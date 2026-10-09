@@ -68,6 +68,43 @@
 #      20f the SAME absence on the main arm still records "main" - that arm
 #          compares the path against cc_session_id and needs no agent_id, so a
 #          blanket "omitted when agent_id is absent" claim would be false
+#  24. REAL USAGE FROM THE AGENT TRANSCRIPT (parallel-automate/24 F8) — the
+#      payload carries no usage, the agent transcript does (repeated per
+#      message.id with a GROWING output_tokens, as real transcripts are):
+#      24a one id read 8, 8, 263 (stop_reason only on the last) counts 263
+#          exactly once; an id with no final line counts the per-field MAX
+#      24b the four TOP-LEVEL integer fields + usage_source:"transcript",
+#          proxy:false, no proxy fields
+#      24c read-token-ledger.sh sums it into a non-zero TOTAL
+#      24d a resumed agent (same agent_id, transcript grown) counts only the
+#          new ids at its next stop — earlier messages are not counted again
+#      24e a repeat stop with no new message appends NOTHING (no double count,
+#          no empty event)
+#      24f an agent transcript with no usage lines still writes the proxy line
+#      24g transcript_path alone (the main thread) is never summed — proxy line
+#      24h non-numeric usage values count 0; malformed lines are skipped
+#      24i the watermark is a POSITION: a transcript whose newest line has no
+#          message.id still records one (the last id + the id-less lines after
+#          it), so a resume counts neither the earlier ids nor that id-less line
+#          again — and a transcript with NO id at all resumes by position too
+#      24j N CONCURRENT firings of one transcript completion, each with a
+#          DIFFERENT ts (so the byte-identity guard cannot collapse them), sum the
+#          transcript exactly once in exactly one line — the watermark is read
+#          inside the same critical section as the append — and leave no lock
+#  27. the watermark lookup reads the log BACKWARDS from EOF in chunks and
+#      stops at the first match — it must return exactly what the old forward
+#      scan to EOF returned:
+#      27a an equivalence harness runs the SUT's own last_counted_mark (lifted
+#          out of the inline program with ast) against a verbatim copy of the
+#          forward scan on fixtures with the match far from EOF behind many
+#          other agents' lines, a line straddling the 64 KiB chunk boundary,
+#          no trailing newline, malformed / CRLF / lone-\r / invalid-UTF-8 lines
+#          interleaved, and the legacy shapes (id without usage_anon_after, a
+#          position-less line that must not shadow an earlier mark, proxy
+#          lines, an agent id that is a substring of another) — at the real
+#          chunk size and at tiny ones that make every line straddle, plus a
+#          seeded fuzz; 27b end to end, a watermark 3,000 foreign lines from
+#          EOF still keeps a resume from recounting
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -1318,17 +1355,17 @@ echo "== 23. the guard still holds at the REAL matcher fan-out, not just at two 
 # Case 21 fires TWO invocations because that was the fan-out when it was written. Registering a
 # lane emitter for every agent this plugin ships takes the matchers that run THIS script from 3
 # to 13 — and an UNTYPED payload matches all of them at once, because a matcher only
-# discriminates when the payload carries an `agent_type`. So one untyped completion now fans out
-# to THIRTEEN concurrent invocations of this script against one file. (A fourteenth SubagentStop
-# emitter exists — `worker`'s `emit-progress-event.sh` — but it is a different script appending a
-# different line, so it is not part of this fan-out. The count here is of THIS script's callers.)
-# FAN_N is 14 rather than 13 on purpose: one more than production can produce, because headroom
+# discriminates when the payload carries an `agent_type`. The `loomwright:worker` matcher joined
+# them (parallel-automate/24 fix-now: worker spend was never ledgered), so one untyped completion
+# now fans out to FOURTEEN concurrent invocations of this script against one file — every agent
+# this plugin ships; case 26 pins that coverage against hooks.json.
+# FAN_N is 15 rather than 14 on purpose: one more than production can produce, because headroom
 # above the real figure is the safe direction for a control and an under-count is not. The dedupe is supposed to
-# collapse them to a single line; at two invocations that was never in doubt, at fourteen the
+# collapse them to a single line; at two invocations that was never in doubt, at fifteen the
 # bounded lock wait (20 x 50ms) is a real budget that could be exhausted, and every invocation
 # that gives up appends UNGUARDED by design. Asserted rather than reasoned about, because the
 # failure mode is a partial collapse — some duplicates, not all — which no smaller case can see.
-FAN_N=14
+FAN_N=15
 FAN_SID="fixture-token-ledger-fanout-001"
 FAN_TP="$SANDBOX/fanout-transcript.jsonl"
 printf 'FFFFFFFF' > "$FAN_TP"
@@ -1346,6 +1383,384 @@ wait
 FAN_LINES="$(wc -l < "$SANDBOX/.supervisor/logs/${FAN_SID}.jsonl" 2>/dev/null | tr -d ' ')"
 assert_eq "case23 $FAN_N concurrent firings of ONE completion still append exactly one line (seed + 1 = 2) — the lock budget survives the fan-out registering every agent creates" "2" "$FAN_LINES"
 
+
+echo "== 24. real usage from the agent transcript (parallel-automate/24 F8) =="
+TU_SID="fixture-token-ledger-transcript-usage-001"
+TU_T="$SANDBOX/subagents/agent-tu001.jsonl"; mkdir -p "$SANDBOX/subagents"
+# msg_A: three streamed lines, output 8, 8, 263 — stop_reason ONLY on the last (the real count).
+# msg_B: no final line (older transcripts) — the per-field MAX (output 40) is counted.
+# Plus the sub-objects real usage carries (cache_creation, service_tier) and a non-assistant line.
+{
+  printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}'
+  for o in 8 8; do
+    printf '{"type":"assistant","message":{"id":"msg_A","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":%s,"cache_read_input_tokens":100,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_5m_input_tokens":50},"service_tier":"standard"}}}\n' "$o"
+  done
+  printf '%s\n' '{"type":"assistant","message":{"id":"msg_A","stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":263,"cache_read_input_tokens":100,"cache_creation_input_tokens":50,"server_tool_use":{"web_search_requests":0}}}}'
+  printf '%s\n' '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}'
+  printf '%s\n' '{"type":"assistant","message":{"id":"msg_B","stop_reason":null,"usage":{"input_tokens":7,"output_tokens":5,"cache_read_input_tokens":200,"cache_creation_input_tokens":0}}}'
+  printf '%s\n' '{"type":"assistant","message":{"id":"msg_B","stop_reason":null,"usage":{"input_tokens":7,"output_tokens":40,"cache_read_input_tokens":200,"cache_creation_input_tokens":0}}}'
+  printf '%s\n' '{"type":"assistant", "message": not json "usage"'
+} > "$TU_T"
+# tu_payload <agent transcript> <session id> <agent id> — the case-24 payload, built once (no usage fields).
+tu_payload() { jq -n --arg a "$1" --arg sid "$2" --arg aid "$3" '{session_id: $sid, agent_id: $aid, agent_transcript_path: $a}'; }
+TU_PAYLOAD="$SANDBOX/tu.json"
+tu_payload "$TU_T" "$TU_SID" tu001 > "$TU_PAYLOAD"
+TU_LOG="$SANDBOX/.supervisor/logs/${TU_SID}.jsonl"
+OUT24="$(run_sut "$TU_PAYLOAD")"
+assert_eq "case24 exit 0" "0" "$(printf '%s\n' "$OUT24" | grep '^RC=' | tail -1 | cut -d= -f2)"
+LINE24="$(tail -1 "$TU_LOG" 2>/dev/null)"
+assert_eq "case24a output_tokens: msg_A's 263 counted ONCE + msg_B's max 40 (first line per id would read 13, every line 324)" \
+  "303" "$(printf '%s' "$LINE24" | jq -r '.output_tokens')"
+assert_eq "case24a input / cache_read / cache_create counted once per id" "17 300 50" \
+  "$(printf '%s' "$LINE24" | jq -r '"\(.input_tokens) \(.cache_read_input_tokens) \(.cache_creation_input_tokens)"')"
+assert_eq "case24b top-level INTEGER fields, transcript marker, real usage" "number number number number transcript false 2 msg_B" \
+  "$(printf '%s' "$LINE24" | jq -r '"\(.input_tokens|type) \(.output_tokens|type) \(.cache_read_input_tokens|type) \(.cache_creation_input_tokens|type) \(.usage_source) \(.proxy) \(.usage_messages) \(.usage_last_message_id)"')"
+assert_eq "case24b no proxy fields and no nested usage object" "false" \
+  "$(printf '%s' "$LINE24" | jq -r 'has("token_proxy_kind") or has("token_proxy_transcript_bytes") or has("usage")')"
+assert_eq "case24c read-token-ledger.sh sums it into a non-zero TOTAL" "INPUT=17 OUTPUT=303 CACHE_READ=300 CACHE_CREATE=50 TOTAL=670 EVENTS=1" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$TU_SID" --root "$SANDBOX")"
+# 24d: the agent is resumed — its transcript grows by msg_C; the next stop counts msg_C only.
+printf '%s\n' '{"type":"assistant","message":{"id":"msg_C","stop_reason":null,"usage":{"input_tokens":3,"output_tokens":2,"cache_read_input_tokens":400,"cache_creation_input_tokens":9}}}' >> "$TU_T"
+printf '%s\n' '{"type":"assistant","message":{"id":"msg_C","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":30,"cache_read_input_tokens":400,"cache_creation_input_tokens":9}}}' >> "$TU_T"
+run_sut "$TU_PAYLOAD" >/dev/null
+assert_eq "case24d resumed agent: the next stop counts only the new id (msg_C)" "3 30 400 9 1 msg_C" \
+  "$(tail -1 "$TU_LOG" | jq -r '"\(.input_tokens) \(.output_tokens) \(.cache_read_input_tokens) \(.cache_creation_input_tokens) \(.usage_messages) \(.usage_last_message_id)"')"
+assert_eq "case24d … so the reader's TOTAL is the transcript's true sum, nothing counted twice" "TOTAL=1112" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$TU_SID" --root "$SANDBOX" | grep -oE 'TOTAL=[0-9]+')"
+sleep 1   # a different ts, so the repeat below is not removed by the adjacent byte-identity guard
+run_sut "$TU_PAYLOAD" >/dev/null
+assert_eq "case24e a repeat stop with no new message appends nothing — same line count, same total" "2 TOTAL=1112" \
+  "$(wc -l < "$TU_LOG" | tr -d ' ') $(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$TU_SID" --root "$SANDBOX" | grep -oE 'TOTAL=[0-9]+')"
+# 24f: an agent transcript with no usage lines → the existing proxy line.
+NU_SID="fixture-token-ledger-transcript-nousage-001"; NU_T="$SANDBOX/subagents/agent-nu001.jsonl"
+printf '%s\n' '{"type":"user","message":{"content":"x"}}' '{"type":"assistant","message":{"id":"m","content":[]}}' > "$NU_T"
+tu_payload "$NU_T" "$NU_SID" nu001 > "$SANDBOX/nu.json"
+OUT24F="$(run_sut "$SANDBOX/nu.json")"
+assert_eq "case24f no usage in the agent transcript ⇒ exit 0 + the proxy line (bytes, no usage_source)" \
+  "0 true $(wc -c < "$NU_T" | tr -d ' ') false" \
+  "$(printf '%s\n' "$OUT24F" | grep '^RC=' | tail -1 | cut -d= -f2) $(tail -1 "$SANDBOX/.supervisor/logs/${NU_SID}.jsonl" | jq -r '"\(.proxy) \(.token_proxy_transcript_bytes) \(has("usage_source"))"')"
+# 24g: only transcript_path (the main session's own transcript) — never summed here.
+MT_SID="fixture-token-ledger-transcript-main-001"
+jq -n --arg t "$TU_T" --arg sid "$MT_SID" '{session_id: $sid, transcript_path: $t}' > "$SANDBOX/mt.json"
+run_sut "$SANDBOX/mt.json" >/dev/null
+assert_eq "case24g transcript_path alone ⇒ proxy line, the main thread is not summed" "true null" \
+  "$(tail -1 "$SANDBOX/.supervisor/logs/${MT_SID}.jsonl" | jq -r '"\(.proxy) \(.output_tokens)"')"
+# 24h: non-numeric usage values count 0 (a string, a float, a bool, a negative).
+NN_SID="fixture-token-ledger-transcript-nonnum-001"; NN_T="$SANDBOX/subagents/agent-nn001.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"id":"n1","stop_reason":"end_turn","usage":{"input_tokens":"12","output_tokens":4.5,"cache_read_input_tokens":true,"cache_creation_input_tokens":-3}}}' \
+  '{"type":"assistant","message":{"id":"n2","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' > "$NN_T"
+tu_payload "$NN_T" "$NN_SID" nn001 > "$SANDBOX/nn.json"
+run_sut "$SANDBOX/nn.json" >/dev/null
+assert_eq "case24h non-numeric values count 0, the numeric message still counts" "1 2 0 0 2" \
+  "$(tail -1 "$SANDBOX/.supervisor/logs/${NN_SID}.jsonl" | jq -r '"\(.input_tokens) \(.output_tokens) \(.cache_read_input_tokens) \(.cache_creation_input_tokens) \(.usage_messages)"')"
+
+# 24i: the newest transcript line has NO message.id — the watermark must still be a position.
+# m1 (output 100) + one id-less line (1) → stop; resumed, + m2 (7) → stop. True OUTPUT sum: 108.
+AN_SID="fixture-token-ledger-transcript-anon-001"; AN_T="$SANDBOX/subagents/agent-an001.jsonl"
+AN_LOG="$SANDBOX/.supervisor/logs/${AN_SID}.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"id":"m1","stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' \
+  '{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' > "$AN_T"
+tu_payload "$AN_T" "$AN_SID" an001 > "$SANDBOX/an.json"
+run_sut "$SANDBOX/an.json" >/dev/null
+assert_eq "case24i a trailing id-less line still records a watermark: the last id + the id-less lines after it" "101 m1 1" \
+  "$(tail -1 "$AN_LOG" | jq -r '"\(.output_tokens) \(.usage_last_message_id) \(.usage_anon_after)"')"
+printf '%s\n' '{"type":"assistant","message":{"id":"m2","stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":7,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' >> "$AN_T"
+run_sut "$SANDBOX/an.json" >/dev/null
+assert_eq "case24i … so the resume counts m2 only — neither m1 nor the id-less line again (OUTPUT 108, not 209 or 109)" "OUTPUT=108" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$AN_SID" --root "$SANDBOX" | grep -oE 'OUTPUT=[0-9]+')"
+# … and a transcript with no message.id at all resumes by position (5, then + 3 → 8, not 13).
+NI_SID="fixture-token-ledger-transcript-noid-001"; NI_T="$SANDBOX/subagents/agent-ni001.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' > "$NI_T"
+tu_payload "$NI_T" "$NI_SID" ni001 > "$SANDBOX/ni.json"
+run_sut "$SANDBOX/ni.json" >/dev/null
+printf '%s\n' '{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' >> "$NI_T"
+run_sut "$SANDBOX/ni.json" >/dev/null
+assert_eq "case24i a transcript with no message.id at all resumes by position too" "OUTPUT=8 EVENTS=2" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$NI_SID" --root "$SANDBOX" | grep -oE '(OUTPUT|EVENTS)=[0-9]+' | tr '\n' ' ' | sed 's/ $//')"
+# 24j: N concurrent firings of ONE transcript completion, each seeing a DIFFERENT ts (a `date`
+# shim per firing), so no two lines can be byte-identical — only the watermark read under the
+# lock can keep the transcript from being summed more than once.
+CC_N=6
+CC_SID="fixture-token-ledger-transcript-concurrent-001"; CC_T="$SANDBOX/subagents/agent-cc001.jsonl"
+CC_LOG="$SANDBOX/.supervisor/logs/${CC_SID}.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"id":"c1","stop_reason":"tool_use","usage":{"input_tokens":4,"output_tokens":40,"cache_read_input_tokens":400,"cache_creation_input_tokens":0}}}' \
+  '{"type":"assistant","message":{"id":"c2","stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":20,"cache_read_input_tokens":200,"cache_creation_input_tokens":0}}}' > "$CC_T"
+tu_payload "$CC_T" "$CC_SID" cc001 > "$SANDBOX/cc.json"
+cc_i=0
+while [ "$cc_i" -lt "$CC_N" ]; do
+  mkdir -p "$SANDBOX/datebin-$cc_i"
+  printf '#!/bin/sh\necho 2026-01-01T00:00:0%sZ\n' "$cc_i" > "$SANDBOX/datebin-$cc_i/date"
+  chmod +x "$SANDBOX/datebin-$cc_i/date"
+  cc_i=$((cc_i + 1))
+done
+cc_i=0
+while [ "$cc_i" -lt "$CC_N" ]; do
+  ( cd "$SANDBOX" && PATH="$SANDBOX/datebin-$cc_i:$PATH" env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX \
+      -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES -u LOOMWRIGHT_AGENT_TYPE bash "$SUT" < "$SANDBOX/cc.json" >/dev/null 2>&1 ) &
+  cc_i=$((cc_i + 1))
+done
+wait
+assert_eq "case24j $CC_N concurrent firings with differing ts sum the transcript exactly ONCE, in ONE line" "INPUT=6 OUTPUT=60 CACHE_READ=600 CACHE_CREATE=0 TOTAL=666 EVENTS=1" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$CC_SID" --root "$SANDBOX")"
+if [ -e "$CC_LOG.lock" ]; then no "case24j the lock handed from the python step to the shell is released — $CC_LOG.lock remains"
+else ok "case24j the lock handed from the python step to the shell is released — no .lock left behind"; fi
+
+
+echo "== 25. take_log_lock's two failure branches: a held lock times out, a stale lock is broken =="
+# Case 24j pins only the happy hand-off. These are the two directions every failure goes, and both
+# must still append exactly one line and exit 0 (the always-exit-0 invariant).
+# 25a TIMEOUT: a live (fresh) lock held by someone else. The python step waits its bound
+# (LOCK_WAIT_TRIES x LOCK_WAIT_S), returns "timeout", hands NOTHING over, and the shell skips its own
+# wait (PY_LOCK=timeout) and appends unguarded — and must NOT remove a lock it never took.
+LK_T="$SANDBOX/subagents/agent-lk001.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"id":"k1","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}}' > "$LK_T"
+LK_SID="fixture-token-ledger-lock-timeout-001"; LK_LOG="$SANDBOX/.supervisor/logs/${LK_SID}.jsonl"
+mkdir -p "$SANDBOX/.supervisor/logs"; rm -rf "$LK_LOG.lock"; mkdir "$LK_LOG.lock"
+tu_payload "$LK_T" "$LK_SID" lk001 > "$SANDBOX/lk.json"
+OUT25A="$(run_sut "$SANDBOX/lk.json")"
+assert_eq "case25a a held lock: exit 0" "0" "$(printf '%s\n' "$OUT25A" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case25a … the wait times out and the line is appended UNGUARDED (one transcript line, not silence)" \
+  "1 transcript" "$(wc -l < "$LK_LOG" 2>/dev/null | tr -d ' ') $(jq -r '.usage_source' "$LK_LOG" 2>/dev/null)"
+if [ -d "$LK_LOG.lock" ]; then ok "case25a … and the other holder's lock is left in place (a timed-out wait owns nothing)"
+else no "case25a … the other holder's lock was removed — a timed-out wait adopted or broke a live lock"; fi
+rm -rf "$LK_LOG.lock"
+# 25b STALE: a lock older than LOCK_STALE_S (a holder that died). The python step breaks it, takes
+# the lock, hands it to the shell, and the shell releases it after its append — nothing left behind.
+LS_SID="fixture-token-ledger-lock-stale-001"; LS_LOG="$SANDBOX/.supervisor/logs/${LS_SID}.jsonl"
+rm -rf "$LS_LOG.lock"; mkdir "$LS_LOG.lock"; touch -t 202601010000 "$LS_LOG.lock"
+tu_payload "$LK_T" "$LS_SID" ls001 > "$SANDBOX/ls.json"
+OUT25B="$(run_sut "$SANDBOX/ls.json")"
+assert_eq "case25b a stale lock: exit 0, one transcript line" "0 1 transcript" \
+  "$(printf '%s\n' "$OUT25B" | grep '^RC=' | tail -1 | cut -d= -f2) $(wc -l < "$LS_LOG" 2>/dev/null | tr -d ' ') $(jq -r '.usage_source' "$LS_LOG" 2>/dev/null)"
+if [ -e "$LS_LOG.lock" ]; then no "case25b the stale lock was not broken (or the taken lock not released) — $LS_LOG.lock remains"
+else ok "case25b … the stale lock is broken, taken, handed over and released — no .lock left behind"; fi
+
+echo "== 26. hooks.json: every agent this plugin ships runs THIS emitter on its own matcher =="
+# The ledger is only as complete as its registrations: `loomwright:worker` — the largest spender —
+# had none, so --max-tokens and lane-status --tokens never saw worker spend. The set of agents is
+# read from agents/*.md frontmatter `name:`, never restated here.
+HOOKS_JSON="$SCRIPT_DIR/../hooks/hooks.json"
+_stop_entries="$(jq -c '.hooks.SubagentStop' "$HOOKS_JSON" 2>/dev/null)"
+for _af in "$SCRIPT_DIR"/../agents/*.md; do
+  [ -f "$_af" ] || continue
+  _an="$(sed -n 's/^name:[[:space:]]*//p' "$_af" | head -1)"
+  [ -n "$_an" ] || { no "case26 no frontmatter name in $_af"; continue; }
+  _cmds="$(printf '%s' "$_stop_entries" | jq -r --arg m "$_an" '.[] | select(.matcher == $m) | .hooks[].command // empty' 2>/dev/null)"
+  case "$_cmds" in
+    *'/scripts/emit-token-ledger.sh" || true'*) ok "case26 $_an runs emit-token-ledger.sh (fail-safe, || true)" ;;
+    *) no "case26 $_an has no matcher running emit-token-ledger.sh — its spend is never ledgered" ;;
+  esac
+done
+# The worker leaf keeps its validator FIRST and the ledger AFTER emit-progress-event.sh in the same
+# command — appending the ledger must not reorder or merge the blocking validator's leaf.
+_wk="$(printf '%s' "$_stop_entries" | jq -r '.[] | select(.matcher == "loomwright:worker") | [.hooks[].command] | join("\n")' 2>/dev/null)"
+case "$_wk" in
+  'python3 "'*'/scripts/validate-worker-result.py" || true'*emit-progress-event.sh*emit-token-ledger.sh*)
+    ok "case26w loomwright:worker: validator leaf first and alone, then progress event, then the ledger" ;;
+  *) no "case26w loomwright:worker leaf order changed: $_wk" ;;
+esac
+
+echo "== 27. the watermark is read BACKWARDS from EOF — same answer as the old forward scan =="
+# 27a: the SUT's own functions, lifted out of its inline python program (the text between
+# `python3 -c '` and the closing `'`) with ast — imports, function defs and UPPER_CASE constants
+# only, so none of the program's top-level code runs — compared against a verbatim copy of the
+# forward scan it replaced.
+# Written to a file first, never a heredoc inside $(...): bash 3.2 mis-parses quotes in one.
+cat > "$SANDBOX/watermark-eq.py" <<'PYEOF'
+import ast, json, os, random, sys, tempfile
+
+src = open(os.environ["SUT_PATH"], encoding="utf-8").read().split("\n")
+start = next(i for i, l in enumerate(src) if l.rstrip().endswith("python3 -c '")) + 1
+end = next(i for i in range(start, len(src)) if src[i].startswith("'"))
+tree = ast.parse("\n".join(src[start:end]))
+keep = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom, ast.FunctionDef))
+        or (isinstance(n, ast.Assign) and all(isinstance(t, ast.Name) and t.id.lstrip("_").isupper()
+                                              for t in n.targets))]
+ns = {}
+exec(compile(ast.Module(body=keep, type_ignores=[]), "sut", "exec"), ns)
+new = ns["last_counted_mark"]
+REAL_CHUNK = ns["MARK_CHUNK_BYTES"]
+
+def _usage_int(val):
+    if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+        return 0
+    return val
+
+def old(log_path, agent_id):
+    # VERBATIM the forward scan last_counted_mark used before the backward read.
+    if not agent_id or not log_path:
+        return None
+    last = None
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if agent_id not in raw or "\"usage_source\"" not in raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except Exception:
+                    continue
+                if not (isinstance(obj, dict) and obj.get("event") == "token_ledger"
+                        and obj.get("usage_source") == "transcript"
+                        and obj.get("agent_id") == agent_id):
+                    continue
+                mid = obj.get("usage_last_message_id")
+                mid = mid if isinstance(mid, str) and mid else None
+                after = _usage_int(obj.get("usage_anon_after"))
+                if mid is not None or after > 0:
+                    last = (mid, after)
+    except OSError:
+        return None
+    return last
+
+def L(aid, **kw):
+    d = {"event": "token_ledger", "session_id": "s", "agent_id": aid, "usage_source": "transcript"}
+    d.update(kw)
+    return json.dumps(d).encode()
+
+def foreign(i, pad=150):
+    return L("other%d" % (i % 7), usage_last_message_id="x%d" % i, pad="p" * pad)
+
+T = "aX"
+POOL = [
+    L(T, usage_last_message_id="m_new", usage_anon_after=2),
+    L(T, usage_last_message_id="m_legacy"),                    # legacy: id, no usage_anon_after
+    L(T, usage_anon_after=3),                                  # id-less position
+    L(T),                                                      # legacy, no position: never shadows
+    L(T, usage_last_message_id="", usage_anon_after=0),        # empty id, zero after: no position
+    L(T, usage_last_message_id="m_neg", usage_anon_after=-4),  # negative after counts 0
+    L(T + "0", usage_last_message_id="m_superstring"),         # agent id contains T: substring hit, not a match
+    json.dumps({"event": "token_ledger", "agent_id": T, "proxy": True, "token_proxy_transcript_bytes": 9}).encode(),
+    json.dumps({"event": "token_ledger", "agent_id": T, "usage_source": "payload", "usage_last_message_id": "m_payload"}).encode(),
+    json.dumps({"event": "subtask_complete", "agent_id": T, "usage_source": "transcript", "usage_last_message_id": "m_ev"}).encode(),
+    b'{"event":"token_ledger","agent_id":"aX","usage_source":"transcript","usage_last_message_id":"m_trunc"',  # malformed
+    b'\xef\xbb\xbf' + L(T, usage_last_message_id="m_bom"),    # BOM: json.loads rejects it
+    L(T, usage_last_message_id="m_\u00e9"),                    # non-ASCII id (escaped by json)
+    b'{"event":"token_ledger","agent_id":"aX","usage_source":"transcript","usage_last_message_id":"m_\xff\xfe"}',  # invalid utf-8 -> U+FFFD
+    b'{"event":"token_ledger",\r"agent_id":"aX","usage_source":"transcript","usage_last_message_id":"m_cr_ws"}',  # \r splits it
+    b"not json at all aX \"usage_source\"",
+    b"",
+    foreign(1), foreign(2, 10), foreign(3, 3000),
+]
+
+def write(path, lines, terms, final_term):
+    with open(path, "wb") as fh:
+        for i, ln in enumerate(lines):
+            fh.write(ln)
+            if i < len(lines) - 1:
+                fh.write(terms[i])
+            else:
+                fh.write(final_term)
+
+fails, checks = [], 0
+tmp = tempfile.mkdtemp()
+
+def check(label, path, chunks=(None, 1, 2, 3, 7, 64), aid=T):
+    global checks
+    want = old(path, aid)
+    for c in chunks:
+        ns["MARK_CHUNK_BYTES"] = REAL_CHUNK if c is None else c
+        got = new(path, aid)
+        checks += 1
+        if got != want:
+            fails.append("%s chunk=%s: forward=%r backward=%r" % (label, c or REAL_CHUNK, want, got))
+    ns["MARK_CHUNK_BYTES"] = REAL_CHUNK
+    return want
+
+p = os.path.join(tmp, "log.jsonl")
+# (a) the match far from EOF behind many other agents' lines — ~5,000 lines, many chunks.
+lines = [L(T, usage_last_message_id="m_far", usage_anon_after=1)] + [foreign(i) for i in range(5000)]
+write(p, lines, [b"\n"] * len(lines), b"\n")
+w = check("far-from-EOF", p, chunks=(None, 4096))
+if w != ("m_far", 1):
+    fails.append("far-from-EOF fixture returned %r, expected the seeded mark" % (w,))
+# (a2) the newest of SEVERAL marks wins, with a position-less legacy line AFTER it that must not shadow it.
+lines = [L(T, usage_last_message_id="m_old")] + [foreign(i) for i in range(800)] \
+    + [L(T, usage_last_message_id="m_newest")] + [foreign(i) for i in range(800)] + [L(T)]
+write(p, lines, [b"\n"] * len(lines), b"")
+w = check("newest-wins+legacy-no-position", p, chunks=(None, 4096))
+if w != ("m_newest", 0):
+    fails.append("newest-wins fixture returned %r, expected ('m_newest', 0)" % (w,))
+# (b) a match line straddling the real 64 KiB chunk boundary (the boundary is counted from EOF).
+target = L(T, usage_last_message_id="m_straddle", pad="s" * 2000)
+filler = foreign(9, REAL_CHUNK - 1000)          # one line ~64 KiB - 1 KiB after the target
+write(p, [foreign(1), target, filler], [b"\n", b"\n"], b"\n")
+size = os.path.getsize(p)
+t_start = len(foreign(1)) + 1
+boundary = size - REAL_CHUNK
+if not (t_start < boundary < t_start + len(target)):
+    fails.append("straddle fixture does not straddle: target [%d,%d) boundary %d" % (t_start, t_start + len(target), boundary))
+w = check("straddle-64KiB", p, chunks=(None,))
+if w != ("m_straddle", 0):
+    fails.append("straddle fixture returned %r" % (w,))
+# (c) no trailing newline — the match is the unterminated last line, and the last line otherwise.
+write(p, [foreign(1), L(T, usage_last_message_id="m_eof")], [b"\n"], b"")
+check("no-trailing-newline/match", p)
+write(p, [L(T, usage_last_message_id="m_first"), foreign(1)], [b"\n"], b"")
+check("no-trailing-newline/foreign", p)
+# (d) malformed / CRLF / lone-\r / invalid-UTF-8 / BOM lines interleaved — every POOL kind, each
+# as the last match candidate, under each terminator.
+for i, ln in enumerate(POOL):
+    for term in (b"\n", b"\r\n", b"\r"):
+        for fin in (b"", b"\n", b"\r\n", b"\r"):
+            write(p, [L(T, usage_last_message_id="m_base"), foreign(4), ln], [term, term], fin)
+            check("pool[%d] term=%r fin=%r" % (i, term, fin), p)
+# (e) degenerate files: empty, only newlines, absent.
+for body in (b"", b"\n", b"\n\n\r\n", b"\r"):
+    with open(p, "wb") as fh:
+        fh.write(body)
+    check("degenerate %r" % body, p)
+missing = os.path.join(tmp, "absent.jsonl")
+if new(missing, T) is not None or old(missing, T) is not None:
+    fails.append("absent log is not None on both sides")
+checks += 1
+# (f) agent ids the byte prefilter must NOT be applied to (non-ASCII), incl. one that only an
+# errors=replace decode produces: bytes "a\xff" decode to "a\ufffd", which the forward scan matches.
+for aid, raw in (("a\u00e9", json.dumps({"event": "token_ledger", "agent_id": "a\u00e9", "usage_source": "transcript",
+                                       "usage_last_message_id": "m_nonascii"}, ensure_ascii=False).encode()),
+                 ("a\ufffd", b'{"event":"token_ledger","agent_id":"a\xff","usage_source":"transcript","usage_last_message_id":"m_repl"}')):
+    for fin in (b"", b"\n"):
+        write(p, [raw] + [foreign(i) for i in range(300)], [b"\n"] * 301, fin)
+        w = check("non-ascii agent %r fin=%r" % (aid, fin), p, chunks=(None, 1, 5, 4096), aid=aid)
+        if w is None:
+            fails.append("non-ascii agent %r fixture: the forward scan found no mark (vacuous)" % aid)
+# seeded fuzz over the pool, random terminators, random chunk sizes.
+rng = random.Random(24)
+for n in range(400):
+    k = rng.randint(1, 12)
+    lines = [rng.choice(POOL) for _ in range(k)]
+    terms = [rng.choice((b"\n", b"\r\n", b"\r", b"\n\n")) for _ in range(k)]
+    write(p, lines, terms, rng.choice((b"", b"\n", b"\r\n", b"\r")))
+    check("fuzz#%d" % n, p, chunks=(None, rng.randint(1, 40), rng.randint(41, 400)))
+
+for f in fails[:20]:
+    print("FAIL " + f)
+print("CHECKS %d FAILS %d" % (checks, len(fails)))
+PYEOF
+_eq_out="$(SUT_PATH="$SUT" python3 "$SANDBOX/watermark-eq.py" 2>&1)"
+_eq_checks="$(printf '%s\n' "$_eq_out" | sed -n 's/^CHECKS \([0-9]*\) FAILS \([0-9]*\)$/\1 \2/p')"
+case "$_eq_checks" in
+  *' 0')
+    if [ "${_eq_checks%% *}" -ge 1000 ]; then
+      ok "case27a backward watermark read == forward scan on ${_eq_checks%% *} fixture x chunk-size checks (far from EOF, 64 KiB straddle, no trailing newline, malformed/CRLF/lone-CR/invalid-UTF-8, legacy shapes, fuzz)"
+    else
+      no "case27a the equivalence harness ran only ${_eq_checks%% *} checks — vacuous"
+    fi ;;
+  *) no "case27a backward watermark read DIFFERS from the forward scan: $(printf '%s' "$_eq_out" | head -8 | tr '\n' ' ')" ;;
+esac
+# 27b end to end: a watermark 3,000 foreign lines from EOF still keeps the resume from recounting.
+FE_SID="fixture-token-ledger-watermark-far-001"; FE_T="$SANDBOX/subagents/agent-fe001.jsonl"
+FE_LOG="$SANDBOX/.supervisor/logs/${FE_SID}.jsonl"; mkdir -p "$SANDBOX/.supervisor/logs"
+printf '%s\n' '{"type":"assistant","message":{"id":"f1","stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":500,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' \
+  '{"type":"assistant","message":{"id":"f2","stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":9,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' > "$FE_T"
+{
+  printf '{"event":"token_ledger","session_id":"%s","agent_id":"fe001","usage_source":"transcript","proxy":false,"output_tokens":500,"usage_messages":1,"usage_last_message_id":"f1","usage_anon_after":0}\n' "$FE_SID"
+  awk -v sid="$FE_SID" 'BEGIN { for (i = 0; i < 3000; i++) printf "{\"event\":\"token_ledger\",\"session_id\":\"%s\",\"agent_id\":\"other%d\",\"usage_source\":\"transcript\",\"usage_last_message_id\":\"o%d\",\"output_tokens\":0}\n", sid, i % 5, i }'
+} > "$FE_LOG"
+tu_payload "$FE_T" "$FE_SID" fe001 > "$SANDBOX/fe.json"
+OUT27B="$(run_sut "$SANDBOX/fe.json")"
+assert_eq "case27b a watermark 3,000 lines from EOF: exit 0, the resume counts f2 only" "0 9 1 f2" \
+  "$(printf '%s\n' "$OUT27B" | grep '^RC=' | tail -1 | cut -d= -f2) $(tail -1 "$FE_LOG" | jq -r '"\(.output_tokens) \(.usage_messages) \(.usage_last_message_id)"')"
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"

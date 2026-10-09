@@ -15,9 +15,9 @@
 #   uuid-named files do not become the sole join key.
 #
 # Usage fields on SubagentStop are EXPECTED ABSENT (see docs/TELEMETRY.md
-# §Token ledger). When absent, records a transcript-byte PROXY — never an
-# invented token count, and never labelled as tokens.
-#
+# §Token ledger). Real usage is then read from the agent's own transcript (see
+# transcript_usage() below); only when none is readable, a transcript-byte PROXY.
+
 # No-op (exit 0) when: empty stdin, missing/empty session_id (both sources),
 # unreadable proxy paths, missing python3, or any parse/write failure.
 #
@@ -112,7 +112,7 @@ case "$UTC_TS" in
 esac
 
 LOG_DIR="${main_root}/.supervisor/logs"
-export UTC_TS
+export UTC_TS LOG_DIR
 
 # ---- Resolve plugin session id from state.md (active run only) --------------
 # Match build-handoff.sh / Supervisor Session block: `- session_id: …`
@@ -191,7 +191,7 @@ export PLUGIN_SESSION_ID
 # Single python3 invocation emits TWO lines: the resolved session id, then the
 # JSONL event — avoids a second interpreter spawn just to re-parse session_id.
 OUT="$(printf '%s' "$INPUT" | python3 -c '
-import json, os, sys
+import atexit, json, os, sys, time
 
 USAGE_TOP_KEYS = (
     "usage",
@@ -254,6 +254,272 @@ def transcript_bytes(payload):
         except OSError:
             continue
     return None
+
+USAGE_INT_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
+# A transcript larger than this is not parsed (the proxy line is written
+# instead) — the read is streaming, but a hook must stay bounded.
+TRANSCRIPT_MAX_BYTES = 256 * 1024 * 1024
+
+def _usage_int(val):
+    """A usage count is a non-negative int (never a bool, a float, a string or
+    one of the sub-objects real transcript usage also carries) — else 0."""
+    if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+        return 0
+    return val
+
+def _line_mark(raw, agent_id):
+    """The watermark ONE log line records for agent_id, as (usage_last_message_id
+    or None, usage_anon_after), or None when the line is not a positioned
+    transcript-sourced token_ledger line of agent_id. A line written by a build
+    without usage_anon_after that also lacks the id carries no position and is
+    None, as that build skipped it; a malformed line is None. A cheap substring
+    test rejects every line that cannot be one before any JSON parse."""
+    if agent_id not in raw or "\"usage_source\"" not in raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return None
+    if not (isinstance(obj, dict) and obj.get("event") == "token_ledger"
+            and obj.get("usage_source") == "transcript"
+            and obj.get("agent_id") == agent_id):
+        return None
+    mid = obj.get("usage_last_message_id")
+    mid = mid if isinstance(mid, str) and mid else None
+    after = _usage_int(obj.get("usage_anon_after"))
+    if mid is not None or after > 0:
+        return (mid, after)
+    return None
+
+# The log is read BACKWARDS in chunks of this many bytes: the watermark is the
+# LAST positioned line of the agent, which sits near EOF, so a long session log
+# costs a few chunks rather than a full scan — inside the lock, where every
+# millisecond is a sibling firing waiting.
+MARK_CHUNK_BYTES = 64 * 1024
+
+def _text_lines(seg, terminated):
+    """The lines a text-mode read (utf-8, errors=replace, universal newlines)
+    yields for one \\n-delimited byte segment, LAST first, each with the "\\n"
+    that read gives it (none on an unterminated final line). Universal newlines
+    also end a line at a lone \\r and fold \\r\\n into one \\n, so the segment is
+    split on \\r too and a trailing \\r is the end of the last line, not an
+    empty line of its own."""
+    pieces = seg.decode("utf-8", "replace").split("\r")
+    if len(pieces) > 1 and pieces[-1] == "":
+        pieces.pop()
+        terminated = True
+    out = [p + "\n" for p in pieces[:-1]]
+    if pieces[-1] or terminated:
+        out.append(pieces[-1] + ("\n" if terminated else ""))
+    return reversed(out)
+
+def _lines_backward(fh, needles=()):
+    """Every line of the binary file fh, LAST first, exactly as a forward
+    text-mode read yields it — never more than one chunk plus one line in
+    memory. A line straddling a chunk boundary is carried until its start is
+    read; the first line of the file is yielded last. needles are byte strings
+    EVERY line the caller can use contains: a span of complete lines lacking
+    one is skipped without splitting or decoding it, so a log in which the
+    agent never appears (its first stop) costs one substring search per chunk.
+    The chunk size is read at call time, so a test can shrink it to make every
+    line straddle one. A read that comes back short (the log shrank under it)
+    is an OSError, the same "cannot tell" every other read failure is."""
+    chunk = MARK_CHUNK_BYTES
+    fh.seek(0, os.SEEK_END)
+    pos = fh.tell()
+    carry, carry_terminated = b"", False
+    while pos > 0:
+        step = min(chunk, pos)
+        pos -= step
+        fh.seek(pos)
+        data = fh.read(step)
+        if len(data) != step:
+            raise OSError("log changed size under the backward read")
+        buf = data + carry
+        if not all(n in buf for n in needles):
+            # No complete line in buf can be a match; keep only the (possibly
+            # partial) first line, whose start may still be in an earlier chunk.
+            nl = buf.find(b"\n")
+            if nl >= 0:
+                carry, carry_terminated = buf[:nl], True
+            else:
+                carry = buf
+            continue
+        parts = buf.split(b"\n")
+        for i in range(len(parts) - 1, 0, -1):
+            seg = parts[i]
+            if not all(n in seg for n in needles):
+                continue
+            for line in _text_lines(seg, True if i < len(parts) - 1 else carry_terminated):
+                yield line
+        if len(parts) > 1:
+            carry_terminated = True
+        carry = parts[0]
+    if all(n in carry for n in needles):
+        for line in _text_lines(carry, carry_terminated):
+            yield line
+
+def last_counted_mark(log_path, agent_id):
+    """The resume WATERMARK of agent_id: the position its LAST transcript-sourced
+    token_ledger line in log_path counted up to (_line_mark above), or None when
+    there is no such line. Reads from EOF backwards and stops at the first match,
+    which is the last one in the file — the same answer a forward scan to EOF
+    gives, without one."""
+    if not agent_id or not log_path:
+        return None
+    try:
+        # Byte needles that are EXACT prefilters for _line_mark: its literal
+        # "usage_source" substring is ASCII, which decoding with errors=replace
+        # never alters; the agent id is one too only when it is ASCII with no
+        # line break (else a decoded line could hold it where the bytes do not).
+        needles = [b"\"usage_source\""]
+        if agent_id.isascii() and "\r" not in agent_id and "\n" not in agent_id:
+            needles.append(agent_id.encode("ascii"))
+        with open(log_path, "rb") as fh:
+            for raw in _lines_backward(fh, needles):
+                mark = _line_mark(raw, agent_id)
+                if mark is not None:
+                    return mark
+    except OSError:
+        return None
+    return None
+
+def read_transcript(path):
+    """Per-message usage from the OWN transcript of a subagent (parallel-automate/24
+    F8), or None when there is none to read. Its assistant lines carry
+    message.usage repeated once per streamed content block, and the repeats
+    are NOT identical: output_tokens is a stream-start placeholder until the
+    final line, the one with a non-null message.stop_reason. Per distinct
+    message.id: that final line (the last such) when one exists, else the
+    per-field max over the lines of that id, never the first line. A line with
+    no message.id stands alone as its own entry. Returns (order, per): the
+    entries in first-seen order and their usage. Reads no shared state, so it
+    runs OUTSIDE the log lock — a large transcript never holds up a sibling."""
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > TRANSCRIPT_MAX_BYTES:
+            return None
+        order, per, anon = [], {}, 0
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if "\"usage\"" not in raw or "\"assistant\"" not in raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except Exception:
+                    continue
+                if not isinstance(obj, dict) or obj.get("type") != "assistant":
+                    continue
+                msg = obj.get("message")
+                if not isinstance(msg, dict) or not isinstance(msg.get("usage"), dict):
+                    continue
+                vals = {k: _usage_int(msg["usage"].get(k)) for k in USAGE_INT_FIELDS}
+                mid = msg.get("id")
+                if not isinstance(mid, str) or not mid:
+                    anon += 1               # no id to dedupe on: the line stands alone
+                    mid = "\0anon-%d" % anon
+                rec = per.get(mid)
+                if rec is None:
+                    rec = per[mid] = {"final": None, "max": dict.fromkeys(USAGE_INT_FIELDS, 0)}
+                    order.append(mid)
+                for k in USAGE_INT_FIELDS:
+                    if vals[k] > rec["max"][k]:
+                        rec["max"][k] = vals[k]
+                if msg.get("stop_reason") is not None:
+                    rec["final"] = vals
+    except (OSError, ValueError):
+        return None
+    if not order:
+        return None
+    return order, per
+
+def count_after(order, per, mark):
+    """Sum the entries AFTER the watermark mark (last_counted_mark above) — a
+    resumed agent counts only what its previous line did not. The watermark is a
+    POSITION, not just an id: the last entry WITH a message.id plus the number
+    of id-less entries counted after it (usage_anon_after), because the newest
+    entry may have no id to record, and an id-less entry counted once must not
+    be counted again on the next stop. The transcript is append-only, so those
+    entries are the same ones. Returns (totals, n_counted, last_id, anon_after)
+    — last_id None when no entry has an id, anon_after then counting from the
+    start."""
+    start = 0
+    if mark is not None:
+        mid, skip = mark
+        if mid is not None:
+            if mid in per:
+                start = order.index(mid) + 1
+            else:
+                skip = 0                    # an id this transcript lacks: count it all
+        while skip > 0 and start < len(order) and order[start].startswith("\0"):
+            start += 1
+            skip -= 1
+    counted = order[start:]
+    totals = dict.fromkeys(USAGE_INT_FIELDS, 0)
+    for m in counted:
+        src = per[m]["final"] if per[m]["final"] is not None else per[m]["max"]
+        for k in USAGE_INT_FIELDS:
+            totals[k] += src[k]
+    last_pos = next((i for i in range(len(order) - 1, -1, -1)
+                     if not order[i].startswith("\0")), None)
+    last_id = order[last_pos] if last_pos is not None else None
+    anon_after = len(order) - (last_pos + 1 if last_pos is not None else 0)
+    return totals, len(counted), last_id, anon_after
+
+# THE WATERMARK READ, THE COUNT AND THE APPEND ARE ONE CRITICAL SECTION. Claude
+# Code runs the hooks matched to one completion CONCURRENTLY (the fan-out the
+# shell lock below documents), so a watermark read before the lock lets every
+# sibling read "nothing counted yet" and append the full total — and when their
+# ts differ by a second the byte-identity guard cannot catch it. So this path
+# takes the SAME per-log mkdir lock the shell takes, AFTER the transcript read
+# (which touches no shared state) and BEFORE the watermark read, and HANDS IT
+# OVER to the shell, which keeps it through its tail-compare and append and
+# releases it there (line 2 of the output says so). Every failure direction is
+# the shell one: a lock not taken within the bound proceeds unguarded, a lock
+# older than a minute is broken, and every exit of this interpreter before the
+# hand-over releases it (atexit).
+LOCK_WAIT_TRIES = 40        # 40 x 50ms: this section also spans an interpreter exit
+LOCK_WAIT_S = 0.05
+LOCK_STALE_S = 60
+_LOCK = {"path": None, "handed_off": False}
+
+def take_log_lock(lock_path):
+    """Returns "held" or "timeout" (never raises)."""
+    try:
+        os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+    except OSError:
+        pass
+    for _ in range(LOCK_WAIT_TRIES):
+        try:
+            os.mkdir(lock_path)
+            _LOCK["path"] = lock_path
+            return "held"
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock_path) > LOCK_STALE_S:
+                    os.rmdir(lock_path)
+            except OSError:
+                pass
+        except OSError:
+            return "timeout"                # cannot be created at all: unguarded
+        time.sleep(LOCK_WAIT_S)
+    return "timeout"
+
+def _release_unless_handed_off():
+    if _LOCK["path"] and not _LOCK["handed_off"]:
+        try:
+            os.rmdir(_LOCK["path"])
+        except OSError:
+            pass
+
+atexit.register(_release_unless_handed_off)
+LOCK_STATE = "none"         # "none": this interpreter did not try; the shell takes the lock
 
 try:
     payload = json.loads(sys.stdin.read())
@@ -352,13 +618,50 @@ if usage_present(payload):
                 event["usage"] = val["usage"]
                 break
 else:
-    nbytes = transcript_bytes(payload)
-    if nbytes is None:
-        # Unreadable / missing proxy paths → silent no-op.
-        sys.exit(0)
-    event["proxy"] = True
-    event["token_proxy_kind"] = "transcript_bytes"
-    event["token_proxy_transcript_bytes"] = int(nbytes)
+    # The payload carries no usage (the expected case): read the real usage
+    # from the OWN transcript of the subagent (_apath, above) only; the session
+    # transcript (`transcript_path`) belongs to the main thread and is never
+    # summed here. Any read/parse failure falls through to the proxy line.
+    _log_path = os.path.join(os.environ.get("LOG_DIR", ""), log_session_id + ".jsonl")
+    try:
+        _parsed = read_transcript(_apath)
+    except Exception:
+        _parsed = None
+    _tu = None
+    if _parsed is not None:
+        # The critical section starts HERE (see take_log_lock above): the
+        # watermark is read under the lock, never before it.
+        LOCK_STATE = take_log_lock(_log_path + ".lock")
+        try:
+            _tu = count_after(_parsed[0], _parsed[1], last_counted_mark(
+                _log_path, agent_id if isinstance(agent_id, str) else ""))
+        except Exception:
+            _tu = None
+    if _tu is not None:
+        _totals, _n_ids, _last_id, _anon_after = _tu
+        if _n_ids == 0:
+            # Everything in the transcript is already counted by an earlier line
+            # of this agent — a sibling firing of this same completion that took
+            # the lock first, or a repeat stop. A second line would add nothing
+            # but an event, so none is written (atexit releases the lock).
+            sys.exit(0)
+        event["proxy"] = False
+        event["usage_source"] = "transcript"
+        for key in USAGE_INT_FIELDS:
+            event[key] = int(_totals[key])
+        event["usage_messages"] = int(_n_ids)
+        if _last_id:
+            event["usage_last_message_id"] = _last_id
+        if _anon_after:
+            event["usage_anon_after"] = int(_anon_after)
+    else:
+        nbytes = transcript_bytes(payload)
+        if nbytes is None:
+            # Unreadable / missing proxy paths → silent no-op.
+            sys.exit(0)
+        event["proxy"] = True
+        event["token_proxy_kind"] = "transcript_bytes"
+        event["token_proxy_transcript_bytes"] = int(nbytes)
 
 # Additive-if-present: orientation_source from the LOOMWRIGHT_ORIENTATION_SOURCE
 # env var (inherited from the hook invocation environment). Only the four known
@@ -398,9 +701,13 @@ try:
     line = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
 except Exception:
     sys.exit(0)
-# Line 1: session id (shell log-file key). Line 2: the JSONL event.
-sys.stdout.write(log_session_id + "\n")
-sys.stdout.write(line + "\n")
+# Line 1: session id (shell log-file key). Line 2: the lock state (held: this
+# interpreter took the log lock and hands it to the shell; timeout: it waited
+# out the bound; none: it did not try). Line 3: the JSONL event. The lock is
+# handed over only once the output is flushed — a failed write releases it.
+sys.stdout.write(log_session_id + "\n" + LOCK_STATE + "\n" + line + "\n")
+sys.stdout.flush()
+_LOCK["handed_off"] = True
 ' 2>/dev/null || true)"
 
 if [ -z "$OUT" ]; then
@@ -409,11 +716,24 @@ fi
 
 SESSION_ID="${OUT%%
 *}"
-LINE="${OUT#*
+_rest="${OUT#*
 }"
+PY_LOCK="${_rest%%
+*}"
+LINE="${_rest#*
+}"
+LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
+_lock="${LOG_FILE}.lock"
+_have_lock=""
+# A lock the python step handed over is adopted BEFORE any guard below can exit,
+# so no exit path strands it (the chained trap is explained at the shell lock).
+if [ "$PY_LOCK" = held ] && [ -n "$SESSION_ID" ]; then
+  _have_lock=1
+  trap 'rmdir "$_lock" 2>/dev/null || true; exit 0' EXIT
+fi
 
-# Guard: need both lines, and the event line must be a JSON object.
-if [ -z "$SESSION_ID" ] || [ "$LINE" = "$OUT" ]; then
+# Guard: need all three lines, and the event line must be a JSON object.
+if [ -z "$SESSION_ID" ] || [ "$_rest" = "$OUT" ] || [ "$LINE" = "$_rest" ]; then
   exit 0
 fi
 case "$LINE" in
@@ -422,7 +742,6 @@ case "$LINE" in
 esac
 
 mkdir -p "$LOG_DIR" 2>/dev/null || true
-LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
 
 # ---- Per-firing idempotency guard (confirmed duplicate mechanism) ------------
 # CONFIRMED, not assumed. hooks.json registers emit-token-ledger.sh under one SubagentStop
@@ -443,10 +762,10 @@ LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
 # At three blocks, exactly TWO lines were measured per untyped firing; why one block
 # emitted nothing was an OPEN QUESTION, recorded rather than guessed in
 # docs/TELEMETRY.md §"Adjacent-duplicate guard". THAT QUESTION IS NOW ABOUT A SYSTEM THAT
-# NO LONGER EXISTS — it was keyed to a three-matcher topology and there are thirteen. It is
+# NO LONGER EXISTS — it was keyed to a three-matcher topology and there are fourteen. It is
 # left recorded rather than deleted because the investigation it holds is still the best
 # account of how these blocks interact, and it is NOT re-answered here because nobody has
-# re-measured at thirteen. The guard never depended on the answer: it keys on byte-identity,
+# re-measured at fourteen. The guard never depended on the answer: it keys on byte-identity,
 # not on a duplicate count, which is why raising the fan-out needed no change to it —
 # asserted at the new fan-out by test-token-ledger.sh case 23 rather than assumed.
 #
@@ -487,9 +806,12 @@ LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
 # directory-wide lock would additionally serialise unrelated sessions against each
 # other for no correctness gain. The name cannot be mistaken for a log: every
 # consumer globs `logs/*.jsonl` on the exact extension, and this ends `.lock`.
-_lock="${LOG_FILE}.lock"
-_have_lock=""
+# The lock may already be held: the transcript-usage path takes it in the python
+# step, BEFORE its watermark read, and hands it over (PY_LOCK=held, adopted above).
+# PY_LOCK=timeout means that step already spent the bounded wait — the append
+# proceeds unguarded rather than waiting a second time. Otherwise the shell takes it.
 _tries=0
+if [ -n "$_have_lock" ] || [ "$PY_LOCK" = timeout ]; then _tries=20; fi
 while [ "$_tries" -lt 20 ]; do
   if mkdir "$_lock" 2>/dev/null; then
     _have_lock=1

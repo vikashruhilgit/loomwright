@@ -998,12 +998,14 @@
       "matcher": "loomwright:worker",
       "script": "scripts/emit-progress-event.sh",
       "scripts": [
-        "scripts/emit-progress-event.sh"
+        "scripts/emit-progress-event.sh",
+        "scripts/emit-token-ledger.sh"
       ],
       "source": "hooks.SubagentStop[3].hooks[1]",
       "type": "command",
       "writes": [
         ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag",
         ".supervisor/state.md"
       ]
     },

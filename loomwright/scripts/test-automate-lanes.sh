@@ -22,15 +22,22 @@
 #   Z Validation 4/5 fixes (parallel-automate/23): F5 readiness report · F9 leak check after removal ·
 #     F1 snapshot before the lane table · F10 no absolute path / real state · F4 resume in the last
 #     session · F2 HELD answer kept + delivered under an owner command · F11 gated wave-end push + ABANDONED
+#   AA Validation 4/5 fixes B (parallel-automate/24): F6 lane-park-notify (truthful per-channel delivery)
+#     · F8 real transcript usage ⇒ non-zero lane TOTAL + a ceiling-check PARK · F12 lane-feed --follow leaves
+#     no pipeline behind on TERM / HUP / INT, and no process naming the suite dir outlives the suite
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 S="$HERE/automate-lanes.sh"
 T="$(cd "$(mktemp -d)" && pwd -P)"
 BG_PIDS=""
+# ere <text> — <text> as a literal extended regex (pgrep / pkill -f take an ERE: an unescaped `+` in
+# `tail -n +1` means "one or more spaces", so the literal never matched — parallel-automate/24 F12).
+ere() { printf '%s' "$1" | sed 's/[][\.*^$+?(){}|]/\\&/g'; }
 cleanup() {
   local p
   for p in $BG_PIDS $(pgrep -f "_lane-run $T" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
+  pkill -TERM -f "$(ere "$T")" 2>/dev/null   # safety net only — the AA-F12z leg is the assertion
   rm -rf "$T"
 }
 trap cleanup EXIT
@@ -509,7 +516,7 @@ has "T5 feed prints the deferred park" "$out" "[park] deferred toolu_r1 — awai
 has "T6 feed prints messages and asks" "$out" "[ask] Which path?"
 has "T7 feed resolves L<n>" "$(cd "$P" && bash "$S" lane-feed L6 2>&1)" "[init] session sess-r"
 bash "$S" lane-feed "$L6" --follow > "$T/follow.out" 2>&1 & FP=$!
-sleep 1.5; pkill -f "tail -n +1 -f $LR2/L6.stream.log" 2>/dev/null; kill "$FP" 2>/dev/null; wait "$FP" 2>/dev/null
+sleep 1.5; kill "$FP" 2>/dev/null; wait "$FP" 2>/dev/null   # lane-feed kills its own pipeline (F12)
 has "T8 --follow narrates" "$(cat "$T/follow.out")" "[spawn] loomwright:worker"
 has "T9 died lane: feed reports it" "$(run lane-feed "$LR2/L1")" "[died]"
 
@@ -1109,6 +1116,158 @@ check "Z-F11i … no jobs/done/ brief; the brief rides under jobs/failed/" \
   "$(ls "$REMOTE11/.supervisor/jobs/done" 2>/dev/null | wc -l | tr -d ' '):$(ls "$REMOTE11/.supervisor/jobs/failed" 2>/dev/null | tr '\n' ' ')" "0:2026-10-08-x.md "
 has "Z-F11j the parent run file records the abandon with the real state" "$(cat "$RF5")" "lane abandoned: L5 ($PARENT5-L5) — state gone;"
 
+# ---- AA: Validation 4/5 fixes B (parallel-automate/24) ------------------------------------------------
+# Each leg fails against the pre-fix code at 9a65ecb and passes here.
+# AA-F12 lane-feed --follow: signalling the lane-feed process ALONE leaves no tail | grep | jq behind.
+AA_TAIL="tail -n \\+1 -f $(ere "$LR2/L6.stream.log")"
+aa_feed() { # <signal> — prints "<seen|unseen> <none|survivor>"; kills any survivor afterwards
+  local sig="$1" fp i=0 seen=unseen
+  if [ "$sig" = INT ]; then   # an async child starts with SIGINT ignored — reset it, as a terminal's Ctrl-C would find it
+    python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
+      bash "$S" lane-feed "$L6" --follow > "$T/aa-follow.$sig" 2>&1 & fp=$!
+  else
+    bash "$S" lane-feed "$L6" --follow > "$T/aa-follow.$sig" 2>&1 & fp=$!
+  fi
+  while [ "$i" -lt 50 ]; do pgrep -f "$AA_TAIL" >/dev/null 2>&1 && { seen=seen; break; }; sleep 0.1; i=$((i + 1)); done
+  sleep 0.3; kill -"$sig" "$fp" 2>/dev/null
+  i=0; while kill -0 "$fp" 2>/dev/null && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+  kill -KILL "$fp" 2>/dev/null; wait "$fp" 2>/dev/null   # bounded: a lane-feed that ignores the signal never hangs the suite
+  i=0; while pgrep -f "$AA_TAIL" >/dev/null 2>&1 && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+  if pgrep -f "$AA_TAIL" >/dev/null 2>&1; then echo "$seen survivor"; pkill -TERM -f "$AA_TAIL" 2>/dev/null; else echo "$seen none"; fi
+}
+check "AA-F12a TERM to lane-feed --follow alone ⇒ its tail pipeline is gone (and the escaped pattern did see it)" "$(aa_feed TERM)" "seen none"
+check "AA-F12b HUP ⇒ the same" "$(aa_feed HUP)" "seen none"
+check "AA-F12c INT ⇒ the same" "$(aa_feed INT)" "seen none"
+has "AA-F12d the follow still narrates" "$(cat "$T/aa-follow.TERM")" "[spawn] loomwright:worker"
+check "AA-F12e the unescaped pattern T8 used never matched a live tail (the root cause, not the path)" \
+  "$(bash "$S" lane-feed "$L6" --follow >/dev/null 2>&1 & fp=$!; sleep 1; pgrep -f "tail -n +1 -f $LR2/L6.stream.log" >/dev/null 2>&1 && echo matched || echo unmatched; kill "$fp" 2>/dev/null; wait "$fp" 2>/dev/null)" unmatched
+
+# AA fixture: one lane (L1) of a fresh parent run, its run file at the ready_for_release park.
+PARENT6=automate-2026-10-08-110000; RF6="$P/.supervisor/automate/$PARENT6.md"; LR6="$T/work/primary-lanes/$PARENT6"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT6" > "$RF6"
+run lane-create "$RF6" reqs/a.md 1 --parallel 2 --max-tokens 200 >/dev/null; L61="$LR6/L1"; LRF6="$L61/.supervisor/automate/$PARENT6-L1.md"
+PR6="https://github.com/o/r/pull/66"
+printf '# Automate Run: %s-L1\n\n## Status: paused\n\n## Queue\n- [ ] reqs/a.md\n\n## Current\n- item: reqs/a.md | status: ready_for_release | pr: %s | branch: f\n- pause_reason: ready_for_release\n\n## Progress\n- 2026-10-08T11:00:00Z session_id sess-aa (reqs/a.md)\n' \
+  "$PARENT6" "$PR6" > "$LRF6"
+# AA-F8 a lane whose log holds a real (transcript-usage) ledger line reads a non-zero TOTAL, and its share parks.
+AAT="$T/aa-transcript.jsonl"
+{ for o in 8 8; do printf '{"type":"assistant","message":{"id":"msg_A","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":%s,"cache_read_input_tokens":100,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_5m_input_tokens":50}}}}\n' "$o"; done
+  echo '{"type":"assistant","message":{"id":"msg_A","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":263,"cache_read_input_tokens":100,"cache_creation_input_tokens":50}}}'
+  echo '{"type":"assistant","message":{"id":"msg_B","stop_reason":null,"usage":{"input_tokens":7,"output_tokens":40,"cache_read_input_tokens":200,"cache_creation_input_tokens":0}}}'
+} > "$AAT"
+jq -n --arg a "$AAT" '{session_id: "sess-aa", agent_id: "aa1", agent_transcript_path: $a}' \
+  | (cd "$L61" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES bash "$HERE/emit-token-ledger.sh")
+check "AA-F8a the real emitter wrote a transcript-usage line into the lane's log" \
+  "$(jq -r '"\(.usage_source) \(.output_tokens)"' "$L61/.supervisor/logs/sess-aa.jsonl" 2>/dev/null)" "transcript 303"
+out="$(run lane-status "$RF6" --tokens)"
+check "AA-F8b lane-status --tokens: the lane's TOTAL is non-zero (the real reader)" \
+  "$(printf '%s\n' "$out" | awk '$1 == "L1"' | grep -oE 'TOTAL=[0-9]+')" "TOTAL=670"
+check "AA-F8c ceiling-check on the lane run file with a share below that total ⇒ PARK" \
+  "$(cd "$L61" && bash "$HERE/automate-helpers.sh" ceiling-check "$LRF6" 100)" "PARK: token_ceiling total=670 max=100"
+
+
+# AA-F6 lane-park-notify: desktop + automate_ready_for_release webhook, one truthful ## Progress line.
+cat > "$T/aa-nd.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$(cat)" >> "$AA_ND_LOG"
+[ -n "${STUB_ND_AUDIT:-}" ] && { mkdir -p .supervisor/logs; echo "2026-10-08T11:00:00Z notify group=loomwright-x tool_use_id=-" >> .supervisor/logs/notifications.log; }
+exit 0
+EOF
+cat > "$T/aa-sw.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "dry=${LOOMWRIGHT_WEBHOOK_DRY_RUN:-} $*" >> "$AA_SW_LOG"
+case "${STUB_SW:-none}" in
+  ignored) echo "repo_webhook_ignored slug=o/r" >&2 ;;
+  configured) [ -n "${LOOMWRIGHT_WEBHOOK_DRY_RUN:-}" ] && echo '{"event_type":"gate"}' ;;
+esac
+exit 0
+EOF
+chmod +x "$T/aa-nd.sh" "$T/aa-sw.sh"; export AA_ND_LOG="$T/aa-nd.log" AA_SW_LOG="$T/aa-sw.log"
+# `desktop: sent` also needs the platform notifier notify-desktop.sh dispatches to, so the host's own
+# PATH must not decide these legs: pn pins the OS (AA_UNAME, default Darwin) and prepends a stub
+# osascript + notify-send (never executed — only probed with `command -v`). AA_PATH replaces the
+# whole PATH for the no-notifier leg (AA-F6m); AA_ND swaps the notifier stub (AA-F6r/s).
+mkdir -p "$T/aa-bin"; printf '#!/usr/bin/env bash\nexit 0\n' > "$T/aa-bin/osascript"; cp "$T/aa-bin/osascript" "$T/aa-bin/notify-send"
+chmod +x "$T/aa-bin/osascript" "$T/aa-bin/notify-send"
+pn() { : > "$AA_ND_LOG"; : > "$AA_SW_LOG"; PATH="${AA_PATH:-$T/aa-bin:$PATH}" LOOMWRIGHT_LANES_UNAME="${AA_UNAME:-Darwin}" \
+  LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" LOOMWRIGHT_LANES_NOTIFY_DESKTOP="${AA_ND:-$T/aa-nd.sh}" \
+  LOOMWRIGHT_LANES_SEND_WEBHOOK="$T/aa-sw.sh" bash "$S" lane-park-notify "$@" 2>&1; }
+pcount() { grep -c 'lane park notify: ready_for_release' "$LRF6" | tr -d ' '; }
+out="$(STUB_SW=ignored STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"; rc=$?
+check "AA-F6a webhook ignored ⇒ exit 0, ONE ## Progress line" "$rc:$(pcount)" "0:1"
+has "AA-F6b … the line names the delivered desktop channel" "$(grep 'lane park notify' "$LRF6")" "desktop: sent;"
+has "AA-F6c … and says the webhook was ignored, with the reason" "$(grep 'lane park notify' "$LRF6")" "webhook: ignored (repo_webhook_ignored slug=o/r — no user-scope egress grant)"
+check "AA-F6d the desktop payload: automate_ready_for_release, the do-not-merge message" \
+  "$(jq -r '"\(.hook_event_name) \(.notification_type) \(.message | test("^https://github.com/o/r/pull/66 READY — do not merge yet — wave open"))"' "$AA_ND_LOG")" \
+  "Notification automate_ready_for_release true"
+check "AA-F6e an ignored webhook is only probed (dry run), never posted" "$(grep -c '^dry= ' "$AA_SW_LOG" | tr -d ' ')" 0
+has "AA-F6f … with gate type automate_ready_for_release" "$(cat "$AA_SW_LOG")" "--gate-type automate_ready_for_release --context https://github.com/o/r/pull/66 READY — do not merge yet — wave open"
+out="$(STUB_SW=configured STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 LOOMWRIGHT_NOTIFY_DEBOUNCE=0 pn "$LRF6")"
+has "AA-F6g webhook configured ⇒ posted once, reported as attempted (never 'sent': its HTTP result is unreported)" \
+  "$(grep -c '^dry= --event-type gate --gate-type automate_ready_for_release' "$AA_SW_LOG" | tr -d ' '):$out" "1:lane-park-notify: lane park notify: ready_for_release ($PARENT6-L1) — desktop: sent; webhook: attempted"
+out="$(STUB_SW=none LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0 pn "$LRF6")"
+check "AA-F6h desktop opted out ⇒ disabled, the notifier not run; no webhook ⇒ not configured" \
+  "$(wc -l < "$AA_ND_LOG" | tr -d ' '):${out#*— }" "0:desktop: disabled (LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0); webhook: not configured"
+out="$(STUB_SW=none LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"
+has "AA-F6i the notifier wrote no audit line ⇒ suppressed, never sent" "$out" "desktop: suppressed (no audit line"
+check "AA-F6j one ## Progress line per run (four runs, four lines)" "$(pcount)" 4
+# AA-F6m..p `sent` is claimed only when a platform notifier exists: notify-desktop.sh writes its audit
+# line on EVERY host before its platform dispatch, so the audit line alone proves no banner.
+# The no-notifier PATH is a symlink farm of the host's PATH minus the three notifiers it can dispatch to.
+mkdir -p "$T/aa-nonotify-bin"
+_aa_ifs="$IFS"; IFS=:
+for _aa_d in $PATH; do
+  [ -d "$_aa_d" ] || continue
+  for _aa_f in "$_aa_d"/*; do
+    _aa_n="${_aa_f##*/}"
+    case "$_aa_n" in osascript|terminal-notifier|notify-send) continue ;; esac
+    [ -x "$_aa_f" ] && [ ! -e "$T/aa-nonotify-bin/$_aa_n" ] && ln -s "$_aa_f" "$T/aa-nonotify-bin/$_aa_n" 2>/dev/null
+  done
+done
+IFS="$_aa_ifs"
+out="$(AA_PATH="$T/aa-nonotify-bin" STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"; rc=$?
+check "AA-F6m audit line written but no OS notifier on PATH (Darwin) ⇒ failed, never sent; exit 0" \
+  "$rc:${out#*— }" "0:desktop: failed (no OS notifier on PATH); webhook: not configured"
+has "AA-F6n … and the ## Progress line says the same" "$(grep 'lane park notify' "$LRF6" | tail -1)" "desktop: failed (no OS notifier on PATH);"
+out="$(AA_PATH="$T/aa-nonotify-bin" AA_UNAME=Linux STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"
+has "AA-F6o Linux without notify-send ⇒ failed (no OS notifier on PATH)" "$out" "desktop: failed (no OS notifier on PATH);"
+out="$(AA_UNAME=Linux STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 DISPLAY= WAYLAND_DISPLAY= pn "$LRF6")"
+has "AA-F6p Linux notify-send present but no display ⇒ failed (no display for notify-send) — notify-desktop.sh skips it there" \
+  "$out" "desktop: failed (no display for notify-send);"
+out="$(AA_UNAME=Linux STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 DISPLAY=:0 pn "$LRF6")"
+has "AA-F6q Linux notify-send + DISPLAY ⇒ sent" "$out" "desktop: sent;"
+# AA-F6r..t Darwin with terminal-notifier but NO osascript: notify-desktop.sh uses terminal-notifier only
+# when its click action is not `none` (resolved by the notify-click-target.sh beside it), else falls
+# through to the osascript branch — so terminal-notifier alone counts only with a click action.
+mkdir -p "$T/aa-tn-bin" "$T/aa-ndc"; cp "$T/aa-bin/osascript" "$T/aa-tn-bin/terminal-notifier"
+cp "$T/aa-nd.sh" "$T/aa-ndc/notify-desktop.sh"; ln -s "$HERE/notify-click-target.sh" "$T/aa-ndc/notify-click-target.sh"
+chmod +x "$T/aa-tn-bin/terminal-notifier" "$T/aa-ndc/notify-desktop.sh"
+out="$(AA_PATH="$T/aa-tn-bin:$T/aa-nonotify-bin" AA_ND="$T/aa-ndc/notify-desktop.sh" LOOMWRIGHT_NOTIFY_CLICK=off \
+  STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"
+has "AA-F6r Darwin terminal-notifier only, click action none (LOOMWRIGHT_NOTIFY_CLICK=off) ⇒ failed (no OS notifier on PATH), never sent" \
+  "$out" "desktop: failed (no OS notifier on PATH);"
+out="$(AA_PATH="$T/aa-tn-bin:$T/aa-nonotify-bin" AA_ND="$T/aa-ndc/notify-desktop.sh" LOOMWRIGHT_NOTIFY_CLICK=activate \
+  STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"
+has "AA-F6s Darwin terminal-notifier only, click action set (activate) ⇒ sent" "$out" "desktop: sent;"
+out="$(AA_PATH="$T/aa-tn-bin:$T/aa-nonotify-bin" LOOMWRIGHT_NOTIFY_CLICK=activate \
+  STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"
+has "AA-F6t Darwin terminal-notifier only, no notify-click-target.sh beside the notifier (action none) ⇒ failed" \
+  "$out" "desktop: failed (no OS notifier on PATH);"
+out="$(LOOMWRIGHT_LANES_NOTIFY_DESKTOP="$T/aa-nd.sh" LOOMWRIGHT_LANES_SEND_WEBHOOK="$T/aa-sw.sh" LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0 \
+  bash "$HERE/automate-helpers.sh" lane-park-notify "$LRF6" 2>&1)"; rc=$?
+check "AA-F6k dispatched through automate-helpers.sh" "$rc:$(printf '%s' "$out" | grep -c '^lane-park-notify: lane park notify:' | tr -d ' ')" "0:1"
+sed 's/status: ready_for_release/status: awaiting_merge/; s/pause_reason: ready_for_release/pause_reason: awaiting_merge/' "$LRF6" > "$T/aa-notpark.md"
+mkdir -p "$L61/.supervisor/automate"; cp "$T/aa-notpark.md" "$L61/.supervisor/automate/aa-notpark.md"
+out="$(STUB_SW=configured LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$L61/.supervisor/automate/aa-notpark.md")"; rc=$?
+check "AA-F6l not at the ready_for_release park ⇒ skipped: exit 0, nothing sent, no line written" \
+  "$rc:$(wc -l < "$AA_ND_LOG" | tr -d ' '):$(wc -l < "$AA_SW_LOG" | tr -d ' '):$(cmp -s "$T/aa-notpark.md" "$L61/.supervisor/automate/aa-notpark.md" && echo unchanged)" "0:0:0:unchanged"
+
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
+# AA-F12z (final leg): nothing this suite started may outlive it — no process whose command line names
+# the suite dir $T (pgrep -f on the ERE-escaped path), after the same stop the EXIT trap performs.
+for p in $BG_PIDS $(pgrep -f "_lane-run $T" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
+i=0; while pgrep -f "$(ere "$T")" >/dev/null 2>&1 && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+AA_LEFT="$(for p in $(pgrep -f "$(ere "$T")" 2>/dev/null); do ps -o pid= -o command= -p "$p" 2>/dev/null; done)"
+check "AA-F12z no process naming the suite dir survives the suite" "${AA_LEFT:-none}" none
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

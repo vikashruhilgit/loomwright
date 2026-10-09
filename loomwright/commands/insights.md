@@ -118,8 +118,8 @@ npx ccusage@latest session    # per-session breakdown
 
 An **advisory** section (always rendered when a dashboard is written; never gates) that rolls up additive `"event":"token_ledger"` lines from `.supervisor/logs/*.jsonl` (emitted by `scripts/emit-token-ledger.sh` on SubagentStop telemetry hooks — see `docs/TELEMETRY.md` §Token ledger). It is **separate from Cost / ccusage**:
 
-- **Real usage** (`proxy: false`) — when usage/token fields are present; per-`agent_type` input/output totals. A **cache-hit ratio** is shown only when real cache fields (`cache_read_input_tokens` / `cache_creation_input_tokens`, top-level or under `usage`) exist; otherwise that line is omitted.
-- **Transcript-byte proxy** (`proxy: true`, `token_proxy_kind: transcript_bytes`) — byte counts of agent transcripts, **explicitly labelled as a proxy and never as tokens** (the expected path today when SubagentStop lacks usage).
+- **Real usage** (`proxy: false`) — when usage/token fields are present; per-`agent_type` input/output totals. The expected path today: the hook payload carries no usage, so the emitter reads real usage from the agent's own transcript (`usage_source: transcript`). A **cache-hit ratio** is shown only when real cache fields (`cache_read_input_tokens` / `cache_creation_input_tokens`, top-level or under `usage`) exist; otherwise that line is omitted.
+- **Transcript-byte proxy** (`proxy: true`, `token_proxy_kind: transcript_bytes`) — byte counts of agent transcripts, **explicitly labelled as a proxy and never as tokens** (only when neither the SubagentStop payload nor the agent's transcript yields usage).
 - **Absent / malformed** — heading + a short degrade note when no ledger lines exist (Corpus health style); malformed JSONL lines are skipped per-line; the script always exits 0.
 
 Reserved future key `graph_context_used` is ignored by this reader (emitters must not write it yet).
