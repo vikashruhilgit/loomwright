@@ -53,7 +53,7 @@ h={"hooks":{"SubagentStop":[
   mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane","deviations","not_verified","no_changes","self_review"]),
   mk("execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason","adjudication_required","missing_outputs","adjudication_options","adjudication_kind","colliding_lanes"]),
   mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate","run_id","run_dir","counts","pause_reason"]),
-  mk("supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","error","summary"]),
+  mk("supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","heal_first_decision","heal_new_findings","error","summary"]),
   mk("plan-reviewer",["schema_version","decision","issues","severity","section","description","summary"]),
   mk("code-reviewer",["schema_version","decision","summary","severity","category","review_mode","audit_focus","trigger_paths_detected","scope_expanded","files_checked"]),
 ]}}
@@ -85,7 +85,8 @@ EOF
 SUPERVISOR_RESULT: schema_version, status: completed | status: failed | status: checkpoint
 | status: completed_with_escalation, pr_url, heal_loop_ran, heal_iterations,
 heal_decision: PASS or heal_decision: ESCALATED or heal_decision: null,
-heal_fixable_issues_fixed, heal_remaining_issues, error, summary.
+heal_fixable_issues_fixed, heal_remaining_issues, heal_first_decision, heal_new_findings,
+error, summary.
 EOF
   cat >"$d/loomwright/agents/plan-reviewer.md" <<'EOF'
 PLAN_REVIEW_RESULT: schema_version, decision: PASS / decision: FAIL / decision: NEEDS_HUMAN,

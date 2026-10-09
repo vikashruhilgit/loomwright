@@ -113,7 +113,8 @@ nfiles() { find "$PROP" -maxdepth 1 -type f -name '*--dismissed-*.md' 2>/dev/nul
 path_of() { printf '%s\n' "$dd_out" | awk -F'\t' -v k="$1" '$1 == "draft" && $2 == k { print $4; exit }'; }
 # find the draft whose quoted body contains <text>
 draft_with() { grep -lF -- "> $1" "$PROP"/*--dismissed-*.md 2>/dev/null | head -n1; }
-progress_n() { grep -c '^- dismissed: ' "$RF" 2>/dev/null || true; }
+# 3b (iq02 T04): every dismissed: Progress line carries a leading UTC ts
+progress_n() { grep -cE '^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z dismissed: ' "$RF" 2>/dev/null || true; }
 tree_sum() { (cd "$PROP" 2>/dev/null && for f in *; do [ -f "$f" ] && printf '%s %s\n' "$f" "$(cksum < "$f")"; done); }
 
 # =============================================================================
@@ -218,7 +219,7 @@ out="$(bash "$H" dismissed-decide "$RF" "$FB" drop)"
 [ ! -e "$FB" ] && ok "drop deletes the draft" || no "drop left the file: $out"
 LED="$AD/$RUN_ID.dismissed-decisions"
 [ "$(awk -F'\t' -v n="$(basename "$FA")" '$1==n{print $2}' "$LED")" = "follow-up" ] && [ "$(awk -F'\t' -v n="$(basename "$FB")" '$1==n{print $2}' "$LED")" = "drop" ] && ok "ledger keyed by draft name records both decisions" || no "ledger: $(cat "$LED" 2>/dev/null)"
-[ "$(( $(progress_n) - p0 ))" = "2" ] && grep -qF -- "- dismissed: drop $(basename "$FB") — beta high" "$RF" && ok "exactly one Progress line per decision, naming the draft and the finding" || no "progress lines: $(grep '^- dismissed' "$RF")"
+[ "$(( $(progress_n) - p0 ))" = "2" ] && grep -qE -- "^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z dismissed: drop $(basename "$FB") — beta high" "$RF" && ok "exactly one Progress line per decision, naming the draft and the finding" || no "progress lines: $(grep '^- dismissed' "$RF")"
 # refusals
 p1="$(progress_n)"; l1="$(wc -l < "$LED" | tr -d ' ')"
 mkdir -p "$TOP/elsewhere"; cp "$FG" "$TOP/elsewhere/$(basename "$FG")"

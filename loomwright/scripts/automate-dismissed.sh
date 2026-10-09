@@ -746,7 +746,10 @@ print(t[:80])' "$f" 2>/dev/null)" || snippet=""
       fi ;;
     drop|fix-now) rm -f -- "$f" 2>/dev/null ;;
   esac
-  bash "$SCRIPT_DIR/automate-helpers.sh" progress-append "$runfile" "dismissed: $decision $name — $snippet" >/dev/null 2>&1 \
+  # iq02 T04 3b: the same leading UTC `<ts>` every other Progress line carries —
+  # the moment the owner's decision was recorded (phase-timing.sh reads it).
+  local dts; dts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  bash "$SCRIPT_DIR/automate-helpers.sh" progress-append "$runfile" "${dts:+$dts }dismissed: $decision $name — $snippet" >/dev/null 2>&1 \
     || echo "dismissed-decide: warning — progress line not appended"
   echo "dismissed-decide: $decision $name"
   return 0

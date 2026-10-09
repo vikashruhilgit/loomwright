@@ -61,6 +61,11 @@ falls back to the default rather than tripping `set -u` arithmetic — same over
 as `LOOMWRIGHT_STALE_RUN_SECONDS` in `build-state.sh`) regardless of which of the three registered
 `PostToolUse` matchers (`Bash` / `Write|Edit` / `Task`) fired the call.
 
+**`working` with `reason: answered` (iq02 T04 3a, additive):** written by `emit-lifecycle.sh answered` when the
+owner answers a question. `state` stays `working` (no new state); `reason` is otherwise absent on `working` rows. It
+carries the payload's `tool_use_id` when present — and the `ask_user` `waiting` row now carries it too — so a reader
+pairs ask→answer by id (by order when no id). Not debounced. `phase-timing.sh` reads the pair as an exact owner wait.
+
 **`failed`-specific:** `reason` is the payload's own top-level `error` string, copied **VERBATIM** —
 never parsed or derived from message text. Observed real values in this repo's own
 `.supervisor/logs/failures.log`: `rate_limit`, `server_error`, `authentication_failed`,
