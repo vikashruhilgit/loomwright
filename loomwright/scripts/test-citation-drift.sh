@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# run-self-tests: early
+# (ci-local.sh early phase: deterministic, 5 s alone on 2026-10-09 — a drifted pin fails the run in seconds)
 # test-citation-drift.sh — every in-repo `file.ext:<N>` citation on a LIVE surface is policed.
 #
 # WHY THIS EXISTS (measured, four times in one change)

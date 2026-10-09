@@ -40,6 +40,21 @@
 #        at once, adds no slot or machine record.
 #        MUTATION CONTROL: the admission call replaced by a fake grant ⇒ the wait check fails.
 #   (AD2) ci-slot.sh missing beside the runner → exit 1, "refusing", no fixture test ran
+#   (FS) iq02 T05: a red test is STREAMED — `run-self-tests: FAIL (exit <rc>, <secs>s): <test>` is in
+#        the output while a slow green test is still running (it waits, bounded, for that line) and
+#        precedes its PASS line; the end-of-run banner + summary are unchanged;
+#        MUTATION CONTROL: a runner copy without the streamed line ⇒ the slow test never sees it
+#   (SH) iq02 T08 --shard K/N / --list: in a fake layout and on the REAL suite, the union of shards
+#        1..N equals --list with no duplicate (N = 1..4); a test absent from the weights file is still
+#        scheduled; malformed K/N, a bare --shard and --shard with test arguments ⇒ exit 1; more shards
+#        than tests ⇒ an empty shard exits 0; SELF_TEST_MANIFEST names every selected test with its rc
+#        (a red one too); MUTATION CONTROL: a split that drops one test breaks the union check
+#   (AG) iq02 T08: the REAL ci.yml `ci` job's inline aggregation block, extracted and run against
+#        manifests built from the real shards: all green ⇒ 0; a dropped manifest, a test no shard
+#        ran, a test run twice, a non-zero rc, a failed or skipped needed job ⇒ exit 1, each named
+#   (EM) `# run-self-tests: early`: --select-marked early prints the marked subset in input order and
+#        runs nothing; in a default run the marker is inert (the test stays concurrent); a test
+#        marked both early and serial ⇒ exit 1, named (default run and --select-marked)
 #
 # Admission sandbox: every runner call here takes its ci-slot.sh slot from a sandboxed pool and
 # machine list, with a fixture load reader, so neither a real holder nor a loaded machine holds it.
@@ -370,6 +385,147 @@ GITHUB_ACTIONS= bash "$A2/loomwright/scripts/run-self-tests.sh" "$T/adm-probe.sh
 [ "$rc" -eq 1 ] && grep -q "refusing to run the suite without machine admission" "$T/a2.out" && [ ! -f "$T/adm.ran" ] \
   && ok "(AD2) no ci-slot.sh beside the runner → exit 1, 'refusing', the fixture test never ran" \
   || no "(AD2) rc=$rc ran=$([ -f "$T/adm.ran" ] && echo y || echo n): $(cat "$T/a2.out")"
+
+echo "== (FS) a red test is streamed the moment it finishes =="
+cat > "$T/fs-slow.sh" <<'EOF'
+# bounded wait (FS_WAIT seconds) for the streamed FAIL line in the runner's own output
+n=0
+while ! grep -q "^run-self-tests: FAIL (exit 3, [0-9]*s): .*/fail.sh$" "$FS_OUT" 2>/dev/null; do
+  n=$((n + 1)); [ "$n" -le $((FS_WAIT * 10)) ] || { echo notseen > "$FS_OUT.seen"; exit 0; }
+  sleep 0.1
+done
+echo seen > "$FS_OUT.seen"
+EOF
+rm -f "$T/fs.out.seen"
+FS_OUT="$T/fs.out" FS_WAIT=30 SELF_TEST_JOBS=2 run "$T/fs.out" "$T/fs-slow.sh" "$T/fail.sh"; rc=$?
+fl="$(grep -n '^run-self-tests: FAIL (exit 3, ' "$T/fs.out" | head -1 | cut -d: -f1)"
+pl="$(grep -n "^PASS [0-9]*s $T/fs-slow.sh\$" "$T/fs.out" | cut -d: -f1)"
+if [ "$rc" -eq 1 ] && [ "$(cat "$T/fs.out.seen" 2>/dev/null)" = seen ] && [ -n "$fl" ] && [ -n "$pl" ] && [ "$fl" -lt "$pl" ] \
+   && grep -q "FAIL (exit 3): $T/fail.sh" "$T/fs.out" && grep -q "1 of 2 self-tests FAILED" "$T/fs.out"; then
+  ok "(FS) the FAIL line was in the output while the slow test still ran, before its PASS line; the end report is unchanged"
+else no "(FS) rc=$rc seen=$(cat "$T/fs.out.seen" 2>/dev/null) fail_line=$fl pass_line=$pl: $(cat "$T/fs.out")"; fi
+# MUTATION CONTROL: a runner copy without the streamed FAIL line (beside its helpers, same layout).
+FSM="$T/fs-mutant"; mkdir -p "$FSM"; git init -q "$FSM"   # ci-slot.sh keys admission by repo
+cp "$HERE/hermetic-test-env.sh" "$HERE/ci-slot.sh" "$HERE/machine-load.sh" "$FSM/" 2>/dev/null
+grep -v 'then echo "run-self-tests: FAIL (exit \$rc, \${secs}s): \$t"; fi$' "$RUNNER" > "$FSM/run-self-tests.sh"
+if [ -s "$FSM/run-self-tests.sh" ] && ! cmp -s "$RUNNER" "$FSM/run-self-tests.sh" && bash -n "$FSM/run-self-tests.sh"; then
+  rm -f "$T/fsm.out.seen"
+  FS_OUT="$T/fsm.out" FS_WAIT=3 SELF_TEST_JOBS=2 GITHUB_ACTIONS= bash "$FSM/run-self-tests.sh" "$T/fs-slow.sh" "$T/fail.sh" > "$T/fsm.out" 2>&1
+  [ "$(cat "$T/fsm.out.seen" 2>/dev/null)" = notseen ] \
+    && ok "(FS) MUTATION CONTROL: without the streamed line the slow test never sees a FAIL — (FS) can fail" \
+    || no "(FS) MUTATION CONTROL: seen=$(cat "$T/fsm.out.seen" 2>/dev/null): $(cat "$T/fsm.out")"
+else no "(FS) MUTATION CONTROL: mutant not built"; fi
+
+echo "== (SH) --shard K/N and --list: the union of the shards is the suite =="
+SH="$T/shard-repo"; mkdir -p "$SH/loomwright/scripts/fixtures" "$SH/loomwright/scripts/adapters/tool"
+cp "$RUNNER" "$HERE/hermetic-test-env.sh" "$HERE/ci-slot.sh" "$HERE/machine-load.sh" "$SH/loomwright/scripts/"
+git init -q "$SH"
+for n in a b c d e f g; do printf '%s\n' "exit 0" > "$SH/loomwright/scripts/test-$n.sh"; done
+printf '%s\n' 'echo red-out; exit 4' > "$SH/loomwright/scripts/test-red.sh"
+printf '%s\n' 'exit 0' > "$SH/loomwright/scripts/adapters/tool/test-ad.sh"
+printf '# w\n50\tloomwright/scripts/test-a.sh\n40\tloomwright/scripts/test-b.sh\n5\tloomwright/scripts/test-c.sh\n' > "$SH/loomwright/scripts/fixtures/self-test-weights.tsv"
+SHR="$SH/loomwright/scripts/run-self-tests.sh"
+# union_ok <runner> <N> — every shard's --list concatenated equals --list exactly once each
+union_ok() {
+  local r="$1" n="$2" k=1
+  bash "$r" --list | env LC_ALL=C sort > "$T/u.want" || return 1
+  : > "$T/u.got"
+  while [ "$k" -le "$n" ]; do bash "$r" --shard "$k/$n" --list >> "$T/u.got" || return 1; k=$((k + 1)); done
+  env LC_ALL=C sort "$T/u.got" > "$T/u.sorted"
+  [ -s "$T/u.want" ] && cmp -s "$T/u.want" "$T/u.sorted"
+}
+uok=1; for n in 1 2 3 4; do union_ok "$SHR" "$n" || uok=0; done
+[ "$uok" = 1 ] && [ "$(bash "$SHR" --list | wc -l | tr -d ' ')" = 9 ] \
+  && ok "(SH) fake layout: shards 1..N union to the 9-test --list with no duplicate, N = 1..4 (flat + adapter tests, weighted and default-weight)" \
+  || no "(SH) fake-layout union broken"
+grep -qx 'loomwright/scripts/test-g.sh' <(bash "$SHR" --shard 1/2 --list; bash "$SHR" --shard 2/2 --list) \
+  && ok "(SH) a test absent from the weights file is still scheduled" || no "(SH) unweighted test-g.sh dropped"
+uok=1; for n in 1 2 3 4; do union_ok "$RUNNER" "$n" || uok=0; done
+[ "$uok" = 1 ] && ok "(SH) REAL suite: shards 1..N union to run-self-tests.sh --list exactly, N = 1..4" || no "(SH) real-suite union broken"
+for badarg in "0/2" "3/2" "x" "2/0" "1/2/3"; do
+  bash "$SHR" --shard "$badarg" --list > "$T/sh.bad" 2>&1; rc=$?
+  { [ "$rc" -eq 1 ] && grep -q "wants K/N" "$T/sh.bad"; } || no "(SH) --shard $badarg: rc=$rc $(cat "$T/sh.bad")"
+done; ok "(SH) malformed K/N (0/2, 3/2, x, 2/0, 1/2/3) ⇒ exit 1, named"
+bash "$SHR" --shard > "$T/sh.bare" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "(SH) a bare --shard ⇒ exit 1" || no "(SH) bare --shard rc=$rc"
+bash "$SHR" --shard 1/2 "$T/pass1.sh" > "$T/sh.args" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && grep -q "take no test arguments" "$T/sh.args" && ok "(SH) --shard with test arguments ⇒ exit 1" || no "(SH) args+shard rc=$rc $(cat "$T/sh.args")"
+[ -z "$(bash "$SHR" --shard 12/12 --list)" ] && SELF_TEST_MANIFEST="$T/m.empty" GITHUB_ACTIONS= bash "$SHR" --shard 12/12 > "$T/sh.e" 2>&1 \
+  && [ -f "$T/m.empty" ] && [ ! -s "$T/m.empty" ] && ok "(SH) more shards than tests: the empty shard exits 0 with an empty manifest" || no "(SH) empty shard: $(cat "$T/sh.e")"
+redk=""; for k in 1 2 3; do grep -qx 'loomwright/scripts/test-red.sh' <(bash "$SHR" --shard "$k/3" --list) && redk="$k"; done
+SELF_TEST_MANIFEST="$T/m.red" GITHUB_ACTIONS= bash "$SHR" --shard "$redk/3" > "$T/sh.r" 2>&1; rc=$?
+want_n="$(bash "$SHR" --shard "$redk/3" --list | wc -l | tr -d ' ')"
+if [ "$rc" -eq 1 ] && [ "$(wc -l < "$T/m.red" | tr -d ' ')" = "$want_n" ] && grep -q $'^4\t[0-9]*\tloomwright/scripts/test-red.sh$' "$T/m.red" \
+   && [ -z "$(awk -F'\t' '$3 != "loomwright/scripts/test-red.sh" && $1 != "0"' "$T/m.red")" ]; then
+  ok "(SH) a red shard still writes a manifest naming every selected test with its rc (test-red.sh = 4)"
+else no "(SH) manifest: rc=$rc want=$want_n $(cat "$T/m.red" 2>/dev/null)"; fi
+# MUTATION CONTROL: a split that never assigns the heaviest test.
+sed 's/for (i = 1; i <= m; i++) if (own\[i\] == k) print t\[i\]/for (i = 1; i <= m; i++) if (own[i] == k \&\& i != 1) print t[i]/' "$SHR" > "$SH/loomwright/scripts/run-mut.sh"
+if [ -s "$SH/loomwright/scripts/run-mut.sh" ] && ! cmp -s "$SHR" "$SH/loomwright/scripts/run-mut.sh" && bash -n "$SH/loomwright/scripts/run-mut.sh"; then
+  union_ok "$SH/loomwright/scripts/run-mut.sh" 2 && no "(SH) MUTATION CONTROL: a split dropping a test passed the union check" \
+    || ok "(SH) MUTATION CONTROL: a split that drops one test fails the union check"
+else no "(SH) MUTATION CONTROL: mutant not built"; fi
+
+echo "== (AG) ci.yml's aggregating ci job fails closed =="
+awk '/- name: Aggregate static \+ every shard/ { f = 1 } f && /^        run: \|$/ { r = 1; next } r && /^          / { sub(/^          /, ""); print; next } r && !/^          / && NF { exit }' "$CI_YML" > "$T/agg.sh"
+AGT="$T/agg-temp"; AGM="$T/agg-m"
+agg_setup() {
+  rm -rf "$AGT" "$AGM"; mkdir -p "$AGT"
+  local k
+  for k in 1 2 3; do
+    mkdir -p "$AGM/self-test-manifest-$k"
+    ( cd "$REPO_ROOT" && bash "$RUNNER" --shard "$k/3" --list ) | awk '{ printf "0\t1\t%s\n", $0 }' > "$AGM/self-test-manifest-$k/self-test-manifest.tsv"
+  done
+}
+agg_run() {  # agg_run <static> <suite> — runs the extracted block from the repo root
+  ( cd "$REPO_ROOT" && STATIC_RESULT="$1" SUITE_RESULT="$2" MDIR="$AGM" SHARDS=3 RUNNER_TEMP="$AGT" bash "$T/agg.sh" ) > "$T/agg.out" 2>&1
+}
+if [ -s "$T/agg.sh" ] && grep -q 'comm -23' "$T/agg.sh" && bash -n "$T/agg.sh"; then
+  agg_setup; agg_run success success; rc=$?
+  [ "$rc" -eq 0 ] && ok "(AG) every shard green + every manifest present ⇒ ci passes" || no "(AG) green: rc=$rc $(cat "$T/agg.out")"
+  agg_setup; rm -rf "$AGM/self-test-manifest-2"; agg_run success success; rc=$?
+  [ "$rc" -eq 1 ] && grep -q "shard 2 left no result manifest" "$T/agg.out" && ok "(AG) a dropped manifest ⇒ ci fails, naming the shard" || no "(AG) dropped: rc=$rc $(cat "$T/agg.out")"
+  agg_setup; m1="$AGM/self-test-manifest-1/self-test-manifest.tsv"; gone="$(head -1 "$m1" | cut -f3)"; sed -i.bak '1d' "$m1"
+  agg_run success success; rc=$?
+  [ "$rc" -eq 1 ] && grep -q "tests no shard ran" "$T/agg.out" && grep -qxF "$gone" "$T/agg.out" && ok "(AG) a test no shard ran ⇒ ci fails, naming it ($gone)" || no "(AG) missing: rc=$rc $(cat "$T/agg.out")"
+  agg_setup; head -1 "$m1" >> "$AGM/self-test-manifest-2/self-test-manifest.tsv"; agg_run success success; rc=$?
+  [ "$rc" -eq 1 ] && grep -q "more than one shard" "$T/agg.out" && ok "(AG) a test run by two shards ⇒ ci fails" || no "(AG) duplicate: rc=$rc $(cat "$T/agg.out")"
+  agg_setup; sed -i.bak '1s/^0/3/' "$m1"; agg_run success success; rc=$?
+  [ "$rc" -eq 1 ] && grep -q "non-zero results" "$T/agg.out" && ok "(AG) a non-zero rc in a manifest ⇒ ci fails" || no "(AG) red rc: rc=$rc $(cat "$T/agg.out")"
+  agg_setup; agg_run success failure; rc=$?
+  [ "$rc" -eq 1 ] && grep -q "job suite: failure" "$T/agg.out" && ok "(AG) a failed suite job ⇒ ci fails (not skipped)" || no "(AG) suite failure: rc=$rc"
+  agg_setup; agg_run skipped success; rc=$?
+  [ "$rc" -eq 1 ] && grep -q "job static: skipped" "$T/agg.out" && ok "(AG) a skipped static job ⇒ ci fails (skipped is not success)" || no "(AG) static skipped: rc=$rc"
+else no "(AG) could not extract the ci job's aggregation block from $CI_YML"; fi
+if grep -qx '  ci:' "$CI_YML" && [ "$(grep -c '^  [a-z][a-z_-]*:$' "$CI_YML")" -ge 3 ] && grep -q '^    if: always()$' "$CI_YML" \
+   && grep -q '^      fail-fast: false$' "$CI_YML" && ! grep -q . < <(awk '/^  ci:$/ { f = 1 } f && /bash scripts\//' "$CI_YML"); then
+  ok "(AG) exactly one job named ci, with if: always(), the suite matrix fail-fast: false, and no bash scripts/<x>.sh line in ci"
+else no "(AG) ci.yml job shape"; fi
+
+echo "== (EM) the early marker: --select-marked, inert in a default run, early+serial conflict =="
+printf '%s\n' '# run-self-tests: early' 'echo early-ran > "$(dirname "$0")/em.ran"' > "$T/em-early.sh"
+printf '%s\n' '# run-self-tests: earlyish' 'exit 0' > "$T/em-near.sh"
+printf '%s\n' '# run-self-tests: early' '# run-self-tests: serial' 'exit 0' > "$T/em-both.sh"
+sel="$(bash "$RUNNER" --select-marked early "$T/pass1.sh" "$T/em-early.sh" "$T/em-near.sh" "$T/em-early.sh" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$sel" = "$T/em-early.sh"$'\n'"$T/em-early.sh" ] \
+  && ok "(EM) --select-marked early prints exactly the marked tests, in input order (exact-line match only)" \
+  || no "(EM) select: rc=$rc out=[$sel]"
+sel="$(bash "$RUNNER" --select-marked serial "$T/em-early.sh" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -z "$sel" ] && ok "(EM) --select-marked serial does not match an early test" || no "(EM) serial select: rc=$rc out=[$sel]"
+rm -f "$T/em.ran"
+run "$T/em.out" "$T/em-early.sh" "$T/pass1.sh"; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$T/em.ran" ] && grep -q "2 concurrently (.* at a time), then 0 serially" "$T/em.out" \
+  && ok "(EM) a default run treats the early marker as inert: the test stays in the concurrent batch" \
+  || no "(EM) default run: rc=$rc: $(cat "$T/em.out")"
+run "$T/emb.out" "$T/em-both.sh" "$T/pass1.sh"; rc=$?
+[ "$rc" -eq 1 ] && grep -q "$T/em-both.sh carries both" "$T/emb.out" \
+  && ok "(EM) early+serial on one test: default run exits 1, naming it" || no "(EM) both: rc=$rc: $(cat "$T/emb.out")"
+sel="$(bash "$RUNNER" --select-marked early "$T/em-both.sh" 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q "em-both.sh carries both" <<<"$sel" \
+  && ok "(EM) early+serial on one test: --select-marked exits 1, naming it" || no "(EM) both select: rc=$rc out=[$sel]"
+bash "$RUNNER" --select-marked bogus "$T/pass1.sh" > "$T/emu.out" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && grep -q "usage: run-self-tests.sh --select-marked" "$T/emu.out" && ok "(EM) an unknown marker name is a usage error" \
+  || no "(EM) unknown marker: rc=$rc: $(cat "$T/emu.out")"
 
 echo
 echo "test-run-self-tests: $pass passed, $fail failed"

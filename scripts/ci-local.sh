@@ -11,9 +11,22 @@
 #                      and every `bash loomwright/scripts/<gate>.sh --check` line
 #                      (derived, not hand-listed — a gate added to ci.yml is picked up automatically)
 #                      + every root scripts/test-*.sh + the loomwright self-test suite. All of them
-#                      go into ONE pool run by loomwright/scripts/run-self-tests.sh (concurrency,
-#                      per-test watchdog, `# run-self-tests: serial` marker, egress-hermetic layer,
-#                      every failure's full log printed, fail-closed on a missing result).
+#                      run through loomwright/scripts/run-self-tests.sh (concurrency, per-test
+#                      watchdog, `# run-self-tests: serial` marker, egress-hermetic layer, every
+#                      failure's full log printed, fail-closed on a missing result) in two phases:
+#                      the EARLY PHASE below, then ONE pool with every other entry.
+#   EARLY PHASE        a full run first runs the EARLY SET, and starts the pool only when all of it
+#                      passed. The early set is DERIVED, never hand-listed: (a) every ci.yml gate
+#                      whose script basename is not test-*.sh (each scripts/check-*.sh /
+#                      scripts/validate-version.sh line with its argument, and each
+#                      `loomwright/scripts/<x>.sh --check` line), plus (b) every planned self-test
+#                      carrying the exact line `# run-self-tests: early` (selected by
+#                      `run-self-tests.sh --select-marked early` — one marker parser). A red early
+#                      entry ends the run at once: every early failure is printed (all of them run),
+#                      the PASS stamp for the key is removed, the verdict is `ci-local: FAIL … early
+#                      gates failed; pool skipped`, exit 1 — in seconds instead of after the whole
+#                      pool. A green early phase runs the pool with the remaining entries, so every
+#                      entry still runs exactly once and a green run stamps exactly as before.
 #   UNTRACKED FILES    check-vendor-coupling.sh scans `git ls-files`, so a NEW file was invisible
 #                      to it until staged (PR #294). Here it runs against a throwaway index holding
 #                      the whole working tree (`git add -A` into a temp GIT_INDEX_FILE — your real
@@ -62,8 +75,9 @@
 #                      tree, plus untracked non-ignored files (HEAD when origin/main is absent). Map:
 #                      loomwright/scripts/<x>.sh ⇒ loomwright/scripts/test-<x>.sh; scripts/<x>.sh ⇒
 #                      scripts/test-<x>.sh (each when it exists); a test-*.sh the full run would run
-#                      ⇒ itself. Plus, always, the cheap static gates ci.yml names (every
-#                      scripts/check-*.sh and scripts/validate-version.sh line, with its argument).
+#                      ⇒ itself. Plus, always, the EARLY SET (see EARLY PHASE: the non-test-*.sh
+#                      ci.yml gates with their arguments, `--check` gates included, and the
+#                      `# run-self-tests: early` tests).
 #                      The plan is a subset of the full plan, run through the same pool under a CI
 #                      slot. A changed file with no mapped suite is listed under "not covered by
 #                      --affected:". It never reads, writes or removes a pass stamp, and always ends
@@ -90,9 +104,10 @@
 #
 # usage: ci-local.sh [--force] [--list] | --affected [--list] | --last | --wait
 #   --force     ignore the pass cache and run everything
-#   --list      print the planned gate/test list and the content key, run nothing
-#               (with --affected: the changed files, the affected plan and the uncovered files)
-#   --affected  run only the suites mapped from the changed files + the cheap gates (never stamps)
+#   --list      print the planned gate/test list, the early set (`early:` lines) and the content
+#               key, run nothing (with --affected: the changed files, the affected plan, its early
+#               set and the uncovered files)
+#   --affected  run only the suites mapped from the changed files + the early set (never stamps)
 #   --last      show the newest saved full-run log for this tree and its verdict, run nothing
 #   --wait      --last, after blocking while this tree's newest run is still in flight
 #   --last/--wait take no other flag, and --affected does not take --force (exit 2)
@@ -415,8 +430,33 @@ if [ "${#suite[@]}" -eq 0 ]; then
 fi
 for t in "${suite[@]}"; do plan+=("$t"); plan_src+=("$t"); plan_label+=("test: $t"); done
 
-# --- --affected: changed files ⇒ mapped suites; the plan entries kept are the cheap static gates +
-# the mapped suites, in full-plan order (see --affected in the header). ---------------------------
+# --- early set (see EARLY PHASE in the header): plan_phase runs parallel to plan. A gate whose script
+# is not a test-*.sh is early by shape; any test-*.sh entry (a test-* gate included) is early only when
+# run-self-tests.sh --select-marked finds its `# run-self-tests: early` line. A test marked both early
+# and serial makes the runner exit 1 (named) — fail closed, never guess a phase. ----------------------
+cand=(); i=0
+while [ "$i" -lt "${#plan[@]}" ]; do
+  case "$(basename "${plan_src[$i]}")" in test-*.sh) cand+=("${plan_src[$i]}") ;; esac
+  i=$((i + 1))
+done
+if ! bash "$runner" --select-marked early ${cand[@]+"${cand[@]}"} > "$tmpd/early.lst"; then
+  echo "ci-local: $runner --select-marked early failed (see above) — refusing to guess the early set" >&2
+  exit 1
+fi
+marked=" "
+while IFS= read -r t; do marked="$marked$t "; done < "$tmpd/early.lst"
+plan_phase=(); i=0
+while [ "$i" -lt "${#plan[@]}" ]; do
+  s="${plan_src[$i]}"
+  case "$(basename "$s")" in
+    test-*.sh) case "$marked" in *" $s "*) plan_phase+=(early) ;; *) plan_phase+=(pool) ;; esac ;;
+    *) plan_phase+=(early) ;;
+  esac
+  i=$((i + 1))
+done
+
+# --- --affected: changed files ⇒ mapped suites; the plan entries kept are the early set + the
+# mapped suites, in full-plan order (see --affected in the header). ---------------------------
 if [ "$affected" -eq 1 ]; then
   if ! git rev-parse -q --verify origin/main >/dev/null 2>&1; then
     base="HEAD"; base_desc="HEAD (origin/main is absent)"
@@ -447,19 +487,20 @@ if [ "$affected" -eq 1 ]; then
       uncovered+=("$f")
     fi
   done
-  aplan=(); alabel=(); n_cheap=0; n_mapped=0; i=0
+  aplan=(); alabel=(); aearly=(); n_early=0; n_mapped=0; i=0
   while [ "$i" -lt "${#plan[@]}" ]; do
     s="${plan_src[$i]}"
-    case "$s" in
-      scripts/check-*.sh|scripts/validate-version.sh) aplan+=("${plan[$i]}"); alabel+=("${plan_label[$i]}"); n_cheap=$((n_cheap + 1)) ;;
-      *) case "$mapped" in *" $s "*) aplan+=("${plan[$i]}"); alabel+=("${plan_label[$i]}"); n_mapped=$((n_mapped + 1)) ;; esac ;;
-    esac
+    if [ "${plan_phase[$i]}" = early ]; then
+      aplan+=("${plan[$i]}"); alabel+=("${plan_label[$i]}"); aearly+=("${plan_label[$i]#*: }"); n_early=$((n_early + 1))
+    else
+      case "$mapped" in *" $s "*) aplan+=("${plan[$i]}"); alabel+=("${plan_label[$i]}"); n_mapped=$((n_mapped + 1)) ;; esac
+    fi
     i=$((i + 1))
   done
   affected_report() {
     local l
     if [ "${#changed[@]}" -eq 0 ]; then
-      echo "ci-local --affected: the changed set is empty (against $base_desc) — the cheap gates only"
+      echo "ci-local --affected: the changed set is empty (against $base_desc) — the early set only"
     else
       echo "ci-local --affected: ${#changed[@]} changed file(s) against $base_desc"
       for l in ${map_lines[@]+"${map_lines[@]}"}; do echo "$l"; done
@@ -475,12 +516,20 @@ if [ "$list" -eq 1 ]; then
   if [ "$affected" -eq 1 ]; then
     affected_report
     for l in ${alabel[@]+"${alabel[@]}"}; do echo "$l"; done
+    for l in ${aearly[@]+"${aearly[@]}"}; do echo "early: $l"; done
     exit 0
   fi
   echo "key: $key"
   [ -f "$stamp" ] && echo "cache: PASS stamped $(cat "$stamp")" || echo "cache: miss"
   for g in "${gates[@]}"; do echo "gate: $g"; done
   for p in "${plan[@]}"; do case "$p" in "$tmpd"/*) ;; *) echo "test: $p" ;; esac; done
+  # The early set (gate arguments kept, no temp wrapper paths): the phase each entry runs in.
+  i=0; n_e=0
+  while [ "$i" -lt "${#plan[@]}" ]; do
+    if [ "${plan_phase[$i]}" = early ]; then echo "early: ${plan_label[$i]#*: }"; n_e=$((n_e + 1)); fi
+    i=$((i + 1))
+  done
+  echo "phases: $n_e early, $(( ${#plan[@]} - n_e )) in the pool"
   exit 0
 fi
 
@@ -504,7 +553,7 @@ open_log
 if [ "$affected" -eq 1 ]; then
   affected_report
   if [ "${#aplan[@]}" -eq 0 ]; then
-    verdict="ci-local --affected: FAIL — ci.yml names no check-*/validate-version gate and nothing mapped; refusing to report green on an empty plan"
+    verdict="ci-local --affected: FAIL — the early set and the mapped set are both empty; refusing to report green on an empty plan"
     verdict_fd=2
     exit 1
   fi
@@ -537,7 +586,7 @@ fi
 
 # --- --affected run: never reads, writes or removes a pass stamp --------------------------------------
 if [ "$affected" -eq 1 ]; then
-  echo "ci-local --affected: $n_cheap cheap gates + $n_mapped mapped suites, one pool (key ${key%%-*})"
+  echo "ci-local --affected: $n_early early-set entries + $n_mapped mapped suites, one pool (key ${key%%-*})"
   start=$(date +%s)
   rc=0
   bash "$runner" "${aplan[@]}" || rc=$?
@@ -554,11 +603,33 @@ fi
 # The holder we waited on may have just verified this same tree.
 if [ "$force" -eq 0 ] && [ -f "$stamp" ]; then cached_exit; fi
 
-# --- run -------------------------------------------------------------------------------------------
-echo "ci-local: ${#gates[@]} ci.yml gates + $(( ${#plan[@]} - ${#gates[@]} )) self-tests, one pool (key ${key%%-*})"
+# --- run: the early phase, then the pool (see EARLY PHASE in the header) ----------------------------
+eplan=(); pplan=(); i=0
+while [ "$i" -lt "${#plan[@]}" ]; do
+  if [ "${plan_phase[$i]}" = early ]; then eplan+=("${plan[$i]}"); else pplan+=("${plan[$i]}"); fi
+  i=$((i + 1))
+done
+echo "ci-local: ${#gates[@]} ci.yml gates + $(( ${#plan[@]} - ${#gates[@]} )) self-tests: ${#eplan[@]} early, then ${#pplan[@]} in one pool (key ${key%%-*})"
 start=$(date +%s)
+# A runner called with NO arguments runs its whole default suite — so an empty phase is skipped, never
+# passed to it.
+if [ "${#eplan[@]}" -gt 0 ]; then
+  echo "ci-local: early phase — ${#eplan[@]} entries; the pool starts only if every one passes"
+  erc=0
+  bash "$runner" "${eplan[@]}" || erc=$?
+  if [ "$erc" -ne 0 ]; then
+    wall=$(( $(date +%s) - start ))
+    echo
+    # Same rule as a pool failure: the cache never keeps vouching for a tree that just failed.
+    rm -f "$stamp"
+    verdict="ci-local: FAIL after ${wall}s — early gates failed; pool skipped (nothing cached)"; verdict_fd=2
+    exit 1   # early-red exit
+  fi
+  echo
+  echo "ci-local: early phase green after $(( $(date +%s) - start ))s — starting the pool"
+fi
 rc=0
-bash "$runner" "${plan[@]}" || rc=$?
+if [ "${#pplan[@]}" -gt 0 ]; then bash "$runner" "${pplan[@]}" || rc=$?; fi
 wall=$(( $(date +%s) - start ))
 
 echo

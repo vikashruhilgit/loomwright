@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# run-self-tests: serial
-# ^ run alone, after the concurrent batch (run-self-tests.sh): (M1) feeds 'y' to a PTY after a fixed `sleep 1`; under load the writer has not reached its prompt yet and the control reads as vacuous.
 # test-harvest-conventions.sh — self-tests for harvest-conventions.sh, the READ-ONLY distiller that
 # turns ledger `convention_mismatch` findings + the agent-memory corpus into a bounded `.agent/rules/`
 # proposal batch. Mirrors the test-add-rule.sh harness convention: isolated temp git repos via
@@ -449,10 +447,18 @@ grep -q 'PLANNED WRITE (not written)' "$ROOT/d.txt" \
 # that 141 becomes the pipeline's status — so a status-based availability probe reported "no pty on
 # this host" on a host that has one, silently skipping the AC3b controls. The feed is a pre-built
 # file for that reason: no pipeline, no SIGPIPE, no status to misread.
-# THE `sleep 1` IS ALSO LOAD-BEARING, not politeness. MEASURED here: feeding the pty with no delay
+# THE FEED IS GATED ON THE PROMPT, never on the clock. MEASURED here: feeding the pty with no delay
 # makes `script` push the whole feed in BEFORE the child reaches its `read`, the line discipline
 # echoes and discards it, and `read` returns EMPTY — indistinguishable from "the writer declined to
-# write", which would have made these controls vacuous in the one direction that matters.
+# write", which would have made these controls vacuous in the one direction that matters. A fixed
+# `sleep 1` used to stand in for "the child is at its prompt"; under a loaded concurrent pool the
+# writer had not reached the prompt after 1 s, (M1a) read as vacuous, and this file had to run
+# `serial` (iq02 T06). Now the feeder polls the pty transcript for the writer's prompt
+# (`Confirm write?`) and feeds only once it is there — or stops when the child exits without ever
+# prompting (the (d3)/(M1b) path). A caller that REQUIRES the prompt checks pty_prompt_missed: a
+# deadline miss is a FAIL naming the missing prompt, never a vacuous pass.
+PTY_PROMPT='Confirm write?'
+PTY_DEADLINE_TICKS=600   # 0.1 s ticks: 60 s for the child to reach its prompt (or exit)
 YFEED="$ROOT/yfeed.txt"
 i=0; : > "$YFEED"; while [ "$i" -lt 50 ]; do printf 'y\n' >> "$YFEED"; i=$((i+1)); done
 # Availability is probed BY OUTPUT, never by exit status: MEASURED on this host, BSD `script -q
@@ -488,14 +494,30 @@ esac
 # The file lives under "$ROOT" and is therefore covered by the existing EXIT trap; calls are strictly
 # sequential, so overwriting it per call is safe (and each call rewrites it before use, so no
 # invocation can ever read a stale one).
+# pty_feed — the stdin of `script`: waits (bounded) until the transcript shows $PTY_PROMPT, then
+# feeds the `y` answers; stops early when the child has exited without prompting ($ROOT/_pty.done).
+# A deadline with neither leaves $ROOT/_pty.missed (read by pty_prompt_missed).
+pty_feed() {
+  local n=0
+  while ! grep -qF "$PTY_PROMPT" "$ROOT/_pty.out" 2>/dev/null; do
+    [ -f "$ROOT/_pty.done" ] && return 0
+    n=$((n + 1)); [ "$n" -le "$PTY_DEADLINE_TICKS" ] || { : > "$ROOT/_pty.missed"; return 0; }
+    sleep 0.1   # fixed-sleep-ok: poll interval of a bounded wait on the prompt, not a timing assumption
+  done
+  cat "$YFEED"
+}
+pty_prompt_missed() { [ -f "$ROOT/_pty.missed" ]; }
 pty_run() {
   printf '%s\n' "$1" > "$ROOT/_ptycmd.sh"
+  rm -f "$ROOT/_pty.out" "$ROOT/_pty.done" "$ROOT/_pty.missed"; : > "$ROOT/_pty.out"
   case "$PTY_MODE" in
-    bsd) { sleep 1; cat "$YFEED"; } | script -q /dev/null /bin/bash "$ROOT/_ptycmd.sh" 2>&1 ;;
+    bsd) pty_feed | { script -q /dev/null /bin/bash "$ROOT/_ptycmd.sh" > "$ROOT/_pty.out" 2>&1; : > "$ROOT/_pty.done"; } ;;
     gnu) PTYCMD="$ROOT/_ptycmd.sh"; export PTYCMD
-         { sleep 1; cat "$YFEED"; } | script -qec '/bin/bash "$PTYCMD"' /dev/null 2>&1 ;;
+         pty_feed | { script -qec '/bin/bash "$PTYCMD"' /dev/null > "$ROOT/_pty.out" 2>&1; : > "$ROOT/_pty.done"; } ;;
     *)   return 127 ;;
   esac
+  : > "$ROOT/_pty.done"
+  cat "$ROOT/_pty.out"
   return 0
 }
 R4="$(new_repo)"
@@ -531,7 +553,9 @@ else
   ARGS="--category testing --statement 'A pty probe rule for pr-1 provenance.' --source 'dreaming:pty-probe'"
   pty_run "cd '$RW1' && bash '$ADD_RULE' $ARGS" > "$ROOT/w1.txt" 2>&1 || true
   SW1b="$(store_sum "$RW1")"
-  if [ "$SW1" != "$SW1b" ]; then
+  if pty_prompt_missed; then
+    no "(M1a) the writer never showed its '$PTY_PROMPT' prompt within $((PTY_DEADLINE_TICKS / 10)) s — the control did not run: $(head -3 "$ROOT/w1.txt")"
+  elif [ "$SW1" != "$SW1b" ]; then
     ok "(M1a) CONFIRMED the hazard is real: add-rule.sh under a PTY with 'y' fed in and NO stdin detachment WRITES"
   else
     no "(M1a) REFUTED: the writer did not write even on the prompting path — every AC3b assertion here would be vacuous: $(head -3 "$ROOT/w1.txt")"
