@@ -636,7 +636,19 @@ else
   no "AC-10 policy mirror drift:"; diff <(printf '%s\n' "$script_policy") <(printf '%s\n' "$doc_policy") | sed 's/^/      /'
 fi
 grep -qx "logs${TAB}consumed → partial exhaust" < <(printf '%s\n' "$script_policy") && ok "AC-10 logs/ carries the partial-exhaust class in the machine surface" || no "AC-10 logs/ class wrong: $(printf '%s\n' "$script_policy" | grep '^logs')"
-[ "$(printf '%s\n' "$script_policy" | grep -c "${TAB}.*exhaust")" = "2" ] && ok "AC-10 exactly two rows carry an exhaust class (logs, drain-rounds)" || no "AC-10 exhaust row count != 2"
+[ "$(printf '%s\n' "$script_policy" | grep -c "${TAB}.*exhaust")" = "3" ] && ok "AC-10 exactly three rows carry an exhaust class (logs, drain-rounds, check-wait)" || no "AC-10 exhaust row count != 3"
+
+echo "== check-wait/ (implementation-quality/02 T03): an aged deadline file is swept, a fresh one kept =="
+FCW="$ROOT/fcw"; build_fixture "$FCW"
+mkdir -p "$FCW/.supervisor/check-wait"
+printf '{"deadline":1,"sha":"a","scope":"required"}\n' > "$FCW/.supervisor/check-wait/old.json"
+printf '{"deadline":9999999999,"sha":"b","scope":"required"}\n' > "$FCW/.supervisor/check-wait/new.json"
+touch -t "$OLD" "$FCW/.supervisor/check-wait/old.json"
+run_rs "$RS" "$FCW" "$FCW" --delete --older-than 1
+[ "$RC" -eq 0 ] && [ ! -e "$FCW/.supervisor/check-wait/old.json" ] && [ -f "$FCW/.supervisor/check-wait/new.json" ] \
+  && grep -qF 'check-wait/: removed 1 file(s)' < <(printf '%s' "$OUT") \
+  && ok "check-wait/ aged deadline removed, fresh one kept, summary counts 1" \
+  || no "check-wait/ sweep wrong (rc=$RC): $(printf '%s\n' "$OUT" | grep -F check-wait | head -3)"
 
 echo
 if [ "$skip" -gt 0 ]; then echo "RESULT: $pass passed, $fail failed, $skip skipped"; else echo "RESULT: $pass passed, $fail failed"; fi

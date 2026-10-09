@@ -27,6 +27,9 @@
 #      unchanged; pending_names (required included, absent required = pending,
 #      sha_mismatch) and red_names (name@run_id, '-' without a run id); scope.
 #  17. (review iteration 2) --names green needs EACH of conclusion/state green.
+#  18-24. (implementation-quality/02 T03) resumable --call-max mode: CONTINUE,
+#      persisted total deadline, --continue fail-closed, new-sha key, mutation
+#      control (deadline reset), no state leak into the cwd.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -446,6 +449,125 @@ else
   no "case 17 mutant invalid (empty / identical / bash -n / not exactly 1 line)"
 fi
 rm -rf "$D17"
+
+# ----------------------------------------------------------------------------
+# 18-24. (implementation-quality/02 T03) resumable mode: --call-max + a persisted
+# TOTAL deadline. Every call runs with its cwd inside a temp dir, so the state
+# (.supervisor/check-wait/) can never leak into this test's own cwd (the
+# drain-rounds LEAK PIN lesson) — asserted in case 24.
+# ----------------------------------------------------------------------------
+LEAK_BEFORE=0; [ -d .supervisor/check-wait ] && LEAK_BEFORE=1
+write_never_settles_stub() {
+  cat > "$1/gh" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *baseRefName*) printf '{"baseRefName":"main"}\n'; exit 0 ;;
+  *headRefOid*) printf '{"headRefOid":"$SHA","statusCheckRollup":[{"name":"ci","status":"IN_PROGRESS","conclusion":"","state":""}]}\n'; exit 0 ;;
+esac
+[ "\$1" = "api" ] && printf '{"required_status_checks":{"contexts":["ci"]}}\n'
+exit 0
+EOF
+  chmod +x "$1/gh"
+}
+# wfc <dir> <script> <args...> — run the wait with cwd = <dir> (state lands in <dir>).
+wfc() { local d="$1" s="$2"; shift 2; ( cd "$d" && GH="$d/gh" bash "$s" "$@" 2>/dev/null ); }
+state_count() { find "$1/.supervisor/check-wait" -name '*.json' 2>/dev/null | wc -l | tr -d ' '; }
+
+echo "== 18. --bound 4 --call-max 2: call 1 prints CONTINUE remaining≈2 within call-max + one interval =="
+D18="$(fresh_stub_dir)"; write_never_settles_stub "$D18"
+T0=$SECONDS
+OUT18="$(wfc "$D18" "$SUT" "$PR" --sha "$SHA" --bound 4 --call-max 2 --interval 1 --required-only)"
+T18=$((SECONDS - T0))
+case "$OUT18" in
+  "CONTINUE sha=$SHA remaining="[123]" pending=none") ok "call 1 CONTINUE ($OUT18) in ${T18}s" ;;
+  *) no "call 1 expected CONTINUE remaining 1-3: '$OUT18'" ;;
+esac
+[ "$T18" -le 5 ] && ok "call 1 returned within call-max + one interval (+2 s slack for a loaded pool)" || no "call 1 took ${T18}s"
+[ "$(state_count "$D18")" = 1 ] && ok "call 1 persisted exactly one deadline" || no "call 1 state files: $(state_count "$D18")"
+
+echo "== 19. call 2 (--continue, same sha) ELAPSES within the REMAINING budget, not a fresh 4 s =="
+T0=$SECONDS
+OUT19="$(wfc "$D18" "$SUT" "$PR" --sha "$SHA" --bound 4 --call-max 2 --interval 1 --required-only --continue)"
+T19=$((SECONDS - T0))
+case "$OUT19" in
+  "ELAPSED sha=$SHA required=pending review_producing=settled pending=none") ok "call 2 ELAPSED ($OUT19) in ${T19}s" ;;
+  *) no "call 2 expected ELAPSED: '$OUT19'" ;;
+esac
+[ "$T19" -le 4 ] && ok "call 2 elapsed within the remaining budget" || no "call 2 took ${T19}s (budget reset?)"
+[ "$(state_count "$D18")" = 0 ] && ok "terminal outcome removed the state file" || no "state left after ELAPSED"
+OUT19B="$(wfc "$D18" "$SUT" "$PR" --sha "$SHA" --bound 4 --call-max 2 --interval 1 --required-only --continue)"
+case "$OUT19B" in *"pending=unreadable_deadline") ok "--continue after a terminal outcome fails closed" ;; *) no "post-terminal --continue: '$OUT19B'" ;; esac
+
+echo "== 20. a continuation whose required check settles green prints SETTLED required=green =="
+D20="$(fresh_stub_dir)"
+cat > "$D20/gh" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *baseRefName*) printf '{"baseRefName":"main"}\n'; exit 0 ;;
+  *headRefOid*)
+    [ -f "$D20/count" ] || echo 0 > "$D20/count"
+    n=\$(cat "$D20/count"); n=\$((n+1)); echo "\$n" > "$D20/count"
+    if [ "\$n" -lt 4 ]; then st=IN_PROGRESS; c=""; else st=COMPLETED; c=SUCCESS; fi
+    printf '{"headRefOid":"$SHA","statusCheckRollup":[{"name":"ci","status":"%s","conclusion":"%s","state":""}]}\n' "\$st" "\$c"
+    exit 0 ;;
+esac
+[ "\$1" = "api" ] && printf '{"required_status_checks":{"contexts":["ci"]}}\n'
+exit 0
+EOF
+chmod +x "$D20/gh"
+OUT20A="$(wfc "$D20" "$SUT" "$PR" --sha "$SHA" --bound 30 --call-max 1 --interval 1 --required-only)"
+OUT20B="$(wfc "$D20" "$SUT" "$PR" --sha "$SHA" --bound 30 --call-max 1 --interval 1 --required-only --continue)"
+while case "$OUT20B" in CONTINUE*) true ;; *) false ;; esac; do
+  OUT20B="$(wfc "$D20" "$SUT" "$PR" --sha "$SHA" --bound 30 --call-max 1 --interval 1 --required-only --continue)"
+done
+case "$OUT20A|$OUT20B" in
+  "CONTINUE sha=$SHA remaining="*"|SETTLED sha=$SHA required=green review_producing=settled") ok "CONTINUE then SETTLED green ($OUT20B)" ;;
+  *) no "continuation settle: '$OUT20A' / '$OUT20B'" ;;
+esac
+
+echo "== 21. a NEW sha is a NEW key: fresh deadline, the old sha's deadline untouched =="
+D21="$(fresh_stub_dir)"; write_never_settles_stub "$D21"
+wfc "$D21" "$SUT" "$PR" --sha "$SHA" --bound 4 --call-max 1 --interval 1 --required-only >/dev/null
+OUT21C="$(wfc "$D21" "$SUT" "$PR" --sha "cafef00d11" --bound 4 --call-max 1 --interval 1 --required-only --continue)"
+case "$OUT21C" in *"pending=unreadable_deadline") ok "--continue on a never-started sha has no deadline (keyed on sha)" ;; *) no "new-sha --continue: '$OUT21C'" ;; esac
+OUT21="$(wfc "$D21" "$SUT" "$PR" --sha "cafef00d11" --bound 100 --call-max 1 --interval 1 --required-only)"
+R21="${OUT21#CONTINUE sha=cafef00d11 remaining=}"; R21="${R21%% *}"
+case "$OUT21" in
+  "CONTINUE sha=cafef00d11 remaining="*" pending=sha_mismatch")
+    if [ "$R21" -ge 90 ] 2>/dev/null; then ok "new sha got a fresh full budget ($OUT21)"; else no "new sha budget not fresh: '$OUT21'"; fi ;;
+  *) no "new sha fresh deadline: '$OUT21'" ;;
+esac
+[ "$(state_count "$D21")" = 2 ] && ok "two shas ⇒ two independent deadlines" || no "state files: $(state_count "$D21")"
+
+echo "== 22. unreadable state on continuation ⇒ ELAPSED pending=unreadable_deadline, never a fresh budget =="
+D22="$(fresh_stub_dir)"; write_never_settles_stub "$D22"
+wfc "$D22" "$SUT" "$PR" --sha "$SHA" --bound 60 --call-max 1 --interval 1 --required-only >/dev/null
+for f in $(find "$D22/.supervisor/check-wait" -name '*.json'); do printf 'garbage{' > "$f"; done
+T0=$SECONDS
+OUT22="$(wfc "$D22" "$SUT" "$PR" --sha "$SHA" --bound 60 --call-max 1 --interval 1 --required-only --continue)"
+case "$OUT22" in
+  "ELAPSED sha=$SHA required=pending review_producing=elapsed pending=unreadable_deadline") ok "garbage state fails closed ($OUT22)" ;;
+  *) no "garbage state: '$OUT22'" ;;
+esac
+[ $((SECONDS - T0)) -le 2 ] && ok "fail-closed without waiting" || no "garbage-state call waited"
+OUT22B="$(wfc "$D22" "$SUT" "$PR" --sha "$SHA" --bound 60 --call-max abc --interval 1 --required-only)"
+case "$OUT22B" in *"pending=bad_usage") ok "non-numeric --call-max ⇒ bad_usage" ;; *) no "bad --call-max: '$OUT22B'" ;; esac
+
+echo "== 23. MUTATION CONTROL: a copy that re-writes the deadline on every call fails case 19 =="
+M23="$D18/mut-reset.sh"
+sed -e 's/^  if \[ "\$CONTINUE" -eq 1 \]; then$/  if false; then/' "$SUT" > "$M23"
+if [ -s "$M23" ] && ! cmp -s "$SUT" "$M23" && bash -n "$M23"; then
+  wfc "$D18" "$M23" "$PR" --sha "$SHA" --bound 4 --call-max 2 --interval 1 --required-only >/dev/null
+  OUT23="$(wfc "$D18" "$M23" "$PR" --sha "$SHA" --bound 4 --call-max 2 --interval 1 --required-only --continue)"
+  case "$OUT23" in ELAPSED*) no "mutation control did NOT discriminate: '$OUT23'" ;;
+    *) ok "mutation control: a reset deadline makes call 2 CONTINUE instead of ELAPSE ($OUT23)" ;; esac
+else
+  no "case 23 mutant invalid (empty / identical / bash -n)"
+fi
+
+echo "== 24. no state leaked into this test's cwd =="
+if [ "$LEAK_BEFORE" -eq 1 ] || [ ! -d .supervisor/check-wait ]; then ok "cwd has no new .supervisor/check-wait"; else no "state LEAKED into $(pwd)/.supervisor/check-wait"; fi
+rm -rf "$D18" "$D20" "$D21" "$D22"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
