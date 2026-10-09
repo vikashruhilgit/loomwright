@@ -459,8 +459,18 @@ fi
 # exceed what the gate measures on this checkout: a baseline that was wrong on
 # day one would grandfather coupling nobody reviewed.
 # ---------------------------------------------------------------------------
+# case15_report <gate output> <gate rc> -> prints ONE ok/FAIL line, returns 1 on
+# FAIL. A failure here is the live gate's own verdict, so the line says so and
+# reprints the gate's BREACH/ERROR rows: one cause reads as one cause, not as a
+# second, unrelated red entry. The assertion itself is unchanged (exit 0).
+case15_report() {
+  if [ "$2" -eq 0 ]; then echo "ok   - case15 live repo passes its own ratchet (exit 0)"; return 0; fi
+  echo "FAIL - case15 live repo passes its own ratchet (expected exit 0, got $2) — this is the LIVE GATE's verdict (scripts/check-vendor-coupling.sh on this checkout), the same cause as that gate's own red entry; its BREACH/ERROR rows:"
+  printf '%s\n' "$1" | grep -E '  (BREACH|ERROR) |^raise_check: ERROR' | sed 's/^/       /'
+  return 1
+}
 OUT="$(cd "$repo_root" && bash "$GATE" 2>&1)"; RC=$?
-check "case15 live repo passes its own ratchet" 0 "$RC"
+if case15_report "$OUT" "$RC"; then pass=$((pass+1)); else fail=$((fail+1)); fi
 contains "case15 live run reports its scan" "$OUT" "files scanned:"
 contains "case15b live run prints the per-class report" "$OUT" "per token class"
 contains "case15b live run prints the flat total"       "$OUT" "TOTAL (flat)"
@@ -1315,6 +1325,121 @@ $(jq -r '.token_classes[].tokens[]' "$REAL_MANIFEST" 2>/dev/null)
 EOF
 check "case26 the gate script contains none of the shipped tokens" 0 "$hard"
 
+
+# ---------------------------------------------------------------------------
+# Case 31 — the BREACH DETAIL block (iq02 Part T09). It changes no verdict; it
+# tells the author which ADDED lines tripped the ratchet and how to get out.
+# Fixture: core/run.sh has ONE pre-existing reference (line 1) at its allowance,
+# committed as the base with an allowance written as 1.0; the head then appends
+# two lines that each carry one fictional hook_protocol token.
+# ---------------------------------------------------------------------------
+HT1="ACME_HOOK_EVENT"; HT2="ACME_HOOK_DECISION"
+DT="$TMP/detail/tree"; mk_tree "$DT"; mkdir -p "$DT/docs"
+put "$DT" core/run.sh "echo \"\$$FTOK\"" 'echo plain one' 'echo plain two'
+put "$DT" adapter/cmd.md "uses $HT1"
+cat > "$DT/docs/m.json" <<JSON
+{
+  "scan_roots": ["core", "adapter"],
+  "token_classes": { "install_root": { "tokens": ["$FTOK"] }, "hook_protocol": { "tokens": ["$HT1", "$HT2"] } },
+  "unclassified_default": "core",
+  "classes": {
+    "adapter": { "globs": ["adapter/*", "core/exempt-seam.sh"] },
+    "adapter_frontmatter": { "globs": [], "max_frontmatter_lines": 60 },
+    "coupled": { "globs": [] },
+    "core":    { "globs": ["core/*"] }
+  },
+  "allowances": { "core/run.sh": 1.0 },
+  "allowance_reasons": { "core/run.sh": "original reason" }
+}
+JSON
+commit_all "$DT" base
+DT_SHA="$(cd "$DT" && git rev-parse HEAD 2>/dev/null)"
+cp "$DT/docs/m.json" "$TMP/detail/base-m.json"
+printf 'echo "%s"\n' "$HT1" >> "$DT/core/run.sh"
+printf 'echo "%s"\n' "$HT2" >> "$DT/core/run.sh"
+stage "$DT"
+run_gate_base "$DT" "$DT/docs/m.json" "$DT_SHA"
+check    "case31a two added hook_protocol references breach (exit 1, as before)" 1 "$RC"
+contains "case31a the BREACH row is printed" "$OUT" "BREACH  +2 over the declared allowance"
+contains "case31b the block is labelled as added-vs-base" "$OUT" "detail: added lines vs $DT_SHA"
+contains "case31b lists added line 4 with its token and class" "$OUT" "line 4: $HT1 (hook_protocol)"
+contains "case31b lists added line 5 with its token and class" "$OUT" "line 5: $HT2 (hook_protocol)"
+lacks    "case31b does NOT list the pre-existing reference on line 1" "$OUT" "line 1: "
+DTL="$(printf '%s\n' "$OUT" | grep -c '^      line ')"
+check    "case31b exactly two lines listed" 2 "$DTL"
+contains "case31c adapter globs are read from the fixture manifest" "$OUT" "classes.adapter.globs: adapter/* core/exempt-seam.sh"
+contains "case31d ready-to-paste allowance row" "$OUT" "allowances:        \"core/run.sh\": 3,"
+contains "case31d ready-to-paste reason row carries the sentinel" "$OUT" "allowance_reasons: \"core/run.sh\": \"REASON-NOT-WRITTEN:"
+# The block must never advise hiding a reference from the literal count, and
+# states the rule positively instead.
+BLOCK="$(printf '%s\n' "$OUT" | awk '/^    detail: /{on=1} on{print} /^      allowance_reasons: /{on=0}')"
+case "$BLOCK" in *"ways out, in this order"*) pass=$((pass+1)); echo "ok   - case31e block extracted for the advice check";;
+  *) fail=$((fail+1)); echo "FAIL - case31e could not extract the detail block";; esac
+if printf '%s\n' "$BLOCK" | grep -qiE 'concatenat|indirect|lookup|assembl|at runtime|split the token|build the (token|name)'; then
+  fail=$((fail+1)); echo "FAIL - case31e the block suggests hiding a reference from the literal count"
+else pass=$((pass+1)); echo "ok   - case31e the block never suggests runtime assembly"; fi
+contains "case31e the rule is stated positively" "$BLOCK" "rule: every reference stays a literal this gate can count"
+# Order of the ways out: reword -> reuse -> adapter -> raise.
+ORD="$(printf '%s\n' "$BLOCK" | grep -oE '^      \([a-d]\) [a-z]+' | awk '{print $2}' | tr '\n' ' ')"
+check "case31f ways out in order reword reuse adapter raise" 0 "$([ "$ORD" = "reword reuse adapter raise " ] && echo 0 || echo 1)"
+
+# 31g — NO BASE: the block says so and lists every token-bearing line; exit unchanged.
+run_gate_base "$DT" "$DT/docs/m.json" "refs/does-not/exist"
+check    "case31g no base: still exit 1" 1 "$RC"
+contains "case31g says base unavailable" "$OUT" "base unavailable — showing all, not only added"
+contains "case31g lists the pre-existing line too" "$OUT" "line 1: $FTOK (install_root)"
+contains "case31g and the added ones" "$OUT" "line 5: $HT2 (hook_protocol)"
+
+# 31h — THE SENTINEL STILL FAILS: paste the suggested rows unchanged.
+PH="REASON-NOT-WRITTEN: replace this with one line saying why this reference is needed"
+jq --arg r "$PH" '.allowances["core/run.sh"] = 3 | .allowance_reasons["core/run.sh"] = $r' "$TMP/detail/base-m.json" > "$DT/docs/m.json"
+run_gate_base "$DT" "$DT/docs/m.json" "$DT_SHA"
+check    "case31h pasted row with the unfilled placeholder exits 1" 1 "$RC"
+contains "case31h raise_check BREACH names the unfilled reason" "$OUT" "is the unfilled placeholder"
+contains "case31i raise row prints integers (base 1.0 -> 1)" "$OUT" "allowance raised (1 -> 3 vs"
+lacks    "case31i raise row never prints the raw JSON literal" "$OUT" "1.0 ->"
+jq '.allowance_reasons["core/run.sh"] = "the emitter needs the two hook fields to build its payload"' "$DT/docs/m.json" > "$DT/docs/m.tmp" && mv "$DT/docs/m.tmp" "$DT/docs/m.json"
+run_gate_base "$DT" "$DT/docs/m.json" "$DT_SHA"
+check    "case31h control: the same raise with a real reason exits 0" 0 "$RC"
+# MUTATION CONTROL: drop the sentinel arm; the pasted-unchanged leg must then
+# pass (proving the leg is what catches it). Mutant gated non-empty, differs, bash -n.
+MUT="$TMP/detail/gate-no-sentinel.sh"
+grep -v 'elif (\$r | contains(\$sent)) then "sentinel"' "$GATE" > "$MUT"
+if [ -s "$MUT" ] && ! cmp -s "$MUT" "$GATE" && bash -n "$MUT" 2>/dev/null; then
+  jq --arg r "$PH" '.allowances["core/run.sh"] = 3 | .allowance_reasons["core/run.sh"] = $r' "$TMP/detail/base-m.json" > "$DT/docs/m.json"
+  OUT="$(VENDOR_COUPLING_ROOT="$DT" VENDOR_COUPLING_MANIFEST="$DT/docs/m.json" VENDOR_COUPLING_BASE="$DT_SHA" bash "$MUT" 2>&1)"; RC=$?
+  check "case31j mutant without the sentinel arm lets the pasted row through (the leg kills it)" 0 "$RC"
+else
+  fail=$((fail+1)); echo "FAIL - case31j mutant is empty, identical or not bash -n clean"
+fi
+
+# 31k — Entry 3: -0 is refused by the jq layer and the shell layer alike.
+sed 's/"core\/run.sh": 1.0 }/"core\/run.sh": -0 }/' "$TMP/detail/base-m.json" > "$DT/docs/m.json"
+grep -q '"core/run.sh": -0 }' "$DT/docs/m.json" || { fail=$((fail+1)); echo "FAIL - case31k could not write the -0 fixture"; }
+run_gate_base "$DT" "$DT/docs/m.json" "$DT_SHA"
+check    "case31k allowance -0 exits 1" 1 "$RC"
+contains "case31k it is refused as not a non-negative integer" "$OUT" "not a JSON non-negative integer"
+JQ_LAYER="$(sed -n '/^ALLOW_TSV=/,/^fi$/p' "$GATE")"
+contains "case31k the jq predicate itself rejects a negative zero" "$JQ_LAYER" 'tojson | startswith("-")'
+
+# 31l — Entry 1: the summary label no longer reads as uncounted.
+contains "case31l summary label says frontmatter bodies are counted" "$OUT" "frontmatter-bounded (header exempt, body counted)"
+lacks    "case31l old label is gone" "$OUT" "of which frontmatter-exempt"
+
+# 31m — Entry 2: the class names live in the manifest only.
+ARCH="$repo_root/loomwright/docs/ARCHITECTURE_CONTRACTS.md"
+restated=0
+for f in "$GATE" "$ARCH"; do
+  if grep -qE 'install root, subagent( |$)|hook protocol, runtime identity' "$f" 2>/dev/null; then restated=$((restated + 1)); echo "     restated class list in $f"; fi
+done
+check "case31m neither the gate header nor ARCHITECTURE_CONTRACTS.md restates the class list" 0 "$restated"
+
+# 31n — case15's report names the live gate's verdict on a breaching run.
+run_gate_base "$DT" "$TMP/detail/base-m.json" ""
+C15="$(case15_report "$OUT" "$RC")"; C15_RC=$?
+check    "case31n case15 still FAILs on a breaching run" 1 "$C15_RC"
+contains "case31n its line names the live gate's verdict" "$C15" "this is the LIVE GATE's verdict"
+contains "case31n it reprints the BREACH row" "$C15" "BREACH  +2 over the declared allowance"
 # ---------------------------------------------------------------------------
 echo "---------------------------------------------------------------------------"
 echo "test-check-vendor-coupling: $pass passed, $fail failed"

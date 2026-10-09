@@ -10,9 +10,9 @@
 #
 # HOW IT COUNTS — AND WHAT IT CANNOT SEE (read this before trusting a green run):
 #   * It counts LITERAL, fixed-string occurrences of the tokens declared in the
-#     manifest's `token_classes` (named classes — install root, subagent
-#     orchestration, ask-user, hook protocol, runtime identity, SDK binding, model
-#     names — each a list of tokens). The gate hard-codes NO token: every string it
+#     manifest's `token_classes` (named classes, each a list of tokens — the
+#     manifest is the one place the class names live; they are not restated
+#     here). The gate hard-codes NO token: every string it
 #     looks for comes from the manifest. It reports a reference total PER CLASS and
 #     a flat total; allowances stay per path and are compared with the flat total.
 #   * OVERLAP RULE — leftmost-longest, each byte counted at most once. A line is
@@ -147,6 +147,24 @@
 #     reviewed in an older PR from one in this PR when the base ref is stale; it
 #     compares with whatever the base ref names right now.
 #
+# BREACH DETAIL (what to do about a breach — it changes no verdict):
+#   Under every BREACH row the gate prints a detail block:
+#   * the token-bearing lines the path ADDED versus the base (`git diff -U0` `+`
+#     lines, line numbers from the hunk headers), each with its token(s) and
+#     class(es), counted by the SAME `scan()` awk function as the ratchet (one
+#     counter, held in SCAN_AWK_FN, never a second matcher). When the base does
+#     not resolve it lists the path's token-bearing lines instead, capped and
+#     labelled `base unavailable — showing all, not only added`;
+#   * the ways out, in order: reword prose, reuse the file's existing reference,
+#     move the code into an adapter-classed file (the manifest's
+#     `classes.adapter.globs`, read as data), raise the allowance;
+#   * a ready-to-paste raise: the `allowances` and `allowance_reasons` entries,
+#     the reason being a fixed placeholder that carries RAISE_REASON_SENTINEL.
+#     raise_check treats a reason equal to or containing the sentinel as
+#     MISSING (BREACH), so pasting the row without writing a reason still fails.
+#   The block never advises hiding a reference from the literal count — that is
+#   the blind spot named above, not a way out.
+#
 # EXIT CODES
 #   0 = every scanned path at or under its declared allowance, every raise reasoned.
 #   1 = at least one BREACH, or an ERROR (missing/malformed/unreadable manifest,
@@ -197,6 +215,10 @@ MANIFEST="${VENDOR_COUPLING_MANIFEST:-$repo_root/loomwright/docs/vendor-coupling
 SCAN_ROOT="${VENDOR_COUPLING_ROOT:-$repo_root}"
 BASE_REF="${VENDOR_COUPLING_BASE:-origin/main}"
 REQUIRE_BASE="${VENDOR_COUPLING_REQUIRE_BASE:-}"
+# The placeholder reason the BREACH detail block prints in its ready-to-paste
+# raise row. raise_check reads any reason containing it as MISSING (see header).
+RAISE_REASON_SENTINEL="REASON-NOT-WRITTEN"
+RAISE_REASON_PLACEHOLDER="$RAISE_REASON_SENTINEL: replace this with one line saying why this reference is needed"
 
 MODE="check"
 case "${1:-}" in
@@ -410,6 +432,7 @@ nclasses="$(cut -f1 "$TOKENS_TSV" | awk '!seen[$0]++' | wc -l | tr -d '[:space:]
 ALLOW_TSV="$TMPDIR_GATE/allowances.tsv"
 if ! jq -r '(.allowances // {}) | to_entries[] |
     "\(.key)\t\(if ((.value | type) == "number") and (.value >= 0) and (.value == (.value | floor)) and (.value <= 999999999)
+                     and ((.value | tojson | startswith("-")) | not)
                 then (.value | floor | tostring) else "!" + (.value | tojson) end)"' "$MANIFEST" > "$ALLOW_TSV" 2>/dev/null; then
   echo "check-vendor-coupling: could not read the allowances table from the manifest (fail CLOSED)" >&2
   exit 1
@@ -560,10 +583,11 @@ fi
 # block longer than FM_MAX lines (between its delimiters) is not frontmatter: the
 # moment it passes the bound, what was held aside is counted and the rest of the
 # file is read as body (fail toward counting — see the header).
-HITS="$TMPDIR_GATE/hits.tsv"
-CLASS_TOTALS="$TMPDIR_GATE/class-totals.tsv"
-: > "$HITS"
-if ! awk -F'\t' -v hits="$HITS" -v ctot="$CLASS_TOTALS" -v unread="$UNREAD" -v fmmax="$FM_MAX" '
+# THE counter. Both awk programs that count (this pass and the BREACH detail
+# block) are built from this one string, so the detail block can never disagree
+# with the verdict. It also records what it matched in `scan_seen` ("token
+# (class)" list) for the detail block; callers reset scan_seen per line.
+SCAN_AWK_FN='
   # scan s, adding one count per non-overlapping leftmost-longest match to arr[class]
   function scan(s, arr,    i, p, best, bl, bi) {
     while (s != "") {
@@ -574,9 +598,15 @@ if ! awk -F'\t' -v hits="$HITS" -v ctot="$CLASS_TOTALS" -v unread="$UNREAD" -v f
       }
       if (bi == 0) return
       arr[tcls[bi]]++
+      scan_seen = scan_seen (scan_seen == "" ? "" : ", ") tok[bi] " (" tcls[bi] ")"
       s = substr(s, best + bl)
     }
   }
+'
+HITS="$TMPDIR_GATE/hits.tsv"
+CLASS_TOTALS="$TMPDIR_GATE/class-totals.tsv"
+: > "$HITS"
+if ! awk -F'\t' -v hits="$HITS" -v ctot="$CLASS_TOTALS" -v unread="$UNREAD" -v fmmax="$FM_MAX" "$SCAN_AWK_FN"'
   NR == FNR {
     ntok++; tcls[ntok] = $1; tok[ntok] = $2; tlen[ntok] = length($2)
     if (!($1 in isclass)) { isclass[$1] = 1; ncls++; cname[ncls] = $1; total[$1] = 0 }
@@ -599,6 +629,7 @@ if ! awk -F'\t' -v hits="$HITS" -v ctot="$CLASS_TOTALS" -v unread="$UNREAD" -v f
           split("", fmcnt); infm = 0; mode = "whole"
         }
       }
+      scan_seen = ""
       if (infm) scan(line, fmcnt); else scan(line, cnt)
     }
     close(src)
@@ -645,6 +676,53 @@ if [ "$MODE" = "print" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# BREACH detail block (see the header's BREACH DETAIL). It prints only; the
+# verdict is decided by the compare loop and is never changed here.
+# ---------------------------------------------------------------------------
+DETAIL_CAP=40
+DETAIL_ADAPTER_GLOBS="$(printf '%s\n' "$ADAPTER_GLOBS" | awk 'NF' | tr '\n' ' ' | sed 's/ *$//')"
+breach_detail() { # breach_detail <path> <class> <actual>
+  local p="$1" cls="$2" n="$3" bsha="" lines="$TMPDIR_GATE/detail-lines.tsv" label
+  bsha="$(git rev-parse --verify -q "$BASE_REF^{commit}" 2>/dev/null)" || bsha=""
+  # Every line goes in as "<line number>\t<text>"; the text keeps any tab.
+  if [ -n "$bsha" ] && git diff --no-color --no-ext-diff -U0 "$bsha" -- "$p" 2>/dev/null | awk '
+      /^@@ / { h = $3; sub(/^\+/, "", h); split(h, a, ","); ln = a[1] + 0; inh = 1; next }
+      !inh { next }
+      /^\+/ { print ln "\t" substr($0, 2); ln++ }' > "$lines"; then
+    label="added lines vs $BASE_REF ($(printf '%.12s' "$bsha")) that carry tokens"
+  else
+    awk '{ print NR "\t" $0 }' "$p" > "$lines" 2>/dev/null || : > "$lines"
+    label="base unavailable — showing all, not only added (first $DETAIL_CAP token-bearing lines)"
+  fi
+  echo "    detail: $label:"
+  awk -F'\t' -v cap="$DETAIL_CAP" "$SCAN_AWK_FN"'
+    NR == FNR { ntok++; tcls[ntok] = $1; tok[ntok] = $2; tlen[ntok] = length($2); next }
+    {
+      ln = $1; text = substr($0, length($1) + 2); sub(/\r$/, "", text)
+      scan_seen = ""; split("", c); scan(text, c)
+      if (scan_seen == "") next
+      shown++
+      if (shown <= cap) printf "      line %s: %s\n", ln, scan_seen
+    }
+    END {
+      if (shown == 0) print "      (none — the breach comes from the allowance side: a lowered, removed or never-declared entry)"
+      if (shown > cap) printf "      ... %d more token-bearing line(s) not shown\n", shown - cap
+    }' "$TOKENS_TSV" "$lines"
+  if [ "$cls" = "adapter_frontmatter" ]; then
+    echo "      (a listed line inside this file's bounded frontmatter header is not counted; body lines are)"
+  fi
+  echo "    ways out, in this order:"
+  echo "      (a) reword — in prose, name the concept, not the token"
+  echo "      (b) reuse — go through the reference this file already has (an existing path variable or helper) instead of adding another"
+  echo "      (c) adapter — move the harness-specific code into an adapter-classed file; classes.adapter.globs: ${DETAIL_ADAPTER_GLOBS:-(none declared)}"
+  echo "      (d) raise — paste both manifest entries below, then replace the placeholder with a real one-line reason"
+  echo "    rule: every reference stays a literal this gate can count; a reference the gate cannot see is not a way out."
+  echo "    ready-to-paste raise (an unedited placeholder is still a BREACH):"
+  printf '      allowances:        "%s": %s,\n' "$p" "$n"
+  printf '      allowance_reasons: "%s": "%s",\n' "$p" "$RAISE_REASON_PLACEHOLDER"
+}
+
+# ---------------------------------------------------------------------------
 # Compare
 # ---------------------------------------------------------------------------
 exit_code=0
@@ -686,6 +764,7 @@ while IFS="$(printf '\t')" read -r p cls n bd; do
   esac
   if [ "$n" -gt "$allow" ]; then
     printf "$ROWFMT" "$p" "$cls" "$n" "$allow" "BREACH  +$((n - allow)) over the declared allowance — remove the reference, or raise the allowance in the manifest in this same PR (with an allowance_reasons entry) [$bd]"
+    breach_detail "$p" "$cls" "$n"
     breaches=$((breaches + 1))
     exit_code=1
   elif [ "$n" -lt "$allow" ]; then
@@ -854,7 +933,8 @@ raise_check() {
   raise_tsv="$TMPDIR_GATE/raises.tsv"
   # Reasons are compared NORMALISED (trimmed, internal whitespace collapsed), so
   # a whitespace-only edit of an inherited reason does not read as "changed".
-  if ! jq -r --slurpfile b "$base_manifest" '
+  if ! jq -r --slurpfile b "$base_manifest" --arg sent "$RAISE_REASON_SENTINEL" '
+      def int_str: if . == floor then (floor | if . == 0 then "0" else tostring end) else tostring end;
       def norm: if type == "string" then gsub("[[:space:]]+"; " ") | sub("^ "; "") | sub(" $"; "") else null end;
       ($b[0].allowances // {}) as $ba |
       ($b[0].allowance_reasons // {}) as $br |
@@ -865,8 +945,9 @@ raise_check() {
       (if ($ba | type) == "object" and (($ba[$p] | type) == "number") then $ba[$p] else null end) as $bv |
       select($v > ($bv // 0)) |
       ($rs[$p]) as $r |
-      [ $p, ($v | tostring), (if $bv == null then "new" else ($bv | tostring) end),
+      [ $p, ($v | int_str), (if $bv == null then "new" else ($bv | int_str) end),
         (if ($r | type) != "string" or (($r | norm) == "") then "missing"
+         elif ($r | contains($sent)) then "sentinel"
          elif (($br | type) == "object") and (($br[$p] | norm) == ($r | norm)) then "inherited"
          else "ok" end) ] | @tsv' "$MANIFEST" > "$raise_tsv" 2>/dev/null; then
     echo "raise_check: ERROR — could not compare allowances with the base manifest (fail CLOSED)"
@@ -878,6 +959,7 @@ raise_check() {
     nraised=$((nraised + 1))
     [ "$state" = "ok" ] && continue
     case "$state" in
+      sentinel)  why="its allowance_reasons entry is the unfilled placeholder (it contains $RAISE_REASON_SENTINEL) — write the one-line reason for THIS raise in its place" ;;
       inherited) why="its allowance_reasons entry is INHERITED unchanged from the base — an old reason does not justify a new raise; change it to say why THIS raise is needed" ;;
       *)         why="it has no allowance_reasons entry — add a one-line reason for this raise" ;;
     esac
@@ -974,7 +1056,7 @@ while IFS="$(printf '\t')" read -r c n; do
 done < "$CLASS_TOTALS"
 printf "  %-24s %7s\n" "TOTAL (flat)" "$total_refs"
 echo "---------------------------------------------------------------------------------------------"
-echo "files scanned: $scanned (counted: $counted, of which frontmatter-exempt: $frontmatter_files; adapter-exempt: $adapter_files) | files with references: $(wc -l < "$HITS" | tr -d '[:space:]') | total references: $total_refs | breaches: $breaches | errors: $errors"
+echo "files scanned: $scanned (counted: $counted, of which frontmatter-bounded (header exempt, body counted): $frontmatter_files; adapter-exempt: $adapter_files) | files with references: $(wc -l < "$HITS" | tr -d '[:space:]') | total references: $total_refs | breaches: $breaches | errors: $errors"
 
 if [ "$exit_code" -ne 0 ]; then
   echo "check-vendor-coupling: FAILED — vendor-coupling ratchet tripped (see BREACH/ERROR rows above)." >&2
