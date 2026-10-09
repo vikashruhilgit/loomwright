@@ -10,7 +10,7 @@ whole-lane `meta-sync.sh push` carried done claims for never-merged work. Honest
 `/supervisor` / `/autonomous` run outside `/automate` gets no automatic done stamp (it reads
 `brief-shipped`) until a human runs `reconcile-status --apply`, or `/automate --resume` / the merge
 watcher closes it out. Caveat: `reconcile-status --apply` promotes only a `pending`/status-less
-requirement; one `stamp-requirement-status.sh` (SessionStart and SubagentStop) already marked
+requirement; one `stamp-requirement-status.sh` (run on session start and when a Supervisor runner finishes) already marked
 `brief-shipped` is listed as an `info` row and needs a hand-written `## Status: done` (or the
 `closeout` above, whose sentinel-keyed guard appends regardless of that heading); promoting it in
 `reconcile-status` is an open follow-up. `test-automate-trail.sh` gains leg DS (OPEN ⇒ requirement byte-identical,

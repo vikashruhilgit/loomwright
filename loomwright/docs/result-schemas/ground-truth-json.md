@@ -252,7 +252,7 @@ heading line**, opened by the namespaced HTML-comment sentinel the idempotency g
 - **Honest limit:** a plain `/supervisor` / `/autonomous` run outside `/automate` gets no automatic done
   stamp — until a human runs `reconcile-status --apply`, or `/automate --resume` / the merge watcher
   runs `closeout`, the requirement reads `brief-shipped` (or nothing). `stamp-requirement-status.sh`
-  (SessionStart and `SubagentStop[loomwright:supervisor-runner]`) writes that `brief-shipped` heading on
+  (run on session start and when a Supervisor runner agent finishes — its two `hooks.json` seams) writes that `brief-shipped` heading on
   a status-less requirement once its brief lands in `done/`. **Caveat:** `reconcile-status --apply`
   promotes only a `pending`/status-less requirement; one already marked `brief-shipped` is listed as an
   `info` row and left unchanged, so it needs a hand-written `## Status: done` (or `/automate --resume` /
