@@ -3,6 +3,7 @@
 # 1846 test-seconds. A test absent from this file gets the runner's default weight — it is never dropped.
 # Re-measure from a later CI run's PASS lines when the balance drifts. Format: <secs><TAB><path>.
 # One 3 s adapter test is deliberately absent (an adapter-boundary scan forbids its name in non-doc files outside adapters/); it takes the default weight.
+# iq02 reconcile (2026-10-09): five tests added after that CI run carry local wall-clock seconds (macOS, idle), not CI times.
 1	loomwright/scripts/adapters/providers/test-lens-compare.sh
 24	loomwright/scripts/adapters/providers/test-lens-run.sh
 37	loomwright/scripts/test-add-orientation.sh
@@ -43,6 +44,7 @@
 0	loomwright/scripts/test-dispatch-pr-postmortem.sh
 9	loomwright/scripts/test-dispatch-pr-review.sh
 2	loomwright/scripts/test-drain-rounds.sh
+1	loomwright/scripts/test-drain-subfloor-decision.sh
 0	loomwright/scripts/test-emit-block-parses.sh
 7	loomwright/scripts/test-emit-lifecycle.sh
 1	loomwright/scripts/test-exec-acceptance-hash.sh
@@ -64,12 +66,15 @@
 24	loomwright/scripts/test-meta-sync-rehearsal.sh
 121	loomwright/scripts/test-meta-sync.sh
 58	loomwright/scripts/test-migrate-branch-mode.sh
+1	loomwright/scripts/test-no-fixed-sleep-race.sh
 0	loomwright/scripts/test-no-junk-tracked-files.sh
 4	loomwright/scripts/test-no-pipefail-grep-q.sh
+1	loomwright/scripts/test-no-self-matching-wait.sh
 0	loomwright/scripts/test-non-interactive-gates-seam.sh
 1	loomwright/scripts/test-not-verified-transport-seam.sh
 0	loomwright/scripts/test-notify-click-target.sh
 2	loomwright/scripts/test-notify-desktop.sh
+1	loomwright/scripts/test-phase-timing.sh
 2	loomwright/scripts/test-pr-postmortem-gather.sh
 1	loomwright/scripts/test-product-seam.sh
 10	loomwright/scripts/test-progress-state.sh
@@ -130,6 +135,7 @@
 20	loomwright/scripts/test-verify-seam.sh
 149	loomwright/scripts/test-verify-walkthrough.sh
 8	loomwright/scripts/test-wait-for-checks.sh
+13	loomwright/scripts/test-wait-lib.sh
 2	loomwright/scripts/test-webhook.sh
 4	loomwright/scripts/test-worker-rule-selfcheck.sh
 8	loomwright/scripts/test-worktree-audit.sh
