@@ -1432,17 +1432,23 @@ $lines
 PROGRESS
   fi
 
-  # ---- item_timing (iq02 T04): ONE script-written event, appended to the item's
-  # session log BEFORE trail-pr so the trail carries it. SILENT and fail-SAFE —
-  # closeout prints only `closeout:` lines (CLOSEOUT_TABLE), so no output here,
-  # and nothing here can change a step's verb or this function's exit status.
+  # ---- item_timing (iq02 T04): ONE script-written event per PR, appended to the
+  # item's session log (a gitignored .supervisor/logs/ file — never a trail path,
+  # so trail-pr does not carry it; /insights reads it locally). IDEMPOTENT like
+  # every other closeout step: a re-run (AC11, the post-trail-merge RECONCILE)
+  # finds this PR's item_timing already in the log and appends nothing. SILENT
+  # and fail-SAFE — closeout prints only `closeout:` lines (CLOSEOUT_TABLE), so
+  # no output here, and nothing here can change a step's verb or this
+  # function's exit status.
   ( _pt="$(bash "$(dirname "$HLP")/phase-timing.sh" --run "$rf_abs" 2>/dev/null)" || exit 0
     _sid="$(printf '%s' "$_pt" | jq -r '.session_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
     [ -n "$_sid" ] || exit 0
     _logs="$(dirname "$(dirname "$rf_abs")")/logs"; [ -d "$_logs" ] || exit 0
+    _lf="$_logs/$_sid.jsonl"
+    [ -f "$_lf" ] && jq -Rne --arg pr "$pr_url" '[inputs | fromjson? | select(type == "object" and .event == "item_timing" and .pr_url == (if $pr == "" then null else $pr end))] | length > 0' < "$_lf" && exit 0   # item_timing-idempotence guard: this PR's row is already logged
     _line="$(printf '%s' "$_pt" | jq -c --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg pr "$pr_url" \
       '{event:"item_timing",ts:$ts,pr_url:(if $pr=="" then null else $pr end)} + .' 2>/dev/null)" || exit 0
-    [ -n "$_line" ] && { printf '%s\n' "$_line" >> "$_logs/$_sid.jsonl"; } 2>/dev/null
+    [ -n "$_line" ] && { printf '%s\n' "$_line" >> "$_lf"; } 2>/dev/null
   ) >/dev/null 2>&1 || true
 
   # ---- 6. trail (runs LAST, after 7; via the dispatcher — stub-able, spy-visible)

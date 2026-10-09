@@ -761,7 +761,25 @@ badl="$(printf '%s\n' "$out2" | grep -v 'skipped — ' || true)"
 [ -z "$badl" ] && [ "$rc" -eq 0 ] && ok "AC11: second run is all skipped lines, exit 0" || no "AC11: non-skipped line(s): $badl"
 [ "$before_rf" = "$(cksum < "$P/$RF_REL")" ] && [ "$before_req" = "$(cksum < "$P/$REQ")" ] && ok "AC11: run file + requirement unchanged" || no "AC11: second run mutated files"
 [ "$before_trail" = "$(git -C "$FX/origin.git" for-each-ref --format='%(objectname)' 'refs/heads/chore/*')" ] && [ "$creates_before" = "$(count_creates)" ] && ok "AC11: no push, no PR create on the second run" || no "AC11: second run pushed/created"
+it_count() { jq -c 'select(.event=="item_timing")' "$1" 2>/dev/null | wc -l | tr -d ' '; }
+[ "$(it_count "$P/.supervisor/logs/sess-it.jsonl")" = 1 ] && ok "AC11: the session log holds exactly ONE item_timing after the second closeout (the append is idempotent)" || no "AC11: item_timing rows after the re-run: $(it_count "$P/.supervisor/logs/sess-it.jsonl")"
 grep -q '^pr merge' "$GH_STUB_DIR/argv.log" && no "gh pr merge called" || ok "closeout never calls gh pr merge"
+# Control: the same two closeouts through a gated copy WITHOUT the idempotence guard append a
+# second item_timing — so the exactly-ONE assertion above is load-bearing (red on the pre-fix code).
+MUTI="$TOP/mutd-itiming"; mkdir -p "$MUTI"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTI/"; cp -R "$HERE/automate-helpers.d" "$MUTI/"
+if [ "$(grep -c 'item_timing-idempotence guard' "$T")" != 1 ]; then no "item_timing mutant anchor is not unique"
+else
+  grep -v 'item_timing-idempotence guard' "$T" > "$MUTI/automate-trail.sh"
+  if [ ! -s "$MUTI/automate-trail.sh" ] || cmp -s "$T" "$MUTI/automate-trail.sh" || ! bash -n "$MUTI/automate-trail.sh"; then no "item_timing mutant not built"
+  else
+    closeout_fixture 112
+    printf -- '- 2026-10-01T10:00:00Z picked %s\n- 2026-10-01T10:30:00Z session_id sess-it (%s)\n- 2026-10-01T11:00:00Z parked awaiting_merge\n' "$REQ" "$REQ" >> "$P/$RF_REL"
+    mkdir -p "$P/.supervisor/logs"
+    (cd "$P" && bash "$MUTI/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" >/dev/null 2>&1)
+    (cd "$P" && bash "$MUTI/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" >/dev/null 2>&1)
+    [ "$(it_count "$P/.supervisor/logs/sess-it.jsonl")" = 2 ] && ok "control: without the guard the re-run appends a second item_timing (the AC11 exactly-ONE assertion is load-bearing)" || no "control: unguarded re-run left $(it_count "$P/.supervisor/logs/sess-it.jsonl") item_timing row(s), expected 2 — the control does not exercise the guard"
+  fi
+fi
 
 echo "== C. closeout idempotent AFTER its own trail PR merged (the sync moves; nothing else may) =="
 # Run automate-2026-10-01-142337: the watcher's closeout opened trail PR #329,
