@@ -241,6 +241,19 @@ To stamp a brief by hand: run `bash scripts/exec-acceptance-hash.sh <brief-path>
 
 so Supervisor Phase 4.5 `ground_truth` executes the doc-currency and version-consistency invariants (advisory) instead of `skipped`. Both ids are plugin-bundled under `scripts/eval-corpus/`; outside this repo they do not resolve, so non-plugin briefs omit them. See `agents/launch-pad.md` Phase 5.
 
+## Touched-file invariants
+
+> Grounded at base `{sha}`. Every worker re-checks the entries for the files in its lanes before hand-back.
+
+- **`{path/of/modified-file}`** — keep: {guard / convention / fail-safe rule, quoting its anchor: `{literal from the file}`}; reuse: {the file's own helper or idiom the change must use instead of a new one}; mirror: {producer/consumer contract the change must match exactly, naming the other side's file and `{anchor}`}; fired by: {matchers/callers, for a hook or emitter}; pinned by: {test file + the `{literal}` it greps}.
+
+**Authoring rules (Launch Pad Phase 3 action 11; Plan Reviewer Criterion 18):**
+- **When:** required when the brief modifies ≥1 existing script (code, or a file a hook, CI step or test runs or pins). A brief that only creates files omits the section — no heading, no "none" line.
+- **One bullet per modified file** (several files may share one bullet only when they share the same invariants). Cover: guards and fail-safe rules to keep (exit codes, `|| true`, closed key sets, locks), conventions to reuse (the file's own O(1)/tail/helper idioms), producer/consumer contracts to mirror exactly, which matchers/callers fire a hook or emitter, and tests that pin the file's text.
+- **Grounded:** every entry names its file and quotes ≥1 anchor as a backticked literal that `grep -F` finds in that file (or in the pinning test the entry names). A bare `file:N` line number is not an anchor — it drifts.
+- **Invariants, not instructions:** state what must still hold after the change; the subtask's own work stays in Acceptance Criteria.
+- Other per-file sections (e.g. a closed-enumeration or pin-mutation list) sit beside this one as their own `## ` sections — never nested inside it.
+
 ## Subtask Structure
 
 **Subtask id scheme (RULE, not merely illustration):** subtask ids are **plain numeric, 1-based, sequential** (`1, 2, 3, …`) — never alpha-suffixed (`1a`/`1b`) and never any other prefixed form. Every id used in the `#` column of the table below, and every `from:` reference in the Subtask Contracts YAML, MUST use this scheme. Downstream, `loomwright/sdk-spike/src/runner.ts`'s parser tolerates legacy alpha-suffixed ids from older briefs (`normalizeSubtaskIds` maps them onto this same scheme so no `from:` edge dangles) — that tolerance is a compatibility shim for *archived* briefs, not license to author new ones with alpha suffixes.
@@ -388,7 +401,7 @@ Subtask 2 (independent)
 
 ### Section Requirements
 
-**9 required sections** (mandatory — Supervisor relies on them) plus **optional sections**: `Feasibility` (Launch Pad v10.3+, in the table below), `Outcomes Rubric` (v12.2.0+), `Executable Acceptance` (v14.19.0+), `House Rules` (v15.109.0+ — Launch Pad Phase 5 action 6a, emitted only when `read-rules.sh --with-ids` routed ≥1 rule to the File Impact Map; its reader banner is demoted to a `> ` line so it stays one H2 section), and `Cited-line premise check` (harness-port/03, nested under `## Skill References`) — the latter four are documented in `agents/launch-pad.md` or their own blocks above and omitted from the table below:
+**9 required sections** (mandatory — Supervisor relies on them) plus **optional sections**: `Feasibility` (Launch Pad v10.3+, in the table below), `Outcomes Rubric` (v12.2.0+), `Executable Acceptance` (v14.19.0+), `House Rules` (v15.109.0+ — Launch Pad Phase 5 action 6a, emitted only when `read-rules.sh --with-ids` routed ≥1 rule to the File Impact Map; its reader banner is demoted to a `> ` line so it stays one H2 section), `Touched-file invariants` (conditionally required — whenever the brief modifies an existing script; Plan Reviewer Criterion 18), and `Cited-line premise check` (harness-port/03, nested under `## Skill References`) — the latter five are documented in `agents/launch-pad.md` or their own blocks above and omitted from the table below:
 
 | Section | Required? | Used In Phase | Purpose |
 |---------|-----------|---------------|---------|
@@ -490,6 +503,7 @@ Before saving a brief:
 - [ ] Parallelism analysis is conservative (no false LAUNCHABLE)
 - [ ] Brief follows the complete template (all 9 required sections present; Feasibility optional)
 - [ ] If Phase 2.5 ran, Feasibility verdict recorded in the optional `## Feasibility` section
+- [ ] If the brief modifies an existing script, `## Touched-file invariants` covers every modified script with grounded (file + quoted anchor) entries
 
 ## See Also
 
