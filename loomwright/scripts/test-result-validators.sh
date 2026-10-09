@@ -2393,6 +2393,75 @@ EOF
 run_v "$V_SUPERVISOR" "$F"
 assert_fail "supervisor: heal_new_findings=-1 [rule 14]" "heal_new_findings must be a non-negative"
 
+# rule 14's heal-SKIP branch: with heal_loop_ran=false both metric keys must be
+# null. Each non-null value below is otherwise in-shape (FAIL is a legal first
+# decision, 3 a legal count), so ONLY the heal_loop_ran=false branch can reject it.
+cat_mk sup-metric-skip-null.md sup-skip-base <<'EOF'
+  heal_iterations: null
+  heal_decision: null
+  heal_fixable_issues_fixed: 0
+  heal_remaining_issues: 0
+  heal_first_decision: null
+  heal_new_findings: null
+  summary: heal loop skipped, both metric keys null
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_pass "supervisor: heal_loop_ran=false with heal_first_decision=null + heal_new_findings=null [rule 14]"
+
+cat_mk sup-metric-skip-first.md sup-skip-base <<'EOF'
+  heal_iterations: null
+  heal_decision: null
+  heal_fixable_issues_fixed: 0
+  heal_remaining_issues: 0
+  heal_first_decision: FAIL
+  heal_new_findings: null
+  summary: heal loop skipped yet a first decision was reported
+EOF
+R14_SKIP_FIRST_FILE="$F"
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: heal_loop_ran=false with heal_first_decision=FAIL [rule 14]" \
+  "heal_loop_ran=false requires heal_first_decision=null"
+
+cat_mk sup-metric-skip-count.md sup-skip-base <<'EOF'
+  heal_iterations: null
+  heal_decision: null
+  heal_fixable_issues_fixed: 0
+  heal_remaining_issues: 0
+  heal_first_decision: null
+  heal_new_findings: 3
+  summary: heal loop skipped yet new findings were counted
+EOF
+R14_SKIP_COUNT_FILE="$F"
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: heal_loop_ran=false with heal_new_findings=3 [rule 14]" \
+  "heal_loop_ran=false requires heal_new_findings=null"
+
+# MUTATION CONTROL against a COPY (gated non-empty + differs + compiles): disable
+# the heal_loop_ran=false branch; both skip cases above must FLIP to accepted.
+V_R14="$TMPROOT/r14-skip/validate-supervisor-result.py"
+mkdir -p "$(dirname "$V_R14")"
+cp "$V_SUPERVISOR" "$V_R14"
+cp "$(dirname "$V_SUPERVISOR")/result_block_parser.py" "$(dirname "$V_R14")/result_block_parser.py"
+python3 - "$V_R14" <<'PY'
+import sys
+p = sys.argv[1]
+src = open(p, encoding="utf-8").read()
+target = ('        if heal_loop_ran is False:\n'
+          '            emit(False, "heal_loop_ran=false requires %s=null')
+mutated = src.replace(target, target.replace("heal_loop_ran is False", "False"), 1)
+assert mutated != src, "mutation target not found — validator source shape changed"
+open(p, "w", encoding="utf-8").write(mutated)
+PY
+if [ -s "$V_R14" ] && ! cmp -s "$V_SUPERVISOR" "$V_R14" && python3 -m py_compile "$V_R14" 2>/dev/null; then
+  ok "supervisor: rule 14 mutation control (heal-skip branch) — mutant is non-empty, differs and compiles"
+else
+  no "supervisor: rule 14 mutation control (heal-skip branch) — mutant invalid, cannot be trusted"
+fi
+run_v "$V_R14" "$R14_SKIP_FIRST_FILE"
+assert_pass "supervisor: rule 14 mutation control — without the heal-skip branch the non-null heal_first_decision case FLIPS to accepted"
+run_v "$V_R14" "$R14_SKIP_COUNT_FILE"
+assert_pass "supervisor: rule 14 mutation control — without the heal-skip branch the non-null heal_new_findings case FLIPS to accepted"
+
 cat_mk sup-pass-remaining.md sup-ran-base <<'EOF'
   heal_iterations: 3
   heal_decision: PASS
