@@ -11,6 +11,9 @@
 #
 # Contract:
 #   usage: run-self-tests.sh [<test.sh> ...]
+#          run-self-tests.sh --select-marked early|serial <test.sh> ...
+#          (prints, in input order, the tests carrying that marker, and runs nothing — the ONE marker
+#          parser: scripts/ci-local.sh derives its early phase from it instead of re-implementing it)
 #          no arguments = the canonical suite: loomwright/scripts/test-*.sh plus
 #          loomwright/scripts/adapters/*/test-*.sh (adapter self-tests live one directory deeper
 #          than the flat glob reaches — without the second glob they are committed tests nothing
@@ -24,13 +27,21 @@
 #          → 2026-10-01, each cancelled at ~361 min with no test named in the log).
 #          SELF_TEST_SLOT_WAIT  seconds to wait for machine admission (a ci-slot.sh slot; see below)
 #   marker: a test carrying the exact line `# run-self-tests: serial` runs ALONE, after the
-#          concurrent batch — for tests that measure wall-clock time and need an idle machine
+#          concurrent batch — for tests that measure wall-clock time and need an idle machine.
+#          A test carrying the exact line `# run-self-tests: early` is a cheap, deterministic test
+#          that scripts/ci-local.sh runs in its EARLY phase (before the pool, so a red one fails the
+#          run in seconds). In this runner's own run the `early` marker changes NOTHING: the test
+#          stays in the concurrent batch. Both markers are matched with the same `grep -qx`
+#          exact-line rule; a test carrying BOTH is a usage error (exit 1, named) — the two phases
+#          conflict.
 #   exit 0 = every test ran AND exited 0
 #   exit 1 = FAIL CLOSED: any test exited non-zero or timed out, any test left no result (its worker died), or
 #            the glob matched nothing (a moved/renamed scripts dir fails LOUDLY, never green), or no admission
 #
 # Unlike the serial `set -e` loop, a red test does not hide the ones after it: every test runs,
-# then each failure's full log is printed at the end. Passing logs are printed too (collapsed in
+# then each failure's full log is printed at the end. A red test is ALSO streamed the moment it
+# finishes — one `run-self-tests: FAIL (exit <rc>, <secs>s): <test>` line, as a TIMEOUT already is —
+# so a reader of a running log (or of `ci-local.sh --wait`) sees it within seconds. Passing logs are printed too (collapsed in
 # `::group::` blocks under GitHub Actions), so a CI reader loses nothing the serial loop showed.
 # No `|| true` anywhere on the gate path: this is a fail-CLOSED correctness gate (CLAUDE.md
 # §"Failure-Mode Invariants").
@@ -38,6 +49,31 @@ set -euo pipefail
 shopt -s nullglob
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# has_marker NAME TEST — the one marker parser: an exact `# run-self-tests: NAME` line (grep -qx).
+has_marker() { grep -qx "# run-self-tests: $1" "$2" 2>/dev/null; }
+# marker_conflict TEST — a test marked both `early` and `serial` is a usage error (the phases conflict).
+marker_conflict() {
+  if has_marker early "$1" && has_marker serial "$1"; then
+    echo "run-self-tests: $1 carries both \`# run-self-tests: early\` and \`# run-self-tests: serial\` — the early phase and the serial tail conflict; keep one" >&2
+    return 0
+  fi
+  return 1
+}
+
+# --select-marked runs nothing: no hermetic layer, no admission, no slot.
+if [ "${1:-}" = "--select-marked" ]; then
+  case "${2:-}" in
+    early|serial) ;;
+    *) echo "usage: run-self-tests.sh --select-marked early|serial <test.sh> ... (got '${2:-}')" >&2; exit 1 ;;
+  esac
+  sel_marker="$2"; shift 2
+  for t in "$@"; do
+    if marker_conflict "$t"; then exit 1; fi
+    if has_marker "$sel_marker" "$t"; then printf '%s\n' "$t"; fi
+  done
+  exit 0
+fi
 
 # Egress-hermetic layer for every worker (second layer — each test ALSO sources the helper itself,
 # enforced by scripts/check-test-hermetic.sh). Sourcing it here scrubs the egress env vars, sets
@@ -188,8 +224,11 @@ if [ "$timed_out" -eq 1 ]; then
 else
   rc=0; wait "$pid" || rc=$?
 fi
-printf "%s %s\n" "$rc" "$(( $(date +%s) - start ))" > "$SELF_TEST_OUT/$idx.rc.tmp"
+secs=$(( $(date +%s) - start ))
+printf "%s %s\n" "$rc" "$secs" > "$SELF_TEST_OUT/$idx.rc.tmp"
 mv "$SELF_TEST_OUT/$idx.rc.tmp" "$SELF_TEST_OUT/$idx.rc"
+# Streamed at once (the end-of-run banner + full log still follow): a red test is visible in seconds.
+if [ "$rc" -ne 0 ]; then echo "run-self-tests: FAIL (exit $rc, ${secs}s): $t"; fi
 WORKER
 export SELF_TEST_OUT="$out"
 
@@ -203,7 +242,9 @@ export SELF_TEST_OUT="$out"
 par_idx=(); ser_idx=()
 i=0
 for t in "${tests[@]}"; do
-  if grep -qx '# run-self-tests: serial' "$t" 2>/dev/null; then ser_idx+=("$i"); else par_idx+=("$i"); fi
+  if marker_conflict "$t"; then exit 1; fi
+  # `early` is inert here (ci-local.sh's phase, not this runner's): an early test stays concurrent.
+  if has_marker serial "$t"; then ser_idx+=("$i"); else par_idx+=("$i"); fi
   i=$((i + 1))
 done
 

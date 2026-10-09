@@ -40,6 +40,13 @@
 #        at once, adds no slot or machine record.
 #        MUTATION CONTROL: the admission call replaced by a fake grant ⇒ the wait check fails.
 #   (AD2) ci-slot.sh missing beside the runner → exit 1, "refusing", no fixture test ran
+#   (FS) iq02 T05: a red test is STREAMED — `run-self-tests: FAIL (exit <rc>, <secs>s): <test>` is in
+#        the output while a slow green test is still running (it waits, bounded, for that line) and
+#        precedes its PASS line; the end-of-run banner + summary are unchanged;
+#        MUTATION CONTROL: a runner copy without the streamed line ⇒ the slow test never sees it
+#   (EM) `# run-self-tests: early`: --select-marked early prints the marked subset in input order and
+#        runs nothing; in a default run the marker is inert (the test stays concurrent); a test
+#        marked both early and serial ⇒ exit 1, named (default run and --select-marked)
 #
 # Admission sandbox: every runner call here takes its ci-slot.sh slot from a sandboxed pool and
 # machine list, with a fixture load reader, so neither a real holder nor a loaded machine holds it.
@@ -370,6 +377,61 @@ GITHUB_ACTIONS= bash "$A2/loomwright/scripts/run-self-tests.sh" "$T/adm-probe.sh
 [ "$rc" -eq 1 ] && grep -q "refusing to run the suite without machine admission" "$T/a2.out" && [ ! -f "$T/adm.ran" ] \
   && ok "(AD2) no ci-slot.sh beside the runner → exit 1, 'refusing', the fixture test never ran" \
   || no "(AD2) rc=$rc ran=$([ -f "$T/adm.ran" ] && echo y || echo n): $(cat "$T/a2.out")"
+
+echo "== (FS) a red test is streamed the moment it finishes =="
+cat > "$T/fs-slow.sh" <<'EOF'
+# bounded wait (FS_WAIT seconds) for the streamed FAIL line in the runner's own output
+n=0
+while ! grep -q "^run-self-tests: FAIL (exit 3, [0-9]*s): .*/fail.sh$" "$FS_OUT" 2>/dev/null; do
+  n=$((n + 1)); [ "$n" -le $((FS_WAIT * 10)) ] || { echo notseen > "$FS_OUT.seen"; exit 0; }
+  sleep 0.1
+done
+echo seen > "$FS_OUT.seen"
+EOF
+rm -f "$T/fs.out.seen"
+FS_OUT="$T/fs.out" FS_WAIT=30 SELF_TEST_JOBS=2 run "$T/fs.out" "$T/fs-slow.sh" "$T/fail.sh"; rc=$?
+fl="$(grep -n '^run-self-tests: FAIL (exit 3, ' "$T/fs.out" | head -1 | cut -d: -f1)"
+pl="$(grep -n "^PASS [0-9]*s $T/fs-slow.sh\$" "$T/fs.out" | cut -d: -f1)"
+if [ "$rc" -eq 1 ] && [ "$(cat "$T/fs.out.seen" 2>/dev/null)" = seen ] && [ -n "$fl" ] && [ -n "$pl" ] && [ "$fl" -lt "$pl" ] \
+   && grep -q "FAIL (exit 3): $T/fail.sh" "$T/fs.out" && grep -q "1 of 2 self-tests FAILED" "$T/fs.out"; then
+  ok "(FS) the FAIL line was in the output while the slow test still ran, before its PASS line; the end report is unchanged"
+else no "(FS) rc=$rc seen=$(cat "$T/fs.out.seen" 2>/dev/null) fail_line=$fl pass_line=$pl: $(cat "$T/fs.out")"; fi
+# MUTATION CONTROL: a runner copy without the streamed FAIL line (beside its helpers, same layout).
+FSM="$T/fs-mutant"; mkdir -p "$FSM"; git init -q "$FSM"   # ci-slot.sh keys admission by repo
+cp "$HERE/hermetic-test-env.sh" "$HERE/ci-slot.sh" "$HERE/machine-load.sh" "$FSM/" 2>/dev/null
+grep -v 'then echo "run-self-tests: FAIL (exit \$rc, \${secs}s): \$t"; fi$' "$RUNNER" > "$FSM/run-self-tests.sh"
+if [ -s "$FSM/run-self-tests.sh" ] && ! cmp -s "$RUNNER" "$FSM/run-self-tests.sh" && bash -n "$FSM/run-self-tests.sh"; then
+  rm -f "$T/fsm.out.seen"
+  FS_OUT="$T/fsm.out" FS_WAIT=3 SELF_TEST_JOBS=2 GITHUB_ACTIONS= bash "$FSM/run-self-tests.sh" "$T/fs-slow.sh" "$T/fail.sh" > "$T/fsm.out" 2>&1
+  [ "$(cat "$T/fsm.out.seen" 2>/dev/null)" = notseen ] \
+    && ok "(FS) MUTATION CONTROL: without the streamed line the slow test never sees a FAIL — (FS) can fail" \
+    || no "(FS) MUTATION CONTROL: seen=$(cat "$T/fsm.out.seen" 2>/dev/null): $(cat "$T/fsm.out")"
+else no "(FS) MUTATION CONTROL: mutant not built"; fi
+
+echo "== (EM) the early marker: --select-marked, inert in a default run, early+serial conflict =="
+printf '%s\n' '# run-self-tests: early' 'echo early-ran > "$(dirname "$0")/em.ran"' > "$T/em-early.sh"
+printf '%s\n' '# run-self-tests: earlyish' 'exit 0' > "$T/em-near.sh"
+printf '%s\n' '# run-self-tests: early' '# run-self-tests: serial' 'exit 0' > "$T/em-both.sh"
+sel="$(bash "$RUNNER" --select-marked early "$T/pass1.sh" "$T/em-early.sh" "$T/em-near.sh" "$T/em-early.sh" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$sel" = "$T/em-early.sh"$'\n'"$T/em-early.sh" ] \
+  && ok "(EM) --select-marked early prints exactly the marked tests, in input order (exact-line match only)" \
+  || no "(EM) select: rc=$rc out=[$sel]"
+sel="$(bash "$RUNNER" --select-marked serial "$T/em-early.sh" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -z "$sel" ] && ok "(EM) --select-marked serial does not match an early test" || no "(EM) serial select: rc=$rc out=[$sel]"
+rm -f "$T/em.ran"
+run "$T/em.out" "$T/em-early.sh" "$T/pass1.sh"; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$T/em.ran" ] && grep -q "2 concurrently (.* at a time), then 0 serially" "$T/em.out" \
+  && ok "(EM) a default run treats the early marker as inert: the test stays in the concurrent batch" \
+  || no "(EM) default run: rc=$rc: $(cat "$T/em.out")"
+run "$T/emb.out" "$T/em-both.sh" "$T/pass1.sh"; rc=$?
+[ "$rc" -eq 1 ] && grep -q "$T/em-both.sh carries both" "$T/emb.out" \
+  && ok "(EM) early+serial on one test: default run exits 1, naming it" || no "(EM) both: rc=$rc: $(cat "$T/emb.out")"
+sel="$(bash "$RUNNER" --select-marked early "$T/em-both.sh" 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q "em-both.sh carries both" <<<"$sel" \
+  && ok "(EM) early+serial on one test: --select-marked exits 1, naming it" || no "(EM) both select: rc=$rc out=[$sel]"
+bash "$RUNNER" --select-marked bogus "$T/pass1.sh" > "$T/emu.out" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && grep -q "usage: run-self-tests.sh --select-marked" "$T/emu.out" && ok "(EM) an unknown marker name is a usage error" \
+  || no "(EM) unknown marker: rc=$rc: $(cat "$T/emu.out")"
 
 echo
 echo "test-run-self-tests: $pass passed, $fail failed"
