@@ -563,6 +563,26 @@ else
 fi
 rm -rf "$WD"
 
+echo "== T04-3c. pr_created event appended to the session log; dispatch unchanged =="
+WD3C="$(make_wd "running" "feature/example")"
+( cd "$WD3C" && git init -q . && git config user.email t@t && git config user.name t && echo s > s && git add s && git commit -qm i ) >/dev/null 2>&1
+printf -- '- session_id: sess-3c\n' >> "$WD3C/.supervisor/state.md"
+run_wrapper "$WD3C" "feature/example" "$FIXTURE"
+EV3C="$(jq -c 'select(.event=="pr_created")' "$WD3C/.supervisor/logs/sess-3c.jsonl" 2>/dev/null)"
+[ "$RUN_RC" -eq 0 ] && [ "$(printf '%s' "$EV3C" | jq -r '.url' 2>/dev/null)" = "$PR" ] \
+  && printf '%s' "$EV3C" | jq -e 'has("ts")' >/dev/null 2>&1 \
+  && ok "3c: one pr_created {event, ts, url} in the active session log" || no "3c: pr_created missing/wrong ($EV3C)"
+printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD3C")" -eq 1 ] \
+  && ok "3c: dispatch unchanged (DRY_RUN_DISPATCH + 1 marker)" || no "3c: dispatch altered"
+# not a git repo / no .supervisor → no event, exit 0 (fail SAFE)
+WD3N="$(make_wd "running" "feature/example")"
+run_wrapper "$WD3N" "feature/example" "$FIXTURE"
+[ "$RUN_RC" -eq 0 ] && [ ! -d "$WD3N/.supervisor/logs" ] && ok "3c: unresolvable main root -> no event, exit 0" || no "3c: fail-safe leg wrong"
+printf 'not json' > "$TMP_PAYLOADS/bad3c.json"; run_wrapper "$WD3C" "feature/example" "$TMP_PAYLOADS/bad3c.json"
+[ "$RUN_RC" -eq 0 ] && [ "$(jq -c 'select(.event=="pr_created")' "$WD3C/.supervisor/logs/sess-3c.jsonl" 2>/dev/null | grep -c .)" = "1" ] \
+  && ok "3c: malformed payload -> exit 0, no extra event" || no "3c: malformed payload leg wrong"
+rm -rf "$WD3C" "$WD3N"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
