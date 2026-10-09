@@ -337,9 +337,11 @@ if ci_dir and os.environ.get("PT_HAVE_TREES") == "1":
                 m = re.match(r"^ci-local: head (\S+) (\S+)", l)
                 if m:
                     head, hb = m.group(1), m.group(2)
-            tail = lines[-1] if lines else ""
-            m = re.match(r"^ci-local: (PASS|FAIL)\b", tail)
-            verdict = m.group(1) if m else "INCOMPLETE"
+            # verdict: the last ci-local PASS/FAIL line among the final 3 (an
+            # --affected run ends with an advisory line after its verdict)
+            tail = next((l for l in reversed(lines[-3:]) if re.match(r"^ci-local( --affected)?: (PASS|FAIL)\b", l)), "")
+            m = re.match(r"^ci-local( --affected)?: (PASS|FAIL)\b", tail)
+            verdict = m.group(2) if m else "INCOMPLETE"
             m = re.search(r"after (\d+)s", tail)
             wall = int(m.group(1)) if m else None
         except Exception:

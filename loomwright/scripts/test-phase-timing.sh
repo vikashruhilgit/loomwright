@@ -77,6 +77,10 @@ OUT="$(bash "$PT" --run "$RUNF" --ci-runs "$CI" --trees "$T/trees" 2>/dev/null)"
 OUT="$(bash "$PT" --run "$RUNF" --ci-runs "$CI" 2>/dev/null)"
 [ "$(q '.ci_runs')" = "null" ] && ok "no tree list ⇒ ci_runs null (incomplete), not []" || no "no trees: $(q '.ci_runs')"
 CIOUT_ARGS="--ci-runs $CI --trees $T/trees"
+CI2="$T/ci2"; mkdir -p "$CI2"
+printf 'ci-local: log x\nci-local: head bbbbsha feature/pa24\nci-local --affected: PASS after 351s — 25 of 157\naffected-only — not a pre-push gate\n' > "$CI2/cccctree-base-Darwin-20261009T101047Z-4-affected.log"
+OUT="$(bash "$PT" --run "$RUNF" --ci-runs "$CI2" --trees "$T/trees" 2>/dev/null)"
+[ "$(q '.ci_runs[0]|"\(.wall_seconds) \(.verdict)"')" = "351 PASS" ] && ok "an --affected log (advisory line after the verdict) reads PASS 351 s, attributed by its HEAD line" || no "affected log: $(q '.ci_runs')"
 
 echo "== F. fail-SAFE =="
 OUT="$(bash "$PT" --run "$T/does-not-exist.md" 2>/dev/null)"; rc=$?
