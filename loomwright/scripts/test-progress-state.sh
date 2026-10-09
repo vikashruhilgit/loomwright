@@ -1615,7 +1615,7 @@ echo "== 42. rejected / stop_hook_active (v15.83.0) — a validator-rejected sto
 # the validator's actual stdout (mutation control), not hard-coded.
 VALIDATOR="$SCRIPT_DIR/validate-worker-result.py"
 LAM_MALFORMED="## WORKER_RESULT\n- status: completed\n"
-LAM_VALID="Wrote .worker-summary.md\n\n## WORKER_RESULT\n- schema_version: 2\n- task_id: T-42\n- status: completed\n- files_modified: [src/a.py]\n- summary: did the thing\n- outputs_verified: []\n- outputs_gap: \"\"\n"
+LAM_VALID="Wrote .worker-summary.md\n\n## WORKER_RESULT\n- schema_version: 2\n- task_id: T-42\n- status: completed\n- files_modified: [src/a.py]\n- summary: did the thing\n- outputs_verified: []\n- outputs_gap: \"\"\n- self_review: [{part: checklist, result: held, evidence: walked}, {part: repro, result: held, evidence: repro}, {part: sweep, result: n/a, evidence: unchanged}, {part: invariants, result: n/a, evidence: absent}]\n"
 
 # 42a: MALFORMED fixture, real validator, stop_hook_active:false (a FIRST stop).
 REPO42A="$(init_repo "feature/case42a")"

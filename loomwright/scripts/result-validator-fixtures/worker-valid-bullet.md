@@ -14,5 +14,6 @@ I implemented the guard and its unit tests, then verified the promised outputs.
 - tests_failed: 0
 - outputs_verified: [{kind: file, path: src/auth/jwt.guard.ts, status: present}, {kind: symbol, path: src/auth/jwt.guard.ts, name: JwtGuard, status: present}, {kind: file, path: src/auth/jwt.guard.spec.ts, status: present}]
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: none
 - summary: Implemented JwtGuard with token validation and refresh support. Added unit tests covering valid, expired and malformed tokens.
