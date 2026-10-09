@@ -855,6 +855,16 @@ printf '%s\n' '{"ts":"2026-10-03T10:00:00Z","event":"session_end","status":"comp
 fd="$FM/.supervisor/insights/dashboard.md"
 grep -qF "| First-pass PASS rate (Phase 4.5 iteration 1) | 1/2 (50%) |" "$fd" 2>/dev/null && ok "first-pass PASS rate = 1/2 (absent-field run not counted)" || no "first-pass PASS rate wrong: $(grep -F 'First-pass' "$fd" 2>/dev/null)"
 grep -qF "| Findings per item (new, all iterations) | 2.5 |" "$fd" 2>/dev/null && ok "findings per item = 2.5 (a 0 survives, absent run excluded)" || no "findings per item wrong: $(grep -F 'Findings per item' "$fd" 2>/dev/null)"
+# a non-integer heal_new_findings (string / object) in ONE session must not blank the Summary table:
+# a numeric string counts as its number, anything else is excluded (it once made `add` throw).
+printf '%s\n' '{"ts":"2026-10-04T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":"1","heal_first_decision":"PASS","heal_new_findings":"1","subtasks_completed":"x","files_changed":{"n":1}}' > "$FM/.supervisor/logs/fm-d.jsonl"
+printf '%s\n' '{"ts":"2026-10-05T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_first_decision":"PASS","heal_new_findings":"three","contract_violations":"two"}' > "$FM/.supervisor/logs/fm-e.jsonl"
+( cd "$FM" && bash "$BUILD" >/dev/null 2>&1 )
+grep -qF "| Sessions | 5 |" "$fd" 2>/dev/null && grep -qF "| Findings per item (new, all iterations) | 2 |" "$fd" 2>/dev/null \
+  && grep -qF "| Files changed (total) | 0 |" "$fd" 2>/dev/null \
+  && ok "non-integer heal_new_findings / counts: the Summary still renders (numeric string counted, junk excluded ⇒ (0+5+1)/3 = 2)" \
+  || no "Summary blanked or wrong by a non-integer field: $(sed -n '/## Summary/,/Completion/p' "$fd" 2>/dev/null | tr '\n' '~')"
+rm -f "$FM/.supervisor/logs/fm-d.jsonl" "$FM/.supervisor/logs/fm-e.jsonl"
 # a corpus carrying neither field → both render "not recorded", never 0
 rm -f "$FM/.supervisor/logs/fm-a.jsonl" "$FM/.supervisor/logs/fm-b.jsonl"; ( cd "$FM" && bash "$BUILD" >/dev/null 2>&1 )
 grep -qF "| First-pass PASS rate (Phase 4.5 iteration 1) | not recorded |" "$fd" 2>/dev/null && grep -qF "| Findings per item (new, all iterations) | not recorded |" "$fd" 2>/dev/null && ok "metric absent ⇒ 'not recorded'" || no "absent metric not rendered as 'not recorded'"

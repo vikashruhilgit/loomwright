@@ -311,7 +311,9 @@ jobs:
           [ -z "$dup" ] || { echo "::error::tests run by more than one shard:"; echo "$dup"; bad=1; }
           missing="$(env LC_ALL=C comm -23 "$RUNNER_TEMP/want.lst" "$RUNNER_TEMP/ran.lst")"
           [ -z "$missing" ] || { echo "::error::tests no shard ran:"; echo "$missing"; bad=1; }
-          extra="$(env LC_ALL=C comm -13 "$RUNNER_TEMP/want.lst" "$RUNNER_TEMP/ran.lst" | uniq)"
+          # deduped first: a test two shards ran is reported above, never ALSO as outside the suite
+          uniq "$RUNNER_TEMP/ran.lst" > "$RUNNER_TEMP/ran.uniq.lst"
+          extra="$(env LC_ALL=C comm -13 "$RUNNER_TEMP/want.lst" "$RUNNER_TEMP/ran.uniq.lst")"
           [ -z "$extra" ] || { echo "::error::manifest names tests outside the suite:"; echo "$extra"; bad=1; }
           red="$(awk -F'\t' '$1 != "0"' "$RUNNER_TEMP/ran.tsv")"
           [ -z "$red" ] || { echo "::error::non-zero results:"; echo "$red"; bad=1; }

@@ -28,7 +28,7 @@ WORKER_RESULT:
   self_review: object[]                # REQUIRED for status ∈ {completed, partial} at schema_version 2 unless no_changes: true; optional (shape-checked when present) for failed / no_changes. The worker's pre-hand-back self-review (agents/worker.md Step 5 item 5), one entry or more per part, every part at least once:
     - part: enum [checklist, repro, sweep, invariants]  # required — miss-class checklist · scratch-dir adversarial repro (code-reviewer §5 procedure) · old-wording sweep · `## Touched-file invariants` re-check
       result: enum [held, fixed, n/a]  # required
-      evidence: string                 # required, non-empty, not none/null — what was checked or fixed
+      evidence: string                 # required, non-empty, not none/null/n/a/na/- — what was checked or fixed
   summary: string                      # required — max 200 tokens, what was done
   error: string                        # conditional — required when status=failed, describes what went wrong
 ```

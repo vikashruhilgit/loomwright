@@ -4,10 +4,19 @@
 # unreadable input ⇒ `null` fields plus one stderr note. Never writes a file.
 #
 # USAGE
-#   phase-timing.sh --run <automate run file> [--logs-dir <dir>]
+#   phase-timing.sh --run <automate run file> [--item <path>] [--logs-dir <dir>]
 #                   [--ci-runs <dir> (--trees <file> | --git-range <base>..<head>) [--branch <name>]]
 #   phase-timing.sh --session <plugin session id> [--logs-dir <dir>]
 # Output: ONE compact JSON record on stdout.
+#
+# ITEM SCOPE (--run): a multi-item run file holds every item's Progress lines. The
+#   record covers ONE item's segment: --item <path> (the closed-out item), else the
+#   item of the LAST `picked` line. The segment runs from that item's first `picked`
+#   line not separated from its last one by a different item's `picked` (a resume
+#   re-pick of the same item stays in it) up to the next `picked` of a different
+#   item. pick, park, the session_id, the drains and every item span come from that
+#   segment only — never from another item's lines. --item never picked ⇒ the item
+#   spans are null; a file with no `picked` line at all is read whole.
 #
 # WHAT IT READS (hook- and script-written rows only — no prompt-written event,
 # no `phase_transition`, no model-computed duration):
@@ -31,7 +40,9 @@
 #   * Owner wait: `asked` = an ask_user `waiting` row (a permission_prompt row
 #     counts only when no ask_user row is within LOOMWRIGHT_LIFECYCLE_HEARTBEAT_DEBOUNCE
 #     s before it). `answered` = the `working`/`reason: answered` row paired by
-#     `tool_use_id` (else by order) ⇒ `exact: true`; on older logs, the next
+#     `tool_use_id` (else by order) ⇒ `exact: true` — ask_user asks ONLY: the
+#     answered row is written by emit-lifecycle.sh answered (the owner-question PostToolUse hook), so a
+#     permission_prompt ask never has one and always takes the fallback; on older logs, the next
 #     `working` row of ANY scope ⇒ `exact: false` (an upper bound — a background
 #     subagent heartbeat during a pending question would shorten it). Asks with
 #     no working row between them form ONE interval. Owner time = sum of
@@ -49,7 +60,7 @@
 set -u
 trap 'exit 0' EXIT
 
-RUN="" SESSION="" LOGS="" CI_RUNS="" TREES="" GIT_RANGE="" BRANCH=""
+RUN="" ITEM="" SESSION="" LOGS="" CI_RUNS="" TREES="" GIT_RANGE="" BRANCH=""
 # flagval <flag> [<next>...] — VAL = the flag's value, NSHIFT = args consumed.
 # A value that starts with `--` is never taken (an empty value rendered as
 # nothing would otherwise swallow the next flag): the flag keeps its default
@@ -64,10 +75,11 @@ flagval() {
 }
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run|--session|--logs-dir|--ci-runs|--trees|--git-range|--branch)
+    --run|--item|--session|--logs-dir|--ci-runs|--trees|--git-range|--branch)
       flagval "$@"
       case "$1" in
         --run) RUN="$VAL" ;;
+        --item) ITEM="$VAL" ;;
         --session) SESSION="$VAL" ;;
         --logs-dir) LOGS="$VAL" ;;
         --ci-runs) CI_RUNS="$VAL" ;;
@@ -89,7 +101,7 @@ elif [ -n "$TREES" ] && [ -r "$TREES" ]; then
   TREE_LIST="$(cat "$TREES" 2>/dev/null)"
 fi
 
-export PT_RUN="$RUN" PT_SESSION="$SESSION" PT_LOGS="$LOGS" PT_CI_RUNS="$CI_RUNS" \
+export PT_RUN="$RUN" PT_ITEM="$ITEM" PT_SESSION="$SESSION" PT_LOGS="$LOGS" PT_CI_RUNS="$CI_RUNS" \
   PT_TREE_LIST="$TREE_LIST" PT_HAVE_TREES="$([ -n "$GIT_RANGE$TREES" ] && echo 1 || echo 0)" \
   PT_BRANCH="$BRANCH" PT_DEBOUNCE="${LOOMWRIGHT_LIFECYCLE_HEARTBEAT_DEBOUNCE:-60}"
 
@@ -151,6 +163,30 @@ if run_path:
         m = re.search(r"run created \(session ([A-Za-z0-9_-]+)\)", t)
         if m and not cc_id:
             cc_id = m.group(1)
+    # Scope to ONE item's segment (ITEM SCOPE in the header): pick/park/session/drains
+    # of item N must never come from item 1's lines.
+    def picked_item(t):
+        m = re.match(r"picked (\S+)", t)
+        return re.sub(r"^\./", "", m.group(1)) if m else None
+    want = re.sub(r"^\./", "", os.environ.get("PT_ITEM", "").strip())
+    picks = [(i, picked_item(t)) for i, (ts, t) in enumerate(progress) if picked_item(t)]
+    if not want and picks:
+        want = picks[-1][1]
+    mine = [i for i, it in picks if it == want]
+    if mine:
+        hi_i = mine[-1]
+        lo_i = hi_i
+        for i, it in reversed([p for p in picks if p[0] < hi_i]):
+            if it != want:
+                break
+            lo_i = i
+        end_i = next((i for i, it in picks if i > hi_i and it != want), len(progress))
+        progress = progress[lo_i:end_i]
+    elif want:
+        note("no picked line for item: %s" % want)
+        progress = []
+    # no `picked` line at all and no --item: nothing to scope by — the whole file (as before)
+    for ts, t in progress:
         m = re.match(r"session_id ([A-Za-z0-9_-]+)", t)
         if m:
             session = m.group(1)
@@ -220,7 +256,10 @@ def owner_wait(lo, hi):
             continue            # a second ask before the first was answered → same interval
         ans, exact = None, False
         tid = a.get("tool_use_id")
-        for i, r in enumerate(answered):
+        # Only an ask_user ask has an `answered` row (`emit-lifecycle.sh answered`, on the
+        # owner-question PostToolUse hook, writes it); a permission_prompt ask paired by order would steal the NEXT question's
+        # answer and be reported exact. It takes the fallback (exact: false) instead.
+        for i, r in enumerate(answered if a.get("reason") == "ask_user" else []):
             if i in used or r["ts"] < a["ts"]:
                 continue
             if tid and r.get("tool_use_id") and r.get("tool_use_id") != tid:

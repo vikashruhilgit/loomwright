@@ -6,8 +6,11 @@
 # test-no-pipefail-grep-q.sh's per-file count RATCHET.
 #
 # WHAT IS COUNTED (a line-based heuristic — it cannot fully parse bash, and need not): a `sleep
-# <number>` statement on a non-comment line that is not a loop line (while/until/for) and not inside a
-# `do … done` body, outside heredoc bodies, and not a background holder (`sleep N &`). Every test is
+# <number>` statement — the number may carry a unit (`1s`, `0.1m`), omit its leading digit (`.5`) or be
+# quoted (`"1"`, `'0.5'`), and the command may be an absolute path (`/bin/sleep`) — on a non-comment
+# line that is not a loop line (while/until/for) and not inside a `do … done` body, outside heredoc
+# bodies, and not a background holder (`sleep N &`, `sleep N >/dev/null &`; an `&>`/`2>&1`
+# redirection is NOT backgrounding, so `sleep 1 &>/dev/null` IS counted). Every test is
 # made on the line's UNQUOTED text: a quoted span closed on the same line ("…", '…', $'…') is blanked
 # first, so a `do`, `<<WORD` or `sleep N` inside a string (a stub body, a message, a JSON fixture) is
 # neither a keyword nor a site, and `do`/`done` count only in keyword position (line start or after
@@ -19,7 +22,7 @@
 # late writer).
 # THE RATCHET (BASELINE below, "<count> <file>"): a count above its baseline, or a counted file not in
 # the baseline, is red; a count BELOW its baseline is red too, until the baseline is lowered — so it
-# only shrinks. A baseline row whose file is gone is red (stale). Controls (F1)-(F10) prove it fires.
+# only shrinks. A baseline row whose file is gone is red (stale). Controls (F1)-(F11) prove it fires.
 # Scope: loomwright/scripts/test-*.sh, loomwright/scripts/adapters/*/test-*.sh, scripts/test-*.sh.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -86,6 +89,16 @@ function scan(l,   out, i, n, c, j, k, m, sp, st, pd, so, si, b) {
   for (b = 2; b <= sp; b++) if (st[b] == "D") { out = so[b] substr(l, si[b]); break }
   CODE = out
 }
+# unqnum(l) — a quoted pure-number token ("1", '\''0.5'\'', "2s") loses its quotes, so `sleep "1"`
+# is the same site as `sleep 1`; scan() would otherwise blank it to "" like any other string.
+function unqnum(l,   out, m) {
+  out = ""
+  while (match(l, /["'\''][0-9]*\.?[0-9]+[smhd]?["'\'']/)) {
+    m = substr(l, RSTART + 1, RLENGTH - 2)
+    out = out substr(l, 1, RSTART - 1) m; l = substr(l, RSTART + RLENGTH)
+  }
+  return out l
+}
 function endfile() { if (leaks && FN != "" && (depth != 0 || hd != "")) printf "%s\tdepth=%d\theredoc=%s\n", FN, depth, hd }
 FNR == 1 { endfile(); hd = ""; depth = 0; FN = FILENAME }
 END { endfile() }
@@ -93,12 +106,16 @@ END { endfile() }
   line = $0
   if (hd != "") { t = line; sub(/^[ \t]+/, "", t); if (t == hd) hd = ""; next }
   if (line ~ /^[ \t]*#/) next
-  scan(line); if (HD != "") hd = HD
+  scan(unqnum(line)); if (HD != "") hd = HD
   nd = gsub(/(^|;|\)\))[ \t]*do([ \t;]|$)/, "&", CODE); nn = gsub(/(^|[;&])[ \t]*done([ \t;)|&<>]|$)/, "&", CODE)
   isloop = (CODE ~ /(^|[ \t;&|(])(while|until|for)[ \t(]/)
+  # SC: CODE with fd redirections that contain `&` (`2>&1`, `<&3`, `&>`, `&>>`) reduced to a plain
+  # `>`, so the only `&` left after a sleep is a real background / `&&` — `sleep 1 &>/dev/null` is a
+  # counted site, `sleep 1 >/dev/null &` a background holder.
+  SC = CODE; gsub(/[0-9]*[<>]&[0-9-]*/, " > ", SC); gsub(/&>>?/, " > ", SC)
   if (!leaks && line !~ /# fixed-sleep-ok:/ && depth == 0 && !isloop \
-      && CODE ~ /(^|[ \t;&|({])sleep[ \t]+[0-9][0-9.]*([ \t;|)}]|&&|$)/ \
-      && CODE !~ /(^|[ \t;&|({])sleep[ \t]+[0-9][0-9.]*[ \t]*&([^&]|$)/)
+      && SC ~ /(^|[ \t;&|({])(\/[A-Za-z0-9_.\/-]*\/)?sleep[ \t]+[0-9]*\.?[0-9]+[smhd]?([ \t;|)}<>&]|$)/ \
+      && SC !~ /(^|[ \t;&|({])(\/[A-Za-z0-9_.\/-]*\/)?sleep[ \t]+[0-9]*\.?[0-9]+[smhd]?[^;&|]*&([^&]|$)/)
     printf "%s\t%d\t%s\n", FILENAME, FNR, line
   depth += nd - nn; if (depth < 0) depth = 0
 }
@@ -193,6 +210,12 @@ printf '%s\n' 'while x; do' 'echo' > "$T/test-lk1.sh"; printf '%s\n' 'cat <<EOF'
 lk="$(fsr_leaks "$T/test-lk1.sh" "$T/test-lk2.sh" "$T/test-lk3.sh")"
 case "$lk" in *"test-lk1.sh	depth=1"*"test-lk2.sh	depth=0	heredoc=EOF"*) ok "(F10) the leak pass reports an unclosed do and an unterminated heredoc" ;; *) no "(F10) leak pass silent: [$lk]" ;; esac
 case "$lk" in *test-lk3.sh*) no "(F10) a balanced file reported as leaking" ;; *) ok "(F10) a file ending in its initial state is not reported" ;; esac
+# (F11) the forms the first counter missed (external review): a unit, a bare `.5`, a quoted number,
+# an absolute path, and an `&>` / `2>&1` redirect (a redirect, not backgrounding).
+for f11 in 'sleep 1s' 'sleep .5' 'sleep "1"' "sleep '0.5'" '/bin/sleep 1' 'sleep 1 &>/dev/null' 'sleep 1 2>&1'; do
+  [ "$(fx 'run &' "$f11" 'assert')" = 1 ] && ok "(F11) \`$f11\` is counted" || no "(F11) \`$f11\` not counted"
+done
+[ -z "$(fx 'sleep 1 >/dev/null &' 'sleep 1 &>/dev/null &' 'sleep 10s &' 'sleep "$n"')" ] && ok "(F11) a redirected background holder, a unit holder and a variable sleep are not counted" || no "(F11) background/variable counted"
 v="$(ratchet '2 a.sh' '3 a.sh
 1 b.sh')"
 case "$v" in *"NEW b.sh"*"UP a.sh"*|*"UP a.sh"*"NEW b.sh"*) ok "(F7) ratchet: a rise and a new file are both red" ;; *) no "(F7) ratchet missed: [$v]" ;; esac

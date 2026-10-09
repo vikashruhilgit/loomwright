@@ -255,7 +255,11 @@ if [ -n "$CALL_MAX" ]; then
     else
       DEADLINE=$((_now + BOUND))
       mkdir -p "$_dir" 2>/dev/null || true
-      printf '{"deadline":%s,"sha":"%s","scope":"%s"}\n' "$DEADLINE" "$SHA" "$_scope" > "$STATE_FILE" 2>/dev/null \
+      # jq -n --arg, never printf: --sha and the review pattern are free text, and a quote or
+      # backslash in either made the file unreadable — every --continue then failed closed and the
+      # TOTAL budget shrank to a single call.
+      "$JQ_BIN" -nc --argjson d "$DEADLINE" --arg sha "$SHA" --arg scope "$_scope" \
+          '{deadline: $d, sha: $sha, scope: $scope}' > "$STATE_FILE" 2>/dev/null \
         || log "could not persist the deadline to $STATE_FILE (a --continue call will fail closed)"
     fi
   fi

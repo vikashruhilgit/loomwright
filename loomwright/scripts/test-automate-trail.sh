@@ -727,7 +727,10 @@ run_closeout() { (cd "$P" && bash "$SPYD/automate-helpers.sh" closeout "$RF_REL"
 
 echo "== C. closeout =="
 closeout_fixture 4
-# iq02 T04: seed the item's session id + pick/park so closeout's item_timing has a record to write
+# iq02 T04: seed the item's session id + pick/park so closeout's item_timing has a record to write.
+# An EARLIER item (20 min, its own session) precedes it: the record must be THIS item's segment
+# (closeout passes --item), never the run's first pick/park (which read 1200 s, not 3600 s).
+printf -- '- 2026-10-01T08:00:00Z picked earlier.md\n- 2026-10-01T08:10:00Z session_id sess-early (earlier.md)\n- 2026-10-01T08:20:00Z parked awaiting_merge\n' >> "$P/$RF_REL"
 printf -- '- 2026-10-01T10:00:00Z picked %s\n- 2026-10-01T10:30:00Z session_id sess-it (%s)\n- 2026-10-01T11:00:00Z parked awaiting_merge\n' "$REQ" "$REQ" >> "$P/$RF_REL"
 mkdir -p "$P/.supervisor/logs"
 (cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout >/dev/null)   # stages trail blobs in the primary index
@@ -748,7 +751,7 @@ grep -q '^owner	automate-closeout:'"$RUN_ID"'$' "$SPYLOG.meta" && ok "trail-pr r
 [ ! -d "$P/.supervisor/run.lock" ] && ok "run lock released after closeout" || no "run lock leaked"
 grep -qE '^- .* closeout https://github.com/acme/widgets/pull/7: closeout: checked' "$P/$RF_REL" && ok "## Progress carries the step lines" || no "Progress lines missing"
 IT="$(jq -c 'select(.event=="item_timing")' "$P/.supervisor/logs/sess-it.jsonl" 2>/dev/null)"
-[ "$(printf '%s' "$IT" | jq -r '"\(.pr_url) \(.item.pick_to_park.seconds) \(has("ts"))"' 2>/dev/null)" = "$PRURL 3600 true" ] && ok "T04: closeout appends ONE item_timing event (phase-timing.sh --run) to the item's session log" || no "T04: item_timing missing/wrong: $IT"
+[ "$(printf '%s' "$IT" | jq -r '"\(.pr_url) \(.item.pick_to_park.seconds) \(has("ts"))"' 2>/dev/null)" = "$PRURL 3600 true" ] && ok "T04: closeout appends ONE item_timing event (phase-timing.sh --run --item: this item's segment, not the earlier item's) to the item's session log" || no "T04: item_timing missing/wrong: $IT"
 case "$out" in *item_timing*|*phase-timing*) no "T04: item_timing step printed output (closeout prints only closeout: lines)" ;; *) ok "T04: the item_timing append is silent" ;; esac
 
 echo "== C. closeout idempotent (AC11) =="

@@ -4068,6 +4068,14 @@ r13 worker-r13-none-evidence.md "status: completed" '""' '- self_review: [{part:
 '
 run_v "$V_WORKER" "$F"
 assert_fail "worker: rule 13 — evidence: none is not evidence (the parser's empty-scalar set)" "not none/null"
+# n/a is a valid RESULT but an empty-scalar EVIDENCE (is_empty_scalar rejects none/null/n/a/na/-):
+# the block reason must name every rejected placeholder, or the worker re-sends n/a and loops.
+for r13_ph in n/a na -; do
+  r13 worker-r13-ph-evidence.md "status: completed" '""' "- self_review: [{part: checklist, result: n/a, evidence: $r13_ph}, {part: repro, result: held, evidence: b}, {part: sweep, result: held, evidence: c}, {part: invariants, result: held, evidence: d}]
+"
+  run_v "$V_WORKER" "$F"
+  assert_fail "worker: rule 13 — evidence: $r13_ph is blocked and the reason names it as a rejected placeholder" "not none/null/n/a/na/-"
+done
 r13 worker-r13-empty-list.md "status: completed" '""' '- self_review: []
 '
 run_v "$V_WORKER" "$F"

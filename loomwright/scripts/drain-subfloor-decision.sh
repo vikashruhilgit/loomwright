@@ -78,6 +78,9 @@ say()    { printf '%s\n' "$1"; exit 0; }
 reason() { printf 'drain-subfloor-decision: %s\n' "$1" >&2; }
 
 # read_round <path|-> — prints the round JSON (validated object) or nothing.
+# Slurped (`-s`) so the WHOLE input must parse and hold EXACTLY ONE object: a
+# stream read would print a leading object and drop a parse error after it
+# (`{…} junk`, `{…}{…}`) — malformed input reads as missing (⇒ continue).
 read_round() {
   local src="${1:-}" body=""
   case "$src" in
@@ -85,7 +88,7 @@ read_round() {
     -) body="$(cat 2>/dev/null || true)" ;;
     *) [ -r "$src" ] || return 0; body="$(cat "$src" 2>/dev/null || true)" ;;
   esac
-  printf '%s' "$body" | "$JQ_BIN" -ce 'select(type == "object")' 2>/dev/null || true
+  printf '%s' "$body" | "$JQ_BIN" -cse 'if length == 1 and (.[0] | type) == "object" then .[0] else empty end' 2>/dev/null || true
 }
 
 # eligible_json <round-json> — prints `confirm` or `continue:<reason>`.

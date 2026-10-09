@@ -24,7 +24,7 @@
 #   M.  MUTATION CONTROLS against COPIES (gated non-empty + differs + bash -n):
 #       `<` → `<=` in the severity comparison; dropping the required=green test;
 #       dropping the `--…`-value refusal; restoring the whitespace `set --`
-#       split of the wait line.
+#       split of the wait line; restoring the stream (non-slurped) round read.
 
 set -uo pipefail
 
@@ -79,6 +79,11 @@ run_table() {
     "$(rf e6 '{"required_failing":[],"needs_human":[],"auto_fixable":[],"severity_floor":"HIGH"}')"
   expect "$s" "E7 garbage input ⇒ continue" continue eligible "$(rf e7 'not json {')"
   expect "$s" "E8 missing file ⇒ continue" continue eligible "$TMP/absent.json"
+  # a valid leading object followed by junk / a second object is malformed as a WHOLE (a stream
+  # read printed the leading object, so `decide` said READY on input that does not parse)
+  expect "$s" "E7b object + trailing junk ⇒ continue" continue eligible "$(rf e7b "$LOW_ROUND garbage{")"
+  expect "$s" "E7c two objects ⇒ continue" continue eligible "$(rf e7c "$LOW_ROUND{\"x\":1}")"
+  dec "$s" "E7d decide on object + trailing junk ⇒ continue (never READY)" continue "$TMP/e7b.json" "$GREEN" none
   expect "$s" "E9 no input arg ⇒ continue" continue eligible
   expect "$s" "E10 unknown finding severity ⇒ continue" continue eligible \
     "$(rf e10 '{"required_failing":[],"needs_human":[],"auto_fixable":[{"severity":"LOW"},{"severity":"TRIVIAL"}],"severity_floor":"HIGH"}')"
@@ -176,9 +181,12 @@ mutant() {
   if ! bash -n "$m" 2>/dev/null; then no "M $1 — mutant does not parse (vacuous control)"; return 1; fi
   printf '%s' "$m"
 }
+# stream: restore the pre-fix stream read (accepts a leading object followed by junk).
+STREAM_SPEC="stream|s/-cse 'if length == 1 and (.\\[0\\] | type) == \"object\" then .\\[0\\] else empty end'/-ce 'select(type == \"object\")'/"
 for spec in 'le|s/all(\. < \$floor)/all(. <= $floor)/' \
             'nogreen|s/^if \[ "\$required" != "green" \]; then   # GREEN-REQUIRED.*/if false; then/' \
             'flagguard|/^    --\*) reason "\$1 has no value/d' \
+            "$STREAM_SPEC" \
             'wsplit|s/   # RED-NAMES-REMAINDER$/; set -f; set -- $_wl; set +f; for tok in "$@"; do case "$tok" in sha=*) line_sha="${tok#sha=}" ;; required=*) required="${tok#required=}" ;; red_names=*) red_names="${tok#red_names=}" ;; esac; done/'; do
   name="${spec%%|*}"; expr="${spec#*|}"
   m="$(mutant "$name" "$expr")" || continue

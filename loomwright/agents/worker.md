@@ -126,7 +126,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
    - `repro` — for each load-bearing claim you introduced (a guard fires, a race is closed, a fallback is safe), run the SAME scratch-dir adversarial repro procedure as `agents/code-reviewer.md` §5: a `mktemp -d` dir with `HOME` relocated, never your worktree, and adversarial inputs (empty, missing field, concurrent, invalid).
    - `sweep` — for every claim, count or behaviour you changed, grep the repo for the OLD wording and update or re-point every restated copy.
    - `invariants` — re-read each entry of the brief's `## Touched-file invariants` for the files you edited and confirm it still holds (`n/a` when the brief has none).
-   Entry shape: `{part: checklist|repro|sweep|invariants, result: held|fixed|n/a, evidence: <non-empty string>}`, every part at least once. Distinct from the fix worker's `self_review:` clause in `FIX_RESULT.summary` (`skills/self-heal-advisory/SKILL.md`, `skills/review-heal/SKILL.md`) — same name, different contract.
+   Entry shape: `{part: checklist|repro|sweep|invariants, result: held|fixed|n/a, evidence: <non-empty string, never none/null/n/a/na/->}`, every part at least once. Distinct from the fix worker's `self_review:` clause in `FIX_RESULT.summary` (`skills/self-heal-advisory/SKILL.md`, `skills/review-heal/SKILL.md`) — same name, different contract.
 
 ### Step 5.5: Write Self-Summary File
 

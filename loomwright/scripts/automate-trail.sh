@@ -1440,7 +1440,9 @@ PROGRESS
   # and fail-SAFE — closeout prints only `closeout:` lines (CLOSEOUT_TABLE), so
   # no output here, and nothing here can change a step's verb or this
   # function's exit status.
-  ( _pt="$(bash "$(dirname "$HLP")/phase-timing.sh" --run "$rf_abs" 2>/dev/null)" || exit 0
+  # --item scopes the record to THIS item's Progress segment: without it a multi-item
+  # run's second close-out read the first item's pick/park/drains.
+  ( _pt="$(bash "$(dirname "$HLP")/phase-timing.sh" --run "$rf_abs" --item "$item" 2>/dev/null)" || exit 0
     _sid="$(printf '%s' "$_pt" | jq -r '.session_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
     [ -n "$_sid" ] || exit 0
     _logs="$(dirname "$(dirname "$rf_abs")")/logs"; [ -d "$_logs" ] || exit 0

@@ -52,22 +52,26 @@ for f in "${files[@]}"; do
   # each defaults to null and renders as "not reported this session".
   # -R + fromjson?: a malformed / non-object line anywhere in the log is skipped per line — a plain
   # `jq -c` aborts at it and drops the session_end after it (and the metrics it carries).
+  # num: every field the Summary SUMS is coerced here, once — a number stays, a numeric string
+  # becomes its number, anything else is null (excluded, "not recorded"). One non-numeric value
+  # in one session once made `add` throw and blanked the WHOLE Summary table.
   jq -Rc --arg sid "$sid" '
+    def num: if type == "number" then . elif type == "string" then (tonumber? // null) else null end;
     fromjson? | select(type=="object" and .event=="session_end")
     | {sid:$sid, ts:(.ts//""), status:(.status//"unknown"), branch:(.branch//""),
        pr_url:(.pr_url//""), heal_decision:(.heal_decision//""),
-       heal_iterations:(.heal_iterations//null), rubric_score:(.rubric_score//null),
-       subtasks_completed:(.subtasks_completed//null), files_changed:(.files_changed//null),
+       heal_iterations:(.heal_iterations|num), rubric_score:(.rubric_score//null),
+       subtasks_completed:(.subtasks_completed|num), files_changed:(.files_changed|num),
        plugin_version:(.plugin_version//"unknown"),
        contract_conformance_status:(.contract_conformance_status//null),
-       contract_violations:(.contract_violations//null),
+       contract_violations:(.contract_violations|num),
        benchmark_status:(.benchmark_status//null),
        benchmark_metric:(.benchmark_metric//null),
        benchmark_value:(.benchmark_value//null),
        benchmark_delta:(.benchmark_delta//null),
        knowledge_sources_used:(.knowledge_sources_used//[]),
        heal_first_decision:(.heal_first_decision//null),
-       heal_new_findings:(.heal_new_findings//null)}
+       heal_new_findings:(.heal_new_findings|num)}
   ' "$f" 2>/dev/null | tail -1 >> "$records"
 done
 

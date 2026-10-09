@@ -33,6 +33,8 @@
 #  25-27. (fix-now A) a first call that finds an UNEXPIRED deadline for its key
 #      keeps it (a dropped --continue never earns a fresh total) and warns;
 #      --restart replaces it; an expired one is replaced; gated mutant.
+#  28. (external review) a quote/backslash in the review pattern keeps the
+#      state file valid JSON and --continue resumable; printf-built mutant.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -620,9 +622,37 @@ else
   no "case 27 mutant invalid (empty / identical / bash -n)"
 fi
 
+echo "== 28. a quote / backslash in the review pattern keeps the state readable (jq-built, never printf) =="
+# The pattern and --sha are free text: a printf-built state file broke JSON on `"` or `\`, so every
+# --continue failed closed (unreadable_deadline) and the TOTAL budget shrank to one call.
+D28="$(fresh_stub_dir)"; write_never_settles_stub "$D28"
+P28='cl"aude\rev*'
+# st28 <script> — first call then --continue with the hostile pattern; prints the continue line.
+st28() {
+  rm -rf "$D28/.supervisor"
+  wfc "$D28" "$1" "$PR" --sha "$SHA" --bound 60 --call-max 1 --interval 1 --review-check-pattern "$P28" >/dev/null
+  wfc "$D28" "$1" "$PR" --sha "$SHA" --bound 60 --call-max 1 --interval 1 --review-check-pattern "$P28" --continue
+}
+OUT28="$(st28 "$SUT")"
+SF28="$(find "$D28/.supervisor/check-wait" -name '*.json' 2>/dev/null | head -n 1)"
+[ -n "$SF28" ] && [ "$(jq -r '.scope' "$SF28" 2>/dev/null)" = "review:$P28" ] && ok "the state file is valid JSON and round-trips the pattern" || no "state file unreadable: $(cat "$SF28" 2>/dev/null)"
+case "$OUT28" in "CONTINUE sha=$SHA remaining="*) ok "--continue resumes the persisted deadline ($OUT28)" ;; *) no "hostile pattern --continue: '$OUT28'" ;; esac
+M28="$D28/mut-printf.sh"   # MUTATION CONTROL: the printf-built state file (the pre-fix line)
+python3 - "$SUT" "$M28" <<'PYEOF'
+import re, sys
+s = open(sys.argv[1]).read()
+s = re.sub(r'"\$JQ_BIN" -nc --argjson d "\$DEADLINE" --arg sha "\$SHA" --arg scope "\$_scope" \\\n\s*\'\{deadline: \$d, sha: \$sha, scope: \$scope\}\'',
+           "printf '{\"deadline\":%s,\"sha\":\"%s\",\"scope\":\"%s\"}\\n' \"$DEADLINE\" \"$SHA\" \"$_scope\"", s, count=1)
+open(sys.argv[2], "w").write(s)
+PYEOF
+if [ -s "$M28" ] && ! cmp -s "$SUT" "$M28" && bash -n "$M28"; then
+  case "$(st28 "$M28")" in *"pending=unreadable_deadline") ok "mutation control: the printf-built state fails the hostile-pattern --continue closed" ;;
+    *) no "case 28 mutation control did NOT discriminate" ;; esac
+else no "case 28 mutant invalid (empty / identical / bash -n)"; fi
+
 echo "== 24. no state leaked into this test's cwd =="
 if [ "$LEAK_BEFORE" -eq 1 ] || [ ! -d .supervisor/check-wait ]; then ok "cwd has no new .supervisor/check-wait"; else no "state LEAKED into $(pwd)/.supervisor/check-wait"; fi
-rm -rf "$D18" "$D20" "$D21" "$D22" "$D25" "$D26"
+rm -rf "$D18" "$D20" "$D21" "$D22" "$D25" "$D26" "$D28"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

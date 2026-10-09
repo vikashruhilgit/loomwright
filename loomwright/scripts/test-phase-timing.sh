@@ -70,6 +70,41 @@ mkrun "$T/o6" "$L" '{"event":"agent_lifecycle","ts":"2026-10-01T10:50:00Z","stat
 OUT="$(bash "$PT" --run "$T/o6/automate/r.md" 2>/dev/null)"
 [ "$(q '.item.owner_seconds')" = "600" ] && [ "$(q '.item.machine_seconds')" = "3000" ] && [ "$(q '.item.pick_to_park.owner_waits[0].exact')" = "false" ] && ok "fallback working row after the park ⇒ clamped too: owner 600, machine 3000" || no "clamp fallback: $(q '.item.pick_to_park')"
 O5="$T/o5/automate/r.md"
+# a permission_prompt ask has no `answered` row (only emit-lifecycle.sh answered writes one, on the owner-question hook):
+# it must take the fallback (exact: false), never steal the NEXT ask_user question's answer.
+mkrun "$T/o7" "$L" '{"event":"agent_lifecycle","ts":"2026-10-01T10:05:00Z","state":"waiting","reason":"permission_prompt"}' \
+  '{"event":"agent_lifecycle","ts":"2026-10-01T10:06:00Z","state":"working"}' \
+  '{"event":"agent_lifecycle","ts":"2026-10-01T10:20:00Z","state":"waiting","reason":"ask_user"}' \
+  '{"event":"agent_lifecycle","ts":"2026-10-01T10:30:00Z","state":"working","reason":"answered"}' "$E"
+O7="$T/o7/automate/r.md"
+OUT="$(bash "$PT" --run "$O7" 2>/dev/null)"
+[ "$(q '[.item.pick_to_park.owner_waits[]|"\(.seconds):\(.exact)"]|join(",")')" = "60:false,600:true" ] && [ "$(q '.item.owner_seconds')" = "660" ] \
+  && ok "id-less permission_prompt ⇒ fallback 60 s exact: false; the later ask_user keeps its own answer (600 s exact)" || no "permission_prompt pairing: $(q '.item.pick_to_park.owner_waits')"
+
+echo "== I. item scope: a multi-item run file reports ONE item's segment =="
+mkdir -p "$T/i/automate" "$T/i/logs"
+printf '%s\n' '## Progress' '- 2026-10-01T09:00:00Z picked a.md' '- 2026-10-01T09:30:00Z session_id s-a (a.md)' \
+  '- 2026-10-01T09:32:00Z owned drain started' '- 2026-10-01T09:40:00Z drain READY → awaiting_merge' '- 2026-10-01T09:50:00Z parked awaiting_merge' \
+  '- 2026-10-01T11:00:00Z picked b.md' '- 2026-10-01T11:30:00Z session_id s-b (b.md)' '- 2026-10-01T11:32:00Z owned drain started' \
+  '- 2026-10-01T11:50:00Z drain READY → awaiting_merge' '- 2026-10-01T12:00:00Z parked awaiting_merge' > "$T/i/automate/r.md"
+I2="$T/i/automate/r.md"
+pt_item() { q '"\(.session_id) \(.item.pick) \(.item.park) \(.item.pick_to_park.seconds) \([.item.owned_drains[].start]|join(","))"'; }
+B_WANT="s-b 2026-10-01T11:00:00Z 2026-10-01T12:00:00Z 3600 2026-10-01T11:32:00Z"
+OUT="$(bash "$PT" --run "$I2" --item b.md 2>/dev/null)"
+[ "$(pt_item)" = "$B_WANT" ] && ok "--item b.md ⇒ item 2's pick/park/session/drain only (not item 1's)" || no "item 2 scope: $(pt_item)"
+OUT="$(bash "$PT" --run "$I2" --item ./a.md 2>/dev/null)"
+[ "$(pt_item)" = "s-a 2026-10-01T09:00:00Z 2026-10-01T09:50:00Z 3000 2026-10-01T09:32:00Z" ] && ok "--item ./a.md ⇒ item 1's segment (leading ./ ignored)" || no "item 1 scope: $(pt_item)"
+OUT="$(bash "$PT" --run "$I2" 2>/dev/null)"
+[ "$(pt_item)" = "$B_WANT" ] && ok "no --item ⇒ the LAST picked item's segment" || no "default scope: $(pt_item)"
+OUT="$(bash "$PT" --run "$I2" --item c.md 2>/dev/null)"; rc=$?
+[ "$rc" = 0 ] && [ "$(q '.item.pick_to_park.seconds')" = "null" ] && [ "$(q '.item.owned_drains|length')" = "0" ] && ok "--item never picked ⇒ null item spans, exit 0" || no "absent item: rc=$rc $(pt_item)"
+mkdir -p "$T/i0/automate" "$T/i0/logs"; printf '%s\n' '## Progress' '- 2026-10-01T10:05:00Z session_id s-i0' > "$T/i0/automate/r.md"
+OUT="$(bash "$PT" --run "$T/i0/automate/r.md" 2>/dev/null)"
+[ "$(q '.session_id')" = "s-i0" ] && ok "a run file with no picked line at all is read whole (session_id kept)" || no "no-pick file lost its session: $(q '.session_id')"
+printf '%s\n' '- 2026-10-01T12:30:00Z picked b.md (resume)' '- 2026-10-01T12:40:00Z session_id s-b2 (b.md)' > "$T/i/automate/r2.tail"
+cat "$I2" "$T/i/automate/r2.tail" > "$T/i/automate/r2.md"
+OUT="$(bash "$PT" --run "$T/i/automate/r2.md" --item b.md 2>/dev/null)"
+[ "$(pt_item)" = "s-b2 2026-10-01T11:00:00Z 2026-10-01T12:00:00Z 3600 2026-10-01T11:32:00Z" ] && ok "a resume re-pick of the same item stays in its segment (first pick kept, latest session_id)" || no "re-pick scope: $(pt_item)"
 echo "== N. missing endpoint ⇒ null, never 0; stranded close-out ⇒ null completion =="
 mkdir -p "$T/n/automate" "$T/n/logs"
 printf '## Progress\n- 2026-10-01T10:00:00Z picked x.md\n- 2026-10-01T10:05:00Z session_id s-n\n' > "$T/n/automate/r.md"
@@ -111,7 +146,7 @@ last_flag_exits() {
   if wait_for_pid_gone "$pid" "$3" 2>/dev/null; then wait "$pid"; rc=$?; [ "$rc" = 0 ]; return; fi
   kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; return 1
 }
-for flag in --run --session --logs-dir --ci-runs --trees --git-range --branch; do
+for flag in --run --item --session --logs-dir --ci-runs --trees --git-range --branch; do
   last_flag_exits "$PT" "$flag" 10 && ok "$flag as the last argument ⇒ exit 0 within a bounded wait" || no "$flag as the last argument hung or exited non-zero"
 done
 # (fix-now C class) a value-less flag never swallows the next `--flag`: `--logs-dir --run <file>`
@@ -156,6 +191,17 @@ if [ -n "$M6" ]; then
   OUT="$(bash "$M6" --logs-dir --run "$RUNF" 2>/dev/null)"
   [ "$(q '.kind')" = "item" ] && no "M6 dropping the --… value refusal stayed green" || ok "M6 drop the --… value refusal ⇒ --logs-dir swallows --run (kind $(q '.kind')) — red"
 else no "M6 mutant not built"; fi
+
+M7="$(mutant noscope '        progress = progress[lo_i:end_i]' '        pass')"
+if [ -n "$M7" ]; then
+  OUT="$(bash "$M7" --run "$I2" --item b.md 2>/dev/null)"
+  [ "$(pt_item)" = "$B_WANT" ] && no "M7 dropping the item-segment scope stayed green" || ok "M7 drop the item-segment scope ⇒ item 2 reads item 1's spans ($(pt_item)) — red"
+else no "M7 mutant not built"; fi
+M8="$(mutant pairany 'for i, r in enumerate(answered if a.get("reason") == "ask_user" else []):' 'for i, r in enumerate(answered):')"
+if [ -n "$M8" ]; then
+  OUT="$(bash "$M8" --run "$O7" 2>/dev/null)"
+  [ "$(q '.item.owner_seconds')" = "660" ] && no "M8 pairing a permission_prompt with an answered row stayed green" || ok "M8 pair permission_prompt by order ⇒ it steals the ask_user answer (owner $(q '.item.owner_seconds')) — red"
+else no "M8 mutant not built"; fi
 
 M5="$(mutant noclamp '            end = hi' '            end = ans')"
 if [ -n "$M5" ]; then

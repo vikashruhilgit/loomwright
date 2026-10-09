@@ -51,7 +51,8 @@
 #        (a red one too); MUTATION CONTROL: a split that drops one test breaks the union check
 #   (AG) iq02 T08: the REAL ci.yml `ci` job's inline aggregation block, extracted and run against
 #        manifests built from the real shards: all green ⇒ 0; a dropped manifest, a test no shard
-#        ran, a test run twice, a non-zero rc, a failed or skipped needed job ⇒ exit 1, each named
+#        ran, a test run twice (named once — never also as outside the suite), a test outside the
+#        suite, a non-zero rc, a failed or skipped needed job ⇒ exit 1, each named
 #   (EM) `# run-self-tests: early`: --select-marked early prints the marked subset in input order and
 #        runs nothing; in a default run the marker is inert (the test stays concurrent); a test
 #        marked both early and serial ⇒ exit 1, named (default run and --select-marked)
@@ -490,6 +491,9 @@ if [ -s "$T/agg.sh" ] && grep -q 'comm -23' "$T/agg.sh" && bash -n "$T/agg.sh"; 
   [ "$rc" -eq 1 ] && grep -q "tests no shard ran" "$T/agg.out" && grep -qxF "$gone" "$T/agg.out" && ok "(AG) a test no shard ran ⇒ ci fails, naming it ($gone)" || no "(AG) missing: rc=$rc $(cat "$T/agg.out")"
   agg_setup; head -1 "$m1" >> "$AGM/self-test-manifest-2/self-test-manifest.tsv"; agg_run success success; rc=$?
   [ "$rc" -eq 1 ] && grep -q "more than one shard" "$T/agg.out" && ok "(AG) a test run by two shards ⇒ ci fails" || no "(AG) duplicate: rc=$rc $(cat "$T/agg.out")"
+  grep -q "outside the suite" "$T/agg.out" && no "(AG) a duplicate is ALSO misreported as a test outside the suite: $(cat "$T/agg.out")" || ok "(AG) a duplicate is reported once (never also as 'outside the suite')"
+  agg_setup; printf '0\t1\tloomwright/scripts/test-not-in-suite.sh\n' >> "$m1"; agg_run success success; rc=$?
+  [ "$rc" -eq 1 ] && grep -q "outside the suite" "$T/agg.out" && grep -qxF "loomwright/scripts/test-not-in-suite.sh" "$T/agg.out" && ok "(AG) a manifest test outside the suite ⇒ ci fails, naming it" || no "(AG) extra: rc=$rc $(cat "$T/agg.out")"
   agg_setup; sed -i.bak '1s/^0/3/' "$m1"; agg_run success success; rc=$?
   [ "$rc" -eq 1 ] && grep -q "non-zero results" "$T/agg.out" && ok "(AG) a non-zero rc in a manifest ⇒ ci fails" || no "(AG) red rc: rc=$rc $(cat "$T/agg.out")"
   agg_setup; agg_run success failure; rc=$?

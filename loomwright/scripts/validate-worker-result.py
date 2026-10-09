@@ -271,7 +271,8 @@ SELF_REVIEW_RESULTS = ("held", "fixed", "n/a")
 _SELF_REVIEW_SHAPE = (
     "a one-line array of {part, result, evidence} entries, part in "
     "checklist|repro|sweep|invariants, result in held|fixed|n/a, evidence a "
-    "non-empty string (not none/null), every part at least once — e.g. self_review: "
+    "non-empty string (not none/null/n/a/na/- — n/a is a valid result, never "
+    "evidence), every part at least once — e.g. self_review: "
     "[{part: checklist, result: held, evidence: \"...\"}, {part: repro, ...}, "
     "{part: sweep, ...}, {part: invariants, ...}] (agents/worker.md Step 5 "
     "item 5; rule 13)"
