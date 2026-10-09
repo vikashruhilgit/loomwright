@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# run-self-tests: serial
-# ^ STILL serial pending proof: (x) now measures interleaved child CPU time (iq02 T06); unmark only after 10/10 green loaded-pool runs (evidence iq02/T06.md).
 # test-build-floor.sh - self-tests for build-floor.sh, the read-only floor projector.
 #
 # HERMETIC BY CONSTRUCTION, and that is the load-bearing property of this file.
@@ -2741,8 +2739,8 @@ PERF_MAX_UNITS=180           # primary arm: see the calibration note below
 # CPU time does not count the time other processes hold the CPU, and interleaving puts both samples
 # under the same load, so the file now runs in the concurrent pool. CPU-time calibration (this
 # machine, 2026-10-09): consolidated readers 87 units idle; pre-consolidation code (2b41286) ~460
-# units (2800 ms vs 528 ms CPU in the historical arm). The loaded-pool range is in the iq02 T06
-# evidence. The 180 bound is unchanged: it still sits well above the first and well below the second.
+# units (2800 ms vs 528 ms CPU in the historical arm); in a loaded 6-job pool it measured 87-90 units
+# across the T06 proof runs. The 180 bound is unchanged: well above the first, well below the second.
 #
 # Both numbers move with the machine, so a slow or loaded runner cancels out - exactly what
 # an absolute millisecond ceiling cannot do. Measured on the maintainer tree: the

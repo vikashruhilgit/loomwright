@@ -76,7 +76,7 @@ BASELINE='
 1 loomwright/scripts/test-run-self-tests.sh
 2 loomwright/scripts/test-session-resume.sh
 1 loomwright/scripts/test-set-otel-resource-attrs.sh
-2 loomwright/scripts/test-setup-ui.sh
+1 loomwright/scripts/test-setup-ui.sh
 1 loomwright/scripts/test-token-ledger.sh
 1 loomwright/scripts/test-verify-queue.sh
 15 loomwright/scripts/test-verify-walkthrough.sh

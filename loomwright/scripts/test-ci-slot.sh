@@ -88,7 +88,6 @@
 #             is never folded into — the caller is counted and waits (N=1) — while an unreadable
 #             boot time keeps today's fold. MUTATION CONTROL: drop repo_fold's boot-time skip ⇒ the
 #             caller folds into the pre-boot record and (G15) fails.
-# run-self-tests: serial
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 

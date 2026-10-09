@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# run-self-tests: serial
-# ^ STILL serial pending proof: (M1) now feeds the PTY only once the prompt is on screen (iq02 T06); unmark only after 10/10 green loaded-pool runs (evidence iq02/T06.md).
 # test-harvest-conventions.sh — self-tests for harvest-conventions.sh, the READ-ONLY distiller that
 # turns ledger `convention_mismatch` findings + the agent-memory corpus into a bounded `.agent/rules/`
 # proposal batch. Mirrors the test-add-rule.sh harness convention: isolated temp git repos via
