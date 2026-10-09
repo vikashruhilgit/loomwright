@@ -9,6 +9,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PT="$HERE/phase-timing.sh"
 FX="$HERE/fixtures/phase-timing/replay-2026-10-08"
 RUNF="$FX/automate/automate-2026-10-08-121222.md"
+# session logs live in session-logs/, not logs/: the root .gitignore ignores every logs/ dir
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
@@ -18,7 +19,7 @@ near() { [ -n "$1" ] && [ "$1" != "null" ] && [ $(( $1 > $2 ? $1 - $2 : $2 - $1 
 q() { printf '%s' "$OUT" | jq -r "$1" 2>/dev/null; }
 
 echo "== R. replay of automate-2026-10-08-121222 (PR #435) — each known span within 60 s =="
-OUT="$(bash "$PT" --run "$RUNF" 2>/dev/null)"
+OUT="$(bash "$PT" --run "$RUNF" --logs-dir "$FX/session-logs" 2>/dev/null)"
 near "$(q '.item.pick_to_first_ready.seconds')" 7480 && ok "pick → drain READY ≈ 2 h 04 m 40 s ($(q '.item.pick_to_first_ready.seconds') s)" || no "pick → READY: $(q '.item.pick_to_first_ready.seconds')"
 near "$(q '.item.post_ready.seconds')" 11245 && ok "post-READY ≈ 3 h 07 m 25 s" || no "post-READY: $(q '.item.post_ready.seconds')"
 [ "$(q '[.item.owned_drains[]|select(.fix_now)][0]|"\(.start) \(.end)"')" = "2026-10-08T15:08:30Z 2026-10-08T16:41:29Z" ] && ok "fix-now re-drain 15:08:30 → 16:41:29" || no "re-drain: $(q '.item.owned_drains')"
@@ -71,15 +72,15 @@ printf 'ci-local: log x\nci-local: PASS after 600s\n' > "$CI/aaaatree-base-Darwi
 printf 'ci-local: log x\nci-local: PASS after 500s\n' > "$CI/5bdf5a4other-base-Darwin-20261008T142600Z-2.log"
 printf 'ci-local: log x\nci-local: head bbbbsha feature/pa24\nci-local: FAIL after 30s\n' > "$CI/3e7bc89dirty-base-Darwin-20261008T142900Z-3.log"
 printf 'aaaatree\nbbbbsha\n' > "$T/trees"
-OUT="$(bash "$PT" --run "$RUNF" --ci-runs "$CI" --trees "$T/trees" 2>/dev/null)"
+OUT="$(bash "$PT" --run "$RUNF" --logs-dir "$FX/session-logs" --ci-runs "$CI" --trees "$T/trees" 2>/dev/null)"
 [ "$(q '[.ci_runs[].log]|map(.[0:8])|join(",")')" = "3e7bc89d,aaaatree" ] && [ "$(q '.ci_unattributed')" = "1" ] && ok "tree + HEAD attributed; the #438-tree run inside the window is unattributed" || no "ci attribution: $(q '.ci_runs') unattributed=$(q '.ci_unattributed')"
 [ "$(q '[.ci_runs[]|select(.log|startswith("aaaa"))][0]|"\(.start) \(.wall_seconds) \(.verdict)"')" = "2026-10-08T13:30:00Z 600 PASS" ] && ok "a run carries start, wall seconds, verdict" || no "run fields: $(q '.ci_runs')"
-OUT="$(bash "$PT" --run "$RUNF" --ci-runs "$CI" 2>/dev/null)"
+OUT="$(bash "$PT" --run "$RUNF" --logs-dir "$FX/session-logs" --ci-runs "$CI" 2>/dev/null)"
 [ "$(q '.ci_runs')" = "null" ] && ok "no tree list ⇒ ci_runs null (incomplete), not []" || no "no trees: $(q '.ci_runs')"
 CIOUT_ARGS="--ci-runs $CI --trees $T/trees"
 CI2="$T/ci2"; mkdir -p "$CI2"
 printf 'ci-local: log x\nci-local: head bbbbsha feature/pa24\nci-local --affected: PASS after 351s — 25 of 157\naffected-only — not a pre-push gate\n' > "$CI2/cccctree-base-Darwin-20261009T101047Z-4-affected.log"
-OUT="$(bash "$PT" --run "$RUNF" --ci-runs "$CI2" --trees "$T/trees" 2>/dev/null)"
+OUT="$(bash "$PT" --run "$RUNF" --logs-dir "$FX/session-logs" --ci-runs "$CI2" --trees "$T/trees" 2>/dev/null)"
 [ "$(q '.ci_runs[0]|"\(.wall_seconds) \(.verdict)"')" = "351 PASS" ] && ok "an --affected log (advisory line after the verdict) reads PASS 351 s, attributed by its HEAD line" || no "affected log: $(q '.ci_runs')"
 
 echo "== F. fail-SAFE =="
@@ -100,7 +101,7 @@ PYEOF
 }
 M1="$(mutant nojoin 'cc_rows = read_jsonl(os.path.join(logs, cc_id + ".jsonl")) if cc_id else None' 'cc_rows = None')"
 if [ -n "$M1" ]; then
-  OUT="$(bash "$M1" --run "$RUNF" 2>/dev/null)"
+  OUT="$(bash "$M1" --run "$RUNF" --logs-dir "$FX/session-logs" 2>/dev/null)"
   if near "$(q '.item.pick_to_autonomous_start.plan_review.seconds')" 480 && near "$(q '.item.pick_to_autonomous_start.owner_seconds')" 600; then no "M1 dropping the cc_session_id join left the 19-minute split green"; else ok "M1 drop the cc_session_id join ⇒ the 19-minute split goes red"; fi
 else no "M1 mutant not built (empty / identical / bash -n)"; fi
 M2="$(mutant zero 'secs = (eb - ea) if (ea is not None and eb is not None and eb >= ea) else None' 'secs = (eb - ea) if (ea is not None and eb is not None and eb >= ea) else 0')"
@@ -111,7 +112,7 @@ else no "M2 mutant not built"; fi
 M3="$(mutant window 'if tree in keys or (head and head in keys) or (branch and hb == branch):' 'if start and "2026-10-08T12:12:45Z" <= start <= "2026-10-08T17:24:50Z":')"
 if [ -n "$M3" ]; then
   # shellcheck disable=SC2086
-  OUT="$(bash "$M3" --run "$RUNF" $CIOUT_ARGS 2>/dev/null)"
+  OUT="$(bash "$M3" --run "$RUNF" --logs-dir "$FX/session-logs" $CIOUT_ARGS 2>/dev/null)"
   if q '[.ci_runs[].log]|join(",")' | grep -q '^.*5bdf5a4'; then ok "M3 time-window attribution ⇒ the 5bdf5a4 (#438) run appears — red"; else no "M3 time-window attribution stayed green"; fi
 else no "M3 mutant not built"; fi
 
