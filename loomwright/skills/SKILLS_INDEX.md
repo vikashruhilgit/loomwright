@@ -10,7 +10,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 |------------|-----------|-----------------|------------|---------|--------------|
 | Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload) | ~800 | 1.7.0 | 2026-10-09 |
 | Workflow Management | `workflow-management/` | — (removed outright, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") | ~1,200 | 1.2.2 | 2026-09-28 |
-| Async Orchestration | `async-orchestration/` | Supervisor (on-demand Read at Phase 2 PLAN entry, refreshed at Phase 4 FINALIZE entry — deliberately NOT preloaded) | ~1,600 | 1.6.2 | 2026-10-09 |
+| Async Orchestration | `async-orchestration/` | Supervisor (on-demand Read at Phase 2 PLAN entry, refreshed at Phase 4 FINALIZE entry — deliberately NOT preloaded) | ~1,600 | 1.6.3 | 2026-10-10 |
 | State Management | `state-management/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded) | ~1,500 | 1.6.0 | 2026-10-09 |
 | Context Summarization | `context-summarization/` | — (removed outright, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") | ~600 | 1.0.0 | 2026-03 |
 | Context Setup | `context-setup/` | Launch Pad (preload) | ~500 | 1.1.0 | 2026-08-17 |
@@ -21,7 +21,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.0.0 | 2026-04 |
 | Memory Tool | `memory-tool/` | — (reference) | ~500 | 1.0.0 | 2026-05-10 |
 | Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,800 [^al-tokens] | 1.5.0 | 2026-09-22 |
-| Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.15.0 | 2026-10-10 |
+| Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.16.0 | 2026-10-10 |
 | Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.11.0 | 2026-10-09 |
 | Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded; Part 1 advisory machinery + Part 2 full Phase 4.5 loop protocol) | ~7,000 | 1.11.1 | 2026-10-10 |
 | Preflight Sync | `preflight-sync/` | Supervisor (on-demand Read at Phase 1.5 entry — deliberately NOT preloaded) | ~1,900 | 1.3.0 | 2026-09-24 |

@@ -87,8 +87,37 @@ queued (- [ ]) → running → rate_limit (parks, no PR yet) | pr-open → await
 - `escalated` **parks** the run (`## Status: paused`, `pause_reason: escalated`) and never opens a second PR (single-open-PR invariant — `skills/automate-loop/SKILL.md` §8/§9).
 - `rate_limit` **parks** the run (`## Status: paused`, `pause_reason: rate_limit`) BEFORE a PR ever exists — RUN itself failed on a rate-limit `StopFailure` (`skills/automate-loop/SKILL.md` §6 "Rate-limit park"). It resumes through the SAME RESUME reconcile as `awaiting_merge`/`escalated` (§4) — no second park vocabulary, no second reconcile path.
 - `drain_died` **parks** the run (`## Status: paused`, `pause_reason: drain_died`, `owned_drain_result: died`) when RECONCILE (§4) finds a `.died` marker for this item's PR from a DETACHED `dispatch-pr-review.sh` drain that exited without ever producing a `REVIEW_HEAL_RESULT` — **never `awaiting_merge`**, since a died drain never reached a real READY/ESCALATED verdict. Resolves through the same RESUME reconcile path as the other parks.
-- `ready_for_release` **parks a lane** (`## Status: paused`, `pause_reason: ready_for_release`) — written instead of `awaiting_merge` by a READY gate inside a `--parallel N>1` lane only: no merge watcher is armed, the notify says "do not merge yet — wave open", no `trail-pr` runs (it is a park). Until item 21 Part A lands the coordinator converts it to `awaiting_merge` at wave end (`skills/automate-loop/SKILL.md` §14).
+- `ready_for_release` **parks a lane** (`## Status: paused`, `pause_reason: ready_for_release`) — written instead of `awaiting_merge` by a READY gate inside a `--parallel N>1` lane only: no merge watcher is armed, the notify says "do not merge yet — wave open", no `trail-pr` runs (it is a park). At wave end the coordinator converts it to `awaiting_merge` (`lane-convert-ready`); after the owner merges, the lane run file is closed out and finalized `## Status: done` and `fleet-closeout` checks the item off the parent Queue (`skills/automate-loop/SKILL.md` §14 "Terminal park" and "Wave close").
 - `skipped`/`abandoned` items are written `- [x] <path>  # skipped|abandoned: <reason>` (above) so they are never re-picked and do not block `done`.
+
+### `--parallel` `## Progress` lines (parallel-automate/21)
+
+Appended (never rewritten), like every `## Progress` line. Each is written only on a `--parallel N>1` run; a sequential run never writes one. Authority: `skills/automate-loop/SKILL.md` §2 "`--limit N`" and §14 "Wave close" / "Policy answers".
+
+| Line | Run file | Written by | Meaning |
+|---|---|---|---|
+| `skipped AUT-QUEUE: lane backlog written by lane-create from the owner's --parallel command` | lane | the lane's engine at Queue confirm | The Queue confirm (gate `AUT-QUEUE`) was not asked: the lane's source is the one-line backlog `lane-create` wrote. |
+| `policy answer: <code> → <label> (policy_sha <first 12>)` | lane | the lane's own `relay-hook` | A catalogued `allowed` gate was answered from the lane's carried policy (exact lookup) instead of being relayed. Fail-SAFE: a failed append never blocks the answer. |
+| `wave policy: <code>=<label>, …` | parent | `lane-policy.sh wave-set` | The owner's per-wave policy answers, recorded when `.supervisor/automate/<run_id>.wave-policy.json` was written. |
+| `fleet closeout: <lane> <item> done (PR <url>)` | parent | `fleet-closeout` | The lane's run file reads `## Status: done`; its item was checked off the parent `## Queue`. |
+| `fleet closeout leaks: <first line>` | parent | `fleet-closeout` | The first line of `lane-status <parent_runfile> --leaks` after the last lane was removed (`leaks: none` on a clean wave). |
+| `wave_paused: main_red after <sha>` | parent | `fleet-closeout` | `origin/<base>` HEAD's `ci` check concluded `failure` at wave close. Informational: no revert, no block, never a `pause_reason`. |
+
+### Lane inbox answer file (`<lane>/.supervisor/inbox/answers/<tool_use_id>.json`)
+
+One JSON file per answered lane question, beside its question file `inbox/questions/<tool_use_id>.json` (`{id, asked_at, questions}`). Two writers, one shape:
+
+| Field | Owner answer (`lane-answer`) | Policy answer (the lane's `relay-hook`) |
+|---|---|---|
+| `answers` | `{"0": "<label>", …}` — the question's own option labels | same |
+| `note` | the owner's optional note, or `null` | none — a policy carries no note |
+| `source` | `"human"` | `"policy"` |
+| `via` | the client the owner answered through | `"policy"` |
+| `at` | UTC timestamp | UTC timestamp |
+| `policy_sha` | — | the carried policy's `policy_sha` (sha256 of its canonical answers) |
+| `gate` | — | the catalog code (`header`) the policy answered |
+
+A question file with no answer file is a pending HUMAN question (`lane-status <parent_runfile> --inbox`). Authority: `skills/automate-loop/SKILL.md` §14 "Policy answers"; codes and labels: `docs/LANE_GATES.md`.
 
 ### Crash-safety contract
 
