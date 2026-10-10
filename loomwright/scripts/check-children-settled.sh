@@ -44,7 +44,8 @@
 #   absence. With at least one `--expect-id`, `no_identity_rows` is unreachable. Without the flag the
 #   `--all` output is byte-identical to before. Callers: FINALIZE Point 5 and
 #   guard-finalize-publish.sh write-marker, both passing the ids recorded under state.md's
-#   `## Worker Results` headings. `--expect-id` with `--agent-id`, a missing value, an empty value or a
+#   `## Worker Results` (headings / `agent_id:` keys; write-marker refuses a non-empty section with
+#   none as `worker_results_unparsed` before calling this script). `--expect-id` with `--agent-id`, a missing value, an empty value or a
 #   value carrying a newline ⇒ `bad_args`.
 #   `rejected_stops` / `rejected_stop_ids` (additive, v15.83.0) are DIAGNOSTIC ONLY — the count of
 #   `subtask_complete` rows carrying `rejected: true` for that agent_id / the identity-row ids with at
