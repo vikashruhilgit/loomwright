@@ -8,6 +8,43 @@
 > it is the only copy. Every claim below was re-verified against `main` at `8b8ef70`,
 > not carried over on trust.
 
+## Status: pending
+
+## Re-scope (2026-10-10, owner decision at Phase 0.7 triage — re-verified on `main` @ `bd35f7d`)
+
+The 2026-09-01 analysis below is kept as history. What is still live:
+
+- **Gap 1 — narrowed to two consumers.** `hook-dispatch-on-pr-create.sh` is CLOSED: a non-empty
+  `in-progress/` is now only a necessary pre-condition, and authorization needs a non-terminal
+  `state.md` on the current branch or exactly one live `autonomous/*/state.json` (its header,
+  "A bare non-empty .supervisor/jobs/in-progress/ is NOT sufficient"). Still live:
+  `notify-desktop.sh` `is_plugin_context` marker 1 and `send-webhook.sh`'s scope gate both
+  treat any `in-progress/*.md` as "Supervisor is active". Impact is bounded — both headers
+  call the gate "intentionally permissive"; a stranded brief costs spurious notifications /
+  paused-webhooks for non-plugin sessions in that repo, not a wrong dispatch.
+- **Gap 2 — historical, not growing.** Re-measured 2026-10-10: **10 of 180** `done/` briefs
+  lack `## Outcome` (was 12 of 88). The newest such brief is dated 2026-09-25; none since.
+  Remaining work: report-only detection in the reconciler, plus a "not recoverable" block
+  for the 10 only if the owner wants them backfilled.
+- **Gap 3 — needs the owner's one-line decision, not code.** The "Supervisor remains the
+  sole writer" sentence for `jobs/` is gone; `ARCHITECTURE_CONTRACTS.md`'s State Ownership
+  table now lists `reconcile-jobs.sh --repair`, `--repair-merged` at SessionStart and
+  `automate-helpers.sh brief-repair` as movers — the multi-writer design was extended by
+  later owner-reviewed PRs. Recommendation: ratify it in writing (one dated line), so the
+  AC below is met by a decision rather than by the table.
+- **Dropped:** the AC to read the abandoned `reconcile-inprogress-jobs.sh` — the
+  `busy-darwin-7b336a` worktree no longer exists, so that copy is gone.
+
+## Touches
+loomwright/scripts/notify-desktop.sh
+loomwright/scripts/send-webhook.sh
+loomwright/scripts/reconcile-jobs.sh
+loomwright/scripts/test-reconcile-jobs.sh
+loomwright/docs/ARCHITECTURE_CONTRACTS.md
+
+## Depends on
+none
+
 ## Problem
 
 v15.39.0 fixed the brief-move strand, but only partly. Three residual gaps remain.
@@ -64,21 +101,18 @@ side effect of a doc edit.
 ## Acceptance criteria
 
 - [ ] Given a brief stranded in `in-progress/` that a reconciler classifies as stranded,
-      when `hook-dispatch-on-pr-create.sh`, `notify-desktop.sh` and `send-webhook.sh`
-      evaluate their "Supervisor is active" condition, then it does NOT read as active —
-      and each has an executed assertion proving it, with a control proving a genuinely
-      active run still does.
+      when `notify-desktop.sh` and `send-webhook.sh` evaluate their "Supervisor is active"
+      marker, then it does NOT read as active — and each has an executed assertion proving
+      it, with a control proving a genuinely active run still does. (`hook-dispatch-on-pr-create.sh`
+      is already closed — re-scope above; add a regression assertion only if none exists.)
 - [ ] Given a brief in `done/` with no `## Outcome` block, when the reconciler runs, then
       the omission is reported; and any block it writes states which fields were not
       recoverable rather than inventing them (mirroring the v15.39.0 convention).
 - [ ] The `done/`-without-`## Outcome` count is measured before and after, and the measured
-      figures are recorded — the 12-of-88 baseline must not be restated from this file
-      without re-measuring.
-- [ ] Gap 3 is resolved by an explicit written decision (ratify the second writer in
-      CLAUDE.md, or demote `--repair` to detect-only), NOT by editing a table to match code.
-- [ ] The abandoned `reconcile-inprogress-jobs.sh` is read before implementing, and any
-      case it covers that the shipped script does not is either adopted or explicitly
-      declined with a reason.
+      figures are recorded — the 10-of-180 figure (2026-10-10) must not be restated from
+      this file without re-measuring.
+- [ ] Gap 3 is resolved by an explicit written, dated owner decision (ratify the multi-writer
+      design for `jobs/`, or demote the movers), NOT by editing a table to match code.
 - [ ] Every new mechanism is mutation-verified: reverting it fails exactly its own cases.
 
 ## Outcomes Rubric

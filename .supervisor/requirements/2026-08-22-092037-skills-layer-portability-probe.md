@@ -93,3 +93,5 @@ spike (item 10 §5) commits to a scope.
 | "It loaded" is mistaken for "it worked" | False green; adapter scoped too small | AC requires observing a core script actually execute, not just discovery |
 | Cursor changes skill discovery between probe and adapter build | Result rots | Record harness version + date; re-verify at adapter build time |
 | Probe scope creeps into fixing skills | Becomes the port instead of measuring it | Explicit non-goal; no skill-body edits |
+
+## Status: done_with_escalation — SUPERSEDED (owner decision 2026-10-10, Phase 0.7 triage: superseded by the FINAL_STATE_GOAL D1′/D2′ amendment of 2026-09-30 — core harness-neutral, Claude adapter first — and the agnostic-phase1 queue; the 2026-09-30 vendor re-verification answered the format half at docs level only. The execution probe — a skill actually running unmodified under another harness — was never run; re-file it under agnostic Phase 2 if wanted. Not implemented.)
