@@ -52,3 +52,9 @@ holds the early stamp also reads the item as done locally. That affects folder i
 
 ## Non-goals
 Lane wave-end pushes (`parallel-automate/23` F11). `reconcile-status` semantics.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-10T13:19:58Z
+- **Brief:** .supervisor/jobs/done/2026-10-09-done-stamp-before-merge.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/446
