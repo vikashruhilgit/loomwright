@@ -1310,9 +1310,10 @@ EOF
 cat > "$T/ab-spy.sh" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >> "\$T_ABSPY"
+[ "\$1" = closeout ] && echo "CC=\${CLAUDECODE-unset} PID=\${CLAUDE_PID-unset}" >> "\$T_ABENV"
 exec bash "$SC/automate-helpers.sh" "\$@"
 EOF
-chmod +x "$T/ab-gh" "$T/ab-spy.sh"; export T_ABGH="$T/ab-gh.calls" T_ABSPY="$T/ab-spy.log"; mkdir -p "$T/remote-ab"
+chmod +x "$T/ab-gh" "$T/ab-spy.sh"; export T_ABGH="$T/ab-gh.calls" T_ABSPY="$T/ab-spy.log" T_ABENV="$T/ab-spy.env"; mkdir -p "$T/remote-ab"
 ab() { REMOTE11="$T/remote-ab" LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" \
   LOOMWRIGHT_LANES_TRAIL="$T/ab-spy.sh" LOOMWRIGHT_GH_BIN="$T/ab-gh" bash "$S" "$@" 2>&1; }
 # ab_lane <n> <item> <pr> — a launched-then-exited lane holding <item> pending (its af/37-shaped prose
@@ -1336,14 +1337,17 @@ out="$(STUB_PR_STATE=OPEN ab lane-convert-ready "$L57")"; rc=$?
 check "AB1 ready_for_release converts (exit 0) to awaiting_merge" "$rc:$(cur_line "$RFAB")" \
   "0:- item: $RAB | status: awaiting_merge | pr: $PRAB | branch: feature/ab|- pause_reason: awaiting_merge|"
 check "AB1b … with NO closeout call (spy) and no done stamp" "$(grep -c '^closeout ' "$T_ABSPY" | tr -d ' '):$(cksum < "$L57/$RAB")" "0:$QAB"
-SAB="$(cksum < "$RFAB")"
-out="$(STUB_PR_STATE=OPEN ab lane-convert-ready "$L57")"; rc=$?
+SAB="$(cksum < "$RFAB")"; : > "$T_ABENV"
+out="$(CLAUDECODE=1 CLAUDE_PID=$$ STUB_PR_STATE=OPEN ab lane-convert-ready "$L57")"; rc=$?
 check "AB2 awaiting_merge re-run, PR still OPEN: exit 0, closeout called once with --no-trail inside the lane" \
   "$rc:$(grep -cxF "closeout $RFAB $RAB $PRAB --no-trail" "$T_ABSPY" | tr -d ' ')" "0:1"
 has "AB2b … its evidence gate line echoed indented" "$out" "  closeout: skipped — pr not merged (awaiting_merge)"
 check "AB2c … nothing written (requirement + run file byte-unchanged)" "$(cksum < "$L57/$RAB"):$(cksum < "$RFAB")" "$QAB:$SAB"
 has "AB2d … the push still names the unmerged exclusion" "$out" "/2026-10-10-L7.md — pr not merged"
 has "AB2e … and the last line names the gate leftover" "$(printf '%s\n' "$out" | tail -n1)" "; closeout leftover: gate — skipped — pr not merged (awaiting_merge)"
+# AB2f the lane closeout is a FRESH run-lock acquire (no --session-id), so it runs with the host identity
+# unset, as the merge watcher does — else a crashed closeout's lock would name the coordinator as holder.
+check "AB2f … and that closeout ran with the host identity vars unset (coordinator had them set)" "$(cat "$T_ABENV")" "CC=unset PID=unset"
 out="$(STUB_PR_STATE=MERGED ab lane-convert-ready "$L57")"; rc=$?
 printf '%s\n' "$out" | sed 's/^/       | /'
 check "AB3 merged re-run exits 0 and its last line reads closeout complete" "$rc:$(printf '%s\n' "$out" | tail -n1 | grep -c '; closeout complete$' | tr -d ' ')" "0:1"

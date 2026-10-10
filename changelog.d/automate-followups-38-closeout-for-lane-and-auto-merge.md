@@ -21,4 +21,4 @@ check now counts only a real stamp block: the sentinel alone on its line, follow
 does) no longer blocks the stamp. That check was the only `requirement-closeout` reader in
 `loomwright/scripts`. With this change the honest limit "an `--auto-merge` item gets no done stamp" is
 retired in the `automate-loop` skill, `self-heal-advisory` step 2.5 and `ground-truth-json.md`. New legs:
-`test-automate-trail.sh` NT1–NT6 and `test-automate-lanes.sh` AB1–AB6.
+`test-automate-trail.sh` NT1–NT6 and `test-automate-lanes.sh` AB1–AB8.

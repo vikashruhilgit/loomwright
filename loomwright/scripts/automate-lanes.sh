@@ -1081,7 +1081,9 @@ lanes_convert_ready() {
     case "$pr" in
       ''|-|null) cs="; closeout not run (## Current has no pr)" ;;
       *)
-        co="$(cd "$LN_DIR" && bash "$TRAIL" closeout "$rf" "$item" "$pr" --no-trail 2>/dev/null)"
+        # A fresh run-lock acquire (no --session-id): unset the host identity like the merge watcher, or a crashed
+        # closeout's lock stays unreclaimable while the coordinator lives (automate-loop SKILL, "Why … are unset").
+        co="$(cd "$LN_DIR" && env -u CLAUDE_PID -u CLAUDECODE bash "$TRAIL" closeout "$rf" "$item" "$pr" --no-trail 2>/dev/null)"
         printf '%s\n' "$co" | sed '/^$/d; s/^/  /'
         cv="$(printf '%s\n' "$co" | bash "$HELPERS" closeout-classify --run "$LN_RUN" --item "${item#./}" --pr "$pr" 2>/dev/null)"
         if [ "$cv" = complete ]; then cs="; closeout complete"
