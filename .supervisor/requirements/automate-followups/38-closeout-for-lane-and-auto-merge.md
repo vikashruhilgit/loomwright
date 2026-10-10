@@ -100,3 +100,9 @@ plugin (v15.126.0, which still stamps before merge) until a release is installed
 ## Non-goals
 Retroactive stamps for items merged before this lands (that is `reconcile-status --apply`, run by the
 owner). `reconcile-status`'s `brief-shipped` limit. Changing the trail triggers.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-10T11:00:13Z
+- **Brief:** .supervisor/jobs/done/2026-10-10-closeout-for-lane-and-auto-merge.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/455
