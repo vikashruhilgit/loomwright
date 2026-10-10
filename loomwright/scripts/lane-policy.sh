@@ -264,7 +264,7 @@ _lp_project_answers() {
   _pp_ignore() { echo "$LP_TAG: project policy ignored — $1" >&2; }
   # (i) a selected must-rule `lane-policy` — rules-check.sh's own listing, never a second parser.
   ids="$(cd "$root" 2>/dev/null && bash "$LP_RULES_CHECK" --list-selected 2>/dev/null </dev/null)"
-  printf '%s\n' "$ids" | grep -qxF "$LP_RULE_ID" \
+  grep -qxF -- "$LP_RULE_ID" <<<"$ids" \
     || { _pp_ignore "no selected must-rule with id $LP_RULE_ID (rules-check.sh --list-selected)"; return 0; }
   # (ii) every `lane-policy` object binds the policy file — DATA only (the check is never run).
   rules_dir="$root/.agent/rules"
