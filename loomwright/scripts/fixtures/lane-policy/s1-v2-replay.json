@@ -1,0 +1,53 @@
+{
+  "_comment": "RECONSTRUCTED replay of the S1 v2 wave (parallel-automate/21 Part B evidence): two lanes asked 15 questions in 10 deferred calls. The original question files are not in this repository, so the wording here is reconstructed from the requirement's classification; what is pinned is the shape. 8 routine questions carry the catalog code their gate has once item 21 lands (2 x AUT-RESUME, 1 x AUT-QUEUE, 1 x LP-SAVE, 3 x AUT-SUMMARY, 1 x SUP-CHILDREN); the 7 real decisions are uncoded (a refine on a MEDIUM finding, save-with-notes vs re-review on 4 LOW notes) or carry a human-only code (an output-gap adjudication, 4 fix-now/follow-up picks on MEDIUM findings). With a policy covering the routine codes, exactly 7 questions must reach the human. Read by test-lane-policy.sh.",
+  "policy_answers": {
+    "AUT-RESUME": "Start new",
+    "AUT-QUEUE": "Process",
+    "LP-SAVE": "Save and exit",
+    "AUT-SUMMARY": "Drop summary",
+    "SUP-CHILDREN": "proceed anyway"
+  },
+  "expect": {"questions": 15, "calls": 10, "human_questions": 7, "routine_questions": 8},
+  "calls": [
+    {"lane": "v2-a", "kind": "routine", "questions": [
+      {"header": "AUT-RESUME", "question": "One other incomplete run exists (automate-2026-10-01-0900). Continue it, start a new run, or archive it?", "multiSelect": false,
+       "options": [{"label": "Continue"}, {"label": "Start new (Recommended)"}, {"label": "Archive"}]}]},
+    {"lane": "v2-b", "kind": "routine", "questions": [
+      {"header": "AUT-RESUME", "question": "A stale paused run exists. Continue it, start a new run, or archive it?", "multiSelect": false,
+       "options": [{"label": "Continue"}, {"label": "Start new (Recommended)"}, {"label": "Archive"}]}]},
+    {"lane": "v2-a", "kind": "routine", "questions": [
+      {"header": "AUT-QUEUE", "question": "Queue: 1 item (lane-backlog.md). Process it?", "multiSelect": false,
+       "options": [{"label": "Process (Recommended)"}, {"label": "Stop"}]}]},
+    {"lane": "v2-a", "kind": "routine", "questions": [
+      {"header": "LP-SAVE", "question": "Plan Review PASS with 0 issues. Save the brief?", "multiSelect": false,
+       "options": [{"label": "Save and exit (Recommended)"}, {"label": "Refine further"}, {"label": "Edit sections"}, {"label": "Discard"}]}]},
+    {"lane": "v2-b", "kind": "routine", "questions": [
+      {"header": "AUT-SUMMARY", "question": "LOW summary draft 1: keep or drop?", "multiSelect": false,
+       "options": [{"label": "Keep summary"}, {"label": "Drop summary (Recommended)"}]},
+      {"header": "AUT-SUMMARY", "question": "LOW summary draft 2: keep or drop?", "multiSelect": false,
+       "options": [{"label": "Keep summary"}, {"label": "Drop summary (Recommended)"}]},
+      {"header": "AUT-SUMMARY", "question": "INFO summary draft 3: keep or drop?", "multiSelect": false,
+       "options": [{"label": "Keep summary"}, {"label": "Drop summary (Recommended)"}]}]},
+    {"lane": "v2-b", "kind": "routine", "questions": [
+      {"header": "SUP-CHILDREN", "question": "Children unsettled: one finished non-plugin Explore agent has no terminal row. Proceed?", "multiSelect": false,
+       "options": [{"label": "proceed anyway (Recommended)"}, {"label": "investigate"}, {"label": "abort"}]}]},
+    {"lane": "v2-a", "kind": "human", "questions": [
+      {"header": "Plan Review", "question": "Plan Review raised a MEDIUM finding. Refine the brief?", "multiSelect": false,
+       "options": [{"label": "Refine further (Recommended)"}, {"label": "Override and save"}, {"label": "Discard"}]}]},
+    {"lane": "v2-b", "kind": "human", "questions": [
+      {"header": "Save brief", "question": "Plan Review PASS with 4 LOW notes. Save with notes or re-review?", "multiSelect": false,
+       "options": [{"label": "Save and exit"}, {"label": "Refine further"}, {"label": "Edit sections"}, {"label": "Discard"}]}]},
+    {"lane": "v2-a", "kind": "human", "questions": [
+      {"header": "SUP-ADJ-GAP", "question": "Subtask 2 requires outputs subtask 1 did not deliver. How to proceed?", "multiSelect": false,
+       "options": [{"label": "A: Re-queue producer"}, {"label": "B: Insert remediation subtask"}, {"label": "C: Exit to Launch Pad"}, {"label": "D: Update consumer brief"}]}]},
+    {"lane": "v2-b", "kind": "human", "questions": [
+      {"header": "AUT-DISMISS", "question": "MEDIUM finding 1 was dismissed by the drain. Decide.", "multiSelect": false,
+       "options": [{"label": "Follow-up (keep draft) (Recommended)"}, {"label": "Fix now on this PR"}, {"label": "Drop"}]},
+      {"header": "AUT-DISMISS", "question": "MEDIUM finding 2 was dismissed by the drain. Decide.", "multiSelect": false,
+       "options": [{"label": "Follow-up (keep draft) (Recommended)"}, {"label": "Fix now on this PR"}, {"label": "Drop"}]},
+      {"header": "AUT-DISMISS", "question": "MEDIUM finding 3 was dismissed by the drain. Decide.", "multiSelect": false,
+       "options": [{"label": "Follow-up (keep draft) (Recommended)"}, {"label": "Fix now on this PR"}, {"label": "Drop"}]},
+      {"header": "AUT-DISMISS", "question": "MEDIUM finding 4 was dismissed by the drain. Decide.", "multiSelect": false,
+       "options": [{"label": "Follow-up (keep draft) (Recommended)"}, {"label": "Fix now on this PR"}, {"label": "Drop"}]}]}
+  ]
+}
