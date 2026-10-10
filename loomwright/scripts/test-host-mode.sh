@@ -49,6 +49,10 @@
 #        state.md (running, new session): lw_state_md_read returns the repo copy, the publish is
 #        denied for the NEW session, and a worker's subagent stop projects the NEW session into the
 #        gate dir (emit-progress-event + build-state), after which lw_state_md_read returns it.
+#   (c4) a finished repo state.md (another branch) beside a live gate-dir run on the CURRENT branch,
+#        state-dir and D1: the union fires and the LIVE copy's session id and branch key the gate —
+#        an unmarked `gh pr create` / `git push` is denied for the live session; write-marker keys
+#        the marker on it; then both are allowed.
 #   (d)  off mode unchanged: the same session writes `.supervisor/` (and, telemetry on,
 #        the project-local settings file) in the repo as before, nothing under TMPDIR; the off-mode
 #        STOP_FAILURE line keeps its byte format; LOOMWRIGHT_HOST_MODE=true is off too; and the
@@ -76,6 +80,16 @@
 #        the guards fail CLOSED on it (deny / write-marker `helper_missing`).
 #   (k)  mutation control: host-mode.sh with its D1 ownership/symlink check neutered makes leg (h)'s
 #        symlink case FAIL (the marker lands in the foreign dir).
+#   (l)  session-resume.sh's host-mode branches against committed fixtures (curation corpus, a
+#        stranded brief whose merge is proven on a local origin/main, an unprovenanced twin
+#        contract, a malformed rule file), state-dir and D1: startup + resume leave the repo clean,
+#        the nudge markers land in the state dir (none anywhere under D1), the brief is reported
+#        but never moved, the twin section and the rules nudge are skipped. An off-mode control
+#        with the same fixtures shows each skipped branch firing; a bare-repo case shows the
+#        orphaned-worktree block running with no repo `.supervisor/`; and a mutation control (the
+#        two --repair-merged host branches removed) makes the leg FAIL.
+#   (m)  seed-run-owner.sh's `.owner` seed lands in the gate dir (state-dir and D1); notify-desktop's
+#        audit log and replay ledger land in the state dir, and nowhere under D1.
 #
 # HONEST LIMITS: "nothing written outside the repo" is observed on the repo, the case HOME, the case
 # TMPDIR and the state dir — a write to some other absolute path would not be seen. Hooks run with
@@ -135,8 +149,8 @@ ALL_SCRIPTS="$(jq -r '[.. | objects | select(.type? == "command") | .command] | 
 # ---- per-case context ---------------------------------------------------------------------------
 # C_DIR case root; C_MODE off|offval|sd|d1; C_ROOT plugin root; C_REPO / C_HOME / C_TMP / C_SD;
 # C_MAIN the repo's main worktree as git prints it; C_GATE lw_gate_state_dir for this mode.
-seed_state() {  # seed_state <session_id> <status>
-  printf '# Supervisor State\n\n## Session\n- session_id: %s\n- branch: main\n- status: %s\n- phase: execute\n\n## Decisions Log\n- seeded by test-host-mode.sh\n' "$1" "$2"
+seed_state() {  # seed_state <session_id> <status> [branch, default main]
+  printf '# Supervisor State\n\n## Session\n- session_id: %s\n- branch: %s\n- status: %s\n- phase: execute\n\n## Decisions Log\n- seeded by test-host-mode.sh\n' "$1" "${3:-main}" "$2"
 }
 
 hm_env() {  # hm_env <cmd...> — run <cmd> under the current case's mode, from the current dir
@@ -457,6 +471,35 @@ for m in sd d1; do
 done
 
 # =================================================================================================
+echo "== (c4) a finished repo seed never scopes the live gate-dir run out of the gate =="
+# The union's other copy is the live one: its session id AND branch key the gate. A finished repo
+# session on another branch must not make step (v) allow a push from the live run's own branch.
+for m in sd d1; do
+  new_case "c4-$m" "$m" bare
+  ( cd "$C_REPO" && export HOME="$C_HOME" GIT_CONFIG_NOSYSTEM=1 && mkdir -p .supervisor \
+      && seed_state oldrun complete feature-x > .supervisor/state.md && git add -A \
+      && git -c user.name=t -c user.email=t@e.x commit -q -m "finished run" ) >/dev/null 2>&1
+  C_SNAP0="$(snap)"
+  ( umask 077; mkdir -p "$C_GATE/logs" ) && seed_state run3 running > "$C_GATE/state.md"
+  jq -nc --arg cc "$CC" '{event:"session_start", session_id:"run3", cc_session_id:$cc}' > "$C_GATE/logs/run3.jsonl"
+  [ "$(state_md_read)" = "$C_MAIN/.supervisor/state.md" ]
+  rec "(c4) $m: lw_state_md_read keeps the finished repo copy (precondition: the union must fire)" $? "$(state_md_read)"
+  for cmd in "$PUBLISH" "git push origin main"; do
+    fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$cmd")"
+    is_deny && grep -q "plugin session run3" <<<"$LAST_OUT"
+    rec "(c4) $m: unmarked '$cmd' on the live run's branch DENIED for the live session" $? "rc=$LAST_RC out=$LAST_OUT"
+  done
+  write_marker; rc=$?
+  [ "$rc" = 0 ] && [ -f "$C_GATE/logs/run3.finalize-gate" ] && [ ! -e "$C_GATE/logs/oldrun.finalize-gate" ]
+  rec "(c4) $m: write-marker keys the marker on the live session (same key as the guard)" $? "rc=$rc $(cat "$C_DIR/wm.out")"
+  for cmd in "$PUBLISH" "git push origin main"; do
+    fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$cmd")"
+    [ "$LAST_RC" = 0 ]; rec "(c4) $m: after write-marker '$cmd' is allowed" $? "rc=$LAST_RC out=$LAST_OUT"
+  done
+  : > "$C_RC"; repo_clean_checks "(c4) $m"; replay
+done
+
+# =================================================================================================
 echo "== (d) off mode is unchanged =="
 for fx in seeded bare; do
   new_case "d-$fx" off "$fx"
@@ -773,6 +816,141 @@ if [ -s "$K_FILE" ] && ! cmp -s "$K_FILE" "$PLUGIN_ROOT/scripts/host-mode.sh" &&
 else
   no "(k) mutant gate failed (empty, identical, or bash -n error) — control is void"
 fi
+
+# =================================================================================================
+echo "== (l) session-resume.sh's host-mode branches, exercised with fixtures =="
+SR_BRIEF=".supervisor/jobs/in-progress/2026-01-01-feat-x.md"
+sr_fixture() {  # committed fixtures every host-mode branch of session-resume.sh reacts to
+  ( cd "$C_REPO" || exit 1
+    export HOME="$C_HOME" GIT_CONFIG_NOSYSTEM=1
+    g() { git -c user.name=t -c user.email=t@e.x "$@"; }
+    mkdir -p .supervisor/logs .supervisor/jobs/in-progress .supervisor/twin/contracts .agent/rules || exit 1
+    # curation nudge: enough local corpus for the probe (as test-session-resume.sh's fixture)
+    printf '%s' '{"curation":{"thresholds":{"dreaming":1,"insights":1}}}' > .supervisor/config.json
+    echo '{"event":"session_end"}' > .supervisor/logs/s1.jsonl
+    echo '{"event":"session_end"}' > .supervisor/logs/s2.jsonl
+    touch -t 202601010000.00 .supervisor/logs/s1.jsonl; touch -t 202601010000.01 .supervisor/logs/s2.jsonl
+    printf '# Brief: feat-x\n' > "$SR_BRIEF"                       # stranded brief (merge proven below)
+    printf '# contract\nbody\n' > .supervisor/twin/contracts/sub.md # no provenance: the reader logs a drop
+    printf '{not json' > .agent/rules/bad.json                      # malformed: the reader logs a skip
+    g add -A && g commit -q -m fixtures || exit 1
+    g checkout -q -b feat-x && printf 'x\n' > x.txt && g add x.txt && g commit -q -m x || exit 1
+    g checkout -q main && g merge -q --no-ff -m "Merge pull request #5 from o/feat-x" feat-x || exit 1
+    git update-ref refs/remotes/origin/main HEAD
+  ) >/dev/null 2>&1 || { no "(l) fixture setup failed in $C_DIR"; return 1; }
+  C_SNAP0="$(snap)"
+}
+sr_fire() {  # sr_fire <startup|resume> — the session-resume leaf; SR_CTX = its additionalContext
+  fire_one SessionStart "$1" session-resume.sh "$(jq -nc --arg cc "$CC" --arg s "$1" '{hook_event_name:"SessionStart", session_id:$cc, source:$s}')"
+  SR_CTX="$(printf '%s' "$LAST_OUT" | jq -r '.. | .additionalContext? // empty' 2>/dev/null)"
+}
+sr_leg() {  # sr_leg <label> — the host-mode checks (C_MODE sd or d1)
+  local lbl="$1" s
+  sr_fire startup
+  [ "$LAST_RC" = 0 ]; rec "$lbl startup: exit 0" $? "rc=$LAST_RC"
+  grep -qF '**Curation cadence:**' <<<"$SR_CTX"; rec "$lbl startup: the curation nudge fired (fixture live)" $? "$SR_CTX"
+  grep -qF "**Stranded brief:** $SR_BRIEF" <<<"$SR_CTX" && ! grep -qF '**Repaired brief:**' <<<"$SR_CTX"
+  rec "$lbl startup: the merged brief is reported stranded, NOT repaired (--repair-merged skipped)" $? "$SR_CTX"
+  [ -f "$C_REPO/$SR_BRIEF" ] && [ ! -e "$C_REPO/.supervisor/jobs/done/${SR_BRIEF##*/}" ]
+  rec "$lbl startup: the brief was not moved" $?
+  if [ "$C_MODE" = sd ]; then
+    [ -f "$C_SD/.curation-nudge-shown" ] && [ -f "$C_SD/.stranded-nudge-shown" ]
+    rec "$lbl startup: both nudge markers redirected into the state dir" $? "$(listing "$C_SD" | tr '\n' ' ')"
+  else
+    s="$(find "$C_TMP" "$C_REPO" "$C_HOME" "$C_SD" \( -name .curation-nudge-shown -o -name .stranded-nudge-shown \
+      -o -name .rules-nudge-shown \) 2>/dev/null)"
+    [ -z "$s" ]; rec "$lbl startup: no nudge marker written anywhere (D1: non-gate writes skip)" $? "$s"
+  fi
+  sr_fire resume
+  [ "$LAST_RC" = 0 ]; rec "$lbl resume: exit 0" $? "rc=$LAST_RC"
+  grep -qF "$SR_BRIEF" <<<"$SR_CTX" && ! grep -q 'Repaired briefs' <<<"$SR_CTX" && [ -f "$C_REPO/$SR_BRIEF" ]
+  rec "$lbl resume: the brief is listed, not repaired, not moved" $? "$SR_CTX"
+  ! grep -q 'System Twin contract store' <<<"$SR_CTX"; rec "$lbl resume: the twin-contracts section is skipped" $?
+  ! grep -q 'No committed house rules found' <<<"$SR_CTX"; rec "$lbl resume: the rules nudge is skipped" $?
+  [ ! -e "$C_REPO/.supervisor/logs/twin.log" ] && [ ! -e "$C_REPO/.supervisor/logs/memory.log" ]
+  rec "$lbl resume: no twin.log / memory.log in the repo" $?
+  : > "$C_RC"; repo_clean_checks "$lbl"
+}
+for m in sd d1; do
+  new_case "l-$m" "$m" seeded
+  sr_fixture || continue
+  sr_leg "(l) $m"; replay
+done
+# Control: OFF mode, the same fixtures — every branch the host legs see skipped DOES fire here, so
+# none of the absences above is vacuous.
+new_case "l-off" off seeded
+if sr_fixture; then
+  sr_fire startup
+  grep -qF '**Curation cadence:**' <<<"$SR_CTX" && [ -f "$C_REPO/.supervisor/.curation-nudge-shown" ]
+  rec "(l) off control: the curation marker lands in the repo" $? "$SR_CTX"
+  grep -qF '**Repaired brief:**' <<<"$SR_CTX" && [ ! -e "$C_REPO/$SR_BRIEF" ]
+  rec "(l) off control: --repair-merged MOVES the merged brief" $? "$SR_CTX"
+  git -C "$C_REPO" checkout -q -- .supervisor/jobs >/dev/null 2>&1   # restore the brief for resume
+  rm -rf "$C_REPO/.supervisor/jobs/done"
+  sr_fire resume
+  grep -q 'System Twin contract store' <<<"$SR_CTX" && [ -f "$C_REPO/.supervisor/logs/twin.log" ]
+  rec "(l) off control: the twin section runs and writes the repo twin.log" $? "$SR_CTX"
+  [ -f "$C_REPO/.supervisor/logs/memory.log" ]; rec "(l) off control: the rules reader writes the repo memory.log" $?
+  replay
+fi
+# The orphaned-worktree block runs under host mode without a repo `.supervisor/` (its log is in the
+# state dir): a bare repo + a recorded, still-listed linked worktree must surface it at startup.
+new_case "l-orphan" sd bare
+OWT="$C_DIR/orphan-wt"
+( export HOME="$C_HOME" GIT_CONFIG_NOSYSTEM=1; git -C "$C_REPO" worktree add -q -b orphan "$OWT" ) >/dev/null 2>&1
+( cd "$C_REPO" && hm_env bash "$C_ROOT/scripts/worktree-audit.sh" note created "$OWT" ) >/dev/null 2>&1
+[ -f "$C_SD/logs/worktrees.log" ] && [ ! -d "$C_REPO/.supervisor" ]
+rec "(l) orphan: worktrees.log is in the state dir and the repo has no .supervisor/ (precondition)" $?
+sr_fire startup
+grep -q '### Orphaned worktrees' <<<"$SR_CTX" && grep -qF "orphan-wt" <<<"$SR_CTX"
+rec "(l) orphan: the orphaned-worktree block runs with no repo .supervisor/" $? "rc=$LAST_RC ctx=$SR_CTX"
+: > "$C_RC"; repo_clean_checks "(l) orphan"; replay
+
+# Mutation control: session-resume.sh with its host-mode --repair-merged skip removed (both arms)
+# makes leg (l) FAIL — the brief is moved and the repo dirtied.
+MUT3="$BASE/mutant-sr"
+mkdir -p "$MUT3"
+cp -R "$PLUGIN_ROOT/scripts" "$PLUGIN_ROOT/hooks" "$PLUGIN_ROOT/.claude-plugin" "$MUT3/" 2>/dev/null
+L_FILE="$MUT3/scripts/session-resume.sh"
+sed 's/^\( *\)if \[ "\$SR_HOST" = 1 \]; then$/\1if false; then/' "$PLUGIN_ROOT/scripts/session-resume.sh" > "$L_FILE.new" \
+  && mv -f "$L_FILE.new" "$L_FILE"
+if [ -s "$L_FILE" ] && [ "$(diff "$PLUGIN_ROOT/scripts/session-resume.sh" "$L_FILE" | grep -c '^>')" = 2 ] \
+   && bash -n "$L_FILE" 2>/dev/null; then
+  ok "(l) mutant session-resume.sh differs in exactly the two --repair-merged host branches and passes bash -n"
+  new_case "l-mutant" sd seeded "$MUT3"
+  if sr_fixture; then
+    sr_leg "(l-mutant)"
+    m_checks="$(cat "$C_CHECKS")"; : > "$C_CHECKS"
+    grep -q '^FAIL (l-mutant) startup: the brief was not moved' <<<"$m_checks" \
+      && grep -q '^FAIL (l-mutant): git status --porcelain --ignored is empty' <<<"$m_checks"
+    rec "(l) leg (l) FAILS against the mutant: the brief moved and the repo is dirty" $? "$m_checks"
+    replay
+  fi
+else
+  no "(l) mutant gate failed (empty, wrong diff, or bash -n error) — control is void"
+fi
+
+# =================================================================================================
+echo "== (m) notify-desktop and seed-run-owner write where host mode says =="
+for m in sd d1; do
+  new_case "m-$m" "$m" seeded
+  # first, before any emitter records an owner in the session log (an existing owner skips the seed)
+  fire_one PostToolUse Write seed-run-owner.sh \
+    "$(p_tool PostToolUse Write "$(jq -nc --arg f "$C_MAIN/.supervisor/state.md" '{file_path:$f, content:"x"}')")"
+  grep -q "$CC" "$C_GATE/logs/$RUN.owner" 2>/dev/null && [ ! -e "$C_REPO/.supervisor/logs" ]
+  rec "(m) $m: seed-run-owner's .owner seed is in the gate dir, not the repo" $? "rc=$LAST_RC $(listing "$C_GATE" | tr '\n' ' ')"
+  fire_one Notification idle_prompt notify-desktop.sh "$(jq -nc --arg cc "$CC" '{hook_event_name:"Notification", session_id:$cc, notification_type:"idle_prompt", message:"waiting"}')"
+  fire_one PreToolUse "$TOOL_ASK" notify-desktop.sh "$(p_tool PreToolUse "$TOOL_ASK" '{"questions":[{"question":"q?"}]}')" \
+    LOOMWRIGHT_NOTIFY_SCOPE=all
+  if [ "$m" = sd ]; then
+    grep -q ' notify ' "$C_SD/logs/notifications.log" 2>/dev/null && grep -qx 'tu-0001' "$C_SD/logs/.notified-ids" 2>/dev/null
+    rec "(m) sd: notify-desktop's audit log and replay ledger are in the state dir" $? "$(listing "$C_SD" | tr '\n' ' ')"
+  else
+    s="$(find "$C_TMP" "$C_REPO" "$C_HOME" "$C_SD" \( -name notifications.log -o -name .notified-ids -o -name .notify-debounce \) 2>/dev/null)"
+    [ -z "$s" ]; rec "(m) d1: notify-desktop wrote no log/ledger anywhere (non-gate writes skip)" $? "$s"
+  fi
+  : > "$C_RC"; repo_clean_checks "(m) $m"; replay
+done
 
 echo
 echo "test-host-mode.sh: $pass passed, $fail failed"

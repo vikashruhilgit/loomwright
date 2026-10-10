@@ -145,7 +145,8 @@ if [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
       # an UNRELATED repo (e.g. a dotfiles $HOME), and anchoring there would reject the valid state dir
       # as in-repo and read that repo's empty D1 log (a vacuous no_identity_rows). Only when the cwd is
       # not in a repo: the log's own dir, then the path with `/.supervisor/logs/*` stripped, then cwd.
-      _cs_wt="${log%/.supervisor/logs/*}"; case "$log" in /*) ;; *) _cs_wt="$PWD" ;; esac
+      # (an absolute log names its worktree by prefix; a relative one is cwd-relative)
+      case "$log" in /*) _cs_wt="${log%/.supervisor/logs/*}" ;; *) _cs_wt="$PWD" ;; esac
       _cs_root="$(git rev-parse --show-toplevel 2>/dev/null)" \
         || _cs_root="$(git -C "$(dirname "$log")" rev-parse --show-toplevel 2>/dev/null)" \
         || _cs_root="$(git -C "$_cs_wt" rev-parse --show-toplevel 2>/dev/null)" || _cs_root=""

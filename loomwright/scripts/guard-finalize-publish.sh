@@ -36,10 +36,11 @@
 # HOST MODE (`LOOMWRIGHT_HOST_MODE=1`, host-mode.sh — sourced, the one resolver): the marker and the
 # session log (+ its `.owner`) live in `lw_gate_state_dir "$ROOT"`/logs, never the repo; state.md is
 # READ via `lw_state_md_read`. The run is LIVE on the UNION (read_live_session): the repo state.md
-# (the agent-written seed) OR the gate-dir copy reads running|checkpoint; the session id comes from
-# lw_state_md_read's file. A missing or stale gate-dir copy never makes the gate allow. Off: the
-# paths above, unchanged. host-mode.sh failing to load with the switch ON denies every publish
-# (`guard_unavailable`) and write-marker refuses `helper_missing` — the marker dir is unknowable;
+# (the agent-written seed) OR the gate-dir copy reads running|checkpoint; the session id and branch
+# come from the copy that reads live (lw_state_md_read's file when both do). A missing or stale
+# gate-dir copy never makes the gate allow. Off: the paths above, unchanged. host-mode.sh failing
+# to load with the switch ON denies every publish (`guard_unavailable`) and write-marker refuses
+# `helper_missing` — the marker dir is unknowable;
 # likewise an unresolvable gate dir (an unsafe/unwritable per-user D1 root, host-mode.sh header)
 # denies every publish and write-marker refuses `gate_dir_unresolvable`.
 #
@@ -127,8 +128,9 @@ resolve_root() {
   STATE_MD="$ROOT/.supervisor/state.md"
   LOG_DIR="$ROOT/.supervisor/logs"
   REPO_STATE_MD="$STATE_MD"; GATE_STATE_MD="$STATE_MD"
-  # the writers' own resolver (host-mode.sh): off, both lines reprint the two paths above
-  if [ "$HOST_HELPER_OK" = 1 ]; then
+  # host mode only: the writers' own resolver (host-mode.sh). Off it would reprint the two paths
+  # above, so it is skipped — no forks on the cheap-first guard path.
+  if [ "$HOST_HELPER_OK" = 1 ] && [ "$HOST_ON" = 1 ]; then
     if LOG_DIR="$(lw_gate_state_dir "$ROOT")"; then
       LOG_DIR="$LOG_DIR/logs"; GATE_STATE_MD="${LOG_DIR%/logs}/state.md"
       STATE_MD="$(lw_state_md_read "$ROOT")"
@@ -180,23 +182,23 @@ read_session_block() {
 }
 
 # read_live_session — read_session_block on $STATE_MD, plus host mode's UNION (header): when that file
-# is not live but the OTHER copy (repo seed vs gate-dir projection) is, the run is still LIVE. The
-# session id and branch stay lw_state_md_read's when its file names an id, else the live copy's.
-# $STATE_MD is left on lw_state_md_read's file either way. Off: exactly read_session_block.
+# is not live but the OTHER copy (repo seed vs gate-dir projection) is, the run is still LIVE, and the
+# session id AND branch are the LIVE copy's — never the non-live file's. A finished prior run's branch
+# must not scope the live run out of the gate (step (v) would allow a push from the live run's own
+# branch), and its id must not key the marker or the session-log join. write-marker and the guard both
+# call this, so the marker key matches on both sides. $STATE_MD is left on lw_state_md_read's file
+# either way. Off: exactly read_session_block.
 read_live_session() {
-  local keep="$STATE_MD" other sid br rc
+  local keep="$STATE_MD" other rc
   SESSION_ID=""; SESSION_STATUS=""; SESSION_BRANCH=""
   read_session_block && return 0
   [ "$HOST_ON" = 1 ] || return 1
-  sid="$SESSION_ID"; br="$SESSION_BRANCH"
   other="$GATE_STATE_MD"; [ "$keep" = "$GATE_STATE_MD" ] && other="$REPO_STATE_MD"
   [ "$other" != "$keep" ] || return 1
   STATE_MD="$other"; SESSION_ID=""; SESSION_STATUS=""; SESSION_BRANCH=""
   read_session_block; rc=$?
   STATE_MD="$keep"
-  [ "$rc" = 0 ] || return 1
-  if [ -n "$sid" ]; then SESSION_ID="$sid"; SESSION_BRANCH="$br"; fi
-  return 0
+  return "$rc"
 }
 
 # ======================================================================================
