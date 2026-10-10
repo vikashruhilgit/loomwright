@@ -37,3 +37,9 @@ none
 ## Touches
 loomwright/docs/RULES_BASELINE.md
 changelog.d/twin-loop-07-rules-baseline-remeasurement.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-10T21:17:57Z
+- **Brief:** .supervisor/jobs/done/auto-2026-10-10-194526-rules-baseline-remeasurement.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/459
