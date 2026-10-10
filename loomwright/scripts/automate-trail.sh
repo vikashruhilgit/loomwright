@@ -62,13 +62,16 @@
 #       and so is a done-stamped requirement / done brief whose PR is not merged
 #       (`; excluded <path> — pr not merged`, _evidence_gate),
 #       so the loop can append it to `## Progress` with one progress-append.
-#   closeout <runfile> <item> <pr_url> [--session-id <sid>]
+#   closeout <runfile> <item> <pr_url> [--session-id <sid>] [--no-trail]
 #       The post-merge close-out (SKILL §6 "Post-merge close-out"): evidence
 #       gate, brief repair, squash-safe worktree/branch cleanup, base-branch
 #       sync, requirement stamp, Queue check-off, trail-pr. One line per step
 #       (`closeout: <verb> — …`, brief-repair/trail-pr lines passed through);
 #       idempotent; steps 3–7 run under run-lock.sh (re-enters a PICK lock via
-#       --session-id; releases with --owner only).
+#       --session-id; releases with --owner only). --no-trail (any position)
+#       skips ONLY the trail-pr step and prints `trail-pr: skipped — --no-trail`
+#       in its place — the `--auto-merge` SYNC and a merged lane's
+#       lane-convert-ready re-run use it (automate-followups/38).
 #   trail-unstage <runfile>
 #       One line: `trail-unstage: unstaged <n> path(s) — <paths>` |
 #       `trail-unstage: skipped — <reason>` (`nothing staged` when clean). Run at
@@ -1146,7 +1149,7 @@ STATUS
 # --------------------------------------------------------------------------- #
 # closeout
 # --------------------------------------------------------------------------- #
-# closeout <runfile> <item> <pr_url> [--session-id <sid>]
+# closeout <runfile> <item> <pr_url> [--session-id <sid>] [--no-trail]
 # The post-merge close-out (SKILL §6 "Post-merge close-out"). Deterministic,
 # idempotent, fail-SAFE. Every output line is `closeout: <verb> — <detail>`
 # (verb ∈ removed|synced|stamped|checked|reconciled|skipped), except the
@@ -1164,6 +1167,13 @@ STATUS
 # file byte-identical and its trail reads `skipped — trail already up to date`.
 # NEVER: commits in the primary checkout, `git reset`, `git stash`, `git branch
 # -d` / ancestry inference, touches another branch or worktree, merges anything.
+# --no-trail (automate-followups/38; parsed like --session-id, any position):
+# every step runs exactly as above except the trail, whose line reads
+# `trail-pr: skipped — --no-trail` — not a `closeout:` line, so closeout-classify
+# ignores it. For the callers where a trail PR would park the run (`--auto-merge`
+# SYNC, SKILL §6 step 5) or where the caller pushes itself (a merged lane's
+# lane-convert-ready re-run, SKILL §14); the run's trail ships at the next
+# existing trigger.
 CO_ROOT=""
 CO_OWNER=""
 CO_LOCKED=0
@@ -1222,11 +1232,28 @@ _co_current() {
   return 0
 }
 
+# _co_stamped <requirement> — closeout step 5's "already stamped" check. True
+# only for a REAL close-out block: a line that is exactly the sentinel
+# `<!-- loomwright:requirement-closeout -->` (a trailing CR tolerated), whose
+# NEXT line is a `## Status: done` / `## Status: done_with_escalation` heading —
+# the shape the step-5 printf writes. A sentinel quoted inline in prose, or on a
+# line of its own followed by anything else, does not count (automate-followups/38:
+# af/37's own requirement quotes it in `## Problem`, and a plain substring match
+# read that as stamped, so closeout never stamped it).
+_co_stamped() {
+  awk 'BEGIN { s = "<!-- loomwright:requirement-closeout -->" }
+    { sub(/\r$/, "") }
+    prev && /^## Status:[[:space:]]*done(_with_escalation)?([^A-Za-z0-9_]|$)/ { f = 1; exit }
+    { prev = ($0 == s) }
+    END { exit !f }' "$1" 2>/dev/null
+}
+
 closeout() {
-  local runfile="" item="" pr_url="" sid=""
+  local runfile="" item="" pr_url="" sid="" no_trail=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --session-id) sid="${2:-}"; shift 2 || shift ;;
+      --no-trail) no_trail=1; shift ;;
       *) if [ -z "$runfile" ]; then runfile="$1"; elif [ -z "$item" ]; then item="$1"; elif [ -z "$pr_url" ]; then pr_url="$1"; fi; shift ;;
     esac
   done
@@ -1377,7 +1404,7 @@ WTLIST
   local sp done_brief="" b ptr
   if [ ! -f "$item" ]; then
     sp="$S requirement $item not found"
-  elif grep -qF '<!-- loomwright:requirement-closeout -->' "$item" 2>/dev/null; then
+  elif _co_stamped "$item"; then
     sp="$S already stamped"
   else
     if [ -r "$HERE/brief-pointer.sh" ]; then
@@ -1456,8 +1483,13 @@ PROGRESS
   ) >/dev/null 2>&1 || true
 
   # ---- 6. trail (runs LAST, after 7; via the dispatcher — stub-able, spy-visible)
-  l="$(bash "$HLP" trail-pr "$rf_abs" --reason closeout 2>/dev/null | tail -n1)"
-  echo "${l:-trail-pr: skipped — no output}"
+  # --no-trail: this step alone is skipped; the lock is still released below.
+  if [ "$no_trail" -eq 1 ]; then
+    echo "trail-pr: skipped — --no-trail"
+  else
+    l="$(bash "$HLP" trail-pr "$rf_abs" --reason closeout 2>/dev/null | tail -n1)"
+    echo "${l:-trail-pr: skipped — no output}"
+  fi
 
   co_release; trap - EXIT
   return 0

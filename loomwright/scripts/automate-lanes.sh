@@ -21,7 +21,8 @@
 #   lane-remove <lane_dir> [--stop] [--abandon]          guarded removal (salvages first); --abandon on a
 #        `gone` lane stamps ABANDONED and pushes the lane's metadata through trail-pr's evidence gate
 #   lane-convert-ready <lane_dir>                        wave end: ready_for_release → awaiting_merge, then
-#        push the lane's metadata (non-claim files by exact list + trail-pr's evidence-gated list)
+#        push the lane's metadata (non-claim files by exact list + trail-pr's evidence-gated list); a
+#        re-run once the PR merged first runs `closeout … --no-trail` inside the lane (the done stamp)
 #   lane-info [--root <dir>]                             print .supervisor/lane.json (exit 1 when absent)
 #   init-check --parallel N [--auto-merge]               INIT refusals: `ok` | `refuse: <reason>` (exit 1)
 #   pick-guard <automate_dir>                            PICK guard: `ok` | `refuse: live_lane <run_id> <lane>`
@@ -42,7 +43,9 @@
 #                                       coordinator never writes into the lane again, EXCEPT (1) the answer
 #                                       file of the inbox protocol (`lane-answer`, below), (2) the
 #                                       wave-end `lane-convert-ready` run-file conversion and its metadata
-#                                       push (trail-pr's failure marker / Progress line included), and
+#                                       push (trail-pr's failure marker / Progress line included) — on a
+#                                       merged lane's re-run also `closeout --no-trail`'s requirement
+#                                       stamp, check-off and `## Current` reconcile — and
 #                                       (3) `lane-remove --abandon` on a `gone` lane: the ABANDONED stamp,
 #                                       the done/ → failed/ brief move and the same push, just before the
 #                                       lane is salvaged and deleted.
@@ -1022,16 +1025,25 @@ _lanes_abandon_meta() {
 # coordinator's one run-file write into a launched lane, and it PUSHES the lane's metadata, so the
 # primary's next meta pull reads awaiting_merge and lane-remove's metadata check (`meta-sync status`)
 # can pass. Under the lane's launch lock (no launch or resume can start mid-conversion). Refusals (exit
-# 1, nothing written): a live lane process (lanes_proc_alive), no run file, a `## Current` that does
-# not read status + pause_reason `ready_for_release`, or an unknown metadata mode. Already converted
-# (both `awaiting_merge` — a re-run after a failed push, or after the PR merged) ⇒ current-set answers
-# `unchanged` and only the pushes run again, so a re-run is idempotent. Branch mode (`on <Y>`) then
+# 1, nothing written): a live lane process (lanes_proc_alive), no run file, a `## Current` that reads
+# none of the three accepted states below, or an unknown metadata mode. Order, after the refusals:
+# `ready_for_release` (both fields) ⇒ current-set converts it to `awaiting_merge` (no closeout — the PR
+# is not merged yet). Already `awaiting_merge` (a re-run after a failed push, or after the owner
+# merged) ⇒ NO current-set; instead `closeout <the lane's run file> <item> <## Current pr> --no-trail`
+# runs inside the lane (automate-followups/38) — the ONE writer of the requirement's done stamp, behind
+# its own evidence gate (PR not MERGED ⇒ it writes nothing), which also checks the item off and
+# reconciles `## Current` to `done` / `awaiting_go`; its lines are echoed indented, closeout-classify
+# reads them and the last line names any leftover (a leftover never changes the exit code); no
+# `pr:` in `## Current` ⇒ closeout is not run. Already closed out (`done` / `awaiting_go` — a re-run
+# after the merged re-run's push failed) ⇒ neither runs again. Each then runs the pushes, so a re-run is
+# idempotent. Branch mode (`on <Y>`) then
 # pushes (1) the lane's non-claim files by exact list (_lanes_meta_extras: the run file, its
 # merge-readiness report, its dismissed-decisions ledger) and (2) everything else through trail-pr's
 # evidence-gated candidate list (_lanes_meta_trail, `--reason wave-end`): a done stamp or a jobs/done/
 # brief whose PR is not MERGED is excluded and named, so while the PR is open the lane keeps reading
-# `local_ahead` and lane-remove keeps refusing — after the owner merges, a re-run pushes the stamp;
-# if the PR closes unmerged, `lane-remove --abandon` records it (F11). Mode `off` has no metadata
+# `local_ahead` and lane-remove keeps refusing — after the owner merges, the re-run's closeout writes
+# the stamp and its pushes carry it; if the PR closes unmerged, `lane-remove --abandon` records it
+# (F11). Mode `off` has no metadata
 # branch to push. A failed push ⇒ `lane-convert-ready: FAILED — …` and exit 2 (re-run to retry).
 _lanes_current_item() { # <runfile> — the `## Current` item path, or nothing
   awk '/^## / { sec = $0; next }
@@ -1041,43 +1053,62 @@ lanes_convert_ready() {
   local dir="${1:-}"
   [ "$#" -le 1 ] || die "lane-convert-ready: unexpected argument '$2'"
   _lane_ctx "$dir" || die "lane-convert-ready: not a lane: ${dir:-<none>}"
-  local L="$LN_LANE" rf pid st status pause item mb out rc list
+  local L="$LN_LANE" rf pid st status pause pr item mb out rc list phase co cv cs=""
   rf="$LN_DIR/.supervisor/automate/$LN_RUN.md"
   _cr_refuse() { _lanes_launch_unlock; echo "lane-convert-ready: refused — $L — $1"; return 1; }
   _lanes_launch_lock || { echo "lane-convert-ready: refused — $L — launch lock busy (a launch or resume of this lane is in flight)"; return 1; }
   pid="$(_lt_get "$LN_TABLE" "$L" 5)"; st="$(_lt_get "$LN_TABLE" "$L" 6)"
   if lanes_proc_alive "$pid" "$st" "$LN_DIR"; then _cr_refuse "live lane process (pid $pid); convert only after it exits"; return 1; fi
   [ -f "$rf" ] || { _cr_refuse "no run file $LN_RUN.md"; return 1; }
-  IFS="$(printf '\t')" read -r status pause _ <<<"$(_lanes_runfile_fields "$rf")"
+  IFS="$(printf '\t')" read -r status pause pr _ <<<"$(_lanes_runfile_fields "$rf")"
   case "$status/$pause" in
-    ready_for_release/ready_for_release) ;;
-    awaiting_merge/awaiting_merge) echo "lane-convert-ready: $L already reads awaiting_merge — retrying the metadata push" ;;
+    ready_for_release/ready_for_release) phase=convert ;;
+    awaiting_merge/awaiting_merge) phase=closeout; echo "lane-convert-ready: $L already reads awaiting_merge — retrying the metadata push" ;;
+    done/awaiting_go) phase=closed; echo "lane-convert-ready: $L already closed out (## Current done / awaiting_go) — retrying the metadata push only" ;;
     *) _cr_refuse "run file reads status ${status:--} / pause_reason ${pause:--}, not ready_for_release"; return 1 ;;
   esac
   item="$(_lanes_current_item "$rf")"
   case "$item" in ''|null|-) _cr_refuse "run file has no ## Current item"; return 1 ;; esac
   if ! mb="$(_lanes_meta_branch "$LN_DIR")"; then _cr_refuse "metadata mode unknown (the conversion could not be pushed)"; return 1; fi
-  out="$(bash "$HELPERS" current-set "$rf" --item "$item" --status awaiting_merge --pause-reason awaiting_merge 2>&1)" \
-    || { _cr_refuse "current-set failed: $(printf '%s' "$out" | tr '\n' ' ')"; return 1; }
+  if [ "$phase" = convert ]; then
+    out="$(bash "$HELPERS" current-set "$rf" --item "$item" --status awaiting_merge --pause-reason awaiting_merge 2>&1)" \
+      || { _cr_refuse "current-set failed: $(printf '%s' "$out" | tr '\n' ' ')"; return 1; }
+  fi
+  # The merged re-run (automate-followups/38): closeout --no-trail inside the lane, under the launch lock,
+  # BEFORE the pushes, never followed by current-set (that would revert closeout's ## Current reconcile).
+  # Its own evidence gate decides — an unmerged PR prints `skipped — pr not merged` and writes nothing.
+  if [ "$phase" = closeout ]; then
+    case "$pr" in
+      ''|-|null) cs="; closeout not run (## Current has no pr)" ;;
+      *)
+        co="$(cd "$LN_DIR" && env -u CLAUDE_PID -u CLAUDECODE bash "$TRAIL" closeout "$rf" "$item" "$pr" --no-trail 2>/dev/null)"
+        printf '%s\n' "$co" | sed '/^$/d; s/^/  /'
+        cv="$(printf '%s\n' "$co" | bash "$HELPERS" closeout-classify --run "$LN_RUN" --item "${item#./}" --pr "$pr" 2>/dev/null)"
+        if [ "$cv" = complete ]; then cs="; closeout complete"
+        elif [ -z "$cv" ]; then cs="; closeout leftover: classify — closeout-classify printed nothing"
+        else cs="; closeout leftover: $(printf '%s\n' "$cv" | awk -F'\t' '$1 == "leftover" { printf "%s%s — %s", (n++ ? ", " : ""), $5, $6 }')"
+        fi ;;
+    esac
+  fi
   if [ -z "$mb" ]; then
     _lanes_launch_unlock
-    echo "lane-convert-ready: converted $L to awaiting_merge (metadata mode off — no metadata branch to push)"
+    echo "lane-convert-ready: converted $L to awaiting_merge (metadata mode off — no metadata branch to push)$cs"
     return 0
   fi
   rc=0; out="$(_lanes_meta_extras "$mb" "chore(supervisor): $LN_RUN ready_for_release -> awaiting_merge (wave end)")" || rc=$?
   if [ "$rc" != 0 ]; then
     _lanes_launch_unlock
-    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge but the metadata push to $mb failed ($(printf '%s\n' "$out" | head -1)); NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR"
+    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge but the metadata push to $mb failed ($(printf '%s\n' "$out" | head -1)); NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR$cs"
     printf '%s\n' "$out" | sed '1d; /^$/d; s/^/  /'
     return 2
   fi
   rc=0; out="$(_lanes_meta_trail "$mb" "$rf" wave-end)" || rc=$?
   _lanes_launch_unlock
   if [ "$rc" != 0 ]; then
-    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge and its run file pushed, but the evidence-gated trail push failed: $out — re-run lane-convert-ready $LN_DIR"
+    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge and its run file pushed, but the evidence-gated trail push failed: $out — re-run lane-convert-ready $LN_DIR$cs"
     return 2
   fi
-  echo "lane-convert-ready: converted $L to awaiting_merge; metadata pushed to $mb — $out"
+  echo "lane-convert-ready: converted $L to awaiting_merge; metadata pushed to $mb — $out$cs"
 }
 
 # _lanes_click_action <notify-desktop.sh path> <checkout root> — the click action notify-desktop.sh
