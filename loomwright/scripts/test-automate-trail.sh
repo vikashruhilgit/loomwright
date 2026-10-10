@@ -2675,7 +2675,7 @@ grep -qF 'does NOT check it off twice' <<<"$(grep -m1 -F '6. **CHECK OFF' <<<"$n
 for old in 'a trail-less close-out at SYNC is an open follow-up' 'no requirement done stamp' 'the stamp now rides'; do
   grep -qF -- "$old" "$SKILL" && no "(NT6) stale SKILL sentence: $old" || ok "(NT6) SKILL no longer says: $old"
 done
-grep -q '^| `closeout` |.*`\[--no-trail\]`' "$SKILL" && ok "(NT6) §1.5 closeout row documents --no-trail" || no "(NT6) §1.5 closeout row lacks --no-trail"
+grep -q '^| `closeout` |.*<pr_url> \[--session-id <sid>\] \[--no-trail\]`' "$SKILL" && ok "(NT6) §1.5 closeout row documents --no-trail" || no "(NT6) §1.5 closeout row lacks --no-trail"
 grep -qF 'it runs no `current-set` but `closeout <the lane'"'"'s run file> <item> <its ## Current pr> --no-trail` inside the lane' "$SKILL" \
   && ok "(NT6) §14 Terminal park names closeout --no-trail as the lane's stamp writer" || no "(NT6) §14 Terminal park sentence"
 nt_help="$(bash "$H" --help)"
