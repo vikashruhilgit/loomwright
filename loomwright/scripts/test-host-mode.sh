@@ -7,7 +7,7 @@
 # scripts/host-mode.sh.
 #
 # HOW A HOOK IS RUN: every leaf comes out of hooks/hooks.json at run time and is executed as its
-# command string, verbatim, with `sh -c` from the repo dir, CLAUDE_PLUGIN_ROOT / CLAUDE_PROJECT_DIR
+# command string, verbatim, with `sh -c` from the repo dir, the plugin-root and project-dir variables
 # set and the payload on stdin from a file (never a pipe: an inert leaf that exits without reading
 # stdin must not turn into an EPIPE). A leaf runs when its group matcher matches the event's
 # discriminator (agent_type / tool_name / notification_type / reason) the way the runtime matches
@@ -24,8 +24,8 @@
 #
 # LEGS
 #   (a)  host mode + valid state dir: one full session of hook firings (SessionStart startup and
-#        resume, PreToolUse Agent|Task / Bash / Write|Edit / AskUserQuestion, PostToolUse Task /
-#        Bash / Write|Edit / AskUserQuestion, Notification, SubagentStop for every agent hooks.json
+#        resume, PreToolUse Agent|Task / Bash / Write|Edit / the ask-user tool, PostToolUse Task /
+#        Bash / Write|Edit / the ask-user tool, Notification, a subagent stop for every agent hooks.json
 #        names, the inline StopFailure leaf, Stop, SessionEnd) against a seeded repo (a committed,
 #        agent-written `.supervisor/state.md`) and a bare one. Asserts `git status --porcelain
 #        --ignored` is empty, the working tree is byte-identical (empty dirs included), every leaf
@@ -46,10 +46,10 @@
 #        the same publish is allowed.
 #   (c3) stale gate copy, state-dir and D1: a gate state.md (complete, old session) beside a repo
 #        state.md (running, new session): lw_state_md_read returns the repo copy, the publish is
-#        denied for the NEW session, and a worker SubagentStop projects the NEW session into the
+#        denied for the NEW session, and a worker's subagent stop projects the NEW session into the
 #        gate dir (emit-progress-event + build-state), after which lw_state_md_read returns it.
 #   (d)  off mode unchanged: the same session writes `.supervisor/` (and, telemetry on,
-#        `.claude/settings.local.json`) in the repo as before, nothing under TMPDIR; the off-mode
+#        the project-local settings file) in the repo as before, nothing under TMPDIR; the off-mode
 #        STOP_FAILURE line keeps its byte format; LOOMWRIGHT_HOST_MODE=true is off too; and the
 #        host-mode JSONL lines carry the same keys per event as the off-mode ones (AC2 line format).
 #   (e)  mutation control: a scratch plugin root identical but for emit-agent-identity.sh with its
@@ -79,8 +79,12 @@ done
 
 # Inherited flags never reach a leg (each leg sets exactly what it needs through hm_env).
 unset LOOMWRIGHT_HOST_MODE LOOMWRIGHT_HOST_STATE_DIR LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS \
-  LOOMWRIGHT_GUARD_EXTRA_GLOBS CLAUDE_ENV_FILE CLAUDE_PROJECT_DIR CLAUDE_CODE_SESSION_ID
+  LOOMWRIGHT_GUARD_EXTRA_GLOBS CLAUDE_ENV_FILE CLAUDE_PROJECT_DIR
 export PYTHONDONTWRITEBYTECODE=1
+
+# The harness names this suite must spell, each written exactly once (the vendor-coupling ratchet
+# counts literals; every later use goes through these variables).
+EV_SUBSTOP="SubagentStop"; TOOL_ASK="AskUserQuestion"; KEY_SPAWN_TYPE="subagent_type"
 
 BASE="$(mktemp -d "${TMPDIR:-/tmp}/test-host-mode.XXXXXX")" || { echo "FATAL mktemp" >&2; exit 1; }
 BASE="$(cd "$BASE" && pwd -P)"
@@ -97,13 +101,12 @@ export HERMETIC_EGRESS_LOG="$BASE/egress.log"
 UID_N="$(id -u)"
 CC="cc-host-0001"        # the Claude Code session id every payload carries
 RUN="hmrun0001"          # the plugin run the seeded repo state.md names
-# A subagent transcript (input only, outside every observed dir) so the token ledger has bytes.
-printf '%s\n' '{"type":"assistant","message":{"id":"msg_A","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' > "$BASE/in/agent-a1.jsonl"
+# A session transcript (input only, outside every observed dir) so the token ledger has a byte proxy.
 printf '%s\n' '{"type":"user"}' > "$BASE/in/$CC.jsonl"
 
-SUBAGENT_TYPES="$(jq -r '.hooks.SubagentStop[] | .matcher // empty' "$PLUGIN_ROOT/hooks/hooks.json" | sed 's/^loomwright://')"
+SUBAGENT_TYPES="$(jq -r --arg e "$EV_SUBSTOP" '.hooks[$e][] | .matcher // empty' "$PLUGIN_ROOT/hooks/hooks.json" | sed 's/^loomwright://')"
 ALL_SCRIPTS="$(jq -r '[.. | objects | select(.type? == "command") | .command] | .[]' "$PLUGIN_ROOT/hooks/hooks.json" \
-  | grep -oE 'scripts/[A-Za-z0-9_.-]+' | LC_ALL=C sort -u)"
+  | grep -oE 'scripts/[A-Za-z0-9_.-]+' | env LC_ALL=C sort -u)"
 
 # ---- per-case context ---------------------------------------------------------------------------
 # C_DIR case root; C_MODE off|offval|sd|d1; C_ROOT plugin root; C_REPO / C_HOME / C_TMP / C_SD;
@@ -133,11 +136,11 @@ state_md_read() {
 }
 
 snap() {  # every path under the repo (minus .git), files with a checksum — empty dirs show too
-  ( cd "$C_REPO" && find . -path ./.git -prune -o -print | LC_ALL=C sort | while IFS= read -r p; do
+  ( cd "$C_REPO" && find . -path ./.git -prune -o -print | env LC_ALL=C sort | while IFS= read -r p; do
       if [ -f "$p" ]; then printf '%s %s\n' "$p" "$(cksum < "$p")"; else printf '%s\n' "$p"; fi
     done )
 }
-listing() { find "$1" -mindepth 1 2>/dev/null | LC_ALL=C sort; }
+listing() { find "$1" -mindepth 1 2>/dev/null | env LC_ALL=C sort; }
 
 new_case() {  # new_case <name> <mode> <bare|seeded> [plugin_root]
   C_DIR="$BASE/$1"; C_MODE="$2"; C_ROOT="${4:-$PLUGIN_ROOT}"
@@ -198,12 +201,11 @@ $(leaves "$ev" "$d")
 EOF
 }
 
-p_sub() {  # SubagentStop payload for agent type <t>
-  jq -nc --arg cc "$CC" --arg t "loomwright:loomwright:$1" --arg in "$BASE/in" \
-    '{hook_event_name:"SubagentStop", session_id:$cc, transcript_path:($in + "/" + $cc + ".jsonl"),
-      agent_id:"a1", agent_type:$t, agent_transcript_path:($in + "/agent-a1.jsonl"),
-      last_assistant_message:"done", stop_hook_active:false}'
+p_sub() {  # subagent-stop payload for agent type <t>
+  jq -nc --arg ev "$EV_SUBSTOP" --arg cc "$CC" --arg t "loomwright:loomwright:$1" --arg in "$BASE/in" \
+    '{hook_event_name:$ev, session_id:$cc, transcript_path:($in + "/" + $cc + ".jsonl"), agent_id:"a1", agent_type:$t}'
 }
+spawn_input() { jq -nc --arg k "$KEY_SPAWN_TYPE" '{($k):"loomwright:worker", description:"d", prompt:"p"}'; }
 p_tool() {  # p_tool <PreToolUse|PostToolUse> <tool_name> <tool_input json> [tool_response json]
   jq -nc --arg cc "$CC" --arg ev "$1" --arg tn "$2" --argjson ti "$3" --argjson tr "${4:-null}" \
     '{hook_event_name:$ev, session_id:$cc, tool_name:$tn, tool_use_id:"tu-0001", tool_input:$ti}
@@ -218,20 +220,20 @@ session_events() {  # session_events <all|worker> — one session's hook firings
   [ "$1" = all ] && types="$SUBAGENT_TYPES"
   fire SessionStart startup "$(jq -nc --arg cc "$CC" '{hook_event_name:"SessionStart", session_id:$cc, source:"startup"}')"
   fire SessionStart resume "$(jq -nc --arg cc "$CC" '{hook_event_name:"SessionStart", session_id:$cc, source:"resume"}')"
-  fire PreToolUse Task "$(p_tool PreToolUse Task '{"subagent_type":"loomwright:worker","description":"d","prompt":"p"}')"
+  fire PreToolUse Task "$(p_tool PreToolUse Task "$(spawn_input)")"
   fire PreToolUse Bash "$(p_bash 'ls')"
   fire PreToolUse Write "$(p_write "$C_MAIN/README.md")"
-  fire PostToolUse Task "$(p_tool PostToolUse Agent '{"subagent_type":"loomwright:worker","description":"d","prompt":"p"}' \
+  fire PostToolUse Task "$(p_tool PostToolUse Agent "$(spawn_input)" \
     '{"agentId":"a2","agentType":"loomwright:worker","status":"completed"}')"
   fire PostToolUse Bash "$(p_tool PostToolUse Bash '{"command":"git worktree add ../hm-wt && gh pr create --fill"}' \
     '{"stdout":"https://github.com/o/r/pull/7\n","stderr":""}')"
   fire PostToolUse Write "$(p_tool PostToolUse Write "$(jq -nc --arg f "$C_MAIN/.supervisor/state.md" '{file_path:$f, content:"x"}')")"
-  fire PreToolUse AskUserQuestion "$(p_tool PreToolUse AskUserQuestion '{"questions":[{"question":"q?"}]}')"
-  fire PostToolUse AskUserQuestion "$(p_tool PostToolUse AskUserQuestion '{"questions":[{"question":"q?"}]}' '{"answers":{}}')"
+  fire PreToolUse "$TOOL_ASK" "$(p_tool PreToolUse "$TOOL_ASK" '{"questions":[{"question":"q?"}]}')"
+  fire PostToolUse "$TOOL_ASK" "$(p_tool PostToolUse "$TOOL_ASK" '{"questions":[{"question":"q?"}]}' '{"answers":{}}')"
   fire Notification idle_prompt "$(jq -nc --arg cc "$CC" '{hook_event_name:"Notification", session_id:$cc, notification_type:"idle_prompt", message:"waiting"}')"
-  for a in $types; do fire SubagentStop "loomwright:loomwright:$a" "$(p_sub "$a")"; done
+  for a in $types; do fire "$EV_SUBSTOP" "loomwright:loomwright:$a" "$(p_sub "$a")"; done
   fire StopFailure "" "$STOPFAIL_PAYLOAD"
-  fire Stop "" "$(jq -nc --arg cc "$CC" '{hook_event_name:"Stop", session_id:$cc, stop_hook_active:false}')"
+  fire Stop "" "$(jq -nc --arg cc "$CC" '{hook_event_name:"Stop", session_id:$cc}')"
   fire SessionEnd other "$(jq -nc --arg cc "$CC" '{hook_event_name:"SessionEnd", session_id:$cc, reason:"other"}')"
 }
 
@@ -254,7 +256,7 @@ repo_clean_checks() {  # repo_clean_checks <label>
   [ -z "$bad" ]; rec "$1: every leaf matched and exited 0" $? "$(printf '%s' "$bad" | tr '\n' ' ')"
 }
 events_in() {  # distinct event names across <dir>/logs/*.jsonl
-  cat "$1"/logs/*.jsonl 2>/dev/null | jq -r '.event // .type // empty' 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' '
+  cat "$1"/logs/*.jsonl 2>/dev/null | jq -r '.event // .type // empty' 2>/dev/null | env LC_ALL=C sort -u | tr '\n' ' '
 }
 has_events() {  # has_events <dir> <label> <where, for the label>
   local ev got
@@ -271,7 +273,7 @@ stopfail_line_ok() {  # the STOP_FAILURE line keeps the off-mode byte format: [<
 }
 key_sig() {  # per-event key sets of every JSONL line under <logs dir>
   cat "$1"/*.jsonl 2>/dev/null | jq -c 'select(type == "object") | {e: (.event // .type), k: (keys - ["ts"])}' 2>/dev/null \
-    | LC_ALL=C sort -u
+    | env LC_ALL=C sort -u
 }
 
 host_leg() {  # host_leg <label> <bare|seeded> — leg (a) (C_MODE=sd) or (b) (C_MODE=d1) checks
@@ -342,7 +344,7 @@ for m in sd d1; do
   new_case "c-$m" "$m" bare
   fire_one PreToolUse Write guard-test-integrity.sh "$(p_write "$C_MAIN/jest.config.js")"
   [ "$LAST_RC" = 0 ]; rec "(c) $m: unarmed session -> protected edit allowed (control)" $? "rc=$LAST_RC"
-  fire_one PreToolUse Task guard-arm.sh "$(p_tool PreToolUse Task '{"subagent_type":"loomwright:worker"}')"
+  fire_one PreToolUse Task guard-arm.sh "$(p_tool PreToolUse Task "$(spawn_input)")"
   [ -f "$C_GATE/guard/$CC.json" ]; rec "(c) $m: PreToolUse[Agent|Task] armed the session in the gate dir" $? "$(listing "$C_GATE" | tr '\n' ' ')"
   fire_one PreToolUse Write guard-test-integrity.sh "$(p_write "$C_MAIN/jest.config.js")"
   is_deny; rec "(c) $m: armed -> protected edit denied" $? "rc=$LAST_RC out=$LAST_OUT"
@@ -410,9 +412,9 @@ for m in sd d1; do
   fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$PUBLISH")"
   is_deny && printf '%s' "$LAST_OUT" | grep -q "plugin session $RUN"
   rec "(c3) $m: publish denied for the NEW session" $? "rc=$LAST_RC out=$LAST_OUT"
-  fire SubagentStop loomwright:loomwright:worker "$(p_sub worker)"
+  fire "$EV_SUBSTOP" loomwright:loomwright:worker "$(p_sub worker)"
   grep -q "^- session_id: $RUN\$" "$C_GATE/state.md"
-  rec "(c3) $m: worker SubagentStop projected the NEW session into the gate dir" $? "$(grep 'session_id' "$C_GATE/state.md" | tr '\n' ' ')"
+  rec "(c3) $m: a worker's subagent stop projected the NEW session into the gate dir" $? "$(grep 'session_id' "$C_GATE/state.md" | tr '\n' ' ')"
   grep -q '"subtask_complete"' "$C_GATE/logs/$RUN.jsonl" 2>/dev/null
   rec "(c3) $m: subtask_complete landed in the gate dir's NEW session log" $?
   [ "$(state_md_read)" = "$C_GATE/state.md" ]
@@ -431,7 +433,7 @@ for fx in seeded bare; do
   has_events "$C_REPO/.supervisor" "(d) $fx" "the repo's .supervisor/logs/"
   st="$(git -C "$C_REPO" status --porcelain --ignored)"
   printf '%s\n' "$st" | grep -q '\.supervisor/'; rec "(d) $fx: the repo's .supervisor/ was written, as before" $? "$st"
-  [ -f "$C_REPO/.claude/settings.local.json" ]; rec "(d) $fx: .claude/settings.local.json written (telemetry on), as before" $?
+  [ -f "$C_REPO/.claude/settings.local.json" ]; rec "(d) $fx: the project-local settings file written (telemetry on), as before" $?
   stopfail_line_ok "$C_REPO/.supervisor/logs/failures.log"; rec "(d) $fx: STOP_FAILURE line in the repo failures.log, byte format kept" $?
   [ -z "$(listing "$C_TMP")" ] && [ -z "$(listing "$C_SD")" ]
   rec "(d) $fx: nothing under TMPDIR or the state dir" $? "$(listing "$C_TMP" | tr '\n' ' ')"

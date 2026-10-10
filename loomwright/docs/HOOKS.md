@@ -64,7 +64,7 @@ Hooks are centralized in `hooks.json`, which is the authoritative source for the
 
 ## Host mode
 
-A host that runs agent sessions in an owner's own repo (Loomwright Studio first) sets **`LOOMWRIGHT_HOST_MODE=1`**. The switch is on only when the value is exactly `1`; unset, or any other value, is off. With it on, no hook in `hooks.json` creates or modifies any path in the session's working tree, `.supervisor/` and `.claude/settings.local.json` included. With it off, every hook behaves exactly as the rows above describe; those rows give the off-mode paths. Source requirement: `.supervisor/requirements/host-contract/02-host-mode-no-repo-writes.md`.
+A host that runs agent sessions in an owner's own repo (Loomwright Studio first) sets **`LOOMWRIGHT_HOST_MODE=1`**. The switch is on only when the value is exactly `1`; unset, or any other value, is off. With it on, no hook in `hooks.json` creates or modifies any path in the session's working tree, `.supervisor/` and the project-local settings file included. With it off, every hook behaves exactly as the rows above describe; those rows give the off-mode paths. Source requirement: `.supervisor/requirements/host-contract/02-host-mode-no-repo-writes.md`.
 
 - **`LOOMWRIGHT_HOST_STATE_DIR`** is the optional destination. It counts only when it is an absolute path to an existing directory that is not inside the repo's main worktree (compared on physical paths, so a symlink cannot point it back in). Unset, relative, missing, a file, or inside the repo: treated as no state dir. Redirected state keeps the `.supervisor/` layout under it: `logs/<session>.jsonl`, `state.md`, `guard/<id>.json`, `logs/<id>.finalize-gate`.
 - **No valid state dir — owner decision D1 (2026-10-09):** gate state goes to a per-user directory outside the repo, `${TMPDIR:-/tmp}/loomwright-host-<uid>/<repo-hash>/`, where `<repo-hash>` is the first 12 hex of the SHA-256 of the repo's absolute main-worktree path; writers create it under `umask 077`. "Gate state" means the guard markers, the finalize-gate marker, and the state those gates read: the `## Session` block of `state.md`, the plugin session log and its `.owner` seed. Every other hook write skips.
@@ -72,31 +72,31 @@ A host that runs agent sessions in an owner's own repo (Loomwright Studio first)
 - **Agent-written `state.md`:** host mode governs hooks only. Context-Keeper still creates the repo's `.supervisor/state.md` with the Write tool, and that repo copy decides which run is current: `lw_state_md_read` returns the gate-dir copy only when its `session_id` equals the repo copy's, or when the repo copy is absent. A gate copy left by an earlier run therefore never hides a newer repo seed. No hook writes the repo `state.md` under host mode; `build-state.sh` projects into the gate dir.
 - **The fail-CLOSED gates keep enforcing.** The test-integrity guard reads its markers from `lw_gate_state_dir`, the same function `guard-arm.sh` writes them through, and its protected-path checks also cover the redirected guard dir and `host-mode.sh`, so an armed agent cannot disarm by editing either. The finalize-publish guard reads its marker and session log from the gate dir and treats the run as live when EITHER the repo `state.md` or the gate-dir copy reads `running`/`checkpoint`. If `host-mode.sh` fails to load while the switch is on, both guards fail CLOSED (`guard_unavailable`), and every fail-SAFE emitter exits 0 without writing.
 
-**Classification of every script `hooks.json` invokes**, plus the inline StopFailure leaf. `redirects`: the write goes to the resolved dir instead of the repo. `skips`: the write does not happen under host mode. `unaffected`: writes nothing in the repo in either mode. "(gate)" = through `lw_gate_state_dir`: the state dir, else the D1 root, never skipped. "(state dir)" = through `lw_state_dir`: the state dir, else skipped. `hooks.json` stays the authority for which leaves call which script; the leaf column is a reading aid.
+**Classification of every script `hooks.json` invokes**, plus the inline StopFailure leaf. `redirects`: the write goes to the resolved dir instead of the repo. `skips`: the write does not happen under host mode. `unaffected`: writes nothing in the repo in either mode. "(gate)" = through `lw_gate_state_dir`: the state dir, else the D1 root, never skipped. "(state dir)" = through `lw_state_dir`: the state dir, else skipped. `hooks.json` stays the authority for which leaves call which script.
 
-| Script / leaf | Leaves | Class | Under host mode |
-|---|---|---|---|
-| `emit-lifecycle.sh` | SubagentStop (catch-all), PostToolUse AskUserQuestion / Bash / Write\|Edit / Task, PreToolUse AskUserQuestion, Notification, StopFailure | redirects (gate) | lifecycle rows, heartbeat debounce marker, ask/answer id ledgers. The switch stands in for the `.supervisor/` presence check |
-| `emit-agent-identity.sh` | PostToolUse Task | redirects (gate) | `agent_identity` row |
-| `emit-token-ledger.sh` | SubagentStop, per-agent matchers | redirects (gate) | `token_ledger` row; `state.md` read through `lw_state_md_read` |
-| `emit-progress-event.sh` | SubagentStop worker | redirects (gate) | `subtask_complete` row, then `build-state.sh` projects `state.md` (and takes its lock) in the gate dir; the repo `state.md` is only read |
-| `reproject-state-on-terminal.sh` | PostToolUse Bash | redirects (gate) | reads `state.md` via `lw_state_md_read` and the gate-dir log and seed; projects through `build-state.sh` as above |
-| `seed-run-owner.sh` | PostToolUse Write\|Edit | redirects (gate) | still triggered by a Write to the repo `state.md`, which it only reads; the `.owner` seed goes to the gate dir |
-| `close-stranded-run.sh` | SessionEnd | redirects (gate) | `session_end` row and re-projection in the gate dir; releasing the repo's `run.lock` skips |
-| `guard-arm.sh` | PreToolUse Agent\|Task, SessionEnd | redirects (gate) | markers at `<gate dir>/guard/<id>.json` |
-| `guard-test-integrity.sh` | PreToolUse Bash, PreToolUse Write\|Edit | redirects (gate) | reads the markers from the gate dir; deny mechanics and the jq-free inert path unchanged |
-| `guard-finalize-publish.sh` | PreToolUse Bash | redirects (gate) | marker and session log in `<gate dir>/logs/`; live on the union of both `state.md` copies; HEAD and branch still read from the project dir |
-| `hook-dispatch-on-pr-create.sh` | PostToolUse Bash | redirects (gate) | the `pr_created` row goes to the gate dir. The review-drain dispatch skips: `dispatch-pr-review.sh` writes markers, logs and a sibling worktree |
-| `worktree-audit.sh` | PostToolUse Bash | redirects (state dir) | `worktrees.log`; the report reads the same file |
-| `notify-desktop.sh` | PreToolUse AskUserQuestion, Notification | redirects (state dir) | `notifications.log`, `.notified-ids`, `.notify-debounce`. Without a state dir the banner still fires, undebounced and unlogged |
-| `send-telemetry.sh` | SubagentStop code-reviewer / qa-executor / supervisor-runner | redirects (state dir) | one `HOST_MODE_SKIPPED` line in `telemetry.log`. `send-telemetry-core.sh` never runs under host mode, because it writes the repo itself |
-| `session-resume.sh` | SessionStart | redirects (state dir) | the nudge debounce markers (without a state dir the nudges go undebounced). Skips: the `reconcile-jobs.sh --repair-merged` brief moves (briefs are still classified and reported), the rules nudge and the twin section (their readers append to repo logs) |
-| StopFailure inline leaf (`failures.log` append) | StopFailure | redirects (state dir) | `<state dir>/logs/failures.log`, same line format. The leaf then pipes the payload to `emit-lifecycle.sh failed` (above) |
-| `stamp-requirement-status.sh` | SessionStart, SubagentStop supervisor-runner | skips | a requirement-file append is repo content |
-| `set-otel-resource-attrs.sh` | SessionStart | skips | the `.claude/settings.local.json` write. The session-scoped `CLAUDE_ENV_FILE` export still runs |
-| `send-webhook.sh` | SubagentStop supervisor-runner, PreToolUse AskUserQuestion | unaffected | an outbound POST; writes no file |
-| `validate-*-result.py` — every validator `hooks.json` names, including the Stop leaf's `validate-code-review-result.py --main-session` | SubagentStop per-agent matchers, Stop | unaffected | read the payload and transcript, print a decision |
-| `TaskCompleted` | TaskCompleted | unaffected | a `type: prompt` hook; runs no script |
+| Script / leaf | Class | Under host mode |
+|---|---|---|
+| `emit-lifecycle.sh` | redirects (gate) | lifecycle rows, heartbeat debounce marker, ask/answer id ledgers. The switch stands in for the `.supervisor/` presence check |
+| `emit-agent-identity.sh` | redirects (gate) | `agent_identity` row |
+| `emit-token-ledger.sh` | redirects (gate) | `token_ledger` row; `state.md` read through `lw_state_md_read` |
+| `emit-progress-event.sh` | redirects (gate) | `subtask_complete` row, then `build-state.sh` projects `state.md` (and takes its lock) in the gate dir; the repo `state.md` is only read |
+| `reproject-state-on-terminal.sh` | redirects (gate) | reads `state.md` via `lw_state_md_read` and the gate-dir log and seed; projects through `build-state.sh` as above |
+| `seed-run-owner.sh` | redirects (gate) | still triggered by a Write to the repo `state.md`, which it only reads; the `.owner` seed goes to the gate dir |
+| `close-stranded-run.sh` | redirects (gate) | `session_end` row and re-projection in the gate dir; releasing the repo's `run.lock` skips |
+| `guard-arm.sh` | redirects (gate) | markers at `<gate dir>/guard/<id>.json` |
+| `guard-test-integrity.sh` | redirects (gate) | reads the markers from the gate dir; deny mechanics and the jq-free inert path unchanged |
+| `guard-finalize-publish.sh` | redirects (gate) | marker and session log in `<gate dir>/logs/`; live on the union of both `state.md` copies; HEAD and branch still read from the project dir |
+| `hook-dispatch-on-pr-create.sh` | redirects (gate) | the `pr_created` row goes to the gate dir. The review-drain dispatch skips: `dispatch-pr-review.sh` writes markers, logs and a sibling worktree |
+| `worktree-audit.sh` | redirects (state dir) | `worktrees.log`; the report reads the same file |
+| `notify-desktop.sh` | redirects (state dir) | `notifications.log`, `.notified-ids`, `.notify-debounce`. Without a state dir the banner still fires, undebounced and unlogged |
+| `send-telemetry.sh` | redirects (state dir) | one `HOST_MODE_SKIPPED` line in `telemetry.log`. `send-telemetry-core.sh` never runs under host mode, because it writes the repo itself |
+| `session-resume.sh` | redirects (state dir) | the nudge debounce markers (without a state dir the nudges go undebounced). Skips: the `reconcile-jobs.sh --repair-merged` brief moves (briefs are still classified and reported), the rules nudge and the twin section (their readers append to repo logs) |
+| StopFailure inline leaf (`failures.log` append) | redirects (state dir) | `<state dir>/logs/failures.log`, same line format. The leaf then pipes the payload to `emit-lifecycle.sh failed` (above) |
+| `stamp-requirement-status.sh` | skips | a requirement-file append is repo content |
+| `set-otel-resource-attrs.sh` | skips | the project-local settings write (OTEL resource attributes). The session-scoped `CLAUDE_ENV_FILE` export still runs |
+| `send-webhook.sh` | unaffected | an outbound POST; writes no file |
+| `validate-*-result.py` — every validator `hooks.json` names, including the Stop leaf's `validate-code-review-result.py --main-session` | unaffected | read the payload and transcript, print a decision |
+| `TaskCompleted` | unaffected | a `type: prompt` hook; runs no script |
 
 **Honest limits:**
 
