@@ -250,15 +250,18 @@ heading line**, opened by the namespaced HTML-comment sentinel the idempotency g
   and an owner's `# abandoned:` decision becomes `## Status: done_with_escalation — ABANDONED (…)`;
   `stamp-requirement-status.sh` writes `## Status: brief-shipped`, deliberately not a done value.
 - **Honest limit:** a plain `/supervisor` / `/autonomous` run outside `/automate` gets no automatic done
-  stamp — until a human runs `reconcile-status --apply`, or `/automate --resume` / the merge watcher
-  runs `closeout`, the requirement reads `brief-shipped` (or nothing). `stamp-requirement-status.sh`
+  stamp. `closeout` needs an `/automate` run file, so `/automate --resume` and the merge watcher
+  (`automate-merge-watch.sh`) close a requirement out only when it is also the `## Current` item of an
+  `/automate` run; for other requirements `/automate --resume` runs `reconcile-status` as a dry run only.
+  For a plain run, recovery after the merge is a human step: `reconcile-status --apply`, or a
+  hand-written `## Status: done`. Until then the requirement reads `brief-shipped` (or nothing) and
+  `resolve-folder` keeps listing the merged item. `stamp-requirement-status.sh`
   (run on session start and when a Supervisor runner agent finishes — its two `hooks.json` seams) writes that `brief-shipped` heading on
   a status-less requirement once its brief lands in `done/`. **Caveat:** `reconcile-status --apply`
-  promotes only a `pending`/status-less requirement; one already marked `brief-shipped` is listed as an
-  `info` row and left unchanged, so it needs a hand-written `## Status: done` (or `/automate --resume` /
-  the merge watcher running `closeout`, which appends its block regardless of an earlier
-  `brief-shipped` heading — its guard keys only on the sentinel). Promoting a merged `brief-shipped`
-  requirement in `reconcile-status` is an open follow-up, an explicit non-goal today.
+  promotes any not-done requirement on merged-PR evidence EXCEPT one already marked `brief-shipped`
+  (a `pending`, `in-progress` or status-less heading is promoted); a `brief-shipped` one is listed as an
+  `info` row and left unchanged, so it needs a hand-written `## Status: done`. Promoting a merged
+  `brief-shipped` requirement in `reconcile-status` is an open follow-up, an explicit non-goal today.
 - **Vocabulary (intentional):** the requirement uses `done`, the brief `## Outcome` uses `completed` /
   `completed_with_escalation`. The split is deliberate — the requirement is "done", the brief is
   "completed" — do **not** harmonize them.
