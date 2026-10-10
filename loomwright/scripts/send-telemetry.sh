@@ -28,6 +28,24 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CORE="$SCRIPT_DIR/send-telemetry-core.sh"
 LOG_DIR="${PWD}/.supervisor/logs"
+# Host mode (host-mode.sh — the one resolver): off keeps "${PWD}/.supervisor/logs"
+# byte-identical. On, the logs and flags go to the host's state dir (lw_state_dir),
+# and with no valid state dir there is nowhere to log, so the wrapper exits 0.
+# The core is NOT run under host mode either way: it creates and appends
+# "${PWD}/.supervisor/logs" itself (telemetry-sent.log) and resolves consent from
+# the cwd, so it cannot be pointed elsewhere from here. A helper that fails to
+# load with the switch on exits 0 without writing.
+ST_HOST=0
+if . "$SCRIPT_DIR/host-mode.sh" 2>/dev/null; then
+  if lw_host_mode; then
+    ST_HOST=1
+    _st_main="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+    _st_dir="$(lw_state_dir "${_st_main:-$PWD}")" || exit 0
+    LOG_DIR="$_st_dir/logs"
+  fi
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG_FILE="$LOG_DIR/telemetry.log"
 
@@ -87,6 +105,13 @@ FLAG_EXISTED_BEFORE="false"
 [ -e "$FLAG" ] && FLAG_EXISTED_BEFORE="true"
 REPO_UNSET_FLAG_EXISTED_BEFORE="false"
 [ -e "$REPO_UNSET_FLAG" ] && REPO_UNSET_FLAG_EXISTED_BEFORE="true"
+
+# ---- Host mode: the core is skipped (it writes the repo — see above) --------
+if [ "$ST_HOST" = 1 ]; then
+  printf '[%s] HOST_MODE_SKIPPED CORE_EXIT=- SESSION=%s PENDING_FLAG_NEW=false STDERR=core_writes_repo_under_host_mode\n' \
+    "$UTC_TS" "$SESSION_LABEL" >> "$LOG_FILE" 2>/dev/null || true
+  exit 0
+fi
 
 # ---- Invoke core (or absorb its absence) ------------------------------------
 STDERR_TMP="$(mktemp 2>/dev/null || echo "/tmp/send-telemetry-stderr-$$.tmp")"

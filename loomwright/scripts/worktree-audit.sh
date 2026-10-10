@@ -170,10 +170,35 @@ log_root() {
   printf '%s' "$d"
 }
 
+# Host mode (host-mode.sh — the one resolver, a plain sibling): off mode does not
+# depend on the helper loading; a helper that fails to load with
+# LOOMWRIGHT_HOST_MODE=1 exits 0 without writing.
+WTA_HOST=0
+if . "$(dirname "$0")/host-mode.sh" 2>/dev/null; then
+  lw_host_mode && WTA_HOST=1
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
+
+# wta_state_dir <root> — the `.supervisor`-equivalent holding logs/worktrees.log,
+# shared by the writer (emit) and the reader (report) so they always agree. Off:
+# `<root>/.supervisor`, byte-identical. On: lw_state_dir of the repo's main
+# worktree; prints nothing and returns 1 when no valid state dir exists (skip).
+wta_state_dir() {
+  local main
+  if [ "$WTA_HOST" != 1 ]; then printf '%s/.supervisor' "$1"; return 0; fi
+  main="$(git -C "$1" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+  lw_state_dir "${main:-$1}"
+}
+
 # plugin_present <root> — the population gate: the plugin has run in this repo
 # iff `<root>/.supervisor/` already exists. Checked by every writer BEFORE any
 # git call or line build; this script never creates `.supervisor/` itself.
+# Under host mode the switch plus a valid state dir is the presence signal (the
+# repo's `.supervisor/` is kept out of the repo there, so it cannot be) — the
+# override below; the off-mode one-liner stays verbatim.
 plugin_present() { [ -d "$1/.supervisor" ]; }
+if [ "$WTA_HOST" = 1 ]; then plugin_present() { wta_state_dir "$1" >/dev/null; }; fi
 
 # unexpanded <token> — true when the token cannot be a literal path because it
 # still carries shell syntax the payload never expanded.
@@ -320,8 +345,10 @@ branch_lookup() {
 # emit <root> <event> <path|""> <branch|""> <confirmed> <session|""> <source> <resolved_by|""> <command>
 emit() {
   local root="$1" event="$2" path="$3" branch="$4" confirmed="$5" sid="$6" src="$7" res="$8" cmd="$9"
-  local dir="$root/.supervisor/logs" line
+  local dir line
   plugin_present "$root" || return 0
+  dir="$(wta_state_dir "$root")" || return 0
+  dir="$dir/logs"
   cmd="$(printf '%s' "$cmd" | head -c 200)"
   line="$(jq -nc --arg ts "$(now_ts)" --arg event "$event" --arg path "$path" \
     --arg branch "$branch" --argjson confirmed "$confirmed" --arg sid "$sid" \
@@ -547,7 +574,8 @@ report() {
   command -v git >/dev/null 2>&1 || return 0
   local root log candidates live rc line path branch ts sid cur
   root="$(log_root "$PWD")"
-  log="$root/.supervisor/logs/worktrees.log"
+  log="$(wta_state_dir "$root")" || return 0
+  log="$log/logs/worktrees.log"
   [ -r "$log" ] || return 0
   # Fold in ONE jq pass: garbage / legacy / event-less lines vanish via fromjson?.
   # A `removed` clears a candidate when it was CONFIRMED (true) or UNPROBEABLE

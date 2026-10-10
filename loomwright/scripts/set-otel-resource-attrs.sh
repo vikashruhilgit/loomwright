@@ -119,6 +119,18 @@ else
   ATTR="${NEW_NAME},${NEW_VER}"
 fi
 
+# ---- Host mode (host-mode.sh — the one resolver) ---------------------------
+# Under LOOMWRIGHT_HOST_MODE=1 the durable settings.local.json write (step 8) is
+# SKIPPED — it is a repo write — while the session-scoped env-file export
+# (step 7) still runs. Off mode does not depend on the helper loading; a helper
+# that fails to load with the switch on exits 0 without writing anything.
+SO_HOST=0
+if . "$(dirname "${BASH_SOURCE[0]}")/host-mode.sh" 2>/dev/null; then
+  lw_host_mode && SO_HOST=1
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
+
 # ---- 7. Current-session best-effort (UNVERIFIED bonus) ----------------------
 # If Claude Code exposed a session env file, export the attrs for the live
 # session too. Correctness must NOT depend on this — skip silently on any issue.
@@ -134,6 +146,7 @@ if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -w "${CLAUDE_ENV_FILE}" ]; then
 fi
 
 # ---- 8. Durable write -------------------------------------------------------
+[ "$SO_HOST" = 1 ] && exit 0   # host mode: never reaches settings.local.json
 mkdir -p "$ROOT/.claude" 2>/dev/null || exit 0
 
 if [ -f "$SL" ]; then
