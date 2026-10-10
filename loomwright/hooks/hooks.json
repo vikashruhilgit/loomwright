@@ -195,7 +195,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "payload=$(cat); mkdir -p .supervisor/logs && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] STOP_FAILURE $payload\" >> .supervisor/logs/failures.log || true; printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" failed || true"
+            "command": "payload=$(cat); if [ \"${LOOMWRIGHT_HOST_MODE:-}\" = \"1\" ]; then r=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p'); d=$(. \"${CLAUDE_PLUGIN_ROOT}/scripts/host-mode.sh\" 2>/dev/null && lw_state_dir \"${r:-$PWD}\") && [ -n \"$d\" ] && mkdir -p \"$d/logs\" && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] STOP_FAILURE $payload\" >> \"$d/logs/failures.log\"; else mkdir -p .supervisor/logs && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] STOP_FAILURE $payload\" >> .supervisor/logs/failures.log; fi || true; printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" failed || true"
           }
         ]
       }

@@ -147,18 +147,38 @@ if [ "$SCOPE" = "plugin" ] && [ "$HOOK_EVENT" = "PreToolUse" ]; then
   fi
 fi
 
-mkdir -p .supervisor/logs 2>/dev/null || true
-NOTIFY_LOG=".supervisor/logs/notifications.log"
+# ---- Host mode (host-mode.sh — the one resolver) ----------------------------
+# ND_LOGS holds notifications.log, .notified-ids and .notify-debounce. Off: the
+# cwd-relative `.supervisor/logs`, byte-identical. On: <lw_state_dir>/logs, or
+# EMPTY when no valid state dir exists — then the audit log goes to /dev/null and
+# the replay ledger + debounce are skipped (fail toward notifying, as everywhere
+# else in this file). A helper that fails to load with the switch on exits 0.
+ND_LOGS=".supervisor/logs"
+if . "$(dirname "$0")/host-mode.sh" 2>/dev/null; then
+  if lw_host_mode; then
+    _nd_main="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+    if _nd_dir="$(lw_state_dir "${_nd_main:-$PWD}")"; then ND_LOGS="$_nd_dir/logs"; else ND_LOGS=""; fi
+  fi
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
+
+NOTIFY_LOG=/dev/null
+if [ -n "$ND_LOGS" ]; then
+  mkdir -p "$ND_LOGS" 2>/dev/null || true
+  NOTIFY_LOG="$ND_LOGS/notifications.log"
+fi
 
 # ---- Replay de-duplication (per tool_use_id) --------------------------------
 # A resumed session replays the same AskUserQuestion tool call (same
 # tool_use_id) to deliver the answer, which re-fires this hook. Sits AFTER the
 # scope gate (an out-of-scope ask is never recorded) and BEFORE the debounce (a
 # replay never touches .notify-debounce). Every step fails toward notifying.
-NOTIFIED_IDS_FILE=".supervisor/logs/.notified-ids"
+NOTIFIED_IDS_FILE=""
+[ -n "$ND_LOGS" ] && NOTIFIED_IDS_FILE="$ND_LOGS/.notified-ids"
 LEDGER_MAX=200
 TOOL_USE_ID=""
-if [ "$HOOK_EVENT" = "PreToolUse" ] && [ "$TOOL_NAME" = "AskUserQuestion" ]; then
+if [ -n "$NOTIFIED_IDS_FILE" ] && [ "$HOOK_EVENT" = "PreToolUse" ] && [ "$TOOL_NAME" = "AskUserQuestion" ]; then
   TOOL_USE_ID="$(printf '%s' "$INPUT" | jq -r '.tool_use_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-' 2>/dev/null || true)"
 fi
 if [ -n "$TOOL_USE_ID" ]; then
@@ -190,17 +210,20 @@ fi
 # LOOMWRIGHT_NOTIFY_DEBOUNCE=0 to disable.
 DEBOUNCE_WINDOW="${LOOMWRIGHT_NOTIFY_DEBOUNCE:-5}"
 case "$DEBOUNCE_WINDOW" in *[!0-9]*|"") DEBOUNCE_WINDOW=5 ;; esac
-DEBOUNCE_FILE=".supervisor/logs/.notify-debounce"
-mkdir -p .supervisor/logs 2>/dev/null || true
+DEBOUNCE_FILE=""
+if [ -n "$ND_LOGS" ]; then
+  DEBOUNCE_FILE="$ND_LOGS/.notify-debounce"
+  mkdir -p "$ND_LOGS" 2>/dev/null || true
+fi
 NOW_EPOCH="$(date +%s 2>/dev/null || echo 0)"
-if [ "$DEBOUNCE_WINDOW" -gt 0 ] && [ "$NOW_EPOCH" != "0" ] && [ -f "$DEBOUNCE_FILE" ]; then
+if [ -n "$DEBOUNCE_FILE" ] && [ "$DEBOUNCE_WINDOW" -gt 0 ] && [ "$NOW_EPOCH" != "0" ] && [ -f "$DEBOUNCE_FILE" ]; then
   LAST_EPOCH="$(cat "$DEBOUNCE_FILE" 2>/dev/null || echo 0)"
   case "$LAST_EPOCH" in *[!0-9]*|"") LAST_EPOCH=0 ;; esac
   if [ "$LAST_EPOCH" -gt 0 ] && [ "$((NOW_EPOCH - LAST_EPOCH))" -lt "$DEBOUNCE_WINDOW" ]; then
     exit 0
   fi
 fi
-[ "$NOW_EPOCH" != "0" ] && printf '%s' "$NOW_EPOCH" > "$DEBOUNCE_FILE" 2>/dev/null || true
+[ -n "$DEBOUNCE_FILE" ] && [ "$NOW_EPOCH" != "0" ] && printf '%s' "$NOW_EPOCH" > "$DEBOUNCE_FILE" 2>/dev/null || true
 
 TITLE=""
 BODY=""
