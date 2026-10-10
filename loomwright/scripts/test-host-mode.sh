@@ -268,7 +268,7 @@ has_events() {  # has_events <dir> <label> <where, for the label>
 stopfail_line_ok() {  # the STOP_FAILURE line keeps the off-mode byte format: [<utc>] STOP_FAILURE <payload>
   local f="$1" line
   line="$(tail -1 "$f" 2>/dev/null)"
-  printf '%s\n' "$line" | grep -qE '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\] STOP_FAILURE ' \
+  grep -qE '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\] STOP_FAILURE ' <<<"$line" \
     && [ "${line#*] STOP_FAILURE }" = "$STOPFAIL_PAYLOAD" ]
 }
 key_sig() {  # per-event key sets of every JSONL line under <logs dir>
@@ -339,7 +339,7 @@ done
 
 # =================================================================================================
 echo "== (c) guard-test-integrity keeps denying under host mode =="
-is_deny() { [ "$LAST_RC" = 2 ] && printf '%s' "$LAST_OUT" | grep -q '"permissionDecision":"deny"'; }
+is_deny() { [ "$LAST_RC" = 2 ] && grep -q '"permissionDecision":"deny"' <<<"$LAST_OUT"; }
 for m in sd d1; do
   new_case "c-$m" "$m" bare
   fire_one PreToolUse Write guard-test-integrity.sh "$(p_write "$C_MAIN/jest.config.js")"
@@ -390,7 +390,7 @@ for m in sd d1; do
   new_case "c2-repo-$m" "$m" seeded
   [ ! -e "$C_GATE/state.md" ]; rec "(c2) $m repo-only run: no gate-dir state.md (precondition)" $?
   fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$PUBLISH")"
-  is_deny && printf '%s' "$LAST_OUT" | grep -q "plugin session $RUN"
+  is_deny && grep -q "plugin session $RUN" <<<"$LAST_OUT"
   rec "(c2) $m repo-only run: unmarked publish denied for the repo seed's session" $? "rc=$LAST_RC out=$LAST_OUT"
   ( umask 077; mkdir -p "$C_GATE/logs" )
   jq -nc --arg cc "$CC" --arg r "$RUN" '{event:"session_start", session_id:$r, cc_session_id:$cc}' > "$C_GATE/logs/$RUN.jsonl"
@@ -410,7 +410,7 @@ for m in sd d1; do
   [ "$(state_md_read)" = "$C_MAIN/.supervisor/state.md" ]
   rec "(c3) $m: lw_state_md_read returns the repo copy over a stale gate copy" $? "$(state_md_read)"
   fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$PUBLISH")"
-  is_deny && printf '%s' "$LAST_OUT" | grep -q "plugin session $RUN"
+  is_deny && grep -q "plugin session $RUN" <<<"$LAST_OUT"
   rec "(c3) $m: publish denied for the NEW session" $? "rc=$LAST_RC out=$LAST_OUT"
   fire "$EV_SUBSTOP" loomwright:loomwright:worker "$(p_sub worker)"
   grep -q "^- session_id: $RUN\$" "$C_GATE/state.md"
@@ -432,7 +432,7 @@ for fx in seeded bare; do
   [ "$C_GATE" = "$C_MAIN/.supervisor" ]; rec "(d) $fx: lw_gate_state_dir is <repo>/.supervisor" $? "$C_GATE"
   has_events "$C_REPO/.supervisor" "(d) $fx" "the repo's .supervisor/logs/"
   st="$(git -C "$C_REPO" status --porcelain --ignored)"
-  printf '%s\n' "$st" | grep -q '\.supervisor/'; rec "(d) $fx: the repo's .supervisor/ was written, as before" $? "$st"
+  grep -q '\.supervisor/' <<<"$st"; rec "(d) $fx: the repo's .supervisor/ was written, as before" $? "$st"
   [ -f "$C_REPO/.claude/settings.local.json" ]; rec "(d) $fx: the project-local settings file written (telemetry on), as before" $?
   stopfail_line_ok "$C_REPO/.supervisor/logs/failures.log"; rec "(d) $fx: STOP_FAILURE line in the repo failures.log, byte format kept" $?
   [ -z "$(listing "$C_TMP")" ] && [ -z "$(listing "$C_SD")" ]
@@ -466,7 +466,7 @@ if [ -s "$M_FILE" ] && ! cmp -s "$M_FILE" "$PLUGIN_ROOT/scripts/emit-agent-ident
    && bash -n "$M_FILE" 2>/dev/null && ! grep -q 'lw_gate_state_dir' "$M_FILE"; then
   ok "(e) mutant is non-empty, differs from the original, passes bash -n, and no longer resolves through host-mode.sh"
   d="$(diff -rq "$PLUGIN_ROOT/scripts" "$MUT/scripts" 2>&1)"
-  [ "$(printf '%s\n' "$d" | grep -c .)" = 1 ] && printf '%s' "$d" | grep -q 'emit-agent-identity.sh'
+  [ "$(printf '%s\n' "$d" | grep -c .)" = 1 ] && grep -q 'emit-agent-identity.sh' <<<"$d"
   rec "(e) the scratch plugin root differs from the real one in that one file only" $? "$d"
   replay
   # The exact run "(a) bare" passed above, against the mutant root: its repo-clean check must fail.
@@ -476,8 +476,8 @@ if [ -s "$M_FILE" ] && ! cmp -s "$M_FILE" "$PLUGIN_ROOT/scripts/emit-agent-ident
   m_checks="$(cat "$C_CHECKS")"
   m_status="$(git -C "$C_REPO" status --porcelain --ignored)"
   : > "$C_CHECKS"
-  printf '%s\n' "$m_checks" | grep -q '^FAIL (e-mutant): git status --porcelain --ignored is empty' \
-    && printf '%s' "$m_status" | grep -q '\.supervisor/'
+  grep -q '^FAIL (e-mutant): git status --porcelain --ignored is empty' <<<"$m_checks" \
+    && grep -q '\.supervisor/' <<<"$m_status"
   rec "(e) leg (a) FAILS against the mutant: its repo-clean check fails, the repo gained .supervisor/" $? "status: $m_status"
   replay
 else
