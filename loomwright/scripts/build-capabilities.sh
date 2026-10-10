@@ -392,17 +392,27 @@ jq -R -s --arg us "$US" 'split("\n") | map(select(length > 0) | split($us) | {na
 #             substitution; or a simple command whose first word is not on the
 #             non-writing allowlist below (so tee, cp, mv, rm, touch, sed -i, eval, `bash -c`, … are
 #             unknown), or an interpreter not followed by a plugin script path.
+#   HOST-MODE SPLIT — the one construct read as LESS than its full text. hooks[] publishes what a
+#             leaf does with host mode OFF (the host-mode behaviour is `host_switch`'s to declare,
+#             reserved). A leaf whose command spells its host-mode split inline as EXACTLY
+#             `if [ "${HOST_VAR:-}" = "1" ]; then <host>; else <off>; fi` is parsed as if `<off>`
+#             stood there alone: under the switch host-mode.sh keeps every hook write out of the
+#             working directory (pinned by test-host-mode.sh, not by this static parse). Any other
+#             spelling — a different test, no `else`, a nested `fi` — is parsed in full and so fails
+#             closed exactly as above.
 NONWRITING_CMDS='cat printf echo mkdir date true false : test ['
 INTERPRETERS='bash sh python3 python'
 ROOT_VAR='CLAUDE_PLUGIN_ROOT'   # the one place the generator names the install-root variable
+HOST_VAR='LOOMWRIGHT_HOST_MODE' # the one place the generator names the host-mode switch
 
 # Sorted by (event, matcher with null as "", group position, leaf position); `source` records the
 # position so an entry can be traced back to hooks.json.
 # ---------------------------------------------------------------------------------------------------
 jq -S --slurpfile audit "$tmpd/audit.json" \
-  --arg nonwriting "$NONWRITING_CMDS" --arg interp "$INTERPRETERS" --arg rv "$ROOT_VAR" '
+  --arg nonwriting "$NONWRITING_CMDS" --arg interp "$INTERPRETERS" --arg rv "$ROOT_VAR" --arg hv "$HOST_VAR" '
   ($audit[0]) as $a
   | ("\\$\\{?" + $rv + "\\}?\"?/scripts/([A-Za-z0-9_.-]+)") as $script_re
+  | ("if \\[ \"\\$\\{" + $hv + ":-\\}\" = \"1\" \\]; then (?<host>[^\n]*?); else (?<off>[^\n]*?); fi(?=$|[ \\t;|&)])") as $host_split_re
   | ($nonwriting | split(" ")) as $okcmds | ($interp | split(" ")) as $interps
   # simple_cmds: the command text split into simple commands. `$(` opens one, and the operators
   # ; & && || | ( and newline separate them. Only REAL fd duplications (`N>&M`, `>&-`, `N>&M-`, the
@@ -426,7 +436,7 @@ jq -S --slurpfile audit "$tmpd/audit.json" \
         else false end;
   [ .hooks | to_entries[] | .key as $ev | .value | to_entries[] | .key as $g | .value as $grp
       | $grp.hooks | to_entries[] | .key as $l | .value as $h
-      | ($h.command // "") as $cmd
+      | ($h.command // "" | sub($host_split_re; "\(.off)")) as $cmd
       | [ $cmd | scan($script_re) | .[0] ] as $s
       | ([ $cmd | scan($rv) ] | length) as $mentions
       # inline redirects as [operator, target]. `>&` followed by an fd number / `-` is a duplication

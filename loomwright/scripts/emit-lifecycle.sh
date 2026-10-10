@@ -143,7 +143,9 @@
 # convention: never CREATE `.supervisor/`, only write into it once it already
 # exists) — the identical failure-mode contract as emit-progress-event.sh,
 # plus this last one which is unique to emit-lifecycle.sh's generic-matcher
-# wiring.
+# wiring. Under host mode (`LOOMWRIGHT_HOST_MODE=1`, host-mode.sh) the dir is
+# resolved by lw_gate_state_dir_existing and never lies in the repo; the same
+# presence check applies to it (see the plugin_present comment below).
 #
 # KNOWN LIMITATION — shared "main" heartbeat-debounce bucket
 # ------------------------------------------------------------
@@ -198,19 +200,37 @@ fi
 . "${BASH_SOURCE[0]%/*}/loom-log-owner.sh" 2>/dev/null || exit 0
 main_root="$(loom_main_root)" || exit 0                     # fail SAFE, never guess
 session_branch="$(git -C "$main_root" branch --show-current 2>/dev/null || true)"
-LOG_DIR="$main_root/.supervisor/logs"
-STATE_MD="$main_root/.supervisor/state.md"
 
-# plugin_present <root> — the population gate: the plugin has run in this repo
-# iff `<root>/.supervisor/` already exists. Byte-parallel with
-# worktree-audit.sh's identically-named gate (same file family, same
-# convention) — checked BEFORE any `mkdir -p "$LOG_DIR"` call site (the
+# ---- Host mode: where gate-input state lives (host-mode.sh, the one resolver) -
+# Off: `$main_root/.supervisor`, byte-identical to before. On: the host's state
+# dir, else the per-user gate root (D1) — never the repo. A helper that fails to
+# load is harmless when the switch is off and a silent no-op when it is on.
+SUP_DIR="$main_root/.supervisor"
+STATE_MD="$SUP_DIR/state.md"
+HOST_ON=0
+if . "${BASH_SOURCE[0]%/*}/host-mode.sh" 2>/dev/null; then
+  SUP_DIR="$(lw_gate_state_dir_existing "$main_root")" || exit 0   # host: no gate dir yet, or unsafe: skip
+  STATE_MD="$(lw_state_md_read "$main_root")"
+  if lw_host_mode; then HOST_ON=1; umask 077; fi
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
+LOG_DIR="$SUP_DIR/logs"
+
+# plugin_present <dir> — the population gate: the plugin has run in this repo
+# iff the resolved `.supervisor/` dir already exists. Same convention as
+# worktree-audit.sh's identically-named gate (that one takes the repo root, this
+# one the resolved dir) — checked BEFORE any `mkdir -p "$LOG_DIR"` call site (the
 # heartbeat debounce marker below, and the shared write path at the bottom)
 # and before the debounce marker file is touched, so a repo where
 # Loomwright/Supervisor has never run is left completely untouched by all
-# subcommands (waiting/heartbeat/failed/ended) on every hook wiring.
-plugin_present() { [ -d "$1/.supervisor" ]; }
-plugin_present "$main_root" || exit 0
+# subcommands (waiting/heartbeat/failed/ended) on every hook wiring. Under host
+# mode the SAME existence test is the gate: SUP_DIR came from
+# lw_gate_state_dir_existing, which never creates it — a valid state dir exists
+# by validation; the D1 gate root exists only once a gate writer (guard-arm.sh
+# arming a run, write-marker) created it. No run yet => nothing written anywhere.
+plugin_present() { [ -d "$1" ]; }
+plugin_present "$SUP_DIR" || exit 0
 
 # Prefer a real UTC ISO timestamp; omit ts entirely when date fails.
 UTC_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"

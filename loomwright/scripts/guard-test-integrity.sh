@@ -16,7 +16,7 @@
 # `local -n` namerefs, no `mapfile`/`readarray`, no associative arrays.
 #
 # EVALUATION ORDER (cheap-first, no `jq` on the inert path):
-#   (i)   .supervisor/guard/ absent or empty            -> allow, no jq
+#   (i)   resolved guard dir absent or empty (below)   -> allow, no jq
 #   (ii)  LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS=1 in env    -> allow
 #   (iii) jq missing / payload unparseable / tool_input  -> deny guard_unavailable
 #         absent / session_id absent (reachable only with >=1 marker present)
@@ -37,7 +37,7 @@
 # or `guard-arm` — labels below are deliberately generic.
 set -u
 
-GUARD_DIR="${CLAUDE_PROJECT_DIR:-$PWD}/.supervisor/guard"
+GUARD_PROJ="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 # ---------------------------------------------------------------------------
 # deny/allow plumbing
@@ -79,10 +79,57 @@ allow() {
 }
 
 # ---------------------------------------------------------------------------
+# Where the markers live: host-mode.sh's gate-dir resolver, the SAME one
+# guard-arm.sh writes them through (one rule, never a restated copy). Off
+# (LOOMWRIGHT_HOST_MODE unset / not `1`): `<project dir>/.supervisor/guard`,
+# exactly as before — sourcing is a builtin and the off-mode resolve is a
+# printf, so the inert path stays jq-free and exec-free. On: `<gate
+# dir>/guard` — the host's state dir or the per-user gate root, never the repo.
+# A helper that fails to load: switch off -> today's literal path; switch on
+# -> GUARD_UNRESOLVED=1, which skips the inert allow in (i) and fails CLOSED
+# in (iii) — an unresolvable marker dir must never read as "nothing armed".
+# The same GUARD_UNRESOLVED=1 when the helper loads but the gate dir is
+# unresolvable (host-mode.sh header: an unsafe per-user D1 root). Resolved
+# through lw_gate_state_dir_existing, which never creates: an ABSENT gate dir
+# means no run armed here yet, so the inert path allows (no markers). The
+# project dir passed as <root> may be a linked worktree: host-mode.sh's
+# one-root rule resolves it to the same gate dir guard-arm.sh writes.
+# ---------------------------------------------------------------------------
+GUARD_DIR="$GUARD_PROJ/.supervisor/guard"
+GUARD_HOST_ON=0
+GUARD_UNRESOLVED=0
+GUARD_HERE="${BASH_SOURCE[0]%/*}"
+[ "$GUARD_HERE" = "${BASH_SOURCE[0]}" ] && GUARD_HERE="."
+# shellcheck source=host-mode.sh
+GUARD_UNRESOLVED_WHY="state resolver missing"
+if . "$GUARD_HERE/host-mode.sh" 2>/dev/null; then
+  # The READER form: never creates the gate dir. rc 2 = no gate dir yet (no run has armed in this
+  # repo) -> no markers -> the inert allow below, as off mode with no `.supervisor/guard`. An armed
+  # session's marker lives in that dir, so an armed session always resolves (rc 0).
+  GUARD_RC=0
+  GUARD_GATE="$(lw_gate_state_dir_existing "$GUARD_PROJ")" || GUARD_RC=$?
+  if [ "$GUARD_RC" = 0 ]; then
+    GUARD_DIR="$GUARD_GATE/guard"
+  elif [ "$GUARD_RC" = 2 ]; then
+    GUARD_DIR=""
+  else
+    # host mode only (off always resolves): unsafe per-user D1 root, or no resolvable base
+    GUARD_UNRESOLVED=1
+    GUARD_UNRESOLVED_WHY="gate state dir unresolvable"
+  fi
+  lw_host_mode && GUARD_HOST_ON=1
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  GUARD_HOST_ON=1
+  GUARD_UNRESOLVED=1
+fi
+
+# ---------------------------------------------------------------------------
 # (i) cheap: guard dir absent or empty -> allow, no jq
 # ---------------------------------------------------------------------------
 GUARD_FILE_COUNT=0
-if [ -d "$GUARD_DIR" ]; then
+if [ "$GUARD_UNRESOLVED" = 1 ]; then
+  GUARD_FILE_COUNT=1
+elif [ -n "$GUARD_DIR" ] && [ -d "$GUARD_DIR" ]; then
   for f in "$GUARD_DIR"/*.json; do
     [ -e "$f" ] || continue
     GUARD_FILE_COUNT=$((GUARD_FILE_COUNT + 1))
@@ -105,6 +152,9 @@ PAYLOAD="$(cat 2>/dev/null || true)"
 # (iii) jq missing / payload unparseable / tool_input absent / session_id
 #       absent -> deny guard_unavailable: <reason>
 # ---------------------------------------------------------------------------
+if [ "$GUARD_UNRESOLVED" = 1 ]; then
+  deny "test_integrity_guard: denied — guard_unavailable: $GUARD_UNRESOLVED_WHY"
+fi
 if ! command -v jq >/dev/null 2>&1; then
   deny "test_integrity_guard: denied — guard_unavailable: jq missing"
 fi
@@ -168,11 +218,66 @@ is_protected_basename() {
     .prettierignore|biome.json|biome.jsonc| \
     ruff.toml|.ruff.toml|.flake8|mypy.ini|.pylintrc| \
     .pre-commit-config.yaml|lefthook.yml| \
-    guard-test-integrity.sh|guard-arm.sh|hooks.json)
+    guard-test-integrity.sh|guard-arm.sh|hooks.json|host-mode.sh)
       return 0 ;;
     *)
       return 1 ;;
   esac
+}
+
+# ===== host mode: the redirected guard dir ================================
+# Under host mode the guard dir lives OUTSIDE the repo (lw_gate_state_dir), so
+# the `.supervisor/guard` substring tests below cannot see it. Computed only
+# under host mode and only past the inert path: GATE_DIR is the gate dir the
+# guard dir sits in, the *_P forms are their physical paths (a symlinked
+# TMPDIR such as macOS /var -> /private/var), and GATE_ROOT_TOKEN — set only
+# for the per-user gate root (no valid host state dir) — is that root's
+# per-user parent basename, derived from the resolver's own output (never
+# restated), so a `$TMPDIR/<it>/…` word written through a variable is caught.
+# KNOWN LIMIT (as off mode's `D=.supervisor; rm $D/guard/x`): a host state dir
+# named only through a variable (`$LOOMWRIGHT_HOST_STATE_DIR/guard/x`).
+GATE_DIR=""; GATE_DIR_P=""; GUARD_DIR_P=""; GATE_ROOT_TOKEN=""
+if [ "$GUARD_HOST_ON" = 1 ]; then
+  GATE_DIR="${GUARD_DIR%/guard}"
+  GATE_DIR_P="$(cd "$GATE_DIR" 2>/dev/null && pwd -P || true)"
+  [ -n "$GATE_DIR_P" ] && GUARD_DIR_P="$GATE_DIR_P/guard"
+  if ! lw_host_state_dir "$GUARD_PROJ" >/dev/null 2>&1; then
+    GATE_ROOT_TOKEN="${GATE_DIR%/*}"
+    GATE_ROOT_TOKEN="${GATE_ROOT_TOKEN##*/}"
+  fi
+fi
+
+# is_host_guard_path <word|path> — host mode only: the word names the
+# redirected guard dir or something under it, the gate dir itself (removing it
+# removes the guard dir), or the per-user gate root.
+is_host_guard_path() {
+  local w="${1%/}"
+  [ "$GUARD_HOST_ON" = 1 ] && [ -n "$w" ] || return 1
+  case "$w" in
+    *"$GUARD_DIR"*|"$GATE_DIR") return 0 ;;
+  esac
+  if [ -n "$GATE_DIR_P" ]; then
+    case "$w" in
+      *"$GUARD_DIR_P"*|"$GATE_DIR_P") return 0 ;;
+    esac
+  fi
+  if [ -n "$GATE_ROOT_TOKEN" ]; then
+    case "$w" in
+      *"$GATE_ROOT_TOKEN"*) return 0 ;;
+    esac
+  fi
+  # The spellings above are fooled by a second name for the same directory —
+  # a case variant on case-insensitive APFS (`…/LOOMWRIGHT-HOST-501/…/GUARD/x`
+  # IS the guard dir there). So also judge by filesystem identity (host-mode.sh
+  # _lw_under_any: `-ef` on each ancestor, builtins only, bounded by depth):
+  # the word is, or is under, the guard dir; is the gate dir; or, for the
+  # per-user gate root, is under that root.
+  if declare -F _lw_under_any >/dev/null; then
+    _lw_under_any "$w" "$GUARD_DIR" && return 0
+    [ -n "$GATE_DIR" ] && [ "$w" -ef "$GATE_DIR" ] && return 0
+    [ -n "$GATE_ROOT_TOKEN" ] && _lw_under_any "$w" "${GATE_DIR%/*}" && return 0
+  fi
+  return 1
 }
 
 basename_of() {
@@ -210,6 +315,7 @@ is_protected_path_arg() {
     *.git/hooks*) return 0 ;;
     *.claude/settings.json|*.claude/settings.local.json) return 0 ;;
   esac
+  is_host_guard_path "$w" && return 0
   if is_protected_basename "$(basename_of "$w")"; then
     return 0
   fi
@@ -864,6 +970,7 @@ evaluate_write_edit() {
     */.husky/*) deny_variant edit "protected configuration path" ;;
     */.git/hooks/*) deny_variant edit "protected configuration path" ;;
   esac
+  is_host_guard_path "$f" && deny_variant edit "protected configuration write"
 
   case "$f" in
     */.claude/settings.json|.claude/settings.json| \

@@ -98,6 +98,19 @@ log() { printf 'hook-dispatch-on-pr-create: %s\n' "$1" >&2; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DISPATCHER="$SCRIPT_DIR/dispatch-pr-review.sh"
 
+# ---- Host mode (host-mode.sh — the one resolver) ------------------------------
+# Off mode is byte-identical and does not depend on the helper loading. Under
+# LOOMWRIGHT_HOST_MODE=1 the pr_created line is gate-class state (D1) and goes to
+# lw_gate_state_dir_existing (skipped until a run created it), and the dispatch is SKIPPED: dispatch-pr-review.sh writes
+# markers, logs and a sibling worktree. A helper that fails to load with the
+# switch on exits 0 without writing.
+HD_HOST=0
+if . "$SCRIPT_DIR/host-mode.sh" 2>/dev/null; then
+  lw_host_mode && HD_HOST=1
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
+
 # ---- Read stdin (the PostToolUse payload) -----------------------------------
 INPUT="$(cat 2>/dev/null || true)"
 if [ -z "$INPUT" ]; then
@@ -163,8 +176,16 @@ fi
 emit_pr_created() (
   . "$SCRIPT_DIR/loom-log-owner.sh" 2>/dev/null || exit 0
   root="$(loom_main_root)" || exit 0
-  [ -d "$root/.supervisor" ] || exit 0
-  logs="$root/.supervisor/logs"; st="$root/.supervisor/state.md"; sid=""
+  sup="$root/.supervisor"; st="$sup/state.md"
+  if [ "$HD_HOST" = 1 ]; then
+    # Host mode: the presence gate is the gate dir's own existence (never
+    # created here — a run's gate writer creates it); absent or unsafe: skip.
+    sup="$(lw_gate_state_dir_existing "$root")" || exit 0
+    st="$(lw_state_md_read "$root")"; umask 077
+  else
+    [ -d "$sup" ] || exit 0
+  fi
+  logs="$sup/logs"; sid=""
   cc="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
   if [ -f "$st" ]; then
     sid="$(sed -nE 's/^- session_id:[[:space:]]*//p' "$st" 2>/dev/null | head -1 | tr -cd 'A-Za-z0-9_-')"
@@ -186,6 +207,11 @@ emit_pr_created() (
   { printf '%s\n' "$line" >> "$logs/$sid.jsonl"; } 2>/dev/null
 )
 emit_pr_created >/dev/null 2>&1 || true
+
+if [ "$HD_HOST" = 1 ]; then
+  log "host mode — the review-drain dispatch writes the repo; skipping dispatch"
+  exit 0
+fi
 
 # ---- SESSION-SCOPE GATE (AC5) ----------------------------------------------
 # Dispatch ONLY when gate (i) holds AND authorization is established from ONE

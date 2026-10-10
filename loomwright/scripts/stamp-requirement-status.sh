@@ -101,6 +101,16 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# Host mode (host-mode.sh — the one resolver, a plain sibling like brief-pointer.sh): the
+# requirement append below is a repo CONTENT mutation, and the `mkdir` lock lives in the repo too,
+# so under LOOMWRIGHT_HOST_MODE=1 nothing is stamped — skipped, never redirected. Off mode does
+# not depend on the helper loading; a helper that fails to load with the switch on also skips.
+if . "$_bp_dir/host-mode.sh" 2>/dev/null; then
+  if lw_host_mode; then say "host mode — requirement files are repo content; nothing stamped"; exit 0; fi
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
+
 if [ -z "$ROOT" ]; then
   ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 fi

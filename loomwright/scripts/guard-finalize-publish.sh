@@ -43,6 +43,20 @@
 # worktree still sees the run. HEAD and the current branch are read from the project dir
 # (`${CLAUDE_PROJECT_DIR:-$PWD}`) — the checkout the publish runs from.
 #
+# HOST MODE (`LOOMWRIGHT_HOST_MODE=1`, host-mode.sh — sourced, the one resolver): the marker and the
+# session log (+ its `.owner`) live in the gate dir's logs/ (host-mode.sh), never the repo; state.md is
+# READ via `lw_state_md_read`. The run is LIVE on the UNION (read_live_session): the repo state.md
+# (the agent-written seed) OR the gate-dir copy reads running|checkpoint; the session id and branch
+# come from the copy that reads live (lw_state_md_read's file when both do). A missing or stale
+# gate-dir copy never makes the gate allow. Off: the paths above, unchanged. host-mode.sh failing
+# to load with the switch ON denies every publish (`guard_unavailable`) and write-marker refuses
+# `helper_missing` — the marker dir is unknowable;
+# likewise an unresolvable gate dir (an unsafe/unwritable per-user D1 root, host-mode.sh header)
+# denies every publish and write-marker refuses `gate_dir_unresolvable`. PRESENCE GATE: the guard
+# path resolves through `lw_gate_state_dir_existing` (never creates); only write-marker, a gate
+# writer, may create the per-user D1 root. An ABSENT gate dir has no marker, so a live repo seed is
+# denied exactly as with an empty gate dir, and a non-live one is allowed at (ii).
+#
 # GUARD EVALUATION ORDER (cheap-first; no jq and no fork on the inert path):
 #   (i)   raw payload contains neither `push` nor `create`         -> allow
 #   (ii)  no `.supervisor/state.md`, no session_id, or status not running|checkpoint
@@ -109,17 +123,48 @@ NL='
 HELPER_OK=0
 # shellcheck source=loom-log-owner.sh
 . "$HERE/loom-log-owner.sh" 2>/dev/null && HELPER_OK=1
+# Host mode (header): HOST_ON is the switch; HOST_HELPER_OK says the resolver loaded.
+HOST_HELPER_OK=0; HOST_ON=0
+# shellcheck source=host-mode.sh
+. "$HERE/host-mode.sh" 2>/dev/null && HOST_HELPER_OK=1
+if [ "$HOST_HELPER_OK" = 1 ]; then lw_host_mode && HOST_ON=1
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then HOST_ON=1; fi
 
 # ---- shared: where `.supervisor/` lives -----------------------------------------------------------
 # The MAIN worktree, resolved by loom_main_root — the same place build-state.sh and the emitters write
 # it — so a session whose project dir is a LINKED worktree still finds the run's state.md. Falls back
 # to the project dir when unresolvable (not a git repo, helper missing).
-ROOT=""; STATE_MD=""; LOG_DIR=""
+ROOT=""; STATE_MD=""; LOG_DIR=""; REPO_STATE_MD=""; GATE_STATE_MD=""; GATE_UNRESOLVED=0; GATE_ABSENT=0
+# resolve_root [create] — `create` only from write-marker (a gate WRITER: lw_gate_state_dir may create
+# the per-user D1 root); the guard path passes nothing and resolves through the non-creating
+# lw_gate_state_dir_existing, where an ABSENT gate dir (no run has created gate state yet) leaves
+# GATE_ABSENT=1: no marker can exist, so a live repo seed is still denied (never allowed).
 resolve_root() {
+  local _rc=0
   [ "$HELPER_OK" = 1 ] && ROOT="$(loom_main_root "$PROJ" 2>/dev/null)"
   [ -n "$ROOT" ] || ROOT="$PROJ"
   STATE_MD="$ROOT/.supervisor/state.md"
   LOG_DIR="$ROOT/.supervisor/logs"
+  REPO_STATE_MD="$STATE_MD"; GATE_STATE_MD="$STATE_MD"
+  # host mode only: the writers' own resolver (host-mode.sh). Off it would reprint the two paths
+  # above, so it is skipped — no forks on the cheap-first guard path.
+  if [ "$HOST_HELPER_OK" = 1 ] && [ "$HOST_ON" = 1 ]; then
+    if [ "${1:-}" = create ]; then
+      LOG_DIR="$(lw_gate_state_dir "$ROOT")" || _rc=$?
+    else
+      LOG_DIR="$(lw_gate_state_dir_existing "$ROOT")" || _rc=$?
+    fi
+    if [ "$_rc" = 0 ]; then
+      LOG_DIR="$LOG_DIR/logs"; GATE_STATE_MD="${LOG_DIR%/logs}/state.md"
+      STATE_MD="$(lw_state_md_read "$ROOT")"
+    elif [ "$_rc" = 2 ]; then
+      # no gate dir yet: only the repo seed can say "live"; there is no marker and no session log
+      LOG_DIR=""; GATE_ABSENT=1; STATE_MD="$REPO_STATE_MD"
+    else
+      # host mode only: unsafe/unwritable per-user D1 root — the marker dir is unknowable
+      LOG_DIR=""; GATE_UNRESOLVED=1
+    fi
+  fi
 }
 
 # ---- shared: the `## Session` block of state.md (no jq) ------------------------------------------
@@ -250,6 +295,26 @@ worker_results_has_content() {
   return 1
 }
 
+# read_live_session — read_session_block on $STATE_MD, plus host mode's UNION (header): when that file
+# is not live but the OTHER copy (repo seed vs gate-dir projection) is, the run is still LIVE, and the
+# session id AND branch are the LIVE copy's — never the non-live file's. A finished prior run's branch
+# must not scope the live run out of the gate (step (v) would allow a push from the live run's own
+# branch), and its id must not key the marker or the session-log join. write-marker and the guard both
+# call this, so the marker key matches on both sides. $STATE_MD is left on lw_state_md_read's file
+# either way. Off: exactly read_session_block.
+read_live_session() {
+  local keep="$STATE_MD" other rc
+  SESSION_ID=""; SESSION_STATUS=""; SESSION_BRANCH=""
+  read_session_block && return 0
+  [ "$HOST_ON" = 1 ] || return 1
+  other="$GATE_STATE_MD"; [ "$keep" = "$GATE_STATE_MD" ] && other="$REPO_STATE_MD"
+  [ "$other" != "$keep" ] || return 1
+  STATE_MD="$other"; SESSION_ID=""; SESSION_STATUS=""; SESSION_BRANCH=""
+  read_session_block; rc=$?
+  STATE_MD="$keep"
+  return "$rc"
+}
+
 # ======================================================================================
 # write-marker mode
 # ======================================================================================
@@ -277,8 +342,10 @@ if [ "${1:-}" = "write-marker" ]; then
   done
   command -v jq >/dev/null 2>&1 || refuse "jq_missing"
   [ "$HELPER_OK" = 1 ] || refuse "helper_missing"
-  resolve_root
-  read_session_block || refuse "no_active_session"
+  [ "$HOST_ON" = 1 ] && [ "$HOST_HELPER_OK" != 1 ] && refuse "helper_missing"
+  resolve_root create
+  [ "$GATE_UNRESOLVED" = 1 ] && refuse "gate_dir_unresolvable"
+  read_live_session || refuse "no_active_session"
   MARKER="$LOG_DIR/$SESSION_ID.finalize-gate"
   SESSION_LOG="$LOG_DIR/$SESSION_ID.jsonl"
   rm -f "$MARKER" 2>/dev/null
@@ -307,7 +374,15 @@ if [ "${1:-}" = "write-marker" ]; then
 $worker_ids
 EOF
     # `${arr[@]+…}`: an empty array under `set -u` is an unbound-variable error on bash 3.2
-    res="$(bash "$HERE/check-children-settled.sh" --log "$SESSION_LOG" --all ${EXPECT_ARGS[@]+"${EXPECT_ARGS[@]}"} 2>/dev/null)"
+    # Host mode runs it from $PROJ: the checker anchors its gate dir on the cwd's repo, which must be
+    # the session repo resolve_root anchored on (never wherever the caller's shell happens to be).
+    # $HERE may be relative, so the checker's path is made absolute BEFORE the cd. Off: unchanged.
+    if [ "$HOST_ON" = 1 ]; then
+      ccs="$(cd "$HERE" 2>/dev/null && pwd)/check-children-settled.sh"
+      res="$(cd "$PROJ" 2>/dev/null && bash "$ccs" --log "$SESSION_LOG" --all ${EXPECT_ARGS[@]+"${EXPECT_ARGS[@]}"} 2>/dev/null)"
+    else
+      res="$(bash "$HERE/check-children-settled.sh" --log "$SESSION_LOG" --all ${EXPECT_ARGS[@]+"${EXPECT_ARGS[@]}"} 2>/dev/null)"
+    fi
     children_status="$(printf '%s' "$res" | jq -r '.status // empty' 2>/dev/null)"
     case "$children_status" in
       # recorded verbatim — `no_identity_rows` is a pass, never `settled` (async-orchestration point 5)
@@ -319,6 +394,7 @@ EOF
     esac
   fi
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+  [ "$HOST_ON" = 1 ] && umask 077
   mkdir -p "$LOG_DIR" 2>/dev/null || refuse "log_dir_unwritable"
   body="$(jq -n -c --arg c "$check" --arg cs "$children_status" --arg h "$head_sha" --arg t "$ts" \
     '{children_check: $c, children_status: $cs, head_sha: $h, ts: $t}')"
@@ -351,9 +427,12 @@ case "$PAYLOAD" in
   *) allow ;;
 esac
 
-# (ii) not a live Supervisor run of this repo -> allow (no jq)
+# (ii) not a live Supervisor run of this repo -> allow (no jq). Host mode with an unloadable resolver
+# cannot tell, so it is never "not live": it falls through and every publish is denied after (iv).
 resolve_root
-read_session_block || allow
+HOST_UNRESOLVED=0
+if [ "$HOST_ON" = 1 ] && { [ "$HOST_HELPER_OK" != 1 ] || [ "$GATE_UNRESOLVED" = 1 ]; }; then HOST_UNRESOLVED=1
+else read_live_session || allow; fi
 
 # (iii)
 command -v jq >/dev/null 2>&1 || deny "guard_unavailable: jq missing"
@@ -548,6 +627,7 @@ EOF
   return 1
 }
 cmd_has_publish "$CMD" 0 || allow
+[ "$HOST_UNRESOLVED" = 1 ] && deny "guard_unavailable: host-mode.sh missing or gate state dir unresolvable (host mode cannot locate the run's state)"
 
 # (v) scope: only a publish from the run's own feature-branch checkout is this run's publish.
 # A DETACHED LINKED worktree (the dispatcher's review-drain sibling, `git push origin HEAD:<ref>`)
@@ -562,7 +642,8 @@ fi
 
 # (vi) session join — reuse THE ownership rule (loom-log-owner.sh), never a restated copy
 [ "$HELPER_OK" = 1 ] || deny "guard_unavailable: loom-log-owner.sh missing"
-owner="$(loom_log_owner "$LOG_DIR/$SESSION_ID.jsonl" | tr -cd 'A-Za-z0-9_-')"
+owner=""
+[ "$GATE_ABSENT" = 1 ] || owner="$(loom_log_owner "$LOG_DIR/$SESSION_ID.jsonl" | tr -cd 'A-Za-z0-9_-')"
 payload_sid="$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
 # owner == payload_sid: this session's run. owner empty: adopt. owner != payload_sid: a resumed run
 # of this checkout — the header's documented DECISION is to require the marker all the same.
@@ -575,6 +656,7 @@ else
 fi
 
 MARKER="$LOG_DIR/$SESSION_ID.finalize-gate"
+[ "$GATE_ABSENT" = 1 ] && MARKER=""   # host mode, no gate dir yet: there is no marker (never `/<id>…`)
 [ -f "$MARKER" ] || deny "$REASON_FIRST (no finalize-gate marker for plugin session $SESSION_ID, $join; run: bash \${CLAUDE_PLUGIN_ROOT}/scripts/guard-finalize-publish.sh write-marker)"
 m_check="$(jq -r '.children_check // empty' "$MARKER" 2>/dev/null)"
 m_head="$(jq -r '.head_sha // empty' "$MARKER" 2>/dev/null)"

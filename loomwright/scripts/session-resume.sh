@@ -46,7 +46,8 @@
 # gate the ADVISORY only: the mechanical `--repair-merged` move (v15.84.0)
 # runs on every startup AND every resume/clear/compact regardless, and a
 # `repaired` row is always reported — there is no switch that leaves a proven
-# merge stranded, on either arm.
+# merge stranded, on either arm, except host mode (LOOMWRIGHT_HOST_MODE=1), where
+# the move is a repo write and is skipped (see the host-mode block below).
 #
 # Also runs an observability health probe (observability_probe, ST3): when
 # telemetry is configured in ~/.claude/settings.json, a 1-second curl checks
@@ -132,6 +133,30 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 SOURCE="$(printf '%s' "$INPUT" | jq -r '.source // empty' 2>/dev/null || true)"
 
+# ---- Host mode (host-mode.sh — the one resolver) -----------------------------
+# Off (LOOMWRIGHT_HOST_MODE unset / not `1`): SR_STATE is the cwd-relative
+# `.supervisor` and SR_HOST is 0 — every path and argument below is
+# byte-identical, and nothing depends on the helper loading. On: this
+# hook writes NOTHING in the repo. The nudge markers go to lw_state_dir (SR_STATE
+# EMPTY when no valid state dir exists ⇒ the marker is neither read nor written,
+# so the nudge is undebounced); the `--repair-merged` brief MOVES are skipped
+# (repo content — the briefs are still classified and reported); and the two
+# children that write the repo themselves are not run (read-rules.sh appends
+# .supervisor/logs/memory.log ⇒ no rules nudge; read-system-contract.sh appends
+# .supervisor/logs/twin.log ⇒ no Section 2.5). Every READ of repo state stays
+# where it is. A helper that fails to load with the switch on exits 0.
+SR_HOST=0
+SR_STATE=".supervisor"
+if . "$(dirname "$0")/host-mode.sh" 2>/dev/null; then
+  if lw_host_mode; then
+    SR_HOST=1
+    _sr_main="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+    SR_STATE="$(lw_state_dir "${_sr_main:-$PWD}")" || SR_STATE=""
+  fi
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
+
 # ---- Startup-arm helpers (DEFINED ABOVE THE CASE ON PURPOSE) ----------------
 # These three functions must be defined here, above the `case "$SOURCE"` below,
 # because the `startup)` arm calls `startup_arm_emit` (which calls the other
@@ -163,8 +188,10 @@ curation_nudge_line() {
   # rule, THIS path must be relaxed in the same edit — otherwise the debounce
   # marker lands in a `./.supervisor` the probe never reads, and the nudge fires
   # on every single session start with the window silently never taken.
-  local marker=".supervisor/.curation-nudge-shown"
-  if [ -f "$marker" ] && [ -n "$(find "$marker" -mmin -1440 2>/dev/null)" ]; then
+  # (Under host mode the marker lives in SR_STATE — see the host-mode block.)
+  local marker=""
+  [ -n "$SR_STATE" ] && marker="$SR_STATE/.curation-nudge-shown"
+  if [ -n "$marker" ] && [ -f "$marker" ] && [ -n "$(find "$marker" -mmin -1440 2>/dev/null)" ]; then
     return 0
   fi
 
@@ -184,7 +211,7 @@ curation_nudge_line() {
   # denied" still reaches stderr — violating this file's silent-pass invariant.
   # Wrapping in `{ ...; }` puts the redirection on the group, which does capture
   # it. Same shape at rules_nudge's marker write.
-  { : > "$marker"; } 2>/dev/null || true
+  [ -n "$marker" ] && { : > "$marker"; } 2>/dev/null || true
   printf '%s' "$line"
   return 0
 }
@@ -236,7 +263,12 @@ stranded_briefs_startup_line() {
   # fresh session within the 24h window must still perform it. A brief the
   # disk can only stamp `stranded_closed` (done stamp, PR not determinable) is
   # reported below exactly as before and left for a human `--repair`.
-  porcelain="$(bash "$reconciler" --repair-merged --porcelain 2>/dev/null || true)"
+  # Host mode: classify only, no brief moves (repo content).
+  if [ "$SR_HOST" = 1 ]; then
+    porcelain="$(bash "$reconciler" --porcelain 2>/dev/null || true)"
+  else
+    porcelain="$(bash "$reconciler" --repair-merged --porcelain 2>/dev/null || true)"
+  fi
   [ -n "$porcelain" ] || return 0
 
   # STATE<TAB>BRIEF<TAB>EVIDENCE, one per line. `repaired` rows are events and
@@ -251,10 +283,11 @@ stranded_briefs_startup_line() {
     esac
   done <<< "$porcelain"
 
-  local marker=".supervisor/.stranded-nudge-shown"
+  local marker=""
+  [ -n "$SR_STATE" ] && marker="$SR_STATE/.stranded-nudge-shown"
   if [ -n "$body" ] && [ "$nudge_off" -eq 1 ]; then
     body=""
-  elif [ -n "$body" ] && [ -f "$marker" ] && [ -n "$(find "$marker" -mmin -1440 2>/dev/null)" ]; then
+  elif [ -n "$body" ] && [ -n "$marker" ] && [ -f "$marker" ] && [ -n "$(find "$marker" -mmin -1440 2>/dev/null)" ]; then
     body=""
   fi
   [ -n "$body$repaired" ] || return 0
@@ -273,7 +306,7 @@ stranded_briefs_startup_line() {
   # Braced redirection: same load-bearing shape as the curation marker above.
   # Stamped only when an ADVISORY line went out; a repaired-only emission does
   # not burn the window (nothing is left to nudge about).
-  case "$body" in *"**Stranded brief:**"*) { : > "$marker"; } 2>/dev/null || true ;; esac
+  case "$body" in *"**Stranded brief:**"*) [ -n "$marker" ] && { : > "$marker"; } 2>/dev/null || true ;; esac
   printf '%s' "$body"
   return 0
 }
@@ -287,7 +320,9 @@ stranded_briefs_startup_line() {
 # orphaned stays byte-identical to the pre-change envelope. Nothing here runs a
 # removal: the hint is a command for the human, never one this hook executes.
 orphaned_worktrees_block() {
-  [ -d ".supervisor" ] || return 0
+  # Under host mode worktrees.log lives in the state dir, not the repo, so the
+  # repo `.supervisor/` cannot gate the (read-only) report there.
+  [ -d ".supervisor" ] || [ "$SR_HOST" = 1 ] || return 0
   local script_dir auditor rows body="" path branch ts sid tag merged salvage any_salvage=0
   script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
   auditor="$script_dir/worktree-audit.sh"
@@ -644,6 +679,10 @@ rules_nudge() {
   # a rules-averse repo). Set ⇒ silent no-op.
   case "${LOOMWRIGHT_RULES_NUDGE:-}" in 0|off|false|no) return 0 ;; esac
 
+  # Host mode: read-rules.sh appends .supervisor/logs/memory.log (a repo write),
+  # so the reader is not run and there is no rules nudge.
+  [ "$SR_HOST" = 1 ] && return 0
+
   # Locate the sibling reader. If it's not readable, safe-skip (no nudge).
   local script_dir reader
   script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
@@ -659,7 +698,7 @@ rules_nudge() {
 
   # Debounce: a fresh (<24h) marker suppresses the nudge. The marker lives under
   # the guaranteed-present .supervisor/ (we are past the bail).
-  local marker=".supervisor/.rules-nudge-shown"
+  local marker="$SR_STATE/.rules-nudge-shown"
   if [ -f "$marker" ] && [ -n "$(find "$marker" -mmin -1440 2>/dev/null)" ]; then
     return 0
   fi
@@ -719,7 +758,12 @@ if compgen -G ".supervisor/jobs/in-progress/*.md" > /dev/null 2>&1; then
   PORCELAIN=""
   # Same mechanical half as the startup arm: a merge the disk proves is moved
   # now, and reported as such; everything else is classified and reported.
-  [ -r "$RECONCILER" ] && PORCELAIN="$(bash "$RECONCILER" --repair-merged --porcelain 2>/dev/null || true)"
+  # Host mode: classify only, no brief moves (repo content).
+  if [ "$SR_HOST" = 1 ]; then
+    [ -r "$RECONCILER" ] && PORCELAIN="$(bash "$RECONCILER" --porcelain 2>/dev/null || true)"
+  else
+    [ -r "$RECONCILER" ] && PORCELAIN="$(bash "$RECONCILER" --repair-merged --porcelain 2>/dev/null || true)"
+  fi
 
   if [ -z "$PORCELAIN" ]; then
     append "### In-progress briefs (state UNVERIFIED — reconciler unavailable)"$'\n'
@@ -832,7 +876,9 @@ fi
 # below), so an empty store — the overwhelmingly common case in a user project — costs one glob.
 # Fail-safe like everything else here: an absent or silent reader appends nothing and the hook
 # still exits 0.
-if compgen -G ".supervisor/twin/contracts/*.md" > /dev/null 2>&1; then
+# Host mode: read-system-contract.sh appends .supervisor/logs/twin.log (a repo
+# write), so this section does not run there.
+if [ "$SR_HOST" != 1 ] && compgen -G ".supervisor/twin/contracts/*.md" > /dev/null 2>&1; then
   TWIN_DIR_SR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
   TWIN_READER="$TWIN_DIR_SR/read-system-contract.sh"
   TWIN_REPAIR="$TWIN_DIR_SR/reprovenance-twin-contracts.sh"
