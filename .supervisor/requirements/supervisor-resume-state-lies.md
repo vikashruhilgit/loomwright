@@ -68,3 +68,8 @@ proceeds on a stale belief.
 ## Provenance
 Found 2026-07-27 by accident, while running FABLE_PARITY_EVAL arm 2 for twin-remediation item 07.
 Recorded in `loomwright/docs/SPIKES/FABLE_PARITY_EVAL.md` §Results (arm-2 blocked note).
+
+## Status: done (PR #109, merge 19cd52b)
+- **Completed:** 2026-10-10T13:30:41Z
+- **Brief:** unknown
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/109

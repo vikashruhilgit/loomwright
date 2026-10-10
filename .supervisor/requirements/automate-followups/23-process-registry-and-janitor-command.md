@@ -144,3 +144,8 @@ start without an explicit per-item owner choice. Remote resources (GitHub branch
 Owner, 2026-10-04, during S1 (session 0d556d54): "we need a way to track background tasks, I don't want any
 orphaned or stray task/session running" and "add a command which shows all with all the details and the user can
 take action based on your suggestions". Evidence from the same session's `ps` inventory, recorded above.
+
+## Status: done (PR #377, merge 2bdb2b7)
+- **Completed:** 2026-10-10T13:27:36Z
+- **Brief:** unknown
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/377

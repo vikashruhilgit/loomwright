@@ -149,3 +149,5 @@ when it isn't.
 ## Out of scope
 Pixel-perfect guarantees, generating Figma-quality mocks, theming/dark-mode machinery,
 Part D auto-run without `## Visual Acceptance`, gating severities for design findings.
+
+## Status: done_with_escalation — ABANDONED (- [x] .supervisor/requirements/review-remediation/10-design-system-substrate.md  # abandoned: owner archived 2026-08-30 — run superseded; requirement file retained on disk and re-queueable in a new run)

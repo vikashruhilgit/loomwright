@@ -29,3 +29,5 @@ No new gating paths, no new hooks, no severity changes to the review contract, n
 - Seeded-violation falsification test per authored check
 - Both seams execute checks via the sanctioned path
 - check-invariants.sh in CI
+
+## Status: done_with_escalation — ABANDONED (- [x] .supervisor/requirements/twin-remediation/03-mechanize-rules-tier1.md  # abandoned: carried forward UNHOMED - not superseded, not present in final-state/; re-enqueue explicitly when scheduled (00-overview: 'unaffected'))

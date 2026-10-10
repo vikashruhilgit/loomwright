@@ -56,3 +56,5 @@ loomwright/commands/handoff.md
 loomwright/commands/dreaming.md
 loomwright/skills/brain-context/SKILL.md
 changelog.d/twin-remediation-06-derived-artifact-freshness.md
+
+## Status: done_with_escalation — ABANDONED (- [x] .supervisor/requirements/twin-remediation/06-derived-artifact-freshness.md  # abandoned: carried forward UNHOMED - partially overlaps final-state/07 (4g); reconcile at that item's PLAN, do not duplicate)

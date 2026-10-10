@@ -157,3 +157,5 @@ verification pending.
 `--cheap` changes of any kind, Haiku in the routing table, auto-demotion or any
 automatic table mutation, learned routing proposals (future `/insights`-fed brief),
 gate-shape changes, sdk-runner graduation.
+
+## Status: done_with_escalation — ABANDONED (- [x] .supervisor/requirements/token-economy/06-model-router-gate.md  # abandoned: owner archived 2026-08-30 — run superseded; requirement file retained on disk and re-queueable in a new run)

@@ -152,3 +152,8 @@ none
 
 ## Touches
 .supervisor/requirements/token-economy/07-verify-spec-replay.md
+
+## Status: done (PR #269, merge e319536)
+- **Completed:** 2026-10-10T13:31:06Z
+- **Brief:** .supervisor/jobs/done/2026-09-26-verify-spec-replay.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/269
