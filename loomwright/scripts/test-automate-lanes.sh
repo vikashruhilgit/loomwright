@@ -29,6 +29,8 @@
 #   AB merged lane close-out (automate-followups/38): lane-convert-ready runs `closeout --no-trail` inside
 #     the lane on its awaiting_merge re-run only (OPEN ⇒ nothing written; MERGED ⇒ stamp + check-off +
 #     done/awaiting_go, pushed), a done/awaiting_go re-run retries only the pushes, leftover / no-pr / mode off
+#   AC a lane whose run wrote an Orchestrator task plan: the wave-end exact list carries it (a done-headed
+#     *-plan.md never), the re-run names the state it reads, lane-remove removes with no hand push + mutation
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -884,7 +886,7 @@ run lane-create "$RF" reqs/b.md 5 >/dev/null; L5="$LR/L5"; RF13="$L5/.supervisor
 conv_rf "$L5" ready_for_release ready_for_release
 out="$(STUB_PUSH_FAIL=1 conv "$L5")"; rc=$?
 check "Y6 a failed push exits 2" "$rc" 2
-has "Y6b … with a FAILED line naming the lane and the retry" "$out" "lane-convert-ready: FAILED — L5 — converted to awaiting_merge but the metadata push to test-meta failed (meta-sync exit 1); NOT pushed"
+has "Y6b … with a FAILED line naming the lane and the retry" "$out" "lane-convert-ready: FAILED — L5 — converted to awaiting_merge, but the metadata push to test-meta failed (meta-sync exit 1); NOT pushed"
 has "Y6c … relaying meta-sync's own reason" "$out" "meta_sync: push_failed"
 has "Y6d … and naming the re-run" "$out" "re-run lane-convert-ready $L5"
 check "Y6e no launch lock left behind" "$(ls -d "$TABLE".L5.launch.lock 2>/dev/null | wc -l | tr -d ' ')" 0
@@ -1403,9 +1405,58 @@ RAB10=".supervisor/requirements/t/ab10.md"; PRAB10="https://github.com/o/r/pull/
 ab_lane 10 "$RAB10" "$PRAB10"; L510="$ABL"; RFAB10="$ABRF"
 ab_rf "$RFAB10" 10 "$RAB10" "$PRAB10" awaiting_merge awaiting_merge
 out="$(STUB_MODE_LINE=off STUB_PR_STATE=MERGED ab lane-convert-ready "$L510")"; rc=$?
-check "AB8 mode off: the merged re-run exits 0 with the mode-off line + the closeout summary" "$rc:$(printf '%s\n' "$out" | tail -n1)" \
-  "0:lane-convert-ready: converted L10 to awaiting_merge (metadata mode off — no metadata branch to push); closeout complete"
+check "AB8 mode off: the merged re-run exits 0 with the mode-off line (naming the state it reads) + the closeout summary" "$rc:$(printf '%s\n' "$out" | tail -n1)" \
+  "0:lane-convert-ready: L10 reads done / awaiting_go (a re-run converts nothing) (metadata mode off — no metadata branch to push); closeout complete"
 check "AB8b … and the lane requirement is stamped" "$(grep -cE '^## Status:[[:space:]]*done' "$L510/$RAB10" | tr -d ' ')" 1
+
+# ---- AC: a lane whose run wrote an Orchestrator task plan is removable with no hand push -------------
+# Operator-run 2026-10-10 Phase 0.2: the plan (`.supervisor/requirements/<slug>-plan.md`, a meta-managed
+# path) rode neither wave-end push, so after a "closeout complete" re-run lane-remove still refused
+# `metadata not pushed (local_ahead 1)` until a hand meta-sync push. Same real scripts as AB; the stub's
+# status counts EVERY managed file that differs from its fake remote, as the real status does.
+ac() { REMOTE11="$T/remote-ac" LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" \
+  LOOMWRIGHT_LANES_TRAIL="$T/ab-spy.sh" LOOMWRIGHT_GH_BIN="$T/ab-gh" bash "${AC_S:-$S}" "$@" 2>&1; }
+PARENT6=automate-2026-10-10-090000; RF6="$P/.supervisor/automate/$PARENT6.md"; LR6="$T/work/primary-lanes/$PARENT6"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT6" > "$RF6"
+ac_lane() { # <n> <pr> — an AB-shaped lane (own parent) at ready_for_release whose run also wrote a task plan
+  local rq=".supervisor/requirements/t/ac$1.md"
+  run lane-create "$RF6" reqs/a.md "$1" >/dev/null; ABL="$LR6/L$1"; ABRF="$ABL/.supervisor/automate/$PARENT6-L$1.md"
+  LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$ABL" --owner-command "$OWN" >/dev/null; wait_gone "$ABL"
+  mkdir -p "$ABL/.supervisor/requirements/t" "$ABL/.supervisor/jobs/done"
+  printf '# ac\n\n## Status: pending\n' > "$ABL/$rq"
+  printf '# brief\n- **Source requirement:** %s\n\n## Outcome\n- **PR:** %s\n' "$rq" "$2" > "$ABL/.supervisor/jobs/done/2026-10-10-ac$1.md"
+  printf '# Automate Run: %s-L%s\n\n## Status: paused\n\n## Source\n- backlog: lane\n\n## Run Config\n- limit: 1\n\n## Queue\n- [ ] %s\n\n## Current\n- item: %s | status: ready_for_release | pr: %s | branch: feature/ac\n- pause_reason: ready_for_release\n\n## Progress\n- 2026-10-10T00:00:00Z drain READY\n' \
+    "$PARENT6" "$1" "$rq" "$rq" "$2" > "$ABRF"
+  printf '# Task Plan: ac%s\n\n## EPIC ac%s\n- [x] **ac%s-1** do it\n' "$1" "$1" "$1" > "$ABL/.supervisor/requirements/ac$1-plan.md"
+}
+mkdir -p "$T/remote-ac"; PAC="https://github.com/o/r/pull/61"; PLAC=".supervisor/requirements/ac1-plan.md"
+ac_lane 1 "$PAC"; L511="$ABL"
+printf '# claim\n\n## Status: done\n- **PR:** %s\n' "$PAC" > "$L511/.supervisor/requirements/claimed-plan.md"
+out="$(STUB_PR_STATE=OPEN ac lane-convert-ready "$L511")"; rc=$?
+check "AC1 wave-end conversion (PR open) exits 0 and pushes the task plan with the non-claim files" \
+  "$rc:$(cmp -s "$L511/$PLAC" "$T/remote-ac/$PLAC" && echo pushed)" "0:pushed"
+check "AC1b … a *-plan.md carrying a done heading is a claim: never on the exact list" \
+  "$([ -e "$T/remote-ac/.supervisor/requirements/claimed-plan.md" ] && echo pushed || echo kept-local)" kept-local
+rm -f "$L511/.supervisor/requirements/claimed-plan.md"
+out="$(STUB_PR_STATE=MERGED ac lane-convert-ready "$L511")"; rc=$?
+check "AC2 the merged re-run closes out (exit 0, closeout complete)" "$rc:$(printf '%s\n' "$out" | tail -n1 | grep -c '; closeout complete$' | tr -d ' ')" "0:1"
+has "AC2b … and its last line names the state the lane now reads, not a conversion" "$(printf '%s\n' "$out" | tail -n1)" \
+  "lane-convert-ready: L1 reads done / awaiting_go (a re-run converts nothing); metadata pushed to test-meta"
+hasnt "AC2c … never 'converted … to awaiting_merge' on a re-run" "$(printf '%s\n' "$out" | tail -n1)" "converted L1 to awaiting_merge"
+out="$(ac lane-remove "$L511")"; rc=$?
+check "AC3 lane-remove then removes the lane — no hand meta-sync push" "$rc:$([ -d "$L511" ] && echo kept || echo removed)" "0:removed"
+has "AC3b … reading lane-remove: removed" "$out" "lane-remove: removed L1 "
+# AC4 mutation control: the same lane lifecycle with the task-plan line dropped from the exact list
+# reproduces the incident — closeout complete, then lane-remove refuses on the one unpushed plan.
+sed '/^    _lanes_task_plans$/d' "$S" > "$MUT/automate-lanes.sh"
+check "AC4a mutation removed the task-plan list line" "$(grep -c '^    _lanes_task_plans$' "$MUT/automate-lanes.sh" | tr -d ' ')" 0
+ac_lane 2 "https://github.com/o/r/pull/62"; L512="$ABL"
+AC_S="$MUT/automate-lanes.sh" STUB_PR_STATE=OPEN ac lane-convert-ready "$L512" >/dev/null
+out="$(AC_S="$MUT/automate-lanes.sh" STUB_PR_STATE=MERGED ac lane-convert-ready "$L512")"
+has "AC4b mutation: the merged re-run still reads closeout complete" "$(printf '%s\n' "$out" | tail -n1)" "; closeout complete"
+out="$(AC_S="$MUT/automate-lanes.sh" ac lane-remove "$L512")"; rc=$?
+check "AC4c mutation: lane-remove refuses on the unpushed plan (the 2026-10-10 incident)" \
+  "$rc:$(printf '%s' "$out" | grep -c 'metadata not pushed (local_ahead 1)' | tr -d ' ')" "1:1"
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 # AA-F12z (final leg): nothing this suite started may outlive it — no process whose command line names
