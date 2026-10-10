@@ -217,63 +217,75 @@ the producer half of the Beads-optional requirement→brief→done close-out loo
 
 **No schema_version bump** — this is a brief file-convention addition, not a result-block schema change.
 
-### `## Status` (requirement-file close-out convention — advisory, Beads-absent only)
+### `## Status` (requirement-file close-out convention — post-merge only)
 
 The optional `## Status` block stamped onto a `.supervisor/requirements/*.md` file is the consumer half
-of the close-out loop. It **mirrors the brief `## Outcome` pattern** — where `## Outcome` records the
-result on the *brief*, this block records the result on the *originating requirement file*:
+of the close-out loop. Where the brief's `## Outcome` records Phase 4.5's result on the *brief*, this
+block records on the *originating requirement file* that **its PR merged** — `automate-helpers.sh`'s
+`is_done` (folder intake, `plan-waves`, `resolve-backlog`, `reconcile-status`) reads it as done.
 
-Each block opens with the namespaced HTML-comment sentinel `<!-- loomwright:requirement-closeout -->` so the idempotent re-stamp keys off that marker, not a bare `## Status` heading. On **PASS / loop-skipped** (the block is stamped verbatim — no inline comments):
+The current block (the only shape any writer emits today) carries the value **on the `## Status:`
+heading line**, opened by the namespaced HTML-comment sentinel the idempotency guard keys off:
 
 ```markdown
 <!-- loomwright:requirement-closeout -->
-## Status
-- **Status:** done
+## Status: done
 - **Completed:** {ISO 8601 timestamp}
 - **Brief:** {done/ brief path}
 - **PR:** {PR URL}
 ```
 
-On **ESCALATED** (same fields, escalated status value, plus one `Heal` line):
+- **Who writes it:** `automate-helpers.sh closeout` (`scripts/automate-trail.sh` step 5 — its `printf`
+  is the byte-shape authority; this copy is illustrative), only after its evidence gate reads the PR
+  `MERGED` (`skills/automate-loop/SKILL.md` §6 "Post-merge close-out"). The Brief is the newest
+  `.supervisor/jobs/done/` brief whose `- **Source requirement:**` equals the item.
+- **Who does NOT write it:** Supervisor Phase 4.5's completion tail. Its step 2.5
+  (`skills/self-heal-advisory/SKILL.md`) writes nothing to the requirement; the heal verdict lives on the
+  brief's `## Outcome` block (`completed` / `completed_with_escalation`, `**Heal reason:**`).
+- **Idempotent (sentinel-keyed):** `closeout` appends the block only when the sentinel is absent
+  (`closeout: skipped — already stamped` otherwise); the requirement file is stamped **in place** and
+  never moved.
+- **Other writers of a `## Status:` heading (not this block):** `reconcile-status --apply` (human-run,
+  evidence-gated on a merged PR) writes `## Status: done (PR #<n>, merge <sha>)` without the sentinel,
+  and an owner's `# abandoned:` decision becomes `## Status: done_with_escalation — ABANDONED (…)`;
+  `stamp-requirement-status.sh` writes `## Status: brief-shipped`, deliberately not a done value.
+- **Honest limit — two paths get no automatic done stamp:** a plain `/supervisor` / `/autonomous` run
+  outside `/automate`, and an `/automate --auto-merge` item that `gate-eval` merged. `closeout` needs an
+  `/automate` run file and a caller: its callers are `/automate --resume`'s RECONCILE
+  (`skills/automate-loop/SKILL.md` §6 step 1, this run's `## Current` item), the merge watcher
+  (`automate-merge-watch.sh`, armed only at an `/automate` park) and `closeout-others` (another run's
+  `## Current` item), so a requirement is closed out only when it is the `## Current` item of an
+  `/automate` run whose PR merged after a park; for other requirements `/automate --resume` runs
+  `reconcile-status` as a dry run only. A gate-merged item never parks: §6 step 5 SYNC runs
+  `brief-repair` and the pull, not `closeout`, and the next PICK moves `## Current` on (before
+  automate-followups/37 Phase 4.5's pre-merge stamp covered it). SYNC does not call `closeout` because
+  its trail step would open a trail PR after every gate-merged item and the next PICK's `trail-gate`
+  parks `trail_pr_open` on it, stopping every unattended `--auto-merge` run after its first merge; a
+  trail-less close-out at SYNC is an open follow-up. For both paths, recovery after the merge is a
+  human step: `reconcile-status --apply`, or a
+  hand-written `## Status: done`. Until then the requirement reads `brief-shipped` (or nothing) and
+  `resolve-folder` keeps listing the merged item. `stamp-requirement-status.sh`
+  (run on session start and when a Supervisor runner agent finishes — its two `hooks.json` seams) writes that `brief-shipped` heading on
+  a status-less requirement once its brief lands in `done/`. **Caveat:** `reconcile-status --apply`
+  promotes any not-done requirement on merged-PR evidence EXCEPT one already marked `brief-shipped`
+  (a `pending`, `in-progress` or status-less heading is promoted); a `brief-shipped` one is listed as an
+  `info` row and left unchanged, so it needs a hand-written `## Status: done`. Promoting a merged
+  `brief-shipped` requirement in `reconcile-status` is an open follow-up, an explicit non-goal today.
+- **Vocabulary (intentional):** the requirement uses `done`, the brief `## Outcome` uses `completed` /
+  `completed_with_escalation`. The split is deliberate — the requirement is "done", the brief is
+  "completed" — do **not** harmonize them.
 
-```markdown
-<!-- loomwright:requirement-closeout -->
-## Status
-- **Status:** done_with_escalation
-- **Completed:** {ISO 8601 timestamp}
-- **Brief:** {done/ brief path}
-- **PR:** {PR URL}
-- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash|rules_gate_unresolved|rules_fail_then_unstamped} — {heal_remaining_issues} remaining
-```
+**Historical shapes (no current writer — a requirement may still carry them):**
 
-- **Who writes it:** Supervisor Phase 4.5 SELF_HEAL completion-tail step 2.5 (`agents/supervisor.md`),
-  reading the brief's `- **Source requirement:**` pointer.
-- **Advisory / Beads-absent only:** stamped ONLY when Beads is inactive (`test -d .beads && bd --version`).
-  When Beads is active this step is **skipped entirely** — `bd close BD-XX` is the sole source of truth
-  for requirement state.
-- **Success-only, with escalation granularity:** stamped only on the successful outcomes that move the
-  brief to `done/` — **PASS / loop-skipped / ESCALATED**. A `failed` / aborted / checkpoint run **NEVER**
-  marks a requirement done. The `Status` value **mirrors the brief `## Outcome` granularity** so an
-  escalated requirement is not indistinguishable from a clean pass: PASS / loop-skipped → `done`;
-  ESCALATED → `done_with_escalation` plus a `- **Heal:**` line recording the escalation reason and
-  remaining-issue count.
-- **Fail-safe:** the whole step is a runtime side-effect emitter — any error (unreadable brief, missing
-  file, write failure, malformed pointer, path outside `.supervisor/requirements/`) is a **logged no-op**
-  that never propagates to `SUPERVISOR_RESULT.status` and never fails the run (per the CLAUDE.md
-  bimodal-failure invariant).
-- **Idempotent (sentinel-keyed):** a prior close-out is located by the
-  `<!-- loomwright:requirement-closeout -->` sentinel, **not** by a bare `## Status` heading —
-  these `.supervisor/requirements/*.md` files have no fixed heading schema, so keying off the heading name
-  would risk clobbering an unrelated `## Status` section a future tool might write. If the sentinel is
-  present, the whole span from the sentinel through the end of its `## Status` block (up to the next `##`
-  heading that appears **after** the `## Status` line, or EOF — not the `## Status` heading itself) is
-  **replaced in place**; if absent, a fresh sentinel-led block is **appended**. The
-  latest close-out wins in the multi-brief case. The requirement file is stamped **in place**; only the
-  brief moves to `done/`.
-- **Vocabulary (intentional):** the requirement `## Status` block uses `done` / `done_with_escalation`,
-  while the brief `## Outcome` block uses `completed` / `completed_with_escalation`. This split is
-  deliberate — the requirement is "done", the brief is "completed" — and the two are internally
-  consistent; do **not** harmonize them.
+- **Before automate-followups/37**, Phase 4.5's completion tail (step 2.5) stamped this block itself,
+  while the PR was still OPEN, on PASS / loop-skipped / ESCALATED; the ESCALATED variant read
+  `## Status: done_with_escalation` plus a `- **Heal:** {reason} — {heal_remaining_issues} remaining`
+  line. That early stamp is why `trail-pr`'s evidence gate exists, and why a whole-lane
+  `meta-sync.sh push` (which bypasses the gate) once carried done claims for never-merged items.
+  `is_done` still reads `done_with_escalation` as done.
+- **Before v15.39.0**, the documented block put the value in a `- **Status:** done` bullet under a bare
+  `## Status` heading. `is_done` reads only the heading line, so that shape left a closed-out
+  requirement re-enqueueable (`docs/PITFALLS.md`, the `- **Status:**`-bullet pitfall).
 
 **No schema_version bump** — this is a requirement-file convention addition, not a result-block schema
 change.
