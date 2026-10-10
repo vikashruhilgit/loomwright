@@ -63,9 +63,30 @@
 # leaves its marker behind. That marker matches no LIVE payload's
 # session_id (a dead session's id is never reused), so it is inert — and
 # gets pruned by any later `arm` call once it crosses the 7-day mark.
+#
+# HOST MODE (`LOOMWRIGHT_HOST_MODE=1`): the guard dir resolves through
+# host-mode.sh's lw_gate_state_dir — the SAME function guard-test-integrity.sh
+# reads it through — so it is `<gate dir>/guard`, never inside the repo, and is
+# created under `umask 077`. Off: `<project dir>/.supervisor/guard`, as above.
+# A host-mode.sh that fails to load is harmless with the switch off (today's
+# path); with it on, nothing is armed (GUARD_DIR empty) rather than a marker
+# landing in the repo — guard-test-integrity.sh fails CLOSED on that same
+# missing helper, so the session is not left unguarded.
 set -u
 
-GUARD_DIR="${CLAUDE_PROJECT_DIR:-$PWD}/.supervisor/guard"
+GUARD_PROJ="${CLAUDE_PROJECT_DIR:-$PWD}"
+GUARD_DIR="$GUARD_PROJ/.supervisor/guard"
+GUARD_HOST_ON=0
+GUARD_HERE="${BASH_SOURCE[0]%/*}"
+[ "$GUARD_HERE" = "${BASH_SOURCE[0]}" ] && GUARD_HERE="."
+# shellcheck source=host-mode.sh
+if . "$GUARD_HERE/host-mode.sh" 2>/dev/null; then
+  GUARD_DIR="$(lw_gate_state_dir "$GUARD_PROJ")/guard"
+  lw_host_mode && GUARD_HOST_ON=1
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  GUARD_DIR=""
+  GUARD_HOST_ON=1
+fi
 PRUNE_AGE_SECONDS=604800 # 7 days
 
 # ---- shared helpers ---------------------------------------------------
@@ -123,10 +144,12 @@ prune() {
 # per-session design, not a shared lock slot.
 write_marker() {
   local sid="$1" by="$2" marker tmp armed_at
+  [ -n "$GUARD_DIR" ] || { printf 'guard_arm_failed: guard dir unresolvable\n' >&2; return 1; }
   marker="$GUARD_DIR/$sid.json"
   if [ -e "$marker" ]; then
     return 0
   fi
+  [ "$GUARD_HOST_ON" = 1 ] && umask 077
   mkdir -p "$GUARD_DIR" 2>/dev/null || { printf 'guard_arm_failed: cannot create guard dir\n' >&2; return 1; }
   armed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
   tmp="$GUARD_DIR/.tmp.$$.${sid}.json"
@@ -211,6 +234,7 @@ cmd_disarm_session() {
   command -v jq >/dev/null 2>&1 || exit 0
   sid="$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null || true)"
   valid_session_id "$sid" || exit 0
+  [ -n "$GUARD_DIR" ] || exit 0
   rm -f "$GUARD_DIR/$sid.json" 2>/dev/null || true
   exit 0
 }
