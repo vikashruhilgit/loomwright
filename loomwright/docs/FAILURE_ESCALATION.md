@@ -161,6 +161,11 @@ Phase 4 FINALIZE pre-merge safety gate, Point 5 (children settled)
 scripts/check-children-settled.sh --all finds ≥1 agent_identity row
 with NO matching terminal row (subtask_complete / token_ledger /
 agent_lifecycle: failed / agent_lifecycle: ended) for that agent_id
+— OR ≥1 --expect-id (a worker id recorded under state.md's
+## Worker Results) with none, even if its identity row never landed
+    — OR (finalize-gate write-marker only) a non-empty ## Worker Results
+    section with no readable id (`### {id}` heading / agent_id: /
+    worker_id: key) ⇒ refused worker_results_unparsed, no marker
     ↓
 Interactive session → AskUserQuestion (proceed anyway / investigate / abort)
     OR
@@ -174,7 +179,7 @@ other pre-merge safety-gate failure above).
 
 **Escape hatch:** `--skip-children-check` short-circuits this ONE checklist point as a deliberate choice — `Context-Keeper(operation: record_decision, phase: FINALIZE, decision: "user_skipped_children_check")`, and the run summary carries `children_check: skipped`. Per CLAUDE.md §"Failure-Mode Invariants", a fail-closed gate needs an explicit escape; there is no silent-proceed path.
 
-**A session with zero `agent_identity` rows** (pre-2026-09-07 logs, or a session that never spawned a Task) reports `children_check: no_identity_rows` and PASSES — nothing to check, never a false `settled`.
+**A session that spawned nothing** — no recorded worker id (so no `--expect-id`) and zero `agent_identity` rows (pre-2026-09-07 logs, or a session that never spawned a Task) — reports `children_check: no_identity_rows` and PASSES — nothing to check, never a false `settled`. A recorded worker id with no terminal row is `unsettled`, never `no_identity_rows`, whether or not its identity row landed.
 
 **Rules:**
 - Same fail-closed shape as `preflight_overlap_detected` (above, Phase 1.5) — interactive soft-gate, non-interactive hard-fail, one named escape-hatch flag.

@@ -7,8 +7,10 @@
 #                                                  hooks.json leaf carries NO `|| true` (CLAUDE.md
 #                                                  §"Plugin Hooks"; the second fail-CLOSED command
 #                                                  hook after guard-test-integrity.sh).
-#   guard-finalize-publish.sh write-marker [--skip-children-check]
+#   guard-finalize-publish.sh write-marker [--skip-children-check] [--expect-id <id>]...
 #                                                  The ONLY writer of the finalize-gate marker.
+#                                                  Flags in any order; an unknown one refuses
+#                                                  (`bad_args`).
 #
 # WHY: FINALIZE point 5 (the children-settled check) was a numbered prose step, and a lane ran it
 # AFTER pushing and opening its PR — nothing refused that. Now a Supervisor run cannot `git push` /
@@ -24,6 +26,14 @@
 # evidence of settlement), or when `--skip-children-check` is given (recorded as `skipped`). It
 # refuses (`session_log_missing`) when the session log is absent or unreadable: the check reports
 # that as `no_identity_rows` for its own fail-SAFE callers, and a gate must not consume it as a pass.
+# EXPECTED IDS (agnostic-phase1/02): the check is run with one `--expect-id` per worker id this run
+# recorded — the `### {worker-id} ({subtask-id})` headings and `agent_id:` / `worker_id:` keys under
+# state.md's `## Worker Results` (read_worker_result_ids) plus any explicit `--expect-id <id>`
+# argument — so a recorded worker with no terminal row refuses `children_unsettled` even when its
+# agent_identity row never landed, instead of recording `no_identity_rows`. A `## Worker Results`
+# section with content but no readable id (a table, prose) refuses `worker_results_unparsed` (fail
+# CLOSED; `--skip-children-check` is the escape). No section / an empty one and no argument ⇒ the
+# check runs exactly as before.
 # Any other outcome (unsettled / unverifiable / no active session / no HEAD) writes nothing and
 # exits 1. HEAD moving after the marker invalidates it: re-run write-marker before every publish
 # (Phase 4.5 heal pushes included) — it re-checks the children each time.
@@ -152,13 +162,119 @@ read_session_block() {
   return 1
 }
 
+# ---- write-marker: the worker ids this run recorded (no jq) --------------------------------------
+# `## Worker Results` is written by an LLM (Context-Keeper's `record_worker_result`), so its shape
+# varies between runs. Two shapes are READ; every other non-empty shape is REFUSED by write-marker
+# (`worker_results_unparsed`), never read as "no workers" — that would silently restore the
+# `no_identity_rows` pass for a run that did spawn workers.
+#
+# One id per line, from either form (both may appear; duplicates are deduped by the join):
+#  (1) HEADING — the first word of every `### {worker-id} ({subtask-id})` heading, the template form;
+#      {worker-id} is the worker's Task-returned agent id (the same id the per-subtask `--agent-id`
+#      gates join on). `**` / backticks / CR are stripped. A leading LABEL word is tolerated
+#      (case-insensitive `worker` / `agent`, optionally followed by `:`, spaced or glued —
+#      `### Worker agent-xxx (1)`, `### worker: a0fef8ff (1)`, `### agent:a0fef8ff`): the id is the
+#      word after it. Fail direction kept: a label with no id word after it (`### Worker (1)`) and any
+#      other unrecognised heading still yields its FIRST word — a recorded heading is never silently
+#      dropped (an unmatched expected id refuses; it never passes).
+#  (2) KEY — an `agent_id: <id>` or `worker_id: <id>` key (case-insensitive) on any non-table line:
+#      a bullet (`- agent_id: a1b2`), a YAML-style continuation line (`  agent_id: a1b2` under
+#      `- subtask: 1`), or a pipe-separated bullet (`- **subtask: 1** | agent_id: a1b2 | status: …`).
+#      `*` / backticks / quotes / CR are stripped; the key must not be glued to a preceding word
+#      character (`parent_agent_id:` is not read); the id ends at whitespace, `|`, `,` or `;`.
+# NOT read (deliberately — a parser for every free shape is a parser nobody can review): table rows
+# (a line whose first non-blank character is `|`), free prose, and any other key. No section prints
+# nothing; worker_results_has_content says whether a section with zero ids must be refused.
+read_worker_result_ids() {
+  [ -f "$STATE_MD" ] || return 0
+  local line in_block=0 tok rest nxt kl
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "## Worker Results"*) in_block=1; continue ;;
+      "## "*) [ "$in_block" = 1 ] && break; continue ;;
+    esac
+    [ "$in_block" = 1 ] || continue
+    case "$line" in
+      "### "*) ;;
+      *)
+        # (2) KEY form. A table row is never read (its first non-blank character is `|`).
+        kl="$(printf '%s' "$line" | tr -d "\`*\"'\r")"
+        kl="${kl#"${kl%%[![:space:]]*}"}"
+        case "$kl" in "|"*) continue ;; esac
+        kl=" $kl"   # so a key at line start is preceded by a non-word character too
+        case "$kl" in
+          *[!A-Za-z0-9_][Aa][Gg][Ee][Nn][Tt]_[Ii][Dd]:*) rest="${kl#*[!A-Za-z0-9_][Aa][Gg][Ee][Nn][Tt]_[Ii][Dd]:}" ;;
+          *[!A-Za-z0-9_][Ww][Oo][Rr][Kk][Ee][Rr]_[Ii][Dd]:*) rest="${kl#*[!A-Za-z0-9_][Ww][Oo][Rr][Kk][Ee][Rr]_[Ii][Dd]:}" ;;
+          *) continue ;;
+        esac
+        rest="${rest#"${rest%%[![:space:]]*}"}"
+        tok="${rest%%[[:space:]|,;]*}"
+        [ -n "$tok" ] && printf '%s\n' "$tok"
+        continue ;;
+    esac
+    case "$line" in
+      "### "*)
+        rest="$(printf '%s' "${line#\#\#\# }" | tr -d '`*\r')"
+        rest="${rest#"${rest%%[![:space:]]*}"}"
+        tok="${rest%%[[:space:]]*}"
+        case "$tok" in
+          [Ww][Oo][Rr][Kk][Ee][Rr]|[Ww][Oo][Rr][Kk][Ee][Rr]:|[Aa][Gg][Ee][Nn][Tt]|[Aa][Gg][Ee][Nn][Tt]:)
+            nxt="${rest#"$tok"}"
+            nxt="${nxt#"${nxt%%[![:space:]]*}"}"
+            nxt="${nxt%%[[:space:]]*}"
+            case "$nxt" in ""|"("*) ;; *) tok="$nxt" ;; esac ;;
+          [Ww][Oo][Rr][Kk][Ee][Rr]:?*|[Aa][Gg][Ee][Nn][Tt]:?*) tok="${tok#*:}" ;;
+        esac
+        [ -n "$tok" ] && printf '%s\n' "$tok" ;;
+    esac
+  done < "$STATE_MD"
+  return 0
+}
+
+# worker_results_has_content — exit 0 when state.md has a `## Worker Results` section carrying any
+# line other than blanks and an `(empty)` / `(none)` placeholder (`*` / `_` / backticks stripped, case
+# ignored); exit 1 otherwise (no file, no section, or an empty one). write-marker pairs it with a zero
+# id count: content that yields no id is a shape this script cannot read, and is refused.
+worker_results_has_content() {
+  [ -f "$STATE_MD" ] || return 1
+  local line in_block=0 t
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "## Worker Results"*) in_block=1; continue ;;
+      "## "*) [ "$in_block" = 1 ] && break; continue ;;
+    esac
+    [ "$in_block" = 1 ] || continue
+    t="$(printf '%s' "$line" | tr -d '[:space:]*_`' | tr '[:upper:]' '[:lower:]')"
+    case "$t" in ""|"(empty)"|"(none)") ;; *) return 0 ;; esac
+  done < "$STATE_MD"
+  return 1
+}
+
 # ======================================================================================
 # write-marker mode
 # ======================================================================================
 if [ "${1:-}" = "write-marker" ]; then
-  skip=0
-  [ "${2:-}" = "--skip-children-check" ] && skip=1
   refuse() { printf '{"status":"refused","reason":"%s"}\n' "$1"; exit 1; }
+  shift
+  skip=0; bad_args=0
+  EXPECT_ARGS=()   # explicit `--expect-id <id>` args, forwarded verbatim to the join
+  # Flags in any order. An unknown argument refuses (`bad_args`) rather than being ignored: a
+  # misspelt `--expect-id` silently dropped would pass the check on less evidence than asked for.
+  # The refusal is only RECORDED here and issued after the stale marker is removed below, so a
+  # refused call never leaves an earlier run's marker in place.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --skip-children-check) skip=1; shift ;;
+      --expect-id)
+        if [ $# -ge 2 ] && [ -n "$2" ]; then
+          EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="$2"; shift 2
+        else
+          bad_args=1; break
+        fi ;;
+      --expect-id=?*) EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="${1#--expect-id=}"; shift ;;
+      *) bad_args=1; break ;;
+    esac
+  done
   command -v jq >/dev/null 2>&1 || refuse "jq_missing"
   [ "$HELPER_OK" = 1 ] || refuse "helper_missing"
   resolve_root
@@ -167,6 +283,7 @@ if [ "${1:-}" = "write-marker" ]; then
   SESSION_LOG="$LOG_DIR/$SESSION_ID.jsonl"
   rm -f "$MARKER" 2>/dev/null
   [ -e "$MARKER" ] && refuse "stale_marker_unremovable"
+  [ "$bad_args" = 1 ] && refuse "bad_args"
   # HEAD of the session's OWN checkout (the one the publish runs from), not the main worktree's.
   head_sha="$(git -C "$PROJ" rev-parse HEAD 2>/dev/null)"
   [ -n "$head_sha" ] || refuse "no_head"
@@ -176,7 +293,21 @@ if [ "${1:-}" = "write-marker" ]; then
     # check-children-settled.sh reads a missing/unreadable log as `no_identity_rows` (fail-SAFE for
     # its own callers). A gate must not consume that as a pass: no log is no evidence at all.
     [ -f "$SESSION_LOG" ] && [ -r "$SESSION_LOG" ] || refuse "session_log_missing"
-    res="$(bash "$HERE/check-children-settled.sh" --log "$SESSION_LOG" --all 2>/dev/null)"
+    # The ids this run spawned and recorded (`## Worker Results` headings / agent_id: keys) are
+    # EXPECTED: each must have a terminal row even when its agent_identity row never landed. No
+    # section, or an empty one => no --expect-id => the join runs exactly as before. A section with
+    # content but ZERO readable ids is refused (fail CLOSED): reading it as "no workers" would let a
+    # run that spawned workers pass as no_identity_rows. Escape: --skip-children-check, after checking.
+    worker_ids="$(read_worker_result_ids)"
+    [ -n "$worker_ids" ] || ! worker_results_has_content || refuse "worker_results_unparsed"
+    while IFS= read -r wid; do
+      [ -n "$wid" ] || continue
+      EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="$wid"
+    done <<EOF
+$worker_ids
+EOF
+    # `${arr[@]+…}`: an empty array under `set -u` is an unbound-variable error on bash 3.2
+    res="$(bash "$HERE/check-children-settled.sh" --log "$SESSION_LOG" --all ${EXPECT_ARGS[@]+"${EXPECT_ARGS[@]}"} 2>/dev/null)"
     children_status="$(printf '%s' "$res" | jq -r '.status // empty' 2>/dev/null)"
     case "$children_status" in
       # recorded verbatim — `no_identity_rows` is a pass, never `settled` (async-orchestration point 5)

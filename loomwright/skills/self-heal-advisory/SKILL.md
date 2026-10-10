@@ -1315,7 +1315,7 @@ Emit the contract-conformance, benchmark, and ground-truth results as the SAME d
 | CODE_REVIEW_RESULT malformed or missing | Retry review once; if still malformed, pause with resume |
 | Fix Task() crashes or returns no FIX_RESULT | Pause phase — emit `SUPERVISOR_RESULT` with `status: checkpoint` (no `paused` status exists in the schema); the resume counter increments at Phase 4.5 entry of the next `--continue` run |
 | `git push` fails inside loop | Pause phase; report auth/network error in checkpoint |
-| finalize-gate `write-marker` refuses before a heal push | Same as a failed push: pause phase, report the refusal reason (`children_unsettled` names the ids) in the checkpoint. Never hand-write the marker |
+| finalize-gate `write-marker` refuses before a heal push | Same as a failed push: pause phase, report the refusal reason (`children_unsettled` names the ids; `worker_results_unparsed` means `## Worker Results` holds no readable id) in the checkpoint. Never hand-write the marker |
 | `gh pr comment` fails at escalation | Record findings in `.supervisor/state.md` decisions log; do NOT fail the task — escalation still succeeds, just without PR comment |
 | Resume counter ≥ 3 | Abort loop, mark ESCALATED with `self_heal_resume_thrash` reason, run completion tail |
 | Tool budget exceeded mid-loop | Checkpoint with `current_phase: SELF_HEAL`, exit with resume command |
