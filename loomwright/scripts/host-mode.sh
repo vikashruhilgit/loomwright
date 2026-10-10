@@ -15,7 +15,7 @@
 # main one (emitters anchor there, as `loom_main_root` in loom-log-owner.sh prints) or a linked one
 # (the guards anchor on the session's project dir). The resolver normalises internally, so both
 # resolve the same dir: the D1 key hashes the MAIN worktree path `git worktree list` reports, and
-# "outside the repo" is tested against EVERY worktree git lists (physical paths). Off mode is not
+# "outside the repo" is tested against EVERY worktree git lists, by filesystem identity (`-ef`). Off mode is not
 # normalised — it prints `<root>/.supervisor` verbatim, exactly as before. Every READ of a piece of
 # state resolves through the SAME function as its writer, so readers and writers never disagree.
 #
@@ -23,7 +23,8 @@
 #
 # lw_host_state_dir [root] — prints $LOOMWRIGHT_HOST_STATE_DIR and returns 0 only when it is an
 #   absolute (`/`-prefixed) path to an existing directory that is NOT inside [root] nor any other
-#   worktree of its repo (compared on physical paths, so a symlink cannot smuggle it back in). Else
+#   worktree of its repo (judged by filesystem identity — `-ef` on each ancestor — so neither a
+#   symlink nor a case-variant spelling on a case-insensitive volume smuggles it back in). Else
 #   prints nothing, returns 1. A host-provided dir is the host's: no ownership test is applied.
 #
 # lw_state_dir <root> — the `.supervisor`-equivalent for NON-gate writes (logs, markers, nudges).
@@ -57,24 +58,45 @@ lw_host_mode() {
   [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]
 }
 
-# _lw_in_worktree <physical-path> <root> — 0 iff the path is <root>, any worktree of <root>'s repo,
-# or inside one (physical paths on both sides).
+# _lw_under_any <path> <dir>... — 0 iff <path> or one of its ancestors IS one of the <dir>s, judged by
+# filesystem identity (`-ef`: same device + inode), never by spelling. A string prefix test is fooled
+# by a case-variant path on case-insensitive APFS (`/x/REPO` names `/x/repo` but shares no prefix
+# with it) and by any second name for a directory; inode identity is not. The walk strips one
+# component per step and stops at `/` (or when stripping changes nothing), so it is bounded by the
+# path's depth times the number of <dir>s — builtin tests only, no fork. A missing <dir> never matches.
+_lw_under_any() {
+  local _d="$1" _prev="" _t=""
+  shift
+  [ "$#" -gt 0 ] || return 1
+  case "$_d" in /*) ;; *) _d="$PWD/$_d" ;; esac
+  while :; do
+    while [ "${#_d}" -gt 1 ] && [ "${_d%/}" != "$_d" ]; do _d="${_d%/}"; done
+    for _t in "$@"; do
+      [ -n "$_t" ] && [ "$_d" -ef "$_t" ] && return 0
+    done
+    [ "$_d" = "/" ] && return 1
+    _prev="$_d"; _d="${_d%/*}"; [ -n "$_d" ] || _d="/"
+    [ "$_d" = "$_prev" ] && return 1
+  done
+}
+
+# _lw_in_worktree <path> <root> — 0 iff the path is <root>, any worktree of <root>'s repo, or inside
+# one, by filesystem identity (_lw_under_any). A path that is not an existing directory cannot be
+# placed, so it counts as INSIDE (every caller then rejects it — the fail-closed direction).
 _lw_in_worktree() {
-  local _p="${1%/}" _root="${2:-}" _list="" _w="" _wp=""
+  local _p="$1" _root="${2:-}" _list="" _w=""
   [ -n "$_root" ] || return 1
+  [ -d "$_p" ] || return 0
   # Collected first, then scanned: no pipeline, so a caller's `set -o pipefail` (SIGPIPE on an early
   # match) cannot flip the answer.
   _list="$(git -C "$_root" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')"
+  set -- "$_root"
   while IFS= read -r _w; do
-    [ -n "$_w" ] || continue
-    _wp="$(cd "$_w" 2>/dev/null && pwd -P)" || _wp=""
-    [ -n "$_wp" ] || _wp="$_w"
-    case "$_p/" in "${_wp%/}/"*) return 0 ;; esac
+    [ -n "$_w" ] && set -- "$@" "$_w"
   done <<EOF
-$_root
 $_list
 EOF
-  return 1
+  _lw_under_any "$_p" "$@"
 }
 
 # _lw_private_dir <dir> — 0 iff <dir> is a real directory (not a symlink) owned by this uid, writable
@@ -145,7 +167,7 @@ lw_gate_state_dir() {
   _uid="$(id -u 2>/dev/null)"
   case "$_uid" in ''|*[!0-9]*) _uid="unknown" ;; esac
   # The base: $TMPDIR only when absolute, an existing directory, and outside every worktree
-  # (physical paths) — a relative or in-repo TMPDIR would put "outside the repo" state inside it.
+  # (filesystem identity) — a relative or in-repo TMPDIR would put "outside the repo" state inside it.
   _base="${TMPDIR:-}"
   while [ "${#_base}" -gt 1 ] && [ "${_base%/}" != "$_base" ]; do _base="${_base%/}"; done
   case "$_base" in /*) ;; *) _base="" ;; esac

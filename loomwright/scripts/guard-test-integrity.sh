@@ -257,6 +257,17 @@ is_host_guard_path() {
       *"$GATE_ROOT_TOKEN"*) return 0 ;;
     esac
   fi
+  # The spellings above are fooled by a second name for the same directory —
+  # a case variant on case-insensitive APFS (`…/LOOMWRIGHT-HOST-501/…/GUARD/x`
+  # IS the guard dir there). So also judge by filesystem identity (host-mode.sh
+  # _lw_under_any: `-ef` on each ancestor, builtins only, bounded by depth):
+  # the word is, or is under, the guard dir; is the gate dir; or, for the
+  # per-user gate root, is under that root.
+  if declare -F _lw_under_any >/dev/null; then
+    _lw_under_any "$w" "$GUARD_DIR" && return 0
+    [ -n "$GATE_DIR" ] && [ "$w" -ef "$GATE_DIR" ] && return 0
+    [ -n "$GATE_ROOT_TOKEN" ] && _lw_under_any "$w" "${GATE_DIR%/*}" && return 0
+  fi
   return 1
 }
 

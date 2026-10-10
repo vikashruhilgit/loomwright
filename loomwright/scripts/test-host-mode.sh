@@ -39,7 +39,8 @@
 #   (c)  guard-test-integrity under host mode, state-dir and D1: unarmed -> a protected edit is
 #        allowed; armed through the PreToolUse[Agent|Task] leaf -> the marker is in the gate dir, and
 #        a protected edit, a hook-bypass commit, an edit of the redirected guard dir, an edit of
-#        host-mode.sh and an rm of the marker are all denied; disarmed by SessionEnd -> allowed.
+#        host-mode.sh and an rm of the marker (plain, and through a case-variant spelling where the
+#        volume is case-insensitive) are all denied; disarmed by SessionEnd -> allowed.
 #   (c2) guard-finalize-publish under host mode, state-dir and D1: `gh pr create` is denied for a
 #        live run whose state.md + session log are in the gate dir, and for a live run whose ONLY
 #        state.md is the agent-written repo copy; after write-marker (marker lands in the gate dir)
@@ -56,9 +57,10 @@
 #        host-mode block removed (mutant gated: non-empty, differs, `bash -n` clean, resolver gone)
 #        makes leg (a) FAIL with the repo dirtied.
 #   (f)  an invalid LOOMWRIGHT_HOST_STATE_DIR (relative, missing, a file, inside the repo, a symlink
-#        into the repo) is rejected: the gate dir is D1, a worker session leaves the repo clean and
+#        into the repo, a case-variant spelling of the repo or of a dir in it) is rejected: the gate dir is D1, a worker session leaves the repo clean and
 #        writes nothing through the bad dir (AC5).
-#   (g)  an unsafe TMPDIR (relative, or a dir inside the repo) is not the D1 base: the repo stays
+#   (g)  an unsafe TMPDIR (relative, a dir inside the repo, or a case-variant spelling of one) is
+#        not the D1 base: the repo stays
 #        clean and the gate root falls back to /tmp (removed again on exit).
 #   (h)  a hostile pre-created D1 root ($TMPDIR/loomwright-host-<uid> a symlink to a foreign dir,
 #        mode 500, or mode 777): the gate dir is unresolvable, nothing lands in the foreign dir,
@@ -67,7 +69,8 @@
 #        rejected by every caller alike (emitters anchor on the main worktree, the guards on the
 #        project dir) — both worktrees stay clean and the marker and events share the D1 gate dir.
 #   (j)  check-children-settled.sh under host mode reads a repo-shaped `--log` (relative and
-#        absolute) from the gate dir; off mode does not; an unloadable helper is `unverifiable`, and
+#        absolute) from the gate dir, judging a state dir named `.supervisor` against the real repo
+#        root (an outside one is valid, an in-repo one maps to D1); off mode does not; an unloadable helper is `unverifiable`, and
 #        the guards fail CLOSED on it (deny / write-marker `helper_missing`).
 #   (k)  mutation control: host-mode.sh with its D1 ownership/symlink check neutered makes leg (h)'s
 #        symlink case FAIL (the marker lands in the foreign dir).
@@ -377,6 +380,16 @@ for m in sd d1; do
   is_deny; rec "(c) $m: armed -> edit of host-mode.sh denied" $? "rc=$LAST_RC"
   fire_one PreToolUse Bash guard-test-integrity.sh "$(p_bash "rm -f $C_GATE/guard/$CC.json")"
   is_deny; rec "(c) $m: armed -> rm of the redirected marker denied" $? "rc=$LAST_RC"
+  # a case-variant spelling of the gate dir names the SAME dir on a case-insensitive volume
+  CV_GATE="$C_DIR/$(printf '%s' "${C_GATE#"$C_DIR"/}" | tr '[:lower:]' '[:upper:]')"
+  if [ "$CV_GATE" -ef "$C_GATE" ]; then
+    fire_one PreToolUse Write guard-test-integrity.sh "$(p_write "$CV_GATE/GUARD/other.json")"
+    is_deny; rec "(c) $m: armed -> edit of a case-variant guard-dir path denied" $? "rc=$LAST_RC out=$LAST_OUT"
+    fire_one PreToolUse Bash guard-test-integrity.sh "$(p_bash "rm -f $CV_GATE/GUARD/$CC.json")"
+    is_deny; rec "(c) $m: armed -> rm of the case-variant marker path denied" $? "rc=$LAST_RC out=$LAST_OUT"
+  else
+    echo "  skip: (c) $m case-variant guard paths — the scratch filesystem is case-sensitive"
+  fi
   fire_one SessionEnd other guard-arm.sh "$(jq -nc --arg cc "$CC" '{hook_event_name:"SessionEnd", session_id:$cc, reason:"other"}')"
   [ ! -e "$C_GATE/guard/$CC.json" ]; rec "(c) $m: SessionEnd disarm removed the gate-dir marker" $?
   fire_one PreToolUse Write guard-test-integrity.sh "$(p_write "$C_MAIN/jest.config.js")"
@@ -514,9 +527,17 @@ use_sd() {  # use_sd <value> — point this case's LOOMWRIGHT_HOST_STATE_DIR at 
 }
 
 echo "== (f) an invalid LOOMWRIGHT_HOST_STATE_DIR is rejected (AC5) =="
-for kind in relative missing file inside symlink; do
+for kind in relative missing file inside symlink casesub caseroot; do
   new_case "f-$kind" sd bare
+  case "$kind" in case*)
+    # a case-variant spelling of the repo (case-insensitive APFS: `REPO` IS `repo`)
+    if ! [ "$C_DIR/REPO" -ef "$C_REPO" ]; then
+      echo "  skip: (f) $kind — the scratch filesystem is case-sensitive"; continue
+    fi ;;
+  esac
   case "$kind" in
+    casesub)  mkdir -p "$C_REPO/sdin"; use_sd "$C_DIR/REPO/SDIN" ;;
+    caseroot) use_sd "$C_DIR/REPO" ;;
     relative) use_sd "state" ;;
     missing)  use_sd "$C_DIR/nope" ;;
     file)     : > "$C_DIR/afile"; use_sd "$C_DIR/afile" ;;
@@ -528,7 +549,7 @@ for kind in relative missing file inside symlink; do
   [ "$C_GATE" = "$C_TMP/loomwright-host-$UID_N/$(d1_hash)" ]; rec "(f) $kind: gate state falls back to D1" $? "$C_GATE"
   session_events worker
   repo_clean_checks "(f) $kind"
-  case "$kind" in inside|symlink)
+  case "$kind" in inside|symlink|casesub)
     [ -z "$(listing "$C_REPO/sdin")" ]; rec "(f) $kind: nothing written through the rejected dir" $? ;;
   esac
   s="$(find "$C_TMP" -name failures.log 2>/dev/null)"
@@ -538,11 +559,15 @@ done
 
 # =================================================================================================
 echo "== (g) an unsafe TMPDIR is never the D1 base =="
-for kind in relative inside; do
+for kind in relative inside casevar; do
   new_case "g-$kind" d1 bare
+  if [ "$kind" = casevar ] && ! [ "$C_DIR/REPO" -ef "$C_REPO" ]; then
+    echo "  skip: (g) $kind — the scratch filesystem is case-sensitive"; continue
+  fi
   case "$kind" in
     relative) C_TMP="reltmp" ;;
     inside)   mkdir -p "$C_REPO/tmpx"; C_TMP="$C_REPO/tmpx" ;;
+    casevar)  mkdir -p "$C_REPO/tmpx"; C_TMP="$C_DIR/REPO/TMPX" ;;
   esac
   C_SNAP0="$(snap)"; C_GATE="$(gate_dir)"
   want="/tmp/loomwright-host-$UID_N/$(d1_hash)"
@@ -659,6 +684,17 @@ st="$(ccs --log ".supervisor/logs/$RUN.jsonl" --all)"
 [ "$st" = settled ] && [ "$C_GATE" = "$C_TMP/loomwright-host-$UID_N/$(d1_hash)" ]
 rec "(j) an in-repo state dir is rejected by the checker too: the log is read from D1" $? "st=$st gate=$C_GATE"
 replay
+# a VALID state dir OUTSIDE the repo that is itself named `.supervisor`: the checker must judge it
+# against the real repo root, not the `<outside>` prefix its own path shape suggests
+new_case "j-sdout" sd seeded
+mkdir -p "$C_DIR/outside/.supervisor"; use_sd "$C_DIR/outside/.supervisor"
+( umask 077; mkdir -p "$C_SD/logs" ) && settled_rows > "$C_SD/logs/$RUN.jsonl"
+[ "$C_GATE" = "$C_SD" ]; rec "(j) outside .supervisor state dir: it is the gate dir (precondition)" $? "$C_GATE"
+st="$(ccs --log "$C_SD/logs/$RUN.jsonl" --all)"
+[ "$st" = settled ]; rec "(j) outside .supervisor state dir: its own log path -> settled" $? "$st"
+st="$(ccs --log ".supervisor/logs/$RUN.jsonl" --all)"
+[ "$st" = settled ]; rec "(j) outside .supervisor state dir: relative repo --log -> settled" $? "$st"
+repo_clean_checks "(j) outside .supervisor state dir"; replay
 new_case "j-off" off seeded
 st="$(ccs --log ".supervisor/logs/$RUN.jsonl" --all)"
 [ "$st" = no_identity_rows ]; rec "(j) off: the repo --log is read as given (no repo log -> no_identity_rows, as before)" $? "$st"

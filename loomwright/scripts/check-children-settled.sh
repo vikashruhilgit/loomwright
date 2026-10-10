@@ -139,19 +139,28 @@ fi
 if [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
   case "$log" in
     .supervisor/logs/*.jsonl|./.supervisor/logs/*.jsonl|/*/.supervisor/logs/*.jsonl)
+      # The root the resolver is anchored on is the REAL repo (what git says), never the path with
+      # `/.supervisor/logs/*` stripped: a host state dir named `<outside>/.supervisor` would make
+      # that stripped prefix (`<outside>`) the "repo", and the resolver would then reject the valid
+      # state dir as in-repo. Order: the log's own dir, then the stripped prefix (the log dir may
+      # not exist yet), then the session cwd's repo, then the cwd itself.
       _cs_wt="${log%/.supervisor/logs/*}"; case "$log" in /*) ;; *) _cs_wt="$PWD" ;; esac
+      _cs_root="$(git -C "$(dirname "$log")" rev-parse --show-toplevel 2>/dev/null)" \
+        || _cs_root="$(git -C "$_cs_wt" rev-parse --show-toplevel 2>/dev/null)" \
+        || _cs_root="$(git rev-parse --show-toplevel 2>/dev/null)" || _cs_root=""
+      [ -n "$_cs_root" ] || _cs_root="$PWD"
       _cs_gate=""
       if . "$(dirname "${BASH_SOURCE[0]}")/host-mode.sh" 2>/dev/null; then
-        _cs_gate="$(lw_gate_state_dir "$_cs_wt")" || _cs_gate=""
-        # a VALID host state dir that itself ends in `.supervisor`: the path is already the gate log
-        _cs_sd="$(lw_host_state_dir "$_cs_wt")" && [ "${log#"${_cs_sd%/}"/}" != "$log" ] && _cs_gate="-"
+        _cs_gate="$(lw_gate_state_dir "$_cs_root")" || _cs_gate=""
       fi
       if [ -z "$_cs_gate" ]; then
         printf '%s: unverifiable — host mode gate state dir unresolvable\n' "$SELF" >&2
         printf '{"status":"unverifiable","reason":"host_gate_unresolvable","source":"%s"}\n' "$SELF"
         exit 0
       fi
-      [ "$_cs_gate" = "-" ] || log="$_cs_gate/logs/${log##*/}" ;;
+      # Always the writer's location — `<gate dir>/logs/<id>.jsonl`, the SAME resolver the hooks
+      # write through. (A log already under a valid host state dir maps onto itself.)
+      log="$_cs_gate/logs/${log##*/}" ;;
   esac
 fi
 
