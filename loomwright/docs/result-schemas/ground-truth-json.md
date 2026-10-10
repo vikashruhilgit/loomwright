@@ -242,27 +242,24 @@ heading line**, opened by the namespaced HTML-comment sentinel the idempotency g
 - **Who does NOT write it:** Supervisor Phase 4.5's completion tail. Its step 2.5
   (`skills/self-heal-advisory/SKILL.md`) writes nothing to the requirement; the heal verdict lives on the
   brief's `## Outcome` block (`completed` / `completed_with_escalation`, `**Heal reason:**`).
-- **Idempotent (sentinel-keyed):** `closeout` appends the block only when the sentinel is absent
-  (`closeout: skipped — already stamped` otherwise); the requirement file is stamped **in place** and
-  never moved.
+- **Idempotent (block-keyed):** `closeout` appends the block only when no real stamp block is present —
+  the sentinel alone on its line, the NEXT line a `## Status: done` / `done_with_escalation` heading
+  (`closeout: skipped — already stamped` otherwise; a sentinel quoted in prose does not count,
+  automate-followups/38); the requirement file is stamped **in place** and never moved.
 - **Other writers of a `## Status:` heading (not this block):** `reconcile-status --apply` (human-run,
   evidence-gated on a merged PR) writes `## Status: done (PR #<n>, merge <sha>)` without the sentinel,
   and an owner's `# abandoned:` decision becomes `## Status: done_with_escalation — ABANDONED (…)`;
   `stamp-requirement-status.sh` writes `## Status: brief-shipped`, deliberately not a done value.
-- **Honest limit — two paths get no automatic done stamp:** a plain `/supervisor` / `/autonomous` run
-  outside `/automate`, and an `/automate --auto-merge` item that `gate-eval` merged. `closeout` needs an
-  `/automate` run file and a caller: its callers are `/automate --resume`'s RECONCILE
-  (`skills/automate-loop/SKILL.md` §6 step 1, this run's `## Current` item), the merge watcher
-  (`automate-merge-watch.sh`, armed only at an `/automate` park) and `closeout-others` (another run's
-  `## Current` item), so a requirement is closed out only when it is the `## Current` item of an
-  `/automate` run whose PR merged after a park; for other requirements `/automate --resume` runs
-  `reconcile-status` as a dry run only. A gate-merged item never parks: §6 step 5 SYNC runs
-  `brief-repair` and the pull, not `closeout`, and the next PICK moves `## Current` on (before
-  automate-followups/37 Phase 4.5's pre-merge stamp covered it). SYNC does not call `closeout` because
-  its trail step would open a trail PR after every gate-merged item and the next PICK's `trail-gate`
-  parks `trail_pr_open` on it, stopping every unattended `--auto-merge` run after its first merge; a
-  trail-less close-out at SYNC is an open follow-up. For both paths, recovery after the merge is a
-  human step: `reconcile-status --apply`, or a
+- **Honest limit — one path gets no automatic done stamp:** a plain `/supervisor` / `/autonomous` run
+  outside `/automate`. `closeout` needs an `/automate` run file and a caller: its callers are
+  `/automate --resume`'s RECONCILE (`skills/automate-loop/SKILL.md` §6 step 1, this run's `## Current`
+  item), the merge watcher (`automate-merge-watch.sh`, armed only at an `/automate` park),
+  `closeout-others` (another run's `## Current` item), `--auto-merge` SYNC (§6 step 5,
+  `closeout --no-trail` right after `gate-eval` merged the PR) and a merged `--parallel` lane's
+  `lane-convert-ready` re-run (§14, `closeout --no-trail` inside the lane) — automate-followups/38 —
+  so a requirement is closed out only as an `/automate` run's item whose PR merged; for other
+  requirements `/automate --resume` runs `reconcile-status` as a dry run only. For that path, recovery
+  after the merge is a human step: `reconcile-status --apply`, or a
   hand-written `## Status: done`. Until then the requirement reads `brief-shipped` (or nothing) and
   `resolve-folder` keeps listing the merged item. `stamp-requirement-status.sh`
   (run on session start and when a Supervisor runner agent finishes — its two `hooks.json` seams) writes that `brief-shipped` heading on
