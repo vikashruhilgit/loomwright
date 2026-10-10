@@ -146,8 +146,23 @@ main_root="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //
 top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
 [ "$top" = "$main_root" ] || exit 0
 
-LOG_DIR="$main_root/.supervisor/logs"
-STATE_MD="$main_root/.supervisor/state.md"
+# Host mode (host-mode.sh — the one resolver): off keeps `$main_root/.supervisor`
+# byte-identical; on, the log and seed live in lw_gate_state_dir (the host's
+# state dir, else the per-user gate root, D1) and state.md is read via
+# lw_state_md_read — the same functions build-state.sh resolves through. A
+# helper that fails to load is harmless when the switch is off and a silent
+# no-op when it is on.
+SUP_DIR="$main_root/.supervisor"
+STATE_MD="$SUP_DIR/state.md"
+HOST_ON=0
+if . "$(dirname "${BASH_SOURCE[0]:-$0}")/host-mode.sh" 2>/dev/null; then
+  SUP_DIR="$(lw_gate_state_dir "$main_root")"
+  STATE_MD="$(lw_state_md_read "$main_root")"
+  if lw_host_mode; then HOST_ON=1; umask 077; fi
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
+LOG_DIR="$SUP_DIR/logs"
 
 [ -f "$STATE_MD" ] && [ -r "$STATE_MD" ] || exit 0
 
@@ -325,7 +340,11 @@ fi
 # reaches that tail). `run-lock.sh release --session-id <id>` is a no-op unless
 # the lock's recorded `session_id` EQUALS this ending session, so it can never
 # steal a DIFFERENT session's live lock.
-if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/run-lock.sh" ]; then
+#
+# SKIPPED under host mode: the lock lives at `<repo>/.supervisor/run.lock`
+# (agent-acquired), and releasing it is a hook mutating the repo. A stranded
+# lock there is left for the next acquire's own stale/force handling.
+if [ "$HOST_ON" = 0 ] && [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/run-lock.sh" ]; then
   bash "$SCRIPT_DIR/run-lock.sh" release --session-id "$PLUGIN_SESSION_ID" --root "$main_root" >/dev/null 2>&1 || true
 fi
 
