@@ -161,9 +161,27 @@ fi
 TOP="$(git -C "$MAIN_ROOT" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
 [ "$TOP" = "$MAIN_ROOT" ] || exit 0
 
-LOG_FILE="$MAIN_ROOT/.supervisor/logs/${SESSION_ID}.jsonl"
-OWNER_FILE="$MAIN_ROOT/.supervisor/logs/${SESSION_ID}.owner"
-STATE_MD="$MAIN_ROOT/.supervisor/state.md"
+# ---- Host mode (host-mode.sh — the one resolver) ----------------------------
+# Off: everything stays under `$MAIN_ROOT/.supervisor`, byte-identical, and
+# STATE_MD_READ == STATE_MD. On: the log, seed, lock and projection live in
+# lw_gate_state_dir (the host's state dir, else the per-user gate root, D1);
+# the repo `state.md` is never written. The sections this projector preserves
+# are READ from lw_state_md_read — the repo seed until the gate copy carries
+# the same session id. A helper that fails to load is harmless when the switch
+# is off and a silent no-op when it is on.
+SUP_DIR="$MAIN_ROOT/.supervisor"
+STATE_MD_READ="$SUP_DIR/state.md"
+if . "$(dirname "${BASH_SOURCE[0]:-$0}")/host-mode.sh" 2>/dev/null; then
+  SUP_DIR="$(lw_gate_state_dir "$MAIN_ROOT")"
+  STATE_MD_READ="$(lw_state_md_read "$MAIN_ROOT")"
+  lw_host_mode && umask 077
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
+
+LOG_FILE="$SUP_DIR/logs/${SESSION_ID}.jsonl"
+OWNER_FILE="$SUP_DIR/logs/${SESSION_ID}.owner"
+STATE_MD="$SUP_DIR/state.md"
 
 # ---- The run-creation seed (`<run_id>.owner`) -------------------------------
 # Written by `seed-run-owner.sh` at the moment `state.md` is created, so both
@@ -217,13 +235,13 @@ fi
 
 PRE_EVENT_RUN=0
 if [ "$LOG_PRESENT" -eq 0 ]; then
-  [ -f "$STATE_MD" ] && [ -r "$STATE_MD" ] || exit 0
-  _sm_session="$(sed -nE 's/^- session_id:[[:space:]]*//p' "$STATE_MD" 2>/dev/null | head -1 || true)"
+  [ -f "$STATE_MD_READ" ] && [ -r "$STATE_MD_READ" ] || exit 0
+  _sm_session="$(sed -nE 's/^- session_id:[[:space:]]*//p' "$STATE_MD_READ" 2>/dev/null | head -1 || true)"
   _sm_session="$(printf '%s' "$_sm_session" | tr -cd 'A-Za-z0-9_-' || true)"
   # Only act on the run `state.md` currently describes. A caller passing some
   # OTHER run's id must not repaint this file with that run's verdict.
   [ "$_sm_session" = "$SESSION_ID" ] || exit 0
-  _sm_status="$(sed -nE 's/^- status:[[:space:]]*//p' "$STATE_MD" 2>/dev/null | head -1 || true)"
+  _sm_status="$(sed -nE 's/^- status:[[:space:]]*//p' "$STATE_MD_READ" 2>/dev/null | head -1 || true)"
   case "$_sm_status" in
     running|checkpoint|paused) ;;
     *) exit 0 ;;   # already terminal, or unrecognised — never guess
@@ -392,7 +410,7 @@ BRANCH="$(git -C "$MAIN_ROOT" branch --show-current 2>/dev/null || true)"
 # (Finding 4 — this projector owns exactly session_id/branch/status/phase;
 # everything else that was already there survives, in its original order.)
 PRESERVED_SESSION_LINES=""
-if [ -f "$STATE_MD" ]; then
+if [ -f "$STATE_MD_READ" ]; then
   PRESERVED_SESSION_LINES="$(awk '
     /^## Session[[:space:]]*$/ { insec = 1; next }
     insec && /^## / { insec = 0 }
@@ -403,7 +421,7 @@ if [ -f "$STATE_MD" ]; then
       sub(/:.*/, "", key)
       if (key !~ /^(session_id|branch|status|phase)$/) print line
     }
-  ' "$STATE_MD" 2>/dev/null || true)"
+  ' "$STATE_MD_READ" 2>/dev/null || true)"
 fi
 
 # ---- mkdir-based lock (Finding 2) -------------------------------------------
@@ -423,7 +441,7 @@ fi
 # the very next event — an incorrectly-stolen lock from a genuinely slow
 # (not dead) holder costs, at worst, one skipped or doubled projection of
 # IDENTICAL derivable content, never data loss.
-LOCK_DIR="$MAIN_ROOT/.supervisor/.state.lock"
+LOCK_DIR="$SUP_DIR/.state.lock"
 STALE_LOCK_SECONDS=60
 
 lock_age_seconds() {
@@ -504,7 +522,7 @@ trap 'cleanup_tmp; exit 0' EXIT
   printf '\n'
 } > "$BLOCK" 2>/dev/null || exit 0
 
-if [ -f "$STATE_MD" ]; then
+if [ -f "$STATE_MD_READ" ]; then
   awk -v newblock="$BLOCK" '
     BEGIN { in_session = 0; injected = 0 }
     /^## Session[[:space:]]*$/ {
@@ -524,7 +542,7 @@ if [ -f "$STATE_MD" ]; then
         while ((getline line < newblock) > 0) print line
       }
     }
-  ' "$STATE_MD" > "$TMP" 2>/dev/null || exit 0
+  ' "$STATE_MD_READ" > "$TMP" 2>/dev/null || exit 0
 else
   {
     printf '# Supervisor State\n\n'
