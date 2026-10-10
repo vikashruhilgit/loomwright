@@ -74,3 +74,10 @@ One **host-neutral** environment switch. Loomwright picks the name, for example 
 
 ## Non-goals
 Changing what any hook does outside host mode. Studio's side of reading the state dir (Studio's phase 2).
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation
+- **Completed:** 2026-10-10T06:42:40Z
+- **Brief:** .supervisor/jobs/done/2026-10-09-host-mode-no-repo-writes.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/450
+- **Heal:** max_iterations_reached — 1 remaining
