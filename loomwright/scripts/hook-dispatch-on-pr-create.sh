@@ -101,7 +101,7 @@ DISPATCHER="$SCRIPT_DIR/dispatch-pr-review.sh"
 # ---- Host mode (host-mode.sh — the one resolver) ------------------------------
 # Off mode is byte-identical and does not depend on the helper loading. Under
 # LOOMWRIGHT_HOST_MODE=1 the pr_created line is gate-class state (D1) and goes to
-# lw_gate_state_dir, and the dispatch is SKIPPED: dispatch-pr-review.sh writes
+# lw_gate_state_dir_existing (skipped until a run created it), and the dispatch is SKIPPED: dispatch-pr-review.sh writes
 # markers, logs and a sibling worktree. A helper that fails to load with the
 # switch on exits 0 without writing.
 HD_HOST=0
@@ -178,9 +178,9 @@ emit_pr_created() (
   root="$(loom_main_root)" || exit 0
   sup="$root/.supervisor"; st="$sup/state.md"
   if [ "$HD_HOST" = 1 ]; then
-    # Host mode: the switch is the presence signal; the gate dir is created at
-    # the existing mkdir site below, under umask 077.
-    sup="$(lw_gate_state_dir "$root")" || exit 0   # gate dir unresolvable: skip the line
+    # Host mode: the presence gate is the gate dir's own existence (never
+    # created here — a run's gate writer creates it); absent or unsafe: skip.
+    sup="$(lw_gate_state_dir_existing "$root")" || exit 0
     st="$(lw_state_md_read "$root")"; umask 077
   else
     [ -d "$sup" ] || exit 0

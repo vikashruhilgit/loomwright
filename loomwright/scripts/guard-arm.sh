@@ -65,8 +65,8 @@
 # gets pruned by any later `arm` call once it crosses the 7-day mark.
 #
 # HOST MODE (`LOOMWRIGHT_HOST_MODE=1`): the guard dir resolves through
-# host-mode.sh's lw_gate_state_dir — the SAME function guard-test-integrity.sh
-# reads it through — so it is `<gate dir>/guard`, never inside the repo, and is
+# host-mode.sh's gate-dir resolver — the SAME one guard-test-integrity.sh reads
+# it through — so it is `<gate dir>/guard`, never inside the repo, and is
 # created under `umask 077`. Off: `<project dir>/.supervisor/guard`, as above.
 # A host-mode.sh that fails to load is harmless with the switch off (today's
 # path); with it on, nothing is armed (GUARD_DIR empty) rather than a marker
@@ -76,6 +76,13 @@
 # unsafe or unwritable per-user D1 root). The project dir passed as <root> may
 # be a linked worktree: host-mode.sh's one-root rule resolves it to the same
 # gate dir the main-worktree-anchored emitters use.
+#
+# PRESENCE GATE (host mode): this script is one of the gate WRITERS allowed
+# to CREATE the per-user D1 root, and only at the moment it writes a marker
+# (write_marker -> lw_gate_state_dir). Everything else here resolves through
+# lw_gate_state_dir_existing, which never creates: a non-Loomwright spawn
+# (arm-from-payload exits before write_marker) and SessionEnd's disarm leave
+# no trace in a host session where no run ever armed.
 set -u
 
 GUARD_PROJ="${CLAUDE_PROJECT_DIR:-$PWD}"
@@ -84,10 +91,15 @@ GUARD_HOST_ON=0
 GUARD_HERE="${BASH_SOURCE[0]%/*}"
 [ "$GUARD_HERE" = "${BASH_SOURCE[0]}" ] && GUARD_HERE="."
 # shellcheck source=host-mode.sh
+GUARD_CREATE=0   # 1: host mode, gate dir absent so far — write_marker creates it (the writer form)
 if . "$GUARD_HERE/host-mode.sh" 2>/dev/null; then
   # Host mode with an unresolvable gate dir (unsafe/unwritable D1 root): nothing is armed —
   # guard-test-integrity.sh denies on that same unresolvable dir, so the session is not unguarded.
-  if _guard_gd="$(lw_gate_state_dir "$GUARD_PROJ")"; then GUARD_DIR="$_guard_gd/guard"; else GUARD_DIR=""; fi
+  # Resolved WITHOUT creating (rc 2 = absent: nothing armed yet, nothing to disarm or prune).
+  _guard_rc=0
+  _guard_gd="$(lw_gate_state_dir_existing "$GUARD_PROJ")" || _guard_rc=$?
+  if [ "$_guard_rc" = 0 ]; then GUARD_DIR="$_guard_gd/guard"; else GUARD_DIR=""; fi
+  [ "$_guard_rc" = 2 ] && GUARD_CREATE=1
   lw_host_mode && GUARD_HOST_ON=1
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
   GUARD_DIR=""
@@ -149,7 +161,11 @@ prune() {
 # acquire_lock SHAPE (atomic mkdir/temp+mv discipline) but is a one-file-
 # per-session design, not a shared lock slot.
 write_marker() {
-  local sid="$1" by="$2" marker tmp armed_at
+  local sid="$1" by="$2" marker tmp armed_at _gd
+  # Host mode, no gate dir yet: arming a run is what starts its gate state — the creating form.
+  if [ "$GUARD_CREATE" = 1 ] && _gd="$(lw_gate_state_dir "$GUARD_PROJ")"; then
+    GUARD_DIR="$_gd/guard"
+  fi
   [ -n "$GUARD_DIR" ] || { printf 'guard_arm_failed: guard dir unresolvable\n' >&2; return 1; }
   marker="$GUARD_DIR/$sid.json"
   if [ -e "$marker" ]; then

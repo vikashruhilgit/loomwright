@@ -147,7 +147,7 @@ top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/d
 [ "$top" = "$main_root" ] || exit 0
 
 # Host mode (host-mode.sh — the one resolver): off keeps `$main_root/.supervisor`
-# byte-identical; on, the log and seed live in lw_gate_state_dir (the host's
+# byte-identical; on, the log and seed live in lw_gate_state_dir_existing (the host's
 # state dir, else the per-user gate root, D1) and state.md is read via
 # lw_state_md_read — the same functions build-state.sh resolves through. A
 # helper that fails to load is harmless when the switch is off and a silent
@@ -156,7 +156,7 @@ SUP_DIR="$main_root/.supervisor"
 STATE_MD="$SUP_DIR/state.md"
 HOST_ON=0
 if . "$(dirname "${BASH_SOURCE[0]:-$0}")/host-mode.sh" 2>/dev/null; then
-  SUP_DIR="$(lw_gate_state_dir "$main_root")" || exit 0   # host mode, gate dir unresolvable: skip
+  SUP_DIR="$(lw_gate_state_dir_existing "$main_root")" || exit 0   # host: no gate dir yet, or unsafe: skip
   STATE_MD="$(lw_state_md_read "$main_root")"
   if lw_host_mode; then HOST_ON=1; umask 077; fi
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then

@@ -134,7 +134,9 @@ fi
 # Host mode (LOOMWRIGHT_HOST_MODE=1): the hooks write the session log to host-mode.sh's
 # lw_gate_state_dir, never the repo, so a repo-shaped `--log` — `.supervisor/logs/<id>.jsonl`
 # (relative) or `<worktree>/.supervisor/logs/<id>.jsonl` — is read from `<gate dir>/logs/<id>.jsonl`.
-# Off: untouched. Host mode with the helper unloadable or the gate dir unresolvable ⇒ `unverifiable`
+# Off: untouched. The gate dir is resolved WITHOUT creating it (lw_gate_state_dir_existing); one that
+# does not exist yet means no log, read as off mode reads a missing log.
+# Host mode with the helper unloadable or the gate dir unresolvable ⇒ `unverifiable`
 # (consumers treat it as not settled) — never a vacuous `no_identity_rows` from the empty repo path.
 if [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
   case "$log" in
@@ -151,7 +153,7 @@ if [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
         || _cs_root="$(git -C "$(dirname "$log")" rev-parse --show-toplevel 2>/dev/null)" \
         || _cs_root="$(git -C "$_cs_wt" rev-parse --show-toplevel 2>/dev/null)" || _cs_root=""
       [ -n "$_cs_root" ] || _cs_root="$PWD"
-      _cs_gate=""; _cs_given=0
+      _cs_gate=""; _cs_given=0; _cs_rc=1
       if . "$(dirname "${BASH_SOURCE[0]}")/host-mode.sh" 2>/dev/null; then
         # An EXISTING log outside every worktree of the session repo can only be a gate-dir log (no
         # host-mode writer puts one anywhere else): read it as given. A log inside the repo is the
@@ -159,10 +161,16 @@ if [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
         if [ -f "$log" ] && [ -r "$log" ] && ! _lw_in_worktree "$(dirname "$log")" "$_cs_root"; then
           _cs_given=1
         else
-          _cs_gate="$(lw_gate_state_dir "$_cs_root")" || _cs_gate=""
+          # A reader: never creates the gate dir (rc 2 = absent: no run has created gate state).
+          _cs_rc=0; _cs_gate="$(lw_gate_state_dir_existing "$_cs_root")" || { _cs_rc=$?; _cs_gate=""; }
         fi
       fi
-      if [ "$_cs_given" = 0 ]; then
+      if [ "$_cs_given" = 0 ] && [ "$_cs_rc" = 2 ]; then
+        # No gate dir yet => no session log anywhere: the same answer as off mode's absent log below
+        # (`--all` no_identity_rows, `--agent-id` unsettled). write-marker never gets here — it refuses
+        # session_log_missing first.
+        log=""
+      elif [ "$_cs_given" = 0 ]; then
         if [ -z "$_cs_gate" ]; then
           printf '%s: unverifiable — host mode gate state dir unresolvable\n' "$SELF" >&2
           printf '{"status":"unverifiable","reason":"host_gate_unresolvable","source":"%s"}\n' "$SELF"

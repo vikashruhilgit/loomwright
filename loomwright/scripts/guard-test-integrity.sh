@@ -79,7 +79,7 @@ allow() {
 }
 
 # ---------------------------------------------------------------------------
-# Where the markers live: host-mode.sh's lw_gate_state_dir, the SAME resolver
+# Where the markers live: host-mode.sh's gate-dir resolver, the SAME one
 # guard-arm.sh writes them through (one rule, never a restated copy). Off
 # (LOOMWRIGHT_HOST_MODE unset / not `1`): `<project dir>/.supervisor/guard`,
 # exactly as before — sourcing is a builtin and the off-mode resolve is a
@@ -88,8 +88,10 @@ allow() {
 # A helper that fails to load: switch off -> today's literal path; switch on
 # -> GUARD_UNRESOLVED=1, which skips the inert allow in (i) and fails CLOSED
 # in (iii) — an unresolvable marker dir must never read as "nothing armed".
-# The same GUARD_UNRESOLVED=1 when the helper loads but lw_gate_state_dir
-# fails (host-mode.sh header: an unsafe or unwritable per-user D1 root). The
+# The same GUARD_UNRESOLVED=1 when the helper loads but the gate dir is
+# unresolvable (host-mode.sh header: an unsafe per-user D1 root). Resolved
+# through lw_gate_state_dir_existing, which never creates: an ABSENT gate dir
+# means no run armed here yet, so the inert path allows (no markers). The
 # project dir passed as <root> may be a linked worktree: host-mode.sh's
 # one-root rule resolves it to the same gate dir guard-arm.sh writes.
 # ---------------------------------------------------------------------------
@@ -101,10 +103,17 @@ GUARD_HERE="${BASH_SOURCE[0]%/*}"
 # shellcheck source=host-mode.sh
 GUARD_UNRESOLVED_WHY="state resolver missing"
 if . "$GUARD_HERE/host-mode.sh" 2>/dev/null; then
-  if GUARD_GATE="$(lw_gate_state_dir "$GUARD_PROJ")"; then
+  # The READER form: never creates the gate dir. rc 2 = no gate dir yet (no run has armed in this
+  # repo) -> no markers -> the inert allow below, as off mode with no `.supervisor/guard`. An armed
+  # session's marker lives in that dir, so an armed session always resolves (rc 0).
+  GUARD_RC=0
+  GUARD_GATE="$(lw_gate_state_dir_existing "$GUARD_PROJ")" || GUARD_RC=$?
+  if [ "$GUARD_RC" = 0 ]; then
     GUARD_DIR="$GUARD_GATE/guard"
+  elif [ "$GUARD_RC" = 2 ]; then
+    GUARD_DIR=""
   else
-    # host mode only (off always resolves): unsafe/unwritable per-user D1 root
+    # host mode only (off always resolves): unsafe per-user D1 root, or no resolvable base
     GUARD_UNRESOLVED=1
     GUARD_UNRESOLVED_WHY="gate state dir unresolvable"
   fi
@@ -120,7 +129,7 @@ fi
 GUARD_FILE_COUNT=0
 if [ "$GUARD_UNRESOLVED" = 1 ]; then
   GUARD_FILE_COUNT=1
-elif [ -d "$GUARD_DIR" ]; then
+elif [ -n "$GUARD_DIR" ] && [ -d "$GUARD_DIR" ]; then
   for f in "$GUARD_DIR"/*.json; do
     [ -e "$f" ] || continue
     GUARD_FILE_COUNT=$((GUARD_FILE_COUNT + 1))

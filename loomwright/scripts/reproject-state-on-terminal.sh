@@ -63,7 +63,7 @@ LOG_BASE=".supervisor/logs"
 # Host mode (host-mode.sh — the one resolver): with the switch off the paths
 # above are used unchanged (no extra fork on this every-Bash-call path). With
 # it on, read state.md and the log/seed through the SAME functions build-state
-# uses (lw_state_md_read / lw_gate_state_dir, anchored at the main worktree as
+# uses (lw_state_md_read / lw_gate_state_dir_existing, anchored at the main worktree as
 # build-state anchors itself). A helper that fails to load is harmless when the
 # switch is off and a silent no-op when it is on.
 if . "${BASH_SOURCE[0]%/*}/host-mode.sh" 2>/dev/null; then
@@ -71,7 +71,7 @@ if . "${BASH_SOURCE[0]%/*}/host-mode.sh" 2>/dev/null; then
     _main_root="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
     [ -n "$_main_root" ] && [ -d "$_main_root" ] || exit 0
     STATE_MD="$(lw_state_md_read "$_main_root")"
-    LOG_BASE="$(lw_gate_state_dir "$_main_root")" || exit 0   # gate dir unresolvable: skip
+    LOG_BASE="$(lw_gate_state_dir_existing "$_main_root")" || exit 0   # no gate dir yet, or unsafe: skip
     LOG_BASE="$LOG_BASE/logs"
   fi
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then

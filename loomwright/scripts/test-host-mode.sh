@@ -90,6 +90,16 @@
 #        two --repair-merged host branches removed) makes the leg FAIL.
 #   (m)  seed-run-owner.sh's `.owner` seed lands in the gate dir (state-dir and D1); notify-desktop's
 #        audit log and replay ledger land in the state dir, and nowhere under D1.
+#   (n)  the presence gate (D1): a plain host session (every leaf fired, the one spawn not a
+#        Loomwright agent and the Write an ordinary file, so no run starts) creates NOTHING under
+#        TMPDIR, the /tmp fallback, the repo or the state dir, while a Write of the live repo state.md
+#        (a run starting) lets seed-run-owner create the root for its seed; before arming, the reader answers absent, the test-integrity guard is
+#        inert and a live repo seed's publish is still denied; `guard-arm.sh arm supervisor` creates
+#        the root (mode 700), after which the emitters write there and both guards deny; a planted
+#        unsafe root (a mode-777 per-user dir, or a symlinked per-repo dir) is unresolvable to the
+#        reader and both guards deny; and a mutation control (the reader made to create) fails it.
+#        (j) also covers guard-arm.sh with host-mode.sh unloadable: no marker anywhere, the leaf
+#        exits 0, a direct arm fails loudly.
 #
 # HONEST LIMITS: "nothing written outside the repo" is observed on the repo, the case HOME, the case
 # TMPDIR and the state dir — a write to some other absolute path would not be seen. Hooks run with
@@ -120,6 +130,7 @@ export PYTHONDONTWRITEBYTECODE=1
 # The harness names this suite must spell, each written exactly once (the vendor-coupling ratchet
 # counts literals; every later use goes through these variables).
 EV_SUBSTOP="SubagentStop"; TOOL_ASK="AskUserQuestion"; KEY_SPAWN_TYPE="subagent_type"
+ENV_SESSION="CLAUDE_CODE_SESSION_ID"   # the session-id variable guard-arm.sh `arm` reads
 
 BASE="$(mktemp -d "${TMPDIR:-/tmp}/test-host-mode.XXXXXX")" || { echo "FATAL mktemp" >&2; exit 1; }
 BASE="$(cd "$BASE" && pwd -P)"
@@ -243,7 +254,7 @@ p_sub() {  # subagent-stop payload for agent type <t>
   jq -nc --arg ev "$EV_SUBSTOP" --arg cc "$CC" --arg t "loomwright:loomwright:$1" --arg in "$BASE/in" \
     '{hook_event_name:$ev, session_id:$cc, transcript_path:($in + "/" + $cc + ".jsonl"), agent_id:"a1", agent_type:$t}'
 }
-spawn_input() { jq -nc --arg k "$KEY_SPAWN_TYPE" '{($k):"loomwright:worker", description:"d", prompt:"p"}'; }
+spawn_input() { jq -nc --arg k "$KEY_SPAWN_TYPE" --arg t "${1:-loomwright:worker}" '{($k):$t, description:"d", prompt:"p"}'; }
 p_tool() {  # p_tool <PreToolUse|PostToolUse> <tool_name> <tool_input json> [tool_response json]
   jq -nc --arg cc "$CC" --arg ev "$1" --arg tn "$2" --argjson ti "$3" --argjson tr "${4:-null}" \
     '{hook_event_name:$ev, session_id:$cc, tool_name:$tn, tool_use_id:"tu-0001", tool_input:$ti}
@@ -253,19 +264,24 @@ p_bash() { p_tool PreToolUse Bash "$(jq -nc --arg c "$1" '{command:$c}')"; }
 p_write() { p_tool PreToolUse Write "$(jq -nc --arg f "$1" '{file_path:$f, content:"x"}')"; }
 STOPFAIL_PAYLOAD="$(jq -nc --arg cc "$CC" '{hook_event_name:"StopFailure", session_id:$cc, agent_id:"a1", error:"rate_limit"}')"
 
-session_events() {  # session_events <all|worker> — one session's hook firings, in a plausible order
-  local a types="worker"
+session_events() {  # session_events <all|worker|plain> — one session's hook firings, in a plausible order
+  # plain: every leaf as for `all`, but the one spawn is a non-Loomwright agent, so no run is armed
+  local a wf types="worker" spawn="loomwright:worker"
   [ "$1" = all ] && types="$SUBAGENT_TYPES"
+  [ "$1" = plain ] && { types="$SUBAGENT_TYPES"; spawn="general-purpose"; }
   fire SessionStart startup "$(jq -nc --arg cc "$CC" '{hook_event_name:"SessionStart", session_id:$cc, source:"startup"}')"
   fire SessionStart resume "$(jq -nc --arg cc "$CC" '{hook_event_name:"SessionStart", session_id:$cc, source:"resume"}')"
-  fire PreToolUse Task "$(p_tool PreToolUse Task "$(spawn_input)")"
+  fire PreToolUse Task "$(p_tool PreToolUse Task "$(spawn_input "$spawn")")"
   fire PreToolUse Bash "$(p_bash 'ls')"
   fire PreToolUse Write "$(p_write "$C_MAIN/README.md")"
-  fire PostToolUse Task "$(p_tool PostToolUse Agent "$(spawn_input)" \
-    '{"agentId":"a2","agentType":"loomwright:worker","status":"completed"}')"
+  fire PostToolUse Task "$(p_tool PostToolUse Agent "$(spawn_input "$spawn")" \
+    "$(jq -nc --arg t "$spawn" '{agentId:"a2", agentType:$t, status:"completed"}')")"
   fire PostToolUse Bash "$(p_tool PostToolUse Bash '{"command":"git worktree add ../hm-wt && gh pr create --fill"}' \
     '{"stdout":"https://github.com/o/r/pull/7\n","stderr":""}')"
-  fire PostToolUse Write "$(p_tool PostToolUse Write "$(jq -nc --arg f "$C_MAIN/.supervisor/state.md" '{file_path:$f, content:"x"}')")"
+  # (plain: a Write of the run's state.md IS a run starting — seed-run-owner may create — so a plain
+  # session writes an ordinary file; the same Write|Edit leaves fire)
+  wf="$C_MAIN/.supervisor/state.md"; [ "$1" = plain ] && wf="$C_MAIN/README.md"
+  fire PostToolUse Write "$(p_tool PostToolUse Write "$(jq -nc --arg f "$wf" '{file_path:$f, content:"x"}')")"
   fire PreToolUse "$TOOL_ASK" "$(p_tool PreToolUse "$TOOL_ASK" '{"questions":[{"question":"q?"}]}')"
   fire PostToolUse "$TOOL_ASK" "$(p_tool PostToolUse "$TOOL_ASK" '{"questions":[{"question":"q?"}]}' '{"answers":{}}')"
   fire Notification idle_prompt "$(jq -nc --arg cc "$CC" '{hook_event_name:"Notification", session_id:$cc, notification_type:"idle_prompt", message:"waiting"}')"
@@ -793,7 +809,20 @@ for m in sd d1; do
   [ "$a" != 0 ] && grep -q 'helper_missing' "$C_DIR/wm.out"
   rec "(j) $m, host-mode.sh unloadable: write-marker refuses helper_missing" $? "rc=$a $(cat "$C_DIR/wm.out")"
   fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$PUBLISH")"
-  is_deny; rec "(j) $m, host-mode.sh unloadable: an unmarked publish is denied" $? "rc=$LAST_RC out=$LAST_OUT"
+  is_deny && grep -q 'guard_unavailable' <<<"$LAST_OUT"
+  rec "(j) $m, host-mode.sh unloadable: an unmarked publish is denied (guard_unavailable)" $? "rc=$LAST_RC out=$LAST_OUT"
+  # guard-arm.sh with the helper unloadable: GUARD_DIR is empty, so nothing is armed ANYWHERE (never
+  # a marker in the repo) — the hook leaf stays fail-SAFE (exit 0), the direct arm fails loudly.
+  rm -rf "$C_TMP/loomwright-host-$UID_N"
+  fire_one PreToolUse Task guard-arm.sh "$(p_tool PreToolUse Task "$(spawn_input)")"
+  [ "$LAST_RC" = 0 ]; rec "(j) $m, host-mode.sh unloadable: the arm leaf exits 0 (fail-SAFE)" $? "rc=$LAST_RC"
+  ( cd "$C_REPO" && hm_env "$ENV_SESSION=$CC" bash "$C_ROOT/scripts/guard-arm.sh" arm supervisor ) > "$C_DIR/arm.out" 2>&1; a=$?
+  [ "$a" != 0 ] && grep -q 'guard_arm_failed: guard dir unresolvable' "$C_DIR/arm.out"
+  rec "(j) $m, host-mode.sh unloadable: a direct arm fails loudly (guard dir unresolvable)" $? "rc=$a $(cat "$C_DIR/arm.out")"
+  s="$(find "$C_REPO" "$C_TMP" "$C_SD" "$C_HOME" -name "$CC.json" 2>/dev/null)"
+  [ -z "$s" ] && [ -z "$(listing "$C_TMP")" ]
+  rec "(j) $m, host-mode.sh unloadable: no marker written anywhere (repo, TMPDIR, state dir, HOME)" $? "$s $(listing "$C_TMP" | tr '\n' ' ')"
+  : > "$C_RC"; repo_clean_checks "(j) $m, host-mode.sh unloadable"
   replay
 done
 
@@ -951,6 +980,111 @@ for m in sd d1; do
   fi
   : > "$C_RC"; repo_clean_checks "(m) $m"; replay
 done
+
+# =================================================================================================
+echo "== (n) presence gate: no Loomwright run, no Loomwright state =="
+wipe_d1() { chmod -R u+rwx "$C_TMP/loomwright-host-$UID_N" 2>/dev/null; rm -rf "$C_TMP/loomwright-host-$UID_N"; }
+plain_checks() {  # plain_checks <label> — a host session with no run created nothing anywhere
+  local lbl="$1" s
+  repo_clean_checks "$lbl"
+  [ -z "$(listing "$C_TMP")" ]; rec "$lbl: TMPDIR untouched — no loomwright-host-<uid> root created" $? "$(listing "$C_TMP" | tr '\n' ' ')"
+  [ ! -e "/tmp/loomwright-host-$UID_N/$(d1_hash)" ]; rec "$lbl: no per-repo dir under the /tmp fallback either" $?
+  [ -z "$(listing "$C_SD")" ]; rec "$lbl: the (unset) state dir untouched" $?
+}
+for fx in seeded bare; do
+  new_case "n-plain-$fx" d1 "$fx"
+  wipe_d1; C_SNAP0="$(snap)"
+  session_events plain
+  plain_checks "(n) plain $fx"
+  if [ "$fx" = seeded ]; then
+    # ...while a Write of the live run's repo state.md is a run starting: seed-run-owner is a gate
+    # writer and creates the root for its `.owner` seed (INIT writes state.md before it arms)
+    fire_one PostToolUse Write seed-run-owner.sh \
+      "$(p_tool PostToolUse Write "$(jq -nc --arg f "$C_MAIN/.supervisor/state.md" '{file_path:$f, content:"x"}')")"
+    grep -q "$CC" "$C_GATE/logs/$RUN.owner" 2>/dev/null && [ "$(ls -ld "$C_GATE" | cut -c1-10)" = "drwx------" ]
+    rec "(n) plain seeded: a Write of the live repo state.md creates the root and seeds .owner" $? "rc=$LAST_RC $(listing "$C_TMP" | tr '\n' ' ')"
+  fi
+  replay
+done
+
+# arming a run is what creates the D1 root; the emitters write there only afterwards; the guards
+# are inert before (absent root, no markers) and deny after; a live repo seed is denied throughout
+new_case "n-arm" d1 seeded
+wipe_d1; C_SNAP0="$(snap)"
+a="$(helper_ans lw_gate_state_dir_existing "$C_MAIN")"
+[ "$a" = "2|" ]; rec "(n) arm: before any run the reader answers absent (rc 2), creating nothing" $? "$a"
+fire "$EV_SUBSTOP" loomwright:loomwright:worker "$(p_sub worker)"
+fire_one PreToolUse Write guard-test-integrity.sh "$(p_write "$C_MAIN/jest.config.js")"
+[ "$LAST_RC" = 0 ]; rec "(n) arm: unarmed, no root -> protected edit allowed (inert, as off mode)" $? "rc=$LAST_RC out=$LAST_OUT"
+fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$PUBLISH")"
+is_deny && grep -q "plugin session $RUN" <<<"$LAST_OUT"
+rec "(n) arm: no root, live repo seed -> unmarked publish still DENIED" $? "rc=$LAST_RC out=$LAST_OUT"
+[ -z "$(listing "$C_TMP")" ]; rec "(n) arm: emitters and guards before arming created nothing under TMPDIR" $? "$(listing "$C_TMP" | tr '\n' ' ')"
+( cd "$C_REPO" && hm_env "$ENV_SESSION=$CC" bash "$C_ROOT/scripts/guard-arm.sh" arm supervisor ) > "$C_DIR/arm.out" 2>&1; a=$?
+top="$C_TMP/loomwright-host-$UID_N"
+[ "$a" = 0 ] && [ -f "$C_GATE/guard/$CC.json" ] && [ "$(ls -ld "$top" | cut -c1-10)" = "drwx------" ] \
+  && [ "$(ls -ld "$C_GATE" | cut -c1-10)" = "drwx------" ]
+rec "(n) arm: 'guard-arm.sh arm supervisor' created the D1 root (mode 700) and the marker" $? "rc=$a $(cat "$C_DIR/arm.out") $(listing "$C_TMP" | tr '\n' ' ')"
+a="$(helper_ans lw_gate_state_dir_existing "$C_MAIN")"
+[ "$a" = "0|$C_GATE" ]; rec "(n) arm: the reader now resolves the gate dir" $? "$a"
+: > "$C_RC"
+fire "$EV_SUBSTOP" loomwright:loomwright:worker "$(p_sub worker)"
+grep -qs '"subtask_complete"' "$C_GATE/logs/$RUN.jsonl" && grep -q "^- session_id: $RUN\$" "$C_GATE/state.md" 2>/dev/null
+rec "(n) arm: after arming, the same subagent stop writes to the gate dir (subtask_complete, projected state.md)" $? "$(listing "$C_GATE" | tr '\n' ' ')"
+fire_one PreToolUse Write guard-test-integrity.sh "$(p_write "$C_MAIN/jest.config.js")"
+is_deny; rec "(n) arm: armed -> protected edit DENIED" $? "rc=$LAST_RC out=$LAST_OUT"
+fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$PUBLISH")"
+is_deny; rec "(n) arm: armed -> unmarked publish DENIED" $? "rc=$LAST_RC out=$LAST_OUT"
+repo_clean_checks "(n) arm"
+replay
+
+# a pre-planted UNSAFE root still makes the guards deny, though the readers no longer create
+for kind in top777 hashlink; do
+  new_case "n-unsafe-$kind" d1 seeded
+  top="$C_TMP/loomwright-host-$UID_N"
+  wipe_d1; mkdir -p "$C_DIR/foreign"
+  case "$kind" in
+    top777)   mkdir "$top" && chmod 777 "$top" ;;
+    hashlink) ( umask 077; mkdir "$top" ) && ln -s "$C_DIR/foreign" "$top/$(d1_hash)" ;;
+  esac
+  C_SNAP0="$(snap)"
+  a="$(helper_ans lw_gate_state_dir_existing "$C_MAIN")"
+  [ "$a" = "1|" ]; rec "(n) unsafe $kind: the reader answers unresolvable (rc 1), not absent" $? "$a"
+  fire_one PreToolUse Write guard-test-integrity.sh "$(p_write "$C_MAIN/pytest.ini")"
+  is_deny && grep -q 'guard_unavailable' <<<"$LAST_OUT"
+  rec "(n) unsafe $kind: a protected edit is DENIED (guard_unavailable)" $? "rc=$LAST_RC out=$LAST_OUT"
+  fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$PUBLISH")"
+  is_deny && grep -q 'guard_unavailable' <<<"$LAST_OUT"
+  rec "(n) unsafe $kind: a publish is DENIED (guard_unavailable)" $? "rc=$LAST_RC out=$LAST_OUT"
+  : > "$C_RC"
+  fire "$EV_SUBSTOP" loomwright:loomwright:worker "$(p_sub worker)"
+  [ -z "$(listing "$C_DIR/foreign")" ]; rec "(n) unsafe $kind: nothing landed in the foreign dir" $? "$(listing "$C_DIR/foreign" | tr '\n' ' ')"
+  repo_clean_checks "(n) unsafe $kind"
+  replay
+done
+
+# Mutation control: a reader that creates (lw_gate_state_dir_existing calling the creating body)
+# makes the plain-session check FAIL — the D1 root appears with no run.
+MUT4="$BASE/mutant-reader"
+mkdir -p "$MUT4"
+cp -R "$PLUGIN_ROOT/scripts" "$PLUGIN_ROOT/hooks" "$PLUGIN_ROOT/.claude-plugin" "$MUT4/" 2>/dev/null
+N_FILE="$MUT4/scripts/host-mode.sh"
+sed 's/^  _lw_gate_resolve "\$_root" 0$/  _lw_gate_resolve "$_root" 1/' "$PLUGIN_ROOT/scripts/host-mode.sh" > "$N_FILE.new" \
+  && mv -f "$N_FILE.new" "$N_FILE"
+if [ -s "$N_FILE" ] && [ "$(diff "$PLUGIN_ROOT/scripts/host-mode.sh" "$N_FILE" | grep -c '^>')" = 1 ] \
+   && bash -n "$N_FILE" 2>/dev/null; then
+  ok "(n) mutant host-mode.sh differs in exactly the reader's create flag and passes bash -n"
+  new_case "n-mutant" d1 seeded "$MUT4"
+  wipe_d1; C_SNAP0="$(snap)"
+  session_events plain
+  plain_checks "(n-mutant)"
+  m_checks="$(cat "$C_CHECKS")"; : > "$C_CHECKS"
+  grep -q '^FAIL (n-mutant): TMPDIR untouched' <<<"$m_checks"
+  rec "(n) the plain-session leg FAILS against the mutant: the D1 root appears with no run" $? "$m_checks"
+  replay
+else
+  no "(n) mutant gate failed (empty, wrong diff, or bash -n error) — control is void"
+fi
 
 echo
 echo "test-host-mode.sh: $pass passed, $fail failed"

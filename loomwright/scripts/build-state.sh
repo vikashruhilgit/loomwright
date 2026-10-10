@@ -164,7 +164,7 @@ TOP="$(git -C "$MAIN_ROOT" rev-parse --path-format=absolute --show-toplevel 2>/d
 # ---- Host mode (host-mode.sh — the one resolver) ----------------------------
 # Off: everything stays under `$MAIN_ROOT/.supervisor`, byte-identical, and
 # STATE_MD_READ == STATE_MD. On: the log, seed, lock and projection live in
-# lw_gate_state_dir (the host's state dir, else the per-user gate root, D1);
+# lw_gate_state_dir_existing (the host's state dir, else the per-user gate root, D1);
 # the repo `state.md` is never written. The sections this projector preserves
 # are READ from lw_state_md_read — the repo seed until the gate copy carries
 # the same session id. A helper that fails to load is harmless when the switch
@@ -172,7 +172,7 @@ TOP="$(git -C "$MAIN_ROOT" rev-parse --path-format=absolute --show-toplevel 2>/d
 SUP_DIR="$MAIN_ROOT/.supervisor"
 STATE_MD_READ="$SUP_DIR/state.md"
 if . "$(dirname "${BASH_SOURCE[0]:-$0}")/host-mode.sh" 2>/dev/null; then
-  SUP_DIR="$(lw_gate_state_dir "$MAIN_ROOT")" || exit 0   # host mode, gate dir unresolvable: skip
+  SUP_DIR="$(lw_gate_state_dir_existing "$MAIN_ROOT")" || exit 0   # host: no gate dir yet, or unsafe: skip
   STATE_MD_READ="$(lw_state_md_read "$MAIN_ROOT")"
   lw_host_mode && umask 077
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then

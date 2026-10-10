@@ -17,7 +17,8 @@
 # resolve the same dir: the D1 key hashes the MAIN worktree path `git worktree list` reports, and
 # "outside the repo" is tested against EVERY worktree git lists, by filesystem identity (`-ef`). Off mode is not
 # normalised — it prints `<root>/.supervisor` verbatim, exactly as before. Every READ of a piece of
-# state resolves through the SAME function as its writer, so readers and writers never disagree.
+# state resolves through the SAME resolver body as its writer (_lw_gate_resolve; the reader form
+# only declines to create), so readers and writers never disagree on the path.
 #
 # lw_host_mode — returns 0 iff LOOMWRIGHT_HOST_MODE is exactly `1`.
 #
@@ -42,7 +43,30 @@
 #   requires each to be a real directory (not a symlink), owned by this uid, writable, and not
 #   group/world-writable. Any failure prints nothing and returns 1: the gate dir is UNRESOLVABLE —
 #   the guards deny (guard_unavailable) and every emitter skips. Writers create subdirs (`logs/`,
-#   `guard/`) with `mkdir -p` under `umask 077`.
+#   `guard/`) with `mkdir -p` under `umask 077`. ONLY the gate writers that legitimately START a
+#   run's state call this creating form: guard-arm.sh when it writes a marker, seed-run-owner.sh
+#   when Context-Keeper's Write of the repo state.md names a live run (its header says why), and
+#   guard-finalize-publish.sh write-marker.
+#
+# lw_gate_state_dir_existing <root> — the same answer WITHOUT creating anything: the PRESENCE GATE
+#   every other caller (emitters, the guards' read paths, check-children-settled.sh,
+#   lw_state_md_read) goes through, mirroring off mode's "the plugin has run here iff `.supervisor/`
+#   exists". Off: <root>/.supervisor, rc 0 (byte-identical). On + valid state dir: that dir, rc 0
+#   (it exists by validation). On, D1: the gate dir and rc 0 only when both D1 components already
+#   exist AND pass the same safety test as above; rc 1 (nothing printed) when either exists but
+#   fails it — a pre-planted unsafe root stays UNRESOLVABLE, so the guards still deny; rc 2 (nothing
+#   printed) when either is ABSENT — no Loomwright run has created gate state for this repo yet: the
+#   guards are inert (as off mode with no `.supervisor/guard`) and the emitters skip. An armed
+#   session's marker lives in the root, so an armed session never reads rc 2.
+#   COST (the cheap path): before any fork, a reader checks whether an entry named
+#   loomwright-host-<uid> exists under $TMPDIR or /tmp — the only two bases the full resolve can pick.
+#   None ⇒ rc 2 with no `git worktree list` and no hash. Anything there (even a hostile entry) takes
+#   the full resolve, so the outside-every-worktree base rule and the main-worktree hash still decide
+#   which root applies; correctness is never traded for the shortcut. Once any host-mode run has
+#   created the per-user root, readers pay the git + hash forks (but still create nothing).
+#   A gate WRITER that cannot create the root (unwritable base) leaves no marker, so the readers then
+#   see rc 2 and stay inert — the documented "a failed arm proceeds visibly unguarded" outcome
+#   (skills/supervisor-config/SKILL.md, INIT step 7), the same as an unwritable `.supervisor/` off.
 #
 # lw_state_md_read <root> — the path every hook READS `state.md` from. The repo copy (the
 #   agent-authored seed — Context-Keeper writes it with the Write tool) decides which run is
@@ -50,7 +74,8 @@
 #   `- session_id:` EQUALS the repo copy's, or when the repo copy is absent; in every other case
 #   (gate copy missing, or stale from an earlier run) <root>/.supervisor/state.md, which hooks
 #   only READ under host mode. The gate dir outlives runs, so a gate copy alone never wins over a
-#   newer repo seed. An unresolvable gate dir reads the repo copy.
+#   newer repo seed. An unresolvable or absent gate dir (lw_gate_state_dir_existing — this reader
+#   never creates it) reads the repo copy.
 #
 # Sourcing has no side effects beyond defining the functions. bash 3.2 safe.
 
@@ -140,14 +165,43 @@ lw_state_dir() {
   lw_host_state_dir "$_root"
 }
 
-lw_gate_state_dir() {
-  local _root="${1:-}" _main="" _hash="" _uid="" _base="" _base_p="" _top=""
-  if ! lw_host_mode; then
-    printf '%s/.supervisor' "$_root"
-    return 0
-  fi
+# _lw_uid — this user's numeric uid, or `unknown`.
+_lw_uid() {
+  local _u
+  _u="$(id -u 2>/dev/null)"
+  case "$_u" in ''|*[!0-9]*) _u="unknown" ;; esac
+  printf '%s' "$_u"
+}
+
+# _lw_d1_none <uid> — 0 iff NO entry (dir, file or symlink, dangling included) named
+# loomwright-host-<uid> exists under either base the D1 resolver could pick ($TMPDIR, spelled as the
+# resolver spells it, and /tmp). Then the D1 root cannot exist wherever the full resolve would put it,
+# so a reader can answer "absent" without `git worktree list` or a hash. Builtin tests only.
+_lw_d1_none() {
+  local _b="${TMPDIR:-}" _t=""
+  while [ "${#_b}" -gt 1 ] && [ "${_b%/}" != "$_b" ]; do _b="${_b%/}"; done
+  for _t in "$_b" /tmp; do
+    case "$_t" in /*) ;; *) continue ;; esac
+    _t="$_t/loomwright-host-$1"
+    if [ -e "$_t" ] || [ -L "$_t" ]; then return 1; fi
+  done
+  return 0
+}
+
+# _lw_gate_resolve <root> <create: 1|0> — the shared body of lw_gate_state_dir (create=1) and
+# lw_gate_state_dir_existing (create=0). Host mode only (callers handle off). Prints the gate dir and
+# returns 0; returns 1 (nothing printed) when it is unresolvable; with create=0 returns 2 (nothing
+# printed) when the D1 root, or this repo's dir in it, does not exist yet.
+_lw_gate_resolve() {
+  local _root="${1:-}" _create="${2:-1}" _main="" _hash="" _uid="" _base="" _base_p="" _top=""
   if lw_host_state_dir "$_root"; then
     return 0
+  fi
+  _uid="$(_lw_uid)"
+  # The cheap path (readers only): no per-user root under either candidate base => absent, decided
+  # before any git or hash fork. Anything there at all (even a hostile entry) takes the full path.
+  if [ "$_create" != 1 ] && _lw_d1_none "$_uid"; then
+    return 2
   fi
   # D1: per-user gate root OUTSIDE the repo, keyed on the main-worktree path so every linked
   # worktree of one repo shares one gate root and two repos never collide.
@@ -164,8 +218,6 @@ lw_gate_state_dir() {
   case "$_hash" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *)
     _hash="$(printf '%s' "$_main" | cksum 2>/dev/null | awk '{printf "%012x", $1}')" ;;
   esac
-  _uid="$(id -u 2>/dev/null)"
-  case "$_uid" in ''|*[!0-9]*) _uid="unknown" ;; esac
   # The base: $TMPDIR only when absolute, an existing directory, and outside every worktree
   # (filesystem identity) — a relative or in-repo TMPDIR would put "outside the repo" state inside it.
   _base="${TMPDIR:-}"
@@ -182,9 +234,36 @@ lw_gate_state_dir() {
     _lw_in_worktree "$_base_p" "$_root" && return 1
   fi
   _top="$_base/loomwright-host-$_uid"
-  _lw_private_mkdir "$_top" || return 1
-  _lw_private_mkdir "$_top/$_hash" || return 1
+  if [ "$_create" = 1 ]; then
+    _lw_private_mkdir "$_top" || return 1
+    _lw_private_mkdir "$_top/$_hash" || return 1
+  else
+    # Never created here. Absent => 2. Present => the SAME safety test the creating form applies,
+    # so a pre-planted unsafe root is unresolvable (1) for readers exactly as for writers.
+    if [ ! -e "$_top" ] && [ ! -L "$_top" ]; then return 2; fi
+    _lw_private_dir "$_top" || return 1
+    if [ ! -e "$_top/$_hash" ] && [ ! -L "$_top/$_hash" ]; then return 2; fi
+    _lw_private_dir "$_top/$_hash" || return 1
+  fi
   printf '%s' "$_top/$_hash"
+}
+
+lw_gate_state_dir() {
+  local _root="${1:-}"
+  if ! lw_host_mode; then
+    printf '%s/.supervisor' "$_root"
+    return 0
+  fi
+  _lw_gate_resolve "$_root" 1
+}
+
+lw_gate_state_dir_existing() {
+  local _root="${1:-}"
+  if ! lw_host_mode; then
+    printf '%s/.supervisor' "$_root"
+    return 0
+  fi
+  _lw_gate_resolve "$_root" 0
 }
 
 lw_state_md_read() {
@@ -194,7 +273,7 @@ lw_state_md_read() {
     printf '%s' "$_repo"
     return 0
   fi
-  if ! _gate="$(lw_gate_state_dir "$_root")"; then
+  if ! _gate="$(lw_gate_state_dir_existing "$_root")"; then
     printf '%s' "$_repo"
     return 0
   fi

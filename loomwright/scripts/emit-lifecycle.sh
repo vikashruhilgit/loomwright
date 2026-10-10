@@ -144,8 +144,8 @@
 # exists) — the identical failure-mode contract as emit-progress-event.sh,
 # plus this last one which is unique to emit-lifecycle.sh's generic-matcher
 # wiring. Under host mode (`LOOMWRIGHT_HOST_MODE=1`, host-mode.sh) the dir is
-# resolved by lw_gate_state_dir and never lies in the repo; the switch itself
-# stands in for that presence check (see the plugin_present comment below).
+# resolved by lw_gate_state_dir_existing and never lies in the repo; the same
+# presence check applies to it (see the plugin_present comment below).
 #
 # KNOWN LIMITATION — shared "main" heartbeat-debounce bucket
 # ------------------------------------------------------------
@@ -209,7 +209,7 @@ SUP_DIR="$main_root/.supervisor"
 STATE_MD="$SUP_DIR/state.md"
 HOST_ON=0
 if . "${BASH_SOURCE[0]%/*}/host-mode.sh" 2>/dev/null; then
-  SUP_DIR="$(lw_gate_state_dir "$main_root")" || exit 0   # host mode, gate dir unresolvable: skip
+  SUP_DIR="$(lw_gate_state_dir_existing "$main_root")" || exit 0   # host: no gate dir yet, or unsafe: skip
   STATE_MD="$(lw_state_md_read "$main_root")"
   if lw_host_mode; then HOST_ON=1; umask 077; fi
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
@@ -225,9 +225,11 @@ LOG_DIR="$SUP_DIR/logs"
 # and before the debounce marker file is touched, so a repo where
 # Loomwright/Supervisor has never run is left completely untouched by all
 # subcommands (waiting/heartbeat/failed/ended) on every hook wiring. Under host
-# mode the switch itself is the presence signal: the state dir already exists,
-# and the D1 gate root is created (umask 077) at those same mkdir sites.
-plugin_present() { [ -d "$1" ] || [ "$HOST_ON" = 1 ]; }
+# mode the SAME existence test is the gate: SUP_DIR came from
+# lw_gate_state_dir_existing, which never creates it — a valid state dir exists
+# by validation; the D1 gate root exists only once a gate writer (guard-arm.sh
+# arming a run, write-marker) created it. No run yet => nothing written anywhere.
+plugin_present() { [ -d "$1" ]; }
 plugin_present "$SUP_DIR" || exit 0
 
 # Prefer a real UTC ISO timestamp; omit ts entirely when date fails.

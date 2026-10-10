@@ -193,18 +193,26 @@ target_dir_p="$(cd "$target_dir" 2>/dev/null && pwd -P)" || exit 0
 
 # Host mode (host-mode.sh — the one resolver): the trigger and the run id stay
 # on the repo `state.md` the agent just wrote (READ only). The `.owner` seed is
-# gate state, so LOG_DIR resolves through lw_gate_state_dir — byte-identical
-# `$main_root/.supervisor/logs` when the switch is off, the host's state dir or
-# the per-user gate root (D1) when on. A helper that fails to load is harmless
-# when the switch is off and a silent no-op when it is on.
-SUP_DIR="$main_root/.supervisor"
+# gate state — byte-identical `$main_root/.supervisor/logs` when the switch is
+# off, the host's state dir or the per-user gate root (D1) when on. A helper
+# that fails to load is harmless when the switch is off and a silent no-op when
+# it is on. PRESENCE GATE: resolved first WITHOUT creating
+# (lw_gate_state_dir_existing). This script is a gate WRITER that may create the
+# D1 root, like guard-arm.sh: Context-Keeper's Write of a LIVE run's repo
+# `state.md` (the one trigger that reaches here) IS a Loomwright run creating its
+# state — the off-mode analogue is that run's own `mkdir .supervisor/`. Skipping
+# the seed there would reopen the unknown-owner window this script closes
+# (INIT writes `state.md` before it arms the guard). So an absent root is
+# created (lw_gate_state_dir) only after the run id and a live status are read.
+SUP_DIR="$main_root/.supervisor"; SEED_CREATE=0
 if . "$(dirname "${BASH_SOURCE[0]:-$0}")/host-mode.sh" 2>/dev/null; then
-  SUP_DIR="$(lw_gate_state_dir "$main_root")" || exit 0   # host mode, gate dir unresolvable: skip
+  _sro_rc=0
+  SUP_DIR="$(lw_gate_state_dir_existing "$main_root")" || _sro_rc=$?
+  case "$_sro_rc" in 0) ;; 2) SEED_CREATE=1 ;; *) exit 0 ;; esac   # unsafe/unresolvable: skip
   lw_host_mode && umask 077
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
   exit 0
 fi
-LOG_DIR="$SUP_DIR/logs"
 STATE_MD="$main_root/.supervisor/state.md"
 [ -f "$STATE_MD" ] && [ -r "$STATE_MD" ] || exit 0
 
@@ -222,6 +230,11 @@ case "$PLUGIN_STATUS" in
   *) exit 0 ;;
 esac
 
+# Host mode, no gate dir yet: a live run's state.md was just written — create it (header).
+if [ "$SEED_CREATE" = 1 ]; then
+  SUP_DIR="$(lw_gate_state_dir "$main_root")" || exit 0
+fi
+LOG_DIR="$SUP_DIR/logs"
 OWNER_FILE="$LOG_DIR/${PLUGIN_SESSION_ID}.owner"
 # Write-once. An existing sidecar is authoritative and is never rewritten —
 # `set -C` below enforces this atomically too; this is the cheap early exit
