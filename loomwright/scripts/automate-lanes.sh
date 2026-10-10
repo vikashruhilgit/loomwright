@@ -942,19 +942,49 @@ lanes_remove() {
 # ==================================================================================================
 # ---- the lane's metadata at the wave end (F11) --------------------------------------------------
 # _lanes_meta_extras <branch> <message> — pushes the lane's own NON-claim metadata, exactly listed:
-# its run file, `<run_id>.merge-readiness.md` and `<run_id>.dismissed-decisions` (each when present).
-# None of them is a done claim. Prints meta-sync's reason and returns 1 on failure.
+# its run file, `<run_id>.merge-readiness.md` and `<run_id>.dismissed-decisions` (each when present),
+# plus its Orchestrator task plans (_lanes_task_plans). None of them is a done claim. Prints
+# meta-sync's reason and returns 1 on failure.
 _lanes_meta_extras() {
   local mb="$1" msg="$2" list f out rc=0
   list="$(mktemp "${TMPDIR:-/tmp}/lane-meta.XXXXXX" 2>/dev/null)" || { echo "could not stage the push list"; return 1; }
-  for f in "$LN_RUN.md" "$LN_RUN.merge-readiness.md" "$LN_RUN.dismissed-decisions"; do
-    if [ -f "$LN_DIR/.supervisor/automate/$f" ]; then printf '%s\n' ".supervisor/automate/$f"; fi
-  done > "$list" || { rm -f "$list"; echo "could not stage the push list"; return 1; }
+  { for f in "$LN_RUN.md" "$LN_RUN.merge-readiness.md" "$LN_RUN.dismissed-decisions"; do
+      if [ -f "$LN_DIR/.supervisor/automate/$f" ]; then printf '%s\n' ".supervisor/automate/$f"; fi
+    done
+    _lanes_task_plans
+  } > "$list" || { rm -f "$list"; echo "could not stage the push list"; return 1; }
   out="$(bash "$META_SYNC" push --branch "$mb" --root "$LN_DIR" --paths-from "$list" --message "$msg" 2>&1)" || rc=$?
   rm -f "$list"
   if [ "$rc" != 0 ]; then
     printf 'meta-sync exit %s\n%s' "$rc" "$out"; return 1
   fi
+  return 0
+}
+
+# _lanes_task_plans — prints the lane's Orchestrator task plans, one repo-relative path per line: every
+# regular file `.supervisor/requirements/<slug>-plan.md` (top level only — the one path the Orchestrator's
+# file-fallback mode writes, agents/orchestrator.md §"Persistence Mode"). It sits on a meta-managed path,
+# so before this list carried it neither of the wave end's pushes did (trail-pr's candidates are the run
+# file, its sidecars, its Queue requirements and their briefs) and lane-remove refused the lane forever
+# on `local_ahead` (operator-run 2026-10-10 Phase 0.2). Excluded, left to trail-pr's evidence gate: a
+# path the lane run file's `## Queue` / `## Current` names (that is the item's requirement), and any
+# file carrying a `## Status: done…` heading (a done claim). A plan the lane only pulled is unchanged,
+# so meta-sync pushes nothing for it; a lane clone has exactly one run, so no other run's plan is here.
+_lanes_task_plans() {
+  local f p items nl tab
+  nl="$(printf '\nx')"; nl="${nl%x}"; tab="$(printf '\t')"
+  items="$(awk '/^## / { sec = $0; next }
+    sec == "## Queue" && /^- \[[ xX]\] / { v = $0; sub(/^- \[[ xX]\] /, "", v); sub(/[[:space:]]+#.*$/, "", v); sub(/[[:space:]]+$/, "", v); sub(/^\.\//, "", v); print v }
+    sec == "## Current" && /^- item:/ { v = $0; sub(/^- item: */, "", v); sub(/ *\|.*/, "", v); sub(/^\.\//, "", v); print v }' \
+    "$LN_DIR/.supervisor/automate/$LN_RUN.md" 2>/dev/null)"
+  for f in "$LN_DIR"/.supervisor/requirements/*-plan.md; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    p=".supervisor/requirements/${f##*/}"
+    case "$p" in *"$nl"*|*"$tab"*) continue ;; esac   # meta-sync refuses such names; never split a line
+    grep -qxF -- "$p" <<<"$items" && continue
+    grep -qE '^## Status:[[:space:]]*done' "$f" 2>/dev/null && continue
+    printf '%s\n' "$p"
+  done
   return 0
 }
 
@@ -1038,13 +1068,15 @@ _lanes_abandon_meta() {
 # after the merged re-run's push failed) ⇒ neither runs again. Each then runs the pushes, so a re-run is
 # idempotent. Branch mode (`on <Y>`) then
 # pushes (1) the lane's non-claim files by exact list (_lanes_meta_extras: the run file, its
-# merge-readiness report, its dismissed-decisions ledger) and (2) everything else through trail-pr's
+# merge-readiness report, its dismissed-decisions ledger, its task plans) and (2) everything else through trail-pr's
 # evidence-gated candidate list (_lanes_meta_trail, `--reason wave-end`): a done stamp or a jobs/done/
 # brief whose PR is not MERGED is excluded and named, so while the PR is open the lane keeps reading
 # `local_ahead` and lane-remove keeps refusing — after the owner merges, the re-run's closeout writes
 # the stamp and its pushes carry it; if the PR closes unmerged, `lane-remove --abandon` records it
 # (F11). Mode `off` has no metadata
-# branch to push. A failed push ⇒ `lane-convert-ready: FAILED — …` and exit 2 (re-run to retry).
+# branch to push. A failed push ⇒ `lane-convert-ready: FAILED — …` and exit 2 (re-run to retry). The
+# last line names the state the lane reads afterwards: `converted <lane> to awaiting_merge` on the
+# conversion, `<lane> reads <status> / <pause_reason> (a re-run converts nothing)` on a re-run.
 _lanes_current_item() { # <runfile> — the `## Current` item path, or nothing
   awk '/^## / { sec = $0; next }
     sec == "## Current" && /^- item:/ { v = $0; sub(/^- item: */, "", v); sub(/ *\|.*/, "", v); print v; exit }' "$1" 2>/dev/null
@@ -1053,7 +1085,7 @@ lanes_convert_ready() {
   local dir="${1:-}"
   [ "$#" -le 1 ] || die "lane-convert-ready: unexpected argument '$2'"
   _lane_ctx "$dir" || die "lane-convert-ready: not a lane: ${dir:-<none>}"
-  local L="$LN_LANE" rf pid st status pause pr item mb out rc list phase co cv cs=""
+  local L="$LN_LANE" rf pid st status pause pr item mb out rc list phase co cv cs="" did fdid
   rf="$LN_DIR/.supervisor/automate/$LN_RUN.md"
   _cr_refuse() { _lanes_launch_unlock; echo "lane-convert-ready: refused — $L — $1"; return 1; }
   _lanes_launch_lock || { echo "lane-convert-ready: refused — $L — launch lock busy (a launch or resume of this lane is in flight)"; return 1; }
@@ -1092,25 +1124,32 @@ lanes_convert_ready() {
         fi ;;
     esac
   fi
+  # What the lane now reads — a re-run converts nothing, and its closeout may have reconciled ## Current
+  # to done / awaiting_go, so it names the state it read back, never "converted … to awaiting_merge".
+  if [ "$phase" = convert ]; then did="converted $L to awaiting_merge"; fdid="converted to awaiting_merge"
+  else
+    IFS="$(printf '\t')" read -r status pause _ <<<"$(_lanes_runfile_fields "$rf")"
+    fdid="reads ${status:--} / ${pause:--} (a re-run converts nothing)"; did="$L $fdid"
+  fi
   if [ -z "$mb" ]; then
     _lanes_launch_unlock
-    echo "lane-convert-ready: converted $L to awaiting_merge (metadata mode off — no metadata branch to push)$cs"
+    echo "lane-convert-ready: $did (metadata mode off — no metadata branch to push)$cs"
     return 0
   fi
   rc=0; out="$(_lanes_meta_extras "$mb" "chore(supervisor): $LN_RUN ready_for_release -> awaiting_merge (wave end)")" || rc=$?
   if [ "$rc" != 0 ]; then
     _lanes_launch_unlock
-    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge but the metadata push to $mb failed ($(printf '%s\n' "$out" | head -1)); NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR$cs"
+    echo "lane-convert-ready: FAILED — $L — $fdid, but the metadata push to $mb failed ($(printf '%s\n' "$out" | head -1)); NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR$cs"
     printf '%s\n' "$out" | sed '1d; /^$/d; s/^/  /'
     return 2
   fi
   rc=0; out="$(_lanes_meta_trail "$mb" "$rf" wave-end)" || rc=$?
   _lanes_launch_unlock
   if [ "$rc" != 0 ]; then
-    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge and its run file pushed, but the evidence-gated trail push failed: $out — re-run lane-convert-ready $LN_DIR$cs"
+    echo "lane-convert-ready: FAILED — $L — $fdid and its non-claim files pushed, but the evidence-gated trail push failed: $out — re-run lane-convert-ready $LN_DIR$cs"
     return 2
   fi
-  echo "lane-convert-ready: converted $L to awaiting_merge; metadata pushed to $mb — $out$cs"
+  echo "lane-convert-ready: $did; metadata pushed to $mb — $out$cs"
 }
 
 # _lanes_click_action <notify-desktop.sh path> <checkout root> — the click action notify-desktop.sh
