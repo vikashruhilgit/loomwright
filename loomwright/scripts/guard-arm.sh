@@ -71,7 +71,11 @@
 # A host-mode.sh that fails to load is harmless with the switch off (today's
 # path); with it on, nothing is armed (GUARD_DIR empty) rather than a marker
 # landing in the repo — guard-test-integrity.sh fails CLOSED on that same
-# missing helper, so the session is not left unguarded.
+# missing helper, so the session is not left unguarded. The same holds when
+# the helper loads but the gate dir is unresolvable (host-mode.sh header: an
+# unsafe or unwritable per-user D1 root). The project dir passed as <root> may
+# be a linked worktree: host-mode.sh's one-root rule resolves it to the same
+# gate dir the main-worktree-anchored emitters use.
 set -u
 
 GUARD_PROJ="${CLAUDE_PROJECT_DIR:-$PWD}"
@@ -81,7 +85,9 @@ GUARD_HERE="${BASH_SOURCE[0]%/*}"
 [ "$GUARD_HERE" = "${BASH_SOURCE[0]}" ] && GUARD_HERE="."
 # shellcheck source=host-mode.sh
 if . "$GUARD_HERE/host-mode.sh" 2>/dev/null; then
-  GUARD_DIR="$(lw_gate_state_dir "$GUARD_PROJ")/guard"
+  # Host mode with an unresolvable gate dir (unsafe/unwritable D1 root): nothing is armed —
+  # guard-test-integrity.sh denies on that same unresolvable dir, so the session is not unguarded.
+  if _guard_gd="$(lw_gate_state_dir "$GUARD_PROJ")"; then GUARD_DIR="$_guard_gd/guard"; else GUARD_DIR=""; fi
   lw_host_mode && GUARD_HOST_ON=1
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
   GUARD_DIR=""

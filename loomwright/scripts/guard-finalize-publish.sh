@@ -39,7 +39,9 @@
 # (the agent-written seed) OR the gate-dir copy reads running|checkpoint; the session id comes from
 # lw_state_md_read's file. A missing or stale gate-dir copy never makes the gate allow. Off: the
 # paths above, unchanged. host-mode.sh failing to load with the switch ON denies every publish
-# (`guard_unavailable`) and write-marker refuses `helper_missing` — the marker dir is unknowable.
+# (`guard_unavailable`) and write-marker refuses `helper_missing` — the marker dir is unknowable;
+# likewise an unresolvable gate dir (an unsafe/unwritable per-user D1 root, host-mode.sh header)
+# denies every publish and write-marker refuses `gate_dir_unresolvable`.
 #
 # GUARD EVALUATION ORDER (cheap-first; no jq and no fork on the inert path):
 #   (i)   raw payload contains neither `push` nor `create`         -> allow
@@ -118,7 +120,7 @@ elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then HOST_ON=1; fi
 # The MAIN worktree, resolved by loom_main_root — the same place build-state.sh and the emitters write
 # it — so a session whose project dir is a LINKED worktree still finds the run's state.md. Falls back
 # to the project dir when unresolvable (not a git repo, helper missing).
-ROOT=""; STATE_MD=""; LOG_DIR=""; REPO_STATE_MD=""; GATE_STATE_MD=""
+ROOT=""; STATE_MD=""; LOG_DIR=""; REPO_STATE_MD=""; GATE_STATE_MD=""; GATE_UNRESOLVED=0
 resolve_root() {
   [ "$HELPER_OK" = 1 ] && ROOT="$(loom_main_root "$PROJ" 2>/dev/null)"
   [ -n "$ROOT" ] || ROOT="$PROJ"
@@ -127,8 +129,13 @@ resolve_root() {
   REPO_STATE_MD="$STATE_MD"; GATE_STATE_MD="$STATE_MD"
   # the writers' own resolver (host-mode.sh): off, both lines reprint the two paths above
   if [ "$HOST_HELPER_OK" = 1 ]; then
-    LOG_DIR="$(lw_gate_state_dir "$ROOT")/logs"; GATE_STATE_MD="${LOG_DIR%/logs}/state.md"
-    STATE_MD="$(lw_state_md_read "$ROOT")"
+    if LOG_DIR="$(lw_gate_state_dir "$ROOT")"; then
+      LOG_DIR="$LOG_DIR/logs"; GATE_STATE_MD="${LOG_DIR%/logs}/state.md"
+      STATE_MD="$(lw_state_md_read "$ROOT")"
+    else
+      # host mode only: unsafe/unwritable per-user D1 root — the marker dir is unknowable
+      LOG_DIR=""; GATE_UNRESOLVED=1
+    fi
   fi
 }
 
@@ -203,6 +210,7 @@ if [ "${1:-}" = "write-marker" ]; then
   [ "$HELPER_OK" = 1 ] || refuse "helper_missing"
   [ "$HOST_ON" = 1 ] && [ "$HOST_HELPER_OK" != 1 ] && refuse "helper_missing"
   resolve_root
+  [ "$GATE_UNRESOLVED" = 1 ] && refuse "gate_dir_unresolvable"
   read_live_session || refuse "no_active_session"
   MARKER="$LOG_DIR/$SESSION_ID.finalize-gate"
   SESSION_LOG="$LOG_DIR/$SESSION_ID.jsonl"
@@ -266,7 +274,7 @@ esac
 # cannot tell, so it is never "not live": it falls through and every publish is denied after (iv).
 resolve_root
 HOST_UNRESOLVED=0
-if [ "$HOST_ON" = 1 ] && [ "$HOST_HELPER_OK" != 1 ]; then HOST_UNRESOLVED=1
+if [ "$HOST_ON" = 1 ] && { [ "$HOST_HELPER_OK" != 1 ] || [ "$GATE_UNRESOLVED" = 1 ]; }; then HOST_UNRESOLVED=1
 else read_live_session || allow; fi
 
 # (iii)
@@ -462,7 +470,7 @@ EOF
   return 1
 }
 cmd_has_publish "$CMD" 0 || allow
-[ "$HOST_UNRESOLVED" = 1 ] && deny "guard_unavailable: host-mode.sh missing (host mode cannot locate the run's state)"
+[ "$HOST_UNRESOLVED" = 1 ] && deny "guard_unavailable: host-mode.sh missing or gate state dir unresolvable (host mode cannot locate the run's state)"
 
 # (v) scope: only a publish from the run's own feature-branch checkout is this run's publish.
 # A DETACHED LINKED worktree (the dispatcher's review-drain sibling, `git push origin HEAD:<ref>`)

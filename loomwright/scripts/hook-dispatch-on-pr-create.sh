@@ -180,7 +180,8 @@ emit_pr_created() (
   if [ "$HD_HOST" = 1 ]; then
     # Host mode: the switch is the presence signal; the gate dir is created at
     # the existing mkdir site below, under umask 077.
-    sup="$(lw_gate_state_dir "$root")"; st="$(lw_state_md_read "$root")"; umask 077
+    sup="$(lw_gate_state_dir "$root")" || exit 0   # gate dir unresolvable: skip the line
+    st="$(lw_state_md_read "$root")"; umask 077
   else
     [ -d "$sup" ] || exit 0
   fi

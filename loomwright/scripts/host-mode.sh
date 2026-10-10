@@ -11,15 +11,20 @@
 # (`<dir>/logs/<session>.jsonl`, `<dir>/state.md`, `<dir>/guard/<id>.json`,
 # `<dir>/logs/<id>.finalize-gate`).
 #
-# Callers pass `<root>` = the repo's MAIN worktree (the same anchoring `loom_main_root` in
-# loom-log-owner.sh prints). Every READ of a piece of state resolves through the SAME function as
-# its writer, so readers and writers never disagree.
+# ONE ROOT RULE (every caller, host mode or not): `<root>` may be ANY worktree of the repo — the
+# main one (emitters anchor there, as `loom_main_root` in loom-log-owner.sh prints) or a linked one
+# (the guards anchor on the session's project dir). The resolver normalises internally, so both
+# resolve the same dir: the D1 key hashes the MAIN worktree path `git worktree list` reports, and
+# "outside the repo" is tested against EVERY worktree git lists (physical paths). Off mode is not
+# normalised — it prints `<root>/.supervisor` verbatim, exactly as before. Every READ of a piece of
+# state resolves through the SAME function as its writer, so readers and writers never disagree.
 #
 # lw_host_mode — returns 0 iff LOOMWRIGHT_HOST_MODE is exactly `1`.
 #
 # lw_host_state_dir [root] — prints $LOOMWRIGHT_HOST_STATE_DIR and returns 0 only when it is an
-#   absolute (`/`-prefixed) path to an existing directory that is NOT inside [root] (compared on
-#   physical paths, so a symlink cannot smuggle it back in). Else prints nothing, returns 1.
+#   absolute (`/`-prefixed) path to an existing directory that is NOT inside [root] nor any other
+#   worktree of its repo (compared on physical paths, so a symlink cannot smuggle it back in). Else
+#   prints nothing, returns 1. A host-provided dir is the host's: no ownership test is applied.
 #
 # lw_state_dir <root> — the `.supervisor`-equivalent for NON-gate writes (logs, markers, nudges).
 #   Off: prints <root>/.supervisor. On + valid state dir: prints it. On without one: prints
@@ -27,11 +32,16 @@
 #
 # lw_gate_state_dir <root> — the `.supervisor`-equivalent for GATE state: the guard markers, the
 #   finalize-gate marker, and the state those gates read (`state.md`'s `## Session` block, the
-#   plugin session log and its `.owner` seed). Off: <root>/.supervisor. On + valid state dir: that
-#   dir. On without one (owner decision D1): ${TMPDIR:-/tmp}/loomwright-host-<uid>/<repo-hash>,
-#   where <repo-hash> is the first 12 hex of the SHA-256 of the repo's absolute main-worktree path.
-#   Always returns 0 with a path. It NEVER creates the dir — a writer does, with `mkdir -p` under
-#   `umask 077`.
+#   plugin session log and its `.owner` seed). Off: <root>/.supervisor (never created here). On +
+#   valid state dir: that dir. On without one (owner decision D1): <base>/loomwright-host-<uid>/
+#   <repo-hash>, where <repo-hash> is the first 12 hex of the SHA-256 of the repo's absolute
+#   main-worktree path and <base> is ${TMPDIR} when that is an absolute existing directory outside
+#   every worktree, else /tmp. The D1 root lives in a shared tmp, so the resolver CREATES its two
+#   components itself (`mkdir`, umask 077 — never `mkdir -p` through a pre-planted path) and then
+#   requires each to be a real directory (not a symlink), owned by this uid, writable, and not
+#   group/world-writable. Any failure prints nothing and returns 1: the gate dir is UNRESOLVABLE —
+#   the guards deny (guard_unavailable) and every emitter skips. Writers create subdirs (`logs/`,
+#   `guard/`) with `mkdir -p` under `umask 077`.
 #
 # lw_state_md_read <root> — the path every hook READS `state.md` from. The repo copy (the
 #   agent-authored seed — Context-Keeper writes it with the Write tool) decides which run is
@@ -39,7 +49,7 @@
 #   `- session_id:` EQUALS the repo copy's, or when the repo copy is absent; in every other case
 #   (gate copy missing, or stale from an earlier run) <root>/.supervisor/state.md, which hooks
 #   only READ under host mode. The gate dir outlives runs, so a gate copy alone never wins over a
-#   newer repo seed.
+#   newer repo seed. An unresolvable gate dir reads the repo copy.
 #
 # Sourcing has no side effects beyond defining the functions. bash 3.2 safe.
 
@@ -47,16 +57,54 @@ lw_host_mode() {
   [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]
 }
 
+# _lw_in_worktree <physical-path> <root> — 0 iff the path is <root>, any worktree of <root>'s repo,
+# or inside one (physical paths on both sides).
+_lw_in_worktree() {
+  local _p="${1%/}" _root="${2:-}" _list="" _w="" _wp=""
+  [ -n "$_root" ] || return 1
+  # Collected first, then scanned: no pipeline, so a caller's `set -o pipefail` (SIGPIPE on an early
+  # match) cannot flip the answer.
+  _list="$(git -C "$_root" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')"
+  while IFS= read -r _w; do
+    [ -n "$_w" ] || continue
+    _wp="$(cd "$_w" 2>/dev/null && pwd -P)" || _wp=""
+    [ -n "$_wp" ] || _wp="$_w"
+    case "$_p/" in "${_wp%/}/"*) return 0 ;; esac
+  done <<EOF
+$_root
+$_list
+EOF
+  return 1
+}
+
+# _lw_private_dir <dir> — 0 iff <dir> is a real directory (not a symlink) owned by this uid, writable
+# and searchable by it, and neither group- nor world-writable.
+_lw_private_dir() {
+  local _d="$1" _m=""
+  [ -d "$_d" ] && [ ! -L "$_d" ] && [ -O "$_d" ] && [ -w "$_d" ] && [ -x "$_d" ] || return 1
+  _m="$(ls -ld "$_d" 2>/dev/null)" || return 1
+  case "$_m" in ?????w*|????????w*) return 1 ;; esac
+  return 0
+}
+
+# _lw_private_mkdir <dir> — create <dir> (one level, umask 077) when nothing is there, then verify it
+# with _lw_private_dir. Creating first and checking after closes the check-then-create window: a
+# racing or pre-planted entry makes `mkdir` fail and is then judged on what is actually there.
+_lw_private_mkdir() {
+  if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+    ( umask 077; mkdir "$1" ) 2>/dev/null
+  fi
+  _lw_private_dir "$1"
+}
+
 lw_host_state_dir() {
-  local _sd="${LOOMWRIGHT_HOST_STATE_DIR:-}" _root="${1:-}" _sd_p="" _root_p=""
+  local _sd="${LOOMWRIGHT_HOST_STATE_DIR:-}" _root="${1:-}" _sd_p=""
   case "$_sd" in /*) ;; *) return 1 ;; esac
   [ -d "$_sd" ] || return 1
   if [ -n "$_root" ]; then
     _sd_p="$(cd "$_sd" 2>/dev/null && pwd -P)" || return 1
     [ -n "$_sd_p" ] || return 1
-    _root_p="$(cd "$_root" 2>/dev/null && pwd -P)" || _root_p=""
-    [ -n "$_root_p" ] || _root_p="$_root"
-    case "$_sd_p/" in "${_root_p%/}/"*) return 1 ;; esac
+    _lw_in_worktree "$_sd_p" "$_root" && return 1
   fi
   printf '%s' "$_sd"
 }
@@ -71,7 +119,7 @@ lw_state_dir() {
 }
 
 lw_gate_state_dir() {
-  local _root="${1:-}" _main="" _hash="" _uid=""
+  local _root="${1:-}" _main="" _hash="" _uid="" _base="" _base_p="" _top=""
   if ! lw_host_mode; then
     printf '%s/.supervisor' "$_root"
     return 0
@@ -96,7 +144,25 @@ lw_gate_state_dir() {
   esac
   _uid="$(id -u 2>/dev/null)"
   case "$_uid" in ''|*[!0-9]*) _uid="unknown" ;; esac
-  printf '%s/loomwright-host-%s/%s' "${TMPDIR:-/tmp}" "$_uid" "$_hash"
+  # The base: $TMPDIR only when absolute, an existing directory, and outside every worktree
+  # (physical paths) — a relative or in-repo TMPDIR would put "outside the repo" state inside it.
+  _base="${TMPDIR:-}"
+  while [ "${#_base}" -gt 1 ] && [ "${_base%/}" != "$_base" ]; do _base="${_base%/}"; done
+  case "$_base" in /*) ;; *) _base="" ;; esac
+  if [ -n "$_base" ]; then
+    _base_p="$(cd "$_base" 2>/dev/null && pwd -P)" || _base_p=""
+    if [ -z "$_base_p" ] || _lw_in_worktree "$_base_p" "$_root"; then _base=""; fi
+  fi
+  if [ -z "$_base" ]; then
+    _base="/tmp"
+    _base_p="$(cd "$_base" 2>/dev/null && pwd -P)" || return 1
+    [ -n "$_base_p" ] || return 1
+    _lw_in_worktree "$_base_p" "$_root" && return 1
+  fi
+  _top="$_base/loomwright-host-$_uid"
+  _lw_private_mkdir "$_top" || return 1
+  _lw_private_mkdir "$_top/$_hash" || return 1
+  printf '%s' "$_top/$_hash"
 }
 
 lw_state_md_read() {
@@ -106,7 +172,11 @@ lw_state_md_read() {
     printf '%s' "$_repo"
     return 0
   fi
-  _gate="$(lw_gate_state_dir "$_root")/state.md"
+  if ! _gate="$(lw_gate_state_dir "$_root")"; then
+    printf '%s' "$_repo"
+    return 0
+  fi
+  _gate="$_gate/state.md"
   if [ ! -f "$_repo" ]; then
     printf '%s' "$_gate"
     return 0

@@ -131,6 +131,30 @@ if [ -n "$bad_args" ]; then
   exit 0
 fi
 
+# Host mode (LOOMWRIGHT_HOST_MODE=1): the hooks write the session log to host-mode.sh's
+# lw_gate_state_dir, never the repo, so a repo-shaped `--log` — `.supervisor/logs/<id>.jsonl`
+# (relative) or `<worktree>/.supervisor/logs/<id>.jsonl` — is read from `<gate dir>/logs/<id>.jsonl`.
+# Off: untouched. Host mode with the helper unloadable or the gate dir unresolvable ⇒ `unverifiable`
+# (consumers treat it as not settled) — never a vacuous `no_identity_rows` from the empty repo path.
+if [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  case "$log" in
+    .supervisor/logs/*.jsonl|./.supervisor/logs/*.jsonl|/*/.supervisor/logs/*.jsonl)
+      _cs_wt="${log%/.supervisor/logs/*}"; case "$log" in /*) ;; *) _cs_wt="$PWD" ;; esac
+      _cs_gate=""
+      if . "$(dirname "${BASH_SOURCE[0]}")/host-mode.sh" 2>/dev/null; then
+        _cs_gate="$(lw_gate_state_dir "$_cs_wt")" || _cs_gate=""
+        # a VALID host state dir that itself ends in `.supervisor`: the path is already the gate log
+        _cs_sd="$(lw_host_state_dir "$_cs_wt")" && [ "${log#"${_cs_sd%/}"/}" != "$log" ] && _cs_gate="-"
+      fi
+      if [ -z "$_cs_gate" ]; then
+        printf '%s: unverifiable — host mode gate state dir unresolvable\n' "$SELF" >&2
+        printf '{"status":"unverifiable","reason":"host_gate_unresolvable","source":"%s"}\n' "$SELF"
+        exit 0
+      fi
+      [ "$_cs_gate" = "-" ] || log="$_cs_gate/logs/${log##*/}" ;;
+  esac
+fi
+
 if ! command -v jq >/dev/null 2>&1; then
   printf '%s: unverifiable — jq_missing (jq is required to run the log join)\n' "$SELF" >&2
   printf '{"status":"unverifiable","reason":"jq_missing","source":"%s"}\n' "$SELF"

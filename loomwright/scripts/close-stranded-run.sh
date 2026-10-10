@@ -156,7 +156,7 @@ SUP_DIR="$main_root/.supervisor"
 STATE_MD="$SUP_DIR/state.md"
 HOST_ON=0
 if . "$(dirname "${BASH_SOURCE[0]:-$0}")/host-mode.sh" 2>/dev/null; then
-  SUP_DIR="$(lw_gate_state_dir "$main_root")"
+  SUP_DIR="$(lw_gate_state_dir "$main_root")" || exit 0   # host mode, gate dir unresolvable: skip
   STATE_MD="$(lw_state_md_read "$main_root")"
   if lw_host_mode; then HOST_ON=1; umask 077; fi
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then

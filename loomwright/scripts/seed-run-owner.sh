@@ -199,7 +199,7 @@ target_dir_p="$(cd "$target_dir" 2>/dev/null && pwd -P)" || exit 0
 # when the switch is off and a silent no-op when it is on.
 SUP_DIR="$main_root/.supervisor"
 if . "$(dirname "${BASH_SOURCE[0]:-$0}")/host-mode.sh" 2>/dev/null; then
-  SUP_DIR="$(lw_gate_state_dir "$main_root")"
+  SUP_DIR="$(lw_gate_state_dir "$main_root")" || exit 0   # host mode, gate dir unresolvable: skip
   lw_host_mode && umask 077
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
   exit 0

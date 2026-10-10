@@ -88,6 +88,10 @@ allow() {
 # A helper that fails to load: switch off -> today's literal path; switch on
 # -> GUARD_UNRESOLVED=1, which skips the inert allow in (i) and fails CLOSED
 # in (iii) — an unresolvable marker dir must never read as "nothing armed".
+# The same GUARD_UNRESOLVED=1 when the helper loads but lw_gate_state_dir
+# fails (host-mode.sh header: an unsafe or unwritable per-user D1 root). The
+# project dir passed as <root> may be a linked worktree: host-mode.sh's
+# one-root rule resolves it to the same gate dir guard-arm.sh writes.
 # ---------------------------------------------------------------------------
 GUARD_DIR="$GUARD_PROJ/.supervisor/guard"
 GUARD_HOST_ON=0
@@ -95,8 +99,15 @@ GUARD_UNRESOLVED=0
 GUARD_HERE="${BASH_SOURCE[0]%/*}"
 [ "$GUARD_HERE" = "${BASH_SOURCE[0]}" ] && GUARD_HERE="."
 # shellcheck source=host-mode.sh
+GUARD_UNRESOLVED_WHY="state resolver missing"
 if . "$GUARD_HERE/host-mode.sh" 2>/dev/null; then
-  GUARD_DIR="$(lw_gate_state_dir "$GUARD_PROJ")/guard"
+  if GUARD_GATE="$(lw_gate_state_dir "$GUARD_PROJ")"; then
+    GUARD_DIR="$GUARD_GATE/guard"
+  else
+    # host mode only (off always resolves): unsafe/unwritable per-user D1 root
+    GUARD_UNRESOLVED=1
+    GUARD_UNRESOLVED_WHY="gate state dir unresolvable"
+  fi
   lw_host_mode && GUARD_HOST_ON=1
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
   GUARD_HOST_ON=1
@@ -133,7 +144,7 @@ PAYLOAD="$(cat 2>/dev/null || true)"
 #       absent -> deny guard_unavailable: <reason>
 # ---------------------------------------------------------------------------
 if [ "$GUARD_UNRESOLVED" = 1 ]; then
-  deny "test_integrity_guard: denied — guard_unavailable: state resolver missing"
+  deny "test_integrity_guard: denied — guard_unavailable: $GUARD_UNRESOLVED_WHY"
 fi
 if ! command -v jq >/dev/null 2>&1; then
   deny "test_integrity_guard: denied — guard_unavailable: jq missing"

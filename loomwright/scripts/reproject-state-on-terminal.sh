@@ -71,7 +71,8 @@ if . "${BASH_SOURCE[0]%/*}/host-mode.sh" 2>/dev/null; then
     _main_root="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
     [ -n "$_main_root" ] && [ -d "$_main_root" ] || exit 0
     STATE_MD="$(lw_state_md_read "$_main_root")"
-    LOG_BASE="$(lw_gate_state_dir "$_main_root")/logs"
+    LOG_BASE="$(lw_gate_state_dir "$_main_root")" || exit 0   # gate dir unresolvable: skip
+    LOG_BASE="$LOG_BASE/logs"
   fi
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
   exit 0

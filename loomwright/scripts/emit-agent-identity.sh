@@ -85,7 +85,7 @@ top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/d
 # is off and a silent no-op when it is on.
 SUP_DIR="$main_root/.supervisor"
 if . "$(dirname "${BASH_SOURCE[0]:-$0}")/host-mode.sh" 2>/dev/null; then
-  SUP_DIR="$(lw_gate_state_dir "$main_root")"
+  SUP_DIR="$(lw_gate_state_dir "$main_root")" || exit 0   # host mode, gate dir unresolvable: skip
   lw_host_mode && umask 077
 elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
   exit 0

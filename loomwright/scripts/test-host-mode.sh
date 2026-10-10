@@ -55,6 +55,22 @@
 #   (e)  mutation control: a scratch plugin root identical but for emit-agent-identity.sh with its
 #        host-mode block removed (mutant gated: non-empty, differs, `bash -n` clean, resolver gone)
 #        makes leg (a) FAIL with the repo dirtied.
+#   (f)  an invalid LOOMWRIGHT_HOST_STATE_DIR (relative, missing, a file, inside the repo, a symlink
+#        into the repo) is rejected: the gate dir is D1, a worker session leaves the repo clean and
+#        writes nothing through the bad dir (AC5).
+#   (g)  an unsafe TMPDIR (relative, or a dir inside the repo) is not the D1 base: the repo stays
+#        clean and the gate root falls back to /tmp (removed again on exit).
+#   (h)  a hostile pre-created D1 root ($TMPDIR/loomwright-host-<uid> a symlink to a foreign dir,
+#        mode 500, or mode 777): the gate dir is unresolvable, nothing lands in the foreign dir,
+#        arming writes no marker, and both guards DENY (guard_unavailable / gate_dir_unresolvable).
+#   (i)  a linked-worktree session: a state dir inside the linked worktree or inside the main one is
+#        rejected by every caller alike (emitters anchor on the main worktree, the guards on the
+#        project dir) — both worktrees stay clean and the marker and events share the D1 gate dir.
+#   (j)  check-children-settled.sh under host mode reads a repo-shaped `--log` (relative and
+#        absolute) from the gate dir; off mode does not; an unloadable helper is `unverifiable`, and
+#        the guards fail CLOSED on it (deny / write-marker `helper_missing`).
+#   (k)  mutation control: host-mode.sh with its D1 ownership/symlink check neutered makes leg (h)'s
+#        symlink case FAIL (the marker lands in the foreign dir).
 #
 # HONEST LIMITS: "nothing written outside the repo" is observed on the repo, the case HOME, the case
 # TMPDIR and the state dir — a write to some other absolute path would not be seen. Hooks run with
@@ -88,7 +104,10 @@ EV_SUBSTOP="SubagentStop"; TOOL_ASK="AskUserQuestion"; KEY_SPAWN_TYPE="subagent_
 
 BASE="$(mktemp -d "${TMPDIR:-/tmp}/test-host-mode.XXXXXX")" || { echo "FATAL mktemp" >&2; exit 1; }
 BASE="$(cd "$BASE" && pwd -P)"
-trap 'chmod -R u+rwx "$BASE" 2>/dev/null; rm -rf "$BASE"' EXIT
+# (g) falls back to the real /tmp; each per-repo gate dir it makes there is listed here and removed.
+trap 'while IFS= read -r p; do [ -n "$p" ] && rm -rf "$p"; done < "$BASE/cleanup.list" 2>/dev/null
+  chmod -R u+rwx "$BASE" 2>/dev/null; rm -rf "$BASE"' EXIT
+: > "$BASE/cleanup.list"
 
 mkdir -p "$BASE/bin" "$BASE/in"
 for s in gh claude; do
@@ -482,6 +501,205 @@ if [ -s "$M_FILE" ] && ! cmp -s "$M_FILE" "$PLUGIN_ROOT/scripts/emit-agent-ident
   replay
 else
   no "(e) mutant gate failed (empty, identical, bash -n error, or the resolver call survived) — control is void"
+fi
+
+# =================================================================================================
+helper_ans() {  # helper_ans <fn> <root> — "<rc>|<stdout>" of the real helper for this case
+  local o rc
+  o="$( cd "$C_REPO" && hm_env bash -c '. "$1" && "$2" "$3"' _ "$PLUGIN_ROOT/scripts/host-mode.sh" "$1" "$2" )"; rc=$?
+  printf '%s|%s' "$rc" "$o"
+}
+use_sd() {  # use_sd <value> — point this case's LOOMWRIGHT_HOST_STATE_DIR at <value>, re-baseline
+  C_SD="$1"; C_GATE="$(gate_dir)"; C_SNAP0="$(snap)"
+}
+
+echo "== (f) an invalid LOOMWRIGHT_HOST_STATE_DIR is rejected (AC5) =="
+for kind in relative missing file inside symlink; do
+  new_case "f-$kind" sd bare
+  case "$kind" in
+    relative) use_sd "state" ;;
+    missing)  use_sd "$C_DIR/nope" ;;
+    file)     : > "$C_DIR/afile"; use_sd "$C_DIR/afile" ;;
+    inside)   mkdir -p "$C_REPO/sdin"; use_sd "$C_REPO/sdin" ;;
+    symlink)  mkdir -p "$C_REPO/sdin"; ln -s "$C_REPO/sdin" "$C_DIR/link"; use_sd "$C_DIR/link" ;;
+  esac
+  a="$(helper_ans lw_host_state_dir "$C_MAIN")"
+  [ "$a" = "1|" ]; rec "(f) $kind: lw_host_state_dir rejects it" $? "$a"
+  [ "$C_GATE" = "$C_TMP/loomwright-host-$UID_N/$(d1_hash)" ]; rec "(f) $kind: gate state falls back to D1" $? "$C_GATE"
+  session_events worker
+  repo_clean_checks "(f) $kind"
+  case "$kind" in inside|symlink)
+    [ -z "$(listing "$C_REPO/sdin")" ]; rec "(f) $kind: nothing written through the rejected dir" $? ;;
+  esac
+  s="$(find "$C_TMP" -name failures.log 2>/dev/null)"
+  [ -z "$s" ]; rec "(f) $kind: the non-gate failures.log write skipped" $? "$s"
+  replay
+done
+
+# =================================================================================================
+echo "== (g) an unsafe TMPDIR is never the D1 base =="
+for kind in relative inside; do
+  new_case "g-$kind" d1 bare
+  case "$kind" in
+    relative) C_TMP="reltmp" ;;
+    inside)   mkdir -p "$C_REPO/tmpx"; C_TMP="$C_REPO/tmpx" ;;
+  esac
+  C_SNAP0="$(snap)"; C_GATE="$(gate_dir)"
+  want="/tmp/loomwright-host-$UID_N/$(d1_hash)"
+  [ -d "$want" ] && printf '%s\n' "$want" >> "$BASE/cleanup.list"
+  [ "$C_GATE" = "$want" ]; rec "(g) $kind: the gate dir falls back to /tmp/loomwright-host-<uid>/<hash>" $? "$C_GATE"
+  fire_one PreToolUse Task guard-arm.sh "$(p_tool PreToolUse Task "$(spawn_input)")"
+  [ -f "$want/guard/$CC.json" ]; rec "(g) $kind: the marker landed in the /tmp gate dir" $?
+  fire StopFailure "" "$STOPFAIL_PAYLOAD"
+  fire "$EV_SUBSTOP" loomwright:loomwright:worker "$(p_sub worker)"
+  st="$(git -C "$C_REPO" status --porcelain --ignored 2>&1)"
+  [ -z "$st" ] && [ "$(snap)" = "$C_SNAP0" ]; rec "(g) $kind: the repo is untouched" $? "$(printf '%s' "$st" | tr '\n' ' ')"
+  bad="$(grep -v ' rc=0 ' "$C_RC")"; [ -z "$bad" ]; rec "(g) $kind: every leaf exited 0" $? "$bad"
+  replay
+done
+
+# =================================================================================================
+echo "== (h) a hostile pre-created D1 root makes the gate dir unresolvable and the guards deny =="
+plant_root() {  # plant_root <symlink|mode500|mode777> — replace this case's D1 root with a hostile one
+  local top="$C_TMP/loomwright-host-$UID_N"
+  chmod -R u+rwx "$top" 2>/dev/null; rm -rf "$top"; mkdir -p "$C_DIR/foreign"
+  case "$1" in
+    symlink) ln -s "$C_DIR/foreign" "$top" ;;
+    mode500) mkdir "$top" && chmod 500 "$top" ;;
+    mode777) mkdir "$top" && chmod 777 "$top" ;;
+  esac
+}
+hostile_leg() {  # hostile_leg <kind> <label> — the checks, recorded
+  local kind="$1" lbl="$2" a
+  plant_root "$kind"
+  a="$(helper_ans lw_gate_state_dir "$C_MAIN")"
+  [ "$a" = "1|" ]; rec "$lbl: lw_gate_state_dir is unresolvable" $? "$a"
+  fire_one PreToolUse Task guard-arm.sh "$(p_tool PreToolUse Task "$(spawn_input)")"
+  [ "$LAST_RC" = 0 ]; rec "$lbl: arming still exits 0 (fail-SAFE)" $? "rc=$LAST_RC"
+  s="$(find "$C_DIR/foreign" "$C_TMP" -name "$CC.json" 2>/dev/null)"
+  [ -z "$s" ]; rec "$lbl: no marker written anywhere" $? "$s"
+  fire_one PreToolUse Write guard-test-integrity.sh "$(p_write "$C_MAIN/pytest.ini")"
+  is_deny && grep -q 'guard_unavailable' <<<"$LAST_OUT"
+  rec "$lbl: a protected edit is DENIED (guard_unavailable), never allowed unguarded" $? "rc=$LAST_RC out=$LAST_OUT"
+  fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$PUBLISH")"
+  is_deny && grep -q 'guard_unavailable' <<<"$LAST_OUT"
+  rec "$lbl: a publish in the live run is DENIED (guard_unavailable)" $? "rc=$LAST_RC out=$LAST_OUT"
+  write_marker; a=$?
+  [ "$a" != 0 ] && grep -q 'gate_dir_unresolvable' "$C_DIR/wm.out"
+  rec "$lbl: write-marker refuses gate_dir_unresolvable" $? "rc=$a $(cat "$C_DIR/wm.out")"
+  : > "$C_RC"
+  fire "$EV_SUBSTOP" loomwright:loomwright:worker "$(p_sub worker)"
+  fire StopFailure "" "$STOPFAIL_PAYLOAD"
+  [ -z "$(listing "$C_DIR/foreign")" ]; rec "$lbl: nothing landed in the foreign dir" $? "$(listing "$C_DIR/foreign" | tr '\n' ' ')"
+  repo_clean_checks "$lbl"
+}
+for kind in symlink mode500 mode777; do
+  new_case "h-$kind" d1 seeded
+  hostile_leg "$kind" "(h) $kind"
+  replay
+done
+
+# =================================================================================================
+echo "== (i) a linked-worktree session: every caller applies one root rule =="
+for where in linked main; do
+  new_case "i-$where" sd bare
+  WT="$C_DIR/wt"
+  ( export HOME="$C_HOME" GIT_CONFIG_NOSYSTEM=1; git -C "$C_REPO" worktree add -q -b side "$WT" ) >/dev/null 2>&1 \
+    || { no "(i) $where: fixture worktree add failed"; continue; }
+  MAIN_REPO="$C_REPO"
+  if [ "$where" = linked ]; then C_SD="$WT/.st"; else C_SD="$MAIN_REPO/.st2"; fi
+  mkdir -p "$C_SD"
+  C_REPO="$WT"                       # the session runs in the LINKED worktree (project dir = it)
+  C_GATE="$(gate_dir)"
+  a="$(helper_ans lw_gate_state_dir "$WT")"
+  [ "$C_GATE" = "$C_TMP/loomwright-host-$UID_N/$(d1_hash)" ] && [ "$a" = "0|$C_GATE" ]
+  rec "(i) $where: main- and linked-anchored callers both resolve the D1 gate dir" $? "main=$C_GATE linked=$a"
+  session_events worker
+  for r in "$MAIN_REPO" "$WT"; do
+    st="$(git -C "$r" status --porcelain --ignored 2>&1)"
+    [ -z "$st" ]; rec "(i) $where: $(basename "$r") worktree status clean" $? "$(printf '%s' "$st" | tr '\n' ' ')"
+  done
+  [ -z "$(listing "$C_SD")" ]; rec "(i) $where: nothing written into the in-worktree state dir" $? "$(listing "$C_SD" | tr '\n' ' ')"
+  # session_events ends with SessionEnd (disarm), so arm once more from the linked worktree
+  fire_one PreToolUse Task guard-arm.sh "$(p_tool PreToolUse Task "$(spawn_input)")"
+  [ -f "$C_GATE/guard/$CC.json" ] && [ -z "$(git -C "$MAIN_REPO" status --porcelain --ignored)" ] && [ -z "$(listing "$C_SD")" ]
+  rec "(i) $where: the guard marker is in the shared gate dir, not the state dir" $? "$(listing "$C_SD" | tr '\n' ' ')"
+  grep -qs '"agent_identity"' "$C_GATE"/logs/*.jsonl; rec "(i) $where: the emitters' events are in the same gate dir" $?
+  replay
+done
+
+# =================================================================================================
+echo "== (j) check-children-settled.sh reads the gate dir's log under host mode =="
+settled_rows() {
+  jq -nc --arg r "$RUN" --arg cc "$CC" '{event:"agent_identity", session_id:$r, cc_session_id:$cc, agent_id:"a1", agent_type:"loomwright:worker"}'
+  jq -nc --arg r "$RUN" '{event:"subtask_complete", session_id:$r, agent_id:"a1", result_block_present:true}'
+}
+ccs() {  # ccs <args...> — the .status of check-children-settled.sh under this case's mode, from the repo
+  ( cd "$C_REPO" && hm_env bash "$C_ROOT/scripts/check-children-settled.sh" "$@" 2>/dev/null ) | jq -r '.status // empty' 2>/dev/null
+}
+for m in sd d1; do
+  new_case "j-$m" "$m" seeded
+  ( umask 077; mkdir -p "$C_GATE/logs" ) && settled_rows > "$C_GATE/logs/$RUN.jsonl"
+  st="$(ccs --log ".supervisor/logs/$RUN.jsonl" --agent-id a1)"
+  [ "$st" = settled ]; rec "(j) $m: relative repo --log, --agent-id -> settled from the gate dir" $? "$st"
+  st="$(ccs --log ".supervisor/logs/$RUN.jsonl" --all)"
+  [ "$st" = settled ]; rec "(j) $m: relative repo --log, --all -> settled (not a vacuous no_identity_rows)" $? "$st"
+  st="$(ccs --log "$C_MAIN/.supervisor/logs/$RUN.jsonl" --all)"
+  [ "$st" = settled ]; rec "(j) $m: absolute main-worktree --log, --all -> settled" $? "$st"
+  st="$(ccs --log "$C_GATE/logs/$RUN.jsonl" --all)"
+  [ "$st" = settled ]; rec "(j) $m: the gate path itself is read as given" $? "$st"
+  repo_clean_checks "(j) $m"; replay
+done
+# a state dir INSIDE the repo (the repo's own .supervisor) is invalid: the log comes from D1, and the
+# check runs under the checker's `set -o pipefail` (the worktree scan must not be flipped by it)
+new_case "j-sdin" sd seeded
+use_sd "$C_MAIN/.supervisor"
+( umask 077; mkdir -p "$C_GATE/logs" ) && settled_rows > "$C_GATE/logs/$RUN.jsonl"
+st="$(ccs --log ".supervisor/logs/$RUN.jsonl" --all)"
+[ "$st" = settled ] && [ "$C_GATE" = "$C_TMP/loomwright-host-$UID_N/$(d1_hash)" ]
+rec "(j) an in-repo state dir is rejected by the checker too: the log is read from D1" $? "st=$st gate=$C_GATE"
+replay
+new_case "j-off" off seeded
+st="$(ccs --log ".supervisor/logs/$RUN.jsonl" --all)"
+[ "$st" = no_identity_rows ]; rec "(j) off: the repo --log is read as given (no repo log -> no_identity_rows, as before)" $? "$st"
+replay
+NOH="$BASE/nohelper-root"
+mkdir -p "$NOH"
+cp -R "$PLUGIN_ROOT/scripts" "$PLUGIN_ROOT/hooks" "$PLUGIN_ROOT/.claude-plugin" "$NOH/" 2>/dev/null
+rm -f "$NOH/scripts/host-mode.sh"
+for m in sd d1; do
+  new_case "j-nohelper-$m" "$m" seeded "$NOH"
+  st="$(ccs --log ".supervisor/logs/$RUN.jsonl" --all)"
+  [ "$st" = unverifiable ]; rec "(j) $m, host-mode.sh unloadable: check-children-settled is unverifiable" $? "$st"
+  fire_one PreToolUse Write guard-test-integrity.sh "$(p_write "$C_MAIN/README.md")"
+  is_deny && grep -q 'guard_unavailable' <<<"$LAST_OUT"
+  rec "(j) $m, host-mode.sh unloadable: guard-test-integrity denies (guard_unavailable)" $? "rc=$LAST_RC out=$LAST_OUT"
+  write_marker; a=$?
+  [ "$a" != 0 ] && grep -q 'helper_missing' "$C_DIR/wm.out"
+  rec "(j) $m, host-mode.sh unloadable: write-marker refuses helper_missing" $? "rc=$a $(cat "$C_DIR/wm.out")"
+  fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$PUBLISH")"
+  is_deny; rec "(j) $m, host-mode.sh unloadable: an unmarked publish is denied" $? "rc=$LAST_RC out=$LAST_OUT"
+  replay
+done
+
+# =================================================================================================
+echo "== (k) mutation control: a resolver without the D1 ownership/symlink check fails leg (h) =="
+MUT2="$BASE/mutant-d1"
+mkdir -p "$MUT2"
+cp -R "$PLUGIN_ROOT/scripts" "$PLUGIN_ROOT/hooks" "$PLUGIN_ROOT/.claude-plugin" "$MUT2/" 2>/dev/null
+K_FILE="$MUT2/scripts/host-mode.sh"
+awk '{ print } /^_lw_private_dir\(\) \{$/ { print "  [ -d \"$1\" ]; return" }' "$PLUGIN_ROOT/scripts/host-mode.sh" > "$K_FILE.new" \
+  && mv -f "$K_FILE.new" "$K_FILE"
+if [ -s "$K_FILE" ] && ! cmp -s "$K_FILE" "$PLUGIN_ROOT/scripts/host-mode.sh" && bash -n "$K_FILE" 2>/dev/null; then
+  ok "(k) mutant host-mode.sh is non-empty, differs from the original and passes bash -n"
+  new_case "k-mutant" d1 seeded "$MUT2"
+  plant_root symlink
+  fire_one PreToolUse Task guard-arm.sh "$(p_tool PreToolUse Task "$(spawn_input)")"
+  s="$(find "$C_DIR/foreign" -name "$CC.json" 2>/dev/null)"
+  [ -n "$s" ]; rec "(k) against the mutant the marker lands in the foreign dir, so leg (h) would FAIL" $? "$(listing "$C_DIR/foreign" | tr '\n' ' ')"
+  replay
+else
+  no "(k) mutant gate failed (empty, identical, or bash -n error) — control is void"
 fi
 
 echo
