@@ -978,9 +978,11 @@ _lanes_meta_trail() {
 # _lanes_abandon_meta — lane-remove --abandon on a lane lane-status reads `gone` (its PR closed
 # unmerged), in lanes_remove's scope. The owner's abandon decision is recorded the way
 # `reconcile-status --apply` records an `# abandoned:` Queue row: every done heading of the lane's
-# requirement (Phase 4.5's closeout stamp for the unmerged PR) becomes `## Status:
-# done_with_escalation — ABANDONED (- [x] <item>  # abandoned: <reason>)` (appended when it has none),
-# and a `jobs/done/` brief pointing at that requirement moves to `jobs/failed/`. Then, in branch mode,
+# requirement becomes `## Status: done_with_escalation — ABANDONED (- [x] <item>  # abandoned:
+# <reason>)` (appended when it has none), and a `jobs/done/` brief pointing at that requirement moves
+# to `jobs/failed/`. (Before automate-followups/37, Phase 4.5 stamped the requirement done before any
+# merge; it no longer does, but an older requirement may still carry that stamp for the unmerged PR,
+# and this is what rewrites it.) Then, in branch mode,
 # the lane's metadata is pushed (_lanes_meta_extras + _lanes_meta_trail --reason abandoned), so the
 # lane is removable with no hand step and nothing pushed claims the unmerged work done.
 _lanes_abandon_meta() {

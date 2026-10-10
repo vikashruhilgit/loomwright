@@ -78,7 +78,19 @@ main_root="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //
 [ -n "$main_root" ] && [ -d "$main_root" ] || exit 0
 top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
 [ "$top" = "$main_root" ] || exit 0
-LOG_DIR="$main_root/.supervisor/logs"
+
+# Host mode (host-mode.sh — the one resolver): off keeps `$main_root/.supervisor`
+# byte-identical; on writes to the host's state dir or the per-user gate root
+# (D1), never the repo. A helper that fails to load is harmless when the switch
+# is off and a silent no-op when it is on.
+SUP_DIR="$main_root/.supervisor"
+if . "$(dirname "${BASH_SOURCE[0]:-$0}")/host-mode.sh" 2>/dev/null; then
+  SUP_DIR="$(lw_gate_state_dir_existing "$main_root")" || exit 0   # host: no gate dir yet, or unsafe: skip
+  lw_host_mode && umask 077
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
+LOG_DIR="$SUP_DIR/logs"
 
 CC_SESSION_ID="$(printf '%s' "$INPUT" | jq -r 'if (.session_id | type) == "string" then .session_id else empty end' 2>/dev/null || true)"
 [ -n "$CC_SESSION_ID" ] || exit 0

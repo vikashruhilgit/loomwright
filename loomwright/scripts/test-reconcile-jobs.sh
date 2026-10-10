@@ -293,24 +293,46 @@ out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
 [ -z "$out" ] && ok "10 empty in-progress ⇒ no porcelain rows" \
               || no "10 empty in-progress emitted rows: $out"
 
-# --- 11. Defect C: is_done vs what the completion tail stamps ---------------
+# --- 11. Defect C: is_done vs what the live writers stamp ------------------
 # The stamp fixtures are EXTRACTED FROM THE CONTRACT, never hand-typed. A
 # hand-typed copy of the format is exactly the drift this pair exists to catch:
-# it would keep passing after someone edited the skill back to a `- **Status:**`
-# bullet, which is the shape that shipped broken. Editing the skill must break
+# it would keep passing after someone edited a writer back to a `- **Status:**`
+# bullet, which is the shape that shipped broken. Editing a writer must break
 # this test — that is the whole point.
-SKILL="$SCRIPT_DIR/../skills/self-heal-advisory/SKILL.md"
+# The contract is the writers' own source text (automate-followups/37: Phase
+# 4.5's completion tail no longer stamps the requirement, so the skill carries
+# no stamp block to extract). Each writer's printf FORMAT is pulled out of the
+# script and EVALUATED with printf, so the fixture is the byte-exact block the
+# writer appends (one line with literal `\n` escapes — `grep -A1` cannot see it):
+#   * the post-merge `closeout` stamp (automate-trail.sh step 5) — `done`;
+#   * the owner-abandon heading (reconcile-status.sh, the shape trail-pr's
+#     evidence gate exempts) — `done_with_escalation — ABANDONED (…)`.
+TRAIL="$SCRIPT_DIR/automate-trail.sh"
+RSTAT="$SCRIPT_DIR/automate-helpers.d/reconcile-status.sh"
 d="$(mktmp)"
 n_stamps=0
-if [ -r "$SKILL" ]; then
-  while IFS= read -r heading; do
-    [ -n "$heading" ] || continue
-    n_stamps=$((n_stamps+1))
-    printf '# r\n\n<!-- loomwright:requirement-closeout -->\n%s\n- **Completed:** x\n' \
-      "$heading" > "$d/a-contract-$n_stamps.md"
-  done < <(grep -A1 -F '<!-- loomwright:requirement-closeout -->' "$SKILL" 2>/dev/null \
-             | grep -E '^[[:space:]]*## Status' | sed 's/^[[:space:]]*//' | sort -u)
+# _printf_fmt <file> <fixed-string prefix of the format> — the single-quoted
+# printf format on the first line carrying `printf '<prefix>`; empty if none.
+_printf_fmt() {
+  local l q="'"
+  l="$(grep -m1 -F "printf $q$2" "$1" 2>/dev/null)" || return 0
+  l="${l#*printf $q}"
+  printf '%s' "${l%%$q*}"
+}
+co_fmt="$(_printf_fmt "$TRAIL" '\n<!-- loomwright:requirement-closeout -->')"
+if [ -n "$co_fmt" ]; then
+  n_stamps=$((n_stamps+1))
+  # shellcheck disable=SC2059  # the format IS the extracted contract
+  { printf '# r\n'; printf "$co_fmt" 2026-01-01T00:00:00Z .supervisor/jobs/done/b.md https://x/pull/1; } \
+    > "$d/a-contract-$n_stamps.md"
 fi
+ab_fmt="$(_printf_fmt "$RSTAT" '\n## Status: done_with_escalation ')"
+case "$ab_fmt" in *ABANDONED*)
+  n_stamps=$((n_stamps+1))
+  # shellcheck disable=SC2059
+  { printf '# r\n'; printf "$ab_fmt" '- [x] .supervisor/requirements/r.md  # abandoned: owner'; } \
+    > "$d/a-contract-$n_stamps.md" ;;
+esac
 printf '# r\n\n## Status: done\n' > "$d/c-handwritten.md"
 printf '# r\n\n## Status: in-progress\n' > "$d/d-open.md"
 printf '# r\n\n## Status: donezo\n' > "$d/e-lookalike.md"
@@ -322,12 +344,18 @@ printf '# r\n\n## Status: brief-shipped\n' > "$d/f-brief-shipped.md"
 enq="$(bash "$HELPERS" resolve-folder "$d" 2>/dev/null | sed 's|.*/||' | tr '\n' ' ')"
 
 # (control) the extractor itself must have found something. Without this a
-# skill edit that removed the blocks entirely would leave 11a passing on zero
+# writer edit that moved or renamed a format would leave 11b passing on zero
 # fixtures — a gate satisfiable by finding nothing.
-if [ "$n_stamps" -ge 2 ]; then
-  ok "11a (control) extracted $n_stamps close-out stamps from the contract"
+# Each extracted fixture must also carry a `## Status:` heading line of its own,
+# so a format that extracted but lost its heading is not counted as found.
+n_heads=0
+for f in "$d"/a-contract-*.md; do
+  [ -f "$f" ] && grep -qE '^## Status:[[:space:]]*done' "$f" && n_heads=$((n_heads+1))
+done
+if [ "$n_stamps" -ge 2 ] && [ "$n_heads" -eq "$n_stamps" ]; then
+  ok "11a (control) extracted $n_stamps done-claim stamps from the live writers"
 else
-  no "11a extractor found $n_stamps stamps (expected >=2) — 11b would be vacuous"
+  no "11a extractor found $n_stamps stamps / $n_heads done headings (expected >=2, equal) — 11b would be vacuous"
 fi
 case "$enq" in *a-contract-*) no "11b a stamp the CONTRACT emits is still enqueueable" ;; *) ok "11b every stamp the contract emits is seen as done" ;; esac
 case "$enq" in *c-handwritten*)   no "11c handwritten '## Status: done' regressed" ;; *) ok "11c handwritten '## Status: done' still seen as done" ;; esac

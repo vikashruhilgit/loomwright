@@ -144,8 +144,23 @@ main_root="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //
 top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
 [ "$top" = "$main_root" ] || exit 0
 session_branch="$(git -C "$main_root" branch --show-current 2>/dev/null || true)"
-LOG_DIR="$main_root/.supervisor/logs"
-STATE_MD="$main_root/.supervisor/state.md"
+
+# ---- Host mode (host-mode.sh — the one resolver) ----------------------------
+# Off keeps `$main_root/.supervisor` byte-identical; on writes to the host's
+# state dir or the per-user gate root (D1), never the repo, and reads state.md
+# via lw_state_md_read (the repo seed decides which run is current). A helper
+# that fails to load is harmless when the switch is off and a silent no-op when
+# it is on. build-state.sh (invoked below) resolves through the same functions.
+SUP_DIR="$main_root/.supervisor"
+STATE_MD="$SUP_DIR/state.md"
+if . "$(dirname "${BASH_SOURCE[0]:-$0}")/host-mode.sh" 2>/dev/null; then
+  SUP_DIR="$(lw_gate_state_dir_existing "$main_root")" || exit 0   # host: no gate dir yet, or unsafe: skip
+  STATE_MD="$(lw_state_md_read "$main_root")"
+  lw_host_mode && umask 077
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
+LOG_DIR="$SUP_DIR/logs"
 
 # Prefer a real UTC ISO timestamp; omit ts entirely when date fails.
 UTC_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"

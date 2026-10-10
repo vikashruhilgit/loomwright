@@ -44,6 +44,16 @@
 #             general-purpose and turn-limit fixtures unsettled — otherwise the ended arm is vacuous.
 #   (m2)    — MUTATION CONTROL: deleting the `rejected` guard from a COPY of `terminal_for` must
 #             flip the rejected-only worker to settled — otherwise the guard is vacuous.
+#   expect-id — (agnostic-phase1/02) `--all --expect-id`: an expected id with no log / an empty log /
+#             only an agent_identity row reads unsettled; with a terminal row (and no identity row)
+#             settled; identity ids are still checked (union, deduped); no flag keeps the no-log and
+#             empty-log output byte-identical (`no_identity_rows`); `--expect-id` misuse ⇒ bad_args;
+#             seams — supervisor.md Point 5 passes `--expect-id`, and the two skill worker-spawn
+#             examples (§"Spawning a Worker", §"Worker Dispatch") use `loomwright:worker`, never
+#             `general-purpose` (scoped to those sections, so the fixer spawns elsewhere never trip it).
+#   (m4)    — MUTATION CONTROL: a COPY of the script that ignores `--expect-id` must turn the no-log
+#             expected-id case back into no_identity_rows (mutant gated on non-empty + differs +
+#             `bash -n`, else the control FAILS as inconclusive).
 #
 # EXPLICIT LIMIT: this pins the script's behaviour and the WIRING (the prompts cite it where they say
 # they do). It cannot prove an Execute Manager / Supervisor actually runs the Bash call at runtime.
@@ -62,12 +72,13 @@ CMD="$PLUGIN_ROOT/commands/supervisor.md"
 # children-settled join) lives in its split file.
 SCHEMAS="$PLUGIN_ROOT/docs/result-schemas/agent-lifecycle-jsonl.md"
 FAILDOC="$PLUGIN_ROOT/docs/FAILURE_ESCALATION.md"
+WFM="$PLUGIN_ROOT/skills/workflow-management/SKILL.md"
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
-for f in "$SCRIPT" "$EM" "$SUP" "$ASYNC" "$CMD" "$SCHEMAS" "$FAILDOC"; do
+for f in "$SCRIPT" "$EM" "$SUP" "$ASYNC" "$CMD" "$SCHEMAS" "$FAILDOC" "$WFM"; do
   [ -f "$f" ] || no "MISSING surface: $f"
 done
 if [ "$fail" -ne 0 ]; then
@@ -368,6 +379,96 @@ else
     ok "mutation control (ended): removing the ended arm turns both the general-purpose and turn-limit fixtures unsettled"
   else
     no "mutation control (ended): mutant still reads $(get "$m3a" .status) — the ended arm is vacuous"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# expect-id) agnostic-phase1/02 — `--all --expect-id <id>`: ids the caller KNOWS it
+#    spawned are checked by the same join even when no agent_identity row landed.
+# ---------------------------------------------------------------------------
+NIR='{"status":"no_identity_rows","unsettled_agent_ids":[],"ended_without_result_ids":[],"rejected_stop_ids":[],"source":"check-children-settled.sh"}'
+out="$(bash "$SCRIPT" --log "$NOLOG" --all --expect-id a1 2>/dev/null)"; rc=$?
+if [ "$rc" = 0 ] && grep -qF '"status":"unsettled"' <<<"$out" && grep -qF '"unsettled_agent_ids":["a1"]' <<<"$out"; then
+  ok "expect-id: no log + --expect-id a1 -> unsettled naming a1, exit 0"
+else
+  no "expect-id: no log + --expect-id a1 -> expected unsettled/[a1]/exit 0, got rc=$rc: $out"
+fi
+out="$(bash "$SCRIPT" --log "$NOLOG" --all 2>/dev/null)"
+[ "$out" = "$NIR" ] && ok "expect-id: no flag + no log -> byte-identical no_identity_rows" \
+  || no "expect-id: no flag + no log -> output changed: $out"
+out="$(bash "$SCRIPT" --log "$LOG3" --all 2>/dev/null)"
+[ "$out" = "$NIR" ] && ok "expect-id: no flag + empty log -> byte-identical no_identity_rows" \
+  || no "expect-id: no flag + empty log -> output changed: $out"
+out="$(bash "$SCRIPT" --log "$LOG3" --all --expect-id a1 2>/dev/null)"
+[ "$(get "$out" .status)" = "unsettled" ] && [ "$(get "$out" '.unsettled_agent_ids | join(",")')" = "a1" ] \
+  && ok "expect-id: empty log + --expect-id a1 -> unsettled naming a1 (never no_identity_rows)" \
+  || no "expect-id: empty log + --expect-id -> expected unsettled/[a1], got: $out"
+
+XLOG="$TMP/expect.jsonl"
+cat > "$XLOG" <<'JSONL'
+{"event":"agent_identity","agent_id":"exp-identity-only","agent_type":"loomwright:worker"}
+{"event":"subtask_complete","agent_id":"exp-terminal-no-identity","result_block_present":true}
+{"event":"agent_identity","agent_id":"other-identity-unsettled","agent_type":"loomwright:code-reviewer"}
+JSONL
+out="$(bash "$SCRIPT" --log "$XLOG" --all --expect-id exp-identity-only 2>/dev/null)"
+[ "$(get "$out" .status)" = "unsettled" ] \
+  && [ "$(get "$out" '.unsettled_agent_ids | sort | join(",")')" = "exp-identity-only,other-identity-unsettled" ] \
+  && ok "expect-id: an expected id with only an agent_identity row -> unsettled" \
+  || no "expect-id: identity-only expected id -> expected unsettled, got: $out"
+XLOG2="$TMP/expect-terminal-only.jsonl"
+grep '"exp-terminal-no-identity"' "$XLOG" > "$XLOG2"
+out="$(bash "$SCRIPT" --log "$XLOG2" --all --expect-id exp-terminal-no-identity 2>/dev/null)"
+[ "$(get "$out" .status)" = "settled" ] && [ "$(get "$out" '.unsettled_agent_ids | length')" = "0" ] \
+  && ok "expect-id: an expected id with a terminal row (and NO identity row) -> settled, never no_identity_rows" \
+  || no "expect-id: terminal-row expected id -> expected settled, got: $out"
+out="$(bash "$SCRIPT" --log "$XLOG" --all --expect-id exp-terminal-no-identity --expect-id=exp-terminal-no-identity 2>/dev/null)"
+[ "$(get "$out" .status)" = "unsettled" ] \
+  && [ "$(get "$out" '.unsettled_agent_ids | join(",")')" = "exp-identity-only,other-identity-unsettled" ] \
+  && ok "expect-id: identity ids are still checked (union with the deduped expected ids; the settled expected id is not named)" \
+  || no "expect-id: union -> expected [exp-identity-only,other-identity-unsettled], got: $out"
+out="$(bash "$SCRIPT" --log "$LOG2" --all --expect-id worker-only 2>/dev/null)"
+[ "$out" = "$(bash "$SCRIPT" --log "$LOG2" --all 2>/dev/null)" ] && [ "$(get "$out" .status)" = "settled" ] \
+  && ok "expect-id: an expected id that also has an identity row is checked once (output identical to the flagless run)" \
+  || no "expect-id: overlap with an identity id changed the verdict: $out"
+for bad in "--agent-id x --expect-id a1" "--all --expect-id" "--all --expect-id="; do
+  # word-splitting the argument list is the point here
+  # shellcheck disable=SC2086
+  out="$(bash "$SCRIPT" --log "$XLOG" $bad 2>/dev/null)"
+  [ "$(get "$out" .status)" = "unverifiable" ] && [ "$(get "$out" .reason)" = "bad_args" ] \
+    && ok "expect-id: [$bad] -> unverifiable/bad_args" \
+    || no "expect-id: [$bad] -> expected unverifiable/bad_args, got: $out"
+done
+grep -q -- "--expect-id" < <(sed -n '/^# Usage:/,/^# A "terminal row"/p' "$SCRIPT") \
+  && ok "expect-id: the script header's Usage / Output block documents --expect-id" \
+  || no "expect-id: the script header's Usage / Output block does not document --expect-id"
+
+# seams: FINALIZE Point 5 passes the expected ids; the two skill worker-spawn examples use the plugin worker
+grep -q -- "--expect-id" < <(grep -E '^ *\*\*Point 5 — children settled' "$SUP") \
+  && ok "seam: supervisor.md Point 5 passes --expect-id" \
+  || no "seam: supervisor.md Point 5 does not pass --expect-id"
+# section <file> <heading> — the lines from <heading> up to the next markdown heading
+section() { awk -v h="$2" '$0 == h {p=1; print; next} p && /^#+ / {exit} p' "$1"; }
+for spec in "$ASYNC|### Spawning a Worker" "$WFM|### Worker Dispatch"; do
+  f="${spec%%|*}"; h="${spec#*|}"; body="$(section "$f" "$h")"
+  if [ -n "$body" ] && grep -qF 'subagent_type: "loomwright:worker"' <<<"$body" \
+     && ! grep -qF 'subagent_type: "general-purpose"' <<<"$body"; then
+    ok "seam: ${f#"$PLUGIN_ROOT"/} §\"${h#\#\#\# }\" spawns loomwright:worker, not general-purpose"
+  else
+    no "seam: ${f#"$PLUGIN_ROOT"/} §\"${h#\#\#\# }\" missing, or its worker spawn is not loomwright:worker"
+  fi
+done
+
+# (m4) MUTATION CONTROL — a COPY that ignores --expect-id must lose the no-log verdict.
+MUT4="$TMP/mutant-expect.sh"
+sed 's/^\( *\)\*) expect_ids="\$expect_ids\$1\$NL" ;;$/\1*) : ;;/' "$SCRIPT" > "$MUT4"
+if [ ! -s "$MUT4" ] || cmp -s "$MUT4" "$SCRIPT" || ! bash -n "$MUT4" 2>/dev/null; then
+  no "mutation control (expect-id): mutant empty, identical to the script, or not valid bash — control inconclusive"
+else
+  m4="$(bash "$MUT4" --log "$NOLOG" --all --expect-id a1 2>/dev/null)"
+  if [ "$(get "$m4" .status)" != "unsettled" ]; then
+    ok "mutation control (expect-id): ignoring --expect-id turns the no-log case $(get "$m4" .status) — the flag is load-bearing"
+  else
+    no "mutation control (expect-id): mutant still reads unsettled — the no-log assertion does not exercise --expect-id"
   fi
 fi
 

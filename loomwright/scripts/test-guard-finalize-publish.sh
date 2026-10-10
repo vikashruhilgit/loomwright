@@ -26,6 +26,15 @@
 # redirect words (`>/dev/null`, `2>err.log`) never stand in for the subcommand, so `git 2>&1 push` /
 # `gh 2>&1 pr create` are denied while a real background `x & git push` still splits and
 # `git stash push 2>&1` stays allowed; two mutation controls (no AMP swap, no redirect tokenizing).
+# expect-id (agnostic-phase1/02): a worker id recorded under state.md's `## Worker Results` with no
+# terminal row -> writer refuses children_unsettled, no marker, even with no agent_identity row; its
+# terminal row -> settled; an explicit `--expect-id` arg is checked too; `--skip-children-check` works
+# in any position; an unknown argument refuses bad_args; a mutation control drops the recorded ids.
+# worker_results_unparsed (fix-now, owner decision): the heading, `agent_id:` bullet, `worker_id:`,
+# pipe-separated bold bullet and YAML-continuation shapes each yield their id; a table-only section
+# (and a table row carrying the key) refuses worker_results_unparsed, removing a stale marker and
+# writing none; an empty / `(empty)` section is unchanged; `--skip-children-check` still writes
+# `skipped`; a mutation control drops the refusal and watches the table-only case pass again.
 #
 # HARNESS RULE: never pipe a producer into the guard — the inert paths exit 0 without reading stdin,
 # so a piped `jq` can hit EPIPE and pipefail turns that race into a spurious rc 2/141; build the
@@ -162,6 +171,126 @@ write_marker "$RI"
   && ok "no identity rows -> marker children_check: no_identity_rows (never settled)" || no "no_identity_rows marker: rc=$WRC out=$WOUT"
 run_guard "$RI" "git push"; expect "guard accepts a no_identity_rows marker at HEAD" 0
 
+echo "== expect-id: recorded worker ids are checked even with no agent_identity row (agnostic-phase1/02) =="
+# record_worker <repo> <worker-id> — a `## Worker Results` entry as Context-Keeper's record_worker_result writes it
+record_worker() { printf '\n## Worker Results\n### %s (1)\n- files_modified: [a]\n- lines: +1 -0\n' "$2" >> "$1/.supervisor/state.md"; }
+REX="$(new_repo running)"; record_worker "$REX" "w-recorded"     # session_start only: no identity row, no terminal row
+write_marker "$REX"
+[ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q '"w-recorded"' <<<"$WOUT" \
+  && [ ! -e "$REX/.supervisor/logs/$PSID.finalize-gate" ] \
+  && ok "expect-id: a recorded worker id with no terminal row -> writer refuses children_unsettled naming it, no marker (never no_identity_rows)" \
+  || no "expect-id: recorded unsettled worker: rc=$WRC out=$WOUT"
+printf '{"event":"subtask_complete","agent_id":"w-recorded","result_block_present":true}\n' >> "$REX/.supervisor/logs/$PSID.jsonl"
+write_marker "$REX"
+[ "$WRC" = 0 ] && [ "$(jq -r .children_check "$REX/.supervisor/logs/$PSID.finalize-gate" 2>/dev/null)" = "settled" ] \
+  && ok "expect-id: the recorded worker's terminal row lands (still no identity row) -> marker settled" \
+  || no "expect-id: recorded settled worker: rc=$WRC out=$WOUT"
+WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker --expect-id w-explicit 2>/dev/null)"; WRC=$?
+[ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q '"w-explicit"' <<<"$WOUT" \
+  && ok "expect-id: an explicit --expect-id arg with no terminal row -> writer refuses children_unsettled" \
+  || no "expect-id: explicit --expect-id: rc=$WRC out=$WOUT"
+WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker --expect-id w-explicit --skip-children-check 2>/dev/null)"; WRC=$?
+[ "$WRC" = 0 ] && [ "$(jq -r .children_check "$RI/.supervisor/logs/$PSID.finalize-gate" 2>/dev/null)" = "skipped" ] \
+  && ok "expect-id: --skip-children-check after another flag still skips (any argument position)" \
+  || no "expect-id: skip in second position: rc=$WRC out=$WOUT"
+WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker --skip-children-chek 2>/dev/null)"; WRC=$?
+# the previous call left a valid `skipped` marker: a bad_args refusal must still remove it first
+[ "$WRC" = 1 ] && grep -q bad_args <<<"$WOUT" && [ ! -e "$RI/.supervisor/logs/$PSID.finalize-gate" ] \
+  && ok "expect-id: an unknown write-marker argument (a misspelt flag) refuses bad_args AND removes the stale marker" \
+  || no "expect-id: unknown arg: rc=$WRC out=$WOUT"
+WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker --skip-children-check 2>/dev/null)"; WRC=$?
+[ "$WRC" = 0 ] && [ -f "$RI/.supervisor/logs/$PSID.finalize-gate" ] || no "fixture: re-seed skipped marker: rc=$WRC out=$WOUT"
+WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker --expect-id 2>/dev/null)"; WRC=$?
+[ "$WRC" = 1 ] && grep -q bad_args <<<"$WOUT" && [ ! -e "$RI/.supervisor/logs/$PSID.finalize-gate" ] \
+  && ok "expect-id: a trailing --expect-id with no value refuses bad_args AND removes the stale marker" \
+  || no "expect-id: valueless --expect-id: rc=$WRC out=$WOUT"
+
+echo "== expect-id: a labelled Worker Results heading yields the id, not the label =="
+# heading text after `### ` (record_worker appends ` (1)`) | the id the writer must name
+LABEL_CASES=(
+  "Worker w-lab1|w-lab1"
+  "worker: w-lab2|w-lab2"
+  "AGENT w-lab3|w-lab3"
+  "agent:w-lab4|w-lab4"
+  "**Worker** \`w-lab5\`|w-lab5"
+  "w-plain|w-plain"
+  "Worker|Worker"
+)
+for lc in "${LABEL_CASES[@]}"; do
+  head_txt="${lc%|*}"; want="${lc##*|}"
+  RLB="$(new_repo running)"; record_worker "$RLB" "$head_txt"
+  write_marker "$RLB"
+  if [ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q "\"$want\"" <<<"$WOUT" \
+     && { [ "$want" = Worker ] || ! grep -q '"Worker"\|"worker:"\|"AGENT"\|"agent:' <<<"$WOUT"; }; then
+    ok "labelled heading '### $head_txt (1)' -> expected id $want"
+  else
+    no "labelled heading '### $head_txt (1)': rc=$WRC out=$WOUT"
+  fi
+done
+
+echo "== worker_results_unparsed: real-run Worker Results shapes (read or refused, never silently empty) =="
+# record_section <repo> <body> — a `## Worker Results` section with a verbatim body, then a following section
+record_section() { printf '\n## Worker Results\n%s\n\n## Error Log\n| # | Phase | Error |\n' "$2" >> "$1/.supervisor/state.md"; }
+TABLE_SECTION='| Worker | Subtask | Status |
+| ac5cbd23 | 2 | completed |'
+# label | section body | id the writer must name in children_unsettled (no terminal row exists for it)
+SHAPE_CASES=(
+  "heading form (unchanged)|### w-head (1)
+- files_modified: [a]|w-head"
+  "agent_id: bullet|- agent_id: w-bullet
+  - status: completed|w-bullet"
+  "worker_id: bullet|- Worker_ID: \`w-wid\`|w-wid"
+  "pipe-separated bold bullet|- **subtask: 1** | agent_id: w-pipe | status: completed | files: 10|w-pipe"
+  "YAML-style continuation key|- subtask: 1
+  agent_id: w-yaml
+  status: completed|w-yaml"
+)
+for sc in "${SHAPE_CASES[@]}"; do
+  label="${sc%%|*}"; rest="${sc#*|}"; want="${rest##*|}"; body="${rest%|*}"
+  RSH="$(new_repo running)"; record_section "$RSH" "$body"
+  write_marker "$RSH"
+  if [ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q "\"$want\"" <<<"$WOUT" \
+     && [ ! -e "$RSH/.supervisor/logs/$PSID.finalize-gate" ]; then
+    ok "shape: $label -> expected id $want read (children_unsettled, no marker)"
+  else
+    no "shape: $label: rc=$WRC out=$WOUT"
+  fi
+done
+# a key glued to a preceding word is not the key (parent_agent_id:) — the section then has no id
+RPG="$(new_repo running)"; record_section "$RPG" "- parent_agent_id: w-parent"
+write_marker "$RPG"
+[ "$WRC" = 1 ] && grep -q worker_results_unparsed <<<"$WOUT" && ! grep -q w-parent <<<"$WOUT" \
+  && ok "shape: parent_agent_id: is not read as agent_id: (section refused worker_results_unparsed)" \
+  || no "shape: parent_agent_id: rc=$WRC out=$WOUT"
+# table-only section: zero ids from non-empty content -> refused, stale marker removed first, no marker
+RTB="$(new_repo running)"; record_section "$RTB" "$TABLE_SECTION"
+write_marker "$RTB" --skip-children-check     # seed a valid stale marker the refusal must remove
+[ "$WRC" = 0 ] && [ -f "$RTB/.supervisor/logs/$PSID.finalize-gate" ] || no "fixture: seed skipped marker: rc=$WRC out=$WOUT"
+write_marker "$RTB"
+[ "$WRC" = 1 ] && [ "$(jq -r '.status + ":" + .reason' <<<"$WOUT" 2>/dev/null)" = "refused:worker_results_unparsed" ] \
+  && [ ! -e "$RTB/.supervisor/logs/$PSID.finalize-gate" ] \
+  && ok "table-only Worker Results section -> refused worker_results_unparsed, stale marker removed, no marker written" \
+  || no "table-only section: rc=$WRC out=$WOUT"
+# a table row carrying the key form is still a table row (not parsed)
+RTK="$(new_repo running)"; record_section "$RTK" "| agent_id: w-cell | 1 | completed |"
+write_marker "$RTK"
+[ "$WRC" = 1 ] && grep -q worker_results_unparsed <<<"$WOUT" \
+  && ok "a table row carrying agent_id: is not parsed -> refused worker_results_unparsed" \
+  || no "table row with key: rc=$WRC out=$WOUT"
+# the escape hatch still works on an unparsed section
+write_marker "$RTB" --skip-children-check
+[ "$WRC" = 0 ] && [ "$(jq -r .children_check "$RTB/.supervisor/logs/$PSID.finalize-gate" 2>/dev/null)" = "skipped" ] \
+  && ok "--skip-children-check on an unparsed section -> marker children_check: skipped" \
+  || no "skip on unparsed section: rc=$WRC out=$WOUT"
+# empty / placeholder-only sections keep today's behaviour (no expected ids -> no_identity_rows)
+for eb in "(empty)" "_(empty)_" "" "   "; do
+  REM="$(new_repo running)"; record_section "$REM" "$eb"
+  write_marker "$REM"
+  [ "$WRC" = 0 ] && [ "$(jq -r .children_check "$REM/.supervisor/logs/$PSID.finalize-gate" 2>/dev/null)" = "no_identity_rows" ] \
+    && ok "Worker Results section body '$eb' -> unchanged (marker no_identity_rows)" \
+    || no "empty section '$eb': rc=$WRC out=$WOUT"
+done
+
 echo "== F3: .supervisor/ is found from a linked worktree; detached sibling + bold state.md =="
 RW="$(new_repo running)"; WT="$TMP/wt-linked.$$"; SIB="$TMP/wt-sibling.$$"
 ( cd "$RW" && git checkout -qb other && git worktree add -q "$WT" "$BR" && git worktree add -q --detach "$SIB" HEAD ) >/dev/null 2>&1
@@ -274,6 +403,22 @@ WRC="$(cd "$RML" && CLAUDE_PROJECT_DIR="$RML" "$REALBASH" "$MUTF" write-marker >
 [ "$MUTOK" = 1 ] && [ "$WRC" = 0 ] && [ -f "$RML/.supervisor/logs/$PSID.finalize-gate" ] \
   && ok "mutation (F2): without the log check a missing log writes a marker — the case is load-bearing" \
   || no "mutation (F2): inconclusive (changed=$MUTOK rc=$WRC)"
+# expect-id: stop feeding the recorded worker ids -> a recorded unsettled worker writes no_identity_rows again
+mutant m-expect 's/^\$worker_ids$//'
+RMX="$(new_repo running)"; record_worker "$RMX" "w-recorded"
+WRC="$(cd "$RMX" && CLAUDE_PROJECT_DIR="$RMX" "$REALBASH" "$MUTF" write-marker >/dev/null 2>&1; echo $?)"
+[ "$MUTOK" = 1 ] && [ -s "$MUTF" ] && bash -n "$MUTF" 2>/dev/null && [ "$WRC" = 0 ] \
+  && [ "$(jq -r .children_check "$RMX/.supervisor/logs/$PSID.finalize-gate" 2>/dev/null)" = "no_identity_rows" ] \
+  && ok "mutation (expect-id): without the recorded ids the unsettled worker passes as no_identity_rows — the wiring is load-bearing" \
+  || no "mutation (expect-id): inconclusive (changed=$MUTOK rc=$WRC)"
+# worker_results_unparsed: drop the zero-ids refusal -> the table-only section passes as no_identity_rows again
+mutant m-unparsed '/|| refuse "worker_results_unparsed"/d'
+RMU="$(new_repo running)"; record_section "$RMU" "$TABLE_SECTION"
+WRC="$(cd "$RMU" && CLAUDE_PROJECT_DIR="$RMU" "$REALBASH" "$MUTF" write-marker >/dev/null 2>&1; echo $?)"
+[ "$MUTOK" = 1 ] && [ -s "$MUTF" ] && bash -n "$MUTF" 2>/dev/null && [ "$WRC" = 0 ] \
+  && [ "$(jq -r .children_check "$RMU/.supervisor/logs/$PSID.finalize-gate" 2>/dev/null)" = "no_identity_rows" ] \
+  && ok "mutation (unparsed): without the refusal a table-only Worker Results section passes as no_identity_rows — the refusal is load-bearing" \
+  || no "mutation (unparsed): inconclusive (changed=$MUTOK rc=$WRC)"
 # F3a: resolve .supervisor/ from the project dir only -> the linked worktree reads inert
 mutant m-f3a 's/ROOT="\$(loom_main_root "\$PROJ" 2>\/dev\/null)"/ROOT=""/'
 RML2="$(new_repo running)"; WT2="$TMP/wt-linked2.$$"

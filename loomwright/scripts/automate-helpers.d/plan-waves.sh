@@ -23,7 +23,9 @@
 # Every comparison (plan-set membership, Queue lookup, cycles) uses the PHYSICAL absolute path.
 # A dependency outside the plan set must be merged-done: a plain `- [x]` Queue row (run-file
 # input) or a done `## Status:` line on ANY heading (is_done) — an ABANDONED stamp, and a
-# `# skipped:` / `# abandoned:` Queue row mark, win over a done stamp (Phase 4.5 stamps before merge).
+# `# skipped:` / `# abandoned:` Queue row mark, win over a done stamp (historically Phase 4.5
+# stamped before merge; a legacy/hand-edited stamp can still predate a PR's merge —
+# automate-followups/37).
 # Companion expansion: <root>/.agent/companions.json (strict shape, read with jq) adds paths to
 # an item's Touches set — ONE pass, added paths are not re-expanded; `when` is an unquoted,
 # case-sensitive bash `case` pattern for a FILE entry (a `"new": true` rule only when the file is

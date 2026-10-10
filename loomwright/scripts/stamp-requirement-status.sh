@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # stamp-requirement-status.sh — mechanically close out source requirements whose job landed.
 #
-# WHY THIS EXISTS (measured, not hypothetical). Supervisor's Phase 4.5 completion tail is
-# SUPPOSED to stamp `## Status: done` on the originating requirement file in Beads-absent mode.
+# WHY THIS EXISTS (measured, not hypothetical). Supervisor's Phase 4.5 completion tail WAS
+# supposed to stamp `## Status: done` on the originating requirement file in Beads-absent mode
+# (it no longer does: since automate-followups/37 only the post-merge `closeout` stamps done).
 # Measured 2026-08-03 across `.supervisor/requirements/final-state/`: only 2 of 6 shipped
 # requirements carried the stamp (01 and 03 stamped; 02, 04, 05, 08 shipped unstamped). That is
 # the same failure mode this repo already measured for `phase_transition` events (560 hook-written
@@ -33,7 +34,7 @@
 #   - RECORDS WHAT IT CAN PROVE: stamps `## Status: brief-shipped`, never `done`. A landed job
 #     proves the work ran, not that every acceptance criterion was met (see the append site).
 #   - IDEMPOTENT: a requirement already carrying a `## Status` heading is left untouched, so
-#     re-running (or running alongside a completion tail that DID fire) never double-stamps.
+#     re-running (or running after a `closeout` / `reconcile-status` stamp) never double-stamps.
 #     Because that guard is check-then-append, concurrent runs are additionally serialized by an
 #     `mkdir` lock (see MUTUAL EXCLUSION below) — the two seams above can genuinely overlap.
 #   - FAIL-SAFE: ALWAYS exits 0. This is a runtime side-effect emitter, not a correctness gate —
@@ -99,6 +100,16 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+# Host mode (host-mode.sh — the one resolver, a plain sibling like brief-pointer.sh): the
+# requirement append below is a repo CONTENT mutation, and the `mkdir` lock lives in the repo too,
+# so under LOOMWRIGHT_HOST_MODE=1 nothing is stamped — skipped, never redirected. Off mode does
+# not depend on the helper loading; a helper that fails to load with the switch on also skips.
+if . "$_bp_dir/host-mode.sh" 2>/dev/null; then
+  if lw_host_mode; then say "host mode — requirement files are repo content; nothing stamped"; exit 0; fi
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+  exit 0
+fi
 
 if [ -z "$ROOT" ]; then
   ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"

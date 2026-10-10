@@ -7,8 +7,10 @@
 #                                                  hooks.json leaf carries NO `|| true` (CLAUDE.md
 #                                                  §"Plugin Hooks"; the second fail-CLOSED command
 #                                                  hook after guard-test-integrity.sh).
-#   guard-finalize-publish.sh write-marker [--skip-children-check]
+#   guard-finalize-publish.sh write-marker [--skip-children-check] [--expect-id <id>]...
 #                                                  The ONLY writer of the finalize-gate marker.
+#                                                  Flags in any order; an unknown one refuses
+#                                                  (`bad_args`).
 #
 # WHY: FINALIZE point 5 (the children-settled check) was a numbered prose step, and a lane ran it
 # AFTER pushing and opening its PR — nothing refused that. Now a Supervisor run cannot `git push` /
@@ -24,6 +26,14 @@
 # evidence of settlement), or when `--skip-children-check` is given (recorded as `skipped`). It
 # refuses (`session_log_missing`) when the session log is absent or unreadable: the check reports
 # that as `no_identity_rows` for its own fail-SAFE callers, and a gate must not consume it as a pass.
+# EXPECTED IDS (agnostic-phase1/02): the check is run with one `--expect-id` per worker id this run
+# recorded — the `### {worker-id} ({subtask-id})` headings and `agent_id:` / `worker_id:` keys under
+# state.md's `## Worker Results` (read_worker_result_ids) plus any explicit `--expect-id <id>`
+# argument — so a recorded worker with no terminal row refuses `children_unsettled` even when its
+# agent_identity row never landed, instead of recording `no_identity_rows`. A `## Worker Results`
+# section with content but no readable id (a table, prose) refuses `worker_results_unparsed` (fail
+# CLOSED; `--skip-children-check` is the escape). No section / an empty one and no argument ⇒ the
+# check runs exactly as before.
 # Any other outcome (unsettled / unverifiable / no active session / no HEAD) writes nothing and
 # exits 1. HEAD moving after the marker invalidates it: re-run write-marker before every publish
 # (Phase 4.5 heal pushes included) — it re-checks the children each time.
@@ -32,6 +42,20 @@
 # anchoring build-state.sh and the emitters use, sourced), so a session whose project dir is a LINKED
 # worktree still sees the run. HEAD and the current branch are read from the project dir
 # (`${CLAUDE_PROJECT_DIR:-$PWD}`) — the checkout the publish runs from.
+#
+# HOST MODE (`LOOMWRIGHT_HOST_MODE=1`, host-mode.sh — sourced, the one resolver): the marker and the
+# session log (+ its `.owner`) live in the gate dir's logs/ (host-mode.sh), never the repo; state.md is
+# READ via `lw_state_md_read`. The run is LIVE on the UNION (read_live_session): the repo state.md
+# (the agent-written seed) OR the gate-dir copy reads running|checkpoint; the session id and branch
+# come from the copy that reads live (lw_state_md_read's file when both do). A missing or stale
+# gate-dir copy never makes the gate allow. Off: the paths above, unchanged. host-mode.sh failing
+# to load with the switch ON denies every publish (`guard_unavailable`) and write-marker refuses
+# `helper_missing` — the marker dir is unknowable;
+# likewise an unresolvable gate dir (an unsafe/unwritable per-user D1 root, host-mode.sh header)
+# denies every publish and write-marker refuses `gate_dir_unresolvable`. PRESENCE GATE: the guard
+# path resolves through `lw_gate_state_dir_existing` (never creates); only write-marker, a gate
+# writer, may create the per-user D1 root. An ABSENT gate dir has no marker, so a live repo seed is
+# denied exactly as with an empty gate dir, and a non-live one is allowed at (ii).
 #
 # GUARD EVALUATION ORDER (cheap-first; no jq and no fork on the inert path):
 #   (i)   raw payload contains neither `push` nor `create`         -> allow
@@ -99,17 +123,48 @@ NL='
 HELPER_OK=0
 # shellcheck source=loom-log-owner.sh
 . "$HERE/loom-log-owner.sh" 2>/dev/null && HELPER_OK=1
+# Host mode (header): HOST_ON is the switch; HOST_HELPER_OK says the resolver loaded.
+HOST_HELPER_OK=0; HOST_ON=0
+# shellcheck source=host-mode.sh
+. "$HERE/host-mode.sh" 2>/dev/null && HOST_HELPER_OK=1
+if [ "$HOST_HELPER_OK" = 1 ]; then lw_host_mode && HOST_ON=1
+elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then HOST_ON=1; fi
 
 # ---- shared: where `.supervisor/` lives -----------------------------------------------------------
 # The MAIN worktree, resolved by loom_main_root — the same place build-state.sh and the emitters write
 # it — so a session whose project dir is a LINKED worktree still finds the run's state.md. Falls back
 # to the project dir when unresolvable (not a git repo, helper missing).
-ROOT=""; STATE_MD=""; LOG_DIR=""
+ROOT=""; STATE_MD=""; LOG_DIR=""; REPO_STATE_MD=""; GATE_STATE_MD=""; GATE_UNRESOLVED=0; GATE_ABSENT=0
+# resolve_root [create] — `create` only from write-marker (a gate WRITER: lw_gate_state_dir may create
+# the per-user D1 root); the guard path passes nothing and resolves through the non-creating
+# lw_gate_state_dir_existing, where an ABSENT gate dir (no run has created gate state yet) leaves
+# GATE_ABSENT=1: no marker can exist, so a live repo seed is still denied (never allowed).
 resolve_root() {
+  local _rc=0
   [ "$HELPER_OK" = 1 ] && ROOT="$(loom_main_root "$PROJ" 2>/dev/null)"
   [ -n "$ROOT" ] || ROOT="$PROJ"
   STATE_MD="$ROOT/.supervisor/state.md"
   LOG_DIR="$ROOT/.supervisor/logs"
+  REPO_STATE_MD="$STATE_MD"; GATE_STATE_MD="$STATE_MD"
+  # host mode only: the writers' own resolver (host-mode.sh). Off it would reprint the two paths
+  # above, so it is skipped — no forks on the cheap-first guard path.
+  if [ "$HOST_HELPER_OK" = 1 ] && [ "$HOST_ON" = 1 ]; then
+    if [ "${1:-}" = create ]; then
+      LOG_DIR="$(lw_gate_state_dir "$ROOT")" || _rc=$?
+    else
+      LOG_DIR="$(lw_gate_state_dir_existing "$ROOT")" || _rc=$?
+    fi
+    if [ "$_rc" = 0 ]; then
+      LOG_DIR="$LOG_DIR/logs"; GATE_STATE_MD="${LOG_DIR%/logs}/state.md"
+      STATE_MD="$(lw_state_md_read "$ROOT")"
+    elif [ "$_rc" = 2 ]; then
+      # no gate dir yet: only the repo seed can say "live"; there is no marker and no session log
+      LOG_DIR=""; GATE_ABSENT=1; STATE_MD="$REPO_STATE_MD"
+    else
+      # host mode only: unsafe/unwritable per-user D1 root — the marker dir is unknowable
+      LOG_DIR=""; GATE_UNRESOLVED=1
+    fi
+  fi
 }
 
 # ---- shared: the `## Session` block of state.md (no jq) ------------------------------------------
@@ -152,21 +207,156 @@ read_session_block() {
   return 1
 }
 
+# ---- write-marker: the worker ids this run recorded (no jq) --------------------------------------
+# `## Worker Results` is written by an LLM (Context-Keeper's `record_worker_result`), so its shape
+# varies between runs. Two shapes are READ; every other non-empty shape is REFUSED by write-marker
+# (`worker_results_unparsed`), never read as "no workers" — that would silently restore the
+# `no_identity_rows` pass for a run that did spawn workers.
+#
+# One id per line, from either form (both may appear; duplicates are deduped by the join):
+#  (1) HEADING — the first word of every `### {worker-id} ({subtask-id})` heading, the template form;
+#      {worker-id} is the worker's Task-returned agent id (the same id the per-subtask `--agent-id`
+#      gates join on). `**` / backticks / CR are stripped. A leading LABEL word is tolerated
+#      (case-insensitive `worker` / `agent`, optionally followed by `:`, spaced or glued —
+#      `### Worker agent-xxx (1)`, `### worker: a0fef8ff (1)`, `### agent:a0fef8ff`): the id is the
+#      word after it. Fail direction kept: a label with no id word after it (`### Worker (1)`) and any
+#      other unrecognised heading still yields its FIRST word — a recorded heading is never silently
+#      dropped (an unmatched expected id refuses; it never passes).
+#  (2) KEY — an `agent_id: <id>` or `worker_id: <id>` key (case-insensitive) on any non-table line:
+#      a bullet (`- agent_id: a1b2`), a YAML-style continuation line (`  agent_id: a1b2` under
+#      `- subtask: 1`), or a pipe-separated bullet (`- **subtask: 1** | agent_id: a1b2 | status: …`).
+#      `*` / backticks / quotes / CR are stripped; the key must not be glued to a preceding word
+#      character (`parent_agent_id:` is not read); the id ends at whitespace, `|`, `,` or `;`.
+# NOT read (deliberately — a parser for every free shape is a parser nobody can review): table rows
+# (a line whose first non-blank character is `|`), free prose, and any other key. No section prints
+# nothing; worker_results_has_content says whether a section with zero ids must be refused.
+read_worker_result_ids() {
+  local f="${LIVE_STATE_MD:-$STATE_MD}"
+  [ -f "$f" ] || return 0
+  local line in_block=0 tok rest nxt kl
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "## Worker Results"*) in_block=1; continue ;;
+      "## "*) [ "$in_block" = 1 ] && break; continue ;;
+    esac
+    [ "$in_block" = 1 ] || continue
+    case "$line" in
+      "### "*) ;;
+      *)
+        # (2) KEY form. A table row is never read (its first non-blank character is `|`).
+        kl="$(printf '%s' "$line" | tr -d "\`*\"'\r")"
+        kl="${kl#"${kl%%[![:space:]]*}"}"
+        case "$kl" in "|"*) continue ;; esac
+        kl=" $kl"   # so a key at line start is preceded by a non-word character too
+        case "$kl" in
+          *[!A-Za-z0-9_][Aa][Gg][Ee][Nn][Tt]_[Ii][Dd]:*) rest="${kl#*[!A-Za-z0-9_][Aa][Gg][Ee][Nn][Tt]_[Ii][Dd]:}" ;;
+          *[!A-Za-z0-9_][Ww][Oo][Rr][Kk][Ee][Rr]_[Ii][Dd]:*) rest="${kl#*[!A-Za-z0-9_][Ww][Oo][Rr][Kk][Ee][Rr]_[Ii][Dd]:}" ;;
+          *) continue ;;
+        esac
+        rest="${rest#"${rest%%[![:space:]]*}"}"
+        tok="${rest%%[[:space:]|,;]*}"
+        [ -n "$tok" ] && printf '%s\n' "$tok"
+        continue ;;
+    esac
+    case "$line" in
+      "### "*)
+        rest="$(printf '%s' "${line#\#\#\# }" | tr -d '`*\r')"
+        rest="${rest#"${rest%%[![:space:]]*}"}"
+        tok="${rest%%[[:space:]]*}"
+        case "$tok" in
+          [Ww][Oo][Rr][Kk][Ee][Rr]|[Ww][Oo][Rr][Kk][Ee][Rr]:|[Aa][Gg][Ee][Nn][Tt]|[Aa][Gg][Ee][Nn][Tt]:)
+            nxt="${rest#"$tok"}"
+            nxt="${nxt#"${nxt%%[![:space:]]*}"}"
+            nxt="${nxt%%[[:space:]]*}"
+            case "$nxt" in ""|"("*) ;; *) tok="$nxt" ;; esac ;;
+          [Ww][Oo][Rr][Kk][Ee][Rr]:?*|[Aa][Gg][Ee][Nn][Tt]:?*) tok="${tok#*:}" ;;
+        esac
+        [ -n "$tok" ] && printf '%s\n' "$tok" ;;
+    esac
+  done < "$f"
+  return 0
+}
+
+# worker_results_has_content — exit 0 when state.md has a `## Worker Results` section carrying any
+# line other than blanks and an `(empty)` / `(none)` placeholder (`*` / `_` / backticks stripped, case
+# ignored); exit 1 otherwise (no file, no section, or an empty one). write-marker pairs it with a zero
+# id count: content that yields no id is a shape this script cannot read, and is refused.
+worker_results_has_content() {
+  local f="${LIVE_STATE_MD:-$STATE_MD}"
+  [ -f "$f" ] || return 1
+  local line in_block=0 t
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "## Worker Results"*) in_block=1; continue ;;
+      "## "*) [ "$in_block" = 1 ] && break; continue ;;
+    esac
+    [ "$in_block" = 1 ] || continue
+    t="$(printf '%s' "$line" | tr -d '[:space:]*_`' | tr '[:upper:]' '[:lower:]')"
+    case "$t" in ""|"(empty)"|"(none)") ;; *) return 0 ;; esac
+  done < "$f"
+  return 1
+}
+
+# read_live_session — read_session_block on $STATE_MD, plus host mode's UNION (header): when that file
+# is not live but the OTHER copy (repo seed vs gate-dir projection) is, the run is still LIVE, and the
+# session id AND branch are the LIVE copy's — never the non-live file's. A finished prior run's branch
+# must not scope the live run out of the gate (step (v) would allow a push from the live run's own
+# branch), and its id must not key the marker or the session-log join. write-marker and the guard both
+# call this, so the marker key matches on both sides. $STATE_MD is left on lw_state_md_read's file
+# either way; LIVE_STATE_MD names the copy that proved live (empty when neither did), and the
+# `## Worker Results` readers above read THAT copy — the expected worker ids belong to the live run,
+# never to a finished seed (wave/w1 integration of #445 x #450). Off: exactly read_session_block.
+LIVE_STATE_MD=""
+read_live_session() {
+  local keep="$STATE_MD" other rc
+  SESSION_ID=""; SESSION_STATUS=""; SESSION_BRANCH=""; LIVE_STATE_MD=""
+  if read_session_block; then LIVE_STATE_MD="$STATE_MD"; return 0; fi
+  [ "$HOST_ON" = 1 ] || return 1
+  other="$GATE_STATE_MD"; [ "$keep" = "$GATE_STATE_MD" ] && other="$REPO_STATE_MD"
+  [ "$other" != "$keep" ] || return 1
+  STATE_MD="$other"; SESSION_ID=""; SESSION_STATUS=""; SESSION_BRANCH=""
+  read_session_block; rc=$?
+  [ "$rc" = 0 ] && LIVE_STATE_MD="$other"
+  STATE_MD="$keep"
+  return "$rc"
+}
+
 # ======================================================================================
 # write-marker mode
 # ======================================================================================
 if [ "${1:-}" = "write-marker" ]; then
-  skip=0
-  [ "${2:-}" = "--skip-children-check" ] && skip=1
   refuse() { printf '{"status":"refused","reason":"%s"}\n' "$1"; exit 1; }
+  shift
+  skip=0; bad_args=0
+  EXPECT_ARGS=()   # explicit `--expect-id <id>` args, forwarded verbatim to the join
+  # Flags in any order. An unknown argument refuses (`bad_args`) rather than being ignored: a
+  # misspelt `--expect-id` silently dropped would pass the check on less evidence than asked for.
+  # The refusal is only RECORDED here and issued after the stale marker is removed below, so a
+  # refused call never leaves an earlier run's marker in place.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --skip-children-check) skip=1; shift ;;
+      --expect-id)
+        if [ $# -ge 2 ] && [ -n "$2" ]; then
+          EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="$2"; shift 2
+        else
+          bad_args=1; break
+        fi ;;
+      --expect-id=?*) EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="${1#--expect-id=}"; shift ;;
+      *) bad_args=1; break ;;
+    esac
+  done
   command -v jq >/dev/null 2>&1 || refuse "jq_missing"
   [ "$HELPER_OK" = 1 ] || refuse "helper_missing"
-  resolve_root
-  read_session_block || refuse "no_active_session"
+  [ "$HOST_ON" = 1 ] && [ "$HOST_HELPER_OK" != 1 ] && refuse "helper_missing"
+  resolve_root create
+  [ "$GATE_UNRESOLVED" = 1 ] && refuse "gate_dir_unresolvable"
+  read_live_session || refuse "no_active_session"
   MARKER="$LOG_DIR/$SESSION_ID.finalize-gate"
   SESSION_LOG="$LOG_DIR/$SESSION_ID.jsonl"
   rm -f "$MARKER" 2>/dev/null
   [ -e "$MARKER" ] && refuse "stale_marker_unremovable"
+  [ "$bad_args" = 1 ] && refuse "bad_args"
   # HEAD of the session's OWN checkout (the one the publish runs from), not the main worktree's.
   head_sha="$(git -C "$PROJ" rev-parse HEAD 2>/dev/null)"
   [ -n "$head_sha" ] || refuse "no_head"
@@ -176,7 +366,29 @@ if [ "${1:-}" = "write-marker" ]; then
     # check-children-settled.sh reads a missing/unreadable log as `no_identity_rows` (fail-SAFE for
     # its own callers). A gate must not consume that as a pass: no log is no evidence at all.
     [ -f "$SESSION_LOG" ] && [ -r "$SESSION_LOG" ] || refuse "session_log_missing"
-    res="$(bash "$HERE/check-children-settled.sh" --log "$SESSION_LOG" --all 2>/dev/null)"
+    # The ids this run spawned and recorded (`## Worker Results` headings / agent_id: keys) are
+    # EXPECTED: each must have a terminal row even when its agent_identity row never landed. No
+    # section, or an empty one => no --expect-id => the join runs exactly as before. A section with
+    # content but ZERO readable ids is refused (fail CLOSED): reading it as "no workers" would let a
+    # run that spawned workers pass as no_identity_rows. Escape: --skip-children-check, after checking.
+    worker_ids="$(read_worker_result_ids)"
+    [ -n "$worker_ids" ] || ! worker_results_has_content || refuse "worker_results_unparsed"
+    while IFS= read -r wid; do
+      [ -n "$wid" ] || continue
+      EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="$wid"
+    done <<EOF
+$worker_ids
+EOF
+    # `${arr[@]+…}`: an empty array under `set -u` is an unbound-variable error on bash 3.2
+    # Host mode runs it from $PROJ: the checker anchors its gate dir on the cwd's repo, which must be
+    # the session repo resolve_root anchored on (never wherever the caller's shell happens to be).
+    # $HERE may be relative, so the checker's path is made absolute BEFORE the cd. Off: unchanged.
+    if [ "$HOST_ON" = 1 ]; then
+      ccs="$(cd "$HERE" 2>/dev/null && pwd)/check-children-settled.sh"
+      res="$(cd "$PROJ" 2>/dev/null && bash "$ccs" --log "$SESSION_LOG" --all ${EXPECT_ARGS[@]+"${EXPECT_ARGS[@]}"} 2>/dev/null)"
+    else
+      res="$(bash "$HERE/check-children-settled.sh" --log "$SESSION_LOG" --all ${EXPECT_ARGS[@]+"${EXPECT_ARGS[@]}"} 2>/dev/null)"
+    fi
     children_status="$(printf '%s' "$res" | jq -r '.status // empty' 2>/dev/null)"
     case "$children_status" in
       # recorded verbatim — `no_identity_rows` is a pass, never `settled` (async-orchestration point 5)
@@ -188,6 +400,7 @@ if [ "${1:-}" = "write-marker" ]; then
     esac
   fi
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+  [ "$HOST_ON" = 1 ] && umask 077
   mkdir -p "$LOG_DIR" 2>/dev/null || refuse "log_dir_unwritable"
   body="$(jq -n -c --arg c "$check" --arg cs "$children_status" --arg h "$head_sha" --arg t "$ts" \
     '{children_check: $c, children_status: $cs, head_sha: $h, ts: $t}')"
@@ -220,9 +433,12 @@ case "$PAYLOAD" in
   *) allow ;;
 esac
 
-# (ii) not a live Supervisor run of this repo -> allow (no jq)
+# (ii) not a live Supervisor run of this repo -> allow (no jq). Host mode with an unloadable resolver
+# cannot tell, so it is never "not live": it falls through and every publish is denied after (iv).
 resolve_root
-read_session_block || allow
+HOST_UNRESOLVED=0
+if [ "$HOST_ON" = 1 ] && { [ "$HOST_HELPER_OK" != 1 ] || [ "$GATE_UNRESOLVED" = 1 ]; }; then HOST_UNRESOLVED=1
+else read_live_session || allow; fi
 
 # (iii)
 command -v jq >/dev/null 2>&1 || deny "guard_unavailable: jq missing"
@@ -417,6 +633,7 @@ EOF
   return 1
 }
 cmd_has_publish "$CMD" 0 || allow
+[ "$HOST_UNRESOLVED" = 1 ] && deny "guard_unavailable: host-mode.sh missing or gate state dir unresolvable (host mode cannot locate the run's state)"
 
 # (v) scope: only a publish from the run's own feature-branch checkout is this run's publish.
 # A DETACHED LINKED worktree (the dispatcher's review-drain sibling, `git push origin HEAD:<ref>`)
@@ -431,7 +648,8 @@ fi
 
 # (vi) session join — reuse THE ownership rule (loom-log-owner.sh), never a restated copy
 [ "$HELPER_OK" = 1 ] || deny "guard_unavailable: loom-log-owner.sh missing"
-owner="$(loom_log_owner "$LOG_DIR/$SESSION_ID.jsonl" | tr -cd 'A-Za-z0-9_-')"
+owner=""
+[ "$GATE_ABSENT" = 1 ] || owner="$(loom_log_owner "$LOG_DIR/$SESSION_ID.jsonl" | tr -cd 'A-Za-z0-9_-')"
 payload_sid="$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
 # owner == payload_sid: this session's run. owner empty: adopt. owner != payload_sid: a resumed run
 # of this checkout — the header's documented DECISION is to require the marker all the same.
@@ -444,6 +662,7 @@ else
 fi
 
 MARKER="$LOG_DIR/$SESSION_ID.finalize-gate"
+[ "$GATE_ABSENT" = 1 ] && MARKER=""   # host mode, no gate dir yet: there is no marker (never `/<id>…`)
 [ -f "$MARKER" ] || deny "$REASON_FIRST (no finalize-gate marker for plugin session $SESSION_ID, $join; run: bash \${CLAUDE_PLUGIN_ROOT}/scripts/guard-finalize-publish.sh write-marker)"
 m_check="$(jq -r '.children_check // empty' "$MARKER" 2>/dev/null)"
 m_head="$(jq -r '.head_sha // empty' "$MARKER" 2>/dev/null)"
