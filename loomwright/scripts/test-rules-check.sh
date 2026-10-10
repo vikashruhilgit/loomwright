@@ -26,6 +26,8 @@
 #         premise is proven first, so the assertion cannot be vacuous), and a stray path argument is
 #         warned-and-ignored rather than narrowing the audit. Routing is an emission filter; /rules
 #         check is a repo-wide audit — see rules-check.sh's header near the parity comment.
+#   (ss) --stamp-state (fleet-operations B3) — match / mismatch / absent, the three early exits, the
+#         precedence chain, one LIVE_HASH computation, and it executes no check and writes no stamp.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -763,6 +765,90 @@ out_bb3="$( cd "$RBB" && HOME="$HBB" bash "$CHECKER" --list-gateable </dev/null 
 [ "$out_bb3" = "$(printf 'bound\tadvisory\tbinds_invalid')" ] \
   && ok "(bh5) untracking the bound file ⇒ --list-gateable demotes the rule to advisory/binds_invalid (tracked-ness is checked with git, not [ -e ])" \
   || no "(bh5) listing after untracking: [$out_bb3]"
+
+# ============================================================================
+echo "== (ss) --stamp-state: read-only live-hash vs stamp — match / mismatch / absent, executes nothing =="
+# (fleet-operations B3.) Exactly one `stamp<TAB>match|mismatch|absent` line, exit 0, no `Checks passed`
+# line, on every path (both early exits included); no check runs and no stamp is written, whatever
+# other flag or env confirm rides along; it sits below --gate-state and above --no-cmd.
+SS_TAB="$(printf '\t')"
+RSS="$(new_repo)"
+HSS="$ROOT/home-ss"; mkdir -p "$HSS"
+MARKER_SS="$ROOT/ss_marker_$$"; rm -f "$MARKER_SS"
+seed_rules_file "$RSS" "ss.json" "[
+  {\"id\":\"ss-one\",\"category\":\"safety\",\"statement\":\"ss\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_SS\",\"provenance\":{\"source\":\"test\"}}
+]"
+ss_run() { ( cd "$RSS" && HOME="$HSS" bash "$CHECKER" "$@" </dev/null 2>/dev/null ); }
+out_ss1="$(ss_run --stamp-state)"; rc_ss1=$?
+[ "$rc_ss1" -eq 0 ] && [ "$out_ss1" = "stamp${SS_TAB}absent" ] \
+  && ok "(ss1) no stamp on this machine ⇒ exactly 'stamp<TAB>absent', exit 0, no 'Checks passed' line" \
+  || no "(ss1) rc=$rc_ss1 out=[$out_ss1]"
+[ ! -e "$MARKER_SS" ] && [ ! -e "$HSS/$STAMP_REL" ] && ok "(ss1b) …executed nothing and wrote no stamp" || no "(ss1b) marker or stamp appeared"
+ss_run --confirm >/dev/null
+[ -e "$MARKER_SS" ] && [ -f "$HSS/$STAMP_REL" ] \
+  && ok "(ss2a) positive control: a genuine --confirm on the same store runs the marker check and stamps" \
+  || no "(ss2a) control broken — the no-execution assertions below would be vacuous"
+rm -f "$MARKER_SS"
+cp "$HSS/$STAMP_REL" "$ROOT/ss-stamp-ref"; touch -t 200001010000 "$HSS/$STAMP_REL" "$ROOT/ss-stamp-ref"
+out_ss2="$(ss_run --stamp-state)"; rc_ss2=$?
+[ "$rc_ss2" -eq 0 ] && [ "$out_ss2" = "stamp${SS_TAB}match" ] \
+  && ok "(ss2b) after the stamp ⇒ exactly 'stamp<TAB>match'" || no "(ss2b) rc=$rc_ss2 out=[$out_ss2]"
+for combo in "--stamp-state --confirm" "--confirm --stamp-state" "--stamp-state --if-stamped" "--stamp-state --no-cmd"; do
+  # shellcheck disable=SC2086 — word-splitting the combo into argv is the point.
+  out_c="$(ss_run $combo)"
+  if [ "$out_c" = "stamp${SS_TAB}match" ] && [ ! -e "$MARKER_SS" ]; then
+    ok "(ss3) '$combo' ⇒ the stamp-state line only, nothing executed (--stamp-state wins)"
+  else
+    no "(ss3) '$combo' out=[$out_c] marker=$([ -e "$MARKER_SS" ] && echo PRESENT || echo absent)"
+  fi
+  rm -f "$MARKER_SS"
+done
+out_ss_env="$( cd "$RSS" && HOME="$HSS" RULES_CHECK_CONFIRM=1 bash "$CHECKER" --stamp-state </dev/null 2>/dev/null )"
+[ "$out_ss_env" = "stamp${SS_TAB}match" ] && [ ! -e "$MARKER_SS" ] \
+  && ok "(ss4) an ambient RULES_CHECK_CONFIRM=1 cannot turn --stamp-state into an execute run" || no "(ss4) out=[$out_ss_env]"
+if cmp -s "$HSS/$STAMP_REL" "$ROOT/ss-stamp-ref" && ! [ "$HSS/$STAMP_REL" -nt "$ROOT/ss-stamp-ref" ]; then
+  ok "(ss5) writes NO stamp: the stamp file's content AND mtime are unchanged after every --stamp-state run"
+else
+  no "(ss5) the stamp file was rewritten under --stamp-state"
+fi
+seed_rules_file "$RSS" "ss.json" "[
+  {\"id\":\"ss-one\",\"category\":\"safety\",\"statement\":\"ss\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_SS \",\"provenance\":{\"source\":\"test\"}}
+]"
+out_ss6="$(ss_run --stamp-state)"
+[ "$out_ss6" = "stamp${SS_TAB}mismatch" ] && [ ! -e "$MARKER_SS" ] \
+  && ok "(ss6) a one-byte check edit after the stamp ⇒ exactly 'stamp<TAB>mismatch'" || no "(ss6) out=[$out_ss6]"
+# Precedence: the higher read-only modes still win.
+out_ss7="$(ss_run --gate-state --stamp-state)"
+out_ss7b="$(ss_run --list-selected --stamp-state)"
+case "$out_ss7" in "store${SS_TAB}ok"*) gs_ok=1 ;; *) gs_ok=0 ;; esac
+[ "$gs_ok" -eq 1 ] && [ "$out_ss7b" = "ss-one" ] \
+  && ok "(ss7) --gate-state and --list-selected outrank --stamp-state (precedence chain)" || no "(ss7) gate=[$out_ss7] list=[$out_ss7b]"
+# Early exits: no .agent/rules/*.json, no parseable rule object, no jq — each prints `stamp<TAB>absent` only.
+RSS0="$(new_repo)"
+out_ss8="$( cd "$RSS0" && HOME="$HSS" bash "$CHECKER" --stamp-state </dev/null 2>/dev/null )"; rc_ss8=$?
+[ "$rc_ss8" -eq 0 ] && [ "$out_ss8" = "stamp${SS_TAB}absent" ] \
+  && ok "(ss8) early exit — no .agent/rules/*.json ⇒ 'stamp<TAB>absent' only (no 'Checks passed')" || no "(ss8) rc=$rc_ss8 out=[$out_ss8]"
+mkdir -p "$RSS0/.agent/rules"; printf 'not json' > "$RSS0/.agent/rules/x.json"
+out_ss9="$( cd "$RSS0" && HOME="$HSS" bash "$CHECKER" --stamp-state </dev/null 2>/dev/null )"
+[ "$out_ss9" = "stamp${SS_TAB}absent" ] \
+  && ok "(ss9) early exit — no parseable rule object ⇒ 'stamp<TAB>absent' only" || no "(ss9) out=[$out_ss9]"
+NOJQ_BIN="$ROOT/nojq-bin"; mkdir -p "$NOJQ_BIN"
+ln -s "$(command -v git)" "$NOJQ_BIN/git"
+out_ss10="$( cd "$RSS" && HOME="$HSS" PATH="$NOJQ_BIN" "$(command -v bash)" "$CHECKER" --stamp-state </dev/null 2>/dev/null )"; rc_ss10=$?
+out_ss10b="$( cd "$RSS" && HOME="$HSS" PATH="$NOJQ_BIN" "$(command -v bash)" "$CHECKER" --no-cmd </dev/null 2>/dev/null )"
+[ "$rc_ss10" -eq 0 ] && [ "$out_ss10" = "stamp${SS_TAB}absent" ] && [ "$out_ss10b" = "Checks passed: 0/0" ] \
+  && ok "(ss10) early exit — no jq on PATH ⇒ 'stamp<TAB>absent' only (and the non-stamp-state exit is unchanged)" \
+  || no "(ss10) rc=$rc_ss10 out=[$out_ss10] no-cmd=[$out_ss10b]"
+# Structure: --stamp-state reuses the ONE LIVE_HASH computation and exits before --if-stamped resolves.
+ss_struct="$(awk '
+  /^LIVE_HASH="\$\(_rc_sha256_file "\$_rc_hash_input"\)"$/ { n_hash++; hash_line = NR }
+  /_rc_sha256_file "\$_rc_hash_input"/ { n_calls++ }
+  /^if \[ "\$MODE" = "stamp-state" \]; then$/ { ss_line = NR }
+  /^if \[ "\$MODE" = "if-stamped" \]; then$/ { is_line = NR }
+  END { print (n_hash == 1 && n_calls == 1 && hash_line < ss_line && ss_line < is_line) ? "ok" : "bad " n_hash "/" n_calls "/" hash_line "/" ss_line "/" is_line }' "$CHECKER")"
+[ "$ss_struct" = "ok" ] \
+  && ok "(ss11) one LIVE_HASH computation; the --stamp-state exit sits after it and before the --if-stamped resolution" \
+  || no "(ss11) structure: $ss_struct"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

@@ -67,9 +67,9 @@
 #     always traces back to an actual human confirmation, never to an automated replay of one.
 #   - Interactive TTY (stdin AND stdout are TTYs, no --if-stamped): prompts once and executes on
 #     y/Y/yes.
-#   Precedence, evaluated top-down (--list-selected, --list-gateable and --gate-state, three read-only
-#   listings, sit above all of these):
-#     --list-selected  >  --list-gateable  >  --gate-state  >  --no-cmd
+#   Precedence, evaluated top-down (--list-selected, --list-gateable, --gate-state and --stamp-state,
+#   four read-only modes, sit above all of these):
+#     --list-selected  >  --list-gateable  >  --gate-state  >  --stamp-state  >  --no-cmd
 #               >  argv --confirm (or RULES_CHECK_CONFIRM=1 when --if-stamped is ABSENT)
 #               >  --if-stamped  >  TTY-yes  >  default-skip.
 #
@@ -213,11 +213,23 @@
 #                                    recorded = a record carrying `countable` (an array of strings)
 #     countable<TAB><id>             zero or more, ONLY under `recorded`: the recorded ids, sorted, unique
 #
+# --stamp-state (fleet-operations B3, READ-ONLY, the tier just below --gate-state and above --no-cmd —
+# executes nothing, writes no stamp, never prompts, exits 0). Answers "is the CURRENT selected must-rule
+# set the one a human stamped on this machine?" without running anything, for lane-policy.sh, which
+# honours a project policy file only while it is bound into a stamped set (skills/rules/SKILL.md §8 —
+# the same valve, not a second one). It exits right after the ONE LIVE_HASH computation below (no
+# second hash) and BEFORE the --if-stamped resolution, compares that hash with
+# `_rc_read_stamp_hash "$STAMP_KEY"`, and prints exactly one line:
+#     stamp<TAB>match|mismatch|absent   absent = no usable stamp record for this key (or an early exit:
+#                                        no jq, no .agent/rules/*.json, no parseable rule object);
+#                                        mismatch = a record whose hash differs from the live set's
+# and NO `Checks passed` line.
+#
 # Usage:  rules-check.sh [--confirm] [--no-cmd] [--if-stamped] [--list-selected] [--list-gateable]
-#                        [--gate-state]
+#                        [--gate-state] [--stamp-state]
 # Exit:   0 = ran (or skipped) with zero check FAILURES ; 1 = >=1 selected check FAILED when executed.
 #         Fail-safe on tooling/absent-store paths (no jq / no rules) → exit 0 (nothing to run).
-#         --list-selected, --list-gateable and --gate-state always exit 0.
+#         --list-selected, --list-gateable, --gate-state and --stamp-state always exit 0.
 
 set -uo pipefail   # NO `set -e` — a failed check is a normal tally, not a script crash.
 
@@ -253,6 +265,7 @@ IF_STAMPED=0
 LIST_SELECTED=0
 LIST_GATEABLE=0
 GATE_STATE=0
+STAMP_STATE=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -262,6 +275,7 @@ while [ "$#" -gt 0 ]; do
     --list-selected) LIST_SELECTED=1; shift ;;   # read-only enumeration — wins over every mode flag
     --list-gateable) LIST_GATEABLE=1; shift ;;   # read-only classification — same tier, below --list-selected
     --gate-state) GATE_STATE=1; shift ;;         # read-only store-health + stamp countable-set — same tier, below --list-gateable
+    --stamp-state) STAMP_STATE=1; shift ;;       # read-only live-hash vs stamp comparison — same tier, below --gate-state
     -h|--help)
       grep -E '^# ' "$0" | sed -E 's/^# ?//'
       exit 0 ;;
@@ -270,7 +284,7 @@ while [ "$#" -gt 0 ]; do
       # typo'd safety flag (e.g. `--no-cmnd` for `--no-cmd`) is not a SILENT no-op.
       # Without this warning a mistyped `--no-cmd` would be dropped, and a co-present
       # `--confirm`/TTY would then execute checks against the caller's intent.
-      printf 'rules-check.sh: warning: ignoring unrecognized argument %s (did you mean --no-cmd, --confirm, --if-stamped, --list-selected, --list-gateable, or --gate-state?)\n' "$1" >&2
+      printf 'rules-check.sh: warning: ignoring unrecognized argument %s (did you mean --no-cmd, --confirm, --if-stamped, --list-selected, --list-gateable, --gate-state, or --stamp-state?)\n' "$1" >&2
       shift ;;
   esac
 done
@@ -391,8 +405,12 @@ _rc_stamp_gate_state() {
 if ! command -v jq >/dev/null 2>&1; then
   echo "$PROG: jq unavailable — cannot read rules, nothing to run (fail-safe)" >&2
   # --list-selected / --list-gateable / --gate-state: stdout is ONLY the listing (empty here — the
-  # verdict helper reads an empty --gate-state as unreadable).
-  [ "$LIST_SELECTED" -eq 1 ] || [ "$LIST_GATEABLE" -eq 1 ] || [ "$GATE_STATE" -eq 1 ] || echo "Checks passed: 0/0"
+  # verdict helper reads an empty --gate-state as unreadable). --stamp-state (when no higher read-only
+  # mode won): its one line, `absent` — with no jq there is no stamp to read.
+  if [ "$STAMP_STATE" -eq 1 ] && [ "$LIST_SELECTED" -eq 0 ] && [ "$LIST_GATEABLE" -eq 0 ] && [ "$GATE_STATE" -eq 0 ]; then
+    printf 'stamp\tabsent\n'
+  fi
+  [ "$LIST_SELECTED" -eq 1 ] || [ "$LIST_GATEABLE" -eq 1 ] || [ "$GATE_STATE" -eq 1 ] || [ "$STAMP_STATE" -eq 1 ] || echo "Checks passed: 0/0"
   exit 0
 fi
 
@@ -419,6 +437,8 @@ elif [ "$LIST_GATEABLE" -eq 1 ]; then
   MODE="list-gateable"               # read-only classification: same tier, executes nothing, never prompts
 elif [ "$GATE_STATE" -eq 1 ]; then
   MODE="gate-state"                  # read-only store-health + stamp state: same tier, executes nothing
+elif [ "$STAMP_STATE" -eq 1 ]; then
+  MODE="stamp-state"                 # read-only live-hash vs stamp: same tier, executes nothing, never prompts
 elif [ "$NO_CMD" -eq 1 ]; then
   MODE="no-cmd"                      # --no-cmd WINS over everything (fail-safe)
 elif [ "$CONFIRM" -eq 1 ]; then
@@ -458,7 +478,8 @@ fi
 
 if [ ! -s "$files_list" ]; then
   echo "$PROG: no .agent/rules/*.json rule files — nothing to check" >&2
-  [ "$MODE" = "list-selected" ] || [ "$MODE" = "list-gateable" ] || echo "Checks passed: 0/0"
+  [ "$MODE" = "stamp-state" ] && printf 'stamp\tabsent\n'
+  [ "$MODE" = "list-selected" ] || [ "$MODE" = "list-gateable" ] || [ "$MODE" = "stamp-state" ] || echo "Checks passed: 0/0"
   exit 0
 fi
 
@@ -488,7 +509,8 @@ done < "$files_list"
 
 if [ ! -s "$combined" ]; then
   echo "$PROG: no parseable rule objects — nothing to check" >&2
-  [ "$MODE" = "list-selected" ] || [ "$MODE" = "list-gateable" ] || echo "Checks passed: 0/0"
+  [ "$MODE" = "stamp-state" ] && printf 'stamp\tabsent\n'
+  [ "$MODE" = "list-selected" ] || [ "$MODE" = "list-gateable" ] || [ "$MODE" = "stamp-state" ] || echo "Checks passed: 0/0"
   exit 0
 fi
 
@@ -754,6 +776,24 @@ while IFS= read -r _rc_rec; do
 done < "$selected" | env LC_ALL=C sort > "$_rc_hash_input"
 LIVE_HASH="$(_rc_sha256_file "$_rc_hash_input")"
 rm -f "$_rc_hash_input" 2>/dev/null
+
+# ---------------------------------------------------------------------------
+# --stamp-state (header, "--stamp-state"): compare the ONE LIVE_HASH above with this repository's
+# stamp and exit 0 — BEFORE STAMP_COUNTABLE, the --if-stamped resolution, the execute loop and the
+# stamp write, none of which a read-only mode may reach. An empty LIVE_HASH (no sha256 tool) can never
+# equal a stamp, so it reads `mismatch` when a record exists — fail CLOSED, never a fabricated match.
+# ---------------------------------------------------------------------------
+if [ "$MODE" = "stamp-state" ]; then
+  _rc_ss_hash="$(_rc_read_stamp_hash "$STAMP_KEY")"
+  if [ -z "$_rc_ss_hash" ]; then
+    printf 'stamp\tabsent\n'
+  elif [ -n "$LIVE_HASH" ] && [ "$_rc_ss_hash" = "$LIVE_HASH" ]; then
+    printf 'stamp\tmatch\n'
+  else
+    printf 'stamp\tmismatch\n'
+  fi
+  exit 0
+fi
 
 # STAMP_COUNTABLE — the `countable` field of the stamp record (header, "THE COUNTABLE SET"): the ids
 # whose --list-gateable class is `countable`, as a sorted unique JSON array. Computed ONLY for a

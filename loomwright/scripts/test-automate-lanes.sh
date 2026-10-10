@@ -31,6 +31,16 @@
 #     done/awaiting_go, pushed), a done/awaiting_go re-run retries only the pushes, leftover / no-pr / mode off
 #   AC a lane whose run wrote an Orchestrator task plan: the wave-end exact list carries it (a done-headed
 #     *-plan.md never), the re-run names the state it reads, lane-remove removes with no hand push + mutation
+#     (parallel-automate/21 A1: in branch mode the merged re-run also finalizes, so AB3f/AB3g/AB4b read the
+#     finalized state — `pause_reason: null`, `## Status: done`; the done/awaiting_go re-run is AE4c)
+#   AD fleet operations Part B (parallel-automate/21): lane-create carries the resolved policy into lane.json
+#     (null without one), relay-hook applies a policy answer (source policy) or defers exactly as before,
+#     lane-status policy digest + --inbox
+#   AE lane-convert-ready finalizes a closed-out lane in branch mode (A1); mode off skips finalize
+#   AF fleet-closeout: stepwise, idempotent wave close (A2) — backstop, check-off, sync, removal, lanes dir,
+#     leaks, main health, lock release; gone / meta-push-failed are the human's; a failed pull stops it
+#   AG wave-plan is READ-ONLY (A4: refs + tree byte-identical) + mutation control; the A3/A4 static guards
+#     (no executable merge / push / gate-eval) + mutation control; A5 no sequential caller
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -278,11 +288,12 @@ rm -f "$L1/.coordinator-write"
 
 # ---- J: relay hook (AC6) ----------------------------------------------------------------------------
 Q2='[{"question":"Which color?","header":"Color","multiSelect":false,"options":[{"label":"Red","description":"r"},{"label":"Blue","description":"b"}]},{"question":"Which extras?","header":"Extras","multiSelect":true,"options":[{"label":"A","description":"a"},{"label":"B","description":"b"},{"label":"C","description":"c"}]}]'
-hook_in() { jq -n -c --arg ev "$1" --arg cwd "$2" --arg id "$3" --argjson q "$Q2" '{hook_event_name: $ev, cwd: $cwd, tool_use_id: $id, tool_name: "AskUserQuestion", tool_input: {questions: $q}}'; }
+hook_in() { jq -n -c --arg ev "$1" --arg cwd "$2" --arg id "$3" --argjson q "${4:-$Q2}" '{hook_event_name: $ev, cwd: $cwd, tool_use_id: $id, tool_name: "AskUserQuestion", tool_input: {questions: $q}}'; }
 out="$(hook_in PermissionRequest "$L2" toolu_q1 | bash "$S" relay-hook)"
 check "J1 bundled call denied" "$(jq -r '.hookSpecificOutput.decision.behavior' <<<"$out")" deny
 out="$(hook_in PreToolUse "$L2" toolu_q1 | bash "$S" relay-hook)"
 check "J2 unanswered question ⇒ defer" "$(jq -r '.hookSpecificOutput.permissionDecision' <<<"$out")" defer
+J2_DEFER="$out"   # the pre-policy defer, byte for byte (AD5–AD9b compare against it)
 QF="$L2/.supervisor/inbox/questions/toolu_q1.json"
 check "J3 question file with asked_at" "$(jq -r '[.id, (.asked_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Z$")), (.questions | length)] | map(tostring) | join(",")' "$QF")" "toolu_q1,true,2"
 check "J4 outside a lane ⇒ no decision" "$(hook_in PreToolUse "$T" toolu_q9 | bash "$S" relay-hook)" "{}"
@@ -784,7 +795,8 @@ out="$(run lane-remove "$L10" --stop)"; check "W7h once clean, the stopped lane 
 # hook resolves the lane through the git common dir, so the question still lands in the LANE's inbox.
 run lane-create "$RF" reqs/a.md 1 >/dev/null; L1="$LR/L1"
 xhook() { hook_in PreToolUse "$1" "$2" | bash "${3:-$S}" relay-hook; }   # <cwd> <tool_use_id> [<script>]
-xdec() { jq -r '.hookSpecificOutput.permissionDecision' <<<"$1" 2>/dev/null; }
+hso() { jq -r -c ".hookSpecificOutput$1" <<<"$2" 2>/dev/null; }   # <field path> <hook output> — a field of the hook response
+xdec() { hso .permissionDecision "$1"; }
 WT="$LR/L1-42-slug"
 git -C "$L1" worktree add -q -b feature/42-slug "$WT" 2>/dev/null
 out="$(xhook "$WT" toolu_x1)"
@@ -1359,19 +1371,21 @@ hasnt "AB3d … and the wave-end push no longer excludes the requirement" "$out"
 check "AB3e the lane requirement carries ONE sentinel-led ## Status: done" \
   "$(grep -A1 -xF '<!-- loomwright:requirement-closeout -->' "$L57/$RAB" | tr '\n' '|'):$(grep -cE '^## Status:[[:space:]]*done' "$L57/$RAB" | tr -d ' ')" \
   "<!-- loomwright:requirement-closeout -->|## Status: done|:1"
-check "AB3f the lane run file reads - [x] <item> and ## Current done / awaiting_go (no current-set after closeout)" \
-  "$(grep -cxF -- "- [x] $RAB" "$RFAB" | tr -d ' '):$(cur_line "$RFAB")" "1:- item: $RAB | status: done | pr: $PRAB | branch: feature/ab|- pause_reason: awaiting_go|"
+# AB3f/AB3g/AB4b — parallel-automate/21 A1: the merged re-run now also runs finalize-empty (branch mode),
+# which writes `## Status: done` and `pause_reason: null`; before A1 the lane stayed done / awaiting_go.
+check "AB3f the lane run file reads - [x] <item> and ## Current done (no current-set after closeout; A1 finalize ⇒ pause_reason null)" \
+  "$(grep -cxF -- "- [x] $RAB" "$RFAB" | tr -d ' '):$(cur_line "$RFAB")" "1:- item: $RAB | status: done | pr: $PRAB | branch: feature/ab|- pause_reason: null|"
 check "AB3g the PUSHED run file carries both" \
   "$(grep -cxF -- "- [x] $RAB" "$T/remote-ab/.supervisor/automate/$PARENT5-L7.md" 2>/dev/null | tr -d ' '):$(cur_line "$T/remote-ab/.supervisor/automate/$PARENT5-L7.md" 2>/dev/null)" \
-  "1:- item: $RAB | status: done | pr: $PRAB | branch: feature/ab|- pause_reason: awaiting_go|"
+  "1:- item: $RAB | status: done | pr: $PRAB | branch: feature/ab|- pause_reason: null|"
 check "AB3h the PUSHED requirement carries the done stamp" "$(grep -cE '^## Status:[[:space:]]*done' "$T/remote-ab/$RAB" 2>/dev/null | tr -d ' ')" 1
 ab_co="$(grep -n '^closeout ' "$T_ABSPY" | tail -n1 | cut -d: -f1)"; ab_tp="$(grep -n '^trail-pr ' "$T_ABSPY" | tail -n1 | cut -d: -f1)"
 check "AB3i closeout ran BEFORE the wave-end trail push (spy order)" "$([ -n "$ab_co" ] && [ -n "$ab_tp" ] && [ "$ab_co" -lt "$ab_tp" ] && echo before)" before
 check "AB3j no launch lock left behind" "$(ls -d "$P/.supervisor/automate/$PARENT5.lanes".L7.launch.lock 2>/dev/null | wc -l | tr -d ' ')" 0
 SAB="$(cksum < "$RFAB")"; nco="$(grep -c '^closeout ' "$T_ABSPY" | tr -d ' ')"; : > "$META_LOG"
 out="$(STUB_PR_STATE=MERGED ab lane-convert-ready "$L57")"; rc=$?
-check "AB4 a re-run on a closed-out lane (done / awaiting_go) is NOT refused (exit 0)" "$rc" 0
-has "AB4b … it names that state and retries only the pushes" "$out" "already closed out (## Current done / awaiting_go) — retrying the metadata push only"
+check "AB4 a re-run on a closed-out (A1: finalized) lane is NOT refused (exit 0)" "$rc" 0
+has "AB4b … it names that state and retries only the pushes" "$out" "already closed out and finalized (## Status: done) — retrying the metadata push only"
 check "AB4c … no second closeout, no current-set (run file byte-unchanged), the pushes ran" \
   "$(grep -c '^closeout ' "$T_ABSPY" | tr -d ' '):$(cksum < "$RFAB"):$(grep -c ' push ' "$META_LOG" | tr -d ' ')" "$nco:$SAB:2"
 out="$(ab lane-status "$RF5")"; rc=$?
@@ -1457,6 +1471,332 @@ has "AC4b mutation: the merged re-run still reads closeout complete" "$(printf '
 out="$(AC_S="$MUT/automate-lanes.sh" ac lane-remove "$L512")"; rc=$?
 check "AC4c mutation: lane-remove refuses on the unpushed plan (the 2026-10-10 incident)" \
   "$rc:$(printf '%s' "$out" | grep -c 'metadata not pushed (local_ahead 1)' | tr -d ' ')" "1:1"
+
+# ---- AD: policy carry (B5), relay-hook policy apply (B6), no policy ⇒ unchanged (B10), digest + inbox (B7)
+# lane-policy.sh is the REAL script (Subtask 1); the policies are a wave-policy file and a project policy
+# file written in this suite's own temp primary. HELPERS is the logging stub (progress-append recorded).
+PARENT8=automate-2026-10-10-100000; RF8="$P/.supervisor/automate/$PARENT8.md"; LR8="$T/work/primary-lanes/$PARENT8"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT8" > "$RF8"
+out="$(run lane-create "$RF8" reqs/a.md 1)"; L81="$LR8/L1"
+check "AD1 no project / wave policy ⇒ lane.json carries \"policy\": null (B10)" \
+  "$(jq -c '[has("policy"), .policy]' "$L81/.supervisor/lane.json")" "[true,null]"
+has "AD1b … and lane-create says policy=none" "$out" "policy=none"
+printf '{"schema_version":1,"run_id":"%s","answers":{"AUT-QUEUE":"Process","AUT-RESUME":"Continue"},"set_at":"2026-10-10T00:00:00Z"}\n' \
+  "$PARENT8" > "$P/.supervisor/automate/$PARENT8.wave-policy.json"
+out="$(run lane-create "$RF8" reqs/b.md 2)"; L82="$LR8/L2"; SHA82="$(jq -r '.policy.policy_sha // empty' "$L82/.supervisor/lane.json")"
+check "AD2 the owner's wave policy is carried into lane.json (answers, a sha256, its source)" \
+  "$(jq -c '[.policy.answers, (.policy.policy_sha | test("^[0-9a-f]{64}$")), [.policy.sources[].kind]]' "$L82/.supervisor/lane.json")" \
+  '[{"AUT-QUEUE":"Process","AUT-RESUME":"Continue"},true,["wave"]]'
+check "AD2b … lane.json's other keys keep their meaning" \
+  "$(jq -c '[.schema_version, .lane, .run_id, .parent_run_id, .primary, .parallel, .max_tokens]' "$L82/.supervisor/lane.json")" \
+  "[1,\"L2\",\"$PARENT8-L2\",\"$PARENT8\",\"$P\",2,null]"
+has "AD2c … lane-create names the carried policy" "$out" "policy=${SHA82:0:12}:2"
+mkdir -p "$P/.agent"; printf '{"schema_version":1,"answers":{"AUT-QUEUE":"Stop"}}\n' > "$P/.agent/lane-policy.json"
+out="$(run lane-create "$RF8" reqs/a.md 3)"
+has "AD3 an unstamped project policy is reported on lane-create's stderr (never applied)" "$out" "lane-policy: project policy ignored — "
+check "AD3b … the lane carries the wave policy only (Process, not the project's Stop)" \
+  "$(jq -c '[.policy.answers["AUT-QUEUE"], [.policy.sources[].kind]]' "$LR8/L3/.supervisor/lane.json")" '["Process",["wave"]]'
+rm -rf "$P/.agent"
+QQ='[{"question":"Process the queue?","header":"AUT-QUEUE","multiSelect":false,"options":[{"label":"Process (Recommended)","description":"p"},{"label":"Stop","description":"s"}]}]'
+QR='[{"question":"Resume the run?","header":"AUT-RESUME","multiSelect":false,"options":[{"label":"Continue","description":"c"},{"label":"Start new","description":"n"},{"label":"Archive","description":"a"}]}]'
+QH='[{"question":"Clean up the leftover?","header":"AUT-LEFTOVER","multiSelect":false,"options":[{"label":"Clean up now","description":"c"},{"label":"Keep and continue","description":"k"},{"label":"Stop","description":"s"}]}]'
+QM="$(jq -c -n --argjson a "$QQ" --argjson b "$Q2" '$a + [$b[0]]')"
+DEFER="$J2_DEFER"
+check "AD0 the defer reference (J2's output) is exactly one PreToolUse defer object" \
+  "$(xdec "$DEFER"):$(jq -c '[length, (.[] | [.hookEventName, .permissionDecision, length])]' <<<"$DEFER")" 'defer:[1,["PreToolUse","defer",2]]'
+qhook() { hook_in PreToolUse "$1" "$2" "$3"; }
+ad_ans() { [ -e "$1/.supervisor/inbox/answers/$2.json" ] && echo answered || echo none; }
+: > "$HELPERS_LOG"
+out="$(qhook "$L82" toolu_p1 "$QQ" | bash "$S" relay-hook)"
+check "AD4 an allowed coded gate with a carried policy answer ⇒ allow (no defer, no resume)" "$(xdec "$out")" allow
+check "AD4b … updatedInput.answers carries the question's OWN label (marker kept)" \
+  "$(hso .updatedInput.answers "$out")" '{"Process the queue?":"Process (Recommended)"}'
+check "AD4c answer file: source policy, via policy, gate, the carried policy_sha, no note" \
+  "$(jq -c --arg sha "$SHA82" '[.source, .via, .gate, (.policy_sha == $sha), .note, (.at | test("Z$")), .answers["Process the queue?"]]' "$L82/.supervisor/inbox/answers/toolu_p1.json")" \
+  '["policy","policy","AUT-QUEUE",true,null,true,"Process (Recommended)"]'
+check "AD4d … the question file is recorded as today" "$(jq -r '[.id, (.questions | length)] | map(tostring) | join(",")' "$L82/.supervisor/inbox/questions/toolu_p1.json")" "toolu_p1,1"
+has "AD4e one lane ## Progress line through progress-append" "$(cat "$HELPERS_LOG")" \
+  "progress-append $L82/.supervisor/automate/$PARENT8-L2.md policy answer: AUT-QUEUE → Process (Recommended) (policy_sha ${SHA82:0:12})"
+has "AD4f … and the allow reason names the policy, not the owner" "$(hso .permissionDecisionReason "$out")" "answered by the stamped lane policy (gate AUT-QUEUE"
+out="$(qhook "$L82" toolu_p2 "$Q2" | bash "$S" relay-hook)"
+check "AD5 a question with no catalog code ⇒ exactly today's defer, no answer file" "$out:$(ad_ans "$L82" toolu_p2)" "$DEFER:none"
+out="$(qhook "$L82" toolu_p3 "$QM" | bash "$S" relay-hook)"
+check "AD6 a multi-question call with one human question ⇒ defer (never a partial answer)" "$out:$(ad_ans "$L82" toolu_p3)" "$DEFER:none"
+out="$(qhook "$L82" toolu_p4 "$QH" | bash "$S" relay-hook)"
+check "AD7 a human-only gate ⇒ defer" "$out:$(ad_ans "$L82" toolu_p4)" "$DEFER:none"
+out="$(qhook "$L81" toolu_p5 "$QQ" | bash "$S" relay-hook)"
+check "AD8 the same allowed gate in a lane carrying \"policy\": null ⇒ defer (B10)" "$out:$(ad_ans "$L81" toolu_p5)" "$DEFER:none"
+cp "$L82/.supervisor/lane.json" "$T/ad-lane.json"
+jq -c '.policy.answers["AUT-QUEUE"] = "Stop"' "$T/ad-lane.json" > "$L82/.supervisor/lane.json"
+out="$(qhook "$L82" toolu_p6 "$QQ" | bash "$S" relay-hook)"
+check "AD9 a carried policy edited inside the lane (sha no longer matches) ⇒ defer" "$out:$(ad_ans "$L82" toolu_p6)" "$DEFER:none"
+cp "$T/ad-lane.json" "$L82/.supervisor/lane.json"
+check "AD9b a lane with no lane.json policy key at all reads like null (pre-21 lane) ⇒ defer" \
+  "$(jq -c 'del(.policy)' "$T/ad-lane.json" > "$L82/.supervisor/lane.json"; qhook "$L82" toolu_p7 "$QQ" | bash "$S" relay-hook):$(ad_ans "$L82" toolu_p7)" "$DEFER:none"
+cp "$T/ad-lane.json" "$L82/.supervisor/lane.json"
+out="$(qhook "$L82" toolu_p8 "$QR" | bash "$S" relay-hook)"
+check "AD10 a second allowed gate is answered too" "$(hso '.updatedInput.answers["Resume the run?"]' "$out")" Continue
+jq -c '.at = "2026-10-10T01:00:00Z"' "$L82/.supervisor/inbox/answers/toolu_p1.json" > "$T/ad.a" && mv "$T/ad.a" "$L82/.supervisor/inbox/answers/toolu_p1.json"
+jq -c '.at = "2026-10-10T02:00:00Z"' "$L82/.supervisor/inbox/answers/toolu_p8.json" > "$T/ad.a" && mv "$T/ad.a" "$L82/.supervisor/inbox/answers/toolu_p8.json"
+out="$(run lane-status "$RF8")"
+has "AD11 lane-status: one policy digest line for the lane with policy answers (B7)" "$out" \
+  "    policy: 2 answered by policy since 2026-10-10T01:00:00Z — last AUT-RESUME → Continue 2026-10-10T02:00:00Z"
+hasnt "AD11b … and no 'none answered' header while a lane has one" "$out" "policy: none answered"
+check "AD11c --json carries the digest" "$(run lane-status "$RF8" --json | jq -c '.lanes[] | select(.lane == "L2") | .policy | [.answered, .first_at, .last_gate, .last_label]')" \
+  '[2,"2026-10-10T01:00:00Z","AUT-RESUME","Continue"]'
+check "AD11d no lane with a policy answer ⇒ the header line 'policy: none answered'" "$(run lane-status "$RF" | sed -n 2p)" "policy: none answered"
+i=0; for f in "$L82"/.supervisor/inbox/questions/*.json "$L81"/.supervisor/inbox/questions/*.json; do
+  i=$((i + 1)); case "$f" in */toolu_p5.json) at="2026-10-10T00:00:01Z" ;; *) at="2026-10-10T00:00:1${i}Z" ;; esac
+  jq -c --arg at "$at" '.asked_at = $at' "$f" > "$T/ad.q" && mv "$T/ad.q" "$f"
+done
+out="$(run lane-status "$RF8" --inbox)"
+check "AD12 --inbox: ONE list of pending human questions, oldest asked_at first" "$(printf '%s\n' "$out" | sed -n '1,3p')" \
+  "lane-status: inbox — 6 pending human question call(s), oldest first
+2026-10-10T00:00:01Z L1 toolu_p5 AUT-QUEUE — Process the queue?
+    options: Process (Recommended) | Stop"
+hasnt "AD12b … a policy-answered question is not in the inbox" "$out" "toolu_p1"
+hasnt "AD12c … nor the second one" "$out" "toolu_p8"
+has "AD12d … a multi-question call lists each question" "$out" "L2 toolu_p3 Color — Which color?"
+check "AD12e … every pending call appears, in asked_at order" "$(printf '%s\n' "$out" | awk '/^2026/ { print $3 }' | uniq | tr '\n' ' ')" \
+  "toolu_p5 toolu_p2 toolu_p3 toolu_p4 toolu_p6 toolu_p7 "
+check "AD12f a lane-status --inbox with no lane table is fail-SAFE (exit 0)" "$(run lane-status "$T/none.md" --inbox >/dev/null; echo $?)" 0
+
+# ---- AE: lane-convert-ready finalizes a closed-out lane (A1) -----------------------------------------
+# The AB scripts (real closeout / finalize-empty / trail-pr, branch mode on in $SC) on lanes of a fresh
+# parent. Mode on ⇒ ONE `finalize —` line, before the last, and `## Status: done` is pushed; a re-run is a
+# no-op finalize; mode off ⇒ `finalize skipped — metadata mode off` and the lane stays paused.
+PARENT9=automate-2026-10-10-110000; RF9="$P/.supervisor/automate/$PARENT9.md"; LR9="$T/work/primary-lanes/$PARENT9"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT9" > "$RF9"; mkdir -p "$T/remote-ae"
+ae() { REMOTE11="$T/remote-ae" LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" \
+  LOOMWRIGHT_LANES_TRAIL="$T/ab-spy.sh" LOOMWRIGHT_GH_BIN="$T/ab-gh" bash "$S" "$@" 2>&1; }
+ae_lane() { # <parent_rf> <lanes_root> <n> <req> <pr> <status> [<item>] — a launched-then-exited lane at <status>
+  local id="$(basename "$1" .md)-L$3"
+  run lane-create "$1" "${7:-reqs/a.md}" "$3" >/dev/null; ABL="$2/L$3"; ABRF="$ABL/.supervisor/automate/$id.md"
+  LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$ABL" --owner-command "$OWN" >/dev/null; wait_gone "$ABL"
+  mkdir -p "$ABL/$(dirname "$4")" "$ABL/.supervisor/jobs/done"
+  printf '# req\n\n## Status: pending\n' > "$ABL/$4"
+  printf '# brief\n- **Source requirement:** %s\n\n## Outcome\n- **PR:** %s\n' "$4" "$5" > "$ABL/.supervisor/jobs/done/2026-10-10-$id.md"
+  printf '# Automate Run: %s\n\n## Status: paused\n\n## Source\n- backlog: lane\n\n## Run Config\n- limit: 1\n\n## Queue\n- [ ] %s\n\n## Current\n- item: %s | status: %s | pr: %s | branch: feature/ae\n- pause_reason: %s\n\n## Progress\n- 2026-10-10T00:00:00Z drain READY\n' \
+    "$id" "$4" "$4" "$6" "$5" "$6" > "$ABRF"
+}
+ae_lane "$RF9" "$LR9" 1 ".supervisor/requirements/t/ae1.md" "https://github.com/o/r/pull/91" awaiting_merge; L91="$ABL"; RF91="$ABRF"
+out="$(STUB_PR_STATE=MERGED ae lane-convert-ready "$L91")"; rc=$?
+check "AE1 merged re-run, branch mode on: exit 0 and ONE finalize line" "$rc:$(printf '%s\n' "$out" | grep -c '^lane-convert-ready: finalize' | tr -d ' ')" "0:1"
+has "AE1b … it carries finalize-empty's own line" "$out" "lane-convert-ready: finalize — finalize-empty: finalized $RF91"
+check "AE1c … printed BEFORE the last line, which still names closeout's state and the summary" \
+  "$(printf '%s\n' "$out" | tail -n2 | head -1 | grep -c '^lane-convert-ready: finalize — ' | tr -d ' '):$(printf '%s\n' "$out" | tail -n1 | grep -c 'reads done / awaiting_go (a re-run converts nothing); metadata pushed to test-meta — .*; closeout complete$' | tr -d ' ')" \
+  "1:1"
+check "AE1d the lane run file reads ## Status: done (and an auto-finalized Progress line)" \
+  "$(grep -c '^## Status: done' "$RF91" | tr -d ' '):$(grep -c 'auto-finalized: queue empty after closeout' "$RF91" | tr -d ' ')" "1:1"
+check "AE1e … and the PUSHED run file is byte-identical to it (finalize ran before the pushes)" \
+  "$(cmp -s "$RF91" "$T/remote-ae/.supervisor/automate/$PARENT9-L1.md" && echo same)" same
+SAE="$(cksum < "$RF91")"
+out="$(STUB_PR_STATE=MERGED ae lane-convert-ready "$L91")"; rc=$?
+check "AE2 a re-run on the finalized lane: exit 0, finalize is a no-op, run file byte-unchanged" \
+  "$rc:$(printf '%s\n' "$out" | grep -c '^lane-convert-ready: finalize — finalize-empty: skipped — not paused$' | tr -d ' '):$(cksum < "$RF91")" "0:1:$SAE"
+out="$(ae lane-remove "$L91")"; rc=$?
+check "AE3 the finalized lane is removable (its metadata is in sync)" "$rc:$([ -d "$L91" ] && echo kept || echo removed)" "0:removed"
+ae_lane "$RF9" "$LR9" 2 ".supervisor/requirements/t/ae2.md" "https://github.com/o/r/pull/92" awaiting_merge; L92="$ABL"; RF92="$ABRF"
+out="$(STUB_MODE_LINE=off STUB_PR_STATE=MERGED ae lane-convert-ready "$L92")"; rc=$?
+check "AE4 mode off: the merged re-run says finalize skipped (it would open a trail PR)" \
+  "$rc:$(printf '%s\n' "$out" | grep -cxF 'lane-convert-ready: finalize skipped — metadata mode off' | tr -d ' ')" "0:1"
+check "AE4b … and the lane stays ## Status: paused at done / awaiting_go" "$(grep -c '^## Status: paused' "$RF92" | tr -d ' '):$(cur_line "$RF92" | sed 's/.*|- //')" "1:pause_reason: awaiting_go|"
+out="$(STUB_MODE_LINE=off STUB_PR_STATE=MERGED ae lane-convert-ready "$L92")"; rc=$?
+has "AE4c a mode-off re-run on done / awaiting_go names that state (the pre-A1 path, still reachable)" "$out" \
+  "already closed out (## Current done / awaiting_go) — retrying the metadata push only"
+check "AE4d … and skips finalize again" "$rc:$(printf '%s\n' "$out" | grep -c 'finalize skipped — metadata mode off' | tr -d ' ')" "0:1"
+check "AE5 a ## Current done / null lane whose ## Status is NOT done is refused (exit 1, nothing written)" \
+  "$(sed -i.bak 's/^- pause_reason: awaiting_go$/- pause_reason: null/' "$RF92"; S0="$(cksum < "$RF92")"; ae lane-convert-ready "$L92" >/dev/null; echo "$?:$([ "$(cksum < "$RF92")" = "$S0" ] && echo same)")" "1:same"
+rm -f "$RF92.bak"
+
+# ---- AF: fleet-closeout — the stepwise, idempotent wave close (A2) -----------------------------------
+# Two lanes; the owner merges L1's PR, then L2's. Real helpers / closeout / finalize / run-lock; gh is a
+# stub keyed per PR (AF_MERGED / AF_CLOSED / AF_NOHEAD) that also answers the `ci` check-runs read.
+cat > "$T/af-gh" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*" >> "$T_AFGH"
+case "$1" in
+  auth) exit 0 ;;
+  pr) [ "$2" = view ] || exit 1
+      st=OPEN; case " ${AF_MERGED:-} " in *" $3 "*) st=MERGED ;; esac; case " ${AF_CLOSED:-} " in *" $3 "*) st=CLOSED ;; esac
+      ma=null; [ "$st" = MERGED ] && ma='"2026-10-10T00:00:00Z"'
+      n="${3##*/}"; oid="$(printf '%040d' "$n")"; case " ${AF_NOHEAD:-} " in *" $3 "*) oid="" ;; esac
+      printf '{"state":"%s","mergedAt":%s,"headRefName":"feature/af%s","headRefOid":"%s"}\n' "$st" "$ma" "$n" "$oid" ;;
+  api) case "$2" in
+         */check-runs*) printf '{"check_runs":[{"name":"ci","conclusion":"%s","started_at":"2026-10-10T00:00:00Z"}]}\n' "${AF_CI:-success}" ;;
+         *) exit 1 ;;
+       esac ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$T/af-gh"; export T_AFGH="$T/af-gh.calls"; mkdir -p "$T/remote-af"
+af() { REMOTE11="$T/remote-af" LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" \
+  LOOMWRIGHT_LANES_TRAIL="$T/ab-spy.sh" LOOMWRIGHT_GH_BIN="$T/af-gh" bash "$S" "$@" 2>&1; }
+PARENT10=automate-2026-10-10-120000; RF10="$P/.supervisor/automate/$PARENT10.md"; LR10="$T/work/primary-lanes/$PARENT10"
+printf '# Automate Run: %s\n\n## Status: running\n\n## Run Config\n- parallel: 2\n\n## Queue\n- [ ] reqs/a.md\n- [ ] reqs/b.md\n\n## Current\n- item: null | status: null\n- wave: 1 | items: reqs/a.md, reqs/b.md\n\n## Progress\n' "$PARENT10" > "$RF10"
+af lane-status "$RF10" --leaks --snapshot >/dev/null
+bash "$HERE/run-lock.sh" acquire --owner "automate-lanes:$PARENT10" --root "$P" >/dev/null 2>&1
+PR101="https://github.com/o/r/pull/101"; PR102="https://github.com/o/r/pull/102"
+ae_lane "$RF10" "$LR10" 1 ".supervisor/requirements/t/af1.md" "$PR101" awaiting_merge; L101="$ABL"; RF101="$ABRF"
+ae_lane "$RF10" "$LR10" 2 ".supervisor/requirements/t/af2.md" "$PR102" awaiting_merge reqs/b.md; L102="$ABL"
+# a new commit on origin/main, so the primary sync has something to pull
+git clone -q "$ORIGIN" "$T/af-other" 2>/dev/null; echo c > "$T/af-other/c.txt"; git -C "$T/af-other" add c.txt
+git -C "$T/af-other" commit -qm c; git -C "$T/af-other" push -q origin main 2>/dev/null
+out="$(AF_MERGED="$PR101" af fleet-closeout "$RF10")"; rc=$?
+printf '%s\n' "$out" | sed 's/^/       | /'
+check "AF1 first call (L1 merged, L2 open): exit 0" "$rc" 0
+check "AF1b … step 1 pulled the metadata branch first" "$(printf '%s\n' "$out" | head -1)" "fleet-closeout: pull — pulled test-meta"
+has "AF1c … L1 backstop: lane-convert-ready closed it out and finalized it" "$out" "fleet-closeout: backstop — L1 lane-convert-ready (exit 0) — lane-convert-ready: finalize — finalize-empty: finalized"
+has "AF1d … L2 waits for its merge" "$out" "fleet-closeout: waiting — L2 awaiting_merge"
+has "AF1e … L1 checked off in the parent Queue" "$out" "fleet-closeout: check-off — L1 reqs/a.md"
+check "AF1f parent Queue: reqs/a.md checked, reqs/b.md not" "$(grep -c '^- \[x\] reqs/a.md$' "$RF10" | tr -d ' '):$(grep -c '^- \[ \] reqs/b.md$' "$RF10" | tr -d ' ')" "1:1"
+check "AF1g one parent Progress line for it, naming the PR" "$(grep -cxF -- "- fleet closeout: L1 reqs/a.md done (PR $PR101)" "$RF10" | tr -d ' ')" 1
+has "AF1h step 4 pulled the primary onto origin/main" "$out" "fleet-closeout: sync — pulled main"
+check "AF1i … the primary now has the new commit" "$(git -C "$P" rev-parse HEAD)" "$(git -C "$T/af-other" rev-parse HEAD)"
+has "AF1j step 5 removed L1" "$out" "fleet-closeout: remove — L1 removed"
+check "AF1k … L1 gone, L2 still there" "$([ -d "$L101" ] && echo kept || echo removed):$([ -d "$L102" ] && echo kept || echo removed)" "removed:kept"
+check "AF1l step 6 waits on L2 (last line), lock still held" \
+  "$(printf '%s\n' "$out" | tail -n1):$(bash "$HERE/run-lock.sh" status --root "$P" | cut -c1-6)" \
+  "fleet-closeout: waiting — lane(s) not removed yet: L2 (re-run fleet-closeout on the next --resume):LOCKED"
+hasnt "AF1m … no wave-end step ran" "$out" "lanes-dir"
+SRF10="$(cksum < "$RF10")"
+out="$(AF_MERGED="$PR101" af fleet-closeout "$RF10")"; rc=$?
+check "AF2 a re-run with nothing new is idempotent (exit 0, parent run file byte-unchanged)" "$rc:$(cksum < "$RF10")" "0:$SRF10"
+has "AF2b … it reads L1 removed" "$out" "fleet-closeout: lane — L1 removed"
+has "AF2c … and the primary already synced" "$out" "fleet-closeout: sync — skipped — already synced (main at origin/main)"
+# AF2d a closed-out lane whose removal is refused waits (never --stop, never an in-session wait)
+echo junk > "$L102/junk.txt"
+out="$(AF_MERGED="$PR101 $PR102" af fleet-closeout "$RF10")"; rc=$?
+check "AF2d the owner merged L2 but its lane is dirty: closed out + checked off, removal waits (exit 0)" \
+  "$rc:$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: waiting — L2 dirty working tree' | tr -d ' '):$([ -d "$L102" ] && echo kept)" "0:1:kept"
+check "AF2e … and the wave end waits on it" "$(printf '%s\n' "$out" | tail -n1)" \
+  "fleet-closeout: waiting — lane(s) not removed yet: L2 (re-run fleet-closeout on the next --resume)"
+rm -f "$L102/junk.txt"
+out="$(AF_MERGED="$PR101 $PR102" AF_CI=failure af fleet-closeout "$RF10")"; rc=$?
+printf '%s\n' "$out" | sed 's/^/       | /'
+check "AF3 the next call removes it: exit 0" "$rc" 0
+has "AF3b … L2 closed out, checked off and removed" "$out" "fleet-closeout: remove — L2 removed"
+check "AF3c parent Queue fully checked off" "$(grep -c '^- \[ \] ' "$RF10" | tr -d ' ')" 0
+has "AF3d the lanes dir is kept, naming its contents (salvage + logs kept by design)" "$out" "fleet-closeout: lanes-dir — kept $LR10 — contents: "
+has "AF3e … salvage among them" "$(printf '%s\n' "$out" | grep 'lanes-dir — kept')" "salvage"
+has "AF3f leaks vs the wave-start snapshot: none" "$out" "fleet-closeout: leaks — leaks: none (vs snapshot <primary>/.supervisor/automate/$PARENT10.leaks-snapshot)"
+check "AF3g … its first line is in the parent Progress, with no absolute path" \
+  "$(grep -c '^- fleet closeout leaks: leaks: none' "$RF10" | tr -d ' '):$(grep -c "$P" "$RF10" | tr -d ' ')" "1:0"
+has "AF3h the sweep is reported unavailable" "$out" "fleet-closeout: sweep: unavailable (automate-followups/22 not shipped)"
+MSHA="$(git -C "$P" rev-parse origin/main)"
+has "AF3i main health: a red ci check on origin/main HEAD pauses the wave (printed)" "$out" "fleet-closeout: wave_paused: main_red after $MSHA"
+check "AF3j … and appended once to the parent Progress (no revert, no block)" "$(grep -cxF -- "- wave_paused: main_red after $MSHA" "$RF10" | tr -d ' ')" 1
+check "AF3k the Queue is empty ⇒ the wave lock is released (last line)" \
+  "$(printf '%s\n' "$out" | tail -n1):$(bash "$HERE/run-lock.sh" status --root "$P")" "fleet-closeout: wave closed — lock released:UNLOCKED"
+check "AF3l the gh calls were reads only (pr view / the check-runs api)" "$(grep -vE '^gh (pr view|api repos/\{owner\}/\{repo\}/commits/[0-9a-f]+/check-runs\?check_name=ci|auth status)' "$T_AFGH" | wc -l | tr -d ' ')" 0
+SRF10="$(cksum < "$RF10")"
+out="$(AF_MERGED="$PR101 $PR102" AF_CI=failure af fleet-closeout "$RF10")"; rc=$?
+check "AF4 a re-run after the close: exit 0, the parent run file byte-unchanged (no duplicate lines)" "$rc:$(cksum < "$RF10")" "0:$SRF10"
+check "AF4b … still ends wave closed (release is idempotent)" "$(printf '%s\n' "$out" | tail -n1)" "fleet-closeout: wave closed — lock released"
+# AF4c the next wave's item is still unchecked ⇒ the lock is kept (the next wave runs under it)
+printf '%s\n' "- [ ] reqs/next.md" > "$T/af.q"; awk -v f="$T/af.q" '{ print } /^## Queue$/ { while ((getline l < f) > 0) print l }' "$RF10" > "$T/af.rf" && mv "$T/af.rf" "$RF10"
+bash "$HERE/run-lock.sh" acquire --owner "automate-lanes:$PARENT10" --root "$P" >/dev/null 2>&1
+out="$(AF_MERGED="$PR101 $PR102" af fleet-closeout "$RF10")"
+check "AF4c a Queue item left for the next wave keeps the wave lock" \
+  "$(printf '%s\n' "$out" | tail -n1):$(bash "$HERE/run-lock.sh" status --root "$P" | cut -c1-6)" \
+  "fleet-closeout: lock kept — 1 Queue item(s) remain unchecked (the next wave runs under it):LOCKED"
+bash "$HERE/run-lock.sh" release --owner "automate-lanes:$PARENT10" --root "$P" >/dev/null 2>&1
+# human cases + the pull failure, on a fresh one-lane parent
+PARENT11=automate-2026-10-10-130000; RF11="$P/.supervisor/automate/$PARENT11.md"; LR11="$T/work/primary-lanes/$PARENT11"
+printf '# Automate Run: %s\n\n## Queue\n- [ ] reqs/a.md\n\n## Progress\n' "$PARENT11" > "$RF11"
+PR111="https://github.com/o/r/pull/111"
+ae_lane "$RF11" "$LR11" 1 ".supervisor/requirements/t/af11.md" "$PR111" awaiting_merge; L111="$ABL"
+out="$(AF_CLOSED="$PR111" af fleet-closeout "$RF11")"; rc=$?
+has "AF5 a gone lane (PR closed unmerged) is the human's: never auto-abandoned" "$out" "fleet-closeout: human — L1 gone (PR closed unmerged): lane-remove $L111 --abandon"
+check "AF5b … the lane is kept and its run file untouched" "$rc:$([ -d "$L111" ] && echo kept):$(grep -c '^## Status: paused' "$L111/.supervisor/automate/$PARENT11-L1.md" | tr -d ' ')" "0:kept:1"
+echo "push_failed — rejected 5 times" > "$L111/.supervisor/automate/$PARENT11-L1.meta-push-failed"
+out="$(AF_MERGED="$PR111" af fleet-closeout "$RF11")"
+has "AF6 a meta-push-failed marker is the human's (no backstop runs)" "$out" "fleet-closeout: human — L1 meta-push-failed: push_failed — rejected 5 times"
+hasnt "AF6b … no backstop" "$out" "backstop"
+rm -f "$L111/.supervisor/automate/$PARENT11-L1.meta-push-failed"
+S11="$(cksum < "$RF11")"
+out="$(STUB_META_FAIL=1 AF_MERGED="$PR111" REMOTE11="$T/remote-af" LOOMWRIGHT_LANES_META_SYNC="$T/meta-sync.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" \
+  LOOMWRIGHT_LANES_TRAIL="$T/ab-spy.sh" LOOMWRIGHT_GH_BIN="$T/af-gh" bash "$S" fleet-closeout "$RF11" 2>&1)"; rc=$?
+check "AF7 a failed metadata pull: exit 2, ONE line, nothing else runs" "$rc:$(printf '%s\n' "$out" | wc -l | tr -d ' '):$out" \
+  "2:1:fleet-closeout: pull FAILED — (meta-sync exit 1)"
+check "AF7b … the parent run file and the lane are untouched" "$(cksum < "$RF11"):$([ -d "$L111" ] && echo kept)" "$S11:kept"
+out="$(af fleet-closeout "$T/nowhere/x.md")"; rc=$?
+check "AF8 a bad parent run file is refused (exit 1)" "$rc:$(printf '%s' "$out" | grep -c '^fleet-closeout: refused — ' | tr -d ' ')" "1:1"
+printf '# Automate Run: automate-2026-10-10-140000\n\n## Progress\n' > "$P/.supervisor/automate/automate-2026-10-10-140000.md"
+check "AF9 no lane table ⇒ one skipped line, exit 0" "$(af fleet-closeout "$P/.supervisor/automate/automate-2026-10-10-140000.md"; echo "rc=$?")" \
+  "fleet-closeout: skipped — no lane table (automate-2026-10-10-140000.lanes): no lane to close out
+rc=0"
+
+# ---- AG: wave-plan is READ-ONLY (A4) + the no-new-merge-path guards (A3) + mutation control ----------
+PARENT12=automate-2026-10-10-150000; RF12P="$P/.supervisor/automate/$PARENT12.md"; LR12="$T/work/primary-lanes/$PARENT12"
+printf '# Automate Run: %s\n\n## Queue\n- [ ] reqs/a.md\n- [ ] reqs/b.md\n\n## Current\n- item: null | status: null\n- wave: 2 | items: reqs/b.md, reqs/a.md\n\n## Progress\n' "$PARENT12" > "$RF12P"
+PR121="https://github.com/o/r/pull/121"; PR122="https://github.com/o/r/pull/122"
+ae_lane "$RF12P" "$LR12" 1 ".supervisor/requirements/t/ag1.md" "$PR121" ready_for_release; L121="$ABL"
+run lane-create "$RF12P" reqs/b.md 2 >/dev/null; L122="$LR12/L2"
+printf '# Automate Run: %s-L2\n\n## Status: paused\n\n## Queue\n- [ ] reqs/b.md\n\n## Current\n- item: reqs/b.md | status: ready_for_release | pr: %s | branch: feature/b\n- pause_reason: ready_for_release\n\n## Progress\n' \
+  "$PARENT12" "$PR122" > "$L122/.supervisor/automate/$PARENT12-L2.md"
+ag_state() { # every ref + the working tree (status + content checksums) of the primary and both lanes
+  local d; for d in "$P" "$L121" "$L122"; do git -C "$d" for-each-ref; git -C "$d" status --porcelain --untracked-files=all; lane_sum "$d"; done 2>&1 | cksum
+}
+: > "$T_AFGH"; AG0="$(ag_state)"
+out="$(AF_NOHEAD="$PR121" af wave-plan "$RF12P")"; rc=$?
+SHA122="$(printf '%040d' 122)"
+check "AG1 wave-plan prints the operator's commands in planner order (exit 0)" "$rc
+$out" "0
+# wave-plan: $PARENT12 wave 2 (from ## Current) — READ-ONLY: nothing below was run; the operator runs it
+git fetch origin
+git checkout -b wave/$PARENT12-w2 origin/main
+git merge --no-ff $SHA122 -m \"Merge lane L2 (reqs/b.md) PR #122\"
+# L1: head unreadable — resolve before integrating
+bash scripts/ci-local.sh
+# run this project's release step
+git push -u origin wave/$PARENT12-w2
+gh pr create --base main --head wave/$PARENT12-w2
+# Conflict rules (Part S):
+#   - a marker-only conflict is resolved in the merge commit itself
+#   - anything larger stops the integration: hand it to the owner
+#   - never rewrite or push a lane branch
+#   - a lane broken on the wave branch is fixed on its own PR, and its new head is re-merged"
+check "AG2 GUARD: every ref and the working tree of the primary and the lanes are byte-identical after it" "$(ag_state)" "$AG0"
+check "AG2b … and its only gh calls were pr view reads" "$(grep -vc '^gh pr view ' "$T_AFGH" | tr -d ' ')" 0
+mkdir -p "$P/scripts"; printf '#!/usr/bin/env bash\n' > "$P/scripts/bump-version.sh"
+out="$(af wave-plan "$RF12P" --wave-branch release/w2)"
+has "AG3 a repo with scripts/bump-version.sh gets it as the release step" "$out" "
+bash scripts/bump-version.sh
+"
+has "AG3b --wave-branch names the branch" "$out" "git checkout -b release/w2 origin/main"
+has "AG3c … both lanes merged by their exact head sha" "$out" "git merge --no-ff $(printf '%040d' 121) -m \"Merge lane L1 (reqs/a.md) PR #121\""
+rm -rf "$P/scripts"
+out="$(af wave-plan "$RF11")"
+check "AG3d no ## Current wave line ⇒ the lane table order, wave 1" "$(printf '%s\n' "$out" | sed -n '1p;3,4p')" \
+  "# wave-plan: $PARENT11 wave 1 (no ## Current wave items — lane table order) — READ-ONLY: nothing below was run; the operator runs it
+git checkout -b wave/$PARENT11-w1 origin/main
+git merge --no-ff $(printf '%040d' 111) -m \"Merge lane L1 (reqs/a.md) PR #111\""
+sed 's/^- wave: 2 | items: reqs\/b.md, reqs\/a.md$/- wave: 3 | items: reqs\/zzz.md/' "$RF12P" > "$T/ag.rf"; cp "$RF12P" "$T/ag.rf.keep"; mv "$T/ag.rf" "$RF12P"
+check "AG3e a wave item with no lane is named and skipped" "$(af wave-plan "$RF12P" | sed -n 4p)" "# reqs/zzz.md: no lane in $PARENT12.lanes — skipped"
+mv "$T/ag.rf.keep" "$RF12P"
+out="$(af wave-plan "$RF12P" --wave-branch 'bad..name')"; rc=$?
+check "AG4 an invalid wave branch name is refused (exit 1)" "$rc:$(printf '%s' "$out" | grep -c "^wave-plan: refused — 'bad..name' is not a valid branch name" | tr -d ' ')" "1:1"
+check "AG4b helpers dispatches wave-plan and fleet-closeout to automate-lanes.sh" \
+  "$(bash "$HERE/automate-helpers.sh" wave-plan 2>&1 | grep -c '^wave-plan: refused — ' | tr -d ' '):$(bash "$HERE/automate-helpers.sh" fleet-closeout 2>&1 | grep -cxF 'automate-lanes: usage: fleet-closeout <parent_runfile>' | tr -d ' ')" \
+  "1:1"
+# AG5 mutation control: a wave-plan that writes ONE ref (the wave branch) must fail the AG2 guard.
+sed 's|^  echo "git checkout -b \$wb origin/\$base"$|&; git -C "$primary" branch "$wb" "refs/remotes/origin/$base" >/dev/null 2>\&1|' "$S" > "$MUT/automate-lanes.sh"
+if [ -s "$MUT/automate-lanes.sh" ] && ! cmp -s "$S" "$MUT/automate-lanes.sh" && bash -n "$MUT/automate-lanes.sh"; then ok "AG5a mutant valid (non-empty, differs, bash -n)"; else bad "AG5a mutant invalid"; fi
+AF_NOHEAD="$PR121" REMOTE11="$T/remote-af" LOOMWRIGHT_GH_BIN="$T/af-gh" bash "$MUT/automate-lanes.sh" wave-plan "$RF12P" >/dev/null 2>&1
+if [ "$(ag_state)" != "$AG0" ]; then ok "AG5b mutation (wave-plan writes a ref) fails the read-only guard"; else bad "AG5b mutation control did not trip"; fi
+git -C "$P" branch -D "wave/$PARENT12-w2" >/dev/null 2>&1
+check "AG5c … the mutant's ref removed again" "$(ag_state)" "$AG0"
+# AG6 A3/A4 static guards: no executable merge / push / gate-eval in automate-lanes.sh — the only hits
+# are comments, the deny-list lines that NAME the tokens, and wave-plan's printed strings.
+ag_exec_hits() { grep -nE 'gh pr merge|gate-eval|git( -C [^ ]+)? (merge|push)( |$)' "$1" \
+  | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE 'LANE_DISALLOWED_FIXED=|disallow="|echo "git |printf .git merge'; }
+check "AG6 automate-lanes.sh has no executable gh pr merge / gate-eval / git merge / git push" "$(ag_exec_hits "$S")" ""
+awk '{ print } /^lanes_wave_plan\(\) \{$/ { print "  git -C \"$LP_PRIMARY\" push origin HEAD >/dev/null 2>&1" }' "$S" > "$MUT/automate-lanes.sh"
+if [ -s "$MUT/automate-lanes.sh" ] && ! cmp -s "$S" "$MUT/automate-lanes.sh" && bash -n "$MUT/automate-lanes.sh"; then ok "AG6a mutant valid (non-empty, differs, bash -n)"; else bad "AG6a mutant invalid"; fi
+check "AG6b mutation (an executable git push) is caught by the static guard" "$(ag_exec_hits "$MUT/automate-lanes.sh" | wc -l | tr -d ' ')" 1
+check "AG7 A5: no sequential-loop script calls fleet-closeout or wave-plan (only the helpers dispatch arm)" \
+  "$(grep -lE 'fleet-closeout|wave-plan' "$HERE"/automate-helpers.d/*.sh "$HERE/automate-trail.sh" "$HERE/automate-dismissed.sh" 2>/dev/null | wc -l | tr -d ' '):$(grep -cE '^ +fleet-closeout\|wave-plan\) exec bash "\$\(dirname "\$0"\)/automate-lanes.sh"' "$HERE/automate-helpers.sh" | tr -d ' ')" "0:1"
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 # AA-F12z (final leg): nothing this suite started may outlive it — no process whose command line names
