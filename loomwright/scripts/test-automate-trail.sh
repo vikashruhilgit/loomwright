@@ -122,6 +122,12 @@
 #      `## Status: pending` after Phase 4.5 (its step-2.5 stamp block, if any,
 #      applied) + closeout with the PR OPEN is byte-identical; MERGED ⇒ exactly
 #      one closeout-printf block; the self-heal skill instructs no stamp.
+#   NT. closeout --no-trail (automate-followups/38) — the same steps, run file
+#      and requirement bytes as plain closeout, no trail-pr (spy), classified
+#      `complete`; OPEN ⇒ nothing; the --auto-merge SYNC close-out (pending
+#      requirement ⇒ one done block, one `- [x]`, no trail PR, trail-gate
+#      clear); the strict sentinel guard (quoted ⇒ stamps; real block ⇒
+#      skipped); SKILL / --help / command wiring.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wait-lib.sh"   # bounded condition waits (iq02 T07)
@@ -2563,6 +2569,119 @@ if grep -q '^2\.5\. \*\*Requirement close-out' <<<"$ds25" && ! grep -qE '^[[:spa
 else
   no "(DS3) step 2.5 still stamps, or no longer names the deferral to closeout"
 fi
+
+echo "== NT. automate-followups/38: closeout --no-trail, the --auto-merge SYNC close-out, the strict sentinel guard =="
+# nt_norm <file> <fx dir> — a run file / requirement with the per-fixture bytes normalised: the fixture
+# dir, UTC timestamps and git object ids (each fixture's squash merge is a different commit).
+nt_norm() { sed -E "s#$2#<FX>#g; s/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g; s/[0-9a-f]{7,40}/<OID>/g" "$1"; }
+nt_seed() { # a session id + pick/park so closeout's silent item_timing step has a record to write
+  printf -- '- 2026-10-01T10:00:00Z picked %s\n- 2026-10-01T10:30:00Z session_id sess-nt (%s)\n- 2026-10-01T11:00:00Z parked awaiting_merge\n' "$REQ" "$REQ" >> "$P/$RF_REL"
+  mkdir -p "$P/.supervisor/logs"
+}
+# (NT1) the plain closeout reference run, then the same fixture shape under --no-trail (flag FIRST).
+closeout_fixture 500; nt_seed; spy_reset
+nt_plain="$(run_closeout)"; NT_FXP="$FX"; cp "$P/$RF_REL" "$TOP/nt-rf-plain"; cp "$P/$REQ" "$TOP/nt-req-plain"
+closeout_fixture 501; nt_seed; spy_reset
+nt_c0="$(count_creates)"
+nt_out="$(cd "$P" && bash "$SPYD/automate-helpers.sh" closeout --no-trail "$RF_REL" "$REQ" "$PRURL")"; rc=$?
+printf '%s\n' "$nt_out" | sed 's/^/    | /'
+[ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$nt_out" | tail -n1)" = "trail-pr: skipped — --no-trail" ] \
+  && ok "(NT1) --no-trail: exit 0, last line 'trail-pr: skipped — --no-trail'" || no "(NT1) rc=$rc last=$(printf '%s\n' "$nt_out" | tail -n1)"
+if grep -q '^trail-pr ' "$SPYLOG" 2>/dev/null; then no "(NT1) trail-pr was called: $(grep '^trail-pr ' "$SPYLOG")"; else ok "(NT1) --no-trail: no trail-pr call (spy)"; fi
+[ "$(count_creates)" = "$nt_c0" ] && ok "(NT1) --no-trail: no trail PR created" || no "(NT1) a trail PR was opened"
+for t in "brief-repair: " "closeout: removed — worktree " "closeout: synced — main at " "closeout: removed — branch feature/x" "closeout: stamped — $REQ" "closeout: checked — - [x] $REQ" "closeout: reconciled — ## Current $REQ status done, pause_reason awaiting_go"; do
+  grep -qF -- "$t" <<<"$nt_out" && ok "(NT1) --no-trail still runs: $t" || no "(NT1) --no-trail missing step line: $t"
+done
+nt_norm "$TOP/nt-req-plain" "$NT_FXP" > "$TOP/nt-req-a"; nt_norm "$P/$REQ" "$FX" > "$TOP/nt-req-b"
+cmp -s "$TOP/nt-req-a" "$TOP/nt-req-b" && grep -qxF '<!-- loomwright:requirement-closeout -->' "$P/$REQ" \
+  && ok "(NT1) the requirement block is byte-identical to plain closeout's (Completed normalised)" || no "(NT1) requirement differs: $(diff "$TOP/nt-req-a" "$TOP/nt-req-b" | tr '\n' '|')"
+nt_norm "$TOP/nt-rf-plain" "$NT_FXP" > "$TOP/nt-rf-a"; nt_norm "$P/$RF_REL" "$FX" > "$TOP/nt-rf-b"
+cmp -s "$TOP/nt-rf-a" "$TOP/nt-rf-b" && grep -qE '^- .* closeout https://github.com/acme/widgets/pull/7: closeout: checked' "$P/$RF_REL" \
+  && ok "(NT1) the run file (check-off, ## Current reconcile, ## Progress lines) equals plain closeout's, normalised" || no "(NT1) run file differs: $(diff "$TOP/nt-rf-a" "$TOP/nt-rf-b" | tr '\n' '|')"
+[ "$(it_count "$P/.supervisor/logs/sess-nt.jsonl")" = 1 ] && ok "(NT1) --no-trail still appends ONE item_timing event" || no "(NT1) item_timing rows: $(it_count "$P/.supervisor/logs/sess-nt.jsonl")"
+[ ! -d "$P/.supervisor/run.lock" ] && ok "(NT1) --no-trail releases the closeout run lock" || no "(NT1) run lock leaked under --no-trail"
+case "$nt_plain" in *"closeout: stamped — "*) ok "(NT1) control: the plain reference run stamped too" ;; *) no "(NT1) plain reference run did not stamp: $nt_plain" ;; esac
+# (NT1b) the flag between the positionals and next to --session-id parses the same (never swallowed as pr_url).
+closeout_fixture 502; spy_reset
+nt_out2="$(cd "$P" && bash "$SPYD/automate-helpers.sh" closeout "$RF_REL" --no-trail "$REQ" --session-id nt-sid "$PRURL")"
+if [ "$(printf '%s\n' "$nt_out2" | tail -n1)" = "trail-pr: skipped — --no-trail" ] && grep -qF "closeout: stamped — $REQ" <<<"$nt_out2" && ! grep -q '^trail-pr ' "$SPYLOG" 2>/dev/null; then
+  ok "(NT1b) --no-trail between the positionals (with --session-id) ⇒ the same close-out, no trail"
+else no "(NT1b) $(printf '%s' "$nt_out2" | tr '\n' '|')"; fi
+# (NT3) closeout-classify reads the whole --no-trail output as complete.
+nt_cv="$(printf '%s\n' "$nt_out" | cls --run "$RUN_ID" --item "$REQ" --pr "$PRURL")"
+[ "$nt_cv" = complete ] && ok "(NT3) closeout-classify on a MERGED --no-trail run prints exactly 'complete'" || no "(NT3) classify: $(printf '%s' "$nt_cv" | tr '\n' '|')"
+# (NT2) PR OPEN + --no-trail ⇒ one evidence-gate line, nothing written, no spy call.
+closeout_fixture 503; spy_reset
+jq '.[0].state = "OPEN"' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+a0="$(cksum < "$P/$RF_REL")"; q0="$(cksum < "$P/$REQ")"
+nt_out="$(cd "$P" && bash "$SPYD/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" --no-trail)"
+if [ "$nt_out" = "closeout: skipped — pr not merged (awaiting_merge)" ] && [ "$a0" = "$(cksum < "$P/$RF_REL")" ] && [ "$q0" = "$(cksum < "$P/$REQ")" ] && ! grep -q '^trail-pr ' "$SPYLOG" 2>/dev/null; then
+  ok "(NT2) --no-trail on an OPEN PR prints only 'pr not merged', run file + requirement byte-unchanged, no trail-pr"
+else no "(NT2) $nt_out"; fi
+
+# (NT4) the --auto-merge SYNC close-out (SKILL §6 step 5): branch mode OFF, requirement pending, its
+# done brief in jobs/done/, the PR MERGED by the gate; the PICK lock is held and re-entered.
+closeout_fixture 504; spy_reset
+printf '# req a\n\n## Status: pending\n' > "$P/$REQ"
+sed "s#^- item: $REQ | status: awaiting_merge#- item: $REQ | status: running#; s#^- pause_reason: awaiting_merge#- pause_reason: null#; s#^\#\# Status: paused#\#\# Status: running#" "$P/$RF_REL" > "$P/rf.t" && mv "$P/rf.t" "$P/$RF_REL"
+bash "$HERE/run-lock.sh" acquire --owner "automate:$RUN_ID" --session-id NT-SID --root "$P" >/dev/null
+nt_c0="$(count_creates)"
+nt_out="$(cd "$P" && bash "$SPYD/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" --no-trail --session-id NT-SID)"
+printf '%s\n' "$nt_out" | sed 's/^/    | /'
+[ "$(grep -A1 -xF '<!-- loomwright:requirement-closeout -->' "$P/$REQ" | tr '\n' '|')" = "<!-- loomwright:requirement-closeout -->|## Status: done|" ] && [ "$(grep -cE '^## Status:[[:space:]]*done' "$P/$REQ")" = 1 ] \
+  && ok "(NT4) auto-merge SYNC: the requirement carries ONE sentinel-led ## Status: done block" || no "(NT4) requirement: $(tr '\n' '|' < "$P/$REQ")"
+[ "$(grep -cxF -- "- [x] $REQ" "$P/$RF_REL")" = 1 ] && ok "(NT4) exactly one - [x] row for the item" || no "(NT4) check-off rows: $(grep -cF "$REQ" "$P/$RF_REL")"
+grep -qF -- "- item: $REQ | status: done" "$P/$RF_REL" && grep -qxF -- '- pause_reason: null' "$P/$RF_REL" \
+  && ok "(NT4) ## Current reconciled to done / null (the run is running)" || no "(NT4) ## Current: $(grep -A2 '^## Current' "$P/$RF_REL" | tr '\n' '|')"
+if [ "$(count_creates)" = "$nt_c0" ] && ! grep -q '^trail-pr ' "$SPYLOG" 2>/dev/null; then ok "(NT4) no trail PR opened (gh stub create count + trail-pr spy: zero calls)"; else no "(NT4) a trail PR was opened"; fi
+grep -q "^owner	automate:$RUN_ID\$" "$P/.supervisor/run.lock/meta" 2>/dev/null && ok "(NT4) the PICK lock survives the re-entered closeout" || no "(NT4) PICK lock lost"
+tg="$(cd "$P" && bash "$H" trail-gate "$RF_REL")"
+case "$tg" in "trail-gate: clear — "*) ok "(NT4) the next PICK's trail-gate reads clear ($tg)" ;; *) no "(NT4) trail-gate: $tg" ;; esac
+bash "$HERE/run-lock.sh" release --owner "automate:$RUN_ID" --root "$P" >/dev/null
+
+# (NT5) the strict sentinel guard: a quoted sentinel is not a stamp; a real stamp block is.
+nt_q='quotes `<!-- loomwright:requirement-closeout -->` inline in its prose'
+for v in inline ownline real dwe; do
+  case "$v" in inline) closeout_fixture 510 ;; ownline) closeout_fixture 511 ;; real) closeout_fixture 512 ;; dwe) closeout_fixture 513 ;; esac
+  case "$v" in
+    inline)  printf '# req a\n\n## Status: pending\n\n## Problem\nThe guard %s.\n' "$nt_q" > "$P/$REQ" ;;
+    ownline) printf '# req a\n\n## Status: pending\n\n## Problem\n<!-- loomwright:requirement-closeout -->\nis the sentinel, quoted on its own line.\n' > "$P/$REQ" ;;
+    real)    printf '# req a\n\n<!-- loomwright:requirement-closeout -->\n## Status: done\n- **PR:** %s\n' "$PRURL" > "$P/$REQ" ;;
+    dwe)     printf '# req a\n\n<!-- loomwright:requirement-closeout -->\n## Status: done_with_escalation — heal reason x\n- **PR:** %s\n' "$PRURL" > "$P/$REQ" ;;
+  esac
+  q0="$(cksum < "$P/$REQ")"
+  nt_out="$(run_closeout)"
+  case "$v" in
+    inline|ownline)
+      grep -qF "closeout: stamped — $REQ" <<<"$nt_out" && [ "$(grep -cE '^## Status:[[:space:]]*done' "$P/$REQ")" = 1 ] \
+        && ok "(NT5) a sentinel quoted $v in prose ⇒ closeout stamps" || no "(NT5) $v: $(grep -F 'closeout: s' <<<"$nt_out" | tr '\n' '|')"
+      nt_out="$(run_closeout)"
+      grep -qxF "closeout: skipped — already stamped" <<<"$nt_out" && [ "$(grep -cE '^## Status:[[:space:]]*done' "$P/$REQ")" = 1 ] \
+        && ok "(NT5) $v: the re-run reads its own block as stamped (idempotent, one block)" || no "(NT5) $v re-run: $(tr '\n' '|' <<<"$nt_out")" ;;
+    *)
+      grep -qxF "closeout: skipped — already stamped" <<<"$nt_out" && [ "$q0" = "$(cksum < "$P/$REQ")" ] \
+        && ok "(NT5) a real stamp block ($v) ⇒ skipped — already stamped, requirement unchanged" || no "(NT5) $v: $(tr '\n' '|' <<<"$nt_out")" ;;
+  esac
+done
+
+# (NT6) SKILL / command / --help wiring (Scope 2 + 3 text).
+nt_s6="$(awk '/^## §6 /{s=1;next} s&&/^## /{exit} s' "$SKILL")"
+nt_st5="$(grep -m1 -F '5. **SYNC**' <<<"$nt_s6")"
+for t in '`automate-helpers.sh closeout <runfile> <item> <pr_url> --no-trail --session-id <this loop'"'"'s session id>`' 'closeout-classify --run <run_id> --item <item> --pr <pr_url> --record <runfile>' '**Close-out leftover gate**' 'BOTH branch modes' 'closeout_leftover' "closeout's step 2 IS \`brief-repair\`"; do
+  grep -qF -- "$t" <<<"$nt_st5" && ok "(NT6) §6 step 5 SYNC names $t" || no "(NT6) §6 step 5 SYNC missing $t"
+done
+grep -qF 'git checkout main && git pull` so the next item' <<<"$nt_st5" && no "(NT6) SYNC still runs its own git pull" || ok "(NT6) SYNC no longer runs its own git checkout main && git pull"
+grep -qF 'does NOT check it off twice' <<<"$(grep -m1 -F '6. **CHECK OFF' <<<"$nt_s6")" && ok "(NT6) §6 step 6: an auto-merged item is already - [x], not checked off twice" || no "(NT6) step 6 double check-off not addressed"
+for old in 'a trail-less close-out at SYNC is an open follow-up' 'no requirement done stamp' 'the stamp now rides'; do
+  grep -qF -- "$old" "$SKILL" && no "(NT6) stale SKILL sentence: $old" || ok "(NT6) SKILL no longer says: $old"
+done
+grep -q '^| `closeout` |.*<pr_url> \[--session-id <sid>\] \[--no-trail\]`' "$SKILL" && ok "(NT6) §1.5 closeout row documents --no-trail" || no "(NT6) §1.5 closeout row lacks --no-trail"
+grep -qF 'it runs no `current-set` but `closeout <the lane'"'"'s run file> <item> <its ## Current pr> --no-trail` inside the lane' "$SKILL" \
+  && ok "(NT6) §14 Terminal park names closeout --no-trail as the lane's stamp writer" || no "(NT6) §14 Terminal park sentence"
+nt_help="$(bash "$H" --help)"
+grep -q '^  closeout .*\[--no-trail\]' <<<"$nt_help" && ok "(NT6) --help closeout row documents --no-trail" || no "(NT6) --help closeout row"
+grep -q '^  lane-convert-ready .*closeout --no-trail' <<<"$nt_help" && ok "(NT6) --help lane-convert-ready row names closeout --no-trail" || no "(NT6) --help lane-convert-ready row"
+grep -qF 'closeout --no-trail' "$HERE/../commands/automate.md" && ok "(NT6) commands/automate.md SYNC points at closeout --no-trail" || no "(NT6) command SYNC pointer"
 
 if [ "$pass" != "$_tally_ok" ] || [ "$fail" != "$_tally_no" ]; then
   echo "  FAIL: summary counter clobbered — pass=$pass vs $_tally_ok ok lines, fail=$fail vs $_tally_no FAIL lines (a leg reused pass/fail as a variable)"

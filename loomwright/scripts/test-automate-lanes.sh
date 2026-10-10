@@ -26,6 +26,9 @@
 #   AA Validation 4/5 fixes B (parallel-automate/24): F6 lane-park-notify (truthful per-channel delivery)
 #     · F8 real transcript usage ⇒ non-zero lane TOTAL + a ceiling-check PARK · F12 lane-feed --follow leaves
 #     no pipeline behind on TERM / HUP / INT, and no process naming the suite dir outlives the suite
+#   AB merged lane close-out (automate-followups/38): lane-convert-ready runs `closeout --no-trail` inside
+#     the lane on its awaiting_merge re-run only (OPEN ⇒ nothing written; MERGED ⇒ stamp + check-off +
+#     done/awaiting_go, pushed), a done/awaiting_go re-run retries only the pushes, leftover / no-pr / mode off
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1286,6 +1289,123 @@ mkdir -p "$L61/.supervisor/automate"; cp "$T/aa-notpark.md" "$L61/.supervisor/au
 out="$(STUB_SW=configured LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$L61/.supervisor/automate/aa-notpark.md")"; rc=$?
 check "AA-F6l not at the ready_for_release park ⇒ skipped: exit 0, nothing sent, no line written" \
   "$rc:$(wc -l < "$AA_ND_LOG" | tr -d ' '):$(wc -l < "$AA_SW_LOG" | tr -d ' '):$(cmp -s "$T/aa-notpark.md" "$L61/.supervisor/automate/aa-notpark.md" && echo unchanged)" "0:0:0:unchanged"
+
+# ---- AB: a merged lane is closed out by lane-convert-ready's re-run (automate-followups/38) ----------
+# lane-convert-ready on `ready_for_release` converts with NO closeout; its `awaiting_merge` re-run runs
+# `closeout <run file> <item> <## Current pr> --no-trail` inside the lane, under the launch lock and
+# BEFORE the pushes (evidence-gated: an OPEN PR ⇒ nothing written); a MERGED re-run stamps the
+# requirement, checks the item off, reconciles ## Current to done / awaiting_go and the wave-end push
+# carries all of it; a re-run after that (`done` / `awaiting_go`) retries only the pushes. The scripts
+# are the REAL copy $SC (branch mode on, Z-F11); a spy dispatcher in front of it records every call.
+cat > "$T/ab-gh" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*" >> "$T_ABGH"
+st="${STUB_PR_STATE:-OPEN}"; ma=null; [ "$st" = MERGED ] && ma='"2026-10-10T00:00:00Z"'
+case "$1 $2" in
+  "auth status") exit 0 ;;
+  "pr view") printf '{"state":"%s","mergedAt":%s,"headRefName":"feature/ab","headRefOid":"1111111111111111111111111111111111111111"}\n' "$st" "$ma" ;;
+  *) exit 1 ;;
+esac
+EOF
+cat > "$T/ab-spy.sh" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "\$T_ABSPY"
+[ "\$1" = closeout ] && echo "CC=\${CLAUDECODE-unset} PID=\${CLAUDE_PID-unset}" >> "\$T_ABENV"
+exec bash "$SC/automate-helpers.sh" "\$@"
+EOF
+chmod +x "$T/ab-gh" "$T/ab-spy.sh"; export T_ABGH="$T/ab-gh.calls" T_ABSPY="$T/ab-spy.log" T_ABENV="$T/ab-spy.env"; mkdir -p "$T/remote-ab"
+ab() { REMOTE11="$T/remote-ab" LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" \
+  LOOMWRIGHT_LANES_TRAIL="$T/ab-spy.sh" LOOMWRIGHT_GH_BIN="$T/ab-gh" bash "$S" "$@" 2>&1; }
+# ab_lane <n> <item> <pr> — a launched-then-exited lane holding <item> pending (its af/37-shaped prose
+# quotes the sentinel inline) and a jobs/done/ brief pointing at it.
+ab_lane() {
+  run lane-create "$RF5" reqs/a.md "$1" >/dev/null; ABL="$LR5/L$1"; ABRF="$ABL/.supervisor/automate/$PARENT5-L$1.md"
+  LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$ABL" --owner-command "$OWN" >/dev/null; wait_gone "$ABL"
+  mkdir -p "$ABL/$(dirname "$2")" "$ABL/.supervisor/jobs/done"
+  printf '# ab\n\n## Status: pending\n\n## Problem\nThe old guard matched `<!-- loomwright:requirement-closeout -->` quoted in prose.\n' > "$ABL/$2"
+  printf '# brief\n- **Source requirement:** %s\n\n## Outcome\n- **PR:** %s\n' "$2" "$3" > "$ABL/.supervisor/jobs/done/2026-10-10-L$1.md"
+}
+ab_rf() { # <runfile> <lane n> <item> <pr> <status> <pause_reason>
+  printf '# Automate Run: %s-L%s\n\n## Status: paused\n\n## Source\n- backlog: lane\n\n## Run Config\n- limit: 1\n\n## Queue\n- [ ] %s\n\n## Current\n- item: %s | status: %s | pr: %s | branch: feature/ab\n- pause_reason: %s\n\n## Progress\n- 2026-10-10T00:00:00Z drain READY\n' \
+    "$PARENT5" "$2" "$3" "$3" "$5" "$4" "$6" > "$1"
+}
+RAB=".supervisor/requirements/t/ab.md"; PRAB="https://github.com/o/r/pull/57"
+ab_lane 7 "$RAB" "$PRAB"; L57="$ABL"; RFAB="$ABRF"
+ab_rf "$RFAB" 7 "$RAB" "$PRAB" ready_for_release ready_for_release
+: > "$T_ABSPY"; QAB="$(cksum < "$L57/$RAB")"
+out="$(STUB_PR_STATE=OPEN ab lane-convert-ready "$L57")"; rc=$?
+check "AB1 ready_for_release converts (exit 0) to awaiting_merge" "$rc:$(cur_line "$RFAB")" \
+  "0:- item: $RAB | status: awaiting_merge | pr: $PRAB | branch: feature/ab|- pause_reason: awaiting_merge|"
+check "AB1b … with NO closeout call (spy) and no done stamp" "$(grep -c '^closeout ' "$T_ABSPY" | tr -d ' '):$(cksum < "$L57/$RAB")" "0:$QAB"
+SAB="$(cksum < "$RFAB")"; : > "$T_ABENV"
+out="$(CLAUDECODE=1 CLAUDE_PID=$$ STUB_PR_STATE=OPEN ab lane-convert-ready "$L57")"; rc=$?
+check "AB2 awaiting_merge re-run, PR still OPEN: exit 0, closeout called once with --no-trail inside the lane" \
+  "$rc:$(grep -cxF "closeout $RFAB $RAB $PRAB --no-trail" "$T_ABSPY" | tr -d ' ')" "0:1"
+has "AB2b … its evidence gate line echoed indented" "$out" "  closeout: skipped — pr not merged (awaiting_merge)"
+check "AB2c … nothing written (requirement + run file byte-unchanged)" "$(cksum < "$L57/$RAB"):$(cksum < "$RFAB")" "$QAB:$SAB"
+has "AB2d … the push still names the unmerged exclusion" "$out" "/2026-10-10-L7.md — pr not merged"
+has "AB2e … and the last line names the gate leftover" "$(printf '%s\n' "$out" | tail -n1)" "; closeout leftover: gate — skipped — pr not merged (awaiting_merge)"
+# AB2f the lane closeout is a FRESH run-lock acquire (no --session-id), so it runs with the host identity
+# unset, as the merge watcher does — else a crashed closeout's lock would name the coordinator as holder.
+check "AB2f … and that closeout ran with the host identity vars unset (coordinator had them set)" "$(cat "$T_ABENV")" "CC=unset PID=unset"
+out="$(STUB_PR_STATE=MERGED ab lane-convert-ready "$L57")"; rc=$?
+printf '%s\n' "$out" | sed 's/^/       | /'
+check "AB3 merged re-run exits 0 and its last line reads closeout complete" "$rc:$(printf '%s\n' "$out" | tail -n1 | grep -c '; closeout complete$' | tr -d ' ')" "0:1"
+has "AB3b … closeout stamped the lane's requirement (a quoted sentinel is not a stamp)" "$out" "  closeout: stamped — $RAB"
+has "AB3c … ran with --no-trail" "$out" "  trail-pr: skipped — --no-trail"
+hasnt "AB3d … and the wave-end push no longer excludes the requirement" "$out" "excluded $RAB — pr not merged"
+check "AB3e the lane requirement carries ONE sentinel-led ## Status: done" \
+  "$(grep -A1 -xF '<!-- loomwright:requirement-closeout -->' "$L57/$RAB" | tr '\n' '|'):$(grep -cE '^## Status:[[:space:]]*done' "$L57/$RAB" | tr -d ' ')" \
+  "<!-- loomwright:requirement-closeout -->|## Status: done|:1"
+check "AB3f the lane run file reads - [x] <item> and ## Current done / awaiting_go (no current-set after closeout)" \
+  "$(grep -cxF -- "- [x] $RAB" "$RFAB" | tr -d ' '):$(cur_line "$RFAB")" "1:- item: $RAB | status: done | pr: $PRAB | branch: feature/ab|- pause_reason: awaiting_go|"
+check "AB3g the PUSHED run file carries both" \
+  "$(grep -cxF -- "- [x] $RAB" "$T/remote-ab/.supervisor/automate/$PARENT5-L7.md" 2>/dev/null | tr -d ' '):$(cur_line "$T/remote-ab/.supervisor/automate/$PARENT5-L7.md" 2>/dev/null)" \
+  "1:- item: $RAB | status: done | pr: $PRAB | branch: feature/ab|- pause_reason: awaiting_go|"
+check "AB3h the PUSHED requirement carries the done stamp" "$(grep -cE '^## Status:[[:space:]]*done' "$T/remote-ab/$RAB" 2>/dev/null | tr -d ' ')" 1
+ab_co="$(grep -n '^closeout ' "$T_ABSPY" | tail -n1 | cut -d: -f1)"; ab_tp="$(grep -n '^trail-pr ' "$T_ABSPY" | tail -n1 | cut -d: -f1)"
+check "AB3i closeout ran BEFORE the wave-end trail push (spy order)" "$([ -n "$ab_co" ] && [ -n "$ab_tp" ] && [ "$ab_co" -lt "$ab_tp" ] && echo before)" before
+check "AB3j no launch lock left behind" "$(ls -d "$P/.supervisor/automate/$PARENT5.lanes".L7.launch.lock 2>/dev/null | wc -l | tr -d ' ')" 0
+SAB="$(cksum < "$RFAB")"; nco="$(grep -c '^closeout ' "$T_ABSPY" | tr -d ' ')"; : > "$META_LOG"
+out="$(STUB_PR_STATE=MERGED ab lane-convert-ready "$L57")"; rc=$?
+check "AB4 a re-run on a closed-out lane (done / awaiting_go) is NOT refused (exit 0)" "$rc" 0
+has "AB4b … it names that state and retries only the pushes" "$out" "already closed out (## Current done / awaiting_go) — retrying the metadata push only"
+check "AB4c … no second closeout, no current-set (run file byte-unchanged), the pushes ran" \
+  "$(grep -c '^closeout ' "$T_ABSPY" | tr -d ' '):$(cksum < "$RFAB"):$(grep -c ' push ' "$META_LOG" | tr -d ' ')" "$nco:$SAB:2"
+out="$(ab lane-status "$RF5")"; rc=$?
+check "AB5 lane-status reads the closed-out lane without error" "$rc:$(printf '%s\n' "$out" | grep -c 'L7' | tr -d ' ' | sed 's/^[1-9][0-9]*$/seen/')" "0:seen"
+out="$(ab lane-park-notify "$RFAB")"; rc=$?
+check "AB5b lane-park-notify keeps skipping a non-ready_for_release file" "$rc:$(printf '%s' "$out" | grep -c '^lane-park-notify: skipped — ' | tr -d ' ')" "0:1"
+out="$(ab lane-remove "$L57")"; rc=$?
+check "AB5c lane-remove passes after the closed-out lane's push and removes it" "$rc:$([ -d "$L57" ] && echo kept || echo removed)" "0:removed"
+# AB6 a closeout leftover inside the lane (its sync refused: the lane clone is on another branch) is
+# echoed and named in the last line, and never changes the exit code; the stamp still lands.
+RAB8=".supervisor/requirements/t/ab8.md"; PRAB8="https://github.com/o/r/pull/58"
+ab_lane 8 "$RAB8" "$PRAB8"; L58="$ABL"; RFAB8="$ABRF"
+git -C "$L58" checkout -q -b scratch
+ab_rf "$RFAB8" 8 "$RAB8" "$PRAB8" awaiting_merge awaiting_merge
+out="$(STUB_PR_STATE=MERGED ab lane-convert-ready "$L58")"; rc=$?
+check "AB6 a closeout sync leftover in the lane keeps exit 0" "$rc" 0
+has "AB6b … the sync skip is echoed indented" "$out" "  closeout: skipped — primary checkout is on scratch (neither main nor the PR head)"
+has "AB6c … and named in the last line" "$(printf '%s\n' "$out" | tail -n1)" "; closeout leftover: sync — skipped — primary checkout is on scratch (neither main nor the PR head)"
+check "AB6d … the requirement is still stamped" "$(grep -cE '^## Status:[[:space:]]*done' "$L58/$RAB8" | tr -d ' ')" 1
+
+# AB7 an awaiting_merge re-run whose ## Current carries no pr: closeout is not run, and the last line says so.
+RAB9=".supervisor/requirements/t/ab9.md"
+ab_lane 9 "$RAB9" "-"; L59="$ABL"; RFAB9="$ABRF"
+ab_rf "$RFAB9" 9 "$RAB9" null awaiting_merge awaiting_merge
+nco="$(grep -c '^closeout ' "$T_ABSPY" | tr -d ' ')"
+out="$(STUB_PR_STATE=MERGED ab lane-convert-ready "$L59")"; rc=$?
+check "AB7 no ## Current pr ⇒ exit 0, no closeout call" "$rc:$(grep -c '^closeout ' "$T_ABSPY" | tr -d ' ')" "0:$nco"
+has "AB7b … and the last line says closeout was not run" "$(printf '%s\n' "$out" | tail -n1)" "; closeout not run (## Current has no pr)"
+# AB8 metadata mode off: the merged re-run still closes the lane out; the mode-off line gains only the summary.
+RAB10=".supervisor/requirements/t/ab10.md"; PRAB10="https://github.com/o/r/pull/60"
+ab_lane 10 "$RAB10" "$PRAB10"; L510="$ABL"; RFAB10="$ABRF"
+ab_rf "$RFAB10" 10 "$RAB10" "$PRAB10" awaiting_merge awaiting_merge
+out="$(STUB_MODE_LINE=off STUB_PR_STATE=MERGED ab lane-convert-ready "$L510")"; rc=$?
+check "AB8 mode off: the merged re-run exits 0 with the mode-off line + the closeout summary" "$rc:$(printf '%s\n' "$out" | tail -n1)" \
+  "0:lane-convert-ready: converted L10 to awaiting_merge (metadata mode off — no metadata branch to push); closeout complete"
+check "AB8b … and the lane requirement is stamped" "$(grep -cE '^## Status:[[:space:]]*done' "$L510/$RAB10" | tr -d ' ')" 1
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 # AA-F12z (final leg): nothing this suite started may outlive it — no process whose command line names
