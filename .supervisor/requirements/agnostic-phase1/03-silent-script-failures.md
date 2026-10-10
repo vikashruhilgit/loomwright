@@ -74,8 +74,7 @@ the spawn shape that bypassed it). Any change to `guard-test-integrity.sh`'s den
 
 bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
 
-## Status: pending
-
+## Status: parked (merged 2026-10-10 into `automate-followups/39-engine-hygiene.md` as Part B — do not run this file; work the merged item)
 ## Depends on
 01
 

@@ -1,7 +1,6 @@
 # Rules seam: four dismissed Phase 4.5 findings from PR #319 (item 13)
 
-## Status: pending
-
+## Status: parked (merged 2026-10-10 into `automate-followups/39-engine-hygiene.md` as Part C — do not run this file; work the merged item)
 > **Promoted from `proposed/` 2026-10-01** (owner triage session). Bundles the four `/automate` gate drafts
 > `automate-2026-09-30-054439--13-dismissed-findings-triage-sweep-ce364e--dismissed-{1b4e0236,3d8b82d7,c37bc07f,summary}.md`,
 > all recorded with owner decision **follow-up** in that run's `.dismissed-decisions` ledger. Source PR:

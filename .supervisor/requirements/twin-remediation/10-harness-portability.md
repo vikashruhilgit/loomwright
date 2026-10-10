@@ -133,12 +133,32 @@ evidence-backed pick rather than an open question.
 - Scope item 1 (CORE/ADAPTER inventory as evidence) shipped as `scripts/check-vendor-coupling.sh` + `loomwright/docs/vendor-coupling-manifest.json` (commit 7fa14d8; today 629 refs / 0 breaches, ratchet one-directional). The "ONE adapter spike" shipped as `loomwright/scripts/adapters/providers/{lens-run,provider-claude,provider-codex,provider-cursor,provider-gemini}.sh` (PR #239) and `adapters/orca/` (PR #237).
 - **Remaining:** scope item 2 (written core contract: file protocol, CLI surface, capability ports + degraded fallbacks; `LOOMWRIGHT_ROOT` resolved-once env var) and item 3 (Cursor/Codex capability research from current docs). Re-scope the AC to those before dispatching.
 
+## Re-scope (2026-10-10, owner decision — narrow the Touches so this item stops conflicting with every script-touching item)
+Shipped already (see the status note above): scope item 1 (inventory → `scripts/check-vendor-coupling.sh` + the
+manifest), the provider-adapter spike (`adapters/providers/`, PR #239; `adapters/orca/`, PR #237), and the
+`LOOMWRIGHT_ROOT` seam itself (`loomwright/scripts/resolve-loomwright-root.sh` + its test). **Remaining, and the whole of
+this item now:**
+1. Scope item 2 as a written document, `loomwright/docs/CORE_CONTRACT.md`: the file protocol (`.supervisor/` + `.agent/`
+   layouts and lifecycle, versioned), the CLI surface (the engine scripts' argv/stdin/stdout/exit-code contracts, the
+   fail-SAFE `exit 0` convention codified), and the five capability ports with a documented degraded fallback each.
+   It names `resolve-loomwright-root.sh` as the one place the harness variable is read.
+2. Scope item 3: re-verify the Cursor / Codex capability matrix from CURRENT official docs (fetch dates cited;
+   anything not re-verified labelled UNVERIFIED) and record it in `CORE_CONTRACT.md`.
+3. One `ARCHITECTURE_CONTRACTS.md` pointer row to the new contract.
+
+**Out of scope (moved to a follow-up, not done here):** migrating the remaining scripts that still read
+`CLAUDE_PLUGIN_ROOT` directly to `LOOMWRIGHT_ROOT` (~30 files on 2026-10-10, half of them tests). That is a repo-wide
+sweep that conflicts with every other script item; file it as its own item and run it alone, after the engine items.
+
+The acceptance criteria and rubric above are read through this re-scope: the inventory, the `LOOMWRIGHT_ROOT`
+indirection and the one-adapter spike are satisfied by the shipped work; the written core contract and the
+re-verified research are what this item must deliver.
+
 ## Depends on
 ../agnostic-phase1/01-ratchet-hardening.md
 
 ## Touches
-loomwright/scripts/
-loomwright/docs/vendor-coupling-manifest.json
 loomwright/docs/CORE_CONTRACT.md
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
+loomwright/docs/vendor-coupling-manifest.json
 changelog.d/twin-remediation-10-harness-portability.md

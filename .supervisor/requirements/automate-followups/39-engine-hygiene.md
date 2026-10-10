@@ -1,15 +1,19 @@
-# 34 — Clean up what the plugin left behind: a squash-safe sweep, a process registry and one `/janitor` command
+# 39 — Engine hygiene: clean up what the plugin leaves behind, keep its locks and guard arms honest, and fix the rules seam's false lines
 
-## Status: parked (merged 2026-10-10 into `automate-followups/39-engine-hygiene.md` as Part A — do not run this file; work the merged item)
-## Merged from (2026-10-06, owner decision: fewer, larger items — a run costs ~$17–20 plus 4+ owner questions even for a tiny change)
-- Part A: `22-squash-safe-sweep.md` — 22 — Squash-safe sweep: clean up worktrees and branches the plugin left behind, with closeout's own rule
-- Part B: `23-process-registry-and-janitor-command.md` — 23 — Process registry + one `/janitor` command: see everything the plugin left running or lying around, act on it safely
+## Status: pending
+
+## Merged from (2026-10-10, owner decision: merge the serialized tail — these three cannot share a wave: all three edit `loomwright/skills/automate-loop/SKILL.md`, and af/34 ∩ ag/03 also share `automate-trail.sh` + its test and `automate-merge-watch.sh`)
+- Part A: `automate-followups/34-sweep-and-janitor.md` — 34 — Clean up what the plugin left behind: a squash-safe sweep, a process registry and one `/janitor` command
+- Part B: `agnostic-phase1/03-silent-script-failures.md` — 03 — Silent script failures (run-lock liveness outside Claude Code; guard hook-arm visibility)
+- Part C: `automate-followups/21-rules-seam-dismissed-followups.md` — Rules seam: four dismissed Phase 4.5 findings from PR #319 (item 13)
 
 The originals are parked with a pointer here. Their text is kept below VERBATIM as parts (headings
 demoted, their Status / Depends on / Touches folded into this file's own sections). Nothing was paraphrased.
+Their changelog.d fragment names are replaced by this item's one fragment. Part A is itself a merged item (its own
+Parts A/B — af/22, af/23 — stay nested inside it).
 
 ## Depends on
-none
+../agnostic-phase1/01-ratchet-hardening.md
 
 ## Touches
 loomwright/scripts/automate-helpers.sh
@@ -31,10 +35,28 @@ loomwright/scripts/run-self-tests.sh
 scripts/ci-local.sh
 loomwright/commands/janitor.md
 loomwright/commands/agent-help.md
-changelog.d/automate-followups-34-sweep-and-janitor.md
+loomwright/scripts/run-lock.sh
+loomwright/scripts/test-run-lock.sh
+loomwright/scripts/guard-arm.sh
+loomwright/scripts/test-guard-test-integrity.sh
+loomwright/agents/supervisor.md
+loomwright/skills/async-orchestration/SKILL.md
+loomwright/skills/autonomous-loop/SKILL.md
+loomwright/skills/supervisor-config/SKILL.md
+loomwright/docs/HOOKS.md
+loomwright/docs/ARCHITECTURE_CONTRACTS.md
+loomwright/docs/RESULT_SCHEMAS.md
+loomwright/docs/prompt-token-budgets.json
+loomwright/docs/vendor-coupling-manifest.json
+loomwright/skills/self-heal-advisory/SKILL.md
+loomwright/scripts/test-rules-gate-seams.sh
+loomwright/scripts/test-rules-seams.sh
+changelog.d/automate-followups-39-engine-hygiene.md
 
 ## Goal
-One change set for leftovers: the squash-safe sweep of worktrees and branches with closeout's own rule (A), and the process registry plus `/janitor`, which uses that sweep (B).
+One change set for engine hygiene: the squash-safe sweep, process registry and `/janitor` (A); a run lock that always
+records a live holder and a guard arm that leaves a trace when it did not happen (B); and the rules seam's posted line
+matching its verdict, with its sink/reader patterns covering the repo's own idioms (C).
 
 ## Acceptance criteria
 - Every part's own acceptance criteria hold, on one branch and one PR.
@@ -47,10 +69,33 @@ One change set for leftovers: the squash-safe sweep of worktrees and branches wi
 4. Rollback: `git revert`.
 
 ## Parts
+### Part A — 34 — Clean up what the plugin left behind: a squash-safe sweep, a process registry and one `/janitor` command
 
-### Part A — 22 — Squash-safe sweep: clean up worktrees and branches the plugin left behind, with closeout's own rule
+#### Merged from (2026-10-06, owner decision: fewer, larger items — a run costs ~$17–20 plus 4+ owner questions even for a tiny change)
+- Part A: `22-squash-safe-sweep.md` — 22 — Squash-safe sweep: clean up worktrees and branches the plugin left behind, with closeout's own rule
+- Part B: `23-process-registry-and-janitor-command.md` — 23 — Process registry + one `/janitor` command: see everything the plugin left running or lying around, act on it safely
 
-#### Problem
+The originals are parked with a pointer here. Their text is kept below VERBATIM as parts (headings
+demoted, their Status / Depends on / Touches folded into this file's own sections). Nothing was paraphrased.
+
+#### Goal
+One change set for leftovers: the squash-safe sweep of worktrees and branches with closeout's own rule (A), and the process registry plus `/janitor`, which uses that sweep (B).
+
+#### Acceptance criteria
+- Every part's own acceptance criteria hold, on one branch and one PR.
+
+#### Validation (must pass before merge)
+1. Baseline full loop once for the merged branch, `<passed>/<total>` and `SKIP` counts, base and branch.
+2. Every part's own Validation steps, labelled by part in the PR body. A part with no Validation section is
+   checked by running its acceptance criteria, and the PR body says so.
+3. Any "Running system" step a part names is run, or listed under "Not verified" with the reason.
+4. Rollback: `git revert`.
+
+#### Parts
+
+##### Part A — 22 — Squash-safe sweep: clean up worktrees and branches the plugin left behind, with closeout's own rule
+
+###### Problem
 `closeout` (`automate-trail.sh`) cleans up exactly one PR, the one it was called for. It removes that PR-head
 worktree only when it is clean after `worktree-salvage.sh`, and deletes the local head branch only when its tip
 equals the PR's `headRefOid` (squash merges make ancestry useless, so `-d` and "0 commits outside main" are never
@@ -64,11 +109,11 @@ used). Nothing else in the plugin cleans up, so anything that never went through
 - **Supervisor's parallel-path worktrees** (`../<project>-<subtask>`, `async-orchestration` FINALIZE) left by a
   run that died before FINALIZE's own cleanup.
 
-#### Goal
+###### Goal
 One command reports, and on request removes, exactly the worktrees and local branches that are provably done:
 the same proof `closeout` already trusts. Anything uncertain is reported and kept.
 
-#### Scope
+###### Scope
 1. **`automate-helpers.sh sweep [--apply] [--root <checkout>]`** (delegated to `automate-trail.sh`, beside
    `closeout`). Without `--apply`, a DRY RUN: it prints and changes nothing. One line per candidate:
    `sweep: would-remove|removed|kept <kind> <path-or-branch> — <reason>`, then one summary line. Always exit 0
@@ -107,11 +152,11 @@ the same proof `closeout` already trusts. Anything uncertain is reported and kep
    **Mutation controls:** dropping the `headRefOid` comparison must fail the moved-tip leg; dropping the
    app-made exclusion must fail its leg.
 
-#### Non-goals
+###### Non-goals
 Remote branches (GitHub's "delete branch on merge" owns those). Session transcripts (Claude Code's 30-day
 `cleanupPeriodDays` owns those). Lane teardown (`parallel-automate/05` `lane-remove`). Any `--force`.
 
-#### Acceptance criteria
+###### Acceptance criteria
 - Given this repo's 20 non-ancestor local branches, when `sweep` runs dry, then each is listed as `would-remove`
   or `kept` with a reason, and nothing changes (pasted output + the unchanged `git branch` checksum).
 - Given `--apply`, then only `would-remove` items go, and a second dry run lists none of them.
@@ -119,15 +164,15 @@ Remote branches (GitHub's "delete branch on merge" owns those). Session transcri
 - `bash scripts/ci-local.sh` green; ship a `changelog.d/` fragment (bump with `scripts/bump-version.sh` as the
   last commit, never by hand).
 
-#### Provenance
+###### Provenance
 Owner, 2026-10-03, during S1 (session 0d556d54): "the cleanup should be handled by the plugin like we are doing
 in closeout". The lane-specific half was amended into `parallel-automate/05` (`lane-remove` refusals) and `/06`
 (fleet closeout teardown + leak summary) the same day. Evidence: 5 stale worktrees in the primary, removed by hand
 with `git worktree remove` after checking each was clean and merged; 20 old local branches still open.
 
-### Part B — 23 — Process registry + one `/janitor` command: see everything the plugin left running or lying around, act on it safely
+##### Part B — 23 — Process registry + one `/janitor` command: see everything the plugin left running or lying around, act on it safely
 
-#### Problem
+###### Problem
 Every kind of process the plugin starts in the background is tracked separately, if at all, and nothing shows
 them together or cleans up orphans. Each mechanism today:
 - merge watcher: a marker plus a pid with a command-line check and a 72h cap;
@@ -155,13 +200,13 @@ The owner stopped the four strays by hand after each command line was re-checked
 background tasks; I don't want any orphaned or stray task or session running", and "a command which shows all with
 all the details, and the user can take action based on your suggestions".
 
-#### Goal
+###### Goal
 One registry knows every detached process the plugin starts. One command shows the owner everything the plugin
 has running or left behind — processes, locks, lanes, worktrees, branches, stale markers — with a suggested action
 per row, and executes only the actions the owner picks, each through a guarded helper. Things the plugin did not
 start are shown, never touched.
 
-#### Scope
+###### Scope
 
 ##### A. Registry (`proc-registry.sh`, per user: processes span repos)
 1. **`register`** — called by every detached launcher. It records an entry under
@@ -231,11 +276,11 @@ start are shown, never touched.
     **Mutation controls:** dropping the command-line check must fail the recycled-pid leg; dropping the
     non-interactive guard must fail its leg.
 
-#### Non-goals
+###### Non-goals
 Managing Claude Code's own sessions or daemon (report and point to the app). Killing anything the plugin did not
 start without an explicit per-item owner choice. Remote resources (GitHub branches, PRs).
 
-#### Acceptance criteria
+###### Acceptance criteria
 - Given today's machine state (or a fixture reproducing it: a leaked fixture server, an old watcher, a dead lock
   holder, a merged clean worktree), when `/janitor` runs, then every item appears once with owner, age, state,
   evidence and a suggested action, and nothing changes.
@@ -246,14 +291,121 @@ start without an explicit per-item owner choice. Remote resources (GitHub branch
 - `bash scripts/ci-local.sh` green; command count and docs updated by the usual surfaces (`plugin.json`, doc
   currency); a `changelog.d/` fragment; `scripts/bump-version.sh` as the last commit.
 
-#### Provenance
+###### Provenance
 Owner, 2026-10-04, during S1 (session 0d556d54): "we need a way to track background tasks, I don't want any
 orphaned or stray task/session running" and "add a command which shows all with all the details and the user can
 take action based on your suggestions". Evidence from the same session's `ps` inventory, recorded above.
 
-## Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
+#### Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
 - `RESULT_SCHEMAS.md` → `result-schemas/automate-run.md` (the sweep's and registry's run-file / `## Progress` lines).
   If Part B's process registry gets its own documented format, add a new `result-schemas/<name>.md` plus the index.
 - `automate-helpers.sh` kept (Part A adds the `sweep` dispatcher arm, delegated to `automate-trail.sh`) +
   `fixtures/automate-helpers-help.golden` (a new subcommand regenerates the `--help` golden,
   `test-automate-helpers-dispatch.sh` check 5).
+
+### Part B — 03 — Silent script failures (run-lock liveness outside Claude Code; guard hook-arm visibility)
+
+#### Problem
+Two fail-safe scripts fail *silently* in ways that weaken the guarantee they exist for.
+
+1. **`run-lock.sh` records a pid that is already dead.** `holder_pid()` (`scripts/run-lock.sh:173-193`) resolves the
+   liveness pid as `CLAUDE_PID` (if alive) → the first non-shell ancestor, but ONLY when `CLAUDECODE` is set → else
+   `$PPID`. Outside Claude Code (a CI step, a terminal, any other harness) the `$PPID` is the invoking shell, which
+   exits right after `acquire`. Exercised 2026-09-30 against a scratch `--root`: with `CLAUDE_PID`/`CLAUDECODE`
+   unset, meta recorded `pid_source ppid` and that pid was dead immediately; a second owner was refused while the
+   lock was young (TTL) but TOOK the lock once `ts` was ≥1800 s old — i.e. any run lasting over 30 minutes can be
+   double-entered. The header (`:36-38`) acknowledges the TTL degradation but nothing surfaces it at acquire time.
+   The ancestor walk itself is harness-neutral; only its `CLAUDECODE` gate is Claude-specific.
+2. **The guard's hook arm path fails invisibly.** `guard-arm.sh arm-from-payload` (the `PreToolUse[Agent|Task]`
+   backstop, carried with `|| true`) exits 0 without arming when `jq` is missing, the payload's
+   `tool_input.subagent_type` is not one of the four armed roles, the payload has no valid `session_id`, or the
+   marker write fails — and records nothing anywhere. The prompt-step `arm` is loud (exit 3,
+   `guard_arm_failed: no session id`), but when the backstop is the arm that mattered, a session can run a
+   Loomwright worker with the test-integrity guard never armed and no one can tell afterwards.
+
+#### Goal
+The run lock records a live holder whenever one exists (under any harness) and says so loudly when it cannot; a
+guard arm that did not happen leaves a durable, readable trace — without changing either script's exit-code
+contract.
+
+#### Scope
+1. **run-lock `holder_pid()`**: run the ancestor walk unconditionally (drop the `CLAUDECODE` gate); keep
+   `CLAUDE_PID` first; `$PPID` only when the walk finds no non-shell ancestor > 1. Keep the `pid_source` values
+   (`claude_pid` | `ancestor` | `ppid`). Consider (and decide in the PR) whether a non-shell ancestor that is a
+   short-lived wrapper (e.g. `env`, `timeout`, `xargs`, `sudo`) must be skipped like a shell — add them to the skip
+   list only with a test.
+2. **Degraded-lock warning**: when the recorded source is `ppid`, `acquire` prints one stderr line
+   `run_lock_degraded: pid_source=ppid ttl_only=1800s` (exit code unchanged) and `status` shows it. Callers that
+   already surface `run_lock_held` (automate PICK, Supervisor INIT, `/autonomous` INIT) surface this line too —
+   verify each caller's prose, do not add new gates.
+3. **Guard arm trace**: `arm-from-payload` appends ONE JSONL row to the session log the other emitters use
+   (`.supervisor/logs/<session_id>.jsonl`, resolved the same way `emit-agent-identity.sh` resolves it) when it
+   declines to arm for a role it SHOULD arm (`subagent_type` in the armed set) — reasons: `jq_missing` (write via
+   printf, no jq), `no_session_id`, `marker_write_failed`. Event name `guard_arm_skipped` with `reason` and
+   `subagent_type`. Non-armed roles stay silent (that is correct behaviour, not a failure). Still ALWAYS exit 0;
+   the hook keeps `|| true`. If no log dir can be resolved, write nothing (fail-safe) — state that limit.
+4. **Surface it**: Supervisor FINALIZE (or the run summary it already prints) reports `test_guard: armed | unarmed
+   (<reason>) | not_applicable` for its own session, read from the marker file + the `guard_arm_skipped` rows.
+   Advisory only — it must not block, park, or change any decision.
+5. **Tests**: `test-run-lock.sh` — with `CLAUDE_PID`/`CLAUDECODE` unset and a non-shell parent (spawn the script
+   from a `python3 -c 'subprocess…'` or `perl` parent that stays alive), `pid_source` is `ancestor` and the pid is
+   alive; with only shells above, `ppid` + the degraded stderr line. Guard: fixture payloads for each skip reason
+   ⇒ one `guard_arm_skipped` row, exit 0; non-armed role ⇒ no row. **Mutation control:** re-add the `CLAUDECODE`
+   gate ⇒ the ancestor test must fail.
+6. Docs: script headers, `HOOKS.md` guard row, CHANGELOG, version bump.
+
+#### Non-goals
+Changing the TTL (1800 s), `--force-unlock`, or the reclaim rule (pid dead AND age ≥ TTL). Adding a heartbeat.
+Making `arm-from-payload` exit non-zero or removing its `|| true`. Changing which roles arm the guard (item 02 fixes
+the spawn shape that bypassed it). Any change to `guard-test-integrity.sh`'s deny logic.
+
+#### Acceptance criteria
+- `env -u CLAUDE_PID -u CLAUDECODE <live non-shell parent> bash run-lock.sh acquire --owner t --root <scratch>`
+  ⇒ meta `pid_source ancestor`, `kill -0 <pid>` succeeds.
+- Only-shell parents ⇒ stderr contains `run_lock_degraded: pid_source=ppid`; exit code as before.
+- `printf '{"tool_input":{"subagent_type":"loomwright:loomwright:worker"}}' | bash guard-arm.sh arm-from-payload`
+  in a scratch project ⇒ exit 0 and one `guard_arm_skipped` row with `reason: no_session_id`.
+- `grep -c '|| true' ` on the hooks.json guard-arm leaves unchanged; the two `guard-test-integrity.sh` leaves still
+  carry none.
+- Full test loop + root checks green.
+
+#### Verified premises (re-check before starting)
+- `run-lock.sh` header resolution order (lines ~26-40, incl. the 2026-09-26 observation) and `holder_pid()`
+  (~173-193); reclaim rule (~240-250).
+- `guard-arm.sh` `cmd_arm_from_payload` (~193-206): every non-arming branch is a bare `exit 0`.
+- Prior decisions NOT to re-litigate: red-team-hardening/06 (lock shape, TTL, human-only `--force-unlock`);
+  six-phase-loop-gaps/02 Rev 4 (one marker per session, no overwrite rule, no tool-call disarm, `arm` exits 3 on
+  no id).
+
+bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
+
+### Part C — Rules seam: four dismissed Phase 4.5 findings from PR #319 (item 13)
+> **Promoted from `proposed/` 2026-10-01** (owner triage session). Bundles the four `/automate` gate drafts
+> `automate-2026-09-30-054439--13-dismissed-findings-triage-sweep-ce364e--dismissed-{1b4e0236,3d8b82d7,c37bc07f,summary}.md`,
+> all recorded with owner decision **follow-up** in that run's `.dismissed-decisions` ledger. Source PR:
+> https://github.com/vikashruhilgit/loomwright/pull/319 (round 1, origin `phase_4_5`, source `code_reviewer`).
+> The finding text below is the reviewer's, quoted as data. Re-verify each one against `main` before changing anything.
+
+#### Findings
+
+1. **MEDIUM, reproduced (`c37bc07f`, dismissed `pre_existing`).** `rules_check_line` tests `$NO_CMD_FLAG` before
+   `unreadable`, so a `--no-cmd` run on an unparseable store escalates `rules_gate_unresolved` while posting
+   `rules_check: cmd_disabled`. The posted line and the verdict disagree.
+2. **MEDIUM, reproduced (`3d8b82d7`, dismissed `below_severity_floor`).** `SEAM_C_VAR_ASSIGN_RE` misses the repo's own
+   `$(cd …)/read-rules.sh` reader idiom, spaced paths, `declare`/`local -r` and alias chains. Its "Limit" comment
+   understates the gap.
+3. **LOW (`0988b86c`, summary entry, dismissed `below_severity_floor`).** `SEAM_C_SINK_PIPE_RE` misses `| /bin/bash`,
+   `| env bash`, `| ksh`; `SEAM_C_SINK_PROCSUB_RE` stops at a nested paren.
+4. **LOW (`1b4e0236`, dismissed `pre_existing`).** `skills/automate-loop/SKILL.md` §10 condition 7 `cmd_disabled ⇒ PARK`
+   bullet omits that an advisory-only store or an empty selection still reads `none` under `RULES_CHECK_NO_CMD=1`.
+
+#### Scope (recommendation)
+- 1: reorder so `unreadable` wins over `cmd_disabled` (fail-CLOSED reading), with a fixture leg for `--no-cmd` +
+  unparseable store.
+- 2–3: widen the seam regexes or, if a regex cannot express the idiom, state the gap honestly in the Limit comment.
+  Add one fixture per missed shape.
+- 4: one-sentence doc fix in §10 condition 7.
+
+#### Acceptance criteria
+- [ ] Each finding re-verified on `main`, then fixed or recorded as not reproducible.
+- [ ] Fixture legs for 1–3; the full `test-*.sh` loop green.
