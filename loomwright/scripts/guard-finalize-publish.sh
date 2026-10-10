@@ -225,7 +225,15 @@ if [ "${1:-}" = "write-marker" ]; then
     # check-children-settled.sh reads a missing/unreadable log as `no_identity_rows` (fail-SAFE for
     # its own callers). A gate must not consume that as a pass: no log is no evidence at all.
     [ -f "$SESSION_LOG" ] && [ -r "$SESSION_LOG" ] || refuse "session_log_missing"
-    res="$(bash "$HERE/check-children-settled.sh" --log "$SESSION_LOG" --all 2>/dev/null)"
+    # Host mode runs it from $PROJ: the checker anchors its gate dir on the cwd's repo, which must be
+    # the session repo resolve_root anchored on (never wherever the caller's shell happens to be).
+    # $HERE may be relative, so the checker's path is made absolute BEFORE the cd. Off: unchanged.
+    if [ "$HOST_ON" = 1 ]; then
+      ccs="$(cd "$HERE" 2>/dev/null && pwd)/check-children-settled.sh"
+      res="$(cd "$PROJ" 2>/dev/null && bash "$ccs" --log "$SESSION_LOG" --all 2>/dev/null)"
+    else
+      res="$(bash "$HERE/check-children-settled.sh" --log "$SESSION_LOG" --all 2>/dev/null)"
+    fi
     children_status="$(printf '%s' "$res" | jq -r '.status // empty' 2>/dev/null)"
     case "$children_status" in
       # recorded verbatim — `no_identity_rows` is a pass, never `settled` (async-orchestration point 5)

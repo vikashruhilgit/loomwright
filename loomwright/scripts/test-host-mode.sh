@@ -70,7 +70,9 @@
 #        project dir) — both worktrees stay clean and the marker and events share the D1 gate dir.
 #   (j)  check-children-settled.sh under host mode reads a repo-shaped `--log` (relative and
 #        absolute) from the gate dir, judging a state dir named `.supervisor` against the real repo
-#        root (an outside one is valid, an in-repo one maps to D1); off mode does not; an unloadable helper is `unverifiable`, and
+#        root (an outside one is valid, an in-repo one maps to D1) — also when that outside parent is
+#        an unrelated git repo (the checker anchors on the session repo; write-marker refuses an
+#        unsettled worker and the publish stays denied); off mode does not; an unloadable helper is `unverifiable`, and
 #        the guards fail CLOSED on it (deny / write-marker `helper_missing`).
 #   (k)  mutation control: host-mode.sh with its D1 ownership/symlink check neutered makes leg (h)'s
 #        symlink case FAIL (the marker lands in the foreign dir).
@@ -695,6 +697,40 @@ st="$(ccs --log "$C_SD/logs/$RUN.jsonl" --all)"
 st="$(ccs --log ".supervisor/logs/$RUN.jsonl" --all)"
 [ "$st" = settled ]; rec "(j) outside .supervisor state dir: relative repo --log -> settled" $? "$st"
 repo_clean_checks "(j) outside .supervisor state dir"; replay
+# ...and that outside parent is ITSELF an unrelated git repo (a dotfiles $HOME): the checker must
+# still anchor on the SESSION repo (the cwd's), not the repo the log's own path sits in — else it
+# rejects the state dir as in-repo, reads that repo's empty D1 log, and a vacuous no_identity_rows
+# lets FINALIZE point 5 write the marker over an unsettled worker (end to end: write-marker, publish).
+for v in unsettled settled; do
+  new_case "j-sdgit-$v" sd seeded
+  mkdir -p "$C_DIR/outside/.supervisor" && git init -q "$C_DIR/outside" >/dev/null 2>&1
+  use_sd "$C_DIR/outside/.supervisor"
+  ( umask 077; mkdir -p "$C_SD/logs" )
+  if [ "$v" = unsettled ]; then settled_rows | head -1 > "$C_SD/logs/$RUN.jsonl"; else settled_rows > "$C_SD/logs/$RUN.jsonl"; fi
+  [ "$C_GATE" = "$C_SD" ] && git -C "$C_DIR/outside" rev-parse --show-toplevel >/dev/null 2>&1
+  rec "(j) state dir in an unrelated git repo, $v: it is the gate dir and the parent is a repo (precondition)" $? "$C_GATE"
+  st="$(ccs --log "$C_SD/logs/$RUN.jsonl" --all)"
+  [ "$st" = "$v" ]; rec "(j) state dir in an unrelated git repo, $v: its own log path -> $v" $? "$st"
+  st="$(ccs --log ".supervisor/logs/$RUN.jsonl" --all)"
+  [ "$st" = "$v" ]; rec "(j) state dir in an unrelated git repo, $v: relative repo --log -> $v" $? "$st"
+  # write-marker invoked from INSIDE the unrelated repo still judges the session repo's run
+  for from in repo foreign; do
+    if [ "$from" = repo ]; then write_marker; a=$?
+    else ( cd "$C_SD" && hm_env bash "$C_ROOT/scripts/guard-finalize-publish.sh" write-marker > "$C_DIR/wm.out" 2>&1 ); a=$?; fi
+    if [ "$v" = unsettled ]; then
+      [ "$a" != 0 ] && grep -q '"reason":"children_unsettled"' "$C_DIR/wm.out" && [ ! -e "$C_SD/logs/$RUN.finalize-gate" ]
+    else
+      [ "$a" = 0 ] && grep -q '"children_check":"settled"' "$C_DIR/wm.out" && [ -f "$C_SD/logs/$RUN.finalize-gate" ]
+    fi
+    rec "(j) state dir in an unrelated git repo, $v: write-marker from the $from cwd -> $v verdict" $? "rc=$a $(cat "$C_DIR/wm.out")"
+  done
+  fire_one PreToolUse Bash guard-finalize-publish.sh "$(p_bash "$PUBLISH")"
+  if [ "$v" = unsettled ]; then is_deny; a=$?; want=denied; else [ "$LAST_RC" = 0 ]; a=$?; want=allowed; fi
+  rec "(j) state dir in an unrelated git repo, $v: the publish is $want" "$a" "rc=$LAST_RC out=$LAST_OUT"
+  st="$(git -C "$C_REPO" status --porcelain --ignored 2>&1)"
+  [ -z "$st" ]; rec "(j) state dir in an unrelated git repo, $v: session repo status clean" $? "$st"
+  replay
+done
 new_case "j-off" off seeded
 st="$(ccs --log ".supervisor/logs/$RUN.jsonl" --all)"
 [ "$st" = no_identity_rows ]; rec "(j) off: the repo --log is read as given (no repo log -> no_identity_rows, as before)" $? "$st"

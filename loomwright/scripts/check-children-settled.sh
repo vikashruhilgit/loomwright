@@ -139,28 +139,38 @@ fi
 if [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
   case "$log" in
     .supervisor/logs/*.jsonl|./.supervisor/logs/*.jsonl|/*/.supervisor/logs/*.jsonl)
-      # The root the resolver is anchored on is the REAL repo (what git says), never the path with
-      # `/.supervisor/logs/*` stripped: a host state dir named `<outside>/.supervisor` would make
-      # that stripped prefix (`<outside>`) the "repo", and the resolver would then reject the valid
-      # state dir as in-repo. Order: the log's own dir, then the stripped prefix (the log dir may
-      # not exist yet), then the session cwd's repo, then the cwd itself.
+      # The root the resolver is anchored on is the SESSION repo — the repo of the current directory,
+      # which is what every writer (hooks via CLAUDE_PROJECT_DIR, the guards' resolve_root) resolved
+      # against — never a repo guessed from the log's own location: a host state dir may sit inside
+      # an UNRELATED repo (e.g. a dotfiles $HOME), and anchoring there would reject the valid state dir
+      # as in-repo and read that repo's empty D1 log (a vacuous no_identity_rows). Only when the cwd is
+      # not in a repo: the log's own dir, then the path with `/.supervisor/logs/*` stripped, then cwd.
       _cs_wt="${log%/.supervisor/logs/*}"; case "$log" in /*) ;; *) _cs_wt="$PWD" ;; esac
-      _cs_root="$(git -C "$(dirname "$log")" rev-parse --show-toplevel 2>/dev/null)" \
-        || _cs_root="$(git -C "$_cs_wt" rev-parse --show-toplevel 2>/dev/null)" \
-        || _cs_root="$(git rev-parse --show-toplevel 2>/dev/null)" || _cs_root=""
+      _cs_root="$(git rev-parse --show-toplevel 2>/dev/null)" \
+        || _cs_root="$(git -C "$(dirname "$log")" rev-parse --show-toplevel 2>/dev/null)" \
+        || _cs_root="$(git -C "$_cs_wt" rev-parse --show-toplevel 2>/dev/null)" || _cs_root=""
       [ -n "$_cs_root" ] || _cs_root="$PWD"
-      _cs_gate=""
+      _cs_gate=""; _cs_given=0
       if . "$(dirname "${BASH_SOURCE[0]}")/host-mode.sh" 2>/dev/null; then
-        _cs_gate="$(lw_gate_state_dir "$_cs_root")" || _cs_gate=""
+        # An EXISTING log outside every worktree of the session repo can only be a gate-dir log (no
+        # host-mode writer puts one anywhere else): read it as given. A log inside the repo is the
+        # repo-shaped path the callers pass, mapped below.
+        if [ -f "$log" ] && [ -r "$log" ] && ! _lw_in_worktree "$(dirname "$log")" "$_cs_root"; then
+          _cs_given=1
+        else
+          _cs_gate="$(lw_gate_state_dir "$_cs_root")" || _cs_gate=""
+        fi
       fi
-      if [ -z "$_cs_gate" ]; then
-        printf '%s: unverifiable — host mode gate state dir unresolvable\n' "$SELF" >&2
-        printf '{"status":"unverifiable","reason":"host_gate_unresolvable","source":"%s"}\n' "$SELF"
-        exit 0
-      fi
-      # Always the writer's location — `<gate dir>/logs/<id>.jsonl`, the SAME resolver the hooks
-      # write through. (A log already under a valid host state dir maps onto itself.)
-      log="$_cs_gate/logs/${log##*/}" ;;
+      if [ "$_cs_given" = 0 ]; then
+        if [ -z "$_cs_gate" ]; then
+          printf '%s: unverifiable — host mode gate state dir unresolvable\n' "$SELF" >&2
+          printf '{"status":"unverifiable","reason":"host_gate_unresolvable","source":"%s"}\n' "$SELF"
+          exit 0
+        fi
+        # Always the writer's location — `<gate dir>/logs/<id>.jsonl`, the SAME resolver the hooks
+        # write through. (A log already under a valid host state dir maps onto itself.)
+        log="$_cs_gate/logs/${log##*/}"
+      fi ;;
   esac
 fi
 
