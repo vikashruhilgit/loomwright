@@ -231,7 +231,8 @@ read_session_block() {
 # (a line whose first non-blank character is `|`), free prose, and any other key. No section prints
 # nothing; worker_results_has_content says whether a section with zero ids must be refused.
 read_worker_result_ids() {
-  [ -f "$STATE_MD" ] || return 0
+  local f="${LIVE_STATE_MD:-$STATE_MD}"
+  [ -f "$f" ] || return 0
   local line in_block=0 tok rest nxt kl
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
@@ -272,7 +273,7 @@ read_worker_result_ids() {
         esac
         [ -n "$tok" ] && printf '%s\n' "$tok" ;;
     esac
-  done < "$STATE_MD"
+  done < "$f"
   return 0
 }
 
@@ -281,7 +282,8 @@ read_worker_result_ids() {
 # ignored); exit 1 otherwise (no file, no section, or an empty one). write-marker pairs it with a zero
 # id count: content that yields no id is a shape this script cannot read, and is refused.
 worker_results_has_content() {
-  [ -f "$STATE_MD" ] || return 1
+  local f="${LIVE_STATE_MD:-$STATE_MD}"
+  [ -f "$f" ] || return 1
   local line in_block=0 t
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
@@ -291,7 +293,7 @@ worker_results_has_content() {
     [ "$in_block" = 1 ] || continue
     t="$(printf '%s' "$line" | tr -d '[:space:]*_`' | tr '[:upper:]' '[:lower:]')"
     case "$t" in ""|"(empty)"|"(none)") ;; *) return 0 ;; esac
-  done < "$STATE_MD"
+  done < "$f"
   return 1
 }
 
@@ -301,16 +303,20 @@ worker_results_has_content() {
 # must not scope the live run out of the gate (step (v) would allow a push from the live run's own
 # branch), and its id must not key the marker or the session-log join. write-marker and the guard both
 # call this, so the marker key matches on both sides. $STATE_MD is left on lw_state_md_read's file
-# either way. Off: exactly read_session_block.
+# either way; LIVE_STATE_MD names the copy that proved live (empty when neither did), and the
+# `## Worker Results` readers above read THAT copy — the expected worker ids belong to the live run,
+# never to a finished seed (wave/w1 integration of #445 x #450). Off: exactly read_session_block.
+LIVE_STATE_MD=""
 read_live_session() {
   local keep="$STATE_MD" other rc
-  SESSION_ID=""; SESSION_STATUS=""; SESSION_BRANCH=""
-  read_session_block && return 0
+  SESSION_ID=""; SESSION_STATUS=""; SESSION_BRANCH=""; LIVE_STATE_MD=""
+  if read_session_block; then LIVE_STATE_MD="$STATE_MD"; return 0; fi
   [ "$HOST_ON" = 1 ] || return 1
   other="$GATE_STATE_MD"; [ "$keep" = "$GATE_STATE_MD" ] && other="$REPO_STATE_MD"
   [ "$other" != "$keep" ] || return 1
   STATE_MD="$other"; SESSION_ID=""; SESSION_STATUS=""; SESSION_BRANCH=""
   read_session_block; rc=$?
+  [ "$rc" = 0 ] && LIVE_STATE_MD="$other"
   STATE_MD="$keep"
   return "$rc"
 }

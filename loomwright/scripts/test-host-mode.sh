@@ -53,6 +53,9 @@
 #        state-dir and D1: the union fires and the LIVE copy's session id and branch key the gate —
 #        an unmarked `gh pr create` / `git push` is denied for the live session; write-marker keys
 #        the marker on it; then both are allowed.
+#   (c5) the same union, with `## Worker Results` in the copies: write-marker expects the LIVE copy's
+#        worker id (unsettled -> refused, its terminal row -> settled) and never the finished seed's
+#        (none there -> no false no_identity_rows pass; a stale id there -> no false refusal).
 #   (d)  off mode unchanged: the same session writes `.supervisor/` (and, telemetry on,
 #        the project-local settings file) in the repo as before, nothing under TMPDIR; the off-mode
 #        STOP_FAILURE line keeps its byte format; LOOMWRIGHT_HOST_MODE=true is off too; and the
@@ -513,6 +516,39 @@ for m in sd d1; do
     [ "$LAST_RC" = 0 ]; rec "(c4) $m: after write-marker '$cmd' is allowed" $? "rc=$LAST_RC out=$LAST_OUT"
   done
   : > "$C_RC"; repo_clean_checks "(c4) $m"; replay
+done
+
+# =================================================================================================
+echo "== (c5) write-marker reads the expected worker ids from the LIVE copy of the union =="
+# wave/w1 integration (#445 x #450): when the union fires, the `## Worker Results` read for
+# --expect-id must come from the copy that proved live, never the finished repo seed it falls back to.
+for m in sd d1; do
+  for v in none stale; do
+    new_case "c5-$v-$m" "$m" bare
+    if [ "$v" = stale ]; then
+      body="$(seed_state oldrun complete feature-x; printf '\n## Worker Results\n### wold (1)\n- files_modified: [a]\n')"
+    else
+      body="$(seed_state oldrun complete feature-x)"
+    fi
+    ( cd "$C_REPO" && export HOME="$C_HOME" GIT_CONFIG_NOSYSTEM=1 && mkdir -p .supervisor \
+        && printf '%s\n' "$body" > .supervisor/state.md && git add -A \
+        && git -c user.name=t -c user.email=t@e.x commit -q -m "finished run" ) >/dev/null 2>&1
+    C_SNAP0="$(snap)"
+    ( umask 077; mkdir -p "$C_GATE/logs" ) \
+      && { seed_state run4 running; printf '\n## Worker Results\n### wlive (1)\n- files_modified: [a]\n'; } > "$C_GATE/state.md"
+    jq -nc --arg cc "$CC" '{event:"session_start", session_id:"run4", cc_session_id:$cc}' > "$C_GATE/logs/run4.jsonl"
+    [ "$(state_md_read)" = "$C_MAIN/.supervisor/state.md" ]
+    rec "(c5) $v $m: lw_state_md_read keeps the finished repo copy (precondition: the union must fire)" $? "$(state_md_read)"
+    write_marker; rc=$?
+    { [ "$rc" != 0 ] && grep -q 'children_unsettled' "$C_DIR/wm.out" && grep -q 'wlive' "$C_DIR/wm.out" \
+        && [ ! -e "$C_GATE/logs/run4.finalize-gate" ]; }
+    rec "(c5) $v $m: the live copy's unsettled worker wlive is expected -> refused, no marker" $? "rc=$rc $(cat "$C_DIR/wm.out")"
+    jq -nc '{event:"subtask_complete", agent_id:"wlive", result_block_present:true}' >> "$C_GATE/logs/run4.jsonl"
+    write_marker; rc=$?
+    [ "$rc" = 0 ] && [ -f "$C_GATE/logs/run4.finalize-gate" ] && grep -q '"children_status":"settled"' "$C_DIR/wm.out"
+    rec "(c5) $v $m: wlive's terminal row lands -> settled marker (a stale repo-seed id is never expected)" $? "rc=$rc $(cat "$C_DIR/wm.out")"
+    : > "$C_RC"; repo_clean_checks "(c5) $v $m"; replay
+  done
 done
 
 # =================================================================================================
