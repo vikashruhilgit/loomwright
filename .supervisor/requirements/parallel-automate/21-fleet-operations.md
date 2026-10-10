@@ -429,3 +429,9 @@ S1 v2 run record (relays 1–8 and the v1/v2 comparison table).
 - `RESULT_SCHEMAS.md` → `result-schemas/automate-run.md`: the Scope names no block of its own; its schema text is the
   run file's `## Progress` policy-answer lines (Scope 5) and the `source: policy` answer record item 05 defines
   under §AUTOMATE_RUN.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-10T21:17:39Z
+- **Brief:** .supervisor/jobs/done/auto-2026-10-10-194843-fleet-operations.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/464
