@@ -288,11 +288,12 @@ rm -f "$L1/.coordinator-write"
 
 # ---- J: relay hook (AC6) ----------------------------------------------------------------------------
 Q2='[{"question":"Which color?","header":"Color","multiSelect":false,"options":[{"label":"Red","description":"r"},{"label":"Blue","description":"b"}]},{"question":"Which extras?","header":"Extras","multiSelect":true,"options":[{"label":"A","description":"a"},{"label":"B","description":"b"},{"label":"C","description":"c"}]}]'
-hook_in() { jq -n -c --arg ev "$1" --arg cwd "$2" --arg id "$3" --argjson q "$Q2" '{hook_event_name: $ev, cwd: $cwd, tool_use_id: $id, tool_name: "AskUserQuestion", tool_input: {questions: $q}}'; }
+hook_in() { jq -n -c --arg ev "$1" --arg cwd "$2" --arg id "$3" --argjson q "${4:-$Q2}" '{hook_event_name: $ev, cwd: $cwd, tool_use_id: $id, tool_name: "AskUserQuestion", tool_input: {questions: $q}}'; }
 out="$(hook_in PermissionRequest "$L2" toolu_q1 | bash "$S" relay-hook)"
 check "J1 bundled call denied" "$(jq -r '.hookSpecificOutput.decision.behavior' <<<"$out")" deny
 out="$(hook_in PreToolUse "$L2" toolu_q1 | bash "$S" relay-hook)"
 check "J2 unanswered question ⇒ defer" "$(jq -r '.hookSpecificOutput.permissionDecision' <<<"$out")" defer
+J2_DEFER="$out"   # the pre-policy defer, byte for byte (AD5–AD9b compare against it)
 QF="$L2/.supervisor/inbox/questions/toolu_q1.json"
 check "J3 question file with asked_at" "$(jq -r '[.id, (.asked_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Z$")), (.questions | length)] | map(tostring) | join(",")' "$QF")" "toolu_q1,true,2"
 check "J4 outside a lane ⇒ no decision" "$(hook_in PreToolUse "$T" toolu_q9 | bash "$S" relay-hook)" "{}"
@@ -794,7 +795,8 @@ out="$(run lane-remove "$L10" --stop)"; check "W7h once clean, the stopped lane 
 # hook resolves the lane through the git common dir, so the question still lands in the LANE's inbox.
 run lane-create "$RF" reqs/a.md 1 >/dev/null; L1="$LR/L1"
 xhook() { hook_in PreToolUse "$1" "$2" | bash "${3:-$S}" relay-hook; }   # <cwd> <tool_use_id> [<script>]
-xdec() { jq -r '.hookSpecificOutput.permissionDecision' <<<"$1" 2>/dev/null; }
+hso() { jq -r -c ".hookSpecificOutput$1" <<<"$2" 2>/dev/null; }   # <field path> <hook output> — a field of the hook response
+xdec() { hso .permissionDecision "$1"; }
 WT="$LR/L1-42-slug"
 git -C "$L1" worktree add -q -b feature/42-slug "$WT" 2>/dev/null
 out="$(xhook "$WT" toolu_x1)"
@@ -1499,21 +1501,23 @@ QQ='[{"question":"Process the queue?","header":"AUT-QUEUE","multiSelect":false,"
 QR='[{"question":"Resume the run?","header":"AUT-RESUME","multiSelect":false,"options":[{"label":"Continue","description":"c"},{"label":"Start new","description":"n"},{"label":"Archive","description":"a"}]}]'
 QH='[{"question":"Clean up the leftover?","header":"AUT-LEFTOVER","multiSelect":false,"options":[{"label":"Clean up now","description":"c"},{"label":"Keep and continue","description":"k"},{"label":"Stop","description":"s"}]}]'
 QM="$(jq -c -n --argjson a "$QQ" --argjson b "$Q2" '$a + [$b[0]]')"
-DEFER='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"defer"}}'
-qhook() { jq -n -c --arg cwd "$1" --arg id "$2" --argjson q "$3" '{hook_event_name: "PreToolUse", cwd: $cwd, tool_use_id: $id, tool_name: "AskUserQuestion", tool_input: {questions: $q}}'; }
+DEFER="$J2_DEFER"
+check "AD0 the defer reference (J2's output) is exactly one PreToolUse defer object" \
+  "$(xdec "$DEFER"):$(jq -c '[length, (.[] | [.hookEventName, .permissionDecision, length])]' <<<"$DEFER")" 'defer:[1,["PreToolUse","defer",2]]'
+qhook() { hook_in PreToolUse "$1" "$2" "$3"; }
 ad_ans() { [ -e "$1/.supervisor/inbox/answers/$2.json" ] && echo answered || echo none; }
 : > "$HELPERS_LOG"
 out="$(qhook "$L82" toolu_p1 "$QQ" | bash "$S" relay-hook)"
-check "AD4 an allowed coded gate with a carried policy answer ⇒ allow (no defer, no resume)" "$(jq -r '.hookSpecificOutput.permissionDecision' <<<"$out")" allow
+check "AD4 an allowed coded gate with a carried policy answer ⇒ allow (no defer, no resume)" "$(xdec "$out")" allow
 check "AD4b … updatedInput.answers carries the question's OWN label (marker kept)" \
-  "$(jq -c '.hookSpecificOutput.updatedInput.answers' <<<"$out")" '{"Process the queue?":"Process (Recommended)"}'
+  "$(hso .updatedInput.answers "$out")" '{"Process the queue?":"Process (Recommended)"}'
 check "AD4c answer file: source policy, via policy, gate, the carried policy_sha, no note" \
   "$(jq -c --arg sha "$SHA82" '[.source, .via, .gate, (.policy_sha == $sha), .note, (.at | test("Z$")), .answers["Process the queue?"]]' "$L82/.supervisor/inbox/answers/toolu_p1.json")" \
   '["policy","policy","AUT-QUEUE",true,null,true,"Process (Recommended)"]'
 check "AD4d … the question file is recorded as today" "$(jq -r '[.id, (.questions | length)] | map(tostring) | join(",")' "$L82/.supervisor/inbox/questions/toolu_p1.json")" "toolu_p1,1"
 has "AD4e one lane ## Progress line through progress-append" "$(cat "$HELPERS_LOG")" \
   "progress-append $L82/.supervisor/automate/$PARENT8-L2.md policy answer: AUT-QUEUE → Process (Recommended) (policy_sha ${SHA82:0:12})"
-has "AD4f … and the allow reason names the policy, not the owner" "$(jq -r '.hookSpecificOutput.permissionDecisionReason' <<<"$out")" "answered by the stamped lane policy (gate AUT-QUEUE"
+has "AD4f … and the allow reason names the policy, not the owner" "$(hso .permissionDecisionReason "$out")" "answered by the stamped lane policy (gate AUT-QUEUE"
 out="$(qhook "$L82" toolu_p2 "$Q2" | bash "$S" relay-hook)"
 check "AD5 a question with no catalog code ⇒ exactly today's defer, no answer file" "$out:$(ad_ans "$L82" toolu_p2)" "$DEFER:none"
 out="$(qhook "$L82" toolu_p3 "$QM" | bash "$S" relay-hook)"
@@ -1531,7 +1535,7 @@ check "AD9b a lane with no lane.json policy key at all reads like null (pre-21 l
   "$(jq -c 'del(.policy)' "$T/ad-lane.json" > "$L82/.supervisor/lane.json"; qhook "$L82" toolu_p7 "$QQ" | bash "$S" relay-hook):$(ad_ans "$L82" toolu_p7)" "$DEFER:none"
 cp "$T/ad-lane.json" "$L82/.supervisor/lane.json"
 out="$(qhook "$L82" toolu_p8 "$QR" | bash "$S" relay-hook)"
-check "AD10 a second allowed gate is answered too" "$(jq -r '.hookSpecificOutput.updatedInput.answers["Resume the run?"]' <<<"$out")" Continue
+check "AD10 a second allowed gate is answered too" "$(hso '.updatedInput.answers["Resume the run?"]' "$out")" Continue
 jq -c '.at = "2026-10-10T01:00:00Z"' "$L82/.supervisor/inbox/answers/toolu_p1.json" > "$T/ad.a" && mv "$T/ad.a" "$L82/.supervisor/inbox/answers/toolu_p1.json"
 jq -c '.at = "2026-10-10T02:00:00Z"' "$L82/.supervisor/inbox/answers/toolu_p8.json" > "$T/ad.a" && mv "$T/ad.a" "$L82/.supervisor/inbox/answers/toolu_p8.json"
 out="$(run lane-status "$RF8")"

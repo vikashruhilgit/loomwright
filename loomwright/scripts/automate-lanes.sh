@@ -1152,6 +1152,12 @@ _lanes_current_item() { # <runfile> — the `## Current` item path, or nothing
   awk '/^## / { sec = $0; next }
     sec == "## Current" && /^- item:/ { v = $0; sub(/^- item: */, "", v); sub(/ *\|.*/, "", v); print v; exit }' "$1" 2>/dev/null
 }
+# _lanes_no_host_identity [NAME=VALUE ...] <cmd> [args...] — runs <cmd> (through env, so leading
+# NAME=VALUE pairs apply) with the host's two runtime-identity variables unset. For a fresh run-lock
+# acquire with no --session-id (lane-convert-ready's closeout and finalize-empty): like the merge
+# watcher, or a crashed call's lock names the coordinator as holder and stays unreclaimable while it
+# lives (automate-loop SKILL, "Why … are unset").
+_lanes_no_host_identity() { env -u CLAUDE_PID -u CLAUDECODE "$@"; }
 lanes_convert_ready() {
   local dir="${1:-}"
   [ "$#" -le 1 ] || die "lane-convert-ready: unexpected argument '$2'"
@@ -1189,9 +1195,8 @@ lanes_convert_ready() {
     case "$pr" in
       ''|-|null) cs="; closeout not run (## Current has no pr)" ;;
       *)
-        # A fresh run-lock acquire (no --session-id): unset the host identity like the merge watcher, or a crashed
-        # closeout's lock stays unreclaimable while the coordinator lives (automate-loop SKILL, "Why … are unset").
-        co="$(cd "$LN_DIR" && env -u CLAUDE_PID -u CLAUDECODE bash "$TRAIL" closeout "$rf" "$item" "$pr" --no-trail 2>/dev/null)"
+        # A fresh run-lock acquire (no --session-id): host identity unset (_lanes_no_host_identity).
+        co="$(cd "$LN_DIR" && _lanes_no_host_identity bash "$TRAIL" closeout "$rf" "$item" "$pr" --no-trail 2>/dev/null)"
         printf '%s\n' "$co" | sed '/^$/d; s/^/  /'
         cv="$(printf '%s\n' "$co" | bash "$HELPERS" closeout-classify --run "$LN_RUN" --item "${item#./}" --pr "$pr" 2>/dev/null)"
         if [ "$cv" = complete ]; then cs="; closeout complete"
@@ -1225,7 +1230,8 @@ lanes_convert_ready() {
       if [ "$fm" != "on $mb" ]; then
         fin="lane-convert-ready: finalize skipped — finalize-empty's mode reader says '${fm:-nothing}', not 'on $mb'"
       else
-        fe="$(cd "$LN_DIR" && env -u CLAUDE_PID -u CLAUDECODE LOOMWRIGHT_META_SYNC_BIN="$META_SYNC" \
+        # finalize-empty's run-lock acquire takes no --session-id either: same unset as closeout above.
+        fe="$(cd "$LN_DIR" && _lanes_no_host_identity LOOMWRIGHT_META_SYNC_BIN="$META_SYNC" \
           bash "$HELPERS" finalize-empty "$rf" 2>/dev/null)"
         fe="$(printf '%s\n' "$fe" | sed '/^$/d' | awk '{ printf "%s%s", (NR > 1 ? "; " : ""), $0 }')"
         fin="lane-convert-ready: finalize — ${fe:-finalize-empty printed nothing}"
@@ -2319,7 +2325,7 @@ lanes_fleet_closeout() {
     case "$state" in
       merged|awaiting_go|done)
         pid="$(_lt_get "$table" "$lane" 5)"; st="$(_lt_get "$table" "$lane" 6)"
-        if lanes_proc_alive "$pid" "$st" "$path"; then _fc "waiting — $lane live claude -p process (pid $pid)"; continue; fi
+        if lanes_proc_alive "$pid" "$st" "$path"; then _fc "waiting — $lane live lane process (pid $pid)"; continue; fi
         w="$(_lanes_live_watchers "$path" | head -1)"
         if [ -n "$w" ]; then _fc "waiting — $lane live merge watcher (pid ${w%%"$tab"*})"; continue; fi
         out="$(bash "$SELF" lane-convert-ready "$path" 2>&1 </dev/null)"; rc=$?
