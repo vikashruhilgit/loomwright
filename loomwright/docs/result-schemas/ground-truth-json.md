@@ -249,11 +249,20 @@ heading line**, opened by the namespaced HTML-comment sentinel the idempotency g
   evidence-gated on a merged PR) writes `## Status: done (PR #<n>, merge <sha>)` without the sentinel,
   and an owner's `# abandoned:` decision becomes `## Status: done_with_escalation — ABANDONED (…)`;
   `stamp-requirement-status.sh` writes `## Status: brief-shipped`, deliberately not a done value.
-- **Honest limit:** a plain `/supervisor` / `/autonomous` run outside `/automate` gets no automatic done
-  stamp. `closeout` needs an `/automate` run file, so `/automate --resume` and the merge watcher
-  (`automate-merge-watch.sh`) close a requirement out only when it is also the `## Current` item of an
-  `/automate` run; for other requirements `/automate --resume` runs `reconcile-status` as a dry run only.
-  For a plain run, recovery after the merge is a human step: `reconcile-status --apply`, or a
+- **Honest limit — two paths get no automatic done stamp:** a plain `/supervisor` / `/autonomous` run
+  outside `/automate`, and an `/automate --auto-merge` item that `gate-eval` merged. `closeout` needs an
+  `/automate` run file and a caller: its callers are `/automate --resume`'s RECONCILE
+  (`skills/automate-loop/SKILL.md` §6 step 1, this run's `## Current` item), the merge watcher
+  (`automate-merge-watch.sh`, armed only at an `/automate` park) and `closeout-others` (another run's
+  `## Current` item), so a requirement is closed out only when it is the `## Current` item of an
+  `/automate` run whose PR merged after a park; for other requirements `/automate --resume` runs
+  `reconcile-status` as a dry run only. A gate-merged item never parks: §6 step 5 SYNC runs
+  `brief-repair` and the pull, not `closeout`, and the next PICK moves `## Current` on (before
+  automate-followups/37 Phase 4.5's pre-merge stamp covered it). SYNC does not call `closeout` because
+  its trail step would open a trail PR after every gate-merged item and the next PICK's `trail-gate`
+  parks `trail_pr_open` on it, stopping every unattended `--auto-merge` run after its first merge; a
+  trail-less close-out at SYNC is an open follow-up. For both paths, recovery after the merge is a
+  human step: `reconcile-status --apply`, or a
   hand-written `## Status: done`. Until then the requirement reads `brief-shipped` (or nothing) and
   `resolve-folder` keeps listing the merged item. `stamp-requirement-status.sh`
   (run on session start and when a Supervisor runner agent finishes — its two `hooks.json` seams) writes that `brief-shipped` heading on
