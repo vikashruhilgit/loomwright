@@ -39,6 +39,8 @@
 #   AE lane-convert-ready finalizes a closed-out lane in branch mode (A1); mode off skips finalize
 #   AF fleet-closeout: stepwise, idempotent wave close (A2) — backstop, check-off, sync, removal, lanes dir,
 #     leaks, main health, lock release; gone / meta-push-failed are the human's; a failed pull stops it
+#   AH lane-wait: the coordinator's lane watcher — events, seen ledger (prune / keep), timeout, idle,
+#     usage, read-only toward lanes
 #   AG wave-plan is READ-ONLY (A4: refs + tree byte-identical) + mutation control; the A3/A4 static guards
 #     (no executable merge / push / gate-eval) + mutation control; A5 no sequential caller
 set -uo pipefail
@@ -543,6 +545,54 @@ has "T1b frame header" "$out" "lane-status --watch"
 has "T1c frame carries the fleet" "$out" "L6  awaiting_input"
 out="$(LOOMWRIGHT_LANES_WATCH_ITERATIONS=2 LOOMWRIGHT_LANES_WATCH_INTERVAL_S=0 run lane-status "$RF2" --watch)"
 check "T2 --watch refreshes" "$(printf '%s\n' "$out" | grep -c '^lane-status --watch')" 2
+
+# ---- AH: lane-wait — the coordinator's lane watcher (a question no longer sits unseen) ---------------------
+# Fleet at this point: L1 died · L2 running · L3 stalled · L4 blocked_launch · L5 held_for_load ·
+# L6 awaiting_input (toolu_r1) · L7 created.
+LWS="$P/.supervisor/automate/$PARENT2.lane-wait-seen"; rm -f "$LWS"
+out="$(run lane-wait "$RF2" --interval 1 --timeout 5)"; rc=$?
+check "AH1 a pending question ⇒ exits 0 at once" "$rc" 0
+has "AH1b the question is named with lane, id and text" "$out" "lane-wait: question L6 toolu_r1 asked 2026-10-07T00:00:00Z — Which path?"
+has "AH1c a died lane is an event" "$out" "lane-wait: state L1 died — pr -"
+has "AH1d a stalled lane is an event" "$out" "lane-wait: state L3 stalled"
+has "AH1e a blocked launch is an event" "$out" "lane-wait: state L4 blocked_launch"
+hasnt "AH1f awaiting_input with its question is reported once, as the question" "$out" "state L6 awaiting_input"
+hasnt "AH1g running / held / created lanes are not events" "$out" "state L2"
+has "AH1h ends with the relay hint" "$(printf '%s\n' "$out" | tail -1)" "lane-wait: relay — show each question to the owner verbatim"
+check "AH2 the seen ledger records every printed key" "$(sort "$LWS" | tr '\n' ',')" "question L6 toolu_r1,state L1 died,state L3 stalled,state L4 blocked_launch,"
+echo "state L2 died" >> "$LWS"
+out="$(run lane-wait "$RF2" --interval 1 --timeout 1)"; rc=$?
+check "AH3 nothing new ⇒ waits, then times out (exit 0)" "$rc:$out" "0:lane-wait: timeout after 1s — nothing new"
+check "AH3b a state key no longer true is pruned (re-entry reports again); questions are kept" \
+  "$(grep -c '^state L2 died$' "$LWS"):$(grep -c '^question L6 toolu_r1$' "$LWS")" "0:1"
+printf '{"id":"toolu_r2","asked_at":"2026-10-07T00:05:00Z","questions":[{"question":"Second ask?","options":[{"label":"A"}]}]}\n' > "$L6/.supervisor/inbox/questions/toolu_r2.json"
+out="$(run lane-wait "$RF2" --interval 1 --timeout 5)"
+check "AH4 a new question only ⇒ exactly that one event + the hint" "$(printf '%s\n' "$out" | grep -c '^lane-wait: ')" 2
+has "AH4b … and it is the new id" "$out" "lane-wait: question L6 toolu_r2 asked 2026-10-07T00:05:00Z — Second ask?"
+rm -f "$L6/.supervisor/inbox/questions/toolu_r2.json"
+out="$(run lane-wait)"; rc=$?
+check "AH5 no run file ⇒ usage, exit 2" "$rc" 2
+out="$(run lane-wait "$RF2" --interval 0)"; rc=$?
+check "AH5b a zero interval is refused (never a busy loop)" "$rc" 2
+out="$(run lane-wait "$P/.supervisor/automate/none.md")"; rc=$?
+check "AH6 no lane table ⇒ idle, exit 0" "$rc" 0
+has "AH6b … and says idle" "$out" "lane-wait: idle — no lane table"
+check "AH7 --help lists lane-wait" "$(bash "$S" --help | grep -c '^#   lane-wait <parent_runfile>' | tr -d ' ')" 1
+# AH8 idle: a fleet with no live lane and nothing new must exit, never poll parked lanes forever.
+PARENT3=automate-2026-10-07-140000; RF3="$P/.supervisor/automate/$PARENT3.md"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT3" > "$RF3"
+run lane-create "$RF3" reqs/a.md 1 --parallel 2 >/dev/null
+run lane-launch "$T/work/primary-lanes/$PARENT3/L1" --host-denied 'denied' >/dev/null
+out="$(run lane-wait "$RF3" --interval 1 --timeout 5)"
+has "AH8a first call reports the blocked lane" "$out" "lane-wait: state L1 blocked_launch"
+out="$(run lane-wait "$RF3" --interval 1 --timeout 5)"; rc=$?
+check "AH8b nothing live, nothing new ⇒ idle at once, exit 0" "$rc:$out" "0:lane-wait: idle — no lane is running; nothing changes until the owner acts"
+# AH9 read-only toward lanes: a full lane-wait pass writes nothing but its own ledger.
+before="$(find "$LR2" -type f -newer "$LWS" 2>/dev/null | wc -l | tr -d ' ')"
+run lane-wait "$RF2" --interval 1 --timeout 1 >/dev/null
+check "AH9 lane-wait writes nothing into any lane" "$(find "$LR2" -type f -newer "$LWS" 2>/dev/null | wc -l | tr -d ' ')" "$before"
+# Clean up the second wave: lane-feed L<n> (T7) resolves the NEWEST lane table in the primary.
+rm -rf "$LWS" "$P/.supervisor/automate/$PARENT3".* "$T/work/primary-lanes/$PARENT3"
 out="$(run lane-feed "$L6")"
 has "T3 feed prints spawns" "$out" "[spawn] loomwright:worker: implement subtask 1"
 has "T4 feed prints the park write" "$out" "[park] bash automate-helpers.sh current-set"

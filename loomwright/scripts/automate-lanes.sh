@@ -44,6 +44,10 @@
 #   lane-readiness <lane_dir|L<n>>                       write <run_id>.merge-readiness.md (advisory, never merges)
 #   lane-park-notify <runfile>                           the ready_for_release park's ONE notify step: desktop +
 #        `automate_ready_for_release` webhook (fail-SAFE) + one ## Progress line naming each channel's real outcome
+#   lane-wait <parent_runfile> [--interval S] [--timeout S]   the coordinator's lane watcher: blocks,
+#        token-free, until a lane needs the owner (a new pending question, or a lane entering a park /
+#        failure state), prints one `lane-wait: …` line per event and exits 0 — run it as a BACKGROUND
+#        command so its exit wakes the coordinator session to relay; read-only except its seen ledger
 #
 # Files (all paths derived; nothing hard-coded):
 #   <lane>/.supervisor/lane.json        D2 marker — the ONE marker lane-create writes (plus the copied
@@ -2008,6 +2012,88 @@ _lanes_watch() {
   done
 }
 
+# lane-wait <parent_runfile> [--interval S] [--timeout S] — the coordinator's lane watcher (§14 "The
+# per-wave loop" step 8). A lane that needs the owner records it and goes quiet (relay-hook defers and the
+# lane exits; a park is a run-file line): nothing else tells the coordinator session, so a question sat
+# unseen until the owner happened to look (W3, 2026-10-11 — two lanes waited 22–24 min). This blocks,
+# token-free (a `sleep` loop over `lane-status --json`), until an ATTENTION event appears that its seen
+# ledger has not reported, prints it and exits 0 — the coordinator runs it as a BACKGROUND command, so the
+# host re-invokes the coordinator when it exits, and re-arms it after relaying. Events, one line each:
+#   lane-wait: question <lane> <tool_use_id> asked <asked_at> — <question, first 160 chars>
+#   lane-wait: state <lane> <state> — pr <url|->            (state ∈ _LANES_WAIT_ATTN below)
+# then ONE `lane-wait: relay — …` hint line. No live lane left (none created / running / held /
+# answer_pending) and nothing new ⇒ `lane-wait: idle — no lane is running; nothing changes until the
+# owner acts`, exit 0 (never a forever-poll of parked lanes). `--timeout S` (default 0 = none) ⇒
+# `lane-wait: timeout after <S>s — nothing new`, exit 0. Unreadable status ⇒ retried next interval.
+# Seen ledger: `<automate dir>/<parent_run_id>.lane-wait-seen`, one key per line — a question key is kept
+# for good (tool_use_ids never repeat), a state key only while that lane is still in that state, so a
+# lane that stalls, is resumed and stalls again is reported again. Keys are recorded when PRINTED: a
+# coordinator that dies after the exit and before relaying does not see them again from lane-wait (its
+# next `--resume` runs `lane-status --inbox`, which lists every pending question regardless).
+# Never answers, launches, resumes or writes into a lane. Exits 0 except a usage error (2).
+_LANES_WAIT_ATTN='["awaiting_input","stalled","died","lost_to_reset","escalated","ready_for_release","rate_limit","drain_died","gone","missing","blocked_launch","merged"]'
+_LANES_WAIT_LIVE='["created","running","held_for_load","answer_pending"]'
+lanes_wait() {
+  local rf="" iv="${LOOMWRIGHT_LANES_WAIT_INTERVAL_S:-15}" to=0 start doc parent ledger cur keep new live
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --interval) iv="${2:-}"; shift ;;
+      --timeout) to="${2:-}"; shift ;;
+      -*) echo "lane-wait: unknown flag '$1'" >&2; return 2 ;;
+      *) [ -z "$rf" ] || { echo "lane-wait: unexpected argument '$1'" >&2; return 2; }; rf="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$rf" ] || { echo "usage: lane-wait <parent_runfile> [--interval S] [--timeout S]" >&2; return 2; }
+  case "$iv" in ''|*[!0-9]*|0) echo "lane-wait: --interval must be a positive integer" >&2; return 2 ;; esac
+  case "$to" in ''|*[!0-9]*) echo "lane-wait: --timeout must be a non-negative integer" >&2; return 2 ;; esac
+  _lanes_table_for "$rf" >/dev/null 2>&1 || { echo "lane-wait: idle — no lane table for ${rf} (nothing to watch)"; return 0; }
+  start="$(date +%s)"
+  while :; do
+    doc="$(lanes_status "$rf" --json 2>/dev/null)"
+    parent="$(jq -r '.parent_run_id // empty' <<<"$doc" 2>/dev/null)"
+    if [ -n "$parent" ]; then
+      ledger="$(dirname "$rf")/$parent.lane-wait-seen"
+      # Current attention events: "<key>\t<line>"; the key is what the ledger dedupes on.
+      cur="$(jq -r --argjson attn "$_LANES_WAIT_ATTN" '
+        .lanes[]? as $l
+        | ( ($l.questions // [])[]
+            | "question \($l.lane) \(.id)\tquestion \($l.lane) \(.id) asked \(.asked_at // "unknown") — \((.question // "") | gsub("[\\r\\n\\t]+"; " ") | .[0:160])" ),
+          ( select($attn | index($l.state)) | select($l.state != "awaiting_input" or (($l.questions // []) | length) == 0)
+            | "state \($l.lane) \($l.state)\tstate \($l.lane) \($l.state) — pr \($l.pr // "-")" )' <<<"$doc" 2>/dev/null)"
+      # Ledger pruned to what is still true: every question key, and state keys still current.
+      keep="$( { [ -f "$ledger" ] && cat "$ledger"; } 2>/dev/null | while IFS= read -r k; do
+        case "$k" in
+          question\ *) printf '%s\n' "$k" ;;
+          state\ *) grep -qxF -- "$k" <<<"$(cut -f1 <<<"$cur")" && printf '%s\n' "$k" ;;
+        esac
+      done)"
+      new="$(printf '%s\n' "$cur" | while IFS= read -r ln; do
+        [ -n "$ln" ] || continue
+        grep -qxF -- "$(cut -f1 <<<"$ln")" <<<"$keep" || printf '%s\n' "$ln"
+      done)"
+      if [ -n "$new" ]; then
+        { [ -n "$keep" ] && printf '%s\n' "$keep"; printf '%s\n' "$new" | cut -f1; } > "$ledger.tmp.$$" 2>/dev/null \
+          && mv "$ledger.tmp.$$" "$ledger" 2>/dev/null || rm -f "$ledger.tmp.$$" 2>/dev/null
+        printf '%s\n' "$new" | cut -f2- | sed 's/^/lane-wait: /'
+        echo "lane-wait: relay — show each question to the owner verbatim (lane-status $rf --inbox), deliver only the owner's answer with lane-answer, then re-arm lane-wait"
+        return 0
+      fi
+      [ -n "$keep" ] && { printf '%s\n' "$keep" > "$ledger.tmp.$$" 2>/dev/null && mv "$ledger.tmp.$$" "$ledger" 2>/dev/null || rm -f "$ledger.tmp.$$" 2>/dev/null; }
+      live="$(jq -r --argjson live "$_LANES_WAIT_LIVE" '[.lanes[]? | .state as $s | select($live | index($s))] | length' <<<"$doc" 2>/dev/null)"
+      if [ "${live:-1}" = 0 ]; then
+        echo "lane-wait: idle — no lane is running; nothing changes until the owner acts"
+        return 0
+      fi
+    fi
+    if [ "$to" -gt 0 ] && [ "$(( $(date +%s) - start ))" -ge "$to" ]; then
+      echo "lane-wait: timeout after ${to}s — nothing new"
+      return 0
+    fi
+    sleep "$iv"
+  done
+}
+
 # ==================================================================================================
 # lane-feed <lane_dir|L<n>> [--follow] — a readable narration of the lane's stream log.
 _LANES_FEED_JQ='fromjson? |
@@ -2529,6 +2615,7 @@ lanes_main() {
     lane-feed) lanes_feed "$@" ;;
     lane-readiness) lanes_readiness "$@" ;;
     lane-park-notify) lanes_park_notify "$@" ;;
+    lane-wait) lanes_wait "$@" ;;
     fleet-closeout) lanes_fleet_closeout "$@" ;;
     wave-plan) lanes_wave_plan "$@" ;;
     _lane-run) lanes_run_wrapper "$@" ;;
