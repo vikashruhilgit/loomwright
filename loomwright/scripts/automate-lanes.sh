@@ -10,14 +10,17 @@
 #   lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]
 #        clone + origin-before-fetch + meta pull + carried configs + lane.json + one-line backlog + relay hooks
 #   lane-launch <lane_dir> --owner-command '<cmd the owner typed>' [--resume-run <run_id> | --continue]
+#        [--without-gate-optout]
 #        detached headless launch (or resume by run id — in the lane's LAST session, a fresh one only
-#        when that cannot be resumed — / fixed decision-free continue message)
+#        when that cannot be resumed — / fixed decision-free continue message); see "Gate opt-out carry"
 #   lane-launch <lane_dir> --host-denied '<reason>'      record a host-refused spawn as blocked_launch
 #   relay-hook                                           PreToolUse / PermissionRequest hook (stdin: hook JSON)
-#   lane-answer <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>]
+#   lane-answer <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>] [--without-gate-optout]
 #        stdin: {"answers":{"0":"<label>"},"note":"<optional free text>"}; validates, records, resumes
-#        (HELD ⇒ the validated answer is kept coordinator-side, the lane reads answer_pending)
-#   lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>'   deliver a kept answer (the poll)
+#        (HELD, or BLOCKED on a missing gate opt-out ⇒ the validated answer is kept coordinator-side,
+#        the lane reads answer_pending)
+#   lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>' [--without-gate-optout]
+#        deliver a kept answer (the poll)
 #   lane-remove <lane_dir> [--stop] [--abandon]          guarded removal (salvages first); --abandon on a
 #        `gone` lane stamps ABANDONED and pushes the lane's metadata through trail-pr's evidence gate
 #   lane-convert-ready <lane_dir>                        wave end: ready_for_release → awaiting_merge, then
@@ -50,6 +53,7 @@
 #        that is neither live nor coordinator-driven — a park / failure state, an unknown one included),
 #        prints one `lane-wait: …` line per event and exits 0 — run it as a BACKGROUND
 #        command so its exit wakes the coordinator session to relay; read-only except its seen ledger
+#        and its liveness marker (the Stop hook guard-lane-wait-armed.sh reads the marker)
 #
 # Files (all paths derived; nothing hard-coded):
 #   <lane>/.supervisor/lane.json        D2 marker — the ONE marker lane-create writes (plus the copied
@@ -87,6 +91,13 @@
 #   <primary>/.supervisor/automate/<parent_run_id>.leaks-snapshot    `lane-status --leaks --snapshot` (wave start)
 #   <primary>/.supervisor/automate/<parent_run_id>.lane-wait-seen    lane-wait's seen ledger (one key per line;
 #                                       atomic tmp+mv rewrite, removed when nothing it holds is still true)
+#   <primary>/.supervisor/automate/<parent_run_id>.lane-wait.pid     lane-wait's liveness marker: `<pid> <start
+#                                       epoch>`, written when it starts watching, removed by its EXIT trap only
+#                                       while the file still names ITS pid (a later lane-wait owns it then).
+#                                       Read by the coordinator's Stop hook (guard-lane-wait-armed.sh)
+#   <primary>/.supervisor/automate/<parent_run_id>.<lane>.gate-optout  the FACT (never a value) that the lane's
+#                                       first launch ran with the test-integrity guard's opt-out set
+#                                       (`gate_optout_at_launch<TAB><utc>`); coordinator-side, never in lane.json
 #   <lane>/.supervisor/automate/<run_id>.merge-readiness.md          lane-readiness (written at the lane's
 #                                       ready_for_release park, when the lane is no longer running)
 #
@@ -103,6 +114,17 @@
 #      overloaded`; `busy` ⇒ HELD `load busy` when any lane of this wave launched within
 #      LOOMWRIGHT_LANE_RECHECK_S (default 60) seconds; `ok` / `unknown` ⇒ launch. HELD = exit 4, no
 #      process, lane table state `held_for_load`.
+#   3a. Gate opt-out carry (every RESUME — lane-answer's resume, --deliver-pending, --resume-run,
+#      --continue): when the lane's <lane>.gate-optout fact is recorded (its first launch ran with
+#      LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS=1, the same predicate guard-test-integrity.sh applies) and this
+#      process's environment lacks it ⇒ `lane-launch: BLOCKED — <lane> — launched with the test-integrity
+#      guard's opt-out; this resume's environment lacks it — …`, exit 3, no process, table
+#      `blocked_launch` (lane-answer keeps the validated answer pending exactly like HELD). The opt-out is
+#      NEVER added to a resume's environment: it is a per-process human decision, and storing it would make
+#      it a stored one (docs/HOOKS.md "Opt-out — process env only"). `--without-gate-optout` resumes
+#      without it — also removing it from the spawned environment — and clears the recorded fact once the
+#      gate passes. A recorded fact only ever REFUSES, so a process that forges or deletes the sidecar can
+#      at most block a resume or drop the opt-out; it can never grant it.
 #   4. Spawn: `claude -p` with the lane allowlist / disallow list below, `--plugin-dir` pinned to the
 #      coordinator's CLAUDE_PLUGIN_ROOT, `--append-system-prompt` = the fixed headless-lane text, env
 #      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 with CLAUDE_PID / CLAUDECODE unset. Prompt:
@@ -507,15 +529,44 @@ LN_LAUNCH_LOCKED=0
 _lanes_launch_lock() { _lt_lock "$LN_TABLE.$LN_LANE.launch" || return 1; LN_LAUNCH_LOCKED=1; }   # LAUNCHLOCK
 _lanes_launch_unlock() { [ "$LN_LAUNCH_LOCKED" = 1 ] || return 0; _lt_unlock "$LN_TABLE.$LN_LANE.launch"; LN_LAUNCH_LOCKED=0; }
 
-# _lanes_gate <owner_cmd> — authority, liveness, regime, admission. Prints the first line; returns the exit code.
+# ---- gate opt-out carry (launch contract 3a) --------------------------------------------------------
+# _lanes_optout_set — the test-integrity guard's opt-out is set in THIS process's environment: the SAME
+# predicate guard-test-integrity.sh applies (`= "1"` exactly; any other value is unset).
+_lanes_optout_set() { [ "${LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS:-}" = "1" ]; }
+# _lanes_optout_file — the coordinator-side fact file (primary's automate dir; never the lane's lane.json).
+_lanes_optout_file() { printf '%s' "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.$LN_LANE.gate-optout"; }
+# _lanes_optout_record — at a FIRST launch only: record the fact (no value) when the opt-out is set and
+# not dropped by --without-gate-optout, else remove any earlier record. Returns 1 when the record cannot
+# be written (the caller refuses the launch: an unrecorded opt-out would silently block a later resume).
+_lanes_optout_record() {
+  local f; f="$(_lanes_optout_file)"
+  if _lanes_optout_set && [ "$LN_WITHOUT_OPTOUT" != 1 ]; then
+    { printf 'gate_optout_at_launch\t%s\n' "$(now_utc)" > "$f.tmp.$$" && mv "$f.tmp.$$" "$f"; } 2>/dev/null \
+      || { rm -f "$f.tmp.$$" 2>/dev/null; return 1; }
+  else
+    rm -f "$f" 2>/dev/null
+  fi
+  return 0
+}
+LN_WITHOUT_OPTOUT=0; LN_STRIP_OPTOUT=0; LN_GATE_OPTOUT_BLOCKED=0
+
+# _lanes_gate <owner_cmd> [<resume 0|1>] — authority, liveness, the gate opt-out carry (resumes only),
+# regime, admission. Prints the first line; returns the exit code. LN_GATE_OPTOUT_BLOCKED=1 marks the
+# opt-out refusal (lane-answer keeps its validated answer pending on it, as on HELD).
 _lanes_gate() {
-  local owner="$1" why
+  local owner="$1" resume="${2:-0}" why
+  LN_GATE_OPTOUT_BLOCKED=0
   if [ -z "$owner" ]; then
     echo "lane-launch: BLOCKED — $LN_LANE — no owner-invoked command — need the owner"
     _lt_set "$LN_TABLE" "$LN_LANE" 8 blocked_launch 10 "no owner-invoked command"; return 3
   fi
   if lanes_proc_alive "$(_lt_get "$LN_TABLE" "$LN_LANE" 5)" "$(_lt_get "$LN_TABLE" "$LN_LANE" 6)" "$LN_DIR"; then
     echo "lane-launch: refused — $LN_LANE — already running (pid $(_lt_get "$LN_TABLE" "$LN_LANE" 5))"; return 1
+  fi
+  if [ "$resume" = 1 ] && [ -e "$(_lanes_optout_file)" ] && ! _lanes_optout_set && [ "$LN_WITHOUT_OPTOUT" != 1 ]; then
+    echo "lane-launch: BLOCKED — $LN_LANE — launched with the test-integrity guard's opt-out; this resume's environment lacks it — re-run the same command with it set, or add --without-gate-optout to resume without it — need the owner"
+    LN_GATE_OPTOUT_BLOCKED=1
+    _lt_set "$LN_TABLE" "$LN_LANE" 8 blocked_launch 10 "launched with the test-integrity guard's opt-out; this resume's environment lacks it"; return 3
   fi
   if ! _lanes_regime_ok; then
     echo "lane-launch: BLOCKED — $LN_LANE — CLI advertises no pinnable permission regime — need the owner"
@@ -524,6 +575,12 @@ _lanes_gate() {
   if ! why="$(_lanes_admission)"; then
     echo "lane-launch: HELD — $LN_LANE — $why"
     _lt_set "$LN_TABLE" "$LN_LANE" 8 held_for_load 10 "$why"; return 4
+  fi
+  # --without-gate-optout: the owner chose to run without it — drop it from the spawn's environment and,
+  # on a resume, clear the recorded fact (only now: a refused or HELD call leaves the record unchanged).
+  if [ "$LN_WITHOUT_OPTOUT" = 1 ]; then
+    LN_STRIP_OPTOUT=1
+    [ "$resume" = 1 ] && rm -f "$(_lanes_optout_file)" 2>/dev/null
   fi
   return 0
 }
@@ -542,6 +599,8 @@ _lanes_spawn() {
     --allowedTools "$LANE_ALLOWED_TOOLS" --disallowedTools "$disallow"
     --plugin-dir "$PLUGIN_ROOT" --append-system-prompt "$LANE_SYS")
   [ -n "$sid" ] && flags+=(--resume "$sid")
+  local -a envu=(-u CLAUDECODE -u CLAUDE_PID)
+  [ "$LN_STRIP_OPTOUT" = 1 ] && envu+=(-u LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS)   # --without-gate-optout
   in=/dev/null
   if [ -n "$prompt" ]; then
     in="$LN_ROOT/$LN_LANE.stdin.json"
@@ -551,7 +610,7 @@ _lanes_spawn() {
   off="$(wc -c < "$LN_LOG" | tr -d ' ')"
   # >>> spawn (the only process start; it writes nothing into the lane directory)
   nohup bash "$SELF" _lane-run "$LN_DIR" "$LN_LOG" "$LN_DIED" "$in" -- \
-    env -u CLAUDECODE -u CLAUDE_PID CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 \
+    env "${envu[@]}" CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 \
     LOOMWRIGHT_LANE_RESUME_PATH="${LN_RESUME_PATH:-}" claude "${flags[@]}" >> "$LN_LOG" 2>&1 &
   pid=$!; LN_SPAWN_PID="$pid"; LN_SPAWN_SID=""
   # <<< spawn
@@ -600,6 +659,7 @@ lanes_launch() {
       --owner-command) _lanes_need "$#" lane-launch "$1"; owner="$2"; shift 2 ;;
       --resume-run) _lanes_need "$#" lane-launch "$1"; resume_run="$2"; [ -n "$resume_run" ] || die "lane-launch: --resume-run needs a run id"; shift 2 ;;
       --continue) cont=1; shift ;;
+      --without-gate-optout) LN_WITHOUT_OPTOUT=1; shift ;;
       --host-denied) _lanes_need "$#" lane-launch "$1"; denied="${2:-host denied the spawn}"; denied_set=1; shift 2 ;;
       *) [ -z "$dir" ] || die "lane-launch: unexpected argument '$1'"; dir="$1"; shift ;;
     esac
@@ -610,7 +670,8 @@ lanes_launch() {
     _lt_set "$LN_TABLE" "$LN_LANE" 8 blocked_launch 10 "$denied"; return 3
   fi
   _lanes_launch_lock || { echo "lane-launch: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"; return 1; }
-  local rc; _lanes_gate "$owner"; rc=$?
+  local rc res=0; { [ -n "$resume_run" ] || [ "$cont" = 1 ]; } && res=1
+  _lanes_gate "$owner" "$res"; rc=$?
   [ "$rc" = 0 ] && { _lanes_launch_go "$resume_run" "$cont"; rc=$?; }
   _lanes_launch_unlock
   return "$rc"
@@ -651,6 +712,8 @@ _lanes_launch_go() {
     jq -e '[.hooks.PreToolUse[]?.hooks[]?.command] | any(test("automate-lanes.sh\" relay-hook"))' \
       "$LN_DIR/.claude/settings.local.json" >/dev/null 2>&1 \
       || { echo "lane-launch: refused — $LN_LANE has no relay hook (a lane never runs without its question channel)"; return 1; }
+    _lanes_optout_record \
+      || { echo "lane-launch: refused — $LN_LANE — cannot record the gate opt-out fact ($(_lanes_optout_file)); a resume could not detect it"; return 1; }
     _lanes_spawn "/loomwright:automate --backlog $LN_DIR/.supervisor/lane-backlog.md" "" "(launch)"
   fi
 }
@@ -772,7 +835,8 @@ _lanes_policy_apply() {
 # owner-authenticated, which is why it can never carry, or stand in for, an owner command. One pending
 # file per lane, last write wins: a second HELD lane-answer for the same question replaces the first
 # (how the owner corrects a kept answer). A discard leaves the question unanswered, so lane-status
-# reads that lane awaiting_input again — never held_for_load.
+# reads that lane awaiting_input again — never held_for_load. A resume refused for a missing gate
+# opt-out (launch contract 3a) keeps the validated answer pending the same way (exit 3, not 4).
 _lanes_pending_file() { printf '%s' "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.$LN_LANE.answer-pending.json"; }
 
 # _lanes_validate_answers <question_file> <input JSON> — prints {<question>: "<label[,label…]>"} or
@@ -834,6 +898,7 @@ lanes_answer() {
       --owner-command) _lanes_need "$#" lane-answer "$1"; owner="$2"; shift 2 ;;
       --via) _lanes_need "$#" lane-answer "$1"; via="${2:-cli}"; shift 2 ;;
       --deliver-pending) deliver=1; shift ;;
+      --without-gate-optout) LN_WITHOUT_OPTOUT=1; shift ;;
       *) if [ -z "$dir" ]; then dir="$1"; elif [ -z "$id" ]; then id="$1"; else die "lane-answer: unexpected argument '$1'"; fi; shift ;;
     esac
   done
@@ -857,19 +922,24 @@ lanes_answer() {
   # nothing half-written there; under the launch lock, so an overlapping answer sees it answered.
   _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
   if [ -e "$af" ]; then _lanes_launch_unlock; die "lane-answer: refused — $id already answered"; fi
-  _lanes_gate "$owner"; rc=$?
-  if [ "$rc" = 4 ]; then
-    # HELD (admission): keep the VALIDATED answer coordinator-side — never the owner command.
+  _lanes_gate "$owner" 1; rc=$?
+  if [ "$rc" = 4 ] || { [ "$rc" = 3 ] && [ "$LN_GATE_OPTOUT_BLOCKED" = 1 ]; }; then
+    # HELD (admission) or BLOCKED on a missing gate opt-out: keep the VALIDATED answer coordinator-side
+    # — never the owner command — so the owner's answer is not lost while the resume waits.
     pf="$(_lanes_pending_file)"; case "$via" in *[!A-Za-z0-9_.-]*) via=cli ;; esac
     if jq -n -c --arg lane "$LN_LANE" --arg id "$id" --argjson a "$(jq -c '.answers' <<<"$in")" --arg note "$note" \
         --arg via "$via" --arg at "$(now_utc)" \
         '{schema_version: 1, lane: $lane, tool_use_id: $id, answers: $a, note: (if $note == "" then null else $note end), via: $via, held_at: $at}' \
         > "$pf.tmp.$$" 2>/dev/null && mv "$pf.tmp.$$" "$pf"; then
-      echo "lane-answer: answer kept pending ($(basename "$pf")) — $LN_LANE reads answer_pending; the next /automate --resume poll delivers it (lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>')"
+      if [ "$rc" = 3 ]; then
+        echo "lane-answer: answer kept pending ($(basename "$pf")) — $LN_LANE reads answer_pending; deliver it with the opt-out set, or with --without-gate-optout (lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>' [--without-gate-optout])"
+      else
+        echo "lane-answer: answer kept pending ($(basename "$pf")) — $LN_LANE reads answer_pending; the next /automate --resume poll delivers it (lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>')"
+      fi
     else
       rm -f "$pf.tmp.$$"; echo "lane-answer: answer NOT kept — cannot write $(basename "$pf"); re-send it at the next poll"
     fi
-    _lanes_launch_unlock; return 4
+    _lanes_launch_unlock; return "$rc"
   fi
   [ "$rc" = 0 ] || { _lanes_launch_unlock; return "$rc"; }
   _lanes_answer_write_resume "$id" "$out" "$note" "$via" "$sid"
@@ -896,7 +966,7 @@ _lanes_deliver_pending() {
   [ -n "$sid" ] || die "lane-answer: refused — no session id to resume"
   _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
   if [ -e "$af" ]; then _lanes_launch_unlock; _discard "$id already answered"; fi
-  _lanes_gate "$owner"; rc=$?
+  _lanes_gate "$owner" 1; rc=$?
   if [ "$rc" != 0 ]; then
     _lanes_launch_unlock
     echo "lane-answer: pending answer kept for $LN_LANE — not delivered"
@@ -2054,9 +2124,52 @@ _lanes_wait_print() {
 # lane that stalls, is resumed and stalls again is reported again. Keys are recorded when PRINTED: a
 # coordinator that dies after the exit and before relaying does not see them again from lane-wait (its
 # next `--resume` runs `lane-status --inbox`, which lists every pending question regardless).
+# Liveness marker: once it has a lane table to watch, lane-wait writes `<automate dir>/<parent_run_id>.
+# lane-wait.pid` = `<its pid> <start epoch>` (tmp+mv) and an EXIT trap (TERM / INT / HUP exit through it)
+# removes it ONLY while the file still names ITS pid — a second lane-wait armed meanwhile owns the file
+# and keeps it. The coordinator's Stop hook (guard-lane-wait-armed.sh) reads it: a coordinator turn that
+# ends with a live wave and no live watcher is sent back to arm one. A stale marker (pid gone, or reused
+# by a process that is not a lane-wait) reads as no watcher.
 # Never answers, launches, resumes or writes into a lane. Exits 0 except a usage error (2).
 _LANES_WAIT_QUIET='["awaiting_merge","awaiting_go","done","removed","abandoned"]'
 _LANES_WAIT_LIVE='["created","running","held_for_load","answer_pending"]'
+_LANES_WAIT_MARK=""
+# _lanes_wait_unmark — remove lane-wait's liveness marker iff it still names this process.
+_lanes_wait_unmark() {
+  [ -n "$_LANES_WAIT_MARK" ] || return 0
+  [ "$(awk 'NR == 1 { print $1 }' "$_LANES_WAIT_MARK" 2>/dev/null)" = "$$" ] && rm -f "$_LANES_WAIT_MARK" 2>/dev/null
+  _LANES_WAIT_MARK=""
+  return 0
+}
+
+# _lanes_quick_state <path> <pid> <pid_start> <table_state> <answer-pending file> — a lane's state as
+# _lanes_lane_json classifies it, in its first-match order, but only as far as the live / attention
+# split needs and with NO gh, ci-slot or stream-log read (the coordinator's Stop hook runs it at every
+# turn end): answer_pending · blocked_launch · held_for_load · created · missing · running ·
+# awaiting_input · `other` (removed / abandoned and every state past awaiting_input: a park, died,
+# lost_to_reset, stalled — none of them live, none an unanswered question). Membership in
+# _LANES_WAIT_LIVE stays the caller's: this never restates that set.
+_lanes_quick_state() {
+  local path="$1" pid="$2" st="$3" ts="$4" apf="${5:-}" pend="" alive=0 nq=0
+  case "$ts" in removed|abandoned) printf 'other'; return 0 ;; esac
+  lanes_proc_alive "$pid" "$st" "$path" && alive=1
+  [ -d "$path/.supervisor/inbox" ] && _lanes_pending_question "$path/.supervisor/inbox" >/dev/null && nq=1
+  if [ "$alive" = 0 ] && [ "$nq" = 1 ] && [ -n "$apf" ] && [ -s "$apf" ]; then
+    pend="$(jq -r '.tool_use_id // empty' "$apf" 2>/dev/null)"
+    case "$pend" in ''|*[!A-Za-z0-9_-]*) pend="" ;; esac
+    if [ -n "$pend" ] && { [ ! -f "$path/.supervisor/inbox/questions/$pend.json" ] || [ -e "$path/.supervisor/inbox/answers/$pend.json" ]; }; then pend=""; fi
+  fi
+  [ -n "$pend" ] && { printf 'answer_pending'; return 0; }
+  case "$ts" in
+    blocked_launch) printf 'blocked_launch' ;;
+    held_for_load) if [ "$nq" = 1 ] && [ -d "$path" ] && [ "$alive" = 0 ]; then printf 'awaiting_input'; else printf 'held_for_load'; fi ;;
+    created) printf 'created' ;;
+    *) if [ ! -d "$path" ]; then printf 'missing'
+       elif [ "$alive" = 1 ]; then printf 'running'
+       elif [ "$nq" = 1 ]; then printf 'awaiting_input'
+       else printf 'other'; fi ;;
+  esac
+}
 lanes_wait() {
   local rf="" iv="${LOOMWRIGHT_LANES_WAIT_INTERVAL_S:-15}" to=0 start doc parent ledger cur keep new live
   while [ "$#" -gt 0 ]; do
@@ -2073,6 +2186,14 @@ lanes_wait() {
   case "$to" in ''|*[!0-9]*) echo "lane-wait: --timeout must be a non-negative integer" >&2; return 2 ;; esac
   _lanes_table_for "$rf" >/dev/null 2>&1 || { echo "lane-wait: idle — no lane table for ${rf} (nothing to watch)"; return 0; }
   start="$(date +%s)"
+  _LANES_WAIT_MARK="$(basename "$rf")"; _LANES_WAIT_MARK="${_LANES_WAIT_MARK%.md}"
+  _LANES_WAIT_MARK="$(dirname "$rf")/${_LANES_WAIT_MARK%.lanes}.lane-wait.pid"
+  { printf '%s %s\n' "$$" "$start" > "$_LANES_WAIT_MARK.tmp.$$" && mv "$_LANES_WAIT_MARK.tmp.$$" "$_LANES_WAIT_MARK"; } 2>/dev/null \
+    || rm -f "$_LANES_WAIT_MARK.tmp.$$" 2>/dev/null
+  trap '_lanes_wait_unmark' EXIT
+  trap '_lanes_wait_unmark; exit 143' TERM
+  trap '_lanes_wait_unmark; exit 130' INT
+  trap '_lanes_wait_unmark; exit 129' HUP
   while :; do
     doc="$(lanes_status "$rf" --json 2>/dev/null)"
     parent="$(jq -r '.parent_run_id // empty' <<<"$doc" 2>/dev/null)"

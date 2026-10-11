@@ -138,6 +138,9 @@ w guard-test-integrity.sh -
 # after the write-marker block. Its marker write (`> "$tmp"; mv -f "$tmp" "$MARKER"`, `rm -f "$MARKER"`) is
 # reached ONLY through `write-marker`, which FINALIZE / self-heal invoke explicitly, never the hook.
 w guard-finalize-publish.sh -
+# guard-lane-wait-armed.sh — a Stop reminder: reads the run lock, the lane table, the lane-wait marker /
+# seen ledger and each lane's inbox (sourcing automate-lanes.sh for its readers only), prints a decision.
+w guard-lane-wait-armed.sh -
 # guard-arm.sh — arm: `printf ... > "$tmp"; mv -f "$tmp" "$marker"`, marker="$GUARD_DIR/$sid.json";
 # disarm-session / stale sweep: `rm -f "$GUARD_DIR/$sid.json"`. GUARD_DIR=<project>/.supervisor/guard.
 w guard-arm.sh '.supervisor/guard/<session>.json'

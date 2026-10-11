@@ -177,6 +177,14 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-code-review-result.py\" --main-session || true"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-lane-wait-armed.sh\" || true"
+          }
+        ]
       }
     ],
     "TaskCompleted": [
