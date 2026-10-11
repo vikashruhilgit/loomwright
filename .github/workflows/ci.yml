@@ -108,6 +108,14 @@ jobs:
       - name: Check the local pre-push runner (ci-local.sh)
         run: bash scripts/test-ci-local.sh
 
+      # The optional loomwright-lanes pane (parallel-automate/14) reaches Loomwright only through
+      # lane-status / lane-feed / lane-answer and nothing under loomwright/ depends on it (P9). This
+      # runner has no `claude` CLI, so the engine checks (plugin validate / test) print SKIP with the
+      # reason; the static half and its mutation controls always run. Root scripts/test-*.sh are not
+      # globbed by run-self-tests.sh, hence explicit. No `|| true`: fail-CLOSED gate.
+      - name: Check the lanes add-on stays on the core lane commands
+        run: bash scripts/test-lanes-addon.sh
+
       # Read-only run-history pull (meta-sync-followups/07, D.3). Since this repo moved its run
       # history to a metadata branch, a CI checkout has no .supervisor/jobs/done/, so the sdk-spike
       # corpus sweep below prints SKIP. Placement is deliberate: AFTER every test step of THIS job

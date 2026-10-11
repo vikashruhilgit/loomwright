@@ -1507,6 +1507,18 @@ _lanes_runfile_fields() {
     END { printf "%s\t%s\t%s\t%s\t%s", d(st), d(pa), d(pr), d(lp), d(pd) }' "$1" 2>/dev/null | tr -d '\r'
 }
 
+# _lanes_runfile_branch <runfile> — the `branch:` field of `## Current`'s `- item:` line, or nothing. Kept out
+# of _lanes_runfile_fields: its callers read five tab fields, and a sixth would join the fifth.
+_lanes_runfile_branch() {
+  [ -f "${1:-}" ] || return 0
+  awk '/^## / { sec = $0; next }
+    sec == "## Current" && /^- item:/ {
+      n = split($0, a, / \| /)
+      for (i = 1; i <= n; i++) { kv = a[i]; k = kv; sub(/:.*/, "", k)
+        if (k == "branch") { v = kv; sub(/^[^:]*: */, "", v); sub(/[ \t]+$/, "", v); b = v } } }
+    END { if (b != "" && b != "-" && b != "null") printf "%s", b }' "$1" 2>/dev/null | tr -d '\r'
+}
+
 # _lanes_parked <status> <pause_reason> — prints the park reason; returns 1 when the run is not parked.
 _lanes_parked() {
   case "${2:-}" in -|null|'') ;; *) printf '%s' "$2"; return 0 ;; esac
@@ -1538,10 +1550,18 @@ _lanes_questions_json() {
     [ -e "$1/answers/$id.json" ] && continue
     at="$(jq -r '.asked_at // empty' "$q" 2>/dev/null)"
     w=null; if e="$(_lanes_epoch "$at")"; then w=$(( $2 - e )); fi
+    # `items`: every question of the call, in order — its index is lane-answer's answer key — with its
+    # option labels, so a client can offer exactly the labels lane-answer accepts without reading the
+    # lane's question file itself (parallel-automate/14). `question` stays the first one's text.
     nx="$(jq -c --slurpfile Q "$q" --arg id "$id" --arg at "$at" --argjson w "$w" \
-      '. + [{id: $id, asked_at: (if $at == "" then null else $at end), waiting_s: $w,
-             question: (($Q[0].questions // [])[0].question // null)}]' <<<"$out" 2>/dev/null)" \
-      || nx="$(jq -c --arg id "$id" '. + [{id: $id, asked_at: null, waiting_s: null, question: null}]' <<<"$out")"
+      'def arr: if type == "array" then . else [] end;
+       . + [{id: $id, asked_at: (if $at == "" then null else $at end), waiting_s: $w,
+             question: (($Q[0].questions // [])[0].question // null),
+             items: (($Q[0].questions // []) | arr | map(select(type == "object") | {
+               question: (.question // null), header: (.header // null), multiSelect: (.multiSelect == true),
+               options: ((.options // []) | arr | map(select(type == "object" and .label != null)
+                 | {label: (.label | tostring), description: (.description // null)}))}))}]' <<<"$out" 2>/dev/null)" \
+      || nx="$(jq -c --arg id "$id" '. + [{id: $id, asked_at: null, waiting_s: null, question: null, items: []}]' <<<"$out")"
     out="$nx"
   done
   printf '%s' "$out"
@@ -1784,10 +1804,11 @@ _lanes_lane_json() {
     --arg llu "$(_lanes_dash "$llu")" --arg status "$(_lanes_dash "$status")" --arg pause "$(_lanes_dash "$pause")" \
     --arg pr "$(_lanes_dash "$pr")" --arg prs "$prs" --arg lp "$(_lanes_dash "$lp")" --arg lm "$lm" --arg la "$la" \
     --argjson qs "$qs" --argjson ci "$cij" --arg held "$held" --arg rdf "$rdf" --arg rds "$rds" --arg rdsum "$rdsum" \
+    --arg br "$(_lanes_runfile_branch "$rf")" \
     'def n: if . == "" then null else . end;
      {lane: $lane, path: $path, item: $item, run_id: $run, state: $state, reason: $reason, pid: ($pid | n),
       session_id: ($sid | n), last_launch_utc: ($llu | n), run_status: ($status | n), pause_reason: ($pause | n),
-      pr: ($pr | n), pr_state: ($prs | n), last_progress: $lp, last_actions: ($la | split("\n") | map(select(. != ""))),
+      pr: ($pr | n), pr_state: ($prs | n), branch: ($br | n), last_progress: $lp, last_actions: ($la | split("\n") | map(select(. != ""))),
       last_message: $lm, questions: $qs, ci_slot: $ci, held_for_load: ($held | n),
       readiness: (if $rds == "" then null else {score: $rds, summary: $rdsum, file: $rdf} end), policy: $pdg}'
 }

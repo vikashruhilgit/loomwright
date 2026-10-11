@@ -130,6 +130,16 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 
 > **Security:** Only `SELECT` queries are permitted. All write operations (`INSERT`, `UPDATE`, `DELETE`, `DROP`, etc.) are blocked.
 
+### Optional: lanes pane
+
+When you run `/automate --parallel`, the sibling **loomwright-lanes** plugin adds a `/lanes` pane inside Claude Code: every lane's state, PR, branch, latest message and merge-readiness, machine load with a HIGH-LOAD alert, and one button per option to answer a lane that is waiting on you.
+
+```
+/plugin install loomwright-lanes@atelier
+```
+
+It is optional and holds no state: it reads `lane-status --json` / `lane-feed` and answers only through `lane-answer`, so the lanes run identically without it (`lane-status --watch` is the plain view). Details: [`loomwright-lanes/README.md`](loomwright-lanes/README.md).
+
 ---
 
 ### Ways to run
