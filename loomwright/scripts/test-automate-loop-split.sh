@@ -15,6 +15,9 @@
 #
 # Checks (each surface):
 #   A. the index assembles (exit 0, non-empty);
+#   A2. assemble.sh's split-path bound, on a scratch plugin: a leading `../` inside the plugin root
+#      assembles; a `..` after a named segment, a climb out of the plugin root, and a climb from an
+#      index with no plugin root each fail CLOSED (non-zero, empty stdout, an `assemble:` reason);
 #   B. INDEX ENTRIES — inside every split block, each heading of the split file, in order, is a heading
 #      line followed by exactly one `See [<file>](<file>).` line, and nothing else; the split file
 #      starts with its first heading and ends with a newline;
@@ -46,7 +49,8 @@
 #   M. MUTATION CONTROLS — each mutant gated on non-empty + differs (+ bash -n for a script mutant):
 #      an index entry's See line dropped (B), an unreferenced split file (C), a split file with one
 #      changed byte (E), Step 0 missing one file (F), the index entry a citation uses removed — exactly
-#      one line fewer — and an anchors-table row removed (G), a reader re-pointed back to the raw index (H).
+#      one line fewer — and an anchors-table row removed (G), a reader re-pointed back to the raw index (H),
+#      assemble.sh with its `..` guard deleted — exactly two lines fewer — accepting the traversal (A2).
 # Read-only; scratch files under mktemp -d. Exit 0 = all pass, 1 = any failure.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -179,6 +183,36 @@ for rel in "$SKILL_IDX" "$CMD_IDX" "$RUN_IDX"; do
     no "A: $rel does not assemble: $(cat "$TMP/asm.err")"
   fi
 done
+
+echo "== A2. assemble.sh bounds .. in split paths (fail-CLOSED) =="
+# A scratch plugin: P/.claude-plugin/plugin.json, an index under P/commands/, a split file under
+# P/skills/, a decoy just OUTSIDE P, and an index in a tree with no plugin root at all.
+T2="$TMP/a2"; P="$T2/plug"; mkdir -p "$P/.claude-plugin" "$P/commands" "$P/skills" "$T2/noplug/x"
+printf '{}\n' > "$P/.claude-plugin/plugin.json"
+printf '## In\n\nbody.\n' > "$P/skills/a.md"; printf '## Out\n\nescaped.\n' > "$T2/outside.md"
+printf '## Out\n\nescaped.\n' > "$T2/noplug/y.md"
+# a2_idx <index path> <split path> — write an index whose one block names <split path>.
+a2_idx() { printf '# Idx\n\n<!-- split:begin %s -->\n<!-- split:end %s -->\n' "$2" "$2" > "$1"; }
+# a2_rejects <assemble> <index> — 0 iff it exits non-zero with nothing on stdout and a reason on stderr.
+a2_rejects() {
+  local rc; bash "$1" "$2" > "$TMP/a2.out" 2> "$TMP/a2.err"; rc=$?
+  [ "$rc" -ne 0 ] && [ ! -s "$TMP/a2.out" ] && grep -q '^assemble: ' "$TMP/a2.err"
+}
+a2_idx "$P/commands/ok.md" "../skills/a.md"
+if bash "$ASM" "$P/commands/ok.md" > "$TMP/a2.out" 2>/dev/null && grep -qx 'body.' "$TMP/a2.out"; then
+  ok "A2: a leading ../ that stays inside the plugin root assembles (../skills/a.md from commands/)"
+else no "A2: a leading ../ inside the plugin root was refused — the bound is too narrow"; fi
+a2_idx "$P/commands/mid.md" "../skills/../skills/a.md"
+a2_rejects "$ASM" "$P/commands/mid.md" && ok "A2: a .. after a named segment (../skills/../skills/a.md) is REJECTED" \
+  || no "A2: a .. after a named segment was ACCEPTED"
+a2_idx "$P/commands/foo.md" "foo/../ok.md"
+a2_rejects "$ASM" "$P/commands/foo.md" && ok "A2: foo/../ok.md is REJECTED" || no "A2: foo/../ok.md was ACCEPTED"
+a2_idx "$P/commands/esc.md" "../../outside.md"
+a2_rejects "$ASM" "$P/commands/esc.md" && ok "A2: a ../../ climb out of the plugin root is REJECTED (the target exists)" \
+  || no "A2: a ../../ climb out of the plugin root was ACCEPTED"
+a2_idx "$T2/noplug/x/idx.md" "../y.md"
+a2_rejects "$ASM" "$T2/noplug/x/idx.md" && ok "A2: a ../ climb from an index with no plugin root above it is REJECTED" \
+  || no "A2: a ../ climb with no plugin root was ACCEPTED"
 
 echo "== B. index entries mirror each split file's headings =="
 for rel in "$SKILL_IDX" "$CMD_IDX" "$RUN_IDX"; do
@@ -533,6 +567,16 @@ if [ -s "$M7" ] && ! cmp -s "$M7" "$HERE/test-run-lock.sh" && bash -n "$M7" 2>/d
   wiring "$M7" >/dev/null && no "MUTATION CONTROL: a reader reading the raw SKILL index was ACCEPTED (H)" \
     || ok "MUTATION CONTROL: a reader reading the raw SKILL index is REJECTED (H)"
 else no "could not build the raw-reader mutant — H control inconclusive"; fi
+# M8 — A2: assemble.sh with its .. guard (after-segment reject + plugin-root bound) deleted must
+# ACCEPT the escape and the mid-path cases, so A2's rejections are the guard's doing.
+M8="$TMP/m8-assemble.sh"
+grep -vF 'fail("a .. segment after a named segment' "$ASM" | grep -vF 'fail("split path climbs out of the plugin root' > "$M8"
+if [ -s "$M8" ] && ! cmp -s "$M8" "$ASM" && bash -n "$M8" 2>/dev/null \
+   && [ "$(wc -l < "$M8" | tr -d ' ')" -eq $(( $(wc -l < "$ASM" | tr -d ' ') - 2 )) ]; then
+  if a2_rejects "$M8" "$P/commands/esc.md" || a2_rejects "$M8" "$P/commands/mid.md"; then
+    no "MUTATION CONTROL: with the .. guard removed a traversal path is STILL rejected — A2 does not discriminate the guard"
+  else ok "MUTATION CONTROL: with the .. guard removed the traversal paths assemble — A2's rejections are the guard's (A2)"; fi
+else no "could not build the guard-removed assemble.sh mutant — A2 control inconclusive"; fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"
