@@ -28,7 +28,8 @@
 #        coordinator --resume): meta pull · per-lane backstop (lane-convert-ready on a merged lane) ·
 #        parent Queue check-off · primary sync · lane-remove · lanes dir, leaks, main health, lock release
 #   wave-plan <parent_runfile> [--wave-branch <name>]    READ-ONLY: prints the operator's wave-branch
-#        integration commands (one `git merge --no-ff <head sha>` per lane) and the conflict rules
+#        integration commands (one `git merge --no-ff <head sha>` per lane) and the conflict rules;
+#        the preview / manual fallback of automate-wave.sh `wave-build`, which runs those same steps
 #   lane-info [--root <dir>]                             print .supervisor/lane.json (exit 1 when absent)
 #   init-check --parallel N [--auto-merge]               INIT refusals: `ok` | `refuse: <reason>` (exit 1)
 #   pick-guard <automate_dir>                            PICK guard: `ok` | `refuse: live_lane <run_id> <lane>`
@@ -2367,10 +2368,13 @@ lanes_readiness() {
 }
 
 # ==================================================================================================
-# WAVE CLOSE (parallel-automate/21 Part A). Owner decision 2026-10-10: the OPERATOR runs the wave-branch
-# merges. Nothing here merges or pushes a lane branch: `wave-plan` only PRINTS the commands, and
-# `fleet-closeout` closes a wave out AFTER the owner merged, through the existing sanctioned paths
-# (lane-convert-ready, queue-checkoff, lane-remove, run-lock.sh release).
+# WAVE CLOSE (parallel-automate/21 Part A). Nothing in THIS file merges or pushes anything:
+# `wave-plan` only PRINTS the integration commands, and `fleet-closeout` closes a wave out AFTER the
+# owner merged the wave PR, through the existing sanctioned paths (lane-convert-ready, queue-checkoff,
+# lane-remove, run-lock.sh release). The ONE writer of a wave branch is the sibling automate-wave.sh
+# (`wave-build`, owner decision 2026-10-11): it sources this file for _lanes_wave_resolve, so it builds
+# exactly the plan `wave-plan` prints, pushes only the wave branch and opens the wave PR; merging that
+# PR stays the owner's.
 
 # _lanes_base_of <checkout> — the base branch (origin/HEAD's name; `main` when unset).
 _lanes_base_of() {
@@ -2560,16 +2564,83 @@ EOF
   return 0
 }
 
+# _lanes_wave_resolve <parent_runfile> [<wave branch>] — the ONE wave resolver. `wave-plan` (below) and
+# automate-wave.sh's `wave-build` (which sources this file) both read the wave through it, so the
+# printed plan and the executed build can never disagree on the lanes, their order, the head shas, the
+# base or the branch name. READ-ONLY: it reads the lane table, the parent `## Current` wave line
+# (`- wave: <k> | items: …`; absent ⇒ the lane table order, wave 1), each lane's `## Current` pr and
+# that PR's head + state (ONE `gh pr view <pr> --json headRefOid,state` read per lane). Sets WV_PARENT,
+# WV_PRIMARY, WV_RF, WV_TABLE, WV_BASE, WV_K, WV_WB (default `wave/<run_id>-w<k>`), WV_SRC and WV_ROWS —
+# one TSV row per wave entry, in planner order: <kind> <lane> <path> <item> <run_id> <pr> <num> <sha>
+# <pr_state>, every empty field `-`. kind: `ok` · `nolane` (a wave item with no lane-table row) · `nopr`
+# (no numeric PR in the lane's run file) · `nohead` (the head sha unreadable). Returns 1 with WV_WHY
+# when it refuses (bad parent run file, no lane table, bad branch name).
+_lanes_wave_resolve() {
+  local rf="${1:-}" wb="${2:-}" wl items item v rows="" tab lane path run pr num j sha st
+  WV_WHY=""; WV_ROWS=""; WV_SRC=""
+  _lanes_parent_of "$rf" || { WV_WHY="$LP_WHY"; return 1; }
+  WV_PARENT="$LP_PARENT"; WV_PRIMARY="$LP_PRIMARY"
+  WV_RF="$WV_PRIMARY/.supervisor/automate/$WV_PARENT.md"; WV_TABLE="$WV_PRIMARY/.supervisor/automate/$WV_PARENT.lanes"
+  tab="$(printf '\t')"
+  [ -f "$WV_TABLE" ] || { WV_WHY="no lane table ($WV_PARENT.lanes)"; return 1; }
+  WV_BASE="$(_lanes_base_of "$WV_PRIMARY")"
+  wl="$(awk '/^## / { sec = $0; next } sec == "## Current" && /^- wave: / { print; exit }' "$WV_RF" 2>/dev/null)"
+  WV_K="$(printf '%s' "$wl" | sed -n 's/^- wave: *\([0-9][0-9]*\) *|.*/\1/p; s/^- wave: *\([0-9][0-9]*\) *$/\1/p' | head -1)"
+  items="$(printf '%s' "$wl" | sed -n 's/^- wave: [^|]*| *items: *//p' \
+    | awk '{ n = split($0, a, /, */); for (i = 1; i <= n; i++) { sub(/ +$/, "", a[i]); if (a[i] != "") print a[i] } }')"
+  [ -n "$WV_K" ] || WV_K=1
+  [ -n "$wb" ] || wb="wave/$WV_PARENT-w$WV_K"
+  git check-ref-format --branch "$wb" >/dev/null 2>&1 || { WV_WHY="'$wb' is not a valid branch name"; return 1; }
+  WV_WB="$wb"
+  if [ -n "$items" ]; then
+    WV_SRC="from ## Current"
+    while IFS= read -r item; do
+      [ -n "$item" ] || continue
+      v="$(awk -F'\t' -v i="$item" '$1 ~ /^L[0-9][0-9]?$/ && $3 == i { r = $1 "\t" $2 "\t" $3 "\t" $4 } END { if (r != "") print r }' "$WV_TABLE")"
+      if [ -n "$v" ]; then rows="$rows$v
+"; else rows="$rows-$tab-$tab$item$tab-
+"; fi
+    done <<<"$items"
+  else
+    WV_SRC="no ## Current wave items — lane table order"
+    rows="$(awk -F'\t' '$1 ~ /^L[0-9][0-9]?$/ { print $1 "\t" $2 "\t" $3 "\t" $4 }' "$WV_TABLE")"
+  fi
+  while IFS="$tab" read -r lane path item run; do
+    [ -n "$lane$item" ] || continue
+    if [ "$lane" = - ]; then WV_ROWS="${WV_ROWS}nolane$tab-$tab-$tab$item$tab-$tab-$tab-$tab-$tab-
+"; continue; fi
+    pr="$(_lanes_dash "$(_lanes_runfile_fields "$path/.supervisor/automate/$run.md" | cut -f3)")"
+    num="${pr##*/}"
+    case "$num" in ''|*[!0-9]*)
+      WV_ROWS="${WV_ROWS}nopr$tab$lane$tab$path$tab$item$tab$run$tab${pr:--}$tab-$tab-$tab-
+"; continue ;;
+    esac
+    j="$("$LANES_GH" pr view "$pr" --json headRefOid,state 2>/dev/null </dev/null)"
+    sha="$(jq -r '.headRefOid // empty' <<<"$j" 2>/dev/null)"; st="$(jq -r '.state // empty' <<<"$j" 2>/dev/null)"
+    case "$sha" in [0-9a-f]*) ;; *) sha="" ;; esac
+    if [ "${#sha}" != 40 ] || [ -n "$(printf '%s' "$sha" | tr -d '0-9a-f')" ]; then
+      WV_ROWS="${WV_ROWS}nohead$tab$lane$tab$path$tab$item$tab$run$tab$pr$tab$num$tab-$tab${st:--}
+"; continue
+    fi
+    WV_ROWS="${WV_ROWS}ok$tab$lane$tab$path$tab$item$tab$run$tab$pr$tab$num$tab$sha$tab${st:--}
+"
+  done <<EOF
+$rows
+EOF
+  return 0
+}
+
 # wave-plan <parent_runfile> [--wave-branch <name>] — Part S, READ-ONLY (owner decision 2026-10-10: the
-# operator merges). Executes no git mutation, no push and no gh write: it reads the lane table, the
-# parent `## Current` wave line (`- wave: <k> | items: …`; absent ⇒ the lane table order, wave 1), each
-# lane's `## Current` pr and that PR's head sha (`gh pr view <pr> --json headRefOid` — a read), and
-# PRINTS the operator's commands: fetch, `git checkout -b <wave branch, default wave/<run_id>-w<k>>
-# origin/<base>`, one `git merge --no-ff <exact head sha> -m "Merge lane <L> (<item>) PR #<n>"` per lane
-# in planner order (an unreadable sha ⇒ `# <lane>: head unreadable — resolve before integrating`, that
-# lane skipped), `bash scripts/ci-local.sh`, the release step (`bash scripts/bump-version.sh` only when
-# the repo has it, else `# run this project's release step`), the push and `gh pr create`, then the
-# conflict rules. Exit 0 printed · 1 refused (bad parent run file, no lane table, bad branch name).
+# operator merges; since then `wave-build` in automate-wave.sh runs these same steps, and this stays the
+# read-only preview and the manual fallback). Executes no git mutation, no push and no gh write: it
+# resolves the wave with _lanes_wave_resolve (above — the lane table, the parent `## Current` wave line,
+# each lane's `## Current` pr and that PR's head sha, a `gh pr view` read) and PRINTS the operator's
+# commands: fetch, `git checkout -b <wave branch, default wave/<run_id>-w<k>> origin/<base>`, one
+# `git merge --no-ff <exact head sha> -m "Merge lane <L> (<item>) PR #<n>"` per lane in planner order
+# (an unreadable sha ⇒ `# <lane>: head unreadable — resolve before integrating`, that lane skipped),
+# `bash scripts/ci-local.sh`, the release step (`bash scripts/bump-version.sh` only when the repo has
+# it, else `# run this project's release step`), the push and `gh pr create`, then the conflict rules.
+# Exit 0 printed · 1 refused (bad parent run file, no lane table, bad branch name).
 lanes_wave_plan() {
   local rf="" wb=""
   while [ "$#" -gt 0 ]; do
@@ -2579,49 +2650,22 @@ lanes_wave_plan() {
       *) [ -z "$rf" ] || { echo "wave-plan: refused — unexpected argument '$1'"; return 1; }; rf="$1"; shift ;;
     esac
   done
-  _lanes_parent_of "$rf" || { echo "wave-plan: refused — $LP_WHY"; return 1; }
-  local parent="$LP_PARENT" primary="$LP_PRIMARY" table base wl k items tab lane path item run pr num sha v msg rows=""
-  tab="$(printf '\t')"
-  rf="$primary/.supervisor/automate/$parent.md"; table="$primary/.supervisor/automate/$parent.lanes"
-  [ -f "$table" ] || { echo "wave-plan: refused — no lane table ($parent.lanes)"; return 1; }
-  base="$(_lanes_base_of "$primary")"
-  wl="$(awk '/^## / { sec = $0; next } sec == "## Current" && /^- wave: / { print; exit }' "$rf" 2>/dev/null)"
-  k="$(printf '%s' "$wl" | sed -n 's/^- wave: *\([0-9][0-9]*\) *|.*/\1/p; s/^- wave: *\([0-9][0-9]*\) *$/\1/p' | head -1)"
-  items="$(printf '%s' "$wl" | sed -n 's/^- wave: [^|]*| *items: *//p' \
-    | awk '{ n = split($0, a, /, */); for (i = 1; i <= n; i++) { sub(/ +$/, "", a[i]); if (a[i] != "") print a[i] } }')"
-  [ -n "$k" ] || k=1
-  [ -n "$wb" ] || wb="wave/$parent-w$k"
-  git check-ref-format --branch "$wb" >/dev/null 2>&1 || { echo "wave-plan: refused — '$wb' is not a valid branch name"; return 1; }
-  if [ -n "$items" ]; then
-    while IFS= read -r item; do
-      [ -n "$item" ] || continue
-      v="$(awk -F'\t' -v i="$item" '$1 ~ /^L[0-9][0-9]?$/ && $3 == i { r = $1 "\t" $2 "\t" $3 "\t" $4 } END { if (r != "") print r }' "$table")"
-      if [ -n "$v" ]; then rows="$rows$v
-"; else rows="$rows-$tab-$tab$item$tab-
-"; fi
-    done <<<"$items"
-  else
-    rows="$(awk -F'\t' '$1 ~ /^L[0-9][0-9]?$/ { print $1 "\t" $2 "\t" $3 "\t" $4 }' "$table")"
-  fi
-  local src="from ## Current"; [ -n "$items" ] || src="no ## Current wave items — lane table order"
-  echo "# wave-plan: $parent wave $k ($src) — READ-ONLY: nothing below was run; the operator runs it"
+  _lanes_wave_resolve "$rf" "$wb" || { echo "wave-plan: refused — $WV_WHY"; return 1; }
+  local parent="$WV_PARENT" primary="$WV_PRIMARY" base="$WV_BASE" k="$WV_K" tab kind lane path item run pr num sha st msg
+  wb="$WV_WB"; tab="$(printf '\t')"
+  echo "# wave-plan: $parent wave $k ($WV_SRC) — READ-ONLY: nothing below was run; the operator runs it"
   echo "git fetch origin"
   echo "git checkout -b $wb origin/$base"
-  while IFS="$tab" read -r lane path item run; do
-    [ -n "$lane$item" ] || continue
-    if [ "$lane" = - ]; then echo "# $item: no lane in $parent.lanes — skipped"; continue; fi
-    pr="$(_lanes_dash "$(_lanes_runfile_fields "$path/.supervisor/automate/$run.md" | cut -f3)")"
-    num="${pr##*/}"
-    case "$num" in ''|*[!0-9]*) echo "# $lane: no PR recorded in its run file — resolve before integrating"; continue ;; esac
-    sha="$("$LANES_GH" pr view "$pr" --json headRefOid 2>/dev/null </dev/null | jq -r '.headRefOid // empty' 2>/dev/null)"
-    case "$sha" in [0-9a-f]*) ;; *) sha="" ;; esac
-    if [ "${#sha}" != 40 ] || [ -n "$(printf '%s' "$sha" | tr -d '0-9a-f')" ]; then
-      echo "# $lane: head unreadable — resolve before integrating"; continue
-    fi
-    msg="$(printf 'Merge lane %s (%s) PR #%s' "$lane" "$item" "$num" | sed 's/[\\"$`]/\\&/g')"
-    printf 'git merge --no-ff %s -m "%s"\n' "$sha" "$msg"
+  while IFS="$tab" read -r kind lane path item run pr num sha st; do
+    case "$kind" in
+      nolane) echo "# $item: no lane in $parent.lanes — skipped" ;;
+      nopr) echo "# $lane: no PR recorded in its run file — resolve before integrating" ;;
+      nohead) echo "# $lane: head unreadable — resolve before integrating" ;;
+      ok) msg="$(printf 'Merge lane %s (%s) PR #%s' "$lane" "$item" "$num" | sed 's/[\\"$`]/\\&/g')"
+          printf 'git merge --no-ff %s -m "%s"\n' "$sha" "$msg" ;;
+    esac
   done <<EOF
-$rows
+$WV_ROWS
 EOF
   echo "bash scripts/ci-local.sh"
   if [ -f "$primary/scripts/bump-version.sh" ]; then echo "bash scripts/bump-version.sh"
