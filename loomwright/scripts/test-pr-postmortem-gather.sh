@@ -97,6 +97,13 @@
 #  12. dismissed_findings author gate: operator-login resolution failure (`gh api user`
 #                     returns empty) degrades to [] even against an otherwise-legit
 #                     operator-authored marker comment — fail-SAFE toward excluding.
+#  13. first commit is never a review-fix (churn-ledger PR #43 round 1) -> a PR whose
+#                     FIRST commit subject matches review_fix_re ("feat: self-heal
+#                     sweep") reads commits[0].is_review_fix == false and books no
+#                     review round (single-commit PR => review_rounds 0); a LATER
+#                     matching headline is still true (=> exactly 1 round); the same
+#                     first subject still flips agent_generated_guess (agent_commit_re
+#                     unchanged).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -439,10 +446,53 @@ cat > "$FIX_DISMISSED_SPOOFED" <<'FIX'
 ]
 FIX
 
+# First-commit fixtures (13): the churn-ledger PR #43 round-1 shape — the PR's OPENING
+# feature commit carries "self-heal" in its subject, which review_fix_re matches. No
+# review can precede the first commit, so it must never count as a review-fix round.
+# FIX_FIRSTONLY is a single-commit PR (the phantom round in isolation); FIX_FIRSTLATER
+# adds a non-matching commit and a LATER self-heal fix commit that must still count.
+FIX_FIRSTONLY="$TMP/fixture-firstonly.json"
+cat > "$FIX_FIRSTONLY" <<'FIX'
+{
+  "number": 42,
+  "title": "Self-heal sweep",
+  "body": "Plain body.",
+  "additions": 40,
+  "deletions": 2,
+  "changedFiles": 2,
+  "commits": [
+    {"messageHeadline": "feat: self-heal sweep", "committedDate": "2026-01-01T08:00:00Z"}
+  ],
+  "reviews": [],
+  "statusCheckRollup": []
+}
+FIX
+
+FIX_FIRSTLATER="$TMP/fixture-firstlater.json"
+cat > "$FIX_FIRSTLATER" <<'FIX'
+{
+  "number": 42,
+  "title": "Self-heal sweep",
+  "body": "Plain body.",
+  "additions": 60,
+  "deletions": 4,
+  "changedFiles": 3,
+  "commits": [
+    {"messageHeadline": "feat: self-heal sweep", "committedDate": "2026-01-01T08:00:00Z"},
+    {"messageHeadline": "docs: tidy readme", "committedDate": "2026-01-01T09:00:00Z"},
+    {"messageHeadline": "fix: self-heal round 2 null guard", "committedDate": "2026-01-01T10:00:00Z"}
+  ],
+  "reviews": [],
+  "statusCheckRollup": []
+}
+FIX
+
 make_gh_stub() {
   local mode="$1" api_mode="${2:-empty}" operator_login="${3-vikashruhilgit}" fixture="" api_fixture=""
   case "$mode" in
     ok)        fixture="$FIX_OK" ;;
+    firstonly) fixture="$FIX_FIRSTONLY" ;;
+    firstlater) fixture="$FIX_FIRSTLATER" ;;
     human)     fixture="$FIX_HUMAN" ;;
     taskid)    fixture="$FIX_TASKID" ;;
     botreview) fixture="$FIX_BOTREVIEW" ;;
@@ -886,6 +936,42 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '.dismissed_findings ==
   ok "unresolvable operator login => dismissed_findings [] (fail-safe toward excluding, never toward accepting all)"
 else
   no "(12) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 13. first commit is never a review-fix => commits[0] false, adds no round; a later match still counts =="
+# Single-commit PR: "feat: self-heal sweep" matches review_fix_re, but it is the commit
+# that OPENED the PR — no review can precede it. Pre-fix this read is_review_fix:true
+# and review_rounds 1 (source fix_commits): the PR #43 phantom round. It must read
+# false and contribute nothing (no reviews, no comments => review_rounds 0, source
+# none). agent_generated_guess stays true: agent_commit_re still sees "self-heal".
+make_gh_stub firstonly
+run_gather "$PR_URL"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and (.commits | length)==1
+    and (.commits[0].headline == "feat: self-heal sweep")
+    and (.commits[0].is_review_fix == false)
+    and (.review_rounds == 0)
+    and (.review_rounds_source == "none")
+    and .agent_generated_guess==true
+  ' >/dev/null 2>&1; then
+  ok "first commit 'feat: self-heal sweep' => is_review_fix false, review_rounds 0 (no phantom round), agent guess still true"
+else
+  no "(13 first-only) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+# Same opening commit plus a LATER matching headline: only the later one is a
+# review-fix (self-heal stays in review_fix_re), so review_rounds is exactly 1.
+make_gh_stub firstlater
+run_gather "$PR_URL"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and ([.commits[].is_review_fix] == [false, false, true])
+    and (.review_rounds == 1)
+    and (.review_rounds_source == "fix_commits")
+  ' >/dev/null 2>&1; then
+  ok "later 'fix: self-heal …' headline still is_review_fix true => review_rounds 1 (the first commit adds nothing)"
+else
+  no "(13 later match) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
 echo

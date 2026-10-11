@@ -31,7 +31,7 @@ Read ${CLAUDE_PLUGIN_ROOT}/skills/pr-postmortem/SKILL.md
 
 1. **Parse input** — a PR URL or `OWNER/REPO#N`; pass it straight to the gather script.
 2. **Gather (read-only)** — `bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-postmortem-gather.sh" "<input>"`, parse its single JSON object. On `{"status":"unavailable",...}` print one clear line and exit gracefully (no partial write).
-3. **Categorize** each review round into exactly one of `plan_gap | missing_context | convention_mismatch | execution_bug | quality_gap | scope_too_large`, set the optional `self_heal_miss` and `dismissed_then_raised` flags, and attribute a `flow_stage` (`launch_pad | worker | self_heal | unknowable`).
+3. **Categorize** each review round that has concrete evidence into exactly one of `plan_gap | missing_context | convention_mismatch | execution_bug | quality_gap | scope_too_large`, set the optional `self_heal_miss` and `dismissed_then_raised` flags, and attribute a `flow_stage` (`launch_pad | worker | self_heal | unknowable` — the keys are unchanged; `unknowable` is for a concrete finding whose stage cannot be told). A residual round with no concrete finding (a bot verify/all-clear comment and only "a push followed") is attributed from a concrete `is_review_fix` headline when one exists, otherwise omitted — so `categories[]` may hold fewer entries than `review_rounds`, and an omitted round is counted in neither `categories[]` nor `flow_stages`. The PR's first commit never counts as a review-fix round.
 4. **Print** the categorized root-cause report (PR identity, size, review_rounds, per-round breakdown, root-cause narrative).
 5. **Append** exactly one `POSTMORTEM_RESULT` JSON line to `.supervisor/postmortem/results.jsonl` (jq-built, fail-safe).
 

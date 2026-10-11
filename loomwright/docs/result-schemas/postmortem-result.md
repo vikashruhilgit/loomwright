@@ -45,7 +45,8 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
 - `number` — integer PR number (from gather).
 - `agent_generated_guess` — boolean; best-effort agent-PR heuristic (from gather).
 - `review_rounds` — integer; total review-and-fix rounds (from gather). The gather derives it as the
-  MAX of three signals: review-fix commit headlines, formal churn-review submissions, and
+  MAX of three signals: review-fix commit headlines (never the PR's first commit — no review can precede
+  it), formal churn-review submissions, and
   **bot-authored issue-comment review rounds** (a comment from a review-bot author — login `claude`,
   `github-actions*`, or any `*[bot]` — whose body
   carries a review marker — a word-bounded review stem ("review"/"reviewed"/"reviewer"/"reviewing"/"reviews") or
@@ -57,10 +58,19 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
   this trend line — the schema is unchanged at `schema_version: 1`.
 - `additions` / `deletions` / `changed_files` — integers; PR size (from gather).
 - `categories` — array of per-round objects `{round, class, self_heal_miss, flow_stage, evidence}`, one
-  per review round, classifying each into a root-cause class and the flow stage that should have caught it.
+  per CATEGORIZED review round, classifying each into a root-cause class and the flow stage that should
+  have caught it. It may hold fewer entries than `review_rounds`: a round with no concrete finding (a bot
+  verify/all-clear comment where the only evidence is that a push followed) is attributed from a concrete
+  review-fix headline when one exists, otherwise omitted — and omitted rounds are never written as
+  `flow_stage: unknowable` entries (`skills/pr-postmortem/SKILL.md` Step 3 is the authority). Consumers
+  iterate `categories[]`; none may assume `length(categories) == review_rounds`.
 - `self_heal_misses` — integer; count of rounds flagged `self_heal_miss` (i.e. Phase 4.5 should have
   caught the class but didn't).
-- `flow_stages` — object tallying rounds per stage `{launch_pad, worker, self_heal, unknowable}`.
+- `flow_stages` — object tallying rounds per stage `{launch_pad, worker, self_heal, unknowable}` — the four
+  keys are unchanged. On a `/pr-postmortem` line it is tallied over `categories[]`, so omitted rounds are
+  counted in neither and the sum of its values equals the length of `categories[]` (`build-floor.sh`'s
+  `flow_stage_counter_disagreements` stays clean for these lines). `automate_drain` lines deliberately do
+  NOT hold that equality — see the counter-vs-categories split in the variant section below.
 - `summary` — short human-readable one-liner.
 - `plugin_version` — string, **additive & optional** — plugin version at analysis time, read
   defensively from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq with an `"unknown"`
