@@ -10,14 +10,17 @@
 #   lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]
 #        clone + origin-before-fetch + meta pull + carried configs + lane.json + one-line backlog + relay hooks
 #   lane-launch <lane_dir> --owner-command '<cmd the owner typed>' [--resume-run <run_id> | --continue]
+#        [--without-gate-optout]
 #        detached headless launch (or resume by run id — in the lane's LAST session, a fresh one only
-#        when that cannot be resumed — / fixed decision-free continue message)
+#        when that cannot be resumed — / fixed decision-free continue message); see "Gate opt-out carry"
 #   lane-launch <lane_dir> --host-denied '<reason>'      record a host-refused spawn as blocked_launch
 #   relay-hook                                           PreToolUse / PermissionRequest hook (stdin: hook JSON)
-#   lane-answer <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>]
+#   lane-answer <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>] [--without-gate-optout]
 #        stdin: {"answers":{"0":"<label>"},"note":"<optional free text>"}; validates, records, resumes
-#        (HELD ⇒ the validated answer is kept coordinator-side, the lane reads answer_pending)
-#   lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>'   deliver a kept answer (the poll)
+#        (HELD, or BLOCKED on a missing gate opt-out ⇒ the validated answer is kept coordinator-side,
+#        the lane reads answer_pending)
+#   lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>' [--without-gate-optout]
+#        deliver a kept answer (the poll)
 #   lane-remove <lane_dir> [--stop] [--abandon]          guarded removal (salvages first); --abandon on a
 #        `gone` lane stamps ABANDONED and pushes the lane's metadata through trail-pr's evidence gate
 #   lane-convert-ready <lane_dir>                        wave end: ready_for_release → awaiting_merge, then
@@ -26,9 +29,12 @@
 #        then, branch mode only, `finalize-empty` on the lane's run file (`## Status: done`)
 #   fleet-closeout <parent_runfile>                      wave close, stepwise + idempotent (re-run on every
 #        coordinator --resume): meta pull · per-lane backstop (lane-convert-ready on a merged lane) ·
-#        parent Queue check-off · primary sync · lane-remove · lanes dir, leaks, main health, lock release
+#        parent Queue check-off · primary sync · lane-remove · lanes dir, leaks, main health, then — Queue
+#        empty — the parent finalize (`## Status: done`, wave line cleared, trail-pr --reason done) and the
+#        lock release
 #   wave-plan <parent_runfile> [--wave-branch <name>]    READ-ONLY: prints the operator's wave-branch
-#        integration commands (one `git merge --no-ff <head sha>` per lane) and the conflict rules
+#        integration commands (one `git merge --no-ff <head sha>` per lane) and the conflict rules;
+#        the preview / manual fallback of automate-wave.sh `wave-build`, which runs those same steps
 #   lane-info [--root <dir>]                             print .supervisor/lane.json (exit 1 when absent)
 #   init-check --parallel N [--auto-merge]               INIT refusals: `ok` | `refuse: <reason>` (exit 1)
 #   pick-guard <automate_dir>                            PICK guard: `ok` | `refuse: live_lane <run_id> <lane>`
@@ -49,6 +55,7 @@
 #        that is neither live nor coordinator-driven — a park / failure state, an unknown one included),
 #        prints one `lane-wait: …` line per event and exits 0 — run it as a BACKGROUND
 #        command so its exit wakes the coordinator session to relay; read-only except its seen ledger
+#        and its liveness marker (the Stop hook guard-lane-wait-armed.sh reads the marker)
 #
 # Files (all paths derived; nothing hard-coded):
 #   <lane>/.supervisor/lane.json        D2 marker — the ONE marker lane-create writes (plus the copied
@@ -86,6 +93,13 @@
 #   <primary>/.supervisor/automate/<parent_run_id>.leaks-snapshot    `lane-status --leaks --snapshot` (wave start)
 #   <primary>/.supervisor/automate/<parent_run_id>.lane-wait-seen    lane-wait's seen ledger (one key per line;
 #                                       atomic tmp+mv rewrite, removed when nothing it holds is still true)
+#   <primary>/.supervisor/automate/<parent_run_id>.lane-wait.pid     lane-wait's liveness marker: `<pid> <start
+#                                       epoch>`, written when it starts watching, removed by its EXIT trap only
+#                                       while the file still names ITS pid (a later lane-wait owns it then).
+#                                       Read by the coordinator's Stop hook (guard-lane-wait-armed.sh)
+#   <primary>/.supervisor/automate/<parent_run_id>.<lane>.gate-optout  the FACT (never a value) that the lane's
+#                                       first launch ran with the test-integrity guard's opt-out set
+#                                       (`gate_optout_at_launch<TAB><utc>`); coordinator-side, never in lane.json
 #   <lane>/.supervisor/automate/<run_id>.merge-readiness.md          lane-readiness (written at the lane's
 #                                       ready_for_release park, when the lane is no longer running)
 #
@@ -102,6 +116,17 @@
 #      overloaded`; `busy` ⇒ HELD `load busy` when any lane of this wave launched within
 #      LOOMWRIGHT_LANE_RECHECK_S (default 60) seconds; `ok` / `unknown` ⇒ launch. HELD = exit 4, no
 #      process, lane table state `held_for_load`.
+#   3a. Gate opt-out carry (every RESUME — lane-answer's resume, --deliver-pending, --resume-run,
+#      --continue): when the lane's <lane>.gate-optout fact is recorded (its first launch ran with
+#      LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS=1, the same predicate guard-test-integrity.sh applies) and this
+#      process's environment lacks it ⇒ `lane-launch: BLOCKED — <lane> — launched with the test-integrity
+#      guard's opt-out; this resume's environment lacks it — …`, exit 3, no process, table
+#      `blocked_launch` (lane-answer keeps the validated answer pending exactly like HELD). The opt-out is
+#      NEVER added to a resume's environment: it is a per-process human decision, and storing it would make
+#      it a stored one (docs/HOOKS.md "Opt-out — process env only"). `--without-gate-optout` resumes
+#      without it — also removing it from the spawned environment — and clears the recorded fact once the
+#      gate passes. A recorded fact only ever REFUSES, so a process that forges or deletes the sidecar can
+#      at most block a resume or drop the opt-out; it can never grant it.
 #   4. Spawn: `claude -p` with the lane allowlist / disallow list below, `--plugin-dir` pinned to the
 #      coordinator's CLAUDE_PLUGIN_ROOT, `--append-system-prompt` = the fixed headless-lane text, env
 #      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 with CLAUDE_PID / CLAUDECODE unset. Prompt:
@@ -506,15 +531,44 @@ LN_LAUNCH_LOCKED=0
 _lanes_launch_lock() { _lt_lock "$LN_TABLE.$LN_LANE.launch" || return 1; LN_LAUNCH_LOCKED=1; }   # LAUNCHLOCK
 _lanes_launch_unlock() { [ "$LN_LAUNCH_LOCKED" = 1 ] || return 0; _lt_unlock "$LN_TABLE.$LN_LANE.launch"; LN_LAUNCH_LOCKED=0; }
 
-# _lanes_gate <owner_cmd> — authority, liveness, regime, admission. Prints the first line; returns the exit code.
+# ---- gate opt-out carry (launch contract 3a) --------------------------------------------------------
+# _lanes_optout_set — the test-integrity guard's opt-out is set in THIS process's environment: the SAME
+# predicate guard-test-integrity.sh applies (`= "1"` exactly; any other value is unset).
+_lanes_optout_set() { [ "${LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS:-}" = "1" ]; }
+# _lanes_optout_file — the coordinator-side fact file (primary's automate dir; never the lane's lane.json).
+_lanes_optout_file() { printf '%s' "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.$LN_LANE.gate-optout"; }
+# _lanes_optout_record — at a FIRST launch only: record the fact (no value) when the opt-out is set and
+# not dropped by --without-gate-optout, else remove any earlier record. Returns 1 when the record cannot
+# be written (the caller refuses the launch: an unrecorded opt-out would silently block a later resume).
+_lanes_optout_record() {
+  local f; f="$(_lanes_optout_file)"
+  if _lanes_optout_set && [ "$LN_WITHOUT_OPTOUT" != 1 ]; then
+    { printf 'gate_optout_at_launch\t%s\n' "$(now_utc)" > "$f.tmp.$$" && mv "$f.tmp.$$" "$f"; } 2>/dev/null \
+      || { rm -f "$f.tmp.$$" 2>/dev/null; return 1; }
+  else
+    rm -f "$f" 2>/dev/null
+  fi
+  return 0
+}
+LN_WITHOUT_OPTOUT=0; LN_STRIP_OPTOUT=0; LN_GATE_OPTOUT_BLOCKED=0
+
+# _lanes_gate <owner_cmd> [<resume 0|1>] — authority, liveness, the gate opt-out carry (resumes only),
+# regime, admission. Prints the first line; returns the exit code. LN_GATE_OPTOUT_BLOCKED=1 marks the
+# opt-out refusal (lane-answer keeps its validated answer pending on it, as on HELD).
 _lanes_gate() {
-  local owner="$1" why
+  local owner="$1" resume="${2:-0}" why
+  LN_GATE_OPTOUT_BLOCKED=0
   if [ -z "$owner" ]; then
     echo "lane-launch: BLOCKED — $LN_LANE — no owner-invoked command — need the owner"
     _lt_set "$LN_TABLE" "$LN_LANE" 8 blocked_launch 10 "no owner-invoked command"; return 3
   fi
   if lanes_proc_alive "$(_lt_get "$LN_TABLE" "$LN_LANE" 5)" "$(_lt_get "$LN_TABLE" "$LN_LANE" 6)" "$LN_DIR"; then
     echo "lane-launch: refused — $LN_LANE — already running (pid $(_lt_get "$LN_TABLE" "$LN_LANE" 5))"; return 1
+  fi
+  if [ "$resume" = 1 ] && [ -e "$(_lanes_optout_file)" ] && ! _lanes_optout_set && [ "$LN_WITHOUT_OPTOUT" != 1 ]; then
+    echo "lane-launch: BLOCKED — $LN_LANE — launched with the test-integrity guard's opt-out; this resume's environment lacks it — re-run the same command with it set, or add --without-gate-optout to resume without it — need the owner"
+    LN_GATE_OPTOUT_BLOCKED=1
+    _lt_set "$LN_TABLE" "$LN_LANE" 8 blocked_launch 10 "launched with the test-integrity guard's opt-out; this resume's environment lacks it"; return 3
   fi
   if ! _lanes_regime_ok; then
     echo "lane-launch: BLOCKED — $LN_LANE — CLI advertises no pinnable permission regime — need the owner"
@@ -523,6 +577,12 @@ _lanes_gate() {
   if ! why="$(_lanes_admission)"; then
     echo "lane-launch: HELD — $LN_LANE — $why"
     _lt_set "$LN_TABLE" "$LN_LANE" 8 held_for_load 10 "$why"; return 4
+  fi
+  # --without-gate-optout: the owner chose to run without it — drop it from the spawn's environment and,
+  # on a resume, clear the recorded fact (only now: a refused or HELD call leaves the record unchanged).
+  if [ "$LN_WITHOUT_OPTOUT" = 1 ]; then
+    LN_STRIP_OPTOUT=1
+    [ "$resume" = 1 ] && rm -f "$(_lanes_optout_file)" 2>/dev/null
   fi
   return 0
 }
@@ -541,6 +601,8 @@ _lanes_spawn() {
     --allowedTools "$LANE_ALLOWED_TOOLS" --disallowedTools "$disallow"
     --plugin-dir "$PLUGIN_ROOT" --append-system-prompt "$LANE_SYS")
   [ -n "$sid" ] && flags+=(--resume "$sid")
+  local -a envu=(-u CLAUDECODE -u CLAUDE_PID)
+  [ "$LN_STRIP_OPTOUT" = 1 ] && envu+=(-u LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS)   # --without-gate-optout
   in=/dev/null
   if [ -n "$prompt" ]; then
     in="$LN_ROOT/$LN_LANE.stdin.json"
@@ -550,7 +612,7 @@ _lanes_spawn() {
   off="$(wc -c < "$LN_LOG" | tr -d ' ')"
   # >>> spawn (the only process start; it writes nothing into the lane directory)
   nohup bash "$SELF" _lane-run "$LN_DIR" "$LN_LOG" "$LN_DIED" "$in" -- \
-    env -u CLAUDECODE -u CLAUDE_PID CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 \
+    env "${envu[@]}" CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 \
     LOOMWRIGHT_LANE_RESUME_PATH="${LN_RESUME_PATH:-}" claude "${flags[@]}" >> "$LN_LOG" 2>&1 &
   pid=$!; LN_SPAWN_PID="$pid"; LN_SPAWN_SID=""
   # <<< spawn
@@ -599,6 +661,7 @@ lanes_launch() {
       --owner-command) _lanes_need "$#" lane-launch "$1"; owner="$2"; shift 2 ;;
       --resume-run) _lanes_need "$#" lane-launch "$1"; resume_run="$2"; [ -n "$resume_run" ] || die "lane-launch: --resume-run needs a run id"; shift 2 ;;
       --continue) cont=1; shift ;;
+      --without-gate-optout) LN_WITHOUT_OPTOUT=1; shift ;;
       --host-denied) _lanes_need "$#" lane-launch "$1"; denied="${2:-host denied the spawn}"; denied_set=1; shift 2 ;;
       *) [ -z "$dir" ] || die "lane-launch: unexpected argument '$1'"; dir="$1"; shift ;;
     esac
@@ -609,7 +672,8 @@ lanes_launch() {
     _lt_set "$LN_TABLE" "$LN_LANE" 8 blocked_launch 10 "$denied"; return 3
   fi
   _lanes_launch_lock || { echo "lane-launch: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"; return 1; }
-  local rc; _lanes_gate "$owner"; rc=$?
+  local rc res=0; { [ -n "$resume_run" ] || [ "$cont" = 1 ]; } && res=1
+  _lanes_gate "$owner" "$res"; rc=$?
   [ "$rc" = 0 ] && { _lanes_launch_go "$resume_run" "$cont"; rc=$?; }
   _lanes_launch_unlock
   return "$rc"
@@ -650,6 +714,8 @@ _lanes_launch_go() {
     jq -e '[.hooks.PreToolUse[]?.hooks[]?.command] | any(test("automate-lanes.sh\" relay-hook"))' \
       "$LN_DIR/.claude/settings.local.json" >/dev/null 2>&1 \
       || { echo "lane-launch: refused — $LN_LANE has no relay hook (a lane never runs without its question channel)"; return 1; }
+    _lanes_optout_record \
+      || { echo "lane-launch: refused — $LN_LANE — cannot record the gate opt-out fact ($(_lanes_optout_file)); a resume could not detect it"; return 1; }
     _lanes_spawn "/loomwright:automate --backlog $LN_DIR/.supervisor/lane-backlog.md" "" "(launch)"
   fi
 }
@@ -771,7 +837,8 @@ _lanes_policy_apply() {
 # owner-authenticated, which is why it can never carry, or stand in for, an owner command. One pending
 # file per lane, last write wins: a second HELD lane-answer for the same question replaces the first
 # (how the owner corrects a kept answer). A discard leaves the question unanswered, so lane-status
-# reads that lane awaiting_input again — never held_for_load.
+# reads that lane awaiting_input again — never held_for_load. A resume refused for a missing gate
+# opt-out (launch contract 3a) keeps the validated answer pending the same way (exit 3, not 4).
 _lanes_pending_file() { printf '%s' "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.$LN_LANE.answer-pending.json"; }
 
 # _lanes_validate_answers <question_file> <input JSON> — prints {<question>: "<label[,label…]>"} or
@@ -833,6 +900,7 @@ lanes_answer() {
       --owner-command) _lanes_need "$#" lane-answer "$1"; owner="$2"; shift 2 ;;
       --via) _lanes_need "$#" lane-answer "$1"; via="${2:-cli}"; shift 2 ;;
       --deliver-pending) deliver=1; shift ;;
+      --without-gate-optout) LN_WITHOUT_OPTOUT=1; shift ;;
       *) if [ -z "$dir" ]; then dir="$1"; elif [ -z "$id" ]; then id="$1"; else die "lane-answer: unexpected argument '$1'"; fi; shift ;;
     esac
   done
@@ -856,19 +924,24 @@ lanes_answer() {
   # nothing half-written there; under the launch lock, so an overlapping answer sees it answered.
   _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
   if [ -e "$af" ]; then _lanes_launch_unlock; die "lane-answer: refused — $id already answered"; fi
-  _lanes_gate "$owner"; rc=$?
-  if [ "$rc" = 4 ]; then
-    # HELD (admission): keep the VALIDATED answer coordinator-side — never the owner command.
+  _lanes_gate "$owner" 1; rc=$?
+  if [ "$rc" = 4 ] || { [ "$rc" = 3 ] && [ "$LN_GATE_OPTOUT_BLOCKED" = 1 ]; }; then
+    # HELD (admission) or BLOCKED on a missing gate opt-out: keep the VALIDATED answer coordinator-side
+    # — never the owner command — so the owner's answer is not lost while the resume waits.
     pf="$(_lanes_pending_file)"; case "$via" in *[!A-Za-z0-9_.-]*) via=cli ;; esac
     if jq -n -c --arg lane "$LN_LANE" --arg id "$id" --argjson a "$(jq -c '.answers' <<<"$in")" --arg note "$note" \
         --arg via "$via" --arg at "$(now_utc)" \
         '{schema_version: 1, lane: $lane, tool_use_id: $id, answers: $a, note: (if $note == "" then null else $note end), via: $via, held_at: $at}' \
         > "$pf.tmp.$$" 2>/dev/null && mv "$pf.tmp.$$" "$pf"; then
-      echo "lane-answer: answer kept pending ($(basename "$pf")) — $LN_LANE reads answer_pending; the next /automate --resume poll delivers it (lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>')"
+      if [ "$rc" = 3 ]; then
+        echo "lane-answer: answer kept pending ($(basename "$pf")) — $LN_LANE reads answer_pending; deliver it with the opt-out set, or with --without-gate-optout (lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>' [--without-gate-optout])"
+      else
+        echo "lane-answer: answer kept pending ($(basename "$pf")) — $LN_LANE reads answer_pending; the next /automate --resume poll delivers it (lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>')"
+      fi
     else
       rm -f "$pf.tmp.$$"; echo "lane-answer: answer NOT kept — cannot write $(basename "$pf"); re-send it at the next poll"
     fi
-    _lanes_launch_unlock; return 4
+    _lanes_launch_unlock; return "$rc"
   fi
   [ "$rc" = 0 ] || { _lanes_launch_unlock; return "$rc"; }
   _lanes_answer_write_resume "$id" "$out" "$note" "$via" "$sid"
@@ -895,7 +968,7 @@ _lanes_deliver_pending() {
   [ -n "$sid" ] || die "lane-answer: refused — no session id to resume"
   _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
   if [ -e "$af" ]; then _lanes_launch_unlock; _discard "$id already answered"; fi
-  _lanes_gate "$owner"; rc=$?
+  _lanes_gate "$owner" 1; rc=$?
   if [ "$rc" != 0 ]; then
     _lanes_launch_unlock
     echo "lane-answer: pending answer kept for $LN_LANE — not delivered"
@@ -1918,12 +1991,38 @@ _lanes_leak_lanes_dir() {
   done
 }
 
+# _lanes_leak_watchers <primary> <parent> — the `## merge-watch v2` section body: one `<pid> <pr_url>`
+# line per LIVE merge watcher, sorted, read from the `*.merge-watch` markers through _lanes_live_watchers
+# (the marker's pid still runs automate-merge-watch for that marker's PR) — for the primary's
+# `.supervisor/automate/` and for every lane path in this run's lane table (a removed lane's directory
+# has no markers left). Never a process-table pattern match: `pgrep -lf automate-merge-watch` (v1) also
+# matched any process whose argv merely NAMED the script — a `grep … scripts/automate-merge-watch.sh`
+# in the coordinator read as `leaks: found — merge-watch` with no watcher running (wave W3, 2026-10-11).
+# Honest limit: a watcher with no marker (or whose marker was deleted) is not listed; every watcher this
+# plugin starts writes one (automate-merge-watch.sh), and lane-remove reads the same markers.
+_lanes_leak_watchers() {
+  local p="$1" parent="${2:-}" tbl l
+  {
+    _lanes_live_watchers "$p"
+    tbl="$p/.supervisor/automate/$parent.lanes"
+    if [ -n "$parent" ] && [ -f "$tbl" ]; then
+      awk -F'\t' '$1 ~ /^L[0-9][0-9]?$/ && $2 != "" && $2 != "-" { print $2 }' "$tbl" | while IFS= read -r l; do
+        [ -d "$l" ] && _lanes_live_watchers "$l"
+      done
+    fi
+  } | tr '\t' ' ' | env LC_ALL=C sort -u
+  return 0
+}
+
 _lanes_leak_sections() { # <primary> <parent>
   local p="$1" pg="${LOOMWRIGHT_LANES_PGREP:-pgrep}"
   echo "## worktrees"; git -C "$p" worktree list --porcelain 2>/dev/null | awk '/^worktree /'
   echo "## lanes-dir"; _lanes_leak_lanes_dir "$p" "${2:-}"
   echo "## claude-p"; "$pg" -lf 'claude -p' 2>/dev/null
-  echo "## merge-watch"; "$pg" -lf automate-merge-watch 2>/dev/null
+  # The format tag IS the header: lanes_leaks compares this section only against a snapshot section
+  # written in the same format (a v1 `## merge-watch` snapshot section is read as not compared).
+  echo "## merge-watch v2"
+  _lanes_leak_watchers "$p" "${2:-}"   # >>> merge-watch body
   echo "## config-checksum"
   if [ -f "$p/.supervisor/config.json" ]; then cksum < "$p/.supervisor/config.json" | awk '{ print $1, $2 }'; else echo absent; fi
   echo "## git-status"; git -C "$p" status --porcelain 2>/dev/null | awk '!/\.leaks-snapshot$/'
@@ -1933,7 +2032,7 @@ _lanes_leak_sections() { # <primary> <parent>
 # lanes_leaks <primary> <parent> [snapshot 0|1] — `--snapshot` records the wave-start state; otherwise
 # compares now against it. First line: `leaks: none` | `leaks: found — <sections>` | `leaks: unknown — …`.
 lanes_leaks() {
-  local p="$1" parent="$2" snap="${3:-0}" sf tmp sec found="" body="" d
+  local p="$1" parent="$2" snap="${3:-0}" sf tmp sec found="" body="" d hd nc=""
   sf="$p/.supervisor/automate/$parent.leaks-snapshot"
   if [ "$snap" = 1 ]; then
     # The ONE exception to observation's exit 0: a snapshot request that wrote nothing exits 1 naming
@@ -1950,8 +2049,20 @@ lanes_leaks() {
   tmp="$(mktemp -d 2>/dev/null)" || { echo "leaks: unknown — no temp dir"; return 0; }
   _lanes_leak_sections "$p" "$parent" > "$tmp/now"
   for sec in worktrees lanes-dir claude-p merge-watch config-checksum git-status; do
-    awk -v s="## $sec" '/^## / { on = ($0 == s); next } on' "$sf" | env LC_ALL=C sort > "$tmp/a"
-    awk -v s="## $sec" '/^## / { on = ($0 == s); next } on' "$tmp/now" | env LC_ALL=C sort > "$tmp/b"
+    hd="## $sec"
+    if [ "$sec" = merge-watch ]; then
+      hd="## merge-watch v2"
+      # A snapshot taken before the marker-based list (its section is the v1 `## merge-watch` pgrep
+      # output, or absent) is NOT compared: two formats never diff into a false `found`.
+      if ! grep -qxF -- "$hd" "$sf"; then
+        nc="merge-watch not compared — pre-v2 snapshot"
+        body="$body- merge-watch: not compared — the wave-start snapshot predates the marker-based watcher list (v1)
+"
+        continue
+      fi
+    fi
+    awk -v s="$hd" '/^## / { on = ($0 == s); next } on' "$sf" | env LC_ALL=C sort > "$tmp/a"
+    awk -v s="$hd" '/^## / { on = ($0 == s); next } on' "$tmp/now" | env LC_ALL=C sort > "$tmp/b"
     if cmp -s "$tmp/a" "$tmp/b"; then body="$body- $sec: same
 "
     else
@@ -1963,7 +2074,7 @@ $d
     fi
   done
   rm -rf "$tmp"
-  if [ -z "$found" ]; then echo "leaks: none (vs snapshot $sf)"; else echo "leaks: found — $found"; fi
+  if [ -z "$found" ]; then echo "leaks: none (vs snapshot $sf${nc:+; $nc})"; else echo "leaks: found — $found${nc:+ ($nc)}"; fi
   printf '%s' "$body"
   return 0
 }
@@ -2074,9 +2185,52 @@ _lanes_wait_print() {
 # lane that stalls, is resumed and stalls again is reported again. Keys are recorded when PRINTED: a
 # coordinator that dies after the exit and before relaying does not see them again from lane-wait (its
 # next `--resume` runs `lane-status --inbox`, which lists every pending question regardless).
+# Liveness marker: once it has a lane table to watch, lane-wait writes `<automate dir>/<parent_run_id>.
+# lane-wait.pid` = `<its pid> <start epoch>` (tmp+mv) and an EXIT trap (TERM / INT / HUP exit through it)
+# removes it ONLY while the file still names ITS pid — a second lane-wait armed meanwhile owns the file
+# and keeps it. The coordinator's Stop hook (guard-lane-wait-armed.sh) reads it: a coordinator turn that
+# ends with a live wave and no live watcher is sent back to arm one. A stale marker (pid gone, or reused
+# by a process that is not a lane-wait) reads as no watcher.
 # Never answers, launches, resumes or writes into a lane. Exits 0 except a usage error (2).
 _LANES_WAIT_QUIET='["awaiting_merge","awaiting_go","done","removed","abandoned"]'
 _LANES_WAIT_LIVE='["created","running","held_for_load","answer_pending"]'
+_LANES_WAIT_MARK=""
+# _lanes_wait_unmark — remove lane-wait's liveness marker iff it still names this process.
+_lanes_wait_unmark() {
+  [ -n "$_LANES_WAIT_MARK" ] || return 0
+  [ "$(awk 'NR == 1 { print $1 }' "$_LANES_WAIT_MARK" 2>/dev/null)" = "$$" ] && rm -f "$_LANES_WAIT_MARK" 2>/dev/null
+  _LANES_WAIT_MARK=""
+  return 0
+}
+
+# _lanes_quick_state <path> <pid> <pid_start> <table_state> <answer-pending file> — a lane's state as
+# _lanes_lane_json classifies it, in its first-match order, but only as far as the live / attention
+# split needs and with NO gh, ci-slot or stream-log read (the coordinator's Stop hook runs it at every
+# turn end): answer_pending · blocked_launch · held_for_load · created · missing · running ·
+# awaiting_input · `other` (removed / abandoned and every state past awaiting_input: a park, died,
+# lost_to_reset, stalled — none of them live, none an unanswered question). Membership in
+# _LANES_WAIT_LIVE stays the caller's: this never restates that set.
+_lanes_quick_state() {
+  local path="$1" pid="$2" st="$3" ts="$4" apf="${5:-}" pend="" alive=0 nq=0
+  case "$ts" in removed|abandoned) printf 'other'; return 0 ;; esac
+  lanes_proc_alive "$pid" "$st" "$path" && alive=1
+  [ -d "$path/.supervisor/inbox" ] && _lanes_pending_question "$path/.supervisor/inbox" >/dev/null && nq=1
+  if [ "$alive" = 0 ] && [ "$nq" = 1 ] && [ -n "$apf" ] && [ -s "$apf" ]; then
+    pend="$(jq -r '.tool_use_id // empty' "$apf" 2>/dev/null)"
+    case "$pend" in ''|*[!A-Za-z0-9_-]*) pend="" ;; esac
+    if [ -n "$pend" ] && { [ ! -f "$path/.supervisor/inbox/questions/$pend.json" ] || [ -e "$path/.supervisor/inbox/answers/$pend.json" ]; }; then pend=""; fi
+  fi
+  [ -n "$pend" ] && { printf 'answer_pending'; return 0; }
+  case "$ts" in
+    blocked_launch) printf 'blocked_launch' ;;
+    held_for_load) if [ "$nq" = 1 ] && [ -d "$path" ] && [ "$alive" = 0 ]; then printf 'awaiting_input'; else printf 'held_for_load'; fi ;;
+    created) printf 'created' ;;
+    *) if [ ! -d "$path" ]; then printf 'missing'
+       elif [ "$alive" = 1 ]; then printf 'running'
+       elif [ "$nq" = 1 ]; then printf 'awaiting_input'
+       else printf 'other'; fi ;;
+  esac
+}
 lanes_wait() {
   local rf="" iv="${LOOMWRIGHT_LANES_WAIT_INTERVAL_S:-15}" to=0 start doc parent ledger cur keep new live
   while [ "$#" -gt 0 ]; do
@@ -2093,6 +2247,14 @@ lanes_wait() {
   case "$to" in ''|*[!0-9]*) echo "lane-wait: --timeout must be a non-negative integer" >&2; return 2 ;; esac
   _lanes_table_for "$rf" >/dev/null 2>&1 || { echo "lane-wait: idle — no lane table for ${rf} (nothing to watch)"; return 0; }
   start="$(date +%s)"
+  _LANES_WAIT_MARK="$(basename "$rf")"; _LANES_WAIT_MARK="${_LANES_WAIT_MARK%.md}"
+  _LANES_WAIT_MARK="$(dirname "$rf")/${_LANES_WAIT_MARK%.lanes}.lane-wait.pid"
+  { printf '%s %s\n' "$$" "$start" > "$_LANES_WAIT_MARK.tmp.$$" && mv "$_LANES_WAIT_MARK.tmp.$$" "$_LANES_WAIT_MARK"; } 2>/dev/null \
+    || rm -f "$_LANES_WAIT_MARK.tmp.$$" 2>/dev/null
+  trap '_lanes_wait_unmark' EXIT
+  trap '_lanes_wait_unmark; exit 143' TERM
+  trap '_lanes_wait_unmark; exit 130' INT
+  trap '_lanes_wait_unmark; exit 129' HUP
   while :; do
     doc="$(lanes_status "$rf" --json 2>/dev/null)"
     parent="$(jq -r '.parent_run_id // empty' <<<"$doc" 2>/dev/null)"
@@ -2388,10 +2550,13 @@ lanes_readiness() {
 }
 
 # ==================================================================================================
-# WAVE CLOSE (parallel-automate/21 Part A). Owner decision 2026-10-10: the OPERATOR runs the wave-branch
-# merges. Nothing here merges or pushes a lane branch: `wave-plan` only PRINTS the commands, and
-# `fleet-closeout` closes a wave out AFTER the owner merged, through the existing sanctioned paths
-# (lane-convert-ready, queue-checkoff, lane-remove, run-lock.sh release).
+# WAVE CLOSE (parallel-automate/21 Part A). Nothing in THIS file merges or pushes anything:
+# `wave-plan` only PRINTS the integration commands, and `fleet-closeout` closes a wave out AFTER the
+# owner merged the wave PR, through the existing sanctioned paths (lane-convert-ready, queue-checkoff,
+# lane-remove, run-lock.sh release). The ONE writer of a wave branch is the sibling automate-wave.sh
+# (`wave-build`, owner decision 2026-10-11): it sources this file for _lanes_wave_resolve, so it builds
+# exactly the plan `wave-plan` prints, pushes only the wave branch and opens the wave PR; merging that
+# PR stays the owner's.
 
 # _lanes_base_of <checkout> — the base branch (origin/HEAD's name; `main` when unset).
 _lanes_base_of() {
@@ -2429,6 +2594,63 @@ _lanes_append_once() {
   bash "$HELPERS" progress-append "$1" "$2" >/dev/null 2>&1 || return 1
 }
 
+# _lanes_fc_finalize <parent_runfile> <primary> <meta branch, empty = mode off> — fleet-closeout's last
+# write, run only once the parent `## Queue` has no `- [ ]` left and only while the wave lock is still
+# held (the caller releases it right after, whatever this printed). It finalizes the parent exactly as
+# the sequential loop's §6 "Termination" does, through the existing helpers (never a hand write):
+# ONE validated `runfile-write` of a staged copy on which `current-wave --wave null` cleared the
+# `- wave:` line, the first `## Status:` line became `## Status: done` and `current-set --pause-reason
+# null` authored `pause_reason: null` (finalize-empty's staging — a failure at any step leaves the run
+# file byte-unchanged); then `<ts> wave closed — Queue empty, run finalized`; then `trail-pr <rf>
+# --reason done` (through the TRAIL seam, with this script's meta-sync, in the primary) printed and
+# appended like finalize-empty's; then, branch mode OFF only, `trail-unstage <rf>`. Lines:
+# `fleet-closeout: finalize — <outcome>` (one per step) | `fleet-closeout: finalize — skipped (already
+# done)` (nothing written: a re-run never repeats the trail) | `fleet-closeout: finalize FAILED —
+# <reason>` (nothing written — a refused write, or the run lock held by an owner other than
+# `automate-lanes:<run_id>`; a FREE lock is taken first, so the write is always under it). Returns 0.
+_lanes_fc_finalize() {
+  local rf="$1" primary="$2" mb="$3" tmp out ts l F="fleet-closeout: finalize FAILED —"
+  if _lanes_rf_done "$rf"; then echo "fleet-closeout: finalize — skipped (already done)"; return 0; fi
+  if grep -q '^- \[ \] ' "$rf" 2>/dev/null; then echo "fleet-closeout: finalize — skipped (Queue items remain)"; return 0; fi
+  grep -q '^## Status:' "$rf" 2>/dev/null || { echo "$F the parent run file has no ## Status: line"; return 0; }
+  # The write happens under the wave lock: held by this wave ⇒ go; free (a FAILED finalize's call already
+  # released it) ⇒ take it, the caller's release drops it; held by anyone else ⇒ nothing written.
+  local lk_st lk_own="automate-lanes:${rf##*/}"; lk_own="${lk_own%.md}"
+  lk_st="$(bash "$RUN_LOCK" status --root "$primary" 2>/dev/null </dev/null | head -1)"
+  case "$lk_st" in
+    "LOCKED owner=$lk_own "*) ;;
+    UNLOCKED)
+      out="$(bash "$RUN_LOCK" acquire --owner "$lk_own" --root "$primary" 2>&1 </dev/null)" \
+        || { echo "$F the wave lock could not be taken — $(printf '%s\n' "$out" | head -1) (nothing written)"; return 0; } ;;
+    LOCKED*) l="${lk_st#LOCKED owner=}"; echo "$F the run lock is held by ${l%% *}, not $lk_own (nothing written)"; return 0 ;;
+    *) echo "$F run lock status unreadable (nothing written)"; return 0 ;;
+  esac
+  tmp="$(mktemp "$rf.fc.XXXXXX" 2>/dev/null)" || { echo "$F cannot stage the rewrite"; return 0; }
+  if ! awk '!st && /^## Status:/ { print "## Status: done"; st = 1; next } { print }' "$rf" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"; echo "$F cannot stage the rewrite"; return 0
+  fi
+  if ! out="$(bash "$HELPERS" current-wave "$tmp" --wave null 2>&1 </dev/null)" \
+     || ! out="$(bash "$HELPERS" current-set "$tmp" --pause-reason null 2>&1 </dev/null)" \
+     || ! out="$(bash "$HELPERS" runfile-write "$rf" < "$tmp" 2>&1)"; then
+    rm -f "$tmp" "$tmp".*
+    echo "$F $(printf '%s\n' "$out" | sed '/^$/d' | head -1 | cut -c1-200) (the run file is unchanged)"; return 0
+  fi
+  rm -f "$tmp"
+  ts="$(now_utc)"
+  bash "$HELPERS" progress-append "$rf" "$ts wave closed — Queue empty, run finalized" >/dev/null 2>&1 \
+    || echo "fleet-closeout: WARNING — the finalize ## Progress line could not be appended" >&2
+  echo "fleet-closeout: finalize — finalized (## Status: done, pause_reason: null, wave line cleared)"
+  l="$(cd "$primary" && LOOMWRIGHT_META_SYNC_BIN="$META_SYNC" bash "$TRAIL" trail-pr "$rf" --reason done 2>/dev/null </dev/null | tail -n1)"
+  l="${l:-trail-pr: skipped — no output}"
+  echo "fleet-closeout: finalize — $l"
+  bash "$HELPERS" progress-append "$rf" "$ts $l" >/dev/null 2>&1
+  if [ -z "$mb" ]; then
+    l="$(cd "$primary" && bash "$TRAIL" trail-unstage "$rf" 2>/dev/null </dev/null | tail -n1)"
+    echo "fleet-closeout: finalize — ${l:-trail-unstage: skipped — no output}"
+  fi
+  return 0
+}
+
 # fleet-closeout <parent_runfile> — the wave close, run in the coordinator's PRIMARY checkout on every
 # `/automate --resume` (stepwise, idempotent: each call does every step it can; nothing waits in-session).
 # One `fleet-closeout: <step> — <detail>` line per lane and per step, in order:
@@ -2452,7 +2674,13 @@ _lanes_append_once() {
 #                  `sweep: unavailable (automate-followups/22 not shipped)`; main health — the `ci` check of
 #                  origin/<base> HEAD via gh: `failure` ⇒ `wave_paused: main_red after <sha>` appended and
 #                  printed (no revert, no block); then, when the parent Queue has no `- [ ]` left,
-#                  `run-lock.sh release --owner "automate-lanes:<run_id>"` ⇒ `wave closed — lock released`.
+#                  the parent FINALIZE under the still-held wave lock (_lanes_fc_finalize: `current-wave
+#                  --wave null` + `## Status: done` + `pause_reason: null` in ONE validated runfile-write,
+#                  `<ts> wave closed — Queue empty, run finalized`, `trail-pr --reason done`, branch mode
+#                  off `trail-unstage`; `finalize — skipped (already done)` on a re-run, nothing written;
+#                  `finalize FAILED — <reason>`, nothing written, exit unchanged), then — on every finalize
+#                  outcome — `run-lock.sh release --owner "automate-lanes:<run_id>"` ⇒ `wave closed — lock
+#                  released`. A Queue item left (the next wave) ⇒ no finalize, `lock kept — …`.
 # Exit: 0 (done, or waiting — the lines say which) · 1 refused (bad parent run file) · 2 pull failed.
 lanes_fleet_closeout() {
   local rf="${1:-}"
@@ -2573,6 +2801,9 @@ EOF
   fi
   n="$(grep -c '^- \[ \] ' "$rf" 2>/dev/null)"; n="${n:-0}"
   if [ "$n" != 0 ]; then _fc "lock kept — $n Queue item(s) remain unchecked (the next wave runs under it)"; return 0; fi
+  # The Queue is empty: finalize the parent UNDER the wave lock, then release it on EVERY outcome —
+  # a refused finalize prints its FAILED line and never strands the lock.
+  _lanes_fc_finalize "$rf" "$primary" "$mb"
   if out="$(bash "$RUN_LOCK" release --owner "automate-lanes:$parent" --root "$primary" 2>&1 </dev/null)"; then
     _fc "wave closed — lock released"
   else
@@ -2581,16 +2812,83 @@ EOF
   return 0
 }
 
+# _lanes_wave_resolve <parent_runfile> [<wave branch>] — the ONE wave resolver. `wave-plan` (below) and
+# automate-wave.sh's `wave-build` (which sources this file) both read the wave through it, so the
+# printed plan and the executed build can never disagree on the lanes, their order, the head shas, the
+# base or the branch name. READ-ONLY: it reads the lane table, the parent `## Current` wave line
+# (`- wave: <k> | items: …`; absent ⇒ the lane table order, wave 1), each lane's `## Current` pr and
+# that PR's head + state (ONE `gh pr view <pr> --json headRefOid,state` read per lane). Sets WV_PARENT,
+# WV_PRIMARY, WV_RF, WV_TABLE, WV_BASE, WV_K, WV_WB (default `wave/<run_id>-w<k>`), WV_SRC and WV_ROWS —
+# one TSV row per wave entry, in planner order: <kind> <lane> <path> <item> <run_id> <pr> <num> <sha>
+# <pr_state>, every empty field `-`. kind: `ok` · `nolane` (a wave item with no lane-table row) · `nopr`
+# (no numeric PR in the lane's run file) · `nohead` (the head sha unreadable). Returns 1 with WV_WHY
+# when it refuses (bad parent run file, no lane table, bad branch name).
+_lanes_wave_resolve() {
+  local rf="${1:-}" wb="${2:-}" wl items item v rows="" tab lane path run pr num j sha st
+  WV_WHY=""; WV_ROWS=""; WV_SRC=""
+  _lanes_parent_of "$rf" || { WV_WHY="$LP_WHY"; return 1; }
+  WV_PARENT="$LP_PARENT"; WV_PRIMARY="$LP_PRIMARY"
+  WV_RF="$WV_PRIMARY/.supervisor/automate/$WV_PARENT.md"; WV_TABLE="$WV_PRIMARY/.supervisor/automate/$WV_PARENT.lanes"
+  tab="$(printf '\t')"
+  [ -f "$WV_TABLE" ] || { WV_WHY="no lane table ($WV_PARENT.lanes)"; return 1; }
+  WV_BASE="$(_lanes_base_of "$WV_PRIMARY")"
+  wl="$(awk '/^## / { sec = $0; next } sec == "## Current" && /^- wave: / { print; exit }' "$WV_RF" 2>/dev/null)"
+  WV_K="$(printf '%s' "$wl" | sed -n 's/^- wave: *\([0-9][0-9]*\) *|.*/\1/p; s/^- wave: *\([0-9][0-9]*\) *$/\1/p' | head -1)"
+  items="$(printf '%s' "$wl" | sed -n 's/^- wave: [^|]*| *items: *//p' \
+    | awk '{ n = split($0, a, /, */); for (i = 1; i <= n; i++) { sub(/ +$/, "", a[i]); if (a[i] != "") print a[i] } }')"
+  [ -n "$WV_K" ] || WV_K=1
+  [ -n "$wb" ] || wb="wave/$WV_PARENT-w$WV_K"
+  git check-ref-format --branch "$wb" >/dev/null 2>&1 || { WV_WHY="'$wb' is not a valid branch name"; return 1; }
+  WV_WB="$wb"
+  if [ -n "$items" ]; then
+    WV_SRC="from ## Current"
+    while IFS= read -r item; do
+      [ -n "$item" ] || continue
+      v="$(awk -F'\t' -v i="$item" '$1 ~ /^L[0-9][0-9]?$/ && $3 == i { r = $1 "\t" $2 "\t" $3 "\t" $4 } END { if (r != "") print r }' "$WV_TABLE")"
+      if [ -n "$v" ]; then rows="$rows$v
+"; else rows="$rows-$tab-$tab$item$tab-
+"; fi
+    done <<<"$items"
+  else
+    WV_SRC="no ## Current wave items — lane table order"
+    rows="$(awk -F'\t' '$1 ~ /^L[0-9][0-9]?$/ { print $1 "\t" $2 "\t" $3 "\t" $4 }' "$WV_TABLE")"
+  fi
+  while IFS="$tab" read -r lane path item run; do
+    [ -n "$lane$item" ] || continue
+    if [ "$lane" = - ]; then WV_ROWS="${WV_ROWS}nolane$tab-$tab-$tab$item$tab-$tab-$tab-$tab-$tab-
+"; continue; fi
+    pr="$(_lanes_dash "$(_lanes_runfile_fields "$path/.supervisor/automate/$run.md" | cut -f3)")"
+    num="${pr##*/}"
+    case "$num" in ''|*[!0-9]*)
+      WV_ROWS="${WV_ROWS}nopr$tab$lane$tab$path$tab$item$tab$run$tab${pr:--}$tab-$tab-$tab-
+"; continue ;;
+    esac
+    j="$("$LANES_GH" pr view "$pr" --json headRefOid,state 2>/dev/null </dev/null)"
+    sha="$(jq -r '.headRefOid // empty' <<<"$j" 2>/dev/null)"; st="$(jq -r '.state // empty' <<<"$j" 2>/dev/null)"
+    case "$sha" in [0-9a-f]*) ;; *) sha="" ;; esac
+    if [ "${#sha}" != 40 ] || [ -n "$(printf '%s' "$sha" | tr -d '0-9a-f')" ]; then
+      WV_ROWS="${WV_ROWS}nohead$tab$lane$tab$path$tab$item$tab$run$tab$pr$tab$num$tab-$tab${st:--}
+"; continue
+    fi
+    WV_ROWS="${WV_ROWS}ok$tab$lane$tab$path$tab$item$tab$run$tab$pr$tab$num$tab$sha$tab${st:--}
+"
+  done <<EOF
+$rows
+EOF
+  return 0
+}
+
 # wave-plan <parent_runfile> [--wave-branch <name>] — Part S, READ-ONLY (owner decision 2026-10-10: the
-# operator merges). Executes no git mutation, no push and no gh write: it reads the lane table, the
-# parent `## Current` wave line (`- wave: <k> | items: …`; absent ⇒ the lane table order, wave 1), each
-# lane's `## Current` pr and that PR's head sha (`gh pr view <pr> --json headRefOid` — a read), and
-# PRINTS the operator's commands: fetch, `git checkout -b <wave branch, default wave/<run_id>-w<k>>
-# origin/<base>`, one `git merge --no-ff <exact head sha> -m "Merge lane <L> (<item>) PR #<n>"` per lane
-# in planner order (an unreadable sha ⇒ `# <lane>: head unreadable — resolve before integrating`, that
-# lane skipped), `bash scripts/ci-local.sh`, the release step (`bash scripts/bump-version.sh` only when
-# the repo has it, else `# run this project's release step`), the push and `gh pr create`, then the
-# conflict rules. Exit 0 printed · 1 refused (bad parent run file, no lane table, bad branch name).
+# operator merges; since then `wave-build` in automate-wave.sh runs these same steps, and this stays the
+# read-only preview and the manual fallback). Executes no git mutation, no push and no gh write: it
+# resolves the wave with _lanes_wave_resolve (above — the lane table, the parent `## Current` wave line,
+# each lane's `## Current` pr and that PR's head sha, a `gh pr view` read) and PRINTS the operator's
+# commands: fetch, `git checkout -b <wave branch, default wave/<run_id>-w<k>> origin/<base>`, one
+# `git merge --no-ff <exact head sha> -m "Merge lane <L> (<item>) PR #<n>"` per lane in planner order
+# (an unreadable sha ⇒ `# <lane>: head unreadable — resolve before integrating`, that lane skipped),
+# `bash scripts/ci-local.sh`, the release step (`bash scripts/bump-version.sh` only when the repo has
+# it, else `# run this project's release step`), the push and `gh pr create`, then the conflict rules.
+# Exit 0 printed · 1 refused (bad parent run file, no lane table, bad branch name).
 lanes_wave_plan() {
   local rf="" wb=""
   while [ "$#" -gt 0 ]; do
@@ -2600,49 +2898,22 @@ lanes_wave_plan() {
       *) [ -z "$rf" ] || { echo "wave-plan: refused — unexpected argument '$1'"; return 1; }; rf="$1"; shift ;;
     esac
   done
-  _lanes_parent_of "$rf" || { echo "wave-plan: refused — $LP_WHY"; return 1; }
-  local parent="$LP_PARENT" primary="$LP_PRIMARY" table base wl k items tab lane path item run pr num sha v msg rows=""
-  tab="$(printf '\t')"
-  rf="$primary/.supervisor/automate/$parent.md"; table="$primary/.supervisor/automate/$parent.lanes"
-  [ -f "$table" ] || { echo "wave-plan: refused — no lane table ($parent.lanes)"; return 1; }
-  base="$(_lanes_base_of "$primary")"
-  wl="$(awk '/^## / { sec = $0; next } sec == "## Current" && /^- wave: / { print; exit }' "$rf" 2>/dev/null)"
-  k="$(printf '%s' "$wl" | sed -n 's/^- wave: *\([0-9][0-9]*\) *|.*/\1/p; s/^- wave: *\([0-9][0-9]*\) *$/\1/p' | head -1)"
-  items="$(printf '%s' "$wl" | sed -n 's/^- wave: [^|]*| *items: *//p' \
-    | awk '{ n = split($0, a, /, */); for (i = 1; i <= n; i++) { sub(/ +$/, "", a[i]); if (a[i] != "") print a[i] } }')"
-  [ -n "$k" ] || k=1
-  [ -n "$wb" ] || wb="wave/$parent-w$k"
-  git check-ref-format --branch "$wb" >/dev/null 2>&1 || { echo "wave-plan: refused — '$wb' is not a valid branch name"; return 1; }
-  if [ -n "$items" ]; then
-    while IFS= read -r item; do
-      [ -n "$item" ] || continue
-      v="$(awk -F'\t' -v i="$item" '$1 ~ /^L[0-9][0-9]?$/ && $3 == i { r = $1 "\t" $2 "\t" $3 "\t" $4 } END { if (r != "") print r }' "$table")"
-      if [ -n "$v" ]; then rows="$rows$v
-"; else rows="$rows-$tab-$tab$item$tab-
-"; fi
-    done <<<"$items"
-  else
-    rows="$(awk -F'\t' '$1 ~ /^L[0-9][0-9]?$/ { print $1 "\t" $2 "\t" $3 "\t" $4 }' "$table")"
-  fi
-  local src="from ## Current"; [ -n "$items" ] || src="no ## Current wave items — lane table order"
-  echo "# wave-plan: $parent wave $k ($src) — READ-ONLY: nothing below was run; the operator runs it"
+  _lanes_wave_resolve "$rf" "$wb" || { echo "wave-plan: refused — $WV_WHY"; return 1; }
+  local parent="$WV_PARENT" primary="$WV_PRIMARY" base="$WV_BASE" k="$WV_K" tab kind lane path item run pr num sha st msg
+  wb="$WV_WB"; tab="$(printf '\t')"
+  echo "# wave-plan: $parent wave $k ($WV_SRC) — READ-ONLY: nothing below was run; the operator runs it"
   echo "git fetch origin"
   echo "git checkout -b $wb origin/$base"
-  while IFS="$tab" read -r lane path item run; do
-    [ -n "$lane$item" ] || continue
-    if [ "$lane" = - ]; then echo "# $item: no lane in $parent.lanes — skipped"; continue; fi
-    pr="$(_lanes_dash "$(_lanes_runfile_fields "$path/.supervisor/automate/$run.md" | cut -f3)")"
-    num="${pr##*/}"
-    case "$num" in ''|*[!0-9]*) echo "# $lane: no PR recorded in its run file — resolve before integrating"; continue ;; esac
-    sha="$("$LANES_GH" pr view "$pr" --json headRefOid 2>/dev/null </dev/null | jq -r '.headRefOid // empty' 2>/dev/null)"
-    case "$sha" in [0-9a-f]*) ;; *) sha="" ;; esac
-    if [ "${#sha}" != 40 ] || [ -n "$(printf '%s' "$sha" | tr -d '0-9a-f')" ]; then
-      echo "# $lane: head unreadable — resolve before integrating"; continue
-    fi
-    msg="$(printf 'Merge lane %s (%s) PR #%s' "$lane" "$item" "$num" | sed 's/[\\"$`]/\\&/g')"
-    printf 'git merge --no-ff %s -m "%s"\n' "$sha" "$msg"
+  while IFS="$tab" read -r kind lane path item run pr num sha st; do
+    case "$kind" in
+      nolane) echo "# $item: no lane in $parent.lanes — skipped" ;;
+      nopr) echo "# $lane: no PR recorded in its run file — resolve before integrating" ;;
+      nohead) echo "# $lane: head unreadable — resolve before integrating" ;;
+      ok) msg="$(printf 'Merge lane %s (%s) PR #%s' "$lane" "$item" "$num" | sed 's/[\\"$`]/\\&/g')"
+          printf 'git merge --no-ff %s -m "%s"\n' "$sha" "$msg" ;;
+    esac
   done <<EOF
-$rows
+$WV_ROWS
 EOF
   echo "bash scripts/ci-local.sh"
   if [ -f "$primary/scripts/bump-version.sh" ]; then echo "bash scripts/bump-version.sh"

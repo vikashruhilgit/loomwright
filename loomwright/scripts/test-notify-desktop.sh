@@ -632,6 +632,108 @@ else
 fi
 
 echo ""
+echo "==== Lane banner (lane-guardrails part 2) ===="
+# Inside an /automate --parallel lane clone (a valid .supervisor/lane.json) the
+# user-question banner names the lane and the coordinator's resume command.
+# Host-independent evidence: the audit line's ` lane=<L>` suffix. The banner
+# text itself is read from the platform's recording notifier stub.
+LANE_PARENT_ID="automate-2026-10-11-090000"
+# seed_lane <dir> [<run_id>] — a lane.json the way lane-create writes it.
+seed_lane() {
+  mkdir -p "$1/.supervisor"
+  jq -nc --arg p "$LANE_PARENT_ID" --arg r "${2:-$LANE_PARENT_ID-L2}" \
+    '{schema_version: 1, lane: "L2", run_id: $r, parent_run_id: $p, primary: "/x/primary", parallel: 2, max_tokens: null, created: "2026-10-11T09:00:00Z", policy: null}' \
+    > "$1/.supervisor/lane.json"
+}
+# lane_ask <tool_use_id> <header|""> <question> [<cwd>] — ask_payload's shape with
+# the given question / header and an optional payload cwd.
+lane_ask() {
+  ask_payload lnsess01 "$1" | jq -c --arg h "$2" --arg q "$3" --arg c "${4:-}" \
+    '(.tool_input.questions = [({question:$q} + (if $h == "" then {} else {header:$h} end))])
+     + (if $c == "" then {} else {cwd:$c} end)'
+}
+LN_SFX=" — answer in the coordinator session: /loomwright:automate --resume $LANE_PARENT_ID"
+# banner_file — the recording notifier stub for this host (empty when none is testable here).
+case "$HOST_OS" in
+  Darwin) LN_SB="$SB_OSA"; LN_STUB=osascript; LN_ENV="DISPLAY=" ;;
+  Linux)  LN_SB="$SB_NS";  LN_STUB=notify-send; LN_ENV="DISPLAY=:0" ;;
+  *)      LN_SB=""; LN_STUB=""; LN_ENV="DISPLAY=" ;;
+esac
+
+# N1: a lane — audit line carries lane=L2; the banner says which lane and which command.
+seed_lane "$TMP_ROOT/wd-$((CASE_N + 1))"
+run_sut "${LN_SB:-$SB_BARE}" "$(lane_ask toolu_ln1 "Way" "Which way should the lane take?")" "$LN_ENV"
+assert_eq "N1 lane banner exit 0" "0" "$RC"
+assert_file_match "N1 audit line names the lane" "notify group=loomwright-lnsess01 tool_use_id=toolu_ln1 lane=L2" "$WD/.supervisor/logs/notifications.log"
+if [ -n "$LN_STUB" ]; then
+  assert_file_match "N1 title: Lane L2 needs your answer" "Lane L2 needs your answer" "$MARKER/$LN_STUB.invoked"
+  assert_file_match "N1 body: the question header + the coordinator's resume command" "Way$LN_SFX" "$MARKER/$LN_STUB.invoked"
+else
+  skip "N1 banner text (no testable notifier on $HOST_OS)"
+fi
+
+# N2: no header ⇒ the question's first 80 characters, then the command.
+LN_Q="$(printf 'Q%.0s' $(seq 1 79))Z-the-81st-char-onwards-must-not-appear"
+seed_lane "$TMP_ROOT/wd-$((CASE_N + 1))"
+run_sut "${LN_SB:-$SB_BARE}" "$(lane_ask toolu_ln2 "" "$LN_Q")" "$LN_ENV"
+if [ -n "$LN_STUB" ]; then
+  assert_file_match "N2 body: first 80 chars of the question + the command" "$(printf '%s' "$LN_Q" | cut -c1-80)$LN_SFX" "$MARKER/$LN_STUB.invoked"
+  if grep -qF -- "-the-81st-char" "$MARKER/$LN_STUB.invoked" 2>/dev/null; then fail "N2 the 81st character onwards is cut"; else pass "N2 the 81st character onwards is cut"; fi
+else
+  skip "N2 banner text (no testable notifier on $HOST_OS)"
+fi
+
+# N3: an oversized header never pushes the resume command out of the 200-byte body.
+seed_lane "$TMP_ROOT/wd-$((CASE_N + 1))"
+run_sut "${LN_SB:-$SB_BARE}" "$(lane_ask toolu_ln3 "$(printf 'é%.0s' $(seq 1 150))" "q")" "$LN_ENV"
+if [ -n "$LN_STUB" ]; then
+  assert_file_match "N3 an oversized header still ends with the full resume command" "$LN_SFX" "$MARKER/$LN_STUB.invoked"
+else
+  skip "N3 banner text (no testable notifier on $HOST_OS)"
+fi
+
+# N4: the lane is found through the payload cwd (the hook's own dir is elsewhere).
+LN_DIR4="$TMP_ROOT/lane-by-cwd"; seed_lane "$LN_DIR4"
+run_sut "${LN_SB:-$SB_BARE}" "$(lane_ask toolu_ln4 "Pick" "Pick one?" "$LN_DIR4")" "$LN_ENV"
+assert_file_match "N4 lane found via the payload cwd" "tool_use_id=toolu_ln4 lane=L2" "$WD/.supervisor/logs/notifications.log"
+
+# N5: a lane is plugin context — the default `plugin` scope never suppresses its banner.
+seed_lane "$TMP_ROOT/wd-$((CASE_N + 1))"
+run_sut "$SB_BARE" "$(lane_ask toolu_ln5 "Way" "Which way?")" LOOMWRIGHT_NOTIFY_SCOPE=plugin
+assert_file_match "N5 lane banner fires under the default plugin scope" "tool_use_id=toolu_ln5 lane=L2" "$WD/.supervisor/logs/notifications.log"
+
+# N6: an INVALID lane.json (run_id is not <parent>-<lane>) is not a lane ⇒ the generic banner.
+seed_lane "$TMP_ROOT/wd-$((CASE_N + 1))" "something-else"
+run_sut "${LN_SB:-$SB_BARE}" "$(lane_ask toolu_ln6 "Way" "Which way?")" "$LN_ENV"
+if grep -qF -- "lane=" "$WD/.supervisor/logs/notifications.log" 2>/dev/null; then fail "N6 invalid lane.json ⇒ no lane= in the audit line"; else pass "N6 invalid lane.json ⇒ no lane= in the audit line"; fi
+if [ -n "$LN_STUB" ]; then
+  assert_file_match "N6 invalid lane.json ⇒ the generic title" "Claude needs your input" "$MARKER/$LN_STUB.invoked"
+fi
+
+# N7: outside a lane the audit line is byte-identical (no suffix) and the banner generic.
+run_sut "${LN_SB:-$SB_BARE}" "$(lane_ask toolu_ln7 "Way" "Which way?")" "$LN_ENV"
+assert_eq "N7 outside a lane: the audit line ends at the tool_use_id" "tool_use_id=toolu_ln7" \
+  "$(grep -F ' notify group=' "$WD/.supervisor/logs/notifications.log" 2>/dev/null | tail -1 | sed 's/.* //')"
+if [ -n "$LN_STUB" ]; then
+  assert_file_match "N7 outside a lane: the generic title and the question text" "Which way?" "$MARKER/$LN_STUB.invoked"
+  if grep -qF -- "coordinator session" "$MARKER/$LN_STUB.invoked" 2>/dev/null; then fail "N7 outside a lane: no resume command"; else pass "N7 outside a lane: no resume command"; fi
+fi
+
+# N8: a Notification event inside a lane is unchanged (only the ask banner is lane-aware).
+seed_lane "$TMP_ROOT/wd-$((CASE_N + 1))"
+run_sut "${LN_SB:-$SB_BARE}" "$P_NOTIFICATION" "$LN_ENV"
+if grep -qF -- "lane=" "$WD/.supervisor/logs/notifications.log" 2>/dev/null; then fail "N8 Notification in a lane ⇒ no lane= suffix"; else pass "N8 Notification in a lane ⇒ no lane= suffix"; fi
+if [ -n "$LN_STUB" ]; then
+  assert_file_match "N8 Notification in a lane keeps its own title" "Claude is waiting on you" "$MARKER/$LN_STUB.invoked"
+fi
+
+# N9: a replayed ask inside a lane is still de-duplicated (replay ledger kept).
+rerun_sut_same_wd "${LN_SB:-$SB_BARE}" "$(lane_ask toolu_ln8 "Way" "Which way?")" "$LN_ENV"
+rerun_sut_same_wd "${LN_SB:-$SB_BARE}" "$(lane_ask toolu_ln8 "Way" "Which way?")" "$LN_ENV"
+assert_eq "N9 a lane replay is skipped (one notify line, one skip line)" "1:1" \
+  "$(count_in 'tool_use_id=toolu_ln8 lane=L2' "$WD/.supervisor/logs/notifications.log"):$(count_in 'skip replay tool_use_id=toolu_ln8' "$WD/.supervisor/logs/notifications.log")"
+
+echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "=========================================="
 echo "RESULT  total=$TOTAL  passed=$PASS_COUNT  failed=$FAIL_COUNT  skipped=$SKIP_COUNT"

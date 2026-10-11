@@ -13,6 +13,8 @@
 #   M liveness + pick-guard (AC12) · N lane-remove refusals (AC3) + mutation controls (AC16)
 #   O lane-info · P branch-check · Q lane-status classification (AC7) · R lane-status --json (AC8)
 #   S keep-awake · T --watch + lane-feed · U merge-readiness (AC9) · V --leaks / --resources / --tokens
+#     (V15-V20: the merge-watch section reads live watchers from their markers — a process that only NAMES
+#     the script is no leak, + mutation control; a v1 snapshot section is not compared)
 #   W drain-round-1 hardening: one-call token total (D8) + mutation control · trailing value flags
 #     exit promptly · unpushed count unreadable refuses + mutation control · lock holder records
 #     (dead holder reclaimed, live holder waited on, foreign lock never unlocked, holder-less lock
@@ -38,9 +40,16 @@
 #     lane-status policy digest + --inbox
 #   AE lane-convert-ready finalizes a closed-out lane in branch mode (A1); mode off skips finalize
 #   AF fleet-closeout: stepwise, idempotent wave close (A2) — backstop, check-off, sync, removal, lanes dir,
-#     leaks, main health, lock release; gone / meta-push-failed are the human's; a failed pull stops it
+#     leaks, main health, lock release; gone / meta-push-failed are the human's; a failed pull stops it;
+#     AF3m-AF12 the Queue-empty parent finalize (done + wave line cleared + one trail-pr, skipped on a
+#     re-run, never with an item left, FAILED write still releases the lock, mode off unstages) + mutation
 #   AH lane-wait: the coordinator's lane watcher — events, seen ledger (prune / keep), timeout, idle,
-#     usage, read-only toward lanes
+#     usage, read-only toward lanes; AH15 its liveness marker (written, handed over to a second watcher,
+#     removed only by its owner, absent on the idle paths); AH16 _lanes_quick_state (the Stop hook's
+#     classifier) agrees with lane-status on every live / attention state of the fleet
+#   AI gate opt-out carry (lane-guardrails part 3): the FACT recorded coordinator-side at first launch,
+#     every resume path refused without it (exit 3, no spawn, nothing in the lane), lane-answer keeps the
+#     validated answer pending, --without-gate-optout resumes without it and clears the fact, never added
 #   AG wave-plan is READ-ONLY (A4: refs + tree byte-identical) + mutation control; the A3/A4 static guards
 #     (no executable merge / push / gate-eval) + mutation control; A5 no sequential caller
 set -uo pipefail
@@ -70,7 +79,7 @@ hasnt() { case "$2" in *"$3"*) bad "$1" "unexpected [$3]" ;; *) ok "$1" ;; esac;
 export HOME="$T/home"; mkdir -p "$HOME"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1
-unset CLAUDE_PLUGIN_ROOT
+unset CLAUDE_PLUGIN_ROOT LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS   # the AI group sets the opt-out per command
 
 BIN="$T/bin"; mkdir -p "$BIN"
 export STUB_LOG="$T/claude.log"; : > "$STUB_LOG"
@@ -81,7 +90,7 @@ if [ "${1:-}" = "--help" ]; then
   exit 0
 fi
 { printf 'ARGS'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'
-  printf 'ENV CEIL=%s CC=%s PID=%s\n' "${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS-unset}" "${CLAUDECODE-unset}" "${CLAUDE_PID-unset}"
+  printf 'ENV CEIL=%s CC=%s PID=%s OPTOUT=%s\n' "${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS-unset}" "${CLAUDECODE-unset}" "${CLAUDE_PID-unset}" "${LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS-unset}"
   printf 'STDIN %s\n' "$(cat)"; printf 'CWD %s\n' "$PWD"
   printf 'RESUMEPATH %s\n' "${LOOMWRIGHT_LANE_RESUME_PATH-unset}"; } >> "$STUB_LOG"
 if [ -n "${STUB_RESUME_FAIL:-}" ]; then
@@ -569,6 +578,17 @@ hasnt "AH1g running / held / created lanes are not events" "$out" "state L2"
 has "AH1h ends with the relay hint" "$(printf '%s\n' "$out" | tail -1)" "lane-wait: relay — show each question to the owner verbatim"
 has "AH1i a mixed batch also carries the state act hint" "$out" "lane-wait: act — handle each state line"
 check "AH2 the seen ledger records every printed key" "$(sort "$LWS" | tr '\n' ',')" "question L6 toolu_r1,state L1 died,state L3 stalled,state L4 blocked_launch,"
+# AH16 the Stop hook's classifier (_lanes_quick_state: no gh, no ci-slot, no stream log) names the same
+# state as lane-status for every live / attention state; the states past awaiting_input read `other`.
+ah16_full="$(bash "$S" lane-status "$RF2" --json 2>/dev/null | jq -r '.lanes[] | "\(.lane) \(.state)"' \
+  | awk '{ s = $2; if (s !~ /^(answer_pending|blocked_launch|held_for_load|created|missing|running|awaiting_input)$/) s = "other"; print $1, s }')"
+ah16_quick="$( ( . "$S"; while IFS="$(printf '\t')" read -r l p _ _ pid st _ ts _; do
+  case "$l" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
+  printf '%s %s\n' "$l" "$(_lanes_quick_state "$p" "$pid" "$st" "$ts" "$P/.supervisor/automate/$PARENT2.$l.answer-pending.json")"
+done < "$TABLE2" ) )"
+check "AH16 fixture: the fleet spans live, attention and other states" \
+  "$(printf '%s\n' "$ah16_full" | awk '{ print $2 }' | sort -u | tr '\n' ' ')" "awaiting_input blocked_launch created held_for_load other running "
+check "AH16a _lanes_quick_state agrees with lane-status lane by lane" "$ah16_quick" "$ah16_full"
 echo "state L2 died" >> "$LWS"
 out="$(run lane-wait "$RF2" --interval 1 --timeout 1)"; rc=$?
 check "AH3 nothing new ⇒ waits, then times out (exit 0)" "$rc:$out" "0:lane-wait: timeout after 1s — nothing new"
@@ -659,6 +679,28 @@ check "AH12a every _LANES_WAIT_QUIET token is a reportable state" "$(ah_drift "$
 check "AH12b every _LANES_WAIT_LIVE token is a reportable state" "$(ah_drift "$ah_live")" ""
 check "AH12c mutation: a fake token appended to a copy of the array is named" "$(ah_drift "$(jq -c '. + ["stalld"]' <<<"$ah_quiet")")" "stalld "
 check "AH12d no token is both live and quiet (an event state would be silenced twice)" "$(jq -rn --argjson a "$ah_quiet" --argjson b "$ah_live" '$a - ($a - $b) | join(",")')" ""
+# AH15 the liveness marker: written naming the watcher's pid; a second watcher takes it over; the first
+# one's exit leaves it (it names the second); the owner's exit removes it; the idle paths write none.
+LWM="$P/.supervisor/automate/$PARENT2.lane-wait.pid"; rm -f "$LWM"
+ah15_wait() { local i=0; while [ "$(awk '{ print $1 }' "$LWM" 2>/dev/null)" != "$1" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
+bash "$S" lane-wait "$RF2" --interval 1 --timeout 60 >/dev/null 2>&1 & LWA=$!; BG_PIDS="$BG_PIDS $LWA"
+ah15_wait "$LWA"
+check "AH15a lane-wait writes <pid> <start epoch>" "$(awk '{ print ($1 == '"$LWA"') ":" ($2 ~ /^[0-9]+$/) }' "$LWM" 2>/dev/null)" "1:1"
+bash "$S" lane-wait "$RF2" --interval 1 --timeout 60 >/dev/null 2>&1 & LWB=$!; BG_PIDS="$BG_PIDS $LWB"
+ah15_wait "$LWB"
+check "AH15b a second watcher takes the marker over" "$(awk '{ print $1 }' "$LWM" 2>/dev/null)" "$LWB"
+kill -TERM "$LWA" 2>/dev/null; wait "$LWA" 2>/dev/null
+check "AH15c the first watcher's exit leaves the marker it no longer owns" "$(awk '{ print $1 }' "$LWM" 2>/dev/null)" "$LWB"
+kill -TERM "$LWB" 2>/dev/null; wait "$LWB" 2>/dev/null
+check "AH15d the owner's exit (TERM) removes it" "$([ -e "$LWM" ] && echo present || echo absent)" absent
+out="$(run lane-wait "$RF2" --interval 1 --timeout 1)"
+check "AH15e a lane-wait that times out removes its marker" "$([ -e "$LWM" ] && echo present || echo absent)" absent
+run lane-wait "$P/.supervisor/automate/none.md" >/dev/null
+bash "$S" lane-wait "$TABLE2" --interval 1 --timeout 60 >/dev/null 2>&1 & LWC=$!; BG_PIDS="$BG_PIDS $LWC"
+ah15_wait "$LWC"
+check "AH15g given the .lanes table path, the marker still lands at <parent_run_id>.lane-wait.pid" "$(awk '{ print $1 }' "$LWM" 2>/dev/null)" "$LWC"
+kill -TERM "$LWC" 2>/dev/null; wait "$LWC" 2>/dev/null
+check "AH15f the no-lane-table idle path writes no marker" "$(ls "$P/.supervisor/automate/" | grep -c 'none.lane-wait.pid' | tr -d ' ')" 0
 # Clean up the second wave: lane-feed L<n> (T7) resolves the NEWEST lane table in the primary.
 rm -rf "$LWS" "$P/.supervisor/automate/$PARENT3".* "$T/work/primary-lanes/$PARENT3"
 out="$(run lane-feed "$L6")"
@@ -755,6 +797,69 @@ check "V4 leaks found names each section" "$(printf '%s\n' "$out" | head -1)" "l
 has "V5 the leaked process is listed" "$out" "  + 4321 claude -p --resume x"
 has "V6 unchanged sections say same" "$out" "- merge-watch: same"
 cp "$T/config.bak" "$P/.supervisor/config.json"; : > "$PGREP_CLAUDE"; git -C "$P" worktree remove --force "$T/wt-leak" 2>/dev/null
+# V15-V20 (wave-close fix 2) the merge-watch section lists LIVE watchers from their *.merge-watch markers
+# (`## merge-watch v2`), never a process-name match: W3's `leaks: found — merge-watch` was a grep whose
+# argv named scripts/automate-merge-watch.sh. A pgrep wrapper hands the merge-watch pattern to the REAL
+# pgrep (so the v1 mutation sees the decoy) and everything else to the stub. Decoys are background
+# `sleep 30`s renamed with `exec -a` (bash 3.2); each names the suite dir, is tracked in BG_PIDS and killed.
+cat > "$T/pgrep-mw" <<EOF
+#!/usr/bin/env bash
+case "\$*" in *automate-merge-watch*) exec pgrep "\$@" ;; esac
+exec "$T/pgrep-stub" "\$@"
+EOF
+chmod +x "$T/pgrep-mw"
+mw_spawn() { # <argv0> — sets MWPID: a background sleep whose ps command line reads "<argv0> 30"
+  bash -c 'exec -a "$0" sleep 30' "$1" </dev/null >/dev/null 2>&1 &
+  MWPID=$!; BG_PIDS="$BG_PIDS $MWPID"; local i=0
+  until case "$(ps -ww -o command= -p "$MWPID" 2>/dev/null)" in "$1"*) true ;; *) false ;; esac || [ "$i" -ge 50 ]; do sleep 0.1; i=$((i + 1)); done
+}
+mw_kill() { local q; for q in "$@"; do kill -TERM "$q" 2>/dev/null; wait "$q" 2>/dev/null; done; }
+mwl() { LOOMWRIGHT_LANES_PGREP="$T/pgrep-mw" bash "${MW_S:-$S}" lane-status "$1" --leaks "${@:2}" 2>&1; }
+PARENTMW=automate-2026-10-11-090000; RFMW="$P/.supervisor/automate/$PARENTMW.md"
+PARENTMV=automate-2026-10-11-091000; RFMV="$P/.supervisor/automate/$PARENTMV.md"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENTMW" > "$RFMW"; printf '# Automate Run: %s\n\n## Progress\n' "$PARENTMV" > "$RFMV"
+mwl "$RFMW" --snapshot >/dev/null
+check "V15 the snapshot's merge-watch section carries the v2 format tag (and no v1 header)" \
+  "$(grep -cxF '## merge-watch v2' "$P/.supervisor/automate/$PARENTMW.leaks-snapshot" | tr -d ' '):$(grep -cxF '## merge-watch' "$P/.supervisor/automate/$PARENTMW.leaks-snapshot" | tr -d ' ')" "1:0"
+# the v1 mutation: the section body back to the process-name match; its own snapshot, before the decoy
+awk '/# >>> merge-watch body$/ { print "  \"$pg\" -lf automate-merge-watch 2>/dev/null"; next } { print }' "$S" > "$MUT/lanes-mw.sh"
+if ! cmp -s "$S" "$MUT/lanes-mw.sh" && bash -n "$MUT/lanes-mw.sh"; then MW_S="$MUT/lanes-mw.sh" mwl "$RFMV" --snapshot >/dev/null; MWMUT=1; else MWMUT=0; fi
+mw_spawn "grep $T/scripts/automate-merge-watch.sh"; MWD="$MWPID"
+out="$(mwl "$RFMW")"
+check "V16 a process whose argv only NAMES automate-merge-watch.sh is not a watcher ⇒ merge-watch: same" \
+  "$(printf '%s\n' "$out" | head -1 | cut -c1-11):$(printf '%s\n' "$out" | grep -cxF -- '- merge-watch: same' | tr -d ' ')" "leaks: none:1"
+if [ "$MWMUT" = 1 ]; then
+  has "V16b mutation (the v1 pgrep line restored) trips V16: the decoy reads as a leak" "$(MW_S="$MUT/lanes-mw.sh" mwl "$RFMV")" "- merge-watch: changed"
+else bad "V16b mutation control not built"; fi
+mw_kill "$MWD"
+# V17 a real marker + a live process running automate-merge-watch for that marker's PR ⇒ reported
+MWU1="https://github.com/o/r/pull/777"; MWU2="https://github.com/o/r/pull/778"
+mw_spawn "bash $T/scripts/automate-merge-watch.sh $RFMW reqs/a.md $MWU1"; MW1="$MWPID"
+printf 'pid\t%s\npr_url\t%s\nstarted\t2026-10-11T09:00:00Z\n' "$MW1" "$MWU1" > "$P/.supervisor/automate/mwtest.merge-watch"
+out="$(mwl "$RFMW")"
+check "V17 a live watcher in the primary ⇒ found — merge-watch, listed as <pid> <pr_url>" \
+  "$(printf '%s\n' "$out" | head -1):$(printf '%s\n' "$out" | grep -cxF -- "  + $MW1 $MWU1" | tr -d ' ')" "leaks: found — merge-watch:1"
+# V18 … and a live watcher of a lane in this run's table
+mkdir -p "$T/mwlane/.supervisor/automate"
+printf 'L1\t%s\treqs/a.md\t%s-L1\t-\t-\t-\tcreated\t-\t-\n' "$T/mwlane" "$PARENTMW" > "$P/.supervisor/automate/$PARENTMW.lanes"
+mw_spawn "bash $T/scripts/automate-merge-watch.sh $T/mwlane/x.md reqs/a.md $MWU2"; MW2="$MWPID"
+printf 'pid\t%s\npr_url\t%s\n' "$MW2" "$MWU2" > "$T/mwlane/.supervisor/automate/$PARENTMW-L1.merge-watch"
+out="$(mwl "$RFMW")"
+check "V18 a live watcher in a lane of the table is listed too (sorted, one line each)" \
+  "$(printf '%s\n' "$out" | grep -cxF -- "  + $MW1 $MWU1" | tr -d ' '):$(printf '%s\n' "$out" | grep -cxF -- "  + $MW2 $MWU2" | tr -d ' ')" "1:1"
+mw_kill "$MW1" "$MW2"
+out="$(mwl "$RFMW")"
+check "V19 markers left behind by watchers that exited are not live ⇒ merge-watch: same" \
+  "$(printf '%s\n' "$out" | grep -cxF -- '- merge-watch: same' | tr -d ' ')" 1
+rm -f "$P/.supervisor/automate/mwtest.merge-watch" "$P/.supervisor/automate/$PARENTMW.lanes"; rm -rf "$T/mwlane"
+# V20 a v1 snapshot (taken by the pre-fix code: `## merge-watch` + pgrep lines) is NOT compared — never a false found
+SFMW="$P/.supervisor/automate/$PARENTMW.leaks-snapshot"
+awk '$0 == "## merge-watch v2" { print "## merge-watch"; print "4242 grep scripts/automate-merge-watch.sh"; next } { print }' "$SFMW" > "$SFMW.t" && mv "$SFMW.t" "$SFMW"
+out="$(mwl "$RFMW")"
+check "V20 a v1 snapshot section ⇒ leaks: none, the first line naming the uncompared section" \
+  "$(printf '%s\n' "$out" | head -1)" "leaks: none (vs snapshot $SFMW; merge-watch not compared — pre-v2 snapshot)"
+has "V20b … and the body says why" "$out" "- merge-watch: not compared — the wave-start snapshot predates the marker-based watcher list (v1)"
+rm -f "$MUT/lanes-mw.sh"
 out="$(run lane-status "$RF2" --resources)"; has "V7 no fleet.log ⇒ resources unknown" "$out" "resources: unknown"
 printf '2026-10-07T10:00:00Z load1=5 load=ok L1_rss=100M L2_rss=300M nonlane_load=10%%\n2026-10-07T10:00:10Z load1=9 load=busy L1_rss=200M L2_rss=150M nonlane_load=20%%\n' > "$P/.supervisor/automate/$PARENT2.fleet.log"
 out="$(run lane-status "$RF2" --resources)"
@@ -1825,10 +1930,26 @@ check "AF3j … and appended once to the parent Progress (no revert, no block)" 
 check "AF3k the Queue is empty ⇒ the wave lock is released (last line)" \
   "$(printf '%s\n' "$out" | tail -n1):$(bash "$HERE/run-lock.sh" status --root "$P")" "fleet-closeout: wave closed — lock released:UNLOCKED"
 check "AF3l the gh calls were reads only (pr view / the check-runs api)" "$(grep -vE '^gh (pr view|api repos/\{owner\}/\{repo\}/commits/[0-9a-f]+/check-runs\?check_name=ci|auth status)' "$T_AFGH" | wc -l | tr -d ' ')" 0
+# AF3m-r the Queue emptied ⇒ the PARENT is finalized as §6 "Termination" ends a sequential run (W3 left
+# it `## Status: running` with its wave line, and the coordinator hand-wrote done + its trail)
+check "AF3m the parent run file reads ## Status: done (no running left)" \
+  "$(grep -c '^## Status: done$' "$RF10" | tr -d ' '):$(grep -c '^## Status: running' "$RF10" | tr -d ' ')" "1:0"
+check "AF3n … ## Current carries pause_reason: null and no wave line" \
+  "$(awk '/^## Current/ { c = 1; next } /^## / { c = 0 } c' "$RF10" | grep -cxF -- '- pause_reason: null' | tr -d ' '):$(grep -c '^- wave:' "$RF10" | tr -d ' ')" "1:0"
+check "AF3o … ONE finalize Progress line" "$(grep -cE '^- [0-9TZ:-]+ wave closed — Queue empty, run finalized$' "$RF10" | tr -d ' ')" 1
+check "AF3p … trail-pr --reason done ran ONCE on the parent (through the trail seam), its line printed and appended" \
+  "$(grep -cxF -- "trail-pr $RF10 --reason done" "$T_ABSPY" | tr -d ' '):$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: finalize — trail-pr: meta-pushed test-meta' | tr -d ' '):$(grep -cE '^- [0-9TZ:-]+ trail-pr: meta-pushed test-meta$' "$RF10" | tr -d ' ')" "1:1:1"
+check "AF3q … the finalize ran BEFORE the release (under the wave lock), and branch mode on ⇒ no trail-unstage" \
+  "$(printf '%s\n' "$out" | tail -n3 | head -1):$(grep -c "^trail-unstage $RF10" "$T_ABSPY" | tr -d ' ')" \
+  "fleet-closeout: finalize — finalized (## Status: done, pause_reason: null, wave line cleared):0"
+check "AF3r … the pushed parent run file carries ## Status: done (the trail ran after the write)" \
+  "$(grep -c '^## Status: done$' "$T/remote-af/.supervisor/automate/$PARENT10.md" 2>/dev/null | tr -d ' ')" 1
 SRF10="$(cksum < "$RF10")"
 out="$(AF_MERGED="$PR101 $PR102" AF_CI=failure af fleet-closeout "$RF10")"; rc=$?
 check "AF4 a re-run after the close: exit 0, the parent run file byte-unchanged (no duplicate lines)" "$rc:$(cksum < "$RF10")" "0:$SRF10"
 check "AF4b … still ends wave closed (release is idempotent)" "$(printf '%s\n' "$out" | tail -n1)" "fleet-closeout: wave closed — lock released"
+check "AF4d … the finalize is skipped (already done) and no second trail-pr runs" \
+  "$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: finalize — skipped (already done)' | tr -d ' '):$(grep -cxF -- "trail-pr $RF10 --reason done" "$T_ABSPY" | tr -d ' ')" "1:1"
 # AF4c the next wave's item is still unchecked ⇒ the lock is kept (the next wave runs under it)
 printf '%s\n' "- [ ] reqs/next.md" > "$T/af.q"; awk -v f="$T/af.q" '{ print } /^## Queue$/ { while ((getline l < f) > 0) print l }' "$RF10" > "$T/af.rf" && mv "$T/af.rf" "$RF10"
 bash "$HERE/run-lock.sh" acquire --owner "automate-lanes:$PARENT10" --root "$P" >/dev/null 2>&1
@@ -1836,6 +1957,7 @@ out="$(AF_MERGED="$PR101 $PR102" af fleet-closeout "$RF10")"
 check "AF4c a Queue item left for the next wave keeps the wave lock" \
   "$(printf '%s\n' "$out" | tail -n1):$(bash "$HERE/run-lock.sh" status --root "$P" | cut -c1-6)" \
   "fleet-closeout: lock kept — 1 Queue item(s) remain unchecked (the next wave runs under it):LOCKED"
+hasnt "AF4e … and no finalize runs while a Queue item remains" "$out" "finalize"
 bash "$HERE/run-lock.sh" release --owner "automate-lanes:$PARENT10" --root "$P" >/dev/null 2>&1
 # human cases + the pull failure, on a fresh one-lane parent
 PARENT11=automate-2026-10-10-130000; RF11="$P/.supervisor/automate/$PARENT11.md"; LR11="$T/work/primary-lanes/$PARENT11"
@@ -1862,6 +1984,62 @@ printf '# Automate Run: automate-2026-10-10-140000\n\n## Progress\n' > "$P/.supe
 check "AF9 no lane table ⇒ one skipped line, exit 0" "$(af fleet-closeout "$P/.supervisor/automate/automate-2026-10-10-140000.md"; echo "rc=$?")" \
   "fleet-closeout: skipped — no lane table (automate-2026-10-10-140000.lanes): no lane to close out
 rc=0"
+
+# AF10-AF13 the parent finalize's edges, on a parent whose only lane is already removed (the table row
+# reads `removed`), so a call goes straight to the wave end. A helpers wrapper in front of the real copy
+# can refuse runfile-write (FC_REFUSE); mode off runs through the no-op trail stub (records its calls).
+cat > "$T/fc-helpers.sh" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = runfile-write ] && [ -n "\${FC_REFUSE:-}" ]; then echo "runfile-write: refused — forced by the test [runfile_write_refused]" >&2; exit 1; fi
+exec bash "$SC/automate-helpers.sh" "\$@"
+EOF
+chmod +x "$T/fc-helpers.sh"
+fc_parent() { # <parent_id> — a running parent with an empty Queue, a wave line and one removed lane
+  FCRF="$P/.supervisor/automate/$1.md"
+  printf '# Automate Run: %s\n\n## Status: running\n\n## Run Config\n- parallel: 2\n\n## Queue\n- [x] reqs/a.md\n\n## Current\n- item: null | status: null\n- wave: 1 | items: reqs/a.md\n\n## Progress\n' "$1" > "$FCRF"
+  printf 'L1\t%s\treqs/a.md\t%s-L1\t-\t-\t-\tremoved\t-\t-\n' "$T/work/primary-lanes/$1/L1" "$1" > "$P/.supervisor/automate/$1.lanes"
+  bash "$HERE/run-lock.sh" acquire --owner "automate-lanes:$1" --root "$P" >/dev/null 2>&1
+}
+fc() { REMOTE11="$T/remote-af" LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$T/fc-helpers.sh" \
+  LOOMWRIGHT_LANES_TRAIL="${FC_TRAIL:-$T/ab-spy.sh}" LOOMWRIGHT_GH_BIN="$T/af-gh" bash "${FC_S:-$S}" "$@" 2>&1; }
+lockst() { bash "$HERE/run-lock.sh" status --root "$P" | cut -c1-6; }
+fc_parent automate-2026-10-11-100000; RF13="$FCRF"
+out="$(FC_REFUSE=1 fc fleet-closeout "$RF13")"; rc=$?
+check "AF10 a refused runfile-write ⇒ finalize FAILED naming why, exit unchanged (0)" \
+  "$rc:$(printf '%s\n' "$out" | grep -c '^fleet-closeout: finalize FAILED — runfile-write: refused — forced by the test' | tr -d ' ')" "0:1"
+check "AF10b … the finalize wrote nothing (still running, wave line kept, no finalize line; no stray staging file) and no trail-pr ran" \
+  "$(grep -c '^## Status: running$' "$RF13" | tr -d ' '):$(grep -c '^- wave: 1' "$RF13" | tr -d ' '):$(grep -c 'run finalized' "$RF13" | tr -d ' '):$(ls "$P/.supervisor/automate/" | grep -c 'automate-2026-10-11-100000\.md\.' | tr -d ' '):$(grep -c "^trail-pr $RF13" "$T_ABSPY" | tr -d ' ')" "1:1:0:0:0"
+check "AF10c … and the wave lock is STILL released (never stranded)" \
+  "$(printf '%s\n' "$out" | tail -n1):$(lockst)" "fleet-closeout: wave closed — lock released:UNLOCK"
+out="$(fc fleet-closeout "$RF13")"; rc=$?
+check "AF10d the next call (lock already free: taken for the write) finalizes it: done, wave line gone, lock released" \
+  "$rc:$(grep -c '^## Status: done$' "$RF13" | tr -d ' '):$(grep -c '^- wave:' "$RF13" | tr -d ' '):$(lockst)" "0:1:0:UNLOCK"
+fc_parent automate-2026-10-11-110000; RF14="$FCRF"; : > "$T_TRAIL_LOG"
+out="$(STUB_MODE_LINE=off FC_TRAIL="$T/trail-stub.sh" fc fleet-closeout "$RF14")"; rc=$?
+check "AF11 branch mode OFF: finalized, trail-pr --reason done then trail-unstage, in that order" \
+  "$rc:$(grep -c '^## Status: done$' "$RF14" | tr -d ' '):$(cat "$T_TRAIL_LOG" | tr '\n' '|')" \
+  "0:1:trail trail-pr $RF14 --reason done|trail trail-unstage $RF14|"
+has "AF11b … each printed as a finalize line" "$out" "fleet-closeout: finalize — trail-pr: skipped — meta no_changes"
+# AF13 the run lock held by ANOTHER owner ⇒ nothing written under it, and it is never stolen
+fc_parent automate-2026-10-11-130000; RF16="$FCRF"
+bash "$HERE/run-lock.sh" release --owner "automate-lanes:automate-2026-10-11-130000" --root "$P" >/dev/null 2>&1
+bash "$HERE/run-lock.sh" acquire --owner "automate-pick:someone-else" --root "$P" >/dev/null 2>&1
+out="$(fc fleet-closeout "$RF16")"; rc=$?
+check "AF13 a foreign run lock ⇒ finalize FAILED naming its holder, parent still running, the lock still theirs" \
+  "$rc:$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: finalize FAILED — the run lock is held by automate-pick:someone-else, not automate-lanes:automate-2026-10-11-130000 (nothing written)' | tr -d ' '):$(grep -c '^## Status: running$' "$RF16" | tr -d ' '):$(bash "$HERE/run-lock.sh" status --root "$P" | cut -d' ' -f1-2)" \
+  "0:1:1:LOCKED owner=automate-pick:someone-else"
+bash "$HERE/run-lock.sh" release --owner "automate-pick:someone-else" --root "$P" >/dev/null 2>&1
+# AF12 mutation control: with the finalize call deleted, the Queue-empty close leaves the parent running
+mkdir -p "$MUT"; FCM="$SC/automate-lanes-nofinalize.sh"
+awk '!/^  _lanes_fc_finalize "\$rf" "\$primary" "\$mb"$/' "$S" > "$FCM"
+fc_parent automate-2026-10-11-120000; RF15="$FCRF"
+if ! cmp -s "$S" "$FCM" && bash -n "$FCM"; then
+  out="$(FC_S="$FCM" fc fleet-closeout "$RF15")"
+  check "AF12 mutation (finalize call deleted) fails the done assertion — the parent stays running" \
+    "$(grep -c '^## Status: done$' "$RF15" | tr -d ' '):$(grep -c '^## Status: running$' "$RF15" | tr -d ' '):$(printf '%s\n' "$out" | tail -n1)" \
+    "0:1:fleet-closeout: wave closed — lock released"
+else bad "AF12 mutation control not built"; fi
+rm -f "$FCM"
 
 # ---- AG: wave-plan is READ-ONLY (A4) + the no-new-merge-path guards (A3) + mutation control ----------
 PARENT12=automate-2026-10-10-150000; RF12P="$P/.supervisor/automate/$PARENT12.md"; LR12="$T/work/primary-lanes/$PARENT12"
@@ -1933,6 +2111,84 @@ if [ -s "$MUT/automate-lanes.sh" ] && ! cmp -s "$S" "$MUT/automate-lanes.sh" && 
 check "AG6b mutation (an executable git push) is caught by the static guard" "$(ag_exec_hits "$MUT/automate-lanes.sh" | wc -l | tr -d ' ')" 1
 check "AG7 A5: no sequential-loop script calls fleet-closeout or wave-plan (only the helpers dispatch arm)" \
   "$(grep -lE 'fleet-closeout|wave-plan' "$HERE"/automate-helpers.d/*.sh "$HERE/automate-trail.sh" "$HERE/automate-dismissed.sh" 2>/dev/null | wc -l | tr -d ' '):$(grep -cE '^ +fleet-closeout\|wave-plan\) exec bash "\$\(dirname "\$0"\)/automate-lanes.sh"' "$HERE/automate-helpers.sh" | tr -d ' ')" "0:1"
+
+# ---- AI: gate opt-out carry (lane-guardrails part 3) ---------------------------------------------------
+# A lane launched WITH the test-integrity guard's opt-out inherits it; a resume run from an environment
+# that lacks it would silently have the guard block the lane. The FACT is recorded coordinator-side at
+# first launch; every resume path refuses (exit 3, no spawn, nothing in the lane) until the owner re-runs
+# with it set or passes --without-gate-optout. The opt-out is never ADDED to a resume's environment.
+PARENT6=automate-2026-10-11-100000; RF6="$P/.supervisor/automate/$PARENT6.md"; LR6="$T/work/primary-lanes/$PARENT6"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT6" > "$RF6"
+for n in 1 2 3; do run lane-create "$RF6" reqs/a.md "$n" --parallel 3 >/dev/null; done
+L61="$LR6/L1"; L62="$LR6/L2"; L63="$LR6/L3"; TABLE6="$P/.supervisor/automate/$PARENT6.lanes"
+OF61="$P/.supervisor/automate/$PARENT6.L1.gate-optout"; OF63="$P/.supervisor/automate/$PARENT6.L3.gate-optout"
+OPT_ON="LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS=1"
+lenv() { grep '^ENV' "$STUB_LOG" | tail -1 | sed 's/.* OPTOUT=//'; }
+LJ61="$(cat "$L61/.supervisor/lane.json")"
+n6="$(claude_calls)"
+out="$(env "$OPT_ON" LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$L61" --owner-command "$OWN" 2>&1)"; rc=$?
+wait_gone "$L61"
+check "AI1 first launch with the opt-out set launches (and the lane inherits it)" "$rc:$(( $(claude_calls) - n6 )):$(lenv)" "0:1:1"
+check "AI1b the FACT is recorded coordinator-side (no value)" "$(cut -f1 "$OF61" 2>/dev/null):$(grep -c 'LOOMWRIGHT\|=1' "$OF61" 2>/dev/null | tr -d ' ')" "gate_optout_at_launch:0"
+check "AI1c … never in the lane: lane.json byte-identical, no opt-out file under the lane" \
+  "$([ "$(cat "$L61/.supervisor/lane.json")" = "$LJ61" ] && echo same):$(find "$L61" -name '*optout*' | wc -l | tr -d ' ')" "same:0"
+mkdir -p "$L61/.supervisor/automate"; printf '# Automate Run: %s-L1 — reqs/a.md\n' "$PARENT6" > "$L61/.supervisor/automate/$PARENT6-L1.md"
+ai_blocked="lane-launch: BLOCKED — L1 — launched with the test-integrity guard's opt-out; this resume's environment lacks it — re-run the same command with it set, or add --without-gate-optout to resume without it — need the owner"
+n6="$(claude_calls)"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --continue)"; rc=$?
+check "AI2 --continue without the opt-out ⇒ BLOCKED exit 3, the exact line, no spawn" "$rc:$(printf '%s\n' "$out" | head -1):$(( $(claude_calls) - n6 ))" "3:$ai_blocked:0"
+check "AI2b … the table reads blocked_launch with the reason; the fact is kept" \
+  "$(awk -F'\t' '$1 == "L1" { print $8 "|" $10 }' "$TABLE6"):$([ -e "$OF61" ] && echo kept)" \
+  "blocked_launch|launched with the test-integrity guard's opt-out; this resume's environment lacks it:kept"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --resume-run "$PARENT6-L1")"; rc=$?
+check "AI3 --resume-run without the opt-out ⇒ BLOCKED exit 3, no spawn" "$rc:$(( $(claude_calls) - n6 ))" "3:0"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS=true run lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --continue)"; rc=$?
+check "AI3b a value other than 1 is the guard's 'unset' too ⇒ BLOCKED" "$rc:$(( $(claude_calls) - n6 ))" "3:0"
+out="$(env "$OPT_ON" LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --continue 2>&1)"; rc=$?
+wait_gone "$L61"
+check "AI4 the same resume WITH the opt-out set ⇒ resumes, the lane runs with it (inherited)" "$rc:$(( $(claude_calls) - n6 )):$(lenv)" "0:1:1"
+check "AI4b … and the fact stays recorded" "$([ -e "$OF61" ] && echo kept || echo gone)" kept
+n6="$(claude_calls)"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --continue --without-gate-optout)"; rc=$?
+wait_gone "$L61"
+check "AI5 --without-gate-optout resumes without it (never added)" "$rc:$(( $(claude_calls) - n6 )):$(lenv)" "0:1:unset"
+check "AI5b … and clears the recorded fact" "$([ -e "$OF61" ] && echo kept || echo gone)" gone
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --continue)"; rc=$?
+wait_gone "$L61"
+check "AI6 fact cleared ⇒ a resume without the opt-out is unchanged (launches)" "$rc:$(( $(claude_calls) - n6 ))" "0:2"
+# AI7 --without-gate-optout given while the environment HAS it: dropped from the spawn, nothing recorded.
+n6="$(claude_calls)"
+out="$(env "$OPT_ON" LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$L62" --owner-command "$OWN" --without-gate-optout 2>&1)"; rc=$?
+wait_gone "$L62"
+check "AI7 a first launch with --without-gate-optout drops it from the lane's env and records nothing" \
+  "$rc:$(lenv):$([ -e "$P/.supervisor/automate/$PARENT6.L2.gate-optout" ] && echo recorded || echo none)" "0:unset:none"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L62" --owner-command "/automate --resume $PARENT6" --continue)"; rc=$?
+wait_gone "$L62"
+check "AI7b recorded = unset ⇒ resumes exactly as before" "$rc" 0
+# AI8 lane-answer: the refusal keeps the owner's validated answer pending (never lost), like HELD.
+out="$(env "$OPT_ON" LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$L63" --owner-command "$OWN" 2>&1)"; wait_gone "$L63"
+zq "$L63" toolu_ai1 sess-ai1
+PF63="$P/.supervisor/automate/$PARENT6.L3.answer-pending.json"; AF63="$L63/.supervisor/inbox/answers/toolu_ai1.json"
+n6="$(claude_calls)"
+out="$(printf '%s' '{"answers":{"0":"Red","1":"A,B"},"note":"keep it small"}' | LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-answer "$L63" toolu_ai1 --owner-command "$OWN" --via test 2>&1)"; rc=$?
+check "AI8 lane-answer without the opt-out ⇒ BLOCKED exit 3, no spawn, nothing written into the lane" \
+  "$rc:$(printf '%s\n' "$out" | head -1):$(( $(claude_calls) - n6 )):$([ -e "$AF63" ] && echo written || echo none)" \
+  "3:${ai_blocked/— L1 —/— L3 —}:0:none"
+check "AI8b … the validated answer is KEPT pending (answers, note, via)" \
+  "$(jq -c '[.tool_use_id, .answers["0"], .answers["1"], .note, .via]' "$PF63" 2>/dev/null)" '["toolu_ai1","Red","A,B","keep it small","test"]'
+has "AI8c … and the line says how to deliver it" "$out" "deliver it with the opt-out set, or with --without-gate-optout"
+check "AI8d lane-status shows the lane as answer_pending" "$(bash "$S" lane-status "$RF6" --json 2>/dev/null | jq -r '.lanes[] | select(.lane == "L3") | .state')" answer_pending
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L63" --deliver-pending --owner-command "/automate --resume $PARENT6")"; rc=$?
+check "AI9 --deliver-pending without the opt-out ⇒ BLOCKED, the answer still pending, nothing in the lane" \
+  "$rc:$([ -s "$PF63" ] && echo kept || echo gone):$([ -e "$AF63" ] && echo written || echo none):$(( $(claude_calls) - n6 ))" "3:kept:none:0"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L63" --deliver-pending --owner-command "/automate --resume $PARENT6" --without-gate-optout)"; rc=$?
+wait_gone "$L63"
+check "AI9b --deliver-pending --without-gate-optout delivers: answer file written, pending gone, fact cleared, env unset" \
+  "$rc:$(jq -c '[.answers["Which color?"], .note]' "$AF63" 2>/dev/null):$([ -e "$PF63" ] && echo kept || echo gone):$([ -e "$OF63" ] && echo kept || echo gone):$(lenv)" \
+  '0:["Red","keep it small"]:gone:gone:unset'
+check "AI9c … one spawn, resuming the deferred session" "$(( $(claude_calls) - n6 )):$(grep '^ARGS' "$STUB_LOG" | tail -1 | grep -c '\[--resume\] \[sess-ai1\]' | tr -d ' ')" "1:1"
+check "AI10 the opt-out's name never reaches a lane file (lane.json, inbox, settings)" \
+  "$(grep -rl 'ALLOW_GATE_CONFIG_EDITS\|gate-optout\|gate_optout' "$L61/.supervisor" "$L63/.supervisor" "$L61/.claude" 2>/dev/null | wc -l | tr -d ' ')" 0
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 # AA-F12z (final leg): nothing this suite started may outlive it — no process whose command line names

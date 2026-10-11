@@ -43,6 +43,11 @@
 # and removes a lane only through its own fail-CLOSED refusals — never `gh pr merge`,
 # never a force-push, never a write into a launched lane beyond the exceptions the
 # automate-lanes.sh header's `Files` block lists (the authority — not restated here).
+# A fourth carve-out (also `--parallel N>1` only): `wave-build` is delegated to the
+# sibling `automate-wave.sh`, the ONE writer of a wave branch — a temporary worktree
+# off fresh origin/<base>, `--no-ff` merges of the lane PR heads, local CI, the
+# release commit, a regular push of the wave branch only and `gh pr create`; never
+# a PR merge, never a lane-branch push, never a force-push (its header is the authority).
 # UNCOUNTED by the
 # doc-currency gate (it is a plain script, not an agent/command/skill/hook).
 #
@@ -86,6 +91,7 @@
 #:  lane-wait        <parent_runfile> [--interval S] [--timeout S]  # delegated to automate-lanes.sh — the coordinator's lane watcher: blocks token-free until a lane needs the owner (a new pending question, or a lane entering a park / failure state), prints one `lane-wait: …` line per event + one relay hint and exits 0 (idle / timeout also exit 0, usage error 2); run as a BACKGROUND command; read-only except its `<parent_run_id>.lane-wait-seen` ledger
 #:  fleet-closeout   <parent_runfile>                   # parallel-automate/21: delegated to automate-lanes.sh — wave close in the coordinator's primary, stepwise + idempotent (re-run on every --resume): meta pull, per-lane backstop (lane-convert-ready on a merged lane), parent Queue check-off, primary sync, lane-remove, then lanes dir / leaks / main health / run-lock release; one `fleet-closeout: <step> — <detail>` line each; never merges; exit 0 (pull failure 2)
 #:  wave-plan        <parent_runfile> [--wave-branch <name>]  # parallel-automate/21: delegated to automate-lanes.sh — READ-ONLY: prints the operator's wave-branch integration commands (one `git merge --no-ff <head sha>` per lane) + the conflict rules; executes no git mutation, push or gh write
+#:  wave-build       <parent_runfile> [--wave-branch <name>]  # delegated to automate-wave.sh — runs what wave-plan prints and stops at an OPEN wave PR: temp worktree off fresh origin/<base>, `--no-ff` merge of each lane PR head in planner order, ci-local.sh, the release commit last, regular push of the wave branch only, `gh pr create`, one parent ## Progress line; never merges a PR or pushes a lane branch; exit 0 opened/done (already open), 1 refused (nothing created), 2 STOPPED (worktree kept, nothing pushed); run it as a BACKGROUND command
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7);
 # 3 progress-append's `current_not_set` guard (the line WAS appended; ## Current was never set).
@@ -1080,6 +1086,8 @@ main() {
     lane-info|init-check|pick-guard|branch-check) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     lane-status|lane-feed|lane-readiness|lane-park-notify|lane-wait) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     fleet-closeout|wave-plan) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
+    # The wave-branch writer — the sibling automate-wave.sh, the fourth carve-out.
+    wave-build) exec bash "$(dirname "$0")/automate-wave.sh" "$cmd" "$@" ;;
     ""|-h|--help)
       _ah_usage
       _ah_bundle | grep -E '^#   [a-z]' | sed 's/^#   /  /'

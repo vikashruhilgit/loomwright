@@ -32,8 +32,15 @@
 #      would make the second script drop the FIRST ask.
 #   5. Debounce (window LOOMWRIGHT_NOTIFY_DEBOUNCE, default 5s).
 #   6. Build a (title, body) pair per event type. Unknown events → exit 0.
+#      Inside an `/automate --parallel` LANE clone (lane-guardrails part 2 — see
+#      "Lane banner" below) the user-question banner names the lane
+#      and the one command that answers it: title `Lane <L> needs your answer`,
+#      body `<question header, else its first 80 chars> — answer in the
+#      coordinator session: /loomwright:automate --resume <parent_run_id>`.
+#      Outside a lane every byte is unchanged.
 #   7. Append one audit line `<ts> notify group=<TN_GROUP> tool_use_id=<id|->`
-#      to notifications.log (every host), then fire the OS-native notification
+#      (plus ` lane=<L>` inside a lane) to notifications.log (every host), then
+#      fire the OS-native notification
 #      (best-effort, never blocking):
 #        macOS  → terminal-notifier (clickable, `-group loomwright-<key>`) or
 #                 osascript display notification
@@ -83,6 +90,47 @@ TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null || t
 
 # utc_ts — ISO-8601 UTC timestamp for notifications.log audit lines.
 utc_ts() { date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "-"; }
+
+# ---- Lane banner (lane-guardrails part 2) ------------------------------------
+# A lane is a headless clone run by `/automate --parallel`: its
+# question is relayed, and ONLY the coordinator session (the one that typed
+# `/automate --parallel`) can answer it, so a generic "Claude needs your input"
+# sent the owner to the wrong session. The lane is detected the way
+# automate-lanes.sh's relay-hook finds it: the first of the payload cwd's MAIN
+# checkout (a worker's linked worktree lives outside the lane dir; the main
+# checkout is the parent of the git common dir), the cwd itself,
+# CLAUDE_PROJECT_DIR and PWD that holds a VALID `.supervisor/lane.json` —
+# `lane` L<1-2 digits>, a path-safe `parent_run_id`, and `run_id` equal to
+# `<parent_run_id>-<lane>` (automate-lanes.sh `_lane_ctx`'s own checks). Any
+# failure ⇒ not a lane ⇒ the unchanged generic banner. A lane is plugin context
+# by definition, so the scope gate below never suppresses its banner. Honest
+# limit: the banner fires even when the lane's stamped policy answers the
+# question itself (relay-hook runs as a separate hook; this one cannot see its
+# decision) — the same over-notify the generic banner had.
+LANE_ID=""
+LANE_PARENT=""
+# (Only PreToolUse is read here: this script is wired on PreToolUse for the
+# user-question tool alone, and every other tool exits at the event switch below.)
+if [ "$HOOK_EVENT" = "PreToolUse" ]; then
+  _nd_cwd="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
+  _nd_lmain=""
+  if [ -n "$_nd_cwd" ] && command -v git >/dev/null 2>&1; then
+    _nd_gcd="$(git -C "$_nd_cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null | head -1 || true)"
+    case "$_nd_gcd" in /*/.git) _nd_lmain="${_nd_gcd%/.git}" ;; esac
+  fi
+  for _nd_c in "$_nd_lmain" "$_nd_cwd" "${CLAUDE_PROJECT_DIR:-}" "${PWD:-}"; do
+    [ -n "$_nd_c" ] && [ -s "$_nd_c/.supervisor/lane.json" ] || continue
+    _nd_lane="$(jq -r 'select((.lane | type) == "string" and (.lane | test("^L[0-9]{1,2}$"))
+        and (.parent_run_id | type) == "string" and (.parent_run_id | test("^[A-Za-z0-9_][A-Za-z0-9._-]*$"))
+        and .run_id == (.parent_run_id + "-" + .lane))
+      | .lane + " " + .parent_run_id' "$_nd_c/.supervisor/lane.json" 2>/dev/null | head -1 || true)"
+    if [ -n "$_nd_lane" ]; then
+      LANE_ID="${_nd_lane%% *}"
+      LANE_PARENT="${_nd_lane#* }"
+    fi
+    break
+  done
+fi
 
 # ---- Scope gate -------------------------------------------------------------
 # LOOMWRIGHT_NOTIFY_SCOPE controls whether non-plugin AskUserQuestion
@@ -141,7 +189,7 @@ SCOPE="${LOOMWRIGHT_NOTIFY_SCOPE:-plugin}"
 # Notification hook event is exempt: it represents Claude Code itself signalling
 # the user (permission prompts, idle, elicitation) — always relevant regardless
 # of plugin origin. Only PreToolUse[AskUserQuestion] gets the scope gate.
-if [ "$SCOPE" = "plugin" ] && [ "$HOOK_EVENT" = "PreToolUse" ]; then
+if [ "$SCOPE" = "plugin" ] && [ "$HOOK_EVENT" = "PreToolUse" ] && [ -z "$LANE_ID" ]; then
   if ! is_plugin_context "$TRANSCRIPT_PATH"; then
     exit 0
   fi
@@ -241,6 +289,19 @@ case "$HOOK_EVENT" in
     BODY="$(printf '%s' "$INPUT" \
       | jq -r '.tool_input.questions[0].question // .tool_input.questions[0].header // "Plugin is paused on a user question"' \
       2>/dev/null || true)"
+    if [ -n "$LANE_ID" ]; then
+      # Lane banner: the head (header, else the question's first 80 chars) is
+      # clipped so head + suffix fit MAX_BODY (200) in BYTES — the generic
+      # truncation below must never cut the resume command off.
+      TITLE="Lane $LANE_ID needs your answer"
+      LANE_BODY="$(printf '%s' "$INPUT" | jq -r --arg p "$LANE_PARENT" '
+        def clip($n): if utf8bytelength <= $n or length == 0 then . else .[0:(length - 1)] | clip($n) end;
+        (" — answer in the coordinator session: /loomwright:automate --resume " + $p) as $sfx
+        | ((.tool_input.questions[0].header // "") | tostring | gsub("[\\r\\n\\t]+"; " ")) as $h
+        | (if $h != "" then $h else ((.tool_input.questions[0].question // "a question") | tostring | gsub("[\\r\\n\\t]+"; " ")) end)
+        | .[0:80] | clip(200 - ($sfx | utf8bytelength)) | . + $sfx' 2>/dev/null || true)"
+      [ -n "$LANE_BODY" ] && BODY="$LANE_BODY"
+    fi
     ;;
   Notification)
     NOTIF_TYPE="$(printf '%s' "$INPUT" | jq -r '.notification_type // empty' 2>/dev/null || true)"
@@ -359,7 +420,11 @@ osascript_escape() {
 # testable without any notifier installed. NOTIFY_LOG is set above the replay
 # de-duplication block. Brace-grouped so an unwritable/directory log cannot
 # leak the shell's own redirect diagnostic (see the ledger write above).
-{ printf '%s notify group=%s tool_use_id=%s\n' "$(utc_ts)" "$TN_GROUP" "${TOOL_USE_ID:--}" >> "$NOTIFY_LOG"; } 2>/dev/null || true
+if [ -n "$LANE_ID" ]; then
+  { printf '%s notify group=%s tool_use_id=%s lane=%s\n' "$(utc_ts)" "$TN_GROUP" "${TOOL_USE_ID:--}" "$LANE_ID" >> "$NOTIFY_LOG"; } 2>/dev/null || true
+else
+  { printf '%s notify group=%s tool_use_id=%s\n' "$(utc_ts)" "$TN_GROUP" "${TOOL_USE_ID:--}" >> "$NOTIFY_LOG"; } 2>/dev/null || true
+fi
 
 # Portable timeout guard (v14.1.0 hardening — red-team W4). A wedged notification
 # daemon or a first-run permission interaction must never block the agent loop.
