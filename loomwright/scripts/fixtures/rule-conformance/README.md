@@ -12,6 +12,8 @@ run in a sandbox repo that holds that store.
 
 Each brief also carries the same one-entry `## Touched-file invariants` section (it modifies an existing
 script), so Plan Reviewer Criterion 18 has no absence finding to add and the verdicts below stay Criterion 17's.
+Each brief also adds a spec without a `## Pin mutations` row, so Criterion 19 may add a MEDIUM `pin_mutations`
+issue; a MEDIUM never changes the decisions below.
 
 | Fixture | Expected Plan Reviewer verdict |
 |---|---|
