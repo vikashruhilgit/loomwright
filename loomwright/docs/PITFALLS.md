@@ -20,7 +20,7 @@
 - **Fix in 11.1.2:** Phase 4.5 completion-tail guard (`loomwright/agents/supervisor.md`) refuses a successful `SUPERVISOR_RESULT` when `skip_self_heal_requested=false` AND `phase45_review_invoked=false`. Run self-reports `status: failed`; job stays in `in-progress/`.
 - **Recovery for pre-11.1.2 runs (operator workaround — unsupported, manual):**
   1. `/code-reviewer` has no first-class branch-vs-branch diff mode. Compute scope via `git diff --name-only origin/main...HEAD` and pass that file list to `/code-reviewer`, OR pipe `git diff origin/main...HEAD` into a manual review.
-  2. Fix any new BLOCKING/HIGH issues; push to feature branch.
+  2. Fix any new issues at or above the fix floor (`scripts/fix-floor.sh resolve`, default MEDIUM); push to feature branch.
   3. Update `.supervisor/` state and the job file by hand. NOT supported — will become `/supervisor --recover-self-heal` in a follow-up PR.
 - **Intentional skip:** re-run with `--skip-self-heal` (the guard accepts it as a recorded deliberate choice).
 

@@ -458,7 +458,7 @@ For **either** kind, the Supervisor MUST:
 
 ### Phase 4.5: SELF_HEAL (Integration Review + Bounded Fix Loop)
 
-**Purpose:** Run a holistic Code Reviewer pass on the integrated feature branch; auto-fix bounded BLOCKING/HIGH `new` issues; escalate if anything remains.
+**Purpose:** Run a holistic Code Reviewer pass on the integrated feature branch; auto-fix bounded `new` issues at or above `FIX_FLOOR` (default MEDIUM; BLOCKING always); escalate if anything remains.
 
 **Protocol authority (read at phase entry):** `Read("${CLAUDE_PLUGIN_ROOT}/skills/self-heal-advisory/SKILL.md")` and execute its **Part 2 — Phase 4.5 SELF_HEAL Loop Protocol** as the authoritative procedure: on-entry actions (phase transition, the `prior_churn`/`house_rules`/`brief_conformance` pre-review advisory enrichments, invariant-tracking init, resume-thrash guard, `--skip-self-heal` check), base-mismatch cleanup, the bounded review-and-fix loop (reviewer + fix-task spawn contracts), Outcomes Rubric grading, the System Twin advisory checks, the advisory red-team lens, fix-task crash handling, the completion-tail procedure (its numbered steps), hard-signal dual emission, and the error-handling table. Part 1 of the same file holds the advisory-only machinery. The skill is deliberately NOT preloaded — one Read here keeps this agent prompt gate-focused. Also `Read("${CLAUDE_PLUGIN_ROOT}/skills/state-management/SKILL.md")` — needed for §"Session Logging"'s exact `session_end` JSONL line shape (the base `ts`/`event`/`type`/`task_id`/`status`/`plugin_version`/`knowledge_sources_used` wrapper): self-heal-advisory's own Part 1 §"Hard-signal dual emission" gives the flat-field correspondence table but explicitly defers to `state-management` for "the exact shape" (see §"Preloaded Skill Routing (4f)" above — `state-management` is likewise no longer frontmatter-preloaded). The gates below stay in THIS file.
 
@@ -745,7 +745,7 @@ After each blocking subagent, extract minimal summary:
 | Orchestrator | `"Created {N} subtasks: {IDs}. Launchable: {IDs}"` |
 | Execute Manager | Parse EXECUTE_RESULT or EXECUTE_CHECKPOINT block |
 | Worker (Single-Agent / Sequential path) | Parse WORKER_RESULT block from output; deterministic `outputs_verified`/`outputs_gap` gate (disk re-check via `verify-provides.sh`, worker report cross-checked) replaces a per-subtask reviewer parse |
-| Code Reviewer (Phase 4.5 integration review) | Parse CODE_REVIEW_RESULT block; filter issues where category=new AND severity in [BLOCKING, HIGH] for fix-task input |
+| Code Reviewer (Phase 4.5 integration review) | Parse CODE_REVIEW_RESULT block; filter issues where category=new AND `fix-floor.sh meets <severity> $FIX_FLOOR` prints `fix` for fix-task input |
 | Fix task (Phase 4.5) | Parse FIX_RESULT block from output |
 
 ### Subagent Spawn Contracts

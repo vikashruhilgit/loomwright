@@ -32,6 +32,7 @@ These names are **coined here**. Treat this section as authoritative; all other 
 | Until-mergeable mode | **`--until-mergeable`** | Opt-in, **heal-only** drain loop (§"Until-Mergeable Mode") that **replaces** the default loop's review half — **absent ⇒ byte-for-byte the default loop**. |
 | Earned fallback trigger | **`no_review_lens_posted`** | Coined in §"Earned Fallback Review — `no_review_lens_posted`". True when §U1's existing read shows no bot-authored finding in any channel AND every review-producing check is green-with-empty-output/absent/skipped. Gates the drain's ONE exception to heal-only: exactly one `code-reviewer` diff review per drain run, fail-CLOSED toward running it. |
 | Drain bound | **`--max-rounds N`** (default 5) | Hard ceiling on drain rounds (§"Until-Mergeable Mode"), **mechanized** by `scripts/drain-rounds.sh` (`init`/`bump`/`check`/`read`) — the SAME ledger call on the SAME §U4 path both entry senses run, never a private per-path counter (AC1/AC2). |
+| Fix floor | **`--fix-floor <HIGH\|MEDIUM\|LOW>`** (default `MEDIUM`; `.supervisor/config.json` `.fix_floor`) | **Fix-time** — the lowest severity BOTH loops fix; below it a finding passes as a dismissed follow-up (§"Fix floor"). The SAME setting Supervisor Phase 4.5 and Launch Pad's plan-review save read. Independent of `--severity-floor`. |
 | Severity floor | **`--severity-floor <BLOCKING\|HIGH\|MEDIUM\|LOW>`** (default `HIGH`) | **Termination-only** — see §"Termination-only severity floor (`sub_floor_converged`)". Does NOT gate whether a finding is fixed (Validate-Then-Fix, §U3.5, is unchanged); gates only whether a round whose entire fixed yield was below this severity starts another round. |
 | Required-check fallback | **`--required-checks all-non-neutral`** | Opt-in fallback when branch-protection metadata is unreadable (default = fail closed → `ESCALATED`). |
 | Scoped check-wait bound | **`--check-wait-timeout N`** (seconds) | Bounded wait for the **scoped set** (required + review-producing checks) to settle (§"Wait-For-Settled-Checks"). Only applies under `--until-mergeable`; **default 1200** (20 min — sized in §"Wait-For-Settled-Checks" against the measured `ci` duration), the TOTAL across resumable calls (each `--call-max 540`), polled every **15s**. Forwarded from the dispatcher via `LOOMWRIGHT_CHECK_WAIT_TIMEOUT`. |
@@ -54,8 +55,8 @@ These names are **coined here**. Treat this section as authoritative; all other 
 - schema_version: 1
 - decision: PASS | ESCALATED        # enum — exactly these two values (READY is added under --until-mergeable, schema v2 — see docs/RESULT_SCHEMAS.md)
 - iterations: <int>                 # how many review→fix→re-review cycles ran
-- issues_fixed: <int>               # count of new+BLOCKING/HIGH issues addressed by fix workers
-- remaining_issues: <int>           # new+BLOCKING/HIGH issues still open at exit
+- issues_fixed: <int>               # count of new issues at or above the fix floor addressed by fix workers
+- remaining_issues: <int>           # new issues at or above the fix floor still open at exit
 - pr_url: "<string>"                # the PR this run operated on
 - notified: <bool>                  # true if a NEEDS_HUMAN notification was attempted
 ```
@@ -116,6 +117,21 @@ Before the loop runs, resolve the PR's head and get the working tree onto it. **
 
 ---
 
+## Fix floor (`--fix-floor`)
+
+ONE fix-time severity threshold shared by every review step — Launch Pad's plan-review save, Supervisor Phase 4.5 and both loops here — so a severity one step lets pass is not fixed by the next. Authority: `scripts/fix-floor.sh` (its header carries the table).
+
+| `FIX_FLOOR` | fixed | passes (dismissed follow-up) |
+|---|---|---|
+| `HIGH` | BLOCKING, HIGH | MEDIUM, LOW |
+| `MEDIUM` (default) | BLOCKING, HIGH, MEDIUM | LOW |
+| `LOW` | every severity | nothing |
+
+- **Resolve once, before either loop:** `FIX_FLOOR = $(bash <the plugin's scripts/fix-floor.sh, invoked like every other script in this file> resolve --flag "<--fix-floor value, empty when absent>" --root .)` — flag > `.supervisor/config.json` `.fix_floor` > `MEDIUM`. The detached runner gets the flag from `LOOMWRIGHT_FIX_FLOOR` (the dispatcher resolved it in the checkout that holds the config — §"Until-Mergeable Dispatch Signal"); the inline `/review-pr` and `/automate`'s owned drain run in that checkout, so `--root .` reads it.
+- **Exit 2 ⇒ stop before any fix:** post one PR comment naming `fix_floor_invalid` and the script's stderr line, emit `decision: ESCALATED` (`remaining_issues: 0`; under `--until-mergeable`, `escalation_cause: other` with `fix_floor_invalid` leading `summary`). A value the script refuses is never replaced by the default.
+- **`at_floor(f)`** = `fix-floor.sh meets "<severity>" "$FIX_FLOOR"` prints `fix`. An absent or unrecognised severity prints `fix` — so a bot finding that states NO severity is fixed exactly as before this setting existed; only a STATED below-floor severity passes.
+- **Not `--severity-floor`.** That one is termination-only (§"Termination-only severity floor"); `fix_floor` decides whether a finding is fixed at all. Both can be set; they never alias.
+
 ## Step 2 — The bounded review→fix→re-review loop
 
 Mirrors Supervisor Phase 4.5 semantics exactly. **Default bound is 3 iterations** (the `--heal-iterations` analogue).
@@ -136,27 +152,31 @@ while heal_iterations < max_heal_iterations:
   )
   # Parse the CODE_REVIEW_RESULT block.
 
-  if review.decision == PASS:
+  # §"Fix floor": the reviewer PASSes on MEDIUM/LOW by its own decision matrix; a PASS that still carries an
+  # at_floor `new` finding is a FIX round here (FIX_FLOOR MEDIUM/LOW). HIGH reproduces the old loop exactly.
+  fixable = [i for i in review.issues if i.category == "new" and at_floor(i)]
+  loop_decision = FAIL if (review.decision == PASS and fixable) else review.decision
+
+  if loop_decision == PASS:
     decision = PASS
     remaining_issues = 0
     break                          # done — DO NOT merge (see "No auto-merge")
 
-  if review.decision == NEEDS_HUMAN:
+  if loop_decision == NEEDS_HUMAN:
     decision = ESCALATED
-    remaining_issues = count(new issues with severity in [BLOCKING, HIGH])
+    remaining_issues = len(fixable)
     # STOP — do NOT auto-fix, do NOT merge.
     post findings to PR (gh pr comment ...)
     notify (best-effort — see "Notify on NEEDS_HUMAN")
     break
 
-  # decision == FAIL — by CODE_REVIEW_RESULT rule, >=1 new + BLOCKING/HIGH issue exists.
-  fixable = [i for i in review.issues if i.category == "new" and i.severity in (BLOCKING, HIGH)]
+  # loop_decision == FAIL — >=1 new issue at or above FIX_FLOOR exists (`fixable`, computed above).
 
   Task(
     subagent_type: "general-purpose",
     # Tool allowlist: Read, Write, Edit, Bash, Glob, Grep — NO Task
     # (the fix worker may not dispatch further subagents).
-    prompt: "Address ONLY these new+BLOCKING/HIGH review findings: {fixable}.
+    prompt: "Address ONLY these new review findings at or above the fix floor ({FIX_FLOOR}): {fixable}.
              Do NOT touch pre_existing issues or nits. Update tests if behaviour
              changes. Run type-check + tests locally before finishing. WAITING: redirect long test output to a file, never pipe it into `tail`; block on a run moved to the background with the project's own wait command (see its CLAUDE.md) or a bounded loop on a line the run writes when it ends — never `pgrep -f`/`pkill -f <pattern>` with <pattern> in your own command (the whole command line is one `<shell> -c` process, so the waiter matches itself and never exits). Before pushing,
              PRE-PUSH SELF-REGRESSION REVIEW: re-read your own diff and confirm it introduces no
@@ -175,9 +195,9 @@ while heal_iterations < max_heal_iterations:
   heal_iterations += 1
 
 # Loop exit
-if heal_iterations == max_heal_iterations and review.decision != PASS:
+if heal_iterations == max_heal_iterations and loop_decision != PASS:
   decision = ESCALATED
-  remaining_issues = count(new issues with severity in [BLOCKING, HIGH])
+  remaining_issues = len(fixable)
   post findings to PR (gh pr comment ...)
   notify (best-effort)
 ```
@@ -185,7 +205,7 @@ if heal_iterations == max_heal_iterations and review.decision != PASS:
 ### Outcome model
 
 - **PASS** → `decision: PASS`. The diff is clean. The loop is **done**. It does **not** merge.
-- **FAIL** (reviewer returned `new` issues with severity BLOCKING/HIGH) → spawn a `Task(general-purpose)` fix worker (allowlist Read / Write / Edit / Bash / Glob / Grep, **no Task**) that addresses ONLY those issues, then **fork-aware push** to the PR branch (same-repo: explicit refspec, **never `--force`**; fork: degrade to ESCALATED — see "Fork-aware push"), then re-review. Bounded to N iterations (**default 3**).
+- **FAIL** (reviewer returned `new` issues at or above the fix floor — a reviewer PASS that still carries one counts) → spawn a `Task(general-purpose)` fix worker (allowlist Read / Write / Edit / Bash / Glob / Grep, **no Task**) that addresses ONLY those issues, then **fork-aware push** to the PR branch (same-repo: explicit refspec, **never `--force`**; fork: degrade to ESCALATED — see "Fork-aware push"), then re-review. Bounded to N iterations (**default 3**).
 - **NEEDS_HUMAN** (reviewer escalates) **or loop exhausts with issues remaining** → **STOP. Do NOT auto-fix, do NOT merge.** Post the findings to the PR via `gh pr comment`, fire notifications best-effort, exit with `decision: ESCALATED`.
 
 ### Never `--force`
@@ -229,7 +249,7 @@ Additionally, **`/review-pr` does not create PRs** (it only operates on an exist
 
 > **This whole section is the SINGLE SOURCE OF TRUTH for until-mergeable readiness semantics.** Other subtasks (the `/review-pr` command body, the `review-pr-runner` agent, the dispatcher script, and `docs/RESULT_SCHEMAS.md`) **reference** the definitions coined here — the channel set (§"All-Channel Read"), the scoped wait (§"Wait-For-Settled-Checks"), validate-then-fix (§"Validate-Then-Fix"), the READY equivalence (§"READY redefinition"), and the dispatch signal contract (§"Until-Mergeable Dispatch Signal") — and must NOT re-duplicate or re-coin them.
 
-`--until-mergeable` is an **opt-in, heal-only** drain loop that **replaces** the default diff-only loop's review half above — under this flag the drain runs **no `code-reviewer` of its own by default** (§U4's pseudocode spawns only the `general-purpose` fix worker). The **ONE exception** is the **earned fallback** (§"Earned Fallback Review — `no_review_lens_posted`" below): at most one diff review per drain run, run only when the drain's own read shows no review lens actually posted. It drains the **machine-speed external review signals** on a PR across **ALL review channels** — **required** CI check-runs, **review-producing** checks, automated/bot **formal reviews**, **inline review threads**, **PR issue comments**, and **bot check-run output/annotations** — **validating** each detected bot finding and auto-fixing the validated ones (regardless of the bot's stated severity), pushing, and re-polling until the **READY** condition (§"READY redefinition") holds, then stops with `decision: READY` and fires a "ready to merge" notification. **It NEVER merges** (see "No auto-merge ever") and **NEVER waits on a human** — human approval, `reviewDecision: REVIEW_REQUIRED`, and human-authored unresolved threads/comments are surfaced/notified but are explicitly **not** readiness blockers.
+`--until-mergeable` is an **opt-in, heal-only** drain loop that **replaces** the default diff-only loop's review half above — under this flag the drain runs **no `code-reviewer` of its own by default** (§U4's pseudocode spawns only the `general-purpose` fix worker). The **ONE exception** is the **earned fallback** (§"Earned Fallback Review — `no_review_lens_posted`" below): at most one diff review per drain run, run only when the drain's own read shows no review lens actually posted. It drains the **machine-speed external review signals** on a PR across **ALL review channels** — **required** CI check-runs, **review-producing** checks, automated/bot **formal reviews**, **inline review threads**, **PR issue comments**, and **bot check-run output/annotations** — **validating** each detected bot finding and auto-fixing the validated ones at or above the fix floor (§"Fix floor" — a finding with no stated severity is always fixed), pushing, and re-polling until the **READY** condition (§"READY redefinition") holds, then stops with `decision: READY` and fires a "ready to merge" notification. **It NEVER merges** (see "No auto-merge ever") and **NEVER waits on a human** — human approval, `reviewDecision: REVIEW_REQUIRED`, and human-authored unresolved threads/comments are surfaced/notified but are explicitly **not** readiness blockers.
 
 > **AC7 — absent ⇒ unchanged.** When `--until-mergeable` is NOT passed, `/review-pr` runs the existing diff-only review→fix→re-review loop (Step 2) **byte-for-byte** — same `PASS`/`ESCALATED` terminal states, same `REVIEW_HEAL_RESULT` `schema_version: 1`, no external-state reads, no all-channel scan, no scoped check-wait, no postmortem tail. This mode is purely opt-in; nothing about the default path changes.
 
@@ -388,18 +408,19 @@ An unresolved review thread is a **READY-blocker ONLY** when its first comment's
 
 Human-authored — or **unknown/unclassifiable** — unresolved threads are **surfaced in the notification but NEVER block READY** (AC3): the loop never waits on a human. (Unknown-author threads are surfaced so a human sees them before they merge; per R11 this is acceptable because READY never auto-merges.) Note the asymmetry with U1's fail-safe: a *GraphQL error* (no thread data at all) → `ESCALATED`; a *successfully-read* thread whose author cannot be classified as a bot → does not block (treated like a human thread, surfaced only).
 
-### Step U3.5 — Validate-Then-Fix (replaces the BLOCKING/HIGH floor) (AC5, PINNED)
+### Step U3.5 — Validate-Then-Fix (replaces the BLOCKING/HIGH floor; fix floor since `fix_floor`) (AC5, PINNED)
 
-> **"Validate-Then-Fix" is canonical.** It **replaces** the old `fixable = actionable BLOCKING/HIGH items …` severity floor. Severity is no longer a gate on *whether* a finding is considered — EVERY detected bot finding (from any channel, at any stated severity) is run through validation. A real **MEDIUM** like #64 must be fixed; the old floor would have silently dropped it.
+> **"Validate-Then-Fix" is canonical.** It **replaces** the old `fixable = actionable BLOCKING/HIGH items …` severity floor. Severity is no longer a gate on *whether* a finding is considered — EVERY detected bot finding (from any channel, at any stated severity) is run through validation. A real **MEDIUM** like #64 must be fixed; the old floor would have silently dropped it. **Fix floor (§"Fix floor"):** after validation, a confirmed finding whose STATED severity ranks below `FIX_FLOOR` is not fixed — it is itemised in `dismissed` with `reason: below_fix_floor` (a follow-up, the same treatment Phase 4.5 gives a below-floor finding). At the default `MEDIUM` floor a #64-style MEDIUM is still fixed; a finding with no stated severity is always fixed.
 
 For each finding in the classified `bot_findings` UNION (§U1), apply this three-way decision:
 
 1. **Validate (evidence-citing — mitigates R4, no rubber-stamping).** The finding is **confirmed** ONLY when it (a) maps to a **concrete current-branch location** (file + line/region that still exists in the checked-out head state) AND (b) is **actionable** (describes a change that can be made). Validation must **cite the evidence** (the grounding location); a finding that **cannot be grounded** on the current branch is **dismissed, not fixed** — never rubber-stamp a finding into a fix without grounding it.
-2. **Confirmed + auto-fixable → FIX regardless of stated severity.** Dispatch the existing fix-worker model: `Task(general-purpose)` with tool allowlist **Read / Write / Edit / Bash / Glob / Grep — NO Task**, told to address ONLY the validated findings; then **fork-aware push** (same-repo: explicit refspec, **REGULAR push, NEVER `--force`**; fork: no push → degrade to ESCALATED — see "Fork-aware push"); then **re-scan ALL channels** (U1). A confirmed MEDIUM/LOW is fixed exactly like a confirmed HIGH — there is no severity floor.
+2. **Confirmed + auto-fixable + at the fix floor → FIX.** Dispatch the existing fix-worker model: `Task(general-purpose)` with tool allowlist **Read / Write / Edit / Bash / Glob / Grep — NO Task**, told to address ONLY the validated findings; then **fork-aware push** (same-repo: explicit refspec, **REGULAR push, NEVER `--force`**; fork: no push → degrade to ESCALATED — see "Fork-aware push"); then **re-scan ALL channels** (U1). A confirmed finding at or above `FIX_FLOOR` is fixed exactly like a confirmed HIGH; no OTHER severity gate exists.
 3. **Confirmed but NOT auto-fixable (needs human judgment) → BLOCKS READY.** It is surfaced/escalated (counted in `remaining_issues`); it does not get a blind fix.
+3a. **Confirmed but its stated severity is below `FIX_FLOOR` → DISMISSED as `below_fix_floor`** (auto-fixable or not). It does **NOT** block READY and is **not** fixed; it travels as a follow-up like any dismissed finding.
 4. **Validated as stale / invalid / already-addressed → DISMISSED.** Recorded as dismissed (`findings_dismissed`, the count; `dismissed`, the itemised `{finding, reason, source}` list, plus an OPTIONAL `severity` when the finding stated one — dismissed-findings-01 / automate-followups/12, `docs/RESULT_SCHEMAS.md` §REVIEW_HEAL_RESULT); does **NOT** block READY and is **not** fixed.
 
-`findings_validated` counts findings confirmed (cases 2+3); `findings_dismissed` counts case 4. Only **case-3 (confirmed-but-not-auto-fixable)** findings remain as READY-blockers after a round — case-2 findings are fixed (and may recur, governed by the Anti-Churn Guardrail), case-4 findings are gone.
+`findings_validated` counts findings confirmed (cases 2+3); `findings_dismissed` counts cases 3a+4. Only **case-3 (confirmed-but-not-auto-fixable)** findings remain as READY-blockers after a round — case-2 findings are fixed (and may recur, governed by the Anti-Churn Guardrail), case-4 findings are gone.
 
 ### Dismissed-findings marker comment (dismissed-findings-01)
 
@@ -431,6 +452,10 @@ max_rounds = 5                      # default; --max-rounds N overrides; HARD ce
 max_probes = 5                      # default; --max-probes N overrides — bound on scripts/ci-run-probe.sh calls PER ROUND
                                      # (ci-trust-probe-01); exactly one `gh api .../jobs` call per probed check, no pagination
 severity_floor = "HIGH"             # default; --severity-floor overrides — TERMINATION-ONLY (see below), never a fix-time gate
+# FIX_FLOOR — resolved once before the loop (§"Fix floor"); the FIX-TIME gate. apply_fix_floor(fs) moves every f in
+# fs whose STATED severity is below FIX_FLOOR (stated_severity(f) present AND `fix-floor.sh meets` prints `pass`) into
+# `dismissed` as {finding: describe(f), reason: "below_fix_floor", source: <f's source>, severity: stated_severity(f)}
+# and returns the rest. No stated severity ⇒ never moved. Evaluate with ONE `fix-floor.sh split "$FIX_FLOOR" -` per call.
 fix_cycles = 0                      # how many fix→push cycles ran (postmortem-gate input)
 churn_rounds = 0                    # consecutive rounds whose fingerprint set didn't shrink
 fingerprints_prev = {}              # see "Anti-Churn Guardrail"
@@ -521,9 +546,11 @@ loop:
   round_number += 1                       # this round's ordinal (dismissed-findings-01) — see the marker-comment note below
   dismissed_before_round = len(dismissed) # snapshot BEFORE Step U3.5 runs, so the marker posts only THIS round's yield
 
-  # Step U3.5 — Validate-Then-Fix EVERY bot finding (any stated severity); no severity floor AT FIX TIME —
-  # reading B, "PINNED SEMANTICS": a finding is NEVER declined a fix on severity grounds.
+  # Step U3.5 — Validate-Then-Fix EVERY bot finding (any stated severity); the ONLY fix-time severity gate is
+  # FIX_FLOOR (apply_fix_floor) — reading B still holds for the termination floor: a finding at or above
+  # FIX_FLOOR is NEVER declined a fix on `--severity-floor` grounds.
   validated      = [f for f in bot_findings if validate(f) == CONFIRMED]   # evidence-cited, grounded on current branch
+  validated      = apply_fix_floor(validated)                              # below-FIX_FLOOR ⇒ dismissed (below_fix_floor)
   # dismissed-findings-01: itemise, don't just tally. `finding` = a short description of f (the
   # actionable text/summary the classifier/check-output surfaced); `reason` = the free-text
   # validation-failure basis (stale | invalid | already-addressed — validate()'s own basis for the
@@ -596,10 +623,10 @@ loop:
       # REASSIGN (not just describe) — this is what makes the READY test below read POST-fallback
       # values instead of the stale pre-fallback ones. Feed fallback_review.issues into THIS round's
       # §U3.5 Validate-Then-Fix pipeline exactly like any other channel's bot_findings (`new`-category
-      # only, matching Step 2's CATEGORY filter — but per §U3.5 there is no severity floor here, so a
-      # validated MEDIUM/LOW is fixed exactly like a HIGH):
+      # only, matching Step 2's CATEGORY filter — and the SAME fix floor as every other channel, so a
+      # validated finding at or above FIX_FLOOR is fixed exactly like a HIGH):
       fallback_findings = [i for i in fallback_review.issues if i.category == "new"]
-      validated    += [f for f in fallback_findings if validate(f) == CONFIRMED]
+      validated    += apply_fix_floor([f for f in fallback_findings if validate(f) == CONFIRMED])
       # source is always "code_reviewer" here — the fallback IS the code-reviewer lens (dismissed-findings-01).
       # severity is carried unconditionally (automate-followups/12): a CODE_REVIEW_RESULT issue always has one.
       dismissed    += [ {finding: describe(f), reason: validate_reason(f), source: "code_reviewer",
@@ -683,7 +710,7 @@ loop:
   # untrusted_infra (ci-trust-probe-01) — never spawn a fix worker against a
   # check live evidence says never ran; `ran`/`unknown` verdicts are
   # unaffected and stay in the pool exactly like before this change.
-  fixable = required_failing_fixable + auto_fixable   # fix validated findings regardless of stated severity
+  fixable = required_failing_fixable + auto_fixable   # validated findings at or above FIX_FLOOR (apply_fix_floor ran at derivation)
   checks_ever_fixed += { c.name for c in required_failing_fixable }   # AC13 input — this drain attempted to fix these
   Task(
     subagent_type: "general-purpose",
@@ -794,7 +821,7 @@ iterations = rounds        # the back-compat v1 analogue — same value as `roun
 
 ### Termination-only severity floor (`sub_floor_converged`) — AC3/AC4/AC9/AC11/AC12/AC13
 
-> **PINNED SEMANTICS — reading B (fix-then-stop) only; reading A (find-then-defer) is FORBIDDEN.** Round N runs Validate-Then-Fix **completely** — every validated finding, at every severity including sub-floor, **is fixed and pushed**. `--severity-floor` decides ONLY that round N+1's re-scan does not start. No finding is ever declined a fix on severity grounds; §U3.5 ("A confirmed MEDIUM/LOW is fixed exactly like a confirmed HIGH — there is no severity floor") and its §Anti-Patterns counterpart (§U3.5, "no severity floor") and the Anti-Pattern below all remain true statements after this change — see AC4.
+> **PINNED SEMANTICS — reading B (fix-then-stop) only; reading A (find-then-defer) is FORBIDDEN.** Round N runs Validate-Then-Fix **completely** — every validated finding at or above `FIX_FLOOR` (§"Fix floor"), including one below `--severity-floor`, **is fixed and pushed**. `--severity-floor` decides ONLY that round N+1's re-scan does not start. No finding is ever declined a fix on `--severity-floor` grounds; the ONE fix-time severity gate is the separately configured `FIX_FLOOR`, and §U3.5 and the Anti-Pattern below remain true statements of that — see AC4.
 
 **The stop decision — MECHANIZED via `scripts/drain-subfloor-decision.sh` (implementation-quality/02 T01).** `eligible` and `decide` evaluate this section's rule (decision table in the script header, fail-CLOSED on any unreadable input); the drain acts on the one printed line and takes `sub_floor_fixed` verbatim from `decide`'s READY line — this round's `auto_fixable` only, never a list accumulated across rounds.
 
@@ -949,6 +976,7 @@ The `--agent` form has **NO flag surface** — you cannot pass `--until-mergeabl
 |---|---|---|
 | **`LOOMWRIGHT_UNTIL_MERGEABLE`** | when truthy (`1` / `true`), the runner invokes its inline `/review-pr <pr-url>` **with `--until-mergeable`** | the master on/off signal. Absent or falsy ⇒ default diff-only loop (AC7 byte-for-byte unchanged). |
 | **`LOOMWRIGHT_CHECK_WAIT_TIMEOUT`** | optional; when set, forwarded as **`--check-wait-timeout <value>`** | scoped check-wait bound (§"Wait-For-Settled-Checks"). |
+| **`LOOMWRIGHT_FIX_FLOOR`** | when set, forwarded verbatim as **`--fix-floor <value>`** in BOTH loops (until-mergeable or not) | the fix-time severity floor (§"Fix floor"), resolved by the dispatcher in the checkout that holds `.supervisor/config.json` — the detached drain's sibling worktree has no `.supervisor/`. `invalid` is forwarded as-is so `/review-pr` refuses it (`fix_floor_invalid`). |
 | **`LOOMWRIGHT_REVIEW_CHECK_PATTERN`** | optional; when set, forwarded as **`--review-check-pattern <value>`** | review-producing check selector glob (§"All-Channel Read" / §"Wait-For-Settled-Checks"). |
 
 - The runner reads these env vars and **translates them into the corresponding `/review-pr` flags** on its inline invocation; the inline `/review-pr` body then runs the until-mergeable drain defined in this section. Only `LOOMWRIGHT_UNTIL_MERGEABLE` is the on/off gate; the other two are optional tuning that are forwarded ONLY when set.
@@ -1020,8 +1048,8 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 - **Claiming READY when any gated channel signal is unknown.** A GraphQL thread error/truncation, an errored issue-comment read, an errored required/review-producing check-output fetch, or unreadable branch-protection metadata must each fail CLOSED to `ESCALATED` — never default-to-green (AC1/AC8).
 - **Reading only one channel (or only metadata).** Reading only `reviews` objects misses the #64 PR **issue comment**; reading `reviews[].state` / `conclusion` / author **alone** misses the body where the actionable finding lives. Read ALL channels (§"All-Channel Read") and classify on `(login, body)` text (AC2/AC2b).
 - **Re-implementing the bot regexes.** `bot_author_re` / `review_marker_re` live ONLY in `scripts/classify-bot-review.sh`. Pipe each channel's items through that helper — never redefine the patterns here.
-- **Reinstating a BLOCKING/HIGH severity floor.** §U3.5 Validate-Then-Fix replaced it: a validated MEDIUM (like #64) MUST be fixed. Never drop a finding solely because its stated severity is below HIGH. **`--severity-floor` (§"Termination-only severity floor") is NOT a reinstatement of this anti-pattern** — it is a TERMINATION-time gate only ("does round N+1 start"), never a fix-time gate ("is this finding fixed"). Every validated finding at every severity is still fixed within its round (reading B); implementing the floor as a fix-time filter (reading A, "find-then-defer") IS this anti-pattern and is forbidden.
-- **"Find-then-defer" (reading A) for `sub_floor_converged`.** Declining to fix a sub-floor finding, reporting it, and terminating is the anti-pattern above wearing a different name. The ONLY authorized shape is reading B: fix everything the round found (any severity), THEN decide whether round N+1 starts.
+- **Reinstating a hard-coded BLOCKING/HIGH severity floor.** §U3.5 Validate-Then-Fix replaced it: at the default `FIX_FLOOR` (`MEDIUM`) a validated MEDIUM (like #64) MUST be fixed. The ONLY fix-time severity gate is the configured `FIX_FLOOR` (§"Fix floor"), read through `scripts/fix-floor.sh` — never a severity test written inline here. **`--severity-floor` (§"Termination-only severity floor") is NOT a reinstatement of this anti-pattern** — it is a TERMINATION-time gate only ("does round N+1 start"), never a fix-time gate ("is this finding fixed"). Every validated finding at or above `FIX_FLOOR` is still fixed within its round (reading B); implementing `--severity-floor` as a fix-time filter (reading A, "find-then-defer") IS this anti-pattern and is forbidden.
+- **"Find-then-defer" (reading A) for `sub_floor_converged`.** Declining to fix a finding below `--severity-floor` (but at or above `FIX_FLOOR`), reporting it, and terminating is the anti-pattern above wearing a different name. The ONLY authorized shape is reading B: fix everything the round found at or above `FIX_FLOOR`, THEN decide whether round N+1 starts.
 - **Waiting on the whole rollup (or letting an optional check block/escalate).** The scoped wait (§"Wait-For-Settled-Checks") observes ONLY required + review-producing checks; an unrelated optional pending check must never block READY or force escalation (AC3).
 - **Threading `--until-mergeable` as a slash string or positional in the `--agent` dispatcher.** The `--agent` runner form has no flag surface — thread the signal via the pinned env vars (§"Until-Mergeable Dispatch Signal"); a slash-string re-parse risks the 11.1.1 auto-delegation trap.
 - **Blocking READY on a human.** Human approval, `REVIEW_REQUIRED`, and human/unknown-author threads & comments are surfaced, never gated (AC3/AC15/AC8). The drain loop waits only on bots + required/review-producing checks.
@@ -1045,6 +1073,6 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 - NEEDS_HUMAN / exhaustion posts findings to the PR and fires best-effort notifications (never blocks the loop).
 - `REVIEW_HEAL_RESULT` emitted with all seven fields at `schema_version: 1` (default loop); `schema_version: 2` with `decision: READY` plus additive/optional drain fields (`channels_scanned`, `findings_validated`, `findings_dismissed`, `checks_waited`, `termination_reason`, `severity_floor`, `sub_floor_fixed`, `rejected_instruction_like`, `dismissed`) under `--until-mergeable` (authoritative schema in `docs/RESULT_SCHEMAS.md`; no bump beyond 2).
 - **`--until-mergeable` absent ⇒ default loop byte-for-byte unchanged** (AC7) — the all-channel scan, scoped check-wait, validate-then-fix, anti-churn, and postmortem-tail logic are strictly opt-in.
-- Under `--until-mergeable`: ALL channels read each round — `gh pr view --json statusCheckRollup,reviews,latestReviews,…` PLUS `gh api graphql` review-threads PLUS `gh api .../issues/<n>/comments` (these comment/review/thread channels classified through `scripts/classify-bot-review.sh`, no re-implemented regexes) PLUS review-producing check-run output/annotations (gated by §U2.5's review-producing classification, NOT the comment author/marker regex); the scoped wait (§U2.5) settles required + review-producing checks before each READY test (optional checks excluded); every bot finding is validate-then-fixed (no severity floor **at fix time** — `--severity-floor` is termination-only, see above); **READY ⇔ required green AND scoped review-producing settled AND no unresolved validated bot findings across ALL channels** (§"READY redefinition"); fails CLOSED to `ESCALATED` on any unknown gated channel or an elapsed scoped wait; bounded by `--max-rounds` (default 5, **mechanized** via `scripts/drain-rounds.sh`, AC1/AC2); **never auto-merges — no `gh pr merge` anywhere — and never waits on a human (AC8)**.
+- Under `--until-mergeable`: ALL channels read each round — `gh pr view --json statusCheckRollup,reviews,latestReviews,…` PLUS `gh api graphql` review-threads PLUS `gh api .../issues/<n>/comments` (these comment/review/thread channels classified through `scripts/classify-bot-review.sh`, no re-implemented regexes) PLUS review-producing check-run output/annotations (gated by §U2.5's review-producing classification, NOT the comment author/marker regex); the scoped wait (§U2.5) settles required + review-producing checks before each READY test (optional checks excluded); every bot finding is validate-then-fixed at or above `FIX_FLOOR` (the one fix-time severity gate — `--severity-floor` is termination-only, see above); **READY ⇔ required green AND scoped review-producing settled AND no unresolved validated bot findings across ALL channels** (§"READY redefinition"); fails CLOSED to `ESCALATED` on any unknown gated channel or an elapsed scoped wait; bounded by `--max-rounds` (default 5, **mechanized** via `scripts/drain-rounds.sh`, AC1/AC2); **never auto-merges — no `gh pr merge` anywhere — and never waits on a human (AC8)**.
 - Postmortem Dispatch Tail runs AFTER the decision is emitted, is churn-gated (default threshold 2), opt-out via `--no-auto-postmortem`, and can never alter `REVIEW_HEAL_RESULT.decision` (`dispatch-pr-postmortem.sh` always exits 0).
 - **Under `--until-mergeable` the drain is heal-only by default** — it spawns NO `Task(loomwright:code-reviewer)` of its own. The **ONE exception** is the earned fallback: when `no_review_lens_posted` holds (§U1's existing read shows no review lens posted in any channel AND every review-producing check is green-with-empty-output/absent/skipped), the drain runs exactly one diff review per drain run before declaring READY, fail-CLOSED toward running it (§"Earned Fallback Review — `no_review_lens_posted`").

@@ -65,7 +65,7 @@ pin() {
     4) printf '%s\n' "$SHA" \
          'rule_findings.append({severity: BLOCKING, category: new, file: "rule"' \
          'iter_decision = FAIL' \
-         'if i.category == "new" and i.severity in (BLOCKING, HIGH)] + rule_findings' ;;
+         'fixable_issues = [i for i in review.issues if at_floor(i)] + rule_findings' ;;
     5) printf '%s\n' "$CM" \
          'A human-stamped, gate-countable `must`-rule check is a correctness gate, not an advisory emitter' ;;
     6) printf '%s\n' "$AL" 'PARK: rules_check_failed (' 'rules-gate-verdict.sh' \

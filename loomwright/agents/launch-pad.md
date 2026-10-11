@@ -547,10 +547,12 @@ Subtask 2 (independent)
 
 1. Reuse the scratch file **as last written by Phase 5 step 9 MATERIALIZE** (do NOT re-assemble the brief here — re-assembling in this action risks reviewing text that differs from what MATERIALIZE wrote and what Phase 6 will save). **On a retry, MATERIALIZE has already been re-run by the FAIL branch below, so this file holds the REVISED brief** — that is what makes the retry a genuine second review rather than a re-read of the rejected text. If the scratch file is missing, serialize the assembled brief from Phase 5 into a text block here as a fallback
 1b. **Gate-parse check (mechanical, before every spawn):** for each id N in the Subtask Structure table, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" <scratch-file> N --parse-only` (the same parser the `outputs_verified` gate runs, no disk checks). Any `unverifiable` line, or `provides_count: 0` for a block that lists entries, is a contract anchor the gate cannot find — fix the anchor (Phase 4 authoring rules); a line carrying `parse_warnings` is a field the gate misreads — fix its quoting (escape an inner `"` as `\"`, or single-quote it). Then re-run MATERIALIZE, and re-check before spawning (a pre-spawn fix consumes no review attempt). Paste the final lines into the spawn prompt's `--- GATE PARSE ---` block — Plan Reviewer has no Bash and treats them as authoritative for Criterion 12
+1c. **Fix floor (once, before the first spawn):** `FIX_FLOOR=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/fix-floor.sh" resolve --flag "<--fix-floor value, empty when absent>" --root .)` — the ONE severity threshold Phase 4.5 and `/review-pr` also fix by (flag > `.supervisor/config.json` `.fix_floor` > `MEDIUM`). Exit 2 ⇒ stop, save nothing: `status: aborted`, `summary: "fix_floor_invalid: <the script's stderr line>"`.
 2. Spawn Plan Reviewer as a subagent with brief text + CLAUDE.md context + the GATE PARSE lines
 3. Parse PLAN_REVIEW_RESULT from reviewer output
 4. Decision handling:
-   - **PASS:** Proceed to Phase 6 (save enabled)
+   - **PASS carrying an issue at the fix floor (attempt < 3):** an issue whose `fix-floor.sh meets "<severity>" "$FIX_FLOOR"` prints `fix` — excluding a `category: executable_acceptance` visibility finding, which no refine resolves — is refined exactly like a FAIL issue: fix it in the brief, re-run MATERIALIZE, re-spawn (consumes an attempt). No human is needed (the same author-side fix the FAIL branch makes), so this runs on both paths.
+   - **PASS** (no issue at the floor, or attempt = 3): Proceed to Phase 6 (save enabled). An at-floor issue still open after the third review never blocks — it is listed in the Phase 5.5 table with Resolution `deferred` and save stays enabled; only BLOCKING/HIGH (FAIL) ever blocks save.
    - **FAIL (attempt < 3):** Fix issues identified in the review, re-assemble affected brief sections, re-spawn reviewer
    - **FAIL (attempt = 3):** Present all unresolved issues to user. Offer: "Refine offline" (exit, `status: blocked` — fix and start a new session) or "Discard". Do NOT save; the 3-spawn cap is never reset within a session.
    - **NEEDS_HUMAN:** Proceed to Phase 6, which branches on WHY: a Criterion 14 `executable_acceptance` escalation goes through action 2a (`approve-and-stamp` / `strip-cmd-bullets` / `discard`, interactive; auto-strip, non-interactive); any other reason uses the generic "Override and save" / "Refine further" / "Discard" prompt (or aborts `needs_human_non_interactive` when non-interactive)
@@ -566,7 +568,11 @@ loop:
   result = spawn_plan_reviewer(brief, claude_md_context)
 
   if result.decision == PASS:
-    → proceed to Phase 6 (save enabled)
+    at_floor = [i for i in result.issues if i.category != "executable_acceptance"
+                and fix-floor.sh meets i.severity FIX_FLOOR == "fix"]
+    if at_floor and attempt < max_attempts:
+      → fix at_floor in the brief, RE-RUN Phase 5 step 9 MATERIALIZE, re-review (consumes an attempt), loop
+    → proceed to Phase 6 (save enabled; any still-open at_floor issue is listed `deferred`, never blocks)
 
   if result.decision == NEEDS_HUMAN:
     if any(issue.category == "executable_acceptance" for issue in result.issues):
