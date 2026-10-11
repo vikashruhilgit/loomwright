@@ -23,8 +23,8 @@ REVIEW_HEAL_RESULT:
   schema_version: 1                    # integer, required — 1 for the default diff-only loop
   decision: enum [PASS, ESCALATED]     # required — exactly these two values (no FAIL in the result block)
   iterations: int                      # required — how many review→fix→re-review cycles ran
-  issues_fixed: int                    # required — count of new+BLOCKING/HIGH issues addressed by fix workers
-  remaining_issues: int                # required — new+BLOCKING/HIGH issues still open at exit
+  issues_fixed: int                    # required — count of new issues at or above the fix floor addressed by fix workers
+  remaining_issues: int                # required — new issues at or above the fix floor still open at exit
   pr_url: string                       # required — the PR this run operated on
   notified: bool                       # required — true if a NEEDS_HUMAN/escalation notification was attempted
 ```
@@ -36,8 +36,8 @@ REVIEW_HEAL_RESULT:
   schema_version: 2                    # integer, required — 2 ONLY under --until-mergeable
   decision: enum [PASS, ESCALATED, READY]   # READY added in v2; emitted ONLY under --until-mergeable
   iterations: int                      # required — review→fix→re-review cycles (default-loop sense; carried for back-compat)
-  issues_fixed: int                    # required — count of new+BLOCKING/HIGH issues addressed by fix workers
-  remaining_issues: int                # required — new+BLOCKING/HIGH issues still open at exit
+  issues_fixed: int                    # required — count of new issues at or above the fix floor addressed by fix workers
+  remaining_issues: int                # required — new issues at or above the fix floor still open at exit
   pr_url: string                       # required — the PR this run operated on
   notified: bool                       # required — true if a notification was attempted (escalation OR "ready to merge")
   # --- drain fields (v2; present only under --until-mergeable) ---
@@ -56,7 +56,7 @@ REVIEW_HEAL_RESULT:
   checks_waited: [string]              # OPTIONAL — scoped checks the loop waited on to settle before the READY test (required + review-producing). §"Wait-For-Settled-Checks"
   # --- drain-bounding fields (v2, OPTIONAL/ADDITIVE; drain-bounding-earned-checks change) ---
   termination_reason: enum [converged, bound_hit, sub_floor_converged, ci_untrusted] | null   # OPTIONAL — WHY the drain terminated where it did. `converged`: a genuine empty-yield round (all channels re-scanned, nothing found). `bound_hit`: `--max-rounds` exhausted (ESCALATED). `sub_floor_converged`: a round whose entire FIXED yield was below `--severity-floor` terminated READY without a further all-channel re-scan (still ran the SHA-bound confirming required-check pass). `ci_untrusted` (ci-trust-probe-01): the only remaining READY-blockers were required checks classified `untrusted_infra` by `scripts/ci-run-probe.sh` (ESCALATED, never READY). Absent/null on other ESCALATED paths (fail-closed channel-unknown, human-judgment findings, unreadable round ledger) — NOT every exit sets this field.
-  severity_floor: enum [BLOCKING, HIGH, MEDIUM, LOW]   # OPTIONAL — the `--severity-floor` value in effect this run (default HIGH). Termination-time only; never gates whether a finding was fixed.
+  severity_floor: enum [BLOCKING, HIGH, MEDIUM, LOW]   # OPTIONAL — the `--severity-floor` value in effect this run (default HIGH). Termination-time only; never gates whether a finding was fixed (the fix-time gate is the separate fix floor — a validated finding below it is itemised in `dismissed` with `reason: below_fix_floor`).
   sub_floor_fixed: [object]            # OPTIONAL — present only when termination_reason == sub_floor_converged; the findings FIXED (never declined — reading B) in the final, un-re-scanned round.
   # --- untrusted-text field (v2, OPTIONAL/ADDITIVE; red-team-hardening item 01) ---
   rejected_instruction_like: int       # OPTIONAL — count of EXTERNAL_TEXT-enveloped bodies rejected as instruction-like (asked the agent to run/fetch/install/change permissions/act outside the PR branch) before validate-then-fix ever saw them. skills/review-heal/SKILL.md §"Untrusted-Text Envelope"
@@ -81,8 +81,8 @@ REVIEW_HEAL_RESULT:
 | `schema_version` | int | both | `1` for the default diff-only loop; `2` ONLY under `--until-mergeable`. |
 | `decision` | enum | both | `PASS` or `ESCALATED` in v1. v2 adds **`READY`** (drain terminal state — required checks green AND no unresolved bot-authored threads). There is **no `FAIL`** in the result block: a reviewer `FAIL` is an internal loop signal that drives a fix iteration, becoming terminal only as `ESCALATED`. **`READY` is emitted ONLY under `--until-mergeable`** and is merge-identical to `PASS`/`ESCALATED` (terminal-stop-and-notify — **never merges**, AC6). |
 | `iterations` | int | both | Number of review→fix→re-review cycles run. Default-loop bound is **3** (the `--heal-iterations` analogue). **Under `--until-mergeable` (v2): `iterations == rounds`** — the drain's bounded outer-loop counter (`while rounds < max_rounds`) IS the v1 `iterations` analogue, so this back-compat field carries the same value as `rounds`. (It is therefore distinct from `fix_cycles`, the fix→push count, which is `≤ rounds`.) |
-| `issues_fixed` | int | both | Count of `new` + BLOCKING/HIGH findings addressed by `general-purpose` fix workers across all iterations. |
-| `remaining_issues` | int | both | `new` + BLOCKING/HIGH findings still open at loop exit. `0` on `PASS`/`READY`; the escalated count on `ESCALATED`. |
+| `issues_fixed` | int | both | Count of `new` findings at or above the fix floor (`scripts/fix-floor.sh`, default MEDIUM) addressed by `general-purpose` fix workers across all iterations. |
+| `remaining_issues` | int | both | `new` findings at or above the fix floor still open at loop exit. `0` on `PASS`/`READY`; the escalated count on `ESCALATED`. |
 | `pr_url` | string | both | The PR URL the run operated on (the loop's single input; resolved to a head branch via `gh pr view <pr-url> --json headRefName`). |
 | `notified` | bool | both | `true` whenever a notification was *attempted* (the NEEDS_HUMAN/escalation banner+webhook, OR — under `--until-mergeable` — the "ready to merge" notification on `READY`). Best-effort, fire-and-forget, always exit 0 — records attempt, not delivery. |
 | `rounds` | int | v2 only | Drain rounds actually run in the `--until-mergeable` outer loop (Step U4 in the skill). |

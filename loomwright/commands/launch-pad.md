@@ -34,6 +34,7 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 | `--discovery` | No | Force full product discovery even if goal seems clear |
 | `--skip-validation` | No | Skip environment validation (Phase 1) for speed |
 | `--project` | No | Explicit project path (overrides auto-detect) |
+| `--fix-floor <HIGH\|MEDIUM\|LOW>` | No | Lowest plan-review issue severity Launch Pad refines before save (default `MEDIUM`; `.supervisor/config.json` `.fix_floor`) — the same threshold Supervisor Phase 4.5 and `/review-pr` fix by. A PASS carrying an issue at the floor is refined and re-reviewed (uses one of the 3 review attempts); once attempts run out it saves with the issue listed `deferred` — a below-HIGH issue never blocks save. An invalid value aborts (`fix_floor_invalid`). |
 | `--non-interactive` / `--non-interactive-fallback` | No | No human to ask — forwarded from `/autonomous`'s own `--non-interactive-fallback` flag (accepts either spelling). Every question gate takes its named branch per the **Can't-ask rule** (Critical Rules): Phase 2 `clarification_needed_non_interactive`; Phase 2.5 `no_go_non_interactive`; Phase 6 — a Criterion 14 `executable_acceptance` escalation auto-strips the flagged `cmd:`/bare bullets, any other NEEDS_HUMAN reason aborts (`status_reason: "needs_human_non_interactive"`), PASS saves (`saved_on_pass_non_interactive`) — the flag is the save opt-in, so a subagent run without it saves nothing (`save_requires_flag_non_interactive`), FAIL × 3 blocks (`plan_review_fail_non_interactive`). Executing as a subagent has the same effect. See `agents/launch-pad.md` §"7-Phase Workflow" Phase 5.5/Phase 6 for the full contract. |
 
 ## What This Does
@@ -400,7 +401,8 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 1. Spawn Plan Reviewer subagent with brief + CLAUDE.md context
 2. Plan Reviewer checks all 18 criteria (file paths, patterns, dependencies, parallelism, subtask contracts, lane declarations, house-rule conformance, touched-file invariants, etc.) — Criteria 11, 13, 14, 15, 16, 17, and 18 are conditional (skip silently when their gating section/field/claim is absent; Criterion 17 runs only when Launch Pad pasted a non-empty `--- APPLICABLE RULES ---` block from its `read-rules.sh --with-ids` consult; Criterion 18 runs only when the brief modifies an existing script); Criterion 12 requires `provides:`/`requires:` contracts unless `legacy_brief: true`
 3. Decision handling:
-   - PASS → proceed to Phase 6 (save enabled)
+   - PASS with an issue at the fix floor (`--fix-floor` / `.fix_floor`, default MEDIUM; attempt < 3) → refine it like a FAIL issue, re-spawn reviewer (consumes an attempt)
+   - PASS → proceed to Phase 6 (save enabled; an at-floor issue still open after attempt 3 is listed `deferred`, never blocks)
    - FAIL (attempt < 3) → fix issues, re-assemble, re-spawn reviewer
    - FAIL (attempt = 3) → present issues, offer "Refine offline" (exit, `status: blocked`) or "Discard" (no save; the 3-spawn cap is never reset within a session)
    - NEEDS_HUMAN → present issues, offer "Override and save" or "Refine further" or "Discard"

@@ -394,6 +394,20 @@ if [ -z "$REVIEW_CHECK_PATTERN" ] && [ -r "$CONFIG_FILE" ] && command -v jq >/de
   REVIEW_CHECK_PATTERN="$(jq -r '.review_check_pattern // empty' "$CONFIG_FILE" 2>/dev/null || true)"
 fi
 
+# ---- Resolve the fix floor (scripts/fix-floor.sh) --------------------------
+# Resolved HERE, in the checkout that holds .supervisor/config.json: the detached
+# drain runs in a sibling worktree where the gitignored .supervisor/ does not
+# exist, so its own resolve would always read the default. Exported in BOTH the
+# until-mergeable and the plain diff-only case — both loops fix by it. A value
+# the script refuses is forwarded as `invalid`, so the runner's /review-pr
+# refuses it visibly (ESCALATED, fix_floor_invalid) instead of the dispatcher
+# silently substituting the default; this script itself still exits 0.
+FIX_FLOOR="$(bash "$(dirname "$0")/fix-floor.sh" resolve --root . 2>/dev/null)" || FIX_FLOOR=""
+if [ -z "$FIX_FLOOR" ]; then
+  FIX_FLOOR="invalid"
+  log "fix floor unresolvable (.supervisor/config.json .fix_floor) — forwarding 'invalid' so the drain refuses"
+fi
+
 # ---- Per-PR dispatch marker (cost / runaway guard) --------------------------
 # Key the marker by a hash of the PR URL so a given PR dispatches at most once.
 mkdir -p "$DISPATCH_DIR" 2>/dev/null || true
@@ -526,9 +540,9 @@ GUARD_SESSION_ID="$(generate_uuid)"
 if [ -n "$DRY_RUN" ]; then
   # Emit the would-be exported env signal prefix (only the vars actually set) so the
   # self-test can assert the pinned until-mergeable contract without launching claude.
-  ENV_PREFIX=""
+  ENV_PREFIX="LOOMWRIGHT_FIX_FLOOR=${FIX_FLOOR} "
   if [ "$UNTIL_MERGEABLE" -eq 1 ]; then
-    ENV_PREFIX="LOOMWRIGHT_UNTIL_MERGEABLE=1 "
+    ENV_PREFIX="${ENV_PREFIX}LOOMWRIGHT_UNTIL_MERGEABLE=1 "
     [ -n "$CHECK_WAIT_TIMEOUT" ] && ENV_PREFIX="${ENV_PREFIX}LOOMWRIGHT_CHECK_WAIT_TIMEOUT=${CHECK_WAIT_TIMEOUT} "
     [ -n "$REVIEW_CHECK_PATTERN" ] && ENV_PREFIX="${ENV_PREFIX}LOOMWRIGHT_REVIEW_CHECK_PATTERN=${REVIEW_CHECK_PATTERN} "
   fi
@@ -758,7 +772,9 @@ printf 'ts=%s\turl=%s\tregime=%s\n' "$TIMESTAMP" "$PR_URL" "$REGIME_LABEL" > "$M
 # Default ON: export LOOMWRIGHT_UNTIL_MERGEABLE=1 unless opted out. The runner
 # reads these and translates them into the corresponding inline /review-pr flags
 # (§"Until-Mergeable Dispatch Signal"). Only export the two optional tuning vars
-# when set; never export them in the opted-out (plain diff-only) case.
+# when set; never export them in the opted-out (plain diff-only) case. The fix
+# floor is exported unconditionally (resolved above) — both loops read it.
+export LOOMWRIGHT_FIX_FLOOR="$FIX_FLOOR"
 if [ "$UNTIL_MERGEABLE" -eq 1 ]; then
   export LOOMWRIGHT_UNTIL_MERGEABLE=1
   [ -n "$CHECK_WAIT_TIMEOUT" ] && export LOOMWRIGHT_CHECK_WAIT_TIMEOUT="$CHECK_WAIT_TIMEOUT"

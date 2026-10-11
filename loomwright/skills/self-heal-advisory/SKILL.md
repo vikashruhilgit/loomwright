@@ -828,6 +828,12 @@ heal_fixable_issues_fixed = 0
 heal_first_decision = null         # findings-per-item metric (iq02 IQ01): the FIRST iteration's iter_decision
 heal_new_findings = 0               # findings-per-item metric: total category=new review.issues across ALL iterations
 max_heal_iterations = {--heal-iterations value, default 3}
+# at_floor(i) — the ONE fix-time severity rule (fix_floor; supervisor-config step 2.10 resolved FIX_FLOOR):
+#   i.category == "new" AND the plugin's `scripts/fix-floor.sh meets "<i.severity>" "$FIX_FLOOR"` prints `fix`
+#   (invoked from the plugin install root like every other script in this file).
+# BLOCKING is always at the floor; an unreadable severity reads as at the floor (never a silent pass). Evaluate it
+# per iteration with ONE `fix-floor.sh split "$FIX_FLOOR" -` over the `new` issues rather than per-item calls.
+# FIX_FLOOR == HIGH reproduces the pre-fix_floor behaviour (new + BLOCKING/HIGH) byte-for-byte.
 heal_dismissed = []                 # ITEMISED {finding, reason, source, severity} list (dismissed-findings-01) — review.issues
                                      # entries excluded from fixable_issues each iteration (pre_existing / nit / drift /
                                      # below_severity_floor); the self-heal-side PARALLEL to review-heal's `dismissed`
@@ -892,19 +898,24 @@ while heal_iterations < max_heal_iterations:
   iter_decision = review.decision
   if rule_findings != [] and iter_decision == PASS:
     iter_decision = FAIL
+  # fix_floor: the reviewer PASSes on MEDIUM/LOW by its own decision matrix (agents/code-reviewer.md); a PASS that
+  # still carries an at_floor finding (FIX_FLOOR MEDIUM/LOW) is a FIX round here, exactly like a rules conversion.
+  # The reviewer's decision is never rewritten — only this loop's reading of it.
+  if iter_decision == PASS and any(at_floor(i) for i in review.issues):
+    iter_decision = FAIL
   # findings-per-item metric (REPORT-ONLY — never read by any branch below): copy, do not compute.
   if heal_first_decision == null:
     heal_first_decision = iter_decision          # PASS | FAIL | NEEDS_HUMAN
   heal_new_findings += count(review.issues where category=new)   # every severity
 
   # dismissed-findings-01: itemise EVERY review.issues entry excluded from the fix-time filter
-  # (the SAME filter the FAIL branch's `fixable_issues` computes below — new+BLOCKING/HIGH). Computed
+  # (the SAME filter the FAIL branch's `fixable_issues` computes below — at_floor). Computed
   # HERE, once per iteration, BEFORE the three-way decision branch, so it also covers PASS/NEEDS_HUMAN
   # iterations whose review.issues can still carry pre_existing/nit/drift entries (a PASS decision
   # means zero new+BLOCKING/HIGH issues — it does NOT mean review.issues is empty). `reason` is a
   # CLOSED enum here (unlike review-heal's free-text dismissed.reason): the finding's own `category`
   # when it is pre_existing/nit/drift (docs/result-schemas/code-review-result.md:29 [pins: `category: enum [new, pre_existing, nit, drift]`]), else "below_severity_floor" for a
-  # `new` finding whose severity is below the fix-time BLOCKING/HIGH floor. `source` is "code_reviewer"
+  # `new` finding whose severity is below the fix-time FIX_FLOOR (the enum value keeps its name). `source` is "code_reviewer"
   # for every item accumulated here — the single-voter loop's one review lens (see docs/RESULT_SCHEMAS.md
   # §SUPERVISOR_RESULT for the full `source` enum, including the multi-voter `red_team`/`voter:<provider>`
   # values this pass does not yet emit). `severity` (automate-followups/12, OPTIONAL in the schema) is the
@@ -918,7 +929,7 @@ while heal_iterations < max_heal_iterations:
      source: "code_reviewer",
      severity: i.severity}
     for i in review.issues
-    if not (i.category == "new" and i.severity in (BLOCKING, HIGH))
+    if not at_floor(i)
   ]
 
   # Rules gate, fail-CLOSED leg (placed AFTER heal_dismissed so this iteration's dismissals are itemised
@@ -928,7 +939,7 @@ while heal_iterations < max_heal_iterations:
     # unaffirmed output to unreadable) never passes silently (forged / truncated replay, helper or
     # checker unreadable). Terminal for this run, like NEEDS_HUMAN (a pre-increment break).
     heal_decision = ESCALATED
-    heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH]) + max(1, len(rules.unresolved))
+    heal_remaining_issues = count(review.issues where at_floor) + max(1, len(rules.unresolved))
     record_decision(phase: SELF_HEAL, decision: "rules_gate_unresolved", rationale: rules_check_line)
     post findings to PR as comment (gh pr comment), naming `rules_gate_unresolved` and rules_check_line
     break
@@ -939,7 +950,7 @@ while heal_iterations < max_heal_iterations:
   # never runs the replay (rules.failing is empty) and countability drift itself reads `unstamped`.
   if rules.verdict == "unstamped" and rules_failed_seen:
     heal_decision = ESCALATED   # rules_fail_then_unstamped — never PASS
-    heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH]) + len(rules_failed_seen)
+    heal_remaining_issues = count(review.issues where at_floor) + len(rules_failed_seen)
     record_decision(phase: SELF_HEAL, decision: "rules_fail_then_unstamped", rationale: "{sorted rules_failed_seen}; " + rules_check_line)
     post findings to PR as comment (gh pr comment), naming `rules_fail_then_unstamped`, the rules_failed_seen ids and rules_check_line
     break
@@ -951,20 +962,20 @@ while heal_iterations < max_heal_iterations:
 
   if iter_decision == NEEDS_HUMAN:
     heal_decision = ESCALATED
-    heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH]) + len(rule_findings)
+    heal_remaining_issues = count(review.issues where at_floor) + len(rule_findings)
     post findings to PR as comment (gh pr comment)   # rule_findings included
     break
 
   # iter_decision == FAIL — by CODE_REVIEW_RESULT rule at least one new+HIGH/BLOCKING issue exists,
-  # OR the rules gate converted a reviewer PASS (rule_findings != [])
-  fixable_issues = [i for i in review.issues if i.category == "new" and i.severity in (BLOCKING, HIGH)] + rule_findings
+  # OR the rules gate converted a reviewer PASS (rule_findings != []), OR the fix_floor converted one (an at_floor MEDIUM/LOW)
+  fixable_issues = [i for i in review.issues if at_floor(i)] + rule_findings
 
   Task(
     subagent_type: "general-purpose",
     # Tool allowlist: Read, Write, Edit, Bash, Glob, Grep (no Task — fix agent may not dispatch further subagents)
     # Pointer-audit note (deliberate paste — see docs/POINTER_AUDIT.md): the findings list below is
     # NOT file-backed (CODE_REVIEW_RESULT exists only in the reviewer Task's transcript, never on
-    # disk), is already bounded by construction (category=new + severity>=HIGH only), and the fix
+    # disk), is already bounded by construction (category=new + at or above FIX_FLOOR only), and the fix
     # worker provably needs each finding's full file:line + description + suggestion every time —
     # they ARE the work items. Keep the paste; do NOT write findings to a scratch file just to
     # point at it (that would add a write path to a review seam that has none).
@@ -973,7 +984,7 @@ while heal_iterations < max_heal_iterations:
              Feature branch: {branch}
              PR: {pr_url}
 
-             Code Reviewer findings to address (severity >= HIGH, category = new):
+             Code Reviewer findings to address (severity >= {FIX_FLOOR}, category = new):
              {numbered list: file:line + description + suggestion}
 
              Task:
@@ -1032,7 +1043,7 @@ while heal_iterations < max_heal_iterations:
 # premature schema growth on a still-soaking advisory instrument.)
 if heal_iterations == max_heal_iterations AND iter_decision != PASS:
   heal_decision = ESCALATED
-  heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH]) + len(rule_findings)   # an unfixed rule finding escalates like any other BLOCKING finding
+  heal_remaining_issues = count(review.issues where at_floor) + len(rule_findings)   # an unfixed rule finding escalates like any other BLOCKING finding
   post findings to PR as comment (when a step-1a class-sweep ran on this FINAL iteration, the comment MUST also note: "class-sweep applied on the final heal iteration — its own edits were NOT re-reviewed; eyeball the swept files", so a human knows to check them)
 ```
 
@@ -1044,18 +1055,18 @@ When ON, each iteration of the review-and-fix loop above changes in exactly two 
 
 1. **Two independent parallel reviewers (the vote).** The iteration's review step spawns TWO reviewers in parallel on the SAME integrated feature-branch diff (same DIFF-SCOPE OVERRIDE, same BASE_BRANCH):
    - the existing `loomwright:code-reviewer` Task — **unchanged contract, spawn prompt verbatim as above** (advisory enrichments and the EXECUTION DIRECTIVE line included, `phase45_review_invoked` still flips on it). Its `CODE_REVIEW_RESULT` remains **THE LLM gating signal** (the rules gate's `rule_findings` are the one deterministic co-gate — never sent to a refute check, never voted away; they join the surviving set as-is): the loop's PASS / NEEDS_HUMAN / FAIL branching and the `heal_decision` derivation stay keyed to it exactly as written above.
-   - a **verification voter** on the same diff scope — this is NOT the standalone advisory red-team lens (see the interaction sub-note below); the voter runs INSIDE the loop, once per iteration, and its BLOCKING/HIGH-severity findings on this branch's newly-introduced surface (map its severity vocabulary to BLOCKING/HIGH; pre-existing issues stay out of scope, mirroring the `category=new` filter) enter the merge rule below. It votes on findings; it never decides the gate — `heal_decision` NEVER derives from its output (a surviving voter finding can only delay finalization within the existing bound; see the delay-vs-decide invariant below). **Which CLI produces this vote is provider-selectable, resolved by `VOTER_PROVIDER` (`skills/supervisor-config/SKILL.md` preamble step 2.9a):**
+   - a **verification voter** on the same diff scope — this is NOT the standalone advisory red-team lens (see the interaction sub-note below); the voter runs INSIDE the loop, once per iteration, and its findings at or above `FIX_FLOOR` on this branch's newly-introduced surface (map its severity vocabulary to BLOCKING/HIGH/MEDIUM/LOW, then apply the same `at_floor` rule; pre-existing issues stay out of scope, mirroring the `category=new` filter) enter the merge rule below. It votes on findings; it never decides the gate — `heal_decision` NEVER derives from its output (a surviving voter finding can only delay finalization within the existing bound; see the delay-vs-decide invariant below). **Which CLI produces this vote is provider-selectable, resolved by `VOTER_PROVIDER` (`skills/supervisor-config/SKILL.md` preamble step 2.9a):**
      - `VOTER_PROVIDER == ""` (the DEFAULT — absent flag AND absent config) — spawn a `loomwright:red-team-reviewer` Task exactly as before. Byte-identical to pre-existing behavior; nothing below in this bullet applies.
      - `VOTER_PROVIDER != ""` (e.g. `cursor:gpt-5`) — instead of spawning the Task, invoke `${CLAUDE_PLUGIN_ROOT}/scripts/adapters/providers/lens-run.sh --provider "$VOTER_PROVIDER" --role review --diff <diff-file> --prompt <prompt-file> --out <out-file> [--commit <sha>]` via Bash, where the diff file is the SAME integrated feature-branch diff (same DIFF-SCOPE OVERRIDE, same BASE_BRANCH) the code-reviewer Task reviews, and the prompt file states the verification-voter role (findings on newly-introduced surface only, same BLOCKING/HIGH/MEDIUM/LOW and new/pre_existing/nit vocabulary the merge rule already expects). Read the resulting `--out` JSON: `lens_status: "ok"` — treat `issues[]` (already normalized to the `docs/RESULT_SCHEMAS.md` `issues[]` shape) as this iteration's voter findings, exactly as if the Task had produced them; any other `lens_status` (`provider_unavailable`, `lens_mutated_tree`, `lens_unparseable`) is the SAME "voter errored/timed out" fail-safe degradation the existing single-voter fallback below already specifies — log one line via `record_decision` and degrade that iteration to the single-voter default (code-reviewer findings fixed as written; no voter findings to merge that iteration). The refute check, merge rule, and `heal_decision` derivation in the rest of this section are UNCHANGED by which branch ran here.
-2. **Second-opinion refute check (the merge rule — decides WHICH findings get fixed).** Collect the iteration's BLOCKING/HIGH `new` findings from BOTH lenses. A finding triggers a fix task ONLY if it **survives a refute check by the OTHER lens**: ask the other lens — via at most ONE bounded refute spawn PER LENS per iteration (batch that lens's cross-findings into it), or by folding the refute question into the next combined prompt — whether each finding is a false positive, unreachable, or already handled; the refute step's ceiling is therefore ≤2 spawns per iteration (one per lens). **EXECUTION DIRECTIVE scope on refutes:** ONLY the refute spawn sent to the **code-reviewer lens** carries the EXECUTION DIRECTIVE line verbatim (same trust level as the Phase 4.5 review itself); the refute sent to the **voter lens** — the `loomwright:red-team-reviewer` Task, or `lens-run.sh` when `VOTER_PROVIDER` is set — does NOT, because §5's procedure is meaningless to red-team-reviewer and a third-party CLI must never be told to execute code. Findings the other lens REFUTES are **LOGGED, NOT FIXED**: record each via `record_decision(phase: SELF_HEAL, decision: "multi_voter_refuted", rationale: "<finding> refuted by <lens>")` and include them in the PR comment, clearly labelled refuted/not-fixed. Findings that SURVIVE form the iteration's `fixable_issues` set fed to the fix task above (replacing the single-lens `fixable_issues` derivation for that iteration; the fix-task spawn contract is otherwise unchanged).
+2. **Second-opinion refute check (the merge rule — decides WHICH findings get fixed).** Collect the iteration's `at_floor` findings (`new`, at or above `FIX_FLOOR`) from BOTH lenses. A finding triggers a fix task ONLY if it **survives a refute check by the OTHER lens**: ask the other lens — via at most ONE bounded refute spawn PER LENS per iteration (batch that lens's cross-findings into it), or by folding the refute question into the next combined prompt — whether each finding is a false positive, unreachable, or already handled; the refute step's ceiling is therefore ≤2 spawns per iteration (one per lens). **EXECUTION DIRECTIVE scope on refutes:** ONLY the refute spawn sent to the **code-reviewer lens** carries the EXECUTION DIRECTIVE line verbatim (same trust level as the Phase 4.5 review itself); the refute sent to the **voter lens** — the `loomwright:red-team-reviewer` Task, or `lens-run.sh` when `VOTER_PROVIDER` is set — does NOT, because §5's procedure is meaningless to red-team-reviewer and a third-party CLI must never be told to execute code. Findings the other lens REFUTES are **LOGGED, NOT FIXED**: record each via `record_decision(phase: SELF_HEAL, decision: "multi_voter_refuted", rationale: "<finding> refuted by <lens>")` and include them in the PR comment, clearly labelled refuted/not-fixed. Findings that SURVIVE form the iteration's `fixable_issues` set fed to the fix task above (replacing the single-lens `fixable_issues` derivation for that iteration; the fix-task spawn contract is otherwise unchanged).
 
 **Delay-vs-decide (the precise invariant):** `heal_decision` — the GATE — still derives ONLY from the code-reviewer's `CODE_REVIEW_RESULT` plus the one deterministic rules co-gate above (PASS only from a code-reviewer PASS with no `rule_findings`; ESCALATED on NEEDS_HUMAN / max iterations / thrash); the `--heal-iterations` bound, never-merge, the completion-tail guard, and the completion-tail procedure below are all IDENTICAL to the single-voter path. What the voter CAN do is extend LOOP CONTINUATION within that existing bound: a code-reviewer PASS becomes FINAL only once the iteration's surviving finding set is empty (or the bound escalates), so a surviving voter finding can DELAY finalization by another bounded fix-and-re-review iteration — it can never FLIP a decision (never turns a PASS into FAIL, nor a FAIL into PASS). Multi-voter edits the `fixable_issues` set and the finalization timing inside each iteration; nothing else. Edge rules:
 - Code-reviewer PASS + zero surviving red-team findings → PASS, exactly as above.
-- Code-reviewer PASS + ≥1 surviving red-team BLOCKING/HIGH finding → spawn a fix task on the surviving set and re-review next iteration (still bounded by `--heal-iterations`; the PASS becomes final only when the surviving set is empty or the bound escalates).
+- Code-reviewer PASS + ≥1 surviving red-team `at_floor` finding → spawn a fix task on the surviving set and re-review next iteration (still bounded by `--heal-iterations`; the PASS becomes final only when the surviving set is empty or the bound escalates).
 - Code-reviewer FAIL with ALL of its findings refuted (surviving set empty) → do NOT spawn a fix task and do NOT auto-PASS; exit the loop with `heal_decision = ESCALATED` and post the refutation log to the PR — a fully-refuted FAIL is a human call, never a silent pass.
 - **Fail-safe degradation:** if the red-team voter (or a refute spawn) errors/times out, log one line via `record_decision` and degrade THAT iteration to the single-voter default above (code-reviewer findings fixed as written; unrefutable voter findings logged, not fixed). Never abort the run on the voter path.
 
-**Per-run counters (additive prose — NO schema bump):** track across all iterations `findings_raised` (BLOCKING/HIGH `new` findings raised by either lens), `findings_refuted` (refuted → logged, not fixed), and `findings_fixed` (survived → dispatched to fix tasks), and carry them inside the `SUPERVISOR_RESULT` `summary` string (e.g. `multi_voter: findings_raised=3 findings_refuted=1 findings_fixed=2`) and the job `## Outcome` block — additive prose only, exactly the `red_team_advisory`-in-summary precedent; do NOT add a new `SUPERVISOR_RESULT` field; `schema_version` stays `1` (see `docs/RESULT_SCHEMAS.md` §SUPERVISOR_RESULT).
+**Per-run counters (additive prose — NO schema bump):** track across all iterations `findings_raised` (`at_floor` findings raised by either lens), `findings_refuted` (refuted → logged, not fixed), and `findings_fixed` (survived → dispatched to fix tasks), and carry them inside the `SUPERVISOR_RESULT` `summary` string (e.g. `multi_voter: findings_raised=3 findings_refuted=1 findings_fixed=2`) and the job `## Outcome` block — additive prose only, exactly the `red_team_advisory`-in-summary precedent; do NOT add a new `SUPERVISOR_RESULT` field; `schema_version` stays `1` (see `docs/RESULT_SCHEMAS.md` §SUPERVISOR_RESULT).
 
 **Interaction with the standalone `--red-team` advisory lens (this sub-note is the ONE authority for the interaction — other surfaces cross-reference it, never restate it):**
 - The standalone `--red-team` / `--no-red-team` advisory lens (further down in this Part) is **UNTOUCHED and fully independent**: it stays advisory-only, high-risk-only, non-gating, a single pass OUTSIDE the heal loop, resolved by its own `RED_TEAM_ENABLED` (supervisor-config step 2.7) — none of its semantics change whether multi-voter is ON or OFF.
@@ -1182,7 +1193,7 @@ else:
 
 **ADVISORY CONTRACT (NON-NEGOTIABLE):**
 - Red-team findings **NEVER change `heal_decision`**, **NEVER directly drive the fix task**, **NEVER block the PR or run**, and introduce **NO new gate**. The Code Reviewer's `CODE_REVIEW_RESULT` remains the **SOLE LLM gating signal** (beside it sits only the one deterministic rules co-gate — a stamped countable `must`-rule failure; §"Delay-vs-decide").
-- If the Code Reviewer INDEPENDENTLY also flags an issue the red-team raised as a `new` BLOCKING/HIGH, the EXISTING class-based fix path handles it — driven by `CODE_REVIEW_RESULT`, **not** by the red-team output. The red-team lens never feeds the fixer.
+- If the Code Reviewer INDEPENDENTLY also flags an issue the red-team raised as a `new` finding at or above `FIX_FLOOR`, the EXISTING class-based fix path handles it — driven by `CODE_REVIEW_RESULT`, **not** by the red-team output. The red-team lens never feeds the fixer.
 - **FAIL-SAFE (mirrors the CLAUDE.md "side-effect emitters fail SAFE" invariant):** any red-team spawn error/timeout, or any `gh pr comment` failure, is a **logged one-line no-op** — record `red_team_advisory = "error"` and CONTINUE. It MUST NOT propagate to `SUPERVISOR_RESULT.status`, MUST NOT raise the completion-tail guard, and MUST NOT abort the run.
 - **Recording (no `schema_version` bump):** carry `red_team_advisory` (`ran` | `skipped_low_risk` | `disabled` | `error`) into `SUPERVISOR_RESULT.summary` and into the job's `## Outcome` block (e.g. `red_team_advisory: ran`). Also carry the classification itself as the additive optional `SUPERVISOR_RESULT.risk_classification: {high_risk, reasons}` object (`docs/RESULT_SCHEMAS.md` §SUPERVISOR_RESULT) — present whenever this lens ran (including `disabled`, since the classification precedes the guard); ABSENT on the Phase 4.5 bypass paths (`--skip-self-heal` / resume-thrash / base-mismatch cleanup), and absent ⇒ valid. `disabled` covers BOTH "`RED_TEAM_ENABLED` was false" AND "the self-heal phase was bypassed (`--skip-self-heal` / resume-thrash) so the lens never ran" — the value is initialized to `"disabled"` at phase entry (step 2) so the Outcome line is never empty. This is an additive-optional note only — do NOT add a new required `SUPERVISOR_RESULT` field; `schema_version` stays `1`.
 

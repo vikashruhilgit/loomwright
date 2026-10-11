@@ -474,6 +474,38 @@ else
 fi
 rm -rf "$WD"
 
+echo "== 11c. fix floor resolved in the dispatching checkout and forwarded in BOTH loops =="
+WD="$(fresh_repo)"
+run_dispatch "$WD" "$PR"          # no config — the default floor
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] && grep -q -- 'LOOMWRIGHT_FIX_FLOOR=MEDIUM ' < <(printf '%s' "$LINE"); then
+  ok "fix floor default: LOOMWRIGHT_FIX_FLOOR=MEDIUM ($LINE)"
+else
+  no "fix floor default missing (line='$LINE')"
+fi
+rm -rf "$WD"
+WD="$(fresh_repo)"
+printf '{"fix_floor": "high", "auto_until_mergeable": false}\n' > "$WD/.supervisor/config.json"
+run_dispatch "$WD" "$PR"          # configured floor + the plain diff-only loop
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] && grep -q -- 'LOOMWRIGHT_FIX_FLOOR=HIGH ' < <(printf '%s' "$LINE") \
+   && ! grep -q -- 'LOOMWRIGHT_UNTIL_MERGEABLE' < <(printf '%s' "$LINE"); then
+  ok "fix floor from config, forwarded to the plain diff-only loop too ($LINE)"
+else
+  no "configured fix floor not forwarded in the plain loop (line='$LINE')"
+fi
+rm -rf "$WD"
+WD="$(fresh_repo)"
+printf '{"fix_floor": "bogus"}\n' > "$WD/.supervisor/config.json"
+run_dispatch "$WD" "$PR"          # an invalid floor is forwarded as `invalid`, never defaulted
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] && grep -q -- 'LOOMWRIGHT_FIX_FLOOR=invalid ' < <(printf '%s' "$LINE"); then
+  ok "invalid fix floor forwarded as 'invalid' so the drain refuses visibly ($LINE)"
+else
+  no "invalid fix floor not forwarded as 'invalid' (line='$LINE')"
+fi
+rm -rf "$WD"
+
 echo "== 12. optional tuning forwarded only when set (timeout + pattern) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --check-wait-timeout 300 --review-check-pattern 'claude*'

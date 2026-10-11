@@ -165,7 +165,7 @@ Check each class against the integrated diff:
 
 **Fix-the-class rule (pairs with Supervisor Phase 4.5 fixer):** when any instance above is flagged, the fixer sweeps the whole diff for the same class and fixes all occurrences — the reviewer samples, the fixer sweeps. See `agents/supervisor.md` Phase 4.5 fix-iteration step.
 
-**Correctness-severity rule (pairs with the diff-review fix floor).** When a class above is a confirmed correctness / security / behavior regression introduced by the diff, label it **HIGH or BLOCKING** (not MEDIUM/LOW) so Phase 4.5 / the default `/review-pr` loop actually fix it — the fix floor only addresses `new` + BLOCKING/HIGH. MEDIUM/LOW stay for maintainability / polish. This is the severity-assignment rule mirrored from `agents/code-reviewer.md`'s "Flag Issues by Severity" step; it does NOT touch the `drift` severity caps.
+**Correctness-severity rule (pairs with the diff-review fix floor).** When a class above is a confirmed correctness / security / behavior regression introduced by the diff, label it **HIGH or BLOCKING** (not MEDIUM/LOW) so Phase 4.5 / `/review-pr` fix it under EVERY configurable fix floor (`scripts/fix-floor.sh` — a project may set it to HIGH, where a MEDIUM passes unfixed). MEDIUM/LOW stay for maintainability / polish. This is the severity-assignment rule mirrored from `agents/code-reviewer.md`'s "Flag Issues by Severity" step; it does NOT touch the `drift` severity caps.
 
 ## Token Cost
 

@@ -60,7 +60,7 @@ Code Reviewer returns PASS
     → heal_decision = PASS; proceed to completion tail
 
 Code Reviewer returns FAIL (iteration < --heal-iterations, default 3)
-    → Spawn fix task for bounded new BLOCKING/HIGH issues (previous issues + review feedback)
+    → Spawn fix task for bounded new issues at or above the fix floor (default MEDIUM) (previous issues + review feedback)
     → Re-review after fix (next iteration)
 
 Code Reviewer returns FAIL at the final iteration (max --heal-iterations reached)
