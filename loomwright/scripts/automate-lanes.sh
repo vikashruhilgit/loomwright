@@ -1679,8 +1679,43 @@ _lanes_inbox() {
   return 0
 }
 
+# _lanes_keep_awake_holders — JSON array of what keeps this machine from idle-sleeping right now, one
+# {pid, process, assertion, name, kind} per holder. macOS: every idle-sleep-preventing power assertion
+# `pmset -g assertions` lists (powerd's own display-on hold excluded), so the Claude desktop app's
+# "Keep computer awake while Claude works" hold counts — it is a power assertion, not a `caffeinate`
+# process, and a process-name check alone read it as "not held". kind: `caffeinate` (a holder that lasts
+# as long as the process it waits on), `claude-app` (the desktop app: held only while a Code session
+# works — headless lanes are not Code sessions, so it can drop mid-wave), `other`. A `caffeinate` that
+# pgrep sees but pmset did not list (no pmset, other OSes) is added. Fail-SAFE: unreadable ⇒ `[]`.
+_lanes_keep_awake_holders() {
+  local pm="${LOOMWRIGHT_LANES_PMSET:-pmset}" rows="" cp
+  if command -v "$pm" >/dev/null 2>&1 || [ -x "$pm" ]; then
+    rows="$("$pm" -g assertions 2>/dev/null | sed -n 's/^[[:space:]]*pid \([0-9][0-9]*\)(\(.*\)): \[[^]]*\] *[0-9:]* *\([A-Za-z]*\) named: "\(.*\)".*$/\1	\2	\3	\4/p' \
+      | awk -F'	' '$2 != "powerd" && $3 ~ /^(PreventUserIdleSystemSleep|NoIdleSleepAssertion|PreventSystemSleep|PreventUserIdleDisplaySleep|NoDisplaySleepAssertion)$/')"
+  fi
+  if ! awk -F'	' '$2 == "caffeinate" { f = 1 } END { exit !f }' <<<"$rows" \
+    && cp="$("${LOOMWRIGHT_LANES_PGREP:-pgrep}" -x caffeinate 2>/dev/null | head -1)" && [ -n "$cp" ]; then
+    rows="$(printf '%s%s%s\tcaffeinate\tPreventUserIdleSystemSleep\tcaffeinate' "$rows" "${rows:+$'\n'}" "$cp")"
+  fi
+  printf '%s' "$rows" | jq -R -s -c '[split("\n")[] | select(. != "") | split("\t")
+    | {pid: (.[0] | tonumber? // null), process: .[1], assertion: .[2], name: (.[3] // ""),
+       kind: (if .[1] == "caffeinate" then "caffeinate" elif (.[1] | test("^Claude( Helper)?$")) then "claude-app" else "other" end)}]' 2>/dev/null \
+    || printf '[]'
+}
+
+# _lanes_keep_awake_state [<holders JSON>] — `held` when a caffeinate or the Claude app holds the machine
+# awake now, else `not held`. `other` holders (macOS daemons such as sharingd / useractivityd take
+# seconds-long assertions all day) are listed but never make it `held`.
 _lanes_keep_awake_state() {
-  if "${LOOMWRIGHT_LANES_PGREP:-pgrep}" -x caffeinate >/dev/null 2>&1; then printf 'held'; else printf 'not held'; fi
+  local h="${1:-}"; [ -n "$h" ] || h="$(_lanes_keep_awake_holders)"
+  if jq -e 'any(.[]; .kind != "other")' >/dev/null 2>&1 <<<"$h"; then printf 'held'; else printf 'not held'; fi
+}
+
+# _lanes_keep_awake_lasting [<holders JSON>] — exit 0 when a `caffeinate` holder exists: the one kind of
+# hold that lasts the wave. The desktop app's hold alone does not (it follows Code-session activity).
+_lanes_keep_awake_lasting() {
+  local h="${1:-}"; [ -n "$h" ] || h="$(_lanes_keep_awake_holders)"
+  jq -e 'any(.[]; .kind == "caffeinate")' >/dev/null 2>&1 <<<"$h"
 }
 
 # _lanes_coordinator_pid — LOOMWRIGHT_LANES_COORDINATOR_PID, else the nearest `claude` ancestor, else $PPID.
@@ -1711,23 +1746,25 @@ _lanes_keep_awake_start() {
     Darwin) ;;
     *) echo "keep-awake: not started — no keep-awake holder known on this OS"; return 0 ;;
   esac
-  [ "$(_lanes_keep_awake_state)" = held ] && { echo "keep-awake: already held"; return 0; }
+  # Only a lasting holder suppresses the start: the desktop app's while-working hold can drop mid-wave.
+  _lanes_keep_awake_lasting && { echo "keep-awake: already held (caffeinate)"; return 0; }
   cp="$(_lanes_coordinator_pid)"
   nohup "$cf" -i -w "$cp" >/dev/null 2>&1 &
   hp=$!
   echo "keep-awake: started (opt-in --keep-awake) — $cf -i -w $cp (pid $hp); it ends with the coordinator"
 }
 
-# _lanes_machine_json — {state, load1, cpus, mem_pressure, keep_awake}; `unknown` when the reader is
-# absent or unreadable (never an error).
+# _lanes_machine_json — {state, load1, cpus, mem_pressure, keep_awake, keep_awake_lasting,
+# keep_awake_holders}; `unknown` when the reader is absent or unreadable (never an error).
 _lanes_machine_json() {
-  local cmd="${LOOMWRIGHT_MACHINE_LOAD_CMD:-$HERE/machine-load.sh}" j="" ka
-  ka="$(_lanes_keep_awake_state)"
+  local cmd="${LOOMWRIGHT_MACHINE_LOAD_CMD:-$HERE/machine-load.sh}" j="" ka h kl=false
+  h="$(_lanes_keep_awake_holders)"; ka="$(_lanes_keep_awake_state "$h")"; _lanes_keep_awake_lasting "$h" && kl=true
   [ -f "$cmd" ] && j="$(bash "$cmd" --json 2>/dev/null | jq -c 'select(type == "object")' 2>/dev/null | head -1)"
   [ -n "$j" ] || j='{}'
-  jq -c --arg ka "$ka" '{state: ((.state // "unknown") | tostring), load1: (.load1 // "unknown"),
-    cpus: (.cpus // "unknown"), mem_pressure: (.mem_pressure // "unknown"), keep_awake: $ka}' <<<"$j" 2>/dev/null \
-    || printf '{"state":"unknown","load1":"unknown","cpus":"unknown","mem_pressure":"unknown","keep_awake":"%s"}' "$ka"
+  jq -c --arg ka "$ka" --argjson h "$h" --argjson kl "$kl" '{state: ((.state // "unknown") | tostring), load1: (.load1 // "unknown"),
+    cpus: (.cpus // "unknown"), mem_pressure: (.mem_pressure // "unknown"), keep_awake: $ka,
+    keep_awake_lasting: $kl, keep_awake_holders: $h}' <<<"$j" 2>/dev/null \
+    || printf '{"state":"unknown","load1":"unknown","cpus":"unknown","mem_pressure":"unknown","keep_awake":"%s","keep_awake_lasting":%s,"keep_awake_holders":[]}' "$ka" "$kl"
 }
 
 _lanes_ci_json() { # `ci-slot.sh status --json`, or nothing
@@ -1787,6 +1824,108 @@ _lanes_resolve() {
       awk -F'\t' -v l="$1" '$1 == l { p = $2 } END { if (p != "") print p }' "$t" ;;
     *) printf '%s' "${1:-}" ;;
   esac
+}
+
+# _lanes_timeline <runfile> <lane_path> <now_epoch> <state> <last_launch_utc> — the lane's step timeline:
+# {started_at, current, label, steps: [{id, name, state, started_at, ended_at, duration_s, lines}],
+#  phase, phase_status, phases: [{phase, at}]} — the last three the lane's Supervisor's (null / []). The seven steps are the per-item loop as
+# a lane records it: pick · plan (Launch Pad) · build (Supervisor up to the PR) · heal (Phase 4.5) ·
+# drain (the owned /review-pr --until-mergeable) · decide (dismissed findings) · merge (park → merge →
+# close-out). Evidence: the run file's timestamped `## Progress` lines, plus the lane's Supervisor
+# `.supervisor/state.md` (`## Session` phase/status, `## Decisions Log` phase timestamps) only when that
+# state was created at or after the pick — a previous item's Supervisor state never shows. A step is
+# reached at its first evidence; the current step is the furthest one reached, its state taken from the
+# lane state (`active`, `waiting` on the owner, `held`, `trouble`; every step `done` once merged/done).
+# A step passed without a line of its own reads `done` with null times: the run never said when it ran.
+# Boundaries: the `picked` line ends Pick and starts Plan; a Launch Pad "brief saved" line ends Plan and starts Build (/autonomous hands the brief to
+# the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too.
+# Fail-SAFE: anything unreadable ⇒ `null`.
+_lanes_timeline() {
+  local rf="$1" sm="$2/.supervisor/state.md" now="$3" state="$4" llu="$5" out
+  # Validated, never trusted by exit code: under `pipefail` an absent state.md fails the pipeline even
+  # when jq printed a good object, and an `|| printf null` there would emit two JSON texts.
+  out="$({
+    [ -f "$rf" ] && awk '/^## / { sec = $0; next }
+      sec == "## Progress" && /^- [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z / {
+        x = substr($0, 24); gsub(/\t/, " ", x); printf "P\t%s\t%s\n", substr($0, 3, 20), x }' "$rf" 2>/dev/null
+    [ -f "$sm" ] && awk 'function val(s) { sub(/^- [a-z_]*: */, "", s); gsub(/\t/, " ", s); return s }
+      /^## / { sec = $0; next }
+      sec == "## Session" && /^- (phase|status):/ { k = $2; sub(/:$/, "", k); printf "S\t%s\t%s\n", k, val($0) }
+      sec == "## Checkpoint" && /^- (created|last_updated):/ { k = $2; sub(/:$/, "", k); printf "S\t%s\t%s\n", k, val($0) }
+      sec == "## Decisions Log" && /^- phase: / && /timestamp: / {
+        ph = $0; sub(/^- phase: */, "", ph); sub(/[, ].*/, "", ph)
+        ts = $0; sub(/.*timestamp: */, "", ts); sub(/[ ,].*/, "", ts)
+        d = $0; sub(/^.*decision: */, "", d); sub(/, (rationale|timestamp):.*/, "", d); gsub(/\t/, " ", d)
+        printf "D\t%s\t%s\t%s\n", ph, ts, d }' "$sm" 2>/dev/null
+    true
+  } | jq -R -s -c --arg state "$state" --arg llu "$(_lanes_dash "$llu")" --argjson now "$now" '
+    def ep: (try fromdateiso8601 catch null);
+    def clip(n): if length > n then .[0:n - 1] + "…" else . end;
+    def ids: ["pick", "plan", "build", "heal", "drain", "decide", "merge"];
+    def names: ["Pick", "Plan", "Build", "Heal", "Drain", "Decide", "Merge"];
+    def ord: . as $id | ids | index($id);
+    def cls:
+      if test("^(closeout |auto-finalized|trail-pr|parked |lane park notify|converted |merged)") then ["merge"]
+      elif test("^(dismissed|owner decisions)") then ["decide"]
+      elif test("owned drain started|^drain |re-drain") then ["drain"]
+      elif test("^/autonomous done") then ["heal"]
+      elif test("^ran /autonomous") then (if test("heal (PASS|FAIL|ESCALATED)") then ["build", "heal"] else ["build"] end)
+      elif test("^supervisor:"; "i") then ["build"]
+      elif test("launch[ -]?pad"; "i") then (if test("brief saved"; "i") then ["plan", "build"] else ["plan"] end)
+      elif test("^picked ") then ["pick", "plan"]
+      elif test("^(run started|run created|run-lock acquired|meta-entry|skipped AUT-QUEUE|trail-gate|trail-unstage)") then ["pick"]
+      else [] end;
+    def sstep: if . == "SELF_HEAL" or . == "LOOP" then "heal" else "build" end;
+    [split("\n")[] | select(. != "") | split("\t")] as $rows
+    | ([$rows[] | select(.[0] == "S") | {key: .[1], value: (.[2] // "")}] | from_entries) as $s
+    | [$rows[] | select(.[0] == "P") | {ts: .[1], e: (.[1] | ep), text: (.[2] // "")} | select(.e != null)] as $p
+    | ([$p[] | select(.text | test("^picked "))] | last) as $pick
+    | (($s.created // "") | ep) as $se
+    | ($se != null and ($pick == null or $se >= $pick.e)) as $sup
+    | ($se == null and ($s.status // "") == "running" and $state == "running" and ($s.phase // "") != "") as $live
+    | ([$p[] | . as $x | ($x.text | cls)[] | {step: ., ts: $x.ts, e: $x.e, text: $x.text}]
+       + (if $sup then
+            [{step: "build", ts: $s.created, e: $se, text: "Supervisor started"}]
+            + [$rows[] | select(.[0] == "D") | {step: (.[1] | sstep), ts: .[2], e: (.[2] | ep),
+                 text: ("Supervisor " + .[1] + ": " + (.[3] // ""))} | select(.e != null)]
+            + (if ($s.phase // "") | sstep == "heal" then
+                 [{step: "heal", ts: ($s.last_updated // $s.created), e: ((($s.last_updated // "") | ep) // $se),
+                   text: ("Supervisor " + $s.phase + " (" + ($s.status // "?") + ")")}] else [] end)
+          else [] end)) as $ev
+    | ([($ev[] | .step), (if $live then ($s.phase | sstep) else empty end) | ord] | max // 0) as $far
+    | (if ($state | test("^(merged|done)$")) then 7 else $far end) as $cur
+    | (if $state == "running" then "active"
+       elif ($state | test("^(awaiting_input|answer_pending|ready_for_release|awaiting_merge)$")) then "waiting"
+       elif ($state | test("^(held_for_load|created)$")) then "held"
+       elif ($state | test("^(stalled|died|lost_to_reset|missing|blocked_launch|gone|escalated|failed|rate_limit|drain_died|removed|abandoned)$")) then "trouble"
+       else "active" end) as $cs
+    | [range(0; 7) as $i
+        | ([$ev[] | select(.step == ids[$i])] | sort_by(.e)) as $mine
+        | {i: $i, first: ($mine | first), last: ($mine | last), lines: [$mine[] | .text | clip(140)][-4:],
+           state: (if $i < $cur then "done" elif $i == $cur then $cs else "pending" end)}] as $st
+    | [$st[] | . as $x
+        | ([$st[($x.i + 1):][] | select(.first != null and .i <= $cur) | .first.e] | min) as $next
+        | (if $x.state == "pending" or ($x.i == $cur) then null else ($next // $x.last.e) end) as $end
+        | ($x.first.e // null) as $b
+        | {id: ids[$x.i], name: names[$x.i], state: $x.state, started_at: ($x.first.ts // null),
+           ended_at: (if $end == null then null else ($end | todateiso8601) end),
+           duration_s: (if $b == null then null elif $end != null then ($end - $b)
+                        elif $x.i == $cur then ([$now - $b, 0] | max) else null end),
+           lines: $x.lines}] as $steps
+    | ([$steps[] | select(.state != "done" and .state != "pending")] | first) as $c
+    | ([$ev[] | select(.step == "drain") | .text | capture("drain round (?<n>[0-9]+)") | .n] | last) as $round
+    | {started_at: (($p | first | .ts) // (if $llu == "" then null else $llu end)),
+       current: ($c.id // null),
+       label: (if $c == null then (if $cur >= 7 then "Done" else null end)
+               elif $c.id == "build" and ($sup or $live) and ($s.phase // "") != "" then "Build · " + $s.phase
+               elif $c.id == "drain" and $round != null then "Drain · round " + $round
+               else $c.name end),
+       steps: $steps,
+       phase: (if $sup or $live then ($s.phase // null) else null end),
+       phase_status: (if $sup or $live then ($s.status // null) else null end),
+       phases: (if $sup then [$rows[] | select(.[0] == "D") | {phase: .[1], at: .[2]}] | group_by(.phase) | map(min_by(.at)) | sort_by(.at)
+                else [] end)}' 2>/dev/null)"
+  if jq -e 'type == "object"' >/dev/null 2>&1 <<<"$out"; then printf '%s' "$out"; else printf 'null'; fi
 }
 
 # _lanes_lane_json <10 lane-table columns> <now_epoch> <ci_json> [<answer-pending file>] — one lane's
@@ -1869,9 +2008,11 @@ _lanes_lane_json() {
     rdsum="$(sed -n 's/^- score: .* | summary: //p' "$rdf" | head -1)"
   fi
   lm="$(_lanes_last_message "$log")"; la="$(_lanes_last_actions "$log")"
-  local pdg; pdg="$(_lanes_policy_digest "$path/.supervisor/inbox")"
+  local pdg tl; pdg="$(_lanes_policy_digest "$path/.supervisor/inbox")"
   jq -e 'type == "object" or . == null' >/dev/null 2>&1 <<<"$pdg" || pdg=null
-  jq -n -c --arg lane "$lane" --arg path "$path" --arg item "$(_lanes_dash "$item")" --arg run "$run" --argjson pdg "$pdg" \
+  tl="$(_lanes_timeline "$rf" "$path" "$now" "$state" "$llu")"
+  jq -e 'type == "object" or . == null' >/dev/null 2>&1 <<<"$tl" || tl=null
+  jq -n -c --arg lane "$lane" --arg path "$path" --arg item "$(_lanes_dash "$item")" --arg run "$run" --argjson pdg "$pdg" --argjson tl "$tl" \
     --arg state "$state" --arg reason "$reason" --arg pid "$(_lanes_dash "$pid")" --arg sid "$(_lanes_dash "$sid")" \
     --arg llu "$(_lanes_dash "$llu")" --arg status "$(_lanes_dash "$status")" --arg pause "$(_lanes_dash "$pause")" \
     --arg pr "$(_lanes_dash "$pr")" --arg prs "$prs" --arg lp "$(_lanes_dash "$lp")" --arg lm "$lm" --arg la "$la" \
@@ -1882,7 +2023,8 @@ _lanes_lane_json() {
       session_id: ($sid | n), last_launch_utc: ($llu | n), run_status: ($status | n), pause_reason: ($pause | n),
       pr: ($pr | n), pr_state: ($prs | n), branch: ($br | n), last_progress: $lp, last_actions: ($la | split("\n") | map(select(. != ""))),
       last_message: $lm, questions: $qs, ci_slot: $ci, held_for_load: ($held | n),
-      readiness: (if $rds == "" then null else {score: $rds, summary: $rdsum, file: $rdf} end), policy: $pdg}'
+      readiness: (if $rds == "" then null else {score: $rds, summary: $rdsum, file: $rdf} end), policy: $pdg,
+      started_at: ($tl.started_at // ($llu | n)), timeline: $tl}'
 }
 
 # _lanes_status_doc <table> <parent> <primary> — the full lane-status JSON document.
@@ -1897,17 +2039,26 @@ _lanes_status_doc() {
     lanes="$lanes$row
 "
   done < "$table"
-  printf '%s' "$lanes" | jq -s -c --arg parent "$parent" --arg primary "$primary" --arg at "$(now_utc)" --argjson m "$m" \
+  local rs; rs="$(awk '/^## / { sec = $0; next } sec == "## Progress" && /^- [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:]*Z / { print substr($0, 3, 20); exit }' \
+    "$primary/.supervisor/automate/$parent.md" 2>/dev/null)"
+  # utc_offset_s: the machine's local offset, so a client in a sandbox with no time zone can show local
+  # clock times ("started 18:22"); `date +%z` is POSIX on BSD and GNU alike.
+  local tz; tz="$(date +%z 2>/dev/null)"
+  case "$tz" in [+-][0-9][0-9][0-9][0-9]) tz="$(( (10#${tz:1:2} * 3600 + 10#${tz:3:2} * 60) * (${tz:0:1}1) ))" ;; *) tz=null ;; esac
+  printf '%s' "$lanes" | jq -s -c --arg parent "$parent" --arg primary "$primary" --arg at "$(now_utc)" --argjson m "$m" --arg rs "$rs" --argjson tz "$tz" \
     --arg hint "$hint" --arg mp "$([ -e "$primary/.supervisor/automate/$parent.memory-pressure" ] && echo true || echo false)" \
-    '{schema_version: 1, parent_run_id: $parent, primary: $primary, generated_at: $at, machine: $m,
+    '{schema_version: 1, parent_run_id: $parent, primary: $primary, generated_at: $at,
+      run_started_at: (if $rs != "" then $rs else ([.[].started_at | select(. != null)] | min) end), utc_offset_s: $tz, machine: $m,
       memory_pressure: ($mp == "true"), keep_awake_suggestion: (if $hint == "" then null else $hint end), lanes: .}'
 }
 
 _lanes_render() { # <status JSON> — the plain view
-  jq -r '"lane-status: \(.parent_run_id) — \(.lanes | length) lane(s) — \(.generated_at)",
+  jq -r '"lane-status: \(.parent_run_id) — \(.lanes | length) lane(s) — \(.generated_at)\(if .run_started_at != null then " — started \(.run_started_at)" else "" end)",
     (if all(.lanes[]; .policy == null) then "policy: none answered" else empty end),
     (.lanes[] | "\(.lane)  \(.state)\(if .reason != "" then " (" + .reason + ")" else "" end)  item=\(.item)  pr=\(.pr // "-")  path=\(.path)",
       (if .policy != null then "    policy: \(.policy.answered) answered by policy\(if .policy.answered > 1 and .policy.first_at != null then " since " + .policy.first_at else "" end) — last \(.policy.last_gate // "?") → \(.policy.last_label) \(.policy.last_at // "unknown")" else empty end),
+      (if .timeline != null then "    steps: \([.timeline as $t | .timeline.steps[] | if .state == "done" then .name + " ✓" elif .state == "pending" then .name
+          else "[\($t.label // .name)\(if .duration_s != null then " " + ((.duration_s / 60 | floor | tostring) + "m") else "" end) \(.state)]" end] | join(" · "))\(if .started_at != null then "  (started \(.started_at))" else "" end)" else empty end),
       (if .last_progress != "" then "    progress: \(.last_progress)" else empty end),
       (if (.last_actions | length) > 0 then "    actions: \(.last_actions | join("; "))" else empty end),
       (.questions[] | "    question: \(.id) asked_at=\(.asked_at // "unknown") waiting_s=\(.waiting_s // "unknown") — \(.question // "")"),
@@ -1917,9 +2068,11 @@ _lanes_render() { # <status JSON> — the plain view
       (if .readiness != null then "    readiness: \(.readiness.summary)" else empty end),
       (if .last_message != "" then "    last: \(.last_message)" else empty end)),
     "machine: state=\(.machine.state) load1=\(.machine.load1) cpus=\(.machine.cpus) mem_pressure=\(.machine.mem_pressure)\(if .memory_pressure then " — memory_pressure: new launches held" else "" end)",
-    "keep-awake: \(.machine.keep_awake)",
-    (if .keep_awake_suggestion != null and .machine.keep_awake != "held"
-     then "keep-awake suggestion (run it yourself): \(.keep_awake_suggestion) — a closed lid still sleeps" else empty end)' <<<"$1"
+    "keep-awake: \(.machine.keep_awake)\([(.machine.keep_awake_holders // [])[] | select(.kind != "other")
+      | if .kind == "caffeinate" then "caffeinate pid \(.pid)" else "Claude app — only while a Code session works" end] | unique
+      | if length > 0 then " (" + join("; ") + ")" else "" end)",
+    (if .keep_awake_suggestion != null and (if .machine | has("keep_awake_lasting") then .machine.keep_awake_lasting else .machine.keep_awake == "held" end) != true
+     then "keep-awake suggestion (run it yourself, or lane-status --keep-awake): \(.keep_awake_suggestion) — a closed lid still sleeps" else empty end)' <<<"$1"
 }
 
 # _lanes_resources <primary> <parent> — the latest fleet.log line per lane plus the wave's peak.

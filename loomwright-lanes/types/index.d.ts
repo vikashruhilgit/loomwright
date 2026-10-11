@@ -39,20 +39,62 @@ export type LaneRow = {
   readiness: { score: string; summary: string; file: string } | null
   /** Questions this lane's stamped policy answered on its own, or null. */
   policy?: { answered: number; first_at: string | null; last_at: string | null; last_gate: string | null; last_label: string } | null
+  /** When the lane started: its run file's first dated line, else its last launch. */
+  started_at?: string | null
+  /** The seven-step rail (pick · plan · build · heal · drain · decide · merge), or null. */
+  timeline?: LaneTimeline | null
 }
+
+/** done · pending, and the current step's state: active, waiting (on the owner), held, trouble. */
+export type LaneStepState = 'done' | 'pending' | 'active' | 'waiting' | 'held' | 'trouble'
+
+export type LaneStep = {
+  id: string
+  name: string
+  state: LaneStepState
+  started_at: string | null
+  ended_at: string | null
+  /** Ended − started; for the current step, now − started. */
+  duration_s: number | null
+  /** The step's last few `## Progress` lines (and Supervisor decisions), oldest first. */
+  lines: string[]
+}
+
+export type LaneTimeline = {
+  started_at: string | null
+  current: string | null
+  /** The current step's words: "Build · EXECUTE", "Drain · round 2", or "Done". */
+  label: string | null
+  steps: LaneStep[]
+  /** The lane's Supervisor phase now (EXECUTE, SELF_HEAL…) and status, when its state is this item's. */
+  phase: string | null
+  phase_status: string | null
+  /** When each Supervisor phase first logged a decision, oldest first. */
+  phases: Array<{ phase: string; at: string }>
+}
+
+export type LaneAwakeHolder = { pid: number | null; process: string; assertion: string; name: string; kind: 'caffeinate' | 'claude-app' | 'other' }
 
 export type LaneMachine = {
   state: string
   load1: number | string
   cpus: number | string
   mem_pressure: string
+  /** `held` when a caffeinate or the Claude app holds the machine awake now. */
   keep_awake: string
+  /** A caffeinate holds it: the one hold that lasts the wave (the app's follows Code-session work). */
+  keep_awake_lasting?: boolean
+  keep_awake_holders?: LaneAwakeHolder[]
 }
 
 export type LaneStatusDoc = {
   schema_version: number
   parent_run_id: string | null
   generated_at?: string
+  /** The wave's start: the parent run file's first dated line. */
+  run_started_at?: string | null
+  /** The machine's UTC offset, so local clock times can be shown without a time zone database. */
+  utc_offset_s?: number | null
   machine: LaneMachine
   memory_pressure?: boolean
   keep_awake_suggestion?: string | null
@@ -84,6 +126,10 @@ declare module 'claude-code' {
       details: Record<string, string[]>
       /** Whether the last read was overloaded (so the alert toasts once per episode). */
       overloaded: boolean
+      /** load1 of the recent reads, oldest first (the header's sparkline). */
+      loads: number[]
+      /** What `lane-status --keep-awake` said the last time the button was pressed. */
+      awake: LaneNote
     }
   }
 }

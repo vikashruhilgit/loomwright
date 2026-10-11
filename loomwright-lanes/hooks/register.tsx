@@ -11,7 +11,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { LaneNote, LaneOption, LanePicks, LaneQuestion, LaneRow, LaneSnapshot, LaneStatusDoc } from '../types'
+import type { LaneNote, LaneOption, LanePicks, LaneQuestion, LaneRow, LaneSnapshot, LaneStatusDoc, LaneStep, LaneStepState } from '../types'
 
 const PANE = 'loomwright-lanes'
 const TITLE = 'Lanes'
@@ -28,6 +28,9 @@ const open = atom({ plugin: 'loomwright-lanes', key: 'open' } as const, {} as Re
 const details = atom({ plugin: 'loomwright-lanes', key: 'details' } as const, {} as Record<string, string[]>)
 const noteDrafts = atom({ plugin: 'loomwright-lanes', key: 'notes' } as const, {} as Record<string, string>)
 const overloaded = atom({ plugin: 'loomwright-lanes', key: 'overloaded' } as const, false)
+const loads = atom({ plugin: 'loomwright-lanes', key: 'loads' } as const, [] as number[])
+const awake = atom({ plugin: 'loomwright-lanes', key: 'awake' } as const, { text: '', ok: true } as LaneNote)
+const LOAD_SAMPLES = 40 // 10 minutes of 15 s reads
 
 type LaneCommand = 'lane-status' | 'lane-feed' | 'lane-answer'
 type Ran = { ok: boolean; out: string }
@@ -164,6 +167,8 @@ async function refresh($: EngineInterface, configured: string): Promise<void> {
       return
     }
     await update($, snapshot, () => ({ doc, error: null, at }))
+    const l1 = Number(doc.machine?.load1)
+    if (Number.isFinite(l1)) await update($, loads, all => [...all, l1].slice(-LOAD_SAMPLES))
 
     const running = doc.lanes.filter(l => l.state === 'running').length
     const asking = waitingCount(doc)
@@ -229,6 +234,80 @@ async function send($: EngineInterface, configured: string, l: LaneRow, q: LaneQ
     await update($, noteDrafts, all => Object.fromEntries(Object.entries(all).filter(([id]) => id !== q.id)))
   }
   await refresh($, configured)
+}
+
+// ---- keeping the machine awake -----------------------------------------------------------------------------
+
+/** The owner's press: `lane-status --keep-awake` starts `caffeinate -i -w <this session>` (macOS only, and
+ *  only when no caffeinate holds already); it ends with the session. The desktop app's own keep-awake
+ *  holds only while a Code session works, and lanes are not Code sessions, so it can drop mid-wave. */
+async function keepAwake($: EngineInterface, configured: string): Promise<void> {
+  const r = await lane($, configured, 'lane-status', ['--keep-awake'])
+  const said = r.out.split('\n').find(x => x.startsWith('keep-awake:')) ?? clip(r.out || 'lane-status --keep-awake said nothing', 300)
+  await update($, awake, () => ({ text: said, ok: r.ok && !/not started/.test(said) }))
+  await refresh($, configured)
+}
+
+// ---- time and the step rail ---------------------------------------------------------------------------------
+
+/** "25 s", "4 min", "1 h 34 min". */
+function span(s: number | null | undefined): string {
+  if (s === null || s === undefined || !Number.isFinite(s)) return ''
+  const t = Math.max(0, Math.round(s))
+  if (t < 60) return `${t} s`
+  const m = Math.floor(t / 60)
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`
+}
+
+/** An ISO UTC time as the machine's local "18:22" (lane-status gives the offset; the sandbox has no zone). */
+function clock(iso: string | null | undefined, offset: number | null | undefined): string {
+  const ms = iso ? Date.parse(iso) : NaN
+  if (!Number.isFinite(ms)) return ''
+  const t = (((Math.floor(ms / 1000) + (offset ?? 0)) % 86400) + 86400) % 86400
+  const hh = String(Math.floor(t / 3600)).padStart(2, '0')
+  const mm = String(Math.floor((t % 3600) / 60)).padStart(2, '0')
+  return `${hh}:${mm}${offset === null || offset === undefined ? ' UTC' : ''}`
+}
+
+/** Seconds since an ISO time, at `now` (ms). */
+function since(iso: string | null | undefined, now: number): number | null {
+  const ms = iso ? Date.parse(iso) : NaN
+  return Number.isFinite(ms) ? Math.max(0, (now - ms) / 1000) : null
+}
+
+const STEP_TONE: Record<LaneStepState, Tone> = {
+  done: 'success', active: 'suggestion', waiting: 'warning', held: 'subtle', trouble: 'error', pending: 'subtle',
+}
+const STEP_MARK: Record<LaneStepState, string> = { done: '✓', active: '●', waiting: '◆', held: '⏸', trouble: '✕', pending: '' }
+const STEP_WORD: Record<LaneStepState, string> = {
+  done: 'done', active: 'now', waiting: 'waiting for you', held: 'held', trouble: 'stopped', pending: 'pending',
+}
+/** What each step is, for a step that has no line of its own yet. */
+const STEP_ABOUT: Record<string, string> = {
+  pick: 'take the item from the lane backlog',
+  plan: 'Launch Pad: brief + Plan Review',
+  build: 'Supervisor: preflight, execute, open the PR',
+  heal: 'Phase 4.5 integration review and fixes',
+  drain: 'review → fix → re-review until mergeable',
+  decide: 'your call on dismissed findings',
+  merge: 'park, merge, close out',
+}
+
+/** A load sparkline in block characters (the terminal's; remote surfaces draw an Svg). */
+function blocks(xs: number[], top: number): string {
+  const bars = '▁▂▃▄▅▆▇█'
+  return xs.map(x => bars[Math.min(7, Math.max(0, Math.round((x / Math.max(top, 0.01)) * 7)))]).join('')
+}
+
+/** The same trend as an SVG: the load line, and the CPU count as a dashed ceiling. */
+function sparkSvg(xs: number[], cpus: number): string {
+  const w = 160, h = 34, top = Math.max(cpus, ...xs, 1) * 1.1
+  const pts = xs.map((x, i) => `${xs.length < 2 ? w : ((i / (xs.length - 1)) * w).toFixed(1)},${(h - 2 - (x / top) * (h - 4)).toFixed(1)}`).join(' ')
+  const cy = (h - 2 - (cpus / top) * (h - 4)).toFixed(1)
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">`
+    + (cpus > 0 ? `<line x1="0" x2="${w}" y1="${cy}" y2="${cy}" stroke="#E24B4A" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>` : '')
+    + `<polyline fill="none" stroke="#378ADD" stroke-width="2" stroke-linejoin="round" points="${pts}"/>`
+    + `</svg>`
 }
 
 // ---- the module ------------------------------------------------------------------------------------------
@@ -419,36 +498,175 @@ export const register: Register = (on, options) => {
     const m = doc.machine
     const hot = m?.state === 'overloaded'
     const asking = waitingCount(doc)
-    const age = Math.max(0, Math.round(((await $.clock.now()) - snap.at) / 1000))
+    const now = await $.clock.now()
+    const age = Math.max(0, Math.round((now - snap.at) / 1000))
+    const off = doc.utc_offset_s ?? null
+    const hist = await read($, loads)
+    const awakeNote = await read($, awake)
+    const Svg = e.surface !== 'terminal' && 'Svg' in ui ? ui.Svg : null
     const pending = doc.lanes
       .flatMap(l => l.questions.map(q => ({ l, q })))
       .sort((a, b) => (b.q.waiting_s ?? 0) - (a.q.waiting_s ?? 0))
 
+    // Header tiles: when the wave started, its lanes, the machine's load, and keep-awake.
+    const tileStyle = desk
+      ? { backgroundColor: tint('subtle', 0.07), paddingX: 2, paddingY: 1 }
+      : { borderStyle: 'round', borderColor: 'subtle', paddingX: 1 }
+    const tile = (key: string, title: string, body: JSX.Element[]) => (
+      <Box key={key} flexDirection="column" flexGrow={1} minWidth={24} {...tileStyle}>
+        <Text dimColor>{title}</Text>
+        {body}
+      </Box>
+    )
+    const count = (pred: (l: LaneRow) => boolean) => doc.lanes.filter(pred).length
+    const nRun = count(l => l.state === 'running')
+    const nAsk = count(l => WAITING.has(l.state))
+    const nPark = count(l => ['ready_for_release', 'awaiting_merge'].includes(l.state))
+    const nDone = count(l => ['merged', 'done'].includes(l.state))
+    const nBad = count(l => TROUBLE.has(l.state))
+    const cpus = Number(m?.cpus)
+    const holders = m?.keep_awake_holders ?? []
+    // An older Loomwright reports no `keep_awake_lasting`; its `held` meant a caffeinate.
+    const lasting = m?.keep_awake_lasting ?? m?.keep_awake === 'held'
+    const caff = holders.find(h => h.kind === 'caffeinate')
+    const [awakeWord, awakeTone, awakeSub]: [string, Tone, string] = lasting
+      ? ['caffeinate holds it', 'success', caff?.pid ? `pid ${caff.pid} · ends with its session` : 'lasts the wave']
+      : holders.some(h => h.kind === 'claude-app')
+        ? ['Claude app only', 'warning', 'drops when no Code session works']
+        : ['not held', 'warning', 'the machine may idle-sleep']
+
+    // The step rail: seven segments, each a hover scope whose card (name, times, its last lines) shows
+    // under the pointer. Done is green, the current step its state's color, pending a faint track.
+    const rail = (l: LaneRow) => {
+      const steps = l.timeline?.steps ?? []
+      if (steps.length === 0) return null
+      const segW = Math.max(4, Math.floor((inner - (steps.length - 1)) / steps.length))
+      const cardW = Math.min(44, inner)
+      return (
+        <Box flexDirection="row" columnGap={1} marginTop={1}>
+          {steps.map((st: LaneStep, i: number) => {
+            const t = STEP_TONE[st.state]
+            const lit = st.state !== 'done' && st.state !== 'pending'
+            const fill = st.state === 'pending' ? tint('subtle', 0.2) : st.state === 'done' ? tint('success', 0.7) : tint(t, 0.95)
+            const went = lit ? since(st.started_at, now) : st.duration_s
+            const when = st.state === 'pending'
+              ? STEP_ABOUT[st.id] ?? ''
+              : !st.started_at
+                ? 'no time recorded for this step'
+                : lit
+                  ? `since ${clock(st.started_at, off)} · ${span(went)} so far`
+                  : `${clock(st.started_at, off)} → ${clock(st.ended_at, off) || '…'}${went !== null ? ` · ${span(went)}` : ''}`
+            const tl = l.timeline
+            const sup = st.id === 'build' && tl && (tl.phase || tl.phases.length > 0)
+              ? [...tl.phases.map(p => `${p.phase} ${clock(p.at, off)}`), ...(lit && tl.phase ? [`${tl.phase} now`] : [])].join(' · ')
+              : ''
+            return (
+              <Box key={`${l.lane}-step-${st.id}`} flexDirection="column" width={segW} flexGrow={1}>
+                {desk ? (
+                  <Box height={1} borderStyle="round" borderColor={fill} backgroundColor={fill}>
+                    <Text> </Text>
+                  </Box>
+                ) : (
+                  <Text color={st.state === 'pending' ? undefined : t} dimColor={st.state === 'pending'} wrap="truncate-end">
+                    {(st.state === 'pending' ? '┄' : '━').repeat(segW)}
+                  </Text>
+                )}
+                <Text color={lit ? t : undefined} dimColor={st.state === 'pending'} bold={lit} wrap="truncate-end">
+                  {STEP_MARK[st.state] ? `${st.name} ${STEP_MARK[st.state]}` : st.name}
+                </Text>
+                <Box
+                  position="absolute"
+                  top={desk ? 4 : 2}
+                  {...(i >= 4 ? { right: 0 } : { left: 0 })}
+                  width={cardW}
+                  display="none"
+                  hover={{ display: 'flex' }}
+                  flexDirection="column"
+                  backgroundColor="inverseText"
+                  borderStyle="round"
+                  borderColor={lit ? t ?? 'subtle' : 'subtle'}
+                  paddingX={desk ? 2 : 1}
+                  paddingY={desk ? 1 : 0}
+                >
+                  <Text bold color={lit ? t : undefined}>{`${st.name} · ${STEP_WORD[st.state]}`}</Text>
+                  <Text dimColor wrap="wrap">{when}</Text>
+                  {sup ? <Text dimColor wrap="wrap">{`Supervisor: ${sup}`}</Text> : null}
+                  {st.lines.slice(-3).map((x, k) => (
+                    <Text key={`${l.lane}-${st.id}-l${k}`} wrap="wrap">{`· ${clip(x, 160)}`}</Text>
+                  ))}
+                </Box>
+              </Box>
+            )
+          })}
+        </Box>
+      )
+    }
+
     return (
       <Box flexDirection="column" gap={1}>
-        {/* Header: the run, the counts, the freshness. */}
-        <Box flexDirection="column">
-          <Box flexDirection="row" justifyContent="space-between">
-            <Text bold>{`${doc.lanes.length} lane${doc.lanes.length === 1 ? '' : 's'}`}</Text>
-            <Text dimColor>{`updated ${age}s ago`}</Text>
-          </Box>
-          <Text dimColor wrap="truncate-end">{clip(doc.parent_run_id ?? 'no run', cols)}</Text>
-          {asking > 0 ? <Text bold color="warning">{`${asking} waiting for you`}</Text> : null}
+        {/* Header: the run and the freshness. */}
+        <Box flexDirection="row" justifyContent="space-between">
+          <Text>
+            <Text bold>Wave</Text>
+            <Text dimColor>{`  ${clip(doc.parent_run_id ?? 'no run', Math.max(8, cols - 24))}`}</Text>
+          </Text>
+          <Text dimColor>{`updated ${age}s ago`}</Text>
         </Box>
 
-        {/* Machine health. */}
+        {/* Tiles: started · lanes · load · keep-awake. */}
+        <Box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
+          {tile('t-start', 'Started', [
+            <Text key="t-start-at" bold>{clock(doc.run_started_at, off) || '—'}</Text>,
+            <Text key="t-start-for" dimColor>{doc.run_started_at ? `running ${span(since(doc.run_started_at, now))}` : 'start not recorded'}</Text>,
+          ])}
+          {tile('t-lanes', 'Lanes', [
+            <Text key="t-lanes-n" bold>{`${doc.lanes.length}`}</Text>,
+            <Text key="t-lanes-split" wrap="wrap">
+              {[
+                nRun ? <Text key="r" color="suggestion">{`${nRun} running`}</Text> : null,
+                nAsk ? <Text key="a" color="warning">{`${nRun ? ' · ' : ''}${nAsk} waiting for you`}</Text> : null,
+                nPark ? <Text key="p" color="warning">{`${nRun || nAsk ? ' · ' : ''}${nPark} to merge`}</Text> : null,
+                nDone ? <Text key="d" color="success">{`${nRun || nAsk || nPark ? ' · ' : ''}${nDone} merged`}</Text> : null,
+                nBad ? <Text key="b" color="error">{`${nRun || nAsk || nPark || nDone ? ' · ' : ''}${nBad} stopped`}</Text> : null,
+              ]}
+            </Text>,
+          ])}
+          {tile('t-load', `Load · ${m?.state ?? 'unknown'}`, [
+            hist.length > 1
+              ? Svg
+                ? <Svg key="t-load-svg" source={sparkSvg(hist, Number.isFinite(cpus) ? cpus : 0)} alt={`load1 over the last ${hist.length} reads, now ${m?.load1}`} width={160} height={34} />
+                : <Text key="t-load-bars" color="suggestion">{blocks(hist, Math.max(Number.isFinite(cpus) ? cpus : 1, ...hist))}</Text>
+              : <Text key="t-load-wait" dimColor>trend after the next read</Text>,
+            <Text key="t-load-now" wrap="wrap">
+              <Text bold color={hot ? 'error' : m?.state === 'busy' ? 'warning' : undefined}>{`${m?.load1 ?? '?'}`}</Text>
+              <Text dimColor>{` on ${m?.cpus ?? '?'} CPUs · memory ${m?.mem_pressure ?? '?'}`}</Text>
+            </Text>,
+          ])}
+          {tile('t-awake', 'Keep awake', [
+            <Text key="t-awake-word" bold color={awakeTone}>{awakeWord}</Text>,
+            <Text key="t-awake-sub" dimColor wrap="wrap">{awakeSub}</Text>,
+            ...(!lasting && doc.keep_awake_suggestion
+              ? [
+                  <Box key="t-awake-btn" marginTop={1} alignSelf="flex-start">
+                    <Button key="keep-awake" variant="secondary" onPress={() => keepAwake($, configured)}>
+                      Keep awake for this wave
+                    </Button>
+                  </Box>,
+                ]
+              : []),
+            ...(awakeNote.text
+              ? [<Text key="t-awake-said" color={awakeNote.ok ? 'success' : 'warning'} wrap="wrap">{awakeNote.text.replace(/^keep-awake: /, '')}</Text>]
+              : []),
+          ])}
+        </Box>
+
         {hot ? (
           <Box flexDirection="column" {...card('error', 'strong')}>
             <Text bold color="error">HIGH-LOAD — machine overloaded</Text>
             <Text wrap="wrap">{`load1 ${m.load1} on ${m.cpus} CPUs · memory ${m.mem_pressure}. New lane launches are held until it eases.`}</Text>
           </Box>
         ) : null}
-        <Box flexDirection="column">
-          {row('m-load', 'Machine', `${m?.state ?? 'unknown'} · load ${m?.load1 ?? '?'} on ${m?.cpus ?? '?'} CPUs · memory ${m?.mem_pressure ?? '?'}`, hot ? 'error' : m?.state === 'busy' ? 'warning' : undefined)}
-          {row('m-awake', 'Awake', m?.keep_awake === 'held' ? 'keep-awake held' : 'keep-awake not held', m?.keep_awake === 'held' ? undefined : 'warning')}
-          {doc.keep_awake_suggestion && m?.keep_awake !== 'held' ? row('m-hint', '', `run it yourself: ${doc.keep_awake_suggestion}`, 'subtle') : null}
-          {doc.memory_pressure ? row('m-mem', 'Memory', 'pressure — new lane launches are held', 'warning') : null}
-        </Box>
+        {doc.memory_pressure ? <Text color="warning" wrap="wrap">Memory pressure — new lane launches are held.</Text> : null}
 
         {snap.error ? (
           <Text color="warning" wrap="wrap">{`The last read failed, showing the one before: ${snap.error}`}</Text>
@@ -475,18 +693,29 @@ export const register: Register = (on, options) => {
           </Box>
         ) : null}
 
-        {/* One card per lane. */}
-        {doc.lanes.map(l => (
-          <Box key={`lane-${l.lane}`} flexDirection="column" {...card(tone(l))}>
+        {/* One card per lane: its step and when it started, the rail, then the facts. */}
+        {doc.lanes.map(l => {
+          const tl = l.timeline
+          const cur = tl?.steps.find(st => st.state !== 'done' && st.state !== 'pending')
+          const headTone = cur ? STEP_TONE[cur.state] : tone(l)
+          const head = tl?.label
+            ? `${cur ? STEP_MARK[cur.state] : '✓'} ${tl.label}${l.state !== 'running' ? ` · ${label(l)}` : ''}`
+            : `${glyph(l)} ${label(l)}`
+          const started = l.started_at ?? tl?.started_at ?? null
+          return (
+          <Box key={`lane-${l.lane}`} flexDirection="column" {...card(headTone ?? tone(l))}>
             <Box flexDirection="row" justifyContent="space-between">
               <Text>
                 <Text bold>{l.lane}</Text>
                 <Text>{'  '}</Text>
-                <Text bold color={tone(l)}>{`${glyph(l)} ${label(l)}`}</Text>
+                <Text bold color={headTone}>{head}</Text>
               </Text>
-              {l.pr ? <Text dimColor>{prRef(l.pr)}</Text> : null}
+              <Text dimColor>
+                {[l.pr ? prRef(l.pr) : '', started ? `started ${clock(started, off)} · ${span(since(started, now))}` : ''].filter(Boolean).join(' · ')}
+              </Text>
             </Box>
             {l.reason && !WAITING.has(l.state) ? <Text dimColor wrap="wrap">{l.reason}</Text> : null}
+            {rail(l)}
 
             <Box flexDirection="column" marginTop={1}>
               {row(`${l.lane}-item`, 'Item', l.item ? l.item.split('/').slice(-2).join('/') : '—')}
@@ -499,7 +728,7 @@ export const register: Register = (on, options) => {
                 ? row(`${l.lane}-q`, 'Question', `waiting ${waited(Math.max(...l.questions.map(q => q.waiting_s ?? 0)))} · answer it in the Inbox`, 'warning')
                 : null}
               {l.policy ? row(`${l.lane}-policy`, 'Policy', `${l.policy.answered} answered automatically · last ${l.policy.last_gate ?? '?'} → ${l.policy.last_label}`) : null}
-              {l.last_progress ? row(`${l.lane}-prog`, 'Progress', l.last_progress.replace(/^- /, '').replace(/^\d{4}-\d{2}-\d{2}T[\d:]+Z\s+/, ''), undefined, true) : null}
+              {l.last_progress ? row(`${l.lane}-prog`, 'Last step', l.last_progress.replace(/^- /, '').replace(/^\d{4}-\d{2}-\d{2}T[\d:]+Z\s+/, ''), undefined, true) : null}
             </Box>
 
             {l.last_message ? (
@@ -530,9 +759,9 @@ export const register: Register = (on, options) => {
                 {opened[l.lane] ? 'Hide steps' : `Show last ${DETAIL_STEPS} steps`}
               </Button>
             </Box>
-
           </Box>
-        ))}
+          )
+        })}
 
         <Box flexDirection="row" alignItems="center" columnGap={2}>
           <Text dimColor>{`Refreshes every ${POLL_MS / 1000} s`}</Text>
