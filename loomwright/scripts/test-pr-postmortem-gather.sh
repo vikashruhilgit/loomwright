@@ -491,7 +491,7 @@ make_gh_stub() {
   local mode="$1" api_mode="${2:-empty}" operator_login="${3-vikashruhilgit}" fixture="" api_fixture=""
   case "$mode" in
     ok)        fixture="$FIX_OK" ;;
-    firstonly)  fixture="$FIX_FIRSTONLY" ;;
+    firstonly) fixture="$FIX_FIRSTONLY" ;;
     firstlater) fixture="$FIX_FIRSTLATER" ;;
     human)     fixture="$FIX_HUMAN" ;;
     taskid)    fixture="$FIX_TASKID" ;;
