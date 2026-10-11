@@ -40,7 +40,12 @@
 #   AF fleet-closeout: stepwise, idempotent wave close (A2) — backstop, check-off, sync, removal, lanes dir,
 #     leaks, main health, lock release; gone / meta-push-failed are the human's; a failed pull stops it
 #   AH lane-wait: the coordinator's lane watcher — events, seen ledger (prune / keep), timeout, idle,
-#     usage, read-only toward lanes
+#     usage, read-only toward lanes; AH15 its liveness marker (written, handed over to a second watcher,
+#     removed only by its owner, absent on the idle paths); AH16 _lanes_quick_state (the Stop hook's
+#     classifier) agrees with lane-status on every live / attention state of the fleet
+#   AI gate opt-out carry (lane-guardrails part 3): the FACT recorded coordinator-side at first launch,
+#     every resume path refused without it (exit 3, no spawn, nothing in the lane), lane-answer keeps the
+#     validated answer pending, --without-gate-optout resumes without it and clears the fact, never added
 #   AG wave-plan is READ-ONLY (A4: refs + tree byte-identical) + mutation control; the A3/A4 static guards
 #     (no executable merge / push / gate-eval) + mutation control; A5 no sequential caller
 set -uo pipefail
@@ -70,7 +75,7 @@ hasnt() { case "$2" in *"$3"*) bad "$1" "unexpected [$3]" ;; *) ok "$1" ;; esac;
 export HOME="$T/home"; mkdir -p "$HOME"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1
-unset CLAUDE_PLUGIN_ROOT
+unset CLAUDE_PLUGIN_ROOT LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS   # the AI group sets the opt-out per command
 
 BIN="$T/bin"; mkdir -p "$BIN"
 export STUB_LOG="$T/claude.log"; : > "$STUB_LOG"
@@ -81,7 +86,7 @@ if [ "${1:-}" = "--help" ]; then
   exit 0
 fi
 { printf 'ARGS'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'
-  printf 'ENV CEIL=%s CC=%s PID=%s\n' "${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS-unset}" "${CLAUDECODE-unset}" "${CLAUDE_PID-unset}"
+  printf 'ENV CEIL=%s CC=%s PID=%s OPTOUT=%s\n' "${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS-unset}" "${CLAUDECODE-unset}" "${CLAUDE_PID-unset}" "${LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS-unset}"
   printf 'STDIN %s\n' "$(cat)"; printf 'CWD %s\n' "$PWD"
   printf 'RESUMEPATH %s\n' "${LOOMWRIGHT_LANE_RESUME_PATH-unset}"; } >> "$STUB_LOG"
 if [ -n "${STUB_RESUME_FAIL:-}" ]; then
@@ -569,6 +574,17 @@ hasnt "AH1g running / held / created lanes are not events" "$out" "state L2"
 has "AH1h ends with the relay hint" "$(printf '%s\n' "$out" | tail -1)" "lane-wait: relay — show each question to the owner verbatim"
 has "AH1i a mixed batch also carries the state act hint" "$out" "lane-wait: act — handle each state line"
 check "AH2 the seen ledger records every printed key" "$(sort "$LWS" | tr '\n' ',')" "question L6 toolu_r1,state L1 died,state L3 stalled,state L4 blocked_launch,"
+# AH16 the Stop hook's classifier (_lanes_quick_state: no gh, no ci-slot, no stream log) names the same
+# state as lane-status for every live / attention state; the states past awaiting_input read `other`.
+ah16_full="$(bash "$S" lane-status "$RF2" --json 2>/dev/null | jq -r '.lanes[] | "\(.lane) \(.state)"' \
+  | awk '{ s = $2; if (s !~ /^(answer_pending|blocked_launch|held_for_load|created|missing|running|awaiting_input)$/) s = "other"; print $1, s }')"
+ah16_quick="$( ( . "$S"; while IFS="$(printf '\t')" read -r l p _ _ pid st _ ts _; do
+  case "$l" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
+  printf '%s %s\n' "$l" "$(_lanes_quick_state "$p" "$pid" "$st" "$ts" "$P/.supervisor/automate/$PARENT2.$l.answer-pending.json")"
+done < "$TABLE2" ) )"
+check "AH16 fixture: the fleet spans live, attention and other states" \
+  "$(printf '%s\n' "$ah16_full" | awk '{ print $2 }' | sort -u | tr '\n' ' ')" "awaiting_input blocked_launch created held_for_load other running "
+check "AH16a _lanes_quick_state agrees with lane-status lane by lane" "$ah16_quick" "$ah16_full"
 echo "state L2 died" >> "$LWS"
 out="$(run lane-wait "$RF2" --interval 1 --timeout 1)"; rc=$?
 check "AH3 nothing new ⇒ waits, then times out (exit 0)" "$rc:$out" "0:lane-wait: timeout after 1s — nothing new"
@@ -659,6 +675,28 @@ check "AH12a every _LANES_WAIT_QUIET token is a reportable state" "$(ah_drift "$
 check "AH12b every _LANES_WAIT_LIVE token is a reportable state" "$(ah_drift "$ah_live")" ""
 check "AH12c mutation: a fake token appended to a copy of the array is named" "$(ah_drift "$(jq -c '. + ["stalld"]' <<<"$ah_quiet")")" "stalld "
 check "AH12d no token is both live and quiet (an event state would be silenced twice)" "$(jq -rn --argjson a "$ah_quiet" --argjson b "$ah_live" '$a - ($a - $b) | join(",")')" ""
+# AH15 the liveness marker: written naming the watcher's pid; a second watcher takes it over; the first
+# one's exit leaves it (it names the second); the owner's exit removes it; the idle paths write none.
+LWM="$P/.supervisor/automate/$PARENT2.lane-wait.pid"; rm -f "$LWM"
+ah15_wait() { local i=0; while [ "$(awk '{ print $1 }' "$LWM" 2>/dev/null)" != "$1" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
+bash "$S" lane-wait "$RF2" --interval 1 --timeout 60 >/dev/null 2>&1 & LWA=$!; BG_PIDS="$BG_PIDS $LWA"
+ah15_wait "$LWA"
+check "AH15a lane-wait writes <pid> <start epoch>" "$(awk '{ print ($1 == '"$LWA"') ":" ($2 ~ /^[0-9]+$/) }' "$LWM" 2>/dev/null)" "1:1"
+bash "$S" lane-wait "$RF2" --interval 1 --timeout 60 >/dev/null 2>&1 & LWB=$!; BG_PIDS="$BG_PIDS $LWB"
+ah15_wait "$LWB"
+check "AH15b a second watcher takes the marker over" "$(awk '{ print $1 }' "$LWM" 2>/dev/null)" "$LWB"
+kill -TERM "$LWA" 2>/dev/null; wait "$LWA" 2>/dev/null
+check "AH15c the first watcher's exit leaves the marker it no longer owns" "$(awk '{ print $1 }' "$LWM" 2>/dev/null)" "$LWB"
+kill -TERM "$LWB" 2>/dev/null; wait "$LWB" 2>/dev/null
+check "AH15d the owner's exit (TERM) removes it" "$([ -e "$LWM" ] && echo present || echo absent)" absent
+out="$(run lane-wait "$RF2" --interval 1 --timeout 1)"
+check "AH15e a lane-wait that times out removes its marker" "$([ -e "$LWM" ] && echo present || echo absent)" absent
+run lane-wait "$P/.supervisor/automate/none.md" >/dev/null
+bash "$S" lane-wait "$TABLE2" --interval 1 --timeout 60 >/dev/null 2>&1 & LWC=$!; BG_PIDS="$BG_PIDS $LWC"
+ah15_wait "$LWC"
+check "AH15g given the .lanes table path, the marker still lands at <parent_run_id>.lane-wait.pid" "$(awk '{ print $1 }' "$LWM" 2>/dev/null)" "$LWC"
+kill -TERM "$LWC" 2>/dev/null; wait "$LWC" 2>/dev/null
+check "AH15f the no-lane-table idle path writes no marker" "$(ls "$P/.supervisor/automate/" | grep -c 'none.lane-wait.pid' | tr -d ' ')" 0
 # Clean up the second wave: lane-feed L<n> (T7) resolves the NEWEST lane table in the primary.
 rm -rf "$LWS" "$P/.supervisor/automate/$PARENT3".* "$T/work/primary-lanes/$PARENT3"
 out="$(run lane-feed "$L6")"
@@ -1933,6 +1971,84 @@ if [ -s "$MUT/automate-lanes.sh" ] && ! cmp -s "$S" "$MUT/automate-lanes.sh" && 
 check "AG6b mutation (an executable git push) is caught by the static guard" "$(ag_exec_hits "$MUT/automate-lanes.sh" | wc -l | tr -d ' ')" 1
 check "AG7 A5: no sequential-loop script calls fleet-closeout or wave-plan (only the helpers dispatch arm)" \
   "$(grep -lE 'fleet-closeout|wave-plan' "$HERE"/automate-helpers.d/*.sh "$HERE/automate-trail.sh" "$HERE/automate-dismissed.sh" 2>/dev/null | wc -l | tr -d ' '):$(grep -cE '^ +fleet-closeout\|wave-plan\) exec bash "\$\(dirname "\$0"\)/automate-lanes.sh"' "$HERE/automate-helpers.sh" | tr -d ' ')" "0:1"
+
+# ---- AI: gate opt-out carry (lane-guardrails part 3) ---------------------------------------------------
+# A lane launched WITH the test-integrity guard's opt-out inherits it; a resume run from an environment
+# that lacks it would silently have the guard block the lane. The FACT is recorded coordinator-side at
+# first launch; every resume path refuses (exit 3, no spawn, nothing in the lane) until the owner re-runs
+# with it set or passes --without-gate-optout. The opt-out is never ADDED to a resume's environment.
+PARENT6=automate-2026-10-11-100000; RF6="$P/.supervisor/automate/$PARENT6.md"; LR6="$T/work/primary-lanes/$PARENT6"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT6" > "$RF6"
+for n in 1 2 3; do run lane-create "$RF6" reqs/a.md "$n" --parallel 3 >/dev/null; done
+L61="$LR6/L1"; L62="$LR6/L2"; L63="$LR6/L3"; TABLE6="$P/.supervisor/automate/$PARENT6.lanes"
+OF61="$P/.supervisor/automate/$PARENT6.L1.gate-optout"; OF63="$P/.supervisor/automate/$PARENT6.L3.gate-optout"
+OPT_ON="LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS=1"
+lenv() { grep '^ENV' "$STUB_LOG" | tail -1 | sed 's/.* OPTOUT=//'; }
+LJ61="$(cat "$L61/.supervisor/lane.json")"
+n6="$(claude_calls)"
+out="$(env "$OPT_ON" LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$L61" --owner-command "$OWN" 2>&1)"; rc=$?
+wait_gone "$L61"
+check "AI1 first launch with the opt-out set launches (and the lane inherits it)" "$rc:$(( $(claude_calls) - n6 )):$(lenv)" "0:1:1"
+check "AI1b the FACT is recorded coordinator-side (no value)" "$(cut -f1 "$OF61" 2>/dev/null):$(grep -c 'LOOMWRIGHT\|=1' "$OF61" 2>/dev/null | tr -d ' ')" "gate_optout_at_launch:0"
+check "AI1c … never in the lane: lane.json byte-identical, no opt-out file under the lane" \
+  "$([ "$(cat "$L61/.supervisor/lane.json")" = "$LJ61" ] && echo same):$(find "$L61" -name '*optout*' | wc -l | tr -d ' ')" "same:0"
+mkdir -p "$L61/.supervisor/automate"; printf '# Automate Run: %s-L1 — reqs/a.md\n' "$PARENT6" > "$L61/.supervisor/automate/$PARENT6-L1.md"
+ai_blocked="lane-launch: BLOCKED — L1 — launched with the test-integrity guard's opt-out; this resume's environment lacks it — re-run the same command with it set, or add --without-gate-optout to resume without it — need the owner"
+n6="$(claude_calls)"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --continue)"; rc=$?
+check "AI2 --continue without the opt-out ⇒ BLOCKED exit 3, the exact line, no spawn" "$rc:$(printf '%s\n' "$out" | head -1):$(( $(claude_calls) - n6 ))" "3:$ai_blocked:0"
+check "AI2b … the table reads blocked_launch with the reason; the fact is kept" \
+  "$(awk -F'\t' '$1 == "L1" { print $8 "|" $10 }' "$TABLE6"):$([ -e "$OF61" ] && echo kept)" \
+  "blocked_launch|launched with the test-integrity guard's opt-out; this resume's environment lacks it:kept"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --resume-run "$PARENT6-L1")"; rc=$?
+check "AI3 --resume-run without the opt-out ⇒ BLOCKED exit 3, no spawn" "$rc:$(( $(claude_calls) - n6 ))" "3:0"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS=true run lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --continue)"; rc=$?
+check "AI3b a value other than 1 is the guard's 'unset' too ⇒ BLOCKED" "$rc:$(( $(claude_calls) - n6 ))" "3:0"
+out="$(env "$OPT_ON" LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --continue 2>&1)"; rc=$?
+wait_gone "$L61"
+check "AI4 the same resume WITH the opt-out set ⇒ resumes, the lane runs with it (inherited)" "$rc:$(( $(claude_calls) - n6 )):$(lenv)" "0:1:1"
+check "AI4b … and the fact stays recorded" "$([ -e "$OF61" ] && echo kept || echo gone)" kept
+n6="$(claude_calls)"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --continue --without-gate-optout)"; rc=$?
+wait_gone "$L61"
+check "AI5 --without-gate-optout resumes without it (never added)" "$rc:$(( $(claude_calls) - n6 )):$(lenv)" "0:1:unset"
+check "AI5b … and clears the recorded fact" "$([ -e "$OF61" ] && echo kept || echo gone)" gone
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L61" --owner-command "/automate --resume $PARENT6" --continue)"; rc=$?
+wait_gone "$L61"
+check "AI6 fact cleared ⇒ a resume without the opt-out is unchanged (launches)" "$rc:$(( $(claude_calls) - n6 ))" "0:2"
+# AI7 --without-gate-optout given while the environment HAS it: dropped from the spawn, nothing recorded.
+n6="$(claude_calls)"
+out="$(env "$OPT_ON" LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$L62" --owner-command "$OWN" --without-gate-optout 2>&1)"; rc=$?
+wait_gone "$L62"
+check "AI7 a first launch with --without-gate-optout drops it from the lane's env and records nothing" \
+  "$rc:$(lenv):$([ -e "$P/.supervisor/automate/$PARENT6.L2.gate-optout" ] && echo recorded || echo none)" "0:unset:none"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L62" --owner-command "/automate --resume $PARENT6" --continue)"; rc=$?
+wait_gone "$L62"
+check "AI7b recorded = unset ⇒ resumes exactly as before" "$rc" 0
+# AI8 lane-answer: the refusal keeps the owner's validated answer pending (never lost), like HELD.
+out="$(env "$OPT_ON" LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$L63" --owner-command "$OWN" 2>&1)"; wait_gone "$L63"
+zq "$L63" toolu_ai1 sess-ai1
+PF63="$P/.supervisor/automate/$PARENT6.L3.answer-pending.json"; AF63="$L63/.supervisor/inbox/answers/toolu_ai1.json"
+n6="$(claude_calls)"
+out="$(printf '%s' '{"answers":{"0":"Red","1":"A,B"},"note":"keep it small"}' | LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-answer "$L63" toolu_ai1 --owner-command "$OWN" --via test 2>&1)"; rc=$?
+check "AI8 lane-answer without the opt-out ⇒ BLOCKED exit 3, no spawn, nothing written into the lane" \
+  "$rc:$(printf '%s\n' "$out" | head -1):$(( $(claude_calls) - n6 )):$([ -e "$AF63" ] && echo written || echo none)" \
+  "3:${ai_blocked/— L1 —/— L3 —}:0:none"
+check "AI8b … the validated answer is KEPT pending (answers, note, via)" \
+  "$(jq -c '[.tool_use_id, .answers["0"], .answers["1"], .note, .via]' "$PF63" 2>/dev/null)" '["toolu_ai1","Red","A,B","keep it small","test"]'
+has "AI8c … and the line says how to deliver it" "$out" "deliver it with the opt-out set, or with --without-gate-optout"
+check "AI8d lane-status shows the lane as answer_pending" "$(bash "$S" lane-status "$RF6" --json 2>/dev/null | jq -r '.lanes[] | select(.lane == "L3") | .state')" answer_pending
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L63" --deliver-pending --owner-command "/automate --resume $PARENT6")"; rc=$?
+check "AI9 --deliver-pending without the opt-out ⇒ BLOCKED, the answer still pending, nothing in the lane" \
+  "$rc:$([ -s "$PF63" ] && echo kept || echo gone):$([ -e "$AF63" ] && echo written || echo none):$(( $(claude_calls) - n6 ))" "3:kept:none:0"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L63" --deliver-pending --owner-command "/automate --resume $PARENT6" --without-gate-optout)"; rc=$?
+wait_gone "$L63"
+check "AI9b --deliver-pending --without-gate-optout delivers: answer file written, pending gone, fact cleared, env unset" \
+  "$rc:$(jq -c '[.answers["Which color?"], .note]' "$AF63" 2>/dev/null):$([ -e "$PF63" ] && echo kept || echo gone):$([ -e "$OF63" ] && echo kept || echo gone):$(lenv)" \
+  '0:["Red","keep it small"]:gone:gone:unset'
+check "AI9c … one spawn, resuming the deferred session" "$(( $(claude_calls) - n6 )):$(grep '^ARGS' "$STUB_LOG" | tail -1 | grep -c '\[--resume\] \[sess-ai1\]' | tr -d ' ')" "1:1"
+check "AI10 the opt-out's name never reaches a lane file (lane.json, inbox, settings)" \
+  "$(grep -rl 'ALLOW_GATE_CONFIG_EDITS\|gate-optout\|gate_optout' "$L61/.supervisor" "$L63/.supervisor" "$L61/.claude" 2>/dev/null | wc -l | tr -d ' ')" 0
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 # AA-F12z (final leg): nothing this suite started may outlive it — no process whose command line names

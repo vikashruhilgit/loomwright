@@ -698,6 +698,19 @@
     },
     {
       "blocking": false,
+      "event": "Stop",
+      "host_mode": "unaffected",
+      "matcher": null,
+      "script": "scripts/guard-lane-wait-armed.sh",
+      "scripts": [
+        "scripts/guard-lane-wait-armed.sh"
+      ],
+      "source": "hooks.Stop[1].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
       "event": "StopFailure",
       "host_mode": "redirects",
       "matcher": null,
