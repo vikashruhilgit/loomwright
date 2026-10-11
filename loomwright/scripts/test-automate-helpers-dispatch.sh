@@ -15,12 +15,17 @@
 #      dispatcher exits non-zero naming that file; an unreadable family file likewise.
 #   4. mutant (b): a family copy with the case-table function it holds renamed (each family in
 #      turn) ⇒ check 1 FAILS on that copy. Every mutant is gated on non-empty + differs + bash -n.
-#   5. the loader block (_ah_source / _ah_bundle) carries no `#   <lower>` line (the --help
-#      filter), and the real dispatcher's --help / -h / no-arg stdout equals the committed golden
-#      fixture fixtures/automate-helpers-help.golden byte-for-byte (exit 0, empty stderr). Needs
-#      no git history, so it never skips. Mutation control: the golden minus one line must fail.
-#      ADDING A SUBCOMMAND? Regenerate the golden in the same change, from the repo root:
-#        bash loomwright/scripts/automate-helpers.sh --help > loomwright/scripts/fixtures/automate-helpers-help.golden
+#   5. the loader block (_ah_source / _ah_bundle / _ah_usage) carries no `#   <lower>` line (the
+#      --help filter), and the real dispatcher's --help / -h / no-arg stdout equals the ordered
+#      concatenation of the per-segment fixtures fixtures/automate-helpers-help/<segment>.golden
+#      (SEGMENTS below, then incidental.golden) byte-for-byte (exit 0, empty stderr); the fixture
+#      dir holds exactly those files. Needs no git history, so it never skips. Mutation controls:
+#      the fixture set minus one help line must fail, and a family copy with its `#:  ` usage block
+#      removed (each family in turn) must change --help and fail.
+#      ADDING A SUBCOMMAND? Add its `#:  ` usage line to the file that implements it (a family's
+#      block in automate-helpers.d/<name>.sh, or the dispatcher's `#:@` group) and the same line,
+#      `#:  ` replaced by two spaces, at the same position in that segment's <segment>.golden.
+#      A NEW FAMILY also needs its name in the dispatcher's _AH_HELP_SEGMENTS and in SEGMENTS here.
 # Exit 0 = all pass, 1 = any failure.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -28,8 +33,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 D="$HERE/automate-helpers.sh"
 FAM_DIR="$HERE/automate-helpers.d"
-# Golden --help output (seeded from the last single-file automate-helpers.sh, a14db34).
-GOLDEN="$HERE/fixtures/automate-helpers-help.golden"
+# Per-segment golden --help fixtures (split by parallel-automate/22 from the single golden seeded
+# from the last single-file automate-helpers.sh, a14db34). SEGMENTS is the EXPECTED order — the
+# test's own copy, so a reordered _AH_HELP_SEGMENTS in the dispatcher fails check 5.
+GOLDEN_DIR="$HERE/fixtures/automate-helpers-help"
+SEGMENTS="config runfile intake resume hdr-gate learning escalation reconcile-status hdr-trail meta plan-waves hdr-lanes incidental"
 
 pass=0; fail=0; skip=0
 ok()   { echo "  ok: $1"; pass=$((pass+1)); }
@@ -155,34 +163,67 @@ while read -r f; do
   else no "mutant (b) $f.sh: $fn renamed but the dispatch check stayed green"; fi
 done <<<"$FAMS"
 
-echo "== 5. --help / -h / no-arg output equals the committed golden fixture"
+echo "== 5. --help / -h / no-arg output equals the ordered per-segment golden fixtures"
 LOADER="$(awk '/^# >>> family-file loader/,/^# <<< family-file loader/' "$D")"
-if [ -n "$LOADER" ] && ! grep -qE '^#   [a-z]' <<<"$LOADER"; then
-  ok "loader block (_ah_source/_ah_bundle) carries no '#   <lower>' line the --help filter could pick up"
-else no "loader block missing, or it carries a '#   <lower>' line that would leak into --help"; fi
+if [ -n "$LOADER" ] && grep -q '^_ah_usage() {$' <<<"$LOADER" && ! grep -qE '^#   [a-z]' <<<"$LOADER"; then
+  ok "loader block (_ah_source/_ah_bundle/_ah_usage) carries no '#   <lower>' line the --help filter could pick up"
+else no "loader block missing, without _ah_usage, or it carries a '#   <lower>' line that would leak into --help"; fi
 # help_matches <dispatcher> <arg> <golden> — stdout == golden byte-for-byte (files + cmp, so
 # trailing newlines count), stderr empty, exit 0.
 help_matches() {
   ( cd "$T/cwd" && bash "$1" $2 >"$T/ho" 2>"$T/he" ); local rc=$?
   [ "$rc" -eq 0 ] && [ -s "$T/ho" ] && [ ! -s "$T/he" ] && cmp -s "$T/ho" "$3"
 }
-if [ ! -s "$GOLDEN" ]; then
-  no "golden help fixture missing or empty: $GOLDEN"
+# The fixture dir holds exactly the SEGMENTS fixtures, each non-empty (an unlisted fixture is a
+# segment this test would never compare).
+GBAD=""
+for sg in $SEGMENTS; do [ -s "$GOLDEN_DIR/$sg.golden" ] || GBAD="$GBAD missing:$sg"; done
+for gf in "$GOLDEN_DIR"/*; do
+  [ -e "$gf" ] || continue
+  case " $SEGMENTS " in *" $(basename "$gf" .golden) "*) [ "${gf%.golden}" != "$gf" ] && continue ;; esac
+  GBAD="$GBAD unlisted:$(basename "$gf")"
+done
+GOLDEN="$T/help.golden"
+: >"$GOLDEN"; for sg in $SEGMENTS; do cat "$GOLDEN_DIR/$sg.golden" >>"$GOLDEN" 2>/dev/null; done
+if [ -n "$GBAD" ] || [ ! -s "$GOLDEN" ]; then
+  no "per-segment help fixtures under $GOLDEN_DIR do not match SEGMENTS:$GBAD"
 else
+  ok "fixture dir holds exactly the $(wc -w <<<"$SEGMENTS" | tr -d ' ') SEGMENTS fixtures, each non-empty"
   for a in --help -h ""; do
     if help_matches "$D" "$a" "$GOLDEN"; then
-      ok "'${a:-<no-arg>}' output equals the golden fixture byte-for-byte ($(grep -c . "$GOLDEN") lines, exit 0, empty stderr)"
-    else no "'${a:-<no-arg>}' output differs from $(basename "$GOLDEN") — regenerate it if you added a subcommand (see header)"; fi
+      ok "'${a:-<no-arg>}' output equals the ordered segment fixtures byte-for-byte ($(grep -c . "$GOLDEN") lines, exit 0, empty stderr)"
+    else no "'${a:-<no-arg>}' output differs from the ordered segment fixtures — added a subcommand? update its <segment>.golden (see header)"; fi
   done
-  # Mutation control: a golden with ONE help line removed must make the comparison fail.
+  # Mutation control 1: the fixture set with ONE help line removed (first line of the first
+  # segment's fixture) must make the comparison fail.
   MG="$T/help.golden.mutant"
-  sed '1d' "$GOLDEN" > "$MG"
+  first="$(set -- $SEGMENTS; echo "$1")"
+  : >"$MG"; for sg in $SEGMENTS; do
+    if [ "$sg" = "$first" ]; then sed '1d' "$GOLDEN_DIR/$sg.golden" >>"$MG"; else cat "$GOLDEN_DIR/$sg.golden" >>"$MG"; fi
+  done
   if [ ! -s "$MG" ] || cmp -s "$GOLDEN" "$MG" \
      || [ "$(wc -l <"$MG")" -ne "$(( $(wc -l <"$GOLDEN") - 1 ))" ]; then
-    no "golden mutant not built (empty, identical, or not exactly one line shorter)"
+    no "fixture-set mutant not built (empty, identical, or not exactly one line shorter)"
   elif help_matches "$D" --help "$MG"; then
-    no "golden mutant (one help line removed) still compared equal — the comparison is vacuous"
-  else ok "golden mutant (one help line removed) ⇒ the --help comparison fails"; fi
+    no "fixture-set mutant (one help line removed from $first.golden) still compared equal — the comparison is vacuous"
+  else ok "fixture-set mutant (one help line removed from $first.golden) ⇒ the --help comparison fails"; fi
+  # Mutation control 2: each family copy with its `#:  ` usage block removed changes --help and
+  # fails (the dispatcher's _ah_usage refuses a listed segment with no usage line, exit 1).
+  bash "$D" --help >"$T/help.real" 2>/dev/null
+  while read -r f; do
+    [ -n "$f" ] || continue
+    C="$(mk_copy)"; M="$(dirname "$C")/automate-helpers.d/$f.sh"
+    grep -v '^#:  ' "$FAM_DIR/$f.sh" > "$M"
+    if [ ! -s "$M" ] || cmp -s "$FAM_DIR/$f.sh" "$M" || ! bash -n "$M"; then
+      no "usage-block mutant $f: not built (empty, no usage line removed, or bash -n failed)"; continue
+    fi
+    ( cd "$T/cwd" && bash "$C" --help >"$T/hm" 2>"$T/hme" )
+    if help_matches "$C" --help "$GOLDEN" || cmp -s "$T/hm" "$T/help.real"; then
+      no "usage-block mutant $f.sh: usage block removed but --help unchanged / still equal to the fixtures"
+    elif grep -qF "segment has no usage line: $f" "$T/hme"; then
+      ok "usage-block mutant $f.sh: usage block removed ⇒ --help changes and fails, naming the empty segment"
+    else no "usage-block mutant $f.sh: --help changed but stderr did not name the empty segment: $(head -1 "$T/hme")"; fi
+  done <<<"$FAMS"
 fi
 
 echo

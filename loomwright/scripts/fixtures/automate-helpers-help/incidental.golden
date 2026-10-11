@@ -1,0 +1,23 @@
+  merged          — PR is MERGED (gh state==MERGED or mergedAt non-null);
+  awaiting_merge  — PR is OPEN/unmerged; item stays awaiting_merge even if the
+  gone            — PR is CLOSED-unmerged (neither merged nor open).
+  cond 2  `gh pr view <url> --json headRefOid,baseRefName,statusCheckRollup` (this combined
+  cond 3  a SEPARATE `gh pr view <url> --json reviewDecision` call (kept apart from cond 2's read
+  cond 4  `gh api repos/<owner>/<repo>/branches/main/protection` — a 404 ⇒ unprotected (false);
+  cond 5  required-check greenness from the SAME protection payload's required-context list
+  cond 6  the gate ITSELF invokes `"$(dirname "$0")/classify-risk.sh" main <live head_sha>
+  cond 7  evaluated AFTER cond 6. PIN FIRST (automate-followups/16), before the helper runs:
+  brief-repair: repaired <brief_path> → <done_path> (<pr_url>)
+  brief-repair: skipped — <reason>
+  plan\t<repo-relative file>\t<status line the file would get>\t<evidence>
+  stamped\t<repo-relative file>\t<status line just written>\t<evidence>
+  info\t<repo-relative file>\tbrief-shipped\t<job path> (<PR url or "no PR recorded">)
+  escalation_cause: <cause> check=<name|null> run_id=<id|null> attempt=<n|null> sha=<sha>
+  check_pending        NO scoped check is red and a scoped (required ∪ review-producing)
+  check_red_unrelated  every red scoped check's every failed step ran ONLY
+  check_red            anything else red — and every unreadable case: a snapshot
+  other                nothing pending, nothing red — the escalation was not check-driven.
+  meta-entry: off                              mode off — proceed exactly as today, no network
+  meta-entry: pulled <branch>                  mode on, `meta-sync.sh pull --branch <branch>` exited 0
+  meta-entry: failed — <reason>                mode on, pull exited non-zero (meta-sync's own text:
+  meta-entry: failed — mode unknown (<reason>) `setup-memory.sh mode` said unknown

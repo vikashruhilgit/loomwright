@@ -1,0 +1,2 @@
+  resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
+  resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers AND the referenced file's own ## Status: done stamp (is_done); dir-fallback path also skips proposed|parked, per is_not_ready
