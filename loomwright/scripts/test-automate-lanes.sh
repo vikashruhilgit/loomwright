@@ -484,7 +484,7 @@ check "Q12 no lane table ⇒ empty lanes, exit 0" "$rc:$(jq -r '.lanes | length'
 
 # ---- R: lane-status --json fields (AC8: machine, asked_at / waiting_s, last_message, CI slot) -----------
 L6="$LR2/L6"; t2set L6 8 launched; t2set L6 9 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-printf '{"id":"toolu_r1","asked_at":"2026-10-07T00:00:00Z","questions":[{"question":"Which path?","options":[{"label":"A"}]}]}\n' > "$L6/.supervisor/inbox/questions/toolu_r1.json"
+printf '{"id":"toolu_r1","asked_at":"2026-10-07T00:00:00Z","questions":[{"question":"Which path?","header":"Path","options":[{"label":"A","description":"the first"},{"description":"no label: dropped"}]},{"question":"Which checks?","multiSelect":true,"options":[{"label":"x, y"},{"label":"z"}]}]}\n' > "$L6/.supervisor/inbox/questions/toolu_r1.json"
 LONG="$(printf 'x%.0s' $(seq 1 400))"
 { echo '{"type":"system","subtype":"init","session_id":"sess-r"}'
   printf '{"type":"assistant","message":{"content":[{"type":"text","text":"first words"}]}}\n'
@@ -511,6 +511,14 @@ J="$(STUB_CI_JSON="{\"holders\":[{\"checkout\":\"$T/elsewhere\"}],\"waiters\":[{
 check "R10 CI-slot queue position" "$(lf L2 '.ci_slot.state + " " + (.ci_slot.position | tostring)')" "waiting 2"
 check "R11 a running lane held by machine admission ⇒ held for load" "$(lf L2 .held_for_load)" "machine busy"
 check "R12 no CI slot record ⇒ ci_slot none" "$(lf L6 .ci_slot.state)" none
+# items (parallel-automate/14): every question of the call, in answer-key order, with exactly the labels
+# lane-answer accepts — what a client draws its option buttons from without reading the lane's files.
+check "R13 items: one per question, in order" "$(lf L6 '.questions[0].items | map(.question) | join("|")')" "Which path?|Which checks?"
+check "R14 items carry header, multiSelect and descriptions" \
+  "$(lf L6 '.questions[0].items | map("\(.header)/\(.multiSelect)/\(.options | map(.label + "=" + (.description // "-")) | join(","))") | join(" ; ")')" \
+  "Path/false/A=the first ; null/true/x, y=-,z=-"
+check "R15 question (first text) kept beside items" "$(lf L6 '.questions[0].question')" "Which path?"
+check "R16 no ## Current branch ⇒ branch null" "$(lf L6 '.branch')" null
 
 # ---- S: keep-awake (suggest, never silently start) --------------------------------------------------
 out="$(run lane-status "$RF2")"
@@ -703,6 +711,7 @@ has "U7 headline repro evidenced" "$(cat "$RD")" "V3 A failure this must catch: 
 has "U8 score line" "$(cat "$RD")" "- score: 2/5 | summary: ready (2/5: running-system NOT-RUN, carried-notes NOT-RUN, scope-fence FAIL)"
 J="$(sj)"
 check "U9 lane-status --json exposes the readiness score" "$(lf L3 '.readiness.score')" "2/5"
+check "U9b lane-status --json carries the branch from ## Current" "$(lf L3 '.branch')" f
 check "U10 parked ready lane state" "$(lf L3 .state)" ready_for_release
 cat > "$T/helpers-merged.sh" <<'EOF'
 #!/usr/bin/env bash

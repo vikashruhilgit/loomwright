@@ -1,6 +1,6 @@
 # Capabilities Contract (`loomwright/capabilities.json`)
 
-`loomwright/capabilities.json` is Loomwright's **outward** promise to a host: a stable, versioned description of what the installed plugin offers — its agents (with the exact runtime agent type), commands, skills, result schemas and hooks, including what each hook writes into the session's working directory. A host reads this one file instead of parsing Loomwright's manifest, frontmatter, `hooks/hooks.json` and result-schema docs, whose shapes are Loomwright's to change between releases.
+`loomwright/capabilities.json` is Loomwright's **outward** promise to a host: a stable, versioned description of what the installed plugin offers — its agents (with the exact runtime agent type), commands, skills, result schemas and hooks, including what each hook writes into the session's working directory and what it does under host mode. A host reads this one file instead of parsing Loomwright's manifest, frontmatter, `hooks/hooks.json` and result-schema docs, whose shapes are Loomwright's to change between releases.
 
 **Not to be confused with `docs/CAPABILITY_BASELINE.json`.** That file is **inbound**: it records the Claude Code features Loomwright *uses*, for `/capability-check`. This file is outbound: what Loomwright *offers*. They share no schema and no consumer.
 
@@ -26,7 +26,17 @@ Counts are not restated here: read them from `capabilities.json` itself (or from
 | `skills[]` | array | One entry per `skills/*/SKILL.md`, sorted by `name`. |
 | `result_schemas[]` | array | One entry per schema section of `docs/RESULT_SCHEMAS.md`, sorted by `name`. |
 | `hooks[]` | array | One entry per leaf of `hooks/hooks.json` (see sort key below). |
-| `host_switch` | null | Reserved; always `null` at this version (filled by a later item). |
+| `host_switch` | object | How a host switches on host mode, and what that does (see `host_switch` below). |
+
+### `host_switch`
+
+| Field | Type | Meaning |
+|---|---|---|
+| `env` | string | The environment variable that switches host mode on: `LOOMWRIGHT_HOST_MODE`. On only when its value is exactly `1`; unset or any other value is off. |
+| `state_dir_env` | string | The environment variable naming the optional state directory: `LOOMWRIGHT_HOST_STATE_DIR`. |
+| `effect` | string | A non-empty, one-sentence summary of what the switch does: when it is on, where hook state goes, and what is skipped. Read the sentence from `capabilities.json`; it is not restated here. |
+
+Both names are named once in the generator, and the self-test greps `scripts/host-mode.sh` to prove each is actually read there, so a rename in the resolver fails CI instead of publishing a stale name. The behavioural authority is `scripts/host-mode.sh`'s header and `docs/HOOKS.md` §"Host mode"; `effect` is a summary for a host, not a second specification. What each hook does under the switch is per entry: `hooks[].host_mode`.
 
 ### `agents[]`
 
@@ -74,7 +84,8 @@ A set with no documented rule gets `result_block: null` (never a guess); `result
 | `script` | string \| null | The first plugin script the command invokes, as `scripts/<file>` relative to the plugin root (the install-root variable may be spelled `$VAR/scripts/`, `${VAR}/scripts/` or `"${VAR}"/scripts/`); `null` for a prompt leaf or a leaf that invokes none. |
 | `scripts` | string[] | Every plugin script the command invokes, in invocation order (several for leaves such as the telemetry + token-ledger leaf or the SessionStart resume leaf). |
 | `blocking` | bool | `false` only for a `command` leaf whose command ENDS in `\|\| true` (a `\|\| true` earlier in the command does not make the last command's exit status fail-safe), and for a `prompt` leaf. `true` marks a fail-CLOSED gate that can stop the tool call. |
-| `writes` | string[] | What the leaf may create, modify or delete in the session's working directory (see below). |
+| `writes` | string[] | What the leaf may create, modify or delete in the session's working directory with host mode OFF (see below). |
+| `host_mode` | string | What the leaf does with host mode ON: `redirects`, `skips`, `unaffected`, or `unknown` (see below). |
 
 **Sort key:** `event`, then `matcher` (null sorts as the empty string), then the group's position, then the leaf's position in `hooks.json`.
 
@@ -86,11 +97,20 @@ A set with no documented rule gets `result_block: null` (never a guess); `result
 - `[]` means **audited: writes nothing in scope** (or a prompt leaf).
 - `["unknown"]` means the writes could not be determined: the script has no audit entry, an inline redirect target is empty or not a literal path, the command contains something the parser does not model (an install-root mention that is not a parsed script path, a `<>` open, `>>&`, a backtick command substitution, a `>(...)` process substitution, or a simple command whose first word is not on the generator's non-writing allowlist — so `tee`, `cp`, `mv`, `rm`, `touch`, `sed -i`, `eval`, `bash -c` and any unknown program are unknown), or the audit says the script's writes are decided at run time (e.g. a script that launches a detached agent). **Unknown wins** — a leaf with any unknown part is exactly `["unknown"]`, never a partial list that looks complete.
 
+**`host_mode`.** Derived from the classification table in `docs/HOOKS.md` §"Host mode" (the `| Script / leaf | Class | Under host mode |` table). That table is the source: the value is never written by hand in the JSON, and editing a row there requires a regeneration (the staleness gate fails until it happens).
+
+- `redirects` — the leaf's writes go to the host's state directory (or, for gate state, the per-user temp root) instead of the working tree. `skips` — the write does not happen under host mode. `unaffected` — the leaf writes nothing in the working tree in either mode.
+- **Row key:** a row whose first cell starts with `StopFailure inline leaf` is the inline-leaf row; the row whose first cell is `` `TaskCompleted` `` is the prompt row; every other row is keyed by the first backticked token of its first cell — a script file name, or a glob (`validate-*-result.py`) matched as a shell glob against a script's basename. The class is the Class cell's first word (`redirects (gate)` ⇒ `redirects`).
+- **Leaf value:** a `prompt` leaf takes the prompt row's class. A `command` leaf takes the classes of every script in `scripts[]`, plus the inline-leaf row's class when it is a `StopFailure` leaf whose only inline redirect is the `failures.log` append, combined by precedence **`redirects` > `skips` > `unaffected`** (a leaf that runs one redirecting and one skipping script is `redirects`; per-script detail stays in `docs/HOOKS.md`). The host-mode split of the `StopFailure` leaf is read exactly as for `writes[]`: only its off-mode branch, so the resolver it sources in the host branch is not a classified script.
+- **`unknown` wins, as in `writes[]`:** a script with no matching row (or matching rows that disagree), a `command` leaf with no script and no inline-leaf match, any other inline redirect, a construct the `writes[]` parser does not model, or a leaf of another type is `unknown` — never a guessed or partial class. **`unknown` never appears in a released contract:** the self-test asserts the real contract has none, so a new hook script added without a `docs/HOOKS.md` row fails CI. A host that meets it should treat it as "not classified".
+- **Fail-closed on a malformed source:** when `hooks.json` has at least one leaf and `docs/HOOKS.md`, its `## Host mode` section or the table is missing, the table has no rows, a row has no key, two rows share a key, or a class word is not one of the three, generation exits 1 with one `build-capabilities: …` line naming the problem. A `hooks.json` with no leaves reads no table.
+
 **Honest limit:** the audit is a hand audit recorded in the generator. The staleness gate re-runs the generator; it does not re-read the scripts, so a script that starts writing a new file without its audit entry being updated is not caught mechanically. Review the audit entry whenever a hook script's write paths change.
 
 ## Compatibility policy
 
 - **Adding** a field, or adding entries to a list, is **non-breaking**: `contract_schema_version` stays the same.
+- Filling `host_switch` (published as `null` before, reserved for this) and adding `hooks[].host_mode` are both **additive** under this rule, so `contract_schema_version` stays `1`.
 - **Removing or renaming** a field, or **changing the meaning** of a field or of an existing value (including the result-schema name normalization above), bumps `contract_schema_version`.
 - **Hosts must ignore fields they do not know**, and must not assume a list's length is fixed between releases.
 - `plugin_version` changes every release and says nothing about contract compatibility; branch on `contract_schema_version`.
