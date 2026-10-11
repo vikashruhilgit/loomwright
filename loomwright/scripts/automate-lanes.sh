@@ -2057,6 +2057,10 @@ lanes_wait() {
     if [ -n "$parent" ]; then
       ledger="$(dirname "$rf")/$parent.lane-wait-seen"
       # Current attention events: "<key>\t<line>"; the key is what the ledger dedupes on.
+      # The `awaiting_input` guard below drops that state line when its questions already
+      # report it; its question-less branch is belt-and-suspenders — today _lanes_lane_json
+      # sets state=awaiting_input only when a question exists, so that branch is unreachable,
+      # but it keeps a question-less awaiting_input reported if that invariant ever changes.
       cur="$(jq -r --argjson attn "$_LANES_WAIT_ATTN" '
         .lanes[]? as $l
         | ( ($l.questions // [])[]
