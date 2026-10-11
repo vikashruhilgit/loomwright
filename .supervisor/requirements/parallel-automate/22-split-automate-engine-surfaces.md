@@ -132,3 +132,9 @@ loomwright/docs/ARCHITECTURE_CONTRACTS.md
 loomwright/skills/SKILLS_INDEX.md
 CLAUDE.md
 changelog.d/parallel-automate-22-split-automate-engine-surfaces.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-11T09:40:54Z
+- **Brief:** .supervisor/jobs/done/2026-10-11-split-automate-engine-surfaces.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/470
