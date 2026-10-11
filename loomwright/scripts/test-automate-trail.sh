@@ -15,6 +15,9 @@
 #      per nested object / list item (missing required key, non-schema key, wrong
 #      shape), valid nested sidecars of both kinds as positives, and a mutation
 #      control: with the NESTED loop disabled every SN negative reads `ok`.
+#      The skip form ({checked: false, status: skipped|unverified}, counts
+#      omitted) passes; three skip-rule mutants (off / ignores checked / also
+#      excuses checked) each turn the leg they target red.
 #   D. dispatcher — automate-helpers.sh --help lists the three rows and the
 #      header names the carve-out; sidecar-check/trail-pr dispatch.
 #   T. trail-pr — commits ONLY trail paths (stray untracked + unrelated modified
@@ -351,6 +354,9 @@ sn-hd-source|SUP|s/reason: pre_existing, source: code_reviewer}/reason: pre_exis
 sn-rh-dismissed|RH|s/reason: "already fixed", //|REVIEW_HEAL_RESULT dismissed[0] missing required key reason
 sn-rh-untrusted|RH|s/, run_id: null}/}/|REVIEW_HEAL_RESULT checks_untrusted[0] missing required key run_id
 sn-rh-subfloor|RH|s/^- sub_floor_fixed: .*/- sub_floor_fixed: [typo]/|REVIEW_HEAL_RESULT sub_floor_fixed[0] is not a mapping
+sn-gt-passrate|SUP|s/^  ground_truth: .*/  ground_truth: {checked: true, status: pass, checks_total: 2, checks_passed: 2, pass_rate: "2\/2"}/|SUPERVISOR_RESULT ground_truth carries non-schema key pass_rate
+sn-gt-skip-nochecked|SUP|s/^  ground_truth: .*/  ground_truth: {status: skipped}/|SUPERVISOR_RESULT ground_truth missing required key checked
+sn-gt-skip-checkedtrue|SUP|s/^  ground_truth: .*/  ground_truth: {checked: true, status: skipped}/|SUPERVISOR_RESULT ground_truth missing required key checks_total
 SNEOF
 sn_build() {  # sn_build <base> <sed expr> <out>
   if [ "$1" = SUP ]; then printf '%s\n' "$SUP_VALID"; else printf '%s\n' "$RH_VALID"; fi | sed "$2" > "$3"
@@ -364,6 +370,36 @@ while IFS='|' read -r f base expr want; do
   r="$(bash "$H" sidecar-check "$SD/$f.md")"
   [ "$r" = "fail $SD/$f.md: $want" ] && ok "SN $f ⇒ $want" || no "SN $f: got '$r'"
 done < "$SN_NEG"
+
+# Skip form (automate-followups/20 amendment): checked false + status skipped|unverified makes
+# the counts/findings optional — the shape Phase 4.5 writes when nothing was checked.
+{ printf '%s\n' "$SUP_GOOD" | sed 's/^  ground_truth: .*/  ground_truth: {checked: false, status: skipped}/'
+  echo '  contract_conformance: {checked: false, status: unverified}'; } > "$SD/sn-sup-skip.md"
+r="$(bash "$H" sidecar-check "$SD/sn-sup-skip.md")"
+[ "$r" = "ok $SD/sn-sup-skip.md" ] && ok "SN: skip form {checked: false, status: skipped|unverified} without counts passes" || no "sn-sup-skip: $r"
+
+# Skip-form mutants: each relaxes the skip rule differently; each leg it targets must turn red.
+#   off   — no skip relaxation at all        ⇒ the skip-form positive reads fail
+#   any   — relaxation ignores `checked`     ⇒ {checked: true, status: skipped} reads ok
+#   nochk — any + `checked` also dropped     ⇒ {status: skipped} reads ok
+sn_skip_mutant() {  # sn_skip_mutant <name> <sed program> → $TOP/sn-skip-<name>/automate-trail.sh
+  local d="$TOP/sn-skip-$1"; mkdir -p "$d"; cp "$HERE/result_block_parser.py" "$d/"
+  sed "$2" "$HERE/automate-trail.sh" > "$d/automate-trail.sh"
+  cmp -s "$HERE/automate-trail.sh" "$d/automate-trail.sh" && { no "SN skip mutant $1: sed changed nothing"; return 1; }
+  return 0
+}
+if sn_skip_mutant off 's/    if key in SKIP_OPTIONAL and isinstance/    if False and isinstance/'; then
+  r="$(bash "$TOP/sn-skip-off/automate-trail.sh" sidecar-check "$SD/sn-sup-skip.md")"
+  case "$r" in "fail "*) ok "SN skip mutant off: the skip-form leg is red without the rule ($r)" ;; *) no "SN skip mutant off: $r" ;; esac
+fi
+if sn_skip_mutant any 's/and R.as_bool(val.get("checked"))\[0\] is False/and True/'; then
+  r="$(bash "$TOP/sn-skip-any/automate-trail.sh" sidecar-check "$SD/sn-gt-skip-checkedtrue.md")"
+  [ "$r" = "ok $SD/sn-gt-skip-checkedtrue.md" ] && ok "SN skip mutant any: {checked: true, status: skipped} leg is red when checked is ignored" || no "SN skip mutant any: $r"
+fi
+if sn_skip_mutant nochk 's/and R.as_bool(val.get("checked"))\[0\] is False/and True/; s/if k not in SKIP_OPTIONAL\[key\]\]/if k not in SKIP_OPTIONAL[key] + ["checked"]]/'; then
+  r="$(bash "$TOP/sn-skip-nochk/automate-trail.sh" sidecar-check "$SD/sn-gt-skip-nochecked.md")"
+  [ "$r" = "ok $SD/sn-gt-skip-nochecked.md" ] && ok "SN skip mutant nochk: {status: skipped} leg is red when the skip form excuses checked" || no "SN skip mutant nochk: $r"
+fi
 
 # Mutation control: a scratch copy of automate-trail.sh whose NESTED loop iterates an empty
 # table. Every SN negative must then read `ok` — so each leg above is red without the check.

@@ -839,7 +839,7 @@ SUPERVISOR_RESULT:
   preflight_sync: enum [clear, overlap_proceed, superseded_proceed, skipped, unverified] | null  # optional (v14.8.0+) — outcome of the Phase 1.5 PRE-FLIGHT SYNC gate; null when the gate did not run (e.g., pre-v14.8.0 resume). On a fail-closed abort the run emits status=failed with `error: "preflight_overlap_detected"` (surfaced by /autonomous as `AUTONOMOUS_RUN.status_reason`). Authoritative field definition lives in docs/RESULT_SCHEMAS.md.
   knowledge_sources_used:                    # optional (v14.28.0+) — ADVISORY/informational array of short source-tag strings recording which memory the run consulted (e.g. ["project_memory", "lessons:testing", "twin:scripts/build-insights.sh"]). Open lowercase tag set: project_memory, lessons:<category>, agent_memory:<agent>, twin:<path>, brain_context (stays in the open-set vocabulary for past-emission validity but has no live plugin-side emitter since the graphify-tier retirement, 2026-08-17). Additive — absent ⇒ valid (old logs unaffected); NEVER gated on; does NOT bump schema_version. Same data also emitted as the FLAT `knowledge_sources_used` array on the session_end JSONL line (the surface build-insights.sh reads), exactly like contract_conformance's dual shape.
     - string
-  contract_conformance:                      # optional (System Twin / ST3) — ADVISORY only; NEVER changes heal_decision, NEVER blocks PR. Absent contracts -> checked:false, status:skipped/unverified.
+  contract_conformance:                      # optional (System Twin / ST3) — ADVISORY only; NEVER changes heal_decision, NEVER blocks PR. Absent contracts -> checked:false, status:skipped/unverified. Skip form, complete as written: {checked: false, status: skipped}.
     checked: boolean
     status: enum [pass, advisory_violations, unverified, skipped]
     contracts_evaluated: integer
@@ -855,8 +855,8 @@ SUPERVISOR_RESULT:
     baseline: number | null
     delta: number | null                     # value - baseline, null if no baseline
     unit: string
-  ground_truth:                              # optional (System Twin / M2b slice 1a, v14.19.0) — ADVISORY only; NEVER changes heal_decision, NEVER blocks PR. Populated from scripts/run-ground-truth.sh.
-    checked: boolean                         # gt.ran — true when >=1 check actually executed; false on skipped / no-jq / all-deferred
+  ground_truth:                              # optional (System Twin / M2b slice 1a, v14.19.0) — ADVISORY only; NEVER changes heal_decision, NEVER blocks PR. Populated from scripts/run-ground-truth.sh. Exactly these keys: NO pass_rate (that is the flat session_end ground_truth_pass_rate only).
+    checked: boolean                         # ALWAYS present. gt.ran — true when >=1 check actually executed; false on skipped / no-jq / all-deferred
     status: enum [pass, advisory_failures, unverified, skipped]
     checks_total: integer
     checks_passed: integer

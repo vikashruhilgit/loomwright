@@ -280,6 +280,13 @@ NESTED = {
     },
 }
 
+# The documented skip form (supervisor-result.md "Nested-object key sets"): these keys
+# become optional when checked is false and status is skipped or unverified.
+SKIP_OPTIONAL = {
+    "ground_truth": ["checks_total", "checks_passed"],
+    "contract_conformance": ["contracts_evaluated", "violations"],
+}
+
 def check_map(label, obj, required, optional):
     if not isinstance(obj, dict):
         say("fail %s: %s %s is not a mapping" % (path, name, label))
@@ -306,6 +313,13 @@ for key, (shape, required, optional, items) in sorted(NESTED[name].items()):
     if shape == "list":
         check_list(key, val, required, optional)
         continue
+    # Skip form: checked false + status skipped|unverified makes the count/list keys
+    # optional (absent reads as 0 / []). `checked` itself stays required.
+    if key in SKIP_OPTIONAL and isinstance(val, dict) \
+            and R.as_bool(val.get("checked"))[0] is False \
+            and R.as_text(val.get("status")).strip() in ("skipped", "unverified"):
+        required = [k for k in required if k not in SKIP_OPTIONAL[key]]
+        optional = optional + SKIP_OPTIONAL[key]
     check_map(key, val, required, optional)
     for sub, (ireq, iopt) in sorted(items.items()):
         if sub in val:
