@@ -571,11 +571,17 @@ fi
 
 # ---- B. SKILL-text legs (Part B prose) ---------------------------------------
 REPO="$(cd "$HERE/../.." && pwd)"
-SK="$REPO/loomwright/skills/automate-loop/SKILL.md"
+# The automate-loop skill, /automate's command body and the AUTOMATE_RUN doc are split indexes
+# (parallel-automate/22): each is read as its documented-order assembly (index segments + split
+# files, scripts/fixtures/automate-loop-split/assemble.sh), never the index alone.
+ASM="$HERE/fixtures/automate-loop-split/assemble.sh"
+SK="$TOP/automate-loop-skill.md"; bash "$ASM" "$REPO/loomwright/skills/automate-loop/SKILL.md" "$SK" || no "B: cannot assemble skills/automate-loop/SKILL.md (index + split files)"
+RUN_ALL="$TOP/automate-run-all.md"; bash "$ASM" "$REPO/loomwright/docs/result-schemas/automate-run.md" "$RUN_ALL" || no "B: cannot assemble result-schemas/automate-run.md (index + split files)"
+CMD_ALL="$TOP/automate-command-all.md"; bash "$ASM" "$REPO/loomwright/commands/automate.md" "$CMD_ALL" || no "B: cannot assemble commands/automate.md (index + split files)"
 # docs/RESULT_SCHEMAS.md is an index; each schema's text lives in docs/result-schemas/<file>.md.
 RSD="$REPO/loomwright/docs/result-schemas"
 # Every schema-doc surface (index + split files), repo-relative, for whole-doc absence scans.
-RS_ALL="loomwright/docs/RESULT_SCHEMAS.md $(cd "$REPO" && ls loomwright/docs/result-schemas/*.md 2>/dev/null | tr '\n' ' ')"
+RS_ALL="loomwright/docs/RESULT_SCHEMAS.md $(cd "$REPO" && ls loomwright/docs/result-schemas/*.md loomwright/docs/result-schemas/automate-run/*.md 2>/dev/null | tr '\n' ' ')"
 QUAL="at most one owner-requested fix-now re-drain per item"
 SUBH="### Dismissed-findings decision step (before the park)"
 # first_line <file> <fixed anchor> — the first line containing the anchor (empty if none)
@@ -617,7 +623,13 @@ for want in "at most ONCE per item" "2 × \`--max-rounds\`" "FIRST drain only" "
 done
 # single-drain qualifier, per restating surface (targeted — the unrelated "exactly ONE line/executor" claims stay)
 while IFS='|' read -r f anchor; do
-  L="$(first_line "$REPO/$f" "$anchor")"
+  case "$f" in
+    loomwright/skills/automate-loop/SKILL.md) p="$SK" ;;
+    loomwright/docs/result-schemas/automate-run.md) p="$RUN_ALL" ;;
+    loomwright/commands/automate.md) p="$CMD_ALL" ;;
+    *) p="$REPO/$f" ;;
+  esac
+  L="$(first_line "$p" "$anchor")"
   if [ -z "$L" ]; then no "B: single-drain anchor not found in $f: $anchor"
   else case "$L" in *"$QUAL"*) ok "B: single-drain qualifier on $f ($anchor)" ;; *) no "B: unqualified single-drain claim in $f ($anchor)" ;; esac; fi
 done <<'SURF'
@@ -637,8 +649,9 @@ unq=0
 RS_CAT="$TOP/result-schemas-all.md"
 # shellcheck disable=SC2086  # RS_ALL is a space-separated path list (no spaces in any path)
 (cd "$REPO" && cat $RS_ALL) > "$RS_CAT"
-for p in "$REPO/loomwright/skills/automate-loop/SKILL.md" "$RS_CAT" "$REPO/loomwright/commands/automate.md" "$REPO/README.md" "$REPO/CLAUDE.md"; do
+for p in "$SK" "$RS_CAT" "$CMD_ALL" "$REPO/README.md" "$REPO/CLAUDE.md"; do
   f="${p#"$REPO"/}"; [ "$p" = "$RS_CAT" ] && f="loomwright/docs/RESULT_SCHEMAS.md (+ result-schemas/*.md)"
+  [ "$p" = "$SK" ] && f="loomwright/skills/automate-loop/SKILL.md (+ split files)"; [ "$p" = "$CMD_ALL" ] && f="loomwright/commands/automate.md (+ split files)"
   while IFS= read -r L; do
     case "$L" in *"$QUAL"*) ;; *) unq=$((unq+1)); echo "    unqualified: $f: ${L:0:120}" ;; esac
   done <<EOF2
@@ -658,7 +671,7 @@ for sc in dismissed-drafts dismissed-decide dismissed-pending; do
   grep -qF "| \`$sc\` |" "$SK" && ok "B: §1.5 row for $sc" || no "B: §1.5 lacks a $sc row"
 done
 grep -qF -- '- pending_decisions: <n> | fix_now_reentered: <true|false>' "$SK" && ok "B: §3 template carries the pending_decisions line" || no "B: §3 template lacks pending_decisions"
-grep -qF -- '- pending_decisions: <n> | fix_now_reentered: <true|false>' "$RSD/automate-run.md" && ok "B: AUTOMATE_RUN template carries the pending_decisions line" || no "B: AUTOMATE_RUN lacks pending_decisions"
+grep -qF -- '- pending_decisions: <n> | fix_now_reentered: <true|false>' "$RUN_ALL" && ok "B: AUTOMATE_RUN template carries the pending_decisions line" || no "B: AUTOMATE_RUN lacks pending_decisions"
 # proposed/ README: the generator template and the committed file are byte-identical
 PW="$REPO/loomwright/scripts/propose-work.sh"
 awk "/^printf '%s\\\\n' \\\\\$/{f=1} f{print} /guarded_write \"README.md\"/{exit}" "$PW" | sed '$d' | sed '$s/ \\$//' > "$TOP/readme-tpl.sh"
@@ -888,7 +901,7 @@ case "$SUB2" in *"automate-helpers.sh dismissed-cost <runfile>"*"≈ <estimate> 
 before "$SUB2" "**Follow-up (keep draft)** (recommended, first)" "**Fix now on this PR**" && ok "C8 §6 step 2 keeps Follow-up recommended and first" || no "C8 recommended order changed"
 case "$SUB2" in *"est. fix_now_cost ≈"*) ok "C8 §6 step 2 records the estimate as data on a Progress line" ;; *) no "C8 no recorded estimate" ;; esac
 case "$SUB3" in *'start `<ts> owned drain started (fix-now re-drain) — '*'terminal `<ts> fix-now re-drain <READY|ESCALATED> ('*) ok "C8 §6 step 3 pins the re-drain start and terminal lines" ;; *) no "C8 §6 step 3 pinned lines missing" ;; esac
-grep -qF 'owned drain started (fix-now re-drain) — ' "$RSD/automate-run.md" && grep -qF 'fix-now re-drain <READY\|ESCALATED> (' "$RSD/automate-run.md" && ok "C8 automate-run.md mirrors both pinned lines beside owned_drain_started" || no "C8 automate-run.md mirror missing"
+grep -qF 'owned drain started (fix-now re-drain) — ' "$RUN_ALL" && grep -qF 'fix-now re-drain <READY\|ESCALATED> (' "$RUN_ALL" && ok "C8 automate-run.md mirrors both pinned lines beside owned_drain_started" || no "C8 automate-run.md mirror missing"
 grep -qF '| `dismissed-cost` |' "$SK" && ok "C8 §1.5 helper table has a dismissed-cost row" || no "C8 §1.5 row missing"
 grep -qF '(each fix-now option shows its derived wall-clock cost)' "$REPO/loomwright/commands/automate.md" && ok "C8 commands/automate.md bullet mirrors the cost" || no "C8 automate.md mirror missing"
 

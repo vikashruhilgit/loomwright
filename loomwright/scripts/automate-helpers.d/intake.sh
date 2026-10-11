@@ -1,3 +1,8 @@
+# --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
+# by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/intake.golden.
+#:  resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
+#:  resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers AND the referenced file's own ## Status: done stamp (is_done); dir-fallback path also skips proposed|parked, per is_not_ready
+
 # resolve-folder <dir> — every *.md NOT marked "## Status: done" and not
 # "## Status: proposed|parked" (sorted).
 resolve_folder() {
