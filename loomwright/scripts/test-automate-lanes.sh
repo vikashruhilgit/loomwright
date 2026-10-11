@@ -52,6 +52,8 @@
 #     validated answer pending, --without-gate-optout resumes without it and clears the fact, never added
 #   AG wave-plan is READ-ONLY (A4: refs + tree byte-identical) + mutation control; the A3/A4 static guards
 #     (no executable merge / push / gate-eval) + mutation control; A5 no sequential caller
+#   AJ lane timeline: the seven steps from `## Progress` + Supervisor state (pick-guarded), boundaries,
+#     current-step state per lane state, the JSON fields and the plain steps line
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -461,7 +463,11 @@ chmod +x "$T/pgrep-stub" "$T/ci-stub.sh" "$T/caff-stub"
 export LOOMWRIGHT_LANES_PGREP="$T/pgrep-stub" LOOMWRIGHT_LANES_CI_SLOT="$T/ci-stub.sh" PGREP_CLAUDE="$T/pgrep.claude"
 export LOOMWRIGHT_LANES_CAFFEINATE="$T/caff-stub" CAFF_LOG="$T/caff.log" LOOMWRIGHT_LANES_BOOT_EPOCH=1000000000
 export LOOMWRIGHT_LANES_UNAME=Darwin LOOMWRIGHT_LANES_COORDINATOR_PID=4242
-: > "$PGREP_CLAUDE"; : > "$CAFF_LOG"
+# pmset stub: prints $PMSET_OUT's content (none by default), so the real Mac's power assertions — the
+# Claude desktop app holds one while it works — never leak into keep_awake.
+printf '%s\n' '#!/usr/bin/env bash' '[ "$*" = "-g assertions" ] && [ -s "${PMSET_OUT:-}" ] && cat "$PMSET_OUT"; exit 0' > "$T/pmset-stub"
+chmod +x "$T/pmset-stub"; export LOOMWRIGHT_LANES_PMSET="$T/pmset-stub" PMSET_OUT="$T/pmset.out"
+: > "$PGREP_CLAUDE"; : > "$CAFF_LOG"; : > "$PMSET_OUT"
 sj() { bash "$S" lane-status "$RF2" --json 2>/dev/null; }
 lf() { jq -r --arg l "$1" ".lanes[] | select(.lane == \$l) | $2" <<<"$J"; }
 STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LR2/L1" --owner-command "$OWN" >/dev/null
@@ -554,6 +560,34 @@ else bad "S6c delayed stub" "the wait missed a write that arrived 0.5 s late"; f
 werr="$(wait_for_file_content "$CAFF_LOG" "caffeinate -i -w 4242" 1 2>&1)"; wrc=$?
 check "S6d a stub that never writes ⇒ the wait fails, naming the condition" "$wrc:$(case "$werr" in *"waiting for: 'caffeinate -i -w 4242' in $CAFF_LOG"*) echo named ;; esac)" "1:named"
 has "S6b and says so" "$out" "keep-awake: started (opt-in --keep-awake)"
+# S7-S11: keep-awake is read from macOS power assertions, not only a `caffeinate` process. The desktop
+# app's "Keep computer awake while Claude works" hold is a NoIdleSleepAssertion owned by `Claude` — the
+# machine IS held, but only while a Code session works (headless lanes are not Code sessions), so the
+# caffeinate suggestion stays and --keep-awake still starts one.
+pm_line() { printf '   pid %s(%s): [0x0006137400018c52] 01:11:43 %s named: "%s"  \n' "$@"; }
+{ echo 'Listed by owning process:'; pm_line 39844 Claude NoIdleSleepAssertion Electron
+  pm_line 341 powerd PreventUserIdleSystemSleep 'Powerd - Prevent sleep while display is on'; } > "$PMSET_OUT"
+J="$(sj)"
+check "S7 Claude app assertion ⇒ held, not lasting, one claude-app holder (powerd's own hold ignored)" \
+  "$(jq -r '.machine | "\(.keep_awake)|\(.keep_awake_lasting)|\([.keep_awake_holders[] | .process + ":" + .kind] | join(","))"' <<<"$J")" \
+  "held|false|Claude:claude-app"
+out="$(run lane-status "$RF2")"
+has "S8 plain view names the app hold and its limit" "$out" "keep-awake: held (Claude app — only while a Code session works)"
+has "S8b the app hold alone keeps the caffeinate suggestion" "$out" "keep-awake suggestion (run it yourself, or lane-status --keep-awake): caffeinate -i -w 4242"
+: > "$CAFF_LOG"; out="$(run lane-status "$RF2" --keep-awake)"
+wait_for_file_content "$CAFF_LOG" "caffeinate -i -w 4242" 15 || bad "S9 wait" "no caffeinate start with only the app hold"
+has "S9 --keep-awake still starts caffeinate when only the app holds" "$(cat "$CAFF_LOG")" "caffeinate -i -w 4242"
+pm_line 777 caffeinate PreventUserIdleSystemSleep 'caffeinate command-line tool' >> "$PMSET_OUT"
+J="$(sj)"; out="$(run lane-status "$RF2")"
+check "S10 a caffeinate assertion ⇒ lasting, no suggestion" \
+  "$(jq -r .machine.keep_awake_lasting <<<"$J"):$(printf '%s' "$out" | grep -c 'suggestion')" "true:0"
+: > "$CAFF_LOG"; out="$(run lane-status "$RF2" --keep-awake)"
+check "S10b --keep-awake with a caffeinate already holding starts none" "$(wc -l < "$CAFF_LOG" | tr -d ' '):$(printf '%s' "$out" | grep -c 'already held')" "0:1"
+{ echo 'Listed by owning process:'; pm_line 639 sharingd PreventUserIdleSystemSleep Handoff; } > "$PMSET_OUT"
+J="$(sj)"
+check "S11 a transient daemon assertion is listed but never makes it held" \
+  "$(jq -r '.machine | "\(.keep_awake)|\(.keep_awake_holders | length)|\(.keep_awake_holders[0].kind)"' <<<"$J")" "not held|1|other"
+: > "$PMSET_OUT"; : > "$CAFF_LOG"
 
 # ---- T: --watch, lane-feed ----------------------------------------------------------------------------
 out="$(LOOMWRIGHT_LANES_WATCH_ITERATIONS=1 run lane-status "$RF2" --watch)"; rc=$?
@@ -2189,6 +2223,61 @@ check "AI9b --deliver-pending --without-gate-optout delivers: answer file writte
 check "AI9c … one spawn, resuming the deferred session" "$(( $(claude_calls) - n6 )):$(grep '^ARGS' "$STUB_LOG" | tail -1 | grep -c '\[--resume\] \[sess-ai1\]' | tr -d ' ')" "1:1"
 check "AI10 the opt-out's name never reaches a lane file (lane.json, inbox, settings)" \
   "$(grep -rl 'ALLOW_GATE_CONFIG_EDITS\|gate-optout\|gate_optout' "$L61/.supervisor" "$L63/.supervisor" "$L61/.claude" 2>/dev/null | wc -l | tr -d ' ')" 0
+
+# ---- AJ: lane timeline (the step rail the /lanes pane draws) ----------------------------------------------
+# _lanes_timeline over fixture run files / Supervisor state: 7 steps from `## Progress` lines, the
+# Supervisor phase only when its state was created at/after the pick, the current step colored by state.
+AJ="$T/aj"; mkdir -p "$AJ/lane/.supervisor"; AJRF="$AJ/run.md"; AJSM="$AJ/lane/.supervisor/state.md"
+ajt() { ( . "$S"; _lanes_timeline "$AJRF" "$AJ/lane" "${3:-$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')}" "$1" "${2:--}" ); }
+ajp() { printf '# Automate Run: x\n\n## Current\n- item: a.md | status: running\n\n## Progress\n' > "$AJRF"; printf '%s\n' "$@" >> "$AJRF"; }
+ajp '- 2026-10-11T03:19:01Z run started (lane L1 of p)' '- trail-gate: clear — an undated line is skipped' \
+  '- 2026-10-11T03:19:14Z picked a.md' '- 2026-10-11T03:55:09Z launch-pad: Plan Review attempt 1/3 FAIL' \
+  '- 2026-10-11T04:13:15Z launch-pad: brief saved .supervisor/jobs/pending/x.md' \
+  '- 2026-10-11T06:11:10Z ran /autonomous → PR https://x/pull/1 (FINALIZE; Phase 4.5 next)' \
+  '- 2026-10-11T06:32:20Z /autonomous done: SUPERVISOR_RESULT completed, heal PASS' \
+  '- 2026-10-11T06:32:42Z owned drain started — /review-pr https://x/pull/1' \
+  '- 2026-10-11T06:36:53Z drain round 1: 1 validated bot finding fixed' '- 2026-10-11T06:48:15Z drain round 2: fixed' \
+  '- 2026-10-11T07:05:55Z drain READY → converged' '- 2026-10-11T07:10:18Z dismissed: drop d1.md' \
+  '- 2026-10-11T07:24:02Z parked ready_for_release — PR https://x/pull/1 READY' '- 2026-10-11T09:40:56Z auto-finalized: queue empty after closeout'
+out="$(ajt merged)"
+check "AJ1 merged ⇒ every step done, label Done, no current" \
+  "$(jq -r '"\([.steps[].state] | unique | join(","))|\(.label)|\(.current)|\(.steps | length)"' <<<"$out")" "done|Done|null|7"
+check "AJ2 boundaries: picked starts Plan, brief saved starts Build, durations from the lines" \
+  "$(jq -r '[.steps[] | "\(.id)=\(.started_at | .[11:19])/\(.duration_s)"] | join(" ")' <<<"$out")" \
+  "pick=03:19:01/13 plan=03:19:14/3241 build=04:13:15/8345 heal=06:32:20/22 drain=06:32:42/2256 decide=07:10:18/824 merge=07:24:02/8214"
+check "AJ3 the run starts at its first dated line; a step keeps its last 4 lines" \
+  "$(jq -r '"\(.started_at)|\(.steps[4].lines | length)|\(.steps[4].lines[0] | .[0:13])"' <<<"$out")" "2026-10-11T03:19:01Z|4|owned drain s"
+out="$(ajt ready_for_release)"
+check "AJ4 parked ⇒ Merge is current and waiting on the owner" "$(jq -r '"\(.current)|\(.steps[6].state)|\(.steps[5].state)"' <<<"$out")" "merge|waiting|done"
+ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md' \
+  '- 2026-10-11T08:30:00Z ran /autonomous → PR https://x/pull/2 (SUPERVISOR_RESULT completed; heal PASS iter 1)' \
+  '- 2026-10-11T08:31:00Z owned drain started' '- 2026-10-11T08:40:00Z drain round 3: fixed'
+out="$(ajt running)"
+check "AJ5 drain round in the label; heal reached by the ran-/autonomous heal verdict; current duration runs to now" \
+  "$(jq -r '"\(.label)|\(.steps[3].state)|\(.steps[4].state)|\(.steps[4].duration_s)"' <<<"$out")" "Drain · round 3|done|active|5340"
+ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md'
+printf '# State Log\n\n## Session\n- status: running\n- phase: EXECUTE\n\n## Decisions Log\n- phase: INIT, decision: guard_armed: ok, timestamp: 2026-10-11T08:02:00Z\n- phase: PRE_FLIGHT_SYNC, decision: preflight_clear, rationale: r, timestamp: 2026-10-11T08:03:00Z\n\n## Checkpoint\n- created: 2026-10-11T08:02:00Z\n- last_updated: 2026-10-11T08:03:00Z\n' > "$AJSM"
+out="$(ajt running)"
+check "AJ6 Supervisor state after the pick ⇒ Build current with its phase; Plan ends at the Supervisor start" \
+  "$(jq -r '"\(.label)|\(.steps[1].duration_s)|\(.steps[2].started_at)|\(.phases | map(.phase) | join(","))"' <<<"$out")" \
+  "Build · EXECUTE|60|2026-10-11T08:02:00Z|INIT,PRE_FLIGHT_SYNC"
+sed -i.bak 's/created: 2026-10-11T08:02:00Z/created: 2026-10-11T07:00:00Z/; s/08:02:00Z\(.*\)INIT/07:00:00Z\1INIT/' "$AJSM"; sed -i.bak 's/timestamp: 2026-10-11T08:0[23]:00Z/timestamp: 2026-10-11T07:00:00Z/' "$AJSM"
+out="$(ajt running)"
+check "AJ7 a Supervisor state created BEFORE the pick (the previous item's) never shows" "$(jq -r '"\(.current)|\(.phase)|\(.phases | length)"' <<<"$out")" "plan|null|0"
+printf '# State Log\n\n## Session\n- status: running\n- phase: FINALIZE\n' > "$AJSM"
+check "AJ8 an undated running Supervisor state still names the phase (no time invented)" \
+  "$(ajt running | jq -r '"\(.label)|\(.steps[2].started_at)"')" "Build · FINALIZE|null"
+check "AJ8b … but only while the lane runs" "$(ajt stalled | jq -r '"\(.current)|\(.steps[1].state)"')" "plan|trouble"
+rm -f "$AJSM"
+check "AJ9 a question ⇒ the current step waits on the owner" "$(ajt awaiting_input | jq -r '.steps[1].state')" waiting
+rm -f "$AJRF"
+check "AJ10 no run file ⇒ Pick current, held, started from last_launch_utc" \
+  "$(ajt created 2026-10-11T07:59:00Z | jq -r '"\(.current)|\(.steps[0].state)|\(.started_at)|\([.steps[1:][].state] | unique | join(","))"')" \
+  "pick|held|2026-10-11T07:59:00Z|pending"
+J="$(sj)"
+check "AJ11 lane-status --json carries timeline, started_at and run_started_at" \
+  "$(jq -r '"\(has("run_started_at"))|\(.lanes | map(.timeline | type) | unique | join(","))|\(.lanes | map(has("started_at")) | all)"' <<<"$J")" "true|object|true"
+has "AJ12 the plain view draws the steps line" "$(run lane-status "$RF2")" "    steps: [Pick"
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 # AA-F12z (final leg): nothing this suite started may outlive it — no process whose command line names

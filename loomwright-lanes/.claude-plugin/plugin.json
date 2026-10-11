@@ -1,7 +1,7 @@
 {
   "name": "loomwright-lanes",
-  "version": "0.1.0",
-  "description": "Optional live pane for Loomwright's /automate --parallel lanes: /lanes shows every lane (state, PR, branch, last actions, readiness, machine load) and answers a waiting lane's question with one button per option. Reads and writes only through Loomwright's lane-status / lane-feed / lane-answer; uninstalling it changes nothing about a run.",
+  "version": "0.2.0",
+  "description": "Optional live pane for Loomwright's /automate --parallel lanes: /lanes shows every lane (its current step on a seven-step rail, start time, state, PR, branch, readiness, machine load and keep-awake) and answers a waiting lane's question with one button per option. Reads and writes only through Loomwright's lane-status / lane-feed / lane-answer; uninstalling it changes nothing about a run.",
   "author": {
     "name": "vikash ruhil"
   },

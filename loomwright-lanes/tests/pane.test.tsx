@@ -265,3 +265,95 @@ test('a question with no readable options shows the main-session fallback, no bu
   expect(calls.filter(c => c.argv[0] === 'claude').length).toBe(1)
   expect(calls.some(c => c.argv.includes('lane-answer'))).toBe(false)
 })
+
+// The step rail, the wave's start and keep-awake. The mocked clock is 2025-10-09T08:53:20Z (1_760_000_000 s);
+// utc_offset_s 19800 (+05:30) makes it 14:23 local. Times below are relative to it.
+const T0 = 1_760_000_000
+const iso = (agoS: number) => new Date((T0 - agoS) * 1000).toISOString().replace(/\.000Z$/, 'Z')
+const step = (id: string, name: string, state: string, startedAgo: number | null, endedAgo: number | null, lines: string[] = []) => ({
+  id, name, state, started_at: startedAgo === null ? null : iso(startedAgo), ended_at: endedAgo === null ? null : iso(endedAgo),
+  duration_s: startedAgo === null ? null : (endedAgo === null ? startedAgo : startedAgo - endedAgo), lines,
+})
+const APP_HOLD = [{ pid: 39844, process: 'Claude', assertion: 'NoIdleSleepAssertion', name: 'Electron', kind: 'claude-app' }]
+const RAIL_DOC = {
+  ...DOC,
+  run_started_at: iso(5640),
+  utc_offset_s: 19800,
+  machine: { ...DOC.machine, state: 'ok', load1: 4.1, keep_awake: 'held', keep_awake_lasting: false, keep_awake_holders: APP_HOLD },
+  lanes: [
+    {
+      ...DOC.lanes[0], started_at: iso(3640),
+      timeline: {
+        started_at: iso(3640), current: 'build', label: 'Build · EXECUTE', phase: 'EXECUTE', phase_status: 'running',
+        phases: [{ phase: 'INIT', at: iso(3540) }, { phase: 'PRE_FLIGHT_SYNC', at: iso(3480) }],
+        steps: [
+          step('pick', 'Pick', 'done', 3640, 3600, ['picked reqs/a.md']),
+          step('plan', 'Plan', 'done', null, null),
+          step('build', 'Build', 'active', 3540, null, ['Supervisor started', 'Supervisor PRE_FLIGHT_SYNC: preflight_clear']),
+          step('heal', 'Heal', 'pending', null, null), step('drain', 'Drain', 'pending', null, null),
+          step('decide', 'Decide', 'pending', null, null), step('merge', 'Merge', 'pending', null, null),
+        ],
+      },
+    },
+  ],
+}
+
+test('each lane shows its current step, a seven-step rail with hover details, and when it started', async ($, on) => {
+  const calls: Call[] = []
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(RAIL_DOC) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface, ...PANE })
+    // The wave: started 07:19:20Z = 12:49 local, running 1 h 34 min.
+    expect(await ui.find({ type: 'Text', text: /^12:49$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^running 1 h 34 min$/ })).toBeDefined()
+    // The lane: its step in the title, its own start, one hover scope per step.
+    expect(await ui.find({ type: 'Text', text: /^● Build · EXECUTE$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /started 13:22 · 1 h 0 min$/ })).toBeDefined()
+    for (const id of ['pick', 'plan', 'build', 'heal', 'drain', 'decide', 'merge']) expect(await ui.find({ key: `L1-step-${id}` })).toBeDefined()
+    // The hover cards: the current step's time so far and Supervisor phases, a done step with no time, a pending one's purpose.
+    expect(await ui.find({ type: 'Text', text: /^Build · now$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^since 13:24 · 59 min so far$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Supervisor: INIT 13:24 · PRE_FLIGHT_SYNC 13:25 · EXECUTE now$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^· Supervisor PRE_FLIGHT_SYNC: preflight_clear$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^no time recorded for this step$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Pick · done$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^13:22 → 13:23 · 40 s$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Phase 4\.5 integration review and fixes$/ })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('keep-awake names the Claude app hold, and the button starts caffeinate through lane-status --keep-awake', async ($, on) => {
+  const calls: Call[] = []
+  let doc: Record<string, unknown> = RAIL_DOC
+  on('process.run', async (_$, e) => {
+    calls.push({ argv: e.argv })
+    const a = e.argv.join(' ')
+    const stdout = a.startsWith('claude plugin list')
+      ? JSON.stringify([{ id: 'loomwright@atelier', enabled: true, installPath: '/p' }])
+      : a.endsWith('lane-status --keep-awake')
+        ? 'keep-awake: started (opt-in --keep-awake) — caffeinate -i -w 4242 (pid 9); it ends with the coordinator\nlane-status: …'
+        : JSON.stringify(doc)
+    if (a.endsWith('lane-status --keep-awake')) {
+      doc = { ...RAIL_DOC, machine: { ...RAIL_DOC.machine, keep_awake_lasting: true, keep_awake_holders: [...APP_HOLD, { pid: 9, process: 'caffeinate', assertion: 'PreventUserIdleSystemSleep', name: 'caffeinate', kind: 'caffeinate' }] } }
+    }
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.open', async () => ({ value: { isPlaced: true } }))
+  on('ui.toast', async () => ({ value: undefined }))
+  mock.clock(on, { now: T0 * 1000 })
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'desktop', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /^Claude app only$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^drops when no Code session works$/ })).toBeDefined()
+  await ui.press({ key: 'keep-awake' })
+  expect(calls.some(c => c.argv.slice(2).join(' ') === 'lane-status --keep-awake')).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /^started \(opt-in --keep-awake\) — caffeinate -i -w 4242/ })).toBeDefined()
+  // Re-read at once: a caffeinate now holds it, so the button is gone.
+  expect(await ui.find({ type: 'Text', text: /^caffeinate holds it$/ })).toBeDefined()
+  expect(await ui.find({ key: 'keep-awake' })).toBeUndefined()
+  await ui.unmount()
+})

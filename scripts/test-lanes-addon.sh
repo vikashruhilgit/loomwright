@@ -8,7 +8,9 @@
 #   2. three commands  — the `LaneCommand` union is exactly lane-status | lane-feed | lane-answer, and
 #                        every `lane(...)` call names one of them — read from the module flattened to
 #                        one line, so a call wrapped across lines (lane-answer's) is seen too; exactly
-#                        three call sites, lane-answer among them
+#                        four call sites, lane-answer among them, and the one beyond the three reads
+#                        exactly `'lane-status', ['--keep-awake']` (the owner's Keep-awake button: it
+#                        starts the caffeinate lane-status already offers, never a lane)
 #   3. no lane files   — no `$.fs`, no `$.process.spawn`, no `bash -c`, no `.supervisor` / inbox /
 #                        stream-log path anywhere in the module
 #   4. answers say so  — lane-answer is called with `--via lanes-addon`
@@ -49,7 +51,10 @@ module_violations() {
   [ -z "$bad" ] || echo "lane() called with: $(printf '%s' "$bad" | tr '\n' ' ')"
   [ -n "$subs" ] || echo "no lane() call sites found"
   n="$(grep -c . <<<"$subs")"
-  [ "$n" = 3 ] || echo "lane() call sites: $n (want exactly 3: lane-feed, lane-status, lane-answer)"
+  [ "$n" = 4 ] || echo "lane() call sites: $n (want exactly 4: lane-feed, lane-status --json, lane-status --keep-awake, lane-answer)"
+  # The second lane-status site may carry only --keep-awake: any other flag set is a new capability.
+  n="$(grep -oE "lane\\( ?\\\$, ?configured, ?'lane-status', ?\\[[^]]*\\]" <<<"$flat" | sed "s/.*\\[\\(.*\\)\\]$/\\1/" | sort | tr '\n' '|')"
+  [ "$n" = "'--json'|'--keep-awake'|" ] || echo "lane-status call sites carry: $n (want exactly ['--json'] and ['--keep-awake'])"
   grep -qx 'lane-answer' <<<"$subs" || echo "no lane() call site names lane-answer"
   grep -nE '\$\.fs\b|\$\.process\.spawn|'"'"'-c'"'"'|\.supervisor|/inbox/|stream\.log|lane-launch|lane-remove' "$f" | sed 's/^/forbidden: /'
 }
@@ -79,6 +84,10 @@ grep -q '\$\.fs\.readFile' "$T/a.tsx" && [ -n "$(module_violations "$T/a.tsx")" 
 sed "s|lane(\$, configured, 'lane-feed', \[l.path\])|lane(\$, configured, 'lane-launch' as LaneCommand, [l.path])|" "$MOD" > "$T/b.tsx"
 grep -q "'lane-launch'" "$T/b.tsx" && [ -n "$(module_violations "$T/b.tsx")" ] \
   && ok "a module calling lane-launch is refused" || no "a module calling lane-launch was NOT refused"
+sed "s|lane(\$, configured, 'lane-status', \['--keep-awake'\])|lane(\$, configured, 'lane-status', ['--keep-awake', '--refresh-readiness'])|" "$MOD" > "$T/e.tsx"
+grep -q "'--refresh-readiness'" "$T/e.tsx" && [ -n "$(module_violations "$T/e.tsx")" ] \
+  && ok "a module whose keep-awake call grows another lane-status flag is refused" \
+  || no "a module whose keep-awake call grows another lane-status flag was NOT refused"
 sed "s|\$\.process\.run(\['claude', 'plugin', 'list', '--json'\]|\$.process.run(['bash', '-c', 'cat x']|" "$MOD" > "$T/c.tsx"
 [ -n "$(module_violations "$T/c.tsx")" ] && ok "a module with a shell probe is refused" || no "a module with a shell probe was NOT refused"
 # lane-answer's call is wrapped one argument per line — the only mutating call, and the one a
