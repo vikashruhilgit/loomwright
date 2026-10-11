@@ -10,6 +10,11 @@
 #      one carrying `ready_sha`, a SUPERVISOR_RESULT whose risk_classification
 #      lacks `reasons`) + a non-canonical channel + the positive control (the
 #      committed item-10 sidecars, d8662b3, copied verbatim into this file).
+#      Since automate-followups/20 the item-10 SUPERVISOR_RESULT FAILS (its
+#      `ground_truth` lacks `checked` — the #311 shape); SN legs add one negative
+#      per nested object / list item (missing required key, non-schema key, wrong
+#      shape), valid nested sidecars of both kinds as positives, and a mutation
+#      control: with the NESTED loop disabled every SN negative reads `ok`.
 #   D. dispatcher — automate-helpers.sh --help lists the three rows and the
 #      header names the carve-out; sidecar-check/trail-pr dispatch.
 #   T. trail-pr — commits ONLY trail paths (stray untracked + unrelated modified
@@ -272,7 +277,11 @@ else
   echo "  note: d8662b3 not reachable (shallow checkout) — provenance leg skipped"
 fi
 r="$(bash "$H" sidecar-check "$SD/rh-good.md")"; [ "$r" = "ok $SD/rh-good.md" ] && ok "item-10 REVIEW_HEAL_RESULT passes" || no "rh-good: $r"
-r="$(bash "$H" sidecar-check "$SD/sup-good.md")"; [ "$r" = "ok $SD/sup-good.md" ] && ok "item-10 SUPERVISOR_RESULT passes" || no "sup-good: $r"
+# automate-followups/20: the item-10 SUPERVISOR_RESULT is the requirement's own example —
+# its `ground_truth` lacks `checked`, so the nested check now fails it.
+r="$(bash "$H" sidecar-check "$SD/sup-good.md")"
+[ "$r" = "fail $SD/sup-good.md: SUPERVISOR_RESULT ground_truth missing required key checked" ] \
+  && ok "item-10 SUPERVISOR_RESULT (ground_truth without checked) fails" || no "sup-good: $r"
 printf '%s\n' "$RH_GOOD" | grep -v '^- rounds:' > "$SD/rh-norounds.md"
 r="$(bash "$H" sidecar-check "$SD/rh-norounds.md")"
 case "$r" in "fail $SD/rh-norounds.md: "*"missing required key rounds") ok "v2 missing rounds fails" ;; *) no "missing rounds: $r" ;; esac
@@ -296,6 +305,89 @@ r="$(bash "$H" sidecar-check "$SD/rh-escreason.md")"
 case "$r" in "fail $SD/rh-escreason.md: "*"non-schema key escalation_reason") ok "a non-schema escalation_reason key still fails" ;; *) no "escalation_reason: $r" ;; esac
 r="$(bash "$H" sidecar-check "$SD/absent.md")"; rc=$?
 [ "$r" = "fail $SD/absent.md: file not found" ] && [ "$rc" -eq 0 ] && ok "missing file ⇒ fail line, exit 0" || no "absent: $r rc=$rc"
+
+# --- SN. nested-object key tables (automate-followups/20) ---------------------
+# SUP_VALID: the item-10 block with a schema-complete ground_truth plus every other
+# nested SUPERVISOR_RESULT object and list, flow and block style mixed.
+SUP_VALID="$(printf '%s\n' "$SUP_GOOD" | sed 's/^  ground_truth: .*/  ground_truth: {checked: true, status: advisory_failures, checks_total: 2, checks_passed: 1, findings: [{check: "cmd:make test", detail: "exit 1", severity: advisory}]}/')
+  contract_conformance:
+    checked: true
+    status: advisory_violations
+    contracts_evaluated: 1
+    violations: 1
+    findings:
+      - {subsystem: hooks, invariant: \"always exit 0\", severity: advisory, detail: \"exit 2 on a normal path\"}
+  benchmark_result: {ran: true, status: pass, name: system-twin-selftest, metric: selftest_pass_count, value: 4, baseline: null, delta: null, unit: assertions}
+  heal_dismissed:
+    - {finding: \"a nit\", reason: nit, source: code_reviewer, severity: LOW}
+    - {finding: \"old bug\", reason: pre_existing, source: code_reviewer}"
+printf '%s\n' "$SUP_VALID" > "$SD/sn-sup-valid.md"
+r="$(bash "$H" sidecar-check "$SD/sn-sup-valid.md")"
+[ "$r" = "ok $SD/sn-sup-valid.md" ] && ok "SN: a schema-complete nested SUPERVISOR_RESULT passes" || no "sn-sup-valid: $r"
+# The parse-miss benchmark shape (ran + status only) and an absent findings list are legal.
+printf '%s\n' "$SUP_VALID" | sed -e 's/^  benchmark_result: .*/  benchmark_result: {ran: false, status: unverified}/' \
+  -e 's/^  ground_truth: .*/  ground_truth: {checked: false, status: skipped, checks_total: 0, checks_passed: 0}/' > "$SD/sn-sup-min.md"
+r="$(bash "$H" sidecar-check "$SD/sn-sup-min.md")"
+[ "$r" = "ok $SD/sn-sup-min.md" ] && ok "SN: minimal benchmark_result / ground_truth without findings pass" || no "sn-sup-min: $r"
+RH_VALID="$(printf '%s\n' "$RH_GOOD" | sed -e 's/^- sub_floor_fixed: .*/- sub_floor_fixed: [{finding: "typo", severity: LOW}]/' \
+  -e 's/^- checks_untrusted: .*/- checks_untrusted: [{check: ci, reason: startup_failure, run_id: null}]/')
+- dismissed: [{finding: \"stale\", reason: \"already fixed\", source: reviews}, {finding: \"x\", reason: \"y\", source: check_outputs, severity: INFO}]"
+printf '%s\n' "$RH_VALID" > "$SD/sn-rh-valid.md"
+r="$(bash "$H" sidecar-check "$SD/sn-rh-valid.md")"
+[ "$r" = "ok $SD/sn-rh-valid.md" ] && ok "SN: a nested REVIEW_HEAL_RESULT (dismissed, checks_untrusted, sub_floor_fixed items) passes" || no "sn-rh-valid: $r"
+
+# One negative per nested object / list item: <file>|<base>|<sed expr>|<expected reason>.
+SN_NEG="$TOP/sn-neg.txt"
+cat > "$SN_NEG" <<'SNEOF'
+sn-gt-checked|SUP|s/{checked: true, status: advisory_failures/{status: advisory_failures/|SUPERVISOR_RESULT ground_truth missing required key checked
+sn-gt-extra|SUP|s/checks_passed: 1, findings/checks_passed: 1, pass_rate: half, findings/|SUPERVISOR_RESULT ground_truth carries non-schema key pass_rate
+sn-gt-shape|SUP|s/^  ground_truth: .*/  ground_truth: pass/|SUPERVISOR_RESULT ground_truth is not a mapping
+sn-gt-finding|SUP|s/, detail: "exit 1", severity: advisory}/, severity: advisory}/|SUPERVISOR_RESULT ground_truth.findings[0] missing required key detail
+sn-cc-violations|SUP|/^    violations: 1$/d|SUPERVISOR_RESULT contract_conformance missing required key violations
+sn-cc-finding|SUP|s/invariant: "always exit 0", //|SUPERVISOR_RESULT contract_conformance.findings[0] missing required key invariant
+sn-bench-status|SUP|s/{ran: true, status: pass, name/{ran: true, name/|SUPERVISOR_RESULT benchmark_result missing required key status
+sn-rc-highrisk|SUP|s/{high_risk: true, reasons/{reasons/|SUPERVISOR_RESULT risk_classification missing required key high_risk
+sn-hd-source|SUP|s/reason: pre_existing, source: code_reviewer}/reason: pre_existing}/|SUPERVISOR_RESULT heal_dismissed[1] missing required key source
+sn-rh-dismissed|RH|s/reason: "already fixed", //|REVIEW_HEAL_RESULT dismissed[0] missing required key reason
+sn-rh-untrusted|RH|s/, run_id: null}/}/|REVIEW_HEAL_RESULT checks_untrusted[0] missing required key run_id
+sn-rh-subfloor|RH|s/^- sub_floor_fixed: .*/- sub_floor_fixed: [typo]/|REVIEW_HEAL_RESULT sub_floor_fixed[0] is not a mapping
+SNEOF
+sn_build() {  # sn_build <base> <sed expr> <out>
+  if [ "$1" = SUP ]; then printf '%s\n' "$SUP_VALID"; else printf '%s\n' "$RH_VALID"; fi | sed "$2" > "$3"
+}
+while IFS='|' read -r f base expr want; do
+  [ -n "$f" ] || continue
+  sn_build "$base" "$expr" "$SD/$f.md"
+  if cmp -s "$SD/$f.md" "$SD/sn-$(echo "$base" | tr 'A-Z' 'a-z')-valid.md"; then
+    no "SN $f: the sed changed nothing (fixture drifted)"; continue
+  fi
+  r="$(bash "$H" sidecar-check "$SD/$f.md")"
+  [ "$r" = "fail $SD/$f.md: $want" ] && ok "SN $f ⇒ $want" || no "SN $f: got '$r'"
+done < "$SN_NEG"
+
+# Mutation control: a scratch copy of automate-trail.sh whose NESTED loop iterates an empty
+# table. Every SN negative must then read `ok` — so each leg above is red without the check.
+SNM="$TOP/sn-mutant"; mkdir -p "$SNM"
+cp "$HERE/result_block_parser.py" "$SNM/"
+sed 's/in sorted(NESTED\[name\]\.items()):/in sorted({}.items()):/' "$HERE/automate-trail.sh" > "$SNM/automate-trail.sh"
+if cmp -s "$HERE/automate-trail.sh" "$SNM/automate-trail.sh"; then
+  no "SN mutant: the sed did not change automate-trail.sh (NESTED loop line moved?)"
+else
+  sn_mut_ok=0; sn_mut_n=0
+  while IFS='|' read -r f base expr want; do
+    [ -n "$f" ] || continue
+    sn_mut_n=$((sn_mut_n+1))
+    r="$(bash "$SNM/automate-trail.sh" sidecar-check "$SD/$f.md")"
+    if [ "$r" = "ok $SD/$f.md" ]; then sn_mut_ok=$((sn_mut_ok+1)); else echo "  note: SN mutant $f: $r"; fi
+  done < "$SN_NEG"
+  if [ "$sn_mut_n" -gt 0 ] && [ "$sn_mut_ok" = "$sn_mut_n" ]; then
+    ok "SN mutant (NESTED loop disabled): all $sn_mut_n nested negatives read ok — every SN leg is load-bearing"
+  else
+    no "SN mutant: only $sn_mut_ok/$sn_mut_n nested negatives read ok without the check"
+  fi
+  r="$(bash "$SNM/automate-trail.sh" sidecar-check "$SD/sup-good.md")"
+  [ "$r" = "ok $SD/sup-good.md" ] && ok "SN mutant: the item-10 ground_truth-without-checked sidecar passes without the check (the #311 blind spot)" || no "SN mutant sup-good: $r"
+fi
 
 # =============================================================================
 echo "== D. dispatcher =="

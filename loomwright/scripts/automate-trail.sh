@@ -54,7 +54,8 @@
 #       REVIEW_HEAL_RESULT / SUPERVISOR_RESULT block with result_block_parser.py
 #       and checks its keys against the tables below (required keys, no
 #       non-schema key, canonical `channels_scanned`, `risk_classification`
-#       carries `reasons`). A file that cannot be checked is a `fail`.
+#       carries `reasons`) and the same required/allowed check on every nested
+#       object and list item (NESTED below). A file that cannot be checked is a `fail`.
 #   trail-pr <runfile> [--reason <reason>]
 #       One line: `trail-pr: opened <url>` | `trail-pr: pushed <url>` |
 #       `trail-pr: skipped — <reason>`. Sidecars that fail `sidecar-check` are
@@ -250,6 +251,65 @@ if name == "SUPERVISOR_RESULT" and R.present(fields, "risk_classification"):
     rc = fields.get("risk_classification")
     if not isinstance(rc, dict) or "reasons" not in rc:
         say("fail %s: risk_classification present without reasons" % path)
+
+# NESTED key tables (automate-followups/20) — mirror the "Nested-object key sets"
+# paragraphs of docs/result-schemas/supervisor-result.md and review-heal-result.md.
+# Update together with them. Per field: (shape, required, optional, item_tables)
+# where shape is "map" (one mapping) or "list" (a list of mappings, each item
+# checked against required/optional; None = items must be mappings, keys unpinned),
+# and item_tables maps a list-valued key of the mapping to its own (required,
+# optional) item table. Value enums are not checked here — key shape only.
+GT_FINDING = (["check", "detail", "severity"], [])
+CC_FINDING = (["subsystem", "invariant", "severity", "detail"], [])
+DISMISSED_ITEM = (["finding", "reason", "source"], ["severity"])
+NESTED = {
+    "SUPERVISOR_RESULT": {
+        "ground_truth": ("map", ["checked", "status", "checks_total", "checks_passed"],
+                         ["findings"], {"findings": GT_FINDING}),
+        "contract_conformance": ("map", ["checked", "status", "contracts_evaluated", "violations"],
+                                 ["findings"], {"findings": CC_FINDING}),
+        "benchmark_result": ("map", ["ran", "status"],
+                             ["name", "metric", "value", "baseline", "delta", "unit"], {}),
+        "risk_classification": ("map", ["high_risk", "reasons"], [], {}),
+        "heal_dismissed": ("list",) + DISMISSED_ITEM + ({},),
+    },
+    "REVIEW_HEAL_RESULT": {
+        "dismissed": ("list",) + DISMISSED_ITEM + ({},),
+        "checks_untrusted": ("list", ["check", "reason", "run_id"], [], {}),
+        "sub_floor_fixed": ("list", None, None, {}),
+    },
+}
+
+def check_map(label, obj, required, optional):
+    if not isinstance(obj, dict):
+        say("fail %s: %s %s is not a mapping" % (path, name, label))
+    if required is None:
+        return
+    for k in required:
+        if k not in obj:
+            say("fail %s: %s %s missing required key %s" % (path, name, label, k))
+    allowed_keys = set(required) | set(optional)
+    for k in obj:
+        if k not in allowed_keys:
+            say("fail %s: %s %s carries non-schema key %s" % (path, name, label, k))
+
+def check_list(label, val, required, optional):
+    if not isinstance(val, list):
+        say("fail %s: %s %s is not a list" % (path, name, label))
+    for i, item in enumerate(val):
+        check_map("%s[%d]" % (label, i), item, required, optional)
+
+for key, (shape, required, optional, items) in sorted(NESTED[name].items()):
+    if not R.present(fields, key):
+        continue
+    val = fields.get(key)
+    if shape == "list":
+        check_list(key, val, required, optional)
+        continue
+    check_map(key, val, required, optional)
+    for sub, (ireq, iopt) in sorted(items.items()):
+        if sub in val:
+            check_list("%s.%s" % (key, sub), val[sub], ireq, iopt)
 
 say("ok %s" % path)
 PY

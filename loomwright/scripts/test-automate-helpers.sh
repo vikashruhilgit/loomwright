@@ -1634,6 +1634,16 @@ if [ "$RUN_OUT" = "PARK: drain_not_ready" ] && [ "$(merges)" -eq 0 ]; then
 else
   no "gate drain wrong (out='$RUN_OUT' merges=$(merges))"
 fi
+# automate-followups/20: the two owned_drain_result values with no REVIEW_HEAL_RESULT behind
+# them never reach the gate; if one is ever passed as drain_result, cond 1 parks it.
+for DR in superseded_by_merge died; do
+  gate "$(pass_ctx | jq --arg d "$DR" '.drain_result=$d')"
+  if [ "$RUN_OUT" = "PARK: drain_not_ready" ] && [ "$(merges)" -eq 0 ]; then
+    ok "gate fail-closed: drain_result $DR ⇒ PARK: drain_not_ready, no merge"
+  else
+    no "gate drain_result $DR not parked (out='$RUN_OUT' merges=$(merges))"
+  fi
+done
 gate "$(pass_ctx | jq '.termination_reason="sub_floor_converged"')"
 if [ "$RUN_OUT" = "PARK: sub_floor_not_merge_eligible" ] && [ "$(merges)" -eq 0 ]; then
   ok "AC9 fail-closed: sub_floor_converged READY ⇒ PARK, no merge"
