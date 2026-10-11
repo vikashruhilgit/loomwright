@@ -69,3 +69,9 @@ loomwright/skills/pr-postmortem/SKILL.md
 loomwright/commands/pr-postmortem.md
 loomwright/docs/RESULT_SCHEMAS.md
 changelog.d/churn-ledger-02-classifier-unknowable-attribution.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-11T15:48:19Z
+- **Brief:** .supervisor/jobs/done/2026-10-11-churn-ledger-02-classifier-unknowable.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/477
