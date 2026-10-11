@@ -238,3 +238,30 @@ test('on a surface with no text input the note field is left out and an answer s
   expect(JSON.parse(sent?.stdin ?? '{}')).toEqual({ answers: { '0': 'A', '1': 'z' } })
   await ui.unmount()
 })
+
+// A question whose options could not be read: a pre-`items` core leaves the key out, the jq-failure fallback sends `items: []`.
+test('a question with no readable options shows the main-session fallback, no buttons, and still counts', async ($, on) => {
+  const calls: Call[] = []
+  const bare = { id: 'toolu_q', asked_at: '2026-10-11T09:18:00Z', waiting_s: 720, question: 'Which path?' }
+  const shapes = [bare, { ...bare, question: 'Still which path?', items: [] }]
+  let doc: unknown = null
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(doc) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  for (const [n, q] of shapes.entries()) {
+    doc = { ...DOC, lanes: [DOC.lanes[0], { ...DOC.lanes[1], questions: [q] }] }
+    if (n === 0) await $.command.run(RUN)
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface, ...PANE })
+      if (n === 1 && surface === 'terminal') await ui.press({ key: 'refresh' })
+      const fallback = new RegExp(`^${q.question.replace(/[?.]/g, '\\$&')} Answer it from the main session with lane-answer\\.$`)
+      expect(await ui.find({ type: 'Text', text: fallback })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /^1 question waiting$/ })).toBeDefined()
+      for (const k of ['toolu_q:send', 'toolu_q:note', 'toolu_q:0:A', 'toolu_q:0:B', 'toolu_q:1:z']) expect(await ui.find({ key: k })).toBeUndefined()
+      await ui.unmount()
+    }
+  }
+  // Two lane-status reads, one plugin lookup: the located script is reused for the same (empty) loomwrightRoot.
+  expect(calls.filter(c => c.argv.includes('lane-status')).length).toBeGreaterThanOrEqual(2)
+  expect(calls.filter(c => c.argv[0] === 'claude').length).toBe(1)
+  expect(calls.some(c => c.argv.includes('lane-answer'))).toBe(false)
+})

@@ -432,7 +432,7 @@ loomwright/                            # Marketplace wrapper repo
 │   └── README.md                            # This file
 ├── stackpack/                               # Sibling plugin: 18 tech-stack reference skills
 ├── mysql-mcp/                               # Sibling plugin: read-only MySQL MCP server
-├── loomwright-lanes/                         # Sibling plugin: optional /lanes pane over --parallel lanes
+├── loomwright-lanes/                        # Sibling plugin: optional /lanes pane over --parallel lanes
 └── loomwright/                 # The nested plugin
     ├── .claude-plugin/
     │   └── plugin.json                      # Plugin manifest

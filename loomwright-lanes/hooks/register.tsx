@@ -34,25 +34,28 @@ type Ran = { ok: boolean; out: string }
 
 // ---- reaching Loomwright ---------------------------------------------------------------------------
 
-let script: string | null = null
+// The located script, remembered with the loomwrightRoot it was located for: a lookup made for one
+// configured value is never reused for another (a found path only; "not found" is asked again).
+let located: { for: string; path: string } | null = null
 
 /** automate-lanes.sh of the configured folder, else of the installed loomwright plugin; null when neither. */
 async function locate($: EngineInterface, configured: string): Promise<string | null> {
-  if (script) return script
+  if (located && located.for === configured) return located.path
+  located = null
   if (configured.trim() !== '') {
-    script = `${configured.trim().replace(/\/+$/, '')}/scripts/automate-lanes.sh`
-    return script
+    located = { for: configured, path: `${configured.trim().replace(/\/+$/, '')}/scripts/automate-lanes.sh` }
+    return located.path
   }
   try {
     const r = await $.process.run(['claude', 'plugin', 'list', '--json'], { timeoutMs: 30_000 })
     if (r.exitCode !== 0) return null
     const list = JSON.parse(r.stdout) as Array<{ id?: string; enabled?: boolean; installPath?: string }>
     const lw = list.find(p => (p.id ?? '').startsWith('loomwright@') && p.enabled !== false && p.installPath)
-    script = lw?.installPath ? `${lw.installPath}/scripts/automate-lanes.sh` : null
+    if (lw?.installPath) located = { for: configured, path: `${lw.installPath}/scripts/automate-lanes.sh` }
   } catch {
-    script = null
+    // an unreadable plugin list: not found, asked again on the next call
   }
-  return script
+  return located ? located.path : null
 }
 
 /** The one door to Loomwright: `bash automate-lanes.sh <lane-status|lane-feed|lane-answer> …`. */
