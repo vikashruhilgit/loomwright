@@ -26,6 +26,10 @@
 #      block in automate-helpers.d/<name>.sh, or the dispatcher's `#:@` group) and the same line,
 #      `#:  ` replaced by two spaces, at the same position in that segment's <segment>.golden.
 #      A NEW FAMILY also needs its name in the dispatcher's _AH_HELP_SEGMENTS and in SEGMENTS here.
+#   6. each remaining _ah_usage fail-closed branch (segment marker inside a family, usage line
+#      outside any segment, malformed `#:` line, segment listed twice, usage lines in an unlisted
+#      segment) — one gated mutant copy each ⇒ --help exits non-zero, prints NOTHING on stdout, and
+#      names the reason on stderr.
 # Exit 0 = all pass, 1 = any failure.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -225,6 +229,44 @@ else
     else no "usage-block mutant $f.sh: --help changed but stderr did not name the empty segment: $(head -1 "$T/hme")"; fi
   done <<<"$FAMS"
 fi
+
+echo "== 6. every other _ah_usage fail-closed branch: exit non-zero, EMPTY stdout, the reason on stderr"
+# usage_mutant <label> <original> <mutant> <expected stderr substring> — <mutant> lives in a fresh
+# mk_copy (its dispatcher is $C); gated on non-empty + differs + bash -n before it is run.
+usage_mutant() {
+  if [ ! -s "$3" ] || cmp -s "$2" "$3" || ! bash -n "$3"; then
+    no "usage mutant ($1): not built (empty, no difference, or bash -n failed)"; return
+  fi
+  ( cd "$T/cwd" && bash "$C" --help >"$T/um" 2>"$T/ume" ); local rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -s "$T/um" ] && grep -qF "automate-helpers: --help: $4" "$T/ume"; then
+    ok "usage mutant ($1) ⇒ exit $rc, empty stdout, stderr names '$4'"
+  else no "usage mutant ($1) ⇒ rc=$rc stdout_bytes=$(wc -c <"$T/um" | tr -d ' ') stderr='$(head -1 "$T/ume")' (expected non-zero, empty stdout, '$4')"; fi
+}
+f1="$(head -1 <<<"$FAMS")"
+# (a) a `#:@` segment marker inside a family's markers
+C="$(mk_copy)"; M="$(dirname "$C")/automate-helpers.d/$f1.sh"
+{ cat "$FAM_DIR/$f1.sh"; echo '#:@ zz-bad'; } >"$M"
+usage_mutant "segment marker inside family $f1" "$FAM_DIR/$f1.sh" "$M" "segment marker inside family $f1: #:@ zz-bad"
+# (b) a `#:  ` usage line in the dispatcher outside any family and any open `#:@` group
+C="$(mk_copy)"
+sed '/^_AH_HELP_SEGMENTS=/a\
+#:  zz-orphan
+' "$D" >"$C"
+usage_mutant "usage line outside any segment" "$D" "$C" "usage line outside any segment: #:  zz-orphan"
+# (c) any other `#:` line shape
+C="$(mk_copy)"
+sed '/^_AH_HELP_SEGMENTS=/a\
+#:zz-malformed
+' "$D" >"$C"
+usage_mutant "malformed usage-block line" "$D" "$C" "malformed usage-block line: #:zz-malformed"
+# (d) a segment listed twice in _AH_HELP_SEGMENTS
+C="$(mk_copy)"
+sed "s/^_AH_HELP_SEGMENTS=\"$f1 /_AH_HELP_SEGMENTS=\"$f1 $f1 /" "$D" >"$C"
+usage_mutant "segment listed twice" "$D" "$C" "segment listed twice: $f1"
+# (e) a segment with usage lines dropped from _AH_HELP_SEGMENTS
+C="$(mk_copy)"
+sed "s/^_AH_HELP_SEGMENTS=\"$f1 /_AH_HELP_SEGMENTS=\"/" "$D" >"$C"
+usage_mutant "usage lines in an unlisted segment" "$D" "$C" "usage lines in an unlisted segment: $f1"
 
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
