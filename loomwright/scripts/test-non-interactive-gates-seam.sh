@@ -65,7 +65,11 @@ PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"
 
 PO_AGENT="$PLUGIN_ROOT/agents/product-owner.md"
 PO_CMD="$PLUGIN_ROOT/commands/product-owner.md"
-AUTO_SKILL="$PLUGIN_ROOT/skills/automate-loop/SKILL.md"
+# The automate-loop skill is a split index (parallel-automate/22): read its documented-order assembly
+# (index segments + split files); a failed assembly leaves no file, so the surface check below fails.
+AUTO_D="$(mktemp -d)"; trap 'rm -rf "$AUTO_D" 2>/dev/null' EXIT
+AUTO_SKILL="$AUTO_D/SKILL.md"
+bash "$HERE/fixtures/automate-loop-split/assemble.sh" "$PLUGIN_ROOT/skills/automate-loop/SKILL.md" "$AUTO_SKILL"
 AUTO_CMD="$PLUGIN_ROOT/commands/automate.md"
 
 pass=0; fail=0
@@ -394,7 +398,7 @@ esac
 
 # ---- (m) MUTATION CONTROL: (a) must go RED when the PO can't-ask branch is deleted ---------------
 MUT_DIR="$(mktemp -d)"
-trap 'rm -rf "$MUT_DIR" 2>/dev/null' EXIT
+trap 'rm -rf "$MUT_DIR" "$AUTO_D" 2>/dev/null' EXIT
 MUT="$MUT_DIR/product-owner.md"
 grep -vF "**Can't-ask branch" "$PO_AGENT" > "$MUT"
 if [ -s "$MUT" ] && ! cmp -s "$PO_AGENT" "$MUT"; then

@@ -1,3 +1,7 @@
+# --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
+# by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/escalation.golden.
+#:  escalation-cause <pr_url> --sha <sha>              # automate-followups/31: fail-SAFE READ-ONLY classifier (always exit 0) of why a drain ESCALATED — one `escalation_cause: <check_pending|check_red_unrelated|check_red|other> check=<name|null> run_id=<id|null> attempt=<n|null> sha=<sha>` line from a `wait-for-checks.sh --bound 0 --names` snapshot; red is examined before pending; check_red_unrelated only when every failed step of every red check ran nothing but plain `bash <path>/test-*.sh` commands whose test files and tested `<stem>.sh` are all outside the PR's changed files (full rule: the automate-helpers.d/escalation.sh header); every unreadable case ⇒ check_red (fail CLOSED); never reruns, merges, pushes or approves
+
 # automate-helpers.d/escalation.sh — sourced by automate-helpers.sh (escalation-cause).
 # Family file (parallel-automate/11 layout): the dispatcher sources it by name and
 # owns $GH / $JQ (the LOOMWRIGHT_GH_BIN / LOOMWRIGHT_JQ_BIN seams).

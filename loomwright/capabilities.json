@@ -337,6 +337,7 @@
     {
       "blocking": false,
       "event": "Notification",
+      "host_mode": "redirects",
       "matcher": "permission_prompt|idle_prompt|elicitation_dialog|elicitation_complete|elicitation_response",
       "script": "scripts/notify-desktop.sh",
       "scripts": [
@@ -358,6 +359,7 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "host_mode": "redirects",
       "matcher": "AskUserQuestion",
       "script": "scripts/emit-lifecycle.sh",
       "scripts": [
@@ -375,6 +377,7 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "host_mode": "redirects",
       "matcher": "Bash",
       "script": "scripts/hook-dispatch-on-pr-create.sh",
       "scripts": [
@@ -389,6 +392,7 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "host_mode": "redirects",
       "matcher": "Bash",
       "script": "scripts/reproject-state-on-terminal.sh",
       "scripts": [
@@ -403,6 +407,7 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "host_mode": "redirects",
       "matcher": "Bash",
       "script": "scripts/worktree-audit.sh",
       "scripts": [
@@ -417,6 +422,7 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "host_mode": "redirects",
       "matcher": "Bash",
       "script": "scripts/emit-lifecycle.sh",
       "scripts": [
@@ -434,6 +440,7 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "host_mode": "redirects",
       "matcher": "Task",
       "script": "scripts/emit-agent-identity.sh",
       "scripts": [
@@ -448,6 +455,7 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "host_mode": "redirects",
       "matcher": "Task",
       "script": "scripts/emit-lifecycle.sh",
       "scripts": [
@@ -465,6 +473,7 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "host_mode": "redirects",
       "matcher": "Task",
       "script": "scripts/emit-lifecycle.sh",
       "scripts": [
@@ -482,6 +491,7 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "host_mode": "redirects",
       "matcher": "Write|Edit",
       "script": "scripts/seed-run-owner.sh",
       "scripts": [
@@ -496,6 +506,7 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "host_mode": "redirects",
       "matcher": "Write|Edit",
       "script": "scripts/emit-lifecycle.sh",
       "scripts": [
@@ -513,6 +524,7 @@
     {
       "blocking": false,
       "event": "PreToolUse",
+      "host_mode": "redirects",
       "matcher": "Agent|Task",
       "script": "scripts/guard-arm.sh",
       "scripts": [
@@ -527,6 +539,7 @@
     {
       "blocking": false,
       "event": "PreToolUse",
+      "host_mode": "redirects",
       "matcher": "AskUserQuestion",
       "script": "scripts/notify-desktop.sh",
       "scripts": [
@@ -548,6 +561,7 @@
     {
       "blocking": false,
       "event": "PreToolUse",
+      "host_mode": "unaffected",
       "matcher": "AskUserQuestion",
       "script": "scripts/send-webhook.sh",
       "scripts": [
@@ -560,6 +574,7 @@
     {
       "blocking": true,
       "event": "PreToolUse",
+      "host_mode": "redirects",
       "matcher": "Bash",
       "script": "scripts/guard-test-integrity.sh",
       "scripts": [
@@ -572,6 +587,7 @@
     {
       "blocking": true,
       "event": "PreToolUse",
+      "host_mode": "redirects",
       "matcher": "Bash",
       "script": "scripts/guard-finalize-publish.sh",
       "scripts": [
@@ -584,6 +600,7 @@
     {
       "blocking": true,
       "event": "PreToolUse",
+      "host_mode": "redirects",
       "matcher": "Write|Edit",
       "script": "scripts/guard-test-integrity.sh",
       "scripts": [
@@ -596,6 +613,7 @@
     {
       "blocking": false,
       "event": "SessionEnd",
+      "host_mode": "redirects",
       "matcher": "logout|prompt_input_exit|other",
       "script": "scripts/close-stranded-run.sh",
       "scripts": [
@@ -612,6 +630,7 @@
     {
       "blocking": false,
       "event": "SessionEnd",
+      "host_mode": "redirects",
       "matcher": "logout|prompt_input_exit|other",
       "script": "scripts/guard-arm.sh",
       "scripts": [
@@ -626,6 +645,7 @@
     {
       "blocking": false,
       "event": "SessionStart",
+      "host_mode": "redirects",
       "matcher": null,
       "script": "scripts/session-resume.sh",
       "scripts": [
@@ -651,6 +671,7 @@
     {
       "blocking": false,
       "event": "SessionStart",
+      "host_mode": "skips",
       "matcher": null,
       "script": "scripts/set-otel-resource-attrs.sh",
       "scripts": [
@@ -665,6 +686,7 @@
     {
       "blocking": false,
       "event": "Stop",
+      "host_mode": "unaffected",
       "matcher": null,
       "script": "scripts/validate-code-review-result.py",
       "scripts": [
@@ -677,6 +699,7 @@
     {
       "blocking": false,
       "event": "StopFailure",
+      "host_mode": "redirects",
       "matcher": null,
       "script": "scripts/emit-lifecycle.sh",
       "scripts": [
@@ -695,6 +718,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": null,
       "script": "scripts/emit-lifecycle.sh",
       "scripts": [
@@ -712,6 +736,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "unaffected",
       "matcher": "loomwright:code-reviewer",
       "script": "scripts/validate-code-review-result.py",
       "scripts": [
@@ -724,6 +749,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:code-reviewer",
       "script": "scripts/send-telemetry.sh",
       "scripts": [
@@ -744,6 +770,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:context-keeper",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
@@ -759,6 +786,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "unaffected",
       "matcher": "loomwright:execute-manager",
       "script": "scripts/validate-execute-result.py",
       "scripts": [
@@ -771,6 +799,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:execute-manager",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
@@ -786,6 +815,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "unaffected",
       "matcher": "loomwright:launch-pad-runner",
       "script": "scripts/validate-launch-pad-result.py",
       "scripts": [
@@ -798,6 +828,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:launch-pad-runner",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
@@ -813,6 +844,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:orchestrator",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
@@ -828,6 +860,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "unaffected",
       "matcher": "loomwright:plan-reviewer",
       "script": "scripts/validate-plan-review-result.py",
       "scripts": [
@@ -840,6 +873,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:plan-reviewer",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
@@ -855,6 +889,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:product-owner",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
@@ -870,6 +905,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "unaffected",
       "matcher": "loomwright:qa-executor",
       "script": "scripts/validate-qa-result.py",
       "scripts": [
@@ -882,6 +918,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:qa-executor",
       "script": "scripts/send-telemetry.sh",
       "scripts": [
@@ -902,6 +939,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:qa-strategist",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
@@ -917,6 +955,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:red-team-reviewer",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
@@ -932,6 +971,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:review-pr-runner",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
@@ -947,6 +987,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:rubric-grader",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
@@ -962,6 +1003,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "unaffected",
       "matcher": "loomwright:supervisor-runner",
       "script": "scripts/validate-supervisor-result.py",
       "scripts": [
@@ -974,6 +1016,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:supervisor-runner",
       "script": "scripts/send-telemetry.sh",
       "scripts": [
@@ -996,6 +1039,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "unaffected",
       "matcher": "loomwright:supervisor-runner",
       "script": "scripts/send-webhook.sh",
       "scripts": [
@@ -1008,6 +1052,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "unaffected",
       "matcher": "loomwright:worker",
       "script": "scripts/validate-worker-result.py",
       "scripts": [
@@ -1020,6 +1065,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "host_mode": "redirects",
       "matcher": "loomwright:worker",
       "script": "scripts/emit-progress-event.sh",
       "scripts": [
@@ -1037,6 +1083,7 @@
     {
       "blocking": false,
       "event": "TaskCompleted",
+      "host_mode": "unaffected",
       "matcher": null,
       "script": null,
       "scripts": [],
@@ -1045,9 +1092,13 @@
       "writes": []
     }
   ],
-  "host_switch": null,
+  "host_switch": {
+    "effect": "Host mode is on only when env is exactly 1; then no hook writes the session's working tree: hook state goes to the state_dir_env directory when it is valid, otherwise gate state goes to a per-user temp root and every other hook write is skipped.",
+    "env": "LOOMWRIGHT_HOST_MODE",
+    "state_dir_env": "LOOMWRIGHT_HOST_STATE_DIR"
+  },
   "plugin_name": "loomwright",
-  "plugin_version": "15.128.1",
+  "plugin_version": "15.129.0",
   "result_schemas": [
     {
       "name": "AUTOMATE_RUN",

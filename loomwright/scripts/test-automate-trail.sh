@@ -135,7 +135,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 H="$HERE/automate-helpers.sh"
 T="$HERE/automate-trail.sh"
-SKILL="$HERE/../skills/automate-loop/SKILL.md"
 
 pass=0; fail=0
 # A shadow tally the summary cross-checks: a leg that reuses `pass`/`fail` as a loop
@@ -149,6 +148,12 @@ TOP="$(mktemp -d "${TMPDIR:-/tmp}/test-automate-trail.XXXXXX")"
 TOP="$(cd "$TOP" && pwd -P)"
 cleanup_all() { rm -rf "$TOP"; }
 trap cleanup_all EXIT
+# The automate-loop skill and /automate's command body are split indexes (parallel-automate/22): the SKILL
+# text legs read the skill's documented-order assembly (index segments + split files), and the absence
+# scans read the command body's assembly too, so text moved into a split file stays covered.
+ASM="$HERE/fixtures/automate-loop-split/assemble.sh"
+SKILL="$TOP/automate-loop-skill.md"; bash "$ASM" "$HERE/../skills/automate-loop/SKILL.md" "$SKILL" || no "cannot assemble skills/automate-loop/SKILL.md (index + split files)"
+CMD_ALL="$TOP/automate-command-all.md"; bash "$ASM" "$HERE/../commands/automate.md" "$CMD_ALL" || no "cannot assemble commands/automate.md (index + split files)"
 
 # ---- stub gh ---------------------------------------------------------------
 STUBBIN="$TOP/bin"; mkdir -p "$STUBBIN"
@@ -660,7 +665,7 @@ no_trail_on '^   \*\*PICK-time run-lock acquire' "live_lane park (PICK-time lane
 no_trail_on '^- \*\*Safe mode \(default\):' "§9 awaiting_merge park"
 no_trail_on '^\*\*`ESCALATED` never merges' "§9 escalated park"
 grep -qE '^On the \*\*`## Status: done`\*\* exit ONLY.*the `limit_reached` exit is a park and releases the lock without a trail' "$SKILL" && ok "Termination limit_reached: no trail-pr at this park" || no "Termination limit_reached still trails"
-hits="$(grep -nE 'trail-pr --reason (awaiting_merge|escalated|rate_limit|drain_died|token_ceiling|limit_reached)' "$SKILL" "$HERE/../commands/automate.md" "$T" "$H" "$HERE/automate-merge-watch.sh" || true)"
+hits="$(grep -nE 'trail-pr --reason (awaiting_merge|escalated|rate_limit|drain_died|token_ceiling|limit_reached)' "$SKILL" "$CMD_ALL" "$T" "$H" "$HERE/automate-merge-watch.sh" || true)"
 [ -z "$hits" ] && ok "no trail-pr --reason <park_reason> anywhere (SKILL, command, scripts)" || no "park-reason trail calls: $hits"
 sect="$(awk '/^### Trail PR after merge and at run end/{s=1;next} s&&/^##/{exit} s' "$SKILL")"
 when="$(grep -m1 -F -- '- **When — this is the ONE authoritative trigger list' <<<"$sect")"
@@ -1959,7 +1964,7 @@ grep -qF 'automate-merge-watch.sh' "$SKILL" && ok "SKILL names automate-merge-wa
 step1="$(grep -m1 -E '^1\. \*\*RECONCILE' "$SKILL")"
 a="${step1%%closeout*}"; b="${step1%%PICK*}"
 if [ -n "$step1" ] && [ "$a" != "$step1" ] && grep -qF -- '--session-id' <<<"$step1" && [ "${#a}" -lt "${#b}" ]; then ok "AC14: §6 step 1 runs closeout --session-id before PICK"; else no "AC14: §6 step 1 closeout wiring"; fi
-hits="$(grep -nE 're-checks the PR each tick|resumes once|resume[sd]? on merge' "$SKILL" "$HERE/../commands/automate.md" "$HERE/../docs/RESULT_SCHEMAS.md" "$HERE"/../docs/result-schemas/*.md || true)"
+hits="$(grep -nE 're-checks the PR each tick|resumes once|resume[sd]? on merge' "$SKILL" "$CMD_ALL" "$HERE/../docs/RESULT_SCHEMAS.md" "$HERE"/../docs/result-schemas/*.md "$HERE"/../docs/result-schemas/automate-run/*.md || true)"
 [ -z "$hits" ] && ok "AC14: decision-9 grep has no per-tick/auto-resume claim" || no "decision-9 hits: $hits"
 grep -qF '/loop` re-invokes `/automate` each tick' "$SKILL" && ok "§12's accurate /loop tick sentence kept" || no "§12 /loop sentence changed"
 grep -qF 'closeout' "$HERE/../commands/automate.md" && grep -qF 'trail-pr' "$HERE/../commands/automate.md" && ok "commands/automate.md mirrors the surface" || no "commands/automate.md surface missing"

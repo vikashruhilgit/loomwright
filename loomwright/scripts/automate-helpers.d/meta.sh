@@ -1,3 +1,8 @@
+# --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
+# by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/meta.golden.
+#:  meta-entry       [--root <checkout>]                # §"Branch mode": the FIRST action of every /automate entry (a bare/empty/option-shaped --root value ⇒ `failed`) — reads `setup-memory.sh mode` itself (no caller input can assert the mode) and, when on, runs `meta-sync.sh pull`; ONE line `meta-entry: off|pulled <branch>|failed — <reason>`; writes nothing under .supervisor/automate/; always exits 0
+#:  meta-push-failed <runfile>                          # §"Branch mode": read-only — prints the first line of this run's gitignored `<run_id>.meta-push-failed` marker (a failed mode-on trail push), or nothing; always exits 0
+
 # --------------------------------------------------------------------------- #
 # §"Branch mode" — meta-entry (pull BEFORE the first read) + meta-push-failed
 # --------------------------------------------------------------------------- #

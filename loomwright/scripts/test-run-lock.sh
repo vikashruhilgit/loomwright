@@ -288,7 +288,12 @@ check_acquire_has_session_id() {
 check_acquire_has_session_id "Supervisor Phase 0 (agents/supervisor.md)" "$PLUGIN_ROOT/agents/supervisor.md"
 check_acquire_has_session_id "supervisor-config SKILL step 0" "$PLUGIN_ROOT/skills/supervisor-config/SKILL.md"
 check_acquire_has_session_id "autonomous-loop SKILL INIT" "$PLUGIN_ROOT/skills/autonomous-loop/SKILL.md"
-check_acquire_has_session_id "automate-loop SKILL PICK (reference shape)" "$PLUGIN_ROOT/skills/automate-loop/SKILL.md"
+# The automate-loop skill is a split index (parallel-automate/22): check its documented-order assembly
+# (index segments + split files) — a failed assembly leaves no file, which the helper reports as a FAIL.
+AL_D="$(mktemp -d)"
+bash "$HERE/fixtures/automate-loop-split/assemble.sh" "$PLUGIN_ROOT/skills/automate-loop/SKILL.md" "$AL_D/SKILL.md"
+check_acquire_has_session_id "automate-loop SKILL PICK (reference shape)" "$AL_D/SKILL.md"
+rm -rf "$AL_D"
 
 echo "== 17. Bash-tool reproduction: ephemeral acquirer shell, live claude, different session -> REFUSED =="
 # fake_claude — a long-lived stand-in for the session's `claude` process.
