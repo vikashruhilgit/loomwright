@@ -180,7 +180,7 @@ has "W1k body: local CI result" "$BODY" "Local CI: pass"
 has "W1l body: release commit" "$BODY" "v1.1.0 (\`scripts/bump-version.sh\`), the last commit"
 has "W1m body: merging marks the lane PRs merged, then --resume runs fleet-closeout" "$BODY" "\`/automate --resume $A\` runs \`fleet-closeout\`"
 check "W1n body ends with the Claude Code line" "$(tail -n1 "$T/gh/create.1")" "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
-check "W1o ONE parent Progress line" "$(grep -cxF -- "- wave built: $WBR — PR https://github.com/o/r/pull/901 (lanes: L2 PR #12, L1 PR #11; ci pass; release v1.1.0)" "$RFA" | tr -d ' ')" 1
+check "W1o ONE parent Progress line, timestamped like every other" "$(grep -cE -- "^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z wave built: $WBR — PR https://github.com/o/r/pull/901 \(lanes: L2 PR #12, L1 PR #11; ci pass; release v1\.1\.0\)$" "$RFA" | tr -d ' ')" 1
 WT1="$(printf '%s\n' "$out" | sed -n 's/^wave-build: worktree — \([^ ]*\) on .*/\1/p')"
 check "W1p the temporary worktree is removed (and its tmp dir), the branch kept locally" \
   "$([ -e "$WT1" ] && echo kept || echo gone):$([ -e "$(dirname "$WT1")" ] && echo kept || echo gone):$(git -C "$P" worktree list | wc -l | tr -d ' '):$(git -C "$P" rev-parse "$WBR")" \

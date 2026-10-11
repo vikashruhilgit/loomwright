@@ -47,7 +47,7 @@
 #                force push, never a lane branch, never the base). Failure ⇒ STOPPED, nothing on origin.
 #  10. pr        `gh pr create --base <base> --head <wave-branch>` (title `Wave <k> (<run_id>): <ids>`).
 #  11. record    ONE parent `## Progress` line via `automate-helpers.sh progress-append`:
-#                `wave built: <wave-branch> — PR <url> (lanes: L1 PR #n, …; ci pass|skipped; release v<x>|skipped)`.
+#                `<ts> wave built: <wave-branch> — PR <url> (lanes: L1 PR #n, …; ci pass|skipped; release v<x>|skipped)`.
 #  12. cleanup   the temporary worktree is removed (the branch stays: it is pushed); last line
 #                `wave-build: opened — <url>`.
 # It NEVER merges any PR (the sole merge executor is automate-helpers.sh gate-eval, SKILL §11), NEVER
@@ -250,7 +250,7 @@ Merging this PR with a merge commit also marks each lane PR above merged on GitH
   [ -n "$url" ] || url="(url unreadable — see gh pr list --head $wb)"
   # 11. record
   local line rel_s=skipped; [ -z "$ver" ] || rel_s="v$ver"
-  line="wave built: $wb — PR $url (lanes: $lanes_s; ci $ci; release $rel_s)"
+  line="$(date -u +%Y-%m-%dT%H:%M:%SZ) wave built: $wb — PR $url (lanes: $lanes_s; ci $ci; release $rel_s)"
   if bash "$HELPERS" progress-append "$WV_RF" "$line" >/dev/null 2>&1; then _wb "record — $parent ## Progress: $line"
   else _wb "record — WARNING: the ## Progress line could not be appended to $parent.md: $line"; fi
   # 12. cleanup — the branch stays (it is pushed); the temporary worktree goes
