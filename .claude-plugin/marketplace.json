@@ -8,7 +8,7 @@
       "name": "loomwright",
       "source": "./loomwright",
       "description": "Loomwright is a plan-first, multi-agent development system for Claude Code. Launch Pad turns a goal into a reviewed brief; Supervisor executes it autonomously across parallel git worktrees with self-heal; dedicated agents cover code review, red-teaming, QA, and standalone PR review-and-heal. 14 agent roles, 24 slash commands, 42 skills, 48 quality gate hooks. Full history in CHANGELOG.md.",
-      "version": "15.128.1",
+      "version": "15.129.0",
       "author": {
         "name": "vikash ruhil"
       },
@@ -101,6 +101,23 @@
         "mysql",
         "database",
         "read-only"
+      ]
+    },
+    {
+      "name": "loomwright-lanes",
+      "source": "./loomwright-lanes",
+      "description": "Optional live pane for Loomwright's /automate --parallel lanes: /lanes shows every lane (state, PR, branch, last actions, readiness, machine load) and answers a waiting lane's question with one button per option. Reads and writes only through Loomwright's lane-status / lane-feed / lane-answer; uninstalling it changes nothing about a run.",
+      "version": "0.1.0",
+      "author": {
+        "name": "vikash ruhil"
+      },
+      "license": "LicenseRef-PolyForm-Shield-1.0.0",
+      "keywords": [
+        "lanes",
+        "parallel",
+        "pane",
+        "dashboard",
+        "loomwright"
       ]
     }
   ]

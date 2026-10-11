@@ -47,7 +47,10 @@ no() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
 
 SHA="loomwright/skills/self-heal-advisory/SKILL.md"
 RH="loomwright/skills/review-heal/SKILL.md"
-AL="loomwright/skills/automate-loop/SKILL.md"
+# automate-loop is a split index (parallel-automate/22); pin 6's needles are all §10 text, so AL names the
+# split file that holds `## §10` (pins are root-relative files — check_pin/fresh_tree/mutate copy them).
+# test-automate-loop-split.sh fails when the index stops naming this file for §10.
+AL="loomwright/skills/automate-loop/modes-and-merge-gate.md"
 CM="CLAUDE.md"
 # The helper invocation in its RUNTIME form (the plugin install root variable, quoted).
 INVOKE='bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-gate-verdict.sh" --root'

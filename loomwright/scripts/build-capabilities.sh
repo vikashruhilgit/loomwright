@@ -395,9 +395,12 @@ jq -R -s --arg us "$US" 'split("\n") | map(select(length > 0) | split($us) | {na
 #             substitution; or a simple command whose first word is not on the
 #             non-writing allowlist below (so tee, cp, mv, rm, touch, sed -i, eval, `bash -c`, … are
 #             unknown), or an interpreter not followed by a plugin script path.
-#   HOST-MODE SPLIT — the one construct read as LESS than its full text. hooks[] publishes what a
-#             leaf does with host mode OFF (the host-mode behaviour is `host_switch`'s to declare,
-#             reserved). A leaf whose command spells its host-mode split inline as EXACTLY
+#   host_mode what the leaf does with host mode ON: redirects | skips | unaffected | unknown, read
+#             from docs/HOOKS.md §"Host mode" (HOST-MODE TABLE below) — never written by hand here.
+#   HOST-MODE SPLIT — the one construct read as LESS than its full text. writes[] publishes what a
+#             leaf does with host mode OFF (the host-mode behaviour is declared by the top-level
+#             host_switch and each leaf's host_mode). A leaf whose command spells its host-mode
+#             split inline as EXACTLY
 #             `if [ "${HOST_VAR:-}" = "1" ]; then <host>; else <off>; fi` is parsed as if `<off>`
 #             stood there alone: under the switch host-mode.sh keeps every hook write out of the
 #             working directory (pinned by test-host-mode.sh, not by this static parse). Any other
@@ -407,13 +410,77 @@ NONWRITING_CMDS='cat printf echo mkdir date true false : test ['
 INTERPRETERS='bash sh python3 python'
 ROOT_VAR='CLAUDE_PLUGIN_ROOT'   # the one place the generator names the install-root variable
 HOST_VAR='LOOMWRIGHT_HOST_MODE' # the one place the generator names the host-mode switch
+HOST_STATE_VAR='LOOMWRIGHT_HOST_STATE_DIR' # the one place it names the host-mode state-dir variable
+# host_switch.effect — one sentence; scripts/host-mode.sh's header is the behavioural authority.
+HOST_EFFECT="Host mode is on only when env is exactly 1; then no hook writes the session's working tree: hook state goes to the state_dir_env directory when it is valid, otherwise gate state goes to a per-user temp root and every other hook write is skipped."
+
+# HOST-MODE TABLE — hooks[].host_mode is parsed from docs/HOOKS.md §"Host mode", the
+# `| Script / leaf | Class | Under host mode |` table (that doc owns the classification; editing a row
+# there requires a regeneration). Row key: a first cell starting `StopFailure inline leaf` is the
+# inline-leaf row; a first cell that is exactly `TaskCompleted` (backticked) is the prompt row; any other
+# row is keyed by the FIRST backticked token of its first cell — a script file name or a shell glob
+# matched against a script's basename. The class is the Class cell's first word.
+#   prompt leaf   -> the prompt row's class
+#   command leaf  -> every script's class (a basename matching no row, or rows that disagree, is
+#                    unknown), plus the inline-leaf row's class for a StopFailure leaf whose only
+#                    inline redirects are the failures.log append; combined redirects > skips > unaffected
+#   unknown WINS (like writes[]): a script with no row, a command leaf with no script and no inline-leaf
+#   match, any other inline redirect, an unmodelled construct (writes[]'s parser), or another leaf type.
+# FAIL-CLOSED: with >= 1 hooks.json leaf, a missing doc / section / table, a row with no key, a
+# duplicate key, or a class word that is not one of the three exits 1. Zero leaves read no table.
+HOOKS_DOC="$ROOT/docs/HOOKS.md"
+HOST_TABLE_HEADER='| Script / leaf | Class | Under host mode |'
+n_hook_leaves="$(jq '[.hooks[][] | .hooks[]] | length' "$HOOKS" 2>/dev/null)" \
+  || { echo "build-capabilities: hooks.json did not parse" >&2; exit 1; }
+: > "$tmpd/host-rows.tsv"
+if [ "$n_hook_leaves" -gt 0 ]; then
+  [ -f "$HOOKS_DOC" ] || { echo "build-capabilities: docs/HOOKS.md is missing — hooks[].host_mode is derived from its §\"Host mode\" table" >&2; exit 1; }
+  awk -v hdr="$HOST_TABLE_HEADER" -v us="$US" '
+    /^## / { if (tab) exit; sec = ($0 == "## Host mode"); next }
+    tab == 1 { if ($0 !~ /^\|[ \t:|-]+$/) { bad = 1; exit } tab = 2; next }
+    tab == 2 { if ($0 !~ /^\|/) exit
+               split($0, c, "|"); a = c[2]; b = c[3]
+               gsub(/^[ \t]+|[ \t]+$/, "", a); gsub(/^[ \t]+|[ \t]+$/, "", b)
+               print a us b; next }
+    sec && $0 == hdr { tab = 1 }
+    END { if (tab != 2 || bad) exit 3 }' "$HOOKS_DOC" > "$tmpd/host-cells.tsv" \
+    || { echo "build-capabilities: docs/HOOKS.md has no §\"Host mode\" table headed '$HOST_TABLE_HEADER' — hooks[].host_mode cannot be derived" >&2; exit 1; }
+  [ -s "$tmpd/host-cells.tsv" ] || { echo "build-capabilities: docs/HOOKS.md §\"Host mode\" table has no rows" >&2; exit 1; }
+  while IFS="$US" read -r cell cls; do
+    case "$cell" in
+      'StopFailure inline leaf'*) key='@inline' ;;
+      '`TaskCompleted`') key='@prompt' ;;
+      *) key="$(printf '%s' "$cell" | sed -n 's/^[^`]*`\([^`]*\)`.*$/\1/p')" ;;
+    esac
+    [ -n "$key" ] || { echo "build-capabilities: docs/HOOKS.md §\"Host mode\" row '$cell' has no backticked key" >&2; exit 1; }
+    word="${cls%%[ (]*}"
+    case "$word" in redirects|skips|unaffected) ;;
+      *) echo "build-capabilities: docs/HOOKS.md §\"Host mode\" row '$cell' has class '$cls' — the first word must be redirects, skips or unaffected" >&2; exit 1 ;;
+    esac
+    if cut -d "$US" -f1 "$tmpd/host-rows.tsv" | grep -qxF -- "$key"; then
+      echo "build-capabilities: docs/HOOKS.md §\"Host mode\" has two rows keyed '$key'" >&2; exit 1
+    fi
+    printf '%s%s%s\n' "$key" "$US" "$word" >> "$tmpd/host-rows.tsv"
+  done < "$tmpd/host-cells.tsv"
+fi
+# rows -> [{key, class, re}]; re is the key as an anchored glob (`*` any run, `?` one char, both
+# within a basename; every other non-alphanumeric character literal).
+jq -R -s --arg us "$US" 'split("\n") | map(select(length > 0) | split($us)
+  | {key: .[0], class: .[1],
+     re: ("^" + ([.[0] | explode[] | [.] | implode
+                  | if . == "*" then "[^/]*" elif . == "?" then "[^/]" elif test("^[A-Za-z0-9_-]$") then . else "\\" + . end]
+                 | join("")) + "$")})' "$tmpd/host-rows.tsv" > "$tmpd/host-rows.json" \
+  || { echo "build-capabilities: docs/HOOKS.md §\"Host mode\" table did not parse" >&2; exit 1; }
 
 # Sorted by (event, matcher with null as "", group position, leaf position); `source` records the
 # position so an entry can be traced back to hooks.json.
 # ---------------------------------------------------------------------------------------------------
-jq -S --slurpfile audit "$tmpd/audit.json" \
+jq -S --slurpfile audit "$tmpd/audit.json" --slurpfile hostrows "$tmpd/host-rows.json" \
   --arg nonwriting "$NONWRITING_CMDS" --arg interp "$INTERPRETERS" --arg rv "$ROOT_VAR" --arg hv "$HOST_VAR" '
   ($audit[0]) as $a
+  | ($hostrows[0]) as $rows
+  | ([$rows[] | select(.key == "@prompt") | .class][0] // "unknown") as $prompt_cls
+  | ([$rows[] | select(.key == "@inline") | .class][0] // "unknown") as $inline_cls
   | ("\\$\\{?" + $rv + "\\}?\"?/scripts/([A-Za-z0-9_.-]+)") as $script_re
   | ("if \\[ \"\\$\\{" + $hv + ":-\\}\" = \"1\" \\]; then (?<host>[^\n]*?); else (?<off>[^\n]*?); fi(?=$|[ \\t;|&)])") as $host_split_re
   | ($nonwriting | split(" ")) as $okcmds | ($interp | split(" ")) as $interps
@@ -437,6 +504,10 @@ jq -S --slurpfile audit "$tmpd/audit.json" \
       | if ($okcmds | index([$c])) then true
         elif ($interps | index([$c])) then (($w[1] // "") | test($script_re))
         else false end;
+    # script_cls: a basename -> the class of the row(s) it matches; none, or rows that disagree => unknown.
+    def script_cls($b): [$rows[] | select(.key | startswith("@") | not) | .re as $re | .class as $c
+                         | select($b | test($re)) | $c] | unique
+                        | if length == 1 then .[0] else "unknown" end;
   [ .hooks | to_entries[] | .key as $ev | .value | to_entries[] | .key as $g | .value as $grp
       | $grp.hooks | to_entries[] | .key as $l | .value as $h
       | ($h.command // "" | sub($host_split_re; "\(.off)")) as $cmd
@@ -456,7 +527,22 @@ jq -S --slurpfile audit "$tmpd/audit.json" \
                 or ([$cmd | simple_cmds[] | understood] | all | not))
          then ["unknown"] else [] end) as $uw
       | (($iw + $sw + $uw) | unique) as $all
+      # host_mode — computed from the SAME post-split $s, so the StopFailure leaf host branch (which
+      # sources host-mode.sh) is not read; its off-branch failures.log append is the inline-leaf row.
+      | ($ev == "StopFailure" and ($inline | length) > 0
+         and ($inline | all(endswith("/failures.log") or . == "failures.log"))) as $il
+      | (if $h.type == "prompt" then [$prompt_cls]
+         elif $h.type == "command" then
+           ($s | map(script_cls(.))) as $sc
+           | (if ($sc | length) == 0 and ($il | not) then ["unknown"] else $sc end)
+             + (if $il then [$inline_cls] elif ($inline | length) > 0 then ["unknown"] else [] end)
+             + $uw
+         else ["unknown"] end) as $hc
       | {event: $ev,
+         host_mode: (if ($hc | index("unknown")) then "unknown"
+                     elif ($hc | index("redirects")) then "redirects"
+                     elif ($hc | index("skips")) then "skips"
+                     else "unaffected" end),
          matcher: ($grp.matcher // null),
          type: $h.type,
          source: ("hooks." + $ev + "[" + ($g | tostring) + "].hooks[" + ($l | tostring) + "]"),
@@ -472,14 +558,15 @@ jq -n -S \
   --argjson v "$CONTRACT_SCHEMA_VERSION" --arg pn "$PLUGIN_NAME" --arg pv "$PLUGIN_VERSION" \
   --slurpfile agents "$tmpd/agents.json" --slurpfile commands "$tmpd/commands.json" \
   --slurpfile skills "$tmpd/skills.json" --slurpfile schemas "$tmpd/schemas.json" \
-  --slurpfile hooks "$tmpd/hooks.json" '
+  --slurpfile hooks "$tmpd/hooks.json" \
+  --arg hsenv "$HOST_VAR" --arg hssd "$HOST_STATE_VAR" --arg hseff "$HOST_EFFECT" '
   {contract_schema_version: $v,
    generated_by: "loomwright/scripts/build-capabilities.sh",
    plugin_name: $pn,
    plugin_version: $pv,
    agents: $agents[0], commands: $commands[0], skills: $skills[0],
    result_schemas: $schemas[0], hooks: $hooks[0],
-   host_switch: null}' > "$tmpd/capabilities.json" || { echo "build-capabilities: assembly failed" >&2; exit 1; }
+   host_switch: {env: $hsenv, state_dir_env: $hssd, effect: $hseff}}' > "$tmpd/capabilities.json" || { echo "build-capabilities: assembly failed" >&2; exit 1; }
 
 if [ "$CHECK" -eq 1 ]; then
   # Compare-only: the target is --out FILE when given, else <plugin-root>/capabilities.json.

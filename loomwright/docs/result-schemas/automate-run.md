@@ -5,6 +5,10 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 > ⚠️ **This is a markdown STATE-FILE contract, NOT a hook-validated emitted result block.** Unlike `SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, `WORKER_RESULT`, and `REVIEW_HEAL_RESULT` — each of which a `SubagentStop` hook in `hooks.json` enumerates and validates — **NOTHING validates `AUTOMATE_RUN`.** No hook enumerates it; there is no SubagentStop validator. It is the persisted state of an inline main-thread workflow (`/automate` is inline-only, no `-runner` agent), written and re-read directly by the engine on each `/loop` tick. The closest precedent in this file is `AUTONOMOUS_RUN` (another inline-workflow state artifact that is "Not subject to hook validation"); `AUTOMATE_RUN` differs in that it is the live, rewritten-in-place run file rather than a terminal summary.
 
 **Single-file principle.** There is **no manifest, no registry, no `progress.jsonl`, no dashboard file** — this ONE markdown file holds everything. "Find prior runs" = glob `.supervisor/automate/*.md` for run files — those carrying the `# Automate Run:` title line (`is_run_file` in `automate-helpers.sh`; rule owned by `skills/automate-loop/SKILL.md` §4) — not marked `## Status: done`. The only other on-disk artifacts are sidecars, never runs: a *transient* config-backup sidecar (`<run_id>.config-backup.json`) that exists only during a tick (see `skills/automate-loop/SKILL.md` §7), and the per-run result sidecars `<run_id>.supervisor-result.md` / `<run_id>.review-heal-result.md` written verbatim at §6 steps 2–3; they carry no `# Automate Run:` title, so RESUME never lists them.
+<!-- index-only:begin -->
+
+> **Split layout (parallel-automate/22, move-only).** A `###` section below that carries only a `See [<file>](<file>).` line was moved verbatim to that file under `automate-run/`; read it there. The run-file layout and the `## Current` fields stay in this file. `scripts/test-automate-loop-split.sh` keeps this index and the files in step.
+<!-- index-only:end -->
 
 ### Run-file layout (`.supervisor/automate/<run_id>.md`)
 
@@ -36,32 +40,19 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 - <ts> drain READY → awaiting_merge
 ```
 
+<!-- split:begin automate-run/sections-status-queue.md -->
 ### Section reference
 
-| Section | Required | Notes |
-|---|---|---|
-| `# Automate Run: <title>` | yes | The run title (H1). **Load-bearing:** RESUME keys on this line (`is_run_file`, matched line-anchored anywhere in the file) to tell a run file from the §6 result sidecars in the same directory — a run file without it is never offered for resume. Writers emit the exact form above; readers also accept the tolerated title forms (a leading BOM, CommonMark-legal indentation, whitespace and letter case — never an H2 or an indented code block), owned by `skills/automate-loop/SKILL.md` §4 step 1 and implemented once as `RUN_TITLE_ERE` in `automate-helpers.sh`. |
-| `## Status` | yes | The run-level status — the `/loop` stop signal. Enum below. |
-| `## Source` | yes | The single resolved source for this run — the user's prompt text, `folder <dir>`, or `backlog <_BACKLOG.md>`. Exactly one source is resolved per run (`skills/automate-loop/SKILL.md` §2). |
-| `## Run Config` | yes | `mode` (`safe` \| `auto-merge`), `parallel` (OPTIONAL — `N`, present only on a `--parallel N>1` parent run, absent on every sequential run and inside every lane; `skills/automate-loop/SKILL.md` §14), `limit` (PROCESSED-item cap, **default 5** — caps completed items this run, never Queue size), `trust_unprotected` (allows auto-merge onto a branch without enforceable protection — **condition 4 only**; nothing overrides condition 6, the `classify-risk.sh` high-risk park), `auto_review_original` (the original `.auto_review` value captured before the suppress window — `true`/`false`/`absent`), `config_backup` (path of the transient byte-for-byte config-backup sidecar), `max_tokens` (optional, red-team-hardening/06 — the `--max-tokens N` ceiling, present ONLY when passed; unlike `--cheap`/`--notify` this one IS persisted so a bare `--resume` still enforces it). The single-drain config-toggle contract is the skill's domain (`skills/automate-loop/SKILL.md` §7); the ceiling contract is §6 step 1 / §11. |
-| `## Queue` | yes | The **FULL** resolved item list, in **processing order** (top-down). Checklist convention below. |
-| `## Current` | yes | The in-flight item, its item-level status, `pause_reason`, and the owned-drain observability fields. Enums below. |
-| `## Progress` | yes | **APPEND-ONLY** event log — one timestamped line per event; never rewritten. |
+See [automate-run/sections-status-queue.md](automate-run/sections-status-queue.md).
 
 ### `## Status` enum (run-level)
 
-| Value | Meaning |
-|---|---|
-| `running` | The loop is actively processing (or this is the freshly-created run). |
-| `paused` | Stopped with **work remaining** — always paired with a `pause_reason` in `## Current` (`awaiting_merge` \| `ready_for_release` \| `awaiting_go` \| `escalated` \| `limit_reached` \| `resume_ambiguous` \| `rate_limit` \| `drain_died` \| `token_ceiling` \| `run_lock_held` \| `meta_unreachable` \| `trail_pr_open` \| `closeout_leftover` \| `live_lane`). |
-| `done` | Set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), i.e. `remaining: 0`. (`remaining` is **COMPUTED/REPORTED** — the count of `- [ ]` Queue items, derived by `automate-helpers.sh remaining` — **not a persisted run-file field**; there is no `remaining:` line stored in the template.) |
+See [automate-run/sections-status-queue.md](automate-run/sections-status-queue.md).
 
 ### `## Queue` checklist convention
 
-- `- [ ] <path>` — **queued** (unprocessed). `remaining` counts only `- [ ]` items.
-- `- [x] <path>` — **done** (merged).
-- `- [x] <path>  # skipped: <reason>` / `- [x] <path>  # abandoned: <reason>` — **excluded**: checked-off so "next unchecked" never re-picks it; the reason is also logged in `## Progress`. Because `remaining` counts only `- [ ]` items, a skipped/abandoned item does **not** block `## Status: done`. (This is the documented way to unblock an `escalated`-parked run without merging — see `skills/automate-loop/SKILL.md` §5/§9.)
-- **Order = processing order** (top-down).
+See [automate-run/sections-status-queue.md](automate-run/sections-status-queue.md).
+<!-- split:end automate-run/sections-status-queue.md -->
 
 ### `## Current` fields
 
@@ -78,61 +69,31 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 | `pending_decisions` | `<n>` (integer ≥ 0) | automate-followups/12 — OPTIONAL, present only when this item's GATE produced dismissed-finding drafts in `.supervisor/requirements/proposed/` (`automate-helpers.sh dismissed-drafts`). The count of this run's drafts still `undecided` after the gate's decision step (always the full count under `--non-interactive-fallback` and at a successful `--auto-merge` MERGE, where nothing is asked); the next interactive PICK asks them (Follow-up / Drop) before RECONCILE's `closeout`. Never a new `pause_reason` value. Authority: `skills/automate-loop/SKILL.md` §6 "Dismissed-findings decision step (before the park)". |
 | `fix_now_reentered` | `true` \| `false` | automate-followups/12 — OPTIONAL, same line as `pending_decisions`. `true` once the owner answered `Fix now on this PR` and the item ran its ONE fix-now DRAIN → GATE re-pass; fix-now is never offered again for this item, and the loop passes `--after-fix-now` to `dismissed-drafts` only on that post-re-pass run. |
 
+<!-- split:begin automate-run/item-lifecycle.md -->
 ### Item lifecycle
 
-```
-queued (- [ ]) → running → rate_limit (parks, no PR yet) | pr-open → awaiting_merge → merged (- [x]) | ready_for_release (lane park) | escalated (parks) | drain_died (parks) | failed | skipped
-```
+See [automate-run/item-lifecycle.md](automate-run/item-lifecycle.md).
+<!-- split:end automate-run/item-lifecycle.md -->
 
-- `escalated` **parks** the run (`## Status: paused`, `pause_reason: escalated`) and never opens a second PR (single-open-PR invariant — `skills/automate-loop/SKILL.md` §8/§9).
-- `rate_limit` **parks** the run (`## Status: paused`, `pause_reason: rate_limit`) BEFORE a PR ever exists — RUN itself failed on a rate-limit `StopFailure` (`skills/automate-loop/SKILL.md` §6 "Rate-limit park"). It resumes through the SAME RESUME reconcile as `awaiting_merge`/`escalated` (§4) — no second park vocabulary, no second reconcile path.
-- `drain_died` **parks** the run (`## Status: paused`, `pause_reason: drain_died`, `owned_drain_result: died`) when RECONCILE (§4) finds a `.died` marker for this item's PR from a DETACHED `dispatch-pr-review.sh` drain that exited without ever producing a `REVIEW_HEAL_RESULT` — **never `awaiting_merge`**, since a died drain never reached a real READY/ESCALATED verdict. Resolves through the same RESUME reconcile path as the other parks.
-- `ready_for_release` **parks a lane** (`## Status: paused`, `pause_reason: ready_for_release`) — written instead of `awaiting_merge` by a READY gate inside a `--parallel N>1` lane only: no merge watcher is armed, the notify says "do not merge yet — wave open", no `trail-pr` runs (it is a park). At wave end the coordinator converts it to `awaiting_merge` (`lane-convert-ready`); after the owner merges, the lane run file is closed out and finalized `## Status: done` and `fleet-closeout` checks the item off the parent Queue (`skills/automate-loop/SKILL.md` §14 "Terminal park" and "Wave close").
-- `skipped`/`abandoned` items are written `- [x] <path>  # skipped|abandoned: <reason>` (above) so they are never re-picked and do not block `done`.
-
+<!-- split:begin automate-run/parallel-lanes.md -->
 ### `--parallel` `## Progress` lines (parallel-automate/21)
 
-Appended (never rewritten), like every `## Progress` line. Each is written only on a `--parallel N>1` run; a sequential run never writes one. Authority: `skills/automate-loop/SKILL.md` §2 "`--limit N`" and §14 "Wave close" / "Policy answers".
-
-| Line | Run file | Written by | Meaning |
-|---|---|---|---|
-| `skipped AUT-QUEUE: lane backlog written by lane-create from the owner's --parallel command` | lane | the lane's engine at Queue confirm | The Queue confirm (gate `AUT-QUEUE`) was not asked: the lane's source is the one-line backlog `lane-create` wrote. |
-| `policy answer: <code> → <label> (policy_sha <first 12>)` | lane | the lane's own `relay-hook` | A catalogued `allowed` gate was answered from the lane's carried policy (exact lookup) instead of being relayed. Fail-SAFE: a failed append never blocks the answer. |
-| `wave policy: <code>=<label>, …` | parent | `lane-policy.sh wave-set` | The owner's per-wave policy answers, recorded when `.supervisor/automate/<run_id>.wave-policy.json` was written. |
-| `fleet closeout: <lane> <item> done (PR <url>)` | parent | `fleet-closeout` | The lane's run file reads `## Status: done`; its item was checked off the parent `## Queue`. |
-| `fleet closeout leaks: <first line>` | parent | `fleet-closeout` | The first line of `lane-status <parent_runfile> --leaks` after the last lane was removed (`leaks: none` on a clean wave). |
-| `wave_paused: main_red after <sha>` | parent | `fleet-closeout` | `origin/<base>` HEAD's `ci` check concluded `failure` at wave close. Informational: no revert, no block, never a `pause_reason`. |
+See [automate-run/parallel-lanes.md](automate-run/parallel-lanes.md).
 
 ### Lane inbox answer file (`<lane>/.supervisor/inbox/answers/<tool_use_id>.json`)
 
-One JSON file per answered lane question, beside its question file `inbox/questions/<tool_use_id>.json` (`{id, asked_at, questions}`). Two writers, one shape:
+See [automate-run/parallel-lanes.md](automate-run/parallel-lanes.md).
+<!-- split:end automate-run/parallel-lanes.md -->
 
-| Field | Owner answer (`lane-answer`) | Policy answer (the lane's `relay-hook`) |
-|---|---|---|
-| `answers` | `{"0": "<label>", …}` — the question's own option labels | same |
-| `note` | the owner's optional note, or `null` | none — a policy carries no note |
-| `source` | `"human"` | `"policy"` |
-| `via` | the client the owner answered through | `"policy"` |
-| `at` | UTC timestamp | UTC timestamp |
-| `policy_sha` | — | the carried policy's `policy_sha` (sha256 of its canonical answers) |
-| `gate` | — | the catalog code (`header`) the policy answered |
-
-A question file with no answer file is a pending HUMAN question (`lane-status <parent_runfile> --inbox`). Authority: `skills/automate-loop/SKILL.md` §14 "Policy answers"; codes and labels: `docs/LANE_GATES.md`.
-
+<!-- split:begin automate-run/crash-safety.md -->
 ### Crash-safety contract
 
-The run file is the **only** copy of resume state, so (per `skills/automate-loop/SKILL.md` §3):
-
-- **Atomic write (temp + rename):** every update is written to a temp file and `mv`-renamed into place — a crash mid-write never leaves a half-written file; the prior intact version survives.
-- **Validated before rename (fail CLOSED on the payload):** `automate-helpers.sh runfile-write` refuses (exit 1, temp removed, run file byte-unchanged, stderr tag `[runfile_write_refused]`) staged content that is empty, lacks the `# Automate Run:` title, a `## Status:` line or the `## Queue` heading, or — replacing an existing run file — does not keep its `## Progress` block as a prefix; `progress-append` / `queue-checkoff` refuse a target with no title instead of fabricating a `## Progress` stub on it. A shrinking line count is NOT a refusal reason (`## Current` legitimately loses lines) — the deliberate difference from `VERIFY_QUEUE`'s line-count guard below. Spec: `skills/automate-loop/SKILL.md` §3 "Validate before rename".
-- **`## Progress` is APPEND-ONLY** — never rewritten; existing lines are immutable, new lines are appended.
-- **Rewrites are confined** to `## Queue` checkboxes and the `## Current` block (`## Status` changes atomically and rarely; `## Source`/`## Run Config` change rarely).
-- **`## Current` moves only through `automate-helpers.sh current-set`** (item form or run-level form, enum-validated, exit 1 with the file byte-unchanged on a refusal); `progress-append` exits 3 with `current_not_set: <line>` on stderr (the line still appended) when a `picked` / `ran /autonomous` / `owned drain started` line meets an unset `## Current`, and RESUME's `current-rebuild` repairs one that was never set, or a `done` one left naming the previous item after the next `picked` line (a `picked` line over a `done` `## Current` is exempt from the exit 3, so this RESUME repair is its only backstop). Spec: `skills/automate-loop/SKILL.md` §3 "`## Current` moves only through `current-set`".
-- **Resume = belief vs truth:** the run file is the loop's *belief*; on every start the engine reconciles each in-flight item against ground truth (`gh pr view --json state,mergedAt` / `git branch --contains` / the requirement's `## Status: done` stamp) **before** trusting a checkbox (`skills/automate-loop/SKILL.md` §4).
+See [automate-run/crash-safety.md](automate-run/crash-safety.md).
 
 ### Optional terminal JSONL breadcrumb (secondary — never the source of truth)
 
-The engine MAY append **ONE** terminal line per run to the existing `.supervisor/logs/<run_id>.jsonl` (the shared session-log convention) for trend tooling. This is a **secondary breadcrumb only** — the run file (`.supervisor/automate/<run_id>.md`) remains **authoritative** for all resume/state decisions; the JSONL line is never read as the source of truth.
+See [automate-run/crash-safety.md](automate-run/crash-safety.md).
+<!-- split:end automate-run/crash-safety.md -->
 
 **Cross-references:**
 - `loomwright/skills/automate-loop/SKILL.md` — the **authority** for the run-file layout, the item lifecycle, resume/reconcile, the single-drain contract, and the two modes. This section documents §3/§4/§5/§6/§7 of that skill; do NOT change names here without updating the skill first.

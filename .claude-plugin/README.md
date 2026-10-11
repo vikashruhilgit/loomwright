@@ -428,10 +428,11 @@ bd close BD-XX                # Complete, next unblocks
 ```
 loomwright/                            # Marketplace wrapper repo
 ├── .claude-plugin/
-│   ├── marketplace.json                     # Marketplace manifest (root, lists 3 plugins)
+│   ├── marketplace.json                     # Marketplace manifest (root, lists 4 plugins)
 │   └── README.md                            # This file
 ├── stackpack/                               # Sibling plugin: 18 tech-stack reference skills
 ├── mysql-mcp/                               # Sibling plugin: read-only MySQL MCP server
+├── loomwright-lanes/                        # Sibling plugin: optional /lanes pane over --parallel lanes
 └── loomwright/                 # The nested plugin
     ├── .claude-plugin/
     │   └── plugin.json                      # Plugin manifest
