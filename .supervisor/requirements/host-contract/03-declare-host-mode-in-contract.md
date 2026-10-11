@@ -47,3 +47,9 @@ The contract declares host mode, generated from the plugin's sources like every 
 
 ## Non-goals
 Changing hook behaviour (02). Studio reading the contract (Studio's phase 2).
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-11T09:41:24Z
+- **Brief:** .supervisor/jobs/done/auto-2026-10-11-032135-declare-host-mode-in-contract.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/468
