@@ -1,7 +1,7 @@
 # move-only proof for the parallel-automate/22 split — read by scripts/test-automate-loop-split.sh (check E).
 # original    <index> <sha256> <bytes> <lines>  — the pre-split file at base da2fac5d4f54bea55fc91700ebe5729755f587ef
 # frontmatter <index> <key> <original> <split>  — the one allowed delta (SKILL.md's minor bump)
-# split-time  <path> <sha256>                    — every index (sha over its text with index-only blocks dropped) and split file (raw sha) as the split committed it
+# split-time  <path> <sha256>                    — every index and split file as the split committed it (sha over its text with index-only blocks dropped)
 original	loomwright/skills/automate-loop/SKILL.md	94429cf6223e32b62babfd103648321c42590fdec157f8e4020c3116afb58ea3	245704	724
 original	loomwright/commands/automate.md	4e77b9a852ac82e52bf85248ab8d99d5c9af6d1284e3fafcb7ca4340798bef1e	23437	114
 original	loomwright/docs/result-schemas/automate-run.md	1c354a67be4f059cb14cdb2d3b14c9f065b6129878b8a67243a2d5d898f06264	25509	143

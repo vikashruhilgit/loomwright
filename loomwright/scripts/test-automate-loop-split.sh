@@ -31,8 +31,9 @@
 #      da2fac5; no git history needed). The only allowed delta is SKILL.md's frontmatter `version:` /
 #      `lastUpdated:` lines (a minor bump, AC1), substituted back before hashing. This proves the SPLIT
 #      COMMIT: it runs while every index and split file still has its split-time sha256 (also in the
-#      fixture; an index is hashed with its index-only blocks dropped, so index-only prose — which
-#      assemble.sh drops — may change without retiring the proof); once a later item edits one, the
+#      fixture; an index AND a split file are hashed with their index-only blocks dropped, so
+#      index-only prose — which assemble.sh drops from both — may change without retiring the proof;
+#      e.g. invariants.md's own pointer to the post-split grep hit paths); once a later item edits one, the
 #      proof prints one SKIP line naming the files — the byte identity is a property of the move, not
 #      a freeze of the engine docs;
 #   F. STEP 0 (AC5) — commands/automate.md Step 0 names every skill split file, in documented order;
@@ -51,7 +52,9 @@
 #   M. MUTATION CONTROLS — each mutant gated on non-empty + differs (+ bash -n for a script mutant):
 #      an index entry's See line dropped (B), an unreferenced split file (C), a split file with one
 #      changed byte (E), an index-only edit keeping E running while an edit outside index-only blocks
-#      retires it (E gating), Step 0 missing one file (F), the index entry a citation uses removed — exactly
+#      retires it (E gating), the same three for a SPLIT file — an index-only block in invariants.md
+#      keeps E running with the assembly unchanged, an unclosed one fails assemble.sh CLOSED, an edit
+#      outside index-only blocks retires E — Step 0 missing one file (F), the index entry a citation uses removed — exactly
 #      one line fewer — and an anchors-table row removed (G), a reader re-pointed back to the raw index (H),
 #      assemble.sh with its `..` guard deleted — exactly two lines fewer — accepting the traversal (A2).
 # Read-only; scratch files under mktemp -d. Exit 0 = all pass, 1 = any failure.
@@ -101,7 +104,7 @@ headings() {
     }' "$1"
 }
 
-# drop_index_only <file> — the index without its index-only blocks.
+# drop_index_only <file> — the file (an index or a split file) without its index-only blocks.
 drop_index_only() { awk '$0 == "<!-- index-only:begin -->" {s = 1; next} $0 == "<!-- index-only:end -->" {s = 0; next} !s' "$1"; }
 
 # blocks <index> — one "<file>\t<begin line>\t<end line>" row per split block.
@@ -267,22 +270,17 @@ proof_matches() {
   got="$(sha256 < "$2") $(wc -c < "$2" | tr -d ' ') $(wc -l < "$2" | tr -d ' ')"
   [ -n "$want" ] && [ "$want" = "$got" ]
 }
-# split_hash <file> <rel> — the split-time hash: an index (SKILL / command / AUTOMATE_RUN) is hashed
-# with its index-only blocks dropped (assemble.sh drops them too, so index-only prose may change
-# without retiring the proof); a split file is hashed raw.
-split_hash() {
-  case "$2" in
-    "$SKILL_IDX"|"$CMD_IDX"|"$RUN_IDX") drop_index_only "$1" | sha256 ;;
-    *) sha256 < "$1" ;;
-  esac
-}
+# split_hash <file> — the split-time hash: every surface, index or split file, is hashed with its
+# index-only blocks dropped (assemble.sh drops them from both, so index-only prose may change
+# without retiring the proof). Marker well-formedness is assemble.sh's job (fail-CLOSED, check A/E).
+split_hash() { drop_index_only "$1" | sha256; }
 # edited_since_split <root> — " <rel>" per split-time surface under <root> whose split_hash differs.
 edited_since_split() {
   local p want out=""
   while IFS="$(printf '\t')" read -r p want; do
     [ -n "$p" ] || continue
     if [ ! -f "$1/$p" ]; then out="$out $p(gone)"; continue; fi
-    [ "$(split_hash "$1/$p" "$p")" = "$want" ] || out="$out $p"
+    [ "$(split_hash "$1/$p")" = "$want" ] || out="$out $p"
   done <<EOF
 $(awk -F '\t' '$1 == "split-time" {print $2 "\t" $3}' "$FIXTURE")
 EOF
@@ -574,7 +572,33 @@ else
     case "$(edited_since_split "$M9")" in *" $SKILL_IDX"*) ok "MUTATION CONTROL: an edit outside index-only blocks still retires the move-only proof (E)" ;;
       *) no "MUTATION CONTROL: an edit outside index-only blocks did NOT retire the move-only proof (E)" ;; esac
   else no "could not build the outside-index-only mutant — E gating control inconclusive"; fi
+  cp "$REPO/$SKILL_IDX" "$M9/$SKILL_IDX"
+  # The same gating for a SPLIT file (invariants.md): an added index-only block keeps E running and
+  # the assembly byte-identical; an edit outside index-only blocks retires E.
+  INV="$SKILL_DIR/invariants.md"
+  bash "$ASM" "$REPO/$SKILL_IDX" > "$TMP/m9-asm-base" 2>/dev/null
+  awk '{print} NR == 2 {print "<!-- index-only:begin -->"; print "M9 split-file index-only note."; print "<!-- index-only:end -->"}' \
+    "$REPO/$INV" > "$M9/$INV"
+  if [ -s "$M9/$INV" ] && [ -s "$TMP/m9-asm-base" ] && ! cmp -s "$M9/$INV" "$REPO/$INV"; then
+    if [ -z "$(edited_since_split "$M9")" ] && bash "$ASM" "$M9/$SKILL_IDX" > "$TMP/m9-asm-io" 2>/dev/null \
+       && cmp -s "$TMP/m9-asm-io" "$TMP/m9-asm-base"; then
+      ok "MUTATION CONTROL: an index-only block in a split file keeps the move-only proof RUNNING and the assembly identical (E)"
+    else no "MUTATION CONTROL: an index-only block in a split file retired the proof or changed the assembly (E)"; fi
+  else no "could not build the split-file index-only mutant — E gating control inconclusive"; fi
+  awk '{print} NR == 2 {print "M9 split-file text outside index-only."}' "$REPO/$INV" > "$M9/$INV"
+  if [ -s "$M9/$INV" ] && ! cmp -s "$M9/$INV" "$REPO/$INV"; then
+    case "$(edited_since_split "$M9")" in *" $INV"*) ok "MUTATION CONTROL: a split-file edit outside index-only blocks still retires the move-only proof (E)" ;;
+      *) no "MUTATION CONTROL: a split-file edit outside index-only blocks did NOT retire the move-only proof (E)" ;; esac
+  else no "could not build the split-file outside-index-only mutant — E gating control inconclusive"; fi
+  cp "$REPO/$INV" "$M9/$INV"
 fi
+# M10 — assemble.sh fails CLOSED on an index-only block left open in a SPLIT file (any baseline).
+M10="$TMP/m10"; mkdir -p "$M10"; cp "$REPO/$SKILL_DIR"/*.md "$M10/"
+printf '<!-- index-only:begin -->\nM10 unclosed.\n' >> "$M10/invariants.md"
+if [ -s "$M10/invariants.md" ] && ! cmp -s "$M10/invariants.md" "$REPO/$SKILL_DIR/invariants.md"; then
+  a2_rejects "$ASM" "$M10/SKILL.md" && ok "MUTATION CONTROL: an unclosed index-only block in a split file fails assemble.sh CLOSED (empty stdout, assemble: reason)" \
+    || no "MUTATION CONTROL: an unclosed index-only block in a split file was ACCEPTED by assemble.sh"
+else no "could not build the unclosed split-file index-only mutant — control inconclusive"; fi
 # M4 — F: Step 0 with one split file name dropped.
 M4="$TMP/m4-automate.md"; drop="$(sed -n '2p' "$TMP/step0-want")"
 awk -v d="\`$drop\`, " '/^### Step 0/ {s = 1} s && !done && index($0, d) {sub(d, ""); done = 1} {print}' "$REPO/$CMD_IDX" > "$M4"

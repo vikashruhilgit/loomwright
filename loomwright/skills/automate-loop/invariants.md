@@ -2,6 +2,9 @@
 
 - **`review-heal` / `/review-pr` / Supervisor Phase 4.5 still NEVER merge.** They terminate at `PASS` / `READY` / `ESCALATED` and leave the PR open. The **invariant — the ONLY place in the plugin that EXECUTES `gh pr merge --squash` is this `automate-loop` `--auto-merge` gate, implemented in `automate-helpers.sh gate-eval`** (§10) — holds regardless of how many docs *describe* it. As a check, a positive-form grep — `grep -rn "gh pr merge --squash" loomwright/ | grep -viE "no |never |not "` — must resolve to ONLY these sanctioned surfaces (the executor + the docs/tests that describe it; the negative-assertion mentions in `review-heal`/`review-pr`/`RESULT_SCHEMAS` are correctly excluded by the filter, and `commands/automate.md`'s two mentions are also excluded because both sit beside "NOT"/"NEVER"):
   - `skills/automate-loop/SKILL.md` — this contract (§10/§11).
+<!-- index-only:begin -->
+    > Post-split note (parallel-automate/22): the skill's grep hits now sit in `skills/automate-loop/per-item-loop.md` and `skills/automate-loop/modes-and-merge-gate.md`; `skills/automate-loop/SKILL.md` above means the skill as a whole — see the note after §11 in the SKILL.md index.
+<!-- index-only:end -->
   - `scripts/automate-helpers.sh` — the **actual executor** (`gate-eval`, the only code path that runs the command). Condition 6 (v15.72.0) and condition 7 (v15.111.0) live INSIDE this same executor — each adds a park condition, never a second merge path, so the surface list stays at these five however many conditions the gate has. `scripts/classify-risk.sh` is a read-only classifier and `scripts/rules-gate-verdict.sh` a delegating verdict helper; neither merges.
   - `scripts/test-automate-helpers.sh` — the self-test that exercises the gate.
   - `commands/agent-help.md` — describes the `--auto-merge` gate as the one place the squash-merge runs.

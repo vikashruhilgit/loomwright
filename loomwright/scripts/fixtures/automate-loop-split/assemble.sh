@@ -16,6 +16,12 @@
 #   <!-- index-only:begin -->  …  <!-- index-only:end -->
 #       Prose that exists only in the index (a note, a Step 0 read list). Assembling drops it.
 #
+# A SPLIT FILE may hold index-only blocks too (same exact marker lines): a pointer that must sit
+# beside moved text without being part of the move (e.g. invariants.md's note on the post-split
+# grep hit paths). Emitting a split file drops its index-only blocks, markers included, under the
+# same fail-CLOSED rules as the index — a nested begin, a stray end or a block left open at the
+# split file's EOF fails. (--files mode does not read split-file bytes, so it does not check them.)
+#
 # Every other line of the index is copied through unchanged. The DOCUMENTED ORDER is the order
 # of the split:begin markers in the index, so the assembled text is the index's own segments
 # and the split files, interleaved where the sections sat before the split.
@@ -30,8 +36,8 @@
 # index's own directory by construction.
 #
 # Fail-CLOSED: an unreadable index; a split:begin inside another block; a split:end that does
-# not close the open split:begin of the same file; an index-only marker out of place; a block
-# left open at EOF; a split file path that breaks the rule above (a `..` past the plugin root
+# not close the open split:begin of the same file; an index-only marker out of place (in the
+# index or in a split file); a block left open at EOF (of the index or of a split file); a split file path that breaks the rule above (a `..` past the plugin root
 # included); a split file that is missing, unreadable, empty or does not end with a newline — each prints one
 # `assemble: <reason>` line to stderr and exits 1 with NOTHING on stdout and no <out-file>
 # written, so a caller can never grep a half-assembled text and read it as clean.
@@ -82,10 +88,16 @@ awk -v dir="$dir" -v pdir="$pdir" -v root="$root" -v mode="$mode" '
     last = ""; cmd | getline last; close(cmd)
     gsub(/[ \t]/, "", last)
     if (last != "\\n") fail("split file missing, empty or without a final newline: " f)
-    n = 0
-    while ((r = (getline line < p)) > 0) { print line; n++ }
+    n = 0; io = 0
+    while ((r = (getline line < p)) > 0) {
+      n++
+      if (line == "<!-- index-only:begin -->") { if (io) { close(p); fail("index-only:begin inside an open index-only block in split file " f ":" n) } io = 1; continue }
+      if (line == "<!-- index-only:end -->") { if (!io) { close(p); fail("index-only:end with no open index-only block in split file " f ":" n) } io = 0; continue }
+      if (!io) print line
+    }
     close(p)
     if (r < 0 || n == 0) fail("split file unreadable or empty: " f)
+    if (io) fail("index-only block left open at EOF in split file " f)
   }
   {
     if ($0 ~ /^<!-- split:begin [^ ]+ -->$/) {
