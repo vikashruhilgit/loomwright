@@ -225,7 +225,8 @@ test('on a surface with no text input the note field is left out and an answer s
   stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(DOC) }))
   on('ui.toast', async () => ({ value: undefined }))
   await $.command.run(RUN)
-  // The mobile element table has no Input, so this is the real `Input === null` branch, not a stub.
+  // A real mobile mount, not a stub: resolve() still hands back an Input there (it returns every element on every
+  // surface), so only the module's surface guard keeps the note out; the kit drops an Input it cannot draw, hence the label check too.
   const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'mobile', ...PANE })
   expect(await ui.find({ key: 'toolu_q:note' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Note to the lane/ })).toBeUndefined()
