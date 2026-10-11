@@ -162,8 +162,8 @@ check "W1c off origin/main: two --no-ff merges in PLANNER order with the exact h
 "$MAIN0 $SHA12|Merge lane L2 ($IB) PR #12
 $(git --git-dir="$ORIGIN" rev-parse "$WBR~2") $SHA11|Merge lane L1 ($IA) PR #11
 $(git --git-dir="$ORIGIN" rev-parse "$WBR~1")|chore(release): v1.1.0 — fold wave 3 fragments (pa/22, pa/21)"
-check "W1d the release commit ends with the Co-Authored-By line" "$(git --git-dir="$ORIGIN" log -1 --format=%B "$WBR" | sed '/^$/d' | tail -n1)" \
-  "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+# A script makes this commit, not a model: no model co-author trailer (claude-review, PR #473).
+check "W1d the release commit carries no Co-Authored-By trailer" "$(git --git-dir="$ORIGIN" log -1 --format=%B "$WBR" | grep -c '^Co-Authored-By:' | tr -d ' ')" 0
 check "W1e the release commit carries the bump (plugin.json 1.1.0, fragment folded)" \
   "$(git --git-dir="$ORIGIN" show "$WBR:loomwright/.claude-plugin/plugin.json" | jq -r .version):$(git --git-dir="$ORIGIN" ls-tree --name-only "$WBR" changelog.d/ | wc -l | tr -d ' ')" "1.1.0:0"
 CIP="$(head -1 "$T/ci.calls" 2>/dev/null)"

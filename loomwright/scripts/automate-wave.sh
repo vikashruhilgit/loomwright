@@ -70,7 +70,6 @@ WAVE_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOUR
 # shellcheck source=automate-lanes.sh
 . "$(dirname "$WAVE_SELF")/automate-lanes.sh" || { echo "wave-build: refused — automate-lanes.sh unreadable"; exit 1; }
 
-WB_CO='Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
 WB_LOCKF=""; WB_WT=""
 
 _wb() { echo "wave-build: $*"; }
@@ -213,7 +212,7 @@ EOF
     ver="${ver#v}"
     [ -n "$ver" ] || _wb_stop "release step ran but the new version is unreadable — log $tmp/bump.log; nothing pushed; worktree kept at $wt"
     [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || _wb_stop "release step changed nothing — nothing pushed; worktree kept at $wt"
-    if ! out="$(git -C "$wt" add -A 2>&1 && git -C "$wt" commit -q -m "chore(release): v$ver — fold wave $k fragments ($ids)" -m "$WB_CO" 2>&1 </dev/null)"; then
+    if ! out="$(git -C "$wt" add -A 2>&1 && git -C "$wt" commit -q -m "chore(release): v$ver — fold wave $k fragments ($ids)" 2>&1 </dev/null)"; then
       _wb_stop "release commit failed: $(printf '%s\n' "$out" | sed '/^$/d' | head -1) — nothing pushed; worktree kept at $wt"
     fi
     rsha="$(git -C "$wt" rev-parse HEAD)"
