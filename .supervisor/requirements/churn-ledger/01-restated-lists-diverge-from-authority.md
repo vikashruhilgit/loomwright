@@ -63,3 +63,9 @@ none
 ## Touches
 .agent/rules/process.json
 changelog.d/churn-ledger-01-restated-lists-diverge-from-authority.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-10T21:18:15Z
+- **Brief:** .supervisor/jobs/done/auto-2026-10-10-141638-restated-list-rule-routing.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/460
