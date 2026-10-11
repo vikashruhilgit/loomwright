@@ -13,6 +13,8 @@
 #   M liveness + pick-guard (AC12) · N lane-remove refusals (AC3) + mutation controls (AC16)
 #   O lane-info · P branch-check · Q lane-status classification (AC7) · R lane-status --json (AC8)
 #   S keep-awake · T --watch + lane-feed · U merge-readiness (AC9) · V --leaks / --resources / --tokens
+#     (V15-V20: the merge-watch section reads live watchers from their markers — a process that only NAMES
+#     the script is no leak, + mutation control; a v1 snapshot section is not compared)
 #   W drain-round-1 hardening: one-call token total (D8) + mutation control · trailing value flags
 #     exit promptly · unpushed count unreadable refuses + mutation control · lock holder records
 #     (dead holder reclaimed, live holder waited on, foreign lock never unlocked, holder-less lock
@@ -38,7 +40,9 @@
 #     lane-status policy digest + --inbox
 #   AE lane-convert-ready finalizes a closed-out lane in branch mode (A1); mode off skips finalize
 #   AF fleet-closeout: stepwise, idempotent wave close (A2) — backstop, check-off, sync, removal, lanes dir,
-#     leaks, main health, lock release; gone / meta-push-failed are the human's; a failed pull stops it
+#     leaks, main health, lock release; gone / meta-push-failed are the human's; a failed pull stops it;
+#     AF3m-AF12 the Queue-empty parent finalize (done + wave line cleared + one trail-pr, skipped on a
+#     re-run, never with an item left, FAILED write still releases the lock, mode off unstages) + mutation
 #   AH lane-wait: the coordinator's lane watcher — events, seen ledger (prune / keep), timeout, idle,
 #     usage, read-only toward lanes; AH15 its liveness marker (written, handed over to a second watcher,
 #     removed only by its owner, absent on the idle paths); AH16 _lanes_quick_state (the Stop hook's
@@ -793,6 +797,69 @@ check "V4 leaks found names each section" "$(printf '%s\n' "$out" | head -1)" "l
 has "V5 the leaked process is listed" "$out" "  + 4321 claude -p --resume x"
 has "V6 unchanged sections say same" "$out" "- merge-watch: same"
 cp "$T/config.bak" "$P/.supervisor/config.json"; : > "$PGREP_CLAUDE"; git -C "$P" worktree remove --force "$T/wt-leak" 2>/dev/null
+# V15-V20 (wave-close fix 2) the merge-watch section lists LIVE watchers from their *.merge-watch markers
+# (`## merge-watch v2`), never a process-name match: W3's `leaks: found — merge-watch` was a grep whose
+# argv named scripts/automate-merge-watch.sh. A pgrep wrapper hands the merge-watch pattern to the REAL
+# pgrep (so the v1 mutation sees the decoy) and everything else to the stub. Decoys are background
+# `sleep 30`s renamed with `exec -a` (bash 3.2); each names the suite dir, is tracked in BG_PIDS and killed.
+cat > "$T/pgrep-mw" <<EOF
+#!/usr/bin/env bash
+case "\$*" in *automate-merge-watch*) exec pgrep "\$@" ;; esac
+exec "$T/pgrep-stub" "\$@"
+EOF
+chmod +x "$T/pgrep-mw"
+mw_spawn() { # <argv0> — sets MWPID: a background sleep whose ps command line reads "<argv0> 30"
+  bash -c 'exec -a "$0" sleep 30' "$1" </dev/null >/dev/null 2>&1 &
+  MWPID=$!; BG_PIDS="$BG_PIDS $MWPID"; local i=0
+  until case "$(ps -ww -o command= -p "$MWPID" 2>/dev/null)" in "$1"*) true ;; *) false ;; esac || [ "$i" -ge 50 ]; do sleep 0.1; i=$((i + 1)); done
+}
+mw_kill() { local q; for q in "$@"; do kill -TERM "$q" 2>/dev/null; wait "$q" 2>/dev/null; done; }
+mwl() { LOOMWRIGHT_LANES_PGREP="$T/pgrep-mw" bash "${MW_S:-$S}" lane-status "$1" --leaks "${@:2}" 2>&1; }
+PARENTMW=automate-2026-10-11-090000; RFMW="$P/.supervisor/automate/$PARENTMW.md"
+PARENTMV=automate-2026-10-11-091000; RFMV="$P/.supervisor/automate/$PARENTMV.md"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENTMW" > "$RFMW"; printf '# Automate Run: %s\n\n## Progress\n' "$PARENTMV" > "$RFMV"
+mwl "$RFMW" --snapshot >/dev/null
+check "V15 the snapshot's merge-watch section carries the v2 format tag (and no v1 header)" \
+  "$(grep -cxF '## merge-watch v2' "$P/.supervisor/automate/$PARENTMW.leaks-snapshot" | tr -d ' '):$(grep -cxF '## merge-watch' "$P/.supervisor/automate/$PARENTMW.leaks-snapshot" | tr -d ' ')" "1:0"
+# the v1 mutation: the section body back to the process-name match; its own snapshot, before the decoy
+awk '/# >>> merge-watch body$/ { print "  \"$pg\" -lf automate-merge-watch 2>/dev/null"; next } { print }' "$S" > "$MUT/lanes-mw.sh"
+if ! cmp -s "$S" "$MUT/lanes-mw.sh" && bash -n "$MUT/lanes-mw.sh"; then MW_S="$MUT/lanes-mw.sh" mwl "$RFMV" --snapshot >/dev/null; MWMUT=1; else MWMUT=0; fi
+mw_spawn "grep $T/scripts/automate-merge-watch.sh"; MWD="$MWPID"
+out="$(mwl "$RFMW")"
+check "V16 a process whose argv only NAMES automate-merge-watch.sh is not a watcher ⇒ merge-watch: same" \
+  "$(printf '%s\n' "$out" | head -1 | cut -c1-11):$(printf '%s\n' "$out" | grep -cxF -- '- merge-watch: same' | tr -d ' ')" "leaks: none:1"
+if [ "$MWMUT" = 1 ]; then
+  has "V16b mutation (the v1 pgrep line restored) trips V16: the decoy reads as a leak" "$(MW_S="$MUT/lanes-mw.sh" mwl "$RFMV")" "- merge-watch: changed"
+else bad "V16b mutation control not built"; fi
+mw_kill "$MWD"
+# V17 a real marker + a live process running automate-merge-watch for that marker's PR ⇒ reported
+MWU1="https://github.com/o/r/pull/777"; MWU2="https://github.com/o/r/pull/778"
+mw_spawn "bash $T/scripts/automate-merge-watch.sh $RFMW reqs/a.md $MWU1"; MW1="$MWPID"
+printf 'pid\t%s\npr_url\t%s\nstarted\t2026-10-11T09:00:00Z\n' "$MW1" "$MWU1" > "$P/.supervisor/automate/mwtest.merge-watch"
+out="$(mwl "$RFMW")"
+check "V17 a live watcher in the primary ⇒ found — merge-watch, listed as <pid> <pr_url>" \
+  "$(printf '%s\n' "$out" | head -1):$(printf '%s\n' "$out" | grep -cxF -- "  + $MW1 $MWU1" | tr -d ' ')" "leaks: found — merge-watch:1"
+# V18 … and a live watcher of a lane in this run's table
+mkdir -p "$T/mwlane/.supervisor/automate"
+printf 'L1\t%s\treqs/a.md\t%s-L1\t-\t-\t-\tcreated\t-\t-\n' "$T/mwlane" "$PARENTMW" > "$P/.supervisor/automate/$PARENTMW.lanes"
+mw_spawn "bash $T/scripts/automate-merge-watch.sh $T/mwlane/x.md reqs/a.md $MWU2"; MW2="$MWPID"
+printf 'pid\t%s\npr_url\t%s\n' "$MW2" "$MWU2" > "$T/mwlane/.supervisor/automate/$PARENTMW-L1.merge-watch"
+out="$(mwl "$RFMW")"
+check "V18 a live watcher in a lane of the table is listed too (sorted, one line each)" \
+  "$(printf '%s\n' "$out" | grep -cxF -- "  + $MW1 $MWU1" | tr -d ' '):$(printf '%s\n' "$out" | grep -cxF -- "  + $MW2 $MWU2" | tr -d ' ')" "1:1"
+mw_kill "$MW1" "$MW2"
+out="$(mwl "$RFMW")"
+check "V19 markers left behind by watchers that exited are not live ⇒ merge-watch: same" \
+  "$(printf '%s\n' "$out" | grep -cxF -- '- merge-watch: same' | tr -d ' ')" 1
+rm -f "$P/.supervisor/automate/mwtest.merge-watch" "$P/.supervisor/automate/$PARENTMW.lanes"; rm -rf "$T/mwlane"
+# V20 a v1 snapshot (taken by the pre-fix code: `## merge-watch` + pgrep lines) is NOT compared — never a false found
+SFMW="$P/.supervisor/automate/$PARENTMW.leaks-snapshot"
+awk '$0 == "## merge-watch v2" { print "## merge-watch"; print "4242 grep scripts/automate-merge-watch.sh"; next } { print }' "$SFMW" > "$SFMW.t" && mv "$SFMW.t" "$SFMW"
+out="$(mwl "$RFMW")"
+check "V20 a v1 snapshot section ⇒ leaks: none, the first line naming the uncompared section" \
+  "$(printf '%s\n' "$out" | head -1)" "leaks: none (vs snapshot $SFMW; merge-watch not compared — pre-v2 snapshot)"
+has "V20b … and the body says why" "$out" "- merge-watch: not compared — the wave-start snapshot predates the marker-based watcher list (v1)"
+rm -f "$MUT/lanes-mw.sh"
 out="$(run lane-status "$RF2" --resources)"; has "V7 no fleet.log ⇒ resources unknown" "$out" "resources: unknown"
 printf '2026-10-07T10:00:00Z load1=5 load=ok L1_rss=100M L2_rss=300M nonlane_load=10%%\n2026-10-07T10:00:10Z load1=9 load=busy L1_rss=200M L2_rss=150M nonlane_load=20%%\n' > "$P/.supervisor/automate/$PARENT2.fleet.log"
 out="$(run lane-status "$RF2" --resources)"
@@ -1863,10 +1930,26 @@ check "AF3j … and appended once to the parent Progress (no revert, no block)" 
 check "AF3k the Queue is empty ⇒ the wave lock is released (last line)" \
   "$(printf '%s\n' "$out" | tail -n1):$(bash "$HERE/run-lock.sh" status --root "$P")" "fleet-closeout: wave closed — lock released:UNLOCKED"
 check "AF3l the gh calls were reads only (pr view / the check-runs api)" "$(grep -vE '^gh (pr view|api repos/\{owner\}/\{repo\}/commits/[0-9a-f]+/check-runs\?check_name=ci|auth status)' "$T_AFGH" | wc -l | tr -d ' ')" 0
+# AF3m-r the Queue emptied ⇒ the PARENT is finalized as §6 "Termination" ends a sequential run (W3 left
+# it `## Status: running` with its wave line, and the coordinator hand-wrote done + its trail)
+check "AF3m the parent run file reads ## Status: done (no running left)" \
+  "$(grep -c '^## Status: done$' "$RF10" | tr -d ' '):$(grep -c '^## Status: running' "$RF10" | tr -d ' ')" "1:0"
+check "AF3n … ## Current carries pause_reason: null and no wave line" \
+  "$(awk '/^## Current/ { c = 1; next } /^## / { c = 0 } c' "$RF10" | grep -cxF -- '- pause_reason: null' | tr -d ' '):$(grep -c '^- wave:' "$RF10" | tr -d ' ')" "1:0"
+check "AF3o … ONE finalize Progress line" "$(grep -cE '^- [0-9TZ:-]+ wave closed — Queue empty, run finalized$' "$RF10" | tr -d ' ')" 1
+check "AF3p … trail-pr --reason done ran ONCE on the parent (through the trail seam), its line printed and appended" \
+  "$(grep -cxF -- "trail-pr $RF10 --reason done" "$T_ABSPY" | tr -d ' '):$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: finalize — trail-pr: meta-pushed test-meta' | tr -d ' '):$(grep -cE '^- [0-9TZ:-]+ trail-pr: meta-pushed test-meta$' "$RF10" | tr -d ' ')" "1:1:1"
+check "AF3q … the finalize ran BEFORE the release (under the wave lock), and branch mode on ⇒ no trail-unstage" \
+  "$(printf '%s\n' "$out" | tail -n3 | head -1):$(grep -c "^trail-unstage $RF10" "$T_ABSPY" | tr -d ' ')" \
+  "fleet-closeout: finalize — finalized (## Status: done, pause_reason: null, wave line cleared):0"
+check "AF3r … the pushed parent run file carries ## Status: done (the trail ran after the write)" \
+  "$(grep -c '^## Status: done$' "$T/remote-af/.supervisor/automate/$PARENT10.md" 2>/dev/null | tr -d ' ')" 1
 SRF10="$(cksum < "$RF10")"
 out="$(AF_MERGED="$PR101 $PR102" AF_CI=failure af fleet-closeout "$RF10")"; rc=$?
 check "AF4 a re-run after the close: exit 0, the parent run file byte-unchanged (no duplicate lines)" "$rc:$(cksum < "$RF10")" "0:$SRF10"
 check "AF4b … still ends wave closed (release is idempotent)" "$(printf '%s\n' "$out" | tail -n1)" "fleet-closeout: wave closed — lock released"
+check "AF4d … the finalize is skipped (already done) and no second trail-pr runs" \
+  "$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: finalize — skipped (already done)' | tr -d ' '):$(grep -cxF -- "trail-pr $RF10 --reason done" "$T_ABSPY" | tr -d ' ')" "1:1"
 # AF4c the next wave's item is still unchecked ⇒ the lock is kept (the next wave runs under it)
 printf '%s\n' "- [ ] reqs/next.md" > "$T/af.q"; awk -v f="$T/af.q" '{ print } /^## Queue$/ { while ((getline l < f) > 0) print l }' "$RF10" > "$T/af.rf" && mv "$T/af.rf" "$RF10"
 bash "$HERE/run-lock.sh" acquire --owner "automate-lanes:$PARENT10" --root "$P" >/dev/null 2>&1
@@ -1874,6 +1957,7 @@ out="$(AF_MERGED="$PR101 $PR102" af fleet-closeout "$RF10")"
 check "AF4c a Queue item left for the next wave keeps the wave lock" \
   "$(printf '%s\n' "$out" | tail -n1):$(bash "$HERE/run-lock.sh" status --root "$P" | cut -c1-6)" \
   "fleet-closeout: lock kept — 1 Queue item(s) remain unchecked (the next wave runs under it):LOCKED"
+hasnt "AF4e … and no finalize runs while a Queue item remains" "$out" "finalize"
 bash "$HERE/run-lock.sh" release --owner "automate-lanes:$PARENT10" --root "$P" >/dev/null 2>&1
 # human cases + the pull failure, on a fresh one-lane parent
 PARENT11=automate-2026-10-10-130000; RF11="$P/.supervisor/automate/$PARENT11.md"; LR11="$T/work/primary-lanes/$PARENT11"
@@ -1900,6 +1984,62 @@ printf '# Automate Run: automate-2026-10-10-140000\n\n## Progress\n' > "$P/.supe
 check "AF9 no lane table ⇒ one skipped line, exit 0" "$(af fleet-closeout "$P/.supervisor/automate/automate-2026-10-10-140000.md"; echo "rc=$?")" \
   "fleet-closeout: skipped — no lane table (automate-2026-10-10-140000.lanes): no lane to close out
 rc=0"
+
+# AF10-AF13 the parent finalize's edges, on a parent whose only lane is already removed (the table row
+# reads `removed`), so a call goes straight to the wave end. A helpers wrapper in front of the real copy
+# can refuse runfile-write (FC_REFUSE); mode off runs through the no-op trail stub (records its calls).
+cat > "$T/fc-helpers.sh" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = runfile-write ] && [ -n "\${FC_REFUSE:-}" ]; then echo "runfile-write: refused — forced by the test [runfile_write_refused]" >&2; exit 1; fi
+exec bash "$SC/automate-helpers.sh" "\$@"
+EOF
+chmod +x "$T/fc-helpers.sh"
+fc_parent() { # <parent_id> — a running parent with an empty Queue, a wave line and one removed lane
+  FCRF="$P/.supervisor/automate/$1.md"
+  printf '# Automate Run: %s\n\n## Status: running\n\n## Run Config\n- parallel: 2\n\n## Queue\n- [x] reqs/a.md\n\n## Current\n- item: null | status: null\n- wave: 1 | items: reqs/a.md\n\n## Progress\n' "$1" > "$FCRF"
+  printf 'L1\t%s\treqs/a.md\t%s-L1\t-\t-\t-\tremoved\t-\t-\n' "$T/work/primary-lanes/$1/L1" "$1" > "$P/.supervisor/automate/$1.lanes"
+  bash "$HERE/run-lock.sh" acquire --owner "automate-lanes:$1" --root "$P" >/dev/null 2>&1
+}
+fc() { REMOTE11="$T/remote-af" LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$T/fc-helpers.sh" \
+  LOOMWRIGHT_LANES_TRAIL="${FC_TRAIL:-$T/ab-spy.sh}" LOOMWRIGHT_GH_BIN="$T/af-gh" bash "${FC_S:-$S}" "$@" 2>&1; }
+lockst() { bash "$HERE/run-lock.sh" status --root "$P" | cut -c1-6; }
+fc_parent automate-2026-10-11-100000; RF13="$FCRF"
+out="$(FC_REFUSE=1 fc fleet-closeout "$RF13")"; rc=$?
+check "AF10 a refused runfile-write ⇒ finalize FAILED naming why, exit unchanged (0)" \
+  "$rc:$(printf '%s\n' "$out" | grep -c '^fleet-closeout: finalize FAILED — runfile-write: refused — forced by the test' | tr -d ' ')" "0:1"
+check "AF10b … the finalize wrote nothing (still running, wave line kept, no finalize line; no stray staging file) and no trail-pr ran" \
+  "$(grep -c '^## Status: running$' "$RF13" | tr -d ' '):$(grep -c '^- wave: 1' "$RF13" | tr -d ' '):$(grep -c 'run finalized' "$RF13" | tr -d ' '):$(ls "$P/.supervisor/automate/" | grep -c 'automate-2026-10-11-100000\.md\.' | tr -d ' '):$(grep -c "^trail-pr $RF13" "$T_ABSPY" | tr -d ' ')" "1:1:0:0:0"
+check "AF10c … and the wave lock is STILL released (never stranded)" \
+  "$(printf '%s\n' "$out" | tail -n1):$(lockst)" "fleet-closeout: wave closed — lock released:UNLOCK"
+out="$(fc fleet-closeout "$RF13")"; rc=$?
+check "AF10d the next call (lock already free: taken for the write) finalizes it: done, wave line gone, lock released" \
+  "$rc:$(grep -c '^## Status: done$' "$RF13" | tr -d ' '):$(grep -c '^- wave:' "$RF13" | tr -d ' '):$(lockst)" "0:1:0:UNLOCK"
+fc_parent automate-2026-10-11-110000; RF14="$FCRF"; : > "$T_TRAIL_LOG"
+out="$(STUB_MODE_LINE=off FC_TRAIL="$T/trail-stub.sh" fc fleet-closeout "$RF14")"; rc=$?
+check "AF11 branch mode OFF: finalized, trail-pr --reason done then trail-unstage, in that order" \
+  "$rc:$(grep -c '^## Status: done$' "$RF14" | tr -d ' '):$(cat "$T_TRAIL_LOG" | tr '\n' '|')" \
+  "0:1:trail trail-pr $RF14 --reason done|trail trail-unstage $RF14|"
+has "AF11b … each printed as a finalize line" "$out" "fleet-closeout: finalize — trail-pr: skipped — meta no_changes"
+# AF13 the run lock held by ANOTHER owner ⇒ nothing written under it, and it is never stolen
+fc_parent automate-2026-10-11-130000; RF16="$FCRF"
+bash "$HERE/run-lock.sh" release --owner "automate-lanes:automate-2026-10-11-130000" --root "$P" >/dev/null 2>&1
+bash "$HERE/run-lock.sh" acquire --owner "automate-pick:someone-else" --root "$P" >/dev/null 2>&1
+out="$(fc fleet-closeout "$RF16")"; rc=$?
+check "AF13 a foreign run lock ⇒ finalize FAILED naming its holder, parent still running, the lock still theirs" \
+  "$rc:$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: finalize FAILED — the run lock is held by automate-pick:someone-else, not automate-lanes:automate-2026-10-11-130000 (nothing written)' | tr -d ' '):$(grep -c '^## Status: running$' "$RF16" | tr -d ' '):$(bash "$HERE/run-lock.sh" status --root "$P" | cut -d' ' -f1-2)" \
+  "0:1:1:LOCKED owner=automate-pick:someone-else"
+bash "$HERE/run-lock.sh" release --owner "automate-pick:someone-else" --root "$P" >/dev/null 2>&1
+# AF12 mutation control: with the finalize call deleted, the Queue-empty close leaves the parent running
+mkdir -p "$MUT"; FCM="$SC/automate-lanes-nofinalize.sh"
+awk '!/^  _lanes_fc_finalize "\$rf" "\$primary" "\$mb"$/' "$S" > "$FCM"
+fc_parent automate-2026-10-11-120000; RF15="$FCRF"
+if ! cmp -s "$S" "$FCM" && bash -n "$FCM"; then
+  out="$(FC_S="$FCM" fc fleet-closeout "$RF15")"
+  check "AF12 mutation (finalize call deleted) fails the done assertion — the parent stays running" \
+    "$(grep -c '^## Status: done$' "$RF15" | tr -d ' '):$(grep -c '^## Status: running$' "$RF15" | tr -d ' '):$(printf '%s\n' "$out" | tail -n1)" \
+    "0:1:fleet-closeout: wave closed — lock released"
+else bad "AF12 mutation control not built"; fi
+rm -f "$FCM"
 
 # ---- AG: wave-plan is READ-ONLY (A4) + the no-new-merge-path guards (A3) + mutation control ----------
 PARENT12=automate-2026-10-10-150000; RF12P="$P/.supervisor/automate/$PARENT12.md"; LR12="$T/work/primary-lanes/$PARENT12"

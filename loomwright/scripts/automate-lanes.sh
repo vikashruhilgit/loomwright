@@ -29,7 +29,9 @@
 #        then, branch mode only, `finalize-empty` on the lane's run file (`## Status: done`)
 #   fleet-closeout <parent_runfile>                      wave close, stepwise + idempotent (re-run on every
 #        coordinator --resume): meta pull · per-lane backstop (lane-convert-ready on a merged lane) ·
-#        parent Queue check-off · primary sync · lane-remove · lanes dir, leaks, main health, lock release
+#        parent Queue check-off · primary sync · lane-remove · lanes dir, leaks, main health, then — Queue
+#        empty — the parent finalize (`## Status: done`, wave line cleared, trail-pr --reason done) and the
+#        lock release
 #   wave-plan <parent_runfile> [--wave-branch <name>]    READ-ONLY: prints the operator's wave-branch
 #        integration commands (one `git merge --no-ff <head sha>` per lane) and the conflict rules;
 #        the preview / manual fallback of automate-wave.sh `wave-build`, which runs those same steps
@@ -1989,12 +1991,38 @@ _lanes_leak_lanes_dir() {
   done
 }
 
+# _lanes_leak_watchers <primary> <parent> — the `## merge-watch v2` section body: one `<pid> <pr_url>`
+# line per LIVE merge watcher, sorted, read from the `*.merge-watch` markers through _lanes_live_watchers
+# (the marker's pid still runs automate-merge-watch for that marker's PR) — for the primary's
+# `.supervisor/automate/` and for every lane path in this run's lane table (a removed lane's directory
+# has no markers left). Never a process-table pattern match: `pgrep -lf automate-merge-watch` (v1) also
+# matched any process whose argv merely NAMED the script — a `grep … scripts/automate-merge-watch.sh`
+# in the coordinator read as `leaks: found — merge-watch` with no watcher running (wave W3, 2026-10-11).
+# Honest limit: a watcher with no marker (or whose marker was deleted) is not listed; every watcher this
+# plugin starts writes one (automate-merge-watch.sh), and lane-remove reads the same markers.
+_lanes_leak_watchers() {
+  local p="$1" parent="${2:-}" tbl l
+  {
+    _lanes_live_watchers "$p"
+    tbl="$p/.supervisor/automate/$parent.lanes"
+    if [ -n "$parent" ] && [ -f "$tbl" ]; then
+      awk -F'\t' '$1 ~ /^L[0-9][0-9]?$/ && $2 != "" && $2 != "-" { print $2 }' "$tbl" | while IFS= read -r l; do
+        [ -d "$l" ] && _lanes_live_watchers "$l"
+      done
+    fi
+  } | tr '\t' ' ' | env LC_ALL=C sort -u
+  return 0
+}
+
 _lanes_leak_sections() { # <primary> <parent>
   local p="$1" pg="${LOOMWRIGHT_LANES_PGREP:-pgrep}"
   echo "## worktrees"; git -C "$p" worktree list --porcelain 2>/dev/null | awk '/^worktree /'
   echo "## lanes-dir"; _lanes_leak_lanes_dir "$p" "${2:-}"
   echo "## claude-p"; "$pg" -lf 'claude -p' 2>/dev/null
-  echo "## merge-watch"; "$pg" -lf automate-merge-watch 2>/dev/null
+  # The format tag IS the header: lanes_leaks compares this section only against a snapshot section
+  # written in the same format (a v1 `## merge-watch` snapshot section is read as not compared).
+  echo "## merge-watch v2"
+  _lanes_leak_watchers "$p" "${2:-}"   # >>> merge-watch body
   echo "## config-checksum"
   if [ -f "$p/.supervisor/config.json" ]; then cksum < "$p/.supervisor/config.json" | awk '{ print $1, $2 }'; else echo absent; fi
   echo "## git-status"; git -C "$p" status --porcelain 2>/dev/null | awk '!/\.leaks-snapshot$/'
@@ -2004,7 +2032,7 @@ _lanes_leak_sections() { # <primary> <parent>
 # lanes_leaks <primary> <parent> [snapshot 0|1] — `--snapshot` records the wave-start state; otherwise
 # compares now against it. First line: `leaks: none` | `leaks: found — <sections>` | `leaks: unknown — …`.
 lanes_leaks() {
-  local p="$1" parent="$2" snap="${3:-0}" sf tmp sec found="" body="" d
+  local p="$1" parent="$2" snap="${3:-0}" sf tmp sec found="" body="" d hd nc=""
   sf="$p/.supervisor/automate/$parent.leaks-snapshot"
   if [ "$snap" = 1 ]; then
     # The ONE exception to observation's exit 0: a snapshot request that wrote nothing exits 1 naming
@@ -2021,8 +2049,20 @@ lanes_leaks() {
   tmp="$(mktemp -d 2>/dev/null)" || { echo "leaks: unknown — no temp dir"; return 0; }
   _lanes_leak_sections "$p" "$parent" > "$tmp/now"
   for sec in worktrees lanes-dir claude-p merge-watch config-checksum git-status; do
-    awk -v s="## $sec" '/^## / { on = ($0 == s); next } on' "$sf" | env LC_ALL=C sort > "$tmp/a"
-    awk -v s="## $sec" '/^## / { on = ($0 == s); next } on' "$tmp/now" | env LC_ALL=C sort > "$tmp/b"
+    hd="## $sec"
+    if [ "$sec" = merge-watch ]; then
+      hd="## merge-watch v2"
+      # A snapshot taken before the marker-based list (its section is the v1 `## merge-watch` pgrep
+      # output, or absent) is NOT compared: two formats never diff into a false `found`.
+      if ! grep -qxF -- "$hd" "$sf"; then
+        nc="merge-watch not compared — pre-v2 snapshot"
+        body="$body- merge-watch: not compared — the wave-start snapshot predates the marker-based watcher list (v1)
+"
+        continue
+      fi
+    fi
+    awk -v s="$hd" '/^## / { on = ($0 == s); next } on' "$sf" | env LC_ALL=C sort > "$tmp/a"
+    awk -v s="$hd" '/^## / { on = ($0 == s); next } on' "$tmp/now" | env LC_ALL=C sort > "$tmp/b"
     if cmp -s "$tmp/a" "$tmp/b"; then body="$body- $sec: same
 "
     else
@@ -2034,7 +2074,7 @@ $d
     fi
   done
   rm -rf "$tmp"
-  if [ -z "$found" ]; then echo "leaks: none (vs snapshot $sf)"; else echo "leaks: found — $found"; fi
+  if [ -z "$found" ]; then echo "leaks: none (vs snapshot $sf${nc:+; $nc})"; else echo "leaks: found — $found${nc:+ ($nc)}"; fi
   printf '%s' "$body"
   return 0
 }
@@ -2554,6 +2594,63 @@ _lanes_append_once() {
   bash "$HELPERS" progress-append "$1" "$2" >/dev/null 2>&1 || return 1
 }
 
+# _lanes_fc_finalize <parent_runfile> <primary> <meta branch, empty = mode off> — fleet-closeout's last
+# write, run only once the parent `## Queue` has no `- [ ]` left and only while the wave lock is still
+# held (the caller releases it right after, whatever this printed). It finalizes the parent exactly as
+# the sequential loop's §6 "Termination" does, through the existing helpers (never a hand write):
+# ONE validated `runfile-write` of a staged copy on which `current-wave --wave null` cleared the
+# `- wave:` line, the first `## Status:` line became `## Status: done` and `current-set --pause-reason
+# null` authored `pause_reason: null` (finalize-empty's staging — a failure at any step leaves the run
+# file byte-unchanged); then `<ts> wave closed — Queue empty, run finalized`; then `trail-pr <rf>
+# --reason done` (through the TRAIL seam, with this script's meta-sync, in the primary) printed and
+# appended like finalize-empty's; then, branch mode OFF only, `trail-unstage <rf>`. Lines:
+# `fleet-closeout: finalize — <outcome>` (one per step) | `fleet-closeout: finalize — skipped (already
+# done)` (nothing written: a re-run never repeats the trail) | `fleet-closeout: finalize FAILED —
+# <reason>` (nothing written — a refused write, or the run lock held by an owner other than
+# `automate-lanes:<run_id>`; a FREE lock is taken first, so the write is always under it). Returns 0.
+_lanes_fc_finalize() {
+  local rf="$1" primary="$2" mb="$3" tmp out ts l F="fleet-closeout: finalize FAILED —"
+  if _lanes_rf_done "$rf"; then echo "fleet-closeout: finalize — skipped (already done)"; return 0; fi
+  if grep -q '^- \[ \] ' "$rf" 2>/dev/null; then echo "fleet-closeout: finalize — skipped (Queue items remain)"; return 0; fi
+  grep -q '^## Status:' "$rf" 2>/dev/null || { echo "$F the parent run file has no ## Status: line"; return 0; }
+  # The write happens under the wave lock: held by this wave ⇒ go; free (a FAILED finalize's call already
+  # released it) ⇒ take it, the caller's release drops it; held by anyone else ⇒ nothing written.
+  local lk_st lk_own="automate-lanes:${rf##*/}"; lk_own="${lk_own%.md}"
+  lk_st="$(bash "$RUN_LOCK" status --root "$primary" 2>/dev/null </dev/null | head -1)"
+  case "$lk_st" in
+    "LOCKED owner=$lk_own "*) ;;
+    UNLOCKED)
+      out="$(bash "$RUN_LOCK" acquire --owner "$lk_own" --root "$primary" 2>&1 </dev/null)" \
+        || { echo "$F the wave lock could not be taken — $(printf '%s\n' "$out" | head -1) (nothing written)"; return 0; } ;;
+    LOCKED*) l="${lk_st#LOCKED owner=}"; echo "$F the run lock is held by ${l%% *}, not $lk_own (nothing written)"; return 0 ;;
+    *) echo "$F run lock status unreadable (nothing written)"; return 0 ;;
+  esac
+  tmp="$(mktemp "$rf.fc.XXXXXX" 2>/dev/null)" || { echo "$F cannot stage the rewrite"; return 0; }
+  if ! awk '!st && /^## Status:/ { print "## Status: done"; st = 1; next } { print }' "$rf" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"; echo "$F cannot stage the rewrite"; return 0
+  fi
+  if ! out="$(bash "$HELPERS" current-wave "$tmp" --wave null 2>&1 </dev/null)" \
+     || ! out="$(bash "$HELPERS" current-set "$tmp" --pause-reason null 2>&1 </dev/null)" \
+     || ! out="$(bash "$HELPERS" runfile-write "$rf" < "$tmp" 2>&1)"; then
+    rm -f "$tmp" "$tmp".*
+    echo "$F $(printf '%s\n' "$out" | sed '/^$/d' | head -1 | cut -c1-200) (the run file is unchanged)"; return 0
+  fi
+  rm -f "$tmp"
+  ts="$(now_utc)"
+  bash "$HELPERS" progress-append "$rf" "$ts wave closed — Queue empty, run finalized" >/dev/null 2>&1 \
+    || echo "fleet-closeout: WARNING — the finalize ## Progress line could not be appended" >&2
+  echo "fleet-closeout: finalize — finalized (## Status: done, pause_reason: null, wave line cleared)"
+  l="$(cd "$primary" && LOOMWRIGHT_META_SYNC_BIN="$META_SYNC" bash "$TRAIL" trail-pr "$rf" --reason done 2>/dev/null </dev/null | tail -n1)"
+  l="${l:-trail-pr: skipped — no output}"
+  echo "fleet-closeout: finalize — $l"
+  bash "$HELPERS" progress-append "$rf" "$ts $l" >/dev/null 2>&1
+  if [ -z "$mb" ]; then
+    l="$(cd "$primary" && bash "$TRAIL" trail-unstage "$rf" 2>/dev/null </dev/null | tail -n1)"
+    echo "fleet-closeout: finalize — ${l:-trail-unstage: skipped — no output}"
+  fi
+  return 0
+}
+
 # fleet-closeout <parent_runfile> — the wave close, run in the coordinator's PRIMARY checkout on every
 # `/automate --resume` (stepwise, idempotent: each call does every step it can; nothing waits in-session).
 # One `fleet-closeout: <step> — <detail>` line per lane and per step, in order:
@@ -2577,7 +2674,13 @@ _lanes_append_once() {
 #                  `sweep: unavailable (automate-followups/22 not shipped)`; main health — the `ci` check of
 #                  origin/<base> HEAD via gh: `failure` ⇒ `wave_paused: main_red after <sha>` appended and
 #                  printed (no revert, no block); then, when the parent Queue has no `- [ ]` left,
-#                  `run-lock.sh release --owner "automate-lanes:<run_id>"` ⇒ `wave closed — lock released`.
+#                  the parent FINALIZE under the still-held wave lock (_lanes_fc_finalize: `current-wave
+#                  --wave null` + `## Status: done` + `pause_reason: null` in ONE validated runfile-write,
+#                  `<ts> wave closed — Queue empty, run finalized`, `trail-pr --reason done`, branch mode
+#                  off `trail-unstage`; `finalize — skipped (already done)` on a re-run, nothing written;
+#                  `finalize FAILED — <reason>`, nothing written, exit unchanged), then — on every finalize
+#                  outcome — `run-lock.sh release --owner "automate-lanes:<run_id>"` ⇒ `wave closed — lock
+#                  released`. A Queue item left (the next wave) ⇒ no finalize, `lock kept — …`.
 # Exit: 0 (done, or waiting — the lines say which) · 1 refused (bad parent run file) · 2 pull failed.
 lanes_fleet_closeout() {
   local rf="${1:-}"
@@ -2698,6 +2801,9 @@ EOF
   fi
   n="$(grep -c '^- \[ \] ' "$rf" 2>/dev/null)"; n="${n:-0}"
   if [ "$n" != 0 ]; then _fc "lock kept — $n Queue item(s) remain unchecked (the next wave runs under it)"; return 0; fi
+  # The Queue is empty: finalize the parent UNDER the wave lock, then release it on EVERY outcome —
+  # a refused finalize prints its FAILED line and never strands the lock.
+  _lanes_fc_finalize "$rf" "$primary" "$mb"
   if out="$(bash "$RUN_LOCK" release --owner "automate-lanes:$parent" --root "$primary" 2>&1 </dev/null)"; then
     _fc "wave closed — lock released"
   else
