@@ -291,7 +291,7 @@ want_step0 > "$TMP/step0-want"
 check_step0() { step0_names "$1" > "$TMP/step0-have"; [ -s "$TMP/step0-want" ] && cmp -s "$TMP/step0-want" "$TMP/step0-have"; }
 if check_step0 "$REPO/$CMD_IDX"; then ok "F: Step 0 names all $(wc -l < "$TMP/step0-want" | tr -d ' ') skill split files, in documented order"
 else no "F: Step 0 names [$(tr '\n' ' ' < "$TMP/step0-have")] — want [$(tr '\n' ' ' < "$TMP/step0-want")]"; fi
-awk '/^### Step 0/ {s = 1; next} s && /^### / {exit} s' "$REPO/$CMD_IDX" | grep -qF -- '${CLAUDE_PLUGIN_ROOT}/skills/automate-loop/' \
+grep -qF -- '${CLAUDE_PLUGIN_ROOT}/skills/automate-loop/' < <(awk '/^### Step 0/ {s = 1; next} s && /^### / {exit} s' "$REPO/$CMD_IDX") \
   && ok "F: Step 0 resolves them under the plugin install root's skills/automate-loop/" || no "F: Step 0 does not name the runtime skill directory"
 
 echo "== G. every citation of a split surface resolves through its index (AC3) =="
