@@ -2023,9 +2023,10 @@ _lanes_watch() {
 # host re-invokes the coordinator when it exits, and re-arms it after relaying. Events, one line each:
 #   lane-wait: question <lane> <tool_use_id> asked <asked_at> — <question, first 160 chars>
 #   lane-wait: state <lane> <state> — pr <url|->            (state ∈ _LANES_WAIT_ATTN below)
-# then ONE `lane-wait: relay — …` hint line. No live lane left (none created / running / held /
-# answer_pending) and nothing new ⇒ `lane-wait: idle — no lane is running; nothing changes until the
-# owner acts`, exit 0 (never a forever-poll of parked lanes). `--timeout S` (default 0 = none) ⇒
+# then one hint line per event kind present: state events ⇒ `lane-wait: act — …` (handle the lane per
+# SKILL §14 "Lane states", then re-arm); questions ⇒ `lane-wait: relay — …` (last when both). No live
+# lane left (none created / running / held / answer_pending) and nothing new ⇒ `lane-wait: idle — no
+# lane is running; nothing changes until the owner acts`, exit 0 (never a forever-poll of parked lanes). `--timeout S` (default 0 = none) ⇒
 # `lane-wait: timeout after <S>s — nothing new`, exit 0. Unreadable status ⇒ retried next interval.
 # Seen ledger: `<automate dir>/<parent_run_id>.lane-wait-seen`, one key per line — a question key is kept
 # for good (tool_use_ids never repeat), a state key only while that lane is still in that state, so a
@@ -2033,7 +2034,7 @@ _lanes_watch() {
 # coordinator that dies after the exit and before relaying does not see them again from lane-wait (its
 # next `--resume` runs `lane-status --inbox`, which lists every pending question regardless).
 # Never answers, launches, resumes or writes into a lane. Exits 0 except a usage error (2).
-_LANES_WAIT_ATTN='["awaiting_input","stalled","died","lost_to_reset","escalated","ready_for_release","rate_limit","drain_died","gone","missing","blocked_launch","merged"]'
+_LANES_WAIT_ATTN='["awaiting_input","stalled","died","lost_to_reset","escalated","ready_for_release","rate_limit","drain_died","gone","missing","blocked_launch","merged","failed"]'
 _LANES_WAIT_LIVE='["created","running","held_for_load","answer_pending"]'
 lanes_wait() {
   local rf="" iv="${LOOMWRIGHT_LANES_WAIT_INTERVAL_S:-15}" to=0 start doc parent ledger cur keep new live
@@ -2082,7 +2083,10 @@ lanes_wait() {
         { [ -n "$keep" ] && printf '%s\n' "$keep"; printf '%s\n' "$new" | cut -f1; } > "$ledger.tmp.$$" 2>/dev/null \
           && mv "$ledger.tmp.$$" "$ledger" 2>/dev/null || rm -f "$ledger.tmp.$$" 2>/dev/null
         printf '%s\n' "$new" | cut -f2- | sed 's/^/lane-wait: /'
-        echo "lane-wait: relay — show each question to the owner verbatim (lane-status $rf --inbox), deliver only the owner's answer with lane-answer, then re-arm lane-wait"
+        grep -q '^state ' <<<"$new" \
+          && echo "lane-wait: act — handle each state line per the automate-loop skill §14 \"Lane states and what the coordinator does\" (report it to the owner; resume a stalled lane once; died / lost_to_reset / escalated / failed / gone ⇒ the owner decides; ready_for_release ⇒ wave-end handling), then re-arm lane-wait"
+        grep -q '^question ' <<<"$new" \
+          && echo "lane-wait: relay — show each question to the owner verbatim (lane-status $rf --inbox), deliver only the owner's answer with lane-answer, then re-arm lane-wait"
         return 0
       fi
       # Nothing new: the ledger is rewritten to exactly `keep` — removed when keep is empty, so a lone

@@ -559,6 +559,7 @@ has "AH1e a blocked launch is an event" "$out" "lane-wait: state L4 blocked_laun
 hasnt "AH1f awaiting_input with its question is reported once, as the question" "$out" "state L6 awaiting_input"
 hasnt "AH1g running / held / created lanes are not events" "$out" "state L2"
 has "AH1h ends with the relay hint" "$(printf '%s\n' "$out" | tail -1)" "lane-wait: relay — show each question to the owner verbatim"
+has "AH1i a mixed batch also carries the state act hint" "$out" "lane-wait: act — handle each state line"
 check "AH2 the seen ledger records every printed key" "$(sort "$LWS" | tr '\n' ',')" "question L6 toolu_r1,state L1 died,state L3 stalled,state L4 blocked_launch,"
 echo "state L2 died" >> "$LWS"
 out="$(run lane-wait "$RF2" --interval 1 --timeout 1)"; rc=$?
@@ -569,6 +570,7 @@ printf '{"id":"toolu_r2","asked_at":"2026-10-07T00:05:00Z","questions":[{"questi
 out="$(run lane-wait "$RF2" --interval 1 --timeout 5)"
 check "AH4 a new question only ⇒ exactly that one event + the hint" "$(printf '%s\n' "$out" | grep -c '^lane-wait: ')" 2
 has "AH4b … and it is the new id" "$out" "lane-wait: question L6 toolu_r2 asked 2026-10-07T00:05:00Z — Second ask?"
+hasnt "AH4c a question-only batch carries no state act hint" "$out" "lane-wait: act"
 rm -f "$L6/.supervisor/inbox/questions/toolu_r2.json"
 out="$(run lane-wait)"; rc=$?
 check "AH5 no run file ⇒ usage, exit 2" "$rc" 2
@@ -593,12 +595,28 @@ check "AH10b … and that lone stale state key is pruned (ledger removed)" "$([ 
 run lane-launch "$T/work/primary-lanes/$PARENT3/L1" --host-denied 'denied' >/dev/null
 out="$(run lane-wait "$RF3" --interval 1 --timeout 5)"
 has "AH8a first call reports the blocked lane (AH10c: the re-entered state reports again)" "$out" "lane-wait: state L1 blocked_launch"
+# AH11 the hint follows the events: a state-only batch says act-on-the-lane, never the question relay.
+has "AH11a a state-only batch ends with the act hint" "$(printf '%s\n' "$out" | tail -1)" "lane-wait: act — handle each state line per the automate-loop skill §14"
+hasnt "AH11b … and carries no question relay hint" "$out" "lane-wait: relay"
 out="$(run lane-wait "$RF3" --interval 1 --timeout 5)"; rc=$?
 check "AH8b nothing live, nothing new ⇒ idle at once, exit 0" "$rc:$out" "0:lane-wait: idle — no lane is running; nothing changes until the owner acts"
 # AH9 read-only toward lanes: a full lane-wait pass writes nothing but its own ledger.
 before="$(find "$LR2" -type f -newer "$LWS" 2>/dev/null | wc -l | tr -d ' ')"
 run lane-wait "$RF2" --interval 1 --timeout 1 >/dev/null
 check "AH9 lane-wait writes nothing into any lane" "$(find "$LR2" -type f -newer "$LWS" 2>/dev/null | wc -l | tr -d ' ')" "$before"
+# AH12 static: every _LANES_WAIT_ATTN / _LANES_WAIT_LIVE token is a state lane-status can report — a literal
+# `state=<tok>` assignment in _lanes_lane_json, or a run-file park status `_lanes_parked` passes through
+# (SKILL §3's status enum). A renamed state would otherwise drift the array silently (a lane in the new
+# state invisible to lane-wait, and idle firing past it). Mutation control: a fake token must be named.
+ah_reportable="$( { grep -v '^_LANES_WAIT_' "$S" | grep -oE '(^|[^_a-zA-Z])state=[a-z_]+' | sed 's/.*state=//'
+  grep -A3 '^_lanes_parked() {' "$S" | grep -F 'case "${1:-}" in' | sed -E 's/.* in ([a-z_|]+)\).*/\1/' | tr '|' '\n'; } | sort -u)"
+ah_drift() { jq -r '.[]' <<<"$1" 2>/dev/null | while IFS= read -r tok; do grep -qxF -- "$tok" <<<"$ah_reportable" || printf '%s ' "$tok"; done; }
+ah_attn="$(sed -n "s/^_LANES_WAIT_ATTN='\(.*\)'\$/\1/p" "$S")"; ah_live="$(sed -n "s/^_LANES_WAIT_LIVE='\(.*\)'\$/\1/p" "$S")"
+check "AH12 both arrays read, and the reportable set holds a parked and a derived state" \
+  "$(jq 'length > 0' <<<"$ah_attn"):$(jq 'length > 0' <<<"$ah_live"):$(grep -cxE 'failed|running' <<<"$ah_reportable")" "true:true:2"
+check "AH12a every _LANES_WAIT_ATTN token is a reportable state" "$(ah_drift "$ah_attn")" ""
+check "AH12b every _LANES_WAIT_LIVE token is a reportable state" "$(ah_drift "$ah_live")" ""
+check "AH12c mutation: a fake token appended to a copy of the array is named" "$(ah_drift "$(jq -c '. + ["stalld"]' <<<"$ah_attn")")" "stalld "
 # Clean up the second wave: lane-feed L<n> (T7) resolves the NEWEST lane table in the primary.
 rm -rf "$LWS" "$P/.supervisor/automate/$PARENT3".* "$T/work/primary-lanes/$PARENT3"
 out="$(run lane-feed "$L6")"
