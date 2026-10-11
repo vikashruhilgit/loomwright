@@ -292,6 +292,10 @@ See [modes-and-merge-gate.md](modes-and-merge-gate.md).
 
 See [invariants.md](invariants.md).
 <!-- split:end invariants.md -->
+<!-- index-only:begin -->
+
+> **§11's surface list after the split (parallel-automate/22).** The positive-form grep in §11 now hits this skill at `skills/automate-loop/per-item-loop.md` and `skills/automate-loop/modes-and-merge-gate.md` — the split files that hold the mentions formerly in this file — not at `SKILL.md` itself. Read the `skills/automate-loop/SKILL.md` entry in §11's list as the skill as a whole (this index + its split files). The list in [invariants.md](invariants.md) is moved text, kept byte-identical by design.
+<!-- index-only:end -->
 
 ---
 

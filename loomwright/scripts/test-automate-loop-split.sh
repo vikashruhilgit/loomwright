@@ -31,8 +31,10 @@
 #      da2fac5; no git history needed). The only allowed delta is SKILL.md's frontmatter `version:` /
 #      `lastUpdated:` lines (a minor bump, AC1), substituted back before hashing. This proves the SPLIT
 #      COMMIT: it runs while every index and split file still has its split-time sha256 (also in the
-#      fixture); once a later item edits one, the proof prints one SKIP line naming the files — the
-#      byte identity is a property of the move, not a freeze of the engine docs;
+#      fixture; an index is hashed with its index-only blocks dropped, so index-only prose — which
+#      assemble.sh drops — may change without retiring the proof); once a later item edits one, the
+#      proof prints one SKIP line naming the files — the byte identity is a property of the move, not
+#      a freeze of the engine docs;
 #   F. STEP 0 (AC5) — commands/automate.md Step 0 names every skill split file, in documented order;
 #   G. CITATIONS (AC3) — every citation of a split surface in the tracked tree (CHANGELOG.md excluded):
 #      the skill path (`automate-loop/SKILL.md`, `automate-loop SKILL`, `automate-loop`) followed by a
@@ -48,7 +50,8 @@
 #      split file the SKILL index gives for `## §10`;
 #   M. MUTATION CONTROLS — each mutant gated on non-empty + differs (+ bash -n for a script mutant):
 #      an index entry's See line dropped (B), an unreferenced split file (C), a split file with one
-#      changed byte (E), Step 0 missing one file (F), the index entry a citation uses removed — exactly
+#      changed byte (E), an index-only edit keeping E running while an edit outside index-only blocks
+#      retires it (E gating), Step 0 missing one file (F), the index entry a citation uses removed — exactly
 #      one line fewer — and an anchors-table row removed (G), a reader re-pointed back to the raw index (H),
 #      assemble.sh with its `..` guard deleted — exactly two lines fewer — accepting the traversal (A2).
 # Read-only; scratch files under mktemp -d. Exit 0 = all pass, 1 = any failure.
@@ -264,19 +267,33 @@ proof_matches() {
   got="$(sha256 < "$2") $(wc -c < "$2" | tr -d ' ') $(wc -l < "$2" | tr -d ' ')"
   [ -n "$want" ] && [ "$want" = "$got" ]
 }
+# split_hash <file> <rel> — the split-time hash: an index (SKILL / command / AUTOMATE_RUN) is hashed
+# with its index-only blocks dropped (assemble.sh drops them too, so index-only prose may change
+# without retiring the proof); a split file is hashed raw.
+split_hash() {
+  case "$2" in
+    "$SKILL_IDX"|"$CMD_IDX"|"$RUN_IDX") drop_index_only "$1" | sha256 ;;
+    *) sha256 < "$1" ;;
+  esac
+}
+# edited_since_split <root> — " <rel>" per split-time surface under <root> whose split_hash differs.
+edited_since_split() {
+  local p want out=""
+  while IFS="$(printf '\t')" read -r p want; do
+    [ -n "$p" ] || continue
+    if [ ! -f "$1/$p" ]; then out="$out $p(gone)"; continue; fi
+    [ "$(split_hash "$1/$p" "$p")" = "$want" ] || out="$out $p"
+  done <<EOF
+$(awk -F '\t' '$1 == "split-time" {print $2 "\t" $3}' "$FIXTURE")
+EOF
+  printf '%s' "$out"
+}
 if ! printf 'x' | sha256 >/dev/null 2>&1; then
   no "E: no sha256 tool (shasum / sha256sum) — the move-only proof cannot run (never read as clean)"
 elif [ ! -s "$FIXTURE" ]; then
   no "E: fixture missing: $FIXTURE"
 else
-  edited=""
-  while IFS="$(printf '\t')" read -r p want; do
-    [ -n "$p" ] || continue
-    if [ ! -f "$REPO/$p" ]; then edited="$edited $p(gone)"; continue; fi
-    [ "$(sha256 < "$REPO/$p")" = "$want" ] || edited="$edited $p"
-  done <<EOF
-$(awk -F '\t' '$1 == "split-time" {print $2 "\t" $3}' "$FIXTURE")
-EOF
+  edited="$(edited_since_split "$REPO")"
   nsplit="$(awk -F '\t' '$1 == "split-time"' "$FIXTURE" | wc -l | tr -d ' ')"
   [ "$nsplit" -gt 0 ] || no "E: the fixture records no split-time file"
   if [ -n "$edited" ]; then
@@ -532,6 +549,32 @@ if [ -n "$victim" ] && [ -s "$M3/$victim" ] && ! cmp -s "$M3/$victim" "$REPO/$SK
   proof_matches "$SKILL_IDX" "$TMP/m3-asm" && no "MUTATION CONTROL: a split file with one changed byte passed the move-only proof (E)" \
     || ok "MUTATION CONTROL: a split file with one changed byte fails the move-only proof (E)"
 else no "could not build the changed-byte mutant — E control inconclusive"; fi
+# M9 — E gating: in a mirror of every split-time surface, an index-only edit to the SKILL index keeps
+# the proof RUNNING (no surface reads as edited), while an edit outside index-only blocks retires it.
+M9="$TMP/m9"
+awk -F '\t' '$1 == "split-time" {print $2}' "$FIXTURE" > "$TMP/m9-paths"
+while IFS= read -r p; do
+  [ -n "$p" ] && [ -f "$REPO/$p" ] || continue
+  mkdir -p "$M9/$(dirname "$p")"; cp "$REPO/$p" "$M9/$p"
+done < "$TMP/m9-paths"
+if [ -n "$(edited_since_split "$REPO")" ]; then
+  echo "  note: E is skipped on this tree — the M9 gating control has no unedited baseline to mutate"
+elif [ -n "$(edited_since_split "$M9")" ]; then
+  no "the unmutated M9 mirror reads as edited — E gating control inconclusive"
+else
+  awk '{print} !d && $0 == "<!-- index-only:end -->" {print "<!-- index-only:begin -->"; print "M9 index-only note."; print "<!-- index-only:end -->"; d = 1}' \
+    "$REPO/$SKILL_IDX" > "$M9/$SKILL_IDX"
+  if ! cmp -s "$M9/$SKILL_IDX" "$REPO/$SKILL_IDX"; then
+    [ -z "$(edited_since_split "$M9")" ] && ok "MUTATION CONTROL: an index-only edit to the SKILL index keeps the move-only proof RUNNING (E)" \
+      || no "MUTATION CONTROL: an index-only edit to the SKILL index retired the move-only proof (E)"
+  else no "could not build the index-only mutant — E gating control inconclusive"; fi
+  awk '!d && $0 == "<!-- index-only:end -->" {print; print "M9 text outside index-only."; d = 1; next} {print}' \
+    "$REPO/$SKILL_IDX" > "$M9/$SKILL_IDX"
+  if ! cmp -s "$M9/$SKILL_IDX" "$REPO/$SKILL_IDX"; then
+    case "$(edited_since_split "$M9")" in *" $SKILL_IDX"*) ok "MUTATION CONTROL: an edit outside index-only blocks still retires the move-only proof (E)" ;;
+      *) no "MUTATION CONTROL: an edit outside index-only blocks did NOT retire the move-only proof (E)" ;; esac
+  else no "could not build the outside-index-only mutant — E gating control inconclusive"; fi
+fi
 # M4 — F: Step 0 with one split file name dropped.
 M4="$TMP/m4-automate.md"; drop="$(sed -n '2p' "$TMP/step0-want")"
 awk -v d="\`$drop\`, " '/^### Step 0/ {s = 1} s && !done && index($0, d) {sub(d, ""); done = 1} {print}' "$REPO/$CMD_IDX" > "$M4"
