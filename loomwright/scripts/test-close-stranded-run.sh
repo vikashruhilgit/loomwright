@@ -27,6 +27,9 @@
 #       closes out for its own session (5a) and still for NO ONE else (5b), with
 #       the seed isolated as the authorising fact (5c) and taking precedence over
 #       a foreign first log line (5d) without becoming a blanket suppression (5e)
+#   6.  a --parallel lane that ended to ASK (lane.json + an unanswered inbox
+#       question) is not closed out (6a); a lane with every question answered
+#       (6b) and an unanswered question outside a lane (6c) still are
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-progress-state.sh / test-token-ledger.sh.
@@ -573,6 +576,56 @@ assert_eq "case5e the seeded owner appends exactly one session_end" "2" "$(count
 assert_eq "case5e appended record is a session_end" "session_end" "$(tail -1 "$LOG5D" | jq -r '.event // empty')"
 assert_eq "case5e state.md reaches a terminal status" "failed" \
   "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO5D/.supervisor/state.md" 2>/dev/null)"
+
+echo "== 6. a --parallel lane that ended to ASK is not stranded =="
+# A headless lane defers its owner question by exiting; lane-answer then resumes the
+# SAME session. Closing the run at that exit flipped state.md off `running`, so
+# every lifecycle row after the resume left the run log (W2 lane L1: 5 run-log
+# lines vs 149 in the session log) and FINALIZE point 5 read a child unsettled.
+seed_lane_question() {
+  # Usage: seed_lane_question <repo> <tool_use_id> [answered]
+  local repo="$1" id="$2"
+  mkdir -p "$repo/.supervisor/inbox/questions" "$repo/.supervisor/inbox/answers"
+  printf '{"run_id":"run-L1","lane":"L1"}\n' > "$repo/.supervisor/lane.json"
+  printf '{"id":"%s","questions":[]}\n' "$id" > "$repo/.supervisor/inbox/questions/$id.json"
+  [ "${3:-}" = "answered" ] && printf '{"answers":{}}\n' > "$repo/.supervisor/inbox/answers/$id.json"
+  return 0
+}
+
+echo "-- 6a. lane + unanswered question -> writes nothing, run stays running --"
+REPO6A="$(init_repo "feature/case6a")"
+seed_owned_log "$REPO6A" "sid-case6a" "cc-lane-6a"
+seed_state "$REPO6A" "sid-case6a" "running"
+seed_lane_question "$REPO6A" "toolu_pending6a"
+OUT6A="$(run_sut "$REPO6A" "cc-lane-6a")"
+assert_eq "case6a exit 0" "0" "$(get_rc "$OUT6A")"
+assert_eq "case6a no session_end appended" "1" "$(count_lines "$REPO6A/.supervisor/logs/sid-case6a.jsonl")"
+assert_eq "case6a state.md still running" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO6A/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 6b. control: lane whose questions are all answered -> still closed out --"
+# Without this control 6a would also pass if any lane.json disabled the close-out.
+REPO6B="$(init_repo "feature/case6b")"
+seed_owned_log "$REPO6B" "sid-case6b" "cc-lane-6b"
+seed_state "$REPO6B" "sid-case6b" "running"
+seed_lane_question "$REPO6B" "toolu_done6b" answered
+OUT6B="$(run_sut "$REPO6B" "cc-lane-6b")"
+assert_eq "case6b exit 0" "0" "$(get_rc "$OUT6B")"
+assert_eq "case6b exactly one session_end appended" "2" "$(count_lines "$REPO6B/.supervisor/logs/sid-case6b.jsonl")"
+assert_eq "case6b state.md reaches a terminal status" "failed" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO6B/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 6c. control: an unanswered inbox question OUTSIDE a lane -> still closed out --"
+# The guard is scoped to lane clones; an inbox left in a primary checkout must not
+# become a way to keep a dead run alive.
+REPO6C="$(init_repo "feature/case6c")"
+seed_owned_log "$REPO6C" "sid-case6c" "cc-primary-6c"
+seed_state "$REPO6C" "sid-case6c" "running"
+seed_lane_question "$REPO6C" "toolu_stray6c"
+rm -f "$REPO6C/.supervisor/lane.json"
+OUT6C="$(run_sut "$REPO6C" "cc-primary-6c")"
+assert_eq "case6c exit 0" "0" "$(get_rc "$OUT6C")"
+assert_eq "case6c exactly one session_end appended" "2" "$(count_lines "$REPO6C/.supervisor/logs/sid-case6c.jsonl")"
 
 echo "== real repo .supervisor untouched =="
 assert_eq "real .supervisor snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

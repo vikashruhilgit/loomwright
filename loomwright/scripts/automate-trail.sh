@@ -1478,7 +1478,8 @@ PROGRESS
     _lf="$_logs/$_sid.jsonl"
     [ -f "$_lf" ] && jq -Rne --arg pr "$pr_url" '[inputs | fromjson? | select(type == "object" and .event == "item_timing" and .pr_url == (if $pr == "" then null else $pr end))] | length > 0' < "$_lf" && exit 0   # item_timing-idempotence guard: this PR's row is already logged
     _line="$(printf '%s' "$_pt" | jq -c --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg pr "$pr_url" \
-      '{event:"item_timing",ts:$ts,pr_url:(if $pr=="" then null else $pr end)} + .' 2>/dev/null)" || exit 0
+      '{event:"item_timing",ts:$ts,pr_url:(if $pr=="" then null else $pr end)} + .
+       | if (.cc_session_id | type) == "string" and .cc_session_id != "" then . else del(.cc_session_id) end' 2>/dev/null)" || exit 0   # a session-log line carries cc_session_id only as a real id (build-floor's recount counts the key)
     [ -n "$_line" ] && { printf '%s\n' "$_line" >> "$_lf"; } 2>/dev/null
   ) >/dev/null 2>&1 || true
 

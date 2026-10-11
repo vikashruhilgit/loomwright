@@ -37,9 +37,12 @@
 #      absent/empty/unparseable reason satisfies this), and
 #   1. `.supervisor/state.md` exists at the MAIN worktree, and
 #   2. its `- status:` is NON-TERMINAL (running | checkpoint | paused), and
-#   3. THIS session is the recorded owner of that run's log.
+#   3. THIS session is the recorded owner of that run's log, and
+#   4. the checkout is NOT a `--parallel` lane holding an unanswered question
+#      (a lane exits to ask and is resumed in the same session — see the scope
+#      guard below).
 # Anything else — a `clear`, a terminal status, no state.md, a non-owner
-# session — writes NOTHING and exits 0.
+# session, a lane waiting on its owner — writes NOTHING and exits 0.
 #
 # `failed` is the ONLY status this emits. `paused` is deliberately never used:
 # it is classified LIVE by hook-dispatch-on-pr-create.sh and DEAD by both
@@ -145,6 +148,24 @@ main_root="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //
 [ -n "$main_root" ] && [ -d "$main_root" ] || exit 0
 top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
 [ "$top" = "$main_root" ] || exit 0
+
+# ---- Scope: a `--parallel` lane that ended to ASK is not stranded -------------
+# A headless lane defers its owner question by EXITING (the relay hook records the
+# question in the lane inbox and returns `defer`); `lane-answer` then resumes the
+# SAME session. Closing the run here flipped state.md off `running`, so after the
+# resume both emitters stopped joining the run and every later lifecycle row went
+# to the session's own log (wave W2, lane L1: 5 run-log lines vs 149) — FINALIZE
+# point 5 then read a child unsettled and the owner had to skip the check.
+# Scoped to a lane clone (`.supervisor/lane.json`, the marker lane-create writes)
+# holding a question with no answer file — the same predicate as
+# automate-lanes.sh's `_lanes_pending_question`. A lane with every question
+# answered, and any non-lane checkout, still closes out below.
+if [ -f "$main_root/.supervisor/lane.json" ]; then
+  for _q in "$main_root"/.supervisor/inbox/questions/*.json; do
+    [ -f "$_q" ] || continue
+    [ -e "$main_root/.supervisor/inbox/answers/$(basename "$_q")" ] || exit 0
+  done
+fi
 
 # Host mode (host-mode.sh — the one resolver): off keeps `$main_root/.supervisor`
 # byte-identical; on, the log and seed live in lw_gate_state_dir_existing (the host's

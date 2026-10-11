@@ -1571,8 +1571,9 @@ def worker_summary_file_evidence(task_id, text, payload):
       1. `{cwd}/.worker-summary.md`, NAMING this task_id      (inline / worktree
          cwd — see _summary_file_matches_task for why the content check)
       2. `{cwd}/.supervisor/worker-summaries/{task_id}.md` (inline mode)
-      3. `../*{task_id}/.worker-summary.md`                (sibling worktree, per
-         the ARCHITECTURE_CONTRACTS worktree naming convention)
+      3. `../*{task_id}/.worker-summary.md` or `../*{task_id}-dep/…` (sibling
+         worktree, per the ARCHITECTURE_CONTRACTS worktree naming convention;
+         `-dep` is a dependent subtask's worktree)
       4. the literal marker `summary_file_write_failed` in the output (the
          documented best-effort degradation)
       5. the output naming the summary file it wrote
@@ -1611,8 +1612,11 @@ def worker_summary_file_evidence(task_id, text, payload):
                 return True
             if task_id:
                 parent = os.path.dirname(os.path.abspath(root))
-                if glob.glob(os.path.join(parent, "*" + task_id, ".worker-summary.md")):
-                    return True
+                # `../<repo>-<sub>-dep` is the dependency worktree execute-manager
+                # creates for a subtask that consumes another's output.
+                for sibling in ("*" + task_id, "*" + task_id + "-dep"):
+                    if glob.glob(os.path.join(parent, sibling, ".worker-summary.md")):
+                        return True
         except OSError:
             continue
 

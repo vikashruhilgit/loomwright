@@ -1415,6 +1415,23 @@ assert_fail "worker: a .worker-summary.md naming ANOTHER task does not satisfy r
 run_v "$V_WORKER" "$FIXDIR/worker-valid-bullet.md" "$SANDBOX_JWT"
 assert_pass "worker: a .worker-summary.md naming THIS task does satisfy rule 3"
 
+# --- Rule 3 tier 3: a dependency worktree `../<repo>-<sub>-dep` is a sibling too
+# execute-manager names a dependent subtask's worktree `../<repo>-<sub>-dep`;
+# the `../*<task_id>/` glob could not match it, so every dependent worker's
+# first stop was rejected (wave W2, lane L1).
+DEPWT="$TMPROOT/depwt"
+mkdir -p "$DEPWT/proj"
+write_summary "$DEPWT/repo-add-jwt-guard-dep" "add-jwt-guard"
+run_v "$V_WORKER" "$FIXDIR/worker-valid-bullet.md" "$DEPWT/proj"
+assert_pass "worker: a summary in the sibling ../<repo>-<task>-dep worktree satisfies rule 3"
+
+DEPWT2="$TMPROOT/depwt2"
+mkdir -p "$DEPWT2/proj"
+write_summary "$DEPWT2/repo-add-jwt-guard-other" "add-jwt-guard"
+run_v "$V_WORKER" "$FIXDIR/worker-valid-bullet.md" "$DEPWT2/proj"
+assert_fail "worker: a sibling whose name only CONTAINS the task id does not satisfy rule 3" \
+  "(rule 3)"
+
 # --- FINDING 6b: status=partial is a RECORDED exemption from rule 4 ----------
 # agents/worker.md's own worked `partial` example carries a non-empty error
 # alongside a non-empty outputs_gap, so an outstanding error is the POINT of
