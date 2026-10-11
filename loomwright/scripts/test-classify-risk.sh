@@ -39,7 +39,7 @@ S="$HERE/classify-risk.sh"
 # docs/RESULT_SCHEMAS.md is an index; the risk table lives in the SUPERVISOR_RESULT split
 # file. E2's one-copy count runs over the index AND every split file (the whole schema doc).
 SCHEMAS="$HERE/../docs/result-schemas/supervisor-result.md"
-SCHEMAS_ALL_DOC="$HERE/../docs/RESULT_SCHEMAS.md $(ls "$HERE"/../docs/result-schemas/*.md 2>/dev/null | tr '\n' ' ')"
+SCHEMAS_ALL_DOC="$HERE/../docs/RESULT_SCHEMAS.md $(ls "$HERE"/../docs/result-schemas/*.md "$HERE"/../docs/result-schemas/automate-run/*.md 2>/dev/null | tr '\n' ' ')"
 VALIDATOR="$HERE/validate-supervisor-result.py"
 BASH_BIN="$(command -v bash)"
 
@@ -266,7 +266,10 @@ grep -q '`\*token\*`' "$TMP/table" && grep -q 'changed_lines > 400' "$TMP/table"
   && grep -q '`skills/`' "$TMP/table" && grep -q 'NO `exclude` key' "$TMP/table" \
   && ok "E3 the table names every branch's data (a/b/c + project, no exclude)" || no "E3 table content incomplete"
 # The lens and the loop POINT at the table instead of restating the pattern list.
-LENS="$HERE/../skills/self-heal-advisory/SKILL.md"; LOOP="$HERE/../skills/automate-loop/SKILL.md"
+# automate-loop is a split index (parallel-automate/22): read its documented-order assembly (index
+# segments + split files); a failed assembly leaves no file, so both greps below fail closed.
+LENS="$HERE/../skills/self-heal-advisory/SKILL.md"; LOOP="$TMP/automate-loop-skill.md"
+bash "$HERE/fixtures/automate-loop-split/assemble.sh" "$HERE/../skills/automate-loop/SKILL.md" "$LOOP"
 grep -q 'classify-risk.sh' "$LENS" && ! grep -q '\*authz\*' "$LENS" \
   && ok "E4 self-heal-advisory lens calls classify-risk.sh and no longer restates the pattern list" || no "E4 lens still restates the heuristic or lacks the call"
 grep -q 'classify-risk.sh' "$LOOP" && ! grep -q '\*authz\*' "$LOOP" \

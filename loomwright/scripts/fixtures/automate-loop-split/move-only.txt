@@ -1,0 +1,24 @@
+# move-only proof for the parallel-automate/22 split — read by scripts/test-automate-loop-split.sh (check E).
+# original    <index> <sha256> <bytes> <lines>  — the pre-split file at base da2fac5d4f54bea55fc91700ebe5729755f587ef
+# frontmatter <index> <key> <original> <split>  — the one allowed delta (SKILL.md's minor bump)
+# split-time  <path> <sha256>                    — every index and split file as the split committed it
+original	loomwright/skills/automate-loop/SKILL.md	94429cf6223e32b62babfd103648321c42590fdec157f8e4020c3116afb58ea3	245704	724
+original	loomwright/commands/automate.md	4e77b9a852ac82e52bf85248ab8d99d5c9af6d1284e3fafcb7ca4340798bef1e	23437	114
+original	loomwright/docs/result-schemas/automate-run.md	1c354a67be4f059cb14cdb2d3b14c9f065b6129878b8a67243a2d5d898f06264	25509	143
+frontmatter	loomwright/skills/automate-loop/SKILL.md	version	1.16.0	1.17.0
+frontmatter	loomwright/skills/automate-loop/SKILL.md	lastUpdated	2026-10-10	2026-10-11
+split-time	loomwright/skills/automate-loop/SKILL.md	32eeba54d84e831501c44735b67c90f78d7ec9e5190aa8f0dea9efc5634b0496
+split-time	loomwright/skills/automate-loop/intake.md	7d6ff242868f0018902aacab271d2baddcc025cf653aa0dbeee7c1b14d91e2a2
+split-time	loomwright/skills/automate-loop/resume.md	1cc1393d3536dc80568225b83e079a3664ada95e85601c7f5a60729819f8b9fb
+split-time	loomwright/skills/automate-loop/per-item-loop.md	61b06ad16e89f31687a688e224b84bfd2cc0f419d43d9cca488429615d808180
+split-time	loomwright/skills/automate-loop/modes-and-merge-gate.md	d6c18313f7ea8db646c0b3b57cb32bf7c218169b80900f5d44e19c7960ea25d3
+split-time	loomwright/skills/automate-loop/invariants.md	dd75cd8908f6a959743af4f06c14dc6605a1af3974efaee6d81d9c8d85c91e40
+split-time	loomwright/skills/automate-loop/branch-mode.md	4b7ce11dddcbe8db52d6498ec4c2b2c95a0a79f20b5422eeb5738dd2fb7a6085
+split-time	loomwright/skills/automate-loop/lanes.md	513fd37ad9198c4397993443ae2456330e9688cfc73c757c8553b7f1b2fb9452
+split-time	loomwright/commands/automate.md	7fb39e41e7fb685931acd25fbe1eec0af1c83c24dad1820e62ddc248838af7e8
+split-time	loomwright/skills/automate-loop/command-lanes.md	de81eacb550a38aa4e723dff2398bd1a5160def248b9e37dec53eccbdf85e3df
+split-time	loomwright/docs/result-schemas/automate-run.md	f0d3127c6548bc88db6e4b324f1f508d3d5cfa9386f88e76d80c2a5989360f00
+split-time	loomwright/docs/result-schemas/automate-run/sections-status-queue.md	2a8d71ede9fb885ba431eab7a59418fdbd796bd92870f8562512d09cbd25df60
+split-time	loomwright/docs/result-schemas/automate-run/item-lifecycle.md	16096da61ba263a201b891afce67048b54516e42b47dbb5ab28c644cb0682d02
+split-time	loomwright/docs/result-schemas/automate-run/parallel-lanes.md	a0d52871d196c25eb0e1788bcbe1443922778b98d6ddca81fbc655d93c2c1106
+split-time	loomwright/docs/result-schemas/automate-run/crash-safety.md	2c13d68869d2fa9e999b55b597a6db2ada6215c1da9ca73042f3599c4946fa4d

@@ -3351,7 +3351,11 @@ rm -rf "$WD10"
 # =============================================================================
 echo "== G. brief-repair (fail-SAFE, evidence-positive engine seam; ONE mover) =="
 
-SKILL_FILE="$HERE/../skills/automate-loop/SKILL.md"
+# The automate-loop skill and the AUTOMATE_RUN doc are split indexes (parallel-automate/22): the prose
+# seams below read their documented-order assembly (index segments + split files), never the index alone.
+SPLIT_D="$(mktemp -d)"; SKILL_FILE="$SPLIT_D/automate-loop-skill.md"; RUN_DOC="$SPLIT_D/automate-run-all.md"
+bash "$HERE/fixtures/automate-loop-split/assemble.sh" "$HERE/../skills/automate-loop/SKILL.md" "$SKILL_FILE" || no "cannot assemble skills/automate-loop/SKILL.md (index + split files)"
+bash "$HERE/fixtures/automate-loop-split/assemble.sh" "$HERE/../docs/result-schemas/automate-run.md" "$RUN_DOC" || no "cannot assemble result-schemas/automate-run.md (index + split files)"
 GK=".supervisor/requirements/r/03.md"
 GU="https://github.com/o/r/pull/7"
 # NEW (self-resolving) ctx shape — the 6 allowed keys only. `review_heal_result_path`
@@ -5343,7 +5347,7 @@ if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: live_lane' "$LG_RF" && [
 lg_bad=""
 grep -q '^CURRENT_PAUSE_ENUM=.* live_lane ' "$HERE/automate-helpers.d/runfile.sh" || lg_bad="$lg_bad runfile.sh"
 grep -q '^- pause_reason: .*|live_lane|null' "$SKILL_FILE" || lg_bad="$lg_bad SKILL§3"
-grep -q '^- pause_reason: .*|live_lane|null' "$HERE/../docs/result-schemas/automate-run.md" || lg_bad="$lg_bad automate-run.md"
+grep -q '^- pause_reason: .*|live_lane|null' "$RUN_DOC" || lg_bad="$lg_bad automate-run.md"
 grep -qF -- '`meta_unreachable`, `closeout_leftover`, `live_lane` | `current-set <rf> --pause-reason <reason>`' "$SKILL_FILE" || lg_bad="$lg_bad SKILL-transition-table"
 if [ -z "$lg_bad" ]; then ok "LANEGUARD live_lane is in every pause_reason enum copy"; else no "LANEGUARD live_lane missing from:$lg_bad"; fi
 # Prose seams (same helper on the real SKILL and on a mutant, like G7): §6 step 1's PICK-time run-lock
@@ -5368,7 +5372,7 @@ if ! cmp -s "$SKILL_FILE" "$LG_T/no-start.md" && ! lg_start_seam "$LG_T/no-start
 # §14's intro no longer claims "no automate-lanes.sh call" without naming the pick-guard exception.
 lg_intro="$(grep -F -- '**Without the flag, or with N = 1, no lane code path is entered**' "$SKILL_FILE" | head -1)"
 case "$lg_intro" in *'except the read-only `pick-guard`'*) ok "LANEGUARD §14 intro names the pick-guard exception" ;; *) no "LANEGUARD §14 intro contradicts the default-path pick-guard: $lg_intro" ;; esac
-rm -rf "$LG_T"
+rm -rf "$LG_T" "$SPLIT_D"
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
