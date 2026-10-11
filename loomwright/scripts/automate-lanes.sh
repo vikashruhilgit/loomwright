@@ -83,6 +83,8 @@
 #   <primary>/.supervisor/automate/<parent_run_id>.memory-pressure   trip file (lane-sampler.sh); read only
 #   <primary>/.supervisor/automate/<parent_run_id>.fleet.log         lane-sampler.sh samples; read only
 #   <primary>/.supervisor/automate/<parent_run_id>.leaks-snapshot    `lane-status --leaks --snapshot` (wave start)
+#   <primary>/.supervisor/automate/<parent_run_id>.lane-wait-seen    lane-wait's seen ledger (one key per line;
+#                                       atomic tmp+mv rewrite, removed when nothing it holds is still true)
 #   <lane>/.supervisor/automate/<run_id>.merge-readiness.md          lane-readiness (written at the lane's
 #                                       ready_for_release park, when the lane is no longer running)
 #
@@ -2079,7 +2081,15 @@ lanes_wait() {
         echo "lane-wait: relay — show each question to the owner verbatim (lane-status $rf --inbox), deliver only the owner's answer with lane-answer, then re-arm lane-wait"
         return 0
       fi
-      [ -n "$keep" ] && { printf '%s\n' "$keep" > "$ledger.tmp.$$" 2>/dev/null && mv "$ledger.tmp.$$" "$ledger" 2>/dev/null || rm -f "$ledger.tmp.$$" 2>/dev/null; }
+      # Nothing new: the ledger is rewritten to exactly `keep` — removed when keep is empty, so a lone
+      # stale state key (L1 stalled → running) is pruned too and the re-entered state reports again.
+      if [ -f "$ledger" ]; then
+        if [ -n "$keep" ]; then
+          { printf '%s\n' "$keep" > "$ledger.tmp.$$" 2>/dev/null && mv "$ledger.tmp.$$" "$ledger" 2>/dev/null; } || rm -f "$ledger.tmp.$$" 2>/dev/null
+        else
+          rm -f "$ledger" 2>/dev/null
+        fi
+      fi
       live="$(jq -r --argjson live "$_LANES_WAIT_LIVE" '[.lanes[]? | .state as $s | select($live | index($s))] | length' <<<"$doc" 2>/dev/null)"
       if [ "${live:-1}" = 0 ]; then
         echo "lane-wait: idle — no lane is running; nothing changes until the owner acts"

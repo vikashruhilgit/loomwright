@@ -577,14 +577,22 @@ check "AH5b a zero interval is refused (never a busy loop)" "$rc" 2
 out="$(run lane-wait "$P/.supervisor/automate/none.md")"; rc=$?
 check "AH6 no lane table ⇒ idle, exit 0" "$rc" 0
 has "AH6b … and says idle" "$out" "lane-wait: idle — no lane table"
+out="$(bash "$HERE/automate-helpers.sh" lane-wait "$P/.supervisor/automate/none.md" 2>&1)"; rc=$?
+check "AH6c dispatched through automate-helpers.sh" "$rc:$out" "0:lane-wait: idle — no lane table for $P/.supervisor/automate/none.md (nothing to watch)"
 check "AH7 --help lists lane-wait" "$(bash "$S" --help | grep -c '^#   lane-wait <parent_runfile>' | tr -d ' ')" 1
 # AH8 idle: a fleet with no live lane and nothing new must exit, never poll parked lanes forever.
 PARENT3=automate-2026-10-07-140000; RF3="$P/.supervisor/automate/$PARENT3.md"
 printf '# Automate Run: %s\n\n## Progress\n' "$PARENT3" > "$RF3"
 run lane-create "$RF3" reqs/a.md 1 --parallel 2 >/dev/null
+# AH10 the ledger's ONLY key is a state no longer true (L1 is `created`: live, not an event). With nothing
+# new and nothing kept, the poll must still prune it — else the re-entered state is never reported again.
+LWS3="$P/.supervisor/automate/$PARENT3.lane-wait-seen"; echo "state L1 blocked_launch" > "$LWS3"
+out="$(run lane-wait "$RF3" --interval 1 --timeout 1)"; rc=$?
+check "AH10 a lone stale key, one live lane, nothing new ⇒ times out" "$rc:$out" "0:lane-wait: timeout after 1s — nothing new"
+check "AH10b … and that lone stale state key is pruned (ledger removed)" "$([ -e "$LWS3" ] && cat "$LWS3" || echo absent)" absent
 run lane-launch "$T/work/primary-lanes/$PARENT3/L1" --host-denied 'denied' >/dev/null
 out="$(run lane-wait "$RF3" --interval 1 --timeout 5)"
-has "AH8a first call reports the blocked lane" "$out" "lane-wait: state L1 blocked_launch"
+has "AH8a first call reports the blocked lane (AH10c: the re-entered state reports again)" "$out" "lane-wait: state L1 blocked_launch"
 out="$(run lane-wait "$RF3" --interval 1 --timeout 5)"; rc=$?
 check "AH8b nothing live, nothing new ⇒ idle at once, exit 0" "$rc:$out" "0:lane-wait: idle — no lane is running; nothing changes until the owner acts"
 # AH9 read-only toward lanes: a full lane-wait pass writes nothing but its own ledger.

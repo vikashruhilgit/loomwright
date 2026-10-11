@@ -34,7 +34,8 @@
 # (parallel-automate/05, reached ONLY by `/automate --parallel N>1` — never by the
 # sequential loop): `lane-create`/`lane-launch`/`relay-hook`/`lane-answer`/
 # `lane-remove`/`lane-convert-ready`/`lane-info`/`init-check`/`pick-guard`/`branch-check`, the
-# observers `lane-status`/`lane-feed`/`lane-readiness`, the park notifier `lane-park-notify` and the wave
+# observers `lane-status`/`lane-feed`/`lane-readiness`, the park notifier `lane-park-notify`, the lane
+# watcher `lane-wait` and the wave
 # close `fleet-closeout` / read-only `wave-plan` (parallel-automate/21) are
 # delegated to the sibling `automate-lanes.sh`, which clones lanes under `<primary>-lanes/`, launches/resumes
 # them headless, writes the lane table sidecar, the lane inbox and the advisory
@@ -97,6 +98,7 @@
 #   lane-feed        <lane_dir|L<n>> [--follow]         # parallel-automate/05: delegated to automate-lanes.sh — readable narration of the lane's stream log
 #   lane-readiness   <lane_dir|L<n>>                    # parallel-automate/05: delegated to automate-lanes.sh — writes <run_id>.merge-readiness.md (PASS/FAIL/NOT-RUN per check; advisory, never merges)
 #   lane-park-notify <runfile>                          # parallel-automate/24: delegated to automate-lanes.sh — a lane's ready_for_release park notify: desktop + `automate_ready_for_release` webhook ("do not merge yet — wave open"), both fail-SAFE, + one ## Progress line naming what each channel actually delivered; always exits 0
+#   lane-wait        <parent_runfile> [--interval S] [--timeout S]  # delegated to automate-lanes.sh — the coordinator's lane watcher: blocks token-free until a lane needs the owner (a new pending question, or a lane entering a park / failure state), prints one `lane-wait: …` line per event + one relay hint and exits 0 (idle / timeout also exit 0, usage error 2); run as a BACKGROUND command; read-only except its `<parent_run_id>.lane-wait-seen` ledger
 #   fleet-closeout   <parent_runfile>                   # parallel-automate/21: delegated to automate-lanes.sh — wave close in the coordinator's primary, stepwise + idempotent (re-run on every --resume): meta pull, per-lane backstop (lane-convert-ready on a merged lane), parent Queue check-off, primary sync, lane-remove, then lanes dir / leaks / main health / run-lock release; one `fleet-closeout: <step> — <detail>` line each; never merges; exit 0 (pull failure 2)
 #   wave-plan        <parent_runfile> [--wave-branch <name>]  # parallel-automate/21: delegated to automate-lanes.sh — READ-ONLY: prints the operator's wave-branch integration commands (one `git merge --no-ff <head sha>` per lane) + the conflict rules; executes no git mutation, push or gh write
 #
@@ -1057,7 +1059,7 @@ main() {
     lane-create|lane-launch|relay-hook|lane-answer|lane-remove) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     lane-convert-ready) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     lane-info|init-check|pick-guard|branch-check) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
-    lane-status|lane-feed|lane-readiness|lane-park-notify) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
+    lane-status|lane-feed|lane-readiness|lane-park-notify|lane-wait) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     fleet-closeout|wave-plan) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     ""|-h|--help)
       _ah_bundle | grep -E '^#   [a-z]' | sed 's/^#   /  /'
