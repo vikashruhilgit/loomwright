@@ -716,7 +716,13 @@ The contract-conformance result, the benchmark result, and the ground-truth resu
    | `ground_truth_status` | `ground_truth.status` |
    | `ground_truth_checks_total` | `ground_truth.checks_total` |
    | `ground_truth_checks_passed` | `ground_truth.checks_passed` |
-   | `ground_truth_pass_rate` (string "M/N") | the runner's `pass_rate` |
+   | `ground_truth_pass_rate` (string "M/N") | the runner's `pass_rate` — FLAT ONLY: never a key of the nested `ground_truth` |
+
+   **Nested shapes, exactly (automate-followups/20 — `/automate` `sidecar-check` fails any other key set; `docs/result-schemas/supervisor-result.md` "Nested-object key sets"):** the flat table above maps nested → flat and never the reverse, so no flat-only field (`pass_rate` / `ground_truth_pass_rate`) is ever copied into a nested object.
+   - `ground_truth: {checked: <bool>, status: <s>, checks_total: <n>, checks_passed: <n>, findings: [...]}` — `checked` is ALWAYS present (`gt.ran`), including on `status: pass`.
+   - `contract_conformance: {checked: <bool>, status: <s>, contracts_evaluated: <n>, violations: <n>, findings: [...]}`.
+   - `benchmark_result: {ran, status, name, metric, value, baseline, delta, unit}` — on a parse miss `{ran: false, status: unverified}`.
+   - **Skip form** (nothing to check): `ground_truth: {checked: false, status: skipped}` / `contract_conformance: {checked: false, status: skipped}` (or `status: unverified`) — complete as written; the counts and `findings` may be written as `0` / `[]` or omitted.
 
    **Findings-per-item fields (iq02 IQ01, additive, same value in both shapes, same names):** `heal_first_decision` (the review-and-fix loop's first `iter_decision` — `PASS` / `FAIL` / `NEEDS_HUMAN`) and `heal_new_findings` (integer — `category: new` `review.issues` summed over every iteration) go on `SUPERVISOR_RESULT` AND on the flat `session_end` line; both are `null` when `heal_loop_ran == false`. They are REPORT-ONLY: never read by the loop, never change `heal_decision` (whose enum is unchanged), and are what `/insights` turns into the first-pass PASS rate and findings per item.
 

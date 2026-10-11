@@ -336,6 +336,8 @@ _ge_pr_parts() {
 # other former key is now GATE-OWNED and REFUSED if present — see below):
 #   {
 #     "drain_result": "READY|ESCALATED",           # cond 1 — the owned drain's terminal decision
+#        # (`died` / `superseded_by_merge` — AUTOMATE_RUN owned_drain_result values with no
+#        # REVIEW_HEAL_RESULT behind them — never reach the gate; if passed, cond 1 PARKs them.)
 #     "termination_reason": "converged|bound_hit|sub_floor_converged|ci_untrusted",  # cond 1b
 #        # A "sub_floor_converged" drain skipped its final all-channel re-scan, so it is NOT
 #        # merge-eligible. "ci_untrusted" (ci-trust-probe-01) always pairs with drain_result ==
