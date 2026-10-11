@@ -648,7 +648,7 @@ seed_lane() {
 # lane_ask <tool_use_id> <header|""> <question> [<cwd>] — ask_payload's shape with
 # the given question / header and an optional payload cwd.
 lane_ask() {
-  ask_payload lanesess1 "$1" | jq -c --arg h "$2" --arg q "$3" --arg c "${4:-}" \
+  ask_payload lnsess01 "$1" | jq -c --arg h "$2" --arg q "$3" --arg c "${4:-}" \
     '(.tool_input.questions = [({question:$q} + (if $h == "" then {} else {header:$h} end))])
      + (if $c == "" then {} else {cwd:$c} end)'
 }
@@ -664,7 +664,7 @@ esac
 seed_lane "$TMP_ROOT/wd-$((CASE_N + 1))"
 run_sut "${LN_SB:-$SB_BARE}" "$(lane_ask toolu_ln1 "Way" "Which way should the lane take?")" "$LN_ENV"
 assert_eq "N1 lane banner exit 0" "0" "$RC"
-assert_file_match "N1 audit line names the lane" "notify group=loomwright-lanesess tool_use_id=toolu_ln1 lane=L2" "$WD/.supervisor/logs/notifications.log"
+assert_file_match "N1 audit line names the lane" "notify group=loomwright-lnsess01 tool_use_id=toolu_ln1 lane=L2" "$WD/.supervisor/logs/notifications.log"
 if [ -n "$LN_STUB" ]; then
   assert_file_match "N1 title: Lane L2 needs your answer" "Lane L2 needs your answer" "$MARKER/$LN_STUB.invoked"
   assert_file_match "N1 body: the question header + the coordinator's resume command" "Way$LN_SFX" "$MARKER/$LN_STUB.invoked"
