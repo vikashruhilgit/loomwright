@@ -52,6 +52,9 @@
 #     validated answer pending, --without-gate-optout resumes without it and clears the fact, never added
 #   AG wave-plan is READ-ONLY (A4: refs + tree byte-identical) + mutation control; the A3/A4 static guards
 #     (no executable merge / push / gate-eval) + mutation control; A5 no sequential caller
+#   AK a lane whose worker filed a proposed/ requirement draft (wave W4): the wave-end exact list carries
+#     it (a done-headed proposed/ file never), the lane is removable with no hand push; lane-remove's
+#     unpushed-metadata refusal — and so fleet-closeout's waiting line — names the paths + two mutations
 #   AJ lane timeline: the seven steps from `## Progress` + Supervisor state (pick-guarded), boundaries,
 #     current-step state per lane state, the JSON fields and the plain steps line
 set -uo pipefail
@@ -395,6 +398,19 @@ out="$(run lane-remove "$L4")"; has "N5 meta-push failure marker refused" "$out"
 rm -f "$L4/.supervisor/automate/$PARENT-L4.meta-push-failed"
 out="$(STUB_META_STATUS='local_ahead 2' run lane-remove "$L4")"; has "N6 unpushed metadata refused" "$out" "metadata not pushed (local_ahead 2)"
 has "N6b meta status passes --branch" "$(cat "$META_LOG")" "meta-sync status --branch test-meta --root $L4"
+# N6c-N6f the `status --paths` naming cap (_lanes_status_named): at most five paths, then `+<k> more`;
+# exactly five reads no `more`; a control with the cap removed lists all seven (N6c's line fails).
+N6P7="$(printf 'local_ahead 7\n  a.md\n  b.md\n  c.md\n  d.md\n  e.md\n  f.md\n  g.md')"
+out="$(STUB_META_STATUS="$N6P7" run lane-remove "$L4")"
+check "N6c seven unpushed paths: five named, then +2 more" "$(printf '%s\n' "$out" | grep 'metadata not pushed' | sed 's/^.* — metadata/metadata/')" \
+  "metadata not pushed (local_ahead 7) — paths: a.md, b.md, c.md, d.md, e.md, +2 more"
+out="$(STUB_META_STATUS="$(printf 'local_ahead 5\n  a.md\n  b.md\n  c.md\n  d.md\n  e.md')" run lane-remove "$L4")"
+check "N6d exactly five paths: all named, no +k more" "$(printf '%s\n' "$out" | grep 'metadata not pushed' | sed 's/^.* — metadata/metadata/')" \
+  "metadata not pushed (local_ahead 5) — paths: a.md, b.md, c.md, d.md, e.md"
+sed "s/sed 's\/^  \/\/' | head -5 /sed 's\/^  \/\/' /" "$S" > "$MUT/automate-lanes.sh"
+check "N6e mutation removed the five-path cap" "$(grep -c "sed 's/^  //' | head -5 " "$MUT/automate-lanes.sh" | tr -d ' ')" 0
+out="$(STUB_META_STATUS="$N6P7" bash "$MUT/automate-lanes.sh" lane-remove "$L4" 2>&1)"
+has "N6f mutation: without the cap all seven are listed (N6c's expected line would fail)" "$out" "paths: a.md, b.md, c.md, d.md, e.md, f.md, g.md, +2 more"
 git -C "$L4" checkout -q -b feature/x; echo y > "$L4/reqs/y.md"; git -C "$L4" add reqs/y.md; git -C "$L4" commit -qm y
 out="$(run lane-remove "$L4")"; has "N7 unpushed commits refused" "$out" "branch feature/x has 1 commit(s) not on origin"
 git -C "$L4" checkout -q main; git -C "$L4" branch -q -D feature/x
@@ -1385,8 +1401,9 @@ case "$1" in
   push) while IFS= read -r p; do [ -n "$p" ] || continue
           if [ -f "$root/$p" ]; then mkdir -p "$REMOTE11/$(dirname "$p")"; cp "$root/$p" "$REMOTE11/$p"; else rm -f "$REMOTE11/$p"; fi
         done < "$pf"; echo "meta_sync: pushed abc"; exit 0 ;;
-  status) n=0; for p in $(managed); do cmp -s "$root/$p" "$REMOTE11/$p" || n=$((n + 1)); done
-          if [ "$n" = 0 ]; then echo "synced abc on test-meta"; else echo "local_ahead $n"; fi; exit 0 ;;
+  status) n=0; ps=""; for p in $(managed); do cmp -s "$root/$p" "$REMOTE11/$p" || { n=$((n + 1)); ps="$ps  $p
+"; }; done
+          if [ "$n" = 0 ]; then echo "synced abc on test-meta"; else echo "local_ahead $n"; case " $* " in *" --paths "*) printf '%s' "$ps" ;; esac; fi; exit 0 ;;
   pull) exit 0 ;;
 esac
 EOF
@@ -1737,8 +1754,8 @@ check "AC3 lane-remove then removes the lane — no hand meta-sync push" "$rc:$(
 has "AC3b … reading lane-remove: removed" "$out" "lane-remove: removed L1 "
 # AC4 mutation control: the same lane lifecycle with the task-plan line dropped from the exact list
 # reproduces the incident — closeout complete, then lane-remove refuses on the one unpushed plan.
-sed '/^    _lanes_task_plans$/d' "$S" > "$MUT/automate-lanes.sh"
-check "AC4a mutation removed the task-plan list line" "$(grep -c '^    _lanes_task_plans$' "$MUT/automate-lanes.sh" | tr -d ' ')" 0
+sed 's|"\$LN_DIR"/.supervisor/requirements/\*-plan.md ||' "$S" > "$MUT/automate-lanes.sh"
+check "AC4a mutation removed the task-plan glob from the non-claim list" "$(grep -c 'requirements/\*-plan.md' "$MUT/automate-lanes.sh" | tr -d ' ')" 0
 ac_lane 2 "https://github.com/o/r/pull/62"; L512="$ABL"
 AC_S="$MUT/automate-lanes.sh" STUB_PR_STATE=OPEN ac lane-convert-ready "$L512" >/dev/null
 out="$(AC_S="$MUT/automate-lanes.sh" STUB_PR_STATE=MERGED ac lane-convert-ready "$L512")"
@@ -1746,6 +1763,56 @@ has "AC4b mutation: the merged re-run still reads closeout complete" "$(printf '
 out="$(AC_S="$MUT/automate-lanes.sh" ac lane-remove "$L512")"; rc=$?
 check "AC4c mutation: lane-remove refuses on the unpushed plan (the 2026-10-10 incident)" \
   "$rc:$(printf '%s' "$out" | grep -c 'metadata not pushed (local_ahead 1)' | tr -d ' ')" "1:1"
+
+# ---- AK: a lane whose worker filed a proposed/ requirement is removable; an unpushed path is NAMED ----
+# Wave W4 (run automate-2026-10-11-182243): L2's worker filed its out-of-scope follow-up as
+# `.supervisor/requirements/proposed/twin-remediation-11-…md` (## Status: proposed). It rode neither
+# wave-end push (the exact list had no proposed/ entry; trail-pr carries only this run's dismissed
+# drafts), so fleet-closeout printed `waiting — L2 metadata not pushed (local_ahead 1)` forever and the
+# coordinator found the file by a hand list-managed diff. Same real scripts and fake remote as AC.
+AKD=".supervisor/requirements/proposed/twin-remediation-11-loomwright-root-migration.md"
+AKC=".supervisor/requirements/proposed/ak-claimed.md"
+ak_files() { # <lane dir> — the filed draft (its body names the lane: the fake remote is shared, so two
+  # lanes' identical drafts would read as already pushed), plus a done-headed one (a claim: never listed)
+  printf '# twin-remediation/11 — LOOMWRIGHT_ROOT migration\n\n## Status: proposed\n\n## Problem\nfiled by the %s worker\n' "${1##*/}" > "$1/$AKD"
+  printf '# claim\n\n## Status: done\n- **PR:** %s\n' "$PAC" > "$1/$AKC"
+}
+mkdir -p "$T/remote-ac/.supervisor/requirements/proposed"; : > "$T/remote-ac/.supervisor/requirements/proposed/pulled.md"
+ac_lane 3 "https://github.com/o/r/pull/63"; L513="$ABL"; mkdir -p "$L513/.supervisor/requirements/proposed"; ak_files "$L513"
+: > "$L513/.supervisor/requirements/proposed/pulled.md"   # a draft the lane only pulled (same bytes as the branch): never unpushed
+out="$(STUB_PR_STATE=OPEN ac lane-convert-ready "$L513")"; rc=$?
+check "AK1 wave-end conversion (PR open) exits 0 and pushes the worker-filed proposed/ draft" \
+  "$rc:$(cmp -s "$L513/$AKD" "$T/remote-ac/$AKD" && echo pushed)" "0:pushed"
+check "AK1b … a done-headed proposed/ file is a claim: never on the exact list" \
+  "$([ -e "$T/remote-ac/$AKC" ] && echo pushed || echo kept-local)" kept-local
+out="$(STUB_PR_STATE=MERGED ac lane-convert-ready "$L513")"; rc=$?
+check "AK2 the merged re-run closes out (exit 0, closeout complete)" "$rc:$(printf '%s\n' "$out" | tail -n1 | grep -c '; closeout complete$' | tr -d ' ')" "0:1"
+out="$(ac lane-remove "$L513")"; rc=$?
+check "AK3 lane-remove refuses on the one unpushed (claim) file and NAMES it" \
+  "$rc:$(printf '%s\n' "$out" | grep -cxF "lane-remove: refused — L3 — metadata not pushed (local_ahead 1) — paths: $AKC" | tr -d ' ')" "1:1"
+out="$(ac fleet-closeout "$RF6")"
+has "AK3b … and fleet-closeout's waiting line names the path (no hand list-managed diff)" "$out" \
+  "fleet-closeout: waiting — L3 metadata not pushed (local_ahead 1) — paths: $AKC"
+rm -f "$L513/$AKC"
+out="$(ac lane-remove "$L513")"; rc=$?
+check "AK4 with the claim gone lane-remove removes the lane — the filed draft needed no hand push" "$rc:$([ -d "$L513" ] && echo kept || echo removed)" "0:removed"
+# AK5 mutation control: the proposed/ glob dropped from the non-claim list reproduces wave W4 — the
+# filed draft never reaches the branch and lane-remove refuses on it (still named).
+sed 's| "\$LN_DIR"/.supervisor/requirements/proposed/\*.md||' "$S" > "$MUT/automate-lanes.sh"
+check "AK5a mutation removed the proposed/ glob" "$(grep -c 'requirements/proposed/\*.md; do$' "$MUT/automate-lanes.sh" | tr -d ' ')" 0
+ac_lane 4 "https://github.com/o/r/pull/64"; L514="$ABL"; mkdir -p "$L514/.supervisor/requirements/proposed"; ak_files "$L514"; rm -f "$L514/$AKC"
+AC_S="$MUT/automate-lanes.sh" STUB_PR_STATE=OPEN ac lane-convert-ready "$L514" >/dev/null
+AC_S="$MUT/automate-lanes.sh" STUB_PR_STATE=MERGED ac lane-convert-ready "$L514" >/dev/null
+out="$(AC_S="$MUT/automate-lanes.sh" ac lane-remove "$L514")"; rc=$?
+check "AK5b mutation: lane-remove refuses on the unpushed filed draft (the wave W4 incident)" \
+  "$rc:$(printf '%s\n' "$out" | grep -cF "metadata not pushed (local_ahead 1) — paths: $AKD" | tr -d ' ')" "1:1"
+# AK6 mutation control: without `--paths` on lane-remove's status read the refusal names nothing (the
+# pre-fix line) — so AK3 / AK3b are what pin the naming.
+sed 's|--root "\$LN_DIR" --paths 2>|--root "$LN_DIR" 2>|' "$S" > "$MUT/automate-lanes.sh"
+check "AK6a mutation dropped --paths from the status read" "$(grep -cF -- '--root "$LN_DIR" --paths 2>' "$MUT/automate-lanes.sh" | tr -d ' ')" 0
+out="$(AC_S="$MUT/automate-lanes.sh" ac lane-remove "$L514")"; rc=$?
+check "AK6b mutation: the refusal reads the bare pre-fix line, no path named" \
+  "$rc:$(printf '%s\n' "$out" | grep -c 'metadata not pushed (local_ahead 1)$' | tr -d ' ')" "1:1"
 
 # ---- AD: policy carry (B5), relay-hook policy apply (B6), no policy ⇒ unchanged (B10), digest + inbox (B7)
 # lane-policy.sh is the REAL script (Subtask 1); the policies are a wave-policy file and a project policy

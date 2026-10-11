@@ -9,7 +9,7 @@
 #   meta-sync.sh init   [--branch <name> [--allow-branch-mismatch]] [--root <checkout>]
 #   meta-sync.sh pull   [--branch <name> [--allow-branch-mismatch]] [--root <checkout>]
 #   meta-sync.sh push   [--branch <name> [--allow-branch-mismatch]] [--root <checkout>] [--paths-from <file>] [--message <m>]
-#   meta-sync.sh status [--branch <name> [--allow-branch-mismatch]] [--root <checkout>]
+#   meta-sync.sh status [--branch <name> [--allow-branch-mismatch]] [--root <checkout>] [--paths]
 #   meta-sync.sh scrub  --paths-from <file> [--root <checkout>]
 #   meta-sync.sh list-managed [--tracked] [--root <checkout>]
 #   meta-sync.sh -h | --help
@@ -51,6 +51,8 @@
 #                 or not). push and scrub ONLY: given to init / pull / status / list-managed it is a
 #                 usage error (exit 1, nothing changed) — never silently accepted and ignored
 #   --tracked     list-managed ONLY (a usage error elsewhere): list from `git ls-files`
+#   --paths       status ONLY (a usage error elsewhere): after the status line, name the paths it
+#                 counts — see STATUS below
 #   --message     commit message for the metadata-branch commit
 #
 # MANAGED SET — the ONE declared list (is_managed below); everything else is invisible to this script:
@@ -246,7 +248,12 @@
 # STATUS prints exactly one line and always exits 0 once the branch is resolved: `synced <sha> on
 # <branch>` | `local_ahead <n>` | `remote_ahead` | `conflict <n>` | `no_remote_branch` |
 # `unreachable` | `never_synced` | `base_branch_mismatch`. (A branch_mismatch / mode_unknown /
-# usage refusal happens before status runs and exits 1.)
+# usage refusal happens before status runs and exits 1.) With --paths, `local_ahead <n>` and
+# `conflict <n>` are followed by the <n> paths they count, one per line, two-space indented,
+# LC_ALL=C-sorted — local_ahead: every take-L and union path, a path this checkout deleted
+# suffixed ` (deleted locally)`; conflict: every conflicting path — so a caller that refuses on
+# them can name what is unpushed (lane-remove does). The first line is unchanged; every other
+# status prints only it.
 # Precedence: unreachable > no_remote_branch > never_synced > base_branch_mismatch > conflict >
 # local_ahead > remote_ahead.
 #
@@ -262,8 +269,9 @@
 # is the ONLY command that may create the branch (an empty orphan commit); it refuses when the
 # branch already exists.
 #
-# Callers: automate-helpers.sh `meta-entry` (pull) and automate-trail.sh `trail-pr` (push
-# --paths-from) — both pass `--branch <the mode's branch>`, which the mode check accepts.
+# Callers: automate-helpers.sh `meta-entry` (pull), automate-trail.sh `trail-pr` (push
+# --paths-from) and automate-lanes.sh `lane-remove` (status --paths) — each passes `--branch <the
+# mode's branch>`, which the mode check accepts.
 
 set -uo pipefail
 
@@ -278,6 +286,7 @@ ROOT=""
 PATHS_FROM=""
 PATHS_FROM_SET=0
 TRACKED=0
+STATUS_PATHS=0
 MESSAGE="meta-sync: run history"
 MAX_ATTEMPTS=5
 LEDGER_PATH=".supervisor/postmortem/results.jsonl"
@@ -305,6 +314,7 @@ while [ $# -gt 0 ]; do
     --root)       need_val "$1" "$#"; ROOT="$2"; shift 2 ;;
     --paths-from) need_val "$1" "$#"; PATHS_FROM="$2"; PATHS_FROM_SET=1; shift 2 ;;
     --tracked)    TRACKED=1; shift ;;
+    --paths)      STATUS_PATHS=1; shift ;;
     --message)    need_val "$1" "$#"; MESSAGE="$2"; shift 2 ;;
     -h|--help)    usage ;;
     *) die "usage: unknown argument '$1' (try --help)" ;;
@@ -319,6 +329,8 @@ done
   || die "usage: scrub requires --paths-from <file> (the files to scan); nothing was changed (try --help)"
 [ "$TRACKED" = "0" ] || [ "$SUBCMD" = "list-managed" ] \
   || die "usage: --tracked applies to list-managed only, not '$SUBCMD'; nothing was changed (try --help)"
+[ "$STATUS_PATHS" = "0" ] || [ "$SUBCMD" = "status" ] \
+  || die "usage: --paths applies to status only, not '$SUBCMD'; nothing was changed (try --help)"
 # scrub and list-managed need no branch and skip the mode / branch check, so a --branch given to
 # them could only be silently ignored.
 NEEDS_BRANCH=1
@@ -1196,6 +1208,13 @@ cmd_push() {
   die "push_failed — rejected $MAX_ATTEMPTS times; nothing forced, meta-base untouched"
 }
 
+# status_paths <outcome>... — under --paths, the plan's paths with those outcomes (see STATUS).
+status_paths() {
+  [ "$STATUS_PATHS" = "1" ] || return 0
+  awk -F'\t' -v want=" $* " 'index(want, " " $1 " ") { print "  " $2 ($3 == "-" ? " (deleted locally)" : "") }' "$WORK/plan" \
+    | env LC_ALL=C sort
+}
+
 cmd_status() {
   local rc n
   fetch_remote; rc=$?
@@ -1210,9 +1229,9 @@ cmd_status() {
   [ "$rc" -eq 0 ] || { echo "unreachable"; exit 0; }
   [ "$HAVE_BASE" = "1" ] || { echo "never_synced"; exit 0; }
   n="$(count_outcome CONFLICT)"
-  [ "$n" -gt 0 ] && { echo "conflict $n"; exit 0; }
+  [ "$n" -gt 0 ] && { echo "conflict $n"; status_paths CONFLICT; exit 0; }
   n=$(( $(count_outcome TAKE_L) + $(count_outcome UNION) ))
-  [ "$n" -gt 0 ] && { echo "local_ahead $n"; exit 0; }
+  [ "$n" -gt 0 ] && { echo "local_ahead $n"; status_paths TAKE_L UNION; exit 0; }
   [ "$(count_outcome TAKE_R)" -gt 0 ] && { echo "remote_ahead"; exit 0; }
   echo "synced $R on $BRANCH"
   exit 0
