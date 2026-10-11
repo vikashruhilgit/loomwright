@@ -27,3 +27,9 @@ loomwright/scripts/automate-merge-watch.sh
 loomwright/docs/RESULT_SCHEMAS.md
 loomwright/skills/automate-loop/SKILL.md
 changelog.d/automate-followups-20-automate-run-enum-gaps-and-sidecar-nested-check.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-11T18:19:28Z
+- **Brief:** none (direct implementation outside /automate, 2026-10-11 owner decision)
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/483
