@@ -5,7 +5,8 @@
 # Static only: reads the real plugin tree, writes into a mktemp dir, no network, no gh.
 #   (D)   determinism: two runs are byte-identical; a fixture copy (different --root) gives the same bytes
 #   (C)   the committed capabilities.json is current (--check exits 0 on the real tree)
-#   (S)   top-level schema: types + plugin_version == plugin.json .version + host_switch null
+#   (S)   top-level schema: types + plugin_version == plugin.json .version + host_switch an object
+#         {env, state_dir_env, effect} + every hooks[] entry has a string host_mode
 #   (N)   one entry per source (agents/*.md, commands/*.md, skills/*/SKILL.md, hooks.json leaves), no
 #         duplicate names — expected counts derived from the source dirs NOW, never hard-coded
 #   (A)   agents: runtime_agent_type derived + matches the probe fixture; tools = tools - disallowedTools;
@@ -14,7 +15,10 @@
 #   (R)   result_schemas: version pins, a decorated heading's normalised name, exclusions, null versions
 #   (H)   hooks: blocking only on the guard leaves; StopFailure writes pinned; no /dev/null or &N target;
 #         the four audited scripts non-empty; unknown only where audited unknown
-#   (U)   a hook script with no audit entry => writes ["unknown"]
+#   (HM)  host mode: host_switch env names exact AND read by scripts/host-mode.sh (grep, with a rename
+#         control); the real contract has no unknown host_mode; spot pins; a HOOKS.md class edit
+#         reaches the output and trips --check (mutation control); fail-CLOSED source controls
+#   (U)   a hook script with no audit entry => writes ["unknown"] and host_mode "unknown"
 #   (P)   fail-CLOSED hook parser: every script-path spelling, write construct (&>, >|, >&word, tee, cp,
 #         sed -i, bash -c, rm, exec N>, dd, install, ln) and unmodelled construct (backticks, >(...), >>&,
 #         heredoc) => ["unknown"] or the literal target, never a silent []; real fd dups stay non-writes;
@@ -51,7 +55,7 @@ q() { local e="$1"; shift; jq -r "$@" "$e" "$tmp/a.json"; }
 fixture_copy() {
   mkdir -p "$1/docs" "$1/scripts"
   cp -R "$PLUGIN/.claude-plugin" "$PLUGIN/agents" "$PLUGIN/commands" "$PLUGIN/skills" "$PLUGIN/hooks" "$1/"
-  cp "$PLUGIN/docs/RESULT_SCHEMAS.md" "$1/docs/"
+  cp "$PLUGIN/docs/RESULT_SCHEMAS.md" "$PLUGIN/docs/HOOKS.md" "$1/docs/"
   cp -R "$PLUGIN/docs/result-schemas" "$1/docs/"
   cp "$COMMITTED" "$1/capabilities.json"
 }
@@ -78,7 +82,8 @@ want_version="$(jq -r .version "$PLUGIN/.claude-plugin/plugin.json")"
 if jq -e --arg v "$want_version" '
     (.contract_schema_version | type == "number" and . == floor)
     and .plugin_version == $v and (.plugin_version | type == "string")
-    and .host_switch == null
+    and (.host_switch | type == "object" and (keys == ["effect", "env", "state_dir_env"])
+         and all(.[]; type == "string" and length > 0))
     and ([.agents, .commands, .skills, .result_schemas, .hooks] | all(type == "array"))
     and (.agents | all((.name|type=="string") and (.runtime_agent_type|type=="string")
          and (.model == null or (.model|type=="string")) and (.tools|type=="array")
@@ -88,7 +93,7 @@ if jq -e --arg v "$want_version" '
     and (.result_schemas | all((.name|type=="string") and (.schema_version == null or (.schema_version|type=="number"))))
     and (.hooks | all((.event|type=="string") and (.matcher == null or (.matcher|type=="string"))
          and (.script == null or (.script|type=="string")) and (.scripts|type=="array")
-         and (.blocking|type=="boolean") and (.writes|type=="array")))' "$tmp/a.json" >/dev/null; then
+         and (.blocking|type=="boolean") and (.writes|type=="array") and (.host_mode|type=="string")))' "$tmp/a.json" >/dev/null; then
   ok "(S) top-level fields and per-entry field types match the documented schema; plugin_version == plugin.json"
 else no "(S) schema/type check failed"; fi
 
@@ -192,6 +197,95 @@ if [ "$(q '[.hooks[] | select(.type == "prompt") | select(.script != null or .sc
   ok "(H) a prompt leaf has script null, scripts [], writes []"
 else no "(H) prompt leaf shape wrong"; fi
 
+# (HM) — host mode. host_switch names the switch + state-dir variables; hooks[].host_mode is derived from
+# docs/HOOKS.md §"Host mode". Leaves are selected by event / type / script name only.
+hm_src="$PLUGIN/scripts/host-mode.sh"
+reads_var() { # reads_var FILE NAME — FILE reads $NAME as a `${NAME:-` default or a quoted "$NAME"
+  [ -n "$2" ] && grep -qF -e "\${$2:-" -e "\"\$$2\"" "$1"
+}
+if [ "$(q '.host_switch.env')" = LOOMWRIGHT_HOST_MODE ] && [ "$(q '.host_switch.state_dir_env')" = LOOMWRIGHT_HOST_STATE_DIR ] \
+   && [ -n "$(q '.host_switch.effect')" ]; then
+  ok "(HM) host_switch = {env: LOOMWRIGHT_HOST_MODE, state_dir_env: LOOMWRIGHT_HOST_STATE_DIR, effect: <non-empty>}"
+else no "(HM) host_switch = $(q '.host_switch' -c)"; fi
+for k in env state_dir_env; do
+  n="$(q ".host_switch.$k")"
+  if [ -f "$hm_src" ] && reads_var "$hm_src" "$n"; then ok "(HM) host_switch.$k ($n) is actually read by scripts/host-mode.sh"
+  else no "(HM) host_switch.$k '$n' is not read by scripts/host-mode.sh (renamed there?)"; fi
+done
+# Control: the grep is not vacuous — the same check on a copy with the variable renamed fails.
+n="$(q '.host_switch.state_dir_env')"
+sed "s/$n/LOOMWRIGHT_RENAMED_DIR/g" "$hm_src" > "$tmp/host-mode-renamed.sh"
+if [ -s "$tmp/host-mode-renamed.sh" ] && ! cmp -s "$hm_src" "$tmp/host-mode-renamed.sh" && bash -n "$tmp/host-mode-renamed.sh" \
+   && ! reads_var "$tmp/host-mode-renamed.sh" "$n"; then
+  ok "(HM) control: a host-mode.sh with the state-dir variable renamed fails the read check"
+else no "(HM) control: the rename mutant is invalid or still passes the read check"; fi
+NO_UNKNOWN='[.hooks[] | select(.host_mode as $m | ["redirects", "skips", "unaffected"] | index([$m]) | not)] | length'
+if [ "$(q "$NO_UNKNOWN")" = 0 ] && [ "$(q '.hooks | length')" -gt 0 ]; then
+  ok "(HM) every hooks[] entry of the real contract has host_mode redirects|skips|unaffected (no unknown — a new hook script needs a docs/HOOKS.md row)"
+else no "(HM) unclassified leaves: $(q '[.hooks[] | select(.host_mode == "unknown" or (.host_mode | type) != "string") | .source] | join(",")')"; fi
+# hm_pin <label> <jq selector over .hooks[]> <want> — every selected leaf (>= 1) has host_mode <want>
+hm_pin() {
+  local got; got="$(q "[.hooks[] | select($2) | .host_mode] | if length == 0 then \"none\" else unique | join(\",\") end")"
+  if [ "$got" = "$3" ]; then ok "(HM) $1 => $3"; else no "(HM) $1: got $got want $3"; fi
+}
+hm_pin "the set-otel-resource-attrs.sh leaf" '.scripts == ["scripts/set-otel-resource-attrs.sh"]' skips
+hm_pin "an emit-lifecycle.sh-only PostToolUse leaf" '.event == "PostToolUse" and .scripts == ["scripts/emit-lifecycle.sh"]' redirects
+hm_pin "the TaskCompleted prompt leaf" '.event == "TaskCompleted" and .type == "prompt"' unaffected
+hm_pin "the StopFailure inline leaf" '.event == "StopFailure"' redirects
+hm_pin "a validator leaf (matched by the validate-*-result.py glob row)" '.scripts == ["scripts/validate-worker-result.py"]' unaffected
+hm_pin "a send-webhook.sh leaf" '.scripts == ["scripts/send-webhook.sh"]' unaffected
+
+# Fixture controls. mutate_doc <sed-expr | grep -v PATTERN> builds $tmp/fh/docs/HOOKS.md from the real
+# doc and refuses an invalid mutant (empty, or identical to the real doc).
+fixture_copy "$tmp/fh"
+real_doc="$PLUGIN/docs/HOOKS.md"
+mutant_ok() { [ -s "$tmp/fh/docs/HOOKS.md" ] && ! cmp -s "$real_doc" "$tmp/fh/docs/HOOKS.md"; }
+hm_fail() { # hm_fail <label> <stderr substring> — the $tmp/fh fixture must exit 1 with ONE stderr line
+  bash "$SUT" --root "$tmp/fh" --out "$tmp/fh.json" 2>"$tmp/fh.err" >/dev/null; local rc=$?
+  local lines; lines="$(wc -l < "$tmp/fh.err" | tr -d ' ')"
+  if [ "$rc" -eq 1 ] && [ "$lines" = 1 ] && grep -qF "$2" "$tmp/fh.err"; then ok "(HM) $1"
+  else no "(HM) $1: rc=$rc lines=$lines err=$(cat "$tmp/fh.err")"; fi
+}
+# Mutation control: ONE class edit in docs/HOOKS.md reaches the output and trips the staleness gate.
+sed 's/^| `set-otel-resource-attrs.sh` | skips |/| `set-otel-resource-attrs.sh` | unaffected |/' "$real_doc" > "$tmp/fh/docs/HOOKS.md"
+bash "$SUT" --root "$tmp/fh" --out "$tmp/fh-mutant.json" 2>/dev/null
+if mutant_ok && [ -s "$tmp/fh-mutant.json" ] && ! cmp -s "$tmp/fh-mutant.json" "$COMMITTED" \
+   && [ "$(jq -r '[.hooks[] | select(.scripts == ["scripts/set-otel-resource-attrs.sh"]) | .host_mode] | unique | join(",")' "$tmp/fh-mutant.json")" = unaffected ]; then
+  ok "(HM) mutant is VALID: a HOOKS.md class edit (set-otel-resource-attrs.sh skips -> unaffected) changes that leaf's host_mode"
+  bash "$SUT" --root "$tmp/fh" --check 2>"$tmp/fh.err" >/dev/null; rc=$?
+  lines="$(wc -l < "$tmp/fh.err" | tr -d ' ')"
+  if [ "$rc" -eq 1 ] && [ "$lines" = 1 ] && grep -qF 'capabilities.json is stale — run: bash loomwright/scripts/build-capabilities.sh and commit' "$tmp/fh.err"; then
+    ok "(HM) the class edit makes --check against the committed contract exit 1 with the one staleness line"
+  else no "(HM) class-edit --check: rc=$rc lines=$lines err=$(cat "$tmp/fh.err")"; fi
+else no "(HM) class-edit mutant invalid — the staleness assertion would not be trustworthy"; fi
+# A deleted script row => its leaves read unknown, and the real-tree no-unknown check would fail on it.
+grep -v '^| `send-webhook.sh` |' "$real_doc" > "$tmp/fh/docs/HOOKS.md"
+bash "$SUT" --root "$tmp/fh" --out "$tmp/fh.json" 2>/dev/null; rc=$?
+if mutant_ok && [ "$rc" -eq 0 ] \
+   && [ "$(jq -r '[.hooks[] | select(.scripts == ["scripts/send-webhook.sh"]) | .host_mode] | unique | join(",")' "$tmp/fh.json")" = unknown ] \
+   && [ "$(jq -r "$NO_UNKNOWN" "$tmp/fh.json")" -gt 0 ]; then
+  ok "(HM) a script with its HOOKS.md row deleted reads host_mode unknown, and the no-unknown check fails on it"
+else no "(HM) deleted-row control: rc=$rc mutant_ok=$(mutant_ok && echo y || echo n)"; fi
+# A deleted inline-leaf row => the StopFailure leaf (whose failures.log append is unclassified) is unknown.
+grep -v '^| StopFailure inline leaf' "$real_doc" > "$tmp/fh/docs/HOOKS.md"
+bash "$SUT" --root "$tmp/fh" --out "$tmp/fh.json" 2>/dev/null; rc=$?
+if mutant_ok && [ "$rc" -eq 0 ] && [ "$(jq -r '[.hooks[] | select(.event == "StopFailure") | .host_mode] | join(",")' "$tmp/fh.json")" = unknown ]; then
+  ok "(HM) with the inline-leaf row deleted, the StopFailure leaf reads unknown (its inline append is classified only by that row)"
+else no "(HM) deleted inline-row control: rc=$rc"; fi
+sed 's/^| `set-otel-resource-attrs.sh` | skips |/| `set-otel-resource-attrs.sh` | sometimes |/' "$real_doc" > "$tmp/fh/docs/HOOKS.md"
+if mutant_ok; then hm_fail "a class word that is not redirects/skips/unaffected exits 1 with one line naming the row" "set-otel-resource-attrs.sh"
+else no "(HM) unknown-class mutant invalid"; fi
+sed 's/^| Script \/ leaf | Class | Under host mode |$/| Script | Class | Under host mode |/' "$real_doc" > "$tmp/fh/docs/HOOKS.md"
+if mutant_ok; then hm_fail "a HOOKS.md whose classification table header is gone exits 1 with one line" "has no §\"Host mode\" table"
+else no "(HM) header mutant invalid"; fi
+rm -f "$tmp/fh/docs/HOOKS.md"
+hm_fail "no docs/HOOKS.md with >= 1 hooks.json leaf exits 1 with one line" "docs/HOOKS.md is missing"
+jq '.hooks = {}' "$PLUGIN/hooks/hooks.json" > "$tmp/fh/hooks/hooks.json"
+bash "$SUT" --root "$tmp/fh" --out "$tmp/fh.json" 2>"$tmp/fh.err"; rc=$?
+if [ "$rc" -eq 0 ] && [ ! -e "$tmp/fh/docs/HOOKS.md" ] && [ "$(jq -c '.hooks' "$tmp/fh.json")" = '[]' ]; then
+  ok "(HM) no docs/HOOKS.md with zero hooks.json leaves generates (exit 0) — the table is read only when a leaf needs it"
+else no "(HM) zero-leaf, no-doc tree: rc=$rc err=$(cat "$tmp/fh.err")"; fi
+
 # (U) — an unaudited script.
 fixture_copy "$tmp/fu"
 jq '.hooks.SessionStart += [{"hooks": [{"type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/never-audited.sh\" || true"}]}]' \
@@ -200,6 +294,9 @@ bash "$SUT" --root "$tmp/fu" --out "$tmp/fu.json"
 if [ "$(jq -c '[.hooks[] | select(.script == "scripts/never-audited.sh") | .writes]' "$tmp/fu.json")" = '[["unknown"]]' ]; then
   ok "(U) a script with no audit entry gets writes [\"unknown\"], never a silent []"
 else no "(U) unaudited script writes = $(jq -c '[.hooks[] | select(.script == "scripts/never-audited.sh") | .writes]' "$tmp/fu.json")"; fi
+if [ "$(jq -c '[.hooks[] | select(.script == "scripts/never-audited.sh") | .host_mode]' "$tmp/fu.json")" = '["unknown"]' ]; then
+  ok "(U) a script with no docs/HOOKS.md host-mode row gets host_mode \"unknown\", never a guessed class"
+else no "(U) unclassified script host_mode = $(jq -c '[.hooks[] | select(.script == "scripts/never-audited.sh") | .host_mode]' "$tmp/fu.json")"; fi
 
 # (P) — the hook parser fails closed. One single-leaf hooks.json per case, built inside $tmp only.
 fixture_copy "$tmp/fp"
