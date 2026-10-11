@@ -6,13 +6,16 @@
 #   1. one door        — exactly two `$.process.run(` calls: `lane()`'s `['bash', s, sub, ...args]`
 #                        and `locate()`'s literal `['claude', 'plugin', 'list', '--json']`
 #   2. three commands  — the `LaneCommand` union is exactly lane-status | lane-feed | lane-answer, and
-#                        every `lane(...)` call names one of them
+#                        every `lane(...)` call names one of them — read from the module flattened to
+#                        one line, so a call wrapped across lines (lane-answer's) is seen too; exactly
+#                        three call sites, lane-answer among them
 #   3. no lane files   — no `$.fs`, no `$.process.spawn`, no `bash -c`, no `.supervisor` / inbox /
 #                        stream-log path anywhere in the module
 #   4. answers say so  — lane-answer is called with `--via lanes-addon`
 #   5. P9, statically  — nothing under loomwright/ names the add-on; the marketplace lists it as its
 #                        own sibling (`./loomwright-lanes`), never inside loomwright/
-#   6. mutation        — a copy of the module that reads a lane's run file, or calls lane-launch, is
+#   6. mutation        — a copy of the module that reads a lane's run file, calls lane-launch, or
+#                        swaps the multi-line lane-answer call's command for another subcommand, is
 #                        refused by checks 1–3 (the checks can fail)
 #   7. engine          — `claude plugin validate` and `claude plugin test` on the plugin, where `claude`
 #                        is on PATH; otherwise SKIP with the reason (never a silent pass)
@@ -32,15 +35,22 @@ no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
 # module_violations <file> — prints one line per broken rule of checks 1–3; nothing when clean.
 module_violations() {
-  local f="$1" n bad
+  local f="$1" n bad flat subs
   n="$(grep -c '\$\.process\.run(' "$f")"
   [ "$n" = 2 ] || echo "process.run calls: $n (want exactly 2: lane() and locate())"
   grep -q "\$\.process\.run(\['bash', s, sub, \.\.\.args\]" "$f" || echo "lane()'s argv is not ['bash', s, sub, ...args]"
   grep -q "\$\.process\.run(\['claude', 'plugin', 'list', '--json'\]" "$f" || echo "locate()'s argv is not the literal claude plugin list --json"
   grep -q "^type LaneCommand = 'lane-status' | 'lane-feed' | 'lane-answer'$" "$f" || echo "LaneCommand is not exactly lane-status | lane-feed | lane-answer"
-  bad="$(grep -o "lane(\$, configured, '[^']*'" "$f" | sed "s/.*'\([^']*\)'$/\1/" | grep -vxE 'lane-status|lane-feed|lane-answer')"
+  # Flatten first: a call wrapped one argument per line (lane-answer's, in send()) is invisible to a
+  # line-at-a-time grep. All whitespace becomes one space, so a call site reads `lane( $, configured, '…'`.
+  flat="$(tr '\n\t\r' '   ' < "$f" | tr -s ' ')"
+  subs="$(grep -oE "lane\\( ?\\\$, ?configured, ?'[^']*'" <<<"$flat" | sed "s/.*'\([^']*\)'$/\1/")"
+  bad="$(grep -vxE 'lane-status|lane-feed|lane-answer' <<<"$subs")"
   [ -z "$bad" ] || echo "lane() called with: $(printf '%s' "$bad" | tr '\n' ' ')"
-  grep -qE "lane\(\\\$, configured, '" "$f" || echo "no lane() call sites found"
+  [ -n "$subs" ] || echo "no lane() call sites found"
+  n="$(grep -c . <<<"$subs")"
+  [ "$n" = 3 ] || echo "lane() call sites: $n (want exactly 3: lane-feed, lane-status, lane-answer)"
+  grep -qx 'lane-answer' <<<"$subs" || echo "no lane() call site names lane-answer"
   grep -nE '\$\.fs\b|\$\.process\.spawn|'"'"'-c'"'"'|\.supervisor|/inbox/|stream\.log|lane-launch|lane-remove' "$f" | sed 's/^/forbidden: /'
 }
 
@@ -71,6 +81,13 @@ grep -q "'lane-launch'" "$T/b.tsx" && [ -n "$(module_violations "$T/b.tsx")" ] \
   && ok "a module calling lane-launch is refused" || no "a module calling lane-launch was NOT refused"
 sed "s|\$\.process\.run(\['claude', 'plugin', 'list', '--json'\]|\$.process.run(['bash', '-c', 'cat x']|" "$MOD" > "$T/c.tsx"
 [ -n "$(module_violations "$T/c.tsx")" ] && ok "a module with a shell probe is refused" || no "a module with a shell probe was NOT refused"
+# lane-answer's call is wrapped one argument per line — the only mutating call, and the one a
+# line-at-a-time extraction missed. Swap its literal for another automate-lanes.sh subcommand that the
+# forbidden-token grep does not name, so only the flattened lane() extraction's checks can catch it.
+sed "s|^\( *\)'lane-answer',$|\1'lane-convert-ready',|" "$MOD" > "$T/d.tsx"
+grep -q "'lane-convert-ready'" "$T/d.tsx" && [ -n "$(module_violations "$T/d.tsx")" ] \
+  && ok "a module whose multi-line lane-answer call names another command is refused" \
+  || no "a module whose multi-line lane-answer call names another command was NOT refused"
 
 echo "7. the engine's own checks"
 if command -v claude >/dev/null 2>&1; then
