@@ -149,89 +149,67 @@ $H reconcile-status .supervisor/requirements --apply
 
 **0.8 Old lane dir** `../ai-agent-manager-lanes/automate-2026-10-08-033739` (abandoned s3-validation lanes, has `salvage/`): check `salvage/`, then delete it.
 
-### Wave-close checklist — every `--parallel` wave until pa/21 is released AND installed
+### Wave-close checklist — from W3 on (v15.128.1: pa/21 + automate-followups/40 installed)
 
-Nothing in the installed engine (15.126.0 / 15.127.0) merges lane PRs, builds a wave PR or closes out lanes after the
-merge. So every multi-item wave ends with these steps. I (the coordinator session) run every step marked **[me]**; you
-run every step marked **[you]**. Nothing is pushed to `main` and nothing is merged by me.
+Updated 2026-10-11 after reading the INSTALLED v15.128.1 `automate-loop` SKILL §14 ("The per-wave loop" steps 9–10,
+"Wave close") and `automate-lanes.sh` `lanes_fleet_closeout`. W2 was closed with the old manual list (record:
+coordinator run `automate-2026-10-10-194230`, wave PR #465). **Nothing below is verified in a running system yet** —
+W3 is the first wave on this engine, so each automated step keeps its manual fallback until W3 has shown it works.
 
-1. **[you]** Launch in a fresh session on the installed version:
+1. **[you]** Launch in a fresh session on the installed version (confirm the app runs 15.128.1):
    `/loomwright:automate --backlog .supervisor/requirements/operator-run/2026-10-10-wN-backlog.md --parallel <n>`.
-   The launch must be typed by you (launch-authority rule).
-2. **[me]** Relay lane questions verbatim (≤4 per question). Poll with `/loomwright:automate --resume <coordinator run_id>`
-   until every lane reads `ready_for_release`.
-3. **[me]** Wave end: run `lane-convert-ready <lane_dir>` per lane (→ `awaiting_merge`, metadata pushed). On a
-   `meta-push … home_path` failure, rewrite the home paths, then re-run.
-4. **[me]** Merge checks per lane PR:
-   - every "Not verified" running-system step run in a scratch clone;
-   - scope fence = Touches + companions;
-   - `ci` + `claude-review` green on the **current** head;
-   - the last bot comment read;
-   - every dismissed finding decided (**[you]** answer).
-5. **[me]** Build the wave PR:
-   ```
-   git checkout main && git pull --ff-only && git checkout -b wave/wN
-   git merge --no-ff <lane PR head sha>          # each lane, planner order; conflicts resolved HERE only
-   bash scripts/ci-local.sh && bash scripts/ci-local.sh --wait
-   bash scripts/bump-version.sh                  # LAST commit: one release per wave (folds every changelog.d fragment)
-   git push -u origin wave/wN
-   gh pr create --base main --head wave/wN --title "wave wN: <items> + release" --body "<lane PRs, merge checks, Not verified>"
-   ```
-   - If wave CI breaks a lane, fix it on that lane's PR branch and re-merge its new head.
-   - Then run `/review-pr <wave PR> --until-mergeable` (the drain) on the wave PR.
+2. **[me]** Relay lane questions verbatim. NEW: routine gates (resume, Queue confirm, summary drafts, Launch Pad save on
+   a clean PASS, Supervisor children-unsettled) can be pre-answered by a wave policy (`lane-policy.sh wave-set`) that you
+   choose at the per-wave step 4 ask; `lane-status <run file> --inbox` batches the rest, oldest first.
+   **Watch:** with automate-followups/40 installed, a lane that asked questions should reach FINALIZE point 5 with every
+   child settled — no `--skip-children-check`. If it still asks, D1 is not fixed in practice; stop and tell me.
+3. **[me]** Wave end: `lane-convert-ready <lane_dir>` per lane (→ `awaiting_merge`, metadata pushed) — unchanged, the
+   engine step 9 precondition. A `forge_slug` scrub hit on a cut-off readiness URL should no longer happen (af/40 D3).
+4. **[me]** Merge checks per lane PR — unchanged, judgment: Not-verified steps, scope fence (the readiness report's
+   `scope-fence` line), `ci` + `claude-review` green on the **current** head, last bot comment read, every dismissed
+   finding decided.
+5. **[me prints, you/me run]** Build the wave PR. NEW: `$H wave-plan <parent run file> [--wave-branch wave/wN]` prints the
+   exact commands (read-only): fetch, `git checkout -b <branch> origin/main`, one `git merge --no-ff <exact PR head sha>
+   -m "Merge lane <L> (<item>) PR #<n>"` per lane in planner order, `bash scripts/ci-local.sh`, `bash
+   scripts/bump-version.sh` as the LAST commit, push, `gh pr create`, plus the conflict rules. The merges stay manual
+   (your pa/21 Part S decision: operator merges; the engine never merges or pushes a lane branch). Then optionally
+   `/review-pr <wave PR> --until-mergeable`.
 6. **[you]** Merge the wave PR with **"Create a merge commit"** (never squash). Every lane PR flips to MERGED.
-7. **[me]** Lane close-out — the step wave 1 missed. Lanes have no merge watcher, so for each lane:
-   ```
-   $H lane-convert-ready <lane_dir>   # merged re-run: closeout --no-trail inside the lane → requirement stamped done, trail pushed
-   $H lane-remove <lane_dir>
-   ```
-   - A `; closeout leftover: …` suffix other than `gate — … pr not merged` ⇒ do NOT `lane-remove`. Fix it first.
-   - Then confirm each item's `## Status: done` and that the coordinator run reads done.
-8. **[you]** Reinstall the released version, confirm the running version, and start the next run in a **fresh** session.
+7. **[me]** Lane close-out — NOW AUTOMATED: `/loomwright:automate --resume <coordinator run_id>` re-runs
+   `lane-convert-ready` per merged lane (done stamp + lane finalize + pushes), then `fleet-closeout <parent run file>`:
+   backstop per merged lane, parent Queue check-off, primary `git pull --ff-only`, `lane-remove` per closed-out lane,
+   leak check, main `ci` health, and — once the parent Queue has no `- [ ]` — releases the `automate-lanes` lock
+   (`fleet-closeout: wave closed — lock released`). Stepwise: re-run `--resume` until that line prints.
+   - A `human — …` line (PR closed unmerged ⇒ `lane-remove <lane_dir> --abandon`; a lane `meta-push-failed`) is yours.
+   - Fallback if it misbehaves: the old manual pair, `$H lane-convert-ready <lane_dir>` then `$H lane-remove <lane_dir>`.
+8. **[me] STILL MANUAL — finalize the coordinator run.** `fleet-closeout` releases the lock but does NOT write the parent
+   `## Status: done`, clear its `- wave:` line, or push its trail (read in `lanes_fleet_closeout`, 2026-10-11). Same as W2:
+   `current-wave <rf> --wave null`; `sed 's/^## Status: running$/## Status: done/' <rf> | $H runfile-write <rf>`;
+   `current-set <rf> --pause-reason null`; `trail-pr <rf> --reason done`. Then stop the fleet sampler
+   (`pkill -f 'lane-sample[r]\.sh.*<run_id>'`) — it only exits with the coordinator session.
+9. **[you]** Release + reinstall when the wave carried code (the bump is already the wave branch's last commit), confirm
+   the running version, and start the next run in a **fresh** session.
 
-### Switch-over: when pa/21 takes over the wave close
-W2's wave branch carries pa/21 **and** the release bump, so W3 can run on an engine that has pa/21. Before W3, I read
-the installed `automate-loop` SKILL §14 and pa/21's merged PR, and drop from the checklist only the steps it really
-automates (expected: steps 5 and 7, and step 3's conversion). Two cases keep a step manual:
-- **Step 5 integration merges.** These stay manual if you decided at pa/21's Plan Review that the coordinator may NOT
-  merge into `wave/*`. In that case pa/21 prepares and you or I run the merges.
-- **Step 6, merging the wave PR into `main`.** Always yours.
-
-Never assume a step is automated: verify it on the first wave that uses it, and keep the manual step as the fallback.
-
-### Sequential run (single items)
-```
-/loomwright:automate --backlog .supervisor/requirements/operator-run/2026-10-10-seq-backlog.md      # no --parallel
-```
-- Each item: PR → review drain → park `awaiting_merge` → merge watcher armed.
-- **[you]** merge (squash is fine) → the watcher closes it out by itself: requirement stamped, branch removed,
-  `main` synced, trail pushed.
-- **[you]** type `/loomwright:automate --resume` for the next item.
-- **Release:** the fragments wait in `changelog.d/`. Run `bash scripts/bump-version.sh` as its own PR when the run
-  finishes, or let the next wave branch's bump fold them in.
-
-## 3b. The parallel-automate track (pa/21, pa/22, pa/18)
-
-This track is the backbone of the wave order above:
-- **pa/21 runs in W2.** Its wave close and lane-question policy then help every wave after it, once it is released and installed.
-- **pa/22 runs in W3.** It splits the engine files so later engine items stop colliding.
-- **pa/18 runs after the W3 re-plan.** It re-points its Touches at the split files.
-
-Decide before pa/21's Plan Review: may the coordinator run the integration merges into `wave/*` itself? This is Part S item 4, and it touches the single-merge-executor invariant.
+### Switch-over record (pa/21 took over the wave close in v15.128.0)
+- Automated now: step 7 (lane close-out, parent check-off, lane removal, leaks, lock release) and the integration
+  command list in step 5 (`wave-plan`, print only).
+- Still manual: step 5's merges (owner decision), step 6 (always yours), step 8 (parent run finalize — a gap pa/21 did
+  not cover; candidate follow-up), and all judgment in step 4.
 
 ## 4. Manual steps that stay manual (and which item removes each)
 
 | Manual step | Why it is manual today | Removed by |
 |---|---|---|
-| Building the wave branch, release bump, one wave PR | Engine opens one PR per lane only | pa/21 Part A (open owner decision: may the coordinator merge into `wave/*`? Decide it at pa/21's Plan Review) |
-| Re-running `lane-convert-ready` + `lane-remove` after the wave PR merges | Lanes arm no merge watcher; `closeout-others` skips lane runs | pa/21 (split closeout / fleet-closeout backstop) |
+| Running the wave-branch merges, release bump, one wave PR | Owner decision at pa/21's Plan Review: the engine never merges | `wave-plan` (pa/21, v15.128.0) now PRINTS the exact commands; running them stays manual by design |
+| Re-running `lane-convert-ready` + `lane-remove` after the wave PR merges | — | **Removed** by pa/21 `fleet-closeout` (v15.128.0) — run `--resume` until `wave closed — lock released`; unverified until W3 |
+| Finalizing the coordinator run (`## Status: done`, clear `- wave:`, `trail-pr --reason done`) | `fleet-closeout` releases the lock but never finalizes the parent run | Not yet filed — candidate follow-up |
 | Merging every PR | Safe mode; auto-merge is refused with `--parallel` | Never — by design |
 | Merge checks (Not-verified steps, scope fence, last bot comment) | Judgment | Partly pa/21 Part B / af/36 |
 | Merging serialized items into fewer, larger ones (done by hand for af/39) | No helper yet | pa/18 Part B (`merge-items`) |
 | Reinstalling the plugin between waves, fresh session per wave | Lanes run the installed version | — |
 | Launch / resume typed by you in the same session | Launch-authority rule | — |
 | Meta-push `home_path` scrub fixes | Scrub is correct to refuse | — |
-| Routine lane questions (start new run, 1-item queue confirm, save brief on 0-issue PASS) | Gates fire per lane | pa/21 Part B (policy answers); step 0.5 removes the stale-run one now |
+| Routine lane questions (start new run, 1-item queue confirm, save brief on 0-issue PASS) | Gates fire per lane | pa/21 Part B (v15.128.0): the 1-item confirm is gone; the rest can be pre-answered by a wave policy you choose per wave |
 | tr/08, tr/09 refinement | No Touches / Depends on sections | You (or `/product-owner` / Launch Pad on each) |
 
 ## 5. Risks to watch
