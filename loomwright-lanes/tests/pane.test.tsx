@@ -219,3 +219,21 @@ test('the inbox lists every waiting question oldest first, carries a note, and o
   expect(JSON.parse(sent?.stdin ?? '{}')).toEqual({ answers: { '0': 'Yes' }, note: 'ship it after the suite' })
   await ui.unmount()
 })
+
+test('on a surface with no text input the note field is left out and an answer still sends', async ($, on) => {
+  const calls: Call[] = []
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(DOC) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  // The mobile element table has no Input, so this is the real `Input === null` branch, not a stub.
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'mobile', ...PANE })
+  expect(await ui.find({ key: 'toolu_q:note' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Note to the lane/ })).toBeUndefined()
+  for (const k of ['toolu_q:0:A', 'toolu_q:send']) expect(await ui.find({ key: k })).toBeDefined()
+  await ui.press({ key: 'toolu_q:0:A' })
+  await ui.press({ key: 'toolu_q:1:z' })
+  await ui.press({ key: 'toolu_q:send' })
+  const sent = calls.find(c => c.argv.includes('lane-answer'))
+  expect(JSON.parse(sent?.stdin ?? '{}')).toEqual({ answers: { '0': 'A', '1': 'z' } })
+  await ui.unmount()
+})

@@ -261,7 +261,7 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const ui = $.ui.resolve(e)
     const { Box, Text, Button } = ui
-    const Input = 'Input' in ui ? ui.Input : null // mobile draws no text field
+    const Input = e.surface !== 'mobile' && 'Input' in ui ? ui.Input : null // the mobile surface has no text field; resolve() returns every element on every surface, so decide by surface, not by the table
     const cols = Math.max(32, e.props.bodyColumns ?? 80)
     const inner = cols - 4 // a lane card's border and padding
     const snap = await read($, snapshot)
@@ -301,7 +301,7 @@ export const register: Register = (on, options) => {
     // The inbox: every lane's pending question in one list, oldest first (what `lane-status --inbox`
     // lists), each answered right here through lane-answer.
     const inboxEntry = (l: LaneRow, q: LaneQuestion) => {
-                const mine = chosen[q.id] ?? {}
+      const mine = chosen[q.id] ?? {}
       const items = q.items ?? []
       const ready = complete(q, mine)
       return (
