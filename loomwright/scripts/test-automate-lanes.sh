@@ -398,6 +398,19 @@ out="$(run lane-remove "$L4")"; has "N5 meta-push failure marker refused" "$out"
 rm -f "$L4/.supervisor/automate/$PARENT-L4.meta-push-failed"
 out="$(STUB_META_STATUS='local_ahead 2' run lane-remove "$L4")"; has "N6 unpushed metadata refused" "$out" "metadata not pushed (local_ahead 2)"
 has "N6b meta status passes --branch" "$(cat "$META_LOG")" "meta-sync status --branch test-meta --root $L4"
+# N6c-N6f the `status --paths` naming cap (_lanes_status_named): at most five paths, then `+<k> more`;
+# exactly five reads no `more`; a control with the cap removed lists all seven (N6c's line fails).
+N6P7="$(printf 'local_ahead 7\n  a.md\n  b.md\n  c.md\n  d.md\n  e.md\n  f.md\n  g.md')"
+out="$(STUB_META_STATUS="$N6P7" run lane-remove "$L4")"
+check "N6c seven unpushed paths: five named, then +2 more" "$(printf '%s\n' "$out" | grep 'metadata not pushed' | sed 's/^.* — metadata/metadata/')" \
+  "metadata not pushed (local_ahead 7) — paths: a.md, b.md, c.md, d.md, e.md, +2 more"
+out="$(STUB_META_STATUS="$(printf 'local_ahead 5\n  a.md\n  b.md\n  c.md\n  d.md\n  e.md')" run lane-remove "$L4")"
+check "N6d exactly five paths: all named, no +k more" "$(printf '%s\n' "$out" | grep 'metadata not pushed' | sed 's/^.* — metadata/metadata/')" \
+  "metadata not pushed (local_ahead 5) — paths: a.md, b.md, c.md, d.md, e.md"
+sed "s/sed 's\/^  \/\/' | head -5 /sed 's\/^  \/\/' /" "$S" > "$MUT/automate-lanes.sh"
+check "N6e mutation removed the five-path cap" "$(grep -c "sed 's/^  //' | head -5 " "$MUT/automate-lanes.sh" | tr -d ' ')" 0
+out="$(STUB_META_STATUS="$N6P7" bash "$MUT/automate-lanes.sh" lane-remove "$L4" 2>&1)"
+has "N6f mutation: without the cap all seven are listed (N6c's expected line would fail)" "$out" "paths: a.md, b.md, c.md, d.md, e.md, f.md, g.md, +2 more"
 git -C "$L4" checkout -q -b feature/x; echo y > "$L4/reqs/y.md"; git -C "$L4" add reqs/y.md; git -C "$L4" commit -qm y
 out="$(run lane-remove "$L4")"; has "N7 unpushed commits refused" "$out" "branch feature/x has 1 commit(s) not on origin"
 git -C "$L4" checkout -q main; git -C "$L4" branch -q -D feature/x
