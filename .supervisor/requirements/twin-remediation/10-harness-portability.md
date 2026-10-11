@@ -162,3 +162,9 @@ loomwright/docs/CORE_CONTRACT.md
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
 loomwright/docs/vendor-coupling-manifest.json
 changelog.d/twin-remediation-10-harness-portability.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-11T15:48:42Z
+- **Brief:** .supervisor/jobs/done/auto-2026-10-11-125633-harness-portability-core-contract.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/479
