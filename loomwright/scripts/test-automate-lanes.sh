@@ -604,19 +604,53 @@ check "AH8b nothing live, nothing new ⇒ idle at once, exit 0" "$rc:$out" "0:la
 before="$(find "$LR2" -type f -newer "$LWS" 2>/dev/null | wc -l | tr -d ' ')"
 run lane-wait "$RF2" --interval 1 --timeout 1 >/dev/null
 check "AH9 lane-wait writes nothing into any lane" "$(find "$LR2" -type f -newer "$LWS" 2>/dev/null | wc -l | tr -d ' ')" "$before"
-# AH12 static: every _LANES_WAIT_ATTN / _LANES_WAIT_LIVE token is a state lane-status can report — a literal
-# `state=<tok>` assignment in _lanes_lane_json, or a run-file park status `_lanes_parked` passes through
-# (SKILL §3's status enum). A renamed state would otherwise drift the array silently (a lane in the new
-# state invisible to lane-wait, and idle firing past it). Mutation control: a fake token must be named.
+# AH13 events are every state that is neither live nor quiet (a deny-list): `_lanes_parked` reports ANY
+# run-file pause_reason as the lane's state, so a park the old allow-list never named (token_ceiling) must
+# wake the coordinator, while a coordinator-driven park (awaiting_merge) must not. L1 (blocked_launch) was
+# already reported above and stays in the ledger.
+for n in 2 3; do run lane-create "$RF3" reqs/a.md "$n" --parallel 4 >/dev/null; done
+TABLE3="$P/.supervisor/automate/$PARENT3.lanes"
+t3set() { awk -F'\t' -v OFS='\t' -v l="$1" -v c="$2" -v v="$3" '$1 == l { $c = v } { print }' "$TABLE3" > "$TABLE3.t" && mv "$TABLE3.t" "$TABLE3"; }
+ah_park() { # <lane> <status> <pause_reason> — a launched-then-exited lane whose run file is parked as given
+  local d r; d="$(awk -F'\t' -v l="$1" '$1 == l { print $2 }' "$TABLE3")"; r="$(awk -F'\t' -v l="$1" '$1 == l { print $4 }' "$TABLE3")"
+  t3set "$1" 8 launched; t3set "$1" 5 99999998; t3set "$1" 6 "Mon Jan  1 00:00:00 2001"; t3set "$1" 9 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  mkdir -p "$d/.supervisor/automate"
+  printf '# Automate Run: %s\n\n## Status: paused\n\n## Current\n- item: reqs/a.md | status: %s | pr: null | branch: f\n- pause_reason: %s\n\n## Progress\n' "$r" "$2" "$3" > "$d/.supervisor/automate/$r.md"
+}
+ah_park L2 running token_ceiling; ah_park L3 awaiting_merge awaiting_merge
+J="$(bash "$S" lane-status "$RF3" --json 2>/dev/null)"
+check "AH13 fixture: L2 reads token_ceiling, L3 awaiting_merge" "$(lf L2 .state):$(lf L3 .state)" "token_ceiling:awaiting_merge"
+out="$(run lane-wait "$RF3" --interval 1 --timeout 5)"; rc=$?
+check "AH13a an unlisted run-file park (token_ceiling) is an event, alone" "$rc:$(printf '%s\n' "$out" | grep '^lane-wait: state')" "0:lane-wait: state L2 token_ceiling — pr -"
+hasnt "AH13b a coordinator-driven park (awaiting_merge) is not an event" "$out" "state L3"
+has "AH13c … and the act hint names the owner's decision for any other state" "$out" "a run-file park such as token_ceiling — the owner decides"
+out="$(run lane-wait "$RF3" --interval 1 --timeout 5)"; rc=$?
+check "AH13d a parked-but-quiet fleet with every event reported ⇒ idle at once (no loop, no re-report)" "$rc:$out" "0:lane-wait: idle — no lane is running; nothing changes until the owner acts"
+# AH14 a long question is clipped by _lanes_clip on a whitespace boundary and marked ` …` (never a raw cut).
+L32="$(awk -F'\t' '$1 == "L2" { print $2 }' "$TABLE3")"; mkdir -p "$L32/.supervisor/inbox/questions"
+ahq="$(for i in $(seq 1 40); do printf 'word%02d ' "$i"; done)"
+jq -n -c --arg q "$ahq" '{id: "toolu_long", asked_at: "2026-10-07T00:09:00Z", questions: [{question: $q, options: [{label: "A"}]}]}' > "$L32/.supervisor/inbox/questions/toolu_long.json"
+out="$(run lane-wait "$RF3" --interval 1 --timeout 5)"
+check "AH14 the question text is clipped by _lanes_clip 160" "$(printf '%s\n' "$out" | grep '^lane-wait: question')" \
+  "lane-wait: question L2 toolu_long asked 2026-10-07T00:09:00Z — $(for i in $(seq 1 22); do printf 'word%02d ' "$i"; done)…"
+# AH12 static: every _LANES_WAIT_QUIET / _LANES_WAIT_LIVE token is a state lane-status can report — a literal
+# `state=<tok>` assignment in _lanes_lane_json, a table state it passes through (`removed|abandoned) state="$ts"`),
+# a run-file park status `_lanes_parked` passes through, or a SKILL §3 `pause_reason` enum value (any non-empty
+# pause_reason becomes the state). A renamed state would otherwise drift the array silently (a quiet token that
+# matches nothing stops silencing; a live token that matches nothing lets idle fire past a working lane).
+# Mutation control: a fake token must be named.
 ah_reportable="$( { grep -v '^_LANES_WAIT_' "$S" | grep -oE '(^|[^_a-zA-Z])state=[a-z_]+' | sed 's/.*state=//'
-  grep -A3 '^_lanes_parked() {' "$S" | grep -F 'case "${1:-}" in' | sed -E 's/.* in ([a-z_|]+)\).*/\1/' | tr '|' '\n'; } | sort -u)"
+  grep -A3 '^_lanes_parked() {' "$S" | grep -F 'case "${1:-}" in' | sed -E 's/.* in ([a-z_|]+)\).*/\1/' | tr '|' '\n'
+  grep -E '^[[:space:]]+[a-z_|]+\) state="\$ts"' "$S" | sed -E 's/^[[:space:]]+([a-z_|]+)\).*/\1/' | tr '|' '\n'
+  grep -m1 '^- pause_reason: ' "$HERE/../skills/automate-loop/SKILL.md" | sed 's/^- pause_reason: //' | tr '|' '\n'; } | sort -u)"
 ah_drift() { jq -r '.[]' <<<"$1" 2>/dev/null | while IFS= read -r tok; do grep -qxF -- "$tok" <<<"$ah_reportable" || printf '%s ' "$tok"; done; }
-ah_attn="$(sed -n "s/^_LANES_WAIT_ATTN='\(.*\)'\$/\1/p" "$S")"; ah_live="$(sed -n "s/^_LANES_WAIT_LIVE='\(.*\)'\$/\1/p" "$S")"
-check "AH12 both arrays read, and the reportable set holds a parked and a derived state" \
-  "$(jq 'length > 0' <<<"$ah_attn"):$(jq 'length > 0' <<<"$ah_live"):$(grep -cxE 'failed|running' <<<"$ah_reportable")" "true:true:2"
-check "AH12a every _LANES_WAIT_ATTN token is a reportable state" "$(ah_drift "$ah_attn")" ""
+ah_quiet="$(sed -n "s/^_LANES_WAIT_QUIET='\(.*\)'\$/\1/p" "$S")"; ah_live="$(sed -n "s/^_LANES_WAIT_LIVE='\(.*\)'\$/\1/p" "$S")"
+check "AH12 both arrays read, and the reportable set holds a parked, a derived, a table and an enum-only state" \
+  "$(jq 'length > 0' <<<"$ah_quiet"):$(jq 'length > 0' <<<"$ah_live"):$(grep -cxE 'failed|running|removed|awaiting_go' <<<"$ah_reportable")" "true:true:4"
+check "AH12a every _LANES_WAIT_QUIET token is a reportable state" "$(ah_drift "$ah_quiet")" ""
 check "AH12b every _LANES_WAIT_LIVE token is a reportable state" "$(ah_drift "$ah_live")" ""
-check "AH12c mutation: a fake token appended to a copy of the array is named" "$(ah_drift "$(jq -c '. + ["stalld"]' <<<"$ah_attn")")" "stalld "
+check "AH12c mutation: a fake token appended to a copy of the array is named" "$(ah_drift "$(jq -c '. + ["stalld"]' <<<"$ah_quiet")")" "stalld "
+check "AH12d no token is both live and quiet (an event state would be silenced twice)" "$(jq -rn --argjson a "$ah_quiet" --argjson b "$ah_live" '$a - ($a - $b) | join(",")')" ""
 # Clean up the second wave: lane-feed L<n> (T7) resolves the NEWEST lane table in the primary.
 rm -rf "$LWS" "$P/.supervisor/automate/$PARENT3".* "$T/work/primary-lanes/$PARENT3"
 out="$(run lane-feed "$L6")"
