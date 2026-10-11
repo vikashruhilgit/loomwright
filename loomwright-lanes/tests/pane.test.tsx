@@ -80,7 +80,9 @@ test('the pane shows machine health, wait time, latest message, branch, readines
     const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface, ...PANE })
     expect(await ui.find({ type: 'Text', text: /HIGH-LOAD — machine overloaded/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /load1 72\.5 on 12 CPUs/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Waiting for your answer/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Inbox$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^1 question waiting$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /answer it in the Inbox/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^12 min$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^Two ways to do this\.$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^feature\/a$/ })).toBeDefined()
@@ -174,5 +176,46 @@ test('Refresh now re-reads lane-status at once', async ($, on) => {
   const before = reads()
   await ui.press({ key: 'refresh' })
   expect(reads()).toBe(before + 1)
+  await ui.unmount()
+})
+
+// Two lanes waiting: L3's question is older than L2's, and L3 already has a held answer; L2 also has policy answers.
+const INBOX_DOC = {
+  ...DOC,
+  machine: { ...DOC.machine, state: 'ok' },
+  lanes: [
+    { ...DOC.lanes[1], policy: { answered: 2, first_at: '2026-10-11T08:00:00Z', last_at: '2026-10-11T09:00:00Z', last_gate: 'plan-review', last_label: 'Proceed' } },
+    {
+      ...DOC.lanes[1], lane: 'L3', path: '/w/lanes/L3', item: 'reqs/c.md', state: 'answer_pending', reason: 'answer held',
+      questions: [{ id: 'toolu_old', asked_at: '2026-10-11T07:00:00Z', waiting_s: 9000, question: 'Go ahead?',
+        items: [{ question: 'Go ahead?', header: null, multiSelect: false, options: [{ label: 'Yes', description: null }, { label: 'No', description: null }] }] }],
+    },
+  ],
+}
+
+test('the inbox lists every waiting question oldest first, carries a note, and offers to replace a held answer', async ($, on) => {
+  const calls: Call[] = []
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(INBOX_DOC) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface, ...PANE })
+    expect(await ui.find({ type: 'Text', text: /^2 questions waiting$/ })).toBeDefined()
+    // Oldest first: L3's send button comes before L2's in document order.
+    const sends = (await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k?.endsWith(':send'))
+    expect(sends).toEqual(['toolu_old:send', 'toolu_q:send'])
+    expect(await ui.find({ type: 'Text', text: /An answer is held/ })).toBeDefined()
+    expect(await ui.find({ type: 'Button', text: /Replace held answer for L3/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /2 answered automatically · last plan-review → Proceed/ })).toBeDefined()
+    expect(await ui.find({ key: 'toolu_q:note' })).toBeDefined()
+    await ui.unmount()
+  }
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'toolu_old:0:Yes' })
+  await ui.input({ key: 'toolu_old:note', text: 'ship it after the suite' })
+  await ui.press({ key: 'toolu_old:send' })
+  const sent = calls.find(c => c.argv.includes('lane-answer'))
+  expect(sent?.argv.slice(3, 5)).toEqual(['/w/lanes/L3', 'toolu_old'])
+  expect(JSON.parse(sent?.stdin ?? '{}')).toEqual({ answers: { '0': 'Yes' }, note: 'ship it after the suite' })
   await ui.unmount()
 })

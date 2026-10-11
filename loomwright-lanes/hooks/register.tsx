@@ -26,6 +26,7 @@ const picks = atom({ plugin: 'loomwright-lanes', key: 'picks' } as const, {} as 
 const message = atom({ plugin: 'loomwright-lanes', key: 'message' } as const, { text: '', ok: true } as LaneNote)
 const open = atom({ plugin: 'loomwright-lanes', key: 'open' } as const, {} as Record<string, boolean>)
 const details = atom({ plugin: 'loomwright-lanes', key: 'details' } as const, {} as Record<string, string[]>)
+const noteDrafts = atom({ plugin: 'loomwright-lanes', key: 'notes' } as const, {} as Record<string, string>)
 const overloaded = atom({ plugin: 'loomwright-lanes', key: 'overloaded' } as const, false)
 
 type LaneCommand = 'lane-status' | 'lane-feed' | 'lane-answer'
@@ -209,16 +210,21 @@ async function send($: EngineInterface, configured: string, l: LaneRow, q: LaneQ
   // lane-answer's own format: one entry per question index; multiSelect labels comma-joined.
   const answers: Record<string, string> = {}
   for (const [k, v] of Object.entries(mine)) answers[k] = v.join(',')
+  // The optional note rides with the answer; lane-answer delivers it as an annotation, never the decision.
+  const text = ((await read($, noteDrafts))[q.id] ?? '').trim()
   const r = await lane(
     $,
     configured,
     'lane-answer',
     [l.path, q.id, '--owner-command', `/lanes answer ${l.lane} ${q.id}`, '--via', VIA],
-    JSON.stringify({ answers }),
+    JSON.stringify(text ? { answers, note: text } : { answers }),
   )
   // lane-answer's words, verbatim — its refusal text included.
   await update($, message, () => ({ text: `${l.lane}: ${r.out || (r.ok ? 'answered' : 'lane-answer failed')}`, ok: r.ok }))
-  if (r.ok) await update($, picks, all => Object.fromEntries(Object.entries(all).filter(([id]) => id !== q.id)))
+  if (r.ok) {
+    await update($, picks, all => Object.fromEntries(Object.entries(all).filter(([id]) => id !== q.id)))
+    await update($, noteDrafts, all => Object.fromEntries(Object.entries(all).filter(([id]) => id !== q.id)))
+  }
   await refresh($, configured)
 }
 
@@ -253,12 +259,15 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text, Button } = ui
+    const Input = 'Input' in ui ? ui.Input : null // mobile draws no text field
     const cols = Math.max(32, e.props.bodyColumns ?? 80)
     const inner = cols - 4 // a lane card's border and padding
     const snap = await read($, snapshot)
     const chosen = await read($, picks)
     const note = await read($, message)
+    const notes = await read($, noteDrafts)
     const opened = await read($, open)
     const det = await read($, details)
     const doc = snap.doc
@@ -289,6 +298,108 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    // The inbox: every lane's pending question in one list, oldest first (what `lane-status --inbox`
+    // lists), each answered right here through lane-answer.
+    const inboxEntry = (l: LaneRow, q: LaneQuestion) => {
+                const mine = chosen[q.id] ?? {}
+      const items = q.items ?? []
+      const ready = complete(q, mine)
+      return (
+        <Box key={`${q.id}`} flexDirection="column" marginTop={1} {...card('warning', 'strong')}>
+          <Box flexDirection="row" justifyContent="space-between">
+            <Text>
+              <Text bold>{l.lane}</Text>
+              <Text dimColor>{`  ${l.item ? l.item.split('/').slice(-1)[0] : ''}`}</Text>
+            </Text>
+            <Text color="warning">{waited(q.waiting_s)}</Text>
+          </Box>
+          {l.state === 'answer_pending' ? (
+            <Text color="warning" wrap="wrap">
+              An answer is held (the machine was busy); the next /automate --resume delivers it. Sending again replaces it.
+            </Text>
+          ) : null}
+          {items.length === 0 ? (
+            <Text wrap="wrap">{`${q.question ?? 'The question could not be read.'} Answer it from the main session with lane-answer.`}</Text>
+          ) : null}
+          {items.map((it, i) => (
+            <Box flexDirection="column" marginTop={1} key={`${q.id}-q${i}`}>
+              {it.header ? <Text dimColor>{it.header.toUpperCase()}</Text> : null}
+              <Text bold wrap="wrap">{it.question ?? ''}</Text>
+              <Text dimColor>{it.multiSelect ? 'Pick one or more' : 'Pick one'}</Text>
+              {(() => {
+                // A picked option is filled and carries its mark (● ○ pick one, ☑ ☐ pick any);
+                // Send stays light until every question is answered. Options without a
+                // description sit side by side as chips; described ones stack, text beneath.
+                const described = it.options.some(o => !!o.description)
+                const button = (o: LaneOption) => {
+                  const picked = (mine[String(i)] ?? []).includes(o.label)
+                  const mark = it.multiSelect ? (picked ? '☑' : '☐') : picked ? '●' : '○'
+                  return (
+                    <Button
+                      key={`${q.id}:${i}:${o.label}`}
+                      variant={picked ? 'primary' : 'secondary'}
+                      onPress={() =>
+                        update($, picks, all => {
+                          const cur = all[q.id]?.[String(i)] ?? []
+                          const labels = it.multiSelect
+                            ? cur.includes(o.label) ? cur.filter(x => x !== o.label) : [...cur, o.label]
+                            : [o.label]
+                          return { ...all, [q.id]: { ...(all[q.id] ?? {}), [String(i)]: labels } }
+                        })
+                      }
+                    >
+                      {`${mark}  ${o.label}`}
+                    </Button>
+                  )
+                }
+                return described ? (
+                  <Box flexDirection="column" marginTop={1} rowGap={1} {...tray}>
+                    {it.options.map(o => (
+                      <Box flexDirection="column" key={`${q.id}-q${i}-${o.label}`}>
+                        {button(o)}
+                        {o.description ? (
+                          <Box paddingLeft={3}>
+                            <Text dimColor wrap="wrap">{o.description}</Text>
+                          </Box>
+                        ) : null}
+                      </Box>
+                    ))}
+                  </Box>
+                ) : (
+                  <Box flexDirection="row" flexWrap="wrap" marginTop={1} columnGap={1} rowGap={1} {...tray}>
+                    {it.options.map(o => button(o))}
+                  </Box>
+                )
+              })()}
+            </Box>
+          ))}
+          {items.length > 0 && Input ? (
+            <Box flexDirection="column" marginTop={1}>
+              <Text dimColor>Note to the lane (optional; it reads it, it never decides)</Text>
+              <Input
+                key={`${q.id}:note`}
+                placeholder="e.g. prefer the smaller diff"
+                value={notes[q.id] ?? ''}
+                submitLabel="Keep"
+                onInput={(v: string) => update($, noteDrafts, all => ({ ...all, [q.id]: v }))}
+                onSubmit={(v: string) => update($, noteDrafts, all => ({ ...all, [q.id]: v }))}
+              />
+            </Box>
+          ) : null}
+          {items.length > 0 ? (
+            <Box flexDirection="column" marginTop={2}>
+              <Box alignSelf="flex-start">
+                <Button key={`${q.id}:send`} variant={ready ? 'primary' : 'secondary'} onPress={() => send($, configured, l, q)}>
+                  {l.state === 'answer_pending' ? `Replace held answer for ${l.lane}` : `Send answer and resume ${l.lane}`}
+                </Button>
+              </Box>
+              {!ready ? <Text dimColor>Answer every question to send.</Text> : null}
+            </Box>
+          ) : null}
+        </Box>
+      )
+    }
+
     if (!snap.at) return <Text dimColor>Reading lane-status…</Text>
     if (!doc) {
       return (
@@ -306,6 +417,9 @@ export const register: Register = (on, options) => {
     const hot = m?.state === 'overloaded'
     const asking = waitingCount(doc)
     const age = Math.max(0, Math.round(((await $.clock.now()) - snap.at) / 1000))
+    const pending = doc.lanes
+      .flatMap(l => l.questions.map(q => ({ l, q })))
+      .sort((a, b) => (b.q.waiting_s ?? 0) - (a.q.waiting_s ?? 0))
 
     return (
       <Box flexDirection="column" gap={1}>
@@ -338,6 +452,26 @@ export const register: Register = (on, options) => {
         ) : null}
         {doc.lanes.length === 0 ? <Text dimColor wrap="wrap">No lanes yet. A wave started with /automate --parallel shows up here.</Text> : null}
 
+        {/* Inbox: everything waiting for you, oldest first. */}
+        {doc.lanes.length > 0 ? (
+          <Box flexDirection="column">
+            <Box flexDirection="row" justifyContent="space-between">
+              <Text bold>Inbox</Text>
+              <Text color={asking > 0 ? 'warning' : 'success'} bold={asking > 0}>
+                {asking > 0 ? `${pending.length} question${pending.length === 1 ? '' : 's'} waiting` : 'nothing waiting'}
+              </Text>
+            </Box>
+            {pending.length === 0 ? <Text dimColor>No lane is waiting for you.</Text> : null}
+            {pending.map(({ l, q }) => inboxEntry(l, q))}
+            {note.text ? (
+              <Box flexDirection="column" marginTop={1} {...card(note.ok ? 'success' : 'warning')}>
+                <Text bold color={note.ok ? 'success' : 'warning'}>{note.ok ? 'Sent' : 'Not sent'}</Text>
+                <Text wrap="wrap">{note.text}</Text>
+              </Box>
+            ) : null}
+          </Box>
+        ) : null}
+
         {/* One card per lane. */}
         {doc.lanes.map(l => (
           <Box key={`lane-${l.lane}`} flexDirection="column" {...card(tone(l))}>
@@ -358,6 +492,10 @@ export const register: Register = (on, options) => {
               {l.ci_slot?.state === 'waiting' ? row(`${l.lane}-ci`, 'CI slot', `waiting · position ${l.ci_slot.position}`) : null}
               {l.ci_slot?.state === 'holding' ? row(`${l.lane}-ci`, 'CI slot', 'running its checks') : null}
               {l.held_for_load ? row(`${l.lane}-held`, 'Held', l.held_for_load, 'warning') : null}
+              {l.questions.length > 0
+                ? row(`${l.lane}-q`, 'Question', `waiting ${waited(Math.max(...l.questions.map(q => q.waiting_s ?? 0)))} · answer it in the Inbox`, 'warning')
+                : null}
+              {l.policy ? row(`${l.lane}-policy`, 'Policy', `${l.policy.answered} answered automatically · last ${l.policy.last_gate ?? '?'} → ${l.policy.last_label}`) : null}
               {l.last_progress ? row(`${l.lane}-prog`, 'Progress', l.last_progress.replace(/^- /, '').replace(/^\d{4}-\d{2}-\d{2}T[\d:]+Z\s+/, ''), undefined, true) : null}
             </Box>
 
@@ -390,96 +528,9 @@ export const register: Register = (on, options) => {
               </Button>
             </Box>
 
-            {/* Questions, longest wait first. */}
-            {[...l.questions]
-              .sort((a, b) => (b.waiting_s ?? 0) - (a.waiting_s ?? 0))
-              .map(q => {
-                const mine = chosen[q.id] ?? {}
-                const items = q.items ?? []
-                const ready = complete(q, mine)
-                return (
-                  <Box key={`${q.id}`} flexDirection="column" marginTop={1} {...card('warning', 'strong')}>
-                    <Box flexDirection="row" justifyContent="space-between">
-                      <Text bold color="warning">Waiting for your answer</Text>
-                      <Text color="warning">{waited(q.waiting_s)}</Text>
-                    </Box>
-                    {items.length === 0 ? (
-                      <Text wrap="wrap">{`${q.question ?? 'The question could not be read.'} Answer it from the main session with lane-answer.`}</Text>
-                    ) : null}
-                    {items.map((it, i) => (
-                      <Box flexDirection="column" marginTop={1} key={`${q.id}-q${i}`}>
-                        {it.header ? <Text dimColor>{it.header.toUpperCase()}</Text> : null}
-                        <Text bold wrap="wrap">{it.question ?? ''}</Text>
-                        <Text dimColor>{it.multiSelect ? 'Pick one or more' : 'Pick one'}</Text>
-                        {(() => {
-                          // A picked option is filled and carries its mark (● ○ pick one, ☑ ☐ pick any);
-                          // Send stays light until every question is answered. Options without a
-                          // description sit side by side as chips; described ones stack, text beneath.
-                          const described = it.options.some(o => !!o.description)
-                          const button = (o: LaneOption) => {
-                            const picked = (mine[String(i)] ?? []).includes(o.label)
-                            const mark = it.multiSelect ? (picked ? '☑' : '☐') : picked ? '●' : '○'
-                            return (
-                              <Button
-                                key={`${q.id}:${i}:${o.label}`}
-                                variant={picked ? 'primary' : 'secondary'}
-                                onPress={() =>
-                                  update($, picks, all => {
-                                    const cur = all[q.id]?.[String(i)] ?? []
-                                    const labels = it.multiSelect
-                                      ? cur.includes(o.label) ? cur.filter(x => x !== o.label) : [...cur, o.label]
-                                      : [o.label]
-                                    return { ...all, [q.id]: { ...(all[q.id] ?? {}), [String(i)]: labels } }
-                                  })
-                                }
-                              >
-                                {`${mark}  ${o.label}`}
-                              </Button>
-                            )
-                          }
-                          return described ? (
-                            <Box flexDirection="column" marginTop={1} rowGap={1} {...tray}>
-                              {it.options.map(o => (
-                                <Box flexDirection="column" key={`${q.id}-q${i}-${o.label}`}>
-                                  {button(o)}
-                                  {o.description ? (
-                                    <Box paddingLeft={3}>
-                                      <Text dimColor wrap="wrap">{o.description}</Text>
-                                    </Box>
-                                  ) : null}
-                                </Box>
-                              ))}
-                            </Box>
-                          ) : (
-                            <Box flexDirection="row" flexWrap="wrap" marginTop={1} columnGap={1} rowGap={1} {...tray}>
-                              {it.options.map(o => button(o))}
-                            </Box>
-                          )
-                        })()}
-                      </Box>
-                    ))}
-                    {items.length > 0 ? (
-                      <Box flexDirection="column" marginTop={2}>
-                        <Box alignSelf="flex-start">
-                          <Button key={`${q.id}:send`} variant={ready ? 'primary' : 'secondary'} onPress={() => send($, configured, l, q)}>
-                            {`Send answer and resume ${l.lane}`}
-                          </Button>
-                        </Box>
-                        {!ready ? <Text dimColor>Answer every question to send.</Text> : null}
-                      </Box>
-                    ) : null}
-                  </Box>
-                )
-              })}
           </Box>
         ))}
 
-        {note.text ? (
-          <Box flexDirection="column" {...card(note.ok ? 'success' : 'warning')}>
-            <Text bold color={note.ok ? 'success' : 'warning'}>{note.ok ? 'Sent' : 'Not sent'}</Text>
-            <Text wrap="wrap">{note.text}</Text>
-          </Box>
-        ) : null}
         <Box flexDirection="row" alignItems="center" columnGap={2}>
           <Text dimColor>{`Refreshes every ${POLL_MS / 1000} s`}</Text>
           <Button key="refresh" variant="secondary" onPress={() => refresh($, configured)}>

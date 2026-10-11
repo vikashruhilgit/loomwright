@@ -37,6 +37,8 @@ export type LaneRow = {
   ci_slot: { state: string; position: number | null; held: string | null }
   held_for_load: string | null
   readiness: { score: string; summary: string; file: string } | null
+  /** Questions this lane's stamped policy answered on its own, or null. */
+  policy?: { answered: number; first_at: string | null; last_at: string | null; last_gate: string | null; last_label: string } | null
 }
 
 export type LaneMachine = {
@@ -74,6 +76,8 @@ declare module 'claude-code' {
       seen: Record<string, boolean>
       picks: LanePicks
       message: LaneNote
+      /** Unsent notes: question id → the owner's draft note. */
+      notes: Record<string, string>
       /** Lanes whose Details view is open. */
       open: Record<string, boolean>
       /** The last lines of lane-feed per open lane. */
