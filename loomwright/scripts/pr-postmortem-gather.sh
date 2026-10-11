@@ -85,6 +85,16 @@
 #     "review #2 — …" (the bot-comment review shape, verified live on a private downstream repo, 2026-06-10). The
 #     optional "code" is the same spirit — the literal word "review" stays
 #     mandatory, so "findings" ALONE still never matches (test-pinned).
+#     The PR's first commit is never a review-fix: commits[0].is_review_fix is
+#     ALWAYS false, whatever its subject says, because no review can precede the
+#     commit that opened the PR — there was nothing yet to fix. Without this, a
+#     feature commit whose subject merely mentions a matching phrase ("feat:
+#     self-heal sweep") booked a phantom review round (churn-ledger PR #43 round 1,
+#     a "counting artifact" the classifier then filed as flow_stage unknowable).
+#     The exclusion is by array POSITION inside the single jq build, not a regex
+#     change: "self-heal" stays in the set, so a LATER self-heal fix commit still
+#     counts, and the same first-commit subject still feeds agent_generated_guess
+#     (agent_commit_re above is unchanged — test-pinned).
 #   review_rounds — derived as MAX(count of is_review_fix commits, count of distinct
 #     CHURN-review submission timestamps, count of timestamp-ANCHORED bot-review issue
 #     comments). A review OBJECT counts as churn only when its state is
@@ -342,7 +352,11 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   (.title // "")                as $title
   | (.body // "")               as $body
   | ([ .commits[]? | (.messageHeadline // (.message // "" | split("\n")[0]) // "") ]) as $headlines
-  | ([ $headlines[] | { headline: ., is_review_fix: (test(review_fix_re; "i")) } ]) as $commits
+  # The first commit is never a review-fix (header doc): index 0 is pinned false,
+  # because no review can precede the commit that opened the PR.
+  | ([ $headlines | to_entries[]
+        | { headline: .value,
+            is_review_fix: ((.key > 0) and (.value | test(review_fix_re; "i"))) } ]) as $commits
   | ([ $commits[] | select(.is_review_fix) ] | length) as $review_fix_count
   # distinct CHURN-review submission timestamps — a review counts as churn only when
   # it requested changes, or commented with a non-empty body. Approval-only reviews

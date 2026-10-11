@@ -26,7 +26,7 @@ The goal: after an agent-generated PR has absorbed multiple rounds of post-PR re
 
 ## The 6 Root-Cause Classes
 
-Each review round is assigned **exactly ONE** class. Definitions are crisp so categorization is reproducible across runs:
+Each categorized review round is assigned **exactly ONE** class (a round with no concrete evidence is not categorized at all — Step 3 omits it). Definitions are crisp so categorization is reproducible across runs:
 
 | Class | Definition (assign when the round's evidence shows…) |
 |---|---|
@@ -58,7 +58,7 @@ Attribute each round to the stage of the agent flow where the root cause was int
 | `launch_pad` | Root cause is upstream planning — `plan_gap`, or a `scope_too_large` that a better-scoped brief would have prevented. |
 | `worker` | Root cause is in implementation — `execution_bug`, `convention_mismatch`, `missing_context`, or a `quality_gap` a worker should have covered. |
 | `self_heal` | The round is a `self_heal_miss` — Phase 4.5 had the integrated diff and should have caught it. |
-| `unknowable` | Evidence is too thin to attribute confidently (e.g. an approval with no actionable body, or a CI-only signal with no comment). Prefer this over guessing. |
+| `unknowable` | Reserved for a round that HAS a concrete finding (a reviewer comment naming a defect, or a fix headline naming what changed) whose stage still cannot be told from the evidence. Prefer this over guessing a stage. It is NOT the bucket for a round with no concrete finding at all — such a round is omitted (Step 3), never classified `unknowable`. |
 
 ---
 
@@ -78,7 +78,7 @@ The script emits exactly ONE JSON object on stdout and always exits 0. Two shape
 
 **`dismissed_findings` (dismissed-findings-01, additive):** the itemised `<!-- loomwright:dismissed round=<n> -->` marker comments the `--until-mergeable` drain and Phase 4.5 self-heal post on the analyzed PR (`skills/review-heal/SKILL.md` §"Dismissed-findings marker comment") — `[]` when the PR carries none. Consumed by the `dismissed_then_raised` signal above; NOT itself a review round and never counted toward `review_rounds`.
 
-**`review_rounds` counts three signals** (MAX of the three): review-fix commit headlines (the narrow phrase set — whose `address(es)? review` alternative accepts an optional intervening "code" since v14.23.3, covering "address code review findings …" headlines the adjacency requirement missed on a private downstream repo — plus the two explicit anchored forms `pr #N review` / `review #N` — word-bounded, so "preview #2" never matches), formal churn-review submissions, and **bot-authored issue-comment review rounds** — a comment whose author looks like a review bot (login `claude`, `github-actions*`, or any `*[bot]`) and whose body carries a review marker (a word-bounded review STEM — "review", "reviewed", "reviewer(s)", "reviewing", "reviews" — or "finding(s)" ANYWHERE in the body; widened in v14.23.2 from the heading-anchored form because bot comments in that shape open with `## Overview` and mention review only in running text, and widened again in v15.76.1 from the bare lexeme after a PR #223 bot comment opening "Reviewed <sha>. … Two minor findings" was dropped; still word-bounded so "Deploy Preview"/"previewed" never match), followed by at least one later push (comment `created_at` vs commit `committedDate`). The third signal covers repos whose review feedback arrives as CI-workflow comments (e.g. `claude[bot]` from a claude-review workflow) instead of GitHub review objects — the mode that previously reported `review_rounds: 0` despite real churn. `review_rounds_source` names the dominant signal (`fix_commits` | `formal_reviews` | `bot_comments` | `none`; ties resolve in that order). The issue-comments fetch is fail-safe and bounded to a single `?per_page=100` page: if it errors, the gather degrades to the two legacy signals, and hostile-typed comment fields degrade element-locally — never an unavailable emit, never a non-zero exit. Known bounded over-count: an all-clear closer ("recommend merge") followed by any later commit (housekeeping, version bump, rebase) books one phantom bot round — accepted noise for a trend-only signal (`review_rounds` is a MAX); a phrasing-based negative anchor on closers was considered and rejected as brittle.
+**`review_rounds` counts three signals** (MAX of the three): review-fix commit headlines (the narrow phrase set — whose `address(es)? review` alternative accepts an optional intervening "code" since v14.23.3, covering "address code review findings …" headlines the adjacency requirement missed on a private downstream repo — plus the two explicit anchored forms `pr #N review` / `review #N` — word-bounded, so "preview #2" never matches; the PR's first commit never counts as a review-fix, whatever its subject says, because no review can precede the commit that opened the PR — so `commits[0].is_review_fix` is always `false`), formal churn-review submissions, and **bot-authored issue-comment review rounds** — a comment whose author looks like a review bot (login `claude`, `github-actions*`, or any `*[bot]`) and whose body carries a review marker (a word-bounded review STEM — "review", "reviewed", "reviewer(s)", "reviewing", "reviews" — or "finding(s)" ANYWHERE in the body; widened in v14.23.2 from the heading-anchored form because bot comments in that shape open with `## Overview` and mention review only in running text, and widened again in v15.76.1 from the bare lexeme after a PR #223 bot comment opening "Reviewed <sha>. … Two minor findings" was dropped; still word-bounded so "Deploy Preview"/"previewed" never match), followed by at least one later push (comment `created_at` vs commit `committedDate`). The third signal covers repos whose review feedback arrives as CI-workflow comments (e.g. `claude[bot]` from a claude-review workflow) instead of GitHub review objects — the mode that previously reported `review_rounds: 0` despite real churn. `review_rounds_source` names the dominant signal (`fix_commits` | `formal_reviews` | `bot_comments` | `none`; ties resolve in that order). The issue-comments fetch is fail-safe and bounded to a single `?per_page=100` page: if it errors, the gather degrades to the two legacy signals, and hostile-typed comment fields degrade element-locally — never an unavailable emit, never a non-zero exit. Known bounded over-count: an all-clear closer ("recommend merge") followed by any later commit (housekeeping, version bump, rebase) books one phantom bot round — accepted noise for a trend-only signal (`review_rounds` is a MAX); a phrasing-based negative anchor on closers was considered and rejected as brittle.
 
 Detect the unavailable shape:
 ```bash
@@ -91,7 +91,7 @@ fi
 This is Invariant 4: clear one-liner, graceful exit, NO partial trend write.
 
 ### Step 3 — Categorize each review round
-For each review round / review-fix signal (driven by `review_rounds`, the `review_comments[]` bodies, and the `is_review_fix` commits), the main thread assigns:
+For each review round / review-fix signal that has concrete evidence (driven by `review_rounds`, the `review_comments[]` bodies, and the `is_review_fix` commits), the main thread assigns:
 - exactly one **class** from the 6 above,
 - the optional **`self_heal_miss`** boolean,
 - the optional **`dismissed_then_raised`** boolean (dismissed-findings-01),
@@ -100,8 +100,8 @@ For each review round / review-fix signal (driven by `review_rounds`, the `revie
 
 Categorization heuristics (reproducible, evidence-first):
 - Read the `review_comments[].snippet` text — the language usually maps directly to a class (e.g. "already have"/"duplicates" → `missing_context`; "split this PR"/"too big" → `scope_too_large`; "missing test"/"no error handling" → `quality_gap`; "this is wrong"/"breaks when" → `execution_bug`; "naming"/"style"/"count is stale" → `convention_mismatch`; "we never specced"/"requirement missing" → `plan_gap`).
-- If `review_rounds` exceeds the number of usable comment snippets, attribute the residual rounds to the `is_review_fix` commit headlines; if even those are thin, classify the residual round as `flow_stage: unknowable` with the best-fit class and a noted low-confidence evidence snippet.
-- **`review_comments[]` is a superset of the rounds — never derive the round count from it.** The gather script intentionally includes approval-bodied reviews (e.g. an `APPROVED` "LGTM after fix") AND review-shaped bot issue comments (including a final all-clear comment with no follow-up push, which is correctly not a round) in `review_comments[]` as context, but only `review_rounds` counts as rounds. Categorize exactly `review_rounds` rounds; treat surplus comment snippets (approvals, follow-up acknowledgements, post-final-push bot comments) as evidence/context only.
+- If `review_rounds` exceeds the number of usable comment snippets, attribute each residual round from a concrete `is_review_fix` commit headline when one exists (the headline names what was fixed — classify from it like any other evidence). A residual round with no concrete finding — e.g. a bot verify/all-clear comment where the only evidence is that "a push followed" — has nothing to classify: OMIT it from `categories[]` and from the `flow_stages` tally. Never classify such a round `flow_stage: unknowable` with a best-fit class: that books a guess as a ledger entry, and enough of them cross `propose-work.sh`'s threshold as a non-actionable candidate (churn-ledger PR #47 rounds 1, 2, 3, 5). `unknowable` stays reserved for a round that has a concrete finding whose stage cannot be told (flow-stage table above).
+- **`review_comments[]` is a superset of the rounds — never derive the round count from it.** The gather script intentionally includes approval-bodied reviews (e.g. an `APPROVED` "LGTM after fix") AND review-shaped bot issue comments (including a final all-clear comment with no follow-up push, which is correctly not a round) in `review_comments[]` as context, but only `review_rounds` counts as rounds. Categorize at most `review_rounds` rounds; a round with no concrete evidence is omitted (previous bullet), so `categories[]` may hold fewer entries than `review_rounds`. Treat surplus comment snippets (approvals, follow-up acknowledgements, post-final-push bot comments) as evidence/context only.
 - When `review_rounds_source` is `bot_comments`, the per-round evidence usually lives in the bot-comment snippets (`review_comments[]` entries from a review-bot author — login `claude`, `github-actions*`, or any `*[bot]`) — read those first, then fall back to commit headlines.
 - Apply the Self-Heal Miss-Class Checklist to set `self_heal_miss` (and thereby lean `flow_stage: self_heal`) where the evidence matches one of its classes.
 - **`dismissed_then_raised` (dismissed-findings-01):** when `gather.dismissed_findings` is non-empty, before finalizing each round check whether its evidence (the `review_comments[]` snippet, restricted to HUMAN-authored entries — i.e. NOT a review-bot login) contains, via normalised substring match (see the flag's own definition above), the text of any `dismissed_findings[]` item. When it does, set `dismissed_then_raised: true` and `flow_stage: self_heal` on that round — the class assignment (one of the 6 above) is UNCHANGED, still driven by the finding's own language exactly as every other round; only the flow-stage attribution is forced to `self_heal`, because a re-raised dismissal means the loop's own validate-then-fix judgment (not the underlying code defect's nature) is what needs fixing.
@@ -111,7 +111,7 @@ Human-readable, to stdout. Include:
 - **PR identity:** `repo#number — title`, and `agent_generated_guess`.
 - **Size:** `additions`/`deletions`/`changed_files`.
 - **review_rounds** total.
-- **Per-round lines:** `round N: class=<class>  self_heal_miss=<bool>  flow_stage=<stage>  evidence="<snippet>"`.
+- **Per-round lines:** `round N: class=<class>  self_heal_miss=<bool>  flow_stage=<stage>  evidence="<snippet>"` — one per categorized round; when Step 3 omitted any no-evidence rounds, say how many (e.g. `2 of 5 rounds omitted: no concrete finding`) so the gap between `review_rounds` and the listed rounds is explained, not silent.
 - **Root-cause narrative:** 2–4 sentences answering *why this PR needed back-and-forth* — the dominant class, whether self-heal should have caught it, and the stage most implicated.
 
 ### Step 5 — Append exactly ONE POSTMORTEM_RESULT trend line (fail-safe)
@@ -158,9 +158,9 @@ exit 0
 ```
 
 Where the main thread builds, before the snippet:
-- `CATEGORIES_JSON` — a JSON array of per-round objects `[{round, class, self_heal_miss, dismissed_then_raised, flow_stage, evidence}]`, itself jq-built (`jq -cn` with `--arg`/`--argjson`) so no untrusted PR text is string-interpolated. `dismissed_then_raised` (dismissed-findings-01) is additive here exactly like `self_heal_miss` — `false` on every round where the check did not trigger, never omitted.
+- `CATEGORIES_JSON` — a JSON array of per-round objects `[{round, class, self_heal_miss, dismissed_then_raised, flow_stage, evidence}]`, one per CATEGORIZED round (at most `review_rounds`; a round Step 3 omitted has no entry), itself jq-built (`jq -cn` with `--arg`/`--argjson`) so no untrusted PR text is string-interpolated. `dismissed_then_raised` (dismissed-findings-01) is additive here exactly like `self_heal_miss` — `false` on every round where the check did not trigger, never omitted.
 - `SELF_HEAL_MISSES` — integer count of rounds with `self_heal_miss: true`.
-- `FLOW_STAGES_JSON` — object tallying rounds per stage, e.g. `{"launch_pad":1,"worker":2,"self_heal":0,"unknowable":0}`.
+- `FLOW_STAGES_JSON` — object tallying rounds per stage, e.g. `{"launch_pad":1,"worker":2,"self_heal":0,"unknowable":0}` — tallied over the `CATEGORIES_JSON` entries, so an omitted round is counted in neither: the sum of the `flow_stages` values equals the length of `categories[]`, which keeps `build-floor.sh`'s `flow_stage_counter_disagreements` compare clean for `/pr-postmortem` lines. Always emit all four keys (`0` when unused).
 - `SUMMARY` — the one-line root-cause narrative (plain string, passed via `--arg`).
 
 **Injection safety:** every value flows through `--arg`/`--argjson`; the analyzed PR's repo/title/number come straight off the already-jq-built `$GATHERED` object via field access (`.repo`, `.number`, …). No PR text is ever concatenated into a JSON string.
@@ -182,9 +182,9 @@ One JSON object per line in `.supervisor/postmortem/results.jsonl`:
 | `agent_generated_guess` | bool | best-effort agent-PR heuristic (from gather) |
 | `review_rounds` | int | from gather |
 | `additions` / `deletions` / `changed_files` | int | size (from gather) |
-| `categories` | array | per-round `[{round, class, self_heal_miss, dismissed_then_raised, flow_stage, evidence}]` — `dismissed_then_raised` is **additive** (dismissed-findings-01); absent in pre-dismissed-findings-01 lines, which remain valid — `schema_version` stays `1` |
+| `categories` | array | per-round `[{round, class, self_heal_miss, dismissed_then_raised, flow_stage, evidence}]`, one per categorized round — may hold fewer entries than `review_rounds` (no-evidence rounds are omitted, Step 3) — `dismissed_then_raised` is **additive** (dismissed-findings-01); absent in pre-dismissed-findings-01 lines, which remain valid — `schema_version` stays `1` |
 | `self_heal_misses` | int | count of rounds flagged `self_heal_miss` |
-| `flow_stages` | object | tally per stage `{launch_pad, worker, self_heal, unknowable}` |
+| `flow_stages` | object | tally per stage `{launch_pad, worker, self_heal, unknowable}` over `categories[]` — its values sum to `categories[]`'s length (omitted rounds appear in neither) |
 | `summary` | string | one-line root-cause narrative |
 | `plugin_version` | string | **additive, optional** — plugin version at analysis time, read defensively from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq (`"unknown"` fallback); absent in older lines, which remain valid — `schema_version` stays `1` |
 | `pr_url` | string \| null | **additive, optional** — PR URL (from gather `.url // null`); absent in older lines, which remain valid — `schema_version` stays `1` |
@@ -204,7 +204,7 @@ This file is **append-only** and the **seed corpus for the deferred synthetic ev
 | Gather returns `unavailable` | Print one line with the reason; exit 0; NO trend write. |
 | `jq` missing at append time | Print one best-effort warning; skip append; exit 0 (report already printed). |
 | `mkdir`/`>>` fails (read-only fs, perms) | Swallowed by the wrapper; print one best-effort warning; exit 0. |
-| Thin evidence for a round | Classify `flow_stage: unknowable` with a best-fit class and a low-confidence evidence note — never invent reviewer intent. |
+| Thin evidence for a round (no concrete finding — e.g. a bot verify/all-clear comment and only "a push followed") | Attribute it from a concrete `is_review_fix` headline when one exists; otherwise omit it from `categories[]` and `flow_stages` and say so in the report — never classify it `flow_stage: unknowable`, never invent reviewer intent. |
 
 ## See Also
 
