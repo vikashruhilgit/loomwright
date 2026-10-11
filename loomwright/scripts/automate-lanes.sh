@@ -22,7 +22,8 @@
 #   lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>' [--without-gate-optout]
 #        deliver a kept answer (the poll)
 #   lane-remove <lane_dir> [--stop] [--abandon]          guarded removal (salvages first); --abandon on a
-#        `gone` lane stamps ABANDONED and pushes the lane's metadata through trail-pr's evidence gate
+#        `gone` lane stamps ABANDONED and pushes the lane's metadata through trail-pr's evidence gate;
+#        an unpushed-metadata refusal names the paths (`meta-sync.sh status --paths`)
 #   lane-convert-ready <lane_dir>                        wave end: ready_for_release → awaiting_merge, then
 #        push the lane's metadata (non-claim files by exact list + trail-pr's evidence-gated list); a
 #        re-run once the PR merged first runs `closeout … --no-trail` inside the lane (the done stamp),
@@ -1002,6 +1003,18 @@ _lanes_live_watchers() {
   done
 }
 
+# _lanes_status_named <meta-sync status --paths output> — `(<first line>)`, plus ` — paths: <p>, …` when
+# indented path lines follow (at most five named, then `+<k> more`). A status with no path lines (an
+# older meta-sync) reads exactly as before: `(<first line>)`.
+_lanes_status_named() {
+  local first n
+  first="$(printf '%s\n' "$1" | head -1)"
+  n="$(printf '%s\n' "$1" | sed 1d | grep -c '^  [^ ]')"
+  [ "$n" -gt 0 ] || { printf '(%s)' "$first"; return 0; }
+  printf '(%s) — paths: %s' "$first" "$(printf '%s\n' "$1" | sed 1d | grep '^  [^ ]' | sed 's/^  //' | head -5 \
+    | awk -v k="$((n - 5))" '{ printf "%s%s", (NR > 1 ? ", " : ""), $0 } END { if (k > 0) printf ", +%d more", k }')"
+}
+
 # _lanes_remove_refusals — every lane-remove refusal that does not depend on process liveness. Runs
 # in lanes_remove's dynamic scope (reads/sets its locals L, abandon, state, rf, q, b, u, mb, ms).
 _lanes_remove_refusals() {
@@ -1029,8 +1042,12 @@ _lanes_remove_refusals() {
   [ -e "$LN_DIR/.supervisor/automate/$LN_RUN.meta-push-failed" ] && { _refuse "meta-push failure marker is set"; return 1; }
   if ! mb="$(_lanes_meta_branch "$LN_DIR")"; then _refuse "metadata mode unknown (cannot prove the metadata was pushed)"; return 1; fi
   if [ -n "$mb" ]; then
-    ms="$(bash "$META_SYNC" status --branch "$mb" --root "$LN_DIR" 2>/dev/null)" || { _refuse "metadata status unreadable"; return 1; }
-    case "$ms" in local_ahead*|conflict*|*local_ahead*|*conflict*) _refuse "metadata not pushed ($ms)"; return 1 ;; esac
+    # --paths: the refusal names what is unpushed, so fleet-closeout's `waiting — <lane> …` line says
+    # which file to push (wave W4: a worker-filed proposed/ draft found only by a hand list-managed diff).
+    ms="$(bash "$META_SYNC" status --branch "$mb" --root "$LN_DIR" --paths 2>/dev/null)" || { _refuse "metadata status unreadable"; return 1; }
+    case "$(printf '%s\n' "$ms" | head -1)" in
+      local_ahead*|conflict*|*local_ahead*|*conflict*) _refuse "metadata not pushed $(_lanes_status_named "$ms")"; return 1 ;;
+    esac
   fi
   # >>> unpushed-commit check (fail CLOSED: an unreadable branch list or count refuses, never reads 0)
   local heads; heads="$(git -C "$LN_DIR" for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null)" \
@@ -1106,15 +1123,15 @@ lanes_remove() {
 # ---- the lane's metadata at the wave end (F11) --------------------------------------------------
 # _lanes_meta_extras <branch> <message> — pushes the lane's own NON-claim metadata, exactly listed:
 # its run file, `<run_id>.merge-readiness.md` and `<run_id>.dismissed-decisions` (each when present),
-# plus its Orchestrator task plans (_lanes_task_plans). None of them is a done claim. Prints
-# meta-sync's reason and returns 1 on failure.
+# plus its Orchestrator task plans and the requirement drafts it filed (_lanes_noclaim_files). None of
+# them is a done claim. Prints meta-sync's reason and returns 1 on failure.
 _lanes_meta_extras() {
   local mb="$1" msg="$2" list f out rc=0
   list="$(mktemp "${TMPDIR:-/tmp}/lane-meta.XXXXXX" 2>/dev/null)" || { echo "could not stage the push list"; return 1; }
   { for f in "$LN_RUN.md" "$LN_RUN.merge-readiness.md" "$LN_RUN.dismissed-decisions"; do
       if [ -f "$LN_DIR/.supervisor/automate/$f" ]; then printf '%s\n' ".supervisor/automate/$f"; fi
     done
-    _lanes_task_plans
+    _lanes_noclaim_files
   } > "$list" || { rm -f "$list"; echo "could not stage the push list"; return 1; }
   out="$(bash "$META_SYNC" push --branch "$mb" --root "$LN_DIR" --paths-from "$list" --message "$msg" 2>&1)" || rc=$?
   rm -f "$list"
@@ -1124,25 +1141,30 @@ _lanes_meta_extras() {
   return 0
 }
 
-# _lanes_task_plans — prints the lane's Orchestrator task plans, one repo-relative path per line: every
-# regular file `.supervisor/requirements/<slug>-plan.md` (top level only — the one path the Orchestrator's
-# file-fallback mode writes, agents/orchestrator.md §"Persistence Mode"). It sits on a meta-managed path,
-# so before this list carried it neither of the wave end's pushes did (trail-pr's candidates are the run
-# file, its sidecars, its Queue requirements and their briefs) and lane-remove refused the lane forever
-# on `local_ahead` (operator-run 2026-10-10 Phase 0.2). Excluded, left to trail-pr's evidence gate: a
-# path the lane run file's `## Queue` / `## Current` names (that is the item's requirement), and any
-# file carrying a `## Status: done…` heading (a done claim). A plan the lane only pulled is unchanged,
-# so meta-sync pushes nothing for it; a lane clone has exactly one run, so no other run's plan is here.
-_lanes_task_plans() {
+# _lanes_noclaim_files — prints the lane's other non-claim metadata, one repo-relative path per line:
+#   - its Orchestrator task plans: every regular top-level `.supervisor/requirements/<slug>-plan.md` (the
+#     one path the Orchestrator's file-fallback mode writes, agents/orchestrator.md §"Persistence Mode")
+#     — before this list carried them, lane-remove refused forever on `local_ahead` (operator-run
+#     2026-10-10 Phase 0.2);
+#   - the requirement drafts it filed: every regular top-level `.supervisor/requirements/proposed/*.md`.
+#     A worker whose requirement says to file an out-of-scope follow-up as its own item writes it there
+#     (`## Status: proposed`); trail-pr's candidates carry only this run's dismissed drafts from that
+#     folder, so before this list carried them the draft stayed local and fleet-closeout waited forever
+#     on `local_ahead 1` (wave W4, run automate-2026-10-11-182243: twin-remediation-11, hand-pushed).
+# Both sit on meta-managed paths no other wave-end push carries. Excluded, left to trail-pr's evidence
+# gate: a path the lane run file's `## Queue` / `## Current` names (that is the item's requirement), and
+# any file carrying a `## Status: done…` heading (a done claim). A file the lane only pulled is unchanged,
+# so meta-sync pushes nothing for it; a lane clone has exactly one run, so nothing here is another run's.
+_lanes_noclaim_files() {
   local f p items nl tab
   nl="$(printf '\nx')"; nl="${nl%x}"; tab="$(printf '\t')"
   items="$(awk '/^## / { sec = $0; next }
     sec == "## Queue" && /^- \[[ xX]\] / { v = $0; sub(/^- \[[ xX]\] /, "", v); sub(/[[:space:]]+#.*$/, "", v); sub(/[[:space:]]+$/, "", v); sub(/^\.\//, "", v); print v }
     sec == "## Current" && /^- item:/ { v = $0; sub(/^- item: */, "", v); sub(/ *\|.*/, "", v); sub(/^\.\//, "", v); print v }' \
     "$LN_DIR/.supervisor/automate/$LN_RUN.md" 2>/dev/null)"
-  for f in "$LN_DIR"/.supervisor/requirements/*-plan.md; do
+  for f in "$LN_DIR"/.supervisor/requirements/*-plan.md "$LN_DIR"/.supervisor/requirements/proposed/*.md; do
     [ -f "$f" ] && [ ! -L "$f" ] || continue
-    p=".supervisor/requirements/${f##*/}"
+    p="${f#"$LN_DIR"/}"
     case "$p" in *"$nl"*|*"$tab"*) continue ;; esac   # meta-sync refuses such names; never split a line
     grep -qxF -- "$p" <<<"$items" && continue
     grep -qE '^## Status:[[:space:]]*done' "$f" 2>/dev/null && continue
@@ -1233,7 +1255,8 @@ _lanes_abandon_meta() {
 # `done`, branch mode runs `finalize-empty` inside the lane before the pushes (A1, parallel-automate/21 —
 # see the comment at its call). Each then runs the pushes, so a re-run is idempotent. Branch mode (`on <Y>`) then
 # pushes (1) the lane's non-claim files by exact list (_lanes_meta_extras: the run file, its
-# merge-readiness report, its dismissed-decisions ledger, its task plans) and (2) everything else through trail-pr's
+# merge-readiness report, its dismissed-decisions ledger, its task plans, the requirement drafts it filed
+# under proposed/) and (2) everything else through trail-pr's
 # evidence-gated candidate list (_lanes_meta_trail, `--reason wave-end`): a done stamp or a jobs/done/
 # brief whose PR is not MERGED is excluded and named, so while the PR is open the lane keeps reading
 # `local_ahead` and lane-remove keeps refusing — after the owner merges, the re-run's closeout writes
@@ -2820,7 +2843,8 @@ _lanes_fc_finalize() {
 #                  `queue-checkoff <parent_runfile> <item>` + `fleet closeout: <lane> <item> done (PR <url>)`.
 #   4. sync        `git pull --ff-only` of the primary (_lanes_sync_primary's refusals are `skipped — …`).
 #   5. remove      `lane-remove <lane_dir>` per closed-out lane (no --stop: a live watcher or process
-#                  refuses — `waiting — <lane> <refusal>`, re-checked on the next call).
+#                  refuses — `waiting — <lane> <refusal>`, re-checked on the next call). An unpushed-
+#                  metadata refusal names its paths (`… (local_ahead <n>) — paths: <p>, …`).
 #   6. wave end    only once EVERY lane reads removed/abandoned: `rmdir <primary>-lanes/<run_id>/` when
 #                  empty, else `kept <dir> — contents: <names>`; `lane-status --leaks` (its first line
 #                  appended as `fleet closeout leaks: <line>`, the primary's path written `<primary>`);

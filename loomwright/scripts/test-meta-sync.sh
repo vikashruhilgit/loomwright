@@ -38,6 +38,7 @@
 #  17. concurrent pushes: the loser is rejected, re-fetches, recomputes and lands — never forced
 #      (origin has receive.denyNonFastForwards); a truly parallel pair both land
 #  18. status vocabulary: synced / local_ahead / remote_ahead / conflict / never_synced, exit 0
+#      (legs 5 and 9: --paths names the local_ahead / conflict paths after the unchanged first line)
 #  19. static: the requirement's forbidden-forms grep over meta-sync.sh returns nothing
 #  22. same-root concurrency: a `status` on the SAME root, injected (git shim) between a push's
 #      read-tree and its first update-index, must not shrink the pushed tree; an index lost mid-push
@@ -324,6 +325,16 @@ ms B pull
 { [ "$RC" -eq 0 ] && [ "$(get B "$RQ/y.md")" = "y local edit in B" ] && [ "$(get B "$RQ/z.md")" = "z new from A" ]; }
 check $? "B's unpushed edit to Y survives pull; A's Z arrives (rc=$RC)"
 ms B status; [ "$OUT" = "local_ahead 1" ]; check $? "status -> local_ahead 1 (got '$OUT')"
+# --paths names what local_ahead counts (lane-remove's refusal prints them — wave W4 needed a hand
+# diff of list-managed against the branch to find one unpushed draft); a local deletion is marked.
+ms B status --paths
+want="$(printf 'local_ahead 1\n  %s' "$RQ/y.md")"
+{ [ "$RC" -eq 0 ] && [ "$OUT" = "$want" ]; }; check $? "status --paths -> local_ahead 1 + the one take-L path (got '$OUT')"
+rm "$W/B/$RQ/d.md"
+ms B status --paths
+want="$(printf 'local_ahead 2\n  %s (deleted locally)\n  %s' "$RQ/d.md" "$RQ/y.md")"
+{ [ "$RC" -eq 0 ] && [ "$OUT" = "$want" ]; }; check $? "status --paths names a local deletion as such, sorted (got '$OUT')"
+ms B status; [ "$OUT" = "local_ahead 2" ]; check $? "status without --paths still prints exactly one line (got '$OUT')"
 
 echo "== 6. post-push base (agreed-state meta-base) =="
 synced_pair
@@ -364,6 +375,7 @@ ms B pull
 { [ "$RC" -eq 1 ] && [ "$(get B "$RQ/c.md")" = "c from B" ] && [ "$(get B "$RQ/w.md")" = "w v1" ] && [ "$(base_of B)" = "$base_before" ]; }
 check $? "pull: conflict -> exit 1 and NOTHING written (pending take-R w.md untouched), meta-base unchanged (rc=$RC)"
 ms B status; [ "$OUT" = "conflict 1" ]; check $? "status -> conflict 1 (got '$OUT')"
+ms B status --paths; [ "$OUT" = "$(printf 'conflict 1\n  %s' "$RQ/c.md")" ]; check $? "status --paths -> conflict 1 + the conflicting path only (got '$OUT')"
 
 echo "== 10. results.jsonl both-append -> union =="
 synced_pair
@@ -1793,7 +1805,7 @@ ms A list-managed
 { [ "$RC" -eq 1 ] && grep -qF "meta_sync: symlink $RQ/linkdir" < <(printf '%s\n' "$OUT"); }
 check $? "list-managed fails closed on a symlinked folder where run history lives, exactly like push (rc=$RC: $OUT)"
 rm -f "$W/A/$RQ/linkdir"
-for args in "pull --tracked" "push --tracked" "status --tracked" "list-managed --branch $BR" "list-managed --branch $BR --allow-branch-mismatch"; do
+for args in "pull --tracked" "push --tracked" "status --tracked" "push --paths" "pull --paths" "list-managed --paths" "list-managed --branch $BR" "list-managed --branch $BR --allow-branch-mismatch"; do
   # shellcheck disable=SC2086
   ms A $args
   [ "$RC" -eq 1 ] && grep -q '^meta_sync: usage: ' < <(printf '%s\n' "$OUT")
