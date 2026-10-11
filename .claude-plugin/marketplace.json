@@ -102,6 +102,23 @@
         "database",
         "read-only"
       ]
+    },
+    {
+      "name": "loomwright-lanes",
+      "source": "./loomwright-lanes",
+      "description": "Optional live pane for Loomwright's /automate --parallel lanes: /lanes shows every lane (state, PR, branch, last actions, readiness, machine load) and answers a waiting lane's question with one button per option. Reads and writes only through Loomwright's lane-status / lane-feed / lane-answer; uninstalling it changes nothing about a run.",
+      "version": "0.1.0",
+      "author": {
+        "name": "vikash ruhil"
+      },
+      "license": "LicenseRef-PolyForm-Shield-1.0.0",
+      "keywords": [
+        "lanes",
+        "parallel",
+        "pane",
+        "dashboard",
+        "loomwright"
+      ]
     }
   ]
 }
