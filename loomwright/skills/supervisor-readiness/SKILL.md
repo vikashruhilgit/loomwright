@@ -252,7 +252,26 @@ so Supervisor Phase 4.5 `ground_truth` executes the doc-currency and version-con
 - **One bullet per modified file** (several files may share one bullet only when they share the same invariants). Cover: guards and fail-safe rules to keep (exit codes, `|| true`, closed key sets, locks), conventions to reuse (the file's own O(1)/tail/helper idioms), producer/consumer contracts to mirror exactly, which matchers/callers fire a hook or emitter, and tests that pin the file's text.
 - **Grounded:** every entry names its file and quotes ≥1 anchor as a backticked literal that `grep -F` finds in that file (or in the pinning test the entry names). A bare `file:N` line number is not an anchor — it drifts.
 - **Invariants, not instructions:** state what must still hold after the change; the subtask's own work stays in Acceptance Criteria.
-- Other per-file sections (e.g. a closed-enumeration or pin-mutation list) sit beside this one as their own `## ` sections — never nested inside it.
+- Other sections (`## Closed enumerations touched`, `## Pin mutations` below) sit beside this one as their own `## ` sections — never nested inside it.
+
+## Closed enumerations touched
+
+> Sibling grep at base `{sha}`: `grep -rnF '{sibling_value}' --exclude=CHANGELOG.md .` → {N} hits in {M} files.
+
+- **`{new_value}`** (sibling: `{sibling_value}`) — must be named in:
+  - `{path}` — {the closed list, quoting its anchor: `{literal}`} — extend.
+  - `{path}` — {what the hit is} — no change: {why it is not a closed list for this value}.
+
+## Pin mutations
+
+| Pin | Mutation (one line, applied to the code the pin protects) |
+|-----|-------------------------------------------------------------|
+| `{test file}` — {pin id or needle} | delete `{line}` in `{path}` / flip `{A}` → `{B}` in `{path}` |
+
+**Authoring rules (Launch Pad Phase 3 action 12; Plan Reviewer Criterion 19):**
+- **When:** `## Closed enumerations touched` is required when the brief adds ≥1 enum, status, reason, category or decision value; `## Pin mutations` when it adds or changes ≥1 test pin. Neither applies → omit both — no heading, no "none" line.
+- **Closed list:** one that must name every value of its kind — a schema enum, an allow-list, a `case` arm set, a closed key set, a `{a|b|c}` doc list. Find them mechanically: `grep -rnF` at least one existing sibling value repo-wide (more when a hit set looks partial), show the command, and give every hit a row (`extend`, or `no change` with the reason). Every `extend` row's file is in the File Impact Map and a subtask's `lanes:`.
+- **Pin mutations:** one row per new or changed pin. The mutation edits the code the pin protects (delete one line, flip one value), never the pin's own needle, and must turn the pin red. Phase 4.5's code reviewer may run each in a scratch copy (`agents/code-reviewer.md` §5); a pin that stays green on its mutant is BLOCKING.
 
 ## Subtask Structure
 
@@ -401,7 +420,7 @@ Subtask 2 (independent)
 
 ### Section Requirements
 
-**9 required sections** (mandatory — Supervisor relies on them) plus **optional sections**: `Feasibility` (Launch Pad v10.3+, in the table below), `Outcomes Rubric` (v12.2.0+), `Executable Acceptance` (v14.19.0+), `House Rules` (v15.109.0+ — Launch Pad Phase 5 action 6a, emitted only when `read-rules.sh --with-ids` routed ≥1 rule to the File Impact Map; its reader banner is demoted to a `> ` line so it stays one H2 section), `Touched-file invariants` (conditionally required — whenever the brief modifies an existing script; Plan Reviewer Criterion 18), and `Cited-line premise check` (harness-port/03, nested under `## Skill References`) — the latter five are documented in `agents/launch-pad.md` or their own blocks above and omitted from the table below:
+**9 required sections** (mandatory — Supervisor relies on them) plus **optional sections**: `Feasibility` (Launch Pad v10.3+, in the table below), `Outcomes Rubric` (v12.2.0+), `Executable Acceptance` (v14.19.0+), `House Rules` (v15.109.0+ — Launch Pad Phase 5 action 6a, emitted only when `read-rules.sh --with-ids` routed ≥1 rule to the File Impact Map; its reader banner is demoted to a `> ` line so it stays one H2 section), `Touched-file invariants` (conditionally required — whenever the brief modifies an existing script; Plan Reviewer Criterion 18), `Closed enumerations touched` and `Pin mutations` (conditionally required — a new enum value / a new or changed test pin; Plan Reviewer Criterion 19), and `Cited-line premise check` (harness-port/03, nested under `## Skill References`) — the latter seven are documented in `agents/launch-pad.md` or their own blocks above and omitted from the table below:
 
 | Section | Required? | Used In Phase | Purpose |
 |---------|-----------|---------------|---------|
