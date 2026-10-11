@@ -20,7 +20,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Plugin Layout
 
-The repo is a **marketplace wrapper** containing three sibling plugins (loomwright, stackpack, mysql-mcp):
+The repo is a **marketplace wrapper** containing four sibling plugins (loomwright, stackpack, mysql-mcp, loomwright-lanes):
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
 - Plugin manifest: `loomwright/.claude-plugin/plugin.json`
@@ -29,7 +29,7 @@ The repo is a **marketplace wrapper** containing three sibling plugins (loomwrig
 - Skills: `loomwright/skills/` (42 skills, see `SKILLS_INDEX.md`)
 - Hooks: `loomwright/hooks/hooks.json`
 - Docs: `loomwright/docs/`
-- Sibling plugins: `stackpack/` (18 tech-stack reference skills) and `mysql-mcp/` (read-only MySQL MCP server `vikashruhil-mysql-mcp`, pinned to an exact version) — versions in each plugin's own `plugin.json`
+- Sibling plugins: `stackpack/` (18 tech-stack reference skills), `mysql-mcp/` (read-only MySQL MCP server `vikashruhil-mysql-mcp`, pinned to an exact version) and `loomwright-lanes/` (optional `/lanes` pane over `/automate --parallel` lanes — a Claude Code mod that reaches Loomwright only through `lane-status` / `lane-feed` / `lane-answer`; nothing in `loomwright/` depends on it, `scripts/test-lanes-addon.sh`) — versions in each plugin's own `plugin.json`
 
 > **Repo path vs. runtime path:** `loomwright/...` is the developer-side path (this repo on disk). Anything invoked by hooks, skills, or agents at *runtime* must reference `${CLAUDE_PLUGIN_ROOT}/...` — that's the canonical Claude Code variable that resolves to the plugin install dir on both dev checkouts and marketplace installs. Never use `loomwright/...` paths from the user-project root; they only resolve for the plugin maintainer.
 
