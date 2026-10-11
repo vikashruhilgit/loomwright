@@ -301,6 +301,20 @@ lanes_proc_alive() {
   return 1
 }
 
+# _lanes_clip <n> — stdin (one line) clipped to at most <n> characters on a whitespace boundary and
+# marked ` …`; a line that fits is unchanged, and a line with no whitespace to cut at is kept whole.
+# Never `cut -c` alone: a cut inside a PR URL leaves a partial `owner/repo` slug, which meta-sync's
+# forge_slug scrub refuses (fail closed) — wave W2's L2 metadata push stopped on exactly that.
+_lanes_clip() {
+  local s c
+  s="$(cat)"; c="$(printf '%s' "$s" | cut -c1-"$1")"
+  [ "$c" = "$s" ] && { printf '%s' "$s"; return 0; }
+  case "$c" in
+    *[[:space:]]*) printf '%s …' "$(printf '%s' "$c" | sed -E 's/[[:space:]]+[^[:space:]]*$//')" ;;
+    *) printf '%s' "$s" ;;
+  esac
+}
+
 # _lanes_pending_question <inbox> — prints the first recorded question id with no answer file.
 _lanes_pending_question() {
   local q id
@@ -1176,7 +1190,7 @@ lanes_convert_ready() {
     done/awaiting_go) phase=closed; echo "lane-convert-ready: $L already closed out (## Current done / awaiting_go) — retrying the metadata push only" ;;
     # A1: finalize-empty rewrote `## Status: done` + pause_reason null — a re-run after a failed push.
     done/null|done/-)
-      if grep -qE '^## Status:[[:space:]]*done([^A-Za-z0-9_]|$)' "$rf" 2>/dev/null; then
+      if _lanes_rf_done "$rf"; then
         phase=closed; echo "lane-convert-ready: $L already closed out and finalized (## Status: done) — retrying the metadata push only"
       else _cr_refuse "run file reads status ${status:--} / pause_reason ${pause:--}, not ready_for_release"; return 1; fi ;;
     *) _cr_refuse "run file reads status ${status:--} / pause_reason ${pause:--}, not ready_for_release"; return 1 ;;
@@ -1970,7 +1984,7 @@ lanes_status() {
       case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
       [ -d "$path" ] && _lane_ctx "$path" || continue
       ts="$(_lanes_runfile_fields "$path/.supervisor/automate/$LN_RUN.md" | cut -f1-2)"
-      case "$ts" in *ready_for_release*|*awaiting_merge*) lanes_readiness "$path" >/dev/null ;; esac
+      case "$ts" in *ready_for_release*|*awaiting_merge*|done*) lanes_readiness "$path" >/dev/null ;; esac
     done < "$table"
   fi
   doc="$(_lanes_status_doc "$table" "$parent" "$primary")"
@@ -2056,7 +2070,8 @@ lanes_feed() {
 #   scope-fence    `gh pr diff --name-only` ⊆ the item's `## Touches` / the brief's lanes + changelog.d/
 #   gates          required checks on the current head, dismissed-finding decisions, children-settled
 #   headline-repro the Validation entry naming a mutation / repro (PASS n/a when none is named)
-# Called by the lane at its ready_for_release park; re-written on demand (`lane-status --refresh-readiness`).
+# Called by the lane at its ready_for_release park; re-written on demand (`lane-status --refresh-readiness`,
+# which also covers a lane already closed out — `done` — so a report written before a fix is repairable).
 _lanes_rd_section() { # <n> <title> <body_file> — the PR body's lines for Validation entry n
   awk -v n="$1" -v t="$2" '
     BEGIN { t = tolower(t) }
@@ -2186,7 +2201,7 @@ lanes_readiness() {
   esac
   if grep -qiE 'children[-_ ]settled' "$rf" 2>/dev/null; then
     grows="$grows
-  - children-settled: PASS — $(grep -iE 'children[-_ ]settled' "$rf" | tail -1 | sed 's/^- //' | cut -c1-160)"
+  - children-settled: PASS — $(grep -iE 'children[-_ ]settled' "$rf" | tail -1 | sed 's/^- //' | _lanes_clip 160)"
   else
     grows="$grows
   - children-settled: NOT-RUN — not recorded in the run file"; [ "$gworst" = FAIL ] || gworst=NOT-RUN

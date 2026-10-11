@@ -254,6 +254,11 @@ seed_tree() {
 
 jget() { jq -r "$2" "$1" 2>/dev/null; }
 scount()  { jq -r --arg k "$2" '.surfaces[$k].count  // "ABSENT"' "$1" 2>/dev/null; }
+# cc_ids — distinct session ids in the JSONL on stdin, by build-floor.sh's OWN predicate (a non-empty
+# STRING cc_session_id). An independent recount must apply the contract, not a looser reading:
+# `select(has("cc_session_id"))` also counted a `null` id as a session (425 vs 426 on a real tree).
+cc_ids() { jq -r 'select((.cc_session_id | type) == "string" and (.cc_session_id | length) > 0) | .cc_session_id' 2>/dev/null \
+  | env LC_ALL=C sort -u | awk 'NF{n++} END{print n+0}'; }
 sstatus() { jq -r --arg k "$2" '.surfaces[$k].status // "ABSENT"' "$1" 2>/dev/null; }
 sreason() { jq -r --arg k "$2" '.surfaces[$k].reason // ""'       "$1" 2>/dev/null; }
 
@@ -404,7 +409,10 @@ grep -qF '*.jsonl' < <(jq -r '.surfaces.logs.basis' "$JA" 2>/dev/null) \
 
 # ============================================================================
 echo "== (c) sessions are segmented by cc_session_id, never by filename =="
-fix_ids="$(jq -r 'select(has("cc_session_id")) | .cc_session_id' "$SESS_FIXTURE" 2>/dev/null | sort -u | awk 'NF{n++} END{print n+0}')"
+[ "$(printf '%s\n' '{"cc_session_id":"a"}' '{"cc_session_id":null}' '{"cc_session_id":""}' '{"cc_session_id":"a"}' '{"x":1}' | cc_ids)" = 1 ] \
+  && ok "the recount counts only non-empty string ids (a null or empty cc_session_id is not a session)" \
+  || no "the recount counted a null or empty cc_session_id as a session"
+fix_ids="$(cc_ids < "$SESS_FIXTURE")"
 fix_noid="$(jq -r 'select(has("cc_session_id") | not) | "x"' "$SESS_FIXTURE" 2>/dev/null | awk 'NF{n++} END{print n+0}')"
 fix_lines="$(awk 'NF{n++} END{print n+0}' "$SESS_FIXTURE")"
 [ "$fix_ids" -eq 3 ] && [ "$fix_noid" -eq 1 ] && [ "$fix_lines" -eq 8 ] \
@@ -1601,7 +1609,7 @@ echo "== (o) newest-session agent rows: current is picked by the newest ts, neve
 # Every expectation below is recomputed FROM THE FIXTURE with jq, independently of the
 # projector's own aggregation - never read back out of floor.json.
 cf_lines="$(awk 'NF{n++} END{print n+0}' "$SESS_CUR_FIXTURE")"
-cf_ids="$(jq -r 'select(has("cc_session_id")) | .cc_session_id' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort -u | awk 'NF{n++} END{print n+0}')"
+cf_ids="$(cc_ids < "$SESS_CUR_FIXTURE")"
 cf_nots="$(jq -r 'select(has("ts") | not) | "x"' "$SESS_CUR_FIXTURE" 2>/dev/null | awk 'NF{n++} END{print n+0}')"
 cf_new_ts="$(jq -r 'select(has("ts")) | .ts' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort | tail -1)"
 cf_new_sid="$(jq -r 'select(has("ts")) | [.ts, .cc_session_id] | @tsv' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort | tail -1 | awk -F'\t' '{print $2}')"
@@ -2551,8 +2559,7 @@ $(diff "$ROOT/real-floor-before" "$ROOT/real-floor-after" 2>/dev/null | head -20
   cmp_real agents           "$(real_n "$HERE"/../agents/*.md)"
   cmp_real postmortem       "$(awk 'NF{n++} END{print n+0}' "$REAL/.supervisor/postmortem/results.jsonl" 2>/dev/null)"
 
-  real_sessions="$(cat "$REAL"/.supervisor/logs/*.jsonl 2>/dev/null \
-    | jq -r 'select(has("cc_session_id")) | .cc_session_id' 2>/dev/null | env LC_ALL=C sort -u | awk 'NF{n++} END{print n+0}')"
+  real_sessions="$(cat "$REAL"/.supervisor/logs/*.jsonl 2>/dev/null | cc_ids)"
   cmp_real sessions "$real_sessions"
   validate_floor "$JM" >/dev/null 2>&1 \
     && ok "the real-tree artefact conforms to the schema parsed from RESULT_SCHEMAS.md" \

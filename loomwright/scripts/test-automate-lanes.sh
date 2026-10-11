@@ -606,6 +606,23 @@ has "U12 gh unreadable ⇒ every Validation step NOT-RUN" "$(cat "$RD")" "V1 Bas
 out="$(LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-status "$RF2" --refresh-readiness)"
 has "U13 lane-status --refresh-readiness re-writes it" "$(cat "$RD")" "V1 Baseline: PASS"
 has "U13b plain view shows the score" "$out" "readiness: ready (2/5:"
+# U14: the children-settled line is clipped, never mid-token. Wave W2's L2 line was cut at 160
+# chars inside its PR URL (`…/loomwright/pull/460` → `…/loomwrig`), and meta-sync's forge_slug scrub
+# then refused the lane's metadata push (a non-allowlisted slug), so lane-remove refused the lane.
+RF3="$L3/.supervisor/automate/$PARENT2-L3.md"; cp "$RF3" "$T/L3-runfile.bak"
+printf -- '- 2026-10-10T14:44:12Z supervisor: worker done (ci-local PASS 161/161; provides 2/2; children settled); FINALIZE → PR https://github.com/vikashruhilgit/loomwright/pull/460 (base main verified); Phase 4.5 next\n' >> "$RF3"
+out="$(LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-readiness "$L3")"
+cs="$(grep 'children-settled:' "$RD")"
+check "U14 a clipped line never ends inside a token (no partial URL)" "$(printf '%s' "$cs" | grep -cE 'github\.com/[^ ]*[^ /0-9]$|loomwrig($|[^h])')" "0"
+has "U14b a clipped line is marked" "$cs" " …"
+# U15: --refresh-readiness also re-writes a lane already closed out (done / awaiting_go), so a report
+# written before a fix can be repaired by the sanctioned path instead of by hand.
+sed -e 's/status: awaiting_merge/status: done/' -e 's/^- pause_reason: ready_for_release$/- pause_reason: awaiting_go/' "$T/L3-runfile.bak" > "$RF3"
+rm -f "$RD"
+out="$(LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-status "$RF2" --refresh-readiness)"
+check "U15 --refresh-readiness re-writes a done lane's report" "$([ -f "$RD" ] && echo yes)" "yes"
+cp "$T/L3-runfile.bak" "$RF3"
+out="$(LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-readiness "$L3")"
 
 # ---- V: --leaks, --resources, --tokens -----------------------------------------------------------------
 out="$(run lane-status "$RF2" --leaks)"; has "V1 no snapshot ⇒ unknown, exit 0" "$out" "leaks: unknown — no snapshot"

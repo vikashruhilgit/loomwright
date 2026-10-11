@@ -763,6 +763,11 @@ grep -qE '^- .* closeout https://github.com/acme/widgets/pull/7: closeout: check
 IT="$(jq -c 'select(.event=="item_timing")' "$P/.supervisor/logs/sess-it.jsonl" 2>/dev/null)"
 [ "$(printf '%s' "$IT" | jq -r '"\(.pr_url) \(.item.pick_to_park.seconds) \(has("ts"))"' 2>/dev/null)" = "$PRURL 3600 true" ] && ok "T04: closeout appends ONE item_timing event (phase-timing.sh --run --item: this item's segment, not the earlier item's) to the item's session log" || no "T04: item_timing missing/wrong: $IT"
 case "$out" in *item_timing*|*phase-timing*) no "T04: item_timing step printed output (closeout prints only closeout: lines)" ;; *) ok "T04: the item_timing append is silent" ;; esac
+# A session-log line carries cc_session_id only as a real id (pr_created's convention). A `null`
+# one was counted as a session by build-floor's recount (`has("cc_session_id")`) — 425 vs 426.
+[ "$(printf '%s' "$IT" | jq -r 'if has("cc_session_id") then (.cc_session_id | type) else "absent" end' 2>/dev/null)" != "null" ] \
+  && ok "T04: item_timing never writes a null cc_session_id into the session log" \
+  || no "T04: item_timing wrote cc_session_id: null: $IT"
 
 echo "== C. closeout idempotent (AC11) =="
 before_rf="$(cksum < "$P/$RF_REL")"; before_req="$(cksum < "$P/$REQ")"
