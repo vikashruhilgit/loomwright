@@ -130,6 +130,16 @@
 #      or truncated diff is no evidence, and a >100-file diff is re-read through
 #      the paginated REST endpoint; mutation controls neuter each of the two
 #      new checks in a copy of the helper and watch the leg go red.
+#   H9. reconcile-status takes a body citation only on an IMPLEMENTS-shaped
+#      line (2026-10-11: PR #470/#482/#457 bodies MENTIONED five requirements
+#      and the dry run planned them done; PR #484's short-form citation was
+#      missed because GitHub search does not find the full path): a passing
+#      mention plans nothing; `Implements <full path>`, `Implements <short
+#      slug>`, `Closes <id> (<path>)` and bold `Requirement:` plan; second-
+#      clause, longer-slug, nested-dir and verb-prefix near misses do not; a
+#      `proposed`/`parked` heading and a top-level task plan are never
+#      candidates; mutation controls restore the any-mention rule, the
+#      full-path search, the status gate and the task-plan skip, each red.
 #   I. ceiling-check (red-team-hardening/06, PICK-time token ceiling; section letter
 #      "I" — "H" is already used in-body by the reconcile-status H1-H6 tests above):
 #      under-max
@@ -3631,6 +3641,10 @@ echo "== H. reconcile-status (queue-hygiene/01: dry-run-default requirement Stat
 
 # rs_key <s> — the stub's filename-safe key (mirrors the stub script's own key()).
 rs_key() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'; }
+# rs_skey <rel> — the key of the term reconcile-status SEARCHES for <rel>: the
+# short ref (no `.supervisor/requirements/` prefix, no `.md`), because GitHub
+# search does not find a full requirement path (PR #484).
+rs_skey() { local r="${1#.supervisor/requirements/}"; rs_key "${r%.md}"; }
 
 # rs_stub_bin <dir> — a gh stub keyed on `pr list --search <term>` and
 # `pr view <url>`, reading canned JSON from $GH_STUB_DIR/list-<key>.json /
@@ -3686,11 +3700,11 @@ rs_repo() {
   printf '# d\n\n## Status: pending\n' > "$rq/operator-run/04-d.md"
   printf '# index\n' > "$rq/00-index.md"
   rs_stub_bin "$r/bin"
-  jq -n --arg url "$RS_URL" '[{url:$url}]' > "$r/ghstub/list-$(rs_key "$relb").json"
+  jq -n --arg url "$RS_URL" '[{url:$url}]' > "$r/ghstub/list-$(rs_skey "$relb").json"
   jq -n --arg rel "$relb" --arg url "$RS_URL" \
     '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:("Ships "+$rel),mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/b",changedFiles:1,files:[{path:"src/b.sh"}]}' \
     > "$r/ghstub/view-$(rs_key "$RS_URL").json"
-  printf '[]' > "$r/ghstub/list-$(rs_key ".supervisor/requirements/qh/03-c-open.md").json"
+  printf '[]' > "$r/ghstub/list-$(rs_skey ".supervisor/requirements/qh/03-c-open.md").json"
   printf '%s\t%s' "$r" "$relb"
 }
 rs_run() {
@@ -3810,13 +3824,15 @@ rs_trail_repo() {  # <trail headRefName> → "<repo>\t<draft rel>\t<req rel>"
   printf '# Dismissed finding\n\n- **Decision:** follow-up\n> some finding\n' > "$r/$reld"
   printf '# a\n\n## Status: pending\n' > "$r/$relq"
   rs_stub_bin "$r/bin"
-  jq -n --arg url "$RS_TRAIL" '[{url:$url}]' > "$r/ghstub/list-$(rs_key "$reld").json"
-  jq -n --arg url "$RS_TRAIL" '[{url:$url}]' > "$r/ghstub/list-$(rs_key "$relq").json"
+  jq -n --arg url "$RS_TRAIL" '[{url:$url}]' > "$r/ghstub/list-$(rs_skey "$reld").json"
+  jq -n --arg url "$RS_TRAIL" '[{url:$url}]' > "$r/ghstub/list-$(rs_skey "$relq").json"
   # The diff is deliberately NOT the trail's real one (which commits the cited
   # files, all under .supervisor/): H8's diff rules would then exclude it too,
   # and the mutation control below could not isolate the branch-name rule.
+  # The body cites both on IMPLEMENTS lines for the same reason: H9's
+  # passing-mention rule would otherwise exclude a bare path list too.
   jq -n --arg d "$reld" --arg q "$relq" --arg h "$1" \
-    '{state:"MERGED",mergedAt:"2026-09-30T00:00:00Z",number:321,body:("Trail paths:\n- "+$q+"\n- "+$d),mergeCommit:{oid:"6b388ae000000000"},headRefName:$h,changedFiles:1,files:[{path:"src/trail-fixture.sh"}]}' \
+    '{state:"MERGED",mergedAt:"2026-09-30T00:00:00Z",number:321,body:("Trail paths:\nImplements "+$q+"\nImplements "+$d),mergeCommit:{oid:"6b388ae000000000"},headRefName:$h,changedFiles:1,files:[{path:"src/trail-fixture.sh"}]}' \
     > "$r/ghstub/view-$(rs_key "$RS_TRAIL").json"
   printf '%s\t%s\t%s' "$r" "$reld" "$relq"
 }
@@ -3845,7 +3861,7 @@ fi
 rm -rf "$R" "$RSM"
 # A trail candidate listed ahead of the real implementation PR is skipped, not fatal.
 IFS=$'\t' read -r R RELD RELQ <<<"$(rs_trail_repo chore/automate-2026-09-30-054439-trail-2)"
-jq -n --arg t "$RS_TRAIL" --arg u "$RS_URL" '[{url:$t},{url:$u}]' > "$R/ghstub/list-$(rs_key "$RELQ").json"
+jq -n --arg t "$RS_TRAIL" --arg u "$RS_URL" '[{url:$t},{url:$u}]' > "$R/ghstub/list-$(rs_skey "$RELQ").json"
 jq -n --arg q "$RELQ" '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:("Ships "+$q),mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/a",changedFiles:1,files:[{path:"src/a.sh"}]}' \
   > "$R/ghstub/view-$(rs_key "$RS_URL").json"
 rs_run "$R" "$R/.supervisor/requirements/qh"
@@ -3875,9 +3891,11 @@ rs_diff_repo() {  # <files_json_array> [changedFiles] → "<repo>"; PR #359 cite
   mkdir -p "$r/.supervisor/requirements/qh" "$r/.supervisor/jobs/done" "$r/.supervisor/automate" "$r/bin" "$r/ghstub"
   printf '# scrub\n\n## Status: pending\n' > "$r/$RS_DREL"
   rs_stub_bin "$r/bin"
-  jq -n --arg url "$RS_D" '[{url:$url}]' > "$r/ghstub/list-$(rs_key "$RS_DREL").json"
+  jq -n --arg url "$RS_D" '[{url:$url}]' > "$r/ghstub/list-$(rs_skey "$RS_DREL").json"
+  # An IMPLEMENTS-line citation (not #359's real bare list), so the diff rules
+  # are what each H8 leg isolates — H9's passing-mention rule would end it first.
   jq -n --arg q "$RS_DREL" --argjson f "$1" --arg c "${2:-}" \
-    '{state:"MERGED",mergedAt:"2026-10-02T00:00:00Z",number:359,body:("Queues:\n- "+$q),mergeCommit:{oid:"9a78b9c000000000"},headRefName:"chore/meta-scrub-cleanup",
+    '{state:"MERGED",mergedAt:"2026-10-02T00:00:00Z",number:359,body:("Queues:\nImplements "+$q),mergeCommit:{oid:"9a78b9c000000000"},headRefName:"chore/meta-scrub-cleanup",
       files:[$f[]|{path:.}],changedFiles:(if $c=="" then ($f|length) else ($c|tonumber) end)}' \
     > "$r/ghstub/view-$(rs_key "$RS_D").json"
   printf '%s' "$r"
@@ -3890,8 +3908,8 @@ rs_mutant() {
   OLD="$1" NEW="$2" awk '$0 == ENVIRON["OLD"] { print ENVIRON["NEW"]; next } { print }' "$H" > "$RSM/automate-helpers.sh"
   ! cmp -s "$H" "$RSM/automate-helpers.sh"
 }
-RS_TOUCH_LINE='    case "$body" in *"$rel"*) grep -qxF -- "$rel" <<<"$paths" || justification="PR body cites $rel" ;; esac'
-RS_TOUCH_MUT='    case "$body" in *"$rel"*) justification="PR body cites $rel" ;; esac'
+RS_TOUCH_LINE='      grep -qxF -- "$rel" <<<"$paths" || justification="PR body cites $rel"'
+RS_TOUCH_MUT='      justification="PR body cites $rel"'
 RS_SUP_LINE="    grep -qv '^\\.supervisor/' <<<\"\$paths\" || continue"
 
 # H8a. The PR adds the requirement (plus a non-.supervisor file) and cites it ⇒ no plan, no stamp.
@@ -3998,6 +4016,143 @@ rs_plans_359 && ok "H8d a complete 150-file REST re-read without the requirement
 sed '$d' "$RS_API" > "$R/a.txt" && mv "$R/a.txt" "$RS_API"
 rs_run "$R" "$R/.supervisor/requirements/qh"
 [ -z "$RUN_OUT" ] && ok "H8d a REST re-read still short of changedFiles is no evidence" || no "H8d short REST re-read read as evidence (out='$RUN_OUT')"
+rm -rf "$R"
+
+# H9. A body citation is evidence only on an IMPLEMENTS-shaped line. On
+#     2026-10-11 the any-mention rule planned five false stamps: PR #470's
+#     `plan-waves` example listed af/36, af/39 and pa/18; PR #482 named the
+#     `proposed/` follow-up draft it filed; PR #457 named a task plan. And it
+#     MISSED af/27, because PR #484 cited the short form and GitHub search does
+#     not find the full path at all.
+RS_C="https://github.com/acme/widgets/pull/77"
+RS_CREL=".supervisor/requirements/qh/09-board-and-right-size.md"
+# rs_cite_repo <rel> <status heading or ""> <body> → "<repo>"; PR #77 (merged,
+# diff src/x.sh) is the ONLY search hit for <rel>'s short ref.
+rs_cite_repo() {
+  local r
+  r="$(mktemp -d)"
+  mkdir -p "$r/$(dirname "$1")" "$r/.supervisor/jobs/done" "$r/.supervisor/automate" "$r/bin" "$r/ghstub"
+  { printf '# req\n\n'; [ -n "$2" ] && printf '%s\n' "$2"; } > "$r/$1"
+  rs_stub_bin "$r/bin"
+  jq -n --arg url "$RS_C" '[{url:$url}]' > "$r/ghstub/list-$(rs_skey "$1").json"
+  jq -n --arg b "$3" \
+    '{state:"MERGED",mergedAt:"2026-10-11T00:00:00Z",number:77,body:$b,mergeCommit:{oid:"61048c0000000000"},headRefName:"feature/pa22-split",changedFiles:1,files:[{path:"src/x.sh"}]}' \
+    > "$r/ghstub/view-$(rs_key "$RS_C").json"
+  printf '%s' "$r"
+}
+rs_plans_77() { grep -qF "plan	$1	done (PR #77, merge 61048c0)	PR body cites $1" <<<"$RUN_OUT"; }
+RS_CITE_LINE='    if _rs_implements_cites "$body" "$short"; then'
+RS_CITE_MUT='    if case "$body" in *"$rel"*) true ;; *) false ;; esac; then'
+# The PR #470 shape: implements ANOTHER requirement, lists this one in an example.
+RS_PASSING="Requirement: \`.supervisor/requirements/qh/22-split-surfaces.md\` (lane L1).
+
+printf '%s\\n' $RS_CREL \\
+  .supervisor/requirements/qh/36-engine-fixes.md > open.txt
+wave 1: $RS_CREL"
+
+# H9a. A passing mention ⇒ no plan, no stamp; the old any-mention rule restored ⇒ red.
+R="$(rs_cite_repo "$RS_CREL" '## Status: pending' "$RS_PASSING")"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+DRY_OUT="$RUN_OUT"
+rs_run "$R" "$R/.supervisor/requirements/qh" --apply
+if [ -z "$DRY_OUT" ] && [ -z "$RUN_OUT" ] && grep -qE '^## Status: pending$' "$R/$RS_CREL"; then
+  ok "H9a a requirement only mentioned in passing (the PR #470 shape) gets no plan and no stamp"
+else
+  no "H9a passing mention read as evidence (dry='$DRY_OUT' apply='$RUN_OUT')"
+fi
+if rs_mutant "$RS_CITE_LINE" "$RS_CITE_MUT"; then
+  RS_H="$RSM/automate-helpers.sh" rs_run "$R" "$R/.supervisor/requirements/qh"
+  rs_plans_77 "$RS_CREL" && ok "H9a mutation control: the any-mention rule restored plans 'done (PR #77)' for the passing mention — the implements-line check is load-bearing" \
+    || no "H9a mutation control: mutant did not reproduce the defect (out='$RUN_OUT') — H9a would be vacuous"
+else
+  no "H9a mutation control: the citation line was not found in the helper"
+fi
+rm -rf "$R" "$RSM"
+
+# H9b. `Implements <full path>` (the PR #483 shape) ⇒ plan row.
+R="$(rs_cite_repo "$RS_CREL" '## Status: pending' "Implements \`$RS_CREL\`, re-scoped to its two live problems.")"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+rs_plans_77 "$RS_CREL" && ok "H9b 'Implements <full path>' plans 'done (PR #77)'" || no "H9b full-path Implements line not evidence (out='$RUN_OUT')"
+rm -rf "$R"
+
+# H9c. `Implements <short slug>` (the PR #484 shape: no prefix, no .md) ⇒ plan row —
+#      and only because the search uses the short form (stub answers that term alone).
+R="$(rs_cite_repo "$RS_CREL" '## Status: pending' 'Implements `qh/09-board-and-right-size`.')"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+rs_plans_77 "$RS_CREL" && ok "H9c 'Implements <short slug>' plans 'done (PR #77)'" || no "H9c short-slug Implements line not evidence (out='$RUN_OUT')"
+if rs_mutant '  search_json="$("$GH" pr list --state merged --search "$short" --json url --limit 5 2>/dev/null)"' \
+             '  search_json="$("$GH" pr list --state merged --search "$rel" --json url --limit 5 2>/dev/null)"'; then
+  RS_H="$RSM/automate-helpers.sh" rs_run "$R" "$R/.supervisor/requirements/qh"
+  [ -z "$RUN_OUT" ] && ok "H9c mutation control: searching the full path finds no candidate (the PR #484 miss) — the short-form search is load-bearing" \
+    || no "H9c mutation control: full-path search still planned (out='$RUN_OUT') — H9c would be vacuous"
+else
+  no "H9c mutation control: the search line was not found in the helper"
+fi
+rm -rf "$R" "$RSM"
+
+# H9d. Other implements shapes seen on main: `Closes <id> (`<path>`)`, a bold
+#      list-item `Requirement:`, lower-case verbs ⇒ plan row each.
+for body in "Closes qh-09 (\`$RS_CREL\`). Follow-up to #426." \
+            "- **Requirement:** \`qh/09-board-and-right-size.md\`" \
+            "ships \`qh/09-board-and-right-size\`"; do
+  R="$(rs_cite_repo "$RS_CREL" '' "$body")"
+  rs_run "$R" "$R/.supervisor/requirements/qh"
+  rs_plans_77 "$RS_CREL" && ok "H9d implements shape plans: $body" || no "H9d implements shape not evidence: '$body' (out='$RUN_OUT')"
+  rm -rf "$R"
+done
+
+# H9e. Near misses on a verb line ⇒ no plan: the path after the first clause,
+#      a longer slug that starts with this one, a path nested under another dir,
+#      and a verb that is only a prefix of a word.
+for body in 'Implements `qh/22-split-surfaces`; unblocks `qh/09-board-and-right-size`.' \
+            'Implements `qh/22-split-surfaces`. Next: `qh/09-board-and-right-size`.' \
+            'Implements `qh/09-board-and-right-size-v2`.' \
+            'Implements `other/qh/09-board-and-right-size`.' \
+            'Shipshape notes on `qh/09-board-and-right-size`.'; do
+  R="$(rs_cite_repo "$RS_CREL" '## Status: pending' "$body")"
+  rs_run "$R" "$R/.supervisor/requirements/qh"
+  [ -z "$RUN_OUT" ] && ok "H9e near miss is no evidence: $body" || no "H9e near miss read as evidence: '$body' (out='$RUN_OUT')"
+  rm -rf "$R"
+done
+
+# H9f. Only a `pending`/absent heading is reconciled: a `## Status: proposed`
+#      draft (the PR #482 shape) or a `parked` item with a real Implements line ⇒ no plan.
+RS_GATE_LINE='  [ -z "$status_hdr" ] || [[ "$status_hdr" =~ $rs_open_re ]] || return 0'
+for st in '## Status: proposed' '## Status: parked'; do
+  R="$(rs_cite_repo "$RS_CREL" "$st" "Implements \`$RS_CREL\`.")"
+  rs_run "$R" "$R/.supervisor/requirements/qh"
+  [ -z "$RUN_OUT" ] && ok "H9f '$st' is never stamped, even with an Implements line" || no "H9f '$st' planned (out='$RUN_OUT')"
+  if [ "$st" = '## Status: proposed' ]; then
+    if rs_mutant "$RS_GATE_LINE" '  :'; then
+      RS_H="$RSM/automate-helpers.sh" rs_run "$R" "$R/.supervisor/requirements/qh"
+      rs_plans_77 "$RS_CREL" && ok "H9f mutation control: without the status gate the proposed draft plans — the gate is load-bearing" \
+        || no "H9f mutation control: mutant did not reproduce (out='$RUN_OUT') — H9f would be vacuous"
+    else
+      no "H9f mutation control: the status-gate line was not found in the helper"
+    fi
+    rm -rf "$RSM"
+  fi
+  rm -rf "$R"
+done
+
+# H9g. A top-level `<slug>-plan.md` task plan (the PR #457 shape) is never a
+#      candidate; a nested `*-plan.md` requirement still is.
+RS_TP=".supervisor/requirements/done-stamp-before-merge-plan.md"
+R="$(rs_cite_repo "$RS_TP" '' "Implements \`$RS_TP\`.")"
+rs_run "$R" "$R/.supervisor/requirements"
+[ -z "$RUN_OUT" ] && ok "H9g a top-level task plan is never a candidate" || no "H9g task plan planned (out='$RUN_OUT')"
+if rs_mutant '    case "$base" in *-plan.md) return 0 ;; esac' '    :'; then
+  RS_H="$RSM/automate-helpers.sh" rs_run "$R" "$R/.supervisor/requirements"
+  rs_plans_77 "$RS_TP" && ok "H9g mutation control: without the task-plan skip it plans — the skip is load-bearing" \
+    || no "H9g mutation control: mutant did not reproduce (out='$RUN_OUT') — H9g would be vacuous"
+else
+  no "H9g mutation control: the task-plan skip line was not found in the helper"
+fi
+rm -rf "$R" "$RSM"
+RS_NP=".supervisor/requirements/qh/10-lane-plan.md"
+R="$(rs_cite_repo "$RS_NP" '## Status: pending' "Implements \`$RS_NP\`.")"
+rs_run "$R" "$R/.supervisor/requirements"
+rs_plans_77 "$RS_NP" && ok "H9g a nested *-plan.md requirement is still reconciled" || no "H9g nested *-plan.md skipped (out='$RUN_OUT')"
 rm -rf "$R"
 
 # ---------------------------------------------------------------------------
