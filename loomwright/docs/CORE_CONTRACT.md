@@ -221,7 +221,7 @@ This is deliberate: its whole job is to name the harness variable once so nothin
 flagged it would be flagging the seam that removes the coupling everywhere else.
 
 **Honest state.** The scripts that read the install root **at runtime** now get it from the resolver
-(twin-remediation/11): the validate-entry lookup in the seven memory/rule writers and the rules auditor, plus
+(twin-remediation/11): the validate-entry lookup in the six memory/rule writers and the rules auditor, plus
 `validate-entry.sh`, `build-handoff.sh` and `automate-lanes.sh`. Each sources the resolver in a subshell (so nothing
 is exported into its own shell or its children), and each falls back to its old location-derived path when the
 resolver beside it is missing. Behaviour change: with the harness variable unset, a pre-set `LOOMWRIGHT_ROOT` now
