@@ -11,7 +11,8 @@
 # section (churn-ledger + lessons counts, curation/retract records, staleness thresholds,
 # absent-corpora degradation, malformed-line tolerance, CHURN_STALE_DAYS override),
 # the Token economics advisory section (token_ledger real vs proxy rollup, absent degrade,
-# malformed-line skip), and the Loop evidence section (data path with strict clean=="yes"
+# malformed-line skip; per-session largest-transcript size vs the advisory threshold, its
+# remedy line, and the honest no-data notes), and the Loop evidence section (data path with strict clean=="yes"
 # headline counting over the all-runs denominator plus the measured-subset parenthetical
 # + era table + pointer line and NO inlined per-run table; no-usable-records,
 # builder-absent, and garbage-emitting-builder degradations — all rendering the one-line
@@ -869,6 +870,69 @@ rm -f "$FM/.supervisor/logs/fm-d.jsonl" "$FM/.supervisor/logs/fm-e.jsonl"
 rm -f "$FM/.supervisor/logs/fm-a.jsonl" "$FM/.supervisor/logs/fm-b.jsonl"; ( cd "$FM" && bash "$BUILD" >/dev/null 2>&1 )
 grep -qF "| First-pass PASS rate (Phase 4.5 iteration 1) | not recorded |" "$fd" 2>/dev/null && grep -qF "| Findings per item (new, all iterations) | not recorded |" "$fd" 2>/dev/null && ok "metric absent ⇒ 'not recorded'" || no "absent metric not rendered as 'not recorded'"
 rm -rf "$FM"
+
+echo "== TR08a. Per-session context size — over/under threshold, max-not-sum, remedy, override =="
+# sess-big: the SAME agent snapshotted twice as its transcript grew (2.0 MB then 3.5 MB) plus a
+# second 1.0 MB agent → largest transcript 3500000 (> the 3000000 default). A sum would read
+# 6500000, so the row pins the max. sess-small: one 500000-byte line (under). sess-real: only a
+# real-usage (proxy:false) line → "not sized", never a 0-byte row.
+SC="$(mktemp -d)"; ( cd "$SC" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$SC/.supervisor/logs"
+{
+  printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}'
+  printf '%s\n' '{"event":"token_ledger","session_id":"sess-big","agent_id":"a1","ts":"2026-06-01T10:01:00Z","proxy":true,"token_proxy_kind":"transcript_bytes","token_proxy_transcript_bytes":2000000}'
+  printf '%s\n' '{"event":"token_ledger","session_id":"sess-big","agent_id":"a1","ts":"2026-06-01T10:02:00Z","proxy":true,"token_proxy_kind":"transcript_bytes","token_proxy_transcript_bytes":3500000}'
+  printf '%s\n' '{"event":"token_ledger","session_id":"sess-big","agent_id":"a2","ts":"2026-06-01T10:03:00Z","proxy":true,"token_proxy_kind":"transcript_bytes","token_proxy_transcript_bytes":1000000}'
+} > "$SC/.supervisor/logs/sess-big.jsonl"
+printf '%s\n' '{"event":"token_ledger","session_id":"sess-small","agent_id":"b1","ts":"2026-06-02T10:01:00Z","proxy":true,"token_proxy_kind":"transcript_bytes","token_proxy_transcript_bytes":500000}' > "$SC/.supervisor/logs/sess-small.jsonl"
+printf '%s\n' '{"event":"token_ledger","session_id":"sess-real","agent_id":"c1","ts":"2026-06-03T10:01:00Z","proxy":false,"input_tokens":10,"output_tokens":5}' > "$SC/.supervisor/logs/sess-real.jsonl"
+scd="$SC/.supervisor/insights/dashboard.md"
+( cd "$SC" && bash "$BUILD" >/dev/null 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && ok "build exits 0 (per-session size fixture)" || no "build rc != 0 (per-session size, rc=$rc)"
+scsec="$(sed -n '/^### Per-session context size/,/^## Recent sessions/p' "$scd" 2>/dev/null)"
+[ -n "$scsec" ] && ok "per-session context-size subsection rendered inside Token economics, before Recent sessions" || no "per-session subsection missing or misplaced"
+grep -qF -- "**Sessions sized:** 2  ·  **Median (p50):** 500000 bytes  ·  **p90:** 3500000 bytes  ·  **Largest:** 3500000 bytes" < <(printf '%s' "$scsec") && ok "distribution line (2 sized, p50/p90/largest) correct" || no "distribution line wrong: $(grep -F 'Sessions sized' < <(printf '%s' "$scsec"))"
+grep -qF -- "**Threshold:** >3000000 bytes (advisory starting value)  ·  **Over threshold:** 1 of 2 session(s)" < <(printf '%s' "$scsec") && ok "default threshold 3000000 flags 1 of 2 sessions" || no "threshold/over count wrong: $(grep -F 'Threshold' < <(printf '%s' "$scsec"))"
+grep -qF "| sess-big | 3 | 3500000 | yes |" < <(printf '%s' "$scsec") && ok "sess-big row = largest snapshot (3500000), not the 6500000 sum, flagged" || no "sess-big row wrong (max-not-sum): $(grep -F 'sess-big' < <(printf '%s' "$scsec"))"
+grep -qF "| sess-small | 1 | 500000 | — |" < <(printf '%s' "$scsec") && ok "sess-small row under threshold, not flagged" || no "sess-small row wrong"
+sc_order="$(printf '%s\n' "$scsec" | awk '/\| sess-big \|/{print "big";exit} /\| sess-small \|/{print "small";exit}')"
+[ "$sc_order" = "big" ] && ok "largest session listed first" || no "per-session table order wrong (got: ${sc_order:-none})"
+grep -qF "**Remedy:** split long runs at a natural checkpoint" < <(printf '%s' "$scsec") && grep -qF '`/handoff`' < <(printf '%s' "$scsec") && ok "remedy line (with /handoff) shown when a session is over threshold" || no "remedy line missing despite an over-threshold session"
+grep -qF "**Not sized here:** 1 session(s) have only real-usage" < <(printf '%s' "$scsec") && ok "real-usage-only session reported as not sized" || no "real-only session not reported"
+grep -qF "| sess-real |" < <(printf '%s' "$scsec") && no "real-usage-only session rendered as a byte row" || ok "real-usage-only session has no fabricated byte row"
+# Override above sess-big's size → nothing flagged, remedy withdrawn.
+( cd "$SC" && SESSION_CONTEXT_THRESHOLD_BYTES=4000000 bash "$BUILD" >/dev/null 2>&1 )
+scsec="$(sed -n '/^### Per-session context size/,/^## Recent sessions/p' "$scd" 2>/dev/null)"
+grep -qF -- "**Threshold:** >4000000 bytes (advisory starting value)  ·  **Over threshold:** 0 of 2 session(s)" < <(printf '%s' "$scsec") && ok "SESSION_CONTEXT_THRESHOLD_BYTES override applies (0 of 2)" || no "threshold override did not apply"
+grep -qF "**Remedy:**" < <(printf '%s' "$scsec") && no "remedy shown with no session over threshold" || ok "no remedy line when nothing is over threshold"
+grep -qF "No session over the threshold." < <(printf '%s' "$scsec") && ok "under-threshold note rendered" || no "under-threshold note missing"
+# Non-numeric override → falls back to the documented default.
+( cd "$SC" && SESSION_CONTEXT_THRESHOLD_BYTES=lots bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "**Threshold:** >3000000 bytes" "$scd" 2>/dev/null && ok "non-numeric override falls back to 3000000" || no "non-numeric override fallback wrong"
+# All-numeric but over-long (17 digits, past the 16-char guard) → also the default, never used as
+# the threshold. The dashboard is removed first so a stale 3000000 render cannot satisfy the grep.
+rm -f "$scd"; ( cd "$SC" && SESSION_CONTEXT_THRESHOLD_BYTES=12345678901234567 bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "**Threshold:** >3000000 bytes" "$scd" 2>/dev/null && ok "over-long numeric override falls back to 3000000" || no "over-long numeric override fallback wrong"
+rm -rf "$SC"
+
+echo "== TR08b. Per-session context size — no data renders an honest note, never a zero =="
+# (i) no token_ledger at all.
+SN="$(mktemp -d)"; ( cd "$SN" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$SN/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$SN/.supervisor/logs/sess-sn.jsonl"
+( cd "$SN" && bash "$BUILD" >/dev/null 2>&1 ); rc=$?
+snsec="$(sed -n '/^### Per-session context size/,/^## Recent sessions/p' "$SN/.supervisor/insights/dashboard.md" 2>/dev/null)"
+[ "$rc" -eq 0 ] && ok "build exits 0 with no ledger (per-session)" || no "build rc != 0 (no ledger, rc=$rc)"
+grep -qF "No per-session data — no \`token_ledger\` events recorded yet" < <(printf '%s' "$snsec") && ok "no-ledger case renders the no-data note" || no "no-ledger no-data note missing"
+grep -qF "Sessions sized" < <(printf '%s' "$snsec") && no "no-ledger case printed a sessions count (fake zero)" || ok "no-ledger case prints no count"
+# (ii) ledger present but only real-usage lines → nothing to size in bytes.
+printf '%s\n' '{"event":"token_ledger","session_id":"sess-sn","agent_id":"r1","proxy":false,"input_tokens":3,"output_tokens":4}' >> "$SN/.supervisor/logs/sess-sn.jsonl"
+( cd "$SN" && bash "$BUILD" >/dev/null 2>&1 )
+snsec="$(sed -n '/^### Per-session context size/,/^## Recent sessions/p' "$SN/.supervisor/insights/dashboard.md" 2>/dev/null)"
+grep -qF "No transcript-byte (proxy) ledger lines — no session can be sized in bytes." < <(printf '%s' "$snsec") && ok "real-usage-only corpus renders the no-proxy note" || no "no-proxy note missing"
+grep -qF "Sessions sized" < <(printf '%s' "$snsec") && no "real-usage-only corpus printed a sessions count (fake zero)" || ok "real-usage-only corpus prints no count"
+grep -qF "**Not sized here:** 1 session(s)" < <(printf '%s' "$snsec") && ok "real-usage-only corpus still names the unsized session" || no "unsized-session line missing (real-only corpus)"
+rm -rf "$SN"
 
 echo "== E. malformed / non-object session-log lines are skipped per line (fix-now E) =="
 # A killed session's truncated last line, or a bare non-object line, must not abort the whole read:

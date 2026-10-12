@@ -168,6 +168,9 @@ reconcile_item() {
 # classified on purpose, never fall through silently). A line matching NO row is a
 # leftover (`unknown`), and the partial-removal form `removed — worktree …; kept …` is a leftover even though
 # its verb row says complete (closeout_classify applies that precedence); a name that merely contains "kept" is classified by its row like any other line.
+# Class `run_lock_held` (automate-followups/36 A1) is neither complete nor a leftover: closeout met
+# the run lock held by a LIVE process (its refusal line ends `(live pid <p>)`, probed at refusal
+# time); a dead or unreadable holder (`(holder pid <p> not running)`) falls to the leftover row.
 CLOSEOUT_TABLE='complete|worktree|removed — worktree *
 complete|branch|removed — branch *
 complete|sync|synced — *
@@ -201,6 +204,7 @@ leftover|checkoff|skipped — * not in ## Queue
 leftover|current|skipped — ## Current not reconciled *
 leftover|current|skipped — no ## Current item line
 leftover|current|skipped — ## Current runfile-write refused
+run_lock_held|lock|skipped — run lock held by * (live pid *)
 leftover|lock|skipped — run lock held by *
 leftover|gate|skipped — pr not merged *
 leftover|guard|skipped — gh unavailable
@@ -232,12 +236,15 @@ EOF
 # passed-through `brief-repair:` / `trail-pr:` lines are ignored, except that a
 # non-skip brief-repair line counts as a change for --record). Prints `complete`
 # or one `leftover<TAB><run>\t<item>\t<pr>\t<step>\t<detail>` row per leftover
-# (`-` for an omitted value). Input with no `closeout:` line ⇒ one leftover row
+# (`-` for an omitted value), followed by one `run_lock_held<TAB>…` row (same
+# columns, step `lock`) per `run lock held by <owner> (live pid <p>)` line — not a
+# leftover and not `complete`: the close-out did not run because a live process
+# holds the run lock, so --record appends nothing and the caller retries later. Input with no `closeout:` line ⇒ one leftover row
 # (step `none`): nothing proves the close-out ran. --record <runfile>: on
 # `complete` with no changing step, progress-append `<ts> closeout: nothing to
 # close out — <item>` unless that exact line (after its one leading timestamp
 # token) is already in ## Progress — at most one per item per run. Exit 0; a
-# usage error exits 1 (the caller reads anything but `complete` as a leftover).
+# usage error exits 1 (the caller reads anything but `complete` — or, at start, `run_lock_held` rows alone — as a leftover).
 closeout_classify() {
   local run="-" item="-" pr="-" rec=""
   while [ "$#" -gt 0 ]; do
@@ -249,7 +256,7 @@ closeout_classify() {
       *) die "closeout-classify: unknown argument '$1' (usage: closeout-classify [--run <run_id> --item <path> --pr <url>] [--record <runfile>])" ;;
     esac
   done
-  local tab=$'\t' line t r cls step n=0 changed=0 rows=""
+  local tab=$'\t' line t r cls step n=0 changed=0 rows="" held=""
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       "brief-repair: "*) case "$line" in *"skipped —"*) ;; *) changed=1 ;; esac; continue ;;
@@ -261,9 +268,10 @@ closeout_classify() {
     case "$t" in "removed — worktree "*"; kept "*) cls=leftover ;; esac  # partial removal; anchored so a NAME containing "kept" never flips a clean line (S3 wave-1 review)
     case "$t" in "removed — "*|"stamped — "*|"checked — "*|"reconciled — "*) changed=1 ;; esac
     [ "$cls" = leftover ] && rows="${rows}leftover$tab$run$tab$item$tab$pr$tab$step$tab${t//$tab/ }"$'\n'
+    [ "$cls" = run_lock_held ] && held="${held}run_lock_held$tab$run$tab$item$tab$pr$tab$step$tab${t//$tab/ }"$'\n'
   done
   [ "$n" -gt 0 ] || rows="leftover$tab$run$tab$item$tab$pr${tab}none${tab}no closeout: line in the input"$'\n'
-  if [ -n "$rows" ]; then printf '%s' "$rows"; return 0; fi
+  if [ -n "$rows" ] || [ -n "$held" ]; then printf '%s%s' "$rows" "$held"; return 0; fi
   echo "complete"
   if [ -n "$rec" ] && [ "$item" != "-" ] && [ "$changed" = 0 ] && [ -f "$rec" ]; then
     local want="closeout: nothing to close out — $item"

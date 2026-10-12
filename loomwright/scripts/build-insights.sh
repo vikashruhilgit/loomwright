@@ -759,6 +759,85 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     echo "- **Target:** ≤${ADVISORY_BUDGET_TARGET_BYTES} bytes/run (soft, advisory; override via \`ADVISORY_BUDGET_TARGET_BYTES\`)  ·  **Over target:** ${at_over:-0} of $at_count event(s)"
   fi
   echo
+
+  # --- Per-session context size (largest transcript) — twin-remediation/08 item 2 ---
+  # Groups the SAME transcript-byte proxy lines the per-role table above sums, but by the
+  # ledger's `session_id` (the plugin session id during a Supervisor run, else the Claude
+  # Code uuid — emit-token-ledger.sh's join key), so a session whose context never reset
+  # stands out. The measure is the LARGEST transcript any ledger line recorded in the
+  # session, NOT a sum: each line is a snapshot of a transcript that only grows, the hook
+  # fires repeatedly per thread, and when a subagent's own transcript is not on disk the
+  # emitter measures the session transcript instead (its `transcript_bytes()` fallback), so
+  # one file shows up under many agent ids — on this repo's ledger a sum over-counted one
+  # session about 200x (1.7 GB summed vs an 8.6 MB largest transcript). The maximum is
+  # immune to all three.
+  # Real-usage (`proxy: false`) lines are tokens — spend, not size — and are never mixed
+  # in; a session that has only those is reported as "not sized", never as 0.
+  # Threshold: ADVISORY starting value — never gates, never a default for anything (item
+  # 07's ledger study was abandoned). 3000000 bytes sits just under the p90 of per-session
+  # largest transcripts on this repo's own ledger when it shipped (147 sessions: p50 ≈ 0.9
+  # MB, p75 ≈ 2.0 MB, p90 ≈ 3.2 MB, max ≈ 15 MB), so it flags roughly the top tenth.
+  # Env override SESSION_CONTEXT_THRESHOLD_BYTES; non-numeric or over-long → the default.
+  SESSION_CONTEXT_THRESHOLD_BYTES="${SESSION_CONTEXT_THRESHOLD_BYTES:-3000000}"
+  case "$SESSION_CONTEXT_THRESHOLD_BYTES" in
+    ''|*[!0-9]*|????????????????*) SESSION_CONTEXT_THRESHOLD_BYTES=3000000 ;;
+    *) SESSION_CONTEXT_THRESHOLD_BYTES=$((10#$SESSION_CONTEXT_THRESHOLD_BYTES)) ;;
+  esac
+  echo "### Per-session context size (largest transcript, bytes)"
+  echo "_How large the biggest transcript in each session grew — a session whose context never resets costs more on every turn without ever failing. Per session: the largest transcript size any proxy ledger line recorded (byte counts, **not** tokens; a maximum, not a sum, because the same growing transcript is snapshotted many times). Advisory only — never gates a PR, a run, or a heal decision. The threshold is a starting value near the p90 of this plugin's own ledger; override via \`SESSION_CONTEXT_THRESHOLD_BYTES\`._"
+  echo
+  sc_json=""
+  if [ -s "$te_lines" ]; then
+    sc_json="$(jq -s -c --argjson t "$SESSION_CONTEXT_THRESHOLD_BYTES" '
+      def sid: if (.session_id|type)=="string" and .session_id!="" then .session_id else "(unknown)" end;
+      # Nearest-rank percentile over an ascending array.
+      def pct($q): if length==0 then null else .[((($q*length)|ceil) - 1) | if . < 0 then 0 else . end] end;
+      [.[] | select(type=="object")] as $all
+      | [$all[] | select(.proxy==true and (.token_proxy_transcript_bytes|type)=="number" and .token_proxy_transcript_bytes >= 0)] as $p
+      | ($p | map(sid) | unique) as $sized
+      | ($all | map(select(.proxy==false) | sid) | unique | map(select(. as $s | ($sized | index($s)) == null)) | length) as $real_only
+      | ($p | group_by(sid)
+            | map({sid: (.[0]|sid), events: length, peak: (map(.token_proxy_transcript_bytes) | max | floor)})
+            | sort_by(-.peak, .sid)) as $s
+      | ($s | map(.peak) | sort) as $v
+      | {n: ($s|length), over: ($s | map(select(.peak > $t)) | length),
+         p50: ($v|pct(0.5)), p90: ($v|pct(0.9)), max: ($v|max), real_only: $real_only,
+         top: ($s[0:5])}
+    ' "$te_lines" 2>/dev/null)"
+  fi
+  sc_n="$(printf '%s' "$sc_json" | jq -r '.n // empty' 2>/dev/null)"
+  case "$sc_n" in ''|*[!0-9]*) sc_n="" ;; esac
+  if [ ! -s "$te_lines" ]; then
+    echo "_No per-session data — no \`token_ledger\` events recorded yet (see the note above)._"
+  elif [ -z "$sc_n" ]; then
+    echo "_Per-session sizes could not be computed from the ledger lines — no number is shown rather than a guessed one._"
+  else
+    sc_real_only="$(printf '%s' "$sc_json" | jq -r '.real_only // 0' 2>/dev/null)"
+    case "$sc_real_only" in ''|*[!0-9]*) sc_real_only=0 ;; esac
+    if [ "$sc_n" -eq 0 ]; then
+      echo "_No transcript-byte (proxy) ledger lines — no session can be sized in bytes._"
+    else
+      printf '%s' "$sc_json" | jq -r --argjson t "$SESSION_CONTEXT_THRESHOLD_BYTES" '
+        "- **Sessions sized:** \(.n)  ·  **Median (p50):** \(.p50) bytes  ·  **p90:** \(.p90) bytes  ·  **Largest:** \(.max) bytes",
+        "- **Threshold:** >\($t) bytes (advisory starting value)  ·  **Over threshold:** \(.over) of \(.n) session(s)",
+        "",
+        "| Session | Ledger lines | Largest transcript (bytes) | Over threshold |",
+        "|---|---|---|---|",
+        (.top[] | "| \(.sid) | \(.events) | \(.peak) | \(if .peak > $t then "yes" else "—" end) |"),
+        ""' 2>/dev/null
+      sc_over="$(printf '%s' "$sc_json" | jq -r '.over // 0' 2>/dev/null)"
+      case "$sc_over" in ''|*[!0-9]*) sc_over=0 ;; esac
+      if [ "$sc_over" -gt 0 ]; then
+        echo "- **Remedy:** split long runs at a natural checkpoint (PR opened, phase done) — start a fresh session, catch up with \`/handoff\`, and resume with \`/supervisor --continue\` (or re-run \`/automate\`, which resumes its run file)."
+      else
+        echo "- No session over the threshold."
+      fi
+    fi
+    if [ "$sc_real_only" -gt 0 ]; then
+      echo "- **Not sized here:** $sc_real_only session(s) have only real-usage (\`proxy: false\`) lines — tokens measure spend, not transcript size, and no per-session token threshold is defined."
+    fi
+  fi
+  echo
   rm -f "$te_lines" 2>/dev/null
 
   echo "## Recent sessions"

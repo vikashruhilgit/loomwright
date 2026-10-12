@@ -734,6 +734,85 @@ assert_eq "N9 a lane replay is skipped (one notify line, one skip line)" "1:1" \
   "$(count_in 'tool_use_id=toolu_ln8 lane=L2' "$WD/.supervisor/logs/notifications.log"):$(count_in 'skip replay tool_use_id=toolu_ln8' "$WD/.supervisor/logs/notifications.log")"
 
 echo ""
+echo "==== Stranded brief vs live run — marker 1 (stranded-brief residual gaps, Gap 1b) ===="
+# Marker 1 used to read ANY brief in in-progress/ as "Supervisor is active", so a
+# brief stranded there by a run that died before the completion tail's move made
+# every later question in the repo look like plugin context. It now asks
+# reconcile-jobs.sh --not-stranded-count. Fixtures: a brief whose source
+# requirement is stamped `## Status: done` classifies stranded_closed (proven
+# stranded); the same brief over an UNSTAMPED requirement classifies unknown
+# (counts as live). The scope is the default `plugin`, there is no transcript and
+# no state.json, so marker 1 is the only marker that can fire. Observable: the
+# `notify group=` audit line, written on every host before any notifier runs.
+SB_RJ="$(build_sandbox sb-rj)"
+for t in git basename awk; do
+  p="$(command -v "$t" 2>/dev/null || true)"
+  [ -n "$p" ] && ln -s "$p" "$SB_RJ/$t" 2>/dev/null
+done
+# seed_brief <wd> <name> <stranded|live>
+seed_brief() {
+  local wd="$1" name="$2" kind="$3"
+  mkdir -p "$wd/.supervisor/jobs/in-progress" "$wd/.supervisor/requirements"
+  printf '# Supervisor Job: %s\n\n## Environment\n- **Source requirement:** .supervisor/requirements/%s.md\n' "$name" "$name" \
+    > "$wd/.supervisor/jobs/in-progress/2026-01-01-$name.md"
+  if [ "$kind" = stranded ]; then
+    printf '# %s\n\n## Status: done\n' "$name" > "$wd/.supervisor/requirements/$name.md"
+  else
+    printf '# %s\n\n## Status: pending\n' "$name" > "$wd/.supervisor/requirements/$name.md"
+  fi
+}
+notified() { grep -qF ' notify group=' "$1/.supervisor/logs/notifications.log" 2>/dev/null; }
+
+# S1: a stranded-only in-progress/ is NOT plugin context.
+seed_brief "$TMP_ROOT/wd-$((CASE_N + 1))" dead-run stranded
+run_sut "$SB_RJ" "$P_ASK" LOOMWRIGHT_NOTIFY_SCOPE=plugin
+assert_eq "S1 stranded-only in-progress/ exit 0" "0" "$RC"
+if notified "$WD"; then fail "S1 a stranded-only in-progress/ is NOT read as Supervisor active (it notified)"; else pass "S1 a stranded-only in-progress/ is NOT read as Supervisor active"; fi
+
+# S2 (control): a brief the reconciler cannot prove stranded — a genuinely live run — still is.
+seed_brief "$TMP_ROOT/wd-$((CASE_N + 1))" live-run live
+run_sut "$SB_RJ" "$P_ASK" LOOMWRIGHT_NOTIFY_SCOPE=plugin
+assert_eq "S2 live in-progress/ exit 0" "0" "$RC"
+if notified "$WD"; then pass "S2 (control) a live (unknown) brief still reads as Supervisor active"; else fail "S2 (control) a live brief was suppressed"; fi
+
+# S3: one stranded + one live brief ⇒ live (any non-stranded brief counts).
+seed_brief "$TMP_ROOT/wd-$((CASE_N + 1))" dead-run stranded
+seed_brief "$TMP_ROOT/wd-$((CASE_N + 1))" live-run live
+run_sut "$SB_RJ" "$P_ASK" LOOMWRIGHT_NOTIFY_SCOPE=plugin
+if notified "$WD"; then pass "S3 a stranded brief beside a live one does not mask the live one"; else fail "S3 the live brief was masked by the stranded one"; fi
+
+# S4: fail direction — no reconciler beside the script ⇒ toward notifying (old behaviour).
+S4_DIR="$TMP_ROOT/sut-no-reconciler"; mkdir -p "$S4_DIR"; cp "$SUT" "$S4_DIR/notify-desktop.sh"
+seed_brief "$TMP_ROOT/wd-$((CASE_N + 1))" dead-run stranded
+SUT_SAVED="$SUT"; SUT="$S4_DIR/notify-desktop.sh"
+run_sut "$SB_RJ" "$P_ASK" LOOMWRIGHT_NOTIFY_SCOPE=plugin
+SUT="$SUT_SAVED"
+assert_eq "S4 no reconciler exit 0" "0" "$RC"
+if notified "$WD"; then pass "S4 an absent reconciler fails TOWARD notifying (a stranded brief still counts)"; else fail "S4 an absent reconciler suppressed the banner (fail-safe reader read as clean)"; fi
+
+# S5 (mutation control, in-suite): splice the pre-fix bare-compgen marker back in
+# between the MUTATION_CONTROL markers; the S1 fixture must then notify. Proves the
+# reconciler-backed gate — not some other marker — is what keeps S1 silent.
+MC_BEGIN='# MUTATION_CONTROL_BEGIN: inprogress-live-brief-gate'
+MC_END='# MUTATION_CONTROL_END: inprogress-live-brief-gate'
+S5_DIR="$TMP_ROOT/sut-mutant"; mkdir -p "$S5_DIR"
+awk -v b="$MC_BEGIN" -v e="$MC_END" '
+  $0 == b { print; print "inprogress_has_live_brief() { compgen -G \".supervisor/jobs/in-progress/*.md\" > /dev/null 2>&1; }"; skip = 1; next }
+  $0 == e { skip = 0 }
+  !skip { print }
+' "$SUT" > "$S5_DIR/notify-desktop.sh"
+cp "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$S5_DIR/" 2>/dev/null
+if grep -qF "$MC_END" "$S5_DIR/notify-desktop.sh" && ! grep -qF 'bash "$rj" --not-stranded-count' "$S5_DIR/notify-desktop.sh"; then
+  seed_brief "$TMP_ROOT/wd-$((CASE_N + 1))" dead-run stranded
+  SUT_SAVED="$SUT"; SUT="$S5_DIR/notify-desktop.sh"
+  run_sut "$SB_RJ" "$P_ASK" LOOMWRIGHT_NOTIFY_SCOPE=plugin
+  SUT="$SUT_SAVED"
+  if notified "$WD"; then pass "S5 (mutant) the bare-compgen marker reproduces the bug on the S1 fixture"; else fail "S5 (mutant) bare-compgen mutant did not notify — S1 does not discriminate"; fi
+else
+  fail "S5 mutant construction (MUTATION_CONTROL markers missing or splice incomplete)"
+fi
+
+echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "=========================================="
 echo "RESULT  total=$TOTAL  passed=$PASS_COUNT  failed=$FAIL_COUNT  skipped=$SKIP_COUNT"

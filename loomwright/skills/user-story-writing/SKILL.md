@@ -2,8 +2,8 @@
 name: user-story-writing
 description: Write clear user stories with testable acceptance criteria. Use for requirements definition and feature scoping.
 allowed-tools: [Read]
-version: "1.2.0"
-lastUpdated: "2026-10-04"
+version: "1.3.0"
+lastUpdated: "2026-10-12"
 ---
 
 # User Story Writing Skill
@@ -16,7 +16,8 @@ Write clear, actionable user stories with testable acceptance criteria following
 - Acceptance criteria use Given/When/Then format
 - Include edge cases and error scenarios
 - Stories must be Independent, Negotiable, Valuable, Estimable, Small, Testable (INVEST)
-- One story = one user goal (not multiple features bundled)
+- **Small means "fits one PR"**, not "one finding": small enough to review in one PR, large enough to pay a run's fixed cost. When two stories touch the same files, prefer one story with Parts (§"Requirement Shape")
+- One story = one user goal (not multiple unrelated features bundled)
 
 ## When to Use This Skill
 
@@ -24,6 +25,87 @@ Write clear, actionable user stories with testable acceptance criteria following
 - Use when breaking down epics into stories
 - Use when documenting acceptance criteria
 - Do NOT use for technical tasks (use Beads tasks instead)
+
+## Requirement Shape
+
+Decide the shape **before writing any file**. Items written one finding at a time come out too small to pay a full run; ten findings merged into one come out too big to plan (a 10-Part item failed Plan Review three times on the 7-subtask cap, then its 4-Part subtask kept hitting the worker's turn limit).
+
+### Shape decision
+
+| Shape | Use when |
+|---|---|
+| **One item** | It fits one PR: about 30 files or fewer in `## Touches` (count a directory's files), at most 7 subtasks, at most 2 Parts per subtask |
+| **One item with Parts** (`## Part A — …`, `## Part B — …`) | Same theme and shared files, and it still fits one PR |
+| **A set of items plus a plan doc** | Anything bigger. Each item in the set fits one PR; the set gets one plan doc (template below) |
+
+No mechanical size check ships yet: count by hand. Too small to pay a run ⇒ merge it into a sibling that touches the same files; too big for one PR ⇒ split it into a set.
+
+### Item rules
+
+- **Every item is self-contained.** A run receives only the item file, so the item carries everything the work needs. A hand-written item uses this shape (a Product Owner story uses the Story Template below, which carries the same machine-read sections):
+
+  ```markdown
+  # NN — <one-line outcome>
+
+  ## Status: pending
+
+  ## Problem
+  ## Goal
+  ## Scope
+  ## Non-goals
+  ## Owner decisions (from _BACKLOG.md)
+  <!-- only when the plan doc records an owner decision this item's run must obey; see "Honest limit" below -->
+  ## Acceptance criteria
+  ## Validation (must pass before merge)
+  ## Measurements
+  <!-- only when a criterion needs repeated runs or timing; see the next rule -->
+  ## Depends on
+  ## Touches
+  ```
+- **Measurements are not acceptance.** A criterion that needs repeated runs (N×), wall-clock timing, or an idle or loaded machine goes under `## Measurements`, never `## Acceptance criteria`. It names the frozen commit it runs against (`git worktree add <tmp> <sha>`), so later edits cannot invalidate a run, and it runs after the code is complete — never inside a worker's turn budget. The worker's own acceptance for it is "the harness exists and passes once".
+- **New findings join an existing theme.** A new item, Part, or "considered and not queued" row goes into that theme's plan doc. Do not start a new `*-followups` folder.
+
+### Plan-doc template
+
+A requirement set has ONE plan doc, `<folder>/_BACKLOG.md` (the name `/automate --backlog` reads; Product Owner names its own `_BACKLOG-{YYYY-MM-DD-HHMMSS}-{slug}.md`). Sections in this order:
+
+<!-- plan-doc-template:begin -->
+```markdown
+# <Theme> — plan doc (index document, not an implementable item)
+
+## Status: done (index document — nothing to implement)
+
+## Why now
+<the problem this set solves, with the measured baseline when one exists>
+
+## Owner decisions
+<binding on every item; the owner's section — "none recorded" until the owner writes them>
+
+## Order
+| Item | Delivers | Depends on | Can run in parallel with |
+|---|---|---|---|
+| 01 | <outcome> | none | 02 |
+| 02 | <outcome> | none | 01 |
+
+## Run
+/automate --backlog <path of this file>
+<mode (safe / --auto-merge / --parallel N) and run rules, e.g. "no new follow-up items">
+
+## Considered and not queued
+<idea — why not, so nobody re-proposes it without new evidence>
+
+## Revisit when
+<the trigger that reopens this set>
+
+## Checklist
+- [ ] .supervisor/requirements/<folder>/01-<slug>.md
+- [ ] .supervisor/requirements/<folder>/02-<slug>.md
+```
+<!-- plan-doc-template:end -->
+
+- **The status stamp is load-bearing:** `/automate --folder` skips a file stamped `## Status: done`, so the plan doc is never enqueued as an item.
+- **The checklist is the only machine-read part.** `/automate --backlog` reads every `- [ ] <path>` line in file order (repo-root-relative paths; an optional `  # note` after two spaces) and skips a line whose item file is stamped done. So keep `- [ ]` lines out of every other section, and keep the checklist last.
+- **Honest limit:** each item's run receives only `--requirement <item>`, never the plan doc. An owner decision an item's run must obey is ALSO copied into that item under `## Owner decisions (from _BACKLOG.md)`.
 
 ## Story Template
 
@@ -154,10 +236,12 @@ src/notifications/
 |--------------|---------|-----------------|
 | "As a user..." | Too vague, no context | "As a Staff Supervisor at a venue..." |
 | Technical language | Not user-focused | Describe outcomes, not implementation |
-| Multiple features | Violates "Small" principle | Split into separate stories |
+| Unrelated features bundled | Not one goal; may not fit one PR | Split by goal; keep same-file work as one story with Parts (§"Requirement Shape") |
 | Missing acceptance criteria | Untestable | Always include Given/When/Then |
 | No business value | "...so that it works" | State measurable outcome |
 | Implementation details | "...using React hooks" | Focus on what, not how |
+| One finding per story | Too small to pay a run's fixed cost | Merge into the sibling that touches the same files |
+| Timing / N× runs as acceptance | A worker waits on it inside its turn budget | Move it to `## Measurements` on a frozen commit |
 
 ## Acceptance Criteria Patterns
 
@@ -196,7 +280,7 @@ Before finalizing a story:
 - [ ] Dependencies listed
 - [ ] `## Depends on` written (`none` when none) and `## Touches` filled from Scope — `plan-waves --lint` says `ok`
 - [ ] Risks identified
-- [ ] Story is estimable (not too vague, not too large)
+- [ ] Story is estimable (not too vague, not too large) and its shape was decided first — it fits one PR (§"Requirement Shape")
 
 ## See Also
 

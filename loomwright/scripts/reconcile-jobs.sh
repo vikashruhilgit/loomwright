@@ -152,6 +152,46 @@
 #                                     queue-hygiene/01) without re-deriving the
 #                                     fallback ladder. Exit 1 and prints nothing when
 #                                     no base ref resolves.
+#   reconcile-jobs.sh --not-stranded-count
+#                                     print ONE integer — how many in-progress briefs
+#                                     the classification above does NOT prove stranded
+#                                     (every state other than stranded_merged /
+#                                     stranded_closed, i.e. `unknown`) — and exit 0.
+#                                     Read-only: implies no repair even beside --repair.
+#                                     0 when in-progress/ is absent or empty. The
+#                                     sanctioned seam for the two user-question scope
+#                                     gates (notify-desktop.sh marker 1, send-webhook.sh's
+#                                     paused-event gate) that used to read ANY brief in
+#                                     in-progress/ as "Supervisor is active". `unknown`
+#                                     counts as live on purpose: UNVERIFIED is not stale,
+#                                     and those gates are permissive (a spurious banner is
+#                                     cheaper than a missed pause). A consumer must treat
+#                                     an EMPTY or non-numeric answer as "live", never as 0.
+#   reconcile-jobs.sh --missing-outcome [--porcelain]
+#                                     REPORT-ONLY scan of .supervisor/jobs/done/ for
+#                                     briefs with no `## Outcome` section (see "MISSING
+#                                     ## Outcome" below); nothing else runs and nothing
+#                                     is ever written. Porcelain rows:
+#                                     missing_outcome<TAB>BRIEF<TAB>EVIDENCE.
+#
+# MISSING ## Outcome (done/ briefs — report-only)
+# ------------------------------------------------
+# Appending `## Outcome` is the second half of completion-tail step 2 and, like
+# the move, is prompt-instructed — so a brief can land in done/ without one, and
+# post-hoc analysis over done/ then silently under-reports. --missing-outcome
+# lists those briefs. It NEVER writes a backfill: done/ is read-only after the
+# move (docs/ARCHITECTURE_CONTRACTS.md §"State Ownership"), and whether the
+# reconciler may write there at all is the open owner decision on writers to
+# jobs/, not something this scan decides.
+# * STRICT heading match, one definition (has_outcome_section, also the repair
+#   guard's): a line that is exactly `## Outcome`, or `## Outcome` followed by
+#   whitespace or a colon, outside a ``` / ~~~ fenced block. The loose
+#   `^## Outcome` prefix also matches `## Outcomes Rubric` — a different section
+#   most briefs carry — and so UNDER-counts the omission (measured 2026-10-12 on
+#   this repo's done/: loose 10 of 187 missing, strict 27 of 187).
+# * A variant heading such as `## Outcome (Supervisor v4 — <date>)` COUNTS as an
+#   Outcome section: it is one, written by an older tail with a suffix.
+# * `### Outcome` (H3) does not count; nor does a heading inside a code fence.
 #
 # Deliberately vendor-neutral (CORE-classified): names no harness-specific
 # variable or path, so `scripts/check-vendor-coupling.sh` holds it at allowance 0.
@@ -178,6 +218,8 @@ PORCELAIN=0
 REPAIR=0
 REPAIR_MERGED_ONLY=0
 PRINT_BASE_REF=0
+NOT_STRANDED_COUNT=0
+MISSING_OUTCOME=0
 # EVIDENCE_MODE flips to 1 the moment ANY --evidence flag is PARSED — before its
 # value is validated. Scoping (see the main loop) keys on this, not on whether a
 # value was accepted: a supplied-but-rejected evidence list must repair NOTHING,
@@ -195,6 +237,8 @@ while [ "$#" -gt 0 ]; do
     --repair)    REPAIR=1 ;;
     --repair-merged) REPAIR=1; REPAIR_MERGED_ONLY=1 ;;
     --print-base-ref) PRINT_BASE_REF=1 ;;
+    --not-stranded-count) NOT_STRANDED_COUNT=1 ;;
+    --missing-outcome) MISSING_OUTCOME=1 ;;
     --evidence)
       EVIDENCE_MODE=1
       shift
@@ -268,6 +312,58 @@ requirement_status() {
     printf 'done'
   fi
 }
+
+# has_outcome_section <brief> — 0 when the brief carries an `## Outcome` section
+# under the STRICT rule in the header ("MISSING ## Outcome"): the line is exactly
+# `## Outcome`, or `## Outcome` + whitespace / colon, outside a fenced block.
+# The exact-line test is spelled separately rather than as `([[:space:]:]|$)`
+# so no awk flavour has to agree on an anchor inside an alternation. An
+# unreadable file returns non-zero (awk exits 2), i.e. "no section found" — the
+# --missing-outcome scan checks readability first so that case is not
+# miscounted as an omission.
+has_outcome_section() {
+  awk '
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+    !fence && ($0 == "## Outcome" || $0 ~ /^## Outcome[[:space:]:]/) { found = 1; exit }
+    END { exit (found ? 0 : 1) }
+  ' "$1" 2>/dev/null
+}
+
+# --missing-outcome is a standalone REPORT-ONLY mode over done/: it runs before
+# (and instead of) the in-progress/ classification below and writes nothing.
+if [ "$MISSING_OUTCOME" -eq 1 ]; then
+  [ "$REPAIR" -eq 1 ] && echo "reconcile-jobs: --missing-outcome is report-only — ignoring --repair; nothing will be written" >&2
+  if [ ! -d "$JOBS_DONE" ]; then
+    [ "$PORCELAIN" -eq 1 ] || echo "reconcile-jobs: no $JOBS_DONE/ — nothing to scan."
+    exit 0
+  fi
+  shopt -s nullglob
+  done_briefs=("$JOBS_DONE"/*.md)
+  shopt -u nullglob
+  n_scanned=0; n_missing=0
+  for brief in "${done_briefs[@]}"; do
+    [ -f "$brief" ] || continue
+    if [ ! -r "$brief" ]; then
+      echo "reconcile-jobs: cannot read '$brief' — not counted" >&2
+      continue
+    fi
+    n_scanned=$((n_scanned+1))
+    has_outcome_section "$brief" && continue
+    n_missing=$((n_missing+1))
+    if [ "$PORCELAIN" -eq 1 ]; then
+      printf 'missing_outcome\t%s\tno ## Outcome section (strict heading match) — PR, heal decision and outcome are not recorded on this brief\n' "$brief"
+    else
+      printf '  missing_outcome  %s\n' "$brief"
+    fi
+  done
+  if [ "$PORCELAIN" -eq 0 ]; then
+    [ "$n_missing" -gt 0 ] && echo
+    echo "reconcile-jobs: ${n_missing} of ${n_scanned} done/ brief(s) carry no ## Outcome section."
+    [ "$n_missing" -gt 0 ] && \
+      echo "  Report-only: nothing was written. Fields the completion tail would have recorded are not recoverable from the brief itself."
+  fi
+  exit 0
+fi
 
 # THE SOURCE-REQUIREMENT POINTER IS PARSED IN EXACTLY ONE PLACE — brief-pointer.sh.
 #
@@ -578,7 +674,7 @@ repair() {
     echo "reconcile-jobs: refusing to repair '$base' — destination already exists" >&2
     return 1
   fi
-  if grep -qE '^## Outcome[[:space:]]*$' "$brief" 2>/dev/null; then
+  if has_outcome_section "$brief"; then
     echo "reconcile-jobs: refusing to repair '$base' — brief already carries an ## Outcome block" >&2
     return 1
   fi
@@ -643,14 +739,19 @@ repair() {
   return 0
 }
 
-[ -d "$JOBS_IN" ] || { [ "$PORCELAIN" -eq 1 ] || echo "reconcile-jobs: no $JOBS_IN/ — nothing to reconcile."; exit 0; }
+[ -d "$JOBS_IN" ] || {
+  if [ "$NOT_STRANDED_COUNT" -eq 1 ]; then echo 0
+  elif [ "$PORCELAIN" -eq 0 ]; then echo "reconcile-jobs: no $JOBS_IN/ — nothing to reconcile."; fi
+  exit 0
+}
 
 shopt -s nullglob
 briefs=("$JOBS_IN"/*.md)
 shopt -u nullglob
 
 if [ "${#briefs[@]}" -eq 0 ]; then
-  [ "$PORCELAIN" -eq 1 ] || echo "reconcile-jobs: $JOBS_IN/ is empty — nothing to reconcile."
+  if [ "$NOT_STRANDED_COUNT" -eq 1 ]; then echo 0
+  elif [ "$PORCELAIN" -eq 0 ]; then echo "reconcile-jobs: $JOBS_IN/ is empty — nothing to reconcile."; fi
   exit 0
 fi
 
@@ -672,11 +773,25 @@ if [ "${#EV_KEYS[@]}" -gt 0 ]; then
   done
 fi
 
-n_repaired=0; n_repairable=0; n_unknown=0
+n_repaired=0; n_repairable=0; n_unknown=0; n_not_stranded=0
 for brief in "${briefs[@]}"; do
   line="$(classify "$brief")"
   state="${line%%	*}"
   evidence="${line#*	}"
+
+  # --not-stranded-count: tally and print nothing per row. Anything that is not
+  # a PROVEN strand counts, including a state this list does not know yet — the
+  # consumers read a non-zero count as "a run may be live". The `continue` sits
+  # ABOVE the repair block on purpose: this mode is read-only whatever else was
+  # passed (a scope gate that runs on every user question must never move a
+  # brief as a side effect) — test 31d holds it there.
+  if [ "$NOT_STRANDED_COUNT" -eq 1 ]; then
+    case "$state" in
+      stranded_merged|stranded_closed) ;;
+      *) n_not_stranded=$((n_not_stranded+1)) ;;
+    esac
+    continue
+  fi
 
   # --repair is SCOPED whenever EVIDENCE_MODE=1: only a verdict sourced from an
   # engine evidence match (discriminated by its prefix, see classify()) is
@@ -714,6 +829,11 @@ for brief in "${briefs[@]}"; do
     printf '  %-16s %s\n                   %s\n' "$state" "$brief" "$evidence"
   fi
 done
+
+if [ "$NOT_STRANDED_COUNT" -eq 1 ]; then
+  echo "$n_not_stranded"
+  exit 0
+fi
 
 if [ "$PORCELAIN" -eq 0 ]; then
   echo

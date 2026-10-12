@@ -6,7 +6,7 @@
 #:  current-set      <runfile_path> [--item <path|null> --status <s|null>] [--pr <url|null>] [--branch <b|null>] [--pause-reason <r>]  # §3 the ONLY writer of ## Current's item/pause_reason lines: item form (both --item/--status; null only both-null) or run-level form (--pause-reason only); enum-validated; a changed --item resets an omitted pr/branch to null; refusal = exit 1, file byte-unchanged; identical values ⇒ `current-set: unchanged`
 #:  current-escalation <runfile_path> --cause <c> [--check <c> --run-id <id> --attempt <n> --sha <sha>]  # automate-followups/31: the ONLY writer of ## Current's `- escalation_cause: <cause> | check: … | run_id: … | attempt: … | sha: …` line (after `- pause_reason:`, else at the end of the block; replaced if present; `--cause null` removes it); cause enum check_pending|check_red_unrelated|check_red|findings|other|null; an omitted field is `null`; refusal (unknown cause, `|`/newline, non-numeric run id/attempt) = exit 1, file byte-unchanged; identical values ⇒ `current-escalation: unchanged`
 #:  current-wave     <runfile_path> --wave <k|null> [--items <i1,i2,…>]  # parallel-automate/05 (--parallel N>1 parent only): the ONLY writer of ## Current's `- wave: <k> | items: <i1>, <i2>` line (replaced if present, else appended at the block end; `--wave null` removes it); refusal (non-positive-integer wave, `|`/newline, --items with null) = exit 1, file byte-unchanged; identical values ⇒ `current-wave: unchanged`
-#:  current-rebuild  <runfile_path>                     # §4 RECONCILE repair: ## Current item null/absent — or `done` and not the LAST picked item — + a `picked` Progress line ⇒ item from the LAST picked line (must be a Queue row), pr ONLY from a later `ran /autonomous` line, branch via one gh pr view; always status running; one `current_rebuilt: … state <s>` line (printed + appended); set and not done (or done = the last picked item) ⇒ `skipped — ## Current set`
+#:  current-rebuild  <runfile_path>                     # §4 RECONCILE repair: ## Current item null/absent — or `done` and not the LAST picked item — + a `picked` Progress line ⇒ item from the LAST picked line (must be a Queue row), pr ONLY from a later `ran /autonomous` line, branch via one gh pr view; always status running + pause_reason null; one `current_rebuilt: … state <s>` line (printed + appended); set and not done (or done = the last picked item) ⇒ `skipped — ## Current set`
 #:  remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
 #:  ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
 
@@ -507,7 +507,10 @@ current_wave() {
 # PRs' URLs). Branch: one `gh pr view <pr> --json headRefName,state,mergedAt`.
 # Status: ALWAYS `running` (OPEN, MERGED, CLOSED or unreadable) — a rebuild never
 # claims awaiting_merge/READY/escalated and never triggers a close-out; the
-# observed state is named in the line for the owner. Writes via current-set, then
+# observed state is named in the line for the owner. pause_reason: ALWAYS `null`
+# (automate-followups/36 A3) — a stale pause reason (often `awaiting_go`) must not
+# sit beside `status: running`; the RESUME's next step (§4 step 4's ask, or the
+# non-interactive `resume_ambiguous` park) writes the run's real pause state. Writes via current-set, then
 # progress-appends and prints `current_rebuilt: <item> pr <url|null> state
 # <OPEN|MERGED|CLOSED|unknown|none>` (`none` = no PR found). Set and not `done`, or
 # `done` and naming the last picked item ⇒ `current-rebuild: skipped — ## Current
@@ -570,7 +573,7 @@ current_rebuild() {
   else
     pr=null
   fi
-  current_set "$out" --item "$item" --status running --pr "$pr" --branch "$branch" >/dev/null
+  current_set "$out" --item "$item" --status running --pr "$pr" --branch "$branch" --pause-reason null >/dev/null
   local msg="current_rebuilt: $item pr $pr state $state"
   progress_append "$out" "$msg"
   echo "$msg"

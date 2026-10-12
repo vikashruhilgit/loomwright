@@ -26,6 +26,7 @@
 #      run-level form; progress-append's current_not_set guard (exit 3, line kept;
 #      `parked ` not guarded; the picked-mismatch arm with `./` and suffix forms) and
 #      a w1-10 replay; current-rebuild against a stubbed gh (OPEN/MERGED/CLOSED/failing)
+#      and its pause_reason null (B10i2, automate-followups/36 A3, mutant-controlled)
 #      with foreign-PR, not-in-Queue and no-picked negatives; three gated mutants.
 #      (ESC, automate-followups/31) escalation-cause: the s2-c/s2-d replays
 #      (check_red_unrelated / check_pending), the related-file and tested-script
@@ -959,6 +960,31 @@ rm -f "$CGH/pr-view-fail"
 cp "$CRB" "$CWD/cr.set"; cr_run "$CRB"
 [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-rebuild: skipped — ## Current set" ] && cmp -s "$CWD/cr.set" "$CRB" \
   && ok "current-rebuild second run: 'skipped — ## Current set', nothing written" || no "current-rebuild second run wrong (rc=$RUN_RC out=$RUN_OUT)"
+# B10i2. automate-followups/36 A3: current-rebuild writes pause_reason null beside status running —
+# a stale pause-only reason (awaiting_go here) never survives the rebuild.
+cr_pause() { # [<helper>] — rebuild a Current whose pause_reason is a stale awaiting_go
+  cr_fixture "$CRB" "t1 picked q/02-b.md" "t2 ran /autonomous → PR $B_PR"
+  sed 's/^- pause_reason: awaiting_merge$/- pause_reason: awaiting_go/' "$CRB" > "$CRB.t" && mv "$CRB.t" "$CRB"
+  printf '{"state":"OPEN","mergedAt":null,"headRefName":"feature/b"}\n' > "$CGH/pr-view.json"
+  CR_H="${1:-}" cr_run "$CRB"
+}
+cr_pause
+if [ "$RUN_RC" -eq 0 ] && grep -qxF -- "- item: q/02-b.md | status: running | pr: $B_PR | branch: feature/b" "$CRB" \
+   && grep -qxF -- '- pause_reason: null' "$CRB" && ! grep -q '^- pause_reason: awaiting_go' "$CRB"; then
+  ok "(B10i2) current-rebuild: status running + pause_reason null (the stale awaiting_go is gone)"
+else
+  no "(B10i2) rebuild left: $(grep -E '^- (item|pause_reason):' "$CRB" | tr '\n' '|') (rc=$RUN_RC out=$RUN_OUT)"
+fi
+CRPM="$CWD/crpm"; mkdir -p "$CRPM"
+sed 's/ --branch "\$branch" --pause-reason null >\/dev\/null$/ --branch "$branch" >\/dev\/null  # mutant A3/' "$H" > "$CRPM/automate-helpers.sh"
+if grep -q '# mutant A3' "$CRPM/automate-helpers.sh" && bash -n "$CRPM/automate-helpers.sh"; then
+  cr_pause "$CRPM/automate-helpers.sh"
+  grep -qxF -- '- pause_reason: awaiting_go' "$CRB" && grep -q '^- item: q/02-b.md | status: running' "$CRB" \
+    && ok "(B10i2) mutation control: without --pause-reason null the rebuild leaves 'status: running' beside 'pause_reason: awaiting_go'" \
+    || no "(B10i2) mutation control did not discriminate: $(grep -E '^- (item|pause_reason):' "$CRB" | tr '\n' '|')"
+else
+  no "(B10i2) mutant A3 not built"
+fi
 # B10j. A `done` ## Current left behind by a PICK that skipped its current-set after a
 # close-out (the guard exempts a done Current, so both lines append with exit 0) is
 # stale: current-rebuild repairs it from the LAST picked line. Before the fix it
@@ -3795,6 +3821,65 @@ else
   no "H5 AC-5: done file (a) was modified"
 fi
 rm -rf "$R"
+
+# H5b. automate-followups/36 B-B: under a HOME-LIKE root (`…/home/alice/proj`) no printed row and no
+#      written line carries an absolute path — the `- **Brief:**` line --apply stamps is the
+#      repo-relative done/ brief, and an abandoned row's run-file field is repo-relative. (The
+#      meta-sync home_path scrub refused the old absolute forms on lane metadata pushes.)
+rs_home_repo() { # prints the repo root: (b) merged+cited WITH a done/ brief, plus an abandoned Queue row
+  local base r relb
+  base="$(mktemp -d)"; r="$base/home/alice/proj"
+  mkdir -p "$r/.supervisor/requirements/qh" "$r/.supervisor/jobs/done" "$r/.supervisor/automate" "$r/bin" "$r/ghstub"
+  r="$(cd "$r" && pwd -P)"
+  relb=".supervisor/requirements/qh/02-b-merged.md"
+  printf '# b\n\n## Status: pending\n' > "$r/$relb"
+  printf '# Brief\n## Environment\n- **Source requirement:** %s\n' "$relb" > "$r/.supervisor/jobs/done/2026-10-01-b-merged.md"
+  printf '# ab\n\n## Status: pending\n' > "$r/.supervisor/requirements/qh/05-abandoned.md"
+  printf '# run\n## Status: running\n## Queue\n- [x] .supervisor/requirements/qh/05-abandoned.md  # abandoned: owner dropped it\n## Progress\n' > "$r/.supervisor/automate/run1.md"
+  rs_stub_bin "$r/bin"
+  jq -n --arg url "$RS_URL" '[{url:$url}]' > "$r/ghstub/list-$(rs_skey "$relb").json"
+  jq -n --arg rel "$relb" --arg url "$RS_URL" \
+    '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:("Ships "+$rel),mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/b",changedFiles:1,files:[{path:"src/b.sh"}]}' \
+    > "$r/ghstub/view-$(rs_key "$RS_URL").json"
+  printf '%s' "$r"
+}
+rs_home_check() { # <repo> — 0 iff dry run + --apply print and write no absolute path, with the relative forms present
+  local r="$1" dry
+  rs_run "$r" "$r/.supervisor/requirements"; dry="$RUN_OUT"
+  rs_run "$r" "$r/.supervisor/requirements" --apply
+  RSH_OUT="$dry"$'\n'"$RUN_OUT"
+  ! grep -qE '/(Users|home)/' <<<"$RSH_OUT" \
+    && ! grep -rqE '/(Users|home)/' "$r/.supervisor/requirements" \
+    && grep -qxF -- '- **Brief:** .supervisor/jobs/done/2026-10-01-b-merged.md' "$r/.supervisor/requirements/qh/02-b-merged.md" \
+    && grep -qF "plan	.supervisor/requirements/qh/05-abandoned.md	done_with_escalation — ABANDONED	.supervisor/automate/run1.md" <<<"$dry" \
+    && grep -qF "stamped	.supervisor/requirements/qh/05-abandoned.md	done_with_escalation — ABANDONED	.supervisor/automate/run1.md" <<<"$RUN_OUT"
+}
+R="$(rs_home_repo)"
+if rs_home_check "$R"; then
+  ok "H5b B-B: home-like root ⇒ no /Users/ or /home/ path in any printed row or written line; Brief + abandoned run file repo-relative"
+else
+  no "H5b B-B: out=$(printf '%s' "$RSH_OUT" | tr '\n' '|') brief=$(grep 'Brief:' "$R/.supervisor/requirements/qh/02-b-merged.md")"
+fi
+rm -rf "${R%/home/alice/proj}"
+# Mutation control: the pre-fix writer (absolute done_brief / abandoned run file) turns H5b red.
+RSHM="$(mktemp -d)"
+sed -e 's/^      printf -- '"'"'- \*\*Brief:\*\* %s\\n'"'"' "\${brief_rel:-unknown}"$/      printf -- '"'"'- **Brief:** %s\\n'"'"' "${done_brief:-unknown}"  # mutant B-B/' \
+    -e 's/^    af_rel="\${af#"\$proj_root"\/}" .*$/    af_rel="$af"  # mutant B-B/' "$H" > "$RSHM/automate-helpers.sh"
+for e in "$(dirname "$H")"/*; do [ "$(basename "$e")" = automate-helpers.sh ] || ln -s "$e" "$RSHM/$(basename "$e")"; done
+if [ "$(grep -c '# mutant B-B' "$RSHM/automate-helpers.sh")" = 2 ] && bash -n "$RSHM/automate-helpers.sh"; then
+  R="$(rs_home_repo)"
+  if RS_H="$RSHM/automate-helpers.sh" rs_home_check "$R"; then
+    no "H5b mutation control REFUTED: the absolute-path writer still passed"
+  elif grep -qE '/home/alice/proj/' <<<"$RSH_OUT$(cat "$R/.supervisor/requirements/qh/02-b-merged.md")"; then
+    ok "H5b mutation control: the absolute-path writer leaks /home/alice/proj/ — the leg is load-bearing"
+  else
+    no "H5b mutation control failed for another reason: $(printf '%s' "$RSH_OUT" | tr '\n' '|')"
+  fi
+  rm -rf "${R%/home/alice/proj}"
+else
+  no "H5b mutant B-B not built ($(grep -c '# mutant B-B' "$RSHM/automate-helpers.sh") of 2 edits applied)"
+fi
+rm -rf "$RSHM"
 
 # H6. brief-shipped is LISTED (info row), never promoted, on EITHER dry-run or --apply.
 R="$(mktemp -d)"

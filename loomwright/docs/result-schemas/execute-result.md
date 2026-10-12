@@ -35,7 +35,7 @@ EXECUTE_RESULT:
   merge_order: string[]                # required — ordered list of branches to merge
   worktrees: object[]                  # required — worktree details for cleanup
     - task_id: string
-      path: string                     # absolute path to worktree
+      path: string                     # path to worktree (absolute at runtime; the example below uses the ARCHITECTURE_CONTRACTS.md naming form `../{repo}-{task_id}-{slug}`, never a home path)
       branch: string                   # branch name in worktree
       status: enum [completed, failed, cleaned]
   branches: string[]                   # optional — all branches created
@@ -68,11 +68,11 @@ EXECUTE_RESULT:
   merge_order: [feature/add-jwt-guard, feature/add-refresh-token]
   worktrees:
     - task_id: add-jwt-guard
-      path: /Users/<name>/myapp-add-jwt-guard
+      path: ../myapp-add-jwt-guard
       branch: feature/add-jwt-guard
       status: completed
     - task_id: add-refresh-token
-      path: /Users/<name>/myapp-add-refresh-token
+      path: ../myapp-add-refresh-token
       branch: feature/add-refresh-token
       status: completed
   summary: 2/2 subtasks completed. JWT guard and refresh token service implemented.

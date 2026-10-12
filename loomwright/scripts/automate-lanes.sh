@@ -1318,6 +1318,9 @@ lanes_convert_ready() {
         cv="$(printf '%s\n' "$co" | bash "$HELPERS" closeout-classify --run "$LN_RUN" --item "${item#./}" --pr "$pr" 2>/dev/null)"
         if [ "$cv" = complete ]; then cs="; closeout complete"
         elif [ -z "$cv" ]; then cs="; closeout leftover: classify — closeout-classify printed nothing"
+        elif ! grep -q '^leftover	' <<<"$cv" && grep -q '^run_lock_held	' <<<"$cv"; then
+          # automate-followups/36 A1: a LIVE process holds the run lock — not a leftover; nothing ran.
+          cs="; closeout deferred: $(printf '%s\n' "$cv" | awk -F'\t' '$1 == "run_lock_held" { printf "%s%s", (n++ ? ", " : ""), $6 }') — re-run lane-convert-ready once it is released"
         else cs="; closeout leftover: $(printf '%s\n' "$cv" | awk -F'\t' '$1 == "leftover" { printf "%s%s — %s", (n++ ? ", " : ""), $5, $6 }')"
         fi ;;
     esac

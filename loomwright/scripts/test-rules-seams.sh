@@ -53,15 +53,16 @@
 #       auditor `audit-rules.sh` (seam_b_unattended; its (B-mut-audit) control appends a
 #       `bash …/audit-rules.sh` line to a temp copy of agents/code-reviewer.md and must turn (B) red). AND
 #   (C) it NEVER pipes / substitutes / execs read-rules.sh OUTPUT into a shell executor
-#       (`| bash`, `|bash`, `| zsh`/`| dash`, `|& bash`, `eval`, exec'd `$(...)`, `source`,
-#       `. <(…)`) — the reader emits `check` as DATA
+#       (`| bash`, `|bash`, `| zsh`/`| dash`/`| ksh`, `| /bin/bash`, `| env bash`, `|& bash`, `eval`,
+#       exec'd `$(...)`, `source`, `. <(…)` incl. a nested `$(…)` inside it) — the reader emits `check` as DATA
 #       and no seam runs it. The reader INVOCATION itself (a `bash … read-rules.sh …` fragment) is
 #       checked unconditionally; only the OTHER read-rules.sh lines get the `never`/`NEVER`
 #       negated-assertion allowlist (see seam_c_scan). A line-level allowlist alone once skipped the
 #       Code Reviewer's and execute-manager's only invocation lines — both share a line with
 #       "never …" prose — so (C) inspected nothing there and a `| bash` on the real call passed.
 #       A shell-variable reader (scripts/session-resume.sh: `reader=…/read-rules.sh`, then
-#       `bash "$reader"` on a LATER line that never names the script) is RESOLVED: every line
+#       `bash "$reader"` on a LATER line that never names the script; the assignment shapes resolved,
+#       and the ones that are not, are listed at seam_c_scan pass 0) is RESOLVED: every line
 #       referencing that variable is inspected too (seam_c_scan pass 0), so a sink on the real call is
 #       not hidden by the indirection. A variable CAPTURING reader output is tainted: executing it
 #       later (`eval`, `bash -c`, a pipe into a shell, `source <(…)`) is a leak (pass 0b).
@@ -81,8 +82,14 @@
 #       `| bash` on scripts/session-resume.sh's `bash "$reader"` call (resume-var); and, on that
 #       same file's `rules_out="$(bash "$reader" …)"` capture, the captured output later executed
 #       (capture-eval, capture-pipe, capture-bash-c — seam_c_scan pass 0b), with a (C-taint-data)
-#       negative control that DATA uses of the capture stay clean. An empty or
-#       unchanged mutant is a FAILURE, never a skip.
+#       negative control that DATA uses of the capture stay clean. automate-followups/39 added one leg
+#       per newly covered shape: sinks abs-path, env-bash, ksh, procsub-nested (code-reviewer.md),
+#       after-span-env (execute-manager.md), capture-pipe-abs, capture-procsub-nested; and reader-alias
+#       assignments assign-cdpwd, assign-declare, assign-local-r, assign-spaced, assign-chain
+#       (session-resume.sh), plus (C-assign) predicate legs, whose negatives pin that a CAPTURE of
+#       reader output is never a path alias. THIS IS A TEST-ONLY STATIC SCANNER: it widens what this
+#       self-test catches in the committed seam surfaces, never what a running plugin enforces. An
+#       empty or unchanged mutant is a FAILURE, never a skip.
 #
 # Plus (D) INVOCATION SHAPE, asserted per surface CLASS rather than uniformly, because the seams
 # genuinely differ in kind — a uniform grep here would be either vacuous or wrong:
@@ -173,13 +180,37 @@ seam_b_unattended() {
   return 0
 }
 
+# THIS IS A TEST-ONLY STATIC SCANNER. Every pattern below decides what this self-test flags in the
+# committed seam surfaces; none of it runs at runtime or protects a user project.
+#
+# SHELL WORDS — ONE definition of "a shell" shared by every sink pattern in (C) (automate-followups/39 C.3;
+# the pipe, after-span and taint patterns each carried their own copy before):
+#   SEAM_C_SHELL_NAME  bash / sh / zsh / dash / ksh / mksh.
+#   SEAM_C_SHELL_CMD   that name as the HEAD of a pipe stage: bare, by any path (`/bin/bash`), or behind
+#                      `env` (itself bare or by path) and its operands (`env bash`, `/usr/bin/env -i bash`),
+#                      followed by a word boundary.
+#   Limit: other launchers in front of the shell (`xargs bash`, `sudo bash`, `command bash`, `exec bash`,
+#   `busybox sh`, `tee >(bash)`) and other shells (fish, csh/tcsh, pwsh) are NOT matched.
+# PAREN NESTING — SEAM_C_NEST is the body of a `(…)` group that may hold up to three nested paren
+# levels, which covers `$(cd "$(dirname "$(readlink -f "$0")")" && pwd)`. Limit: a fourth level, or a
+# `)` inside a quoted string within the group, ends the match early.
+SEAM_C_SHELL_NAME='(ba|z|da|mk|k)?sh'
+SEAM_C_SHELL_CMD='(([^[:space:]|;&]*/)?env([[:space:]]+[^[:space:]|;&]+)*[[:space:]]+)?([^[:space:]|;&]*/)?'"$SEAM_C_SHELL_NAME"'([^[:alnum:]_]|$)'
+SEAM_C_P1='\([^()]*\)'
+SEAM_C_P2='\(([^()]|'"$SEAM_C_P1"')*\)'
+SEAM_C_P3='\(([^()]|'"$SEAM_C_P2"')*\)'
+SEAM_C_NEST='([^()]|'"$SEAM_C_P3"')*'
+SEAM_C_CMDSUB='\$'"$SEAM_C_P3"
+
 # seam_c_is_sink <text> — (C)'s executor-sink predicate: 0 when <text> pipes / substitutes / evals /
 # sources read-rules.sh OUTPUT into a shell (`| bash`, `| sh`, `eval`, `source`, exec'd `$(bash …)`).
-# The original space-only globs are kept; SEAM_C_SINK_PIPE_RE adds the `|bash` / `| zsh` / `| dash` /
-# `|& bash` shapes in the SAME form as SEAM_C_AFTER_SPAN_RE, and SEAM_C_SINK_PROCSUB_RE the
-# `. <(…read-rules.sh…)` dot-source of a process substitution (`source <(…)` is already a `source` match).
-SEAM_C_SINK_PIPE_RE='read-rules\.sh.*\|&?[[:space:]]*(ba|z|da)?sh([^[:alnum:]_]|$)'
-SEAM_C_SINK_PROCSUB_RE='(^|[^[:alnum:]_.])(\.|source)[[:space:]]+<\([^)]*read-rules\.sh'
+# The original space-only globs are kept; SEAM_C_SINK_PIPE_RE adds every SEAM_C_SHELL_CMD pipe stage
+# (`|bash`, `| zsh`, `| ksh`, `| /bin/bash`, `| env bash`, `|& bash`, …) in the SAME form as
+# SEAM_C_AFTER_SPAN_RE, and SEAM_C_SINK_PROCSUB_RE the `. <(…read-rules.sh…)` dot-source of a process
+# substitution, including one whose reader path is built by a nested `$(…)` (`source <(…)` is already a
+# `source` match).
+SEAM_C_SINK_PIPE_RE='read-rules\.sh.*\|&?[[:space:]]*'"$SEAM_C_SHELL_CMD"
+SEAM_C_SINK_PROCSUB_RE='(^|[^[:alnum:]_.])(\.|source)[[:space:]]+<\('"$SEAM_C_NEST"'read-rules\.sh'
 seam_c_is_sink() {
   case "$1" in
     *'read-rules.sh'*'| bash'*|*'read-rules.sh'*'| sh'*|*'eval'*'read-rules.sh'*|*'source'*'read-rules.sh'*|*'$(bash'*'read-rules.sh'*')'*)
@@ -210,12 +241,22 @@ seam_c_is_sink() {
 #      the seams' invariant phrasing) allowlisted: a negated assertion is not a violation. Deliberately
 #      NOT allowlisting a bare `not`/`NOT`/`# comment` — too broad. The allowlist can no longer hide an
 #      invocation, because pass 1 already inspected it.
-#   0. RESOLVED READER VARIABLES — a `NAME=…read-rules.sh` assignment makes NAME a reader alias; every
-#      later line referencing `$NAME`/`${NAME}` (not the assignment itself) is inspected UNCONDITIONALLY
-#      with the reference rewritten to `read-rules.sh`. A leading capture (`NAME="$(` /
-#      `local NAME="$(`) is stripped first: capturing the reader's stdout into a variable is the
-#      legitimate shape (session-resume.sh's rules_nudge), not the exec'd `$(bash …)` sink. Limit:
-#      only a literal assignment is resolved — a name built at runtime is not.
+#   0. RESOLVED READER VARIABLES — an assignment whose value NAMES the reader makes NAME a reader alias
+#      (seam_c_var_assign); every later line referencing `$NAME`/`${NAME}` (not the assignment itself)
+#      is inspected UNCONDITIONALLY with the reference rewritten to `read-rules.sh`. A leading capture
+#      (`NAME="$(` / `local NAME="$(`) is stripped first: capturing the reader's stdout into a variable
+#      is the legitimate shape (session-resume.sh's rules_nudge), not the exec'd `$(bash …)` sink.
+#      Resolved assignment shapes: an optional `local`/`export`/`readonly`/`declare`/`typeset` with
+#      flags (`local -r`, `declare -x`); a value that is one shell word made of plain characters,
+#      `$var`/`${var}`, double- or single-quoted strings (spaces allowed: `R="/my dir/read-rules.sh"`) and
+#      `$(…)` substitutions up to SEAM_C_NEST's depth (`R="$(cd "$(dirname "$0")" && pwd)/read-rules.sh"`);
+#      and an alias of an alias (`R2="$R"`), resolved to a fixpoint. The reader must be named OUTSIDE
+#      every `$(…)` in the value: `out="$(bash …/read-rules.sh)"` captures OUTPUT (pass 0b), it is not
+#      a path alias. Limit (honest — these are NOT resolved): a name built at runtime (`eval "R=…"`,
+#      `printf -v R`, `read R`, `declare -n` namerefs); an assignment that is not the first command on
+#      its line (`cd x && R=…`) or the second of several on one `local a=1 R=…`; a value continued
+#      across lines; backtick substitution; arrays; `$(…)` nested deeper than SEAM_C_NEST; a reader
+#      path assembled from pieces none of which spells `read-rules.sh` (`R="$d/read-$kind.sh"`).
 #   0b. TAINTED CAPTURES — capturing is legitimate, but the capturing NAME then holds reader output:
 #      a `NAME="$(…read-rules.sh…)"` capture (direct, or through a resolved reader variable) makes
 #      NAME tainted, and any line in the file that EXECUTES `$NAME`/`${NAME}` is a leak
@@ -226,31 +267,57 @@ seam_c_is_sink() {
 #      through a copy (`b=$out`) and only the `NAME="$(` / `local NAME="$(` capture shape taints —
 #      `read`/`mapfile` from the reader, or backtick capture, does not.
 # Plain read loops over here-strings — no `printf | grep -q` (SEAM_C_AFTER_SPAN_RE's SIGPIPE note).
-SEAM_C_VAR_ASSIGN_RE='^[[:space:]]*(local[[:space:]]+|export[[:space:]]+|readonly[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=[^[:space:]]*read-rules\.sh'
+# SEAM_C_ASSIGN_RE — `[declarer [-flags…]] NAME=WORD`; BASH_REMATCH[4] = NAME, [5] = WORD (pass 0).
+SEAM_C_WORD='(([^[:space:]"'\''$;&|<>()`\\]|\\.|\$[^("[:space:]]|'"$SEAM_C_CMDSUB"'|"([^"\\$]|\\.|\$[^("]|'"$SEAM_C_CMDSUB"')*"|'\''[^'\'']*'\'')*)'
+SEAM_C_ASSIGN_RE='^[[:space:]]*((local|export|readonly|declare|typeset)([[:space:]]+-[[:alnum:]]+)*[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)='"$SEAM_C_WORD"
+# seam_c_var_assign <line> [<known reader vars>] — 0 when <line> assigns a reader ALIAS: its value, with
+# every `$(…)` removed, names read-rules.sh or references a known reader var. Sets SEAM_C_ASSIGN_NAME.
+seam_c_var_assign() {
+  local w v re
+  SEAM_C_ASSIGN_NAME=""
+  case "$1" in *=*) : ;; *) return 1 ;; esac
+  [[ "$1" =~ $SEAM_C_ASSIGN_RE ]] || return 1
+  SEAM_C_ASSIGN_NAME="${BASH_REMATCH[4]}"; w="${BASH_REMATCH[5]}"
+  while [[ "$w" =~ $SEAM_C_CMDSUB ]]; do w="${w/"${BASH_REMATCH[0]}"/}"; done
+  case "$w" in *read-rules.sh*) return 0 ;; esac
+  for v in $2; do
+    re='\$\{?'"$v"'(\}|[^[:alnum:]_]|$)'
+    [[ "$w" =~ $re ]] && return 0
+  done
+  return 1
+}
 SEAM_C_CAPTURE_RE='^[[:space:]]*(local[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*="?\$\((.*)$'
 SEAM_C_CAPTURE_NAME_RE='^[[:space:]]*(local[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)="?\$\('
 # seam_c_taint_sink <line> <name> — 0 when <line> executes the tainted variable <name> (pass 0b).
 # <name> is an identifier ([A-Za-z0-9_] only), so it is safe to splice into the ERE.
 seam_c_taint_sink() {
-  local ref sh='(ba|z|da)?sh' re
+  local ref sh="$SEAM_C_SHELL_NAME" re
   ref='\$\{?'"$2"'(\}|[^[:alnum:]_]|$)'
   for re in \
     '(^|[^[:alnum:]_])eval[[:space:]]+[^;&|]*'"$ref" \
     '(^|[^[:alnum:]_])'"$sh"'[[:space:]]+(-[[:alnum:]]+[[:space:]]+)*-[[:alnum:]]*c[[:alnum:]]*[[:space:]]+[^;&|]*'"$ref" \
-    "$ref"'.*\|&?[[:space:]]*'"$sh"'([^[:alnum:]_]|$)' \
+    "$ref"'.*\|&?[[:space:]]*'"$SEAM_C_SHELL_CMD" \
     '(^|[^[:alnum:]_])'"$sh"'[[:space:]]*<<<[[:space:]]*"?'"$ref" \
-    '(^|[^[:alnum:]_.])(\.|source)[[:space:]]+<\([^)]*'"$ref"; do
+    '(^|[^[:alnum:]_.])(\.|source)[[:space:]]+<\('"$SEAM_C_NEST$ref"; do
     [[ "$1" =~ $re ]] && return 0
   done
   return 1
 }
-SEAM_C_AFTER_SPAN_RE='bash [^`]*read-rules\.sh[^`]*`.*\|&?[[:space:]]*(ba|z|da)?sh([^[:alnum:]_]|$)'
+SEAM_C_AFTER_SPAN_RE='bash [^`]*read-rules\.sh[^`]*`.*\|&?[[:space:]]*'"$SEAM_C_SHELL_CMD"
 seam_c_scan() {
   local f="$1" line frag v t norm vars="" taints=""
   SEAM_C_LEAK=""; SEAM_C_INVOC=0; SEAM_C_LINES=0
-  while IFS= read -r line || [ -n "$line" ]; do
-    if [[ "$line" =~ $SEAM_C_VAR_ASSIGN_RE ]]; then vars="$vars ${BASH_REMATCH[2]}"; fi
-  done < "$f"
+  # Pass 0 pre-scan, to a fixpoint: a new alias can make an alias-of-an-alias resolvable (`R2="$R"`).
+  # Terminates: each round adds a NEW name from the file's finite set of assigned names, or stops.
+  local grew=1
+  while [ "$grew" -eq 1 ]; do
+    grew=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      seam_c_var_assign "$line" "$vars" || continue
+      case " $vars " in *" $SEAM_C_ASSIGN_NAME "*) continue ;; esac
+      vars="$vars $SEAM_C_ASSIGN_NAME"; grew=1
+    done < "$f"
+  done
   # Pass 0b pre-scan: a capture of reader output (direct, or via a resolved reader variable) taints its NAME.
   while IFS= read -r line || [ -n "$line" ]; do
     [[ "$line" =~ $SEAM_C_CAPTURE_NAME_RE ]] || continue
@@ -263,7 +330,7 @@ seam_c_scan() {
       case "$line" in *"\$$t"*|*"\${$t}"*) : ;; *) continue ;; esac
       if [ -z "$SEAM_C_LEAK" ] && seam_c_taint_sink "$line" "$t"; then SEAM_C_LEAK="$line"; fi
     done
-    if [ -n "$vars" ] && ! [[ "$line" =~ $SEAM_C_VAR_ASSIGN_RE ]]; then
+    if [ -n "$vars" ] && ! seam_c_var_assign "$line" "$vars"; then
       for v in $vars; do
         case "$line" in *"\$$v"*|*"\${$v}"*) : ;; *) continue ;; esac
         norm="${line//"\"\$$v\""/read-rules.sh}"; norm="${norm//"\${$v}"/read-rules.sh}"; norm="${norm//"\$$v"/read-rules.sh}"
@@ -451,6 +518,7 @@ c_mut_run() {
   fi
 }
 C_MUT_AFTER_SPAN='s#(bash [^`]*read-rules\.sh[^`]*<[^`<>]*>[^`]*`)#\1 | bash#'
+C_MUT_AFTER_SPAN_ENV='s#(bash [^`]*read-rules\.sh[^`]*<[^`<>]*>[^`]*`)#\1 | env bash#'
 c_mut_run in-span     "$CR" 's#(read-rules\.sh"[[:space:]]*<[^<>]*>)#\1 | bash#'
 c_mut_run end-of-line "$CR" '/read-rules\.sh"[[:space:]]*<[^<>]*>/ s#$# | bash#'
 c_mut_run after-span  "$PLUGIN_ROOT/agents/execute-manager.md" "$C_MUT_AFTER_SPAN"
@@ -482,6 +550,65 @@ c_mut_run capture-pipe   "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_CAP#
   printf '%s' \"\$rules_out\" | bash#"
 # C-mut:capture-bash-c — same line, `… && bash -c "$rules_out"`.
 c_mut_run capture-bash-c "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_CAP#\\1 \\&\\& bash -c \"\$rules_out\"#"
+# automate-followups/39 C.3 — one leg per newly matched sink shape (each passes (C) on main's scanner):
+# C-mut:abs-path — piped into a shell named by absolute path.
+c_mut_run abs-path       "$CR" "s#$C_MUT_INV#\\1 | /bin/bash#"
+# C-mut:env-bash — piped into `env bash`.
+c_mut_run env-bash       "$CR" "s#$C_MUT_INV#\\1 | env bash#"
+# C-mut:ksh — piped into ksh.
+c_mut_run ksh            "$CR" "s#$C_MUT_INV#\\1 | ksh#"
+# C-mut:procsub-nested — `. <(bash "$(dirname x)/read-rules.sh" <paths>)`: a nested paren inside <(…).
+c_mut_run procsub-nested "$CR" 's#bash "[^"`]*read-rules\.sh"([[:space:]]*<[^<>]*>)#. <(bash "$(dirname x)/read-rules.sh"\1)#'
+# C-mut:after-span-env — ` | env bash` right after a "never …" line's closing backtick (pass 1b).
+c_mut_run after-span-env "$PLUGIN_ROOT/agents/execute-manager.md" "$C_MUT_AFTER_SPAN_ENV"
+# C-mut:capture-pipe-abs — the captured output later piped into /bin/bash (pass 0b).
+c_mut_run capture-pipe-abs "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_CAP#\\1\\
+  printf '%s' \"\$rules_out\" | /bin/bash#"
+# C-mut:capture-procsub-nested — the captured output dot-sourced through a <(…) holding a nested $(…).
+c_mut_run capture-procsub-nested "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_CAP#\\1\\
+  . <(printf '%s\\\\n' \"\$(true)\" \"\$rules_out\")#"
+
+# automate-followups/39 C.2 — one leg per newly resolved reader-alias assignment shape, on
+# scripts/session-resume.sh's real `reader="$script_dir/read-rules.sh"` line, each with a `| bash` added
+# to the real `bash "$reader"` call that never names the script (each passes (C) on main's scanner).
+C_MUT_ASSIGN='reader="\$script_dir/read-rules\.sh"'
+C_MUT_PIPE='s#(bash "\$reader" 2>/dev/null)#\1 | bash#'
+# C-mut:assign-cdpwd — the repo's own `$(cd "$(dirname …)" && pwd)/read-rules.sh` idiom. Its sink is an
+# exec'd `$(bash "$reader")` on the next line, not `| bash`: a value opening with `$(` also matches pass
+# 0b's capture shape, so pass 0b alone already flags a pipe of `$reader` — the exec'd substitution is
+# the sink only pass 0's alias resolution can see.
+c_mut_run assign-cdpwd   "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_ASSIGN#reader=\"\$(cd \"\$(dirname \"\$0\")\" \\&\\& pwd)/read-rules.sh\"\\
+  \$(bash \"\$reader\")#"
+# C-mut:assign-declare — `declare reader=…`.
+c_mut_run assign-declare "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_ASSIGN#declare &#; $C_MUT_PIPE"
+# C-mut:assign-local-r — `local -r reader=…`.
+c_mut_run assign-local-r "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_ASSIGN#local -r &#; $C_MUT_PIPE"
+# C-mut:assign-spaced — a quoted reader path with a space in it.
+c_mut_run assign-spaced  "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_ASSIGN#reader=\"/my dir/read-rules.sh\"#; $C_MUT_PIPE"
+# C-mut:assign-chain — an alias of an alias: `rr=…/read-rules.sh`, then `reader="$rr"` on the next line.
+c_mut_run assign-chain   "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_ASSIGN#rr=\"\$script_dir/read-rules.sh\"\\
+  reader=\"\$rr\"#; $C_MUT_PIPE"
+# (C-assign) the predicate directly: each shape names its alias; a CAPTURE of reader output is not one.
+c_assign() {  # c_assign <label> <line> <known-vars> <expected alias NAME, or - for none>
+  if seam_c_var_assign "$2" "$3"; then
+    if [ "$4" = "$SEAM_C_ASSIGN_NAME" ]; then ok "(C-assign:$1) resolves alias $4"
+    else no "(C-assign:$1) expected [$4], resolved alias [$SEAM_C_ASSIGN_NAME] from: $2"; fi
+  elif [ "$4" = "-" ]; then ok "(C-assign:$1) is not a reader alias"
+  else no "(C-assign:$1) did NOT resolve alias $4 from: $2"; fi
+}
+c_assign bare      'R=scripts/read-rules.sh' '' R
+c_assign cdpwd     'R="$(cd "$(dirname "$0")" && pwd)/read-rules.sh"' '' R
+c_assign cdpwd-3   'R="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)/read-rules.sh"' '' R
+c_assign unquoted  'R=$(dirname "$0")/read-rules.sh' '' R
+c_assign declare   'declare R="$d/read-rules.sh"' '' R
+c_assign local-r   '  local -r R="$d/read-rules.sh"' '' R
+c_assign spaced    'R="/my dir/read-rules.sh"' '' R
+c_assign squoted   "R='/my dir/read-rules.sh'" '' R
+c_assign chain     'R2="${R}"' 'R' R2
+c_assign capture   'out="$(bash "$d/read-rules.sh" a b)"' '' -
+c_assign capture-v 'out="$(bash "$R")"' 'R' -
+c_assign prefix    'R2="$Rx"' 'R' -
+c_assign other     'X="$d/other.sh"' '' -
 # Pass 0b NEGATIVE control: DATA uses of the captured text (print, grep, pipe into a non-shell
 # command, an argument) are NOT sinks — a copy carrying them must still pass (C).
 CAP_DATA="$(mktemp)"

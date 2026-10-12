@@ -48,7 +48,8 @@
 #   (zg) a BOM/indented run-file title is still surfaced; the title ERE copy matches the helper's
 #   (za)-(zf) /automate surfacing (automate-followups/32 Part A): resume prints the
 #       merged-but-not-closed-out line (za); startup makes zero gh calls (zb); gh
-#       absent/failing/hanging ⇒ `merge state unverified` (zc); ≤5 gh calls (zd); the
+#       absent/failing/hanging ⇒ `merge state unverified` (zc); ≤5 gh calls (zd); one
+#       overall deadline across them, mutant-controlled (zh, automate-followups/36 A2); the
 #       live-watcher line on both arms, never for a stale/recycled pid (ze); nothing
 #       to report ⇒ nothing printed, with a mutation control (zf).
 
@@ -1625,6 +1626,36 @@ for n in 21 22 23 24 25 26 27; do au_rf "$R2" "automate-$n" "$n"; echo MERGED > 
 : > "$AGHLOG"; c="$(au_hook "$R2" resume)"
 [ "$(wc -l < "$AGHLOG" | tr -d ' ')" = 5 ] && [ "$(grep -c 'merged but not closed out' <<<"$c")" = 5 ] && [ "$(grep -c 'merge state unverified$' <<<"$c")" = 2 ] && [ "$(lastrc)" = 0 ] \
   && ok "(zd) cap: 5 gh calls per SessionStart; the 2 items past the cap print unverified" || no "(zd) calls=$(wc -l < "$AGHLOG") merged=$(grep -c 'merged but' <<<"$c") unverified=$(grep -c unverified <<<"$c")"
+# (zh) automate-followups/36 A2: ONE overall deadline across the gh calls. Five in-flight runs and a
+# hanging gh at a 1 s per-call timeout used to cost 5 calls / ~5 s (25 s at the 5 s default); with
+# LOOMWRIGHT_SR_GH_DEADLINE=2 the budget is spent by the second call (10 + 10 ticks), so exactly 2 gh
+# calls run and all five items print `merge state unverified`, exit 0. Counted calls, not wall time,
+# are the assertion (deterministic under a loaded pool); elapsed is reported only.
+R4="$(new_repo)"; make_plugin_active "$R4"
+for n in 31 32 33 34 35; do au_rf "$R4" "automate-$n" "$n"; done
+zh_run() { # [<hook>] — runs the hook (or a mutant copy) over R4 with gh hanging; sets ZH_OUT / ZH_SECS
+  local hk="${1:-$HOOK}" t0 t1
+  : > "$AGHLOG"; touch "$AGH/hang"; t0="$(date +%s)"
+  ZH_OUT="$( cd "$R4" && printf '{"source":"resume"}' | env AGH_DIR="$AGH" LOOMWRIGHT_GH_BIN="$AGH/gh" LOOMWRIGHT_SR_GH_TIMEOUT=1 LOOMWRIGHT_SR_GH_DEADLINE=2 bash "$hk" 2>/dev/null )"
+  printf '%s' "$?" > "$RCFILE"; t1="$(date +%s)"; rm -f "$AGH/hang"
+  ZH_OUT="$(ctx_of "$ZH_OUT")"; ZH_SECS=$((t1 - t0))
+}
+zh_run
+[ "$(lastrc)" = 0 ] && [ "$(wc -l < "$AGHLOG" | tr -d ' ')" = 2 ] && [ "$(grep -c 'merge state unverified$' <<<"$ZH_OUT")" = 5 ] \
+  && ok "(zh) overall deadline: a hanging gh costs 2 calls (budget spent), not 5; all five items unverified, exit 0 (${ZH_SECS}s)" \
+  || no "(zh) calls=$(wc -l < "$AGHLOG") unverified=$(grep -c 'merge state unverified$' <<<"$ZH_OUT") rc=$(lastrc) ${ZH_SECS}s"
+# Mutation control: the pre-fix probe (per-call timeout only, no shared budget) makes all 5 calls.
+ZHM="$(mktmp)"; cp "$SCRIPT_DIR"/*.sh "$ZHM/" 2>/dev/null
+sed -e 's/^    if \[ "\$calls" -ge 5 \] || \[ "\$left" -le 0 \]; then state=unverified$/    if [ "$calls" -ge 5 ]; then state=unverified  # mutant: no overall deadline/' \
+    -e 's/^  case "\$max" in .*$/  :  # mutant: no budget clamp/' "$HOOK" > "$ZHM/session-resume.sh"
+if grep -q 'mutant: no overall deadline' "$ZHM/session-resume.sh" && grep -q 'mutant: no budget clamp' "$ZHM/session-resume.sh" && bash -n "$ZHM/session-resume.sh"; then
+  zh_run "$ZHM/session-resume.sh"
+  [ "$(wc -l < "$AGHLOG" | tr -d ' ')" = 5 ] \
+    && ok "(zh) mutation control: without the overall deadline the same probe makes 5 gh calls (${ZH_SECS}s) — the call-count assertion is load-bearing" \
+    || no "(zh) mutation control did not discriminate: calls=$(wc -l < "$AGHLOG")"
+else
+  no "(zh) mutation control: mutant not built"
+fi
 # (ze) live watcher ⇒ the line on startup AND resume; a stale or recycled-pid marker ⇒ nothing.
 R3="$(new_repo)"; make_plugin_active "$R3"; mkdir -p "$R3/.supervisor/automate"
 WD="$(mktmp)"; printf '#!/usr/bin/env bash\nwhile :; do sleep 1; done\n' > "$WD/automate-merge-watch.sh"

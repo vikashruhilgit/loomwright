@@ -1375,8 +1375,22 @@ closeout() {
     lk="$(bash "$HERE/run-lock.sh" acquire --owner "$CO_OWNER" --root "$root" 2>/dev/null)"; rc=$?
   fi
   if [ "$rc" -ne 0 ]; then
-    local holder; holder="$(printf '%s\n' "$lk" | sed -n 's/.*run_lock_held owner=\([^ ]*\).*/\1/p' | head -n1)"
-    echo "$S run lock held by ${holder:-unknown}"; return 0
+    # The refusal names the holder's liveness (automate-followups/36 A1). run-lock.sh's
+    # refusal carries the same `owner=… pid=… age=…` fields `run-lock.sh status` prints;
+    # the pid is probed HERE, at refusal time, with the same `kill -0` run-lock.sh uses.
+    # A LIVE holder (often another lane's run in this checkout, met by closeout-others) is
+    # busy, not a leftover: closeout-classify reads `(live pid <p>)` as `run_lock_held`. A
+    # dead or unreadable holder — run-lock.sh reclaims only a dead pid at age >= 1800 s, so a
+    # dead-but-young one still refuses — stays a leftover.
+    local holder hpid
+    holder="$(printf '%s\n' "$lk" | sed -n 's/.*run_lock_held owner=\([^ ]*\).*/\1/p' | head -n1)"
+    hpid="$(printf '%s\n' "$lk" | sed -n 's/.*run_lock_held owner=[^ ]* pid=\([0-9][0-9]*\).*/\1/p' | head -n1)"
+    if [ -n "$hpid" ] && kill -0 "$hpid" 2>/dev/null; then
+      echo "$S run lock held by ${holder:-unknown} (live pid $hpid)"
+    else
+      echo "$S run lock held by ${holder:-unknown} (holder pid ${hpid:-unknown} not running)"
+    fi
+    return 0
   fi
   CO_LOCKED=1
   trap co_release EXIT
@@ -1692,6 +1706,13 @@ finalize_empty() {
   local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   bash "$HLP" progress-append "$rf_rel" "$ts auto-finalized: queue empty after closeout" >/dev/null 2>&1
   echo "finalize-empty: finalized $runfile"
+  # ORDER (automate-followups/36 A4 — kept on purpose): `## Status: done` is written ABOVE,
+  # BEFORE trail-pr, because the trail PR is what carries that stamp to main; a trail cut
+  # first would record `paused` and leave the done stamp uncommitted. Consequence: a FAILED
+  # trail-pr is NOT retried by a later `resume-glob --finalize` (the run is no longer paused,
+  # so _fe_ineligible skips it). Its failure line is appended to ## Progress below and printed;
+  # the recovery is a hand `automate-helpers.sh trail-pr <runfile> --reason done` (idempotent).
+  # The §6 "Termination" exit of a live loop has the same order and the same recovery.
   local l
   l="$(bash "$HLP" trail-pr "$rf_abs" --reason done 2>/dev/null | tail -n1)"
   [ -n "$l" ] || l="trail-pr: skipped — no output"
@@ -1717,9 +1738,13 @@ finalize_empty() {
 # — `trail-unstage <that runfile>` (a foreign run's staged trail blobs would ride
 # into the current run's next commit and make `_sync_primary` see a dirty index).
 # Per close-out: `closeout-others: <run_id> <item> <pr>`, that closeout's lines, the
-# unstage line, that closeout's own `closeout-classify` answer (`complete` or its
-# `leftover` rows — classified per invocation, never interleaved), and ONE record
-# line `cross-run closeout <run_id> <item>: <complete | leftover <step> — <detail>>`
+# unstage line, that closeout's own `closeout-classify` answer (`complete`, its
+# `leftover` rows, or a `run_lock_held` row — classified per invocation, never
+# interleaved), and ONE record line `cross-run closeout <run_id> <item>: <complete |
+# leftover <step> — <detail> | run_lock_held — <detail>; retried at the next start>`.
+# A `run_lock_held` answer (a LIVE process holds the run lock) is not a leftover: the
+# engine's close-out leftover gate never sees it, nothing parks, and the next start's
+# closeout-others retries that run (its ## Current still names the merged item)
 # — `closeout-others: recorded — …` when appended to --record's run file,
 # `closeout-others: record — …` when there is no such file yet. The record line
 # carries NO PR URL (a URL in a leftover detail becomes `<url>`), so
@@ -1750,7 +1775,7 @@ closeout_others() {
   # runs — the coordinator does that ONCE, in the primary, before the wave launches.
   if _in_lane_clone "$root"; then echo "$S lane clone"; return 0; fi
   local bm; bm="$(_branch_mode "$root")"
-  local cands f cl item pr st run_id out verdict first summ rl l tab=$'\t'
+  local cands f cl item pr st run_id out verdict first held summ rl l tab=$'\t'
   cands="$(bash "$HLP" resume-glob "$d_abs" 2>/dev/null)"
   while IFS= read -r f; do
     [ -n "$f" ] && [ -f "$f" ] || continue
@@ -1775,10 +1800,14 @@ closeout_others() {
     verdict="$(printf '%s\n' "$out" | bash "$HLP" closeout-classify --run "$run_id" --item "$item" --pr "$pr" 2>/dev/null)"
     [ -n "$verdict" ] || verdict="leftover$tab$run_id$tab$item$tab$pr${tab}classify${tab}closeout-classify printed nothing"
     printf '%s\n' "$verdict"
+    first="$(printf '%s\n' "$verdict" | grep -m1 "^leftover$tab")"
+    held="$(printf '%s\n' "$verdict" | grep -m1 "^run_lock_held$tab")"
     if [ "$verdict" = complete ]; then
       summ="complete"
+    elif [ -z "$first" ] && [ -n "$held" ]; then
+      summ="run_lock_held — $(printf '%s' "$held" | cut -f6-); retried at the next start"
+      summ="$(printf '%s' "$summ" | sed -E 's#https?://[^[:space:]]+#<url>#g')"
     else
-      first="$(printf '%s\n' "$verdict" | grep -m1 "^leftover$tab")"
       summ="leftover $(printf '%s' "$first" | cut -f5) — $(printf '%s' "$first" | cut -f6-)"
       summ="$(printf '%s' "$summ" | sed -E 's#https?://[^[:space:]]+#<url>#g')"
     fi
