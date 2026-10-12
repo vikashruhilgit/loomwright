@@ -100,7 +100,9 @@
 # allowlist by invoking `bash "${LOOMWRIGHT_ROOT}/scripts/setup-memory.sh" allowlist`. It MUST
 # NOT parse LOOMWRIGHT_MEMORY_REPO_ALLOWLIST (or any other layer) itself: that env var is only
 # layer 2 of four in setup-memory.sh's `load_allowlist` precedence
-# (`--allow` -> env -> .supervisor/config.json array -> git-remote default). A second parser here
+# (`--allow` -> env -> .supervisor/config.json array -> git-remote default + the GRANTED entries of
+# the tracked request file .agent/meta-allowlist.txt, granted only on a gh repository-id match with
+# origin). A second parser here
 # would agree with the ledger filter on layer 2 and diverge on layers 1, 3 and 4 — reproducing the
 # config-vs-remote divergence that has already turned one gate green locally and red in CI.
 # One resolver, two consumers (the ledger filter and this check).
@@ -1581,7 +1583,7 @@ validate_cross_repo_reference() {
     return 0
   fi
   if [ -z "$entries" ]; then
-    _ve_advise "ADVISORY_CROSS_REPO_ALLOWLIST_UNRESOLVED" "the entry cites a repo reference but the allowlist resolved to nothing (no --allow, no LOOMWRIGHT_MEMORY_REPO_ALLOWLIST, no .supervisor/config.json entry, no git remote) — membership could not be examined, so this is neither a pass nor a refusal but an unknown, reported as one"
+    _ve_advise "ADVISORY_CROSS_REPO_ALLOWLIST_UNRESOLVED" "the entry cites a repo reference but the allowlist resolved to nothing (no --allow, no LOOMWRIGHT_MEMORY_REPO_ALLOWLIST, no .supervisor/config.json entry, no git remote and so no granted .agent/meta-allowlist.txt entry) — membership could not be examined, so this is neither a pass nor a refusal but an unknown, reported as one"
     return 0
   fi
 

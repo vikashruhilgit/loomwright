@@ -5,7 +5,7 @@
 # WHY THIS EXISTS: `vikashruhilgit/loomwright` is a PUBLIC repo. Committing `.claude/agent-memory/`
 # and `.supervisor/memory/` publishes the Twin's accumulated judgment irreversibly — a push cannot
 # be taken back, and `/setup memory remove` explicitly does NOT unpublish
-# (setup-memory.sh:1286 [pins: `Removal does NOT unpublish`]).
+# (setup-memory.sh:1585 [pins: `Removal does NOT unpublish`]).
 # One memory entry cited a private work repo before this migration. This is the regression net that
 # stops it coming back.
 #
@@ -405,8 +405,10 @@ else
   # THE EXPECTED SLUGS ARE DECLARED HERE, IN COMMITTED CODE — deliberately NOT read from
   # `setup-memory.sh allowlist`. That resolver reads `.supervisor/config.json`, which is GITIGNORED
   # (`.gitignore` excludes `.supervisor/*`; the managed block re-includes the memory stores and the
-  # ledger, never the config). So the allowlist DOES NOT TRAVEL with the repo: on any fresh clone —
-  # and in CI — it falls back to the live git remote ALONE, one entry, and every pre-rename
+  # ledger, never the config). So the config DOES NOT TRAVEL with the repo, and the tracked request
+  # file `.agent/meta-allowlist.txt` can only request (an entry is granted only on a `gh`
+  # repository-id match with origin): without config.json and without gh (as in CI) the resolver
+  # falls back to the live git remote ALONE, one entry, and every pre-rename
   # `vikashruhilgit/ai-agent-manager` record in the committed ledger is then judged FOREIGN.
   #
   # That is not hypothetical: this exact census passed on the author's machine (2-entry config) and
@@ -431,7 +433,13 @@ vikashruhilgit/ai-agent-manager'
   # Cross-check, advisory: report when the machine-local allowlist disagrees with the committed
   # expectation. NOT a failure — a contributor's config is theirs — but a silent divergence here is
   # what made the CI break confusing, so name it.
-  LOCAL_ALLOW="$(bash "$SETUP_MEMORY" --root "$REPO_ROOT" allowlist 2>/dev/null | sort | tr '\n' ' ')"
+  # A FAILING gh stub first on PATH: with no config.json (a fresh clone) this resolution reaches
+  # the tracked request file and would otherwise ask the REAL gh — the developer's credentials and
+  # the network. Failing gh grants no request entry, which is exactly what gh-less CI resolves.
+  mkdir -p "$TMPD/nogh-net"
+  printf '#!/bin/sh\necho "gh: test stub — no network in test-committed-twin-scrub.sh" >&2\nexit 1\n' > "$TMPD/nogh-net/gh"
+  chmod +x "$TMPD/nogh-net/gh"
+  LOCAL_ALLOW="$(PATH="$TMPD/nogh-net:$PATH" bash "$SETUP_MEMORY" --root "$REPO_ROOT" allowlist 2>/dev/null | sort | tr '\n' ' ')"
   EXPECT_ALLOW="$(printf '%s\n' "$OWNED_SLUGS" | sort | tr '\n' ' ')"
   if [ "$LOCAL_ALLOW" = "$EXPECT_ALLOW" ]; then
     ok "the machine-local allowlist matches the committed owned-slug list"
