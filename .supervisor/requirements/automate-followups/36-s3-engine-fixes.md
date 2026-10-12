@@ -1,6 +1,6 @@
 # 36 — S3 engine fixes: wave-1 review leftovers, lane-run hygiene, and carrying the learning stores
 
-## Status: pending
+## Status: parked (split 2026-10-12 into `af36-remainder/01`–`04` — see `af36-remainder/_BACKLOG.md`; Parts A + B-B shipped v15.133.0, B-C #438)
 
 ## Merged from (2026-10-07, owner decision relayed by S3 session 2216aefd: merge the serialized tail into fewer, larger items — every remaining item except pa/14 shares `automate-loop/SKILL.md` with every other, so separate items buy no parallelism and cost a wave each)
 - Part A: `automate-followups/35-wave1-review-leftovers.md` — 35 — Wave-1 review leftovers: the seven open notes from the #397 review
@@ -309,3 +309,4 @@ Owner direction, 2026-10-03, session cc4eaee3 (after M1): carry everything that 
 - **Remaining after that:** Part B item A (`validation_unrun` blocks READY — needs a real lane/run as running-system evidence) and Part C (six more stores, allowlist request file + GitHub repo-id grant rule, twin pair rule, per-type merge rules, scrub legs, consent before first publish, /dreaming memory PR). Part C is security-sensitive: ship C-B5 consent with C-B1 stores, never after; the grant rule must fail closed without gh; line-union must never touch `.provenance.jsonl`. Recommend splitting Part C into C-A / C-B / C-C PRs.
 - **Stale Touches:** `skills/automate-loop/SKILL.md` is split (resume.md, per-item-loop.md, branch-mode.md, lanes.md, …); `fixtures/automate-helpers-help.golden` is now `fixtures/automate-helpers-help/*.golden`. Rewrite Touches for the remaining parts before queuing.
 - **Shipped 2026-10-12 in v15.133.0** (integration PR #493, merge b6e1100): Part A (all seven) + Part B item B — PR #492. **Remaining:** Part B item A (`validation_unrun` gate) and Part C (learning stores). Requirement stays open.
+- **Split 2026-10-12:** the remainder is now four items in `.supervisor/requirements/af36-remainder/` — 01 `validation_unrun` gate (B-A), 02 allowlist grant (C-A), 03 learning stores + consent (C-B), 04 /dreaming memory PR (C-C) — each with Touches rewritten for today's tree. This file is parked; work from the split.
