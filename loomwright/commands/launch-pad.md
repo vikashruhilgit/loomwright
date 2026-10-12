@@ -2,7 +2,7 @@
 description: Prepare a raw goal for autonomous Supervisor execution with codebase analysis, environment validation, file impact estimation, and save to jobs folder
 ---
 
-> **Execute this workflow inline as the main thread.** Do not delegate to `loomwright:launch-pad-runner` via the Agent tool — a delegated subagent cannot spawn further subagents ([docs](https://code.claude.com/docs/en/sub-agents)) and the workflow will silently abort with "Task/Agent tool unavailable". To run the agent in its own session instead, launch with `claude --agent loomwright:launch-pad-runner`.
+> **Execute this workflow inline as the main thread.** Do not delegate to `loomwright:launch-pad-runner` via the Agent tool. A delegated runner is a subagent: it has no ask tool, so every question gate takes its can't-ask branch. Each layer it adds also uses subagent nesting depth (three layers by default, and a host setting can lower it; [docs](https://code.claude.com/docs/en/sub-agents), re-read 2026-10-12). Under a lowered limit the workflow aborts with "Task/Agent tool unavailable". See `docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting". To run the agent in its own session instead, launch with `claude --agent loomwright:launch-pad-runner`.
 
 > **Execution contract:** Inline main-thread execution replaces only the top-level `launch-pad-runner`. You MUST still spawn the `plan-reviewer` child agent via the Task tool at the Plan Review gate. Do NOT collapse the workflow into direct main-thread brief-drafting and self-validation.
 

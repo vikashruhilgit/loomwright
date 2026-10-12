@@ -16,9 +16,10 @@
 # have to OBSERVE the payload, not read about it.
 #
 # TWO CONSTRAINTS MAKE AN IN-SESSION PROBE IMPOSSIBLE (brief R1 / R3):
-#   R1  A `loomwright:worker` subagent cannot spawn Task subagents
-#       (spawn-depth), so it can never produce a `PreToolUse[Task]` event in
-#       its own session.
+#   R1  A `loomwright:worker` subagent cannot spawn Task subagents (its
+#       frontmatter `disallowedTools` denies Task; nesting depth is not the
+#       reason, since the host now allows it), so it can never produce a
+#       `PreToolUse[Task]` event in its own session.
 #   R3  Hooks are read at SESSION START, so editing `.claude/settings.local.json`
 #       mid-session is not a reliable way to arm a capture hook. Concluding
 #       "the hook does not fire" from a hook that silently never armed would be

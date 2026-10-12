@@ -110,7 +110,7 @@ Full design (wrapper-vs-core architecture, scoring rubric, privacy whitelist, ex
 
 ## Persistent Memory & Skills Preloading
 
-Agents opt in via frontmatter: `memory: project` gives an agent a persistent store at `.claude/agent-memory/loomwright:<agent>/`; `skills:` pre-injects those skill bodies at spawn time (no runtime file-read). Both lists are authoritative in `loomwright/agents/*.md` frontmatter — read there, not from a table here.
+Agents opt in via frontmatter: `memory: project` gives an agent a persistent store at `.claude/agent-memory/loomwright-loomwright-<agent>/` (the runtime agent type `loomwright:loomwright:<agent>` with each `:` made `-`); `skills:` pre-injects those skill bodies at spawn time (no runtime file-read). Both lists are authoritative in `loomwright/agents/*.md` frontmatter — read there, not from a table here.
 
 > Decision aid for *what* to write to those memory directories: `loomwright/skills/memory-tool/SKILL.md` (reference skill — not pre-loaded; consult on demand when tagging conventions or Memory-Tool-vs-file-based questions arise).
 

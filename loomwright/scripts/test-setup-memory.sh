@@ -249,10 +249,10 @@ P_LEDGER_SIBLING=".supervisor/postmortem/some-other-artifact.json"
 # make a populated store tree inside a fixture (real files, so tracking assertions are real)
 seed_stores() {
   local d="$1"
-  mkdir -p "$d/.claude/agent-memory/loomwright:supervisor" "$d/.supervisor/memory" \
+  mkdir -p "$d/.claude/agent-memory/loomwright-loomwright-code-reviewer" "$d/.supervisor/memory" \
            "$d/.claude/worktrees/busy-darwin" "$d/.supervisor/logs"
-  echo "# MEMORY"  > "$d/.claude/agent-memory/loomwright:supervisor/MEMORY.md"
-  echo '{"p":1}'   > "$d/.claude/agent-memory/loomwright:supervisor/.provenance.jsonl"
+  echo "# MEMORY"  > "$d/.claude/agent-memory/loomwright-loomwright-code-reviewer/MEMORY.md"
+  echo '{"p":1}'   > "$d/.claude/agent-memory/loomwright-loomwright-code-reviewer/.provenance.jsonl"
   echo "# LESSONS" > "$d/.supervisor/memory/LESSONS.md"
   echo '{"p":1}'   > "$d/.supervisor/memory/.lessons-provenance.jsonl"
   echo "wt"        > "$d/.claude/worktrees/busy-darwin/README.md"
@@ -260,8 +260,8 @@ seed_stores() {
   echo '{}'        > "$d/.supervisor/logs/session.jsonl"
 }
 
-P_MEM=".claude/agent-memory/loomwright:supervisor/MEMORY.md"
-P_MEM_DOT=".claude/agent-memory/loomwright:supervisor/.provenance.jsonl"
+P_MEM=".claude/agent-memory/loomwright-loomwright-code-reviewer/MEMORY.md"
+P_MEM_DOT=".claude/agent-memory/loomwright-loomwright-code-reviewer/.provenance.jsonl"
 P_LES=".supervisor/memory/LESSONS.md"
 P_LES_DOT=".supervisor/memory/.lessons-provenance.jsonl"
 P_WT=".claude/worktrees/busy-darwin/README.md"
@@ -313,7 +313,7 @@ has '^apply: applied' "$out_b" && ok "(b) apply reports 'applied'" || no "(b) ap
 assert_committable "$Ab" "$P_MEM" "(b) after apply $P_MEM is committable"
 assert_committable "$Ab" "$P_LES" "(b) after apply $P_LES is committable"
 # A deeper nested file must also survive (the re-included directory is traversable all the way down).
-assert_committable "$Ab" ".claude/agent-memory/loomwright:worker/notes/deep.md" "(b) after apply a DEEPLY nested agent-memory file is committable"
+assert_committable "$Ab" ".claude/agent-memory/loomwright-loomwright-worker/notes/deep.md" "(b) after apply a DEEPLY nested agent-memory file is committable"
 # UNINTENDED — one assertion per path, never a bulk claim.
 assert_ignored "$Ab" "$P_WT"    "(b) after apply $P_WT stays ignored"
 assert_ignored "$Ab" "$P_LOCAL" "(b) after apply $P_LOCAL stays ignored"
@@ -2023,6 +2023,72 @@ if cmp -s "$MEM" "$VB_D/mut.sh"; then no "(vb) mutation self-check: the patch ch
 elif [ "$mrc" -eq 1 ]; then ok "(vb) mutation self-check: a refuse-all valid_branch_name makes valid-branch refuse 'loomwright-meta' (it calls the one predicate)"
 else no "(vb) mutation self-check: a refuse-all predicate still accepted (rc=$mrc) — valid-branch does not call valid_branch_name"; fi
 rm -rf "$VB_D"
+
+# ============================================================================
+echo "== (am) the agent-memory probe path uses the naming of the stores this repo really tracks =="
+# setup-memory.sh probes one agent-memory store for committability. A probe in a naming form the
+# host never creates (the old `loomwright:supervisor`) still passes the gitignore probe while
+# naming a directory that cannot exist. So the probe is pinned to the form of the stores this repo
+# tracks: it must start with the longest common prefix of the tracked store names and carry no ':'.
+# The prefix is derived from `git ls-files`, never typed here, so a future rename of the real
+# stores moves the expectation with it. A built-in mutant (the colon form) proves the check bites.
+AM_REL="$(dirname "$(dirname "$P_MEM")")"   # the agent-memory root, taken from the fixture constant
+# store_names: the first path segment under $AM_REL of every line that starts with it (indent allowed).
+store_names() {
+  awk -v r="$AM_REL/" '{ sub(/^[ \t]+/, "") } index($0, r) == 1 { s = substr($0, length(r) + 1); sub(/\/.*/, "", s); if (s != "") print s }' | sort -u
+}
+AM_STORES="$(git -C "$PLUGIN_REPO" ls-files -- "$AM_REL" 2>/dev/null | store_names)"
+am_n=0; am_prefix=""
+while IFS= read -r am_s; do
+  [ -n "$am_s" ] || continue
+  am_n=$((am_n + 1))
+  if [ "$am_n" -eq 1 ]; then am_prefix="$am_s"; continue; fi
+  while [ -n "$am_prefix" ] && [ "${am_s#"$am_prefix"}" = "$am_s" ]; do am_prefix="${am_prefix%?}"; done
+done <<EOF_AM
+$AM_STORES
+EOF_AM
+[ "$am_n" -ge 2 ] \
+  || setup_fail "(am) needs >= 2 tracked $AM_REL/<store>/ dirs in $PLUGIN_REPO to derive the naming prefix (found $am_n)"
+[ -n "$am_prefix" ] || setup_fail "(am) the tracked store names share no common prefix — cannot derive the naming form"
+case "$am_prefix" in *:*) setup_fail "(am) a tracked store name carries ':' ($am_prefix) — the fixture premise is wrong" ;; esac
+
+# am_probe_names <check-output> → the agent-memory store names the intended-paths list probes.
+am_probe_names() { store_names <<< "$1"; }
+# am_probe_ok <check-output> → 0 when at least one probe is named and every one has the tracked form.
+am_probe_ok() {
+  local names n k=0
+  names="$(am_probe_names "$1")"
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    k=$((k + 1))
+    case "$n" in *:*) return 1 ;; esac
+    [ "${n#"$am_prefix"}" != "$n" ] || return 1
+  done <<EOF_AMP
+$names
+EOF_AMP
+  [ "$k" -ge 1 ]
+}
+
+Am="$(newgit)"
+seed_stores "$Am"
+out_am="$(mem "$Am" check 2>&1)"
+am_named="$(am_probe_names "$out_am" | tr '\n' ' ')"
+[ -n "$am_named" ] && ok "(am) check lists an agent-memory probe store ($am_named)" \
+  || no "(am) check output names no $AM_REL/<store>/ probe path"
+if am_probe_ok "$out_am"; then
+  ok "(am) the probe store ($am_named) has the tracked form '${am_prefix}<role>' and no ':'"
+else
+  no "(am) the probe store ($am_named) does not match the tracked store form '${am_prefix}<role>' (or carries ':')"
+fi
+
+# Mutation self-check: drop the ':' -> '-' rule (the old colon form) and the same predicate must fail.
+AM_D="$(mkfix)"
+sed "s/| tr ':' '-')\"; }\$/| cat)\"; }/" "$MEM" > "$AM_D/mut.sh"
+out_am_mut="$(bash "$AM_D/mut.sh" --root "$Am" check 2>&1)"
+if cmp -s "$MEM" "$AM_D/mut.sh"; then no "(am) mutation self-check: the patch changed nothing — inconclusive"
+elif am_probe_ok "$out_am_mut"; then no "(am) mutation self-check: a colon-form probe ($(am_probe_names "$out_am_mut" | tr '\n' ' ')) still passed — the check does not bite"
+else ok "(am) mutation self-check: the colon-form probe ($(am_probe_names "$out_am_mut" | tr '\n' ' ')) is rejected"; fi
+rm -rf "$AM_D"
 
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"

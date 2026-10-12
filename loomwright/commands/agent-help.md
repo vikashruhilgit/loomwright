@@ -907,7 +907,7 @@ Each basis is tuned by env vars read by its own script, all optional. Ledger bas
 
 **Purpose:** Run the bounded review→fix→re-review loop against an *existing* PR URL — decoupled from a full Supervisor run, so any open PR (human- or agent-authored) can be reviewed and auto-healed in place. Resolves the PR's head branch (`gh pr view --json headRefName`), checks it out, then orchestrates a `code-reviewer` pass + a `general-purpose` fix worker (default 3 iterations) until the diff is clean (`PASS`) or escalates (`ESCALATED`). Pushes fixes (never `--force`); **never auto-merges** — the PR is always left open for a human, and `NEEDS_HUMAN` stops + notifies + posts findings to the PR.
 
-> **Inline main-thread command.** `/review-pr` runs inline; the `loomwright:review-pr-runner` agent is for `claude --agent` agent-owned sessions and is NEVER `Task`-spawned (it spawns its own `code-reviewer` + fix-worker children — subagents cannot spawn subagents). Plain `/supervisor` can optionally auto-dispatch it from the completion tail (`--auto-review` / `--no-auto-review`, off by default); `/autonomous` chains it as a Task step in EVALUATE.
+> **Inline main-thread command.** `/review-pr` runs inline; the `loomwright:review-pr-runner` agent is for `claude --agent` agent-owned sessions and is NEVER `Task`-spawned (AC9 — it spawns its own `code-reviewer` + fix-worker children; Claude Code now allows that nesting, so the rule is retained pending owner review — `docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting"). Plain `/supervisor` can optionally auto-dispatch it from the completion tail (`--auto-review` / `--no-auto-review`, off by default); `/autonomous` chains it as a Task step in EVALUATE.
 
 **Usage:**
 ```bash

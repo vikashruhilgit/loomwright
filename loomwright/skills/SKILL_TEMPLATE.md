@@ -1,9 +1,11 @@
-# {SKILL_NAME}
-
 ---
+name: "{skill-dir-name}"  # must equal the skill directory name
+description: "{What the skill does and when to use it — key use case first}"
 version: "1.0.0"
 lastUpdated: "2026-03"
 ---
+
+# {SKILL_NAME}
 
 ## When to Use
 
