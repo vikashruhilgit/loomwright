@@ -143,20 +143,49 @@ fi
 # cost a missed notification (the AskUserQuestion still fires in-conversation).
 # A false positive costs at most one spurious banner. The three markers are
 # independent ORs:
-#   (1) .supervisor/jobs/in-progress/*.md exists — Supervisor is active
+#   (1) .supervisor/jobs/in-progress/ holds a brief the offline reconciler does
+#       NOT prove stranded — Supervisor may be active (inprogress_has_live_brief)
 #   (2) .supervisor/autonomous/*/state.json mtime within last 2h — autonomous loop active
 #   (3) transcript_path readable AND contains a plugin marker in the last 200 lines
+# Markers 2 and 3 are evaluated FIRST: they are plain file reads, while marker 1
+# may run the reconciler (a subprocess) — so a live run, whose own transcript
+# almost always satisfies marker 3, rarely pays for it.
 # Notification hook events (permission_prompt, idle_prompt, elicitation_*) are
 # exempt from the scope gate — those events ARE inherently Claude-Code-wide and
 # the user expects them.
+
+# inprogress_has_live_brief — marker 1. A brief in in-progress/ used to read as
+# "Supervisor is active" on sight, but the completion tail's in-progress/ →
+# done/ move is prompt-instructed, so a run that dies before it STRANDS its
+# brief there, and every later question in that repo looked like plugin
+# context. A brief now counts only when the sibling reconcile-jobs.sh (offline
+# by construction: files and local git refs only, no forge call, no network)
+# does NOT prove it stranded — `--not-stranded-count` prints how many
+# in-progress briefs are anything but stranded_merged / stranded_closed; its
+# `unknown` counts as live (UNVERIFIED is not stale). Fail direction is TOWARD
+# notifying, i.e. the old behaviour: an unreadable reconciler or an empty /
+# non-numeric answer means "live" — a fail-safe reader's empty output is never
+# read as "nothing is running". Cost: one reconciler run (measured ~170ms per
+# in-progress brief against a 300-merge local history), paid only when
+# in-progress/ is non-empty AND markers 2 and 3 both missed. send-webhook.sh's
+# paused-event gate carries the same function — keep the two in step.
+# MUTATION_CONTROL_BEGIN: inprogress-live-brief-gate
+inprogress_has_live_brief() {
+  # compgen returns 0 when at least one match; nullglob would be cleaner but
+  # pulls in shopt side effects. No brief ⇒ no reconciler call at all.
+  compgen -G ".supervisor/jobs/in-progress/*.md" > /dev/null 2>&1 || return 1
+  local rj n
+  rj="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/reconcile-jobs.sh"
+  [ -r "$rj" ] || return 0
+  n="$(bash "$rj" --not-stranded-count 2>/dev/null)"
+  n="${n%%$'\n'*}"
+  case "$n" in ""|*[!0-9]*) return 0 ;; esac
+  [ "$n" -gt 0 ]
+}
+# MUTATION_CONTROL_END: inprogress-live-brief-gate
+
 is_plugin_context() {
   local transcript_path="${1:-}"
-
-  # Marker 1: active Supervisor job. compgen returns 0 when at least one match;
-  # nullglob would be cleaner but pulls in shopt side effects.
-  if compgen -G ".supervisor/jobs/in-progress/*.md" > /dev/null 2>&1; then
-    return 0
-  fi
 
   # Marker 2: recent autonomous-loop state file. -mmin -120 is "modified in
   # the last 120 minutes" — 2h is wide enough to span Phase 4.5 self-heal +
@@ -180,6 +209,11 @@ is_plugin_context() {
     if tail -200 "$transcript_path" 2>/dev/null | grep -qE 'loomwright:|/launch-pad|/supervisor|/autonomous|/code-reviewer|/qa-executor|/qa-strategist|/red-team-reviewer|/product-owner|/agent-help|/telemetry|/dreaming'; then
       return 0
     fi
+  fi
+
+  # Marker 1, last on purpose (see the scope-gate comment above).
+  if inprogress_has_live_brief; then
+    return 0
   fi
 
   return 1

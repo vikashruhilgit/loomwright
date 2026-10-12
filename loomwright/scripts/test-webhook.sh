@@ -565,6 +565,73 @@ run_dry_run "$PAYLOAD21F"
 assert_eq "case21f inline block wins over the handback (pr_url from inline)" "https://github.com/example/repo/pull/42" "$(printf '%s' "$OUT" | jq -r '.pr_url // empty')"
 
 echo ""
+echo "==== Case 22: paused scope gate — a STRANDED brief is not plugin context (Gap 1c) ===="
+# The plugin-scope gate used to set PLUGIN_CONTEXT=1 for ANY brief in
+# in-progress/, so a brief stranded there by a dead run turned every later
+# question in the repo into a paused webhook. It now asks reconcile-jobs.sh
+# --not-stranded-count. Fixtures: source requirement stamped `## Status: done`
+# ⇒ stranded_closed (proven stranded); unstamped ⇒ unknown (counts as live).
+# Default `plugin` scope, no transcript_path, no state.json — marker 1 is the
+# only marker that can fire.
+# seed22 <wd> <name> <stranded|live>
+seed22() {
+  mkdir -p "$1/.supervisor/jobs/in-progress" "$1/.supervisor/requirements"
+  printf '# Supervisor Job: %s\n\n## Environment\n- **Source requirement:** .supervisor/requirements/%s.md\n' "$2" "$2" \
+    > "$1/.supervisor/jobs/in-progress/2026-01-01-$2.md"
+  if [ "$3" = stranded ]; then printf '# r\n\n## Status: done\n' > "$1/.supervisor/requirements/$2.md"
+  else printf '# r\n\n## Status: pending\n' > "$1/.supervisor/requirements/$2.md"; fi
+}
+# run22 <wd> <script> → OUT, RC (default plugin scope; dry run prints the payload)
+run22() {
+  OUT="$( cd "$1" && printf '%s' "$PAUSED_PAYLOAD" \
+    | env -u LOOMWRIGHT_WEBHOOK_FORMAT -u LOOMWRIGHT_NOTIFY_SCOPE \
+          LOOMWRIGHT_WEBHOOK_URL="https://example.com/hook" LOOMWRIGHT_WEBHOOK_DRY_RUN=1 \
+      bash "$2" 2>/dev/null )"
+  RC=$?
+}
+WD22A="$TMPDIR_TEST/case22a"; seed22 "$WD22A" dead-run stranded
+run22 "$WD22A" "$WEBHOOK"
+assert_eq    "case22a exit 0" "0" "$RC"
+assert_empty "case22a stranded-only in-progress/ ⇒ NOT plugin context (no paused payload)" "$OUT"
+
+WD22B="$TMPDIR_TEST/case22b"; seed22 "$WD22B" live-run live
+run22 "$WD22B" "$WEBHOOK"
+assert_eq "case22b exit 0" "0" "$RC"
+assert_eq "case22b (control) a live (unknown) brief still ⇒ plugin context (paused payload)" "paused" "$(printf '%s' "$OUT" | jq -r '.event // empty' 2>/dev/null)"
+
+WD22C="$TMPDIR_TEST/case22c"; seed22 "$WD22C" dead-run stranded; seed22 "$WD22C" live-run live
+run22 "$WD22C" "$WEBHOOK"
+assert_eq "case22c a stranded brief beside a live one does not mask it" "paused" "$(printf '%s' "$OUT" | jq -r '.event // empty' 2>/dev/null)"
+
+# Fail direction: no reconciler beside the script ⇒ toward the webhook (old behaviour).
+NR22="$TMPDIR_TEST/case22-noreconciler"; mkdir -p "$NR22"
+cp "$WEBHOOK" "$NR22/send-webhook.sh"; cp "$SCRIPT_DIR/resolve-egress-config.sh" "$NR22/" 2>/dev/null
+WD22D="$TMPDIR_TEST/case22d"; seed22 "$WD22D" dead-run stranded
+run22 "$WD22D" "$NR22/send-webhook.sh"
+assert_eq "case22d exit 0" "0" "$RC"
+assert_eq "case22d an absent reconciler fails TOWARD the webhook (stranded brief still counts)" "paused" "$(printf '%s' "$OUT" | jq -r '.event // empty' 2>/dev/null)"
+
+# Mutation control (in-suite): splice the pre-fix bare-compgen marker between the
+# MUTATION_CONTROL markers; the case22a fixture must then fire. Proves the
+# reconciler-backed gate is what keeps 22a silent.
+MC22_BEGIN='# MUTATION_CONTROL_BEGIN: inprogress-live-brief-gate'
+MC22_END='# MUTATION_CONTROL_END: inprogress-live-brief-gate'
+MUT22="$TMPDIR_TEST/case22-mutant"; mkdir -p "$MUT22"
+awk -v b="$MC22_BEGIN" -v e="$MC22_END" '
+  { line = $0; sub(/^[[:space:]]+/, "", line) }
+  line == b { print; print "inprogress_has_live_brief() { compgen -G \".supervisor/jobs/in-progress/*.md\" >/dev/null 2>&1; }"; skip = 1; next }
+  line == e { skip = 0 }
+  !skip { print }
+' "$WEBHOOK" > "$MUT22/send-webhook.sh"
+cp "$SCRIPT_DIR/resolve-egress-config.sh" "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$MUT22/" 2>/dev/null
+if grep -qF "$MC22_END" "$MUT22/send-webhook.sh" && ! grep -qF 'bash "$rj" --not-stranded-count' "$MUT22/send-webhook.sh"; then
+  run22 "$WD22A" "$MUT22/send-webhook.sh"
+  assert_eq "case22e (mutant) the bare-compgen gate reproduces the bug on the 22a fixture" "paused" "$(printf '%s' "$OUT" | jq -r '.event // empty' 2>/dev/null)"
+else
+  fail "case22e mutant construction (MUTATION_CONTROL markers missing or splice incomplete)"
+fi
+
+echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "=========================================="
 echo "RESULT  total=$TOTAL  passed=$PASS_COUNT  failed=$FAIL_COUNT"
