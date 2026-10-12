@@ -83,9 +83,9 @@
 #        a filesystem-path origin grants nothing; a NON-github.com origin (https, scp, ssh://)
 #        grants nothing with ZERO gh calls; a hung gh is killed at the bound, grants nothing and
 #        leaves no process or temp file; no file / own-slug-only ⇒ ZERO gh calls; stdout stays the
-#        list. gh is a recording PATH stub (no network); eight sed/awk mutants (id comparison,
+#        list. gh is a recording PATH stub (no network); nine sed/awk mutants (id comparison,
 #        failure guards, stderr, shape check, eager lookup, layer order, host check, overrun
-#        check) each turn their leg red, gated on non-empty + changed + `bash -n`-clean
+#        check, entry cap) each turn their leg red, gated on non-empty + changed + `bash -n`-clean
 #   (e)  idempotency: a second apply is a no-op that writes nothing (.gitignore AND config
 #        byte-identical, no second backup); PLUS backup-before-write asserted positively — the
 #        backup exists and its CONTENT is the pristine pre-apply file — and two applies inside the
@@ -812,7 +812,7 @@ done
 
 # (ma10) a HUNG gh is BOUNDED: killed after LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT seconds, treated as gh
 # failing (nothing granted, reason named), no further gh call after the overrun, no sleeping child
-# left behind, and no temp file left in TMPDIR.
+# left behind, and nothing written to TMPDIR (the runner is file-free — `allowlist` writes nothing).
 MA10="$(newgit https://github.com/acme/widget.git)"
 ma_req "$MA10" 'acme/old-name' 'stranger/elsewhere'
 MA10_TMP="$MA_D/ma10-tmpdir"; mkdir -p "$MA10_TMP"
@@ -858,6 +858,46 @@ MA_OUT="$(cat "$MA_D/out")"; MA_ERR="$(cat "$MA_D/err")"; MA_CALLS="$(cat "$MA_L
   && ok "(ma10) a hung ENTRY lookup is bounded, grants nothing, and stops further gh calls (2 calls: origin + one entry)" \
   || no "(ma10) a hung entry lookup was not bounded cleanly (out: $MA_OUT; gh: $(printf '%s' "$MA_CALLS" | tr '\n' '|'); err: $MA_ERR)"
 pkill -f "$MA10_PAT" 2>/dev/null || true
+
+# (ma11) the WORK the request file drives is CAPPED, not just each call: 25 non-own entries (the
+# first one the same-id old slug) ⇒ at most cap + 1 = 21 gh calls (origin + 20 entries), the same-id
+# entry still granted in file order, and each of the 5 entries past the cap named and never passed to gh.
+MA11="$(newgit https://github.com/acme/widget.git)"
+MA11_ENTRIES="acme/old-name"; i=2
+while [ "$i" -le 25 ]; do MA11_ENTRIES="$MA11_ENTRIES
+fill-org/repo-$i"; i=$((i + 1)); done
+mkdir -p "$MA11/.agent"; printf '%s\n' "$MA11_ENTRIES" > "$MA11/.agent/meta-allowlist.txt"
+ma11_leg() {
+  local j
+  ma_run "$MA11"
+  [ "$(ma_ncalls)" -le 21 ] && [ "$MA_OUT" = "$(printf 'acme/widget\nacme/old-name')" ] || return 1
+  [ "$(printf '%s\n' "$MA_ERR" | grep -c 'over the 20-entry cap')" = "5" ] || return 1
+  for j in 21 22 23 24 25; do
+    hasF "allowlist: ignored fill-org/repo-$j — over the 20-entry cap" "$MA_ERR" || return 1
+    ! hasF "repos/fill-org/repo-$j " "$MA_CALLS" || return 1
+  done
+  return 0
+}
+ma11_leg && ok "(ma11) 25 request entries ⇒ $(ma_ncalls) gh calls (cap 20 + origin), same-id slug still granted, the 5 over-cap entries named and never passed to gh" \
+  || no "(ma11) the request file drove uncapped gh work or mis-named the over-cap entries (calls: $(ma_ncalls); out: $MA_OUT; err: $(printf '%s' "$MA_ERR" | tail -n 6 | tr '\n' '|'))"
+# ... the env override is clamped: 0 / junk fall back to the default, a huge value to the ceiling.
+ma_run "$MA11" LOOMWRIGHT_ALLOWLIST_MAX_ENTRIES=3
+{ [ "$(ma_ncalls)" = "4" ] && hasF 'allowlist: ignored fill-org/repo-5 — over the 3-entry cap' "$MA_ERR"; } \
+  && ok "(ma11) LOOMWRIGHT_ALLOWLIST_MAX_ENTRIES=3 ⇒ 4 gh calls, entry 5 named over the 3-entry cap" \
+  || no "(ma11) the cap override was not honoured (calls: $(ma_ncalls); err: $(printf '%s' "$MA_ERR" | tail -n 3 | tr '\n' '|'))"
+ma_run "$MA11" LOOMWRIGHT_ALLOWLIST_MAX_ENTRIES=999999999999999999999999
+{ [ "$(ma_ncalls)" = "26" ] && ! hasF 'entry cap' "$MA_ERR"; } \
+  && ok "(ma11) an oversized override is clamped to the ceiling (100), not overflowed: all 25 entries compared" \
+  || no "(ma11) oversized cap override mishandled (calls: $(ma_ncalls); err: $(printf '%s' "$MA_ERR" | tail -n 3 | tr '\n' '|'))"
+# ... and READING is capped too: an entry past line 200 is never read (zero gh calls), named once.
+MA12="$(newgit https://github.com/acme/widget.git)"
+mkdir -p "$MA12/.agent"
+awk 'BEGIN { for (i = 1; i <= 200; i++) print "# filler " i; print "acme/old-name" }' > "$MA12/.agent/meta-allowlist.txt"
+ma_run "$MA12"
+{ [ "$MA_OUT" = "acme/widget" ] && [ -z "$MA_CALLS" ] \
+  && [ "$(printf '%s\n' "$MA_ERR" | grep -c 'allowlist: stopped reading .agent/meta-allowlist.txt after 200 lines')" = "1" ]; } \
+  && ok "(ma11) a line past the 200-line read cap is never read or passed to gh, and the stop is named once" \
+  || no "(ma11) the read cap did not hold (out: $MA_OUT; gh: $MA_CALLS; err: $(printf '%s' "$MA_ERR" | tail -n 2 | tr '\n' '|'))"
 
 # Mutation controls — each gated on the mutant being NON-EMPTY, DIFFERENT from the original and
 # `bash -n`-clean (an unapplied or broken mutant would otherwise "pass" silently).
@@ -923,12 +963,18 @@ if M="$(ma_mutant host 's/^      elif \[ "\$(remote_host)" != "github.com" \]; t
     || ok "(ma-mut HOST) dropping the github.com host check grants a namesake for a non-github origin, so (ma9) turns red"
 else no "(ma-mut HOST) could not build the mutant — inconclusive"; fi
 # (BOUND) the overrun check dropped ⇒ the runner waits out the hung gh ⇒ (ma10)'s bound leg red.
-if M="$(ma_mutant bound 's/^    if \[ "\$ticks" -ge "\$max" \]; then$/    if false; then/')"; then
+if M="$(ma_mutant bound 's/^          if \[ "\$ticks" -ge "\$max" \]; then$/          if false; then/')"; then
   MA_SUT="$M"; ma10_leg; MA10_RC=$?; MA_SUT="$MEM"
   pkill -f "$MA10_PAT" 2>/dev/null || true
   [ "$MA10_RC" -eq 0 ] && no "(ma-mut BOUND) REFUTED: without the overrun check the hung gh still finished inside the bound — (ma10) is not load-bearing" \
     || ok "(ma-mut BOUND) without the overrun check the hung gh is waited out (${MA10_ELAPSED}s), so (ma10) turns red"
 else no "(ma-mut BOUND) could not build the mutant — inconclusive"; fi
+# (CAP) the comparison cap dropped ⇒ every entry reaches gh ⇒ (ma11)'s cap leg red.
+if M="$(ma_mutant cap 's/^    if \[ "\$compared" -ge "\$cap" \]; then$/    if false; then/')"; then
+  MA_SUT="$M"; ma11_leg; MA11_RC=$?; MA_SUT="$MEM"
+  [ "$MA11_RC" -eq 0 ] && no "(ma-mut CAP) REFUTED: without the cap 25 entries still made at most cap+1 gh calls — (ma11) is not load-bearing" \
+    || ok "(ma-mut CAP) without the cap every entry reaches gh ($(ma_ncalls) calls), so (ma11) turns red"
+else no "(ma-mut CAP) could not build the mutant — inconclusive"; fi
 # (A4) the request-file layer moved ABOVE the config layer ⇒ (ma6)'s config-wins leg red.
 if [ -n "$JQ" ]; then
   if M="$(ma_mutant_awk a4 '  if [ -z "$out" ] && command -v jq >/dev/null 2>&1 && [ -f "$CFG" ]; then' '  [ -z "$out" ] && out="$(meta_allowlist_grants "$(remote_slug)")"')"; then

@@ -13,9 +13,9 @@ lazily, so no file (or an own-slug-only file) makes zero calls. Only a github.co
 asks github.com, so a GitLab, Bitbucket or GitHub Enterprise origin would be compared with a github.com namesake;
 such an origin grants nothing and makes no `gh` call. Every `gh` call is bounded by
 `LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT` seconds (default 10; portable, no `timeout` binary), killed and counted as failing
-on overrun, and one overrun stops further calls, so a hung `gh` cannot stall `validate-entry.sh` or `meta-sync.sh`. Status lines go to stderr, so stdout stays the
-list that `meta-sync.sh`'s push scrub and `validate-entry.sh` read. New legs in `test-setup-memory.sh` (eight
-mutants, including the host check and the overrun check) and `test-meta-sync.sh` (a fresh clone with no config pushes old-slug history; a mutant without the
+on overrun, and one overrun stops further calls, so a hung `gh` cannot stall `validate-entry.sh` or `meta-sync.sh`. The runner writes no temp file (it reads `gh` through a pipe), so `allowlist` still writes nothing. The request file is untrusted input, so the work it drives is capped too: at most 20 non-own entries are compared per resolution (`LOOMWRIGHT_ALLOWLIST_MAX_ENTRIES`, clamped to 100), each later entry is named (`over the 20-entry cap`) and never passed to `gh`, and reading stops after 200 lines. Status lines go to stderr, so stdout stays the
+list that `meta-sync.sh`'s push scrub and `validate-entry.sh` read. New legs in `test-setup-memory.sh` (nine
+mutants, including the host check, the overrun check and the entry cap) and `test-meta-sync.sh` (a fresh clone with no config pushes old-slug history; a mutant without the
 layer is refused) use stubbed `gh`, and the legs of `test-validate-entry.sh` and `test-committed-twin-scrub.sh` that
 resolve the allowlist against the real checkout run behind a failing `gh` stub, so a fresh clone makes no network call. `/setup memory` docs, the consent disclosure, the setup skill's
 "does not travel" lesson and `validate-entry.sh`'s restated precedence now describe the request/grant split.

@@ -6,7 +6,8 @@
 # renamed repo's old slug redirects to the same id), and a slug naming any OTHER repository is
 # ignored and named on stderr. Without gh, with gh failing or timing out (each call is bounded by
 # $LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT seconds, default 10), or when origin is not on github.com,
-# NOTHING here is granted.
+# NOTHING here is granted. At most 20 non-own entries are checked ($LOOMWRIGHT_ALLOWLIST_MAX_ENTRIES,
+# clamped to 100) and only the first 200 lines are read; later entries are named and never granted.
 # Read only when --allow, $LOOMWRIGHT_MEMORY_REPO_ALLOWLIST and .supervisor/config.json are empty.
 # `#` lines and blank lines are skipped.
 #

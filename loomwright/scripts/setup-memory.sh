@@ -90,7 +90,8 @@
 # `.supervisor/config.json` `.setup_memory.repo_allowlist` (backup-first jq merge that preserves
 # every unrelated key). It writes NOTHING under `~/.claude/`, and it NEVER runs `git add`,
 # `git rm`, `git commit` or any other history-touching command. `check`, `allowlist`,
-# `filter-ledger` and `valid-branch` write nothing at all.
+# `filter-ledger` and `valid-branch` write nothing at all — not even a temp file: the bounded `gh`
+# runner behind the allowlist's request file (gh_id_bounded) reads gh's answer through a pipe.
 #
 # TRACKED-WRITE RISK (stated here, deliberately NOT fixed here): once `.claude/agent-memory/` is
 # tracked, every memory write becomes a working-tree modification — it shows in `git status`, can
@@ -897,8 +898,20 @@ remote_slug() {
 # every gh call runs under gh_id_bounded, LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT seconds (default 10),
 # killed on overrun and treated as gh failing — nothing granted. After one timeout no further gh
 # call is made in that resolution, so a hung gh costs at most two bounds.
+#
+# CAPPED. The request file is the attacker-controlled input, so the WORK it drives is capped too, not
+# just each call: at most META_ALLOWLIST_MAX_ENTRIES well-formed non-own entries are compared per
+# resolution (default 20; $LOOMWRIGHT_ALLOWLIST_MAX_ENTRIES overrides it with a positive integer, and
+# is clamped to META_ALLOWLIST_MAX_ENTRIES_CEIL), so a resolution makes at most cap + 1 gh calls even
+# when gh answers just inside the bound every time. Each entry past the cap is named on stderr
+# (`allowlist: ignored <slug> — over the <N>-entry cap`) and never passed to gh. Reading stops after
+# META_ALLOWLIST_MAX_LINES lines, named once on stderr, so a huge file cannot drive unbounded
+# per-line work either. Granted entries keep their file order.
 META_ALLOWLIST_REL=".agent/meta-allowlist.txt"
 META_ALLOWLIST_GH_TIMEOUT_DEFAULT=10
+META_ALLOWLIST_MAX_ENTRIES_DEFAULT=20
+META_ALLOWLIST_MAX_ENTRIES_CEIL=100
+META_ALLOWLIST_MAX_LINES=200
 
 # remote_host — print origin's HOST, lower-cased, or nothing (a filesystem path, no origin, or an
 # unparseable URL). A SEPARATE read from remote_slug, whose owner/repo output other callers depend
@@ -926,39 +939,73 @@ allowlist_gh_limit() {
   printf '%s\n' "$lim"
 }
 
+# allowlist_max_entries — the per-resolution comparison cap: $LOOMWRIGHT_ALLOWLIST_MAX_ENTRIES when
+# it is a positive integer (no leading zero), clamped to META_ALLOWLIST_MAX_ENTRIES_CEIL; else the
+# default. (Length-checked before the arithmetic so a 30-digit value cannot overflow the compare.)
+allowlist_max_entries() {
+  local cap="${LOOMWRIGHT_ALLOWLIST_MAX_ENTRIES:-}"
+  case "$cap" in ''|*[!0-9]*|0*) cap="$META_ALLOWLIST_MAX_ENTRIES_DEFAULT" ;; esac
+  if [ "${#cap}" -gt 3 ] || [ "$cap" -gt "$META_ALLOWLIST_MAX_ENTRIES_CEIL" ]; then
+    cap="$META_ALLOWLIST_MAX_ENTRIES_CEIL"
+  fi
+  printf '%s\n' "$cap"
+}
+
+# gh_kill_tree <pid> <signal> — signal <pid>'s descendants (depth-first, via pgrep -P when present)
+# and then <pid> itself. A descendant that inherited gh's stdout would otherwise hold the capture
+# pipe open past the bound.
+gh_kill_tree() {
+  local p="$1" sig="$2" c
+  if command -v pgrep >/dev/null 2>&1; then
+    for c in $(pgrep -P "$p" 2>/dev/null); do gh_kill_tree "$c" "$sig"; done
+  fi
+  kill -"$sig" "$p" 2>/dev/null
+}
+
 # gh_id_bounded <owner/repo> — print `gh api repos/<slug> --jq .id` within the bound. Exit 0 on a
-# completed, successful gh; 1 when gh failed or no temp file could be made; 124 when the bound
-# expired (gh is killed — TERM, then KILL — and REAPED before returning, so no child outlives the
-# call). bash 3.2 / BSD has no `timeout`: gh is backgrounded writing to a private mktemp file,
-# polled every 0.1s, and the file is removed on every path (it is the only thing written, and it
-# never outlives the call). gh reads </dev/null so it can never consume the caller's stdin.
+# completed, successful gh; 1 when gh failed; 124 when the bound expired (gh and its descendants are
+# killed — TERM, then KILL — and REAPED before returning, so no child outlives the call). bash 3.2 /
+# BSD has no `timeout`, and this runner is FILE-FREE (the WRITE-CONTAINMENT INVARIANT says
+# `allowlist` writes nothing): inside the command substitution gh runs in the background with the
+# substitution pipe as its stdout; a watchdog subshell — its own stdin/stdout/stderr on /dev/null,
+# so it never holds the pipe — polls gh every 0.1s and kills it on overrun, exiting 124 to say so;
+# the substitution reaps gh, then the watchdog (which exits by itself within 0.1s of gh finishing),
+# and its stderr is discarded so no "Terminated" job notice escapes. Partial output from a killed gh
+# is never printed. gh reads </dev/null so it can never consume the caller's stdin.
 gh_id_bounded() {
-  local slug="$1" lim tmp pid ticks=0 max rc
+  local slug="$1" lim max out rc
   lim="$(allowlist_gh_limit)"
   max=$((lim * 10))
-  tmp="$(mktemp "${TMPDIR:-/tmp}/loomwright-allowlist-gh.XXXXXX" 2>/dev/null)" || return 1
-  [ -n "$tmp" ] && [ -f "$tmp" ] || return 1
-  gh api "repos/$slug" --jq .id </dev/null >"$tmp" 2>/dev/null &
-  pid=$!
-  while kill -0 "$pid" 2>/dev/null; do
-    if [ "$ticks" -ge "$max" ]; then
-      command -v pkill >/dev/null 2>&1 && pkill -TERM -P "$pid" 2>/dev/null
-      kill -TERM "$pid" 2>/dev/null
-      ticks=0
-      while kill -0 "$pid" 2>/dev/null && [ "$ticks" -lt 10 ]; do sleep 0.1; ticks=$((ticks + 1)); done
-      command -v pkill >/dev/null 2>&1 && pkill -KILL -P "$pid" 2>/dev/null
-      kill -KILL "$pid" 2>/dev/null
-      wait "$pid" 2>/dev/null
-      rm -f "$tmp" 2>/dev/null
-      return 124
-    fi
-    sleep 0.1
-    ticks=$((ticks + 1))
-  done
-  wait "$pid" 2>/dev/null; rc=$?
-  if [ "$rc" -eq 0 ]; then cat "$tmp" 2>/dev/null; fi
-  rm -f "$tmp" 2>/dev/null
+  out="$(
+    {
+      gh api "repos/$slug" --jq .id </dev/null 2>/dev/null &
+      gpid=$!
+      (
+        ticks=0
+        while kill -0 "$gpid" 2>/dev/null; do
+          if [ "$ticks" -ge "$max" ]; then
+            gh_kill_tree "$gpid" TERM
+            ticks=0
+            while kill -0 "$gpid" 2>/dev/null && [ "$ticks" -lt 10 ]; do sleep 0.1; ticks=$((ticks + 1)); done
+            gh_kill_tree "$gpid" KILL
+            exit 124
+          fi
+          sleep 0.1
+          ticks=$((ticks + 1))
+        done
+        exit 0
+      ) </dev/null >/dev/null 2>&1 &
+      wpid=$!
+      wait "$gpid"; grc=$?
+      wait "$wpid"; wrc=$?
+      [ "$wrc" -eq 124 ] && exit 124
+      [ "$grc" -eq 0 ] && exit 0
+      exit 1
+    } 2>/dev/null
+  )"; rc=$?
+  [ "$rc" -eq 124 ] && return 124
   [ "$rc" -eq 0 ] || return 1
+  printf '%s\n' "$out"
   return 0
 }
 
@@ -972,15 +1019,24 @@ gh_id_bounded() {
 #     or `..`) is never passed to gh;
 #   · origin's id is looked up LAZILY, at most once per call, and only when a well-formed non-own
 #     entry needs comparing — so no request file, or one holding only origin's own slug, makes ZERO
-#     gh calls (the GitHub-shaped test fixtures stay hermetic).
+#     gh calls (the GitHub-shaped test fixtures stay hermetic);
+#   · at most allowlist_max_entries non-own entries are COMPARED (each one gh call) — every later
+#     one is named `over the <N>-entry cap` and never passed to gh — and reading stops after
+#     META_ALLOWLIST_MAX_LINES lines (see CAPPED above).
 # gh reads </dev/null: it must never consume the request file this loop is reading from stdin.
 meta_allowlist_grants() {
   local own="${1:-}" f="$repo/$META_ALLOWLIST_REL" line e le own_l origin_id="" origin_state="" id rc
-  local lim
+  local lim cap compared=0 nlines=0
   [ -f "$f" ] && [ -r "$f" ] || return 0
   lim="$(allowlist_gh_limit)"
+  cap="$(allowlist_max_entries)"
   own_l="$(printf '%s' "$own" | tr 'A-Z' 'a-z')"
   while IFS= read -r line || [ -n "$line" ]; do
+    nlines=$((nlines + 1))
+    if [ "$nlines" -gt "$META_ALLOWLIST_MAX_LINES" ]; then
+      echo "allowlist: stopped reading $META_ALLOWLIST_REL after $META_ALLOWLIST_MAX_LINES lines — over the line cap; later entries are ignored" >&2
+      break
+    fi
     e="$(printf '%s' "$line" | awk '{ sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, ""); print }')"
     case "$e" in ''|'#'*) continue ;; esac
     le="$(printf '%s' "$e" | tr 'A-Z' 'a-z')"
@@ -1020,6 +1076,11 @@ meta_allowlist_grants() {
       echo "allowlist: ignored $e — $origin_state" >&2
       continue
     fi
+    if [ "$compared" -ge "$cap" ]; then
+      echo "allowlist: ignored $e — over the ${cap}-entry cap (never passed to gh)" >&2
+      continue
+    fi
+    compared=$((compared + 1))
     id="$(gh_id_bounded "$e")"; rc=$?
     [ "$rc" -eq 0 ] || id=""
     if [ "$rc" -eq 124 ]; then
@@ -1468,7 +1529,8 @@ What becomes VERSION-CONTROLLED if you apply this:
                                  repo's old slug), and only for a github.com origin. gh is
                                  OPTIONAL: missing, failing or past its time bound
                                  (LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT, default 10s), no request
-                                 entry is granted.
+                                 entry is granted. At most 20 request entries are checked
+                                 (LOOMWRIGHT_ALLOWLIST_MAX_ENTRIES); later ones are not granted.
 These are COMMITTED IN PLACE — nothing is moved, symlinked or copied, so every agent keeps
 reading its store from the same path it uses today.
 
@@ -1532,7 +1594,8 @@ allowlist is the current remote PLUS the GRANTED entries of the tracked request 
 .agent/meta-allowlist.txt — an entry there is only a REQUEST, granted only when
 `gh api repos/<slug> --jq .id` equals origin's id, and only for a github.com origin. gh is
 OPTIONAL: missing, failing or past its time bound (LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT, default 10s),
-no request entry is granted and the scrub uses the remote alone.
+no request entry is granted and the scrub uses the remote alone. At most 20 request entries are
+checked (LOOMWRIGHT_ALLOWLIST_MAX_ENTRIES); later ones are not granted.
 
 Read this before saying yes:
   · Committing publishes. Agent memory can contain proprietary architecture, internal service
