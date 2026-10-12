@@ -135,3 +135,4 @@ changelog.d/agnostic-phase1-05-docs-and-hygiene-sweep.md
 - **Item 7: drop** — twin-remediation/10 is done (PR #479) and the owner's 2026-10-10 re-scope already treats the spike as satisfied.
 - **Re-verify** the nesting-depth and per-call-model platform facts against the live Claude Code docs at run time (this validation used the requirement's 2026-09-30 citation).
 - **Run last** (after the other items), so the sweep also covers their new wording. Add to Touches: `loomwright/capabilities.json`, `commands/agent-help.md`, `scripts/capture-task-spawn-payload.sh`, the two test fixtures above. Line numbers have moved — re-grep before editing.
+- **Owner decision (2026-10-12):** item 6 — rename the `commit-skill` skill to `commit` (visible id `loomwright:commit-skill` → `loomwright:commit`; regenerate `loomwright/capabilities.json`). Item 7 dropped (see re-scope).
