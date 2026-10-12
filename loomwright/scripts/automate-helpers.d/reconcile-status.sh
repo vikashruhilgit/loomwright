@@ -343,8 +343,8 @@ _rs_process_file() {
   # A not-ready item (`is_not_ready`: a `proposed` draft or a `parked` item) is
   # an owner decision, never reconciled: PR #482's body named a `## Status:
   # proposed` draft and the dry run planned `done` for it. Every other not-done
-  # heading (`pending`, `in-progress`, `in review — …`, none) stays promotable,
-  # the contract docs/result-schemas/ground-truth-json.md states.
+  # heading (`pending`, `in-progress`, a free-text `in review — …`, none) stays
+  # promotable, as it was before this gate existed.
   is_not_ready "$f" && return 0
 
   local done_brief; done_brief="$(_rs_find_done_brief "$rel" "$jobs_done")"
