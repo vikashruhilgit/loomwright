@@ -118,6 +118,8 @@ _lp_catalog_rows() {
     '/automate per-finding dismissed draft at the park, including fix-now'
   _lp_row AUT-LEFTOVER human-only 'Clean up now|Keep and continue|Stop' \
     '/automate close-out leftover gate (cleans up or deletes)'
+  _lp_row AUT-WAIVE    human-only 'Waive this step|Keep parked' \
+    '/automate READY park: waive a running-system Validation step validation-gate reports unrun (owner words from the answer note; cannot ask ⇒ stays escalated, validation_unrun)'
   _lp_row PO-ASSUME    human-only 'Proceed anyway|Refine requirements|Abort' \
     'Product Owner assumption-check soft gate (/automate prompt intake)'
   _lp_row LP-CLARIFY   human-only '(free text)' \
