@@ -45,7 +45,7 @@ Per the `review-heal` skill, this runner **spawns child agents** — a `code-rev
 - the **main agent of its own session** — `claude --agent loomwright:review-pr-runner`, or
 - **inline on the main thread** via `/review-pr <pr-url>`.
 
-The runner is **NEVER Task-spawned**. Claude Code now allows subagent nesting (three layers by default, and a host setting can lower it — [docs](https://code.claude.com/docs/en/sub-agents), re-read 2026-10-12), so the rule's original reason — *subagents cannot spawn subagents* — no longer holds; it is **retained pending owner review; see agnostic-phase1/05** (`docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting"). A `Task`-spawned runner's children sit one layer deeper, and under a lowered limit its own `Task(code-reviewer)` / `Task(general-purpose)` calls would fail.
+The runner is **NEVER Task-spawned**. Claude Code now allows subagent nesting (three layers by default, and a host setting can lower it — [docs](https://code.claude.com/docs/en/sub-agents), re-read 2026-10-12), so the rule's original reason — *subagents cannot spawn subagents* — no longer holds; it is **retained pending owner review; see agnostic-phase1/06** (`docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting"). A `Task`-spawned runner's children sit one layer deeper, and under a lowered limit its own `Task(code-reviewer)` / `Task(general-purpose)` calls would fail.
 
 ---
 

@@ -62,7 +62,7 @@
 #   process — NOT a nested Task spawn. The original reason (subagents cannot spawn
 #   subagents) is stale: the host now allows nesting three layers deep by
 #   default. The detached form also keeps the postmortem off the loop's path, and
-#   it is retained pending owner review (see agnostic-phase1/05 and
+#   it is retained pending owner review (see agnostic-phase1/06 and
 #   docs/ARCHITECTURE_CONTRACTS.md "Subagent nesting").
 #   See skills/review-heal/SKILL.md "Postmortem Dispatch Tail".
 #
