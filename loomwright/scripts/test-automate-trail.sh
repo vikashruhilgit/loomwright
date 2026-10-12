@@ -86,7 +86,9 @@
 #      the merge and the last skip reason.
 #   WE. escalated park (automate-followups/31) — the watcher armed at an
 #      `escalated` park closes out on merge; check_red/findings/other/another
-#      PR ⇒ no check polling; check_pending → green ⇒ one `now mergeable` line +
+#      PR ⇒ no check polling; validation_unrun (af36-remainder/01) ⇒ no polling and
+#      never `now mergeable`, even with a green run on the head (E2b);
+#      check_pending → green ⇒ one `now mergeable` line +
 #      one `automate_escalation_recheck` notify (latched, also across a
 #      restart), non-green ⇒ one `still failing … rerun: gh run rerun <id>
 #      --failed`; check_red_unrelated reports only at a NEWER attempt; the
@@ -1821,6 +1823,18 @@ for wc in findings other foreign; do
   we_watch >/dev/null
   [ "$(we_calls)" = "0" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E2) AC12: $wc ⇒ no check polling" || no "(E2) $wc polled: $(we_calls)"
 done
+
+# (E2b, af36-remainder/01 AC8) validation_unrun is an engine-side park cause (an unrun
+# running-system Validation step), never a check: even with a run id whose run is green on
+# the PR head — the exact shape E3 reports — the watcher never polls and never writes
+# `now mergeable`; a merge still closes the item out.
+closeout_fixture 420; spy_reset; we_open; : > "$GH_STUB_DIR/argv.log"
+we_park validation_unrun --check "V2 Running system" --run-id 555 --attempt 1 --sha "$ESHA"
+grep -qE '^- escalation_cause: validation_unrun \| check: V2 Running system' "$P/$RF_REL" && ok "(E2b) fixture: ## Current carries the validation_unrun line" || no "(E2b) fixture line: $(cur_block "$P/$RF_REL" | tr '\n' '|')"
+printf 'OPEN\nOPEN\nOPEN\nOPEN\nMERGED\n' > "$GH_STUB_DIR/state-seq"; { rj 1 completed success; rj 1 completed success; } > "$GH_STUB_DIR/run-seq"
+we_watch >/dev/null
+[ "$(we_calls)" = "0" ] && [ "$(we_n 'merge-watch: now mergeable:')" = "0" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E2b) validation_unrun ⇒ no check polling, never 'now mergeable', no recheck notify" || no "(E2b) validation_unrun re-checked: calls=$(we_calls) $(grep 'mergeable' "$P/$RF_REL")"
+[ "$(spy_count '^closeout ' "$SPYLOG")" = "1" ] && ok "(E2b) the merge still closes a validation_unrun park out (one closeout)" || no "(E2b) closeouts=$(spy_count '^closeout ' "$SPYLOG")"
 
 # (E3, AC10) check_pending → completes green ⇒ exactly one now-mergeable line +
 # one recheck notify, then keeps watching and closes out on the merge.
