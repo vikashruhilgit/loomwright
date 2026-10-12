@@ -19,6 +19,8 @@
 #          the drifted v2 resume phrasings vs the coded AUT-RESUME form, input forms, garbage
 #   (rp)   replay — the reconstructed S1 v2 fixture: 15 questions / 10 calls, exactly 7 to the human
 #   (mut)  MUTATION CONTROL — decide with the policy check removed honours a human-only code ⇒ (dc7) FAILS
+#   (aw)   AUT-WAIVE (the validation-unrun waiver) is human-only and decide answers human under a policy
+#          naming it; MUTATION CONTROL — the row flipped to `allowed` ⇒ (aw1) FAILS
 #   (ro)   resolve's --stamp-state read executes no check (a marker-writing must-check leaves no marker)
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -400,6 +402,37 @@ if [ -s "$MUT" ] && ! cmp -s "$LP" "$MUT" && bash -n "$MUT" 2>/dev/null \
   fi
 else
   no "(mut0) the mutation did not land cleanly (empty / identical / bash -n failed / marker missing)"
+fi
+
+# ============================================================================
+echo "== (aw) AUT-WAIVE — the validation-unrun waiver is human-only and never auto-answered =="
+# The owner's waiver of an unrun running-system Validation step (af36-remainder/01, AC4): a lane's
+# relay hook must never answer it from policy, even a policy that names it with a valid sha.
+AW_CANON='{"AUT-WAIVE":"Waive this step"}'
+jq -n --argjson a "$AW_CANON" --arg s "$(_t_sha "$AW_CANON")" '{policy_sha: $s, sources: [], answers: $a}' > "$ROOT/pol-aw.json"
+Q_AW="$(q1 AUT-WAIVE '["Waive this step","Keep parked"]')"
+# aw_check <lane-policy script> — 0 iff AUT-WAIVE's catalog row is human-only with its exact labels
+# AND decide answers `human` for the coded AUT-WAIVE question under a policy naming it.
+aw_check() {
+  [ "$(bash "$1" catalog 2>/dev/null | awk -F'\t' '$1 == "AUT-WAIVE" { print $1 "\t" $2 "\t" $3 }')" \
+      = "AUT-WAIVE${TAB}human-only${TAB}Waive this step|Keep parked" ] \
+    && [ "$(bash "$1" decide "$Q_AW" --policy-json "$ROOT/pol-aw.json" 2>/dev/null)" = "human" ]
+}
+aw_check "$LP" && ok "(aw1) AUT-WAIVE is human-only ('Waive this step|Keep parked') and decide answers human even when a valid policy names it" \
+  || no "(aw1) AUT-WAIVE is not human-only, or decide auto-answered the waiver: catalog=[$(bash "$LP" catalog | grep '^AUT-WAIVE')] decide=[$(bash "$LP" decide "$Q_AW" --policy-json "$ROOT/pol-aw.json" 2>/dev/null)]"
+# Mutation control (the brief's pin): flip AUT-WAIVE's policy to `allowed` ⇒ (aw1) must FAIL.
+MUT_AW="$ROOT/lane-policy.mut-aw.sh"
+sed '/_lp_row AUT-WAIVE /s/human-only/allowed   /' "$LP" > "$MUT_AW"
+if [ -s "$MUT_AW" ] && ! cmp -s "$LP" "$MUT_AW" && bash -n "$MUT_AW" 2>/dev/null \
+   && grep -qF '_lp_row AUT-WAIVE    allowed    ' "$MUT_AW"; then
+  ok "(aw2) the AUT-WAIVE mutant is valid: non-empty, differs from the original, passes bash -n, the hunk landed"
+  if aw_check "$MUT_AW"; then
+    no "(aw3) REFUTED: with AUT-WAIVE flipped to allowed, (aw1) still passes — the pin is vacuous"
+  else
+    ok "(aw3) CONFIRMED: with AUT-WAIVE flipped to allowed, (aw1) FAILS (decide=$(bash "$MUT_AW" decide "$Q_AW" --policy-json "$ROOT/pol-aw.json" 2>/dev/null)) — the pin is load-bearing"
+  fi
+else
+  no "(aw2) the AUT-WAIVE mutation did not land cleanly (empty / identical / bash -n failed / hunk missing)"
 fi
 
 # ============================================================================
