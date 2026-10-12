@@ -60,12 +60,14 @@
 #   AL validation-gate (af36-remainder/01): the #402 replay (pa/16's bullet Validation + PR #402's body,
 #     both fixtures under fixtures/validation-gate/) ⇒ unrun; evidenced ⇒ ok; no running-system step ⇒
 #     none; unreadable PR body / item ⇒ unrun; "Not verified" heading ⇒ NOT-RUN; FAIL ⇒ unrun; the owner
-#     waiver (counted only after the last `picked <item>`) + its refusals; a `|`-bearing title is a legal
+#     waiver (counted only for its item, after the last `picked <item>`) + its refusals; a `|`-bearing title is a legal
 #     `current-escalation --check`; ONE shared reader; AC9 mutation control (unconditional ok ⇒ AL1 red);
 #     fence-aware PR-body + item scans, a "running system" title outranking the repro rule, and evidence
 #     attributed to the step (not-run line, bold pseudo-heading, sibling bullet, next paragraph) — AL11–AL16;
 #     a not-run statement on any non-fenced line, an anchored step's intro paragraph, and no title-keyed
-#     evidence for a title two entries share — AL17–AL19, U13c
+#     evidence for a title two entries share — AL17–AL19, U13c; an anchored passage crossing a paragraph
+#     break only via an intro line ending in `:`, the wider not-run vocabulary — AL20–AL20g; a waiver
+#     bound to its item (named in the line, refused for any item but the last picked) — AL7h–AL7m
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -2471,6 +2473,31 @@ check "AL19b … each needs its own \"validation <n>\": only V1 anchored ⇒ unr
   "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body"
 out="$(vgb '## Test Plan\nValidation 1 — three clones:\n```\npeak load1 31\n```\nValidation 2 — quiet machine:\n```\npeak load1 4\n```\n' reqs/twin.md)"
 check "AL19c … both anchored with output ⇒ ok — 2 steps" "$out" "validation-gate: ok — 2 running-system step(s) evidenced"
+# Review iteration 3: an anchored passage crosses a paragraph break only after an intro line ending in
+# `:`, and the wider not-run vocabulary (outside fences only).
+out="$(vgb '## Test Plan\nValidation 2 - running system: could not get to this, machine shared.\n\nUnit test output:\n```\nok\n```\n')"
+check "AL20 repro A: \"could not get to this.\" + a later paragraph's fence ⇒ unrun (never ok)" \
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
+out="$(vgb '## Test Plan\nValidation 2 - running system: not yet run; needs a quiet machine.\n\nCI is green on the branch.\n\nShellcheck output:\n```\nok\n```\n')"
+check "AL20b repro B: \"not yet run\" + unrelated paragraphs + a fence ⇒ unrun" \
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
+out="$(vgb '## Test Plan\nValidation 2 - running system: deferred; needs a quiet machine.\n\nCI is green on the branch.\n\nShellcheck output:\n```\nok\n```\n')"
+check "AL20c the boundary alone (no not-run words): an unrelated paragraph after the step's sentence closes the passage ⇒ unrun" \
+  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output"
+out="$(vgb '## Test Plan\nValidation 2 (running system):\n\nRan three clones:\n\n```\npeak load1 31\n```\n')"
+check "AL20d an intro chain ending in \":\" keeps the fence (U13c shape, running-system step) ⇒ ok" \
+  "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
+out="$(vgb '## Test Plan\nValidation 2 - running system: deferred.\n\nWe ran the unit tests\ninstead.\n\nOutput:\n```\nok\n```\n')"
+check "AL20g an intro paragraph is crossed into only at the passage's FIRST break ⇒ unrun" \
+  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output"
+vg_voc=""
+for ph in "not yet run" "wasn't run" "was not run" "couldn't run" "could not run" "could not get to it" "not tested" "untested"; do
+  out="$(vgb "## Test Plan\nValidation 2 - running system: $ph.\n\`\`\`\npeak load1 31\n\`\`\`\n")"
+  [ "$out" = "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body" ] || vg_voc="$vg_voc [$ph: $out]"
+done
+check "AL20e the not-run vocabulary (not yet run / wasn't / was not / couldn't / could not run / could not get to / not tested / untested) ⇒ unrun even with a fence" "${vg_voc:-none}" none
+out="$(vgb '## Test Plan\nValidation 2 - running system: three clones\n```\nuntested: 0, not tested: 0, peak load1 31\n```\n')"
+check "AL20f … but those words inside the pasted output are output ⇒ ok" "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
 printf '# n\n## Validation (must pass before merge)\n1. **Baseline:** tests green.\n2. **Unchanged path:** a READY drain whose PR body pastes every running-system step parks as before.\n' > "$VG/reqs/norun.md"
 printf '# n\n## Touches\n- `x`\n' > "$VG/reqs/noval.md"
 check "AL5 AC5 no running-system entry (\"running-system\" hyphenated is not the phrase) ⇒ none" \
@@ -2490,15 +2517,32 @@ check "AL6f an absolute item path is read as given (not re-rooted)" "$(vg "$VGRF
 out="$(vg "$VGRF" reqs/pa16.md "$VGPR" --waive 2 --words "run it at wave close on a quiet machine")"; rc=$?
 check "AL7 AC3 --waive records the waiver (exit 0)" "$rc|$out" "0|validation-gate: waiver recorded — V2 Running system"
 check "AL7b … as ONE ## Progress line naming the step and the owner's words" \
-  "$(grep -c '^- [0-9T:Z-]* validation waived: V2 Running system — owner: "run it at wave close on a quiet machine"$' "$VGRF")" 1
+  "$(grep -c '^- [0-9T:Z-]* validation waived: reqs/pa16.md V2 Running system — owner: "run it at wave close on a quiet machine"$' "$VGRF")" 1
 check "AL7c a recorded waiver ⇒ waived" "$(vg "$VGRF" reqs/pa16.md "$VGPR")" "validation-gate: waived — V2 Running system"
 cp "$VGRF" "$T/vg-waived"
 out="$(vg "$VGRF" reqs/pa16.md "$VGPR" --waive 2 --words "run it at wave close on a quiet machine")"
 check "AL7d the identical waiver again ⇒ already recorded, file byte-unchanged" "$out|$(cmp -s "$T/vg-waived" "$VGRF" && echo same)" "validation-gate: waiver already recorded — V2 Running system|same"
 printf -- '- 2026-10-12T11:00:00Z picked reqs/pa16.md\n' >> "$VGRF"
 check "AL7e a waiver BEFORE the last \`picked <item>\` line no longer counts (re-pick ⇒ unrun)" "$(vg "$VGRF" reqs/pa16.md "$VGPR")" "$AL1_WANT"
-printf -- '- 2026-10-12T11:05:00Z note: validation waived: V2 Running system — owner: "forged"\n' >> "$VGRF"
+printf -- '- 2026-10-12T11:05:00Z note: validation waived: reqs/pa16.md V2 Running system — owner: "forged"\n' >> "$VGRF"
 check "AL7f a waiver quoted inside another line is not a waiver" "$(vg "$VGRF" reqs/pa16.md "$VGPR")" "$AL1_WANT"
+printf -- '- 2026-10-12T11:06:00Z validation waived: V2 Running system — owner: "old item-less form"\n' >> "$VGRF"
+check "AL7h an item-less (pre-iteration-3) waiver line does not count" "$(vg "$VGRF" reqs/pa16.md "$VGPR")" "$AL1_WANT"
+# Review iteration 3: a waiver is bound to its item — refused for any item but the last picked one,
+# and a waiver line naming another item never counts for this one.
+cp "$VG/reqs/pa16.md" "$VG/reqs/a.md"; cp "$VG/reqs/pa16.md" "$VG/reqs/b.md"
+printf '# Automate Run: vg\n## Status: running\n\n## Current\n- item: reqs/b.md | status: running | pr: %s | branch: f\n\n## Progress\n- 2026-10-12T09:00:00Z picked reqs/a.md\n- 2026-10-12T10:00:00Z picked reqs/b.md\n' "$VGPR" > "$T/vgx.md"
+mkdir -p "$T/vgx/.supervisor/automate"; cp -R "$VG/reqs" "$T/vgx/"; mv "$T/vgx.md" "$T/vgx/.supervisor/automate/x.md"; VGX="$T/vgx/.supervisor/automate/x.md"; cp "$VGX" "$T/vgx.ref"
+out="$(vg "$VGX" reqs/a.md "$VGPR" --waive 2 --words "a only")"; rc=$?
+check "AL7i --waive for an item that is not the run's last picked item ⇒ refused, exit 1, file byte-unchanged" \
+  "$rc|$out|$(cmp -s "$T/vgx.ref" "$VGX" && echo same)" "1|validation-gate: refused — reqs/a.md is not the run's current item (last picked: reqs/b.md)|same"
+check "AL7j … and reqs/b.md stays unrun (no waiver carried over)" "$(vg "$VGX" reqs/b.md "$VGPR")" "$AL1_WANT"
+printf -- '- 2026-10-12T10:05:00Z validation waived: reqs/a.md V2 Running system — owner: "for a"\n' >> "$VGX"
+check "AL7k a waiver line naming another item never counts for this one" "$(vg "$VGX" reqs/b.md "$VGPR")" "$AL1_WANT"
+out="$(vg "$VGX" ./reqs/b.md "$VGPR" --waive 2 --words "for b")"; rc=$?
+check "AL7l --waive for the current item (leading ./ stripped) records it naming the item" \
+  "$rc|$out|$(grep -c '^- [0-9T:Z-]* validation waived: reqs/b.md V2 Running system — owner: "for b"$' "$VGX")" "0|validation-gate: waiver recorded — V2 Running system|1"
+check "AL7m … and counts for reqs/b.md" "$(vg "$VGX" reqs/b.md "$VGPR")" "validation-gate: waived — V2 Running system"
 vg_rf; cp "$VGRF" "$T/vg-ref"; vg_bad=""
 for wa in "--waive 2 --words ''" "--waive 2 --words 'a|b'" "--waive 1 --words 'ok'" "--waive 9 --words 'ok'" "--waive x --words 'ok'" "--waive 2" "--words 'ok'"; do
   eval "set -- $wa"; out="$(vg "$VGRF" reqs/pa16.md "$VGPR" "$@")"; rc=$?

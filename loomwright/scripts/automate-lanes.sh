@@ -2572,7 +2572,9 @@ lanes_feed() {
 # entry n. With the 4th argument `nv` it prints instead ONE line: `NV` when any matched block starts
 # under a PR-body heading (at any enclosing level) containing "not verified" or "not run"; else `NL`
 # when such a heading says "skipped", or ANY non-fenced line of a matched block (its first line, a
-# continuation, a heading-started section's body) says "not run" / "skipped" / "not verified"; else
+# continuation, a heading-started section's body) says "not run" / "skipped" / "not verified" (or
+# "not yet run", "wasn't run", "couldn't run", "could not get to", "not tested", "untested" — "was
+# not run" / "could not run" are already "not run"; any such heading text is a "not run" heading); else
 # nothing — the same match, so the not-run tests can never drift from the evidence test. Fenced lines
 # never raise NL (pasted output that says "skipped" is output, not the PR's statement). <others> is
 # the item's entry titles, newline-separated; <tm> 0 disables the title match (a title another entry's
@@ -2588,13 +2590,22 @@ lanes_feed() {
 #                list item, the next list item at the same or a shallower indent; for any non-heading
 #                start, an unindented non-fence paragraph after a blank line that is a list item or
 #                names another entry's title — and, for a title match, ANY such paragraph (a generic
-#                mention never borrows the next paragraph's fence; an anchored match keeps its own
-#                intro paragraph, e.g. "Output:", and the fence after it)
+#                mention never borrows the next paragraph's fence). An anchored match crosses such a
+#                paragraph break ONLY when the last non-blank, non-fenced line before it ends in `:`
+#                (an intro line: "Validation 1 (tests):" / blank / "Ran the suite:" / blank / fence
+#                stays one passage) or, at its FIRST break only, when the new paragraph's line itself
+#                ends in `:` (the step's sentence, then "Output:", then the fence); otherwise it closes,
+#                so "… needs a quiet machine." / "CI is green." / "Shellcheck output:" + fence never
+#                borrows that fence. The shape "<step sentence>." / "<x> output:" + fence is the same
+#                for a run step and an unrun one — only the not-run vocabulary tells them apart. An
+#                indented line never closes a match by this paragraph rule
 _lanes_rd_section() {
   _RD_T="$2" _RD_O="${5:-}" awk -v n="$1" -v mode="${4:-}" -v tm="${6:-1}" '
     BEGIN { t = tolower(ENVIRON["_RD_T"]); vn = "validation[ #]*" n "([^0-9]|$)"; no = split(tolower(ENVIRON["_RD_O"]), ot, "\n") }
     function ind(s) { match(s, /^[ \t]*/); return RLENGTH }
-    function nrv(s) { return index(s, "not verified") || index(s, "not run") }
+    function nrv(s) { return index(s, "not verified") || index(s, "not run") || index(s, "not yet run") ||
+      index(s, "wasn\047t run") || index(s, "wasn\342\200\231t run") || index(s, "couldn\047t run") ||
+      index(s, "couldn\342\200\231t run") || index(s, "could not get to") || index(s, "not tested") || index(s, "untested") }
     function nrl(s) { return nrv(s) || index(s, "skipped") }
     function oth(s,  i) { for (i = 1; i <= no; i++) if (ot[i] != "" && !index(t, ot[i]) && index(s, ot[i])) return 1; return 0 }
     { l = tolower($0); wasin = inf; fl = 0; hd = 0 }
@@ -2608,15 +2619,17 @@ _lanes_rd_section() {
     { li = (l ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/) }
     on && !wasin && !fl && (hd || (l ~ /validation[ #]*[0-9]/ && l !~ vn) ||
         (sk == "b" && li && ind(l) <= si) ||
-        (sk != "h" && blank && l !~ /^[ \t]/ && l !~ /^[ \t]*$/ && (!sw || li || oth(l)))) { on = 0 }
+        (sk != "h" && blank && l !~ /^[ \t]/ && l !~ /^[ \t]*$/ &&
+         (!sw || li || oth(l) || (lnb !~ /:$/ && (pb || l !~ /:[ \t\r]*$/))))) { on = 0 }
+    on && !wasin && !fl && sk != "h" && blank && l !~ /^[ \t]/ && l !~ /^[ \t]*$/ { pb = 1 }
     !on && !wasin && !fl && (l ~ vn || (tm != 0 && t != "" && index(l, t) > 0 && l !~ /validation[ #]*[0-9]/)) {
-      on = 1; si = ind(l); sw = (l ~ vn)
+      on = 1; si = ind(l); sw = (l ~ vn); pb = 0
       sk = hd ? "h" : (li ? "b" : "p")
       for (k = 1; k <= top; k++) if (k in h) { if (nrv(h[k])) nv = 1; else if (index(h[k], "skipped")) nl = 1 }
     }
     on && !wasin && !fl && nrl(l) { nl = 1 }
     on && mode != "nv" { print }
-    { blank = (!wasin && !fl && l ~ /^[ \t]*$/) }
+    { blank = (!wasin && !fl && l ~ /^[ \t]*$/); if (!wasin && !fl && !blank) { lnb = l; sub(/[ \t\r]+$/, "", lnb) } }
     END { if (mode == "nv") { if (nv) print "NV"; else if (nl) print "NL" } }' "$3"
 }
 
@@ -2636,7 +2649,8 @@ _lanes_rd_section() {
 #             running-system — the joined entry text contains "running system" · other (case-insensitive)
 #   status    gh_ok 0 ⇒ NOT-RUN (PR body unreadable). Else the PR body's matching lines
 #             (_lanes_rd_section): none ⇒ NOT-RUN; under a "not verified" / "not run" heading, or any
-#             non-fenced matched line saying "not run" / "skipped" / "not verified" ⇒ NOT-RUN; no fence
+#             non-fenced matched line saying "not run" / "skipped" / "not verified" (or another phrase of
+#             _lanes_rd_section's not-run set) ⇒ NOT-RUN; no fence
 #             line ⇒ NOT-RUN; a non-repro entry whose output shows the word FAIL ⇒ FAIL; else PASS
 #   unique    an entry whose title (case-insensitive) equals or is contained in another entry's title
 #             gets NO title match — e.g. two `- **Running system:**` bullets — so one passage can never
@@ -2859,11 +2873,13 @@ lanes_readiness() {
 # none / ok / waived as unrun.
 # Waiver form (--waive <n> --words <text>) — called by the engine ONLY with an interactive owner's
 # answer, never on a can't-ask path — appends ONE `## Progress` line through progress-append:
-#   <utc> validation waived: V<n> <title> — owner: "<text>"
-# A waiver counts only AFTER the run file's LAST `picked <item>` line (a re-pick needs a new waiver).
-# Refusals print `validation-gate: refused — <reason>` and exit 1 with nothing written: empty words, a
-# `|` or newline in them, <n> not a running-system entry, an unreadable item file, no `picked <item>`
-# line in the run file. An identical waiver already counted ⇒ `waiver already recorded`, nothing written.
+#   <utc> validation waived: <item> V<n> <title> — owner: "<text>"
+# (<item> with any leading `./` stripped). A waiver counts only for the item it names, and only AFTER
+# the run file's LAST `picked <item>` line (a re-pick needs a new waiver). Refusals print
+# `validation-gate: refused — <reason>` and exit 1 with nothing written: empty words, a `|` or newline
+# in them, <n> not a running-system entry, an unreadable item file, no `picked <item>` line in the run
+# file, or <item> not the item of the run file's LAST `picked` line (a waiver is only ever for the item
+# being parked now). An identical waiver already counted ⇒ `waiver already recorded`, nothing written.
 _lanes_vg_itemf() { # <runfile> <item> — the item file's path
   local rf="$1" it="$2" d
   case "$it" in /*) printf '%s' "$it"; return 0 ;; esac
@@ -2883,6 +2899,18 @@ _lanes_vg_after_pick() { # <runfile> <item> — the ## Progress lines after the 
         if (x == it) last = n
       } }
     END { if (!last) exit 1; for (i = last + 1; i <= n; i++) print line[i] }' "$1" 2>/dev/null
+}
+
+_lanes_vg_last_pick() { # <runfile> — the item of the LAST `picked` line in ## Progress (`./` stripped); exit 1 when none
+  awk '
+    /^## / { inp = ($0 ~ /^## Progress/); next }
+    !inp { next }
+    { l = $0; sub(/^- /, "", l)
+      if (l ~ /^([^ ]+ )?picked /) {
+        x = l; sub(/^([^ ]+ )?picked /, "", x); split(x, a, " "); x = a[1]
+        sub(/[;,]+$/, "", x); sub(/^\.\//, "", x); last = x; f = 1
+      } }
+    END { if (!f || last == "") exit 1; print last }' "$1" 2>/dev/null
 }
 
 _lanes_vg_has() { # <lines> <prefix> [exact] — 0 when a `- [<one token> ]<prefix>…` line is there (exact: the whole rest)
@@ -2920,12 +2948,14 @@ lanes_validation_gate() {
     [ -f "$itemf" ] && [ -r "$itemf" ] || { echo "$G refused — item file unreadable: $item"; return 1; }
     title="$(_lanes_validation_rows "$itemf" /dev/null 0 | awk -F'\t' -v n="$wn" '$1 == n && $3 == "running-system" { print $2; exit }')"
     [ -n "$title" ] || { echo "$G refused — V$wn is not a running-system Validation entry of $item"; return 1; }
-    local after
+    local after lastp
     if ! after="$(_lanes_vg_after_pick "$rf" "$item")"; then echo "$G refused — no \`picked $item\` line in $rf (a waiver would never count)"; return 1; fi
-    if _lanes_vg_has "$after" "validation waived: V$wn $title — owner: \"$words\"" exact; then
+    lastp="$(_lanes_vg_last_pick "$rf")" || lastp=""
+    if [ "$lastp" != "${item#./}" ]; then echo "$G refused — $item is not the run's current item (last picked: ${lastp:-none})"; return 1; fi
+    if _lanes_vg_has "$after" "validation waived: ${item#./} V$wn $title — owner: \"$words\"" exact; then
       echo "$G waiver already recorded — V$wn $title"; return 0
     fi
-    bash "$HELPERS" progress-append "$rf" "$(now_utc) validation waived: V$wn $title — owner: \"$words\"" >/dev/null 2>&1 \
+    bash "$HELPERS" progress-append "$rf" "$(now_utc) validation waived: ${item#./} V$wn $title — owner: \"$words\"" >/dev/null 2>&1 \
       || { echo "$G refused — progress-append failed on $rf"; return 1; }
     echo "$G waiver recorded — V$wn $title"
     return 0
@@ -2949,7 +2979,7 @@ lanes_validation_gate() {
     [ "$kind" = running-system ] || continue
     k=$((k + 1))
     [ "$st" = PASS ] && continue
-    if [ -n "$after" ] && _lanes_vg_has "$after" "validation waived: V$n $title — owner: \""; then
+    if [ -n "$after" ] && _lanes_vg_has "$after" "validation waived: ${item#./} V$n $title — owner: \""; then
       waived="$waived${waived:+; }V$n $title"; continue
     fi
     echo "$G unrun — V$n $title: $ev"; return 0

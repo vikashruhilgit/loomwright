@@ -6,8 +6,8 @@ item's `## Validation` section has pasted, fenced evidence in the PR body. A ste
 "Not verified" / "Not run" PR-body heading, a FAIL, or an unreadable item file or PR body reads `unrun` (fail CLOSED),
 and the item parks `escalated` with the new engine-side `escalation_cause: validation_unrun` naming the step, until the
 step is evidenced (RECONCILE re-checks on `--resume`) or the owner waives it through the new human-only `AUT-WAIVE`
-gate. The waiver is one `## Progress` line carrying the step and the owner's own words; a run that cannot ask never
-waives. `lane-readiness` and the gate share one Validation reader, which now also parses `- ` bullet entries and treats
+gate. The waiver is one `## Progress` line carrying the item, the step and the owner's own words, and only the item
+being parked can be waived; a run that cannot ask never waives. `lane-readiness` and the gate share one Validation reader, which now also parses `- ` bullet entries and treats
 a "Not verified" heading as NOT-RUN. `current-escalation` accepts `validation_unrun`, and the merge watcher never
 reports such a park as now mergeable. Honest limit: `gate-eval` does not run the validation gate itself; the engine's
 GATE prose runs it before `gate-eval` and before every READY park.
