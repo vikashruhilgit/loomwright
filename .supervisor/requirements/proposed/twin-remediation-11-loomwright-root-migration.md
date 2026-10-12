@@ -85,3 +85,9 @@ unknown
 - **Open decisions:** migrate set-otel-resource-attrs or adapter-class it (it reads .claude-plugin/plugin.json); optionally fold the 7 validator-lookup copies into one helper (keep each writer's LOAD GUARD block intact). Behaviour change: a pre-set LOOMWRIGHT_ROOT now wins over the sibling fallback — tests that unset CLAUDE_PLUGIN_ROOT must also unset LOOMWRIGHT_ROOT (test-automate-lanes, test-guard-lane-wait-armed, test-validate-entry).
 - **Size:** small–medium, one PR; lower the vendor-coupling-manifest allowances in the same PR; still run alone.
 - **Owner decision (2026-10-12):** scope = the runtime readers only; `set-otel-resource-attrs.sh` is labelled Claude-only adapter code (it reads `.claude-plugin/plugin.json`) and stays on `CLAUDE_PLUGIN_ROOT`; migrate the other 10. Printed-instruction literals and the two hooks.json parsers are excluded.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-12T10:54:31Z
+- **Brief:** none (direct implementation outside /automate)
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/495

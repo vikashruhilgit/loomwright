@@ -129,3 +129,10 @@ side effect of a doc edit.
 - **Gap 3 awaits the owner:** the re-scope above says the sole-writer sentence is gone — it is not: `docs/ARCHITECTURE_CONTRACTS.md` still says "Supervisor remains the sole writer of `.supervisor/jobs/`", while the same doc lists `reconcile-jobs.sh --repair` / `--repair-merged` / `brief-repair` as movers. Needs the owner's dated decision line, then a one-line doc fix.
 - **Shipped 2026-10-12 in v15.133.0** (integration PR #493, merge b6e1100): Gaps 1b, 1c, 2 — PR #491 (`reconcile-jobs.sh --not-stranded-count` / `--missing-outcome`). **Remaining:** Gap 3 (owner ratification of a second jobs/ writer + the ARCHITECTURE_CONTRACTS.md sole-writer line). Requirement stays open.
 - **Owner decision (2026-10-12):** Gap 3 — YES: `.supervisor/jobs/` may have more than one writer. Supervisor plus the evidence-gated repair movers (`reconcile-jobs.sh --repair` / `--repair-merged`, `automate-helpers.sh brief-repair`) may move briefs. Remaining work: replace the "Supervisor remains the sole writer of `.supervisor/jobs/`" sentence in `loomwright/docs/ARCHITECTURE_CONTRACTS.md` with that rule.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-12T10:54:31Z
+- **Brief:** none (direct implementation outside /automate)
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/491
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/495
