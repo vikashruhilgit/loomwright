@@ -34,6 +34,18 @@
 #   MROOT rewrite the runtime prefix to the repo-relative `scripts/…` form in BOTH skills ⇒ P1 and P2
 #         must FAIL (the prefix itself is load-bearing, not just the script name).
 #
+# LINE LEGS (automate-followups/39 C.1 — the posted Phase 4.5 line must name the verdict Part 2 acts on):
+#   The REAL rules-gate-verdict.sh runs against a fixture store with RULES_CHECK_NO_CMD=1 (what
+#   $NO_CMD_FLAG exports), and its verdict is projected through self-heal-advisory's OWN
+#   `rules_check_line =` block by project_line, a small evaluator of that block's branch grammar (first
+#   match wins). An unknown condition, an unparseable branch or a missing block is an EVAL_ERROR, which
+#   fails the leg — never a vacuous pass.
+#     L1  corrupt store + --no-cmd ⇒ verdict unreadable ⇒ line `rules_check: unreadable`
+#     L2  no store (empty selection) + --no-cmd ⇒ verdict none ⇒ line `rules_check: none`
+#     L3  an unstamped countable store + --no-cmd ⇒ verdict cmd_disabled ⇒ line `rules_check: cmd_disabled`
+#   ML1 (gated mutant) put back the pre-fix first branch (`$NO_CMD_FLAG is non-empty or … cmd_disabled`)
+#       ⇒ L1 must FAIL on the mutant (it posts cmd_disabled over an escalating unreadable verdict).
+#
 # Portability: bash 3.2 (macOS) + Linux; no GNU-only flags, no mapfile, no sed -i.
 set -uo pipefail
 
@@ -176,6 +188,112 @@ if fresh_tree "$d" && run_pins "$d"; then
   else ok "MROOT the repo-relative helper path fails P1 and P2 (the runtime prefix is load-bearing)"; fi
 else
   no "MROOT positive control: tree copy or unmutated pin run failed"
+fi
+
+# ---- line legs (C.1): the posted line names the helper's verdict, under --no-cmd -----------------
+# project_line <skill-file> <no_cmd_flag> <verdict-json> — print the line the skill's `rules_check_line =`
+# block yields (main projection only; the `+= rules_advisory` suffix is not evaluated), or
+# `EVAL_ERROR: <why>`.
+project_line() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, re, sys
+path, flag, raw = sys.argv[1], sys.argv[2], sys.argv[3]
+def err(m):
+    print("EVAL_ERROR: " + m); sys.exit(0)
+try:
+    rules = json.loads(raw)
+except Exception:
+    err("verdict is not JSON")
+lines = open(path, encoding="utf-8").read().split("\n")
+start = [i for i, l in enumerate(lines) if re.match(r"rules_check_line =(\s|$)", l)]
+if len(start) != 1:
+    err("expected exactly one `rules_check_line =` block, found %d" % len(start))
+branches = []
+for l in lines[start[0] + 1:]:
+    if l.startswith("rules_check_line +="):
+        break
+    m = re.match(r'\s*(if|elif)\s+(.*?):\s+"((?:[^"\\]|\\.)*)"', l) or re.match(r'\s*(else):()\s+"((?:[^"\\]|\\.)*)"', l)
+    if not m:
+        err("unparseable branch line: " + l)
+    branches.append((m.group(1), m.group(2), m.group(3)))
+if not branches or branches[0][0] != "if":
+    err("block does not open with an `if` branch")
+def atom(a):
+    a = a.strip()
+    if a == "$NO_CMD_FLAG is non-empty":
+        return flag != ""
+    if a == "rules.checks_passed is non-null":
+        return rules.get("checks_passed") is not None
+    m = re.fullmatch(r'rules\.verdict == "([a-z_]+)"', a)
+    if m:
+        return rules.get("verdict") == m.group(1)
+    err("unknown condition atom: " + a)
+for kind, cond, text in branches:
+    if kind == "else" or any(atom(a) for a in cond.split(" or ")):
+        print(text); sys.exit(0)
+err("no branch matched and no else")
+PY
+}
+
+if ! command -v jq >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  echo "skip L1-L3/ML1: jq or python3 absent — the helper cannot compute a verdict here (vacuous)"
+else
+  GV="$REPO/loomwright/scripts/rules-gate-verdict.sh"
+  LROOT="$TMP/lines"; mkdir -p "$LROOT/home"
+  # line_repo <name> — a committed scratch git repo carrying a tracked data.txt; prints its path.
+  line_repo() {
+    local r="$LROOT/$1"
+    mkdir -p "$r"
+    ( cd "$r" && git init -q && git config user.email t@t && git config user.name t \
+        && printf 'hello\n' > data.txt && git add data.txt && git commit -qm init ) >/dev/null 2>&1
+    printf '%s' "$r"
+  }
+  # nocmd_verdict <repo> — the REAL helper's verdict JSON under RULES_CHECK_NO_CMD=1, sandboxed HOME.
+  nocmd_verdict() {
+    ( cd "$1" && env -u RULES_CHECK_CONFIRM HOME="$LROOT/home" RULES_CHECK_NO_CMD=1 \
+        bash "$GV" --root "$1" </dev/null 2>/dev/null )
+  }
+  # line_leg <label> <skill-file> <repo> <expected-verdict> <expected-line> — 0 iff both hold.
+  line_leg() {
+    local v got
+    v="$(nocmd_verdict "$3")"
+    if [ "$(printf '%s' "$v" | jq -r '.verdict' 2>/dev/null)" != "$4" ]; then
+      no "$1 precondition: helper verdict is not $4: [$v]"; return 1
+    fi
+    got="$(project_line "$2" "--no-cmd" "$v")"
+    if [ "$got" = "$5" ]; then ok "$1 verdict $4 under --no-cmd posts \`$got\`"; return 0; fi
+    no "$1 verdict $4 under --no-cmd posts \`$got\` (expected \`$5\`)"; return 1
+  }
+  RL1="$(line_repo corrupt)"; mkdir -p "$RL1/.agent/rules"; printf '[{"id": "x",\n' > "$RL1/.agent/rules/r.json"
+  RL2="$(line_repo empty)"
+  RL3="$(line_repo countable)"; mkdir -p "$RL3/.agent/rules"
+  jq -n '[{id:"c1", category:"t", statement:"s", enforcement:"must", check:"grep -q hello data.txt", binds:[], provenance:{source:"t"}}]' \
+    > "$RL3/.agent/rules/r.json"
+  line_leg "L1 corrupt store:" "$REPO/$SHA" "$RL1" unreadable "rules_check: unreadable"
+  line_leg "L2 empty selection:" "$REPO/$SHA" "$RL2" none "rules_check: none"
+  line_leg "L3 countable, unstamped store:" "$REPO/$SHA" "$RL3" cmd_disabled "rules_check: cmd_disabled"
+
+  # ML1 — the pre-fix order (a $NO_CMD_FLAG disjunct as the FIRST branch) must turn L1 red.
+  d="$TMP/ml1"
+  if fresh_tree "$d" && [ "$(project_line "$d/$SHA" "--no-cmd" "$(nocmd_verdict "$RL1")")" = "rules_check: unreadable" ]; then
+    awk '!done && /^  if rules\.verdict == "unreadable":/ {
+           print "  if $NO_CMD_FLAG is non-empty or rules.verdict == \"cmd_disabled\":  \"rules_check: cmd_disabled\""
+           sub(/^  if /, "  elif "); done = 1 }
+         { print }' "$d/$SHA" > "$d/$SHA.mut"
+    if [ ! -s "$d/$SHA.mut" ] || cmp -s "$d/$SHA.mut" "$d/$SHA"; then
+      no "ML1 mutant empty or unchanged (gate: the first branch was not found)"
+    else
+      mv "$d/$SHA.mut" "$d/$SHA"
+      got="$(project_line "$d/$SHA" "--no-cmd" "$(nocmd_verdict "$RL1")")"
+      if [ "$got" = "rules_check: unreadable" ]; then
+        no "ML1 the pre-fix branch order still posts \`$got\` — L1 is not load-bearing"
+      else
+        ok "ML1 the pre-fix branch order posts \`$got\` over an unreadable verdict — L1 turns red"
+      fi
+    fi
+  else
+    no "ML1 positive control: tree copy or the unmutated L1 projection failed"
+  fi
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
