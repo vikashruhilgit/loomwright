@@ -1,8 +1,8 @@
 {
-  "_comment": "Capability baseline for /capability-check (v14.6.0+). Snapshot of the Claude Code features and external deps this plugin currently USES or has deliberately considered. /capability-check diffs the LIVE Claude Code changelog/docs + dep versions against this file and reports candidate adoptions — it never self-applies. Maintainer updates this via `/capability-check --update-baseline` (a repo-root, committed action) after reviewing a report. The `product_directions` section is the home for /capability-check --strategy mode's scored, grounded, deduped product directions (each with status adopted | proposed | deferred); --strategy reads it to dedup (never re-proposing a recorded direction), and it is written only via `/capability-check --strategy --update-baseline`. NOTE: `baseline_date` + `plugin_version_at_last_scan` are the (date, plugin-version) pair of the last full platform/adoption scan — they record WHEN the `claude_code.*` lists were last refreshed, NOT the current plugin version. Both are bumped together only by a real `--update-baseline` adoption scan (Workflow A step 5). They are NOT bumped by `--strategy` direction edits: the `product_directions` section (introduced in v14.9.0) carries its own per-entry `date`s, so adding or restatusing a direction leaves the platform-scan pair untouched.",
+  "_comment": "Capability baseline for /capability-check (v14.6.0+). Snapshot of the Claude Code features and external deps this plugin currently USES or has deliberately considered. /capability-check diffs the LIVE Claude Code changelog/docs + dep versions against this file and reports candidate adoptions — it never self-applies. Maintainer updates this via `/capability-check --update-baseline` (a repo-root, committed action) after reviewing a report. The `product_directions` section is the home for /capability-check --strategy mode's scored, grounded, deduped product directions (each with status adopted | proposed | deferred); --strategy reads it to dedup (never re-proposing a recorded direction), and it is written only via `/capability-check --strategy --update-baseline`. NOTE: `baseline_date` + `plugin_version_at_last_scan` are the (date, plugin-version) pair of the last full platform/adoption scan — they record WHEN the `claude_code.*` lists were last refreshed, NOT the current plugin version. Both are bumped together only by a real `--update-baseline` adoption scan (Workflow A step 5). They are NOT bumped by `--strategy` direction edits: the `product_directions` section (introduced in v14.9.0) carries its own per-entry `date`s, so adding or restatusing a direction leaves the platform-scan pair untouched. The 2026-10-12 scan (twin-remediation/09 item 1) had PARTIAL coverage under the default 5-fetch budget: the hooks and sub-agents reference pages were read for the full current event/field lists, but the changelog only for v2.1.287-v2.1.296, so tools or plugin features shipped June-September and absent from those pages may still be unaccounted for.",
   "schema_version": 1,
-  "baseline_date": "2026-06-01",
-  "plugin_version_at_last_scan": "14.6.0",
+  "baseline_date": "2026-10-12",
+  "plugin_version_at_last_scan": "15.132.0",
   "claude_code": {
     "hook_events_used": [
       "SubagentStop",
@@ -22,10 +22,10 @@
       "effort", "permissionMode"
     ],
     "tools_used": [
-      "Task", "Read", "Write", "Edit", "Glob", "Grep", "Bash",
+      "Agent", "Task", "TaskOutput", "Read", "Write", "Edit", "Glob", "Grep", "Bash",
       "LSP", "WebFetch", "WebSearch", "AskUserQuestion"
     ],
-    "model_tiers_used": ["inherit", "opus", "sonnet", "haiku"],
+    "model_tiers_used": ["inherit", "sonnet", "haiku"],
     "features_used": [
       "slash-commands",
       "subagents (Task)",
@@ -35,23 +35,41 @@
       "MCP servers via sibling plugin (since v15.6.0 the MySQL MCP ships as mysql-mcp@atelier, not bundled)",
       "${CLAUDE_PLUGIN_ROOT} path resolution",
       "AskUserQuestion gated prompts",
-      "SessionStart additionalContext injection"
+      "SessionStart additionalContext injection",
+      "SessionStart CLAUDE_ENV_FILE export (set-otel-resource-attrs.sh)",
+      "PreToolUse permission-decision deny + exit 2 (the fail-CLOSED guard-test-integrity.sh / guard-finalize-publish.sh leaves)",
+      "Claude Mods via sibling plugin (loomwright-lanes: the /lanes pane is a hooks-module mod, nothing in loomwright depends on it)"
     ]
   },
   "known_not_adopted": [
-    {"feature": "Remote Control", "why": "documented as the inbound reply leg for v14.1.0 notifications; not yet wired into any workflow"},
-    {"feature": "PreCompact hook", "why": "considered for state-flush before compaction; SessionStart resume covers the recovery path for now"},
-    {"feature": "Agent Teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)", "why": "documented as experimental/complementary; graduation criteria tracked in agent-teams skill, not met"},
-    {"feature": "isolation: worktree frontmatter", "why": "NO-GO (2026-06-06 empirical probe): native worktree isolation aborted because the plugin's WorktreeCreate hook returned no worktree path. That blocking hook was REMOVED in v15.66.0 (measured 2026-09-11: the payload has no worktree_path and a WorktreeCreate hook replaces the harness git behaviour), so the probe's cause is gone — but adopting isolation: worktree is a SEPARATE decision (the plugin's worktree audit deliberately does not log the native population), not an automatic consequence; re-probe after reinstall before re-flagging. NOTE: claude_code.hook_events_used was hand-refreshed on 2026-09-11 in the same change (WorktreeCreate dropped, PostToolUse put in its slot, the already-wired SessionEnd added before SessionStart) without bumping baseline_date — the next --update-baseline scan re-derives it"}
+    {"feature": "Remote Control", "why": "documented as the inbound reply leg for v14.1.0 notifications; still not wired into any workflow (only a comment in scripts/send-webhook.sh names it). Re-checked 2026-10-12: actively maintained upstream (changelog v2.1.288-v2.1.295), no change in plugin fit"},
+    {"feature": "PreCompact hook", "why": "considered for state-flush before compaction; SessionStart resume covers the recovery path for now. Re-checked 2026-10-12: still unused; PostCompact now exists too (listed below)"},
+    {"feature": "Agent Teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)", "why": "documented as experimental/complementary; graduation criteria tracked in agent-teams skill (dated 2026-05-10, 3 of 6 met), not met. The 2026-10-12 scan saw teammate fixes (changelog v2.1.288: a plugin-defined agent spawned by name keeps its own prompt and tools) but did not re-check the unmet criteria; that re-check is twin-remediation/09 item 2e"},
+    {"feature": "isolation: worktree frontmatter", "why": "NO-GO (2026-06-06 empirical probe): native worktree isolation aborted because the plugin's WorktreeCreate hook returned no worktree path. That blocking hook was REMOVED in v15.66.0 (measured 2026-09-11: the payload has no worktree_path and a WorktreeCreate hook replaces the harness git behaviour), so the probe's cause is gone — but adopting isolation: worktree is a SEPARATE decision (the plugin's worktree audit deliberately does not log the native population), not an automatic consequence. The 2026-10-12 scan adds doc evidence against a drop-in swap: the sub-agents reference says the native worktree branches from the default branch, not the parent session's HEAD, while Supervisor workers must branch from the run's feature branch. Re-probe in a reinstalled-plugin session before re-flagging (twin-remediation/09 item 2d). The 2026-09-11 hand-refresh of claude_code.hook_events_used was re-derived from hooks.json by the 2026-10-12 scan and is correct"},
+    {"feature": "onFailure: \"block\" hook handler field (v2.1.295+)", "why": "CANDIDATE (2026-10-12 scan), not applied, awaiting owner decision: the two fail-CLOSED PreToolUse guards deny with exit 2, but any other non-zero exit (a crash) is a non-blocking error today, so they fail open on their own crash. Probe how a pre-2.1.295 host treats the key first"},
+    {"feature": "async: true hook handler field", "why": "CANDIDATE (2026-10-12 scan), not applied, awaiting owner decision: take the fail-SAFE send-telemetry.sh / send-webhook.sh subagent-stop leaves off the stop path"},
+    {"feature": "if hook handler field (permission-rule filter on tool events)", "why": "CANDIDATE (2026-10-12 scan), not applied, awaiting owner decision: stop spawning the PostToolUse[Bash] emitters on unrelated commands. Not for the fail-CLOSED guards until matching inside compound commands is proven"},
+    {"feature": "SubagentStart hook", "why": "CANDIDATE (2026-10-12 scan), not applied, awaiting owner decision: a spawn-time seam for agent identity/lifecycle rows, which are joined from PostToolUse[Task] today. Needs a payload probe for agent_id + agent_type"},
+    {"feature": "Agent tool effort parameter (v2.1.292)", "why": "CANDIDATE (2026-10-12 scan), not applied, awaiting owner decision: a second cost lever for /supervisor --cheap, which overrides only model"},
+    {"feature": "omitClaudeMd subagent field", "why": "CANDIDATE (2026-10-12 scan), low priority, not applied: context-keeper and rubric-grader may not need the project CLAUDE.md; confirm neither reads conventions from it first"},
+    {"feature": "SendMessage resume of a completed or turn-limited subagent", "why": "CANDIDATE (2026-10-12 scan), not applied: Supervisor and Execute Manager surface agent_id for a manual resume and otherwise re-run cold. An orchestration change, so it belongs to the twin-remediation/09 item 2 analysis"},
+    {"feature": "Nested subagents (spawn depth default 3, env-configurable), background completion notifications, Workflow tool", "why": "seen 2026-10-12: they overlap the Execute Manager poll loop and Supervisor spawn choreography; evaluated propose-only in twin-remediation/09 items 2b/2c (Claude adapter layer per CORE_CONTRACT.md), not adopted here"},
+    {"feature": "Hook events Setup, UserPromptSubmit, UserPromptExpansion, PermissionRequest, PermissionDenied, PostToolUseFailure, PostToolBatch, MessageDisplay, TaskCreated, TeammateIdle, InstructionsLoaded, ConfigChange, CwdChanged, DirectoryAdded, FileChanged, PostCompact, PreModelSwitch, PostModelSwitch, Elicitation, ElicitationResult", "why": "seen 2026-10-12 in the hooks reference; no current plugin workflow needs them"},
+    {"feature": "WorktreeCreate / WorktreeRemove hooks", "why": "used until v15.66.0, then removed: a WorktreeCreate command hook must print the worktree path and replaces the harness git behaviour (hooks reference, 2026-10-12)"},
+    {"feature": "Hook types http, mcp_tool, agent; handler field asyncRewake; SessionStart outputs sessionTitle, watchPaths, initialUserMessage, reloadSkills", "why": "seen 2026-10-12; the emitters are command hooks carrying their own consent and fail-SAFE logic (send-webhook.sh), and the one prompt hook is enough"},
+    {"feature": "Subagent frontmatter mcpServers, initialPrompt", "why": "ignored for plugin-distributed agents per the sub-agents reference (2026-10-12), like hooks and permissionMode"},
+    {"feature": "Subagent frontmatter background, experimental.cacheTtl, autoCompactWindow", "why": "seen 2026-10-12 (autoCompactWindow only in changelog v2.1.296, not on the docs page read); foreground/background is decided per spawn by Supervisor and Execute Manager"},
+    {"feature": "Tools Monitor, TaskStop, PushNotification; claude plugin eval", "why": "seen 2026-10-12; no workflow uses them. claude plugin eval fits a per-release ablation ritual, but twin-remediation item 07, which owned that ritual, is ABANDONED"},
+    {"feature": "Model alias fable", "why": "seen 2026-10-12 in the sub-agents reference; agents pin inherit or haiku and --cheap overrides to sonnet"}
   ],
   "deps": {
     "vikashruhil-mysql-mcp": {"via": "uvx", "pin": "==1.0.1 (see mysql-mcp/.mcp.json)", "note": "read-only MySQL MCP server — since v15.6.0 it ships as the sibling mysql-mcp@atelier plugin, no longer bundled in loomwright"},
     "runtime_clis": ["git", "gh", "jq", "sha256sum|shasum", "uvx"]
   },
   "sources_to_check": {
-    "claude_code_changelog": "https://docs.claude.com/en/release-notes/claude-code",
-    "claude_code_docs_hooks": "https://docs.claude.com/en/docs/claude-code/hooks",
-    "claude_code_docs_subagents": "https://docs.claude.com/en/docs/claude-code/sub-agents",
+    "claude_code_changelog": "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md",
+    "claude_code_docs_hooks": "https://code.claude.com/docs/en/hooks",
+    "claude_code_docs_subagents": "https://code.claude.com/docs/en/sub-agents",
     "search_fallback": "Claude Code changelog new features hooks tools"
   },
   "product_directions": [
