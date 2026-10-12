@@ -4115,9 +4115,16 @@ for body in 'Implements `qh/22-split-surfaces`; unblocks `qh/09-board-and-right-
   rm -rf "$R"
 done
 
-# H9f. Only a `pending`/absent heading is reconciled: a `## Status: proposed`
+# H9f. A not-ready heading (is_not_ready) is never reconciled: a `## Status: proposed`
 #      draft (the PR #482 shape) or a `parked` item with a real Implements line ⇒ no plan.
-RS_GATE_LINE='  [ -z "$status_hdr" ] || [[ "$status_hdr" =~ $rs_open_re ]] || return 0'
+RS_GATE_LINE='  is_not_ready "$f" && return 0'
+# Every other not-done heading stays promotable (ground-truth-json.md's contract).
+for st in '## Status: in-progress' '## Status: in review — PR #77, awaiting merge'; do
+  R="$(rs_cite_repo "$RS_CREL" "$st" "Implements \`$RS_CREL\`.")"
+  rs_run "$R" "$R/.supervisor/requirements/qh"
+  rs_plans_77 "$RS_CREL" && ok "H9f '$st' with an Implements line still plans 'done (PR #77)'" || no "H9f '$st' not reconciled (out='$RUN_OUT')"
+  rm -rf "$R"
+done
 for st in '## Status: proposed' '## Status: parked'; do
   R="$(rs_cite_repo "$RS_CREL" "$st" "Implements \`$RS_CREL\`.")"
   rs_run "$R" "$R/.supervisor/requirements/qh"
