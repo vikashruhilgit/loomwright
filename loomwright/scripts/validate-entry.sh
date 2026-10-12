@@ -97,7 +97,7 @@
 # have been clean anyway. That rule, not the arithmetic, is the thing to read first.
 #
 # ALLOWLIST RESOLUTION IS DELEGATED, NEVER RE-IMPLEMENTED. The cross-repo check obtains the
-# allowlist by invoking `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" allowlist`. It MUST
+# allowlist by invoking `bash "${LOOMWRIGHT_ROOT}/scripts/setup-memory.sh" allowlist`. It MUST
 # NOT parse LOOMWRIGHT_MEMORY_REPO_ALLOWLIST (or any other layer) itself: that env var is only
 # layer 2 of four in setup-memory.sh's `load_allowlist` precedence
 # (`--allow` -> env -> .supervisor/config.json array -> git-remote default). A second parser here
@@ -261,9 +261,9 @@ VALIDATE_ENTRY_RC_PASS=0
 VALIDATE_ENTRY_RC_REFUSE=1
 VALIDATE_ENTRY_RC_UNEXAMINABLE=2
 
-# Where this file lives — used only to locate a sibling setup-memory.sh when CLAUDE_PLUGIN_ROOT is
-# unset (the build-handoff.sh precedent: CLAUDE_PLUGIN_ROOT is the plugin ROOT, helpers live under
-# its scripts/ subdir).
+# Where this file lives — used to find resolve-loomwright-root.sh (the plugin ROOT; helpers live
+# under its scripts/ subdir, the build-handoff.sh precedent) and, when that root has no
+# setup-memory.sh, to locate a sibling one.
 _VE_SELF="${BASH_SOURCE[0]:-$0}"
 _VE_SELF_DIR="$(cd "$(dirname "$_VE_SELF")" 2>/dev/null && pwd)"
 [ -n "$_VE_SELF_DIR" ] || _VE_SELF_DIR="."
@@ -1180,8 +1180,13 @@ EOF
 # second parser of the allowlist itself.
 _ve_setup_memory_path() {
   if [ -n "${VALIDATE_ENTRY_SETUP_MEMORY:-}" ]; then printf '%s' "$VALIDATE_ENTRY_SETUP_MEMORY"; return 0; fi
-  if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" ]; then
-    printf '%s' "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh"; return 0
+  # The install root comes from the vendor-neutral resolver (docs/CORE_CONTRACT.md "Root resolution"),
+  # sourced in a SUBSHELL: this file is itself sourced by the writers, so a file-scope source would
+  # export LOOMWRIGHT_ROOT into their shells. A missing resolver leaves it empty -> the sibling.
+  local _ve_lw_root
+  _ve_lw_root="$( . "$_VE_SELF_DIR/resolve-loomwright-root.sh" 2>/dev/null && printf '%s' "$LOOMWRIGHT_ROOT" )" || _ve_lw_root=""
+  if [ -n "$_ve_lw_root" ] && [ -f "$_ve_lw_root/scripts/setup-memory.sh" ]; then
+    printf '%s' "$_ve_lw_root/scripts/setup-memory.sh"; return 0
   fi
   printf '%s' "$_VE_SELF_DIR/setup-memory.sh"
 }

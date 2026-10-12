@@ -220,10 +220,22 @@ It is **ADAPTER-classed** in `docs/vendor-coupling-manifest.json` and therefore 
 This is deliberate: its whole job is to name the harness variable once so nothing else has to, and a gate that
 flagged it would be flagging the seam that removes the coupling everywhere else.
 
-**Honest state.** Other scripts still read the harness variable directly today. Moving them onto `LOOMWRIGHT_ROOT`
-is a separate follow-up, not part of this contract's first version. The measured call-site list and its base commit
-live only in that follow-up draft, `.supervisor/requirements/proposed/twin-remediation-11-loomwright-root-migration.md`.
-It is propose-only gitignored state, so it is present in the checkout that filed it, not in a clone.
+**Honest state.** The scripts that read the install root **at runtime** now get it from the resolver
+(twin-remediation/11): the validate-entry lookup in the seven memory/rule writers and the rules auditor, plus
+`validate-entry.sh`, `build-handoff.sh` and `automate-lanes.sh`. Each sources the resolver in a subshell (so nothing
+is exported into its own shell or its children), and each falls back to its old location-derived path when the
+resolver beside it is missing. Behaviour change: with the harness variable unset, a pre-set `LOOMWRIGHT_ROOT` now
+wins over that location-derived path. Not every mention of the harness variable is migrated, on purpose:
+
+- `set-otel-resource-attrs.sh` stays on the harness variable. It is Claude-only adapter code (its gate, its outputs and
+  the version manifest it reads are all Claude Code's), and its header says so.
+- Printed instructions that the script never expands (in `audit-rules.sh`, `build-insights.sh`,
+  `guard-finalize-publish.sh` and `propose-domain.sh`) still name the harness variable. They are text for the host
+  shell to run, and that shell only has the harness variable unless an adapter exports `LOOMWRIGHT_ROOT` into it.
+- The two `hooks.json` parsers (`build-capabilities.sh`, `scripts/check-contract-parity.sh`) match the harness
+  variable because the hook manifest, which is adapter-classed, spells it that way.
+- Comments, recorded fixture data, and tests that assert the prompt layer or `hooks.json` spell the harness variable
+  are left alone.
 
 ---
 
