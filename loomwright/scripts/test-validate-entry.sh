@@ -66,6 +66,16 @@ trap 'chmod -R u+rwX "$TMP" 2>/dev/null; rm -rf "$TMP" 2>/dev/null' EXIT
 # pinned harness root above, and fall back to an absent sibling setup-memory.sh — a different code
 # path from the real check's, which would make each control measure the missing resolver instead.
 cp "$HERE/resolve-loomwright-root.sh" "$TMP/resolve-loomwright-root.sh"
+# NO NETWORK from the allowlist resolver. Every cross-repo leg runs validate-entry.sh, which resolves
+# the allowlist through setup-memory.sh; any leg whose resolution reaches layer 4 against REPO_ROOT
+# (no env allowlist, no .supervisor/config.json — a fresh clone, CI) reads the tracked request file
+# .agent/meta-allowlist.txt and would ask the REAL `gh` (the developer's credentials, the network).
+# A FAILING gh stub first on PATH for the whole suite keeps every leg hermetic: no request entry is
+# granted, exactly what a gh-less CI resolves, so no assertion's meaning changes.
+mkdir -p "$TMP/nogh-net"
+printf '#!/bin/sh\necho "gh: test stub — no network in test-validate-entry.sh" >&2\nexit 1\n' > "$TMP/nogh-net/gh"
+chmod +x "$TMP/nogh-net/gh"
+PATH="$TMP/nogh-net:$PATH"; export PATH
 
 # Snapshot the live config up front (section 12 re-checks it at the end).
 LIVE_CFG="$REPO_ROOT/.supervisor/config.json"

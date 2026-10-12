@@ -58,8 +58,9 @@
 # is stored as a JSON ARRAY, defaults to the CURRENT remote's owner/repo on a fresh install (never a
 # hardcoded owner — the plugin ships to other users), and is extended by hand when a repo is renamed.
 # That config is gitignored and does not travel; the TRACKED `.agent/meta-allowlist.txt` does, but it
-# can only REQUEST: an entry is granted only on a `gh` repository-id match with origin, and never
-# without gh (see META_ALLOWLIST_REL / meta_allowlist_grants, beside load_allowlist).
+# can only REQUEST: an entry is granted only on a `gh` repository-id match with a github.com origin,
+# each gh call time-bounded, and never without gh (see META_ALLOWLIST_REL / meta_allowlist_grants,
+# beside load_allowlist).
 #
 # WHY here: this is the deterministic, mechanizable engine. The INTERACTIVE half — the
 # consent-bearing AskUserQuestion offer that must be answered BEFORE anything is written — lives
@@ -883,11 +884,88 @@ remote_slug() {
 # committed file publish those records. An entry is therefore granted ONLY when GitHub says it is
 # the SAME repository as origin: `gh api repos/<slug> --jq .id` equals origin's id (a renamed repo's
 # old slug redirects to the same id; any other repository does not).
+#
+# github.com ORIGINS ONLY. `gh api repos/<slug>` asks github.com unless told otherwise, so for a
+# GitLab / Bitbucket / GitHub Enterprise origin it would compare two github.com NAMESAKES of the
+# slug — an unrelated repository — and could "prove" sameness that does not exist. So the request
+# file is consulted only when origin's HOST is github.com (remote_host, beside remote_slug); any
+# other host grants NOTHING and makes ZERO gh calls. (Not `gh --hostname`: GHE id semantics are
+# unverified here, and a guessed grant is the one outcome this layer must never produce.)
+#
+# BOUNDED. validate-entry.sh resolves this allowlist on every memory/lesson/rule write and
+# meta-sync.sh on every push, so a hung `gh` (captive portal, stalled TLS) must not stall them:
+# every gh call runs under gh_id_bounded, LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT seconds (default 10),
+# killed on overrun and treated as gh failing — nothing granted. After one timeout no further gh
+# call is made in that resolution, so a hung gh costs at most two bounds.
 META_ALLOWLIST_REL=".agent/meta-allowlist.txt"
+META_ALLOWLIST_GH_TIMEOUT_DEFAULT=10
+
+# remote_host — print origin's HOST, lower-cased, or nothing (a filesystem path, no origin, or an
+# unparseable URL). A SEPARATE read from remote_slug, whose owner/repo output other callers depend
+# on. Handles scheme URLs (`https://[user[:pw]@]host[:port]/…`, `ssh://git@host[:port]/…`), the
+# scp form (`[user@]host:owner/repo`) and a scheme-less `host/owner/repo`.
+remote_host() {
+  local url h
+  url="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
+  [ -n "$url" ] || return 0
+  case "$url" in
+    /*|./*|../*|'~'*|file://*) return 0 ;;
+    *://*) h="${url#*://}"; h="${h%%/*}"; h="${h##*@}"; h="${h%%:*}" ;;
+    *:*)   h="${url%%:*}"; h="${h##*@}" ;;
+    *)     h="${url%%/*}" ;;
+  esac
+  [ -n "$h" ] || return 0
+  printf '%s\n' "$h" | tr 'A-Z' 'a-z'
+}
+
+# allowlist_gh_limit — the per-call gh bound in whole seconds: $LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT when
+# it is a positive integer (no leading zero), else the default.
+allowlist_gh_limit() {
+  local lim="${LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT:-}"
+  case "$lim" in ''|*[!0-9]*|0*) lim="$META_ALLOWLIST_GH_TIMEOUT_DEFAULT" ;; esac
+  printf '%s\n' "$lim"
+}
+
+# gh_id_bounded <owner/repo> — print `gh api repos/<slug> --jq .id` within the bound. Exit 0 on a
+# completed, successful gh; 1 when gh failed or no temp file could be made; 124 when the bound
+# expired (gh is killed — TERM, then KILL — and REAPED before returning, so no child outlives the
+# call). bash 3.2 / BSD has no `timeout`: gh is backgrounded writing to a private mktemp file,
+# polled every 0.1s, and the file is removed on every path (it is the only thing written, and it
+# never outlives the call). gh reads </dev/null so it can never consume the caller's stdin.
+gh_id_bounded() {
+  local slug="$1" lim tmp pid ticks=0 max rc
+  lim="$(allowlist_gh_limit)"
+  max=$((lim * 10))
+  tmp="$(mktemp "${TMPDIR:-/tmp}/loomwright-allowlist-gh.XXXXXX" 2>/dev/null)" || return 1
+  [ -n "$tmp" ] && [ -f "$tmp" ] || return 1
+  gh api "repos/$slug" --jq .id </dev/null >"$tmp" 2>/dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$ticks" -ge "$max" ]; then
+      command -v pkill >/dev/null 2>&1 && pkill -TERM -P "$pid" 2>/dev/null
+      kill -TERM "$pid" 2>/dev/null
+      ticks=0
+      while kill -0 "$pid" 2>/dev/null && [ "$ticks" -lt 10 ]; do sleep 0.1; ticks=$((ticks + 1)); done
+      command -v pkill >/dev/null 2>&1 && pkill -KILL -P "$pid" 2>/dev/null
+      kill -KILL "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      rm -f "$tmp" 2>/dev/null
+      return 124
+    fi
+    sleep 0.1
+    ticks=$((ticks + 1))
+  done
+  wait "$pid" 2>/dev/null; rc=$?
+  if [ "$rc" -eq 0 ]; then cat "$tmp" 2>/dev/null; fi
+  rm -f "$tmp" 2>/dev/null
+  [ "$rc" -eq 0 ] || return 1
+  return 0
+}
 
 # meta_allowlist_grants <origin-slug> — print, one per line, the request-file entries that are
 # GRANTED; name every skipped entry (and why) on STDERR, never stdout. FAILS CLOSED: no `gh`, a
-# failing `gh`, a non-numeric answer, or an origin with no parseable owner/repo grants NOTHING.
+# failing or timed-out `gh`, a non-numeric answer, an origin with no parseable owner/repo, or an
+# origin whose host is not github.com grants NOTHING.
 #   · `#` comments and blank lines are skipped;
 #   · origin's own slug (case-insensitive) is already granted by the remote default — no gh call;
 #   · an entry that is not owner/repo-shaped (`[A-Za-z0-9._-]+/[A-Za-z0-9._-]+`, neither half `.`
@@ -897,8 +975,10 @@ META_ALLOWLIST_REL=".agent/meta-allowlist.txt"
 #     gh calls (the GitHub-shaped test fixtures stay hermetic).
 # gh reads </dev/null: it must never consume the request file this loop is reading from stdin.
 meta_allowlist_grants() {
-  local own="${1:-}" f="$repo/$META_ALLOWLIST_REL" line e le own_l origin_id="" origin_state="" id
+  local own="${1:-}" f="$repo/$META_ALLOWLIST_REL" line e le own_l origin_id="" origin_state="" id rc
+  local lim
   [ -f "$f" ] && [ -r "$f" ] || return 0
+  lim="$(allowlist_gh_limit)"
   own_l="$(printf '%s' "$own" | tr 'A-Z' 'a-z')"
   while IFS= read -r line || [ -n "$line" ]; do
     e="$(printf '%s' "$line" | awk '{ sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, ""); print }')"
@@ -919,21 +999,35 @@ meta_allowlist_grants() {
     if [ -z "$origin_state" ]; then
       if [ -z "$own" ]; then
         origin_state="origin has no owner/repo slug (a filesystem-path or unparseable remote), so nothing can be compared"
+      elif [ "$(remote_host)" != "github.com" ]; then
+        origin_state="origin is not on github.com, so the request cannot be checked (gh would compare a github.com namesake)"
       elif ! command -v gh >/dev/null 2>&1; then
         origin_state="gh is not installed, so the request cannot be checked (request-file entries need gh)"
       else
-        origin_id="$(gh api "repos/$own" --jq .id </dev/null 2>/dev/null)" || origin_id=""
-        case "$origin_id" in
-          ''|*[!0-9]*) origin_id=""; origin_state="gh could not resolve origin $own (unauthenticated, offline or failing), so the request cannot be checked" ;;
-          *) origin_state="ok" ;;
-        esac
+        origin_id="$(gh_id_bounded "$own")"; rc=$?
+        [ "$rc" -eq 0 ] || origin_id=""
+        if [ "$rc" -eq 124 ]; then
+          origin_state="gh timed out after ${lim}s resolving origin $own, so the request cannot be checked"
+        else
+          case "$origin_id" in
+            ''|*[!0-9]*) origin_id=""; origin_state="gh could not resolve origin $own (unauthenticated, offline or failing), so the request cannot be checked" ;;
+            *) origin_state="ok" ;;
+          esac
+        fi
       fi
     fi
     if [ "$origin_state" != "ok" ]; then
       echo "allowlist: ignored $e — $origin_state" >&2
       continue
     fi
-    id="$(gh api "repos/$e" --jq .id </dev/null 2>/dev/null)" || id=""
+    id="$(gh_id_bounded "$e")"; rc=$?
+    [ "$rc" -eq 0 ] || id=""
+    if [ "$rc" -eq 124 ]; then
+      # One overrun means gh is unreachable for this resolution: stop asking, so the total stays bounded.
+      origin_state="gh timed out after ${lim}s, so the request cannot be checked"
+      echo "allowlist: ignored $e — $origin_state" >&2
+      continue
+    fi
     case "$id" in
       ''|*[!0-9]*)
         echo "allowlist: ignored $e — gh could not resolve it, so it cannot be shown to be this repository" >&2
@@ -1371,8 +1465,10 @@ What becomes VERSION-CONTROLLED if you apply this:
                                  entries of the tracked request file .agent/meta-allowlist.txt —
                                  an entry there is only a REQUEST, granted only when
                                  `gh api repos/<slug> --jq .id` equals origin's id (a renamed
-                                 repo's old slug). gh is OPTIONAL: missing or failing, no
-                                 request entry is granted.
+                                 repo's old slug), and only for a github.com origin. gh is
+                                 OPTIONAL: missing, failing or past its time bound
+                                 (LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT, default 10s), no request
+                                 entry is granted.
 These are COMMITTED IN PLACE — nothing is moved, symlinked or copied, so every agent keeps
 reading its store from the same path it uses today.
 
@@ -1434,8 +1530,9 @@ meta-sync.sh's push scrub still refuses any ledger record or forge slug outside 
 allowlist. .supervisor/config.json (gitignored) does not travel; on a clone without it the
 allowlist is the current remote PLUS the GRANTED entries of the tracked request file
 .agent/meta-allowlist.txt — an entry there is only a REQUEST, granted only when
-`gh api repos/<slug> --jq .id` equals origin's id. gh is OPTIONAL: missing or failing, no
-request entry is granted and the scrub uses the remote alone.
+`gh api repos/<slug> --jq .id` equals origin's id, and only for a github.com origin. gh is
+OPTIONAL: missing, failing or past its time bound (LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT, default 10s),
+no request entry is granted and the scrub uses the remote alone.
 
 Read this before saying yes:
   · Committing publishes. Agent memory can contain proprietary architecture, internal service

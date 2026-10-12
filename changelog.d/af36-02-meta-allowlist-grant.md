@@ -9,9 +9,14 @@ and named on stderr (`allowlist: ignored <slug> — not this repository`). `gh` 
 fails closed: when it is missing or failing, no request entry is granted and the layer yields the remote alone,
 as before. Layers 1–3 still win with the file unread and no `gh` call. Origin's own slug never needs `gh`, a
 malformed entry is never passed to it, a filesystem-path origin grants nothing, and origin's id is looked up
-lazily, so no file (or an own-slug-only file) makes zero calls. Status lines go to stderr, so stdout stays the
-list that `meta-sync.sh`'s push scrub and `validate-entry.sh` read. New legs in `test-setup-memory.sh` (six
-mutants) and `test-meta-sync.sh` (a fresh clone with no config pushes old-slug history; a mutant without the
-layer is refused) use stubbed `gh`. `/setup memory` docs, the consent disclosure, the setup skill's
+lazily, so no file (or an own-slug-only file) makes zero calls. Only a github.com origin is checked: `gh api`
+asks github.com, so a GitLab, Bitbucket or GitHub Enterprise origin would be compared with a github.com namesake;
+such an origin grants nothing and makes no `gh` call. Every `gh` call is bounded by
+`LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT` seconds (default 10; portable, no `timeout` binary), killed and counted as failing
+on overrun, and one overrun stops further calls, so a hung `gh` cannot stall `validate-entry.sh` or `meta-sync.sh`. Status lines go to stderr, so stdout stays the
+list that `meta-sync.sh`'s push scrub and `validate-entry.sh` read. New legs in `test-setup-memory.sh` (eight
+mutants, including the host check and the overrun check) and `test-meta-sync.sh` (a fresh clone with no config pushes old-slug history; a mutant without the
+layer is refused) use stubbed `gh`, and the legs of `test-validate-entry.sh` and `test-committed-twin-scrub.sh` that
+resolve the allowlist against the real checkout run behind a failing `gh` stub, so a fresh clone makes no network call. `/setup memory` docs, the consent disclosure, the setup skill's
 "does not travel" lesson and `validate-entry.sh`'s restated precedence now describe the request/grant split.
 Honest limit, verified live on 2026-10-12: `vikashruhilgit/ai-agent-manager` is now a separate repository on GitHub (created 2026-07-02), not a redirect, so the seeded old slug is correctly refused here and this repo's old-slug ledger records still need `.supervisor/config.json` on a fresh clone; resolving that is an owner follow-up.

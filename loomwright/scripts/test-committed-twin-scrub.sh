@@ -5,7 +5,7 @@
 # WHY THIS EXISTS: `vikashruhilgit/loomwright` is a PUBLIC repo. Committing `.claude/agent-memory/`
 # and `.supervisor/memory/` publishes the Twin's accumulated judgment irreversibly — a push cannot
 # be taken back, and `/setup memory remove` explicitly does NOT unpublish
-# (setup-memory.sh:1383 [pins: `Removal does NOT unpublish`]).
+# (setup-memory.sh:1479 [pins: `Removal does NOT unpublish`]).
 # One memory entry cited a private work repo before this migration. This is the regression net that
 # stops it coming back.
 #
@@ -433,7 +433,13 @@ vikashruhilgit/ai-agent-manager'
   # Cross-check, advisory: report when the machine-local allowlist disagrees with the committed
   # expectation. NOT a failure — a contributor's config is theirs — but a silent divergence here is
   # what made the CI break confusing, so name it.
-  LOCAL_ALLOW="$(bash "$SETUP_MEMORY" --root "$REPO_ROOT" allowlist 2>/dev/null | sort | tr '\n' ' ')"
+  # A FAILING gh stub first on PATH: with no config.json (a fresh clone) this resolution reaches
+  # the tracked request file and would otherwise ask the REAL gh — the developer's credentials and
+  # the network. Failing gh grants no request entry, which is exactly what gh-less CI resolves.
+  mkdir -p "$TMPD/nogh-net"
+  printf '#!/bin/sh\necho "gh: test stub — no network in test-committed-twin-scrub.sh" >&2\nexit 1\n' > "$TMPD/nogh-net/gh"
+  chmod +x "$TMPD/nogh-net/gh"
+  LOCAL_ALLOW="$(PATH="$TMPD/nogh-net:$PATH" bash "$SETUP_MEMORY" --root "$REPO_ROOT" allowlist 2>/dev/null | sort | tr '\n' ' ')"
   EXPECT_ALLOW="$(printf '%s\n' "$OWNED_SLUGS" | sort | tr '\n' ' ')"
   if [ "$LOCAL_ALLOW" = "$EXPECT_ALLOW" ]; then
     ok "the machine-local allowlist matches the committed owned-slug list"

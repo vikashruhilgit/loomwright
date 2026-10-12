@@ -80,10 +80,12 @@
 #        same-id slug is GRANTED, a different-id slug is ignored + named on stderr + refused by the
 #        ledger filter; a failing or absent gh grants nothing (config.json entries still are);
 #        layers 1–3 win with the file unread and ZERO gh calls; malformed entries never reach gh;
-#        a filesystem-path origin grants nothing; no file / own-slug-only ⇒ ZERO gh calls; stdout
-#        stays the list. gh is a recording PATH stub (no network); six sed/awk mutants (id
-#        comparison, failure guards, stderr, shape check, eager lookup, layer order) each turn
-#        their leg red, gated on non-empty + changed + `bash -n`-clean
+#        a filesystem-path origin grants nothing; a NON-github.com origin (https, scp, ssh://)
+#        grants nothing with ZERO gh calls; a hung gh is killed at the bound, grants nothing and
+#        leaves no process or temp file; no file / own-slug-only ⇒ ZERO gh calls; stdout stays the
+#        list. gh is a recording PATH stub (no network); eight sed/awk mutants (id comparison,
+#        failure guards, stderr, shape check, eager lookup, layer order, host check, overrun
+#        check) each turn their leg red, gated on non-empty + changed + `bash -n`-clean
 #   (e)  idempotency: a second apply is a no-op that writes nothing (.gitignore AND config
 #        byte-identical, no second backup); PLUS backup-before-write asserted positively — the
 #        backup exists and its CONTENT is the pristine pre-apply file — and two applies inside the
@@ -606,6 +608,9 @@ cat > "$MA_D/bin/gh" <<'GH'
 #!/bin/sh
 printf '%s\n' "$*" >> "$GH_STUB_LOG"
 if [ -n "${GH_STUB_FAIL:-}" ]; then echo "gh: stub failure (not logged in)" >&2; exit 1; fi
+# A HUNG gh: `exec` so the stub IS the sleep — the bound's kill reaches it, and a leaked process
+# is findable by its unique duration.
+if [ -n "${GH_STUB_HANG:-}" ]; then exec sleep "$GH_STUB_HANG"; fi
 p="$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
 case "$p" in
   repos/acme/widget|repos/acme/old-name) echo 101 ;;   # old-name: the rename redirect, SAME id
@@ -776,6 +781,84 @@ ma_run "$MA8"
   && ok "(ma8) A5: a filesystem-path origin grants nothing, calls no gh, and says why" \
   || no "(ma8) A5: filesystem-path origin granted or called gh (out: $MA_OUT; gh: $MA_CALLS; err: $MA_ERR)"
 
+# (ma9) a NON-github.com origin grants NOTHING and makes ZERO gh calls. `gh api` defaults to
+# github.com, so for a GitLab / GHE origin it would compare two github.com NAMESAKES: the stub
+# answers acme/widget and acme/old-name with the SAME id 101, which a host-blind check would grant.
+MA9_OK=1; MA9_DETAIL=""
+ma9_leg() {
+  local u d
+  MA9_OK=1; MA9_DETAIL=""
+  for u in https://gitlab.com/acme/widget.git git@ghe.corp.example:acme/widget.git ssh://git@bitbucket.org/acme/widget.git; do
+    d="$(newgit "$u")"
+    ma_req "$d" 'acme/old-name'
+    ma_run "$d"
+    if ! { [ "$MA_OUT" = "acme/widget" ] && [ -z "$MA_CALLS" ] \
+           && hasF 'allowlist: ignored acme/old-name — origin is not on github.com' "$MA_ERR"; }; then
+      MA9_OK=0; MA9_DETAIL="$MA9_DETAIL [$u: out=$(printf '%s' "$MA_OUT" | tr '\n' ' ') gh=$(printf '%s' "$MA_CALLS" | tr '\n' '|')]"
+    fi
+  done
+  [ "$MA9_OK" = 1 ]
+}
+ma9_leg && ok "(ma9) non-github.com origins (https gitlab, scp GHE, ssh:// bitbucket) grant nothing, call no gh, and say why" \
+  || no "(ma9) a non-github.com origin granted a same-id namesake or called gh:$MA9_DETAIL"
+# ... and the host match is case-insensitive and accepts the scp / ssh:// github.com forms.
+MA9G=1
+for u in https://GitHub.COM/acme/widget.git git@github.com:acme/widget.git ssh://git@github.com/acme/widget.git; do
+  d="$(newgit "$u")"; ma_req "$d" 'acme/old-name'; ma_run "$d"
+  [ "$MA_OUT" = "$(printf 'acme/widget\nacme/old-name')" ] || MA9G=0
+done
+[ "$MA9G" = 1 ] && ok "(ma9) github.com origins in https (any case), scp and ssh:// form still grant the same-id slug" \
+  || no "(ma9) the host check rejected a github.com origin form (last out: $MA_OUT; err: $MA_ERR)"
+
+# (ma10) a HUNG gh is BOUNDED: killed after LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT seconds, treated as gh
+# failing (nothing granted, reason named), no further gh call after the overrun, no sleeping child
+# left behind, and no temp file left in TMPDIR.
+MA10="$(newgit https://github.com/acme/widget.git)"
+ma_req "$MA10" 'acme/old-name' 'stranger/elsewhere'
+MA10_TMP="$MA_D/ma10-tmpdir"; mkdir -p "$MA10_TMP"
+# A per-run duration (7.<pid>) and an anchored pattern, so a concurrent run of this suite in another
+# checkout can never be mistaken for a leak here.
+MA10_HANG="7.$$"
+MA10_PAT="^sleep 7\\.$$\$"
+ma10_leg() {
+  local t0 t1
+  t0="$(date +%s)"
+  ma_run "$MA10" LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT=1 GH_STUB_HANG="$MA10_HANG" TMPDIR="$MA10_TMP"
+  t1="$(date +%s)"
+  MA10_ELAPSED=$((t1 - t0))
+  [ "$MA_OUT" = "acme/widget" ] && [ "$MA10_ELAPSED" -lt 5 ] && [ "$(ma_ncalls)" = "1" ] \
+    && hasF 'allowlist: ignored acme/old-name — gh timed out after 1s resolving origin acme/widget' "$MA_ERR" \
+    && hasF 'allowlist: ignored stranger/elsewhere — gh timed out after 1s resolving origin' "$MA_ERR"
+}
+MA10_ELAPSED=""
+ma10_leg && ok "(ma10) a hung gh is killed at the 1s bound (${MA10_ELAPSED}s total), grants nothing, names why, and is not asked again" \
+  || no "(ma10) a hung gh was not bounded or granted something (elapsed ${MA10_ELAPSED}s; out: $MA_OUT; gh: $(printf '%s' "$MA_CALLS" | tr '\n' '|'); err: $MA_ERR)"
+{ ! pgrep -f "$MA10_PAT" >/dev/null 2>&1 && [ -z "$(ls -A "$MA10_TMP" 2>/dev/null)" ]; } \
+  && ok "(ma10) the killed gh was reaped (no 'sleep $MA10_HANG' left running) and no temp file was left in TMPDIR" \
+  || no "(ma10) the bounded runner leaked a process or a temp file (procs: $(pgrep -f "$MA10_PAT" | tr '\n' ' '); tmp: $(ls -A "$MA10_TMP" 2>/dev/null | tr '\n' ' '))"
+pkill -f "$MA10_PAT" 2>/dev/null || true
+# A hang on an ENTRY lookup (origin answers) is bounded too, and stops further lookups.
+cat > "$MA_D/bin-entryhang-gh" <<'GH'
+#!/bin/sh
+printf '%s\n' "$*" >> "$GH_STUB_LOG"
+case "$2" in
+  repos/acme/widget) echo 101 ;;
+  *) exec sleep "$GH_STUB_HANG" ;;
+esac
+GH
+mkdir -p "$MA_D/bin-entryhang"; mv "$MA_D/bin-entryhang-gh" "$MA_D/bin-entryhang/gh"; chmod +x "$MA_D/bin-entryhang/gh"
+: > "$MA_LOG"
+env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST GH_STUB_LOG="$MA_LOG" GH_STUB_HANG="$MA10_HANG" LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT=1 \
+  TMPDIR="$MA10_TMP" PATH="$MA_D/bin-entryhang:$PATH" bash "$MEM" --root "$MA10" allowlist > "$MA_D/out" 2> "$MA_D/err"
+MA_OUT="$(cat "$MA_D/out")"; MA_ERR="$(cat "$MA_D/err")"; MA_CALLS="$(cat "$MA_LOG")"
+{ [ "$MA_OUT" = "acme/widget" ] && [ "$(ma_ncalls)" = "2" ] \
+  && hasF 'allowlist: ignored acme/old-name — gh timed out after 1s' "$MA_ERR" \
+  && hasF 'allowlist: ignored stranger/elsewhere — gh timed out after 1s' "$MA_ERR" \
+  && ! pgrep -f "$MA10_PAT" >/dev/null 2>&1 && [ -z "$(ls -A "$MA10_TMP" 2>/dev/null)" ]; } \
+  && ok "(ma10) a hung ENTRY lookup is bounded, grants nothing, and stops further gh calls (2 calls: origin + one entry)" \
+  || no "(ma10) a hung entry lookup was not bounded cleanly (out: $MA_OUT; gh: $(printf '%s' "$MA_CALLS" | tr '\n' '|'); err: $MA_ERR)"
+pkill -f "$MA10_PAT" 2>/dev/null || true
+
 # Mutation controls — each gated on the mutant being NON-EMPTY, DIFFERENT from the original and
 # `bash -n`-clean (an unapplied or broken mutant would otherwise "pass" silently).
 # ma_mutant <name> <sed-expr> → prints the mutant path, status 1 when the gate fails.
@@ -832,6 +915,20 @@ if M="$(ma_mutant_awk a9 '  [ -f "$f" ] && [ -r "$f" ] || return 0' '  [ -n "$ow
   [ -z "$MA_CALLS" ] && no "(ma-mut A9) REFUTED: an eager origin lookup still made zero gh calls" \
     || ok "(ma-mut A9) an eager origin lookup makes a gh call with no request file, so (ma1) turns red"
 else no "(ma-mut A9) could not build the mutant — inconclusive"; fi
+# (HOST) the github.com host check dropped ⇒ a GitLab/GHE origin compares github.com namesakes and
+# grants acme/old-name ⇒ (ma9) must turn red.
+if M="$(ma_mutant host 's/^      elif \[ "\$(remote_host)" != "github.com" \]; then$/      elif false; then/')"; then
+  MA_SUT="$M"; ma9_leg; MA9_RC=$?; MA_SUT="$MEM"
+  [ "$MA9_RC" -eq 0 ] && no "(ma-mut HOST) REFUTED: without the host check a non-github.com origin still grants nothing — (ma9) is not load-bearing" \
+    || ok "(ma-mut HOST) dropping the github.com host check grants a namesake for a non-github origin, so (ma9) turns red"
+else no "(ma-mut HOST) could not build the mutant — inconclusive"; fi
+# (BOUND) the overrun check dropped ⇒ the runner waits out the hung gh ⇒ (ma10)'s bound leg red.
+if M="$(ma_mutant bound 's/^    if \[ "\$ticks" -ge "\$max" \]; then$/    if false; then/')"; then
+  MA_SUT="$M"; ma10_leg; MA10_RC=$?; MA_SUT="$MEM"
+  pkill -f "$MA10_PAT" 2>/dev/null || true
+  [ "$MA10_RC" -eq 0 ] && no "(ma-mut BOUND) REFUTED: without the overrun check the hung gh still finished inside the bound — (ma10) is not load-bearing" \
+    || ok "(ma-mut BOUND) without the overrun check the hung gh is waited out (${MA10_ELAPSED}s), so (ma10) turns red"
+else no "(ma-mut BOUND) could not build the mutant — inconclusive"; fi
 # (A4) the request-file layer moved ABOVE the config layer ⇒ (ma6)'s config-wins leg red.
 if [ -n "$JQ" ]; then
   if M="$(ma_mutant_awk a4 '  if [ -z "$out" ] && command -v jq >/dev/null 2>&1 && [ -f "$CFG" ]; then' '  [ -z "$out" ] && out="$(meta_allowlist_grants "$(remote_slug)")"')"; then

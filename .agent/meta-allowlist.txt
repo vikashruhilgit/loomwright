@@ -4,7 +4,9 @@
 # Each line is an owner/repo slug this repository REQUESTS. Listing a slug here never grants it:
 # an entry is GRANTED only when `gh api repos/<slug> --jq .id` equals the id of origin's slug (a
 # renamed repo's old slug redirects to the same id), and a slug naming any OTHER repository is
-# ignored and named on stderr. Without gh, or with gh failing, NOTHING here is granted.
+# ignored and named on stderr. Without gh, with gh failing or timing out (each call is bounded by
+# $LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT seconds, default 10), or when origin is not on github.com,
+# NOTHING here is granted.
 # Read only when --allow, $LOOMWRIGHT_MEMORY_REPO_ALLOWLIST and .supervisor/config.json are empty.
 # `#` lines and blank lines are skipped.
 #
