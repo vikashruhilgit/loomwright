@@ -63,7 +63,9 @@
 #     waiver (counted only after the last `picked <item>`) + its refusals; a `|`-bearing title is a legal
 #     `current-escalation --check`; ONE shared reader; AC9 mutation control (unconditional ok ⇒ AL1 red);
 #     fence-aware PR-body + item scans, a "running system" title outranking the repro rule, and evidence
-#     attributed to the step (not-run line, bold pseudo-heading, sibling bullet, next paragraph) — AL11–AL16
+#     attributed to the step (not-run line, bold pseudo-heading, sibling bullet, next paragraph) — AL11–AL16;
+#     a not-run statement on any non-fenced line, an anchored step's intro paragraph, and no title-keyed
+#     evidence for a title two entries share — AL17–AL19, U13c
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -830,6 +832,19 @@ has "U12 gh unreadable ⇒ every Validation step NOT-RUN" "$(cat "$RD")" "V1 Bas
 out="$(LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-status "$RF2" --refresh-readiness)"
 has "U13 lane-status --refresh-readiness re-writes it" "$(cat "$RD")" "V1 Baseline: PASS"
 has "U13b plain view shows the score" "$out" "readiness: ready (2/5:"
+# A numbered `Validation 1 (tests):` line, a blank, an intro paragraph ending in ':' and then the fence
+# still reads PASS (origin/main did; review iteration 2 — the paragraph boundary never drops it).
+cat > "$T/gh-ready-intro" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "pr view") jq -n --arg b "$(printf 'Validation 1 (tests):\n\nRan the suite:\n```\npassed: 5 failed: 0\n```\n')" '{body: $b, headRefOid: "abc123"}' ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$T/gh-ready-intro"
+LOOMWRIGHT_GH_BIN="$T/gh-ready-intro" run lane-readiness "$L3" >/dev/null
+has "U13c numbered entry: \`Validation 1 (tests):\` + blank + intro paragraph + fence ⇒ PASS" "$(cat "$RD")" "V1 Baseline: PASS — pasted output in the PR body"
+LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-readiness "$L3" >/dev/null
 # U14: the children-settled line is clipped, never mid-token. Wave W2's L2 line was cut at 160
 # chars inside its PR URL (`…/loomwright/pull/460` → `…/loomwrig`), and meta-sync's forge_slug scrub
 # then refused the lane's metadata push (a non-allowlisted slug), so lane-remove refused the lane.
@@ -2430,6 +2445,32 @@ check "AL15 (c) a generic \"running system\" mention in the Summary does not bor
   "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output"
 out="$(vgb '## Test Plan\n### Validation 2 — running system\n\nRan three clones:\n\n```\n# load\npeak load1 31.2\n```\n')"
 check "AL16 a heading-started step still owns its whole section (fence with a \`#\` line inside) ⇒ ok" "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
+# Review iteration 2: a not-run statement on ANY non-fenced line of the step's passage, an anchored step
+# keeping its own intro paragraph, and no title-keyed evidence for a title two entries share.
+out="$(vgb '## Test Plan\n- **Running system:** three clones\n  Not run: machine shared\n  ```\n  load1 82\n  ```\n')"
+check "AL17 bullet form: \"Not run\" on the line AFTER the match, a fence following ⇒ unrun" \
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
+out="$(vgb '## Test Plan\n### Validation 2 - running system\nNot run, machine shared.\n```\nload1 82\n```\n')"
+check "AL17b heading form: \"Not run\" in the section body, a fence following ⇒ unrun" \
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
+out="$(vgb '## Test Plan\nValidation 2 — running system: three clones\n```\n3 skipped, 0 not run, peak load1 31\n```\n')"
+check "AL17c … but \"skipped\" / \"not run\" inside the pasted output is output, not the PR's statement ⇒ ok" \
+  "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
+out="$(vgb '## Test Plan\nValidation 2 (running system): ran three clones at once.\n\nOutput:\n\n```\npeak load1 31\n```\n')"
+check "AL18 AC2 an anchored step keeps its intro paragraph (\"Output:\") and the fence after it ⇒ ok" \
+  "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
+out="$(vgb '## Test Plan\nValidation 1 — running system: no, the smoke run.\n```\nok\n```\n')"
+check "AL18b a title mention on another step's anchored line is never borrowed ⇒ unrun" \
+  "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body"
+printf '# t\n## Validation\n- **Running system:** three clones at once.\n- **Running system:** a rerun on a quiet machine.\n' > "$VG/reqs/twin.md"
+out="$(vgb '## Test Plan\n- **Running system:** three clones\n  ```\n  peak load1 31\n  ```\n## Not verified\n- the quiet-machine rerun: deferred\n' reqs/twin.md)"
+check "AL19 two entries titled \"Running system\": one generic passage evidences neither (no title match) ⇒ unrun" \
+  "$out" "validation-gate: unrun — V1 Running system: no evidence in the PR body"
+out="$(vgb '## Test Plan\nValidation 1 — running system, three clones:\n```\npeak load1 31\n```\n## Not verified\n- the quiet-machine rerun: deferred\n' reqs/twin.md)"
+check "AL19b … each needs its own \"validation <n>\": only V1 anchored ⇒ unrun naming V2" \
+  "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body"
+out="$(vgb '## Test Plan\nValidation 1 — three clones:\n```\npeak load1 31\n```\nValidation 2 — quiet machine:\n```\npeak load1 4\n```\n' reqs/twin.md)"
+check "AL19c … both anchored with output ⇒ ok — 2 steps" "$out" "validation-gate: ok — 2 running-system step(s) evidenced"
 printf '# n\n## Validation (must pass before merge)\n1. **Baseline:** tests green.\n2. **Unchanged path:** a READY drain whose PR body pastes every running-system step parks as before.\n' > "$VG/reqs/norun.md"
 printf '# n\n## Touches\n- `x`\n' > "$VG/reqs/noval.md"
 check "AL5 AC5 no running-system entry (\"running-system\" hyphenated is not the phrase) ⇒ none" \

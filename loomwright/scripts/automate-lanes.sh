@@ -2568,40 +2568,53 @@ lanes_feed() {
 #   headline-repro the Validation entry naming a mutation / repro (PASS n/a when none is named)
 # Called by the lane at its ready_for_release park; re-written on demand (`lane-status --refresh-readiness`,
 # which also covers a lane already closed out — `done` — so a report written before a fix is repairable).
-# _lanes_rd_section <n> <title> <body_file> [nv] — the PR body's lines for Validation entry n. With
-# the 4th argument `nv` it prints instead ONE line: `NV` when any matched block starts under a PR-body
-# heading (at any enclosing level) containing "not verified" or "not run"; else `NL` when a matched
-# block's own first line says "not run" / "skipped" / "not verified"; else nothing — the same match,
-# so the heading test can never drift from the evidence test. Fence-aware: a line inside a ``` / ~~~ block (shell comments, `#!`,
-# root prompts, pasted output) is never a heading, never starts a match and never ends one.
+# _lanes_rd_section <n> <title> <body_file> [nv] [<others>] [<tm>] — the PR body's lines for Validation
+# entry n. With the 4th argument `nv` it prints instead ONE line: `NV` when any matched block starts
+# under a PR-body heading (at any enclosing level) containing "not verified" or "not run"; else `NL`
+# when such a heading says "skipped", or ANY non-fenced line of a matched block (its first line, a
+# continuation, a heading-started section's body) says "not run" / "skipped" / "not verified"; else
+# nothing — the same match, so the not-run tests can never drift from the evidence test. Fenced lines
+# never raise NL (pasted output that says "skipped" is output, not the PR's statement). <others> is
+# the item's entry titles, newline-separated; <tm> 0 disables the title match (a title another entry's
+# title contains is not unique — that entry needs its own "validation <n>"). Titles are read through
+# ENVIRON (awk -v would rewrite a backslash). Fence-aware: a line inside a ``` / ~~~ block (shell
+# comments, `#!`, root prompts, pasted output) is never a heading, never starts a match, never ends one.
 #   heading      `#`..`######` + a space, or a whole-line bold `**…**` naming "not verified" / "not run"
-#                (a pseudo-heading below every `#` level)
-#   match start  a line naming "validation <n>", or containing the entry's title
+#                / "skipped" (a pseudo-heading below every `#` level)
+#   match start  a line naming "validation <n>" (an anchored match), or containing the entry's title
+#                (a title match, only when <tm> is not 0 and the line names no "validation <m>" —
+#                another step's anchored line is never borrowed by a title)
 #   match end    any heading; a line naming another "validation <m>"; for a match that started on a
 #                list item, the next list item at the same or a shallower indent; for any non-heading
-#                start, an unindented non-fence line after a blank line (the next paragraph) — so a
-#                fence elsewhere in the section is never this step's evidence
+#                start, an unindented non-fence paragraph after a blank line that is a list item or
+#                names another entry's title — and, for a title match, ANY such paragraph (a generic
+#                mention never borrows the next paragraph's fence; an anchored match keeps its own
+#                intro paragraph, e.g. "Output:", and the fence after it)
 _lanes_rd_section() {
-  awk -v n="$1" -v t="$2" -v mode="${4:-}" '
-    BEGIN { t = tolower(t); vn = "validation[ #]*" n "([^0-9]|$)" }
+  _RD_T="$2" _RD_O="${5:-}" awk -v n="$1" -v mode="${4:-}" -v tm="${6:-1}" '
+    BEGIN { t = tolower(ENVIRON["_RD_T"]); vn = "validation[ #]*" n "([^0-9]|$)"; no = split(tolower(ENVIRON["_RD_O"]), ot, "\n") }
     function ind(s) { match(s, /^[ \t]*/); return RLENGTH }
+    function nrv(s) { return index(s, "not verified") || index(s, "not run") }
+    function nrl(s) { return nrv(s) || index(s, "skipped") }
+    function oth(s,  i) { for (i = 1; i <= no; i++) if (ot[i] != "" && !index(t, ot[i]) && index(s, ot[i])) return 1; return 0 }
     { l = tolower($0); wasin = inf; fl = 0; hd = 0 }
     l ~ /^[ \t]*(```|~~~)/ {
       fl = 1; x = l; sub(/^[ \t]*/, "", x); c = substr(x, 1, 3)
       if (!inf) { inf = 1; fc = c } else if (c == fc) inf = 0
     }
     !wasin && !fl && l ~ /^#+[ \t]/ && match(l, /[^#]/) - 1 <= 6 { lv = RSTART - 1; hd = 1 }
-    !wasin && !fl && !hd && l ~ /^[ \t]*\*\*.*\*\*[ \t]*:?[ \t]*$/ && (index(l, "not verified") || index(l, "not run")) { lv = 7; hd = 1 }
+    !wasin && !fl && !hd && l ~ /^[ \t]*\*\*.*\*\*[ \t]*:?[ \t]*$/ && nrl(l) { lv = 7; hd = 1 }
     hd { h[lv] = l; for (k = lv + 1; k <= 7; k++) delete h[k]; top = lv }
+    { li = (l ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/) }
     on && !wasin && !fl && (hd || (l ~ /validation[ #]*[0-9]/ && l !~ vn) ||
-        (sk == "b" && l ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/ && ind(l) <= si) ||
-        (sk != "h" && blank && l !~ /^[ \t]/ && l !~ /^[ \t]*$/)) { on = 0 }
-    !on && !wasin && !fl && (l ~ vn || (t != "" && index(l, t) > 0)) {
-      on = 1; si = ind(l)
-      sk = hd ? "h" : (l ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/ ? "b" : "p")
-      for (k = 1; k <= top; k++) if ((k in h) && (index(h[k], "not verified") || index(h[k], "not run"))) nv = 1
-      if (index(l, "not verified") || index(l, "not run") || index(l, "skipped")) nl = 1
+        (sk == "b" && li && ind(l) <= si) ||
+        (sk != "h" && blank && l !~ /^[ \t]/ && l !~ /^[ \t]*$/ && (!sw || li || oth(l)))) { on = 0 }
+    !on && !wasin && !fl && (l ~ vn || (tm != 0 && t != "" && index(l, t) > 0 && l !~ /validation[ #]*[0-9]/)) {
+      on = 1; si = ind(l); sw = (l ~ vn)
+      sk = hd ? "h" : (li ? "b" : "p")
+      for (k = 1; k <= top; k++) if (k in h) { if (nrv(h[k])) nv = 1; else if (index(h[k], "skipped")) nl = 1 }
     }
+    on && !wasin && !fl && nrl(l) { nl = 1 }
     on && mode != "nv" { print }
     { blank = (!wasin && !fl && l ~ /^[ \t]*$/) }
     END { if (mode == "nv") { if (nv) print "NV"; else if (nl) print "NL" } }' "$3"
@@ -2622,13 +2635,16 @@ _lanes_rd_section() {
 #             mutation / repro ("mutation", "must catch", "repro", "must fail"; today's rule) ·
 #             running-system — the joined entry text contains "running system" · other (case-insensitive)
 #   status    gh_ok 0 ⇒ NOT-RUN (PR body unreadable). Else the PR body's matching lines
-#             (_lanes_rd_section): none ⇒ NOT-RUN; under a "not verified" / "not run" heading, or a
-#             matched first line saying "not run" / "skipped" / "not verified" ⇒ NOT-RUN; no fence line
-#             ⇒ NOT-RUN; a non-repro entry whose output shows the word FAIL ⇒ FAIL; else PASS
+#             (_lanes_rd_section): none ⇒ NOT-RUN; under a "not verified" / "not run" heading, or any
+#             non-fenced matched line saying "not run" / "skipped" / "not verified" ⇒ NOT-RUN; no fence
+#             line ⇒ NOT-RUN; a non-repro entry whose output shows the word FAIL ⇒ FAIL; else PASS
+#   unique    an entry whose title (case-insensitive) equals or is contained in another entry's title
+#             gets NO title match — e.g. two `- **Running system:**` bullets — so one passage can never
+#             evidence two steps: each needs its own "validation <n>" in the PR body, else NOT-RUN
 # An unreadable item file prints nothing (callers that must fail CLOSED check readability themselves).
 _lanes_validation_rows() {
-  local itemf="$1" body="$2" gh_ok="$3" pr="${4:-}" n title kind st ev sec nvs
-  awk '
+  local itemf="$1" body="$2" gh_ok="$3" pr="${4:-}" n title kind tm st ev sec nvs ents titles
+  ents="$(awk '
     function flush() {
       if (!cur) return
       t = first
@@ -2656,15 +2672,20 @@ _lanes_validation_rows() {
     /^[ \t]*$/ { blank = 1; next }
     cur && ($0 ~ /^[ \t]/ || !blank) { x = $0; gsub(/\t/, " ", x); sub(/^ +/, "", x); full = full " " x; blank = 0; next }
     { flush(); blank = 0 }
-    END { flush() }' "$itemf" 2>/dev/null |
-  while IFS="$(printf '\t')" read -r n title kind; do
+    END { flush() }' "$itemf" 2>/dev/null)"
+  [ -n "$ents" ] || return 0
+  titles="$(cut -f2 <<<"$ents")"
+  # 4th column tm: 0 when this title equals / is contained in another entry's title (no title match).
+  awk -F'\t' '{ r[NR] = $0; lt[NR] = tolower($2) }
+    END { for (i = 1; i <= NR; i++) { tm = 1; for (j = 1; j <= NR; j++) if (j != i && index(lt[j], lt[i])) tm = 0; print r[i] "\t" tm } }' <<<"$ents" |
+  while IFS="$(printf '\t')" read -r n title kind tm; do
     [ -n "$n" ] || continue
     # (`${pr:-…}` expands to $pr itself when set — the old one-expression form printed the URL twice)
     if [ "$gh_ok" = 0 ]; then st=NOT-RUN; if [ -n "$pr" ]; then ev="PR body unreadable ($pr)"; else ev="PR body unreadable: no PR recorded"; fi
     else
-      sec="$(_lanes_rd_section "$n" "$title" "$body")"
+      sec="$(_lanes_rd_section "$n" "$title" "$body" "" "$titles" "$tm")"
       if [ -z "$sec" ]; then st=NOT-RUN; ev="no evidence in the PR body"
-      elif nvs="$(_lanes_rd_section "$n" "$title" "$body" nv)" && [ "$nvs" = NV ]; then st=NOT-RUN; ev="listed under a \"Not verified\" / \"Not run\" heading in the PR body"
+      elif nvs="$(_lanes_rd_section "$n" "$title" "$body" nv "$titles" "$tm")" && [ "$nvs" = NV ]; then st=NOT-RUN; ev="listed under a \"Not verified\" / \"Not run\" heading in the PR body"
       elif [ -n "$nvs" ]; then st=NOT-RUN; ev="marked not run / skipped / not verified in the PR body"
       elif ! grep -qE '^[[:space:]]*(```|~~~)' <<<"$sec"; then st=NOT-RUN; ev="mentioned in the PR body without pasted output"
       elif [ "$kind" != repro ] && grep -qw 'FAIL' <<<"$sec"; then st=FAIL; ev="pasted output shows FAIL"
