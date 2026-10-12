@@ -38,7 +38,7 @@
       "SessionStart additionalContext injection",
       "SessionStart CLAUDE_ENV_FILE export (set-otel-resource-attrs.sh)",
       "PreToolUse permission-decision deny + exit 2 (the fail-CLOSED guard-test-integrity.sh / guard-finalize-publish.sh leaves)",
-      "Claude Mods via sibling plugin (loomwright-lanes: the /lanes pane is a hooks-module mod, nothing in loomwright depends on it)"
+      "Claude Mods via an optional sibling plugin (the /lanes pane is a hooks-module mod; nothing under loomwright/ depends on it)"
     ]
   },
   "known_not_adopted": [
