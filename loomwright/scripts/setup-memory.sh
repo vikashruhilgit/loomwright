@@ -835,46 +835,79 @@ write_gitignore() {
 ALLOWLIST=""
 ALLOWLIST_SOURCE="none"
 
-# Parse `owner/repo` out of a git remote URL. Handles https, ssh scp-style, and ssh:// forms;
-# strips a trailing `.git`. Echoes nothing when it cannot decide — NEVER guesses an owner.
-remote_slug() {
-  local url slug head
-  url="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
+# ORIGIN: ONE READ, ONE NORMALISATION. origin's owner/repo (the layer-4 default) and its HOST (the
+# request file's github.com gate) both come from ONE `git remote get-url origin` per resolution
+# (resolve_origin) and ONE URL-shape classification (parse_remote_url). They used to be two reads
+# through two separate case ladders, so a new URL form taught to one parser could silently disagree
+# with the other — the slug saying "acme/widget" while the host said "not github.com", or worse the
+# reverse. One ladder makes that disagreement structurally impossible.
+ORIGIN_SLUG=""
+ORIGIN_HOST=""
+PARSED_SLUG=""
+PARSED_HOST=""
+
+# parse_remote_url <url> — classify the URL ONCE (filesystem path | scheme | scp | scheme-less) and
+# set, in the CURRENT shell, PARSED_HOST (lower-cased, or empty) and PARSED_SLUG (`owner/repo`, or
+# empty). Handles `https://[user[:pw]@]host[:port]/…`, `ssh://git@host[:port]/…`, the scp form
+# `[user@]host:owner/repo` and a scheme-less `host/owner/repo`; strips a trailing `.git`. The slug is
+# empty whenever it cannot decide — NEVER guesses an owner. Pure: no read, no write, no subshell.
+parse_remote_url() {
+  local url="${1:-}" kind h slug head repo_part rest owner_part
+  PARSED_SLUG=""; PARSED_HOST=""
   [ -n "$url" ] || return 0
-  # A FILESYSTEM-PATH remote carries no owner at all. `origin = /Users/x/myrepo` has the same
-  # shape as `host/owner/repo` once you only look at the last two segments, so the naive tail
-  # split would return `x/myrepo` — an owner invented from a parent directory name, which is
-  # exactly what this function promises never to do. Decide it is a path and return nothing.
+  # A FILESYSTEM-PATH remote carries no owner (and no host) at all. `origin = /Users/x/myrepo` has
+  # the same shape as `host/owner/repo` once you only look at the last two segments, so the naive
+  # tail split would return `x/myrepo` — an owner invented from a parent directory name, which is
+  # exactly what this parser promises never to do. Decide it is a path and return nothing.
   case "$url" in
     # NOTE the QUOTED tilde: bash tilde-expands `case` PATTERNS, so a bare `~*` would silently
     # become the developer's own home path and stop matching a literal `~/...` remote.
     /*|./*|../*|'~'*|file://*) return 0 ;;
+    *://*) kind=scheme; h="${url#*://}"; h="${h%%/*}"; h="${h##*@}"; h="${h%%:*}" ;;
+    *:*)   kind=scp;    h="${url%%:*}"; h="${h##*@}" ;;
+    *)     kind=plain;  h="${url%%/*}" ;;
   esac
-  slug="$url"
-  slug="${slug%.git}"
+  [ -n "$h" ] && PARSED_HOST="$(printf '%s\n' "$h" | tr 'A-Z' 'a-z')"
+  slug="${url%.git}"
   slug="${slug%/}"
-  case "$slug" in
-    *://*|*:*) : ;;                 # a scheme or an scp-style `host:` — a real remote URL
-    *)
-      # No scheme and no colon: only a HOST-LIKE leading segment can be followed by an owner.
-      # `subdir/myrepo` or a bare `myrepo` is a relative path, not `owner/repo`.
-      head="${slug%%/*}"
-      case "$head" in
-        *.*|localhost) : ;;
-        *) return 0 ;;
-      esac ;;
-  esac
+  if [ "$kind" = plain ]; then
+    # No scheme and no colon: only a HOST-LIKE leading segment can be followed by an owner.
+    # `subdir/myrepo` or a bare `myrepo` is a relative path, not `owner/repo`.
+    head="${slug%%/*}"
+    case "$head" in
+      *.*|localhost) : ;;
+      *) return 0 ;;
+    esac
+  fi
   case "$slug" in
     *:*/*)  slug="${slug##*:}" ;;   # git@host:owner/repo  → owner/repo
   esac
   # For URL forms the tail is still host/owner/repo — keep the LAST two segments.
-  local repo_part owner_part rest
   repo_part="${slug##*/}"
   rest="${slug%/*}"
   owner_part="${rest##*/}"
   [ -n "$repo_part" ] && [ -n "$owner_part" ] || return 0
   case "$owner_part" in *:*) return 0 ;; esac   # no owner segment at all
-  printf '%s/%s\n' "$owner_part" "$repo_part"
+  PARSED_SLUG="$owner_part/$repo_part"
+}
+
+# resolve_origin — read origin's URL exactly ONCE and set ORIGIN_SLUG / ORIGIN_HOST from it, in the
+# CURRENT shell. Every resolution calls it afresh (an in-process memo for that resolution only), so
+# a later resolution in the same process re-reads rather than trusting an earlier value.
+resolve_origin() {
+  local url
+  url="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
+  parse_remote_url "$url"
+  ORIGIN_SLUG="$PARSED_SLUG"
+  ORIGIN_HOST="$PARSED_HOST"
+}
+
+# remote_slug — print origin's `owner/repo`, or nothing when it cannot decide (the original output
+# contract, unchanged: a filesystem-path origin still yields nothing).
+remote_slug() {
+  resolve_origin
+  [ -n "$ORIGIN_SLUG" ] && printf '%s\n' "$ORIGIN_SLUG"
+  return 0
 }
 
 # THE TRACKED REQUEST FILE. `.supervisor/config.json` is gitignored, so it does not travel: a second
@@ -889,8 +922,8 @@ remote_slug() {
 # github.com ORIGINS ONLY. `gh api repos/<slug>` asks github.com unless told otherwise, so for a
 # GitLab / Bitbucket / GitHub Enterprise origin it would compare two github.com NAMESAKES of the
 # slug — an unrelated repository — and could "prove" sameness that does not exist. So the request
-# file is consulted only when origin's HOST is github.com (remote_host, beside remote_slug); any
-# other host grants NOTHING and makes ZERO gh calls. (Not `gh --hostname`: GHE id semantics are
+# file is consulted only when origin's HOST is github.com ($ORIGIN_HOST, set by resolve_origin from
+# the SAME read and the SAME parse as the slug); any other host grants NOTHING and makes ZERO gh calls. (Not `gh --hostname`: GHE id semantics are
 # unverified here, and a guessed grant is the one outcome this layer must never produce.)
 #
 # BOUNDED. validate-entry.sh resolves this allowlist on every memory/lesson/rule write and
@@ -901,6 +934,17 @@ remote_slug() {
 # timeout no further gh call is made in that resolution, so a hung gh costs at most two bounds,
 # each plus a 1s TERM grace (limit: a descendant that deliberately leaves gh's process group is
 # not covered — see gh_id_bounded).
+#
+# NOT CACHED ACROSS INVOCATIONS — BY DESIGN. Each `setup-memory.sh allowlist` process resolves from
+# scratch: origin's URL is read once and origin's id looked up at most once PER RESOLUTION (an
+# in-process memo), but nothing survives the process. A cross-invocation cache would have to be a
+# FILE, and the WRITE-CONTAINMENT INVARIANT says `allowlist` writes none; an env-provided cache (a
+# caller-exported origin id) is refused too, because a stale or forged value could then GRANT — an
+# id may only be trusted when this process produced it. The cost is bounded instead: zero gh calls
+# with no request file or an own-slug-only one (lazy lookup), at most cap + 1 calls otherwise, each
+# within the bound. A caller that resolves many times (validate-entry.sh once per entry, meta-sync.sh
+# per push) and wants zero gh calls should set `.supervisor/config.json` `.setup_memory.repo_allowlist`
+# — layer 3 then wins and the request file is never read.
 #
 # CAPPED. The request file is the attacker-controlled input, so the WORK it drives is capped too, not
 # just each call: at most META_ALLOWLIST_MAX_ENTRIES well-formed non-own entries are compared per
@@ -915,24 +959,6 @@ META_ALLOWLIST_GH_TIMEOUT_DEFAULT=10
 META_ALLOWLIST_MAX_ENTRIES_DEFAULT=20
 META_ALLOWLIST_MAX_ENTRIES_CEIL=100
 META_ALLOWLIST_MAX_LINES=200
-
-# remote_host — print origin's HOST, lower-cased, or nothing (a filesystem path, no origin, or an
-# unparseable URL). A SEPARATE read from remote_slug, whose owner/repo output other callers depend
-# on. Handles scheme URLs (`https://[user[:pw]@]host[:port]/…`, `ssh://git@host[:port]/…`), the
-# scp form (`[user@]host:owner/repo`) and a scheme-less `host/owner/repo`.
-remote_host() {
-  local url h
-  url="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
-  [ -n "$url" ] || return 0
-  case "$url" in
-    /*|./*|../*|'~'*|file://*) return 0 ;;
-    *://*) h="${url#*://}"; h="${h%%/*}"; h="${h##*@}"; h="${h%%:*}" ;;
-    *:*)   h="${url%%:*}"; h="${h##*@}" ;;
-    *)     h="${url%%/*}" ;;
-  esac
-  [ -n "$h" ] || return 0
-  printf '%s\n' "$h" | tr 'A-Z' 'a-z'
-}
 
 # allowlist_gh_limit — the per-call gh bound in whole seconds: $LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT when
 # it is a positive integer (no leading zero), else the default.
@@ -1023,6 +1049,10 @@ gh_id_bounded() {
 # GRANTED; name every skipped entry (and why) on STDERR, never stdout. FAILS CLOSED: no `gh`, a
 # failing or timed-out `gh`, a non-numeric answer, an origin with no parseable owner/repo, or an
 # origin whose host is not github.com grants NOTHING.
+#   · an ABSENT request file is silent; one that EXISTS but is not a readable regular file (mode
+#     000, a directory, a symlink to one) is named once on stderr and grants nothing;
+#   · origin's host is read from $ORIGIN_HOST (resolve_origin, run by load_allowlist before this) —
+#     never a second `git remote get-url`; unset, it fails closed as "not on github.com";
 #   · `#` comments and blank lines are skipped;
 #   · origin's own slug (case-insensitive) is already granted by the remote default — no gh call;
 #   · an entry that is not owner/repo-shaped (`[A-Za-z0-9._-]+/[A-Za-z0-9._-]+`, neither half `.`
@@ -1037,6 +1067,9 @@ gh_id_bounded() {
 meta_allowlist_grants() {
   local own="${1:-}" f="$repo/$META_ALLOWLIST_REL" line e le own_l origin_id="" origin_state="" id rc
   local lim cap compared=0 nlines=0
+  if [ -e "$f" ] && ! { [ -f "$f" ] && [ -r "$f" ]; }; then
+    echo "allowlist: ignored $META_ALLOWLIST_REL — not readable (not a readable regular file), so no request entry is granted" >&2
+  fi
   [ -f "$f" ] && [ -r "$f" ] || return 0
   lim="$(allowlist_gh_limit)"
   cap="$(allowlist_max_entries)"
@@ -1065,7 +1098,7 @@ meta_allowlist_grants() {
     if [ -z "$origin_state" ]; then
       if [ -z "$own" ]; then
         origin_state="origin has no owner/repo slug (a filesystem-path or unparseable remote), so nothing can be compared"
-      elif [ "$(remote_host)" != "github.com" ]; then
+      elif [ "$ORIGIN_HOST" != "github.com" ]; then
         origin_state="origin is not on github.com, so the request cannot be checked (gh would compare a github.com namesake)"
       elif ! command -v gh >/dev/null 2>&1; then
         origin_state="gh is not installed, so the request cannot be checked (request-file entries need gh)"
@@ -1162,7 +1195,8 @@ load_allowlist() {
     fi
   fi
   if [ -z "$out" ]; then
-    own="$(remote_slug)"
+    resolve_origin   # ONE origin read for this resolution: the slug here AND the host gate inside
+    own="$ORIGIN_SLUG"
     granted="$(meta_allowlist_grants "$own")"
     out="$own"
     if [ -n "$own" ]; then

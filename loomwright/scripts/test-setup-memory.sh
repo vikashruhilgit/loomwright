@@ -84,10 +84,13 @@
 #        grants nothing with ZERO gh calls; a hung gh is killed at the bound, grants nothing and
 #        leaves no process or temp file — and so is a child gh leaves on the pipe (one that
 #        ignores TERM, or one an exit-0 gh never waited for); no file / own-slug-only ⇒ ZERO gh
-#        calls; stdout stays the list. gh is a recording PATH stub (no network); eleven sed/awk
+#        calls; stdout stays the list; origin's URL is read EXACTLY ONCE per resolution and slug
+#        and host agree across https / ssh:// / scp / scheme-less forms (a git shim counts the
+#        reads); an existing-but-unreadable request file (mode 000, a directory) is named on
+#        stderr and grants nothing. gh is a recording PATH stub (no network); thirteen sed/awk
 #        mutants (id comparison, failure guards, stderr, shape check, eager lookup, layer order,
-#        host check, overrun check, group signal, group poll, entry cap) each turn their leg red,
-#        gated on non-empty + changed + `bash -n`-clean
+#        host check, single origin read, unreadable-file line, overrun check, group signal, group
+#        poll, entry cap) each turn their leg red, gated on non-empty + changed + `bash -n`-clean
 #   (e)  idempotency: a second apply is a no-op that writes nothing (.gitignore AND config
 #        byte-identical, no second backup); PLUS backup-before-write asserted positively — the
 #        backup exists and its CONTENT is the pristine pre-apply file — and two applies inside the
@@ -952,6 +955,68 @@ ma_run "$MA12"
   && ok "(ma11) a line past the 200-line read cap is never read or passed to gh, and the stop is named once" \
   || no "(ma11) the read cap did not hold (out: $MA_OUT; gh: $MA_CALLS; err: $(printf '%s' "$MA_ERR" | tail -n 2 | tr '\n' '|'))"
 
+# (ma14) ONE origin read per resolution, ONE parse for slug AND host. A git shim on PATH logs every
+# `remote get-url` and execs the real git. Each URL form must resolve the slug (acme/widget), gate
+# on the host it came from (github.com forms grant the same-id acme/old-name; a scheme-less gitlab
+# origin grants nothing with zero gh calls), and read origin's URL EXACTLY ONCE — the request file
+# needs both slug and host, so two parsers would read twice.
+MA_GITC="$MA_D/bin-gitcount"; mkdir -p "$MA_GITC"
+MA_REAL_GIT="$(command -v git)"
+printf '#!/bin/sh\ncase " $* " in *" remote get-url "*) printf "%%s\\n" "$*" >> "$GIT_COUNT_LOG" ;; esac\nexec "%s" "$@"\n' \
+  "$MA_REAL_GIT" > "$MA_GITC/git"
+chmod +x "$MA_GITC/git"
+MA_GITLOG="$MA_D/git-count.log"
+MA14_DETAIL=""
+ma14_leg() {
+  local u d want n
+  MA14_DETAIL=""
+  for u in https://github.com/acme/widget.git ssh://git@github.com:22/acme/widget.git git@github.com:acme/widget.git \
+           github.com/acme/widget https://user:tok@GitHub.com:443/acme/widget.git gitlab.com/acme/widget; do
+    d="$(newgit "$u")"; ma_req "$d" 'acme/old-name'
+    : > "$MA_GITLOG"
+    ma_run "$d" PATH="$MA_GITC:$MA_D/bin:$PATH" GIT_COUNT_LOG="$MA_GITLOG"
+    n="$(grep -c 'remote get-url' "$MA_GITLOG" 2>/dev/null || true)"
+    case "$u" in
+      gitlab.com/*) want="acme/widget"
+        { [ -z "$MA_CALLS" ] && hasF 'allowlist: ignored acme/old-name — origin is not on github.com' "$MA_ERR"; } \
+          || MA14_DETAIL="$MA14_DETAIL [$u: host gate wrong gh=$(printf '%s' "$MA_CALLS" | tr '\n' '|')]" ;;
+      *) want="$(printf 'acme/widget\nacme/old-name')" ;;
+    esac
+    [ "$MA_OUT" = "$want" ] || MA14_DETAIL="$MA14_DETAIL [$u: out=$(printf '%s' "$MA_OUT" | tr '\n' ' ')]"
+    [ "$n" = "1" ] || MA14_DETAIL="$MA14_DETAIL [$u: $n origin reads]"
+  done
+  [ -z "$MA14_DETAIL" ]
+}
+ma14_leg && ok "(ma14) https / ssh:// / scp / scheme-less / userinfo+port origins: slug and host agree, and origin is read EXACTLY ONCE per resolution" \
+  || no "(ma14) slug/host disagreed or origin was read more than once:$MA14_DETAIL"
+
+# (ma15) a request file that EXISTS but cannot be read (mode 000, or a directory at that path) is
+# NAMED on stderr and grants nothing; an ABSENT file stays silent (ma1's fixture, re-run).
+MA15_DETAIL=""
+ma15_leg() {
+  local d
+  MA15_DETAIL=""
+  d="$(newgit https://github.com/acme/widget.git)"; ma_req "$d" 'acme/old-name'; chmod 000 "$d/.agent/meta-allowlist.txt"
+  if [ -r "$d/.agent/meta-allowlist.txt" ]; then
+    MA15_ROOT=1   # running as root: mode 000 is still readable, so only the directory case is meaningful
+  else
+    ma_run "$d"
+    { [ "$MA_OUT" = "acme/widget" ] && [ -z "$MA_CALLS" ] \
+      && hasF 'allowlist: ignored .agent/meta-allowlist.txt — not readable' "$MA_ERR"; } || MA15_DETAIL="$MA15_DETAIL [mode 000: out=$MA_OUT err=$MA_ERR]"
+  fi
+  chmod 600 "$d/.agent/meta-allowlist.txt"
+  d="$(newgit https://github.com/acme/widget.git)"; mkdir -p "$d/.agent/meta-allowlist.txt"
+  ma_run "$d"
+  { [ "$MA_OUT" = "acme/widget" ] && [ -z "$MA_CALLS" ] \
+    && hasF 'allowlist: ignored .agent/meta-allowlist.txt — not readable' "$MA_ERR"; } || MA15_DETAIL="$MA15_DETAIL [directory: out=$MA_OUT err=$MA_ERR]"
+  ma_run "$MA1"
+  hasF 'not readable' "$MA_ERR" && MA15_DETAIL="$MA15_DETAIL [absent file was named: $MA_ERR]"
+  [ -z "$MA15_DETAIL" ]
+}
+MA15_ROOT=0
+ma15_leg && ok "(ma15) an unreadable request file (mode 000$([ "$MA15_ROOT" = 1 ] && printf ' skipped — root'), a directory) is named on stderr and grants nothing; an absent one stays silent" \
+  || no "(ma15) an unreadable request file was skipped silently or granted something:$MA15_DETAIL"
+
 # Mutation controls — each gated on the mutant being NON-EMPTY, DIFFERENT from the original and
 # `bash -n`-clean (an unapplied or broken mutant would otherwise "pass" silently).
 # ma_mutant <name> <sed-expr> → prints the mutant path, status 1 when the gate fails.
@@ -1010,11 +1075,23 @@ if M="$(ma_mutant_awk a9 '  [ -f "$f" ] && [ -r "$f" ] || return 0' '  [ -n "$ow
 else no "(ma-mut A9) could not build the mutant — inconclusive"; fi
 # (HOST) the github.com host check dropped ⇒ a GitLab/GHE origin compares github.com namesakes and
 # grants acme/old-name ⇒ (ma9) must turn red.
-if M="$(ma_mutant host 's/^      elif \[ "\$(remote_host)" != "github.com" \]; then$/      elif false; then/')"; then
+if M="$(ma_mutant host 's/^      elif \[ "\$ORIGIN_HOST" != "github.com" \]; then$/      elif false; then/')"; then
   MA_SUT="$M"; ma9_leg; MA9_RC=$?; MA_SUT="$MEM"
   [ "$MA9_RC" -eq 0 ] && no "(ma-mut HOST) REFUTED: without the host check a non-github.com origin still grants nothing — (ma9) is not load-bearing" \
     || ok "(ma-mut HOST) dropping the github.com host check grants a namesake for a non-github origin, so (ma9) turns red"
 else no "(ma-mut HOST) could not build the mutant — inconclusive"; fi
+# (ONE-READ) the host gate re-resolves origin lazily (a second `git remote get-url`) ⇒ (ma14) red.
+if M="$(ma_mutant oneread 's/^      elif \[ "\$ORIGIN_HOST" != "github.com" \]; then$/      elif resolve_origin; [ "$ORIGIN_HOST" != "github.com" ]; then/')"; then
+  MA_SUT="$M"; ma14_leg; MA14_RC=$?; MA_SUT="$MEM"
+  [ "$MA14_RC" -eq 0 ] && no "(ma-mut ONE-READ) REFUTED: a second origin read still counted as one — (ma14) is not load-bearing" \
+    || ok "(ma-mut ONE-READ) re-reading origin for the host gate makes 2 reads, so (ma14) turns red"
+else no "(ma-mut ONE-READ) could not build the mutant — inconclusive"; fi
+# (UNREADABLE) the unreadable-file status line dropped ⇒ the skip is silent again ⇒ (ma15) red.
+if M="$(ma_mutant unreadable 's/^  if \[ -e "\$f" \] && ! .*; then$/  if false; then/')"; then
+  MA_SUT="$M"; ma15_leg; MA15_RC=$?; MA_SUT="$MEM"
+  [ "$MA15_RC" -eq 0 ] && no "(ma-mut UNREADABLE) REFUTED: without the status line an unreadable request file is still named — (ma15) is not load-bearing" \
+    || ok "(ma-mut UNREADABLE) dropping the status line skips an unreadable request file silently, so (ma15) turns red"
+else no "(ma-mut UNREADABLE) could not build the mutant — inconclusive"; fi
 # (BOUND) the overrun check dropped ⇒ the runner waits out the hung gh ⇒ (ma10)'s bound leg red.
 if M="$(ma_mutant bound 's/^          if \[ "\$ticks" -ge "\$max" \]; then$/          if false; then/')"; then
   MA_SUT="$M"; ma10_leg; MA10_RC=$?; MA_SUT="$MEM"

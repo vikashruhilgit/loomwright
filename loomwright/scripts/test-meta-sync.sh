@@ -2005,7 +2005,7 @@ echo "== 63. the tracked request file .agent/meta-allowlist.txt: a fresh clone w
 # so layer 4 is genuinely what resolves. TWO PATH stubs, no network:
 #   · git: `git remote get-url` expands url.<x>.insteadOf, so a clone fetching from the local bare
 #     origin can never REPORT a GitHub-shaped origin. The shim answers only
-#     `git -C <root> remote get-url origin` (remote_slug's call) with https://github.com/owner/repo.git;
+#     `git -C <root> remote get-url origin` (resolve_origin's single read) with https://github.com/owner/repo.git;
 #     every other git call — ls-remote, fetch, push — still reaches the local bare origin.
 #   · gh: owner/repo and owner/repo-old (the rename redirect) answer id 7; other/private answers 9.
 RA_BIN="$TROOT/ra-bin"; mkdir -p "$RA_BIN"
