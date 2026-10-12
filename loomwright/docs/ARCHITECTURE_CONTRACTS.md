@@ -716,7 +716,7 @@ Every question gate in `agents/`, `commands/` and `skills/` and what it does whe
 | `/verify` queue ambiguous resume | `commands/verify.md` queue mode; `skills/verify-walkthrough/SKILL.md` §10 | MI; MN (`--non-interactive-fallback`) | `pause_reason: resume_ambiguous` | unchanged |
 | `/setup` offers and confirms | `commands/setup.md`; `skills/setup/SKILL.md` | MI only (main-thread command) | writes nothing without an Accept | unchanged |
 | `/telemetry` enable / import offer | `commands/telemetry.md` | MI only | writes nothing without an Accept (never auto-imports) | unchanged |
-| `/dreaming` per-item gate | `commands/dreaming.md` | MI only | writes nothing without an Accept | unchanged |
+| `/dreaming` per-item gate | `commands/dreaming.md` | MI only | writes nothing without an Accept; pushes nothing without a Pre-push confirmation (per item for the rules PR, one per-run question for the memory PR) | unchanged |
 
 **Grouped description hits (no gate of their own):** the `--non-interactive` parameter rows in `agents/supervisor.md` and `commands/supervisor.md` belong to the Supervisor rows. The "what runs inline" lists, the flow diagram and the PLAN / EXECUTE forwarding notes in `commands/autonomous.md` and `skills/autonomous-loop/SKILL.md` belong to the Launch Pad and Supervisor rows. The note that `/verify` never asks (`commands/verify.md`) belongs to the qa-executor sign-in row. The notification hook that fires on any ask (`commands/setup.md` notifications section, `commands/agent-help.md` hooks table) is not a gate; it fires only when a gate actually asks.
 
