@@ -61,7 +61,9 @@
 #     both fixtures under fixtures/validation-gate/) ⇒ unrun; evidenced ⇒ ok; no running-system step ⇒
 #     none; unreadable PR body / item ⇒ unrun; "Not verified" heading ⇒ NOT-RUN; FAIL ⇒ unrun; the owner
 #     waiver (counted only after the last `picked <item>`) + its refusals; a `|`-bearing title is a legal
-#     `current-escalation --check`; ONE shared reader; AC9 mutation control (unconditional ok ⇒ AL1 red)
+#     `current-escalation --check`; ONE shared reader; AC9 mutation control (unconditional ok ⇒ AL1 red);
+#     fence-aware PR-body + item scans, a "running system" title outranking the repro rule, and evidence
+#     attributed to the step (not-run line, bold pseudo-heading, sibling bullet, next paragraph) — AL11–AL16
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -2397,6 +2399,37 @@ out="$(vgb '## Evidence\n### Not run in this lane\nValidation 2 — running syst
 has "AL3b … also under a nested \"Not run\" sub-heading" "$out" "unrun — V2 Running system: listed under"
 out="$(vgb '## Test Plan\nValidation 2 — running system\n```\nFAIL - load1 63.6\n```\n')"
 check "AL4 pasted output showing FAIL counts as not evidenced ⇒ unrun" "$out" "validation-gate: unrun — V2 Running system: pasted output shows FAIL"
+# Review iteration 1: the PR-body scan is fence-aware, a "running system" title outranks the repro rule,
+# and evidence is attributed to the step (not to every fence in its section).
+out="$(vgb '## Not verified\n```\n# machine busy\n$ uptime\n```\n- **Running system:** three clones at once, skipped\n```\n$ date\n```\n')"
+check "AL11 a \`#\` comment inside a fence is not a heading: the \"Not verified\" heading still governs ⇒ unrun" \
+  "$out" "validation-gate: unrun — V2 Running system: listed under a \"Not verified\" / \"Not run\" heading in the PR body"
+out="$(vgb '## Not verified\n```\n#!/usr/bin/env bash\n## step one\n```\nValidation 2 — running system\n```\npeak 31\n```\n')"
+has "AL11b … nor a \`#!\` shebang or a \`## \` line inside a fence" "$out" "unrun — V2 Running system: listed under a \"Not verified\""
+out="$(vgb '## Test Plan\n```\n# Validation 2 running system\n```\n')"
+check "AL11c a match inside a fence never starts the step's evidence window" "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body"
+printf '# r\n## Validation\n1. **Running system:** reproduce the freeze with three clones at once.\n2. **Repro:** must catch the mutation.\n' > "$VG/reqs/repro.md"
+check "AL12 a Running system step whose first line says \"reproduce\" is still gated (title outranks the repro rule)" \
+  "$(VG_GH="$T/vg-no-gh" vg "$VGRF" reqs/repro.md "$VGPR")" "validation-gate: unrun — V1 Running system: PR body unreadable ($VGPR)"
+check "AL12b … and a repro-titled step keeps kind repro" \
+  "$( ( . "$S"; _lanes_validation_rows "$VG/reqs/repro.md" /dev/null 0 ) | cut -f1,3 | tr '\t\n' ':,')" "1:running-system,2:repro,"
+printf '# f\n## Validation\n1. **Smoke:** run it\n```\n## not a section\n- not an entry\n```\n2. **Running system:** three clones\n' > "$VG/reqs/fence.md"
+check "AL12c item side: a fenced \`## \` / \`- \` line neither ends ## Validation nor starts an entry" \
+  "$( ( . "$S"; _lanes_validation_rows "$VG/reqs/fence.md" /dev/null 0 ) | cut -f1,3 | tr '\t\n' ':,')" "1:other,2:running-system,"
+out="$(vgb '## Test Plan\n- Running system (three clones): not run, machine shared.\n- unrelated bullet\n  ```\n  x\n  ```\n')"
+check "AL13 (a) a matched line saying \"not run\" ⇒ NOT-RUN even with a fence later in the section" \
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
+out="$(vgb '## Test Plan\n- Running system (three clones): deferred.\n- unrelated bullet\n  ```\n  x\n  ```\n')"
+check "AL13b a bullet-started match ends at the next sibling bullet (its fence is not this step's evidence)" \
+  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output"
+out="$(vgb '## Test Plan\n**Not verified:**\n- Running system three clones\n```\nx\n```\n')"
+check "AL14 (b) a whole-line bold **Not verified:** is a heading ⇒ unrun" \
+  "$out" "validation-gate: unrun — V2 Running system: listed under a \"Not verified\" / \"Not run\" heading in the PR body"
+out="$(vgb '## Summary\nFixes the running system freeze.\n\nExample:\n```\nx\n```\n')"
+check "AL15 (c) a generic \"running system\" mention in the Summary does not borrow the next paragraph's fence ⇒ unrun" \
+  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output"
+out="$(vgb '## Test Plan\n### Validation 2 — running system\n\nRan three clones:\n\n```\n# load\npeak load1 31.2\n```\n')"
+check "AL16 a heading-started step still owns its whole section (fence with a \`#\` line inside) ⇒ ok" "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
 printf '# n\n## Validation (must pass before merge)\n1. **Baseline:** tests green.\n2. **Unchanged path:** a READY drain whose PR body pastes every running-system step parks as before.\n' > "$VG/reqs/norun.md"
 printf '# n\n## Touches\n- `x`\n' > "$VG/reqs/noval.md"
 check "AL5 AC5 no running-system entry (\"running-system\" hyphenated is not the phrase) ⇒ none" \

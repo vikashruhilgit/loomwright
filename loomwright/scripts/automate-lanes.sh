@@ -2569,21 +2569,42 @@ lanes_feed() {
 # Called by the lane at its ready_for_release park; re-written on demand (`lane-status --refresh-readiness`,
 # which also covers a lane already closed out — `done` — so a report written before a fix is repairable).
 # _lanes_rd_section <n> <title> <body_file> [nv] — the PR body's lines for Validation entry n. With
-# the 4th argument `nv` it prints instead ONE line `NV` when any matched block starts under a PR-body
-# heading (at any enclosing level) containing "not verified" or "not run", else nothing — the same
-# match, so the heading test can never drift from the evidence test.
+# the 4th argument `nv` it prints instead ONE line: `NV` when any matched block starts under a PR-body
+# heading (at any enclosing level) containing "not verified" or "not run"; else `NL` when a matched
+# block's own first line says "not run" / "skipped" / "not verified"; else nothing — the same match,
+# so the heading test can never drift from the evidence test. Fence-aware: a line inside a ``` / ~~~ block (shell comments, `#!`,
+# root prompts, pasted output) is never a heading, never starts a match and never ends one.
+#   heading      `#`..`######` + a space, or a whole-line bold `**…**` naming "not verified" / "not run"
+#                (a pseudo-heading below every `#` level)
+#   match start  a line naming "validation <n>", or containing the entry's title
+#   match end    any heading; a line naming another "validation <m>"; for a match that started on a
+#                list item, the next list item at the same or a shallower indent; for any non-heading
+#                start, an unindented non-fence line after a blank line (the next paragraph) — so a
+#                fence elsewhere in the section is never this step's evidence
 _lanes_rd_section() {
   awk -v n="$1" -v t="$2" -v mode="${4:-}" '
-    BEGIN { t = tolower(t) }
-    { l = tolower($0) }
-    l ~ /^#/ { lv = match(l, /[^#]/) - 1; if (lv < 1) lv = length(l); h[lv] = l; for (k = lv + 1; k <= 6; k++) delete h[k]; top = lv }
-    on && (l ~ /^#/ || (l ~ /validation[ #]*[0-9]/ && l !~ ("validation[ #]*" n "([^0-9]|$)"))) { on = 0 }
-    !on && (l ~ ("validation[ #]*" n "([^0-9]|$)") || (t != "" && index(l, t) > 0)) {
-      on = 1
+    BEGIN { t = tolower(t); vn = "validation[ #]*" n "([^0-9]|$)" }
+    function ind(s) { match(s, /^[ \t]*/); return RLENGTH }
+    { l = tolower($0); wasin = inf; fl = 0; hd = 0 }
+    l ~ /^[ \t]*(```|~~~)/ {
+      fl = 1; x = l; sub(/^[ \t]*/, "", x); c = substr(x, 1, 3)
+      if (!inf) { inf = 1; fc = c } else if (c == fc) inf = 0
+    }
+    !wasin && !fl && l ~ /^#+[ \t]/ && match(l, /[^#]/) - 1 <= 6 { lv = RSTART - 1; hd = 1 }
+    !wasin && !fl && !hd && l ~ /^[ \t]*\*\*.*\*\*[ \t]*:?[ \t]*$/ && (index(l, "not verified") || index(l, "not run")) { lv = 7; hd = 1 }
+    hd { h[lv] = l; for (k = lv + 1; k <= 7; k++) delete h[k]; top = lv }
+    on && !wasin && !fl && (hd || (l ~ /validation[ #]*[0-9]/ && l !~ vn) ||
+        (sk == "b" && l ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/ && ind(l) <= si) ||
+        (sk != "h" && blank && l !~ /^[ \t]/ && l !~ /^[ \t]*$/)) { on = 0 }
+    !on && !wasin && !fl && (l ~ vn || (t != "" && index(l, t) > 0)) {
+      on = 1; si = ind(l)
+      sk = hd ? "h" : (l ~ /^[ \t]*([-*+]|[0-9]+[.)])[ \t]/ ? "b" : "p")
       for (k = 1; k <= top; k++) if ((k in h) && (index(h[k], "not verified") || index(h[k], "not run"))) nv = 1
+      if (index(l, "not verified") || index(l, "not run") || index(l, "skipped")) nl = 1
     }
     on && mode != "nv" { print }
-    END { if (mode == "nv" && nv) print "NV" }' "$3"
+    { blank = (!wasin && !fl && l ~ /^[ \t]*$/) }
+    END { if (mode == "nv") { if (nv) print "NV"; else if (nl) print "NL" } }' "$3"
 }
 
 # _lanes_validation_rows <item_file> <body_file> <gh_ok> [<pr>] — THE Validation reader, shared by
@@ -2591,19 +2612,22 @@ _lanes_rd_section() {
 # the item's `## Validation` section:  n<TAB>title<TAB>kind<TAB>status<TAB>evidence
 #   entries   a column-0 numbered line (`N. `, numbered N) OR a column-0 `- ` bullet (numbered 1..k in
 #             order); an indented line, or an unindented one right after it (no blank line between),
-#             continues the entry; a blank line followed by unindented text ends it
+#             continues the entry; a blank line followed by unindented text ends it. Fence-aware: a
+#             ``` / ~~~ block's lines never start an entry or end the section (they join the open entry)
 #   title     the entry's first line: its first `**…**` span, else its first 60 chars; trailing `:`
 #             stripped; every `|` → `/` and tab runs → one space, so `V<n> <title>` is always a legal
 #             `current-escalation --check` value; `(untitled)` when empty
-#   kind      repro — the FIRST line names a mutation / repro ("mutation", "must catch", "repro", "must
-#             fail"; today's rule, checked first) · running-system — the title or the joined entry text
-#             contains "running system" (case-insensitive) · other
+#   kind      running-system — the TITLE contains "running system" (checked first: a gated step is
+#             never shadowed by a "reproduce" in its first line) · repro — the FIRST line names a
+#             mutation / repro ("mutation", "must catch", "repro", "must fail"; today's rule) ·
+#             running-system — the joined entry text contains "running system" · other (case-insensitive)
 #   status    gh_ok 0 ⇒ NOT-RUN (PR body unreadable). Else the PR body's matching lines
-#             (_lanes_rd_section): none ⇒ NOT-RUN; under a "not verified" / "not run" heading ⇒ NOT-RUN;
-#             no fenced block ⇒ NOT-RUN; a non-repro entry whose output shows the word FAIL ⇒ FAIL; else PASS
+#             (_lanes_rd_section): none ⇒ NOT-RUN; under a "not verified" / "not run" heading, or a
+#             matched first line saying "not run" / "skipped" / "not verified" ⇒ NOT-RUN; no fence line
+#             ⇒ NOT-RUN; a non-repro entry whose output shows the word FAIL ⇒ FAIL; else PASS
 # An unreadable item file prints nothing (callers that must fail CLOSED check readability themselves).
 _lanes_validation_rows() {
-  local itemf="$1" body="$2" gh_ok="$3" pr="${4:-}" n title kind st ev sec
+  local itemf="$1" body="$2" gh_ok="$3" pr="${4:-}" n title kind st ev sec nvs
   awk '
     function flush() {
       if (!cur) return
@@ -2613,12 +2637,16 @@ _lanes_validation_rows() {
       sub(/:$/, "", t); gsub(/\|/, "/", t); gsub(/[ \t]*\t[ \t]*/, " ", t)
       if (t == "") t = "(untitled)"
       lf = tolower(first); lt = tolower(t); lj = tolower(full)
-      if (lf ~ /mutation|must catch|repro|must fail/) k = "repro"
-      else if (index(lt, "running system") || index(lj, "running system")) k = "running-system"
+      if (index(lt, "running system")) k = "running-system"
+      else if (lf ~ /mutation|must catch|repro|must fail/) k = "repro"
+      else if (index(lj, "running system")) k = "running-system"
       else k = "other"
       print num "\t" t "\t" k
       cur = 0
     }
+    { wasin = inf; fl = ($0 ~ /^[ \t]*(```|~~~)/) }
+    fl { x = $0; sub(/^[ \t]*/, "", x); c = substr(x, 1, 3); if (!inf) { inf = 1; fc = c } else if (c == fc) inf = 0 }
+    fl || wasin { if (on && cur) { x = $0; gsub(/\t/, " ", x); sub(/^ +/, "", x); full = full " " x }; blank = 0; next }
     /^## / { flush(); on = ($0 ~ /^## Validation/); blank = 0; next }
     !on { next }
     /^[0-9]+\. / { flush(); num = $0; sub(/\..*/, "", num); cur = 1; blank = 0
@@ -2636,8 +2664,9 @@ _lanes_validation_rows() {
     else
       sec="$(_lanes_rd_section "$n" "$title" "$body")"
       if [ -z "$sec" ]; then st=NOT-RUN; ev="no evidence in the PR body"
-      elif [ -n "$(_lanes_rd_section "$n" "$title" "$body" nv)" ]; then st=NOT-RUN; ev="listed under a \"Not verified\" / \"Not run\" heading in the PR body"
-      elif ! grep -q '```' <<<"$sec"; then st=NOT-RUN; ev="mentioned in the PR body without pasted output"
+      elif nvs="$(_lanes_rd_section "$n" "$title" "$body" nv)" && [ "$nvs" = NV ]; then st=NOT-RUN; ev="listed under a \"Not verified\" / \"Not run\" heading in the PR body"
+      elif [ -n "$nvs" ]; then st=NOT-RUN; ev="marked not run / skipped / not verified in the PR body"
+      elif ! grep -qE '^[[:space:]]*(```|~~~)' <<<"$sec"; then st=NOT-RUN; ev="mentioned in the PR body without pasted output"
       elif [ "$kind" != repro ] && grep -qw 'FAIL' <<<"$sec"; then st=FAIL; ev="pasted output shows FAIL"
       else st=PASS; ev="pasted output in the PR body"; fi
     fi
