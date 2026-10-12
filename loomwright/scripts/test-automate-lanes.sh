@@ -2498,6 +2498,25 @@ done
 check "AL20e the not-run vocabulary (not yet run / wasn't / was not / couldn't / could not run / could not get to / not tested / untested) ⇒ unrun even with a fence" "${vg_voc:-none}" none
 out="$(vgb '## Test Plan\nValidation 2 - running system: three clones\n```\nuntested: 0, not tested: 0, peak load1 31\n```\n')"
 check "AL20f … but those words inside the pasted output are output ⇒ ok" "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
+# Drain round 1: a numbered entry and a bullet in one section never share a number (bullets follow the
+# section's largest N), and two numbered entries that DO share one are each NOT-RUN.
+printf '# m\n## Validation (must pass before merge)\n1. **Baseline:** tests green.\n- **Running system:** start three clones and record peak load.\n' > "$VG/reqs/mixed.md"
+check "AL21 mixed numbered + bulleted section: entries numbered 1, 2 (never two 1s)" \
+  "$( ( . "$S"; _lanes_validation_rows "$VG/reqs/mixed.md" /dev/null 0 ) | cut -f1,3 | tr '\t\n' ':,')" "1:other,2:running-system,"
+out="$(vgb '## Test Plan\nValidation 1: baseline\n```\nok 12 passed\n```\n' reqs/mixed.md)"
+check "AL21b the drain repro: the Baseline's \"Validation 1\" never evidences the Running system bullet ⇒ unrun" \
+  "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body"
+out="$(vgb '## Test Plan\nValidation 1: baseline\n```\nok 12 passed\n```\nValidation 2: three clones\n```\npeak load1 31\n```\n' reqs/mixed.md)"
+check "AL21c … the Running system bullet evidenced by its own \"Validation 2\" ⇒ ok" "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
+printf '# m\n## Validation\n- **Smoke:** x\n3. **Baseline:** tests green.\n- **Running system:** three clones.\n' > "$VG/reqs/mixed2.md"
+check "AL21d a bullet BEFORE a numbered entry still takes a number above the section's largest N (4, 3, 5)" \
+  "$( ( . "$S"; _lanes_validation_rows "$VG/reqs/mixed2.md" /dev/null 0 ) | cut -f1,3 | tr '\t\n' ':,')" "4:other,3:other,5:running-system,"
+check "AL21e a purely bulleted section is unchanged (1..k)" \
+  "$( ( . "$S"; _lanes_validation_rows "$VG/reqs/twin.md" /dev/null 0 ) | cut -f1,3 | tr '\t\n' ':,')" "1:running-system,2:running-system,"
+printf '# d\n## Validation\n1. **Smoke:** x\n1. **Running system:** three clones.\n' > "$VG/reqs/dup.md"
+out="$(vgb '## Test Plan\nValidation 1: three clones\n```\npeak load1 31\n```\n' reqs/dup.md)"
+check "AL21f two numbered entries sharing a number: the anchor is ambiguous ⇒ unrun (never ok)" \
+  "$out" "validation-gate: unrun — V1 Running system: entry number 1 is not unique in the item's ## Validation section (renumber the item)"
 printf '# n\n## Validation (must pass before merge)\n1. **Baseline:** tests green.\n2. **Unchanged path:** a READY drain whose PR body pastes every running-system step parks as before.\n' > "$VG/reqs/norun.md"
 printf '# n\n## Touches\n- `x`\n' > "$VG/reqs/noval.md"
 check "AL5 AC5 no running-system entry (\"running-system\" hyphenated is not the phrase) ⇒ none" \

@@ -2636,10 +2636,17 @@ _lanes_rd_section() {
 # _lanes_validation_rows <item_file> <body_file> <gh_ok> [<pr>] — THE Validation reader, shared by
 # lane-readiness and validation-gate (af36-remainder/01: no second parser). One TSV row per entry of
 # the item's `## Validation` section:  n<TAB>title<TAB>kind<TAB>status<TAB>evidence
-#   entries   a column-0 numbered line (`N. `, numbered N) OR a column-0 `- ` bullet (numbered 1..k in
-#             order); an indented line, or an unindented one right after it (no blank line between),
+#   entries   a column-0 numbered line (`N. `) OR a column-0 `- ` bullet; an indented line, or an unindented one right after it (no blank line between),
 #             continues the entry; a blank line followed by unindented text ends it. Fence-aware: a
 #             ``` / ~~~ block's lines never start an entry or end the section (they join the open entry)
+#   number    a numbered entry keeps its own N; the section's bullets are numbered M+1..M+k in order,
+#             M = the LARGEST N of any numbered entry anywhere in the section (0 when none) — so a
+#             purely bulleted section reads 1..k, a purely numbered one reads as written, and a bullet
+#             can never share a number with a numbered entry (af36-remainder/01 drain round 1: `1.` +
+#             `- **Running system:**` once read as two entries numbered 1, and the Baseline's
+#             "Validation 1" evidenced the Running system step). Two numbered entries that still share
+#             a number (`1.` / `1.` as written) are each NOT-RUN — an anchored "validation <n>" is
+#             ambiguous there, and ambiguity never reads as evidence (fail CLOSED)
 #   title     the entry's first line: its first `**…**` span, else its first 60 chars; trailing `:`
 #             stripped; every `|` → `/` and tab runs → one space, so `V<n> <title>` is always a legal
 #             `current-escalation --check` value; `(untitled)` when empty
@@ -2681,21 +2688,25 @@ _lanes_validation_rows() {
     !on { next }
     /^[0-9]+\. / { flush(); num = $0; sub(/\..*/, "", num); cur = 1; blank = 0
                    first = $0; gsub(/\t/, " ", first); full = first; next }
-    /^- / { flush(); nb++; num = nb; cur = 1; blank = 0
+    /^- / { flush(); num = "b"; cur = 1; blank = 0
             first = $0; gsub(/\t/, " ", first); full = first; next }
     /^[ \t]*$/ { blank = 1; next }
     cur && ($0 ~ /^[ \t]/ || !blank) { x = $0; gsub(/\t/, " ", x); sub(/^ +/, "", x); full = full " " x; blank = 0; next }
     { flush(); blank = 0 }
-    END { flush() }' "$itemf" 2>/dev/null)"
+    END { flush() }' "$itemf" 2>/dev/null |
+    awk -F'\t' -v OFS='\t' '{ r[NR] = $0; if ($1 != "b" && $1 + 0 > m) m = $1 + 0 }
+      END { for (i = 1; i <= NR; i++) { $0 = r[i]; if ($1 == "b") $1 = ++m; print } }')"
   [ -n "$ents" ] || return 0
   titles="$(cut -f2 <<<"$ents")"
   # 4th column tm: 0 when this title equals / is contained in another entry's title (no title match).
-  awk -F'\t' '{ r[NR] = $0; lt[NR] = tolower($2) }
-    END { for (i = 1; i <= NR; i++) { tm = 1; for (j = 1; j <= NR; j++) if (j != i && index(lt[j], lt[i])) tm = 0; print r[i] "\t" tm } }' <<<"$ents" |
-  while IFS="$(printf '\t')" read -r n title kind tm; do
+  # 5th column du: 1 when another entry carries the same number (numbered `1.` / `1.` as written).
+  awk -F'\t' '{ r[NR] = $0; lt[NR] = tolower($2); nn[NR] = $1 + 0; c[$1 + 0]++ }
+    END { for (i = 1; i <= NR; i++) { tm = 1; for (j = 1; j <= NR; j++) if (j != i && index(lt[j], lt[i])) tm = 0; print r[i] "\t" tm "\t" (c[nn[i]] > 1) } }' <<<"$ents" |
+  while IFS="$(printf '\t')" read -r n title kind tm du; do
     [ -n "$n" ] || continue
     # (`${pr:-…}` expands to $pr itself when set — the old one-expression form printed the URL twice)
     if [ "$gh_ok" = 0 ]; then st=NOT-RUN; if [ -n "$pr" ]; then ev="PR body unreadable ($pr)"; else ev="PR body unreadable: no PR recorded"; fi
+    elif [ "$du" = 1 ]; then st=NOT-RUN; ev="entry number $n is not unique in the item's ## Validation section (renumber the item)"
     else
       sec="$(_lanes_rd_section "$n" "$title" "$body" "" "$titles" "$tm")"
       if [ -z "$sec" ]; then st=NOT-RUN; ev="no evidence in the PR body"
