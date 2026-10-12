@@ -53,6 +53,8 @@ No mechanical size check ships yet: count by hand. Too small to pay a run ⇒ me
   ## Goal
   ## Scope
   ## Non-goals
+  ## Owner decisions (from _BACKLOG.md)
+  <!-- only when the plan doc records an owner decision this item's run must obey; see "Honest limit" below -->
   ## Acceptance criteria
   ## Validation (must pass before merge)
   ## Measurements

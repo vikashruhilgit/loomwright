@@ -909,6 +909,10 @@ grep -qF "No session over the threshold." < <(printf '%s' "$scsec") && ok "under
 # Non-numeric override → falls back to the documented default.
 ( cd "$SC" && SESSION_CONTEXT_THRESHOLD_BYTES=lots bash "$BUILD" >/dev/null 2>&1 )
 grep -qF -- "**Threshold:** >3000000 bytes" "$scd" 2>/dev/null && ok "non-numeric override falls back to 3000000" || no "non-numeric override fallback wrong"
+# All-numeric but over-long (17 digits, past the 16-char guard) → also the default, never used as
+# the threshold. The dashboard is removed first so a stale 3000000 render cannot satisfy the grep.
+rm -f "$scd"; ( cd "$SC" && SESSION_CONTEXT_THRESHOLD_BYTES=12345678901234567 bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "**Threshold:** >3000000 bytes" "$scd" 2>/dev/null && ok "over-long numeric override falls back to 3000000" || no "over-long numeric override fallback wrong"
 rm -rf "$SC"
 
 echo "== TR08b. Per-session context size — no data renders an honest note, never a zero =="
