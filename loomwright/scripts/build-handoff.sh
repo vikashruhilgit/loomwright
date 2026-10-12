@@ -76,12 +76,15 @@ cd "$GITROOT" 2>/dev/null || true
 command -v jq >/dev/null 2>&1 || { echo "build-handoff: jq required — skipping" >&2; exit 0; }
 
 # Locate the sibling read-* helpers robustly at runtime AND under the test harness (AC5).
-# CLAUDE_PLUGIN_ROOT, when set, is the plugin ROOT — the read-* helpers live under its `scripts/`
-# subdir (this script itself is invoked as ${CLAUDE_PLUGIN_ROOT}/scripts/build-handoff.sh, cf.
-# commands/handoff.md). Treating CLAUDE_PLUGIN_ROOT as the scripts dir silently skips the readers
-# in real plugin execution. When unset (test harness / direct call) BASH_SOURCE's own dir IS scripts/.
+# The install root comes from the vendor-neutral resolver (docs/CORE_CONTRACT.md "Root resolution"),
+# sourced in a SUBSHELL so nothing is exported. It is the plugin ROOT — the read-* helpers live under
+# its `scripts/` subdir (commands/handoff.md invokes this script from there). Treating the root as
+# the scripts dir silently skips the readers in real plugin execution. With no harness value and no
+# pre-set LOOMWRIGHT_ROOT the resolver's own dev-checkout arm answers, i.e. this script's parent dir;
+# a missing resolver leaves the root empty and BASH_SOURCE's own dir (which IS scripts/) is used.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo .)"
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then HELPERS_DIR="$CLAUDE_PLUGIN_ROOT/scripts"; else HELPERS_DIR="$SCRIPT_DIR"; fi
+LW_ROOT="$( . "$SCRIPT_DIR/resolve-loomwright-root.sh" 2>/dev/null && printf '%s' "$LOOMWRIGHT_ROOT" )" || LW_ROOT=""
+if [ -n "$LW_ROOT" ]; then HELPERS_DIR="$LW_ROOT/scripts"; else HELPERS_DIR="$SCRIPT_DIR"; fi
 
 OUT_DIR=".supervisor/handoff"
 OUT="$OUT_DIR/digest.md"

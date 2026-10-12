@@ -61,6 +61,11 @@ no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
 TMP="$(mktemp -d)"
 trap 'chmod -R u+rwX "$TMP" 2>/dev/null; rm -rf "$TMP" 2>/dev/null' EXIT
+# Every mutant below is a copy at $TMP/<name>.sh, and validate-entry.sh finds the install root
+# through the resolver BESIDE it. Without this copy a mutant would resolve no root at all, lose the
+# pinned harness root above, and fall back to an absent sibling setup-memory.sh — a different code
+# path from the real check's, which would make each control measure the missing resolver instead.
+cp "$HERE/resolve-loomwright-root.sh" "$TMP/resolve-loomwright-root.sh"
 
 # Snapshot the live config up front (section 12 re-checks it at the end).
 LIVE_CFG="$REPO_ROOT/.supervisor/config.json"
@@ -203,17 +208,49 @@ grep -qx ALIVE "$TMP/o" && ok "sourcing an unparseable helper returns non-zero a
   || no "sourcing an unparseable helper killed the caller or returned 0"
 
 # Resolver lookup falls back to a SIBLING setup-memory.sh when CLAUDE_PLUGIN_ROOT is unset.
+# The root resolver is copied beside it, so the lookup really runs through it (its dev-checkout arm
+# answers $TMP, which has no scripts/setup-memory.sh, hence the sibling). LOOMWRIGHT_ROOT is unset
+# too: a pre-set neutral root now WINS over the sibling (twin-remediation/11).
 mkdir -p "$TMP/sibling"
 cp "$VE" "$TMP/sibling/validate-entry.sh"
+cp "$HERE/resolve-loomwright-root.sh" "$TMP/sibling/resolve-loomwright-root.sh"
 cat > "$TMP/sibling/setup-memory.sh" <<'STUB'
 #!/usr/bin/env bash
 echo "siblingorg/siblingrepo"
 exit 0
 STUB
-( unset CLAUDE_PLUGIN_ROOT VALIDATE_ENTRY_SETUP_MEMORY
+( unset CLAUDE_PLUGIN_ROOT LOOMWRIGHT_ROOT VALIDATE_ENTRY_SETUP_MEMORY
   bash "$TMP/sibling/validate-entry.sh" cross-repo --entry "see siblingorg/siblingrepo" ) >/dev/null 2>&1
 [ $? -eq 0 ] && ok "with CLAUDE_PLUGIN_ROOT unset the resolver falls back to a sibling setup-memory.sh" \
   || no "sibling-dir resolver fallback did not work"
+
+# The vendor-neutral arm: a pre-set LOOMWRIGHT_ROOT (what a non-Claude adapter sets) is the root
+# whose scripts/setup-memory.sh is consulted, over the sibling. The two allowlist resolvers allow
+# DIFFERENT slugs, so the same entry is advised as foreign under one and silent under the other —
+# both legs are needed, or a check that never detects the slug at all would pass the second alone.
+mkdir -p "$TMP/lwroot/scripts"
+cat > "$TMP/lwroot/scripts/setup-memory.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "lwrootorg/lwrootrepo"
+exit 0
+STUB
+# One subshell for both legs (the harness variable is unset once); each leg's status goes to a file.
+( unset CLAUDE_PLUGIN_ROOT VALIDATE_ENTRY_SETUP_MEMORY LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
+  ( unset LOOMWRIGHT_ROOT
+    bash "$TMP/sibling/validate-entry.sh" cross-repo --entry "context lives in lwrootorg/lwrootrepo" ) >/dev/null 2>"$TMP/lw-sib.err"
+  echo "$?" > "$TMP/lw-sib.rc"
+  LOOMWRIGHT_ROOT="$TMP/lwroot" bash "$TMP/sibling/validate-entry.sh" cross-repo \
+    --entry "context lives in lwrootorg/lwrootrepo" >/dev/null 2>"$TMP/lw-root.err"
+  echo "$?" > "$TMP/lw-root.rc" )
+rc_sib="$(cat "$TMP/lw-sib.rc" 2>/dev/null)"; rc_sib="${rc_sib:-missing}"
+rc_lw="$(cat "$TMP/lw-root.rc" 2>/dev/null)"; rc_lw="${rc_lw:-missing}"
+if [ "$rc_sib" = 0 ] && [ "$rc_lw" = 0 ] \
+   && grep -qF 'ADVISORY_CROSS_REPO' "$TMP/lw-sib.err" 2>/dev/null \
+   && ! grep -qF 'ADVISORY' "$TMP/lw-root.err" 2>/dev/null; then
+  ok "a pre-set LOOMWRIGHT_ROOT's setup-memory.sh is used over the sibling (sibling allowlist: advised as foreign; neutral root's: silent)"
+else
+  no "a pre-set LOOMWRIGHT_ROOT was not honoured (rc sibling=$rc_sib neutral=$rc_lw; the sibling leg must advise ADVISORY_CROSS_REPO and the neutral-root leg must stay silent)"
+fi
 
 echo "== 2. duplicate =="
 STORE="$TMP/store.md"

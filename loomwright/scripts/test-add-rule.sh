@@ -790,6 +790,25 @@ ve_degraded "helper unparseable"   "$VETMP/unparse.sh"
 ve_degraded "helper truncated"     "$VETMP/partial.sh"
 ve_degraded "helper sentinel-less" "$VETMP/nosentinel.sh"
 
+# twin-remediation/11 — the vendor-neutral arm of the validator lookup. With no override and the
+# harness root variable unset, a pre-set LOOMWRIGHT_ROOT is where validate-entry.sh is looked up. The
+# copy planted there records that it was sourced and then IS the real validator, so the clean write
+# must succeed AND the record must exist; the sibling lookup every other case here takes never
+# sources it. (The harness arm itself is covered by test-resolve-loomwright-root.sh.)
+ve_neutral_root() {
+  local r st lw="$VETMP/lwroot"; r="$(ve_repo)"; st="$r/$VESTORE"
+  mkdir -p "$lw/scripts"; rm -f "$lw/sourced"
+  printf ': > %q\n. %q\n' "$lw/sourced" "$VEFILE" > "$lw/scripts/validate-entry.sh"
+  unset CLAUDE_PLUGIN_ROOT   # the harness arm outranks the neutral one
+  export LOOMWRIGHT_ROOT="$lw"; ve_write "$r" "$VE_CLEAN" "$VE_SRC"; unset LOOMWRIGHT_ROOT
+  if [ "$VE_RC" -eq 0 ] && [ -f "$st" ] && [ -f "$lw/sourced" ]; then
+    ok "LOOMWRIGHT_ROOT arm: a pre-set neutral root supplies the validator (sourced from it, write rc 0)"
+  else
+    no "LOOMWRIGHT_ROOT arm: rc=$VE_RC store=$([ -f "$st" ] && echo present || echo absent) sourced=$([ -f "$lw/sourced" ] && echo yes || echo NO) — the pre-set root was not used"
+  fi
+}
+ve_neutral_root
+
 # MUTATION CONTROLS. Both mutants are COPIES in $VETMP: the writer on disk is never edited, which
 # makes "this writer goes RED while the other four stay green" true by construction rather than by a
 # sibling run — a temp-file copy provably cannot reach the other four writers. Each mutant is gated

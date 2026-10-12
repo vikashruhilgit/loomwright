@@ -38,7 +38,7 @@ has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "missing [$3] in [$(printf '
 export HOME="$T/home"; mkdir -p "$HOME"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1
-unset CLAUDE_PLUGIN_ROOT CLAUDE_PROJECT_DIR LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS
+unset CLAUDE_PLUGIN_ROOT LOOMWRIGHT_ROOT CLAUDE_PROJECT_DIR LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS   # a pre-set neutral root would beat the location-derived one
 
 BIN="$T/bin"; mkdir -p "$BIN"
 cat > "$BIN/claude" <<'EOF'
