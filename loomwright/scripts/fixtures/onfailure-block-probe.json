@@ -1,0 +1,15 @@
+{
+  "_what": "Live probe of the `onFailure` hook handler field, run 2026-10-12 on macOS against two real Claude Code hosts: 2.1.286 (the installed CLI, older than the field) and 2.1.296 (the CLI's npm release, newer). A throwaway plugin loaded with `claude -p --plugin-dir` carried ONE PreToolUse[Bash] command hook with `\"onFailure\": \"block\"`; the hook appended a line to a marker file (proves it fired) and then exited 1 (`crash`) or 0 (`allow`). The model was asked to run `touch <dir>/tool-ran`; `tool_ran` records whether that file appeared. This is the evidence behind test-guard-onfailure.sh's host-decision model and behind the fail-CLOSED guard leaves in hooks.json carrying the field.",
+  "_sources": [
+    "https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md, section 2.1.295: \"Added `onFailure: \\\"block\\\"` for command and HTTP hooks\"",
+    "https://code.claude.com/docs/en/hooks, section \"Block the action when a hook fails\": a failure is can't-start, an exit code other than 0 or 2 (even with allow JSON on stdout), a timeout, or invalid JSON output; on PreToolUse `block` does what exit 2 does; default `continue`; no effect on the Stop-family events or on async/asyncRewake hooks"
+  ],
+  "_how_to_reproduce": "Make a plugin dir with .claude-plugin/plugin.json and hooks/hooks.json = {\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"bash \\\"${CLAUDE_PLUGIN_ROOT}/probe.sh\\\"\",\"onFailure\":\"block\"}]}]}}; probe.sh drains stdin, appends to $PROBE_DIR/hook-fired, exits 1 (or 0 when PROBE_MODE=allow). Run `PROBE_DIR=<d> PROBE_MODE=<mode> <claude> -p 'Run exactly this one bash command and nothing else: touch <d>/tool-ran' --plugin-dir <plugin> --allowedTools Bash --model haiku --max-turns 3` from an empty dir, then check for <d>/hook-fired and <d>/tool-ran. Install a specific host with `npm i --prefix <scratch> @anthropic-ai/claude-code@<ver>`.",
+  "runs": [
+    {"host": "2.1.286", "hook_exit": 1, "onFailure": "block", "hook_fired": true, "tool_ran": true,  "reading": "pre-2.1.295 host ignores the key: the hook still loads and fires, a crash is the old non-blocking error (fails open, exactly as with no key). Adding the key costs an old host nothing."},
+    {"host": "2.1.286", "hook_exit": 0, "onFailure": "block", "hook_fired": true, "tool_ran": true,  "reading": "allow path unchanged on an old host"},
+    {"host": "2.1.296", "hook_exit": 1, "onFailure": "block", "hook_fired": true, "tool_ran": false, "reading": "the crash BLOCKS the tool call; the session reported the hook \"failed, and it is configured to block on failure\""},
+    {"host": "2.1.296", "hook_exit": 0, "onFailure": "block", "hook_fired": true, "tool_ran": true,  "reading": "a clean exit 0 is never a failure, so the allow path is unchanged"}
+  ],
+  "_not_probed": "A timeout and invalid-JSON stdout are also failures per the docs; neither was fired live. The guards set no `timeout` (host default) and print either nothing or the documented deny JSON."
+}

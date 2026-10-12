@@ -289,11 +289,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-test-integrity.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-test-integrity.sh\"",
+            "onFailure": "block"
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-finalize-publish.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-finalize-publish.sh\"",
+            "onFailure": "block"
           }
         ]
       },
@@ -302,7 +304,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-test-integrity.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-test-integrity.sh\"",
+            "onFailure": "block"
           }
         ]
       },
