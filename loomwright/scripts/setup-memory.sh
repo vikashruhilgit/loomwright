@@ -895,9 +895,12 @@ remote_slug() {
 #
 # BOUNDED. validate-entry.sh resolves this allowlist on every memory/lesson/rule write and
 # meta-sync.sh on every push, so a hung `gh` (captive portal, stalled TLS) must not stall them:
-# every gh call runs under gh_id_bounded, LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT seconds (default 10),
-# killed on overrun and treated as gh failing — nothing granted. After one timeout no further gh
-# call is made in that resolution, so a hung gh costs at most two bounds.
+# every gh call runs under gh_id_bounded, LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT seconds (default 10):
+# on overrun gh AND every process it started (its process group — a child left holding the capture
+# pipe included) are killed, and the call is treated as gh failing — nothing granted. After one
+# timeout no further gh call is made in that resolution, so a hung gh costs at most two bounds,
+# each plus a 1s TERM grace (limit: a descendant that deliberately leaves gh's process group is
+# not covered — see gh_id_bounded).
 #
 # CAPPED. The request file is the attacker-controlled input, so the WORK it drives is capped too, not
 # just each call: at most META_ALLOWLIST_MAX_ENTRIES well-formed non-own entries are compared per
@@ -951,43 +954,50 @@ allowlist_max_entries() {
   printf '%s\n' "$cap"
 }
 
-# gh_kill_tree <pid> <signal> — signal <pid>'s descendants (depth-first, via pgrep -P when present)
-# and then <pid> itself. A descendant that inherited gh's stdout would otherwise hold the capture
-# pipe open past the bound.
-gh_kill_tree() {
-  local p="$1" sig="$2" c
-  if command -v pgrep >/dev/null 2>&1; then
-    for c in $(pgrep -P "$p" 2>/dev/null); do gh_kill_tree "$c" "$sig"; done
-  fi
-  kill -"$sig" "$p" 2>/dev/null
-}
-
 # gh_id_bounded <owner/repo> — print `gh api repos/<slug> --jq .id` within the bound. Exit 0 on a
-# completed, successful gh; 1 when gh failed; 124 when the bound expired (gh and its descendants are
-# killed — TERM, then KILL — and REAPED before returning, so no child outlives the call). bash 3.2 /
-# BSD has no `timeout`, and this runner is FILE-FREE (the WRITE-CONTAINMENT INVARIANT says
-# `allowlist` writes nothing): inside the command substitution gh runs in the background with the
-# substitution pipe as its stdout; a watchdog subshell — its own stdin/stdout/stderr on /dev/null,
-# so it never holds the pipe — polls gh every 0.1s and kills it on overrun, exiting 124 to say so;
-# the substitution reaps gh, then the watchdog (which exits by itself within 0.1s of gh finishing),
-# and its stderr is discarded so no "Terminated" job notice escapes. Partial output from a killed gh
-# is never printed. gh reads </dev/null so it can never consume the caller's stdin.
+# completed, successful gh; 1 when gh failed; 124 when the bound expired. bash 3.2 / BSD has no
+# `timeout`, and this runner is FILE-FREE (the WRITE-CONTAINMENT INVARIANT says `allowlist` writes
+# nothing): inside the command substitution gh runs in the background with the substitution pipe as
+# its stdout, and gh reads </dev/null so it can never consume the caller's stdin.
+#
+# WHAT IS BOUNDED IS THE PIPE, NOT gh's PID. Anything gh forks inherits that stdout, and the
+# substitution waits for EOF on it, so a child left behind — one that ignores TERM after gh died, or
+# one gh exited 0 without waiting for — would hold the call open after gh itself is gone. So gh is
+# started under `set -m`, which makes it the leader of a NEW PROCESS GROUP that every descendant
+# joins (and stays in after gh exits and it is re-parented). A watchdog subshell — its own
+# stdin/stdout/stderr on /dev/null, so it never holds the pipe — polls that GROUP, not gh, every
+# 0.1s: it exits 0 as soon as the group is empty (gh and everything it started have finished), and
+# at the bound it sends TERM to the whole group, waits up to 1s, sends KILL to the whole group and
+# exits 124. A group whose leader exited 0 but whose child still runs at the bound is therefore a
+# timeout too (its partial output is never printed). Signals go only to `-<gh's pid>`, the group gh
+# leads, never to a pid found by a pattern. So a hung call costs at most the bound plus the 1s TERM
+# grace. HONEST LIMIT: a descendant that leaves the group on purpose (setsid / setpgid — a daemon)
+# is outside it and NOT bounded; gh does not do that. If the group did not form (gh alive, group
+# absent), gh is killed and the call fails closed rather than running unbounded. The substitution
+# reaps gh, then the watchdog, and its stderr is discarded so no "Terminated" job notice escapes.
 gh_id_bounded() {
   local slug="$1" lim max out rc
   lim="$(allowlist_gh_limit)"
   max=$((lim * 10))
   out="$(
     {
+      set -m
       gh api "repos/$slug" --jq .id </dev/null 2>/dev/null &
       gpid=$!
+      set +m
+      if ! kill -0 -- "-$gpid" 2>/dev/null && kill -0 "$gpid" 2>/dev/null; then
+        kill -KILL "$gpid" 2>/dev/null
+        wait "$gpid"
+        exit 1
+      fi
       (
         ticks=0
-        while kill -0 "$gpid" 2>/dev/null; do
+        while kill -0 -- "-$gpid" 2>/dev/null; do
           if [ "$ticks" -ge "$max" ]; then
-            gh_kill_tree "$gpid" TERM
+            kill -TERM -- "-$gpid" 2>/dev/null
             ticks=0
-            while kill -0 "$gpid" 2>/dev/null && [ "$ticks" -lt 10 ]; do sleep 0.1; ticks=$((ticks + 1)); done
-            gh_kill_tree "$gpid" KILL
+            while kill -0 -- "-$gpid" 2>/dev/null && [ "$ticks" -lt 10 ]; do sleep 0.1; ticks=$((ticks + 1)); done
+            kill -KILL -- "-$gpid" 2>/dev/null
             exit 124
           fi
           sleep 0.1

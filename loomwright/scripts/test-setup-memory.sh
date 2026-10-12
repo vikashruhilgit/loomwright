@@ -82,10 +82,12 @@
 #        layers 1–3 win with the file unread and ZERO gh calls; malformed entries never reach gh;
 #        a filesystem-path origin grants nothing; a NON-github.com origin (https, scp, ssh://)
 #        grants nothing with ZERO gh calls; a hung gh is killed at the bound, grants nothing and
-#        leaves no process or temp file; no file / own-slug-only ⇒ ZERO gh calls; stdout stays the
-#        list. gh is a recording PATH stub (no network); nine sed/awk mutants (id comparison,
-#        failure guards, stderr, shape check, eager lookup, layer order, host check, overrun
-#        check, entry cap) each turn their leg red, gated on non-empty + changed + `bash -n`-clean
+#        leaves no process or temp file — and so is a child gh leaves on the pipe (one that
+#        ignores TERM, or one an exit-0 gh never waited for); no file / own-slug-only ⇒ ZERO gh
+#        calls; stdout stays the list. gh is a recording PATH stub (no network); eleven sed/awk
+#        mutants (id comparison, failure guards, stderr, shape check, eager lookup, layer order,
+#        host check, overrun check, group signal, group poll, entry cap) each turn their leg red,
+#        gated on non-empty + changed + `bash -n`-clean
 #   (e)  idempotency: a second apply is a no-op that writes nothing (.gitignore AND config
 #        byte-identical, no second backup); PLUS backup-before-write asserted positively — the
 #        backup exists and its CONTENT is the pristine pre-apply file — and two applies inside the
@@ -859,6 +861,57 @@ MA_OUT="$(cat "$MA_D/out")"; MA_ERR="$(cat "$MA_D/err")"; MA_CALLS="$(cat "$MA_L
   || no "(ma10) a hung entry lookup was not bounded cleanly (out: $MA_OUT; gh: $(printf '%s' "$MA_CALLS" | tr '\n' '|'); err: $MA_ERR)"
 pkill -f "$MA10_PAT" 2>/dev/null || true
 
+# (ma13) the bound holds on the PIPE, not just gh's pid: anything gh forks inherits the capture
+# pipe, so a child left behind must be killed at the bound too. (a) gh dies on TERM but its child
+# IGNORES TERM and is re-parented once gh is reaped; (b) gh EXITS 0 at once, printing the matching
+# id, and leaves a child holding the pipe. Both must finish inside the bound + the 1s TERM grace,
+# grant nothing (a gh whose group outlives the bound is a timeout, its output discarded) and leave
+# no child running. Per-run sleep durations (8.1<pid> / 8.2<pid>) are the leak markers.
+MA13="$(newgit https://github.com/acme/widget.git)"
+ma_req "$MA13" 'acme/old-name'
+MA13A_HANG="8.1$$"; MA13A_PAT="^sleep 8\\.1$$\$"
+MA13B_HANG="8.2$$"; MA13B_PAT="^sleep 8\\.2$$\$"
+mkdir -p "$MA_D/bin-orphan-term" "$MA_D/bin-orphan-exit0"
+cat > "$MA_D/bin-orphan-term/gh" <<'GH'
+#!/bin/sh
+printf '%s\n' "$*" >> "$GH_STUB_LOG"
+( trap '' TERM; exec sleep "$GH_STUB_HANG" ) &
+wait
+GH
+cat > "$MA_D/bin-orphan-exit0/gh" <<'GH'
+#!/bin/sh
+printf '%s\n' "$*" >> "$GH_STUB_LOG"
+( sleep "$GH_STUB_HANG" ) &
+echo 101
+exit 0
+GH
+chmod +x "$MA_D/bin-orphan-term/gh" "$MA_D/bin-orphan-exit0/gh"
+# ma13_leg <bin-dir> <hang> <pattern> — 0 iff bounded (< 5s), nothing granted, timeout named, one
+# gh call, no child left. Sets MA13_ELAPSED.
+ma13_leg() {
+  local t0 t1
+  : > "$MA_LOG"
+  t0="$(date +%s)"
+  env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST GH_STUB_LOG="$MA_LOG" GH_STUB_HANG="$2" LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT=1 \
+    TMPDIR="$MA10_TMP" PATH="$1:$PATH" bash "$MA_SUT" --root "$MA13" allowlist > "$MA_D/out" 2> "$MA_D/err"
+  t1="$(date +%s)"
+  MA13_ELAPSED=$((t1 - t0))
+  MA_OUT="$(cat "$MA_D/out")"; MA_ERR="$(cat "$MA_D/err")"; MA_CALLS="$(cat "$MA_LOG")"
+  [ "$MA_OUT" = "acme/widget" ] && [ "$MA13_ELAPSED" -lt 5 ] && [ "$(ma_ncalls)" = "1" ] \
+    && hasF 'allowlist: ignored acme/old-name — gh timed out after 1s resolving origin acme/widget' "$MA_ERR" \
+    && ! hasF 'Terminated' "$MA_ERR" && ! pgrep -f "$3" >/dev/null 2>&1 \
+    && [ -z "$(ls -A "$MA10_TMP" 2>/dev/null)" ]
+}
+MA13_ELAPSED=""
+ma13_leg "$MA_D/bin-orphan-term" "$MA13A_HANG" "$MA13A_PAT" \
+  && ok "(ma13) a TERM-ignoring child of a killed gh is killed with it: bounded (${MA13_ELAPSED}s), nothing granted, no 'sleep $MA13A_HANG' left" \
+  || no "(ma13) a TERM-ignoring child outlived the bound or leaked (elapsed ${MA13_ELAPSED}s; out: $MA_OUT; procs: $(pgrep -f "$MA13A_PAT" | tr '\n' ' '); err: $MA_ERR)"
+pkill -f "$MA13A_PAT" 2>/dev/null || true
+ma13_leg "$MA_D/bin-orphan-exit0" "$MA13B_HANG" "$MA13B_PAT" \
+  && ok "(ma13) a gh that exits 0 leaving a child on the pipe is bounded (${MA13_ELAPSED}s), counted as a timeout (its id not granted), no 'sleep $MA13B_HANG' left" \
+  || no "(ma13) an exit-0 gh's lingering child was not bounded or its id was granted (elapsed ${MA13_ELAPSED}s; out: $MA_OUT; procs: $(pgrep -f "$MA13B_PAT" | tr '\n' ' '); err: $MA_ERR)"
+pkill -f "$MA13B_PAT" 2>/dev/null || true
+
 # (ma11) the WORK the request file drives is CAPPED, not just each call: 25 non-own entries (the
 # first one the same-id old slug) ⇒ at most cap + 1 = 21 gh calls (origin + 20 entries), the same-id
 # entry still granted in file order, and each of the 5 entries past the cap named and never passed to gh.
@@ -969,6 +1022,22 @@ if M="$(ma_mutant bound 's/^          if \[ "\$ticks" -ge "\$max" \]; then$/    
   [ "$MA10_RC" -eq 0 ] && no "(ma-mut BOUND) REFUTED: without the overrun check the hung gh still finished inside the bound — (ma10) is not load-bearing" \
     || ok "(ma-mut BOUND) without the overrun check the hung gh is waited out (${MA10_ELAPSED}s), so (ma10) turns red"
 else no "(ma-mut BOUND) could not build the mutant — inconclusive"; fi
+# (GROUP-KILL) TERM/KILL sent to gh's pid instead of its group ⇒ the TERM-ignoring child survives
+# and holds the pipe ⇒ (ma13)'s (a) leg red.
+if M="$(ma_mutant groupkill 's/kill -TERM -- "-\$gpid" 2>\/dev\/null$/kill -TERM "$gpid" 2>\/dev\/null/;s/kill -KILL -- "-\$gpid" 2>\/dev\/null$/kill -KILL "$gpid" 2>\/dev\/null/')"; then
+  MA_SUT="$M"; ma13_leg "$MA_D/bin-orphan-term" "$MA13A_HANG" "$MA13A_PAT"; MA13_RC=$?; MA_SUT="$MEM"
+  pkill -f "$MA13A_PAT" 2>/dev/null || true
+  [ "$MA13_RC" -eq 0 ] && no "(ma-mut GROUP-KILL) REFUTED: signalling gh's pid alone still bounded the TERM-ignoring child — (ma13a) is not load-bearing" \
+    || ok "(ma-mut GROUP-KILL) signalling gh's pid instead of its group leaves the child on the pipe (${MA13_ELAPSED}s), so (ma13a) turns red"
+else no "(ma-mut GROUP-KILL) could not build the mutant — inconclusive"; fi
+# (GROUP-POLL) the watchdog polls gh's pid instead of its group ⇒ it stops when gh exits 0 and
+# nothing bounds the lingering child ⇒ (ma13)'s (b) leg red.
+if M="$(ma_mutant grouppoll 's/^        while kill -0 -- "-\$gpid" 2>\/dev\/null; do$/        while kill -0 "$gpid" 2>\/dev\/null; do/')"; then
+  MA_SUT="$M"; ma13_leg "$MA_D/bin-orphan-exit0" "$MA13B_HANG" "$MA13B_PAT"; MA13_RC=$?; MA_SUT="$MEM"
+  pkill -f "$MA13B_PAT" 2>/dev/null || true
+  [ "$MA13_RC" -eq 0 ] && no "(ma-mut GROUP-POLL) REFUTED: polling gh's pid alone still bounded the exit-0 gh's child — (ma13b) is not load-bearing" \
+    || ok "(ma-mut GROUP-POLL) polling gh's pid instead of its group stops at gh's exit and the child holds the pipe (${MA13_ELAPSED}s), so (ma13b) turns red"
+else no "(ma-mut GROUP-POLL) could not build the mutant — inconclusive"; fi
 # (CAP) the comparison cap dropped ⇒ every entry reaches gh ⇒ (ma11)'s cap leg red.
 if M="$(ma_mutant cap 's/^    if \[ "\$compared" -ge "\$cap" \]; then$/    if false; then/')"; then
   MA_SUT="$M"; ma11_leg; MA11_RC=$?; MA_SUT="$MEM"
