@@ -87,6 +87,16 @@
 #   plan\t<repo-relative file>\t<status line the file would get>\t<evidence>
 #   stamped\t<repo-relative file>\t<status line just written>\t<evidence>
 #   info\t<repo-relative file>\tbrief-shipped\t<job path> (<PR url or "no PR recorded">)
+# An abandoned row's <evidence> is the repo-relative run file
+# (`.supervisor/automate/<run_id>.md`).
+#
+# NO ABSOLUTE PATHS (automate-followups/36 B-B). Every path this prints or writes
+# is repo-relative — the `- **Brief:**` line --apply stamps into a requirement file
+# (`.supervisor/jobs/done/<brief>.md`, the form closeout's own stamp writes) and the
+# abandoned rows' run-file field included. Requirement files and the run file the
+# RESUME appends `plan` rows to travel on the metadata branch, whose meta-sync
+# home-path scrub refuses an absolute `/Users/…` or `/home/…` path: the absolute
+# forms failed lane metadata pushes in S3 waves 1 and 2.
 #
 # FAIL-SAFE (`set +e` below): a network hiccup, an unreadable brief, or a
 # malformed run-file row degrades that ONE candidate to "no evidence" — it
@@ -360,12 +370,13 @@ RS_EV
   status_line="done (PR #${num}, merge ${sha})"
 
   if [ "$apply" -eq 1 ]; then
-    local tmp; tmp="$(mktemp "${f}.XXXXXX")"
+    local tmp brief_rel=""; tmp="$(mktemp "${f}.XXXXXX")"
+    [ -n "$done_brief" ] && brief_rel="${done_brief#"$proj_root"/}"
     _rs_strip_trailing_status "$f" "$tmp"
     {
       printf '\n## Status: %s\n' "$status_line"
       printf -- '- **Completed:** %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
-      printf -- '- **Brief:** %s\n' "${done_brief:-unknown}"
+      printf -- '- **Brief:** %s\n' "${brief_rel:-unknown}"
       printf -- '- **PR:** %s\n' "$url"
     } >> "$tmp"
     mv -f "$tmp" "$f"
@@ -386,9 +397,10 @@ RS_EV
 _rs_process_abandoned() {
   local root_abs="$1" proj_root="$2" automate_dir="$3" apply="$4"
   [ -d "$automate_dir" ] || return 0
-  local af line
+  local af af_rel line
   for af in "$automate_dir"/*.md; do
     [ -f "$af" ] || continue
+    af_rel="${af#"$proj_root"/}"   # repo-relative in every printed row (no home path)
     while IFS= read -r line; do
       case "$line" in
         "- [x] "*"  # abandoned: "*)
@@ -409,9 +421,9 @@ _rs_process_abandoned() {
             _rs_strip_trailing_status "$fabs" "$tmp"
             printf '\n## Status: done_with_escalation \xe2\x80\x94 ABANDONED (%s)\n' "$line" >> "$tmp"
             mv -f "$tmp" "$fabs"
-            printf 'stamped\t%s\tdone_with_escalation \xe2\x80\x94 ABANDONED\t%s\n' "$reqpath" "$af"
+            printf 'stamped\t%s\tdone_with_escalation \xe2\x80\x94 ABANDONED\t%s\n' "$reqpath" "$af_rel"
           else
-            printf 'plan\t%s\tdone_with_escalation \xe2\x80\x94 ABANDONED\t%s\n' "$reqpath" "$af"
+            printf 'plan\t%s\tdone_with_escalation \xe2\x80\x94 ABANDONED\t%s\n' "$reqpath" "$af_rel"
           fi
           ;;
       esac

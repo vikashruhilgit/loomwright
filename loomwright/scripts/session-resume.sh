@@ -108,9 +108,12 @@
 # compact ONLY — automate_inflight_lines, the ONE place this hook calls the forge:
 # one `gh pr view` per run file whose `## Current` names a not-done item with a
 # PR, at most 5 per SessionStart, each time-bounded (background + bounded poll +
-# kill; LOOMWRIGHT_SR_GH_TIMEOUT seconds, default 5); a MERGED answer prints the
-# merged-but-not-closed-out line, an absent / failing / slow gh or an item past
-# the cap prints `… merge state unverified` (never a guess). NEW TEST SEAM in this
+# kill; LOOMWRIGHT_SR_GH_TIMEOUT seconds, default 5), and all of them together
+# bounded by ONE overall deadline (LOOMWRIGHT_SR_GH_DEADLINE seconds, default 8 —
+# automate-followups/36 A2: five slow calls used to add ~25 s to every resume); a
+# MERGED answer prints the merged-but-not-closed-out line, an absent / failing /
+# slow gh, an item past the cap, or one reached after the deadline is spent prints
+# `… merge state unverified` (never a guess). NEW TEST SEAM in this
 # file (not reused from elsewhere here): LOOMWRIGHT_GH_BIN names the gh binary
 # (default `gh`), the same seam name automate-helpers.sh uses.
 #
@@ -439,30 +442,34 @@ automate_watch_lines() {
   return 0
 }
 
-# sr_pr_state <url> — MERGED | OPEN | CLOSED | unverified, from ONE time-bounded
-# `gh pr view` (bash 3.2 has no `timeout`: background it, poll every 0.1s up to
-# LOOMWRIGHT_SR_GH_TIMEOUT seconds, kill it on the deadline). Absent gh, a failing
-# or slow call, unparsable output ⇒ unverified. Resume/clear/compact only.
+# sr_pr_state <url> [<max_ticks>] — prints `<state> <ticks>`: the state (MERGED |
+# OPEN | CLOSED | unverified) from ONE time-bounded `gh pr view`, and the 0.1 s poll
+# ticks it spent (bash 3.2 has no `timeout`: background it, poll every 0.1s, kill it
+# on the deadline). The deadline is the SMALLER of LOOMWRIGHT_SR_GH_TIMEOUT seconds
+# and <max_ticks> tenths — the caller's remaining overall budget. Absent gh, a
+# failing or slow call, unparsable output ⇒ unverified. Resume/clear/compact only.
 sr_pr_state() {
-  local url="$1" gh="${LOOMWRIGHT_GH_BIN:-gh}" tmo="${LOOMWRIGHT_SR_GH_TIMEOUT:-5}" tmp pid i=0 rc st mg
+  local url="$1" max="${2:-}" gh="${LOOMWRIGHT_GH_BIN:-gh}" tmo="${LOOMWRIGHT_SR_GH_TIMEOUT:-5}" tmp pid i=0 rc st mg lim
   case "$tmo" in ''|*[!0-9]*) tmo=5 ;; esac
-  command -v "$gh" >/dev/null 2>&1 || { echo unverified; return 0; }
-  tmp="$(mktemp "${TMPDIR:-/tmp}/sr-gh.XXXXXX" 2>/dev/null)" || { echo unverified; return 0; }
+  lim=$((tmo * 10))
+  case "$max" in ''|*[!0-9]*) ;; *) [ "$max" -lt "$lim" ] && lim="$max" ;; esac
+  command -v "$gh" >/dev/null 2>&1 || { echo "unverified 0"; return 0; }
+  tmp="$(mktemp "${TMPDIR:-/tmp}/sr-gh.XXXXXX" 2>/dev/null)" || { echo "unverified 0"; return 0; }
   "$gh" pr view "$url" --json state,mergedAt > "$tmp" 2>/dev/null < /dev/null &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
-    if [ "$i" -ge $((tmo * 10)) ]; then
-      kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; rm -f "$tmp"; echo unverified; return 0
+    if [ "$i" -ge "$lim" ]; then
+      kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; rm -f "$tmp"; echo "unverified $i"; return 0
     fi
     sleep 0.1; i=$((i + 1))
   done
   wait "$pid"; rc=$?
   st="$(jq -r '.state // empty' "$tmp" 2>/dev/null)"; mg="$(jq -r '.mergedAt // empty' "$tmp" 2>/dev/null)"
   rm -f "$tmp"
-  if [ "$rc" -ne 0 ]; then echo unverified
-  elif [ "$st" = MERGED ] || [ -n "$mg" ]; then echo MERGED
-  elif [ "$st" = OPEN ] || [ "$st" = CLOSED ]; then echo "$st"
-  else echo unverified; fi
+  if [ "$rc" -ne 0 ]; then echo "unverified $i"
+  elif [ "$st" = MERGED ] || [ -n "$mg" ]; then echo "MERGED $i"
+  elif [ "$st" = OPEN ] || [ "$st" = CLOSED ]; then echo "$st $i"
+  else echo "unverified $i"; fi
   return 0
 }
 
@@ -470,9 +477,10 @@ sr_pr_state() {
 # each run file (`# Automate Run:` title, not `## Status: done`) whose `## Current`
 # item line names a non-null item, a `…/pull/<n>` pr and a status other than
 # `done`: MERGED ⇒ `automate: <run_id> item <item> PR <url> merged but not closed
-# out — /automate --resume closes it out`; unverified (gh absent/failing/slow, or
-# past the 5-call cap) ⇒ `automate: <run_id> item <item> PR <url> merge state
-# unverified`; OPEN/CLOSED ⇒ nothing. No in-flight PR ⇒ no call, nothing printed.
+# out — /automate --resume closes it out`; unverified (gh absent/failing/slow,
+# past the 5-call cap, or reached once the overall LOOMWRIGHT_SR_GH_DEADLINE budget
+# is spent — no call is made then) ⇒ `automate: <run_id> item <item> PR <url> merge
+# state unverified`; OPEN/CLOSED ⇒ nothing. No in-flight PR ⇒ no call, nothing printed.
 # /automate run-file title ERE — a byte-identical COPY of automate-helpers.sh's _RUN_TITLE_BOM and
 # RUN_TITLE_ERE (is_run_file; its header states the tolerated forms: leading BOM, up to 3 spaces of
 # indent, any case). This hook does not source the helper; test-session-resume.sh asserts the copies
@@ -481,7 +489,9 @@ _RUN_TITLE_BOM="$(printf '\357\273\277')"
 RUN_TITLE_ERE="^(${_RUN_TITLE_BOM})? {0,3}#[[:blank:]]*[Aa][Uu][Tt][Oo][Mm][Aa][Tt][Ee][[:blank:]]+[Rr][Uu][Nn][[:blank:]]*:"
 automate_inflight_lines() {
   [ -d ".supervisor/automate" ] || return 0
-  local f cl item st pr state calls=0 out=""
+  local f cl item st pr state calls=0 out="" r used left dl="${LOOMWRIGHT_SR_GH_DEADLINE:-8}"
+  case "$dl" in ''|*[!0-9]*) dl=8 ;; esac
+  left=$((dl * 10))   # the overall budget, in sr_pr_state's 0.1 s ticks
   for f in .supervisor/automate/*.md; do
     [ -f "$f" ] || continue
     env LC_ALL=C grep -qE "$RUN_TITLE_ERE" "$f" 2>/dev/null || continue
@@ -493,7 +503,12 @@ automate_inflight_lines() {
     pr="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "pr: ")==1) {print substr($i, 5); exit}}')"
     [ -n "$item" ] && [ "$item" != null ] && [ "$st" != done ] || continue
     case "$pr" in http://*/pull/*|https://*/pull/*) ;; *) continue ;; esac
-    if [ "$calls" -ge 5 ]; then state=unverified; else calls=$((calls + 1)); state="$(sr_pr_state "$pr")"; fi
+    if [ "$calls" -ge 5 ] || [ "$left" -le 0 ]; then state=unverified
+    else
+      calls=$((calls + 1)); r="$(sr_pr_state "$pr" "$left")"; state="${r%% *}"; used="${r##* }"
+      case "$used" in ''|*[!0-9]*) used=0 ;; esac
+      left=$((left - used))
+    fi
     case "$state" in
       MERGED) out="${out}automate: $(basename "$f" .md) item $item PR $pr merged but not closed out — /automate --resume closes it out"$'\n' ;;
       unverified) out="${out}automate: $(basename "$f" .md) item $item PR $pr merge state unverified"$'\n' ;;

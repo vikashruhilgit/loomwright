@@ -170,6 +170,11 @@
 #      `.dismissed-decisions`, a `.lanes` sidecar and a `<name>.dismissed-decisions.bak` are not; a
 #      ledger carrying a home path is refused by push's scrub (exit 2), nothing published
 #  60. mutation control (xiv): a mutant without the D9 is_managed arm drops the ledger -> (59) turns red
+#  61. an UNREADABLE meta-base (chmod 000; skipped under root like leg 29): pull and push exit 1
+#      `base_branch_mismatch — meta-base <path> is unreadable`, nothing written locally, nothing
+#      published, meta-base bytes unchanged (automate-followups/36 A6)
+#  62. mutation control (xv): a mutant without load_base's unreadable arm no longer refuses as
+#      unreadable -> (61) turns red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1090,7 +1095,7 @@ ms B push --paths-from "$W/list35.txt"
 { [ "$RC" -eq 1 ] && grep -qF "meta_sync: conflict $RQ/x.md" < <(printf '%s\n' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$MB_SHA" ]; }
 check $? "missing meta-base object + an unlisted conflict -> the --paths-from push exits 1 naming it, branch tip and meta-base unchanged (whole-set derivation) (rc=$RC: $OUT)"
 
-echo "== 38. symlinks under requirements/: a non-managed FILE syncs; a dangling or managed-.md one refuses =="
+echo "== 38. symlinks under requirements/: a non-managed FILE is ignored (never synced, not refused); a dangling or managed-.md one refuses =="
 # design_png_world — synced pair; B holds requirements/q/design.png -> a regular file OUTSIDE
 # .supervisor/, a pending take-R (A's x.md v2) and a genuinely local change (B's y.md v2).
 design_png_world() {
@@ -1928,6 +1933,60 @@ if build_mutant "$MUT_XIV" 's/^    \.supervisor\/automate\/?\*\.dismissed-decisi
   fi
 else
   no "mutation control (xiv): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 61. an UNREADABLE meta-base: pull and push refuse base_branch_mismatch, nothing changed (af/36 A6) =="
+# load_base's `[ ! -r "$META_BASE" ]` arm: the branch the base was recorded against is unknown, so
+# the sync refuses rather than plan against it (or fall back to the no-base derivation).
+UNR_MSG="meta_sync: base_branch_mismatch — meta-base"
+UNR_TAIL="is unreadable, so the branch it was recorded against is unknown; nothing was changed"
+# unr_world — synced pair; B holds a local edit and a pending take-R; B's meta-base chmod 000.
+unr_world() {
+  synced_pair
+  put A "$RQ/x.md" "x v2 from A"; ms A push
+  put B "$RQ/y.md" "y v2 local to B"
+  UNR_TIP="$(br_tip)"; cp "$W/B/.git/meta-base" "$W/unr-base.before"
+  chmod 000 "$W/B/.git/meta-base"
+}
+# unr_untouched — 0 iff B's files, the branch tip and B's meta-base bytes are as unr_world left them.
+unr_untouched() {
+  chmod 644 "$W/B/.git/meta-base"
+  local same=1; cmp -s "$W/unr-base.before" "$W/B/.git/meta-base" || same=0
+  chmod 000 "$W/B/.git/meta-base"
+  [ "$same" = 1 ] && [ "$(br_tip)" = "$UNR_TIP" ] && [ "$(get B "$RQ/x.md")" = "x v1" ] \
+    && [ "$(get B "$RQ/y.md")" = "y v2 local to B" ] && [ ! -e "$W/B/.git/meta-sync.lock" ]
+}
+UNR_SKIP=0
+if [ "$(id -u)" = "0" ]; then
+  echo "  SKIP: unreadable meta-base legs (running as root, permissions are not enforced)"; UNR_SKIP=1
+else
+  unr_world
+  ms B pull
+  { [ "$RC" -eq 1 ] && grep -qF "$UNR_MSG" < <(printf '%s\n' "$OUT") && grep -qF "$UNR_TAIL" < <(printf '%s\n' "$OUT") && unr_untouched; }
+  check $? "pull with an unreadable meta-base -> exit 1 base_branch_mismatch (unreadable), pending x.md NOT written, meta-base bytes and branch unchanged (rc=$RC: $OUT)"
+  ms B push
+  { [ "$RC" -eq 1 ] && grep -qF "$UNR_MSG" < <(printf '%s\n' "$OUT") && grep -qF "$UNR_TAIL" < <(printf '%s\n' "$OUT") && unr_untouched; }
+  check $? "push with an unreadable meta-base -> exit 1 base_branch_mismatch (unreadable), nothing published, meta-base bytes unchanged (rc=$RC: $OUT)"
+  chmod 644 "$W/B/.git/meta-base"
+fi
+
+echo "== 62. mutation control (xv): drop load_base's unreadable-meta-base arm -> the unreadable assertion (61) must turn red =="
+MUT_XV="$TROOT/mutant-xv"
+if [ "$UNR_SKIP" = 1 ]; then
+  echo "  SKIP: mutation control (xv) (its leg 61 is skipped under root)"
+elif build_mutant "$MUT_XV" 's@^  if \[ ! -r "\$META_BASE" \]; then$@  if false; then  # mutant (xv)@' 'if false; then  # mutant (xv)'; then
+  unr_world
+  SCRIPT="$MUT_XV/meta-sync.sh"
+  ms B push
+  SCRIPT="$SUT"
+  chmod 644 "$W/B/.git/meta-base"
+  if [ "$RC" -eq 1 ] && grep -qF "$UNR_TAIL" < <(printf '%s\n' "$OUT"); then
+    no "mutation control (xv) REFUTED: the mutant still printed the unreadable refusal — leg 61 is not load-bearing"
+  else
+    ok "mutation control (xv): without the arm the unreadable meta-base is no longer refused as unreadable, so leg 61 turns red (rc=$RC: $(printf '%s' "$OUT" | tr '\n' '|'))"
+  fi
+else
+  no "mutation control (xv): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
 fi
 
 echo

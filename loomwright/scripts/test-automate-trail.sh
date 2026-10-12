@@ -2356,6 +2356,52 @@ lst="$(fe_glob)"
 [ -z "$lst" ] && grep -qxF -- "## Status: done" "$P/$RF_REL" && grep -qxF -- "- pause_reason: null" "$P/$RF_REL" \
   && ok "(F1b) the next --finalize retries cleanly and finalizes" || no "(F1b) retry: list='$lst'"
 
+# (F4) automate-followups/36 A4 — the order is kept on purpose: `## Status: done` is written BEFORE
+# trail-pr, because the trail PR carries that stamp. So a FAILED trail-pr is not retried by a later
+# --finalize (the run is no longer paused); its line sits in ## Progress and the recovery is a hand
+# `trail-pr <runfile> --reason done`. A stub trail-pr records the run file's ## Status when called.
+FTD="$TOP/fetrail"; mkdir -p "$FTD"; cp "$HERE"/*.sh "$HERE"/*.py "$FTD/"; cp -R "$HERE/automate-helpers.d" "$FTD/"
+mv "$FTD/automate-helpers.sh" "$FTD/automate-helpers.real.sh"
+cat > "$FTD/automate-helpers.sh" <<'SHIM'
+#!/usr/bin/env bash
+if [ "${1:-}" = trail-pr ]; then
+  { printf 'trail-pr saw: '; grep -m1 '^## Status:' "$2"; } >> "$FE_TRAIL_LOG"
+  if [ -n "${FE_TRAIL_FAIL:-}" ]; then echo "trail-pr: skipped — gh pr create failed (stub)"; exit 0; fi
+fi
+exec bash "$(dirname "$0")/automate-helpers.real.sh" "$@"
+SHIM
+export FE_TRAIL_LOG="$TOP/fe-trail.log"
+fe_trail_leg() { # <helpers dir> — closeout, then --finalize through <dir>'s shim with a failing trail-pr
+  closeout_fixture "$1"; run_closeout >/dev/null
+  : > "$FE_TRAIL_LOG"
+  FE_LST="$(FE_TRAIL_FAIL=1 FE_H="$2/automate-helpers.sh" fe_glob)"
+}
+fe_trail_leg 208 "$FTD"
+[ -z "$FE_LST" ] && grep -qxF -- "## Status: done" "$P/$RF_REL" && [ "$(cat "$FE_TRAIL_LOG")" = "trail-pr saw: ## Status: done" ] \
+  && ok "(F4) trail-pr runs AFTER the done write: the one trail call saw '## Status: done' (the trail carries the stamp)" \
+  || no "(F4) list='$FE_LST' trail log: $(tr '\n' '|' < "$FE_TRAIL_LOG")"
+grep -qE '^- [^ ]+ trail-pr: skipped — gh pr create failed \(stub\)$' "$P/$RF_REL" && grep -qxF 'trail-pr: skipped — gh pr create failed (stub)' "$FX/fe.err" \
+  && ok "(F4) the failed trail is visible: its line is printed and appended to ## Progress" || no "(F4) failure line missing: $(tr '\n' '|' < "$FX/fe.err")"
+c1="$(cksum < "$P/$RF_REL")"
+lst="$(FE_H="$FTD/automate-helpers.sh" fe_glob)"
+[ -z "$lst" ] && [ "$(wc -l < "$FE_TRAIL_LOG" | tr -d ' ')" = 1 ] && [ "$c1" = "$(cksum < "$P/$RF_REL")" ] \
+  && ok "(F4) a later --finalize does NOT retry the failed trail (the run is done, not listed, byte-unchanged) — the documented limit" \
+  || no "(F4) retry leg: list='$lst' trail calls=$(wc -l < "$FE_TRAIL_LOG")"
+o="$(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason done)"
+case "$o" in "trail-pr: skipped"*|"") no "(F4) hand recovery 'trail-pr --reason done' shipped nothing: '$o'" ;;
+  *) ok "(F4) the documented recovery — a hand 'trail-pr <runfile> --reason done' — ships the trail ('$o')" ;; esac
+# Mutation control: a trail cut BEFORE the done write records 'paused' — the order leg turns red.
+MUTFT="$TOP/mutd-fetrail"; mkdir -p "$MUTFT"; cp -R "$FTD"/* "$MUTFT/"
+awk 'index($0, "  local tmp; tmp=\"$(mktemp \"${rf_abs}.fe.XXXXXX\")\"")==1 { print "  bash \"$HLP\" trail-pr \"$rf_abs\" --reason done >/dev/null 2>&1  # mutant A4" } { print }' "$T" > "$MUTFT/automate-trail.sh"
+if grep -q '# mutant A4' "$MUTFT/automate-trail.sh" && bash -n "$MUTFT/automate-trail.sh"; then
+  fe_trail_leg 209 "$MUTFT"
+  [ "$(head -n1 "$FE_TRAIL_LOG")" = "trail-pr saw: ## Status: paused" ] \
+    && ok "(F4) control: a trail-pr cut before the done write sees 'paused' — the order leg is load-bearing" \
+    || no "(F4) control did not discriminate: $(tr '\n' '|' < "$FE_TRAIL_LOG")"
+else
+  no "(F4) mutant A4 not built"
+fi
+
 # (F2) eligibility + lock: only paused/awaiting_go/remaining-0/Current-done runs finalize.
 new_fixture 204
 ( cd "$P" && git checkout -q -- README; rm -f stray.txt; rm -f "$AUTD"/*.md )
@@ -2445,6 +2491,17 @@ want_row "closeout: skipped — pr not merged (awaiting_merge)" gate && ok "(CL2
 want_row "closeout: frobnicated — something new" unknown && ok "(CL2) an unknown closeout: line ⇒ leftover (unknown)" || no "(CL2) unknown line: $(cl_one 'closeout: frobnicated — something new')"
 want_row "closeout: skipped — uncommitted changes outside the trail paths (README)" sync && ok "(CL2) sync skipped on a dirty primary ⇒ leftover (sync)" || no "(CL2) dirty sync"
 want_row "closeout: skipped — no done brief" stamp && ok "(CL2) 'skipped — no done brief' ⇒ leftover (stamp)" || no "(CL2) no done brief"
+# (CL2l) automate-followups/36 A1: a run lock held by a LIVE process is `run_lock_held` — neither
+# complete nor a leftover; a dead or unreadable holder stays `leftover lock`.
+o="$(cl_one "closeout: skipped — run lock held by automate:r-L1 (live pid 4242)")"
+[ "$o" = "run_lock_held	R1	q/01.md	$PRURL	lock	skipped — run lock held by automate:r-L1 (live pid 4242)" ] \
+  && ok "(CL2l) '… run lock held by <owner> (live pid <p>)' ⇒ ONE run_lock_held row (not complete, not leftover)" || no "(CL2l) live: $o"
+want_row "closeout: skipped — run lock held by automate:r-L1 (holder pid 4242 not running)" lock && ok "(CL2l) a dead holder ⇒ leftover (lock)" || no "(CL2l) dead: $(cl_one "closeout: skipped — run lock held by automate:r-L1 (holder pid 4242 not running)")"
+want_row "closeout: skipped — run lock held by unknown (holder pid unknown not running)" lock && ok "(CL2l) an unreadable holder ⇒ leftover (lock)" || no "(CL2l) unreadable holder"
+CLR="$TOP/cl-held.md"; printf '# Automate Run: h\n## Status: running\n## Queue\n- [ ] q/01.md\n## Current\n- item: null | status: null | pr: null | branch: null\n- pause_reason: null\n## Progress\n- t0 run created\n' > "$CLR"
+c0="$(cksum < "$CLR")"
+printf 'brief-repair: skipped — nothing to repair\ncloseout: skipped — run lock held by automate:r-L1 (live pid 4242)\n' | cls --run R1 --item q/01.md --pr "$PRURL" --record "$CLR" >/dev/null
+[ "$c0" = "$(cksum < "$CLR")" ] && ok "(CL2l) --record on a run_lock_held answer appends nothing (no false 'nothing to close out')" || no "(CL2l) --record appended: $(tail -n1 "$CLR")"
 o="$(printf 'brief-repair: repaired x\ntrail-pr: skipped — gh failed\n' | cls --run R1)"
 [ "$o" = "leftover	R1	-	-	none	no closeout: line in the input" ] && ok "(CL2) no closeout: line at all ⇒ one leftover row (nothing proves the close-out ran); brief-repair/trail-pr lines ignored" || no "(CL2) no closeout line: $o"
 bash "$H" closeout-classify --bogus </dev/null >/dev/null 2>&1; [ $? -eq 1 ] && ok "(CL2) usage error exits 1" || no "(CL2) usage error rc"
@@ -2580,6 +2637,53 @@ grep -qxF "closeout-others: recorded — cross-run closeout $RUN_ID $REQ: leftov
   && ! grep -q 'https\?://' "$P/$RBF" \
   && ok "(CO6) a leftover detail carrying a PR URL reaches B's Progress as <url> — the record line never carries the URL" \
   || no "(CO6) out=$(printf '%s' "$o" | tr '\n' '|') B=$(grep 'cross-run' "$P/$RBF")"
+
+# (CO7)-(CO9) automate-followups/36 A1: closeout-others meets the run lock held by ANOTHER process.
+# co_plant_lock <pid> — a run lock owned by a sibling lane's run, recorded NOW (young: never TTL-reclaimable).
+co_plant_lock() {
+  mkdir -p "$P/.supervisor/run.lock"
+  printf 'pid\t%s\nowner\tautomate:%s-L1\nsession_id\tother-session\nts\t%s\npid_source\tppid\n' "$1" "$RUN_ID" "$(date +%s)" > "$P/.supervisor/run.lock/meta"
+}
+co_live_leg() { # [<helpers>] — A's merged item meets a lock held by THIS live test shell; sets CO_O
+  closeout_fixture 320; mk_rb
+  co_plant_lock "$$"
+  CO_O="$(CO_H="${1:-}" co_others --record "$RBF")"
+}
+co_live_leg
+CO_HELD="closeout: skipped — run lock held by automate:$RUN_ID-L1 (live pid $$)"
+grep -qxF -- "$CO_HELD" <<<"$CO_O" \
+  && grep -qE "^run_lock_held	$RUN_ID	" <<<"$CO_O" && ! grep -qE '^leftover	' <<<"$CO_O" \
+  && grep -qxF "closeout-others: recorded — cross-run closeout $RUN_ID $REQ: run_lock_held — skipped — run lock held by automate:$RUN_ID-L1 (live pid $$); retried at the next start" <<<"$CO_O" \
+  && grep -qxF -- "- [ ] $REQ" "$P/$RF_REL" && grep -q "^owner	automate:$RUN_ID-L1\$" "$P/.supervisor/run.lock/meta" \
+  && ok "(CO7) a LIVE holder ⇒ 'live pid' line, a run_lock_held row and NO leftover row (nothing for the gate to park), recorded as retried; A untouched, the lock not stolen" \
+  || no "(CO7) out=$(printf '%s' "$CO_O" | tr '\n' '|')"
+rm -rf "$P/.supervisor/run.lock"
+o="$(co_others --record "$RBF")"
+grep -qx complete <<<"$o" && grep -qxF -- "- [x] $REQ" "$P/$RF_REL" \
+  && ok "(CO7) the next start (lock released) closes A out: complete, checked off — the retry the record line promised" || no "(CO7) retry: $(printf '%s' "$o" | tr '\n' '|')"
+# (CO8) a DEAD holder whose lock is young (run-lock.sh will not reclaim it for 1800 s) stays a leftover.
+sleep 0 & DEADPID=$!; wait "$DEADPID" 2>/dev/null
+closeout_fixture 321; mk_rb
+co_plant_lock "$DEADPID"
+o="$(co_others --record "$RBF")"
+rm -rf "$P/.supervisor/run.lock"
+grep -qxF -- "closeout: skipped — run lock held by automate:$RUN_ID-L1 (holder pid $DEADPID not running)" <<<"$o" \
+  && grep -qE "^leftover	$RUN_ID	$REQ	$PRURL	lock	" <<<"$o" && ! grep -q '^run_lock_held	' <<<"$o" \
+  && grep -qxF "closeout-others: recorded — cross-run closeout $RUN_ID $REQ: leftover lock — skipped — run lock held by automate:$RUN_ID-L1 (holder pid $DEADPID not running)" <<<"$o" \
+  && ok "(CO8) a DEAD (young, unreclaimable) holder ⇒ 'not running' line and a leftover lock row, as before" \
+  || no "(CO8) out=$(printf '%s' "$o" | tr '\n' '|')"
+# (CO9) mutation control: drop the live-holder check ⇒ a live holder reads as a leftover again (CO7 red).
+MUTLK="$TOP/mutd-lock"; mkdir -p "$MUTLK"; cp "$SPYD"/*.sh "$SPYD"/*.py "$MUTLK/"; cp -R "$SPYD/automate-helpers.d" "$MUTLK/"
+sed 's/^    if \[ -n "\$hpid" \] && kill -0 "\$hpid" 2>\/dev\/null; then$/    if false; then  # mutant A1/' "$T" > "$MUTLK/automate-trail.sh"
+if grep -q '# mutant A1' "$MUTLK/automate-trail.sh" && bash -n "$MUTLK/automate-trail.sh"; then
+  co_live_leg "$MUTLK/automate-helpers.sh"
+  rm -rf "$P/.supervisor/run.lock"
+  grep -qE "^leftover	$RUN_ID	$REQ	$PRURL	lock	" <<<"$CO_O" && ! grep -q '^run_lock_held	' <<<"$CO_O" \
+    && ok "(CO9) control: without the live-holder check a busy lane's lock is a leftover again — CO7 is load-bearing" \
+    || no "(CO9) control did not discriminate: $(printf '%s' "$CO_O" | tr '\n' '|')"
+else
+  no "(CO9) mutant A1 not built"
+fi
 
 echo "== K. SKILL wiring (Part A, automate-followups/32) =="
 s6="$(awk '/^## §6 /{s=1;next} s&&/^## /{exit} s' "$SKILL")"
