@@ -331,24 +331,52 @@ if [ "$HOOK_EVENT" = "PreToolUse" ] && [ "$TOOL_NAME" = "AskUserQuestion" ]; the
 
   # Scope gate (mirrors notify-desktop.sh): default `plugin` suppresses paused
   # webhooks outside plugin context; LOOMWRIGHT_NOTIFY_SCOPE=all fires on
-  # every AskUserQuestion. Three independent OR'd markers.
+  # every AskUserQuestion. Three independent OR'd markers:
+  #   (1) in-progress/ holds a brief the offline reconciler does NOT prove
+  #       stranded (inprogress_has_live_brief below)
+  #   (2) an autonomous state.json modified within the last 2h
+  #   (3) the transcript's last 200 lines name a plugin agent/command
+  # Markers 2 and 3 run FIRST (plain file reads); marker 1 may spawn the
+  # reconciler, so it runs only when both missed.
+  #
+  # inprogress_has_live_brief — marker 1. Same function, same contract as
+  # notify-desktop.sh's (keep the two in step): a brief stranded in in-progress/
+  # by a run that died before the completion tail's move no longer reads as
+  # "Supervisor is active". It counts only when reconcile-jobs.sh
+  # --not-stranded-count (offline: files and local git refs, no forge call, no
+  # network) reports a brief that is not stranded_merged / stranded_closed —
+  # `unknown` counts as live. Fail direction is TOWARD the webhook (the old
+  # behaviour): an unreadable reconciler or an empty / non-numeric answer
+  # means "live". Cost: one reconciler run (measured ~170ms per in-progress
+  # brief against a 300-merge local history), only when in-progress/ is
+  # non-empty and markers 2 and 3 both missed.
+  # MUTATION_CONTROL_BEGIN: inprogress-live-brief-gate
+  inprogress_has_live_brief() {
+    compgen -G ".supervisor/jobs/in-progress/*.md" >/dev/null 2>&1 || return 1
+    local rj n
+    rj="${SELF_DIR:-.}/reconcile-jobs.sh"
+    [ -r "$rj" ] || return 0
+    n="$(bash "$rj" --not-stranded-count 2>/dev/null)"
+    n="${n%%$'\n'*}"
+    case "$n" in ""|*[!0-9]*) return 0 ;; esac
+    [ "$n" -gt 0 ]
+  }
+  # MUTATION_CONTROL_END: inprogress-live-brief-gate
   SCOPE="${LOOMWRIGHT_NOTIFY_SCOPE:-plugin}"
   if [ "$SCOPE" = "plugin" ]; then
     TRANSCRIPT_PATH=""
     [ -n "$JQ_BIN" ] && TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.transcript_path // empty' 2>/dev/null || true)"
     PLUGIN_CONTEXT=0
-    if compgen -G ".supervisor/jobs/in-progress/*.md" >/dev/null 2>&1; then PLUGIN_CONTEXT=1; fi
-    if [ "$PLUGIN_CONTEXT" -eq 0 ]; then
-      for sf in .supervisor/autonomous/*/state.json; do
-        [ -f "$sf" ] || continue
-        if [ -n "$(find "$sf" -mmin -120 2>/dev/null)" ]; then PLUGIN_CONTEXT=1; break; fi
-      done
-    fi
+    for sf in .supervisor/autonomous/*/state.json; do
+      [ -f "$sf" ] || continue
+      if [ -n "$(find "$sf" -mmin -120 2>/dev/null)" ]; then PLUGIN_CONTEXT=1; break; fi
+    done
     if [ "$PLUGIN_CONTEXT" -eq 0 ] && [ -n "$TRANSCRIPT_PATH" ] && [ -r "$TRANSCRIPT_PATH" ]; then
       if tail -200 "$TRANSCRIPT_PATH" 2>/dev/null | grep -qE 'loomwright:|/launch-pad|/supervisor|/autonomous|/code-reviewer|/qa-executor|/qa-strategist|/red-team-reviewer|/product-owner|/agent-help|/telemetry|/dreaming'; then
         PLUGIN_CONTEXT=1
       fi
     fi
+    if [ "$PLUGIN_CONTEXT" -eq 0 ] && inprogress_has_live_brief; then PLUGIN_CONTEXT=1; fi
     if [ "$PLUGIN_CONTEXT" -eq 0 ]; then exit 0; fi
   fi
 

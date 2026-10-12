@@ -794,6 +794,108 @@ fi
 grep -q 'VCS_BASE_REF_PROBED=1' "$RECON" && ok "30p2 the probe is marked done after the first call (a failed probe is cached too)" || no "30p2 probe-once marker missing"
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 
+# --- 31. --not-stranded-count (stranded-brief residual gaps, Gap 1b/1c) -------
+# The seam notify-desktop.sh marker 1 and send-webhook.sh's paused gate read: ONE
+# integer = in-progress briefs NOT proven stranded. `unknown` counts (UNVERIFIED
+# is not stale); stranded_merged / stranded_closed do not.
+r="$(new_repo ".supervisor/requirements/req.md")"
+printf '# req\n\n## Status: done\n' > "$r/.supervisor/requirements/req.md"
+out="$(cd "$r" && bash "$RECON" --not-stranded-count 2>/dev/null)"
+[ "$out" = "0" ] && ok "31a a stranded_closed-only in-progress/ ⇒ 0" || no "31a expected 0, got: [$out]"
+printf '# req\n' > "$r/.supervisor/requirements/req.md"
+out="$(cd "$r" && bash "$RECON" --not-stranded-count 2>/dev/null)"
+[ "$out" = "1" ] && ok "31b (control) an unknown brief counts as not stranded ⇒ 1" || no "31b expected 1, got: [$out]"
+# Mixed: one stranded_merged (run file), one stranded_closed (stamp), one unknown.
+r="$(new_repo ".supervisor/requirements/m.md")"
+printf '# m\n' > "$r/.supervisor/requirements/m.md"
+printf '## Current\n- item: .supervisor/requirements/m.md | status: merged | pr: https://github.com/o/r/pull/9 | branch: b\n' > "$r/.supervisor/automate/run.md"
+printf '# c\n\n## Status: done\n' > "$r/.supervisor/requirements/c.md"
+printf '# u\n' > "$r/.supervisor/requirements/u.md"
+printf '# J\n- **Source requirement:** .supervisor/requirements/c.md\n' > "$r/.supervisor/jobs/in-progress/closed.md"
+printf '# J\n- **Source requirement:** .supervisor/requirements/u.md\n' > "$r/.supervisor/jobs/in-progress/open.md"
+out="$(cd "$r" && bash "$RECON" --not-stranded-count 2>/dev/null)"
+[ "$out" = "1" ] && ok "31c merged + closed + unknown ⇒ exactly the unknown one counts (1)" || no "31c expected 1, got: [$out]"
+# Read-only even beside --repair: nothing moves, output is still just the count.
+out="$(cd "$r" && bash "$RECON" --not-stranded-count --repair 2>/dev/null)"
+if [ "$out" = "1" ] && [ -f "$r/.supervisor/jobs/in-progress/brief.md" ] && [ -f "$r/.supervisor/jobs/in-progress/closed.md" ] \
+   && [ -z "$(ls -A "$r/.supervisor/jobs/done")" ]; then
+  ok "31d --not-stranded-count --repair moves nothing and prints only the count"
+else
+  no "31d count mode repaired or printed rows: [$out] done=[$(ls "$r/.supervisor/jobs/done" | tr '\n' ' ')]"
+fi
+r="$(mktmp)"
+out="$(cd "$r" && bash "$RECON" --not-stranded-count 2>/dev/null)"; rc=$?
+[ "$out" = "0" ] && [ "$rc" -eq 0 ] && ok "31e no in-progress/ ⇒ 0, exit 0" || no "31e expected 0/rc0, got: [$out] rc=$rc"
+mkdir -p "$r/.supervisor/jobs/in-progress"
+out="$(cd "$r" && bash "$RECON" --not-stranded-count 2>/dev/null)"
+[ "$out" = "0" ] && ok "31f empty in-progress/ ⇒ 0" || no "31f expected 0, got: [$out]"
+# The default porcelain report is untouched by the new flag's existence.
+r="$(new_repo ".supervisor/requirements/req.md")"; printf '# req\n\n## Status: done\n' > "$r/.supervisor/requirements/req.md"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in "stranded_closed	.supervisor/jobs/in-progress/brief.md	source requirement .supervisor/requirements/req.md is stamped done") ok "31g default --porcelain row unchanged" ;; *) no "31g default porcelain changed: [$out]" ;; esac
+
+# --- 32. --missing-outcome: report-only scan of done/ (Gap 2) ----------------
+# STRICT heading rule: exactly `## Outcome`, or `## Outcome` + whitespace/colon,
+# outside a code fence. `## Outcomes Rubric` is a different section (the loose
+# `^## Outcome` prefix counted it, under-reporting the omission).
+r="$(mktmp)"; D="$r/.supervisor/jobs/done"; mkdir -p "$D"
+printf '# a\n\n## Outcome\n- **Status:** completed\n'                          > "$D/a-exact.md"
+printf '# b\n\n## Outcome (Supervisor v4 — 2026-06-14)\n- **Status:** done\n'  > "$D/b-variant.md"
+printf '# c\n\n## Outcome: completed\n'                                         > "$D/c-colon.md"
+printf '# d\n\n## Outcome   \n- x\n'                                            > "$D/d-trailing-ws.md"
+printf '# e\n\n## Outcomes Rubric\n- r\n'                                       > "$D/e-rubric-only.md"
+printf '# f\n\n## Task\nnothing else\n'                                         > "$D/f-none.md"
+printf '# g\n\n### Outcome\n- x\n'                                              > "$D/g-h3.md"
+printf '# h\n\n```markdown\n## Outcome\n- template\n```\n'                      > "$D/h-fenced.md"
+printf 'not a brief\n'                                                          > "$D/notes.txt"
+before="$(cd "$D" && ls -l; cat ./*)"
+out="$(cd "$r" && bash "$RECON" --missing-outcome --porcelain 2>/dev/null)"; rc=$?
+got="$(printf '%s\n' "$out" | cut -f1,2 | sort | tr '\n' ' ')"
+want="missing_outcome	.supervisor/jobs/done/e-rubric-only.md missing_outcome	.supervisor/jobs/done/f-none.md missing_outcome	.supervisor/jobs/done/g-h3.md missing_outcome	.supervisor/jobs/done/h-fenced.md "
+[ "$got" = "$want" ] && ok "32a porcelain lists exactly the 4 briefs with no strict ## Outcome section" || no "32a porcelain rows: [$got]"
+[ "$rc" -eq 0 ] && ok "32b --missing-outcome exits 0" || no "32b rc=$rc"
+case "$out" in *b-variant*) no "32c a '## Outcome (Supervisor v4 — …)' variant heading was reported missing" ;; *) ok "32c a variant '## Outcome (…)' heading COUNTS as an Outcome section" ;; esac
+case "$out" in *e-rubric-only*) ok "32d '## Outcomes Rubric' alone is NOT an Outcome section (the loose-prefix undercount)" ;; *) no "32d Outcomes Rubric counted as an Outcome" ;; esac
+case "$out" in *h-fenced*) ok "32e a '## Outcome' inside a code fence does not count" ;; *) no "32e fenced heading counted" ;; esac
+case "$out" in *a-exact*|*c-colon*|*d-trailing-ws*) no "32f an exact / colon / trailing-space heading was reported missing" ;; *) ok "32f exact, colon and trailing-whitespace headings count" ;; esac
+human="$(cd "$r" && bash "$RECON" --missing-outcome 2>/dev/null)"
+case "$human" in *"4 of 8 done/ brief(s) carry no ## Outcome section."*) ok "32g human summary: 4 of 8" ;; *) no "32g human summary wrong: $human" ;; esac
+err="$(cd "$r" && bash "$RECON" --missing-outcome --repair 2>&1 >/dev/null)"
+after="$(cd "$D" && ls -l; cat ./*)"
+if [ "$before" = "$after" ] && [ ! -e "$r/.supervisor/jobs/in-progress" ]; then
+  ok "32h report-only: done/ byte-identical after the scan, even with --repair"
+else
+  no "32h --missing-outcome wrote something"
+fi
+case "$err" in *"report-only"*) ok "32i --repair beside --missing-outcome is refused out loud" ;; *) no "32i no report-only notice: [$err]" ;; esac
+r="$(mktmp)"
+out="$(cd "$r" && bash "$RECON" --missing-outcome --porcelain 2>/dev/null)"; rc=$?
+[ -z "$out" ] && [ "$rc" -eq 0 ] && ok "32j no done/ ⇒ silent porcelain, exit 0" || no "32j [$out] rc=$rc"
+
+# --- 33. the repair guard shares the strict rule ----------------------------
+# A brief already carrying a variant `## Outcome (…)` heading must not be stamped
+# a second time (the old `^## Outcome[[:space:]]*$` guard let it through).
+r="$(new_repo ".supervisor/requirements/req.md")"
+echo "# req" > "$r/.supervisor/requirements/req.md"
+printf '## Current\n- item: .supervisor/requirements/req.md | status: merged | pr: https://github.com/o/r/pull/3 | branch: b\n' > "$r/.supervisor/automate/run.md"
+printf '\n## Outcome (Supervisor v4 — 2026-06-14)\n- **Status:** completed\n' >> "$r/.supervisor/jobs/in-progress/brief.md"
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+if [ -f "$r/.supervisor/jobs/in-progress/brief.md" ] && [ ! -e "$r/.supervisor/jobs/done/brief.md" ]; then
+  ok "33a --repair refuses a brief already carrying a variant '## Outcome (…)' heading"
+else
+  no "33a a variant-Outcome brief was re-stamped"
+fi
+r="$(new_repo ".supervisor/requirements/req.md")"
+echo "# req" > "$r/.supervisor/requirements/req.md"
+printf '## Current\n- item: .supervisor/requirements/req.md | status: merged | pr: https://github.com/o/r/pull/4 | branch: b\n' > "$r/.supervisor/automate/run.md"
+printf '\n## Outcomes Rubric\n- r\n' >> "$r/.supervisor/jobs/in-progress/brief.md"
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+if [ -f "$r/.supervisor/jobs/done/brief.md" ] && grep -q '^## Outcome$' "$r/.supervisor/jobs/done/brief.md"; then
+  ok "33b (control) a brief with only '## Outcomes Rubric' is still repaired"
+else
+  no "33b an Outcomes-Rubric-only brief was refused"
+fi
+
 echo "---------------------------------------------------------------------------"
 echo "test-reconcile-jobs: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
