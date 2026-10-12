@@ -8,7 +8,7 @@
       "name": "loomwright",
       "source": "./loomwright",
       "description": "Loomwright is a plan-first, multi-agent development system for Claude Code. Launch Pad turns a goal into a reviewed brief; Supervisor executes it autonomously across parallel git worktrees with self-heal; dedicated agents cover code review, red-teaming, QA, and standalone PR review-and-heal. 14 agent roles, 24 slash commands, 42 skills, 48 quality gate hooks. Full history in CHANGELOG.md.",
-      "version": "15.133.1",
+      "version": "16.0.0",
       "author": {
         "name": "vikash ruhil"
       },
@@ -69,8 +69,8 @@
     {
       "name": "stackpack",
       "source": "./stackpack",
-      "description": "Stackpack v1.0.0 \u2014 generic tech-stack reference skills (Next.js, NestJS, API-gateway patterns, MySQL, PostgreSQL, Redis, Docker) spun out of Loomwright; 18 skills, no agents/commands/hooks. Install alongside loomwright@atelier.",
-      "version": "1.0.0",
+      "description": "Stackpack \u2014 generic tech-stack reference skills (Next.js, NestJS, API-gateway patterns, MySQL, PostgreSQL, Redis, Docker) spun out of Loomwright; 18 skills, no agents/commands/hooks. Install alongside loomwright@atelier.",
+      "version": "2.0.0",
       "author": {
         "name": "vikash ruhil"
       },

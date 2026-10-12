@@ -156,7 +156,7 @@ Fix FATAL/CRITICAL findings
 
 ```
 .supervisor/
-├── state.md              ← Context-Keeper (sole writer on the parallel path; inline Supervisor writes `## Session` directly)
+├── state.md              ← Context-Keeper (sole agent writer; `## Session` seeded once, then projected by scripts/build-state.sh)
 ├── history/              ← Supervisor (LOOP phase)
 ├── jobs/
 │   ├── pending/          ← Launch Pad (Phase 6 SAVE)

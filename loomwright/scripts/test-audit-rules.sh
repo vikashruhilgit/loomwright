@@ -235,6 +235,18 @@ fp="$(fingerprint "$r")"
 run_audit "$r"
 [ "$RC" -eq 0 ] && ok "(c1) a clean fixture store audits clean (exit 0)" \
                 || no "(c1) a clean fixture store did not audit clean (exit $RC): $(printf '%s' "$OUT" | head -20)"
+# (c1-lw) twin-remediation/11 — the vendor-neutral arm of the validator lookup. With no override and
+# the harness root variable unset, a pre-set LOOMWRIGHT_ROOT is where validate-entry.sh is looked up.
+# The copy planted there records that it was sourced and then IS the real validator, so the same
+# store must still audit clean AND the record must exist; every other case here passes an explicit
+# override, and the sibling lookup never sources the planted copy. (The harness arm itself is
+# covered by test-resolve-loomwright-root.sh.)
+LWR="$ROOT/lwroot"; mkdir -p "$LWR/scripts"; rm -f "$LWR/sourced"
+printf ': > %q\n. %q\n' "$LWR/sourced" "$VALIDATOR" > "$LWR/scripts/validate-entry.sh"
+OUT="$( unset CLAUDE_PLUGIN_ROOT AUDIT_RULES_VALIDATOR; cd "$r" && LOOMWRIGHT_ROOT="$LWR" bash "$ENGINE" 2>&1 )"; RC=$?
+{ [ "$RC" -eq 0 ] && [ -f "$LWR/sourced" ]; } \
+  && ok "(c1-lw) a pre-set LOOMWRIGHT_ROOT supplies the validator (sourced from it, audit still clean)" \
+  || no "(c1-lw) the pre-set LOOMWRIGHT_ROOT was not used (rc=$RC, sourced=$([ -f "$LWR/sourced" ] && echo yes || echo NO))"
 five_named=1
 for tok in duplicate contradiction provenance dead-reference cross-repo; do
   grep -q -- "$tok" < <(printf '%s' "$OUT") || five_named=0

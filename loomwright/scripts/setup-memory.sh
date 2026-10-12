@@ -296,14 +296,24 @@ fi
 # from the `**` cases on purpose — a dotfile inside a re-included directory is its own
 # silent-failure class, and losing them strips provenance from a fresh clone (read-lessons.sh's
 # read-side provenance gate depends on them).
-INTENDED_PATHS='.claude/agent-memory/loomwright:supervisor/MEMORY.md
-.claude/agent-memory/loomwright:supervisor/.provenance.jsonl
+#
+# The agent-memory probe path is DERIVED, never typed. The rule is read off the stores the host
+# actually creates (the ones this repo tracks are `.claude/agent-memory/loomwright-loomwright-<role>/`):
+# a plugin agent's runtime type is the doubled `<plugin>:<plugin>:<role>`, and its store directory is
+# that type with every `:` made `-`. The platform docs give only `<name-of-agent>`, so the rule is
+# observed, not documented. A colon form (`loomwright:<role>`) names a directory that never exists.
+# The probe needs one concrete role; every store shares the parent the gitignore rules govern.
+# test-setup-memory.sh group (am) checks the probe against the repo's tracked stores.
+agent_memory_store_dir() { printf '.claude/agent-memory/%s' "$(printf '%s' "$1" | tr ':' '-')"; }
+AGENT_MEMORY_PROBE_DIR="$(agent_memory_store_dir 'loomwright:loomwright:code-reviewer')"
+INTENDED_PATHS="$AGENT_MEMORY_PROBE_DIR/MEMORY.md
+$AGENT_MEMORY_PROBE_DIR/.provenance.jsonl
 .supervisor/memory/LESSONS.md
 .supervisor/memory/.lessons-provenance.jsonl
 .supervisor/requirements/queue/01-item.md
 .supervisor/jobs/done/2026-01-01-brief.md
 .supervisor/jobs/failed/2026-01-01-brief.md
-.supervisor/automate/automate-2026-01-01-000000.md'
+.supervisor/automate/automate-2026-01-01-000000.md"
 
 # The THIRD store, held separately from INTENDED_PATHS on purpose: its membership in the probed
 # intended set is CONDITIONAL on the ledger gate passing. Folding it into INTENDED_PATHS would make

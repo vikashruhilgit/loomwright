@@ -129,7 +129,7 @@
 #      gate passes. A recorded fact only ever REFUSES, so a process that forges or deletes the sidecar can
 #      at most block a resume or drop the opt-out; it can never grant it.
 #   4. Spawn: `claude -p` with the lane allowlist / disallow list below, `--plugin-dir` pinned to the
-#      coordinator's CLAUDE_PLUGIN_ROOT, `--append-system-prompt` = the fixed headless-lane text, env
+#      coordinator's plugin root (LOOMWRIGHT_ROOT), `--append-system-prompt` = the fixed headless-lane text, env
 #      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 with CLAUDE_PID / CLAUDECODE unset. Prompt:
 #      `/loomwright:automate --backlog <lane>/.supervisor/lane-backlog.md` or
 #      `/loomwright:automate --resume <run_id>` (the lane's own run id only — never a bare --resume).
@@ -182,7 +182,11 @@ set -uo pipefail
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 HERE="$(dirname "$SELF")"
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$HERE/.." && pwd)}"
+# The install root comes from the vendor-neutral resolver (docs/CORE_CONTRACT.md "Root resolution"),
+# sourced in a SUBSHELL so this script adds nothing to the environment of the lanes it spawns.
+# A missing resolver keeps the old location-derived fallback (this script's parent dir).
+PLUGIN_ROOT="$( . "$HERE/resolve-loomwright-root.sh" 2>/dev/null && printf '%s' "$LOOMWRIGHT_ROOT" )" || PLUGIN_ROOT=""
+[ -n "$PLUGIN_ROOT" ] || PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"
 META_SYNC="${LOOMWRIGHT_LANES_META_SYNC:-$HERE/meta-sync.sh}"
 SETUP_MEMORY="${LOOMWRIGHT_LANES_SETUP_MEMORY:-$HERE/setup-memory.sh}"
 HELPERS="${LOOMWRIGHT_LANES_HELPERS:-$HERE/automate-helpers.sh}"

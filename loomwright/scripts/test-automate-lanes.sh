@@ -84,7 +84,7 @@ hasnt() { case "$2" in *"$3"*) bad "$1" "unexpected [$3]" ;; *) ok "$1" ;; esac;
 export HOME="$T/home"; mkdir -p "$HOME"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1
-unset CLAUDE_PLUGIN_ROOT LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS   # the AI group sets the opt-out per command
+unset CLAUDE_PLUGIN_ROOT LOOMWRIGHT_ROOT LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS   # the AI group sets the opt-out per command; a pre-set neutral root would beat the location-derived one
 
 BIN="$T/bin"; mkdir -p "$BIN"
 export STUB_LOG="$T/claude.log"; : > "$STUB_LOG"
@@ -292,6 +292,12 @@ out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L1" --owner-command "/autom
 has "H14 resume by run id" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "/loomwright:automate --resume $PARENT-L1"
 wait_gone "$L1"
 rm -f "$L1/.supervisor/automate/$PARENT-L1.md"
+# H15 — the vendor-neutral root arm (twin-remediation/11): with the harness variable unset (the suite
+# unsets it above), a pre-set LOOMWRIGHT_ROOT is the plugin dir the lane is pinned to. H1 covers the
+# other side: nothing pre-set ⇒ the location-derived root.
+out="$(LOOMWRIGHT_ROOT="$T/neutral-root" LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L1" --owner-command "$OWN")"
+has "H15 pre-set LOOMWRIGHT_ROOT pins --plugin-dir" "$(grep '^ARGS' "$STUB_LOG" | tail -1)" "[--plugin-dir] [$T/neutral-root]"
+wait_gone "$L1"
 
 # ---- I: coordinator never writes into a launched lane (checksum) + mutation control ------------------
 check "I1 lane checksum unchanged across launches" "$(lane_sum "$L1")" "$SUM_L1_BEFORE"

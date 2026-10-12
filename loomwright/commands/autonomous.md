@@ -2,7 +2,7 @@
 description: Continuous autonomous mode — chain Launch Pad → Supervisor and loop by default with stacked PRs; rubric / Option-C signals drive re-planning, gate firings can ping a webhook
 ---
 
-> **Execute this workflow inline as the main thread.** Do not delegate to any `autonomous-*-runner` via the Agent tool — `/autonomous` runs the entire Launch Pad and Supervisor workflows inline, and both of those require Task descendants (`plan-reviewer`, `orchestrator`, `execute-manager`, `code-reviewer`, etc.). An extra delegation layer would hit the documented subagent-spawn trap and the inner workflows would silently abort. The `/autonomous` command is a thin orchestration shell that references Launch Pad and Supervisor's inline workflows; it does NOT introduce a new delegated agent.
+> **Execute this workflow inline as the main thread.** Do not delegate to any `autonomous-*-runner` via the Agent tool — `/autonomous` runs the entire Launch Pad and Supervisor workflows inline, and both of those require Task descendants (`plan-reviewer`, `orchestrator`, `execute-manager`, `code-reviewer`, etc.). An extra delegation layer would run them as a subagent: it has no ask tool, so every question gate takes its can't-ask branch, and each Task descendant sits one nesting layer deeper. Under a lowered spawn-depth limit the inner workflows lose the Agent tool and abort (`docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting"). The `/autonomous` command is a thin orchestration shell that references Launch Pad and Supervisor's inline workflows; it does NOT introduce a new delegated agent.
 
 > **Foreground-assisted automation, not fire-and-forget.** The loop will prompt you in-session at several points:
 > - Launch Pad **Phase 6**: save / refine / discard the brief

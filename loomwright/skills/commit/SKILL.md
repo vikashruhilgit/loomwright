@@ -1,5 +1,5 @@
 ---
-name: commit-skill
+name: commit
 description: Create conventional commits linked to Beads tasks. Use when writing commit messages, linking work to issues, or ensuring conventional commit format compliance.
 version: "1.1.0"
 lastUpdated: "2026-06"

@@ -25,6 +25,15 @@
 # Injection-safety: APP / VER / ATTR cross into jq ONLY via --arg, never
 # interpolated into a jq program string. APP/VER are sanitized to the OTel
 # attribute grammar before composing.
+#
+# CLAUDE-ONLY ADAPTER CODE — deliberately NOT migrated onto LOOMWRIGHT_ROOT (owner decision
+# 2026-10-12, twin-remediation/11). Everything this helper does is Claude Code's: its gate is that
+# harness's telemetry flag in that harness's user settings, it writes that harness's per-project
+# settings overlay and env file, and its service.version comes from the Claude plugin manifest
+# (`.claude-plugin/plugin.json` under the harness install root). Routing that root through the
+# vendor-neutral resolver would buy nothing: a non-Claude harness has neither the manifest path nor
+# the settings files, so it needs its own adapter, not this one with a neutral variable name. The
+# harness root read in section 4 below is therefore the intended, counted coupling of this file.
 
 set -u
 # Intentionally NO `set -e` / pipefail — fail-safe hook helper.

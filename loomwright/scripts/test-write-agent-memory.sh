@@ -679,6 +679,25 @@ assert_guard_refusal "(e1) an ABSENT validator" "$VDIR/never-existed.sh"
 assert_guard_refusal "(e2) an UNPARSEABLE validator (clause i)" "$VDIR/unparseable.sh"
 assert_guard_refusal "(e3) a TRUNCATED validator that parses but defines only 3 of 5 checks (clause ii)" "$VDIR/truncated.sh"
 assert_guard_refusal "(e4) a SENTINEL-STRIPPED validator, all five checks present (clause iii)" "$VDIR/nosentinel.sh"
+
+# (e-lw) twin-remediation/11 — the vendor-neutral arm of the validator lookup. With no override and
+# the harness root variable unset, a pre-set LOOMWRIGHT_ROOT is where validate-entry.sh is looked up.
+# The copy planted there records that it was sourced and then IS the real validator, so the write
+# must succeed AND the record must exist; the sibling lookup `run` takes everywhere else never
+# sources it. (The harness arm itself is covered by test-resolve-loomwright-root.sh.)
+RLW="$(new_repo)"; SLW="$RLW/lw-store"; LWR="$ROOT/lwroot"
+mkdir -p "$LWR/scripts"; rm -f "$LWR/sourced"
+printf ': > %q\n. %q\n' "$LWR/sourced" "$VALIDATOR" > "$LWR/scripts/validate-entry.sh"
+BLW="$(mkbody "$RLW/body-lw.md")"
+unset CLAUDE_PLUGIN_ROOT   # the harness arm outranks the neutral one
+export LOOMWRIGHT_ROOT="$LWR"
+run "$RLW" "$SLW" "$AGENT" neutral_root "an entry written while only the neutral root names the plugin, per PR #149" "$BLW" --source "PR #149" --confirm
+unset LOOMWRIGHT_ROOT
+if [ "$RC" -eq 0 ] && [ -f "$SLW/$AGENT/neutral_root.md" ] && [ -f "$LWR/sourced" ]; then
+  ok "(e-lw) a pre-set LOOMWRIGHT_ROOT supplies the validator (sourced from it, write rc 0)"
+else
+  no "(e-lw) the pre-set LOOMWRIGHT_ROOT was not used (rc=$RC, sourced=$([ -f "$LWR/sourced" ] && echo yes || echo NO)) — $OUT"
+fi
 # All three assertions are needed together: the writer commits via temp-file + atomic mv, so
 # "byte-unchanged" alone is ALSO true of a plain crash and does not discriminate a refusal from one.
 grep -qF 'REFUSE_VALIDATOR_UNAVAILABLE' "$WRITER" && ok "(e) the REFUSE_VALIDATOR_UNAVAILABLE token is present ON DISK in the writer, so the deterministic outputs gate can see the guard exists" || no "(e) the writer carries no REFUSE_VALIDATOR_UNAVAILABLE token"

@@ -1,7 +1,6 @@
 ---
 name: agent-output
 description: Standard output format for all agents. Use to ensure consistent, structured communication with clear sections.
-allowed-tools: None
 version: "1.0.0"
 lastUpdated: "2026-03"
 ---

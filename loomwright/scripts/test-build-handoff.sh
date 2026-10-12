@@ -325,6 +325,19 @@ grep -qF "SHIM_LESSONS_SENTINEL_42" "$DIGI" 2>/dev/null \
   && ok "read-lessons.sh resolved under \$CLAUDE_PLUGIN_ROOT/scripts and its output incorporated" \
   || no "lessons reader NOT resolved under \$CLAUDE_PLUGIN_ROOT/scripts (finding #1 regression)"
 
+# The vendor-neutral arm (twin-remediation/11): with the harness variable unset, a pre-set
+# LOOMWRIGHT_ROOT (what a non-Claude adapter sets) is the root the readers resolve under. Without it
+# the resolver's dev-checkout arm would answer and the REAL readers would run, so the shim sentinels
+# appear only if the pre-set value was honoured.
+RI2="$(new_repo)"
+seed_job "$RI2" done "reader-host-neutral" >/dev/null
+( unset CLAUDE_PLUGIN_ROOT; cd "$RI2" && LOOMWRIGHT_ROOT="$SHIMROOT" bash "$BUILD" ) >/dev/null; rcI2=$?
+DIGI2="$RI2/.supervisor/handoff/digest.md"
+[ "$rcI2" -eq 0 ] && ok "pre-set LOOMWRIGHT_ROOT: exits 0" || no "pre-set LOOMWRIGHT_ROOT: expected exit 0, got $rcI2"
+{ grep -qF "SHIM_MEMORY_SENTINEL_42" "$DIGI2" 2>/dev/null && grep -qF "SHIM_LESSONS_SENTINEL_42" "$DIGI2" 2>/dev/null; } \
+  && ok "pre-set LOOMWRIGHT_ROOT (harness variable unset) resolves both readers under \$LOOMWRIGHT_ROOT/scripts" \
+  || no "pre-set LOOMWRIGHT_ROOT was NOT honoured — the readers did not resolve under it"
+
 # ============================================================================
 echo "== (j) abbreviated recorded SHA prefixes HEAD → 'fresh', not 'hint' (finding #2) =="
 RJ="$(new_repo)"
@@ -634,6 +647,9 @@ grep -qF "Nothing to summarize yet" "$DIGS2" 2>/dev/null \
 # are listed), proving the filter is what excludes them. Gated: non-empty, differs, `bash -n`
 # clean, and the filter line really gone (while the index loop is still present).
 MUTS="$(mktmp)"
+# The install-root resolver goes BESIDE the mutant, as it sits beside the real script, so the mutant
+# resolves the same pinned root and runs the same reader path; only the filter line differs.
+cp "$HERE/resolve-loomwright-root.sh" "$MUTS/resolve-loomwright-root.sh"
 grep -vF 'env LC_ALL=C grep -qE "$RUN_TITLE_ERE" "$f" 2>/dev/null || continue' "$BUILD" > "$MUTS/build-handoff.sh"
 if [ -s "$MUTS/build-handoff.sh" ] && ! cmp -s "$BUILD" "$MUTS/build-handoff.sh" && bash -n "$MUTS/build-handoff.sh" 2>/dev/null \
    && ! grep -qF 'grep -qE "$RUN_TITLE_ERE" "$f"' "$MUTS/build-handoff.sh" \

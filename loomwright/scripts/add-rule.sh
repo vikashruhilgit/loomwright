@@ -124,8 +124,12 @@ VE_HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || printf '%s' ".")"
 _ve_load_validator() {
   VALIDATOR="${ADD_RULE_VALIDATOR:-}"
   if [ -z "$VALIDATOR" ]; then
-    if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh" ]; then
-      VALIDATOR="${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh"
+    # The install root comes from the vendor-neutral resolver (docs/CORE_CONTRACT.md "Root
+    # resolution"), sourced in a SUBSHELL so nothing leaks into this shell. A missing resolver
+    # leaves it empty and the sibling copy below is used, exactly as when no root is set.
+    _ve_lw_root="$( . "$VE_HERE/resolve-loomwright-root.sh" 2>/dev/null && printf '%s' "$LOOMWRIGHT_ROOT" )" || _ve_lw_root=""
+    if [ -n "$_ve_lw_root" ] && [ -f "$_ve_lw_root/scripts/validate-entry.sh" ]; then
+      VALIDATOR="$_ve_lw_root/scripts/validate-entry.sh"
     else
       VALIDATOR="$VE_HERE/validate-entry.sh"
     fi
