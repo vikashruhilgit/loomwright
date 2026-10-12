@@ -41,3 +41,9 @@ No orchestration rewrite in this item. No removal of the review-heal loop (it is
 - isolation:worktree NO-GO empirically re-verified (not assumed)
 - Follow-up stubs written; no orchestration/review behavior changes in this PR
 - Scan cadence documented alongside item 07's per-release ritual
+
+## Re-scope (2026-10-12, validated read-only against main cee4e94; owner-requested)
+- **Item 1 worse than written:** `docs/CAPABILITY_BASELINE.json` is dated 2026-06-01 at plugin 14.6.0 (plugin now 15.131.0); no scan report was ever saved. **In flight (direct):** item 1 baseline refresh — branch `chore/tr09-capability-baseline-refresh`.
+- **Still needed (analysis):** items 2a–2f, 3–5. 2d's blocker cause is gone (WorktreeCreate hook removed v15.66.0) but the post-reinstall re-probe is owed; adoption belongs in the adapter layer per CORE_CONTRACT.md §3.3. 2e: agent-teams graduation criteria dated 2026-05-10.
+- **Refine before running items 2–5:** replace the dead references to items 05 and 07 (both ABANDONED) for follow-up discipline and cadence; map each overlap to a CORE_CONTRACT port; the worktree re-probe needs a reinstalled-plugin session (manual).
+- **Proposed Touches:** `loomwright/docs/CAPABILITY_BASELINE.json`, a new overlap doc under `loomwright/docs/`, `loomwright/skills/agent-teams/SKILL.md`, `loomwright/commands/capability-check.md`. Depends on: none.

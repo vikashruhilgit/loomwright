@@ -399,3 +399,8 @@ worker's turn budget.
   PO writes the plan doc). Owner: "it's related to how we create requirements".
 - Touches + `loomwright/skills/SKILLS_INDEX.md` (skill version bump) and `loomwright/docs/prompt-token-budgets.json`
   (PO prompt re-measure). The item is now at its own ~30-file limit: nothing else is added.
+
+## Re-scope (2026-10-12, validated read-only against main cee4e94; owner-requested)
+- **Nothing had shipped**; dependencies 04 and 10 are done.
+- **In flight (direct):** Part C (requirement shape, `_BACKLOG.md` plan-doc template, PO writes the plan doc, C6 fixture) — branch `docs/pa18c-requirement-shape`. The false "PO writes an optional `_BACKLOG.md`" claim sits in `skills/automate-loop/intake.md` (not SKILL.md).
+- **Parked by owner (2026-10-12):** Part A (`/backlog` board) and Part B (right-size, merge-items) — revisit when the open backlog exceeds ~20 items. Three acceptance checks cite 2026-10-09 backlog snapshots that no longer exist; rewrite them as fixtures if revived. A1's ABANDONED-over-conflict guard is moot for the four cited items (already stamped by hand).

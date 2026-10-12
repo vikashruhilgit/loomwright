@@ -121,3 +121,9 @@ side effect of a doc edit.
 - The missing-`## Outcome` gap is measured, reported, and its baseline re-derived not copied.
 - Gap 3 carries a dated human decision with its reasoning.
 - No new claim that no check backs.
+
+## Re-scope (2026-10-12, validated read-only against main cee4e94; owner-requested)
+- **Gap 1a: already done** — `hook-dispatch-on-pr-create.sh` requires a coherent state.md/state.json; regression-tested (AC5(e)).
+- **In flight (direct):** Gap 1b (`notify-desktop.sh` bare in-progress/ gate), Gap 1c (`send-webhook.sh` same), Gap 2 (report-only missing-`## Outcome` detection in `reconcile-jobs.sh`) — branch `fix/stranded-brief-residual-gaps`.
+- **Baseline correction:** "10 of 180" used a loose `^## Outcome` grep that also matches `## Outcomes Rubric`; a strict heading match gives 27 of 187 (local done/, 2026-10-12; newest affected brief 2026-09-25, not growing).
+- **Gap 3 awaits the owner:** the re-scope above says the sole-writer sentence is gone — it is not: `docs/ARCHITECTURE_CONTRACTS.md` still says "Supervisor remains the sole writer of `.supervisor/jobs/`", while the same doc lists `reconcile-jobs.sh --repair` / `--repair-merged` / `brief-repair` as movers. Needs the owner's dated decision line, then a one-line doc fix.

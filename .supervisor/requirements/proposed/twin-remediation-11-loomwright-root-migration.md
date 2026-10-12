@@ -78,3 +78,9 @@ Run this ALONE, after the engine items: the sweep touches many scripts and confl
 
 ## Touches
 unknown
+
+## Re-scope (2026-10-12, validated read-only against main cee4e94; owner-requested)
+- **Re-measured: zero drift** (17 non-test + 14 test files, same split as base 0aa53c3). Dependency tr/10 done (#479).
+- **Narrow the first AC to runtime reads:** only 11 scripts / 20 lines actually read the variable at runtime (the validator lookup in add-orientation, add-rule, audit-rules, write-agent-memory, write-lessons, write-project-memory, write-system-contract; plus validate-entry, build-handoff, automate-lanes, set-otel-resource-attrs). Exclude the 6 printed-instruction literals (audit-rules, build-insights, guard-finalize-publish, propose-domain — they must stay `${CLAUDE_PLUGIN_ROOT}` unless something exports LOOMWRIGHT_ROOT into the harness shell) and the 2 hooks.json parsers (build-capabilities, check-contract-parity). About half the test hits assert prose and must NOT migrate.
+- **Open decisions:** migrate set-otel-resource-attrs or adapter-class it (it reads .claude-plugin/plugin.json); optionally fold the 7 validator-lookup copies into one helper (keep each writer's LOAD GUARD block intact). Behaviour change: a pre-set LOOMWRIGHT_ROOT now wins over the sibling fallback — tests that unset CLAUDE_PLUGIN_ROOT must also unset LOOMWRIGHT_ROOT (test-automate-lanes, test-guard-lane-wait-armed, test-validate-entry).
+- **Size:** small–medium, one PR; lower the vendor-coupling-manifest allowances in the same PR; still run alone.

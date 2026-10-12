@@ -26,3 +26,9 @@ No new state formats, no scheduler, no forced kills of running sessions, no chan
 - Fresh-session-per-item mode works end-to-end on a real 2-item run
 - Context-size section live in /insights with real numbers
 - No invariant regressions (single-drain, resume fail-closed)
+
+## Re-scope (2026-10-12, validated read-only against main cee4e94; owner-requested)
+- **Item 1 partial precedent only:** `--parallel N` lanes (2026-10-07) run one item per headless session, but only for N ≥ 2 in a separate clone; the sequential loop and /autonomous still run inline. Lane resume reuses the LAST session (the opposite of segmenting).
+- **In flight (direct):** items 2 (per-session context size in /insights, advisory threshold + remedy line) and 3 (docs) — branch `feat/tr08a-insights-session-size`.
+- **Refine before running items 1 and 4:** (a) segmented mode = reuse lanes with N=1 in the primary, or a new sequential dispatch; (b) how `run.lock` hands over between segments (it is re-entrant only for the same session id); (c) threshold and opt-in vs default — item 07, cited as the trigger, is ABANDONED.
+- **Proposed Touches** for the rest: `loomwright/skills/automate-loop/{SKILL.md,lanes.md}`, `loomwright/skills/autonomous-loop/SKILL.md`, `loomwright/scripts/automate-lanes.sh` or `automate-helpers.sh`, `loomwright/scripts/run-lock.sh`, `README.md`, `AGENT_GUIDELINES.md`. Depends on: none.

@@ -409,3 +409,10 @@ bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
 #### Acceptance criteria
 - [ ] Each finding re-verified on `main`, then fixed or recorded as not reproducible.
 - [ ] Fixture legs for 1–3; the full `test-*.sh` loop green.
+
+## Re-scope (2026-10-12, validated read-only against main cee4e94; owner-requested)
+- **Nothing had shipped** as of cee4e94.
+- **In flight (direct):** Part C (C.1–C.4) — branch `fix/af39c-rules-seam-lines`. C.4's sentence now lives in `skills/automate-loop/modes-and-merge-gate.md`.
+- **Remaining:** Part B (run-lock ancestor walk without the CLAUDECODE gate + `run_lock_degraded`; `guard_arm_skipped` rows; Supervisor `test_guard:` line) — open decisions: the wrapper skip-list (a long-lived ancestor such as tmux/sshd makes a crashed run's lock never TTL-reclaim; test-run-lock.sh test 18 must flip), and where a `no_session_id` / `jq_missing` skip row is written (the log path is keyed on the payload session id). Part A (sweep, proc registry, /janitor, watchdog/ci-local leak gate) is large (~20 files) and destructive — run on its own, sweep first; `fleet-closeout` still prints the placeholder `sweep: unavailable (automate-followups/22 not shipped)` (pinned by test-automate-lanes.sh AF3h).
+- **The merge rationale is gone:** since the 2026-10-11 skill split the three parts edit different files. Recommend B alone (medium) and A alone (large).
+- **Stale Touches:** replace `skills/automate-loop/SKILL.md` with the split files; add `scripts/automate-lanes.sh`, `scripts/test-automate-lanes.sh`; `docs/RESULT_SCHEMAS.md` → `docs/result-schemas/*`.
