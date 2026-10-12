@@ -1,6 +1,6 @@
 # --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/reconcile-status.golden.
-#:  reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a `pending`/absent-status *.md under <requirements_root> (skips `00-*`, `_*`, `README*`, `operator-run/`) whose PR is MERGED (state via reconcile-item) and whose body cites the file's repo-relative path, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR, never a PR whose changed files are ALL under `.supervisor/`, and never a body citation from a PR whose own diff adds or modifies that requirement file; an unreadable or incomplete diff is no evidence), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file (never promoted); writes nothing without `--apply`.
+#:  reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a not-done *.md under <requirements_root>, other than a `proposed`/`parked` one (is_not_ready) (skips `00-*`, `_*`, `README*`, `operator-run/`, top-level `<slug>-plan.md` task plans) whose PR is MERGED (state via reconcile-item) and whose body cites the file's path (with or without the `.supervisor/requirements/` prefix and `.md`) on an `Implements`/`Closes`/`Resolves`/`Fixes`/`Ships`/`Lands`/`Requirement:`/`Source requirement:` line, before that line's first `;` or `. `, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR, never a PR whose changed files are ALL under `.supervisor/`, and never a body citation from a PR whose own diff adds or modifies that requirement file; an unreadable or incomplete diff is no evidence), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file (never promoted); writes nothing without `--apply`.
 
 # --------------------------------------------------------------------------- #
 # queue-hygiene/01 — reconcile-status: requirement `## Status:` from ground
@@ -17,10 +17,28 @@
 # read ground truth back, never infer it.
 #
 # EVIDENCE, for a *.md this script does NOT already consider `is_done()`:
-#   (a) PR-BODY CITATION — a `gh pr list --state merged --search <rel-path>`
-#       hit whose body (fetched with ONE more `gh pr view`) contains the
-#       file's own repo-relative path, literally — and whose diff does NOT
-#       itself add or modify that file (see NEVER EVIDENCE below).
+#   (a) IMPLEMENTS-LINE CITATION — a `gh pr list --state merged --search
+#       <short ref>` hit whose body (fetched with ONE more `gh pr view`) cites
+#       the file on an IMPLEMENTS-shaped line (_rs_implements_cites) — and whose
+#       diff does NOT itself add or modify that file (see NEVER EVIDENCE below).
+#       The <short ref> is the repo-relative path with any
+#       `.supervisor/requirements/` prefix and `.md` suffix dropped
+#       (`automate-followups/27-brief-closed-…`): GitHub search returns NOTHING
+#       for the full path of PR #484's requirement, while the short form finds
+#       it and every full-path citation too.
+#       WHY NOT ANY MENTION. A body names requirement paths for many reasons
+#       besides implementing them. On 2026-10-11 the any-mention rule planned
+#       five false `done` stamps: PR #470 (the pa/22 split) listed af/36, af/39
+#       and pa/18 in a `plan-waves` example; PR #482 named the
+#       `proposed/twin-remediation-11` follow-up draft it was filing; PR #457
+#       named the task plan it failed to push. `--apply` would have made them
+#       permanent and `is_done` would have hidden the three pending items from
+#       every later intake. A citation now counts only on a line that OPENS
+#       with an implements verb, and only in that line's first clause — so
+#       "Implements X; unblocks Y" credits X alone. Honest limit: a verb line
+#       that names an unrelated path in its first clause ("Fixes the bug that
+#       blocked `qh/03-x`") still counts; a PR with no verb line gets no
+#       stamp at all, which is the recoverable direction.
 #   (b) BRANCH-SLUG — when this requirement has an associated
 #       `.supervisor/jobs/done/<brief>.md` (found by the SAME reverse
 #       `## Source requirement:` pointer scan `stamp-requirement-status.sh`
@@ -95,15 +113,75 @@ _rs_project_root() {
   printf '%s' "$abs"
 }
 
-# _rs_skip_path <abs_file> — the Scope §1 exclusion list: an index file, a
-# leading-underscore file, a README, or anything under an `operator-run/`
+# _rs_skip_path <abs_file> <proj_root> — the Scope §1 exclusion list: an index
+# file, a leading-underscore file, a README, anything under an `operator-run/`
 # subfolder (the `/automate` engine's own worked-by-hand pile, never
-# reconciled mechanically).
+# reconciled mechanically), or an Orchestrator task plan — a top-level
+# `.supervisor/requirements/<slug>-plan.md` (agents/orchestrator.md writes
+# them there; the same definition automate-lanes.sh's wave-end push uses).
+# A task plan is a work breakdown, not a requirement: PR #457 named one in its
+# body and the dry run planned a `done` stamp for it.
 _rs_skip_path() {
-  local f="$1" base; base="$(basename "$f")"
+  local f="$1" proj_root="${2:-}" base; base="$(basename "$f")"
   case "$base" in 00-*|_*|README*) return 0 ;; esac
   case "$f" in */operator-run/*) return 0 ;; esac
+  if [ -n "$proj_root" ] && [ "$(dirname "$f")" = "$proj_root/.supervisor/requirements" ]; then
+    case "$base" in *-plan.md) return 0 ;; esac
+  fi
   return 1
+}
+
+# _rs_short_ref <rel_path> — <rel_path> without a leading
+# `.supervisor/requirements/` and a trailing `.md`: the form both the
+# candidate search and _rs_implements_cites match on.
+_rs_short_ref() {
+  local r="${1#.supervisor/requirements/}"
+  printf '%s' "${r%.md}"
+}
+
+# _rs_implements_cites <body> <short_ref> — 0 when some line of <body> cites
+# <short_ref> as the work it implements:
+#   - the line, after leading whitespace, list/quote markers (`-`, `*`, `+`,
+#     `>`) and `**` bold markers, OPENS with Implements, Closes, Resolves,
+#     Fixes, Ships, Lands, `Requirement:` or `Source requirement:` (any case);
+#   - the citation sits in the line's first clause — the text before its first
+#     `;` or `.`-then-whitespace (so `.supervisor` and `.md` never end it);
+#   - with every `.supervisor/requirements/` prefix removed from that clause,
+#     <short_ref> appears on a path boundary: not preceded by a path character
+#     (`[A-Za-z0-9_./-]`), and followed — after an optional `.md` — by end of
+#     clause, a sentence-final `.`, or a character that cannot continue a slug.
+# The body travels through ENVIRON, never an awk -v (which would interpret its
+# backslashes) or a here-string line split.
+_rs_implements_cites() {
+  RS_BODY="$1" RS_SHORT="$2" awk 'BEGIN {
+    s = ENVIRON["RS_SHORT"]; sl = length(s)
+    if (sl == 0) exit 1
+    n = split(ENVIRON["RS_BODY"], L, "\n")
+    for (i = 1; i <= n; i++) {
+      line = L[i]
+      sub(/\r$/, "", line)
+      gsub(/\*\*/, "", line)
+      sub(/^[ \t]*([-*+>][ \t]+)*/, "", line)
+      low = tolower(line)
+      if (low !~ /^(implements|closes|resolves|fixes|ships|lands)([^a-z]|$)/ \
+          && low !~ /^(source )?requirement:/) continue
+      if (match(line, /;|\.[ \t]/)) line = substr(line, 1, RSTART - 1)
+      gsub(/\.supervisor\/requirements\//, "", line)
+      off = 0
+      while ((p = index(substr(line, off + 1), s)) > 0) {
+        at = off + p
+        before = (at > 1) ? substr(line, at - 1, 1) : ""
+        after = substr(line, at + sl)
+        if (substr(after, 1, 3) == ".md") after = substr(after, 4)
+        a = substr(after, 1, 1); a2 = substr(after, 2, 1)
+        if (before !~ /[A-Za-z0-9_.\/-]/ \
+            && a !~ /[A-Za-z0-9_\/-]/ \
+            && !(a == "." && a2 ~ /[A-Za-z0-9]/)) exit 0
+        off = at
+      }
+    }
+    exit 1
+  }'
 }
 
 # _rs_load_brief_pointer — source the sibling brief-pointer.sh (THE one
@@ -200,7 +278,8 @@ _rs_evidence_for() {
   local rel="$1" done_brief="$2" candidates="" c seen=$'\x1f'
   [ -n "${3:-}" ] && candidates="$3"$'\n'
   local search_json
-  search_json="$("$GH" pr list --state merged --search "$rel" --json url --limit 5 2>/dev/null)"
+  local short; short="$(_rs_short_ref "$rel")"
+  search_json="$("$GH" pr list --state merged --search "$short" --json url --limit 5 2>/dev/null)"
   if [ -n "$search_json" ]; then
     local urls; urls="$(printf '%s' "$search_json" | "$JQ" -r '.[]?.url // empty' 2>/dev/null)"
     [ -n "$urls" ] && candidates="${candidates}${urls}"$'\n'
@@ -227,7 +306,9 @@ _rs_evidence_for() {
     paths="$(_rs_pr_changed_paths "$c" "$view")" || continue
     grep -qv '^\.supervisor/' <<<"$paths" || continue
     local justification=""
-    case "$body" in *"$rel"*) grep -qxF -- "$rel" <<<"$paths" || justification="PR body cites $rel" ;; esac
+    if _rs_implements_cites "$body" "$short"; then
+      grep -qxF -- "$rel" <<<"$paths" || justification="PR body cites $rel"
+    fi
     if [ -z "$justification" ] && [ -n "$slug" ]; then
       case "$headref" in *"$slug") justification="head branch '$headref' matches brief slug '$slug'" ;; esac
     fi
@@ -258,6 +339,13 @@ _rs_process_file() {
       return 0
       ;;
   esac
+
+  # A not-ready item (`is_not_ready`: a `proposed` draft or a `parked` item) is
+  # an owner decision, never reconciled: PR #482's body named a `## Status:
+  # proposed` draft and the dry run planned `done` for it. Every other not-done
+  # heading (`pending`, `in-progress`, a free-text `in review — …`, none) stays
+  # promotable, as it was before this gate existed.
+  is_not_ready "$f" && return 0
 
   local done_brief; done_brief="$(_rs_find_done_brief "$rel" "$jobs_done")"
   local seed=""
@@ -314,7 +402,7 @@ _rs_process_abandoned() {
           fabs="$proj_root/$reqpath"
           [ -f "$fabs" ] || continue
           case "$fabs" in "$root_abs"/*|"$root_abs") ;; *) continue ;; esac
-          _rs_skip_path "$fabs" && continue
+          _rs_skip_path "$fabs" "$proj_root" && continue
           is_done "$fabs" && continue
           if [ "$apply" -eq 1 ]; then
             local tmp; tmp="$(mktemp "${fabs}.XXXXXX")"
@@ -355,7 +443,7 @@ reconcile_status() {
   local f
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    _rs_skip_path "$f" && continue
+    _rs_skip_path "$f" "$proj_root" && continue
     is_done "$f" && continue
     _rs_process_file "$f" "$proj_root" "$jobs_done" "$apply"
   done < <(find "$root_abs" -type f -name '*.md' 2>/dev/null | env LC_ALL=C sort)
