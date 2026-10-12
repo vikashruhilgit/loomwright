@@ -1274,7 +1274,7 @@
       "name": "claude-md-validation"
     },
     {
-      "name": "commit-skill"
+      "name": "commit"
     },
     {
       "name": "context-setup"

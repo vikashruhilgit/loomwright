@@ -91,9 +91,9 @@ The grader **never** changes `heal_decision`, **never** triggers a fix iteration
 
 If the grader cannot complete the pass for any reason (diff unavailable, malformed input, exceeded `maxTurns`), it must still emit `rubric_score: 0/{total}` with each item marked `FAIL — <reason>`. Silent exits are forbidden — the Supervisor's completion tail records `rubric_grader_parse_failed` and sets `rubric_score = null` only when no `rubric_score: N/M` line appears at all.
 
-## Why a registered agent (not a `Task()` call with `model:` keyword)
+## Why a registered agent (model pinned in frontmatter)
 
-The Claude Code `Task` tool accepts `description`, `prompt`, and `subagent_type` only. A `model:` parameter on the `Task()` call is silently ignored. The only reliable way to enforce **`model: haiku`** for this grader is to declare it in this agent's frontmatter and have the Supervisor invoke it via `subagent_type: "loomwright:rubric-grader"`. Read-only behavior at runtime comes from the `disallowedTools` allowlist (`Write, Edit, Task, NotebookEdit`), not from `permissionMode` (which Claude Code silently ignores in plugin-distributed agent frontmatter — see CLAUDE.md "Hook gotcha").
+Claude Code resolves a subagent's model in this order: the per-invocation `model` parameter on the `Task`/Agent call, then the agent's `model` frontmatter, then an environment-variable default, then the main conversation's model; a per-invocation model also persists when the subagent is resumed ([sub-agents docs](https://code.claude.com/docs/en/sub-agents), read 2026-10-12 — before v2.1.251 that environment variable outranked both, and before v2.1.211 a resume dropped the per-call value). `/supervisor --cheap` relies on that first rung for the roles it overrides; this grader is not one of them. Its **`model: haiku`** therefore lives in this agent's frontmatter, so every Supervisor spawn via `subagent_type: "loomwright:rubric-grader"` that passes no `model:` runs on Haiku (unless the host's force-one-model override is on). Read-only behavior at runtime comes from the `disallowedTools` allowlist (`Write, Edit, Task, NotebookEdit`), not from `permissionMode` (which Claude Code silently ignores in plugin-distributed agent frontmatter — see CLAUDE.md "Hook gotcha").
 
 ## See also
 

@@ -40,12 +40,12 @@ This runner is the *executable surface* of the **`review-heal` skill**, which is
 
 ## Execution-contract rule (AC9)
 
-Per the `review-heal` skill, this runner **spawns child agents** — a `code-reviewer` for the review and a `general-purpose` fix worker for the fix. Because *subagents cannot spawn subagents* (Claude Code limitation), the runner MUST run ONLY as:
+Per the `review-heal` skill, this runner **spawns child agents** — a `code-reviewer` for the review and a `general-purpose` fix worker for the fix. The runner MUST run ONLY as:
 
 - the **main agent of its own session** — `claude --agent loomwright:review-pr-runner`, or
 - **inline on the main thread** via `/review-pr <pr-url>`.
 
-The runner is **NEVER Task-spawned**. A `Task(loomwright:review-pr-runner)` call lands the runner one spawn-level too deep and its own `Task(code-reviewer)` / `Task(general-purpose)` calls would fail.
+The runner is **NEVER Task-spawned**. Claude Code now allows subagent nesting (three layers by default, and a host setting can lower it — [docs](https://code.claude.com/docs/en/sub-agents), re-read 2026-10-12), so the rule's original reason — *subagents cannot spawn subagents* — no longer holds; it is **retained pending owner review; see agnostic-phase1/05** (`docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting"). A `Task`-spawned runner's children sit one layer deeper, and under a lowered limit its own `Task(code-reviewer)` / `Task(general-purpose)` calls would fail.
 
 ---
 
@@ -75,7 +75,7 @@ Run the loop exactly as the `review-heal` skill specifies (mirrors Supervisor Ph
 1. `Task(subagent_type: "loomwright:code-reviewer", ...)` reviewing the PR-branch diff (`git diff <base>...HEAD`), schema `CODE_REVIEW_RESULT` v3, `review_mode: diff_review`. Parse the result block.
 2. **PASS** → `decision = PASS`, `remaining_issues = 0`, break. **Do NOT merge.**
 3. **NEEDS_HUMAN** → `decision = ESCALATED`. STOP — do NOT auto-fix, do NOT merge. Post findings to the PR (`gh pr comment`), fire best-effort notifications, break.
-4. **FAIL** (≥1 `new` issue at or above the fix floor — `review-heal` §"Fix floor"; a reviewer PASS that still carries one counts) → spawn a `Task(subagent_type: "general-purpose", ...)` fix worker, instructing it IN ITS PROMPT to use only Read / Write / Edit / Bash / Glob / Grep and **never Task** (subagents cannot spawn subagents; note the Task call itself cannot restrict a child's toolset — this is a prompt contract, not an enforced allowlist) that addresses ONLY the `new` findings at or above the fix floor, leaving `pre_existing` issues and nits untouched. Then **fork-aware push** to update the PR branch — same-repo: explicit refspec `git push origin HEAD:<head_ref>` (**regular push, NEVER `--force`**, required because the detached drain worktree has no current branch name to push by default); fork/cross-repo (`gh pr view --json isCrossRepository` ⇒ head NOT on `origin`): do **NOT** push to `origin`, degrade to **review-only** and exit `decision: ESCALATED` with the findings posted as a PR comment. Then increment `heal_iterations`, and re-review. (See `review-heal` skill §"Fork-aware push".)
+4. **FAIL** (≥1 `new` issue at or above the fix floor — `review-heal` §"Fix floor"; a reviewer PASS that still carries one counts) → spawn a `Task(subagent_type: "general-purpose", ...)` fix worker, instructing it IN ITS PROMPT to use only Read / Write / Edit / Bash / Glob / Grep and **never Task** (the no-nesting reason this once cited is stale — the rule is retained pending owner review, `docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting"; note the Task call itself cannot restrict a child's toolset — this is a prompt contract, not an enforced allowlist) that addresses ONLY the `new` findings at or above the fix floor, leaving `pre_existing` issues and nits untouched. Then **fork-aware push** to update the PR branch — same-repo: explicit refspec `git push origin HEAD:<head_ref>` (**regular push, NEVER `--force`**, required because the detached drain worktree has no current branch name to push by default); fork/cross-repo (`gh pr view --json isCrossRepository` ⇒ head NOT on `origin`): do **NOT** push to `origin`, degrade to **review-only** and exit `decision: ESCALATED` with the findings posted as a PR comment. Then increment `heal_iterations`, and re-review. (See `review-heal` skill §"Fork-aware push".)
 5. **Loop exhaustion** (`heal_iterations == max_heal_iterations` and still not PASS) → `decision = ESCALATED`; post findings (`gh pr comment`), fire best-effort notifications.
 
 ### Step 3 — Notify on NEEDS_HUMAN / exhaustion (best-effort)

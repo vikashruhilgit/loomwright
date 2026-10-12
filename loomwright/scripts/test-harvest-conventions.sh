@@ -1246,19 +1246,19 @@ reason_of() {   # reason_of <transcript> <candidate-name>
 SS="$(new_repo)"
 { rec 1 "count drift in the banner" '["src/a/x.md"]' 5
 } > "$SS/.supervisor/postmortem/results.jsonl"
-mkdir -p "$SS/.claude/agent-memory/loomwright:code-reviewer"
+mkdir -p "$SS/.claude/agent-memory/loomwright-loomwright-code-reviewer"
 # (i) NON-NORMATIVE, HIGH pw — the case that produced the false sentence. Every distinctive term is
 # lifted from new_repo's own CLAUDE.md/AGENT_GUIDELINES.md, so pw is 100%; the body carries none of
 # the MUST/NEVER/ALWAYS-class wording, so normative=0. This combination is NOT hypothetical: the
 # real corpus has entries at pw=91% and pw=100% with normative=0.
-cat > "$SS/.claude/agent-memory/loomwright:code-reviewer/nonnormative_high_overlap.md" <<'EOF'
+cat > "$SS/.claude/agent-memory/loomwright-loomwright-code-reviewer/nonnormative_high_overlap.md" <<'EOF'
 ---
 description: guidance counts advisory guidelines closed emitters
 ---
 An observation about how the gates read.
 EOF
 # (ii) NORMATIVE, LOW pw — the case whose "below the floor" wording was correct and must survive.
-cat > "$SS/.claude/agent-memory/loomwright:code-reviewer/normative_low_overlap.md" <<'EOF'
+cat > "$SS/.claude/agent-memory/loomwright-loomwright-code-reviewer/normative_low_overlap.md" <<'EOF'
 ---
 description: zygomorphic quixotry frobnicate widgetized snorklewhacker
 ---

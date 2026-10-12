@@ -1,5 +1,5 @@
 ---
-name: nestjs-repository-patterns
+name: nestjs-drizzle
 description: Implement repository patterns with Drizzle ORM in NestJS. Covers CRUD, pagination, transactions, relations, entity mapping for legacy schemas, and optional soft delete/audit fields. Use when building data access layers.
 version: "1.0.0"
 lastUpdated: "2026-03"

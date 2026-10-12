@@ -11,7 +11,7 @@
 ## Common Pitfalls
 
 ### `/supervisor` or `/launch-pad` aborted with "Task/Agent tool unavailable"?
-- Pre-11.1.1 name-collision trap: the slash command silently auto-delegated to a same-named registered subagent, which couldn't spawn its own children ([docs](https://code.claude.com/docs/en/sub-agents): *"Subagents cannot spawn other subagents"*).
+- Pre-11.1.1 name-collision trap: the slash command silently auto-delegated to a same-named registered subagent, which on the Claude Code release of that time could not spawn its own children. Current releases allow nesting three layers deep by default ([docs](https://code.claude.com/docs/en/sub-agents), re-read 2026-10-12). The same abort still happens when that limit is lowered, and a delegated runner always loses the ask tool (`docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting").
 - Fix in 11.1.1: registered agents are now `loomwright:supervisor-runner` and `loomwright:launch-pad-runner`. The slash commands are inline main-thread workflows; the `-runner` suffix lets `claude --agent loomwright:supervisor-runner` own a session without re-introducing auto-delegation.
 - For an agent-owned session: `claude --agent …-runner`. Otherwise stay on the main thread via the slash command.
 

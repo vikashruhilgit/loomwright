@@ -59,10 +59,12 @@
 #   (nohup + background + full stdio redirection to a log under .supervisor/logs/; `-p`
 #   print-mode runs non-interactively and exits — plain `claude "<prompt>"` would open an
 #   interactive REPL that hangs when detached). A fresh OS
-#   process — NOT a nested Task spawn — is mandatory because subagents cannot spawn
-#   subagents; the review-heal loop body is itself Task-spawned in the /autonomous
-#   EVALUATE sense, so a nested Task(/pr-postmortem) would land one spawn-level too
-#   deep. See skills/review-heal/SKILL.md "Postmortem Dispatch Tail".
+#   process — NOT a nested Task spawn. The original reason (subagents cannot spawn
+#   subagents) is stale: the host now allows nesting three layers deep by
+#   default. The detached form also keeps the postmortem off the loop's path, and
+#   it is retained pending owner review (see agnostic-phase1/05 and
+#   docs/ARCHITECTURE_CONTRACTS.md "Subagent nesting").
+#   See skills/review-heal/SKILL.md "Postmortem Dispatch Tail".
 #
 # USAGE
 #   dispatch-pr-postmortem.sh <pr-url> [gating flags...]
@@ -303,7 +305,8 @@ printf '%s\t%s\n' "$TIMESTAMP" "$PR_URL" > "$MARKER" 2>/dev/null || true
 # is inline-only (no runner agent), so namespacing the slash command is the equivalent fix.
 #
 # /pr-postmortem is read-only (gh reads + a single append to results.jsonl); the detached run
-# relies on the project's existing permission settings, same best-effort posture as dispatch-pr-review.sh.
+# relies on the project's existing permission settings (best-effort). This differs from
+# dispatch-pr-review.sh, which pins its own regime (see its header's PERMISSIONS section).
 ( nohup "$CLAUDE_BIN" -p "/loomwright:pr-postmortem $PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
 
 log "dispatched /pr-postmortem for $PR_URL ($TRIGGER_REASON; log: $RUN_LOG)"

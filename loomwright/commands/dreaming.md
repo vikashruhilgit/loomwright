@@ -203,7 +203,7 @@ INPUTS (read-only):
 - System Twin contract drift (OPTIONAL — present only when this project uses the System Twin):
 {the contract_conformance_status / contract_violations trend across the loaded session_end events, and/or per-subsystem contract drift read-only from .supervisor/twin/ via read-system-contract.sh. ABSENT when no twin data exists — treat its absence as "not reported" and reflect normally.}
 - Your own existing persistent memory directory (read-only for this turn):
-.claude/agent-memory/loomwright:{agent-id}/
+.claude/agent-memory/loomwright-loomwright-{agent-id}/
 
 HARD RULES:
 - READ-ONLY for this turn. Do NOT call Write, Edit, NotebookEdit, or any Bash command that mutates files, the git index, branches, the working tree, or your own memory directory. /dreaming will refuse to persist anything you propose without explicit per-item user approval — your job is to propose, not to write.
@@ -229,7 +229,7 @@ OUTPUT (mandatory six-section report, in this order):
 
   ## 3. Proposed Memory Updates
   Each proposal MUST be labeled "PENDING USER APPROVAL" and include:
-  - Target file/tag under .claude/agent-memory/loomwright:{agent-id}/
+  - Target file/tag under .claude/agent-memory/loomwright-loomwright-{agent-id}/
   - Change type (add / edit / delete)
   - Proposed text (verbatim, ready to paste)
   - Linked Insight number

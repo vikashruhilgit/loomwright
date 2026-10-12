@@ -1093,10 +1093,12 @@ When the loop exits with `heal_decision == PASS` AND the in-progress brief conta
 rubric_bullets = parse_rubric(brief_path)   # [] if no ## Outcomes Rubric section
 
 if heal_decision == PASS and rubric_bullets:
-  # Invoke the registered rubric-grader agent. Spawning by `subagent_type` is
-  # the reliable enforcement path for `model: haiku` — the Task tool ignores
-  # `model:` keywords on the call site, but honors the frontmatter on
-  # `agents/rubric-grader.md`. Read-only behavior at runtime is enforced by
+  # Invoke the registered rubric-grader agent with NO per-call `model:`, so
+  # the `model: haiku` frontmatter on `agents/rubric-grader.md` applies. A
+  # per-call `model:` WOULD be honoured — it is first in Claude Code's
+  # resolution order and is what `--cheap` relies on (sub-agents docs, read
+  # 2026-10-12; see the grader's §"Why a registered agent") — so passing one
+  # here would override Haiku. Read-only behavior at runtime is enforced by
   # the agent's `disallowedTools: Write, Edit, Task, NotebookEdit` plus the
   # prompt convention restricting Bash to read-only git inspection.
   # `permissionMode: plan` is preserved in the agent frontmatter for
