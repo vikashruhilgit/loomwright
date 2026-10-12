@@ -4,8 +4,8 @@ Exactly **one** source is resolved per run. Resolution produces the **FULL** ord
 
 ### Prompt source — `/automate "X"`
 
-- Runs **`/product-owner`** on the prompt text. This is a **REUSE**, not a new code path: Product Owner already writes `.supervisor/requirements/*.md` story files (and, in Beads-absent mode, an optional `_BACKLOG.md`).
-- The **generated file paths become the `## Queue`** (in PO's emitted order; if PO also wrote a `_BACKLOG.md`, prefer its documented dependency order per the backlog-doc rules below).
+- Runs **`/product-owner`** on the prompt text. This is a **REUSE**, not a new code path: in Beads-absent mode Product Owner writes one `.supervisor/requirements/{YYYY-MM-DD-HHMMSS}-{slug}.md` story file per story and, when it persists 2 or more stories, one plan doc `.supervisor/requirements/_BACKLOG-{YYYY-MM-DD-HHMMSS}-{slug}.md` (`skills/user-story-writing/SKILL.md` §"Requirement Shape").
+- The **generated story file paths become the `## Queue`** (in PO's emitted order; when PO also wrote a plan doc, use its `## Checklist` order — `resolve-backlog <plan doc>`, per the backlog-doc rules below). The plan doc itself is never a Queue item and never counts toward "N files" (it is stamped `## Status: done`).
 - **1 generated file ⇒ single-item run; N files ⇒ loop.**
 - **Bare `/automate`** (no prompt, no source flag): **attempt RESUME first** (§4); if no incomplete run exists, `AskUserQuestion` *"What do you want to automate?"* and then proceed as a prompt source. **Cannot ask** (`--non-interactive-fallback`, or the ask tool is absent): ask nothing, create no run file, print `automate: no_source_non_interactive` and stop; an incomplete run found by that RESUME is never continued without `--resume` — §4 step 4's `resume_requires_flag_non_interactive`.
 - **0 generated files ⇒ report + stop** (never wedge) — the run file records `## Status: done`, `remaining: 0` with a `## Progress` note that the prompt produced no items.
