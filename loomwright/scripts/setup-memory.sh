@@ -54,10 +54,12 @@
 # `<owner>/ai-agent-manager` (pre-rename) against 39 under the current slug — a filter keyed on
 # the live remote would silently drop the larger, older half. (Those two figures are ILLUSTRATIVE
 # and drift as the ledger grows; re-derive with jq, never grep — the ledger mixes compact and
-# spaced JSON, so `grep -c '"repo":"…"'` under-counts the spaced records silently.) So the
-# allowlist is stored as a
-# JSON ARRAY, defaults to the CURRENT remote's owner/repo on a fresh install (never a hardcoded
-# owner — the plugin ships to other users), and is extended by hand when a repo is renamed.
+# spaced JSON, so `grep -c '"repo":"…"'` under-counts the spaced records silently.) So the allowlist
+# is stored as a JSON ARRAY, defaults to the CURRENT remote's owner/repo on a fresh install (never a
+# hardcoded owner — the plugin ships to other users), and is extended by hand when a repo is renamed.
+# That config is gitignored and does not travel; the TRACKED `.agent/meta-allowlist.txt` does, but it
+# can only REQUEST: an entry is granted only on a `gh` repository-id match with origin, and never
+# without gh (see META_ALLOWLIST_REL / meta_allowlist_grants, beside load_allowlist).
 #
 # WHY here: this is the deterministic, mechanizable engine. The INTERACTIVE half — the
 # consent-bearing AskUserQuestion offer that must be answered BEFORE anything is written — lives
@@ -105,7 +107,7 @@
 #   setup-memory.sh apply --branch-mode off        # back to the default block (`off` is RESERVED — never a branch name)
 #   setup-memory.sh mode                           # print ONE line: off | on <branch> | unknown <reason>
 #   setup-memory.sh valid-branch <name>            # exit 0 iff <name> is a valid metadata branch (no writes)
-#   setup-memory.sh allowlist                      # print the resolved allowlist, one entry per line
+#   setup-memory.sh allowlist                      # print the allowlist, one per line (status: stderr)
 #   setup-memory.sh filter-ledger --ledger F       # print ledger records whose .repo is in the allowlist
 #   setup-memory.sh filter-ledger --ledger F --allow owner/repo --allow owner/old-name
 #   setup-memory.sh --root /path/to/repo check     # point at a fixture repo
@@ -873,6 +875,80 @@ remote_slug() {
   printf '%s/%s\n' "$owner_part" "$repo_part"
 }
 
+# THE TRACKED REQUEST FILE. `.supervisor/config.json` is gitignored, so it does not travel: a second
+# machine or a scratch clone falls back to the live remote alone, and every pre-rename record then
+# reads as foreign (meta-sync.sh's push scrub refuses it). `.agent/meta-allowlist.txt` is TRACKED, so
+# it does travel — and that is exactly why it may only REQUEST. The ledger collects records about
+# OTHER repos analysed from this checkout, so a list that GRANTED would let whoever controls the
+# committed file publish those records. An entry is therefore granted ONLY when GitHub says it is
+# the SAME repository as origin: `gh api repos/<slug> --jq .id` equals origin's id (a renamed repo's
+# old slug redirects to the same id; any other repository does not).
+META_ALLOWLIST_REL=".agent/meta-allowlist.txt"
+
+# meta_allowlist_grants <origin-slug> — print, one per line, the request-file entries that are
+# GRANTED; name every skipped entry (and why) on STDERR, never stdout. FAILS CLOSED: no `gh`, a
+# failing `gh`, a non-numeric answer, or an origin with no parseable owner/repo grants NOTHING.
+#   · `#` comments and blank lines are skipped;
+#   · origin's own slug (case-insensitive) is already granted by the remote default — no gh call;
+#   · an entry that is not owner/repo-shaped (`[A-Za-z0-9._-]+/[A-Za-z0-9._-]+`, neither half `.`
+#     or `..`) is never passed to gh;
+#   · origin's id is looked up LAZILY, at most once per call, and only when a well-formed non-own
+#     entry needs comparing — so no request file, or one holding only origin's own slug, makes ZERO
+#     gh calls (the GitHub-shaped test fixtures stay hermetic).
+# gh reads </dev/null: it must never consume the request file this loop is reading from stdin.
+meta_allowlist_grants() {
+  local own="${1:-}" f="$repo/$META_ALLOWLIST_REL" line e le own_l origin_id="" origin_state="" id
+  [ -f "$f" ] && [ -r "$f" ] || return 0
+  own_l="$(printf '%s' "$own" | tr 'A-Z' 'a-z')"
+  while IFS= read -r line || [ -n "$line" ]; do
+    e="$(printf '%s' "$line" | awk '{ sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, ""); print }')"
+    case "$e" in ''|'#'*) continue ;; esac
+    le="$(printf '%s' "$e" | tr 'A-Z' 'a-z')"
+    if [ -n "$own_l" ] && [ "$le" = "$own_l" ]; then
+      echo "allowlist: granted $e — current remote (no gh call)" >&2
+      continue
+    fi
+    if ! printf '%s\n' "$e" | env LC_ALL=C grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then
+      echo "allowlist: ignored $e — not an owner/repo slug (never passed to gh)" >&2
+      continue
+    fi
+    case "/$e/" in */./*|*/../*)
+      echo "allowlist: ignored $e — not an owner/repo slug (never passed to gh)" >&2
+      continue ;;
+    esac
+    if [ -z "$origin_state" ]; then
+      if [ -z "$own" ]; then
+        origin_state="origin has no owner/repo slug (a filesystem-path or unparseable remote), so nothing can be compared"
+      elif ! command -v gh >/dev/null 2>&1; then
+        origin_state="gh is not installed, so the request cannot be checked (request-file entries need gh)"
+      else
+        origin_id="$(gh api "repos/$own" --jq .id </dev/null 2>/dev/null)" || origin_id=""
+        case "$origin_id" in
+          ''|*[!0-9]*) origin_id=""; origin_state="gh could not resolve origin $own (unauthenticated, offline or failing), so the request cannot be checked" ;;
+          *) origin_state="ok" ;;
+        esac
+      fi
+    fi
+    if [ "$origin_state" != "ok" ]; then
+      echo "allowlist: ignored $e — $origin_state" >&2
+      continue
+    fi
+    id="$(gh api "repos/$e" --jq .id </dev/null 2>/dev/null)" || id=""
+    case "$id" in
+      ''|*[!0-9]*)
+        echo "allowlist: ignored $e — gh could not resolve it, so it cannot be shown to be this repository" >&2
+        continue ;;
+    esac
+    if [ "$id" = "$origin_id" ]; then
+      echo "allowlist: granted $e — same repository as origin $own (id $id)" >&2
+      printf '%s\n' "$e"
+    else
+      echo "allowlist: ignored $e — not this repository" >&2
+    fi
+  done < "$f"
+  return 0
+}
+
 # load_allowlist — resolve the allowlist INTO THE GLOBALS $ALLOWLIST (newline-separated entries)
 # and $ALLOWLIST_SOURCE (a human-readable provenance label). It must run in the CURRENT shell:
 # a command substitution would evaluate it in a SUBSHELL and the source label would never reach
@@ -883,13 +959,20 @@ remote_slug() {
 #   2. $LOOMWRIGHT_MEMORY_REPO_ALLOWLIST (newline-, comma- or colon-separated)
 #   3. .supervisor/config.json  .setup_memory.repo_allowlist[]   (a JSON ARRAY — the stored shape)
 #   4. default: the CURRENT git remote's owner/repo (fresh-install default; never a hardcoded owner)
+#      PLUS the GRANTED entries of the tracked request file `.agent/meta-allowlist.txt`
+#      (see meta_allowlist_grants — a listed slug is only a REQUEST)
 #
 # It is a LIST at every layer. A repo RENAME is the documented reason: records written before the
 # rename carry the old slug, and a live-remote-keyed filter would silently drop them. This is also
 # why layer 4 is only a DEFAULT — `apply` snapshots it into config, and every later read comes from
 # config, so renaming the remote afterwards does not retroactively change what the filter retains.
+#
+# Layers 1–3 win exactly as before: when any of them is non-empty the request file is NOT read and
+# `gh` is never called. Every request-file status line goes to STDERR — meta-sync.sh's scrub and
+# validate-entry.sh read this subcommand's STDOUT as the list, so a status line on stdout would
+# become an allowlist entry.
 load_allowlist() {
-  local out=""
+  local out="" own granted
   ALLOWLIST_SOURCE="none"
   if [ -n "$ALLOW_FLAGS" ]; then
     out="$ALLOW_FLAGS"
@@ -914,9 +997,16 @@ load_allowlist() {
     fi
   fi
   if [ -z "$out" ]; then
-    out="$(remote_slug)"
-    if [ -n "$out" ]; then
+    own="$(remote_slug)"
+    granted="$(meta_allowlist_grants "$own")"
+    out="$own"
+    if [ -n "$own" ]; then
       ALLOWLIST_SOURCE="default (current git remote)"
+      if [ -n "$granted" ]; then
+        out="${own}
+${granted}"
+        ALLOWLIST_SOURCE="default (current git remote) + request file $META_ALLOWLIST_REL (granted entries)"
+      fi
     else
       ALLOWLIST_SOURCE="unset (no git remote to default from)"
     fi
@@ -1276,6 +1366,13 @@ What becomes VERSION-CONTROLLED if you apply this:
                                  `.repo` is inside this repo's allowlist. If any record is not,
                                  the negation is WITHHELD, the offending slugs are named, and
                                  readiness reports `gated`.
+                                 The allowlist seeded into .supervisor/config.json (gitignored,
+                                 it does not travel) is the current remote PLUS the GRANTED
+                                 entries of the tracked request file .agent/meta-allowlist.txt —
+                                 an entry there is only a REQUEST, granted only when
+                                 `gh api repos/<slug> --jq .id` equals origin's id (a renamed
+                                 repo's old slug). gh is OPTIONAL: missing or failing, no
+                                 request entry is granted.
 These are COMMITTED IN PLACE — nothing is moved, symlinked or copied, so every agent keeps
 reading its store from the same path it uses today.
 
@@ -1333,6 +1430,12 @@ repo-allowlist ledger gate does not apply: the ledger is never un-ignored here).
 Run history ALREADY committed on this branch stays tracked — switching only rewrites .gitignore.
 Untracking it is a separate, deliberate operator step (migrate-branch-mode.sh plan), never this
 helper: it never runs git add / git rm / git commit.
+meta-sync.sh's push scrub still refuses any ledger record or forge slug outside the repo
+allowlist. .supervisor/config.json (gitignored) does not travel; on a clone without it the
+allowlist is the current remote PLUS the GRANTED entries of the tracked request file
+.agent/meta-allowlist.txt — an entry there is only a REQUEST, granted only when
+`gh api repos/<slug> --jq .id` equals origin's id. gh is OPTIONAL: missing or failing, no
+request entry is granted and the scrub uses the remote alone.
 
 Read this before saying yes:
   · Committing publishes. Agent memory can contain proprietary architecture, internal service

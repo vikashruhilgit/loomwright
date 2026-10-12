@@ -76,6 +76,14 @@
 #        explicitly and separately from the `**` globs
 #   (d)  allowlist: stored as a JSON ARRAY (never a string); a renamed repo retains records under
 #        BOTH slugs; a foreign-repo record is excluded; a fresh install defaults to the remote
+#   (ma) the tracked request file .agent/meta-allowlist.txt (layer 4, beside the remote default): a
+#        same-id slug is GRANTED, a different-id slug is ignored + named on stderr + refused by the
+#        ledger filter; a failing or absent gh grants nothing (config.json entries still are);
+#        layers 1–3 win with the file unread and ZERO gh calls; malformed entries never reach gh;
+#        a filesystem-path origin grants nothing; no file / own-slug-only ⇒ ZERO gh calls; stdout
+#        stays the list. gh is a recording PATH stub (no network); six sed/awk mutants (id
+#        comparison, failure guards, stderr, shape check, eager lookup, layer order) each turn
+#        their leg red, gated on non-empty + changed + `bash -n`-clean
 #   (e)  idempotency: a second apply is a no-op that writes nothing (.gitignore AND config
 #        byte-identical, no second backup); PLUS backup-before-write asserted positively — the
 #        backup exists and its CONTENT is the pristine pre-apply file — and two applies inside the
@@ -583,6 +591,255 @@ D9b="$(newgit ../sibling-repo)"
 [ -z "$(mem "$D9b" allowlist 2>/dev/null)" ] && ok "(d9) a RELATIVE path remote also yields no default" || no "(d9) a relative path remote fabricated an owner"
 D9c="$(newgit ssh://git@github.com/acme/widget.git)"
 [ "$(mem "$D9c" allowlist 2>/dev/null)" = "acme/widget" ] && ok "(d9) a real ssh:// URL still resolves (the path guard did not over-reject)" || no "(d9) the path guard broke ssh:// URL resolution"
+
+# ============================================================================
+echo "== (ma) the tracked request file .agent/meta-allowlist.txt — it REQUESTS, only a gh id match GRANTS =="
+# WHY: .supervisor/config.json is gitignored, so a fresh clone resolves the allowlist to the remote
+# alone and refuses every pre-rename record. The tracked request file travels — so it must never
+# GRANT on its own (the ledger collects records about OTHER repos; a granting committed list would
+# let whoever controls the file publish them). Granted only when `gh api repos/<slug> --jq .id`
+# equals origin's id. NO NETWORK: `gh` is a recording stub on PATH (every invocation appended to
+# $MA_LOG), and the absent-gh legs run on a hermetic PATH of symlinks that has no gh at all.
+MA_D="$(mkfix)"
+mkdir -p "$MA_D/bin"
+cat > "$MA_D/bin/gh" <<'GH'
+#!/bin/sh
+printf '%s\n' "$*" >> "$GH_STUB_LOG"
+if [ -n "${GH_STUB_FAIL:-}" ]; then echo "gh: stub failure (not logged in)" >&2; exit 1; fi
+p="$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
+case "$p" in
+  repos/acme/widget|repos/acme/old-name) echo 101 ;;   # old-name: the rename redirect, SAME id
+  repos/stranger/elsewhere) echo 202 ;;                # a DIFFERENT repository
+  *) echo "gh: HTTP 404: Not Found" >&2; exit 1 ;;
+esac
+GH
+chmod +x "$MA_D/bin/gh"
+MA_LOG="$MA_D/gh.log"
+# A PATH with every tool setup-memory.sh's allowlist path uses EXCEPT gh (CI's ubuntu image and a
+# Homebrew mac both ship a real gh in a directory that also holds git/awk, so dropping one
+# directory is not enough): a hermetic dir of symlinks, as test-meta-sync.sh builds for no-jq.
+MA_NOGH="$MA_D/nogh-bin"; mkdir -p "$MA_NOGH"
+for t in bash sh git cat dirname sed awk mktemp rm mkdir tr sort grep env cksum date wc cut head \
+         tail jq cp mv ls printf test true false; do
+  tp="$(command -v "$t" 2>/dev/null)"
+  case "$tp" in /*) ln -sf "$tp" "$MA_NOGH/$t" ;; esac
+done
+MA_NOGH_PATH="${HERMETIC_SHIM_DIR:+$HERMETIC_SHIM_DIR:}$MA_NOGH"
+{ [ -z "$(PATH="$MA_NOGH_PATH" command -v gh)" ] && [ -n "$(PATH="$MA_NOGH_PATH" command -v git)" ]; } \
+  || setup_fail "(ma) the no-gh PATH must have git and no gh"
+MA_SUT="$MEM"
+# ma_run <dir> [VAR=value ...] — `allowlist` on the gh-stub PATH, env allowlist scrubbed; sets
+# MA_OUT (stdout), MA_ERR (stderr) and MA_CALLS (gh invocations, one per line).
+ma_run() {
+  local d="$1"; shift
+  : > "$MA_LOG"
+  env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST GH_STUB_LOG="$MA_LOG" PATH="$MA_D/bin:$PATH" "$@" \
+    bash "$MA_SUT" --root "$d" allowlist > "$MA_D/out" 2> "$MA_D/err"
+  MA_OUT="$(cat "$MA_D/out")"; MA_ERR="$(cat "$MA_D/err")"; MA_CALLS="$(cat "$MA_LOG")"
+}
+# ma_run_nogh <dir> — the same on the hermetic PATH with NO gh at all.
+ma_run_nogh() {
+  : > "$MA_LOG"
+  env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST PATH="$MA_NOGH_PATH" "$MA_NOGH/bash" "$MA_SUT" --root "$1" allowlist \
+    > "$MA_D/out" 2> "$MA_D/err"
+  MA_OUT="$(cat "$MA_D/out")"; MA_ERR="$(cat "$MA_D/err")"; MA_CALLS="$(cat "$MA_LOG")"
+}
+# ma_stdout_is_list — 0 iff every stdout line is an owner/repo slug (no status text leaked in).
+ma_stdout_is_list() {
+  local l
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    printf '%s\n' "$l" | env LC_ALL=C grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' || return 1
+  done <<EOF_MA
+$MA_OUT
+EOF_MA
+  return 0
+}
+ma_req() { mkdir -p "$1/.agent"; printf '%s\n' "${@:2}" > "$1/.agent/meta-allowlist.txt"; }
+ma_ncalls() { [ -n "$MA_CALLS" ] && printf '%s\n' "$MA_CALLS" | wc -l | tr -d ' ' || echo 0; }
+
+# (ma1) A9 — NO request file ⇒ ZERO gh calls on a GitHub-shaped origin.
+MA1="$(newgit https://github.com/acme/widget.git)"
+ma_run "$MA1"
+{ [ "$MA_OUT" = "acme/widget" ] && [ -z "$MA_CALLS" ]; } \
+  && ok "(ma1) A9: no request file ⇒ the remote alone and ZERO gh calls (lazy lookup)" \
+  || no "(ma1) A9: no request file made gh calls or changed the list (out: $MA_OUT; gh: $MA_CALLS)"
+# (ma2) A9 + A5 — a file holding only origin's own slug (any case), comments and blanks ⇒ ZERO calls.
+MA2="$(newgit https://github.com/acme/widget.git)"
+ma_req "$MA2" '# requested slugs' '' '   ' 'ACME/Widget' '  acme/widget  ' '# trailing comment'
+ma_run "$MA2"
+{ [ "$MA_OUT" = "acme/widget" ] && [ -z "$MA_CALLS" ]; } \
+  && ok "(ma2) A9/A5: own slug (case-insensitive) + comments + blanks ⇒ granted with ZERO gh calls" \
+  || no "(ma2) A9/A5: own-slug-only request file made gh calls or changed the list (out: $MA_OUT; gh: $MA_CALLS)"
+hasF 'allowlist: granted ACME/Widget — current remote' "$MA_ERR" \
+  && ok "(ma2) the own slug's grant is named on stderr" || no "(ma2) own-slug status missing (err: $MA_ERR)"
+hasF '# source: default (current git remote)' "$MA_ERR" && ! hasF 'request file' "$(printf '%s\n' "$MA_ERR" | grep '^# source:')" \
+  && ok "(ma2) the # source: line does not credit the request file when it contributed nothing" \
+  || no "(ma2) wrong # source: line (err: $MA_ERR)"
+
+# (ma3) THE GRANT AND THE REFUSAL — same-id slug granted, different-id slug ignored + named.
+MA3="$(newgit https://github.com/acme/widget.git)"
+ma_req "$MA3" '# request' 'acme/old-name' 'stranger/elsewhere'
+ma_run "$MA3"
+[ "$MA_OUT" = "$(printf 'acme/widget\nacme/old-name')" ] \
+  && ok "(ma3) A1: the same-id (renamed) slug acme/old-name is GRANTED beside the remote" \
+  || no "(ma3) A1: same-id slug not granted (out: $MA_OUT; err: $MA_ERR)"
+# THE A2 assertion — the one the id-comparison mutant below must turn red.
+ma3_a2() { ! hasF 'stranger/elsewhere' "$MA_OUT" && hasF 'allowlist: ignored stranger/elsewhere — not this repository' "$MA_ERR"; }
+ma3_a2 && ok "(ma3) A2: the different-id slug is NOT granted and is named: 'allowlist: ignored stranger/elsewhere — not this repository'" \
+  || no "(ma3) A2: different-id slug granted or not named (out: $MA_OUT; err: $MA_ERR)"
+# A6 — stdout is the list and nothing else; the status lines are on stderr.
+ma_stdout_is_list && ! hasF 'allowlist:' "$MA_OUT" \
+  && ok "(ma3) A6: stdout stays one owner/repo per line — no status text leaked into the list" \
+  || no "(ma3) A6: status text reached STDOUT, where meta-sync.sh/validate-entry.sh read it as entries (out: $MA_OUT)"
+src_ma3="$(printf '%s\n' "$MA_ERR" | grep '^# source:')"
+{ hasF 'default (current git remote)' "$src_ma3" && hasF '.agent/meta-allowlist.txt' "$src_ma3"; } \
+  && ok "(ma3) A6: the # source: line names the request file AND keeps 'default (current git remote)'" \
+  || no "(ma3) A6: # source: line wrong (got: $src_ma3)"
+n_origin="$(printf '%s\n' "$MA_CALLS" | grep -c 'repos/acme/widget ' || true)"
+{ [ "$n_origin" = "1" ] && [ "$(ma_ncalls)" = "3" ]; } \
+  && ok "(ma3) origin's id looked up exactly ONCE per call (3 gh calls for 2 entries)" \
+  || no "(ma3) gh call count wrong (origin lookups $n_origin; calls: $(printf '%s' "$MA_CALLS" | tr '\n' '|'))"
+# The scrub consumer: filter-ledger (the same resolver meta-sync.sh's push scrub reads) refuses the
+# different-id slug's record and keeps the granted old slug's record.
+cat > "$MA3/ledger.jsonl" <<'LEDGER'
+{"repo":"acme/old-name","number":1}
+{"repo":"stranger/elsewhere","number":2}
+LEDGER
+ma3_led="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST GH_STUB_LOG="$MA_LOG" PATH="$MA_D/bin:$PATH" bash "$MEM" --root "$MA3" filter-ledger --ledger "$MA3/ledger.jsonl" 2>/dev/null)"
+if [ -z "$JQ" ]; then
+  ok "(ma3) jq unavailable — the ledger-filter consumer leg is skipped (pass)"
+else
+  { ledger_has_repo "$ma3_led" "acme/old-name" && ! ledger_has_repo "$ma3_led" "stranger/elsewhere"; } \
+    && ok "(ma3) A2: the ledger filter keeps the granted old slug's record and REFUSES the different-id slug's" \
+    || no "(ma3) A2: ledger filter verdict wrong (kept: $ma3_led)"
+fi
+
+# (ma4) A3 — a FAILING gh grants NOTHING from the request file and says why.
+ma_run "$MA3" GH_STUB_FAIL=1
+{ [ "$MA_OUT" = "acme/widget" ] && hasF 'allowlist: ignored acme/old-name — gh could not resolve origin acme/widget' "$MA_ERR"; } \
+  && ok "(ma4) A3: failing gh ⇒ no request entry granted (remote alone) and the reason is named" \
+  || no "(ma4) A3: failing gh granted an entry or named no reason (out: $MA_OUT; err: $MA_ERR)"
+# (ma5) A3 — an ABSENT gh grants nothing either, and says why.
+ma_run_nogh "$MA3"
+{ [ "$MA_OUT" = "acme/widget" ] && hasF 'allowlist: ignored acme/old-name — gh is not installed' "$MA_ERR"; } \
+  && ok "(ma5) A3: absent gh ⇒ no request entry granted (remote alone) and the reason is named" \
+  || no "(ma5) A3: absent gh granted an entry or named no reason (out: $MA_OUT; err: $MA_ERR)"
+
+# (ma6) A4 + A3 — layers 1–3 win as before: the request file is NOT read and gh is NEVER called.
+if [ -z "$JQ" ]; then
+  ok "(ma6) jq unavailable — the config-layer legs are skipped (pass)"
+else
+  MA6="$(newgit https://github.com/acme/widget.git)"
+  ma_req "$MA6" 'acme/old-name' 'stranger/elsewhere'
+  mkdir -p "$MA6/.supervisor"; printf '{"setup_memory":{"repo_allowlist":["acme/widget","fixture-org/kept"]}}\n' > "$MA6/.supervisor/config.json"
+  ma_run "$MA6"
+  ma6_a4() { [ "$MA_OUT" = "$(printf 'acme/widget\nfixture-org/kept')" ] && [ -z "$MA_CALLS" ] && ! hasF 'allowlist:' "$MA_ERR"; }
+  ma6_a4 && ok "(ma6) A4: a present config.json wins — the request file is not read and ZERO gh calls" \
+    || no "(ma6) A4: config layer did not win cleanly (out: $MA_OUT; gh: $MA_CALLS; err: $MA_ERR)"
+  ma_run_nogh "$MA6"
+  [ "$MA_OUT" = "$(printf 'acme/widget\nfixture-org/kept')" ] \
+    && ok "(ma6) A3: with gh absent, config.json entries are still granted" \
+    || no "(ma6) A3: config entries lost when gh is absent (out: $MA_OUT)"
+fi
+ma_run "$MA3" LOOMWRIGHT_MEMORY_REPO_ALLOWLIST=acme/only
+{ [ "$MA_OUT" = "acme/only" ] && [ -z "$MA_CALLS" ]; } \
+  && ok "(ma6) A4: the env layer wins — request file not read, ZERO gh calls" \
+  || no "(ma6) A4: env layer did not win cleanly (out: $MA_OUT; gh: $MA_CALLS)"
+: > "$MA_LOG"
+ma6_flag="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST GH_STUB_LOG="$MA_LOG" PATH="$MA_D/bin:$PATH" bash "$MEM" --root "$MA3" --allow acme/flag allowlist 2>/dev/null)"
+{ [ "$ma6_flag" = "acme/flag" ] && [ ! -s "$MA_LOG" ]; } \
+  && ok "(ma6) A4: --allow wins — request file not read, ZERO gh calls" \
+  || no "(ma6) A4: --allow layer did not win cleanly (out: $ma6_flag; gh: $(cat "$MA_LOG"))"
+
+# (ma7) A5 — a malformed entry is NEVER passed to gh and is named as ignored.
+MA7="$(newgit https://github.com/acme/widget.git)"
+ma_req "$MA7" 'not-a-slug' 'a/b/c' '../x' 'owner/repo name' '$(touch pwned)/x' 'stranger/elsewhere'
+ma_run "$MA7"
+ma7_a5() {
+  [ "$(ma_ncalls)" = "2" ] && hasF 'repos/acme/widget ' "$MA_CALLS" && hasF 'repos/stranger/elsewhere ' "$MA_CALLS" || return 1
+  ! hasF 'not-a-slug' "$MA_CALLS" && ! hasF 'a/b/c' "$MA_CALLS" && ! hasF '../x' "$MA_CALLS" \
+    && ! hasF 'repo name' "$MA_CALLS" && ! hasF 'pwned' "$MA_CALLS"
+}
+ma7_a5 && ok "(ma7) A5: malformed entries never reach gh (only origin + the well-formed entry were looked up)" \
+  || no "(ma7) A5: a malformed entry reached gh (calls: $(printf '%s' "$MA_CALLS" | tr '\n' '|'))"
+{ hasF 'allowlist: ignored not-a-slug — not an owner/repo slug' "$MA_ERR" && hasF 'allowlist: ignored a/b/c — not an owner/repo slug' "$MA_ERR" \
+  && hasF 'allowlist: ignored ../x — not an owner/repo slug' "$MA_ERR" && [ "$MA_OUT" = "acme/widget" ] && [ ! -e "$MA7/pwned" ]; } \
+  && ok "(ma7) A5: each malformed entry is named as ignored; none granted; nothing executed" \
+  || no "(ma7) A5: malformed entries not named or granted (out: $MA_OUT; err: $MA_ERR)"
+
+# (ma8) A5 — a filesystem-path origin grants NO request entry and makes NO gh call.
+MA8="$(newgit /Users/someone/parent-dir/myrepo)"
+ma_req "$MA8" 'acme/old-name'
+ma_run "$MA8"
+{ [ -z "$MA_OUT" ] && [ -z "$MA_CALLS" ] && hasF 'allowlist: ignored acme/old-name — origin has no owner/repo slug' "$MA_ERR"; } \
+  && ok "(ma8) A5: a filesystem-path origin grants nothing, calls no gh, and says why" \
+  || no "(ma8) A5: filesystem-path origin granted or called gh (out: $MA_OUT; gh: $MA_CALLS; err: $MA_ERR)"
+
+# Mutation controls — each gated on the mutant being NON-EMPTY, DIFFERENT from the original and
+# `bash -n`-clean (an unapplied or broken mutant would otherwise "pass" silently).
+# ma_mutant <name> <sed-expr> → prints the mutant path, status 1 when the gate fails.
+ma_mutant() {
+  local m="$MA_D/mut-$1.sh"
+  sed -e "$2" "$MEM" > "$m" 2>/dev/null || return 1
+  [ -s "$m" ] && ! cmp -s "$MEM" "$m" && bash -n "$m" 2>/dev/null || return 1
+  printf '%s' "$m"
+}
+# ma_mutant_awk <name> <exact-line> <line-to-insert-before-it>
+ma_mutant_awk() {
+  local m="$MA_D/mut-$1.sh"
+  awk -v t="$2" -v ins="$3" '$0 == t { print ins } { print }' "$MEM" > "$m" 2>/dev/null || return 1
+  [ -s "$m" ] && ! cmp -s "$MEM" "$m" && bash -n "$m" 2>/dev/null || return 1
+  printf '%s' "$m"
+}
+# The A3 / A5 sed programs, read from quoted heredocs so no shell quoting touches them (`read -d ''`,
+# not `$(cat <<…)`: bash 3.2 mis-parses a heredoc holding an unbalanced `)` inside `$( )`).
+MA_SED_A3=""; IFS= read -r -d '' MA_SED_A3 <<'SED'
+s/if \[ "\$origin_state" != "ok" \]; then/if false; then/
+s/^      ''|\*\[!0-9\]\*)$/      __mutant_never__)/
+SED
+MA_SED_A5=""; IFS= read -r -d '' MA_SED_A5 <<'SED'
+s/^    if ! printf /    if false \&\& printf /
+s@^    case "/\$e/" in \*/\./\*|\*/\.\./\*)$@    case "/$e/" in __mutant_never__)@
+SED
+# (A2) the id comparison removed ⇒ every well-formed entry granted ⇒ the A2 leg must turn red.
+if M="$(ma_mutant a2 's/if \[ "\$id" = "\$origin_id" \]; then/if true; then/')"; then
+  MA_SUT="$M"; ma_run "$MA3"; MA_SUT="$MEM"
+  ma3_a2 && no "(ma-mut A2) REFUTED: with the id comparison removed the A2 leg still passes — it is not load-bearing" \
+    || ok "(ma-mut A2) removing the id comparison grants stranger/elsewhere, so the A2 leg turns red"
+else no "(ma-mut A2) could not build the mutant (empty, unchanged or bash -n failed) — inconclusive"; fi
+# (A3) the gh-failure guards dropped ⇒ "" = "" grants on a failing gh ⇒ (ma4) must turn red.
+if M="$(ma_mutant a3 "$MA_SED_A3")"; then
+  MA_SUT="$M"; ma_run "$MA3" GH_STUB_FAIL=1; MA_SUT="$MEM"
+  [ "$MA_OUT" = "acme/widget" ] && no "(ma-mut A3) REFUTED: with the failure guards dropped a failing gh still grants nothing — (ma4) is not load-bearing" \
+    || ok "(ma-mut A3) dropping the gh-failure guards grants on a failing gh, so (ma4) turns red (out: $(printf '%s' "$MA_OUT" | tr '\n' ' '))"
+else no "(ma-mut A3) could not build the mutant — inconclusive"; fi
+# (A6) the `>&2` dropped from the 'not this repository' line ⇒ (ma3)'s stdout-is-the-list leg red.
+if M="$(ma_mutant a6 's/\(echo "allowlist: ignored \$e — not this repository"\) >&2/\1/')"; then
+  MA_SUT="$M"; ma_run "$MA3"; MA_SUT="$MEM"
+  ma_stdout_is_list && no "(ma-mut A6) REFUTED: status on stdout still reads as a clean list" \
+    || ok "(ma-mut A6) a status line on stdout is caught by the A6 leg"
+else no "(ma-mut A6) could not build the mutant — inconclusive"; fi
+# (A5) the owner/repo shape check dropped ⇒ malformed entries reach gh ⇒ (ma7) red.
+if M="$(ma_mutant a5 "$MA_SED_A5")"; then
+  MA_SUT="$M"; ma_run "$MA7"; MA_SUT="$MEM"
+  ma7_a5 && no "(ma-mut A5) REFUTED: without the shape check malformed entries still never reach gh" \
+    || ok "(ma-mut A5) without the shape check a malformed entry reaches gh, so (ma7) turns red"
+else no "(ma-mut A5) could not build the mutant — inconclusive"; fi
+# (A9) origin's id looked up EAGERLY at the top of the layer ⇒ (ma1)'s zero-call leg red.
+if M="$(ma_mutant_awk a9 '  [ -f "$f" ] && [ -r "$f" ] || return 0' '  [ -n "$own" ] && gh api "repos/$own" --jq .id </dev/null >/dev/null 2>&1')"; then
+  MA_SUT="$M"; ma_run "$MA1"; MA_SUT="$MEM"
+  [ -z "$MA_CALLS" ] && no "(ma-mut A9) REFUTED: an eager origin lookup still made zero gh calls" \
+    || ok "(ma-mut A9) an eager origin lookup makes a gh call with no request file, so (ma1) turns red"
+else no "(ma-mut A9) could not build the mutant — inconclusive"; fi
+# (A4) the request-file layer moved ABOVE the config layer ⇒ (ma6)'s config-wins leg red.
+if [ -n "$JQ" ]; then
+  if M="$(ma_mutant_awk a4 '  if [ -z "$out" ] && command -v jq >/dev/null 2>&1 && [ -f "$CFG" ]; then' '  [ -z "$out" ] && out="$(meta_allowlist_grants "$(remote_slug)")"')"; then
+    MA_SUT="$M"; ma_run "$MA6"; MA_SUT="$MEM"
+    ma6_a4 && no "(ma-mut A4) REFUTED: with the request layer above config the A4 leg still passes" \
+      || ok "(ma-mut A4) moving the request layer above config reads it and calls gh, so (ma6) turns red"
+  else no "(ma-mut A4) could not build the mutant — inconclusive"; fi
+fi
 
 # ============================================================================
 echo "== (e) idempotency + BACKUP-BEFORE-WRITE — a second apply is a no-op that writes NOTHING =="

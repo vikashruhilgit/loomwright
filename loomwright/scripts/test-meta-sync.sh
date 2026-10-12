@@ -175,6 +175,14 @@
 #      published, meta-base bytes unchanged (automate-followups/36 A6)
 #  62. mutation control (xv): a mutant without load_base's unreadable arm no longer refuses as
 #      unreadable -> (61) turns red
+#  63. the tracked request file .agent/meta-allowlist.txt (af36-remainder/02): a fresh clone with
+#      NO config.json and the file-level allowlist env scrubbed pulls, then pushes an old-slug
+#      ledger line + an old-slug forge URL -> exit 0 (a gh stub answers the old slug with origin's
+#      id; a git shim reports a GitHub-shaped origin while fetches still hit the local bare repo);
+#      a failing gh -> the same push is refused (exit 2 ledger_repo); a requested slug that is a
+#      DIFFERENT repository -> its record refused and the resolver names it on stderr
+#  64. mutation control (xvi): a setup-memory.sh mutant without the request-file layer call turns
+#      the A1 push (63) red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1987,6 +1995,111 @@ elif build_mutant "$MUT_XV" 's@^  if \[ ! -r "\$META_BASE" \]; then$@  if false;
   fi
 else
   no "mutation control (xv): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 63. the tracked request file .agent/meta-allowlist.txt: a fresh clone with NO config.json pushes old-slug history (af36-remainder/02 A1/A2) =="
+# WHY: the allowlist's config.json is gitignored, so a fresh clone resolved it to the remote alone
+# and refused every push that touched a pre-rename ledger line or an old-slug forge URL. The tracked
+# request file travels; setup-memory.sh grants an entry only when gh says it is the SAME repository
+# as origin. These legs run with the file-level LOOMWRIGHT_MEMORY_REPO_ALLOWLIST scrubbed (env -u),
+# so layer 4 is genuinely what resolves. TWO PATH stubs, no network:
+#   · git: `git remote get-url` expands url.<x>.insteadOf, so a clone fetching from the local bare
+#     origin can never REPORT a GitHub-shaped origin. The shim answers only
+#     `git -C <root> remote get-url origin` (remote_slug's call) with https://github.com/owner/repo.git;
+#     every other git call — ls-remote, fetch, push — still reaches the local bare origin.
+#   · gh: owner/repo and owner/repo-old (the rename redirect) answer id 7; other/private answers 9.
+RA_BIN="$TROOT/ra-bin"; mkdir -p "$RA_BIN"
+RA_LOG="$TROOT/ra-gh.log"
+cat > "$RA_BIN/git" <<SHIM
+#!/bin/sh
+if [ "\$1" = "-C" ] && [ "\$3" = "remote" ] && [ "\$4" = "get-url" ] && [ "\$5" = "origin" ]; then
+  echo "https://github.com/owner/repo.git"; exit 0
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+cat > "$RA_BIN/gh" <<'GH'
+#!/bin/sh
+printf '%s\n' "$*" >> "$RA_GH_LOG"
+if [ -n "${RA_GH_FAIL:-}" ]; then echo "gh: stub failure (not logged in)" >&2; exit 1; fi
+case "$2" in
+  repos/owner/repo|repos/owner/repo-old) echo 7 ;;
+  repos/other/private) echo 9 ;;
+  *) echo "gh: HTTP 404: Not Found" >&2; exit 1 ;;
+esac
+GH
+chmod +x "$RA_BIN/git" "$RA_BIN/gh"
+# ra_ms <clone> <args...> [— env: RA_EXTRA="VAR=value"] — the SUT with the allowlist env scrubbed
+# and both stubs first on PATH; sets OUT / RC like ms.
+RA_EXTRA=""
+ra_ms() {
+  local d="$1"; shift
+  # shellcheck disable=SC2086
+  OUT="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST RA_GH_LOG="$RA_LOG" PATH="$RA_BIN:$PATH" $RA_EXTRA bash "$SCRIPT" "$@" --root "$W/$d" 2>&1)"; RC=$?
+}
+RA_REQ='# requested slugs (only a gh repository-id match with origin grants one)
+owner/repo
+owner/repo-old'
+# ra_world — origin's code branch carries the request file; A (env allowlist: both slugs) publishes
+# old-slug history; C is a FRESH clone with no .supervisor/config.json that pulls it.
+ra_world() {
+  mkworld
+  ( cd "$W/seed" && mkdir -p .agent && printf '%s\n' "$RA_REQ" > .agent/meta-allowlist.txt \
+      && git add .agent/meta-allowlist.txt && git commit -qm 'request file' && git push -q origin main ) >/dev/null 2>&1
+  clone A; ms A init
+  put A "$RQ/old.md" "see https://github.com/owner/repo-old/pull/3"
+  mkdir -p "$W/A/.supervisor/postmortem"
+  printf '%s\n' '{"repo":"owner/repo-old","n":1}' '{"repo":"owner/repo","n":2}' > "$W/A/.supervisor/postmortem/results.jsonl"
+  ms A push
+  clone C
+}
+# ra_scenario — 0 iff C (no config) pulls, then pushes a new old-slug ledger line + an old-slug edit.
+RA_DETAIL=""
+ra_scenario() {
+  ra_world
+  [ -f "$W/C/.agent/meta-allowlist.txt" ] && [ ! -e "$W/C/.supervisor/config.json" ] || { RA_DETAIL="fixture: request file missing or config present in C"; return 1; }
+  ra_ms C pull
+  [ "$RC" -eq 0 ] || { RA_DETAIL="pull rc=$RC: $OUT"; return 1; }
+  printf '%s\n' '{"repo":"owner/repo-old","n":3}' >> "$W/C/.supervisor/postmortem/results.jsonl"
+  printf '%s\n' "and https://github.com/owner/repo-old/issues/9" >> "$W/C/$RQ/old.md"
+  ra_ms C push
+  RA_DETAIL="push rc=$RC: $(printf '%s' "$OUT" | tr '\n' '|')"
+  [ "$RC" -eq 0 ] && grep -q 'meta_sync: pushed' < <(printf '%s' "$OUT") \
+    && grep -qF '"n":3' < <(br_show .supervisor/postmortem/results.jsonl) \
+    && grep -qF 'owner/repo-old/issues/9' < <(br_show "$RQ/old.md")
+}
+ra_scenario; check $? "A1: a fresh clone with no config.json pulls, then pushes an old-slug ledger line + an old-slug edit — the old slug resolves to origin's id ($RA_DETAIL)"
+# A3 in the scrub: the same push with gh FAILING grants nothing, so the scrub refuses (fail closed).
+ra_world; ra_ms C pull
+printf '%s\n' '{"repo":"owner/repo-old","n":3}' >> "$W/C/.supervisor/postmortem/results.jsonl"
+tip="$(br_tip)"
+RA_EXTRA="RA_GH_FAIL=1"; ra_ms C push; RA_EXTRA=""
+{ [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub .supervisor/postmortem/results.jsonl: ledger_repo" < <(printf '%s\n' "$OUT") && [ "$(br_tip)" = "$tip" ]; }
+check $? "A3: with gh failing, no request entry is granted — the old-slug ledger line is refused (exit 2 ledger_repo, branch unchanged) (rc=$RC: $OUT)"
+# A2 in the scrub: a requested slug that is a DIFFERENT repository is not granted — its record is refused.
+printf '%s\n' 'other/private' >> "$W/C/.agent/meta-allowlist.txt"
+printf '%s\n' '{"repo":"other/private","n":1}' >> "$W/C/.supervisor/postmortem/results.jsonl"
+ra_ms C push
+{ [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub .supervisor/postmortem/results.jsonl: ledger_repo" < <(printf '%s\n' "$OUT") && [ "$(br_tip)" = "$tip" ]; }
+check $? "A2: a requested slug resolving to a DIFFERENT repository is not granted — its ledger record is refused by the scrub (rc=$RC: $OUT)"
+ra_allow="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST RA_GH_LOG="$RA_LOG" PATH="$RA_BIN:$PATH" bash "$HERE/setup-memory.sh" --root "$W/C" allowlist 2>&1)"
+grep -qF 'allowlist: ignored other/private — not this repository' < <(printf '%s\n' "$ra_allow")
+check $? "A2: ... and the resolver names it on stderr: 'allowlist: ignored other/private — not this repository' (got: $(printf '%s' "$ra_allow" | tr '\n' '|'))"
+
+echo "== 64. mutation control (xvi): delete the request-file layer call from setup-memory.sh -> the A1 assertion (63) must turn red =="
+MUT_XVI="$TROOT/mutant-xvi"; mkdir -p "$MUT_XVI"
+cp "$SUT" "$MUT_XVI/meta-sync.sh"
+sed -e 's/^    granted="\$(meta_allowlist_grants "\$own")"$/    granted=""  # mutant (xvi)/' "$HERE/setup-memory.sh" > "$MUT_XVI/setup-memory.sh"
+if [ -s "$MUT_XVI/setup-memory.sh" ] && ! cmp -s "$HERE/setup-memory.sh" "$MUT_XVI/setup-memory.sh" \
+   && grep -qF 'granted=""  # mutant (xvi)' "$MUT_XVI/setup-memory.sh" && bash -n "$MUT_XVI/setup-memory.sh"; then
+  SCRIPT="$MUT_XVI/meta-sync.sh"
+  if ra_scenario; then
+    no "mutation control (xvi) REFUTED: without the request-file layer the fresh clone still pushed — leg 63 is not load-bearing"
+  else
+    ok "mutation control (xvi): without the request-file layer the old-slug push is refused, so leg 63 turns red ($RA_DETAIL)"
+  fi
+  SCRIPT="$SUT"
+else
+  no "mutation control (xvi): could not build the mutant (empty, unchanged or bash -n failed) — control inconclusive"
 fi
 
 echo
