@@ -611,6 +611,14 @@ See `AGENT_GUIDELINES.md` for detailed standards per language.
 5. **Review gates (manual, human-invoked):** If you choose to run `/code-reviewer` yourself between tasks, wait for PASS before moving to the next one — this is not the retired automatic per-subtask gate
 6. **Adversarial audit:** Run `/red-team-reviewer` before launch
 
+### Segment long sessions
+
+A session whose context never resets sends its whole, growing transcript with every turn, so it costs more the longer it runs, and nothing fails to tell you. Treat a long-lived session as a smell, not a badge:
+
+- **Split at natural checkpoints:** after a PR opens, or after a phase completes.
+- **Pick up in a fresh session:** catch up with `/handoff`, then resume from on-disk state with `/supervisor --continue`, or re-run `/automate` (it resumes its run file).
+- **Check with `/insights`:** its Token economics section lists each session's largest transcript and flags sessions over an advisory threshold (`SESSION_CONTEXT_THRESHOLD_BYTES`, default 3000000 bytes). It only reports. Nothing splits a session for you.
+
 ### CLAUDE.md Proposal Workflow
 
 When Code Reviewer discovers a new pattern:
