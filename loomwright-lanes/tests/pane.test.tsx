@@ -437,6 +437,45 @@ test('Send reads "Sending" while lane-answer runs and ignores a second press', a
   await ui.unmount()
 })
 
+test('two Send presses in the same instant send one answer', async ($, on) => {
+  const calls: Call[] = []
+  const hold = gated(on, calls)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'toolu_q:0:A' })
+  await ui.press({ key: 'toolu_q:1:z' })
+  const release = hold('answer')
+  // No tick between them: the second press arrives before the first one's state write lands.
+  const both = Promise.all([ui.press({ key: 'toolu_q:send' }), ui.press({ key: 'toolu_q:send' })])
+  await tick()
+  release()
+  await both
+  expect(calls.filter(c => c.argv.includes('lane-answer')).length).toBe(1)
+  await ui.unmount()
+})
+
+test('two Keep awake presses and two Refresh now presses in the same instant run once each', async ($, on) => {
+  const calls: Call[] = []
+  const hold = gated(on, calls)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'terminal', ...PANE })
+  const reads = () => calls.filter(c => c.argv.includes('lane-status') && !c.argv.includes('--keep-awake')).length
+  const before = reads()
+  let release = hold('status')
+  let both = Promise.all([ui.press({ key: 'refresh' }), ui.press({ key: 'refresh' })])
+  await tick()
+  release()
+  await both
+  expect(reads()).toBe(before + 1)
+  release = hold('status')
+  both = Promise.all([ui.press({ key: 'keep-awake' }), ui.press({ key: 'keep-awake' })])
+  await tick()
+  release()
+  await both
+  expect(calls.filter(c => c.argv.includes('--keep-awake')).length).toBe(1)
+  await ui.unmount()
+})
+
 test('the re-read after an answer is not lost when a poll is already reading', async ($, on) => {
   const calls: Call[] = []
   const hold = gated(on, calls)

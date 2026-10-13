@@ -164,9 +164,22 @@ async function loadDetails($: EngineInterface, configured: string, l: LaneRow): 
   await update($, details, all => ({ ...all, [l.lane]: lines }))
 }
 
-/** Marks a press's work in flight, so its button reads "…ing" and a second press is ignored. */
-async function working_($: EngineInterface, key: string, on: boolean): Promise<void> {
-  await update($, working, all => (on ? { ...all, [key]: true } : Object.fromEntries(Object.entries(all).filter(([k]) => k !== key))))
+// A press's work in flight. The claim is a module Set, taken and checked in one synchronous step: a
+// guard that first awaited a state read let two presses in the same instant both pass it (two
+// lane-answer calls). The `working` state only mirrors it, so the button can read "…ing".
+const claimed = new Set<string>()
+
+/** Runs `work` unless the same key's work is already running; the button says so meanwhile. */
+async function exclusive($: EngineInterface, key: string, work: () => Promise<void>): Promise<void> {
+  if (claimed.has(key)) return
+  claimed.add(key)
+  try {
+    await update($, working, all => ({ ...all, [key]: true }))
+    await work()
+  } finally {
+    claimed.delete(key)
+    await update($, working, all => Object.fromEntries(Object.entries(all).filter(([k]) => k !== key)))
+  }
 }
 
 // One read at a time, and none lost: a refresh asked for while one runs (a press's re-read landing on a
@@ -254,18 +267,13 @@ function complete(q: LaneQuestion, mine: Record<string, string[]>): boolean {
 
 async function send($: EngineInterface, configured: string, l: LaneRow, q: LaneQuestion): Promise<void> {
   const key = `send:${q.id}`
-  if ((await read($, working))[key]) return // already sending: a second press would only be refused
+  if (claimed.has(key)) return // already sending: a second press would only be refused
   const mine = (await read($, picks))[q.id] ?? {}
   if (!complete(q, mine)) {
     await update($, message, () => ({ text: `${l.lane}: pick an option for every question first.`, ok: false }))
     return
   }
-  await working_($, key, true)
-  try {
-    await deliver($, configured, l, q, mine)
-  } finally {
-    await working_($, key, false)
-  }
+  await exclusive($, key, () => deliver($, configured, l, q, mine))
 }
 
 async function deliver($: EngineInterface, configured: string, l: LaneRow, q: LaneQuestion, mine: Record<string, string[]>): Promise<void> {
@@ -303,27 +311,17 @@ async function deliver($: EngineInterface, configured: string, l: LaneRow, q: La
  *  only when no caffeinate holds already); it ends with the session. The desktop app's own keep-awake
  *  holds only while a Code session works, and lanes are not Code sessions, so it can drop mid-wave. */
 async function keepAwake($: EngineInterface, configured: string): Promise<void> {
-  if ((await read($, working)).awake) return
-  await working_($, 'awake', true)
-  try {
+  await exclusive($, 'awake', async () => {
     const r = await lane($, configured, 'lane-status', ['--keep-awake'])
     const said = r.out.split('\n').find(x => x.startsWith('keep-awake:')) ?? clip(r.out || 'lane-status --keep-awake said nothing', 300)
     await update($, awake, () => ({ text: said, ok: r.ok && !/not started/.test(said) }))
     await refresh($, configured)
-  } finally {
-    await working_($, 'awake', false)
-  }
+  })
 }
 
 /** The owner's Refresh now: the same read, with its button saying so while it runs. */
 async function refreshNow($: EngineInterface, configured: string): Promise<void> {
-  if ((await read($, working)).refresh) return
-  await working_($, 'refresh', true)
-  try {
-    await refresh($, configured)
-  } finally {
-    await working_($, 'refresh', false)
-  }
+  await exclusive($, 'refresh', () => refresh($, configured))
 }
 
 // ---- time and the step rail ---------------------------------------------------------------------------------
