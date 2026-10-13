@@ -116,3 +116,9 @@ asks for. Scope 1 therefore adds the other six; Scope 3's dismissed-decisions ru
 Owner direction, 2026-10-03, session cc4eaee3 (after M1): carry everything that makes the plugin perform best on the
 metadata branch; ignore session-level state. Store inventory and counts verified in the primary checkout on
 2026-10-03.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-13T12:39:36Z
+- **Brief:** .supervisor/jobs/done/2026-10-13-af36-03-meta-sync-learning-stores.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/528
