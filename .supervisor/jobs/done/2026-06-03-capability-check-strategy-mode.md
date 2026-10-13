@@ -122,7 +122,7 @@ requires:
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-03T19:03:17Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/25
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/25
 - **Branch:** feature/capability-check-strategy-mode
 - **Files changed:** 10 (ST1 command spec, ST2 baseline seed, ST3 docs/version across 7 surfaces, + grounding draft)
 - **Heal loop ran:** true

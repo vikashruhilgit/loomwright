@@ -91,7 +91,7 @@
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-09T20:37:22Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/45
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/45
 - **Branch:** feature/pr-postmortem-analyzer
 - **Files changed:** 14
 - **Heal loop ran:** true

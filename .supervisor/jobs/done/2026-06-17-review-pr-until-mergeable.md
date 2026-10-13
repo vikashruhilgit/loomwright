@@ -185,7 +185,7 @@ No file overlap between subtasks. S2 now also edits the two `/autonomous` consum
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-17T13:23:58Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/63
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/63
 - **Branch:** feature/review-pr-until-mergeable
 - **Files changed:** 14
 - **Heal loop ran:** true

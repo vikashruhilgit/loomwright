@@ -183,7 +183,7 @@ Subtask 1 ──┬──→ Subtask 2
 - **heal_remaining_issues:** 0
 - **rubric_score:** 7/7
 - **contract_conformance:** PASS (corpus-tasks doc-currency-green + version-consistent both green)
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/82
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/82
 - **Branch:** feature/handoff-digest (base main, head f3b381f)
 - **Gates:** validate-version, check-doc-currency, check-command-sync, test-build-handoff — all exit 0
 - **Completed:** 2026-06-28

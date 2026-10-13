@@ -227,7 +227,7 @@ Subtask 5 ──┘
 - **heal_iterations:** 1
 - **heal_fixable_issues_fixed:** 0
 - **heal_remaining_issues:** 0
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/61
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/61
 - **rubric_score:** 7/7 (advisory)
 - **ground_truth:** pass (2/2 — doc-currency-green, version-consistent)
 - **Completed:** 2026-06-17T05:19:07Z

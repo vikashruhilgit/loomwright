@@ -133,7 +133,7 @@ No file overlap — Subtasks 1 and 2 touch disjoint agent prompts and run fully 
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-17T17:53:04Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/64
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/64
 - **Branch:** feature/launchpad-planreviewer-guardrails
 - **Files changed:** 10
 - **Heal loop ran:** true

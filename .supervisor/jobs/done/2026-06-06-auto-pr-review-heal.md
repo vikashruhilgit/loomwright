@@ -188,7 +188,7 @@ Start a **fresh** session (clean context) and run:
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-06
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/32
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/32
 - **Branch:** feature/auto-pr-review-heal
 - **Files changed:** 22 (21 feature files + capability-check.md count fix)
 - **Heal loop ran:** true

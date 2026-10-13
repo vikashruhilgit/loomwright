@@ -160,7 +160,7 @@ Subtask 1 ──→ Subtask 2 ──→ Subtask 3
 
 ## Outcome
 - **Status:** completed
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/67 (base: main)
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/67 (base: main)
 - **Version:** 14.33.0 → 14.34.0
 - **Hook count:** 19 → 20
 - **heal_loop_ran:** true

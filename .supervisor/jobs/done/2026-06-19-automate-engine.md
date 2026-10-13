@@ -188,7 +188,7 @@ subtask_5:   # doc-currency + counts + version (must run last)
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-20T19:11:11Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/74
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/74
 - **Branch:** feature/automate-engine
 - **Files changed:** 13
 - **Heal loop ran:** true

@@ -153,7 +153,7 @@ git checkout main && git pull origin main
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-07T10:35:14Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/37
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/37
 - **Branch:** feature/m2b-ground-truth
 - **Files changed:** 11 (2 new scripts + 9 modified)
 - **Heal loop ran:** true

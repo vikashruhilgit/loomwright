@@ -99,7 +99,7 @@
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-09T16:35:00Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/43
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/43
 - **Branch:** feature/self-heal-blind-spot-hardening
 - **Files changed:** 12
 - **Heal loop ran:** true

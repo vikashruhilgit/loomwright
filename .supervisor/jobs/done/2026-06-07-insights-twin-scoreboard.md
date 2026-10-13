@@ -83,7 +83,7 @@ git pull
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-07T08:13:16Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/35
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/35
 - **Branch:** feature/insights-scoreboard
 - **Files changed:** 11
 - **Heal loop ran:** true

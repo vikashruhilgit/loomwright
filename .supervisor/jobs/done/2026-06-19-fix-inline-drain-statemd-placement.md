@@ -157,7 +157,7 @@ Subtask 1 ──→ Subtask 2 ──→ Subtask 3
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-19T10:06:23Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/71
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/71
 - **Branch:** feature/fix-inline-drain-statemd-placement
 - **Files changed:** 11
 - **Heal loop ran:** true

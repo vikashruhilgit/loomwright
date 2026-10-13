@@ -309,7 +309,7 @@ Start a fresh Claude Code session with clean context and run the command above.
 - **completed_at:** 2026-05-09T13:30:00Z (approx)
 - **outcome:** completed
 - **feature_branch:** feature/v12-reliability-primitives
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/8
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/8
 - **subtasks_completed:** 5/5 (S1, S2, S3, S4, S5)
 - **heal_loop_ran:** true
 - **heal_decision:** PASS (iteration 2)

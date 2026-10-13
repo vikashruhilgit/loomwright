@@ -89,7 +89,7 @@ git pull
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-06T17:53:34Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/34
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/34
 - **Branch:** feature/eval-harness
 - **Files changed:** 21 (+627/-14)
 - **Heal loop ran:** true

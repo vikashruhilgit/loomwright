@@ -151,7 +151,7 @@ S2 ──┬──→ S1 ──┐
 ## Outcome (Supervisor v4 — 2026-06-14)
 - status: completed
 - branch: feature/autonomous-rubric-auto-author
-- pr: https://github.com/vikashruhilgit/ai-agent-manager/pull/57
+- pr: https://github.com/vikashruhilgit/loomwright/pull/57
 - base: main
 - subtasks: S2, S1, S3, S4, S5 — all completed (4 batches)
 - preflight_sync: clear

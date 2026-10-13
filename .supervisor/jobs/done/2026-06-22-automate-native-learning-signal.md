@@ -143,7 +143,7 @@ Recommend **(A — full record)**. Plan Review confirms A-full or B before imple
 ## Outcome
 - **Status:** done
 - **Result:** completed
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/77 (v14.44.0, base main, OPEN — awaiting human merge)
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/77 (v14.44.0, base main, OPEN — awaiting human merge)
 - **heal_loop_ran:** true
 - **heal_decision:** PASS
 - **heal_iterations:** 0 (code review found 0 new BLOCKING/HIGH issues; 1 LOW nit applied as optional polish)

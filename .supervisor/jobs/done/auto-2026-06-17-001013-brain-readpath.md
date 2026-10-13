@@ -162,6 +162,6 @@ Subtask 2 (independent)
 - **heal_iterations:** 1 (holistic review PASS, no fix loop needed)
 - **heal_remaining_issues:** 0 BLOCKING/HIGH (2 non-gating: 1 MEDIUM corpus-gitignore, 1 LOW path-drift)
 - **rubric_score:** 7/7
-- **pr_url:** https://github.com/vikashruhilgit/ai-agent-manager/pull/60
+- **pr_url:** https://github.com/vikashruhilgit/loomwright/pull/60
 - **branch:** feature/brain-context-readpath
 - **completed:** 2026-06-16T19:25:00Z

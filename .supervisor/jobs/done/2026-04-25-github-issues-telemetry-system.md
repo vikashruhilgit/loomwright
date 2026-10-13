@@ -17,7 +17,7 @@
 | Git | ✓ clean | branch: `main`, no uncommitted changes |
 | Worktrees | ✓ | none orphaned |
 | GitHub CLI | ✓ | authenticated as `vikashruhilgit`, scope `repo` (issue creation allowed) |
-| Git remote | ✓ | `https://github.com/vikashruhilgit/ai-agent-manager.git` |
+| Git remote | ✓ | `https://github.com/vikashruhilgit/loomwright.git` |
 | Blockers | 0 | — |
 | Warnings | 0 | Supervisor will cut feature branch off `main` as normal |
 
@@ -324,7 +324,7 @@ User-supplied review found one LOW wording issue: `/telemetry status` AC implied
 
 - **Status:** completed
 - **Branch:** feature/github-issues-telemetry-system
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/7
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/7
 - **Commits:** 07d0d4b (initial feature), db99d13 (heal iter 1)
 - **heal_loop_ran:** true
 - **heal_iterations:** 1

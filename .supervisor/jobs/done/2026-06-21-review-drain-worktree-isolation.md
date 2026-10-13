@@ -110,7 +110,7 @@ This change rewrites the exact dispatcher whose prose-only behavior caused the l
 ## Outcome
 - **Status:** done
 - **Completed:** 2026-06-21
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/75
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/75
 - **PR state:** OPEN (left for human review/merge — Supervisor never merges)
 - **Branch:** feature/review-drain-worktree-isolation (base: main)
 - **Version:** v14.42.0 (base main was v14.41.0 post-#74; counts unchanged 14/19/56/20)

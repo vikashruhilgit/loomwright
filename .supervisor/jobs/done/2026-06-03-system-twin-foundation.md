@@ -193,7 +193,7 @@ requires:
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-04T07:15:04Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/26
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/26
 - **Branch:** feature/system-twin-foundation
 - **Files changed:** 30
 - **Heal loop ran:** true

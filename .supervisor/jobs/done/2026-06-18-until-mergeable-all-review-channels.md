@@ -221,7 +221,7 @@ No file overlap. Dependencies are purely contract/ordering: S2 calls S1's classi
 
 ## Outcome
 - **Status:** completed
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/65 (#65, base `main`, OPEN — never auto-merged)
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/65 (#65, base `main`, OPEN — never auto-merged)
 - **Branch:** feature/until-mergeable-all-review-channels
 - **Commits:** 2 (41fd262 feature; d4010ce Phase 4.5 heal)
 - **Version:** 14.31.0 → 14.32.0

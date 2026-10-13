@@ -82,4 +82,4 @@ the optional Launch Pad usage marker so all three APPLY-path agents are machine-
 
 
 ## Status: done
-- Shipped in 14.33.0 via PR https://github.com/vikashruhilgit/ai-agent-manager/pull/66 on 2026-06-18T09:04:58Z
+- Shipped in 14.33.0 via PR https://github.com/vikashruhilgit/loomwright/pull/66 on 2026-06-18T09:04:58Z

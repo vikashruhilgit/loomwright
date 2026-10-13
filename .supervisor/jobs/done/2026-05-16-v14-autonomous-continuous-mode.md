@@ -248,7 +248,7 @@ mv .supervisor/jobs/pending/2026-04-27-v11.2.1-platform-leverage.md .supervisor/
 - **status:** completed
 - **session_id:** v14-20260516-221852
 - **branch:** feature/v14-autonomous-continuous-mode
-- **pr_url:** https://github.com/vikashruhilgit/ai-agent-manager/pull/12
+- **pr_url:** https://github.com/vikashruhilgit/loomwright/pull/12
 - **branch_base:** main
 - **pr_state:** open
 - **heal_loop_ran:** true

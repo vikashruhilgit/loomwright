@@ -201,7 +201,7 @@ Subtask 1 ──→ Subtask 2 ──┬──→ Subtask 3
 
 ## Outcome
 - **Status:** completed
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/84 (base: main, OPEN)
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/84 (base: main, OPEN)
 - **Feature branch:** feature/rules-substrate
 - **Subtasks:** 5/5 completed (ST1 skill+README · ST2 reader · ST3 reader-test · ST4 command+docs-test+index+help · ST5 version+doc-currency)
 - **heal_loop_ran:** true

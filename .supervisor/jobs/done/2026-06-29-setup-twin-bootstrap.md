@@ -182,7 +182,7 @@ Subtask 1 ──┬──→ Subtask 2
 
 ## Outcome
 - **Status:** completed
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/83
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/83
 - **Heal loop ran:** true
 - **Heal decision:** PASS
 - **Heal iterations:** 0 (review clean on first pass — no fixes needed)

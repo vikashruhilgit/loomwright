@@ -162,7 +162,7 @@ Subtask 1 ──→ Subtask 2 ──→ Subtask 3
 - **Status:** done
 - **Completed:** 2026-06-27
 - **Branch:** feature/read-before-write-rule
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/81
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/81
 - **heal_loop_ran:** true
 - **heal_decision:** PASS
 - **heal_iterations:** 0

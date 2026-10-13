@@ -124,7 +124,7 @@ requires:
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-14T18:02:54Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/59
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/59
 - **Branch:** feature/requirement-closeout-loop
 - **Files changed:** 9
 - **Heal loop ran:** true

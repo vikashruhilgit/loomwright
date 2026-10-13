@@ -139,7 +139,7 @@ Subtask 3 (metadata — independent; doc-currency verified in Phase 4.5)
 
 ## Outcome
 - **Status:** completed
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/66
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/66
 - **Branch:** feature/phase2b-knowledge-sources-insights
 - **Version:** 14.33.0
 - **heal_loop_ran:** true

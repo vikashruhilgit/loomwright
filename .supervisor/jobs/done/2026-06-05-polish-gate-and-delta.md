@@ -90,7 +90,7 @@ git pull
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-06T09:14:05Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/30
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/30
 - **Branch:** feature/polish-gate-and-delta
 - **Files changed:** 9 (3 ST scripts/tests + 6 docs/manifests)
 - **Heal loop ran:** true

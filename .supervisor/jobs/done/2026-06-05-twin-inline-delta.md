@@ -91,7 +91,7 @@ git pull   # get /obsidian's merge
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-05T07:28:29Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/28
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/28
 - **Branch:** feature/twin-inline-delta
 - **Files changed:** 10 (8 modified + 2 new scripts)
 - **Heal loop ran:** true

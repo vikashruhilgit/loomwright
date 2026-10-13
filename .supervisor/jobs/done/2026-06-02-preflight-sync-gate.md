@@ -134,7 +134,7 @@ Start a **fresh** Claude Code session (clean context) and run:
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-02
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/24
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/24
 - **Branch:** feature/preflight-sync-gate (base: main, verified)
 - **Files changed:** 13 (+218/-21)
 - **Subtasks:** 4/4 completed, 4/4 per-subtask reviews PASS

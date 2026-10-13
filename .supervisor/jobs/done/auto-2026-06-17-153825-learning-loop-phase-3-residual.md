@@ -136,7 +136,7 @@
 
 ## Outcome
 - **Result:** completed
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/62
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/62
 - **Branch:** feature/learning-loop-phase3-residual
 - **Base:** main
 - **heal_loop_ran:** true

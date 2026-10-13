@@ -182,7 +182,7 @@ single-agent (no fan-out)
 - **Heal remaining issues:** 1
 - **Red team advisory:** disabled
 - **Until-mergeable dispatched:** false
-- **Summary:** Tracked .agent/meta-allowlist.txt request layer in setup-memory.sh allowlist; grant only on a github.com repo-id match with origin, bounded and capped gh calls, fail closed. 6 review findings fixed over 3 heal iterations; the iteration-3 fix (gh process-group bound) was not re-reviewed but was independently verified. Acceptance A1 not met for this repo: vikashruhilgit/ai-agent-manager is a separate repository (owner-accepted).
+- **Summary:** Tracked .agent/meta-allowlist.txt request layer in setup-memory.sh allowlist; grant only on a github.com repo-id match with origin, bounded and capped gh calls, fail closed. 6 review findings fixed over 3 heal iterations; the iteration-3 fix (gh process-group bound) was not re-reviewed but was independently verified. Acceptance A1 not met for this repo: the old slug vikashruhilgit/ai-agent-manager is a separate repository (owner-accepted).
 
 ## Not verified
 - **real-system A1 — fresh clone resolving both seeded slugs** — vikashruhilgit/ai-agent-manager is a separate repo (id 1286686688); only vikashruhilgit/loomwright is granted live; needs an owner decision (subtask 1)

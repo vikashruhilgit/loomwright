@@ -147,7 +147,7 @@ Subtask 2 (docs)    ─┘
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-18T15:41:21Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/68
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/68
 - **Branch:** feature/rename-notify-config-backcompat
 - **Files changed:** 22
 - **Heal loop ran:** true

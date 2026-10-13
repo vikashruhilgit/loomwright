@@ -109,7 +109,7 @@ requires:
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-04T20:38:29Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/27
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/27
 - **Branch:** feature/obsidian-vault
 - **Files changed:** 10
 - **Heal loop ran:** true

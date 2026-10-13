@@ -166,7 +166,7 @@ The #31/#32 postmortems were run against the **target repo (BetterBlocks)**, and
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-22T00:21:00Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/76
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/76
 - **Branch:** feature/review-rigor-and-severity
 - **Files changed:** 11
 - **Heal loop ran:** true

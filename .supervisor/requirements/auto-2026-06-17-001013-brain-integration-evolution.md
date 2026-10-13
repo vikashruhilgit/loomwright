@@ -327,7 +327,7 @@ Everything downstream depends on the read path landing and measuring well.
 **Status:** in_progress (read-path slice landed)
 **Iteration 1 (autonomous):** Phase 0 + Phase 1 (in-repo read path) — DONE
 **Brief:** .supervisor/jobs/done/auto-2026-06-17-001013-brain-readpath.md
-**PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/60
+**PR:** https://github.com/vikashruhilgit/loomwright/pull/60
 **Rubric:** 7/7
 **Completed:** 2026-06-16
 **Remaining (deferred):** Phase 2 (/setup brain), Phase 3 (write path — cross-repo), Phase 4 (Twin↔Graphify), Phase 5 (freshness feedback)

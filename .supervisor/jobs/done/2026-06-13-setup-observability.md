@@ -232,7 +232,7 @@ Subtask 4 ─────────────────→ Subtask 5
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-12T22:47:25Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/54
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/54
 - **Branch:** feature/setup-observability
 - **Files changed:** 29
 - **Heal loop ran:** true

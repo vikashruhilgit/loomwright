@@ -195,7 +195,7 @@ CI auto-registration is already handled: [ci.yml](.github/workflows/ci.yml) glob
 - **Heal iterations:** 0 (review PASS on first holistic pass — no BLOCKING/HIGH new issues)
 - **Heal remaining issues:** 0
 - **Rubric score:** 7/7
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/79
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/79
 - **Branch:** feature/local-twin-step5-bridge-apply
 - **Base:** main
 - **Until-mergeable dispatched:** true

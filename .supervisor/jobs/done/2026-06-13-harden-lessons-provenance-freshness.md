@@ -78,7 +78,7 @@
 ## Outcome
 - **Status:** completed
 - **Branch:** feature/harden-lessons-provenance-freshness
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/55
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/55
 - **heal_loop_ran:** true
 - **heal_decision:** PASS
 - **heal_iterations:** 1 (review FAIL → fix HIGH trailer-collision + MEDIUM test + LOW sanitizer → re-review PASS)

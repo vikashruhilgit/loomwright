@@ -163,7 +163,7 @@ Subtask 3 ─┘
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-18T19:58:06Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/70
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/70
 - **Branch:** feature/fix-inline-review-drain-dispatch
 - **Files changed:** 12
 - **Heal loop ran:** true

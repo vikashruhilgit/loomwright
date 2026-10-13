@@ -107,7 +107,7 @@ Subtask 2 ──→ Subtask 3
 
 ## Outcome
 - **Status:** completed
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/19
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/19
 - **Branch:** feature/v14.4.0-round-out-p2 (base: main)
 - **Subtasks completed:** 3/3
 - **Phase 4.5 self-heal:** heal_decision=PASS, heal_iterations=1, 0 new issues

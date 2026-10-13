@@ -183,7 +183,7 @@ Subtask 1 ───────────────────────�
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-18T17:27:37Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/69
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/69
 - **Branch:** feature/phase4-churn-ledger
 - **Files changed:** 15
 - **Heal loop ran:** true

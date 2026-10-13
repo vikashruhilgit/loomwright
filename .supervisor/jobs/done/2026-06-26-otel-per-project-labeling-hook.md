@@ -186,7 +186,7 @@ Fixture-driven (temp `HOME` + temp git repo via `mktemp -d`, `trap` cleanup; nev
 
 ## Outcome
 - **Status:** completed
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/80
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/80
 - **Branch:** feature/otel-per-project-labeling-hook (commit c827958)
 - **heal_loop_ran:** true
 - **heal_decision:** PASS

@@ -68,4 +68,4 @@ Close the PR-churn learning loop: turn the append-only postmortem corpus (`.supe
 - **Status:** done
 - **Completed:** 2026-06-18T17:27:37Z
 - **Brief:** .supervisor/jobs/done/auto-2026-06-18-214904-learning-loop-phase-4-churn-ledger.md
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/69
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/69

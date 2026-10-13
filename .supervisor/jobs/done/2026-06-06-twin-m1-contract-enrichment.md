@@ -97,7 +97,7 @@ git pull
 ## Outcome
 - **Status:** completed
 - **Completed:** 2026-06-06T12:20:14Z
-- **PR:** https://github.com/vikashruhilgit/ai-agent-manager/pull/31
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/31
 - **Branch:** feature/twin-m1-enrichment (base: main)
 - **Files changed:** 11 (+386 / -20)
 - **Heal loop ran:** true
