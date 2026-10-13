@@ -248,6 +248,13 @@
 # its meta-base entry stays the previous one (a skipped path is unconsidered), run history still
 # pushes, and the exit code is the one run history alone gives. (A CONFLICT is not a publish: a
 # conflicting proposal .md still aborts like any .md, and a twin conflict refuses the twin set.)
+# HONEST LIMIT — that abort ignores consent: an agent-memory proposal .md both sides changed (or,
+# with no meta-base, one matching no branch-history blob) makes pull AND push exit 1 `conflict`,
+# nothing changed — so meta-entry's pull (every /automate start or resume) is blocked by a store
+# this machine may have declined to publish, and a trail-pr --paths-from push by a proposal it
+# never listed. Manual resolution: make the two sides agree (`git show origin/<branch>:<path> >
+# <path>`, merging any local edit in by hand), then re-run. Follow-up candidate: extend the twin
+# set's hold-don't-abort rule to the other non-union learning stores.
 # The record is read only when a push would publish a learning path, so a run-history-only push
 # (trail-pr, lanes) never reads it.
 #

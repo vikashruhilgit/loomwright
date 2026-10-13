@@ -42,9 +42,10 @@
 #   mode-pr             (fresh) on a NEW branch: `setup-memory.sh apply --branch-mode <b>`, one commit
 #                       of `.gitignore` only, push, open a PR — never merged. Returns to the default.
 #   seed                (history) `meta-sync.sh push --branch <b>`, then the A/B check against the
-#                       CURRENT origin/<default> (A = `list-managed --tracked`, B = the branch
-#                       tree's RUN-HISTORY entries, `list-managed --tree <branch> --run-history` —
-#                       the learning stores are untracked here and travel only with consent):
+#                       CURRENT origin/<default> (A = `list-managed --tracked`, B = the WHOLE
+#                       branch tree MINUS its learning-store paths — the learning stores are
+#                       untracked here and travel only with consent; an unmanaged stray on the
+#                       branch stays in B, so it still breaks A = B):
 #                       A = B, every blob equal, nothing on the branch but the managed kinds
 #                       (*.md, results.jsonl, brain-baseline.jsonl, .provenance.jsonl,
 #                       *.dismissed-decisions).
@@ -74,8 +75,8 @@
 #                       the corrected #361 recipe on a NEW branch: push local edits to the branch,
 #                       `git revert --no-commit` the untrack commit, re-track the CURRENT branch files
 #                       (`git checkout <branch tip> -- <every branch path>`), drop paths deleted on
-#                       the branch since migration, commit, push, open a PR — never merged. Only
-#                       RUN-HISTORY branch paths are re-tracked: the learning stores (twin contracts,
+#                       the branch since migration, commit, push, open a PR — never merged. Every
+#                       branch path EXCEPT the learning stores is re-tracked: those (twin contracts,
 #                       provenance, proposals, eval files) were never tracked, so a rollback never
 #                       commits them to the default branch.
 #   state               print the state file and the next step (resume point).
@@ -191,6 +192,15 @@ read_mode() { bash "$SM" --root "$ROOT" mode 2>/dev/null | head -n 1; }
 mode_branch() { local m; m="$(read_mode)"; case "$m" in "on "*) printf '%s' "${m#on }" ;; esac; return 0; } # <x> of `on <x>`, else empty
 init_default_branch() { local x; x="$(mode_branch)"; printf '%s' "${x:-loomwright-meta}"; } # what init records without --branch
 tracked_managed() { bash "$MS" list-managed --tracked --root "$ROOT"; }
+# branch_learning <tree-ish> <out> — the LEARNING-STORE paths of that tree, sorted: its managed set
+# minus its run-history set (meta-sync.sh is the one predicate; nothing here restates it). The ONE
+# excluded class — callers subtract it from the whole tree, so unmanaged strays are never dropped.
+branch_learning() {
+  bash "$MS" list-managed --tree "$1" --root "$ROOT" | env LC_ALL=C sort > "$2.all" || return 1
+  bash "$MS" list-managed --tree "$1" --run-history --root "$ROOT" | env LC_ALL=C sort > "$2.rh" || return 1
+  env LC_ALL=C comm -23 "$2.all" "$2.rh" > "$2" || return 1
+  rm -f "$2.all" "$2.rh"
+}
 detect_case() { # prints fresh | history | already <b> | unknown <reason>; exit 1 when unreadable
   local mode tm
   mode="$(read_mode)"
@@ -243,17 +253,20 @@ pr_create() { # pr_create <head> <base> <title> <body file> — prints the PR ur
 }
 
 # ---- A/B check -----------------------------------------------------------------------------------
-# ab_check <b> <default> — A = list-managed --tracked at HEAD (== origin/<default>), B = the branch
-# tree's run-history entries (the learning stores on the branch are consent-gated and never in A).
+# ab_check <b> <default> — A = list-managed --tracked at HEAD (== origin/<default>), B = the WHOLE
+# branch tree MINUS its learning-store paths (consent-gated, never in A). B is "everything but the
+# excluded class", never "only the included class": an UNMANAGED entry on the branch (a stray
+# NOTES.md, jobs/pending/x.md) stays in B, so it still breaks A = B.
 ab_check() {
   local b="$1" d="$2" an bn rc=0 nonmd extra
   fetch_meta "$b"
   tracked_managed | env LC_ALL=C sort > "$SD/a.list" || { echo "migrate-branch-mode: list-managed --tracked failed" >&2; return 1; }
   g ls-tree -r --full-tree HEAD | awk -F'\t' 'NR==FNR { want[$0] = 1; next } ($2 in want) { split($1, m, " "); print m[3] "\t" $2 }' "$SD/a.list" - | env LC_ALL=C sort > "$SD/a.ent"
-  bash "$MS" list-managed --tree "refs/remotes/origin/$b" --run-history --root "$ROOT" | env LC_ALL=C sort > "$SD/b.rh" \
-    || { echo "migrate-branch-mode: list-managed --tree origin/$b --run-history failed" >&2; return 1; }
-  g ls-tree -r "refs/remotes/origin/$b" | awk -F'\t' '{ split($1, m, " "); print m[3] "\t" $2 }' | env LC_ALL=C sort > "$SD/b.all"
-  awk -F'\t' -v RH="$SD/b.rh" 'FILENAME == RH { rh[$0] = 1; next } ($2 in rh)' "$SD/b.rh" "$SD/b.all" > "$SD/b.ent"
+  branch_learning "refs/remotes/origin/$b" "$SD/b.learn" \
+    || { echo "migrate-branch-mode: could not list the learning-store paths on origin/$b" >&2; return 1; }
+  g ls-tree -r "refs/remotes/origin/$b" | awk -F'\t' '{ split($1, m, " "); print m[3] "\t" $2 }' | env LC_ALL=C sort > "$SD/b.all" \
+    || { echo "migrate-branch-mode: could not read the origin/$b tree" >&2; return 1; }
+  awk -F'\t' -v LS="$SD/b.learn" 'FILENAME == LS { ls[$0] = 1; next } !($2 in ls)' "$SD/b.learn" "$SD/b.all" > "$SD/b.ent"
   cut -f2 "$SD/b.ent" | env LC_ALL=C sort > "$SD/b.list"
   an="$(wc -l < "$SD/a.list" | tr -d ' ')"; bn="$(wc -l < "$SD/b.list" | tr -d ' ')"
   say "A (tracked managed on origin/$d) = $an; B (origin/$b tree) = $bn"
@@ -640,8 +653,12 @@ cmd_rollback() {
 }
 rb_retrack_from_branch() { # the step the old M1 order (revert -> meta-sync pull -> git add) got wrong
   local br="$1" p
-  # run history only: the learning stores on the branch were never tracked (see rollback above)
-  bash "$MS" list-managed --tree "$br" --run-history --root "$ROOT" > "$SD/onbranch.list" || return 1
+  # every branch path MINUS the learning stores (never tracked — see rollback above); subtracting
+  # the excluded class keeps the pre-learning-store behaviour for every other branch entry
+  branch_learning "$br" "$SD/onbranch.learn" || return 1
+  g ls-tree -r --name-only "$br" > "$SD/onbranch.all" || return 1
+  grep -vxF -f "$SD/onbranch.learn" "$SD/onbranch.all" > "$SD/onbranch.list"
+  [ $? -le 1 ] || return 1
   if [ -s "$SD/onbranch.list" ]; then
     tr '\n' '\0' < "$SD/onbranch.list" | (cd "$ROOT" && xargs -0 git checkout "$br" --) || return 1
   fi

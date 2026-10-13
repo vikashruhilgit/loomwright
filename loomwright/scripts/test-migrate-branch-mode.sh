@@ -62,6 +62,10 @@
 #      without `env LC_ALL=C` MUST turn the leg red
 #  20. rollback of an untrack PR merged as a real 2-parent `--no-ff` merge commit keeps a
 #      post-migration edit, add and delete; mutation control: dropping `-m 1` MUST turn it red
+#  21. seed's A/B check: B is the WHOLE branch tree minus its learning-store paths — a consented
+#      learning store on the branch still gives A = B (seed PASS), while three UNMANAGED strays of a
+#      managed kind (NOTES.md, jobs/pending/, logs/) stay in B and fail it naming each; mutation
+#      control: B = the run-history entries only MUST turn the stray leg red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -582,6 +586,50 @@ if build_mutant "$MUT" 's/then g revert --no-commit -m 1 "\$c"; else/then g reve
   if merge_rollback_leg; then no "mutation control REFUTED: rollback without -m 1 still reverted the merge commit"; else ok "mutation control: rollback without -m 1 turns the 2-parent leg red ($MR_DETAIL)"; fi
   SCRIPT="$SUT"
 else no "mutation control (rollback -m 1) did not build — counts as FAIL"; fi
+
+echo "== 21. seed A/B: an unmanaged stray on the branch breaks A = B; consented learning stores do not =="
+# stray_leg [strays] — history world, consent granted, one learning store (eval/results.jsonl) local,
+# so the seed push publishes it to the branch; with "strays", three UNMANAGED entries of a managed
+# KIND (NOTES.md, jobs/pending/stray.md, logs/stray.md) are put on the branch before seed.
+# 0 = the expected outcome (strays: seed FAIL naming all three; none: seed PASS). Detail in STRAY_DETAIL.
+stray_leg() {
+  local learn
+  mkworld history; to_protected A || { STRAY_DETAIL="to_protected failed: $OUT"; return 1; }
+  mkdir -p "$W/A/.supervisor/eval"; echo '{"run":"r1","score":1}' > "$W/A/.supervisor/eval/results.jsonl"
+  bash "$HERE/setup-memory.sh" --root "$W/A" consent grant >/dev/null 2>&1
+  if [ "${1:-}" = strays ]; then
+    rm -rf "$W/O"; git clone -q "$W/origin.git" "$W/O" 2>/dev/null
+    ( cd "$W/O" && git checkout -q -b "$BR" "origin/$BR" && mkdir -p .supervisor/jobs/pending .supervisor/logs \
+      && echo n > NOTES.md && echo '# p' > .supervisor/jobs/pending/stray.md && echo '# l' > .supervisor/logs/stray.md \
+      && git add -f NOTES.md .supervisor && git commit -qm strays && git push -q origin "$BR" ) >/dev/null 2>&1 \
+      || { STRAY_DETAIL="could not put the strays on $BR"; return 1; }
+  fi
+  mb A seed
+  learn="$(git --git-dir="$W/origin.git" cat-file -e "$BR:.supervisor/eval/results.jsonl" 2>/dev/null && echo yes || echo no)"
+  STRAY_DETAIL="rc=$RC seed=$(st A seed) learning-store-on-branch=$learn"
+  [ "$learn" = yes ] || return 1
+  if [ "${1:-}" = strays ]; then
+    [ "$RC" -ne 0 ] && [ "$(st A seed)" = FAIL ] && has "A != B" \
+      && has "NOTES.md" && has ".supervisor/jobs/pending/stray.md" && has ".supervisor/logs/stray.md"
+  else
+    [ "$RC" -eq 0 ] && [ "$(st A seed)" = PASS ] && has "path lists equal" && [ "$(st A seed_b)" = 3 ]
+  fi
+}
+stray_leg; check $? "a consented learning store on the branch is subtracted from B: seed PASS, A = B = 3 ($STRAY_DETAIL)"
+stray_leg strays; check $? "unmanaged strays on the branch stay in B: seed FAIL naming all three ($STRAY_DETAIL)"
+# mutation control: the narrowing this leg guards against — B = the run-history entries only
+MUT="$TROOT/mut-ab-narrow"
+MSED="$(cat <<'SED'
+s/^  env LC_ALL=C comm -23 "\$2\.all" "\$2\.rh" > "\$2" || return 1$/  cp "$2.rh" "$2" || return 1/
+s/ !(\$2 in ls)' "\$SD\/b\.learn"/ ($2 in ls)' "$SD\/b.learn"/
+SED
+)"
+if build_mutant "$MUT" "$MSED" 'cp "$2.rh" "$2" || return 1' && grep -qF "(\$2 in ls)' \"\$SD/b.learn\"" "$MUT/migrate-branch-mode.sh" \
+   && ! grep -qF "!(\$2 in ls)" "$MUT/migrate-branch-mode.sh"; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if stray_leg strays; then no "mutation control REFUTED: B = run history only still failed the stray seed"; else ok "mutation control: B = run history only drops the strays and turns the leg red ($STRAY_DETAIL)"; fi
+  SCRIPT="$SUT"
+else no "mutation control (A/B stray narrowing) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"

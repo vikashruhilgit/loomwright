@@ -44,17 +44,18 @@
 #   migrate-clean         after the scratch migration commit (`setup-memory.sh apply --branch-mode`
 #                         + `git rm -r --cached` of the tracked managed set, on the scratch default
 #                         branch), mode reads `on <b>` and `git status --porcelain` is empty
-#   pull-roundtrip        a SECOND clone runs `meta-sync.sh pull --branch <b>`: same RUN-HISTORY
-#                         managed list, every such file byte-identical (cmp) to the first clone's
+#   pull-roundtrip        a SECOND clone runs `meta-sync.sh pull --branch <b>`: its managed list
+#                         equals the first clone's MINUS the learning stores that never reached the
+#                         branch (consent), every such file byte-identical (cmp) to the first clone's
 #   rollback-run          the shipped `migrate-branch-mode.sh rollback --commit <migration commit>`
 #                         exits 0, pushes a NEW branch, opens a PR through a stub gh, never merges
 #                         (the scratch default branch is unchanged)
 #   rollback-edit-kept    the post-migration edit is in the rollback tree
 #   rollback-add-kept     the post-migration addition is in the rollback tree
 #   rollback-delete-kept  the post-migration deletion stays deleted in the rollback tree
-#   rollback-all-kept     every RUN-HISTORY file on the branch tip is in the rollback tree with the
-#                         same blob (the rollback re-tracks run history only — the learning stores
-#                         were never tracked, so it never commits them to the default branch)
+#   rollback-all-kept     every file on the branch tip EXCEPT the learning stores is in the
+#                         rollback tree with the same blob (the learning stores were never tracked,
+#                         so the rollback never commits them to the default branch)
 #   rollback-gitignore    the rollback tree's .gitignore equals the pre-migration .gitignore
 #   twin-contracts        the System Twin reader (read-system-contract.sh) verifies EVERY contract
 #                         file in .supervisor/twin/contracts/ (copied from the checkout), before and
@@ -261,11 +262,15 @@ res $? migrate-clean "mode '$MODE'; porcelain: ${dirty:-empty}; $(grep -E '^ *ap
 # ---- second checkout: pull round trip ------------------------------------------------------------
 git clone -q "$O" "$C" 2>/dev/null && scratch_cfg "$C"
 msx pull --branch "$B" --root "$C" > "$S/pull.out" 2>&1; prc=$?
-bash "$MS" list-managed --run-history --root "$C" 2>/dev/null | env LC_ALL=C sort > "$S/C.list"
+# expected = the FULL local managed set minus the learning stores that did NOT reach the branch
+# (consent may legitimately hold them back) — never "run history only", which would stop checking
+# the learning stores that DID travel
+env LC_ALL=C sort -u "$S/L.list" "$S/LLB.list" > "$S/LX.list"
+bash "$MS" list-managed --root "$C" 2>/dev/null | env LC_ALL=C sort > "$S/C.list"
 diffp=""
-while IFS= read -r p; do cmp -s "$A/$p" "$C/$p" || diffp="$diffp$p "; done < "$S/L.list"
-[ "$prc" -eq 0 ] && cmp -s "$S/L.list" "$S/C.list" && [ -z "$diffp" ]
-res $? pull-roundtrip "rc=$prc; differs: ${diffp:-none}; lists $(cmp -s "$S/L.list" "$S/C.list" && echo equal || echo differ)"
+while IFS= read -r p; do cmp -s "$A/$p" "$C/$p" || diffp="$diffp$p "; done < "$S/LX.list"
+[ "$prc" -eq 0 ] && cmp -s "$S/LX.list" "$S/C.list" && [ -z "$diffp" ]
+res $? pull-roundtrip "rc=$prc; differs: ${diffp:-none}; lists $(cmp -s "$S/LX.list" "$S/C.list" && echo equal || echo differ)"
 lrt=0; while IFS= read -r p; do cmp -s "$A/$p" "$C/$p" && lrt=$((lrt+1)); done < "$S/LLB.list"
 echo "info: learning stores round-tripped: $lrt of $(wc -l < "$S/LLB.list" | tr -d ' ') byte-identical"
 
@@ -298,14 +303,19 @@ blob_eq "$E" "$S/E.expect"; res $? rollback-edit-kept "$E"
 blob_eq "$N" "$S/N.expect"; res $? rollback-add-kept "$N"
 [ -n "$RB" ] && ! ga cat-file -e "$RT:$D" 2>/dev/null; res $? rollback-delete-kept "$D"
 ga fetch -q origin "+refs/heads/$B:refs/remotes/origin/$B" 2>/dev/null
-lost=""
-bash "$MS" list-managed --tree "refs/remotes/origin/$B" --run-history --root "$A" > "$S/RB.rh" 2>/dev/null \
-  || { : > "$S/RB.rh"; lost="<could not list the run history on $B> "; }
-[ -s "$S/RB.rh" ] || lost="${lost:-<no run history on $B> }"
+lost=""; nkept=0
+# every branch entry MINUS the learning stores (never tracked, so never re-tracked) — an unmanaged
+# stray on the branch is still checked, as before the learning stores existed
+{ bash "$MS" list-managed --tree "refs/remotes/origin/$B" --root "$A" 2>/dev/null | env LC_ALL=C sort > "$S/RB.all" \
+  && bash "$MS" list-managed --tree "refs/remotes/origin/$B" --run-history --root "$A" 2>/dev/null | env LC_ALL=C sort > "$S/RB.rh" \
+  && env LC_ALL=C comm -23 "$S/RB.all" "$S/RB.rh" > "$S/RB.learn"; } \
+  || { : > "$S/RB.learn"; lost="<could not list the learning stores on $B> "; }
 while IFS="$(printf '\t')" read -r meta p; do
-  grep -qxF -- "$p" "$S/RB.rh" || continue    # run history only (see rollback-all-kept)
+  grep -qxF -- "$p" "$S/RB.learn" && continue    # learning stores excluded (see rollback-all-kept)
+  nkept=$((nkept+1))
   [ "$(ga rev-parse -q --verify "$RT:$p" 2>/dev/null)" = "$(printf '%s' "$meta" | awk '{print $3}')" ] || lost="$lost$p "
 done < <(ga ls-tree -r "refs/remotes/origin/$B" 2>/dev/null)
+[ "$nkept" -gt 0 ] || lost="${lost:-<nothing but learning stores on $B> }"
 [ -n "$RB" ] && [ -z "$lost" ]; res $? rollback-all-kept "not at branch bytes: ${lost:-<no rollback branch>}"
 [ -n "$RB" ] && [ "$(ga show "$RT:.gitignore" 2>/dev/null)" = "$(ga show "$PRE:.gitignore" 2>/dev/null)" ]; res $? rollback-gitignore
 
