@@ -311,7 +311,7 @@
       "name": "rules"
     },
     {
-      "description": "Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP, opt-in status line, opt-in local run view",
+      "description": "Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP, opt-in status line",
       "name": "setup"
     },
     {
@@ -321,10 +321,6 @@
     {
       "description": "Manage opt-in GitHub Issues telemetry — status, enable, disable, test",
       "name": "telemetry"
-    },
-    {
-      "description": "The Floor, directly — start, stop and inspect the local loopback-only run view, and manage the project registry that decides which projects the picker can show (check | serve | stop | add | list | forget | scan). Configuration (apply / remove) stays with /setup ui.",
-      "name": "ui"
     },
     {
       "description": "Walk a ticket's acceptance criteria through the RUNNING app — one evidenced PASS / FAIL / BLOCKED / NOT_VERIFIABLE verdict per criterion, advisory only",

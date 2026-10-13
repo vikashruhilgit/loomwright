@@ -118,7 +118,6 @@
 26	loomwright/scripts/test-setup-memory.sh
 0	loomwright/scripts/test-setup-observability.sh
 1	loomwright/scripts/test-setup-statusline.sh
-134	loomwright/scripts/test-setup-ui.sh
 1	loomwright/scripts/test-skills-index-companion.sh
 0	loomwright/scripts/test-stamp-requirement-status.sh
 1	loomwright/scripts/test-status-line.sh

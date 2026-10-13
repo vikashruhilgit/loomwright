@@ -53,7 +53,7 @@ seed_log() {
 # Cross-platform mtime in seconds: GNU `stat -c %Y` FIRST, BSD/macOS `stat -f %m` second,
 # numeric-checked. The order matters: on GNU coreutils `-f` means --file-system, so
 # `stat -f %m` SUCCEEDS with a multi-line filesystem dump — trying it first made every
-# note read as rewritten on Linux (issue #40; same pattern as setup-ui.sh / build-floor.sh).
+# note read as rewritten on Linux (issue #40; same pattern as build-floor.sh).
 mtime() {
   local m
   m="$(stat -c %Y "$1" 2>/dev/null)" || m=""

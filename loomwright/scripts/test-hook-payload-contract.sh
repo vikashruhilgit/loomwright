@@ -23,10 +23,8 @@
 #     (SCRIPT NAME extraction from the `command` strings), PLUS one level of
 #     sibling scripts each of those files itself invokes by literal filename
 #     (e.g. send-telemetry.sh's `CORE="$SCRIPT_DIR/send-telemetry-core.sh"`
-#     pulls send-telemetry-core.sh into scope). This is why setup-ui.sh's
-#     OWN local variable named "payload" (an HTTP POST body on The Floor's
-#     loopback server, nothing to do with Claude Code hooks) is correctly
-#     OUT of scope — it is never named in hooks.json.
+#     pulls send-telemetry-core.sh into scope). A script never named in
+#     hooks.json is OUT of scope, whatever its own variables are called.
 #   - The field-read idiom scanned for is the literal-string form:
 #     `payload.get("field")` / `payload.get('field')` /
 #     `payload["field"]` / `payload['field']`. A field reached only through
