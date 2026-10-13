@@ -95,3 +95,9 @@ Running any validation step automatically. Changing the home-path scrub. Making 
 ## Evidence
 S3 record §"Wave 2 result" (pa/16 failed its own running-system Validation) and §"Wave 1 result" / §"Lessons from
 wave 1" (merge checks found real gaps the PR bodies left open).
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-13T00:54:38Z
+- **Brief:** .supervisor/jobs/done/2026-10-12-af36-01-validation-unrun-gate.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/502
