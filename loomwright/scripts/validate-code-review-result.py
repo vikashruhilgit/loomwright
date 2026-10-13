@@ -39,7 +39,13 @@ prompt gave a verbatim reason string, it is reused verbatim.
       (j) DRIFT SEVERITY CAPS — count/version_secondary ≤ MEDIUM,
       hooks_parity/wording ≤ LOW; (k) FAIL ⇒ ≥1 new/drift BLOCKING/HIGH issue
       (the caps in (j) mean capped drift can never satisfy it);
-      (l) FAIL/NEEDS_HUMAN ⇒ issues non-empty.
+      (l) FAIL/NEEDS_HUMAN ⇒ issues non-empty; (m) OPTIONAL
+      house_rule_verdicts (#431) — absent is valid (an old emitter, or no
+      house rule applied); present ⇒ an array of mappings with exactly the
+      keys id/verdict/reason, non-empty id and reason, verdict ∈ VERDICTS,
+      one entry per id. Shape only: no verdict value is ever read against
+      `decision` — the field is advisory and cannot make a block pass or fail
+      on what it SAYS, only on whether it is well-formed.
 
 (B) is enforced as present AND non-empty — an empty summary carries nothing a
 caller can act on, and every sibling validator reads "present" that way.
@@ -125,6 +131,9 @@ DRIFT_KINDS = (
     "version_authoritative", "version_secondary", "mirrored_prompt", "count",
     "workflow", "hooks_parity", "wording",
 )
+# (m) — the per-house-rule verdict record (#431/#432). Advisory: shape-checked only.
+HOUSE_RULE_VERDICTS = ("followed", "violated", "conflicts_with_requirement", "not_applicable")
+HOUSE_RULE_VERDICT_KEYS = ("id", "verdict", "reason")
 # (j) — the highest severity each capped drift_kind may carry.
 DRIFT_CAPS = {
     "count": "MEDIUM",
@@ -286,6 +295,43 @@ def _check_v3(fields, decision):
             cat in ("new", "drift") and sev in BLOCKING_SEVERITIES for sev, cat in pairs):
         emit(False, "decision=FAIL requires at least one issue with category new or drift "
                     "and severity BLOCKING or HIGH (v3 rule k)")
+
+    _check_house_rule_verdicts(fields)
+
+
+def _check_house_rule_verdicts(fields):
+    """(m) OPTIONAL house_rule_verdicts. Absent ⇒ allowed (pre-#431 emitters and
+    reviews with no applicable house rule). Present ⇒ well-formed. Never compared
+    with `decision`: a `violated` verdict on a PASS block is legal by design."""
+    if not present(fields, "house_rule_verdicts"):
+        return
+    raw = fields.get("house_rule_verdicts")
+    if not isinstance(raw, list):
+        emit(False, "house_rule_verdicts must be an array when present; got %r (v3 rule m)"
+             % as_text(raw))
+    seen = set()
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            emit(False, "house_rule_verdicts[%d] is not a mapping; each entry needs %s "
+                        "(v3 rule m)" % (index, "/".join(HOUSE_RULE_VERDICT_KEYS)))
+        for key in entry:
+            if key not in HOUSE_RULE_VERDICT_KEYS:
+                emit(False, "house_rule_verdicts[%d] contains disallowed key %s; only %s "
+                            "are accepted (v3 rule m)"
+                     % (index, key, "/".join(HOUSE_RULE_VERDICT_KEYS)))
+        for key in HOUSE_RULE_VERDICT_KEYS:
+            if key not in entry or is_empty_scalar(entry.get(key)):
+                emit(False, "house_rule_verdicts[%d] is missing a non-empty %s field "
+                            "(v3 rule m)" % (index, key))
+        verdict = as_text(entry.get("verdict")).strip()
+        if verdict not in HOUSE_RULE_VERDICTS:
+            emit(False, "house_rule_verdicts[%d] verdict must be one of %s; got %r (v3 rule m)"
+                 % (index, ", ".join(HOUSE_RULE_VERDICTS), verdict))
+        rule_id = as_text(entry.get("id")).strip()
+        if rule_id in seen:
+            emit(False, "house_rule_verdicts[%d] repeats id %s; give each applicable rule "
+                        "exactly one verdict (v3 rule m)" % (index, rule_id))
+        seen.add(rule_id)
 
 
 MAIN_SESSION_FLAG = "--main-session"

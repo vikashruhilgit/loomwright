@@ -21,6 +21,12 @@
 # Stop hook judged that background child and blocked every main-thread turn end
 # while it ran (2026-09-27).
 #
+# Section K covers the optional advisory `house_rule_verdicts` (v3 rule m,
+# #431/#432): absent and empty stay valid; a malformed entry blocks; a
+# `violated` verdict on a PASS block is legal. Section L keeps the verdict enum
+# identical across the validator, the reviewer prompt, the Phase 4.5 prompt
+# line and the schema doc.
+#
 # Separate from test-result-validators.sh so the rule-by-rule coverage reads
 # next to the one validator it falsifies. Same contract, same wire shape:
 #   pass -> exactly `{}`;  fail -> exactly `{"decision": "block", "reason": …}`;
@@ -375,6 +381,102 @@ assert_pass "unparseable Stop payload -> {} exit 0"
 printf '["loomwright:loomwright:code-reviewer"]' > "$TMPROOT/.stop.json"
 LAST_OUT="$( ( cd "$TMPROOT" && python3 "$V" --main-session < "$TMPROOT/.stop.json" ) 2>/dev/null)"; LAST_RC=$?
 assert_pass "non-object Stop payload -> {} exit 0"
+
+echo "== K. house_rule_verdicts (v3 rule m — OPTIONAL, advisory, shape-checked; #431/#432) =="
+# The per-rule verdict record. Absent stays valid (every pre-#431 emitter, and a
+# review with no applicable house rule); present must be well-formed. A
+# `violated` / `conflicts_with_requirement` verdict on a PASS block is LEGAL —
+# the field never changes `decision`, so no rule ties a verdict value to it.
+HRV='  house_rule_verdicts:
+    - id: ui-select-max-10
+      verdict: conflicts_with_requirement
+      reason: "AC5 asks for a Select over 20 cities; the rule wants AutoComplete above ~10"
+    - id: ui-failure-not-toast-only
+      verdict: violated
+      reason: "the refusal path only raises a toast"
+    - id: ui-button-component
+      verdict: followed
+      reason: "uses <Button> from the design system"
+    - id: api-error-envelope
+      verdict: not_applicable
+      reason: "the diff touches no API handler"
+'
+export HRV
+sub hrv.md v3-diff.md 's.replace("  summary: ", __import__("os").environ["HRV"] + "  summary: ")'
+HRV_OK="$F"
+run_v "$HRV_OK"; assert_pass "(m) present: all four verdict values on a PASS block pass (advisory — never tied to decision)"
+run_v "$V3_DIFF"; assert_pass "(m) absent: a block with no house_rule_verdicts still passes (old emitters)"
+sub hrvempty.md v3-diff.md 's.replace("  summary: ", "  house_rule_verdicts: []\n  summary: ")'
+run_v "$F"; assert_pass "(m) present but empty array passes"
+sub hrvenum.md hrv.md 's.replace("verdict: violated", "verdict: broken")'
+run_v "$F"; assert_block "(m) bad enum value -> names index, enum and value" "house_rule_verdicts[1] verdict must be one of followed, violated, conflicts_with_requirement, not_applicable; got 'broken'"
+sub hrvscalar.md v3-diff.md 's.replace("  summary: ", "  house_rule_verdicts: all followed\n  summary: ")'
+run_v "$F"; assert_block "(m) a scalar instead of an array" "house_rule_verdicts must be an array when present"
+sub hrvnoreason.md hrv.md 's.replace("      reason: \"uses <Button> from the design system\"\n", "")'
+run_v "$F"; assert_block "(m) entry without a reason" "house_rule_verdicts[2] is missing a non-empty reason field"
+sub hrvnoid.md hrv.md 's.replace("    - id: api-error-envelope\n      verdict", "    - verdict")'
+run_v "$F"; assert_block "(m) entry without an id" "house_rule_verdicts[3] is missing a non-empty id field"
+sub hrvkey.md hrv.md 's.replace("      verdict: followed\n", "      verdict: followed\n      severity: LOW\n")'
+run_v "$F"; assert_block "(m) ad-hoc entry key" "house_rule_verdicts[2] contains disallowed key severity"
+sub hrvdup.md hrv.md 's.replace("id: ui-button-component", "id: ui-select-max-10")'
+run_v "$F"; assert_block "(m) the same rule given two verdicts" "house_rule_verdicts[2] repeats id ui-select-max-10"
+# Mutation control: a validator with the enum check deleted must ACCEPT the bad
+# value — proving the bad-enum assertion above is carried by that check alone.
+MUT_V="$TMPROOT/mut-validate-code-review-result.py"
+python3 - "$V" "$MUT_V" <<'PY'
+import sys
+s = open(sys.argv[1], encoding="utf-8").read()
+needle = "        if verdict not in HOUSE_RULE_VERDICTS:\n"
+assert s.count(needle) == 1, "mutation anchor not found exactly once"
+open(sys.argv[2], "w", encoding="utf-8").write(s.replace(needle, "        if False:\n"))
+PY
+cp "$SCRIPT_DIR/result_block_parser.py" "$TMPROOT/"
+if [ -s "$MUT_V" ] && ! cmp -s "$V" "$MUT_V"; then
+  sub hrvenum2.md hrv.md 's.replace("verdict: violated", "verdict: broken")'
+  run_v "$F" "$MUT_V"; assert_pass "(m-mut) CONFIRMED: with the enum check removed the bad value is accepted (the check is load-bearing)"
+  run_v "$F"; assert_block "(m-mut) positive control: the real validator still rejects it" "verdict must be one of"
+else
+  no "(m-mut) INVALID mutant: empty or identical to the original"
+fi
+
+echo "== L. house_rule_verdicts: prompt <-> validator <-> schema parity =="
+# The verdict enum lives in the validator; the reviewer prompt, the Phase 4.5
+# prompt line and the schema doc each restate it. One drifted copy would make a
+# reviewer emit a value the hook rejects (or never emit one it accepts). And the
+# ids the reviewer must answer by only exist when its read passes --with-ids.
+PLUGIN_DIR="$SCRIPT_DIR/.."
+parity="$(python3 - "$V" "$PLUGIN_DIR" <<'PY'
+import os, re, sys
+v, root = sys.argv[1], sys.argv[2]
+src = open(v, encoding="utf-8").read()
+m = re.search(r'^HOUSE_RULE_VERDICTS = \(([^)]*)\)', src, re.M)
+if not m:
+    print("validator HOUSE_RULE_VERDICTS tuple not found"); sys.exit()
+enum = re.findall(r'"([a-z_]+)"', m.group(1))
+surfaces = {
+    "agents/code-reviewer.md": "5c. **House-rule conformance",
+    "skills/self-heal-advisory/SKILL.md": "**HOUSE-RULES ADVISORY (non-gating",
+    "docs/result-schemas/code-review-result.md": "house_rule_verdicts: object[]",
+}
+bad = []
+for rel, anchor in surfaces.items():
+    text = open(os.path.join(root, rel), encoding="utf-8").read()
+    i = text.find(anchor)
+    if i < 0:
+        bad.append("%s: anchor %r missing" % (rel, anchor)); continue
+    window = text[i:i + 2500]
+    for val in enum:
+        if not re.search(r"(?<![a-z_])%s(?![a-z_])" % val, window):
+            bad.append("%s: verdict %s not restated next to %r" % (rel, val, anchor))
+for rel in ("agents/code-reviewer.md", "skills/self-heal-advisory/SKILL.md"):
+    text = open(os.path.join(root, rel), encoding="utf-8").read()
+    if not re.search(r'read-rules\.sh" <[^<>]{0,40}> --with-ids', text):
+        bad.append("%s: the house-rules read no longer passes --with-ids" % rel)
+print("ok" if not bad and len(enum) == 4 else "; ".join(bad) or "enum size %d" % len(enum))
+PY
+)"
+if [ "$parity" = "ok" ]; then ok "verdict enum restated on all three surfaces; both reads pass --with-ids"
+else no "house_rule_verdicts parity: $parity"; fi
 
 echo "== J. hooks.json wiring =="
 wiring="$(python3 - "$HOOKS" <<'EOF'

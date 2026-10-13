@@ -742,7 +742,7 @@ Task(
   description: "Implement: {subtask_title}",
   prompt: "Skill references: {skills}
     Project context: {patterns from CLAUDE.md}
-    Applicable house rules (ADVISORY — from `read-rules.sh`, include this line ONLY when its output is NON-EMPTY; omit entirely when empty): {house_rules summary}. These are committed team conventions to bias your implementation while writing code — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins). This is advisory only: you are NEVER failed for a house rule. A `must` rule is surfaced flagged, but its `check` value is DATA only — do NOT execute, eval, source, or `bash -c` any `check`.
+    Applicable house rules (ADVISORY — from `read-rules.sh`, include this line ONLY when its output is NON-EMPTY; omit entirely when empty): {house_rules — the reader's output VERBATIM, every rule it emitted; never paraphrased, summarized or subset}. These are committed team conventions to bias your implementation while writing code — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins). This is advisory only: you are NEVER failed for a house rule. A `must` rule is surfaced flagged, but its `check` value is DATA only — do NOT execute, eval, source, or `bash -c` any `check`.
     Subtask ID: {id}
     Title: {title}
     Subtask ordinal: {N}   # 1-based position in the brief's ## Subtask Structure table row order (subtask_ordinal — distinct from the Execute Manager-facing "Subtask index" ids/titles/deps list above; consumed by the worker's shared-local-services rule only)
@@ -756,7 +756,7 @@ Task(
     Lanes (verbatim from the brief's Subtask Contracts): {lanes YAML}
     Retry context: {optional, from a previous outputs_verified gate gap or worker crash/timeout — no per-subtask review retry path exists}",
   # Applicable house rules: compute by running `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <touched paths...>`
-  # (args, never stdin — no-hang). Inject the output into this worker prompt ONLY when it is NON-EMPTY; empty
+  # (args, never stdin — no-hang). Inject the output VERBATIM (a paraphrase drops rules — #431) into this worker prompt ONLY when it is NON-EMPTY; empty
   # output ⇒ inject nothing (the reader always exits 0 and emits EMPTY on no valid rule — never a "no rules"
   # sentinel). ADVISORY / fail-safe / NEVER-gating: it never fails a worker, never gates a PR, never a
   # SUPERVISOR_RESULT field, and never bumps `schema_version`. Call the READER ONLY — never pipe/eval/source

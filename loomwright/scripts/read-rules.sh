@@ -144,8 +144,9 @@
 #   token is REMOVED from the routing scope; every other positional (including look-alikes such as
 #   `--with-ids=1` or `--WITH-IDS`) stays a touched path exactly as before. Routing, validation, dedup,
 #   supersession and the schema are unchanged. WITHOUT the flag the output is BYTE-IDENTICAL to the
-#   pre-flag reader (pinned by test-read-rules.sh against a hand-written pre-change baseline), so the worker paste,
-#   the Phase 4.5 seam and their token budgets are untouched.
+#   pre-flag reader (pinned by test-read-rules.sh against a hand-written pre-change baseline), so the worker paste
+#   is untouched. The Code Reviewer and the Phase 4.5 seam DO pass the flag (#431): the reviewer answers each
+#   rule BY ID in CODE_REVIEW_RESULT.house_rule_verdicts (agents/code-reviewer.md step 5c).
 #
 # Usage:  read-rules.sh [--with-ids] [touched-path ...]   (args are the ROUTING scope — see "PATH
 #                                             ROUTING" above; NO args = repo-wide. Prints applicable

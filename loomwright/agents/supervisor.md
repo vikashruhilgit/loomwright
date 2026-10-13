@@ -512,6 +512,7 @@ For **either** kind, the Supervisor MUST:
 - Twin signal: {format-twin-delta.sh output line}
 - Rules check: {rules_check_line — completion-tail step 7}
 - Rules audit: {rules_audit_line, then "; " + rules_gate_trigger_line when present — completion-tail step 8}
+- House rules: {house_rules_line — completion-tail step 9}
 - Resume count: {N} (0 after successful PASS/ESCALATED)
 - Task: {task_id} [COMPLETED | COMPLETED_WITH_ESCALATION]
 - Tool calls: Supervisor {N}/50

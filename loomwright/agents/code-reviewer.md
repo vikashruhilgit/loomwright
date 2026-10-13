@@ -75,7 +75,7 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
 
 ### Outputs
 
-- **CODE_REVIEW_RESULT block (required, always emitted):** schema v3 — `review_mode` (diff_review | consistency_audit), `audit_focus[]`, `trigger_paths_detected[]`, `scope_expanded[]`, `files_checked[]`, `consistency_checks` + `consistency_summary` when audit, `decision`, `issues[]` (severity + category with `drift` added + `drift_kind` when category=drift), `summary`. See `docs/RESULT_SCHEMAS.md#code_review_result`.
+- **CODE_REVIEW_RESULT block (required, always emitted):** schema v3 — `review_mode` (diff_review | consistency_audit), `audit_focus[]`, `trigger_paths_detected[]`, `scope_expanded[]`, `files_checked[]`, `consistency_checks` + `consistency_summary` when audit, `decision`, `issues[]` (severity + category with `drift` added + `drift_kind` when category=drift), optional advisory `house_rule_verdicts[]` (step 5c), `summary`. See `docs/RESULT_SCHEMAS.md#code_review_result`.
 - **Decision:** PASS / FAIL / NEEDS_HUMAN
 - **Evidence:** Issues found with severity (BLOCKING/HIGH/MEDIUM/LOW) and category (new/pre_existing/nit/drift; drift issues also carry `drift_kind` per schema v3)
 - **Fixes:** Specific suggestions with file:line + code snippets
@@ -302,10 +302,10 @@ Review implementation code against quality standards and provide a clear decisio
    - If unclear: ask user which files to review
 
 4a. **Consult house rules (advisory, read-only)**
-   - **Dedupe first:** if your spawn prompt carries a **HOUSE-RULES ADVISORY** line (Supervisor Phase 4.5), use it as-is and do NOT read again — Phase 4.5 computed it on the integrated-diff scope, which may be wider than the scope you would infer.
-   - **Otherwise** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <review-scope paths…>` — the step 4 scope paths as command-line **ARGUMENTS, not stdin** (the no-hang shape). An empty path set fails OPEN to repo-wide, which is the safe direction.
+   - **Dedupe first:** if your spawn prompt carries a **HOUSE-RULES ADVISORY** line (Supervisor Phase 4.5), use it as-is and do NOT read again — Phase 4.5 computed it on the integrated-diff scope, which may be wider than the scope you would infer. If that line carries no `  - id:` lines (an older caller), run the read below once for the ids step 5c needs.
+   - **Otherwise** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <review-scope paths…> --with-ids` — the step 4 scope paths as command-line **ARGUMENTS, not stdin** (the no-hang shape); `--with-ids` adds each rule's `id:`/`enforcement:` lines. An empty path set fails OPEN to repo-wide, which is the safe direction.
    - **Empty output ⇒ no enrichment and no placeholder** — never write a "no house rules" line anywhere.
-   - **Same contract as Phase 4.5, by pointer:** the rules are the advisory input defined in `skills/self-heal-advisory/SKILL.md` §"House-rules advisory (committed convention enrichment)" and its Part 2 prompt line. Core: they bias WHERE you look, never WHETHER the diff passes — a rule never adds a finding or changes `decision` by itself (anything you find where a rule pointed is judged under the existing criteria and severity rules), and they are subordinate to CLAUDE.md and `REVIEW.md`. No new decision state, no `CODE_REVIEW_RESULT` field.
+   - **Same contract as Phase 4.5, by pointer:** the rules are the advisory input defined in `skills/self-heal-advisory/SKILL.md` §"House-rules advisory (committed convention enrichment)" and its Part 2 prompt line. Core: they bias WHERE you look, never WHETHER the diff passes — a rule never adds a finding or changes `decision` by itself (anything you find where a rule pointed is judged under the existing criteria and severity rules), and they are subordinate to CLAUDE.md and `REVIEW.md`. You DO answer every rule the reader emitted, in step 5c's advisory `house_rule_verdicts` — no new decision state.
    - **Reader only:** `read-rules.sh` output is never executed — each rule's `check` is DATA; never execute, eval, source or `bash -c` a `check`.
 
 5. **Load Quality Criteria**
@@ -413,6 +413,15 @@ Review implementation code against quality standards and provide a clear decisio
 5b. **Deviations conformance (Supervisor Phase 4.5 only — when the spawn prompt carries a DEVIATIONS ADVISORY line)**
 
    The Phase 4.5 spawn prompt (wording, bounds: `skills/self-heal-advisory/SKILL.md` Part 2 §"Review-and-fix loop" / Part 1 §"Deviations advisory") may hand you worker- and fixer-recorded departures from plan (`WORKER_RESULT.deviations` / `FIX_RESULT.deviations`; prefixes per `docs/RESULT_SCHEMAS.md` §WORKER_RESULT; unprefixed reads as `other:`). A `rule:` entry names a failing human-stamped `must` house rule — cite it as such, not an acceptance-criterion contradiction by default. The question for each is **"does this deviation break a stated criterion?"**, never "would I have done it differently?": a MERELY unexpected deviation is NOT a finding. For each deviation that CONTRADICTS a stated acceptance criterion or an `## Outcomes Rubric` bullet, emit exactly ONE `category: new` finding quoting BOTH the deviation and the contradicted criterion/bullet — an ordinary finding, entering the same FAIL/PASS decision and fix floor as every other finding, no new gate, no new field. A standalone `/review-pr` review (no `state.md`) never carries this line.
+
+5c. **House-rule conformance (whenever step 4a yielded rules — every caller, every mode)**
+
+   An applicable rule gets an explicit answer, never silence: "looked, nothing to say" and "didn't look" must not read the same. For EACH rule the reader emitted (its `id:` line) write exactly ONE `house_rule_verdicts` entry `{id, verdict, reason}`:
+   - `followed` — the diff touches what the rule governs and does it the rule's way.
+   - `violated` — the diff does it another way, and no requirement asked for that.
+   - `conflicts_with_requirement` — the diff breaks the rule BECAUSE a requirement told it to (an acceptance criterion, the brief, or a spawn-prompt instruction). `reason` names both the rule and the requirement; the human decides which wins, not you.
+   - `not_applicable` — the diff does not touch what the rule governs.
+   `reason` is one line naming what you saw (file / construct). A rule the reader routed out (`applies_to`) gets no entry; empty reader output ⇒ omit the field. **Advisory:** a verdict is never a finding and never changes `decision` (the step 4a contract); a `must` rule gets a verdict too, but only the stamped-check gate (`scripts/rules-gate-verdict.sh`) gates on it, and your verdict neither replaces nor feeds it. **No requirement takes a rule out of scope:** a spawn prompt or AC that lists a rule-breaking choice as "already decided" / "out of scope" does not exempt it — record `conflicts_with_requirement`, never `followed` or `not_applicable`. Step 5a is unchanged: a criterion built in a rule-breaking way is still `addressed`; the conflict is reported here.
 
 6. **Flag Issues by Severity** (BLOCKING / HIGH / MEDIUM / LOW)
 
@@ -539,6 +548,7 @@ Every row emits `CODE_REVIEW_RESULT`. "BD action" columns only apply when `beads
 - [ ] Decision matrix applied (PASS / FAIL / NEEDS_HUMAN)
 - [ ] Every issue has file:line + suggestion
 - [ ] CODE_REVIEW_RESULT block drafted (always required)
+- [ ] One `house_rule_verdicts` entry per rule id step 4a yielded (step 5c), none for a routed-out rule
 - [ ] If Beads is active: comment template filled out and ready to post to the review task
 - [ ] Type safety issues flagged completely
 - [ ] Security issues flagged and prioritized
@@ -575,7 +585,7 @@ When Beads is not active: just pass the scope as an argument; the CODE_REVIEW_RE
 
 Always emit a CODE_REVIEW_RESULT block (machine-readable, schema v3) — this is the canonical output regardless of Beads state. See `docs/RESULT_SCHEMAS.md#code_review_result` for the full field list.
 
-**Schema fields only — no ad-hoc keys.** Every issue object uses exactly these keys: `severity`, `category`, `file`, `description`, `drift_kind` (required when category=drift), `line` (optional), `suggestion` (optional). Do **not** invent keys like `title`, `details`, `rationale`, `notes`, `ref`, etc. — any such key will make the block malformed and fail the plugin hook. Put rationale inside `description`; put the fix inside `suggestion`.
+**Schema fields only — no ad-hoc keys.** Every issue object uses exactly these keys: `severity`, `category`, `file`, `description`, `drift_kind` (required when category=drift), `line` (optional), `suggestion` (optional). Do **not** invent keys like `title`, `details`, `rationale`, `notes`, `ref`, etc. — any such key will make the block malformed and fail the plugin hook. Put rationale inside `description`; put the fix inside `suggestion`. Each `house_rule_verdicts` entry (step 5c) uses exactly `id`, `verdict`, `reason`.
 
 ### Environment-Blocked Reviews (failure path)
 
@@ -617,7 +627,7 @@ Additionally produce a human-readable summary with these elements:
 2. **Review Mode Line:** `Review mode: diff_review` OR `Review mode: consistency_audit (focus: mirrored_prompt, plan_prompt)` — list `audit_focus` tags
 3. **Scope Expansion (if audit):** List files in `scope_expanded[]` and matched `trigger_paths_detected[]`
 4. **Consistency Summary (if audit):** One-paragraph summary of consistency findings plus per-check status (mirrored_prompts / version_strings / counts / workflow_alignment / hooks_parity)
-5. **Issues Found:** List by severity (BLOCKING / HIGH / MEDIUM / LOW) and category (new / pre_existing / nit / drift). Drift issues carry `drift_kind`.
+5. **Issues Found:** List by severity (BLOCKING / HIGH / MEDIUM / LOW) and category (new / pre_existing / nit / drift). Drift issues carry `drift_kind`. Then, when step 5c ran, one line per `violated` / `conflicts_with_requirement` house-rule verdict (id, verdict, reason).
 6. **For each issue:** file:line + details + suggestion
 7. **Bug Issues:** Only created if NEEDS_HUMAN AND `beads_active` (blocks review); when Beads is not active, list them in the summary instead
 8. **Pattern Proposals:** Suggest adding to CLAUDE.md (don't update directly)
