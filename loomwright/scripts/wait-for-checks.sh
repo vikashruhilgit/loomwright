@@ -59,8 +59,12 @@
 #                      completed non-success/non-neutral/non-skipped; run_id
 #                      parsed from `detailsUrl` with the `/actions/runs/(N)/`
 #                      regex skills/review-heal/SKILL.md §U4 uses, `-` absent.
-#                  WITHOUT the flag the output line is byte-unchanged. Consumer:
-#                  `automate-helpers.sh escalation-cause`.
+#                  WITHOUT the flag the output line is byte-unchanged. Names are
+#                  free text (may hold spaces): consumers read this line ONLY
+#                  through wait-for-checks-line.sh (`wfc_line_parse`), never by
+#                  word splitting — `automate-helpers.sh escalation-cause` and
+#                  drain-subfloor-decision.sh `decide`. A change to this
+#                  output grammar changes that reader in the same commit.
 #   --call-max <s> OPT-IN RESUMABLE MODE (implementation-quality/02 T03). A
 #                  per-CALL ceiling (positive integer, clamped to 570) so no
 #                  single foreground call outlives the host's 600 s foreground

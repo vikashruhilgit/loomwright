@@ -35,6 +35,10 @@
 #      --restart replaces it; an expired one is replaced; gated mutant.
 #  28. (external review) a quote/backslash in the review pattern keeps the
 #      state file valid JSON and --continue resumable; printf-built mutant.
+#  29. (V5) producer -> shared reader (wait-for-checks-line.sh) round trip:
+#      spaced check names (`test (18.x)`, `build (ubuntu-latest)`) survive in
+#      pending= / pending_names= / red_names=; first-occurrence scalars; the
+#      shared word-split mutant (fixtures/wait-for-checks-line/wsplit.sed).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -649,6 +653,49 @@ if [ -s "$M28" ] && ! cmp -s "$SUT" "$M28" && bash -n "$M28"; then
   case "$(st28 "$M28")" in *"pending=unreadable_deadline") ok "mutation control: the printf-built state fails the hostile-pattern --continue closed" ;;
     *) no "case 28 mutation control did NOT discriminate" ;; esac
 else no "case 28 mutant invalid (empty / identical / bash -n)"; fi
+
+echo "== 29. (V5) producer -> shared reader round trip: spaced check names survive wait-for-checks-line.sh =="
+# The reader every consumer uses (escalation.sh, drain-subfloor-decision.sh) parses the line THIS
+# script prints. Matrix-style names carry spaces; a word-splitting reader keeps the first word only.
+LIB29="$HERE/wait-for-checks-line.sh"
+# rt29 <reader> <line> — the parsed fields, `|`-joined, from a subshell that sources <reader>.
+rt29() {
+  ( . "$1" && wfc_line_parse "$2" \
+    && printf '%s|%s|%s|%s|%s|%s|%s|%s' "$WFC_KIND" "$WFC_SHA" "$WFC_REQUIRED" "$WFC_PENDING" \
+         "$WFC_PENDING_NAMES" "$WFC_RED_NAMES" "$WFC_HAVE_PENDING_NAMES" "$WFC_HAVE_RED_NAMES" )
+}
+D29="$(fresh_stub_dir)"
+write_names_stub "$D29" '{"headRefOid":"deadbeef00","statusCheckRollup":[{"name":"test (18.x)","status":"IN_PROGRESS","conclusion":"","state":""},{"name":"claude review (pr)","status":"IN_PROGRESS","conclusion":"","state":""},{"name":"lint","status":"COMPLETED","conclusion":"SUCCESS"}]}' '["test (18.x)","lint"]'
+OUT29P="$(GH="$D29/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --names)"
+WANT29P="ELAPSED sha=deadbeef00 required=pending review_producing=elapsed pending=claude review (pr) pending_names=test (18.x),claude review (pr) red_names=none"
+[ "$OUT29P" = "$WANT29P" ] && ok "29a producer prints spaced pending names verbatim ($OUT29P)" || no "29a producer line: '$OUT29P'"
+GOT29P="$(rt29 "$LIB29" "$OUT29P")"
+[ "$GOT29P" = "ELAPSED|deadbeef00|pending|claude review (pr)|test (18.x),claude review (pr)|none|1|1" ] \
+  && ok "29a reader keeps whole spaced names in pending= and pending_names= ($GOT29P)" || no "29a reader: '$GOT29P'"
+write_names_stub "$D29" '{"headRefOid":"deadbeef00","statusCheckRollup":[{"name":"build (ubuntu-latest)","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/acme/widgets/actions/runs/99/job/1"},{"name":"test (18.x)","status":"COMPLETED","conclusion":"FAILURE"}]}' '["build (ubuntu-latest)","test (18.x)"]'
+OUT29R="$(GH="$D29/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --names)"
+[ "$OUT29R" = "SETTLED sha=deadbeef00 required=red review_producing=settled pending_names=none red_names=build (ubuntu-latest)@99,test (18.x)@-" ] \
+  && ok "29b producer prints spaced red names verbatim ($OUT29R)" || no "29b producer line: '$OUT29R'"
+GOT29R="$(rt29 "$LIB29" "$OUT29R")"
+[ "$GOT29R" = "SETTLED|deadbeef00|red||none|build (ubuntu-latest)@99,test (18.x)@-|1|1" ] \
+  && ok "29b reader keeps whole spaced names in red_names= ($GOT29R)" || no "29b reader: '$GOT29R'"
+GOT29S="$(rt29 "$LIB29" "  SETTLED sha=deadbeef00 required=green review_producing=settled pending_names=odd required=red sha=0bad red_names=none  ")"
+[ "$GOT29S" = "SETTLED|deadbeef00|green||odd required=red sha=0bad|none|1|1" ] \
+  && ok "29c scalars come from their FIRST occurrence; surrounding whitespace dropped ($GOT29S)" || no "29c reader: '$GOT29S'"
+GOT29N="$(rt29 "$LIB29" "SETTLED sha=deadbeef00 required=green review_producing=settled")"
+[ "$GOT29N" = "SETTLED|deadbeef00|green||||0|0" ] && ok "29d a line without --names fields reports both absent ($GOT29N)" || no "29d reader: '$GOT29N'"
+# MUTATION CONTROL (shared with the consumers' suites): the reader reverted to word-splitting.
+M29="$D29/wait-for-checks-line.sh"
+sed -f "$HERE/fixtures/wait-for-checks-line/wsplit.sed" "$LIB29" > "$M29"
+if [ -s "$M29" ] && ! cmp -s "$LIB29" "$M29" && bash -n "$M29"; then
+  MG29P="$(rt29 "$M29" "$OUT29P")"; MG29R="$(rt29 "$M29" "$OUT29R")"
+  if [ "$MG29P" != "$GOT29P" ] && [ "$MG29R" != "$GOT29R" ]; then
+    ok "mutation control: a word-splitting reader cuts the spaced names (pending: $MG29P | red: $MG29R)"
+  else
+    no "case 29 mutation control did NOT discriminate (pending: $MG29P | red: $MG29R)"
+  fi
+else no "case 29 mutant invalid (empty / identical / bash -n)"; fi
+rm -rf "$D29"
 
 echo "== 24. no state leaked into this test's cwd =="
 if [ "$LEAK_BEFORE" -eq 1 ] || [ ! -d .supervisor/check-wait ]; then ok "cwd has no new .supervisor/check-wait"; else no "state LEAKED into $(pwd)/.supervisor/check-wait"; fi
