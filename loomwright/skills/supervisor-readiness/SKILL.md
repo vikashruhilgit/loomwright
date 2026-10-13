@@ -157,6 +157,8 @@ Success looks like {measurable outcome}.
 - [ ] Given {precondition}, when {action}, then {outcome}
 - [ ] ...
 
+**Evidence rule (Launch Pad Phase 2 action 3; Plan Reviewer Criterion 20):** a criterion's evidence lives in the diff, never only in the PR body. FINALIZE writes the PR body before Phase 4.5, and no fix task can edit it, so a criterion only the body can satisfy fails every heal round. Write it as "then a committed evidence file `docs/evidence/<slug>.md` contains {the commands, values or rejected alternatives}, and the PR body links to it": Markdown, never `*.log` (`*.log` is commonly gitignored, so `git add` would skip it), and a File Impact Map create. FINALIZE lists each such file in the PR body's `## Evidence` section (`skills/async-orchestration/SKILL.md` §"PR Body Template").
+
 ## Outcomes Rubric (optional — v12.2.0+)
 
 3-7 observable, testable assertion bullets the integrated PR diff must satisfy. Used by Supervisor Phase 4.5 (after Code Reviewer PASS) to spawn a Haiku grader that scores the PR against each item, emitting `rubric_score: N/M` in SUPERVISOR_RESULT.
@@ -175,7 +177,7 @@ Success looks like {measurable outcome}.
 - The new `JwtAuthGuard` class is exported from `src/auth/jwt.guard.ts` and decorated with `@Injectable()`.
 - `auth.module.ts` registers `JwtAuthGuard` in its `providers` array.
 - A spec file `src/auth/jwt.guard.spec.ts` exists and contains at least one `expect(...)` assertion.
-- The PR description does not mention TODO, FIXME, or "deferred".
+- No line the diff adds contains `TODO`, `FIXME`, or `deferred`.
 - No file outside `src/auth/` is modified.
 ```
 
@@ -517,6 +519,7 @@ Before saving a brief:
 - [ ] All 8 pre-flight checks passed (or warnings acknowledged)
 - [ ] Goal is a single clear sentence
 - [ ] Acceptance criteria are testable (Given/When/Then)
+- [ ] No acceptance criterion's only evidence is the PR body (it lives in a committed `docs/evidence/<slug>.md` — the Evidence rule under the template's `## Acceptance Criteria`)
 - [ ] Every file path in impact map has been verified to exist (or marked as "create")
 - [ ] Subtask count follows `## Decomposition Threshold` (default 1; split only for a named reason, recorded as `Split reason:`)
 - [ ] Parallelism analysis is conservative (no false LAUNCHABLE)
