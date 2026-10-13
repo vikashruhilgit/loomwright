@@ -7,8 +7,10 @@ lastUpdated: "2026-04"
 
 # Telemetry
 
-Opt-in feedback channel that turns finished agent runs into structured
-GitHub issues. The issue is the database; labels are the index.
+Opt-in feedback channel that turns finished agent runs — and plugin script
+steps that fail or warn (`scripts/emit-script-event.sh`, `docs/TELEMETRY.md`
+§"Script events") — into structured GitHub issues. The issue is the
+database; labels are the index.
 
 Full design: `loomwright/docs/TELEMETRY.md`.
 

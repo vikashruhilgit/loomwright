@@ -131,7 +131,50 @@ REH="$HERE/meta-sync-rehearsal.sh"
 GH="${LOOMWRIGHT_GH_BIN:-gh}"
 
 say() { printf 'migrate-branch-mode: %s\n' "$*"; }
-die() { printf 'migrate-branch-mode: %s\n' "$*" >&2; exit 1; }
+die() { # die <message> — the reason line, then exit 1. The step's telemetry code (evt below) is
+  # the one a site set, else the message CLASS: never the message text itself.
+  if [ -z "${EVT_CODE:-}" ]; then
+    case "$*" in
+      refused*|*": refused"*) EVT_CODE=refused ;;
+      *": FAIL"*) EVT_CODE=step_failed ;;
+      *) EVT_CODE=error ;;
+    esac
+  fi
+  printf 'migrate-branch-mode: %s\n' "$*" >&2; exit 1
+}
+# ---- script-event telemetry (docs/TELEMETRY.md §"Script events") ---------------------------------
+# Every mutating step reports pass / fail to emit-script-event.sh from the EXIT trap armed at the
+# dispatch below — plugin facts only: the step, a plugin-defined code, integer counts and managed-
+# file KIND counts. Opt-in like all telemetry (nothing is sent without user-scope consent), and
+# fire-and-forget: the trap keeps the step's exit code and prints nothing. plan / state are read-
+# only and never emit (plan writes nothing at all). A command substitution or `( )` subshell that
+# dies does not run the EXIT trap (bash), so only the step's own exit reports.
+EVT_CODE=""; EVT_ARGS=""
+evt() { # evt <code> [--count k=v | --kind g.k=n]... — set the code a following failure reports
+  EVT_CODE="$1"; shift
+  while [ $# -gt 0 ]; do EVT_ARGS="$EVT_ARGS$1"$'\n'; shift; done
+}
+evt_emit() { # evt_emit <exit code> — the EXIT trap body
+  local rc="$1" outcome code
+  case "$rc" in 0) outcome=pass; code=ok ;; 1) outcome=fail; code="${EVT_CODE:-error}" ;; *) return 0 ;; esac
+  local IFS=$'\n' a args=()
+  for a in $EVT_ARGS; do [ -n "$a" ] && args+=("$a"); done
+  bash "$HERE/emit-script-event.sh" --root "$ROOT" migrate-branch-mode "$STEP" "$outcome" "$code" ${args[@]+"${args[@]}"} >/dev/null 2>&1 || true
+}
+kind_of() { # kind_of <path> — the managed-file KIND enum the telemetry core accepts
+  case "$1" in
+    *.dismissed-decisions) echo dismissed-decisions ;;
+    */brain-baseline.jsonl|brain-baseline.jsonl) echo brain-baseline-jsonl ;;
+    */results.jsonl|results.jsonl) echo results-jsonl ;;
+    */.provenance.jsonl|.provenance.jsonl) echo provenance-jsonl ;;
+    *.md) echo md ;;
+    *) echo other ;;
+  esac
+}
+kind_counts() { # kind_counts <group> <file of paths> — `--kind <group>.<kind>=<n>` lines
+  local p; while IFS= read -r p; do [ -n "$p" ] && kind_of "$p"; done < "$2" | env LC_ALL=C sort | uniq -c \
+    | while read -r n k; do printf -- '--kind\n%s.%s=%s\n' "$1" "$k" "$n"; done
+}
 usage() { sed -n '2,/^# Portability/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 STEP="${1:-}"; [ $# -gt 0 ] && shift
@@ -172,6 +215,7 @@ state_del() { # state_del <key> — drop every line of <key> (a no-op when absen
 need() { # need <key> <accepted value>... — refuse (nothing changed) unless the recorded result matches
   local k="$1" v; shift; v="$(state_get "$k")"
   for want in "$@"; do [ "$v" = "$want" ] && return 0; done
+  evt "needs_$k"
   die "refused: step '$k' is '${v:-not run}' (needs $*); run it first — nothing was changed"
 }
 need_preflight() { need preflight PASS; }
@@ -259,7 +303,7 @@ new_branch_name() { # new_branch_name <base> — a name free locally and on orig
 }
 apply_mode_block() { # apply_mode_block <b> <state key for the backup> — on the CURRENT (new) branch
   local b="$1" out bk dest
-  out="$(bash "$SM" --root "$ROOT" apply --branch-mode "$b" 2>&1)"
+  out="$(LOOMWRIGHT_SCRIPT_EVENT_CALLER="migrate-branch-mode.$STEP" bash "$SM" --root "$ROOT" apply --branch-mode "$b" 2>&1)"
   printf '%s\n' "$out" | grep -E '^ *(apply|backup):' | sed 's/^ */  /'
   [ "$(read_mode)" = "on $b" ] || { echo "migrate-branch-mode: apply did not leave the mode line at 'on $b'" >&2; return 1; }
   bk="$(printf '%s\n' "$out" | sed -n 's/^  backup:  \(.*\)   (delete it.*$/\1/p' | head -n 1)"
@@ -331,6 +375,7 @@ ab_check() {
     diff "$SD/au.list" "$SD/b.list" > "$SD/ab-names.diff"; diff "$SD/au.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"
   fi
   if [ -s "$SD/ab-names.diff" ]; then
+    evt ab_names_mismatch
     if [ "$AB_REL" = subset ]; then echo "migrate-branch-mode: A ⊄ B — path(s) in A missing from B:" >&2
     elif [ "$un" -gt 0 ]; then echo "migrate-branch-mode: A + U != B — path lists differ (< A + U, > B):" >&2
     else echo "migrate-branch-mode: A != B — path lists differ:" >&2; fi
@@ -338,10 +383,10 @@ ab_check() {
   elif [ "$AB_REL" = subset ]; then say "A ⊆ B (B has $((bn - an)) extra) — every A path is on B"
   elif [ "$un" -gt 0 ]; then say "path lists equal: B = A + U (empty diff)"
   else say "path lists equal (empty diff)"; fi
-  if [ -s "$SD/ab-blobs.diff" ]; then echo "migrate-branch-mode: blob mismatch:" >&2; sed 's/^/  /' "$SD/ab-blobs.diff" >&2; rc=1; else say "every blob equal (empty diff)"; fi
+  if [ -s "$SD/ab-blobs.diff" ]; then [ -n "$EVT_CODE" ] || evt ab_blob_mismatch; echo "migrate-branch-mode: blob mismatch:" >&2; sed 's/^/  /' "$SD/ab-blobs.diff" >&2; rc=1; else say "every blob equal (empty diff)"; fi
   # every branch entry (learning stores included) must be a managed KIND (meta-sync.sh: MANAGED SET)
   nonmd="$(cut -f2 "$SD/b.all" | grep -v -E '\.md$|(^|/)results\.jsonl$|(^|/)brain-baseline\.jsonl$|(^|/)\.provenance\.jsonl$|\.dismissed-decisions$')"
-  if [ -n "$nonmd" ]; then echo "migrate-branch-mode: entries of a non-managed kind on $b:" >&2; printf '  %s\n' $nonmd >&2; rc=1; fi
+  if [ -n "$nonmd" ]; then [ -n "$EVT_CODE" ] || evt ab_nonmanaged_kind; echo "migrate-branch-mode: entries of a non-managed kind on $b:" >&2; printf '  %s\n' $nonmd >&2; rc=1; fi
   # The index read clears the caller's GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE, as A's read does
   # (meta-sync.sh list-managed --tracked): git reads an inherited GIT_INDEX_FILE naming a missing file
   # as an EMPTY index with exit 0, which would silently report no extra tracked path.
@@ -352,6 +397,12 @@ ab_check() {
     sed 's/^/  /' "$SD/extra.list"
   fi
   AB_A="$an"; AB_B="$bn"; AB_U="$un"
+  # telemetry counts for the step's report (only sent when the step fails): the three set sizes and
+  # the KINDS of the paths each side holds alone — never a path (diff: `<` = A [+ U] only, `>` = B only)
+  sed -n 's/^> //p' "$SD/ab-names.diff" > "$SD/ab-b-only.list"; sed -n 's/^< //p' "$SD/ab-names.diff" > "$SD/ab-a-only.list"
+  evt "${EVT_CODE:-ok}" --count "a=$an" --count "u=$un" --count "b=$bn" --count "extra_owner_decision=$extra" \
+    $(kind_counts b_only "$SD/ab-b-only.list") $(kind_counts a_only "$SD/ab-a-only.list")
+  [ "$EVT_CODE" = ok ] && EVT_CODE=""
   return $rc
 }
 
@@ -405,6 +456,7 @@ cmd_preflight() {
   [ -n "$(repo_slug)" ]; check $? "owner/repo known for gh (${OPT_REPO:-$(repo_slug)}; --repo to set)"
   if [ "$fails" -gt 0 ]; then
     g check-ignore -q ".supervisor/migrate-branch-mode/state" && state_set preflight FAIL
+    evt preflight_checks_failed --count "failed=$fails"
     say "preflight: FAIL ($fails check(s) failed)"; exit 1
   fi
   state_set preflight PASS; state_set case "$c"; state_set default "$d"
@@ -423,7 +475,7 @@ cmd_scrub() {
   if bash "$MS" scrub --paths-from "$SD/push.list" --root "$ROOT"; then
     state_set scrub PASS; say "scrub: PASS"
   else
-    state_set scrub FAIL; die "scrub: FAIL — the hits above (file:line: rule) must be fixed before init; nothing was pushed"
+    state_set scrub FAIL; evt scrub_hit; die "scrub: FAIL — the hits above (file:line: rule) must be fixed before init; nothing was pushed"
   fi
 }
 
@@ -436,7 +488,7 @@ cmd_rehearse() {
   bash "$SM" valid-branch "$b" || die "refused: '$b' is not a valid metadata branch name — nothing was run"
   say "rehearsing on a scratch clone + local bare remote with --branch $b (the real remote is never touched)"
   if bash "$REH" --root "$ROOT" --branch "$b"; then state_set rehearse PASS; say "rehearse: PASS"
-  else state_set rehearse FAIL; die "rehearse: FAIL"; fi
+  else state_set rehearse FAIL; evt rehearse_failed; die "rehearse: FAIL"; fi
 }
 
 cmd_init() {
@@ -535,7 +587,7 @@ cmd_seed() {
   on_default_clean "$d"
   # a (re-)seed starts a new round: an earlier untrack PR / verify-pr no longer describes it
   stale_if_recorded untrack_pr verify_pr
-  bash "$MS" push --branch "$b" --root "$ROOT" || { state_set seed FAIL; die "seed: FAIL — meta-sync.sh push --branch $b"; }
+  bash "$MS" push --branch "$b" --root "$ROOT" || { state_set seed FAIL; evt meta_push_failed; die "seed: FAIL — meta-sync.sh push --branch $b"; }
   if ab_check "$b" "$d"; then
     state_set seed PASS; state_set seed_a "$AB_A"; state_set seed_u "$AB_U"; state_set seed_b "$AB_B"; state_set seed_sha "$(g rev-parse HEAD)"
     state_set seed_check "$AB_REL"
@@ -602,16 +654,16 @@ cmd_verify_pr() {
   b="$(rec_branch)" || exit 1; d="$(default_branch)"; nb="$(state_get untrack_branch)"
   st="$(ghr pr view "$POS" --json state,headRefName --jq '.state + " " + .headRefName' 2>/dev/null)" || die "verify-pr: gh pr view $POS failed"
   head="${st#* }"
-  [ "${st%% *}" = OPEN ] || { state_set verify_pr FAIL; die "verify-pr: FAIL — PR $POS is '${st%% *}', not OPEN"; }
-  [ "$head" = "$nb" ] || { state_set verify_pr FAIL; die "verify-pr: FAIL — PR $POS head is '$head', not the untrack branch '$nb'"; }
+  [ "${st%% *}" = OPEN ] || { state_set verify_pr FAIL; evt pr_not_open; die "verify-pr: FAIL — PR $POS is '${st%% *}', not OPEN"; }
+  [ "$head" = "$nb" ] || { state_set verify_pr FAIL; evt pr_head_mismatch; die "verify-pr: FAIL — PR $POS head is '$head', not the untrack branch '$nb'"; }
   on_default_clean "$d"
-  bash "$MS" push --branch "$b" --root "$ROOT" || { state_set verify_pr FAIL; die "verify-pr: FAIL — meta-sync.sh push --branch $b"; }
+  bash "$MS" push --branch "$b" --root "$ROOT" || { state_set verify_pr FAIL; evt meta_push_failed; die "verify-pr: FAIL — meta-sync.sh push --branch $b"; }
   ab_check "$b" "$d" || { state_set verify_pr FAIL; die "verify-pr: FAIL — A/B check failed against the current origin/$d; do NOT merge"; }
   g fetch -q origin "+refs/heads/$nb:refs/remotes/origin/$nb" || die "could not fetch $nb"
   # every tracked managed path must be in the PR's deletion set, or it stays tracked after the merge
   mbase="$(g merge-base HEAD "refs/remotes/origin/$nb")" || die "verify-pr: no merge base between $d and $nb"
   missing="$(g diff --name-only --diff-filter=D "$mbase" "refs/remotes/origin/$nb" | env LC_ALL=C sort | env LC_ALL=C comm -13 - "$SD/a.list" | tr '\n' ' ')"
-  if [ -n "$missing" ]; then state_set verify_pr FAIL; die "verify-pr: FAIL — PR $POS leaves tracked managed path(s) tracked: $missing— re-cut it (untrack-pr after seed); do NOT merge"; fi
+  if [ -n "$missing" ]; then state_set verify_pr FAIL; evt pr_leaves_tracked --count "paths=$(printf '%s' "$missing" | wc -w | tr -d ' ')"; die "verify-pr: FAIL — PR $POS leaves tracked managed path(s) tracked: $missing— re-cut it (untrack-pr after seed); do NOT merge"; fi
   state_set verify_pr PASS; state_set verify_pr_sha "$(g rev-parse HEAD)"
   local rel="A = B = $AB_A"; [ "$AB_U" -gt 0 ] && rel="B = A + U ($AB_B = $AB_A + $AB_U)"
   [ "$AB_REL" = subset ] && rel="A ⊆ B (A = $AB_A, B = $AB_B; B has $((AB_B - AB_A)) extra)"
@@ -631,8 +683,8 @@ cmd_after_merge() {
   b="$(rec_branch)" || exit 1; d="$(default_branch)"
   [ "$(g symbolic-ref -q --short HEAD)" = "$d" ] || die "refused: not on $d"
   pre="$(g rev-parse HEAD)"
-  g pull -q --ff-only origin "$d" || { state_set after_merge FAIL; die "after-merge: git pull failed"; }
-  [ "$(read_mode)" = "on $b" ] || { state_set after_merge FAIL; die "after-merge: FAIL — mode line is '$(read_mode)', not 'on $b' (is the PR merged?)"; }
+  g pull -q --ff-only origin "$d" || { state_set after_merge FAIL; evt pull_failed; die "after-merge: git pull failed"; }
+  [ "$(read_mode)" = "on $b" ] || { state_set after_merge FAIL; evt mode_not_on_branch; die "after-merge: FAIL — mode line is '$(read_mode)', not 'on $b' (is the PR merged?)"; }
   # The mode line is NOT proof the untrack PR merged (a half-migrated repo reads `on $b` before it).
   # Proof: no path this round's PR untracks ($SD/a.list, the A set verify-pr just checked the PR
   # deletes) is still tracked — or the PR's head commit is in HEAD. Otherwise the PR is still open:
@@ -643,6 +695,7 @@ cmd_after_merge() {
     open="$(printf '%s\n' "$tm" | env LC_ALL=C sort | env LC_ALL=C comm -12 "$SD/a.list" -)"
     if [ -n "$open" ] && ! untrack_head_merged; then
       printf '%s\n' "$open" | sed 's/^/  still tracked (this round untracks it): /' >&2
+      evt untrack_pr_not_merged
       die "after-merge: refused — untrack PR not merged yet — merge PR $(state_get pr_untrack | sed 's|.*/||'), then re-run after-merge (nothing was recorded)"
     fi
   fi
@@ -653,7 +706,7 @@ cmd_after_merge() {
     [ -n "$p" ] && [ ! -e "$ROOT/$p" ] || continue
     mkdir -p "$(dirname "$ROOT/$p")" && g cat-file blob "$pre:$p" > "$ROOT/$p"
   done
-  bash "$MS" pull --branch "$b" --root "$ROOT" || { state_set after_merge FAIL; die "after-merge: FAIL — meta-sync.sh pull --branch $b"; }
+  bash "$MS" pull --branch "$b" --root "$ROOT" || { state_set after_merge FAIL; evt meta_pull_failed; die "after-merge: FAIL — meta-sync.sh pull --branch $b"; }
   fetch_meta "$b"
   # One path per line, verbatim (a space is part of the name; no word-split, no glob); the
   # process substitution keeps `miss` in this shell so it still gates the FAIL below.
@@ -661,7 +714,7 @@ cmd_after_merge() {
     [ -n "$p" ] || continue
     [ -f "$ROOT/$p" ] || { echo "migrate-branch-mode: missing after pull: $p" >&2; miss=$((miss+1)); }
   done < <(g ls-tree -r --name-only "refs/remotes/origin/$b")
-  [ "$miss" -eq 0 ] || { state_set after_merge FAIL; die "after-merge: FAIL — $miss branch file(s) not back"; }
+  [ "$miss" -eq 0 ] || { state_set after_merge FAIL; evt files_not_back --count "paths=$miss"; die "after-merge: FAIL — $miss branch file(s) not back"; }
   # Re-read the ground truth, not verify-pr's snapshot: a managed file committed to $d between
   # verify-pr and the merge is still TRACKED (the PR never untracked it) and absent from $b, yet the
   # mode block ignores it, so `git status --porcelain` stays empty. Any tracked managed path = not done.
@@ -672,9 +725,10 @@ cmd_after_merge() {
     # record the follow-up round and stale round 1's results, so `state` points at seed and
     # after-merge's `need verify_pr PASS` can only be met by a round-2 verify-pr
     state_set followup 1; state_set seed STALE; state_set untrack_pr STALE; state_set verify_pr STALE
+    evt still_tracked --count "paths=$(printf '%s\n' "$tm" | grep -c .)"
     die "after-merge: FAIL — the managed path(s) above are still tracked on $d (committed after verify-pr; the merged PR did not untrack them) — run seed, then a follow-up untrack-pr (verify-pr before its merge), then after-merge again$([ "$(state_get case)" = fresh ] && printf ' (fresh case: re-run preflight first — it re-detects the case as history)')"
   fi
-  [ -z "$(g status --porcelain)" ] || { g status --porcelain >&2; state_set after_merge FAIL; die "after-merge: FAIL — git status --porcelain is not empty"; }
+  [ -z "$(g status --porcelain)" ] || { g status --porcelain >&2; state_set after_merge FAIL; evt porcelain_dirty; die "after-merge: FAIL — git status --porcelain is not empty"; }
   state_set after_merge PASS
   say "after-merge: PASS — run history is back from $b and the working tree is clean"
   say "every OTHER checkout must run:"
@@ -743,6 +797,10 @@ cmd_state() {
   say "next: $(printf '%s' "$nxt" | tr '_' '-')"
 }
 
+case "$STEP" in
+  plan|state) ;;   # read-only: never report (plan writes nothing at all)
+  *) trap 'evt_emit $?' EXIT ;;
+esac
 case "$STEP" in
   plan) cmd_plan ;;
   preflight) cmd_preflight ;;

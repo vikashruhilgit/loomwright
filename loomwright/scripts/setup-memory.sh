@@ -1930,6 +1930,27 @@ $paths
 EOF
 }
 
+# apply_readiness_event — apply's verdict as an opt-in script event (docs/TELEMETRY.md §"Script
+# events"): `configured` is a pass (it closes this step's open threads), partial / unknown / not
+# configured a warn with the leaked / blocked path COUNTS. `gated` is not reported: it reflects the
+# repo's own ledger records, not plugin behaviour. Plugin facts only; fire-and-forget (exit 0, no
+# output). LOOMWRIGHT_SCRIPT_EVENT_CALLER names the plugin step that ran apply (migrate-branch-mode
+# sets it), so a warning only one caller sees is visible as such.
+apply_readiness_event() {
+  local outcome code leaked blocked
+  case "$REPORT_VERDICT" in
+    configured) outcome=pass; code=ok ;;
+    partial*) outcome=warn; code=readiness_partial ;;
+    unknown*) outcome=warn; code=readiness_unknown ;;
+    "not configured"*) outcome=warn; code=readiness_not_configured ;;
+    *) return 0 ;;
+  esac
+  leaked="$(printf '%s' "$REPORT_LEAKED_UNINTENDED" | grep -c .)"; blocked="$(printf '%s' "$REPORT_BLOCKED_INTENDED" | grep -c .)"
+  bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/emit-script-event.sh" --root "$repo" setup-memory apply "$outcome" "$code" \
+    --count "leaked_unintended=$leaked" --count "blocked_intended=$blocked" --count "branch_mode=$([ -n "$EFFECTIVE_BRANCH" ] && echo 1 || echo 0)" \
+    ${LOOMWRIGHT_SCRIPT_EVENT_CALLER:+--caller "$LOOMWRIGHT_SCRIPT_EVENT_CALLER"} >/dev/null 2>&1 || true
+}
+
 warn_if_not_configured() {
   local _slug=""
   case "$REPORT_VERDICT" in
@@ -2110,6 +2131,7 @@ do_apply() {
     echo "== verify =="
     render_report
     warn_if_not_configured
+    apply_readiness_event
     exit 0
   fi
 
@@ -2142,6 +2164,7 @@ do_apply() {
   echo "== verify =="
   render_report
   warn_if_not_configured
+  apply_readiness_event
   echo
   if [ -n "$EFFECTIVE_BRANCH" ]; then
     echo "Next: the two memory stores are only UN-IGNORED — nothing is committed yet. Review with"
