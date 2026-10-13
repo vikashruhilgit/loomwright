@@ -20,7 +20,7 @@
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-BUMP="$repo_root/scripts/bump-version.sh"
+BUMP="${BUMP_VERSION_UNDER_TEST:-$repo_root/scripts/bump-version.sh}"   # override: run this suite against another copy (before/after evidence)
 VALIDATE="$repo_root/scripts/validate-version.sh"
 GATE="$repo_root/scripts/check-doc-currency.sh"
 for f in "$BUMP" "$VALIDATE" "$GATE"; do [ -f "$f" ] || { echo "FAIL: missing $f" >&2; exit 1; }; done
@@ -385,6 +385,194 @@ run_bump "$D" --dry-run; rc=$?
 [ "$rc" -eq 0 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF "also regenerates: $CJ" "$TMP/last.out"
 check $? "caps: --dry-run names the regenerated contract and writes nothing"
 
+# ---- 9c. --check: the content rule (#512) ------------------------------------------------------
+# P7's invariant is the CONTENT of the version files, not the position of the bump commit. Each case
+# is a branch off a base that origin/main points at, so the merge base is real.
+echo "# bump-version.sh --check (content rule) and the re-fold"
+run_check() { local d="$1"; shift; ( cd "$d" && bash scripts/bump-version.sh --check "$@" ) > "$TMP/last.out" 2>&1; }
+# make_branch <dir> — fixture + origin/main at the base + a feature branch carrying fragment a.md.
+make_branch() {
+  make_fixture "$1"
+  g "$1" update-ref refs/remotes/origin/main HEAD
+  g "$1" checkout -q -b feature
+  frag "$1" a.md 'Alpha headline\nAlpha body.\n'
+  echo "feature code" > "$1/feature.txt"
+  g "$1" add -A && g "$1" commit -q -m "feature + its fragment"
+}
+bump_commit() { run_bump "$1" "${@:2}" && g "$1" add -A && g "$1" commit -q -m "chore(release): bump"; }
+entries() { grep -cE '^\*\*v[0-9]+\.[0-9]+\.[0-9]+ — ' "$1/$CL"; }   # CHANGELOG entry count
+expect_fail() { # expect_fail <dir> <fixed message> <label>
+  run_check "$1"; local rc=$?
+  [ "$rc" -eq 1 ] && grep -qF 'check FAILED' "$TMP/last.out" && grep -qF -- "$2" "$TMP/last.out"
+  check $? "$3 (exit 1, names: $2)"
+}
+
+D="$TMP/c1"; make_branch "$D"
+run_check "$D"; rc=$?
+[ "$rc" -eq 0 ] && grep -qF 'check OK — not bumped (version 1.2.3' "$TMP/last.out"; check $? "check: a fragment-only branch is consistent (not bumped, 1 pending — legal)"
+bump_commit "$D"
+run_check "$D"; rc=$?
+[ "$rc" -eq 0 ] && grep -qF 'check OK — bumped 1.2.3 -> 1.2.4 (patch); the entry is the fold of: a.md' "$TMP/last.out"; check $? "check: a correct scripted bump passes and names the folded fragment"
+# The #367 shape: heal / drain commits land AFTER the bump and touch no release file.
+echo "heal fix 1" >> "$D/feature.txt"; g "$D" commit -q -am "fix: address review feedback (iteration 1)"
+echo "heal fix 2" >> "$D/feature.txt"; g "$D" commit -q -am "fix: address drain review feedback (round 1)"
+[ "$(g "$D" log -1 --format=%s)" != "chore(release): bump" ]; check $? "#367 precondition: the bump commit is NOT the last commit"
+run_check "$D"; rc=$?
+[ "$rc" -eq 0 ] && grep -qF 'check OK — bumped 1.2.3 -> 1.2.4' "$TMP/last.out"; check $? "check: the #367 shape (bump not last, content right) passes"
+
+# Right after the script ran, before the commit: the working tree is checked (the fragment's text is
+# read back from the commit that carried it).
+D="$TMP/c1b"; make_branch "$D"; run_bump "$D"
+run_check "$D"; rc=$?
+[ "$rc" -eq 0 ] && grep -qF 'check OK — bumped 1.2.3 -> 1.2.4' "$TMP/last.out"; check $? "check: an uncommitted fresh bump passes (fragment text read from history)"
+
+# A fragment added after the bump is left unfolded.
+D="$TMP/c2"; make_branch "$D"; bump_commit "$D"
+frag "$D" b.md 'Late heal fragment\n'; g "$D" add -A && g "$D" commit -q -m "fix: a heal round adds a fragment"
+expect_fail "$D" "fragment(s) pending after this branch's bump 1.2.3 -> 1.2.4: changelog.d/b.md" "check: a fragment added after the bump FAILS"
+grep -qF 're-run bash scripts/bump-version.sh (it re-folds' "$TMP/last.out"; check $? "check: the pending-fragment finding names the one-command fix"
+cp -R "$D" "$TMP/c2-refold"   # reused by the re-fold cases below
+
+# Hand-edited version files.
+D="$TMP/c3"; make_branch "$D"; bump_commit "$D"
+jq '.version = "1.2.9"' "$D/$PJ" > "$D/pj.tmp" && mv "$D/pj.tmp" "$D/$PJ"; g "$D" commit -q -am "hand edit"
+expect_fail "$D" "version 1.2.9 is not one patch/minor/major step above the merge base's 1.2.3" "check: a hand-edited plugin.json version FAILS"
+grep -qF "marketplace.json loomwright version 1.2.4 differs from" "$TMP/last.out"; check $? "check: ... and the marketplace mismatch is reported too"
+D="$TMP/c3b"; make_branch "$D"
+sed 's/"version": "1.2.3"/"version": "1.2.4"/' "$D/$PJ" > "$D/pj.tmp" && mv "$D/pj.tmp" "$D/$PJ"
+sed 's/"version": "1.2.3"/"version": "1.2.4"/' "$D/$MJ" > "$D/mj.tmp" && mv "$D/mj.tmp" "$D/$MJ"
+awk '!d && /^\*\*v1\.2\.3 / { print "**v1.2.4 — A hand-written entry:** no fragment says this."; print ""; d = 1 } { print }' "$D/$CL" > "$D/cl.tmp" && mv "$D/cl.tmp" "$D/$CL"
+rm -f "$D/changelog.d/a.md"; g "$D" add -A && g "$D" commit -q -m "hand bump, consistent across the three files"
+( cd "$D" && bash scripts/validate-version.sh >/dev/null 2>&1 ); check $? "hand-bump precondition: the three files agree (validate-version.sh is blind to it)"
+expect_fail "$D" "entry is not the fold of any set of fragments this branch carried" "check: a consistent HAND bump (entry no fragment produces) FAILS"
+# A hand-reworded entry after a scripted bump.
+D="$TMP/c4"; make_branch "$D"; bump_commit "$D"
+sed 's/^\*\*v1\.2\.4 — Alpha headline:\*\* Alpha body\./**v1.2.4 — Alpha headline:** Alpha body, reworded by a heal fix./' "$D/$CL" > "$D/cl.tmp" && mv "$D/cl.tmp" "$D/$CL"
+g "$D" commit -q -am "fix: reword the changelog entry"
+expect_fail "$D" "entry is not the fold of any set of fragments" "check: a hand-reworded CHANGELOG entry after the bump FAILS"
+# An older entry edited: CHANGELOG.md is the base's plus exactly the one entry, nothing else.
+D="$TMP/c4b"; make_branch "$D"; bump_commit "$D"
+sed 's/older body\./older body, edited./' "$D/$CL" > "$D/cl.tmp" && mv "$D/cl.tmp" "$D/$CL"; g "$D" commit -q -am "edit an old entry"
+expect_fail "$D" "is not the merge base's plus exactly the one new entry" "check: an edited OLDER entry FAILS"
+# Not bumped, but CHANGELOG.md edited by hand; a fragment on the base deleted without a bump.
+D="$TMP/c5"; make_branch "$D"
+sed 's/previous body\./previous body (edited)./' "$D/$CL" > "$D/cl.tmp" && mv "$D/cl.tmp" "$D/$CL"; g "$D" commit -q -am "hand edit"
+expect_fail "$D" "differs from the merge base's but the version did not change" "check: a hand CHANGELOG edit with no bump FAILS"
+D="$TMP/c5b"; make_fixture "$D"; frag "$D" onmain.md 'Merged unfolded on main\n'; g "$D" add -A && g "$D" commit -q -m "main merged a fragment"
+g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature; g "$D" rm -q changelog.d/onmain.md && g "$D" commit -q -m "lost it"
+expect_fail "$D" "changelog.d/onmain.md (on the merge base) was deleted without a bump" "check: deleting main's unfolded fragment without a bump FAILS"
+# A bump must fold the base's unfolded fragments too.
+D="$TMP/c5c"; make_fixture "$D"; frag "$D" onmain.md 'Merged unfolded on main\n'; g "$D" add -A && g "$D" commit -q -m "main merged a fragment"
+g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature; frag "$D" a.md 'Alpha headline\n'; g "$D" add -A && g "$D" commit -q -m frag
+bump_commit "$D"
+run_check "$D"; rc=$?
+[ "$rc" -eq 0 ] && grep -qF 'the entry is the fold of: a.md onmain.md' "$TMP/last.out"; check $? "check: a bump that folded main's unfolded fragment with its own passes"
+
+# capabilities.json drift (the generated copy of the version).
+D="$TMP/c6"; make_caps_fixture "$D"; g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature
+frag "$D" a.md 'Alpha headline\n'; g "$D" add -A && g "$D" commit -q -m frag; bump_commit "$D"
+run_check "$D"; rc=$?
+[ "$rc" -eq 0 ]; check $? "check: a scripted bump with a capability contract passes"
+set_caps_version_t() { sed "s/\"plugin_version\": \"$2\"/\"plugin_version\": \"$3\"/" "$1/$CJ" > "$1/cj.tmp" && mv "$1/cj.tmp" "$1/$CJ"; }
+set_caps_version_t "$D" 1.2.4 1.2.3; g "$D" commit -q -am "caps drift"
+expect_fail "$D" "capabilities.json plugin_version 1.2.3 differs from" "check: a capabilities.json plugin_version drift FAILS"
+D="$TMP/c6b"; make_caps_fixture "$D"; g "$D" update-ref refs/remotes/origin/main HEAD; g "$D" checkout -q -b feature
+set_caps_version_t "$D" 1.2.3 1.2.4; g "$D" commit -q -am "caps hand-bumped alone"
+expect_fail "$D" "capabilities.json plugin_version 1.2.4 differs from" "check: a hand-bumped capabilities.json with no bump FAILS"
+
+# Cannot check ⇒ exit 2, fail CLOSED (never a silent pass).
+D="$TMP/c7"; make_fixture "$D"
+run_check "$D"; rc=$?
+[ "$rc" -eq 2 ] && grep -qF "check CANNOT RUN — the base ref 'origin/main' is not resolvable" "$TMP/last.out"; check $? "check: no base ref ⇒ exit 2 (cannot check), never 0"
+run_check "$D" --base main; rc=$?
+[ "$rc" -eq 0 ]; check $? "check: --base <ref> overrides the default base"
+D="$TMP/c7b"; git clone -q --depth 1 "file://$TMP/c1" "$D" 2>/dev/null; g "$D" update-ref refs/remotes/origin/main HEAD
+run_check "$D"; rc=$?
+[ "$rc" -eq 2 ] && grep -qF 'shallow' "$TMP/last.out"; check $? "check: a shallow clone ⇒ exit 2 (the folded fragments may be missing)"
+run_bump "$TMP/c1" --check minor; rc=$?
+[ "$rc" -eq 1 ] && grep -qF -- '--check takes no bump level' "$TMP/last.out"; check $? "check: --check refuses a bump level"
+
+# ---- 9d. the re-fold: a re-run on a branch that already carries a bump ----------------------------
+D="$TMP/c2-refold"; before_ver="$(ver_of "$D")"
+run_bump "$D"; rc=$?
+[ "$rc" -eq 0 ] && grep -qF 're-folded this branch' "$TMP/last.out"; check $? "re-fold: a plain re-run over an existing bump with a pending fragment re-folds (exit 0)"
+[ "$before_ver" = "1.2.4 1.2.4 1.2.4" ] && [ "$(ver_of "$D")" = "1.2.4 1.2.4 1.2.4" ]; check $? "re-fold: the version stays 1.2.4 — ONE bump, never a double bump"
+[ "$(entries "$D")" = "3" ] && [ "$(sed -n 7p "$D/$CL")" = "**v1.2.4 — Alpha headline; Late heal fragment:** Alpha body." ]
+check $? "re-fold: exactly ONE new entry, folding the earlier and the late fragment in filename order"
+[ ! -e "$D/changelog.d/a.md" ] && [ ! -e "$D/changelog.d/b.md" ]; check $? "re-fold: no fragment left behind"
+grep -qF "refold-touched: CHANGELOG.md $PJ $MJ changelog.d/b.md" "$TMP/last.out"; check $? "re-fold: the machine line names exactly the paths to commit"
+g "$D" add -A && g "$D" commit -q -m "chore(release): re-fold"
+run_check "$D"; rc=$?
+[ "$rc" -eq 0 ] && grep -qF 'the entry is the fold of: a.md b.md' "$TMP/last.out"; check $? "re-fold: --check passes on the re-folded branch"
+[ -z "$(find "$D" -maxdepth 1 -name '.bump-version.*')" ]; check $? "re-fold: no scratch dir left behind"
+
+# The previous bump's explicit level is kept; a fragment asking for more raises it.
+D="$TMP/c8"; make_branch "$D"; bump_commit "$D" minor
+frag "$D" b.md 'Late\n'; g "$D" add -A && g "$D" commit -q -m late
+run_bump "$D"; [ "$(ver_of "$D")" = "1.3.0 1.3.0 1.3.0" ] && [ "$(entries "$D")" = "3" ]; check $? "re-fold: an explicit 'minor' on the first bump is kept (1.3.0, one entry)"
+D="$TMP/c8b"; make_branch "$D"; bump_commit "$D"
+frag "$D" b.md '<!-- bump: minor -->\nLate minor\n'; g "$D" add -A && g "$D" commit -q -m late
+run_bump "$D"; [ "$(ver_of "$D")" = "1.3.0 1.3.0 1.3.0" ] && [ "$(entries "$D")" = "3" ] && ! grep -qF '**v1.2.4' "$D/$CL"
+check $? "re-fold: a later minor fragment raises the ONE bump to 1.3.0 (no 1.2.4 entry left)"
+# A fragment of the same name re-added with new text after its fold: the newer text wins.
+D="$TMP/c8c"; make_branch "$D"; bump_commit "$D"
+frag "$D" a.md 'Alpha headline v2\nAlpha body v2.\n'; g "$D" add -A && g "$D" commit -q -m "re-add a.md with new text"
+run_bump "$D"; rc=$?; g "$D" add -A && g "$D" commit -q -m refold
+[ "$rc" -eq 0 ] && [ "$(sed -n 7p "$D/$CL")" = "**v1.2.4 — Alpha headline v2:** Alpha body v2." ]; check $? "re-fold: a re-added fragment's newer text replaces its folded text"
+run_check "$D"; check $? "re-fold: --check passes after a same-name re-fold"
+
+# --refold is a no-op unless there is a bump AND a pending fragment (the lane shape stays untouched).
+D="$TMP/c9"; make_branch "$D"; before="$(tree_sum "$D")"
+run_bump "$D" --refold; rc=$?
+[ "$rc" -eq 0 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF 'this branch carries no bump' "$TMP/last.out"; check $? "--refold: a fragments-only branch (a parallel lane) is left byte-identical"
+bump_commit "$D"; before="$(tree_sum "$D")"
+run_bump "$D" --refold; rc=$?
+[ "$rc" -eq 0 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF 'already folds every fragment' "$TMP/last.out"; check $? "--refold: a current bump is left byte-identical"
+run_bump "$D"; rc=$?
+[ "$rc" -eq 1 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF 'already folds every fragment; nothing to bump' "$TMP/last.out"; check $? "plain re-run on a current bump: refused, nothing written (never a double bump)"
+D="$TMP/c9b"; make_fixture "$D"; frag "$D" x.md 'X\n'; before="$(tree_sum "$D")"
+run_bump "$D" --refold; rc=$?
+[ "$rc" -eq 0 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF 'cannot tell whether this branch carries a bump' "$TMP/last.out"; check $? "--refold: no base ⇒ no-op with the reason (CI's --check is the gate)"
+
+# The re-fold refuses when the existing bump is not reproducible, and restores on a failure.
+D="$TMP/c10"; make_branch "$D"; bump_commit "$D"
+sed 's/Alpha body\./Alpha body, hand-edited./' "$D/$CL" > "$D/cl.tmp" && mv "$D/cl.tmp" "$D/$CL"; g "$D" commit -q -am "hand edit"
+frag "$D" b.md 'Late\n'; g "$D" add -A && g "$D" commit -q -m late; before="$(tree_sum "$D")"
+run_bump "$D"; rc=$?
+[ "$rc" -eq 1 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF 'refusing to re-fold' "$TMP/last.out" && grep -qF 'revert this branch' "$TMP/last.out"
+check $? "re-fold: a hand-edited existing bump is refused, nothing written, the fix named"
+D="$TMP/c11"; make_branch "$D"; bump_commit "$D"
+frag "$D" b.md 'Late\n'; printf '#!/usr/bin/env bash\nexit 1\n' > "$D/scripts/bad-validator.sh"; g "$D" add -A && g "$D" commit -q -m late
+before="$(tree_sum "$D")"
+( cd "$D" && BUMP_VERSION_VALIDATORS="scripts/bad-validator.sh" bash scripts/bump-version.sh ) > "$TMP/last.out" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && [ "$(tree_sum "$D")" = "$before" ] && [ ! -e "$D/changelog.d/a.md" ] && [ -z "$(g "$D" status --porcelain)" ] \
+  && [ -z "$(find "$D" -maxdepth 1 -name '.bump-version.*')" ]
+check $? "re-fold: a failing validator restores every file byte-identical (the restored a.md removed again)"
+D="$TMP/c12"; make_branch "$D"; bump_commit "$D"; frag "$D" b.md 'Late\n'; g "$D" add -A && g "$D" commit -q -m late
+before="$(tree_sum "$D")"; run_bump "$D" --dry-run; rc=$?
+[ "$rc" -eq 0 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF 're-fold:' "$TMP/last.out"; check $? "re-fold: --dry-run prints the plan and writes nothing"
+
+# ---- 9e. mutation controls: each --check rule is what catches its case -----------------------------
+mutant() { # mutant <dir> <awk program applied to a copy of the script>
+  awk "$2" "$BUMP" > "$1/scripts/bump-version.sh"
+}
+cp -R "$TMP/c2" "$TMP/m1"
+mutant "$TMP/m1" '{ sub(/\[ "\$ignore_pending" -eq 0 \]/, "[ \"$ignore_pending\" -eq 9 ]"); print }'
+run_check "$TMP/m1"; rc=$?
+[ "$rc" -eq 0 ]; check $? "mutation control: without the pending-after-bump rule, the late fragment goes undetected"
+cp -R "$TMP/c4" "$TMP/m2"
+mutant "$TMP/m2" '/^chk\(\) \{/ { print "search_fold() { FOLD_IDX=(); return 0; }" } { print }'
+run_check "$TMP/m2"; rc=$?
+[ "$rc" -eq 0 ]; check $? "mutation control: without the fold search, a hand-reworded entry goes undetected"
+cp -R "$TMP/c6" "$TMP/m3"
+mutant "$TMP/m3" '{ sub(/\[ "\$W_CAPS" != "\$W_VER" \]/, "false"); print }'
+run_check "$TMP/m3"; rc=$?
+[ "$rc" -eq 0 ]; check $? "mutation control: without the capabilities compare, the drift goes undetected"
+cp -R "$TMP/c2" "$TMP/m4"
+mutant "$TMP/m4" '{ sub(/if \[ "\$old_ver" != "\$BASE_VER" \]; then/, "if false; then"); print }'
+run_bump "$TMP/m4"; [ "$(entries "$TMP/m4")" = "4" ] && [ "$(ver_of "$TMP/m4")" = "1.2.5 1.2.5 1.2.5" ]
+check $? "mutation control: without the re-fold dispatch, a re-run double-bumps (1.2.5, two new entries) — the old behaviour"
+
 # ---- 10. check-doc-currency.sh bump-without-script guard (AC5) ----------------------------------
 echo "# check-doc-currency.sh bump-fragment-guard"
 G="$TMP/guard"; mkdir -p "$G"
@@ -413,9 +601,9 @@ set_ver 98.0.0
 gate; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'DRIFT \[bump-fragment-guard\]' "$TMP/gate.out"; check $? "guard: a hand bump with a fragment present FAILS"
 # The same state is reached by a scripted bump left stale after main moved (rebased onto a main
-# that merged a legal unfolded fragment); a bare re-run there double-bumps, so the DRIFT text must
-# name the drop-or-revert-the-bump-commit-first remedy, not only "bump with the script".
-grep -q 'DRIFT \[bump-fragment-guard\].*drop or revert that commit first, then re-run' "$TMP/gate.out"; check $? "guard: the DRIFT message names the drop-or-revert-the-stale-bump remedy"
+# that merged a legal unfolded fragment); a re-run there now RE-FOLDS (#512) instead of
+# double-bumping, so the DRIFT text must say so and point at the content check.
+grep -q 'DRIFT \[bump-fragment-guard\].*re-folds into that ONE bump instead of double-bumping.*--check verifies' "$TMP/gate.out"; check $? "guard: the DRIFT message names the re-run-re-folds remedy and the --check"
 # Control: delete the single invocation line from a copy — the same case must now pass silently.
 grep -v '^run_bump_fragment_guard || fail=1$' "$G/scripts/check-doc-currency.sh" > "$G/scripts/nog.sh"
 [ "$(grep -c '^run_bump_fragment_guard || fail=1$' "$G/scripts/check-doc-currency.sh")" = "1" ]; check $? "guard control precondition: exactly one invocation line"

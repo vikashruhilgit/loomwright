@@ -288,10 +288,13 @@ fi
 # than README.md is still present carries either a bump not made by the script, or a scripted bump
 # left stale after main moved: a branch whose bump commit folded its own fragment, then rebased onto
 # a main that legally merged an unfolded fragment (decision P7 in changelog.d/README.md), lands in
-# exactly this state. The two are indistinguishable here, so the DRIFT message names both remedies:
-# if the branch already carries a bump commit, drop or revert it FIRST (that brings its own fragment
-# back), then re-run scripts/bump-version.sh once — re-running on top of the stale bump double-bumps
-# (two CHANGELOG entries in one PR). The same procedure is the P7 section of changelog.d/README.md.
+# exactly this state. The two are indistinguishable here, and ONE remedy now covers both: re-run
+# scripts/bump-version.sh. On a branch that already carries a bump it RE-FOLDS (#512) — it resets
+# the version files to the merge base, restores the fragments that bump folded and folds them with
+# the pending ones into the ONE bump — so it no longer double-bumps; it refuses (and names the fix:
+# revert the bump commit first) when the existing bump is not reproducible. The content rule itself
+# is `scripts/bump-version.sh --check` (the P7 section of changelog.d/README.md); this guard stays as
+# the doc gate's cheaper subset of it.
 # A branch merely BEHIND main (main bumped after the fork, the branch carries only a fragment) has
 # the merge base's version and stays green.
 # HONEST LIMITS: (1) a hand bump with NO fragment is undetectable here — there is nothing left to
@@ -331,7 +334,7 @@ run_bump_fragment_guard() {
     return 0
   fi
   if [ "$VERSION" != "$base_ver" ]; then
-    echo "  DRIFT [bump-fragment-guard] $PLUGIN_JSON — version $VERSION differs from the merge base's $base_ver while changelog.d/ fragment(s) remain:$frags — bump with scripts/bump-version.sh (it folds and removes them); if this branch already carries a bump commit (main moved after it), drop or revert that commit first, then re-run — never re-run on top of it (that double-bumps); see changelog.d/README.md (who runs the bump, P7)"
+    echo "  DRIFT [bump-fragment-guard] $PLUGIN_JSON — version $VERSION differs from the merge base's $base_ver while changelog.d/ fragment(s) remain:$frags — re-run scripts/bump-version.sh (it folds and removes them; on a branch that already carries a bump it re-folds into that ONE bump instead of double-bumping, and refuses with the fix when that bump was hand-edited); bash scripts/bump-version.sh --check verifies the result; see changelog.d/README.md (P7)"
     return 1
   fi
   return 0

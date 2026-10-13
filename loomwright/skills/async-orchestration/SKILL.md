@@ -601,6 +601,12 @@ Before completing async orchestration:
    - Format: `feat|fix|refactor({scope}): {message}\n\nCloses {task_id}`
    - **NEVER code-fence the message.** The first line passed to `git commit` MUST be the conventional-commit subject (e.g. `feat({scope}): {message}`) — never a ```` ``` ```` / ```` ```bash ```` fence. Pass multi-line messages as separate `-m` flags or via `git commit -F -` / a heredoc (see `skills/commit/SKILL.md` → "Passing the Message to git"). A fence as the first line makes ```` ``` ```` the commit/PR subject.
 
+5.5. **Release re-fold (#512) — after step 5's commits, BEFORE `write-marker` and step 6's push:**
+   ```bash
+   bash scripts/release-refold.sh   # protocol form — the runtime-resolvable form is agents/supervisor.md §Phase 4 FINALIZE gate 5
+   ```
+   A no-op (exit 0) unless the project has a fold-capable `scripts/bump-version.sh` and this branch already carries a bump with a `changelog.d/` fragment still pending; then it re-folds every fragment into that ONE bump and commits it (HEAD moves, so it runs before `write-marker`). It then runs `bump-version.sh --check`, so a hand-edited version file or CHANGELOG.md also exits non-zero. The same line runs before every Phase 4.5 heal push and every `/review-pr` fix push, so no later commit can leave a fragment unfolded (in this plugin's own repo, CI's `scripts/check-version-bump.sh` re-checks the content on every PR to `main`). Non-zero ⇒ abort FINALIZE before the push, like a failed pre-merge gate: no push, no PR, log its printed reason, `SUPERVISOR_RESULT.status: failed` with `error: "release_refold_refused"`, run lock released on this abort exit.
+
 6. **Push and create PR (against `BASE_BRANCH` — defaults to `main`):**
    ```bash
    git push -u origin feature/{task_id}-{desc}

@@ -1066,6 +1066,10 @@ while heal_iterations < max_heal_iterations:
     fixer_deviations += [f"fix-{heal_iterations+1}: {entry}" for entry in FIX_RESULT.deviations]
     record_decision(phase: SELF_HEAL, decision: f"fixer_deviations: appended {len(FIX_RESULT.deviations)} from fix-{heal_iterations+1}", rationale: "carriage for step 1g's Deviations advisory — FIX_RESULT bypasses Context-Keeper")
 
+  # release re-fold (#512): a fix that added a changelog.d/ fragment after this branch's bump is
+  # folded into that ONE bump here — a no-op otherwise. It may commit, so it runs BEFORE write-marker.
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/release-refold.sh"   # non-zero ⇒ same as a failed push: pause phase, report its printed reason
+
   # finalize-gate (automate-followups/33): the fix commit moved HEAD, so the PreToolUse[Bash] guard
   # denies this push until the marker names the new HEAD. Re-write it in its OWN Bash call first —
   # it re-runs the children-settled check (the fix worker above must have returned). A refusal is
@@ -1376,6 +1380,7 @@ Emit the contract-conformance, benchmark, and ground-truth results as the SAME d
 | CODE_REVIEW_RESULT malformed or missing | Retry review once; if still malformed, pause with resume |
 | Fix Task() crashes or returns no FIX_RESULT | Pause phase — emit `SUPERVISOR_RESULT` with `status: checkpoint` (no `paused` status exists in the schema); the resume counter increments at Phase 4.5 entry of the next `--continue` run |
 | `git push` fails inside loop | Pause phase; report auth/network error in checkpoint |
+| `release-refold.sh` exits non-zero before a heal push (#512) | Same as a failed push: pause phase, report its printed reason (a hand-edited version file or CHANGELOG.md; the fix is a `changelog.d/` fragment + re-running `scripts/bump-version.sh`) |
 | finalize-gate `write-marker` refuses before a heal push | Same as a failed push: pause phase, report the refusal reason (`children_unsettled` names the ids; `worker_results_unparsed` means `## Worker Results` holds no readable id) in the checkpoint. Never hand-write the marker |
 | `gh pr comment` fails at escalation | Record findings in `.supervisor/state.md` decisions log; do NOT fail the task — escalation still succeeds, just without PR comment |
 | Resume counter ≥ 3 | Abort loop, mark ESCALATED with `self_heal_resume_thrash` reason, run completion tail |

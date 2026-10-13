@@ -116,6 +116,25 @@ jobs:
       - name: Check the lanes add-on stays on the core lane commands
         run: bash scripts/test-lanes-addon.sh
 
+      # Release content (#512, decision P7 in changelog.d/README.md): plugin.json, marketplace.json,
+      # CHANGELOG.md and capabilities.json's plugin_version must be exactly what the bump script
+      # produces from the merge base plus this branch's changelog.d/ fragments, at ANY commit — the
+      # bump no longer has to be the last commit (Phase 4.5 heal and /review-pr drain commits land
+      # after it). The check reads the folded fragments back from the branch's history, so it needs
+      # the whole history and main: the checkout is depth 1, hence the unshallow fetch of main into a
+      # DEDICATED ref (never refs/remotes/origin/main, so no other step changes behaviour). Placed
+      # after every other gate of this job because it deepens the clone. A shallow or base-less run
+      # exits 2 and fails the step: fail CLOSED, never a silent skip. The gate's name is the
+      # read-only wrapper on purpose (ci-local.sh makes every script line here a local gate and drops
+      # its arguments). Root scripts/test-*.sh are not globbed by run-self-tests.sh, hence explicit.
+      # No `|| true` on either gate line.
+      - name: Check the release content (version files are the fold of this branch's fragments)
+        run: |
+          git fetch --no-tags --unshallow origin +refs/heads/main:refs/bump-check/base \
+            || git fetch --no-tags origin +refs/heads/main:refs/bump-check/base
+          bash scripts/test-bump-version.sh
+          bash scripts/check-version-bump.sh --base refs/bump-check/base
+
       # Read-only run-history pull (meta-sync-followups/07, D.3). Since this repo moved its run
       # history to a metadata branch, a CI checkout has no .supervisor/jobs/done/, so the sdk-spike
       # corpus sweep below prints SKIP. Placement is deliberate: AFTER every test step of THIS job
