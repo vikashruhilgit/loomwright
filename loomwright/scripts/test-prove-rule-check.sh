@@ -28,6 +28,17 @@
 #       proof into the repo; (d8e) an out-of-repo --out on the same refusal still gets its proof.
 #   (k) mutation control, in-suite: a VALID mutant that restores the containment check to AFTER the
 #       early exits must turn (d8d) RED while (d8) stays green — so (d8d) is load-bearing.
+#   (l) containment is by FILE IDENTITY: on a case-insensitive filesystem an upper-cased in-repo
+#       --out (absolute, or relative from an upper-cased cwd) is still out_inside_repo, nothing lands
+#       in the repo. Skipped, with a printed reason, on a case-sensitive filesystem (Linux CI).
+#   (m) the baseline and leg 2 are independent: a check that writes a marker into its own scratch
+#       copy reads VACUOUS (not PROVEN) on a patch that leaves the rule intact, and an identity patch
+#       still reads patch_no_effect although the baseline dirtied the copy.
+#   (p) HEAD is pinned before leg 1: a check that commits in the user's tree (and in its own copy)
+#       still proves against the commit that was HEAD when the run started.
+#   (n) the reset cannot be done (`git reset` stubbed to fail) ⇒ `UNPROVABLE (scratch_reset_failed)`.
+#   (o) mutation controls, in-suite, for (l) (m) (n) (p): each VALID mutant reverts one fix, still
+#       PROVES a valid run (faithful), and turns its test RED.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -76,11 +87,13 @@ state() { git -C "$1" worktree list --porcelain; echo "--status--"; git -C "$1" 
 # prove_in <repo> <args...> — runs the prover from <repo> with a FRESH per-run TMPDIR (so the scratch
 # dir it creates is observable), stdin from /dev/null and stdout captured (never a TTY).
 # Sets OUT, RC, RUN_TMP, BEFORE, AFTER.
-prove_in() {
-  local repo="$1"; shift
+prove_in() { prove_with "$PROVER" "$@"; }
+# prove_with <script> <repo> <args...> — prove_in for a given prover script (the mutation controls).
+prove_with() {
+  local script="$1" repo="$2"; shift 2
   RUN_TMP="$(mktemp -d "$ROOT/tmp.XXXXXX")"
   BEFORE="$(state "$repo" 2>&1)"
-  OUT="$( ( cd "$repo" && TMPDIR="$RUN_TMP" bash "$PROVER" "$@" ) </dev/null 2>&1 )"; RC=$?
+  OUT="$( ( cd "$repo" && TMPDIR="$RUN_TMP" bash "$script" "$@" ) </dev/null 2>&1 )"; RC=$?
   AFTER="$(state "$repo" 2>&1)"
 }
 last_line() { printf '%s\n' "$OUT" | tail -1; }
@@ -204,6 +217,7 @@ cat > "$SHIM/git" <<'SH'
 prev=""
 for a in "$@"; do
   if [ "$prev" = worktree ] && [ "$a" = "${STUB_FAIL_WORKTREE:-}" ]; then echo "shim: git worktree $a refused" >&2; exit 128; fi
+  if [ -n "${STUB_FAIL_SUBCMD:-}" ] && [ "$a" = "$STUB_FAIL_SUBCMD" ]; then echo "shim: git $a refused" >&2; exit 128; fi
   prev="$a"
 done
 exec "$STUB_REAL_GIT" "$@"
@@ -342,6 +356,88 @@ printf '%s' "$OUT" | grep -qF 'git worktree prune' && ok "(g3) the leak report n
 git -C "$RG" worktree prune >/dev/null 2>&1   # clean the fixture's stale entry
 
 # ============================================================================
+echo "== (l) containment by identity: a case-variant in-repo --out is still inside the repo =="
+mkdir -p "$ROOT/CiProbe"
+if [ -d "$ROOT/ciprobe" ]; then CI_FS=1; else CI_FS=0; fi
+RL="$(new_repo)"; RL_UP="$(printf '%s' "$RL" | tr '[:lower:]' '[:upper:]')"
+if [ "$CI_FS" -eq 1 ] && [ "$RL_UP" != "$RL" ] && [ "$RL_UP" -ef "$RL" ]; then
+  ok "(l0) premise: the filesystem is case-insensitive and the upper-cased path names the fixture repo"
+  prove_in "$RL" --check "$CHECK_TOKEN" --counterexample "$DEL_PATCH" --out "$RL_UP/caseproof.json" --confirm
+  expect_unprovable "(l1) valid args + an upper-cased absolute in-repo --out" out_inside_repo
+  [ ! -e "$RL/caseproof.json" ] && ok "(l1b) no proof landed in the repo" || no "(l1b) the proof landed in the repo via a case-variant path"
+  no_leak "(l1c) UNPROVABLE (out_inside_repo, case variant)"
+  RUN_TMP="$(mktemp -d "$ROOT/tmp.XXXXXX")"; BEFORE="$(state "$RL" 2>&1)"
+  OUT="$( ( cd "$RL_UP" && TMPDIR="$RUN_TMP" bash "$PROVER" --check "$CHECK_TOKEN" --counterexample "$DEL_PATCH" --out caseproof2.json --confirm ) </dev/null 2>&1 )"; RC=$?
+  AFTER="$(state "$RL" 2>&1)"
+  expect_unprovable "(l2) valid args + a relative --out from an upper-cased cwd" out_inside_repo
+  [ ! -e "$RL/caseproof2.json" ] && ok "(l2b) no proof landed in the repo" || no "(l2b) the proof landed in the repo via an upper-cased cwd"
+  no_leak "(l2c) UNPROVABLE (out_inside_repo, case-variant cwd)"
+else
+  echo "  skip: (l) needs a case-insensitive filesystem; this one is case-sensitive (e.g. Linux CI), where no case variant of the repo path exists"
+fi
+
+# ============================================================================
+echo "== (m) the baseline and leg 2 are independent: a check's own leftovers earn nothing =="
+# The check writes a marker (scratch.log — gitignored, so the user's status is unchanged) and then
+# fails whenever the marker already exists. The patch adds an unrelated file; TOKEN stays.
+ADD_PATCH="$ROOT/add-unrelated.patch"
+cat > "$ADD_PATCH" <<'PATCH'
+--- /dev/null
++++ b/src/b.txt
+@@ -0,0 +1 @@
++unrelated
+PATCH
+CHECK_STATEFUL='grep -q TOKEN src/a.txt && test ! -e scratch.log && touch scratch.log'
+RM="$(new_repo)"
+prove_in "$RM" --check "$CHECK_STATEFUL" --counterexample "$ADD_PATCH" --out "$ROOT/m.proof.json" --confirm
+[ "$RC" -eq 1 ] && [ "$(last_line)" = "verdict: VACUOUS" ] \
+  && ok "(m1) a marker the baseline left behind is not credited to the patch: VACUOUS, exit 1" \
+  || no "(m1) expected VACUOUS/1 (the patch leaves the rule intact), got rc=$RC: $OUT"
+jq -e '.baseline_exit==0 and .counterexample_exit==0' "$ROOT/m.proof.json" >/dev/null 2>&1 \
+  && ok "(m2) proof: baseline 0, counterexample 0 — leg 2 started from a clean copy" \
+  || no "(m2) proof: $(cat "$ROOT/m.proof.json" 2>/dev/null)"
+no_leak "(m3) VACUOUS (stateful check)"
+# An identity patch (applies, changes nothing): the baseline's marker must not hide that.
+ID_PATCH="$ROOT/identity.patch"
+cat > "$ID_PATCH" <<'PATCH'
+--- a/src/a.txt
++++ b/src/a.txt
+@@ -1 +1 @@
+-TOKEN here
++TOKEN here
+PATCH
+RM2="$(new_repo)"
+prove_in "$RM2" --check "$CHECK_STATEFUL" --counterexample "$ID_PATCH" --confirm
+expect_unprovable "(m4) a no-effect patch after a baseline that dirtied its copy" patch_no_effect
+no_leak "(m5) UNPROVABLE (patch_no_effect, stateful check)"
+
+# ============================================================================
+echo "== (p) HEAD is pinned before leg 1: a check that commits cannot move what the scratch copies =="
+# On its first run in a tree (no scratch.log) the check removes TOKEN and COMMITS — in the user's tree
+# during leg 1, and in its detached copy during the baseline. Its exit is the TOKEN grep from BEFORE.
+CHECK_DRIFT='grep -q TOKEN src/a.txt; r=$?; if [ ! -e scratch.log ]; then touch scratch.log; sed -i.bak s/TOKEN/gone/ src/a.txt && rm -f src/a.txt.bak && git -c user.email=t@t -c user.name=t commit -qam drift; fi; exit $r'
+RP="$(new_repo)"
+prove_in "$RP" --check "$CHECK_DRIFT" --counterexample "$DEL_PATCH" --out "$ROOT/p.proof.json" --confirm
+[ "$RC" -eq 0 ] && [ "$(last_line)" = "verdict: PROVEN" ] \
+  && jq -e '.now_exit==0 and .baseline_exit==0 and .counterexample_exit==1' "$ROOT/p.proof.json" >/dev/null 2>&1 \
+  && ok "(p1) the scratch legs copied the commit pinned before leg 1, and leg 2 started from it again: PROVEN" \
+  || no "(p1) expected PROVEN with exits 0/0/1, got rc=$RC: $OUT / $(cat "$ROOT/p.proof.json" 2>/dev/null)"
+[ "$(git -C "$RP" worktree list --porcelain | grep -c '^worktree ')" = "1" ] && [ -z "$(ls -A "$RUN_TMP" 2>/dev/null)" ] \
+  && ok "(p2) no scratch worktree entry or directory left behind" || no "(p2) scratch leak: $(git -C "$RP" worktree list --porcelain)"
+
+# ============================================================================
+echo "== (n) the scratch copy cannot be reset ⇒ UNPROVABLE (scratch_reset_failed) =="
+RN="$(new_repo)"
+RUN_TMP="$(mktemp -d "$ROOT/tmp.XXXXXX")"; BEFORE="$(state "$RN" 2>&1)"
+OUT="$( ( cd "$RN" && TMPDIR="$RUN_TMP" PATH="$SHIM:$PATH" STUB_REAL_GIT="$REAL_GIT" STUB_FAIL_SUBCMD=reset \
+          bash "$PROVER" --check "$CHECK_TOKEN" --counterexample "$DEL_PATCH" --out "$ROOT/n.proof.json" --confirm ) </dev/null 2>&1 )"; RC=$?
+AFTER="$(state "$RN" 2>&1)"
+expect_unprovable "(n1) git reset fails after the baseline (would otherwise be PROVEN)" scratch_reset_failed
+jq -e '.reason=="scratch_reset_failed" and .baseline_exit==0 and .counterexample_exit==null' "$ROOT/n.proof.json" >/dev/null 2>&1 \
+  && ok "(n2) proof: the baseline ran, leg 2 never did" || no "(n2) proof: $(cat "$ROOT/n.proof.json" 2>/dev/null)"
+no_leak "(n3) UNPROVABLE (scratch_reset_failed)"
+
+# ============================================================================
 echo "== (h) the user-scope rules stamp is never created or changed by a prove run =="
 if [ -n "$STAMP_REL" ] && [ "$(cat "$STAMP" 2>/dev/null)" = '{"seed":"untouched"}' ] && [ "$(home_print)" = "$HOME_BEFORE" ]; then
   ok "(h1) after every run above (all four verdicts), the stamp and the whole test HOME are byte-identical"
@@ -394,6 +490,97 @@ else
   no "(k1) the mutation did not land (empty, identical, unparseable, or an edit missed) — the control proves nothing"
 fi
 rm -f "$MUTK"
+
+# ============================================================================
+echo "== (o) mutation controls for (l) (m) (n) (p): revert one fix, the test must go RED =="
+# mutant_ok <file> <marker> — VALID: non-empty, differs from the prover, parses, the edit landed.
+mutant_ok() { [ -s "$1" ] && ! cmp -s "$PROVER" "$1" && bash -n "$1" 2>/dev/null && grep -qF -- "$2" "$1"; }
+# faithful <file> <label> — the mutant still PROVES a plain valid run, so only the reverted fix differs.
+faithful() {
+  local r; r="$(new_repo)"
+  prove_with "$1" "$r" --check "$CHECK_TOKEN" --counterexample "$DEL_PATCH" --out "$ROOT/faithful.proof.json" --confirm
+  [ "$(last_line)" = "verdict: PROVEN" ] && ok "$2: the mutant still PROVES a valid run (faithful)" \
+    || no "$2: the mutant broke a valid run ($(last_line)) — it is not a one-fix revert"
+}
+
+# (o1) no reset between the baseline and leg 2 (the pre-fix shape) ⇒ (m1), (m4), (n1) go RED.
+MUT_R="$ROOT/mutant-reset-prove-rule-check.sh"
+sed 's|^reset_scratch_copy$|:   # MUTANT: no reset between the baseline and leg 2|' "$PROVER" > "$MUT_R"
+if mutant_ok "$MUT_R" '# MUTANT: no reset between the baseline and leg 2'; then
+  ok "(o1a) the no-reset mutant is VALID: non-empty, differs from the prover, parses, the edit landed"
+  faithful "$MUT_R" "(o1b)"
+  prove_with "$MUT_R" "$(new_repo)" --check "$CHECK_STATEFUL" --counterexample "$ADD_PATCH" --confirm
+  [ "$(last_line)" = "verdict: PROVEN" ] \
+    && ok "(o1c) CONFIRMED: without the reset the stateful check reads PROVEN — (m1) would go RED" \
+    || no "(o1c) REFUTED: the no-reset mutant reads '$(last_line)' — (m1) cannot detect a missing reset"
+  prove_with "$MUT_R" "$(new_repo)" --check "$CHECK_STATEFUL" --counterexample "$ID_PATCH" --confirm
+  [ "$(last_line)" != "verdict: UNPROVABLE (patch_no_effect)" ] \
+    && ok "(o1d) CONFIRMED: without the reset the identity patch reads '$(last_line)' — (m4) would go RED" \
+    || no "(o1d) REFUTED: the no-reset mutant still reads patch_no_effect — (m4) is not load-bearing"
+  OUT="$( ( cd "$(new_repo)" && PATH="$SHIM:$PATH" STUB_REAL_GIT="$REAL_GIT" STUB_FAIL_SUBCMD=reset \
+            bash "$MUT_R" --check "$CHECK_TOKEN" --counterexample "$DEL_PATCH" --confirm ) </dev/null 2>&1 )"
+  [ "$(last_line)" != "verdict: UNPROVABLE (scratch_reset_failed)" ] \
+    && ok "(o1e) CONFIRMED: without the reset a failing git reset reads '$(last_line)' — (n1) would go RED" \
+    || no "(o1e) REFUTED: the no-reset mutant still reads scratch_reset_failed"
+else
+  no "(o1a) the no-reset mutation did not land — the control proves nothing"
+fi
+rm -f "$MUT_R"
+
+# (o2) the scratch worktree copies whatever HEAD is AFTER leg 1 (the pre-fix shape) ⇒ (p1) goes RED.
+MUT_P="$ROOT/mutant-pin-prove-rule-check.sh"
+sed 's|worktree add --detach "\$WT" "\$HEAD_SHA" >|worktree add --detach "$WT" HEAD >|' "$PROVER" > "$MUT_P"
+if mutant_ok "$MUT_P" 'worktree add --detach "$WT" HEAD >'; then
+  ok "(o2a) the unpinned-HEAD mutant is VALID: non-empty, differs from the prover, parses, the edit landed"
+  faithful "$MUT_P" "(o2b)"
+  prove_with "$MUT_P" "$(new_repo)" --check "$CHECK_DRIFT" --counterexample "$DEL_PATCH" --confirm
+  [ "$(last_line)" != "verdict: PROVEN" ] \
+    && ok "(o2c) CONFIRMED: with HEAD read after leg 1 the drift check reads '$(last_line)' — (p1) would go RED" \
+    || no "(o2c) REFUTED: the unpinned mutant still PROVES — (p1) cannot detect an unpinned HEAD"
+else
+  no "(o2a) the unpinned-HEAD mutation did not land — the control proves nothing"
+fi
+rm -f "$MUT_P"
+
+# (o3) the reset targets the copy's own (moved) HEAD instead of the pinned sha ⇒ (p1) goes RED.
+MUT_S="$ROOT/mutant-resetsha-prove-rule-check.sh"
+sed 's|reset -q --hard "\$HEAD_SHA" >|reset -q --hard >|' "$PROVER" > "$MUT_S"
+if mutant_ok "$MUT_S" 'reset -q --hard >'; then
+  ok "(o3a) the reset-to-own-HEAD mutant is VALID: non-empty, differs from the prover, parses, the edit landed"
+  faithful "$MUT_S" "(o3b)"
+  prove_with "$MUT_S" "$(new_repo)" --check "$CHECK_DRIFT" --counterexample "$DEL_PATCH" --confirm
+  [ "$(last_line)" != "verdict: PROVEN" ] \
+    && ok "(o3c) CONFIRMED: resetting to the copy's moved HEAD reads '$(last_line)' — (p1) would go RED" \
+    || no "(o3c) REFUTED: the mutant still PROVES — (p1) cannot detect a reset to the wrong commit"
+else
+  no "(o3a) the reset-to-own-HEAD mutation did not land — the control proves nothing"
+fi
+rm -f "$MUT_S"
+
+# (o4) string-prefix containment (the pre-fix shape) ⇒ (l1) goes RED. Case-insensitive hosts only.
+if [ "$CI_FS" -eq 1 ] && [ "$RL_UP" != "$RL" ] && [ "$RL_UP" -ef "$RL" ]; then
+  MUT_C="$ROOT/mutant-case-prove-rule-check.sh"
+  sed 's|^    same_file_or_ancestor "\$out_dir" "\$TOP" && OUT_INSIDE=1$|    case "$out_cand/" in "$TOP/"*) OUT_INSIDE=1 ;; esac   # MUTANT: string-prefix containment|' "$PROVER" > "$MUT_C"
+  if mutant_ok "$MUT_C" '# MUTANT: string-prefix containment'; then
+    ok "(o4a) the string-containment mutant is VALID: non-empty, differs from the prover, parses, the edit landed"
+    faithful "$MUT_C" "(o4b)"
+    RO="$(new_repo)"
+    prove_with "$MUT_C" "$RO" --check 'true' --counterexample "$DEL_PATCH" --out "$RO/proof.json" --confirm
+    [ "$(last_line)" = "verdict: UNPROVABLE (out_inside_repo)" ] && [ ! -e "$RO/proof.json" ] \
+      && ok "(o4c) the mutant still refuses a same-case in-repo --out ((d8) stays green)" \
+      || no "(o4c) the mutant changed (d8): $(last_line)"
+    RO_UP="$(printf '%s' "$RO" | tr '[:lower:]' '[:upper:]')"
+    prove_with "$MUT_C" "$RO" --check "$CHECK_TOKEN" --counterexample "$DEL_PATCH" --out "$RO_UP/caseproof.json" --confirm
+    [ -e "$RO/caseproof.json" ] \
+      && ok "(o4d) CONFIRMED: the string-prefix mutant writes the proof INTO the repo ('$(last_line)') — (l1) would go RED" \
+      || no "(o4d) REFUTED: the mutant wrote no in-repo proof — (l1) is not load-bearing"
+  else
+    no "(o4a) the string-containment mutation did not land — the control proves nothing"
+  fi
+  rm -f "$MUT_C"
+else
+  echo "  skip: (o4) needs a case-insensitive filesystem, like (l)"
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

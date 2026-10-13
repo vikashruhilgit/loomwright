@@ -19,8 +19,8 @@
 #                       no_head_commit, out_inside_repo, out_dir_missing, out_not_a_file, jq_missing,
 #                       sha256_unavailable, needs_confirmation, scratch_create_failed,
 #                       worktree_add_failed, patch_does_not_apply, patch_no_effect,
-#                       scratch_baseline_fails, timeout, interrupted, scratch_leak,
-#                       proof_write_failed.
+#                       scratch_baseline_fails, scratch_reset_failed, timeout, interrupted,
+#                       scratch_leak, proof_write_failed.
 # Could-not-examine is NEVER proven: every error path is UNPROVABLE and non-zero. This is a
 # correctness gate (CLAUDE.md bimodal-failure invariant) and fails CLOSED.
 #
@@ -32,10 +32,14 @@
 #   --counterexample  a unified-diff patch file (D1) introducing ONE violation of the rule. It is
 #                     applied ONLY inside the scratch copy, never to the user's tree.
 #   --out             write a proof file (D2) for every verdict — see "PROOF FILE" below. Must resolve
-#                     OUTSIDE the repo working tree (refused otherwise: out_inside_repo). The
-#                     containment check runs BEFORE any refusal that could write a proof, so an
-#                     in-repo --out never receives one on ANY path: an earlier refusal (bad_args,
-#                     counterexample_unreadable, …) still names its own reason, but writes nothing.
+#                     OUTSIDE the repo working tree (refused otherwise: out_inside_repo). Containment
+#                     is decided by FILE IDENTITY (`-ef`, device + inode, on the --out directory and
+#                     each of its ancestors against the repo root), never by comparing path strings, so
+#                     a case-variant path on a case-insensitive filesystem or a symlinked alias cannot
+#                     pass as "outside". The containment check runs BEFORE any refusal that could
+#                     write a proof, so an in-repo --out never receives one on ANY path: an earlier
+#                     refusal (bad_args, counterexample_unreadable, …) still names its own reason,
+#                     but writes nothing.
 #   --confirm         run without a prompt. See "CONFIRMATION".
 #   --timeout         per-leg timeout in seconds (positive integer; default 60). The environment
 #                     variable PROVE_RULE_CHECK_TIMEOUT sets the default; argv wins. It is the ONLY
@@ -49,13 +53,23 @@
 # candidate is not authorizing its replay — a human still runs `/rules check --confirm` for that.
 #
 # ORDER.
+#   0. HEAD is resolved to a commit sha BEFORE leg 1 and every scratch step uses that pinned sha, so a
+#      check that moves HEAD in the user's tree (commit, checkout) cannot change what the scratch
+#      legs copy.
 #   1. Leg 1: `bash -c "<check>" </dev/null` from the repo root (`git rev-parse --show-toplevel`).
 #      Non-zero ⇒ FAILS_NOW; the scratch copy is never created.
-#   2. Scratch: `mktemp -d` (physical path), `git worktree add --detach <scratch>/wt HEAD` with
-#      hooks disabled for that one command.
+#   2. Scratch: `mktemp -d` (physical path), `git worktree add --detach <scratch>/wt <pinned sha>`
+#      with hooks disabled for that one command. git's own record of the new worktree is identified
+#      by `-ef` against the scratch path and kept for the step 6 verify.
 #   3. Baseline: run the check in the scratch copy BEFORE the patch. Non-zero ⇒
 #      `UNPROVABLE (scratch_baseline_fails)` — the scratch copy (HEAD) differs from the working tree
 #      in something the check reads, so a later failure could not be credited to the patch.
+#   3b. Reset: the scratch copy is restored to the pinned sha (`reset --hard`, `clean -ffdx`, hooks
+#      disabled) and must then be byte-clean (`git status --porcelain --untracked-files=all
+#      --ignored` empty, HEAD == the pinned sha) — otherwise `UNPROVABLE (scratch_reset_failed)`.
+#      The baseline and leg 2 are independent: whatever the check wrote into its copy during the
+#      baseline is gone before the patch is applied, so leg 2's failure cannot come from the check's
+#      own leftovers, and the patch_no_effect probe in step 4 sees only the patch.
 #   4. `git apply` the patch in the scratch copy (fails ⇒ patch_does_not_apply; applies but changes
 #      nothing ⇒ patch_no_effect).
 #   5. Leg 2: run the check in the scratch copy. Exit 0 ⇒ VACUOUS, non-zero ⇒ PROVEN.
@@ -93,6 +107,10 @@
 #   - A hand-forged proof file is not prevented. The gate makes the proof step a required, recorded
 #     act, not a cryptographic one.
 #   - A check that daemonizes a process outlives the watchdog's process-tree kill.
+#   - Step 3b resets only the scratch TREE. State a check keeps elsewhere — a counter under $HOME or
+#     /tmp, the network, the git config / refs it shares with the user's repo — carries from the
+#     baseline into leg 2, and a nondeterministic check (time, randomness, races) can still read
+#     PROVEN by chance. A stateful or flaky check is the human reviewer's to reject.
 
 set -uo pipefail
 
@@ -108,6 +126,8 @@ CONFIRM=0
 TIMEOUT="${PROVE_RULE_CHECK_TIMEOUT:-60}"
 TOP=""
 SCRATCH=""; WT=""; WT_ATTEMPTED=0
+WT_RECORDED=""             # git's own record of the scratch worktree path, matched by identity (-ef)
+HEAD_SHA=""                # HEAD pinned before leg 1; every scratch step copies exactly this commit
 NOW_EXIT="null"; BASE_EXIT="null"; CE_EXIT="null"
 CHECK_SHA="null"; PATCH_SHA="null"
 FINISHED=0
@@ -193,7 +213,10 @@ cleanup_scratch() {
 }
 
 # scratch_gone — 0 only when the dir is gone AND no worktree entry names it. A worktree list that
-# cannot be read is NOT evidence of absence (fail closed).
+# cannot be read is NOT evidence of absence (fail closed). Once the dir is gone, identity (-ef) can
+# no longer be asked, so the entry is matched against BOTH the path this script passed and the path
+# git recorded for it (WT_RECORDED, found by -ef while the worktree still existed) — git may store a
+# spelling that differs from ours as a string.
 scratch_gone() {
   local listing
   [ -n "$SCRATCH" ] || return 0
@@ -201,6 +224,45 @@ scratch_gone() {
   if [ "$WT_ATTEMPTED" -eq 1 ]; then
     listing="$(git -C "$TOP" worktree list --porcelain 2>/dev/null)" || return 1
     printf '%s\n' "$listing" | grep -qxF "worktree $WT" && return 1
+    if [ -n "$WT_RECORDED" ]; then
+      printf '%s\n' "$listing" | grep -qxF "worktree $WT_RECORDED" && return 1
+    fi
+  fi
+  return 0
+}
+
+# same_file_or_ancestor <dir> <root> — 0 when <dir> IS <root> or lies under it, decided by file
+# identity (`-ef`: device + inode) on <dir> and each of its ancestors, never by comparing path
+# strings: a case-variant spelling on a case-insensitive filesystem, or a symlinked alias, names the
+# same directory and must be caught. <dir> must exist (the walk starts from a resolved directory).
+# Terminates at the filesystem root: dirname of `/` is `/`, and an unchanged parent ends the walk.
+same_file_or_ancestor() {
+  local d="$1" root="$2" parent
+  [ -n "$d" ] && [ -n "$root" ] || return 1
+  while :; do
+    [ "$d" -ef "$root" ] && return 0
+    parent="$(dirname "$d")"
+    [ "$parent" = "$d" ] && return 1
+    d="$parent"
+  done
+}
+
+# reset_scratch_copy — ORDER 3b. The baseline and leg 2 must start from the SAME clean copy, or a
+# check that writes into its own copy could earn PROVEN from its leftovers rather than from the
+# patch. Resets to the PINNED sha (a check that commits in its copy moves the detached HEAD), then
+# verifies rather than assumes: a status that cannot be read is not clean.
+reset_scratch_copy() {
+  local st cur
+  if ! git -C "$WT" -c core.hooksPath=/dev/null reset -q --hard "$HEAD_SHA" >"$SCRATCH_LOGS/reset.log" 2>&1 \
+     || ! git -C "$WT" -c core.hooksPath=/dev/null clean -qffdx >>"$SCRATCH_LOGS/reset.log" 2>&1; then
+    sed 's/^/    /' "$SCRATCH_LOGS/reset.log"
+    unprovable scratch_reset_failed "the scratch copy could not be reset to HEAD after the baseline run"
+  fi
+  st="$(git -C "$WT" status --porcelain --untracked-files=all --ignored 2>/dev/null)" || st="<git status failed>"
+  cur="$(git -C "$WT" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null)" || cur=""
+  if [ -n "$st" ] || [ "$cur" != "$HEAD_SHA" ]; then
+    printf '%s\n' "$st" | head -n 20 | sed 's/^/    /'
+    unprovable scratch_reset_failed "the scratch copy is not a clean copy of HEAD after the reset"
   fi
   return 0
 }
@@ -315,7 +377,9 @@ if [ -n "$OUT" ]; then
   if [ -n "$TOP_ERR" ]; then
     OUT_INSIDE=1
   elif [ -n "$TOP" ]; then
-    case "$out_cand/" in "$TOP/"*) OUT_INSIDE=1 ;; esac
+    # By identity, not by string: `pwd -P` keeps the case the caller typed, so on a case-insensitive
+    # filesystem a string-prefix test would read an upper-cased in-repo path as "outside".
+    same_file_or_ancestor "$out_dir" "$TOP" && OUT_INSIDE=1
   fi
   [ "$OUT_INSIDE" -eq 1 ] || OUT_ABS="$out_cand"
 fi
@@ -343,8 +407,10 @@ fi
 # TOP was resolved before the --out block; only its verdicts are issued here.
 [ -z "$TOP_ERR" ] || unprovable not_a_git_repo "$TOP_ERR"
 [ -n "$TOP" ] || unprovable not_a_git_repo "not inside a git working tree — no scratch worktree is possible"
-git -C "$TOP" rev-parse --verify -q 'HEAD^{commit}' >/dev/null 2>&1 \
-  || unprovable no_head_commit "the repo has no HEAD commit to copy into a scratch worktree"
+# Pinned HERE, before leg 1 runs the check in the user's tree: a check that commits or checks out
+# there must not change the commit the scratch legs copy.
+HEAD_SHA="$(git -C "$TOP" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null)" || HEAD_SHA=""
+[ -n "$HEAD_SHA" ] || unprovable no_head_commit "the repo has no HEAD commit to copy into a scratch worktree"
 
 [ "$OUT_INSIDE" -eq 0 ] \
   || unprovable out_inside_repo "--out must resolve OUTSIDE the repo working tree ($TOP) — the prover never writes into it"
@@ -396,10 +462,19 @@ fi
 
 # ---- Leg 2: HEAD + counterexample in a scratch worktree -------------------
 WT_ATTEMPTED=1
-if ! git -C "$TOP" -c core.hooksPath=/dev/null worktree add --detach "$WT" HEAD >"$SCRATCH_LOGS/wt-add.log" 2>&1; then
+if ! git -C "$TOP" -c core.hooksPath=/dev/null worktree add --detach "$WT" "$HEAD_SHA" >"$SCRATCH_LOGS/wt-add.log" 2>&1; then
   sed 's/^/    /' "$SCRATCH_LOGS/wt-add.log"
   unprovable worktree_add_failed "git worktree add failed"
 fi
+# Find git's own record of the new worktree BY IDENTITY while it still exists, for the verify-gone
+# check in finish(). No entry that is the scratch worktree ⇒ its removal could never be verified.
+while IFS= read -r wt_line; do
+  case "$wt_line" in "worktree "*) ;; *) continue ;; esac
+  if [ "${wt_line#worktree }" -ef "$WT" ]; then WT_RECORDED="${wt_line#worktree }"; break; fi
+done <<EOF
+$(git -C "$TOP" worktree list --porcelain 2>/dev/null)
+EOF
+[ -n "$WT_RECORDED" ] || unprovable worktree_add_failed "the scratch worktree is not in git's worktree list, so its removal could not be verified"
 
 run_check "$WT" baseline
 [ "$RUN_TIMED_OUT" -eq 1 ] && { say "baseline (scratch copy, before the patch): timed out after ${TIMEOUT}s"; unprovable timeout; }
@@ -410,6 +485,8 @@ if [ "$BASE_EXIT" -ne 0 ]; then
   show_stream stderr "$SCRATCH_LOGS/baseline.err"
   unprovable scratch_baseline_fails "the check fails on a clean copy of HEAD although it passes on the working tree — it depends on uncommitted state, so a failure after the patch could not be credited to the patch"
 fi
+
+reset_scratch_copy
 
 if ! git -C "$WT" apply "$PATCH_ABS" >"$SCRATCH_LOGS/apply.log" 2>&1; then
   sed 's/^/    /' "$SCRATCH_LOGS/apply.log"
