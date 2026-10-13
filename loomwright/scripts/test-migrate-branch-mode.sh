@@ -36,8 +36,9 @@
 #      the round-2 seed / verify-pr say A ⊆ B (never "equal") and the PR body does too
 #  12. a step with no recorded metadata branch (rollback) refuses before any push / branch / state
 #  13. a half-migrated FIRST migration (mode line already `on <b>`, history still tracked, no recorded
-#      after-merge) with an extra local managed file -> seed FAIL (A = B required, never A ⊆ B);
-#      mutation control: subset mode keyed on the mode line alone MUST turn it red
+#      after-merge) with an extra managed file on the branch that is NOT on this disk (another
+#      checkout's push) -> seed FAIL (A + U = B required, never A ⊆ B); mutation control: subset
+#      mode keyed on the mode line alone MUST turn it red
 #  14. a re-cut untrack PR stales the earlier verify-pr PASS: `state` says next verify-pr and
 #      after-merge refuses until verify-pr runs against the new PR
 #  15. after-merge proves the untrack PR merged: on a half-migrated repo (exact A = B seed PASS) an
@@ -86,6 +87,14 @@
 #      tracked-set reads; every other git call sees the real index): $EV force-tracked on main is
 #      still named on the OWNER DECISION line and seed PASSes; mutation control: ab_check's extra
 #      read as a bare `g ls-files` (honouring the inherited index) MUST turn it red
+#  26. the loomwright-studio field failure (A = 63, B = 66): the DEFAULT `/setup memory` block, 63
+#      run-history files tracked through it, and three `.supervisor/automate/<run>.dismissed-decisions`
+#      ledgers the block keeps ignored (porcelain empty). seed PASS naming U = 3 and B = A + U, state
+#      seed_a=63 seed_u=3 seed_b=66, the untrack PR body states "A + U vs B" (never "A vs B"),
+#      verify-pr PASS "B = A + U (66 = 63 + 3)", untrack PR leaves the ledgers alone, after-merge PASS
+#      with an empty porcelain and the three ledgers still on disk; mutation control: ab_check
+#      comparing B with A alone (the pre-fix relation) MUST reproduce the path-list failure naming the
+#      3 ledgers
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -306,9 +315,12 @@ gh_never_writes; check $? "rollback never merges"
 grep -qE 'xargs +(-[a-zA-Z0-9]+ +)*-r( |$)' "$SUT" && no "SUT uses GNU-only xargs -r" || ok "no GNU-only xargs -r in the SUT"
 
 # ---- mutation controls ---------------------------------------------------------------------------
-# build_mutant <dir> <sed-expr> <must-appear> — copies every sibling script, seds the SUT; 0 = built
+# build_mutant <dir> <sed-expr> <must-appear> — copies every sibling script, seds the SUT; 0 = built.
+# automate-helpers.sh sources its families from automate-helpers.d/ (preflight's resume-glob probe
+# runs it whenever .supervisor/automate exists), so that folder is copied too.
 build_mutant() {
   mkdir -p "$1"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$1/"; done
+  cp -R "$HERE/automate-helpers.d" "$1/" || return 1
   sed -e "$2" "$SUT" > "$1/migrate-branch-mode.sh" || return 1
   cmp -s "$SUT" "$1/migrate-branch-mode.sh" && return 1
   grep -qF "$3" "$1/migrate-branch-mode.sh" || return 1
@@ -405,19 +417,23 @@ check $? "rollback with no recorded branch exits 1 before any push, branch or st
 
 echo "== 13. half-migrated FIRST migration: A ⊆ B is never accepted on the mode line alone =="
 # half_migrated — main already carries the branch-mode block (setup-memory apply committed) while the
-# history is still tracked; A also holds one untracked local managed file. 0 = seed refused (A != B)
+# history is still tracked; after init another checkout puts a managed file on the branch that this
+# disk never held (the earlier-round shape subset mode would accept). It is not in U — U is local
+# files only — so it breaks B = A + U. 0 = seed refused (A != B)
 half_migrated() {
   mkworld history
   rm -rf "$W/O"; git clone -q "$W/origin.git" "$W/O" 2>/dev/null
   ( cd "$W/O" && bash "$HERE/setup-memory.sh" --root "$W/O" apply --branch-mode "$BR" >/dev/null && git add .gitignore && git commit -qm mode && git push -q origin main )
   git -C "$W/A" pull -q --ff-only origin main
-  echo '# local only' > "$W/A/.supervisor/jobs/done/local.md"
   to_protected A || { HALF_DETAIL="to_protected failed: $OUT"; return 2; }
+  ( cd "$W/O" && git fetch -q origin && git checkout -q -b "$BR" "origin/$BR" && mkdir -p .supervisor/jobs/done \
+    && echo '# remote only' > .supervisor/jobs/done/remote-only.md && git add -f .supervisor/jobs/done/remote-only.md \
+    && git commit -qm remote-only && git push -q origin "$BR" ) >/dev/null 2>&1 || { HALF_DETAIL="could not put remote-only.md on $BR"; return 2; }
   mb A seed
   HALF_DETAIL="rc=$RC mode=$(bash "$HERE/setup-memory.sh" --root "$W/A" mode) followup=$(st A followup) seed=$(st A seed)"
   [ "$RC" -eq 1 ] && [ "$(st A seed)" = FAIL ] && has "A != B" && ! has "A ⊆ B"
 }
-half_migrated; check $? "mode line 'on $BR' + tracked history + extra local file, no recorded after-merge -> seed FAIL ($HALF_DETAIL)"
+half_migrated; check $? "mode line 'on $BR' + tracked history + a branch-only managed file, no recorded after-merge -> seed FAIL ($HALF_DETAIL)"
 MUT="$TROOT/mut-subset-mode-line"
 if build_mutant "$MUT" 's/^  if \[ "\$(state_get followup)" = 1 \] && \[ "\$(read_mode)" = "on \$b" \]; then$/  if [ "$(read_mode)" = "on $b" ]; then/' '  if [ "$(read_mode)" = "on $b" ]; then'; then
   SCRIPT="$MUT/migrate-branch-mode.sh"
@@ -829,6 +845,54 @@ if build_mutant "$MUT" 's/^  env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE g
   else ok "mutation control: ab_check's extra read honouring the inherited GIT_INDEX_FILE reports no extra — (25) is load-bearing ($IE_DETAIL)"; fi
   SCRIPT="$SUT"
 else no "mutation control (ab_check index env) did not build — counts as FAIL"; fi
+
+echo "== 26. ignored dismissed-decisions ledgers (the A = 63, B = 66 field failure): B = A + U =="
+# dd_leg — the DEFAULT block on main (setup-memory apply, no --branch-mode): 3 history files + 60
+# automate/run-N.md committed through it (A = 63), then three ignored <run>.dismissed-decisions
+# ledgers on A's disk only (U = 3). 0 = seed PASS with B = A + U (66 = 63 + 3). Detail in DD_DETAIL.
+DDL=".supervisor/automate/automate-2026-10-12-000001.dismissed-decisions"
+dd_leg() {
+  local i
+  DD_DETAIL=""
+  mkworld history
+  rm -rf "$W/O"; git clone -q "$W/origin.git" "$W/O" 2>/dev/null
+  ( cd "$W/O" && printf '*.log\n' > .gitignore && bash "$HERE/setup-memory.sh" --root "$W/O" apply >/dev/null 2>&1 \
+    && rm -f .gitignore.backup.* && mkdir -p .supervisor/automate \
+    && i=1 && while [ "$i" -le 60 ]; do printf '# Automate Run: run-%s\n\n## Status: done\n' "$i" > ".supervisor/automate/run-$i.md"; i=$((i+1)); done \
+    && git add .gitignore .supervisor/automate && git commit -qm "default block + run history" && git push -q origin main ) >/dev/null 2>&1 \
+    || { DD_DETAIL="could not build the default-block world"; return 1; }
+  git -C "$W/A" pull -q --ff-only origin main
+  for i in 1 2 3; do
+    printf 'automate-x--a-1--dismissed-%s.md\tdrop\t2026-10-12T00:00:0%sZ\n' "$i" "$i" > "$W/A/${DDL%000001.dismissed-decisions}00000$i.dismissed-decisions"
+  done
+  [ -z "$(porcelain A)" ] && git -C "$W/A" check-ignore -q -- "$DDL" || { DD_DETAIL="the default block does not keep the ledger ignored (porcelain: $(porcelain A | tr '\n' ' '))"; return 1; }
+  to_protected A; [ "$(st A preflight)$(st A protect)" = PASSPASS ] || { DD_DETAIL="preflight=$(st A preflight) protect=$(st A protect): $OUT"; return 1; }
+  mb A seed
+  DD_DETAIL="seed rc=$RC seed=$(st A seed) a=$(st A seed_a) u=$(st A seed_u) b=$(st A seed_b)"
+  [ "$RC" -eq 0 ] && [ "$(st A seed)" = PASS ] && [ "$(st A seed_a)" = 63 ] && [ "$(st A seed_u)" = 3 ] && [ "$(st A seed_b)" = 66 ] \
+    && has "A (tracked managed on origin/main) = 63; U (managed run history on disk, gitignored) = 3; B (origin/$BR tree) = 66" \
+    && has "B = A + U" && grep -qx "  $DDL" <<<"$OUT"
+}
+dd_leg; check $? "default block + 3 ignored dismissed-decisions ledgers: seed PASS, A = 63, U = 3, B = 66 ($DD_DETAIL)"
+mb A untrack-pr; N26="$(pr_n pr_untrack)"
+{ [ "$RC" -eq 0 ] && grep -qF -- "- U (managed run history on disk, gitignored" "$STUBD/body.$N26" && grep -qF -- "- path-list diff A + U vs B: empty" "$STUBD/body.$N26" \
+  && ! grep -qF -- "diff A vs B" "$STUBD/body.$N26"; }; check $? "untrack PR body states the A + U relation, never 'A vs B' (rc=$RC)"
+git -C "$W/A" fetch -q origin; DDR="$(git -C "$W/A" diff --name-only --diff-filter=D "origin/main" "origin/$(st A untrack_branch)" | wc -l | tr -d ' ')"
+[ "$DDR" = 63 ]; check $? "the untrack PR untracks exactly A (63 paths; the ignored ledgers were never tracked) (got $DDR)"
+mb A verify-pr "$N26"; { [ "$RC" -eq 0 ] && has "B = A + U (66 = 63 + 3)"; }; check $? "verify-pr PASS states B = A + U (66 = 63 + 3) (rc=$RC)"
+owner_merge "$(st A untrack_branch)"; mb A after-merge
+DDK=0; for i in 1 2 3; do [ -f "$W/A/${DDL%000001.dismissed-decisions}00000$i.dismissed-decisions" ] && DDK=$((DDK+1)); done
+{ [ "$RC" -eq 0 ] && [ -z "$(porcelain A)" ] && [ "$DDK" = 3 ]; }; check $? "after-merge PASS, porcelain empty, the 3 ledgers still on disk (rc=$RC kept=$DDK)"
+gh_never_writes; check $? "leg 26: gh never merges nor writes a ruleset"
+MUT="$TROOT/mut-ab-no-u"
+if build_mutant "$MUT" 's/^    diff "\$SD\/au\.list" "\$SD\/b\.list" > "\$SD\/ab-names\.diff"; diff "\$SD\/au\.ent" "\$SD\/b\.ent" > "\$SD\/ab-blobs\.diff"$/    diff "$SD\/a.list" "$SD\/b.list" > "$SD\/ab-names.diff"; diff "$SD\/a.ent" "$SD\/b.ent" > "$SD\/ab-blobs.diff"/' \
+   '    diff "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"; diff "$SD/a.ent" "$SD/b.ent"'; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if dd_leg; then no "mutation control REFUTED: comparing B with A alone still passed the ignored-ledger seed ($DD_DETAIL)"
+  elif [ "$(st A seed)" = FAIL ] && has "!= B — path lists differ" && has "> $DDL"; then ok "mutation control: B compared with A alone reproduces the field failure — seed FAIL, the path lists differ by the ledgers ($DD_DETAIL; $(grep '^migrate-branch-mode: A (' <<<"$OUT" | sed 's/^migrate-branch-mode: //'))"
+  else no "mutation control: the pre-fix relation failed for another reason ($DD_DETAIL)"; printf '%s\n' "$OUT" | tail -n 6 | sed 's/^/    /'; fi
+  SCRIPT="$SUT"
+else no "mutation control (ab_check without U) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"
