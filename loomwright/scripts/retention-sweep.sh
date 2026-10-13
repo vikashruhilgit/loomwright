@@ -135,7 +135,7 @@ policy_rows() {
   row insights consumed - 'curation-status.sh (dashboard.md mtime IS the /insights watermark), build-floor.sh' 'never'
   row heal-signal consumed - 'build-insights.sh confusion matrix, build-loop-evidence.sh' 'never'
   row eval consumed - 'build-insights.sh, run-eval.sh' 'never'
-  row floor consumed - 'the Floor UI serves it; rebuilt by build-floor.sh' 'never'
+  row floor consumed - '/propose reads it (propose-work.sh); rebuilt by build-floor.sh' 'never'
   row handoff consumed - '/handoff output; rebuilt by build-handoff.sh' 'never'
   row worker-summaries consumed - 'Execute Manager, /dreaming (N most recent), build-floor.sh, result_block_parser.py' 'never'
   row scratch consumed - 'spike outputs cited from memory/provenance; no runtime reader — retained as provenance' 'never'

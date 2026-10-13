@@ -25,7 +25,7 @@ The repo is a **marketplace wrapper** containing four sibling plugins (loomwrigh
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
 - Plugin manifest: `loomwright/.claude-plugin/plugin.json`
 - Agents: `loomwright/agents/` (14 markdown prompts)
-- Commands: `loomwright/commands/` (24 entry points)
+- Commands: `loomwright/commands/` (23 entry points)
 - Skills: `loomwright/skills/` (42 skills, see `SKILLS_INDEX.md`)
 - Hooks: `loomwright/hooks/hooks.json`
 - Docs: `loomwright/docs/`

@@ -258,7 +258,7 @@ One recorded verdict per directory (v15.68.0): **tracked** (committed; never tou
 | `insights/` | consumed | `curation-status.sh` (`dashboard.md` mtime IS the `/insights` watermark — deleting it resets pending to "every signal log"), `build-floor.sh` | never |
 | `heal-signal/` | consumed | `build-insights.sh` confusion matrix, `build-loop-evidence.sh` | never |
 | `eval/` | consumed | `build-insights.sh`, `run-eval.sh` | never |
-| `floor/` | consumed | the Floor UI serves it; rebuilt by `build-floor.sh` | never |
+| `floor/` | consumed | `/propose` reads it (`propose-work.sh`); rebuilt by `build-floor.sh` | never |
 | `handoff/` | consumed | `/handoff` output; rebuilt by `build-handoff.sh` | never |
 | `worker-summaries/` | consumed | Execute Manager, `/dreaming` (N most recent), `build-floor.sh`, `result_block_parser.py` | never |
 | `scratch/` | consumed | spike outputs cited from memory/provenance; no runtime reader — retained as provenance | never |
