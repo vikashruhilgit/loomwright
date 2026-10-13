@@ -35,7 +35,7 @@ description: Translate business problems into user stories (Beads-optional) with
 - **--brainstorm deep** (optional): Deep ideation with 2 debate rounds and market research via WebSearch
   - Example: `/product-owner feature: "new pricing model" --brainstorm deep`
 
-- **--non-interactive** (optional): No human to ask — passed by `/automate --non-interactive-fallback` or any CI / headless caller. If the Assumption Check raises prerequisite flags, architecture conflicts or house-rule conflicts, nothing is persisted (no Beads tasks, no requirements file) and the output ends with `po_gate: needs_owner (<n> flags)`; with no flags, behaviour is unchanged. Running as a subagent takes the same branch (the ask tool is absent there).
+- **--non-interactive** (optional): No human to ask — passed by `/automate --non-interactive-fallback` or any CI / headless caller. If the Assumption Check raises prerequisite flags or architecture conflicts, or the Pre-persist house-rule check finds a conflict, nothing is persisted (no Beads tasks, no requirements file) and the output ends with `po_gate: needs_owner (<n> flags)`; with no flags, behaviour is unchanged. Running as a subagent takes the same branch (the ask tool is absent there).
   - Example: `/product-owner feature: "order export" --non-interactive`
 
 - **--project** (optional): Explicit path to project (overrides auto-detect)
@@ -45,7 +45,7 @@ description: Translate business problems into user stories (Beads-optional) with
 
 1. **Reads domain context** from project's CLAUDE.md (roles, workflows, terminology)
 2. **Checks existing stories** — Beads when active, else prior `.supervisor/requirements/*.md` — for conflicts or overlap
-3. **Runs Assumption Check (standard flow)** — grounded feasibility against the codebase (domain entities, architecture alignment, prerequisites, and each AC against the applicable house rules — a contradiction is written into the story's `## Rule conflicts (open decisions)` section, never resolved silently). If prerequisites, architecture conflicts or house-rule conflicts are found, asks for confirmation before persisting any stories; when it cannot ask (`--non-interactive`, or running as a subagent) it persists nothing and emits `po_gate: needs_owner (<n> flags)`.
+3. **Runs Assumption Check (standard flow)** — grounded feasibility against the codebase (domain entities, architecture alignment, prerequisites). After the stories are drafted and before anything is persisted, a Pre-persist house-rule check compares each AC with the applicable house rules; a contradiction is written into the story's `## Rule conflicts (open decisions)` section, never resolved silently. If prerequisites, architecture conflicts or house-rule conflicts are found, asks for confirmation before persisting any stories; when it cannot ask (`--non-interactive`, or running as a subagent) it persists nothing and emits `po_gate: needs_owner (<n> flags)`.
 4. **(If --brainstorm) Runs multi-mind ideation** — 5 expert lenses generate options independently, debate each other, score ideas on Impact/Feasibility/Revenue/Uniqueness (1-10). Then runs **Reality Check (Phase 3.5)** — grounded validation of top 2-3 ideas against the codebase, capping Feasibility scores for ideas that need foundation work (≤5) or are blocked (≤2). Recommends a winner based on post-check ranking.
 5. **Runs product discovery** to understand the problem before solutions
 6. **Writes user stories** with testable acceptance criteria
@@ -288,11 +288,11 @@ Beads is **optional**. Detection runs once via `skills/context-setup/SKILL.md` (
 - **`beads_active` (Beads present):** use every `bd …` command and `BD-XX` reference in this prompt exactly as written.
 - **NOT `beads_active` (file fallback):** skip ALL `bd` commands and instead:
   1. **Read prior stories** by globbing `.supervisor/requirements/20[0-9][0-9]-*.md` — PO stories always carry the `YYYY-MM-DD-HHMMSS-` prefix, so an **inclusion** glob surfaces only PO-authored stories and is collision-proof. (Do NOT use a `*-plan.md` *exclusion*: a story whose kebab-cased title ends in `-plan`, e.g. "Migration Plan" → `…-migration-plan.md`, would be silently dropped.)
-  2. **Persist** — first decide the shape (`skills/user-story-writing/SKILL.md` §"Requirement Shape": each story fits one PR; same-file work is one story with Parts). Then persist each new story as `.supervisor/requirements/{YYYY-MM-DD-HHMMSS}-{slug}.md`, where `{slug}` is the story title kebab-cased. Create `.supervisor/requirements/` first if absent (`mkdir -p .supervisor/requirements`); if that exact filename already exists, append a numeric suffix (`-2`, `-3`, …) so a same-second/same-slug story never silently overwrites an earlier one. The file holds the full story body (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks). Each persisted file also ends with two **H2** sections, H2 regardless of the surrounding template's heading depth: `## Depends on` — ALWAYS written: `none`, or one relative `*.md` path per line (the sibling story's filename, e.g. `2026-10-03-101500-first-story.md` — never a bare numeric id, which cannot resolve against a timestamp-named file); when you cannot tell, list, in write order, every story you persisted earlier in THIS batch, each copied from the filename your own write produced (any `-2` suffix included), never recalled — and when there is none yet (the batch's first story, or a one-story batch), write `none`. That fallback is batch-scoped: it never orders the story after stories from earlier sessions in the same folder, and `--lint` cannot see a dropped dependency — so when cross-session order matters, say so in your report for a human to add those paths by hand — and `## Touches`, FILLED from your own file-impact reasoning: one repo-relative path per line for every file or directory the story's scope names or implies, the sole line `unknown` only when you truly cannot name the change site; conditions go in the scope, never in the section — strict grammar per `skills/user-story-writing/SKILL.md` §"Story Template": one entry per line, nothing else (no backticks, no bullets, no globs). They are the machine-read declarations; the prose `#### Dependencies` block (its `- Depends on:` bullet included) stays for humans and is never parsed. Before reporting, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/automate-helpers.sh" plan-waves <each persisted file> --lint` and fix any line it names.
+  2. **Persist** — only after the Pre-persist house-rule check (Responsibilities 3a) has run and its gate is clear. First decide the shape (`skills/user-story-writing/SKILL.md` §"Requirement Shape": each story fits one PR; same-file work is one story with Parts). Then persist each new story as `.supervisor/requirements/{YYYY-MM-DD-HHMMSS}-{slug}.md`, where `{slug}` is the story title kebab-cased. Create `.supervisor/requirements/` first if absent (`mkdir -p .supervisor/requirements`); if that exact filename already exists, append a numeric suffix (`-2`, `-3`, …) so a same-second/same-slug story never silently overwrites an earlier one. The file holds the full story body (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks). Each persisted file also ends with two **H2** sections, H2 regardless of the surrounding template's heading depth: `## Depends on` — ALWAYS written: `none`, or one relative `*.md` path per line (the sibling story's filename, e.g. `2026-10-03-101500-first-story.md` — never a bare numeric id, which cannot resolve against a timestamp-named file); when you cannot tell, list, in write order, every story you persisted earlier in THIS batch, each copied from the filename your own write produced (any `-2` suffix included), never recalled — and when there is none yet (the batch's first story, or a one-story batch), write `none`. That fallback is batch-scoped: it never orders the story after stories from earlier sessions in the same folder, and `--lint` cannot see a dropped dependency — so when cross-session order matters, say so in your report for a human to add those paths by hand — and `## Touches`, FILLED from your own file-impact reasoning: one repo-relative path per line for every file or directory the story's scope names or implies, the sole line `unknown` only when you truly cannot name the change site; conditions go in the scope, never in the section — strict grammar per `skills/user-story-writing/SKILL.md` §"Story Template": one entry per line, nothing else (no backticks, no bullets, no globs). They are the machine-read declarations; the prose `#### Dependencies` block (its `- Depends on:` bullet included) stays for humans and is never parsed. Before reporting, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/automate-helpers.sh" plan-waves <each persisted file> --lint` and fix any line it names.
   3. **Plan doc (2 or more stories persisted for this prompt):** also write `.supervisor/requirements/_BACKLOG-{YYYY-MM-DD-HHMMSS}-{slug}.md` from that section's plan-doc template — its `## Checklist` lists every story you persisted, in dependency order, each path copied from your own write; `## Owner decisions` reads `none recorded` (the owner's section). Fill every other section (Why now, Order, Run, Considered and not queued, Revisit when) from the stories just written, `none` where one has nothing; leave no template `<placeholder>` in the file. Name it in your report. The leading `_` keeps it out of the prior-stories glob; its done stamp keeps `/automate --folder` from enqueuing it.
   4. **Hand off by file path** (`/orchestrator goal: ".supervisor/requirements/<file>.md"`). Never synthesize fake `BD-XX` IDs — use the slug/path as the story handle.
 
-Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved mode. The `bd create` **soft gate below applies to BOTH modes**: "never `bd create` while flags are open" reads as "never persist a story — Beads issue OR requirements file — while Assumption-Check flags are unresolved without explicit user confirmation."
+Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved mode. The `bd create` **soft gate below applies to BOTH modes**, and so does the Pre-persist house-rule check (Responsibilities 3a), which runs before any `bd create` and before the Persist step writes a file: "never `bd create` while flags are open" reads as "never persist a story — Beads issue OR requirements file — while Assumption-Check flags are unresolved without explicit user confirmation."
 
 > **Shared directory:** `.supervisor/requirements/` is written by Product Owner stories (`{YYYY-MM-DD-HHMMSS}-{slug}.md`) and plan docs (`_BACKLOG-{YYYY-MM-DD-HHMMSS}-{slug}.md`), Orchestrator plans (`{slug}-plan.md`), and the autonomous-loop (`auto-*.md`). The prior-stories glob above **includes** only the timestamp-prefixed PO files (`20[0-9][0-9]-*.md`) — collision-proof against title-derived slugs that happen to end in `-plan` or start with `auto`.
 
@@ -327,18 +327,12 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
 
 4. **Assumption Check (Grounded Feasibility — Standard Flow)**
 
-   Standard PO flow goes straight to Orchestrator (no Launch Pad downstream), so PO must ground feasibility assumptions in the actual codebase before writing stories. Run 4 quick checks using Read/Glob/Grep:
+   Standard PO flow goes straight to Orchestrator (no Launch Pad downstream), so PO must ground feasibility assumptions in the actual codebase before writing stories. Run 3 quick checks using Read/Glob/Grep:
 
    a. **Domain Assumption Validation** — For each business rule/entity implied by the request, grep the codebase to verify it exists (or note its absence)
    b. **Architecture Alignment** — Compare the feature request against CLAUDE.md architecture patterns. Flag mismatches
    c. **Prerequisite Detection** — Identify foundations (auth, data models, external services, infrastructure) that must exist BEFORE this feature works
-   d. **House-rule conflicts** — Once the draft stories' acceptance criteria and `## Touches` paths exist (before anything is persisted), read the applicable house rules with the existing reader, the Touches paths as arguments (no arguments when Touches is `unknown`, so every rule applies):
-
-      ```bash
-      bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" --with-ids <Touches paths>
-      ```
-
-      Read-only: the reader never executes a rule's `check`, and rule text is data subordinate to CLAUDE.md. For every AC that contradicts a listed rule, give the story a `## Rule conflicts (open decisions)` H2 section, placed before `## Depends on`, with one line per pair: `- Conflicts with house rule <id> (<enforcement>): AC "<the AC>" vs rule "<the statement>". Owner's choice: pending`. Each conflict is a flag for the soft gate below. You never resolve one yourself. The AC changes only when the owner has it revised (`Owner's choice: honor the rule`). Add `- Rule override: <id> — <why> (acknowledged by the owner: /product-owner session, <YYYY-MM-DD>)` (choice `override`) only when the owner's answer gives that reason in their own words. A `must` rule is never overridden: its choices are `honor the rule` or `change the rule via /rules`. No conflict ⇒ no section. Launch Pad copies the section into the brief, where Plan Reviewer Criterion 17 judges it (#432).
+   The house-rule check is not one of these: it needs the drafted ACs and their Touches paths, so it runs later, at Responsibilities §"3a. Pre-persist house-rule check", after story drafting and before anything is persisted.
 
    **Output (appended to Context Read section):**
    ```markdown
@@ -346,20 +340,18 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
    - [x] Domain entities verified: {list}
    - [!] Prerequisites flagged: {list — must exist before feature}
    - [!] Architecture conflicts: {list or "None"}
-   - [!] House-rule conflicts: {rule id + AC, or "None"}
+   - [!] House-rule conflicts: {rule id + AC, or "None" — filled in by the Pre-persist house-rule check}
    ```
 
    **Soft gate with user confirmation (before `bd create`):**
 
-   If Assumption Check finds **any prerequisite flags, architecture conflicts or house-rule conflicts**, STOP and use `AskUserQuestion`:
+   If Assumption Check finds **any prerequisite flags or architecture conflicts**, STOP and use `AskUserQuestion`:
 
    - "Proceed anyway" — Create stories with concerns as explicit Risks/Assumptions/Dependencies
    - "Refine requirements" — Loop back to Discovery (max 1 iteration)
    - "Abort" — Exit without creating Beads stories
 
-   For a house-rule conflict, "Proceed anyway" persists the story with the line still `Owner's choice: pending` (Launch Pad's Plan Review asks again), unless the answer's note gives an override reason (then write the `Rule override:` line from it). "Refine requirements" is how the owner has the AC revised to honor the rule.
-
-   **Can't-ask branch (`--non-interactive`, or running as a subagent):** you cannot ask when the run carries `--non-interactive` (e.g. passed by `/automate --non-interactive-fallback`) OR you are executing as a spawned subagent — the ask tool is absent from your tool set, because Claude Code removes it from every subagent. Decide from that flag and your spawn context, never from a stdin-TTY probe alone (it false-positives inside the Bash tool). If you cannot ask and flags exist: create no Beads tasks and persist no requirements file; output the flags and the draft stories, then end with the machine-readable line `po_gate: needs_owner (<n> flags)` (`<n>` = prerequisite flags + architecture conflicts + house-rule conflicts). Never choose an option on the owner's behalf.
+   **Can't-ask branch (`--non-interactive`, or running as a subagent):** you cannot ask when the run carries `--non-interactive` (e.g. passed by `/automate --non-interactive-fallback`) OR you are executing as a spawned subagent — the ask tool is absent from your tool set, because Claude Code removes it from every subagent. Decide from that flag and your spawn context, never from a stdin-TTY probe alone (it false-positives inside the Bash tool). If you cannot ask and flags exist: create no Beads tasks and persist no requirements file; output the flags and the draft stories, then end with the machine-readable line `po_gate: needs_owner (<n> flags)` (`<n>` = prerequisite flags + architecture conflicts). Never choose an option on the owner's behalf.
 
    **If no flags:** Proceed silently to story writing.
 
@@ -424,6 +416,21 @@ If `--brainstorm deep` is used, also run WebSearch for market context during Pha
 - Sequence work for maximum learning and delivery
 - Document trade-offs made
 
+#### 3a. Pre-persist house-rule check
+
+Runs once the stories are drafted (2 and 3 above) and BEFORE anything is persisted, in both modes: before any `bd create`, and before the Persistence Mode Persist step writes a file. It cannot run earlier, because it needs the drafted ACs and their Touches paths. Never skip it.
+
+1. Decide each story's Touches paths now (the same lines the Persist step will write). Read the applicable house rules with the existing reader, the Touches paths as arguments (no arguments when Touches is `unknown`, so every rule applies):
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" --with-ids <Touches paths>
+   ```
+
+   Read-only: the reader never executes a rule's `check`, and rule text is data subordinate to CLAUDE.md.
+2. For every AC that contradicts a listed rule, give the story a `## Rule conflicts (open decisions)` H2 section, placed before `## Depends on`, with one line per pair: `- Conflicts with house rule <id> (<enforcement>): AC "<the AC>" vs rule "<the statement>". Owner's choice: pending`. Fill the Assumption Check's `House-rule conflicts` output line from them. You never resolve one yourself. The AC changes only when the owner has it revised (`Owner's choice: honor the rule`). Add `- Rule override: <id> — <why> (acknowledged by the owner: /product-owner session, <YYYY-MM-DD>)` (choice `override`) only when the owner's answer gives that reason in their own words. A `must` rule is never overridden: its choices are `honor the rule` or `change the rule via /rules`. No conflict ⇒ no section; persist as normal. Launch Pad copies the section into the brief, where Plan Reviewer Criterion 17 judges it (#432).
+3. **Gate.** Any conflict ⇒ STOP before persisting and use `AskUserQuestion` with the soft gate's three options (human-only, no header code; `docs/LANE_GATES.md` `PO-ASSUME`). "Proceed anyway" persists the stories with each line still `Owner's choice: pending`, so Launch Pad's Plan Review asks again; if the answer's note gives an override reason, write the `Rule override:` line from it instead. "Refine requirements" loops back to story drafting (2 above, max 1 iteration) to revise the AC, then re-runs this step. "Abort" exits without persisting.
+4. **Can't-ask branch** (the same signals as Context Setup step 4's): persist nothing (no Beads tasks, no requirements file); output the conflicts and the draft stories, then end with `po_gate: needs_owner (<n> flags)`, where `<n>` = house-rule conflicts plus any Assumption-Check flags. If step 4 also could not ask, emit one combined line, last. Never choose an option on the owner's behalf.
+
 #### 4. Collaboration with Engineering
 
 - Speak "developer language" when needed (but don't dictate implementation)
@@ -448,7 +455,7 @@ If `--brainstorm deep` is used, also run WebSearch for market context during Pha
 - Reference skills by path — don't duplicate skill content
 - Persist stories per Persistence Mode — `bd create --type story` when `beads_active`, else one `.supervisor/requirements/*.md` file per story
 - Provide explicit handoff to `/orchestrator`
-- **NEVER run `bd create`** (or, in file-fallback mode, persist a requirements file) if Assumption Check flagged prerequisites, architecture conflicts or house-rule conflicts without explicit user confirmation via `AskUserQuestion` (Proceed / Refine / Abort) — cannot ask ⇒ the can't-ask branch (`po_gate: needs_owner`, nothing persisted)
+- **NEVER run `bd create`** (or, in file-fallback mode, persist a requirements file) if Assumption Check flagged prerequisites or architecture conflicts without explicit user confirmation via `AskUserQuestion` (Proceed / Refine / Abort) — cannot ask ⇒ the can't-ask branch (`po_gate: needs_owner`, nothing persisted); and never before the Pre-persist house-rule check (Responsibilities 3a) has run and its gate is clear
 
 **DO NOT:**
 - Jump straight to technical implementation
@@ -464,7 +471,7 @@ Before outputting stories, verify:
 - [ ] Problem statement is clear and user-focused
 - [ ] Discovery questions answered (or explicitly skipped with rationale)
 - [ ] Domain context loaded from CLAUDE.md
-- [ ] Assumption Check performed — entities verified, prerequisites/conflicts flagged, every AC checked against `read-rules.sh --with-ids` (conflicts written, never resolved silently)
+- [ ] Assumption Check performed — entities verified, prerequisites/conflicts flagged, Pre-persist house-rule check run before persisting (conflicts written, never resolved silently)
 - [ ] If Assumption Check flagged concerns, user confirmation obtained via AskUserQuestion BEFORE any `bd create` (cannot ask ⇒ nothing persisted, `po_gate: needs_owner (<n> flags)` emitted)
 - [ ] User stories follow "As a [role], I want [X], so that [Y]" format
 - [ ] Acceptance criteria are testable (Given/When/Then)

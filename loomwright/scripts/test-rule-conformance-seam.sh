@@ -30,16 +30,19 @@
 #           unless an owner-acknowledged `Rule override:` line is present; a scope line is never an
 #           override), Launch Pad carrying `## Rule conflicts (open decisions)` through verbatim and
 #           owning the 17c gate (action 2b, catalog code LP-RULE-OVR, can't-ask status
-#           rule_conflict_non_interactive, inventory row), Product Owner's Assumption Check d.
-#           (reads the rules, writes the section; agent<->command mirror byte-identical), and the
+#           rule_conflict_non_interactive, inventory row), Product Owner's §"3a. Pre-persist house-rule check"
+#           (reads the rules, writes the section, its own gate; agent<->command mirror byte-identical;
+#           an ORDER check pins it after story drafting, outside Context Setup, before Persist), and the
 #           fixtures under fixtures/rule-conformance/advisory/ (override grammar with negative
 #           controls, story->brief byte-identical carry, reader trace, plan-waves --lint). PART 4
-#           also kills mutants that delete 17c, Launch Pad action 2b, or the PO d. check. Prompt
+#           also kills mutants that delete 17c, Launch Pad action 2b, or the PO 3a step, and one
+#           that moves the 3a step back into Context Setup step 4 (the order check must catch it). Prompt
 #           BEHAVIOUR (a model actually flagging the contradiction) is the live probe on those
 #           fixtures, not this test.
 #
 # Env overrides (used by PART 4's re-invocation only): SEAM_LP (agents/launch-pad.md),
-# SEAM_PR (agents/plan-reviewer.md), SEAM_PO (agents/product-owner.md), SEAM_NO_MUTATION=1
+# SEAM_PR (agents/plan-reviewer.md), SEAM_PO / SEAM_POC (agents/ and commands/product-owner.md),
+# SEAM_NO_MUTATION=1
 # (skip PART 4 in the child).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -50,7 +53,7 @@ LP="${SEAM_LP:-$PLUGIN/agents/launch-pad.md}"
 PR="${SEAM_PR:-$PLUGIN/agents/plan-reviewer.md}"
 LPC="$PLUGIN/commands/launch-pad.md"
 PO="${SEAM_PO:-$PLUGIN/agents/product-owner.md}"
-POC="$PLUGIN/commands/product-owner.md"
+POC="${SEAM_POC:-$PLUGIN/commands/product-owner.md}"
 ARCH="$PLUGIN/docs/ARCHITECTURE_CONTRACTS.md"
 FIX="$HERE/fixtures/rule-conformance"
 READER="$HERE/read-rules.sh"
@@ -261,20 +264,57 @@ for f in "$LP" "$LPC"; do
     || no "$(basename "$(dirname "$f")")/launch-pad.md Can't-ask rule lacks rule_conflict_non_interactive"
 done
 has "$LPC" 'record-override' && ok "command mirror: 17c gate options" || no "command mirror 17c gate"
-# 5c — Product Owner reads the rules and writes the section (agent + command mirror).
-po_d() { block "$1" '^   d\. \*\*House-rule conflicts\*\*' '^   \*\*Output \(appended to Context Read section\):\*\*'; }
-POD_A="$(po_d "$PO")"; POD_C="$(po_d "$POC")"
-[ -n "$POD_A" ] && ok "PO agent: Assumption Check d. House-rule conflicts" || no "PO agent d. missing"
-bhas "$POD_A" "bash \"$ROOTVAR/scripts/read-rules.sh\" --with-ids" && ok "PO d: runs the reader with --with-ids" || no "PO d reader call"
-for s in "$CONFLICTS_H" 'Conflicts with house rule <id>' "Owner's choice: pending" 'never executes' 'never resolve' 'before `## Depends on`'; do
-  bhas "$POD_A" "$s" && ok "PO d names: $s" || no "PO d lacks: $s"
-done
-[ -n "$POD_A" ] && [ "$POD_A" = "$POD_C" ] && ok "PO d block byte-identical in agent and command (mirror)" || no "PO d block differs agent vs command"
+# 5c — Product Owner reads the rules and writes the section (agent + command mirror), at the right
+# POINT IN THE FLOW. PR #518's first draft put the check inside Context Setup step 4, which runs before
+# any story is drafted, so it had no ACs or Touches paths to check: text present, position wrong. The
+# ORDER predicate below pins the position, and PART 4 kills a mutant that moves the step back.
+STEP_H='#### 3a. Pre-persist house-rule check'
+po_d() { block "$1" '^#### 3a\. Pre-persist house-rule check$' '^#### 4\. '; }
+# lnum <file> <ERE> — line number of the first match, empty when none.
+lnum() { LN_P="$2" awk '$0 ~ ENVIRON["LN_P"] { print NR; exit }' "$1"; }
+# po_order_ok <file> — exit 0 iff the house-rule check is its own step AFTER story drafting
+# (Responsibilities 2) and before the next responsibility, is NOT inside Context Setup, and the
+# Persist step, the both-modes bd create sentence and the Critical Rules bullet each make it a
+# precondition of persisting. Silent: used on the real files AND the mutants.
+po_order_ok() {
+  n_step="$(grep -cxF -- "$STEP_H" "$1")"; [ "$n_step" = 1 ] || return 1
+  l_step="$(lnum "$1" '^#### 3a\. Pre-persist house-rule check$')"
+  l_draft="$(lnum "$1" '^#### 2\. Requirement Definition$')"; l_next="$(lnum "$1" '^#### 4\. ')"
+  l_cs="$(lnum "$1" '^### Context Setup')"; l_resp="$(lnum "$1" '^### Responsibilities$')"
+  [ -n "$l_step" ] && [ -n "$l_draft" ] && [ -n "$l_next" ] && [ -n "$l_cs" ] && [ -n "$l_resp" ] || return 1
+  [ "$l_draft" -lt "$l_step" ] && [ "$l_step" -lt "$l_next" ] || return 1
+  { [ "$l_step" -lt "$l_cs" ] || [ "$l_step" -ge "$l_resp" ]; } || return 1
+  cs="$(block "$1" '^### Context Setup' '^### Responsibilities$')"
+  bhas "$cs" 'read-rules.sh' && return 1
+  bhas "$cs" 'or house-rule conflicts**' && return 1
+  persist="$(grep -E '^  2\. \*\*Persist\*\*' "$1")"
+  bhas "$persist" 'only after the Pre-persist house-rule check (Responsibilities 3a) has run and its gate is clear' || return 1
+  modes="$(grep -F 'soft gate below applies to BOTH modes**' "$1")"
+  bhas "$modes" 'Pre-persist house-rule check (Responsibilities 3a), which runs before any `bd create` and before the Persist step writes a file' || return 1
+  crit="$(grep -F -- '- **NEVER run `bd create`**' "$1")"
+  bhas "$crit" 'never before the Pre-persist house-rule check (Responsibilities 3a) has run' || return 1
+  return 0
+}
 for f in "$PO" "$POC"; do
-  CAB="$(grep -F -- "**Can't-ask branch" "$f")"
-  grep -qF '+ house-rule conflicts' <<<"$CAB" \
-    && ok "$(basename "$(dirname "$f")")/product-owner.md can't-ask count includes house-rule conflicts" \
-    || no "$(basename "$(dirname "$f")")/product-owner.md can't-ask count omits house-rule conflicts"
+  po_order_ok "$f" && ok "$(basename "$(dirname "$f")")/product-owner.md: house-rule check is its own step after story drafting, outside Context Setup, and a precondition of Persist / bd create" \
+    || no "$(basename "$(dirname "$f")")/product-owner.md: house-rule check is out of order (or Persist / bd create / Critical Rules do not require it)"
+done
+POD_A="$(po_d "$PO")"; POD_C="$(po_d "$POC")"
+[ -n "$POD_A" ] && ok "PO agent: $STEP_H present" || no "PO agent: $STEP_H missing"
+bhas "$POD_A" "bash \"$ROOTVAR/scripts/read-rules.sh\" --with-ids" && ok "PO 3a: runs the reader with --with-ids" || no "PO 3a reader call"
+for s in "$CONFLICTS_H" 'Conflicts with house rule <id>' "Owner's choice: pending" 'never executes' 'never resolve' 'before `## Depends on`' \
+         'BEFORE anything is persisted, in both modes' 'loops back to story drafting (2 above, max 1 iteration)' \
+         '`po_gate: needs_owner (<n> flags)`' '`<n>` = house-rule conflicts plus any Assumption-Check flags' 'persist nothing'; do
+  bhas "$POD_A" "$s" && ok "PO 3a names: $s" || no "PO 3a lacks: $s"
+done
+[ -n "$POD_A" ] && [ "$POD_A" = "$POD_C" ] && ok "PO 3a block byte-identical in agent and command (mirror)" || no "PO 3a block differs agent vs command"
+for f in "$PO" "$POC"; do
+  CAB="$(grep -F -- "   **Can't-ask branch (\`--non-interactive\`" "$f")"
+  if [ -n "$CAB" ] && bhas "$CAB" '(`<n>` = prerequisite flags + architecture conflicts)' && ! bhas "$CAB" 'house-rule'; then
+    ok "$(basename "$(dirname "$f")")/product-owner.md: the step-4 can't-ask count no longer claims house-rule conflicts"
+  else
+    no "$(basename "$(dirname "$f")")/product-owner.md: the step-4 can't-ask line still counts house-rule conflicts (they cannot exist yet)"
+  fi
 done
 # 5d — the gate is catalogued human-only and inventoried with its can't-ask status.
 CAT="$(bash "$HERE/lane-policy.sh" catalog 2>/dev/null | awk -F'\t' '$1 == "LP-RULE-OVR" { print $2 "|" $3 }')"
@@ -346,22 +386,37 @@ if [ "${SEAM_NO_MUTATION:-0}" != "1" ]; then
     if [ "$src" = pr ]; then child "$WORK/lp.md" "$WORK/$m.md"; else child "$WORK/lp-m.md" "$WORK/pr.md"; fi
     [ $? -ne 0 ] && ok "mutant $m (${m%%-*}) is killed" || no "mutant $m survived"
   done
-  # #432 plan half: deleting 17c, Launch Pad's action 2b, or the PO d. check must each be killed.
-  cp "$PO" "$WORK/po.md"
-  child3() { SEAM_NO_MUTATION=1 SEAM_LP="$1" SEAM_PR="$2" SEAM_PO="$3" bash "$HERE/test-rule-conformance-seam.sh" >/dev/null 2>&1; }
-  if child3 "$WORK/lp.md" "$WORK/pr.md" "$WORK/po.md"; then ok "positive control (with PO copy) passes"
-  else no "positive control (with PO copy) failed"; fi
+  # #432 plan half: deleting 17c, Launch Pad's action 2b or the PO 3a step must each be killed, and
+  # so must MOVING the 3a step back into Context Setup step 4 (PR #518 review round 1). The PO
+  # mutations are applied to BOTH PO copies, so the agent<->command mirror check stays green and
+  # cannot be what kills them.
+  cp "$PO" "$WORK/po.md"; cp "$POC" "$WORK/poc.md"
+  child4() { SEAM_NO_MUTATION=1 SEAM_LP="$1" SEAM_PR="$2" SEAM_PO="$3" SEAM_POC="$4" bash "$HERE/test-rule-conformance-seam.sh" >/dev/null 2>&1; }
+  if child4 "$WORK/lp.md" "$WORK/pr.md" "$WORK/po.md" "$WORK/poc.md"; then ok "positive control (with PO copies) passes"
+  else no "positive control (with PO copies) failed"; fi
   awk '!/^- \*\*17c — advisory contradiction\.\*\*/' "$WORK/pr.md" > "$WORK/pr17c-m.md"
   awk 'f && /^3\. If Plan Review returned PASS/ {f=0} /^2b\. \*\*House-rule override NEEDS_HUMAN/ {f=1} !f' "$WORK/lp.md" > "$WORK/lp2b-m.md"
-  awk 'f && /^   \*\*Output \(appended to Context Read section\):\*\*/ {f=0} /^   d\. \*\*House-rule conflicts\*\*/ {f=1} !f' "$WORK/po.md" > "$WORK/pod-m.md"
-  for trio in "pr17c-m:lp:pr17c-m:po" "lp2b-m:lp2b-m:pr:po" "pod-m:lp:pr:pod-m"; do
-    m="${trio%%:*}"; rest="${trio#*:}"; a="${rest%%:*}"; rest="${rest#*:}"; b="${rest%%:*}"; c="${rest#*:}"
-    case "$m" in pr*) orig=pr ;; lp*) orig=lp ;; *) orig=po ;; esac
-    if [ ! -s "$WORK/$m.md" ]; then no "mutant $m is empty"; continue; fi
-    if cmp -s "$WORK/$m.md" "$WORK/$orig.md"; then no "mutant $m is identical to its original"; continue; fi
-    child3 "$WORK/$a.md" "$WORK/$b.md" "$WORK/$c.md"
+  # pod: delete the 3a step. pomv: cut it and paste it just before step 4's Output block.
+  for c in po poc; do
+    awk 'f && /^#### 4\. / {f=0} /^#### 3a\. Pre-persist house-rule check$/ {f=1} !f' "$WORK/$c.md" > "$WORK/pod-$c-m.md"
+    awk 'NR==FNR { if ($0 ~ /^#### 4\. /) g=0; if ($0 ~ /^#### 3a\. Pre-persist house-rule check$/) g=1; if (g) blk = blk $0 "\n"; next }
+         f && /^#### 4\. / {f=0} /^#### 3a\. Pre-persist house-rule check$/ {f=1} f {next}
+         /^   \*\*Output \(appended to Context Read section\):\*\*$/ { printf "%s", blk } { print }' \
+      "$WORK/$c.md" "$WORK/$c.md" > "$WORK/pomv-$c-m.md"
+  done
+  if po_order_ok "$WORK/po.md" && ! po_order_ok "$WORK/pomv-po-m.md"; then ok "order predicate: passes the real step, fails the moved-back mutant"
+  else no "order predicate does not tell the real position from the moved-back mutant"; fi
+  for spec in "pr17c-m:lp:pr17c-m:po:poc:pr" "lp2b-m:lp2b-m:pr:po:poc:lp" \
+              "pod-m:lp:pr:pod-po-m:pod-poc-m:po" "pomv-m:lp:pr:pomv-po-m:pomv-poc-m:po"; do
+    IFS=: read -r m a b c d orig <<<"$spec"
+    probe="$WORK/$c.md"; case "$m" in pr*) probe="$WORK/$b.md" ;; lp*) probe="$WORK/$a.md" ;; esac
+    if [ ! -s "$probe" ]; then no "mutant $m is empty"; continue; fi
+    if cmp -s "$probe" "$WORK/$orig.md"; then no "mutant $m is identical to its original"; continue; fi
+    child4 "$WORK/$a.md" "$WORK/$b.md" "$WORK/$c.md" "$WORK/$d.md"
     [ $? -ne 0 ] && ok "mutant $m is killed" || no "mutant $m survived"
   done
+  ! cmp -s "$WORK/pomv-po-m.md" "$WORK/po.md" && [ "$(grep -c . "$WORK/pomv-po-m.md")" = "$(grep -c . "$WORK/po.md")" ] \
+    && ok "pomv mutant moves the step (same non-blank line count), it does not delete it" || no "pomv mutant changed the line count"
 fi
 
 echo
