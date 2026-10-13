@@ -12,8 +12,9 @@
 #   (c) FAILS_NOW — a failing check ⇒ FAILS_NOW, exit 1, the check ran EXACTLY once (leg 2 never
 #       ran), proof counterexample_exit null; add-rule.sh refuses it (AC 3).
 #   (d) UNPROVABLE — patch does not apply / not a git repo / `git worktree add` fails / timeout /
-#       bad args / scratch baseline fails / --out inside the repo ⇒ `UNPROVABLE (<reason>)`, exit 2
-#       (AC 4, AC 12).
+#       bad args / scratch baseline fails / --out inside the repo / jq absent with --out / a TMPDIR
+#       that cannot hold the scratch dir / the proof write failing after the legs pass ⇒
+#       `UNPROVABLE (<reason>)`, exit 2 (AC 4, AC 12).
 #   (e) needs_confirmation — no --confirm, no TTY, ambient env "confirm" variables set ⇒ the canary
 #       check never runs, `UNPROVABLE (needs_confirmation)` (AC 5).
 #   (f) no leak — for every verdict, `git worktree list --porcelain` + `git status --porcelain` are
@@ -119,7 +120,7 @@ sha_of() {   # independent of the prover's helper: whichever tool this host has
 # it with known bytes, and fingerprint the whole test HOME. Every prove run below is checked against it.
 STAMP_REL="$(sed -n 's|^RULES_CHECK_STAMP_FILE="\${HOME:-}/\(.*\)"$|\1|p' "$CHECKER" | head -1)"
 STAMP="$HOME/$STAMP_REL"
-home_print() { ( cd "$HOME" && find . -type f -exec cksum {} \; | LC_ALL=C sort ); }
+home_print() { ( cd "$HOME" && find . -type f -exec cksum {} \; | env LC_ALL=C sort ); }
 if [ -n "$STAMP_REL" ]; then
   mkdir -p "$(dirname "$STAMP")"; printf '{"seed":"untouched"}\n' > "$STAMP"
   ok "(h0) premise: stamp path derived from rules-check.sh ($STAMP_REL) and seeded"
@@ -134,7 +135,7 @@ RA="$(new_repo)"
 prove_in "$RA" --check "$CHECK_TOKEN" --counterexample "$DEL_PATCH" --out "$ROOT/a.proof.json" --confirm
 [ "$RC" -eq 0 ] && [ "$(last_line)" = "verdict: PROVEN" ] \
   && ok "(a1) PROVEN, exit 0" || no "(a1) expected PROVEN/0, got rc=$RC: $OUT"
-printf '%s' "$OUT" | grep -qF 'now leg (current tree' && printf '%s' "$OUT" | grep -qF 'counterexample leg (scratch copy of HEAD + patch): exit 1' \
+grep -qF 'now leg (current tree' < <(printf '%s' "$OUT") && grep -qF 'counterexample leg (scratch copy of HEAD + patch): exit 1' < <(printf '%s' "$OUT") \
   && ok "(a2) both legs' exit codes are printed" || no "(a2) leg output missing: $OUT"
 if jq -e --arg h "$(sha_of "$CHECK_TOKEN")" \
      '.schema=="rule-check-proof/1" and .verdict=="PROVEN" and .reason==null and .check_sha256==$h
@@ -175,7 +176,7 @@ prove_in "$RC_REPO" --check "printf 'x\\n' >> '$CNT'; exit 3" --counterexample "
   && ok "(c1) FAILS_NOW, exit 1" || no "(c1) expected FAILS_NOW/1, got rc=$RC: $OUT"
 c_runs="$(wc -l < "$CNT" | tr -d '[:space:]')"
 [ "$c_runs" = "1" ] && jq -e '.now_exit==3 and .baseline_exit==null and .counterexample_exit==null' "$ROOT/c.proof.json" >/dev/null 2>&1 \
-  && printf '%s' "$OUT" | grep -qF 'counterexample leg: not run' \
+  && grep -qF 'counterexample leg: not run' < <(printf '%s' "$OUT") \
   && ok "(c2) the check ran exactly once: the counterexample leg never ran (proof exits null)" \
   || no "(c2) leg 2 ran or was recorded (runs=$c_runs): $(cat "$ROOT/c.proof.json" 2>/dev/null)"
 no_leak "(c3) FAILS_NOW"
@@ -318,6 +319,80 @@ OUT="$( ( cd "$RD" && PATH="$SHA_STUB:$PATH" bash "$PROVER" --check "printf x >>
 expect_unprovable "(d12) no working sha256 tool" sha256_unavailable
 [ ! -s "$CNT12" ] && ok "(d12b) the check never ran" || no "(d12b) the check ran although the proof could not be hashed"
 
+# (d13) jq absent from PATH with --out ⇒ nothing runs. Every PATH dir holding a jq is replaced by a
+# symlink farm of that dir minus jq (one `ln -s dir/*` each), so every other tool resolves unchanged.
+nojq_path() {
+  local IFS=: d out="" n=0 farm
+  for d in $PATH; do
+    [ -n "$d" ] || continue
+    if [ -x "$d/jq" ]; then
+      n=$((n + 1)); farm="$ROOT/nojq.$n"; mkdir -p "$farm"
+      ln -s "$d"/* "$farm"/ 2>/dev/null
+      rm -f "$farm/jq"; d="$farm"
+    fi
+    out="${out:+$out:}$d"
+  done
+  printf '%s' "$out"
+}
+NOJQ_PATH="$(nojq_path)"
+if ! PATH="$NOJQ_PATH" command -v jq >/dev/null 2>&1 && PATH="$NOJQ_PATH" command -v git >/dev/null 2>&1; then
+  ok "(d13-premise) jq is off the stubbed PATH, git still on it"
+else
+  no "(d13-premise) the jq-less PATH still resolves jq (or lost git): $NOJQ_PATH"
+fi
+RD13="$(new_repo)"; CNT13="$ROOT/d13.count"; : > "$CNT13"; rm -f "$ROOT/d13.proof.json"
+RUN_TMP="$(mktemp -d "$ROOT/tmp.XXXXXX")"; BEFORE="$(state "$RD13" 2>&1)"
+OUT="$( ( cd "$RD13" && TMPDIR="$RUN_TMP" PATH="$NOJQ_PATH" bash "$PROVER" --check "printf x >> '$CNT13'" \
+          --counterexample "$DEL_PATCH" --out "$ROOT/d13.proof.json" --confirm ) </dev/null 2>&1 )"; RC=$?
+AFTER="$(state "$RD13" 2>&1)"
+expect_unprovable "(d13) jq absent with --out" jq_missing
+[ ! -s "$CNT13" ] && [ ! -e "$ROOT/d13.proof.json" ] \
+  && ok "(d13b) the check never ran and no proof file was written" \
+  || no "(d13b) the check ran or a proof appeared without jq (runs=$(wc -c < "$CNT13" | tr -d '[:space:]'))"
+no_leak "(d13c) UNPROVABLE (jq_missing)"
+
+# (d14) a TMPDIR that cannot hold the scratch dir (it does not exist) ⇒ scratch_create_failed, before
+# leg 1 runs; the out-of-repo proof still records the reason.
+RD14="$(new_repo)"; CNT14="$ROOT/d14.count"; : > "$CNT14"; rm -f "$ROOT/d14.proof.json"
+RUN_TMP="$(mktemp -d "$ROOT/tmp.XXXXXX")"; BEFORE="$(state "$RD14" 2>&1)"
+OUT="$( ( cd "$RD14" && TMPDIR="$RUN_TMP/no-such-dir" bash "$PROVER" --check "printf x >> '$CNT14'" \
+          --counterexample "$DEL_PATCH" --out "$ROOT/d14.proof.json" --confirm ) </dev/null 2>&1 )"; RC=$?
+AFTER="$(state "$RD14" 2>&1)"
+expect_unprovable "(d14) TMPDIR does not exist" scratch_create_failed
+[ ! -s "$CNT14" ] && ok "(d14b) the check never ran (the scratch dir comes before leg 1)" \
+  || no "(d14b) the check ran although no scratch dir could be created"
+jq -e '.verdict=="UNPROVABLE" and .reason=="scratch_create_failed"' "$ROOT/d14.proof.json" >/dev/null 2>&1 \
+  && ok "(d14c) the proof records UNPROVABLE (scratch_create_failed)" \
+  || no "(d14c) proof: $(cat "$ROOT/d14.proof.json" 2>/dev/null)"
+no_leak "(d14d) UNPROVABLE (scratch_create_failed)"
+
+# (d15) the proof write fails AFTER every leg passed (would be PROVEN): a jq shim refuses only the
+# proof-building call (the one naming counterexample_exit) ⇒ proof_write_failed; a stale file at --out
+# is removed, not left to read as a proof, and no temp proof is left beside it.
+JQ_SHIM="$ROOT/jq-shim"; mkdir -p "$JQ_SHIM"
+cat > "$JQ_SHIM/jq" <<'SH'
+#!/usr/bin/env bash
+for a in "$@"; do
+  if [ "$a" = counterexample_exit ]; then echo "shim: jq proof write refused" >&2; exit 5; fi
+done
+exec "$STUB_REAL_JQ" "$@"
+SH
+chmod +x "$JQ_SHIM/jq"
+RD15="$(new_repo)"; D15_OUT="$(mktemp -d "$ROOT/d15out.XXXXXX")"
+printf '{"verdict":"PROVEN","stale":true}\n' > "$D15_OUT/p.json"
+RUN_TMP="$(mktemp -d "$ROOT/tmp.XXXXXX")"; BEFORE="$(state "$RD15" 2>&1)"
+OUT="$( ( cd "$RD15" && TMPDIR="$RUN_TMP" PATH="$JQ_SHIM:$PATH" STUB_REAL_JQ="$(command -v jq)" \
+          bash "$PROVER" --check "$CHECK_TOKEN" --counterexample "$DEL_PATCH" --out "$D15_OUT/p.json" --confirm ) </dev/null 2>&1 )"; RC=$?
+AFTER="$(state "$RD15" 2>&1)"
+grep -qF 'counterexample leg (scratch copy of HEAD + patch): exit 1' < <(printf '%s' "$OUT") \
+  && ok "(d15-premise) both legs ran and the patch was caught — the run would have been PROVEN" \
+  || no "(d15-premise) the legs did not reach PROVEN, so (d15) could pass for the wrong reason: $OUT"
+expect_unprovable "(d15) the proof write fails after the checks pass" proof_write_failed
+[ -z "$(ls -A "$D15_OUT")" ] \
+  && ok "(d15b) the stale --out file is removed and no temp proof is left in the --out directory" \
+  || no "(d15b) left in the --out directory: $(ls -A "$D15_OUT")"
+no_leak "(d15c) UNPROVABLE (proof_write_failed)"
+
 # ============================================================================
 echo "== (j) SIGTERM during leg 2 ⇒ UNPROVABLE (interrupted), scratch still removed =="
 # Leg 1 passes on the working tree (the untracked file exists); the clean scratch copy lacks it, so the
@@ -345,7 +420,7 @@ OUT="$( ( cd "$RE" && TMPDIR="$RUN_TMP" RULES_CHECK_CONFIRM=1 PROVE_RULE_CHECK_C
 AFTER="$(state "$RE" 2>&1)"
 [ ! -e "$CANARY" ] && ok "(e1) the canary file does not exist — the check never ran" || no "(e1) SECURITY: the check ran without --confirm"
 expect_unprovable "(e2) unconfirmed run" needs_confirmation
-printf '%s' "$OUT" | grep -qF "touch '$CANARY'" && printf '%s' "$OUT" | grep -qF -- '-TOKEN here' \
+grep -qF "touch '$CANARY'" < <(printf '%s' "$OUT") && grep -qF -- '-TOKEN here' < <(printf '%s' "$OUT") \
   && ok "(e3) the check AND the patch text were displayed before the (refused) confirmation" \
   || no "(e3) check/patch not displayed: $OUT"
 no_leak "(e4) UNPROVABLE (needs_confirmation)"
@@ -358,7 +433,7 @@ OUT="$( ( cd "$RG" && PATH="$SHIM:$PATH" STUB_REAL_GIT="$REAL_GIT" STUB_FAIL_WOR
 expect_unprovable "(g1) worktree removal fails (would otherwise be PROVEN)" scratch_leak
 jq -e '.verdict=="UNPROVABLE" and .reason=="scratch_leak"' "$ROOT/g.proof.json" >/dev/null 2>&1 \
   && ok "(g2) the proof records the leak, not the PROVEN it overrode" || no "(g2) proof: $(cat "$ROOT/g.proof.json" 2>/dev/null)"
-printf '%s' "$OUT" | grep -qF 'git worktree prune' && ok "(g3) the leak report names the remedy" || no "(g3) no remedy named: $OUT"
+grep -qF 'git worktree prune' < <(printf '%s' "$OUT") && ok "(g3) the leak report names the remedy" || no "(g3) no remedy named: $OUT"
 git -C "$RG" worktree prune >/dev/null 2>&1   # clean the fixture's stale entry
 
 # ============================================================================

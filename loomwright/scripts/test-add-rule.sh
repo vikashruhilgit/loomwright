@@ -365,8 +365,8 @@ p_refused() {
   run_writer "$r" "$@" --confirm; rc1=$RC; out1="$OUT"
   run_writer "$r" "$@"
   if [ "$rc1" -ne 0 ] && [ "$RC" -ne 0 ] && [ "$(count_rule_files "$r")" = "0" ] \
-     && printf '%s' "$out1" | grep -qE 'rejected:|refusing' && printf '%s' "$out1" | grep -qF -- "$frag" \
-     && printf '%s' "$OUT" | grep -qF -- "$frag" && ! printf '%s' "$OUT" | grep -qF 'PLANNED WRITE'; then
+     && grep -qE 'rejected:|refusing' < <(printf '%s' "$out1") && grep -qF -- "$frag" < <(printf '%s' "$out1") \
+     && grep -qF -- "$frag" < <(printf '%s' "$OUT") && ! grep -qF 'PLANNED WRITE' < <(printf '%s' "$OUT"); then
     ok "$label (rc $rc1 confirmed / $RC dry-run, nothing written, no plan printed)"
   else
     no "$label NOT refused as expected (rc $rc1 / $RC, files=$(count_rule_files "$r")): $out1"
@@ -395,7 +395,7 @@ for t in shasum sha256sum openssl; do printf '#!/bin/sh\nexit 1\n' > "$SHA_STUB/
 RP4E="$(new_repo)"
 OUT="$( ( cd "$RP4E" && PATH="$SHA_STUB:$PATH" bash "$WRITER" --category pg --statement "proof gate four e" \
           --enforcement must --check "$CHECK_P" --proof "$PROOF_P" --confirm ) 2>&1 )"; RC=$?
-[ "$RC" -eq 2 ] && [ "$(count_rule_files "$RP4E")" = "0" ] && printf '%s' "$OUT" | grep -qF 'no working sha256 tool' \
+[ "$RC" -eq 2 ] && [ "$(count_rule_files "$RP4E")" = "0" ] && grep -qF 'no working sha256 tool' < <(printf '%s' "$OUT") \
   && ok "(P4e) no working sha256 tool ⇒ refused as could-not-examine (exit 2), nothing written" \
   || no "(P4e) expected exit 2 + 'no working sha256 tool', got rc=$RC: $OUT"
 # (P5) --proof with --retract: refused by the R1 guard. A REAL target is seeded so that, without the
@@ -405,12 +405,12 @@ printf '%s' '[{"id":"p5-target","category":"safety","statement":"a retract targe
   > "$RP5/.agent/rules/safety.json"
 before_p5="$(cat "$RP5/.agent/rules/safety.json")"
 run_writer "$RP5" --retract --target "p5-target" --reason "x"
-printf '%s' "$OUT" | grep -qF 'PLANNED RETRACT' \
+grep -qF 'PLANNED RETRACT' < <(printf '%s' "$OUT") \
   && ok "(P5) premise: the same retract WITHOUT --proof is accepted (dry-run plans it) — the target is real" \
   || no "(P5) premise: the retract target is not retractable, so (P5) below could pass for the wrong reason: $OUT"
 run_writer "$RP5" --retract --target "p5-target" --reason "x" --proof "$PROOF_P" --confirm
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF -- 'cannot be combined with add-only flags' \
-   && printf '%s' "$OUT" | grep -qF -- '--proof' && [ "$(cat "$RP5/.agent/rules/safety.json")" = "$before_p5" ]; then
+if [ "$RC" -ne 0 ] && grep -qF -- 'cannot be combined with add-only flags' < <(printf '%s' "$OUT") \
+   && grep -qF -- '--proof' < <(printf '%s' "$OUT") && [ "$(cat "$RP5/.agent/rules/safety.json")" = "$before_p5" ]; then
   ok "(P5) --proof with --retract rejected by R1 (message names --proof), store byte-identical"
 else
   no "(P5) --proof with --retract not rejected by R1 (rc=$RC): $OUT"
@@ -433,7 +433,7 @@ run_writer "$RP7" --category pg --statement "a must claim with no mechanism yet"
 # (P8) a valid proof on a dry-run still only PLANS (the gate passes, the confirm gate still holds).
 RP8="$(new_repo)"
 run_writer "$RP8" --category pg --statement "proof gate eight" --enforcement must --check "$CHECK_P" --proof "$PROOF_P"
-[ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF 'PLANNED WRITE' && [ "$(count_rule_files "$RP8")" = "0" ] \
+[ "$RC" -eq 0 ] && grep -qF 'PLANNED WRITE' < <(printf '%s' "$OUT") && [ "$(count_rule_files "$RP8")" = "0" ] \
   && ok "(P8) valid PROVEN proof without --confirm ⇒ PLANNED WRITE, nothing written" \
   || no "(P8) valid-proof dry-run wrong (rc=$RC files=$(count_rule_files "$RP8")): $OUT"
 

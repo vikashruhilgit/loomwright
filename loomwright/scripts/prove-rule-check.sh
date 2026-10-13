@@ -42,8 +42,13 @@
 #                     but writes nothing.
 #   --confirm         run without a prompt. See "CONFIRMATION".
 #   --timeout         per-leg timeout in seconds (positive integer; default 60). The environment
-#                     variable PROVE_RULE_CHECK_TIMEOUT sets the default; argv wins. It is the ONLY
-#                     environment variable this script reads as an input.
+#                     variable PROVE_RULE_CHECK_TIMEOUT sets the default; argv wins.
+#
+# ENVIRONMENT. Exactly two environment variables are read as inputs, and neither confirms anything:
+#   PROVE_RULE_CHECK_TIMEOUT  the default per-leg timeout (see --timeout; argv wins).
+#   TMPDIR                    where the scratch dir (run logs + the scratch worktree) is created:
+#                             `mktemp -d "${TMPDIR:-/tmp}/prove-rule-check.XXXXXX"`, /tmp when unset.
+#                             A TMPDIR that cannot hold it ⇒ `UNPROVABLE (scratch_create_failed)`.
 #
 # CONFIRMATION (scope 2/3 — same trust boundary as `rules-check.sh --confirm`, skills/rules/SKILL.md
 # §9). A check is arbitrary shell. The check string and the patch text are PRINTED first; the check
@@ -225,9 +230,11 @@ scratch_gone() {
   [ ! -e "$SCRATCH" ] || return 1
   if [ "$WT_ATTEMPTED" -eq 1 ]; then
     listing="$(git -C "$TOP" worktree list --porcelain 2>/dev/null)" || return 1
-    printf '%s\n' "$listing" | grep -qxF "worktree $WT" && return 1
+    # Whole-line literal match in pure bash: no pipe, no here-string temp file, so no I/O failure can
+    # read as "no entry" (the quoted parts of a case pattern are literal).
+    case $'\n'"$listing"$'\n' in *$'\n'"worktree $WT"$'\n'*) return 1 ;; esac
     if [ -n "$WT_RECORDED" ]; then
-      printf '%s\n' "$listing" | grep -qxF "worktree $WT_RECORDED" && return 1
+      case $'\n'"$listing"$'\n' in *$'\n'"worktree $WT_RECORDED"$'\n'*) return 1 ;; esac
     fi
   fi
   return 0
