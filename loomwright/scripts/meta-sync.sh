@@ -238,7 +238,7 @@
 # CONSENT (push only; pull always takes learning-store paths from the branch) — the metadata
 # branch can be PUBLIC and the learning stores hold internal reasoning the scrub only
 # pattern-checks, so a push publishes them only when this repo's user-scope record says
-# `granted`. The record lives under $HOME/.claude/loomwright/ (one JSON file, keyed by origin's
+# `granted`. The record lives in the user's scope (one JSON file — setup-memory.sh header: CONSENT names it — keyed by origin's
 # owner/repo, else the literal origin URL) and is written ONLY by `setup-memory.sh consent grant |
 # decline` (asked by `/setup memory`); this script only READS it, through `setup-memory.sh consent
 # status` (the one reader — it never asks). Anything but an exact `granted` — no record,

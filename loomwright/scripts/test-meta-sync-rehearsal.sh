@@ -189,13 +189,14 @@ check $? "no consent: every named check PASSes and the learning stores stay off 
 mkworld
 bash "$HERE/setup-memory.sh" --root "$W/src" consent grant >/dev/null 2>&1
 [ "$(bash "$HERE/setup-memory.sh" --root "$W/src" consent status)" = granted ]; check $? "fixture: consent granted for the fixture under the scratch HOME"
-CREC="$HOME/.claude/loomwright/meta-sync-consent.json"; CREC0="$(cat "$CREC" 2>/dev/null)"
+home_sig() { (cd "$HOME" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done); }
+CREC0="$(home_sig)"
 run --branch "$BR"
 { [ "$RC" -eq 0 ] && all_pass && has "info: learning stores: consent 'granted' — 2 learning-store path(s) on $BR (of 2 local)" \
   && has "info: learning stores round-tripped: 2 of 2 byte-identical"; }
 check $? "consent granted: every named check PASSes, the twin contract + .provenance.jsonl reach the branch and round-trip (rc=$RC)"
 [ "$RC" -eq 0 ] || printf '%s\n' "$OUT" | grep -E '^(FAIL|info)' | sed 's/^/    /'
-[ "$(cat "$CREC" 2>/dev/null)" = "$CREC0" ]; check $? "the caller's consent record is unchanged (the scratch clone's grant lives in the scratch HOME only)"
+[ "$(home_sig)" = "$CREC0" ]; check $? "the caller's HOME (its consent record included) is byte-unchanged (the scratch clone's grant lives in the scratch HOME only)"
 mutant verify-present-full meta-sync-rehearsal.sh 'MUTANT-FULL' verify-present <<'SED'
 s|^bash "\$MS" list-managed --run-history --root "\$A" 2>/dev/null \| env LC_ALL=C sort > "\$S/L.list"$|bash "$MS" list-managed --root "$A" 2>/dev/null \| env LC_ALL=C sort > "$S/L.list"  # MUTANT-FULL|
 SED

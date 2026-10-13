@@ -90,7 +90,7 @@
 # every candidate name is taken the write is REFUSED outright rather than clobbering one), and (b)
 # `.supervisor/config.json` `.setup_memory.repo_allowlist` (backup-first jq merge that preserves
 # every unrelated key). It writes NOTHING under `~/.claude/` — with ONE exception: the user-scope
-# learning-store consent record `$HOME/.claude/loomwright/meta-sync-consent.json` (CONSENT_FILE_REL),
+# learning-store consent record, CONSENT_FILE_REL under $HOME (see CONSENT below),
 # written ONLY by `consent grant` / `consent decline` (one atomic mktemp + rename beside it, the
 # record's other repos' entries preserved) — and it NEVER runs `git add`, `git rm`, `git commit` or
 # any other history-touching command. `check`, `allowlist`, `filter-ledger`, `valid-branch`, `mode`
@@ -153,7 +153,7 @@
 # publishes the learning stores (twin contracts + .provenance.jsonl, agent-memory proposals, the
 # eval JSONL files) only when this repo's record reads `granted`. The record is a fact about the
 # USER, not the repo (a repo-relative file could at most REQUEST, never grant — the telemetry
-# invariant): ONE JSON file, $HOME/.claude/loomwright/meta-sync-consent.json,
+# invariant): ONE JSON file, $HOME/<CONSENT_FILE_REL>,
 #   {"schema_version": 1, "repos": {"<key>": {"learning_stores": "granted"|"declined",
 #                                             "recorded_at": "<UTC ISO-8601>"}}}
 # keyed by origin's `owner/repo` (remote_slug — it NEVER guesses an owner), falling back to the
@@ -2306,7 +2306,7 @@ do_consent() {
     { [ -f "$file" ] && jq -e 'type == "object" and ((.repos // {}) | type == "object")' "$file" >/dev/null 2>&1; } \
       || { echo "consent: NOT recorded — ~/$CONSENT_FILE_REL exists but is not a JSON object with an object .repos; repair or remove it by hand. Nothing was written."; exit 0; }
   fi
-  mkdir -p "$dir" 2>/dev/null || { echo "consent: NOT recorded — could not create ~/.claude/loomwright/. Nothing was written."; exit 0; }
+  mkdir -p "$dir" 2>/dev/null || { echo "consent: NOT recorded — could not create ~/$(dirname "$CONSENT_FILE_REL")/. Nothing was written."; exit 0; }
   tmp="$(mktemp "$file.tmp.XXXXXX" 2>/dev/null)" || { echo "consent: NOT recorded — could not create a temp file beside ~/$CONSENT_FILE_REL. Nothing was written."; exit 0; }
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if { if [ -e "$file" ]; then cat "$file"; else printf '{}'; fi; } \

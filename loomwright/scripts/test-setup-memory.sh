@@ -141,7 +141,7 @@
 #   (k)  the suite never touched the plugin repo's own .gitignore
 #   (cs) `consent grant | decline | status` (af36-03): the user-scope learning-store consent record —
 #        status prints `none` / `granted` / `declined` (one line); grant / decline write EXACTLY one
-#        file, $HOME/.claude/loomwright/meta-sync-consent.json (nothing under the repo, no other
+#        file, the user-scope record CONSENT_FILE_REL names (nothing under the repo, no other
 #        HOME file), keyed by origin's owner/repo (a filesystem-path origin: the literal URL), other
 #        repos' entries preserved; no origin -> `none` and nothing written; a malformed record is
 #        never clobbered; a bad action writes nothing; status / check / mode write nothing; the
@@ -2663,7 +2663,7 @@ csg_repo0="$(tree_sig "$CSG")"
 out_cs="$(cs "$CSG" grant)"
 hasF "consent: recorded granted for Acme/Widget" "$out_cs" && ok "(cs) grant reports the record keyed by origin's owner/repo" || no "(cs) grant output: $out_cs"
 [ "$(tree_sig "$CS_HOME" | cut -d' ' -f1)" = "./.claude/loomwright/meta-sync-consent.json" ] \
-  && ok "(cs) grant wrote EXACTLY one file, \$HOME/.claude/loomwright/meta-sync-consent.json" || no "(cs) grant wrote: $(tree_sig "$CS_HOME" | cut -d' ' -f1 | tr '\n' ' ')"
+  && ok "(cs) grant wrote EXACTLY one file, the user-scope consent record" || no "(cs) grant wrote: $(tree_sig "$CS_HOME" | cut -d' ' -f1 | tr '\n' ' ')"
 [ "$(tree_sig "$CSG")" = "$csg_repo0" ] && ok "(cs) grant wrote nothing under the repo" || no "(cs) grant changed the repo tree"
 [ "$(jq -r '.repos["Acme/Widget"].learning_stores' "$CS_REC" 2>/dev/null)" = "granted" ] && ok "(cs) the record holds .repos[\"Acme/Widget\"].learning_stores = granted" || no "(cs) record shape wrong: $(cat "$CS_REC" 2>/dev/null)"
 [ "$(cs "$CSG" status)" = "granted" ] && ok "(cs) status reads it back as 'granted'" || no "(cs) status after grant"
