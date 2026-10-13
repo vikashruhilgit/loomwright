@@ -36,8 +36,13 @@
 #       still reads patch_no_effect although the baseline dirtied the copy.
 #   (p) HEAD is pinned before leg 1: a check that commits in the user's tree (and in its own copy)
 #       still proves against the commit that was HEAD when the run started.
-#   (n) the reset cannot be done (`git reset` stubbed to fail) ⇒ `UNPROVABLE (scratch_reset_failed)`.
-#   (o) mutation controls, in-suite, for (l) (m) (n) (p): each VALID mutant reverts one fix, still
+#   (n) the reset cannot be done (the restoring `git checkout` stubbed to fail) ⇒
+#       `UNPROVABLE (scratch_reset_failed)`.
+#   (q) the reset never moves a shared ref: a check that leaves its scratch copy ON a pre-existing
+#       branch (`git checkout feat`) still reads PROVEN, and every ref of the user's repo (`feat`
+#       included) is byte-identical after the run; a copy left on a branch AT the pinned sha (the
+#       restoring checkout stubbed to a no-op) is refused by the detached-HEAD verify.
+#   (o) mutation controls, in-suite, for (l) (m) (n) (p) (q): each VALID mutant reverts one fix, still
 #       PROVES a valid run (faithful), and turns its test RED.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -218,6 +223,7 @@ prev=""
 for a in "$@"; do
   if [ "$prev" = worktree ] && [ "$a" = "${STUB_FAIL_WORKTREE:-}" ]; then echo "shim: git worktree $a refused" >&2; exit 128; fi
   if [ -n "${STUB_FAIL_SUBCMD:-}" ] && [ "$a" = "$STUB_FAIL_SUBCMD" ]; then echo "shim: git $a refused" >&2; exit 128; fi
+  if [ -n "${STUB_NOOP_SUBCMD:-}" ] && [ "$a" = "$STUB_NOOP_SUBCMD" ]; then exit 0; fi
   prev="$a"
 done
 exec "$STUB_REAL_GIT" "$@"
@@ -429,13 +435,51 @@ prove_in "$RP" --check "$CHECK_DRIFT" --counterexample "$DEL_PATCH" --out "$ROOT
 echo "== (n) the scratch copy cannot be reset ⇒ UNPROVABLE (scratch_reset_failed) =="
 RN="$(new_repo)"
 RUN_TMP="$(mktemp -d "$ROOT/tmp.XXXXXX")"; BEFORE="$(state "$RN" 2>&1)"
-OUT="$( ( cd "$RN" && TMPDIR="$RUN_TMP" PATH="$SHIM:$PATH" STUB_REAL_GIT="$REAL_GIT" STUB_FAIL_SUBCMD=reset \
+OUT="$( ( cd "$RN" && TMPDIR="$RUN_TMP" PATH="$SHIM:$PATH" STUB_REAL_GIT="$REAL_GIT" STUB_FAIL_SUBCMD=checkout \
           bash "$PROVER" --check "$CHECK_TOKEN" --counterexample "$DEL_PATCH" --out "$ROOT/n.proof.json" --confirm ) </dev/null 2>&1 )"; RC=$?
 AFTER="$(state "$RN" 2>&1)"
-expect_unprovable "(n1) git reset fails after the baseline (would otherwise be PROVEN)" scratch_reset_failed
+expect_unprovable "(n1) the restoring git checkout fails after the baseline (would otherwise be PROVEN)" scratch_reset_failed
 jq -e '.reason=="scratch_reset_failed" and .baseline_exit==0 and .counterexample_exit==null' "$ROOT/n.proof.json" >/dev/null 2>&1 \
   && ok "(n2) proof: the baseline ran, leg 2 never did" || no "(n2) proof: $(cat "$ROOT/n.proof.json" 2>/dev/null)"
 no_leak "(n3) UNPROVABLE (scratch_reset_failed)"
+
+# ============================================================================
+echo "== (q) the reset never moves a shared ref: a branch the check checks out in its copy is untouched =="
+# `feat` is one commit ahead of HEAD and shares src/a.txt with it. In its scratch copy (cwd */wt) the
+# check checks `feat` out, so the baseline leaves the copy ON that branch; the reset that follows must
+# move only the copy's own HEAD — a `reset --hard` would rewrite `feat` (refs are shared with the
+# user's repo) and leave the user's commit reachable from the reflog alone.
+RQ="$(new_repo)"
+( cd "$RQ" && git checkout -qb feat && printf 'feat\n' > src/c.txt && git add src/c.txt \
+    && git commit -qm feat && git checkout -q - ) >/dev/null 2>&1
+FEAT_SHA="$(git -C "$RQ" rev-parse --verify -q refs/heads/feat 2>/dev/null)"
+REFS_BEFORE="$(git -C "$RQ" for-each-ref 2>&1)"
+CHECK_BRANCH='case "$PWD" in */wt) git checkout -q feat ;; esac; grep -q TOKEN src/a.txt'
+if [ -n "$FEAT_SHA" ] && [ "$FEAT_SHA" != "$(git -C "$RQ" rev-parse HEAD)" ]; then
+  ok "(q0) premise: feat ($FEAT_SHA) is a distinct commit ahead of HEAD"
+else
+  no "(q0) premise: could not build the feat branch fixture"
+fi
+prove_in "$RQ" --check "$CHECK_BRANCH" --counterexample "$DEL_PATCH" --out "$ROOT/q.proof.json" --confirm
+[ "$RC" -eq 0 ] && [ "$(last_line)" = "verdict: PROVEN" ] \
+  && ok "(q1) a check that checks a branch out in its copy still reads PROVEN" \
+  || no "(q1) expected PROVEN/0, got rc=$RC: $OUT"
+[ "$(git -C "$RQ" rev-parse --verify -q refs/heads/feat 2>/dev/null)" = "$FEAT_SHA" ] \
+  && [ "$(git -C "$RQ" for-each-ref 2>&1)" = "$REFS_BEFORE" ] \
+  && ok "(q2) feat and every other ref of the user's repo are byte-identical after the run" \
+  || no "(q2) a shared ref MOVED: feat=$(git -C "$RQ" rev-parse refs/heads/feat 2>&1) (was $FEAT_SHA); refs now [$(git -C "$RQ" for-each-ref 2>&1)]"
+no_leak "(q3) PROVEN (check leaves its copy on a branch)"
+# (q4) the detached-HEAD verify: the check creates a branch AT the pinned sha in its copy (`switch -c`,
+# so the shim's no-op on `checkout` does not swallow it) and the restoring checkout is a no-op ⇒ the
+# tree is clean and HEAD resolves to the pinned sha, yet HEAD is a branch — refused, not PROVEN.
+CHECK_ONBRANCH='case "$PWD" in */wt) git switch -qc q4-branch ;; esac; grep -q TOKEN src/a.txt'
+RQ4="$(new_repo)"
+RUN_TMP="$(mktemp -d "$ROOT/tmp.XXXXXX")"; BEFORE="$(state "$RQ4" 2>&1)"
+OUT="$( ( cd "$RQ4" && TMPDIR="$RUN_TMP" PATH="$SHIM:$PATH" STUB_REAL_GIT="$REAL_GIT" STUB_NOOP_SUBCMD=checkout \
+          bash "$PROVER" --check "$CHECK_ONBRANCH" --counterexample "$DEL_PATCH" --confirm ) </dev/null 2>&1 )"; RC=$?
+AFTER="$(state "$RQ4" 2>&1)"
+expect_unprovable "(q4) a copy left on a branch at the pinned sha after the restore" scratch_reset_failed
+no_leak "(q5) UNPROVABLE (scratch_reset_failed, HEAD on a branch)"
 
 # ============================================================================
 echo "== (h) the user-scope rules stamp is never created or changed by a prove run =="
@@ -492,7 +536,7 @@ fi
 rm -f "$MUTK"
 
 # ============================================================================
-echo "== (o) mutation controls for (l) (m) (n) (p): revert one fix, the test must go RED =="
+echo "== (o) mutation controls for (l) (m) (n) (p) (q): revert one fix, the test must go RED =="
 # mutant_ok <file> <marker> — VALID: non-empty, differs from the prover, parses, the edit landed.
 mutant_ok() { [ -s "$1" ] && ! cmp -s "$PROVER" "$1" && bash -n "$1" 2>/dev/null && grep -qF -- "$2" "$1"; }
 # faithful <file> <label> — the mutant still PROVES a plain valid run, so only the reverted fix differs.
@@ -517,10 +561,10 @@ if mutant_ok "$MUT_R" '# MUTANT: no reset between the baseline and leg 2'; then
   [ "$(last_line)" != "verdict: UNPROVABLE (patch_no_effect)" ] \
     && ok "(o1d) CONFIRMED: without the reset the identity patch reads '$(last_line)' — (m4) would go RED" \
     || no "(o1d) REFUTED: the no-reset mutant still reads patch_no_effect — (m4) is not load-bearing"
-  OUT="$( ( cd "$(new_repo)" && PATH="$SHIM:$PATH" STUB_REAL_GIT="$REAL_GIT" STUB_FAIL_SUBCMD=reset \
+  OUT="$( ( cd "$(new_repo)" && PATH="$SHIM:$PATH" STUB_REAL_GIT="$REAL_GIT" STUB_FAIL_SUBCMD=checkout \
             bash "$MUT_R" --check "$CHECK_TOKEN" --counterexample "$DEL_PATCH" --confirm ) </dev/null 2>&1 )"
   [ "$(last_line)" != "verdict: UNPROVABLE (scratch_reset_failed)" ] \
-    && ok "(o1e) CONFIRMED: without the reset a failing git reset reads '$(last_line)' — (n1) would go RED" \
+    && ok "(o1e) CONFIRMED: without the reset a failing restoring checkout reads '$(last_line)' — (n1) would go RED" \
     || no "(o1e) REFUTED: the no-reset mutant still reads scratch_reset_failed"
 else
   no "(o1a) the no-reset mutation did not land — the control proves nothing"
@@ -544,8 +588,8 @@ rm -f "$MUT_P"
 
 # (o3) the reset targets the copy's own (moved) HEAD instead of the pinned sha ⇒ (p1) goes RED.
 MUT_S="$ROOT/mutant-resetsha-prove-rule-check.sh"
-sed 's|reset -q --hard "\$HEAD_SHA" >|reset -q --hard >|' "$PROVER" > "$MUT_S"
-if mutant_ok "$MUT_S" 'reset -q --hard >'; then
+sed 's|checkout -q --force --detach "\$HEAD_SHA" >|checkout -q --force --detach >|' "$PROVER" > "$MUT_S"
+if mutant_ok "$MUT_S" 'checkout -q --force --detach >'; then
   ok "(o3a) the reset-to-own-HEAD mutant is VALID: non-empty, differs from the prover, parses, the edit landed"
   faithful "$MUT_S" "(o3b)"
   prove_with "$MUT_S" "$(new_repo)" --check "$CHECK_DRIFT" --counterexample "$DEL_PATCH" --confirm
@@ -556,6 +600,34 @@ else
   no "(o3a) the reset-to-own-HEAD mutation did not land — the control proves nothing"
 fi
 rm -f "$MUT_S"
+
+# (o5) the reset is `reset --hard` again with no detached-HEAD verify (the iteration-2 shape) ⇒ (q2)
+# goes RED (feat moved) and (q4) goes RED (the branch at the pinned sha is not refused).
+MUT_Q="$ROOT/mutant-resethard-prove-rule-check.sh"
+sed -e 's|checkout -q --force --detach "\$HEAD_SHA" >|reset -q --hard "$HEAD_SHA" >|' \
+    -e 's|^  if git -C "\$WT" symbolic-ref -q HEAD .*$|  :   # MUTANT: reset --hard, no detached-HEAD verify|' \
+    "$PROVER" > "$MUT_Q"
+if mutant_ok "$MUT_Q" '# MUTANT: reset --hard, no detached-HEAD verify' && grep -qF 'reset -q --hard "$HEAD_SHA" >' "$MUT_Q"; then
+  ok "(o5a) the reset --hard mutant is VALID: non-empty, differs from the prover, parses, both edits landed"
+  faithful "$MUT_Q" "(o5b)"
+  RQM="$(new_repo)"
+  ( cd "$RQM" && git checkout -qb feat && printf 'feat\n' > src/c.txt && git add src/c.txt \
+      && git commit -qm feat && git checkout -q - ) >/dev/null 2>&1
+  FEAT_M="$(git -C "$RQM" rev-parse --verify -q refs/heads/feat 2>/dev/null)"
+  prove_with "$MUT_Q" "$RQM" --check "$CHECK_BRANCH" --counterexample "$DEL_PATCH" --confirm
+  FEAT_M_AFTER="$(git -C "$RQM" rev-parse --verify -q refs/heads/feat 2>/dev/null)"
+  [ -n "$FEAT_M" ] && [ "$FEAT_M_AFTER" != "$FEAT_M" ] \
+    && ok "(o5c) CONFIRMED: reset --hard moved feat $FEAT_M -> $FEAT_M_AFTER ('$(last_line)') — (q2) would go RED" \
+    || no "(o5c) REFUTED: the reset --hard mutant left feat at '$FEAT_M_AFTER' — (q2) is not load-bearing"
+  OUT="$( ( cd "$(new_repo)" && PATH="$SHIM:$PATH" STUB_REAL_GIT="$REAL_GIT" STUB_NOOP_SUBCMD=reset \
+            bash "$MUT_Q" --check "$CHECK_ONBRANCH" --counterexample "$DEL_PATCH" --confirm ) </dev/null 2>&1 )"
+  [ "$(last_line)" != "verdict: UNPROVABLE (scratch_reset_failed)" ] \
+    && ok "(o5d) CONFIRMED: without the detached-HEAD verify a copy on a branch reads '$(last_line)' — (q4) would go RED" \
+    || no "(o5d) REFUTED: the mutant still refuses a copy left on a branch — (q4) is not load-bearing"
+else
+  no "(o5a) the reset --hard mutation did not land — the control proves nothing"
+fi
+rm -f "$MUT_Q"
 
 # (o4) string-prefix containment (the pre-fix shape) ⇒ (l1) goes RED. Case-insensitive hosts only.
 if [ "$CI_FS" -eq 1 ] && [ "$RL_UP" != "$RL" ] && [ "$RL_UP" -ef "$RL" ]; then

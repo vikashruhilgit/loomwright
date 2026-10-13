@@ -64,9 +64,11 @@
 #   3. Baseline: run the check in the scratch copy BEFORE the patch. Non-zero ⇒
 #      `UNPROVABLE (scratch_baseline_fails)` — the scratch copy (HEAD) differs from the working tree
 #      in something the check reads, so a later failure could not be credited to the patch.
-#   3b. Reset: the scratch copy is restored to the pinned sha (`reset --hard`, `clean -ffdx`, hooks
-#      disabled) and must then be byte-clean (`git status --porcelain --untracked-files=all
-#      --ignored` empty, HEAD == the pinned sha) — otherwise `UNPROVABLE (scratch_reset_failed)`.
+#   3b. Reset: the scratch copy is restored to the pinned sha (`checkout --force --detach` — never
+#      `reset --hard`, which would move a branch the baseline left the copy on, a ref shared with the
+#      user's repo — then `clean -ffdx`, hooks disabled) and must then be byte-clean (`git status
+#      --porcelain --untracked-files=all --ignored` empty, HEAD detached at the pinned sha) —
+#      otherwise `UNPROVABLE (scratch_reset_failed)`.
 #      The baseline and leg 2 are independent: whatever the check wrote into its copy during the
 #      baseline is gone before the patch is applied, so leg 2's failure cannot come from the check's
 #      own leftovers, and the patch_no_effect probe in step 4 sees only the patch.
@@ -249,17 +251,22 @@ same_file_or_ancestor() {
 
 # reset_scratch_copy — ORDER 3b. The baseline and leg 2 must start from the SAME clean copy, or a
 # check that writes into its own copy could earn PROVEN from its leftovers rather than from the
-# patch. Resets to the PINNED sha (a check that commits in its copy moves the detached HEAD), then
+# patch. Restores the PINNED sha (a check that commits in its copy moves the detached HEAD), then
 # verifies rather than assumes: a status that cannot be read is not clean.
+# `checkout --force --detach`, never `reset --hard`: reset moves whatever HEAD points at, so after a
+# baseline that left the copy ON A BRANCH (`git checkout feat`) it would rewrite that branch — and
+# branch refs are shared with the user's repo. A detaching checkout moves only the copy's own HEAD.
+# The verify therefore also requires HEAD to be detached (`symbolic-ref` must fail).
 reset_scratch_copy() {
   local st cur
-  if ! git -C "$WT" -c core.hooksPath=/dev/null reset -q --hard "$HEAD_SHA" >"$SCRATCH_LOGS/reset.log" 2>&1 \
+  if ! git -C "$WT" -c core.hooksPath=/dev/null checkout -q --force --detach "$HEAD_SHA" >"$SCRATCH_LOGS/reset.log" 2>&1 \
      || ! git -C "$WT" -c core.hooksPath=/dev/null clean -qffdx >>"$SCRATCH_LOGS/reset.log" 2>&1; then
     sed 's/^/    /' "$SCRATCH_LOGS/reset.log"
     unprovable scratch_reset_failed "the scratch copy could not be reset to HEAD after the baseline run"
   fi
   st="$(git -C "$WT" status --porcelain --untracked-files=all --ignored 2>/dev/null)" || st="<git status failed>"
   cur="$(git -C "$WT" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null)" || cur=""
+  if git -C "$WT" symbolic-ref -q HEAD >/dev/null 2>&1; then cur="<HEAD is on a branch, not detached>"; fi
   if [ -n "$st" ] || [ "$cur" != "$HEAD_SHA" ]; then
     printf '%s\n' "$st" | head -n 20 | sed 's/^/    /'
     unprovable scratch_reset_failed "the scratch copy is not a clean copy of HEAD after the reset"
