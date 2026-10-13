@@ -60,7 +60,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| Frontend UI | `frontend-ui/` | Worker (reference) | ~600 | 1.0.0 | 2026-03 |
+| Frontend UI | `frontend-ui/` | Worker (reference) | ~600 | 1.1.0 | 2026-10 |
 
 ## Testing / QA
 

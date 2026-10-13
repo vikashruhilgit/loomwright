@@ -27,6 +27,13 @@
 # identical across the validator, the reviewer prompt, the Phase 4.5 prompt
 # line and the schema doc.
 #
+# Section N covers the optional `cannot_determine` (v3 rule n, #433): absent and
+# empty stay valid; every entry needs an item and a reason that is neither empty,
+# missing, nor a bare "runtime-only" label; a mutant with the reason check
+# disabled must accept the empty reason. Section O keeps its {item, reason} keys
+# identical across the validator, the reviewer prompt, the Phase 4.5 brief line
+# and the schema doc, and catches any surface still sending it to a summary line.
+#
 # Separate from test-result-validators.sh so the rule-by-rule coverage reads
 # next to the one validator it falsifies. Same contract, same wire shape:
 #   pass -> exactly `{}`;  fail -> exactly `{"decision": "block", "reason": …}`;
@@ -479,6 +486,98 @@ PY
 )"
 if [ "$parity" = "ok" ]; then ok "verdict enum restated on all three surfaces; both reads pass --with-ids"
 else no "house_rule_verdicts parity: $parity"; fi
+
+echo "== N. cannot_determine (v3 rule n — OPTIONAL; every entry needs a reason; #433) =="
+# What the reviewer could not decide by reading the code. #433: a PASS listed
+# focus order as "runtime-only" with no reason, and a human then found the
+# defect by reading the same diff. Absent stays valid (old emitters); present,
+# each entry must say WHY — what would have to run to decide it.
+CD='  cannot_determine:
+    - item: "toolbar wraps at 320px"
+      reason: "needs the page rendered at a 320px viewport to see whether the buttons wrap"
+    - item: "AC4: list filters in under 200ms"
+      reason: "needs a timed run against the real dataset"
+'
+export CD
+sub cd.md v3-diff.md 's.replace("  summary: ", __import__("os").environ["CD"] + "  summary: ")'
+CD_OK="$F"
+run_v "$CD_OK"; assert_pass "(n) reason present on every entry -> pass"
+# The PR-body-only criterion (#511/PR #520's step-5a case) names what would have
+# to be READ, not run — it must satisfy the same rule.
+sub cdprbody.md cd.md 's.replace("reason: \"needs a timed run against the real dataset\"", "reason: \"only the PR body shows it; the body is not in the diff\"")'
+run_v "$F"; assert_pass "(n) a PR-body-only criterion with a reason naming where the evidence lives -> pass"
+run_v "$V3_DIFF"; assert_pass "(n) absent: a block with no cannot_determine still passes (old emitters)"
+sub cdempty.md v3-diff.md 's.replace("  summary: ", "  cannot_determine: []\n  summary: ")'
+run_v "$F"; assert_pass "(n) present but empty array passes"
+sub cdblank.md cd.md 's.replace("reason: \"needs a timed run against the real dataset\"", "reason: \"\"")'
+run_v "$F"; assert_block "(n) EMPTY reason -> block naming the index and the field" "cannot_determine[1] is missing a non-empty reason field"
+sub cdmissing.md cd.md 's.replace("      reason: \"needs a timed run against the real dataset\"\n", "")'
+run_v "$F"; assert_block "(n) MISSING reason key -> block" "cannot_determine[1] is missing a non-empty reason field"
+sub cdbare.md cd.md 's.replace("reason: \"needs a timed run against the real dataset\"", "reason: \"Runtime-only.\"")'
+run_v "$F"; assert_block "(n) a bare runtime label is not a reason (the #433 shape)" "cannot_determine[1] reason 'Runtime-only.' only restates the label"
+sub cdnoitem.md cd.md 's.replace("    - item: \"toolbar wraps at 320px\"\n      reason", "    - reason")'
+run_v "$F"; assert_block "(n) entry without an item" "cannot_determine[0] is missing a non-empty item field"
+sub cdkey.md cd.md 's.replace("      reason: \"needs a timed run", "      severity: LOW\n      reason: \"needs a timed run")'
+run_v "$F"; assert_block "(n) ad-hoc entry key" "cannot_determine[1] contains disallowed key severity"
+sub cdscalar.md v3-diff.md 's.replace("  summary: ", "  cannot_determine: focus order (runtime-only)\n  summary: ")'
+run_v "$F"; assert_block "(n) a scalar summary line instead of an array" "cannot_determine must be an array when present"
+sub cdstr.md v3-diff.md 's.replace("  summary: ", "  cannot_determine:\n    - focus order\n  summary: ")'
+run_v "$F"; assert_block "(n) an array entry that is a plain string, not a mapping" "cannot_determine[0] is not a mapping"
+# Mutation control: with the required-field loop disabled the empty reason must
+# be ACCEPTED — the EMPTY-reason assertion above is carried by that check alone.
+MUT_N="$TMPROOT/mutn-validate-code-review-result.py"
+python3 - "$V" "$MUT_N" <<'PY'
+import sys
+s = open(sys.argv[1], encoding="utf-8").read()
+needle = "        for key in CANNOT_DETERMINE_KEYS:\n            if key not in entry or is_empty_scalar(entry.get(key)):\n"
+assert s.count(needle) == 1, "mutation anchor not found exactly once"
+open(sys.argv[2], "w", encoding="utf-8").write(
+    s.replace(needle, "        for key in CANNOT_DETERMINE_KEYS:\n            if False:\n"))
+PY
+cp "$SCRIPT_DIR/result_block_parser.py" "$TMPROOT/"
+if [ -s "$MUT_N" ] && ! cmp -s "$V" "$MUT_N"; then
+  sub cdblank2.md cd.md 's.replace("reason: \"needs a timed run against the real dataset\"", "reason: \"\"")'
+  run_v "$F" "$MUT_N"; assert_pass "(n-mut) CONFIRMED: with the reason check removed an empty reason is accepted (the check is load-bearing)"
+  run_v "$F"; assert_block "(n-mut) positive control: the real validator still rejects it" "is missing a non-empty reason field"
+else
+  no "(n-mut) INVALID mutant: empty or identical to the original"
+fi
+
+echo "== O. cannot_determine: validator <-> reviewer <-> Phase 4.5 line <-> schema parity =="
+# The entry keys live in the validator. The reviewer prompt, the Phase 4.5 brief
+# line and the schema doc each restate where cannot_determine goes. A surface
+# still saying "one summary line" would have a reviewer emit a scalar the hook
+# now rejects.
+parity_cd="$(python3 - "$V" "$SCRIPT_DIR/.." <<'PY'
+import os, re, sys
+v, root = sys.argv[1], sys.argv[2]
+src = open(v, encoding="utf-8").read()
+m = re.search(r'^CANNOT_DETERMINE_KEYS = \(([^)]*)\)', src, re.M)
+if not m:
+    print("validator CANNOT_DETERMINE_KEYS tuple not found"); sys.exit()
+keys = re.findall(r'"([a-z_]+)"', m.group(1))
+surfaces = {
+    "agents/code-reviewer.md": "**`cannot_determine` — admission rule",
+    "skills/self-heal-advisory/SKILL.md": "**BRIEF-CONFORMANCE ADVISORY (",
+    "docs/result-schemas/code-review-result.md": "cannot_determine: object[]",
+}
+bad = []
+for rel, anchor in surfaces.items():
+    text = open(os.path.join(root, rel), encoding="utf-8").read()
+    i = text.find(anchor)
+    if i < 0:
+        bad.append("%s: anchor %r missing" % (rel, anchor)); continue
+    window = text[i:i + 4000]
+    for k in keys:
+        if not re.search(r"(?<![a-z_])%s(?=[:,}`])" % k, window):
+            bad.append("%s: entry key %s not restated next to %r" % (rel, k, anchor))
+    if re.search(r"(?i)one summary line[^.]{0,60}cannot_determine|cannot_determine[^.]{0,40}one-line summary", window):
+        bad.append("%s: still sends cannot_determine to a summary line" % rel)
+print("ok" if not bad and keys == ["item", "reason"] else "; ".join(bad) or "keys %r" % keys)
+PY
+)"
+if [ "$parity_cd" = "ok" ]; then ok "cannot_determine {item, reason} restated on all three surfaces; none still says 'summary line'"
+else no "cannot_determine parity: $parity_cd"; fi
 
 echo "== J. hooks.json wiring =="
 wiring="$(python3 - "$HOOKS" <<'EOF'

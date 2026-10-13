@@ -41,7 +41,7 @@ description: Review code changes with LSP diagnostics, issue categorization, and
    - Repo drift (mirrored-prompt, version, count, workflow, hooks-parity, wording) — audit mode only
 8. **Validates CLAUDE.md accuracy** (flags outdated patterns against actual codebase)
 9. **Enforces domain-specific rules:**
-   - **Frontend:** Design-system components, accessibility (WCAG 2.1 AA), responsive design
+   - **Frontend:** Design-system components, accessibility (WCAG 2.1 AA), responsive design, and the static interaction-behaviour lens (below)
    - **Backend:** Framework-specific patterns (NestJS, Next.js API, API Gateway)
 10. **Detects new patterns** for CLAUDE.md proposal
 11. **Provides structured feedback** with suggestions + a `CODE_REVIEW_RESULT` block (schema v3) — always emitted
@@ -203,6 +203,7 @@ When reviewing UI components, the reviewer checks:
 - **Responsive Design:** Checks mobile-first approach, consistent breakpoints, fluid layouts
 - **Component Reusability:** Detects duplicate UI patterns and suggests extraction
 - **Type Safety:** Validates typed props for all components
+- **Interaction behaviour (static lens):** questions decided by reading the diff, never deferred as "runtime" — `focus_on_unmount`, `busy_state_cleared`, `async_state_distinct`, `unsaved_exit_parity`, `state_reset_on_input_change`, `actionable_failure_persists`. A hit is an ordinary finding under the usual severity rules. Only a property that needs a rendered page or a real run (layout at a width, computed contrast, real timing) goes in `cannot_determine`, each entry with a one-line reason naming what would have to run; the hook rejects an empty one. Canonical wording: the agent prompt's Review Process step 3.
 
 **Skill Reference:** `skills/frontend-ui/SKILL.md`
 
