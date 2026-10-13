@@ -26,8 +26,21 @@
 #           non-empty + differs-from-original, and a positive control (unmutated temp copies)
 #           must pass first, so a vacuous or broken harness cannot report a false kill.
 #
+#   PART 5  #432 plan half — an AC that contradicts an ADVISORY rule: Plan Reviewer 17c (NEEDS_HUMAN
+#           unless an owner-acknowledged `Rule override:` line is present; a scope line is never an
+#           override), Launch Pad carrying `## Rule conflicts (open decisions)` through verbatim and
+#           owning the 17c gate (action 2b, catalog code LP-RULE-OVR, can't-ask status
+#           rule_conflict_non_interactive, inventory row), Product Owner's Assumption Check d.
+#           (reads the rules, writes the section; agent<->command mirror byte-identical), and the
+#           fixtures under fixtures/rule-conformance/advisory/ (override grammar with negative
+#           controls, story->brief byte-identical carry, reader trace, plan-waves --lint). PART 4
+#           also kills mutants that delete 17c, Launch Pad action 2b, or the PO d. check. Prompt
+#           BEHAVIOUR (a model actually flagging the contradiction) is the live probe on those
+#           fixtures, not this test.
+#
 # Env overrides (used by PART 4's re-invocation only): SEAM_LP (agents/launch-pad.md),
-# SEAM_PR (agents/plan-reviewer.md), SEAM_NO_MUTATION=1 (skip PART 4 in the child).
+# SEAM_PR (agents/plan-reviewer.md), SEAM_PO (agents/product-owner.md), SEAM_NO_MUTATION=1
+# (skip PART 4 in the child).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
@@ -36,6 +49,9 @@ PLUGIN="$(cd "$HERE/.." && pwd)"
 LP="${SEAM_LP:-$PLUGIN/agents/launch-pad.md}"
 PR="${SEAM_PR:-$PLUGIN/agents/plan-reviewer.md}"
 LPC="$PLUGIN/commands/launch-pad.md"
+PO="${SEAM_PO:-$PLUGIN/agents/product-owner.md}"
+POC="$PLUGIN/commands/product-owner.md"
+ARCH="$PLUGIN/docs/ARCHITECTURE_CONTRACTS.md"
 FIX="$HERE/fixtures/rule-conformance"
 READER="$HERE/read-rules.sh"
 LIB="$HERE/exec-acceptance-lib.sh"
@@ -206,6 +222,114 @@ for b in conforming omitting; do
   { bhas "$DEC" parseFloat || bhas "$DEC" toFixed; } && no "brief-$b contradicts the rule" || ok "brief-$b: Design decisions honor the rule"
 done
 
+echo "PART 5 — advisory-rule conflicts at plan time (#432 plan half: Product Owner, Criterion 17c, Launch Pad)"
+ADV="$FIX/advisory"
+ADV_ID="ui-select-max-ten-options"
+CONFLICTS_H='## Rule conflicts (open decisions)'
+# The override grammar, as an ERE over one line: id, an em-dash, a non-empty why, then the owner
+# acknowledgment with a non-empty <where> and an ISO date.
+OVR_ERE='^- Rule override: [a-z0-9][a-z0-9-]* — .*[^ ].* \(acknowledged by the owner: [^,)]*[^ ,)], [0-9]{4}-[0-9]{2}-[0-9]{2}\)$'
+CONF_ERE='^- Conflicts with house rule [a-z0-9][a-z0-9-]* \((advisory|must)\): AC ".+" vs rule ".+"\. Owner'"'"'s choice: (pending|honor the rule|override|change the rule via /rules)$'
+# 5a — Plan Reviewer 17c (re-uses the Criterion 17 block from PART 2).
+bhas "$C17" '**17c — advisory contradiction.**' && ok "17c present" || no "17c sentence missing"
+bhas "$C17" '`- Rule override: <id> — <why> (acknowledged by the owner: <where>, <YYYY-MM-DD>)`' \
+  && ok "17c: override grammar" || no "17c override grammar"
+bhas "$C17" 'is not an override' && bhas "$C17" 'out of scope' && ok "17c: a scope line is never an override" || no "17c scope-line clause"
+bhas "$C17" "Owner's choice: pending" && ok "17c: a pending conflict line triggers it" || no "17c pending-conflict carve-out"
+bhas "$C17" 'description starts `17c:`' && ok "17c: issue description prefix" || no "17c description prefix"
+bhas "$C17" 'MEDIUM for 17c' && ok "17c: MEDIUM severity" || no "17c severity"
+bhas "$C17" 'never relaxes 17a or 17b' && ok "17c: an override never relaxes a must rule" || no "17c must-rule clause"
+grep -qE '^\| Criterion 17c .*\*\*NEEDS_HUMAN\*\*' "$PR" && ok "decision matrix: 17c ⇒ NEEDS_HUMAN" || no "decision matrix 17c row"
+CHK="$(grep -F -- '- [ ] All 19 criteria checked' "$PR")"
+grep -qF '17c' <<<"$CHK" && ok "quality checklist names 17c" || no "checklist 17c"
+# 5b — Launch Pad carries the section through and owns the 17c gate.
+bhas "$A6A" '**(iii)**' && bhas "$A6A" "$CONFLICTS_H" && bhas "$A6A" 'copy it into the brief verbatim' \
+  && bhas "$A6A" 'independent of `applicable_rules`' && ok "6a (iii): carry the Rule conflicts section verbatim" || no "6a (iii) carry-through"
+P6="$(block "$LP" '^### Phase 6: REFINE & SAVE' '^### Phase 7')"
+A2B="$(block "$LP" '^2b\. \*\*House-rule override NEEDS_HUMAN' '^3\. If Plan Review returned PASS')"
+[ -n "$A2B" ] && ok "Phase 6 action 2b present" || no "Phase 6 action 2b missing"
+for s in '`record-override`' '`honor-rule`' '`discard`' 'rule_conflict_non_interactive' '**Never author an override.**' '`LP-RULE-OVR`'; do
+  bhas "$A2B" "$s" && ok "2b names $s" || no "2b lacks $s"
+done
+bhas "$P6" 'rule_conflict_non_interactive' && ok "Phase 6 names rule_conflict_non_interactive" || no "Phase 6 status"
+P55="$(block "$LP" '^### Phase 5\.5: PLAN REVIEW' '^### Phase 6: ')"
+bhas "$P55" 'issue.description.startswith("17c:")' && ok "Phase 5.5 retry loop routes 17c to action 2b" || no "Phase 5.5 17c branch"
+for f in "$LP" "$LPC"; do
+  CAR="$(grep -F -- "- **Can't-ask rule:**" "$f")"
+  grep -qF 'rule_conflict_non_interactive' <<<"$CAR" \
+    && ok "$(basename "$(dirname "$f")")/launch-pad.md Can't-ask rule names rule_conflict_non_interactive" \
+    || no "$(basename "$(dirname "$f")")/launch-pad.md Can't-ask rule lacks rule_conflict_non_interactive"
+done
+has "$LPC" 'record-override' && ok "command mirror: 17c gate options" || no "command mirror 17c gate"
+# 5c — Product Owner reads the rules and writes the section (agent + command mirror).
+po_d() { block "$1" '^   d\. \*\*House-rule conflicts\*\*' '^   \*\*Output \(appended to Context Read section\):\*\*'; }
+POD_A="$(po_d "$PO")"; POD_C="$(po_d "$POC")"
+[ -n "$POD_A" ] && ok "PO agent: Assumption Check d. House-rule conflicts" || no "PO agent d. missing"
+bhas "$POD_A" "bash \"$ROOTVAR/scripts/read-rules.sh\" --with-ids" && ok "PO d: runs the reader with --with-ids" || no "PO d reader call"
+for s in "$CONFLICTS_H" 'Conflicts with house rule <id>' "Owner's choice: pending" 'never executes' 'never resolve' 'before `## Depends on`'; do
+  bhas "$POD_A" "$s" && ok "PO d names: $s" || no "PO d lacks: $s"
+done
+[ -n "$POD_A" ] && [ "$POD_A" = "$POD_C" ] && ok "PO d block byte-identical in agent and command (mirror)" || no "PO d block differs agent vs command"
+for f in "$PO" "$POC"; do
+  CAB="$(grep -F -- "**Can't-ask branch" "$f")"
+  grep -qF '+ house-rule conflicts' <<<"$CAB" \
+    && ok "$(basename "$(dirname "$f")")/product-owner.md can't-ask count includes house-rule conflicts" \
+    || no "$(basename "$(dirname "$f")")/product-owner.md can't-ask count omits house-rule conflicts"
+done
+# 5d — the gate is catalogued human-only and inventoried with its can't-ask status.
+CAT="$(bash "$HERE/lane-policy.sh" catalog 2>/dev/null | awk -F'\t' '$1 == "LP-RULE-OVR" { print $2 "|" $3 }')"
+[ "$CAT" = "human-only|record-override|honor-rule|discard" ] && ok "lane catalog: LP-RULE-OVR human-only with its labels" || no "lane catalog row: '$CAT'"
+INV="$(block "$ARCH" '^## Question-gate inventory' '^## Failure Escalation Summary')"
+INVROW="$(grep -F '| Launch Pad house-rule override NEEDS_HUMAN |' <<<"$INV")"
+grep -qF 'rule_conflict_non_interactive' <<<"$INVROW" \
+  && ok "question-gate inventory row names rule_conflict_non_interactive" || no "question-gate inventory row"
+# 5e — fixtures.
+for f in rules/advisory.json brief-no-override.md brief-override.md story-conflict.md README.md; do
+  [ -s "$ADV/$f" ] && ok "advisory fixture present: $f" || no "advisory fixture missing/empty: $f"
+done
+AHINTS='expect|rule_conformance|17[abc]|needs_human'
+for b in no-override override; do
+  grep -qiE -- "$AHINTS" "$ADV/brief-$b.md" && no "brief-$b.md leaks a verdict hint (/$AHINTS/i)" || ok "brief-$b.md carries no verdict hint"
+done
+[ "$(grep -m1 '^# Supervisor Job:' "$ADV/brief-no-override.md")" = "$(grep -m1 '^# Supervisor Job:' "$ADV/brief-override.md")" ] \
+  && ok "both advisory briefs share one title" || no "advisory brief titles differ"
+RROW="$(grep -F '| `brief-no-override.md` |' "$ADV/README.md")"
+grep -qF 'NEEDS_HUMAN: 17c MEDIUM `rule_conformance`' <<<"$RROW" \
+  && ok "README: no-override ⇒ NEEDS_HUMAN 17c" || no "README no-override row"
+RROW="$(grep -F '| `brief-override.md` |' "$ADV/README.md")"
+grep -qF 'PASS: no 17c issue' <<<"$RROW" \
+  && ok "README: override ⇒ PASS" || no "README override row"
+SEC_STORY="$(block "$ADV/story-conflict.md" '^## Rule conflicts \(open decisions\)$' '^## Depends on$')"
+SEC_BRIEF="$(block "$ADV/brief-override.md" '^## Rule conflicts \(open decisions\)$' '^## Risk Assessment$')"
+[ -n "$SEC_STORY" ] && [ "$SEC_STORY" = "$SEC_BRIEF" ] && ok "override brief carries the story's section byte-for-byte" || no "story ↔ brief section drift"
+lacks "$ADV/brief-no-override.md" 'Rule override:' && lacks "$ADV/brief-no-override.md" "$CONFLICTS_H" \
+  && ok "no-override brief: no override, no section" || no "no-override brief carries an override"
+n_conf="$(grep -cE "$CONF_ERE" <<<"$SEC_STORY")"; n_ovr="$(grep -cE "$OVR_ERE" <<<"$SEC_STORY")"
+[ "$n_conf" -eq 1 ] && [ "$n_ovr" -eq 1 ] && ok "story section: one conflict line + one override line, both well-formed" \
+  || no "story section grammar (conflict=$n_conf override=$n_ovr)"
+OVR_LINE="$(grep -E "$OVR_ERE" <<<"$SEC_STORY")"; CONF_LINE="$(grep -E "$CONF_ERE" <<<"$SEC_STORY")"
+grep -qF "Rule override: $ADV_ID — " <<<"$OVR_LINE" && ok "override names the store's rule id" || no "override id mismatch"
+grep -qF "house rule $ADV_ID (advisory)" <<<"$CONF_LINE" && ok "conflict line names id + enforcement" || no "conflict line id/enforcement"
+# grammar controls: an override with no acknowledgment, or an empty why, is not well-formed.
+grep -qE "$OVR_ERE" <<<"- Rule override: $ADV_ID — because" && no "grammar accepts an unacknowledged override" || ok "grammar rejects an unacknowledged override"
+grep -qE "$OVR_ERE" <<<"- Rule override: $ADV_ID —  (acknowledged by the owner: x, 2026-10-13)" && no "grammar accepts an empty why" || ok "grammar rejects an empty why"
+LINT="$(bash "$HERE/automate-helpers.sh" plan-waves "$ADV/story-conflict.md" --lint 2>&1)"; lrc=$?
+[ "$lrc" -eq 0 ] && bhas "$LINT" 'Touches ok; Depends on ok' && ok "story with a Rule conflicts section still lints clean" || no "story lint: rc=$lrc $LINT"
+if command -v jq >/dev/null 2>&1; then
+  AREPO="$WORK/adv-repo"; mkdir -p "$AREPO/.agent/rules"; ( cd "$AREPO" && git init -q ) >/dev/null 2>&1
+  cp "$ADV"/rules/*.json "$AREPO/.agent/rules/"
+  AOUT="$( cd "$AREPO" && bash "$READER" --with-ids src/ui/address-form.tsx </dev/null 2>/dev/null )"
+  bhas "$AOUT" "  - id: $ADV_ID" && bhas "$AOUT" '  - enforcement: advisory' && ! bhas "$AOUT" '[MUST]' \
+    && ok "advisory store: routed, advisory, no [MUST]" || no "advisory reader output"
+  AEXP="$(printf '%s\n' "$AOUT" | sed "1s/.*/$DEMOTED/")"
+  for b in no-override override; do
+    HRB="$(block "$ADV/brief-$b.md" '^## House Rules$' '^## (Rule conflicts|Risk Assessment)' | sed '1d' | sed '/^$/d')"
+    [ -n "$AOUT" ] && [ "$HRB" = "$AEXP" ] && ok "brief-$b: ## House Rules == reader output, banner demoted" || no "brief-$b House Rules drift"
+  done
+else
+  echo "  skip: jq unavailable — advisory store trace is vacuous here."
+fi
+
 if [ "${SEAM_NO_MUTATION:-0}" != "1" ]; then
   echo "PART 4 — mutation control"
   cp "$LP" "$WORK/lp.md"; cp "$PR" "$WORK/pr.md"
@@ -221,6 +345,22 @@ if [ "${SEAM_NO_MUTATION:-0}" != "1" ]; then
     if cmp -s "$WORK/$m.md" "$WORK/$src.md"; then no "mutant $m is identical to its original"; continue; fi
     if [ "$src" = pr ]; then child "$WORK/lp.md" "$WORK/$m.md"; else child "$WORK/lp-m.md" "$WORK/pr.md"; fi
     [ $? -ne 0 ] && ok "mutant $m (${m%%-*}) is killed" || no "mutant $m survived"
+  done
+  # #432 plan half: deleting 17c, Launch Pad's action 2b, or the PO d. check must each be killed.
+  cp "$PO" "$WORK/po.md"
+  child3() { SEAM_NO_MUTATION=1 SEAM_LP="$1" SEAM_PR="$2" SEAM_PO="$3" bash "$HERE/test-rule-conformance-seam.sh" >/dev/null 2>&1; }
+  if child3 "$WORK/lp.md" "$WORK/pr.md" "$WORK/po.md"; then ok "positive control (with PO copy) passes"
+  else no "positive control (with PO copy) failed"; fi
+  awk '!/^- \*\*17c — advisory contradiction\.\*\*/' "$WORK/pr.md" > "$WORK/pr17c-m.md"
+  awk 'f && /^3\. If Plan Review returned PASS/ {f=0} /^2b\. \*\*House-rule override NEEDS_HUMAN/ {f=1} !f' "$WORK/lp.md" > "$WORK/lp2b-m.md"
+  awk 'f && /^   \*\*Output \(appended to Context Read section\):\*\*/ {f=0} /^   d\. \*\*House-rule conflicts\*\*/ {f=1} !f' "$WORK/po.md" > "$WORK/pod-m.md"
+  for trio in "pr17c-m:lp:pr17c-m:po" "lp2b-m:lp2b-m:pr:po" "pod-m:lp:pr:pod-m"; do
+    m="${trio%%:*}"; rest="${trio#*:}"; a="${rest%%:*}"; rest="${rest#*:}"; b="${rest%%:*}"; c="${rest#*:}"
+    case "$m" in pr*) orig=pr ;; lp*) orig=lp ;; *) orig=po ;; esac
+    if [ ! -s "$WORK/$m.md" ]; then no "mutant $m is empty"; continue; fi
+    if cmp -s "$WORK/$m.md" "$WORK/$orig.md"; then no "mutant $m is identical to its original"; continue; fi
+    child3 "$WORK/$a.md" "$WORK/$b.md" "$WORK/$c.md"
+    [ $? -ne 0 ] && ok "mutant $m is killed" || no "mutant $m survived"
   done
 fi
 

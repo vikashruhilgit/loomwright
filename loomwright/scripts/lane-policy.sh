@@ -132,6 +132,8 @@ _lp_catalog_rows() {
     'Plan Review NEEDS_HUMAN, or any MEDIUM-or-higher finding'
   _lp_row LP-EXEC-ACC  human-only 'approve-and-stamp|strip-cmd-bullets|discard' \
     'Launch Pad executable-acceptance stamp'
+  _lp_row LP-RULE-OVR  human-only 'record-override|honor-rule|discard' \
+    'Launch Pad Plan Review 17c: an AC contradicts an advisory house rule with no owner override (owner words from the answer note; cannot ask ⇒ rule_conflict_non_interactive)'
   _lp_row LP-FAIL      human-only 'Refine offline|Discard' \
     'Plan Review FAIL after the third attempt'
   _lp_row LP-MEMORY    human-only '(free text)' \

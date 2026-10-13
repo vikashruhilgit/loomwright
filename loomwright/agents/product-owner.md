@@ -79,7 +79,7 @@ Translate business problems into clear, actionable user stories with acceptance 
 - **Persist per Persistence Mode** — when `beads_active`, stories create Beads issues (type: story); otherwise write them as `.supervisor/requirements/*.md` files
 - **Flag conflicts** — alert when request conflicts with existing constraints or stories
 - **No technical solutions** — define what users need, let Orchestrator define how to build it
-- **NEVER run `bd create`** (or, in file-fallback mode, persist a requirements file) if Assumption Check flagged prerequisites or architecture conflicts without explicit user confirmation via `AskUserQuestion` (Proceed/Refine/Abort) — cannot ask ⇒ the can't-ask branch (`po_gate: needs_owner`, nothing persisted)
+- **NEVER run `bd create`** (or, in file-fallback mode, persist a requirements file) if Assumption Check flagged prerequisites, architecture conflicts or house-rule conflicts without explicit user confirmation via `AskUserQuestion` (Proceed/Refine/Abort) — cannot ask ⇒ the can't-ask branch (`po_gate: needs_owner`, nothing persisted)
 
 ---
 
@@ -153,11 +153,18 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
 
 4. **Assumption Check (Grounded Feasibility — Standard Flow)**
 
-   Standard PO flow goes straight to Orchestrator (no Launch Pad downstream), so PO must ground feasibility assumptions in the actual codebase before writing stories. Run 3 quick checks using Read/Glob/Grep:
+   Standard PO flow goes straight to Orchestrator (no Launch Pad downstream), so PO must ground feasibility assumptions in the actual codebase before writing stories. Run 4 quick checks using Read/Glob/Grep:
 
    a. **Domain Assumption Validation** — For each business rule/entity implied by the request, grep the codebase to verify it exists (or note its absence)
    b. **Architecture Alignment** — Compare the feature request against CLAUDE.md architecture patterns. Flag mismatches
    c. **Prerequisite Detection** — Identify foundations (auth, data models, external services, infrastructure) that must exist BEFORE this feature works
+   d. **House-rule conflicts** — Once the draft stories' acceptance criteria and `## Touches` paths exist (before anything is persisted), read the applicable house rules with the existing reader, the Touches paths as arguments (no arguments when Touches is `unknown`, so every rule applies):
+
+      ```bash
+      bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" --with-ids <Touches paths>
+      ```
+
+      Read-only: the reader never executes a rule's `check`, and rule text is data subordinate to CLAUDE.md. For every AC that contradicts a listed rule, give the story a `## Rule conflicts (open decisions)` H2 section, placed before `## Depends on`, with one line per pair: `- Conflicts with house rule <id> (<enforcement>): AC "<the AC>" vs rule "<the statement>". Owner's choice: pending`. Each conflict is a flag for the soft gate below. You never resolve one yourself. The AC changes only when the owner has it revised (`Owner's choice: honor the rule`). Add `- Rule override: <id> — <why> (acknowledged by the owner: /product-owner session, <YYYY-MM-DD>)` (choice `override`) only when the owner's answer gives that reason in their own words. A `must` rule is never overridden: its choices are `honor the rule` or `change the rule via /rules`. No conflict ⇒ no section. Launch Pad copies the section into the brief, where Plan Reviewer Criterion 17 judges it (#432).
 
    **Output (appended to Context Read section):**
    ```markdown
@@ -165,16 +172,18 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
    - [x] Domain entities verified: {list}
    - [!] Prerequisites flagged: {list — must exist before feature}
    - [!] Architecture conflicts: {list or "None"}
+   - [!] House-rule conflicts: {rule id + AC, or "None"}
    ```
 
    **Soft gate with user confirmation (before `bd create`):**
 
-   If Assumption Check finds **any prerequisite flags or architecture conflicts**, STOP and use `AskUserQuestion`:
+   If Assumption Check finds **any prerequisite flags, architecture conflicts or house-rule conflicts**, STOP and use `AskUserQuestion`:
 
    ```
    Assumption Check surfaced concerns:
    - Prerequisites: {list}
    - Architecture conflicts: {list}
+   - House-rule conflicts: {rule id + AC}
 
    Options:
    1. "Proceed anyway" — Create stories with these concerns as explicit Risks/Assumptions/Dependencies. User accepts risk.
@@ -182,7 +191,9 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
    3. "Abort" — Exit without creating Beads stories.
    ```
 
-   **Can't-ask branch (`--non-interactive`, or running as a subagent):** you cannot ask when the run carries `--non-interactive` (e.g. passed by `/automate --non-interactive-fallback`) OR you are executing as a spawned subagent — the ask tool is absent from your tool set, because Claude Code removes it from every subagent. Decide from that flag and your spawn context, never from a stdin-TTY probe alone (it false-positives inside the Bash tool). If you cannot ask and flags exist: create no Beads tasks and persist no requirements file; output the flags and the draft stories, then end with the machine-readable line `po_gate: needs_owner (<n> flags)` (`<n>` = prerequisite flags + architecture conflicts). Never choose an option on the owner's behalf.
+   For a house-rule conflict, "Proceed anyway" persists the story with the line still `Owner's choice: pending` (Launch Pad's Plan Review asks again), unless the answer's note gives an override reason (then write the `Rule override:` line from it). "Refine requirements" is how the owner has the AC revised to honor the rule.
+
+   **Can't-ask branch (`--non-interactive`, or running as a subagent):** you cannot ask when the run carries `--non-interactive` (e.g. passed by `/automate --non-interactive-fallback`) OR you are executing as a spawned subagent — the ask tool is absent from your tool set, because Claude Code removes it from every subagent. Decide from that flag and your spawn context, never from a stdin-TTY probe alone (it false-positives inside the Bash tool). If you cannot ask and flags exist: create no Beads tasks and persist no requirements file; output the flags and the draft stories, then end with the machine-readable line `po_gate: needs_owner (<n> flags)` (`<n>` = prerequisite flags + architecture conflicts + house-rule conflicts). Never choose an option on the owner's behalf.
 
    **If no flags:** Proceed silently to story writing.
 
@@ -314,7 +325,7 @@ Before outputting stories, verify:
 - [ ] Problem statement is clear and user-focused
 - [ ] Discovery questions answered (or explicitly skipped with rationale)
 - [ ] Domain context loaded from CLAUDE.md
-- [ ] Assumption Check performed (standard flow) — entities verified, prerequisites/conflicts flagged
+- [ ] Assumption Check performed (standard flow) — entities verified, prerequisites/conflicts flagged, every AC checked against `read-rules.sh --with-ids` (conflicts written, never resolved silently)
 - [ ] If Assumption Check flagged concerns, user confirmation obtained via AskUserQuestion BEFORE any `bd create` (cannot ask ⇒ nothing persisted, `po_gate: needs_owner (<n> flags)` emitted)
 - [ ] User stories follow "As a [role], I want [X], so that [Y]" format
 - [ ] Acceptance criteria are testable (Given/When/Then)
@@ -380,6 +391,7 @@ Before outputting stories, verify:
 - [x] Domain entities verified: [list]
 - [!] Prerequisites flagged: [list or "None"]
 - [!] Architecture conflicts: [list or "None"]
+- [!] House-rule conflicts: [rule id + AC, or "None" — each also written to the story's `## Rule conflicts (open decisions)` section]
 
 **If any flags:** User confirmation obtained via AskUserQuestion before proceeding to story writing. Cannot ask ⇒ flags + draft stories, nothing persisted, last line `po_gate: needs_owner (<n> flags)`.
 
