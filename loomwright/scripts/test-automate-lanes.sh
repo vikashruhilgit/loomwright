@@ -68,7 +68,10 @@
 #     a not-run statement on any non-fenced line, an anchored step's intro paragraph, and no title-keyed
 #     evidence for a title two entries share — AL17–AL19, U13c; an anchored passage crossing a paragraph
 #     break only via an intro line ending in `:`, the wider not-run vocabulary — AL20–AL20g; a waiver
-#     bound to its item (named in the line, refused for any item but the last picked) — AL7h–AL7m
+#     bound to its item (named in the line, refused for any item but the last picked) — AL7h–AL7m;
+#     `* ` / `+ ` / `N) ` entries parse like `- ` / `N. `, a section that exists but parses to no entry
+#     reads `unrun` (never `none`) with its own mutation control, and the not-run vocabulary matches
+#     whole phrases only ("not running hot" stays PASS) — AL22–AL22h
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -2533,6 +2536,48 @@ printf '# n\n## Touches\n- `x`\n' > "$VG/reqs/noval.md"
 check "AL5 AC5 no running-system entry (\"running-system\" hyphenated is not the phrase) ⇒ none" \
   "$(VG_GH="$T/vg-no-gh" vg "$VGRF" reqs/norun.md "$VGPR")" "validation-gate: none — no running-system step in reqs/norun.md"
 check "AL5b AC5 no ## Validation section at all ⇒ none" "$(vg "$VGRF" reqs/noval.md "$VGPR")" "validation-gate: none — no running-system step in reqs/noval.md"
+# AL22: the entry grammar reads every list style, and a section it cannot parse fails CLOSED (the
+# proposed/validation-gate-parser-fail-open repro: `* ` / `1) ` items once read as zero entries ⇒ `none`).
+printf '# s\n## Validation\n* **Smoke:** tests green.\n* **Running system:** start three clones.\n' > "$VG/reqs/star.md"
+printf '# s\n## Validation\n+ **Smoke:** tests green.\n+ **Running system:** start three clones.\n' > "$VG/reqs/plus.md"
+printf '# s\n## Validation\n1) **Smoke:** tests green.\n2) **Running system:** start three clones.\n' > "$VG/reqs/paren.md"
+vg_ls=""
+for st in star plus paren; do
+  r="$( ( . "$S"; _lanes_validation_rows "$VG/reqs/$st.md" /dev/null 0 ) | cut -f1,3 | tr '\t\n' ':,')"
+  [ "$r" = "1:other,2:running-system," ] || vg_ls="$vg_ls [$st rows: $r]"
+  out="$(vgb '## Test Plan\nValidation 1: baseline\n```\nok 12 passed\n```\n' "reqs/$st.md")"
+  [ "$out" = "validation-gate: unrun — V2 Running system: no evidence in the PR body" ] || vg_ls="$vg_ls [$st unevidenced: $out]"
+  out="$(vgb '## Test Plan\nValidation 2: three clones\n```\npeak load1 31\n```\n' "reqs/$st.md")"
+  [ "$out" = "validation-gate: ok — 1 running-system step(s) evidenced" ] || vg_ls="$vg_ls [$st evidenced: $out]"
+done
+check "AL22 \`* \` / \`+ \` / \`N) \` entries read as 1:other, 2:running-system; unevidenced ⇒ unrun, evidenced ⇒ ok" "${vg_ls:-none}" none
+check "AL22b \`* \` / \`N) \` fallback titles drop their marker like \`- \` / \`N. \`" \
+  "$(printf '# s\n## Validation\n* plain smoke step\n3) plain running system step\n' > "$T/vg-ft.md"; ( . "$S"; _lanes_validation_rows "$T/vg-ft.md" /dev/null 0 ) | cut -f1,2 | tr '\t\n' ':,')" \
+  "4:plain smoke step,3:plain running system step,"
+AL22C_WANT="validation-gate: unrun — reqs/prose.md: the ## Validation section has no parseable entry (an entry is a column-0 N. / N) / - / * / + list item)"
+printf '# p\n## Validation (must pass before merge)\nStart the app on the running system and paste its output.\n\n## Touches\n- `x`\n' > "$VG/reqs/prose.md"
+out="$(vg "$VGRF" reqs/prose.md "$VGPR")"; rc=$?
+check "AL22c a ## Validation section that parses to no entry ⇒ unrun with the reason (never none), exit 0" "$rc|$out" "0|$AL22C_WANT"
+printf '# e\n## Validation\n\n## Touches\n- `x`\n' > "$VG/reqs/empty.md"
+check "AL22d an empty ## Validation section ⇒ unrun (fail CLOSED)" "$(vg "$VGRF" reqs/empty.md "$VGPR")" \
+  "validation-gate: unrun — reqs/empty.md: the ## Validation section has no parseable entry (an entry is a column-0 N. / N) / - / * / + list item)"
+out="$(vg "$VGRF" reqs/prose.md "$VGPR" --waive 0 --words "ok")"; rc=$?
+check "AL22e the step-less unrun has nothing to waive (--waive 0 refused, exit 1)" "$rc|$out" "1|validation-gate: refused — V0 is not a running-system Validation entry of reqs/prose.md"
+# Mutation control: the guard removed, the unparseable section must read `none` again — AL22c goes red.
+mkdir -p "$T/vgmut2"; cp "$HERE"/resolve-loomwright-root.sh "$T/vgmut2/" 2>/dev/null
+sed '/^  if \[ -n "\$ev" \]; then echo "\$G unrun — \$item: \$ev"; return 0; fi$/d' "$S" > "$T/vgmut2/automate-lanes.sh"
+if [ ! -s "$T/vgmut2/automate-lanes.sh" ] || cmp -s "$S" "$T/vgmut2/automate-lanes.sh" || ! bash -n "$T/vgmut2/automate-lanes.sh"; then
+  bad "AL22f guard mutant not built (empty, sed matched nothing, or bash -n failed)"
+else
+  out="$(VG_S="$T/vgmut2/automate-lanes.sh" vg "$VGRF" reqs/prose.md "$VGPR")"
+  if [ "$out" != "$AL22C_WANT" ]; then ok "AL22f mutation control: the unparsed-section guard removed turns AL22c red (mutant prints: $out)"
+  else bad "AL22f mutant still printed the AL22c verdict — AL22c is vacuous"; fi
+fi
+out="$(vgb '## Test Plan\nValidation 2 - running system: three clones; the machine was not running hot.\n```\npeak load1 31\n```\n')"
+check "AL22g the not-run vocabulary is whole phrases: \"not running hot\" is not \"not run\" ⇒ ok" "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
+out="$(vgb '## Test Plan\nValidation 2 - running system: not run (needs a quiet machine).\n```\npeak load1 31\n```\n')"
+check "AL22h … while \"not run\" as its own phrase still marks the step ⇒ unrun" \
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
 out="$(VG_GH="$T/vg-no-gh" vg "$VGRF" reqs/pa16.md "$VGPR")"; rc=$?
 check "AL6 AC6 gh unreadable ⇒ unrun (fail CLOSED, exit 0)" "$rc|$out" "0|validation-gate: unrun — V2 Running system: PR body unreadable ($VGPR)"
 check "AL6b AC6 no PR url ⇒ unrun" "$(vg "$VGRF" reqs/pa16.md "")" "validation-gate: unrun — V2 Running system: PR body unreadable: no PR recorded"
