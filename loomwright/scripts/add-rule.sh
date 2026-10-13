@@ -34,6 +34,16 @@
 #     validated here (non-empty, no newline/CR/tab, no `..`, not absolute, not `~`-relative) so this
 #     writer can never author a scope that is silently dead or that walks out of the repo.
 #
+# VERIFIED RULE CHECKS (owner decision D2) added ONE more flag on the (default) ADD action:
+#   - `--proof <file>` — REQUIRED for, and only valid on, a `--enforcement must` add that carries
+#     `--check`. The file is the proof `prove-rule-check.sh --out` writes. The writer refuses
+#     (`rejected:`, non-zero, nothing written) a missing `--proof`, a proof file that is missing /
+#     unreadable / not a JSON object / of another schema, a verdict other than `PROVEN`, or a
+#     recorded `check_sha256` that is not the sha256 of THIS `--check` value's exact bytes. No sha256
+#     tool ⇒ refused too (could not examine ⇒ exit 2). Advisory adds and adds without `--check` are
+#     unchanged and take no proof. The proof is NOT stored in the rule (D4: the schema is frozen) —
+#     it is recorded in the commit / PR body. Verdicts are owned by prove-rule-check.sh's header.
+#
 # WRITE DISCIPLINE — ADD action (per skills/rules/SKILL.md §7 — ALL enforced here in code, never prose):
 #   1. Category containment. Slug a LEGITIMATE category to a SINGLE `[a-z0-9-]` path segment via BENIGN
 #      normalization only (lowercase, spaces→'-', collapse repeats, strip leading/trailing '-'). REJECT
@@ -65,7 +75,7 @@
 #
 # WRITE DISCIPLINE — RETRACT action (curate-postmortem.sh shape, validate-before-write, fail loud):
 #   R1. `--retract` is mutually exclusive with every add-only flag (`--category`/`--statement`/
-#       `--check`/`--supersedes`/`--applies-to`) — combining them is rejected outright (exit 2), never silently
+#       `--check`/`--supersedes`/`--applies-to`/`--proof`) — combining them is rejected outright (exit 2), never silently
 #       ignored, so a caller can't accidentally mix modes.
 #   R2. `--target <rule-id>` is REQUIRED (non-empty, no embedded newline/CR — mirrors
 #       curate-postmortem.sh's own target guard so a target could never accidentally match nothing).
@@ -87,7 +97,8 @@
 #
 # Usage:
 #   add-rule.sh --category <str> --statement <str> [--enforcement advisory|must] [--check <str>]
-#               [--source <str>] [--supersedes <rule-id>] [--applies-to <glob> ...] [--confirm]
+#               [--proof <file>] [--source <str>] [--supersedes <rule-id>] [--applies-to <glob> ...]
+#               [--confirm]
 #   add-rule.sh --retract --target <rule-id> --reason <str> [--confirm]
 # Exit:  0 = wrote/retracted OR planned-ok (dry-run) ; non-zero = rejected / error (no partial write).
 
@@ -206,6 +217,8 @@ reason_set=0         # whether --reason was supplied at all (RETRACT action only
 reason=""
 replacement_set=0    # whether --replacement was supplied at all (ALWAYS rejected in this file)
 replacement_val=""
+proof_set=0          # whether --proof was supplied at all (ADD action only; must + --check only)
+proof_file=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -215,6 +228,7 @@ while [ "$#" -gt 0 ]; do
     --check)       [ "$#" -ge 2 ] || die "--check requires a value"; check_set=1; check_val="$2"; shift 2 ;;
     --source)      [ "$#" -ge 2 ] || die "--source requires a value"; source_val="$2"; shift 2 ;;
     --supersedes)  [ "$#" -ge 2 ] || die "--supersedes requires a value"; supersedes_set=1; supersedes_val="$2"; shift 2 ;;
+    --proof)       [ "$#" -ge 2 ] || die "--proof requires a value"; proof_set=1; proof_file="$2"; shift 2 ;;
     --applies-to)  [ "$#" -ge 2 ] || die "--applies-to requires a value"; applies_to_set=1
                    # A2-newline, checked HERE and nowhere else: the accumulator below is newline-
                    # TERMINATED, so an embedded newline would be consumed as the accumulator's OWN
@@ -271,8 +285,8 @@ RULES_DIR="$GITROOT/.agent/rules"
 if [ "$retract" -eq 1 ]; then
   # R1. Mutually exclusive with every add-only flag.
   if [ -n "$category" ] || [ -n "$statement" ] || [ "$check_set" -eq 1 ] || [ "$supersedes_set" -eq 1 ] \
-     || [ "$applies_to_set" -eq 1 ]; then
-    die "rejected: --retract cannot be combined with add-only flags (--category/--statement/--check/--supersedes/--applies-to)" 2
+     || [ "$applies_to_set" -eq 1 ] || [ "$proof_set" -eq 1 ]; then
+    die "rejected: --retract cannot be combined with add-only flags (--category/--statement/--check/--supersedes/--applies-to/--proof)" 2
   fi
 
   # R2. --target required, non-empty, newline/CR-free (mirrors curate-postmortem.sh's target guard).
@@ -504,6 +518,53 @@ if [ "$applies_to_set" -eq 1 ]; then
     at_count=$((at_count + 1))
   done
   [ "$at_count" -gt 0 ] || die "rejected: --applies-to must be non-empty when supplied"
+fi
+
+# ---------------------------------------------------------------------------
+# 2b. THE PROOF GATE (verified rule checks, D2). A `must` rule with a `check` enters the store only
+#     with a PROVEN proof for THAT EXACT check string. Placed here — before the validator, the id
+#     scan and the confirm gate — so a dry-run never plans a write the real run would refuse. Each
+#     clause is a SEPARATE refusal (never one combined jq expression) so every way a proof can be
+#     wrong names itself. Fail CLOSED throughout: anything unreadable is refused, never treated as
+#     "no proof needed".
+# ---------------------------------------------------------------------------
+_ar_sha256_str() {
+  # Same fallback chain as rules-check.sh's _rc_sha256_file, over the EXACT bytes (no newline added).
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$1" | shasum -a 256 2>/dev/null | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$1" | sha256sum 2>/dev/null | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    printf '%s' "$1" | openssl dgst -sha256 2>/dev/null | awk '{print $NF}'
+  fi
+}
+if [ "$enforcement" = "must" ] && [ "$check_set" -eq 1 ]; then
+  [ "$proof_set" -eq 1 ] || die "rejected: --enforcement must with --check requires --proof <file> written by prove-rule-check.sh (verdict PROVEN for this exact check). Prove it first, or add the rule as --enforcement advisory with the check kept as data. Nothing was written."
+  [ -n "$proof_file" ] && [ -f "$proof_file" ] && [ -r "$proof_file" ] \
+    || die "rejected: --proof file is missing or unreadable: $proof_file. Nothing was written."
+  jq -e 'type == "object"' "$proof_file" >/dev/null 2>&1 \
+    || die "rejected: --proof file is not a JSON object: $proof_file. Nothing was written."
+  jq -e '.schema == "rule-check-proof/1"' "$proof_file" >/dev/null 2>&1 \
+    || die "rejected: --proof file is not a prove-rule-check.sh proof (schema rule-check-proof/1): $proof_file. Nothing was written."
+  proof_verdict="$(jq -r '.verdict | if type == "string" then . else "<not a string>" end' "$proof_file" 2>/dev/null)" || proof_verdict="<unreadable>"
+  [ "$proof_verdict" = "PROVEN" ] \
+    || die "rejected: --proof verdict is '$proof_verdict', not PROVEN — this check has not been shown to fail on a violation. Add it as --enforcement advisory (check kept as data) instead. Nothing was written."
+  # `|| live_check_sha=""`: a failing hash pipeline under `set -euo pipefail` would otherwise abort
+  # this script SILENTLY inside the assignment — closed, but with no diagnostic. Empty ⇒ the named
+  # refusal just below.
+  live_check_sha="$(_ar_sha256_str "$check_val")" || live_check_sha=""
+  case "$live_check_sha" in
+    *[!0-9a-f]*|"") die "refusing to write — no working sha256 tool (shasum / sha256sum / openssl), so the proof could not be matched to this check. Nothing was written." 2 ;;
+  esac
+  [ "${#live_check_sha}" -eq 64 ] \
+    || die "refusing to write — the sha256 tool returned a malformed digest, so the proof could not be matched to this check. Nothing was written." 2
+  proof_check_sha="$(jq -r '.check_sha256 | if type == "string" then . else "" end' "$proof_file" 2>/dev/null)" || proof_check_sha=""
+  [ "$proof_check_sha" = "$live_check_sha" ] \
+    || die "rejected: --proof is for a different check string (proof check_sha256 '$proof_check_sha' != sha256 of this --check '$live_check_sha'). Re-prove this exact check. Nothing was written."
+elif [ "$proof_set" -eq 1 ]; then
+  # Never silently ignored: a proof on an add that needs none means the caller's intent and this
+  # writer's disagree (e.g. a D3 advisory fallback that kept the flag).
+  die "rejected: --proof is only valid together with --enforcement must and --check (an advisory or check-less add takes no proof). Nothing was written."
 fi
 
 # Build the JSON array injection-safely: the raw text crosses into jq via `-R -s` (read as a raw

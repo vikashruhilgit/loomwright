@@ -24,6 +24,12 @@
 #       with NO file written, one bad pattern among repeated flags aborts the WHOLE write, the flag is
 #       rejected alongside --retract, and a writer→reader ROUND TRIP proves what is authored is what
 #       read-rules.sh actually routes on.
+#   (P) the proof gate (verified rule checks, D2): `--enforcement must --check X` is REFUSED without a
+#       `--proof`, with a missing / non-JSON / non-object / wrong-schema proof, with a non-PROVEN
+#       (real VACUOUS) proof, with a PROVEN proof for a DIFFERENT check, and with no working sha256
+#       tool — with and without --confirm, nothing written; `--proof` with `--retract` is refused by
+#       the R1 guard; `--proof` on an add that needs none is refused; advisory, check-less and
+#       must-without-check adds behave exactly as before; a valid proof dry-run still only PLANS.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -43,6 +49,30 @@ new_repo() {
   ( cd "$r" && git init -q && git config user.email t@t && git config user.name t \
       && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
   printf '%s' "$r"
+}
+
+# Verified rule checks (D2): a `must` add with `--check` needs a PROVEN proof from the REAL prover —
+# never a hand-written proof JSON on the success path. Fixture helpers:
+#   commit_src_a <repo>                    — commits src/a/x.md + src/a/y.md (no '19' anywhere), the
+#                                            scope every candidate below greps.
+#   add_19_patch <file> <name...>          — writes a unified diff ADDING one new src/a/<name> file
+#                                            per argument, each containing '19' (the counterexample).
+#   prove <repo> <check> <patch> <out>     — runs prove-rule-check.sh --confirm in <repo>; sets
+#                                            PROVE_OUT / PROVE_RC.
+PROVER="$SCRIPT_DIR/prove-rule-check.sh"
+commit_src_a() {
+  ( cd "$1" && mkdir -p src/a && printf 'x\n' > src/a/x.md && printf 'y\n' > src/a/y.md \
+      && git add src/a && git commit -qm src-a ) >/dev/null 2>&1
+}
+add_19_patch() {
+  local f="$1" n; shift
+  : > "$f"
+  for n in "$@"; do
+    printf -- '--- /dev/null\n+++ b/src/a/%s\n@@ -0,0 +1 @@\n+release 19 note\n' "$n" >> "$f"
+  done
+}
+prove() {
+  PROVE_OUT="$( ( cd "$1" && bash "$PROVER" --check "$2" --counterexample "$3" --out "$4" --confirm ) </dev/null 2>&1 )"; PROVE_RC=$?
 }
 
 # Run the writer inside a temp repo. All extra args forwarded. Captures stdout+stderr and rc.
@@ -251,16 +281,22 @@ run_writer "$RG5" --category "gval" --statement "no check here" --confirm
 [ "$(jq -r '.[0].check | type' "$RG5/.agent/rules/gval.json" 2>/dev/null)" = "null" ] \
   && ok "(G4b) omitted --check yields explicit null" || no "(G4b) omitted check not null"
 
-# (G4c) executable-rule-candidates/01 — the "Accept rule WITH check" button composes EXACTLY
-# `add-rule.sh --enforcement must --check "<candidate>" --confirm` with NO code change to this file (verified
-# separately: `git diff main -- loomwright/scripts/add-rule.sh` is empty). This case proves a
-# REALISTIC check_candidate-shaped string (harvest-conventions.sh's own absence-template output,
-# built from its FIXED template allowlist) round-trips BYTE-EXACT through the unmodified writer —
-# the "accept-with-check" half of the two-button flow. (G4b above already proves the sibling
-# "accept-without-check" half via the SAME unmodified --check/no-check paths.)
-RG6="$(new_repo)"
+# (G4c) executable-rule-candidates/01 — the "Accept rule WITH check" button composes
+# `add-rule.sh --enforcement must --check "<candidate>" --proof "<proof>" --confirm`. Since verified
+# rule checks (D2) the writer requires that PROVEN proof for a must + check add, so this case first
+# PROVES the candidate with the real prover (fixture: a committed src/a/ scope without '19', and a
+# counterexample patch adding a '19' file), then proves a REALISTIC check_candidate-shaped string
+# (harvest-conventions.sh's own absence-template output, built from its FIXED template allowlist)
+# round-trips BYTE-EXACT through the writer — the "accept-with-check" half of the two-button flow.
+# (G4b above proves the sibling "accept-without-check" half via the --check/no-check paths.)
+RG6="$(new_repo)"; commit_src_a "$RG6"
 CANDIDATE_G6="grep -rnE -- '19' src/a/*; test \$? -eq 1"
-run_writer "$RG6" --category "gval" --statement "candidate round trip" --enforcement must --check "$CANDIDATE_G6" --confirm
+PATCH_G6="$ROOT/g6.patch"; PROOF_G6="$ROOT/g6.proof.json"; add_19_patch "$PATCH_G6" z.md
+prove "$RG6" "$CANDIDATE_G6" "$PATCH_G6" "$PROOF_G6"
+[ "$PROVE_RC" -eq 0 ] && [ "$(jq -r '.verdict' "$PROOF_G6" 2>/dev/null)" = "PROVEN" ] \
+  && ok "(G4c) premise: the candidate is PROVEN by prove-rule-check.sh on this fixture" \
+  || no "(G4c) premise: expected PROVEN (rc 0), got rc=$PROVE_RC: $(printf '%s' "$PROVE_OUT" | tail -3)"
+run_writer "$RG6" --category "gval" --statement "candidate round trip" --enforcement must --check "$CANDIDATE_G6" --proof "$PROOF_G6" --confirm
 stored_check_g6="$(jq -r '.[0].check' "$RG6/.agent/rules/gval.json" 2>/dev/null)"
 [ "$stored_check_g6" = "$CANDIDATE_G6" ] && [ "$(jq -r '.[0].enforcement' "$RG6/.agent/rules/gval.json" 2>/dev/null)" = "must" ] \
   && ok "(G4c) a check_candidate-shaped string round-trips BYTE-EXACT through --check (accept-with-check produces check == the candidate string exactly)" \
@@ -269,12 +305,22 @@ stored_check_g6="$(jq -r '.[0].check' "$RG6/.agent/rules/gval.json" 2>/dev/null)
 # (G4d) the BOUND template carries `"$(` — the delivery shape commands/dreaming.md documents (load the
 # candidate through a QUOTED heredoc, pass "$CANDIDATE") must store it byte-exact AND must not run the
 # embedded $(grep …) at delivery. A marker-touching payload inside the $( proves non-execution directly.
-RG7="$(new_repo)"
+RG7="$(new_repo)"; commit_src_a "$RG7"
 MARKER_G7="$ROOT/g7_marker_$$"; rm -f "$MARKER_G7" 2>/dev/null
 CANDIDATE_G7="$(cat <<LOOMWRIGHT_CHECK_CANDIDATE_FIXTURE
 test "\$(grep -rlE -- '19' src/a/* | wc -l; touch $MARKER_G7)" -le 2
 LOOMWRIGHT_CHECK_CANDIDATE_FIXTURE
 )"
+# Prove leg FIRST (D2). A confirmed prove run DOES execute the candidate — that is its job — so it
+# creates the marker; the marker is then removed BEFORE the delivery, and the non-execution assertion
+# below stays exactly as strong: it observes the delivery alone. Counterexample: 3 new '19' files,
+# pushing the ratchet count past its bound of 2.
+PATCH_G7="$ROOT/g7.patch"; PROOF_G7="$ROOT/g7.proof.json"; add_19_patch "$PATCH_G7" n1.md n2.md n3.md
+prove "$RG7" "$CANDIDATE_G7" "$PATCH_G7" "$PROOF_G7"
+[ "$PROVE_RC" -eq 0 ] && [ "$(jq -r '.verdict' "$PROOF_G7" 2>/dev/null)" = "PROVEN" ] \
+  && ok "(G4d) premise: the bound candidate is PROVEN by prove-rule-check.sh on this fixture" \
+  || no "(G4d) premise: expected PROVEN (rc 0), got rc=$PROVE_RC: $(printf '%s' "$PROVE_OUT" | tail -3)"
+rm -f "$MARKER_G7" 2>/dev/null
 # Build the delivery script exactly as dreaming.md step 3 shows it, with the candidate pasted verbatim
 # into the quoted-heredoc body, then run it as its own bash process (as the agent's Bash tool would).
 DELIVER_G7="$ROOT/deliver_g7.sh"
@@ -282,7 +328,8 @@ DELIVER_G7="$ROOT/deliver_g7.sh"
   printf 'CANDIDATE="$(cat <<'"'"'LOOMWRIGHT_CHECK_CANDIDATE'"'"'\n'
   printf '%s\n' "$CANDIDATE_G7"
   printf 'LOOMWRIGHT_CHECK_CANDIDATE\n)"\n'
-  printf 'cd %q && bash %q --category gval --statement %q --enforcement must --check "$CANDIDATE" --confirm < /dev/null\n' \
+  printf 'PROOF=%q\n' "$PROOF_G7"
+  printf 'cd %q && bash %q --category gval --statement %q --enforcement must --check "$CANDIDATE" --proof "$PROOF" --confirm < /dev/null\n' \
     "$RG7" "$WRITER" "bound candidate round trip"
 } > "$DELIVER_G7"
 bash "$DELIVER_G7" >/dev/null 2>&1
@@ -293,6 +340,102 @@ stored_check_g7="$(jq -r '.[0].check' "$RG7/.agent/rules/gval.json" 2>/dev/null)
 [ ! -e "$MARKER_G7" ] \
   && ok "(G4d) …and the embedded \$( … ) was NOT executed at delivery (marker absent)" \
   || no "(G4d) SECURITY REGRESSION: the delivery shape executed the candidate's \$( … )"
+
+# ============================================================================
+echo "== (P) the proof gate: a must + check add needs a PROVEN proof for THAT check =="
+# One fixture repo + two REAL proofs from the prover: a PROVEN one for CHECK_P, and a VACUOUS one for
+# `true` (the canonical always-passing check). Every refusal below must leave .agent/ empty.
+RP="$(new_repo)"; commit_src_a "$RP"
+CHECK_P="grep -rnE -- '19' src/a/*; test \$? -eq 1"
+PATCH_P="$ROOT/p.patch"; add_19_patch "$PATCH_P" p.md
+PROOF_P="$ROOT/p.proof.json"; prove "$RP" "$CHECK_P" "$PATCH_P" "$PROOF_P"
+PROOF_V="$ROOT/v.proof.json"; prove "$RP" "true" "$PATCH_P" "$PROOF_V"
+if [ "$(jq -r '.verdict' "$PROOF_P" 2>/dev/null)" = "PROVEN" ] && [ "$(jq -r '.verdict' "$PROOF_V" 2>/dev/null)" = "VACUOUS" ]; then
+  ok "(P0) premise: the real prover wrote one PROVEN and one VACUOUS proof"
+else
+  no "(P0) premise: expected PROVEN + VACUOUS proofs, got [$(jq -c . "$PROOF_P" 2>/dev/null)] [$(jq -c . "$PROOF_V" 2>/dev/null)]"
+fi
+# p_refused <label> <expected-message-fragment> <args...> — runs the writer twice (with and without
+# --confirm) and asserts: non-zero both times, a `rejected:` (or `refusing`) diagnostic carrying the
+# fragment, and NO rule file written.
+p_refused() {
+  local label="$1" frag="$2"; shift 2
+  local r rc1 out1
+  r="$(new_repo)"
+  run_writer "$r" "$@" --confirm; rc1=$RC; out1="$OUT"
+  run_writer "$r" "$@"
+  if [ "$rc1" -ne 0 ] && [ "$RC" -ne 0 ] && [ "$(count_rule_files "$r")" = "0" ] \
+     && printf '%s' "$out1" | grep -qE 'rejected:|refusing' && printf '%s' "$out1" | grep -qF -- "$frag" \
+     && printf '%s' "$OUT" | grep -qF -- "$frag" && ! printf '%s' "$OUT" | grep -qF 'PLANNED WRITE'; then
+    ok "$label (rc $rc1 confirmed / $RC dry-run, nothing written, no plan printed)"
+  else
+    no "$label NOT refused as expected (rc $rc1 / $RC, files=$(count_rule_files "$r")): $out1"
+  fi
+}
+p_refused "(P1) must + check with NO --proof is refused" "requires --proof" \
+  --category pg --statement "proof gate one" --enforcement must --check "$CHECK_P"
+p_refused "(P2) a PROVEN proof for a DIFFERENT check string is refused" "different check string" \
+  --category pg --statement "proof gate two" --enforcement must --check "$CHECK_P; true" --proof "$PROOF_P"
+p_refused "(P3) a VACUOUS proof (real prover output, matching check) is refused" "not PROVEN" \
+  --category pg --statement "proof gate three" --enforcement must --check "true" --proof "$PROOF_V"
+p_refused "(P4a) a missing proof file is refused" "missing or unreadable" \
+  --category pg --statement "proof gate four" --enforcement must --check "$CHECK_P" --proof "$ROOT/does-not-exist.json"
+printf 'not json at all\n' > "$ROOT/p_garbage.json"
+p_refused "(P4b) a non-JSON proof file is refused" "not a JSON object" \
+  --category pg --statement "proof gate four b" --enforcement must --check "$CHECK_P" --proof "$ROOT/p_garbage.json"
+printf '["PROVEN"]\n' > "$ROOT/p_array.json"
+p_refused "(P4c) a JSON non-object proof is refused" "not a JSON object" \
+  --category pg --statement "proof gate four c" --enforcement must --check "$CHECK_P" --proof "$ROOT/p_array.json"
+jq '.schema = "something-else/1"' "$PROOF_P" > "$ROOT/p_schema.json"
+p_refused "(P4d) a proof of another schema is refused" "schema rule-check-proof/1" \
+  --category pg --statement "proof gate four d" --enforcement must --check "$CHECK_P" --proof "$ROOT/p_schema.json"
+# (P4e) no working sha256 tool: stub all three to print nothing, so the writer cannot match the proof.
+SHA_STUB="$ROOT/sha-stub"; mkdir -p "$SHA_STUB"
+for t in shasum sha256sum openssl; do printf '#!/bin/sh\nexit 1\n' > "$SHA_STUB/$t"; chmod +x "$SHA_STUB/$t"; done
+RP4E="$(new_repo)"
+OUT="$( ( cd "$RP4E" && PATH="$SHA_STUB:$PATH" bash "$WRITER" --category pg --statement "proof gate four e" \
+          --enforcement must --check "$CHECK_P" --proof "$PROOF_P" --confirm ) 2>&1 )"; RC=$?
+[ "$RC" -eq 2 ] && [ "$(count_rule_files "$RP4E")" = "0" ] && printf '%s' "$OUT" | grep -qF 'no working sha256 tool' \
+  && ok "(P4e) no working sha256 tool ⇒ refused as could-not-examine (exit 2), nothing written" \
+  || no "(P4e) expected exit 2 + 'no working sha256 tool', got rc=$RC: $OUT"
+# (P5) --proof with --retract: refused by the R1 guard. A REAL target is seeded so that, without the
+# guard's proof clause, the retract would SUCCEED (rc 0, rule removed) — the test cannot pass by accident.
+RP5="$(new_repo)"; mkdir -p "$RP5/.agent/rules"
+printf '%s' '[{"id":"p5-target","category":"safety","statement":"a retract target that really exists","enforcement":"advisory","check":null,"provenance":{"source":"seed","added":"2026-01-01T00:00:00Z"}}]' \
+  > "$RP5/.agent/rules/safety.json"
+before_p5="$(cat "$RP5/.agent/rules/safety.json")"
+run_writer "$RP5" --retract --target "p5-target" --reason "x"
+printf '%s' "$OUT" | grep -qF 'PLANNED RETRACT' \
+  && ok "(P5) premise: the same retract WITHOUT --proof is accepted (dry-run plans it) — the target is real" \
+  || no "(P5) premise: the retract target is not retractable, so (P5) below could pass for the wrong reason: $OUT"
+run_writer "$RP5" --retract --target "p5-target" --reason "x" --proof "$PROOF_P" --confirm
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF -- 'cannot be combined with add-only flags' \
+   && printf '%s' "$OUT" | grep -qF -- '--proof' && [ "$(cat "$RP5/.agent/rules/safety.json")" = "$before_p5" ]; then
+  ok "(P5) --proof with --retract rejected by R1 (message names --proof), store byte-identical"
+else
+  no "(P5) --proof with --retract not rejected by R1 (rc=$RC): $OUT"
+fi
+# (P6) --proof on an add that needs none is refused, never silently ignored.
+p_refused "(P6a) --proof on an ADVISORY add with --check is refused" "only valid together with --enforcement must and --check" \
+  --category pg --statement "proof gate six" --enforcement advisory --check "$CHECK_P" --proof "$PROOF_P"
+p_refused "(P6b) --proof on a must add WITHOUT --check is refused" "only valid together with --enforcement must and --check" \
+  --category pg --statement "proof gate six b" --enforcement must --proof "$PROOF_P"
+# (P7) unchanged paths: advisory + check, and must with NO check, need no proof and write as before.
+RP7="$(new_repo)"
+run_writer "$RP7" --category pg --statement "advisory keeps its check as data" --enforcement advisory --check "$CHECK_P" --confirm
+[ "$RC" -eq 0 ] && [ "$(jq -r '.[0].check' "$RP7/.agent/rules/pg.json" 2>/dev/null)" = "$CHECK_P" ] \
+  && ok "(P7a) advisory + --check, no --proof: written exactly as before (check stored as data)" \
+  || no "(P7a) advisory + check add changed behaviour (rc=$RC): $OUT"
+run_writer "$RP7" --category pg --statement "a must claim with no mechanism yet" --enforcement must --confirm
+[ "$RC" -eq 0 ] && [ "$(jq -r '.[1].enforcement + "/" + (.[1].check | tostring)' "$RP7/.agent/rules/pg.json" 2>/dev/null)" = "must/null" ] \
+  && ok "(P7b) must WITHOUT --check, no --proof: written exactly as before (check null)" \
+  || no "(P7b) must-without-check add changed behaviour (rc=$RC): $OUT"
+# (P8) a valid proof on a dry-run still only PLANS (the gate passes, the confirm gate still holds).
+RP8="$(new_repo)"
+run_writer "$RP8" --category pg --statement "proof gate eight" --enforcement must --check "$CHECK_P" --proof "$PROOF_P"
+[ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF 'PLANNED WRITE' && [ "$(count_rule_files "$RP8")" = "0" ] \
+  && ok "(P8) valid PROVEN proof without --confirm ⇒ PLANNED WRITE, nothing written" \
+  || no "(P8) valid-proof dry-run wrong (rc=$RC files=$(count_rule_files "$RP8")): $OUT"
 
 # ============================================================================
 echo "== (H) confirm-only: no --confirm + non-TTY ⇒ DRY-RUN (plan printed, NO file written) =="
