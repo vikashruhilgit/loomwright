@@ -1,6 +1,6 @@
 # 39 — Engine hygiene: clean up what the plugin leaves behind, keep its locks and guard arms honest, and fix the rules seam's false lines
 
-## Status: pending
+## Status: parked (split 2026-10-13 — Part A → `39a-sweep-and-janitor.md`, Part B → `39b-run-lock-and-guard-arm.md`, Part C shipped #490; do not run this file)
 
 ## Merged from (2026-10-10, owner decision: merge the serialized tail — these three cannot share a wave: all three edit `loomwright/skills/automate-loop/SKILL.md`, and af/34 ∩ ag/03 also share `automate-trail.sh` + its test and `automate-merge-watch.sh`)
 - Part A: `automate-followups/34-sweep-and-janitor.md` — 34 — Clean up what the plugin left behind: a squash-safe sweep, a process registry and one `/janitor` command
