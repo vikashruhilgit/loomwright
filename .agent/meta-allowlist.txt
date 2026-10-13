@@ -1,0 +1,18 @@
+# .agent/meta-allowlist.txt — the TRACKED repo-allowlist REQUEST file (read by
+# loomwright/scripts/setup-memory.sh `allowlist`, precedence layer 4).
+#
+# Each line is an owner/repo slug this repository REQUESTS. Listing a slug here never grants it:
+# an entry is GRANTED only when `gh api repos/<slug> --jq .id` equals the id of origin's slug (a
+# renamed repo's old slug redirects to the same id), and a slug naming any OTHER repository is
+# ignored and named on stderr. Without gh, with gh failing or timing out (each call is bounded by
+# $LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT seconds, default 10), or when origin is not on github.com,
+# NOTHING here is granted. At most 20 non-own entries are checked ($LOOMWRIGHT_ALLOWLIST_MAX_ENTRIES,
+# clamped to 100) and only the first 200 lines are read; later entries are named and never granted.
+# Read only when --allow, $LOOMWRIGHT_MEMORY_REPO_ALLOWLIST and .supervisor/config.json are empty.
+# `#` lines and blank lines are skipped.
+#
+# NOTE (verified 2026-10-12): vikashruhilgit/ai-agent-manager is now a SEPARATE repository on
+# GitHub, not a redirect, so it is refused (`not this repository`) until the owner decides what
+# to do with it. The request is kept so that decision stays visible.
+vikashruhilgit/loomwright
+vikashruhilgit/ai-agent-manager
