@@ -1,3 +1,0 @@
-<!-- bump: patch -->
-Auto-merge gate pins the merge to the head SHA it checked
-`automate-helpers.sh gate-eval` now runs `gh pr merge --squash --match-head-commit <live head>`. Conditions 2 (ready_sha and checks), 6 (classify-risk.sh) and 7 (the rules-gate checkout pin) all evaluate one live head SHA, but the merge itself took no SHA, so a push that landed between those reads and the merge was merged without having been checked. GitHub now refuses a moved head and the gate parks `merge_command_failed`. A new test-automate-helpers.sh case models the push-after-checks race and fails if the pin is dropped.

@@ -35,6 +35,13 @@
 #      already migrated (no reset, FAIL scratch-mode-off — migrate-branch-mode.sh's `already`); a
 #      fresh fixture whose only other .md is a twin contract still gets the two synthetic seeds;
 #      a scratch migration that also untracks the learning store goes red at migrate-clean
+#   9. seed-ab runs the SHIPPED seed A/B check: the history fixture plus three gitignored
+#      `.supervisor/automate/<run>.dismissed-decisions` ledgers -> every check PASSes (B = A + U);
+#      mutation control: a migrate-branch-mode.sh comparing B with A alone (the pre-fix relation,
+#      which failed loomwright-studio's real seed at A = 63, B = 66) turns seed-ab red while every
+#      verify-* check stays green — the gap that let rehearse pass; and the half-migrated run (6)
+#      keeps the copied untracked file ignored in the reset scratch clone (an info/exclude line), so
+#      the shipped seed does not see a dirty tree — mutation control: without that line seed-ab is red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -57,7 +64,7 @@ export GIT_AUTHOR_NAME=tester GIT_AUTHOR_EMAIL=tester@test.invalid
 export GIT_COMMITTER_NAME=tester GIT_COMMITTER_EMAIL=tester@test.invalid
 export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="owner/repo"
 
-CHECKS="scratch-remote scratch-mode-off init push verify-present verify-blobs verify-nothing-extra verify-types migrate-clean pull-roundtrip rollback-run rollback-edit-kept rollback-add-kept rollback-delete-kept rollback-all-kept rollback-gitignore twin-contracts source-untouched"
+CHECKS="scratch-remote scratch-mode-off init push verify-present verify-blobs verify-nothing-extra verify-types seed-ab migrate-clean pull-roundtrip rollback-run rollback-edit-kept rollback-add-kept rollback-delete-kept rollback-all-kept rollback-gitignore twin-contracts source-untouched"
 
 # ---- fixtures ------------------------------------------------------------------------------------
 W=""
@@ -102,7 +109,7 @@ mkworld; FP0="$(fp)"
 run --branch "$BR"
 all_pass; check $? "every named check PASSes (rc=$RC)"; [ "$RC" -eq 0 ] || printf '%s\n' "$OUT" | grep -E '^(FAIL|info)' | sed 's/^/    /'
 [ "$RC" -eq 0 ]; check $? "exit 0 when every check passes"
-[ "$(printf '%s\n' "$OUT" | grep -cE '^(PASS|FAIL): ')" = 18 ]; check $? "one PASS/FAIL line per check (18)"
+[ "$(printf '%s\n' "$OUT" | grep -cE '^(PASS|FAIL): ')" = 19 ]; check $? "one PASS/FAIL line per check (19)"
 [ "$FP0" = "$(fp)" ]; check $? "fixture refs, remotes and its origin are unchanged"
 ! git --git-dir="$W/origin.git" rev-parse -q --verify "refs/heads/$BR" >/dev/null; check $? "no metadata branch on the real remote"
 [ -z "$(git -C "$W/src" status --porcelain)" ]; check $? "fixture working tree untouched"
@@ -266,6 +273,32 @@ if build_mutant "$TROOT/mut-nmd" meta-sync-rehearsal.sh "$TROOT/nmd.sed" 'n_md="
   tw_world; SCRIPT="$TROOT/mut-nmd/meta-sync-rehearsal.sh"; run --branch "$BR"; SCRIPT="$SUT"
   if [ "$RC" -eq 1 ] && ! has "added two synthetic"; then ok "mutation control: counting the twin contract as drill material skips the seeds and turns the run red ($(printf '%s\n' "$OUT" | grep '^FAIL' | cut -d' ' -f2 | tr '\n' ' '))"; else no "mutation control REFUTED: counting the twin contract left the run green (rc=$RC)"; fi
 else no "mutation control (n_md) did not build — counts as FAIL"; fi
+
+echo "== 9. seed-ab: the shipped seed check, with ignored dismissed-decisions ledgers =="
+dd_world() {
+  mkworld; local i
+  mkdir -p "$W/src/.supervisor/automate"
+  for i in 1 2 3; do printf 'd-%s.md\tdrop\t2026-10-12T00:00:0%sZ\n' "$i" "$i" > "$W/src/.supervisor/automate/automate-r$i.dismissed-decisions"; done
+}
+dd_world; run --branch "$BR"
+{ [ "$RC" -eq 0 ] && all_pass && git -C "$W/src" check-ignore -q -- .supervisor/automate/automate-r1.dismissed-decisions; }
+check $? "three ignored ledgers: every check PASSes, seed-ab included (rc=$RC)"
+[ "$RC" -eq 0 ] || printf '%s\n' "$OUT" | grep -E '^(FAIL|info)' | sed 's/^/    /'
+cat > "$TROOT/no-u.sed" <<'SED'
+s|^    diff "\$SD/au\.list" "\$SD/b\.list" > "\$SD/ab-names\.diff"; diff "\$SD/au\.ent" "\$SD/b\.ent" > "\$SD/ab-blobs\.diff"$|    diff "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"; diff "$SD/a.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"|
+SED
+if build_mutant "$TROOT/mut-no-u" migrate-branch-mode.sh "$TROOT/no-u.sed" 'diff "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"'; then
+  dd_world; SCRIPT="$TROOT/mut-no-u/meta-sync-rehearsal.sh"; run --branch "$BR"; SCRIPT="$SUT"
+  { [ "$RC" -eq 1 ] && red seed-ab && [ "$(grep -c '^FAIL' <<<"$OUT")" = 1 ] && grep -q '^PASS: verify-nothing-extra$' <<<"$OUT"; }
+  check $? "mutation control: the pre-fix A = B relation turns ONLY seed-ab red — every verify-* check stays green (rc=$RC; $(grep '^FAIL' <<<"$OUT" | cut -c1-200 | tr '\n' ' '))"
+else no "mutation control (seed A/B without U) did not build — counts as FAIL"; fi
+cat > "$TROOT/no-exc.sed" <<'SED'
+s|^    printf '/%s\\n' "\$(printf '%s' "\$p" \| sed 's/\[\]\[\*?\\\\\]/\\\\\&/g')" >> "\$EXC"$|    : # MUTANT-NO-EXCLUDE|
+SED
+if build_mutant "$TROOT/mut-no-exc" meta-sync-rehearsal.sh "$TROOT/no-exc.sed" 'MUTANT-NO-EXCLUDE'; then
+  half_world "$BR"; SCRIPT="$TROOT/mut-no-exc/meta-sync-rehearsal.sh"; run --branch "$BR"; SCRIPT="$SUT"
+  { [ "$RC" -eq 1 ] && red seed-ab && has "not clean"; }; check $? "mutation control: without keeping the copied file ignored, the half-migrated seed-ab reads a dirty tree (rc=$RC)"
+else no "mutation control (half-migrated exclude) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"

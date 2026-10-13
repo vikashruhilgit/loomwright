@@ -50,7 +50,11 @@
 #                       breaks A = B):
 #                       A = B, every blob equal, nothing on the branch but the managed kinds
 #                       (*.md, results.jsonl, brain-baseline.jsonl, .provenance.jsonl,
-#                       *.dismissed-decisions).
+#                       *.dismissed-decisions). "A = B" in full is B = A + U: U = the managed run
+#                       history on disk that git does NOT track (the default block keeps every
+#                       automate/<run>.dismissed-decisions ledger ignored, and the postmortem ledger
+#                       while the allowlist gate fails), which the push sends too; each U blob must
+#                       equal the local file. U is listed, never untracked, and stays on disk.
 #                       Tracked .supervisor/ paths outside the run-history set (a tracked learning
 #                       store included) are LISTED for an owner decision, never dropped or
 #                       untracked; git alone owns a tracked learning store from then on —
@@ -102,7 +106,7 @@
 #                 seed / untrack_pr / verify_pr: STALE once a later step invalidated them — a
 #                 re-run seed staled untrack_pr + verify_pr, a re-cut untrack-pr staled verify_pr,
 #                 an after-merge tracked-path FAIL staled all three)
-#   seed_a / seed_b=<counts>  seed_sha=<origin/<default> the seed check ran against>
+#   seed_a / seed_u / seed_b=<counts>  seed_sha=<origin/<default> the seed check ran against>
 #   seed_check=equal | subset (the A/B relation seed proved)   verify_pr_sha=<HEAD at verify-pr PASS>
 #   followup=1  after-merge found managed paths still tracked after a merged untrack PR (merge
 #               proven: no a.list path still tracked, or the PR head is in HEAD) — the only
@@ -110,8 +114,8 @@
 #               preflight unless after_merge is still FAIL (the fresh-case mid-round re-preflight)
 #   mode_pr_branch / untrack_branch / rollback_branch=<new branch>  pr_mode / pr_untrack /
 #   pr_rollback=<PR url>  backup_mode_pr / backup_untrack_pr=<moved .gitignore.backup.<ts> path>
-# Side files in the same folder: a.list (the A set), ab-names.diff, ab-blobs.diff, extra.list,
-# ruleset.json, *.body (PR bodies), backups. Nothing there is ever tracked.
+# Side files in the same folder: a.list (the A set), u.list (the U set), ab-names.diff,
+# ab-blobs.diff, extra.list, ruleset.json, *.body (PR bodies), backups. Nothing there is ever tracked.
 #
 # Exit: 0 step passed; 1 refused / failed (a reason line says which); 2 usage error.
 # Portability: bash 3.2 + BSD userland (no `xargs -r`, no `sed -i`, no `timeout`).
@@ -281,8 +285,16 @@ pr_create() { # pr_create <head> <base> <title> <body file> — prints the PR ur
 # as an OWNER DECISION and stays tracked. B is "everything but the excluded class", never "only the
 # included class": an UNMANAGED entry on the branch (a stray NOTES.md, jobs/pending/x.md) stays in
 # B, so it still breaks A = B.
+# U = the managed run history on DISK that git does not track (u.list): seed's push sends the LOCAL
+# managed set, and the default block keeps some of it ignored on purpose — every
+# `.supervisor/automate/<run>.dismissed-decisions` ledger, and the postmortem ledger while the repo
+# allowlist gate fails — so those files reach B without ever being in A. The first-round relation is
+# therefore B = A + U exactly (names, and every blob: A's from HEAD, U's hashed from disk), not
+# A = B: `A = B` assumed U is empty, and every repo whose /automate run recorded a dismissed-findings
+# decision failed seed on it. U is never untracked (it is not tracked) and stays on disk. A branch
+# entry that is neither in A nor a local file (another checkout's push, a stray) still breaks it.
 ab_check() {
-  local b="$1" d="$2" an bn rc=0 nonmd extra
+  local b="$1" d="$2" an un bn rc=0 nonmd extra
   fetch_meta "$b"
   tracked_managed | env LC_ALL=C sort > "$SD/a.list" || { echo "migrate-branch-mode: list-managed --tracked --run-history failed" >&2; return 1; }
   g ls-tree -r --full-tree HEAD | awk -F'\t' 'NR==FNR { want[$0] = 1; next } ($2 in want) { split($1, m, " "); print m[3] "\t" $2 }' "$SD/a.list" - | env LC_ALL=C sort > "$SD/a.ent"
@@ -292,8 +304,20 @@ ab_check() {
     || { echo "migrate-branch-mode: could not read the origin/$b tree" >&2; return 1; }
   awk -F'\t' -v LS="$SD/b.learn" 'FILENAME == LS { ls[$0] = 1; next } !($2 in ls)' "$SD/b.learn" "$SD/b.all" > "$SD/b.ent"
   cut -f2 "$SD/b.ent" | env LC_ALL=C sort > "$SD/b.list"
-  an="$(wc -l < "$SD/a.list" | tr -d ' ')"; bn="$(wc -l < "$SD/b.list" | tr -d ' ')"
-  say "A (tracked managed on origin/$d) = $an; B (origin/$b tree) = $bn"
+  # U (header above): local managed run history minus A, each blob hashed from disk (--no-filters,
+  # as meta-sync.sh hashes what it pushes); --stdin-paths keeps the order, so paste pairs them
+  bash "$MS" list-managed --run-history --root "$ROOT" | env LC_ALL=C sort | env LC_ALL=C comm -23 - "$SD/a.list" > "$SD/u.list" \
+    || { echo "migrate-branch-mode: list-managed --run-history failed" >&2; return 1; }
+  : > "$SD/u.sha"
+  if [ -s "$SD/u.list" ]; then
+    g hash-object --no-filters --stdin-paths < "$SD/u.list" > "$SD/u.sha" \
+      || { echo "migrate-branch-mode: could not hash the untracked managed files" >&2; return 1; }
+  fi
+  paste "$SD/u.sha" "$SD/u.list" | env LC_ALL=C sort > "$SD/u.ent"
+  env LC_ALL=C sort "$SD/a.list" "$SD/u.list" > "$SD/au.list"; env LC_ALL=C sort "$SD/a.ent" "$SD/u.ent" > "$SD/au.ent"
+  an="$(wc -l < "$SD/a.list" | tr -d ' ')"; un="$(wc -l < "$SD/u.list" | tr -d ' ')"; bn="$(wc -l < "$SD/b.list" | tr -d ' ')"
+  say "A (tracked managed on origin/$d) = $an; U (managed run history on disk, gitignored) = $un; B (origin/$b tree) = $bn"
+  [ "$un" -gt 0 ] && { say "U — pushed by seed, never tracked, so nothing to untrack; they stay on disk:"; sed 's/^/  /' "$SD/u.list"; }
   AB_REL=equal
   # A ⊆ B is accepted ONLY in a follow-up round this flow RECORDED (after-merge found paths still
   # tracked after a merged untrack PR -> followup=1) — never on the mode line alone: a first
@@ -304,13 +328,15 @@ ab_check() {
     env LC_ALL=C comm -23 "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"; env LC_ALL=C comm -23 "$SD/a.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"
     say "follow-up round (recorded after-merge FAIL; $d already on $b): checking A is a subset of B"
   else
-    diff "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"; diff "$SD/a.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"
+    diff "$SD/au.list" "$SD/b.list" > "$SD/ab-names.diff"; diff "$SD/au.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"
   fi
   if [ -s "$SD/ab-names.diff" ]; then
     if [ "$AB_REL" = subset ]; then echo "migrate-branch-mode: A ⊄ B — path(s) in A missing from B:" >&2
+    elif [ "$un" -gt 0 ]; then echo "migrate-branch-mode: A + U != B — path lists differ (< A + U, > B):" >&2
     else echo "migrate-branch-mode: A != B — path lists differ:" >&2; fi
     sed 's/^/  /' "$SD/ab-names.diff" >&2; rc=1
   elif [ "$AB_REL" = subset ]; then say "A ⊆ B (B has $((bn - an)) extra) — every A path is on B"
+  elif [ "$un" -gt 0 ]; then say "path lists equal: B = A + U (empty diff)"
   else say "path lists equal (empty diff)"; fi
   if [ -s "$SD/ab-blobs.diff" ]; then echo "migrate-branch-mode: blob mismatch:" >&2; sed 's/^/  /' "$SD/ab-blobs.diff" >&2; rc=1; else say "every blob equal (empty diff)"; fi
   # every branch entry (learning stores included) must be a managed KIND (meta-sync.sh: MANAGED SET)
@@ -325,7 +351,7 @@ ab_check() {
     say "OWNER DECISION: $extra tracked .supervisor/ path(s) are OUTSIDE the run-history set (a tracked learning store included); they stay tracked and are NOT untracked or moved to $b by this flow:"
     sed 's/^/  /' "$SD/extra.list"
   fi
-  AB_A="$an"; AB_B="$bn"
+  AB_A="$an"; AB_B="$bn"; AB_U="$un"
   return $rc
 }
 
@@ -511,16 +537,19 @@ cmd_seed() {
   stale_if_recorded untrack_pr verify_pr
   bash "$MS" push --branch "$b" --root "$ROOT" || { state_set seed FAIL; die "seed: FAIL — meta-sync.sh push --branch $b"; }
   if ab_check "$b" "$d"; then
-    state_set seed PASS; state_set seed_a "$AB_A"; state_set seed_b "$AB_B"; state_set seed_sha "$(g rev-parse HEAD)"
+    state_set seed PASS; state_set seed_a "$AB_A"; state_set seed_u "$AB_U"; state_set seed_b "$AB_B"; state_set seed_sha "$(g rev-parse HEAD)"
     state_set seed_check "$AB_REL"
     say "seed: PASS"
   else state_set seed FAIL; die "seed: FAIL — A/B check failed; the flow stops before untrack-pr"; fi
 }
 
-ab_body_lines() { # ab_body_lines <equal|subset> <A> <B> — the PR body's A/B claim; never claims equality that does not hold
+ab_body_lines() { # ab_body_lines <equal|subset> <A> <B> <U> — the PR body's A/B claim; never claims equality that does not hold
   if [ "$1" = subset ]; then
     printf -- '- path-list check: A ⊆ B (B has %s extra, migrated in an earlier round); A minus B: empty\n' "$(($3 - $2))"
     printf -- '- blob check: every A blob equals its B blob'
+  elif [ "${4:-0}" -gt 0 ]; then
+    printf -- '- U (managed run history on disk, gitignored — pushed to the branch, never tracked, so nothing to untrack): %s\n' "$4"
+    printf -- '- path-list diff A + U vs B: empty\n- blob diff A + U vs B: empty'
   else
     printf -- '- path-list diff A vs B: empty\n- blob diff A vs B: empty'
   fi
@@ -552,7 +581,7 @@ untracks the managed paths (\`git rm -r --cached\`; the files stay on disk and o
 
 - A (tracked managed paths on \`$d\`): $(state_get seed_a)
 - B (\`$b\` tree): $(state_get seed_b)
-$(ab_body_lines "$(state_get seed_check)" "$(state_get seed_a)" "$(state_get seed_b)")
+$(ab_body_lines "$(state_get seed_check)" "$(state_get seed_a)" "$(state_get seed_b)" "$(state_get seed_u)")
 - pre-migration SHA: $(state_get pre_migration_sha)
 
 **Immediately before merging, run \`migrate-branch-mode.sh verify-pr <this PR's number>\`** — it
@@ -584,7 +613,8 @@ cmd_verify_pr() {
   missing="$(g diff --name-only --diff-filter=D "$mbase" "refs/remotes/origin/$nb" | env LC_ALL=C sort | env LC_ALL=C comm -13 - "$SD/a.list" | tr '\n' ' ')"
   if [ -n "$missing" ]; then state_set verify_pr FAIL; die "verify-pr: FAIL — PR $POS leaves tracked managed path(s) tracked: $missing— re-cut it (untrack-pr after seed); do NOT merge"; fi
   state_set verify_pr PASS; state_set verify_pr_sha "$(g rev-parse HEAD)"
-  local rel="A = B = $AB_A"; [ "$AB_REL" = subset ] && rel="A ⊆ B (A = $AB_A, B = $AB_B; B has $((AB_B - AB_A)) extra)"
+  local rel="A = B = $AB_A"; [ "$AB_U" -gt 0 ] && rel="B = A + U ($AB_B = $AB_A + $AB_U)"
+  [ "$AB_REL" = subset ] && rel="A ⊆ B (A = $AB_A, B = $AB_B; B has $((AB_B - AB_A)) extra)"
   say "verify-pr: PASS — PR $POS is safe to merge now ($rel against origin/$d $(g rev-parse --short HEAD))"
 }
 

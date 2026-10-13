@@ -43,6 +43,13 @@
 #                         managed kind — *.md, results.jsonl, brain-baseline.jsonl,
 #                         .provenance.jsonl or *.dismissed-decisions — and every local managed path
 #                         is a regular file
+#   seed-ab               the SHIPPED `migrate-branch-mode.sh seed` passes on the scratch clone (run
+#                         through a scratch state file, as rollback-run runs the shipped rollback):
+#                         its A/B check — B = A + U, U the gitignored managed run history on disk —
+#                         is the gate the real seed applies, so a relation the verify-* checks above
+#                         accept but seed refuses can no longer pass the rehearsal (they never
+#                         compared the branch with the TRACKED set, which is how a repo with an
+#                         ignored *.dismissed-decisions ledger rehearsed green and then failed seed)
 #   migrate-clean         after the scratch migration commit (`setup-memory.sh apply --branch-mode`
 #                         + `git rm -r --cached` of the tracked RUN-HISTORY set — what untrack-pr
 #                         untracks; a tracked learning store stays tracked — on the scratch default
@@ -79,7 +86,8 @@
 # <n> learning-store path(s) on <b>` after the push, and `learning stores round-tripped: <m> of <n>
 # byte-identical` after the second checkout's pull.
 #
-# Run history the checkout holds UNTRACKED (gitignored) is copied into the scratch clone, as is the
+# Run history the checkout holds UNTRACKED (gitignored) is copied into the scratch clone — still
+# ignored there (an info/exclude line when the scratch block alone would not ignore it) — as is the
 # checkout's .git/info/exclude and .supervisor/twin/. When fewer than two RUN-HISTORY *.md files exist,
 # two synthetic ones are added (an `info:` line says so) so the edit / delete drill has material.
 # `gh` is a stub inside the scratch dir (LOOMWRIGHT_GH_BIN + PATH); no real gh call is made. The
@@ -151,7 +159,7 @@ scratch_cfg() { # identity, no hooks, no signing — local config of a scratch c
 }
 # msx — meta-sync.sh under the scratch HOME (the mirrored consent record; see LEARNING STORES).
 msx() { HOME="$S/home" bash "$MS" "$@"; }
-LATE="init push verify-present verify-blobs verify-nothing-extra verify-types migrate-clean pull-roundtrip rollback-run rollback-edit-kept rollback-add-kept rollback-delete-kept rollback-all-kept rollback-gitignore twin-contracts"
+LATE="init push verify-present verify-blobs verify-nothing-extra verify-types seed-ab migrate-clean pull-roundtrip rollback-run rollback-edit-kept rollback-add-kept rollback-delete-kept rollback-all-kept rollback-gitignore twin-contracts"
 
 # ---- scratch world: bare remote + clone A ---------------------------------------------------------
 mkdir -p "$S/nohooks" "$S/bin"
@@ -184,6 +192,11 @@ while IFS= read -r p; do
   [ -n "$p" ] || continue
   ga ls-files --error-unmatch -- "$p" >/dev/null 2>&1 && continue
   mkdir -p "$(dirname "$A/$p")" && cp -p "$ROOT/$p" "$A/$p" || die "could not copy $p"
+  # keep the checkout's ignore status: a half-migrated reset (above) un-ignores run history the
+  # checkout's branch-mode block ignores, which would read as a dirty tree to the shipped seed
+  if git -C "$ROOT" check-ignore -q -- "$p" 2>/dev/null && ! ga check-ignore -q -- "$p" 2>/dev/null; then
+    printf '/%s\n' "$(printf '%s' "$p" | sed 's/[][*?\\]/\\&/g')" >> "$EXC"
+  fi
 done < "$S/src.list"
 [ -d "$ROOT/.supervisor/twin" ] && { mkdir -p "$A/.supervisor" && cp -R -p "$ROOT/.supervisor/twin" "$A/.supervisor/" || die "could not copy .supervisor/twin"; }
 for p in .supervisor/config.json .agent/meta-sync-deny.txt; do
@@ -250,6 +263,15 @@ extra="$(env LC_ALL=C comm -13 "$S/LF.list" "$S/R.list" | tr '\n' ' ')"
 badt="$(awk -F'\t' '{ split($1, m, " "); if (m[1] != "100644" || m[2] != "blob" || $2 !~ /^\.supervisor\// || ($2 !~ /\.md$/ && $2 !~ /(^|\/)results\.jsonl$/ && $2 !~ /(^|\/)brain-baseline\.jsonl$/ && $2 !~ /(^|\/)\.provenance\.jsonl$/ && $2 !~ /\.dismissed-decisions$/)) print $1 " " $2 }' "$S/R.ent" | tr '\n' ' ')"
 while IFS= read -r p; do { [ -f "$A/$p" ] && [ ! -L "$A/$p" ]; } || badt="${badt}local:$p "; done < "$S/LF.list"
 [ -z "$badt" ]; res $? verify-types "$badt"
+
+# ---- the shipped seed A/B check (before the scratch migration: seed runs while history is tracked) --
+# A scratch state file stands in for preflight / protect (owner and gh steps the rehearsal cannot
+# take); seed's own on_default_clean, push and ab_check then run unchanged, under the scratch HOME.
+mkdir -p "$A/.supervisor/migrate-branch-mode"
+printf 'preflight=PASS\nprotect=PASS\ncase=history\nbranch=%s\ndefault=%s\n' "$B" "$DEF" > "$A/.supervisor/migrate-branch-mode/state"
+HOME="$S/home" bash "$MB" seed --root "$A" > "$S/seed.out" 2>&1; src=$?
+[ "$src" -eq 0 ] && grep -qx 'seed=PASS' "$A/.supervisor/migrate-branch-mode/state"
+res $? seed-ab "rc=$src: $(grep -E '^migrate-branch-mode: (A |A != B|A \+ U != B|blob|seed|refused|entries)|^  [<>] ' "$S/seed.out" | head -n 8 | tr '\n' ' ')$(grep -q 'not clean' "$S/seed.out" && printf 'porcelain: %s' "$(ga status --porcelain | head -n 5 | tr '\n' ' ')")"
 
 # ---- scratch migration commit (on the scratch default branch; stands in for the owner's merge) -----
 PRE="$(ga rev-parse HEAD)"
