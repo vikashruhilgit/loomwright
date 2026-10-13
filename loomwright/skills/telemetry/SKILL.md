@@ -73,11 +73,20 @@ To stop sending: `/telemetry disable`. To inspect state:
   `[Telemetry] {agent_type} | Score: {N} | Failed: {true|false}`.
 - A body with sections: Task Summary, Agent Scores, Issues Detected,
   AI Suggestions, Tools Used, Raw Data (JSON of the redacted payload).
+- **Plugin facts only, never project content** — for any source repo,
+  private or public: agent type, schema, status enum, score, per-severity
+  counts, tool names, plugin version. Issues Detected lines are fixed
+  templates (`[HIGH] new finding`, `failing_tests=2`), never the finding text
+  (`docs/TELEMETRY.md` §"Privacy whitelist").
 - Labels: `telemetry`, `score:{low|medium|high}`,
   `task:{agent-type}`, and `agent:{name}-weak` for any sub-score `< 5`.
 
 ## What does NOT get sent
 
+- Project content of any kind: finding descriptions, `primary_error`,
+  subtask / failing-test names, task ids, repo names, PR numbers, branches,
+  file paths, line numbers, or the result block (the `include_result_block`
+  key is inert).
 - Anything matching the privacy whitelist: API keys (`sk-...`,
   `ghp_...`), `Bearer` tokens, `api_key` / `password` patterns,
   `/Users/<name>/` and `/home/<name>/` paths, email addresses, or raw

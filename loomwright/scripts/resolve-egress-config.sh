@@ -40,10 +40,10 @@
 #                                     re-derive it themselves.
 #   INCLUDE_RESULT_BLOCK            - "true" | "" (empty means false/unset) — USER-SCOPE
 #                                     ONLY, set via `/telemetry enable --include-result-block`.
-#                                     When "true", send-telemetry-core.sh restores the
-#                                     redacted result_block field into raw_data; the
-#                                     default (empty) is field-selection only. Red-team-
-#                                     hardening item 08.
+#                                     INERT since triage PR-1: send-telemetry-core.sh ships
+#                                     plugin facts only and ignores this value (it logs
+#                                     include_result_block_ignored). Still printed so the
+#                                     key's removal stays a separate owner decision.
 #   REPO_REQUESTED_TELEMETRY_REPO  - informational only, from
 #                                     .supervisor/telemetry-consent.json's
 #                                     telemetry_repo field. NEVER fed into TELEMETRY

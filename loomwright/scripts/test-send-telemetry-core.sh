@@ -25,11 +25,12 @@
 #     test-telemetry.sh transcript-fallback precedent — deliberately NOT committed into
 #     telemetry-fixtures/*.json, whose flat glob is auto-discovered by test-telemetry.sh's
 #     consent-state matrix (committed files there would add SKIP noise to that harness).
-#   - Group 7 (redaction) needs the production redact_text()/PRIVACY_PATTERNS: a payload
-#     containing a secret always exits 2 in stage 1 and never prints its redacted body,
-#     so the harness extracts the STAGE1_PY heredoc verbatim from the core and exec()s it
-#     with a clean payload, then calls the REAL redact_text/scan_for_secret from the
-#     resulting namespace. This tests production code, not a copy.
+#   - Group 7 (redaction) needs the production PRIVACY_PATTERNS / scan_for_secret() /
+#     redact_home_paths(): a payload containing a secret always exits 2 in stage 1 and
+#     never prints its body, so the harness extracts the STAGE1_PY heredoc verbatim from
+#     the core and exec()s it with a clean payload, then calls the REAL functions from the
+#     resulting namespace. This tests production code, not a copy. (Secrets hard-block;
+#     only the two home-path labels are redacted rather than blocked.)
 #   - bash-3.2-safe: no mapfile, no associative arrays, no `;&` fallthrough; small
 #     fixtures only (no pattern-substitution on large strings); no `stat`-based probes,
 #     timestamps come from python3 datetime (portable across BSD/GNU).
@@ -367,6 +368,57 @@ real_payload("real-handback-qa.json",
         "  summary: eight generated tests failed",
         "```"])),
     agent_type="loomwright:loomwright:qa-executor")
+
+# Group 12 (triage PR-1): plugin facts only, never project content. Every
+# result block below is full of the project's own text — file paths, function
+# names, line numbers, a repo URL / PR number, a branch, subtask and test
+# names — none of which may reach the rendered body.
+def write_agent(name, agent_type, text):
+    payload = {
+        "session_id": "fixture-core-%s" % os.path.splitext(name)[0],
+        "agent_type": agent_type,
+        "result_block": text,
+    }
+    with open(os.path.join(outdir, name), "w") as fh:
+        json.dump(payload, fh)
+
+write_agent("content-review.json", "loomwright:loomwright:code-reviewer", "\n".join([
+    "Review done.", "", "```yaml", "CODE_REVIEW_RESULT:",
+    "  schema_version: 3",
+    "  review_mode: diff_review",
+    "  decision: FAIL",
+    "  tools_used: [Read, Grep, src/billing/charge_card.py, charge_card.py]",
+    "  issues:",
+    "    - severity: HIGH",
+    "      category: new",
+    "      file: src/billing/charge_card.py",
+    "      line: 214",
+    "      description: charge_card() in src/billing/charge_card.py:214 skips the idempotency key, see https://github.com/acme-private/hub/pull/88",
+    "    - severity: BLOCKING",
+    "      category: new",
+    "      file: src/billing/refund.py",
+    "      description: refund_all() at src/billing/refund.py line 37 double-credits the ledger",
+    "  summary: two findings in the billing module",
+    "```"]))
+write_agent("content-supervisor.json", "loomwright:loomwright:supervisor-runner", "\n".join([
+    "SUPERVISOR_RESULT:",
+    "  schema_version: 1",
+    "  task_id: feature/acme-checkout-rewrite",
+    "  status: failed",
+    "  pr_url: https://github.com/acme-private/hub/pull/88",
+    "  branch: feature/acme-checkout-rewrite",
+    "  subtasks_failed: [rewrite-charge_card-handler]",
+    "  heal_decision: ESCALATED",
+    "  error: charge_card() in src/billing/charge_card.py:214 broke",
+    "  summary: checkout rewrite failed"]))
+write_agent("content-qa.json", "loomwright:loomwright:qa-executor", "\n".join([
+    "QA_RESULT:",
+    "  schema_version: 1",
+    "  task_id: acme-checkout-qa",
+    "  tests_generated: 4",
+    "  tests_passed: 3",
+    "  failing_test: tests/billing/test_charge.py::test_charge_card_retries",
+    "  summary: one failing test"]))
 PY
 if [ ! -f "$FIXDIR/secrets.tsv" ]; then
   echo "FATAL  fixture generation failed" >&2
@@ -644,21 +696,29 @@ echo ""
 echo "==== Group 10: raw_data field selection (red-team-hardening item 08, Fix 3) ===="
 user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
 
-# (a) default body: no result_block key, but issues/tools/primary_error present.
+# (a) default body: no result_block key, issues/tools present, and none of the
+#     free-text fields (triage PR-1: plugin facts only — primary_error and
+#     task_id are project text).
 out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
 rc=$?
 assert_eq "raw_data_default_rc=0" "0" "$rc"
 assert_not_match "raw_data_default_no_result_block" '"result_block"' "$out"
 assert_match "raw_data_default_has_issues" '"issues": {' "$out"
 assert_match "raw_data_default_has_tools" '"tools": [' "$out"
-assert_match "raw_data_default_has_primary_error" '"primary_error"' "$out"
+assert_not_match "raw_data_default_no_primary_error" '"primary_error"' "$out"
+assert_not_match "raw_data_default_no_task_id" '"task_id"' "$out"
+assert_not_match "raw_data_default_no_task_id_value" "consent-matrix-task" "$out"
 
-# (b) with include_result_block:true -> result_block reappears.
+# (b) include_result_block:true is INERT (triage PR-1): the result_block is
+#     project content, so no consent key can put it back; the core says so on
+#     stderr.
 user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo", "include_result_block": true}'
 out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
 rc=$?
 assert_eq "raw_data_opt_in_rc=0" "0" "$rc"
-assert_match "raw_data_opt_in_has_result_block" '"result_block"' "$out"
+assert_not_match "raw_data_opt_in_still_no_result_block" '"result_block"' "$out"
+assert_not_match "raw_data_opt_in_no_summary_text" "escalated run for consent and dedup matrix" "$out"
+assert_match "raw_data_opt_in_ignored_noted" "include_result_block_ignored" "$out"
 
 # (c) with include_result_block:false (explicit) -> same as default, absent.
 user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo", "include_result_block": false}'
@@ -667,10 +727,10 @@ rc=$?
 assert_eq "raw_data_explicit_false_rc=0" "0" "$rc"
 assert_not_match "raw_data_explicit_false_no_result_block" '"result_block"' "$out"
 
-# (d) primary_error truncation lives ONLY at the raw_data dict-literal call
-# site — the shared `primary_error` variable that also feeds the dedup hash
+# (d) primary_error is no longer shipped at all (triage PR-1), but the shared
+# `primary_error` variable still feeds the LOCAL dedup hash
 # (hash_input = "task_id::bucket::primary_error", same contract Group 6
-# pins) must stay UNTRUNCATED. longerr-a.json / longerr-b.json share an
+# pins) and must stay UNTRUNCATED there. longerr-a.json / longerr-b.json share an
 # IDENTICAL 220-char prefix and differ only after it, so a hash computed on
 # the TRUNCATED-to-200 string would be IDENTICAL for both — this seeds the
 # sent-log with the hash computed on the FULL (untruncated) string and
@@ -712,26 +772,18 @@ assert_eq "longerr_b_not_deduped_would_exit=0" "0" "$(extract_would_exit "$out_b
 assert_not_match "longerr_b_no_dedup_hit" "dedup_hit" "$out_b"
 rm -f "$SB_SENT_LOG"
 
-# The raw_data field itself must be truncated to <= 200 chars in the body.
+# The long error text itself (a subtask name here) never reaches the body —
+# not truncated, absent.
 out_a_dry="$(run_core "$FIXDIR/longerr-a.json" --dry-run)"
-PE_LEN_A="$(printf '%s' "$out_a_dry" | python3 -c '
-import sys, re
-m = re.search(r"\"primary_error\": \"([^\"]*)\"", sys.stdin.read())
-print(len(m.group(1)) if m else -1)
-')"
-if [ "$PE_LEN_A" -le 200 ] && [ "$PE_LEN_A" -ge 0 ]; then
-  echo "PASS  longerr_a_primary_error_truncated_to_200 (len=$PE_LEN_A)"
-  PASS_COUNT=$((PASS_COUNT + 1))
-else
-  echo "FAIL  longerr_a_primary_error_truncated_to_200 len=$PE_LEN_A"
-  FAIL_COUNT=$((FAIL_COUNT + 1))
-fi
+assert_eq "longerr_a_would_send" "0" "$(extract_would_exit "$out_a_dry")"
+assert_not_match "longerr_a_error_text_not_shipped" "XXXXXXXXXXXXXXXXXXXX" "$out_a_dry"
+assert_not_match "longerr_a_no_primary_error_field" '"primary_error"' "$out_a_dry"
 
 # ---- Group 7: redaction visibility ([REDACTED:<label>] markers) ----------------
 # A secret-bearing payload exits 2 before the body ever prints, so the ONLY way to
 # observe redaction end-to-end is to run the production stage-1 code directly:
 # extract the STAGE1_PY heredoc from the core verbatim, exec it with a clean
-# payload, then exercise its redact_text()/scan_for_secret()/PRIVACY_PATTERNS.
+# payload, then exercise its redact_home_paths()/scan_for_secret()/PRIVACY_PATTERNS.
 echo ""
 echo "==== Group 7: redaction markers via extracted production stage-1 code ===="
 # Anchor: the PRIVACY_PATTERNS identifier must exist in the core.
@@ -777,7 +829,7 @@ if err is not None:
     sys.exit(1)
 
 pats = ns.get("PRIVACY_PATTERNS")
-redact = ns.get("redact_text")
+redact = ns.get("redact_home_paths")
 scan = ns.get("scan_for_secret")
 if not pats or not callable(redact) or not callable(scan):
     print("HARNESS_FAIL missing_symbols")
@@ -802,13 +854,16 @@ for line in open(secrets_tsv):
         sample = secret
     else:
         sample = "prefix %s suffix" % secret
-    out = redact(sample)
-    marker = "[REDACTED:%s]" % label
-    if marker in out and secret not in out:
-        print("REDACT_OK label=%s" % label)
-    else:
-        print("REDACT_FAIL label=%s out=%r" % (label, out))
-        ok = False
+    # Only the two home-path labels are REDACTED in the body; every other label
+    # hard-blocks the send (exit 2) instead, so it never needs a body marker.
+    if label in ("macos-home-path", "linux-home-path"):
+        out = redact(sample)
+        marker = "[REDACTED:%s]" % label
+        if marker in out and secret not in out:
+            print("REDACT_OK label=%s" % label)
+        else:
+            print("REDACT_FAIL label=%s out=%r" % (label, out))
+            ok = False
     got = scan(secret)
     if got == label:
         print("SCAN_OK label=%s" % label)
@@ -825,7 +880,11 @@ assert_eq "redaction_harness_rc=0" "0" "$REDACT_RC"
 assert_match "redaction_pattern_labels_pin" "PATTERN_LABELS_OK count=9" "$REDACT_OUT"
 while IFS="$(printf '\t')" read -r label secret; do
   [ -z "$label" ] && continue
-  assert_match "redaction_marker [$label]" "REDACT_OK label=$label" "$REDACT_OUT"
+  assert_match "scan_label [$label]" "SCAN_OK label=$label" "$REDACT_OUT"
+  case "$label" in
+    macos-home-path|linux-home-path)
+      assert_match "redaction_marker [$label]" "REDACT_OK label=$label" "$REDACT_OUT" ;;
+  esac
 done < "$FIXDIR/secrets.tsv"
 
 # ---- Group 8: red-team-hardening item 02 — the 2026-09-21 planted-file --------
@@ -944,8 +1003,12 @@ assert_eq "real_shape_would_send" "0" "$(extract_would_exit "$out")"
 assert_not_match "real_shape_transport_paths_not_blocked" "PRIVACY_BLOCKED" "$out"
 assert_not_match "real_shape_decision_parsed" "score_default_used" "$out"
 assert_match "real_shape_failed_title" "Failed: true" "$out"
-assert_match "real_shape_issue_from_handback" "[HIGH] unquoted var in" "$out"
-assert_match "real_shape_home_path_redacted" "[REDACTED:macos-home-path]" "$out"
+assert_match "real_shape_issue_from_handback" "[HIGH] new finding" "$out"
+assert_not_match "real_shape_no_finding_text" "unquoted var in" "$out"
+# The home paths sat in the finding text and file field, neither of which is
+# shipped any more (triage PR-1), so there is nothing left to redact; Group 7
+# still pins the redaction primitive itself.
+assert_not_match "real_shape_home_path_not_shipped" "/Users/" "$out"
 assert_not_match "real_shape_no_username_leak" "/Users/testuser" "$out"
 # Doubled runtime prefix must normalise to the same label the goldens pin.
 assert_match "real_shape_task_type_normalised" "Task Type: code-reviewer" "$out"
@@ -964,6 +1027,97 @@ assert_match "real_shape_secret_label" "PRIVACY_BLOCKED pattern=github-token" "$
 out="$(run_core "$FIXDIR/real-prose-only.json" --dry-run)"
 assert_eq "real_shape_prose_mention_skipped" "5" "$(extract_would_exit "$out")"
 assert_match "real_shape_prose_reason" "no_known_result_block" "$out"
+user_scope_none
+
+# ---- Group 12: plugin facts only, never project content (triage PR-1) ---------
+# Telemetry is posted to a repo the user chose (often PUBLIC; consent can route
+# ANY source repo there, private ones included). It may describe the PLUGIN's
+# behaviour only. Each fixture's result block is full of project text; the
+# rendered body (title + labels + body) must carry none of it, while the
+# structured plugin facts survive. These cases FAIL on the pre-PR-1 core,
+# which posted the first line of each finding description and a 200-char
+# primary_error excerpt.
+echo ""
+echo "==== Group 12: plugin facts only, never project content ===="
+consent_none
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
+
+# Every project-content token the fixtures carry (path, function name, line
+# number, repo URL / owner / PR number, branch, subtask and test names; the
+# space-containing "line 37" is asserted separately below).
+CONTENT_TOKENS="charge_card refund_all src/billing billing/ .py :214 acme-private acme-checkout github.com/acme pull/88 feature/ tests/billing test_charge ledger"
+assert_no_project_content() { # $1 tag  $2 dry-run output
+  local tag="$1" o="$2" tok
+  for tok in $CONTENT_TOKENS; do
+    assert_not_match "${tag}_no_content[$tok]" "$tok" "$o"
+  done
+  assert_not_match "${tag}_no_line_37" "line 37" "$o"
+  assert_not_match "${tag}_no_primary_error_field" '"primary_error"' "$o"
+  assert_not_match "${tag}_no_task_id_field" '"task_id"' "$o"
+  assert_not_match "${tag}_no_task_id_line" "Task ID:" "$o"
+}
+
+out="$(run_core "$FIXDIR/content-review.json" --dry-run)"
+assert_eq "content_review_would_send" "0" "$(extract_would_exit "$out")"
+assert_no_project_content "content_review" "$out"
+# The plugin facts are still there.
+assert_match "content_review_blocking_line" "[BLOCKING] new finding" "$out"
+assert_match "content_review_high_line" "[HIGH] new finding" "$out"
+assert_match "content_review_high_count" '"high": 1' "$out"
+assert_match "content_review_blocking_count" '"blocking": 1' "$out"
+assert_match "content_review_status" '"status": "fail"' "$out"
+assert_match "content_review_schema" '"schema": "CODE_REVIEW_RESULT"' "$out"
+assert_match "content_review_score" '"score": 1' "$out"
+assert_match "content_review_tool_names_kept" '"Read"' "$out"
+assert_match "content_review_agent" "Task Type: code-reviewer" "$out"
+
+out="$(run_core "$FIXDIR/content-supervisor.json" --dry-run)"
+assert_eq "content_supervisor_would_send" "0" "$(extract_would_exit "$out")"
+assert_no_project_content "content_supervisor" "$out"
+assert_match "content_supervisor_subtask_counted" "subtask_failed" "$out"
+assert_match "content_supervisor_heal_enum_kept" "heal_decision=ESCALATED" "$out"
+assert_match "content_supervisor_unspecified_count" '"unspecified": 2' "$out"
+
+out="$(run_core "$FIXDIR/content-qa.json" --dry-run)"
+assert_eq "content_qa_would_send" "0" "$(extract_would_exit "$out")"
+assert_no_project_content "content_qa" "$out"
+assert_match "content_qa_failing_counted" "failing_tests=1" "$out"
+assert_match "content_qa_tests_failed" "tests_failed=1/4" "$out"
+
+# The include_result_block opt-in cannot bring the project text back.
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo", "include_result_block": true}'
+out="$(run_core "$FIXDIR/content-review.json" --dry-run)"
+assert_no_project_content "content_review_opt_in" "$out"
+assert_not_match "content_review_opt_in_no_result_block" '"result_block"' "$out"
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
+
+# Mutation control: put the finding description back into the Issues Detected
+# line (the pre-PR-1 behaviour, between the no-project-text-findings
+# sentinels) and the content assertions above must go RED.
+BEGIN_MARK_C='# MUTATION_CONTROL_BEGIN: no-project-text-findings'
+END_MARK_C='# MUTATION_CONTROL_END: no-project-text-findings'
+if grep -qF "$BEGIN_MARK_C" "$CORE" && grep -qF "$END_MARK_C" "$CORE"; then
+  # The mutant sits beside a copy of the resolver (the core finds it as a
+  # sibling), inside the sandbox — never written into the source tree.
+  MUTANT_C_DIR="$SANDBOX/content-mutant"
+  mkdir -p "$MUTANT_C_DIR"
+  cp "$SCRIPT_DIR/resolve-egress-config.sh" "$MUTANT_C_DIR/"
+  MUTANT_C="$MUTANT_C_DIR/send-telemetry-core.sh"
+  awk -v b="$BEGIN_MARK_C" -v e="$END_MARK_C" '
+    index($0, b) { print; print "                issues.append(\"[%s] %s\" % (sev, issue[\"description\"].splitlines()[0]))"; skip = 1; next }
+    index($0, e) { skip = 0 }
+    !skip { print }' "$CORE" > "$MUTANT_C"
+  mut_out="$( ( cd "$SANDBOX" && HOME="$SB_HOME" PATH="$SHIM_DIR:$PATH" bash "$MUTANT_C" --dry-run < "$FIXDIR/content-review.json" 2>&1 ) )"
+  assert_eq "content_mutant_still_sends" "0" "$(extract_would_exit "$mut_out")"
+  assert_match "content_mutant_leaks_function_name" "charge_card()" "$mut_out"
+  assert_match "content_mutant_leaks_path_and_line" "src/billing/charge_card.py:214" "$mut_out"
+  assert_match "content_mutant_leaks_repo_url" "github.com/acme-private/hub/pull/88" "$mut_out"
+  echo "  (the mutant is the RED result: with the description put back, the"
+  echo "   project's path, function, line and repo URL reach the issue body)"
+else
+  echo "FAIL  content_mutation_sentinels_present  markers not found in $CORE"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
 user_scope_none
 
 # ---- Final invariants: gh never invoked; real .supervisor untouched -------------

@@ -724,31 +724,45 @@ if not raw_hit:
     raw_hit = scan_for_secret(result_block, skip=HOME_PATH_LABELS)
 
 # ---- Build prospective body components -------------------------------------
-# Issues Detected — per schema.
+# PLUGIN FACTS ONLY, NEVER PROJECT CONTENT (docs/TELEMETRY.md §"Privacy
+# whitelist"). The issue lands in a repo the user chose — often PUBLIC, and
+# user-scope consent can route ANY source repo there — so nothing read out of
+# the project's own text is ever posted: no finding description, subtask name,
+# failing-test name, task id, repo name, PR number, branch, file path or line
+# number. Every Issues Detected line below is built from a fixed template plus
+# integers and plugin enums; the free-text values are only COUNTED.
+PLUGIN_ENUM_RX = re.compile(r"^[A-Z][A-Z_]{0,31}$")
 issues = []
 if schema == "SUPERVISOR_RESULT":
     sf_count, sf_list = parse_count_or_list(result_block, "subtasks_failed")
     if sf_list:
-        issues.extend(sf_list)
+        # One line per failed subtask (the per-line count feeds
+        # issues_by_severity.unspecified below); the subtask NAME is project
+        # content and is not sent.
+        issues.extend(["subtask_failed"] * len(sf_list))
     elif sf_count > 0:
         issues.append("subtasks_failed=%d" % sf_count)
-    hd = field(result_block, "heal_decision") or ""
-    if hd and hd.upper() != "PASS":
-        issues.append("heal_decision=" + hd)
+    hd = (field(result_block, "heal_decision") or "").strip().upper()
+    if hd and hd != "PASS":
+        issues.append("heal_decision=" + (hd if PLUGIN_ENUM_RX.match(hd) else "OTHER"))
 elif schema == "CODE_REVIEW_RESULT":
-    # Description lines for new BLOCKING + HIGH issues. Uses the structural
+    # One line per new BLOCKING + HIGH issue: severity and category only — the
+    # description is project content and is not sent. Uses the structural
     # parser so issue field order is irrelevant.
     parsed_for_body = parse_issue_blocks(result_block)
     for sev in ("BLOCKING", "HIGH"):
         for issue in parsed_for_body:
             if issue["severity"] == sev and issue["category"] == "new" and issue["description"]:
-                line = issue["description"].splitlines()[0]
-                issues.append("[%s] %s" % (sev, line))
+                # MUTATION_CONTROL_BEGIN: no-project-text-findings
+                issues.append("[%s] new finding" % sev)
+                # MUTATION_CONTROL_END: no-project-text-findings
 else:  # QA_RESULT
     failing_rx = re.compile(r"^\s*(?:-\s*)?failing_test\s*:\s*(.+?)\s*$",
                             re.MULTILINE | re.IGNORECASE)
-    for m in failing_rx.finditer(result_block):
-        issues.append(m.group(1).strip())
+    failing_count = len(failing_rx.findall(result_block))
+    if failing_count:
+        # The test NAMES are project content; only their number is sent.
+        issues.append("failing_tests=%d" % failing_count)
     tg = field_int(result_block, "tests_generated", 0)
     tp = field_int(result_block, "tests_passed", 0)
     if tg > 0 and tp < tg:
@@ -763,14 +777,20 @@ if m:
     inner = m.group(1).strip()
     if inner:
         tools = [x.strip().strip('"').strip("'") for x in inner.split(",") if x.strip()]
+# A tool / skill name is a plugin fact; anything that is not a bare name token
+# (a path, a file name, a sentence, a URL) is project content and is dropped.
+# No `.` and no `/`: tool and skill names (`Read`, `loomwright:review-heal`,
+# `mcp__srv__tool`) never need them, file names and URLs always do.
+TOOL_NAME_RX = re.compile(r"^[A-Za-z][A-Za-z0-9_:-]{0,63}$")
+tools = [t for t in tools if TOOL_NAME_RX.match(t)]
 
 # Sub-scores — none extracted in v1; section will be omitted.
 agent_scores = []  # placeholder; left empty for v1.
 
 # Issues per severity — a STRUCTURED count for raw_data, distinct from the
 # `issues` list above (which is the human-readable markdown-body lines).
-# CODE_REVIEW_RESULT issue lines carry a "[SEVERITY] " prefix (built above at
-# the `issues.append("[%s] %s" % (sev, line))` call); other schemas' issue
+# CODE_REVIEW_RESULT issue lines carry a "[SEVERITY] " prefix (built above
+# inside the no-project-text-findings sentinels); other schemas' issue
 # lines carry no severity concept at all, so they count as "unspecified"
 # rather than being silently dropped from the total.
 issue_severity_rx = re.compile(r"^\[(BLOCKING|HIGH|MEDIUM|LOW)\]\s")
@@ -791,48 +811,39 @@ if weak_label:
 
 # ---- Build redacted JSON payload (Raw Data section) ------------------------
 # PRIVACY IS FIELD SELECTION, NOT REGEX MATCHING (red-team-hardening item 08,
-# Fix 3): `raw_data` ships only structured, already-summarized fields by
-# default — never the free-text result_block, which can carry file paths,
-# finding descriptions and subtask names no fixed regex allowlist can
-# enumerate. PRIVACY_PATTERNS below stays as a SECONDARY tripwire on whatever
-# text IS included (the body + this dict), not the privacy boundary itself.
-def redact_text(text):
-    out = text
-    for rx, label in PRIVACY_PATTERNS:
-        out = rx.sub("[REDACTED:" + label + "]", out)
-    return out
-
-redacted_block = redact_text(result_block)
+# Fix 3; tightened by triage PR-1): `raw_data` ships plugin facts only —
+# schema/agent/version, status enum, score, per-severity counts and tool
+# names. No free-text field from the result block is shipped: not the
+# result_block, not primary_error, not task_id. PRIVACY_PATTERNS below stays a
+# SECONDARY tripwire on the rendered body, not the privacy boundary itself.
 # Additive plugin-version stamp — resolved by the bash layer above from the
 # plugin manifest relative to this script ("unknown" when unreadable). Purely
 # additive to the redacted payload; schema_version stays 1.
 plugin_version = os.environ.get("LOOMWRIGHT_PLUGIN_VERSION", "") or "unknown"
-# TRUNCATED HERE ONLY, at this dict-literal call site — `primary_error` the
-# shared variable is left untouched, because it also feeds the dedup-hash
-# input (sha256 6h-window gate) and a separate PRIMARY_ERROR emit line below;
-# an in-place reassignment would silently make two distinct long errors
-# sharing a 200-char prefix dedupe as one AND truncate that emit channel too.
+# `primary_error` and `task_id` are NOT shipped (they are project text: a
+# finding description / subtask / test name, and a result-block task id). Both
+# still feed the LOCAL dedup hash and telemetry-sent.log, which never leave
+# the machine. `status` is a plugin enum; anything else reads "other".
+status_out = status if (not status or re.fullmatch(r"[a-z_]{1,40}", status)) else "other"
 raw_data = {
     "schema_version": 1,
-    "task_id": task_id,
     "agent_type": agent_norm,
     "schema": schema,
     "score": score_int,
     "score_float": round(score_f, 2),
     "score_bucket": bucket,
-    "status": status,
-    "primary_error": primary_error[:200],
+    "status": status_out,
     "issues": issues_by_severity,
     "tools": tools,
     "redacted": True,
     "plugin_version": plugin_version,
 }
-# Opt-in escape hatch — user-scope `include_result_block: true` only, set via
-# `/telemetry enable --include-result-block` (never a repo-relative file: the
-# same user-scope-only discipline red-team-hardening item 02 established for
-# consent/target-repo/webhook-url). Default is absent -> field selection only.
+# The user-scope `include_result_block: true` key (`/telemetry enable
+# --include-result-block`) used to restore the redacted result_block here. It
+# is now INERT: the result_block is project content, and no consent key can
+# re-enable it. The core notes the ignored key on stderr (telemetry.log).
 if os.environ.get("LOOMWRIGHT_INCLUDE_RESULT_BLOCK", "") == "true":
-    raw_data["result_block"] = redacted_block
+    sys.stderr.write("include_result_block_ignored reason=plugin_facts_only\n")
 raw_data_json = json.dumps(raw_data, indent=2, sort_keys=True)
 
 # ---- Format issue body -----------------------------------------------------
@@ -844,7 +855,6 @@ def section(title, lines):
 body = []
 body.append("## Task Summary\n")
 body.append("- Task Type: %s\n" % agent_norm)
-body.append("- Task ID: %s\n" % task_id)
 body.append("- Success: %s\n" % ("true" if success else "false"))
 body.append("- Score: %s/10\n" % score_int)
 body.append("- Bucket: %s\n\n" % bucket)

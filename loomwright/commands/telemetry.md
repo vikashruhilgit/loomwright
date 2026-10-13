@@ -18,7 +18,7 @@ description: Manage opt-in GitHub Issues telemetry — status, enable, disable, 
 
 - **subcommand** (required): one of `status`, `enable`, `disable`, `test`.
   - If omitted or unrecognised, print this usage block and exit.
-- **`--include-result-block`** (optional, `enable` only): opt back into shipping the redacted `result_block` field inside the `raw_data` JSON. Default (no flag) is field-selection only — `raw_data` never carries `result_block`, only structured fields (`schema`, `score`/`score_bucket`, `status`, `primary_error` truncated to 200 chars, `issues` per-severity counts, `tools`). See red-team-hardening item 08.
+- **`--include-result-block`** (optional, `enable` only): still writes `include_result_block: true`, but the key is **inert** — telemetry carries plugin facts only, never project content, so the core ignores it and logs `include_result_block_ignored`. `raw_data` only ever carries `schema`, `score`/`score_bucket`, the `status` enum, `issues` per-severity counts, tool names and `plugin_version` — never `result_block`, finding text, `primary_error`, task ids, repo/PR/branch names or paths (`docs/TELEMETRY.md` §"Privacy whitelist"). Tell the user this when they pass the flag.
 
 ## What This Does
 

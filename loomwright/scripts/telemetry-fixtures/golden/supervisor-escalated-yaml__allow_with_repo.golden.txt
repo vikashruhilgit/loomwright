@@ -10,7 +10,6 @@ LABELS:
 BODY_BEGIN
 ## Task Summary
 - Task Type: supervisor
-- Task ID: fixture-supervisor-escalated-yaml-task-0004
 - Success: false
 - Score: 5/10
 - Bucket: medium
@@ -33,7 +32,6 @@ BODY_BEGIN
     "unspecified": 1
   },
   "plugin_version": "<NORMALISED>",
-  "primary_error": "ESCALATED",
   "redacted": true,
   "schema": "SUPERVISOR_RESULT",
   "schema_version": 1,
@@ -41,7 +39,6 @@ BODY_BEGIN
   "score_bucket": "medium",
   "score_float": 4.5,
   "status": "completed_with_escalation",
-  "task_id": "fixture-supervisor-escalated-yaml-task-0004",
   "tools": []
 }
 ```BODY_END
