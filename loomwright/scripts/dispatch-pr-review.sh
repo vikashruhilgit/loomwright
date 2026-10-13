@@ -101,10 +101,14 @@
 #   pre-approved" — the one headless mode that honours an explicit --allowedTools
 #   allowlist without ever auto-approving beyond it, unlike `auto`/`acceptEdits`/
 #   `bypassPermissions`),
-#   `DISALLOWED_TOOLS` ("WebFetch,WebSearch"), and `build_allowed_tools()` (Read, Grep,
-#   Glob, Task, the scoped `Bash(git fetch|checkout|add|commit|push origin <head-ref>:*)`
-#   entries — NEVER a bare `git push` — `Bash(gh pr view|diff|comment:*)`,
-#   `Bash(gh api repos/*|graphql:*)`, plus any test/lint runner double-declared in BOTH
+#   `DISALLOWED_TOOLS` (WebFetch, WebSearch, and Write/Edit of the worktree's git
+#   pointer, its host-tool settings dir and its MCP config), and `build_allowed_tools()` (Read, Grep, Glob, Task, `Write(./**)` /
+#   `Edit(./**)` scoped to the drain worktree, `Bash(git fetch|checkout|add|commit:*)`,
+#   the EXACT `Bash(git push origin HEAD:<head-ref>)` — NEVER a bare or wildcarded
+#   `git push` — `Bash(gh pr view|diff|comment:*)`, `Bash(jq *)`, one absolute-path
+#   `Bash(bash <scripts>/<name> *)` per drain script (GitHub API reads via the
+#   read-only `drain-gh-read.sh`; NO raw `gh api` entry, which would admit a merge),
+#   plus any test/lint runner double-declared in BOTH
 #   `.supervisor/config.json .drain_allowed_commands[]` (repo scope) AND the user-scope
 #   `~/.claude/loomwright/drain-allowlist.json` for this repo slug — a repo-only entry
 #   is ignored with one log line, decision R2: an opt-in never lives in a file the repo
@@ -249,7 +253,7 @@ fi
 # heredoc further down — read the identical construction. Never two
 # independently-typed strings (see header PERMISSIONS section).
 PERMISSION_MODE="dontAsk"
-DISALLOWED_TOOLS="WebFetch,WebSearch"
+DISALLOWED_TOOLS="WebFetch,WebSearch,Write(./.git),Write(./.git/**),Edit(./.git),Edit(./.git/**),Write(./.claude/**),Edit(./.claude/**),Write(./.mcp.json),Edit(./.mcp.json)"
 
 # drain_allowed_commands_extra — doubly-declared test/lint runners (decision R2).
 # Repo-scope `.drain_allowed_commands[]` in $CONFIG_FILE is honored ONLY for the
@@ -284,15 +288,48 @@ drain_allowed_commands_extra() {
   return 0
 }
 
+# DRAIN_SCRIPTS — the plugin scripts the drain runs (review-heal invokes each as
+# `bash "<plugin-root variable>/scripts/<name>"`). The runner's prompt reaches the
+# model with that variable already expanded, so the command text carries
+# an ABSOLUTE path, and a rule must name that path: a rule containing a literal
+# `${...}` never matches (probed, scripts/fixtures/drain-allowlist-probe.json).
+# Each script gets its own rule — a `scripts/*` glob would also admit
+# `scripts/../<anything>`. automate-helpers.sh is listed separately because it
+# also holds `gate-eval`, the sanctioned merge executor: only its
+# `escalation-cause` subcommand is admitted. Adding a script call to the drain
+# prose without adding it here fails test-dispatch-pr-review.sh (drift guard).
+DRAIN_SCRIPTS="drain-gh-read.sh drain-rounds.sh drain-subfloor-decision.sh fix-floor.sh wait-for-checks.sh ci-run-probe.sh classify-bot-review.sh wrap-external-text.sh rules-gate-verdict.sh release-refold.sh guard-arm.sh notify-desktop.sh send-webhook.sh dispatch-pr-postmortem.sh"
+DRAIN_SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+
 # build_allowed_tools <head_ref> — the single shared construction for the
 # heal loop's exact tool needs. $1 is the resolved PR head ref for the scoped
 # push entry, or the literal placeholder token "HEAD_REF" when not yet resolved
 # (the DRY_RUN preview runs BEFORE step ④ resolves it — never a bare `git push`
 # either way, only a not-yet-substituted token in the preview).
+#
+# Every rule shape here is one the real CLI was probed to honour (fixture above):
+#   - NO raw `gh api` entry of any kind. `Bash(gh api graphql:*)` admits a
+#     mergePullRequest mutation and `gh api repos/...` admits `-X PUT .../merge`;
+#     GitHub API reads go through drain-gh-read.sh, read-only by construction.
+#   - Write/Edit are scoped to the drain worktree (`./**`, the launch cwd). The
+#     runner itself still cannot edit (its frontmatter disallows Write/Edit);
+#     these reach the `general-purpose` fix worker it spawns, which inherits this
+#     allowlist. DISALLOWED_TOOLS fences off the files that would re-point git or
+#     re-grant permissions mid-session (the git pointer, the settings dir, the
+#     MCP config).
+#   - The push entry is EXACT: `git push origin HEAD:<head_ref>` is the one shape
+#     review-heal §"Fork-aware push" prescribes. No trailing wildcard, so no
+#     extra refspec (`... main`) and no `--force` can ride along.
+#   - No `*` before a trailing `:*`: the legacy prefix form treats it as a
+#     literal character, so `Bash(gh api repos/*:*)` matched nothing.
 build_allowed_tools() {
-  local href="${1:-HEAD_REF}"
-  printf 'Read,Grep,Glob,Task,Bash(git fetch:*),Bash(git checkout:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin %s:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*:*),Bash(gh api graphql:*)%s' \
-    "$href" "$(drain_allowed_commands_extra)"
+  local href="${1:-HEAD_REF}" s scripts=""
+  for s in $DRAIN_SCRIPTS; do
+    scripts="${scripts},Bash(bash ${DRAIN_SCRIPT_DIR}/${s} *)"
+  done
+  scripts="${scripts},Bash(bash ${DRAIN_SCRIPT_DIR}/automate-helpers.sh escalation-cause *)"
+  printf 'Read,Grep,Glob,Task,Write(./**),Edit(./**),Bash(git fetch:*),Bash(git checkout:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD:%s),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(jq *)%s%s' \
+    "$href" "$scripts" "$(drain_allowed_commands_extra)"
 }
 
 # ---- Regime probe (decision R1 — refuse under a permissive ambient default) --

@@ -263,31 +263,27 @@ Each drain round begins by reading the PR's external review state across **all**
 # (a) core PR state — single gh pr view (formal reviews + check rollup + corroborating fields)
 gh pr view <pr-url> --json statusCheckRollup,reviews,latestReviews,reviewDecision,mergeable,mergeStateStatus
 
+# (b)-(d) go through scripts/drain-gh-read.sh, invoked like every other script in
+#     this file — NEVER a raw `gh api` call. The detached drain's pinned allowlist
+#     admits no `gh api` at all (a rule broad enough to read threads also admits a
+#     mergePullRequest mutation or `-X PUT .../merge`); the wrapper builds each call
+#     itself, read-only by construction, and exits gh's own status (non-zero ⇒ the
+#     channel is UNKNOWN, see "Fail-CLOSED per channel" below).
+#
 # (b) inline review threads + each thread's first-comment author type — GraphQL only
-gh api graphql -f query='
-  query($owner:String!,$repo:String!,$number:Int!){
-    repository(owner:$owner,name:$repo){
-      pullRequest(number:$number){
-        reviewThreads(first:100){
-          pageInfo{ hasNextPage }
-          nodes{
-            isResolved
-            comments(first:1){ nodes{ author{ login __typename } body } }
-          }
-        }
-      }
-    }
-  }' -F owner=<owner> -F repo=<repo> -F number=<number>
+#     (fixed query: reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved
+#     comments(first:1){nodes{author{login __typename} body}}}})
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/drain-gh-read.sh" review-threads <owner>/<repo> <number>
 
 # (c) PR issue comments — THE #64 CHANNEL GAP. claude-code-review.yml posts via
 #     `gh pr comment` (an issue comment), NOT a review object, so reviews/latestReviews
 #     never return it. Each element already carries {user.login, body}.
-gh api repos/<owner>/<repo>/issues/<number>/comments?per_page=100
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/drain-gh-read.sh" issue-comments <owner>/<repo> <number>
 
 # (d) check-run conclusions + output text/annotations — the finding can live in the
 #     check OUTPUT, not just the conclusion. For each relevant check-run id from
 #     statusCheckRollup:
-gh api repos/<owner>/<repo>/check-runs/<id>/annotations   # annotation `message`/`title` text
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/drain-gh-read.sh" check-annotations <owner>/<repo> <id>   # annotation `message`/`title` text
 #     plus the check-run `output` { title, summary, text } already present in the rollup / detail.
 ```
 
@@ -341,7 +337,7 @@ Every body/output text this step fetched — from ANY channel, bot-authored or n
 
 - **Inline threads (R1, unchanged):** if the GraphQL thread query errors (or returns no parseable thread set), thread-state is **unknown** → MUST NOT claim READY → `ESCALATED`. Unknown is never treated as "no blocking threads".
 - **Thread truncation is unknown too (fail-CLOSED, >100 threads):** `reviewThreads(first:100)` caps at 100 and is **not paginated**. If `reviewThreads.pageInfo.hasNextPage == true`, the set is truncated — an unresolved bot thread could exist beyond #100 — so a truncated read is **unknown** thread-state → MUST NOT claim READY → `ESCALATED`, exactly like a GraphQL error. (Full pagination is a deliberate non-goal: escalating on the rare >100-thread PR keeps the fail-CLOSED contract consistent without unbounded paging; the drain re-polls as it resolves threads, so a churning PR converges below the cap.)
-- **PR issue comments:** if `gh api .../issues/<n>/comments` errors, the issue-comment channel is **unknown** → MUST NOT claim READY → `ESCALATED` (a #64-style finding could be hiding there). The classifier's own empty/invalid-input `[]` is NOT an error — it means "read succeeded, no bot findings"; only a non-zero `gh api` read failure is "unknown".
+- **PR issue comments:** if `drain-gh-read.sh issue-comments` errors, the issue-comment channel is **unknown** → MUST NOT claim READY → `ESCALATED` (a #64-style finding could be hiding there). The classifier's own empty/invalid-input `[]` is NOT an error — it means "read succeeded, no bot findings"; only a non-zero read failure (the wrapper exits gh's own status) is "unknown".
 - **Check-run output/annotations:** if `statusCheckRollup` itself is unreadable, the required-check gate already fails CLOSED (§U2). If the rollup is readable but a per-check `annotations`/`output` fetch errors for a **required or review-producing** check, that check's findings are **unknown** → MUST NOT claim READY → `ESCALATED`. An annotation-fetch error on an **unrelated optional** check does NOT force escalation (it is outside the gated set, mirroring AC3).
 
 ### Step U2 — Required-check discovery (AC14, PINNED, fail CLOSED)
@@ -349,9 +345,8 @@ Every body/output text this step fetched — from ANY channel, bot-authored or n
 "Checks green" gates on **required** checks ONLY (optional/non-required failing checks never block READY). Discover the required contexts from branch-protection metadata:
 
 ```
-# REST
-gh api repos/<owner>/<repo>/branches/<base>/protection/required_status_checks
-# …or GraphQL baseRef.branchProtectionRule.requiredStatusCheckContexts
+# REST GET .../branches/<base>/protection/required_status_checks, via the read-only wrapper
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/drain-gh-read.sh" required-checks <owner>/<repo> <base>
 ```
 
 - Gate READY only on the discovered required contexts; cross-reference them against `statusCheckRollup`.
@@ -1044,7 +1039,7 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 - **Creating a PR from `/review-pr`.** Would open the door to review→review recursion.
 - **Letting notify failures abort the loop.** The notify scripts are fire-and-forget; treat their exit codes as advisory only (they always exit 0 anyway).
 - **Re-coining any pinned name.** Other subtasks consume the names above verbatim — renaming here breaks the contract.
-- **Inventing a `gh pr view --json reviewThreads` flag.** Unresolved threads + author type are GraphQL-only (Step U1). The `--json` flag does not exist; use `gh api graphql`.
+- **Inventing a `gh pr view --json reviewThreads` flag.** Unresolved threads + author type are GraphQL-only (Step U1). The `--json` flag does not exist; use `drain-gh-read.sh review-threads` (Step U1 (b)).
 - **Claiming READY when any gated channel signal is unknown.** A GraphQL thread error/truncation, an errored issue-comment read, an errored required/review-producing check-output fetch, or unreadable branch-protection metadata must each fail CLOSED to `ESCALATED` — never default-to-green (AC1/AC8).
 - **Reading only one channel (or only metadata).** Reading only `reviews` objects misses the #64 PR **issue comment**; reading `reviews[].state` / `conclusion` / author **alone** misses the body where the actionable finding lives. Read ALL channels (§"All-Channel Read") and classify on `(login, body)` text (AC2/AC2b).
 - **Re-implementing the bot regexes.** `bot_author_re` / `review_marker_re` live ONLY in `scripts/classify-bot-review.sh`. Pipe each channel's items through that helper — never redefine the patterns here.
@@ -1073,6 +1068,6 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 - NEEDS_HUMAN / exhaustion posts findings to the PR and fires best-effort notifications (never blocks the loop).
 - `REVIEW_HEAL_RESULT` emitted with all seven fields at `schema_version: 1` (default loop); `schema_version: 2` with `decision: READY` plus additive/optional drain fields (`channels_scanned`, `findings_validated`, `findings_dismissed`, `checks_waited`, `termination_reason`, `severity_floor`, `sub_floor_fixed`, `rejected_instruction_like`, `dismissed`) under `--until-mergeable` (authoritative schema in `docs/RESULT_SCHEMAS.md`; no bump beyond 2).
 - **`--until-mergeable` absent ⇒ default loop byte-for-byte unchanged** (AC7) — the all-channel scan, scoped check-wait, validate-then-fix, anti-churn, and postmortem-tail logic are strictly opt-in.
-- Under `--until-mergeable`: ALL channels read each round — `gh pr view --json statusCheckRollup,reviews,latestReviews,…` PLUS `gh api graphql` review-threads PLUS `gh api .../issues/<n>/comments` (these comment/review/thread channels classified through `scripts/classify-bot-review.sh`, no re-implemented regexes) PLUS review-producing check-run output/annotations (gated by §U2.5's review-producing classification, NOT the comment author/marker regex); the scoped wait (§U2.5) settles required + review-producing checks before each READY test (optional checks excluded); every bot finding is validate-then-fixed at or above `FIX_FLOOR` (the one fix-time severity gate — `--severity-floor` is termination-only, see above); **READY ⇔ required green AND scoped review-producing settled AND no unresolved validated bot findings across ALL channels** (§"READY redefinition"); fails CLOSED to `ESCALATED` on any unknown gated channel or an elapsed scoped wait; bounded by `--max-rounds` (default 5, **mechanized** via `scripts/drain-rounds.sh`, AC1/AC2); **never auto-merges — no `gh pr merge` anywhere — and never waits on a human (AC8)**.
+- Under `--until-mergeable`: ALL channels read each round — `gh pr view --json statusCheckRollup,reviews,latestReviews,…` PLUS `drain-gh-read.sh review-threads` PLUS `drain-gh-read.sh issue-comments` (these comment/review/thread channels classified through `scripts/classify-bot-review.sh`, no re-implemented regexes) PLUS review-producing check-run output/annotations (gated by §U2.5's review-producing classification, NOT the comment author/marker regex); the scoped wait (§U2.5) settles required + review-producing checks before each READY test (optional checks excluded); every bot finding is validate-then-fixed at or above `FIX_FLOOR` (the one fix-time severity gate — `--severity-floor` is termination-only, see above); **READY ⇔ required green AND scoped review-producing settled AND no unresolved validated bot findings across ALL channels** (§"READY redefinition"); fails CLOSED to `ESCALATED` on any unknown gated channel or an elapsed scoped wait; bounded by `--max-rounds` (default 5, **mechanized** via `scripts/drain-rounds.sh`, AC1/AC2); **never auto-merges — no `gh pr merge` anywhere — and never waits on a human (AC8)**.
 - Postmortem Dispatch Tail runs AFTER the decision is emitted, is churn-gated (default threshold 2), opt-out via `--no-auto-postmortem`, and can never alter `REVIEW_HEAL_RESULT.decision` (`dispatch-pr-postmortem.sh` always exits 0).
 - **Under `--until-mergeable` the drain is heal-only by default** — it spawns NO `Task(loomwright:code-reviewer)` of its own. The **ONE exception** is the earned fallback: when `no_review_lens_posted` holds (§U1's existing read shows no review lens posted in any channel AND every review-producing check is green-with-empty-output/absent/skipped), the drain runs exactly one diff review per drain run before declaring READY, fail-CLOSED toward running it (§"Earned Fallback Review — `no_review_lens_posted`").
