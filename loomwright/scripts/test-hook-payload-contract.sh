@@ -49,6 +49,12 @@
 #     gap (no fixture exists to verify `error` against), left open here
 #     rather than papered over with an invented fixture — recording a
 #     StopFailure fixture is future work, not silently done by this gate.
+#     `kind` is send-telemetry-core.sh's script-event discriminator
+#     (docs/TELEMETRY.md §"Script events"): emit-script-event.sh writes
+#     `"kind": "script_event"` into the payload it pipes to the wrapper — it
+#     is never a Claude Code hook field, and a real hook payload simply lacks
+#     it (the agent-result path then runs, unchanged). The script-event fields
+#     are read only after it matched, from that same emitter-built payload.
 #
 # MUTATION CONTROL: appends a read of a field name that exists in NO fixture
 # (`xyz_never_recorded_field`) to a COPY of one real hook script and asserts
@@ -104,7 +110,8 @@ fixture_has_field() { # fixture_has_field <name>
 KNOWN_EXEMPT="result_block
 output
 agent_output
-error"
+error
+kind"
 is_exempt() { # is_exempt <name>
   grep -qxF -- "$1" < <(printf '%s\n' "$KNOWN_EXEMPT")
 }
