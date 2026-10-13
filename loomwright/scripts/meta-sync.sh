@@ -275,11 +275,14 @@
 # plus one summary line; its meta-base entry stays the PREVIOUS one (absent when it had none, the
 # twin-set refusal's rule — WHAT meta-base RECORDS), so no later sync deletes the branch copy or
 # overwrites the local file because of it. The index is read with `git ls-files -z` over the
-# learning roots and fails closed (exit 1, nothing changed) when it cannot be read. RUN HISTORY is
-# never looked up: a tracked run-history path keeps the 3-way rule above unchanged (run history is
-# meant to be untracked in branch mode; that is what the migration does). The exit code stays the
-# one run history alone gives. A tracked path the pair rule needs (TWIN SET) is read as it stands
-# locally (pull) or on the branch (push). list-managed is unaffected (it lists, it never syncs).
+# learning roots — with the caller's GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE cleared, since git
+# reads an inherited GIT_INDEX_FILE naming a missing file as an EMPTY index with exit 0 ("nothing
+# tracked", a fail-open) — and fails closed (exit 1, nothing changed) when it cannot be read.
+# RUN HISTORY is never looked up: a tracked run-history path keeps the 3-way rule above unchanged
+# (run history is meant to be untracked in branch mode; that is what the migration does). The exit
+# code stays the one run history alone gives. A tracked path the pair rule needs (TWIN SET) is read
+# as it stands locally (pull) or as last agreed (its meta-base entry) on push. list-managed is
+# unaffected (it lists, it never syncs).
 #
 # PULL — fetch, decide per path, leave every tracked learning path to git (TRACKED LEARNING
 # STORES), refuse the twin set if it must be (TWIN SET), refuse on any other
@@ -1342,14 +1345,16 @@ consent_skip() {
 # tracks is named on stderr (`learning_tracked`, unless quiet) and held (hold_rows TRACKED: never
 # written, deleted, merged, published or reported as a conflict; meta-base keeps its PREVIOUS
 # entry). Run-history paths are never looked up here, so a tracked run-history path syncs exactly
-# as before. The index is read NUL-delimited over the learning roots only, and FAILS CLOSED (non-
-# zero) like every other git read: a failed read is never "nothing tracked". Sets TRACKED_N.
+# as before. The index is read NUL-delimited over the learning roots only, with the caller's
+# GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE cleared (an inherited GIT_INDEX_FILE naming a missing
+# file reads as an empty index with exit 0), and FAILS CLOSED (non-zero) like every other git read:
+# a failed read is never "nothing tracked". Sets TRACKED_N.
 TRACKED_N=0
 tracked_learning_hold() {
   TRACKED_N=0
   : > "$WORK/tracked.learning" || return 1
   [ -s "$WORK/learning.lst" ] || return 0
-  g ls-files -z -- .supervisor/twin .supervisor/agent-memory-proposals .supervisor/eval > "$WORK/tl.raw" 2>/dev/null \
+  env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git -C "$ROOT" ls-files -z -- .supervisor/twin .supervisor/agent-memory-proposals .supervisor/eval > "$WORK/tl.raw" 2>/dev/null \
     || { warn "could not read this checkout's git index (git ls-files failed)"; return 1; }
   no_newline_in "$WORK/tl.raw" "the tracked files under the learning-store roots" || return 1
   tr '\0' '\n' < "$WORK/tl.raw" \
@@ -1745,7 +1750,9 @@ cmd_scrub() {
 # cmd_list_managed — every path is_managed accepts, one per line, LC_ALL=C-sorted. Default: the
 # local working folder through list_local (the exact enumeration pull / push use, so its symlink,
 # unsearchable-root and newline-name refusals apply: exit 1). --tracked: `git ls-files` (the index)
-# under .supervisor/, read NUL-delimited (a newline name is refused, as everywhere else).
+# under .supervisor/, read NUL-delimited (a newline name is refused, as everywhere else) with the
+# caller's GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE cleared, so an inherited index override can
+# never make this checkout's tracked set read as empty.
 cmd_list_managed() {
   local p
   if [ "$TREE_SET" = "1" ]; then
@@ -1754,7 +1761,7 @@ cmd_list_managed() {
     list_tree "$TREE_SRC" "$WORK/lm.tsv" || die "could not list the managed entries of '$TREE_SRC'; nothing was changed"
     cut -f1 "$WORK/lm.tsv" > "$WORK/lm.out" || die "could not read the tree's managed-file list"
   elif [ "$TRACKED" = "1" ]; then
-    g ls-files -z -- .supervisor > "$WORK/lm.z" 2>/dev/null \
+    env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git -C "$ROOT" ls-files -z -- .supervisor > "$WORK/lm.z" 2>/dev/null \
       || die "could not list the tracked files (git ls-files failed); nothing was changed"
     no_newline_in "$WORK/lm.z" "the tracked files under .supervisor/" || exit 1
     tr '\0' '\n' < "$WORK/lm.z" \

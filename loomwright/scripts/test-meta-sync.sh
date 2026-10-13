@@ -236,6 +236,10 @@
 #      `; tracked 1`
 #  84. mutation control: without the tracked-learning hold (83) turns red (the pull unions into the
 #      tracked file)
+#  85. (83)'s world pulled with GIT_INDEX_FILE=/nonexistent exported -> the hold reads the real index
+#      anyway: the tracked file byte-unchanged and named `learning_tracked`, `git status` clean
+#  86. mutation control: a hold whose ls-files honours the inherited GIT_INDEX_FILE (no `env -u`)
+#      turns (85) red (a missing index reads as nothing tracked; the pull unions into the file)
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -2669,6 +2673,40 @@ if build_mutant "$MUT_TK" 's/^tracked_learning_hold() {$/tracked_learning_hold()
   SCRIPT="$SUT"
 else
   no "mutation control (tracked): could not build the mutant — control inconclusive"
+fi
+
+echo "== 85. an inherited GIT_INDEX_FILE cannot hide a tracked learning store from the hold =="
+# tracked_env_leg — (83)'s world (B tracks $EV with a local line, A appends another on the branch),
+# then B pulls with GIT_INDEX_FILE=/nonexistent EXPORTED: git reads a missing index as empty with
+# exit 0, so a hold that honoured it would see "nothing tracked" and union into the tracked file.
+# 0 = the tracked file byte-unchanged, named `learning_tracked`, `git status` clean. Detail in TE_DETAIL.
+tracked_env_leg() {
+  local b0
+  TE_DETAIL=""
+  mkworld; clone A; clone B; ms A init; grant A
+  put A "$EV" '{"run":1}'; put A "$RQ/x.md" "x"; ms A push; ms B pull
+  [ "$RC" -eq 0 ] || { TE_DETAIL="setup pull rc=$RC"; return 1; }
+  printf '%s\n' '{"run":"b-local"}' >> "$W/B/$EV"
+  ( cd "$W/B" && git add -f -- "$EV" && git commit -qm "track eval" ) >/dev/null 2>&1 || { TE_DETAIL="could not track $EV"; return 1; }
+  printf '%s\n' '{"run":2}' >> "$W/A/$EV"; ms A push
+  [ "$RC" -eq 0 ] || { TE_DETAIL="sibling push rc=$RC"; return 1; }
+  b0="$(cat "$W/B/$EV")"
+  OUT="$(export GIT_INDEX_FILE=/nonexistent; bash "$SCRIPT" pull --root "$W/B" 2>&1)"; RC=$?
+  TE_DETAIL="pull rc=$RC same-bytes=$([ "$(cat "$W/B/$EV")" = "$b0" ] && echo yes || echo no) porcelain='$(porcelain B | tr '\n' ' ')' named=$(has_line "meta_sync: learning_tracked $EV — tracked by git, left to git" && echo yes || echo no)"
+  [ "$(cat "$W/B/$EV")" = "$b0" ] && has_line "meta_sync: learning_tracked $EV — tracked by git, left to git" \
+    && [ -z "$(porcelain B)" ]
+}
+tracked_env_leg; check $? "an exported GIT_INDEX_FILE=/nonexistent does not hide the tracked store: the pull leaves it byte-unchanged and names it, git status clean ($TE_DETAIL)"
+
+echo "== 86. mutation control: a hold that honours the inherited GIT_INDEX_FILE must turn (85) red =="
+MUT_TE="$TROOT/mutant-tracked-env"
+if build_mutant "$MUT_TE" 's/^  env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git -C "$ROOT" ls-files -z -- \.supervisor\/twin /  g ls-files -z -- .supervisor\/twin /' '  g ls-files -z -- .supervisor/twin '; then
+  SCRIPT="$MUT_TE/meta-sync.sh"
+  if tracked_env_leg; then no "mutation control (tracked env) REFUTED: the leg stayed green with the inherited index honoured ($TE_DETAIL)"
+  else ok "mutation control (tracked env): honouring the inherited GIT_INDEX_FILE rewrites the tracked file — (85) is load-bearing ($TE_DETAIL)"; fi
+  SCRIPT="$SUT"
+else
+  no "mutation control (tracked env): could not build the mutant — control inconclusive"
 fi
 
 echo
