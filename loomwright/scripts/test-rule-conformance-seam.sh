@@ -8,7 +8,7 @@
 #   PART 1  Launch Pad's Phase 3 action 0c shape (reader invoked with `--with-ids`, paths as
 #           ARGUMENTS, empty ⇒ omit), Phase 5 action 6a (House Rules section with the demoted
 #           banner, `- rule: <id>` bullets, empty ⇒ emit neither) and the Phase 5.5 APPLICABLE
-#           RULES block's conditional emission; the criteria count (now 19) in the command mirror.
+#           RULES block's conditional emission; the criteria count (now 20) in the command mirror.
 #   PART 2  Plan Reviewer Criterion 17: skip clause, 17a / 17b FAIL conditions, the
 #           `rule_conformance` category (criterion body AND output-format enum), the count, and
 #           Criterion 14's classifier naming `rule:` as a non-cmd prefix.
@@ -102,10 +102,10 @@ bhas "$SPAWN" '--- APPLICABLE RULES ---' && bhas "$SPAWN" '--- APPLICABLE RULES 
   && ok "spawn carries the APPLICABLE RULES block" || no "spawn APPLICABLE RULES markers"
 bhas "$SPAWN" 'OMIT this whole block, both markers included, when applicable_rules is empty' \
   && ok "spawn: block omitted when empty" || no "spawn conditional-emission clause"
-bhas "$SPAWN" 'Check all 19 review criteria.' && ok "spawn: Check all 19" || no "spawn criteria count"
-lacks "$LP" 'Check all 18' && ok "no stale 'Check all 18'" || no "stale 'Check all 18' in launch-pad agent"
-has "$LPC" 'checks all 19 criteria' && lacks "$LPC" 'all 18 criteria' \
-  && ok "command mirror: all 19 criteria" || no "command mirror criteria count"
+bhas "$SPAWN" 'Check all 20 review criteria.' && ok "spawn: Check all 20" || no "spawn criteria count"
+lacks "$LP" 'Check all 19' && ok "no stale 'Check all 19'" || no "stale 'Check all 19' in launch-pad agent"
+has "$LPC" 'checks all 20 criteria' && lacks "$LPC" 'all 19 criteria' \
+  && ok "command mirror: all 20 criteria" || no "command mirror criteria count"
 
 echo "PART 2 — Plan Reviewer Criterion 17"
 [ -s "$PR" ] || no "missing or empty: $PR"
@@ -121,9 +121,9 @@ bhas "$C17" '**Advisory rules never FAIL.**' && ok "17: advisory never FAILs" ||
 bhas "$C17" '**Issue category:** `rule_conformance`' && ok "17: rule_conformance category" || no "17 category"
 bhas "$C17" 'HIGH for 17a and 17b' && ok "17: HIGH severity" || no "17 severity"
 has "$PR" '| lane_overlap | rule_conformance |' && ok "output-format category enum lists rule_conformance" || no "category enum"
-has "$PR" '## 19 Review Criteria' && lacks "$PR" '## 18 Review Criteria' && has "$PR" 'All 19 review criteria must be checked' \
-  && has "$PR" '(19 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, and 19 conditional)' && has "$PR" 'All 19 criteria checked' \
-  && ok "criteria count 19 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
+has "$PR" '## 20 Review Criteria' && lacks "$PR" '## 19 Review Criteria' && has "$PR" 'All 20 review criteria must be checked' \
+  && has "$PR" '(20 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, and 20 conditional)' && has "$PR" 'All 20 criteria checked' \
+  && ok "criteria count 20 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
 
 echo "PART 2b — Plan Reviewer Criterion 18 + the section it checks"
 C18="$(block "$PR" '^### 18\. Touched-File Invariants' '^### 19\. ')"
@@ -245,7 +245,7 @@ bhas "$C17" 'description starts `17c:`' && ok "17c: issue description prefix" ||
 bhas "$C17" 'MEDIUM for 17c' && ok "17c: MEDIUM severity" || no "17c severity"
 bhas "$C17" 'never relaxes 17a or 17b' && ok "17c: an override never relaxes a must rule" || no "17c must-rule clause"
 grep -qE '^\| Criterion 17c .*\*\*NEEDS_HUMAN\*\*' "$PR" && ok "decision matrix: 17c ⇒ NEEDS_HUMAN" || no "decision matrix 17c row"
-CHK="$(grep -F -- '- [ ] All 19 criteria checked' "$PR")"
+CHK="$(grep -F -- '- [ ] All 20 criteria checked' "$PR")"
 grep -qF '17c' <<<"$CHK" && ok "quality checklist names 17c" || no "checklist 17c"
 # 5b — Launch Pad carries the section through and owns the 17c gate.
 bhas "$A6A" '**(iii)**' && bhas "$A6A" "$CONFLICTS_H" && bhas "$A6A" 'copy it into the brief verbatim' \
