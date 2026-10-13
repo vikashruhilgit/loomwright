@@ -31,21 +31,50 @@ The fragments fold, in filename order, into ONE new top entry of `CHANGELOG.md`:
 `scripts/validate-version.sh`, `scripts/check-doc-currency.sh` and `build-capabilities.sh --check`. Any failure
 restores every file and exits 1. Preview with `--dry-run`.
 
-## Who runs the bump (decision P7)
+## Who runs the bump, and the content rule (decision P7)
 
-- **Sequential run / single PR** (the default): the PR's author, worker or human, writes a fragment and runs
-  `bash scripts/bump-version.sh` as the **LAST** commit of the PR. Nothing that touches the three version files or
-  `changelog.d/` may follow that commit. If `main` moves before the merge, drop or revert the bump commit (which
-  brings the fragment back), rebase, and re-run the script. A bare re-run after the fold has no fragment and is
-  refused by design.
+- **Sequential run / single PR** (the default): the PR's author, worker or human, writes a fragment, commits it,
+  and runs `bash scripts/bump-version.sh`. Later commits may follow the bump. Phase 4.5 heal commits and
+  `/review-pr` drain commits always do (#367, #512).
 - **Parallel wave:** lanes write fragments only. The release lane runs the bump once for the whole wave.
 - **An unfolded fragment merged without a bump is legal.** The next bump folds it.
+
+**The rule is about content, not commit position.** At every commit, compared with `git merge-base HEAD origin/main`,
+a branch is in one of two states:
+
+- **Not bumped.** The versions in `plugin.json`, `marketplace.json` and `capabilities.json` and the whole of
+  `CHANGELOG.md` equal the merge base's. Every fragment the merge base had is still present.
+- **Bumped once.** The version is one patch, minor or major step above the merge base's in all three files.
+  `CHANGELOG.md` is the merge base's plus exactly the one entry the script renders. That entry is the fold of
+  fragments this branch carried, including every fragment the merge base had. No fragment is left pending.
+
+`bash scripts/check-version-bump.sh` checks this. It is a thin wrapper over `bash scripts/bump-version.sh --check`,
+and CI runs it on every PR with a deepened checkout. It reads the folded fragments back from the branch's history.
+Exit 1 means the rule is broken. Exit 2 means it cannot check (no base ref, or a shallow clone), and CI treats that
+as a failure.
+
+**A fragment added after the bump** (for example, by a heal fix) is folded by **re-running**
+`bash scripts/bump-version.sh`. On a branch that already carries a bump, the script **re-folds**:
+
+1. It checks that the existing bump can be reproduced from the branch's fragments.
+2. It restores the pre-bump state: the merge base's `CHANGELOG.md` and version lines, plus the fragments the bump
+   folded. A pending fragment with the same name wins.
+3. It bumps once over all of them, at the higher of the earlier bump's level and the fragments' request.
+
+The script never double-bumps while it can resolve `origin/main`. Without it, the script prints a NOTE and bumps
+from the working tree, as before. If the existing bump was hand-edited, it refuses and tells you to revert the bump
+commit. On the plugin's sequential path, `scripts/release-refold.sh` runs `--refold` before every push: FINALIZE,
+each Phase 4.5 heal push, and each `/review-pr` fix push. It commits the result, so no later commit can leave a
+fragment unfolded. On a branch with no bump (a lane), `--refold` does nothing.
+
+If `main` moves before the merge, bring it in (merge or rebase). If that brought in an unfolded fragment, re-run the
+script to re-fold it. If `main` released in between, the bump is now more than one step from the new merge base and
+the re-fold refuses, so revert the bump commit and re-run.
 
 ## The guard
 
 `scripts/check-doc-currency.sh` fails when this branch changed the `plugin.json` version (compared with
 `git merge-base HEAD origin/main`) while a fragment is still here. That combination is either a bump not made by the
 script, or a scripted bump left stale after `main` moved (for example, a rebase onto a `main` that merged an unfolded
-fragment). If the branch already has a bump commit, drop or revert it first, then re-run the script; re-running on
-top of it double-bumps. A branch that is only behind `main` stays green. A hand bump with no fragment cannot be detected, and the
-script's header says so.
+fragment). In both cases, re-run the script. It re-folds instead of double-bumping. A branch that is only behind
+`main` stays green. On its own, this guard cannot catch a hand bump with no fragment; `--check` above can.

@@ -191,7 +191,7 @@ while heal_iterations < max_heal_iterations:
   # clean|fixed-in-pass). A missing line means the anticipatory self-review was skipped → treat the fix as
   # incomplete (re-prompt once / surface); never silently accept it as done.
 
-  push_fix_to_pr()                 # fork-aware: same-repo ⇒ git push origin HEAD:<head_ref> (REGULAR, NEVER --force); fork ⇒ no push, degrade to ESCALATED (see "Fork-aware push")
+  push_fix_to_pr()                 # fork-aware: same-repo ⇒ release-refold.sh, then git push origin HEAD:<head_ref> (REGULAR, NEVER --force); fork ⇒ no push, degrade to ESCALATED (see "Fork-aware push")
   heal_iterations += 1
 
 # Loop exit
@@ -216,7 +216,7 @@ Pushes that update the PR branch are **regular pushes only**. A force-push would
 
 Whether (and how) a fix push happens depends on whether the PR head is on `origin`:
 
-- **Same-repo PR** (`isCrossRepository == false`): push via an **explicit refspec** so the local detached-HEAD worktree updates the exact PR branch — `git push origin HEAD:<head_ref>` (**REGULAR push, NEVER `--force`**). The explicit `HEAD:<head_ref>` form is required because the detached drain worktree has no current branch name to push by default.
+- **Same-repo PR** (`isCrossRepository == false`): FIRST run the release re-fold (#512) in the worktree being pushed — `bash "${CLAUDE_PLUGIN_ROOT}/scripts/release-refold.sh"`: a no-op unless the project has a fold-capable `scripts/bump-version.sh` and the branch already carries a bump with a `changelog.d/` fragment pending, in which case it re-folds that fragment into the ONE bump and commits it, so the push below carries it. Non-zero ⇒ do NOT push; degrade to `ESCALATED` with its printed reason posted to the PR (a hand-edited version file or CHANGELOG.md). THEN push via an **explicit refspec** so the local detached-HEAD worktree updates the exact PR branch — `git push origin HEAD:<head_ref>` (**REGULAR push, NEVER `--force`**). The explicit `HEAD:<head_ref>` form is required because the detached drain worktree has no current branch name to push by default.
 - **Fork / cross-repo PR** (`isCrossRepository == true`, head NOT on `origin`): **do NOT push to `origin`** — `git push origin HEAD:<head_ref>` would update the wrong ref or fail. Instead **degrade to review-only**: post the findings as a PR comment and exit `decision: ESCALATED`. The drain detects fork status from the dispatcher-threaded signal (`LOOMWRIGHT_PR_IS_FORK=1`, head ref in `LOOMWRIGHT_PR_HEAD_REF`) or directly via `gh pr view <pr-url> --json isCrossRepository,headRepositoryOwner`. The default diff-only `/review-pr` loop is fork-aware in the same way.
 
 This closes a latent gap in the prior bare `git push`, which had no fork awareness and would have pushed to the wrong ref on a fork PR.
@@ -741,7 +741,7 @@ loop:
   # checked + clean|fixed-in-pass). A missing line means the anticipatory self-review was skipped → treat the
   # fix as incomplete (re-prompt once / surface); never silently accept it as done.
 
-  push_fix_to_pr()                      # fork-aware: same-repo ⇒ git push origin HEAD:<head_ref> (REGULAR, NEVER --force); fork ⇒ no push, degrade to ESCALATED (see "Fork-aware push")
+  push_fix_to_pr()                      # fork-aware: same-repo ⇒ release-refold.sh, then git push origin HEAD:<head_ref> (REGULAR, NEVER --force); fork ⇒ no push, degrade to ESCALATED (see "Fork-aware push")
   pushed_sha = capture_head_sha()       # R1 — captured AT THIS INSTANT; the confirming pass below binds to exactly this SHA, never a re-read of "current" HEAD
 
   # --- Termination-only severity floor (AC3/AC4/AC11/AC12; §"Termination-only severity floor" below) ---
@@ -918,7 +918,7 @@ Every `ESCALATED` v2 exit also sets `escalation_cause` + `escalation_check`/`_ru
 |---|---|
 | bound hit; §U2.5 wait elapsed; confirming pass red/unreadable/unsettled (on `pushed_sha`) | the classifier's fields |
 | only human-judgment findings | `findings` |
-| rules gate, round ledger, `ci_untrusted` (keeps its `termination_reason`), channel-unknown, fork, required-check metadata unavailable | `other` |
+| rules gate, round ledger, `ci_untrusted` (keeps its `termination_reason`), channel-unknown, fork, release re-fold refused (#512), required-check metadata unavailable | `other` |
 
 `findings`/`other` set the four companions to `null`. The classifier is one fail-safe call, `scripts/automate-helpers.sh escalation-cause <pr_url> --sha <sha>`: it prints one `escalation_cause: <cause> check=… run_id=… attempt=… sha=…` line; copy each field as-is. The cause is informational — it never changes `decision`, and nothing here reruns a check (`gh run rerun` stays human), merges, pushes or approves.
 

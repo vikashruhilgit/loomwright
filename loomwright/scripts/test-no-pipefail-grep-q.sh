@@ -219,7 +219,6 @@ WRITER_BASELINE='2 loomwright/scripts/add-orientation.sh
 1 loomwright/scripts/send-telemetry-core.sh
 1 loomwright/scripts/verify-run.sh
 13 loomwright/sdk-spike/test/self-test.sh
-1 scripts/bump-version.sh
 1 scripts/check-doc-currency.sh
 2 scripts/check-skills-index-sync.sh'
 # Tracked AND untracked-but-not-ignored, so a new script is gated before it is ever committed.
