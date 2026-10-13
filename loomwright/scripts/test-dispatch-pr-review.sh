@@ -913,16 +913,65 @@ if [ "$RUN_RC" -eq 0 ] \
    && grep -q -- 'Bash(git checkout:\*)' < <(printf '%s' "$LINE") \
    && grep -q -- 'Bash(git add:\*)' < <(printf '%s' "$LINE") \
    && grep -q -- 'Bash(git commit:\*)' < <(printf '%s' "$LINE") \
-   && grep -q -- 'Bash(git push origin' < <(printf '%s' "$LINE") \
+   && grep -qF -- 'Write(./**),Edit(./**)' < <(printf '%s' "$LINE") \
+   && grep -qF -- 'Bash(git push origin HEAD:HEAD_REF),' < <(printf '%s' "$LINE") \
    && grep -q -- 'Bash(gh pr view:\*)' < <(printf '%s' "$LINE") \
    && grep -q -- 'Bash(gh pr diff:\*)' < <(printf '%s' "$LINE") \
    && grep -q -- 'Bash(gh pr comment:\*)' < <(printf '%s' "$LINE") \
-   && grep -q -- 'Bash(gh api repos/\*:\*)' < <(printf '%s' "$LINE") \
-   && grep -q -- 'Bash(gh api graphql:\*)' < <(printf '%s' "$LINE") \
+   && grep -qF -- "Bash(bash $HERE/drain-gh-read.sh *)" < <(printf '%s' "$LINE") \
    && grep -q -- '--disallowedTools WebFetch,WebSearch' < <(printf '%s' "$LINE"); then
   ok "DRY_RUN permission pin: --permission-mode dontAsk + full allowedTools list + disallowedTools present"
 else
   no "DRY_RUN permission pin wrong (line='$LINE')"
+fi
+
+# 28b. (BLOCKING — F1) the allowlist's SHAPE is checked against what the real CLI
+# honours (scripts/fixtures/drain-allowlist-probe.json), not against the string the
+# code happens to build. Test 28 used to pin `Bash(gh api repos/*:*)` — a rule the
+# runtime treats as matching nothing — so a passing suite proved only that the code
+# chose that string. Each assertion below is a probed fact.
+echo "== 28b. (BLOCKING) drain allowlist: no merge vector, only rule shapes the CLI honours, every drain script admitted =="
+AT28="$(printf '%s' "$LINE" | perl -ne 'print $1 if /--allowedTools (.*?) --disallowedTools /')"
+DT28="$(printf '%s' "$LINE" | perl -ne 'print $1 if /--disallowedTools (.*?) --agent /')"
+f28=""
+[ -n "$AT28" ] || f28="$f28 allowlist-unparsed"
+# No raw GitHub API and no merge: `gh api graphql` admits mergePullRequest, `gh api
+# repos/...` admits `-X PUT .../merge` (probe: current_list results).
+case "$AT28" in *"gh api"*) f28="$f28 raw-gh-api" ;; esac
+case "$AT28" in *"gh pr merge"*) f28="$f28 gh-pr-merge" ;; esac
+# automate-helpers.sh also holds gate-eval (the merge executor): only escalation-cause.
+AT28_LINES="$(printf '%s' "$AT28" | tr ',' '\n')"
+grep -vqF 'automate-helpers.sh escalation-cause *)' < <(grep -F 'automate-helpers.sh' <<<"$AT28_LINES") && f28="$f28 automate-helpers-unscoped"
+# A `*` before the legacy trailing `:*` is a literal character (probe: previous_list).
+grep -Eq '\*.*:\*\)$' <<<"$AT28_LINES" && f28="$f28 literal-star-before-colon-star"
+# A rule carrying `${...}` never matches (probe: rule_shape_checks).
+case "$AT28" in *'${'*) f28="$f28 unexpanded-variable" ;; esac
+# The push entry is exact — no wildcard after HEAD:<ref> (extra refspec / --force).
+grep -vqxF 'Bash(git push origin HEAD:HEAD_REF)' < <(grep -F 'git push' <<<"$AT28_LINES") && f28="$f28 push-not-exact"
+# Files that would re-point git or re-grant permissions mid-session stay denied.
+for d in 'Write(./.git)' 'Write(./.git/**)' 'Edit(./.git/**)' 'Write(./.claude/**)' 'Edit(./.claude/**)' 'Write(./.mcp.json)'; do
+  case ",$DT28," in *",$d,"*) ;; *) f28="$f28 not-denied:$d" ;; esac
+done
+# Drift guard: every plugin script the drain prose names must be admitted. A new
+# `scripts/<x>.sh` call in review-heal / the runner without an allowlist entry
+# would be denied at runtime under dontAsk — the same silent breakage as F1.
+# Exempt: scripts the prose names but the drain model never runs itself.
+#   dispatch-pr-review.sh  — this dispatcher (the drain never re-dispatches itself)
+#   worktree-salvage.sh    — run by this dispatcher's teardown trap, not the model
+#   pr-postmortem-gather.sh, bump-version.sh — run INSIDE dispatch-pr-postmortem.sh /
+#                            release-refold.sh, which are admitted
+#   automate-helpers.sh    — admitted per subcommand (checked above)
+EXEMPT28=" dispatch-pr-review.sh worktree-salvage.sh pr-postmortem-gather.sh bump-version.sh automate-helpers.sh "
+for s28 in $(grep -ohE 'scripts/[a-z0-9_-]+\.(sh|py)' "$HERE/../skills/review-heal/SKILL.md" "$HERE/../agents/review-pr.md" | sed 's#scripts/##' | sort -u); do
+  case "$EXEMPT28" in *" $s28 "*) continue ;; esac
+  case "$AT28" in *"Bash(bash $HERE/$s28 *)"*) ;; *) f28="$f28 script-not-admitted:$s28" ;; esac
+done
+# ...and the prose must not tell the drain to call raw `gh api` (it would be denied).
+grep -nE '^(gh api|  *gh api)' "$HERE/../skills/review-heal/SKILL.md" "$HERE/../agents/review-pr.md" >/dev/null && f28="$f28 prose-raw-gh-api"
+if [ -z "$f28" ]; then
+  ok "drain allowlist shape: no gh api / gh pr merge, gate-eval unreachable, exact push, no literal-star or \${} rules, .git/.claude denied, every drain script admitted"
+else
+  no "drain allowlist shape wrong:$f28"
 fi
 rm -rf "$WD"
 
@@ -935,7 +984,7 @@ if [ "$RC29" -eq 0 ] \
    && grep -q -- '--permission-mode dontAsk' < <(printf '%s' "$ARGS_LINE") \
    && grep -q -- 'Read,Grep,Glob,Task' < <(printf '%s' "$ARGS_LINE") \
    && grep -q -- 'Bash(git push origin' < <(printf '%s' "$ARGS_LINE") \
-   && grep -q -- 'Bash(gh api graphql:\*)' < <(printf '%s' "$ARGS_LINE") \
+   && grep -qF -- 'Write(./**),Edit(./**)' < <(printf '%s' "$ARGS_LINE") \
    && grep -q -- '--disallowedTools WebFetch,WebSearch' < <(printf '%s' "$ARGS_LINE") \
    && grep -q -- '--agent loomwright:review-pr-runner' < <(printf '%s' "$ARGS_LINE"); then
   ok "real-path binding: captured args= carries --permission-mode/--allowedTools/--disallowedTools (not just DRY_RUN_DISPATCH) (args='$ARGS_LINE')"
