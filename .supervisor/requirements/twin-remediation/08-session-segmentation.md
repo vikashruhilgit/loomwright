@@ -33,3 +33,5 @@ No new state formats, no scheduler, no forced kills of running sessions, no chan
 - **Refine before running items 1 and 4:** (a) segmented mode = reuse lanes with N=1 in the primary, or a new sequential dispatch; (b) how `run.lock` hands over between segments (it is re-entrant only for the same session id); (c) threshold and opt-in vs default — item 07, cited as the trigger, is ABANDONED.
 - **Proposed Touches** for the rest: `loomwright/skills/automate-loop/{SKILL.md,lanes.md}`, `loomwright/skills/autonomous-loop/SKILL.md`, `loomwright/scripts/automate-lanes.sh` or `automate-helpers.sh`, `loomwright/scripts/run-lock.sh`, `README.md`, `AGENT_GUIDELINES.md`. Depends on: none.
 - **Shipped 2026-10-12 in v15.133.0** (integration PR #493, merge b6e1100): items 2–3 (/insights per-session context size, 3 MB advisory threshold; README tip) — PR #487. **Remaining:** items 1 and 4 (owner decisions). Requirement stays open.
+
+- **2026-10-13:** items 1 and 4 rewritten as `twin-remediation/08b-single-lane-sequential.md` (the `/autonomous` half of item 1 dropped). Nothing left to run in this file.

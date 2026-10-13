@@ -405,3 +405,11 @@ worker's turn budget.
 - **In flight (direct):** Part C (requirement shape, `_BACKLOG.md` plan-doc template, PO writes the plan doc, C6 fixture) — branch `docs/pa18c-requirement-shape`. The false "PO writes an optional `_BACKLOG.md`" claim sits in `skills/automate-loop/intake.md` (not SKILL.md).
 - **Parked by owner (2026-10-12):** Part A (`/backlog` board) and Part B (right-size, merge-items) — revisit when the open backlog exceeds ~20 items. Three acceptance checks cite 2026-10-09 backlog snapshots that no longer exist; rewrite them as fixtures if revived. A1's ABANDONED-over-conflict guard is moot for the four cited items (already stamped by hand).
 - **Shipped 2026-10-12 in v15.133.0** (integration PR #493, merge b6e1100): Part C (requirement shape, `_BACKLOG.md` plan-doc template, PO writes the plan doc; false claim fixed in intake.md + commands/automate.md) — PR #488. Parts A and B parked. Requirement stays open.
+
+## Un-parked 2026-10-13 (owner)
+- Run **Parts A and B only**. Part C shipped in #488 (v15.133.0) — do NOT redo it.
+- Rewrite the acceptance checks that cite the 2026-10-09 backlog (Part A's "On the backlog as it stood on 2026-10-09 …"
+  and Part B's "`right-size` on `implementation-quality/02` as it stood on 2026-10-09 …") as hermetic fixtures: build the
+  cited states in a temp requirements tree; never read the live backlog in a test.
+- A1's ABANDONED-over-conflict guard is moot for the four cited items (already stamped by hand) — keep the guard, test
+  it on a fixture.
