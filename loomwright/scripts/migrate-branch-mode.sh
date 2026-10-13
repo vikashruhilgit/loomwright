@@ -11,9 +11,10 @@
 #   plan                read-only: detect the case and print the step sequence. Detects "already
 #                       migrated" BEFORE any precondition (a run lock is legitimately held during an
 #                       /automate run). Writes nothing at all — no state file, no ref, no index.
-#                         fresh    no managed path tracked; mode `off`
-#                         history  managed paths tracked (whatever the mode line says)
-#                         already  mode `on <b>` and nothing tracked -> `already in branch mode on <b>`
+#                         fresh    no run-history path tracked; mode `off`
+#                         history  run-history paths tracked (whatever the mode line says)
+#                         already  mode `on <b>` and no run history tracked -> `already in branch
+#                                  mode on <b>` (a tracked learning store never changes the case)
 #                         refused  mode `unknown <reason>` -> exit 1 naming the reason
 #                       It also prints the metadata branch init defaults to (see init).
 #   preflight           print every precondition with its result; record PASS/FAIL. THE GATE: every
@@ -42,10 +43,20 @@
 #   mode-pr             (fresh) on a NEW branch: `setup-memory.sh apply --branch-mode <b>`, one commit
 #                       of `.gitignore` only, push, open a PR — never merged. Returns to the default.
 #   seed                (history) `meta-sync.sh push --branch <b>`, then the A/B check against the
-#                       CURRENT origin/<default> (A = `list-managed --tracked`, B = the branch tree):
-#                       A = B, every blob equal, nothing but *.md / results.jsonl on the branch.
-#                       Tracked .supervisor/ paths outside the managed set are LISTED for an owner
-#                       decision, never dropped. A != B stops the flow before untrack-pr.
+#                       CURRENT origin/<default> (A = `list-managed --tracked --run-history`, B =
+#                       the WHOLE branch tree MINUS its learning-store paths — both sides are run
+#                       history: learning stores travel only with consent and the migration never
+#                       untracks one; an unmanaged stray on the branch stays in B, so it still
+#                       breaks A = B):
+#                       A = B, every blob equal, nothing on the branch but the managed kinds
+#                       (*.md, results.jsonl, brain-baseline.jsonl, .provenance.jsonl,
+#                       *.dismissed-decisions).
+#                       Tracked .supervisor/ paths outside the run-history set (a tracked learning
+#                       store included) are LISTED for an owner decision, never dropped or
+#                       untracked; git alone owns a tracked learning store from then on —
+#                       meta-sync.sh pull / push leave it alone (`learning_tracked`), so a branch
+#                       copy that diverges never dirties after-merge's or rollback's clean tree.
+#                       A != B stops the flow before untrack-pr.
 #   untrack-pr          (history) on a NEW branch: the branch-mode block, `git rm -r --cached` of the
 #                       seeded A set, one commit, push, open a PR carrying the A/B counts, the empty
 #                       diffs, the pre-migration SHA and the verify-pr instruction — never merged.
@@ -59,7 +70,7 @@
 #                       the run-history files the pull deleted (from the
 #                       pre-pull commit, which verify-pr proved equal to the branch), `meta-sync.sh
 #                       pull --branch <b>`, confirm the files are back, NO managed path is still
-#                       tracked (`list-managed --tracked` — catches a file committed after verify-pr;
+#                       tracked (`list-managed --tracked --run-history` — catches a file committed after verify-pr;
 #                       a FAIL there records followup=1 and marks seed / untrack_pr / verify_pr
 #                       STALE, so recovery re-runs seed -> untrack-pr -> verify-pr, and only in that
 #                       recorded follow-up round (followup=1 AND <default> already on <b>) does the
@@ -70,7 +81,11 @@
 #                       the corrected #361 recipe on a NEW branch: push local edits to the branch,
 #                       `git revert --no-commit` the untrack commit, re-track the CURRENT branch files
 #                       (`git checkout <branch tip> -- <every branch path>`), drop paths deleted on
-#                       the branch since migration, commit, push, open a PR — never merged.
+#                       the branch since migration, commit, push, open a PR — never merged. Every
+#                       branch path EXCEPT the learning stores is re-tracked: the migration never
+#                       untracks one (twin contracts, provenance, proposals, eval files), so a
+#                       rollback never commits a branch learning store to the default branch; one
+#                       tracked before the migration stays tracked, and none is deleted from disk.
 #   state               print the state file and the next step (resume point).
 #
 #   --root    checkout (default: `git rev-parse --show-toplevel` of $PWD)
@@ -183,12 +198,35 @@ ghr() { # ghr <gh args...> — gh in the checkout, scoped to the recorded repo w
 read_mode() { bash "$SM" --root "$ROOT" mode 2>/dev/null | head -n 1; }
 mode_branch() { local m; m="$(read_mode)"; case "$m" in "on "*) printf '%s' "${m#on }" ;; esac; return 0; } # <x> of `on <x>`, else empty
 init_default_branch() { local x; x="$(mode_branch)"; printf '%s' "${x:-loomwright-meta}"; } # what init records without --branch
-tracked_managed() { bash "$MS" list-managed --tracked --root "$ROOT"; }
+# tracked_managed — the TRACKED RUN-HISTORY paths: the one set this flow moves to the branch and
+# untracks. Every consumer (detect_case, ab_check's A, untrack-pr via a.list, after-merge's
+# re-checks) compares run history only. A TRACKED learning store (twin contracts, provenance,
+# proposals, eval files) is never in it: the migration never untracks one — it stays tracked and
+# ab_check lists it as an OWNER DECISION extra, exactly as before the managed set grew; meta-sync.sh
+# leaves a tracked learning store to git (its TRACKED LEARNING STORES rule), so no pull dirties it.
+tracked_managed() { bash "$MS" list-managed --tracked --run-history --root "$ROOT"; }
+# tracked_learning <out> — the TRACKED learning-store paths (index), sorted: the managed set minus
+# run history, read through the same predicate (rb_retrack_from_branch never deletes one from disk)
+tracked_learning() {
+  bash "$MS" list-managed --tracked --root "$ROOT" | env LC_ALL=C sort > "$1.all" || return 1
+  tracked_managed | env LC_ALL=C sort > "$1.rh" || return 1
+  env LC_ALL=C comm -23 "$1.all" "$1.rh" > "$1" || return 1
+  rm -f "$1.all" "$1.rh"
+}
+# branch_learning <tree-ish> <out> — the LEARNING-STORE paths of that tree, sorted: its managed set
+# minus its run-history set (meta-sync.sh is the one predicate; nothing here restates it). The ONE
+# excluded class — callers subtract it from the whole tree, so unmanaged strays are never dropped.
+branch_learning() {
+  bash "$MS" list-managed --tree "$1" --root "$ROOT" | env LC_ALL=C sort > "$2.all" || return 1
+  bash "$MS" list-managed --tree "$1" --run-history --root "$ROOT" | env LC_ALL=C sort > "$2.rh" || return 1
+  env LC_ALL=C comm -23 "$2.all" "$2.rh" > "$2" || return 1
+  rm -f "$2.all" "$2.rh"
+}
 detect_case() { # prints fresh | history | already <b> | unknown <reason>; exit 1 when unreadable
   local mode tm
   mode="$(read_mode)"
   case "$mode" in off|on\ *) ;; unknown\ *) printf '%s' "$mode"; return 0 ;; *) printf 'unknown unreadable mode line: %s' "${mode:-<empty>}"; return 0 ;; esac
-  tm="$(tracked_managed)" || { printf 'unknown list-managed --tracked failed'; return 0; }
+  tm="$(tracked_managed)" || { printf 'unknown list-managed --tracked --run-history failed'; return 0; }
   if [ -n "$tm" ]; then printf 'history'
   elif [ "$mode" = off ]; then printf 'fresh'
   else printf 'already %s' "${mode#on }"; fi
@@ -236,13 +274,23 @@ pr_create() { # pr_create <head> <base> <title> <body file> — prints the PR ur
 }
 
 # ---- A/B check -----------------------------------------------------------------------------------
-# ab_check <b> <default> — A = list-managed --tracked at HEAD (== origin/<default>), B = branch tree.
+# ab_check <b> <default> — A = the tracked RUN-HISTORY paths at HEAD (== origin/<default>;
+# tracked_managed), B = the WHOLE branch tree MINUS its learning-store paths. Both sides compare run
+# history only: a learning store on the branch travels with consent and is subtracted from B, and a
+# TRACKED learning store is not in A (tracked_managed is run-history only) — it lands in extra.list
+# as an OWNER DECISION and stays tracked. B is "everything but the excluded class", never "only the
+# included class": an UNMANAGED entry on the branch (a stray NOTES.md, jobs/pending/x.md) stays in
+# B, so it still breaks A = B.
 ab_check() {
   local b="$1" d="$2" an bn rc=0 nonmd extra
   fetch_meta "$b"
-  tracked_managed | env LC_ALL=C sort > "$SD/a.list" || { echo "migrate-branch-mode: list-managed --tracked failed" >&2; return 1; }
+  tracked_managed | env LC_ALL=C sort > "$SD/a.list" || { echo "migrate-branch-mode: list-managed --tracked --run-history failed" >&2; return 1; }
   g ls-tree -r --full-tree HEAD | awk -F'\t' 'NR==FNR { want[$0] = 1; next } ($2 in want) { split($1, m, " "); print m[3] "\t" $2 }' "$SD/a.list" - | env LC_ALL=C sort > "$SD/a.ent"
-  g ls-tree -r "refs/remotes/origin/$b" | awk -F'\t' '{ split($1, m, " "); print m[3] "\t" $2 }' | env LC_ALL=C sort > "$SD/b.ent"
+  branch_learning "refs/remotes/origin/$b" "$SD/b.learn" \
+    || { echo "migrate-branch-mode: could not list the learning-store paths on origin/$b" >&2; return 1; }
+  g ls-tree -r "refs/remotes/origin/$b" | awk -F'\t' '{ split($1, m, " "); print m[3] "\t" $2 }' | env LC_ALL=C sort > "$SD/b.all" \
+    || { echo "migrate-branch-mode: could not read the origin/$b tree" >&2; return 1; }
+  awk -F'\t' -v LS="$SD/b.learn" 'FILENAME == LS { ls[$0] = 1; next } !($2 in ls)' "$SD/b.learn" "$SD/b.all" > "$SD/b.ent"
   cut -f2 "$SD/b.ent" | env LC_ALL=C sort > "$SD/b.list"
   an="$(wc -l < "$SD/a.list" | tr -d ' ')"; bn="$(wc -l < "$SD/b.list" | tr -d ' ')"
   say "A (tracked managed on origin/$d) = $an; B (origin/$b tree) = $bn"
@@ -265,12 +313,16 @@ ab_check() {
   elif [ "$AB_REL" = subset ]; then say "A ⊆ B (B has $((bn - an)) extra) — every A path is on B"
   else say "path lists equal (empty diff)"; fi
   if [ -s "$SD/ab-blobs.diff" ]; then echo "migrate-branch-mode: blob mismatch:" >&2; sed 's/^/  /' "$SD/ab-blobs.diff" >&2; rc=1; else say "every blob equal (empty diff)"; fi
-  nonmd="$(grep -v -E '\.md$|(^|/)results\.jsonl$' "$SD/b.list")"
-  if [ -n "$nonmd" ]; then echo "migrate-branch-mode: non-.md / results.jsonl entries on $b:" >&2; printf '  %s\n' $nonmd >&2; rc=1; fi
-  g ls-files -- .supervisor | env LC_ALL=C sort | env LC_ALL=C comm -23 - "$SD/a.list" > "$SD/extra.list"
+  # every branch entry (learning stores included) must be a managed KIND (meta-sync.sh: MANAGED SET)
+  nonmd="$(cut -f2 "$SD/b.all" | grep -v -E '\.md$|(^|/)results\.jsonl$|(^|/)brain-baseline\.jsonl$|(^|/)\.provenance\.jsonl$|\.dismissed-decisions$')"
+  if [ -n "$nonmd" ]; then echo "migrate-branch-mode: entries of a non-managed kind on $b:" >&2; printf '  %s\n' $nonmd >&2; rc=1; fi
+  # The index read clears the caller's GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE, as A's read does
+  # (meta-sync.sh list-managed --tracked): git reads an inherited GIT_INDEX_FILE naming a missing file
+  # as an EMPTY index with exit 0, which would silently report no extra tracked path.
+  env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git -C "$ROOT" -c core.quotepath=off ls-files -- .supervisor | env LC_ALL=C sort | env LC_ALL=C comm -23 - "$SD/a.list" > "$SD/extra.list"
   extra="$(wc -l < "$SD/extra.list" | tr -d ' ')"
   if [ "$extra" -gt 0 ]; then
-    say "OWNER DECISION: $extra tracked .supervisor/ path(s) are OUTSIDE the managed set; they stay tracked and are NOT moved to $b:"
+    say "OWNER DECISION: $extra tracked .supervisor/ path(s) are OUTSIDE the run-history set (a tracked learning store included); they stay tracked and are NOT untracked or moved to $b by this flow:"
     sed 's/^/  /' "$SD/extra.list"
   fi
   AB_A="$an"; AB_B="$bn"
@@ -557,7 +609,7 @@ cmd_after_merge() {
   # refuse and write NOTHING, so verify_pr PASS stays valid and no follow-up round is recorded.
   if [ "$(state_get case)" != fresh ]; then
     [ -s "$SD/a.list" ] || die "refused: this round's untracked set ($SD/a.list) is missing — re-run verify-pr <n>; nothing was changed"
-    tm="$(tracked_managed)" || die "after-merge: list-managed --tracked failed; nothing was recorded"
+    tm="$(tracked_managed)" || die "after-merge: list-managed --tracked --run-history failed; nothing was recorded"
     open="$(printf '%s\n' "$tm" | env LC_ALL=C sort | env LC_ALL=C comm -12 "$SD/a.list" -)"
     if [ -n "$open" ] && ! untrack_head_merged; then
       printf '%s\n' "$open" | sed 's/^/  still tracked (this round untracks it): /' >&2
@@ -583,7 +635,7 @@ cmd_after_merge() {
   # Re-read the ground truth, not verify-pr's snapshot: a managed file committed to $d between
   # verify-pr and the merge is still TRACKED (the PR never untracked it) and absent from $b, yet the
   # mode block ignores it, so `git status --porcelain` stays empty. Any tracked managed path = not done.
-  tm="$(tracked_managed)" || { state_set after_merge FAIL; die "after-merge: FAIL — list-managed --tracked failed"; }
+  tm="$(tracked_managed)" || { state_set after_merge FAIL; die "after-merge: FAIL — list-managed --tracked --run-history failed"; }
   if [ -n "$tm" ]; then
     printf '%s\n' "$tm" | sed 's/^/  still tracked on '"$d"': /' >&2
     state_set after_merge FAIL
@@ -628,12 +680,22 @@ cmd_rollback() {
 }
 rb_retrack_from_branch() { # the step the old M1 order (revert -> meta-sync pull -> git add) got wrong
   local br="$1" p
-  g ls-tree -r --name-only "$br" > "$SD/onbranch.list" || return 1
+  # every branch path MINUS the learning stores (never untracked by the migration — see rollback above); subtracting
+  # the excluded class keeps the pre-learning-store behaviour for every other branch entry
+  branch_learning "$br" "$SD/onbranch.learn" || return 1
+  g ls-tree -r --name-only "$br" > "$SD/onbranch.all" || return 1
+  grep -vxF -f "$SD/onbranch.learn" "$SD/onbranch.all" > "$SD/onbranch.list"
+  [ $? -le 1 ] || return 1
   if [ -s "$SD/onbranch.list" ]; then
     tr '\n' '\0' < "$SD/onbranch.list" | (cd "$ROOT" && xargs -0 git checkout "$br" --) || return 1
   fi
-  # paths the revert re-added that were deleted on the branch since migration
-  g diff --cached --name-only --diff-filter=A HEAD -- .supervisor | grep -vxF -f "$SD/onbranch.list" > "$SD/gone.list"
+  # paths the revert re-added that were deleted on the branch since migration. `rm -f` below deletes
+  # from disk, so a learning store is never among them: the untrack commit never removes one
+  # (tracked_managed is run history only), and should a hand-picked --commit have removed one, the
+  # revert's re-tracked copy is left exactly as the revert restored it — never deleted.
+  tracked_learning "$SD/staged.learn" || return 1
+  g diff --cached --name-only --diff-filter=A HEAD -- .supervisor | grep -vxF -f "$SD/onbranch.list" \
+    | grep -vxF -f "$SD/staged.learn" > "$SD/gone.list"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     g rm -q --cached -- "$p" && rm -f -- "$ROOT/$p"

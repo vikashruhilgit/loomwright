@@ -9,9 +9,9 @@
 #   meta-sync.sh init   [--branch <name> [--allow-branch-mismatch]] [--root <checkout>]
 #   meta-sync.sh pull   [--branch <name> [--allow-branch-mismatch]] [--root <checkout>]
 #   meta-sync.sh push   [--branch <name> [--allow-branch-mismatch]] [--root <checkout>] [--paths-from <file>] [--message <m>]
-#   meta-sync.sh status [--branch <name> [--allow-branch-mismatch]] [--root <checkout>] [--paths]
+#   meta-sync.sh status [--branch <name> [--allow-branch-mismatch]] [--root <checkout>] [--paths] [--learning]
 #   meta-sync.sh scrub  --paths-from <file> [--root <checkout>]
-#   meta-sync.sh list-managed [--tracked] [--root <checkout>]
+#   meta-sync.sh list-managed [--tracked | --tree <tree-ish>] [--run-history] [--root <checkout>]
 #   meta-sync.sh -h | --help
 #
 #   scrub         a DRY RUN of push's scrub over the files listed in --paths-from (read from the
@@ -23,7 +23,11 @@
 #                 LC_ALL=C-sorted, exit 0. Default: the local working folder, enumerated exactly as
 #                 pull / push enumerate it (so it fails closed — exit 1 — on the same symlink /
 #                 unsearchable-root / newline-name hazards). --tracked: the paths `git ls-files`
-#                 lists instead (the index). Writes nothing, takes no lock, fetches nothing.
+#                 lists instead (the index). --tree <tree-ish>: the managed entries of that tree
+#                 (read exactly as pull / push read a branch tree — a newline name or a failed
+#                 read exits 1). --run-history (with any source): RUN-HISTORY paths only — every
+#                 LEARNING-STORE path (see MANAGED SET) is dropped, so a caller can tell the two
+#                 classes apart without a second list. Writes nothing, takes no lock, fetches nothing.
 #   scrub and list-managed need NO branch: they skip the mode / branch check below (so they work in
 #   a checkout whose mode reads `unknown`), and --branch / --allow-branch-mismatch given to them is
 #   a usage error (exit 1) — never silently accepted and ignored.
@@ -51,8 +55,12 @@
 #                 or not). push and scrub ONLY: given to init / pull / status / list-managed it is a
 #                 usage error (exit 1, nothing changed) — never silently accepted and ignored
 #   --tracked     list-managed ONLY (a usage error elsewhere): list from `git ls-files`
+#   --tree        list-managed ONLY (a usage error elsewhere, and with --tracked): list that tree
+#   --run-history list-managed ONLY (a usage error elsewhere): drop the learning-store paths
 #   --paths       status ONLY (a usage error elsewhere): after the status line, name the paths it
 #                 counts — see STATUS below
+#   --learning    status ONLY (a usage error elsewhere): add the ONE learning-store line — see
+#                 STATUS below
 #   --message     commit message for the metadata-branch commit
 #
 # MANAGED SET — the ONE declared list (is_managed below); everything else is invisible to this script:
@@ -64,6 +72,16 @@
 #     ledger — TSV of draft names, no home paths — so a lane's decisions survive lane-remove;
 #     parallel-automate/05 D9; scrubbed like every other added file)
 #   .supervisor/postmortem/results.jsonl
+#   LEARNING STORES (the stores agents read back to decide better; published only with the
+#   user-scope consent — see CONSENT below — and never synced at all while git tracks them here —
+#   see TRACKED LEARNING STORES below; every other managed path is RUN HISTORY):
+#   .supervisor/twin/contracts/*.md                    (top level only) ┐ the TWIN SET — synced
+#   .supervisor/twin/.provenance.jsonl                                  ┘ together (see TWIN SET)
+#   .supervisor/agent-memory-proposals/*.md            (top level only)
+#   .supervisor/eval/results.jsonl
+#   .supervisor/eval/brain-baseline.jsonl
+#   NOT managed: .supervisor/worker-summaries/ (named `{subtask_id}.md` and rewritten per run, so
+#   two machines would conflict routinely — a follow-up first gives them unique names).
 #   minus anything under a NESTED .supervisor/ (.supervisor/requirements/**/.supervisor/**),
 #   and minus every NON-CANONICAL path (an absolute path, or one with a `.` / `..` / empty segment).
 #   Branch trees are untrusted input (anyone who can push the branch can mktree any entry name);
@@ -71,7 +89,8 @@
 #   written or deleted, so it is simply not a managed path (pull ignores it; push fails closed,
 #   because git's read-tree refuses such a tree).
 # Local files are enumerated with `find` over the managed roots ONLY (requirements/ with nested
-# .supervisor/ trees pruned; the top level of jobs/done, jobs/failed, automate and postmortem), so
+# .supervisor/ trees pruned; the top level of jobs/done, jobs/failed, automate, postmortem, twin,
+# twin/contracts, agent-memory-proposals and eval — a root's parent is listed before it), so
 # churn or an unreadable folder elsewhere under .supervisor/ (logs, worktrees) never blocks a sync;
 # an unsearchable managed root or folder on the way to one, or a find error inside a root, fails
 # closed. Matches are filtered through that list; each one is staged into the
@@ -110,10 +129,25 @@
 #   L == R             -> nothing
 #   L == B             -> take R   (R absent => delete locally)
 #   R == B             -> take L   (L absent => delete on the branch)
-#   both changed       -> .supervisor/postmortem/results.jsonl: line-union (R's lines unchanged,
-#                         including repeats inside R, then the L lines not present in R in local
-#                         order — never a global dedupe); any other path: `meta_sync: conflict
-#                         <path>`, exit 1, NOTHING changed. A conflict needs a human.
+#   both changed       -> a UNION PATH (the union-path predicate is_union in compute_plan — the
+#                         postmortem ledger .supervisor/postmortem/results.jsonl, the two eval
+#                         files .supervisor/eval/results.jsonl and .supervisor/eval/brain-baseline
+#                         .jsonl, and every .supervisor/automate/<name>.dismissed-decisions):
+#                           the three .jsonl files: line-union (R's lines unchanged, including
+#                           repeats inside R, then the L lines not present in R in local order —
+#                           never a global dedupe);
+#                           a .dismissed-decisions ledger: an ORDERED union (ordered_merge) — every
+#                           distinct line kept once; `summary-member<TAB><h8><TAB><slot>` rows are a
+#                           set and come first; decision rows `<draft><TAB><decision><TAB><ts>` follow,
+#                           sorted by their ISO-8601 ts (stable: ties keep R's rows first), so the
+#                           reader's last-row-wins yields the time-latest decision per draft (a row
+#                           whose third field is not an ISO-8601 timestamp sorts with the set rows,
+#                           i.e. as the oldest);
+#                         the TWIN SET (.provenance.jsonl and every contract — never a union path):
+#                           the whole twin set is REFUSED (see TWIN SET), run history still syncs;
+#                         any other path (every .md, the agent-memory proposals included):
+#                           `meta_sync: conflict <path>`, exit 1, NOTHING changed. A conflict needs
+#                           a human.
 #
 # NO meta-base (a clone's first sync; `status` says never_synced) — B is derived per path from R's
 # history, read from the old/new blob columns of `git log --no-renames --format= --raw --no-abbrev`
@@ -124,10 +158,15 @@
 #                                              otherwise conflict
 #   path absent in R, never in R's history:    B absent => a genuinely new local file is pushed
 #   path present in R:  L == R => nothing; L absent => take R; L equals an OLDER blob => take R
-#                       (stale copy); results.jsonl with L != R => line-union; otherwise conflict
+#                       (stale copy); a union path with L != R => its union (above); otherwise
+#                       conflict
 # The derivation always covers the WHOLE managed set (even under --paths-from) and any conflict
-# anywhere aborts, because the meta-base written afterwards must cover every managed path. The
-# history walk runs only while meta-base is absent (or to verify a legacy base, below).
+# anywhere aborts, because the meta-base written afterwards must cover every managed path — with
+# ONE exception, the twin set: a twin conflict refuses the twin set instead of aborting, and the
+# meta-base then keeps every twin path's PREVIOUS entry (absent when it had none), so no refused
+# twin path is ever recorded as agreed and the next sync re-derives — and re-refuses — it (see
+# TWIN SET). The history walk runs only while meta-base is absent (or to verify a legacy base,
+# below).
 #
 # BRANCH BINDING — meta-base is two lines: the agreed-state tree SHA, then `branch <name>`, the
 # branch it was recorded against (written together by one atomic rename, under the lock). A base
@@ -158,22 +197,105 @@
 #   - after an accepted push (which writes nothing to the working tree) it is built per path: a
 #     pushed take-L path => the pushed L; L == R => R; a take-R path the push did NOT apply locally
 #     => the PREVIOUS B entry (or the derived B), so the next pull still takes R and the next push
-#     never reverts R or deletes a sibling's new file; a results.jsonl union the push wrote to the
-#     branch but not locally => the local L; any managed path the push did not consider (outside
-#     --paths-from) => its previous / derived B.
+#     never reverts R or deletes a sibling's new file; a union (any union path) the push wrote to
+#     the branch but not locally => the local L; any managed path the push did not consider
+#     (outside --paths-from, a learning-store path skipped for want of consent, or a learning-store
+#     path left to git because it is tracked) => its previous / derived B;
+#   - after a pull or push that REFUSED the twin set it is per-path for the twin set: every twin
+#     path keeps its PREVIOUS base entry (absent when it had none) while every other path is
+#     recorded as above — so a pull no longer records R's tree wholesale then. Recording R for a
+#     refused twin path would make it look agreed: the next push would delete the branch's
+#     contracts this checkout never received and overwrite the branch's provenance chain.
+#   - after a pull that LEFT a tracked learning path to git (TRACKED LEARNING STORES) the same
+#     per-path rule holds for that path: it keeps its PREVIOUS base entry (absent when it had none),
+#     never R's — recording R would make a later sync (once git stops tracking it) read the local
+#     copy as the newer side and push it over the branch's, dropping a sibling's lines.
 #   Recording R's (or the new commit's) branch tree after a push would make the next sync revert a
 #   sibling's newer change or resurrect a deletion. A conflict, a scrub hit or an exhausted retry
 #   leaves meta-base untouched. refs/meta-sync/base points at the same tree purely as a gc anchor
 #   (the tree and its blobs are otherwise unreachable and `git gc` would prune them); if the object
 #   is ever missing anyway, the script falls back to the no-base derivation with a warning.
 #
-# PULL — fetch, decide per path, refuse on any conflict / not_a_file / containment failure, then
-# write. The ledger UNION is built and renamed into place BEFORE any take-R write or delete: the
-# union re-reads the working ledger and fails closed when it no longer hashes to the planned L
-# (`<path> changed during the sync`), and because it runs first such a refusal leaves every other
-# managed file untouched and meta-base unchanged.
+# TWIN SET (.supervisor/twin/contracts/*.md + .supervisor/twin/.provenance.jsonl) — a contract is
+# only valid beside its provenance chain, so the twin set syncs as a whole on the side being
+# written (pull: the working folder; push: the branch) or not at all:
+#   - PAIR RULE: when the sync would change the twin set on that side, its post-state is checked
+#     with the SAME chain rules read-system-contract.sh applies (`GENESIS` is the first prev_hash;
+#     each later prev_hash is the sha256 of the previous raw line, blank lines skipped, the walk
+#     stops at the first break; a contract is valid only when the sha256 of its bytes is the
+#     content_hash of a chain-valid `add`). A contract that would lack one is a pair-rule break.
+#   - FORK: both sides changed .provenance.jsonl since the meta-base (or any twin path conflicts)
+#     — never a line-union: two chains cannot be merged.
+#   Either one REFUSES THE TWIN SET as a whole on that side — no twin path written or deleted,
+#   every offending path named on stderr, one line each:
+#     `meta_sync: twin_refused <path>: <reason>`   (reason: conflict | no chain-valid add
+#                                                   provenance entry | no sha256 tool)
+#   — while run history and the other learning stores still sync, and the exit code is the one
+#   run history alone gives (meta-entry, lane pulls and migrate-branch-mode.sh treat any non-zero
+#   exit as failure). meta-base keeps every twin path's previous entry (WHAT meta-base RECORDS),
+#   so the next pull or push on the same divergence re-refuses; it never deletes the other side's
+#   contracts nor overwrites its chain. Manual resolution: keep ONE side's chain — discard the
+#   local twin set and pull, or take the branch's and re-append locally — then run
+#   reprovenance-twin-contracts.sh --confirm only to re-bless contract bodies left without a chain
+#   entry (it is the recovery path for bodies changed outside write-system-contract.sh, not a
+#   chain merger).
 #
-# PUSH — fetch, decide per path, build the new tree in a SEPARATE index (a per-run GIT_INDEX_FILE
+# CONSENT (push only; pull takes learning-store paths from the branch whatever the consent — except
+# a path git tracks, which neither side touches: TRACKED LEARNING STORES below) — the metadata
+# branch can be PUBLIC and the learning stores hold internal reasoning the scrub only
+# pattern-checks, so a push publishes them only when this repo's user-scope record says
+# `granted`. The record lives in the user's scope (one JSON file — setup-memory.sh header: CONSENT names it — keyed by origin's
+# owner/repo, else the literal origin URL) and is written ONLY by `setup-memory.sh consent grant |
+# decline` (asked by `/setup memory`); this script only READS it, through `setup-memory.sh consent
+# status` (the one reader — it never asks). Anything but an exact `granted` — no record,
+# `declined`, an unreadable record, a missing reader — fails toward NOT publishing: every learning
+# path the push would add, change or delete is skipped and named,
+#   `meta_sync: learning_skipped <path> — no consent (run /setup memory)`
+# its meta-base entry stays the previous one (a skipped path is unconsidered), run history still
+# pushes, and the exit code is the one run history alone gives. (A CONFLICT is not a publish: a
+# conflicting proposal .md still aborts like any .md, and a twin conflict refuses the twin set.)
+# HONEST LIMIT — that abort ignores consent: an agent-memory proposal .md both sides changed (or,
+# with no meta-base, one matching no branch-history blob) makes pull AND push exit 1 `conflict`,
+# nothing changed — so meta-entry's pull (every /automate start or resume) is blocked by a store
+# this machine may have declined to publish, and a trail-pr --paths-from push by a proposal it
+# never listed. Manual resolution: make the two sides agree (`git show origin/<branch>:<path> >
+# <path>`, merging any local edit in by hand), then re-run. Follow-up candidate: extend the twin
+# set's hold-don't-abort rule to the other non-union learning stores.
+# The record is read only when a push would publish a learning path, so a run-history-only push
+# (trail-pr, lanes) never reads it.
+#
+# TRACKED LEARNING STORES — git owns a learning-store path this checkout's git index tracks (a repo
+# that committed its eval file, twin contracts or proposals on its code branch; the migration never
+# untracks one — migrate-branch-mode.sh lists it as an OWNER DECISION extra). Two owners of one
+# file would fight: a pull that wrote the branch's copy into a tracked file would dirty the code
+# branch's working tree on every sync (after-merge's and rollback's clean-tree preconditions then
+# fail). So pull AND push leave every such path alone — never written, deleted, merged, published,
+# reported as a conflict or as `learning_skipped` — and name each on stderr, one line per path:
+#   `meta_sync: learning_tracked <path> — tracked by git, left to git`
+# plus one summary line; its meta-base entry stays the PREVIOUS one (absent when it had none, the
+# twin-set refusal's rule — WHAT meta-base RECORDS), so no later sync deletes the branch copy or
+# overwrites the local file because of it. The index is read with `git ls-files -z` over the
+# learning roots — with the caller's GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE cleared, since git
+# reads an inherited GIT_INDEX_FILE naming a missing file as an EMPTY index with exit 0 ("nothing
+# tracked", a fail-open) — and fails closed (exit 1, nothing changed) when it cannot be read.
+# RUN HISTORY is never looked up: a tracked run-history path keeps the 3-way rule above unchanged
+# (run history is meant to be untracked in branch mode; that is what the migration does). The exit
+# code stays the one run history alone gives. A tracked path the pair rule needs (TWIN SET) is read
+# as it stands locally (pull) or on the branch (push). list-managed is unaffected (it lists, it
+# never syncs).
+#
+# PULL — fetch, decide per path, leave every tracked learning path to git (TRACKED LEARNING
+# STORES), refuse the twin set if it must be (TWIN SET), refuse on any other
+# conflict / not_a_file / containment failure, then write. Every UNION (the three .jsonl union
+# paths and the ordered .dismissed-decisions merge) is built and renamed into place BEFORE any
+# take-R write or delete: the union re-reads the working file and fails closed when it no longer
+# hashes to the planned L (`<path> changed during the sync`), and because it runs first such a
+# refusal leaves every other managed file untouched and meta-base unchanged. Every file pull
+# writes — .supervisor/twin/.provenance.jsonl included — gets FILE_MODE (0666 & ~umask), the mode
+# a plain `>` gives it; write-system-contract.sh sets no mode either.
+#
+# PUSH — fetch, decide per path (a tracked learning path is left to git and never published —
+# TRACKED LEARNING STORES), build the new tree in a SEPARATE index (a per-run GIT_INDEX_FILE
 # under this run's temp dir — never a fixed name in the shared gitdir — seeded from R's tree via
 # read-tree) with explicit per-path update-index adds/removes, write-tree -> commit-tree -p R ->
 # refspec push of that commit to refs/heads/<branch>. Before commit-tree the new tree is checked
@@ -252,15 +374,25 @@
 #   Note: loomwright/scripts/test-committed-twin-scrub.sh is a TEST with placeholder deny terms over
 #   the committed Twin stores — it is not a scrub and does not gate this branch.
 #
-# STATUS prints exactly one line and always exits 0 once the branch is resolved: `synced <sha> on
-# <branch>` | `local_ahead <n>` | `remote_ahead` | `conflict <n>` | `no_remote_branch` |
+# STATUS prints exactly one first line and always exits 0 once the branch is resolved: `synced
+# <sha> on <branch>` | `local_ahead <n>` | `remote_ahead` | `conflict <n>` | `no_remote_branch` |
 # `unreachable` | `never_synced` | `base_branch_mismatch`. (A branch_mismatch / mode_unknown /
-# usage refusal happens before status runs and exits 1.) With --paths, `local_ahead <n>` and
-# `conflict <n>` are followed by the <n> paths they count, one per line, two-space indented,
-# LC_ALL=C-sorted — local_ahead: every take-L and union path, a path this checkout deleted
-# suffixed ` (deleted locally)`; conflict: every conflicting path — so a caller that refuses on
-# them can name what is unpushed (lane-remove does). The first line is unchanged; every other
-# status prints only it.
+# usage refusal happens before status runs and exits 1.) The first line counts RUN-HISTORY paths
+# only: every learning-store path is left out of the conflict, take-L / union and take-R counts
+# alike, so a learning-only difference (a twin provenance fork included) never changes it and
+# every caller that parses it (lane-remove's `local_ahead` refusal) behaves as before. With
+# --paths, `local_ahead <n>` and `conflict <n>` are followed by the <n> paths they count, one per
+# line, two-space indented, LC_ALL=C-sorted — local_ahead: every take-L and union path, a path
+# this checkout deleted suffixed ` (deleted locally)`; conflict: every conflicting path — so a
+# caller that refuses on them can name what is unpushed (lane-remove does). With --learning
+# (opt-in, never part of the default output) ONE more line follows, last:
+#   `learning: <state>; consent <granted|declined|none|unknown>` — <state> is `conflict <n>` |
+#   `local_ahead <n>` | `remote_ahead` | `synced` over the learning-store paths alone (same
+#   precedence), or the first line's own token when no plan was computed (`never_synced`, …). A
+#   learning-store path git tracks (TRACKED LEARNING STORES) is not counted in <state>; when at
+#   least one exists the line ends `; tracked <n>` (absent otherwise, so the line is unchanged), and
+#   an unreadable index makes <state> `unreachable`.
+# Without --paths / --learning status prints only the first line.
 # Precedence: unreachable > no_remote_branch > never_synced > base_branch_mismatch > conflict >
 # local_ahead > remote_ahead.
 #
@@ -274,11 +406,15 @@
 # base_branch_mismatch, a meta-base that is not a regular file, usage error, a list-managed
 # enumeration refusal; 2 scrub hit (push and scrub). `init`
 # is the ONLY command that may create the branch (an empty orphan commit); it refuses when the
-# branch already exists.
+# branch already exists. `twin_refused`, `learning_skipped` and `learning_tracked` are stderr-only and
+# leave the exit code unchanged — they are not refusals of the command, so they are not in this
+# list (an UNREADABLE git index is: exit 1, nothing changed).
 #
 # Callers: automate-helpers.sh `meta-entry` (pull), automate-trail.sh `trail-pr` (push
 # --paths-from) and automate-lanes.sh `lane-remove` (status --paths) — each passes `--branch <the
-# mode's branch>`, which the mode check accepts.
+# mode's branch>`, which the mode check accepts. meta-entry's pull takes the learning stores like
+# any managed path (a tracked one excepted — TRACKED LEARNING STORES); trail-pr's (and the lanes') exact --paths-from lists never name them, so they
+# are published by a whole-set push (no --paths-from) only.
 
 set -uo pipefail
 
@@ -293,10 +429,15 @@ ROOT=""
 PATHS_FROM=""
 PATHS_FROM_SET=0
 TRACKED=0
+TREE_SRC=""
+TREE_SET=0
+RUN_HISTORY=0
 STATUS_PATHS=0
+STATUS_LEARNING=0
 MESSAGE="meta-sync: run history"
 MAX_ATTEMPTS=5
 LEDGER_PATH=".supervisor/postmortem/results.jsonl"
+TWIN_PROV=".supervisor/twin/.provenance.jsonl"
 DENY_CONFIG=".agent/meta-sync-deny.txt"
 BASE_REF="refs/meta-sync/base"
 
@@ -321,7 +462,10 @@ while [ $# -gt 0 ]; do
     --root)       need_val "$1" "$#"; ROOT="$2"; shift 2 ;;
     --paths-from) need_val "$1" "$#"; PATHS_FROM="$2"; PATHS_FROM_SET=1; shift 2 ;;
     --tracked)    TRACKED=1; shift ;;
+    --tree)       need_val "$1" "$#"; TREE_SRC="$2"; TREE_SET=1; shift 2 ;;
+    --run-history) RUN_HISTORY=1; shift ;;
     --paths)      STATUS_PATHS=1; shift ;;
+    --learning)   STATUS_LEARNING=1; shift ;;
     --message)    need_val "$1" "$#"; MESSAGE="$2"; shift 2 ;;
     -h|--help)    usage ;;
     *) die "usage: unknown argument '$1' (try --help)" ;;
@@ -338,6 +482,12 @@ done
   || die "usage: --tracked applies to list-managed only, not '$SUBCMD'; nothing was changed (try --help)"
 [ "$STATUS_PATHS" = "0" ] || [ "$SUBCMD" = "status" ] \
   || die "usage: --paths applies to status only, not '$SUBCMD'; nothing was changed (try --help)"
+[ "$STATUS_LEARNING" = "0" ] || [ "$SUBCMD" = "status" ] \
+  || die "usage: --learning applies to status only, not '$SUBCMD'; nothing was changed (try --help)"
+{ [ "$TREE_SET" = "0" ] && [ "$RUN_HISTORY" = "0" ]; } || [ "$SUBCMD" = "list-managed" ] \
+  || die "usage: --tree / --run-history apply to list-managed only, not '$SUBCMD'; nothing was changed (try --help)"
+[ "$TREE_SET" = "0" ] || [ "$TRACKED" = "0" ] \
+  || die "usage: --tree and --tracked are two different sources; give one; nothing was changed (try --help)"
 # scrub and list-managed need no branch and skip the mode / branch check, so a --branch given to
 # them could only be silently ignored.
 NEEDS_BRANCH=1
@@ -533,9 +683,34 @@ is_managed() {
       esac
       return 0 ;;
     .supervisor/jobs/done/*/*|.supervisor/jobs/failed/*/*|.supervisor/automate/*/*) return 1 ;;
+    .supervisor/twin/contracts/*/*|.supervisor/agent-memory-proposals/*/*) return 1 ;;
     .supervisor/jobs/done/*.md|.supervisor/jobs/failed/*.md|.supervisor/automate/*.md) return 0 ;;
     .supervisor/automate/?*.dismissed-decisions) return 0 ;;
     .supervisor/postmortem/results.jsonl) return 0 ;;
+    # learning stores (is_learning_path below names the class)
+    .supervisor/twin/contracts/*.md|.supervisor/twin/.provenance.jsonl) return 0 ;;
+    .supervisor/agent-memory-proposals/*.md) return 0 ;;
+    .supervisor/eval/results.jsonl|.supervisor/eval/brain-baseline.jsonl) return 0 ;;
+  esac
+  return 1
+}
+
+# is_twin_path / is_learning_path <MANAGED path> — the two classes inside the managed set (called
+# only on paths is_managed accepted, so its exclusions — nesting, non-canonical — already ran).
+# The TWIN SET syncs as a whole (header: TWIN SET); every LEARNING-STORE path is published only
+# with consent (header: CONSENT) and is left out of status's first line. Everything else is run
+# history.
+is_twin_path() {
+  case "$1" in
+    .supervisor/twin/contracts/*.md|.supervisor/twin/.provenance.jsonl) return 0 ;;
+  esac
+  return 1
+}
+is_learning_path() {
+  is_twin_path "$1" && return 0
+  case "$1" in
+    .supervisor/agent-memory-proposals/*.md) return 0 ;;
+    .supervisor/eval/results.jsonl|.supervisor/eval/brain-baseline.jsonl) return 0 ;;
   esac
   return 1
 }
@@ -550,6 +725,7 @@ is_managed() {
 symlink_hazard() {
   case "$1" in
     .supervisor|.supervisor/requirements|.supervisor/jobs|.supervisor/jobs/done|.supervisor/jobs/failed|.supervisor/automate|.supervisor/postmortem) return 0 ;;
+    .supervisor/twin|.supervisor/twin/contracts|.supervisor/agent-memory-proposals|.supervisor/eval) return 0 ;;
   esac
   is_managed "$1" && return 0
   if [ -d "$ROOT/$1" ] || [ ! -e "$ROOT/$1" ]; then is_managed "$1/x.md"; else return 1; fi
@@ -644,7 +820,8 @@ list_tree() {
 
 # list_local <out> <write:0|1> — managed files in the working folder, hashed as stored bytes.
 # Enumerates ONLY the managed roots (requirements/ minus nested .supervisor/ trees; the top level
-# of jobs/done, jobs/failed, automate and postmortem), so churn or unreadable entries elsewhere
+# of jobs/done, jobs/failed, automate, postmortem, twin, twin/contracts, agent-memory-proposals and
+# eval), so churn or unreadable entries elsewhere
 # under .supervisor/ (logs, worktrees) can never block a sync. Fails closed when a managed root or
 # a folder on the way to one cannot be searched or fully enumerated, or when a symlink sits where
 # managed run history lives (find does not descend a symlinked directory, so its files would read
@@ -662,7 +839,8 @@ list_local() {
   # Parents first: a child is only looked at when its parent is a searchable real directory, so an
   # absent child is truly absent (never an EACCES on the parent read as "no such folder").
   for d in .supervisor .supervisor/requirements .supervisor/jobs .supervisor/jobs/done \
-           .supervisor/jobs/failed .supervisor/automate .supervisor/postmortem; do
+           .supervisor/jobs/failed .supervisor/automate .supervisor/postmortem \
+           .supervisor/twin .supervisor/twin/contracts .supervisor/agent-memory-proposals .supervisor/eval; do
     case "$d" in
       .supervisor) : ;;
       *) case "$present" in *" ${d%/*} "*) : ;; *) continue ;; esac ;;
@@ -797,6 +975,15 @@ compute_plan() {
   fi
   awk -F'\t' -v OFS='\t' -v hb="$HAVE_BASE" -v hs="$hs" -v ledger="$LEDGER_PATH" \
       -v LF="$L" -v RF="$Rf" -v BF="$Bf" -v HF="$Hf" -v SF="$Sf" '
+    # is_union — the UNION-PATH PREDICATE (header: 3-WAY RULE): the paths whose both-changed outcome
+    # is a union instead of a conflict. The twin set is deliberately NOT here (a chain fork refuses
+    # the twin set — see twin_gate); every .md is not here either (per-file conflict).
+    function is_union(p) {
+      if (p == ledger) return 1
+      if (p == ".supervisor/eval/results.jsonl" || p == ".supervisor/eval/brain-baseline.jsonl") return 1
+      if (p ~ /^\.supervisor\/automate\/[^\/]+\.dismissed-decisions$/) return 1
+      return 0
+    }
     FILENAME == LF { Lb[$1] = $2; U[$1] = 1; next }
     FILENAME == RF { Rb[$1] = $2; U[$1] = 1; next }
     FILENAME == BF { Bb[$1] = $2; U[$1] = 1; next }
@@ -812,13 +999,13 @@ compute_plan() {
           if (l == r) { o = "SAME"; nb = r }
           else if (l == b) { o = "TAKE_R"; nb = b }
           else if (r == b) { o = "TAKE_L"; nb = (sel ? l : b) }
-          else if (p == ledger) { o = "UNION"; nb = (sel ? l : b) }
+          else if (is_union(p)) { o = "UNION"; nb = (sel ? l : b) }
           else { o = "CONFLICT"; nb = b }
         } else if (r != "-") {
           if (l == r) { o = "SAME"; nb = r }
           else if (l == "-") { o = "TAKE_R"; nb = "-" }
           else if ((p SUBSEP l) in H) { o = "TAKE_R"; nb = l }
-          else if (p == ledger) { o = "UNION"; nb = (sel ? l : "-") }
+          else if (is_union(p)) { o = "UNION"; nb = (sel ? l : "-") }
           else { o = "CONFLICT"; nb = "-" }
         } else if (p in HP) {
           if ((p SUBSEP l) in H) { o = "TAKE_R"; nb = l }
@@ -830,6 +1017,30 @@ compute_plan() {
       }
     }' "$L" "$Rf" "$Bf" "$Hf" "$Sf" | env LC_ALL=C sort -t "$TAB" -k2,2 > "$WORK/plan" \
     || { warn "could not compute the sync plan"; return 1; }
+  classify_plan || { warn "could not classify the sync plan"; return 1; }
+}
+
+# classify_plan — writes $WORK/learning.lst: every plan path in the learning stores, one
+# `<path><TAB>twin|store` line (twin = the twin set; store = the other learning stores).
+classify_plan() {
+  local o p rest
+  while IFS="$TAB" read -r o p rest; do
+    if is_twin_path "$p"; then printf '%s\ttwin\n' "$p"
+    elif is_learning_path "$p"; then printf '%s\tstore\n' "$p"; fi
+  done < "$WORK/plan" > "$WORK/learning.lst"
+}
+
+# hold_rows <paths-file> <outcome> — rewrites the plan rows of the listed paths: outcome <outcome>
+# (HOLD = a refused twin path, SKIP = a learning path not published for want of consent; both are
+# no-ops for pull and push), not selected, and newbase = the PREVIOUS base entry ("-" when there
+# was none, or no base at all — B.tsv is empty then), so meta-base never records them as agreed.
+hold_rows() {
+  awk -F'\t' -v OFS='\t' -v o="$2" -v PF="$1" -v BF="$WORK/B.tsv" '
+    FILENAME == PF { h[$1] = 1; next }
+    FILENAME == BF { b[$1] = $2; next }
+    ($2 in h) { $1 = o; $5 = (($2 in b) ? b[$2] : "-"); $6 = 0 }
+    { print }' "$1" "$WORK/B.tsv" "$WORK/plan" > "$WORK/plan.new" \
+    && mv -f "$WORK/plan.new" "$WORK/plan"
 }
 
 # count_outcome <outcome> [selected-only:0|1]
@@ -865,11 +1076,13 @@ report_not_a_file() {
   return 1
 }
 
-# union_into <R-blob|-> <L-blob|-> <out> [<L-file>] — R's lines unchanged, then L's lines not
-# present in R. With <L-file> (pull) L is read from the working file — a pull hashes local files
-# WITHOUT -w, so L's blob is not in the object store — and must still hash to <L-blob> (a file
-# changed mid-sync fails closed). Every read fails closed: a side that cannot be read is NEVER
-# treated as empty (that silently drops the clone's unpushed ledger lines). "-" = absent side.
+# union_into <R-blob|-> <L-blob|-> <out> [<L-file>|""] [<path>] — the union of a union path (see
+# the header's 3-WAY RULE): for a .dismissed-decisions ledger the ORDERED merge (ordered_merge),
+# for every other union path R's lines unchanged, then L's lines not present in R. With <L-file>
+# (pull) L is read from the working file — a pull hashes local files WITHOUT -w, so L's blob is
+# not in the object store — and must still hash to <L-blob> (a file changed mid-sync fails
+# closed). Every read fails closed: a side that cannot be read is NEVER treated as empty (that
+# silently drops the clone's unpushed ledger lines). "-" = absent side.
 union_into() {
   { : > "$WORK/u.r" && : > "$WORK/u.l"; } || return 1
   if [ "$1" != "-" ]; then g cat-file blob "$1" > "$WORK/u.r" 2>/dev/null || return 1; fi
@@ -882,7 +1095,28 @@ union_into() {
       g cat-file blob "$2" > "$WORK/u.l" 2>/dev/null || return 1
     fi
   fi
-  awk 'FNR == NR { inR[$0] = 1; print; next } !($0 in inR) && !seen[$0]++ { print }' "$WORK/u.r" "$WORK/u.l" > "$3"
+  case "${5:-}" in
+    .supervisor/automate/*.dismissed-decisions) ordered_merge "$WORK/u.r" "$WORK/u.l" "$3" ;;
+    *) awk 'FNR == NR { inR[$0] = 1; print; next } !($0 in inR) && !seen[$0]++ { print }' "$WORK/u.r" "$WORK/u.l" > "$3" ;;
+  esac
+}
+
+# ordered_merge <R-file> <L-file> <out> — the .dismissed-decisions union. Every distinct line is
+# kept once (R's first, then L's new ones); `summary-member<TAB><h8><TAB><slot>` rows are a SET
+# (automate-dismissed.sh collects them position-independently) and come first, then the decision
+# rows `<draft><TAB><decision><TAB><ts>` sorted by their ISO-8601 ts — stable, so ties keep R's
+# rows first — because the reader is last-row-wins: a plain union would let an OLDER local
+# decision override a NEWER branch one. A row whose third field is not an ISO-8601 timestamp sorts
+# with the set rows (oldest).
+ordered_merge() {
+  awk -v RF="$1" -v OFS='\t' '
+    function emit(line,   n, f, grp, key) {
+      n = split(line, f, "\t"); grp = 0; key = ""
+      if (n >= 3 && f[1] != "summary-member" && f[1] != "" && f[3] ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T/) { grp = 1; key = f[3] }
+      print grp, key, ++seq, line
+    }
+    !($0 in seen) { seen[$0] = 1; emit($0) }' "$1" "$2" \
+    | env LC_ALL=C sort -t "$TAB" -k1,1n -k2,2 -k3,3n | cut -f4- > "$3"
 }
 
 # refuse_bad_base — pull / push refuse UP FRONT (after the lock, before any fetch, write or
@@ -1069,6 +1303,176 @@ scrub_candidates() {
   [ "$any" -eq 0 ]
 }
 
+# ---- learning stores: consent (push) and the twin set (pull + push) ----
+# read_consent — asks the sibling setup-memory.sh (`consent status`, the ONE reader of the
+# user-scope record; this script never parses it and never writes it) and sets CONSENT to
+# granted | declined | none | `unknown <reason>`. FAIL-CLOSED on the answer's shape: only an exact
+# single-line `granted` grants; a missing reader, a non-zero exit, empty or multi-line output is
+# `unknown`, which publishes nothing.
+CONSENT=""
+read_consent() {
+  local out rc=0 nl='
+'
+  if [ ! -f "$HERE/setup-memory.sh" ]; then CONSENT="unknown setup-memory.sh is missing"; return 0; fi
+  out="$(bash "$HERE/setup-memory.sh" --root "$ROOT" consent status 2>/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then CONSENT="unknown setup-memory.sh consent status exited $rc"; return 0; fi
+  case "$out" in
+    *"$nl"*)                CONSENT="unknown multi-line answer" ;;
+    granted|declined|none)  CONSENT="$out" ;;
+    "")                     CONSENT="unknown empty answer" ;;
+    *)                      CONSENT="unknown $out" ;;
+  esac
+}
+
+# consent_skip — push only. Every SELECTED learning-store row that would publish (take-L: an add,
+# change or delete on the branch; union) is skipped unless this repo's consent reads `granted`:
+# named on stderr (`learning_skipped`), then held (hold_rows SKIP: not pushed, meta-base keeps its
+# previous entry). The record is read only when such a row exists.
+consent_skip() {
+  awk -F'\t' -v LF="$WORK/learning.lst" 'FILENAME == LF { c[$1] = 1; next }
+    ($2 in c) && $6 == 1 && ($1 == "TAKE_L" || $1 == "UNION") { print $2 }' \
+    "$WORK/learning.lst" "$WORK/plan" > "$WORK/publish.learning" || return 1
+  [ -s "$WORK/publish.learning" ] || return 0
+  read_consent
+  [ "$CONSENT" = "granted" ] && return 0
+  sed 's/^/meta_sync: learning_skipped /; s/$/ — no consent (run \/setup memory)/' "$WORK/publish.learning" >&2
+  warn "$(wc -l < "$WORK/publish.learning" | tr -d ' ') learning-store path(s) above not published — this repo's consent reads '${CONSENT%% *}' (run /setup memory to record one); run history still pushes"
+  hold_rows "$WORK/publish.learning" SKIP
+}
+
+# tracked_learning_hold [quiet:0|1] — pull, push and status --learning. GIT OWNS A TRACKED LEARNING
+# STORE (header: TRACKED LEARNING STORES): every learning-store plan path this checkout's git index
+# tracks is named on stderr (`learning_tracked`, unless quiet) and held (hold_rows TRACKED: never
+# written, deleted, merged, published or reported as a conflict; meta-base keeps its PREVIOUS
+# entry). Run-history paths are never looked up here, so a tracked run-history path syncs exactly
+# as before. The index is read NUL-delimited over the learning roots only, with the caller's
+# GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE cleared (an inherited GIT_INDEX_FILE naming a missing
+# file reads as an empty index with exit 0), and FAILS CLOSED (non-zero) like every other git read:
+# a failed read is never "nothing tracked". Sets TRACKED_N.
+TRACKED_N=0
+tracked_learning_hold() {
+  TRACKED_N=0
+  : > "$WORK/tracked.learning" || return 1
+  [ -s "$WORK/learning.lst" ] || return 0
+  env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git -C "$ROOT" ls-files -z -- .supervisor/twin .supervisor/agent-memory-proposals .supervisor/eval > "$WORK/tl.raw" 2>/dev/null \
+    || { warn "could not read this checkout's git index (git ls-files failed)"; return 1; }
+  no_newline_in "$WORK/tl.raw" "the tracked files under the learning-store roots" || return 1
+  tr '\0' '\n' < "$WORK/tl.raw" \
+    | awk -F'\t' -v LF="$WORK/learning.lst" 'FILENAME == LF { c[$1] = 1; next } ($0 in c) && !s[$0]++' "$WORK/learning.lst" - \
+    | env LC_ALL=C sort > "$WORK/tracked.learning" || return 1
+  [ -s "$WORK/tracked.learning" ] || return 0
+  TRACKED_N="$(wc -l < "$WORK/tracked.learning" | tr -d ' ')"
+  if [ "${1:-0}" = "0" ]; then
+    sed 's/^/meta_sync: learning_tracked /; s/$/ — tracked by git, left to git/' "$WORK/tracked.learning" >&2
+    warn "$TRACKED_N learning-store path(s) above are tracked by this checkout's git index — git owns them: not written, deleted, merged or published here, meta-base keeps their previous entry; run history still syncs"
+  fi
+  hold_rows "$WORK/tracked.learning" TRACKED
+}
+
+# twin_sha — sha256 of stdin, with the SAME tool order read-system-contract.sh uses.
+twin_sha() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d' ' -f1
+  else return 1; fi
+}
+# twin_field <line> <key> — read-system-contract.sh's own STRING-field extractor, verbatim.
+twin_field() { printf '%s' "$1" | sed -E "s/.*\"$2\":\"([^\"]*)\".*/\1/"; }
+# twin_trusted <provenance file> <out> — the content_hashes of the chain-valid `add` entries, by
+# read-system-contract.sh's walk exactly: blank lines skipped, prev_hash GENESIS first and then the
+# sha256 of the previous raw line, the walk stops at the first break.
+twin_trusted() {
+  local line prev="GENESIS" ch
+  : > "$2" || return 1
+  [ -f "$1" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [ "$(twin_field "$line" prev_hash)" = "$prev" ] || break
+    if [ "$(twin_field "$line" action)" = "add" ]; then
+      ch="$(twin_field "$line" content_hash)"; [ -n "$ch" ] && printf '%s\n' "$ch" >> "$2"
+    fi
+    prev="$(printf '%s' "$line" | twin_sha)" || return 1
+  done < "$1"
+}
+# twin_post_bytes <side> <outcome> <path> <L> <R> <sel> <out> — the bytes the twin path would hold
+# on <side> after the sync (pull: the working folder; push: the branch) into <out>; returns 2 when
+# the path would be absent there. Local bytes of a pull come from the working file (a pull hashes
+# without -w, so L is not in the object store); every other side is a blob read. Fails closed.
+twin_post_bytes() {
+  local v
+  if [ "$1" = "pull" ]; then
+    if [ "$2" = "TAKE_R" ]; then v="$5"; else v="$4"; [ "$v" = "-" ] && return 2; cat "$ROOT/$3" > "$7" 2>/dev/null; return $?; fi
+  else
+    if [ "$2" = "TAKE_L" ] && [ "$6" = "1" ]; then v="$4"; else v="$5"; fi
+  fi
+  [ "$v" = "-" ] && return 2
+  g cat-file blob "$v" > "$7" 2>/dev/null
+}
+# twin_pair_check <side> — appends `<path><TAB><reason>` to $WORK/twin.bad for every contract the
+# post-state of <side> would hold WITHOUT a chain-valid `add` entry in that post-state's provenance.
+twin_pair_check() {
+  local o p l r nb sel rc
+  printf 'x' | twin_sha >/dev/null 2>&1 || {
+    printf '%s\tno sha256 tool — the pair rule cannot be checked\n' "$TWIN_PROV" >> "$WORK/twin.bad"; return 0; }
+  : > "$WORK/twin.prov" || return 1
+  while IFS="$TAB" read -r o p l r nb sel; do
+    [ "$p" = "$TWIN_PROV" ] || continue
+    twin_post_bytes "$1" "$o" "$p" "$l" "$r" "$sel" "$WORK/twin.prov"; rc=$?
+    [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || { warn "could not read the post-sync bytes of $p"; return 1; }
+    [ "$rc" -eq 2 ] && rm -f "$WORK/twin.prov"
+  done < "$WORK/twin.rows"
+  twin_trusted "$WORK/twin.prov" "$WORK/twin.trusted" || { warn "could not walk the provenance chain"; return 1; }
+  while IFS="$TAB" read -r o p l r nb sel; do
+    [ "$p" = "$TWIN_PROV" ] && continue
+    twin_post_bytes "$1" "$o" "$p" "$l" "$r" "$sel" "$WORK/twin.body"; rc=$?
+    [ "$rc" -eq 2 ] && continue
+    [ "$rc" -eq 0 ] || { warn "could not read the post-sync bytes of $p"; return 1; }
+    grep -qxF -- "$(twin_sha < "$WORK/twin.body")" "$WORK/twin.trusted" \
+      || printf '%s\tno chain-valid add provenance entry\n' "$p" >> "$WORK/twin.bad"
+  done < "$WORK/twin.rows"
+  return 0
+}
+
+# twin_gate <pull|push> [selected-only:0|1] — the TWIN SET rule (header: TWIN SET). Runs only when
+# the sync would change the twin set on <side> (pull: a take-R twin row; push: a selected take-L
+# twin row) or a twin path conflicts. Any twin conflict, or a pair-rule break in <side>'s
+# post-state, REFUSES THE TWIN SET: every offending path named (`twin_refused`), then EVERY twin
+# row held (hold_rows HOLD: nothing of the twin set written or deleted, meta-base keeps every twin
+# path's previous entry). Sets TWIN_REFUSED. Non-zero only when a read failed (fail closed).
+TWIN_REFUSED=0
+twin_gate() {
+  local side="$1" so="${2:-0}"
+  TWIN_REFUSED=0
+  awk -F'\t' -v LF="$WORK/learning.lst" 'FILENAME == LF { if ($2 == "twin") t[$1] = 1; next } ($2 in t)' \
+    "$WORK/learning.lst" "$WORK/plan" > "$WORK/twin.rows" || return 1
+  [ -s "$WORK/twin.rows" ] || return 0
+  : > "$WORK/twin.bad" || return 1
+  awk -F'\t' -v OFS='\t' -v so="$so" '$1 == "CONFLICT" && (so == 0 || $6 == 1) { print $2, "conflict" }' \
+    "$WORK/twin.rows" >> "$WORK/twin.bad" || return 1
+  if awk -F'\t' -v side="$side" '(side == "pull" && $1 == "TAKE_R") || (side == "push" && $1 == "TAKE_L" && $6 == 1) { f = 1 } END { exit !f }' "$WORK/twin.rows"; then
+    twin_pair_check "$side" || return 1
+  fi
+  [ -s "$WORK/twin.bad" ] || return 0
+  awk -F'\t' '{ print "meta_sync: twin_refused " $1 ": " $2 }' "$WORK/twin.bad" >&2
+  if [ "$side" = "pull" ]; then side="the working folder"; else side="the branch"; fi
+  warn "twin set refused on $side — nothing of it written or deleted there, meta-base keeps every twin path's previous entry; run history and the other stores still sync. To resolve, keep ONE side's chain (discard the local twin set and pull, or re-append onto the branch's chain), then reprovenance-twin-contracts.sh --confirm only to re-bless contract bodies left without a chain entry."
+  cut -f2 "$WORK/twin.rows" > "$WORK/twin.paths" || return 1
+  hold_rows "$WORK/twin.paths" HOLD || return 1
+  TWIN_REFUSED=1
+  return 0
+}
+
+# build_pull_base — the meta-base a pull records after REFUSING the twin set or leaving a tracked
+# learning path to git: R's entry for every path, except every held path (HOLD: a refused twin path;
+# TRACKED: a learning path git tracks), which keeps its previous base entry (hold_rows wrote it into
+# the newbase column; "-" = absent). Prints the tree SHA.
+build_pull_base() {
+  rm -f "$META_BASE_INDEX"
+  GIT_INDEX_FILE="$META_BASE_INDEX" g read-tree --empty || return 1
+  awk -F'\t' '{ v = ($1 == "HOLD" || $1 == "TRACKED") ? $5 : $4; if (v != "-") print "100644 " v "\t" $2 }' "$WORK/plan" \
+    | GIT_INDEX_FILE="$META_BASE_INDEX" g update-index --index-info || return 1
+  GIT_INDEX_FILE="$META_BASE_INDEX" g write-tree
+}
+
 # ---- subcommands ----
 cmd_init() {
   remote_probe
@@ -1101,6 +1505,8 @@ cmd_pull() {
   compute_plan 0; rc=$?
   [ "$rc" -eq 2 ] && die "$BASE_REFUSAL"
   [ "$rc" -eq 0 ] || exit 1
+  tracked_learning_hold || die "could not check which learning-store paths git tracks; nothing was changed"
+  twin_gate pull 0 || die "could not evaluate the twin set; nothing was changed"
   report_conflicts 0 || exit 1
   report_not_a_file 0 || exit 1
   local o p l r nb sel written=0 deleted=0 dst tmp phase
@@ -1141,13 +1547,21 @@ cmd_pull() {
         g cat-file blob "$r" > "$tmp" 2>/dev/null && mv -f "$tmp" "$dst" \
           || { rm -f "$tmp"; die "could not write $p (meta-base untouched)"; }
       else
-        union_into "$r" "$l" "$tmp" "$dst" && mv -f "$tmp" "$dst" \
+        union_into "$r" "$l" "$tmp" "$dst" "$p" && mv -f "$tmp" "$dst" \
           || { rm -f "$tmp"; die "could not write the union of $p (it runs first: nothing was changed, meta-base untouched)"; }
       fi
       written=$((written + 1))
     done < "$WORK/plan"
   done
-  write_base_file "$RT" || die "could not write meta-base"
+  # A refused twin set or a left-alone tracked learning path must not look agreed: meta-base is then
+  # per-path (header: WHAT meta-base RECORDS) — R's entry everywhere except the held paths, which
+  # keep their previous entry.
+  if [ "$TWIN_REFUSED" = "1" ] || [ "$TRACKED_N" != "0" ]; then
+    nb="$(build_pull_base)" || die "could not build the per-path meta-base (held paths); meta-base untouched"
+  else
+    nb="$RT"
+  fi
+  write_base_file "$nb" || die "could not write meta-base"
   say "pulled $R ($written written, $deleted deleted)"
 }
 
@@ -1171,9 +1585,14 @@ cmd_push() {
     [ "$rc" -eq 2 ] && die "$BASE_REFUSAL"
     [ "$rc" -eq 0 ] || exit 1
     # With a base, an unlisted path is ignored entirely; without one the derivation covers the
-    # whole managed set and any conflict anywhere aborts (meta-base must cover every path).
+    # whole managed set and any non-twin conflict anywhere aborts (meta-base must cover every
+    # path; a twin conflict instead refuses the twin set, whose paths then keep their previous
+    # meta-base entry — header: TWIN SET). Learning-store paths publish only with consent.
     abort_sel=1
     [ "$HAVE_BASE" = "1" ] || abort_sel=0
+    tracked_learning_hold || die "could not check which learning-store paths git tracks; nothing was pushed"
+    consent_skip || die "could not apply the learning-store consent; nothing was pushed"
+    twin_gate push "$abort_sel" || die "could not evaluate the twin set; nothing was pushed"
     report_conflicts "$abort_sel" || exit 1
     report_not_a_file "$abort_sel" || exit 1
     rm -f "$META_INDEX"
@@ -1194,7 +1613,7 @@ cmd_push() {
           fi
           changed=$((changed + 1)) ;;
         UNION)
-          union_into "$r" "$l" "$WORK/union.out" || die "could not build the union of $p"
+          union_into "$r" "$l" "$WORK/union.out" "" "$p" || die "could not build the union of $p"
           s="$(g hash-object -w --no-filters --stdin < "$WORK/union.out")" || die "hash-object failed for $p"
           GIT_INDEX_FILE="$META_INDEX" g update-index --add --cacheinfo 100644 "$s" "$p" || die "update-index failed for $p"
           printf '%s\t%s\n' "$p" "$s" >> "$WORK/candidates"
@@ -1245,26 +1664,59 @@ status_paths() {
     | env LC_ALL=C sort
 }
 
+# split_learning_rows — moves the learning-store rows out of $WORK/plan into $WORK/plan.learning,
+# so status's first line (count_outcome / status_paths over $WORK/plan) counts run history only.
+split_learning_rows() {
+  awk -F'\t' -v LF="$WORK/learning.lst" -v LO="$WORK/plan.learning" 'FILENAME == LF { c[$1] = 1; next }
+    ($2 in c) { print > LO; next } { print }' "$WORK/learning.lst" "$WORK/plan" > "$WORK/plan.rh" \
+    && touch "$WORK/plan.learning" && mv -f "$WORK/plan.rh" "$WORK/plan"
+}
+
+# status_done <learning state> — prints the opt-in learning line (--learning) and exits 0; a
+# `; tracked <n>` suffix names how many learning-store paths git tracks here (left to git, so not
+# counted in <state>) — only when there is at least one, so the line is unchanged otherwise.
+status_done() {
+  if [ "$STATUS_LEARNING" = "1" ]; then
+    read_consent
+    echo "learning: $1; consent ${CONSENT%% *}$([ "$TRACKED_N" = "0" ] || printf '; tracked %s' "$TRACKED_N")"
+  fi
+  exit 0
+}
+
+# learning_state — the learning stores' state over $WORK/plan.learning, same precedence as the
+# first line: conflict <n> > local_ahead <n> > remote_ahead > synced.
+learning_state() {
+  awk -F'\t' '$1 == "CONFLICT" { c++ } $1 == "TAKE_L" || $1 == "UNION" { a++ } $1 == "TAKE_R" { r++ }
+    END { if (c) print "conflict " c; else if (a) print "local_ahead " a; else if (r) print "remote_ahead"; else print "synced" }' \
+    "$WORK/plan.learning" 2>/dev/null || echo "unreachable"
+}
+
 cmd_status() {
-  local rc n
+  local rc n ls
   fetch_remote; rc=$?
   case "$rc" in
     0) : ;;
-    3) echo "no_remote_branch"; exit 0 ;;
-    *) echo "unreachable"; exit 0 ;;
+    3) echo "no_remote_branch"; status_done no_remote_branch ;;
+    *) echo "unreachable"; status_done unreachable ;;
   esac
-  [ -f "$META_BASE" ] || { echo "never_synced"; exit 0; }
+  [ -f "$META_BASE" ] || { echo "never_synced"; status_done never_synced; }
   compute_plan 0 >/dev/null 2>&1; rc=$?
-  [ "$rc" -eq 2 ] && { echo "base_branch_mismatch"; exit 0; }
-  [ "$rc" -eq 0 ] || { echo "unreachable"; exit 0; }
-  [ "$HAVE_BASE" = "1" ] || { echo "never_synced"; exit 0; }
+  [ "$rc" -eq 2 ] && { echo "base_branch_mismatch"; status_done base_branch_mismatch; }
+  [ "$rc" -eq 0 ] || { echo "unreachable"; status_done unreachable; }
+  [ "$HAVE_BASE" = "1" ] || { echo "never_synced"; status_done never_synced; }
+  # --learning only: tracked learning paths are git's (header: TRACKED LEARNING STORES) — held out
+  # of the learning state and counted on the learning line; an unreadable index makes it unreachable.
+  ls=""
+  if [ "$STATUS_LEARNING" = "1" ]; then tracked_learning_hold 1 2>/dev/null || { TRACKED_N=0; ls="unreachable"; }; fi
+  split_learning_rows || { echo "unreachable"; status_done unreachable; }
+  [ -n "$ls" ] || ls="$(learning_state)"
   n="$(count_outcome CONFLICT)"
-  [ "$n" -gt 0 ] && { echo "conflict $n"; status_paths CONFLICT; exit 0; }
+  [ "$n" -gt 0 ] && { echo "conflict $n"; status_paths CONFLICT; status_done "$ls"; }
   n=$(( $(count_outcome TAKE_L) + $(count_outcome UNION) ))
-  [ "$n" -gt 0 ] && { echo "local_ahead $n"; status_paths TAKE_L UNION; exit 0; }
-  [ "$(count_outcome TAKE_R)" -gt 0 ] && { echo "remote_ahead"; exit 0; }
+  [ "$n" -gt 0 ] && { echo "local_ahead $n"; status_paths TAKE_L UNION; status_done "$ls"; }
+  [ "$(count_outcome TAKE_R)" -gt 0 ] && { echo "remote_ahead"; status_done "$ls"; }
   echo "synced $R on $BRANCH"
-  exit 0
+  status_done "$ls"
 }
 
 # cmd_scrub — push's scrub as a DRY RUN over the --paths-from list (working-tree files under the
@@ -1298,11 +1750,18 @@ cmd_scrub() {
 # cmd_list_managed — every path is_managed accepts, one per line, LC_ALL=C-sorted. Default: the
 # local working folder through list_local (the exact enumeration pull / push use, so its symlink,
 # unsearchable-root and newline-name refusals apply: exit 1). --tracked: `git ls-files` (the index)
-# under .supervisor/, read NUL-delimited (a newline name is refused, as everywhere else).
+# under .supervisor/, read NUL-delimited (a newline name is refused, as everywhere else) with the
+# caller's GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE cleared, so an inherited index override can
+# never make this checkout's tracked set read as empty.
 cmd_list_managed() {
   local p
-  if [ "$TRACKED" = "1" ]; then
-    g ls-files -z -- .supervisor > "$WORK/lm.z" 2>/dev/null \
+  if [ "$TREE_SET" = "1" ]; then
+    g rev-parse -q --verify "$TREE_SRC^{tree}" >/dev/null 2>&1 \
+      || die "list-managed --tree: '$TREE_SRC' is not a tree-ish in this repository; nothing was changed"
+    list_tree "$TREE_SRC" "$WORK/lm.tsv" || die "could not list the managed entries of '$TREE_SRC'; nothing was changed"
+    cut -f1 "$WORK/lm.tsv" > "$WORK/lm.out" || die "could not read the tree's managed-file list"
+  elif [ "$TRACKED" = "1" ]; then
+    env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git -C "$ROOT" ls-files -z -- .supervisor > "$WORK/lm.z" 2>/dev/null \
       || die "could not list the tracked files (git ls-files failed); nothing was changed"
     no_newline_in "$WORK/lm.z" "the tracked files under .supervisor/" || exit 1
     tr '\0' '\n' < "$WORK/lm.z" \
@@ -1311,6 +1770,11 @@ cmd_list_managed() {
   else
     list_local "$WORK/lm.tsv" 0 || die "could not enumerate the local managed files; nothing was changed"
     cut -f1 "$WORK/lm.tsv" > "$WORK/lm.out" || die "could not read the local managed-file list"
+  fi
+  if [ "$RUN_HISTORY" = "1" ]; then
+    while IFS= read -r p; do if ! is_learning_path "$p"; then printf '%s\n' "$p"; fi; done < "$WORK/lm.out" > "$WORK/lm.rh" \
+      || die "could not filter the run-history paths"
+    mv -f "$WORK/lm.rh" "$WORK/lm.out" || die "could not filter the run-history paths"
   fi
   cat "$WORK/lm.out"
 }
