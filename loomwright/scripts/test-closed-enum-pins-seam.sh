@@ -97,17 +97,17 @@ bhas "$A12" 'Neither applies → skip silently and emit neither section.' && ok 
 has "$LP" '4d. **Closed enumerations / pin mutations (conditional, from Phase 3 action 12):**' \
   && ok "launch-pad: Phase 5 action 4d emits the sections" || no "launch-pad: Phase 5 emission"
 SPAWN="$(block "$LP" '^\*\*Spawn contract:\*\*' '^\*\*Output:\*\*')"
-bhas "$SPAWN" 'Check all 19 review criteria.' && ok "spawn: Check all 19" || no "spawn criteria count"
-lacks "$LP" 'Check all 18 review criteria' && ok "launch-pad: no stale 'Check all 18'" || no "stale 'Check all 18' in launch-pad"
+bhas "$SPAWN" 'Check all 20 review criteria.' && ok "spawn: Check all 20" || no "spawn criteria count"
+lacks "$LP" 'Check all 19 review criteria' && ok "launch-pad: no stale 'Check all 19'" || no "stale 'Check all 19' in launch-pad"
 has "$LPC" '9. Closed enumerations and pin mutations (conditional' && ok "command mirror: Phase 3 step 9" || no "command mirror step 9"
 has "$LPC" 'When Phase 3 step 9 ran, emit' && ok "command mirror: Phase 5 emission" || no "command mirror Phase 5 emission"
-has "$LPC" 'checks all 19 criteria' && lacks "$LPC" 'checks all 18 criteria' && ok "command mirror: all 19 criteria" \
+has "$LPC" 'checks all 20 criteria' && lacks "$LPC" 'checks all 19 criteria' && ok "command mirror: all 20 criteria" \
   || no "command mirror criteria count"
 has "$LPC" 'Criterion 19 runs only when the brief adds an enum value or a test pin' && ok "command mirror: Criterion 19 gate" \
   || no "command mirror Criterion 19 gate"
 
 echo "PART 3 — Plan Reviewer Criterion 19"
-C19="$(block "$PR" '^### 19\. Closed Enumerations and Pin Mutations' '^## Decision Matrix')"
+C19="$(block "$PR" '^### 19\. Closed Enumerations and Pin Mutations' '^(### 20\. |## Decision Matrix)')"
 [ -n "$C19" ] && ok "### 19. Closed Enumerations and Pin Mutations present" || no "Criterion 19 block not found"
 bhas "$C19" 'Neither → skip silently.' && ok "19: skip clause" || no "19 skip clause"
 bhas "$C19" '**19a — enumerations.** A new value and no `## Closed enumerations touched` entry for it.' \
@@ -120,9 +120,9 @@ bhas "$C19" '**19c — coverage.**' && bhas "$C19" 'in neither the File Impact M
 bhas "$C19" '**Issue category:** `closed_enumerations` for 19a and 19c; `pin_mutations` for 19b.' && ok "19: categories" \
   || no "19 categories"
 bhas "$C19" '**Severity if failed:** MEDIUM for 19a, 19b and 19c' && ok "19: MEDIUM" || no "19 severity"
-has "$PR" '## 19 Review Criteria' && lacks "$PR" '## 18 Review Criteria' && has "$PR" 'All 19 review criteria must be checked' \
-  && has "$PR" '(19 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, and 19 conditional)' && has "$PR" 'All 19 criteria checked' \
-  && ok "criteria count 19 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
+has "$PR" '## 20 Review Criteria' && lacks "$PR" '## 19 Review Criteria' && has "$PR" 'All 20 review criteria must be checked' \
+  && has "$PR" '(20 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, and 20 conditional)' && has "$PR" 'All 20 criteria checked' \
+  && ok "criteria count 20 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
 has "$PR" 'Criterion 19 is conditional: skip silently when the brief adds no enum value and no test pin.' \
   && ok "intro paragraph names Criterion 19's gate" || no "intro paragraph gate"
 has "$PR" '| touched_file_invariants | closed_enumerations | pin_mutations |' && ok "output-format enum lists both categories" \
@@ -223,7 +223,7 @@ if [ "${SEAM_NO_MUTATION:-0}" != "1" ]; then
   if child "$WORK/lp.md" "$WORK/pr.md"; then ok "positive control: unmutated temp copies pass"
   else no "positive control failed — mutation results would be meaningless"; fi
   awk '!/^- \*\*19a — enumerations\.\*\*/' "$WORK/pr.md" > "$WORK/pr19a-m.md"
-  awk 'f && /^## Decision Matrix/ {f=0} /^### 19\. / {f=1} !f' "$WORK/pr.md" > "$WORK/pr19-m.md"
+  awk 'f && /^(### 20\. |## Decision Matrix)/ {f=0} /^### 19\. / {f=1} !f' "$WORK/pr.md" > "$WORK/pr19-m.md"
   awk 'f && /^\*\*Output:\*\*/ {f=0} /^12\. \*\*Closed enumerations/ {f=1} !f' "$WORK/lp.md" > "$WORK/lp12-m.md"
   for m in pr19a-m pr19-m lp12-m; do
     case "$m" in pr*) src=pr ;; *) src=lp ;; esac

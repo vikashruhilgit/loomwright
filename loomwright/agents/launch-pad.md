@@ -155,7 +155,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
    - Ask clarifying questions (max 2 rounds via `AskUserQuestion`); cannot ask (Can't-ask rule) ⇒ `status: aborted, status_reason: "clarification_needed_non_interactive"`
 2. If goal is clear (specific outcome described, or a requirement file was read):
    - Extract acceptance criteria directly from goal / requirement file
-3. Write/refine criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`)
+3. Write/refine criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`). A criterion whose evidence would live in the PR body — one carried forward at step 0 included — is written in the evidence-file form instead (`skills/supervisor-readiness/SKILL.md` §"Acceptance Criteria"), and its `docs/evidence/<slug>.md` joins the Phase 3 File Impact Map as a create; Plan Reviewer Criterion 20 FAILs it otherwise
 4. Scope to MVP using `skills/mvp-scoping/SKILL.md`
 5. If `--discovery` flag is set: force full product discovery even if goal seems clear
 
@@ -557,7 +557,7 @@ Subtask 2 (independent)
 4. Decision handling:
    - **PASS carrying an issue at the fix floor (attempt < 3):** an issue whose `fix-floor.sh meets "<severity>" "$FIX_FLOOR"` prints `fix` — excluding a `category: executable_acceptance` visibility finding, which no refine resolves — is refined exactly like a FAIL issue: fix it in the brief, re-run MATERIALIZE, re-spawn (consumes an attempt). No human is needed (the same author-side fix the FAIL branch makes), so this runs on both paths.
    - **PASS** (no issue at the floor, or attempt = 3): Proceed to Phase 6 (save enabled). An at-floor issue still open after the third review never blocks — it is listed in the Phase 5.5 table with Resolution `deferred` and save stays enabled; only BLOCKING/HIGH (FAIL) ever blocks save.
-   - **FAIL (attempt < 3):** Fix issues identified in the review, re-assemble affected brief sections, re-spawn reviewer. A 17c issue is fixed only by revising the brief to honor the rule, never by writing a `Rule override:` line (Phase 6 action 2b)
+   - **FAIL (attempt < 3):** Fix issues identified in the review, re-assemble affected brief sections, re-spawn reviewer. A 17c issue is fixed only by revising the brief to honor the rule, never by writing a `Rule override:` line (Phase 6 action 2b). A Criterion 20 `pr_body_evidence` issue is fixed by rewriting that criterion in the evidence-file form its suggestion gives (the file added to the File Impact Map and the subtask's `lanes:`), never by deleting the criterion
    - **FAIL (attempt = 3):** Present all unresolved issues to user. Offer: "Refine offline" (exit, `status: blocked` — fix and start a new session) or "Discard". Do NOT save; the 3-spawn cap is never reset within a session.
    - **NEEDS_HUMAN:** Proceed to Phase 6, which branches on WHY: a Criterion 14 `executable_acceptance` escalation goes through action 2a (`approve-and-stamp` / `strip-cmd-bullets` / `discard`, interactive; auto-strip, non-interactive); a Criterion 17c house-rule conflict goes through action 2b (`record-override` / `honor-rule` / `discard`; `rule_conflict_non_interactive` when it cannot ask); any other reason uses the generic "Override and save" / "Refine further" / "Discard" prompt (or aborts `needs_human_non_interactive` when non-interactive)
 
@@ -651,7 +651,7 @@ Task(
 Project CLAUDE.md context:
 {relevant patterns, tech stack, directory structure — max 500 tokens}
 
-Check all 19 review criteria. Output a PLAN_REVIEW_RESULT block.",
+Check all 20 review criteria. Output a PLAN_REVIEW_RESULT block.",
   subagent_type: "loomwright:plan-reviewer"
 )
 ```
