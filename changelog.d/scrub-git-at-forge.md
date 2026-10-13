@@ -1,0 +1,3 @@
+<!-- bump: patch -->
+meta-sync scrub no longer reads a forge git SSH remote as an e-mail address
+The metadata scrub's email rule matched the scp-style git SSH remote (the `git` user at github.com, gitlab.com or bitbucket.org followed by a colon), so a done brief quoting a clone URL was refused at push. The rule now exempts exactly that string: lowercase, one of the three forge_slug hosts, colon required. Any other user, host, letter case or a colon-less form still hits, a real address on the same line still hits, and the owner/repo after the colon is still checked by forge_slug. The `scrub` dry run reports the first non-exempt line. New legs 65–66 in test-meta-sync.sh, including two mutation controls that widen the exemption.

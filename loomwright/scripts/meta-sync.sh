@@ -215,7 +215,14 @@
 #       sibling setup-memory.sh (`allowlist`); a missing/unparseable `.repo` is a hit;
 #   (b) prose, portable POSIX ERE only (no GNU-only escapes — on BSD grep those would silently match
 #       nothing and this fail-CLOSED gate would fail OPEN):
-#         email          e-mail addresses
+#         email          e-mail addresses (any letter case). ONE exemption, exact: the `git` SSH user
+#                        at a forge_slug host in the scp-style remote form — `git@github.com:`,
+#                        `git@gitlab.com:`, `git@bitbucket.org:`, all lowercase, trailing `:` required
+#                        (git@github.com:owner/repo is a remote, not a mailbox). The whole match must
+#                        be that string, so `someone@github.com`, `xgit@github.com:`, `git@example.com`,
+#                        `git@github.company.com:`, a colon-less `git@github.com` and any other case
+#                        still hit, and a real address on the same line still hits. The slug after
+#                        the `:` is still checked by forge_slug.
 #         home_path      absolute home paths: /Users/<name>/ and /home/<name>/ (any letter case —
 #                        macOS paths are case-insensitive), where <name> is any run of letters, digits,
 #                        `.`, `_` or `-`. ANCHORED: the `/` must start the line or follow a character
@@ -928,13 +935,35 @@ scrub_report() {
   if [ "$4" = "1" ]; then echo "meta_sync: scrub-hit $1:$3: $2"; else echo "meta_sync: scrub $1: $2"; fi
 }
 
-# first_match_line <i|s> <ERE> <file> — the 1-based number of the first line matching <ERE> (i = any
-# letter case), or `-` when none can be read back. Only ever called AFTER the -q decision grep
-# matched, so it never decides a hit — it only locates one. -a: a NUL byte would otherwise make grep
-# print "Binary file … matches" instead of a numbered line; only the number leaves the pipe.
+# EMAIL_FORGE_EXEMPT — the ONE email-rule match that is not a hit: the `git` SSH user at a forge
+# host in the scp-style remote form (git@github.com:owner/repo). A whole `grep -o` match must equal
+# it exactly — lowercase, the trailing `:` included — so any other user, host, case or shape still
+# hits. See the SCRUB header, rule email.
+EMAIL_FORGE_EXEMPT='git@(github\.com|gitlab\.com|bitbucket\.org):'
+
+# email_matches <ERE> <file> — every match of the email rule's <ERE> in <file>, one `<line>:<match>`
+# per match, MINUS the exact forge SSH-remote exemption above. Exit 0 = at least one real hit, 1 =
+# none, >1 = a scan error (the caller reports scan_error(email): fail closed). The -o pass appends an
+# optional `:` so the exemption can see the remote's colon; `:` is in neither the local-part nor the
+# host class, so this never changes which addresses match. A match starts at the leftmost
+# local-part character, so `xgit@github.com:` is one match `xgit@…` and is NOT exempt.
+email_matches() {
+  local all="$WORK/email.all" rc
+  env LC_ALL=C grep -a -i -n -o -E -e "$1:?" "$2" > "$all" 2>/dev/null; rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  env LC_ALL=C grep -v -E -e "^[0-9]+:${EMAIL_FORGE_EXEMPT}\$" "$all" 2>/dev/null
+}
+
+# first_match_line <i|s|e> <ERE> <file> — the 1-based number of the first line matching <ERE> (i = any
+# letter case; e = the email rule: the first line holding a NON-exempt email_matches match), or `-`
+# when none can be read back. Only ever called AFTER the decision grep matched, so it never decides
+# a hit — it only locates one. -a: a NUL byte would otherwise make grep print "Binary file …
+# matches" instead of a numbered line; only the number leaves the pipe.
 first_match_line() {
   local n
-  if [ "$1" = "i" ]; then
+  if [ "$1" = "e" ]; then
+    n="$(email_matches "$2" "$3" | head -n 1 | cut -d: -f1)"
+  elif [ "$1" = "i" ]; then
     n="$(env LC_ALL=C grep -a -i -n -m 1 -E -e "$2" "$3" 2>/dev/null | cut -d: -f1)"
   else
     n="$(env LC_ALL=C grep -a -n -m 1 -E -e "$2" "$3" 2>/dev/null | cut -d: -f1)"
@@ -949,20 +978,21 @@ first_match_line() {
 # hit/no-hit DECISION is the same `grep -q` in both modes — with-line only adds the line lookup.
 scan_file() {
   local f="$1" p="$2" wl="${3:-0}" hits=0 L='(^|[^A-Za-z0-9_])' rule re rc icase ln
-  # rule<TAB>case(i = any letter case, s = exact)<TAB>ERE
+  # rule<TAB>case(i = any letter case, s = exact, e = email: any letter case minus the exact forge
+  # SSH-remote exemption, decided by email_matches)<TAB>ERE
   while IFS="$TAB" read -r rule icase re; do
-    if [ "$icase" = "i" ]; then
-      env LC_ALL=C grep -i -E -q -e "$re" "$f" 2>/dev/null; rc=$?
-    else
-      env LC_ALL=C grep -E -q -e "$re" "$f" 2>/dev/null; rc=$?
-    fi
+    case "$icase" in
+      e) email_matches "$re" "$f" >/dev/null; rc=$? ;;
+      i) env LC_ALL=C grep -i -E -q -e "$re" "$f" 2>/dev/null; rc=$? ;;
+      *) env LC_ALL=C grep -E -q -e "$re" "$f" 2>/dev/null; rc=$? ;;
+    esac
     if [ "$rc" -eq 0 ]; then
       ln="-"; [ "$wl" = "1" ] && ln="$(first_match_line "$icase" "$re" "$f")"
       scrub_report "$p" "$rule" "$ln" "$wl"; hits=1
     elif [ "$rc" -gt 1 ]; then scrub_report "$p" "scan_error($rule)" - "$wl"; hits=1
     fi
   done <<EOF
-email${TAB}i${TAB}[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}
+email${TAB}e${TAB}[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}
 home_path${TAB}i${TAB}(^|[^A-Za-z0-9_-])/(Users|home)/[A-Za-z0-9._-]+/
 token_github${TAB}s${TAB}${L}gh[pousr]_[A-Za-z0-9]{36,}
 token_github_pat${TAB}s${TAB}${L}github_pat_[A-Za-z0-9_]{22,}
