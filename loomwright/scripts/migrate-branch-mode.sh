@@ -316,7 +316,10 @@ ab_check() {
   # every branch entry (learning stores included) must be a managed KIND (meta-sync.sh: MANAGED SET)
   nonmd="$(cut -f2 "$SD/b.all" | grep -v -E '\.md$|(^|/)results\.jsonl$|(^|/)brain-baseline\.jsonl$|(^|/)\.provenance\.jsonl$|\.dismissed-decisions$')"
   if [ -n "$nonmd" ]; then echo "migrate-branch-mode: entries of a non-managed kind on $b:" >&2; printf '  %s\n' $nonmd >&2; rc=1; fi
-  g ls-files -- .supervisor | env LC_ALL=C sort | env LC_ALL=C comm -23 - "$SD/a.list" > "$SD/extra.list"
+  # The index read clears the caller's GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE, as A's read does
+  # (meta-sync.sh list-managed --tracked): git reads an inherited GIT_INDEX_FILE naming a missing file
+  # as an EMPTY index with exit 0, which would silently report no extra tracked path.
+  env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git -C "$ROOT" -c core.quotepath=off ls-files -- .supervisor | env LC_ALL=C sort | env LC_ALL=C comm -23 - "$SD/a.list" > "$SD/extra.list"
   extra="$(wc -l < "$SD/extra.list" | tr -d ' ')"
   if [ "$extra" -gt 0 ]; then
     say "OWNER DECISION: $extra tracked .supervisor/ path(s) are OUTSIDE the run-history set (a tracked learning store included); they stay tracked and are NOT untracked or moved to $b by this flow:"

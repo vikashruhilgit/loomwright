@@ -82,6 +82,10 @@
 #      an empty porcelain, $EV byte-unchanged and still tracked (meta-sync names it
 #      `learning_tracked`), the teammate's line still on the branch; mutation control: a meta-sync.sh
 #      without the tracked-learning hold MUST turn both consent legs red
+#  25. seed with GIT_INDEX_FILE=/nonexistent exported (a git shim lets it reach ONLY `ls-files`, the
+#      tracked-set reads; every other git call sees the real index): $EV force-tracked on main is
+#      still named on the OWNER DECISION line and seed PASSes; mutation control: ab_check's extra
+#      read as a bare `g ls-files` (honouring the inherited index) MUST turn it red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -786,6 +790,45 @@ if ! cmp -s "$HERE/meta-sync.sh" "$MUT/meta-sync.sh" && grep -qF '# mutant track
   done
   SCRIPT="$SUT"
 else no "mutation control (meta-sync tracked-learning hold) did not build — counts as FAIL"; fi
+
+echo "== 25. an inherited GIT_INDEX_FILE cannot empty seed's OWNER DECISION extra =="
+# git shim: an inherited GIT_INDEX_FILE=/nonexistent reaches ONLY `ls-files` (the tracked-set reads);
+# every other git call runs with it cleared, so on_default_clean's status and meta-sync's push see the
+# real index and the leg isolates the reads under test. meta-sync's own per-run index values pass.
+GSHIM="$TROOT/gitshim"; mkdir -p "$GSHIM"
+REAL_GIT="$(command -v git)"
+cat > "$GSHIM/git" <<SHIM
+#!/bin/bash
+if [ "\${GIT_INDEX_FILE:-}" = /nonexistent ]; then
+  case " \$* " in *" ls-files "*) : ;; *) unset GIT_INDEX_FILE ;; esac
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+chmod +x "$GSHIM/git"
+# index_env_leg — history world plus $EV force-tracked on main (outside the run-history set); seed
+# runs with GIT_INDEX_FILE=/nonexistent exported through the shim. 0 = seed PASS and the OWNER
+# DECISION line still counts and names $EV (a missing index read would report no extra). Detail in IE_DETAIL.
+index_env_leg() {
+  IE_DETAIL=""
+  mkworld history
+  ( cd "$W/A" && mkdir -p .supervisor/eval && echo '{"run":"r1","score":1}' > "$EV" \
+    && git add -f "$EV" && git commit -qm eval && git push -q origin main ) >/dev/null 2>&1 \
+    || { IE_DETAIL="could not commit $EV"; return 1; }
+  to_protected A || { IE_DETAIL="to_protected failed: $OUT"; return 1; }
+  OUT="$(export GIT_INDEX_FILE=/nonexistent PATH="$GSHIM:$PATH"; bash "$SCRIPT" seed --root "$W/A" 2>&1)"; RC=$?
+  IE_DETAIL="seed rc=$RC seed=$(st A seed) owner-line=$(has "OWNER DECISION: 2 tracked .supervisor/ path(s)" && echo yes || echo no) ev-named=$(grep -qx "  $EV" <<<"$OUT" && echo yes || echo no)"
+  [ "$RC" -eq 0 ] && [ "$(st A seed)" = PASS ] && has "OWNER DECISION: 2 tracked .supervisor/ path(s)" \
+    && grep -qx "  $EV" <<<"$OUT"
+}
+index_env_leg; check $? "an exported GIT_INDEX_FILE=/nonexistent does not empty the OWNER DECISION extra: seed PASS, the tracked learning store still named ($IE_DETAIL)"
+MUT="$TROOT/mut-ab-index-env"
+if build_mutant "$MUT" 's/^  env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git -C "\$ROOT" -c core\.quotepath=off ls-files -- \.supervisor | /  g ls-files -- .supervisor | /' \
+   '  g ls-files -- .supervisor | '; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if index_env_leg; then no "mutation control REFUTED: ab_check's bare g ls-files kept the leg green with the inherited index honoured ($IE_DETAIL)"
+  else ok "mutation control: ab_check's extra read honouring the inherited GIT_INDEX_FILE reports no extra — (25) is load-bearing ($IE_DETAIL)"; fi
+  SCRIPT="$SUT"
+else no "mutation control (ab_check index env) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"

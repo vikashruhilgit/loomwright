@@ -240,6 +240,10 @@
 #      anyway: the tracked file byte-unchanged and named `learning_tracked`, `git status` clean
 #  86. mutation control: a hold whose ls-files honours the inherited GIT_INDEX_FILE (no `env -u`)
 #      turns (85) red (a missing index reads as nothing tracked; the pull unions into the file)
+#  87. list-managed --tracked with GIT_INDEX_FILE=/nonexistent exported -> still lists the committed
+#      tracked managed path (the real index), exit 0
+#  88. mutation control: a list-managed --tracked whose ls-files honours the inherited GIT_INDEX_FILE
+#      (no `env -u`) turns (87) red (a missing index lists nothing tracked)
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -2707,6 +2711,33 @@ if build_mutant "$MUT_TE" 's/^  env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TRE
   SCRIPT="$SUT"
 else
   no "mutation control (tracked env): could not build the mutant — control inconclusive"
+fi
+
+echo "== 87. an inherited GIT_INDEX_FILE cannot empty list-managed --tracked =="
+# lm_tracked_env_leg — A commits one managed path on its code branch, then runs list-managed
+# --tracked with GIT_INDEX_FILE=/nonexistent EXPORTED: git reads a missing index as empty with exit
+# 0, so a read that honoured it would list nothing (migrate-branch-mode.sh would see no tracked set).
+# 0 = exit 0 and exactly the committed path listed. Detail in LT_DETAIL.
+lm_tracked_env_leg() {
+  LT_DETAIL=""
+  mkworld; clone A
+  put A "$RQ/t.md" "tracked"
+  ( cd "$W/A" && git add -f -- "$RQ/t.md" && git commit -qm "track t" ) >/dev/null 2>&1 || { LT_DETAIL="could not track $RQ/t.md"; return 1; }
+  OUT="$(export GIT_INDEX_FILE=/nonexistent; bash "$SCRIPT" list-managed --tracked --root "$W/A" 2>&1)"; RC=$?
+  LT_DETAIL="rc=$RC out='$(printf '%s' "$OUT" | tr '\n' '|')'"
+  [ "$RC" -eq 0 ] && [ "$OUT" = "$RQ/t.md" ]
+}
+lm_tracked_env_leg; check $? "an exported GIT_INDEX_FILE=/nonexistent does not empty list-managed --tracked: the committed path is listed, exit 0 ($LT_DETAIL)"
+
+echo "== 88. mutation control: a list-managed --tracked that honours the inherited GIT_INDEX_FILE must turn (87) red =="
+MUT_LT="$TROOT/mutant-lm-tracked-env"
+if build_mutant "$MUT_LT" 's/^    env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git -C "$ROOT" ls-files -z -- \.supervisor > /    g ls-files -z -- .supervisor > /' '    g ls-files -z -- .supervisor > '; then
+  SCRIPT="$MUT_LT/meta-sync.sh"
+  if lm_tracked_env_leg; then no "mutation control (list-managed tracked env) REFUTED: the leg stayed green with the inherited index honoured ($LT_DETAIL)"
+  else ok "mutation control (list-managed tracked env): honouring the inherited GIT_INDEX_FILE lists nothing — (87) is load-bearing ($LT_DETAIL)"; fi
+  SCRIPT="$SUT"
+else
+  no "mutation control (list-managed tracked env): could not build the mutant — control inconclusive"
 fi
 
 echo

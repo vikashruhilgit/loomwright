@@ -281,8 +281,8 @@
 # RUN HISTORY is never looked up: a tracked run-history path keeps the 3-way rule above unchanged
 # (run history is meant to be untracked in branch mode; that is what the migration does). The exit
 # code stays the one run history alone gives. A tracked path the pair rule needs (TWIN SET) is read
-# as it stands locally (pull) or as last agreed (its meta-base entry) on push. list-managed is
-# unaffected (it lists, it never syncs).
+# as it stands locally (pull) or on the branch (push). list-managed is unaffected (it lists, it
+# never syncs).
 #
 # PULL — fetch, decide per path, leave every tracked learning path to git (TRACKED LEARNING
 # STORES), refuse the twin set if it must be (TWIN SET), refuse on any other
