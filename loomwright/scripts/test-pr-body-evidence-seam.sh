@@ -192,7 +192,7 @@ LINE="$(grep -F -- '**BRIEF-CONFORMANCE ADVISORY (include this line ONLY' "$SHA"
 bhas "$LINE" 'is judged on that file in the diff (absent or incomplete ⇒ `not_addressed`, `file:` that path)' \
   && bhas "$LINE" 'a criterion whose ONLY evidence is the PR body is `cannot_determine`' \
   && ok "Phase 4.5 prompt line: same two outcomes" || no "Phase 4.5 prompt line evidence clause"
-has "$QC" 'or evidence only in the PR body, which no fix task can edit) ⇒ named in a one-line summary, not a finding; a criterion naming a committed evidence file is judged on that file.' \
+has "$QC" 'or evidence only in the PR body, which no fix task can edit) ⇒ one `cannot_determine` entry with a reason, not a finding; a criterion naming a committed evidence file is judged on that file.' \
   && ok "preloaded quality-checklist agrees" || no "quality-checklist brief-conformance item"
 TPL="$(awk '/^\*\*PR Body Template:\*\*/{f=1} f{print; if (/^```$/ && c++) exit}' "$AO")"
 ORDER="$(printf '%s\n' "$TPL" | grep -E '^## (Test Plan|Evidence|Not verified|Task)$' | tr '\n' '|')"

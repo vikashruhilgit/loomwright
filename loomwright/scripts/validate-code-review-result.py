@@ -45,7 +45,13 @@ prompt gave a verbatim reason string, it is reused verbatim.
       keys id/verdict/reason, non-empty id and reason, verdict ∈ VERDICTS,
       one entry per id. Shape only: no verdict value is ever read against
       `decision` — the field is advisory and cannot make a block pass or fail
-      on what it SAYS, only on whether it is well-formed.
+      on what it SAYS, only on whether it is well-formed; (n) OPTIONAL
+      cannot_determine (#433) — absent is valid; present ⇒ an array of
+      mappings with exactly the keys item/reason, non-empty item, and a
+      non-empty reason that is more than a bare runtime label
+      (BARE_RUNTIME_REASONS). The reviewer's admission rule says the reason
+      names what would have to run to decide the item; this rule can reject
+      only the empty and the label-only reason, not judge a real one.
 
 (B) is enforced as present AND non-empty — an empty summary carries nothing a
 caller can act on, and every sibling validator reads "present" that way.
@@ -134,6 +140,15 @@ DRIFT_KINDS = (
 # (m) — the per-house-rule verdict record (#431/#432). Advisory: shape-checked only.
 HOUSE_RULE_VERDICTS = ("followed", "violated", "conflicts_with_requirement", "not_applicable")
 HOUSE_RULE_VERDICT_KEYS = ("id", "verdict", "reason")
+# (n) — what the reviewer could not decide by reading the code, and why (#433).
+CANNOT_DETERMINE_KEYS = ("item", "reason")
+# A reason that only restates the label names nothing that would have to run —
+# the exact shape #433 observed ("runtime-only", no reason). Compared after
+# lowercasing, mapping -/_ to spaces and dropping other punctuation.
+BARE_RUNTIME_REASONS = (
+    "runtime", "runtime only", "runtime behavior", "runtime behaviour", "needs runtime",
+    "requires runtime", "cannot determine", "unknown", "unverified",
+)
 # (j) — the highest severity each capped drift_kind may carry.
 DRIFT_CAPS = {
     "count": "MEDIUM",
@@ -297,6 +312,41 @@ def _check_v3(fields, decision):
                     "and severity BLOCKING or HIGH (v3 rule k)")
 
     _check_house_rule_verdicts(fields)
+    _check_cannot_determine(fields)
+
+
+def _bare_reason(text):
+    words = re.sub(r"[^a-z0-9 ]", "", re.sub(r"[-_]", " ", text.lower())).split()
+    return " ".join(words) in BARE_RUNTIME_REASONS
+
+
+def _check_cannot_determine(fields):
+    """(n) OPTIONAL cannot_determine. Absent or [] ⇒ allowed. Present ⇒ each entry
+    names the item and WHY a static read cannot settle it. Never compared with
+    `decision`: an entry is not a finding."""
+    if not present(fields, "cannot_determine"):
+        return
+    raw = fields.get("cannot_determine")
+    if not isinstance(raw, list):
+        emit(False, "cannot_determine must be an array when present; got %r (v3 rule n)"
+             % as_text(raw))
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            emit(False, "cannot_determine[%d] is not a mapping; each entry needs %s "
+                        "(v3 rule n)" % (index, "/".join(CANNOT_DETERMINE_KEYS)))
+        for key in entry:
+            if key not in CANNOT_DETERMINE_KEYS:
+                emit(False, "cannot_determine[%d] contains disallowed key %s; only %s "
+                            "are accepted (v3 rule n)"
+                     % (index, key, "/".join(CANNOT_DETERMINE_KEYS)))
+        for key in CANNOT_DETERMINE_KEYS:
+            if key not in entry or is_empty_scalar(entry.get(key)):
+                emit(False, "cannot_determine[%d] is missing a non-empty %s field; name "
+                            "what would have to run to decide it (v3 rule n)" % (index, key))
+        if _bare_reason(as_text(entry.get("reason"))):
+            emit(False, "cannot_determine[%d] reason %r only restates the label; name what "
+                        "would have to run to decide it (v3 rule n)"
+                 % (index, as_text(entry.get("reason")).strip()))
 
 
 def _check_house_rule_verdicts(fields):

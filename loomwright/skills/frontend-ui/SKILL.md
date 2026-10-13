@@ -2,8 +2,8 @@
 name: frontend-ui
 description: Enforce design system components, accessibility (WCAG 2.1 AA), responsive design, and component reusability. Use when reviewing frontend/UI code in React, Vue, Angular, or Svelte projects.
 allowed-tools: Read, Grep
-version: "1.0.0"
-lastUpdated: "2026-03"
+version: "1.1.0"
+lastUpdated: "2026-10"
 ---
 
 # Frontend UI Skill
@@ -14,6 +14,7 @@ Enforce design system components, accessibility, responsive design, and componen
 
 - **Design System First:** Use design-system components over raw HTML elements
 - **Accessibility:** Alt text, ARIA labels, keyboard navigation, color contrast
+- **Interaction behaviour:** What happens after a state change (focus, busy flags, async status, unsaved edits, failures) is decided by reading the code, not deferred as "runtime"
 - **Responsive:** Mobile-first, consistent breakpoints, fluid layouts
 - **Reusability:** No duplicate UI logic, extract common patterns to shared components
 - **Type Safety:** Typed props for all components, no implicit `any`
@@ -251,7 +252,7 @@ When reviewing UI code, verify:
 - [ ] Color contrast ≥ 4.5:1 for text (verify with contrast checker)
 - [ ] Interactive elements support keyboard (Enter/Space keys)
 - [ ] Focus indicators visible (`:focus` styles defined)
-- [ ] Modals/dialogs trap focus and have close mechanism
+- [ ] Modals/dialogs trap focus, have a close mechanism, and return focus to the opener on close
 - [ ] Skip links provided for navigation (optional, but recommended)
 
 ### When to Flag Accessibility Issues
@@ -264,6 +265,25 @@ When reviewing UI code, verify:
 | Color contrast < 4.5:1 | MEDIUM | Suggest higher contrast color |
 | `onClick` without keyboard support | MEDIUM | Add `onKeyDown` handler |
 | Missing focus indicator | LOW | Suggest `:focus` styles |
+
+---
+
+## Interaction-behaviour lens (static)
+
+The checks above ask what an element **has**. These ask what happens **after a state change**, and every one is decided by reading the diff. None of them needs a browser, so none goes in `cannot_determine`. The canonical list is the Code Reviewer's Review Process step 3 (`agents/code-reviewer.md`); the ids are identical there and in `commands/code-reviewer.md`.
+
+| Id | Question the code answers | Typical miss |
+|---|---|---|
+| `focus_on_unmount` | When the focused control unmounts, hides or becomes disabled, does focus move somewhere explicit? Does a dialog return focus to its opener? | A successful action removes the button the user just pressed; nothing calls `.focus()`, so focus falls to `<body>` |
+| `busy_state_cleared` | Is a busy / disabled / pending flag set before async work cleared on every exit (success, error, abort, unmount)? | `setSaving(true)` … `setSaving(false)` only after `await`, so a rejected promise leaves the button disabled for good (use `finally`) |
+| `async_state_distinct` | Do loading, failed and stale render differently from success? | A status chip reads "up to date" while `isLoading \|\| isError` |
+| `unsaved_exit_parity` | Does every exit from an edit surface (Cancel, close, Escape, link, route change) treat unsaved changes the same way? | Link navigation prompts "discard changes?", but Cancel discards silently |
+| `state_reset_on_input_change` | Is local state seeded from a prop / id / route param reset or re-derived when that input changes? | `useState(props.item.name)` keeps the previous item's name after the user picks another item |
+| `actionable_failure_persists` | Does a failure the user must act on stay on screen beyond a transient toast? | A save that failed validation shows a 3-second toast and leaves no inline error |
+
+**Severity:** a hit the diff introduces is a behaviour regression. The Code Reviewer's severity-assignment rule makes it HIGH, or BLOCKING when it loses user data. A hit in untouched code is `pre_existing`. A library default counts as code: read the library's documented behaviour (for example, whether its dialog restores focus) instead of deferring.
+
+**What really needs a run:** only layout at a viewport width, computed contrast, real timing, or what a screen reader actually says. Each of these goes in `cannot_determine` with a one-line reason naming what would have to run.
 
 ---
 
@@ -888,6 +908,6 @@ export default defineComponent({
 
 ## Version
 
-- **Version:** 1.0.0
-- **Last Updated:** January 2026
+- **Version:** 1.1.0
+- **Last Updated:** October 2026
 - **Maintained By:** Loomwright Plugin

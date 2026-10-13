@@ -75,7 +75,7 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
 
 ### Outputs
 
-- **CODE_REVIEW_RESULT block (required, always emitted):** schema v3 — `review_mode` (diff_review | consistency_audit), `audit_focus[]`, `trigger_paths_detected[]`, `scope_expanded[]`, `files_checked[]`, `consistency_checks` + `consistency_summary` when audit, `decision`, `issues[]` (severity + category with `drift` added + `drift_kind` when category=drift), optional advisory `house_rule_verdicts[]` (step 5c), `summary`. See `docs/RESULT_SCHEMAS.md#code_review_result`.
+- **CODE_REVIEW_RESULT block (required, always emitted):** schema v3 — `review_mode` (diff_review | consistency_audit), `audit_focus[]`, `trigger_paths_detected[]`, `scope_expanded[]`, `files_checked[]`, `consistency_checks` + `consistency_summary` when audit, `decision`, `issues[]` (severity + category with `drift` added + `drift_kind` when category=drift), optional advisory `house_rule_verdicts[]` (step 5c), optional `cannot_determine[]` (step 5's admission rule), `summary`. See `docs/RESULT_SCHEMAS.md#code_review_result`.
 - **Decision:** PASS / FAIL / NEEDS_HUMAN
 - **Evidence:** Issues found with severity (BLOCKING/HIGH/MEDIUM/LOW) and category (new/pre_existing/nit/drift; drift issues also carry `drift_kind` per schema v3)
 - **Fixes:** Specific suggestions with file:line + code snippets
@@ -359,6 +359,7 @@ Review implementation code against quality standards and provide a clear decisio
      - Flag: Images without alt text
      - Flag: Icon buttons without aria-label
      - Flag: Form inputs without labels
+     - Flag: A click handler on a non-interactive element with no role, `tabIndex` and Enter/Space handler
      - Flag: Color contrast < 4.5:1 (verify with contrast checker if suspicious)
    - **Responsive Design:**
      - Flag: Fixed widths instead of fluid layouts
@@ -369,6 +370,14 @@ Review implementation code against quality standards and provide a clear decisio
    - **Type Safety:**
      - Flag: Untyped component props
      - Flag: Missing prop interfaces
+   - **Interaction-behaviour lens (static — decide each from the code, never defer it as "runtime"):** for every changed UI component, handler or hook, trace what happens after each state change:
+     - `focus_on_unmount` — a focused control that unmounts, hides or becomes disabled (success, close, delete) leaves focus somewhere explicit; a dialog returns focus to its opener. Nothing moving it ⇒ focus falls to `<body>`.
+     - `busy_state_cleared` — a busy / disabled / pending flag set before async work is cleared on EVERY exit (success, error, abort, unmount), not only on success.
+     - `async_state_distinct` — loading, failed and stale render distinctly from success; no success copy ("up to date", "saved") while the query is loading or errored.
+     - `unsaved_exit_parity` — every exit from an edit surface (Cancel, close, Escape, link, route change) treats unsaved changes the same way.
+     - `state_reset_on_input_change` — local state seeded from a prop / id / route param is reset or re-derived when that input changes.
+     - `actionable_failure_persists` — a failure the user must act on stays on screen beyond a transient toast.
+     A hit is an ordinary `issues[]` finding naming its id: category per step 7, severity per step 6's severity-assignment rule. No new decision state, no new field. A library default is code too: read its documented contract (Context7; unreachable ⇒ a finding at Context Setup step 6's confidence tier, never `cannot_determine`). No UI change in the diff ⇒ the lens does not apply and writes nothing.
 
    **For BACKEND code specifically:**
    - Apply framework-specific skills:
@@ -402,13 +411,15 @@ Review implementation code against quality standards and provide a clear decisio
    - **Bind `unverified` to the verdict:** if the unverified behavior is **load-bearing** (central to the diff's correctness / security claim) AND static review cannot establish its safety, return **`NEEDS_HUMAN`** — or raise a `new` HIGH issue when the gap is simply "no test exists" that a fix worker can close — **never `PASS`**. (This is consistent with the fail-CLOSED-on-correctness principle — cf. the decision-matrix row "environment prevents a normal review → NEEDS_HUMAN"; `NEEDS_HUMAN` maps to `ESCALATED`, leaving the PR open for a human.)
    - A **non-load-bearing** unverified behavior (tangential, not central to the change's correctness) is reported as `unverified` but does NOT block PASS.
 
+   **`cannot_determine` — admission rule (every caller, every mode).** A property no reading of the code can settle goes in the optional `cannot_determine` field, one `{item, reason}` entry each — never a finding, never silence. Admissible ONLY when deciding it needs a rendered page or a real run — layout at a viewport width, computed contrast, real timing (latency, throughput, animation), a screen reader's actual speech (whether a live region exists is static) — or evidence outside the diff (a criterion whose only evidence is the PR body). `reason` is one line naming what would have to run or be read, e.g. "needs the page rendered at 320px" or "only the PR body shows it"; the validator rejects an empty or label-only ("runtime-only") reason. A step-3 lens question is never admissible. Not `unverified`: that is a load-bearing claim you could not execute safely.
+
 5a. **Brief conformance (Supervisor Phase 4.5 only — when the spawn prompt carries a BRIEF-CONFORMANCE ADVISORY line)**
 
    The Phase 4.5 spawn prompt (authoritative wording: `skills/self-heal-advisory/SKILL.md` Part 2 §"Review-and-fix loop"; the brief-parsing and bounding rules live in its Part 1 and are NOT restated here) may hand you the in-progress brief's acceptance criteria. When it does, reach a **three-way verdict per criterion** from the diff text only — you execute nothing for these verdicts (the EXECUTION DIRECTIVE governs §5 load-bearing claims only):
    - `addressed` — the integrated diff contains the change the criterion asks for. No output.
    - `not_addressed` — the diff contains no corresponding change. Emit exactly ONE `category: new`, severity **HIGH** finding per such criterion, quoting the criterion verbatim in `description` and stating what is missing in `suggestion`; `file:` is the path the criterion most plausibly targets when evident, otherwise the sentinel `brief` (the spawn-prompt line above is the authoritative statement of this convention). This is an ordinary finding: it enters the same FAIL/PASS decision and the same fix floor as every other `new` finding — no new gate, no new field.
-   - `cannot_determine` — the criterion cannot be established from the diff text (runtime-only behavior such as latency or throughput). NOT a finding: name these criteria in ONE summary line under `cannot_determine`.
-   - **Where the evidence lives:** a criterion that names a committed file (e.g. `docs/evidence/<slug>.md`) is judged on that file in the diff — absent, or lacking what the criterion says it contains ⇒ `not_addressed`, `file:` that path (a fix task can write it). The PR body is not in the diff and no fix task can edit it: never judge a clause about it (e.g. "and the PR body links to it"), and a criterion whose ONLY evidence is the PR body is `cannot_determine`, never a finding.
+   - `cannot_determine` — the criterion cannot be established from the diff text (runtime-only behavior such as latency or throughput). NOT a finding: one `cannot_determine` entry per criterion, `item` = the criterion, `reason` per step 5's admission rule.
+   - **Where the evidence lives:** a criterion that names a committed file (e.g. `docs/evidence/<slug>.md`) is judged on that file in the diff — absent, or lacking what the criterion says it contains ⇒ `not_addressed`, `file:` that path (a fix task can write it). The PR body is not in the diff and no fix task can edit it: never judge a clause about it (e.g. "and the PR body links to it"), and a criterion whose ONLY evidence is the PR body is `cannot_determine`, never a finding — one `cannot_determine` entry whose reason says only the PR body shows it, which the diff does not contain and no fix task can edit.
    Rubric bullets the line labels as orientation-only NEVER produce findings (they belong to the Rubric Grader). A standalone `/review-pr` review has no brief and never carries this line — the step simply does not apply there.
 
 5b. **Deviations conformance (Supervisor Phase 4.5 only — when the spawn prompt carries a DEVIATIONS ADVISORY line)**
@@ -449,7 +460,7 @@ Review implementation code against quality standards and provide a clear decisio
    - Refactoring opportunities
    - Helpful comments
 
-   **Severity-assignment rule for `new` code-behavior findings (correctness ⇒ HIGH/BLOCKING).** Any **confirmed correctness, security, or behavior regression introduced by the diff** — exactly the class the Adversarial-Input Lens hunts (negative / zero / overflow mishandling, replay / idempotency holes, run-once violations, concurrency races, validation-parity or trust-boundary gaps, injection) — MUST be labeled **HIGH** or **BLOCKING**, never MEDIUM/LOW. MEDIUM/LOW are reserved for maintainability, polish, or non-blocking risk. **Why this is load-bearing:** the fix paths (Supervisor Phase 4.5, `/review-pr`) fix only `new` findings at or above a project-configurable fix floor (`scripts/fix-floor.sh`; it can be set to HIGH), and this reviewer PASSes when only MEDIUM/LOW remain — so a real correctness bug *mislabeled* MEDIUM can be found but never fixed. This rule governs ONLY `category: new` code-behavior findings; it does **NOT** alter the `drift` severity caps (`count` / `version_secondary` ≤ MEDIUM, `hooks_parity` / `wording` ≤ LOW) defined for consistency-audit mode, nor the PASS-on-MEDIUM/LOW decision for genuine maintainability / polish findings.
+   **Severity-assignment rule for `new` code-behavior findings (correctness ⇒ HIGH/BLOCKING).** Any **confirmed correctness, security, or behavior regression introduced by the diff** — exactly the classes the Adversarial-Input Lens hunts (negative / zero / overflow mishandling, replay / idempotency holes, run-once violations, concurrency races, validation-parity or trust-boundary gaps, injection) and the step-3 Interaction-behaviour lens names — MUST be labeled **HIGH** or **BLOCKING**, never MEDIUM/LOW. MEDIUM/LOW are reserved for maintainability, polish, or non-blocking risk. **Why this is load-bearing:** the fix paths (Supervisor Phase 4.5, `/review-pr`) fix only `new` findings at or above a project-configurable fix floor (`scripts/fix-floor.sh`; it can be set to HIGH), and this reviewer PASSes when only MEDIUM/LOW remain — so a real correctness bug *mislabeled* MEDIUM can be found but never fixed. This rule governs ONLY `category: new` code-behavior findings; it does **NOT** alter the `drift` severity caps (`count` / `version_secondary` ≤ MEDIUM, `hooks_parity` / `wording` ≤ LOW) defined for consistency-audit mode, nor the PASS-on-MEDIUM/LOW decision for genuine maintainability / polish findings.
 
 7. **Categorize Each Issue**
 
@@ -550,6 +561,7 @@ Every row emits `CODE_REVIEW_RESULT`. "BD action" columns only apply when `beads
 - [ ] Every issue has file:line + suggestion
 - [ ] CODE_REVIEW_RESULT block drafted (always required)
 - [ ] One `house_rule_verdicts` entry per rule id step 4a yielded (step 5c), none for a routed-out rule
+- [ ] Interaction-behaviour lens applied to every changed UI component (step 3); every `cannot_determine` entry passes step 5's admission rule and its `reason` names what would have to run
 - [ ] If Beads is active: comment template filled out and ready to post to the review task
 - [ ] Type safety issues flagged completely
 - [ ] Security issues flagged and prioritized
@@ -586,7 +598,7 @@ When Beads is not active: just pass the scope as an argument; the CODE_REVIEW_RE
 
 Always emit a CODE_REVIEW_RESULT block (machine-readable, schema v3) — this is the canonical output regardless of Beads state. See `docs/RESULT_SCHEMAS.md#code_review_result` for the full field list.
 
-**Schema fields only — no ad-hoc keys.** Every issue object uses exactly these keys: `severity`, `category`, `file`, `description`, `drift_kind` (required when category=drift), `line` (optional), `suggestion` (optional). Do **not** invent keys like `title`, `details`, `rationale`, `notes`, `ref`, etc. — any such key will make the block malformed and fail the plugin hook. Put rationale inside `description`; put the fix inside `suggestion`. Each `house_rule_verdicts` entry (step 5c) uses exactly `id`, `verdict`, `reason`.
+**Schema fields only — no ad-hoc keys.** Every issue object uses exactly these keys: `severity`, `category`, `file`, `description`, `drift_kind` (required when category=drift), `line` (optional), `suggestion` (optional). Do **not** invent keys like `title`, `details`, `rationale`, `notes`, `ref`, etc. — any such key will make the block malformed and fail the plugin hook. Put rationale inside `description`; put the fix inside `suggestion`. Each `house_rule_verdicts` entry (step 5c) uses exactly `id`, `verdict`, `reason`; each `cannot_determine` entry exactly `item`, `reason`.
 
 ### Environment-Blocked Reviews (failure path)
 
@@ -628,7 +640,7 @@ Additionally produce a human-readable summary with these elements:
 2. **Review Mode Line:** `Review mode: diff_review` OR `Review mode: consistency_audit (focus: mirrored_prompt, plan_prompt)` — list `audit_focus` tags
 3. **Scope Expansion (if audit):** List files in `scope_expanded[]` and matched `trigger_paths_detected[]`
 4. **Consistency Summary (if audit):** One-paragraph summary of consistency findings plus per-check status (mirrored_prompts / version_strings / counts / workflow_alignment / hooks_parity)
-5. **Issues Found:** List by severity (BLOCKING / HIGH / MEDIUM / LOW) and category (new / pre_existing / nit / drift). Drift issues carry `drift_kind`. Then, when step 5c ran, one line per `violated` / `conflicts_with_requirement` house-rule verdict (id, verdict, reason).
+5. **Issues Found:** List by severity (BLOCKING / HIGH / MEDIUM / LOW) and category (new / pre_existing / nit / drift). Drift issues carry `drift_kind`. Then, when step 5c ran, one line per `violated` / `conflicts_with_requirement` house-rule verdict (id, verdict, reason), and one per `cannot_determine` entry (item — reason).
 6. **For each issue:** file:line + details + suggestion
 7. **Bug Issues:** Only created if NEEDS_HUMAN AND `beads_active` (blocks review); when Beads is not active, list them in the summary instead
 8. **Pattern Proposals:** Suggest adding to CLAUDE.md (don't update directly)
