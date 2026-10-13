@@ -16,7 +16,7 @@ demoted, their Status / Depends on / Touches folded into this file's own section
 
 ## Touches
 loomwright/scripts/automate-helpers.sh
-loomwright/scripts/fixtures/automate-helpers-help.golden
+loomwright/scripts/fixtures/automate-helpers-help/
 loomwright/scripts/automate-helpers.d/plan-waves.sh
 loomwright/scripts/automate-helpers.d/intake.sh
 loomwright/scripts/test-automate-helpers-dispatch.sh
@@ -29,7 +29,7 @@ loomwright/scripts/meta-sync.sh
 loomwright/scripts/test-meta-sync.sh
 loomwright/commands/backlog.md
 loomwright/commands/agent-help.md
-loomwright/skills/automate-loop/SKILL.md
+loomwright/skills/automate-loop/
 loomwright/docs/result-schemas/automate-run.md
 loomwright/scripts/automate-dismissed.sh
 loomwright/scripts/propose-common.sh

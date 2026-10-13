@@ -12,14 +12,20 @@ human-approved edits). Drafted 2026-10-13 against main 508aabc.
 none
 
 ## Touches
-loomwright/scripts/prove-rule-check.sh            (new)
-loomwright/scripts/test-prove-rule-check.sh       (new)
-loomwright/scripts/add-rule.sh                    (D2: --proof required for must + check)
+loomwright/scripts/prove-rule-check.sh
+loomwright/scripts/test-prove-rule-check.sh
+loomwright/scripts/add-rule.sh
 loomwright/scripts/test-add-rule.sh
-loomwright/skills/rules/SKILL.md                  (§7 add discipline, §9 trust boundary)
+loomwright/skills/rules/SKILL.md
 loomwright/commands/rules.md
-loomwright/commands/dreaming.md                   ("Accept rule WITH check" path)
+loomwright/commands/dreaming.md
 changelog.d/verified-rule-checks.md
+
+## Touches notes (moved out of the machine-read section 2026-10-13)
+- `prove-rule-check.sh` and `test-prove-rule-check.sh` are new files.
+- `add-rule.sh`: D2 — `--proof` required for a `must` rule with a `check`.
+- `skills/rules/SKILL.md`: §7 add discipline, §9 trust boundary.
+- `commands/dreaming.md`: the "Accept rule WITH check" path.
 
 ## Problem
 Loomwright edits its own instructions in two places: `/rules add` and `/dreaming`'s harvested-rule Accept. Both

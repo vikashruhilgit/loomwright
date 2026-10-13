@@ -17,10 +17,10 @@ Parts A/B — af/22, af/23 — stay nested inside it).
 
 ## Touches
 loomwright/scripts/automate-helpers.sh
-loomwright/scripts/fixtures/automate-helpers-help.golden
+loomwright/scripts/fixtures/automate-helpers-help/
 loomwright/scripts/automate-trail.sh
 loomwright/scripts/test-automate-trail.sh
-loomwright/skills/automate-loop/SKILL.md
+loomwright/skills/automate-loop/
 loomwright/commands/automate.md
 loomwright/docs/result-schemas/automate-run.md
 loomwright/scripts/proc-registry.sh
