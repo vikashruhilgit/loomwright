@@ -26,11 +26,13 @@
 #   scratch-remote        the scratch clone's ONLY remote is `origin` = the local bare repo
 #   scratch-mode-off      the scratch clone reads mode `off` (a fully migrated checkout cannot be
 #                         rehearsed). A HALF-MIGRATED checkout — mode line `on <b>` with <b> equal to
-#                         --branch AND managed paths still tracked — is rehearsed: the scratch clone's
+#                         --branch AND run-history paths still tracked — is rehearsed: the scratch clone's
 #                         mode block is reset with `setup-memory.sh apply --branch-mode off` in a
 #                         scratch-only commit (an `info:` line says so) before this check, so the drill
 #                         still runs init -> push -> verify -> migrate -> pull -> rollback. `on <b>` with
-#                         nothing tracked, or `on <other>` (<other> != --branch), stays a FAIL here.
+#                         no run history tracked (a tracked learning store does not count — the
+#                         same `already` verdict migrate-branch-mode.sh gives), or `on <other>`
+#                         (<other> != --branch), stays a FAIL here.
 #   init                  `meta-sync.sh init --branch <b>` created origin/<b> (scratch bare repo)
 #   push                  `meta-sync.sh push --branch <b>` succeeded
 #   verify-present        every RUN-HISTORY managed path (`list-managed --run-history`) is on the
@@ -42,11 +44,14 @@
 #                         .provenance.jsonl or *.dismissed-decisions — and every local managed path
 #                         is a regular file
 #   migrate-clean         after the scratch migration commit (`setup-memory.sh apply --branch-mode`
-#                         + `git rm -r --cached` of the tracked managed set, on the scratch default
-#                         branch), mode reads `on <b>` and `git status --porcelain` is empty
+#                         + `git rm -r --cached` of the tracked RUN-HISTORY set — what untrack-pr
+#                         untracks; a tracked learning store stays tracked — on the scratch default
+#                         branch), mode reads `on <b>`, `git status --porcelain` is empty and the
+#                         tracked learning-store set is unchanged
 #   pull-roundtrip        a SECOND clone runs `meta-sync.sh pull --branch <b>`: its managed list
 #                         equals the first clone's MINUS the learning stores that never reached the
-#                         branch (consent), every such file byte-identical (cmp) to the first clone's
+#                         branch (consent) and are not tracked, every such file byte-identical (cmp)
+#                         to the first clone's
 #   rollback-run          the shipped `migrate-branch-mode.sh rollback --commit <migration commit>`
 #                         exits 0, pushes a NEW branch, opens a PR through a stub gh, never merges
 #                         (the scratch default branch is unchanged)
@@ -75,7 +80,7 @@
 # byte-identical` after the second checkout's pull.
 #
 # Run history the checkout holds UNTRACKED (gitignored) is copied into the scratch clone, as is the
-# checkout's .git/info/exclude and .supervisor/twin/. When fewer than two managed *.md files exist,
+# checkout's .git/info/exclude and .supervisor/twin/. When fewer than two RUN-HISTORY *.md files exist,
 # two synthetic ones are added (an `info:` line says so) so the edit / delete drill has material.
 # `gh` is a stub inside the scratch dir (LOOMWRIGHT_GH_BIN + PATH); no real gh call is made. The
 # scratch dir is removed on every exit path.
@@ -165,7 +170,7 @@ mkdir -p "$(dirname "$EXC")"
 # Only for the rehearsed branch and only while something is tracked — a fully migrated checkout
 # (nothing tracked) or a mode line naming another branch is left as is and fails scratch-mode-off.
 if [ "$(bash "$SM" --root "$A" mode 2>/dev/null | head -n 1)" = "on $B" ] \
-  && bash "$MS" list-managed --tracked --root "$A" > "$S/T0.list" 2>/dev/null && [ -s "$S/T0.list" ]; then
+  && bash "$MS" list-managed --tracked --run-history --root "$A" > "$S/T0.list" 2>/dev/null && [ -s "$S/T0.list" ]; then
   bash "$SM" --root "$A" apply --branch-mode off > "$S/reset.out" 2>&1
   rm -f "$A"/.gitignore.backup.*
   { ga add -- .gitignore && ga commit -q -m "rehearsal: reset the half-migrated mode block to off" && ga push -q origin "$DEF"; } >/dev/null 2>&1 \
@@ -191,7 +196,7 @@ done
 if [ -n "$(ga diff --cached --name-only)" ]; then
   ga commit -q -m "rehearsal: --no-config" && ga push -q origin "$DEF" || die "could not commit the --no-config removal in the scratch clone"
 fi
-n_md="$(bash "$MS" list-managed --root "$A" 2>/dev/null | grep -c '\.md$')"
+n_md="$(bash "$MS" list-managed --run-history --root "$A" 2>/dev/null | grep -c '\.md$')"   # the edit / delete drill picks from run history
 if [ "${n_md:-0}" -lt 2 ]; then
   mkdir -p "$A/.supervisor/jobs/done"
   for i in 1 2; do printf '# rehearsal seed %s\n' "$i" > "$A/.supervisor/jobs/done/rehearsal-seed-$i.md"; printf '/.supervisor/jobs/done/rehearsal-seed-%s.md\n' "$i" >> "$EXC"; done
@@ -248,24 +253,33 @@ while IFS= read -r p; do { [ -f "$A/$p" ] && [ ! -L "$A/$p" ]; } || badt="${badt
 
 # ---- scratch migration commit (on the scratch default branch; stands in for the owner's merge) -----
 PRE="$(ga rev-parse HEAD)"
+# tracked_learn — the tracked learning-store paths (the managed set minus run history, from the index)
+tracked_learn() {
+  bash "$MS" list-managed --tracked --run-history --root "$A" 2>/dev/null | env LC_ALL=C sort > "$S/TRH.list"
+  bash "$MS" list-managed --tracked --root "$A" 2>/dev/null | env LC_ALL=C sort | env LC_ALL=C comm -23 - "$S/TRH.list"
+}
+TL0="$(tracked_learn)"
 bash "$SM" --root "$A" apply --branch-mode "$B" > "$S/apply.out" 2>&1
 rm -f "$A"/.gitignore.backup.*
-bash "$MS" list-managed --tracked --root "$A" > "$S/T.list" 2>/dev/null
+bash "$MS" list-managed --tracked --run-history --root "$A" > "$S/T.list" 2>/dev/null   # what untrack-pr untracks: run history only
 [ -s "$S/T.list" ] && { tr '\n' '\0' < "$S/T.list" | (cd "$A" && xargs -0 git rm -r -q --cached --); }
 ga add -- .gitignore 2>/dev/null
 ga commit -q -m "rehearsal: branch mode on $B (untrack run history)" >/dev/null 2>&1 && ga push -q origin "$DEF" 2>/dev/null
 MIG="$(ga rev-parse HEAD)"
 MODE="$(bash "$SM" --root "$A" mode 2>/dev/null | head -n 1)"; dirty="$(ga status --porcelain | tr '\n' ' ')"
-[ "$MIG" != "$PRE" ] && [ "$MODE" = "on $B" ] && [ -z "$dirty" ] && [ "$(git --git-dir="$O" rev-parse "refs/heads/$DEF")" = "$MIG" ]
-res $? migrate-clean "mode '$MODE'; porcelain: ${dirty:-empty}; $(grep -E '^ *apply:' "$S/apply.out" | head -n 1)"
+TL1="$(tracked_learn)"
+[ "$MIG" != "$PRE" ] && [ "$MODE" = "on $B" ] && [ -z "$dirty" ] && [ "$(git --git-dir="$O" rev-parse "refs/heads/$DEF")" = "$MIG" ] && [ "$TL1" = "$TL0" ]
+res $? migrate-clean "mode '$MODE'; porcelain: ${dirty:-empty}; tracked learning stores $(printf '%s' "$TL0" | grep -c .) -> $(printf '%s' "$TL1" | grep -c .); $(grep -E '^ *apply:' "$S/apply.out" | head -n 1)"
 
 # ---- second checkout: pull round trip ------------------------------------------------------------
 git clone -q "$O" "$C" 2>/dev/null && scratch_cfg "$C"
 msx pull --branch "$B" --root "$C" > "$S/pull.out" 2>&1; prc=$?
 # expected = the FULL local managed set minus the learning stores that did NOT reach the branch
 # (consent may legitimately hold them back) — never "run history only", which would stop checking
-# the learning stores that DID travel
-env LC_ALL=C sort -u "$S/L.list" "$S/LLB.list" > "$S/LX.list"
+# the learning stores that DID travel. A learning store still TRACKED after the migration (the
+# migration never untracks one) reaches the second clone through git, so it is expected too.
+bash "$MS" list-managed --tracked --root "$A" 2>/dev/null | env LC_ALL=C sort | env LC_ALL=C comm -12 "$S/LL.list" - > "$S/LT.list"
+env LC_ALL=C sort -u "$S/L.list" "$S/LLB.list" "$S/LT.list" > "$S/LX.list"
 bash "$MS" list-managed --root "$C" 2>/dev/null | env LC_ALL=C sort > "$S/C.list"
 diffp=""
 while IFS= read -r p; do cmp -s "$A/$p" "$C/$p" || diffp="$diffp$p "; done < "$S/LX.list"

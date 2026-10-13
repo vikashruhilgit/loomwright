@@ -66,6 +66,16 @@
 #      learning store on the branch still gives A = B (seed PASS), while three UNMANAGED strays of a
 #      managed kind (NOTES.md, jobs/pending/, logs/) stay in B and fail it naming each; mutation
 #      control: B = the run-history entries only MUST turn the stray leg red
+#  22. a TRACKED learning store (.supervisor/eval/results.jsonl force-tracked on main), consent none
+#      AND grant: seed PASS with A = B = 3 (A is run history only), the store named as an OWNER
+#      DECISION extra, untrack-pr leaves it tracked, after-merge PASS, `plan` then reads `already`;
+#      a rollback --commit of a hand-made commit that untracked it re-tracks it and never deletes it
+#      from disk; mutation controls: tracked_managed without `--run-history` MUST turn seed red, and
+#      gone.list without the staged learning-store filter MUST delete the store
+#  23. rollback with consent granted and an UNTRACKED eval learning store on the branch: the store is
+#      NOT in the rollback tree (never committed to the default branch) and stays on disk, while
+#      the run history is re-tracked; mutation control: re-tracking every branch path (no
+#      learning-store subtraction) MUST turn it red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -630,6 +640,97 @@ if build_mutant "$MUT" "$MSED" 'cp "$2.rh" "$2" || return 1' && grep -qF "(\$2 i
   if stray_leg strays; then no "mutation control REFUTED: B = run history only still failed the stray seed"; else ok "mutation control: B = run history only drops the strays and turns the leg red ($STRAY_DETAIL)"; fi
   SCRIPT="$SUT"
 else no "mutation control (A/B stray narrowing) did not build — counts as FAIL"; fi
+
+echo "== 22. a tracked learning store stays tracked: run history alone is migrated =="
+EV=".supervisor/eval/results.jsonl"
+# tracked_learning_leg <none|grant> — history world plus $EV force-tracked on main; the full history
+# flow to after-merge. 0 = seed PASS (A = B = 3), $EV named as an owner-decision extra and never
+# untracked, after-merge PASS, plan reads `already`. Detail in TL_DETAIL.
+tracked_learning_leg() {
+  local ub
+  mkworld history
+  ( cd "$W/A" && mkdir -p .supervisor/eval && echo '{"run":"r1","score":1}' > "$EV" \
+    && git add -f "$EV" && git commit -qm eval && git push -q origin main ) >/dev/null 2>&1 \
+    || { TL_DETAIL="could not commit $EV"; return 1; }
+  [ "$1" = grant ] && bash "$HERE/setup-memory.sh" --root "$W/A" consent grant >/dev/null 2>&1
+  to_protected A || { TL_DETAIL="to_protected failed: $OUT"; return 1; }
+  mb A seed
+  TL_DETAIL="consent=$1 seed rc=$RC seed=$(st A seed) A=$(st A seed_a) B=$(st A seed_b)"
+  { [ "$RC" -eq 0 ] && [ "$(st A seed)" = PASS ] && [ "$(st A seed_a)" = 3 ] && [ "$(st A seed_b)" = 3 ] \
+    && has "OWNER DECISION: 2 tracked .supervisor/ path(s)" && grep -qx "  $EV" <<<"$OUT"; } || return 1
+  mb A untrack-pr || { TL_DETAIL="$TL_DETAIL; untrack-pr rc=$RC"; return 1; }
+  ub="$(st A untrack_branch)"
+  git --git-dir="$W/origin.git" cat-file -e "$ub:$EV" 2>/dev/null || { TL_DETAIL="$TL_DETAIL; the untrack PR untracks $EV"; return 1; }
+  mb A verify-pr "$(pr_n pr_untrack)" || { TL_DETAIL="$TL_DETAIL; verify-pr rc=$RC"; return 1; }
+  owner_merge "$ub"; TL_MERGE="$MERGE_SHA"
+  mb A after-merge
+  TL_DETAIL="$TL_DETAIL; after-merge rc=$RC"
+  { [ "$RC" -eq 0 ] && [ "$(st A after_merge)" = PASS ] && git -C "$W/A" ls-files --error-unmatch -- "$EV" >/dev/null 2>&1 \
+    && [ -f "$W/A/$EV" ] && [ -z "$(porcelain A)" ]; } || return 1
+  mb A plan
+  TL_DETAIL="$TL_DETAIL; plan rc=$RC"
+  [ "$RC" -eq 0 ] && has "already in branch mode on $BR"
+}
+tracked_learning_leg none; check $? "consent none: a tracked learning store is an owner-decision extra, seed PASS A = B = 3, kept tracked through after-merge, plan reads already ($TL_DETAIL)"
+tracked_learning_leg grant; check $? "consent grant: the same, with the store also on the branch ($TL_DETAIL)"
+# hand_rollback_leg — after leg 22 (grant): the OWNER untracks $EV in a hand-made commit on main, then
+# rollback --commit <that commit>. 0 = $EV re-tracked by the revert, in the rollback tree with its
+# bytes, still on disk (gone.list never deletes a learning store). Detail in HR_DETAIL.
+hand_rollback_leg() {
+  local c rb
+  tracked_learning_leg grant || { HR_DETAIL="setup: $TL_DETAIL"; return 1; }
+  ( cd "$W/A" && git rm -q --cached -- "$EV" && git commit -qm "untrack $EV" && git push -q origin main ) >/dev/null 2>&1 \
+    || { HR_DETAIL="could not untrack $EV by hand"; return 1; }
+  c="$(git -C "$W/A" rev-parse HEAD)"
+  mb A rollback --commit "$c"; rb="$(st A rollback_branch)"
+  HR_DETAIL="rc=$RC on-disk=$([ -f "$W/A/$EV" ] && echo yes || echo no) in-tree=$(git -C "$W/A" cat-file -e "$rb:$EV" 2>/dev/null && echo yes || echo no)"
+  [ "$RC" -eq 0 ] && [ -f "$W/A/$EV" ] && [ "$(cat "$W/A/$EV")" = '{"run":"r1","score":1}' ] \
+    && git -C "$W/A" cat-file -e "$rb:$EV" 2>/dev/null
+}
+hand_rollback_leg; check $? "rollback of a hand-made commit that untracked a learning store re-tracks it and never deletes it from disk ($HR_DETAIL)"
+MUT="$TROOT/mut-tracked-rh"
+if build_mutant "$MUT" 's/^tracked_managed() { bash "\$MS" list-managed --tracked --run-history --root "\$ROOT"; }$/tracked_managed() { bash "$MS" list-managed --tracked --root "$ROOT"; }/' \
+   'tracked_managed() { bash "$MS" list-managed --tracked --root "$ROOT"; }'; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  for cs in none grant; do
+    if tracked_learning_leg "$cs"; then no "mutation control REFUTED: tracked_managed without --run-history kept the consent-$cs leg green"
+    else ok "mutation control: tracked_managed without --run-history turns the consent-$cs leg red ($TL_DETAIL)"; fi
+  done
+  SCRIPT="$SUT"
+else no "mutation control (tracked_managed --run-history) did not build — counts as FAIL"; fi
+MUT="$TROOT/mut-gone-learn"
+if build_mutant "$MUT" 's/^    | grep -vxF -f "\$SD\/staged\.learn" > "\$SD\/gone\.list"$/    > "$SD\/gone.list"/' '    > "$SD/gone.list"'; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if hand_rollback_leg; then no "mutation control REFUTED: gone.list without the learning-store filter kept the store"; else ok "mutation control: gone.list without the learning-store filter deletes the store ($HR_DETAIL)"; fi
+  SCRIPT="$SUT"
+else no "mutation control (gone.list learning filter) did not build — counts as FAIL"; fi
+
+echo "== 23. rollback never commits a branch learning store to the default branch =="
+# rollback_learning_leg — history flow with consent granted and an UNTRACKED $EV, so seed publishes
+# it to the branch; after-merge, then rollback. 0 = $EV on the branch, NOT in the rollback tree,
+# still on disk, while the run history is re-tracked and the tree is clean. Detail in RL_DETAIL.
+rollback_learning_leg() {
+  local rb
+  mkworld history
+  mkdir -p "$W/A/.supervisor/eval"; echo '{"run":"r1","score":1}' > "$W/A/$EV"
+  bash "$HERE/setup-memory.sh" --root "$W/A" consent grant >/dev/null 2>&1
+  to_protected A && mb A seed && mb A untrack-pr && mb A verify-pr "$(pr_n pr_untrack)" || { RL_DETAIL="flow failed at rc=$RC: $(printf '%s' "$OUT" | tail -n 2)"; return 1; }
+  owner_merge "$(st A untrack_branch)"
+  mb A after-merge || { RL_DETAIL="after-merge rc=$RC"; return 1; }
+  git --git-dir="$W/origin.git" cat-file -e "$BR:$EV" 2>/dev/null || { RL_DETAIL="$EV never reached $BR"; return 1; }
+  mb A rollback --commit "$MERGE_SHA"; rb="$(st A rollback_branch)"
+  RL_DETAIL="rc=$RC in-rollback-tree=$(git -C "$W/A" cat-file -e "$rb:$EV" 2>/dev/null && echo yes || echo no) on-disk=$([ -f "$W/A/$EV" ] && echo yes || echo no)"
+  [ "$RC" -eq 0 ] && remote_has "$rb" && ! git -C "$W/A" cat-file -e "$rb:$EV" 2>/dev/null && [ -f "$W/A/$EV" ] \
+    && git -C "$W/A" cat-file -e "$rb:.supervisor/jobs/done/a.md" 2>/dev/null \
+    && git -C "$W/A" cat-file -e "$rb:.supervisor/requirements/q/req.md" 2>/dev/null && [ -z "$(porcelain A)" ]
+}
+rollback_learning_leg; check $? "rollback re-tracks run history but never the branch's learning store, which stays on disk ($RL_DETAIL)"
+MUT="$TROOT/mut-rb-learn"
+if build_mutant "$MUT" 's/^  grep -vxF -f "\$SD\/onbranch\.learn" "\$SD\/onbranch\.all"/  grep -vxF -f \/dev\/null "$SD\/onbranch.all"/' 'grep -vxF -f /dev/null "$SD/onbranch.all"'; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if rollback_learning_leg; then no "mutation control REFUTED: re-tracking every branch path kept the learning store out of the rollback tree"; else ok "mutation control: re-tracking every branch path commits the learning store and turns the leg red ($RL_DETAIL)"; fi
+  SCRIPT="$SUT"
+else no "mutation control (rollback learning subtraction) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"

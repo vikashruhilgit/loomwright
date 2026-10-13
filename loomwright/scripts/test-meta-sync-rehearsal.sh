@@ -27,6 +27,14 @@
 #      branch and round-trip byte-identical, and the caller's record is not written for the scratch
 #      clone; mutation controls: verify-present over the FULL list goes red without consent,
 #      verify-types without .provenance.jsonl goes red with consent
+#   8. run history vs learning stores in the rehearsal's own `--tracked` / count reads (each pinned by
+#      a mutant dropping its `--run-history` or its tracked-learning term):
+#      a TRACKED learning store (.supervisor/eval/results.jsonl) stays tracked through the scratch
+#      migration, so the second clone gets it through git: every check PASSes with consent none and
+#      granted (pull-roundtrip expects it); mode `on <b>` with ONLY a learning store tracked is
+#      already migrated (no reset, FAIL scratch-mode-off — migrate-branch-mode.sh's `already`); a
+#      fresh fixture whose only other .md is a twin contract still gets the two synthetic seeds;
+#      a scratch migration that also untracks the learning store goes red at migrate-clean
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -208,6 +216,56 @@ if build_mutant "$TROOT/mut-types" meta-sync-rehearsal.sh "$TROOT/types.sed" 'br
   SCRIPT="$TROOT/mut-types/meta-sync-rehearsal.sh"; run --branch "$BR"; SCRIPT="$SUT"
   if [ "$RC" -eq 1 ] && red verify-types; then ok "mutation control: without .provenance.jsonl among the kinds a consented run goes red at verify-types"; else no "mutation control REFUTED: verify-types stayed green without .provenance.jsonl (rc=$RC)"; fi
 else no "mutation control (types) did not build — counts as FAIL"; fi
+
+echo "== 8. run history vs learning stores in the rehearsal's tracked / count reads =="
+EV=".supervisor/eval/results.jsonl"
+track_ev() { ( cd "$W/src" && mkdir -p .supervisor/eval && echo '{"run":"r1","score":1}' > "$EV" && git add -f "$EV" && git commit -qm eval && git push -q origin main ) >/dev/null 2>&1; }
+# tl_run [grant] — history fixture with $EV force-tracked; 0 = every check PASSes
+tl_run() { mkworld; track_ev; [ "${1:-}" = grant ] && bash "$HERE/setup-memory.sh" --root "$W/src" consent grant >/dev/null 2>&1; run --branch "$BR"; [ "$RC" -eq 0 ] && all_pass >/dev/null; }
+tl_run; check $? "a tracked learning store, consent none: every check PASSes (it stays tracked; pull-roundtrip expects it) (rc=$RC)"
+[ "$RC" -eq 0 ] || printf '%s\n' "$OUT" | grep -E '^(FAIL|info)' | sed 's/^/    /'
+tl_run grant; check $? "a tracked learning store, consent granted: every check PASSes (rc=$RC)"
+[ "$RC" -eq 0 ] || printf '%s\n' "$OUT" | grep -E '^(FAIL|info)' | sed 's/^/    /'
+cat > "$TROOT/lx.sed" <<'SED'
+s|^env LC_ALL=C sort -u "\$S/L.list" "\$S/LLB.list" "\$S/LT.list" > "\$S/LX.list"$|env LC_ALL=C sort -u "$S/L.list" "$S/LLB.list" > "$S/LX.list"  # MUTANT-LX|
+SED
+if build_mutant "$TROOT/mut-lx" meta-sync-rehearsal.sh "$TROOT/lx.sed" 'MUTANT-LX'; then
+  SCRIPT="$TROOT/mut-lx/meta-sync-rehearsal.sh"; tl_run; SCRIPT="$SUT"
+  if [ "$RC" -eq 1 ] && red pull-roundtrip; then ok "mutation control: without the tracked-learning term a tracked learning store turns pull-roundtrip red"; else no "mutation control REFUTED: pull-roundtrip stayed green without the tracked-learning term (rc=$RC)"; fi
+else no "mutation control (LX) did not build — counts as FAIL"; fi
+cat > "$TROOT/untrack-all.sed" <<'SED'
+s|^bash "\$MS" list-managed --tracked --run-history --root "\$A" > "\$S/T.list" 2>/dev/null |bash "$MS" list-managed --tracked --root "$A" > "$S/T.list" 2>/dev/null  # MUTANT-UNTRACK-ALL |
+SED
+if build_mutant "$TROOT/mut-untrack-all" meta-sync-rehearsal.sh "$TROOT/untrack-all.sed" 'MUTANT-UNTRACK-ALL'; then
+  SCRIPT="$TROOT/mut-untrack-all/meta-sync-rehearsal.sh"; tl_run; SCRIPT="$SUT"
+  if [ "$RC" -eq 1 ] && red migrate-clean; then ok "mutation control: a scratch migration that untracks the learning store too turns migrate-clean red"; else no "mutation control REFUTED: untracking the learning store left migrate-clean green (rc=$RC)"; fi
+else no "mutation control (untrack-all) did not build — counts as FAIL"; fi
+# mode `on $BR` with only a learning store tracked = already migrated (no run history tracked)
+ev_only_world() {
+  mkworld fresh; track_ev
+  ( cd "$W/src" && bash "$HERE/setup-memory.sh" --root "$W/src" apply --branch-mode "$BR" >/dev/null 2>&1 && rm -f .gitignore.backup.* && git commit -qam mode && git push -q origin main ) >/dev/null 2>&1
+}
+ev_only_world; run --branch "$BR"
+{ [ "$RC" -eq 1 ] && red scratch-mode-off && ! has "info: half-migrated"; }; check $? "mode on $BR with only a learning store tracked -> already migrated: no reset, FAIL scratch-mode-off (rc=$RC)"
+cat > "$TROOT/t0.sed" <<'SED'
+s|list-managed --tracked --run-history --root "\$A" > "\$S/T0.list"|list-managed --tracked --root "$A" > "$S/T0.list"|
+SED
+if build_mutant "$TROOT/mut-t0" meta-sync-rehearsal.sh "$TROOT/t0.sed" 'list-managed --tracked --root "$A" > "$S/T0.list"'; then
+  ev_only_world; SCRIPT="$TROOT/mut-t0/meta-sync-rehearsal.sh"; run --branch "$BR"; SCRIPT="$SUT"
+  if has "info: half-migrated"; then ok "mutation control: counting the learning store as tracked run history rehearses an already-migrated checkout as half-migrated"; else no "mutation control REFUTED: no half-migrated reset without --run-history (rc=$RC)"; fi
+else no "mutation control (T0) did not build — counts as FAIL"; fi
+# a fresh fixture whose only other .md is a twin contract: the drill needs two RUN-HISTORY .md files
+tw_world() { mkworld fresh; ( cd "$W/src" && printf 'SYSTEM_CONTRACT: app\ninvariants: [prints code]\n' | bash "$HERE/write-system-contract.sh" --subsystem app --source "session:fixture-0001" >/dev/null 2>&1 ); }
+tw_world; run --branch "$BR"
+{ [ "$RC" -eq 0 ] && all_pass && has "added two synthetic"; }; check $? "fresh + a twin contract: the synthetic seeds are still added, every check PASSes (rc=$RC)"
+[ "$RC" -eq 0 ] || printf '%s\n' "$OUT" | grep -E '^(FAIL|info)' | sed 's/^/    /'
+cat > "$TROOT/nmd.sed" <<'SED'
+s|^n_md="\$(bash "\$MS" list-managed --run-history --root|n_md="$(bash "$MS" list-managed --root|
+SED
+if build_mutant "$TROOT/mut-nmd" meta-sync-rehearsal.sh "$TROOT/nmd.sed" 'n_md="$(bash "$MS" list-managed --root'; then
+  tw_world; SCRIPT="$TROOT/mut-nmd/meta-sync-rehearsal.sh"; run --branch "$BR"; SCRIPT="$SUT"
+  if [ "$RC" -eq 1 ] && ! has "added two synthetic"; then ok "mutation control: counting the twin contract as drill material skips the seeds and turns the run red ($(printf '%s\n' "$OUT" | grep '^FAIL' | cut -d' ' -f2 | tr '\n' ' '))"; else no "mutation control REFUTED: counting the twin contract left the run green (rc=$RC)"; fi
+else no "mutation control (n_md) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"
