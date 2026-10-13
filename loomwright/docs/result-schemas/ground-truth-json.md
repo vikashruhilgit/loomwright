@@ -263,12 +263,12 @@ heading line**, opened by the namespaced HTML-comment sentinel the idempotency g
   hand-written `## Status: done`. Until then the requirement reads `brief-shipped` (or nothing) and
   `resolve-folder` keeps listing the merged item. `stamp-requirement-status.sh`
   (run on session start and when a Supervisor runner agent finishes — its two `hooks.json` seams) writes that `brief-shipped` heading on
-  a status-less requirement once its brief lands in `done/`. **Caveat:** `reconcile-status --apply`
-  never promotes a requirement already marked `brief-shipped` (which candidates it does promote, and
-  what counts as merged-PR evidence, is the `reconcile-status` row of `skills/automate-loop/SKILL.md`
-  §1.5 — not restated here); a `brief-shipped` one is listed as an
-  `info` row and left unchanged, so it needs a hand-written `## Status: done`. Promoting a merged
-  `brief-shipped` requirement in `reconcile-status` is an open follow-up, an explicit non-goal today.
+  a status-less requirement once its brief lands in `done/`. `reconcile-status --apply` promotes a
+  `brief-shipped` requirement on the same merged-PR evidence it requires of any other not-done one
+  (which candidates it promotes, and what counts as merged-PR evidence, is the `reconcile-status` row
+  of `skills/automate-loop/SKILL.md` §1.5 — not restated here), appending its done heading below the
+  kept `brief-shipped` one; without that evidence the file is listed as an `info` row and left
+  unchanged, and only then needs a hand-written `## Status: done`.
 - **Vocabulary (intentional):** the requirement uses `done`, the brief `## Outcome` uses `completed` /
   `completed_with_escalation`. The split is deliberate — the requirement is "done", the brief is
   "completed" — do **not** harmonize them.
