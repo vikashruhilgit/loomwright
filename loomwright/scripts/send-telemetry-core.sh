@@ -3,20 +3,28 @@
 #
 # Authoritative spec: loomwright/docs/TELEMETRY.md
 #
-# Pipeline (matches docs/TELEMETRY.md §Interest filter — privacy first, gh last,
-# interest-filter runs AFTER consent + target-repo + body-privacy, BEFORE dedup;
-# updated in heal iter 1 of v11.2.0 to remove the prior order-of-operations
-# divergence that allowed a healthy run with a secret to be filter-skipped
-# without a PRIVACY_BLOCKED audit-log entry):
+# Pipeline (matches docs/TELEMETRY.md §Interest filter — privacy first, gh last):
 #   1. Parse flags (only --dry-run supported)
 #   2. Read stdin
-#   3. Parse JSON (session_id, agent_type, result_block) + detect schema
-#   4. Compute deterministic score per the rubric (three separate per-block tables)
-#   5. Raw payload privacy scan — fail-closed exit 2 BEFORE consent so
-#      privacy-blocked events always log even on healthy/successful runs.
-#   6. Build prospective body (redacted) + final body privacy scan (defence
-#      in depth — exit 2 again on hit).
-#   7. Read consent via resolve-egress-config.sh (USER-SCOPE ONLY —
+#   3. Stage 1 (python, `-I`):
+#      a. resolve the finishing agent's text and locate its result block with
+#         the SHARED result_block_parser.py — the same ladder and locator the
+#         SubagentStop validators use (no second, permissive parser here)
+#      b. raw payload privacy scan — fail-closed exit 2 BEFORE everything
+#         else, so a privacy-blocked event always logs, healthy or not
+#      c. sibling-validator verdict: run the SAME validate-*-result.py that
+#         sits beside this core in the SubagentStop group on the SAME payload;
+#         a stop it rejects (`decision: block`) is skipped (exit 5,
+#         validator_rejected) — the agent is told to re-emit and the retry is
+#         the one that is recorded. Decided from the verdict, not hook order.
+#      d. parse the block with result_block_parser.parse_block; parse errors
+#         also skip (exit 5, unparseable_block) — defence in depth when the
+#         validator itself is unavailable
+#      e. score + per-severity / per-category counts FROM THE PARSED FIELDS
+#         (every category, `drift` included — never from rendered lines)
+#      f. render the open / round / close texts from plugin facts only, then
+#         the final body privacy scan (exit 2 again on hit)
+#   4. Read consent via resolve-egress-config.sh (USER-SCOPE ONLY —
 #      ~/.claude/loomwright/egress.json, keyed by repo slug; red-team-hardening
 #      item 02 — a repo-relative .supervisor/telemetry-consent.json can at most
 #      REQUEST, never grant, see docs/TELEMETRY.md §"Consent flow"):
@@ -25,12 +33,21 @@
 #        - repo-requested telemetry_repo != resolved value -> stderr
 #          "repo_consent_ignored slug=<slug>" (informational, does not change
 #          the exit code by itself)
-#   8. Resolve target repo (env -> user-scope entry -> exit 4)
-#   9. Interest filter (skip if score >= 5 AND status in success set, exit 5)
-#  10. Dedup check (sha256 of task_id::score_bucket::primary_error within 6h, exit 5)
-#  11. Dry-run branch (print and exit 0 with WOULD_EXIT marker)
-#  12. Live: gh issue create
-#  13. Append success line to telemetry-sent.log
+#   5. Resolve target repo (env -> user-scope entry -> exit 4)
+#   6. Stage 2 (python, `-I`) — ONE THREAD PER REVIEW TARGET
+#      (docs/TELEMETRY.md §"Posting policy"):
+#        - thread key = sha256(destination, agent, source repo, branch) computed
+#          locally; stored ONLY in the user-scope map
+#          ~/.claude/loomwright/telemetry-threads.json, never posted
+#        - interest filter: a success with no open thread and score >= 5 is
+#          skipped (exit 5)
+#        - first non-success for a key opens an issue; later rounds comment on
+#          it; a success closes it (closing comment + telemetry:healed-in-loop)
+#        - the same round seen twice in one thread is skipped (exit 5, dedup_hit)
+#        - unreadable map -> post nothing (exit 1, thread_map_unreadable)
+#        - --dry-run: reads the map, prints the would-be action, writes nothing
+#        - live: the whole read-decide-post-write runs under an exclusive
+#          flock on the map's lock file; the map is replaced atomically
 #
 # Exit codes (authoritative — match docs/TELEMETRY.md):
 #   0 sent
@@ -62,11 +79,15 @@ if [ -n "$CORE_SELF_DIR" ] && [ -f "$PLUGIN_MANIFEST" ]; then
   if command -v jq >/dev/null 2>&1; then
     PLUGIN_VERSION="$(jq -r '.version // "unknown"' "$PLUGIN_MANIFEST" 2>/dev/null)" || PLUGIN_VERSION="unknown"
   elif command -v python3 >/dev/null 2>&1; then
-    PLUGIN_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version") or "unknown")' "$PLUGIN_MANIFEST" 2>/dev/null)" || PLUGIN_VERSION="unknown"
+    PLUGIN_VERSION="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version") or "unknown")' "$PLUGIN_MANIFEST" 2>/dev/null)" || PLUGIN_VERSION="unknown"
   fi
 fi
 case "$PLUGIN_VERSION" in ""|null) PLUGIN_VERSION="unknown" ;; esac
 export LOOMWRIGHT_PLUGIN_VERSION="$PLUGIN_VERSION"
+# The shared parser and the sibling validators are found HERE, beside this
+# script — never on $PWD (the user's project), which `python3 -I` also keeps
+# off sys.path.
+export LOOMWRIGHT_TELEMETRY_CORE_DIR="$CORE_SELF_DIR"
 
 # ---- Parse flags -------------------------------------------------------------
 DRY_RUN="false"
@@ -102,12 +123,11 @@ fi
 
 # ---- Early consent read: INCLUDE_RESULT_BLOCK only ---------------------------
 # This is a NON-GATING read — it does not decide whether the send proceeds
-# (that is step 7 below, unchanged, at its documented pipeline position). It
-# only tells stage 1 whether to restore `result_block` into raw_data while
-# building the body, which has to happen before the body-privacy scan that
-# stage 1 itself performs. Calling the resolver a second time at step 7 for
-# the actual consent decision is deliberate — it keeps this read isolated
-# from (and unable to influence) the documented privacy-before-consent order.
+# (that is step 4 below, unchanged, at its documented pipeline position). It
+# only tells stage 1 whether the (now inert) include_result_block key is set,
+# so stage 1 can note that it ignores it. Calling the resolver a second time at
+# step 4 for the actual consent decision is deliberate — it keeps this read
+# isolated from (and unable to influence) the privacy-before-consent order.
 EARLY_INCLUDE_RESULT_BLOCK=""
 if [ -n "$CORE_SELF_DIR" ] && [ -f "${CORE_SELF_DIR}/resolve-egress-config.sh" ]; then
   EARLY_RESOLVER_OUT="$(bash "${CORE_SELF_DIR}/resolve-egress-config.sh" 2>/dev/null || true)"
@@ -121,7 +141,7 @@ EOF
 fi
 export LOOMWRIGHT_INCLUDE_RESULT_BLOCK="$EARLY_INCLUDE_RESULT_BLOCK"
 
-# ---- Stage 1: parse JSON, detect schema, compute score, build payload --------
+# ---- Stage 1: parse JSON, verdict, parse block, score, build texts -----------
 #
 # Single python invocation that returns a `key=value` line-protocol on stdout
 # so bash can keep orchestrating cleanly. All redactions and regex live inside
@@ -131,12 +151,14 @@ export LOOMWRIGHT_INCLUDE_RESULT_BLOCK="$EARLY_INCLUDE_RESULT_BLOCK"
 # (`python3 - <<PY` reads its code from stdin, which would clobber the JSON
 # payload we need to pipe in.) Using `python3 -c "$VAR"` keeps stdin free.
 IFS= read -r -d '' STAGE1_PY <<'PY' || true
-import json, sys, re, os
+import json, sys, re, os, hashlib, subprocess
 
 # ---------------------------------------------------------------------------
 # Privacy regex deny-list — MUST stay aligned with send-telemetry.sh wrapper
 # and docs/TELEMETRY.md. The first 8 tuples are the wrapper's mapping; the 9th
 # (.env-style assignment, multiline) is body-only per Subtask #2a guidance.
+# Defined (with the two helpers below) BEFORE any exit point: the test
+# harness exec()s this source and calls them directly.
 # ---------------------------------------------------------------------------
 PRIVACY_PATTERNS = [
     (re.compile(r"sk-[A-Za-z0-9]{20,}"),                                 "openai-key"),
@@ -150,524 +172,6 @@ PRIVACY_PATTERNS = [
     (re.compile(r"^\s*[A-Z_][A-Z0-9_]*=.+$", re.MULTILINE),              "env-assignment"),
 ]
 
-def emit(key, value):
-    # Replace newlines so bash can read line-by-line.
-    if isinstance(value, bool):
-        value = "true" if value else "false"
-    s = str(value).replace("\r", " ").replace("\n", "\\n")
-    sys.stdout.write("%s=%s\n" % (key, s))
-
-def fail(stage, msg, exit_code):
-    sys.stderr.write("%s reason=%s\n" % (stage, msg))
-    emit("EXIT_CODE", exit_code)
-    sys.stdout.flush()
-    sys.exit(0)  # bash reads EXIT_CODE; this stage always returns 0 itself.
-
-def _last_assistant_text_from_transcript(path):
-    """Best-effort extraction of the LAST assistant message's text from a Claude
-    Code transcript JSONL. The transcript schema is not formally documented, so
-    we defensively pull `text` parts from the last assistant-role entry. Returns
-    "" on any read/parse failure. Mirrors the helper of the same name in
-    scripts/validate-launch-pad-result.py — keep the two in sync."""
-    last_text = ""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-                msg = obj.get("message") if isinstance(obj, dict) else None
-                if not isinstance(msg, dict):
-                    msg = obj if isinstance(obj, dict) else {}
-                role = msg.get("role") or obj.get("role") or obj.get("type")
-                if role != "assistant":
-                    continue
-                content = msg.get("content")
-                texts = []
-                if isinstance(content, str):
-                    texts.append(content)
-                elif isinstance(content, list):
-                    for part in content:
-                        if isinstance(part, dict) and isinstance(part.get("text"), str):
-                            texts.append(part["text"])
-                if texts:
-                    last_text = "\n".join(texts)
-    except OSError:
-        return ""
-    return last_text
-
-def _last_handback_message_from_transcript(path):
-    """Return the `message` of the LAST `SubagentHandback` tool call in a
-    subagent transcript JSONL, or "" when there is none / on any failure.
-
-    Current Claude Code runtimes return a subagent's report through a
-    `SubagentHandback` tool call: the full report (including the YAML result
-    block) is that call's `input.message`, while `last_assistant_message` is a
-    short prose recap that typically NAMES the block without containing it
-    (captured 2026-09-27 from a real loomwright:code-reviewer SubagentStop).
-    Reading only the recap made every CODE_REVIEW_RESULT score with an empty
-    `decision`."""
-    last_msg = ""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-                msg = obj.get("message") if isinstance(obj, dict) else None
-                if not isinstance(msg, dict) or msg.get("role") != "assistant":
-                    continue
-                content = msg.get("content")
-                if not isinstance(content, list):
-                    continue
-                for part in content:
-                    if (isinstance(part, dict) and part.get("type") == "tool_use"
-                            and part.get("name") == "SubagentHandback"):
-                        inp = part.get("input")
-                        m = inp.get("message") if isinstance(inp, dict) else None
-                        if isinstance(m, str) and m:
-                            last_msg = m
-    except OSError:
-        return ""
-    return last_msg
-
-# A result block is present only when its name stands on a HEADER line
-# (`NAME:` YAML form or `## NAME` markdown form). A bare substring match also
-# fired on prose that merely mentions the block ("I sent back the
-# CODE_REVIEW_RESULT block"), which then scored with every field empty.
-SCHEMA_NAMES = ("SUPERVISOR_RESULT", "CODE_REVIEW_RESULT", "QA_RESULT")
-
-def _has_block_header(text, name):
-    return re.search(r"^[ \t]*(?:#+[ \t]*)?" + name + r"[ \t]*:?[ \t]*$",
-                     text, re.MULTILINE) is not None
-
-def _has_any_block(text):
-    return any(_has_block_header(text, n) for n in SCHEMA_NAMES)
-
-# ---- Parse JSON ------------------------------------------------------------
-try:
-    raw = sys.stdin.read()
-    payload = json.loads(raw)
-    if not isinstance(payload, dict):
-        raise ValueError("payload_not_object")
-except Exception as e:
-    fail("unknown_payload_skipped", "json_parse_failed", 5)
-
-session_id = payload.get("session_id", "") or ""
-if not isinstance(session_id, str):
-    session_id = ""
-session_id = "".join(c for c in session_id if c.isalnum() or c in ("-", "_"))
-
-agent_type = payload.get("agent_type", "") or ""
-if not isinstance(agent_type, str):
-    agent_type = ""
-
-# ---- Resolve the finishing subagent's output text --------------------------
-# v14.2.1 correctness fix: Claude Code SubagentStop payloads do NOT carry a
-# top-level `result_block` field. Empirically (verified against a real captured
-# SubagentStop payload) the subagent's final text lives in
-# `last_assistant_message`; the only guaranteed fallback is the transcript
-# JSONL (`agent_transcript_path` for a Task-spawned subagent — the plugin's
-# code-reviewer / qa-executor / supervisor-runner all fire their SubagentStop
-# this way — else the shared session `transcript_path`). The legacy
-# `result_block` / `output` / `agent_output` field names are retained in the
-# chain so existing fixtures and any future payload that re-adds them keep
-# working. Mirrors scripts/validate-launch-pad-result.py.
-result_block = (
-    payload.get("last_assistant_message")
-    or payload.get("result_block")
-    or payload.get("output")
-    or payload.get("agent_output")
-    or ""
-)
-if not isinstance(result_block, str):
-    result_block = ""
-# The inline text may be a handback recap that names the block without
-# carrying it — prefer the subagent's SubagentHandback message when the
-# inline text holds no actual block.
-if not _has_any_block(result_block):
-    _atp = payload.get("agent_transcript_path")
-    if isinstance(_atp, str) and _atp and os.path.exists(_atp):
-        _hb = _last_handback_message_from_transcript(_atp)
-        if _has_any_block(_hb):
-            result_block = _hb
-if not result_block:
-    for _tp_key in ("agent_transcript_path", "transcript_path"):
-        _tp = payload.get(_tp_key)
-        if isinstance(_tp, str) and _tp and os.path.exists(_tp):
-            _txt = _last_assistant_text_from_transcript(_tp)
-            if _txt:
-                result_block = _txt
-                break
-
-# ---- Detect schema ---------------------------------------------------------
-schema = None
-for _name in SCHEMA_NAMES:
-    if _has_block_header(result_block, _name):
-        schema = _name
-        break
-if schema is None:
-    fail("unknown_payload_skipped", "no_known_result_block", 5)
-
-# ---- Helpers to extract fields from a result block --------
-# Real agents emit YAML mapping form (`  key: value`, see agents/supervisor.md
-# §"Result Block" and docs/RESULT_SCHEMAS.md). The earlier fixtures use the
-# bullet form (`- key: value`) — both must be supported, since the SubagentStop
-# payload echoes whatever the agent printed verbatim.
-def field(text, key):
-    """Return first match for `key: value` or `- key: value` (case-insensitive)."""
-    rx = re.compile(r"^\s*(?:-\s*)?" + re.escape(key) + r"\s*:\s*(.+?)\s*$",
-                    re.MULTILINE | re.IGNORECASE)
-    m = rx.search(text)
-    if not m:
-        return None
-    return m.group(1).strip()
-
-def field_list(text, key):
-    """Parse `- key: [a, b, c]` or empty list `[]` into a Python list."""
-    raw = field(text, key)
-    if raw is None:
-        return []
-    raw = raw.strip()
-    if raw.startswith("[") and raw.endswith("]"):
-        inner = raw[1:-1].strip()
-        if not inner:
-            return []
-        # Split on commas; tolerate quoted items.
-        items = [x.strip().strip('"').strip("'") for x in inner.split(",")]
-        return [x for x in items if x]
-    # Fallback: single-value treated as one-element list.
-    return [raw]
-
-def field_int(text, key, default=0):
-    v = field(text, key)
-    if v is None:
-        return default
-    try:
-        return int(v)
-    except Exception:
-        try:
-            return int(float(v))
-        except Exception:
-            return default
-
-def field_float(text, key, default=0.0):
-    v = field(text, key)
-    if v is None:
-        return default
-    try:
-        return float(v)
-    except Exception:
-        return default
-
-def clamp(s):
-    if s < 0:
-        return 0.0
-    if s > 10:
-        return 10.0
-    return s
-
-def round_half_up_int(s):
-    # Round half up to nearest integer (Python's bankers' rounding would round
-    # 0.5 to 0, which is wrong for our spec).
-    import math
-    return int(math.floor(s + 0.5))
-
-# ---------------------------------------------------------------------------
-# Score functions (deterministic; same input -> same output).
-# ---------------------------------------------------------------------------
-
-def parse_count_or_list(text, key):
-    """Parse `key: <int>` or `key: [a, b]` and return (count, list_items).
-
-    Schema-canonical form is integer (`subtasks_failed: 0`). Legacy bullet
-    fixtures use list form (`- subtasks_failed: []` or `[BD-1, BD-2]`).
-    Returns (0, []) when the field is missing or unparseable.
-    """
-    raw = field(text, key)
-    if raw is None:
-        return (0, [])
-    raw = raw.strip()
-    if raw.startswith("[") and raw.endswith("]"):
-        inner = raw[1:-1].strip()
-        if not inner:
-            return (0, [])
-        items = [x.strip().strip('"').strip("'") for x in inner.split(",") if x.strip()]
-        return (len(items), items)
-    try:
-        return (int(raw), [])
-    except (ValueError, TypeError):
-        try:
-            return (int(float(raw)), [])
-        except (ValueError, TypeError):
-            return (0, [])
-
-def score_supervisor(text):
-    """Rubric A — SUPERVISOR_RESULT.
-    Returns (final_score_float, status, primary_error, success_bool, sub_agent_weak_label_or_empty).
-    """
-    status = (field(text, "status") or "").strip().lower()
-    heal_decision = (field(text, "heal_decision") or "").strip().upper()
-    heal_remaining = field_int(text, "heal_remaining_issues", 0)
-    sf_count, sf_list = parse_count_or_list(text, "subtasks_failed")
-
-    base_deducted_for_remaining = False
-    if status == "completed" and heal_decision == "PASS" and heal_remaining == 0:
-        base = 9.0
-    elif status == "completed" and heal_decision == "PASS" and heal_remaining > 0:
-        base = 7.0
-        base_deducted_for_remaining = True  # base already accounts for it.
-    elif status == "completed_with_escalation":
-        base = 5.0
-    elif status == "checkpoint":
-        base = 4.0
-    elif status == "failed":
-        base = 2.0
-    else:
-        base = 3.0
-        sys.stderr.write("score_default_used schema=SUPERVISOR_RESULT status=%s\n" % status)
-
-    # Adjustments
-    base -= 0.5 * sf_count
-    if heal_remaining > 0 and not base_deducted_for_remaining:
-        delta = -0.25 * heal_remaining
-        if delta < -1.0:
-            delta = -1.0
-        base += delta
-
-    final = clamp(base)
-
-    # Primary error
-    primary_error = ""
-    if sf_list:
-        primary_error = sf_list[0]
-    elif heal_decision and heal_decision != "PASS":
-        primary_error = heal_decision
-
-    # Success
-    success = (status == "completed" and heal_decision == "PASS")
-
-    # Sub-agent weak label — be conservative (omit per spec note).
-    weak_label = ""
-
-    return final, status, primary_error, success, weak_label
-
-def parse_issue_blocks(text):
-    """Parse all issue blocks from a CODE_REVIEW_RESULT result block.
-
-    Returns a list of dicts with keys severity (upper-cased), category
-    (lower-cased), description, file, drift_kind. Each block's window runs
-    from one `severity: …` match to the next, so field order WITHIN a block
-    is irrelevant — `description` may legally appear before `category`, and
-    extra optional fields (suggestion, line, drift_kind, …) may interleave.
-
-    The schema (docs/RESULT_SCHEMAS.md v3 + hooks/hooks.json validator)
-    requires the fields to exist but imposes no ordering, so this parser
-    must not either.
-    """
-    issues = []
-    sev_rx = re.compile(r"severity\s*:\s*([A-Za-z]+)", re.IGNORECASE)
-    sev_matches = list(sev_rx.finditer(text))
-    for i, m in enumerate(sev_matches):
-        start = m.start()
-        end = sev_matches[i + 1].start() if i + 1 < len(sev_matches) else len(text)
-        window = text[start:end]
-        sev = m.group(1).strip().upper()
-        cat_m = re.search(r"category\s*:\s*([A-Za-z_]+)", window, re.IGNORECASE)
-        desc_m = re.search(r"description\s*:\s*(.+?)\s*(?:\n|$)", window, re.IGNORECASE)
-        file_m = re.search(r"\bfile\s*:\s*(.+?)\s*(?:\n|$)", window, re.IGNORECASE)
-        drift_m = re.search(r"drift_kind\s*:\s*([A-Za-z_]+)", window, re.IGNORECASE)
-        issues.append({
-            "severity": sev,
-            "category": (cat_m.group(1).strip().lower() if cat_m else ""),
-            "description": (desc_m.group(1).strip() if desc_m else ""),
-            "file": (file_m.group(1).strip() if file_m else ""),
-            "drift_kind": (drift_m.group(1).strip().lower() if drift_m else ""),
-        })
-    return issues
-
-def _count_severity(parsed_issues, severity):
-    """Count parsed issues at the given severity, bucketed by category.
-    Operates on the output of parse_issue_blocks() so it is order-independent.
-    """
-    counts = {"new": 0, "pre_existing": 0, "nit": 0, "drift": 0, "_total": 0}
-    target = severity.upper()
-    for issue in parsed_issues:
-        if issue["severity"] != target:
-            continue
-        cat = issue["category"]
-        if cat in counts:
-            counts[cat] += 1
-        counts["_total"] += 1
-    return counts
-
-def score_code_review(text):
-    """Rubric B — CODE_REVIEW_RESULT."""
-    decision = (field(text, "decision") or "").strip().upper()
-
-    parsed_issues = parse_issue_blocks(text)
-    blocking = _count_severity(parsed_issues, "BLOCKING")
-    high = _count_severity(parsed_issues, "HIGH")
-    medium = _count_severity(parsed_issues, "MEDIUM")
-    low = _count_severity(parsed_issues, "LOW")
-
-    new_blocking = blocking.get("new", 0)
-    new_high = high.get("new", 0)
-    new_medium = medium.get("new", 0)
-    new_low = low.get("new", 0)
-
-    # Drift issues across all severities.
-    drift_total = (blocking.get("drift", 0) + high.get("drift", 0)
-                   + medium.get("drift", 0) + low.get("drift", 0))
-
-    if decision == "PASS" and new_blocking == 0 and new_high == 0:
-        base = 9.0
-    elif decision == "PASS" and (new_medium > 0 or new_low > 0) and new_blocking == 0 and new_high == 0:
-        base = 7.0
-    elif decision == "NEEDS_HUMAN":
-        base = 4.0
-    elif decision == "FAIL":
-        base = 2.0
-    else:
-        base = 3.0
-        sys.stderr.write("score_default_used schema=CODE_REVIEW_RESULT decision=%s\n" % decision)
-
-    base += -1.0 * new_blocking
-    base += -0.5 * new_high
-    base += -0.25 * drift_total
-
-    final = clamp(base)
-
-    # Primary error: first `new` BLOCKING issue's description, else first `new`
-    # HIGH, else empty. Iterates the structurally-parsed list so field order
-    # within each issue block is irrelevant.
-    primary_error = ""
-    for sev_pref in ("BLOCKING", "HIGH"):
-        for issue in parsed_issues:
-            if issue["severity"] == sev_pref and issue["category"] == "new" and issue["description"]:
-                primary_error = issue["description"].splitlines()[0]
-                break
-        if primary_error:
-            break
-
-    success = (decision == "PASS")
-    weak_label = ""
-    return final, decision.lower(), primary_error, success, weak_label
-
-def score_qa(text):
-    """Rubric C — QA_RESULT."""
-    tg = field_int(text, "tests_generated", 0)
-    tp = field_int(text, "tests_passed", 0)
-    coverage = field_float(text, "coverage_estimate", 0.0)
-    gates_passed = field_int(text, "self_check_gates_passed", 5)
-
-    if tg == 0:
-        # Per spec: filter_skipped upstream. Signal that to bash.
-        emit("EXIT_CODE", 5)
-        sys.stderr.write("filter_skipped reason=tests_generated_zero\n")
-        sys.exit(0)
-
-    r = float(tp) / float(tg) if tg > 0 else 0.0
-
-    if r >= 1.0:
-        base = 9.0
-    elif r >= 0.9:
-        base = 7.0
-    elif r >= 0.7:
-        base = 5.0
-    else:
-        base = 3.0
-
-    if coverage < 0.5:
-        base += -1.0
-    if gates_passed < 5:
-        missing = 5 - gates_passed
-        base += -0.5 * missing
-
-    final = clamp(base)
-
-    # Primary error: first failing test name if obtainable.
-    primary_error = ""
-    failing_rx = re.compile(r"^\s*(?:-\s*)?failing_test\s*:\s*(.+?)\s*$",
-                            re.MULTILINE | re.IGNORECASE)
-    m = failing_rx.search(text)
-    if m:
-        primary_error = m.group(1).strip()
-
-    success = (tp == tg and gates_passed >= 5)
-    weak_label = ""
-    return final, "qa", primary_error, success, weak_label
-
-# ---- Run scoring -----------------------------------------------------------
-if schema == "SUPERVISOR_RESULT":
-    score_f, status, primary_error, success, weak_label = score_supervisor(result_block)
-elif schema == "CODE_REVIEW_RESULT":
-    score_f, status, primary_error, success, weak_label = score_code_review(result_block)
-else:
-    score_f, status, primary_error, success, weak_label = score_qa(result_block)
-
-# Bucket
-if score_f < 4:
-    bucket = "low"
-elif score_f < 8:
-    bucket = "medium"
-else:
-    bucket = "high"
-
-score_int = round_half_up_int(score_f)
-
-# ---- task_id (from result block; fallback to session_id) -------------------
-task_id = field(result_block, "task_id") or session_id or "unknown"
-
-# ---- Normalised agent type for labels --------------------------------------
-def normalise_agent(at, schema):
-    s = at or ""
-    # Strip plugin prefix — EVERY leading occurrence: the runtime reports
-    # plugin agents doubled (`loomwright:loomwright:code-reviewer`, observed
-    # in a live SubagentStop payload 2026-09-27), and stripping only one left
-    # `loomwright:code-reviewer` in the issue title and `task:` label.
-    while s.startswith("loomwright:"):
-        s = s[len("loomwright:"):]
-    # Strip -runner suffix.
-    if s.endswith("-runner"):
-        s = s[:-len("-runner")]
-    if not s:
-        # Fall back to schema-derived label.
-        if schema == "SUPERVISOR_RESULT":
-            s = "supervisor"
-        elif schema == "CODE_REVIEW_RESULT":
-            s = "code-reviewer"
-        else:
-            s = "qa-executor"
-    return s
-
-agent_norm = normalise_agent(agent_type, schema)
-
-# ---- Interest filter (deferred) --------------------------------------------
-# The interest filter has MOVED to bash, where it runs AFTER consent + target
-# repo resolution per docs/TELEMETRY.md §Interest filter. Stage 1 only emits
-# the signals bash needs to decide:
-#   - SUCCESS (per-schema)
-#   - STATUS  (already emitted)
-#   - SCORE_INT / SCORE_BUCKET
-# This is the heal-iter-1 reorder that closes the "healthy run with a secret
-# never logs PRIVACY_BLOCKED" loophole.
-
-# ---- Failed flag (for title) -----------------------------------------------
-# Failed = inverse of success per docs/TELEMETRY.md §"Title format".
-failed = (not success)
-
-# ---- Privacy-scan helper used in stage 1 (raw payload only) ----------------
-# We pre-flag any raw-string secrets; the prospective body is re-scanned with
-# the FULL set below (defence in depth via shared regex set).
 def scan_for_secret(text, skip=()):
     for rx, label in PRIVACY_PATTERNS:
         if label in skip:
@@ -693,15 +197,85 @@ def redact_home_paths(text):
             out = rx.sub("[REDACTED:" + label + "]/", out)
     return out
 
+def emit(key, value):
+    # Replace newlines so bash can read line-by-line.
+    if isinstance(value, bool):
+        value = "true" if value else "false"
+    s = str(value).replace("\r", " ").replace("\n", "\\n")
+    sys.stdout.write("%s=%s\n" % (key, s))
+
+def fail(stage, msg, exit_code):
+    sys.stderr.write("%s reason=%s\n" % (stage, msg))
+    emit("EXIT_CODE", exit_code)
+    sys.stdout.flush()
+    sys.exit(0)  # bash reads EXIT_CODE; this stage always returns 0 itself.
+
+# ---- The shared parser (the one every SubagentStop validator uses) ---------
+# Imported from the core's own directory only. A missing or broken parser
+# means nothing can be verified, so nothing is posted.
+CORE_DIR = os.environ.get("LOOMWRIGHT_TELEMETRY_CORE_DIR", "")
+if not CORE_DIR or not os.path.isfile(os.path.join(CORE_DIR, "result_block_parser.py")):
+    fail("parser_unavailable", "result_block_parser_missing", 1)
+sys.path.insert(0, CORE_DIR)
+try:
+    import result_block_parser as rbp
+except Exception:
+    fail("parser_unavailable", "result_block_parser_import_failed", 1)
+
+SCHEMA_NAMES = ("SUPERVISOR_RESULT", "CODE_REVIEW_RESULT", "QA_RESULT")
+# The validator each block's SubagentStop group runs beside this core
+# (hooks/hooks.json): code-reviewer, qa-executor, supervisor-runner.
+SIBLING_VALIDATORS = {
+    "SUPERVISOR_RESULT": "validate-supervisor-result.py",
+    "CODE_REVIEW_RESULT": "validate-code-review-result.py",
+    "QA_RESULT": "validate-qa-result.py",
+}
+
+# ---- Parse JSON ------------------------------------------------------------
+try:
+    raw = sys.stdin.read()
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ValueError("payload_not_object")
+except Exception as e:
+    fail("unknown_payload_skipped", "json_parse_failed", 5)
+
+def _token(v):
+    if not isinstance(v, str):
+        return ""
+    return "".join(c for c in v if c.isalnum() or c in ("-", "_"))
+
+session_id = _token(payload.get("session_id", "") or "")
+agent_id = _token(payload.get("agent_id", "") or "")
+
+agent_type = payload.get("agent_type", "") or ""
+if not isinstance(agent_type, str):
+    agent_type = ""
+
+# ---- Resolve the finishing subagent's output text + its block --------------
+# The SAME ladder the validators use (result_block_parser.resolve_payload_text:
+# inline last_assistant_message / result_block / output / agent_output, the
+# SubagentHandback message when the inline text is only a recap that names
+# the block, then the transcripts), and the SAME locator (the last block wins).
+result_text = rbp.resolve_payload_text(payload, SCHEMA_NAMES)
+if not isinstance(result_text, str):
+    result_text = ""
+schema, block = (None, None)
+if result_text:
+    schema, block = rbp.find_last_named_block(result_text, SCHEMA_NAMES)
+if schema is None:
+    fail("unknown_payload_skipped", "no_known_result_block", 5)
+
+# ---- Raw privacy scan — FIRST, before any verdict or skip ------------------
 # Walk every string field of payload (1 level deep) for raw secrets — EXCEPT
 # the runtime's transport metadata. Claude Code always sets `cwd`,
 # `transcript_path`, `agent_transcript_path` and `scratchpad_dir` to absolute
 # paths, so on macOS/Linux they ALWAYS match the home-path patterns; scanning
 # them blocked 100% of real events (4,580 PRIVACY_BLOCKED, 0 sent, 2026-05 ..
-# 2026-09). None of them is ever copied into the issue: the body is built only
-# from the resolved result text, the alnum-sanitized session_id and
-# agent_type. Every OTHER string field stays scanned (fail-closed default for
-# any field a future runtime adds).
+# 2026-09). None of them is ever copied into the issue. Every OTHER string
+# field stays scanned (fail-closed default for any field a future runtime
+# adds). The RESOLVED result text is scanned too: when it came from a
+# transcript it is not a top-level payload field.
 TRANSPORT_KEYS = frozenset((
     "cwd", "transcript_path", "agent_transcript_path", "scratchpad_dir",
     "hook_event_name", "permission_mode", "agent_id", "prompt_id",
@@ -715,15 +289,292 @@ for k, v in payload.items():
         if h:
             raw_hit = h
             break
-
-# Also scan the RESOLVED result text. When it was read from the transcript
-# JSONL (v14.2.1 fallback) it is NOT a top-level payload field, so the loop
-# above would miss a secret embedded there. The body scan only ever sees the
-# REDACTED copy, so this raw scan is the authoritative fail-closed gate.
 if not raw_hit:
-    raw_hit = scan_for_secret(result_block, skip=HOME_PATH_LABELS)
+    raw_hit = scan_for_secret(result_text, skip=HOME_PATH_LABELS)
+if raw_hit:
+    sys.stderr.write("PRIVACY_BLOCKED pattern=%s\n" % raw_hit)
+    emit("EXIT_CODE", 2)
+    sys.exit(0)
 
-# ---- Build prospective body components -------------------------------------
+# ---- Sibling-validator verdict on the SAME payload -------------------------
+# The validator and this core are sibling commands in one SubagentStop group,
+# so neither sees the other's result and their order is not something to rely
+# on. A stop the validator BLOCKS is not final: the runtime feeds the reason
+# back and the agent re-emits — recording the rejected attempt posted it twice
+# (#422/#423, #461/#462) and posted the rejected text mis-parsed (`- [HIGH] >-`).
+# So the core asks the validator itself, on the bytes it was given, and skips
+# a rejected stop; the accepted retry is the one recorded.
+# MUTATION_CONTROL_BEGIN: sibling-validator-verdict
+def sibling_verdict(schema_name, payload_text):
+    path = os.path.join(CORE_DIR, SIBLING_VALIDATORS.get(schema_name, ""))
+    if not os.path.isfile(path):
+        return "unavailable"
+    try:
+        cp = subprocess.run([sys.executable, "-I", path], input=payload_text,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, timeout=30)
+    except Exception:
+        return "unavailable"
+    lines = [l for l in (cp.stdout or "").splitlines() if l.strip()]
+    try:
+        decision = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        decision = None
+    if not isinstance(decision, dict):
+        return "unavailable"
+    if decision.get("decision") == "block":
+        return "rejected"
+    return "accepted"
+
+verdict = sibling_verdict(schema, raw)
+if verdict == "rejected":
+    fail("filter_skipped", "validator_rejected schema=%s" % schema, 5)
+if verdict == "unavailable":
+    sys.stderr.write("validator_unavailable schema=%s\n" % schema)
+# MUTATION_CONTROL_END: sibling-validator-verdict
+
+# ---- Parse the block with the shared parser --------------------------------
+fields, parse_errors = rbp.parse_block(block)
+if parse_errors:
+    # The validator rejects this too (load_block); reaching here means it was
+    # unavailable. Never score a block the shared parser cannot read.
+    fail("filter_skipped", "unparseable_block schema=%s" % schema, 5)
+
+# ---- Typed reads over the PARSED fields ------------------------------------
+def ftext(key):
+    v = fields.get(key)
+    if isinstance(v, (list, dict)):
+        return ""
+    return rbp.as_text(v).strip()
+
+def fint(key, default=0):
+    v = ftext(key)
+    if not v:
+        return default
+    try:
+        return int(v)
+    except ValueError:
+        try:
+            return int(float(v))
+        except ValueError:
+            return default
+
+def ffloat(key, default=0.0):
+    v = ftext(key)
+    if not v:
+        return default
+    try:
+        return float(v)
+    except ValueError:
+        return default
+
+def flist(key):
+    v = fields.get(key)
+    return v if isinstance(v, list) else []
+
+def count_or_list(key):
+    """`key: <int>` or `key: [a, b]` -> (count, items). Missing/unparseable -> (0, [])."""
+    v = fields.get(key)
+    if isinstance(v, list):
+        items = [rbp.as_text(x).strip() for x in v if x is not None and rbp.as_text(x).strip()]
+        return (len(items), items)
+    return (fint(key, 0), [])
+
+def clamp(s):
+    if s < 0:
+        return 0.0
+    if s > 10:
+        return 10.0
+    return s
+
+def round_half_up_int(s):
+    # Round half up to nearest integer (Python's bankers' rounding would round
+    # 0.5 to 0, which is wrong for our spec).
+    import math
+    return int(math.floor(s + 0.5))
+
+# ---------------------------------------------------------------------------
+# Score functions (deterministic; same input -> same output).
+# ---------------------------------------------------------------------------
+
+def score_supervisor():
+    """Rubric A — SUPERVISOR_RESULT."""
+    status = ftext("status").lower()
+    heal_decision = ftext("heal_decision").upper()
+    heal_remaining = fint("heal_remaining_issues", 0)
+    sf_count, sf_list = count_or_list("subtasks_failed")
+
+    base_deducted_for_remaining = False
+    if status == "completed" and heal_decision == "PASS" and heal_remaining == 0:
+        base = 9.0
+    elif status == "completed" and heal_decision == "PASS" and heal_remaining > 0:
+        base = 7.0
+        base_deducted_for_remaining = True  # base already accounts for it.
+    elif status == "completed_with_escalation":
+        base = 5.0
+    elif status == "checkpoint":
+        base = 4.0
+    elif status == "failed":
+        base = 2.0
+    else:
+        base = 3.0
+        sys.stderr.write("score_default_used schema=SUPERVISOR_RESULT status=%s\n" % status)
+
+    base -= 0.5 * sf_count
+    if heal_remaining > 0 and not base_deducted_for_remaining:
+        delta = -0.25 * heal_remaining
+        if delta < -1.0:
+            delta = -1.0
+        base += delta
+
+    primary_error = ""
+    if sf_list:
+        primary_error = sf_list[0]
+    elif heal_decision and heal_decision != "PASS":
+        primary_error = heal_decision
+    success = (status == "completed" and heal_decision == "PASS")
+    return clamp(base), status, primary_error, success
+
+def parsed_review_issues():
+    """CODE_REVIEW_RESULT `issues` as parsed by the shared parser — every
+    category, `drift` included. Order-independent by construction."""
+    out = []
+    for it in flist("issues"):
+        if not isinstance(it, dict):
+            continue
+        out.append({
+            "severity": rbp.as_text(it.get("severity")).strip().upper(),
+            "category": rbp.as_text(it.get("category")).strip().lower(),
+            "description": rbp.as_text(it.get("description")).strip(),
+            "drift_kind": rbp.as_text(it.get("drift_kind")).strip().lower(),
+        })
+    return out
+
+def score_code_review(parsed):
+    """Rubric B — CODE_REVIEW_RESULT."""
+    decision = ftext("decision").upper()
+
+    def n(sev, cat):
+        return sum(1 for i in parsed if i["severity"] == sev and i["category"] == cat)
+
+    new_blocking, new_high = n("BLOCKING", "new"), n("HIGH", "new")
+    new_medium, new_low = n("MEDIUM", "new"), n("LOW", "new")
+    drift_total = sum(1 for i in parsed if i["category"] == "drift")
+
+    if decision == "PASS" and new_blocking == 0 and new_high == 0:
+        base = 9.0
+    elif decision == "PASS" and (new_medium > 0 or new_low > 0) and new_blocking == 0 and new_high == 0:
+        base = 7.0
+    elif decision == "NEEDS_HUMAN":
+        base = 4.0
+    elif decision == "FAIL":
+        base = 2.0
+    else:
+        base = 3.0
+        sys.stderr.write("score_default_used schema=CODE_REVIEW_RESULT decision=%s\n" % decision)
+
+    base += -1.0 * new_blocking
+    base += -0.5 * new_high
+    base += -0.25 * drift_total
+
+    # Primary error (LOCAL dedup input only — never posted): the first new
+    # BLOCKING/HIGH description, else the first drift BLOCKING/HIGH one.
+    primary_error = ""
+    for cat in ("new", "drift"):
+        for sev_pref in ("BLOCKING", "HIGH"):
+            for issue in parsed:
+                if issue["severity"] == sev_pref and issue["category"] == cat and issue["description"]:
+                    primary_error = issue["description"].splitlines()[0]
+                    break
+            if primary_error:
+                break
+        if primary_error:
+            break
+
+    success = (decision == "PASS")
+    return clamp(base), decision.lower(), primary_error, success
+
+def qa_failing_tests():
+    n = len([x for x in flist("failing_tests") if x is not None])
+    if ftext("failing_test"):
+        n += 1
+    return n
+
+def score_qa():
+    """Rubric C — QA_RESULT."""
+    tg = fint("tests_generated", 0)
+    tp = fint("tests_passed", 0)
+    coverage = ffloat("coverage_estimate", 0.0)
+    gates_passed = fint("self_check_gates_passed", 5)
+
+    if tg == 0:
+        # Per spec: filter_skipped upstream. Signal that to bash.
+        fail("filter_skipped", "tests_generated_zero", 5)
+
+    r = float(tp) / float(tg) if tg > 0 else 0.0
+    if r >= 1.0:
+        base = 9.0
+    elif r >= 0.9:
+        base = 7.0
+    elif r >= 0.7:
+        base = 5.0
+    else:
+        base = 3.0
+    if coverage < 0.5:
+        base += -1.0
+    if gates_passed < 5:
+        base += -0.5 * (5 - gates_passed)
+
+    primary_error = ftext("failing_test")
+    if not primary_error:
+        ft = [rbp.as_text(x).strip() for x in flist("failing_tests") if x is not None]
+        primary_error = ft[0] if ft else ""
+    success = (tp == tg and gates_passed >= 5)
+    return clamp(base), "qa", primary_error, success
+
+# ---- Run scoring -----------------------------------------------------------
+review_issues = parsed_review_issues() if schema == "CODE_REVIEW_RESULT" else []
+if schema == "SUPERVISOR_RESULT":
+    score_f, status, primary_error, success = score_supervisor()
+elif schema == "CODE_REVIEW_RESULT":
+    score_f, status, primary_error, success = score_code_review(review_issues)
+else:
+    score_f, status, primary_error, success = score_qa()
+
+if score_f < 4:
+    bucket = "low"
+elif score_f < 8:
+    bucket = "medium"
+else:
+    bucket = "high"
+score_int = round_half_up_int(score_f)
+
+# ---- task_id (from result block; fallback to session_id) — LOCAL only ------
+task_id = ftext("task_id") or session_id or "unknown"
+
+# ---- Normalised agent type for labels --------------------------------------
+def normalise_agent(at, schema):
+    s = at or ""
+    # Strip plugin prefix — EVERY leading occurrence: the runtime reports
+    # plugin agents doubled (`loomwright:loomwright:code-reviewer`, observed
+    # in a live SubagentStop payload 2026-09-27), and stripping only one left
+    # `loomwright:code-reviewer` in the issue title and `task:` label.
+    while s.startswith("loomwright:"):
+        s = s[len("loomwright:"):]
+    if s.endswith("-runner"):
+        s = s[:-len("-runner")]
+    if not s:
+        if schema == "SUPERVISOR_RESULT":
+            s = "supervisor"
+        elif schema == "CODE_REVIEW_RESULT":
+            s = "code-reviewer"
+        else:
+            s = "qa-executor"
+    return s
+
+agent_norm = normalise_agent(agent_type, schema)
+
+# ---- Issues Detected lines + counts -----------------------------------------
 # PLUGIN FACTS ONLY, NEVER PROJECT CONTENT (docs/TELEMETRY.md §"Privacy
 # whitelist"). The issue lands in a repo the user chose — often PUBLIC, and
 # user-scope consent can route ANY source repo there — so nothing read out of
@@ -732,9 +583,12 @@ if not raw_hit:
 # number. Every Issues Detected line below is built from a fixed template plus
 # integers and plugin enums; the free-text values are only COUNTED.
 PLUGIN_ENUM_RX = re.compile(r"^[A-Z][A-Z_]{0,31}$")
+DRIFT_KIND_RX = re.compile(r"^[a-z][a-z_]{0,31}$")
+SEVERITIES = ("BLOCKING", "HIGH", "MEDIUM", "LOW")
+CATEGORIES = ("new", "pre_existing", "nit", "drift")
 issues = []
 if schema == "SUPERVISOR_RESULT":
-    sf_count, sf_list = parse_count_or_list(result_block, "subtasks_failed")
+    sf_count, sf_list = count_or_list("subtasks_failed")
     if sf_list:
         # One line per failed subtask (the per-line count feeds
         # issues_by_severity.unspecified below); the subtask NAME is project
@@ -742,88 +596,79 @@ if schema == "SUPERVISOR_RESULT":
         issues.extend(["subtask_failed"] * len(sf_list))
     elif sf_count > 0:
         issues.append("subtasks_failed=%d" % sf_count)
-    hd = (field(result_block, "heal_decision") or "").strip().upper()
+    hd = ftext("heal_decision").upper()
     if hd and hd != "PASS":
         issues.append("heal_decision=" + (hd if PLUGIN_ENUM_RX.match(hd) else "OTHER"))
 elif schema == "CODE_REVIEW_RESULT":
-    # One line per new BLOCKING + HIGH issue: severity and category only — the
-    # description is project content and is not sent. Uses the structural
-    # parser so issue field order is irrelevant.
-    parsed_for_body = parse_issue_blocks(result_block)
+    # One line per BLOCKING + HIGH `new` or `drift` issue: severity, category
+    # and the drift_kind enum only — the description is project content.
     for sev in ("BLOCKING", "HIGH"):
-        for issue in parsed_for_body:
-            if issue["severity"] == sev and issue["category"] == "new" and issue["description"]:
+        for issue in review_issues:
+            if issue["severity"] != sev:
+                continue
+            if issue["category"] == "new":
                 # MUTATION_CONTROL_BEGIN: no-project-text-findings
                 issues.append("[%s] new finding" % sev)
                 # MUTATION_CONTROL_END: no-project-text-findings
+            elif issue["category"] == "drift":
+                kind = issue["drift_kind"]
+                issues.append("[%s] drift finding (%s)" % (sev, kind if DRIFT_KIND_RX.match(kind) else "other"))
+    if ftext("decision").upper() == "FAIL" and not issues:
+        # Truthful empty FAIL: say so instead of rendering nothing.
+        issues.append("no BLOCKING/HIGH new or drift finding was parsed (counts below)")
 else:  # QA_RESULT
-    failing_rx = re.compile(r"^\s*(?:-\s*)?failing_test\s*:\s*(.+?)\s*$",
-                            re.MULTILINE | re.IGNORECASE)
-    failing_count = len(failing_rx.findall(result_block))
+    failing_count = qa_failing_tests()
     if failing_count:
         # The test NAMES are project content; only their number is sent.
         issues.append("failing_tests=%d" % failing_count)
-    tg = field_int(result_block, "tests_generated", 0)
-    tp = field_int(result_block, "tests_passed", 0)
+    tg = fint("tests_generated", 0)
+    tp = fint("tests_passed", 0)
     if tg > 0 and tp < tg:
         issues.append("tests_failed=%s/%s" % (tg - tp, tg))
 
-# Tools Used — best-effort scan.
-tools = []
-tools_rx = re.compile(r"^\s*(?:-\s*)?(?:tools_used|skills_used)\s*:\s*\[(.*?)\]",
-                      re.MULTILINE | re.IGNORECASE)
-m = tools_rx.search(result_block)
-if m:
-    inner = m.group(1).strip()
-    if inner:
-        tools = [x.strip().strip('"').strip("'") for x in inner.split(",") if x.strip()]
-# A tool / skill name is a plugin fact; anything that is not a bare name token
-# (a path, a file name, a sentence, a URL) is project content and is dropped.
-# No `.` and no `/`: tool and skill names (`Read`, `loomwright:review-heal`,
-# `mcp__srv__tool`) never need them, file names and URLs always do.
+# Issues per severity — a STRUCTURED count for raw_data, computed from the
+# PARSED result, never from the rendered lines above: CODE_REVIEW_RESULT
+# counts every parsed issue (all four categories, so a drift-only FAIL is no
+# longer posted as zero findings — #373/#378) and also splits by category;
+# the other schemas have no severity concept, so their lines count as
+# "unspecified".
+issues_by_severity = {"blocking": 0, "high": 0, "medium": 0, "low": 0, "unspecified": 0}
+issues_by_category = None
+# MUTATION_CONTROL_BEGIN: count-from-parsed-findings
+if schema == "CODE_REVIEW_RESULT":
+    issues_by_category = {"new": 0, "pre_existing": 0, "nit": 0, "drift": 0, "other": 0}
+    for issue in review_issues:
+        sev = issue["severity"].lower() if issue["severity"] in SEVERITIES else "unspecified"
+        issues_by_severity[sev] += 1
+        cat = issue["category"] if issue["category"] in CATEGORIES else "other"
+        issues_by_category[cat] += 1
+else:
+    issues_by_severity["unspecified"] = len(issues)
+# MUTATION_CONTROL_END: count-from-parsed-findings
+round_total = sum(issues_by_severity.values())
+
+# Tools Used — a tool / skill name is a plugin fact; anything that is not a
+# bare name token (a path, a file name, a sentence, a URL) is project content
+# and is dropped. No `.` and no `/`: tool and skill names (`Read`,
+# `loomwright:review-heal`, `mcp__srv__tool`) never need them, file names and
+# URLs always do.
 TOOL_NAME_RX = re.compile(r"^[A-Za-z][A-Za-z0-9_:-]{0,63}$")
+_tool_src = flist("tools_used") if "tools_used" in fields else flist("skills_used")
+tools = [rbp.as_text(t).strip() for t in _tool_src if t is not None]
 tools = [t for t in tools if TOOL_NAME_RX.match(t)]
 
-# Sub-scores — none extracted in v1; section will be omitted.
-agent_scores = []  # placeholder; left empty for v1.
+# ---- Labels (applied when a thread is OPENED) -------------------------------
+labels = ["telemetry", "score:" + bucket, "task:" + agent_norm]
 
-# Issues per severity — a STRUCTURED count for raw_data, distinct from the
-# `issues` list above (which is the human-readable markdown-body lines).
-# CODE_REVIEW_RESULT issue lines carry a "[SEVERITY] " prefix (built above
-# inside the no-project-text-findings sentinels); other schemas' issue
-# lines carry no severity concept at all, so they count as "unspecified"
-# rather than being silently dropped from the total.
-issue_severity_rx = re.compile(r"^\[(BLOCKING|HIGH|MEDIUM|LOW)\]\s")
-issues_by_severity = {"blocking": 0, "high": 0, "medium": 0, "low": 0, "unspecified": 0}
-for _issue_line in issues:
-    _sev_m = issue_severity_rx.match(_issue_line)
-    if _sev_m:
-        issues_by_severity[_sev_m.group(1).lower()] += 1
-    else:
-        issues_by_severity["unspecified"] += 1
-
-# ---- Compute labels --------------------------------------------------------
-labels = ["telemetry"]
-labels.append("score:" + bucket)
-labels.append("task:" + agent_norm)
-if weak_label:
-    labels.append(weak_label)
-
-# ---- Build redacted JSON payload (Raw Data section) ------------------------
+# ---- Raw Data (plugin facts only) ------------------------------------------
 # PRIVACY IS FIELD SELECTION, NOT REGEX MATCHING (red-team-hardening item 08,
 # Fix 3; tightened by triage PR-1): `raw_data` ships plugin facts only —
-# schema/agent/version, status enum, score, per-severity counts and tool
-# names. No free-text field from the result block is shipped: not the
-# result_block, not primary_error, not task_id. PRIVACY_PATTERNS below stays a
-# SECONDARY tripwire on the rendered body, not the privacy boundary itself.
-# Additive plugin-version stamp — resolved by the bash layer above from the
-# plugin manifest relative to this script ("unknown" when unreadable). Purely
-# additive to the redacted payload; schema_version stays 1.
+# schema/agent/version, status enum, score, per-severity (and, for reviews,
+# per-category) counts and tool names. No free-text field from the result
+# block is shipped: not the result_block, not primary_error, not task_id.
+# PRIVACY_PATTERNS stays a SECONDARY tripwire on the rendered text, not the
+# privacy boundary itself.
 plugin_version = os.environ.get("LOOMWRIGHT_PLUGIN_VERSION", "") or "unknown"
-# `primary_error` and `task_id` are NOT shipped (they are project text: a
-# finding description / subtask / test name, and a result-block task id). Both
-# still feed the LOCAL dedup hash and telemetry-sent.log, which never leave
-# the machine. `status` is a plugin enum; anything else reads "other".
 status_out = status if (not status or re.fullmatch(r"[a-z_]{1,40}", status)) else "other"
 raw_data = {
     "schema_version": 1,
@@ -838,64 +683,100 @@ raw_data = {
     "redacted": True,
     "plugin_version": plugin_version,
 }
-# The user-scope `include_result_block: true` key (`/telemetry enable
-# --include-result-block`) used to restore the redacted result_block here. It
-# is now INERT: the result_block is project content, and no consent key can
-# re-enable it. The core notes the ignored key on stderr (telemetry.log).
+if issues_by_category is not None:
+    raw_data["issues_by_category"] = issues_by_category
+# The user-scope `include_result_block: true` key is INERT: the result_block
+# is project content, and no consent key can re-enable it.
 if os.environ.get("LOOMWRIGHT_INCLUDE_RESULT_BLOCK", "") == "true":
     sys.stderr.write("include_result_block_ignored reason=plugin_facts_only\n")
 raw_data_json = json.dumps(raw_data, indent=2, sort_keys=True)
 
-# ---- Format issue body -----------------------------------------------------
+# ---- Render the three texts a round can become ------------------------------
+# Stage 2 picks one (open / comment / close) and fills the two placeholders
+# with integers it reads from the user-scope thread map (round number, and
+# the per-round finding totals) — digits and commas only, so the privacy scan
+# below covers every byte that can be posted.
 def section(title, lines):
     if not lines:
         return ""
     return "## " + title + "\n" + "\n".join("- " + l for l in lines) + "\n\n"
 
-body = []
-body.append("## Task Summary\n")
-body.append("- Task Type: %s\n" % agent_norm)
-body.append("- Success: %s\n" % ("true" if success else "false"))
-body.append("- Score: %s/10\n" % score_int)
-body.append("- Bucket: %s\n\n" % bucket)
+def record(with_suggestions):
+    out = []
+    out.append("## Task Summary\n")
+    out.append("- Task Type: %s\n" % agent_norm)
+    out.append("- Success: %s\n" % ("true" if success else "false"))
+    out.append("- Score: %s/10\n" % score_int)
+    out.append("- Bucket: %s\n\n" % bucket)
+    if issues:
+        out.append(section("Issues Detected", issues))
+    if with_suggestions:
+        out.append("## AI Suggestions\n")
+        out.append("- (placeholder — automatic suggestion synthesis is future work; see docs/TELEMETRY.md §Future Work)\n\n")
+    if tools:
+        out.append(section("Tools Used", tools))
+    out.append("## Raw Data\n")
+    out.append("```json\n")
+    out.append(raw_data_json + "\n")
+    out.append("```\n")
+    return "".join(out)
 
-if agent_scores:
-    body.append(section("Agent Scores", agent_scores))
+open_text = (
+    "## Telemetry thread — round @@ROUND@@\n"
+    "- One thread per review target: each later round is a comment here, and a "
+    "final success closes the thread with the `telemetry:healed-in-loop` label.\n"
+    "- A non-pass round is the loop working (a reviewer FAIL is the reviewer doing "
+    "its job); read the thread as one loop, not as separate defects.\n\n"
+) + record(True)
+round_text = "## Round @@ROUND@@\n\n" + record(False)
+close_text = (
+    "## Round @@ROUND@@ — loop closed\n"
+    "- Final verdict: %s\n"
+    "- Rounds recorded: @@ROUND@@\n"
+    "- Findings per round (all severities): @@SERIES@@\n"
+    "- Per-finding outcomes (fixed / dismissed / deferred): not recorded — this "
+    "stop does not carry them (docs/TELEMETRY.md §\"Posting policy\")\n\n"
+) % (status_out or "pass") + record(False)
 
-if issues:
-    body.append(section("Issues Detected", issues))
+open_text = redact_home_paths(open_text)
+round_text = redact_home_paths(round_text)
+close_text = redact_home_paths(close_text)
 
-body.append("## AI Suggestions\n")
-body.append("- (placeholder — automatic suggestion synthesis is future work; see docs/TELEMETRY.md §Future Work)\n\n")
+# ---- Privacy scan (final) on every text that can be posted ------------------
+title = "[Telemetry] %s thread" % agent_norm
+for _txt in (open_text, round_text, close_text, title, " ".join(labels)):
+    body_hit = scan_for_secret(_txt)
+    if body_hit:
+        sys.stderr.write("PRIVACY_BLOCKED pattern=%s\n" % body_hit)
+        emit("EXIT_CODE", 2)
+        sys.exit(0)
 
-if tools:
-    body.append(section("Tools Used", tools))
+# ---- Round identity (LOCAL only — dedup inside a thread) --------------------
+# A stop is one round. Its identity is the finishing subagent's agent_id within
+# the session when the runtime supplies one (every current SubagentStop does);
+# otherwise the legacy content hash sha256(task_id::bucket::primary_error).
+legacy_hash = hashlib.sha256(("%s::%s::%s" % (task_id, bucket, primary_error)).encode("utf-8")).hexdigest()
+if agent_id:
+    round_id = hashlib.sha256(("agent::%s::%s" % (session_id, agent_id)).encode("utf-8")).hexdigest()
+else:
+    round_id = legacy_hash
 
-body.append("## Raw Data\n")
-body.append("```json\n")
-body.append(raw_data_json + "\n")
-body.append("```\n")
-
-body_text = redact_home_paths("".join(body))
-
-# ---- Privacy scan (final) on prospective issue body + raw payload ----------
-body_hit = scan_for_secret(body_text)
-hit = body_hit or raw_hit
-
-if hit:
-    sys.stderr.write("PRIVACY_BLOCKED pattern=%s\n" % hit)
-    emit("EXIT_CODE", 2)
-    sys.exit(0)
-
-# ---- Title -----------------------------------------------------------------
-title = "[Telemetry] %s | Score: %s | Failed: %s" % (
-    agent_norm, score_int, "true" if failed else "false"
-)
-
-# ---- Dedup hash ------------------------------------------------------------
-import hashlib
-hash_input = "%s::%s::%s" % (task_id, bucket, primary_error)
-dedup_hash = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
+round_record = {
+    "agent": agent_norm,
+    "schema": schema,
+    "success": bool(success),
+    "score_int": score_int,
+    "score_bucket": bucket,
+    "status": status,
+    "round_id": round_id,
+    "round_total": round_total,
+    "session": session_id,
+    "title": title,
+    "labels": sorted(labels),
+    "open_text": open_text,
+    "round_text": round_text,
+    "close_text": close_text,
+}
 
 # ---- Emit results ---------------------------------------------------------
 emit("SCHEMA", schema)
@@ -905,20 +786,15 @@ emit("SCORE_INT", score_int)
 emit("SCORE_BUCKET", bucket)
 emit("STATUS", status)
 emit("SUCCESS", success)
-emit("FAILED", failed)
-emit("PRIMARY_ERROR", primary_error)
-emit("DEDUP_HASH", dedup_hash)
-emit("LABELS", "\t".join(sorted(labels)))
-emit("TITLE", title)
-# Body is multi-line. Encode as hex (NOT base64 — base64 padding uses `=`,
-# which collides with our `key=value` line-protocol separator and gets
-# stripped by bash `read -r` because `=` is in IFS). Hex is binary-safe
-# and contains no IFS characters.
-emit("BODY_HEX", body_text.encode("utf-8").hex())
-emit("EXIT_CODE", 0)  # 0 means "stage 1 OK; bash continues to consent/repo/dedup/gh"
+emit("ROUND_ID", round_id)
+emit("SESSION_ID", session_id)
+# Multi-line record: hex (NOT base64 — base64 padding uses `=`, which collides
+# with our `key=value` line-protocol separator). Hex carries no IFS character.
+emit("ROUND_RECORD_HEX", json.dumps(round_record, sort_keys=True).encode("utf-8").hex())
+emit("EXIT_CODE", 0)  # 0 means "stage 1 OK; bash continues to consent/repo/thread"
 PY
 
-STAGE1_OUT="$(printf '%s' "$INPUT" | python3 -c "$STAGE1_PY")"
+STAGE1_OUT="$(printf '%s' "$INPUT" | python3 -I -c "$STAGE1_PY")"
 STAGE1_RC=$?
 
 if [ $STAGE1_RC -ne 0 ]; then
@@ -934,12 +810,9 @@ SCORE_INT=""
 SCORE_BUCKET=""
 STATUS=""
 SUCCESS=""
-FAILED=""
-PRIMARY_ERROR=""
-DEDUP_HASH=""
-LABELS_TSV=""
-TITLE=""
-BODY_HEX=""
+ROUND_ID=""
+SESSION_ID=""
+ROUND_RECORD_HEX=""
 EXIT_CODE=""
 
 while IFS='=' read -r k v; do
@@ -951,12 +824,9 @@ while IFS='=' read -r k v; do
     SCORE_BUCKET) SCORE_BUCKET="$v" ;;
     STATUS) STATUS="$v" ;;
     SUCCESS) SUCCESS="$v" ;;
-    FAILED) FAILED="$v" ;;
-    PRIMARY_ERROR) PRIMARY_ERROR="$v" ;;
-    DEDUP_HASH) DEDUP_HASH="$v" ;;
-    LABELS) LABELS_TSV="$v" ;;
-    TITLE) TITLE="$v" ;;
-    BODY_HEX) BODY_HEX="$v" ;;
+    ROUND_ID) ROUND_ID="$v" ;;
+    SESSION_ID) SESSION_ID="$v" ;;
+    ROUND_RECORD_HEX) ROUND_RECORD_HEX="$v" ;;
     EXIT_CODE) EXIT_CODE="$v" ;;
   esac
 done <<EOF
@@ -968,9 +838,11 @@ if [ -z "$EXIT_CODE" ]; then
   exit 1
 fi
 
-# Stage 1 may signal early exit (privacy_blocked=2, json_parse_failed/empty=5,
-# QA tests_generated==0 short-circuit=5). Interest filter is NOT in stage 1
-# anymore — it runs in bash after consent + target-repo resolution.
+# Stage 1 may signal early exit (privacy_blocked=2, parser_unavailable=1,
+# json_parse_failed/empty/no block/validator_rejected/unparseable_block/QA
+# tests_generated==0 = 5). The interest filter is NOT in stage 1 — it runs in
+# stage 2, after consent + target-repo resolution, because it depends on
+# whether the review target already has an open thread.
 if [ "$EXIT_CODE" != "0" ]; then
   if [ "$DRY_RUN" = "true" ]; then
     printf -- '--- DRY RUN ---\n'
@@ -1064,178 +936,356 @@ if [ -z "$TARGET_REPO" ]; then
 fi
 
 # Validate repo format owner/repo.
-if ! printf '%s' "$TARGET_REPO" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then
+if ! grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' <<<"$TARGET_REPO"; then
   printf 'invalid_repo_format repo=%s\n' "$TARGET_REPO" >&2
   exit 1
 fi
 
-# ---- Interest filter ---------------------------------------------------------
-# Per docs/TELEMETRY.md §Interest filter: runs AFTER privacy + consent +
-# target-repo resolution, BEFORE dedup. Skip if score >= 5 AND status indicates
-# success (per-schema definition emitted as SUCCESS by stage 1):
-#   - SUPERVISOR_RESULT: status=='completed' AND heal_decision=='PASS'
-#   - CODE_REVIEW_RESULT: decision=='PASS'
-#   - QA_RESULT:          tests_passed==tests_generated AND gates>=5
-#
-# A healthy run (score>=5, success=true) whose payload contains a secret has
-# ALREADY exited 2 in stage 1's raw/body privacy scans, so the audit trail is
-# preserved before this short-circuit fires.
-INTEREST_SKIP="false"
-if [ "$SUCCESS" = "true" ] && [ -n "$SCORE_INT" ] && [ "$SCORE_INT" -ge 5 ] 2>/dev/null; then
-  case "$SCHEMA" in
-    SUPERVISOR_RESULT)
-      # `success` (stage 1) already encodes status=completed AND heal_decision=PASS.
-      INTEREST_SKIP="true"
-      ;;
-    CODE_REVIEW_RESULT)
-      # Stage 1 emits status=<decision>.lower; success=(decision==PASS).
-      INTEREST_SKIP="true"
-      ;;
-    QA_RESULT)
-      INTEREST_SKIP="true"
-      ;;
-  esac
-fi
-
-if [ "$INTEREST_SKIP" = "true" ]; then
-  printf 'filter_skipped reason=interest_filter score=%s status=%s\n' \
-    "$SCORE_INT" "$STATUS" >&2
-  if [ "$DRY_RUN" = "true" ]; then
-    printf -- '--- DRY RUN ---\n'
-    printf 'WOULD_EXIT=5\n'
-    exit 0
+# ---- Review target (LOCAL ONLY — feeds the thread key, never posted) ---------
+# The target is the branch under review. In order:
+#   1. the checked-out branch of $PWD (inline Phase 4.5, an /automate lane, a
+#      feature checkout) — unless it is the repo's default branch, where many
+#      unrelated reviews happen and one shared thread would merge them;
+#   2. LOOMWRIGHT_PR_HEAD_REF — dispatch-pr-review.sh exports the PR's head
+#      branch into the detached drain, whose worktree is detached at the PR
+#      head SHA, so a drain shares the inline review's thread;
+#   3. the session id (one thread per session).
+# The resolved value is hashed together with the destination, agent and source
+# slug in stage 2 and stored only in the user-scope map.
+TARGET_REF=""
+if command -v git >/dev/null 2>&1; then
+  _tl_branch="$(git -C "$PWD" symbolic-ref -q --short HEAD 2>/dev/null || true)"
+  _tl_default="$(git -C "$PWD" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  _tl_default="${_tl_default#origin/}"
+  if [ -n "$_tl_branch" ]; then
+    if [ -n "$_tl_default" ]; then
+      [ "$_tl_branch" != "$_tl_default" ] && TARGET_REF="branch:$_tl_branch"
+    else
+      case "$_tl_branch" in
+        main|master) : ;;
+        *) TARGET_REF="branch:$_tl_branch" ;;
+      esac
+    fi
   fi
-  exit 5
+fi
+if [ -z "$TARGET_REF" ] && [ -n "${LOOMWRIGHT_PR_HEAD_REF:-}" ]; then
+  TARGET_REF="branch:${LOOMWRIGHT_PR_HEAD_REF}"
+fi
+if [ -z "$TARGET_REF" ]; then
+  TARGET_REF="session:${SESSION_ID:-unknown}"
 fi
 
-# ---- Dedup check -------------------------------------------------------------
-# Scan telemetry-sent.log for the same hash within last 6h.
-DEDUP_HIT="false"
-if [ -r "$SENT_LOG" ]; then
-  DEDUP_HIT="$(python3 - "$SENT_LOG" "$DEDUP_HASH" <<'PY' 2>/dev/null
-import sys, re
-from datetime import datetime, timedelta, timezone
-path, want_hash = sys.argv[1], sys.argv[2]
-cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
-hit = False
+# ---- Stage 2: one thread per review target ----------------------------------
+IFS= read -r -d '' STAGE2_PY <<'PY' || true
+import errno, fcntl, hashlib, json, os, re, subprocess, sys, tempfile, time
+from datetime import datetime, timezone, timedelta
+
+def err(s):
+    sys.stderr.write(s + "\n")
+
+DRY = os.environ.get("TL_DRY_RUN") == "true"
+
+def _stage2_crash(t, v, tb):
+    err("stage2_failed reason=%s" % getattr(t, "__name__", "error"))
+    if DRY:
+        sys.stdout.write("--- DRY RUN ---\nWOULD_EXIT=1\n")
+        sys.stdout.flush()
+    os._exit(0 if DRY else 1)
+
+sys.excepthook = _stage2_crash
+
+def finish(code, lines=()):
+    """Single exit point. --dry-run always returns 0 with a WOULD_EXIT line."""
+    if DRY:
+        sys.stdout.write("--- DRY RUN ---\n")
+        for l in lines:
+            sys.stdout.write(l + "\n")
+        sys.stdout.write("WOULD_EXIT=%d\n" % code)
+        sys.stdout.flush()
+        sys.exit(0)
+    sys.stdout.flush()
+    sys.exit(code)
+
 try:
-    with open(path, "r") as f:
-        for line in f:
-            line = line.rstrip("\n")
-            if not line:
-                continue
-            parts = line.split("\t")
-            if len(parts) < 2:
-                continue
-            ts_s = parts[0].strip()
-            h = parts[1].strip()
-            if h != want_hash:
-                continue
-            try:
-                # Tolerate trailing Z.
-                ts = datetime.fromisoformat(ts_s.replace("Z", "+00:00"))
-            except Exception:
-                continue
-            if ts >= cutoff:
-                hit = True
-                break
-except FileNotFoundError:
+    rec = json.loads(bytes.fromhex(sys.stdin.read().strip()).decode("utf-8"))
+except Exception:
+    err("stage2_bad_record")
+    finish(1)
+
+dest = os.environ.get("TL_DEST", "")
+slug = os.environ.get("TL_SOURCE_SLUG", "")
+target_ref = os.environ.get("TL_TARGET_REF", "")
+home = os.environ.get("HOME", "")
+sent_log = os.environ.get("TL_SENT_LOG", "")
+task_id = os.environ.get("TL_TASK_ID", "")
+lock_timeout = 30.0
+try:
+    lock_timeout = float(os.environ.get("LOOMWRIGHT_TELEMETRY_LOCK_TIMEOUT", "30"))
+except ValueError:
     pass
-sys.stdout.write("true" if hit else "false")
+
+if not home:
+    err("thread_map_unreadable reason=no_home")
+    finish(1)
+MAP_DIR = os.path.join(home, ".claude", "loomwright")
+MAP_PATH = os.path.join(MAP_DIR, "telemetry-threads.json")
+LOCK_PATH = MAP_PATH + ".lock"
+HEALED_LABEL = "telemetry:healed-in-loop"
+SEEN_CAP = 200
+CLOSED_TTL = timedelta(days=30)
+
+# The thread key: computed here, stored in the map, never posted. The issue's
+# title and body carry no repo, branch or PR — only the agent and plugin facts.
+KEY = hashlib.sha256("\0".join(("v1", dest, rec["agent"], slug, target_ref)).encode("utf-8")).hexdigest()
+
+class Unreadable(Exception):
+    pass
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+# MUTATION_CONTROL_BEGIN: thread-map-unreadable-fails-safe
+def load_map():
+    """Missing file -> empty map (first use). Anything else that cannot be read
+    back as a schema_version 1 map -> Unreadable: post NOTHING, because an empty
+    reading could open a second issue for a target that already has a thread."""
+    try:
+        with open(MAP_PATH, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except FileNotFoundError:
+        return {"schema_version": 1, "threads": {}}
+    except Exception as e:
+        raise Unreadable(type(e).__name__)
+    if not isinstance(doc, dict) or doc.get("schema_version") != 1 or not isinstance(doc.get("threads"), dict):
+        raise Unreadable("bad_shape")
+    return doc
+# MUTATION_CONTROL_END: thread-map-unreadable-fails-safe
+
+def save_map(doc):
+    """Atomic replace: write a same-dir temp file, fsync, rename over the map."""
+    cutoff = datetime.now(timezone.utc) - CLOSED_TTL
+    for k in list(doc["threads"].keys()):
+        t = doc["threads"][k]
+        if t.get("state") != "open":
+            try:
+                ts = datetime.fromisoformat(str(t.get("updated_at", "")).replace("Z", "+00:00"))
+            except ValueError:
+                ts = None
+            if ts is None or ts < cutoff:
+                del doc["threads"][k]
+    fd, tmp = tempfile.mkstemp(prefix=".telemetry-threads.", suffix=".tmp", dir=MAP_DIR)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, MAP_PATH)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+def decide(doc):
+    """Return (action, thread) — action in open|comment|close|skip_interest|skip_dedup."""
+    t = doc["threads"].get(KEY)
+    open_t = t if (isinstance(t, dict) and t.get("state") == "open"
+                   and t.get("dest") == dest and isinstance(t.get("issue"), int)) else None
+    if open_t is not None and rec["round_id"] in (open_t.get("seen") or []):
+        return "skip_dedup", open_t
+    if rec["success"]:
+        if open_t is not None:
+            return "close", open_t
+        if int(rec["score_int"]) >= 5:
+            return "skip_interest", None
+        return "open", None
+    return ("comment", open_t) if open_t is not None else ("open", None)
+
+def text_for(action, thread):
+    rounds = int(thread.get("rounds", 0)) + 1 if thread else 1
+    series = list(thread.get("series", [])) if thread else []
+    series.append(int(rec["round_total"]))
+    src = {"open": rec["open_text"], "comment": rec["round_text"], "close": rec["close_text"]}[action]
+    txt = src.replace("@@ROUND@@", str(rounds)).replace("@@SERIES@@", ", ".join(str(n) for n in series))
+    return txt, rounds, series
+
+def gh(args, body=None):
+    """Run gh; returns (rc, stdout). The body goes through a private temp file."""
+    path = None
+    try:
+        if body is not None:
+            fd, path = tempfile.mkstemp(prefix="telemetry-body.", suffix=".md")
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            args = args + ["--body-file", path]
+        cp = subprocess.run(["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, timeout=60)
+        return cp.returncode, (cp.stdout or "") + (cp.stderr or "")
+    except Exception as e:
+        return 127, type(e).__name__
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+def sent_line(action, url):
+    if not sent_log:
+        return
+    try:
+        with open(sent_log, "a", encoding="utf-8") as fh:
+            fh.write("%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % (
+                now_iso(), rec["round_id"], task_id, rec["score_int"], rec["score_bucket"], url, action))
+    except OSError:
+        pass
+
+def skip(action):
+    if action == "skip_interest":
+        err("filter_skipped reason=interest_filter score=%s status=%s" % (rec["score_int"], rec["status"]))
+    else:
+        err("dedup_hit hash=%s" % rec["round_id"])
+    finish(5)
+
+# ---- --dry-run: read the map, report the would-be action, write nothing ------
+if DRY:
+    try:
+        doc = load_map()
+    except Unreadable as e:
+        err("thread_map_unreadable reason=%s — posting nothing (an empty reading could duplicate a thread)" % e)
+        finish(1)
+    action, thread = decide(doc)
+    if action.startswith("skip_"):
+        skip(action)
+    txt, rounds, _series = text_for(action, thread)
+    lines = ["TARGET_REPO=%s" % dest,
+             "THREAD_ACTION=%s" % action,
+             "THREAD_ROUND=%d" % rounds,
+             "TITLE=%s" % rec["title"],
+             "SCORE=%s" % rec["score_int"],
+             "BUCKET=%s" % rec["score_bucket"],
+             "LABELS:"]
+    if action == "open":
+        lines += ["  - %s" % l for l in rec["labels"]]
+    elif action == "close":
+        lines.append("  - %s" % HEALED_LABEL)
+    lines.append("BODY_BEGIN\n%sBODY_END" % txt)
+    finish(0, lines)
+
+# ---- Live: read-decide-post-write under ONE exclusive lock -------------------
+try:
+    os.makedirs(MAP_DIR, mode=0o700, exist_ok=True)
+    lock_fd = os.open(LOCK_PATH, os.O_RDWR | os.O_CREAT, 0o600)
+except OSError as e:
+    err("thread_map_unreadable reason=lock_open_%s — posting nothing" % type(e).__name__)
+    finish(1)
+# MUTATION_CONTROL_BEGIN: thread-map-lock
+deadline = time.time() + lock_timeout
+while True:
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        break
+    except OSError as e:
+        if e.errno not in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
+            err("thread_map_unreadable reason=lock_%s — posting nothing" % errno.errorcode.get(e.errno, e.errno))
+            finish(1)
+        if time.time() >= deadline:
+            err("thread_map_lock_timeout seconds=%s — posting nothing" % lock_timeout)
+            finish(1)
+        time.sleep(0.1)
+# MUTATION_CONTROL_END: thread-map-lock
+
+try:
+    doc = load_map()
+except Unreadable as e:
+    err("thread_map_unreadable reason=%s — posting nothing (an empty reading could duplicate a thread)" % e)
+    finish(1)
+
+action, thread = decide(doc)
+if action.startswith("skip_"):
+    skip(action)
+txt, rounds, series = text_for(action, thread)
+
+def ensure_label(name, color, desc):
+    rc, _ = gh(["label", "create", name, "--repo", dest, "--force", "--color", color, "--description", desc])
+    if rc != 0:
+        err("label_create_failed label=%s" % name)
+
+if action == "open":
+    for l in rec["labels"]:
+        rc, _ = gh(["label", "create", l, "--repo", dest, "--force"])
+    args = ["issue", "create", "--repo", dest, "--title", rec["title"]]
+    for l in rec["labels"]:
+        args += ["--label", l]
+    rc, out = gh(args, txt)
+    if rc != 0:
+        err("gh_failed rc=%s op=issue_create" % rc)
+        finish(1)
+    m = re.search(r"/issues/(\d+)\s*$", out.strip())
+    if not m:
+        # The issue may exist, but without its number no later round can find
+        # it; record nothing and say so.
+        err("gh_issue_url_unparsed op=issue_create")
+        finish(1)
+    url = m.group(0)
+    doc["threads"][KEY] = {
+        "dest": dest, "issue": int(m.group(1)), "state": "open",
+        "rounds": rounds, "series": series, "seen": [rec["round_id"]],
+        "opened_at": now_iso(), "updated_at": now_iso(),
+    }
+else:
+    num = thread["issue"]
+    rc, _ = gh(["issue", "comment", str(num), "--repo", dest], txt)
+    if rc != 0:
+        err("gh_failed rc=%s op=issue_comment" % rc)
+        finish(1)
+    thread["rounds"] = rounds
+    thread["series"] = series
+    thread["seen"] = (list(thread.get("seen") or []) + [rec["round_id"]])[-SEEN_CAP:]
+    thread["updated_at"] = now_iso()
+    url = "/issues/%d" % num
+    if action == "close":
+        ensure_label(HEALED_LABEL, "0e8a16", "Telemetry thread whose review loop ended in a pass")
+        rc, _ = gh(["issue", "edit", str(num), "--repo", dest, "--add-label", HEALED_LABEL])
+        if rc != 0:
+            err("label_add_failed label=%s" % HEALED_LABEL)
+        rc, _ = gh(["issue", "close", str(num), "--repo", dest, "--reason", "completed"])
+        if rc != 0:
+            # The closing comment is posted; the thread stays open in the map so
+            # a later round still lands in it and a later pass retries the close.
+            err("gh_failed rc=%s op=issue_close" % rc)
+            try:
+                save_map(doc)
+            except Exception as e:
+                err("thread_map_write_failed reason=%s" % type(e).__name__)
+            finish(1)
+        thread["state"] = "closed"
+    doc["threads"][KEY] = thread
+
+try:
+    save_map(doc)
+except Exception as e:
+    err("thread_map_write_failed reason=%s" % type(e).__name__)
+    finish(1)
+sent_line(action, url)
+err("thread_%s round=%d" % (action, rounds))
+finish(0)
 PY
-)"
-  if [ -z "$DEDUP_HIT" ]; then
-    DEDUP_HIT="false"
-  fi
-fi
 
-if [ "$DEDUP_HIT" = "true" ]; then
-  printf 'dedup_hit hash=%s\n' "$DEDUP_HASH" >&2
-  if [ "$DRY_RUN" = "true" ]; then
-    printf -- '--- DRY RUN ---\n'
-    printf 'WOULD_EXIT=5\n'
-    exit 0
-  fi
-  exit 5
-fi
-
-# ---- Decode body for output / gh -------------------------------------------
-BODY_TEXT="$(printf '%s' "$BODY_HEX" | python3 -c '
-import sys
-data = sys.stdin.read().strip()
-sys.stdout.write(bytes.fromhex(data).decode("utf-8"))
-' 2>/dev/null || true)"
-
-# Convert TSV labels back to a sorted list.
-LABELS_SORTED="$(printf '%s' "$LABELS_TSV" | tr '\t' '\n' | sort -u)"
-
-# ---- Dry-run branch ---------------------------------------------------------
-if [ "$DRY_RUN" = "true" ]; then
-  printf -- '--- DRY RUN ---\n'
-  printf 'TARGET_REPO=%s\n' "$TARGET_REPO"
-  printf 'TITLE=%s\n' "$TITLE"
-  printf 'SCORE=%s\n' "$SCORE_INT"
-  printf 'BUCKET=%s\n' "$SCORE_BUCKET"
-  printf 'LABELS:\n'
-  printf '%s\n' "$LABELS_SORTED" | sed 's/^/  - /'
-  printf 'BODY_BEGIN\n%sBODY_END\n' "$BODY_TEXT"
-  printf 'WOULD_EXIT=0\n'
-  exit 0
-fi
-
-# ---- Live: gh issue create --------------------------------------------------
-if ! command -v gh >/dev/null 2>&1; then
+if [ "$DRY_RUN" != "true" ] && ! command -v gh >/dev/null 2>&1; then
   printf 'gh_missing\n' >&2
   exit 1
 fi
 
-# Idempotently ensure labels exist (best-effort; ignore failures).
-while IFS= read -r lbl; do
-  [ -z "$lbl" ] && continue
-  gh label create "$lbl" --repo "$TARGET_REPO" --force >/dev/null 2>&1 || true
-done <<EOF
-$LABELS_SORTED
-EOF
-
-# Write body to a temp file (avoids shell-quoting bugs).
-BODY_TMP="$(mktemp "${LOG_DIR}/telemetry-body.XXXXXX" 2>/dev/null || echo "/tmp/telemetry-body-$$.tmp")"
-printf '%s' "$BODY_TEXT" > "$BODY_TMP" 2>/dev/null || {
-  printf 'body_write_failed\n' >&2
-  exit 1
-}
-
-# Build label flags.
-LABEL_FLAGS=()
-while IFS= read -r lbl; do
-  [ -z "$lbl" ] && continue
-  LABEL_FLAGS+=(--label "$lbl")
-done <<EOF
-$LABELS_SORTED
-EOF
-
-ISSUE_URL="$(gh issue create \
-  --repo "$TARGET_REPO" \
-  --title "$TITLE" \
-  --body-file "$BODY_TMP" \
-  "${LABEL_FLAGS[@]}" 2>&1)"
-GH_RC=$?
-
-rm -f "$BODY_TMP" 2>/dev/null || true
-
-if [ $GH_RC -ne 0 ]; then
-  printf 'gh_failed rc=%s\n' "$GH_RC" >&2
-  printf '%s\n' "$ISSUE_URL" >&2
-  exit 1
-fi
-
-# Extract URL from gh output (last line is typically the URL).
-ISSUE_URL_CLEAN="$(printf '%s' "$ISSUE_URL" | tail -n 1 | tr -d '[:space:]' || true)"
-
-# ---- Append success line to telemetry-sent.log -----------------------------
-UTC_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
-{
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$UTC_TS" "$DEDUP_HASH" "$TASK_ID" "$SCORE_INT" "$SCORE_BUCKET" "$ISSUE_URL_CLEAN"
-} >> "$SENT_LOG" 2>/dev/null || true
-
-exit 0
+printf '%s' "$ROUND_RECORD_HEX" | \
+  TL_DRY_RUN="$DRY_RUN" TL_DEST="$TARGET_REPO" TL_SOURCE_SLUG="${EGRESS_REPO_SLUG:-}" \
+  TL_TARGET_REF="$TARGET_REF" TL_SENT_LOG="$SENT_LOG" TL_TASK_ID="$TASK_ID" \
+  python3 -I -c "$STAGE2_PY"
+STAGE2_RC=$?
+case "$STAGE2_RC" in
+  0|1|5) exit "$STAGE2_RC" ;;
+  *) printf 'stage2_python_failed rc=%s\n' "$STAGE2_RC" >&2; exit 1 ;;
+esac

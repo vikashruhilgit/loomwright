@@ -1,7 +1,7 @@
 ---
 name: telemetry
 description: Opt-in GitHub Issues telemetry for loomwright. Enables longitudinal analysis of agent quality by emitting structured, scored, redacted issues from `SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, and `QA_RESULT` blocks. Use when a project wants to feed run outcomes back into the maintainer repo (or its own analytics repo) without standing up a backend.
-version: "1.0.0"
+version: "1.1.0"
 lastUpdated: "2026-04"
 ---
 
@@ -69,17 +69,26 @@ To stop sending: `/telemetry disable`. To inspect state:
 
 ## What gets sent
 
-- A title of the form
-  `[Telemetry] {agent_type} | Score: {N} | Failed: {true|false}`.
-- A body with sections: Task Summary, Agent Scores, Issues Detected,
-  AI Suggestions, Tools Used, Raw Data (JSON of the redacted payload).
+- **One thread per review target** (`docs/TELEMETRY.md` §"Posting
+  policy"): the first non-pass round for a target (repo + branch, keyed
+  locally in the user-scope `telemetry-threads.json` beside `egress.json`,
+  never posted)
+  opens an issue titled `[Telemetry] {agent_type} thread`; later rounds are
+  comments; the final pass adds a closing comment (verdict, rounds,
+  per-round finding totals), the `telemetry:healed-in-loop` label, and
+  closes it. A stop the result-block validator rejects is never posted.
+- Each round's body has sections: Task Summary, Agent Scores, Issues
+  Detected, AI Suggestions (opening issue only), Tools Used, Raw Data (JSON
+  of the redacted payload; counts come from the parsed result block, every
+  category including `drift`).
 - **Plugin facts only, never project content** — for any source repo,
   private or public: agent type, schema, status enum, score, per-severity
   counts, tool names, plugin version. Issues Detected lines are fixed
   templates (`[HIGH] new finding`, `failing_tests=2`), never the finding text
   (`docs/TELEMETRY.md` §"Privacy whitelist").
-- Labels: `telemetry`, `score:{low|medium|high}`,
-  `task:{agent-type}`, and `agent:{name}-weak` for any sub-score `< 5`.
+- Labels (on open): `telemetry`, `score:{low|medium|high}` (round 1's),
+  `task:{agent-type}`, and `agent:{name}-weak` for any sub-score `< 5`;
+  `telemetry:healed-in-loop` on close.
 
 ## What does NOT get sent
 
@@ -94,13 +103,16 @@ To stop sending: `/telemetry disable`. To inspect state:
   (`privacy_blocked`), structured log entry names which pattern hit
   (never the matched content). Stderr is redacted by the same list
   before being appended to the log.
-- Healthy runs. Interest filter: skip if score `>= 5` AND status is in
-  the success set (`completed`/`PASS`/all-tests-passed). Send if score
-  `< 5` OR status in `{failed, FAIL, completed_with_escalation,
-  ESCALATED, NEEDS_HUMAN}`.
-- Duplicate signal. 6-hour dedup window keyed on
-  `{task_id, score_bucket, primary_error}` via
-  `.supervisor/logs/telemetry-sent.log`.
+- Healthy runs. Interest filter: skip if the target has no open thread
+  AND score `>= 5` AND status is in the success set
+  (`completed`/`PASS`/all-tests-passed); a success on a target WITH an
+  open thread closes it. Send if score `< 5` OR status in `{failed, FAIL,
+  completed_with_escalation, ESCALATED, NEEDS_HUMAN}`.
+- A validator-rejected attempt (only its accepted retry is posted), and a
+  round its thread already holds (per-thread dedup in the user-scope map).
+- Anything when the thread map is unreadable: nothing is posted (a fresh
+  issue could duplicate an open thread); the core exits `1` and logs
+  `thread_map_unreadable`.
 
 ## Hook contract (always-exits-0)
 

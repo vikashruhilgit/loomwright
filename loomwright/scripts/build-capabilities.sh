@@ -103,6 +103,8 @@ w stamp-requirement-status.sh '.supervisor/requirements/<requirement>.md'
 # send-telemetry.sh — `>> "$LOG_FILE"` ($PWD/.supervisor/logs/telemetry.log); `: > "$FLAG"` and
 # `: > "$REPO_UNSET_FLAG"` (telemetry-*-shown-<session or nosession-hour>.flag); it pipes into
 # send-telemetry-core.sh, which appends `>> "$SENT_LOG"` (.supervisor/logs/telemetry-sent.log).
+# (The core's user-scope thread map, telemetry-threads.json under the home directory, is outside the
+# working directory, so out of scope here — #508.)
 w send-telemetry.sh '.supervisor/logs/telemetry.log'
 w send-telemetry.sh '.supervisor/logs/telemetry-pending-shown-<key>.flag'
 w send-telemetry.sh '.supervisor/logs/telemetry-repo-unset-shown-<key>.flag'

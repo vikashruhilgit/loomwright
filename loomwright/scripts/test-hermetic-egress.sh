@@ -195,7 +195,8 @@ if [ -n "$USER_SCOPE_REL" ]; then
   printf '{"schema_version":1,"repos":{"probe-owner/probe-sandbox":{"telemetry":"always_allow"}}}\n' > "$TSB/home/$USER_SCOPE_REL"
 fi
 jq -n '{session_id:"probe-hermetic", agent_type:"loomwright:supervisor-runner",
-        result_block:"## SUPERVISOR_RESULT\n- schema_version: 1\n- task_id: probe-hermetic-task\n- status: failed\n- subtasks_failed: [BD-1x]\n- summary: hermetic probe fixture\n"}' > "$TSB/fixture.json"
+        result_block:"## SUPERVISOR_RESULT\n- schema_version: 1\n- task_id: probe-hermetic-task\n- status: failed\n- heal_loop_ran: false\n- heal_iterations: null\n- heal_decision: null\n- heal_fixable_issues_fixed: 0\n- heal_remaining_issues: 0\n- error: probe failure\n- subtasks_failed: [BD-1x]\n- summary: hermetic probe fixture\n"}' > "$TSB/fixture.json"
+# (#508: the core skips a stop its sibling validator rejects, so the probe block is schema-valid.)
 run_t() { ( cd "$TSB" && HOME="$TSB/home" bash "$CORE" < "$TSB/fixture.json" ) >/dev/null 2>&1; echo $?; }
 
 echo "== (T0) telemetry fixture sanity: the user-scope path was derived and consent is readable =="

@@ -1,6 +1,8 @@
 --- DRY RUN ---
 TARGET_REPO=example/repo
-TITLE=[Telemetry] code-reviewer | Score: 2 | Failed: true
+THREAD_ACTION=open
+THREAD_ROUND=1
+TITLE=[Telemetry] code-reviewer thread
 SCORE=2
 BUCKET=low
 LABELS:
@@ -8,6 +10,10 @@ LABELS:
   - task:code-reviewer
   - telemetry
 BODY_BEGIN
+## Telemetry thread — round 1
+- One thread per review target: each later round is a comment here, and a final success closes the thread with the `telemetry:healed-in-loop` label.
+- A non-pass round is the loop working (a reviewer FAIL is the reviewer doing its job); read the thread as one loop, not as separate defects.
+
 ## Task Summary
 - Task Type: code-reviewer
 - Success: false
@@ -31,6 +37,13 @@ BODY_BEGIN
     "medium": 0,
     "unspecified": 0
   },
+  "issues_by_category": {
+    "drift": 0,
+    "new": 1,
+    "nit": 0,
+    "other": 0,
+    "pre_existing": 0
+  },
   "plugin_version": "<NORMALISED>",
   "redacted": true,
   "schema": "CODE_REVIEW_RESULT",
@@ -41,5 +54,6 @@ BODY_BEGIN
   "status": "fail",
   "tools": []
 }
-```BODY_END
+```
+BODY_END
 WOULD_EXIT=0
