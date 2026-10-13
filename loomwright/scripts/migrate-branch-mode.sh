@@ -42,8 +42,12 @@
 #   mode-pr             (fresh) on a NEW branch: `setup-memory.sh apply --branch-mode <b>`, one commit
 #                       of `.gitignore` only, push, open a PR — never merged. Returns to the default.
 #   seed                (history) `meta-sync.sh push --branch <b>`, then the A/B check against the
-#                       CURRENT origin/<default> (A = `list-managed --tracked`, B = the branch tree):
-#                       A = B, every blob equal, nothing but *.md / results.jsonl on the branch.
+#                       CURRENT origin/<default> (A = `list-managed --tracked`, B = the branch
+#                       tree's RUN-HISTORY entries, `list-managed --tree <branch> --run-history` —
+#                       the learning stores are untracked here and travel only with consent):
+#                       A = B, every blob equal, nothing on the branch but the managed kinds
+#                       (*.md, results.jsonl, brain-baseline.jsonl, .provenance.jsonl,
+#                       *.dismissed-decisions).
 #                       Tracked .supervisor/ paths outside the managed set are LISTED for an owner
 #                       decision, never dropped. A != B stops the flow before untrack-pr.
 #   untrack-pr          (history) on a NEW branch: the branch-mode block, `git rm -r --cached` of the
@@ -70,7 +74,10 @@
 #                       the corrected #361 recipe on a NEW branch: push local edits to the branch,
 #                       `git revert --no-commit` the untrack commit, re-track the CURRENT branch files
 #                       (`git checkout <branch tip> -- <every branch path>`), drop paths deleted on
-#                       the branch since migration, commit, push, open a PR — never merged.
+#                       the branch since migration, commit, push, open a PR — never merged. Only
+#                       RUN-HISTORY branch paths are re-tracked: the learning stores (twin contracts,
+#                       provenance, proposals, eval files) were never tracked, so a rollback never
+#                       commits them to the default branch.
 #   state               print the state file and the next step (resume point).
 #
 #   --root    checkout (default: `git rev-parse --show-toplevel` of $PWD)
@@ -236,13 +243,17 @@ pr_create() { # pr_create <head> <base> <title> <body file> — prints the PR ur
 }
 
 # ---- A/B check -----------------------------------------------------------------------------------
-# ab_check <b> <default> — A = list-managed --tracked at HEAD (== origin/<default>), B = branch tree.
+# ab_check <b> <default> — A = list-managed --tracked at HEAD (== origin/<default>), B = the branch
+# tree's run-history entries (the learning stores on the branch are consent-gated and never in A).
 ab_check() {
   local b="$1" d="$2" an bn rc=0 nonmd extra
   fetch_meta "$b"
   tracked_managed | env LC_ALL=C sort > "$SD/a.list" || { echo "migrate-branch-mode: list-managed --tracked failed" >&2; return 1; }
   g ls-tree -r --full-tree HEAD | awk -F'\t' 'NR==FNR { want[$0] = 1; next } ($2 in want) { split($1, m, " "); print m[3] "\t" $2 }' "$SD/a.list" - | env LC_ALL=C sort > "$SD/a.ent"
-  g ls-tree -r "refs/remotes/origin/$b" | awk -F'\t' '{ split($1, m, " "); print m[3] "\t" $2 }' | env LC_ALL=C sort > "$SD/b.ent"
+  bash "$MS" list-managed --tree "refs/remotes/origin/$b" --run-history --root "$ROOT" | env LC_ALL=C sort > "$SD/b.rh" \
+    || { echo "migrate-branch-mode: list-managed --tree origin/$b --run-history failed" >&2; return 1; }
+  g ls-tree -r "refs/remotes/origin/$b" | awk -F'\t' '{ split($1, m, " "); print m[3] "\t" $2 }' | env LC_ALL=C sort > "$SD/b.all"
+  awk -F'\t' -v RH="$SD/b.rh" 'FILENAME == RH { rh[$0] = 1; next } ($2 in rh)' "$SD/b.rh" "$SD/b.all" > "$SD/b.ent"
   cut -f2 "$SD/b.ent" | env LC_ALL=C sort > "$SD/b.list"
   an="$(wc -l < "$SD/a.list" | tr -d ' ')"; bn="$(wc -l < "$SD/b.list" | tr -d ' ')"
   say "A (tracked managed on origin/$d) = $an; B (origin/$b tree) = $bn"
@@ -265,8 +276,9 @@ ab_check() {
   elif [ "$AB_REL" = subset ]; then say "A ⊆ B (B has $((bn - an)) extra) — every A path is on B"
   else say "path lists equal (empty diff)"; fi
   if [ -s "$SD/ab-blobs.diff" ]; then echo "migrate-branch-mode: blob mismatch:" >&2; sed 's/^/  /' "$SD/ab-blobs.diff" >&2; rc=1; else say "every blob equal (empty diff)"; fi
-  nonmd="$(grep -v -E '\.md$|(^|/)results\.jsonl$' "$SD/b.list")"
-  if [ -n "$nonmd" ]; then echo "migrate-branch-mode: non-.md / results.jsonl entries on $b:" >&2; printf '  %s\n' $nonmd >&2; rc=1; fi
+  # every branch entry (learning stores included) must be a managed KIND (meta-sync.sh: MANAGED SET)
+  nonmd="$(cut -f2 "$SD/b.all" | grep -v -E '\.md$|(^|/)results\.jsonl$|(^|/)brain-baseline\.jsonl$|(^|/)\.provenance\.jsonl$|\.dismissed-decisions$')"
+  if [ -n "$nonmd" ]; then echo "migrate-branch-mode: entries of a non-managed kind on $b:" >&2; printf '  %s\n' $nonmd >&2; rc=1; fi
   g ls-files -- .supervisor | env LC_ALL=C sort | env LC_ALL=C comm -23 - "$SD/a.list" > "$SD/extra.list"
   extra="$(wc -l < "$SD/extra.list" | tr -d ' ')"
   if [ "$extra" -gt 0 ]; then
@@ -628,7 +640,8 @@ cmd_rollback() {
 }
 rb_retrack_from_branch() { # the step the old M1 order (revert -> meta-sync pull -> git add) got wrong
   local br="$1" p
-  g ls-tree -r --name-only "$br" > "$SD/onbranch.list" || return 1
+  # run history only: the learning stores on the branch were never tracked (see rollback above)
+  bash "$MS" list-managed --tree "$br" --run-history --root "$ROOT" > "$SD/onbranch.list" || return 1
   if [ -s "$SD/onbranch.list" ]; then
     tr '\n' '\0' < "$SD/onbranch.list" | (cd "$ROOT" && xargs -0 git checkout "$br" --) || return 1
   fi

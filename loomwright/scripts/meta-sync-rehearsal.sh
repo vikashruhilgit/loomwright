@@ -33,23 +33,28 @@
 #                         nothing tracked, or `on <other>` (<other> != --branch), stays a FAIL here.
 #   init                  `meta-sync.sh init --branch <b>` created origin/<b> (scratch bare repo)
 #   push                  `meta-sync.sh push --branch <b>` succeeded
-#   verify-present        every managed path (list-managed) is on the branch
+#   verify-present        every RUN-HISTORY managed path (`list-managed --run-history`) is on the
+#                         branch — the learning stores may legitimately be absent (no consent)
 #   verify-blobs          every branch blob equals the local file (hash-object)
-#   verify-nothing-extra  the branch holds nothing outside the managed set
-#   verify-types          every branch entry is a regular 100644 blob named *.md or results.jsonl
-#                         under .supervisor/, and every local managed path is a regular file
+#   verify-nothing-extra  the branch holds nothing outside the FULL managed set (`list-managed`)
+#   verify-types          every branch entry is a regular 100644 blob under .supervisor/ of a
+#                         managed kind — *.md, results.jsonl, brain-baseline.jsonl,
+#                         .provenance.jsonl or *.dismissed-decisions — and every local managed path
+#                         is a regular file
 #   migrate-clean         after the scratch migration commit (`setup-memory.sh apply --branch-mode`
 #                         + `git rm -r --cached` of the tracked managed set, on the scratch default
 #                         branch), mode reads `on <b>` and `git status --porcelain` is empty
-#   pull-roundtrip        a SECOND clone runs `meta-sync.sh pull --branch <b>`: same managed list,
-#                         every file byte-identical (cmp) to the first clone's
+#   pull-roundtrip        a SECOND clone runs `meta-sync.sh pull --branch <b>`: same RUN-HISTORY
+#                         managed list, every such file byte-identical (cmp) to the first clone's
 #   rollback-run          the shipped `migrate-branch-mode.sh rollback --commit <migration commit>`
 #                         exits 0, pushes a NEW branch, opens a PR through a stub gh, never merges
 #                         (the scratch default branch is unchanged)
 #   rollback-edit-kept    the post-migration edit is in the rollback tree
 #   rollback-add-kept     the post-migration addition is in the rollback tree
 #   rollback-delete-kept  the post-migration deletion stays deleted in the rollback tree
-#   rollback-all-kept     every file on the branch tip is in the rollback tree with the same blob
+#   rollback-all-kept     every RUN-HISTORY file on the branch tip is in the rollback tree with the
+#                         same blob (the rollback re-tracks run history only — the learning stores
+#                         were never tracked, so it never commits them to the default branch)
 #   rollback-gitignore    the rollback tree's .gitignore equals the pre-migration .gitignore
 #   twin-contracts        the System Twin reader (read-system-contract.sh) verifies EVERY contract
 #                         file in .supervisor/twin/contracts/ (copied from the checkout), before and
@@ -57,6 +62,16 @@
 #                         is dropped by the reader and therefore fails this check
 #   source-untouched      the checkout's refs, remote config and `git status --porcelain` are
 #                         identical before and after the run
+#
+# LEARNING STORES (twin contracts + .provenance.jsonl, agent-memory proposals, the eval JSONL files)
+# travel on the push only with the user-scope consent (meta-sync.sh header: CONSENT). The rehearsal
+# reads the CHECKOUT's record under the caller's real HOME (`setup-memory.sh consent status`) and
+# mirrors that decision for the scratch clone in a scratch HOME (`$S/home`, written by `consent
+# grant` there — the real record is never written), which every meta-sync.sh init / push / pull
+# below runs under: the scratch clone's origin is a local path, so it could never match the
+# checkout's own key. Two `info:` lines report what happened: `learning stores: consent '<state>' —
+# <n> learning-store path(s) on <b>` after the push, and `learning stores round-tripped: <m> of <n>
+# byte-identical` after the second checkout's pull.
 #
 # Run history the checkout holds UNTRACKED (gitignored) is copied into the scratch clone, as is the
 # checkout's .git/info/exclude and .supervisor/twin/. When fewer than two managed *.md files exist,
@@ -128,6 +143,8 @@ scratch_cfg() { # identity, no hooks, no signing — local config of a scratch c
   git -C "$1" config user.name "meta-sync-rehearsal"; git -C "$1" config user.email "rehearsal@example.invalid"
   git -C "$1" config commit.gpgsign false; git -C "$1" config core.hooksPath "$S/nohooks"
 }
+# msx — meta-sync.sh under the scratch HOME (the mirrored consent record; see LEARNING STORES).
+msx() { HOME="$S/home" bash "$MS" "$@"; }
 LATE="init push verify-present verify-blobs verify-nothing-extra verify-types migrate-clean pull-roundtrip rollback-run rollback-edit-kept rollback-add-kept rollback-delete-kept rollback-all-kept rollback-gitignore twin-contracts"
 
 # ---- scratch world: bare remote + clone A ---------------------------------------------------------
@@ -180,6 +197,14 @@ if [ "${n_md:-0}" -lt 2 ]; then
   echo "info: fewer than two managed .md files — added two synthetic ones under .supervisor/jobs/done/"
 fi
 
+# learning-store consent: the checkout's own decision, mirrored for the scratch clone (never the real record)
+mkdir -p "$S/home"
+SRC_CONSENT="$(bash "$SM" --root "$ROOT" consent status 2>/dev/null | head -n 1)"
+case "$SRC_CONSENT" in granted|declined|none) ;; *) SRC_CONSENT="unknown" ;; esac
+if [ "$SRC_CONSENT" = granted ]; then
+  HOME="$S/home" bash "$SM" --root "$A" consent grant >/dev/null 2>&1 || die "could not mirror the checkout's learning-store consent into the scratch HOME"
+fi
+
 # twin store, before
 twin_verified() { (cd "$A" && bash "$RSC" 2>/dev/null) | grep -c '^### contract:'; }
 twin_files() { ls "$A/.supervisor/twin/contracts"/*.md 2>/dev/null | wc -l | tr -d ' '; }
@@ -190,17 +215,21 @@ MODE="$(bash "$SM" --root "$A" mode 2>/dev/null | head -n 1)"
 [ "$MODE" = off ] || { SKIPWHY="mode is not off"; skip $LATE; }
 
 # ---- init, push --------------------------------------------------------------------------------------
-bash "$MS" init --branch "$B" --root "$A" > "$S/init.out" 2>&1
+msx init --branch "$B" --root "$A" > "$S/init.out" 2>&1
 rc=$?; [ "$rc" -eq 0 ] && git --git-dir="$O" rev-parse -q --verify "refs/heads/$B" >/dev/null
 res $? init "rc=$rc: $(tail -n 1 "$S/init.out")"
-bash "$MS" push --branch "$B" --root "$A" > "$S/push.out" 2>&1
+msx push --branch "$B" --root "$A" > "$S/push.out" 2>&1
 res $? push "$(grep -E 'scrub|meta_sync' "$S/push.out" | tail -n 3 | tr '\n' ' ')"
 
 # ---- verify --------------------------------------------------------------------------------------
 ga fetch -q origin "+refs/heads/$B:refs/remotes/origin/$B" 2>/dev/null
-bash "$MS" list-managed --root "$A" 2>/dev/null | env LC_ALL=C sort > "$S/L.list"
+bash "$MS" list-managed --run-history --root "$A" 2>/dev/null | env LC_ALL=C sort > "$S/L.list"
+bash "$MS" list-managed --root "$A" 2>/dev/null | env LC_ALL=C sort > "$S/LF.list"
 ga ls-tree -r "refs/remotes/origin/$B" 2>/dev/null > "$S/R.ent"
 cut -f2 "$S/R.ent" | env LC_ALL=C sort > "$S/R.list"
+env LC_ALL=C comm -23 "$S/LF.list" "$S/L.list" > "$S/LL.list"      # the local learning-store paths
+env LC_ALL=C comm -12 "$S/LL.list" "$S/R.list" > "$S/LLB.list"     # ... of them on the branch
+echo "info: learning stores: consent '$SRC_CONSENT' — $(wc -l < "$S/LLB.list" | tr -d ' ') learning-store path(s) on $B (of $(wc -l < "$S/LL.list" | tr -d ' ') local)"
 miss="$(env LC_ALL=C comm -23 "$S/L.list" "$S/R.list" | tr '\n' ' ')"
 [ -s "$S/L.list" ] && [ -z "$miss" ]; res $? verify-present "missing on $B: ${miss:-<no managed files>}"
 bad=""
@@ -209,10 +238,11 @@ while IFS="$(printf '\t')" read -r meta p; do
   [ "$(ga hash-object --no-filters -- "$A/$p")" = "$(printf '%s' "$meta" | awk '{print $3}')" ] || bad="$bad$p "
 done < "$S/R.ent"
 [ -s "$S/R.ent" ] && [ -z "$bad" ]; res $? verify-blobs "blob differs: ${bad:-<empty branch>}"
-extra="$(env LC_ALL=C comm -13 "$S/L.list" "$S/R.list" | tr '\n' ' ')"
+extra="$(env LC_ALL=C comm -13 "$S/LF.list" "$S/R.list" | tr '\n' ' ')"
 [ -z "$extra" ]; res $? verify-nothing-extra "not managed: $extra"
-badt="$(awk -F'\t' '{ split($1, m, " "); if (m[1] != "100644" || m[2] != "blob" || $2 !~ /^\.supervisor\// || ($2 !~ /\.md$/ && $2 !~ /(^|\/)results\.jsonl$/)) print $1 " " $2 }' "$S/R.ent" | tr '\n' ' ')"
-while IFS= read -r p; do { [ -f "$A/$p" ] && [ ! -L "$A/$p" ]; } || badt="${badt}local:$p "; done < "$S/L.list"
+# the managed KINDS (meta-sync.sh header: MANAGED SET) — a branch entry of any other kind is wrong
+badt="$(awk -F'\t' '{ split($1, m, " "); if (m[1] != "100644" || m[2] != "blob" || $2 !~ /^\.supervisor\// || ($2 !~ /\.md$/ && $2 !~ /(^|\/)results\.jsonl$/ && $2 !~ /(^|\/)brain-baseline\.jsonl$/ && $2 !~ /(^|\/)\.provenance\.jsonl$/ && $2 !~ /\.dismissed-decisions$/)) print $1 " " $2 }' "$S/R.ent" | tr '\n' ' ')"
+while IFS= read -r p; do { [ -f "$A/$p" ] && [ ! -L "$A/$p" ]; } || badt="${badt}local:$p "; done < "$S/LF.list"
 [ -z "$badt" ]; res $? verify-types "$badt"
 
 # ---- scratch migration commit (on the scratch default branch; stands in for the owner's merge) -----
@@ -230,12 +260,14 @@ res $? migrate-clean "mode '$MODE'; porcelain: ${dirty:-empty}; $(grep -E '^ *ap
 
 # ---- second checkout: pull round trip ------------------------------------------------------------
 git clone -q "$O" "$C" 2>/dev/null && scratch_cfg "$C"
-bash "$MS" pull --branch "$B" --root "$C" > "$S/pull.out" 2>&1; prc=$?
-bash "$MS" list-managed --root "$C" 2>/dev/null | env LC_ALL=C sort > "$S/C.list"
+msx pull --branch "$B" --root "$C" > "$S/pull.out" 2>&1; prc=$?
+bash "$MS" list-managed --run-history --root "$C" 2>/dev/null | env LC_ALL=C sort > "$S/C.list"
 diffp=""
 while IFS= read -r p; do cmp -s "$A/$p" "$C/$p" || diffp="$diffp$p "; done < "$S/L.list"
 [ "$prc" -eq 0 ] && cmp -s "$S/L.list" "$S/C.list" && [ -z "$diffp" ]
 res $? pull-roundtrip "rc=$prc; differs: ${diffp:-none}; lists $(cmp -s "$S/L.list" "$S/C.list" && echo equal || echo differ)"
+lrt=0; while IFS= read -r p; do cmp -s "$A/$p" "$C/$p" && lrt=$((lrt+1)); done < "$S/LLB.list"
+echo "info: learning stores round-tripped: $lrt of $(wc -l < "$S/LLB.list" | tr -d ' ') byte-identical"
 
 # ---- post-migration edit / add / delete, then the SHIPPED rollback --------------------------------
 E="$(grep '\.md$' "$S/L.list" | head -n 1)"; D="$(grep '\.md$' "$S/L.list" | grep -vxF "$E" | tail -n 1)"
@@ -267,7 +299,11 @@ blob_eq "$N" "$S/N.expect"; res $? rollback-add-kept "$N"
 [ -n "$RB" ] && ! ga cat-file -e "$RT:$D" 2>/dev/null; res $? rollback-delete-kept "$D"
 ga fetch -q origin "+refs/heads/$B:refs/remotes/origin/$B" 2>/dev/null
 lost=""
+bash "$MS" list-managed --tree "refs/remotes/origin/$B" --run-history --root "$A" > "$S/RB.rh" 2>/dev/null \
+  || { : > "$S/RB.rh"; lost="<could not list the run history on $B> "; }
+[ -s "$S/RB.rh" ] || lost="${lost:-<no run history on $B> }"
 while IFS="$(printf '\t')" read -r meta p; do
+  grep -qxF -- "$p" "$S/RB.rh" || continue    # run history only (see rollback-all-kept)
   [ "$(ga rev-parse -q --verify "$RT:$p" 2>/dev/null)" = "$(printf '%s' "$meta" | awk '{print $3}')" ] || lost="$lost$p "
 done < <(ga ls-tree -r "refs/remotes/origin/$B" 2>/dev/null)
 [ -n "$RB" ] && [ -z "$lost" ]; res $? rollback-all-kept "not at branch bytes: ${lost:-<no rollback branch>}"

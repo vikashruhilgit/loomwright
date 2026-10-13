@@ -108,7 +108,8 @@
 #        retains anything already pushed + that already-tracked files need `git rm --cached`
 #   (h)  the consent disclosure (what becomes version-controlled) is printed BEFORE applying
 #   (i)  write containment: only .gitignore(+backup) and .supervisor/config.json; `check` writes
-#        nothing; no commit/index/HEAD is ever touched; only read-only git subcommands are used
+#        nothing; no commit/index/HEAD is ever touched; only read-only git subcommands are used;
+#        the code references HOME only inside do_consent (the ONE user-scope write — group (cs))
 #   (j)  fail-safe: every subcommand exits 0, including on a non-git root and a bad flag — and a
 #        root where nothing could be probed reports the VERDICT as `unknown`, never `partial`
 #   (l)  the FINDINGS-LEDGER GATE: a clean ledger is un-ignored (and ONLY the ledger, not its
@@ -138,6 +139,14 @@
 #        file changed; its verdict agrees with `apply --branch-mode`, and a refuse-all mutant of
 #        the predicate turns its accept red (it calls the predicate, never a copy)
 #   (k)  the suite never touched the plugin repo's own .gitignore
+#   (cs) `consent grant | decline | status` (af36-03): the user-scope learning-store consent record —
+#        status prints `none` / `granted` / `declined` (one line); grant / decline write EXACTLY one
+#        file, $HOME/.claude/loomwright/meta-sync-consent.json (nothing under the repo, no other
+#        HOME file), keyed by origin's owner/repo (a filesystem-path origin: the literal URL), other
+#        repos' entries preserved; no origin -> `none` and nothing written; a malformed record is
+#        never clobbered; a bad action writes nothing; status / check / mode write nothing; the
+#        branch-mode disclosure names the learning stores and the consent ask; mutation control: a
+#        writer aimed at the repo root instead of $HOME turns the containment assertion red
 #
 # EVERY LEDGER ASSERTION IN THIS FILE USES jq, NEVER grep. A findings ledger mixes compact
 # (`"repo":"x"`) and spaced (`"repo": "x"`) JSON — this plugin's own ledger carries one spaced
@@ -1487,8 +1496,13 @@ case "$git_subs" in
   *)
     ok "(i4) only read-only git subcommands are invoked: $git_subs" ;;
 esac
-mem_src="$(cat "$MEM")"
-hasF 'HOME' "$mem_src" && no "(i4) setup-memory.sh references \$HOME (must never write under ~/.claude/)" || ok "(i4) setup-memory.sh never references \$HOME"
+# The WRITE-CONTAINMENT INVARIANT's ONE amendment (af36-03): the user-scope consent record. So the
+# code may reference HOME ONLY inside do_consent (the record's sole writer/reader) — never in any
+# other code line; comment lines may name the record's path. Group (cs) proves the behaviour (grant
+# writes exactly that one file); this static leg pins WHERE the reference may live.
+mem_src="$(awk '/^do_consent\(\) \{$/ { inc = 1 } inc && /^}$/ { inc = 0; next } !inc && $0 !~ /^[[:space:]]*#/' "$MEM")"
+hasF 'HOME' "$mem_src" && no "(i4) setup-memory.sh references \$HOME outside do_consent (must never write under ~/.claude/ except the consent record)" || ok "(i4) setup-memory.sh references \$HOME only inside do_consent (the one user-scope write)"
+hasF 'HOME' "$(awk '/^do_consent\(\) \{$/ { inc = 1 } inc { print } inc && /^}$/ { exit }' "$MEM")" && ok "(i4) do_consent is where the HOME reference lives (the scan above is not vacuous)" || no "(i4) do_consent was not found — the HOME scan scoped nothing"
 
 # ============================================================================
 echo "== (j) fail-safe — every subcommand exits 0, including on hostile input =="
@@ -2635,6 +2649,65 @@ if cmp -s "$MEM" "$AM_D/mut.sh"; then no "(am) mutation self-check: the patch ch
 elif am_probe_ok "$out_am_mut"; then no "(am) mutation self-check: a colon-form probe ($(am_probe_names "$out_am_mut" | tr '\n' ' ')) still passed — the check does not bite"
 else ok "(am) mutation self-check: the colon-form probe ($(am_probe_names "$out_am_mut" | tr '\n' ' ')) is rejected"; fi
 rm -rf "$AM_D"
+
+echo "== (cs) consent: the ONE user-scope write, keyed by repo, written only by grant / decline =="
+CS_HOME="$(mkfix)"
+CS_REC="$CS_HOME/.claude/loomwright/meta-sync-consent.json"
+cs() { env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST HOME="$CS_HOME" bash "${CS_SUT:-$MEM}" --root "$1" consent "${@:2}" 2>/dev/null; }
+# tree_sig <dir> — every file under <dir> with its checksum (the containment witness)
+tree_sig() { (cd "$1" && find . -type f -print | LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done); }
+CSG="$(newgit "https://github.com/Acme/Widget.git")"
+[ "$(cs "$CSG" status)" = "none" ] && ok "(cs) no record -> status prints exactly 'none'" || no "(cs) status without a record did not print 'none'"
+[ -z "$(tree_sig "$CS_HOME")" ] && ok "(cs) status wrote nothing under HOME" || no "(cs) status wrote under HOME"
+csg_repo0="$(tree_sig "$CSG")"
+out_cs="$(cs "$CSG" grant)"
+hasF "consent: recorded granted for Acme/Widget" "$out_cs" && ok "(cs) grant reports the record keyed by origin's owner/repo" || no "(cs) grant output: $out_cs"
+[ "$(tree_sig "$CS_HOME" | cut -d' ' -f1)" = "./.claude/loomwright/meta-sync-consent.json" ] \
+  && ok "(cs) grant wrote EXACTLY one file, \$HOME/.claude/loomwright/meta-sync-consent.json" || no "(cs) grant wrote: $(tree_sig "$CS_HOME" | cut -d' ' -f1 | tr '\n' ' ')"
+[ "$(tree_sig "$CSG")" = "$csg_repo0" ] && ok "(cs) grant wrote nothing under the repo" || no "(cs) grant changed the repo tree"
+[ "$(jq -r '.repos["Acme/Widget"].learning_stores' "$CS_REC" 2>/dev/null)" = "granted" ] && ok "(cs) the record holds .repos[\"Acme/Widget\"].learning_stores = granted" || no "(cs) record shape wrong: $(cat "$CS_REC" 2>/dev/null)"
+[ "$(cs "$CSG" status)" = "granted" ] && ok "(cs) status reads it back as 'granted'" || no "(cs) status after grant"
+cs "$CSG" decline >/dev/null
+[ "$(cs "$CSG" status)" = "declined" ] && ok "(cs) decline overwrites the decision -> 'declined'" || no "(cs) status after decline"
+CSP="$(newgit "$CS_HOME/elsewhere/origin.git")"
+cs "$CSP" grant >/dev/null
+{ [ "$(cs "$CSP" status)" = "granted" ] && [ "$(jq -r '.repos["Acme/Widget"].learning_stores' "$CS_REC")" = "declined" ] \
+  && [ "$(jq -r --arg k "$CS_HOME/elsewhere/origin.git" '.repos[$k].learning_stores' "$CS_REC")" = "granted" ]; } \
+  && ok "(cs) a filesystem-path origin keys by the literal URL; the other repo's entry is preserved" || no "(cs) path-origin keying: $(cat "$CS_REC")"
+CSN="$(newgit)"
+rec0="$(cksum < "$CS_REC")"
+[ "$(cs "$CSN" status)" = "none" ] && ok "(cs) no origin -> status 'none'" || no "(cs) no-origin status"
+out_csn="$(cs "$CSN" grant)"
+{ hasF "NOT recorded" "$out_csn" && [ "$(cksum < "$CS_REC")" = "$rec0" ]; } && ok "(cs) no origin -> grant writes nothing and says why" || no "(cs) no-origin grant: $out_csn"
+out_bad="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST HOME="$CS_HOME" bash "$MEM" --root "$CSG" consent bogus 2>&1)"; rc_bad=$?
+{ [ "$rc_bad" -eq 0 ] && hasF "Nothing was written" "$out_bad" && [ "$(cksum < "$CS_REC")" = "$rec0" ]; } && ok "(cs) a bad action is a usage line, exit 0, nothing written" || no "(cs) bad action (rc=$rc_bad): $out_bad"
+for sub in check mode allowlist; do
+  env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST HOME="$CS_HOME" bash "$MEM" --root "$CSG" "$sub" >/dev/null 2>&1
+done
+[ "$(cksum < "$CS_REC")" = "$rec0" ] && [ "$(tree_sig "$CS_HOME" | wc -l | tr -d ' ')" = "1" ] && ok "(cs) check / mode / allowlist write nothing under HOME" || no "(cs) a read-only subcommand wrote under HOME"
+printf '[1, 2]\n' > "$CS_REC"
+out_mal="$(cs "$CSG" grant)"
+{ hasF "NOT recorded" "$out_mal" && [ "$(cat "$CS_REC")" = "[1, 2]" ]; } && ok "(cs) a malformed record is never clobbered" || no "(cs) malformed record: $out_mal / $(cat "$CS_REC")"
+case "$(cs "$CSG" status)" in "unknown "*) ok "(cs) a malformed record reads 'unknown <reason>' (publishes nothing)" ;; *) no "(cs) malformed status: $(cs "$CSG" status)" ;; esac
+CSB="$(newgit "https://github.com/Acme/Widget.git")"; printf '# x\n' > "$CSB/.gitignore"
+env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST HOME="$CS_HOME" bash "$MEM" --root "$CSB" apply --branch-mode loomwright-meta >/dev/null 2>&1
+out_bm="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST HOME="$CS_HOME" bash "$MEM" --root "$CSB" check 2>&1)"
+{ hasF ".supervisor/twin/contracts/" "$out_bm" && hasF "setup-memory.sh consent" "$out_bm" && hasi "only pattern-checks" "$out_bm"; } \
+  && ok "(cs) the branch-mode disclosure names the learning stores, the consent record and that the scrub only pattern-checks" || no "(cs) branch-mode disclosure lacks the learning-store paragraph"
+# mutation control: a writer aimed at the repo root must fail the containment assertion
+CS_MUT="$(mkfix)"
+sed 's|file="\$HOME/\$CONSENT_FILE_REL"|file="$repo/$CONSENT_FILE_REL"|' "$MEM" > "$CS_MUT/setup-memory.sh"
+if cmp -s "$MEM" "$CS_MUT/setup-memory.sh" || ! bash -n "$CS_MUT/setup-memory.sh"; then
+  no "(cs) mutation control: the repo-root mutant did not build — inconclusive"
+else
+  CSM="$(newgit "https://github.com/Acme/Mutant.git")"; csm0="$(tree_sig "$CSM")"; home0="$(tree_sig "$CS_HOME")"
+  CS_SUT="$CS_MUT/setup-memory.sh" cs "$CSM" grant >/dev/null
+  if [ "$(tree_sig "$CSM")" != "$csm0" ] && [ "$(tree_sig "$CS_HOME")" = "$home0" ]; then
+    ok "(cs) mutation control: the repo-root mutant writes under the repo, which the containment assertion rejects"
+  else
+    no "(cs) mutation control: the mutant did not write under the repo — the containment assertion does not bite"
+  fi
+fi
 
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"

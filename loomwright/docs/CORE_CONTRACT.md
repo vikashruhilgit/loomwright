@@ -61,6 +61,8 @@ means the path follows whichever mode the repo chose.
 | `config.json` | The user; the `/automate` engine toggles it around RUN through `automate-helpers.sh config-suppress` / `config-restore` (byte-for-byte backup, restored in a finally-style cleanup) | Persistent run configuration | gitignored | `CLAUDE.md` §"Failure-Mode Invariants" (single-drain ownership) |
 | `run.lock` | `run-lock.sh` (sole writer) | One run per checkout; reclaimed only when its pid is dead and it is old | gitignored | `run-lock.sh` header |
 
+In branch mode the learning stores — `twin/contracts/*.md` + `twin/.provenance.jsonl`, `agent-memory-proposals/*.md` and the two eval JSONL files (`eval/results.jsonl`, `eval/brain-baseline.jsonl`) — are meta-branch too (the `is_managed` predicate above is the list), published only with the user-scope consent `setup-memory.sh consent` records (`docs/ARCHITECTURE_CONTRACTS.md` §"Metadata branch").
+
 Every other `.supervisor/` directory (`twin/`, `worker-summaries/`, `history/`, `floor/`, …) has exactly one row in
 §"`.supervisor/` retention policy", which is the authoritative directory list. This table restates only what an
 adapter must know to run the engine. In host mode (`LOOMWRIGHT_HOST_MODE=1`) hook-written state moves out of the

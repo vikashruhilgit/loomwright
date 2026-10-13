@@ -21,6 +21,12 @@
 #      clone is reset to off, every check passes, the real remote is untouched; a mode line naming
 #      ANOTHER branch -> FAIL scratch-mode-off; mutation control: without the reset the half-migrated
 #      run goes red at scratch-mode-off
+#   7. learning stores (af36-03) on the history fixture (its provenanced twin store): with NO consent
+#      recorded under the scratch HOME every check PASSes and the learning stores stay off the
+#      branch; with consent GRANTED for the fixture every check PASSes, both twin paths reach the
+#      branch and round-trip byte-identical, and the caller's record is not written for the scratch
+#      clone; mutation controls: verify-present over the FULL list goes red without consent,
+#      verify-types without .provenance.jsonl goes red with consent
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -173,6 +179,34 @@ if build_mutant "$TROOT/mut-no-reset" meta-sync-rehearsal.sh "$TROOT/no-reset.se
   half_world "$BR"; SCRIPT="$TROOT/mut-no-reset/meta-sync-rehearsal.sh"; run --branch "$BR"; SCRIPT="$SUT"
   if [ "$RC" -eq 1 ] && red scratch-mode-off; then ok "mutation control: without the reset a half-migrated checkout goes red at scratch-mode-off"; else no "mutation control REFUTED: no-reset left scratch-mode-off green (rc=$RC)"; fi
 else no "mutation control (no-reset) did not build — counts as FAIL"; fi
+
+echo "== 7. learning stores: consent decides what the push carries; every check passes either way =="
+mkworld
+run --branch "$BR"
+{ [ "$RC" -eq 0 ] && all_pass && has "info: learning stores: consent 'none' — 0 learning-store path(s) on $BR (of 2 local)"; }
+check $? "no consent: every named check PASSes and the learning stores stay off the branch (rc=$RC)"
+[ "$RC" -eq 0 ] || printf '%s\n' "$OUT" | grep -E '^(FAIL|info)' | sed 's/^/    /'
+mkworld
+bash "$HERE/setup-memory.sh" --root "$W/src" consent grant >/dev/null 2>&1
+[ "$(bash "$HERE/setup-memory.sh" --root "$W/src" consent status)" = granted ]; check $? "fixture: consent granted for the fixture under the scratch HOME"
+CREC="$HOME/.claude/loomwright/meta-sync-consent.json"; CREC0="$(cat "$CREC" 2>/dev/null)"
+run --branch "$BR"
+{ [ "$RC" -eq 0 ] && all_pass && has "info: learning stores: consent 'granted' — 2 learning-store path(s) on $BR (of 2 local)" \
+  && has "info: learning stores round-tripped: 2 of 2 byte-identical"; }
+check $? "consent granted: every named check PASSes, the twin contract + .provenance.jsonl reach the branch and round-trip (rc=$RC)"
+[ "$RC" -eq 0 ] || printf '%s\n' "$OUT" | grep -E '^(FAIL|info)' | sed 's/^/    /'
+[ "$(cat "$CREC" 2>/dev/null)" = "$CREC0" ]; check $? "the caller's consent record is unchanged (the scratch clone's grant lives in the scratch HOME only)"
+mutant verify-present-full meta-sync-rehearsal.sh 'MUTANT-FULL' verify-present <<'SED'
+s|^bash "\$MS" list-managed --run-history --root "\$A" 2>/dev/null \| env LC_ALL=C sort > "\$S/L.list"$|bash "$MS" list-managed --root "$A" 2>/dev/null \| env LC_ALL=C sort > "$S/L.list"  # MUTANT-FULL|
+SED
+cat > "$TROOT/types.sed" <<'SED'
+s| \&\& \$2 !~ /(^\|\\/)\\.provenance\\.jsonl\$/||
+SED
+if build_mutant "$TROOT/mut-types" meta-sync-rehearsal.sh "$TROOT/types.sed" 'brain-baseline\.jsonl$/ && $2 !~ /\.dismissed-decisions$/'; then
+  mkworld; bash "$HERE/setup-memory.sh" --root "$W/src" consent grant >/dev/null 2>&1
+  SCRIPT="$TROOT/mut-types/meta-sync-rehearsal.sh"; run --branch "$BR"; SCRIPT="$SUT"
+  if [ "$RC" -eq 1 ] && red verify-types; then ok "mutation control: without .provenance.jsonl among the kinds a consented run goes red at verify-types"; else no "mutation control REFUTED: verify-types stayed green without .provenance.jsonl (rc=$RC)"; fi
+else no "mutation control (types) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"

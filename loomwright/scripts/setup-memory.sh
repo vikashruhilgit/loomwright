@@ -88,10 +88,13 @@
 # pid, then a counter, when that name is already taken — a backup NEVER overwrites another, and if
 # every candidate name is taken the write is REFUSED outright rather than clobbering one), and (b)
 # `.supervisor/config.json` `.setup_memory.repo_allowlist` (backup-first jq merge that preserves
-# every unrelated key). It writes NOTHING under `~/.claude/`, and it NEVER runs `git add`,
-# `git rm`, `git commit` or any other history-touching command. `check`, `allowlist`,
-# `filter-ledger` and `valid-branch` write nothing at all — not even a temp file: the bounded `gh`
-# runner behind the allowlist's request file (gh_id_bounded) reads gh's answer through a pipe.
+# every unrelated key). It writes NOTHING under `~/.claude/` — with ONE exception: the user-scope
+# learning-store consent record `$HOME/.claude/loomwright/meta-sync-consent.json` (CONSENT_FILE_REL),
+# written ONLY by `consent grant` / `consent decline` (one atomic mktemp + rename beside it, the
+# record's other repos' entries preserved) — and it NEVER runs `git add`, `git rm`, `git commit` or
+# any other history-touching command. `check`, `allowlist`, `filter-ledger`, `valid-branch`, `mode`
+# and `consent status` write nothing at all — not even a temp file: the bounded `gh` runner behind
+# the allowlist's request file (gh_id_bounded) reads gh's answer through a pipe.
 #
 # TRACKED-WRITE RISK (stated here, deliberately NOT fixed here): once `.claude/agent-memory/` is
 # tracked, every memory write becomes a working-tree modification — it shows in `git status`, can
@@ -112,6 +115,8 @@
 #   setup-memory.sh allowlist                      # print the allowlist, one per line (status: stderr)
 #   setup-memory.sh filter-ledger --ledger F       # print ledger records whose .repo is in the allowlist
 #   setup-memory.sh filter-ledger --ledger F --allow owner/repo --allow owner/old-name
+#   setup-memory.sh consent status                 # print ONE line: granted | declined | none | unknown <reason>
+#   setup-memory.sh consent grant|decline          # record this repo's learning-store consent (user scope)
 #   setup-memory.sh --root /path/to/repo check     # point at a fixture repo
 #   setup-memory.sh -h | --help
 #
@@ -142,6 +147,24 @@
 # right after `valid-branch` is always the name, even when it starts with `-` (so `-x` is judged,
 # and refused, rather than parsed as a flag). It runs before the repo root is resolved, reads no
 # file and writes nothing; on acceptance it prints nothing.
+#
+# CONSENT (learning stores on the metadata branch — meta-sync.sh header: CONSENT). meta-sync.sh
+# publishes the learning stores (twin contracts + .provenance.jsonl, agent-memory proposals, the
+# eval JSONL files) only when this repo's record reads `granted`. The record is a fact about the
+# USER, not the repo (a repo-relative file could at most REQUEST, never grant — the telemetry
+# invariant): ONE JSON file, $HOME/.claude/loomwright/meta-sync-consent.json,
+#   {"schema_version": 1, "repos": {"<key>": {"learning_stores": "granted"|"declined",
+#                                             "recorded_at": "<UTC ISO-8601>"}}}
+# keyed by origin's `owner/repo` (remote_slug — it NEVER guesses an owner), falling back to the
+# literal origin URL when no slug parses (a filesystem-path origin). No origin at all => no key:
+# `status` prints `none`, `grant` / `decline` write nothing. `consent status` is the ONE reader
+# (meta-sync.sh calls it; nothing else parses the file) and prints exactly one line: `granted` |
+# `declined` | `none` (no file, or no entry for this key) | `unknown <reason>` (HOME unset, jq
+# missing, a file that is not valid JSON or holds another value) — and every answer but `granted`
+# publishes nothing. `consent grant` / `consent decline` are the ONLY writers; they refuse (nothing
+# written, exit 0, a reason line) without jq, without HOME, without a key, or over an existing file
+# that is not a JSON object (never clobbered). Asking is the command layer's job (`/setup memory`,
+# commands/setup.md); this helper never asks.
 #
 # Exit: 0 in every normal path — EXCEPT `valid-branch`, a predicate whose exit code IS its answer:
 # 0 accepted, 1 refused (one reason line on stderr; also for a missing name or an extra flag).
@@ -184,6 +207,7 @@ ALLOW_FLAGS=""     # newline-separated (bash-3.2-safe: no arrays needed downstre
 BRANCH_MODE_SET=0  # 1 when --branch-mode was given (its value is REQUIRED: <branch> | off)
 BRANCH_MODE_VAL=""
 VB_NAME=""         # valid-branch: the name to judge (the argument right after the subcommand)
+CONSENT_ACTION=""  # consent: grant | decline | status (the argument right after the subcommand)
 
 # reject_option_value <flag> <noun> <value> — an EMPTY or option-shaped (`-…`) value is the NEXT
 # flag (or nothing), never the value: `--root --branch-mode apply` must not resolve a root named
@@ -206,6 +230,13 @@ while [ $# -gt 0 ]; do
   case "$1" in
     check|apply|remove|allowlist|filter-ledger|mode)
       [ -z "$SUBCMD" ] && SUBCMD="$1"; shift ;;
+    consent)
+      # The NEXT argument is the action (grant | decline | status), judged by do_consent.
+      if [ -z "$SUBCMD" ]; then
+        SUBCMD="$1"
+        [ $# -ge 2 ] && { CONSENT_ACTION="$2"; shift; }
+      fi
+      shift ;;
     valid-branch)
       # The NEXT argument is the name, verbatim — even an option-shaped one, which the predicate
       # then refuses (`valid-branch -x` judges `-x`; it never parses it as a flag).
@@ -1652,6 +1683,18 @@ Read this before saying yes:
     when parallel workers write it.
   · The metadata branch publishes too. Every remote that receives it gets the run history on it,
     and requirement files and briefs quote whatever was on screen.
+LEARNING STORES — a SEPARATE consent, asked once after this apply. meta-sync.sh can also carry
+  · .supervisor/twin/contracts/*.md + .supervisor/twin/.provenance.jsonl — System Twin contracts
+                                 and their provenance chain
+  · .supervisor/agent-memory-proposals/*.md — proposed agent-memory entries
+  · .supervisor/eval/results.jsonl, .supervisor/eval/brain-baseline.jsonl — eval history
+to the metadata branch. They hold the agents' internal reasoning about this codebase, and the
+push scrub only pattern-checks them (e-mail, home paths, tokens, forge slugs, deny patterns) — it
+cannot recognise proprietary prose. They are published ONLY when you record consent for this repo
+(`setup-memory.sh consent grant`; `consent decline` records a no; `consent status` reads it). The
+record lives in your user scope, ~/.claude/loomwright/meta-sync-consent.json, keyed by this repo's
+origin — a repo file can never grant it. Without a `granted` record every push skips them and names
+each one (`learning_skipped`); a pull still brings them in from the branch.
 What stays IGNORED here: .claude/worktrees/, .claude/settings.local.json, .supervisor/logs/,
 .supervisor/jobs/pending/ and in-progress/, every run-history path above (the ledger included),
 any nested `.supervisor/` tree, and everything else under .claude/ and .supervisor/.
@@ -2211,7 +2254,74 @@ do_mode() {
   exit 0
 }
 
+# ---- subcommand: consent (the user-scope learning-store consent record — header: CONSENT) ----
+CONSENT_FILE_REL=".claude/loomwright/meta-sync-consent.json"
+
+# consent_key — this repo's key: origin's owner/repo, else the literal origin URL (any
+# `user[:password]@` userinfo stripped, so a credential never becomes a key), else nothing.
+consent_key() {
+  resolve_origin
+  if [ -n "$ORIGIN_SLUG" ]; then printf '%s' "$ORIGIN_SLUG"; return 0; fi
+  git -C "$repo" remote get-url origin 2>/dev/null | head -n 1 | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@#\1#'
+  return 0
+}
+
+do_consent() {
+  local key file val cur dir tmp ts
+  if [ "$BRANCH_MODE_SET" = 1 ] || [ -n "$LEDGER" ] || [ -n "$ALLOW_FLAGS" ]; then
+    echo "setup-memory: consent takes only grant | decline | status (got --branch-mode / --ledger / --allow). Nothing was written." >&2
+    [ "$CONSENT_ACTION" = "status" ] && echo "unknown usage error"
+    exit 0
+  fi
+  case "$CONSENT_ACTION" in
+    grant) val="granted" ;;
+    decline) val="declined" ;;
+    status) val="" ;;
+    *) echo "setup-memory: consent requires grant | decline | status (got '${CONSENT_ACTION}'). Nothing was written." >&2; exit 0 ;;
+  esac
+  case "${HOME:-}" in
+    /*) file="$HOME/$CONSENT_FILE_REL" ;;
+    *) if [ -z "$val" ]; then echo "unknown HOME is not an absolute path"; else echo "consent: NOT recorded — HOME is not an absolute path. Nothing was written."; fi; exit 0 ;;
+  esac
+  key="$(consent_key)"
+  if [ -z "$val" ]; then
+    # STATUS — the one reader; writes nothing.
+    [ -n "$key" ] || { echo "setup-memory: consent: this repo has no origin remote, so no record can be keyed" >&2; echo "none"; exit 0; }
+    [ -e "$file" ] || { echo "none"; exit 0; }
+    command -v jq >/dev/null 2>&1 || { echo "unknown jq is not available"; exit 0; }
+    cur="$(jq -r --arg k "$key" 'if type == "object" then ((.repos // {}) | if type == "object" then (.[$k].learning_stores // "none") else "@bad" end) else "@bad" end' "$file" 2>/dev/null)" \
+      || { echo "unknown $CONSENT_FILE_REL is not valid JSON"; exit 0; }
+    case "$cur" in
+      granted|declined|none) echo "$cur" ;;
+      *) echo "unknown $CONSENT_FILE_REL holds an unrecognised record for this repo" ;;
+    esac
+    exit 0
+  fi
+  # GRANT / DECLINE — the only writers of the record.
+  [ -n "$key" ] || { echo "consent: NOT recorded — this repo has no origin remote, so the record cannot be keyed. Nothing was written."; exit 0; }
+  command -v jq >/dev/null 2>&1 || { echo "consent: NOT recorded — jq is not available. Nothing was written."; exit 0; }
+  dir="$(dirname "$file")"
+  if [ -e "$file" ]; then
+    { [ -f "$file" ] && jq -e 'type == "object" and ((.repos // {}) | type == "object")' "$file" >/dev/null 2>&1; } \
+      || { echo "consent: NOT recorded — ~/$CONSENT_FILE_REL exists but is not a JSON object with an object .repos; repair or remove it by hand. Nothing was written."; exit 0; }
+  fi
+  mkdir -p "$dir" 2>/dev/null || { echo "consent: NOT recorded — could not create ~/.claude/loomwright/. Nothing was written."; exit 0; }
+  tmp="$(mktemp "$file.tmp.XXXXXX" 2>/dev/null)" || { echo "consent: NOT recorded — could not create a temp file beside ~/$CONSENT_FILE_REL. Nothing was written."; exit 0; }
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if { if [ -e "$file" ]; then cat "$file"; else printf '{}'; fi; } \
+      | jq --arg k "$key" --arg v "$val" --arg t "$ts" \
+          '.schema_version = (.schema_version // 1) | .repos = ((.repos // {}) | .[$k] = ((.[$k] // {}) + {learning_stores: $v, recorded_at: $t}))' > "$tmp" 2>/dev/null \
+     && chmod 600 "$tmp" && mv -f "$tmp" "$file"; then
+    echo "consent: recorded $val for $key (~/$CONSENT_FILE_REL)"
+  else
+    rm -f "$tmp"
+    echo "consent: NOT recorded — the record could not be written. Nothing was changed."
+  fi
+  exit 0
+}
+
 case "$SUBCMD" in
+  consent)       do_consent ;;
   mode)          do_mode ;;
   check)         do_check ;;
   apply)         do_apply ;;
