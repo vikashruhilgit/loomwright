@@ -71,3 +71,9 @@ another repo (`meta-sync-followups/07`).
 ## Provenance
 Owner direction, 2026-10-03, session cc4eaee3 (after M1). The allowlist failure (218 hits without `config.json`)
 comes from the M1 rehearsal the same day.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-13T00:55:03Z
+- **Brief:** .supervisor/jobs/done/2026-10-12-af36-02-meta-allowlist-grant.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/501
