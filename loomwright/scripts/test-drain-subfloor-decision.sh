@@ -24,7 +24,9 @@
 #   M.  MUTATION CONTROLS against COPIES (gated non-empty + differs + bash -n):
 #       `<` → `<=` in the severity comparison; dropping the required=green test;
 #       dropping the `--…`-value refusal; restoring the whitespace `set --`
-#       split of the wait line; restoring the stream (non-slurped) round read.
+#       split of the wait line; restoring the stream (non-slurped) round read;
+#       (libwsplit) the SHARED reader wait-for-checks-line.sh reverted to word-splitting.
+#   X3. the shared reader missing beside the script ⇒ ESCALATED (fail closed).
 
 set -uo pipefail
 
@@ -172,6 +174,8 @@ bash "$SCRIPT" decide "$TMP/low.json" --sha "$SHA_OK" --wait-line "$GREEN" --rul
 if [ "$rc" -eq 0 ]; then ok "X2 READY path exits 0"; else no "X2 READY rc=$rc"; fi
 
 echo "== M. mutation controls (copies only) =="
+# Every mutant copy sources the shared wait-line reader from beside itself.
+cp "$HERE/wait-for-checks-line.sh" "$TMP/wait-for-checks-line.sh"
 # mutant <name> <sed-expr> — a gated COPY of the script; prints its path or nothing.
 mutant() {
   local m="$TMP/mut-$1.sh"
@@ -197,6 +201,31 @@ for spec in 'le|s/all(\. < \$floor)/all(. <= $floor)/' \
   reds="$(printf '%s\n' "$mout" | grep -c '  FAIL: ' || true)"
   if [ "${reds:-0}" -ge 1 ]; then ok "M $name — mutant turns $reds case(s) red"; else no "M $name — mutant SURVIVED the table"; fi
 done
+
+# libwsplit: the SHARED reader (wait-for-checks-line.sh) reverted to word-splitting, the script
+# itself unchanged — the class-level control (fixtures/wait-for-checks-line/wsplit.sed, the same
+# mutant test-wait-for-checks.sh and the ESC legs of test-automate-helpers.sh run).
+LM="$TMP/libmut"; mkdir -p "$LM"
+cp "$SCRIPT" "$LM/drain-subfloor-decision.sh"
+sed -f "$HERE/fixtures/wait-for-checks-line/wsplit.sed" "$HERE/wait-for-checks-line.sh" > "$LM/wait-for-checks-line.sh"
+if [ -s "$LM/wait-for-checks-line.sh" ] && ! cmp -s "$HERE/wait-for-checks-line.sh" "$LM/wait-for-checks-line.sh" \
+   && bash -n "$LM/wait-for-checks-line.sh" 2>/dev/null; then
+  saved_pass=$pass; saved_fail=$fail
+  mout="$(run_table "$LM/drain-subfloor-decision.sh")"
+  pass=$saved_pass; fail=$saved_fail
+  reds="$(printf '%s\n' "$mout" | grep -c '  FAIL: ' || true)"
+  if [ "${reds:-0}" -ge 1 ] && grep -q '  FAIL: D18 ' <<<"$mout"; then
+    ok "M libwsplit — a word-splitting shared reader turns $reds case(s) red (D18 among them)"
+  else
+    no "M libwsplit — the word-splitting reader SURVIVED the table"
+  fi
+else
+  no "M libwsplit — could not build a valid reader mutant (vacuous control)"
+fi
+# The reader is required: without it the decision fails CLOSED (never READY on an unread line).
+NL="$TMP/nolib"; mkdir -p "$NL"; cp "$SCRIPT" "$NL/drain-subfloor-decision.sh"
+expect "$NL/drain-subfloor-decision.sh" "X3 shared reader missing ⇒ ESCALATED (fail closed)" "ESCALATED repeat_check_failure=false" \
+  decide "$TMP/low.json" --sha "$SHA_OK" --wait-line "$GREEN" --rules none
 
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

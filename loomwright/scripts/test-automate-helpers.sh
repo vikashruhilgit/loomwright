@@ -36,6 +36,9 @@
 #      Review iteration 1: every command of a failed step counts (two-command step,
 #      mixed failed steps, no Run block ⇒ check_red; valid mutant), red before pending,
 #      and current-set dropping the line on leaving `escalated` / a changed item.
+#      V5: spaced (matrix) check names — `test (18.x)` pending and `build (ubuntu-latest)`
+#      red keep the whole name + run id through the shared wait-for-checks-line.sh reader
+#      and current-escalation; the shared word-split reader mutant; missing reader ⇒ check_red.
 #   C. folder / backlog-doc resolvers (skip ## Status: done; documented order).
 #   D. resume-glob lists only run files (is_run_file: `# Automate Run:` title) not
 #      done — §6 result sidecars excluded, with a validated is_run_file mutant;
@@ -5218,6 +5221,7 @@ case "$*" in
   *"--paginate"*) [ -f "$d/paginate.txt" ] || exit 1; cat "$d/paginate.txt"; exit 0 ;;
   "api repos/"*"/protection")
     [ -f "$d/prot.err" ] && { cat "$d/prot.err" >&2; exit 1; }
+    [ -f "$d/prot.json" ] && { cat "$d/prot.json"; exit 0; }
     printf '{"required_status_checks":{"contexts":["ci"]}}\n'; exit 0 ;;
   "run view "*" --json attempt") printf '{"attempt":%s}\n' "$(cat "$d/attempt" 2>/dev/null || echo 1)"; exit 0 ;;
   "run view "*" --log-failed")
@@ -5423,6 +5427,74 @@ if [ -s "$ESC_MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$ESC_MUT/automate-hel
 else
   no "ESC AC5 mutation control: could not build a valid mutant -- control inconclusive"
 fi
+rm -rf "$ESC_MUT"
+
+# V5 (spaced check names): matrix-style required checks carry spaces. The snapshot line is read
+# by the shared reader (wait-for-checks-line.sh), so the WHOLE name is recorded and its run id
+# found — the word-splitting parse recorded `check=test run_id=null` and the merge watcher then
+# polled a check named `test` that does not exist.
+esc_prot() { printf '{"required_status_checks":{"contexts":%s}}\n' "$1" > "$ESC_D/prot.json"; }
+esc_case e11a
+jq -c '.statusCheckRollup[0] |= (.name = "test (18.x)" | .status = "IN_PROGRESS" | .conclusion = "")
+       | .statusCheckRollup[1] |= (.status = "COMPLETED" | .conclusion = "SUCCESS")' "$ESC_FX/s2d-rollup.json" > "$ESC_D/rollup.json"
+esc_prot '["test (18.x)"]'
+esc_run "$H" "$ESC_D_URL" "1e35336"
+ESC_SP_PEND="escalation_cause: check_pending check=test (18.x) run_id=37259136900 attempt=1 sha=1e35336"
+esc_expect "V5 pending required 'test (18.x)' ⇒ check_pending on the whole name, run id from the rollup" "$ESC_SP_PEND"
+esc_case e11b
+jq -c '.statusCheckRollup[0].name = "build (ubuntu-latest)"' "$ESC_FX/s2c-rollup.json" > "$ESC_D/rollup.json"
+esc_prot '["build (ubuntu-latest)"]'
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"
+ESC_SP_UNREL="escalation_cause: check_red_unrelated check=build (ubuntu-latest) run_id=37254186674 attempt=1 sha=$ESC_C_SHA"
+esc_expect "V5 red 'build (ubuntu-latest)' in an unrelated test only ⇒ check_red_unrelated on the whole name" "$ESC_SP_UNREL"
+esc_case e11c
+jq -c '.statusCheckRollup[0].name = "build (ubuntu-latest)"' "$ESC_FX/s2c-rollup.json" > "$ESC_D/rollup.json"
+jq -c '.changedFiles += 1 | .files += [{"path":"scripts/test-ci-local.sh"}]' "$ESC_FX/s2c-files.json" > "$ESC_D/files.json"
+esc_prot '["build (ubuntu-latest)"]'
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"
+esc_expect "V5 red 'build (ubuntu-latest)' related to the PR ⇒ check_red, whole name + run id kept" \
+  "escalation_cause: check_red check=build (ubuntu-latest) run_id=37254186674 attempt=1 sha=$ESC_C_SHA"
+esc_case e11d
+jq -c '.statusCheckRollup[0].name = "test (18.x)"
+       | .statusCheckRollup += [(.statusCheckRollup[0] | .name = "build (ubuntu-latest)")]' "$ESC_FX/s2c-rollup.json" > "$ESC_D/rollup.json"
+esc_prot '["test (18.x)","build (ubuntu-latest)"]'
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"
+esc_expect "V5 two spaced red checks, both unrelated ⇒ check_red_unrelated on the first whole name" \
+  "escalation_cause: check_red_unrelated check=test (18.x) run_id=37254186674 attempt=1 sha=$ESC_C_SHA"
+# The recorded line carries the spaced name through current-escalation (refuses only `|`/newline)
+# and back out through the ` | ` field split the merge watcher's esc_fields uses.
+ESC_SPRF="$ESC_T/sp-run.md"
+printf '# Automate Run: esc\n## Status: paused\n## Source\n- folder f\n## Run Config\n- mode: safe | limit: 5\n## Queue\n- [ ] a.md\n## Current\n- item: a.md | status: escalated | pr: %s | branch: f/a\n- pause_reason: null\n## Progress\n- t0 run created\n' "$ESC_D_URL" > "$ESC_SPRF"
+RUN_OUT="$(bash "$H" current-escalation "$ESC_SPRF" --cause check_pending --check "test (18.x)" --run-id 37259136900 --attempt 1 --sha 1e35336 2>&1)"; RUN_RC=$?
+ESC_SP_FLD="$(awk '/^- escalation_cause: / { n = split($0, a, / \| /); for (i = 1; i <= n; i++) if (index(a[i], "check: ") == 1) print substr(a[i], 8) }' "$ESC_SPRF")"
+if [ "$RUN_RC" -eq 0 ] && [ "$ESC_SP_FLD" = "test (18.x)" ] \
+   && grep -qxF -- '- escalation_cause: check_pending | check: test (18.x) | run_id: 37259136900 | attempt: 1 | sha: 1e35336' "$ESC_SPRF"; then
+  ok "V5 current-escalation records the spaced name and the ' | ' field split reads it back whole ($ESC_SP_FLD)"
+else
+  no "V5 spaced name lost in current-escalation (rc=$RUN_RC out=$RUN_OUT field='$ESC_SP_FLD')"
+fi
+# MUTATION CONTROL (class level): the SHARED reader reverted to word-splitting
+# (fixtures/wait-for-checks-line/wsplit.sed, the mutant the reader's own and the drain suites
+# also run) must cut the names again — every V5 leg turns red.
+ESC_MUT="$(mktemp -d)"
+for e in "$(dirname "$H")"/*; do [ "$(basename "$e")" = wait-for-checks-line.sh ] || ln -s "$e" "$ESC_MUT/$(basename "$e")"; done
+sed -f "$HERE/fixtures/wait-for-checks-line/wsplit.sed" "$HERE/wait-for-checks-line.sh" > "$ESC_MUT/wait-for-checks-line.sh"
+if [ -s "$ESC_MUT/wait-for-checks-line.sh" ] && ! cmp -s "$HERE/wait-for-checks-line.sh" "$ESC_MUT/wait-for-checks-line.sh" \
+   && bash -n "$ESC_MUT/wait-for-checks-line.sh" 2>/dev/null; then
+  ESC_D="$ESC_T/e11a"; esc_run "$ESC_MUT/automate-helpers.sh" "$ESC_D_URL" "1e35336"; esc_m1="$ESC_OUT"
+  ESC_D="$ESC_T/e11b"; esc_run "$ESC_MUT/automate-helpers.sh" "$ESC_C_URL" "$ESC_C_SHA"; esc_m2="$ESC_OUT"
+  if [ "$esc_m1" != "$ESC_SP_PEND" ] && [ "$esc_m2" != "$ESC_SP_UNREL" ]; then
+    ok "ESC V5 mutation control: a word-splitting shared reader cuts both spaced names ($esc_m1 | $esc_m2)"
+  else
+    no "ESC V5 mutation control did NOT discriminate (m1='$esc_m1' m2='$esc_m2')"
+  fi
+else
+  no "ESC V5 mutation control: could not build a valid reader mutant -- control inconclusive"
+fi
+# The reader is required: without it every snapshot is unreadable ⇒ check_red (fail CLOSED).
+rm -f "$ESC_MUT/wait-for-checks-line.sh"
+ESC_D="$ESC_T/e11a"; esc_run "$ESC_MUT/automate-helpers.sh" "$ESC_D_URL" "1e35336"
+esc_expect "V5 shared reader missing ⇒ check_red, exit 0" "escalation_cause: check_red check=null run_id=null attempt=null sha=1e35336"
 rm -rf "$ESC_MUT"
 
 # AC13 (classifier half): no executed rerun / merge / push / approval in the family file.

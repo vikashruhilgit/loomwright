@@ -40,7 +40,7 @@ escalation_cause() {
 # no gh/jq failure can abort the dispatcher's `set -euo pipefail` before the one line prints.
 _esc_classify() (
   set +e +o pipefail
-  local url="" sha="" snap w first req="" pnames="" rnames="" have_pn=0 have_rn=0 pend_field=""
+  local url="" sha="" snap first req pnames rnames have_pn have_rn pend_field lib
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --sha) sha="${2:-}"; shift; [ "$#" -gt 0 ] && shift ;;
@@ -52,18 +52,16 @@ _esc_classify() (
   case "$sha" in ''|*[!0-9A-Za-z]*) sha="${sha:-null}"; _esc_out check_red null null null "$sha"; exit 0 ;; esac
   [ -n "$url" ] || { _esc_out check_red null null null "$sha"; exit 0; }
 
+  # The snapshot line is read by the shared reader (wait-for-checks-line.sh), never by word
+  # splitting: check names are free text (`test (18.x)`), so a split would record `check=test`.
+  # A missing reader fails CLOSED like any other unreadable case.
+  lib="$(dirname "$0")/wait-for-checks-line.sh"
+  { [ -r "$lib" ] && . "$lib"; } || { _esc_out check_red null null null "$sha"; exit 0; }
   snap="$(GH="$GH" JQ="$JQ" bash "$(dirname "$0")/wait-for-checks.sh" "$url" --sha "$sha" --bound 0 --interval 1 --names 2>/dev/null | tail -n 1)"
-  first="${snap%% *}"
-  set -f
-  for w in $snap; do
-    case "$w" in
-      required=*) req="${w#required=}" ;;
-      pending=*) pend_field="${w#pending=}" ;;
-      pending_names=*) pnames="${w#pending_names=}"; have_pn=1 ;;
-      red_names=*) rnames="${w#red_names=}"; have_rn=1 ;;
-    esac
-  done
-  set +f
+  wfc_line_parse "$snap"
+  first="$WFC_KIND"; req="$WFC_REQUIRED"; pend_field="$WFC_PENDING"
+  pnames="$WFC_PENDING_NAMES"; rnames="$WFC_RED_NAMES"
+  have_pn="$WFC_HAVE_PENDING_NAMES"; have_rn="$WFC_HAVE_RED_NAMES"
   if { [ "$first" != SETTLED ] && [ "$first" != ELAPSED ]; } || [ "$have_pn" = 0 ] || [ "$have_rn" = 0 ] \
      || [ "$req" = unknown ] || [ -z "$req" ] || [ "$pnames" = sha_mismatch ] || [ "$pend_field" = sha_mismatch ]; then
     _esc_out check_red null null null "$sha"; exit 0

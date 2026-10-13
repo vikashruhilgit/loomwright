@@ -92,7 +92,7 @@
 #      one `automate_escalation_recheck` notify (latched, also across a
 #      restart), non-green ⇒ one `still failing … rerun: gh run rerun <id>
 #      --failed`; check_red_unrelated reports only at a NEWER attempt; the
-#      check-runs API path when no run id; a same-PR double arm keeps ONE
+#      check-runs API path when no run id (E6b: a spaced matrix name, V5); a same-PR double arm keeps ONE
 #      watcher (already-running line, first pid alive, marker pid unchanged,
 #      one closeout) with a valid mutant deleting that branch; static scan: no
 #      executed gh run rerun / gh pr merge / git push. Review iteration 1: a
@@ -1883,6 +1883,23 @@ printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"
 jq -cn '{check_runs:[{name:"ci",status:"completed",conclusion:"success",started_at:"t1"},{name:"claude-review",status:"completed",conclusion:"success",started_at:"t2",details_url:"https://github.com/acme/widgets/actions/runs/999/job/1"}]}' > "$GH_STUB_DIR/api-seq"
 we_watch >/dev/null
 grep -q "^api repos/acme/widgets/commits/$ESHA/check-runs" "$GH_STUB_DIR/argv.log" && [ "$(we_n "merge-watch: now mergeable: claude-review green on $ESHA")" = "1" ] && ok "(E6) no run id ⇒ gh api commits/<sha>/check-runs by name ⇒ one now-mergeable" || no "(E6) argv: $(tr '\n' '|' < "$GH_STUB_DIR/argv.log")"
+
+# (E6b, V5) a spaced (matrix) check name recorded whole — what escalation-cause writes since it
+# reads the snapshot through wait-for-checks-line.sh — is found by name on the no-run-id path
+# ⇒ one now-mergeable. Control: the word-split name the old parser recorded (`test`) matches no
+# check run ⇒ never reported (the silent loss V5 describes).
+for wn in "test (18.x)" "test"; do
+  closeout_fixture 408; spy_reset; we_open; : > "$GH_STUB_DIR/argv.log"
+  we_park check_pending --check "$wn" --sha "$ESHA"
+  printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"
+  jq -cn '{check_runs:[{name:"lint",status:"completed",conclusion:"success",started_at:"t1"},{name:"test (18.x)",status:"completed",conclusion:"success",started_at:"t2",details_url:"https://github.com/acme/widgets/actions/runs/998/job/1"}]}' > "$GH_STUB_DIR/api-seq"
+  we_watch >/dev/null
+  if [ "$wn" = "test (18.x)" ]; then
+    [ "$(we_n "merge-watch: now mergeable: test (18.x) green on $ESHA")" = "1" ] && ok "(E6b) V5: spaced check name 'test (18.x)', no run id ⇒ found by name ⇒ one now-mergeable" || no "(E6b) spaced name not reported: $(grep -E 'mergeable|failing|escalation_cause' "$P/$RF_REL" | tr '\n' '|')"
+  else
+    [ "$(we_n 'merge-watch: now mergeable:')" = "0" ] && ok "(E6b) V5 control: the word-split name 'test' matches no check run ⇒ never reported" || no "(E6b) control: truncated name reported"
+  fi
+done
 
 # (E7, AC9) park → fix-now re-drain → re-park of the SAME PR: both parks run the
 # documented launch line (`nohup bash <watcher> <runfile> <item> <pr_url> </dev/null >log &`;
