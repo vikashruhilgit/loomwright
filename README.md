@@ -87,7 +87,7 @@ your-project/
 └── src/ (your code)
 ```
 
-**Optional integrations in one place:** run `/setup` to configure optional integrations — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions), `statusline` (an opt-in one-line run report — phase, branch, subtask progress, age of the last event), and `ui` (The Floor — an opt-in, loopback-only local page showing the current run's stages and one lane per agent, with a stalled lane visible without being looked for) — from a single status dashboard.
+**Optional integrations in one place:** run `/setup` to configure optional integrations — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions), and `statusline` (an opt-in one-line run report — phase, branch, subtask progress, age of the last event) — from a single status dashboard.
 
 ### Optional: MySQL MCP
 
@@ -199,7 +199,7 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 | **QA Executor**       | `/qa-executor`                  | Discover → generate strict tests → find missing functionality → QA_RESULT | Automated QA                    |
 | **Verify** (command)  | `/verify <ticket>`              | Walk one ticket's acceptance criteria through the RUNNING app with Playwright from Bash — one evidenced verdict per criterion (PASS / FAIL / BLOCKED / NOT_VERIFIABLE) into an append-only evidence store with a derived summary; advisory only | Proving a ticket landed in the running app |
 | **Review-PR**         | `/review-pr <pr-url>`           | Standalone review→fix→re-review loop against an existing PR; auto-heals the diff, never auto-merges → REVIEW_HEAL_RESULT | Review/heal any open PR         |
-| **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions), `statusline` (opt-in one-line run report; never overwrites a status line you already have), `ui` (The Floor — an opt-in local run view served on 127.0.0.1 only) | First install, enabling integrations |
+| **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions), `statusline` (opt-in one-line run report; never overwrites a status line you already have) | First install, enabling integrations |
 | **Rules** (command)   | `/rules [list\|suggest\|add\|retract\|audit\|check]` | House Rules substrate — committed `.agent/rules/` conventions store + fail-safe reader; list/suggest/add/retract/audit/check (`audit` re-validates the standing store read-only) | Capturing durable team conventions |
 | **Propose** (command) | `/propose` · `/propose --domain` | Evidence-carrying candidate work items under `.supervisor/requirements/proposed/` from **three bases**, never more than one in one invocation: the churn ledger (inward, local, zero external calls); `--from-verify <run_id>`, one `/verify` run's evidence drafted into per-FAIL requirement files; or, with `--domain`, the project's domain — what competent apps in it do that this one does not, from `.agent/product.json` plus fetched sources — proposes, never queues | Deciding what to work on next   |
 
@@ -728,7 +728,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    /reload-plugins
    ```
    Developers on a local checkout: replace the `add` source with `./` and run from the repo root so it resolves to your checkout (see **For Developers**).
-3. Verify with `/skills` — should show all 42 skills under "Plugin skills". Use `/agent-help` to confirm all 24 slash commands are registered.
+3. Verify with `/skills` — should show all 42 skills under "Plugin skills". Use `/agent-help` to confirm all 23 slash commands are registered.
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `loomwright/`. Switch to the marketplace flow shown in **Quick Start**.
 

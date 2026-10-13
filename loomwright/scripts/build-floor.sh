@@ -1085,7 +1085,7 @@ if [ -n "$rules_detail" ] && [ -n "$pm_paths_tsv" ]; then
   # 3.0 s against 52,000 iterations producing 3.3 MB at 269 s - 10x the work for ~90x the time,
   # the bash 3.2 quadratic-append class this repo has recorded before. Today's real store is far
   # from the cliff (4 globs x ~1,300 paths => 325 matches), so this was a scaling hazard, not a
-  # present defect - but this script is what `setup-ui.sh serve` regenerates every 2 s, and the
+  # present defect - but this script was what the Floor web page (since retired) regenerated every 2 s, and the
   # runtime bound added in this same PR scales the LEDGER while holding the rules store small,
   # so nothing exercised this path.
   #
