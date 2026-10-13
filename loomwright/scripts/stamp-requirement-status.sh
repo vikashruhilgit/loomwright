@@ -231,8 +231,12 @@ for brief in "$DONE_DIR"/*.md; do
   # would be closed by `2026-07-24-parity-eval-prep.md` — a brief that shipped the PREP while the
   # eval itself remains owed. Stamping either `done` would launder an unmet requirement into a
   # satisfied one, which is precisely the record-overstates-reality failure this script exists to
-  # correct. Promotion to `## Status: done` stays a human judgement; the idempotency guard above
-  # keys on `^## Status`, so a later hand-written `done` is never overwritten or duplicated.
+  # correct. Promotion to `## Status: done` needs a MERGED PR, which this script never reads: the
+  # post-merge `closeout` (an `/automate` item) or the human-run `automate-helpers.sh
+  # reconcile-status --apply`, which holds a brief-shipped file to its usual merged-PR evidence and
+  # appends the done stamp below this heading (since 2026-10-13; it used to only list it), or a
+  # hand edit. The idempotency guard above keys on `^## Status`, so a later done stamp is never
+  # overwritten or duplicated.
   {
     printf '\n## Status: brief-shipped\n'
     printf '\nJob `%s/%s` completed (reconciled from the job lifecycle, not self-reported).\n' \

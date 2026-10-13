@@ -1,6 +1,6 @@
 # --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/reconcile-status.golden.
-#:  reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a not-done *.md under <requirements_root>, other than a `proposed`/`parked` one (is_not_ready) (skips `00-*`, `_*`, `README*`, `operator-run/`, top-level `<slug>-plan.md` task plans) whose PR is MERGED (state via reconcile-item) and whose body cites the file's path (with or without the `.supervisor/requirements/` prefix and `.md`) on an `Implements`/`Closes`/`Resolves`/`Fixes`/`Ships`/`Lands`/`Requirement:`/`Source requirement:` line, before that line's first `;` or `. `, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR, never a PR whose changed files are ALL under `.supervisor/`, and never a body citation from a PR whose own diff adds or modifies that requirement file; an unreadable or incomplete diff is no evidence), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file (never promoted); writes nothing without `--apply`.
+#:  reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a not-done *.md under <requirements_root>, other than a `proposed`/`parked` one (is_not_ready) (skips `00-*`, `_*`, `README*`, `operator-run/`, top-level `<slug>-plan.md` task plans) whose PR is MERGED (state via reconcile-item) and whose body cites the file's path (with or without the `.supervisor/requirements/` prefix and `.md`) on an `Implements`/`Closes`/`Resolves`/`Fixes`/`Ships`/`Lands`/`Requirement:`/`Source requirement:` line, before that line's first `;` or `. `, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR, never a PR whose changed files are ALL under `.supervisor/`, and never a body citation from a PR whose own diff adds or modifies that requirement file; an unreadable or incomplete diff is no evidence), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; a `## Status: brief-shipped` file (stamp-requirement-status.sh's job-landed heading) is held to the SAME evidence and gets the stamp APPENDED under that heading, never rewriting it, and without evidence is only listed; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file it does not stamp; writes nothing without `--apply`.
 
 # --------------------------------------------------------------------------- #
 # queue-hygiene/01 — reconcile-status: requirement `## Status:` from ground
@@ -72,6 +72,17 @@
 # reads ADDITIONAL fields (body, mergeCommit, headRefName) on a candidate
 # `reconcile_item` has ALREADY confirmed merged.
 #
+# BRIEF-SHIPPED (owner decision 2026-10-13, reversing queue-hygiene/01's "listed,
+# never promoted" non-goal). `stamp-requirement-status.sh` writes `## Status:
+# brief-shipped` on a status-less requirement once its brief reaches
+# `.supervisor/jobs/done/` — at PR open, before any merge — so the heading proves
+# the job ran, not that it shipped. It is held to EXACTLY the evidence above (no
+# looser path: a landed brief is never evidence on its own) and, on a match, gets
+# the §6 done shape APPENDED below its heading, which is never rewritten. With no
+# evidence it is listed as an `info` row and left byte-unchanged, as before. The
+# old unconditional `info` return hid every plain-run requirement from the one
+# recovery path its honest limit names (#447: 27 merged-but-re-offered files).
+#
 # NEVER DOWNGRADES: `is_done()` gates every file before ANY evidence is
 # gathered, so a `done`/`done_with_escalation` file is never even read past
 # that check — this function does not distinguish "no evidence" from "already
@@ -86,7 +97,7 @@
 # --porcelain's convention):
 #   plan\t<repo-relative file>\t<status line the file would get>\t<evidence>
 #   stamped\t<repo-relative file>\t<status line just written>\t<evidence>
-#   info\t<repo-relative file>\tbrief-shipped\t<job path> (<PR url or "no PR recorded">)
+#   info\t<repo-relative file>\tbrief-shipped\t<done/ brief's PR url, or "no PR recorded">
 # An abandoned row's <evidence> is the repo-relative run file
 # (`.supervisor/automate/<run_id>.md`).
 #
@@ -229,6 +240,10 @@ _rs_brief_slug() {
 # _rs_strip_trailing_status <file> <tmp> — copy every line of <file> to <tmp>
 # EXCEPT a bare `## Status: pending` heading (the stale line a stamp replaces;
 # SKILL §1.5/queue-hygiene AC-2 "stale trailing pending line is removed").
+# A `## Status: brief-shipped` heading and its two-line note are deliberately
+# KEPT: the done stamp is appended below them (the same append-only shape
+# `closeout` leaves on such a file), so the record shows the job landed first and
+# the merge was proven later; `is_done` matches the appended heading anywhere.
 _rs_strip_trailing_status() {
   grep -vE '^## Status:[[:space:]]*pending[[:space:]]*$' "$1" > "$2" 2>/dev/null
 }
@@ -338,30 +353,34 @@ _rs_process_file() {
   rel="${f#"$proj_root"/}"
   status_hdr="$(grep -m1 -E '^## Status:' "$f" 2>/dev/null)"
 
-  # brief-shipped: LISTED, never promoted (Scope §4 / Non-goals).
-  case "$status_hdr" in
-    *brief-shipped*)
-      local db pr
-      db="$(_rs_find_done_brief "$rel" "$jobs_done")"
-      pr=""
-      [ -n "$db" ] && pr="$(_rs_outcome_pr "$db")"
-      printf 'info\t%s\tbrief-shipped\t%s\n' "$rel" "${pr:-no PR recorded}"
-      return 0
-      ;;
-  esac
+  # brief-shipped (stamp-requirement-status.sh's "job landed, ACs unverified"
+  # heading) takes the SAME evidence path as every other not-done heading below,
+  # and is only LISTED (`info`) when that path finds no merged PR. Until
+  # 2026-10-13 it returned here with the `info` row unconditionally (the
+  # queue-hygiene/01 "listed, never promoted" non-goal) — and since that heading
+  # lands on every status-less requirement whose brief reaches `done/`, the early
+  # return hid exactly the plain-`/supervisor` requirements whose only recovery
+  # path is this script (27 merged-but-re-offered files in the owner's checkout;
+  # #447). The bar is unchanged: a landed brief alone still proves nothing, only
+  # a merged PR does, so promotion needs what a `pending` file needs.
+  local shipped=0
+  case "$status_hdr" in *brief-shipped*) shipped=1 ;; esac
 
   # A not-ready item (`is_not_ready`: a `proposed` draft or a `parked` item) is
   # an owner decision, never reconciled: PR #482's body named a `## Status:
   # proposed` draft and the dry run planned `done` for it. Every other not-done
-  # heading (`pending`, `in-progress`, a free-text `in review — …`, none) stays
-  # promotable, as it was before this gate existed.
-  is_not_ready "$f" && return 0
-
+  # heading (`pending`, `in-progress`, a free-text `in review — …`,
+  # `brief-shipped`, none) stays promotable. A brief-shipped file the owner also
+  # marked not-ready keeps its `info` row.
   local done_brief; done_brief="$(_rs_find_done_brief "$rel" "$jobs_done")"
   local seed=""
   [ -n "$done_brief" ] && seed="$(_rs_outcome_pr "$done_brief")"
-  local evidence; evidence="$(_rs_evidence_for "$rel" "$done_brief" "$seed")"
-  [ -n "$evidence" ] || return 0
+  local evidence=""
+  is_not_ready "$f" || evidence="$(_rs_evidence_for "$rel" "$done_brief" "$seed")"
+  if [ -z "$evidence" ]; then
+    [ "$shipped" -eq 1 ] && printf 'info\t%s\tbrief-shipped\t%s\n' "$rel" "${seed:-no PR recorded}"
+    return 0
+  fi
 
   local url num sha just status_line
   IFS=$'\t' read -r url num sha just <<RS_EV

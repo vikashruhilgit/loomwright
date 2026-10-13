@@ -115,6 +115,13 @@
 #      asked — the two SKILL §6 seam pins with per-line
 #      mutants (AC-9a), and the invocation-removed helper mutant beside real siblings
 #      behind a positive gate (AC-9b).
+#   H6. reconcile-status promotes a `## Status: brief-shipped` requirement on the
+#      same merged-PR evidence as any other not-done file (owner decision
+#      2026-10-13, #447): a plan row in the dry run, the §6 shape APPENDED under
+#      the kept heading under --apply, an idempotent re-run; with no evidence (PR
+#      open, self-citing diff, all-.supervisor/ diff, trail PR, no candidate) or a
+#      parked heading, only the info row and a byte-unchanged file; mutation
+#      control — the old unconditional early return restored ⇒ never promoted.
 #   H7. reconcile-status never takes the engine's own trail PR as evidence: a
 #      proposed/ draft and a Queue requirement cited ONLY by a merged
 #      chore/<run_id>-trail-<n> PR body get no plan line (run
@@ -142,7 +149,7 @@
 #      candidates; mutation controls restore the any-mention rule, the
 #      full-path search, the status gate and the task-plan skip, each red.
 #   I. ceiling-check (red-team-hardening/06, PICK-time token ceiling; section letter
-#      "I" — "H" is already used in-body by the reconcile-status H1-H6 tests above):
+#      "I" — "H" is already used in-body by the reconcile-status H1-H9 tests above):
 #      under-max
 #      prints OK; over-max prints PARK: token_ceiling + non-zero total/max; a
 #      LEDGER_UNREADABLE=1 reader answer PARKs as ledger_unreadable (fail CLOSED);
@@ -3738,6 +3745,13 @@ rs_run() {
   local r="$1"; shift
   RUN_OUT="$(GH_STUB_DIR="$r/ghstub" PATH="$r/bin:$PATH" LOOMWRIGHT_GH_BIN=gh bash "${RS_H:-$H}" reconcile-status "$@" 2>/dev/null)"; RUN_RC=$?
 }
+# rs_mutant <exact helper line> <replacement> — a copy of the helper with that ONE
+# line replaced; RSM names the copy's dir. Returns 1 when the line is not found.
+rs_mutant() {
+  RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null
+  OLD="$1" NEW="$2" awk '$0 == ENVIRON["OLD"] { print ENVIRON["NEW"]; next } { print }' "$H" > "$RSM/automate-helpers.sh"
+  ! cmp -s "$H" "$RSM/automate-helpers.sh"
+}
 
 # H1. AC-1: dry run over the 5-file fixture prints exactly ONE plan line (b), writes nothing.
 IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
@@ -3881,18 +3895,132 @@ else
 fi
 rm -rf "$RSHM"
 
-# H6. brief-shipped is LISTED (info row), never promoted, on EITHER dry-run or --apply.
-R="$(mktemp -d)"
-mkdir -p "$R/.supervisor/requirements/qh" "$R/.supervisor/jobs/done" "$R/.supervisor/automate" "$R/bin" "$R/ghstub"
-rs_stub_bin "$R/bin"
-printf '# shipped\n\n## Status: brief-shipped\n\nJob done, ACs unverified.\n' > "$R/.supervisor/requirements/qh/07-shipped.md"
-rs_run "$R" "$R/.supervisor/requirements/qh" --apply
-if grep -qE '^info	.*07-shipped\.md	brief-shipped	' < <(printf '%s\n' "$RUN_OUT") \
-   && grep -qE '^## Status:[[:space:]]*brief-shipped[[:space:]]*$' "$R/.supervisor/requirements/qh/07-shipped.md"; then
-  ok "H6 brief-shipped: listed as an 'info' row, file untouched (never promoted) even under --apply"
+# H6. brief-shipped (stamp-requirement-status.sh's "job landed, ACs unverified" heading) is
+#     PROMOTED on the same merged-PR evidence as any other not-done file, and only LISTED (an
+#     `info` row, file byte-unchanged) without it (owner decision 2026-10-13, reversing the
+#     queue-hygiene/01 "listed, never promoted" non-goal: that early return hid every plain-run
+#     requirement from the one recovery path its honest limit names — 27 such files in the
+#     owner's checkout). The stamp is APPENDED, the brief-shipped heading never rewritten.
+RS_SREL=".supervisor/requirements/qh/07-shipped.md"
+RS_SBRIEF=".supervisor/jobs/done/2026-10-01-qh-07-shipped.md"
+RS_SURL="https://github.com/acme/widgets/pull/88"
+# rs_shipped_repo <state> <headRefName> <body> <files-json> [<extra status line>] — a brief-shipped
+# requirement in the byte shape stamp-requirement-status.sh writes, its done/ brief (Source
+# requirement pointer + `- **PR:**` Outcome line), and one candidate PR in the given state.
+rs_shipped_repo() {
+  local r; r="$(mktemp -d)"
+  mkdir -p "$r/.supervisor/requirements/qh" "$r/.supervisor/jobs/done" "$r/.supervisor/automate" "$r/bin" "$r/ghstub"
+  rs_stub_bin "$r/bin"
+  {
+    printf '# shipped\n\nProse.\n\n## Status: brief-shipped\n'
+    printf '\nJob `.supervisor/jobs/done/%s` completed (reconciled from the job lifecycle, not self-reported).\n' "$(basename "$RS_SBRIEF")"
+    printf 'Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.\n'
+    [ -n "${5:-}" ] && printf '\n%s\n' "$5"
+  } > "$r/$RS_SREL"
+  printf '# Brief\n## Environment\n- **Source requirement:** %s\n\n## Outcome\n- **Status:** completed\n- **PR:** %s\n' \
+    "$RS_SREL" "$RS_SURL" > "$r/$RS_SBRIEF"
+  jq -n --arg url "$RS_SURL" '[{url:$url}]' > "$r/ghstub/list-$(rs_skey "$RS_SREL").json"
+  jq -n --arg st "$1" --arg head "$2" --arg body "$3" --argjson files "$4" \
+    '{state:$st,mergedAt:(if $st=="MERGED" then "2026-10-02T00:00:00Z" else null end),number:88,body:$body,mergeCommit:{oid:"0a1b2c3d4e5f6789"},headRefName:$head,changedFiles:($files|length),files:($files|map({path:.}))}' \
+    > "$r/ghstub/view-$(rs_key "$RS_SURL").json"
+  printf '%s' "$r"
+}
+RSS_DRY=""; RSS_APPLY=""
+RS_SROW_SLUG="$RS_SREL	done (PR #88, merge 0a1b2c3)	head branch 'feature/qh-07-shipped' matches brief slug 'qh-07-shipped'"
+RS_SROW_CITE="$RS_SREL	done (PR #88, merge 0a1b2c3)	PR body cites $RS_SREL"
+# rs_shipped_promotes <repo> <row-suffix> — 0 iff the dry run prints `plan\t<row>` and writes
+# nothing, then --apply prints `stamped\t<row>`, keeps the original bytes as a prefix (heading
+# never rewritten), appends the §6 shape so is_done matches, and a re-run is a byte-identical no-op.
+rs_shipped_promotes() {
+  local r="$1" row="$2" f="$1/$RS_SREL" orig n
+  orig="$(cksum < "$f")"; n="$(wc -c < "$f" | tr -d ' ')"
+  rs_run "$r" "$r/.supervisor/requirements/qh"; RSS_DRY="$RUN_OUT"
+  [ "$RSS_DRY" = "plan	$row" ] && [ "$(cksum < "$f")" = "$orig" ] || return 1
+  cp "$f" "$f.orig"
+  rs_run "$r" "$r/.supervisor/requirements/qh" --apply; RSS_APPLY="$RUN_OUT"
+  [ "$RSS_APPLY" = "stamped	$row" ] || return 1
+  [ "$(head -c "$n" "$f" | cksum)" = "$(cksum < "$f.orig")" ] || return 1
+  grep -qxF '## Status: brief-shipped' "$f" \
+    && grep -qxF '## Status: done (PR #88, merge 0a1b2c3)' "$f" \
+    && grep -qE '^- \*\*Completed:\*\* [0-9]{4}-' "$f" \
+    && grep -qxF -- "- **Brief:** $RS_SBRIEF" "$f" \
+    && grep -qxF -- "- **PR:** $RS_SURL" "$f" \
+    && grep -qE '^## Status:[[:space:]]*done(_with_escalation)?\b' "$f" || return 1
+  local stamped; stamped="$(cksum < "$f")"
+  rs_run "$r" "$r/.supervisor/requirements/qh" --apply
+  [ -z "$RUN_OUT" ] && [ "$(cksum < "$f")" = "$stamped" ]
+}
+# rs_shipped_listed <repo> <pr field> — 0 iff dry run AND --apply each print exactly the one info
+# row and the file is byte-unchanged.
+rs_shipped_listed() {
+  local r="$1" f="$1/$RS_SREL" orig; orig="$(cksum < "$f")"
+  rs_run "$r" "$r/.supervisor/requirements/qh"; RSS_DRY="$RUN_OUT"
+  rs_run "$r" "$r/.supervisor/requirements/qh" --apply; RSS_APPLY="$RUN_OUT"
+  [ "$RSS_DRY" = "info	$RS_SREL	brief-shipped	$2" ] && [ "$RSS_APPLY" = "$RSS_DRY" ] && [ "$(cksum < "$f")" = "$orig" ]
+}
+
+# H6a. brief-shipped + its done/ brief's PR MERGED on a branch matching the brief slug ⇒ plan row
+#      (dry run), stamped under --apply, append-only, idempotent.
+R="$(rs_shipped_repo MERGED feature/qh-07-shipped "Ships the thing." '["src/x.sh"]')"
+if rs_shipped_promotes "$R" "$RS_SROW_SLUG"; then
+  ok "H6a brief-shipped + merged branch-slug PR: plan row (dry run, file untouched), stamped under --apply (append-only, is_done true, brief-shipped heading kept), re-run a no-op"
 else
-  no "H6 brief-shipped wrong (out='$RUN_OUT')"
+  no "H6a brief-shipped not promoted (dry='$RSS_DRY' apply='$RSS_APPLY' file=$(tr '\n' '|' < "$R/$RS_SREL"))"
 fi
+# Mutation control: the pre-fix early return restored (brief-shipped ⇒ info row, return) ⇒ H6a red.
+RS_SHIP_LINE='  case "$status_hdr" in *brief-shipped*) shipped=1 ;; esac'
+RS_SHIP_MUT='  case "$status_hdr" in *brief-shipped*) printf '"'"'info\t%s\tbrief-shipped\t%s\n'"'"' "$rel" "no PR recorded"; return 0 ;; esac'
+rm -rf "$R"; R="$(rs_shipped_repo MERGED feature/qh-07-shipped "Ships the thing." '["src/x.sh"]')"
+if rs_mutant "$RS_SHIP_LINE" "$RS_SHIP_MUT"; then
+  if RS_H="$RSM/automate-helpers.sh" rs_shipped_promotes "$R" "$RS_SROW_SLUG"; then
+    no "H6a mutation control REFUTED: the early-return helper still promoted brief-shipped"
+  elif grep -qxF '## Status: brief-shipped' "$R/$RS_SREL" && ! grep -qE '^## Status:[[:space:]]*done' "$R/$RS_SREL"; then
+    ok "H6a mutation control: with the early return restored the merged brief-shipped file is never promoted — the fall-through is load-bearing"
+  else
+    no "H6a mutation control failed for another reason (dry='$RSS_DRY' apply='$RSS_APPLY')"
+  fi
+else
+  no "H6a mutation control: the brief-shipped case line was not found in the helper"
+fi
+rm -rf "$R" "$RSM"
+
+# H6b. The body-citation path promotes a brief-shipped file too (branch does not match the slug).
+R="$(rs_shipped_repo MERGED feature/unrelated "Implements \`qh/07-shipped\`." '["src/x.sh"]')"
+rs_shipped_promotes "$R" "$RS_SROW_CITE" \
+  && ok "H6b brief-shipped + merged PR whose Implements line cites it ⇒ plan, then stamped" \
+  || no "H6b body-citation promotion wrong (dry='$RSS_DRY' apply='$RSS_APPLY')"
+rm -rf "$R"
+
+# H6c. No merged evidence ⇒ the info row exactly as before, file byte-unchanged under --apply:
+#      the done/ brief's PR still OPEN; a self-citing PR (its diff modifies the requirement);
+#      an all-.supervisor/ diff on a slug-matching branch; the engine's own trail PR.
+R="$(rs_shipped_repo OPEN feature/qh-07-shipped "Ships the thing." '["src/x.sh"]')"
+rs_shipped_listed "$R" "$RS_SURL" && ok "H6c brief-shipped + OPEN PR ⇒ info row only (dry run and --apply), file byte-unchanged" \
+  || no "H6c OPEN PR leg wrong (dry='$RSS_DRY' apply='$RSS_APPLY')"
+rm -rf "$R"
+R="$(rs_shipped_repo MERGED feature/unrelated "Implements \`qh/07-shipped\`." "[\"src/x.sh\",\"$RS_SREL\"]")"
+rs_shipped_listed "$R" "$RS_SURL" && ok "H6c brief-shipped + self-citing PR (diff modifies the requirement) ⇒ info row only" \
+  || no "H6c self-citing leg wrong (dry='$RSS_DRY' apply='$RSS_APPLY')"
+rm -rf "$R"
+R="$(rs_shipped_repo MERGED feature/qh-07-shipped "Ships the thing." '[".supervisor/automate/run.md"]')"
+rs_shipped_listed "$R" "$RS_SURL" && ok "H6c brief-shipped + all-.supervisor/ diff on a slug-matching branch ⇒ info row only" \
+  || no "H6c all-.supervisor leg wrong (dry='$RSS_DRY' apply='$RSS_APPLY')"
+rm -rf "$R"
+R="$(rs_shipped_repo MERGED chore/automate-2026-10-01-000000-trail-1 "Implements \`qh/07-shipped\`." '["src/x.sh"]')"
+rs_shipped_listed "$R" "$RS_SURL" && ok "H6c brief-shipped cited only by a trail PR ⇒ info row only" \
+  || no "H6c trail leg wrong (dry='$RSS_DRY' apply='$RSS_APPLY')"
+rm -rf "$R"
+# No done/ brief and no candidate at all ⇒ 'no PR recorded', as before.
+R="$(rs_shipped_repo MERGED feature/qh-07-shipped "Ships the thing." '["src/x.sh"]')"
+rm -f "$R/$RS_SBRIEF" "$R/ghstub/list-$(rs_skey "$RS_SREL").json"
+rs_shipped_listed "$R" "no PR recorded" && ok "H6c brief-shipped with no done/ brief and no candidate ⇒ info row 'no PR recorded'" \
+  || no "H6c no-candidate leg wrong (dry='$RSS_DRY' apply='$RSS_APPLY')"
+rm -rf "$R"
+# H6d. A brief-shipped file that ALSO carries a not-ready heading (an owner `parked` decision) is
+#      never promoted, even with merged evidence — still listed.
+R="$(rs_shipped_repo MERGED feature/qh-07-shipped "Ships the thing." '["src/x.sh"]' '## Status: parked')"
+rs_shipped_listed "$R" "$RS_SURL" && ok "H6d brief-shipped + a parked heading ⇒ info row only, never promoted despite merged evidence" \
+  || no "H6d parked leg wrong (dry='$RSS_DRY' apply='$RSS_APPLY')"
 rm -rf "$R"
 
 # H7. The engine's own trail PR is never evidence (sibling defect of the
@@ -3986,13 +4114,6 @@ rs_diff_repo() {  # <files_json_array> [changedFiles] → "<repo>"; PR #359 cite
   printf '%s' "$r"
 }
 rs_plans_359() { grep -qF "plan	$RS_DREL	done (PR #359, merge 9a78b9c)	PR body cites $RS_DREL" <<<"$RUN_OUT"; }
-# rs_mutant <exact helper line> <replacement> — a copy of the helper with that ONE
-# line replaced; RSM names the copy's dir. Returns 1 when the line is not found.
-rs_mutant() {
-  RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null
-  OLD="$1" NEW="$2" awk '$0 == ENVIRON["OLD"] { print ENVIRON["NEW"]; next } { print }' "$H" > "$RSM/automate-helpers.sh"
-  ! cmp -s "$H" "$RSM/automate-helpers.sh"
-}
 RS_TOUCH_LINE='      grep -qxF -- "$rel" <<<"$paths" || justification="PR body cites $rel"'
 RS_TOUCH_MUT='      justification="PR body cites $rel"'
 RS_SUP_LINE="    grep -qv '^\\.supervisor/' <<<\"\$paths\" || continue"
@@ -4202,7 +4323,8 @@ done
 
 # H9f. A not-ready heading (is_not_ready) is never reconciled: a `## Status: proposed`
 #      draft (the PR #482 shape) or a `parked` item with a real Implements line ⇒ no plan.
-RS_GATE_LINE='  is_not_ready "$f" && return 0'
+RS_GATE_LINE='  is_not_ready "$f" || evidence="$(_rs_evidence_for "$rel" "$done_brief" "$seed")"'
+RS_GATE_MUT='  evidence="$(_rs_evidence_for "$rel" "$done_brief" "$seed")"'
 # Every other not-done heading stays promotable (ground-truth-json.md's contract).
 for st in '## Status: in-progress' '## Status: in review — PR #77, awaiting merge'; do
   R="$(rs_cite_repo "$RS_CREL" "$st" "Implements \`$RS_CREL\`.")"
@@ -4215,7 +4337,7 @@ for st in '## Status: proposed' '## Status: parked'; do
   rs_run "$R" "$R/.supervisor/requirements/qh"
   [ -z "$RUN_OUT" ] && ok "H9f '$st' is never stamped, even with an Implements line" || no "H9f '$st' planned (out='$RUN_OUT')"
   if [ "$st" = '## Status: proposed' ]; then
-    if rs_mutant "$RS_GATE_LINE" '  :'; then
+    if rs_mutant "$RS_GATE_LINE" "$RS_GATE_MUT"; then
       RS_H="$RSM/automate-helpers.sh" rs_run "$R" "$R/.supervisor/requirements/qh"
       rs_plans_77 "$RS_CREL" && ok "H9f mutation control: without the status gate the proposed draft plans — the gate is load-bearing" \
         || no "H9f mutation control: mutant did not reproduce (out='$RUN_OUT') — H9f would be vacuous"
