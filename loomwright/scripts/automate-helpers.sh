@@ -34,7 +34,9 @@
 # (parallel-automate/05, reached ONLY by `/automate --parallel N>1` — never by the
 # sequential loop): `lane-create`/`lane-launch`/`relay-hook`/`lane-answer`/
 # `lane-remove`/`lane-convert-ready`/`lane-info`/`init-check`/`pick-guard`/`branch-check`, the
-# observers `lane-status`/`lane-feed`/`lane-readiness`, the park notifier `lane-park-notify`, the lane
+# observers `lane-status`/`lane-feed`/`lane-readiness`, the READY-park gate `validation-gate` (also
+# called by the sequential loop: it takes the run file and item explicitly), the park notifier
+# `lane-park-notify`, the lane
 # watcher `lane-wait` and the wave
 # close `fleet-closeout` / read-only `wave-plan` (parallel-automate/21) are
 # delegated to the sibling `automate-lanes.sh`, which clones lanes under `<primary>-lanes/`, launches/resumes
@@ -87,6 +89,7 @@
 #:  lane-status      [<parent_runfile>] [--json] [--watch] [--leaks [--snapshot]] [--resources | --tokens | --inbox]  # parallel-automate/05: delegated to automate-lanes.sh — one line per lane (state, item, PR, question, CI slot, readiness, policy-answer digest); --json adds machine state; --inbox (parallel-automate/21) lists every lane's pending human questions, oldest first; fail-SAFE observer (exit 0)
 #:  lane-feed        <lane_dir|L<n>> [--follow]         # parallel-automate/05: delegated to automate-lanes.sh — readable narration of the lane's stream log
 #:  lane-readiness   <lane_dir|L<n>>                    # parallel-automate/05: delegated to automate-lanes.sh — writes <run_id>.merge-readiness.md (PASS/FAIL/NOT-RUN per check; advisory, never merges)
+#:  validation-gate  <runfile> <item> <pr_url> [--waive <n> --words <text>]  # af36-remainder/01: delegated to automate-lanes.sh — the READY-park gate (lane AND sequential): every "Running system" Validation step needs pasted PR-body evidence (shared reader with lane-readiness); prints ONE line `validation-gate: none|ok|waived|unrun — …`, fail CLOSED (unreadable item / PR body ⇒ unrun), always exit 0; --waive records an interactive owner's waiver (one ## Progress line, counted only after the last `picked <item>`; refusal exit 1)
 #:  lane-park-notify <runfile>                          # parallel-automate/24: delegated to automate-lanes.sh — a lane's ready_for_release park notify: desktop + `automate_ready_for_release` webhook ("do not merge yet — wave open"), both fail-SAFE, + one ## Progress line naming what each channel actually delivered; always exits 0
 #:  lane-wait        <parent_runfile> [--interval S] [--timeout S]  # delegated to automate-lanes.sh — the coordinator's lane watcher: blocks token-free until a lane needs the owner (a new pending question, or a lane entering a park / failure state), prints one `lane-wait: …` line per event + one relay hint and exits 0 (idle / timeout also exit 0, usage error 2); run as a BACKGROUND command; read-only except its `<parent_run_id>.lane-wait-seen` ledger
 #:  fleet-closeout   <parent_runfile>                   # parallel-automate/21: delegated to automate-lanes.sh — wave close in the coordinator's primary, stepwise + idempotent (re-run on every --resume): meta pull, per-lane backstop (lane-convert-ready on a merged lane), parent Queue check-off, primary sync, lane-remove, then lanes dir / leaks / main health / run-lock release; one `fleet-closeout: <step> — <detail>` line each; never merges; exit 0 (pull failure 2)
@@ -1086,7 +1089,7 @@ main() {
     lane-create|lane-launch|relay-hook|lane-answer|lane-remove) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     lane-convert-ready) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     lane-info|init-check|pick-guard|branch-check) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
-    lane-status|lane-feed|lane-readiness|lane-park-notify|lane-wait) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
+    lane-status|lane-feed|lane-readiness|validation-gate|lane-park-notify|lane-wait) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     fleet-closeout|wave-plan) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     # The wave-branch writer — the sibling automate-wave.sh, the fourth carve-out.
     wave-build) exec bash "$(dirname "$0")/automate-wave.sh" "$cmd" "$@" ;;

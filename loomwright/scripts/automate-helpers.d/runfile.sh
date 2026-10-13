@@ -4,7 +4,7 @@
 #:  progress-append  <runfile_path> <line>             # §3 append-only ## Progress (never rewrites prior lines); refuses a file with no "# Automate Run:" title; exit 3 + `current_not_set: <line>` on stderr (line still appended) when a `picked `/`ran /autonomous`/`owned drain started` line meets a null ## Current item, or `picked <X>` meets a different non-done item
 #:  queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped); refuses a file with no title
 #:  current-set      <runfile_path> [--item <path|null> --status <s|null>] [--pr <url|null>] [--branch <b|null>] [--pause-reason <r>]  # §3 the ONLY writer of ## Current's item/pause_reason lines: item form (both --item/--status; null only both-null) or run-level form (--pause-reason only); enum-validated; a changed --item resets an omitted pr/branch to null; refusal = exit 1, file byte-unchanged; identical values ⇒ `current-set: unchanged`
-#:  current-escalation <runfile_path> --cause <c> [--check <c> --run-id <id> --attempt <n> --sha <sha>]  # automate-followups/31: the ONLY writer of ## Current's `- escalation_cause: <cause> | check: … | run_id: … | attempt: … | sha: …` line (after `- pause_reason:`, else at the end of the block; replaced if present; `--cause null` removes it); cause enum check_pending|check_red_unrelated|check_red|findings|other|null; an omitted field is `null`; refusal (unknown cause, `|`/newline, non-numeric run id/attempt) = exit 1, file byte-unchanged; identical values ⇒ `current-escalation: unchanged`
+#:  current-escalation <runfile_path> --cause <c> [--check <c> --run-id <id> --attempt <n> --sha <sha>]  # automate-followups/31: the ONLY writer of ## Current's `- escalation_cause: <cause> | check: … | run_id: … | attempt: … | sha: …` line (after `- pause_reason:`, else at the end of the block; replaced if present; `--cause null` removes it); cause enum check_pending|check_red_unrelated|check_red|findings|validation_unrun|other|null; an omitted field is `null`; refusal (unknown cause, `|`/newline, non-numeric run id/attempt) = exit 1, file byte-unchanged; identical values ⇒ `current-escalation: unchanged`
 #:  current-wave     <runfile_path> --wave <k|null> [--items <i1,i2,…>]  # parallel-automate/05 (--parallel N>1 parent only): the ONLY writer of ## Current's `- wave: <k> | items: <i1>, <i2>` line (replaced if present, else appended at the block end; `--wave null` removes it); refusal (non-positive-integer wave, `|`/newline, --items with null) = exit 1, file byte-unchanged; identical values ⇒ `current-wave: unchanged`
 #:  current-rebuild  <runfile_path>                     # §4 RECONCILE repair: ## Current item null/absent — or `done` and not the LAST picked item — + a `picked` Progress line ⇒ item from the LAST picked line (must be a Queue row), pr ONLY from a later `ran /autonomous` line, branch via one gh pr view; always status running + pause_reason null; one `current_rebuilt: … state <s>` line (printed + appended); set and not done (or done = the last picked item) ⇒ `skipped — ## Current set`
 #:  remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
@@ -344,7 +344,8 @@ current_set() {
 # automate-followups/31: the ONLY writer of `## Current`'s optional line
 #   - escalation_cause: <cause> | check: <c|null> | run_id: <id|null> | attempt: <n|null> | sha: <sha|null>
 # recorded at an `escalated` park (the cause comes from `escalation-cause` for a
-# check-driven escalation, else `findings`/`other`). Placement: replaces an existing
+# check-driven escalation, `validation_unrun` for validation-gate's unrun verdict at a
+# READY park — `--check "V<n> <title>"` — else `findings`/`other`). Placement: replaces an existing
 # `- escalation_cause:` line in the block; else inserted right after the block's
 # `- pause_reason:` line; else appended at the end of the block (current-set's own
 # append rule). `--cause null` removes the line (absent ⇒ unchanged). An omitted
@@ -356,7 +357,7 @@ current_set() {
 # Idempotent: the identical line already present ⇒ `current-escalation: unchanged`.
 # The only OTHER thing that removes the line is an item-form current-set leaving
 # `escalated` or changing the item (the line is per-item state, never carried over).
-ESCALATION_CAUSE_ENUM=" check_pending check_red_unrelated check_red findings other null "
+ESCALATION_CAUSE_ENUM=" check_pending check_red_unrelated check_red findings validation_unrun other null "
 current_escalation() {
   local out="${1:-}"
   [ "$#" -gt 0 ] && shift

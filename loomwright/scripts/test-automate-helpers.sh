@@ -5495,6 +5495,16 @@ done
 run_h bash "$H" current-escalation "$ESC_RF" --cause check_red --sha "$(printf 'a\nb')"
 { [ "$RUN_RC" -eq 1 ] && cmp -s "$ESC_T/ref" "$ESC_RF"; } || esc_bad="$esc_bad [newline sha rc=$RUN_RC]"
 if [ -z "$esc_bad" ]; then ok "ESC current-escalation: every refusal exits 1 with the file byte-unchanged"; else no "ESC current-escalation refusals wrong:$esc_bad"; fi
+# af36-remainder/01: validation_unrun — validation-gate's unrun verdict at a READY park, the step as --check.
+esc_rf; cp "$ESC_T/ref" "$ESC_T/vu-before"
+run_h bash "$H" current-escalation "$ESC_RF" --cause validation_unrun --check "V2 Running system" --sha 1e35336
+if [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-escalation: written" ] \
+   && [ "$(grep -A1 -xF -- '- pause_reason: null' "$ESC_RF" | tail -1)" = "- escalation_cause: validation_unrun | check: V2 Running system | run_id: null | attempt: null | sha: 1e35336" ] \
+   && [ "$(diff "$ESC_T/vu-before" "$ESC_RF" | grep -c '^[<>]')" = 1 ]; then
+  ok "ESC current-escalation: --cause validation_unrun --check \"V<n> <title>\" accepted (one line, after pause_reason)"
+else
+  no "ESC current-escalation validation_unrun refused or misplaced (rc=$RUN_RC out=$RUN_OUT): $(grep -n escalation_cause "$ESC_RF" | tr '\n' '|')"
+fi
 # Review iteration 1 (stale per-item state): the escalation line is per-item park state.
 esc_rf; run_h bash "$H" current-escalation "$ESC_RF" --cause check_pending --check claude-review --run-id 37259136927 --attempt 1 --sha 1e35336
 cp "$ESC_RF" "$ESC_T/esc-on"
