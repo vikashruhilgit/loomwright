@@ -18,7 +18,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Agent Teams | `agent-teams/` | — (reference) | ~800 | 1.1.0 | 2026-05-10 |
 | Agent Output | `agent-output/` | — (reference) | ~400 | 1.0.0 | 2026-03 |
 | Beads Workflow | `beads-workflow/` | Orchestrator (reference), Product Owner (reference) | ~600 | 1.0.0 | 2026-03 |
-| Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.0.0 | 2026-04 |
+| Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.1.0 | 2026-04 |
 | Memory Tool | `memory-tool/` | — (reference) | ~500 | 1.0.0 | 2026-05-10 |
 | Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,800 [^al-tokens] | 1.5.0 | 2026-09-22 |
 | Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.17.0 | 2026-10-11 |

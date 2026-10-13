@@ -28,6 +28,12 @@ The system is:
   per-severity counts, tool names), never what the project it ran in contains:
   no finding text, repo name, PR number, branch, file path or line number, for
   any source repo, public or private (§"Privacy whitelist").
+- **One thread per review target.** A review loop is one issue, not one per
+  round: the first non-pass round for a target (repo + branch, computed
+  locally and kept only in a user-scope map) opens an issue, later rounds
+  comment on it, and the final pass closes it with `telemetry:healed-in-loop`
+  (§"Posting policy"). A stop the result-block validator rejects is never
+  posted — only its accepted retry is.
 - **Privacy-first.** A regex deny-list inside the core script blocks any
   payload that looks like a secret, file path, email, or `.env` content.
 - **Deterministic.** The same result block scored twice produces the same
@@ -65,15 +71,21 @@ SubagentStop hook (hooks.json)
        |   - ALWAYS exits 0
        v
 [ ${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry-core.sh ]   <-- CORE
-       - resolves the agent's result text (§Result-text extraction)
-       - parses the resolved result block
+       - resolves the agent's result text and block with the SHARED
+         result_block_parser.py (§Result-text extraction)
+       - runs privacy whitelist on the raw payload (fail-closed)
+       - asks the sibling validator for its verdict on the same payload;
+         skips a rejected stop (§"Posting policy")
+       - parses the block with the shared parser; derives score and counts
+         from the parsed fields per the rubric below
+       - renders the open / round / close texts + labels (plugin facts only)
        - resolves consent + target repo
-       - applies interest filter and dedup
-       - runs privacy whitelist (fail-closed)
-       - derives score per the rubric below
-       - formats issue body + labels
-       - calls `gh issue create`
-       - writes to telemetry-sent.log on success
+       - looks up the review target's thread in the user-scope map;
+         applies the interest filter and per-thread dedup
+       - calls `gh issue create` (first round) or `gh issue comment` (later
+         rounds; the closing pass also labels and closes) under the map lock
+       - updates the user-scope thread map atomically and
+         appends to telemetry-sent.log on success
        - exits 0..5 per the contract below
 ```
 
@@ -122,8 +134,12 @@ final text is in **`last_assistant_message`**.
    session **`transcript_path`**. This is the only field the hook docs
    guarantee, so it is the durable fallback.
 
+Since #508 the core does not carry its own copy of this chain: it imports
+`scripts/result_block_parser.py` and calls the same `resolve_payload_text` +
+`find_last_named_block` the result-block validators use, so the core and the
+validator can never resolve different text or a different block.
 `scripts/validate-launch-pad-result.py` (the `launch-pad-runner` SubagentStop
-validator) uses the same chain — keep all three in sync. The historical
+validator) uses the same chain. The historical
 mistake (reading only `.result_block`, which is always empty) silently
 suppressed every supervisor-completion webhook and every telemetry post until
 v14.2.1.
@@ -1121,12 +1137,12 @@ read these codes to decide what happened.
 
 | Code | Name                  | Meaning                                                                                  |
 |------|-----------------------|------------------------------------------------------------------------------------------|
-| 0    | `sent`                | Issue successfully created via `gh issue create`. One line appended to `telemetry-sent.log`. |
-| 1    | `generic_error`       | Unexpected failure (e.g. `gh` not authed, network error, malformed JSON from `gh`). Logged with redacted stderr. |
+| 0    | `sent`                | The round was posted: a thread opened (`gh issue create`), a round comment added, or the thread closed (comment + `telemetry:healed-in-loop` + close). The user-scope thread map is updated and one line appended to `telemetry-sent.log`. |
+| 1    | `generic_error`       | Unexpected failure (e.g. `gh` not authed, network error, unparseable `gh` output), the shared parser missing (`parser_unavailable`), or the thread map unreadable / its lock not acquired (`thread_map_unreadable`, `thread_map_lock_timeout` — nothing is posted, so no duplicate thread can open). Logged with redacted stderr. |
 | 2    | `privacy_blocked`     | Privacy whitelist matched the prospective issue body or stderr; nothing was sent. Logged with the matched pattern's name only — never the matched content. |
 | 3    | `no_consent`          | The user-scope `~/.claude/loomwright/egress.json` entry for this repo's slug is missing or set to `"no"` (v15.87.0 — a repo-relative `.supervisor/telemetry-consent.json` can no longer grant this on its own; see §"Consent flow"). Wrapper rate-limits the user-facing notice to once per session. |
 | 4    | `no_repo_configured`  | Neither `LOOMWRIGHT_TELEMETRY_REPO` nor the user-scope entry's `telemetry_repo` is set. Wrapper logs `telemetry_repo_unset` once per session. |
-| 5    | `filter_skipped`      | Interest filter, schema mismatch (`unknown_payload_skipped`), or dedup window suppressed the send. Not an error. |
+| 5    | `filter_skipped`      | Interest filter, schema mismatch (`unknown_payload_skipped`), a stop the sibling validator rejected (`validator_rejected`) or the shared parser could not read (`unparseable_block`), or a round its thread already holds (`dedup_hit`). Not an error. |
 
 The wrapper's behaviour is invariant of the core exit code: log the code,
 log the redacted stderr, exit 0.
@@ -1189,8 +1205,10 @@ minus `0.5` = **`8.5`**. Bucket: `high`.
 
 ### Rubric B — `CODE_REVIEW_RESULT`
 
-The score reflects severity of **new** issues only. `pre_existing` and
-`nit` issues do not affect the score.
+The score reflects severity of **new** issues (and a small deduction per
+`drift` issue). `pre_existing` and `nit` issues do not affect the score —
+they are still COUNTED in Raw Data (§"Issue body template"), which counts
+every parsed issue.
 
 | Condition                                                                  | Base score |
 |----------------------------------------------------------------------------|------------|
@@ -1247,9 +1265,16 @@ Bucket: `medium`.
 
 ## Issue body template
 
-Every issue follows the layout from `temp/self-learning.md` §1. Sections
-appear in this order; sections with no data are omitted (the renderer
-should not emit empty headers).
+Every round renders the layout below (from `temp/self-learning.md` §1).
+Sections appear in this order; sections with no data are omitted (the
+renderer should not emit empty headers). The issue that OPENS a thread
+starts with a `## Telemetry thread — round 1` header explaining the thread;
+a later round's comment starts with `## Round <N>`; the closing comment
+starts with `## Round <N> — loop closed` plus the final verdict, the number
+of rounds and the per-round finding totals (§"Posting policy"). `<N>` and
+the totals are integers read from the user-scope thread map — the only
+values not rendered in stage 1, so the stage-1 privacy scan covers every
+other byte.
 
 ```markdown
 ## Task Summary
@@ -1265,7 +1290,11 @@ should not emit empty headers).
 ## Issues Detected
 - <one bullet per finding, from a fixed template — NEVER the finding's text:
     CODE_REVIEW_RESULT: `[BLOCKING] new finding` / `[HIGH] new finding`,
-                        one per new BLOCKING/HIGH issue
+                        one per new BLOCKING/HIGH issue, and
+                        `[HIGH] drift finding (<drift_kind enum>)` per
+                        drift BLOCKING/HIGH issue; a FAIL with none of
+                        those says so in one line instead of rendering
+                        nothing
     SUPERVISOR_RESULT:  `subtask_failed` per failed subtask (names not sent),
                         `subtasks_failed=<N>`, `heal_decision=<ENUM|OTHER>`
     QA_RESULT:          `failing_tests=<N>` (names not sent), `tests_failed=<n>/<N>`>
@@ -1291,6 +1320,7 @@ should not emit empty headers).
   "score_bucket": "medium",
   "status": "<plugin status enum, else \"other\">",
   "issues": {"blocking": 0, "high": 0, "medium": 0, "low": 0, "unspecified": 0},
+  "issues_by_category": {"new": 0, "pre_existing": 0, "nit": 0, "drift": 0, "other": 0},
   "tools": ["..."],
   "redacted": true,
   "plugin_version": "..."
@@ -1300,8 +1330,14 @@ should not emit empty headers).
 
 The Raw Data keys above are the complete set — there is no `task_id`,
 `primary_error`, `result_block`, repo, PR, branch or path key (see §"Privacy
-whitelist"). `primary_error` and `task_id` are still computed, but only for
-the LOCAL dedup hash and `telemetry-sent.log` (§"Dedup window").
+whitelist"). `issues_by_category` is present for `CODE_REVIEW_RESULT` only.
+**Both counts come from the PARSED result block** (#508): `issues` counts
+every parsed issue by severity, all four categories included, so a
+drift-only FAIL no longer posts as zero findings (#373, #378); before #508
+they were counted from the rendered `new` lines. Other schemas have no
+severity, so their Issues Detected lines count as `unspecified`.
+`primary_error` and `task_id` are still computed, but only for the LOCAL
+round identity and `telemetry-sent.log` (§"Dedup window").
 
 **`Success` derivation:**
 
@@ -1312,18 +1348,22 @@ the LOCAL dedup hash and `telemetry-sent.log` (§"Dedup window").
 **Title format (exact):**
 
 ```
-[Telemetry] {agent_type} | Score: {N} | Failed: {true|false}
+[Telemetry] {agent_type} thread
 ```
 
-`{N}` is the integer score (round-half-up from the rubric's clamped float).
-`Failed` is the inverse of `Success` above.
+An opaque thread title: no score (it changes every round — each round's
+score is in its own body), and no repo, branch or PR (the thread key is
+local, §"Posting policy"). The pre-#508 title, `… | Score: N | Failed:
+true`, read a reviewer FAIL as the agent failing; a reviewer FAIL is the
+reviewer doing its job.
 
 ---
 
 ## Labels
 
-Every issue gets at least two labels (`telemetry` + a `score:` tier).
-Additional labels stack as conditions are met.
+Every thread issue gets at least two labels (`telemetry` + a `score:` tier)
+when it is OPENED — the tier is round 1's; later rounds' scores are in their
+comments. Additional labels stack as conditions are met.
 
 | Label                              | When applied                                                                               |
 |------------------------------------|--------------------------------------------------------------------------------------------|
@@ -1334,6 +1374,7 @@ Additional labels stack as conditions are met.
 | `task:supervisor`                  | `agent_type == "supervisor"` (matched on `SUPERVISOR_RESULT`).                             |
 | `task:code-reviewer`               | `CODE_REVIEW_RESULT`.                                                                      |
 | `task:qa-executor`                 | `QA_RESULT`.                                                                               |
+| `telemetry:healed-in-loop`         | Added by the closing pass: the loop this thread recorded ended in a pass. Created with `gh label create --force` first (best effort — a failure is logged, the close still proceeds). |
 | `agent:{name}-weak`                | When any sub-score `< 5`. `{name}` is the sub-agent identifier (lowercased, dash-separated). E.g. `agent:planner-weak`. |
 
 Label creation is the issuer's responsibility — Subtask #2b should
@@ -1589,7 +1630,11 @@ template"); the title and labels carry only the agent name and score.
 **What is never sent:** finding descriptions (no `## Issues Detected` text, no
 `primary_error` — not even an excerpt), subtask names, failing-test names, the
 result-block `task_id`, any repo name, PR number or URL, branch, file path or
-line number, and the result block itself.
+line number, the result block itself — and the thread key or anything it is
+computed from (§"Posting policy"): threading is decided locally, and a thread
+comment carries the same plugin facts as an issue. Pinned by
+`scripts/test-telemetry-threads.sh` T7 across every title, body and comment
+of a whole loop.
 
 **The body's privacy comes from this FIELD SELECTION, not the regex list below
 (red-team-hardening item 08, Fix 3; tightened by triage PR-1).** File paths,
@@ -1701,7 +1746,10 @@ core already runs at lines 5-6 of the pipeline.
 To avoid spam on healthy runs, the core skips uninteresting outcomes
 even when consent + target repo are configured.
 
-**Skip (exit 5) if:** derived score `>= 5` AND status is in the success set.
+**Skip (exit 5) if:** the review target has NO open thread AND the derived
+score is `>= 5` AND status is in the success set. A success on a target
+that HAS an open thread is never skipped — it is the round that closes the
+thread (§"Posting policy").
 
 | Result block         | Success set                  |
 |----------------------|------------------------------|
@@ -1717,31 +1765,118 @@ even when consent + target repo are configured.
 | `CODE_REVIEW_RESULT` | `{"FAIL", "NEEDS_HUMAN"}`                                                       |
 | `QA_RESULT`          | any failing test, or any failing self-check gate                                 |
 
-The interest filter runs **after** privacy and target-repo resolution,
-**before** dedup. Order matters: privacy violations always log even on
-"healthy" runs (audit trail integrity); dedup runs last so dedup never
-suppresses a privacy event.
+The interest filter runs **after** privacy and target-repo resolution, in
+the thread step. Order matters: privacy violations always log even on
+"healthy" runs (audit trail integrity), and neither the validator verdict,
+the interest filter nor dedup can suppress a privacy event.
+
+---
+
+## Posting policy — one thread per review target (#508)
+
+Owner decision 2026-10-13. The unit worth recording is the review LOOP, not
+each round: in triage 2026-10-12 every one of ~84 open telemetry findings was
+a reviewer round whose finding was already healed inside the same PR, filed
+as its own issue.
+
+**1. A stop the validator rejects is not posted.** The telemetry hook and the
+result-block validator (`validate-{code-review,qa,supervisor}-result.py`) are
+sibling commands in the same `SubagentStop` matcher group (`hooks/hooks.json`),
+so neither sees the other's result and their order is not something to rely
+on. A blocked stop is not final — the runtime feeds the reason back and the
+agent re-emits. Before #508 the core parsed with its own permissive regexes,
+posted the rejected attempt (a YAML `description: >-` rendered as
+`- [HIGH] >-`), then posted the retry again (#422/#423, #461/#462). Now stage
+1 runs that same validator on the same payload bytes and, on
+`decision: block`, exits 5 `filter_skipped reason=validator_rejected` —
+decided from the verdict, not from hook order. The block is then parsed with
+the shared `result_block_parser.parse_block`; a parse error also skips
+(`unparseable_block`), which covers the case where the validator itself is
+unavailable (`validator_unavailable` is logged and the parse check stands
+alone). Honest limit: the runtime caps a block-and-retry loop at 8
+continuations; a stop still rejected at the cap is never recorded.
+
+**2. The review target and its thread key.** Computed locally, in order:
+the branch checked out in `$PWD` (unless it is the repo's default branch —
+`origin/HEAD`, else `main`/`master` — where unrelated reviews meet), else
+`LOOMWRIGHT_PR_HEAD_REF` (which `dispatch-pr-review.sh` exports into the
+detached until-mergeable drain, whose worktree is detached at the PR head),
+else the session id. The key is
+`sha256("v1" ⊕ destination repo ⊕ agent ⊕ source repo slug ⊕ target)`; it,
+and everything it is computed from, stays in the map below and is never
+posted. One target therefore has one thread per agent (`code-reviewer`,
+`supervisor`, `qa-executor`) per destination.
+
+**3. Open, comment, close.**
+
+| Round outcome | Target has an open thread? | Action |
+|---|---|---|
+| non-success | no  | `gh issue create` — the thread opens with round 1's record |
+| non-success | yes | `gh issue comment` — round N's record |
+| success     | yes | closing `gh issue comment` (final verdict, rounds, per-round finding totals, this round's record), then `gh issue edit --add-label telemetry:healed-in-loop`, then `gh issue close --reason completed` |
+| success     | no  | interest filter: skipped when score `>= 5`, else opens a thread |
+
+A closed thread is finished: the next non-success round for the same target
+opens a NEW thread. If `gh issue close` fails, the closing comment stands and
+the thread stays open in the map, so the next pass retries the close.
+
+**4. The thread map.** `~/.claude/loomwright/telemetry-threads.json`, beside
+`egress.json`, so every worktree and every lane of the same user shares it
+(the old per-cwd dedup log died with each removed worktree):
+
+```json
+{"schema_version": 1,
+ "threads": {"<key>": {"dest": "owner/repo", "issue": 123, "state": "open|closed",
+                       "rounds": 2, "series": [1, 2], "seen": ["<round id>", "..."],
+                       "opened_at": "<iso>", "updated_at": "<iso>"}}}
+```
+
+- **Concurrent-safe:** a live post holds an exclusive `flock` on
+  `telemetry-threads.json.lock` across the whole read → decide → `gh` →
+  write, so two worktrees posting the first round of one target at once open
+  ONE issue and the second becomes its comment (T5). The lock wait is
+  bounded (30 s, `LOOMWRIGHT_TELEMETRY_LOCK_TIMEOUT`); a timeout posts nothing
+  (exit 1 `thread_map_lock_timeout`).
+- **Atomic:** the map is written to a same-directory temp file, fsynced and
+  renamed over the old one, mode `0600`. Closed threads untouched for 30 days
+  are pruned on write.
+- **Fail SAFE:** a map that exists but cannot be read back as a
+  `schema_version: 1` map (garbage, wrong shape, a directory) means NOTHING
+  is posted — an empty reading could open a duplicate of an open thread. The
+  core exits 1 with `thread_map_unreadable` on stderr, which the wrapper logs
+  to `telemetry.log`; the map is left untouched for the user to inspect. A
+  MISSING map is first use, not an error.
+- **`--dry-run`** reads the map (no lock), prints `THREAD_ACTION=` /
+  `THREAD_ROUND=` with the text that would be posted, and writes nothing.
+
+**5. Per-finding outcomes — measured gap.** The closing comment records the
+final verdict, the number of rounds and each round's finding total. It does
+NOT carry how many findings were fixed, dismissed or deferred: those exist
+(`REVIEW_HEAL_RESULT.issues_fixed` / `findings_dismissed` / `dismissed[]`,
+`SUPERVISOR_RESULT.heal_fixable_issues_fixed` / `heal_dismissed[]`), but no
+telemetry hook receives `REVIEW_HEAL_RESULT`, and the supervisor's stop is a
+different agent's thread that arrives after the reviewer's pass has closed its
+own. The closing comment says "not recorded" rather than inventing a tally.
+Measuring the reviewer's false-positive rate needs that routing — see
+§"Future work".
 
 ---
 
 ## Dedup window
 
-Same {`task_id`, `score_bucket`, `primary_error`} within the last 6 hours
--> skip (exit 5).
+Dedup is now **per thread, in the user-scope map** (#508) — there is no
+time window and the per-cwd log is no longer consulted. A round whose
+identity is already in its open thread's `seen` list is skipped (exit 5,
+`dedup_hit hash=<round id>`).
 
-Implementation:
+Round identity:
 
-- Hash key: `sha256(task_id + "::" + score_bucket + "::" + primary_error)`
-  (using `hashlib.sha256(...).hexdigest()` in stage 1 — `sha256` is in the
-  Python stdlib and always available, so there is no `md5` fallback).
-- Storage: `.supervisor/logs/telemetry-sent.log` — one line per
-  successful send, six tab-separated columns:
-  `<iso_ts>\t<hash>\t<task_id>\t<score>\t<bucket>\t<issue_url>`.
-- Lookup: scan the last 6h of entries (`awk` on timestamp prefix is
-  sufficient at expected volumes). Match column 1 (timestamp) against the
-  6h window and column 2 (hash) against the current run's hash; columns
-  3-6 are recorded for `/telemetry status` reporting and post-mortem
-  triage but are NOT consulted during dedup. If the hash is present, exit 5.
+- `sha256("agent::" + session_id + "::" + agent_id)` when the payload carries
+  the finishing subagent's `agent_id` (every current stop payload does) —
+  one reviewer spawn is one round, so a repeated delivery of the same stop is
+  a dedup while a new reviewer spawn with the same finding is a new round;
+- else the legacy content hash
+  `sha256(task_id + "::" + score_bucket + "::" + primary_error)`.
 
 `primary_error` (computed for this LOCAL hash only — it is never posted, see
 §"Privacy whitelist"):
@@ -1749,10 +1884,12 @@ Implementation:
 - `SUPERVISOR_RESULT`: first item in `subtasks_failed`, else
   `heal_decision` if not `PASS`, else empty.
 - `CODE_REVIEW_RESULT`: first `new` BLOCKING issue's `description`, else
-  first `new` HIGH issue's `description`, else empty. (The schema has no
-  `title` field — see allowed issue keys in the SubagentStop validator at
-  `hooks/hooks.json` and the v3 schema in `docs/RESULT_SCHEMAS.md`.)
+  first `new` HIGH issue's `description`, else the first `drift`
+  BLOCKING/HIGH one, else empty.
 - `QA_RESULT`: first failing test name, else empty.
+
+`.supervisor/logs/telemetry-sent.log` is still appended on every post — an
+audit line, no longer a dedup source.
 
 ---
 
@@ -1765,7 +1902,8 @@ quick reference).
 | Path                                                      | Format                                                                | Purpose                                |
 |-----------------------------------------------------------|-----------------------------------------------------------------------|----------------------------------------|
 | `.supervisor/logs/telemetry.log`                          | one JSON-ish line per event (`{"event":"...","ts":"...", ...}`)        | Full audit (sends, skips, errors, privacy blocks) |
-| `.supervisor/logs/telemetry-sent.log`                     | six tab-separated columns: `<iso_ts>\t<hash>\t<task_id>\t<score>\t<bucket>\t<issue_url>` (hash is sha256; cols 3-6 are for `/telemetry status` + post-mortem triage, not consulted by dedup) | Dedup lookup (cols 1+2); `/telemetry status` last-sent timestamp |
+| `.supervisor/logs/telemetry-sent.log`                     | seven tab-separated columns: `<iso_ts>\t<round_id>\t<task_id>\t<score>\t<bucket>\t<issue_url>\t<open\|comment\|close>` | Local audit; `/telemetry status` last-sent timestamp (col 1). Not a dedup source since #508 |
+| `telemetry-threads.json` (+ `.lock`), beside the user-scope `egress.json` | user-scope JSON thread map (§"Posting policy") | Thread lookup + per-thread dedup, shared by every worktree |
 | `.supervisor/logs/telemetry-pending-shown-${session_id}.flag` | empty file (mtime is the signal)                                  | Per-session "consent pending" rate-limit marker |
 | `.supervisor/logs/telemetry-pending-shown-nosession-$(date +%Y%m%d%H).flag` | empty file (mtime is the signal)                     | Fallback marker when `session_id` is missing |
 
@@ -2181,6 +2319,14 @@ counts `automate_escalation_recheck` separately — legs WE).
   suggestions from the score breakdown and the failing signals.
 - **Auto-PR for prompt fixes.** When `agent:{name}-weak` recurs N times,
   draft a PR adjusting the relevant agent's prompt.
+- **Per-finding outcomes in the closing comment (#508 follow-up).** Route the
+  review loop's own terminal record (`REVIEW_HEAL_RESULT.issues_fixed` /
+  `findings_dismissed` / `dismissed[]`, or Phase 4.5's
+  `heal_fixable_issues_fixed` / `heal_dismissed[]` by reason enum) into the
+  reviewer's thread, so the closing comment carries a fixed / dismissed /
+  deferred tally and dismissed-as-invalid becomes the reviewer's measured
+  false-positive rate. Today no telemetry hook receives `REVIEW_HEAL_RESULT`,
+  so the closing comment says "not recorded" (§"Posting policy").
 
 These are intentionally deferred so the v1 surface stays small enough
 to review and reason about.
@@ -2209,8 +2355,9 @@ send-telemetry.sh (wrapper, ALWAYS exit 0)
       v stdin
 send-telemetry-core.sh (core, exit 0..5)
       |
-      +-- parse → score → privacy (raw + body) → consent → repo
-      |          → interest → dedup → gh
+      +-- resolve + locate (shared parser) → privacy (raw) → validator
+      |   verdict → parse → score → render + privacy (body) → consent
+      |   → repo → thread lookup (interest, dedup) → gh create|comment|close
       |
       v exit code + raw stderr
 send-telemetry.sh (wrapper, post-core)
@@ -2236,7 +2383,8 @@ Key invariants reflected in the diagram:
   silently via the interest filter.
 - **Core owns all decisions.** Parsing, scoring, consent reading,
   target-repo resolution, the privacy whitelist, the interest filter,
-  dedup, and the actual `gh issue create` invocation all live in
+  the thread lookup, dedup, and the actual `gh issue create` /
+  `gh issue comment` / `gh issue close` invocations all live in
   `send-telemetry-core.sh`. The wrapper does no payload inspection.
 - **Wrapper owns stderr redaction.** The core's stderr is captured by
   the wrapper to a tmp file, then redacted via the same regex set
@@ -2262,12 +2410,12 @@ the linked section above for the source-of-truth definitions.
 
 | Code | Name                | Meaning                                                                                          | Wrapper action                                                                                                                            |
 |------|---------------------|--------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
-| 0    | sent                | Issue posted to GitHub via `gh issue create`. URL appended to `.supervisor/logs/telemetry-sent.log`. | Log primary line `CORE_EXIT=0`. Exit 0.                                                                                                   |
-| 1    | generic_error       | Unexpected error (malformed args, JSON parse failure inside repo handling, `gh` CLI failure).     | Log primary line with redacted stderr. Exit 0.                                                                                            |
+| 0    | sent                | Round posted to its thread (issue opened, comment added, or thread closed). Thread map updated; a line appended to `.supervisor/logs/telemetry-sent.log`. | Log primary line `CORE_EXIT=0`. Exit 0.                                                                                                   |
+| 1    | generic_error       | Unexpected error (malformed args, `gh` CLI failure), shared parser missing, or thread map unreadable / lock timeout (nothing posted). | Log primary line with redacted stderr. Exit 0.                                                                                            |
 | 2    | privacy_blocked     | Privacy whitelist matched; issue NOT posted; structured `PRIVACY_BLOCKED pattern=<label>` on stderr (NEVER the matched content). | Log primary line. Exit 0.                                                                                                                 |
 | 3    | no_consent          | The user-scope `~/.claude/loomwright/egress.json` entry for this repo's slug is missing or `"no"` (v15.87.0; a repo-relative `.supervisor/telemetry-consent.json` request alone cannot satisfy this — see §"Consent flow"). | Log primary line; if per-session pending flag is new, set `PENDING_FLAG_NEW=true` and touch the flag (rate-limits the user-facing notice). Exit 0. |
 | 4    | no_repo_configured  | Neither `LOOMWRIGHT_TELEMETRY_REPO` env var nor the user-scope entry's `telemetry_repo` is set.       | Log primary line; if the per-session repo-unset flag is new, append a SECOND `telemetry_repo_unset` line with the user-facing remediation hint. Exit 0. |
-| 5    | filter_skipped      | Healthy run (score >= 5 AND status in success set), or unknown payload schema.                    | Log primary line `CORE_EXIT=5`. Exit 0.                                                                                                   |
+| 5    | filter_skipped      | Healthy run with no open thread (score >= 5 AND status in success set), unknown payload schema, validator-rejected or unparseable block, or a round already in its thread. | Log primary line `CORE_EXIT=5`. Exit 0.                                                                                                   |
 
 The wrapper's primary log line shape is:
 

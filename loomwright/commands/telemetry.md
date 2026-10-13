@@ -150,12 +150,15 @@ Then a 1-line summary, e.g. `Telemetry: enabled, target=vikashruhilgit/loomwrigh
    Capture stdout. The script always exits 0 in dry-run mode regardless of `WOULD_EXIT`, so do not branch on exit status — branch on the `WOULD_EXIT=<n>` line in stdout.
 3. Parse stdout for these fields and print them:
    - `TARGET_REPO=<value>` — print `Target repo: <value>` or `Target repo: unset` if missing/empty.
+   - `THREAD_ACTION=<open|comment|close>` and `THREAD_ROUND=<n>` — print `Thread action: <action> (round <n>)`. Telemetry posts ONE THREAD PER REVIEW TARGET (`docs/TELEMETRY.md` §"Posting policy"): `open` = a new issue, `comment` = a round comment on the target's open thread, `close` = the closing comment + `telemetry:healed-in-loop` + close. Both lines are absent when the dry-run skips; then print nothing for them.
    - `BODY_BEGIN`...`BODY_END` block — print the body verbatim under a `## Issue body (dry-run)` heading using a markdown code fence.
    - `WOULD_EXIT=<n>` — print `WOULD_EXIT: <n>`.
-4. **Do NOT** call `gh issue create`. **Do NOT** modify `~/.claude/loomwright/egress.json` or any repo-relative file. Dry-run is read-only.
+4. **Do NOT** call `gh` (`gh issue create`, `gh issue comment`, `gh issue close` — none of them). **Do NOT** modify `~/.claude/loomwright/egress.json`, the user-scope thread map `telemetry-threads.json` beside it, or any repo-relative file. Dry-run is read-only: the core only READS the thread map to report the action.
 5. Print final 1-line summary:
-   - If `WOULD_EXIT=0`: `Telemetry: dry-run would create an issue at <target-repo>.`
-   - Else: `Telemetry: dry-run would skip (WOULD_EXIT=<n>); see body above for early-exit reason.`
+   - If `WOULD_EXIT=0` and `THREAD_ACTION=open`: `Telemetry: dry-run would open a thread at <target-repo>.`
+   - If `WOULD_EXIT=0` and `THREAD_ACTION=comment`: `Telemetry: dry-run would add round <n> to this target's open thread at <target-repo>.`
+   - If `WOULD_EXIT=0` and `THREAD_ACTION=close`: `Telemetry: dry-run would close this target's thread at <target-repo> (healed in loop).`
+   - Else: `Telemetry: dry-run would skip (WOULD_EXIT=<n>); see output above for the reason.` (`WOULD_EXIT=1` with `thread_map_unreadable` means the user-scope thread map is unreadable and nothing would be posted.)
 
 ## If subcommand is missing or unrecognised
 
@@ -168,7 +171,7 @@ Print the Usage block at the top of this file and exit. 1-line summary: `Telemet
 - ONLY modify `~/.claude/loomwright/egress.json` (user scope), and only via the backup-first, jq-deep-merge, abort-on-parse-failure procedure in `enable`/`disable` (and `status`'s human-confirmed one-time import, which reuses that same procedure). Never touch any other file.
 - NEVER write `.supervisor/telemetry-consent.json` — it is a read-only, repo-relative *request* surface now, never this command's output target.
 - For `enable`, use AskUserQuestion (not a hook-driven prompt) to collect the target repo.
-- NEVER call `gh issue create` from this command — that is the hook's job.
+- NEVER call `gh issue create` / `gh issue comment` / `gh issue close` from this command — posting is the hook's job.
 - **NEVER auto-import** a repo-relative request into user scope. The ONLY import path is `status`'s human-confirmed `AskUserQuestion` offer — this is a standing invariant, not a convenience shortcut to relax later (auto-importing would recreate the exact vulnerability red-team-hardening item 02 closes).
 - `test` is fully read-only.
 - Always print the 1-line `Telemetry: ...` summary at the end so the user can scan results.
@@ -257,7 +260,8 @@ $ /telemetry test
 [... formatted markdown body printed by core script ...]
 
 Target repo: vikashruhilgit/loomwright
+Thread action: open (round 1)
 WOULD_EXIT: 0
 
-Telemetry: dry-run would create an issue at vikashruhilgit/loomwright.
+Telemetry: dry-run would open a thread at vikashruhilgit/loomwright.
 ```

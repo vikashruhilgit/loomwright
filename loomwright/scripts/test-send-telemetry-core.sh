@@ -15,7 +15,7 @@
 #     never appears AND that live-path invocations always short-circuit (exit 2/3/4/5)
 #     before the gh step. Would-send paths use --dry-run + WOULD_EXIT assertions only.
 #   - Sandbox isolation: the core resolves .supervisor/logs/ from $PWD
-#     (send-telemetry-core.sh:48-50
+#     (send-telemetry-core.sh:65-67
 #     [pins: `LOG_DIR="${PWD}/.supervisor/logs"`]), so every invocation
 #     runs with CWD inside a mktemp sandbox. The real repo .supervisor/ is snapshotted
 #     before and asserted byte-identical after. Consent + target-repo now resolve
@@ -66,6 +66,9 @@ fi
 # The env override for the target repo must not leak into the consent-matrix
 # assertions (allow_no_repo must be exit 4, not env-resolved).
 unset LOOMWRIGHT_TELEMETRY_REPO 2>/dev/null || true
+# The drain's head-ref hint feeds the thread key (#508); an ambient value from
+# the operator's own drain session must not leak into these assertions.
+unset LOOMWRIGHT_PR_HEAD_REF 2>/dev/null || true
 
 # ---- Sandbox -----------------------------------------------------------------
 SANDBOX="$(mktemp -d 2>/dev/null)" || { echo "FATAL  mktemp failed" >&2; exit 1; }
@@ -89,6 +92,7 @@ mkdir -p "$FIXDIR" "$SHIM_DIR"
 SB_SLUG="sandbox-owner/sandbox-repo"
 SB_HOME="$SANDBOX/home"
 SB_EGRESS="$SB_HOME/.claude/loomwright/egress.json"
+SB_THREADS="$(dirname "$SB_EGRESS")/telemetry-threads.json"   # the user-scope thread map (#508)
 mkdir -p "$SB_HOME/.claude/loomwright"
 git -C "$SANDBOX" init -q 2>/dev/null || { echo "FATAL  git init failed in sandbox" >&2; exit 1; }
 git -C "$SANDBOX" remote add origin "https://github.com/${SB_SLUG}.git" 2>/dev/null || true
@@ -106,6 +110,33 @@ open(sys.argv[3], "w").write(json.dumps(doc))
 ' "$1" "$SB_SLUG" "$SB_EGRESS"
 }
 user_scope_write_raw() { printf '%s' "$1" > "$SB_EGRESS"; }
+
+# copy_core_siblings <dir> — a mutant core finds its helpers BESIDE itself
+# (resolver, the shared result-block parser, the three sibling validators).
+copy_core_siblings() {
+  local d="$1" f
+  mkdir -p "$d"
+  for f in resolve-egress-config.sh result_block_parser.py validate-code-review-result.py \
+           validate-qa-result.py validate-supervisor-result.py; do
+    cp "$SCRIPT_DIR/$f" "$d/"
+  done
+}
+
+# seed_thread <dest> <agent> <target_ref> <state> <seen_hash>
+# Writes the user-scope thread map with ONE thread for the key the core
+# derives (#508 thread-key contract, stage 2 of send-telemetry-core.sh:
+# sha256("v1\0<dest>\0<agent>\0<source slug>\0<target_ref>")).
+seed_thread() {
+  python3 -c '
+import hashlib, json, sys
+dest, agent, slug, ref, state, seen, path = sys.argv[1:8]
+key = hashlib.sha256("\0".join(("v1", dest, agent, slug, ref)).encode()).hexdigest()
+doc = {"schema_version": 1, "threads": {key: {"dest": dest, "issue": 7, "state": state,
+       "rounds": 1, "series": [1], "seen": [seen],
+       "opened_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}}}
+open(path, "w").write(json.dumps(doc))
+' "$1" "$2" "$SB_SLUG" "$3" "$4" "$5" "$SB_THREADS"
+}
 
 # ---- gh shim: fails loudly if ANY core invocation ever reaches the gh step ----
 {
@@ -207,13 +238,40 @@ with open(os.path.join(outdir, "secrets.tsv"), "w") as fh:
         fh.write("%s\t%s\n" % (label, secret))
 
 def block(task_id, status, extra_lines):
-    lines = [
-        "## SUPERVISOR_RESULT",
-        "- schema_version: 1",
-        "- task_id: %s" % task_id,
-        "- status: %s" % status,
+    """A SUPERVISOR_RESULT that validate-supervisor-result.py ACCEPTS (#508:
+    the core skips any stop its sibling validator rejects, so a fixture meant
+    to reach consent / dedup / the body must be schema-valid). `extra_lines`
+    (`- key: value`) override the defaults by key; other lines are appended."""
+    fields = [
+        ("schema_version", "1"),
+        ("task_id", task_id),
+        ("status", status),
+        ("heal_loop_ran", "false"),
+        ("heal_iterations", "null"),
+        ("heal_decision", "null"),
+        ("heal_fixable_issues_fixed", "0"),
+        ("heal_remaining_issues", "0"),
     ]
-    lines.extend(extra_lines)
+    if status in ("completed", "completed_with_escalation"):
+        fields.append(("pr_url", "https://example.invalid/pull/1"))
+    if status == "failed":
+        fields.append(("error", "fixture failure"))
+    tail = []
+    for line in extra_lines:
+        if line.startswith("- ") and ": " in line:
+            key, val = line[2:].split(": ", 1)
+            if key == "heal_decision" and val != "null":
+                fields = [(k, v) for k, v in fields if k not in ("heal_loop_ran", "heal_iterations")]
+                fields += [("heal_loop_ran", "true"), ("heal_iterations", "1")]
+            if any(k == key for k, _ in fields):
+                fields = [(k, (val if k == key else v)) for k, v in fields]
+            else:
+                fields.append((key, val))
+        else:
+            tail.append(line)
+    if not any(k == "summary" for k, _ in fields):
+        fields.append(("summary", "fixture"))
+    lines = ["## SUPERVISOR_RESULT"] + ["- %s: %s" % kv for kv in fields] + tail
     return "\n".join(lines) + "\n"
 
 def write(name, result_block):
@@ -335,6 +393,9 @@ def review_block(desc):
         "Review done.", "", "```yaml", "CODE_REVIEW_RESULT:",
         "  schema_version: 3",
         "  review_mode: diff_review",
+        "  audit_focus: []",
+        "  trigger_paths_detected: []",
+        "  scope_expanded: []",
         "  files_checked:",
         "    - %s/x.sh" % HOME_ROOT,
         "  decision: FAIL",
@@ -365,6 +426,8 @@ real_payload("real-handback-qa.json",
         "  tests_generated: 12",
         "  tests_passed: 4",
         "  tests_failed: 8",
+        "  coverage_estimate: 0.4",
+        "  status: failed",
         "  summary: eight generated tests failed",
         "```"])),
     agent_type="loomwright:loomwright:qa-executor")
@@ -386,6 +449,10 @@ write_agent("content-review.json", "loomwright:loomwright:code-reviewer", "\n".j
     "Review done.", "", "```yaml", "CODE_REVIEW_RESULT:",
     "  schema_version: 3",
     "  review_mode: diff_review",
+    "  audit_focus: []",
+    "  trigger_paths_detected: []",
+    "  scope_expanded: []",
+    "  files_checked: [src/billing/charge_card.py, src/billing/refund.py]",
     "  decision: FAIL",
     "  tools_used: [Read, Grep, src/billing/charge_card.py, charge_card.py]",
     "  issues:",
@@ -408,6 +475,10 @@ write_agent("content-supervisor.json", "loomwright:loomwright:supervisor-runner"
     "  pr_url: https://github.com/acme-private/hub/pull/88",
     "  branch: feature/acme-checkout-rewrite",
     "  subtasks_failed: [rewrite-charge_card-handler]",
+    "  heal_loop_ran: true",
+    "  heal_iterations: 1",
+    "  heal_fixable_issues_fixed: 0",
+    "  heal_remaining_issues: 0",
     "  heal_decision: ESCALATED",
     "  error: charge_card() in src/billing/charge_card.py:214 broke",
     "  summary: checkout rewrite failed"]))
@@ -418,6 +489,8 @@ write_agent("content-qa.json", "loomwright:loomwright:qa-executor", "\n".join([
     "  tests_generated: 4",
     "  tests_passed: 3",
     "  failing_test: tests/billing/test_charge.py::test_charge_card_retries",
+    "  coverage_estimate: 0.6",
+    "  status: failed",
     "  summary: one failing test"]))
 PY
 if [ ! -f "$FIXDIR/secrets.tsv" ]; then
@@ -648,45 +721,55 @@ assert_eq "repo_explicit_null_exit=4" "4" "$rc"
 assert_match "repo_explicit_null_marker" "no_repo_configured" "$out"
 
 # ---- Group 6: dedup determinism -------------------------------------------------
-# Hash contract pin (send-telemetry-core.sh:735 [pins: `hash_input = "%s::%s::%s"`]):
-# sha256("task_id::bucket::primary_error").
+# #508: dedup no longer reads a per-cwd 6h sent log (it died with every removed
+# worktree); a round is deduped INSIDE its thread, in the user-scope map every
+# worktree shares. A payload without an agent_id keeps the legacy round
+# identity — the hash contract below (send-telemetry-core.sh round identity
+# [pins: `legacy_hash = hashlib.sha256`]): sha256("task_id::bucket::primary_error").
 # dedup-a.json: task_id=dedup-task-A, status=failed (base 2.0) minus 0.5 for one
 # failed subtask => score 1.5 => bucket "low"; primary_error=BD-9x (subtasks_failed[0]).
-# telemetry-sent.log is appended ONLY on the live send path, so we SEED it here.
-# If the hash contract drifted, the seeded entry would not match, the core would
-# fall through toward the live gh step, and the shim would fail the run loudly.
+# Both fixtures are pointed at ONE review target (LOOMWRIGHT_PR_HEAD_REF) so
+# they share a thread key.
 echo ""
-echo "==== Group 6: dedup determinism ===="
+echo "==== Group 6: dedup determinism (per-thread, user-scope map) ===="
 user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
 DEDUP_HASH_A="$(python3 -c 'import hashlib; print(hashlib.sha256(b"dedup-task-A::low::BD-9x").hexdigest())')"
-TS_NOW="$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
-TS_STALE="$(python3 -c 'from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc) - timedelta(hours=10)).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
+run_core_ref() { # <ref> <fixture> [args] — run_core with a review-target hint
+  local ref="$1"; shift
+  local fixture="$1"; shift
+  ( cd "$SANDBOX" && HOME="$SB_HOME" PATH="$SHIM_DIR:$PATH" LOOMWRIGHT_PR_HEAD_REF="$ref" bash "$CORE" "$@" < "$fixture" 2>&1 )
+}
 
-mkdir -p "$(dirname "$SB_SENT_LOG")"
-# (i) same hash within the 6h window -> second occurrence exits 5 (dedup_hit).
-printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$TS_NOW" "$DEDUP_HASH_A" "dedup-task-A" "2" "low" "https://example.invalid/issues/1" > "$SB_SENT_LOG"
-out="$(run_core "$FIXDIR/dedup-a.json")"
-rc=$?
-assert_eq "dedup_same_hash_within_window_exit=5" "5" "$rc"
+# (i) the same round already recorded in the open thread -> dedup_hit (5).
+seed_thread "example/repo" "supervisor" "branch:feature/dedup" "open" "$DEDUP_HASH_A"
+out="$(run_core_ref feature/dedup "$FIXDIR/dedup-a.json" --dry-run)"
+assert_eq "dedup_same_round_in_thread_would_exit=5" "5" "$(extract_would_exit "$out")"
 assert_match "dedup_hit_marker" "dedup_hit hash=$DEDUP_HASH_A" "$out"
 
-# (ii) different primary_error (BD-7z) -> different hash -> NOT deduped -> would-send.
-out="$(run_core "$FIXDIR/dedup-b.json" --dry-run)"
-rc=$?
-assert_eq "dedup_different_error_rc=0" "0" "$rc"
+# (ii) different primary_error (BD-7z) -> a different round -> a COMMENT on
+#      the same thread, not a dedup.
+out="$(run_core_ref feature/dedup "$FIXDIR/dedup-b.json" --dry-run)"
 assert_eq "dedup_different_error_would_exit=0" "0" "$(extract_would_exit "$out")"
 assert_not_match "dedup_different_error_no_hit" "dedup_hit" "$out"
+assert_match "dedup_different_error_comments" "THREAD_ACTION=comment" "$out"
+assert_match "dedup_different_error_round_2" "THREAD_ROUND=2" "$out"
 
-# (iii) same hash but OUTSIDE the 6h window -> NOT deduped -> would-send.
+# (iii) the same round in a CLOSED thread -> not deduped: a new loop opens a
+#       new thread.
+seed_thread "example/repo" "supervisor" "branch:feature/dedup" "closed" "$DEDUP_HASH_A"
+out="$(run_core_ref feature/dedup "$FIXDIR/dedup-a.json" --dry-run)"
+assert_eq "dedup_closed_thread_would_exit=0" "0" "$(extract_would_exit "$out")"
+assert_match "dedup_closed_thread_opens" "THREAD_ACTION=open" "$out"
+
+# (iv) the dedup state lives in the user scope, not the cwd: a sent log in the
+#      cwd claiming the round was posted no longer suppresses it.
+rm -f "$SB_THREADS"
+mkdir -p "$(dirname "$SB_SENT_LOG")"
 printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$TS_STALE" "$DEDUP_HASH_A" "dedup-task-A" "2" "low" "https://example.invalid/issues/1" > "$SB_SENT_LOG"
-out="$(run_core "$FIXDIR/dedup-a.json" --dry-run)"
-rc=$?
-assert_eq "dedup_stale_entry_rc=0" "0" "$rc"
-assert_eq "dedup_stale_entry_would_exit=0" "0" "$(extract_would_exit "$out")"
-assert_not_match "dedup_stale_entry_no_hit" "dedup_hit" "$out"
-rm -f "$SB_SENT_LOG"
+  "2099-01-01T00:00:00Z" "$DEDUP_HASH_A" "dedup-task-A" "2" "low" "https://example.invalid/issues/1" > "$SB_SENT_LOG"
+out="$(run_core_ref feature/dedup "$FIXDIR/dedup-a.json" --dry-run)"
+assert_eq "dedup_cwd_sent_log_not_consulted" "0" "$(extract_would_exit "$out")"
+rm -f "$SB_SENT_LOG" "$SB_THREADS"
 
 # ---- Group 10: raw_data body — field selection, not result_block (Fix 3) -------
 # red-team-hardening item 08: raw_data ships structured fields, never the free-
@@ -733,7 +816,7 @@ assert_not_match "raw_data_explicit_false_no_result_block" '"result_block"' "$ou
 # pins) and must stay UNTRUNCATED there. longerr-a.json / longerr-b.json share an
 # IDENTICAL 220-char prefix and differ only after it, so a hash computed on
 # the TRUNCATED-to-200 string would be IDENTICAL for both — this seeds the
-# sent-log with the hash computed on the FULL (untruncated) string and
+# thread map with the hash computed on the FULL (untruncated) string and
 # proves the runtime's own hash matches it, the same "seed + expect dedup_hit"
 # technique Group 6 already established.
 user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
@@ -751,26 +834,24 @@ else
   PASS_COUNT=$((PASS_COUNT + 1))
 fi
 
-mkdir -p "$(dirname "$SB_SENT_LOG")"
-printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$TS_NOW" "$DEDUP_HASH_LONG_A" "longerr-task" "2" "low" "https://example.invalid/issues/2" > "$SB_SENT_LOG"
-# Seeded with the FULL-string hash for fixture A: if the runtime hashed the
-# SAME full string, this dedupes (exit 5). If it had instead truncated
-# primary_error in place before hashing, the runtime's own hash would differ
-# from this seed and the request would wrongly proceed toward a live send.
-out_a="$(run_core "$FIXDIR/longerr-a.json")"
-rc_a=$?
-assert_eq "longerr_a_dedupes_on_full_hash_exit=5" "5" "$rc_a"
+# Seeded with the FULL-string hash for fixture A in the open thread of one
+# review target: if the runtime hashed the SAME full string, this dedupes
+# (WOULD_EXIT=5). If it had instead truncated primary_error before hashing,
+# the runtime's own hash would differ from this seed and the round would post.
+seed_thread "example/repo" "supervisor" "branch:feature/longerr" "open" "$DEDUP_HASH_LONG_A"
+out_a="$(run_core_ref feature/longerr "$FIXDIR/longerr-a.json" --dry-run)"
+assert_eq "longerr_a_dedupes_on_full_hash_would_exit=5" "5" "$(extract_would_exit "$out_a")"
 assert_match "longerr_a_dedup_hit_marker" "dedup_hit hash=$DEDUP_HASH_LONG_A" "$out_a"
 
-# Fixture B, same seeded log (still keyed to A's full hash) -> NOT deduped,
+# Fixture B, same seeded thread (still keyed to A's full hash) -> NOT deduped,
 # because B's full-length primary_error genuinely differs after char 220.
-out_b="$(run_core "$FIXDIR/longerr-b.json" --dry-run)"
+out_b="$(run_core_ref feature/longerr "$FIXDIR/longerr-b.json" --dry-run)"
 rc_b=$?
 assert_eq "longerr_b_not_deduped_rc=0" "0" "$rc_b"
 assert_eq "longerr_b_not_deduped_would_exit=0" "0" "$(extract_would_exit "$out_b")"
 assert_not_match "longerr_b_no_dedup_hit" "dedup_hit" "$out_b"
-rm -f "$SB_SENT_LOG"
+
+rm -f "$SB_THREADS"
 
 # The long error text itself (a subtask name here) never reaches the body —
 # not truncated, absent.
@@ -955,7 +1036,9 @@ echo "==== Group 9: mutation control (revert resolver call -> repro reappears) =
 BEGIN_MARK='# MUTATION_CONTROL_BEGIN: resolve-egress-config-integration'
 END_MARK='# MUTATION_CONTROL_END: resolve-egress-config-integration'
 if grep -qF "$BEGIN_MARK" "$CORE" && grep -qF "$END_MARK" "$CORE"; then
-  MUTANT="$SANDBOX/send-telemetry-core.mutant.sh"
+  copy_core_siblings "$SANDBOX/resolver-mutant"
+  rm -f "$SANDBOX/resolver-mutant/resolve-egress-config.sh"
+  MUTANT="$SANDBOX/resolver-mutant/send-telemetry-core.sh"
   MUTANT_BLOCK="$SANDBOX/mutant-block.txt"
   cat > "$MUTANT_BLOCK" <<'BLOCK'
 CONSENT_DECISION="missing"
@@ -1002,7 +1085,10 @@ out="$(run_core "$FIXDIR/real-handback-fail.json" --dry-run)"
 assert_eq "real_shape_would_send" "0" "$(extract_would_exit "$out")"
 assert_not_match "real_shape_transport_paths_not_blocked" "PRIVACY_BLOCKED" "$out"
 assert_not_match "real_shape_decision_parsed" "score_default_used" "$out"
-assert_match "real_shape_failed_title" "Failed: true" "$out"
+# #508: the title is an opaque thread title — a reviewer FAIL is the reviewer
+# working, so "Failed: true" is gone, and no repo / PR / branch appears.
+assert_match "real_shape_thread_title" "TITLE=[Telemetry] code-reviewer thread" "$out"
+assert_not_match "real_shape_no_failed_title" "Failed: true" "$out"
 assert_match "real_shape_issue_from_handback" "[HIGH] new finding" "$out"
 assert_not_match "real_shape_no_finding_text" "unquoted var in" "$out"
 # The home paths sat in the finding text and file field, neither of which is
@@ -1100,8 +1186,7 @@ if grep -qF "$BEGIN_MARK_C" "$CORE" && grep -qF "$END_MARK_C" "$CORE"; then
   # The mutant sits beside a copy of the resolver (the core finds it as a
   # sibling), inside the sandbox — never written into the source tree.
   MUTANT_C_DIR="$SANDBOX/content-mutant"
-  mkdir -p "$MUTANT_C_DIR"
-  cp "$SCRIPT_DIR/resolve-egress-config.sh" "$MUTANT_C_DIR/"
+  copy_core_siblings "$MUTANT_C_DIR"
   MUTANT_C="$MUTANT_C_DIR/send-telemetry-core.sh"
   awk -v b="$BEGIN_MARK_C" -v e="$END_MARK_C" '
     index($0, b) { print; print "                issues.append(\"[%s] %s\" % (sev, issue[\"description\"].splitlines()[0]))"; skip = 1; next }

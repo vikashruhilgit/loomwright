@@ -1,6 +1,8 @@
 --- DRY RUN ---
 TARGET_REPO=example/repo
-TITLE=[Telemetry] supervisor | Score: 5 | Failed: true
+THREAD_ACTION=open
+THREAD_ROUND=1
+TITLE=[Telemetry] supervisor thread
 SCORE=5
 BUCKET=medium
 LABELS:
@@ -8,6 +10,10 @@ LABELS:
   - task:supervisor
   - telemetry
 BODY_BEGIN
+## Telemetry thread — round 1
+- One thread per review target: each later round is a comment here, and a final success closes the thread with the `telemetry:healed-in-loop` label.
+- A non-pass round is the loop working (a reviewer FAIL is the reviewer doing its job); read the thread as one loop, not as separate defects.
+
 ## Task Summary
 - Task Type: supervisor
 - Success: false
@@ -41,5 +47,6 @@ BODY_BEGIN
   "status": "completed_with_escalation",
   "tools": []
 }
-```BODY_END
+```
+BODY_END
 WOULD_EXIT=0
