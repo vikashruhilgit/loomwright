@@ -1,20 +1,16 @@
-# Backlog 2026-10-13 — af36-remainder/03, af/39, pa/18, verified-rule-checks (sequential, no --parallel)
+# Backlog 2026-10-13 — verified-rule-checks (sequential, no --parallel)
 
-## Status: parked (operator-run backlog doc: run it with `/loomwright:automate --backlog .supervisor/requirements/operator-run/2026-10-13-next-backlog.md`)
+## Status: parked (operator-run backlog doc: run it with `/loomwright:automate --backlog .supervisor/requirements/operator-run/2026-10-13-next-backlog.md` AFTER af36-remainder/03 has merged)
 
-Sequential on purpose (owner 2026-10-13): no wave for single items. One PR per item; merge it, then
-`/loomwright:automate --resume <run_id>` for the next. af/39 and pa/18 share files, so they could not run in
-parallel anyway.
+Sequential on purpose (owner 2026-10-13): no wave for single items. One PR; merge it.
 
-Prep done 2026-10-13: af36-remainder/03 moved out of run `automate-2026-10-12-181635` (checked off `# skipped`,
-run finalized); af/39 and pa/18 Touches re-pointed to `fixtures/automate-helpers-help/` and
-`skills/automate-loop/` (both split since they were written); verified-rule-checks' Touches notes moved out of the
-machine-read section. All four lint clean.
+Corrected 2026-10-13: af/39 and pa/18 were removed after reading their Re-scope sections. pa/18's remaining
+Parts A and B are PARKED (Part C shipped in #488). af/39's Part C shipped (#490); Parts A and B are to be split
+into separate items and Part B has two open owner decisions (wrapper skip-list; where skip rows are logged).
+af36-remainder/03 runs on its own first: `/loomwright:automate --folder .supervisor/requirements/af36-remainder`.
 
-- [ ] .supervisor/requirements/af36-remainder/03-meta-sync-learning-stores.md
-- [ ] .supervisor/requirements/automate-followups/39-engine-hygiene.md
-- [ ] .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md
 - [ ] .supervisor/requirements/verified-rule-checks.md
 
-Not in this backlog: twin-remediation/09 (shipped in #489, needs only its stamp); twin-remediation/08 (items 1 and 4
-need an owner design decision); verify-walkthrough/operator-run/08 (manual dogfood run).
+Not in this backlog: af/39 A/B (split + decisions first); pa/18 A/B (parked); twin-remediation/09 (shipped in #489,
+needs only its stamp); twin-remediation/08 items 1 and 4 (owner design decision); verify-walkthrough/operator-run/08
+(manual dogfood run).
