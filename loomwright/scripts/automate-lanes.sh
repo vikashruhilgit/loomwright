@@ -2584,11 +2584,12 @@ lanes_feed() {
 # when such a heading says "skipped", or ANY non-fenced line of a matched block (its first line, a
 # continuation, a heading-started section's body) says "not run" / "skipped" / "not verified" (or
 # "not yet run", "wasn't run", "couldn't run", "could not get to", "not tested", "untested" — "was
-# not run" / "could not run" are already "not run"; any such heading text is a "not run" heading); else
-# nothing — the same match, so the not-run tests can never drift from the evidence test. Fenced lines
-# never raise NL (pasted output that says "skipped" is output, not the PR's statement). <others> is
-# the item's entry titles, newline-separated; <tm> 0 disables the title match (a title another entry's
-# title contains is not unique — that entry needs its own "validation <n>"). Titles are read through
+# not run" / "could not run" are already "not run"; any such heading text is a "not run" heading) — each
+# as a whole phrase, never inside a longer word ("not running hot" is not "not run"); else nothing —
+# the same match, so the not-run tests can never drift from the evidence test. Fenced lines never raise
+# NL (pasted output that says "skipped" is output, not the PR's statement). <others> is the item's
+# entry titles, newline-separated; <tm> 0 disables the title match (a title another entry's title
+# contains is not unique — that entry needs its own "validation <n>"). Titles are read through
 # ENVIRON (awk -v would rewrite a backslash). Fence-aware: a line inside a ``` / ~~~ block (shell
 # comments, `#!`, root prompts, pasted output) is never a heading, never starts a match, never ends one.
 #   heading      `#`..`######` + a space, or a whole-line bold `**…**` naming "not verified" / "not run"
@@ -2613,10 +2614,15 @@ _lanes_rd_section() {
   _RD_T="$2" _RD_O="${5:-}" awk -v n="$1" -v mode="${4:-}" -v tm="${6:-1}" '
     BEGIN { t = tolower(ENVIRON["_RD_T"]); vn = "validation[ #]*" n "([^0-9]|$)"; no = split(tolower(ENVIRON["_RD_O"]), ot, "\n") }
     function ind(s) { match(s, /^[ \t]*/); return RLENGTH }
-    function nrv(s) { return index(s, "not verified") || index(s, "not run") || index(s, "not yet run") ||
-      index(s, "wasn\047t run") || index(s, "wasn\342\200\231t run") || index(s, "couldn\047t run") ||
-      index(s, "couldn\342\200\231t run") || index(s, "could not get to") || index(s, "not tested") || index(s, "untested") }
-    function nrl(s) { return nrv(s) || index(s, "skipped") }
+    function ph(s, p,  st, i, j) { st = 1   # p in s as a whole phrase: no letter/digit on either side
+      while ((i = index(substr(s, st), p)) > 0) { j = st + i - 1
+        if ((j == 1 || substr(s, j - 1, 1) !~ /[a-z0-9]/) && substr(s, j + length(p), 1) !~ /[a-z0-9]/) return 1
+        st = j + 1 }
+      return 0 }
+    function nrv(s) { return ph(s, "not verified") || ph(s, "not run") || ph(s, "not yet run") ||
+      ph(s, "wasn\047t run") || ph(s, "wasn\342\200\231t run") || ph(s, "couldn\047t run") ||
+      ph(s, "couldn\342\200\231t run") || ph(s, "could not get to") || ph(s, "not tested") || ph(s, "untested") }
+    function nrl(s) { return nrv(s) || ph(s, "skipped") }
     function oth(s,  i) { for (i = 1; i <= no; i++) if (ot[i] != "" && !index(t, ot[i]) && index(s, ot[i])) return 1; return 0 }
     { l = tolower($0); wasin = inf; fl = 0; hd = 0 }
     l ~ /^[ \t]*(```|~~~)/ {
@@ -2635,7 +2641,7 @@ _lanes_rd_section() {
     !on && !wasin && !fl && (l ~ vn || (tm != 0 && t != "" && index(l, t) > 0 && l !~ /validation[ #]*[0-9]/)) {
       on = 1; si = ind(l); sw = (l ~ vn); pb = 0
       sk = hd ? "h" : (li ? "b" : "p")
-      for (k = 1; k <= top; k++) if (k in h) { if (nrv(h[k])) nv = 1; else if (index(h[k], "skipped")) nl = 1 }
+      for (k = 1; k <= top; k++) if (k in h) { if (nrv(h[k])) nv = 1; else if (ph(h[k], "skipped")) nl = 1 }
     }
     on && !wasin && !fl && nrl(l) { nl = 1 }
     on && mode != "nv" { print }
@@ -2646,7 +2652,7 @@ _lanes_rd_section() {
 # _lanes_validation_rows <item_file> <body_file> <gh_ok> [<pr>] — THE Validation reader, shared by
 # lane-readiness and validation-gate (af36-remainder/01: no second parser). One TSV row per entry of
 # the item's `## Validation` section:  n<TAB>title<TAB>kind<TAB>status<TAB>evidence
-#   entries   a column-0 numbered line (`N. `) OR a column-0 `- ` bullet; an indented line, or an unindented one right after it (no blank line between),
+#   entries   a column-0 numbered line (`N. ` or `N) `) OR a column-0 `- ` / `* ` / `+ ` bullet; an indented line, or an unindented one right after it (no blank line between),
 #             continues the entry; a blank line followed by unindented text ends it. Fence-aware: a
 #             ``` / ~~~ block's lines never start an entry or end the section (they join the open entry)
 #   number    a numbered entry keeps its own N; the section's bullets are numbered M+1..M+k in order,
@@ -2672,7 +2678,11 @@ _lanes_rd_section() {
 #   unique    an entry whose title (case-insensitive) equals or is contained in another entry's title
 #             gets NO title match — e.g. two `- **Running system:**` bullets — so one passage can never
 #             evidence two steps: each needs its own "validation <n>" in the PR body, else NOT-RUN
-# An unreadable item file prints nothing (callers that must fail CLOSED check readability themselves).
+#   unparsed  a `## Validation` section that EXISTS but yields no entry (prose only, or an unsupported
+#             list style) prints ONE row instead: 0<TAB>(no parseable entry)<TAB>unparsed<TAB>NOT-RUN<TAB>
+#             <reason> — fail CLOSED, so an unreadable section never reads as "no running-system step"
+# An unreadable item file, or one with no `## Validation` section, prints nothing (callers that must
+# fail CLOSED check readability themselves).
 _lanes_validation_rows() {
   local itemf="$1" body="$2" gh_ok="$3" pr="${4:-}" n title kind tm st ev sec nvs ents titles
   ents="$(awk '
@@ -2680,7 +2690,7 @@ _lanes_validation_rows() {
       if (!cur) return
       t = first
       if (match(t, /\*\*[^*]+\*\*/)) t = substr(t, RSTART + 2, RLENGTH - 4)
-      else { sub(/^([0-9]+\.|-) */, "", t); t = substr(t, 1, 60) }
+      else { sub(/^([0-9]+[.)]|[-*+]) */, "", t); t = substr(t, 1, 60) }
       sub(/:$/, "", t); gsub(/\|/, "/", t); gsub(/[ \t]*\t[ \t]*/, " ", t)
       if (t == "") t = "(untitled)"
       lf = tolower(first); lt = tolower(t); lj = tolower(full)
@@ -2689,24 +2699,29 @@ _lanes_validation_rows() {
       else if (index(lj, "running system")) k = "running-system"
       else k = "other"
       print num "\t" t "\t" k
-      cur = 0
+      cur = 0; ne++
     }
     { wasin = inf; fl = ($0 ~ /^[ \t]*(```|~~~)/) }
     fl { x = $0; sub(/^[ \t]*/, "", x); c = substr(x, 1, 3); if (!inf) { inf = 1; fc = c } else if (c == fc) inf = 0 }
     fl || wasin { if (on && cur) { x = $0; gsub(/\t/, " ", x); sub(/^ +/, "", x); full = full " " x }; blank = 0; next }
-    /^## / { flush(); on = ($0 ~ /^## Validation/); blank = 0; next }
+    /^## / { flush(); on = ($0 ~ /^## Validation/); if (on) sec = 1; blank = 0; next }
     !on { next }
-    /^[0-9]+\. / { flush(); num = $0; sub(/\..*/, "", num); cur = 1; blank = 0
+    /^[0-9]+[.)] / { flush(); num = $0; sub(/[.)].*/, "", num); cur = 1; blank = 0
                    first = $0; gsub(/\t/, " ", first); full = first; next }
-    /^- / { flush(); num = "b"; cur = 1; blank = 0
+    /^[-*+] / { flush(); num = "b"; cur = 1; blank = 0
             first = $0; gsub(/\t/, " ", first); full = first; next }
     /^[ \t]*$/ { blank = 1; next }
     cur && ($0 ~ /^[ \t]/ || !blank) { x = $0; gsub(/\t/, " ", x); sub(/^ +/, "", x); full = full " " x; blank = 0; next }
     { flush(); blank = 0 }
-    END { flush() }' "$itemf" 2>/dev/null |
-    awk -F'\t' -v OFS='\t' '{ r[NR] = $0; if ($1 != "b" && $1 + 0 > m) m = $1 + 0 }
-      END { for (i = 1; i <= NR; i++) { $0 = r[i]; if ($1 == "b") $1 = ++m; print } }')"
+    END { flush(); if (sec && !ne) print "U" }' "$itemf" 2>/dev/null |
+    awk -F'\t' -v OFS='\t' '$0 == "U" { print; next } { r[NR] = $0; if ($1 != "b" && $1 + 0 > m) m = $1 + 0 }
+      END { for (i = 1; i <= NR; i++) { if (!(i in r)) continue; $0 = r[i]; if ($1 == "b") $1 = ++m; print } }')"
   [ -n "$ents" ] || return 0
+  # Fail CLOSED: a section that exists but yields no entry is never "no step" — one row, kind unparsed.
+  if [ "$ents" = U ]; then
+    printf '0\t(no parseable entry)\tunparsed\tNOT-RUN\t%s\n' "the ## Validation section has no parseable entry (an entry is a column-0 N. / N) / - / * / + list item)"
+    return 0
+  fi
   titles="$(cut -f2 <<<"$ents")"
   # 4th column tm: 0 when this title equals / is contained in another entry's title (no title match).
   # 5th column du: 1 when another entry carries the same number (numbered `1.` / `1.` as written).
@@ -2889,7 +2904,9 @@ lanes_readiness() {
 #   validation-gate: waived — V<n> <title>[; V<m> <title>…]   every non-PASS running-system step waived
 #   validation-gate: unrun — V<n> <title>: <evidence>          the first non-PASS, un-waived one (FAIL too)
 #   validation-gate: unrun — <reason>                           unreadable item file, usage error
-# A readable item with no running-system step is `none` without reading the PR; an unreadable PR body
+#   validation-gate: unrun — <item>: the ## Validation section has no parseable entry (…)   (step-less)
+# A readable item with no running-system step is `none` without reading the PR — but a `## Validation`
+# section the reader parses to zero entries is `unrun`, never `none`; an unreadable PR body
 # makes every step NOT-RUN, so any running-system step reads `unrun`. Callers treat anything but
 # none / ok / waived as unrun.
 # Waiver form (--waive <n> --words <text>) — called by the engine ONLY with an interactive owner's
@@ -2984,7 +3001,11 @@ lanes_validation_gate() {
   [ -n "$rf" ] && [ -n "$item" ] || { echo "$G unrun — $usage"; return 0; }
   itemf="$(_lanes_vg_itemf "$rf" "$item")"
   if [ ! -f "$itemf" ] || [ ! -r "$itemf" ]; then echo "$G unrun — item file unreadable: $item"; return 0; fi
-  if ! _lanes_validation_rows "$itemf" /dev/null 0 | awk -F'\t' '$3 == "running-system" { f = 1 } END { exit !f }'; then
+  rows="$(_lanes_validation_rows "$itemf" /dev/null 0)"
+  # Fail CLOSED: a section the reader cannot parse is unrun (step-less, nothing to waive), never `none`.
+  ev="$(awk -F'\t' '$3 == "unparsed" { print $5; exit }' <<<"$rows")"
+  if [ -n "$ev" ]; then echo "$G unrun — $item: $ev"; return 0; fi
+  if ! awk -F'\t' '$3 == "running-system" { f = 1 } END { exit !f }' <<<"$rows"; then
     echo "$G none — no running-system step in $item"; return 0
   fi
   local tmp view gh_ok=0 k=0 waived="" after=""
