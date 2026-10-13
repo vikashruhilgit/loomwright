@@ -412,6 +412,8 @@ sub hrvenum.md hrv.md 's.replace("verdict: violated", "verdict: broken")'
 run_v "$F"; assert_block "(m) bad enum value -> names index, enum and value" "house_rule_verdicts[1] verdict must be one of followed, violated, conflicts_with_requirement, not_applicable; got 'broken'"
 sub hrvscalar.md v3-diff.md 's.replace("  summary: ", "  house_rule_verdicts: all followed\n  summary: ")'
 run_v "$F"; assert_block "(m) a scalar instead of an array" "house_rule_verdicts must be an array when present"
+sub hrvstritem.md v3-diff.md 's.replace("  summary: ", "  house_rule_verdicts:\n    - ui-select-max-10 followed\n  summary: ")'
+run_v "$F"; assert_block "(m) an array entry that is a plain string, not a mapping" "house_rule_verdicts[0] is not a mapping"
 sub hrvnoreason.md hrv.md 's.replace("      reason: \"uses <Button> from the design system\"\n", "")'
 run_v "$F"; assert_block "(m) entry without a reason" "house_rule_verdicts[2] is missing a non-empty reason field"
 sub hrvnoid.md hrv.md 's.replace("    - id: api-error-envelope\n      verdict", "    - verdict")'
