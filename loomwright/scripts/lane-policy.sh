@@ -121,7 +121,9 @@ _lp_catalog_rows() {
   _lp_row AUT-WAIVE    human-only 'Waive this step|Keep parked' \
     '/automate READY park: waive a running-system Validation step validation-gate reports unrun (owner words from the answer note; cannot ask ⇒ stays escalated, validation_unrun)'
   _lp_row PO-ASSUME    human-only 'Proceed anyway|Refine requirements|Abort' \
-    'Product Owner assumption-check soft gate (/automate prompt intake)'
+    'Product Owner assumption-check soft gate and pre-persist house-rule check (/automate prompt intake)'
+  _lp_row PO-RULE-MUST human-only 'Refine requirements|Change the rule via /rules|Abort' \
+    'Product Owner pre-persist house-rule check on a must-rule conflict (no override option: a must rule is never overridden)'
   _lp_row LP-CLARIFY   human-only '(free text)' \
     'Launch Pad Phase 2 clarification'
   _lp_row LP-NO-GO     human-only 'Override and continue|Revise goal|Abort' \
@@ -132,6 +134,8 @@ _lp_catalog_rows() {
     'Plan Review NEEDS_HUMAN, or any MEDIUM-or-higher finding'
   _lp_row LP-EXEC-ACC  human-only 'approve-and-stamp|strip-cmd-bullets|discard' \
     'Launch Pad executable-acceptance stamp'
+  _lp_row LP-RULE-OVR  human-only 'record-override|honor-rule|discard' \
+    'Launch Pad Plan Review 17c: an AC contradicts an advisory house rule with no owner override (owner words from the answer note; cannot ask ⇒ rule_conflict_non_interactive)'
   _lp_row LP-FAIL      human-only 'Refine offline|Discard' \
     'Plan Review FAIL after the third attempt'
   _lp_row LP-MEMORY    human-only '(free text)' \

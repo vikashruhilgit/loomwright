@@ -3,7 +3,7 @@
 Every question the engine (`/automate`, `/autonomous`, and the Launch Pad, Supervisor and Product Owner flows they run inline) asks the owner through the host's ask tool is one **gate**. Each gate has a short stable **code**, its canonical option **labels**, and a **policy**:
 
 - `allowed` — a routine formality. A human-stamped project policy or an owner-set wave policy may answer it in a lane, by exact lookup.
-- `human-only` — a real decision. No policy ever answers it, whatever a policy file says. A Plan Review FAIL or NEEDS_HUMAN, any MEDIUM-or-higher finding, an output gap or adjudication, a pre-flight OVERLAP or SUPERSEDED, per-finding dismissed drafts and fix-now, close-out leftovers, waiving an unrun running-system Validation step, Launch Pad clarification, NO-GO, the executable-acceptance stamp and memory facts, Supervisor INIT config, and anything that merges, deletes or pushes are all `human-only`.
+- `human-only` — a real decision. No policy ever answers it, whatever a policy file says. A Plan Review FAIL or NEEDS_HUMAN, any MEDIUM-or-higher finding, an output gap or adjudication, a pre-flight OVERLAP or SUPERSEDED, per-finding dismissed drafts and fix-now, close-out leftovers, waiving an unrun running-system Validation step, Launch Pad clarification, NO-GO, the executable-acceptance stamp, a house-rule override and memory facts, Supervisor INIT config, and anything that merges, deletes or pushes are all `human-only`.
 
 **Authority.** The table below is a MIRROR. The one authoritative table is `loomwright/scripts/lane-policy.sh catalog` (TSV: `code<TAB>policy<TAB>labels-joined-by-|<TAB>purpose`). Change a gate there, then regenerate this table in the same change with `bash loomwright/scripts/lane-policy.sh catalog --markdown`. `loomwright/scripts/test-lane-policy.sh` parses this table back into TSV and fails when the two differ. It also fails on any code longer than 12 characters, the ask tool's `header` limit (`commands/dreaming.md`).
 
@@ -51,12 +51,14 @@ Every question the engine (`/automate`, `/autonomous`, and the Launch Pad, Super
 | `AUT-DISMISS` | human-only | `Follow-up (keep draft)` · `Fix now on this PR` · `Drop` | /automate per-finding dismissed draft at the park, including fix-now |
 | `AUT-LEFTOVER` | human-only | `Clean up now` · `Keep and continue` · `Stop` | /automate close-out leftover gate (cleans up or deletes) |
 | `AUT-WAIVE` | human-only | `Waive this step` · `Keep parked` | /automate READY park: waive a running-system Validation step validation-gate reports unrun (owner words from the answer note; cannot ask ⇒ stays escalated, validation_unrun) |
-| `PO-ASSUME` | human-only | `Proceed anyway` · `Refine requirements` · `Abort` | Product Owner assumption-check soft gate (/automate prompt intake) |
+| `PO-ASSUME` | human-only | `Proceed anyway` · `Refine requirements` · `Abort` | Product Owner assumption-check soft gate and pre-persist house-rule check (/automate prompt intake) |
+| `PO-RULE-MUST` | human-only | `Refine requirements` · `Change the rule via /rules` · `Abort` | Product Owner pre-persist house-rule check on a must-rule conflict (no override option: a must rule is never overridden) |
 | `LP-CLARIFY` | human-only | `(free text)` | Launch Pad Phase 2 clarification |
 | `LP-NO-GO` | human-only | `Override and continue` · `Revise goal` · `Abort` | Launch Pad Phase 2.5 feasibility NO-GO |
 | `LP-SAVE-NOTE` | human-only | `Save and exit` · `Refine further` · `Edit sections` · `Discard` | Launch Pad Phase 6 save on a Plan Review PASS that carries any issue or note (asked with no code) |
 | `LP-NEEDHUMAN` | human-only | `Override and save` · `Refine further` · `Discard` | Plan Review NEEDS_HUMAN, or any MEDIUM-or-higher finding |
 | `LP-EXEC-ACC` | human-only | `approve-and-stamp` · `strip-cmd-bullets` · `discard` | Launch Pad executable-acceptance stamp |
+| `LP-RULE-OVR` | human-only | `record-override` · `honor-rule` · `discard` | Launch Pad Plan Review 17c: an AC contradicts an advisory house rule with no owner override (owner words from the answer note; cannot ask ⇒ rule_conflict_non_interactive) |
 | `LP-FAIL` | human-only | `Refine offline` · `Discard` | Plan Review FAIL after the third attempt |
 | `LP-MEMORY` | human-only | `(free text)` | Launch Pad project-memory candidate facts |
 | `SUP-INIT` | human-only | `(free text)` | Supervisor INIT config (max workers, task) |

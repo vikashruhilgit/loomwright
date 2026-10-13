@@ -1,0 +1,11 @@
+[
+  {
+    "id": "ui-select-max-ten-options",
+    "category": "ui",
+    "statement": "A Select under src/ui/ offers at most about 10 options; a longer list uses AutoComplete instead.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": { "source": "fixture: test-rule-conformance-seam.sh", "added": "2026-10-13T00:00:00Z" },
+    "applies_to": ["src/ui/*"]
+  }
+]
