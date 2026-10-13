@@ -30,6 +30,7 @@ const noteDrafts = atom({ plugin: 'loomwright-lanes', key: 'notes' } as const, {
 const overloaded = atom({ plugin: 'loomwright-lanes', key: 'overloaded' } as const, false)
 const loads = atom({ plugin: 'loomwright-lanes', key: 'loads' } as const, [] as number[])
 const awake = atom({ plugin: 'loomwright-lanes', key: 'awake' } as const, { text: '', ok: true } as LaneNote)
+const working = atom({ plugin: 'loomwright-lanes', key: 'working' } as const, {} as Record<string, boolean>)
 const LOAD_SAMPLES = 40 // 10 minutes of 15 s reads
 
 type LaneCommand = 'lane-status' | 'lane-feed' | 'lane-answer'
@@ -136,66 +137,121 @@ function clip(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, Math.max(0, n - 1)) + '…'
 }
 
+/** Action lines as read: a home folder as `~`, and a line repeated in a row folded into one `(×3)`. */
+function tidy(lines: string[]): string[] {
+  const out: Array<{ text: string; n: number }> = []
+  for (const raw of lines) {
+    const text = raw.replace(/\/(?:Users|home)\/[^/\s]+/g, '~')
+    const last = out[out.length - 1]
+    if (last && last.text === text) last.n += 1
+    else out.push({ text, n: 1 })
+  }
+  return out.map(x => (x.n > 1 ? `${x.text}  (×${x.n})` : x.text))
+}
+
 function waitingCount(doc: LaneStatusDoc): number {
   return doc.lanes.filter(l => l.questions.length > 0).length
 }
 
-async function loadDetails($: EngineInterface, configured: string, l: LaneRow): Promise<void> {
+async function feed($: EngineInterface, configured: string, l: LaneRow): Promise<string[]> {
   const r = await lane($, configured, 'lane-feed', [l.path])
   const lines = r.out.split('\n').filter(x => x.trim() !== '')
-  await update($, details, all => ({ ...all, [l.lane]: r.ok ? lines.slice(-DETAIL_STEPS) : [`(details unavailable: ${clip(r.out, 200)})`] }))
+  return r.ok ? lines.slice(-DETAIL_STEPS) : [`(details unavailable: ${clip(r.out, 200)})`]
 }
 
-let busy = false
+async function loadDetails($: EngineInterface, configured: string, l: LaneRow): Promise<void> {
+  const lines = await feed($, configured, l)
+  await update($, details, all => ({ ...all, [l.lane]: lines }))
+}
 
-async function refresh($: EngineInterface, configured: string): Promise<void> {
-  if (busy) return
-  busy = true
+// A press's work in flight. The claim is a module Set, taken and checked in one synchronous step: a
+// guard that first awaited a state read let two presses in the same instant both pass it (two
+// lane-answer calls). The `working` state only mirrors it, so the button can read "…ing".
+const claimed = new Set<string>()
+
+/** Runs `work` unless the same key's work is already running; the button says so meanwhile. */
+async function exclusive($: EngineInterface, key: string, work: () => Promise<void>): Promise<void> {
+  if (claimed.has(key)) return
+  claimed.add(key)
   try {
-    const r = await lane($, configured, 'lane-status', ['--json'])
-    const at = await $.clock.now()
-    let doc: LaneStatusDoc | null = null
-    try {
-      doc = r.ok ? (JSON.parse(r.out) as LaneStatusDoc) : null
-    } catch {
-      doc = null
-    }
-    if (!doc || !Array.isArray(doc.lanes)) {
-      // Fail-safe: say so, keep the last good document on screen, change nothing.
-      await update($, snapshot, s => ({ ...s, at, error: clip(r.out || 'status unreadable', 300) }))
-      $.ui.status('lanes: status unavailable')
-      return
-    }
-    await update($, snapshot, () => ({ doc, error: null, at }))
-    const l1 = Number(doc.machine?.load1)
-    if (Number.isFinite(l1)) await update($, loads, all => [...all, l1].slice(-LOAD_SAMPLES))
-
-    const running = doc.lanes.filter(l => l.state === 'running').length
-    const asking = waitingCount(doc)
-    const hot = doc.machine?.state === 'overloaded'
-    $.ui.status(
-      doc.lanes.length === 0
-        ? undefined
-        : `lanes: ${running} running${asking ? ` · ${asking} waiting for you` : ''}${hot ? ' · HIGH-LOAD' : ''}`,
-    )
-
-    if (hot && !(await read($, overloaded))) $.ui.toast(`HIGH-LOAD: machine overloaded (load1 ${doc.machine.load1} on ${doc.machine.cpus} CPUs) — /lanes`)
-    if (hot !== (await read($, overloaded))) await update($, overloaded, () => hot)
-
-    const known = await read($, seen)
-    for (const l of doc.lanes) {
-      for (const q of l.questions) {
-        if (known[q.id]) continue
-        $.ui.toast(`${l.lane} is waiting for your answer — /lanes`)
-        await update($, seen, s => ({ ...s, [q.id]: true }))
-      }
-    }
-
-    const opened = await read($, open)
-    for (const l of doc.lanes) if (opened[l.lane]) await loadDetails($, configured, l)
+    await update($, working, all => ({ ...all, [key]: true }))
+    await work()
   } finally {
-    busy = false
+    claimed.delete(key)
+    await update($, working, all => Object.fromEntries(Object.entries(all).filter(([k]) => k !== key)))
   }
+}
+
+// One read at a time, and none lost: a refresh asked for while one runs (a press's re-read landing on a
+// 15 s poll) runs once more after it, and its caller waits for that — dropping it left an answered
+// question on screen until the next poll, inviting a second Send that lane-answer then refuses.
+let reading: Promise<void> | null = null
+let again = false
+
+function refresh($: EngineInterface, configured: string): Promise<void> {
+  if (reading) {
+    again = true
+    return reading
+  }
+  reading = (async () => {
+    try {
+      do {
+        again = false
+        await readOnce($, configured)
+      } while (again)
+    } finally {
+      reading = null
+    }
+  })()
+  return reading
+}
+
+async function readOnce($: EngineInterface, configured: string): Promise<void> {
+  const r = await lane($, configured, 'lane-status', ['--json'])
+  const at = await $.clock.now()
+  let doc: LaneStatusDoc | null = null
+  try {
+    doc = r.ok ? (JSON.parse(r.out) as LaneStatusDoc) : null
+  } catch {
+    doc = null
+  }
+  if (!doc || !Array.isArray(doc.lanes)) {
+    // Fail-safe: say so, keep the last good document on screen, change nothing.
+    await update($, snapshot, s => ({ ...s, at, error: clip(r.out || 'status unreadable', 300) }))
+    $.ui.status('lanes: status unavailable')
+    return
+  }
+  await update($, snapshot, () => ({ doc, error: null, at }))
+  const l1 = Number(doc.machine?.load1)
+  if (Number.isFinite(l1)) await update($, loads, all => [...all, l1].slice(-LOAD_SAMPLES))
+
+  const running = doc.lanes.filter(l => l.state === 'running').length
+  const asking = waitingCount(doc)
+  const hot = doc.machine?.state === 'overloaded'
+  $.ui.status(
+    doc.lanes.length === 0
+      ? undefined
+      : `lanes: ${running} running${asking ? ` · ${asking} waiting for you` : ''}${hot ? ' · HIGH-LOAD' : ''}`,
+  )
+
+  if (hot && !(await read($, overloaded))) $.ui.toast(`HIGH-LOAD: machine overloaded (load1 ${doc.machine.load1} on ${doc.machine.cpus} CPUs) — /lanes`)
+  if (hot !== (await read($, overloaded))) await update($, overloaded, () => hot)
+
+  const known = await read($, seen)
+  for (const l of doc.lanes) {
+    for (const q of l.questions) {
+      if (known[q.id]) continue
+      $.ui.toast(`${l.lane} is waiting for your answer — /lanes`)
+      await update($, seen, s => ({ ...s, [q.id]: true }))
+    }
+  }
+
+  // Every open lane's feed in one write: each state write redraws the pane, so a poll writes as
+  // few times as it can.
+  const opened = await read($, open)
+  const fresh: Record<string, string[]> = {}
+  for (const l of doc.lanes) if (opened[l.lane]) fresh[l.lane] = await feed($, configured, l)
+  if (Object.keys(fresh).length > 0) await update($, details, all => ({ ...all, ...fresh }))
 }
 
 // ---- answering -----------------------------------------------------------------------------------------
@@ -210,11 +266,17 @@ function complete(q: LaneQuestion, mine: Record<string, string[]>): boolean {
 }
 
 async function send($: EngineInterface, configured: string, l: LaneRow, q: LaneQuestion): Promise<void> {
+  const key = `send:${q.id}`
+  if (claimed.has(key)) return // already sending: a second press would only be refused
   const mine = (await read($, picks))[q.id] ?? {}
   if (!complete(q, mine)) {
     await update($, message, () => ({ text: `${l.lane}: pick an option for every question first.`, ok: false }))
     return
   }
+  await exclusive($, key, () => deliver($, configured, l, q, mine))
+}
+
+async function deliver($: EngineInterface, configured: string, l: LaneRow, q: LaneQuestion, mine: Record<string, string[]>): Promise<void> {
   // lane-answer's own format: one entry per question index; multiSelect labels comma-joined.
   const answers: Record<string, string> = {}
   for (const [k, v] of Object.entries(mine)) answers[k] = v.join(',')
@@ -227,9 +289,16 @@ async function send($: EngineInterface, configured: string, l: LaneRow, q: LaneQ
     [l.path, q.id, '--owner-command', `/lanes answer ${l.lane} ${q.id}`, '--via', VIA],
     JSON.stringify(text ? { answers, note: text } : { answers }),
   )
-  // lane-answer's words, verbatim — its refusal text included.
-  await update($, message, () => ({ text: `${l.lane}: ${r.out || (r.ok ? 'answered' : 'lane-answer failed')}`, ok: r.ok }))
-  if (r.ok) {
+  // lane-answer's words, verbatim — its refusal text included. "Already answered" is the race with the
+  // main session (lane-wait relays the same question there): the lane has its answer, so say that.
+  const taken = !r.ok && /already answered/.test(r.out)
+  await update($, message, () => ({
+    text: taken
+      ? `${l.lane}: this question was already answered (from the main session, most likely) — nothing was sent twice. (${clip(r.out, 200)})`
+      : `${l.lane}: ${r.out || (r.ok ? 'answered' : 'lane-answer failed')}`,
+    ok: r.ok,
+  }))
+  if (r.ok || taken) {
     await update($, picks, all => Object.fromEntries(Object.entries(all).filter(([id]) => id !== q.id)))
     await update($, noteDrafts, all => Object.fromEntries(Object.entries(all).filter(([id]) => id !== q.id)))
   }
@@ -242,10 +311,17 @@ async function send($: EngineInterface, configured: string, l: LaneRow, q: LaneQ
  *  only when no caffeinate holds already); it ends with the session. The desktop app's own keep-awake
  *  holds only while a Code session works, and lanes are not Code sessions, so it can drop mid-wave. */
 async function keepAwake($: EngineInterface, configured: string): Promise<void> {
-  const r = await lane($, configured, 'lane-status', ['--keep-awake'])
-  const said = r.out.split('\n').find(x => x.startsWith('keep-awake:')) ?? clip(r.out || 'lane-status --keep-awake said nothing', 300)
-  await update($, awake, () => ({ text: said, ok: r.ok && !/not started/.test(said) }))
-  await refresh($, configured)
+  await exclusive($, 'awake', async () => {
+    const r = await lane($, configured, 'lane-status', ['--keep-awake'])
+    const said = r.out.split('\n').find(x => x.startsWith('keep-awake:')) ?? clip(r.out || 'lane-status --keep-awake said nothing', 300)
+    await update($, awake, () => ({ text: said, ok: r.ok && !/not started/.test(said) }))
+    await refresh($, configured)
+  })
+}
+
+/** The owner's Refresh now: the same read, with its button saying so while it runs. */
+async function refreshNow($: EngineInterface, configured: string): Promise<void> {
+  await exclusive($, 'refresh', () => refresh($, configured))
 }
 
 // ---- time and the step rail ---------------------------------------------------------------------------------
@@ -299,6 +375,13 @@ function blocks(xs: number[], top: number): string {
   return xs.map(x => bars[Math.min(7, Math.max(0, Math.round((x / Math.max(top, 0.01)) * 7)))]).join('')
 }
 
+/** One rail segment on a remote surface: a thin rounded bar, stretched to its slot's width. */
+const BAR_PX = 6
+function barSvg(fill: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 ${BAR_PX}" width="1000" height="${BAR_PX}" preserveAspectRatio="none">`
+    + `<rect x="0" y="0" width="1000" height="${BAR_PX}" rx="${BAR_PX / 2}" ry="${BAR_PX / 2}" fill="${fill}"/></svg>`
+}
+
 /** The same trend as an SVG: the load line, and the CPU count as a dashed ceiling. */
 function sparkSvg(xs: number[], cpus: number): string {
   const w = 160, h = 34, top = Math.max(cpus, ...xs, 1) * 1.1
@@ -342,7 +425,7 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const ui = $.ui.resolve(e)
-    const { Box, Text, Button } = ui
+    const { Box, Text, Button, Link } = ui
     const Input = e.surface !== 'mobile' && 'Input' in ui ? ui.Input : null // the mobile surface has no text field; resolve() returns every element on every surface, so decide by surface, not by the table
     const cols = Math.max(32, e.props.bodyColumns ?? 80)
     const inner = cols - 4 // a lane card's border and padding
@@ -352,6 +435,7 @@ export const register: Register = (on, options) => {
     const notes = await read($, noteDrafts)
     const opened = await read($, open)
     const det = await read($, details)
+    const busyNow = await read($, working)
     const doc = snap.doc
 
     // Sections. On the desktop a section is a soft tint of its tone and has no border, so the
@@ -386,6 +470,7 @@ export const register: Register = (on, options) => {
       const mine = chosen[q.id] ?? {}
       const items = q.items ?? []
       const ready = complete(q, mine)
+      const sending = !!busyNow[`send:${q.id}`]
       return (
         <Box key={`${q.id}`} flexDirection="column" marginTop={1} {...card('warning', 'strong')}>
           <Box flexDirection="row" justifyContent="space-between">
@@ -420,8 +505,9 @@ export const register: Register = (on, options) => {
                     <Button
                       key={`${q.id}:${i}:${o.label}`}
                       variant={picked ? 'primary' : 'secondary'}
+                      dimColor={sending && !picked}
                       onPress={() =>
-                        update($, picks, all => {
+                        sending ? undefined : update($, picks, all => {
                           const cur = all[q.id]?.[String(i)] ?? []
                           const labels = it.multiSelect
                             ? cur.includes(o.label) ? cur.filter(x => x !== o.label) : [...cur, o.label]
@@ -471,11 +557,17 @@ export const register: Register = (on, options) => {
           {items.length > 0 ? (
             <Box flexDirection="column" marginTop={2}>
               <Box alignSelf="flex-start">
-                <Button key={`${q.id}:send`} variant={ready ? 'primary' : 'secondary'} onPress={() => send($, configured, l, q)}>
-                  {l.state === 'answer_pending' ? `Replace held answer for ${l.lane}` : `Send answer and resume ${l.lane}`}
+                <Button key={`${q.id}:send`} variant={ready && !sending ? 'primary' : 'secondary'} onPress={() => send($, configured, l, q)}>
+                  {sending
+                    ? `⏳ Sending — resuming ${l.lane}…`
+                    : l.state === 'answer_pending' ? `Replace held answer for ${l.lane}` : `Send answer and resume ${l.lane}`}
                 </Button>
               </Box>
-              {!ready ? <Text dimColor>Answer every question to send.</Text> : null}
+              {sending ? (
+                <Text dimColor wrap="wrap">lane-answer is checking the answer and resuming the lane; this takes a few seconds.</Text>
+              ) : !ready ? (
+                <Text dimColor>Answer every question to send.</Text>
+              ) : null}
             </Box>
           ) : null}
         </Box>
@@ -504,6 +596,7 @@ export const register: Register = (on, options) => {
     const hist = await read($, loads)
     const awakeNote = await read($, awake)
     const Svg = e.surface !== 'terminal' && 'Svg' in ui ? ui.Svg : null
+    const waves = (doc.waves ?? []).filter(w => /^https:\/\//.test(w.pr))
     const pending = doc.lanes
       .flatMap(l => l.questions.map(q => ({ l, q })))
       .sort((a, b) => (b.q.waiting_s ?? 0) - (a.q.waiting_s ?? 0))
@@ -535,69 +628,83 @@ export const register: Register = (on, options) => {
         ? ['Claude app only', 'warning', 'drops when no Code session works']
         : ['not held', 'warning', 'the machine may idle-sleep']
 
-    // The step rail: seven segments, each a hover scope whose card (name, times, its last lines) shows
-    // under the pointer. Done is green, the current step its state's color, pending a faint track.
+    // The step rail: seven thin segments, each a hover scope whose card (name, times, its last lines)
+    // shows under the pointer, its name centred beneath. Done is green, the current step its state's
+    // color, pending a faint track. Only the current step carries a mark (the color already says
+    // done); too narrow for seven names, the rail names the current step alone, under the whole rail.
     const rail = (l: LaneRow) => {
       const steps = l.timeline?.steps ?? []
       if (steps.length === 0) return null
-      const segW = Math.max(4, Math.floor((inner - (steps.length - 1)) / steps.length))
+      const segW = Math.max(3, Math.floor((inner - (steps.length - 1)) / steps.length))
+      const named = segW >= 6
       const cardW = Math.min(44, inner)
+      const curIx = steps.findIndex(st => st.state !== 'done' && st.state !== 'pending')
+      const cur = curIx >= 0 ? steps[curIx] : null
       return (
-        <Box flexDirection="row" columnGap={1} marginTop={1}>
-          {steps.map((st: LaneStep, i: number) => {
-            const t = STEP_TONE[st.state]
-            const lit = st.state !== 'done' && st.state !== 'pending'
-            const fill = st.state === 'pending' ? tint('subtle', 0.2) : st.state === 'done' ? tint('success', 0.7) : tint(t, 0.95)
-            const went = lit ? since(st.started_at, now) : st.duration_s
-            const when = st.state === 'pending'
-              ? STEP_ABOUT[st.id] ?? ''
-              : !st.started_at
-                ? 'no time recorded for this step'
-                : lit
-                  ? `since ${clock(st.started_at, off)} · ${span(went)} so far`
-                  : `${clock(st.started_at, off)} → ${clock(st.ended_at, off) || '…'}${went !== null ? ` · ${span(went)}` : ''}`
-            const tl = l.timeline
-            const sup = st.id === 'build' && tl && (tl.phase || tl.phases.length > 0)
-              ? [...tl.phases.map(p => `${p.phase} ${clock(p.at, off)}`), ...(lit && tl.phase ? [`${tl.phase} now`] : [])].join(' · ')
-              : ''
-            return (
-              <Box key={`${l.lane}-step-${st.id}`} flexDirection="column" width={segW} flexGrow={1}>
-                {desk ? (
-                  <Box height={1} borderStyle="round" borderColor={fill} backgroundColor={fill}>
-                    <Text> </Text>
+        <Box flexDirection="column" marginTop={1}>
+          <Box flexDirection="row" columnGap={1}>
+            {steps.map((st: LaneStep, i: number) => {
+              const t = STEP_TONE[st.state]
+              const lit = st.state !== 'done' && st.state !== 'pending'
+              const fill = st.state === 'pending' ? tint('subtle', 0.25) : st.state === 'done' ? tint('success', 0.75) : tint(t, 0.95)
+              const went = lit ? since(st.started_at, now) : st.duration_s
+              const when = st.state === 'pending'
+                ? STEP_ABOUT[st.id] ?? ''
+                : !st.started_at
+                  ? 'no time recorded for this step'
+                  : lit
+                    ? `since ${clock(st.started_at, off)} · ${span(went)} so far`
+                    : `${clock(st.started_at, off)} → ${clock(st.ended_at, off) || '…'}${went !== null ? ` · ${span(went)}` : ''}`
+              const tl = l.timeline
+              const sup = st.id === 'build' && tl && (tl.phase || tl.phases.length > 0)
+                ? [...tl.phases.map(p => `${p.phase} ${clock(p.at, off)}`), ...(lit && tl.phase ? [`${tl.phase} now`] : [])].join(' · ')
+                : ''
+              return (
+                <Box key={`${l.lane}-step-${st.id}`} flexDirection="column" alignItems="center" width={segW} flexGrow={1}>
+                  {Svg ? (
+                    <Svg source={barSvg(fill)} alt={`${st.name}: ${STEP_WORD[st.state]}`} height={BAR_PX} />
+                  ) : (
+                    <Text color={st.state === 'pending' ? undefined : t} dimColor={st.state === 'pending'} wrap="truncate-end">
+                      {(st.state === 'pending' ? '╌' : '━').repeat(segW)}
+                    </Text>
+                  )}
+                  {named ? (
+                    <Text color={lit ? t : st.state === 'done' ? 'success' : undefined} dimColor={!lit} bold={lit} wrap="truncate-end">
+                      {lit ? `${st.name} ${STEP_MARK[st.state]}` : st.name}
+                    </Text>
+                  ) : null}
+                  <Box
+                    position="absolute"
+                    top={named ? 2 : 1}
+                    {...(i >= 4 ? { right: 0 } : { left: 0 })}
+                    width={cardW}
+                    display="none"
+                    hover={{ display: 'flex' }}
+                    flexDirection="column"
+                    backgroundColor="inverseText"
+                    borderStyle="round"
+                    borderColor={lit ? t ?? 'subtle' : 'subtle'}
+                    paddingX={desk ? 2 : 1}
+                    paddingY={desk ? 1 : 0}
+                  >
+                    <Text bold color={lit ? t : undefined}>{`${st.name} · ${STEP_WORD[st.state]}`}</Text>
+                    <Text dimColor wrap="wrap">{when}</Text>
+                    {sup ? <Text dimColor wrap="wrap">{`Supervisor: ${sup}`}</Text> : null}
+                    {st.lines.slice(-3).map((x, k) => (
+                      <Text key={`${l.lane}-${st.id}-l${k}`} wrap="wrap">{`· ${clip(x, 160)}`}</Text>
+                    ))}
                   </Box>
-                ) : (
-                  <Text color={st.state === 'pending' ? undefined : t} dimColor={st.state === 'pending'} wrap="truncate-end">
-                    {(st.state === 'pending' ? '┄' : '━').repeat(segW)}
-                  </Text>
-                )}
-                <Text color={lit ? t : undefined} dimColor={st.state === 'pending'} bold={lit} wrap="truncate-end">
-                  {STEP_MARK[st.state] ? `${st.name} ${STEP_MARK[st.state]}` : st.name}
-                </Text>
-                <Box
-                  position="absolute"
-                  top={desk ? 4 : 2}
-                  {...(i >= 4 ? { right: 0 } : { left: 0 })}
-                  width={cardW}
-                  display="none"
-                  hover={{ display: 'flex' }}
-                  flexDirection="column"
-                  backgroundColor="inverseText"
-                  borderStyle="round"
-                  borderColor={lit ? t ?? 'subtle' : 'subtle'}
-                  paddingX={desk ? 2 : 1}
-                  paddingY={desk ? 1 : 0}
-                >
-                  <Text bold color={lit ? t : undefined}>{`${st.name} · ${STEP_WORD[st.state]}`}</Text>
-                  <Text dimColor wrap="wrap">{when}</Text>
-                  {sup ? <Text dimColor wrap="wrap">{`Supervisor: ${sup}`}</Text> : null}
-                  {st.lines.slice(-3).map((x, k) => (
-                    <Text key={`${l.lane}-${st.id}-l${k}`} wrap="wrap">{`· ${clip(x, 160)}`}</Text>
-                  ))}
                 </Box>
-              </Box>
-            )
-          })}
+              )
+            })}
+          </Box>
+          {!named ? (
+            <Box flexDirection="row" justifyContent="center">
+              <Text color={cur ? STEP_TONE[cur.state] : 'success'} bold wrap="truncate-end">
+                {cur ? `${cur.name} ${STEP_MARK[cur.state]} · step ${curIx + 1} of ${steps.length}` : `all ${steps.length} steps done`}
+              </Text>
+            </Box>
+          ) : null}
         </Box>
       )
     }
@@ -612,6 +719,21 @@ export const register: Register = (on, options) => {
           </Text>
           <Text dimColor>{`updated ${age}s ago`}</Text>
         </Box>
+
+        {/* The wave PR(s): what the owner merges once the lanes are parked. The latest first. */}
+        {waves.length > 0 ? (
+          <Box flexDirection="column" {...card('success')}>
+            {[...waves].reverse().map((w, i) => (
+              <Box key={`wave-${w.pr}`} flexDirection="row" columnGap={1} flexWrap="wrap">
+                <Text bold={i === 0} dimColor={i > 0}>{w.wave !== null ? `Wave ${w.wave} PR` : 'Wave PR'}</Text>
+                <Link key={`wave-pr-${w.pr}`} href={w.pr}>{prRef(w.pr)}</Link>
+                <Text dimColor wrap="truncate-end">
+                  {[w.branch, w.built_at ? `built ${clock(w.built_at, off)}` : ''].filter(Boolean).join(' · ')}
+                </Text>
+              </Box>
+            ))}
+          </Box>
+        ) : null}
 
         {/* Tiles: started · lanes · load · keep-awake. */}
         <Box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={1}>
@@ -649,7 +771,7 @@ export const register: Register = (on, options) => {
               ? [
                   <Box key="t-awake-btn" marginTop={1} alignSelf="flex-start">
                     <Button key="keep-awake" variant="secondary" onPress={() => keepAwake($, configured)}>
-                      Keep awake for this wave
+                      {busyNow.awake ? '⏳ Starting caffeinate…' : 'Keep awake for this wave'}
                     </Button>
                   </Box>,
                 ]
@@ -710,9 +832,11 @@ export const register: Register = (on, options) => {
                 <Text>{'  '}</Text>
                 <Text bold color={headTone}>{head}</Text>
               </Text>
-              <Text dimColor>
-                {[l.pr ? prRef(l.pr) : '', started ? `started ${clock(started, off)} · ${span(since(started, now))}` : ''].filter(Boolean).join(' · ')}
-              </Text>
+              <Box flexDirection="row" flexShrink={0}>
+                {l.pr && /^https:\/\//.test(l.pr) ? <Link key={`${l.lane}-pr`} href={l.pr}>{prRef(l.pr)}</Link> : null}
+                {l.pr && !/^https:\/\//.test(l.pr) ? <Text dimColor>{prRef(l.pr)}</Text> : null}
+                {started ? <Text dimColor>{`${l.pr ? ' · ' : ''}started ${clock(started, off)} · ${span(since(started, now))}`}</Text> : null}
+              </Box>
             </Box>
             {l.reason && !WAITING.has(l.state) ? <Text dimColor wrap="wrap">{l.reason}</Text> : null}
             {rail(l)}
@@ -741,7 +865,7 @@ export const register: Register = (on, options) => {
             {(opened[l.lane] ? det[l.lane] ?? ['loading…'] : l.last_actions).length > 0 ? (
               <Box flexDirection="column" marginTop={1}>
                 <Text dimColor>{opened[l.lane] ? `Last ${DETAIL_STEPS} steps` : 'Last actions'}</Text>
-                {(opened[l.lane] ? det[l.lane] ?? ['loading…'] : l.last_actions).map((a, i) => (
+                {tidy(opened[l.lane] ? det[l.lane] ?? ['loading…'] : l.last_actions).map((a, i) => (
                   <Text dimColor wrap="truncate-end" key={`${l.lane}-a${i}`}>{clip(`· ${a}`, inner)}</Text>
                 ))}
               </Box>
@@ -756,7 +880,7 @@ export const register: Register = (on, options) => {
                   if (now) await loadDetails($, configured, l)
                 }}
               >
-                {opened[l.lane] ? 'Hide steps' : `Show last ${DETAIL_STEPS} steps`}
+                {opened[l.lane] ? (det[l.lane] ? 'Hide steps' : '⏳ Loading steps…') : `Show last ${DETAIL_STEPS} steps`}
               </Button>
             </Box>
           </Box>
@@ -765,8 +889,8 @@ export const register: Register = (on, options) => {
 
         <Box flexDirection="row" alignItems="center" columnGap={2}>
           <Text dimColor>{`Refreshes every ${POLL_MS / 1000} s`}</Text>
-          <Button key="refresh" variant="secondary" onPress={() => refresh($, configured)}>
-            ↻ Refresh now
+          <Button key="refresh" variant="secondary" onPress={() => refreshNow($, configured)}>
+            {busyNow.refresh ? '⏳ Refreshing…' : '↻ Refresh now'}
           </Button>
         </Box>
       </Box>

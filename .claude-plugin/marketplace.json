@@ -107,7 +107,7 @@
       "name": "loomwright-lanes",
       "source": "./loomwright-lanes",
       "description": "Optional live pane for Loomwright's /automate --parallel lanes: /lanes shows every lane (its current step on a seven-step rail, start time, state, PR, branch, readiness, machine load and keep-awake) and answers a waiting lane's question with one button per option. Reads and writes only through Loomwright's lane-status / lane-feed / lane-answer; uninstalling it changes nothing about a run.",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "author": {
         "name": "vikash ruhil"
       },
