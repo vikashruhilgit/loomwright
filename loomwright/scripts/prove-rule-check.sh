@@ -16,7 +16,7 @@
 #   FAILS_NOW   exit 1  leg 1 failed — the check does not hold on the current tree. Leg 2 never runs.
 #   UNPROVABLE  exit 2  could not examine: `UNPROVABLE (<reason>)`. Reasons: bad_args,
 #                       counterexample_unreadable, counterexample_empty, not_a_git_repo,
-#                       no_head_commit, out_inside_repo, out_dir_missing, jq_missing,
+#                       no_head_commit, out_inside_repo, out_dir_missing, out_not_a_file, jq_missing,
 #                       sha256_unavailable, needs_confirmation, scratch_create_failed,
 #                       worktree_add_failed, patch_does_not_apply, patch_no_effect,
 #                       scratch_baseline_fails, timeout, interrupted, scratch_leak,
@@ -206,6 +206,7 @@ write_proof() {
   [ -n "$OUT_ABS" ] || return 0
   command -v jq >/dev/null 2>&1 || return 1
   if [ -n "$reason" ]; then reason_json="$(jq -n --arg r "$reason" '$r')" || return 1; else reason_json="null"; fi
+  if [ -e "$OUT_ABS" ] && [ ! -f "$OUT_ABS" ]; then return 1; fi
   dir="$(dirname "$OUT_ABS")"
   tmp="$(mktemp "$dir/.prove-rule-check.XXXXXX" 2>/dev/null)" || return 1
   if ! jq -n \
@@ -287,6 +288,10 @@ if [ -n "$OUT" ]; then
     OUT_ABS=""; unprovable out_dir_missing "the --out directory does not exist: $(dirname "$OUT")"
   fi
   OUT_ABS="$out_dir/$(basename "$OUT")"
+  # An existing non-regular --out (a directory, a fifo) would swallow the atomic `mv` of the proof.
+  if [ -e "$OUT_ABS" ] && [ ! -f "$OUT_ABS" ]; then
+    OUT_ABS=""; unprovable out_not_a_file "--out exists and is not a regular file: $OUT"
+  fi
   # Proof writing needs jq, and the proof's hashes need a sha256 tool — both checked before anything runs.
   if ! command -v jq >/dev/null 2>&1; then
     OUT_ABS=""; unprovable jq_missing "jq is required to write a proof file"
@@ -349,7 +354,9 @@ fi
 # ---------------------------------------------------------------------------
 # Scratch dir (logs + the scratch worktree), physical path so it matches git's own record.
 # ---------------------------------------------------------------------------
-s_raw="$(mktemp -d 2>/dev/null)" || s_raw=""
+# An explicit template: a bare `mktemp -d` on macOS ignores $TMPDIR, so the scratch location would not
+# be the caller's to choose (or to observe).
+s_raw="$(mktemp -d "${TMPDIR:-/tmp}/prove-rule-check.XXXXXX" 2>/dev/null)" || s_raw=""
 [ -n "$s_raw" ] || unprovable scratch_create_failed "mktemp -d failed"
 SCRATCH="$(cd "$s_raw" && pwd -P)" || { SCRATCH="$s_raw"; unprovable scratch_create_failed "cannot resolve the scratch dir"; }
 SCRATCH_LOGS="$SCRATCH/logs"

@@ -20,6 +20,8 @@
 #       byte-identical before/after and the scratch dir (under a per-run TMPDIR) is gone (AC 6).
 #   (g) scratch_leak — worktree removal stubbed to fail ⇒ `UNPROVABLE (scratch_leak)` (AC 6).
 #   (h) the user-scope rules stamp file is neither created nor changed by any prove run (AC 7).
+#   (j) an interrupt (SIGTERM) during leg 2 ⇒ `UNPROVABLE (interrupted)`, the running check's tree is
+#       killed and the scratch worktree is still removed (no leak).
 #   (i) Validation 2 mutation control, in-suite: a VALID mutant whose counterexample leg is a no-op
 #       reporting exit 1 must NOT read VACUOUS on `true` — so (b) is load-bearing.
 
@@ -244,6 +246,42 @@ prove_in "$RD" --check 'true' --counterexample "$DEL_PATCH" --out "$RD/proof.jso
 expect_unprovable "(d8) --out inside the repo" out_inside_repo
 [ ! -e "$RD/proof.json" ] && ok "(d8b) no proof file was written inside the repo" || no "(d8b) a proof file landed in the repo"
 no_leak "(d8c) UNPROVABLE (out_inside_repo)"
+
+# (d9) a repo with no commit has no HEAD to copy.
+RD9="$(mktemp -d "$ROOT/nohead.XXXXXX")"; ( cd "$RD9" && git init -q ) >/dev/null 2>&1
+OUT="$( ( cd "$RD9" && bash "$PROVER" --check 'true' --counterexample "$DEL_PATCH" --confirm ) </dev/null 2>&1 )"; RC=$?
+expect_unprovable "(d9) a repo with no HEAD commit" no_head_commit
+# (d10)/(d11) --out targets that cannot hold a proof.
+prove_in "$RD" --check 'true' --counterexample "$DEL_PATCH" --out "$ROOT/no-such-dir/p.json" --confirm
+expect_unprovable "(d10) --out in a directory that does not exist" out_dir_missing
+mkdir -p "$ROOT/out-is-a-dir"
+prove_in "$RD" --check 'true' --counterexample "$DEL_PATCH" --out "$ROOT/out-is-a-dir" --confirm
+expect_unprovable "(d11) --out that is an existing directory" out_not_a_file
+[ -z "$(ls -A "$ROOT/out-is-a-dir")" ] && ok "(d11b) nothing was moved into that directory" || no "(d11b) a temp proof leaked into the --out directory"
+# (d12) no working sha256 tool (all three stubbed to fail) with --out ⇒ nothing runs.
+SHA_STUB="$ROOT/sha-stub"; mkdir -p "$SHA_STUB"
+for t in shasum sha256sum openssl; do printf '#!/bin/sh\nexit 1\n' > "$SHA_STUB/$t"; chmod +x "$SHA_STUB/$t"; done
+CNT12="$ROOT/d12.count"; : > "$CNT12"
+OUT="$( ( cd "$RD" && PATH="$SHA_STUB:$PATH" bash "$PROVER" --check "printf x >> '$CNT12'" --counterexample "$DEL_PATCH" --out "$ROOT/d12.json" --confirm ) </dev/null 2>&1 )"; RC=$?
+expect_unprovable "(d12) no working sha256 tool" sha256_unavailable
+[ ! -s "$CNT12" ] && ok "(d12b) the check never ran" || no "(d12b) the check ran although the proof could not be hashed"
+
+# ============================================================================
+echo "== (j) SIGTERM during leg 2 ⇒ UNPROVABLE (interrupted), scratch still removed =="
+# Leg 1 passes on the working tree (the untracked file exists); the clean scratch copy lacks it, so the
+# baseline run sleeps — the prover is TERMed while its scratch worktree exists.
+RJ="$(new_repo)"; printf 'local\n' > "$RJ/only-here.txt"
+RUN_TMP="$(mktemp -d "$ROOT/tmp.XXXXXX")"; BEFORE="$(state "$RJ" 2>&1)"
+( cd "$RJ" && TMPDIR="$RUN_TMP" exec bash "$PROVER" --check '[ -f only-here.txt ] || sleep 30' \
+    --counterexample "$DEL_PATCH" --confirm ) </dev/null > "$ROOT/j.out" 2>&1 &
+jpid=$!
+i=0; while [ "$i" -lt 100 ] && ! ls -d "$RUN_TMP"/*/wt >/dev/null 2>&1; do sleep 0.1; i=$((i + 1)); done
+ls -d "$RUN_TMP"/*/wt >/dev/null 2>&1 && ok "(j0) premise: the scratch worktree existed when the signal was sent" \
+  || no "(j0) premise: the scratch worktree never appeared — the interrupt below would not exercise its cleanup"
+kill -TERM "$jpid" 2>/dev/null; wait "$jpid"; RC=$?
+OUT="$(cat "$ROOT/j.out")"; AFTER="$(state "$RJ" 2>&1)"
+expect_unprovable "(j1) interrupted" interrupted
+no_leak "(j2) UNPROVABLE (interrupted)"
 
 # ============================================================================
 echo "== (e) no --confirm, no TTY ⇒ the canary check never runs =="
