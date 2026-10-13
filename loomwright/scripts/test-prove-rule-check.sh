@@ -24,6 +24,10 @@
 #       killed and the scratch worktree is still removed (no leak).
 #   (i) Validation 2 mutation control, in-suite: a VALID mutant whose counterexample leg is a no-op
 #       reporting exit 1 must NOT read VACUOUS on `true` — so (b) is load-bearing.
+#   (d8d) an in-repo --out on an EARLY refusal (bad_args, counterexample_unreadable/empty) writes no
+#       proof into the repo; (d8e) an out-of-repo --out on the same refusal still gets its proof.
+#   (k) mutation control, in-suite: a VALID mutant that restores the containment check to AFTER the
+#       early exits must turn (d8d) RED while (d8) stays green — so (d8d) is load-bearing.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -246,6 +250,34 @@ prove_in "$RD" --check 'true' --counterexample "$DEL_PATCH" --out "$RD/proof.jso
 expect_unprovable "(d8) --out inside the repo" out_inside_repo
 [ ! -e "$RD/proof.json" ] && ok "(d8b) no proof file was written inside the repo" || no "(d8b) a proof file landed in the repo"
 no_leak "(d8c) UNPROVABLE (out_inside_repo)"
+# (d8d) the containment check runs BEFORE every refusal that writes a proof: an in-repo --out on an
+# EARLIER exit (bad args, unreadable/empty patch, bad --timeout) still names its own reason, but no
+# proof lands in the repo and `git status` is unchanged.
+d8d_case() {   # <label> <reason> <out-rel> <prover args...>
+  local label="$1" reason="$2" rel="$3"; shift 3
+  prove_in "$RD" "$@" --out "$RD/$rel" --confirm
+  expect_unprovable "$label" "$reason"
+  if [ ! -e "$RD/$rel" ] && [ -z "$(find "$RD" -name '.prove-rule-check.*' -not -path "$RD/.git/*" 2>/dev/null)" ]; then
+    ok "$label: no proof (and no temp proof) was written inside the repo"
+  else
+    no "$label: a proof landed in the repo at $rel"
+  fi
+  no_leak "$label"
+  rm -f "$RD/$rel"
+}
+mkdir -p "$RD/sub"   # an existing (empty, so status-invisible) in-repo dir
+d8d_case "(d8d1) in-repo --out + no --check"            bad_args                  proof.json     --counterexample "$DEL_PATCH"
+d8d_case "(d8d2) in-repo --out + unreadable patch"      counterexample_unreadable proof.json     --check 'true' --counterexample "$ROOT/nope.patch"
+d8d_case "(d8d3) in-repo --out + --timeout 0"           bad_args                  sub/p.json     --check 'true' --counterexample "$DEL_PATCH" --timeout 0
+d8d_case "(d8d4) in-repo --out + empty patch"           counterexample_empty      proof.json     --check 'true' --counterexample "$ROOT/empty.patch"
+# (d8e) persistence is NOT over-corrected: an early refusal with an OUT-of-repo --out still writes
+# its proof, recording the refusal's own reason.
+rm -f "$ROOT/d8e.proof.json"
+prove_in "$RD" --counterexample "$DEL_PATCH" --out "$ROOT/d8e.proof.json" --confirm
+expect_unprovable "(d8e) out-of-repo --out + no --check" bad_args
+jq -e '.verdict=="UNPROVABLE" and .reason=="bad_args"' "$ROOT/d8e.proof.json" >/dev/null 2>&1 \
+  && ok "(d8e2) a bad-args run still leaves a proof outside the repo saying so" \
+  || no "(d8e2) proof: $(cat "$ROOT/d8e.proof.json" 2>/dev/null)"
 
 # (d9) a repo with no commit has no HEAD to copy.
 RD9="$(mktemp -d "$ROOT/nohead.XXXXXX")"; ( cd "$RD9" && git init -q ) >/dev/null 2>&1
@@ -332,6 +364,36 @@ else
   no "(i1) the mutation did not land (empty, identical, or unparseable) — the control proves nothing"
 fi
 rm -f "$MUT"
+
+# ============================================================================
+echo "== (k) mutation control: containment moved back AFTER the early exits must break (d8d) =="
+# The mutant is the pre-fix shape: OUT_ABS is set as soon as --out resolves, and the later
+# out_inside_repo refusal clears it — so every early exit in between writes the proof into the repo.
+MUTK="$ROOT/mutant-k-prove-rule-check.sh"
+sed -e 's|^  \[ "\$OUT_INSIDE" -eq 1 \] \|\| OUT_ABS="\$out_cand"$|  OUT_ABS="$out_cand"   # MUTANT: set before containment|' \
+    -e 's|^\[ "\$OUT_INSIDE" -eq 0 \] \\$|[ "$OUT_INSIDE" -eq 0 ] \|\| OUT_ABS=""; [ "$OUT_INSIDE" -eq 0 ] \\|' \
+    "$PROVER" > "$MUTK"
+if [ -s "$MUTK" ] && ! cmp -s "$PROVER" "$MUTK" && bash -n "$MUTK" 2>/dev/null \
+   && grep -qF '# MUTANT: set before containment' "$MUTK" && grep -qF '|| OUT_ABS=""; [ "$OUT_INSIDE" -eq 0 ]' "$MUTK"; then
+  ok "(k1) the mutant is VALID: non-empty, differs from the prover, parses, both edits landed"
+  RK="$(new_repo)"
+  OUT="$( ( cd "$RK" && bash "$MUTK" --check 'true' --counterexample "$DEL_PATCH" --out "$RK/proof.json" --confirm ) </dev/null 2>&1 )"; RC=$?
+  [ "$(last_line)" = "verdict: UNPROVABLE (out_inside_repo)" ] && [ ! -e "$RK/proof.json" ] \
+    && ok "(k2) the mutant still passes (d8) — valid args are refused with no proof written" \
+    || no "(k2) the mutant is not the pre-fix shape: (d8) changed ($(last_line))"
+  rm -f "$RK/proof.json"
+  OUT="$( ( cd "$RK" && bash "$MUTK" --check "$CHECK_TOKEN" --counterexample "$DEL_PATCH" --out "$ROOT/k.proof.json" --confirm ) </dev/null 2>&1 )"; RC=$?
+  [ "$(last_line)" = "verdict: PROVEN" ] && [ "$(jq -r .verdict "$ROOT/k.proof.json" 2>/dev/null)" = "PROVEN" ] \
+    && ok "(k2b) the mutant still proves an out-of-repo valid-args run (only the guard ordering differs)" \
+    || no "(k2b) the mutant broke the valid path, so it is not the pre-fix shape ($(last_line))"
+  OUT="$( ( cd "$RK" && bash "$MUTK" --counterexample "$DEL_PATCH" --out "$RK/proof.json" --confirm ) </dev/null 2>&1 )"; RC=$?
+  [ -e "$RK/proof.json" ] \
+    && ok "(k3) CONFIRMED: the mutant writes a bad_args proof INTO the repo — (d8d1) would go RED, so it is load-bearing" \
+    || no "(k3) REFUTED: the mutant writes no in-repo proof — (d8d) cannot detect a write ahead of its guard"
+else
+  no "(k1) the mutation did not land (empty, identical, unparseable, or an edit missed) — the control proves nothing"
+fi
+rm -f "$MUTK"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

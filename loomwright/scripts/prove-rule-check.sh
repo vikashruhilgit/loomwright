@@ -32,7 +32,10 @@
 #   --counterexample  a unified-diff patch file (D1) introducing ONE violation of the rule. It is
 #                     applied ONLY inside the scratch copy, never to the user's tree.
 #   --out             write a proof file (D2) for every verdict — see "PROOF FILE" below. Must resolve
-#                     OUTSIDE the repo working tree (refused otherwise: out_inside_repo).
+#                     OUTSIDE the repo working tree (refused otherwise: out_inside_repo). The
+#                     containment check runs BEFORE any refusal that could write a proof, so an
+#                     in-repo --out never receives one on ANY path: an earlier refusal (bad_args,
+#                     counterexample_unreadable, …) still names its own reason, but writes nothing.
 #   --confirm         run without a prompt. See "CONFIRMATION".
 #   --timeout         per-leg timeout in seconds (positive integer; default 60). The environment
 #                     variable PROVE_RULE_CHECK_TIMEOUT sets the default; argv wins. It is the ONLY
@@ -71,7 +74,8 @@
 # OUTPUT. Each run's exit code and its (bounded) stdout/stderr, then ONE final line:
 #   verdict: <VERDICT>[ (<reason>)]
 #
-# PROOF FILE (D2/D4). With --out, written atomically for EVERY verdict, built only with `jq -n`:
+# PROOF FILE (D2/D4). With --out, written atomically for EVERY verdict (an in-repo --out excepted:
+# it never receives one — see --out), built only with `jq -n`:
 #   {"schema":"rule-check-proof/1","verdict":…,"reason":…|null,"check_sha256":…|null,
 #    "counterexample_sha256":…|null,"now_exit":…|null,"baseline_exit":…|null,
 #    "counterexample_exit":…|null,"ts":…}
@@ -281,21 +285,39 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# --out is resolved FIRST, so even a bad-args run leaves a proof file saying so.
+# The repo root is RESOLVED here, before anything can exit, because the --out containment check
+# below needs it. Its verdicts (not_a_git_repo, no_head_commit) are still issued further down, after
+# the argument checks, so the reason a run reports is unchanged.
+TOP_ERR=""
+TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || TOP=""
+if [ -n "$TOP" ]; then
+  TOP="$(cd "$TOP" 2>/dev/null && pwd -P)" || { TOP=""; TOP_ERR="cannot resolve the repo root"; }
+fi
+
+# --out is resolved FIRST, so even a bad-args run leaves a proof file saying so — but OUT_ABS (the
+# ONLY thing write_proof reads) is set only after the containment check has passed. Every exit
+# before that point, including an interrupt, therefore writes no proof. An in-repo --out is HELD
+# BACK (OUT_INSIDE=1) rather than refused here, so an earlier refusal still names its own reason;
+# the out_inside_repo verdict itself is issued at its usual place below.
+OUT_INSIDE=0
 if [ -n "$OUT" ]; then
   out_dir="$(cd "$(dirname "$OUT")" 2>/dev/null && pwd -P)" || out_dir=""
-  if [ -z "$out_dir" ]; then
-    OUT_ABS=""; unprovable out_dir_missing "the --out directory does not exist: $(dirname "$OUT")"
-  fi
-  OUT_ABS="$out_dir/$(basename "$OUT")"
+  [ -n "$out_dir" ] || unprovable out_dir_missing "the --out directory does not exist: $(dirname "$OUT")"
+  out_cand="$out_dir/$(basename "$OUT")"
   # An existing non-regular --out (a directory, a fifo) would swallow the atomic `mv` of the proof.
-  if [ -e "$OUT_ABS" ] && [ ! -f "$OUT_ABS" ]; then
-    OUT_ABS=""; unprovable out_not_a_file "--out exists and is not a regular file: $OUT"
+  if [ -e "$out_cand" ] && [ ! -f "$out_cand" ]; then
+    unprovable out_not_a_file "--out exists and is not a regular file: $OUT"
   fi
   # Proof writing needs jq, and the proof's hashes need a sha256 tool — both checked before anything runs.
-  if ! command -v jq >/dev/null 2>&1; then
-    OUT_ABS=""; unprovable jq_missing "jq is required to write a proof file"
+  command -v jq >/dev/null 2>&1 || unprovable jq_missing "jq is required to write a proof file"
+  # Containment. Fail CLOSED: inside a repo whose root cannot be resolved, containment cannot be
+  # shown, so the proof is held back as if it were inside.
+  if [ -n "$TOP_ERR" ]; then
+    OUT_INSIDE=1
+  elif [ -n "$TOP" ]; then
+    case "$out_cand/" in "$TOP/"*) OUT_INSIDE=1 ;; esac
   fi
+  [ "$OUT_INSIDE" -eq 1 ] || OUT_ABS="$out_cand"
 fi
 
 [ -z "$bad_args" ] || unprovable bad_args "$bad_args"
@@ -318,17 +340,14 @@ if [ -n "$OUT_ABS" ]; then
   PATCH_SHA="\"$h\""
 fi
 
-TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || TOP=""
+# TOP was resolved before the --out block; only its verdicts are issued here.
+[ -z "$TOP_ERR" ] || unprovable not_a_git_repo "$TOP_ERR"
 [ -n "$TOP" ] || unprovable not_a_git_repo "not inside a git working tree — no scratch worktree is possible"
-TOP="$(cd "$TOP" && pwd -P)" || unprovable not_a_git_repo "cannot resolve the repo root"
 git -C "$TOP" rev-parse --verify -q 'HEAD^{commit}' >/dev/null 2>&1 \
   || unprovable no_head_commit "the repo has no HEAD commit to copy into a scratch worktree"
 
-if [ -n "$OUT_ABS" ]; then
-  case "$OUT_ABS/" in
-    "$TOP/"*) OUT_ABS=""; unprovable out_inside_repo "--out must resolve OUTSIDE the repo working tree ($TOP) — the prover never writes into it" ;;
-  esac
-fi
+[ "$OUT_INSIDE" -eq 0 ] \
+  || unprovable out_inside_repo "--out must resolve OUTSIDE the repo working tree ($TOP) — the prover never writes into it"
 
 # ---------------------------------------------------------------------------
 # Display, then confirm. Nothing below this block runs without confirmation.
