@@ -183,6 +183,15 @@
 #      DIFFERENT repository -> its record refused and the resolver names it on stderr
 #  64. mutation control (xvi): a setup-memory.sh mutant without the request-file layer call turns
 #      the A1 push (63) red
+#  65. email exemption, exact: the scp-style git SSH remote at each forge_slug host (git@github.com:,
+#      git@gitlab.com:, git@bitbucket.org: + an allowlisted owner/repo) passes the email rule — scrub
+#      exit 0 per host, and a push of all three lands; refusals still exit 2 naming email at the right
+#      line: a real address at a forge host, a non-forge git@ host, a look-alike forge host, a longer
+#      user (xgit@), a colon-less git@github.com, an upper-case remote, and a line holding a forge
+#      remote AND a real address (line 2, after an exempt-only line 1); an unallowlisted slug after
+#      git@github.com: is still forge_slug (and not email); a push over the refusals exits 2
+#  66. mutation control (xvii): a mutant exemption widened to any user, and one without the trailing
+#      `:`, each turn a refusal leg of (65) green-when-it-must-be-red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -966,8 +975,10 @@ synced_pair
 mkdir -p "$W/gshim"
 cat > "$W/gshim/grep" <<SHIM
 #!/bin/sh
-# fault injection: the built-in case-insensitive rule scan (grep -i -E -q -e <re> <file>) errors
+# fault injection: the built-in case-insensitive rule scan (grep -i -E -q -e <re> <file>) errors,
+# and so does the email rule's match listing (email_matches: grep -a -i -n -o -E -e <re> <file>)
 if [ "\$1" = "-i" ] && [ "\$2" = "-E" ] && [ "\$3" = "-q" ]; then exit 2; fi
+if [ "\$1" = "-a" ] && [ "\$2" = "-i" ] && [ "\$3" = "-n" ] && [ "\$4" = "-o" ]; then exit 2; fi
 exec "$REAL_GREP" "\$@"
 SHIM
 chmod +x "$W/gshim/grep"
@@ -2100,6 +2111,78 @@ if [ -s "$MUT_XVI/setup-memory.sh" ] && ! cmp -s "$HERE/setup-memory.sh" "$MUT_X
   SCRIPT="$SUT"
 else
   no "mutation control (xvi): could not build the mutant (empty, unchanged or bash -n failed) — control inconclusive"
+fi
+
+echo "== 65. email exemption: only git@<forge host>: (scp-style SSH remote) passes; real addresses still hit =="
+synced_pair
+put B "$RQ/fx-github.md" "$(printf '%s\n' 'clone it:' 'git clone git@github.com:owner/repo.git')"
+put B "$RQ/fx-gitlab.md" "remote: git@gitlab.com:owner/repo"
+put B "$RQ/fx-bitbucket.md" "origin git@bitbucket.org:owner/repo-old.git (fetch)"
+for h in github gitlab bitbucket; do
+  printf '%s\n' "$RQ/fx-$h.md" > "$W/fx.list"
+  SOUT="$(bash "$SCRIPT" scrub --paths-from "$W/fx.list" --root "$W/B" 2>"$W/fx.err")"; RC=$?
+  { [ "$RC" -eq 0 ] && [ "$SOUT" = "meta_sync: clean (1 file(s) scanned)" ] && [ ! -s "$W/fx.err" ]; }
+  check $? "the git SSH remote at $h passes the email rule: scrub exit 0, clean (rc=$RC: $SOUT $(tr '\n' '|' < "$W/fx.err"))"
+done
+ms B push
+{ [ "$RC" -eq 0 ] && br_has "$RQ/fx-github.md" && br_has "$RQ/fx-gitlab.md" && br_has "$RQ/fx-bitbucket.md"; }
+check $? "a push carrying all three forge remotes lands (rc=$RC: $OUT)"
+# fx_refused <file> <content> <expected scrub-hit line(s), newline-separated> — scrub names exactly those
+fx_refused() {
+  put B "$RQ/$1" "$2"
+  printf '%s\n' "$RQ/$1" > "$W/fx.list"
+  SOUT="$(bash "$SCRIPT" scrub --paths-from "$W/fx.list" --root "$W/B" 2>"$W/fx.err")"; RC=$?
+  FX_GOT="$(grep '^meta_sync: scrub-hit ' "$W/fx.err" | env LC_ALL=C sort | tr '\n' '|')"
+  [ "$RC" -eq 2 ] && [ "$FX_GOT" = "$(printf '%s\n' "$3" | env LC_ALL=C sort | tr '\n' '|')" ]
+}
+fx_refused fr-forge-user.md "mail someone@github.com about it" "meta_sync: scrub-hit $RQ/fr-forge-user.md:1: email"
+check $? "a real address at a forge host (someone@github.com) still exits 2: email (got: $FX_GOT)"
+fx_refused fr-nonforge.md "remote git@example.com:owner/repo.git" "meta_sync: scrub-hit $RQ/fr-nonforge.md:1: email"
+check $? "a non-forge git@ host (git@example.com:) still exits 2: email (got: $FX_GOT)"
+fx_refused fr-lookalike.md "remote git@github.company.com:owner/repo.git" "meta_sync: scrub-hit $RQ/fr-lookalike.md:1: email"
+check $? "a look-alike forge host (git@github.company.com:) still exits 2: email (got: $FX_GOT)"
+fx_refused fr-xgit.md "remote xgit@github.com:owner/repo.git" "meta_sync: scrub-hit $RQ/fr-xgit.md:1: email"
+check $? "a longer user (xgit@github.com:) still exits 2: email (got: $FX_GOT)"
+fx_refused fr-nocolon.md "write to git@github.com today" "meta_sync: scrub-hit $RQ/fr-nocolon.md:1: email"
+check $? "a colon-less git@github.com (mailbox shape, not a remote) still exits 2: email (got: $FX_GOT)"
+fx_refused fr-upper.md "remote GIT@GITHUB.COM:owner/repo" "meta_sync: scrub-hit $RQ/fr-upper.md:1: email"
+check $? "an upper-case GIT@GITHUB.COM: is not the exact exemption and still exits 2: email (got: $FX_GOT)"
+fx_refused fr-mixed.md "$(printf '%s\n' 'git@github.com:owner/repo.git' 'remote git@github.com:owner/repo.git, ask someone@example.org')" \
+  "meta_sync: scrub-hit $RQ/fr-mixed.md:2: email"
+check $? "a line holding a forge remote AND a real address still exits 2: email at line 2, past the exempt-only line 1 (got: $FX_GOT)"
+fx_refused fr-slug.md "git clone git@github.com:evilcorp/secret-repo.git" "meta_sync: scrub-hit $RQ/fr-slug.md:-: forge_slug"
+check $? "an unallowlisted slug after git@github.com: is still forge_slug, and the remote is not email (got: $FX_GOT)"
+tip="$(br_tip)"; base_before="$(base_of B)"
+ms B push
+{ [ "$RC" -eq 2 ] && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ] \
+  && grep -qxF "meta_sync: scrub $RQ/fr-xgit.md: email" < <(printf '%s\n' "$OUT") \
+  && grep -qxF "meta_sync: scrub $RQ/fr-mixed.md: email" < <(printf '%s\n' "$OUT"); }
+check $? "push over the refusals exits 2 naming them, branch tip and meta-base unchanged (rc=$RC)"
+
+echo "== 66. mutation control (xvii): a widened exemption must turn a refusal leg of (65) red =="
+MUT_XVII="$TROOT/mutant-xvii"
+if build_mutant "$MUT_XVII" "s/^EMAIL_FORGE_EXEMPT='git@/EMAIL_FORGE_EXEMPT='[a-z0-9._%+-]*git@/" "EMAIL_FORGE_EXEMPT='[a-z0-9._%+-]*git@"; then
+  SCRIPT="$MUT_XVII/meta-sync.sh"
+  if fx_refused fr-xgit.md "remote xgit@github.com:owner/repo.git" "meta_sync: scrub-hit $RQ/fr-xgit.md:1: email"; then
+    no "mutation control (xvii) REFUTED: an any-user exemption still refused xgit@github.com: — leg 65 is not load-bearing"
+  else
+    ok "mutation control (xvii): an any-user exemption lets xgit@github.com: through (rc=$RC), so leg 65 turns red"
+  fi
+  SCRIPT="$SUT"
+else
+  no "mutation control (xvii): could not build the any-user mutant — control inconclusive"
+fi
+MUT_XVIIB="$TROOT/mutant-xvii-b"
+if build_mutant "$MUT_XVIIB" "s/^EMAIL_FORGE_EXEMPT='\\(.*\\)):'\$/EMAIL_FORGE_EXEMPT='\\1):?'/" "bitbucket\\.org):?'"; then
+  SCRIPT="$MUT_XVIIB/meta-sync.sh"
+  if fx_refused fr-nocolon.md "write to git@github.com today" "meta_sync: scrub-hit $RQ/fr-nocolon.md:1: email"; then
+    no "mutation control (xvii-b) REFUTED: an optional-colon exemption still refused a colon-less git@github.com — leg 65 is not load-bearing"
+  else
+    ok "mutation control (xvii-b): an optional-colon exemption lets a colon-less git@github.com through (rc=$RC), so leg 65 turns red"
+  fi
+  SCRIPT="$SUT"
+else
+  no "mutation control (xvii-b): could not build the optional-colon mutant — control inconclusive"
 fi
 
 echo
