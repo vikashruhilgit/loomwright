@@ -11,8 +11,7 @@
 # Read only when --allow, $LOOMWRIGHT_MEMORY_REPO_ALLOWLIST and .supervisor/config.json are empty.
 # `#` lines and blank lines are skipped.
 #
-# NOTE (verified 2026-10-12): vikashruhilgit/ai-agent-manager is now a SEPARATE repository on
-# GitHub, not a redirect, so it is refused (`not this repository`) until the owner decides what
-# to do with it. The request is kept so that decision stays visible.
+# NOTE (2026-10-13): the pre-rename slug vikashruhilgit/ai-agent-manager is no longer requested.
+# It is a SEPARATE repository on GitHub now (not a redirect), so it was never granted, and the
+# metadata branch's run history was rewritten to vikashruhilgit/loomwright, so nothing needs it.
 vikashruhilgit/loomwright
-vikashruhilgit/ai-agent-manager
