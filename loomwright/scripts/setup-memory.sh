@@ -50,11 +50,12 @@
 #
 # WHY the allowlist is a LIST (and never the live remote): the findings ledger
 # (`.supervisor/postmortem/results.jsonl`) carries a `repo` field per record, and a repo RENAME
-# leaves older records under the old slug. In this plugin's own ledger, 42 records sit under
+# leaves older records under the old slug. This plugin's own ledger once held 42 records under
 # `<owner>/ai-agent-manager` (pre-rename) against 39 under the current slug — a filter keyed on
-# the live remote would silently drop the larger, older half. (Those two figures are ILLUSTRATIVE
-# and drift as the ledger grows; re-derive with jq, never grep — the ledger mixes compact and
-# spaced JSON, so `grep -c '"repo":"…"'` under-counts the spaced records silently.) So the allowlist
+# the live remote would have silently dropped the larger, older half. (Historical: on 2026-10-13
+# those records were rewritten to the current slug on the metadata branch, so the live ledger no
+# longer shows the split. Re-derive any such count with jq, never grep — the ledger mixes compact
+# and spaced JSON, so `grep -c '"repo":"…"'` under-counts the spaced records silently.) So the allowlist
 # is stored as a JSON ARRAY, defaults to the CURRENT remote's owner/repo on a fresh install (never a
 # hardcoded owner — the plugin ships to other users), and is extended by hand when a repo is renamed.
 # That config is gitignored and does not travel; the TRACKED `.agent/meta-allowlist.txt` does, but it
