@@ -10,7 +10,6 @@ LABELS:
 BODY_BEGIN
 ## Task Summary
 - Task Type: qa-executor
-- Task ID: fixture-qa-failed-task-0003
 - Success: false
 - Score: 1/10
 - Bucket: low
@@ -33,7 +32,6 @@ BODY_BEGIN
     "unspecified": 1
   },
   "plugin_version": "<NORMALISED>",
-  "primary_error": "",
   "redacted": true,
   "schema": "QA_RESULT",
   "schema_version": 1,
@@ -41,7 +39,6 @@ BODY_BEGIN
   "score_bucket": "low",
   "score_float": 1.0,
   "status": "qa",
-  "task_id": "fixture-qa-failed-task-0003",
   "tools": []
 }
 ```BODY_END

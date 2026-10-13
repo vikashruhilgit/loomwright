@@ -23,6 +23,11 @@ The system is:
   labels are the index.
 - **Hook-driven, fire-and-forget.** A `SubagentStop` hook invokes a wrapper
   shell script. The wrapper never blocks the agent run — it always exits 0.
+- **Plugin facts only, never project content.** An issue describes how the
+  PLUGIN behaved (which agent, which schema, the status enum, the score,
+  per-severity counts, tool names), never what the project it ran in contains:
+  no finding text, repo name, PR number, branch, file path or line number, for
+  any source repo, public or private (§"Privacy whitelist").
 - **Privacy-first.** A regex deny-list inside the core script blocks any
   payload that looks like a secret, file path, email, or `.env` content.
 - **Deterministic.** The same result block scored twice produces the same
@@ -1249,7 +1254,6 @@ should not emit empty headers).
 ```markdown
 ## Task Summary
 - Task Type: <agent_type, e.g. supervisor / code-reviewer / qa-executor>
-- Task ID: <task_id from the result block>
 - Success: <true|false — derived from status enum, see below>
 - Score: <N>/10
 - Bucket: <low|medium|high>
@@ -1259,30 +1263,45 @@ should not emit empty headers).
                                   (omit section entirely if no sub-scores)
 
 ## Issues Detected
-- <one bullet per error / failed subtask / new BLOCKING issue / failing test name>
+- <one bullet per finding, from a fixed template — NEVER the finding's text:
+    CODE_REVIEW_RESULT: `[BLOCKING] new finding` / `[HIGH] new finding`,
+                        one per new BLOCKING/HIGH issue
+    SUPERVISOR_RESULT:  `subtask_failed` per failed subtask (names not sent),
+                        `subtasks_failed=<N>`, `heal_decision=<ENUM|OTHER>`
+    QA_RESULT:          `failing_tests=<N>` (names not sent), `tests_failed=<n>/<N>`>
                                   (omit section if empty)
 
 ## AI Suggestions
 - (placeholder — static text in this release; future work in §Future Work)
 
 ## Tools Used
-- <one bullet per distinct agent tool / skill referenced in the run if available>
+- <one bullet per distinct agent tool / skill NAME referenced in the run if
+   available; an entry that is not a bare name token (a path, a URL, a
+   sentence) is dropped>
                                   (omit section if empty)
 
 ## Raw Data
 \`\`\`json
 {
   "schema_version": 1,
-  "task_id": "...",
   "agent_type": "...",
+  "schema": "CODE_REVIEW_RESULT",
   "score": 7,
+  "score_float": 7.0,
   "score_bucket": "medium",
-  "status": "...",
+  "status": "<plugin status enum, else \"other\">",
+  "issues": {"blocking": 0, "high": 0, "medium": 0, "low": 0, "unspecified": 0},
+  "tools": ["..."],
   "redacted": true,
-  ...
+  "plugin_version": "..."
 }
 \`\`\`
 ```
+
+The Raw Data keys above are the complete set — there is no `task_id`,
+`primary_error`, `result_block`, repo, PR, branch or path key (see §"Privacy
+whitelist"). `primary_error` and `task_id` are still computed, but only for
+the LOCAL dedup hash and `telemetry-sent.log` (§"Dedup window").
 
 **`Success` derivation:**
 
@@ -1552,21 +1571,50 @@ different use). No code path may reintroduce that fallback.
 
 ## Privacy whitelist (lives in core)
 
-**The body's privacy comes from FIELD SELECTION, not this regex list (red-team-
-hardening item 08, Fix 3).** `raw_data` ships only structured, already-
-summarized fields by default — `schema`, `score`/`score_bucket`, `status`,
-`primary_error` (truncated to 200 chars), an `issues` object counted per
-severity, and `tools`. It never carries the free-text `result_block`, because
-file paths, finding descriptions and subtask names are exactly the kind of
-sensitive content a fixed regex allowlist cannot enumerate — a regex deny-list
-is a secret *scanner*, not a privacy *boundary*. The deny-list below is a
-**secondary tripwire** on whatever text IS included (the rendered body plus
-this dict), scanned below, not the mechanism that decides what goes in. A
-user-scope `include_result_block: true` consent key (set only via
-`/telemetry enable --include-result-block`, surfaced by `/telemetry status`)
-opts back into shipping the redacted `result_block` field — see
-`resolve-egress-config.sh`'s `INCLUDE_RESULT_BLOCK` output and
-`send-telemetry-core.sh`'s `LOOMWRIGHT_INCLUDE_RESULT_BLOCK` env var.
+**The rule: plugin facts only, never project content.** A telemetry issue
+describes how the PLUGIN behaved. It never carries content from the project
+the agent ran in — for ANY source repo, private or public, this one included.
+The target repo is chosen by the user and is often PUBLIC, and user-scope
+consent can route any source repo to it, so the only safe boundary is one
+that does not depend on where the issue lands.
+
+**What is sent (the complete set):** `agent_type`, `schema`,
+`schema_version`, `plugin_version`, the `status` enum (anything that is not
+an enum word reads `"other"`), `score` / `score_float` / `score_bucket`,
+`Success`, the per-severity `issues` counts, and `tools` (bare tool / skill
+NAME tokens only — a path, file name, URL or sentence is dropped). The Issues Detected
+lines are fixed templates plus integers and plugin enums (§"Issue body
+template"); the title and labels carry only the agent name and score.
+
+**What is never sent:** finding descriptions (no `## Issues Detected` text, no
+`primary_error` — not even an excerpt), subtask names, failing-test names, the
+result-block `task_id`, any repo name, PR number or URL, branch, file path or
+line number, and the result block itself.
+
+**The body's privacy comes from this FIELD SELECTION, not the regex list below
+(red-team-hardening item 08, Fix 3; tightened by triage PR-1).** File paths,
+function names and finding text are exactly the content a fixed regex cannot
+enumerate — a regex deny-list is a secret *scanner*, not a privacy
+*boundary*. The deny-list below is a **secondary tripwire** on the rendered
+body, not the mechanism that decides what goes in.
+
+**History, so the change is visible:** until triage PR-1 the body carried the
+first line of every new BLOCKING/HIGH finding description, a 200-char
+`primary_error` excerpt, failed-subtask and failing-test names, and the
+result-block `task_id` — and this section claimed it carried no finding
+descriptions. That claim was false; the code now matches this section.
+Pinned by `scripts/test-send-telemetry-core.sh` Group 12: fixtures whose
+finding text holds a path, a function name, a line number and a repo / PR URL
+must render a body with none of them, and a mutation control that puts the
+description back must turn those assertions red.
+
+**`include_result_block` is inert.** The user-scope `include_result_block:
+true` key (`/telemetry enable --include-result-block`) used to restore the
+redacted `result_block` into Raw Data. The result block is project content, so
+no consent key may re-enable it: the core now ignores the key and notes
+`include_result_block_ignored` on stderr (`telemetry.log`).
+`resolve-egress-config.sh` still reports `INCLUDE_RESULT_BLOCK` and the flag
+is still accepted; removing them is a separate owner decision.
 
 The whitelist is enforced inside `send-telemetry-core.sh`. The wrapper
 does no payload inspection — it cannot, because it must always exit 0
@@ -1695,7 +1743,8 @@ Implementation:
   3-6 are recorded for `/telemetry status` reporting and post-mortem
   triage but are NOT consulted during dedup. If the hash is present, exit 5.
 
-`primary_error`:
+`primary_error` (computed for this LOCAL hash only — it is never posted, see
+§"Privacy whitelist"):
 
 - `SUPERVISOR_RESULT`: first item in `subtasks_failed`, else
   `heal_decision` if not `PASS`, else empty.

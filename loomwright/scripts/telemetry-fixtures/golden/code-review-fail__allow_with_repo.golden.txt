@@ -10,13 +10,12 @@ LABELS:
 BODY_BEGIN
 ## Task Summary
 - Task Type: code-reviewer
-- Task ID: fixture-sess-code-review-fail-0005
 - Success: false
 - Score: 2/10
 - Bucket: low
 
 ## Issues Detected
-- [HIGH] Password compared with double-equals instead of timing-safe equals
+- [HIGH] new finding
 
 ## AI Suggestions
 - (placeholder — automatic suggestion synthesis is future work; see docs/TELEMETRY.md §Future Work)
@@ -33,7 +32,6 @@ BODY_BEGIN
     "unspecified": 0
   },
   "plugin_version": "<NORMALISED>",
-  "primary_error": "Password compared with double-equals instead of timing-safe equals",
   "redacted": true,
   "schema": "CODE_REVIEW_RESULT",
   "schema_version": 1,
@@ -41,7 +39,6 @@ BODY_BEGIN
   "score_bucket": "low",
   "score_float": 1.5,
   "status": "fail",
-  "task_id": "fixture-sess-code-review-fail-0005",
   "tools": []
 }
 ```BODY_END
