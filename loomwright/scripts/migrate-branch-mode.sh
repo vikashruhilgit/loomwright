@@ -61,9 +61,11 @@
 #                       meta-sync.sh pull / push leave it alone (`learning_tracked`), so a branch
 #                       copy that diverges never dirties after-merge's or rollback's clean tree.
 #                       A != B stops the flow before untrack-pr.
-#   untrack-pr          (history) on a NEW branch: the branch-mode block, `git rm -r --cached` of the
-#                       seeded A set, one commit, push, open a PR carrying the A/B counts, the empty
-#                       diffs, the pre-migration SHA and the verify-pr instruction — never merged.
+#   untrack-pr          (history) on a NEW branch: `git rm -r --cached` of the seeded A set, THEN the
+#                       branch-mode block (so apply's readiness verify judges the tree being committed
+#                       — a still-tracked ledger would read as committable), one commit, push, open a
+#                       PR carrying the A/B counts, the empty diffs, the pre-migration SHA and the
+#                       verify-pr instruction — never merged.
 #   verify-pr <n>       run IMMEDIATELY before merging PR <n>: fast-forward to the then-current
 #                       default, push anything new to the branch, repeat the seed check, and check
 #                       the PR untracks every tracked managed path.
@@ -256,6 +258,9 @@ new_branch_name() { # new_branch_name <base> — a name free locally and on orig
   local n="$1" i=2
   while g rev-parse -q --verify "refs/heads/$n" >/dev/null || [ -n "$(g ls-remote --heads origin "$n" 2>/dev/null)" ]; do n="$1-$i"; i=$((i+1)); done
   printf '%s' "$n"
+}
+untrack_a_set() { # `git rm -r --cached` every path of the seeded A set (a.list) — the files stay on disk
+  tr '\n' '\0' < "$SD/a.list" | (cd "$ROOT" && xargs -0 git rm -r -q --cached --)
 }
 apply_mode_block() { # apply_mode_block <b> <state key for the backup> — on the CURRENT (new) branch
   local b="$1" out bk dest
@@ -565,11 +570,16 @@ cmd_untrack_pr() {
   stale_if_recorded verify_pr # a verify-pr of an earlier PR never vouches for the one cut now
   nb="$(new_branch_name "chore/loomwright-untrack-run-history-$b")"
   g checkout -q -b "$nb" || die "could not create $nb"
+  # Untrack BEFORE writing the block: apply's post-write readiness verify probes `git check-ignore`,
+  # which never reports a TRACKED path as ignored, so with the A set still in the index a tracked
+  # findings ledger read as "committable" and apply printed a false `WARNING — readiness is
+  # 'partial …'` for a commit whose tree reads `configured`. In this order the verify judges the
+  # tree this step commits, so a WARNING it prints is real.
+  untrack_a_set || { g reset -q; g checkout -q "$d"; g branch -q -D "$nb"; state_set untrack_pr FAIL; die "untrack-pr: FAIL — git rm --cached failed (nothing committed)"; }
   if ! apply_mode_block "$b" backup_untrack_pr; then
-    g checkout -q -- .gitignore; g checkout -q "$d"; g branch -q -D "$nb"
+    g reset -q; g checkout -q -- .gitignore; g checkout -q "$d"; g branch -q -D "$nb"
     state_set untrack_pr FAIL; die "untrack-pr: FAIL — apply did not write the branch-mode block"
   fi
-  tr '\n' '\0' < "$SD/a.list" | (cd "$ROOT" && xargs -0 git rm -r -q --cached --) || { state_set untrack_pr FAIL; die "git rm --cached failed (on $nb)"; }
   g add -- .gitignore
   g commit -q -m "chore(memory): untrack run history — it lives on $b now" || { state_set untrack_pr FAIL; die "commit failed"; }
   g push -q origin "refs/heads/$nb:refs/heads/$nb" || { state_set untrack_pr FAIL; die "push of $nb failed"; }

@@ -95,6 +95,14 @@
 #      with an empty porcelain and the three ledgers still on disk; mutation control: ab_check
 #      comparing B with A alone (the pre-fix relation) MUST reproduce the path-list failure naming the
 #      3 ledgers
+#  27. untrack-pr's readiness verify runs on the tree it commits: a history repo whose findings
+#      ledger (.supervisor/postmortem/results.jsonl) is TRACKED -> untrack-pr prints apply's lines but
+#      NO `WARNING` (the ledger is untracked before the branch-mode block is written, so `git
+#      check-ignore` sees it as ignored), the untrack PR's head reads `Memory readiness: configured`
+#      and untracks the ledger; mutation control: the old order (block written while the A set is
+#      still tracked) MUST print `apply: WARNING — readiness is 'partial`; and when apply refuses AFTER
+#      the untrack (a stubbed setup-memory.sh), the step restores the index, returns to main clean,
+#      deletes the new branch, records FAIL and pushes nothing
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -893,6 +901,63 @@ if build_mutant "$MUT" 's/^    diff "\$SD\/au\.list" "\$SD\/b\.list" > "\$SD\/ab
   else no "mutation control: the pre-fix relation failed for another reason ($DD_DETAIL)"; printf '%s\n' "$OUT" | tail -n 6 | sed 's/^/    /'; fi
   SCRIPT="$SUT"
 else no "mutation control (ab_check without U) did not build — counts as FAIL"; fi
+
+echo "== 27. untrack-pr: no false readiness WARNING while the ledger is still tracked =="
+LDG=".supervisor/postmortem/results.jsonl"
+# ledger_leg — history world plus a TRACKED findings ledger (allowlisted record); seed, untrack-pr.
+# 0 = untrack-pr PASS with no WARNING, its branch head reads `configured` and untracks the ledger.
+ledger_leg() {
+  local nb rd
+  LG_DETAIL=""
+  mkworld history
+  ( cd "$W/A" && mkdir -p .supervisor/postmortem && echo '{"repo":"owner/repo","pr":1,"rounds":0}' > "$LDG" \
+    && git add -f "$LDG" && git commit -qm ledger && git push -q origin main ) >/dev/null 2>&1 \
+    || { LG_DETAIL="could not commit the ledger"; return 1; }
+  to_protected A; mb A seed
+  [ "$(st A seed)" = PASS ] && grep -qx "$LDG" "$W/A/.supervisor/migrate-branch-mode/a.list" \
+    || { LG_DETAIL="seed=$(st A seed) (ledger in A: $(grep -cx "$LDG" "$W/A/.supervisor/migrate-branch-mode/a.list" 2>/dev/null)): $OUT"; return 1; }
+  mb A untrack-pr; LG_OUT="$OUT"; nb="$(st A untrack_branch)"
+  rm -rf "$W/R"; git clone -q "$W/origin.git" "$W/R" 2>/dev/null && git -C "$W/R" checkout -q "$nb" 2>/dev/null
+  rd="$(bash "$HERE/setup-memory.sh" --root "$W/R" check 2>/dev/null | grep '^Memory readiness:')"
+  LG_DETAIL="untrack rc=$RC state=$(st A untrack_pr) warning=$(grep -c 'WARNING' <<<"$LG_OUT") head: ${rd:-<none>} ledger-tracked-on-head=$(git -C "$W/R" ls-files -- "$LDG" | grep -c .)"
+  [ "$RC" -eq 0 ] && [ "$(st A untrack_pr)" = PASS ] && grep -q '^  apply:' <<<"$LG_OUT" && ! grep -q 'WARNING' <<<"$LG_OUT" \
+    && [ "$rd" = "Memory readiness: configured" ] && [ -z "$(git -C "$W/R" ls-files -- "$LDG")" ]
+}
+ledger_leg; check $? "tracked ledger: untrack-pr prints no readiness WARNING, its head reads configured and untracks the ledger ($LG_DETAIL)"
+[ -f "$W/A/$LDG" ] && [ -z "$(porcelain A)" ]; check $? "the ledger stays on disk and the checkout is clean after untrack-pr"
+MUT="$TROOT/mut-untrack-order"
+MSED="$(cat <<'SED'
+/^cmd_untrack_pr()/,/^}/s/^  untrack_a_set || { g reset .*$/  : # MUTANT-OLD-ORDER/
+/^cmd_untrack_pr()/,/^}/s/^  g add -- \.gitignore$/  untrack_a_set; g add -- .gitignore/
+SED
+)"
+if build_mutant "$MUT" "$MSED" 'MUTANT-OLD-ORDER' && grep -qF '  untrack_a_set; g add -- .gitignore' "$MUT/migrate-branch-mode.sh"; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if ledger_leg; then no "mutation control REFUTED: the old order (block before untrack) printed no WARNING ($LG_DETAIL)"
+  elif grep -qF "apply: WARNING — readiness is 'partial" <<<"$LG_OUT"; then ok "mutation control: the old order prints the false partial WARNING for a configured head ($LG_DETAIL)"
+  else no "mutation control: the old order failed for another reason ($LG_DETAIL)"; fi
+  SCRIPT="$SUT"
+else no "mutation control (untrack-pr order) did not build — counts as FAIL"; fi
+# apply refusing AFTER the untrack: the step restores the index (the A set tracked again), returns to
+# main, deletes the new branch, records FAIL and pushes nothing — the reorder must not strand a
+# half-untracked index. setup-memory.sh is stubbed in a copied scripts dir: only `apply` refuses.
+STUBSM="$TROOT/stub-apply-refuses"; mkdir -p "$STUBSM"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$STUBSM/"; done
+cp -R "$HERE/automate-helpers.d" "$STUBSM/"
+cat > "$STUBSM/setup-memory.sh" <<STUB
+#!/bin/bash
+for a in "\$@"; do [ "\$a" = apply ] && { echo "apply: refused (test stub)"; exit 1; }; done
+exec bash "$HERE/setup-memory.sh" "\$@"
+STUB
+mkworld history
+( cd "$W/A" && mkdir -p .supervisor/postmortem && echo '{"repo":"owner/repo","pr":1,"rounds":0}' > "$LDG" \
+  && git add -f "$LDG" && git commit -qm ledger && git push -q origin main ) >/dev/null 2>&1
+to_protected A; mb A seed; O0="$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname)' | env LC_ALL=C sort)"
+SCRIPT="$STUBSM/migrate-branch-mode.sh"; mb A untrack-pr; SCRIPT="$SUT"
+{ [ "$RC" -eq 1 ] && has "apply did not write the branch-mode block" && [ "$(st A untrack_pr)" = FAIL ] \
+  && [ "$(git -C "$W/A" symbolic-ref --short HEAD)" = main ] && [ -z "$(porcelain A)" ] \
+  && [ -n "$(git -C "$W/A" ls-files -- "$LDG")" ] && [ -z "$(git -C "$W/A" branch --list 'chore/loomwright-untrack-run-history-*')" ] \
+  && [ "$O0" = "$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname)' | env LC_ALL=C sort)" ]; }
+check $? "apply refusing after the untrack: index restored (ledger tracked again), back on main, clean, branch deleted, FAIL recorded, nothing pushed (rc=$RC; porcelain: $(porcelain A | tr '\n' ' '))"
 
 echo
 echo "$pass passed, $fail failed"
