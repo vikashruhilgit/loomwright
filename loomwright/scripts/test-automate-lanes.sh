@@ -56,7 +56,8 @@
 #     it (a done-headed proposed/ file never), the lane is removable with no hand push; lane-remove's
 #     unpushed-metadata refusal — and so fleet-closeout's waiting line — names the paths + two mutations
 #   AJ lane timeline: the seven steps from `## Progress` + Supervisor state (pick-guarded), boundaries,
-#     current-step state per lane state, the JSON fields and the plain steps line
+#     current-step state per lane state, the JSON fields and the plain steps line; `waves` from the
+#     parent run file's wave-build records (undated hand line, colon inside the parenthetical)
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -2351,6 +2352,16 @@ J="$(sj)"
 check "AJ11 lane-status --json carries timeline, started_at and run_started_at" \
   "$(jq -r '"\(has("run_started_at"))|\(.lanes | map(.timeline | type) | unique | join(","))|\(.lanes | map(has("started_at")) | all)"' <<<"$J")" "true|object|true"
 has "AJ12 the plain view draws the steps line" "$(run lane-status "$RF2")" "    steps: [Pick"
+check "AJ13 no wave built yet ⇒ waves is an empty list" "$(jq -c '.waves' <<<"$J")" "[]"
+cp "$RF2" "$RF2.aj13"
+printf '%s\n' '- wave built: wave/w3 — PR https://github.com/o/r/pull/474 (lanes: L1 PR #470; ci pass)' \
+  '- 2026-10-13T00:15:43Z wave built (by hand; owner: push it): wave/p-w4 — PR https://github.com/o/r/pull/506 (lanes: L1 PR #502)' \
+  '- 2026-10-13T00:20:00Z wave PR #506 ci re-run PASS' >> "$RF2"
+check "AJ14 waves: every wave-build record, oldest first — an undated hand line and a parenthesised colon included" \
+  "$(sj | jq -r '[.waves[] | "\(.wave)|\(.branch)|\(.pr)|\(.built_at)"] | join(" ")')" \
+  "3|wave/w3|https://github.com/o/r/pull/474|null 4|wave/p-w4|https://github.com/o/r/pull/506|2026-10-13T00:15:43Z"
+has "AJ15 the plain view names the wave PR" "$(run lane-status "$RF2")" "wave 4 PR: https://github.com/o/r/pull/506  branch=wave/p-w4"
+mv "$RF2.aj13" "$RF2"
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 # AA-F12z (final leg): nothing this suite started may outlive it — no process whose command line names

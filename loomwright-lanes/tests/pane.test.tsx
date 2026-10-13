@@ -357,3 +357,149 @@ test('keep-awake names the Claude app hold, and the button starts caffeinate thr
   expect(await ui.find({ key: 'keep-awake' })).toBeUndefined()
   await ui.unmount()
 })
+
+test('a lane card links its PR and folds repeated actions', async ($, on) => {
+  const calls: Call[] = []
+  const doc = { ...DOC, lanes: [{ ...DOC.lanes[0], last_actions: ['Bash cd /Users/me/w/lanes/L1', 'Bash cd /Users/me/w/lanes/L1', 'Edit x.ts'] }] }
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(doc) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface, ...PANE })
+    const link = await ui.find({ type: 'Link' })
+    expect(link?.props).toEqual({ href: 'https://github.com/o/r/pull/5' })
+    expect(link?.children).toEqual(['PR #5'])
+    expect(await ui.find({ type: 'Text', text: /^· Bash cd ~\/w\/lanes\/L1 {2}\(×2\)$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^· Edit x\.ts$/ })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('too narrow for seven names, the rail names the current step alone', async ($, on) => {
+  const calls: Call[] = []
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(RAIL_DOC) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface, ...PANE, props: { ...PANE.props, bodyColumns: 40 } })
+    expect(await ui.find({ type: 'Text', text: /^Build ● · step 3 of 7$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Heal$/ })).toBeUndefined()
+    // The hover cards stay, one per step.
+    expect(await ui.find({ key: 'L1-step-heal' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+// A process.run stub whose lane-answer and lane-status calls can each be held open by a test.
+function gated(on: On, calls: Call[]) {
+  const held: { answer: Promise<void> | null; status: Promise<void> | null } = { answer: null, status: null }
+  on('process.run', async (_$, e) => {
+    calls.push({ argv: e.argv, stdin: e.init?.stdin })
+    const a = e.argv.join(' ')
+    if (a.includes(' lane-answer ') && held.answer) await held.answer
+    if (a.includes(' lane-status ') && held.status) await held.status
+    const r = a.startsWith('claude plugin list')
+      ? { exitCode: 0, stdout: JSON.stringify([{ id: 'loomwright@atelier', enabled: true, installPath: '/p' }]) }
+      : a.includes(' lane-answer ')
+        ? { exitCode: 0, stdout: 'lane-answer: L2 answered (toolu_q) — resumed' }
+        : { exitCode: 0, stdout: JSON.stringify(DOC) }
+    return { value: { ...r, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.open', async () => ({ value: { isPlaced: true } }))
+  on('ui.toast', async () => ({ value: undefined }))
+  mock.clock(on, { now: 1_760_000_000_000 })
+  const hold = (k: 'answer' | 'status') => {
+    let release: () => void = () => {}
+    held[k] = new Promise(r => { release = r })
+    return () => { held[k] = null; release() }
+  }
+  return hold
+}
+const tick = () => new Promise(r => setTimeout(r, 20))
+
+test('Send reads "Sending" while lane-answer runs and ignores a second press', async ($, on) => {
+  const calls: Call[] = []
+  const hold = gated(on, calls)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'desktop', ...PANE })
+  await ui.press({ key: 'toolu_q:0:A' })
+  await ui.press({ key: 'toolu_q:1:z' })
+  const release = hold('answer')
+  const first = ui.press({ key: 'toolu_q:send' })
+  await tick()
+  expect((await ui.find({ key: 'toolu_q:send' }))?.text).toMatch(/Sending — resuming L2/)
+  await ui.press({ key: 'toolu_q:send' })
+  release()
+  await first
+  expect(calls.filter(c => c.argv.includes('lane-answer')).length).toBe(1)
+  expect((await ui.find({ key: 'toolu_q:send' }))?.text).toMatch(/^Send answer and resume L2$/)
+  await ui.unmount()
+})
+
+test('the re-read after an answer is not lost when a poll is already reading', async ($, on) => {
+  const calls: Call[] = []
+  const hold = gated(on, calls)
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'toolu_q:0:A' })
+  await ui.press({ key: 'toolu_q:1:z' })
+  const release = hold('status')
+  const poll = ui.press({ key: 'refresh' }) // a read in flight, as a 15 s poll would be
+  await tick()
+  const sent = ui.press({ key: 'toolu_q:send' })
+  await tick()
+  release()
+  await Promise.all([poll, sent])
+  const at = calls.findIndex(c => c.argv.includes('lane-answer'))
+  expect(at).toBeGreaterThan(-1)
+  expect(calls.slice(at + 1).some(c => c.argv.includes('lane-status'))).toBe(true)
+  await ui.unmount()
+})
+
+test('a question already answered elsewhere says so and clears the picks', async ($, on) => {
+  const calls: Call[] = []
+  on('process.run', async (_$, e) => {
+    calls.push({ argv: e.argv })
+    const a = e.argv.join(' ')
+    const r = a.startsWith('claude plugin list')
+      ? { exitCode: 0, stdout: JSON.stringify([{ id: 'loomwright@atelier', enabled: true, installPath: '/p' }]), stderr: '' }
+      : a.includes(' lane-answer ')
+        ? { exitCode: 1, stdout: '', stderr: 'lane-answer: refused — toolu_q already answered' }
+        : { exitCode: 0, stdout: JSON.stringify(DOC), stderr: '' }
+    return { value: { ...r, isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.open', async () => ({ value: { isPlaced: true } }))
+  on('ui.toast', async () => ({ value: undefined }))
+  mock.clock(on, { now: 1_760_000_000_000 })
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'toolu_q:0:A' })
+  await ui.press({ key: 'toolu_q:1:z' })
+  await ui.press({ key: 'toolu_q:send' })
+  expect(await ui.find({ type: 'Text', text: /L2: this question was already answered \(from the main session, most likely\)/ })).toBeDefined()
+  expect((await ui.find({ key: 'toolu_q:0:A' }))?.text).toContain('○')
+  await ui.unmount()
+})
+
+test('the header links every wave PR, the latest first', async ($, on) => {
+  const calls: Call[] = []
+  const doc = { ...RAIL_DOC, waves: [
+    { wave: 1, branch: 'wave/r-w1', pr: 'https://github.com/o/r/pull/9', built_at: iso(600) },
+    { wave: 2, branch: 'wave/r-w2', pr: 'https://github.com/o/r/pull/12', built_at: null },
+  ] }
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(doc) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface, ...PANE })
+    const links = await ui.findAll({ type: 'Link' })
+    const hrefs = links.map(l => (l.props as { href: string }).href)
+    expect(hrefs.indexOf('https://github.com/o/r/pull/12')).toBe(0)
+    expect(hrefs.indexOf('https://github.com/o/r/pull/9')).toBe(1)
+    expect(await ui.find({ type: 'Text', text: /^Wave 2 PR$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^wave\/r-w1 · built 14:13$/ })).toBeDefined()
+    await ui.unmount()
+  }
+})

@@ -87,6 +87,8 @@ export type LaneMachine = {
   keep_awake_holders?: LaneAwakeHolder[]
 }
 
+export type LaneWave = { wave: number | null; branch: string; pr: string; built_at: string | null }
+
 export type LaneStatusDoc = {
   schema_version: number
   parent_run_id: string | null
@@ -95,6 +97,8 @@ export type LaneStatusDoc = {
   run_started_at?: string | null
   /** The machine's UTC offset, so local clock times can be shown without a time zone database. */
   utc_offset_s?: number | null
+  /** Every wave PR the run opened (wave-build's `## Progress` record), oldest first; absent before 0.3.0's Loomwright. */
+  waves?: LaneWave[]
   machine: LaneMachine
   memory_pressure?: boolean
   keep_awake_suggestion?: string | null
@@ -130,6 +134,8 @@ declare module 'claude-code' {
       loads: number[]
       /** What `lane-status --keep-awake` said the last time the button was pressed. */
       awake: LaneNote
+      /** Presses whose work is in flight (`send:<question id>`, `awake`, `refresh`): their buttons say so. */
+      working: Record<string, boolean>
     }
   }
 }

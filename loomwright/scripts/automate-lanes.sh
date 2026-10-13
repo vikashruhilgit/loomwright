@@ -2071,19 +2071,29 @@ _lanes_status_doc() {
   done < "$table"
   local rs; rs="$(awk '/^## / { sec = $0; next } sec == "## Progress" && /^- [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:]*Z / { print substr($0, 3, 20); exit }' \
     "$primary/.supervisor/automate/$parent.md" 2>/dev/null)"
+  # waves: every wave PR this run opened, oldest first, read from wave-build's `## Progress` record
+  # (`<ts> wave built: <branch> — PR <url> (…)`; a hand-built wave writes the same line, its timestamp
+  # sometimes left out). No gh call: lane-status is polled, so the PR's own state is not read here.
+  local wv; wv="$(awk '/^## / { sec = $0; next } sec == "## Progress" && /^- .*wave built/' "$primary/.supervisor/automate/$parent.md" 2>/dev/null \
+    | jq -R -s -c '[split("\n")[]
+        | capture("^- (?:(?<built_at>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z) )?wave built.*?: (?<branch>[^ ]+) — PR (?<pr>https://[^ ]+)")
+        | .pr |= sub("[),.;]+$"; "")
+        | . + {wave: ((.branch | capture("w(?<k>[0-9]+)$").k | tonumber)? // null)}]' 2>/dev/null)"
+  [ -n "$wv" ] || wv='[]'
   # utc_offset_s: the machine's local offset, so a client in a sandbox with no time zone can show local
   # clock times ("started 18:22"); `date +%z` is POSIX on BSD and GNU alike.
   local tz; tz="$(date +%z 2>/dev/null)"
   case "$tz" in [+-][0-9][0-9][0-9][0-9]) tz="$(( (10#${tz:1:2} * 3600 + 10#${tz:3:2} * 60) * (${tz:0:1}1) ))" ;; *) tz=null ;; esac
-  printf '%s' "$lanes" | jq -s -c --arg parent "$parent" --arg primary "$primary" --arg at "$(now_utc)" --argjson m "$m" --arg rs "$rs" --argjson tz "$tz" \
+  printf '%s' "$lanes" | jq -s -c --arg parent "$parent" --arg primary "$primary" --arg at "$(now_utc)" --argjson m "$m" --arg rs "$rs" --argjson tz "$tz" --argjson wv "$wv" \
     --arg hint "$hint" --arg mp "$([ -e "$primary/.supervisor/automate/$parent.memory-pressure" ] && echo true || echo false)" \
     '{schema_version: 1, parent_run_id: $parent, primary: $primary, generated_at: $at,
-      run_started_at: (if $rs != "" then $rs else ([.[].started_at | select(. != null)] | min) end), utc_offset_s: $tz, machine: $m,
+      run_started_at: (if $rs != "" then $rs else ([.[].started_at | select(. != null)] | min) end), utc_offset_s: $tz, waves: $wv, machine: $m,
       memory_pressure: ($mp == "true"), keep_awake_suggestion: (if $hint == "" then null else $hint end), lanes: .}'
 }
 
 _lanes_render() { # <status JSON> — the plain view
   jq -r '"lane-status: \(.parent_run_id) — \(.lanes | length) lane(s) — \(.generated_at)\(if .run_started_at != null then " — started \(.run_started_at)" else "" end)",
+    ((.waves // [])[] | "wave\(if .wave != null then " " + (.wave | tostring) else "" end) PR: \(.pr)  branch=\(.branch)\(if .built_at != null then "  built " + .built_at else "" end)"),
     (if all(.lanes[]; .policy == null) then "policy: none answered" else empty end),
     (.lanes[] | "\(.lane)  \(.state)\(if .reason != "" then " (" + .reason + ")" else "" end)  item=\(.item)  pr=\(.pr // "-")  path=\(.path)",
       (if .policy != null then "    policy: \(.policy.answered) answered by policy\(if .policy.answered > 1 and .policy.first_at != null then " since " + .policy.first_at else "" end) — last \(.policy.last_gate // "?") → \(.policy.last_label) \(.policy.last_at // "unknown")" else empty end),
