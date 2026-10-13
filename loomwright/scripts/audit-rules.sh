@@ -4,8 +4,10 @@
 # WHAT IT IS FOR — THE OVER-TIME HALF OF A WRITE-TIME GATE. `validate-entry.sh` already holds five
 # correctness checks and `add-rule.sh` runs all five on every `/rules add`. But it runs them ONCE, AT
 # WRITE TIME, AGAINST THE STORE AS IT STOOD THAT DAY. Nothing re-validates a rule as the repo drifts
-# underneath it: the path a rule scopes itself to gets renamed, the rule it was written to replace
-# gets retracted, a later rule says the opposite. This script re-runs those same five checks against
+# underneath it: the path a rule scopes itself to gets renamed, a rule names a `supersedes` target
+# that never existed, a later rule says the opposite. (A `supersedes` target that existed and was
+# then RETRACTED is NOT drift: it is the one clean end state of a supersession, decided from the
+# store's git history — see SUPERSESSION HISTORY below, #430.) This script re-runs those same five checks against
 # every standing rule, adds five STORE-WIDE checks that only make sense over a whole store, and
 # reports what it found WITH THE EVIDENCE — never as a bare verdict.
 #
@@ -314,7 +316,9 @@ if [ "$unreadable" -eq 1 ]; then exit 2; fi
 
 # RECORDS line kinds (tab-delimited; every free-text cell has tabs/newlines neutralized in jq):
 #   SKIP\t<why>
-#   DANGLE\t<id>\t<target>          supersedes names an id absent from the valid set
+#   DANGLE\t<id>\t<target>\t<absent|invalid>
+#                                   supersedes names an id absent from the valid set; `invalid` when
+#                                   the id is still in the store as an object validation SKIPs
 #   SELFREF\t<id>                   supersedes names its own id
 #   DEAD\t<id>\t<hider>             hidden from the reader by a live rule's supersedes
 #   CYCLE\t<id>                     a supersession cycle member; the reader drops its edge
@@ -338,6 +342,10 @@ if [ -s "$COMBINED" ]; then
     def cell: gsub("[\t\n]"; " ");
 
     sort_by([.fi, .ei])
+    # EVERY string id in the store, INCLUDING objects per-object validation is about to SKIP. A
+    # dangling target that is still present as a skipped object was not retracted; it is reported
+    # differently from one that is absent (see the DANGLE arm in PASS 2).
+    | ( [ .[] | .obj | objects | .id | strings ] ) as $any_ids
     | reduce .[] as $row ( {seen: {}, out: []};
         ($row.obj) as $o
         | (
@@ -402,7 +410,8 @@ if [ -s "$COMBINED" ]; then
                    | select( ($tgt | length) > 0 )
                    | select( $tgt != $o.id )
                    | select( ($ok_ids | index($tgt)) == null )
-                   | "DANGLE\t" + ($o.id | cell) + "\t" + ($tgt | cell) ) )
+                   | "DANGLE\t" + ($o.id | cell) + "\t" + ($tgt | cell)
+                     + "\t" + (if ($any_ids | index($tgt)) == null then "absent" else "invalid" end) ) )
         + ( $ok_objs
             | map( . as $o | ($o.supersedes) as $tgt
                    | select( ($tgt | type) == "string" )
@@ -526,6 +535,10 @@ pattern_matches_any() {
 F_BLOCK="$WORK/f.blocking"; : > "$F_BLOCK"; n_block=0
 F_ADV="$WORK/f.advisory";   : > "$F_ADV";   n_adv=0
 F_UNK="$WORK/f.unknown";    : > "$F_UNK";   n_unk=0
+# RESOLVED — NOT a finding class. A `supersedes` edge whose target was retracted on purpose: the
+# documented clean end state of a supersession (#430). Listed with its evidence so the edge is never
+# invisible, but NEVER counted in any finding total and NEVER exit-bearing.
+F_RES="$WORK/f.resolved";   : > "$F_RES";   n_resolved=0
 
 # add_finding <file> <check> <subject> <what> <evidence> [<recommendation>]
 # Evidence is REQUIRED and printed verbatim: a finding without its evidence is a claim, and this
@@ -772,10 +785,79 @@ while IFS=$'\t' read -r kind rid r_cat r_enf r_ckk r_ckv r_route r_src r_added r
 done < "$RECORDS"
 
 # ---------------------------------------------------------------------------
+# SUPERSESSION HISTORY (#430) — did <id> EVER exist as a rule in this store?
+#
+# WHY THIS EXISTS. A supersession has two halves: `add --supersedes A` writes B, and A — now hidden
+# from the reader — is reported `dead_rule` until it is retracted. Retracting A then leaves B's edge
+# pointing at an id the store no longer holds. Before this lookup the audit could not tell that
+# DELIBERATE end state from a TYPO'd target that never existed, so it blocked both as
+# `dangling_supersedes` — and the two documented verbs sent the owner round a loop with no clean
+# state (#430). The distinguishing fact is "did A ever exist", and the store's OWN evidence for it is
+# git history: add-rule.sh writes no retraction record by design (skills/rules/SKILL.md §7.5 — the
+# commit that lands the removal IS the durable record), so history is the only record there is.
+#
+# HOW. `git log -S<id>` (pickaxe, a literal substring — never a regex) lists the commits on HEAD's
+# line where the number of occurrences of the id's text changed under the store dir. That is only a
+# CANDIDATE filter: B's own `"supersedes": "<id>"` contains the same text, so a typo that was
+# committed would match too. Each candidate commit, and its parent, is therefore VERIFIED by jq: the
+# id counts as on record only when some committed `*.json` array in the store dir held an OBJECT whose
+# `.id` equals it EXACTLY. jq reads the committed blob from a work-dir file and takes the id via
+# `--arg`; untrusted text never enters a program string or a shell command. Read-only throughout:
+# `git log` / `ls-tree` / `show` never write the store.
+#
+# RESULT (sets HIST_STATE and HIST_WHY; always returns 0):
+#   on_record  a committed version of the store held a rule with this id   (HIST_WHY = where)
+#   never      full, non-shallow history was consulted and no version did
+#   unknown    history could not be consulted, or it is SHALLOW and the id was not found in the part
+#              that is present — "never existed" is then UNPROVEN, so it is reported UNKNOWN (exit 2),
+#              exactly as an unobtainable path list is for `applies_to`. Never clean, never a typo verdict.
+# KNOWN LIMIT: the lookup follows the store dir's CURRENT path; a rule that lived only under a store
+# dir that was later moved is not found (reported `never`, i.e. BLOCKING — the pre-#430 behaviour).
+# ---------------------------------------------------------------------------
+supersedes_target_history() {
+  local tgt="$1" commits hc rev f
+  HIST_STATE="unknown"; HIST_WHY=""
+  if ! git -C "$RULES_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    HIST_WHY="the rule store is not inside a git work tree, so there is no committed history to consult"
+    return 0
+  fi
+  if ! git -C "$RULES_DIR" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    HIST_STATE="never"; HIST_WHY="the repository has no commits yet, so no version of the store was ever committed"
+    return 0
+  fi
+  if ! commits="$(git -C "$RULES_DIR" log --no-textconv --format=%H "-S$tgt" -- . 2>/dev/null)"; then
+    HIST_WHY="\`git log\` over the store dir failed, so its history could not be consulted"
+    return 0
+  fi
+  for hc in $commits; do
+    for rev in "$hc" "$hc^"; do
+      git -C "$RULES_DIR" rev-parse --verify -q "$rev^{commit}" >/dev/null 2>&1 || continue
+      while IFS= read -r -d '' f; do
+        case "$f" in *.json) : ;; *) continue ;; esac
+        git -C "$RULES_DIR" show "$rev:./$f" > "$WORK/hist.json" 2>/dev/null || continue
+        if jq -e --arg t "$tgt" 'type == "array" and any(.[]; type == "object" and .id == $t)' \
+             "$WORK/hist.json" >/dev/null 2>&1; then
+          HIST_STATE="on_record"
+          HIST_WHY="rule id \"$tgt\" is in $f at commit $(git -C "$RULES_DIR" rev-parse --short "$rev" 2>/dev/null || printf '%s' "$rev")"
+          return 0
+        fi
+      done < <(git -C "$RULES_DIR" ls-tree -z --name-only "$rev" -- . 2>/dev/null)
+    done
+  done
+  if [ "$(git -C "$RULES_DIR" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+    HIST_WHY="the id is not in the history present here, but this clone is SHALLOW, so whether it ever existed is UNPROVEN"
+    return 0
+  fi
+  HIST_STATE="never"
+  HIST_WHY="no committed version of the store held a rule with this id (full history consulted)"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # PASS 2 — the store-wide checks that are properties of the SUPERSESSION GRAPH plus the objects the
 # reader silently drops. Read from the records file the jq pass already produced.
 # ---------------------------------------------------------------------------
-while IFS=$'\t' read -r kind a b _rest; do
+while IFS=$'\t' read -r kind a b c _rest; do
   case "$kind" in
     SKIP)
       n_skipped=$((n_skipped + 1))
@@ -784,11 +866,36 @@ while IFS=$'\t' read -r kind a b _rest; do
         "reader diagnostic: $a" \
         "fix the object by hand and re-run; the audit never writes." ;;
     DANGLE)
-      # -- store-wide 3: a dangling `supersedes` target (AC4).
-      block "dangling_supersedes" "rule: $a" \
-        "its \`supersedes\` names \"$b\", which is not a valid rule in this store — the reader ignores a dangling edge, so the curation the author wrote SILENTLY DID NOTHING" \
-        "supersedes=\"$b\" (no valid rule carries that id; a target that exists only as a SKIPped object counts as absent, exactly as read-rules.sh treats it)" \
-        "either the target was retracted (the edge is now noise and the rule should be re-authored without it) or the id is a typo. Re-author via \`/rules add --supersedes <correct-id>\` and retract this one via \`add-rule.sh --retract --target $a --reason '<why>' --confirm\`." ;;
+      # -- store-wide 3: a dangling `supersedes` target (AC4), split three ways by the store's own
+      #    evidence (#430 — see SUPERSESSION HISTORY above). Only an id that NEVER existed, or one
+      #    that is still present but SKIPped, is a defect; a target that existed and was retracted is
+      #    the documented clean end state of a supersession.
+      REC_REAUTHOR="re-author via \`/rules add --supersedes <correct-id>\` (or without \`--supersedes\`) and retract this one via \`add-rule.sh --retract --target $a --reason '<why>' --confirm\`."
+      if [ "$c" = "invalid" ]; then
+        block "dangling_supersedes" "rule: $a" \
+          "its \`supersedes\` names \"$b\", which is still in the store but is SKIPPED by per-object validation — it was never retracted, the reader ignores the edge, so the curation the author wrote SILENTLY DID NOTHING" \
+          "supersedes=\"$b\" (an object with that id is present but invalid; see its [skipped_object] finding)" \
+          "fix or retract the skipped object \"$b\" (its own finding names it). Retracting it is the supersession's clean end state; if \"$b\" is the wrong target, $REC_REAUTHOR"
+      else
+        supersedes_target_history "$b" </dev/null
+        case "$HIST_STATE" in
+          on_record)
+            n_resolved=$((n_resolved + 1))
+            add_finding "$F_RES" "resolved_supersession" "rule: $a" \
+              "its \`supersedes\` names \"$b\", which is no longer in the store because it was RETRACTED — the supersession is complete and the edge is history" \
+              "edge: $a -> $b | $HIST_WHY" "" ;;
+          never)
+            block "dangling_supersedes" "rule: $a" \
+              "its \`supersedes\` names \"$b\", which is not a rule in this store and never appears as a rule id in any committed version of it — almost certainly a TYPO, so the curation the author wrote SILENTLY DID NOTHING" \
+              "supersedes=\"$b\" | $HIST_WHY. A target retracted BEFORE it was ever committed leaves no record either, and reads the same way." \
+              "$REC_REAUTHOR" ;;
+          *)
+            unknown "dangling_supersedes" "rule: $a" \
+              "its \`supersedes\` names \"$b\", which is not in this store, and whether it EVER existed (a retracted target, which is clean) or never did (a typo, which is a defect) COULD NOT BE DECIDED" \
+              "supersedes=\"$b\" | $HIST_WHY" \
+              "run the audit in a full (non-shallow) clone of the repository — \`git fetch --unshallow\` — so the store's history can decide it. Reported UNKNOWN rather than clean." ;;
+        esac
+      fi ;;
     SELFREF)
       block "dangling_supersedes" "rule: $a" \
         "its \`supersedes\` names its OWN id — the reader ignores a self-referential edge, so the curation SILENTLY DID NOTHING" \
@@ -796,11 +903,24 @@ while IFS=$'\t' read -r kind a b _rest; do
         "re-author with the correct target via \`/rules add --supersedes <older-id>\` and retract this one via \`add-rule.sh --retract --target $a --reason '<why>' --confirm\`." ;;
     DEAD)
       # -- store-wide 4: a rule superseded by a later rule (AC5).
+      #    The remedy is the ONE step to the supersession's clean end state (#430): retract the hidden
+      #    rule, after which $b's edge reads as a RESOLVED supersession — provided "$a" is on record in
+      #    git history. If it never was, a retract would leave no evidence it existed and the edge
+      #    would read as a typo, so the remedy says to commit first.
       n_dead=$((n_dead + 1))
+      REC_RETRACT="\`bash \${CLAUDE_PLUGIN_ROOT}/scripts/add-rule.sh --retract --target $a --reason 'superseded by $b' --confirm\`"
+      supersedes_target_history "$a" </dev/null
+      if [ "$HIST_STATE" = "on_record" ]; then
+        dead_rec="retract the dead object: $REC_RETRACT. That is the whole remedy: \"$b\" keeps its \`supersedes\` edge, and the next audit lists it as a resolved supersession (\"$a\" stays on record in git history) — the clean end state. Do not re-author \"$b\"."
+      elif [ "$HIST_STATE" = "never" ]; then
+        dead_rec="\"$a\" is not yet in this repository's committed history ($HIST_WHY), so a retract now would leave nothing recording that it existed and \"$b\"'s edge would read as a typo. Commit the store as it stands FIRST, then retract the dead object: $REC_RETRACT. The next audit then lists \"$b\" as a resolved supersession — the clean end state."
+      else
+        dead_rec="retract the dead object once it is committed: $REC_RETRACT. Whether \"$a\" is on record could not be confirmed here ($HIST_WHY); the retract reaches the clean end state (\"$b\" listed as a resolved supersession) only when the audit runs in a full git clone that holds a commit with \"$a\" in it."
+      fi
       block "dead_rule" "rule: $a" \
         "superseded by \"$b\" — it is HIDDEN from read-rules.sh's output, so it is a rule nobody reads that is still committed, still audited, and still looks live to anyone browsing the store" \
         "hidden by supersedes edge: $b -> $a (single-hop, non-transitive, as read-rules.sh resolves it)" \
-        "remove the dead object outright: \`bash \${CLAUDE_PLUGIN_ROOT}/scripts/add-rule.sh --retract --target $a --reason 'superseded by $b' --confirm\`. Keeping it changes nothing that is read." ;;
+        "$dead_rec" ;;
     CYCLE)
       block "supersession_cycle" "rule: $a" \
         "this rule is a member of a \`supersedes\` CYCLE. read-rules.sh drops every edge originating from a cycle member (so nothing is silently hidden), which means this rule's curation edge SILENTLY DID NOTHING" \
@@ -829,6 +949,7 @@ printf -- '- store dir: %s (%s file(s))\n' "$RULES_DIR" "$n_files"
 printf -- '- rule objects parsed: %s\n' "$n_objects"
 printf -- '- valid rules: %s   (objects skipped by per-object validation: %s)\n' "$n_valid" "$n_skipped"
 printf -- '- superseded / hidden from the reader: %s\n' "$n_dead"
+printf -- '- resolved supersessions (target retracted, on record in git history): %s\n' "$n_resolved"
 printf -- '- STANDING rules audited: %s   (of which `must`: %s)\n' "$n_rules" "$n_must"
 printf -- '- rule `check` strings EXECUTED by this audit: 0 — every `check` was read as text and\n'
 printf '  statically linted. `rules-check.sh` (human-invoked, confirm-gated) is the sole executor.\n\n'
@@ -840,7 +961,9 @@ printf '    dead-reference, cross-repo            — ADVISORY (report only; nev
 printf -- '- STORE-WIDE (this file, over the merged store):\n'
 printf '    no_mechanism        a `must` rule whose `check` is null or whitespace-only\n'
 printf '    never_fires         an `applies_to` glob set that matches zero tracked repo paths\n'
-printf '    dangling_supersedes a `supersedes` naming an id absent from the store (or its own id)\n'
+printf '    dangling_supersedes a `supersedes` naming an id that NEVER existed in the store (no committed\n'
+printf '                        version held it), one still present but skipped, or its own id. A target\n'
+printf '                        that existed and was RETRACTED is a resolved supersession, not a finding\n'
 printf '    dead_rule           a rule superseded by a later rule\n'
 printf '    later_contradiction a rule contradicted by a rule added AFTER it\n'
 printf '    (plus supersession_cycle and skipped_object — defects the fail-safe reader swallows)\n\n'
@@ -861,6 +984,12 @@ printf 'unobtainable input, an unorderable timestamp. Conflating "could not exam
 printf 'clean" is the fail-open class validate-entry.sh exists to close, so it is kept separate here and\n'
 printf 'it makes this run exit 2.\n\n'
 if [ "$n_unk" -gt 0 ]; then cat "$F_UNK"; else printf '  none\n\n'; fi
+
+printf '## Resolved supersessions — history, no action (%s)\n\n' "$n_resolved"
+printf 'A `supersedes` edge whose target was RETRACTED after being committed: the one clean end state of\n'
+printf 'a supersession (add --supersedes, then retract the old rule). Listed with its evidence so the edge\n'
+printf 'is never invisible; NOT a finding, never counted above and never exit-bearing.\n\n'
+if [ "$n_resolved" -gt 0 ]; then cat "$F_RES"; else printf '  none\n\n'; fi
 
 printf '## Small-N honesty\n\n'
 printf 'This store holds %s standing rule(s), of which %s are `must`.\n' "$n_rules" "$n_must"
