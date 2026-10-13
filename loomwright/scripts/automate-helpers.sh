@@ -331,7 +331,9 @@ _ge_pr_parts() {
 # GraphQL, `classify-risk.sh`, and two artifact-file reads) instead of trusting
 # a model-authored value — a caller can no longer hand the gate a fabricated
 # verdict for any of conditions 2 through 7. Prints "MERGE" and EXECUTES
-# `gh pr merge --squash <url>` ONLY when EVERY condition holds; otherwise prints
+# `gh pr merge --squash --match-head-commit <live head> <url>` ONLY when EVERY
+# condition holds (the SHA pin makes GitHub refuse a head that moved after the
+# checks read it — that refusal parks as merge_command_failed); otherwise prints
 # "PARK: <reason>" and returns 0 (a PARK is a normal, expected outcome — fail
 # CLOSED, never crash).
 #
@@ -1020,7 +1022,12 @@ GEPARTS
   fi
 
   # ALL conditions hold — the ONLY sanctioned `gh pr merge --squash` in the plugin (§11).
-  if "$GH" pr merge --squash "$url" >/dev/null 2>&1; then
+  # `--match-head-commit` binds the merge to `live_head`, the exact SHA conditions 2
+  # (ready_sha + statusCheckRollup), 6 (classify-risk.sh) and 7 (the rules-gate checkout
+  # pin) were evaluated against. Without it GitHub merges whatever the head is AT MERGE
+  # TIME, so a push landing between those reads and this call would be merged unchecked.
+  # With it GitHub refuses a moved head, which parks below as merge_command_failed.
+  if "$GH" pr merge --squash --match-head-commit "$live_head" "$url" >/dev/null 2>&1; then
     echo "MERGE"; return 0
   fi
   echo "PARK: merge_command_failed"; return 0
