@@ -58,7 +58,9 @@
 #      `trust_unprotected: true` NOT overriding cond. 6), plus malformed-ctx
 #      (ctx_unreadable) and a merge-command failure (merge_command_failed); AND the
 #      all-pass MERGE case (`high_risk: false` + every other condition) fires
-#      `gh pr merge --squash` exactly once; AND a mutation control (cond 6 deleted from a
+#      `gh pr merge --squash --match-head-commit <checked head>` exactly once; AND a head
+#      that moves between the checks and the merge parks merge_command_failed with
+#      nothing merged (the stub models GitHub's SHA-pin refusal); AND a mutation control (cond 6 deleted from a
 #      COPY of gate_eval, gated on non-empty + differs + `bash -n`) turns the cond-6 PARK
 #      cases red while the MERGE case stays green.
 #   R. gate-eval condition 7 — the rules gate (section letter "R": "F" is already
@@ -217,7 +219,13 @@ make_stub_bin() {
 # Stub gh: reads canned responses from $GH_STUB_DIR.
 #   pr view <url> --json ...<reviewDecision>...   -> cat pr-view-rd.json (or exit 1 if pr-view-rd-fail marker)
 #   pr view <url> --json ... (any OTHER field set) -> cat pr-view.json (or exit 1 if pr-view-fail marker)
-#   pr merge --squash <url>                        -> append a line to merge.log, exit per marker
+#   pr merge --squash [--match-head-commit SHA] <url>
+#                                                  -> append a line to merge.log, exit per marker;
+#                                                     a merge-time-head file models a push that landed
+#                                                     AFTER the gate's reads: like GitHub, a given
+#                                                     --match-head-commit that differs from it is
+#                                                     refused (MERGE_REFUSED, exit 1), and a merge
+#                                                     WITHOUT the flag goes through regardless
 #   api graphql -f query=...                       -> cat graphql.json (or exit 1 if graphql-fail marker)
 #   api repos/.../branches/main/protection          -> cat protection.json; protection-404 marker exits 1
 #                                                      with "Not Found (HTTP 404)"; protection-fail
@@ -244,6 +252,13 @@ if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
   esac
 fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "merge" ]; then
+  if [ -f "$GH_STUB_DIR/merge-time-head" ]; then
+    mhc=""; prev=""
+    for a in "$@"; do [ "$prev" = "--match-head-commit" ] && mhc="$a"; prev="$a"; done
+    if [ -n "$mhc" ] && [ "$mhc" != "$(cat "$GH_STUB_DIR/merge-time-head")" ]; then
+      echo "MERGE_REFUSED $*" >> "$GH_STUB_DIR/merge.log"; exit 1
+    fi
+  fi
   echo "MERGE_CALLED $*" >> "$GH_STUB_DIR/merge.log"
   if [ -f "$GH_STUB_DIR/merge-fail" ]; then exit 1; fi
   exit 0
@@ -1633,7 +1648,7 @@ reset_live() {
   printf '{"required_pull_request_reviews":{"required_approving_review_count":1},"required_status_checks":{"contexts":["ci"]}}\n' > "$GH_STUB_DIR/protection.json"
   rm -f "$GH_STUB_DIR/protection-404" "$GH_STUB_DIR/protection-fail"
   printf '{"high_risk": false, "reasons": [], "changed_files": 0, "changed_lines": 0, "source": "classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
-  rm -f "$GH_STUB_DIR/merge-fail"
+  rm -f "$GH_STUB_DIR/merge-fail" "$GH_STUB_DIR/merge-time-head"
   printf '%s\n' "$RULES_NONE" > "$GH_STUB_DIR/rules.json"
   rm -f "$GH_STUB_DIR/rules-exit" "$GH_STUB_DIR/rules-called.log"
 }
@@ -1971,11 +1986,27 @@ reset_live
 gate "$(pass_ctx)"
 if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] \
    && grep -q -- '--squash' "$GH_STUB_DIR/merge.log" \
+   && grep -qF -- "--match-head-commit $E_PR_HEAD" "$GH_STUB_DIR/merge.log" \
    && grep -qF "$PR" "$GH_STUB_DIR/merge.log"; then
-  ok "gate all-pass: MERGE fires 'gh pr merge --squash <url>' exactly once"
+  ok "gate all-pass: MERGE fires 'gh pr merge --squash --match-head-commit <checked head> <url>' exactly once"
 else
   no "gate all-pass wrong (out='$RUN_OUT' merges=$(merges) log='$(cat "$GH_STUB_DIR/merge.log" 2>/dev/null)')"
 fi
+
+# --- TOCTOU: a push lands AFTER every condition read the head but BEFORE the
+# merge. The stub, like GitHub, refuses a --match-head-commit that no longer
+# matches and merges a flag-less call regardless — so a gate that drops the SHA
+# pin MERGEs unchecked code here and this case goes red. ---
+printf '%040d\n' 0 > "$GH_STUB_DIR/merge-time-head"   # a pushed commit ≠ $E_PR_HEAD
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: merge_command_failed" ] \
+   && ! grep -q MERGE_CALLED "$GH_STUB_DIR/merge.log" \
+   && grep -q MERGE_REFUSED "$GH_STUB_DIR/merge.log"; then
+  ok "gate fail-closed: head moved between the checks and the merge ⇒ GitHub refuses the SHA-pinned merge ⇒ PARK: merge_command_failed, nothing merged"
+else
+  no "gate head-moved-at-merge FAILED OPEN (out='$RUN_OUT' merges=$(merges) log='$(cat "$GH_STUB_DIR/merge.log" 2>/dev/null)')"
+fi
+rm -f "$GH_STUB_DIR/merge-time-head"
 
 # --- merge command itself fails ---
 touch "$GH_STUB_DIR/merge-fail"
