@@ -63,6 +63,7 @@ No mechanical size check ships yet: count by hand. Too small to pay a run ⇒ me
   ## Touches
   ```
 - **Measurements are not acceptance.** A criterion that needs repeated runs (N×), wall-clock timing, or an idle or loaded machine goes under `## Measurements`, never `## Acceptance criteria`. It names the frozen commit it runs against (`git worktree add <tmp> <sha>`), so later edits cannot invalidate a run, and it runs after the code is complete — never inside a worker's turn budget. The worker's own acceptance for it is "the harness exists and passes once".
+- **Evidence lives in a committed file, never the PR body.** A criterion that needs pasted commands, measured values or rejected alternatives names a committed evidence file as where they go: "then `docs/evidence/<slug>.md` contains …, and the PR body links to it" (Markdown, never `*.log`, which is commonly gitignored). The PR body is written before review and no fix task can edit it, so a criterion that only the body can satisfy is never healed (`skills/supervisor-readiness/SKILL.md` §"Acceptance Criteria"; Plan Reviewer Criterion 20 FAILs it on the Launch Pad path). `## Validation (must pass before merge)` running-system steps are different: their output is pasted into the PR body by whoever ran them, and the `/automate` validation gate reads it there and parks rather than looping a heal round.
 - **New findings join an existing theme.** A new item, Part, or "considered and not queued" row goes into that theme's plan doc. Do not start a new `*-followups` folder.
 
 ### Plan-doc template
