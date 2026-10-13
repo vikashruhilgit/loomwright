@@ -741,6 +741,168 @@ fi
 byte_identical "$r3" "$fp" "(o7)"
 
 # ============================================================================
+echo "== (p) #430: supersede -> dead_rule -> retract reaches ONE clean end state; a typo stays BLOCKING =="
+# The loop issue #430 reported, driven through the REAL sole writer rather than seeded JSON, because
+# the defect was a property of the documented VERB SEQUENCE: `add --supersedes` made the audit block
+# on `dead_rule`, the recommended retract then made it block on `dangling_supersedes`, and no state
+# reachable through the documented verbs was clean. The audit could not tell a target that was
+# retracted on purpose from an id that never existed. The store's own evidence for "it existed" is
+# git history (add-rule.sh writes no retraction record by design, skills/rules/SKILL.md §7.5).
+ADD_WRITER="$SCRIPT_DIR/add-rule.sh"
+add_rule() {
+  local repo="$1"; shift
+  ADD_OUT="$( cd "$repo" && ADD_RULE_VALIDATOR="$VALIDATOR" bash "$ADD_WRITER" "$@" 2>&1 )"; ADD_RC=$?
+}
+commit_store() { ( cd "$1" && git add -A .agent/rules && git commit -qm "$2" ) >/dev/null 2>&1; }
+A_ID="x-use-a-style-always"
+A_STMT="Use A style always"
+B_STMT="Prefer the shared Banner component over hand-rolled alert markup"
+# blocking_kinds — only the [kind] tokens inside the BLOCKING section, so a resolved supersession
+# listed elsewhere in the report cannot satisfy (or falsify) an assertion about BLOCKING findings.
+blocking_kinds() {
+  awk '/^## Findings — BLOCKING/{f=1; next} /^## /{f=0} f && /^  \[/{print}' <<<"$OUT"
+}
+
+# Step 1 — a store holding one COMMITTED rule A (the issue's "any store with one rule A").
+r="$(new_repo)"
+add_rule "$r" --category x --statement "$A_STMT" --confirm
+commit_store "$r" "add rule A"
+run_audit "$r"
+[ "$ADD_RC" -eq 0 ] && [ "$RC" -eq 0 ] \
+  && ok "(p1) a store with one committed rule A audits clean (exit 0)" \
+  || no "(p1) setup: add rc=$ADD_RC audit rc=$RC — $(printf '%s' "$ADD_OUT" | tail -2)"
+
+# Step 2 — supersede A with B through the writer. The audit blocks on dead_rule, as designed: A is a
+# rule nobody reads that is still committed. The remedy it prints must lead to the clean end state.
+add_rule "$r" --category x --statement "$B_STMT" --supersedes "$A_ID" --confirm
+B_ID="$(jq -r --arg a "$A_ID" '.[] | select(.supersedes == $a) | .id' "$r/.agent/rules/x.json" 2>/dev/null)"
+run_audit "$r"
+if [ "$ADD_RC" -eq 0 ] && [ -n "$B_ID" ] && [ "$RC" -eq 1 ] && grep -q "\[dead_rule\] rule: $A_ID" <<<"$(blocking_kinds)"; then
+  ok "(p2) after --supersedes the superseded rule is reported [dead_rule] (exit 1)"
+else
+  no "(p2) expected dead_rule on $A_ID (add rc=$ADD_RC, B=$B_ID, audit rc=$RC)"
+fi
+dead_rec="$(grep -A4 "\[dead_rule\] rule: $A_ID" <<<"$OUT" | grep 'recommend:')"
+if grep -q -- "--retract --target $A_ID" <<<"$dead_rec" && grep -qi 'resolved supersession' <<<"$dead_rec"; then
+  ok "(p3) the dead_rule remedy is the single retract AND says the edge then reads as a resolved supersession"
+else
+  no "(p3) the dead_rule remedy does not lead to the clean end state: $dead_rec"
+fi
+
+# Step 3 — follow the remedy exactly. Step 4 — the audit must now be CLEAN. Before the fix this
+# blocked on dangling_supersedes (exit 1) and the owner was sent back round the loop.
+add_rule "$r" --retract --target "$A_ID" --reason "superseded by $B_ID" --confirm
+fp="$(fingerprint "$r")"
+run_audit "$r"
+if [ "$ADD_RC" -eq 0 ] && [ "$RC" -eq 0 ] && [ -z "$(blocking_kinds)" ]; then
+  ok "(p4) #430: after the recommended retract the audit is CLEAN (exit 0, zero BLOCKING findings)"
+else
+  no "(p4) #430 LOOP: after the recommended retract the audit still blocks (retract rc=$ADD_RC, audit rc=$RC): $(blocking_kinds | tr '\n' ' ')"
+fi
+if grep -q "$B_ID -> $A_ID" <<<"$(awk '/^## Resolved supersessions/{f=1; next} /^## /{f=0} f' <<<"$OUT")"; then
+  ok "(p5) the edge is listed under Resolved supersessions with its evidence (history, no action)"
+else
+  no "(p5) the resolved edge $B_ID -> $A_ID is not listed under '## Resolved supersessions'"
+fi
+grep -q 'resolved supersessions (target retracted, on record in git history): 1' <<<"$OUT" \
+  && ok "(p6) the store summary counts the resolved supersession" \
+  || no "(p6) the store summary does not count the resolved supersession"
+byte_identical "$r" "$fp" "(p7)"
+# Committing the retraction does not change the verdict: A stays on record in an older commit.
+commit_store "$r" "supersede A with B, retract A"
+run_audit "$r"
+[ "$RC" -eq 0 ] && ok "(p8) with the retraction committed the audit stays clean (exit 0)" \
+                || no "(p8) committing the retraction made the audit non-clean (exit $RC)"
+
+# A TYPO stays BLOCKING: an id that never existed in any committed version of the store. The repo
+# has committed history (rule A's file), so "never existed" is decided, not assumed.
+add_rule "$r" --category y --statement "Name every gate failure reason in the message text" --supersedes "x-use-a-styel-always" --confirm
+commit_store "$r" "typo supersedes"
+run_audit "$r"
+if [ "$RC" -eq 1 ] && grep -q '\[dangling_supersedes\]' <<<"$(blocking_kinds)" \
+   && grep -q 'never appears as a rule id in any committed version' <<<"$OUT"; then
+  ok "(p9) a supersedes naming an id that NEVER existed stays BLOCKING [dangling_supersedes] (exit 1)"
+else
+  no "(p9) the typo'd supersedes target is no longer BLOCKING (exit $RC): $(blocking_kinds | tr '\n' ' ')"
+fi
+
+# (p10) MUTATION CONTROL — make the history lookup always answer "not on record"; (p4) must go RED,
+# i.e. the merged-DANGLE behaviour that produced the loop comes back.
+sed -e 's/^supersedes_target_history() {$/supersedes_target_history() { HIST_STATE=never; HIST_WHY=mutant; return 0;/' "$ENGINE" > "$MUT/hist-never.sh"
+if mutant_ok "$MUT/hist-never.sh" "(p10) history-never mutant"; then
+  r2="$(new_repo)"
+  add_rule "$r2" --category x --statement "$A_STMT" --confirm; commit_store "$r2" "add A"
+  add_rule "$r2" --category x --statement "$B_STMT" --supersedes "$A_ID" --confirm
+  add_rule "$r2" --retract --target "$A_ID" --reason "superseded" --confirm
+  run_audit "$r2" "$MUT/hist-never.sh"
+  if [ "$RC" -eq 1 ] && grep -q '\[dangling_supersedes\]' <<<"$(blocking_kinds)"; then
+    ok "(p10) MUTATION CONTROL: with the history lookup disabled the #430 loop comes back (exit 1) — (p4) is not vacuous"
+  else
+    no "(p10) MUTATION CONTROL: the mutant still audits clean (exit $RC) — (p4) may pass for another reason"
+  fi
+fi
+# (p11) MUTATION CONTROL — make the lookup always answer "on record"; (p9) must go RED, proving the
+# typo assertion discriminates rather than passing because every dangle is still blocked.
+sed -e 's/^supersedes_target_history() {$/supersedes_target_history() { HIST_STATE=on_record; HIST_WHY=mutant; return 0;/' "$ENGINE" > "$MUT/hist-always.sh"
+if mutant_ok "$MUT/hist-always.sh" "(p11) history-always mutant"; then
+  run_audit "$r" "$MUT/hist-always.sh"
+  if ! grep -q '\[dangling_supersedes\]' <<<"$(blocking_kinds)"; then
+    ok "(p11) MUTATION CONTROL: with the lookup forced to 'on record' the typo is no longer BLOCKING — (p9) is not vacuous"
+  else
+    no "(p11) MUTATION CONTROL: the mutant still blocks the typo — (p9) may pass for another reason"
+  fi
+fi
+
+# A rule that was NEVER COMMITTED has no record. Superseding it and retracting it before any commit
+# is indistinguishable from a typo, so the dead_rule remedy must say "commit first" — and following
+# that remedy must reach the same clean end state.
+r3="$(new_repo)"
+add_rule "$r3" --category x --statement "$A_STMT" --confirm
+add_rule "$r3" --category x --statement "$B_STMT" --supersedes "$A_ID" --confirm
+run_audit "$r3"
+dead_rec="$(grep -A4 "\[dead_rule\] rule: $A_ID" <<<"$OUT" | grep 'recommend:')"
+if grep -qi 'commit' <<<"$dead_rec" && grep -qi 'not yet in this repository.s committed history' <<<"$dead_rec"; then
+  ok "(p12) for a never-committed superseded rule the dead_rule remedy says to commit before retracting"
+else
+  no "(p12) the never-committed dead_rule remedy does not say to commit first: $dead_rec"
+fi
+commit_store "$r3" "add A and B"
+add_rule "$r3" --retract --target "$A_ID" --reason "superseded" --confirm
+run_audit "$r3"
+[ "$RC" -eq 0 ] && ok "(p13) commit-then-retract (the remedy for a never-committed rule) audits clean (exit 0)" \
+                || no "(p13) commit-then-retract did not audit clean (exit $RC): $(blocking_kinds | tr '\n' ' ')"
+
+# A target that still EXISTS but is SKIPped by validation was not retracted: the edge did nothing,
+# so it stays BLOCKING even though the id is on record.
+r4="$(new_repo)"
+add_rule "$r4" --category x --statement "$A_STMT" --confirm; commit_store "$r4" "add A"
+add_rule "$r4" --category x --statement "$B_STMT" --supersedes "$A_ID" --confirm
+jq --arg a "$A_ID" 'map(if .id == $a then .enforcement = "bogus" else . end)' "$r4/.agent/rules/x.json" > "$r4/x.tmp" \
+  && cat "$r4/x.tmp" > "$r4/.agent/rules/x.json"; rm -f "$r4/x.tmp"
+run_audit "$r4"
+if [ "$RC" -eq 1 ] && grep -q "\[dangling_supersedes\] rule: $B_ID" <<<"$(blocking_kinds)" \
+   && grep -q 'still in the store but is SKIPPED' <<<"$OUT"; then
+  ok "(p14) a target that exists but is SKIPped stays BLOCKING [dangling_supersedes] (not 'resolved')"
+else
+  no "(p14) a present-but-invalid target was not kept BLOCKING (exit $RC): $(blocking_kinds | tr '\n' ' ')"
+fi
+
+# Shallow history cannot prove "never existed": a dangle whose target is not found there is UNKNOWN
+# (exit 2), never clean and never a confident typo verdict.
+r5="$(new_repo)"
+add_rule "$r5" --category x --statement "$A_STMT" --confirm; commit_store "$r5" "add A"
+add_rule "$r5" --category x --statement "$B_STMT" --supersedes "$A_ID" --confirm; commit_store "$r5" "add B"
+add_rule "$r5" --retract --target "$A_ID" --reason "superseded" --confirm; commit_store "$r5" "retract A"
+r5s="$ROOT/shallow.$$"
+git clone -q --depth 1 "file://$r5" "$r5s" >/dev/null 2>&1
+run_audit "$r5s"
+if [ "$RC" -eq 2 ] && grep -q '\[dangling_supersedes\]' <<<"$(awk '/^## Findings — UNKNOWN/{f=1; next} /^## /{f=0} f' <<<"$OUT")"; then
+  ok "(p15) in a SHALLOW clone an unfound target is UNKNOWN (exit 2), not clean and not a typo verdict"
+else
+  no "(p15) a shallow clone did not report the undecidable dangle as UNKNOWN (exit $RC)"
+fi
+
+# ============================================================================
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
