@@ -197,7 +197,7 @@ check $? "no consent: every named check PASSes and the learning stores stay off 
 mkworld
 bash "$HERE/setup-memory.sh" --root "$W/src" consent grant >/dev/null 2>&1
 [ "$(bash "$HERE/setup-memory.sh" --root "$W/src" consent status)" = granted ]; check $? "fixture: consent granted for the fixture under the scratch HOME"
-home_sig() { (cd "$HOME" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done); }
+home_sig() { (cd "$HOME" && find . -type f | env LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done); }
 CREC0="$(home_sig)"
 run --branch "$BR"
 { [ "$RC" -eq 0 ] && all_pass && has "info: learning stores: consent 'granted' — 2 learning-store path(s) on $BR (of 2 local)" \

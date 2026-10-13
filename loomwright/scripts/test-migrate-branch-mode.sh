@@ -76,6 +76,12 @@
 #      NOT in the rollback tree (never committed to the default branch) and stays on disk, while
 #      the run history is re-tracked; mutation control: re-tracking every branch path (no
 #      learning-store subtraction) MUST turn it red
+#  24. the review's repro of a git-TRACKED learning store with two owners, consent none AND grant:
+#      $EV force-tracked on main, seed PASS (A = B = 3), a teammate adds a line to $EV on the
+#      metadata branch, untrack-pr -> verify-pr -> owner merge -> after-merge: after-merge PASS with
+#      an empty porcelain, $EV byte-unchanged and still tracked (meta-sync names it
+#      `learning_tracked`), the teammate's line still on the branch; mutation control: a meta-sync.sh
+#      without the tracked-learning hold MUST turn both consent legs red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -731,6 +737,55 @@ if build_mutant "$MUT" 's/^  grep -vxF -f "\$SD\/onbranch\.learn" "\$SD\/onbranc
   if rollback_learning_leg; then no "mutation control REFUTED: re-tracking every branch path kept the learning store out of the rollback tree"; else ok "mutation control: re-tracking every branch path commits the learning store and turns the leg red ($RL_DETAIL)"; fi
   SCRIPT="$SUT"
 else no "mutation control (rollback learning subtraction) did not build — counts as FAIL"; fi
+
+echo "== 24. a tracked learning store diverged on the branch: after-merge stays clean (git owns it) =="
+# diverged_learning_leg <none|grant> — the review's repro: history world with $EV force-tracked on
+# main, seed PASS (A = B = 3), then a TEAMMATE (a clone that does not track it) adds a line to $EV
+# on $BR; untrack-pr -> verify-pr -> owner merge -> after-merge. 0 = after-merge PASS with an empty
+# porcelain, $EV byte-unchanged and still tracked, meta-sync naming it `learning_tracked`, and the
+# teammate's line still on $BR. Detail in DL_DETAIL.
+diverged_learning_leg() {
+  local ev0 brev
+  mkworld history
+  ( cd "$W/A" && mkdir -p .supervisor/eval && echo '{"run":"r1","score":1}' > "$EV" \
+    && git add -f "$EV" && git commit -qm eval && git push -q origin main ) >/dev/null 2>&1 \
+    || { DL_DETAIL="could not commit $EV"; return 1; }
+  [ "$1" = grant ] && bash "$HERE/setup-memory.sh" --root "$W/A" consent grant >/dev/null 2>&1
+  to_protected A || { DL_DETAIL="to_protected failed: $OUT"; return 1; }
+  mb A seed
+  DL_DETAIL="consent=$1 seed rc=$RC A=$(st A seed_a) B=$(st A seed_b)"
+  { [ "$RC" -eq 0 ] && [ "$(st A seed)" = PASS ] && [ "$(st A seed_a)" = 3 ] && [ "$(st A seed_b)" = 3 ]; } || return 1
+  rm -rf "$W/T"; git clone -q "$W/origin.git" "$W/T" 2>/dev/null
+  ( cd "$W/T" && git checkout -q -b "$BR" "origin/$BR" && mkdir -p .supervisor/eval \
+    && { git show "origin/$BR:$EV" 2>/dev/null || cat "$W/A/$EV"; } > "$EV.new" && mv "$EV.new" "$EV" \
+    && echo '{"run":"teammate","score":2}' >> "$EV" && git add -f "$EV" && git commit -qm "teammate eval line" \
+    && git push -q origin "$BR" ) >/dev/null 2>&1 || { DL_DETAIL="$DL_DETAIL; teammate push failed"; return 1; }
+  brev="$(git --git-dir="$W/origin.git" show "$BR:$EV" 2>/dev/null)"
+  ev0="$(cat "$W/A/$EV")"
+  mb A untrack-pr || { DL_DETAIL="$DL_DETAIL; untrack-pr rc=$RC"; return 1; }
+  mb A verify-pr "$(pr_n pr_untrack)" || { DL_DETAIL="$DL_DETAIL; verify-pr rc=$RC: $(printf '%s' "$OUT" | tail -n 2)"; return 1; }
+  owner_merge "$(st A untrack_branch)"
+  mb A after-merge
+  DL_DETAIL="$DL_DETAIL; after-merge rc=$RC state=$(st A after_merge) porcelain='$(porcelain A | tr '\n' ' ')' ev-same=$([ "$(cat "$W/A/$EV")" = "$ev0" ] && echo yes || echo no)"
+  [ "$RC" -eq 0 ] && [ "$(st A after_merge)" = PASS ] && [ -z "$(porcelain A)" ] && [ "$(cat "$W/A/$EV")" = "$ev0" ] \
+    && git -C "$W/A" ls-files --error-unmatch -- "$EV" >/dev/null 2>&1 \
+    && has "meta_sync: learning_tracked $EV — tracked by git, left to git" \
+    && [ "$(git --git-dir="$W/origin.git" show "$BR:$EV" 2>/dev/null)" = "$brev" ]
+}
+diverged_learning_leg none; check $? "consent none: a tracked learning store the branch diverged on is left to git — after-merge PASS, clean, the store unchanged and tracked ($DL_DETAIL)"
+diverged_learning_leg grant; check $? "consent grant: the same, and the branch's copy is never overwritten ($DL_DETAIL)"
+# mutation control: meta-sync.sh WITHOUT the tracked-learning hold (the sibling the SUT calls)
+MUT="$TROOT/mut-ms-tracked"
+mkdir -p "$MUT"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$MUT/"; done
+sed -e 's/^tracked_learning_hold() {$/tracked_learning_hold() { TRACKED_N=0; return 0  # mutant tracked/' "$HERE/meta-sync.sh" > "$MUT/meta-sync.sh"
+if ! cmp -s "$HERE/meta-sync.sh" "$MUT/meta-sync.sh" && grep -qF '# mutant tracked' "$MUT/meta-sync.sh" && bash -n "$MUT/meta-sync.sh"; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  for cs in none grant; do
+    if diverged_learning_leg "$cs"; then no "mutation control REFUTED: meta-sync without the tracked-learning hold kept the consent-$cs leg green"
+    else ok "mutation control: meta-sync without the tracked-learning hold dirties the tracked store and turns the consent-$cs leg red ($DL_DETAIL)"; fi
+  done
+  SCRIPT="$SUT"
+else no "mutation control (meta-sync tracked-learning hold) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"

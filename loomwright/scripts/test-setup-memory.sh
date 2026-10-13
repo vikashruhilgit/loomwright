@@ -2655,7 +2655,7 @@ CS_HOME="$(mkfix)"
 CS_REC="$CS_HOME/.claude/loomwright/meta-sync-consent.json"
 cs() { env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST HOME="$CS_HOME" bash "${CS_SUT:-$MEM}" --root "$1" consent "${@:2}" 2>/dev/null; }
 # tree_sig <dir> — every file under <dir> with its checksum (the containment witness)
-tree_sig() { (cd "$1" && find . -type f -print | LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done); }
+tree_sig() { (cd "$1" && find . -type f -print | env LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done); }
 CSG="$(newgit "https://github.com/Acme/Widget.git")"
 [ "$(cs "$CSG" status)" = "none" ] && ok "(cs) no record -> status prints exactly 'none'" || no "(cs) status without a record did not print 'none'"
 [ -z "$(tree_sig "$CS_HOME")" ] && ok "(cs) status wrote nothing under HOME" || no "(cs) status wrote under HOME"

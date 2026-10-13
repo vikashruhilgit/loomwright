@@ -73,7 +73,8 @@
 #     parallel-automate/05 D9; scrubbed like every other added file)
 #   .supervisor/postmortem/results.jsonl
 #   LEARNING STORES (the stores agents read back to decide better; published only with the
-#   user-scope consent — see CONSENT below; every other managed path is RUN HISTORY):
+#   user-scope consent — see CONSENT below — and never synced at all while git tracks them here —
+#   see TRACKED LEARNING STORES below; every other managed path is RUN HISTORY):
 #   .supervisor/twin/contracts/*.md                    (top level only) ┐ the TWIN SET — synced
 #   .supervisor/twin/.provenance.jsonl                                  ┘ together (see TWIN SET)
 #   .supervisor/agent-memory-proposals/*.md            (top level only)
@@ -198,13 +199,17 @@
 #     => the PREVIOUS B entry (or the derived B), so the next pull still takes R and the next push
 #     never reverts R or deletes a sibling's new file; a union (any union path) the push wrote to
 #     the branch but not locally => the local L; any managed path the push did not consider
-#     (outside --paths-from, or a learning-store path skipped for want of consent) => its previous
-#     / derived B;
+#     (outside --paths-from, a learning-store path skipped for want of consent, or a learning-store
+#     path left to git because it is tracked) => its previous / derived B;
 #   - after a pull or push that REFUSED the twin set it is per-path for the twin set: every twin
 #     path keeps its PREVIOUS base entry (absent when it had none) while every other path is
 #     recorded as above — so a pull no longer records R's tree wholesale then. Recording R for a
 #     refused twin path would make it look agreed: the next push would delete the branch's
 #     contracts this checkout never received and overwrite the branch's provenance chain.
+#   - after a pull that LEFT a tracked learning path to git (TRACKED LEARNING STORES) the same
+#     per-path rule holds for that path: it keeps its PREVIOUS base entry (absent when it had none),
+#     never R's — recording R would make a later sync (once git stops tracking it) read the local
+#     copy as the newer side and push it over the branch's, dropping a sibling's lines.
 #   Recording R's (or the new commit's) branch tree after a push would make the next sync revert a
 #   sibling's newer change or resurrect a deletion. A conflict, a scrub hit or an exhausted retry
 #   leaves meta-base untouched. refs/meta-sync/base points at the same tree purely as a gc anchor
@@ -235,7 +240,8 @@
 #   entry (it is the recovery path for bodies changed outside write-system-contract.sh, not a
 #   chain merger).
 #
-# CONSENT (push only; pull always takes learning-store paths from the branch) — the metadata
+# CONSENT (push only; pull takes learning-store paths from the branch whatever the consent — except
+# a path git tracks, which neither side touches: TRACKED LEARNING STORES below) — the metadata
 # branch can be PUBLIC and the learning stores hold internal reasoning the scrub only
 # pattern-checks, so a push publishes them only when this repo's user-scope record says
 # `granted`. The record lives in the user's scope (one JSON file — setup-memory.sh header: CONSENT names it — keyed by origin's
@@ -258,7 +264,25 @@
 # The record is read only when a push would publish a learning path, so a run-history-only push
 # (trail-pr, lanes) never reads it.
 #
-# PULL — fetch, decide per path, refuse the twin set if it must be (TWIN SET), refuse on any other
+# TRACKED LEARNING STORES — git owns a learning-store path this checkout's git index tracks (a repo
+# that committed its eval file, twin contracts or proposals on its code branch; the migration never
+# untracks one — migrate-branch-mode.sh lists it as an OWNER DECISION extra). Two owners of one
+# file would fight: a pull that wrote the branch's copy into a tracked file would dirty the code
+# branch's working tree on every sync (after-merge's and rollback's clean-tree preconditions then
+# fail). So pull AND push leave every such path alone — never written, deleted, merged, published,
+# reported as a conflict or as `learning_skipped` — and name each on stderr, one line per path:
+#   `meta_sync: learning_tracked <path> — tracked by git, left to git`
+# plus one summary line; its meta-base entry stays the PREVIOUS one (absent when it had none, the
+# twin-set refusal's rule — WHAT meta-base RECORDS), so no later sync deletes the branch copy or
+# overwrites the local file because of it. The index is read with `git ls-files -z` over the
+# learning roots and fails closed (exit 1, nothing changed) when it cannot be read. RUN HISTORY is
+# never looked up: a tracked run-history path keeps the 3-way rule above unchanged (run history is
+# meant to be untracked in branch mode; that is what the migration does). The exit code stays the
+# one run history alone gives. A tracked path the pair rule needs (TWIN SET) is read as it stands
+# locally (pull) or on the branch (push). list-managed is unaffected (it lists, it never syncs).
+#
+# PULL — fetch, decide per path, leave every tracked learning path to git (TRACKED LEARNING
+# STORES), refuse the twin set if it must be (TWIN SET), refuse on any other
 # conflict / not_a_file / containment failure, then write. Every UNION (the three .jsonl union
 # paths and the ordered .dismissed-decisions merge) is built and renamed into place BEFORE any
 # take-R write or delete: the union re-reads the working file and fails closed when it no longer
@@ -267,7 +291,8 @@
 # writes — .supervisor/twin/.provenance.jsonl included — gets FILE_MODE (0666 & ~umask), the mode
 # a plain `>` gives it; write-system-contract.sh sets no mode either.
 #
-# PUSH — fetch, decide per path, build the new tree in a SEPARATE index (a per-run GIT_INDEX_FILE
+# PUSH — fetch, decide per path (a tracked learning path is left to git and never published —
+# TRACKED LEARNING STORES), build the new tree in a SEPARATE index (a per-run GIT_INDEX_FILE
 # under this run's temp dir — never a fixed name in the shared gitdir — seeded from R's tree via
 # read-tree) with explicit per-path update-index adds/removes, write-tree -> commit-tree -p R ->
 # refspec push of that commit to refs/heads/<branch>. Before commit-tree the new tree is checked
@@ -360,7 +385,10 @@
 # (opt-in, never part of the default output) ONE more line follows, last:
 #   `learning: <state>; consent <granted|declined|none|unknown>` — <state> is `conflict <n>` |
 #   `local_ahead <n>` | `remote_ahead` | `synced` over the learning-store paths alone (same
-#   precedence), or the first line's own token when no plan was computed (`never_synced`, …).
+#   precedence), or the first line's own token when no plan was computed (`never_synced`, …). A
+#   learning-store path git tracks (TRACKED LEARNING STORES) is not counted in <state>; when at
+#   least one exists the line ends `; tracked <n>` (absent otherwise, so the line is unchanged), and
+#   an unreadable index makes <state> `unreachable`.
 # Without --paths / --learning status prints only the first line.
 # Precedence: unreachable > no_remote_branch > never_synced > base_branch_mismatch > conflict >
 # local_ahead > remote_ahead.
@@ -375,13 +403,14 @@
 # base_branch_mismatch, a meta-base that is not a regular file, usage error, a list-managed
 # enumeration refusal; 2 scrub hit (push and scrub). `init`
 # is the ONLY command that may create the branch (an empty orphan commit); it refuses when the
-# branch already exists. `twin_refused` and `learning_skipped` are stderr-only and leave the exit
-# code unchanged — they are not refusals of the command, so they are not in this list.
+# branch already exists. `twin_refused`, `learning_skipped` and `learning_tracked` are stderr-only and
+# leave the exit code unchanged — they are not refusals of the command, so they are not in this
+# list (an UNREADABLE git index is: exit 1, nothing changed).
 #
 # Callers: automate-helpers.sh `meta-entry` (pull), automate-trail.sh `trail-pr` (push
 # --paths-from) and automate-lanes.sh `lane-remove` (status --paths) — each passes `--branch <the
 # mode's branch>`, which the mode check accepts. meta-entry's pull takes the learning stores like
-# any managed path; trail-pr's (and the lanes') exact --paths-from lists never name them, so they
+# any managed path (a tracked one excepted — TRACKED LEARNING STORES); trail-pr's (and the lanes') exact --paths-from lists never name them, so they
 # are published by a whole-set push (no --paths-from) only.
 
 set -uo pipefail
@@ -1308,6 +1337,33 @@ consent_skip() {
   hold_rows "$WORK/publish.learning" SKIP
 }
 
+# tracked_learning_hold [quiet:0|1] — pull, push and status --learning. GIT OWNS A TRACKED LEARNING
+# STORE (header: TRACKED LEARNING STORES): every learning-store plan path this checkout's git index
+# tracks is named on stderr (`learning_tracked`, unless quiet) and held (hold_rows TRACKED: never
+# written, deleted, merged, published or reported as a conflict; meta-base keeps its PREVIOUS
+# entry). Run-history paths are never looked up here, so a tracked run-history path syncs exactly
+# as before. The index is read NUL-delimited over the learning roots only, and FAILS CLOSED (non-
+# zero) like every other git read: a failed read is never "nothing tracked". Sets TRACKED_N.
+TRACKED_N=0
+tracked_learning_hold() {
+  TRACKED_N=0
+  : > "$WORK/tracked.learning" || return 1
+  [ -s "$WORK/learning.lst" ] || return 0
+  g ls-files -z -- .supervisor/twin .supervisor/agent-memory-proposals .supervisor/eval > "$WORK/tl.raw" 2>/dev/null \
+    || { warn "could not read this checkout's git index (git ls-files failed)"; return 1; }
+  no_newline_in "$WORK/tl.raw" "the tracked files under the learning-store roots" || return 1
+  tr '\0' '\n' < "$WORK/tl.raw" \
+    | awk -F'\t' -v LF="$WORK/learning.lst" 'FILENAME == LF { c[$1] = 1; next } ($0 in c) && !s[$0]++' "$WORK/learning.lst" - \
+    | env LC_ALL=C sort > "$WORK/tracked.learning" || return 1
+  [ -s "$WORK/tracked.learning" ] || return 0
+  TRACKED_N="$(wc -l < "$WORK/tracked.learning" | tr -d ' ')"
+  if [ "${1:-0}" = "0" ]; then
+    sed 's/^/meta_sync: learning_tracked /; s/$/ — tracked by git, left to git/' "$WORK/tracked.learning" >&2
+    warn "$TRACKED_N learning-store path(s) above are tracked by this checkout's git index — git owns them: not written, deleted, merged or published here, meta-base keeps their previous entry; run history still syncs"
+  fi
+  hold_rows "$WORK/tracked.learning" TRACKED
+}
+
 # twin_sha — sha256 of stdin, with the SAME tool order read-system-contract.sh uses.
 twin_sha() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1
@@ -1400,13 +1456,14 @@ twin_gate() {
   return 0
 }
 
-# build_pull_base — the meta-base a pull records after REFUSING the twin set: R's entry for every
-# path, except every twin path, which keeps its previous base entry (hold_rows wrote it into the
-# newbase column; "-" = absent). Prints the tree SHA.
+# build_pull_base — the meta-base a pull records after REFUSING the twin set or leaving a tracked
+# learning path to git: R's entry for every path, except every held path (HOLD: a refused twin path;
+# TRACKED: a learning path git tracks), which keeps its previous base entry (hold_rows wrote it into
+# the newbase column; "-" = absent). Prints the tree SHA.
 build_pull_base() {
   rm -f "$META_BASE_INDEX"
   GIT_INDEX_FILE="$META_BASE_INDEX" g read-tree --empty || return 1
-  awk -F'\t' '{ v = ($1 == "HOLD") ? $5 : $4; if (v != "-") print "100644 " v "\t" $2 }' "$WORK/plan" \
+  awk -F'\t' '{ v = ($1 == "HOLD" || $1 == "TRACKED") ? $5 : $4; if (v != "-") print "100644 " v "\t" $2 }' "$WORK/plan" \
     | GIT_INDEX_FILE="$META_BASE_INDEX" g update-index --index-info || return 1
   GIT_INDEX_FILE="$META_BASE_INDEX" g write-tree
 }
@@ -1443,6 +1500,7 @@ cmd_pull() {
   compute_plan 0; rc=$?
   [ "$rc" -eq 2 ] && die "$BASE_REFUSAL"
   [ "$rc" -eq 0 ] || exit 1
+  tracked_learning_hold || die "could not check which learning-store paths git tracks; nothing was changed"
   twin_gate pull 0 || die "could not evaluate the twin set; nothing was changed"
   report_conflicts 0 || exit 1
   report_not_a_file 0 || exit 1
@@ -1490,10 +1548,11 @@ cmd_pull() {
       written=$((written + 1))
     done < "$WORK/plan"
   done
-  # A refused twin set must not look agreed: meta-base is then per-path (header: WHAT meta-base
-  # RECORDS) — R's entry everywhere except the twin paths, which keep their previous entry.
-  if [ "$TWIN_REFUSED" = "1" ]; then
-    nb="$(build_pull_base)" || die "could not build the per-path meta-base (twin set refused); meta-base untouched"
+  # A refused twin set or a left-alone tracked learning path must not look agreed: meta-base is then
+  # per-path (header: WHAT meta-base RECORDS) — R's entry everywhere except the held paths, which
+  # keep their previous entry.
+  if [ "$TWIN_REFUSED" = "1" ] || [ "$TRACKED_N" != "0" ]; then
+    nb="$(build_pull_base)" || die "could not build the per-path meta-base (held paths); meta-base untouched"
   else
     nb="$RT"
   fi
@@ -1526,6 +1585,7 @@ cmd_push() {
     # meta-base entry — header: TWIN SET). Learning-store paths publish only with consent.
     abort_sel=1
     [ "$HAVE_BASE" = "1" ] || abort_sel=0
+    tracked_learning_hold || die "could not check which learning-store paths git tracks; nothing was pushed"
     consent_skip || die "could not apply the learning-store consent; nothing was pushed"
     twin_gate push "$abort_sel" || die "could not evaluate the twin set; nothing was pushed"
     report_conflicts "$abort_sel" || exit 1
@@ -1607,11 +1667,13 @@ split_learning_rows() {
     && touch "$WORK/plan.learning" && mv -f "$WORK/plan.rh" "$WORK/plan"
 }
 
-# status_done <learning state> — prints the opt-in learning line (--learning) and exits 0.
+# status_done <learning state> — prints the opt-in learning line (--learning) and exits 0; a
+# `; tracked <n>` suffix names how many learning-store paths git tracks here (left to git, so not
+# counted in <state>) — only when there is at least one, so the line is unchanged otherwise.
 status_done() {
   if [ "$STATUS_LEARNING" = "1" ]; then
     read_consent
-    echo "learning: $1; consent ${CONSENT%% *}"
+    echo "learning: $1; consent ${CONSENT%% *}$([ "$TRACKED_N" = "0" ] || printf '; tracked %s' "$TRACKED_N")"
   fi
   exit 0
 }
@@ -1637,8 +1699,12 @@ cmd_status() {
   [ "$rc" -eq 2 ] && { echo "base_branch_mismatch"; status_done base_branch_mismatch; }
   [ "$rc" -eq 0 ] || { echo "unreachable"; status_done unreachable; }
   [ "$HAVE_BASE" = "1" ] || { echo "never_synced"; status_done never_synced; }
+  # --learning only: tracked learning paths are git's (header: TRACKED LEARNING STORES) — held out
+  # of the learning state and counted on the learning line; an unreadable index makes it unreachable.
+  ls=""
+  if [ "$STATUS_LEARNING" = "1" ]; then tracked_learning_hold 1 2>/dev/null || { TRACKED_N=0; ls="unreachable"; }; fi
   split_learning_rows || { echo "unreachable"; status_done unreachable; }
-  ls="$(learning_state)"
+  [ -n "$ls" ] || ls="$(learning_state)"
   n="$(count_outcome CONFLICT)"
   [ "$n" -gt 0 ] && { echo "conflict $n"; status_paths CONFLICT; status_done "$ls"; }
   n=$(( $(count_outcome TAKE_L) + $(count_outcome UNION) ))

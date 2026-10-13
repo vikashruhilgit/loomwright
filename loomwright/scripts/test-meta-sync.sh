@@ -228,6 +228,14 @@
 #  82. round trip: write-system-contract.sh contracts + proposals, eval files and a dismissed ledger
 #      pushed with consent; read-system-contract.sh in a fresh clone prints the same
 #      `twin_store_status: healthy (emitted 2, …)`; the other stores are byte-identical
+#  83. a TRACKED learning store (owner decision a: git owns it): B force-tracks $EV with a local line
+#      while a sibling appends another on the branch -> B's pull leaves the tracked file byte-unchanged
+#      (no union written, porcelain empty) naming `learning_tracked <path> — tracked by git, left to
+#      git`, run history still arrives, exit 0, meta-base keeps the previous $EV entry; B's push never
+#      publishes it (branch copy unchanged) while its run history lands; status --learning ends
+#      `; tracked 1`
+#  84. mutation control: without the tracked-learning hold (83) turns red (the pull unions into the
+#      tracked file)
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -2617,6 +2625,51 @@ check $? "read-system-contract.sh in the fresh clone: '$(rsc F)' = the source's 
 okf=0
 for p in "$PR/p1.md" "$EV" "$EB" "$DL" "$TP"; do cmp -s "$W/A/$p" "$W/F/$p" || { okf=1; echo "    differs: $p"; }; done
 [ "$okf" -eq 0 ]; check $? "proposals, dismissed ledger, eval files and the provenance chain are byte-identical in the fresh clone"
+
+echo "== 83. a tracked learning store is git's: pull and push leave it alone, run history syncs =="
+# tracked_leg — A publishes $EV (consent granted) and B pulls it; B force-tracks $EV on its code
+# branch with a local line while A appends another on the branch; then B pulls and pushes. 0 = the
+# tracked file byte-unchanged and named, the branch copy unchanged by B's push, run history both
+# ways, meta-base's $EV entry the one agreed before tracking, exit 0 throughout. Detail in TK_DETAIL.
+tracked_leg() {
+  local b0 r0 base_ev v1
+  TK_DETAIL=""
+  mkworld; clone A; clone B; ms A init; grant A
+  put A "$EV" '{"run":1}'; put A "$RQ/x.md" "x"; ms A push; ms B pull
+  [ "$RC" -eq 0 ] || { TK_DETAIL="setup pull rc=$RC"; return 1; }
+  v1="$(git -C "$W/B" hash-object --no-filters -- "$W/B/$EV")"
+  printf '%s\n' '{"run":"b-local"}' >> "$W/B/$EV"
+  ( cd "$W/B" && git add -f -- "$EV" && git commit -qm "track eval" ) >/dev/null 2>&1 || { TK_DETAIL="could not track $EV"; return 1; }
+  printf '%s\n' '{"run":2}' >> "$W/A/$EV"; put A "$RQ/y.md" "y"; ms A push
+  [ "$RC" -eq 0 ] || { TK_DETAIL="sibling push rc=$RC"; return 1; }
+  b0="$(cat "$W/B/$EV")"; r0="$(br_show "$EV")"
+  ms B pull
+  base_ev="$(git -C "$W/B" ls-tree "$(head -n 1 "$W/B/.git/meta-base")" -- "$EV" 2>/dev/null | awk '{print $3}')"
+  TK_DETAIL="pull rc=$RC same-bytes=$([ "$(cat "$W/B/$EV")" = "$b0" ] && echo yes || echo no) y=$(get B "$RQ/y.md") porcelain='$(porcelain B | tr '\n' ' ')' base-ev=${base_ev:-none}"
+  { [ "$RC" -eq 0 ] && has_line "meta_sync: learning_tracked $EV — tracked by git, left to git" \
+    && [ "$(cat "$W/B/$EV")" = "$b0" ] && [ "$(get B "$RQ/y.md")" = "y" ] && [ -z "$(porcelain B)" ] \
+    && [ "$base_ev" = "$v1" ]; } || return 1
+  put B "$RQ/z.md" "z"; ms B push
+  TK_DETAIL="$TK_DETAIL; push rc=$RC branch-ev-same=$([ "$(br_show "$EV")" = "$r0" ] && echo yes || echo no) z-on-branch=$(br_has "$RQ/z.md" && echo yes || echo no)"
+  { [ "$RC" -eq 0 ] && has_line "meta_sync: learning_tracked $EV — tracked by git, left to git" \
+    && ! grep -q "learning_skipped" <<<"$OUT" && [ "$(br_show "$EV")" = "$r0" ] && br_has "$RQ/z.md" \
+    && [ "$(cat "$W/B/$EV")" = "$b0" ] && git -C "$W/B" ls-files --error-unmatch -- "$EV" >/dev/null 2>&1; } || return 1
+  ms B status --learning
+  TK_DETAIL="$TK_DETAIL; status='$(printf '%s' "$OUT" | tr '\n' '|')'"
+  [ "$(printf '%s\n' "$OUT" | sed -n 2p)" = "learning: synced; consent granted; tracked 1" ]
+}
+tracked_leg; check $? "a tracked learning store is left to git: pull and push leave it byte-unchanged and name it, run history syncs, meta-base keeps the agreed entry ($TK_DETAIL)"
+
+echo "== 84. mutation control: without the tracked-learning hold (83) must turn red =="
+MUT_TK="$TROOT/mutant-tracked"
+if build_mutant "$MUT_TK" 's/^tracked_learning_hold() {$/tracked_learning_hold() { TRACKED_N=0; return 0  # mutant tracked/' '# mutant tracked'; then
+  SCRIPT="$MUT_TK/meta-sync.sh"
+  if tracked_leg; then no "mutation control (tracked) REFUTED: the leg stayed green without the hold ($TK_DETAIL)"
+  else ok "mutation control (tracked): without the hold the tracked file is rewritten — (83) is load-bearing ($TK_DETAIL)"; fi
+  SCRIPT="$SUT"
+else
+  no "mutation control (tracked): could not build the mutant — control inconclusive"
+fi
 
 echo
 echo "test-meta-sync: $pass passed, $fail failed"

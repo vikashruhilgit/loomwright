@@ -53,7 +53,10 @@
 #                       *.dismissed-decisions).
 #                       Tracked .supervisor/ paths outside the run-history set (a tracked learning
 #                       store included) are LISTED for an owner decision, never dropped or
-#                       untracked. A != B stops the flow before untrack-pr.
+#                       untracked; git alone owns a tracked learning store from then on —
+#                       meta-sync.sh pull / push leave it alone (`learning_tracked`), so a branch
+#                       copy that diverges never dirties after-merge's or rollback's clean tree.
+#                       A != B stops the flow before untrack-pr.
 #   untrack-pr          (history) on a NEW branch: the branch-mode block, `git rm -r --cached` of the
 #                       seeded A set, one commit, push, open a PR carrying the A/B counts, the empty
 #                       diffs, the pre-migration SHA and the verify-pr instruction — never merged.
@@ -199,7 +202,8 @@ init_default_branch() { local x; x="$(mode_branch)"; printf '%s' "${x:-loomwrigh
 # untracks. Every consumer (detect_case, ab_check's A, untrack-pr via a.list, after-merge's
 # re-checks) compares run history only. A TRACKED learning store (twin contracts, provenance,
 # proposals, eval files) is never in it: the migration never untracks one — it stays tracked and
-# ab_check lists it as an OWNER DECISION extra, exactly as before the managed set grew.
+# ab_check lists it as an OWNER DECISION extra, exactly as before the managed set grew; meta-sync.sh
+# leaves a tracked learning store to git (its TRACKED LEARNING STORES rule), so no pull dirties it.
 tracked_managed() { bash "$MS" list-managed --tracked --run-history --root "$ROOT"; }
 # tracked_learning <out> — the TRACKED learning-store paths (index), sorted: the managed set minus
 # run history, read through the same predicate (rb_retrack_from_branch never deletes one from disk)

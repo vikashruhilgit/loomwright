@@ -1695,7 +1695,8 @@ cannot recognise proprietary prose. They are published ONLY when you record cons
 (`setup-memory.sh consent grant`; `consent decline` records a no; `consent status` reads it). The
 record lives in your user scope, ~/.claude/loomwright/meta-sync-consent.json, keyed by this repo's
 origin — a repo file can never grant it. Without a `granted` record every push skips them and names
-each one (`learning_skipped`); a pull still brings them in from the branch.
+each one (`learning_skipped`); a pull still brings them in from the branch. A learning-store file
+this repo TRACKS in git is left to git: no pull or push touches it (`learning_tracked`).
 What stays IGNORED here: .claude/worktrees/, .claude/settings.local.json, .supervisor/logs/,
 .supervisor/jobs/pending/ and in-progress/, every run-history path above (the ledger included),
 any nested `.supervisor/` tree, and everything else under .claude/ and .supervisor/.
