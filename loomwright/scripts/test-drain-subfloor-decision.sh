@@ -214,7 +214,7 @@ if [ -s "$LM/wait-for-checks-line.sh" ] && ! cmp -s "$HERE/wait-for-checks-line.
   mout="$(run_table "$LM/drain-subfloor-decision.sh")"
   pass=$saved_pass; fail=$saved_fail
   reds="$(printf '%s\n' "$mout" | grep -c '  FAIL: ' || true)"
-  if [ "${reds:-0}" -ge 1 ] && printf '%s\n' "$mout" | grep -q '  FAIL: D18 '; then
+  if [ "${reds:-0}" -ge 1 ] && grep -q '  FAIL: D18 ' <<<"$mout"; then
     ok "M libwsplit — a word-splitting shared reader turns $reds case(s) red (D18 among them)"
   else
     no "M libwsplit — the word-splitting reader SURVIVED the table"
