@@ -36,7 +36,9 @@
 #           fixtures under fixtures/rule-conformance/advisory/ (override grammar with negative
 #           controls, story->brief byte-identical carry, reader trace, plan-waves --lint). PART 4
 #           also kills mutants that delete 17c, Launch Pad action 2b, or the PO 3a step, and one
-#           that moves the 3a step back into Context Setup step 4 (the order check must catch it). Prompt
+#           that moves the 3a step back into Context Setup step 4 (the order check must catch it),
+#           one that restores a Proceed branch persisting `pending`, and one that makes step 4's
+#           can't-ask branch terminal again (the flow check must catch both). Prompt
 #           BEHAVIOUR (a model actually flagging the contradiction) is the live probe on those
 #           fixtures, not this test.
 #
@@ -304,21 +306,46 @@ POD_A="$(po_d "$PO")"; POD_C="$(po_d "$POC")"
 bhas "$POD_A" "bash \"$ROOTVAR/scripts/read-rules.sh\" --with-ids" && ok "PO 3a: runs the reader with --with-ids" || no "PO 3a reader call"
 for s in "$CONFLICTS_H" 'Conflicts with house rule <id>' "Owner's choice: pending" 'never executes' 'never resolve' 'before `## Depends on`' \
          'BEFORE anything is persisted, in both modes' 'loops back to story drafting (2 above, max 1 iteration)' \
-         '`po_gate: needs_owner (<n> flags)`' '`<n>` = house-rule conflicts plus any Assumption-Check flags' 'persist nothing'; do
+         '`po_gate: needs_owner (<n> flags)`' '`<n>` = prerequisite flags + architecture conflicts + house-rule conflicts' 'persist nothing'; do
   bhas "$POD_A" "$s" && ok "PO 3a names: $s" || no "PO 3a lacks: $s"
 done
 [ -n "$POD_A" ] && [ "$POD_A" = "$POD_C" ] && ok "PO 3a block byte-identical in agent and command (mirror)" || no "PO 3a block differs agent vs command"
+# PR #518 review round 2 — BEHAVIOUR, not presence:
+#  (1) an answered gate never persists `pending` (the default PO -> Orchestrator path runs no rule
+#      check, so a persisted `pending` would never be asked again): advisory "Proceed anyway" writes
+#      the `Rule override:` line, with a follow-up and an honest fallback reason; the must-rule
+#      question offers no Proceed/override option at all;
+#  (2) step 4's can't-ask branch is NON-terminal (records flags, continues to drafting and 3a) and
+#      the run has exactly ONE `po_gate` emission point, inside 3a.
+EMIT='end the run with `po_gate: needs_owner (<n> flags)`'
+po_flow_ok() {
+  g="$(block "$1" '^3\. \*\*Gate\.\*\*' "^4\\. \\*\\*Can't-ask branch")"
+  [ -n "$g" ] || return 1
+  bhas "$g" "a persisted story never carries \`Owner's choice: pending\`" || return 1
+  grep -qE "still \`Owner's choice: pending\`|persists the stories with each line" <<<"$g" && return 1
+  adv="$(grep -F -- '   - **Advisory rule**' <<<"$g")"
+  bhas "$adv" "\"Proceed anyway\" is the owner's override: set \`Owner's choice: override\` and write \`- Rule override:" || return 1
+  bhas "$adv" 'ask ONE follow-up question' && bhas "$adv" '`owner chose Proceed anyway; no reason given`' || return 1
+  must="$(grep -F -- '   - **`must` rule**' <<<"$g")"
+  bhas "$must" '"Refine requirements" / "Change the rule via /rules" / "Abort"' || return 1
+  bhas "$must" 'Proceed' && return 1
+  cab="$(grep -F -- "   **Can't-ask branch (\`--non-interactive\`" "$1")"
+  bhas "$cab" 'CONTINUE to story drafting and the Pre-persist house-rule check (Responsibilities 3a)' || return 1
+  bhas "$cab" 'does not stop the run' || return 1
+  bhas "$cab" 'end with' && return 1
+  [ "$(grep -cF -- "$EMIT" "$1")" = 1 ] || return 1
+  bhas "$(po_d "$1")" "$EMIT" || return 1
+  return 0
+}
 for f in "$PO" "$POC"; do
-  CAB="$(grep -F -- "   **Can't-ask branch (\`--non-interactive\`" "$f")"
-  if [ -n "$CAB" ] && bhas "$CAB" '(`<n>` = prerequisite flags + architecture conflicts)' && ! bhas "$CAB" 'house-rule'; then
-    ok "$(basename "$(dirname "$f")")/product-owner.md: the step-4 can't-ask count no longer claims house-rule conflicts"
-  else
-    no "$(basename "$(dirname "$f")")/product-owner.md: the step-4 can't-ask line still counts house-rule conflicts (they cannot exist yet)"
-  fi
+  po_flow_ok "$f" && ok "$(basename "$(dirname "$f")")/product-owner.md: answered gate never persists pending, must-rule gate has no Proceed, step 4 continues, one po_gate emission (in 3a)" \
+    || no "$(basename "$(dirname "$f")")/product-owner.md: gate/continuation behaviour wrong (pending persisted, must-rule Proceed, terminal step 4, or po_gate emitted other than once in 3a)"
 done
 # 5d — the gate is catalogued human-only and inventoried with its can't-ask status.
 CAT="$(bash "$HERE/lane-policy.sh" catalog 2>/dev/null | awk -F'\t' '$1 == "LP-RULE-OVR" { print $2 "|" $3 }')"
 [ "$CAT" = "human-only|record-override|honor-rule|discard" ] && ok "lane catalog: LP-RULE-OVR human-only with its labels" || no "lane catalog row: '$CAT'"
+CAT2="$(bash "$HERE/lane-policy.sh" catalog 2>/dev/null | awk -F'\t' '$1 == "PO-RULE-MUST" { print $2 "|" $3 }')"
+[ "$CAT2" = "human-only|Refine requirements|Change the rule via /rules|Abort" ] && ok "lane catalog: PO-RULE-MUST human-only, no Proceed label" || no "lane catalog PO-RULE-MUST row: '$CAT2'"
 INV="$(block "$ARCH" '^## Question-gate inventory' '^## Failure Escalation Summary')"
 INVROW="$(grep -F '| Launch Pad house-rule override NEEDS_HUMAN |' <<<"$INV")"
 grep -qF 'rule_conflict_non_interactive' <<<"$INVROW" \
@@ -403,11 +430,22 @@ if [ "${SEAM_NO_MUTATION:-0}" != "1" ]; then
          f && /^#### 4\. / {f=0} /^#### 3a\. Pre-persist house-rule check$/ {f=1} f {next}
          /^   \*\*Output \(appended to Context Read section\):\*\*$/ { printf "%s", blk } { print }' \
       "$WORK/$c.md" "$WORK/$c.md" > "$WORK/pomv-$c-m.md"
+    # pend: restore round 1's Proceed text (persists `pending`). term: restore step 4's terminal wording.
+    MUT_LINE="   - **Advisory rule** — options \"Proceed anyway\" / \"Refine requirements\" / \"Abort\". \"Proceed anyway\" persists the stories with each line still \`Owner's choice: pending\`, so Launch Pad's Plan Review asks again." \
+      awk 'index($0, "   - **Advisory rule**") == 1 { print ENVIRON["MUT_LINE"]; next } { print }' "$WORK/$c.md" > "$WORK/pend-$c-m.md"
+    MUT_FROM="record the flags, never choose an option on the owner's behalf, and CONTINUE to story drafting and the Pre-persist house-rule check (Responsibilities 3a), read-only. This branch does not stop the run: 3a's can't-ask branch emits the one combined machine-readable line \`po_gate: needs_owner (<n> flags)\` at the very end, counting these flags too." \
+    MUT_TO="output the flags and the draft stories, then end with the machine-readable line \`po_gate: needs_owner (<n> flags)\` (\`<n>\` = prerequisite flags + architecture conflicts). Never choose an option on the owner's behalf." \
+      awk '{ i = index($0, ENVIRON["MUT_FROM"]); if (i) $0 = substr($0, 1, i - 1) ENVIRON["MUT_TO"] substr($0, i + length(ENVIRON["MUT_FROM"])); print }' "$WORK/$c.md" > "$WORK/term-$c-m.md"
+  done
+  for mm in pend term; do
+    if po_flow_ok "$WORK/po.md" && ! po_flow_ok "$WORK/$mm-po-m.md"; then ok "flow predicate: passes the real text, fails the $mm mutant"
+    else no "flow predicate does not reject the $mm mutant"; fi
   done
   if po_order_ok "$WORK/po.md" && ! po_order_ok "$WORK/pomv-po-m.md"; then ok "order predicate: passes the real step, fails the moved-back mutant"
   else no "order predicate does not tell the real position from the moved-back mutant"; fi
   for spec in "pr17c-m:lp:pr17c-m:po:poc:pr" "lp2b-m:lp2b-m:pr:po:poc:lp" \
-              "pod-m:lp:pr:pod-po-m:pod-poc-m:po" "pomv-m:lp:pr:pomv-po-m:pomv-poc-m:po"; do
+              "pod-m:lp:pr:pod-po-m:pod-poc-m:po" "pomv-m:lp:pr:pomv-po-m:pomv-poc-m:po" \
+              "pend-m:lp:pr:pend-po-m:pend-poc-m:po" "term-m:lp:pr:term-po-m:term-poc-m:po"; do
     IFS=: read -r m a b c d orig <<<"$spec"
     probe="$WORK/$c.md"; case "$m" in pr*) probe="$WORK/$b.md" ;; lp*) probe="$WORK/$a.md" ;; esac
     if [ ! -s "$probe" ]; then no "mutant $m is empty"; continue; fi

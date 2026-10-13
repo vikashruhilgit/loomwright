@@ -122,6 +122,8 @@ _lp_catalog_rows() {
     '/automate READY park: waive a running-system Validation step validation-gate reports unrun (owner words from the answer note; cannot ask ⇒ stays escalated, validation_unrun)'
   _lp_row PO-ASSUME    human-only 'Proceed anyway|Refine requirements|Abort' \
     'Product Owner assumption-check soft gate and pre-persist house-rule check (/automate prompt intake)'
+  _lp_row PO-RULE-MUST human-only 'Refine requirements|Change the rule via /rules|Abort' \
+    'Product Owner pre-persist house-rule check on a must-rule conflict (no override option: a must rule is never overridden)'
   _lp_row LP-CLARIFY   human-only '(free text)' \
     'Launch Pad Phase 2 clarification'
   _lp_row LP-NO-GO     human-only 'Override and continue|Revise goal|Abort' \
