@@ -684,8 +684,9 @@ dedupe_rate() {
 # grep-able token or path across >= 3 of its supporting findings. Sets CC_CANDIDATE (empty string
 # when no candidate qualifies) and CC_SUPPORT (0 when empty). This is advisory data shown to a human
 # in the harvester's own report/JSON — it is NEVER passed to add-rule.sh by this script (check stays
-# null, AC9b unchanged; the separately-printed WITH-check invocation carries only the LITERAL text
-# `--check "$CANDIDATE"`, for a human-confirmed delivery to fill in) and NEVER executed by this script.
+# null, AC9b unchanged; the separately-printed WITH-check invocation carries only the LITERAL texts
+# `--check "$CANDIDATE"` and `--proof "$PROOF"`, for a human-confirmed delivery to fill in) and NEVER
+# executed by this script (proving it is prove-rule-check.sh's job, at /dreaming delivery time).
 #
 # THE FIXED TEMPLATE ALLOWLIST (exactly two strings; <p> = the token, <paths> = the scoped globs):
 #   absence : grep -rnE -- '<p>' <paths>; test $? -eq 1
@@ -852,12 +853,15 @@ compose_add_rule() {
   ADD_RULE_CMD="$ADD_RULE_CMD --source $(shq "$SOURCE_VAL") < /dev/null"
   # The "Accept rule WITH check" invocation (PR #267 Phase 4.5 finding 2). rules-check.sh selects
   # ONLY `enforcement == "must"` rules, so a rule accepted WITH its check but stored `advisory` could
-  # never run under --confirm or --if-stamped. This path therefore composes `--enforcement must`
-  # (add-rule.sh has always accepted it — the writer is unmodified). `--check "$CANDIDATE"` is the
-  # LITERAL text `"$CANDIDATE"`: the candidate itself is never spliced into this string — the
-  # delivery step loads it through a quoted heredoc (commands/dreaming.md, delivery step 3). The
-  # plain ADD_RULE_CMD above (the default Accept path) is byte-unchanged and never carries --check.
-  ADD_RULE_CMD_WITH_CHECK="add-rule.sh --category $(shq "$category") --statement $(shq "$statement") --enforcement must$at_part --source $(shq "$SOURCE_VAL") --check \"\$CANDIDATE\" < /dev/null"
+  # never run under --confirm or --if-stamped. This path therefore composes `--enforcement must`.
+  # Since verified rule checks (D2) add-rule.sh REFUSES a must + check add without a PROVEN proof
+  # for that exact check, so the line also ends in `--proof "$PROOF"` — the proof file
+  # prove-rule-check.sh wrote at delivery (commands/dreaming.md, the proof step). `--check
+  # "$CANDIDATE"` and `--proof "$PROOF"` are LITERAL texts: the candidate itself is never spliced
+  # into this string — the delivery step loads it through a quoted heredoc (commands/dreaming.md,
+  # delivery step 3). The plain ADD_RULE_CMD above (the default Accept path) is byte-unchanged and
+  # never carries --check.
+  ADD_RULE_CMD_WITH_CHECK="add-rule.sh --category $(shq "$category") --statement $(shq "$statement") --enforcement must$at_part --source $(shq "$SOURCE_VAL") --check \"\$CANDIDATE\" --proof \"\$PROOF\" < /dev/null"
 }
 
 # ---------------------------------------------------------------------------

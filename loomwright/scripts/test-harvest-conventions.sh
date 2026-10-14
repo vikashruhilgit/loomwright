@@ -1610,12 +1610,14 @@ grep -F '     invocation: ' "$ROOT/cc.txt" > "$ROOT/cc_inv.txt"
   && ok "(cc2b) the DEFAULT Accept invocation never passes --check and stays --enforcement advisory even when a check_candidate is shown (AC9b freeze holds)" \
   || no "(cc2b) the default Accept invocation changed: $(cat "$ROOT/cc_inv.txt")"
 # (cc2c) the "Accept rule WITH check" invocation composes --enforcement must (rules-check.sh selects
-# ONLY must-rules — an advisory rule's check can never run) and carries the LITERAL "$CANDIDATE".
+# ONLY must-rules — an advisory rule's check can never run), carries the LITERAL "$CANDIDATE", and —
+# since verified rule checks (D2), where add-rule.sh refuses a must + check add without a PROVEN
+# proof — the LITERAL --proof "$PROOF" right before the stdin detachment.
 grep -F '     invocation (Accept rule WITH check): ' "$ROOT/cc.txt" > "$ROOT/cc_invwc.txt"
 [ -s "$ROOT/cc_invwc.txt" ] && grep -qF -- '--enforcement must' "$ROOT/cc_invwc.txt" \
-  && grep -qF -- '--check "$CANDIDATE" < /dev/null' "$ROOT/cc_invwc.txt" \
+  && grep -qF -- '--check "$CANDIDATE" --proof "$PROOF" < /dev/null' "$ROOT/cc_invwc.txt" \
   && ! grep -qF -- '--enforcement advisory' "$ROOT/cc_invwc.txt" \
-  && ok "(cc2c) the WITH-check invocation composes --enforcement must + the literal --check \"\$CANDIDATE\" (never the spliced candidate)" \
+  && ok "(cc2c) the WITH-check invocation composes --enforcement must + the literal --check \"\$CANDIDATE\" --proof \"\$PROOF\" (never the spliced candidate)" \
   || no "(cc2c) WITH-check invocation wrong or missing: $(cat "$ROOT/cc_invwc.txt")"
 
 # (p-json) --json emits the SAME candidate as a machine-readable `check_candidate` key; `check` null.
@@ -1857,10 +1859,13 @@ for g in './.agent/*' './.*' './.git/*'; do [ -n "$(ud_cand "$g")" ] && ud_bad="
   || no "(ud3) ./-prefixed glob(s) still given a candidate:$ud_bad"
 
 # (u-e2e) finding 2 — END TO END: harvest a candidate, accept it WITH check via the DOCUMENTED
-# delivery shape (commands/dreaming.md delivery step 3: the printed WITH-check invocation, --confirm
-# appended, stdin redirect kept, $CANDIDATE loaded through a QUOTED heredoc), then the SOLE execution
-# path runs it: `rules-check.sh --confirm` ⇒ 1/1, then `--if-stamped` replays 1/1. Old code composed
+# delivery shape (commands/dreaming.md: the proof step — the counterexample patch loaded through a
+# QUOTED heredoc into a `mktemp -d` dir outside the repo, `prove-rule-check.sh --confirm` writing
+# $PROOF — then delivery step 3: the printed WITH-check invocation, --confirm appended, stdin redirect
+# kept, $CANDIDATE loaded through a QUOTED heredoc), then the SOLE execution path for a STORED check
+# runs it: `rules-check.sh --confirm` ⇒ 1/1, then `--if-stamped` replays 1/1. Old code composed
 # `--enforcement advisory`, which rules-check.sh never selects ⇒ `Checks passed: 0/0`.
+PROVER_E2E="$SCRIPT_DIR/prove-rule-check.sh"
 CHECKER_E2E="$SCRIPT_DIR/rules-check.sh"
 RQ2="$(new_repo)"
 HQ2="$ROOT/home_q2"; mkdir -p "$HQ2"
@@ -1876,17 +1881,28 @@ Q2_INV="$(sed -n 's/^     invocation (Accept rule WITH check): //p' "$ROOT/q2.tx
 if [ -n "$Q2_CAND" ] && [ -n "$Q2_INV" ]; then
   ok "(u2a) premise: the harvest printed a check_candidate AND a WITH-check invocation"
   # Documented delivery shape: `add-rule.sh` → the real writer path, `--confirm` inserted before the
-  # kept `< /dev/null`. The candidate is loaded verbatim through a quoted heredoc at column 0.
+  # kept `< /dev/null`. The candidate is loaded verbatim through a quoted heredoc at column 0, and so
+  # is the counterexample patch (one new src/a/ file carrying the token the absence check forbids).
+  # The patch, the proof and the prover's scratch all live under `mktemp -d` OUTSIDE the repo; TMPDIR
+  # points mktemp into this suite's own temp root.
   Q2_RUN="${Q2_INV%< /dev/null}"
   Q2_RUN="${Q2_RUN#add-rule.sh }"
   Q2_SCRIPT="$ROOT/q2_deliver.sh"
+  Q2_TMP="$ROOT/q2_tmp"; mkdir -p "$Q2_TMP"
   {
     printf 'CANDIDATE="$(cat <<'"'"'LOOMWRIGHT_CHECK_CANDIDATE'"'"'\n%s\nLOOMWRIGHT_CHECK_CANDIDATE\n)"\n' "$Q2_CAND"
-    printf 'cd %q && bash %q %s--confirm < /dev/null\n' "$RQ2" "$ADD_RULE" "$Q2_RUN"
+    printf 'PROVE_DIR="$(mktemp -d)"\n'
+    printf 'cat > "$PROVE_DIR/counterexample.patch" <<'"'"'LOOMWRIGHT_COUNTEREXAMPLE_PATCH'"'"'\n'
+    printf -- '--- /dev/null\n+++ b/src/a/z.md\n@@ -0,0 +1 @@\n+citation reference 19\n'
+    printf 'LOOMWRIGHT_COUNTEREXAMPLE_PATCH\n'
+    printf 'PROOF="$PROVE_DIR/proof.json"\n'
+    printf 'cd %q || exit 9\n' "$RQ2"
+    printf 'bash %q --check "$CANDIDATE" --counterexample "$PROVE_DIR/counterexample.patch" --out "$PROOF" --confirm < /dev/null || exit 8\n' "$PROVER_E2E"
+    printf 'bash %q %s--confirm < /dev/null\n' "$ADD_RULE" "$Q2_RUN"
   } > "$Q2_SCRIPT"
-  bash "$Q2_SCRIPT" >/dev/null 2>&1; q2_rc=$?
+  TMPDIR="$Q2_TMP" bash "$Q2_SCRIPT" >/dev/null 2>&1; q2_rc=$?
   [ "$q2_rc" -eq 0 ] && ok "(u2b) the documented WITH-check delivery wrote the rule (exit 0)" \
-    || no "(u2b) delivery exited $q2_rc: $(bash "$Q2_SCRIPT" 2>&1 | tail -3)"
+    || no "(u2b) delivery exited $q2_rc (8 = the proof was not PROVEN): $(TMPDIR="$Q2_TMP" bash "$Q2_SCRIPT" 2>&1 | tail -3)"
   q2_enf="$(cat "$RQ2"/.agent/rules/*.json 2>/dev/null | jq -r '.[0].enforcement' 2>/dev/null)"
   q2_chk="$(cat "$RQ2"/.agent/rules/*.json 2>/dev/null | jq -r '.[0].check' 2>/dev/null)"
   [ "$q2_enf" = "must" ] && [ "$q2_chk" = "$Q2_CAND" ] \
