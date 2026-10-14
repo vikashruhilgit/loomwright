@@ -6022,7 +6022,7 @@ qg_order() {  # <md> — prints the verdict line the leg compares
   local L p w r g a
   L="$QG/list.md"; qg_list "$1" > "$L"
   p="$(qg_idx "$L" "--status awaiting_merge")"; w="$(qg_idx "$L" "automate-merge-watch.sh")"; r="$(qg_idx "$L" "run-lock.sh release")"
-  g="$(qg_idx "$L" "park-ask-gate")"; a="$(qg_idx "$L" "AskUserQuestion")"
+  g="$(qg_idx "$L" "park-ask-gate")"; a="$(qg_idx "$L" "Ask the owner")"
   if [ "$p" -gt 0 ] && [ "$w" -gt 0 ] && [ "$r" -gt 0 ] && [ "$g" -gt 0 ] && [ "$a" -gt 0 ] \
      && [ "$p" -lt "$g" ] && [ "$w" -lt "$g" ] && [ "$r" -lt "$g" ] && [ "$g" -lt "$a" ] \
      && grep -F -- "park-ask-gate" "$L" | head -n1 | grep -qF -- "--wait 75"; then
@@ -6053,7 +6053,7 @@ qg_prose_mut() {  # <label> <line anchor> <after anchor>
   fi
 }
 qg_prose_mut "watcher arm moved after the park-ask-gate step" "automate-merge-watch.sh" "park-ask-gate"
-qg_prose_mut "park write (current-set --status awaiting_merge) moved after the ask" "--status awaiting_merge" "AskUserQuestion"
+qg_prose_mut "park write (current-set --status awaiting_merge) moved after the ask" "--status awaiting_merge" "Ask the owner"
 qg_prose_mut "lock release moved after the park-ask-gate step" "run-lock.sh release" "park-ask-gate"
 
 # ---- QG4. intake prose (AC2): §2 "--limit N" calls queue-confirm, asks AUT-QUEUE only on `ask`,

@@ -619,13 +619,13 @@ p_lead="$(ln_of "$SUBF" "$PF_LEAD")"
 PFL="$TOP/park-first-list.md"
 awk -v h="$PF_LEAD" '$0 == h { f = 1; next } f && /^[0-9]+\. / { s = 1; print; next } f && s { exit }' "$SUBF" > "$PFL"
 pf_p="$(ln_of "$PFL" "--status awaiting_merge")"; pf_w="$(ln_of "$PFL" "automate-merge-watch.sh")"; pf_n="$(ln_of "$PFL" "Notify")"
-pf_r="$(ln_of "$PFL" "run-lock.sh release")"; pf_g="$(ln_of "$PFL" "park-ask-gate")"; pf_a="$(ln_of "$PFL" "AskUserQuestion")"
+pf_r="$(ln_of "$PFL" "run-lock.sh release")"; pf_g="$(ln_of "$PFL" "park-ask-gate")"; pf_a="$(ln_of "$PFL" "Ask the owner")"
 [ "$pf_p" -gt 0 ] && [ "$pf_p" -lt "$pf_w" ] && [ "$pf_w" -lt "$pf_n" ] && [ "$pf_n" -lt "$pf_r" ] && [ "$pf_r" -lt "$pf_g" ] && [ "$pf_g" -lt "$pf_a" ] \
   && ok "B: park-first list — park write → watcher → notify → lock release → park-ask-gate → ask" \
   || no "B: park-first order park=$pf_p watcher=$pf_w notify=$pf_n release=$pf_r gate=$pf_g ask=$pf_a"
 L="$(first_line "$PFL" "park-ask-gate")"
 case "$L" in *"--wait 75"*"refuse — <reason>"*"ask NOTHING"*"pending_decisions"*) ok "B: park-first gate step waits 75s and a refuse asks nothing, keeping pending_decisions" ;; *) no "B: park-first gate step wrong" ;; esac
-L="$(first_line "$PFL" "AskUserQuestion")"
+L="$(first_line "$PFL" "Ask the owner")"
 case "$L" in *"**Fix now on this PR** is offered only when the gate line reads \`ask — fix-now allowed\`"*) ok "B: park-first ask offers Fix now only on the gate's fix-now-allowed line" ;; *) no "B: park-first ask does not gate Fix now" ;; esac
 L="$(first_line "$SUBF" "**Fix-now after the park (D3).**")"
 case "$L" in *"re-runs \`park-ask-gate"*"run-lock.sh acquire --owner \"automate:<run_id>\" --session-id <sid>"*"dismissed-decide <runfile> <draft_path> follow-up"*"fix-now became follow-up: <draft_name> — <reason>"*) ok "B: a late or lock-refused fix-now becomes a follow-up (D3)" ;; *) no "B: D3 fix-now hand-off wrong" ;; esac
