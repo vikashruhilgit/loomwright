@@ -18,3 +18,5 @@ follow-up draft with its own `fix-now became follow-up` Progress line, so no fix
 park, `--non-interactive-fallback` and lanes keep the decide-then-park order. Tests: test-automate-helpers.sh section
 QG (both helpers with a stubbed gh, a delayed-marker leg, and a prose-order leg over the new park-first list, each
 with a validated mutant); test-automate-dismissed.sh Part B pins the new order.
+`closeout` and `finalize-empty` now take the run lock from inside the run file's checkout with no `--root`, so in a linked
+worktree they meet the engine's main-root lock instead of a second one beside it (test-automate-trail.sh AC14w, with a mutant).
