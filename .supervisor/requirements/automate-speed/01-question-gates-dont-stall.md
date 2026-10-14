@@ -76,3 +76,9 @@ A question the owner has not answered yet never holds work that does not depend 
 ## Non-goals
 - Changing what the dismissed-findings drafts contain, the threshold, or the ledger.
 - Auto-answering any human-only gate.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-14T09:04:06Z
+- **Brief:** .supervisor/jobs/done/2026-10-14-automate-speed-01-question-gates.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/537
