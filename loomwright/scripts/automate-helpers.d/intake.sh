@@ -118,6 +118,7 @@ queue_confirm() {
     case "$a" in
       --lane-backlog) lane=1 ;;
       *) k=$((k + 1))
+         # a 4th+ positional is deliberately not stored: the `[ "$k" -eq 3 ]` check below rejects it (exit 1)
          case "$k" in 1) src="$a" ;; 2) n="$a" ;; 3) limit="$a" ;; esac ;;
     esac
   done

@@ -187,6 +187,7 @@
 #      (QG1) — backlog n ≤ limit skips with the exact line (n == limit included), n > limit asks,
 #      folder/prompt/unknown sources ask, --lane-backlog prints intake.md's lane reason byte for
 #      byte, a signed / non-integer / leading-zero / >9-digit count asks with nothing on stderr,
+#      a 9-digit count (the largest accepted) is judged normally,
 #      a missing or extra argument exits 1; park-ask-gate (QG2, stubbed gh) — fix-now allowed only
 #      on a written awaiting_merge park + this PR's merge-watch marker + an exact OPEN read,
 #      MERGED / CLOSED / other / unreadable / `{}` ⇒ unavailable, a closed-out (done) item ⇒
@@ -5916,6 +5917,7 @@ qc_gt()    { qc "$1" backlog 6 5; }            # n > limit asks
 qc_src()   { printf '%s|%s|%s' "$(qc "$1" folder 1 5)" "$(qc "$1" prompt 0 5)" "$(qc "$1" nonsense 1 5)"; }
 qc_lane()  { printf '%s|%s' "$(qc "$1" --lane-backlog)" "$(qc "$1" backlog 9 1 --lane-backlog)"; }
 qc_bad()   { printf '%s|%s|%s|%s|%s' "$(qc "$1" backlog -1 5)" "$(qc "$1" backlog abc 5)" "$(qc "$1" backlog 3 x)" "$(qc "$1" backlog 08 9)" "$(qc "$1" backlog 1234567890 5)"; }
+qc_max()   { printf '%s|%s' "$(qc "$1" backlog 123456789 999999999)" "$(qc "$1" backlog 999999999 5)"; }  # 9 digits is the largest accepted count
 qc_usage() { printf '%s|%s|%s' "$(qc "$1" backlog 3 2>/dev/null | cut -c1-4)" "$(qc "$1" 2>/dev/null | cut -c1-4)" "$(qc "$1" backlog 1 2 3 | cut -c1-4)"; }
 E_LE="rc=0 skip — backlog queue 5 ≤ limit 5"
 E_GT="rc=0 ask"
@@ -5923,12 +5925,14 @@ E_SRC="rc=0 ask|rc=0 ask|rc=0 ask"
 E_LANE="rc=0 $QC_LANE|rc=0 $QC_LANE"
 E_BAD="rc=0 ask|rc=0 ask|rc=0 ask|rc=0 ask|rc=0 ask"
 E_USAGE="rc=1|rc=1|rc=1"
+E_MAX="rc=0 skip — backlog queue 123456789 ≤ limit 999999999|rc=0 ask"
 qg_is "QG1a queue-confirm backlog n == limit ⇒ exactly 'skip — backlog queue 5 ≤ limit 5', exit 0" "$(qc_le "$H")" "$E_LE"
 qg_is "QG1a' queue-confirm backlog 3 ≤ 5 ⇒ skip line names both numbers" "$(qc_lt "$H")" "rc=0 skip — backlog queue 3 ≤ limit 5"
 qg_is "QG1b queue-confirm backlog n > limit ⇒ ask" "$(qc_gt "$H")" "$E_GT"
 qg_is "QG1c queue-confirm folder / prompt / unknown source ⇒ ask at any count" "$(qc_src "$H")" "$E_SRC"
 qg_is "QG1d queue-confirm --lane-backlog ⇒ the lane skip text exactly (positional args ignored)" "$(qc_lane "$H")" "$E_LANE"
 qg_is "QG1e queue-confirm non-integer / signed / leading-zero / >9-digit count ⇒ ask, nothing on stderr" "$(qc_bad "$H")" "$E_BAD"
+qg_is "QG1e' queue-confirm 9-digit counts are accepted (the length-cap boundary): 123456789 ≤ 999999999 skips, 999999999 > 5 asks" "$(qc_max "$H")" "$E_MAX"
 qg_is "QG1f queue-confirm missing or extra argument ⇒ usage error exit 1" "$(qc_usage "$H")" "$E_USAGE"
 # the lane text is the lane's existing Progress reason, byte for byte (intake.md's lane bullet)
 QG_INTAKE="$HERE/../skills/automate-loop/intake.md"
@@ -5952,6 +5956,7 @@ qg_mut_check "QG1b: comparison always true" '  if [ "$n" -le "$limit" ]; then' '
 qg_mut_check "QG1c: source check deleted" '  [ "$src" = backlog ] || { echo "ask"; return 0; }' __DELETE__ qc_src "$E_SRC"
 qg_mut_check "QG1d: one word of the lane text changed" "    echo \"$QC_LANE\"; return 0" "    echo \"skip — lane backlog made by lane-create from the owner's --parallel command\"; return 0" qc_lane "$E_LANE"
 qg_mut_check "QG1e: integer check dropped" '  { _qc_count "$n" && _qc_count "$limit"; } || { echo "ask"; return 0; }' __DELETE__ qc_bad "$E_BAD"
+qg_mut_check "QG1e': length cap lowered to 8 digits" '  [ "${#1}" -le 9 ]' '  [ "${#1}" -le 8 ]' qc_max "$E_MAX"
 qg_mut_check "QG1f: argument-count die deleted" '  [ "$k" -eq 3 ] || die "queue-confirm: usage:' __DELETE__ qc_usage "$E_USAGE"
 
 # ---- QG2. park-ask-gate (AC3/AC4) against a stubbed gh (pr view → ghstub/pr-view.json, or exit 1)
