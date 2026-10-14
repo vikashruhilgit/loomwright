@@ -2,6 +2,7 @@
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/intake.golden.
 #:  resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
 #:  resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers AND the referenced file's own ## Status: done stamp (is_done); dir-fallback path also skips proposed|parked, per is_not_ready
+#:  queue-confirm    <source> <n> <limit> | --lane-backlog  # §2 "--limit N" gate AUT-QUEUE: `skip — backlog queue <n> ≤ limit <limit>` for a backlog source whose Queue is not longer than --limit (owner decision D1), `skip — lane backlog …` with --lane-backlog, else `ask` (folder/prompt, n > limit, a non-integer, an unknown source: fail toward asking); exit 0 (missing argument 1)
 
 # resolve-folder <dir> — every *.md NOT marked "## Status: done" and not
 # "## Status: proposed|parked" (sorted).
@@ -84,6 +85,54 @@ resolve_backlog() {
         ;;
     esac
   done < "$doc"
+}
+
+# queue-confirm <source> <n> <limit> | --lane-backlog — SKILL §2 "`--limit N`" is the
+# spec (owner decision D1, automate-speed/01): whether the engine asks gate `AUT-QUEUE`
+# once the Queue is resolved. Pure logic, READ-ONLY, one line on stdout:
+# - skip — backlog queue <n> ≤ limit <limit>   source `backlog` and n ≤ limit: the owner
+#                                               wrote and ordered the doc, and --limit
+#                                               already caps the run, so asking adds nothing
+# - skip — lane backlog written by lane-create from the owner's --parallel command
+#                                               --lane-backlog (anywhere in the arguments):
+#                                               the parallel-automate/21 B8 lane skip; its
+#                                               text is the lane's `skipped AUT-QUEUE:`
+#                                               Progress reason, byte for byte
+# - ask                                         everything else — `folder` or `prompt` at any
+#                                               count, n > limit, a non-integer n or limit
+#                                               (only `0` or 1-9 digits without a leading
+#                                               zero count, so no overflow and no sign), an
+#                                               unknown source: fail toward asking.
+# The engine writes the reason after `skip — ` as ONE `skipped AUT-QUEUE: <reason>`
+# `## Progress` line. Without --lane-backlog, anything but exactly three positional
+# arguments is a usage error (exit 1); otherwise exit 0.
+# _qc_count <v> — true for `0` or 1-9 digits with no leading zero (a plain count `[ -le ]`
+# compares safely: no sign, no whitespace, no overflow).
+_qc_count() {
+  case "$1" in ''|*[!0-9]*|0?*) return 1 ;; esac
+  [ "${#1}" -le 9 ]
+}
+queue_confirm() {
+  local a lane=0 src="" n="" limit="" k=0
+  for a in "$@"; do
+    case "$a" in
+      --lane-backlog) lane=1 ;;
+      *) k=$((k + 1))
+         # a 4th+ positional is deliberately not stored: the `[ "$k" -eq 3 ]` check below rejects it (exit 1)
+         case "$k" in 1) src="$a" ;; 2) n="$a" ;; 3) limit="$a" ;; esac ;;
+    esac
+  done
+  if [ "$lane" = 1 ]; then
+    echo "skip — lane backlog written by lane-create from the owner's --parallel command"; return 0
+  fi
+  [ "$k" -eq 3 ] || die "queue-confirm: usage: queue-confirm <source> <n> <limit> | --lane-backlog"
+  [ "$src" = backlog ] || { echo "ask"; return 0; }
+  { _qc_count "$n" && _qc_count "$limit"; } || { echo "ask"; return 0; }
+  if [ "$n" -le "$limit" ]; then
+    echo "skip — backlog queue $n ≤ limit $limit"
+  else
+    echo "ask"
+  fi
 }
 
 # resolve_backlog_dir <dir> — fallback ordering by directory order over *.md,

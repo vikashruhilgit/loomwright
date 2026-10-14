@@ -2,6 +2,7 @@
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/resume.golden.
 #:  resume-glob      <automate_dir> [--finalize]        # §4 (--finalize: run finalize-empty on each candidate first, list the rest; finalize lines on stderr) list run files (is_run_file: a "# Automate Run:" title line anywhere — BOM/0-3-space indent/whitespace/case tolerant, RUN_TITLE_ERE) not "## Status: done"; §6 result sidecars never listed because they carry no such line
 #:  reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
+#:  park-ask-gate    <runfile> <item> <pr_url> [--wait <s>]  # §6 "Dismissed-findings decision step (before the park)" park-first READY park: READ-ONLY; `ask — fix-now allowed: …` only when ## Current names this item+PR at status awaiting_merge, a <run_id>.merge-watch marker carries this PR (polled every 1s for up to --wait <s>, default 0) and `gh pr view --json state` reads exactly OPEN; `ask — fix-now unavailable: …` on MERGED/CLOSED/other/unreadable or a closed-out (done) item; else one `refuse — <reason>` line (ask nothing); exit 0 (usage error 1)
 
 # --------------------------------------------------------------------------- #
 # §4 — resume: glob + reconcile (run-file is BELIEF; git/gh is TRUTH)
@@ -154,6 +155,100 @@ reconcile_item() {
   fi
   # CLOSED-unmerged or unknown.
   echo "gone"
+}
+
+# park-ask-gate <runfile> <item> <pr_url> [--wait <seconds>] — SKILL §6 "Dismissed-findings
+# decision step (before the park)", its "Order — sequential interactive READY park (park
+# first, then ask)" list, is the spec (automate-speed/01, owner decisions D2/D3). The engine
+# writes the `awaiting_merge` park, arms the merge watcher, notifies and releases the run
+# lock FIRST; this gate then says whether the owner's dismissed-findings decisions may be
+# asked, and whether `Fix now on this PR` may be offered. READ-ONLY (the run file, the
+# marker and the PR are never written). ONE line on stdout:
+# - ask — fix-now allowed: PR OPEN, parked awaiting_merge, merge watcher armed
+#       ## Current's `- item:` line names <item> (after a leading `./` strip on both sides)
+#       and <pr_url> (exactly) at `status: awaiting_merge`, the marker
+#       `<runfile dir>/<run_id>.merge-watch` carries `pr_url<TAB><pr_url>`, and this gate's
+#       OWN `gh pr view <pr_url> --json state` reads exactly `OPEN`.
+# - ask — fix-now unavailable: PR <MERGED|CLOSED|state <s>|state unreadable>
+#       the same park, any other state — fail CLOSED toward no fix-now push. NOT
+#       `reconcile-item`: it maps an unreadable read to `awaiting_merge` (the safe belief
+#       for a merge decision), which is the wrong direction for a push.
+# - ask — fix-now unavailable: closed out
+#       the item reads `status: done` — the watcher's `closeout` already ran.
+# - refuse — <reason>
+#       anything else: a missing/unreadable run file, no `## Current` item line, a
+#       `## Current` naming another item or PR, a status that is neither `awaiting_merge`
+#       nor `done` (e.g. `running`: the park was not written first), or no marker for this
+#       PR within --wait. The engine then asks NOTHING; the drafts stay undecided.
+# --wait <s> (an integer, default 0 = judge once): the detached watcher writes its marker
+# asynchronously — after its single-instance block, up to 60s when it replaces a live
+# watcher for another PR — so the gate re-judges every 1s for up to <s>s while the only
+# thing missing is the marker (a status that turns `done` meanwhile answers `closed out`).
+# The engine passes `--wait 75`. Honest limit: a marker is trusted by its `pr_url` alone
+# (the watcher removes it on every exit, so a stale one needs a SIGKILLed watcher), and a
+# merge landing after this read is not prevented. Exit 0; a usage error exits 1.
+park_ask_gate() {
+  local rf="" item="" pr="" wait=0 k=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --wait)
+        [ "$#" -ge 2 ] || die "park-ask-gate: --wait needs a value"
+        case "$2" in ''|*[!0-9]*) die "park-ask-gate: --wait must be a whole number of seconds: '$2'" ;; esac
+        wait="$2"; shift 2 ;;
+      -*) die "park-ask-gate: unknown option '$1' (usage: park-ask-gate <runfile> <item> <pr_url> [--wait <seconds>])" ;;
+      *) k=$((k + 1))
+         case "$k" in 1) rf="$1" ;; 2) item="$1" ;; 3) pr="$1" ;; *) die "park-ask-gate: too many arguments" ;; esac
+         shift ;;
+    esac
+  done
+  [ -n "$rf" ] && [ -n "$item" ] && [ -n "$pr" ] \
+    || die "park-ask-gate: usage: park-ask-gate <runfile> <item> <pr_url> [--wait <seconds>]"
+  local marker verdict i=0
+  marker="$(dirname "$rf")/$(basename "$rf" .md).merge-watch"
+  while :; do
+    verdict="$(_pag_judge "$rf" "$item" "$pr" "$marker")"
+    [ "$verdict" = "need_marker" ] || break
+    [ "$i" -lt "$wait" ] || break
+    sleep 1; i=$((i + 1))
+  done
+  case "$verdict" in
+    need_marker) echo "refuse — no merge-watch marker for this PR within ${wait}s"; return 0 ;;
+    judged) ;;
+    *) echo "$verdict"; return 0 ;;
+  esac
+  local view state
+  if ! view="$("$GH" pr view "$pr" --json state 2>/dev/null)"; then
+    echo "ask — fix-now unavailable: PR state unreadable"; return 0
+  fi
+  state="$(printf '%s' "$view" | "$JQ" -r '.state // empty | strings' 2>/dev/null || true)"
+  case "$state" in
+    OPEN) echo "ask — fix-now allowed: PR OPEN, parked awaiting_merge, merge watcher armed" ;;
+    MERGED|CLOSED) echo "ask — fix-now unavailable: PR $state" ;;
+    "") echo "ask — fix-now unavailable: PR state unreadable" ;;
+    *) echo "ask — fix-now unavailable: PR state $state" ;;
+  esac
+}
+
+# _pag_judge <runfile> <item> <pr_url> <marker> — one read of the run file and marker for
+# park_ask_gate: prints a final `ask — …` / `refuse — …` line, `need_marker` (the park is
+# written but no marker carries this PR yet) or `judged` (park + marker present: the
+# caller reads the PR state).
+_pag_judge() {
+  local rf="$1" item="$2" pr="$3" marker="$4" line ci cp cs mp
+  if [ ! -f "$rf" ] || [ ! -r "$rf" ]; then echo "refuse — run file not found or unreadable: $rf"; return 0; fi
+  line="$(_current_item_line "$rf")"
+  [ -n "$line" ] || { echo "refuse — no ## Current item line"; return 0; }
+  ci="$(_current_field "$line" item)"; cp="$(_current_field "$line" pr)"; cs="$(_current_field "$line" status)"
+  if [ "${ci#./}" != "${item#./}" ] || [ "$cp" != "$pr" ]; then
+    echo "refuse — ## Current is ${ci:-?} (${cp:-?}), not this item/PR"; return 0
+  fi
+  case "$cs" in
+    done) echo "ask — fix-now unavailable: closed out"; return 0 ;;
+    awaiting_merge) ;;
+    *) echo "refuse — park not written: ## Current status ${cs:-?}, not awaiting_merge"; return 0 ;;
+  esac
+  mp="$(awk -F'\t' '$1 == "pr_url" { print $2; exit }' "$marker" 2>/dev/null || true)"
+  if [ -n "$mp" ] && [ "$mp" = "$pr" ]; then echo "judged"; else echo "need_marker"; fi
 }
 
 # --------------------------------------------------------------------------- #

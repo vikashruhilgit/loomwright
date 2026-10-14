@@ -1627,6 +1627,43 @@ out="$(run_closeout --session-id SESS-1)"
 grep -q "^owner	automate:$RUN_ID\$" "$P/.supervisor/run.lock/meta" 2>/dev/null && ok "AC14: outer lock still held by automate:<run_id> afterwards" || no "AC14: outer lock lost"
 bash "$HERE/run-lock.sh" release --owner "automate:$RUN_ID" --root "$P" >/dev/null
 
+# (AC14w) one lock dir per checkout, linked worktrees included: the engine's PICK acquire
+# passes no --root (run-lock.sh resolves the MAIN worktree root), so a closeout of a run
+# file living in a LINKED worktree must meet that same lock — refused without --session-id,
+# re-entered with it, and never a second .supervisor/run.lock in the linked worktree.
+# Mutant: closeout's lock helper passes `--root <run file's toplevel>` (the old divergent
+# root) ⇒ it locks <linked>/.supervisor/run.lock beside the engine's and runs steps 3–7.
+WT_LINK_LEG() { # <scripts dir> — closeout_fixture'd world; run file + item copied into wt-other
+  local d="$1" W="$FX/wt-other"
+  mkdir -p "$W/.supervisor/automate" "$W/$(dirname "$REQ")"
+  cp "$P/$RF_REL" "$W/$RF_REL"; cp "$P/$REQ" "$W/$REQ"
+  (cd "$W" && bash "$HERE/run-lock.sh" acquire --owner "automate:$RUN_ID" --session-id SESS-1 >/dev/null)
+  (cd "$W" && bash "$d/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" 2>/dev/null)
+}
+closeout_fixture 131
+out="$(WT_LINK_LEG "$SPYD")"
+case "$out" in *"closeout: skipped — run lock held by automate:$RUN_ID"*) ok "AC14w: linked worktree, engine lock (no --root) held ⇒ closeout refused" ;; *) no "AC14w no-sid: $out" ;; esac
+[ -d "$FX/wt-pr" ] && grep -qxF -- "- [ ] $REQ" "$FX/wt-other/$RF_REL" && [ ! -e "$FX/wt-other/.supervisor/run.lock" ] \
+  && ok "AC14w: refused ⇒ steps 3–7 did not run, no second lock dir in the linked worktree" || no "AC14w: steps ran / second lock dir (wt-pr: $([ -d "$FX/wt-pr" ] && echo kept || echo gone); queue: $(grep -F -- "$REQ" "$FX/wt-other/$RF_REL" | head -n1); lock: $(ls -d "$FX/wt-other/.supervisor/run.lock" 2>&1))"
+out="$(cd "$FX/wt-other" && bash "$SPYD/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" --session-id SESS-1 2>/dev/null)"
+grep -qxF -- "- [x] $REQ" "$FX/wt-other/$RF_REL" && grep -q "^owner	automate:$RUN_ID\$" "$P/.supervisor/run.lock/meta" 2>/dev/null && [ ! -e "$FX/wt-other/.supervisor/run.lock" ] \
+  && ok "AC14w: --session-id re-enters the main-root lock from a linked worktree; outer owner kept" || no "AC14w re-entry: $out"
+bash "$HERE/run-lock.sh" release --owner "automate:$RUN_ID" --root "$P" >/dev/null
+MUTW="$TOP/mutd-wtroot"; mkdir -p "$MUTW"; cp -R "$SPYD"/. "$MUTW/"
+sed 's|( cd "$dir" 2>/dev/null \&\& bash "$HERE/run-lock.sh" "$@" )|( bash "$HERE/run-lock.sh" "$@" --root "$dir" )|' "$T" > "$MUTW/automate-trail.sh"
+if [ -s "$MUTW/automate-trail.sh" ] && ! cmp -s "$T" "$MUTW/automate-trail.sh" && bash -n "$MUTW/automate-trail.sh"; then
+  closeout_fixture 132
+  out="$(WT_LINK_LEG "$MUTW")"
+  case "$out" in *"run lock held"*) no "AC14w mutant: the divergent --root still refused — the leg is vacuous" ;;
+    *) [ -e "$FX/wt-other/.supervisor/run.lock" ] || grep -qxF -- "- [x] $REQ" "$FX/wt-other/$RF_REL" \
+         && ok "AC14w mutation control: a --root <linked toplevel> closeout takes a second lock and runs past the engine's" \
+         || no "AC14w mutant: not refused yet no second lock / check-off: $out" ;;
+  esac
+  bash "$HERE/run-lock.sh" release --owner "automate:$RUN_ID" --root "$P" >/dev/null
+else
+  no "AC14w mutant not built"
+fi
+
 co_body="$(awk '/^closeout\(\) \{/{s=1} s{print} s&&/^}/{exit}' "$T" | grep -vE '^[[:space:]]*#')"
 bad="$(grep -nE 'git (-C [^ ]+ )?(commit|reset|stash|merge)|branch -d |merge-base|pr merge|push' <<<"$co_body" || true)"
 [ -n "$co_body" ] && [ -z "$bad" ] && ok "closeout never commits/resets/stashes/merges/pushes in the primary" || no "closeout body: $bad"
