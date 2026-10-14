@@ -1071,8 +1071,10 @@ main() {
     ceiling-check)   ceiling_check "$@" ;;
     resolve-folder)  resolve_folder "$@" ;;
     resolve-backlog) resolve_backlog "$@" ;;
+    queue-confirm)   queue_confirm "$@" ;;
     resume-glob)     resume_glob "$@" ;;
     reconcile-item)  reconcile_item "$@" ;;
+    park-ask-gate)   park_ask_gate "$@" ;;
     gate-eval)       gate_eval "$@" ;;
     learning-emit)   learning_emit "$@" ;;
     brief-repair)    brief_repair "$@" ;;
