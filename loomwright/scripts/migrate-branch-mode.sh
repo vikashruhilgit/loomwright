@@ -406,10 +406,16 @@ ab_check() {
   AB_A="$an"; AB_B="$bn"; AB_U="$un"
   # telemetry for the step's failure report — ONLY when this check failed (a passing check leaves
   # nothing behind for a later, unrelated failure to carry): the set sizes and the KINDS of the paths
-  # each side holds alone, and of the paths whose blobs differ — never a path. Names diff: `<` = A
-  # [+ U] only, `>` = B only; blobs diff: `<sha><TAB><path>` rows (prefixed `< ` / `> ` unless subset).
+  # each side holds alone, and of the paths whose blobs differ — never a path. Names diff: `diff`
+  # output (`<` = A [+ U] only, `>` = B only), except in a subset round, where `comm -23` wrote bare
+  # A-only paths (B-only is legitimate there, so nothing is B-only); blobs diff: `<sha><TAB><path>`
+  # rows (prefixed `< ` / `> ` unless subset).
   if [ "$rc" -ne 0 ]; then
-    sed -n 's/^> //p' "$SD/ab-names.diff" > "$SD/ab-b-only.list"; sed -n 's/^< //p' "$SD/ab-names.diff" > "$SD/ab-a-only.list"
+    if [ "$AB_REL" = subset ]; then
+      cp "$SD/ab-names.diff" "$SD/ab-a-only.list"; : > "$SD/ab-b-only.list"
+    else
+      sed -n 's/^> //p' "$SD/ab-names.diff" > "$SD/ab-b-only.list"; sed -n 's/^< //p' "$SD/ab-names.diff" > "$SD/ab-a-only.list"
+    fi
     sed -n 's/^[<>] //; /\t/s/^[^\t]*\t//p' "$SD/ab-blobs.diff" | env LC_ALL=C sort -u > "$SD/ab-blob.list"
     evt "${EVT_CODE:-error}" --count "a=$an" --count "u=$un" --count "b=$bn" --count "extra_owner_decision=$extra" \
       $(kind_counts b_only "$SD/ab-b-only.list") $(kind_counts a_only "$SD/ab-a-only.list") $(kind_counts blob_mismatch "$SD/ab-blob.list")

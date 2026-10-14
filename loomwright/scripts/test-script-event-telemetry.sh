@@ -14,6 +14,9 @@
 #       step opens its own thread, the step's pass comments + labels + closes BOTH; the next pass is
 #       interest-skipped; a pass of ANOTHER step closes nothing; the same thread key in another
 #       source repo is a separate thread
+#   S3b a group close that FAILS on one of two threads (the gh stub's GH_FAIL_CLOSE_ISSUE knob
+#       fails `issue close <n>`): the core exits 1, the OTHER thread is recorded closed in the map,
+#       the failed one stays open, and the next pass retries and closes it (never re-closing the other)
 #   S4  no user-scope consent -> exit 3, gh never called
 #   S5  the emitter: exit 0 and no output in every case (core missing, python3 absent from PATH,
 #       too few args, LOOMWRIGHT_SCRIPT_EVENTS=0 sends nothing); LOOMWRIGHT_SCRIPT_EVENT_TEE gets
@@ -58,6 +61,8 @@ GH_LOG="$T/gh.log"; GH_BODIES="$T/bodies"
 cat > "$T/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GH_LOG"
+# GH_FAIL_CLOSE_ISSUE=<n>: `issue close <n>` fails (logged first, so the attempt is visible)
+[ "$1 ${2:-}" = "issue close" ] && [ -n "${GH_FAIL_CLOSE_ISSUE:-}" ] && [ "${3:-}" = "$GH_FAIL_CLOSE_ISSUE" ] && exit 1
 body=""; prev=""; for a in "$@"; do [ "$prev" = "--body-file" ] && body="$a"; prev="$a"; done
 n="$(ls "$GH_BODIES" | wc -l | tr -d ' ')"
 [ -n "$body" ] && cp "$body" "$GH_BODIES/$n.md"
@@ -124,6 +129,30 @@ core "$T/r1" "$(ev migrate-branch-mode seed fail ab_names_mismatch L8)"; R8="$RC
 LEAK=""; for f in "$GH_BODIES"/*.md; do grep -qE 'secret-repo|other-repo|/Users/|acme' "$f" && LEAK="$LEAK $(basename "$f")"; done
 grep -qE 'secret-repo|other-repo|acme' "$GH_LOG" && LEAK="$LEAK gh-args"
 [ -z "$LEAK" ]; check $? "no source repo slug or path in any posted body or gh argument (${LEAK:-clean})"
+
+echo "== S3b. a group close that fails on ONE thread: the rest close, a later pass retries =="
+# map_state <issue> — that thread's recorded state in the user-scope thread map ("" when absent)
+map_state() { python3 -I -c 'import json, sys
+d = json.load(open(sys.argv[1]))
+print("".join(t.get("state", "") for t in d.get("threads", {}).values() if isinstance(t, dict) and t.get("issue") == int(sys.argv[2])))' "$MAP" "$1" 2>/dev/null; }
+gh_reset; rm -f "$MAP"
+core "$T/r1" "$(ev migrate-branch-mode seed fail code_a P1)"; P1="$RC"
+core "$T/r1" "$(ev migrate-branch-mode seed fail code_b P2)"; P2="$RC"
+# fail the thread the group close visits FIRST (decide() walks the map keys sorted), so the
+# OTHER thread's close proves the loop continues past a failure rather than stopping at it
+FIRST="$(python3 -I -c 'import json, sys
+d = json.load(open(sys.argv[1]))
+print([t["issue"] for k, t in sorted(d["threads"].items()) if t.get("state") == "open"][0])' "$MAP" 2>/dev/null)"
+OTHER=101; [ "$FIRST" = 101 ] && OTHER=102
+export GH_FAIL_CLOSE_ISSUE="$FIRST"; core "$T/r1" "$(ev migrate-branch-mode seed pass ok P3)"; P3="$RC"; unset GH_FAIL_CLOSE_ISSUE
+CL="$(sed -n 's/^issue close \(10[12]\) .*/\1/p' "$GH_LOG" | tr '\n' ' ')"
+{ [ "$P1$P2" = 00 ] && [ "$P3" = 1 ] && [ "$CL" = "$FIRST $OTHER " ] && [ "$(map_state "$FIRST")" = open ] && [ "$(map_state "$OTHER")" = closed ] \
+  && has "thread_close_group closed=1 of=2"; }
+check $? "close of #$FIRST (visited first) fails: the core exits 1, continues to close #$OTHER (recorded closed), #$FIRST stays open (rc=$P3; closes: ${CL}; $FIRST=$(map_state "$FIRST") $OTHER=$(map_state "$OTHER"))"
+core "$T/r1" "$(ev migrate-branch-mode seed pass ok P4)"; P4="$RC"
+{ [ "$P4" = 0 ] && [ "$(grep -c "^issue close $FIRST " "$GH_LOG")" = 2 ] && [ "$(grep -c "^issue close $OTHER " "$GH_LOG")" = 1 ] \
+  && [ "$(map_state "$FIRST")" = closed ] && [ "$(map_state "$OTHER")" = closed ]; }
+check $? "the next pass retries and closes #$FIRST only, never re-closing #$OTHER (rc=$P4; $FIRST=$(map_state "$FIRST") $OTHER=$(map_state "$OTHER"))"
 
 echo "== S4. no consent -> nothing sent =="
 gh_reset; rm -f "$LW/egress.json"

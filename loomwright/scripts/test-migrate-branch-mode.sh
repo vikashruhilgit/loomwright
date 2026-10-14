@@ -107,6 +107,11 @@
 #      that code with paths=1 and NO A/B counts or kinds (a passing check leaves nothing behind); a
 #      step's own usage error (verify-pr with no number, exit 2) reports nothing; mutation control:
 #      an accumulating evt with an always-reporting ab_check MUST leak the stale counts
+#  29. script-event telemetry of a FAILING follow-up (A ⊆ B) seed: after leg 11's recorded after-merge
+#      FAIL, a round-2 seed whose push leaves a tracked A path off the branch (meta-sync.sh `push`
+#      stubbed to a no-op; the SUT unmodified) FAILs `A ⊄ B` and reports kinds.a_only.md=1 and no
+#      b_only; mutation control: the pre-fix `diff`-prefix extraction on the bare `comm` output MUST
+#      lose a_only
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -981,10 +986,10 @@ if build_mutant "$MUT" 's/^  EVT_CODE="\$1"; EVT_ARGS=""; shift$/  EVT_CODE="$1"
    && python3 - "$MUT/migrate-branch-mode.sh" <<'PYM'
 import sys
 p = sys.argv[1]; s = open(p).read()
-a = '  if [ "$rc" -ne 0 ]; then\n    sed -n \'s/^> //p\''
+a = '  if [ "$rc" -ne 0 ]; then\n    if [ "$AB_REL" = subset ]; then'
 if s.count(a) != 1:
     sys.exit(1)
-open(p, "w").write(s.replace(a, '  if true; then\n    sed -n \'s/^> //p\''))
+open(p, "w").write(s.replace(a, '  if true; then\n    if [ "$AB_REL" = subset ]; then'))
 PYM
 then
   SCRIPT="$MUT/migrate-branch-mode.sh"; hist_to_untrack; : > "$EVTEE"
@@ -992,6 +997,35 @@ then
   if grep -q '"a": ' "$EVTEE"; then ok "mutation control: accumulating evt + always-reporting ab_check leaks the passing A/B counts into pr_leaves_tracked"
   else no "mutation control REFUTED: the accumulate mutant reported no stale counts ($(cat "$EVTEE"))"; fi
 else no "mutation control (evt accumulate) did not build — counts as FAIL"; fi
+
+echo "== 29. script-event telemetry: a failing follow-up (A ⊆ B) seed reports its A-only KINDS (#536 drain round 2) =="
+# The follow-up round's names diff is `comm -23` output — bare A-only paths, no `< `/`> ` prefix. A
+# real failing subset round needs a tracked A path the seed's push did not put on B, so meta-sync.sh
+# is stubbed in a copied scripts dir: `push` is a no-op, every other subcommand runs the real script.
+# The SUT is copied unmodified; the mutant below differs from it only in the extraction.
+STUBPUSH="$TROOT/stub-push-noop"; mkdir -p "$STUBPUSH"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$STUBPUSH/"; done
+cp -R "$HERE/automate-helpers.d" "$STUBPUSH/"
+cat > "$STUBPUSH/meta-sync.sh" <<STUB
+#!/bin/bash
+[ "\${1:-}" = push ] && exit 0
+exec bash "$HERE/meta-sync.sh" "\$@"
+STUB
+race_late >/dev/null; R29="$?"
+SCRIPT="$STUBPUSH/migrate-branch-mode.sh"; : > "$EVTEE"
+export LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; mb A seed; unset LOOMWRIGHT_SCRIPT_EVENT_TEE; SCRIPT="$SUT"
+{ [ "$R29" -eq 0 ] && [ "$RC" -eq 1 ] && has "A ⊄ B" && has ".supervisor/jobs/done/late.md" && [ "$(st A followup)" = 1 ] \
+  && grep -q '"code": "ab_names_mismatch"' "$EVTEE" && grep -q '"a_only": {"md": 1}' "$EVTEE" && ! grep -q '"b_only"' "$EVTEE" \
+  && grep -q '"a": 1' "$EVTEE" && ! grep -q 'late' "$EVTEE"; }
+check $? "follow-up seed FAILs A ⊄ B and reports kinds.a_only.md=1, no b_only, no path (race=$R29 rc=$RC; $(cat "$EVTEE"))"
+MUT="$TROOT/mut-subset-extract"
+if build_mutant "$MUT" 's/^    if \[ "\$AB_REL" = subset \]; then$/    if false; then/' '    if false; then'; then
+  cp "$STUBPUSH/meta-sync.sh" "$MUT/meta-sync.sh"
+  SCRIPT="$MUT/migrate-branch-mode.sh"; : > "$EVTEE"
+  export LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; mb A seed; unset LOOMWRIGHT_SCRIPT_EVENT_TEE; SCRIPT="$SUT"
+  if [ "$RC" -eq 1 ] && grep -q '"code": "ab_names_mismatch"' "$EVTEE" && ! grep -q '"a_only"' "$EVTEE"; then
+    ok "mutation control: the diff-prefix extraction on the subset round's comm output loses kinds.a_only"
+  else no "mutation control REFUTED: the pre-fix extraction still reported a_only (rc=$RC; $(cat "$EVTEE"))"; fi
+else no "mutation control (subset extraction) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"
