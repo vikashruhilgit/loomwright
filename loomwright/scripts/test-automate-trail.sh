@@ -74,7 +74,10 @@
 #      the re-staged index entries (mutant without the restore = control); a
 #      Queue item naming a tracked source file is never committed by trail-pr.
 #   W. merge watcher — OPEN → MERGED ⇒ one closeout + one notify (pid_source
-#      ppid in the lock meta), CLOSED ⇒ `gone` line + no cleanup, lifetime cap,
+#      holder_env in the lock meta: the closeout process itself, dead once it
+#      exits — run under a live non-shell ancestor whose CLAUDE_PID names it,
+#      so neither the ancestor nor the launching session is ever recorded),
+#      CLOSED ⇒ `gone` line + no cleanup, lifetime cap,
 #      single instance + TERM + dead-pid reclaim, marker gone on every exit;
 #      a transient `gh unavailable` closeout skip is retried (one successful
 #      closeout + one notify); a terminal guard skip ⇒ Progress line + failure
@@ -1681,12 +1684,28 @@ closeout_fixture 9
 spy_reset
 printf 'OPEN\nOPEN\nMERGED\n' > "$GH_STUB_DIR/state-seq"
 jq '.[0].state = "OPEN"' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
-wout="$(cd "$P" && CLAUDECODE=1 LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"; rc=$?
+# AC14 runs the watcher under a LIVE long-lived non-shell ancestor (a perl standing in for an
+# un-detached launcher's `claude`, with CLAUDE_PID naming it and CLAUDECODE set): without the
+# watcher's holder pin, run-lock.sh's ungated ancestor walk would record that perl.
+rm -f "$TOP/w14.out" "$TOP/w14.rc" "$TOP/w14.perl"
+( cd "$P" || exit 1
+  CLAUDECODE=1 LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 W14_OUT="$TOP/w14.out" W14_RC="$TOP/w14.rc" \
+    perl -e '$ENV{CLAUDE_PID} = $$; my $r = system(@ARGV) >> 8; open(my $f, ">", $ENV{W14_RC}); print $f "$r\n"; close $f; sleep 600' \
+    bash -c 'bash "$@" </dev/null >"$W14_OUT" 2>&1' _ "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null >/dev/null 2>&1 &
+  echo "$!" > "$TOP/w14.perl" )
+i=0; while [ ! -s "$TOP/w14.rc" ] && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i+1)); done
+wout="$(cat "$TOP/w14.out" 2>/dev/null)"; rc="$(cat "$TOP/w14.rc" 2>/dev/null)"; rc="${rc:-99}"
+w14_perl="$(cat "$TOP/w14.perl" 2>/dev/null)"
+w14_perl_alive=0; [ -n "$w14_perl" ] && kill -0 "$w14_perl" 2>/dev/null && w14_perl_alive=1
 [ "$rc" -eq 0 ] && ok "watcher exits 0" || no "watcher rc=$rc"
 [ "$(spy_count '^closeout ' "$SPYLOG")" = "1" ] && ok "AC13: OPEN → MERGED ⇒ exactly one closeout" || no "AC13: closeout count $(spy_count '^closeout ' "$SPYLOG")"
 [ "$(spy_count notify "$SPYLOG.notify")" = "1" ] && [ "$(spy_count 'automate_merge_watch' "$SPYLOG.webhook")" = "1" ] && ok "AC13: exactly one notify (desktop + webhook)" || no "AC13: notify count"
 [ ! -d "$FX/wt-pr" ] && grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && ok "watcher-driven closeout cleaned up + checked off" || no "watcher closeout: $wout"
-grep -q '^pid_source	ppid$' "$SPYLOG.meta" && ok "AC14: watcher-driven closeout records pid_source ppid (CLAUDECODE unset by the watcher)" || no "pid_source: $(cat "$SPYLOG.meta" 2>/dev/null | tr '\n' '|')"
+w14_hp="$(awk -F'\t' '$1=="pid"{print $2; exit}' "$SPYLOG.meta" 2>/dev/null)"
+grep -q '^pid_source	holder_env$' "$SPYLOG.meta" && [ "$w14_perl_alive" = 1 ] && [ -n "$w14_hp" ] && [ "$w14_hp" != "$w14_perl" ] && ! kill -0 "$w14_hp" 2>/dev/null \
+  && ok "AC14: watcher-driven closeout records pid_source holder_env — the closeout process (dead once it exits), not the live ancestor $w14_perl" \
+  || no "pid_source (ancestor perl=$w14_perl alive=$w14_perl_alive): $(cat "$SPYLOG.meta" 2>/dev/null | tr '\n' '|')"
+[ -n "$w14_perl" ] && kill "$w14_perl" 2>/dev/null
 [ ! -e "$P/$MARK" ] && ok "AC13: marker gone after MERGED exit" || no "marker left after MERGED"
 
 closeout_fixture 10
@@ -2740,9 +2759,44 @@ grep -qxF -- "closeout: skipped — run lock held by automate:$RUN_ID-L1 (holder
   && grep -qxF "closeout-others: recorded — cross-run closeout $RUN_ID $REQ: leftover lock — skipped — run lock held by automate:$RUN_ID-L1 (holder pid $DEADPID not running)" <<<"$o" \
   && ok "(CO8) a DEAD (young, unreclaimable) holder ⇒ 'not running' line and a leftover lock row, as before" \
   || no "(CO8) out=$(printf '%s' "$o" | tr '\n' '|')"
+# (CO8b) the liveness rule is run-lock.sh's, not a local `kill -0`: a LIVE pid whose recorded
+# pid_start does not match (the OS reused it) is a dead holder — 'not running' and a leftover lock.
+closeout_fixture 322; mk_rb
+co_plant_lock "$$"; printf 'pid_start\tThu Jan  1 00:00:00 1970\n' >> "$P/.supervisor/run.lock/meta"
+o="$(co_others --record "$RBF")"
+rm -rf "$P/.supervisor/run.lock"
+grep -qxF -- "closeout: skipped — run lock held by automate:$RUN_ID-L1 (holder pid $$ not running)" <<<"$o" \
+  && grep -qE "^leftover	$RUN_ID	$REQ	$PRURL	lock	" <<<"$o" && ! grep -q '^run_lock_held	' <<<"$o" \
+  && ok "(CO8b) a live pid with a mismatched pid_start (reused) ⇒ 'not running' + leftover lock (run-lock.sh's holder_alive, not kill -0)" \
+  || no "(CO8b) out=$(printf '%s' "$o" | tr '\n' '|')"
+# (CO8c) race: the refused holder (dead) releases and a LIVE newcomer takes the lock before the
+# liveness read. The verdict is bound to the refused pid, so it fails toward the leftover — never
+# the newcomer's 'alive'. A run-lock.sh wrapper swaps the meta right after a refused acquire.
+RACELK="$TOP/race-lock"; mkdir -p "$RACELK"; cp "$SPYD"/*.sh "$SPYD"/*.py "$RACELK/"; cp -R "$SPYD/automate-helpers.d" "$RACELK/"
+mv "$RACELK/run-lock.sh" "$RACELK/run-lock.real.sh"
+cat > "$RACELK/run-lock.sh" <<'SHIM'
+#!/usr/bin/env bash
+out="$(bash "$(dirname "$0")/run-lock.real.sh" "$@")"; rc=$?
+[ -z "$out" ] || printf '%s\n' "$out"
+if [ "${1:-}" = acquire ] && [ "$rc" -ne 0 ] && [ -n "${RACE_META:-}" ]; then
+  printf 'pid\t%s\nowner\tnewcomer\nsession_id\tnew\nts\t%s\npid_source\tppid\n' "$RACE_NEWPID" "$(date +%s)" > "$RACE_META"
+fi
+exit "$rc"
+SHIM
+sleep 0 & DEADPID=$!; wait "$DEADPID" 2>/dev/null
+closeout_fixture 323; mk_rb
+co_plant_lock "$DEADPID"
+o="$(RACE_META="$P/.supervisor/run.lock/meta" RACE_NEWPID="$$" CO_H="$RACELK/automate-helpers.sh" co_others --record "$RBF")"
+raced="$(grep -c '^owner	newcomer$' "$P/.supervisor/run.lock/meta" 2>/dev/null)"
+rm -rf "$P/.supervisor/run.lock"
+[ "$raced" = 1 ] \
+  && grep -qxF -- "closeout: skipped — run lock held by automate:$RUN_ID-L1 (holder pid $DEADPID not running)" <<<"$o" \
+  && grep -qE "^leftover	$RUN_ID	$REQ	$PRURL	lock	" <<<"$o" && ! grep -q '^run_lock_held	' <<<"$o" \
+  && ok "(CO8c) refusal→liveness race (dead holder replaced by a live one) ⇒ still 'not running' + leftover lock" \
+  || no "(CO8c) raced=$raced out=$(printf '%s' "$o" | tr '\n' '|')"
 # (CO9) mutation control: drop the live-holder check ⇒ a live holder reads as a leftover again (CO7 red).
 MUTLK="$TOP/mutd-lock"; mkdir -p "$MUTLK"; cp "$SPYD"/*.sh "$SPYD"/*.py "$MUTLK/"; cp -R "$SPYD/automate-helpers.d" "$MUTLK/"
-sed 's/^    if \[ -n "\$hpid" \] && kill -0 "\$hpid" 2>\/dev\/null; then$/    if false; then  # mutant A1/' "$T" > "$MUTLK/automate-trail.sh"
+sed 's/^    if \[ "\$hlive" = alive \]; then$/    if false; then  # mutant A1/' "$T" > "$MUTLK/automate-trail.sh"
 if grep -q '# mutant A1' "$MUTLK/automate-trail.sh" && bash -n "$MUTLK/automate-trail.sh"; then
   co_live_leg "$MUTLK/automate-helpers.sh"
   rm -rf "$P/.supervisor/run.lock"

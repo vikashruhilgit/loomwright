@@ -111,6 +111,7 @@ if [ "${1:-}" = "--help" ]; then
 fi
 { printf 'ARGS'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'
   printf 'ENV CEIL=%s CC=%s PID=%s OPTOUT=%s\n' "${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS-unset}" "${CLAUDECODE-unset}" "${CLAUDE_PID-unset}" "${LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS-unset}"
+  printf 'HOLDERENV %s\n' "${LOOMWRIGHT_HOLDER_PID-unset}"
   printf 'STDIN %s\n' "$(cat)"; printf 'CWD %s\n' "$PWD"
   printf 'RESUMEPATH %s\n' "${LOOMWRIGHT_LANE_RESUME_PATH-unset}"; } >> "$STUB_LOG"
 if [ -n "${STUB_RESUME_FAIL:-}" ]; then
@@ -269,7 +270,7 @@ out="$(run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
 check "G4 memory trip ⇒ HELD memory_pressure" "$rc:$(printf '%s\n' "$out" | head -1)" "4:lane-launch: HELD — L1 — memory_pressure"
 rm -f "$P/.supervisor/automate/$PARENT.memory-pressure"
 check "G5 no process while held" "$(claude_calls)" "$n0"
-out="$(LOOMWRIGHT_MACHINE_LOAD_CMD="$T/absent-load.sh" CLAUDECODE=1 CLAUDE_PID=4242 run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
+out="$(LOOMWRIGHT_MACHINE_LOAD_CMD="$T/absent-load.sh" CLAUDECODE=1 CLAUDE_PID=4242 LOOMWRIGHT_HOLDER_PID=4242 run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
 check "G6 unknown load admits" "$rc" 0
 has "G7 launched line with session id" "$out" "launched L1"
 check "G8 one process started" "$(claude_calls)" "$((n0 + 1))"
@@ -295,6 +296,7 @@ has "H4d disallow carries the GraphQL auto-merge mutation via gh api" "$first" "
 hasnt "H4e gh api graphql itself is not blanket-denied" "$first" "Bash(gh api graphql"
 hasnt "H5 no non-interactive fallback flag" "$first" "non-interactive"
 has "H6 env: ceiling 0, CLAUDECODE and CLAUDE_PID unset" "$(grep '^ENV' "$STUB_LOG" | sed -n "$((n0 + 1))p")" "CEIL=0 CC=unset PID=unset"
+check "H6b env: the coordinator's LOOMWRIGHT_HOLDER_PID (set on the launch) is unset for the lane" "$(grep '^HOLDERENV' "$STUB_LOG" | sed -n "$((n0 + 1))p")" "HOLDERENV unset"
 has "H7 prompt = namespaced backlog command" "$(grep '^STDIN' "$STUB_LOG" | sed -n "$((n0 + 1))p")" "/loomwright:automate --backlog $L1/.supervisor/lane-backlog.md"
 check "H8 runs inside the lane" "$(grep '^CWD' "$STUB_LOG" | sed -n "$((n0 + 1))p")" "CWD $L1"
 check "H9 session id from system/init recorded" "$(tcol L1 7)" sess-123
@@ -1651,10 +1653,25 @@ cat > "$T/ab-spy.sh" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >> "\$T_ABSPY"
 [ "\$1" = closeout ] && echo "CC=\${CLAUDECODE-unset} PID=\${CLAUDE_PID-unset}" >> "\$T_ABENV"
+[ "\$1" = closeout ] && echo "closeout HOLDER=\${LOOMWRIGHT_HOLDER_PID-unset} SELF=\$\$" >> "\$T_ABHOLD"
 exec bash "$SC/automate-helpers.sh" "\$@"
 EOF
 chmod +x "$T/ab-gh" "$T/ab-spy.sh"; export T_ABGH="$T/ab-gh.calls" T_ABSPY="$T/ab-spy.log" T_ABENV="$T/ab-spy.env"; mkdir -p "$T/remote-ab"
-ab() { REMOTE11="$T/remote-ab" LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" \
+# The finalize-empty half of the holder pin (AC 9): a helpers shim that records LOOMWRIGHT_HOLDER_PID and
+# its own pid for finalize-empty, then execs the real helper; setup-memory.sh beside it forwards (the
+# lane reads finalize-empty's mode through `dirname "$HELPERS"`). Used only where AB_HELPERS names it.
+export T_ABHOLD="$T/ab-spy.holder"; mkdir -p "$T/abh"
+cat > "$T/abh/automate-helpers.sh" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = finalize-empty ] && echo "finalize-empty HOLDER=\${LOOMWRIGHT_HOLDER_PID-unset} SELF=\$\$" >> "\$T_ABHOLD"
+exec bash "$SC/automate-helpers.sh" "\$@"
+EOF
+printf '#!/usr/bin/env bash\nexec bash "%s/setup-memory.sh" "$@"\n' "$SC" > "$T/abh/setup-memory.sh"
+chmod +x "$T/abh/automate-helpers.sh" "$T/abh/setup-memory.sh"
+# holder_pinned <label> — every recorded HOLDER is numeric and equals that process's own SELF pid.
+holder_pinned() { awk -v l="$1" '$1 == l { n++; h = $2; s = $3; sub(/^HOLDER=/, "", h); sub(/^SELF=/, "", s); if (h !~ /^[0-9]+$/ || h != s) bad++ }
+  END { print ((n > 0 && !bad) ? "pinned" : "unpinned(" n + 0 "," bad + 0 ")") }' "$T_ABHOLD" 2>/dev/null; }
+ab() { REMOTE11="$T/remote-ab" LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="${AB_HELPERS:-$SC/automate-helpers.sh}" \
   LOOMWRIGHT_LANES_TRAIL="$T/ab-spy.sh" LOOMWRIGHT_GH_BIN="$T/ab-gh" bash "$S" "$@" 2>&1; }
 # ab_lane <n> <item> <pr> — a launched-then-exited lane holding <item> pending (its af/37-shaped prose
 # quotes the sentinel inline) and a jobs/done/ brief pointing at it.
@@ -1688,7 +1705,9 @@ has "AB2e … and the last line names the gate leftover" "$(printf '%s\n' "$out"
 # AB2f the lane closeout is a FRESH run-lock acquire (no --session-id), so it runs with the host identity
 # unset, as the merge watcher does — else a crashed closeout's lock would name the coordinator as holder.
 check "AB2f … and that closeout ran with the host identity vars unset (coordinator had them set)" "$(cat "$T_ABENV")" "CC=unset PID=unset"
-out="$(STUB_PR_STATE=MERGED ab lane-convert-ready "$L57")"; rc=$?
+check "AB2g … and its LOOMWRIGHT_HOLDER_PID is the closeout process's own pid (the run-lock holder pin)" "$(holder_pinned closeout)" pinned
+: > "$T_ABHOLD"
+out="$(AB_HELPERS="$T/abh/automate-helpers.sh" STUB_PR_STATE=MERGED ab lane-convert-ready "$L57")"; rc=$?
 printf '%s\n' "$out" | sed 's/^/       | /'
 check "AB3 merged re-run exits 0 and its last line reads closeout complete" "$rc:$(printf '%s\n' "$out" | tail -n1 | grep -c '; closeout complete$' | tr -d ' ')" "0:1"
 has "AB3b … closeout stamped the lane's requirement (a quoted sentinel is not a stamp)" "$out" "  closeout: stamped — $RAB"
@@ -1705,6 +1724,8 @@ check "AB3g the PUSHED run file carries both" \
   "$(grep -cxF -- "- [x] $RAB" "$T/remote-ab/.supervisor/automate/$PARENT5-L7.md" 2>/dev/null | tr -d ' '):$(cur_line "$T/remote-ab/.supervisor/automate/$PARENT5-L7.md" 2>/dev/null)" \
   "1:- item: $RAB | status: done | pr: $PRAB | branch: feature/ab|- pause_reason: null|"
 check "AB3h the PUSHED requirement carries the done stamp" "$(grep -cE '^## Status:[[:space:]]*done' "$T/remote-ab/$RAB" 2>/dev/null | tr -d ' ')" 1
+check "AB3k the merged re-run's closeout AND its NAME=VALUE-led finalize-empty each ran with LOOMWRIGHT_HOLDER_PID = their own pid" \
+  "$(holder_pinned closeout):$(holder_pinned finalize-empty)" "pinned:pinned"
 ab_co="$(grep -n '^closeout ' "$T_ABSPY" | tail -n1 | cut -d: -f1)"; ab_tp="$(grep -n '^trail-pr ' "$T_ABSPY" | tail -n1 | cut -d: -f1)"
 check "AB3i closeout ran BEFORE the wave-end trail push (spy order)" "$([ -n "$ab_co" ] && [ -n "$ab_tp" ] && [ "$ab_co" -lt "$ab_tp" ] && echo before)" before
 check "AB3j no launch lock left behind" "$(ls -d "$P/.supervisor/automate/$PARENT5.lanes".L7.launch.lock 2>/dev/null | wc -l | tr -d ' ')" 0

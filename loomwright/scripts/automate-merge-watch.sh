@@ -80,12 +80,17 @@
 # so `pgrep -f automate-merge-watch` mid-poll shows two processes for ONE
 # watcher (the s3-g "two watchers" observation was this counting artifact).
 #
-# CLAUDE_PID / CLAUDECODE are unset HERE as well as by the launcher: with them
-# set, run-lock.sh would record the launching Claude session as the lock
-# holder, and a closeout that died without its trap would leave a lock nobody
-# can reclaim while that session lives. Unset, run-lock.sh records
-# `pid_source ppid` — the closeout process — reclaimable after it dies
-# (dead pid + the 1800s TTL).
+# The closeout's run lock must name the CLOSEOUT PROCESS as its holder, so a
+# closeout that died without its trap leaves a lock reclaimable once it is
+# dead (dead pid + the 1800s TTL) — never the launching Claude session, and
+# never a long-lived ancestor (run-lock.sh's ancestor walk is no longer gated
+# on a Claude-only variable, so a watcher started under any live non-shell
+# would otherwise record THAT). Two parts: CLAUDE_PID / CLAUDECODE are unset
+# HERE as well as by the launcher, and the closeout runs through
+# `bash -c 'LOOMWRIGHT_HOLDER_PID=$$; …; exec env "$@"'`, which pins the
+# holder to its own pid (`exec` + `env`'s exec keep it, so `$$` IS the
+# closeout) — run-lock.sh records `pid_source holder_env`. Resolution order:
+# docs/ARCHITECTURE_CONTRACTS.md §"Run lock".
 #
 # Always exits 0. bash 3.2 / BSD-userland safe (no `timeout`; `sleep` only).
 # Seams: LOOMWRIGHT_GH_BIN, LOOMWRIGHT_JQ_BIN (same as automate-helpers.sh).
@@ -326,7 +331,9 @@ while :; do
   case "$state" in
     MERGED)
       merged_seen=1
-      out="$(bash "$HERE/automate-helpers.sh" closeout "$rf_abs" "$item" "$pr_url" 2>/dev/null)"
+      # The holder pin (comment block above): the closeout process is the lock holder.
+      out="$(bash -c 'LOOMWRIGHT_HOLDER_PID=$$; export LOOMWRIGHT_HOLDER_PID; exec env "$@"' _ \
+        bash "$HERE/automate-helpers.sh" closeout "$rf_abs" "$item" "$pr_url" 2>/dev/null)"
       [ -n "$out" ] && printf '%s\n' "$out"
       guard=""
       # A lone `closeout: skipped — …` line is a guard that stopped closeout
