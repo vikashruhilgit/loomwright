@@ -1,8 +1,8 @@
 ---
 name: telemetry
-description: Opt-in GitHub Issues telemetry for loomwright. Enables longitudinal analysis of agent quality by emitting structured, scored, redacted issues from `SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, and `QA_RESULT` blocks. Use when a project wants to feed run outcomes back into the maintainer repo (or its own analytics repo) without standing up a backend.
-version: "1.1.0"
-lastUpdated: "2026-04"
+description: Opt-in GitHub Issues telemetry for loomwright. Enables longitudinal analysis of agent quality by emitting structured, scored, redacted issues from `SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, and `QA_RESULT` blocks, plus plugin script steps that fail or warn (`scripts/emit-script-event.sh`). Use when a project wants to feed run outcomes back into the maintainer repo (or its own analytics repo) without standing up a backend.
+version: "1.2.0"
+lastUpdated: "2026-10"
 ---
 
 # Telemetry
