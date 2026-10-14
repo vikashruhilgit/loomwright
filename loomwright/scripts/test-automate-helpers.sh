@@ -5932,7 +5932,21 @@ qg_is "QG1e queue-confirm non-integer / signed / leading-zero / >9-digit count �
 qg_is "QG1f queue-confirm missing or extra argument ⇒ usage error exit 1" "$(qc_usage "$H")" "$E_USAGE"
 # the lane text is the lane's existing Progress reason, byte for byte (intake.md's lane bullet)
 QG_INTAKE="$HERE/../skills/automate-loop/intake.md"
-if grep -qF -- "skipped AUT-QUEUE: ${QC_LANE#skip — }" "$QG_INTAKE"; then ok "QG1d' the --lane-backlog reason is intake.md's lane Progress line byte for byte"; else no "QG1d' intake.md lane line differs from queue-confirm --lane-backlog"; fi
+qg_lane_prose() { if grep -qF -- "skipped AUT-QUEUE: ${QC_LANE#skip — }" "$1"; then printf match; else printf differ; fi; }
+qg_is "QG1d' the --lane-backlog reason is intake.md's lane Progress line byte for byte" "$(qg_lane_prose "$QG_INTAKE")" match
+# qg_prose_check <label> <src> <mutant> <scenario_fn> <expected> — a prose mutant is trusted only
+# when it is non-empty, differs from <src> and lost no line; it must then turn <scenario_fn> red.
+qg_prose_check() {
+  if [ -s "$3" ] && ! cmp -s "$2" "$3" && [ "$(wc -l < "$3")" -ge "$(wc -l < "$2")" ]; then
+    if [ "$("$4" "$3")" != "$5" ]; then ok "QG prose mutant ($1) turns its leg red"; else no "QG prose mutant ($1) did NOT discriminate"; fi
+  else
+    no "QG prose mutant ($1) not gated (empty, identical, or a line was lost)"
+  fi
+  rm -f "$3"
+}
+QG_LANE_TXT="${QC_LANE#skip — }"
+QG_LT="$QG_LANE_TXT" awk 'BEGIN { t = ENVIRON["QG_LT"] } !d && (i = index($0, t)) { d = 1; $0 = substr($0, 1, i - 1) "lane backlog made by" substr($0, i + length("lane backlog written by")) } { print }' "$QG_INTAKE" > "$QG/intake-lane-mutant.md"
+qg_prose_check "QG1d': intake.md's lane line reworded (written by → made by)" "$QG_INTAKE" "$QG/intake-lane-mutant.md" qg_lane_prose match
 qg_mut_check "QG1a: -le flipped to -lt" '  if [ "$n" -le "$limit" ]; then' '  if [ "$n" -lt "$limit" ]; then' qc_le "$E_LE"
 qg_mut_check "QG1b: comparison always true" '  if [ "$n" -le "$limit" ]; then' '  if true; then' qc_gt "$E_GT"
 qg_mut_check "QG1c: source check deleted" '  [ "$src" = backlog ] || { echo "ask"; return 0; }' __DELETE__ qc_src "$E_SRC"
@@ -5980,8 +5994,12 @@ P_MISSING="rc=0 refuse — run file not found or unreadable: $QG/auto/absent.md|
 P_USAGE="rc=1 |rc=1 |rc=1 |rc=1 |rc=1 "
 P_NEVER="rc=0 refuse — no merge-watch marker for this PR within 1s"
 qg_is "QG2a park-ask-gate parked awaiting_merge + marker for this PR + gh OPEN ⇒ fix-now allowed (a ./ item spelling matches)" "$(p_open "$H")" "$P_OPEN"
-qg_parked; qg_state OPEN; QG_RF_SUM="$(cksum < "$QG_RF")"; QG_MK_SUM="$(cksum < "$QG_MK")"; pag "$H" "$QG_RF" "$QG_ITEM" "$QG_PR" --wait 1 >/dev/null
-if [ "$(cksum < "$QG_RF")" = "$QG_RF_SUM" ] && [ "$(cksum < "$QG_MK")" = "$QG_MK_SUM" ]; then ok "QG2a' park-ask-gate is READ-ONLY: run file and marker byte-unchanged"; else no "QG2a' park-ask-gate wrote the run file or the marker"; fi
+p_ro() {  # <helper> — `unchanged` when one park-ask-gate call left the run file and marker byte-identical
+  local a b; qg_parked; qg_state OPEN; a="$(cksum < "$QG_RF")"; b="$(cksum < "$QG_MK")"
+  pag "$1" "$QG_RF" "$QG_ITEM" "$QG_PR" --wait 1 >/dev/null
+  if [ "$(cksum < "$QG_RF")" = "$a" ] && [ "$(cksum < "$QG_MK")" = "$b" ]; then printf unchanged; else printf changed; fi
+}
+qg_is "QG2a' park-ask-gate is READ-ONLY: run file and marker byte-unchanged" "$(p_ro "$H")" unchanged
 qg_is "QG2b park-ask-gate MERGED / CLOSED / any other state ⇒ fix-now unavailable (exact OPEN only)" "$(p_states "$H")" "$P_STATES"
 qg_is "QG2c park-ask-gate gh pr view failing, or a body with no state ⇒ fix-now unavailable: state unreadable (fail closed, unlike reconcile-item)" "$(p_ghfail "$H")" "$P_GHFAIL"
 qg_is "QG2d park-ask-gate item closed out (status done) ⇒ ask — fix-now unavailable: closed out" "$(p_done "$H")" "$P_DONE"
@@ -6010,6 +6028,8 @@ qg_mut_check "QG2g: item/PR match deleted" '  if [ "${ci#./}" != "${item#./}" ] 
 qg_mut_check "QG2h: run-file readability check deleted" '  if [ ! -f "$rf" ] || [ ! -r "$rf" ]; then echo "refuse — run file not found' __DELETE__ p_missing "$P_MISSING"
 qg_mut_check "QG2i: usage die neutered" '    || die "park-ask-gate: usage:' '    || true' p_usage "$P_USAGE"
 qg_mut_check "QG2j: --wait ignored (judge once)" '        wait="$2"; shift 2 ;;' '        shift 2 ;;' p_delayed "$P_OPEN"
+qg_mut_check "QG2a': the judge appends to the run file" '  [ -n "$line" ] || { echo "refuse — no ## Current item line"; return 0; }' '  printf x >> "$rf"; [ -n "$line" ] || { echo "refuse — no ## Current item line"; return 0; }' p_ro unchanged
+qg_mut_check "QG2a': the judge appends to the merge-watch marker" '  mp="$(awk -F' "  printf x >> \"\$marker\"; mp=\"\$(awk -F'\\t' '\$1 == \"pr_url\" { print \$2; exit }' \"\$marker\" 2>/dev/null || true)\"" p_ro unchanged
 qg_mut_check "QG2k: no-marker refusal turned into a pass" '    need_marker) echo "refuse — no merge-watch marker' '    need_marker) ;;' p_never "$P_NEVER"
 
 # ---- QG3. prose order (AC5, AC9): the park-first list in per-item-loop.md puts the park write,
@@ -6032,7 +6052,13 @@ qg_order() {  # <md> — prints the verdict line the leg compares
   fi
 }
 qg_is "QG3a per-item-loop.md park-first list: park write, watcher, lock release precede park-ask-gate --wait 75, which precedes the ask" "$(qg_order "$QG_LOOP")" "park-first"
-if [ "$(grep -cxF -- "$QG_LEAD" "$QG_LOOP")" = 1 ] && grep -qxF -- '### Dismissed-findings decision step (before the park)' "$QG_LOOP"; then ok "QG3a' the lead line is unique and the cited heading is byte-unchanged"; else no "QG3a' lead line missing/duplicated or the cited heading changed"; fi
+QG_CITED='### Dismissed-findings decision step (before the park)'
+qg_lead() { if [ "$(grep -cxF -- "$QG_LEAD" "$1")" = 1 ] && grep -qxF -- "$QG_CITED" "$1"; then printf ok; else printf bad; fi; }
+qg_is "QG3a' the lead line is unique and the cited heading is byte-unchanged" "$(qg_lead "$QG_LOOP")" ok
+QG_H="$QG_LEAD" awk 'BEGIN { h = ENVIRON["QG_H"] } { print } !d && $0 == h { d = 1; print }' "$QG_LOOP" > "$QG/lead-dup.md"
+qg_prose_check "QG3a': the lead line duplicated" "$QG_LOOP" "$QG/lead-dup.md" qg_lead ok
+QG_H="$QG_CITED" awk 'BEGIN { h = ENVIRON["QG_H"] } $0 == h { $0 = "### Dismissed-findings decision step (at the park)" } { print }' "$QG_LOOP" > "$QG/heading-mut.md"
+qg_prose_check "QG3a': the cited heading altered" "$QG_LOOP" "$QG/heading-mut.md" qg_lead ok
 # qg_move <out> <line anchor> <after anchor> — move the first list line holding <line anchor>
 # below the first list line holding <after anchor>, inside the park-first list only.
 qg_move() {
