@@ -20,6 +20,7 @@ Conventions a team agrees on tend to live in heads, in CLAUDE.md prose, or get r
 /rules add                  # append one rule to .agent/rules/<category>.json (confirm-only)
 /rules add --supersedes X   # append a rule that supersedes (hides) an OLDER rule id X
 /rules add --applies-to G   # append a rule scoped to path-glob G (repeatable; omit ⇒ repo-wide)
+/rules add --enforcement must --check C   # PROVE C first (prove-rule-check.sh), then add with --proof
 /rules retract              # remove an existing rule object by id (confirm-only)
 /rules check                # human-invoked: run `must` rules' checks after explicit confirmation
 /rules audit                # read-only: re-validate the standing rules store, propose fixes
@@ -58,7 +59,7 @@ Analyze the repo and **PROPOSE** rules — never blank-slate-ask, never auto-wri
 
 ### `add` (§7 — append-only write discipline, confirm-only)
 
-`add` is a **thin caller** of the sole-writer helper `${CLAUDE_PLUGIN_ROOT}/scripts/add-rule.sh` — it does **not** re-implement the write in prose. The helper enforces the §7 write discipline **in code** (path containment + value validation + array-only parse-gate + atomic append), so the command just collects the fields and delegates:
+`add` is a **thin caller** of the sole-writer helper `scripts/add-rule.sh` (invoked as shown below) — it does **not** re-implement the write in prose. The helper enforces the §7 write discipline **in code** (path containment + value validation + array-only parse-gate + atomic append), so the command just collects the fields and delegates:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/add-rule.sh" \
@@ -66,6 +67,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/add-rule.sh" \
   --statement "<statement>" \
   --enforcement "<advisory|must>" \   # optional, default advisory
   --check "<shell string>" \          # optional, default null (omit for a null check)
+  --proof "<proof-file>" \            # REQUIRED with --enforcement must + --check, refused otherwise — see "Proof step" below
   --source "<who/what added it>" \    # optional, default "/rules add"
   --supersedes "<older-rule-id>" \    # optional (curation/anti-rot) — see below
   --applies-to "<path-glob>" \        # optional, REPEATABLE — path routing scope; omit for repo-wide
@@ -82,6 +84,23 @@ The helper, per `add-rule.sh` (mechanizing SKILL.md §7):
 6. **Confirm-only:** writes ONLY when `--confirm` is passed (or an interactive TTY confirms). With no `--confirm` and non-interactive, it **prints the planned write and writes nothing**. Append-only — never edits or removes an existing rule via the ADD action (`--retract`, below, is the one sanctioned exception).
 
 The path-containment and validation guarantees are proven by `scripts/test-add-rule.sh` (rejects `../escape`, `a/b`, `.hidden`, `foo;rm -rf`, backtick, and empty categories; asserts no traversal write).
+
+**Proof step — `--enforcement must` with `--check` (verified rule checks, owner decisions D1–D4).** A check that passes today proves nothing on its own (`true`, an always-present token, a path typo), yet a stamped, gate-countable `must` check counts at Phase 4.5, the drain and `gate-eval` condition 7. So before calling `add-rule.sh`, `/rules add` proves the check can tell right from wrong, in this order:
+
+1. Get a **counterexample**: a unified-diff patch introducing ONE violation of the rule (D1) — the human author supplies it (it is never generated). Put the patch, and the proof file below, under `mktemp -d` — **outside the repo**.
+2. Run the prover, which **DISPLAYS the check and the patch** and runs only on `--confirm` (pass it only after the human has seen both and said yes) or an interactive TTY `y` — an environment variable never confirms:
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/prove-rule-check.sh" \
+     --check "<shell string>" --counterexample "<dir>/counterexample.patch" \
+     --out "<dir>/proof.json" --confirm
+   ```
+
+   Leg 1 runs the check on the current tree (must pass); leg 2 runs it on a scratch `git worktree` copy of HEAD with the patch applied (must fail). The scratch copy is removed and verified gone, and the user's tree and worktree list are left as found. The verdict — `PROVEN`, `VACUOUS`, `FAILS_NOW` or `UNPROVABLE (<reason>)`, a closed set owned by the script's header — is the last line; show it **and both legs' outputs** to the human.
+3. **`PROVEN` only:** call `add-rule.sh` with the same `--check` string and `--proof "<dir>/proof.json"`. The writer re-hashes the check and refuses (nothing written, with or without `--confirm`) a missing proof, a non-`PROVEN` proof, or a proof for a different check string. Record the verdict and both outputs in the commit / PR body (D4 — the rule schema has no `proof` member).
+4. **Anything else — the D3 fallback:** the rule is **not** added as `must`. Offer it as `--enforcement advisory` with the same `--check` kept as **data** and no `--proof`; `rules-check.sh` never selects an advisory rule, so its check never runs and never counts at a gate.
+
+**Proving writes no stamp** and authorizes no replay: `prove-rule-check.sh` runs a CANDIDATE string passed on argv, **never reads `.agent/rules/`**, and never touches the user-scope stamp — a human still runs `/rules check --confirm` after the rule lands (see `check` below). Advisory adds and adds without `--check` need no proof and behave exactly as before.
 
 **`--applies-to <path-glob>` (path routing, optional flag on `add`, REPEATABLE).** N flags author an N-element `applies_to` array on the new rule; **omit it for `applies_to: null`, i.e. repo-wide** — the default every pre-routing rule carries. `read-rules.sh` acts on it at read time (see `list` above). Patterns are bash `case` globs, **not** `.gitignore` patterns (`*` and `**` are equivalent and both cross `/`; no `!` negation) — the full syntax table is in `skills/rules/SKILL.md` §1. Validated before writing: each pattern must be non-empty and not whitespace-only, free of tab/newline/0x1F (the three the reader neutralizes) and of CR, `..`-free, and neither absolute (`/…`) nor home-relative (`~…`); one bad pattern **aborts the whole add** (non-zero, nothing written), mirroring the reject-never-sanitize discipline of the category guard. Rejected alongside `--retract` like every other add-only flag.
 
@@ -131,7 +150,7 @@ The engine passes `--store` a **one-line-per-rule comparison corpus** (`build_co
 
 ### `check` (§8 — HUMAN-invoked only)
 
-`check` is a **thin caller** of the sole-execution helper `${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh` — it does **not** re-implement check execution in prose. The helper is the ONLY path in the whole slice that runs a rule's `check`, and it does so only behind an explicit confirmation gate:
+`check` is a **thin caller** of the sole-execution helper `${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh` — it does **not** re-implement check execution in prose. The helper is the ONLY path in the whole slice that runs a STORED rule's `check` (the add-time prover above runs a candidate string before it is stored), and it does so only behind an explicit confirmation gate:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh" \
@@ -164,10 +183,11 @@ The helper, per `rules-check.sh` (mechanizing SKILL.md §8):
 
 ## Trust boundary (`check` is arbitrary shell — §9)
 
-A `check` value is **arbitrary shell authored by anyone who cloned or PR'd the repo** — untrusted data everywhere except one explicit, confirmed path:
+A `check` value is **arbitrary shell authored by anyone who cloned or PR'd the repo** — untrusted data everywhere except on the explicit, human-confirmed paths below (`rules-check.sh` for a stored check, `prove-rule-check.sh` for a candidate before it is stored):
 
 - **The reader (`read-rules.sh`) emits `check` as DATA and the `check` is never executed by the reader** — there is no code path in it that runs a `check`. Safe for any unattended caller (a hook, a worker, a future enforcement seam) with zero code-execution risk.
 - **`/rules check` requires confirmation** — it is HUMAN-invoked only, DISPLAYS each `must`-rule's `check`, and runs it ONLY after explicit confirmation. It never blind-executes a check authored by a cloning teammate.
+- **`prove-rule-check.sh` is a confirm-gated runner of a CANDIDATE check string**, used only by the `add` proof step above and by `/dreaming`'s "Accept rule WITH check". It takes the check from argv, never reads `.agent/rules/`, displays the check and the patch before anything runs, runs nothing without `--confirm` or a TTY `y`, and writes no stamp. `rules-check.sh` remains the sole executor of a STORED rule's `check`.
 - **Unattended execution of `check` commands is now MECHANIZED + GATED in `rules-check.sh`** — its default-off `--no-cmd` valve (which WINS over `--confirm` AND `--if-stamped`) inherits `run-ground-truth.sh --no-cmd`'s machine-authored trust boundary (the same boundary Plan Reviewer Criterion 14 enforces). The worker's spawn-time paste, the Code Reviewer's own read (`agents/code-reviewer.md` Context Setup step 4a) and the SessionStart nudge consume the reader alone — which surfaces each `check` as DATA and never executes it. **Two stages call `rules-check.sh` with execution enabled** — Phase 4.5 (its advisory replay and `run-ground-truth.sh`'s `rule:` delegation) and worker Step 5 (`worker-rule-selfcheck.sh`) — and all of them call only `rules-check.sh --if-stamped`, which only ever replays a set a human already confirmed on THAT SAME MACHINE (see "Stamp semantics" above) — it never gates `heal_decision` and enters no fix loop.
 
 ## See Also
