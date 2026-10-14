@@ -53,7 +53,9 @@
 #       park, arms the watcher, notifies and releases the lock BEFORE park-ask-gate and
 #       the ask (GATE step 4, §9, the park-first list), and a late or lock-refused
 #       fix-now becomes a follow-up, with park-ask-gate re-read UNDER the re-acquired
-#       lock before `## Status: running` (D3 mutant: the re-read moved after the write);
+#       lock before `## Status: running` (D3 mutant: the re-read moved after the write),
+#       and the decision batch — not the answer — is D3's unit: EACH fix-now answer is
+#       recorded before the ONE re-pass (batch mutant: the singular form ⇒ red);
 #       every park-first run-file write after the lock release (step 6's Progress line,
 #       step 8's decision batch / dismissed-decide / pending_decisions, D3's follow-up)
 #       sits inside a run-lock acquire/release pair (mutants: acquire removed ⇒ red);
@@ -693,6 +695,29 @@ if [ -s "$D3_MUT" ] && ! cmp -s "$SUBF" "$D3_MUT" && [ "$(wc -l < "$D3_MUT")" = 
   [ "$o" != ordered ] && ok "B: D3 mutant (second gate read moved after the running write) turns the order leg red: $o" || no "B: D3 mutant did NOT discriminate"
 else
   no "B: D3 mutant not gated (empty, identical, or a line lost)"
+fi
+# D3 batch unit: with k>1 fix-now answers in one decision batch, EACH is recorded
+# (`dismissed-decide … fix-now`) before the ONE re-pass, and on a refusal EACH becomes a
+# follow-up — a per-answer reading either starts a second re-pass or leaves a draft unrecorded.
+D3_EACH='`dismissed-decide <runfile> <draft_path> fix-now` for EACH fix-now answer of the batch'
+d3_batch() {  # <md> — prints `batch` or the offending offsets
+  D3_A="$D3_ANCHOR" D3_E="$D3_EACH" awk 'BEGIN { h = ENVIRON["D3_A"]; e = ENVIRON["D3_E"] } index($0, h) {
+    d = index($0, e); p = index($0, "the ONE fix-now DRAIN → GATE re-pass"); f = index($0, "EACH fix-now answer of the batch becomes a follow-up")
+    u = index($0, "never one per answer") + index($0, "decision batch, never the single answer")
+    if (d > 0 && p > d && f > 0 && u > 0) print "batch"; else print "bad each=" d " repass=" p " follow_each=" f " unit=" u
+    exit }' "$1"
+}
+o="$(d3_batch "$SUBF")"
+[ "$o" = batch ] && ok "B: D3 — the decision batch is the unit: EACH fix-now answer recorded before the ONE re-pass, EACH refused one a follow-up" || no "B: D3 batch wording: ${o:-paragraph missing}"
+D3_BMUT="$TOP/d3-batch-mutant.md"
+D3_A="$D3_ANCHOR" D3_E="$D3_EACH" awk 'BEGIN { h = ENVIRON["D3_A"]; e = ENVIRON["D3_E"]; r = "`dismissed-decide <runfile> <draft_path> fix-now`" }
+  index($0, h) && (i = index($0, e)) { $0 = substr($0, 1, i - 1) r substr($0, i + length(e)) }
+  { print }' "$SUBF" > "$D3_BMUT"
+if [ -s "$D3_BMUT" ] && ! cmp -s "$SUBF" "$D3_BMUT" && [ "$(wc -l < "$D3_BMUT")" = "$(wc -l < "$SUBF")" ]; then
+  o="$(d3_batch "$D3_BMUT")"
+  [ "$o" != batch ] && ok "B: D3 batch mutant (singular per-answer dismissed-decide fix-now) turns the batch leg red: $o" || no "B: D3 batch mutant did NOT discriminate"
+else
+  no "B: D3 batch mutant not gated (empty, identical, or a line lost)"
 fi
 # The restated single-drain invariant in CLAUDE.md must not claim one order for every park.
 cl_order() {  # <md> — `both` when the single-drain invariant names the two orders and not the stale one

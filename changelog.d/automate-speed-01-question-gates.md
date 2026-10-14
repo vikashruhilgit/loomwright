@@ -11,9 +11,10 @@ releases the run lock BEFORE it asks, and asks only after the new read-only `aut
 <runfile> <item> <pr_url> [--wait <s>]` answers `ask`: it refuses (nothing asked, the next PICK asks) when the park was
 not written, no merge-watch marker carries the PR within `--wait` (the engine passes 75s, past the watcher's 60s
 replace wait) or `## Current` names another item or PR, and it allows fix-now only when its own `gh pr view --json
-state` reads exactly OPEN. A fix-now answer re-checks the gate, re-acquires the run lock and re-checks the gate again while
-holding it (the watcher's `closeout` takes the same lock), before any `running` write; otherwise it becomes a
-follow-up draft with one `fix-now became follow-up` Progress line, so no fix is pushed after a merge. The `escalated`
+state` reads exactly OPEN. All fix-now answers of one decision batch are handled together: the engine re-checks the
+gate, re-acquires the run lock and re-checks the gate again while holding it (the watcher's `closeout` takes the same
+lock), before any `running` write, then records every fix-now answer before the ONE re-pass; otherwise each becomes a
+follow-up draft with its own `fix-now became follow-up` Progress line, so no fix is pushed after a merge. The `escalated`
 park, `--non-interactive-fallback` and lanes keep the decide-then-park order. Tests: test-automate-helpers.sh section
 QG (both helpers with a stubbed gh, a delayed-marker leg, and a prose-order leg over the new park-first list, each
 with a validated mutant); test-automate-dismissed.sh Part B pins the new order.
