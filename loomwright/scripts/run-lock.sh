@@ -27,14 +27,19 @@
 # and degraded to a bare 1800s lease). The Bash-tool shell that invokes this
 # script also exits after each call, so `$PPID` is no better there; the
 # process that lives as long as the run is the harness's own process (the
-# session's `claude` under Claude Code). Resolution order (recorded as
-# `pid_source`):
+# session's `claude` under Claude Code). No tier ever records a pid that
+# `kill -0` may never report dead (is_holder_pid): 0 (`kill -0 0` signals the
+# caller's own process group, so it always "lives"), a leading zero, or 1
+# (init — alive forever wherever the caller may signal it, e.g. as root in a
+# CI container; EPERM elsewhere) — such a lock could never be reclaimed.
+# Resolution order (recorded as `pid_source`):
 #   1. `holder_env` — `$LOOMWRIGHT_HOLDER_PID` when numeric and alive. The
 #      vendor-neutral way for ANY harness (a CI job, a script, a close-out
 #      that must hold the lock itself) to name the process the lock lives as
 #      long as. A dead or non-numeric value, 0, a leading zero, or 1 is
 #      ignored (falls through).
-#   2. `claude_pid` — `$CLAUDE_PID` when numeric and alive. Evidence: observed
+#   2. `claude_pid` — `$CLAUDE_PID` when numeric and alive; 0, a leading zero
+#      or 1 is ignored the same way (none is a real `claude`). Evidence: observed
 #      2026-09-26 on Claude Code 2.1.281 (Desktop), `CLAUDE_PID` in a Bash-tool
 #      shell = that shell's own parent = the `claude` binary. It is NOT in the
 #      public env-var docs, so it is never the only line of defence:
@@ -52,6 +57,13 @@
 #      1800s TTL: `acquire` (and `status` on such a lock) prints one STDERR
 #      line `run_lock_degraded: pid_source=ppid ttl_only=1800s`; stdout and
 #      the exit code are unchanged. Set LOOMWRIGHT_HOLDER_PID to avoid it.
+#      When `$PPID` itself is no holder pid — 1 (the script was orphaned to
+#      init before bash read its parent, a double fork) or 0 (a parent outside
+#      the pid namespace, e.g. `docker exec`) — `pid` is recorded EMPTY, with
+#      no `pid_start`: no holder, so `holder_alive` reads dead and reclaim
+#      needs only age >= 1800s; `status` prints `pid=` and `liveness` prints
+#      `unknown`. Never `$$` instead: it is dead the instant `acquire` returns,
+#      which an empty pid states honestly rather than through a fake pid.
 # Honest limits of the walk: a long-lived non-shell that is not the run (a CI
 # runner agent, an IDE) IS recorded — name the right process with
 # LOOMWRIGHT_HOLDER_PID; names are matched exactly after the basename +
@@ -267,19 +279,25 @@ holder_alive() {
   return 0
 }
 
+# is_holder_pid <v> — true when <v> may be recorded as a holder: decimal, no
+# leading zero, > 1. 0 (kill -0 0 signals our own process group, so it always
+# "lives"), a leading zero, and 1 (init; alive to `kill -0` as root) never
+# are — one rule for every tier.
+is_holder_pid() {
+  case "${1:-}" in ''|*[!0-9]*|0*|1) return 1 ;; esac
+  return 0
+}
+
 # holder_pid — prints `<pid> <pid_source>`, the liveness pid recorded in meta
-# (resolution order in the header).
+# (resolution order in the header); `-` in place of the pid means "no holder"
+# (an empty `pid`, header tier 4).
 holder_pid() {
-  # 0 (kill -0 0 signals our own process group, so it always "lives"), a
-  # leading zero, and 1 (init) are never a holder — the walk's own `-gt 1` rule.
-  case "${LOOMWRIGHT_HOLDER_PID:-}" in
-    ''|*[!0-9]*|0*|1) : ;;
-    *) if kill -0 "$LOOMWRIGHT_HOLDER_PID" 2>/dev/null; then echo "$LOOMWRIGHT_HOLDER_PID holder_env"; return; fi ;;
-  esac
-  case "${CLAUDE_PID:-}" in
-    ''|*[!0-9]*) : ;;
-    *) if kill -0 "$CLAUDE_PID" 2>/dev/null; then echo "$CLAUDE_PID claude_pid"; return; fi ;;
-  esac
+  if is_holder_pid "${LOOMWRIGHT_HOLDER_PID:-}" && kill -0 "$LOOMWRIGHT_HOLDER_PID" 2>/dev/null; then
+    echo "$LOOMWRIGHT_HOLDER_PID holder_env"; return
+  fi
+  if is_holder_pid "${CLAUDE_PID:-}" && kill -0 "$CLAUDE_PID" 2>/dev/null; then
+    echo "$CLAUDE_PID claude_pid"; return
+  fi
   # The ancestor walk — unconditional (no harness gate).
   local p="$PPID" c n=0
   while [ "$n" -lt 8 ]; do
@@ -287,14 +305,14 @@ holder_pid() {
     [ -n "$c" ] || break
     is_session_host_comm "$c" && break
     if ! is_shell_comm "$c" && ! is_wrapper_comm "$c"; then
-      [ "$p" -gt 1 ] 2>/dev/null && { echo "$p ancestor"; return; }
+      is_holder_pid "$p" && { echo "$p ancestor"; return; }
       break
     fi
     p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
     case "$p" in ''|*[!0-9]*) break ;; esac
     n=$((n+1))
   done   # end of the ancestor walk
-  echo "$PPID ppid"
+  if is_holder_pid "$PPID"; then echo "$PPID ppid"; else echo "- ppid"; fi
 }
 
 # write_meta [owner] — owner defaults to --owner; the re-entrant path passes
@@ -306,7 +324,9 @@ write_meta() {
   read -r hp hsrc <<EOF_HOLDER
 $(holder_pid)
 EOF_HOLDER
-  hstart="$(proc_lstart "$hp")"
+  [ "$hp" != - ] || hp=""
+  hstart=""
+  [ -z "$hp" ] || hstart="$(proc_lstart "$hp")"
   {
     printf 'pid\t%s\n' "$hp"
     printf 'owner\t%s\n' "$owner"

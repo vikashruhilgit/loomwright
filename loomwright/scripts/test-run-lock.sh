@@ -60,7 +60,8 @@
 #  --- Holder under any harness + start-time fingerprint (af39b) ---
 #  22. LOOMWRIGHT_HOLDER_PID live -> pid_source holder_env (with or without
 #      CLAUDE_PID); dead / non-numeric -> ignored, falls through.
-#  23. LOOMWRIGHT_HOLDER_PID unset + live CLAUDE_PID -> claude_pid.
+#  23. LOOMWRIGHT_HOLDER_PID unset + live CLAUDE_PID -> claude_pid; that variable
+#      at 0, a leading zero or 1 (or dead / non-numeric) is never recorded.
 #  24. a WRAPPER (env/timeout/xargs/sudo) between the shells and a non-shell
 #      is skipped like a shell (PATH-stub `ps` answering from a pid table).
 #  25. a SESSION HOST (tmux/screen/sshd/login/Terminal/iTerm2) stops the walk:
@@ -87,6 +88,12 @@
 #      the same live pid -> alive; a different recorded pid (the lock changed
 #      hands, even to a LIVE holder) -> dead; no lock -> unknown; a
 #      non-numeric --pid -> usage error (exit 1).
+#  34. a `$PPID` of 1 (the SUT orphaned to init by a double fork before bash
+#      read its parent) is never recorded: pid empty, no pid_start, pid_source
+#      ppid + the degraded line, liveness unknown, status `pid=`; reclaimable
+#      once aged, refused while young. Mutation control: the pre-fix
+#      `echo "$PPID ppid"` records 1, and where `kill -0 1` succeeds (root)
+#      the aged lock is never reclaimed. SKIPs where a subreaper adopts orphans.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -574,6 +581,16 @@ if [ "$(meta_val "$D23" pid)" = "$CL22" ] && [ "$(meta_val "$D23" pid_source)" =
 else
   no "expected claude_pid $CL22, got '$(meta_val "$D23" pid)' '$(meta_val "$D23" pid_source)'"
 fi
+# 0 always "lives" (kill -0 0) and 1 is init: the same rule as the holder pin.
+for bad in 0 007 1 999999 abc; do
+  D23b="$(fresh_root)"
+  run_env -u LOOMWRIGHT_HOLDER_PID CLAUDE_PID="$bad" -- acquire --owner x:23 --root "$D23b"
+  if [ "$RUN_RC" -eq 0 ] && [ "$(meta_val "$D23b" pid)" != "$bad" ] && [ "$(meta_val "$D23b" pid_source)" != claude_pid ]; then
+    ok "harness pid var='$bad' ignored -> falls through to the walk / ppid ($(meta_val "$D23b" pid_source))"
+  else
+    no "harness pid var='$bad' must never be recorded: got '$(meta_val "$D23b" pid)' '$(meta_val "$D23b" pid_source)' rc=$RUN_RC"
+  fi
+done
 kill "$HOLD22" "$CL22" 2>/dev/null; wait "$HOLD22" "$CL22" 2>/dev/null
 
 echo "== 24. a wrapper between the shells and a non-shell ancestor is skipped =="
@@ -867,6 +884,74 @@ if [ "$v33u" = unknown ] && [ "$v33s" = alive ] && [ "$v33o" = dead ] && [ "$v33
 else
   no "liveness --pid: none='$v33u' same='$v33s' other='$v33o' unbound='$v33n' bad_rc=$rc33b"
 fi
+
+echo "== 34. a \$PPID of 1 (orphaned to init) is never recorded; the lock stays TTL-reclaimable =="
+# orphan_acquire <sut> <root> <ppid-file> — the outer shell exits at once, so
+# the backgrounded subshell is reparented to init; it then (after a pause)
+# records its own $PPID and EXECs the SUT, which therefore starts with that
+# same parent. A `ps` stub that yields nothing keeps the walk out of it, as on
+# a minimal image. Waits up to ~10s for the meta.
+STUB34="$(mktemp -d)"
+printf '#!/bin/sh\nexit 1\n' > "$STUB34/ps"; chmod +x "$STUB34/ps"
+orphan_acquire() {
+  local sut="$1" root="$2" pf="$3" i=0
+  env -u CLAUDE_PID -u LOOMWRIGHT_HOLDER_PID PATH="$STUB34:$PATH" \
+    bash -c '( sleep 1; exec bash -c '"'"'echo "$PPID" > "$3"; exec bash "$1" acquire --owner x:34 --root "$2"'"'"' _ "$1" "$2" "$3" ) >/dev/null 2>"$4" & exit 0' \
+    _ "$sut" "$root" "$pf" "$root.err" >/dev/null 2>&1
+  while [ "$i" -lt 100 ] && ! grep -q '^pid_source' "$(meta_file "$root")" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
+}
+D34="$(fresh_root)"
+orphan_acquire "$SUT" "$D34" "$D34.ppid"
+o34="$(cat "$D34.ppid" 2>/dev/null)"
+if [ "$o34" != 1 ]; then
+  # A subreaper (systemd --user, a container's init shim) adopted the orphan
+  # instead of pid 1 — this host cannot produce the scenario.
+  ok "SKIP: orphan reparented to pid '${o34:-?}', not 1 (a subreaper) -- leg not reproducible here"
+else
+  st34="$(bash "$SUT" status --root "$D34" 2>"$RUN_ERR_FILE")"; st34e="$(cat "$RUN_ERR_FILE")"
+  lv34="$(bash "$SUT" liveness --root "$D34" 2>/dev/null)"
+  if grep -q $'^pid\t$' "$(meta_file "$D34")" && [ -z "$(meta_val "$D34" pid_start)" ] \
+     && [ "$(meta_val "$D34" pid_source)" = ppid ] && [ "$(cat "$D34.err")" = "$DEGRADED_LINE" ] \
+     && [ "$lv34" = unknown ] && [ "$st34e" = "$DEGRADED_LINE" ]; then
+    case "$st34" in "LOCKED owner=x:34 pid= age="*) ok "\$PPID=1 -> empty pid, no pid_start, ppid + degraded line, liveness unknown, status '$st34'" ;;
+      *) no "status stdout for an empty pid: '$st34'" ;; esac
+  else
+    no "\$PPID=1: meta='$(tr '\t\n' '=;' < "$(meta_file "$D34")")' err='$(cat "$D34.err")' liveness='$lv34' status_err='$st34e'"
+  fi
+  run_sut acquire --owner x:34b --root "$D34"
+  if [ "$RUN_RC" -eq 1 ]; then ok "young empty-pid lock refused (dead holder alone never reclaims)"; else no "young empty-pid lock must refuse, rc=$RUN_RC"; fi
+  set_meta_field "$D34" ts "$(( $(date +%s) - 4000 ))"
+  run_sut acquire --owner x:34b --root "$D34"
+  if [ "$RUN_RC" -eq 0 ] && [ "$(meta_val "$D34" owner)" = x:34b ]; then
+    ok "aged empty-pid lock reclaimed by a different owner"
+  else
+    no "aged empty-pid lock must reclaim: rc=$RUN_RC owner='$(meta_val "$D34" owner)'"
+  fi
+  # Mutation control: the pre-fix fallback records init. Whether that lock is
+  # then unreclaimable depends on `kill -0 1`: it succeeds as root (a CI
+  # container) and fails EPERM for an ordinary user — so the never-reclaimed
+  # half is asserted only where `kill -0 1` succeeds.
+  MUT34="$(mktemp -d)/run-lock.sh"
+  sed 's/^  if is_holder_pid "\$PPID"; then echo "\$PPID ppid"; else echo "- ppid"; fi$/  echo "$PPID ppid"/' "$SUT" > "$MUT34"
+  D34m="$(fresh_root)"
+  if grep -q '^  echo "\$PPID ppid"$' "$MUT34"; then
+    orphan_acquire "$MUT34" "$D34m" "$D34m.ppid"
+    p34m="$(meta_val "$D34m" pid)"
+    set_meta_field "$D34m" ts "$(( $(date +%s) - 4000 ))"
+    bash "$MUT34" acquire --owner x:34b --root "$D34m" >/dev/null 2>&1; rc34m=$?
+    if kill -0 1 2>/dev/null; then want34m=1; else want34m=0; fi
+    if [ "$p34m" = 1 ] && [ "$rc34m" -eq "$want34m" ]; then
+      ok "mutation control: the pre-fix fallback records pid 1 (aged-acquire rc=$rc34m; kill -0 1 here: $([ "$want34m" = 1 ] && echo succeeds || echo EPERM))"
+    else
+      no "mutation control did not reproduce: pid='$p34m' rc=$rc34m want_rc=$want34m"
+    fi
+  else
+    no "mutation control: could not locate the ppid fallback line in run-lock.sh"
+  fi
+  rm -rf "$(dirname "$MUT34")"
+fi
+rm -rf "$STUB34"
+rm -f "$D34.ppid" "$D34.err" "${D34m:-}.ppid" "${D34m:-}.err"
 rm -rf "$PSSTUB" "$TBL" "$RUN_ERR_FILE"
 
 echo
