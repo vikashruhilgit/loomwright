@@ -133,7 +133,7 @@
 #      at most block a resume or drop the opt-out; it can never grant it.
 #   4. Spawn: `claude -p` with the lane allowlist / disallow list below, `--plugin-dir` pinned to the
 #      coordinator's plugin root (LOOMWRIGHT_ROOT), `--append-system-prompt` = the fixed headless-lane text, env
-#      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 with CLAUDE_PID / CLAUDECODE unset. Prompt:
+#      CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 with CLAUDE_PID / CLAUDECODE / LOOMWRIGHT_HOLDER_PID unset. Prompt:
 #      `/loomwright:automate --backlog <lane>/.supervisor/lane-backlog.md` or
 #      `/loomwright:automate --resume <run_id>` (the lane's own run id only — never a bare --resume).
 #
@@ -610,7 +610,7 @@ _lanes_spawn() {
     --allowedTools "$LANE_ALLOWED_TOOLS" --disallowedTools "$disallow"
     --plugin-dir "$PLUGIN_ROOT" --append-system-prompt "$LANE_SYS")
   [ -n "$sid" ] && flags+=(--resume "$sid")
-  local -a envu=(-u CLAUDECODE -u CLAUDE_PID)
+  local -a envu=(-u CLAUDECODE -u CLAUDE_PID -u LOOMWRIGHT_HOLDER_PID)   # a coordinator's holder pin never reaches a lane
   [ "$LN_STRIP_OPTOUT" = 1 ] && envu+=(-u LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS)   # --without-gate-optout
   in=/dev/null
   if [ -n "$prompt" ]; then
@@ -1277,12 +1277,19 @@ _lanes_current_item() { # <runfile> — the `## Current` item path, or nothing
   awk '/^## / { sec = $0; next }
     sec == "## Current" && /^- item:/ { v = $0; sub(/^- item: */, "", v); sub(/ *\|.*/, "", v); print v; exit }' "$1" 2>/dev/null
 }
-# _lanes_no_host_identity [NAME=VALUE ...] <cmd> [args...] — runs <cmd> (through env, so leading
-# NAME=VALUE pairs apply) with the host's two runtime-identity variables unset. For a fresh run-lock
-# acquire with no --session-id (lane-convert-ready's closeout and finalize-empty): like the merge
-# watcher, or a crashed call's lock names the coordinator as holder and stays unreclaimable while it
-# lives (automate-loop SKILL, "Why … are unset").
-_lanes_no_host_identity() { env -u CLAUDE_PID -u CLAUDECODE "$@"; }
+# _lanes_no_host_identity [NAME=VALUE ...] <cmd> [args...] — runs <cmd> (through `exec env`, so
+# leading NAME=VALUE pairs apply) with the host's two runtime-identity variables unset AND
+# LOOMWRIGHT_HOLDER_PID pinned to <cmd>'s own pid (`bash -c` sets it to `$$`, then `exec env` and
+# env's own exec keep that pid, so `$$` IS <cmd>). Guarantee: a fresh run-lock acquire with no
+# --session-id inside <cmd> (lane-convert-ready's closeout and finalize-empty) records <cmd> itself
+# as holder (`pid_source holder_env`) — never the coordinator session and never a long-lived
+# ancestor such as the coordinator's own `claude` (run-lock.sh's ancestor walk is ungated) — so a
+# crashed call's lock is reclaimable once <cmd> is dead. Like the merge watcher (automate-loop
+# SKILL, "Why … are unset"); resolution order: docs/ARCHITECTURE_CONTRACTS.md §"Run lock".
+_lanes_no_host_identity() {
+  env -u CLAUDE_PID -u CLAUDECODE \
+    bash -c 'LOOMWRIGHT_HOLDER_PID=$$; export LOOMWRIGHT_HOLDER_PID; exec env "$@"' _ "$@"
+}
 lanes_convert_ready() {
   local dir="${1:-}"
   [ "$#" -le 1 ] || die "lane-convert-ready: unexpected argument '$2'"
@@ -1320,7 +1327,8 @@ lanes_convert_ready() {
     case "$pr" in
       ''|-|null) cs="; closeout not run (## Current has no pr)" ;;
       *)
-        # A fresh run-lock acquire (no --session-id): host identity unset (_lanes_no_host_identity).
+        # A fresh run-lock acquire (no --session-id): host identity unset, holder pinned to the
+        # closeout process (_lanes_no_host_identity).
         co="$(cd "$LN_DIR" && _lanes_no_host_identity bash "$TRAIL" closeout "$rf" "$item" "$pr" --no-trail 2>/dev/null)"
         printf '%s\n' "$co" | sed '/^$/d; s/^/  /'
         cv="$(printf '%s\n' "$co" | bash "$HELPERS" closeout-classify --run "$LN_RUN" --item "${item#./}" --pr "$pr" 2>/dev/null)"
@@ -1358,7 +1366,7 @@ lanes_convert_ready() {
       if [ "$fm" != "on $mb" ]; then
         fin="lane-convert-ready: finalize skipped — finalize-empty's mode reader says '${fm:-nothing}', not 'on $mb'"
       else
-        # finalize-empty's run-lock acquire takes no --session-id either: same unset as closeout above.
+        # finalize-empty's run-lock acquire takes no --session-id either: same unset + holder pin as closeout above.
         fe="$(cd "$LN_DIR" && _lanes_no_host_identity LOOMWRIGHT_META_SYNC_BIN="$META_SYNC" \
           bash "$HELPERS" finalize-empty "$rf" 2>/dev/null)"
         fe="$(printf '%s\n' "$fe" | sed '/^$/d' | awk '{ printf "%s%s", (NR > 1 ? "; " : ""), $0 }')"
