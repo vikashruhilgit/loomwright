@@ -7,7 +7,7 @@
 #   run-lock.sh acquire --owner <label> [--session-id <id>] [--root <checkout>] [--force-unlock]
 #   run-lock.sh release --owner <label> | --session-id <id> [--root <checkout>] [--force-unlock]
 #   run-lock.sh status  [--root <checkout>]
-#   run-lock.sh liveness [--root <checkout>]
+#   run-lock.sh liveness [--pid <pid>] [--root <checkout>]
 #
 # Lock: <root>/.supervisor/run.lock          (a directory — `mkdir` is atomic
 #                                              on every POSIX filesystem, the
@@ -66,7 +66,11 @@
 # `kill -0` succeeds AND (meta has no `pid_start`, OR the pid's current
 # `lstart` equals it) — so a pid the OS reused for an unrelated process reads
 # dead. That ONE rule is `holder_alive`; reclaim reads it, and `liveness`
-# prints it for any other reader (session-resume.sh), so nothing restates it.
+# prints it for every other reader that judges the holder (session-resume.sh's
+# stale-lock line, automate-trail.sh's closeout refusal). No script outside
+# this file probes a run.lock meta pid with its own `kill -0` — readers that
+# only read `owner`/`session_id` (guard-lane-wait-armed.sh, `status` callers)
+# make no liveness call and are not copies of the rule.
 # Honest limits: a live pid whose `lstart` cannot be read now, while meta
 # holds a `pid_start`, compares unequal and reads dead. On Linux, procps
 # derives `lstart` from the boot time plus the process's start ticks, and the
@@ -138,6 +142,11 @@
 # liveness: prints exactly one of `alive`, `dead` (the `holder_alive` verdict
 #   on the recorded pid + pid_start) or `unknown` (no lock, or no recorded
 #   pid); always exits 0. Read-only — never acquires, refreshes or reclaims.
+#   `--pid <pid>` binds the verdict to ONE holder: when the lock now records a
+#   different pid (the holder a caller saw refused it has since released, and
+#   another took the lock), it prints `dead`, never the newcomer's `alive` —
+#   a caller judging a refusal fails toward "not running". A non-numeric
+#   `--pid` is a usage error.
 #
 # Honest limit: this lock protects only entry points that actually RUN this
 # script (automate PICK, Supervisor Phase 0 INIT, /autonomous INIT). It does
@@ -153,7 +162,7 @@ die_usage() {
     echo "usage: run-lock.sh acquire --owner <label> [--session-id <id>] [--root <dir>] [--force-unlock]"
     echo "       run-lock.sh release --owner <label> | --session-id <id> [--root <dir>] [--force-unlock]"
     echo "       run-lock.sh status  [--root <dir>]"
-    echo "       run-lock.sh liveness [--root <dir>]"
+    echo "       run-lock.sh liveness [--pid <pid>] [--root <dir>]"
   } >&2
   exit 1
 }
@@ -166,6 +175,7 @@ OWNER=""
 SESSION_ID=""
 ROOT=""
 FORCE=0
+EXPECT_PID=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -173,6 +183,7 @@ while [ $# -gt 0 ]; do
     --session-id)   SESSION_ID="${2:-}"; shift 2 ;;
     --root)         ROOT="${2:-}"; shift 2 ;;
     --force-unlock) FORCE=1; shift ;;
+    --pid)          EXPECT_PID="${2:-}"; shift 2 ;;
     -h|--help)      die_usage ;;
     *)              die_usage ;;
   esac
@@ -411,9 +422,12 @@ cmd_status() {
 
 cmd_liveness() {
   local lk_pid
+  case "$EXPECT_PID" in *[!0-9]*) die_usage ;; esac
   lk_pid="$(meta_get pid)"
   if [ ! -d "$LOCK_DIR" ] || [ -z "$lk_pid" ]; then
     echo "unknown"
+  elif [ -n "$EXPECT_PID" ] && [ "$lk_pid" != "$EXPECT_PID" ]; then
+    echo "dead"   # --pid: the lock now names another holder (header, `liveness`)
   elif holder_alive "$lk_pid" "$(meta_get pid_start)"; then
     echo "alive"
   else

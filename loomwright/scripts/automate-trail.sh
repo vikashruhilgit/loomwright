@@ -1393,15 +1393,21 @@ closeout() {
   if [ "$rc" -ne 0 ]; then
     # The refusal names the holder's liveness (automate-followups/36 A1). run-lock.sh's
     # refusal carries the same `owner=… pid=… age=…` fields `run-lock.sh status` prints;
-    # the pid is probed HERE, at refusal time, with the same `kill -0` run-lock.sh uses.
-    # A LIVE holder (often another lane's run in this checkout, met by closeout-others) is
-    # busy, not a leftover: closeout-classify reads `(live pid <p>)` as `run_lock_held`. A
-    # dead or unreadable holder — run-lock.sh reclaims only a dead pid at age >= 1800 s, so a
-    # dead-but-young one still refuses — stays a leftover.
-    local holder hpid
+    # the verdict is run-lock.sh's OWN (`liveness`, its `holder_alive` rule: kill -0 AND
+    # the recorded pid_start — a reused pid reads dead), never a local `kill -0`. It runs
+    # through _run_lock_in, so it reads the lock dir the acquire was refused on, and
+    # `--pid` binds it to the REFUSED pid: if that holder released and another took the
+    # lock in between, the verdict is `dead`, never the newcomer's `alive` (fails toward
+    # the leftover). A LIVE holder (often another lane's run in this checkout, met by
+    # closeout-others) is busy, not a leftover: closeout-classify reads `(live pid <p>)`
+    # as `run_lock_held`. A dead, reused, released or unreadable holder — run-lock.sh
+    # reclaims only a dead pid at age >= 1800 s, so a dead-but-young one still refuses —
+    # stays a leftover.
+    local holder hpid hlive=""
     holder="$(printf '%s\n' "$lk" | sed -n 's/.*run_lock_held owner=\([^ ]*\).*/\1/p' | head -n1)"
     hpid="$(printf '%s\n' "$lk" | sed -n 's/.*run_lock_held owner=[^ ]* pid=\([0-9][0-9]*\).*/\1/p' | head -n1)"
-    if [ -n "$hpid" ] && kill -0 "$hpid" 2>/dev/null; then
+    [ -z "$hpid" ] || hlive="$(_run_lock_in "$root" liveness --pid "$hpid" 2>/dev/null)"
+    if [ "$hlive" = alive ]; then
       echo "$S run lock held by ${holder:-unknown} (live pid $hpid)"
     else
       echo "$S run lock held by ${holder:-unknown} (holder pid ${hpid:-unknown} not running)"

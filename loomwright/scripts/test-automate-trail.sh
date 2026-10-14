@@ -2759,9 +2759,44 @@ grep -qxF -- "closeout: skipped — run lock held by automate:$RUN_ID-L1 (holder
   && grep -qxF "closeout-others: recorded — cross-run closeout $RUN_ID $REQ: leftover lock — skipped — run lock held by automate:$RUN_ID-L1 (holder pid $DEADPID not running)" <<<"$o" \
   && ok "(CO8) a DEAD (young, unreclaimable) holder ⇒ 'not running' line and a leftover lock row, as before" \
   || no "(CO8) out=$(printf '%s' "$o" | tr '\n' '|')"
+# (CO8b) the liveness rule is run-lock.sh's, not a local `kill -0`: a LIVE pid whose recorded
+# pid_start does not match (the OS reused it) is a dead holder — 'not running' and a leftover lock.
+closeout_fixture 322; mk_rb
+co_plant_lock "$$"; printf 'pid_start\tThu Jan  1 00:00:00 1970\n' >> "$P/.supervisor/run.lock/meta"
+o="$(co_others --record "$RBF")"
+rm -rf "$P/.supervisor/run.lock"
+grep -qxF -- "closeout: skipped — run lock held by automate:$RUN_ID-L1 (holder pid $$ not running)" <<<"$o" \
+  && grep -qE "^leftover	$RUN_ID	$REQ	$PRURL	lock	" <<<"$o" && ! grep -q '^run_lock_held	' <<<"$o" \
+  && ok "(CO8b) a live pid with a mismatched pid_start (reused) ⇒ 'not running' + leftover lock (run-lock.sh's holder_alive, not kill -0)" \
+  || no "(CO8b) out=$(printf '%s' "$o" | tr '\n' '|')"
+# (CO8c) race: the refused holder (dead) releases and a LIVE newcomer takes the lock before the
+# liveness read. The verdict is bound to the refused pid, so it fails toward the leftover — never
+# the newcomer's 'alive'. A run-lock.sh wrapper swaps the meta right after a refused acquire.
+RACELK="$TOP/race-lock"; mkdir -p "$RACELK"; cp "$SPYD"/*.sh "$SPYD"/*.py "$RACELK/"; cp -R "$SPYD/automate-helpers.d" "$RACELK/"
+mv "$RACELK/run-lock.sh" "$RACELK/run-lock.real.sh"
+cat > "$RACELK/run-lock.sh" <<'SHIM'
+#!/usr/bin/env bash
+out="$(bash "$(dirname "$0")/run-lock.real.sh" "$@")"; rc=$?
+[ -z "$out" ] || printf '%s\n' "$out"
+if [ "${1:-}" = acquire ] && [ "$rc" -ne 0 ] && [ -n "${RACE_META:-}" ]; then
+  printf 'pid\t%s\nowner\tnewcomer\nsession_id\tnew\nts\t%s\npid_source\tppid\n' "$RACE_NEWPID" "$(date +%s)" > "$RACE_META"
+fi
+exit "$rc"
+SHIM
+sleep 0 & DEADPID=$!; wait "$DEADPID" 2>/dev/null
+closeout_fixture 323; mk_rb
+co_plant_lock "$DEADPID"
+o="$(RACE_META="$P/.supervisor/run.lock/meta" RACE_NEWPID="$$" CO_H="$RACELK/automate-helpers.sh" co_others --record "$RBF")"
+raced="$(grep -c '^owner	newcomer$' "$P/.supervisor/run.lock/meta" 2>/dev/null)"
+rm -rf "$P/.supervisor/run.lock"
+[ "$raced" = 1 ] \
+  && grep -qxF -- "closeout: skipped — run lock held by automate:$RUN_ID-L1 (holder pid $DEADPID not running)" <<<"$o" \
+  && grep -qE "^leftover	$RUN_ID	$REQ	$PRURL	lock	" <<<"$o" && ! grep -q '^run_lock_held	' <<<"$o" \
+  && ok "(CO8c) refusal→liveness race (dead holder replaced by a live one) ⇒ still 'not running' + leftover lock" \
+  || no "(CO8c) raced=$raced out=$(printf '%s' "$o" | tr '\n' '|')"
 # (CO9) mutation control: drop the live-holder check ⇒ a live holder reads as a leftover again (CO7 red).
 MUTLK="$TOP/mutd-lock"; mkdir -p "$MUTLK"; cp "$SPYD"/*.sh "$SPYD"/*.py "$MUTLK/"; cp -R "$SPYD/automate-helpers.d" "$MUTLK/"
-sed 's/^    if \[ -n "\$hpid" \] && kill -0 "\$hpid" 2>\/dev\/null; then$/    if false; then  # mutant A1/' "$T" > "$MUTLK/automate-trail.sh"
+sed 's/^    if \[ "\$hlive" = alive \]; then$/    if false; then  # mutant A1/' "$T" > "$MUTLK/automate-trail.sh"
 if grep -q '# mutant A1' "$MUTLK/automate-trail.sh" && bash -n "$MUTLK/automate-trail.sh"; then
   co_live_leg "$MUTLK/automate-helpers.sh"
   rm -rf "$P/.supervisor/run.lock"

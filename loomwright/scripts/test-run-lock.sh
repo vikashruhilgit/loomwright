@@ -83,6 +83,10 @@
 #  32. `liveness` prints the same verdict acquire's reclaim reads: unknown
 #      (no lock), alive, dead (dead pid), dead (reused pid); stdout of
 #      status/acquire unchanged.
+#  33. `liveness --pid <p>` binds the verdict to the holder a caller saw:
+#      the same live pid -> alive; a different recorded pid (the lock changed
+#      hands, even to a LIVE holder) -> dead; no lock -> unknown; a
+#      non-numeric --pid -> usage error (exit 1).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -847,6 +851,22 @@ fi
 st32="$(bash "$SUT" status --root "$D32" 2>/dev/null)"
 case "$st32" in "LOCKED owner=x:32 pid=999999 age="*) ok "status stdout shape unchanged: '$st32'" ;;
   *) no "status stdout changed: '$st32'" ;; esac
+
+echo "== 33. liveness --pid binds the verdict to the refused holder =="
+D33="$(fresh_root)"
+v33u="$(bash "$SUT" liveness --pid 4242 --root "$D33" 2>/dev/null)"
+sleep 600 & L33=$!
+env LOOMWRIGHT_HOLDER_PID="$L33" bash "$SUT" acquire --owner x:33 --root "$D33" >/dev/null 2>&1
+v33s="$(bash "$SUT" liveness --pid "$L33" --root "$D33" 2>/dev/null)"
+v33o="$(bash "$SUT" liveness --pid "$$" --root "$D33" 2>/dev/null)"
+v33n="$(bash "$SUT" liveness --root "$D33" 2>/dev/null)"
+bash "$SUT" liveness --pid x1 --root "$D33" >/dev/null 2>&1; rc33b=$?
+kill "$L33" 2>/dev/null; wait "$L33" 2>/dev/null
+if [ "$v33u" = unknown ] && [ "$v33s" = alive ] && [ "$v33o" = dead ] && [ "$v33n" = alive ] && [ "$rc33b" = 1 ]; then
+  ok "liveness --pid: unknown (no lock) / alive (same live pid) / dead (lock names another LIVE pid) / unbound still alive / bad --pid exit 1"
+else
+  no "liveness --pid: none='$v33u' same='$v33s' other='$v33o' unbound='$v33n' bad_rc=$rc33b"
+fi
 rm -rf "$PSSTUB" "$TBL" "$RUN_ERR_FILE"
 
 echo
