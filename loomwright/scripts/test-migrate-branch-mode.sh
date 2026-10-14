@@ -103,6 +103,10 @@
 #      still tracked) MUST print `apply: WARNING — readiness is 'partial`; and when apply refuses AFTER
 #      the untrack (a stubbed setup-memory.sh), the step restores the index, returns to main clean,
 #      deletes the new branch, records FAIL and pushes nothing
+#  28. script-event telemetry: verify-pr whose A/B check PASSES and then fails pr_leaves_tracked reports
+#      that code with paths=1 and NO A/B counts or kinds (a passing check leaves nothing behind); a
+#      step's own usage error (verify-pr with no number, exit 2) reports nothing; mutation control:
+#      an accumulating evt with an always-reporting ab_check MUST leak the stale counts
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -958,6 +962,36 @@ SCRIPT="$STUBSM/migrate-branch-mode.sh"; mb A untrack-pr; SCRIPT="$SUT"
   && [ -n "$(git -C "$W/A" ls-files -- "$LDG")" ] && [ -z "$(git -C "$W/A" branch --list 'chore/loomwright-untrack-run-history-*')" ] \
   && [ "$O0" = "$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname)' | env LC_ALL=C sort)" ]; }
 check $? "apply refusing after the untrack: index restored (ledger tracked again), back on main, clean, branch deleted, FAIL recorded, nothing pushed (rc=$RC; porcelain: $(porcelain A | tr '\n' ' '))"
+
+echo "== 28. script-event telemetry: a failure reports only its own counts (#536 drain round 1) =="
+# verify-pr's A/B check PASSES (c.md is pushed to the branch first), then the stale PR fails
+# pr_leaves_tracked. The event must carry pr_leaves_tracked's own count only — never the A/B sizes a
+# passing check computed (evt replaces; ab_check reports only when it fails). Wiring only: the TEE
+# seam records the payload; this world has no consent, so nothing is sent.
+EVTEE="$TROOT/events.jsonl"
+hist_to_untrack; : > "$EVTEE"
+export LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; verify_newfile; V28="$?"; unset LOOMWRIGHT_SCRIPT_EVENT_TEE
+{ [ "$V28" -eq 0 ] && grep -q '"code": "pr_leaves_tracked"' "$EVTEE" && grep -q '"paths": 1' "$EVTEE" \
+  && ! grep -qE '"(a|u|b|extra_owner_decision)": ' "$EVTEE" && ! grep -q '"kinds": {"' "$EVTEE"; }
+check $? "verify-pr: A/B passes, then pr_leaves_tracked reports paths=1 and no stale A/B counts or kinds ($(cat "$EVTEE"))"
+: > "$EVTEE"; export LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; mb A verify-pr; unset LOOMWRIGHT_SCRIPT_EVENT_TEE
+{ [ "$RC" -eq 2 ] && [ ! -s "$EVTEE" ]; }; check $? "a step's own usage error (verify-pr with no PR number, exit 2) reports nothing (rc=$RC)"
+MUT="$TROOT/mut-evt-accumulate"
+if build_mutant "$MUT" 's/^  EVT_CODE="\$1"; EVT_ARGS=""; shift$/  EVT_CODE="$1"; shift/' '  EVT_CODE="$1"; shift' \
+   && python3 - "$MUT/migrate-branch-mode.sh" <<'PYM'
+import sys
+p = sys.argv[1]; s = open(p).read()
+a = '  if [ "$rc" -ne 0 ]; then\n    sed -n \'s/^> //p\''
+if s.count(a) != 1:
+    sys.exit(1)
+open(p, "w").write(s.replace(a, '  if true; then\n    sed -n \'s/^> //p\''))
+PYM
+then
+  SCRIPT="$MUT/migrate-branch-mode.sh"; hist_to_untrack; : > "$EVTEE"
+  export LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; verify_newfile; unset LOOMWRIGHT_SCRIPT_EVENT_TEE; SCRIPT="$SUT"
+  if grep -q '"a": ' "$EVTEE"; then ok "mutation control: accumulating evt + always-reporting ab_check leaks the passing A/B counts into pr_leaves_tracked"
+  else no "mutation control REFUTED: the accumulate mutant reported no stale counts ($(cat "$EVTEE"))"; fi
+else no "mutation control (evt accumulate) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"

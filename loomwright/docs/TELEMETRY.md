@@ -1188,10 +1188,14 @@ thread in its group is interest-skipped (exit 5) and posts nothing. A
 `warn` / `fail` opens or comments. A failure after the close opens a new
 thread. Pinned by `scripts/test-script-event-telemetry.sh` S3.
 
-**What the migration reports.** A failing step's code plus, from the A/B
-check, `a` / `u` / `b` / `extra_owner_decision` counts and the KIND counts of
-the paths each side holds alone (`kinds.b_only.dismissed-decisions = 3` is
-the 2026-10-13 failure, with no path in it). `setup-memory.sh apply` reports
+**What the migration reports.** A failing step's code. When the A/B check
+itself fails it adds the `a` / `u` / `b` / `extra_owner_decision` counts and
+the KIND counts of the paths each side holds alone and of the paths whose
+blobs differ (`kinds.b_only.dismissed-decisions = 3` is the 2026-10-13
+failure, with no path in it); a check that passed leaves nothing behind, and
+`evt` replaces the code and counts rather than accumulating them, so a later,
+unrelated failure in the same step reports only its own (pinned by
+`scripts/test-migrate-branch-mode.sh` leg 28). `setup-memory.sh apply` reports
 `readiness_partial` / `readiness_unknown` / `readiness_not_configured` (warn)
 or `ok` (pass) with the leaked / blocked path COUNTS and, when the migration
 ran it, `caller: migrate-branch-mode.<step>`; a `gated` verdict is not

@@ -152,8 +152,10 @@ die() { # die <message> — the reason line, then exit 1. The step's telemetry c
 # only and never emit (plan writes nothing at all). A command substitution or `( )` subshell that
 # dies does not run the EXIT trap (bash), so only the step's own exit reports.
 EVT_CODE=""; EVT_ARGS=""
-evt() { # evt <code> [--count k=v | --kind g.k=n]... — set the code a following failure reports
-  EVT_CODE="$1"; shift
+evt() { # evt <code> [--count k=v | --kind g.k=n]... — set the code AND counts a following failure
+  # reports. It REPLACES both (never accumulates), so a later, unrelated failure in the same step
+  # never reports counts an earlier check left behind.
+  EVT_CODE="$1"; EVT_ARGS=""; shift
   while [ $# -gt 0 ]; do EVT_ARGS="$EVT_ARGS$1"$'\n'; shift; done
 }
 evt_emit() { # evt_emit <exit code> — the EXIT trap body
@@ -402,12 +404,16 @@ ab_check() {
     sed 's/^/  /' "$SD/extra.list"
   fi
   AB_A="$an"; AB_B="$bn"; AB_U="$un"
-  # telemetry counts for the step's report (only sent when the step fails): the three set sizes and
-  # the KINDS of the paths each side holds alone — never a path (diff: `<` = A [+ U] only, `>` = B only)
-  sed -n 's/^> //p' "$SD/ab-names.diff" > "$SD/ab-b-only.list"; sed -n 's/^< //p' "$SD/ab-names.diff" > "$SD/ab-a-only.list"
-  evt "${EVT_CODE:-ok}" --count "a=$an" --count "u=$un" --count "b=$bn" --count "extra_owner_decision=$extra" \
-    $(kind_counts b_only "$SD/ab-b-only.list") $(kind_counts a_only "$SD/ab-a-only.list")
-  [ "$EVT_CODE" = ok ] && EVT_CODE=""
+  # telemetry for the step's failure report — ONLY when this check failed (a passing check leaves
+  # nothing behind for a later, unrelated failure to carry): the set sizes and the KINDS of the paths
+  # each side holds alone, and of the paths whose blobs differ — never a path. Names diff: `<` = A
+  # [+ U] only, `>` = B only; blobs diff: `<sha><TAB><path>` rows (prefixed `< ` / `> ` unless subset).
+  if [ "$rc" -ne 0 ]; then
+    sed -n 's/^> //p' "$SD/ab-names.diff" > "$SD/ab-b-only.list"; sed -n 's/^< //p' "$SD/ab-names.diff" > "$SD/ab-a-only.list"
+    sed -n 's/^[<>] //; /\t/s/^[^\t]*\t//p' "$SD/ab-blobs.diff" | env LC_ALL=C sort -u > "$SD/ab-blob.list"
+    evt "${EVT_CODE:-error}" --count "a=$an" --count "u=$un" --count "b=$bn" --count "extra_owner_decision=$extra" \
+      $(kind_counts b_only "$SD/ab-b-only.list") $(kind_counts a_only "$SD/ab-a-only.list") $(kind_counts blob_mismatch "$SD/ab-blob.list")
+  fi
   return $rc
 }
 
