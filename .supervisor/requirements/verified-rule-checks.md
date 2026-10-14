@@ -112,3 +112,9 @@ Dogfood in this repo first. Each `/dreaming` rules PR body carries the verdict c
 - Auto-generating counterexamples. The author (human or `/dreaming` proposal) supplies one.
 - Any change to `rules-check.sh`, the stamp, or `rules-gate-verdict.sh`.
 - Adopting the VERSE code or a benchmark harness.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-14T01:02:33Z
+- **Brief:** .supervisor/jobs/done/2026-10-13-verified-rule-checks.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/533
