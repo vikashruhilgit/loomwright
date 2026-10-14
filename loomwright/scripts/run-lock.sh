@@ -17,25 +17,53 @@
 #                                              NOT JSON, matching
 #                                              dispatch-pr-review.sh's
 #                                              write_lock_meta convention):
-#         pid, owner, session_id, ts, pid_source
+#         pid, owner, session_id, ts, pid_source[, pid_start]
+#       The first five keys keep their names and this order (session-resume.sh
+#       reads `pid` with its own awk); `pid_start` is appended after them.
 #
 # `pid` is the HOLDER's liveness pid — NOT this script's `$$` (which is dead
 # the instant `acquire` returns, so every lock looked "dead pid" immediately
 # and degraded to a bare 1800s lease). The Bash-tool shell that invokes this
-# script also exits after each call, so `$PPID` is no better there; the only
-# process that lives as long as the run is the session's `claude` process.
-# Resolution order (recorded as `pid_source`):
-#   1. `claude_pid` — `$CLAUDE_PID` when numeric and alive. Evidence: observed
+# script also exits after each call, so `$PPID` is no better there; the
+# process that lives as long as the run is the harness's own process (the
+# session's `claude` under Claude Code). Resolution order (recorded as
+# `pid_source`):
+#   1. `holder_env` — `$LOOMWRIGHT_HOLDER_PID` when numeric and alive. The
+#      vendor-neutral way for ANY harness (a CI job, a script, a close-out
+#      that must hold the lock itself) to name the process the lock lives as
+#      long as. A dead or non-numeric value is ignored (falls through).
+#   2. `claude_pid` — `$CLAUDE_PID` when numeric and alive. Evidence: observed
 #      2026-09-26 on Claude Code 2.1.281 (Desktop), `CLAUDE_PID` in a Bash-tool
 #      shell = that shell's own parent = the `claude` binary. It is NOT in the
 #      public env-var docs, so it is never the only line of defence:
-#   2. `ancestor` — under Claude Code (`CLAUDECODE` set), the first ancestor
-#      of this script that is not a shell (sh/bash/zsh/dash/ksh/fish): the
-#      Bash-tool shell's parent, i.e. `claude`. Survives `CLAUDE_PID` being
-#      dropped or renamed by a future release.
-#   3. `ppid` — otherwise the invoking shell (an interactive terminal, a CI
-#      step, a test harness). Under Claude Code this source means 1 and 2 both
-#      failed — the lock is degraded to the 1800s TTL, visible in `meta`.
+#   3. `ancestor` — under ANY harness (the walk has no harness gate), the first
+#      ancestor of this script that is neither a shell (sh/bash/zsh/dash/ksh/
+#      fish) nor a WRAPPER (is_wrapper_comm: a process that only runs the
+#      command below it), walking up from `$PPID` for at most 8 steps. Under
+#      Claude Code that is `claude`; survives `CLAUDE_PID` being dropped or
+#      renamed by a future release. The walk STOPS (falls to 4) at a SESSION
+#      HOST (is_session_host_comm: a terminal multiplexer, login or terminal
+#      app that outlives any one run), at pid 1, or when `ps` yields nothing —
+#      a host is never recorded, so a run that crashed under one stays
+#      TTL-reclaimable.
+#   4. `ppid` — otherwise the invoking shell. The lock is then DEGRADED to the
+#      1800s TTL: `acquire` (and `status` on such a lock) prints one STDERR
+#      line `run_lock_degraded: pid_source=ppid ttl_only=1800s`; stdout and
+#      the exit code are unchanged. Set LOOMWRIGHT_HOLDER_PID to avoid it.
+# Honest limits of the walk: a long-lived non-shell that is not the run (a CI
+# runner agent, an IDE) IS recorded — name the right process with
+# LOOMWRIGHT_HOLDER_PID; names are matched exactly after the basename +
+# leading-`-` strip, so a host whose `comm` differs from the closed list is
+# recorded as `ancestor`.
+#
+# `pid_start` fingerprints the holder: `LC_ALL=C ps -o lstart= -p <pid>`,
+# surrounding whitespace trimmed, written only when non-empty. At reclaim the
+# recorded pid is alive only when `kill -0` succeeds AND (meta has no
+# `pid_start`, OR the pid's current `lstart` equals it) — so a pid the OS
+# reused for an unrelated process reads dead. Honest limit: a live pid whose
+# `lstart` cannot be read now, while meta holds a `pid_start`, compares
+# unequal and reads dead; reclaim still also needs age >= 1800s.
+#
 # Observed 2026-09-26 (automate-2026-09-26-115755): automate PICK recorded its
 # own shell pid, launch-pad ran ~28 min, and Supervisor Phase 0's acquire
 # (different owner) reclaimed the "dead-pid + >=1800s" lock as stale.
@@ -68,10 +96,14 @@
 #     acquire doubles as a liveness heartbeat). An empty `--session-id` never
 #     re-enters. Cooperative, like the rest of this lock: a caller that lies
 #     about its session id can re-enter, exactly as it could `--force-unlock`.
-#   Reclaim: fires ONLY when BOTH the recorded pid is dead AND
+#   Reclaim: fires ONLY when BOTH the recorded pid is dead (a `pid_start`
+#   mismatch counts as dead — see `pid_start` above) AND
 #   age >= LOCK_TTL_SECONDS (1800s) — a dead pid alone, or a young lock
 #   alone, both refuse (matches dispatch-pr-review.sh's acquire_lock TTL
 #   contract exactly).
+#   Degraded: any successful acquire (fresh, reclaim, re-entrant refresh)
+#   that recorded `pid_source ppid` also prints `run_lock_degraded: …` to
+#   STDERR (never stdout).
 #
 # release:
 #   Idempotent no-op success (exit 0) when the lock is already absent, or
@@ -88,7 +120,9 @@
 #   that authorization belongs to the caller (never invoked by an agent
 #   without an explicit human instruction — see docs/PITFALLS.md).
 #
-# status: prints `LOCKED owner=<label> pid=<pid> age=<s>` or `UNLOCKED`.
+# status: prints `LOCKED owner=<label> pid=<pid> age=<s>` or `UNLOCKED`; a
+#   held lock whose meta reads `pid_source ppid` also gets the
+#   `run_lock_degraded: …` line on STDERR.
 #
 # Honest limit: this lock protects only entry points that actually RUN this
 # script (automate PICK, Supervisor Phase 0 INIT, /autonomous INIT). It does
@@ -168,44 +202,85 @@ is_shell_comm() {
   return 1
 }
 
+# is_wrapper_comm — a process that only runs the command below it; the walk
+# steps past it like a shell. Closed list, owned here (docs point to it).
+is_wrapper_comm() {
+  local c="${1##*/}"
+  c="${c#-}"
+  case "$c" in env|timeout|xargs|sudo) return 0 ;; esac
+  return 1
+}
+
+# is_session_host_comm — a process that outlives any one run (a terminal
+# multiplexer, a login, a terminal app); the walk STOPS at it and never
+# records it. Closed list, owned here (docs point to it).
+is_session_host_comm() {
+  local c="${1##*/}"
+  c="${c#-}"
+  case "$c" in tmux|screen|sshd|login|Terminal|iTerm2) return 0 ;; esac
+  return 1
+}
+
+# proc_lstart <pid> — the pid's start time (`lstart`, C locale), surrounding
+# whitespace trimmed; empty when `ps` yields nothing. The `pid_start` value.
+proc_lstart() {
+  LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | head -n 1
+}
+
 # holder_pid — prints `<pid> <pid_source>`, the liveness pid recorded in meta
 # (resolution order in the header).
 holder_pid() {
+  case "${LOOMWRIGHT_HOLDER_PID:-}" in
+    ''|*[!0-9]*) : ;;
+    *) if kill -0 "$LOOMWRIGHT_HOLDER_PID" 2>/dev/null; then echo "$LOOMWRIGHT_HOLDER_PID holder_env"; return; fi ;;
+  esac
   case "${CLAUDE_PID:-}" in
     ''|*[!0-9]*) : ;;
     *) if kill -0 "$CLAUDE_PID" 2>/dev/null; then echo "$CLAUDE_PID claude_pid"; return; fi ;;
   esac
-  if [ -n "${CLAUDECODE:-}" ]; then
-    local p="$PPID" c n=0
-    while [ "$n" -lt 8 ]; do
-      c="$(ps -o comm= -p "$p" 2>/dev/null)"
-      [ -n "$c" ] || break
-      if ! is_shell_comm "$c"; then
-        [ "$p" -gt 1 ] 2>/dev/null && { echo "$p ancestor"; return; }
-        break
-      fi
-      p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
-      case "$p" in ''|*[!0-9]*) break ;; esac
-      n=$((n+1))
-    done
-  fi
+  # The ancestor walk — unconditional (no harness gate).
+  local p="$PPID" c n=0
+  while [ "$n" -lt 8 ]; do
+    c="$(ps -o comm= -p "$p" 2>/dev/null)"
+    [ -n "$c" ] || break
+    is_session_host_comm "$c" && break
+    if ! is_shell_comm "$c" && ! is_wrapper_comm "$c"; then
+      [ "$p" -gt 1 ] 2>/dev/null && { echo "$p ancestor"; return; }
+      break
+    fi
+    p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
+    case "$p" in ''|*[!0-9]*) break ;; esac
+    n=$((n+1))
+  done   # end of the ancestor walk
   echo "$PPID ppid"
 }
 
 # write_meta [owner] — owner defaults to --owner; the re-entrant path passes
-# the recorded outer owner so a nested acquire never relabels the lock.
+# the recorded outer owner so a nested acquire never relabels the lock. Sets
+# WROTE_SRC to the recorded pid_source (read by note_degraded).
+WROTE_SRC=""
 write_meta() {
-  local owner="${1:-$OWNER}" hp hsrc
+  local owner="${1:-$OWNER}" hp hsrc hstart
   read -r hp hsrc <<EOF_HOLDER
 $(holder_pid)
 EOF_HOLDER
+  hstart="$(proc_lstart "$hp")"
   {
     printf 'pid\t%s\n' "$hp"
     printf 'owner\t%s\n' "$owner"
     printf 'session_id\t%s\n' "$SESSION_ID"
     printf 'ts\t%s\n' "$(now_epoch)"
     printf 'pid_source\t%s\n' "$hsrc"
+    [ -z "$hstart" ] || printf 'pid_start\t%s\n' "$hstart"
   } > "$LOCK_META" 2>/dev/null || true
+  WROTE_SRC="$hsrc"
+}
+
+# note_degraded <pid_source> — the one STDERR line for a TTL-only lock. Never
+# stdout: every stdout line here is parsed by a caller.
+note_degraded() {
+  [ "${1:-}" = ppid ] || return 0
+  echo "run_lock_degraded: pid_source=ppid ttl_only=${LOCK_TTL_SECONDS}s" >&2
 }
 
 print_held() {
@@ -231,6 +306,7 @@ cmd_acquire() {
 
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     write_meta
+    note_degraded "$WROTE_SRC"
     exit 0
   fi
 
@@ -242,23 +318,31 @@ cmd_acquire() {
     lk_owner="$(meta_get owner)"
     write_meta "$lk_owner"
     echo "run_lock_reentrant owner=${lk_owner} session_id=${SESSION_ID}"
+    note_degraded "$WROTE_SRC"
     exit 0
   fi
 
   # Held — consider TTL reclaim. BOTH must hold: (a) recorded pid dead, AND
   # (b) lock age >= LOCK_TTL_SECONDS. A dead pid alone, or a fresh lock
   # alone, both refuse (matches dispatch-pr-review.sh's acquire_lock).
-  local lk_pid age pid_alive
+  # "Alive" = `kill -0` succeeds AND (no recorded `pid_start`, OR the pid's
+  # current lstart equals it) — a reused pid reads dead (header, `pid_start`).
+  local lk_pid lk_start age pid_alive
   lk_pid="$(meta_get pid)"
+  lk_start="$(meta_get pid_start)"
   age="$(lock_age)"
   pid_alive=0
   if [ -n "$lk_pid" ] && kill -0 "$lk_pid" 2>/dev/null; then
     pid_alive=1
+    if [ -n "$lk_start" ] && [ "$(proc_lstart "$lk_pid")" != "$lk_start" ]; then
+      pid_alive=0   # pid_start mismatch: the pid was reused
+    fi
   fi
   if [ "$pid_alive" -eq 0 ] && [ "$age" -ge "$LOCK_TTL_SECONDS" ] 2>/dev/null; then
     rm -rf "$LOCK_DIR" 2>/dev/null || true
     if mkdir "$LOCK_DIR" 2>/dev/null; then
       write_meta
+      note_degraded "$WROTE_SRC"
       exit 0
     fi
     # Lost the reclaim race to a concurrent acquirer — fall through and
@@ -293,6 +377,7 @@ cmd_release() {
 cmd_status() {
   if [ -d "$LOCK_DIR" ]; then
     print_held | sed 's/^run_lock_held/LOCKED/'
+    note_degraded "$(meta_get pid_source)"
   else
     echo "UNLOCKED"
   fi
