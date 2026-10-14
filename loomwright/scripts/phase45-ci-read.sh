@@ -11,8 +11,8 @@
 # checks are almost always pending; the review takes minutes), and appends each finding to that
 # iteration's `fixable_issues` — a red check makes the iteration a fix iteration even on a reviewer PASS.
 #
-# THE READ (one, never a wait): `wait-for-checks.sh <pr_url> --sha <sha> --bound 0 --required-only
-# --names`, parsed ONLY through wait-for-checks-line.sh's `wfc_line_parse` (check names hold spaces;
+# THE READ (one, never a wait): `wait-for-checks.sh <pr_url> --sha <sha>` with a zero bound,
+# `--required-only --names`, parsed ONLY through wait-for-checks-line.sh's `wfc_line_parse` (check names hold spaces;
 # never split that line on whitespace). --sha defaults to the PR's `headRefOid`. When <sha> is not the
 # PR's head (the line reads `pending_names=sha_mismatch` — e.g. a past head), the required contexts
 # (drain-gh-read.sh required-checks) are read against that commit's check-runs
@@ -146,10 +146,22 @@ log_tail() {
   if [ -n "$w" ]; then printf '%s' "$w"; else printf '(log unavailable)'; fi
 }
 
+# red_names is `<name>@<run_id|->` joined by `,` — but a check NAME can itself hold `,` (a matrix job:
+# `test (ubuntu-latest, 20)@123`). So an entry ends only at a fragment ending `@<digits>` or `@-`; any
+# other fragment is joined (with its `,`) onto the next one before name and run id are split.
 probes=0
 rest="$WFC_RED_NAMES"
 while [ -n "$rest" ]; do
-  case "$rest" in *,*) item="${rest%%,*}"; rest="${rest#*,}" ;; *) item="$rest"; rest="" ;; esac
+  item=""; first=1
+  while :; do
+    case "$rest" in *,*) frag="${rest%%,*}"; rest="${rest#*,}" ;; *) frag="$rest"; rest="" ;; esac
+    if [ "$first" -eq 1 ]; then item="$frag"; first=0; else item="$item,$frag"; fi
+    case "$frag" in
+      *@-) break ;;
+      *@*) case "${frag##*@}" in ''|*[!0-9]*) ;; *) break ;; esac ;;
+    esac
+    [ -n "$rest" ] || break
+  done
   [ -n "$item" ] || continue
   case "$item" in *@*) name="${item%@*}"; rid="${item##*@}" ;; *) name="$item"; rid="-" ;; esac
   verdict=""

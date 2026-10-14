@@ -93,6 +93,9 @@
 # runs and they never touch the real machine-wide holders list.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../loomwright/scripts/hermetic-test-env.sh"
 set -uo pipefail
+# Every fixture git call (incl. the static-gate drift leg's commit) must hit the fixture repo, never a
+# repo a caller's exported GIT_DIR / GIT_INDEX_FILE names.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"

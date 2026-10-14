@@ -18,6 +18,9 @@
 #   (W)  the WORKING TREE is copied: an untracked file and an uncommitted edit reach the pin
 #   (Z)  no leak: checkout status (incl. ignored), index bytes and `git worktree list` identical, no
 #        scratch dir left in TMPDIR, nothing written to the caller's HOME (HOME is relocated)
+#   (G)  a caller-exported GIT_DIR / GIT_INDEX_FILE (pointing at the checkout) leaves its HEAD, index
+#        bytes and `status --porcelain` unchanged — the scratch copy never commits/stages into it
+#        MUTATION CONTROL: a copy without the git-env `unset` line moves HEAD or the index ⇒ (G) catches it
 #   (P)  exit precedence: not_held + unverified ⇒ exit 1
 #   (C)  cache: a second run re-runs nothing (every line `(cached)`, pin execution counter 0)
 #   (CI) cache invalidation: the target changes ⇒ that row re-runs; unverified rows are never cached
@@ -27,6 +30,8 @@
 #   (E)  usage / unreadable brief / non-git root ⇒ one `pin-mutations: unverified (<reason>)` line, exit 2
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
+# The fixture's own git calls must hit the fixture, never a repo a caller's exported GIT_DIR names.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUT="$HERE/run-pin-mutations.sh"
@@ -213,6 +218,35 @@ if [ "$before_status" = "$after_status" ] && [ "$before_index" = "$(cksum < "$R/
   ok "(Z) checkout status/index/worktree list identical, scratch dir gone, the caller's HOME untouched"
 else no "(Z) status_same=$([ "$before_status" = "$after_status" ] && echo y || echo n) tmp=[$(ls -A "$TMPDIR")] home=[$(ls -A "$HOME")]"; fi
 ( cd "$R" && git checkout -q -- . && rm -f a/extra.sh ignored.txt )
+
+# (G) — caller git env. A pending edit + an untracked file; GIT_DIR / GIT_INDEX_FILE exported for the run only.
+# g_run <sut> — runs <sut> with the vars exported; sets g_same=y when HEAD, index bytes, status are unchanged.
+g_run() {
+  printf '# pending edit\n' >> "$R/a/lib.sh"; printf 'u\n' > "$R/a/untracked.txt"
+  local h0 i0 s0
+  h0="$(git -C "$R" rev-parse HEAD)"; i0="$(cksum < "$R/.git/index")"; s0="$(git -C "$R" status --porcelain)"
+  : > "$PIN_COUNTER"
+  out="$(cd "$R" && GIT_DIR="$R/.git" GIT_INDEX_FILE="$R/.git/index" bash "$1" "$B" 2>"$T/stderr")"; rc=$?
+  g_same=n
+  if [ "$h0" = "$(git -C "$R" rev-parse HEAD)" ] && [ "$i0" = "$(cksum < "$R/.git/index")" ] \
+     && [ "$s0" = "$(git -C "$R" status --porcelain)" ]; then g_same=y; fi
+  # restore the fixture whatever the run did (a mutant may have committed onto it)
+  git -C "$R" reset -q --hard "$h0" 2>/dev/null; rm -f "$R/a/untracked.txt"
+}
+brief "$B" "$ROW_VALUE"
+g_run "$SUT"
+if [ "$g_same" = y ] && [ "$rc" -eq 0 ] && has 'pin-mutation 1: held'; then
+  ok "(G) caller-exported GIT_DIR + GIT_INDEX_FILE: checkout HEAD, index bytes and status unchanged, row still held"
+else no "(G) same=$g_same rc=$rc out=$out"; fi
+# MUTATION CONTROL — drop the git-env unset.
+awk '/^unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE / { n++; next } { print } END { exit n != 1 }' "$SUT" > "$T/mutant-genv.sh"
+mrc=$?
+if [ "$mrc" -eq 0 ] && bash -n "$T/mutant-genv.sh"; then
+  g_run "$T/mutant-genv.sh"
+  if [ "$g_same" = n ]; then
+    ok "(G) MUTATION CONTROL: without the unset the scratch copy's git reaches the checkout — (G) catches it"
+  else no "(G) MUTATION CONTROL: the no-unset mutant left the checkout unchanged: rc=$rc out=$out"; fi
+else no "(G) MUTATION CONTROL: mutant not built (anchor_found=$((1 - mrc)))"; fi
 
 # (P)
 brief "$B" "$ROW_WEAK" "$ROW_PROSE"

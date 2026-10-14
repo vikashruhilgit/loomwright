@@ -55,7 +55,9 @@
 # `CLAUDE_PROJECT_DIR` are relocated into the scratch dir. Watchdog: no `timeout(1)` (absent on stock
 # macOS) — the pin runs in the background, is polled, and on expiry its process tree is TERMed then
 # KILLed (run-self-tests.sh's idiom). The checkout is only READ (ls-files, hash-object without -w): its
-# working tree, index and `git worktree list` are untouched. The EXIT trap removes the scratch dir.
+# working tree, index and `git worktree list` are untouched — also under a caller-exported GIT_DIR /
+# GIT_INDEX_FILE / GIT_WORK_TREE (that family is unset before the first git call). The EXIT trap removes
+# the scratch dir.
 #
 # --cache <file>  TSV `row_key<TAB>verdict<TAB>target_hash<TAB>pin_hash`; row_key = git hash of the
 #                 trimmed row text, hashes = `git hash-object` of the target and the pin file in the
@@ -96,6 +98,11 @@ done
 [ -n "$BRIEF" ] || die "usage: run-pin-mutations.sh <brief> [--root <checkout>] [--cache <file>] [--only-paths <glob>...] [--timeout <secs>]"
 case "$TIMEOUT" in ''|*[!0-9]*|0) die "usage: --timeout must be a positive integer" ;; esac
 [ -f "$BRIEF" ] && [ -r "$BRIEF" ] || die "brief_unreadable"
+# Every git call below names its repo explicitly (`--root`'s checkout, or the scratch copy). A caller's
+# exported GIT_DIR / GIT_INDEX_FILE / … would override that and point the scratch copy's init/add/commit
+# and checkout/clean (and the pin child) at the CALLER's repo and index — a commit on the caller's branch,
+# staged edits in the real index. Cleared once here, so ls-files, sgit and the pin run all inherit none.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE
 ROOT_ABS="$(cd "$ROOT" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" || ROOT_ABS=""
 [ -n "$ROOT_ABS" ] && [ -d "$ROOT_ABS" ] || die "root_not_git"
 

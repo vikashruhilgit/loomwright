@@ -8,8 +8,8 @@ reads are read-only `gh` calls against `vikashruhilgit/loomwright` PR #533 (Vali
 
 | Test | Result |
 |---|---|
-| `loomwright/scripts/test-run-pin-mutations.sh` | 26/26 (exit 0) |
-| `loomwright/scripts/test-phase45-ci-read.sh` | 10/10 (exit 0) |
+| `loomwright/scripts/test-run-pin-mutations.sh` | 28/28 (exit 0) |
+| `loomwright/scripts/test-phase45-ci-read.sh` | 11/11 (exit 0) |
 | `loomwright/scripts/test-phase45-rounds-seam.sh` | 52/52 (exit 0) |
 | `scripts/test-ci-local.sh` | 93/93 (exit 0) |
 | `loomwright/scripts/test-closed-enum-pins-seam.sh` | 79/79 (exit 0) |
@@ -56,6 +56,22 @@ ok   (J) an explicit SELF_TEST_JOBS is passed through unchanged
 FAIL (SD) rc=0 gaps=[scripts/check-locale-prefix.sh ] ran=[] out=ci-local --affected: the changed set is empty (against the merge-base with origin/main (da61dcf)) — the early set only
 test-ci-local: 92 passed, 1 failed
 ```
+
+**(c) `run-pin-mutations.sh` without its git-env `unset` line** (review iteration 1) — the
+`unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE …` line dropped, then `bash test-run-pin-mutations.sh` from a
+temp copy. With `GIT_DIR` / `GIT_INDEX_FILE` exported at the checkout, the scratch copy's
+init/add/commit reach the caller's repo, and leg (G) goes red (its in-file control cannot find the
+already-removed line, hence the second line):
+
+```
+FAIL (G) same=n rc=0 out=pin-mutation 1: held — a/test-lib.sh :: flip `echo 42` → `echo 43` in `a/lib.sh` ⇒ leg red
+FAIL (G) MUTATION CONTROL: mutant not built (anchor_found=0)
+test-run-pin-mutations: 26 passed, 2 failed
+```
+
+**(d) `phase45-ci-read.sh` with the pre-fix `,` split of `red_names`** (review iteration 1) — the matrix
+leg (MX) goes red: `test (ubuntu-latest, 20)@123` became two findings,
+`checks=[ 20)@123|ci@111|test (ubuntu-latest@-|]` (`test-phase45-ci-read: 10 passed, 1 failed`).
 
 ## 3. Running-system validation
 

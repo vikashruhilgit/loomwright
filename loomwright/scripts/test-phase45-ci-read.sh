@@ -14,6 +14,8 @@
 #   (SR) a single read: wait-for-checks.sh is called once with `--bound 0 --required-only --names`
 #        (recording stub), and with the real one a pending rollup is read exactly once
 #   (MP) --max-probes 1 with two red checks ⇒ one probe, two findings; a spaced name survives
+#   (MX) a matrix check name holding `,` (`test (ubuntu-latest, 20)`) is ONE finding with its run id
+#        (and is probed), never split into two fragments
 #   (LF) a failed --log-failed fetch, or no run id ⇒ "(log unavailable)", still a finding
 #   (PS) --sha that is not the PR head ⇒ the commit's check-runs, filtered to the required contexts
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -167,6 +169,17 @@ if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^{')" = 2 ] && [ "$(g
    && [ "$(field check 2)" = "test (18.x)" ] && [ "$(field run_id 2)" = 222 ]; then
   ok "(MP) --max-probes 1: one probe, both red checks are findings, the spaced name survives"
 else no "(MP) jobs_calls=$(grep -c '/jobs$' "$GH_STUB_LOG") out=$out"; fi
+
+# (MX)
+reset_fx; printf '{"required_status_checks":{"contexts":["test (ubuntu-latest, 20)","ci"],"checks":[]}}' > "$FX/protection.json"
+rollup "$SHA" "[$(red_row 'test (ubuntu-latest, 20)' 123),$(red_row ci 111)]"; jobs_ran 123; jobs_ran 111
+log_real > "$FX/log-123.txt"; log_real > "$FX/log-111.txt"
+run "$PR" --sha "$SHA"
+mx_checks="$(printf '%s\n' "$out" | grep '^{' | jq -r '.check + "@" + .run_id' | sort | tr '\n' '|')"
+if [ "$rc" -eq 0 ] && [ "$mx_checks" = "ci@111|test (ubuntu-latest, 20)@123|" ] \
+   && grep -qF 'actions/runs/123/jobs' "$GH_STUB_LOG"; then
+  ok "(MX) a matrix name with ', ' stays one finding with its run id (and is probed)"
+else no "(MX) checks=[$mx_checks] out=$out"; fi
 
 # (LF)
 reset_fx; rollup "$SHA" "[$(red_row ci 111)]"; jobs_ran 111          # no log-111.txt ⇒ the fetch fails
