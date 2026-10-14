@@ -37,6 +37,11 @@
 #   (A)  unknown argument             → exit 2
 #   (W)  wiring: ci-local.sh's loomwright glob line is the one run-self-tests.sh uses, and the real
 #        ci.yml runs this self-test
+#   (SD) static-gate drift (automate-speed/02): the REAL ci.yml, copied into a fixture whose every named
+#        script is a stub — each `bash scripts/check-*.sh` line of its `static` job is an `early:` entry
+#        of `--affected --list` (so a background worker's `--affected` run includes every static CI
+#        gate); --list runs nothing, takes no slot, writes no stamp; MUTATION CONTROL: a copy that
+#        excludes check-locale-prefix.sh from the early-set derivation is caught
 # Run logs, --last, --affected:
 #   (LG) a run's first and last output line name its log (PASS, FAIL, TERM while queued); the log
 #        ends with its verdict line; a FAIL log holds the runner's FAIL banner (stderr captured)
@@ -770,6 +775,35 @@ want_lc=$'gate: scripts/check-a.sh\ngate: loomwright/scripts/check-l.sh --check'
 if [ "$rc" -eq 0 ] && [ "$(grep '^gate: ' <<<"$out")" = "$want_lc" ]; then ok "(LC) a loomwright --check line is a gate; the suite runner line is not"
 else no "(LC) rc=$rc out=$out"; fi
 rm -f "$R/loomwright/scripts/check-l.sh"
+
+# (SD) — the real ci.yml's static gates are all in the --affected early set.
+build_fixture
+cp "$REPO_ROOT/.github/workflows/ci.yml" "$R/.github/workflows/ci.yml"
+while IFS= read -r s; do
+  [ -f "$R/$s" ] || { mkdir -p "$R/$(dirname "$s")"; printf 'echo "%s" >> "$FIXTURE_LOG"\n' "$s" > "$R/$s"; }
+done < <(grep -oE 'bash (scripts|loomwright/scripts)/[A-Za-z0-9_.-]+\.sh' "$R/.github/workflows/ci.yml" | sed 's/^bash //' | sort -u)
+( cd "$R" && git add -A && git commit -qm real-ci-yml && git update-ref refs/remotes/origin/main HEAD )
+static_checks="$(awk '/^  static:$/ { f = 1; next } f && /^  [A-Za-z0-9_-]+:$/ { exit } f' "$R/.github/workflows/ci.yml" \
+  | grep -oE 'bash scripts/check-[A-Za-z0-9_.-]+\.sh( --self-test)?' | sed 's/^bash //' | awk '!seen[$0]++')"
+# drift_gaps — the static check lines with no `early: <line>` in $out (empty = no drift).
+drift_gaps() { local c; while IFS= read -r c; do [ -n "$c" ] && ! grep -qxF "early: $c" <<<"$out" && echo "$c"; done <<<"$static_checks"; }
+stamps_before="$(ls "$state/pass" 2>/dev/null | wc -l | tr -d ' ')"
+run --affected --list
+if [ "$rc" -eq 0 ] && grep -qxF 'scripts/check-locale-prefix.sh' <<<"$static_checks" && [ "$(grep -c . <<<"$static_checks")" -ge 5 ] \
+   && [ -z "$(drift_gaps)" ] && [ ! -s "$FIXTURE_LOG" ] && [ "$(ls "$state/pass" 2>/dev/null | wc -l | tr -d ' ')" = "$stamps_before" ]; then
+  ok "(SD) every static-job check-*.sh line of the real ci.yml ($(grep -c . <<<"$static_checks")) is an --affected early: entry; --list ran nothing, no stamp"
+else no "(SD) rc=$rc gaps=[$(drift_gaps | tr '\n' ' ')] ran=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+# MUTATION CONTROL — exclude check-locale-prefix.sh from the early-set derivation.
+awk '/^    \*\) plan_phase\+=\(early\) ;;$/ { print "    check-locale-prefix.sh) plan_phase+=(pool) ;;"; n++ } { print } END { exit n != 1 }' \
+  "$R/scripts/ci-local.sh" > "$R/scripts/ci-local-mutant.sh"
+mut_rc=$?
+if [ "$mut_rc" -eq 0 ] && ! cmp -s "$R/scripts/ci-local.sh" "$R/scripts/ci-local-mutant.sh" && bash -n "$R/scripts/ci-local-mutant.sh"; then
+  : > "$FIXTURE_LOG"; out="$(cd "$R" && bash scripts/ci-local-mutant.sh --affected --list 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(drift_gaps)" = "scripts/check-locale-prefix.sh" ]; then
+    ok "(SD) MUTATION CONTROL: check-locale-prefix.sh dropped from the early set ⇒ the drift check names exactly it"
+  else no "(SD) MUTATION CONTROL: the drift check missed the mutant: rc=$rc gaps=[$(drift_gaps | tr '\n' ' ')]"; fi
+else no "(SD) MUTATION CONTROL: mutant not built (anchor_found=$((1 - mut_rc)))"; fi
+rm -f "$R/scripts/ci-local-mutant.sh"
 
 # (A)
 run --bogus
