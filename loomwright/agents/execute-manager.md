@@ -330,6 +330,7 @@ for iteration in 1..max_iterations:
       # --- Pin-mutation gate (automate-speed/02) — beside the outputs gate above, never folded into
       # its adjudication CHECKPOINT and never a pause. Scoped to the rows whose mutation target this
       # subtask's lanes own (rows on a sibling's code are left to Phase 4.5, which runs every row).
+      # {main_checkout} = the absolute project root this Execute Manager runs in (not the worktree).
       # The cache path is MAIN-CHECKOUT ABSOLUTE (`.supervisor/` does not exist inside the worktree) and
       # PER SUBTASK: its hashes are this worktree's, so Phase 4.5's integrated run (shared
       # `{stem}.tsv`) never reuses a `held` computed before a sibling's edits landed.

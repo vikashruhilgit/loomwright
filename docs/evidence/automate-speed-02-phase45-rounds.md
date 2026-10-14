@@ -8,7 +8,7 @@ reads are read-only `gh` calls against `vikashruhilgit/loomwright` PR #533 (Vali
 
 | Test | Result |
 |---|---|
-| `loomwright/scripts/test-run-pin-mutations.sh` | 32/32 (exit 0) |
+| `loomwright/scripts/test-run-pin-mutations.sh` | 33/33 (exit 0) |
 | `loomwright/scripts/test-phase45-ci-read.sh` | 11/11 (exit 0) |
 | `loomwright/scripts/test-phase45-rounds-seam.sh` | 61/61 (exit 0) |
 | `scripts/test-ci-local.sh` | 93/93 (exit 0) |
@@ -83,6 +83,14 @@ FAIL (K) rc=143 waited=300 cache=[] dir=[] out=pin-mutation 1: held — a/test-l
 FAIL (K) rerun: rc=2 cache=[ee9f7020…	held	…] out=pin-mutation 1: held — a/test-lib.sh …
 FAIL (B) rc=2 took=0s execs=0 out=pin-mutations: unverified (usage: unknown option --budget)
 test-run-pin-mutations: 29 passed, 3 failed
+```
+
+**(f) the pre-fix `run-pin-mutations.sh` cleanup (TERM kills only the pin's own pid)** (review iteration 3)
+— the iteration-2 script beside the new test. The new orphan assertion in leg (K) goes red: the slow pin's
+`sleep`, counted by its recorded pid, outlives the TERMed run (reparented to PID 1):
+
+```
+FAIL (K) orphan: recorded=[3693] still alive=[ 3693]
 ```
 
 ## 3. Running-system validation

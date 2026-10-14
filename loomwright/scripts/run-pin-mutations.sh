@@ -58,7 +58,8 @@
 # before every run so one pin's leftovers never reach the next. `HOME`, `XDG_STATE_HOME` and
 # `CLAUDE_PROJECT_DIR` are relocated into the scratch dir. Watchdog: no `timeout(1)` (absent on stock
 # macOS) — the pin runs in the background, is polled, and on expiry its process tree is TERMed then
-# KILLed (run-self-tests.sh's idiom). The checkout is only READ (ls-files, hash-object without -w): its
+# KILLed (run-self-tests.sh's idiom) — so is it on TERM / INT of this script (one helper, kill_tree).
+# The checkout is only READ (ls-files, hash-object without -w): its
 # working tree, index and `git worktree list` are untouched — also under a caller-exported GIT_DIR /
 # GIT_INDEX_FILE / GIT_WORK_TREE (that family is unset before the first git call). The EXIT trap removes
 # the scratch dir.
@@ -136,7 +137,9 @@ case "$ROWS" in "__PM_NO_SECTION__"|"") out "pin-mutations: none"; exit 0 ;; esa
 
 SCRATCH=""; CUR_PID=""; CUR_TMPC=""
 cleanup() {
-  if [ -n "$CUR_PID" ]; then kill -TERM "$CUR_PID" 2>/dev/null; wait "$CUR_PID" 2>/dev/null; fi
+  # The pin's whole process tree, not just its subshell: a TERM/INT mid-run must not orphan the pin's
+  # children (reparented to PID 1, still running). Same tree kill as the --timeout path (kill_tree).
+  if [ -n "$CUR_PID" ]; then kill_tree "$CUR_PID"; fi
   if [ -n "$CUR_TMPC" ]; then rm -f "$CUR_TMPC"; fi
   if [ -n "$SCRATCH" ]; then rm -rf "$SCRATCH"; fi
 }
@@ -233,12 +236,23 @@ descendants() {
   local c
   for c in $(ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$1" '$2 == p { print $1 }'); do echo "$c"; descendants "$c"; done
 }
+# kill_tree <pid> — TERM then KILL <pid> and every descendant (collected BEFORE the first signal, while
+# they still hang off <pid>; digits only), then reap <pid>. The ONE tree kill: the --timeout path and the
+# TERM/INT cleanup both use it, so a pin's children never outlive the run.
+kill_tree() {
+  local k tree
+  tree="$( { echo "$1"; descendants "$1"; } | grep -E '^[0-9]+$')"
+  for k in $tree; do kill -TERM "$k" 2>/dev/null; done
+  sleep 1
+  for k in $tree; do kill -KILL "$k" 2>/dev/null; done
+  wait "$1" 2>/dev/null
+}
 # run_pin <pin rel path> <log> — sets RUN_RC and RUN_TIMED_OUT. The caller resets the scratch first.
 # budget_left — seconds left of --budget (prints a large number when there is no budget).
 budget_left() { if [ "$BUDGET" -gt 0 ]; then echo $((BUDGET - SECONDS)); else echo 999999999; fi; }
 RUN_RC=0; RUN_TIMED_OUT=0; RUN_BUDGET_CUT=0
 run_pin() {
-  local pid start k tree limit left
+  local pid start limit left
   RUN_TIMED_OUT=0; RUN_BUDGET_CUT=0
   limit="$TIMEOUT"; left="$(budget_left)"
   if [ "$left" -lt "$limit" ]; then limit="$left"; RUN_BUDGET_CUT=1; fi
@@ -252,11 +266,7 @@ run_pin() {
     sleep 0.1
   done
   if [ "$RUN_TIMED_OUT" -eq 1 ]; then
-    tree="$( { echo "$pid"; descendants "$pid"; } | grep -E '^[0-9]+$')"
-    for k in $tree; do kill -TERM "$k" 2>/dev/null; done
-    sleep 1
-    for k in $tree; do kill -KILL "$k" 2>/dev/null; done
-    wait "$pid" 2>/dev/null
+    kill_tree "$pid"
     RUN_RC=124
   else
     RUN_RC=0; wait "$pid" || RUN_RC=$?; RUN_BUDGET_CUT=0

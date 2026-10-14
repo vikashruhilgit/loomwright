@@ -26,7 +26,8 @@
 #   (CI) cache invalidation: the target changes ⇒ that row re-runs; unverified rows are never cached
 #   (K)  a run TERMed mid-way (a pin that sleeps): the rows it finished are printed AND in the cache
 #        (written after each row, temp + mv: no stray temp file), `pin-mutations: unverified
-#        (interrupted)` replaces the summary, exit 143; the next run shows the finished row `(cached)`
+#        (interrupted)` replaces the summary, exit 143, and the pin's child process (its `sleep`, counted
+#        by recorded pid) does not outlive the run; the next run shows the finished row `(cached)`
 #   (B)  --budget: a pin cut by the whole-run bound and a row reached after it ⇒ `unverified
 #        (budget_exhausted)`, the summary line still prints, exit 2, a cached row is still served
 #   (O)  --only-paths: rows outside the globs print nothing; zero selected ⇒ `pin-mutations: none selected`
@@ -81,7 +82,8 @@ exit 0
 SH
   printf 'echo run >> "$PIN_COUNTER"\nexit 0\n' > "$R/a/test-weak.sh"
   printf 'echo run >> "$PIN_COUNTER"\nexit 1\n' > "$R/a/test-red.sh"
-  printf 'echo run >> "$PIN_COUNTER"\nsleep 30\n' > "$R/a/test-slow.sh"
+  # The sleep's pid is recorded (PIN_SLEEP_PIDS) so leg (K) can check, by pid, that it did not outlive the run.
+  printf 'echo run >> "$PIN_COUNTER"\nsleep 30 &\necho "$!" >> "${PIN_SLEEP_PIDS:-/dev/null}"\nwait "$!"\n' > "$R/a/test-slow.sh"
   printf 'echo dup\n' > "$R/b/test-dup.sh"; printf 'echo dup\n' > "$R/c/test-dup.sh"
   printf '{"mode": "strict", "n": 1}\n' > "$R/d/conf.json"
   cat > "$R/d/test-conf.sh" <<'SH'
@@ -288,7 +290,7 @@ else no "(CI) rc=$rc execs=$(execs) out=$out"; fi
 # (K) — kill a run while row 2's pin sleeps; row 1 must already be in the cache.
 CK="$T/cache-k/pins.tsv"; ROW_SLOW='| `a/test-slow.sh` | flip `echo 42` → `echo 44` in `a/lib.sh` |'
 brief "$B" "$ROW_VALUE" "$ROW_SLOW"
-: > "$PIN_COUNTER"
+: > "$PIN_COUNTER"; export PIN_SLEEP_PIDS="$T/k.sleep-pids"; : > "$PIN_SLEEP_PIDS"
 ( cd "$R" && exec bash "$SUT" "$B" --cache "$CK" ) > "$T/k.out" 2>&1 &
 kpid=$!
 i=0   # bounded: row 1 = 2 executions, row 2's unmutated slow pin = the 3rd
@@ -300,6 +302,17 @@ if [ "$krc" -eq 143 ] && has 'pin-mutation 1: held —' && ! has 'pin-mutation 2
    && [ "$(wc -l < "$CK" | tr -d ' ')" = 1 ] && grep -q "	held	" "$CK" && [ -z "$(ls -A "$(dirname "$CK")" | grep -v '^pins.tsv$')" ]; then
   ok "(K) TERM mid-run: row 1 printed and cached, no summary, interrupted line, exit 143, no stray cache temp"
 else no "(K) rc=$krc waited=$i cache=[$(cat "$CK" 2>/dev/null)] dir=[$(ls -A "$(dirname "$CK")" 2>/dev/null)] out=$out"; fi
+# Orphans: by recorded pid (never `pgrep -f` — that matches this test's own command line). Bounded 3s
+# for the reaped child to disappear.
+kpids="$(grep -E '^[0-9]+$' "$PIN_SLEEP_PIDS")"; unset PIN_SLEEP_PIDS
+alive=""; j=0
+while [ "$j" -lt 30 ]; do
+  alive=""; for p in $kpids; do kill -0 "$p" 2>/dev/null && alive="$alive $p"; done
+  [ -n "$alive" ] || break; sleep 0.1; j=$((j + 1))
+done
+if [ -n "$kpids" ] && [ -z "$alive" ]; then
+  ok "(K) TERM mid-run: the pin's child process (sleep, $(echo $kpids | wc -w | tr -d ' ') recorded pid) did not outlive the run"
+else no "(K) orphan: recorded=[$kpids] still alive=[$alive]"; for p in $alive; do kill -KILL "$p" 2>/dev/null; done; fi
 run "$B" --cache "$CK" --timeout 1
 if [ "$rc" -eq 2 ] && has 'pin-mutation 1: held (cached)' && has 'pin-mutation 2: unverified (timeout)' \
    && [ "$(wc -l < "$CK" | tr -d ' ')" = 1 ]; then
