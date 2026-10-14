@@ -8,6 +8,14 @@
 two decisions it left open are now made (below) and they OVERRIDE the "consider (and decide in the PR)" wording in
 Scope 1. Part A is `39a-sweep-and-janitor.md`; Part C shipped in #490.
 
+## Split 2026-10-14 (owner, run automate-2026-10-13-181331)
+Scopes 3–4 (the guard-arm trace and the `test_guard:` line) and owner decision 3 MOVED to
+`39c-guard-arm-trace.md`: they edit `scripts/guard-arm.sh`, which the armed test-integrity guard denies to an
+ordinary run (verified 2026-10-14 against the installed v17.2.0 guard — see 39c "Why it was split"). **This item
+is now Scopes 1, 2, 5 (run-lock tests) and 6 (docs) only**, with owner decisions 1–2. The decision-3 text, the
+`arm-skipped.jsonl` acceptance line and the guard bullets below are kept for history; 39c is their authority.
+`guard-arm.sh` and `test-guard-test-integrity.sh` are out of this item's Touches.
+
 ## Depends on
 none
 
@@ -70,6 +78,8 @@ changelog.d/af39b-run-lock-and-guard-arm.md
    degraded line; one with `LOOMWRIGHT_HOLDER_PID=$$` from a long-lived shell — paste `pid_source holder_env`.
 3. Rollback: `git revert` (a meta written with `pid_start` stays readable by the old code — it ignores unknown keys;
    confirm that in the PR).
+
+## Source text (af/39 Part B, carried verbatim — not part of the Validation section)
 
 ### Part B — 03 — Silent script failures (run-lock liveness outside Claude Code; guard hook-arm visibility)
 
@@ -146,3 +156,9 @@ the spawn shape that bypassed it). Any change to `guard-test-integrity.sh`'s den
   no id).
 
 bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-14T15:51:26Z
+- **Brief:** .supervisor/jobs/done/2026-10-14-af39b-run-lock-holder.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/542
