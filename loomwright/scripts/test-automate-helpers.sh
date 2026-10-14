@@ -5964,7 +5964,7 @@ p_usage()   { printf '%s|%s|%s|%s|%s' "$(pag "$1" "$QG_RF" "$QG_ITEM")" "$(pag "
 # delayed marker: the watcher writes it ~2s after the call; --wait 5 must see it and answer ask
 p_delayed() {
   qg_parked; qg_state OPEN; rm -f "$QG_MK"
-  ( sleep 2; qg_marker "$QG_PR" ) & local bg=$! out
+  ( sleep 2; qg_marker "$QG_PR" ) & local bg=$! out   # fixed-sleep-ok: the delayed writer IS the fixture (the watcher writes its marker late)
   out="$(pag "$1" "$QG_RF" "$QG_ITEM" "$QG_PR" --wait 5)"
   wait "$bg" 2>/dev/null; printf '%s' "$out"
 }
@@ -6025,7 +6025,7 @@ qg_order() {  # <md> — prints the verdict line the leg compares
   g="$(qg_idx "$L" "park-ask-gate")"; a="$(qg_idx "$L" "Ask the owner")"
   if [ "$p" -gt 0 ] && [ "$w" -gt 0 ] && [ "$r" -gt 0 ] && [ "$g" -gt 0 ] && [ "$a" -gt 0 ] \
      && [ "$p" -lt "$g" ] && [ "$w" -lt "$g" ] && [ "$r" -lt "$g" ] && [ "$g" -lt "$a" ] \
-     && grep -F -- "park-ask-gate" "$L" | head -n1 | grep -qF -- "--wait 75"; then
+     && grep -qF -- "--wait 75" < <(grep -F -m1 -- "park-ask-gate" "$L"); then
     echo "park-first"
   else
     echo "bad order: park=$p watcher=$w release=$r gate=$g ask=$a"
@@ -6059,8 +6059,8 @@ qg_prose_mut "lock release moved after the park-ask-gate step" "run-lock.sh rele
 # ---- QG4. intake prose (AC2): §2 "--limit N" calls queue-confirm, asks AUT-QUEUE only on `ask`,
 # and appends ONE `skipped AUT-QUEUE: <reason>` line on a skip.
 qg_intake() {  # <md> — 0 when the --limit N section wires queue-confirm as AC2 says
-  awk '/^### `--limit N`/ { f = 1 } f' "$1" | grep -F -- 'automate-helpers.sh queue-confirm <source> <n> <limit>' \
-    | grep -F -- '`ask` ⇒ ask `AUT-QUEUE`' | grep -F -- 'skipped AUT-QUEUE: <reason>' | grep -qF -- 'skipped AUT-QUEUE: backlog queue <n> ≤ limit <N>'
+  grep -qF -- 'skipped AUT-QUEUE: backlog queue <n> ≤ limit <N>' < <(awk '/^### `--limit N`/ { f = 1 } f' "$1" \
+    | grep -F -- 'automate-helpers.sh queue-confirm <source> <n> <limit>' | grep -F -- '`ask` ⇒ ask `AUT-QUEUE`' | grep -F -- 'skipped AUT-QUEUE: <reason>')
 }
 qg_intake "$QG_INTAKE" && ok "QG4 intake.md --limit N: queue-confirm decides, AUT-QUEUE only on ask, one skipped AUT-QUEUE line on skip" || no "QG4 intake.md --limit N does not wire queue-confirm"
 awk '{ gsub(/automate-helpers\.sh queue-confirm/, "automate-helpers.sh resolve-backlog") } { print }' "$QG_INTAKE" > "$QG/intake-mutant.md"
