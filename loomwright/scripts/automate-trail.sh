@@ -1248,6 +1248,22 @@ STATUS
 # SYNC, SKILL §6 step 5) or where the caller pushes itself (a merged lane's
 # lane-convert-ready re-run, SKILL §14); the run's trail ships at the next
 # existing trigger.
+# _run_lock_in <checkout> <run-lock.sh args…> — every run-lock.sh call that closes or
+# finalizes a run (closeout, finalize-empty) goes through here. It runs run-lock.sh from
+# INSIDE the run file's checkout with NO --root, so the lock dir is the one run-lock.sh's
+# own default resolution picks — the MAIN worktree root of that checkout — exactly the dir
+# the engine's PICK / post-release windows take (they pass no --root either). Passing
+# `--root <run file's toplevel>` instead diverged in a linked worktree: the engine locked
+# <main>/.supervisor/run.lock, closeout <linked>/.supervisor/run.lock, and both acquires
+# succeeded (the post-release mutual exclusion and PICK/RECONCILE re-entry did not hold).
+# A lane clone is its own main worktree, so its lock dir is unchanged; the merge watcher's
+# cwd does not matter (the checkout comes from the run file). A failed cd returns
+# non-zero, which an acquire reads as refused (fail CLOSED).
+_run_lock_in() {
+  local dir="$1"; shift
+  ( cd "$dir" 2>/dev/null && bash "$HERE/run-lock.sh" "$@" )
+}
+
 CO_ROOT=""
 CO_OWNER=""
 CO_LOCKED=0
@@ -1255,7 +1271,7 @@ co_release() {
   if [ "$CO_LOCKED" -eq 1 ] && [ -n "$CO_OWNER" ]; then
     # --owner ONLY: never forward --session-id to release (run-lock.sh releases on
     # EITHER match, which would drop an outer PICK lock we merely re-entered).
-    bash "$HERE/run-lock.sh" release --owner "$CO_OWNER" --root "$CO_ROOT" >/dev/null 2>&1
+    _run_lock_in "$CO_ROOT" release --owner "$CO_OWNER" >/dev/null 2>&1
   fi
   CO_LOCKED=0
   return 0
@@ -1370,9 +1386,9 @@ closeout() {
   CO_ROOT="$root"; CO_OWNER="automate-closeout:$run_id"
   local lk rc
   if [ -n "$sid" ]; then
-    lk="$(bash "$HERE/run-lock.sh" acquire --owner "$CO_OWNER" --session-id "$sid" --root "$root" 2>/dev/null)"; rc=$?
+    lk="$(_run_lock_in "$root" acquire --owner "$CO_OWNER" --session-id "$sid" 2>/dev/null)"; rc=$?
   else
-    lk="$(bash "$HERE/run-lock.sh" acquire --owner "$CO_OWNER" --root "$root" 2>/dev/null)"; rc=$?
+    lk="$(_run_lock_in "$root" acquire --owner "$CO_OWNER" 2>/dev/null)"; rc=$?
   fi
   if [ "$rc" -ne 0 ]; then
     # The refusal names the holder's liveness (automate-followups/36 A1). run-lock.sh's
@@ -1611,7 +1627,7 @@ FE_OWNER=""
 FE_LOCKED=0
 fe_release() {
   if [ "$FE_LOCKED" -eq 1 ] && [ -n "$FE_OWNER" ]; then
-    bash "$HERE/run-lock.sh" release --owner "$FE_OWNER" --root "$FE_ROOT" >/dev/null 2>&1
+    _run_lock_in "$FE_ROOT" release --owner "$FE_OWNER" >/dev/null 2>&1
   fi
   FE_LOCKED=0
   return 0
@@ -1673,7 +1689,7 @@ finalize_empty() {
 
   FE_ROOT="$root"; FE_OWNER="automate-finalize:$run_id"
   local lk rc holder
-  lk="$(bash "$HERE/run-lock.sh" acquire --owner "$FE_OWNER" --root "$root" 2>/dev/null)"; rc=$?
+  lk="$(_run_lock_in "$root" acquire --owner "$FE_OWNER" 2>/dev/null)"; rc=$?
   if [ "$rc" -ne 0 ]; then
     holder="$(printf '%s\n' "$lk" | sed -n 's/.*run_lock_held owner=\([^ ]*\).*/\1/p' | head -n1)"
     echo "$S run lock held by ${holder:-unknown}"; return 0

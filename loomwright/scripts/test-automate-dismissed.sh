@@ -47,8 +47,18 @@
 #       pc_guarded_write is load-bearing (mutation control: PROPOSE_COMMON_SH at a
 #       copy with the marked guard block deleted turns the refusal legs red).
 #   B. (Part B) SKILL-text legs — the prose the inline loop executes: the decision
-#       subsection exists and precedes the park write + the watcher arm on every park
-#       path (safe-mode, fail-closed --auto-merge, escalated, GATE step 4);
+#       subsection exists; at an `escalated` park (and under --non-interactive-fallback)
+#       it precedes the park write + the watcher arm, while a sequential interactive
+#       READY park (safe-mode, fail-closed --auto-merge; automate-speed/01) writes the
+#       park, arms the watcher, notifies and releases the lock BEFORE park-ask-gate and
+#       the ask (GATE step 4, §9, the park-first list), and a late or lock-refused
+#       fix-now becomes a follow-up, with park-ask-gate re-read UNDER the re-acquired
+#       lock before `## Status: running` (D3 mutant: the re-read moved after the write),
+#       and the decision batch — not the answer — is D3's unit: EACH fix-now answer is
+#       recorded before the ONE re-pass (batch mutant: the singular form ⇒ red);
+#       every park-first run-file write after the lock release (step 6's Progress line,
+#       step 8's decision batch / dismissed-decide / pending_decisions, D3's follow-up)
+#       sits inside a run-lock acquire/release pair (mutants: acquire removed ⇒ red);
 #       --non-interactive-fallback asks nothing and records pending_decisions; the
 #       PICK ask precedes RECONCILE's closeout and offers Follow-up / Drop only;
 #       fix-now bounds + honest limits; every restating single-drain surface carries
@@ -599,22 +609,144 @@ sub_body() { awk -v h="$SUBH" '$0 == h { f = 1; next } f && /^### / { exit } f {
 SUBF="$TOP/subsection.md"; sub_body > "$SUBF"
 
 grep -qxF -- "$SUBH" "$SK" && ok "B: SKILL carries the subsection heading" || no "B: SKILL lacks '$SUBH'"
+# The decide-then-park list (an `escalated` park, every park under --non-interactive-fallback,
+# a lane's ready_for_release park): the ask (step 2) precedes the park write (step 4).
 s_ask="$(ln_of "$SUBF" "2. **Interactive**")"; s_park="$(ln_of "$SUBF" "4. Only then write the park state")"
-[ "$s_ask" -gt 0 ] && [ "$s_park" -gt "$s_ask" ] && ok "B: the ask (step 2) precedes the park write (step 4) in the subsection" || no "B: subsection order ask=$s_ask park=$s_park"
+[ "$s_ask" -gt 0 ] && [ "$s_park" -gt "$s_ask" ] && ok "B: decide-then-park list — the ask (step 2) precedes the park write (step 4)" || no "B: subsection order ask=$s_ask park=$s_park"
 L="$(first_line "$SUBF" "4. Only then write the park state")"
 before "$L" "Only then write the park state" "merge-watcher arming" && ok "B: the watcher is armed only after the park write" || no "B: step 4 does not order park write before watcher arm"
+L="$(first_line "$SUBF" "**Order — for every GATE outcome that parks with an open PR")"
+case "$L" in *"except the sequential interactive READY park"*) ok "B: the decide-then-park list names the READY-park exception" ;; *) no "B: the decide-then-park list still claims every park" ;; esac
+# The park-first list (automate-speed/01): a sequential interactive READY park writes the park,
+# arms the watcher, notifies and releases the lock BEFORE park-ask-gate, and asks only after it.
+PF_LEAD='**Order — sequential interactive READY park (park first, then ask):**'
+p_lead="$(ln_of "$SUBF" "$PF_LEAD")"
+[ "$p_lead" -gt "$s_park" ] && ok "B: the park-first list follows the decide-then-park list" || no "B: park-first lead line missing or misplaced (lead=$p_lead park=$s_park)"
+PFL="$TOP/park-first-list.md"
+awk -v h="$PF_LEAD" '$0 == h { f = 1; next } f && /^[0-9]+\. / { s = 1; print; next } f && s { exit }' "$SUBF" > "$PFL"
+pf_p="$(ln_of "$PFL" "--status awaiting_merge")"; pf_w="$(ln_of "$PFL" "automate-merge-watch.sh")"; pf_n="$(ln_of "$PFL" "Notify")"
+pf_r="$(ln_of "$PFL" "run-lock.sh release")"; pf_g="$(ln_of "$PFL" "park-ask-gate")"; pf_a="$(ln_of "$PFL" "Ask the owner")"
+[ "$pf_p" -gt 0 ] && [ "$pf_p" -lt "$pf_w" ] && [ "$pf_w" -lt "$pf_n" ] && [ "$pf_n" -lt "$pf_r" ] && [ "$pf_r" -lt "$pf_g" ] && [ "$pf_g" -lt "$pf_a" ] \
+  && ok "B: park-first list — park write → watcher → notify → lock release → park-ask-gate → ask" \
+  || no "B: park-first order park=$pf_p watcher=$pf_w notify=$pf_n release=$pf_r gate=$pf_g ask=$pf_a"
+L="$(first_line "$PFL" "park-ask-gate")"
+case "$L" in *"--wait 75"*"refuse — <reason>"*"ask NOTHING"*"pending_decisions"*) ok "B: park-first gate step waits 75s and a refuse asks nothing, keeping pending_decisions" ;; *) no "B: park-first gate step wrong" ;; esac
+L="$(first_line "$PFL" "Ask the owner")"
+case "$L" in *"**Fix now on this PR** is offered only when the gate line reads \`ask — fix-now allowed\`"*) ok "B: park-first ask offers Fix now only on the gate's fix-now-allowed line" ;; *) no "B: park-first ask does not gate Fix now" ;; esac
+# Post-release writes take the run lock: step 5 released it and the merge watcher's closeout
+# (which holds the same lock) may run, while progress-append / current-set / dismissed-decide
+# each rename the whole run file with no lock of their own. Step 6's Progress line and step 8's
+# decision-batch line, dismissed-decide calls and pending_decisions rewrite must sit INSIDE an
+# acquire … release pair (a concurrent progress-append lost closeout's `status: done` 60/60).
+pf_lock() {  # <park-first list md> — prints `locked` or the offending offsets
+  awk '
+    !s6 && index($0, "park-ask-gate") { s6 = 1
+      a = index($0, "run-lock.sh acquire"); w1 = index($0, "dismissed decisions asked after the park"); w2 = index($0, "dismissed decisions not asked"); r = index($0, "run-lock.sh release")
+      ok6 = (a > 0 && w1 > a && w2 > a && r > w1 && r > w2); d6 = "s6 acquire=" a " asked=" w1 " not_asked=" w2 " release=" r }
+    /^8\. / { s8 = 1
+      a = index($0, "run-lock.sh acquire"); b = index($0, "the decision-batch line"); d = index($0, "dismissed-decide"); q = index($0, "`pending_decisions: <n>` rewrite"); r = index($0, "run-lock.sh release")
+      ok8 = (a > 0 && b > a && d > a && q > a && r > b && r > d && r > q); d8 = "s8 acquire=" a " batch=" b " decide=" d " pending=" q " release=" r }
+    END { if (s6 && s8 && ok6 && ok8) print "locked"; else print "bad " d6 " | " d8 }' "$1"
+}
+o="$(pf_lock "$PFL")"
+[ "$o" = locked ] && ok "B: park-first steps 6 and 8 write the run file only inside a run-lock acquire/release pair" || no "B: park-first post-release writes not locked: $o"
+PF_ACQ='`run-lock.sh acquire --owner "automate:<run_id>" --session-id <sid>`; '
+for pf_m in 'park-ask-gate' '^8\. '; do
+  PFM="$TOP/pf-lock-mutant.md"
+  PF_A="$PF_ACQ" PF_S="$pf_m" awk 'BEGIN { a = ENVIRON["PF_A"]; m = ENVIRON["PF_S"] }
+    !d && $0 ~ m && (i = index($0, a)) { d = 1; $0 = substr($0, 1, i - 1) substr($0, i + length(a)) } { print }' "$PFL" > "$PFM"
+  if [ -s "$PFM" ] && ! cmp -s "$PFL" "$PFM" && [ "$(wc -l < "$PFM")" = "$(wc -l < "$PFL")" ]; then
+    o="$(pf_lock "$PFM")"
+    [ "$o" != locked ] && ok "B: lock mutant (acquire removed from the '$pf_m' step) turns the lock leg red: $o" || no "B: lock mutant ('$pf_m') did NOT discriminate"
+  else
+    no "B: lock mutant ('$pf_m') not gated (empty, identical, or a line lost)"
+  fi
+done
+L="$(first_line "$SUBF" "**Post-release writes take the run lock.**")"
+case "$L" in *"\`dismissed-decide\` (\`scripts/automate-dismissed.sh\`) takes none either"*"never across a question"*"never write without the lock"*) ok "B: the post-release-writes rule names dismissed-decide's missing lock, forbids lock-free writes and never holds the lock across a question" ;; *) no "B: post-release-writes rule missing or wrong" ;; esac
+L="$(first_line "$SUBF" "**Fix-now after the park (D3).**")"
+case "$L" in *"fix-now became follow-up: <draft_name> — <reason>"*"both written under the run lock"*) ok "B: D3's follow-up writes are taken under the run lock" ;; *) no "B: D3 follow-up writes are not locked" ;; esac
+L="$(first_line "$SUBF" "**Fix-now after the park (D3).**")"
+case "$L" in *"re-runs \`park-ask-gate"*"run-lock.sh acquire --owner \"automate:<run_id>\" --session-id <sid>"*"dismissed-decide <runfile> <draft_path> follow-up"*"fix-now became follow-up: <draft_name> — <reason>"*) ok "B: a late or lock-refused fix-now becomes a follow-up (D3)" ;; *) no "B: D3 fix-now hand-off wrong" ;; esac
+# D3 check-then-act: the first park-ask-gate read holds no lock, so the watcher's closeout can
+# close the item out before the acquire. The gate must be re-read UNDER the lock, before the
+# `## Status: running` write: order acquire → park-ask-gate (second) → running.
+D3_ANCHOR='**Fix-now after the park (D3).**'
+d3_order() {  # <md> — prints `ordered` or the offending offsets
+  D3_A="$D3_ANCHOR" awk 'BEGIN { h = ENVIRON["D3_A"] } index($0, h) {
+    a = index($0, "run-lock.sh acquire"); r = substr($0, a + 1)
+    g = index(r, "park-ask-gate"); s = index(r, "`## Status: running`"); rel = index(r, "run-lock.sh release")
+    if (a > 0 && g > 0 && s > 0 && g < s && rel > 0 && index(r, "still reads `ask — fix-now allowed`") > 0) print "ordered"
+    else print "bad acquire=" a " gate2=" g " running=" s " release=" rel
+    exit }' "$1"
+}
+o="$(d3_order "$SUBF")"
+[ "$o" = ordered ] && ok "B: D3 — acquire → park-ask-gate re-read under the lock → ## Status: running (a release on a second-read refusal)" || no "B: D3 lock-held re-check order: ${o:-paragraph missing}"
+# mutant: the second gate read moved AFTER the running write (the race the re-check closes)
+D3_G='runs `park-ask-gate <runfile> <item> <pr_url>` AGAIN while holding the lock'
+D3_MUT="$TOP/d3-mutant.md"
+D3_A="$D3_ANCHOR" D3_G="$D3_G" awk 'BEGIN { h = ENVIRON["D3_A"]; g = ENVIRON["D3_G"]; t = "--pause-reason null`" }
+  index($0, h) && index($0, g) && index($0, t) {
+    i = index($0, g); $0 = substr($0, 1, i - 1) substr($0, i + length(g))
+    j = index($0, t); $0 = substr($0, 1, j + length(t) - 1) " then " g substr($0, j + length(t)) }
+  { print }' "$SUBF" > "$D3_MUT"
+if [ -s "$D3_MUT" ] && ! cmp -s "$SUBF" "$D3_MUT" && [ "$(wc -l < "$D3_MUT")" = "$(wc -l < "$SUBF")" ]; then
+  o="$(d3_order "$D3_MUT")"
+  [ "$o" != ordered ] && ok "B: D3 mutant (second gate read moved after the running write) turns the order leg red: $o" || no "B: D3 mutant did NOT discriminate"
+else
+  no "B: D3 mutant not gated (empty, identical, or a line lost)"
+fi
+# D3 batch unit: with k>1 fix-now answers in one decision batch, EACH is recorded
+# (`dismissed-decide … fix-now`) before the ONE re-pass, and on a refusal EACH becomes a
+# follow-up — a per-answer reading either starts a second re-pass or leaves a draft unrecorded.
+D3_EACH='`dismissed-decide <runfile> <draft_path> fix-now` for EACH fix-now answer of the batch'
+d3_batch() {  # <md> — prints `batch` or the offending offsets
+  D3_A="$D3_ANCHOR" D3_E="$D3_EACH" awk 'BEGIN { h = ENVIRON["D3_A"]; e = ENVIRON["D3_E"] } index($0, h) {
+    d = index($0, e); p = index($0, "the ONE fix-now DRAIN → GATE re-pass"); f = index($0, "EACH fix-now answer of the batch becomes a follow-up")
+    u = index($0, "never one per answer") + index($0, "decision batch, never the single answer")
+    if (d > 0 && p > d && f > 0 && u > 0) print "batch"; else print "bad each=" d " repass=" p " follow_each=" f " unit=" u
+    exit }' "$1"
+}
+o="$(d3_batch "$SUBF")"
+[ "$o" = batch ] && ok "B: D3 — the decision batch is the unit: EACH fix-now answer recorded before the ONE re-pass, EACH refused one a follow-up" || no "B: D3 batch wording: ${o:-paragraph missing}"
+D3_BMUT="$TOP/d3-batch-mutant.md"
+D3_A="$D3_ANCHOR" D3_E="$D3_EACH" awk 'BEGIN { h = ENVIRON["D3_A"]; e = ENVIRON["D3_E"]; r = "`dismissed-decide <runfile> <draft_path> fix-now`" }
+  index($0, h) && (i = index($0, e)) { $0 = substr($0, 1, i - 1) r substr($0, i + length(e)) }
+  { print }' "$SUBF" > "$D3_BMUT"
+if [ -s "$D3_BMUT" ] && ! cmp -s "$SUBF" "$D3_BMUT" && [ "$(wc -l < "$D3_BMUT")" = "$(wc -l < "$SUBF")" ]; then
+  o="$(d3_batch "$D3_BMUT")"
+  [ "$o" != batch ] && ok "B: D3 batch mutant (singular per-answer dismissed-decide fix-now) turns the batch leg red: $o" || no "B: D3 batch mutant did NOT discriminate"
+else
+  no "B: D3 batch mutant not gated (empty, identical, or a line lost)"
+fi
+# The restated single-drain invariant in CLAUDE.md must not claim one order for every park.
+cl_order() {  # <md> — `both` when the single-drain invariant names the two orders and not the stale one
+  local l; l="$(grep -F -m1 -- '**`/automate` single-drain ownership' "$1")"
+  case "$l" in *"decision step before the park"*) echo stale ;; *"after the park at a sequential interactive READY park, before it at an escalated park"*) echo both ;; *) echo missing ;; esac
+}
+o="$(cl_order "$REPO/CLAUDE.md")"
+[ "$o" = both ] && ok "B: CLAUDE.md single-drain invariant names both decision orders (READY: after the park; escalated: before)" || no "B: CLAUDE.md single-drain order restatement is $o"
+CL_MUT="$TOP/claude-mutant.md"
+awk '{ i = index($0, "dismissed-findings decision step (`skills/automate-loop/SKILL.md` §6 — after the park at a sequential interactive READY park, before it at an escalated park)")
+  if (i) $0 = substr($0, 1, i - 1) "dismissed-findings decision step before the park (`skills/automate-loop/SKILL.md` §6)" substr($0, i + length("dismissed-findings decision step (`skills/automate-loop/SKILL.md` §6 — after the park at a sequential interactive READY park, before it at an escalated park)"))
+  print }' "$REPO/CLAUDE.md" > "$CL_MUT"
+if [ -s "$CL_MUT" ] && ! cmp -s "$REPO/CLAUDE.md" "$CL_MUT" && [ "$(wc -l < "$CL_MUT")" = "$(wc -l < "$REPO/CLAUDE.md")" ]; then
+  [ "$(cl_order "$CL_MUT")" != both ] && ok "B: CLAUDE.md mutant (old 'before the park' wording) turns the order leg red" || no "B: CLAUDE.md order mutant did NOT discriminate"
+else
+  no "B: CLAUDE.md order mutant not gated (empty, identical, or a line lost)"
+fi
 L="$(first_line "$SK" "4. **GATE**")"
-before "$L" "Dismissed-findings decision step (before the park)" "merge watcher is armed" && ok "B: GATE step 4 runs the decision step before any park/watcher" || no "B: GATE step 4 lacks the before-park decision step"
+case "$L" in *"Dismissed-findings decision step (before the park)"*"**is written FIRST**"*"park-ask-gate"*"keep the decide-then-park order:**"*"come before the park state is written, the merge watcher is armed"*) ok "B: GATE step 4 — READY park written first, escalated / non-interactive / lane decide first" ;; *) no "B: GATE step 4 order wrong" ;; esac
 L="$(first_line "$SK" "**Safe mode (default):**")"
-before "$L" "Dismissed-findings decision step (before the park)" "arm the merge watcher" && ok "B: §9 safe-mode park runs the decision step before arming the watcher" || no "B: §9 safe-mode bullet order"
+before "$L" "arm the merge watcher" "park-ask-gate" && before "$L" "write the park state" "the owner's decisions" && ok "B: §9 safe-mode park is written and watched before park-ask-gate and the decisions" || no "B: §9 safe-mode bullet order"
 L="$(first_line "$SK" "otherwise fail **CLOSED** → park + notify")"
-case "$L" in *"Dismissed-findings decision step (before the park)"*) ok "B: §9 fail-closed --auto-merge park runs the decision step" ;; *) no "B: §9 --auto-merge park lacks the decision step" ;; esac
+case "$L" in *"park-first order"*"the merge watcher"*"park-ask-gate"*"Dismissed-findings decision step (before the park)"*) ok "B: §9 fail-closed --auto-merge park takes the park-first order" ;; *) no "B: §9 --auto-merge park order wrong" ;; esac
 L="$(first_line "$SK" "**\`ESCALATED\` never merges and PARKS the run**")"
-before "$L" "Dismissed-findings decision step (before the park)" "## Status: paused" && ok "B: §9 escalated park runs the decision step before the park write" || no "B: §9 escalated bullet order"
+before "$L" "Dismissed-findings decision step (before the park)" "## Status: paused" && ok "B: §9 escalated park still runs the decision step before the park write" || no "B: §9 escalated bullet order"
 L="$(first_line "$SUBF" "**Under \`--non-interactive-fallback\`**")"
-case "$L" in *"asks nothing"*"pending_decisions"*) ok "B: --non-interactive-fallback asks nothing and records pending_decisions" ;; *) no "B: non-interactive sentence missing" ;; esac
+case "$L" in *"(unchanged"*"asks nothing"*"pending_decisions"*) ok "B: --non-interactive-fallback (unchanged) asks nothing and records pending_decisions" ;; *) no "B: non-interactive sentence missing" ;; esac
 L="$(first_line "$SK" "**PICK-time pending-decisions ask")"
-case "$L" in *"BEFORE RECONCILE's \`closeout\`"*"**Follow-up (keep draft)** / **Drop** ONLY"*"fix-now is offered only at the park"*) ok "B: PICK ask precedes RECONCILE's closeout, Follow-up / Drop only" ;; *) no "B: PICK-time ask paragraph wrong" ;; esac
+case "$L" in *"BEFORE RECONCILE's \`closeout\`"*"**Follow-up (keep draft)** / **Drop** ONLY"*"fix-now is offered only at the park"*"park-ask-gate"*) ok "B: PICK ask precedes RECONCILE's closeout, Follow-up / Drop only" ;; *) no "B: PICK-time ask paragraph wrong" ;; esac
 case "$L" in *"Fix now on this PR"*) no "B: PICK ask must never offer Fix now" ;; *) ok "B: PICK ask offers no Fix-now option" ;; esac
 p_ask="$(ln_of "$SK" "**PICK-time pending-decisions ask")"; p_rec="$(ln_of "$SK" "1. **RECONCILE**")"; p_run="$(ln_of "$SK" "2. **RUN**")"
 [ "$p_ask" -gt "$p_rec" ] && [ "$p_ask" -lt "$p_run" ] && ok "B: the PICK ask sits inside §6 step 1 (PICK), before RUN" || no "B: PICK ask placement rec=$p_rec ask=$p_ask run=$p_run"

@@ -1,2 +1,3 @@
   resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers AND the referenced file's own ## Status: done stamp (is_done); dir-fallback path also skips proposed|parked, per is_not_ready
+  queue-confirm    <source> <n> <limit> | --lane-backlog  # §2 "--limit N" gate AUT-QUEUE: `skip — backlog queue <n> ≤ limit <limit>` for a backlog source whose Queue is not longer than --limit (owner decision D1), `skip — lane backlog …` with --lane-backlog, else `ask` (folder/prompt, n > limit, a non-integer, an unknown source: fail toward asking); exit 0 (missing argument 1)
