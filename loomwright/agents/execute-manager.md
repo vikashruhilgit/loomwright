@@ -331,13 +331,14 @@ for iteration in 1..max_iterations:
       # its adjudication CHECKPOINT and never a pause. Scoped to the rows whose mutation target this
       # subtask's lanes own (rows on a sibling's code are left to Phase 4.5, which runs every row).
       # The cache path is MAIN-CHECKOUT ABSOLUTE: `.supervisor/` does not exist inside the worktree.
-      pins = Bash(`bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-pin-mutations.sh" {brief_path} --root {worktree_path} --cache {main_checkout}/.supervisor/pin-mutations/{brief basename without .md}.tsv --only-paths {this subtask's lanes: globs}`)
+      # <plugin root> = the same install root as the verify-provides.sh call above.
+      pins = Bash(`bash "<plugin root>/scripts/run-pin-mutations.sh" {brief_path} --root {worktree_path} --cache {main_checkout}/.supervisor/pin-mutations/{brief basename without .md}.tsv --only-paths {this subtask's lanes: globs}`)
       tool_calls += 1
       if pins has a `not_held` line and this subtask has not been pin-re-spawned:
         # ONE bounded re-spawn — the crash-retry shape (retry once in same worktree): same spawn
         # template, `Retry context:` = the `not_held` lines verbatim (data). Its completion re-enters
         # this step, the script runs ONCE more, and no second re-spawn follows.
-        Task(... same worker spawn, worktree {worktree_path}, run_in_background: true ...); mark pin_respawned
+        Task(... the Step 3 worker spawn, unchanged, in {worktree_path} ...); mark pin_respawned
         tool_calls += 1
         track the worker as running again; skip_to_next_iteration
       if pins still has a `not_held` line, or exited 2:
