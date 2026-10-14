@@ -31,7 +31,8 @@
 #   1. `holder_env` — `$LOOMWRIGHT_HOLDER_PID` when numeric and alive. The
 #      vendor-neutral way for ANY harness (a CI job, a script, a close-out
 #      that must hold the lock itself) to name the process the lock lives as
-#      long as. A dead or non-numeric value is ignored (falls through).
+#      long as. A dead or non-numeric value, 0, a leading zero, or 1 is
+#      ignored (falls through).
 #   2. `claude_pid` — `$CLAUDE_PID` when numeric and alive. Evidence: observed
 #      2026-09-26 on Claude Code 2.1.281 (Desktop), `CLAUDE_PID` in a Bash-tool
 #      shell = that shell's own parent = the `claude` binary. It is NOT in the
@@ -230,8 +231,10 @@ proc_lstart() {
 # holder_pid — prints `<pid> <pid_source>`, the liveness pid recorded in meta
 # (resolution order in the header).
 holder_pid() {
+  # 0 (kill -0 0 signals our own process group, so it always "lives"), a
+  # leading zero, and 1 (init) are never a holder — the walk's own `-gt 1` rule.
   case "${LOOMWRIGHT_HOLDER_PID:-}" in
-    ''|*[!0-9]*) : ;;
+    ''|*[!0-9]*|0*|1) : ;;
     *) if kill -0 "$LOOMWRIGHT_HOLDER_PID" 2>/dev/null; then echo "$LOOMWRIGHT_HOLDER_PID holder_env"; return; fi ;;
   esac
   case "${CLAUDE_PID:-}" in

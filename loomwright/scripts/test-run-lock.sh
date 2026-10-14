@@ -538,7 +538,8 @@ if [ "$(meta_val "$D22b" pid)" = "$HOLD22" ] && [ "$(meta_val "$D22b" pid_source
 else
   no "LOOMWRIGHT_HOLDER_PID must win over CLAUDE_PID: got '$(meta_val "$D22b" pid)' '$(meta_val "$D22b" pid_source)'"
 fi
-for bad in 999999 abc 12x; do
+# 0 always "lives" (kill -0 0 = own process group) and 1 is init: never a holder.
+for bad in 999999 abc 12x 0 007 1; do
   D22c="$(fresh_root)"
   run_env LOOMWRIGHT_HOLDER_PID="$bad" CLAUDE_PID="$CL22" -- acquire --owner x:22 --root "$D22c"
   if [ "$(meta_val "$D22c" pid)" = "$CL22" ] && [ "$(meta_val "$D22c" pid_source)" = claude_pid ]; then
