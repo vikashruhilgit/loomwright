@@ -54,6 +54,9 @@
 #       the ask (GATE step 4, §9, the park-first list), and a late or lock-refused
 #       fix-now becomes a follow-up, with park-ask-gate re-read UNDER the re-acquired
 #       lock before `## Status: running` (D3 mutant: the re-read moved after the write);
+#       every park-first run-file write after the lock release (step 6's Progress line,
+#       step 8's decision batch / dismissed-decide / pending_decisions, D3's follow-up)
+#       sits inside a run-lock acquire/release pair (mutants: acquire removed ⇒ red);
 #       --non-interactive-fallback asks nothing and records pending_decisions; the
 #       PICK ask precedes RECONCILE's closeout and offers Follow-up / Drop only;
 #       fix-now bounds + honest limits; every restating single-drain surface carries
@@ -628,6 +631,39 @@ L="$(first_line "$PFL" "park-ask-gate")"
 case "$L" in *"--wait 75"*"refuse — <reason>"*"ask NOTHING"*"pending_decisions"*) ok "B: park-first gate step waits 75s and a refuse asks nothing, keeping pending_decisions" ;; *) no "B: park-first gate step wrong" ;; esac
 L="$(first_line "$PFL" "Ask the owner")"
 case "$L" in *"**Fix now on this PR** is offered only when the gate line reads \`ask — fix-now allowed\`"*) ok "B: park-first ask offers Fix now only on the gate's fix-now-allowed line" ;; *) no "B: park-first ask does not gate Fix now" ;; esac
+# Post-release writes take the run lock: step 5 released it and the merge watcher's closeout
+# (which holds the same lock) may run, while progress-append / current-set / dismissed-decide
+# each rename the whole run file with no lock of their own. Step 6's Progress line and step 8's
+# decision-batch line, dismissed-decide calls and pending_decisions rewrite must sit INSIDE an
+# acquire … release pair (a concurrent progress-append lost closeout's `status: done` 60/60).
+pf_lock() {  # <park-first list md> — prints `locked` or the offending offsets
+  awk '
+    !s6 && index($0, "park-ask-gate") { s6 = 1
+      a = index($0, "run-lock.sh acquire"); w1 = index($0, "dismissed decisions asked after the park"); w2 = index($0, "dismissed decisions not asked"); r = index($0, "run-lock.sh release")
+      ok6 = (a > 0 && w1 > a && w2 > a && r > w1 && r > w2); d6 = "s6 acquire=" a " asked=" w1 " not_asked=" w2 " release=" r }
+    /^8\. / { s8 = 1
+      a = index($0, "run-lock.sh acquire"); b = index($0, "the decision-batch line"); d = index($0, "dismissed-decide"); q = index($0, "`pending_decisions: <n>` rewrite"); r = index($0, "run-lock.sh release")
+      ok8 = (a > 0 && b > a && d > a && q > a && r > b && r > d && r > q); d8 = "s8 acquire=" a " batch=" b " decide=" d " pending=" q " release=" r }
+    END { if (s6 && s8 && ok6 && ok8) print "locked"; else print "bad " d6 " | " d8 }' "$1"
+}
+o="$(pf_lock "$PFL")"
+[ "$o" = locked ] && ok "B: park-first steps 6 and 8 write the run file only inside a run-lock acquire/release pair" || no "B: park-first post-release writes not locked: $o"
+PF_ACQ='`run-lock.sh acquire --owner "automate:<run_id>" --session-id <sid>`; '
+for pf_m in 'park-ask-gate' '^8\. '; do
+  PFM="$TOP/pf-lock-mutant.md"
+  PF_A="$PF_ACQ" PF_S="$pf_m" awk 'BEGIN { a = ENVIRON["PF_A"]; m = ENVIRON["PF_S"] }
+    !d && $0 ~ m && (i = index($0, a)) { d = 1; $0 = substr($0, 1, i - 1) substr($0, i + length(a)) } { print }' "$PFL" > "$PFM"
+  if [ -s "$PFM" ] && ! cmp -s "$PFL" "$PFM" && [ "$(wc -l < "$PFM")" = "$(wc -l < "$PFL")" ]; then
+    o="$(pf_lock "$PFM")"
+    [ "$o" != locked ] && ok "B: lock mutant (acquire removed from the '$pf_m' step) turns the lock leg red: $o" || no "B: lock mutant ('$pf_m') did NOT discriminate"
+  else
+    no "B: lock mutant ('$pf_m') not gated (empty, identical, or a line lost)"
+  fi
+done
+L="$(first_line "$SUBF" "**Post-release writes take the run lock.**")"
+case "$L" in *"\`dismissed-decide\` (\`scripts/automate-dismissed.sh\`) takes none either"*"never across a question"*"never write without the lock"*) ok "B: the post-release-writes rule names dismissed-decide's missing lock, forbids lock-free writes and never holds the lock across a question" ;; *) no "B: post-release-writes rule missing or wrong" ;; esac
+L="$(first_line "$SUBF" "**Fix-now after the park (D3).**")"
+case "$L" in *"fix-now became follow-up: <draft_name> — <reason>"*"both written under the run lock"*) ok "B: D3's follow-up writes are taken under the run lock" ;; *) no "B: D3 follow-up writes are not locked" ;; esac
 L="$(first_line "$SUBF" "**Fix-now after the park (D3).**")"
 case "$L" in *"re-runs \`park-ask-gate"*"run-lock.sh acquire --owner \"automate:<run_id>\" --session-id <sid>"*"dismissed-decide <runfile> <draft_path> follow-up"*"fix-now became follow-up: <draft_name> — <reason>"*) ok "B: a late or lock-refused fix-now becomes a follow-up (D3)" ;; *) no "B: D3 fix-now hand-off wrong" ;; esac
 # D3 check-then-act: the first park-ask-gate read holds no lock, so the watcher's closeout can
