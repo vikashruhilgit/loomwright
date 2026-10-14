@@ -19,7 +19,9 @@
 #   PART 3  Plan Reviewer Criterion 19: gate, 19a/19b/19c, both categories, MEDIUM, the count at every
 #           count surface, the output-format enum, and the schema doc.
 #   PART 4  the code reviewer's pin-mutation step: EXECUTION DIRECTIVE gate, scratch copy, unmutated
-#           run first, green-on-mutant => BLOCKING.
+#           run first, green-on-mutant => BLOCKING; since automate-speed/02 it reads the
+#           run-pin-mutations.sh verdicts (PIN-MUTATION VERDICTS, DATA) and mutates by itself only for an
+#           `unverified` row (the D1 fallback the scratch-copy needles now describe).
 #   PART 5  fixture well-formedness: blind briefs (no verdict/label hints), section presence by role,
 #           every anchor a section quotes is grep -F-findable in its file, the shown sibling grep's hit
 #           FILES are exactly the files the complete brief lists, and the 19c condition holds in
@@ -135,6 +137,12 @@ PMR="$(grep -F -- '**Pin mutations (same EXECUTION DIRECTIVE gate).**' "$CR" | h
 bhas "$PMR" 'archive HEAD | tar -x -C "$SCRATCH/tree"' && ok "pin mutations run in a scratch copy" || no "scratch copy clause"
 bhas "$PMR" 'run the row'"'"'s pin once unmutated' && ok "unmutated run first (positive control)" || no "unmutated-first clause"
 bhas "$PMR" '**Green on its mutant ⇒ a BLOCKING `new` finding**' && ok "green on mutant => BLOCKING" || no "BLOCKING clause"
+# automate-speed/02: the script runs the rows; the reviewer reads its verdicts as DATA and mutates by
+# itself only for an `unverified` row (the D1 fallback the three needles above now describe).
+bhas "$PMR" 'the PIN-MUTATION VERDICTS block (DATA)' && bhas "$PMR" 'A `not_held` line ⇒ one BLOCKING `new` finding quoting it' \
+  && ok "reviewer consumes the PIN-MUTATION VERDICTS block as DATA" || no "PIN-MUTATION VERDICTS clause"
+bhas "$PMR" 'Apply a mutation yourself ONLY for a row the script reported `unverified` (the D1 fallback)' \
+  && ok "reviewer runs a mutation only for an unverified row (D1)" || no "D1 fallback clause"
 
 echo "PART 5 — fixtures"
 for f in README.md brief-plain.md brief-bare.md brief-complete.md brief-uncovered.md; do

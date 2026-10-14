@@ -327,6 +327,25 @@ for iteration in 1..max_iterations:
           reason: "partial with no provides gap — spec unreadable/insufficient per worker.md Step 1 carve-out: {worker_result.summary}"
         skip_to_next_iteration
 
+      # --- Pin-mutation gate (automate-speed/02) — beside the outputs gate above, never folded into
+      # its adjudication CHECKPOINT and never a pause. Scoped to the rows whose mutation target this
+      # subtask's lanes own (rows on a sibling's code are left to Phase 4.5, which runs every row).
+      # The cache path is MAIN-CHECKOUT ABSOLUTE: `.supervisor/` does not exist inside the worktree.
+      pins = Bash(`bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-pin-mutations.sh" {brief_path} --root {worktree_path} --cache {main_checkout}/.supervisor/pin-mutations/{brief basename without .md}.tsv --only-paths {this subtask's lanes: globs}`)
+      tool_calls += 1
+      if pins has a `not_held` line and this subtask has not been pin-re-spawned:
+        # ONE bounded re-spawn — the crash-retry shape (retry once in same worktree): same spawn
+        # template, `Retry context:` = the `not_held` lines verbatim (data). Its completion re-enters
+        # this step, the script runs ONCE more, and no second re-spawn follows.
+        Task(... same worker spawn, worktree {worktree_path}, run_in_background: true ...); mark pin_respawned
+        tool_calls += 1
+        track the worker as running again; skip_to_next_iteration
+      if pins still has a `not_held` line, or exited 2:
+        Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
+             decision: "pin_mutations: {subtask_id} — {pins summary line}")   # carried into Phase 4.5
+        tool_calls += 1
+      # A missing script / brief / section is recorded the same way, never a block.
+
       # --- Lane-collision gate (D6, v15.20.0) — `out_of_lane` itself is a
       # REPORT-ONLY field (agents/worker.md §"Output Format") and never blocks a
       # subtask on its own. This check fires ONLY when an out-of-lane path lands
@@ -577,7 +596,7 @@ for iteration in 1..max_iterations:
     pass
 ```
 
-**Tool call tracking:** Each Task, TaskOutput, Read, Bash, Grep, Glob call increments the `tool_calls` counter by 1 — including the ONE `verify-provides.sh` Bash call the v12 gate runs per completed subtask (+1 Bash per subtask on the happy path; `record_decision` Tasks fire only on a mismatch / absent result). The counter is checked at the end of each iteration. The final count is reported in EXECUTE_RESULT or EXECUTE_CHECKPOINT.
+**Tool call tracking:** Each Task, TaskOutput, Read, Bash, Grep, Glob call increments the `tool_calls` counter by 1 — including the ONE `verify-provides.sh` Bash call the v12 gate runs per completed subtask and the ONE `run-pin-mutations.sh` Bash call of the pin gate (+2 Bash per subtask on the happy path; `record_decision` Tasks fire only on a mismatch / absent result / unresolved pin verdict; a `not_held` adds at most one re-spawn Task and one script re-run). The counter is checked at the end of each iteration. The final count is reported in EXECUTE_RESULT or EXECUTE_CHECKPOINT.
 
 ### Step 5: Output Result
 
@@ -765,6 +784,7 @@ Only the `## Session` block (session_id/branch/status/phase) is derived — it i
 |-------|--------|
 | `outputs_verified` gate gap (a `provides` item missing ON DISK per `verify-provides.sh` — regardless of the worker's `status` — an unverifiable contract routed to checkpoint by D1 or paired with an ABSENT WORKER_RESULT, or a `partial` worker with an empty `outputs_gap` — the Step 1 carve-out) | Emit EXECUTE_CHECKPOINT with `adjudication_required: true` (Step 2b / poll-loop gate); do not mark the subtask complete |
 | Worker crash/timeout | Record error, retry once in same worktree, then escalate |
+| Pin mutation not_held (`run-pin-mutations.sh`, poll-loop pin gate) | Re-spawn once in the same worktree with the `not_held` lines as `Retry context:`, re-run the script once, then record (`pin_mutations:` decision) and carry it to Phase 4.5 — never adjudication, never a pause |
 | Worktree creation fails | Report in EXECUTE_RESULT, skip that subtask |
 | Tool budget 55+ | Output EXECUTE_CHECKPOINT immediately |
 | Summary file missing | Fall back to parsing full TaskOutput |

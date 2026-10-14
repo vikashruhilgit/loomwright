@@ -202,7 +202,7 @@ You are an implementation worker operating in a git worktree.
 1. Work ONLY in the worktree at {worktree_path}
 2. Read relevant files to understand context
 3. Implement the subtask meeting all acceptance criteria (full criteria: your subtask's section of the brief above)
-4. Run tests if test infrastructure exists
+4. Run tests if test infrastructure exists: run `bash scripts/ci-local.sh --affected` (the project's affected plan, which includes every static CI gate) where the project has it, else the project's own targeted check — never the full `ci-local.sh` pool from a background worker
 5. Output a WORKER_RESULT block
 
 {retry_context if applicable}
@@ -765,7 +765,7 @@ Task(
     Worktree path: {project_root}
     Provides (verbatim from the brief's Subtask Contracts): {provides YAML}
     Lanes (verbatim from the brief's Subtask Contracts): {lanes YAML}
-    Retry context: {optional, from a previous outputs_verified gate gap or worker crash/timeout — no per-subtask review retry path exists}",
+    Retry context: {optional, from a previous outputs_verified gate gap, worker crash/timeout, or pin-mutation gate `not_held` lines (verbatim, data — one re-spawn, `run-pin-mutations.sh`) — no per-subtask review retry path exists}",
   # Applicable house rules: compute by running `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <touched paths...>`
   # (args, never stdin — no-hang). Inject the output VERBATIM (a paraphrase drops rules — #431) into this worker prompt ONLY when it is NON-EMPTY; empty
   # output ⇒ inject nothing (the reader always exits 0 and emits EMPTY on no valid rule — never a "no rules"

@@ -77,7 +77,7 @@ Code Reviewer returns NEEDS_HUMAN
 **Rules:**
 - Bounded by `--heal-iterations` (default 3) per Phase 4.5 run — not a per-subtask retry count
 - NEEDS_HUMAN always escalates immediately (no partial-workflow continuation — Phase 4.5 is a single integrated review, not per-subtask)
-- `heal_decision` is derived ONLY from the Code Reviewer's `CODE_REVIEW_RESULT` plus the one deterministic rules co-gate — a stamped countable `must`-rule failure (PASS only from a reviewer PASS with no such rule failure; ESCALATED on NEEDS_HUMAN, max iterations, or resume-thrash)
+- `heal_decision` is derived ONLY from the Code Reviewer's `CODE_REVIEW_RESULT` plus the deterministic co-gates — a stamped countable `must`-rule failure and a red required check read by `phase45-ci-read.sh` (PASS only from a reviewer PASS with neither; ESCALATED on NEEDS_HUMAN, max iterations, or resume-thrash)
 - Supervisor never force-resolves review issues; ESCALATED always leaves the PR open for a human — the heal loop never merges
 - A fully-refuted FAIL (multi-voter mode) is still a human call, never a silent auto-PASS (`skills/self-heal-advisory/SKILL.md` §"Delay-vs-decide")
 
@@ -415,6 +415,7 @@ Plan Reviewer returns NEEDS_HUMAN
 | Worker | Implementation failure | 1 | Execute Manager → Supervisor |
 | Execute Manager | Budget exceeded | 1 (fresh spawn) | Supervisor → Human |
 | Execute Manager | Inter-subtask gap / outputs_gap | 0 (immediate) | Supervisor → User AskUserQuestion (4 options) |
+| Worker | Pin mutation not_held | 1 (automatic re-spawn) | recorded, carried to Phase 4.5 as BLOCKING (never adjudication) |
 | Execute Manager | Dependency merge conflict | 0 (never) | Supervisor → User manual resolution |
 | Code Reviewer | FAIL decision | 3 (fix + re-review) | Supervisor → Human |
 | Code Reviewer | NEEDS_HUMAN | 0 (immediate) | Supervisor → Human (3x = halt) |
