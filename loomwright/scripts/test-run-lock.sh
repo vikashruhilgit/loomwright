@@ -68,8 +68,8 @@
 #  26. the `run_lock_degraded` STDERR line on fresh / reclaim / re-entrant
 #      acquire and on status of a ppid lock; stdout + rc byte-identical; no
 #      other pid_source prints it.
-#  27. pid_start = trimmed `LC_ALL=C ps -o lstart=` of the holder; omitted
-#      when ps yields nothing.
+#  27. pid_start = trimmed `env TZ=UTC0 LC_ALL=C ps -o lstart=` of the
+#      holder; omitted when ps yields nothing.
 #  28. pid reuse: live pid + different pid_start reads DEAD (reclaimed when
 #      old, refused when young); equal pid_start reads held (test 11 is the
 #      no-pid_start leg).
@@ -77,6 +77,12 @@
 #      after them; a FROZEN copy of the base meta_get agrees with the new one.
 #  30. mutation controls: re-adding the CLAUDECODE gate turns 18 red;
 #      dropping the pid_start compare turns 28's reuse leg red.
+#  31. pid_start is TZ-independent: written under TZ=UTC, compared under
+#      TZ=Asia/Kolkata -> a live holder past the TTL is still held (refused);
+#      mutation control: dropping the TZ pin reclaims it.
+#  32. `liveness` prints the same verdict acquire's reclaim reads: unknown
+#      (no lock), alive, dead (dead pid), dead (reused pid); stdout of
+#      status/acquire unchanged.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -653,7 +659,7 @@ echo "== 27. pid_start = the holder's trimmed lstart; omitted when ps yields not
 sleep 600 & L27=$!
 D27="$(fresh_root)"
 run_env -u LOOMWRIGHT_HOLDER_PID CLAUDE_PID="$L27" -- acquire --owner x:27 --root "$D27"
-want27="$(LC_ALL=C ps -o lstart= -p "$L27" | trim_ws)"
+want27="$(env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$L27" | trim_ws)"
 if [ -n "$want27" ] && [ "$(meta_val "$D27" pid_start)" = "$want27" ]; then
   ok "pid_start recorded = the holder's trimmed lstart ('$want27')"
 else
@@ -708,7 +714,7 @@ fi
 D28e="$(fresh_root)"
 run_sut acquire --owner x:28-eq --root "$D28e"
 set_meta_field "$D28e" pid "$$"
-set_meta_field "$D28e" pid_start "$(LC_ALL=C ps -o lstart= -p "$$" | trim_ws)"
+set_meta_field "$D28e" pid_start "$(env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$$" | trim_ws)"
 set_meta_field "$D28e" ts 1
 run_sut acquire --owner x:28-other --root "$D28e"
 if [ "$RUN_RC" -ne 0 ] && grep -q '^run_lock_held owner=x:28-eq ' < <(printf '%s' "$RUN_OUT"); then
@@ -768,7 +774,7 @@ else
   no "mutation control: could not build the CLAUDECODE-gate mutant -- control inconclusive"
 fi
 MUT30B="$MUT30DIR/nostart.sh"
-sed -e 's/^      pid_alive=0   # pid_start mismatch: the pid was reused$/      :   # mutant: pid_start compare dropped/' "$SUT" > "$MUT30B"
+sed -e 's/^    return 1   # pid_start mismatch: the pid was reused$/    :   # mutant: pid_start compare dropped/' "$SUT" > "$MUT30B"
 if [ -s "$MUT30B" ] && ! diff -q "$MUT30B" "$SUT" >/dev/null 2>&1 && bash -n "$MUT30B" 2>/dev/null \
    && grep -qF 'mutant: pid_start compare dropped' "$MUT30B"; then
   D30b="$(fresh_root)"
@@ -781,7 +787,67 @@ if [ -s "$MUT30B" ] && ! diff -q "$MUT30B" "$SUT" >/dev/null 2>&1 && bash -n "$M
 else
   no "mutation control: could not build the no-pid_start-compare mutant -- control inconclusive"
 fi
-rm -rf "$MUT30DIR" "$PSSTUB" "$TBL" "$RUN_ERR_FILE"
+rm -rf "$MUT30DIR"
+
+echo "== 31. pid_start is TZ-independent: written under one TZ, compared under another -> held =="
+# tz_leg <sut> — acquire under TZ=UTC with a live holder pinned, age the lock past
+# the TTL, then a different owner acquires under TZ=Asia/Kolkata; prints that rc.
+tz_leg() {
+  local sut="$1" root lp rc
+  root="$(fresh_root)"
+  sleep 600 & lp=$!
+  env TZ=UTC LOOMWRIGHT_HOLDER_PID="$lp" bash "$sut" acquire --owner x:31-held --root "$root" >/dev/null 2>&1
+  set_meta_field "$root" ts 1
+  env -u LOOMWRIGHT_HOLDER_PID TZ=Asia/Kolkata bash "$sut" acquire --owner x:31-new --root "$root" >/dev/null 2>&1; rc=$?
+  kill "$lp" 2>/dev/null; wait "$lp" 2>/dev/null
+  echo "$rc $(meta_val "$root" owner) $(meta_val "$root" pid_source)"
+}
+read -r r31 o31 s31 <<EOF31
+$(tz_leg "$SUT")
+EOF31
+if [ "$r31" != 0 ] && [ "$o31" = x:31-held ] && [ "$s31" = holder_env ]; then
+  ok "live holder written under TZ=UTC is still held when compared under TZ=Asia/Kolkata"
+else
+  no "cross-TZ compare must read held: rc=$r31 owner='$o31' pid_source='$s31'"
+fi
+MUT31DIR="$(mktemp -d)"; MUT31="$MUT31DIR/notz.sh"
+sed -e 's/^  env TZ=UTC0 LC_ALL=C ps -o lstart= -p "\$1"/  env LC_ALL=C ps -o lstart= -p "$1"/' "$SUT" > "$MUT31"
+if [ -s "$MUT31" ] && ! diff -q "$MUT31" "$SUT" >/dev/null 2>&1 && bash -n "$MUT31" 2>/dev/null \
+   && [ "$(env TZ=UTC LC_ALL=C ps -o lstart= -p "$$")" != "$(env TZ=Asia/Kolkata LC_ALL=C ps -o lstart= -p "$$")" ]; then
+  read -r rm31 _ _ <<EOF31M
+$(tz_leg "$MUT31")
+EOF31M
+  if [ "$rm31" = 0 ]; then
+    ok "mutation control: without the TZ pin the same live holder is reclaimed -- test 31 is load-bearing"
+  else
+    no "mutation control REFUTED: the TZ-unpinned mutant still refused (rc=$rm31)"
+  fi
+else
+  no "mutation control: could not build the TZ-unpinned mutant (or ps ignores TZ here) -- control inconclusive"
+fi
+rm -rf "$MUT31DIR"
+
+echo "== 32. liveness prints the verdict acquire's reclaim reads =="
+D32="$(fresh_root)"
+v32u="$(bash "$SUT" liveness --root "$D32" 2>/dev/null)"; rc32u=$?
+sleep 600 & L32=$!
+env LOOMWRIGHT_HOLDER_PID="$L32" bash "$SUT" acquire --owner x:32 --root "$D32" >/dev/null 2>&1
+v32a="$(bash "$SUT" liveness --root "$D32" 2>/dev/null)"
+set_meta_field "$D32" pid_start "Thu Jan  1 00:00:00 1970"
+v32r="$(bash "$SUT" liveness --root "$D32" 2>/dev/null)"
+kill "$L32" 2>/dev/null; wait "$L32" 2>/dev/null
+set_meta_field "$D32" pid 999999
+v32d="$(bash "$SUT" liveness --root "$D32" 2>/dev/null)"; rc32d=$?
+if [ "$v32u" = unknown ] && [ "$rc32u" = 0 ] && [ "$v32a" = alive ] && [ "$v32r" = dead ] \
+   && [ "$v32d" = dead ] && [ "$rc32d" = 0 ]; then
+  ok "liveness: unknown (no lock) / alive / dead (reused pid) / dead (dead pid), exit 0"
+else
+  no "liveness verdicts: none='$v32u'($rc32u) live='$v32a' reused='$v32r' dead='$v32d'($rc32d)"
+fi
+st32="$(bash "$SUT" status --root "$D32" 2>/dev/null)"
+case "$st32" in "LOCKED owner=x:32 pid=999999 age="*) ok "status stdout shape unchanged: '$st32'" ;;
+  *) no "status stdout changed: '$st32'" ;; esac
+rm -rf "$PSSTUB" "$TBL" "$RUN_ERR_FILE"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

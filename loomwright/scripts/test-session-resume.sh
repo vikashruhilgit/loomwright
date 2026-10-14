@@ -44,7 +44,9 @@
 #       branch via a genuinely alive pid ($$) with an old ts, proving liveness
 #       gates the TTL the same way test-run-lock.sh case 11 does (z10), the
 #       dead-pid-but-young-age non-reclaimable edge (z11), and no lock dir ⇒
-#       no section at all (z12).
+#       no section at all (z12). (z13) a live but reused pid (pid_start
+#       mismatch) reads (dead) + reclaimable — the verdict is run-lock.sh's own
+#       `liveness`, never restated; an equal pid_start reads (alive).
 #   (zg) a BOM/indented run-file title is still surfaced; the title ERE copy matches the helper's
 #   (za)-(zf) /automate surfacing (automate-followups/32 Part A): resume prints the
 #       merged-but-not-closed-out line (za); startup makes zero gh calls (zb); gh
@@ -1463,6 +1465,38 @@ test_no_stale_lock() {
     || ok "(z12) no heading when unlocked"
 }
 test_no_stale_lock
+
+echo "== (z13) stale run lock: live but REUSED pid (pid_start mismatch) ⇒ (dead) + reclaimable, as run-lock.sh reads it =="
+# Section 5b takes run-lock.sh's own `liveness` verdict — a kill -0-only restatement would print
+# (alive) here and advise --force-unlock although the next acquire reclaims the lock.
+test_stale_lock_reused_pid() {
+  local r ctx now rl
+  rl="$SCRIPT_DIR/run-lock.sh"
+  r="$(new_repo)"; make_plugin_active "$r"
+  now="$(date +%s 2>/dev/null || echo 0)"
+  seed_run_lock "$r" "supervisor:reused" "$$" "$((now - 2000))" "sess-reused"
+  printf 'pid_source\tclaude_pid\npid_start\t%s\n' "Thu Jan  1 00:00:00 1970" >> "$r/.supervisor/run.lock/meta"
+  ctx="$(run_hook_ctx "$r" resume)"
+  grep -qF -- "pid=$$ (dead)" <<< "$ctx" \
+    && ok "(z13) a live pid with a mismatched pid_start reads (dead)" \
+    || no "(z13) expected 'pid=$$ (dead)', got: $ctx"
+  grep -qF -- "This lock is reclaimable" <<< "$ctx" \
+    && ok "(z13) reclaimable wording present — agrees with run-lock.sh's reclaim" \
+    || no "(z13) expected reclaimable wording, got: $ctx"
+  [ "$(bash "$rl" liveness --root "$r")" = dead ] \
+    && ok "(z13) run-lock.sh liveness agrees: dead" || no "(z13) run-lock.sh liveness disagrees"
+  # Equal pid_start (run-lock.sh's own pinned form) ⇒ alive, never reclaimable.
+  r="$(new_repo)"; make_plugin_active "$r"
+  seed_run_lock "$r" "supervisor:same" "$$" "$((now - 2000))" "sess-same"
+  printf 'pid_source\tclaude_pid\npid_start\t%s\n' \
+    "$(env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$$" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')" \
+    >> "$r/.supervisor/run.lock/meta"
+  ctx="$(run_hook_ctx "$r" resume)"
+  grep -qF -- "pid=$$ (alive)" <<< "$ctx" && ! grep -qF -- "This lock is reclaimable" <<< "$ctx" \
+    && ok "(z13) a live pid with an EQUAL pid_start reads (alive), not reclaimable" \
+    || no "(z13) equal pid_start should read alive: $ctx"
+}
+test_stale_lock_reused_pid
 
 # ---- Branch mode: the offline meta-base hint (skills/automate-loop/SKILL.md §"Branch mode") ----
 # Mode on + no <gitdir>/meta-base ⇒ exactly ONE hint line, with NO network (a git shim on PATH

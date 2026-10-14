@@ -7,6 +7,7 @@
 #   run-lock.sh acquire --owner <label> [--session-id <id>] [--root <checkout>] [--force-unlock]
 #   run-lock.sh release --owner <label> | --session-id <id> [--root <checkout>] [--force-unlock]
 #   run-lock.sh status  [--root <checkout>]
+#   run-lock.sh liveness [--root <checkout>]
 #
 # Lock: <root>/.supervisor/run.lock          (a directory — `mkdir` is atomic
 #                                              on every POSIX filesystem, the
@@ -57,13 +58,22 @@
 # leading-`-` strip, so a host whose `comm` differs from the closed list is
 # recorded as `ancestor`.
 #
-# `pid_start` fingerprints the holder: `LC_ALL=C ps -o lstart= -p <pid>`,
-# surrounding whitespace trimmed, written only when non-empty. At reclaim the
-# recorded pid is alive only when `kill -0` succeeds AND (meta has no
-# `pid_start`, OR the pid's current `lstart` equals it) — so a pid the OS
-# reused for an unrelated process reads dead. Honest limit: a live pid whose
-# `lstart` cannot be read now, while meta holds a `pid_start`, compares
-# unequal and reads dead; reclaim still also needs age >= 1800s.
+# `pid_start` fingerprints the holder: `env TZ=UTC0 LC_ALL=C ps -o lstart=
+# -p <pid>`, surrounding whitespace trimmed, written only when non-empty.
+# `ps` prints `lstart` in the caller's local time, so both TZ and the locale
+# are pinned — a writer and a comparer in sessions with different TZ (or
+# LC_*) settings read the same string. The recorded pid is alive only when
+# `kill -0` succeeds AND (meta has no `pid_start`, OR the pid's current
+# `lstart` equals it) — so a pid the OS reused for an unrelated process reads
+# dead. That ONE rule is `holder_alive`; reclaim reads it, and `liveness`
+# prints it for any other reader (session-resume.sh), so nothing restates it.
+# Honest limits: a live pid whose `lstart` cannot be read now, while meta
+# holds a `pid_start`, compares unequal and reads dead. On Linux, procps
+# derives `lstart` from the boot time plus the process's start ticks, and the
+# boot time follows the wall clock, so a wall-clock STEP (an NTP step, a VM
+# resume) can shift a running holder's `lstart`: it then reads dead too. In
+# both cases reclaim still also needs age >= 1800s, and a re-entrant acquire
+# re-stamps `pid_start`.
 #
 # Observed 2026-09-26 (automate-2026-09-26-115755): automate PICK recorded its
 # own shell pid, launch-pad ran ~28 min, and Supervisor Phase 0's acquire
@@ -125,6 +135,10 @@
 #   held lock whose meta reads `pid_source ppid` also gets the
 #   `run_lock_degraded: …` line on STDERR.
 #
+# liveness: prints exactly one of `alive`, `dead` (the `holder_alive` verdict
+#   on the recorded pid + pid_start) or `unknown` (no lock, or no recorded
+#   pid); always exits 0. Read-only — never acquires, refreshes or reclaims.
+#
 # Honest limit: this lock protects only entry points that actually RUN this
 # script (automate PICK, Supervisor Phase 0 INIT, /autonomous INIT). It does
 # NOT protect against an IDE-hosted agent, or any other process, that edits
@@ -139,6 +153,7 @@ die_usage() {
     echo "usage: run-lock.sh acquire --owner <label> [--session-id <id>] [--root <dir>] [--force-unlock]"
     echo "       run-lock.sh release --owner <label> | --session-id <id> [--root <dir>] [--force-unlock]"
     echo "       run-lock.sh status  [--root <dir>]"
+    echo "       run-lock.sh liveness [--root <dir>]"
   } >&2
   exit 1
 }
@@ -222,10 +237,23 @@ is_session_host_comm() {
   return 1
 }
 
-# proc_lstart <pid> — the pid's start time (`lstart`, C locale), surrounding
+# proc_lstart <pid> — the pid's start time (`lstart`, pinned to UTC and the C
+# locale via `env`, never a bare prefix — check-locale-prefix.sh), surrounding
 # whitespace trimmed; empty when `ps` yields nothing. The `pid_start` value.
 proc_lstart() {
-  LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | head -n 1
+  env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | head -n 1
+}
+
+# holder_alive <pid> <pid_start> — THE liveness rule (header, `pid_start`):
+# `kill -0` succeeds AND (no recorded pid_start, OR the pid's current lstart
+# equals it). Read by acquire's reclaim and by `liveness`.
+holder_alive() {
+  local pid="${1:-}" start="${2:-}"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  if [ -n "$start" ] && [ "$(proc_lstart "$pid")" != "$start" ]; then
+    return 1   # pid_start mismatch: the pid was reused
+  fi
+  return 0
 }
 
 # holder_pid — prints `<pid> <pid_source>`, the liveness pid recorded in meta
@@ -328,18 +356,12 @@ cmd_acquire() {
   # Held — consider TTL reclaim. BOTH must hold: (a) recorded pid dead, AND
   # (b) lock age >= LOCK_TTL_SECONDS. A dead pid alone, or a fresh lock
   # alone, both refuse (matches dispatch-pr-review.sh's acquire_lock).
-  # "Alive" = `kill -0` succeeds AND (no recorded `pid_start`, OR the pid's
-  # current lstart equals it) — a reused pid reads dead (header, `pid_start`).
-  local lk_pid lk_start age pid_alive
-  lk_pid="$(meta_get pid)"
-  lk_start="$(meta_get pid_start)"
+  # "Alive" is holder_alive — a reused pid reads dead (header, `pid_start`).
+  local age pid_alive
   age="$(lock_age)"
   pid_alive=0
-  if [ -n "$lk_pid" ] && kill -0 "$lk_pid" 2>/dev/null; then
+  if holder_alive "$(meta_get pid)" "$(meta_get pid_start)"; then
     pid_alive=1
-    if [ -n "$lk_start" ] && [ "$(proc_lstart "$lk_pid")" != "$lk_start" ]; then
-      pid_alive=0   # pid_start mismatch: the pid was reused
-    fi
   fi
   if [ "$pid_alive" -eq 0 ] && [ "$age" -ge "$LOCK_TTL_SECONDS" ] 2>/dev/null; then
     rm -rf "$LOCK_DIR" 2>/dev/null || true
@@ -387,9 +409,23 @@ cmd_status() {
   exit 0
 }
 
+cmd_liveness() {
+  local lk_pid
+  lk_pid="$(meta_get pid)"
+  if [ ! -d "$LOCK_DIR" ] || [ -z "$lk_pid" ]; then
+    echo "unknown"
+  elif holder_alive "$lk_pid" "$(meta_get pid_start)"; then
+    echo "alive"
+  else
+    echo "dead"
+  fi
+  exit 0
+}
+
 case "$CMD" in
-  acquire) cmd_acquire ;;
-  release) cmd_release ;;
-  status)  cmd_status ;;
+  acquire)  cmd_acquire ;;
+  release)  cmd_release ;;
+  status)   cmd_status ;;
+  liveness) cmd_liveness ;;
   *) die_usage ;;
 esac

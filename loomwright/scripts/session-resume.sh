@@ -980,9 +980,16 @@ if [ -d ".supervisor/run.lock" ]; then
   if [ -n "$LK_TS" ] && [ "$LK_TS" -ge 0 ] 2>/dev/null; then
     LK_AGE=$((LK_NOW - LK_TS))
   fi
+  # Liveness is run-lock.sh's own verdict (`liveness`: kill -0 AND the
+  # pid_start fingerprint), never restated here — a reused pid reads dead
+  # exactly as the next acquire will read it. Unreadable/absent ⇒ unknown.
   LK_ALIVE="unknown"
   if [ -n "$LK_PID" ]; then
-    if kill -0 "$LK_PID" 2>/dev/null; then LK_ALIVE="alive"; else LK_ALIVE="dead"; fi
+    LK_RL="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/run-lock.sh"
+    case "$(bash "$LK_RL" liveness --root "$PWD" 2>/dev/null)" in
+      alive) LK_ALIVE="alive" ;;
+      dead)  LK_ALIVE="dead" ;;
+    esac
   fi
   append "### Stale run lock"$'\n'
   append "\`.supervisor/run.lock\` is held: owner=${LK_OWNER:-?} pid=${LK_PID:-?} (${LK_ALIVE}) session_id=${LK_SESSION:-?} age=${LK_AGE}s"$'\n'
