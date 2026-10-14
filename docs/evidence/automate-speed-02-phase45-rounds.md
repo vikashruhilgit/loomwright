@@ -8,9 +8,9 @@ reads are read-only `gh` calls against `vikashruhilgit/loomwright` PR #533 (Vali
 
 | Test | Result |
 |---|---|
-| `loomwright/scripts/test-run-pin-mutations.sh` | 28/28 (exit 0) |
+| `loomwright/scripts/test-run-pin-mutations.sh` | 32/32 (exit 0) |
 | `loomwright/scripts/test-phase45-ci-read.sh` | 11/11 (exit 0) |
-| `loomwright/scripts/test-phase45-rounds-seam.sh` | 52/52 (exit 0) |
+| `loomwright/scripts/test-phase45-rounds-seam.sh` | 61/61 (exit 0) |
 | `scripts/test-ci-local.sh` | 93/93 (exit 0) |
 | `loomwright/scripts/test-closed-enum-pins-seam.sh` | 79/79 (exit 0) |
 | `loomwright/scripts/test-brief-conformance-seam.sh` | 26/26 (exit 0) |
@@ -72,6 +72,18 @@ test-run-pin-mutations: 26 passed, 2 failed
 **(d) `phase45-ci-read.sh` with the pre-fix `,` split of `red_names`** (review iteration 1) — the matrix
 leg (MX) goes red: `test (ubuntu-latest, 20)@123` became two findings,
 `checks=[ 20)@123|ci@111|test (ubuntu-latest@-|]` (`test-phase45-ci-read: 10 passed, 1 failed`).
+
+**(e) the pre-fix `run-pin-mutations.sh` (cache written once, after the last row; no `--budget`)** (review
+iteration 2) — `git show HEAD~:loomwright/scripts/run-pin-mutations.sh` beside the new test in a temp dir.
+The kill leg (K) goes red (TERM while row 2's pin sleeps leaves no cache at all, so the next run re-runs
+row 1), and the budget leg (B) is refused as an unknown option:
+
+```
+FAIL (K) rc=143 waited=300 cache=[] dir=[] out=pin-mutation 1: held — a/test-lib.sh :: flip `echo 42` → `echo 43` in `a/lib.sh` ⇒ leg red
+FAIL (K) rerun: rc=2 cache=[ee9f7020…	held	…] out=pin-mutation 1: held — a/test-lib.sh …
+FAIL (B) rc=2 took=0s execs=0 out=pin-mutations: unverified (usage: unknown option --budget)
+test-run-pin-mutations: 29 passed, 3 failed
+```
 
 ## 3. Running-system validation
 

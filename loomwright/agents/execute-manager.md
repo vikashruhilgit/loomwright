@@ -330,9 +330,12 @@ for iteration in 1..max_iterations:
       # --- Pin-mutation gate (automate-speed/02) — beside the outputs gate above, never folded into
       # its adjudication CHECKPOINT and never a pause. Scoped to the rows whose mutation target this
       # subtask's lanes own (rows on a sibling's code are left to Phase 4.5, which runs every row).
-      # The cache path is MAIN-CHECKOUT ABSOLUTE: `.supervisor/` does not exist inside the worktree.
-      # <plugin root> = the same install root as the verify-provides.sh call above.
-      pins = Bash(`bash "<plugin root>/scripts/run-pin-mutations.sh" {brief_path} --root {worktree_path} --cache {main_checkout}/.supervisor/pin-mutations/{brief basename without .md}.tsv --only-paths {this subtask's lanes: globs}`)
+      # The cache path is MAIN-CHECKOUT ABSOLUTE (`.supervisor/` does not exist inside the worktree) and
+      # PER SUBTASK: its hashes are this worktree's, so Phase 4.5's integrated run (shared
+      # `{stem}.tsv`) never reuses a `held` computed before a sibling's edits landed.
+      # <plugin root> = the same install root as the verify-provides.sh call above. Bounded: Bash
+      # `timeout: 600000`; `--budget 540` ends the script, summary printed, before that cap.
+      pins = Bash(`bash "<plugin root>/scripts/run-pin-mutations.sh" {brief_path} --root {worktree_path} --cache {main_checkout}/.supervisor/pin-mutations/{brief basename without .md}.{subtask_id}.tsv --budget 540 --only-paths {this subtask's lanes: globs}`)
       tool_calls += 1
       if pins has a `not_held` line and this subtask has not been pin-re-spawned:
         # ONE bounded re-spawn — the crash-retry shape (retry once in same worktree): same spawn
@@ -341,6 +344,8 @@ for iteration in 1..max_iterations:
         Task(... the Step 3 worker spawn, unchanged, in {worktree_path} ...); mark pin_respawned
         tool_calls += 1
         track the worker as running again; skip_to_next_iteration
+      # No `pin-mutations: <h> held, …` summary line, or an exit other than 0/1/2 ⇒ INCOMPLETE: treat
+      # as exit 2 (rows with no printed line are not-run, never held).
       if pins still has a `not_held` line, or exited 2:
         Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
              decision: "pin_mutations: {subtask_id} — {pins summary line}")   # carried into Phase 4.5

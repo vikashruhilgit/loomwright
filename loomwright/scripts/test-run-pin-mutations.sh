@@ -24,6 +24,11 @@
 #   (P)  exit precedence: not_held + unverified ⇒ exit 1
 #   (C)  cache: a second run re-runs nothing (every line `(cached)`, pin execution counter 0)
 #   (CI) cache invalidation: the target changes ⇒ that row re-runs; unverified rows are never cached
+#   (K)  a run TERMed mid-way (a pin that sleeps): the rows it finished are printed AND in the cache
+#        (written after each row, temp + mv: no stray temp file), `pin-mutations: unverified
+#        (interrupted)` replaces the summary, exit 143; the next run shows the finished row `(cached)`
+#   (B)  --budget: a pin cut by the whole-run bound and a row reached after it ⇒ `unverified
+#        (budget_exhausted)`, the summary line still prints, exit 2, a cached row is still served
 #   (O)  --only-paths: rows outside the globs print nothing; zero selected ⇒ `pin-mutations: none selected`
 #   (S)  section handling: no section ⇒ `pin-mutations: none`, exit 0; a fenced heading is not the
 #        section; the section ends at the next `##` heading; `\|` in a literal reads as `|`
@@ -280,6 +285,41 @@ if [ "$rc" -eq 0 ] && has 'pin-mutation 1: held —' && ! has 'pin-mutation 1: h
 else no "(CI) rc=$rc execs=$(execs) out=$out"; fi
 ( cd "$R" && git checkout -q -- . )
 
+# (K) — kill a run while row 2's pin sleeps; row 1 must already be in the cache.
+CK="$T/cache-k/pins.tsv"; ROW_SLOW='| `a/test-slow.sh` | flip `echo 42` → `echo 44` in `a/lib.sh` |'
+brief "$B" "$ROW_VALUE" "$ROW_SLOW"
+: > "$PIN_COUNTER"
+( cd "$R" && exec bash "$SUT" "$B" --cache "$CK" ) > "$T/k.out" 2>&1 &
+kpid=$!
+i=0   # bounded: row 1 = 2 executions, row 2's unmutated slow pin = the 3rd
+while [ "$i" -lt 300 ] && { [ "$(execs)" -lt 3 ] || [ ! -s "$CK" ]; }; do sleep 0.1; i=$((i + 1)); done
+kill -TERM "$kpid" 2>/dev/null; wait "$kpid"; krc=$?
+out="$(cat "$T/k.out")"
+if [ "$krc" -eq 143 ] && has 'pin-mutation 1: held —' && ! has 'pin-mutation 2:' \
+   && [ "$(sed -n '$p' <<<"$out")" = "pin-mutations: unverified (interrupted)" ] && ! has 'pin-mutations: 1 held' \
+   && [ "$(wc -l < "$CK" | tr -d ' ')" = 1 ] && grep -q "	held	" "$CK" && [ -z "$(ls -A "$(dirname "$CK")" | grep -v '^pins.tsv$')" ]; then
+  ok "(K) TERM mid-run: row 1 printed and cached, no summary, interrupted line, exit 143, no stray cache temp"
+else no "(K) rc=$krc waited=$i cache=[$(cat "$CK" 2>/dev/null)] dir=[$(ls -A "$(dirname "$CK")" 2>/dev/null)] out=$out"; fi
+run "$B" --cache "$CK" --timeout 1
+if [ "$rc" -eq 2 ] && has 'pin-mutation 1: held (cached)' && has 'pin-mutation 2: unverified (timeout)' \
+   && [ "$(wc -l < "$CK" | tr -d ' ')" = 1 ]; then
+  ok "(K) the next run shows the finished row (cached), re-runs only the unfinished one, no duplicate entry"
+else no "(K) rerun: rc=$rc cache=[$(cat "$CK" 2>/dev/null)] out=$out"; fi
+
+# (B) — whole-run budget.
+CB="$T/cache-b/pins.tsv"
+brief "$B" "$ROW_GUARD"
+run "$B" --cache "$CB"
+brief "$B" "$ROW_SLOW" "$ROW_VALUE" "$ROW_GUARD"
+start=$SECONDS
+run "$B" --cache "$CB" --budget 2
+took=$((SECONDS - start))
+if [ "$rc" -eq 2 ] && has 'pin-mutation 1: unverified (budget_exhausted)' && has 'pin-mutation 2: unverified (budget_exhausted)' \
+   && has 'pin-mutation 3: held (cached)' && [ "$(execs)" = 1 ] && [ "$took" -le 10 ] \
+   && [ "$(sed -n '$p' <<<"$out")" = "pin-mutations: 1 held, 0 not_held, 2 unverified (1 cached)" ]; then
+  ok "(B) --budget 2: the slow pin is cut, the next row never runs (budget_exhausted ×2), the cached row is served, summary printed in ${took}s"
+else no "(B) rc=$rc took=${took}s execs=$(execs) out=$out"; fi
+
 # (O)
 brief "$B" "$ROW_VALUE" '| `d/test-conf.sh` | flip `strict` → `loose` in `d/conf.json` |' "$ROW_PROSE"
 run "$B" --only-paths 'a/*'
@@ -324,6 +364,10 @@ else no "(E) usage: rc=$rc out=$out"; fi
 run "$B" --timeout 0
 if [ "$rc" -eq 2 ] && has 'pin-mutations: unverified (usage:'; then ok "(E) --timeout 0 ⇒ exit 2"
 else no "(E) timeout: rc=$rc out=$out"; fi
+
+run "$B" --budget x
+if [ "$rc" -eq 2 ] && has 'pin-mutations: unverified (usage:'; then ok "(E) --budget x ⇒ exit 2"
+else no "(E) budget: rc=$rc out=$out"; fi
 
 [ -z "$(ls -A "$TMPDIR")" ] && ok "every run removed its scratch dir" || no "scratch dirs left: $(ls -A "$TMPDIR")"
 

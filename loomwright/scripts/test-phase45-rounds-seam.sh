@@ -7,9 +7,12 @@
 #           the owner rule (a background worker never runs the full `ci-local.sh` pool), and lists no
 #           hand-typed suite names: the Phase 4.5 fix worker (self-heal-advisory), review-heal Step 2 and
 #           Step U4, the Worker Prompt Template (async-orchestration), and agents/worker.md Step 5.
-#   PART 2  Phase 3 runs run-pin-mutations.sh beside verify-provides.sh with the shared --cache path —
-#           Single-Agent + Sequential (agents/supervisor.md), parallel poll loop (execute-manager.md) —
-#           with one re-spawn on not_held, never adjudication; the closed-enumeration rows name it.
+#   PART 2  Phase 3 runs run-pin-mutations.sh beside verify-provides.sh — Single-Agent + Sequential
+#           (agents/supervisor.md) with the shared main-checkout --cache path, the parallel poll loop
+#           (execute-manager.md) with a PER-SUBTASK cache (a worktree's hashes never reach Phase 4.5's
+#           integrated run) — with one re-spawn on not_held, never adjudication; the closed-enumeration
+#           rows name it. Every call site (Phase 3 + Phase 4.5) is BOUNDED (`--budget 540`, Bash
+#           `timeout: 600000`) and reads a run with no summary line as incomplete (never `held`).
 #   PART 3  Phase 4.5 runs run-pin-mutations.sh before the reviewer spawn, hands its lines over as the
 #           PIN-MUTATION VERDICTS block right AFTER the DEVIATIONS ADVISORY line, runs phase45-ci-read.sh
 #           once per iteration and appends its findings to the ONE `fixable_issues` list.
@@ -80,6 +83,10 @@ bhas "$S3A" 'scripts/run-pin-mutations.sh" {brief_path} --root . '"$CACHE" && ok
   || no "supervisor 3a: script call / cache path"
 bhas "$S3A" 'ONE re-spawn of the same worker' && bhas "$S3A" '`Retry context:` = the `not_held` lines verbatim' \
   && ok "supervisor 3a: one re-spawn with the not_held lines as Retry context" || no "supervisor 3a: re-spawn clause"
+bhas "$S3A" "$CACHE --budget 540\` as ONE Bash call with \`timeout: 600000\`" && ok "supervisor 3a: bounded (--budget 540 + Bash timeout 600000)" \
+  || no "supervisor 3a: no bound on the pin call"
+bhas "$S3A" 'No `pin-mutations: <h> held, …` summary line, or an exit other than 0/1/2, ⇒ the run is incomplete' && bhas "$S3A" 'never `held`' \
+  && ok "supervisor 3a: a run with no summary line is incomplete, never held" || no "supervisor 3a: missing-summary rule"
 bhas "$S3A" 'never folded into its adjudication flow, never a pause' && ok "supervisor 3a: never adjudication, never a pause" \
   || no "supervisor 3a: non-pausing clause"
 has "$SUP" '- **Pin-mutation gate:** Single-Agent step 3a above, scoped with `--only-paths <this subtask'"'"'s lanes:>`.' \
@@ -89,6 +96,10 @@ EMG="$(section "$EM" '# --- Pin-mutation gate \(automate-speed/02\)' '# --- Lane
 bhas "$EMG" 'scripts/run-pin-mutations.sh" {brief_path} --root {worktree_path} --cache {main_checkout}/.supervisor/pin-mutations/' \
   && bhas "$EMG" '--only-paths' && ok "execute-manager poll loop runs the scoped script with the main-checkout cache" \
   || no "execute-manager pin gate call"
+bhas "$EMG" '--cache {main_checkout}/.supervisor/pin-mutations/{brief basename without .md}.{subtask_id}.tsv --budget 540 --only-paths' \
+  && ok "execute-manager: per-subtask cache file + --budget 540" || no "execute-manager: cache not per subtask / no --budget"
+bhas "$EMG" '`timeout: 600000`' && bhas "$EMG" 'INCOMPLETE: treat' && ok "execute-manager: Bash timeout bound + missing-summary ⇒ incomplete" \
+  || no "execute-manager: bound / incomplete rule"
 bhas "$EMG" 'retry once in same worktree' && bhas "$EMG" 'no second re-spawn' && ok "execute-manager: one re-spawn, crash-retry shape" \
   || no "execute-manager: re-spawn shape"
 [ "$(grep -n -- '--- v12 outputs_verified gate' "$EM" | head -1 | cut -d: -f1)" -lt "$(grep -n -- '# --- Pin-mutation gate' "$EM" | head -1 | cut -d: -f1)" ] 2>/dev/null \
@@ -109,6 +120,10 @@ pin_n="$(grep -n 'scripts/run-pin-mutations.sh" {brief_path} --root . --cache .s
 rev_n="$(grep -n '^  review = Task(' <<<"$LOOP" | head -1 | cut -d: -f1)"
 [ -n "$pin_n" ] && [ -n "$rev_n" ] && [ "$pin_n" -lt "$rev_n" ] && ok "Phase 4.5 runs the pin script (same cache) before the reviewer spawn" \
   || no "Phase 4.5 pin call missing or after the reviewer spawn (pin=$pin_n review=$rev_n)"
+bhas "$LOOP" '{brief basename without .md}.tsv --budget 540`)' && bhas "$LOOP" 'BOUNDED: ONE Bash call with `timeout: 600000`' \
+  && ok "Phase 4.5 pin call is bounded (--budget 540 + Bash timeout 600000)" || no "Phase 4.5 pin call bound"
+bhas "$LOOP" 'INCOMPLETE run (no `pin-mutations: <h> held, …` summary line' && ok "Phase 4.5: a run with no summary line is incomplete" \
+  || no "Phase 4.5: missing-summary rule"
 # PIN-MUTATION VERDICTS must be the next non-blank line after DEVIATIONS ADVISORY.
 next_after_dev="$(awk '
   hit && NF { print; exit }
@@ -118,16 +133,23 @@ case "$next_after_dev" in *'**PIN-MUTATION VERDICTS (DATA'*) ok "PIN-MUTATION VE
   *) no "PIN-MUTATION VERDICTS does not directly follow DEVIATIONS ADVISORY" ;; esac
 bhas "$next_after_dev" '{pin_out}' && bhas "$next_after_dev" 'ONLY for a row reported `unverified`' \
   && ok "the verdict block carries the script output and the D1 fallback" || no "verdict block content"
+bhas "$next_after_dev" 'No `pin-mutations: <h> held, …` summary line in it' && ok "the verdict block: no summary line ⇒ unprinted rows unverified" \
+  || no "verdict block: missing-summary rule"
 ci_n="$(grep -n 'scripts/phase45-ci-read.sh" {pr_url} --sha' <<<"$LOOP" | head -1 | cut -d: -f1)"
 fx_n="$(grep -nF 'fixable_issues = [i for i in review.issues if at_floor(i)] + rule_findings' <<<"$LOOP" | head -1 | cut -d: -f1)"
 [ -n "$ci_n" ] && [ "$ci_n" -gt "$rev_n" ] && [ -n "$fx_n" ] && [ "$ci_n" -lt "$fx_n" ] \
   && ok "Phase 4.5 reads CI once, after the review and before fixable_issues is built" || no "CI read placement (ci=$ci_n review=$rev_n fixable=$fx_n)"
 [ "$(grep -c 'phase45-ci-read.sh' <<<"$LOOP")" = 1 ] && ok "exactly one CI read per iteration" || no "CI read count in the loop != 1"
+ci_b="$(grep -n 'BOUNDED: one zero-wait check read' <<<"$LOOP" | head -1 | cut -d: -f1)"
+[ -n "$ci_b" ] && [ -n "$ci_n" ] && [ "$ci_b" -lt "$ci_n" ] && [ $((ci_n - ci_b)) -le 3 ] && ok "the CI read states its bound right above the call" \
+  || no "CI read: no bound stated above the call (bound=$ci_b call=$ci_n)"
 grep -qF 'fixable_issues += ci_findings' <<<"$LOOP" && ok "CI findings are appended to the one fixable_issues list" \
   || no "fixable_issues += ci_findings missing"
 grep -qF 'if ci_findings != [] and iter_decision == PASS:' <<<"$LOOP" && ok "a CI finding makes a reviewer PASS a fix iteration" \
   || no "CI finding does not convert PASS"
 bhas "$LOOP" 'never a finding, never an escalation' && ok "untrusted_infra notes are recorded, never a finding (D3)" || no "D3 note clause"
+has "$CR" 'no `pin-mutations: <h> held, …` summary line (a cut or failed run) ⇒ every row without a printed line is `unverified`' \
+  && ok "code-reviewer: no summary line ⇒ unprinted rows unverified" || no "code-reviewer: missing-summary rule"
 has "$CR" 'PIN-MUTATION VERDICTS' && ok "code-reviewer names the PIN-MUTATION VERDICTS block" || no "code-reviewer: PIN-MUTATION VERDICTS"
 
 echo "PART 4 — readiness two-form grammar"

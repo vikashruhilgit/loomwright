@@ -3,7 +3,7 @@
 #
 # USAGE
 #   run-pin-mutations.sh <brief> [--root <checkout>] [--cache <file>] [--only-paths <glob>...]
-#                        [--timeout <secs>]
+#                        [--timeout <secs>] [--budget <secs>]
 #
 # WHY: since the Pin mutations section exists, the Phase 4.5 reviewer re-applied every row on every
 # iteration (PR #533: 16 rows, ~32 suite runs per review). This script does that mechanical work once
@@ -32,7 +32,8 @@
 # build the mutant and VALIDATE it (non-empty, differs from the original, `bash -n` clean for `.sh`,
 # `jq empty` clean for `.json`; else `unverified (invalid_mutant: <why>)`) → run the pin UNMUTATED
 # (once per distinct pin file per invocation; non-zero ⇒ `unverified (pin_red_unmutated)`) → run it on
-# the mutant: non-zero ⇒ `held`, zero ⇒ `not_held`; a run past --timeout ⇒ `unverified (timeout)`.
+# the mutant: non-zero ⇒ `held`, zero ⇒ `not_held`; a run past --timeout ⇒ `unverified (timeout)`; a
+# row that needs a run once --budget is spent (or whose run the budget cuts) ⇒ `unverified (budget_exhausted)`.
 #
 # VERDICTS — the closed set this script owns (prose elsewhere references it, never restates another):
 #   held | not_held | unverified (<reason>)
@@ -46,7 +47,10 @@
 # selects no row prints `pin-mutations: none selected`. Both exit 0.
 # EXIT: 0 every examined row held (or nothing to examine); 1 any `not_held` (wins over unverified);
 #       2 any `unverified` and no `not_held`, and on a usage error / unreadable brief / a --root that is
-#       not a git checkout (one `pin-mutations: unverified (<reason>)` line).
+#       not a git checkout (one `pin-mutations: unverified (<reason>)` line); 143 / 130 on TERM / INT
+#       (`pin-mutations: unverified (interrupted)` after the rows already printed). A caller reads a run
+#       with no `pin-mutations: <h> held, …` summary line, or any other exit code, as INCOMPLETE: every
+#       row with no printed line is `unverified` — never `held`.
 #
 # SCRATCH: every pin runs in ONE `mktemp -d` copy of the WORKING TREE (`git ls-files --cached --others
 # --exclude-standard`, existing files only — so uncommitted and untracked worker edits are included),
@@ -63,16 +67,25 @@
 #                 trimmed row text, hashes = `git hash-object` of the target and the pin file in the
 #                 working tree. A row whose key and BOTH hashes match is not re-run: its previous verdict
 #                 prints with ` (cached)`. Only `held` / `not_held` are written (never `unverified`);
-#                 entries for rows this run did not examine are kept; the file is written atomically
-#                 (temp + mv). Convention used by both callers:
-#                 `.supervisor/pin-mutations/<brief basename without .md>.tsv`.
-#                 HONEST LIMIT: a pin whose result depends on files other than its target and its own
-#                 test file is not re-run when only those files change.
+#                 entries for rows this run did not examine are kept. Written AFTER EACH examined row
+#                 (temp + mv, one entry per row key — an examined row's old entry is replaced, or dropped
+#                 when it is now unverified), so a run killed mid-way keeps the rows it finished.
+#                 ONE cache per tree: the hashes are the --root tree's, so a cache filled in one tree
+#                 (a subtask worktree) is never handed to a run on another (the integrated checkout) —
+#                 callers: `.supervisor/pin-mutations/<brief basename without .md>.tsv` for the main
+#                 checkout, `<…>.<subtask_id>.tsv` for a parallel subtask's worktree.
+#                 HONEST LIMITS: a pin whose result depends on files other than its target and its own
+#                 test file is not re-run when only those files change; two concurrent runs on ONE cache
+#                 may drop each other's entries (a later re-run, never a wrong verdict — every entry is
+#                 bound to its own hashes).
 # --only-paths <glob>...  keep only rows whose mutation target path (resolved, else as written) matches a
 #                 glob — bash pattern matching where `*` crosses `/`, and a glob ending in `/` is a
 #                 directory prefix (the `lanes:` reading). Other rows print nothing. Rows outside the
 #                 two forms have no target and are never selected.
 # --timeout <s>   per pin run (default 300).
+# --budget <s>    whole-run bound (default 0 = none): once spent, a row that needs a pin run is not run
+#                 (`unverified (budget_exhausted)`), a running pin is cut at the bound, and the run still
+#                 prints its summary and keeps its cache. Callers pass one below their tool-call bound.
 #
 # Bash 3.2 / BSD userland safe. Self-test: test-run-pin-mutations.sh.
 
@@ -81,13 +94,14 @@ set -u
 out() { printf '%s\n' "$1"; }
 die() { out "pin-mutations: unverified ($1)"; exit 2; }
 
-BRIEF=""; ROOT="."; CACHE=""; TIMEOUT=300; HAVE_ONLY=0; ONLY=()
+BRIEF=""; ROOT="."; CACHE=""; TIMEOUT=300; BUDGET=0; HAVE_ONLY=0; ONLY=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) sed -n '2,/^# Bash 3.2/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --root) [ $# -ge 2 ] || die "usage: --root needs a value"; ROOT="$2"; shift 2 ;;
     --cache) [ $# -ge 2 ] || die "usage: --cache needs a value"; CACHE="$2"; shift 2 ;;
     --timeout) [ $# -ge 2 ] || die "usage: --timeout needs a value"; TIMEOUT="$2"; shift 2 ;;
+    --budget) [ $# -ge 2 ] || die "usage: --budget needs a value"; BUDGET="$2"; shift 2 ;;
     --only-paths)
       HAVE_ONLY=1; shift
       while [ $# -gt 0 ]; do case "$1" in --*) break ;; esac; ONLY+=("$1"); shift; done ;;
@@ -95,8 +109,9 @@ while [ $# -gt 0 ]; do
     *) [ -z "$BRIEF" ] || die "usage: extra argument $1"; BRIEF="$1"; shift ;;
   esac
 done
-[ -n "$BRIEF" ] || die "usage: run-pin-mutations.sh <brief> [--root <checkout>] [--cache <file>] [--only-paths <glob>...] [--timeout <secs>]"
+[ -n "$BRIEF" ] || die "usage: run-pin-mutations.sh <brief> [--root <checkout>] [--cache <file>] [--only-paths <glob>...] [--timeout <secs>] [--budget <secs>]"
 case "$TIMEOUT" in ''|*[!0-9]*|0) die "usage: --timeout must be a positive integer" ;; esac
+case "$BUDGET" in ''|*[!0-9]*) die "usage: --budget must be a non-negative integer" ;; esac
 [ -f "$BRIEF" ] && [ -r "$BRIEF" ] || die "brief_unreadable"
 # Every git call below names its repo explicitly (`--root`'s checkout, or the scratch copy). A caller's
 # exported GIT_DIR / GIT_INDEX_FILE / … would override that and point the scratch copy's init/add/commit
@@ -119,14 +134,15 @@ ROWS="$(awk '
 ' "$BRIEF" 2>/dev/null)" || die "brief_unreadable"
 case "$ROWS" in "__PM_NO_SECTION__"|"") out "pin-mutations: none"; exit 0 ;; esac
 
-SCRATCH=""; CUR_PID=""
+SCRATCH=""; CUR_PID=""; CUR_TMPC=""
 cleanup() {
   if [ -n "$CUR_PID" ]; then kill -TERM "$CUR_PID" 2>/dev/null; wait "$CUR_PID" 2>/dev/null; fi
+  if [ -n "$CUR_TMPC" ]; then rm -f "$CUR_TMPC"; fi
   if [ -n "$SCRATCH" ]; then rm -rf "$SCRATCH"; fi
 }
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'out "pin-mutations: unverified (interrupted)"; exit 130' INT
+trap 'out "pin-mutations: unverified (interrupted)"; exit 143' TERM
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/run-pin-mutations.XXXXXX" 2>/dev/null)" || SCRATCH=""
 [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ] || { SCRATCH=""; die "scratch_failed"; }
 mkdir -p "$SCRATCH/home" "$SCRATCH/state" "$SCRATCH/logs" "$SCRATCH/mut"
@@ -218,16 +234,21 @@ descendants() {
   for c in $(ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$1" '$2 == p { print $1 }'); do echo "$c"; descendants "$c"; done
 }
 # run_pin <pin rel path> <log> — sets RUN_RC and RUN_TIMED_OUT. The caller resets the scratch first.
-RUN_RC=0; RUN_TIMED_OUT=0
+# budget_left — seconds left of --budget (prints a large number when there is no budget).
+budget_left() { if [ "$BUDGET" -gt 0 ]; then echo $((BUDGET - SECONDS)); else echo 999999999; fi; }
+RUN_RC=0; RUN_TIMED_OUT=0; RUN_BUDGET_CUT=0
 run_pin() {
-  local pid start k tree
-  RUN_TIMED_OUT=0
+  local pid start k tree limit left
+  RUN_TIMED_OUT=0; RUN_BUDGET_CUT=0
+  limit="$TIMEOUT"; left="$(budget_left)"
+  if [ "$left" -lt "$limit" ]; then limit="$left"; RUN_BUDGET_CUT=1; fi
+  if [ "$limit" -le 0 ]; then RUN_TIMED_OUT=1; RUN_RC=124; return 0; fi
   ( cd "$SCRATCH/tree" && exec env HOME="$SCRATCH/home" XDG_STATE_HOME="$SCRATCH/state" \
       CLAUDE_PROJECT_DIR="$SCRATCH/tree" GIT_CONFIG_NOSYSTEM=1 bash "$1" ) > "$2" 2>&1 < /dev/null &
   pid=$!; CUR_PID="$pid"
   start=$SECONDS
   while kill -0 "$pid" 2>/dev/null; do
-    if [ $((SECONDS - start)) -ge "$TIMEOUT" ]; then RUN_TIMED_OUT=1; break; fi
+    if [ $((SECONDS - start)) -ge "$limit" ]; then RUN_TIMED_OUT=1; break; fi
     sleep 0.1
   done
   if [ "$RUN_TIMED_OUT" -eq 1 ]; then
@@ -238,12 +259,12 @@ run_pin() {
     wait "$pid" 2>/dev/null
     RUN_RC=124
   else
-    RUN_RC=0; wait "$pid" || RUN_RC=$?
+    RUN_RC=0; wait "$pid" || RUN_RC=$?; RUN_BUDGET_CUT=0
   fi
   CUR_PID=""
 }
 
-# unmutated <pin> — memoised per invocation; sets UNMUT_V = ok | red | timeout | scratch_failed. Called
+# unmutated <pin> — memoised per invocation; sets UNMUT_V = ok | red | timeout | budget | scratch_failed. Called
 # in the MAIN shell (never inside $(...)): it may create the scratch copy, whose state must persist.
 UNMUT="$SCRATCH/unmutated.tsv"; : > "$UNMUT"; UNMUT_V=""
 unmutated() {
@@ -252,13 +273,13 @@ unmutated() {
   if ! prepare_scratch || ! reset_scratch; then UNMUT_V="scratch_failed"
   else
     run_pin "$1" "$SCRATCH/logs/unmutated.log"
-    if [ "$RUN_TIMED_OUT" -eq 1 ]; then UNMUT_V="timeout"; elif [ "$RUN_RC" -ne 0 ]; then UNMUT_V="red"; else UNMUT_V="ok"; fi
+    if [ "$RUN_TIMED_OUT" -eq 1 ] && [ "$RUN_BUDGET_CUT" -eq 1 ]; then UNMUT_V="budget"
+    elif [ "$RUN_TIMED_OUT" -eq 1 ]; then UNMUT_V="timeout"; elif [ "$RUN_RC" -ne 0 ]; then UNMUT_V="red"; else UNMUT_V="ok"; fi
   fi
   printf '%s\t%s\n' "$1" "$UNMUT_V" >> "$UNMUT"
 }
 
 # ---- cache ------------------------------------------------------------------------------------------
-CACHE_NEW="$SCRATCH/cache.new"; CACHE_SEEN="$SCRATCH/cache.seen"; : > "$CACHE_NEW"; : > "$CACHE_SEEN"
 cache_lookup() {   # <key> <target_hash> <pin_hash> — prints held|not_held, or nothing
   [ -n "$CACHE" ] && [ -f "$CACHE" ] || return 0
   PM_K="$1" PM_T="$2" PM_P="$3" awk -F'\t' '
@@ -266,6 +287,25 @@ cache_lookup() {   # <key> <target_hash> <pin_hash> — prints held|not_held, or
       && ($2 == "held" || $2 == "not_held") && $3 ~ /^[0-9a-f]+$/ && $4 ~ /^[0-9a-f]+$/ { v = $2 }
     END { if (v != "") print v }
   ' "$CACHE" 2>/dev/null
+}
+# cache_put <key> <verdict> <target_hash> <pin_hash> — after EACH examined row: drop every entry for
+# <key>, append this row's entry when held/not_held, atomic temp + mv in the cache's own directory (a
+# reader never sees a partial TSV; a killed run keeps the rows it finished). A failed write warns and
+# loses only this row's entry (the next run re-runs it).
+cache_put() {
+  [ -n "$CACHE" ] || return 0
+  local cdir; cdir="$(dirname "$CACHE")"
+  if mkdir -p "$cdir" 2>/dev/null && CUR_TMPC="$(mktemp "$cdir/.pin-cache.XXXXXX" 2>/dev/null)"; then
+    {
+      if [ -f "$CACHE" ]; then
+        PM_K="$1" awk -F'\t' 'NF == 4 && $1 != ENVIRON["PM_K"]' "$CACHE" 2>/dev/null
+      fi
+      case "$2" in held|not_held) printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" ;; esac
+    } > "$CUR_TMPC" && mv "$CUR_TMPC" "$CACHE" || { rm -f "$CUR_TMPC"; echo "run-pin-mutations: could not write the cache $CACHE" >&2; }
+    CUR_TMPC=""
+  else
+    CUR_TMPC=""; echo "run-pin-mutations: could not write the cache $CACHE" >&2
+  fi
 }
 
 # ---- rows -------------------------------------------------------------------------------------------
@@ -322,7 +362,6 @@ while IFS= read -r line <&3; do
     th="$(git -C "$ROOT_ABS" hash-object -- "$target" 2>/dev/null)"
     ph="$(git -C "$ROOT_ABS" hash-object -- "$pin" 2>/dev/null)"
     if [ -n "$key" ] && [ -n "$th" ] && [ -n "$ph" ]; then
-      printf '%s\n' "$key" >> "$CACHE_SEEN"
       cv="$(cache_lookup "$key" "$th" "$ph")"
       if [ -n "$cv" ]; then verdict="$cv"; cached=" (cached)"; fi
     fi
@@ -340,12 +379,14 @@ while IFS= read -r line <&3; do
       [ -z "$why" ] || verdict="unverified (invalid_mutant: $why)"
     fi
   fi
+  if [ -z "$verdict" ] && [ "$(budget_left)" -le 0 ]; then verdict="unverified (budget_exhausted)"; fi
   if [ -z "$verdict" ]; then
     unmutated "$pin"
     case "$UNMUT_V" in
       ok) ;;
       red) verdict="unverified (pin_red_unmutated)" ;;
       timeout) verdict="unverified (timeout)" ;;
+      budget) verdict="unverified (budget_exhausted)" ;;
       *) verdict="unverified (scratch_failed)" ;;
     esac
   fi
@@ -354,7 +395,8 @@ while IFS= read -r line <&3; do
     else
       run_pin "$pin" "$SCRATCH/logs/mutated.$idx.log"
       mrc="$RUN_RC"
-      if [ "$RUN_TIMED_OUT" -eq 1 ]; then verdict="unverified (timeout)"
+      if [ "$RUN_TIMED_OUT" -eq 1 ] && [ "$RUN_BUDGET_CUT" -eq 1 ]; then verdict="unverified (budget_exhausted)"
+      elif [ "$RUN_TIMED_OUT" -eq 1 ]; then verdict="unverified (timeout)"
       elif [ "$mrc" -ne 0 ]; then verdict="held"
       else verdict="not_held"
       fi
@@ -367,7 +409,8 @@ while IFS= read -r line <&3; do
     *) U=$((U + 1)) ;;
   esac
   [ -z "$cached" ] || C=$((C + 1))
-  case "$verdict" in held|not_held) printf '%s\t%s\t%s\t%s\n' "$key" "$verdict" "$th" "$ph" >> "$CACHE_NEW" ;; esac
+  # An examined (hashed), freshly computed row is written NOW — a cached one is already there.
+  if [ -n "$key" ] && [ -n "$th" ] && [ -n "$ph" ] && [ -z "$cached" ]; then cache_put "$key" "$verdict" "$th" "$ph"; fi
   out "pin-mutation $idx: $verdict$cached — $shown :: $mut_cell"
 done 3<<EOF_PM_ROWS
 $ROWS
@@ -376,23 +419,6 @@ EOF_PM_ROWS
 if [ "$SELECTED" -eq 0 ]; then
   if [ "$HAVE_ONLY" -eq 1 ] && [ "$idx" -gt 0 ]; then out "pin-mutations: none selected"; else out "pin-mutations: none"; fi
   exit 0
-fi
-
-# Cache write: entries this run did not examine are kept; examined ones are replaced by this run's
-# held/not_held (an examined row that is now unverified loses its entry). Atomic temp + mv.
-if [ -n "$CACHE" ]; then
-  cdir="$(dirname "$CACHE")"
-  if mkdir -p "$cdir" 2>/dev/null && tmpc="$(mktemp "$cdir/.pin-cache.XXXXXX" 2>/dev/null)"; then
-    {
-      if [ -f "$CACHE" ]; then
-        # FILENAME, not NR == FNR: an empty seen-list would make every cache line read as "seen".
-        awk -F'\t' -v seenf="$CACHE_SEEN" 'FILENAME == seenf { seen[$0] = 1; next } NF == 4 && !($1 in seen)' "$CACHE_SEEN" "$CACHE" 2>/dev/null
-      fi
-      cat "$CACHE_NEW"
-    } > "$tmpc" && mv "$tmpc" "$CACHE" || { rm -f "$tmpc"; echo "run-pin-mutations: could not write the cache $CACHE" >&2; }
-  else
-    echo "run-pin-mutations: could not write the cache $CACHE" >&2
-  fi
 fi
 
 out "pin-mutations: $H held, $X not_held, $U unverified ($C cached)"
