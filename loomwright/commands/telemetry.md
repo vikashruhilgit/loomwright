@@ -122,7 +122,7 @@ Then a 1-line summary, e.g. `Telemetry: enabled, target=vikashruhilgit/loomwrigh
    Include result_block in raw payload: <yes | no>
    User-scope config: ~/.claude/loomwright/egress.json (backup written)
    ```
-   Followed by 1-line summary: `Telemetry: enabled, target=<answer> (user-scope config). Future qualifying agent runs will post issues.` (append `, raw_data will include result_block.` when `--include-result-block` was passed).
+   Followed by 1-line summary: `Telemetry: enabled, target=<answer> (user-scope config). Future qualifying agent runs and plugin script steps will post issues.` (append `, raw_data will include result_block.` when `--include-result-block` was passed).
 
 ## If subcommand == `disable`
 
@@ -235,7 +235,7 @@ Repo slug: vikashruhilgit/loomwright
 Include result_block in raw payload: no
 User-scope config: ~/.claude/loomwright/egress.json (backup written)
 
-Telemetry: enabled, target=vikashruhilgit/loomwright (user-scope config). Future qualifying agent runs will post issues.
+Telemetry: enabled, target=vikashruhilgit/loomwright (user-scope config). Future qualifying agent runs and plugin script steps will post issues.
 ```
 
 ### Example: disable

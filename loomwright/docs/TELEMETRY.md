@@ -9,7 +9,8 @@ once the wrapper, core, and `/telemetry` slash command land.
 ## Overview
 
 Telemetry is an **opt-in**, structured feedback channel that turns finished
-agent runs (`SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, `QA_RESULT`) into GitHub
+agent runs (`SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, `QA_RESULT`) — and the
+steps of plugin scripts that fail or warn (§"Script events") — into GitHub
 issues in a target repo of the user's choice. Each issue carries a derived
 score, a labelled categorisation, and a redacted JSON payload. The goal is
 longitudinal analysis: identify weak agents, find recurring failure modes,
@@ -1129,6 +1130,79 @@ append path.
 
 ---
 
+## Script events
+
+A plugin **script** (not an agent) can report that one of its steps passed,
+warned or failed. The first users are the branch-mode migration
+(`migrate-branch-mode.sh`, every step except the read-only `plan` / `state`)
+and `setup-memory.sh apply`'s readiness verdict — the two places where, on
+2026-10-13, a real migration failed (`seed`'s A/B check, A = 63 / B = 66) and
+printed a false readiness warning, and the only report the plugin got was a
+human pasting it from the session.
+
+**Same pipeline, same gates.** `scripts/emit-script-event.sh` builds the
+payload and pipes it to the wrapper (`send-telemetry.sh`) from the reporting
+checkout, so consent (§"Consent flow"), the target repo, the privacy scan,
+the thread map and the exit codes are exactly the agent path's. Without
+user-scope consent for that repo nothing is sent.
+
+**Fire-and-forget, never a substitute for the failure.** The emitter always
+exits 0 and prints nothing. A gate that fails still fails in front of the
+user, with the same output and exit code (pinned by
+`scripts/test-script-event-telemetry.sh` S6, which compares a run with
+events off and on byte for byte). Telemetry reports the failure as well; it
+never replaces it. `LOOMWRIGHT_SCRIPT_EVENTS=0` turns emission off;
+`LOOMWRIGHT_SCRIPT_EVENT_TEE=<file>` also appends each payload line to a file
+(the test seam).
+
+**Payload — FIELD SELECTION, in the core.** The core reads only these fields,
+of these shapes, and copies nothing else (an extra key — a path, a message, a
+repo slug — is never rendered):
+
+| Field | Shape | Missing / wrong shape |
+|---|---|---|
+| `kind` | `"script_event"` | not a script event |
+| `script` | one of the known scripts (`migrate-branch-mode`, `setup-memory`) | skipped, exit 5 `script_event_invalid` |
+| `step`, `code` | token `^[a-z][a-z0-9_-]{0,39}$` — a plugin-defined code, never message text | skipped, exit 5 |
+| `outcome` | `pass` \| `fail` \| `warn` | skipped, exit 5 |
+| `event_id` | token, one per invocation (the round identity) | skipped, exit 5 |
+| `counts` | up to 16 `{key: int}`, key `^[a-z][a-z0-9_]{0,31}$`, `0 <= int <= 10^9` | entry dropped, counted |
+| `kinds` | `{group: {kind: int}}`, group in `b_only` / `a_only` / `blob_mismatch`, kind in the managed-KIND enum (`md`, `dismissed-decisions`, `results-jsonl`, `brain-baseline-jsonl`, `provenance-jsonl`, `other`) | entry dropped, counted |
+| `caller` | `<known script>.<step token>` — the plugin step that ran this one | dropped, counted |
+
+Raw Data carries those fields plus `dropped` (how many entries were refused)
+and `plugin_version`. The title is `[Telemetry] <script> <step>: <code>`; the
+labels are `telemetry`, `telemetry:script-event`, `script:<script>` and
+`outcome:<outcome>`. The regex deny-list still runs over every text as the
+secondary tripwire. Codes are chosen at the reporting site (`evt <code>` in
+`migrate-branch-mode.sh`); a failure no site names reports its message CLASS
+(`refused`, `step_failed`, `error`), never its text.
+
+**Threading — one thread per script step and code, per source repo.** The
+thread key is (destination, source repo, `script:<script>:<step>:<code>`) —
+no branch or session, so a repeat in any session lands in the same issue.
+Every such thread also records a hashed GROUP key (script + step, source
+repo). A `pass` of that step closes **every** open thread in its group
+(closing comment, `telemetry:healed-in-loop`, close); a `pass` with no open
+thread in its group is interest-skipped (exit 5) and posts nothing. A
+`warn` / `fail` opens or comments. A failure after the close opens a new
+thread. Pinned by `scripts/test-script-event-telemetry.sh` S3.
+
+**What the migration reports.** A failing step's code. When the A/B check
+itself fails it adds the `a` / `u` / `b` / `extra_owner_decision` counts and
+the KIND counts of the paths each side holds alone and of the paths whose
+blobs differ (`kinds.b_only.dismissed-decisions = 3` is the 2026-10-13
+failure, with no path in it); a check that passed leaves nothing behind, and
+`evt` replaces the code and counts rather than accumulating them, so a later,
+unrelated failure in the same step reports only its own (pinned by
+`scripts/test-migrate-branch-mode.sh` leg 28). `setup-memory.sh apply` reports
+`readiness_partial` / `readiness_unknown` / `readiness_not_configured` (warn)
+or `ok` (pass) with the leaked / blocked path COUNTS and, when the migration
+ran it, `caller: migrate-branch-mode.<step>`; a `gated` verdict is not
+reported (it reflects the repo's own ledger, not plugin behaviour).
+
+---
+
 ## Core exit codes (authoritative)
 
 The core is the only script that may exit non-zero. The wrapper logs the
@@ -1625,7 +1699,10 @@ an enum word reads `"other"`), `score` / `score_float` / `score_bucket`,
 `Success`, the per-severity `issues` counts, and `tools` (bare tool / skill
 NAME tokens only — a path, file name, URL or sentence is dropped). The Issues Detected
 lines are fixed templates plus integers and plugin enums (§"Issue body
-template"); the title and labels carry only the agent name and score.
+template"); the title and labels carry only the agent name and score. A
+script event's complete set is §"Script events"' field table (a known script
+name, token step / code, the outcome enum, integer counts and managed-KIND
+counts, the caller token, `plugin_version`).
 
 **What is never sent:** finding descriptions (no `## Issues Detected` text, no
 `primary_error` — not even an excerpt), subtask names, failing-test names, the

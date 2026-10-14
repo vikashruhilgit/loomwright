@@ -240,6 +240,142 @@ try:
 except Exception as e:
     fail("unknown_payload_skipped", "json_parse_failed", 5)
 
+# ---- Script events (docs/TELEMETRY.md §"Script events") ---------------------
+# A plugin SCRIPT (not an agent) reports that one of its steps failed, warned or
+# passed: `emit-script-event.sh` builds the payload, the wrapper pipes it here.
+# PRIVACY IS FIELD SELECTION: only allow-listed fields of allow-listed shapes are
+# read — a known script name, token-shaped step / code, an outcome enum, integer
+# counts, and per-group counts of a fixed managed-KIND enum. Anything else in the
+# payload (an extra key, a path, a message) is never copied anywhere. A required
+# field that fails its shape skips the event (exit 5); an optional entry that
+# fails is dropped and counted in raw_data.dropped.
+# MUTATION_CONTROL_BEGIN: script-event-field-selection
+SCRIPT_EVENT_SCRIPTS = ("migrate-branch-mode", "setup-memory")
+SCRIPT_EVENT_OUTCOMES = ("pass", "fail", "warn")
+SCRIPT_EVENT_KIND_GROUPS = ("b_only", "a_only", "blob_mismatch")
+SCRIPT_EVENT_KINDS = ("md", "dismissed-decisions", "results-jsonl", "brain-baseline-jsonl",
+                      "provenance-jsonl", "other")
+SE_TOKEN_RX = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
+SE_COUNT_KEY_RX = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+SE_ID_RX = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+SE_MAX_ENTRIES = 16
+
+def _se_int(v):
+    return isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 10 ** 9
+
+def script_event(p):
+    dropped = 0
+    script = p.get("script")
+    if not (isinstance(script, str) and script in SCRIPT_EVENT_SCRIPTS):
+        fail("unknown_payload_skipped", "script_event_invalid field=script", 5)
+    req = {}
+    for k in ("step", "code"):
+        v = p.get(k)
+        if not (isinstance(v, str) and SE_TOKEN_RX.match(v)):
+            fail("unknown_payload_skipped", "script_event_invalid field=%s" % k, 5)
+        req[k] = v
+    outcome = p.get("outcome")
+    if outcome not in SCRIPT_EVENT_OUTCOMES:
+        fail("unknown_payload_skipped", "script_event_invalid field=outcome", 5)
+    event_id = p.get("event_id")
+    if not (isinstance(event_id, str) and SE_ID_RX.match(event_id)):
+        fail("unknown_payload_skipped", "script_event_invalid field=event_id", 5)
+    caller = p.get("caller")
+    if caller is not None:
+        parts = caller.split(".", 1) if isinstance(caller, str) else []
+        if not (len(parts) == 2 and parts[0] in SCRIPT_EVENT_SCRIPTS and SE_TOKEN_RX.match(parts[1])):
+            caller = None
+            dropped += 1
+    counts = {}
+    raw_counts = p.get("counts")
+    if isinstance(raw_counts, dict):
+        for k, v in raw_counts.items():
+            if len(counts) < SE_MAX_ENTRIES and isinstance(k, str) and SE_COUNT_KEY_RX.match(k) and _se_int(v):
+                counts[k] = v
+            else:
+                dropped += 1
+    elif raw_counts is not None:
+        dropped += 1
+    kinds = {}
+    raw_kinds = p.get("kinds")
+    if isinstance(raw_kinds, dict):
+        for g, m in raw_kinds.items():
+            if not (g in SCRIPT_EVENT_KIND_GROUPS and isinstance(m, dict)):
+                dropped += 1
+                continue
+            sel = {}
+            for kk, n in m.items():
+                if kk in SCRIPT_EVENT_KINDS and _se_int(n):
+                    sel[kk] = n
+                else:
+                    dropped += 1
+            if sel:
+                kinds[g] = sel
+    elif raw_kinds is not None:
+        dropped += 1
+    return script, req["step"], req["code"], outcome, event_id, caller, counts, kinds, dropped
+# MUTATION_CONTROL_END: script-event-field-selection
+
+if payload.get("kind") == "script_event":
+    se_script, se_step, se_code, se_outcome, se_event_id, se_caller, se_counts, se_kinds, se_dropped = script_event(payload)
+    se_session = "".join(c for c in str(payload.get("session_id") or "") if c.isalnum() or c in ("-", "_"))[:64] or "script"
+    se_success = se_outcome == "pass"
+    se_score = 10 if se_success else (4 if se_outcome == "warn" else 2)
+    se_bucket = "high" if se_success else ("medium" if se_outcome == "warn" else "low")
+    se_version = os.environ.get("LOOMWRIGHT_PLUGIN_VERSION", "") or "unknown"
+    se_agent = "script:%s:%s:%s" % (se_script, se_step, se_code)
+    se_raw = {
+        "schema_version": 1, "kind": "script_event", "script": se_script, "step": se_step,
+        "code": se_code, "outcome": se_outcome, "counts": se_counts, "kinds": se_kinds,
+        "dropped": se_dropped, "redacted": True, "plugin_version": se_version,
+    }
+    if se_caller:
+        se_raw["caller"] = se_caller
+    def se_lines(title, d):
+        return ("## %s\n" % title + "".join("- %s: %s\n" % (k, d[k]) for k in sorted(d)) + "\n") if d else ""
+    se_record = (
+        "## Script Event\n- Script: %s\n- Step: %s\n- Outcome: %s\n- Code: %s\n%s- Plugin version: %s\n\n"
+        % (se_script, se_step, se_outcome, se_code, ("- Caller: %s\n" % se_caller) if se_caller else "", se_version)
+        + se_lines("Counts", se_counts)
+        + "".join(se_lines("Kinds (%s)" % g, se_kinds[g]) for g in sorted(se_kinds))
+        + "## Raw Data\n```json\n" + json.dumps(se_raw, indent=2, sort_keys=True) + "\n```\n"
+    )
+    se_open = (
+        "## Telemetry thread — plugin script event, round @@ROUND@@\n"
+        "- One thread per script step and code in one source repo: each repeat is a comment here, "
+        "and the step's next pass closes the thread with the `telemetry:healed-in-loop` label.\n"
+        "- Plugin facts only: no repo, branch, path or message text is ever sent (docs/TELEMETRY.md "
+        "§\"Script events\").\n\n"
+    ) + se_record
+    se_round = "## Round @@ROUND@@\n\n" + se_record
+    se_close = (
+        "## Round @@ROUND@@ — step passed, thread closed\n"
+        "- `%s %s` passed after @@ROUND@@ recorded round(s).\n\n" % (se_script, se_step)
+    ) + se_record
+    se_title = "[Telemetry] %s %s: %s" % (se_script, se_step, se_code)
+    se_labels = ["telemetry", "telemetry:script-event", "script:" + se_script, "outcome:" + se_outcome]
+    for _txt in (se_open, se_round, se_close, se_title, " ".join(se_labels)):
+        _hit = scan_for_secret(_txt)
+        if _hit:
+            sys.stderr.write("PRIVACY_BLOCKED pattern=%s\n" % _hit)
+            emit("EXIT_CODE", 2)
+            sys.exit(0)
+    se_rec = {
+        "agent": se_agent, "group": "script:%s:%s" % (se_script, se_step), "schema": "SCRIPT_EVENT",
+        "success": se_success, "score_int": se_score, "score_bucket": se_bucket, "status": se_outcome,
+        "round_id": hashlib.sha256(("script::%s::%s" % (se_session, se_event_id)).encode("utf-8")).hexdigest(),
+        "round_total": 0 if se_success else 1, "session": se_session, "title": se_title,
+        "labels": sorted(se_labels), "open_text": se_open, "round_text": se_round, "close_text": se_close,
+    }
+    for _k, _v in (("SCHEMA", "SCRIPT_EVENT"), ("AGENT_NORM", se_agent), ("TASK_ID", se_session),
+                   ("SCORE_INT", se_score), ("SCORE_BUCKET", se_bucket), ("STATUS", se_outcome),
+                   ("SUCCESS", se_success), ("ROUND_ID", se_rec["round_id"]), ("SESSION_ID", se_session)):
+        emit(_k, _v)
+    emit("ROUND_RECORD_HEX", json.dumps(se_rec, sort_keys=True).encode("utf-8").hex())
+    emit("EXIT_CODE", 0)
+    sys.stdout.flush()
+    sys.exit(0)
+
 def _token(v):
     if not isinstance(v, str):
         return ""
@@ -952,8 +1088,13 @@ fi
 #   3. the session id (one thread per session).
 # The resolved value is hashed together with the destination, agent and source
 # slug in stage 2 and stored only in the user-scope map.
+# A SCRIPT event (docs/TELEMETRY.md §"Script events") is keyed by its script, step
+# and code alone (its "agent"), so a repeat in any session or branch of the same
+# source repo lands in the same thread.
 TARGET_REF=""
-if command -v git >/dev/null 2>&1; then
+if [ "$SCHEMA" = "SCRIPT_EVENT" ]; then
+  TARGET_REF="script"
+elif command -v git >/dev/null 2>&1; then
   _tl_branch="$(git -C "$PWD" symbolic-ref -q --short HEAD 2>/dev/null || true)"
   _tl_default="$(git -C "$PWD" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)"
   _tl_default="${_tl_default#origin/}"
@@ -1037,6 +1178,12 @@ CLOSED_TTL = timedelta(days=30)
 # The thread key: computed here, stored in the map, never posted. The issue's
 # title and body carry no repo, branch or PR — only the agent and plugin facts.
 KEY = hashlib.sha256("\0".join(("v1", dest, rec["agent"], slug, target_ref)).encode("utf-8")).hexdigest()
+# A script event's GROUP (script + step, docs/TELEMETRY.md §"Script events"): every
+# code-thread of one step in one source repo carries the same hashed group key, so
+# the step's next pass closes all of them. Agent results have no group.
+GROUP_KEY = ""
+if rec.get("group"):
+    GROUP_KEY = hashlib.sha256("\0".join(("v1-group", dest, rec["group"], slug)).encode("utf-8")).hexdigest()
 
 class Unreadable(Exception):
     pass
@@ -1090,7 +1237,18 @@ def save_map(doc):
         raise
 
 def decide(doc):
-    """Return (action, thread) — action in open|comment|close|skip_interest|skip_dedup."""
+    """Return (action, thread) — action in open|comment|close|close_group|skip_interest|skip_dedup.
+    close_group's thread is a list of (key, thread) pairs: every open thread of the group."""
+    # MUTATION_CONTROL_BEGIN: script-event-group-close
+    if rec["success"] and GROUP_KEY:
+        members = [(k, t) for k, t in sorted(doc["threads"].items())
+                   if isinstance(t, dict) and t.get("state") == "open" and t.get("dest") == dest
+                   and t.get("group_key") == GROUP_KEY and isinstance(t.get("issue"), int)
+                   and rec["round_id"] not in (t.get("seen") or [])]
+        if members:
+            return "close_group", members
+        return "skip_interest", None
+    # MUTATION_CONTROL_END: script-event-group-close
     t = doc["threads"].get(KEY)
     open_t = t if (isinstance(t, dict) and t.get("state") == "open"
                    and t.get("dest") == dest and isinstance(t.get("issue"), int)) else None
@@ -1108,7 +1266,8 @@ def text_for(action, thread):
     rounds = int(thread.get("rounds", 0)) + 1 if thread else 1
     series = list(thread.get("series", [])) if thread else []
     series.append(int(rec["round_total"]))
-    src = {"open": rec["open_text"], "comment": rec["round_text"], "close": rec["close_text"]}[action]
+    src = {"open": rec["open_text"], "comment": rec["round_text"], "close": rec["close_text"],
+           "close_group": rec["close_text"]}[action]
     txt = src.replace("@@ROUND@@", str(rounds)).replace("@@SERIES@@", ", ".join(str(n) for n in series))
     return txt, rounds, series
 
@@ -1160,6 +1319,14 @@ if DRY:
     action, thread = decide(doc)
     if action.startswith("skip_"):
         skip(action)
+    if action == "close_group":
+        lines = ["TARGET_REPO=%s" % dest, "THREAD_ACTION=close_group", "THREAD_COUNT=%d" % len(thread),
+                 "TITLE=%s" % rec["title"], "LABELS:", "  - %s" % HEALED_LABEL]
+        for _k, _t in thread:
+            _txt, _r, _s = text_for("close_group", _t)
+            lines.append("ISSUE=%d" % _t["issue"])
+            lines.append("BODY_BEGIN\n%sBODY_END" % _txt)
+        finish(0, lines)
     txt, rounds, _series = text_for(action, thread)
     lines = ["TARGET_REPO=%s" % dest,
              "THREAD_ACTION=%s" % action,
@@ -1207,12 +1374,57 @@ except Unreadable as e:
 action, thread = decide(doc)
 if action.startswith("skip_"):
     skip(action)
-txt, rounds, series = text_for(action, thread)
 
 def ensure_label(name, color, desc):
     rc, _ = gh(["label", "create", name, "--repo", dest, "--force", "--color", color, "--description", desc])
     if rc != 0:
         err("label_create_failed label=%s" % name)
+
+def close_thread(num):
+    """Label + close one thread; False when the close itself failed."""
+    ensure_label(HEALED_LABEL, "0e8a16", "Telemetry thread whose review loop ended in a pass")
+    rc, _ = gh(["issue", "edit", str(num), "--repo", dest, "--add-label", HEALED_LABEL])
+    if rc != 0:
+        err("label_add_failed label=%s" % HEALED_LABEL)
+    rc, _ = gh(["issue", "close", str(num), "--repo", dest, "--reason", "completed"])
+    if rc != 0:
+        err("gh_failed rc=%s op=issue_close" % rc)
+        return False
+    return True
+
+if action == "close_group":
+    # Every open code-thread of this step: closing comment, label, close. A thread
+    # whose comment or close fails stays open in the map (a later pass retries it);
+    # the map is saved after each one, so a failure never loses earlier closes.
+    closed = 0
+    failed = False
+    for k, t in thread:
+        txt, rounds, series = text_for("close_group", t)
+        rc, _ = gh(["issue", "comment", str(t["issue"]), "--repo", dest], txt)
+        if rc != 0:
+            err("gh_failed rc=%s op=issue_comment" % rc)
+            failed = True
+            continue
+        t["rounds"] = rounds
+        t["series"] = series
+        t["seen"] = (list(t.get("seen") or []) + [rec["round_id"]])[-SEEN_CAP:]
+        t["updated_at"] = now_iso()
+        if close_thread(t["issue"]):
+            t["state"] = "closed"
+            closed += 1
+        else:
+            failed = True
+        doc["threads"][k] = t
+        try:
+            save_map(doc)
+        except Exception as e:
+            err("thread_map_write_failed reason=%s" % type(e).__name__)
+            finish(1)
+        sent_line("close", "/issues/%d" % t["issue"])
+    err("thread_close_group closed=%d of=%d" % (closed, len(thread)))
+    finish(1 if failed else 0)
+
+txt, rounds, series = text_for(action, thread)
 
 if action == "open":
     for l in rec["labels"]:
@@ -1236,6 +1448,8 @@ if action == "open":
         "rounds": rounds, "series": series, "seen": [rec["round_id"]],
         "opened_at": now_iso(), "updated_at": now_iso(),
     }
+    if GROUP_KEY:
+        doc["threads"][KEY]["group_key"] = GROUP_KEY
 else:
     num = thread["issue"]
     rc, _ = gh(["issue", "comment", str(num), "--repo", dest], txt)
@@ -1248,15 +1462,9 @@ else:
     thread["updated_at"] = now_iso()
     url = "/issues/%d" % num
     if action == "close":
-        ensure_label(HEALED_LABEL, "0e8a16", "Telemetry thread whose review loop ended in a pass")
-        rc, _ = gh(["issue", "edit", str(num), "--repo", dest, "--add-label", HEALED_LABEL])
-        if rc != 0:
-            err("label_add_failed label=%s" % HEALED_LABEL)
-        rc, _ = gh(["issue", "close", str(num), "--repo", dest, "--reason", "completed"])
-        if rc != 0:
+        if not close_thread(num):
             # The closing comment is posted; the thread stays open in the map so
             # a later round still lands in it and a later pass retries the close.
-            err("gh_failed rc=%s op=issue_close" % rc)
             try:
                 save_map(doc)
             except Exception as e:
