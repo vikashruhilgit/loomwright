@@ -177,7 +177,7 @@ done
 # SALVAGE_MUTANT_ANCHOR — argument parsing ends here; detection and capture follow.
 # (test-worktree-salvage.sh derives its mutant by inserting `exit 0` after this line.)
 
-[ -n "$WT" ] || fail "usage: worktree-salvage.sh <worktree path> [--dest <dir>] [--reason <text>]"
+[ -n "$WT" ] || fail "usage: worktree-salvage.sh <worktree path> [--dest <dir>] [--reason <text>] [--ignored]"
 command -v git >/dev/null 2>&1 || fail "git not found"
 [ -d "$WT" ] || fail "not a directory: $WT"
 WT_TOP="$(cd "$WT" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" \

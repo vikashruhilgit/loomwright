@@ -3131,7 +3131,7 @@ SW_ROOT_UID=0; [ "$(id -u)" -eq 0 ] && SW_ROOT_UID=1   # root reads a 0000 file:
 sw_branch_fixture() { # <n>
   sw_repo "$1"
   local b t
-  for b in team/done moved open-pr closed-pr no-pr gh-fail garbage curb held; do sw_branch "$b"; done
+  for b in team/done moved open-pr closed-pr no-pr gh-fail garbage curb held nooid; do sw_branch "$b"; done
   sw_merged team/done 11
   sw_merged moved 12; sw_branch moved-tmp moved; git -C "$SWP" update-ref refs/heads/moved "$(git -C "$SWP" rev-parse moved-tmp)"; git -C "$SWP" branch -q -D moved-tmp
   t="$(git -C "$SWP" rev-parse refs/heads/open-pr)"
@@ -3139,7 +3139,9 @@ sw_branch_fixture() { # <n>
   sw_pr closed-pr "[{\"number\":30,\"state\":\"CLOSED\",\"headRefOid\":\"$(git -C "$SWP" rev-parse refs/heads/closed-pr)\"}]"
   : > "$SWGH/gh-fail.json.fail"
   printf 'not json\n' > "$SWGH/garbage.json"
+  sw_pr nooid '[{"number":13,"state":"MERGED","headRefOid":null}]'
   sw_merged curb 40; git -C "$SWP" checkout -q curb 2>/dev/null
+  git -C "$SWP" worktree add -q "$SWFX/proj-base" main >/dev/null 2>&1
   sw_merged held 50; git -C "$SWP" worktree add -q "$SWFX/proj-held wt" held >/dev/null 2>&1; echo wip > "$SWFX/proj-held wt/wip.txt"
 }
 sw_branch_fixture 1
@@ -3159,6 +3161,8 @@ sw_line "$out" "sweep: kept branch curb — current branch of the primary" && ok
 sw_line "$out" "sweep: kept branch main — base branch" && ok "(SW1) AC2 the base branch is never a candidate" || no "(SW1) main line"
 sw_line "$out" "sweep: kept branch held — checked out in worktree $SWFX/proj-held wt" && ok "(SW1) AC2 a branch in a kept worktree is never a candidate (path with a space)" || no "(SW1) held line"
 sw_line "$out" "sweep: kept worktree $SWFX/proj-held wt — dirty (uncommitted changes on held)" && ok "(SW1) AC3 dirty worktree ⇒ kept" || no "(SW1) dirty worktree line"
+sw_line "$out" "sweep: kept branch nooid — PR #13 merged but headRefOid/tip unreadable" && ok "(SW1) a MERGED PR without a headRefOid ⇒ kept (no tip proof)" || no "(SW1) nooid line"
+sw_line "$out" "sweep: kept worktree $SWFX/proj-base — on the base branch main" && ok "(SW1) a worktree on the base branch ⇒ kept" || no "(SW1) base-branch worktree line"
 for b in curb main; do
   grep -q -- "--head $b " "$SWGH/argv.log" && no "(SW1) excluded branch $b cost a gh call" || ok "(SW1) excluded branch $b: no gh call"
 done
@@ -3170,14 +3174,16 @@ out="$(sw_run --apply)"; rc=$?
 sw_shape "(SW1) --apply" "$out" "$rc"
 sw_line "$out" "sweep: removed branch team/done — PR #11 MERGED" && ! sw_has team/done && ok "(SW1) AC1 --apply: sweep: removed branch team/done and the branch is gone" || no "(SW1) apply team/done: $(printf '%s' "$out" | grep team/done)"
 sw_kept_all=1
-for b in moved open-pr closed-pr no-pr gh-fail garbage curb main held; do sw_has "$b" || { sw_kept_all=0; no "(SW1) --apply removed $b"; }; done
-[ "$sw_kept_all" = 1 ] && ok "(SW1) AC2 --apply: every kept branch remains (moved, OPEN, CLOSED, no PR, gh failure, unparseable, current, base, held)"
+for b in moved open-pr closed-pr no-pr gh-fail garbage curb main held nooid; do sw_has "$b" || { sw_kept_all=0; no "(SW1) --apply removed $b"; }; done
+[ "$sw_kept_all" = 1 ] && ok "(SW1) AC2 --apply: every kept branch remains (moved, OPEN, CLOSED, no PR, gh failure, unparseable, current, base, held, no headRefOid)"
 [ -d "$SWFX/proj-held wt" ] && ok "(SW1) --apply: the dirty worktree remains" || no "(SW1) dirty worktree removed"
 out="$(sw_run --apply)"
-[ "$(printf '%s\n' "$out" | tail -n1)" = "sweep: summary — applied: 0 removed, 10 kept (1 worktree(s), 9 branch(es) examined)" ] \
+[ "$(printf '%s\n' "$out" | tail -n1)" = "sweep: summary — applied: 0 removed, 12 kept (2 worktree(s), 10 branch(es) examined)" ] \
   && ok "(SW1) a second --apply removes nothing (idempotent)" || no "(SW1) second apply: $(printf '%s\n' "$out" | tail -n1)"
 out="$(sw_run --bogus)"; rc=$?
 [ "$out" = "sweep: summary — skipped: unknown argument --bogus (nothing examined)" ] && [ "$rc" -eq 0 ] && ok "(SW1) an unknown argument ⇒ one summary line, nothing examined, exit 0" || no "(SW1) bogus arg: '$out' rc=$rc"
+out="$(sw_run --root)"; rc=$?
+[ "$out" = "sweep: summary — skipped: unknown argument --root (no value) (nothing examined)" ] && [ "$rc" -eq 0 ] && ok "(SW1) --root without a value ⇒ refused, nothing examined, exit 0" || no "(SW1) bare --root: '$out' rc=$rc"
 out="$(cd "$TOP" && bash "$T" sweep --root "$TOP/no-such-dir")"; rc=$?
 [ "$out" = "sweep: summary — skipped: not a git checkout ($TOP/no-such-dir)" ] && [ "$rc" -eq 0 ] && ok "(SW1) not a checkout ⇒ one summary line, exit 0" || no "(SW1) not a checkout: '$out' rc=$rc"
 
@@ -3202,6 +3208,8 @@ sw_wt_fixture() { # <n>
   WT_UNREAD="$SWFX/proj-unread"; sw_wt "$WT_UNREAD" wunread; sw_merged wunread 68
   mkdir -p "$WT_UNREAD/.supervisor/logs"; echo secret-log > "$WT_UNREAD/.supervisor/logs/a.jsonl"
   chmod 000 "$WT_UNREAD/.supervisor/logs/a.jsonl"
+  WT_LOCK="$SWFX/proj-locked"; sw_wt "$WT_LOCK" wlock; sw_merged wlock 69; git -C "$SWP" worktree lock "$WT_LOCK" >/dev/null 2>&1
+  WT_GONE="$SWFX/proj-gone"; sw_wt "$WT_GONE" wgone; sw_merged wgone 71; mv "$WT_GONE" "$SWFX/gone-moved-away"
   # worktree-audit.sh's log: the off-sibling path is recorded as created (⇒ plugin-made); so is
   # the app worktree, so only the .claude/worktrees/ exclusion keeps it (the pin mutation's target).
   { jq -nc --arg p "$WT_LOGGED" '{ts:"t",event:"created",path:$p,branch:"wlogged",confirmed:true,source:"direct"}'
@@ -3229,6 +3237,9 @@ sw_line "$out" "sweep: kept other $WT_OTHER — origin unknown" && ok "(SW2) unk
 sw_line "$out" "sweep: kept worktree $WT_DET — detached HEAD (no branch to prove)" && ok "(SW2) detached HEAD ⇒ kept" || no "(SW2) detached line"
 sw_line "$out" "sweep: kept worktree $WT_LIVE — live process 4242 has its cwd here" && ok "(SW2) AC3 a live process's cwd (below the worktree) ⇒ kept, pid named" || no "(SW2) live line"
 sw_line "$out" "sweep: kept branch wapp — checked out in worktree $WT_APP" && ok "(SW2) the app worktree's branch is held" || no "(SW2) wapp branch line"
+sw_line "$out" "sweep: kept worktree $WT_LOCK — locked" && ok "(SW2) a locked worktree ⇒ kept" || no "(SW2) locked line"
+sw_line "$out" "sweep: kept worktree $WT_GONE — directory missing" && sw_line "$out" "sweep: kept branch wgone — checked out in worktree $WT_GONE" \
+  && ok "(SW2) a worktree whose directory is gone ⇒ kept (and its branch held)" || no "(SW2) missing-dir line"
 # lsof absent: liveness unverifiable ⇒ every removable worktree is kept under --apply.
 out="$(SW_LSOF="$TOP/no-such-lsof" sw_run --apply)"; rc=$?
 sw_shape "(SW2) --apply, lsof absent" "$out" "$rc"
@@ -3257,8 +3268,9 @@ if [ "$SW_ROOT_UID" = 0 ]; then
     && ok "(SW2) AC4 a forced copy failure keeps the worktree, naming the failed entry" || no "(SW2) unreadable: $(printf '%s\n' "$out" | grep -F "$WT_UNREAD")"
 else echo "  note: running as root — the unreadable-entry copy-failure leg is skipped"; fi
 sw_kept_all=1
-for w in "$WT_APP" "$WT_LIVE" "$WT_DIRTY" "$WT_LANE" "$WT_OTHER" "$WT_DET"; do [ -d "$w" ] || { sw_kept_all=0; no "(SW2) --apply removed $w"; }; done
-[ "$sw_kept_all" = 1 ] && ok "(SW2) AC5 --apply leaves the app, live, dirty, lane, other and detached worktrees in place"
+for w in "$WT_APP" "$WT_LIVE" "$WT_DIRTY" "$WT_LANE" "$WT_OTHER" "$WT_DET" "$WT_LOCK"; do [ -d "$w" ] || { sw_kept_all=0; no "(SW2) --apply removed $w"; }; done
+git -C "$SWP" worktree list --porcelain | grep -qxF "worktree $WT_GONE" && sw_has wgone && sw_has wlock || { sw_kept_all=0; no "(SW2) --apply dropped the missing-dir worktree record or a held branch"; }
+[ "$sw_kept_all" = 1 ] && ok "(SW2) AC5 --apply leaves the app, live, dirty, lane, other, detached, locked and missing-dir worktrees in place"
 sw_line "$out" "sweep: kept app $WT_APP — clean and merged" && ok "(SW2) AC5 --apply still reports the app worktree (kept app)" || no "(SW2) app line under --apply"
 sw_unread_fix
 

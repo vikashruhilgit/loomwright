@@ -2020,7 +2020,10 @@ sweep_run() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --apply) SW_APPLY=1; shift ;;
-      --root) root="${2:-}"; shift 2 || shift ;;
+      --root)
+        if [ "$#" -ge 2 ] && [ -n "$2" ]; then root="$2"; shift 2
+        else [ -n "$bad" ] || bad="--root (no value)"; shift
+        fi ;;
       *) [ -n "$bad" ] || bad="$1"; shift ;;
     esac
   done
