@@ -21,7 +21,7 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 - mode: safe|auto-merge | limit: 5 | trust_unprotected: false
 - auto_review_original: <true|false|absent> | config_backup: <run_id>.config-backup.json
 - max_tokens: <N|absent>          # red-team-hardening/06 — ONLY present when --max-tokens was passed; PERSISTED (unlike --cheap/--notify) so a bare --resume still enforces it
-- parallel: <N|absent>            # parallel-automate/05 — ONLY present on a --parallel N>1 parent run (skills/automate-loop/SKILL.md §14)
+- parallel: <N|absent>            # parallel-automate/05 — present on any --parallel parent run, 1 included (N = 1 = single-lane mode, skills/automate-loop/lanes.md)
 ## Queue                    # `- [ ]` queued · `- [x]` done (merged) · `- [x] … # skipped|abandoned:` excluded; order = processing order
 - [ ] <requirement path or generated file>
 - [x] <... merged ...>

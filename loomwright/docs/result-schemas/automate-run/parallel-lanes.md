@@ -1,6 +1,6 @@
 ### `--parallel` `## Progress` lines (parallel-automate/21)
 
-Appended (never rewritten), like every `## Progress` line. Each is written only on a `--parallel N>1` run; a sequential run never writes one. Authority: `skills/automate-loop/SKILL.md` §2 "`--limit N`" and §14 "Wave close" / "Policy answers".
+Appended (never rewritten), like every `## Progress` line. Each is written only on a `--parallel` run (the tokens line only on a single-lane `--parallel 1` parent; the wave lines only on N > 1); a sequential run never writes one. Authority: `skills/automate-loop/SKILL.md` §2 "`--limit N`" and §14 "Wave close" / "Policy answers".
 
 | Line | Run file | Written by | Meaning |
 |---|---|---|---|
@@ -8,6 +8,7 @@ Appended (never rewritten), like every `## Progress` line. Each is written only 
 | `policy answer: <code> → <label> (policy_sha <first 12>)` | lane | the lane's own `relay-hook` | A catalogued `allowed` gate was answered from the lane's carried policy (exact lookup) instead of being relayed. Fail-SAFE: a failed append never blocks the answer. |
 | `wave policy: <code>=<label>, …` | parent | `lane-policy.sh wave-set` | The owner's per-wave policy answers, recorded when `.supervisor/automate/<run_id>.wave-policy.json` was written. |
 | `fleet closeout: <lane> <item> done (PR <url>)` | parent | `fleet-closeout` | The lane's run file reads `## Status: done`; its item was checked off the parent `## Queue`. |
+| `fleet closeout: <lane> tokens TOTAL=<n>` | parent | `fleet-closeout` (step 5, before that lane's `lane-remove`) or `lane-remove` (plain / `--abandon`, before deleting the lane directory) — single-lane parents (`- parallel: 1`) only, once per lane | The lane's `read-token-ledger.sh` TOTAL (`unknown` when unreadable), recorded while its directory still exists: the whole-run `--max-tokens` ceiling's only record of a removed lane — `lane-create --parallel 1 --max-tokens T` reads it, and a removed lane with no such line (or `unknown`) refuses `token_ceiling ledger_unreadable` (`skills/automate-loop/lanes.md` "Single-lane mode"). |
 | `fleet closeout leaks: <first line>` | parent | `fleet-closeout` | The first line of `lane-status <parent_runfile> --leaks` after the last lane was removed (`leaks: none` on a clean wave). |
 | `wave_paused: main_red after <sha>` | parent | `fleet-closeout` | `origin/<base>` HEAD's `ci` check concluded `failure` at wave close. Informational: no revert, no block, never a `pause_reason`. |
 

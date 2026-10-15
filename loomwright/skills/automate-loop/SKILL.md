@@ -88,6 +88,8 @@ so **the tested code IS the executed code** (one implementation, guarded by `scr
 | `park-ask-gate` | §6 "Dismissed-findings decision step (before the park)" | The "park before ask" gate of a sequential interactive READY park, READ-ONLY (automate-speed/01, owner decisions D2/D3). `park-ask-gate <runfile> <item> <pr_url> [--wait <seconds>]` prints ONE line: `ask — fix-now allowed: …` only when `## Current` names this item and PR at `status: awaiting_merge`, a `<run_id>.merge-watch` marker beside the run file carries this `pr_url`, and its OWN `gh pr view <pr> --json state` reads exactly `OPEN`; `ask — fix-now unavailable: PR MERGED\|CLOSED\|state <s>\|state unreadable` on any other read (fail closed toward no fix-now push — never `reconcile-item`, which maps an unreadable read to `awaiting_merge`); `ask — fix-now unavailable: closed out` when the item reads `status: done`; else `refuse — <reason>` (a missing/unreadable run file, no or another item/PR, a status that is not `awaiting_merge`/`done`, no marker for this PR within `--wait`) and the engine asks nothing. `--wait <s>` re-judges every 1 s for up to `<s>` s while only the marker is missing (the watcher writes it asynchronously, up to 60 s late when it replaces a watcher for another PR); the engine passes `--wait 75`, the default `0` judges once. Exit 0; a usage error exits 1. |
 | `ceiling-check` | §6 step 1 | PICK-time token-ceiling check (red-team-hardening/06): `ceiling-check <runfile> <max_tokens> [--root <checkout>]` sums the run's ledger via `scripts/read-token-ledger.sh --run-id <runfile>` and compares TOTAL against `<max_tokens>`; prints `OK total=<n> max=<n>`, `PARK: token_ceiling total=<n> max=<n>`, or `PARK: ledger_unreadable` — always exits 0 (a PARK is a normal outcome, same convention as `gate-eval`). |
 | `fleet-closeout` | §14 "Wave close" | Delegated to `automate-lanes.sh`. `fleet-closeout <parent_runfile>` — the coordinator's stepwise, idempotent wave close in the primary checkout, re-run on each `--resume`: per-lane backstop `lane-convert-ready`, parent Queue check-off, primary sync, `lane-remove`, then leaks, main health and — once the parent Queue is empty — the parent finalize (`## Status: done`, the wave line cleared, `trail-pr --reason done`) and the lock release. One `fleet-closeout: <step> — <detail>` line per lane and step; stops at the first step that must wait. Never merges and never pushes a lane branch. |
+| `lane-park` | §6 step 4 GATE (inside a lane) / §14 "Terminal park" | Delegated to `automate-lanes.sh`. `lane-park [--root <dir>]` — READ-ONLY park seam (twin-remediation/08b): prints ONE line, exit 0 — `awaiting_merge` when `.supervisor/lane.json` is absent (not a lane) or carries `"single_lane": true`, `ready_for_release` when it is present without it or unreadable. Inside a lane the GATE writes the park it prints; a sequential run never calls it. |
+| `lane-drain-check` | §14 "Single-lane mode" | Delegated to `automate-lanes.sh`. `lane-drain-check <lane_dir>` — READ-ONLY drain guard the coordinator runs at a single lane's park: ONE line, exit 0 — `drain-guard: ok — …`, `violation — <reason>` (a review-dispatch marker for the lane PR, 0 or ≥ 2 owned drains / ≥ 2 fix-now re-drains after the last `picked`, a config backup) or `unknown — <reason>` (fail SAFE). |
 | `wave-plan` | §14 "Wave close" | Delegated to `automate-lanes.sh`. `wave-plan <parent_runfile> [--wave-branch <name>]` — READ-ONLY: prints the owner's wave-branch integration commands for the current wave and the conflict rules. Runs no git mutation, no push and no `gh` write. |
 | `wave-build` | §14 "Wave close" | Delegated to `automate-wave.sh` (the one writer of a wave branch). `wave-build <parent_runfile> [--wave-branch <name>]` — builds the wave `wave-plan` prints in a temporary worktree off fresh `origin/<base>` (`--no-ff` lane merges, `ci-local.sh`, the release commit last), pushes ONLY the wave branch and opens the wave PR; one `wave-build: <step> — <detail>` line per step, result last. Exit 0 opened / done (already open) · 1 refused (nothing created) · 2 STOPPED (worktree kept, nothing pushed). Never merges a PR, never pushes a lane branch, never force-pushes. Run as a BACKGROUND command. |
 | `lane-policy.sh catalog\|wave-set\|resolve\|decide` (standalone script) | §14 "Policy answers" | NOT an `automate-helpers.sh` subcommand: `scripts/lane-policy.sh` holds the ONE authoritative gate catalog (`catalog`), writes the owner's per-wave policy (`wave-set`), resolves the stamped project policy plus the wave policy at `lane-create` (`resolve`) and is the lane relay hook's exact lookup (`decide`). Its header is the contract. |
@@ -142,7 +144,7 @@ See [intake.md](intake.md).
 - mode: safe|auto-merge | limit: 5 | trust_unprotected: false
 - auto_review_original: <true|false|absent> | config_backup: <run_id>.config-backup.json
 - max_tokens: <N|absent>          # red-team-hardening/06 — ONLY present when --max-tokens was passed; opt-in, PERSISTED (unlike --cheap/--notify) so a bare --resume still enforces it
-- parallel: <N|absent>            # parallel-automate/05 — ONLY present on a --parallel N>1 parent run (§14); absent on every sequential run and inside every lane
+- parallel: <N|absent>            # parallel-automate/05 — present on any --parallel parent run, 1 included (N = 1 = single-lane mode, twin-remediation/08b, §14); absent on every sequential run and inside every lane
 ## Queue                    # `- [ ]` queued · `- [x]` done (merged) · `- [x] … # skipped|abandoned:` excluded; order = processing order
 - [ ] <requirement path or generated file>
 - [x] <... merged ...>
@@ -166,13 +168,13 @@ See [intake.md](intake.md).
 ### Item lifecycle
 
 ```
-queued (- [ ]) → running → rate_limit (parks, no PR yet) | pr-open → awaiting_merge → merged (- [x]) | ready_for_release (a lane's READY park, §14) | escalated (parks) | failed | skipped
+queued (- [ ]) → running → rate_limit (parks, no PR yet) | pr-open → awaiting_merge → merged (- [x]) | ready_for_release (an N>1 lane's READY park, §14; a single lane — `--parallel 1` — parks awaiting_merge: `lane-park`) | escalated (parks) | failed | skipped
 ```
 
 ### `## Status` semantics
 
 - **`running`** — the loop is actively processing (or is the freshly-created run).
-- **`paused`** — stopped with work remaining; always paired with a `pause_reason` (`awaiting_merge` | `ready_for_release` — a lane's terminal READY park, inside a lane only, §14 | `awaiting_go` | `escalated` | `limit_reached` | `resume_ambiguous` | `rate_limit` | `drain_died` | `token_ceiling` | `run_lock_held` | `meta_unreachable` — branch mode's `meta-entry` failed on a `--resume` of an existing run, §13 | `trail_pr_open` — §6 step 1's trail gate | `closeout_leftover` — a close-out could not safely finish a step (a kept worktree/branch, a refused sync, an unknown result line) and the owner chose Stop or the run is non-interactive — §6 step 1 "Close-out leftover gate"; a RUN-level park written with `current-set`'s run-level form | `live_lane` — §6 step 1's lane guard (`pick-guard`) found a live lane of an open `--parallel` wave in this checkout, §14; a RUN-level park written with `current-set`'s run-level form).
+- **`paused`** — stopped with work remaining; always paired with a `pause_reason` (`awaiting_merge` | `ready_for_release` — an N>1 lane's terminal READY park, inside such a lane only (a single lane's READY park is `awaiting_merge` — the park `lane-park` prints), §14 | `awaiting_go` | `escalated` | `limit_reached` | `resume_ambiguous` | `rate_limit` | `drain_died` | `token_ceiling` | `run_lock_held` | `meta_unreachable` — branch mode's `meta-entry` failed on a `--resume` of an existing run, §13 | `trail_pr_open` — §6 step 1's trail gate | `closeout_leftover` — a close-out could not safely finish a step (a kept worktree/branch, a refused sync, an unknown result line) and the owner chose Stop or the run is non-interactive — §6 step 1 "Close-out leftover gate"; a RUN-level park written with `current-set`'s run-level form | `live_lane` — §6 step 1's lane guard (`pick-guard`) found a live lane of an open `--parallel` wave in this checkout, §14; a RUN-level park written with `current-set`'s run-level form).
 - **After a close-out — `paused` + `awaiting_go`.** Once `closeout` has closed out the `## Current` item (its PR merged; §6 "Post-merge close-out"), nothing is in flight and nothing blocks the run, but the next item still waits for the owner's explicit go (`/automate --resume`; `closeout` never picks). That state reads: `## Status: paused` (unchanged — the run is stopped, and `done` is reserved for the Queue-resolved termination with its `--reason done` trail, which `closeout` never writes, even when it checked off the last item), `## Current` item `status: done`, `pause_reason: awaiting_go`. `null` is NOT used here: `null` means "not paused" (`running`/`done`), and a `paused` run with `pause_reason: null` would break the pairing rule above. When `closeout` runs inside a live loop (RECONCILE, `## Status: running`), it writes `pause_reason: null` instead — the loop is running and its PICK goes on. A `--resume` of an `awaiting_go` run needs no reconcile for that item (it is `- [x]` and `done`); it falls straight through to PICK.
 - **`done`** — set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), i.e. `remaining: 0`. Two writers, both with the `--reason done` trail: the §6 "Termination" exit of a live loop, and `finalize-empty` (§4 step 1, via `resume-glob --finalize`) for a run left `paused` + `awaiting_go` with `remaining` 0 and its `## Current` item `status: done` — the state `closeout` leaves after checking off the last item, since `closeout` itself never writes `done`. `remaining` is **COMPUTED/REPORTED** (the count of `- [ ]` Queue items, via `automate-helpers.sh remaining`) — it is **NOT a persisted run-file field**; the template stores no `remaining:` line.
 
@@ -197,7 +199,7 @@ queued (- [ ]) → running → rate_limit (parks, no PR yet) | pr-open → await
 | §6 step 3 DRAIN start | none — item `status` stays `running`; `owned_drain_started` stays its own line |
 | Rate-limit park (§6) | `current-set <rf> --item <path> --status rate_limit --pause-reason rate_limit` |
 | `drain_died` park (§4) | `current-set <rf> --item <path> --status drain_died --pause-reason drain_died` |
-| Lane READY park (§14 — inside a lane only, replaces the `awaiting_merge` park) | `current-set <rf> --item <path> --status ready_for_release --pause-reason ready_for_release` |
+| Lane READY park (§14 — inside an N>1 lane only, replaces the `awaiting_merge` park; a single lane — `lane-park` prints `awaiting_merge` — writes the `awaiting_merge` park, and `current-set` refuses `ready_for_release` there) | `current-set <rf> --item <path> --status ready_for_release --pause-reason ready_for_release` |
 | GATE `awaiting_merge` park (§9) | `current-set <rf> --item <path> --status awaiting_merge --pause-reason awaiting_merge` |
 | GATE `escalated` park (§9) | `current-set <rf> --item <path> --status escalated --pause-reason escalated` |
 | Close-out of the `## Current` item (§6 "Post-merge close-out") | `closeout` itself: `current-set <rf> --item <stored item> --status done --pause-reason awaiting_go\|null` |
@@ -319,7 +321,7 @@ See [invariants.md](invariants.md).
 /automate ... --non-interactive-fallback     # passthrough to inner /autonomous + engine gates fail closed
 /automate ... --cheap                        # passthrough to inner /autonomous (Sonnet cost profile → /supervisor; not persisted — re-pass on --resume)
 /automate ... --max-tokens N                 # opt-in spend ceiling (red-team-hardening/06) — PARKS before PICK on breach; PERSISTED in ## Run Config (unlike --cheap/--notify)
-/automate ... --parallel N                   # opt-in lanes (§14): up to N independent items at once, each in its own local clone; absent or N = 1 ⇒ no lane code path; refused with --auto-merge
+/automate ... --parallel N                   # opt-in lanes (§14): up to N independent items at once, each in its own local clone; absent ⇒ no lane code path; N = 1 ⇒ single-lane mode (one fresh lane per item, parked awaiting_merge; needs branch mode); refused with --auto-merge
 ```
 
 ### `/loop` driver (namespaced form required headless)
@@ -364,6 +366,10 @@ See [lanes.md](lanes.md).
 See [lanes.md](lanes.md).
 
 ### Terminal park — `ready_for_release`
+
+See [lanes.md](lanes.md).
+
+### Single-lane mode (`--parallel 1`)
 
 See [lanes.md](lanes.md).
 
