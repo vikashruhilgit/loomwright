@@ -80,3 +80,18 @@ No `lanes.md`, `command-lanes.md`, `resume.md` or `branch-mode.md`. A scan of ev
 **What the first attempt found (at `ea7a88d`, fixed by `6d4479c` and `d70321c`).** The same run at the first commit did not Read the four files, but `pick-guard` refused `refuse: automate_dir_missing .supervisor/automate`. The only instruction to `mkdir -p .supervisor/automate` before `pick-guard` on a new run lived in the resume split file's §4, which a fresh run no longer reads. The session then ran `grep -n "pick-guard"` over `resume.md` and `lanes.md` (about 7.5K chars) to recover. `6d4479c` puts that one start-order step in the `intake.md` row. `d70321c` closes a second rule of the same kind: the `progress-append` of a start-time `closeout-others: record — …` line also lives only in §4, so that line is now a `resume.md` trigger. The re-run above shows neither the refusal nor any touch of the four files.
 
 **Honest limits.** One run covers the fresh, sequential, branch-mode-off, no-remote shape only. The `closeout-others: record — …` trigger was not exercised (it needs another run with a merged in-flight PR). A run that reads the trigger lines still depends on the model following Step 0's "read when the trigger is observed" instruction; nothing mechanical enforces the late reads.
+
+**Re-run at `df24b18`** (after Phase 4.5 fix 1 added the always-run `meta-entry` step and the `- parallel:` lanes trigger; the plugin was loaded from a detached worktree of that commit, same flags, a new scratch repo). Every Read tool `file_path`:
+
+```
+loomwright/skills/automate-loop/SKILL.md
+loomwright/skills/automate-loop/per-item-loop.md
+loomwright/skills/automate-loop/SKILL.md
+loomwright/skills/automate-loop/intake.md
+loomwright/commands/autonomous.md
+loomwright/skills/automate-loop/modes-and-merge-gate.md
+loomwright/skills/automate-loop/invariants.md
+loomwright/commands/review-pr.md
+```
+
+No tool input names `lanes.md`, `command-lanes.md`, `resume.md` or `branch-mode.md`. The new start step ran and printed `meta-entry: off` (twice), which fires no read. The session created its run file, recorded `skipped AUT-QUEUE: backlog queue 1 ≤ limit 5`, and then stopped before PICK on its own because the scratch repo has no remote. That is earlier than the first run, which reached `trail-gate`. It is the model's own call about the environment, not a protocol step this change touches. Commits after `df24b18` change only the changelog fragment and this file.
