@@ -57,3 +57,9 @@ wave-build local CI. Default behaviour (no `--parallel`) is unchanged.
 2. Running system: one real `--parallel 1` run of a trivial item; paste the lane's `## Current` at the park and the
    absence of a wave PR. If not possible inside the run, list it under "Not verified".
 3. Rollback: `git revert`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-15T02:41:11Z
+- **Brief:** .supervisor/jobs/done/2026-10-14-tr08b-single-lane-sequential.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/548
