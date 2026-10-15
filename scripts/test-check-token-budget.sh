@@ -52,7 +52,8 @@ contains() { # contains "name" haystack needle
   case "$2" in *"$3"*) pass=$((pass+1)); echo "ok   - $1";; *) fail=$((fail+1)); echo "FAIL - $1 (missing: $3)";; esac
 }
 contains_line() { # contains_line "name" haystack needle1 needle2 -> ONE line holds both
-  if printf '%s\n' "$2" | grep -F -- "$3" | grep -qF -- "$4"; then pass=$((pass+1)); echo "ok   - $1"; else
+  # No producer pipes into grep -q (pipefail EPIPE race — test-no-pipefail-grep-q.sh).
+  if grep -qF -- "$4" < <(grep -F -- "$3" <<<"$2"); then pass=$((pass+1)); echo "ok   - $1"; else
     fail=$((fail+1)); echo "FAIL - $1 (no single line holds both '$3' and '$4')"; fi
 }
 
