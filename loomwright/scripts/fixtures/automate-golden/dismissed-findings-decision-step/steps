@@ -1,0 +1,13 @@
+validation-gate "$RF" .supervisor/requirements/s3-validation/02-scratch-doc-b.md https://github.com/vikashruhilgit/loomwright/pull/428
+loop: bash "$H" progress-append "$RF" "$(cat "$PREV")"
+dismissed-drafts "$RF" .supervisor/requirements/s3-validation/02-scratch-doc-b.md https://github.com/vikashruhilgit/loomwright/pull/428
+loop: bash "$H" progress-append "$RF" "2026-10-08T04:18:00Z $(tail -n 1 "$PREV")"
+dismissed-cost "$RF"
+loop: bash "$H" progress-append "$RF" "2026-10-08T04:40:15Z owner decisions (dismissed): 0 fix-now, 1 follow-up, 0 drop (est. fix_now_cost ≈ $(sed -n 's/^fix_now_cost: ≈ \([^ ]*\) .*/\1/p' "$PREV"), n=default)"
+dismissed-decide "$RF" "$ROOT/.supervisor/requirements/proposed/automate-2026-10-08-033739-L2--02-scratch-doc-b-b2ce94--dismissed-7de02129.md" follow-up
+dismissed-pending "$RF"
+lane-park --root "$ROOT"
+loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
+current-set "$RF" --item .supervisor/requirements/s3-validation/02-scratch-doc-b.md --status ready_for_release --pause-reason ready_for_release
+loop: awk -v n='- pending_decisions: 0 | fix_now_reentered: false' '{print} index($0, "- owned_drain_started:")==1 && !d {print n; d=1}' "$RF" | bash "$H" runfile-write "$RF"
+progress-append "$RF" "2026-10-08T04:40:24Z parked ready_for_release — PR https://github.com/vikashruhilgit/loomwright/pull/428 READY; do not merge yet — wave open (no merge watcher armed in a lane)"

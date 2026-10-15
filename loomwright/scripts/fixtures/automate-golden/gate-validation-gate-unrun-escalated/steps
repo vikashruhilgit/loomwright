@@ -1,0 +1,8 @@
+validation-gate "$RF" .supervisor/requirements/twin-remediation/08b-single-lane-sequential.md https://github.com/vikashruhilgit/loomwright/pull/548
+loop: cp "$PREV" "$ROOT/.gate.line"; bash "$H" progress-append "$RF" "$(cat "$PREV")"
+dismissed-drafts "$RF" .supervisor/requirements/twin-remediation/08b-single-lane-sequential.md https://github.com/vikashruhilgit/loomwright/pull/548
+loop: bash "$H" progress-append "$RF" "$(tail -n 1 "$PREV")"
+loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
+current-set "$RF" --item .supervisor/requirements/twin-remediation/08b-single-lane-sequential.md --status escalated --pause-reason escalated
+loop: c="$(sed -n 's/^validation-gate: unrun — \(V[0-9][0-9]* [^:]*\): .*/\1/p' "$ROOT/.gate.line")"; bash "$H" current-escalation "$RF" --cause validation_unrun --check "$c" --sha 06ce6f59617b3b515a1950dbeb8b13630b54525c
+progress-append "$RF" "2026-10-15T02:39:08Z parked escalated https://github.com/vikashruhilgit/loomwright/pull/548 — validation_unrun"

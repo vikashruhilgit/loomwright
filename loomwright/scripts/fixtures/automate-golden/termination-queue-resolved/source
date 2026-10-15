@@ -1,0 +1,6 @@
+run: automate-2026-10-13-181331
+lines: header (branch mode OFF here: the scratch checkout has no metadata branch), the full 5-row Queue
+with only pa/18 left, ## Current for 39a as its closeout left it; steps check off pa/18 (as closeout does)
+and run the `## Status: done` exit.
+gap: the real run is still paused (pa/18 not run); the done exit, `trail-pr --reason done` against a
+scratch bare origin and the dry `sweep` line are what the prose orders, run for real hermetically (gh stubbed).

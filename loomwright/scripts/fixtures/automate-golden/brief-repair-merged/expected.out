@@ -1,0 +1,14 @@
+$ brief-repair .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md https://github.com/vikashruhilgit/loomwright/pull/542
+brief-repair: repaired .supervisor/jobs/in-progress/2026-10-14-af39b-run-lock-holder.md → .supervisor/jobs/done/2026-10-14-af39b-run-lock-holder.md (https://github.com/vikashruhilgit/loomwright/pull/542)
+= 0
+$ loop: bash "$H" progress-append "$RF" "2026-10-14T15:51:26Z closeout https://github.com/vikashruhilgit/loomwright/pull/542: $(tail -n 1 "$PREV")"
+= 0
+$ loop: ls .supervisor/jobs/in-progress .supervisor/jobs/done
+.supervisor/jobs/done:
+2026-10-14-af39b-run-lock-holder.md
+
+.supervisor/jobs/in-progress:
+= 0
+$ brief-repair .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md https://github.com/vikashruhilgit/loomwright/pull/542
+brief-repair: skipped — no in-progress brief matches .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md
+= 0

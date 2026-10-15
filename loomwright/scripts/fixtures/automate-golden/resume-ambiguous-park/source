@@ -1,0 +1,5 @@
+run: automate-2026-10-13-181331
+lines: this run paused awaiting_go after 39a, and a second incomplete run in the same directory (the real
+automate-2026-09-30-054439 before its archive, paused). Under --non-interactive-fallback a bare --resume is
+ambiguous: the prose persists `pause_reason: resume_ambiguous` in ## Current (judgment: the can't-ask branch).
+gap: the real automate-2026-09-10-115828 resume_ambiguous stop predates current-set.

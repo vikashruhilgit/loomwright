@@ -1,0 +1,6 @@
+run: automate-2026-10-13-181331
+lines: header, Queue, ## Current and Progress of item 39a through `validation-gate: ok`; the run's own
+on-disk supervisor-result / review-heal-result sidecars (written for 39a). The merge-watch marker stands in
+for the detached watcher the engine launches (boundary: no process is started); the notify and the
+run-lock release have no run-file effect. Steps replay the real 09:54:06Z park and 09:56:17Z gate line.
+gap: none for the lines; the marker pid is a placeholder.

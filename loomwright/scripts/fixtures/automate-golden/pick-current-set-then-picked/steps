@@ -1,0 +1,2 @@
+current-set "$RF" --item .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md --status running --pr null --branch null --pause-reason null
+progress-append "$RF" "2026-10-14T09:15:31Z picked .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md"

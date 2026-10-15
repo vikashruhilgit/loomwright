@@ -1,0 +1,8 @@
+# deterministic scratch commits: main = base, feature/af39a-sweep = one commit on top (the PR head)
+printf 'golden scratch base\n' > README.md
+git add README.md && git commit -q -m base
+git checkout -q -b feature/af39a-sweep
+mkdir -p docs
+printf 'golden low-risk note\n' > docs/sweep-note.md
+git add docs/sweep-note.md && git commit -q -m change
+git checkout -q main

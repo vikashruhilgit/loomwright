@@ -1,0 +1,9 @@
+dismissed-drafts "$RF" .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md https://github.com/vikashruhilgit/loomwright/pull/555
+loop: bash "$H" progress-append "$RF" "$(tail -n 1 "$PREV")"
+dismissed-pending "$RF"
+loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
+current-set "$RF" --item .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md --status awaiting_merge --pr https://github.com/vikashruhilgit/loomwright/pull/555 --branch feature/af39a-sweep --pause-reason awaiting_merge
+loop: awk -v n='- pending_decisions: 2 | fix_now_reentered: false' '{print} index($0, "- owned_drain_started:")==1 && !d {print n; d=1}' "$RF" | bash "$H" runfile-write "$RF"
+progress-append "$RF" "2026-10-15T09:54:06Z parked awaiting_merge https://github.com/vikashruhilgit/loomwright/pull/555 — 2 dismissed decision(s) pending"
+park-ask-gate "$RF" .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md https://github.com/vikashruhilgit/loomwright/pull/555 --wait 75
+loop: bash "$H" progress-append "$RF" "2026-10-15T09:56:17Z dismissed decisions asked after the park — $(cat "$PREV")"

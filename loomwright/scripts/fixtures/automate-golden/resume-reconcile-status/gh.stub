@@ -1,0 +1,4 @@
+0	pr list --state merged --search supervisor-resume-state-lies *	[{"url": "https://github.com/vikashruhilgit/loomwright/pull/109"}]
+0	pr view https://github.com/vikashruhilgit/loomwright/pull/109 --json state,mergedAt	{"state": "MERGED", "mergedAt": "2026-08-04T10:00:00Z"}
+0	pr view https://github.com/vikashruhilgit/loomwright/pull/109 --json number,body,mergeCommit,headRefName,files,changedFiles	{"number": 109, "body": "Implements .supervisor/requirements/supervisor-resume-state-lies.md", "mergeCommit": {"oid": "19cd52b"}, "headRefName": "fix/supervisor-resume-state-lies", "files": [{"path": "loomwright/agents/supervisor.md"}], "changedFiles": 1}
+0	pr list *	[]

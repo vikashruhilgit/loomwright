@@ -1,0 +1,7 @@
+config-orig "$ROOT/.supervisor/config.json"
+config-suppress "$ROOT/.supervisor/config.json" "$AD/automate-2026-10-13-181331.config-backup.json"
+config-orig "$ROOT/.supervisor/config.json" "$AD/automate-2026-10-13-181331.config-backup.json"
+progress-append "$RF" "2026-10-14T09:15:37Z auto_review suppressed (backup automate-2026-10-13-181331.config-backup.json) — running /autonomous --single-iteration"
+config-restore "$ROOT/.supervisor/config.json" "$AD/automate-2026-10-13-181331.config-backup.json"
+progress-append "$RF" "2026-10-14T11:02:07Z auto_review restored (config-restore: original absent)"
+loop: ls -a "$ROOT/.supervisor" "$AD"

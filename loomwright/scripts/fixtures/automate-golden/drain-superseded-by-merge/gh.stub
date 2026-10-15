@@ -1,0 +1,5 @@
+0	auth status*	
+0	pr view https://github.com/vikashruhilgit/loomwright/pull/305 --json state,mergedAt	{"state":"MERGED","mergedAt":"2026-09-30T04:15:19Z"}
+0	pr view https://github.com/vikashruhilgit/loomwright/pull/305 --json headRefName,headRefOid	{"headRefName":"feature/automate-followups-11-post-park-lifecycle","headRefOid":"8c835ba0000000000000000000000000000000000"}
+0	pr list *	[]
+0	pr create *	https://github.com/vikashruhilgit/loomwright/pull/311

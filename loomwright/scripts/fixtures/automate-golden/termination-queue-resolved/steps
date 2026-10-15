@@ -1,0 +1,7 @@
+queue-checkoff "$RF" .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md
+remaining "$RF"
+loop: sed 's/^## Status: running$/## Status: done/' "$RF" | bash "$H" runfile-write "$RF"
+trail-pr "$RF" --reason done
+loop: bash "$H" progress-append "$RF" "2026-10-15T11:00:00Z $(cat "$PREV")"
+sweep --root "$ROOT"
+loop: bash "$H" progress-append "$RF" "2026-10-15T11:00:01Z sweep (dry run): $(grep '^sweep: summary — ' "$PREV" | tail -n 1)"

@@ -1,0 +1,5 @@
+$ reconcile-status "$ROOT/.supervisor/requirements"
+plan	.supervisor/requirements/supervisor-resume-state-lies.md	done (PR #109, merge 19cd52b)	PR body cites .supervisor/requirements/supervisor-resume-state-lies.md
+= 0
+$ loop: tab="$(printf '\t')"; grep '^plan' "$PREV" | while IFS="$tab" read -r k f st ev; do bash "$H" progress-append "$RF" "reconcile-status: would stamp $f (${st%% (*})"; done
+= 0

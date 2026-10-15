@@ -1,0 +1,1 @@
+0	pr view https://github.com/vikashruhilgit/loomwright/pull/548 --json body	{"body": "## Summary\nOne lane for `--parallel 1`.\n\n## Validation\nvalidation 1\n```\ntest-automate-lanes.sh: 831 passed, 0 failed\n```\n\n## Not verified\n- V2 Running system: one real `--parallel 1` run of a trivial item \u2014 not run inside this run.\n"}

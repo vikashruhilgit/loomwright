@@ -1,0 +1,4 @@
+trail-gate "$RF"
+loop: bash "$H" progress-append "$RF" "$(cat "$PREV")"
+loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
+current-set "$RF" --pause-reason trail_pr_open

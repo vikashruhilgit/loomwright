@@ -1,0 +1,6 @@
+run: automate-2026-09-30-054439
+lines: title, Source, Run Config and the 11-row Queue; the last closeout line (#319) and a PICK of item 14.
+gap: the real run's ## Current item line was hand-written (it read item 14 / running / pr null); the helper's
+real `current_rebuilt: … pr null state none` line (its last Progress line but one) is the output this replays from
+the never-set (null) ## Current the repair exists for. The picked line's timestamp is reconstructed.
+Mutation leg M2 targets this case.

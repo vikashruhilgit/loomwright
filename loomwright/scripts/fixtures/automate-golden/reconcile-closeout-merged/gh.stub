@@ -1,0 +1,6 @@
+0	auth status*	
+0	pr view https://github.com/vikashruhilgit/loomwright/pull/555 --json state,mergedAt	{"state":"MERGED","mergedAt":"2026-10-15T10:49:00Z"}
+0	pr view https://github.com/vikashruhilgit/loomwright/pull/555 --json headRefName,headRefOid	{"headRefName":"feature/af39a-sweep","headRefOid":"028cbed6b8e3588f93731d6b862f0bc334de1d96"}
+0	pr list *	[]
+0	pr create *	https://github.com/vikashruhilgit/loomwright/pull/559
+0	pr list --state open *	[]

@@ -1,0 +1,2 @@
+resume-glob "$AD"
+current-set "$RF" --pause-reason resume_ambiguous

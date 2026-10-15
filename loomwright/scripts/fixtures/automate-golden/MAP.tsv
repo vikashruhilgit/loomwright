@@ -1,0 +1,82 @@
+# MAP.tsv — prose unit → golden case (automate-speed/05). Read by test-automate-golden.sh.
+# Data row: <unit id><TAB><case>  or  <unit id><TAB>judgment — covered at the step boundary: <case>.
+# Lines starting with # and blank lines are comments. Unit ids are extracted LIVE from the three prose files
+# (skills/automate-loop/{resume,per-item-loop,modes-and-merge-gate}.md); this file holds only id → case, never
+# the unit list itself. A prose edit that adds or renames a unit fails `unmapped unit` / `stale map row`.
+#
+# Judgment / boundary rows: the case pins what the step RECEIVES and what it MUST WRITE, with the model's or
+# owner's answer (or a side effect that cannot run hermetically) supplied as fixed input:
+#   RUN (L1.2) and DRAIN (L1.3): /autonomous and the inline /review-pr are model runs — their results
+#     (PR URL, REVIEW_HEAL_RESULT sidecar) are fixed input.
+#   §4 L1.4 AUT-RESUME ask / L1.5 flag re-pass: the owner's choice / the invocation's flags; the case pins the
+#     can't-ask write (resume_ambiguous) and that the run file carries no passthrough flag.
+#   §4 L1.8 and the dismissed-findings asks: the owner's Follow-up / Drop / Fix-now answers are fixed input.
+#   Park-first L2.3-L2.5: the detached merge watcher, the notify and run-lock.sh release cannot run
+#     hermetically; the watcher's marker file is supplied as fixed input, the others write nothing to the run file.
+#   §10 cond 3: the trusted-actor allowlist is user-scope (HOME); the case pins the reviewDecision arm.
+#
+# Steps that need git (closeout, trail-gate, trail-unstage, trail-pr, sweep, gate-eval cond 6/7) run for real
+# inside each case's scratch `git init` checkout (a bare scratch origin where a sync or push is needed — the
+# case's `setup` file); gh is always the stub driven by the case's gh.stub.
+#
+# Cases with no unit row (bold-label bullets and §6 step-1 paragraphs are not map units, AC1):
+#   drain-superseded-by-merge, drain-pinned-start-line-current-not-set, closeout-leftover-gate-non-interactive,
+#   pick-time-lane-guard-park, pick-time-token-ceiling-park, fix-now-became-follow-up,
+#   gate-validation-waive, gate-validation-recheck-at-reconcile, termination-queue-resolved,
+#   learning-emit-end-of-drain's idempotent re-emit (same case), brief-repair-merged's re-run (same case).
+
+# ---- resume.md
+resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)	resume-glob-finalize
+resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)|L1.1	resume-glob-finalize
+resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)|L1.2	resume-current-rebuild
+resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)|L1.3	resume-config-crash-restore
+resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)|L1.4	judgment — covered at the step boundary: resume-ambiguous-park
+resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)|L1.5	judgment — covered at the step boundary: resume-rate-limit-park
+resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)|L1.6	resume-rate-limit-park
+resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)|L1.7	resume-reconcile-status
+resume.md|§4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)|L1.8	judgment — covered at the step boundary: pick-pending-decisions-ask
+resume.md|§5 — Skipped / abandoned items	skipped-item-check-off
+
+# ---- per-item-loop.md
+per-item-loop.md|§6 — The per-item loop	pick-current-set-then-picked
+per-item-loop.md|§6 — The per-item loop|L1.1	reconcile-closeout-merged
+per-item-loop.md|§6 — The per-item loop|L1.2	judgment — covered at the step boundary: run-record-pr
+per-item-loop.md|§6 — The per-item loop|L1.3	judgment — covered at the step boundary: drain-owned-drain-started
+per-item-loop.md|§6 — The per-item loop|L1.4	gate-validation-gate-unrun-escalated
+per-item-loop.md|§6 — The per-item loop|L1.5	sync-closeout-no-trail
+per-item-loop.md|§6 — The per-item loop|L1.6	check-off-progress
+per-item-loop.md|Rate-limit park (end of RUN, before DRAIN)	rate-limit-park
+per-item-loop.md|Termination (two exits)	termination-limit-reached
+per-item-loop.md|Learning-emit at end-of-DRAIN (engine-native ground-truth signal)	learning-emit-end-of-drain
+per-item-loop.md|Brief-repair at RECONCILE and SYNC (merge-evidenced lifecycle repair)	brief-repair-merged
+per-item-loop.md|Dismissed-findings decision step (before the park)	dismissed-findings-decision-step
+per-item-loop.md|Dismissed-findings decision step (before the park)|L1.1	dismissed-findings-decision-step
+per-item-loop.md|Dismissed-findings decision step (before the park)|L1.2	judgment — covered at the step boundary: dismissed-findings-decision-step
+per-item-loop.md|Dismissed-findings decision step (before the park)|L1.3	judgment — covered at the step boundary: dismissed-fix-now-re-drain
+per-item-loop.md|Dismissed-findings decision step (before the park)|L1.4	dismissed-findings-decision-step
+per-item-loop.md|Dismissed-findings decision step (before the park)|L2.1	park-first-ready-park
+per-item-loop.md|Dismissed-findings decision step (before the park)|L2.2	park-first-ready-park
+per-item-loop.md|Dismissed-findings decision step (before the park)|L2.3	judgment — covered at the step boundary: park-first-ready-park
+per-item-loop.md|Dismissed-findings decision step (before the park)|L2.4	judgment — covered at the step boundary: park-first-ready-park
+per-item-loop.md|Dismissed-findings decision step (before the park)|L2.5	judgment — covered at the step boundary: park-first-ready-park
+per-item-loop.md|Dismissed-findings decision step (before the park)|L2.6	park-first-ready-park
+per-item-loop.md|Dismissed-findings decision step (before the park)|L2.7	judgment — covered at the step boundary: park-first-decisions-recorded
+per-item-loop.md|Dismissed-findings decision step (before the park)|L2.8	park-first-decisions-recorded
+per-item-loop.md|Trail PR after merge and at run end	termination-queue-resolved
+per-item-loop.md|Post-merge close-out (`closeout` + the merge watcher)	reconcile-closeout-merged
+per-item-loop.md|§7 — Single drain (no double-dispatch) + the config-toggle contract	judgment — covered at the step boundary: drain-owned-drain-started
+per-item-loop.md|Suppress window (wrap the RUN phase)	run-config-suppress-restore
+per-item-loop.md|Config-toggle contract (byte-for-byte; absent-delete; malformed-abort)	run-config-suppress-restore
+per-item-loop.md|Own ONE inline drain	judgment — covered at the step boundary: drain-owned-drain-started
+per-item-loop.md|§8 — Single-open-PR invariant (BOTH modes)	pick-time-trail-gate-park
+
+# ---- modes-and-merge-gate.md
+modes-and-merge-gate.md|§9 — Two modes + READY / ESCALATED semantics	escalated-park
+modes-and-merge-gate.md|§10 — Trusted auto-merge gate (7 conditions, fail CLOSED, SELF-RESOLVING)	gate-eval-merge
+modes-and-merge-gate.md|§10 — Trusted auto-merge gate (7 conditions, fail CLOSED, SELF-RESOLVING)|L1.1	gate-eval-drain-not-ready-park
+modes-and-merge-gate.md|§10 — Trusted auto-merge gate (7 conditions, fail CLOSED, SELF-RESOLVING)|L1.2	gate-eval-head-sha-moved-park
+modes-and-merge-gate.md|§10 — Trusted auto-merge gate (7 conditions, fail CLOSED, SELF-RESOLVING)|L1.3	judgment — covered at the step boundary: gate-eval-review-decision-blocking-park
+modes-and-merge-gate.md|§10 — Trusted auto-merge gate (7 conditions, fail CLOSED, SELF-RESOLVING)|L1.4	gate-eval-unprotected-branch-park
+modes-and-merge-gate.md|§10 — Trusted auto-merge gate (7 conditions, fail CLOSED, SELF-RESOLVING)|L1.5	gate-eval-checks-not-green-park
+modes-and-merge-gate.md|§10 — Trusted auto-merge gate (7 conditions, fail CLOSED, SELF-RESOLVING)|L1.6	gate-eval-high-risk-diff-park
+modes-and-merge-gate.md|§10 — Trusted auto-merge gate (7 conditions, fail CLOSED, SELF-RESOLVING)|L1.7	gate-eval-rules-gate-head-mismatch-park

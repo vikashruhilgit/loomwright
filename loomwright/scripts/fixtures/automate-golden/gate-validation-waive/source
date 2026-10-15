@@ -1,0 +1,5 @@
+run: automate-2026-10-14-041009-L1
+lines: the lane run file's header and Queue, its PICK line; the requirement file as it read before its done
+stamp; the owner's waiver words are the real 07:16:04Z `validation waived` line's words (the AUT-WAIVE answer,
+fixed input). The PR body shows V3 not run.
+gap: the real PR body is not on disk; it is reduced to a body with no V3 evidence.

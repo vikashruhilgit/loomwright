@@ -1,0 +1,5 @@
+run: automate-2026-10-13-181331
+lines: header (Run Config `auto_review_original: absent`), Queue, the 39b PICK; steps replay the real
+`auto_review suppressed` / `auto_review restored (config-restore: original absent)` lines around RUN.
+gap: none — the real run's .supervisor/config.json had no auto_review key; here the file is absent
+(`absent` either way), so restore deletes it.
