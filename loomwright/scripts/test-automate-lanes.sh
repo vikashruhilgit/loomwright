@@ -62,7 +62,8 @@
 #   SL single-lane mode `--parallel 1` (twin-remediation/08b): lane.json single_lane (first leg) · lane-park seam ·
 #     fresh lane numbers 1..99 · whole-run token ceiling · lane-remove / fleet-closeout `fleet closeout: <lane>
 #     tokens TOTAL=<n>` line (before the removal) · lane-drain-check (dispatch marker by the dispatcher's own
-#     PR_HASH block, owned drains after the LAST picked, config backup, unknown) · current-set's single_lane
+#     PR_HASH block, owned drains after the LAST picked — timestamp optional, colon form tolerated — config
+#     backup, unknown) · both tokens-line readers take an optional timestamp · current-set's single_lane
 #     refusal · the merge watcher's documented launch line outlives its parent + a nohup mutation control
 #   AL validation-gate (af36-remainder/01): the #402 replay (pa/16's bullet Validation + PR #402's body,
 #     both fixtures under fixtures/validation-gate/) ⇒ unrun; evidenced ⇒ ok; no running-system step ⇒
@@ -2310,6 +2311,16 @@ out="$(sl lane-remove "$LRS/L13")"
 check "SL7d a lane that already has its tokens line gets no second one" "$(grep -c '^- fleet closeout: L13 tokens TOTAL=' "$RFS" | tr -d ' ')" 1
 out="$(sl lane-remove "$LRN/L2")"; rc=$?
 check "SL7e lane-remove on an N>1 parent's lane writes NO tokens line" "$rc:$(grep -c 'tokens TOTAL=' "$RFN" | tr -d ' ')" "0:0"
+# SL7f/g the tokens line is read after one OPTIONAL timestamp token (the run file's own convention), by
+# both readers: the whole-run SPENT sum and lane-remove's "already has its line" skip
+printf 'L7\t%s\treqs/y.md\t%s-L7\t-\t-\t-\tremoved\t-\t-\n' "$LRS/L7" "$PARS" >> "$TBS"   # a gone lane, timestamped line
+bash "$SC/automate-helpers.sh" progress-append "$RFS" "t9 fleet closeout: L7 tokens TOTAL=1000" >/dev/null 2>&1
+out="$(sl lane-create "$RFS" reqs/b.md 14 --parallel 1 --max-tokens 2000)"; rc=$?
+check "SL7f a timestamped tokens line counts toward SPENT (300+100+50+200+7+1000 = 1657 ⇒ max_tokens 343)" \
+  "$rc:$(jq -c .max_tokens "$LRS/L14/.supervisor/lane.json" 2>/dev/null)" "0:343"
+bash "$SC/automate-helpers.sh" progress-append "$RFS" "t9 fleet closeout: L14 tokens TOTAL=3" >/dev/null 2>&1
+out="$(sl lane-remove "$LRS/L14")"; rc=$?
+check "SL7g a lane whose tokens line is timestamped gets no second one" "$rc:$(grep -c 'fleet closeout: L14 tokens TOTAL=' "$RFS" | tr -d ' ')" "0:1"
 # SL8 lane-drain-check: markers, not prose — dispatch marker / owned-drain count after the LAST picked / config backup
 SLD="$LRS/L1"; SLDR="$SLD/.supervisor/automate/$PARS-L1.md"; SLPR="https://github.com/o/r/pull/881"
 sl_drf() { # <progress lines…> — the lane run file at its park with these ## Progress lines
@@ -2329,6 +2340,19 @@ sl_drf "t2 picked reqs/a.md" "t3 owned drain started — a @ b" "t4 owned drain 
 has "SL8d two fix-now re-drains ⇒ violation" "$(sl lane-drain-check "$SLD")" "drain-guard: violation — 2 fix-now re-drains after the last picked line (at most 1)"
 sl_drf "t2 picked reqs/a.md" "t4 drain READY"
 has "SL8e no owned drain after the last picked ⇒ violation" "$(sl lane-drain-check "$SLD")" "drain-guard: violation — 0 owned drain(s) after the last picked line"
+# SL8k-n the drain-start line is matched after one OPTIONAL timestamp token, colon form tolerated
+sl_drf "t2 picked reqs/a.md" "t3 owned drain started: /review-pr x --until-mergeable @ b"
+check "SL8k a colon-form drain start (legacy run files) ⇒ ok, 1 drain" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: ok — 1 owned drain(s), no dispatch marker, no config backup"
+sl_drf "picked reqs/a.md" "owned drain started — a @ b" "drain READY"
+check "SL8l an untimestamped drain start is counted ⇒ ok, 1 drain" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: ok — 1 owned drain(s), no dispatch marker, no config backup"
+sl_drf "t2 picked reqs/a.md" "owned drain started — a @ b" "t4 owned drain started — a @ c"
+check "SL8m one untimestamped + one timestamped plain drain ⇒ violation, 2 drains" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: violation — 2 owned drain(s) after the last picked line (exactly 1 expected)"
+sl_drf "t2 picked reqs/a.md" "t3 owned drain started: a @ b" "owned drain started (fix-now re-drain) — a @ c" "t5 owned drain started (fix-now re-drain) — a @ d"
+check "SL8n fix-now re-drains still counted apart, timestamp optional (1 plain ok, 2 fix-now ⇒ violation)" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: violation — 2 fix-now re-drains after the last picked line (at most 1)"
 sl_drf "t2 picked reqs/a.md" "t3 owned drain started — a @ b"
 # the marker is named by the DISPATCHER's own PR_HASH block (dispatch-pr-review.sh), run on the lane's PR URL
 SL_HASHBLK="$(awk '/^PR_HASH=""$/ { on = 1 } on && /^MARKER=/ { exit } on' "$HERE/dispatch-pr-review.sh")"

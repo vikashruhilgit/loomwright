@@ -635,7 +635,7 @@ PY
 # --------------------------------------------------------------------------- #
 # lane drafts (parallel-automate/05, Scope 7)
 # --------------------------------------------------------------------------- #
-# A lane of a `--parallel N>1` parent run `<parent>` has run id `<parent>-L<n>`, so
+# A lane of a `--parallel N` parent run `<parent>` (N = 1 included) has run id `<parent>-L<n>`, so
 # its drafts are named `<parent>-L<n>--…--dismissed-*.md` — invisible to the
 # parent's own `<parent>--*` glob. dismissed-pending / dismissed-decide given the
 # PARENT run file also see them; each lane draft is decided against its lane's

@@ -1097,7 +1097,7 @@ main() {
     dismissed-decide)  exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;
     dismissed-pending) exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;
     dismissed-cost)    exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;
-    # Lane lifecycle for `/automate --parallel N>1` only — the sibling
+    # Lane lifecycle for `/automate --parallel N` only (N = 1 = single-lane mode) — the sibling
     # automate-lanes.sh, the third carve-out named in the header.
     lane-create|lane-launch|relay-hook|lane-answer|lane-remove) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     lane-convert-ready) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;

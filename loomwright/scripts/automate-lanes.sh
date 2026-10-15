@@ -226,8 +226,9 @@ RUN_LOCK="${LOOMWRIGHT_LANES_RUN_LOCK:-$HERE/run-lock.sh}"     # fleet-closeout'
 # the GraphQL merge / auto-merge mutations); `gh api graphql` itself stays allowed because a lane's
 # own drain reads review threads through it. Honest limit: a deny list is a TRIPWIRE, not a sandbox —
 # any other route to the merge API (e.g. a raw HTTP client carrying a token) is not covered. The
-# merge invariant's real backstop is that a lane parks at ready_for_release and only the
-# coordinator's automate-loop §10 gate ever executes a merge.
+# merge invariant's real backstop is that a lane only ever parks (`ready_for_release` in an N > 1 lane,
+# `awaiting_merge` in a single lane — `lane-park`) and no lane runs the automate-loop §10 merge gate
+# (`--auto-merge` is refused with any N).
 LANE_ALLOWED_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Task,Agent,AskUserQuestion"
 LANE_DISALLOWED_FIXED="Bash(gh pr merge:*),Bash(gh pr merge *),Bash(*--admin*),Bash(gh api *pulls/*/merge*),Bash(gh api *mergePullRequest*),Bash(gh api *enablePullRequestAutoMerge*),Bash(git push --force:*),Bash(git push -f:*),Bash(git push --force-with-lease:*),Bash(git push *--force*)"
 LANE_SYS="You are running as a HEADLESS lane (claude -p). Ending your turn ENDS this process and stops any background task. Never end your turn to wait for background work (CI, checks, subagents, long commands): wait in the FOREGROUND with a blocking Bash call or a Monitor you wait on. End your turn only when the item is parked, or when you must ask the owner via AskUserQuestion."
@@ -2268,15 +2269,25 @@ _lanes_single_spent() {
   while IFS="$tab" read -r lane path _ run _; do
     case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
     if [ -d "$path" ]; then v="$(_lanes_lane_total "$run" "$path")"
-    else
-      v="$(L="$lane" awk 'BEGIN { p = "- fleet closeout: " ENVIRON["L"] " tokens TOTAL=" }
-             /^## / { inp = ($0 ~ /^## Progress/); next }
-             inp && index($0, p) == 1 { v = substr($0, length(p) + 1) } END { print v }' "$rf" 2>/dev/null)"
-    fi
+    else v="$(_lanes_tokens_line "$rf" "$lane")"; fi
     case "$v" in ''|*[!0-9]*) return 1 ;; esac
     sum=$((sum + 10#$v))
   done < "$table"
   echo "$sum"
+}
+
+# _lanes_tokens_line <parent_runfile> <lane> — the value of the LAST `## Progress` line `fleet closeout:
+# <lane> tokens TOTAL=<v>`, matched after one OPTIONAL timestamp token (the `^([^ ]+ )?` convention of
+# `picked`, _lanes_vg_has and progress-append's `current_not_set` guard). Prints <v>; exit 1 when no such
+# line. The one reader of that line: _lanes_single_spent sums it, _lanes_tokens_record skips on it.
+_lanes_tokens_line() {
+  L="$2" awk 'BEGIN { p = "fleet closeout: " ENVIRON["L"] " tokens TOTAL=" }
+    /^## / { inp = ($0 ~ /^## Progress/); next }
+    !inp { next }
+    { l = $0; if (sub(/^- /, "", l) == 0) next
+      if (index(l, p) != 1) { sub(/^[^ ]+ /, "", l); if (index(l, p) != 1) next }
+      v = substr(l, length(p) + 1); f = 1 }
+    END { if (!f) exit 1; print v }' "$1" 2>/dev/null
 }
 
 # _lanes_tokens_record <parent_runfile> <lane> <lane path> <lane run_id> — single-lane parents only:
@@ -2285,7 +2296,7 @@ _lanes_single_spent() {
 # the whole-run ceiling can still count a removed lane. Prints the line it wrote (nothing when skipped).
 _lanes_tokens_record() {
   local rf="$1" lane="$2" t
-  grep -q "^- fleet closeout: $lane tokens TOTAL=" "$rf" 2>/dev/null && return 0
+  _lanes_tokens_line "$rf" "$lane" >/dev/null && return 0
   t="$(_lanes_lane_total "$4" "$3")"
   bash "$HELPERS" progress-append "$rf" "fleet closeout: $lane tokens TOTAL=$t" >/dev/null 2>&1 \
     || { echo "automate-lanes: WARNING — the tokens line for $lane could not be appended" >&2; return 1; }
@@ -2325,9 +2336,13 @@ _lanes_pr_hash() {
 #   `drain-guard: violation — <reason>[; <reason>…]` when (a) <lane>/.supervisor/review-dispatch/ holds the
 #     marker named by _lanes_pr_hash of the lane `## Current` `pr:` URL (a detached default dispatch
 #     fired), (b) after the LAST `picked` line of the lane run file's `## Progress` there are 0 or ≥ 2
-#     lines starting (after one timestamp token) `owned drain started — `, or ≥ 2 starting `owned drain
-#     started (fix-now re-drain) — `, or (c) <lane>/.supervisor/automate/<run_id>.config-backup.json exists
-#     (the auto_review toggle was never restored);
+#     plain owned-drain starts, or ≥ 2 fix-now re-drain starts, or (c)
+#     <lane>/.supervisor/automate/<run_id>.config-backup.json exists (the auto_review toggle was never
+#     restored). A line is matched after one OPTIONAL timestamp token — the same `^([^ ]+ )?` convention
+#     as `picked`, _lanes_vg_has and progress-append's `current_not_set` guard: `owned drain started (fix-now`
+#     is a fix-now re-drain start (the pinned `… (fix-now re-drain) — …`); any other `owned drain started`
+#     followed by a space, `:` or the line end is a plain start (pinned `<ts> owned drain started — <drain
+#     invocation> @ <head sha>`, per-item-loop.md §6 step 3; legacy `owned drain started: …` is tolerated);
 #   `drain-guard: ok — <n> owned drain(s), no dispatch marker, no config backup` otherwise;
 #   `drain-guard: unknown — <reason>` when the lane, its run file, its PR or its `picked` line cannot be
 #     read (observation fails SAFE — never `ok` on what it could not read).
@@ -2345,10 +2360,19 @@ lanes_drain_check() {
     { n++; line[n] = $0; l = $0; sub(/^- /, "", l); if (l ~ /^([^ ]+ )?picked /) last = n }
     END { if (!last) exit 1; for (i = last + 1; i <= n; i++) print line[i] }' "$rf" 2>/dev/null)" \
     || { echo "$G unknown — no picked line in the lane ## Progress ($LN_RUN.md)"; return 0; }
-  plain="$(printf '%s\n' "$after" | awk '{ l = $0; if (sub(/^- /, "", l) == 0) next; sub(/^[^ ]+ /, "", l)
-    if (index(l, "owned drain started — ") == 1) c++ } END { print c + 0 }')"
-  fix="$(printf '%s\n' "$after" | awk '{ l = $0; if (sub(/^- /, "", l) == 0) next; sub(/^[^ ]+ /, "", l)
-    if (index(l, "owned drain started (fix-now re-drain) — ") == 1) c++ } END { print c + 0 }')"
+  # One pass, one classification per line: the unstripped rest first, then with one timestamp token
+  # stripped (optional timestamp — an untimestamped line is never mis-read by stripping its first word).
+  read -r plain fix <<<"$(printf '%s\n' "$after" | awk '
+    function kind(s,  r) {
+      if (index(s, "owned drain started") != 1) return ""
+      r = substr(s, length("owned drain started") + 1)
+      if (index(r, " (fix-now") == 1) return "fix"
+      if (r == "" || substr(r, 1, 1) == " " || substr(r, 1, 1) == ":") return "plain"
+      return "" }
+    { l = $0; if (sub(/^- /, "", l) == 0) next
+      k = kind(l); if (k == "") { sub(/^[^ ]+ /, "", l); k = kind(l) }
+      if (k == "plain") p++; else if (k == "fix") f++ }
+    END { print p + 0, f + 0 }')"
   [ -e "$LN_DIR/.supervisor/review-dispatch/$(_lanes_pr_hash "$pr")" ] \
     && why="${why:+$why; }review-dispatch marker for $pr (a detached default drain was dispatched)"
   [ "$plain" = 1 ] || why="${why:+$why; }$plain owned drain(s) after the last picked line (exactly 1 expected)"
