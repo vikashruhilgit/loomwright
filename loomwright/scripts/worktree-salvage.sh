@@ -15,7 +15,7 @@
 # removal.
 #
 # USAGE
-#   worktree-salvage.sh <abs-or-rel worktree path> [--dest <dir>] [--reason <text>]
+#   worktree-salvage.sh <abs-or-rel worktree path> [--dest <dir>] [--reason <text>] [--ignored]
 #
 #   --dest    destination directory. Default: `<primary>/.supervisor/salvage/`
 #             where <primary> is the parent of `git rev-parse --git-common-dir`
@@ -27,6 +27,21 @@
 #   --reason  free text recorded in the README (the caller names its site:
 #             `dispatch pre-add cleanup`, `dispatch header-write teardown`,
 #             `review-drain teardown`, `FINALIZE step 4`).
+#   --ignored OPT-IN gitignored-runtime salvage (af/39a — the 2026-10-12 hand
+#             cleanup lost a worktree's session logs and postmortem ledger, because
+#             DETECTION below skips ignored content by design and `git worktree
+#             remove` deletes it). Each PRESENT entry of the fixed list
+#             `.supervisor/logs/`, `.supervisor/postmortem/`,
+#             `.claude/settings.local.json` is copied to `<salvage>/ignored/<rel>`
+#             and verified byte-identical (`diff -r`), stopping at the first
+#             failure. The VERDICT is the LAST stdout line, always printed in this
+#             mode: `ignored: ok <n>` (n = entries copied; `ignored: ok 0` with no
+#             salvage directory when the tree is clean and no entry is present) or
+#             `ignored: failed <rel> — <reason>` (a script-level failure before any
+#             entry is known names `-`). Exit stays 0. A caller removes the worktree
+#             ONLY on an `ignored: ok` line — anything else, including no line at
+#             all, keeps it (`automate-trail.sh` sweep and closeout step 3a). Without
+#             the flag every output below is byte-unchanged.
 #
 # OUTPUT
 #   stdout: the created salvage directory `<dest>/<basename(wt)>-<UTC ts>[-N]`
@@ -127,13 +142,18 @@ set -u
 
 fail() {
   # ONE stderr line, nothing captured, exit 0 — the always-exit-0 contract.
+  # --ignored: the verdict line still comes last on stdout, naming the first
+  # pending entry (or `-` before the entry list is known).
   printf 'worktree-salvage: %s\n' "$1" >&2
+  [ "$IGNORED" -eq 1 ] && printf 'ignored: failed %s — %s\n' "${IGN_FIRST:--}" "$1"
   exit 0
 }
 
 WT=""
 DEST=""
 REASON="unspecified"
+IGNORED=0
+IGN_FIRST=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dest)
@@ -142,10 +162,11 @@ while [ $# -gt 0 ]; do
     --reason)
       [ $# -ge 2 ] || fail "--reason needs a value"
       REASON="$2"; shift 2 ;;
+    --ignored) IGNORED=1; shift ;;
     --dest=*)   DEST="${1#--dest=}"; shift ;;
     --reason=*) REASON="${1#--reason=}"; shift ;;
     -h|--help)
-      printf 'usage: worktree-salvage.sh <worktree path> [--dest <dir>] [--reason <text>]\n'
+      printf 'usage: worktree-salvage.sh <worktree path> [--dest <dir>] [--reason <text>] [--ignored]\n'
       exit 0 ;;
     *)
       if [ -z "$WT" ]; then WT="$1"; shift
@@ -170,8 +191,27 @@ trap 'rm -f "$TMP"' EXIT
 if ! git -C "$WT_TOP" status --porcelain=v1 -z --untracked-files=all > "$TMP" 2>/dev/null; then
   fail "git status failed in $WT_TOP"
 fi
-# Clean worktree ⇒ nothing to keep ⇒ silent, no directory, exit 0.
-[ -s "$TMP" ] || exit 0
+# --ignored: the PRESENT entries of the fixed gitignored-runtime list (a literal
+# list — never a word-split variable). Read before the clean-tree exit so a tree
+# that is clean in git's terms but holds runtime logs is still salvaged.
+IGN_LIST=""
+IGN_N=0
+if [ "$IGNORED" -eq 1 ]; then
+  for IGN_REL in .supervisor/logs .supervisor/postmortem .claude/settings.local.json; do
+    if [ -e "$WT_TOP/$IGN_REL" ] || [ -L "$WT_TOP/$IGN_REL" ]; then
+      IGN_LIST="$IGN_LIST$IGN_REL
+"
+      IGN_N=$((IGN_N + 1))
+      [ -n "$IGN_FIRST" ] || IGN_FIRST="$IGN_REL"
+    fi
+  done
+fi
+# Clean worktree ⇒ nothing to keep ⇒ silent, no directory, exit 0 (--ignored with
+# no entry present: the verdict `ignored: ok 0` alone, still no directory).
+if [ ! -s "$TMP" ]; then
+  [ "$IGNORED" -eq 1 ] || exit 0
+  [ "$IGN_N" -gt 0 ] || { printf 'ignored: ok 0\n'; exit 0; }
+fi
 
 # ---- destination + name (only now — detection found content) -----------------
 if [ -z "$DEST" ]; then
@@ -269,6 +309,30 @@ while IFS= read -r -d '' ENTRY; do
   fi
 done < "$TMP"
 
+# ---- --ignored: copy + verify each present gitignored runtime entry ------------
+# Stops at the first failure; the verdict names that entry. `diff -r` is the
+# byte-identity check (content, recursively — a partial `cp` or a source that
+# changed mid-copy reads as a failure).
+IGN_VERDICT=""
+IGN_DONE=0
+if [ "$IGNORED" -eq 1 ]; then
+  while IFS= read -r IGN_REL; do
+    [ -n "$IGN_REL" ] || continue
+    IGN_DST="$SALVAGE_DIR/ignored/$IGN_REL"
+    # IGNORED_COPY_ANCHOR — test-worktree-salvage.sh's pin mutation deletes this copy.
+    if ! mkdir -p "$(dirname "$IGN_DST")" 2>/dev/null || ! cp -pR "$WT_TOP/$IGN_REL" "$IGN_DST" 2>/dev/null; then
+      IGN_VERDICT="ignored: failed $IGN_REL — copy failed"; break
+    fi
+    if ! diff -r "$WT_TOP/$IGN_REL" "$IGN_DST" >/dev/null 2>&1; then
+      IGN_VERDICT="ignored: failed $IGN_REL — copy is not byte-identical"; break
+    fi
+    IGN_DONE=$((IGN_DONE + 1))
+  done <<IGNLIST
+$IGN_LIST
+IGNLIST
+  [ -n "$IGN_VERDICT" ] || IGN_VERDICT="ignored: ok $IGN_DONE"
+fi
+
 BRANCH="$(git -C "$WT_TOP" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 [ -n "$BRANCH" ] || BRANCH="HEAD"
 
@@ -308,10 +372,17 @@ write_readme() {
   printf 'Gitignored runtime state (`.supervisor/` logs, drain rounds, scratch) is per-checkout\n'
   printf 'by design and is not uncommitted work — it is never listed by `git status` without\n'
   printf '`--ignored`, so the salvage holds work, not noise.\n'
+  if [ "$IGNORED" -eq 1 ]; then
+    printf '\n## Gitignored runtime content (--ignored)\n\n'
+    printf 'This salvage was asked for it: `ignored/` holds each present entry of\n'
+    printf '`.supervisor/logs/`, `.supervisor/postmortem/`, `.claude/settings.local.json`,\n'
+    printf 'verified byte-identical. Verdict: '; printf '%s' "$IGN_VERDICT"; printf '\n'
+  fi
 }
 if ! write_readme > "$SALVAGE_DIR/README.md" 2>/dev/null; then
   printf 'worktree-salvage: README.md write failed in %s\n' "$SALVAGE_DIR" >&2
 fi
 
 printf '%s\n' "$SALVAGE_DIR"
+[ "$IGNORED" -eq 1 ] && printf '%s\n' "$IGN_VERDICT"
 exit 0

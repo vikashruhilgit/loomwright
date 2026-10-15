@@ -141,6 +141,23 @@
 #      requirement ⇒ one done block, one `- [x]`, no trail PR, trail-gate
 #      clear); the strict sentinel guard (quoted ⇒ stamps; real block ⇒
 #      skipped); SKILL / --help / command wiring.
+#   SW. sweep (af/39a) — branches: MERGED at the tip ⇒ would-remove / removed;
+#      moved tip, newest OPEN, CLOSED unmerged, no PR, gh failure, unparseable ⇒
+#      `sweep: kept branch`; current / base / held-in-a-kept-worktree never cost a
+#      gh call. Worktrees (judged first): clean merged sibling (a path with a
+#      space) and a worktree-audit `created` path ⇒ removed after its 3 gitignored
+#      entries land byte-identical under <salvage>/ignored/; dirty, detached,
+#      live-process cwd (stubbed lsof; real lsof when it can see a child), lsof
+#      absent/failing, forced copy failure ⇒ kept; app (`kept app`, clean+merged,
+#      still present after --apply), lane (`use lane-remove`), other (`origin
+#      unknown`). Dry run: `git worktree list --porcelain` + `git branch -v`
+#      checksum unchanged, no salvage written. Exit 0 and ONE last summary line
+#      everywhere. closeout 3a: the same --ignored gate (2 entries salvaged; a copy
+#      failure keeps it in the `skipped — kept worktree …` form closeout-classify
+#      reads). F1 carries the finalize-empty run-end line (one, after the trail
+#      line). Pin mutations, each observed RED: tip comparison deleted, the
+#      .claude/worktrees/ exclusion deleted, the sweep verdict ignored, the
+#      closeout 3a verdict ignored.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wait-lib.sh"   # bounded condition waits (iq02 T07)
@@ -2406,6 +2423,14 @@ stg="$(git -C "$P" diff --cached --name-only)"
 c1="$(cksum < "$P/$RF_REL")"
 o2="$(cd "$P" && bash "$H" finalize-empty "$RF_REL")"
 [ "$o2" = "finalize-empty: skipped — not paused" ] && [ "$c1" = "$(cksum < "$P/$RF_REL")" ] && ok "(F1) a second finalize is a no-op ('$o2')" || no "(F1) second finalize: '$o2'"
+# af/39a AC7: ONE dry-run sweep summary line per run end, AFTER the trail line (never inside the
+# staged rewrite) — and the second (no-op) finalize above did not add another.
+fe_sw="$(grep -nE '^- [^ ]+ sweep \(dry run\): sweep: summary — dry run: ' "$P/$RF_REL" | cut -d: -f1)"
+fe_tr="$(grep -nE '^- [^ ]+ trail-pr: (opened|pushed|skipped)' "$P/$RF_REL" | tail -n1 | cut -d: -f1)"
+[ "$(printf '%s\n' "$fe_sw" | grep -c .)" = 1 ] && [ -n "$fe_tr" ] && [ "$fe_sw" -gt "$fe_tr" ] \
+  && ok "(F1) AC7 finalize-empty appends exactly ONE '<ts> sweep (dry run): sweep: summary — dry run: …' Progress line, after its trail line" \
+  || no "(F1) sweep line(s) at '$(printf '%s' "$fe_sw" | tr '\n' ' ')' vs trail line $fe_tr"
+grep -q '^sweep' "$FX/fe.err" && no "(F1) the sweep line leaked into finalize-empty's printed output" || ok "(F1) the sweep summary is appended to ## Progress only (finalize-empty's printed lines unchanged)"
 # Control: without the mode-off trail-unstage the finalized run's trail blobs stay staged.
 MUTU="$TOP/mutd-unstage"; mkdir -p "$MUTU"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTU/"; cp -R "$HERE/automate-helpers.d" "$MUTU/"
 grep -v 'l="$(bash "$HLP" trail-unstage "$rf_abs"' "$T" > "$MUTU/automate-trail.sh"
@@ -3046,6 +3071,275 @@ nt_help="$(bash "$H" --help)"
 grep -q '^  closeout .*\[--no-trail\]' <<<"$nt_help" && ok "(NT6) --help closeout row documents --no-trail" || no "(NT6) --help closeout row"
 grep -q '^  lane-convert-ready .*closeout --no-trail' <<<"$nt_help" && ok "(NT6) --help lane-convert-ready row names closeout --no-trail" || no "(NT6) --help lane-convert-ready row"
 grep -qF 'closeout --no-trail' "$HERE/../commands/automate.md" && ok "(NT6) commands/automate.md SYNC points at closeout --no-trail" || no "(NT6) command SYNC pointer"
+
+# =============================================================================
+echo "== SW. sweep: squash-safe sweep of plugin-made worktrees + local branches (af/39a) =="
+# Real repos in $TOP; gh and lsof stubbed through the LOOMWRIGHT_GH_BIN /
+# LOOMWRIGHT_LSOF_BIN seams. The sweep gh stub answers `pr list --head <B>` per branch.
+SWBIN="$TOP/swbin"; mkdir -p "$SWBIN"
+cat > "$SWBIN/gh" <<'STUB'
+#!/usr/bin/env bash
+# `pr list --head <B>` ⇒ $SWGH/<B, `/` and space as `_`>.json ([] when absent); <that>.fail ⇒ exit 1.
+set -u
+d="$SWGH"; echo "$*" >> "$d/argv.log"
+[ "${1:-} ${2:-}" = "pr list" ] || exit 0
+h=""; while [ $# -gt 0 ]; do [ "$1" = --head ] && h="${2:-}"; shift; done
+f="$d/$(printf '%s' "$h" | tr '/ ' '__').json"
+[ -f "$f.fail" ] && exit 1
+if [ -f "$f" ]; then cat "$f"; else echo '[]'; fi
+exit 0
+STUB
+cat > "$SWBIN/lsof" <<'STUB'
+#!/usr/bin/env bash
+# `lsof -a -d cwd -F pn` stand-in: pid 1 at / plus $SWGH/lsof.extra; $SWGH/lsof.fail ⇒ exit 1.
+[ -f "$SWGH/lsof.fail" ] && exit 1
+printf 'p1\nfcwd\nn/\n'
+[ -f "$SWGH/lsof.extra" ] && cat "$SWGH/lsof.extra"
+exit 0
+STUB
+chmod +x "$SWBIN/gh" "$SWBIN/lsof"
+sw_repo() { # <n> — SWFX, SWP (primary `proj`, base branch main, no origin), SWGH
+  SWFX="$TOP/sw$1"; SWP="$SWFX/proj"; SWGH="$SWFX/gh"; mkdir -p "$SWP" "$SWGH"; : > "$SWGH/argv.log"
+  ( cd "$SWP" && git init -q && git symbolic-ref HEAD refs/heads/main \
+    && printf '.supervisor/\n.claude/\n' > .gitignore && echo base > README \
+    && git add .gitignore README && git commit -qm init ) >/dev/null 2>&1
+}
+sw_branch() { # <name> [<parent>] — a branch carrying its own commit (no checkout)
+  local c
+  c="$(git -C "$SWP" commit-tree "$(git -C "$SWP" rev-parse 'main^{tree}')" -p "${2:-main}" -m "$1" 2>/dev/null)"
+  git -C "$SWP" update-ref "refs/heads/$1" "$c"
+}
+sw_pr() { printf '%s\n' "$2" > "$SWGH/$(printf '%s' "$1" | tr '/ ' '__').json"; }   # <branch> <json array>
+sw_merged() { # <branch> <number> [<headRefOid>] — newest PR MERGED at the branch tip (or <oid>)
+  local o="${3:-$(git -C "$SWP" rev-parse "refs/heads/$1")}"
+  sw_pr "$1" "[{\"number\":$2,\"state\":\"MERGED\",\"headRefOid\":\"$o\",\"mergedAt\":\"2026-10-01T00:00:00Z\"}]"
+}
+sw_wt() { sw_branch "$2"; git -C "$SWP" worktree add -q "$1" "$2" >/dev/null 2>&1; }   # <path> <branch>
+sw_run() { (cd "$SWP" && SWGH="$SWGH" LOOMWRIGHT_GH_BIN="$SWBIN/gh" LOOMWRIGHT_LSOF_BIN="${SW_LSOF:-$SWBIN/lsof}" bash "${SW_T:-$T}" sweep "$@"); }
+sw_sum() { { git -C "$SWP" worktree list --porcelain; git -C "$SWP" branch -v; } | cksum; }
+sw_has() { git -C "$SWP" rev-parse -q --verify "refs/heads/$1" >/dev/null 2>&1; }
+sw_line() { printf '%s\n' "$1" | grep -qF -- "$2"; }   # <out> <fixed substring>
+sw_shape() { # <label> <out> <rc>: exit 0, exactly ONE summary line, and it is the last line
+  local n last
+  n="$(printf '%s\n' "$2" | grep -c '^sweep: summary — ')"; last="$(printf '%s\n' "$2" | tail -n1)"
+  case "$last" in "sweep: summary — "*) [ "$3" -eq 0 ] && [ "$n" = 1 ] && { ok "$1: exit 0, exactly one sweep: summary line, last"; return 0; } ;; esac
+  no "$1: rc=$3 summary lines=$n last='$last'"
+}
+SW_ROOT_UID=0; [ "$(id -u)" -eq 0 ] && SW_ROOT_UID=1   # root reads a 0000 file: the unreadable legs need a non-root uid
+
+# ---- branch fixture: every AC1/AC2 case side by side ------------------------
+sw_branch_fixture() { # <n>
+  sw_repo "$1"
+  local b t
+  for b in team/done moved open-pr closed-pr no-pr gh-fail garbage curb held; do sw_branch "$b"; done
+  sw_merged team/done 11
+  sw_merged moved 12; sw_branch moved-tmp moved; git -C "$SWP" update-ref refs/heads/moved "$(git -C "$SWP" rev-parse moved-tmp)"; git -C "$SWP" branch -q -D moved-tmp
+  t="$(git -C "$SWP" rev-parse refs/heads/open-pr)"
+  sw_pr open-pr "[{\"number\":20,\"state\":\"MERGED\",\"headRefOid\":\"$t\"},{\"number\":21,\"state\":\"OPEN\",\"headRefOid\":\"$t\"}]"
+  sw_pr closed-pr "[{\"number\":30,\"state\":\"CLOSED\",\"headRefOid\":\"$(git -C "$SWP" rev-parse refs/heads/closed-pr)\"}]"
+  : > "$SWGH/gh-fail.json.fail"
+  printf 'not json\n' > "$SWGH/garbage.json"
+  sw_merged curb 40; git -C "$SWP" checkout -q curb 2>/dev/null
+  sw_merged held 50; git -C "$SWP" worktree add -q "$SWFX/proj-held wt" held >/dev/null 2>&1; echo wip > "$SWFX/proj-held wt/wip.txt"
+}
+sw_branch_fixture 1
+s0="$(sw_sum)"
+out="$(sw_run)"; rc=$?
+printf '%s\n' "$out" | sed 's/^/    | /'
+sw_shape "(SW1) dry run" "$out" "$rc"
+[ "$s0" = "$(sw_sum)" ] && ok "(SW1) dry run: checksum of git worktree list --porcelain + git branch -v unchanged" || no "(SW1) dry run changed worktrees/branches"
+sw_line "$out" "sweep: would-remove branch team/done — PR #11 MERGED, tip == merged head " && ok "(SW1) AC1 merged + tip == headRefOid ⇒ would-remove (a branch name with a slash)" || no "(SW1) team/done line"
+sw_line "$out" "sweep: kept branch moved — tip " && sw_line "$out" "moved after merge (PR #12 merged head " && ok "(SW1) AC2 moved tip ⇒ sweep: kept branch moved — … moved after merge" || no "(SW1) moved line"
+sw_line "$out" "sweep: kept branch open-pr — newest PR #21 is OPEN" && ok "(SW1) AC2 newest PR OPEN ⇒ kept (an older MERGED PR at the same tip does not count)" || no "(SW1) open-pr line"
+sw_line "$out" "sweep: kept branch closed-pr — newest PR #30 is CLOSED unmerged" && ok "(SW1) AC2 CLOSED unmerged ⇒ kept" || no "(SW1) closed-pr line"
+sw_line "$out" "sweep: kept branch no-pr — no PR for this branch" && ok "(SW1) AC2 no PR ⇒ kept" || no "(SW1) no-pr line"
+sw_line "$out" "sweep: kept branch gh-fail — gh read failed (pr list --head, rc 1)" && ok "(SW1) AC2 gh read fails ⇒ kept" || no "(SW1) gh-fail line"
+sw_line "$out" "sweep: kept branch garbage — gh read failed (unparseable pr list)" && ok "(SW1) AC2 unparseable gh output ⇒ kept" || no "(SW1) garbage line"
+sw_line "$out" "sweep: kept branch curb — current branch of the primary" && ok "(SW1) AC2 the primary's current branch is never a candidate (even merged)" || no "(SW1) curb line"
+sw_line "$out" "sweep: kept branch main — base branch" && ok "(SW1) AC2 the base branch is never a candidate" || no "(SW1) main line"
+sw_line "$out" "sweep: kept branch held — checked out in worktree $SWFX/proj-held wt" && ok "(SW1) AC2 a branch in a kept worktree is never a candidate (path with a space)" || no "(SW1) held line"
+sw_line "$out" "sweep: kept worktree $SWFX/proj-held wt — dirty (uncommitted changes on held)" && ok "(SW1) AC3 dirty worktree ⇒ kept" || no "(SW1) dirty worktree line"
+for b in curb main; do
+  grep -q -- "--head $b " "$SWGH/argv.log" && no "(SW1) excluded branch $b cost a gh call" || ok "(SW1) excluded branch $b: no gh call"
+done
+# held's ONE read is the worktree judgment's; the branch phase adds none.
+[ "$(grep -c -- "--head held " "$SWGH/argv.log")" = 1 ] && ok "(SW1) a branch held by a kept worktree: the branch phase adds no gh call" || no "(SW1) held: $(grep -c -- "--head held " "$SWGH/argv.log") gh calls"
+o2="$(cd "$TOP" && SWGH="$SWGH" LOOMWRIGHT_GH_BIN="$SWBIN/gh" LOOMWRIGHT_LSOF_BIN="$SWBIN/lsof" bash "$T" sweep --root "$SWFX/proj-held wt")"
+[ "$o2" = "$out" ] && ok "(SW1) --root <a linked worktree> resolves to the primary (same report from another cwd)" || no "(SW1) --root from elsewhere differs: $(printf '%s' "$o2" | tail -n1)"
+out="$(sw_run --apply)"; rc=$?
+sw_shape "(SW1) --apply" "$out" "$rc"
+sw_line "$out" "sweep: removed branch team/done — PR #11 MERGED" && ! sw_has team/done && ok "(SW1) AC1 --apply: sweep: removed branch team/done and the branch is gone" || no "(SW1) apply team/done: $(printf '%s' "$out" | grep team/done)"
+sw_kept_all=1
+for b in moved open-pr closed-pr no-pr gh-fail garbage curb main held; do sw_has "$b" || { sw_kept_all=0; no "(SW1) --apply removed $b"; }; done
+[ "$sw_kept_all" = 1 ] && ok "(SW1) AC2 --apply: every kept branch remains (moved, OPEN, CLOSED, no PR, gh failure, unparseable, current, base, held)"
+[ -d "$SWFX/proj-held wt" ] && ok "(SW1) --apply: the dirty worktree remains" || no "(SW1) dirty worktree removed"
+out="$(sw_run --apply)"
+[ "$(printf '%s\n' "$out" | tail -n1)" = "sweep: summary — applied: 0 removed, 10 kept (1 worktree(s), 9 branch(es) examined)" ] \
+  && ok "(SW1) a second --apply removes nothing (idempotent)" || no "(SW1) second apply: $(printf '%s\n' "$out" | tail -n1)"
+out="$(sw_run --bogus)"; rc=$?
+[ "$out" = "sweep: summary — skipped: unknown argument --bogus (nothing examined)" ] && [ "$rc" -eq 0 ] && ok "(SW1) an unknown argument ⇒ one summary line, nothing examined, exit 0" || no "(SW1) bogus arg: '$out' rc=$rc"
+out="$(cd "$TOP" && bash "$T" sweep --root "$TOP/no-such-dir")"; rc=$?
+[ "$out" = "sweep: summary — skipped: not a git checkout ($TOP/no-such-dir)" ] && [ "$rc" -eq 0 ] && ok "(SW1) not a checkout ⇒ one summary line, exit 0" || no "(SW1) not a checkout: '$out' rc=$rc"
+
+# ---- worktree fixture: every AC3/AC4/AC5 origin and condition ----------------
+sw_wt_fixture() { # <n>
+  sw_repo "$1"
+  WT_CLEAN="$SWFX/proj-clean wt"; sw_wt "$WT_CLEAN" wclean; sw_merged wclean 61
+  mkdir -p "$WT_CLEAN/.supervisor/logs" "$WT_CLEAN/.supervisor/postmortem" "$WT_CLEAN/.claude"
+  printf '{"event":"session"}\n' > "$WT_CLEAN/.supervisor/logs/s1.jsonl"
+  printf '{"automate_key":"k"}\n' > "$WT_CLEAN/.supervisor/postmortem/results.jsonl"
+  printf '{"permissions":{"allow":[]}}\n' > "$WT_CLEAN/.claude/settings.local.json"
+  rm -rf "$SWFX/expect"; mkdir -p "$SWFX/expect"; cp -pR "$WT_CLEAN/.supervisor" "$WT_CLEAN/.claude" "$SWFX/expect/"
+  WT_DIRTY="$SWFX/proj-dirty"; sw_wt "$WT_DIRTY" wdirty; sw_merged wdirty 62; echo wip > "$WT_DIRTY/wip.txt"
+  mkdir -p "$SWP/.claude/worktrees" "$SWFX/proj-lanes" "$SWFX/elsewhere" "$SWFX/logged" "$SWP/.supervisor/logs"
+  WT_APP="$SWP/.claude/worktrees/x"; sw_wt "$WT_APP" wapp; sw_merged wapp 63
+  WT_LANE="$SWFX/proj-lanes/l1"; sw_wt "$WT_LANE" wlane; sw_merged wlane 64
+  WT_OTHER="$SWFX/elsewhere/o1"; sw_wt "$WT_OTHER" wother; sw_merged wother 65
+  WT_LOGGED="$SWFX/logged/r1"; sw_wt "$WT_LOGGED" wlogged; sw_merged wlogged 66
+  WT_DET="$SWFX/proj-det"; git -C "$SWP" worktree add -q --detach "$WT_DET" main >/dev/null 2>&1
+  WT_LIVE="$SWFX/proj-live"; sw_wt "$WT_LIVE" wlive; sw_merged wlive 67
+  printf 'p4242\nfcwd\nn%s/sub\n' "$WT_LIVE" > "$SWGH/lsof.extra"
+  WT_UNREAD="$SWFX/proj-unread"; sw_wt "$WT_UNREAD" wunread; sw_merged wunread 68
+  mkdir -p "$WT_UNREAD/.supervisor/logs"; echo secret-log > "$WT_UNREAD/.supervisor/logs/a.jsonl"
+  chmod 000 "$WT_UNREAD/.supervisor/logs/a.jsonl"
+  # worktree-audit.sh's log: the off-sibling path is recorded as created (⇒ plugin-made); so is
+  # the app worktree, so only the .claude/worktrees/ exclusion keeps it (the pin mutation's target).
+  { jq -nc --arg p "$WT_LOGGED" '{ts:"t",event:"created",path:$p,branch:"wlogged",confirmed:true,source:"direct"}'
+    jq -nc --arg p "$WT_APP" '{ts:"t",event:"created",path:$p,branch:"wapp",confirmed:true,source:"direct"}'
+    echo 'legacy garbage line'; } > "$SWP/.supervisor/logs/worktrees.log"
+}
+sw_unread_fix() { chmod 644 "$WT_UNREAD/.supervisor/logs/a.jsonl" 2>/dev/null; return 0; }
+sw_wt_fixture 2
+s0="$(sw_sum)"
+out="$(sw_run)"; rc=$?
+printf '%s\n' "$out" | sed 's/^/    | /'
+sw_shape "(SW2) dry run" "$out" "$rc"
+[ "$s0" = "$(sw_sum)" ] && ok "(SW2) dry run: worktree list + branch -v checksum unchanged" || no "(SW2) dry run changed worktrees/branches"
+[ ! -e "$SWP/.supervisor/salvage" ] && ok "(SW2) dry run salvages nothing (no .supervisor/salvage created)" || no "(SW2) dry run wrote a salvage dir"
+fb="$(printf '%s\n' "$out" | grep -n '^sweep: [a-z-]* branch ' | head -n1 | cut -d: -f1)"
+lw="$(printf '%s\n' "$out" | grep -nE '^sweep: [a-z-]* (worktree|app|lane|other) ' | tail -n1 | cut -d: -f1)"
+[ -n "$fb" ] && [ -n "$lw" ] && [ "$lw" -lt "$fb" ] && ok "(SW2) worktrees are judged before branches" || no "(SW2) order: last worktree line $lw, first branch line $fb"
+sw_line "$out" "sweep: would-remove worktree $WT_CLEAN — branch wclean: PR #61 MERGED, tip == merged head " && ok "(SW2) AC3 clean merged sibling (path with a space) ⇒ would-remove" || no "(SW2) clean line"
+sw_line "$out" "sweep: would-remove worktree $WT_LOGGED — branch wlogged: PR #66" && ok "(SW2) AC3 a worktree-audit.sh 'created' path off the sibling pattern is plugin-made" || no "(SW2) logged line"
+sw_line "$out" "sweep: would-remove branch wclean — PR #61" && ok "(SW2) the branch of a worktree removed this run is a candidate in the same (dry) run" || no "(SW2) wclean branch line"
+sw_line "$out" "sweep: kept worktree $WT_DIRTY — dirty (uncommitted changes on wdirty)" && ok "(SW2) AC3 dirty ⇒ kept" || no "(SW2) dirty line"
+sw_line "$out" "sweep: kept app $WT_APP — clean and merged (branch wapp: PR #63 MERGED" && sw_line "$out" "the app removes its own worktrees" && ok "(SW2) AC5 app-made clean+merged worktree ⇒ kept app, naming clean+merged and that the app removes it" || no "(SW2) app line"
+sw_line "$out" "sweep: kept lane $WT_LANE — use lane-remove" && ok "(SW2) AC5 lane clone path ⇒ kept lane — use lane-remove" || no "(SW2) lane line"
+sw_line "$out" "sweep: kept other $WT_OTHER — origin unknown" && ok "(SW2) unknown origin ⇒ kept other — origin unknown" || no "(SW2) other line"
+sw_line "$out" "sweep: kept worktree $WT_DET — detached HEAD (no branch to prove)" && ok "(SW2) detached HEAD ⇒ kept" || no "(SW2) detached line"
+sw_line "$out" "sweep: kept worktree $WT_LIVE — live process 4242 has its cwd here" && ok "(SW2) AC3 a live process's cwd (below the worktree) ⇒ kept, pid named" || no "(SW2) live line"
+sw_line "$out" "sweep: kept branch wapp — checked out in worktree $WT_APP" && ok "(SW2) the app worktree's branch is held" || no "(SW2) wapp branch line"
+# lsof absent: liveness unverifiable ⇒ every removable worktree is kept under --apply.
+out="$(SW_LSOF="$TOP/no-such-lsof" sw_run --apply)"; rc=$?
+sw_shape "(SW2) --apply, lsof absent" "$out" "$rc"
+sw_line "$out" "sweep: kept worktree $WT_CLEAN — liveness unverifiable (lsof absent or failing)" && [ -d "$WT_CLEAN" ] && sw_has wclean \
+  && ok "(SW2) AC3 lsof absent ⇒ kept (liveness unverifiable), worktree + branch remain" || no "(SW2) lsof absent: $(printf '%s\n' "$out" | grep -F "$WT_CLEAN")"
+: > "$SWGH/lsof.fail"; out="$(sw_run --apply)"; rm -f "$SWGH/lsof.fail"
+sw_line "$out" "sweep: kept worktree $WT_CLEAN — liveness unverifiable (lsof absent or failing)" && [ -d "$WT_CLEAN" ] \
+  && ok "(SW2) AC3 lsof failing ⇒ kept" || no "(SW2) lsof failing: $(printf '%s\n' "$out" | grep -F "$WT_CLEAN")"
+[ ! -e "$SWP/.supervisor/salvage" ] && ok "(SW2) a worktree kept before the salvage step leaves no salvage dir" || no "(SW2) salvage written for a kept worktree"
+out="$(sw_run --apply)"; rc=$?
+printf '%s\n' "$out" | sed 's/^/    | /'
+sw_shape "(SW2) --apply" "$out" "$rc"
+sw_line "$out" "sweep: removed worktree $WT_CLEAN — branch wclean: PR #61" && [ ! -d "$WT_CLEAN" ] && ! git -C "$SWP" worktree list --porcelain | grep -qxF "worktree $WT_CLEAN" \
+  && ok "(SW2) AC3 --apply removes the clean merged plugin worktree (git worktree remove)" || no "(SW2) clean worktree not removed: $(printf '%s\n' "$out" | grep -F "$WT_CLEAN")"
+sw_salv="$(ls -d "$SWP/.supervisor/salvage/proj-clean wt-"* 2>/dev/null | head -n1)"
+sw_ign_ok=1
+for e in .supervisor/logs/s1.jsonl .supervisor/postmortem/results.jsonl .claude/settings.local.json; do
+  if [ -n "$sw_salv" ] && cmp -s "$SWFX/expect/$e" "$sw_salv/ignored/$e"; then :; else sw_ign_ok=0; no "(SW2) AC4 $e not byte-identical under ignored/ (salvage '$sw_salv')"; fi
+done
+[ "$sw_ign_ok" = 1 ] && ok "(SW2) AC4 all 3 gitignored runtime entries are byte-identical under <salvage>/ignored/ (copied before the removal)"
+sw_line "$out" "gitignored salvage verified (ignored: ok 3)" && ok "(SW2) the removed line names the verified verdict" || no "(SW2) verdict not named"
+sw_line "$out" "sweep: removed branch wclean — PR #61" && ! sw_has wclean && ok "(SW2) the freed branch is removed in the same --apply run" || no "(SW2) wclean branch remains"
+sw_line "$out" "sweep: removed worktree $WT_LOGGED" && [ ! -d "$WT_LOGGED" ] && ! sw_has wlogged && ok "(SW2) the log-recorded worktree + its branch are removed" || no "(SW2) logged worktree"
+if [ "$SW_ROOT_UID" = 0 ]; then
+  sw_line "$out" "sweep: kept worktree $WT_UNREAD — gitignored salvage not verified: ignored: failed .supervisor/logs — copy failed" && [ -d "$WT_UNREAD" ] && sw_has wunread \
+    && ok "(SW2) AC4 a forced copy failure keeps the worktree, naming the failed entry" || no "(SW2) unreadable: $(printf '%s\n' "$out" | grep -F "$WT_UNREAD")"
+else echo "  note: running as root — the unreadable-entry copy-failure leg is skipped"; fi
+sw_kept_all=1
+for w in "$WT_APP" "$WT_LIVE" "$WT_DIRTY" "$WT_LANE" "$WT_OTHER" "$WT_DET"; do [ -d "$w" ] || { sw_kept_all=0; no "(SW2) --apply removed $w"; }; done
+[ "$sw_kept_all" = 1 ] && ok "(SW2) AC5 --apply leaves the app, live, dirty, lane, other and detached worktrees in place"
+sw_line "$out" "sweep: kept app $WT_APP — clean and merged" && ok "(SW2) AC5 --apply still reports the app worktree (kept app)" || no "(SW2) app line under --apply"
+sw_unread_fix
+
+# ---- real lsof (when it can see a child's cwd): live ⇒ kept; gone ⇒ removed --
+if command -v lsof >/dev/null 2>&1; then
+  sw_repo 3; WT_RL="$SWFX/proj-rl"; sw_wt "$WT_RL" wrl; sw_merged wrl 70
+  ( cd "$WT_RL" && exec sleep 60 ) & sw_pid=$!
+  if wait_for_cmd 10 sh -c "lsof -a -p $sw_pid -d cwd -F n 2>/dev/null | grep -qxF 'n$WT_RL'"; then
+    out="$(SW_LSOF=lsof sw_run --apply)"
+    sw_line "$out" "sweep: kept worktree $WT_RL — live process $sw_pid has its cwd here" && [ -d "$WT_RL" ] \
+      && ok "(SW3) real lsof: a live process's cwd keeps the worktree (pid named)" || no "(SW3) real lsof live: $(printf '%s\n' "$out" | grep -F "$WT_RL")"
+    kill "$sw_pid" 2>/dev/null; wait "$sw_pid" 2>/dev/null
+    out="$(SW_LSOF=lsof sw_run --apply)"
+    sw_line "$out" "sweep: removed worktree $WT_RL" && [ ! -d "$WT_RL" ] && ok "(SW3) real lsof: once the process is gone the worktree is removed" || no "(SW3) real lsof gone: $(printf '%s\n' "$out" | grep -F "$WT_RL")"
+  else
+    kill "$sw_pid" 2>/dev/null; wait "$sw_pid" 2>/dev/null
+    echo "  note: this lsof cannot see a child's cwd — real-lsof leg skipped (the stubbed legs above cover the logic)"
+  fi
+else
+  echo "  note: lsof absent — real-lsof leg skipped"
+fi
+
+# ---- closeout step 3a: the same --ignored gate (AC4's closeout half) ---------
+closeout_fixture 240
+mkdir -p "$FX/wt-pr/.supervisor/logs"; printf '{"event":"x"}\n' > "$FX/wt-pr/.supervisor/logs/x.jsonl"
+cp "$FX/wt-pr/.supervisor/logs/x.jsonl" "$FX/exp-x.jsonl"; cp "$FX/wt-pr/.supervisor/postmortem/results.jsonl" "$FX/exp-pm.jsonl"
+out="$(run_closeout)"
+co_salv="$(ls -d "$P/.supervisor/salvage/wt-pr-"* 2>/dev/null | head -n1)"
+[ ! -d "$FX/wt-pr" ] && [ -n "$co_salv" ] && cmp -s "$FX/exp-x.jsonl" "$co_salv/ignored/.supervisor/logs/x.jsonl" \
+  && cmp -s "$FX/exp-pm.jsonl" "$co_salv/ignored/.supervisor/postmortem/results.jsonl" \
+  && ok "(SW4) closeout 3a: 2 gitignored runtime entries salvaged byte-identical, then the worktree removed" || no "(SW4) closeout salvage: salv='$co_salv' out=$(printf '%s' "$out" | grep -F worktree)"
+sw_co_unread() { # <fixture-n> <helpers-dir> — closeout with an unreadable gitignored log in wt-pr
+  closeout_fixture "$1"
+  mkdir -p "$FX/wt-pr/.supervisor/logs"; echo log > "$FX/wt-pr/.supervisor/logs/a.jsonl"; chmod 000 "$FX/wt-pr/.supervisor/logs/a.jsonl"
+  out="$(cd "$P" && bash "$2/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL")"
+  chmod 644 "$FX/wt-pr/.supervisor/logs/a.jsonl" 2>/dev/null
+}
+if [ "$SW_ROOT_UID" = 0 ]; then
+  sw_co_unread 241 "$SPYD"
+  sw_line "$out" "closeout: skipped — kept worktree $FX/wt-pr (gitignored salvage not verified: ignored: failed .supervisor/logs — copy failed)" && [ -d "$FX/wt-pr" ] \
+    && ok "(SW4) closeout 3a: a forced copy failure keeps the worktree in the 'skipped — kept worktree …' form, naming the entry" || no "(SW4) closeout unread: $(printf '%s' "$out" | grep -F worktree)"
+  printf '%s\n' "$out" | bash "$H" closeout-classify --run "$RUN_ID" --item "$REQ" --pr "$PRURL" | grep -q "^leftover	.*	worktree	" \
+    && ok "(SW4) closeout-classify still reads that kept line as a leftover" || no "(SW4) closeout-classify: $(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$RUN_ID" --item "$REQ" --pr "$PRURL" | tr '\t\n' ' |')"
+fi
+
+# ---- static: nothing runs --apply unattended; no --force / rm -rf in sweep_run --
+sw_body="$(awk '/^sweep_run\(\) \{/{s=1} s{print} s&&/^}/{exit}' "$T")"
+[ -n "$sw_body" ] && ! printf '%s\n' "$sw_body" | grep -v '^[[:space:]]*#' | grep -qE 'worktree remove[^"]*--force|rm -rf' \
+  && ok "(SW5) sweep_run never runs git worktree remove --force or rm -rf" || no "(SW5) sweep_run body has --force / rm -rf (or was not found)"
+sw_calls="$(grep -n 'sweep_run --' "$T" | grep -v '^[0-9]*:[[:space:]]*#')"
+[ -n "$sw_calls" ] && ! printf '%s\n' "$sw_calls" | grep -q -- '--apply' \
+  && ok "(SW5) every in-script sweep_run call is a dry run (no --apply): $(printf '%s\n' "$sw_calls" | wc -l | tr -d ' ') call(s)" || no "(SW5) sweep_run calls: $sw_calls"
+
+# ---- pin mutations (scratch copies; each must turn its leg red) ---------------
+sw_mutant() { # <name> <sed program> → SW_MD=$TOP/swm-<name> (every script copied, automate-trail.sh mutated)
+  SW_MD="$TOP/swm-$1"; mkdir -p "$SW_MD"; cp "$HERE"/*.sh "$HERE"/*.py "$SW_MD/"; cp -R "$HERE/automate-helpers.d" "$SW_MD/"
+  sed "$2" "$T" > "$SW_MD/automate-trail.sh"
+  if cmp -s "$T" "$SW_MD/automate-trail.sh" || ! bash -n "$SW_MD/automate-trail.sh" 2>/dev/null; then no "(SWM) mutant $1 not built (sed matched nothing or broke the syntax)"; return 1; fi
+  return 0
+}
+if sw_mutant tip '/\[ "\$tip" != "\$oid" \]/d'; then
+  sw_branch_fixture 5
+  out="$(SW_T="$SW_MD/automate-trail.sh" sw_run)"
+  sw_line "$out" "sweep: would-remove branch moved — " && ok "(SWM) control: without the tip == headRefOid comparison the moved-tip leg is red (moved reads would-remove)" || no "(SWM) tip mutant did not discriminate: $(printf '%s\n' "$out" | grep ' moved ')"
+fi
+if sw_mutant app '/"\$SW_PRI\/\.claude\/worktrees\/"\*) kind=app ;;/d'; then
+  sw_wt_fixture 6
+  out="$(SW_T="$SW_MD/automate-trail.sh" sw_run --apply)"
+  [ ! -d "$WT_APP" ] && ok "(SWM) control: without the .claude/worktrees/ exclusion --apply removes the app worktree (the app leg is red)" || no "(SWM) app mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "$WT_APP")"
+  sw_unread_fix
+fi
+if [ "$SW_ROOT_UID" = 0 ] && sw_mutant verdict 's/case "\$sw_verdict" in "ignored: ok "\*) ;;/case "$sw_verdict" in *) ;;/'; then
+  sw_wt_fixture 7
+  out="$(SW_T="$SW_MD/automate-trail.sh" sw_run --apply)"
+  [ ! -d "$WT_UNREAD" ] && ok "(SWM) control: a sweep that ignores the salvage verdict removes the copy-failure worktree (that leg is red)" || no "(SWM) verdict mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "$WT_UNREAD")"
+  sw_unread_fix
+fi
+if [ "$SW_ROOT_UID" = 0 ] && sw_mutant coverdict 's/case "\$co_verdict" in "ignored: ok "\*) co_ign=ok ;; esac/co_ign=ok/'; then
+  sw_co_unread 242 "$SW_MD"
+  [ ! -d "$FX/wt-pr" ] && ok "(SWM) control: a closeout 3a that ignores the salvage verdict removes the copy-failure worktree (that leg is red)" || no "(SWM) closeout verdict mutant did not discriminate: $(printf '%s' "$out" | grep -F worktree)"
+fi
 
 if [ "$pass" != "$_tally_ok" ] || [ "$fail" != "$_tally_no" ]; then
   echo "  FAIL: summary counter clobbered — pass=$pass vs $_tally_ok ok lines, fail=$fail vs $_tally_no FAIL lines (a leg reused pass/fail as a variable)"

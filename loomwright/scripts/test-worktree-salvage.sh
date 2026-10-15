@@ -79,6 +79,13 @@
 #         its own, it names a real UNMODIFIED file — the only observable trace of an
 #         unconsumed origin field; z.txt alone does not discriminate); in-suite mutant
 #         drops the origin read ⇒ AC-14 RED (phantom appears), AC-1 GREEN
+#   AC-16 (af/39a) `--ignored`: a CLEAN tree holding `.supervisor/logs/`,
+#         `.supervisor/postmortem/` and `.claude/settings.local.json` ⇒ salvage dir
+#         first, `ignored: ok 3` LAST, each entry cmp-identical under ignored/<rel>,
+#         README section; without the flag the same tree stays silent (default
+#         unchanged); no entry ⇒ exactly `ignored: ok 0`, no directory; a dirty tree
+#         gets both captures; an unreadable entry / unwritable dest ⇒ `ignored: failed
+#         <rel> — <reason>`, exit 0; pin mutation (the copy deleted) ⇒ AC-16a RED
 #
 # Bash-3.2/BSD-safe: no `timeout`, no `${var//…}` on large strings, `"$@"` under
 # `set -u`. The Bash tool's shell is zsh — run this as `bash test-worktree-salvage.sh`.
@@ -922,6 +929,72 @@ if [ "$S_RC" -eq 0 ] && [ -n "$SDIR" ] && [ -f "$SDIR/untracked/new/dir/f.txt" ]
   ok "AC-15: real untracked file salvaged, .supervisor/guard/ never appears anywhere under the salvage dir"
 else
   no "AC-15 (rc=$S_RC sdir='$SDIR' f_txt=$([ -f "$SDIR/untracked/new/dir/f.txt" ] && echo present || echo absent) guard_hits='$(find "$SDIR" -iname '*guard*' 2>/dev/null)')"
+fi
+
+echo "== AC-16. (af/39a) --ignored: gitignored runtime entries copied byte-identical; verdict line last; default unchanged =="
+# ign_wt — fresh_wt with `.claude/` ignored too (info/exclude lives in the common dir, so it
+# covers the worktree) and the three runtime entries present; expected copies kept in FX_D/exp-ign.
+ign_wt() {
+  fresh_wt "${1:-wt}"
+  printf '.claude/\n' >> "$FX_REPO/.git/info/exclude"
+  mkdir -p "$FX_WT/.supervisor/logs" "$FX_WT/.supervisor/postmortem" "$FX_WT/.claude"
+  printf '{"event":"session_start"}\n' > "$FX_WT/.supervisor/logs/s1.jsonl"
+  printf '{"automate_key":"k"}\n' > "$FX_WT/.supervisor/postmortem/results.jsonl"
+  printf '{"permissions":{"allow":[]}}\n' > "$FX_WT/.claude/settings.local.json"
+  mkdir -p "$FX_D/exp-ign"; cp -pR "$FX_WT/.supervisor" "$FX_WT/.claude" "$FX_D/exp-ign/"
+}
+# check_ac16a <script> — clean tree + 3 entries: first stdout line the salvage dir, LAST line
+# `ignored: ok 3`, every entry cmp-identical under <dir>/ignored/<rel>, exit 0.
+check_ac16a() {
+  ign_wt ac16a
+  run_salvage "$1" "$FX_WT" --dest "$FX_D/d16a" --ignored --reason "AC-16a"
+  local dir last e
+  dir="$(printf '%s\n' "$S_OUT" | head -n1)"; last="$(printf '%s\n' "$S_OUT" | tail -n1)"
+  [ "$S_RC" -eq 0 ] && [ -d "$dir" ] && [ "$last" = "ignored: ok 3" ] || return 1
+  for e in .supervisor/logs/s1.jsonl .supervisor/postmortem/results.jsonl .claude/settings.local.json; do
+    cmp -s "$FX_D/exp-ign/$e" "$dir/ignored/$e" || return 1
+  done
+  return 0
+}
+if check_ac16a "$SALVAGE"; then ok "AC-16a: clean tree, 3 gitignored entries ⇒ salvage dir first, 'ignored: ok 3' last, each byte-identical under ignored/"
+else no "AC-16a (rc=$S_RC out='$S_OUT' err='$S_ERR')"; fi
+DIR16="$(printf '%s\n' "$S_OUT" | head -n1)"
+grep -q '^## Gitignored runtime content (--ignored)' "$DIR16/README.md" 2>/dev/null && grep -qF 'Verdict: ignored: ok 3' "$DIR16/README.md" \
+  && ok "AC-16a: README names the --ignored section and its verdict" || no "AC-16a README: $(cat "$DIR16/README.md" 2>/dev/null | tail -n4 | tr '\n' '|')"
+run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d16c"
+[ "$S_RC" -eq 0 ] && [ -z "$S_OUT" ] && [ -z "$S_ERR" ] && [ ! -e "$FX_D/d16c" ] \
+  && ok "AC-16c: WITHOUT --ignored the same tree is clean — silent, no directory, exit 0 (default byte-unchanged)" || no "AC-16c (out='$S_OUT' err='$S_ERR')"
+fresh_wt ac16b
+run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d16b" --ignored
+[ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored: ok 0" ] && [ -z "$S_ERR" ] && [ ! -e "$FX_D/d16b" ] \
+  && ok "AC-16b: clean tree, no entry present ⇒ stdout exactly 'ignored: ok 0', no directory" || no "AC-16b (out='$S_OUT' err='$S_ERR')"
+ign_wt ac16d; dirty_wt "$FX_WT"; rm -f "$FX_WT/.claude/settings.local.json"
+run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d16d" --ignored
+DIR16="$(printf '%s\n' "$S_OUT" | head -n1)"
+[ "$S_RC" -eq 0 ] && [ "$(printf '%s\n' "$S_OUT" | tail -n1)" = "ignored: ok 2" ] && cmp -s "$FX_D/exp-a.txt" "$DIR16/modified/a.txt" \
+  && cmp -s "$FX_D/exp-ign/.supervisor/logs/s1.jsonl" "$DIR16/ignored/.supervisor/logs/s1.jsonl" && [ ! -e "$DIR16/ignored/.claude" ] \
+  && ok "AC-16d: dirty tree ⇒ the normal capture AND the 2 present entries; an absent entry is not counted" || no "AC-16d (out='$S_OUT')"
+if [ "$(id -u)" -ne 0 ]; then
+  ign_wt ac16e; chmod 000 "$FX_WT/.supervisor/logs/s1.jsonl"
+  run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d16e" --ignored
+  chmod 644 "$FX_WT/.supervisor/logs/s1.jsonl"
+  [ "$S_RC" -eq 0 ] && [ "$(printf '%s\n' "$S_OUT" | tail -n1)" = "ignored: failed .supervisor/logs — copy failed" ] \
+    && ok "AC-16e: an entry that cannot be copied ⇒ last line 'ignored: failed .supervisor/logs — copy failed', exit 0" || no "AC-16e (rc=$S_RC out='$S_OUT')"
+  ign_wt ac16f; mkdir -p "$FX_D/ro16"; chmod 0555 "$FX_D/ro16"
+  run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/ro16/salvage" --ignored
+  chmod 0755 "$FX_D/ro16"
+  [ "$S_RC" -eq 0 ] && [ "$S_ERR_LINES" -eq 1 ] && [ "$S_OUT" = "ignored: failed .supervisor/logs — cannot create destination $FX_D/ro16/salvage" ] \
+    && ok "AC-16f: unwritable destination ⇒ verdict names the first pending entry, one stderr line, exit 0" || no "AC-16f (rc=$S_RC out='$S_OUT' err='$S_ERR')"
+else
+  echo "  note: running as root — AC-16e/f (unreadable / unwritable) skipped"
+fi
+# AC-16g pin mutation: the copy of the ignored entries deleted ⇒ AC-16a RED.
+MUT16="$SCRATCH/mut16/worktree-salvage.sh"; mkdir -p "$SCRATCH/mut16"
+sed 's/! cp -pR "\$WT_TOP\/\$IGN_REL" "\$IGN_DST" 2>\/dev\/null/! true/' "$SALVAGE" > "$MUT16"
+if [ -s "$MUT16" ] && ! cmp -s "$MUT16" "$SALVAGE" && bash -n "$MUT16" 2>/dev/null; then
+  if check_ac16a "$MUT16"; then no "AC-16g: AC-16a survived the copy-deleted mutant (vacuous)"; else ok "AC-16g: AC-16a RED against the mutant without the ignored-entry copy ($(printf '%s\n' "$S_OUT" | tail -n1))"; fi
+else
+  no "AC-16g gate: mutant not usable (empty, identical, or syntax error)"
 fi
 
 echo

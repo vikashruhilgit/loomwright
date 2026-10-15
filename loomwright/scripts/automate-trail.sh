@@ -29,7 +29,8 @@
 #     open does it run closeout's step-4 sync (_sync_primary: re-stage the
 #     landed recorded trail blobs, `git checkout <base>`, `git pull --ff-only`).
 #   * `closeout` removes ONLY this PR's head-branch worktrees (HEAD == the PR's
-#     headRefOid AND clean after `worktree-salvage.sh`) and that local branch
+#     headRefOid AND clean after `worktree-salvage.sh` AND its gitignored runtime
+#     content salvaged + verified — `--ignored` verdict `ignored: ok`) and that local branch
 #     (`git branch -D`, only when its tip == the PR's headRefOid), switches the primary to the base branch
 #     and `git pull --ff-only`s it (first re-staging the recorded trail blobs
 #     that landed upstream — index only), appends the requirement stamp, checks the
@@ -38,11 +39,19 @@
 #     rewrites ONLY a closed-out run's `## Status: paused` → `done` and its
 #     `## Current` `pause_reason` → `null` (`current-set` on a staged copy, then
 #     one validated runfile-write), appends
-#     two Progress lines, calls trail-pr `--reason done` and — branch mode off —
-#     trail-unstage for that run. Nothing else.
+#     two Progress lines, calls trail-pr `--reason done`, appends ONE
+#     `<ts> sweep (dry run): <summary>` Progress line (a DRY sweep — never
+#     `--apply`) and — branch mode off — trail-unstage for that run. Nothing else.
 #   * `closeout-others` runs `closeout` (and, branch mode off, `trail-unstage`)
 #     for OTHER runs' merged in-flight items and appends ONE record line to the
 #     --record run file. Nothing else.
+#   * `sweep` (dry run by default) is read-only; ONLY with `--apply` it runs
+#     `git worktree remove` (never `--force`) on a plugin-made linked worktree and
+#     `git branch -D` on a local branch, each ONLY when closeout's own squash-safe
+#     rule holds (newest PR MERGED AND tip == its headRefOid), the worktree is
+#     clean, no live process has its cwd there, and `worktree-salvage.sh
+#     --ignored` printed `ignored: ok`. App-made / lane / unknown-origin worktrees
+#     are reported, never touched. Nothing else.
 #   * Neither subcommand merges anything (the sole merge executor is `automate-helpers.sh
 #     gate-eval`, SKILL §11), trail-pr never calls `run-lock.sh` (closeout takes it around steps 3–7);
 #     neither runs `git reset`,
@@ -100,6 +109,12 @@
 #       trail PR; synced — <base> at <sha>` | `…; sync skipped — <reason>`. Run
 #       at PICK after RECONCILE, before trail-unstage: the single-open-PR
 #       invariant counts this run's own trail PR (SKILL §8); fail-CLOSED read.
+#   sweep [--apply] [--root <checkout>]
+#       One `sweep: would-remove|removed|kept <kind> <path-or-branch> — <reason>`
+#       line per candidate (kinds: worktree, branch, app, lane, other; worktrees
+#       first), then exactly ONE `sweep: summary — …` line, last. Dry run by
+#       default (changes nothing); `--apply` removes only what the dry run reports
+#       `would-remove`. Always exit 0. See sweep_run below.
 #
 # CHECKOUT CONTRACT (decision 4 of the post-park-lifecycle brief, proved by the
 # post-merge-pull legs of test-automate-trail.sh): after a successful push, AND
@@ -135,12 +150,14 @@
 #
 # Always exits 0 (a runtime side-effect emitter — CLAUDE.md §"Failure-Mode
 # Invariants"). bash 3.2 / BSD-userland safe. Seams: LOOMWRIGHT_GH_BIN,
-# LOOMWRIGHT_JQ_BIN (same as automate-helpers.sh).
+# LOOMWRIGHT_JQ_BIN (same as automate-helpers.sh), LOOMWRIGHT_LSOF_BIN (sweep's
+# liveness read).
 
 set -uo pipefail
 
 GH="${LOOMWRIGHT_GH_BIN:-gh}"
 JQ="${LOOMWRIGHT_JQ_BIN:-jq}"
+LSOF="${LOOMWRIGHT_LSOF_BIN:-lsof}"
 HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 
 # --------------------------------------------------------------------------- #
@@ -1428,7 +1445,7 @@ closeout() {
   [ -n "$base_branch" ] || base_branch="main"
 
   # ---- 3a. worktrees on the PR's head branch (never the primary; runs 1st) --
-  local wt_line="" wt_list wt salv dirty wrem="" wkeep=""
+  local wt_line="" wt_list wt salv dirty wrem="" wkeep="" co_verdict co_ign
   if [ -z "$head_ref" ] || [ -z "$head_oid" ]; then
     wt_line="$S head branch unresolved (gh pr view headRefName/headRefOid failed)"; head_ref=""
   elif [ "$head_ref" = "$base_branch" ]; then
@@ -1449,12 +1466,23 @@ closeout() {
         wkeep="${wkeep:+$wkeep, }$wt (tip ${wtip:0:12} != merged head ${head_oid:0:12})"
         continue
       fi
-      salv="$(bash "$HERE/worktree-salvage.sh" "$wt" --reason "automate closeout" 2>/dev/null)"
+      # --ignored (af/39a): gitignored runtime content (`.supervisor/logs/`,
+      # `.supervisor/postmortem/`, `.claude/settings.local.json`) is copied and
+      # verified too; ANY last line but `ignored: ok <n>` — a failed entry, or no
+      # verdict at all — keeps the worktree (fail closed on a fail-safe emitter).
+      salv="$(bash "$HERE/worktree-salvage.sh" "$wt" --reason "automate closeout" --ignored 2>/dev/null)"
+      co_verdict="$(printf '%s\n' "$salv" | tail -n1)"
+      salv="$(printf '%s\n' "$salv" | head -n1)"
+      case "$salv" in "ignored: "*) salv="" ;; esac
       dirty="$(git -C "$wt" status --porcelain 2>/dev/null)"
-      if [ -z "$dirty" ] && git worktree remove "$wt" >/dev/null 2>&1; then
-        wrem="${wrem:+$wrem, }$wt"
-      elif [ -n "$dirty" ]; then
+      co_ign=failed
+      case "$co_verdict" in "ignored: ok "*) co_ign=ok ;; esac
+      if [ -n "$dirty" ]; then
         wkeep="${wkeep:+$wkeep, }$wt still dirty after salvage${salv:+ (salvaged to $salv)}"
+      elif [ "$co_ign" != ok ]; then
+        wkeep="${wkeep:+$wkeep, }$wt (gitignored salvage not verified: ${co_verdict:-no verdict})"
+      elif git worktree remove "$wt" >/dev/null 2>&1; then
+        wrem="${wrem:+$wrem, }$wt"
       else
         wkeep="${wkeep:+$wkeep, }$wt (git worktree remove refused)"
       fi
@@ -1622,7 +1650,8 @@ PROGRESS
 # line authored by `current-set --pause-reason null` on the staged copy; every
 # other byte unchanged); `progress-append "<ts> auto-finalized: queue empty after
 # closeout"`; `trail-pr <runfile> --reason done` (the SAME call the Queue-resolved
-# termination makes) and its line appended; branch mode OFF only, `trail-unstage
+# termination makes) and its line appended; ONE `<ts> sweep (dry run): <summary>`
+# Progress line (sweep_run, dry — af/39a); branch mode OFF only, `trail-unstage
 # <runfile>` (this is usually a FOREIGN run finalized from the current run's RESUME:
 # its staged trail blobs would ride into the current run's next commit and make
 # `_sync_primary` see a dirty index); the lock released in a trap.
@@ -1740,6 +1769,13 @@ finalize_empty() {
   [ -n "$l" ] || l="trail-pr: skipped — no output"
   echo "$l"
   bash "$HLP" progress-append "$rf_rel" "$ts $l" >/dev/null 2>&1
+  # af/39a: ONE dry-run sweep summary per run end, appended AFTER the trail line —
+  # never inside the staged runfile rewrite above, never `--apply`. A subshell, so
+  # the sweep can neither move this function's cwd nor touch its EXIT trap.
+  local sw
+  sw="$( (sweep_run --root "$root") 2>/dev/null | tail -n1)"
+  case "$sw" in "sweep: summary — "*) ;; *) sw="sweep: summary — skipped: no output" ;; esac
+  bash "$HLP" progress-append "$rf_rel" "$ts sweep (dry run): $sw" >/dev/null 2>&1
   if [ "$(_branch_mode "$root")" = "off" ]; then
     l="$(bash "$HLP" trail-unstage "$rf_abs" 2>/dev/null | tail -n1)"
     echo "${l:-trail-unstage: skipped — no output}"
@@ -1846,6 +1882,287 @@ EOF
 }
 
 # --------------------------------------------------------------------------- #
+# sweep (SKILL §1.5 — af/39a: squash-safe sweep of plugin leftovers)
+# --------------------------------------------------------------------------- #
+# sweep [--apply] [--root <checkout>] — reports (dry run, the default: NOTHING is
+# written, removed or salvaged) and, ONLY with `--apply`, removes exactly the
+# plugin-made linked worktrees and local branches that are provably done under
+# CLOSEOUT'S OWN squash-safe rule — no new heuristic: the branch's NEWEST PR
+# (`gh pr list --state all --head <B> --json number,state,headRefOid,mergedAt`,
+# highest number) is MERGED AND the local tip equals that PR's headRefOid. Squash
+# merges hide a merged branch from ancestry, so ancestry is never consulted.
+#
+# <checkout> (default $PWD) resolves to its PRIMARY checkout (the parent of
+# `git rev-parse --git-common-dir`). WORKTREES are judged first, then BRANCHES, so a
+# branch checked out in a worktree removed (dry run: that would be removed) this
+# run is a candidate in the same run — the dry run reports what --apply would do.
+#
+# Worktree origin (`git worktree list --porcelain`, never the primary):
+#   <primary>/.claude/worktrees/**   app    — reported only; the app removes them
+#   <primary>-lanes/**               lane   — `kept lane <path> — use lane-remove`
+#   a `created` path in <primary>/.supervisor/logs/worktrees.log (worktree-audit.sh),
+#   or a `<parent>/<project>-<suffix>` sibling of the primary
+#                                    worktree — removable under the rule below
+#   anything else                    other  — `kept other <path> — origin unknown`
+# A plugin-made worktree is removed (`git worktree remove`, NEVER --force, never
+# rm -rf) only when ALL hold: not locked/prunable, a branch (detached ⇒ kept: no
+# branch to prove) that passes the rule with the WORKTREE's HEAD as the tip, clean
+# (`git status --porcelain` empty — checked before the salvage so a dirty tree is
+# kept without piling salvage copies, and again after it), no live process has its
+# cwd there (`lsof -a -d cwd`, prefix match; lsof absent or failing ⇒ kept, liveness
+# unverifiable — never a kill), and `worktree-salvage.sh --ignored` printed
+# `ignored: ok <n>` as its last line (anything else, or no line ⇒ kept naming it).
+#
+# Branches (refs/heads/*): the primary's current branch, the base branch
+# (origin/HEAD, else main) and a branch checked out in any worktree NOT removed
+# this run are never candidates (each a `kept branch` line, no gh call). The rest:
+# no PR / newest OPEN / CLOSED unmerged / tip moved after the merge / gh read
+# failed ⇒ `kept branch <B> — <that case>`; the rule ⇒ `would-remove` (dry) or
+# `git branch -D` ⇒ `removed`.
+#
+# Output: one `sweep: would-remove|removed|kept <kind> <path-or-branch> — <reason>`
+# line per candidate, then exactly ONE `sweep: summary — …` line, last. Always
+# exit 0 (fail-SAFE emitter; every read failure fails toward KEEPING). Cost: one
+# gh call per examined branch — dry runs only at run end (finalize-empty).
+SW_APPLY=0
+SW_ACT=0
+SW_KEPT=0
+SW_LIVE_STATE=""
+SW_LIVE=""
+
+# _sw_line <act|kept> <kind> <subject> <reason> — one candidate line + the tally.
+_sw_line() {
+  local verb=kept
+  if [ "$1" = act ]; then
+    if [ "$SW_APPLY" -eq 1 ]; then verb=removed; else verb=would-remove; fi
+    SW_ACT=$((SW_ACT + 1))
+  else
+    SW_KEPT=$((SW_KEPT + 1))
+  fi
+  printf 'sweep: %s %s %s — %s\n' "$verb" "$2" "$3" "$4"
+}
+
+# _sw_rule <branch> <tip> — closeout's squash-safe rule. Sets SW_RULE (pass|fail)
+# and SW_WHY (the reason text). Every read failure is a `fail` naming the case.
+_sw_rule() {
+  local b="$1" tip="$2" js rc newest num="" state="" oid=""
+  SW_RULE=fail
+  js="$(cd "$SW_PRI" 2>/dev/null && "$GH" pr list --state all --head "$b" --json number,state,headRefOid,mergedAt 2>/dev/null)"; rc=$?
+  if [ "$rc" -ne 0 ]; then SW_WHY="gh read failed (pr list --head, rc $rc)"; return 0; fi
+  newest="$(printf '%s' "$js" | "$JQ" -r 'if type != "array" then error("not an array")
+      elif length == 0 then "none"
+      else (max_by(.number) | "\(.number)\u001f\(.state)\u001f\(.headRefOid // "")") end' 2>/dev/null)" || newest=""
+  if [ -z "$newest" ]; then SW_WHY="gh read failed (unparseable pr list)"; return 0; fi
+  if [ "$newest" = none ]; then SW_WHY="no PR for this branch"; return 0; fi
+  IFS=$'\037' read -r num state oid <<SWREC
+$newest
+SWREC
+  case "$state" in
+    MERGED) ;;
+    OPEN) SW_WHY="newest PR #$num is OPEN"; return 0 ;;
+    CLOSED) SW_WHY="newest PR #$num is CLOSED unmerged"; return 0 ;;
+    *) SW_WHY="newest PR #$num state ${state:-unknown}"; return 0 ;;
+  esac
+  if [ -z "$oid" ] || [ -z "$tip" ]; then SW_WHY="PR #$num merged but headRefOid/tip unreadable"; return 0; fi
+  if [ "$tip" != "$oid" ]; then SW_WHY="tip ${tip:0:12} moved after merge (PR #$num merged head ${oid:0:12})"; return 0; fi
+  SW_RULE=pass
+  SW_WHY="PR #$num MERGED, tip == merged head ${oid:0:12}"
+  return 0
+}
+
+# _sw_live_read — reads every process's cwd ONCE per sweep, lazily (only a
+# removable candidate needs it), in the CURRENT shell so the cache survives.
+# lsof absent, failing or printing nothing ⇒ SW_LIVE_STATE=fail (liveness
+# unverifiable ⇒ every candidate is kept).
+_sw_live_read() {
+  [ -z "$SW_LIVE_STATE" ] || return 0
+  SW_LIVE_STATE=fail
+  if command -v "$LSOF" >/dev/null 2>&1; then
+    SW_LIVE="$("$LSOF" -a -d cwd -F pn 2>/dev/null)" && [ -n "$SW_LIVE" ] && SW_LIVE_STATE=ok
+  fi
+  return 0
+}
+
+# _sw_live <path> [<canonical path>] — prints the pid of a live process whose cwd
+# is <path> or below; returns 0 live, 1 not live, 2 unverifiable. Call
+# _sw_live_read first (this usually runs in a command substitution).
+_sw_live() {
+  [ "$SW_LIVE_STATE" = ok ] || return 2
+  local pid
+  pid="$(printf '%s\n' "$SW_LIVE" | SW_A="$1" SW_B="${2:-$1}" awk '
+    BEGIN { a = ENVIRON["SW_A"]; b = ENVIRON["SW_B"] }
+    /^p/ { pid = substr($0, 2); next }
+    /^n/ { n = substr($0, 2)
+           if (n == a || n == b || index(n, a "/") == 1 || index(n, b "/") == 1) { print pid; exit } }')"
+  [ -n "$pid" ] || return 1
+  printf '%s' "$pid"
+  return 0
+}
+
+# _sw_plugin_made <path> <canonical> — recorded as `created` in worktree-audit.sh's
+# log, or a `<parent>/<project>-<suffix>` sibling of the primary.
+_sw_plugin_made() {
+  local log="$SW_PRI/.supervisor/logs/worktrees.log" hit
+  if [ -r "$log" ]; then
+    hit="$("$JQ" -n -R -r --arg a "$1" --arg b "$2" \
+      'any(inputs | fromjson? | select(type == "object" and .event == "created" and (.path | type) == "string"); .path == $a or .path == $b)' \
+      < "$log" 2>/dev/null)"
+    [ "$hit" = true ] && return 0
+  fi
+  [ "$(dirname "$2")" = "$(dirname "$SW_PRI")" ] || return 1
+  case "$(basename "$2")" in "$(basename "$SW_PRI")"-?*) return 0 ;; esac
+  return 1
+}
+
+sweep_run() {
+  local root="" bad=""
+  SW_APPLY=0; SW_ACT=0; SW_KEPT=0; SW_LIVE_STATE=""; SW_LIVE=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --apply) SW_APPLY=1; shift ;;
+      --root) root="${2:-}"; shift 2 || shift ;;
+      *) [ -n "$bad" ] || bad="$1"; shift ;;
+    esac
+  done
+  local S="sweep: summary — skipped:"
+  if [ -n "$bad" ]; then echo "$S unknown argument $bad (nothing examined)"; return 0; fi
+  if ! command -v git >/dev/null 2>&1; then echo "$S git unavailable"; return 0; fi
+  [ -n "$root" ] || root="$PWD"
+  local common
+  common="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null)"
+  if [ -z "$common" ]; then echo "$S not a git checkout ($root)"; return 0; fi
+  SW_PRI="$(cd "$root" 2>/dev/null && cd "$common/.." 2>/dev/null && pwd -P)"
+  if [ -z "$SW_PRI" ] || [ ! -d "$SW_PRI" ]; then echo "$S cannot resolve the primary checkout"; return 0; fi
+
+  local base cur
+  base="$(git -C "$SW_PRI" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"
+  base="${base#origin/}"; [ -n "$base" ] || base="main"
+  cur="$(git -C "$SW_PRI" symbolic-ref -q --short HEAD 2>/dev/null)"
+
+  # ---- worktrees (judged first) -----------------------------------------------
+  local wts
+  wts="$(git -C "$SW_PRI" worktree list --porcelain 2>/dev/null | awk '
+    function flush() { if (n > 1 && path != "") printf "%s\037%s\037%s\037%s\n", path, head, br, fl
+                       path = ""; head = ""; br = ""; fl = "" }
+    /^worktree / { flush(); n++; path = substr($0, 10); next }
+    /^HEAD /     { head = substr($0, 6); next }
+    /^branch /   { br = substr($0, 8); sub(/^refs\/heads\//, "", br); next }
+    /^detached/  { fl = fl "detached,"; next }
+    /^locked/    { fl = fl "locked,"; next }
+    /^prunable/  { fl = fl "prunable,"; next }
+    END { flush() }')"
+  local nwt=0 nbr=0 held="" p head br fl cp kind v salv sw_verdict dirty pid lrc
+  while IFS=$'\037' read -r p head br fl; do
+    [ -n "$p" ] || continue
+    cp="$(cd "$p" 2>/dev/null && pwd -P)"; [ -n "$cp" ] || cp="$p"
+    if [ "$cp" = "$SW_PRI" ]; then continue; fi
+    nwt=$((nwt + 1))
+    case "$cp/" in
+      "$SW_PRI/.claude/worktrees/"*) kind=app ;;
+      "$SW_PRI-lanes/"*) kind=lane ;;
+      *) if _sw_plugin_made "$p" "$cp"; then kind=worktree; else kind=other; fi ;;
+    esac
+    # v = the keep reason (empty ⇒ still removable). A worktree that is not
+    # removed keeps its branch out of the branch phase (`held`).
+    v=""
+    case "$kind" in
+      lane)  v="use lane-remove" ;;
+      other) v="origin unknown" ;;
+    esac
+    if [ -z "$v" ]; then
+      case "$fl" in
+        *prunable*) v="directory missing (prunable — git worktree prune clears it)" ;;
+        *locked*) v="locked" ;;
+      esac
+    fi
+    if [ -z "$v" ] && [ ! -d "$p" ]; then v="directory missing"; fi
+    if [ -z "$v" ] && { [ -z "$br" ] || case "$fl" in *detached*) true ;; *) false ;; esac; }; then
+      v="detached HEAD (no branch to prove)"
+    fi
+    if [ -z "$v" ] && [ "$br" = "$base" ]; then v="on the base branch $base"; fi
+    if [ -z "$v" ]; then
+      _sw_rule "$br" "$head"
+      [ "$SW_RULE" = pass ] || v="branch $br: $SW_WHY"
+    fi
+    if [ -z "$v" ]; then
+      dirty="$(git -C "$p" status --porcelain 2>/dev/null)" || dirty="(git status failed)"
+      [ -z "$dirty" ] || v="dirty (uncommitted changes on $br)"
+    fi
+    if [ "$kind" = app ]; then
+      if [ -z "$v" ]; then
+        v="clean and merged (branch $br: $SW_WHY) — left in place; the app removes its own worktrees"
+      else
+        v="$v — left in place; the app removes its own worktrees"
+      fi
+      _sw_line kept app "$p" "$v"
+      [ -z "$br" ] || held="$held$br"$'\037'"$p"$'\n'
+      continue
+    fi
+    if [ -z "$v" ]; then
+      _sw_live_read
+      pid="$(_sw_live "$p" "$cp")"; lrc=$?
+      if [ "$lrc" -eq 0 ]; then v="live process $pid has its cwd here"
+      elif [ "$lrc" -eq 2 ]; then v="liveness unverifiable (lsof absent or failing)"
+      fi
+    fi
+    if [ -n "$v" ]; then
+      _sw_line kept "$kind" "$p" "$v"
+      [ -z "$br" ] || held="$held$br"$'\037'"$p"$'\n'
+      continue
+    fi
+    if [ "$SW_APPLY" -ne 1 ]; then
+      _sw_line act worktree "$p" "branch $br: $SW_WHY; clean; no live process (gitignored runtime content is salvaged and verified first)"
+      continue
+    fi
+    salv="$(bash "$HERE/worktree-salvage.sh" "$p" --reason "automate sweep" --ignored 2>/dev/null)"
+    sw_verdict="$(printf '%s\n' "$salv" | tail -n1)"
+    salv="$(printf '%s\n' "$salv" | head -n1)"
+    case "$salv" in "ignored: "*) salv="" ;; esac
+    dirty="$(git -C "$p" status --porcelain 2>/dev/null)" || dirty="(git status failed)"
+    case "$sw_verdict" in "ignored: ok "*) ;; *) v="gitignored salvage not verified: ${sw_verdict:-no verdict}" ;; esac
+    [ -n "$v" ] || [ -z "$dirty" ] || v="still dirty after salvage"
+    if [ -z "$v" ] && git -C "$SW_PRI" worktree remove "$p" >/dev/null 2>&1; then
+      _sw_line act worktree "$p" "branch $br: $SW_WHY; gitignored salvage verified (${sw_verdict})${salv:+, salvaged to $salv}"
+    else
+      _sw_line kept worktree "$p" "${v:-git worktree remove refused}${salv:+ (salvaged to $salv)}"
+      held="$held$br"$'\037'"$p"$'\n'
+    fi
+  done <<SWWT
+$wts
+SWWT
+
+  # ---- local branches ---------------------------------------------------------
+  local refs b tip hp
+  refs="$(git -C "$SW_PRI" for-each-ref --format='%(refname)' refs/heads/ 2>/dev/null)"
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    b="${b#refs/heads/}"
+    nbr=$((nbr + 1))
+    if [ -n "$cur" ] && [ "$b" = "$cur" ]; then _sw_line kept branch "$b" "current branch of the primary"; continue; fi
+    if [ "$b" = "$base" ]; then _sw_line kept branch "$b" "base branch"; continue; fi
+    hp="$(printf '%s' "$held" | SW_BR="$b" awk 'BEGIN { FS = "\037"; b = ENVIRON["SW_BR"] } $1 == b { print $2; exit }')"
+    if [ -n "$hp" ]; then _sw_line kept branch "$b" "checked out in worktree $hp"; continue; fi
+    tip="$(git -C "$SW_PRI" rev-parse -q --verify "refs/heads/$b" 2>/dev/null)"
+    _sw_rule "$b" "$tip"
+    if [ "$SW_RULE" != pass ]; then _sw_line kept branch "$b" "$SW_WHY"; continue; fi
+    if [ "$SW_APPLY" -ne 1 ]; then _sw_line act branch "$b" "$SW_WHY"; continue; fi
+    if git -C "$SW_PRI" branch -D "$b" >/dev/null 2>&1; then
+      _sw_line act branch "$b" "$SW_WHY"
+    else
+      _sw_line kept branch "$b" "git branch -D refused"
+    fi
+  done <<SWBR
+$refs
+SWBR
+
+  local mode="dry run" verb="would-remove"
+  [ "$SW_APPLY" -eq 1 ] && { mode="applied"; verb="removed"; }
+  printf 'sweep: summary — %s: %s %s, %s kept (%s worktree(s), %s branch(es) examined)\n' \
+    "$mode" "$SW_ACT" "$verb" "$SW_KEPT" "$nwt" "$nbr"
+  return 0
+}
+
+# --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
 main() {
@@ -1858,6 +2175,7 @@ main() {
     trail-gate)    trail_gate "$@" ;;
     finalize-empty) finalize_empty "$@" ;;
     closeout-others) closeout_others "$@" ;;
+    sweep)         sweep_run "$@" ;;
     ""|-h|--help)  grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /' ;;
     *) echo "automate-trail: unknown subcommand: $cmd" >&2 ;;
   esac
