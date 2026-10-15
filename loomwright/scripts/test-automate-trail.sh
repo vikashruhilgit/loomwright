@@ -3127,7 +3127,7 @@ sw_wt() { sw_branch "$2"; git -C "$SWP" worktree add -q "$1" "$2" >/dev/null 2>&
 sw_run() { (cd "$SWP" && SWGH="$SWGH" LOOMWRIGHT_GH_BIN="$SWBIN/gh" LOOMWRIGHT_LSOF_BIN="${SW_LSOF:-$SWBIN/lsof}" bash "${SW_T:-$T}" sweep "$@"); }
 sw_sum() { { git -C "$SWP" worktree list --porcelain; git -C "$SWP" branch -v; } | cksum; }
 sw_has() { git -C "$SWP" rev-parse -q --verify "refs/heads/$1" >/dev/null 2>&1; }
-sw_line() { printf '%s\n' "$1" | grep -qF -- "$2"; }   # <out> <fixed substring>
+sw_line() { grep -qF -- "$2" <<<"$1"; }   # <out> <fixed substring>
 sw_shape() { # <label> <out> <rc>: exit 0, exactly ONE summary line, and it is the last line
   local n last
   n="$(printf '%s\n' "$2" | grep -c '^sweep: summary — ')"; last="$(printf '%s\n' "$2" | tail -n1)"
@@ -3261,7 +3261,7 @@ sw_line "$out" "sweep: kept worktree $WT_CLEAN — liveness unverifiable (lsof a
 out="$(sw_run --apply)"; rc=$?
 printf '%s\n' "$out" | sed 's/^/    | /'
 sw_shape "(SW2) --apply" "$out" "$rc"
-sw_line "$out" "sweep: removed worktree $WT_CLEAN — branch wclean: PR #61" && [ ! -d "$WT_CLEAN" ] && ! git -C "$SWP" worktree list --porcelain | grep -qxF "worktree $WT_CLEAN" \
+sw_line "$out" "sweep: removed worktree $WT_CLEAN — branch wclean: PR #61" && [ ! -d "$WT_CLEAN" ] && ! grep -qxF "worktree $WT_CLEAN" < <(git -C "$SWP" worktree list --porcelain) \
   && ok "(SW2) AC3 --apply removes the clean merged plugin worktree (git worktree remove)" || no "(SW2) clean worktree not removed: $(printf '%s\n' "$out" | grep -F "$WT_CLEAN")"
 sw_salv="$(ls -d "$SWP/.supervisor/salvage/proj-clean wt-"* 2>/dev/null | head -n1)"
 sw_ign_ok=1
@@ -3278,7 +3278,7 @@ if [ "$SW_ROOT_UID" = 0 ]; then
 else echo "  note: running as root — the unreadable-entry copy-failure leg is skipped"; fi
 sw_kept_all=1
 for w in "$WT_APP" "$WT_LIVE" "$WT_DIRTY" "$WT_LANE" "$WT_OTHER" "$WT_DET" "$WT_LOCK"; do [ -d "$w" ] || { sw_kept_all=0; no "(SW2) --apply removed $w"; }; done
-git -C "$SWP" worktree list --porcelain | grep -qxF "worktree $WT_GONE" && sw_has wgone && sw_has wlock || { sw_kept_all=0; no "(SW2) --apply dropped the missing-dir worktree record or a held branch"; }
+grep -qxF "worktree $WT_GONE" < <(git -C "$SWP" worktree list --porcelain) && sw_has wgone && sw_has wlock || { sw_kept_all=0; no "(SW2) --apply dropped the missing-dir worktree record or a held branch"; }
 [ "$sw_kept_all" = 1 ] && ok "(SW2) AC5 --apply leaves the app, live, dirty, lane, other, detached, locked and missing-dir worktrees in place"
 sw_line "$out" "sweep: kept app $WT_APP — clean and merged" && ok "(SW2) AC5 --apply still reports the app worktree (kept app)" || no "(SW2) app line under --apply"
 sw_unread_fix
@@ -3287,7 +3287,7 @@ sw_unread_fix
 if command -v lsof >/dev/null 2>&1; then
   sw_repo 3; WT_RL="$SWFX/proj-rl"; sw_wt "$WT_RL" wrl; sw_merged wrl 70
   ( cd "$WT_RL" && exec sleep 60 ) & sw_pid=$!
-  if wait_for_cmd 10 sh -c "lsof -a -p $sw_pid -d cwd -F n 2>/dev/null | grep -qxF 'n$WT_RL'"; then
+  if wait_for_cmd 10 sh -c "lsof -a -p $sw_pid -d cwd -F n 2>/dev/null | grep -xF 'n$WT_RL' >/dev/null"; then
     out="$(SW_LSOF=lsof sw_run --apply)"
     sw_line "$out" "sweep: kept worktree $WT_RL — live process $sw_pid has its cwd here" && [ -d "$WT_RL" ] \
       && ok "(SW3) real lsof: a live process's cwd keeps the worktree (pid named)" || no "(SW3) real lsof live: $(printf '%s\n' "$out" | grep -F "$WT_RL")"
@@ -3304,16 +3304,21 @@ fi
 
 # ---- review fixes: unsalvaged gitignored content; a non-ASCII path lsof escapes --
 # proj-env: merged + clean, but a gitignored `.env` no salvage list covers ⇒ kept, dry run
-# and --apply alike. proj-nm: only allowlisted node_modules/ beyond the list ⇒ removed.
+# and --apply alike. proj-nm: only a top-level node_modules/ beside the committed package.json
+# beyond the list ⇒ removed (regenerable). proj-nest: `build/` is ignored and hand-written
+# src/build/notes.md sits beside the tracked src/main.c with no manifest there ⇒ kept, named.
 # proj-café: lsof under a C/POSIX locale prints the cwd of the process living there as
 # `proj-caf\xc3\xa9` (the stub prints exactly that n-line), which never equals the path ⇒
 # without the escaped-byte check it reads "not live" and --apply removes it.
 sw_rev_fixture() { # <n>
   sw_repo "$1"
-  ( cd "$SWP" && printf '.env\nnode_modules/\n' >> .gitignore && git commit -qam "ignore more" ) >/dev/null 2>&1
+  ( cd "$SWP" && printf '.env\nnode_modules/\nbuild/\n' >> .gitignore && printf '{}\n' > package.json && mkdir -p src \
+    && printf 'int main;\n' > src/main.c && git add .gitignore package.json src/main.c && git commit -qm "ignore more" ) >/dev/null 2>&1
   WT_ENV="$SWFX/proj-env"; sw_wt "$WT_ENV" wenv; sw_merged wenv 81; printf 'SECRET=1\n' > "$WT_ENV/.env"
   WT_NM="$SWFX/proj-nm"; sw_wt "$WT_NM" wnm; sw_merged wnm 82
   mkdir -p "$WT_NM/node_modules/pkg"; printf 'x\n' > "$WT_NM/node_modules/pkg/i.js"
+  WT_NEST="$SWFX/proj-nest"; sw_wt "$WT_NEST" wnest; sw_merged wnest 84
+  mkdir -p "$WT_NEST/src/build"; printf 'hand-written\n' > "$WT_NEST/src/build/notes.md"
   WT_UTF="$SWFX/proj-café"; sw_wt "$WT_UTF" wutf; sw_merged wutf 83
   printf 'p4343\nfcwd\nn%s\n' "$SWFX/proj-caf\\xc3\\xa9" > "$SWGH/lsof.extra"
 }
@@ -3322,13 +3327,16 @@ out="$(sw_run)"; rc=$?
 printf '%s\n' "$out" | sed 's/^/    | /'
 sw_shape "(SW6) dry run" "$out" "$rc"
 sw_line "$out" "sweep: kept worktree $WT_ENV — unsalvaged ignored content: .env" && ok "(SW6) dry run: a gitignored .env no list covers ⇒ kept worktree — unsalvaged ignored content: .env" || no "(SW6) env dry: $(printf '%s\n' "$out" | grep -F "$WT_ENV")"
-sw_line "$out" "sweep: would-remove worktree $WT_NM — branch wnm: PR #82" && ok "(SW6) dry run: only allowlisted node_modules/ ⇒ would-remove" || no "(SW6) nm dry: $(printf '%s\n' "$out" | grep -F "$WT_NM")"
+sw_line "$out" "sweep: would-remove worktree $WT_NM — branch wnm: PR #82" && ok "(SW6) dry run: only a node_modules/ beside its package.json ⇒ would-remove" || no "(SW6) nm dry: $(printf '%s\n' "$out" | grep -F "$WT_NM")"
+sw_line "$out" "sweep: kept worktree $WT_NEST — unsalvaged ignored content: src/build/" && ok "(SW6) dry run: hand-written src/build/notes.md (no manifest beside it) ⇒ kept, src/build/ named" || no "(SW6) nest dry: $(printf '%s\n' "$out" | grep -F "$WT_NEST")"
 sw_line "$out" "sweep: kept worktree $WT_UTF — liveness unverifiable (the path holds a byte lsof escapes" && ok "(SW6) dry run: a non-ASCII path ⇒ kept, liveness unverifiable" || no "(SW6) utf dry: $(printf '%s\n' "$out" | grep -F "proj-caf")"
 out="$(sw_run --apply)"; rc=$?
 sw_shape "(SW6) --apply" "$out" "$rc"
 sw_line "$out" "sweep: kept worktree $WT_ENV — unsalvaged ignored content: .env" && [ "$(cat "$WT_ENV/.env" 2>/dev/null)" = "SECRET=1" ] && sw_has wenv \
   && ok "(SW6) --apply: the .env worktree is kept, its secret intact, its branch held" || no "(SW6) env apply: $(printf '%s\n' "$out" | grep -F "$WT_ENV")"
 sw_line "$out" "sweep: removed worktree $WT_NM" && [ ! -d "$WT_NM" ] && ok "(SW6) --apply: the node_modules-only worktree is removed (regenerable)" || no "(SW6) nm apply: $(printf '%s\n' "$out" | grep -F "$WT_NM")"
+sw_line "$out" "sweep: kept worktree $WT_NEST — unsalvaged ignored content: src/build/" && [ "$(cat "$WT_NEST/src/build/notes.md" 2>/dev/null)" = hand-written ] && sw_has wnest \
+  && ok "(SW6) --apply: the src/build/ worktree is kept, notes.md intact, its branch held" || no "(SW6) nest apply: $(printf '%s\n' "$out" | grep -F "$WT_NEST")"
 sw_line "$out" "sweep: kept worktree $WT_UTF — liveness unverifiable (the path holds a byte lsof escapes" && [ -d "$WT_UTF" ] && sw_has wutf \
   && ok "(SW6) --apply: the non-ASCII worktree is kept and remains" || no "(SW6) utf apply: $(printf '%s\n' "$out" | grep -F "proj-caf")"
 # Real lsof with LANG/LC_ALL/LC_CTYPE unset (the C locale escapes the path's bytes): a live
@@ -3336,7 +3344,7 @@ sw_line "$out" "sweep: kept worktree $WT_UTF — liveness unverifiable (the path
 if command -v lsof >/dev/null 2>&1; then
   sw_repo 9; WT_RU="$SWFX/proj-ré"; sw_wt "$WT_RU" wru; sw_merged wru 90
   ( cd "$WT_RU" && exec sleep 120 ) & sw_pid=$!
-  if wait_for_cmd 10 sh -c "env -u LANG -u LC_ALL -u LC_CTYPE lsof -a -p $sw_pid -d cwd -F n 2>/dev/null | grep -q '^n/'"; then
+  if wait_for_cmd 10 sh -c "env -u LANG -u LC_ALL -u LC_CTYPE lsof -a -p $sw_pid -d cwd -F n 2>/dev/null | grep '^n/' >/dev/null"; then
     out="$(cd "$SWP" && env -u LANG -u LC_ALL -u LC_CTYPE SWGH="$SWGH" LOOMWRIGHT_GH_BIN="$SWBIN/gh" LOOMWRIGHT_LSOF_BIN=lsof bash "$T" sweep --apply)"
     sw_line "$out" "sweep: kept worktree $WT_RU — liveness unverifiable (the path holds a byte lsof escapes" && [ -d "$WT_RU" ] && kill -0 "$sw_pid" 2>/dev/null \
       && ok "(SW6) real lsof, no LANG/LC_ALL/LC_CTYPE: a live process in a non-ASCII worktree keeps it (the dir remains)" || no "(SW6) real lsof utf: $(printf '%s\n' "$out" | grep -F "proj-r")"
@@ -3345,6 +3353,46 @@ if command -v lsof >/dev/null 2>&1; then
   fi
   kill "$sw_pid" 2>/dev/null; wait "$sw_pid" 2>/dev/null
 fi
+
+# ---- a git read/write that fails ⇒ kept (the fail-closed arms) ----------------
+# A git on PATH that fails ONE subcommand, chosen by SW_GIT_FAIL (everything else is the
+# real git): `lsfiles` (default) — `ls-files … --ignored`, so worktree-salvage.sh
+# --check-ignored prints `ignored-check: failed — …`, neither `ok` nor `unsalvaged` ⇒ the
+# `*)` arm keeps it; `status` — `status --porcelain` ⇒ "(git status failed)" reads dirty;
+# `remove` — `worktree remove` ⇒ "git worktree remove refused".
+SW_REAL_GIT="$(command -v git)"; export SW_REAL_GIT
+SWGITBIN="$TOP/swgitbin"; mkdir -p "$SWGITBIN"
+cat > "$SWGITBIN/git" <<'STUB'
+#!/usr/bin/env bash
+case "${SW_GIT_FAIL:-lsfiles}: $* " in
+  lsfiles:*" ls-files "*" --ignored "*|status:*" status --porcelain"*|remove:*" worktree remove "*)
+    echo "stub: git $1 refused" >&2; exit 128 ;;
+esac
+exec "$SW_REAL_GIT" "$@"
+STUB
+chmod +x "$SWGITBIN/git"
+sw_uv_fixture() { sw_repo "$1"; WT_UV="$SWFX/proj-uv"; sw_wt "$WT_UV" wuv; sw_merged wuv 91; }
+SW_UV_WHY="gitignored content unverifiable: ignored-check: failed — cannot list the gitignored entries of"
+sw_uv_fixture 12
+out="$(PATH="$SWGITBIN:$PATH" sw_run)"; rc=$?
+sw_shape "(SW7) dry run, coverage listing failing" "$out" "$rc"
+sw_line "$out" "sweep: kept worktree $WT_UV — $SW_UV_WHY $WT_UV" && sw_line "$out" "sweep: kept branch wuv — checked out in worktree $WT_UV" \
+  && ok "(SW7) dry run: the coverage check cannot list ⇒ kept worktree — gitignored content unverifiable (and its branch held)" || no "(SW7) dry: $(printf '%s\n' "$out" | grep -F "$WT_UV")"
+out="$(PATH="$SWGITBIN:$PATH" sw_run --apply)"; rc=$?
+sw_shape "(SW7) --apply, coverage listing failing" "$out" "$rc"
+sw_line "$out" "sweep: kept worktree $WT_UV — $SW_UV_WHY $WT_UV" && [ -d "$WT_UV" ] && sw_has wuv && [ ! -e "$SWP/.supervisor/salvage" ] \
+  && ok "(SW7) --apply: kept, the worktree and its branch remain, nothing salvaged" || no "(SW7) apply: $(printf '%s\n' "$out" | grep -F "$WT_UV")"
+out="$(sw_run)"
+sw_line "$out" "sweep: would-remove worktree $WT_UV — branch wuv: PR #91" && ok "(SW7) control: the same worktree with a working git reads would-remove (the stub alone keeps it)" || no "(SW7) control: $(printf '%s\n' "$out" | grep -F "$WT_UV")"
+out="$(SW_GIT_FAIL=status PATH="$SWGITBIN:$PATH" sw_run)"
+sw_line "$out" "sweep: kept worktree $WT_UV — dirty (uncommitted changes on wuv)" \
+  && ok "(SW7) dry run: git status failing ⇒ kept as dirty (an unreadable tree is never read as clean)" || no "(SW7) status: $(printf '%s\n' "$out" | grep -F "$WT_UV")"
+sw_uv_remove() { # <script> — --apply with `git worktree remove` failing
+  sw_uv_fixture "$1"; out="$(SW_GIT_FAIL=remove PATH="$SWGITBIN:$PATH" SW_T="${2:-$T}" sw_run --apply)"
+}
+sw_uv_remove 14
+grep -qxF "sweep: kept worktree $WT_UV — git worktree remove refused" <<<"$out" && [ -d "$WT_UV" ] && sw_has wuv \
+  && ok "(SW7) --apply: git worktree remove refused ⇒ kept, named, the worktree and its branch remain" || no "(SW7) remove: $(printf '%s\n' "$out" | grep -F "$WT_UV")"
 
 # ---- closeout step 3a: the same --ignored gate (AC4's closeout half) ---------
 closeout_fixture 240
@@ -3365,16 +3413,16 @@ if [ "$SW_ROOT_UID" = 0 ]; then
   sw_co_unread 241 "$SPYD"
   sw_line "$out" "closeout: skipped — kept worktree $FX/wt-pr (gitignored salvage not verified: ignored: failed .supervisor/logs — copy failed)" && [ -d "$FX/wt-pr" ] \
     && ok "(SW4) closeout 3a: a forced copy failure keeps the worktree in the 'skipped — kept worktree …' form, naming the entry" || no "(SW4) closeout unread: $(printf '%s' "$out" | grep -F worktree)"
-  printf '%s\n' "$out" | bash "$H" closeout-classify --run "$RUN_ID" --item "$REQ" --pr "$PRURL" | grep -q "^leftover	.*	worktree	" \
+  grep -q "^leftover	.*	worktree	" < <(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$RUN_ID" --item "$REQ" --pr "$PRURL") \
     && ok "(SW4) closeout-classify still reads that kept line as a leftover" || no "(SW4) closeout-classify: $(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$RUN_ID" --item "$REQ" --pr "$PRURL" | tr '\t\n' ' |')"
 fi
 
 # ---- static: nothing runs --apply unattended; no --force / rm -rf in sweep_run --
 sw_body="$(awk '/^sweep_run\(\) \{/{s=1} s{print} s&&/^}/{exit}' "$T")"
-[ -n "$sw_body" ] && ! printf '%s\n' "$sw_body" | grep -v '^[[:space:]]*#' | grep -qE 'worktree remove[^"]*--force|rm -rf' \
+[ -n "$sw_body" ] && ! grep -qE 'worktree remove[^"]*--force|rm -rf' < <(grep -v '^[[:space:]]*#' <<<"$sw_body") \
   && ok "(SW5) sweep_run never runs git worktree remove --force or rm -rf" || no "(SW5) sweep_run body has --force / rm -rf (or was not found)"
 sw_calls="$(grep -n 'sweep_run --' "$T" | grep -v '^[0-9]*:[[:space:]]*#')"
-[ -n "$sw_calls" ] && ! printf '%s\n' "$sw_calls" | grep -q -- '--apply' \
+[ -n "$sw_calls" ] && ! grep -q -- '--apply' <<<"$sw_calls" \
   && ok "(SW5) every in-script sweep_run call is a dry run (no --apply): $(printf '%s\n' "$sw_calls" | wc -l | tr -d ' ') call(s)" || no "(SW5) sweep_run calls: $sw_calls"
 
 # ---- pin mutations (scratch copies; each must turn its leg red) ---------------
@@ -3405,6 +3453,20 @@ if sw_mutant coverage 's/"ignored-check: ok") ;;/*) ;;/'; then
   sw_rev_fixture 10
   out="$(SW_T="$SW_MD/automate-trail.sh" sw_run)"
   sw_line "$out" "sweep: would-remove worktree $WT_ENV" && ok "(SWM) control: a sweep that ignores the coverage check reports the .env worktree would-remove (that leg is red)" || no "(SWM) coverage mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "$WT_ENV")"
+fi
+if sw_mutant unverif 's/\*) v="gitignored content unverifiable: \${ic:-no verdict}" ;;/*) ;;/'; then
+  sw_uv_fixture 13
+  out="$(PATH="$SWGITBIN:$PATH" SW_T="$SW_MD/automate-trail.sh" sw_run)"
+  sw_line "$out" "sweep: would-remove worktree $WT_UV" && ok "(SWM) control: without the fail-closed arm an unlistable worktree reads would-remove (the SW7 leg is red)" || no "(SWM) unverif mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "$WT_UV")"
+fi
+if sw_mutant gitstatus '1,/dirty="(git status failed)"/s/|| dirty="(git status failed)"/|| dirty=""/'; then
+  sw_uv_fixture 15
+  out="$(SW_GIT_FAIL=status PATH="$SWGITBIN:$PATH" SW_T="$SW_MD/automate-trail.sh" sw_run)"
+  sw_line "$out" "sweep: would-remove worktree $WT_UV" && ok "(SWM) control: a failed git status read as clean ⇒ would-remove (the SW7 status leg is red)" || no "(SWM) gitstatus mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "$WT_UV")"
+fi
+if sw_mutant rmrefused 's/if \[ -z "\$v" \] && git -C "\$SW_PRI" worktree remove "\$p" >\/dev\/null 2>&1; then/if [ -z "$v" ] \&\& { git -C "$SW_PRI" worktree remove "$p" >\/dev\/null 2>\&1 || :; }; then/'; then
+  sw_uv_remove 16 "$SW_MD/automate-trail.sh"
+  sw_line "$out" "sweep: removed worktree $WT_UV" && [ -d "$WT_UV" ] && ok "(SWM) control: a refused remove reported as removed (the SW7 remove leg is red)" || no "(SWM) rmrefused mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "$WT_UV")"
 fi
 if sw_mutant bytes 's/|| return 3$/|| :/'; then
   sw_rev_fixture 11

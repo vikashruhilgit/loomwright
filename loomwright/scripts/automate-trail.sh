@@ -2008,7 +2008,7 @@ _sw_live_read() {
 _sw_live() {
   local s pid
   for s in "$1" "${2:-$1}"; do
-    [ "$(printf '%s' "$s" | LC_ALL=C tr -d '\040-\133\135-\176' | wc -c | tr -d ' ')" = 0 ] || return 3
+    [ "$(printf '%s' "$s" | env LC_ALL=C tr -d '\040-\133\135-\176' | wc -c | tr -d ' ')" = 0 ] || return 3
   done
   [ "$SW_LIVE_STATE" = ok ] || return 2
   pid="$(printf '%s\n' "$SW_LIVE" | SW_A="$1" SW_B="${2:-$1}" awk '

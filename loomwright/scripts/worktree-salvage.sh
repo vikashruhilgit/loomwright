@@ -41,8 +41,8 @@
 #             entry is present) or `ignored: failed <rel> — <reason>` (a script-level
 #             failure before any entry is known names `-`). FAIL CLOSED on what the
 #             list does not cover: when the worktree holds gitignored content that is
-#             neither on the salvage list (or inside one of its entries) nor on the
-#             short REGENERABLE allowlist (IGN_REGEN below: build/cache output), the
+#             neither on the salvage list (or inside one of its entries) nor
+#             REGENERABLE (ign_regenerable below: build/cache output beside its manifest), the
 #             verdict is `ignored: failed <entry> — unsalvaged ignored content` — a
 #             `.env`, `.supervisor/state.md`, `.supervisor/jobs/` or `graphify-out/`
 #             would otherwise be deleted with no copy. `--allow-unsalvaged` drops ONLY
@@ -184,11 +184,51 @@ IGN_HOST_SETTINGS=".claude/settings.local.json"
 ign_salvage_list() {
   printf '%s\n' .supervisor/logs .supervisor/postmortem "$IGN_HOST_SETTINGS"
 }
-# IGN_REGEN — the REGENERABLE allowlist: gitignored build/cache output a removal may
-# delete with no copy, matched against an entry's LAST path component. Deliberately
-# short and named in this one place; anything neither here nor on the salvage list
-# keeps the worktree (--ignored / --check-ignored fail closed on it).
-IGN_REGEN=" node_modules .venv __pycache__ dist build .next target .DS_Store "
+# ign_regenerable <entry> — THE REGENERABLE RULE, stated only here: returns 0 when a
+# gitignored <entry> (relative to $WT_TOP, as `git ls-files --directory` names it — a
+# directory ends in `/`) is build/cache output a removal may delete with no copy.
+# Anything neither regenerable nor on the salvage list keeps the worktree
+# (--ignored / --check-ignored fail closed on it). The rule is ANCHORED, never a bare
+# name match: a name alone (`build`, `dist`, `target`) is also what a person calls a
+# hand-written folder, so `src/build/notes.md` must never read as regenerable.
+#   - DIRECTORIES ONLY (a real, non-symlink directory; the entry ends in `/`) beside
+#     the manifest of the tool that regenerates them, in the SAME parent directory
+#     (the worktree top for a top-level entry):
+#       node_modules/ .next/          beside package.json
+#       dist/ build/                  beside package.json, pyproject.toml, setup.py
+#                                     or requirements*.txt
+#       target/                       beside Cargo.toml
+#       .venv/                        beside pyproject.toml, setup.py or requirements*.txt
+#   - ANY DEPTH, two exceptions, because neither is ever hand-authored work: a
+#     `__pycache__/` directory (CPython writes one beside every imported module, at
+#     whatever depth the module sits, and rebuilds it on the next import) and a
+#     `.DS_Store` FILE (Finder's per-folder view metadata).
+ign_regenerable() {
+  local p name dir m f
+  case "$1" in
+    .DS_Store|*/.DS_Store) return 0 ;;
+    */) ;;
+    *) return 1 ;;
+  esac
+  p="${1%/}"
+  [ -d "$WT_TOP/$p" ] && [ ! -L "$WT_TOP/$p" ] || return 1
+  name="${p##*/}"
+  case "$p" in */*) dir="$WT_TOP/${p%/*}" ;; *) dir="$WT_TOP" ;; esac
+  case "$name" in
+    __pycache__) return 0 ;;
+    node_modules|.next) set -- package.json ;;
+    dist|build) set -- package.json pyproject.toml setup.py 'requirements*.txt' ;;
+    target) set -- Cargo.toml ;;
+    .venv) set -- pyproject.toml setup.py 'requirements*.txt' ;;
+    *) return 1 ;;
+  esac
+  for m in "$@"; do
+    # $m unquoted on purpose: `requirements*.txt` is a glob; an unmatched glob stays
+    # literal and fails -f.
+    for f in "$dir"/$m; do [ -f "$f" ] && return 0; done
+  done
+  return 1
+}
 
 # ign_first_unsalvaged — prints the FIRST gitignored entry of $WT_TOP that is neither
 # a salvage-list entry (or inside one) nor regenerable; prints nothing when every
@@ -198,7 +238,7 @@ IGN_REGEN=" node_modules .venv __pycache__ dist build .next target .DS_Store "
 # a non-ASCII or newline-bearing name is never C-quoted. Returns 1 when git cannot
 # list the entries (the caller fails closed).
 ign_first_unsalvaged() {
-  local q nq e p last s cover anc c
+  local q nq e p s cover anc c
   q="$(mktemp "${TMPDIR:-/tmp}/wt-salvage-ign.XXXXXX" 2>/dev/null)" || return 1
   nq="$(mktemp "${TMPDIR:-/tmp}/wt-salvage-ign.XXXXXX" 2>/dev/null)" || { rm -f "$q"; return 1; }
   if ! git -C "$WT_TOP" ls-files -z --others --ignored --exclude-standard --directory > "$q" 2>/dev/null; then
@@ -208,7 +248,7 @@ ign_first_unsalvaged() {
     : > "$nq"
     while IFS= read -r -d '' e; do
       [ -n "$e" ] || continue
-      p="${e%/}"; last="${p##*/}"; cover=0; anc=0
+      p="${e%/}"; cover=0; anc=0
       while IFS= read -r s; do
         [ -n "$s" ] || continue
         case "$p" in "$s"|"$s"/*) cover=1 ;; esac
@@ -216,7 +256,7 @@ ign_first_unsalvaged() {
       done <<SALV
 $(ign_salvage_list)
 SALV
-      case "$IGN_REGEN" in *" $last "*) cover=1 ;; esac
+      ign_regenerable "$e" && cover=1
       [ "$cover" -eq 1 ] && continue
       if [ "$anc" -eq 1 ] && [ -d "$WT_TOP/$p" ] && [ ! -L "$WT_TOP/$p" ]; then
         while IFS= read -r -d '' c; do
