@@ -34,7 +34,7 @@
 # (parallel-automate/05, reached ONLY by `/automate --parallel N` — never by the
 # sequential loop; N = 1 is single-lane mode, twin-remediation/08b): `lane-create`/`lane-launch`/`relay-hook`/`lane-answer`/
 # `lane-remove`/`lane-convert-ready`/`lane-info`/`init-check`/`pick-guard`/`branch-check`, the
-# read-only park seam `lane-park` (called by the GATE of every run: no lane.json ⇒ the sequential
+# read-only park seam `lane-park [--root <dir>]` (called by the GATE inside a lane only; no lane.json ⇒ the sequential
 # `awaiting_merge`) and drain guard `lane-drain-check`, the
 # observers `lane-status`/`lane-feed`/`lane-readiness`, the READY-park gate `validation-gate` (also
 # called by the sequential loop: it takes the run file and item explicitly), the park notifier
