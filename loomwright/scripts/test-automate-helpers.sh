@@ -5829,16 +5829,46 @@ run_h bash "$H" current-wave "$LN_RF" --wave null
 if [ "$RUN_RC" -eq 0 ] && ! grep -q '^- wave:' "$LN_RF"; then ok "LANE current-wave --wave null removes the line"; else no "LANE current-wave null did not remove"; fi
 # Dispatch: every Subtask-1 lane subcommand reaches automate-lanes.sh (help lines present, never 'unknown subcommand').
 ln_bad=""
-for ln_s in lane-create lane-launch relay-hook lane-answer lane-remove lane-info init-check pick-guard branch-check current-wave; do
+for ln_s in lane-create lane-launch relay-hook lane-answer lane-remove lane-info lane-park lane-drain-check init-check pick-guard branch-check current-wave; do
   grep -q "^  $ln_s " <<<"$(bash "$H" --help)" || ln_bad="$ln_bad help:$ln_s"
 done
-for ln_s in lane-create lane-launch lane-answer lane-remove lane-info init-check pick-guard branch-check; do
+for ln_s in lane-create lane-launch lane-answer lane-remove lane-info lane-park lane-drain-check init-check pick-guard branch-check; do
   awk -v w="$ln_s" 'index($0, "/automate-lanes.sh\" \"$cmd\" \"$@\" ;;") && /^    [a-z|-]+\) exec bash / { l=$1; sub(/\)$/, "", l); n=split(l, a, "|"); for (i=1;i<=n;i++) if (a[i]==w) f=1 } END { exit !f }' "$H" || ln_bad="$ln_bad arm:$ln_s"
 done
 (cd "$LN_T" && bash "$H" lane-info --root "$LN_T" </dev/null >/dev/null 2>"$LN_T/li.err"); ln_rc=$?
 grep -q 'unknown subcommand' "$LN_T/li.err" && ln_bad="$ln_bad lane-info-unrouted"
 if [ -z "$ln_bad" ] && [ "$ln_rc" -eq 1 ]; then ok "LANE dispatch: lane subcommands have help lines + exec arms to automate-lanes.sh; lane-info outside a lane exits 1"; else no "LANE dispatch wrong (lane-info rc=$ln_rc):$ln_bad"; fi
 rm -rf "$LN_T"
+echo "== SINGLELANE. twin-remediation/08b: current-set refuses the ready_for_release park in a single_lane checkout =="
+SLH="$(mktemp -d)"; SLH="$(cd "$SLH" && pwd -P)"
+sl_h_rf() { # <checkout> — a run file in <checkout>/.supervisor/automate/ with an item running
+  mkdir -p "$1/.supervisor/automate"
+  printf '# Automate Run: sl-1 — queue\n## Status: running\n## Queue\n- [ ] a.md\n## Current\n- item: a.md | status: running | pr: null | branch: null\n- pause_reason: null\n\n## Progress\n- t0 picked a.md\n' > "$1/.supervisor/automate/sl-1.md"
+}
+sl_h_rf "$SLH/single"; printf '{"schema_version": 1, "lane": "L1", "single_lane": true}\n' > "$SLH/single/.supervisor/lane.json"
+sl_h_rf "$SLH/multi"; printf '{"schema_version": 1, "lane": "L1", "parallel": 2}\n' > "$SLH/multi/.supervisor/lane.json"
+sl_h_rf "$SLH/false"; printf '{"schema_version": 1, "lane": "L1", "single_lane": false}\n' > "$SLH/false/.supervisor/lane.json"
+sl_h_rf "$SLH/none"
+SLRF="$SLH/single/.supervisor/automate/sl-1.md"; cp "$SLRF" "$SLH/ref"
+sl_bad=""
+for sl_args in "--item a.md --status ready_for_release --pr https://x/pull/1" "--item a.md --status ready_for_release --pause-reason ready_for_release" "--pause-reason ready_for_release" "--item a.md --status awaiting_merge --pause-reason ready_for_release"; do
+  # shellcheck disable=SC2086
+  sl_err="$(bash "$H" current-set "$SLRF" $sl_args 2>&1 >/dev/null)"; sl_rc=$?
+  { [ "$sl_rc" -eq 1 ] && cmp -s "$SLH/ref" "$SLRF" && [ "$(printf '%s\n' "$sl_err" | grep -c .)" = 1 ] && case "$sl_err" in *single_lane*) true ;; *) false ;; esac; } || sl_bad="$sl_bad [$sl_args rc=$sl_rc err=$sl_err]"
+done
+if [ -z "$sl_bad" ]; then ok "SINGLELANE current-set: ready_for_release (status or pause_reason) in a single_lane checkout ⇒ exit 1, file byte-unchanged, one stderr line naming single_lane"; else no "SINGLELANE refusal wrong:$sl_bad"; fi
+run_h bash "$H" current-set "$SLRF" --item a.md --status awaiting_merge --pr https://x/pull/1 --pause-reason awaiting_merge
+if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- item: a.md | status: awaiting_merge | pr: https://x/pull/1 | branch: null' "$SLRF"; then ok "SINGLELANE current-set: the single lane's awaiting_merge park is written"; else no "SINGLELANE awaiting_merge park refused (rc=$RUN_RC)"; fi
+sl_bad=""
+for sl_d in multi false none; do
+  sl_rf="$SLH/$sl_d/.supervisor/automate/sl-1.md"
+  run_h bash "$H" current-set "$sl_rf" --item a.md --status ready_for_release --pause-reason ready_for_release
+  { [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-set: written" ] && grep -qxF -- '- pause_reason: ready_for_release' "$sl_rf"; } || sl_bad="$sl_bad ready:$sl_d"
+  run_h bash "$H" current-set "$sl_rf" --item a.md --status awaiting_merge --pause-reason awaiting_merge
+  { [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: awaiting_merge' "$sl_rf"; } || sl_bad="$sl_bad merge:$sl_d"
+done
+if [ -z "$sl_bad" ]; then ok "SINGLELANE current-set unchanged without the key: no lane.json, a lane.json without single_lane, single_lane false — ready_for_release and awaiting_merge both written"; else no "SINGLELANE current-set changed off the single lane:$sl_bad"; fi
+rm -rf "$SLH"
 echo "== LANEGUARD. parallel-automate/05 AC12: the lane guard is wired into the DEFAULT path (sequential PICK + new-run start), not only §14 =="
 LG_T="$(mktemp -d)"; mkdir -p "$LG_T/auto"
 run_h bash "$H" pick-guard "$LG_T/auto"
@@ -5876,8 +5906,9 @@ awk 'index($0,"**Start order (automate-followups/32):**") {gsub(/pick-guard/,"gu
 if ! cmp -s "$SKILL_FILE" "$LG_T/no-pick.md" && ! lg_pick_seam "$LG_T/no-pick.md" && lg_start_seam "$LG_T/no-pick.md"; then ok "LANEGUARD (mutant) pick-guard gone from §6 PICK only ⇒ PICK pin red, start pin green"; else no "LANEGUARD PICK mutant not discriminated"; fi
 if ! cmp -s "$SKILL_FILE" "$LG_T/no-start.md" && ! lg_start_seam "$LG_T/no-start.md" && lg_pick_seam "$LG_T/no-start.md"; then ok "LANEGUARD (mutant) pick-guard gone from §4 start only ⇒ start pin red, PICK pin green"; else no "LANEGUARD start mutant not discriminated"; fi
 # §14's intro no longer claims "no automate-lanes.sh call" without naming the pick-guard exception.
-lg_intro="$(grep -F -- '**Without the flag, or with N = 1, no lane code path is entered**' "$SKILL_FILE" | head -1)"
-case "$lg_intro" in *'except the read-only `pick-guard`'*) ok "LANEGUARD §14 intro names the pick-guard exception" ;; *) no "LANEGUARD §14 intro contradicts the default-path pick-guard: $lg_intro" ;; esac
+# twin-remediation/08b: the sentence no longer folds N = 1 into "no lane code path" — `--parallel 1` is single-lane mode.
+lg_intro="$(grep -F -- '**Without the flag, no lane code path is entered**' "$SKILL_FILE" | head -1)"
+case "$lg_intro" in *'except the read-only `pick-guard`'*'**`--parallel 1` is single-lane mode**'*) ok "LANEGUARD §14 intro names the pick-guard exception and states single-lane mode for N = 1" ;; *) no "LANEGUARD §14 intro contradicts the default-path pick-guard or omits single-lane mode: $lg_intro" ;; esac
 rm -rf "$LG_T" "$SPLIT_D"
 
 # =============================================================================

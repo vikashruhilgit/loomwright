@@ -31,9 +31,11 @@
 # drafts under `.supervisor/requirements/proposed/` (through propose-common.sh's
 # `pc_guarded_write`), its gitignored `<run_id>.dismissed-decisions` ledger and
 # one `## Progress` line per decision — never git, never `gh`. A third carve-out
-# (parallel-automate/05, reached ONLY by `/automate --parallel N>1` — never by the
-# sequential loop): `lane-create`/`lane-launch`/`relay-hook`/`lane-answer`/
+# (parallel-automate/05, reached ONLY by `/automate --parallel N` — never by the
+# sequential loop; N = 1 is single-lane mode, twin-remediation/08b): `lane-create`/`lane-launch`/`relay-hook`/`lane-answer`/
 # `lane-remove`/`lane-convert-ready`/`lane-info`/`init-check`/`pick-guard`/`branch-check`, the
+# read-only park seam `lane-park` (called by the GATE of every run: no lane.json ⇒ the sequential
+# `awaiting_merge`) and drain guard `lane-drain-check`, the
 # observers `lane-status`/`lane-feed`/`lane-readiness`, the READY-park gate `validation-gate` (also
 # called by the sequential loop: it takes the run file and item explicitly), the park notifier
 # `lane-park-notify`, the lane
@@ -45,7 +47,7 @@
 # and removes a lane only through its own fail-CLOSED refusals — never `gh pr merge`,
 # never a force-push, never a write into a launched lane beyond the exceptions the
 # automate-lanes.sh header's `Files` block lists (the authority — not restated here).
-# A fourth carve-out (also `--parallel N>1` only): `wave-build` is delegated to the
+# A fourth carve-out (`--parallel N>1` only — it refuses a single-lane parent): `wave-build` is delegated to the
 # sibling `automate-wave.sh`, the ONE writer of a wave branch — a temporary worktree
 # off fresh origin/<base>, `--no-ff` merges of the lane PR heads, local CI, the
 # release commit, a regular push of the wave branch only and `gh pr create`; never
@@ -76,19 +78,21 @@
 #:  trail-unstage    <runfile>                          # §6 step 1 PICK (before RUN): delegated to automate-trail.sh — drops the trail-path index entries trail-pr staged so the next item's commit cannot sweep them; one line; always exits 0
 #:  trail-gate       <runfile>                          # §6 step 1 PICK (after RECONCILE, before trail-unstage) / §8: delegated to automate-trail.sh — `PARK — trail PR open <url>` while this run's trail PR is open (or its state is unreadable: fail CLOSED); else `clear — …` after syncing the primary onto the base branch (closeout's sync); one line; always exits 0
 #:@ hdr-lanes
-#:  lane-create      <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]  # parallel-automate/05 (--parallel N>1 only): delegated to automate-lanes.sh — clone at <primary>-lanes/<run_id>/L<n>/ (origin before fetch), carried configs, .supervisor/lane.json, one-line backlog, relay hooks
+#:  lane-create      <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]  # parallel-automate/05 (--parallel N; an explicit --parallel 1 = single-lane: lane.json single_lane, n 1..99 never reused, --max-tokens a whole-run ceiling): delegated to automate-lanes.sh — clone at <primary>-lanes/<run_id>/L<n>/ (origin before fetch), carried configs, .supervisor/lane.json, one-line backlog, relay hooks
 #:  lane-launch      <lane_dir> --owner-command '<cmd>' [--resume-run <run_id> | --continue]  # parallel-automate/05: delegated to automate-lanes.sh — detached headless launch/resume; no owner command ⇒ `BLOCKED` (exit 3); load/memory admission ⇒ `HELD` (exit 4)
 #:  relay-hook                                          # parallel-automate/05: delegated to automate-lanes.sh — the lane's PreToolUse/PermissionRequest[AskUserQuestion] hook (stdin: hook JSON) ⇒ inbox question file + defer
 #:  lane-answer      <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>]  # parallel-automate/05: delegated to automate-lanes.sh — validates the answer against the question's own labels, records it, resumes the lane (HELD ⇒ kept coordinator-side as answer_pending, last write wins); `lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>'` delivers a kept answer (the coordinator's poll)
 #:  lane-remove      <lane_dir> [--stop] [--abandon]    # parallel-automate/05: delegated to automate-lanes.sh — guarded removal (fail-CLOSED refusals; salvages first)
 #:  lane-convert-ready <lane_dir>                       # parallel-automate/05: delegated to automate-lanes.sh — wave end: a stopped lane's ready_for_release ⇒ awaiting_merge (current-set) + metadata push (its non-claim files by exact list, the rest through trail-pr --reason wave-end's evidence gate); a re-run once the PR merged runs closeout --no-trail inside the lane first (the done stamp), then (branch mode only) finalize-empty on the lane's run file (`## Status: done`); refusal exit 1, failed push exit 2
 #:  lane-info        [--root <dir>]                     # parallel-automate/05: delegated to automate-lanes.sh — prints .supervisor/lane.json; exit 1 when absent (not a lane)
-#:  init-check       --parallel N [--auto-merge]        # parallel-automate/05: delegated to automate-lanes.sh — INIT refusals: `ok` | `refuse: <reason>` (exit 1)
+#:  lane-park        [--root <dir>]                     # twin-remediation/08b: delegated to automate-lanes.sh — READ-ONLY park seam: prints `awaiting_merge` (no lane.json, or `"single_lane": true`) or `ready_for_release` (any other lane.json, an unreadable one included); always exit 0
+#:  init-check       --parallel N [--auto-merge]        # parallel-automate/05: delegated to automate-lanes.sh — INIT refusals: `ok` | `refuse: <reason>` (exit 1); --auto-merge refused with any N; N = 1 also refuses `single_lane_requires_branch_mode` unless setup-memory.sh mode reads `on <branch>`
 #:  pick-guard       <automate_dir>                     # parallel-automate/05: delegated to automate-lanes.sh — PICK guard: `ok` | `refuse: live_lane <run_id> <lane>` (exit 1)
 #:  branch-check     <lane_dir> <branch>                # parallel-automate/05: delegated to automate-lanes.sh — remote branch-name check; prints the name to use (suffix -L<n>) or refuses
 #:  lane-status      [<parent_runfile>] [--json] [--watch] [--leaks [--snapshot]] [--resources | --tokens | --inbox]  # parallel-automate/05: delegated to automate-lanes.sh — one line per lane (state, item, PR, question, CI slot, readiness, policy-answer digest); --json adds machine state; --inbox (parallel-automate/21) lists every lane's pending human questions, oldest first; fail-SAFE observer (exit 0)
 #:  lane-feed        <lane_dir|L<n>> [--follow]         # parallel-automate/05: delegated to automate-lanes.sh — readable narration of the lane's stream log
 #:  lane-readiness   <lane_dir|L<n>>                    # parallel-automate/05: delegated to automate-lanes.sh — writes <run_id>.merge-readiness.md (PASS/FAIL/NOT-RUN per check; advisory, never merges)
+#:  lane-drain-check <lane_dir>                         # twin-remediation/08b: delegated to automate-lanes.sh — READ-ONLY drain guard at a lane's park: `drain-guard: ok|violation|unknown — …` (dispatch marker for the lane PR, owned-drain count after the last `picked`, config backup); fail-SAFE, always exit 0
 #:  validation-gate  <runfile> <item> <pr_url> [--waive <n> --words <text>]  # af36-remainder/01: delegated to automate-lanes.sh — the READY-park gate (lane AND sequential): every "Running system" Validation step needs pasted PR-body evidence (shared reader with lane-readiness); prints ONE line `validation-gate: none|ok|waived|unrun — …`, fail CLOSED (unreadable item / PR body ⇒ unrun), always exit 0; --waive records an interactive owner's waiver (one ## Progress line, counted only after the last `picked <item>`; refusal exit 1)
 #:  lane-park-notify <runfile>                          # parallel-automate/24: delegated to automate-lanes.sh — a lane's ready_for_release park notify: desktop + `automate_ready_for_release` webhook ("do not merge yet — wave open"), both fail-SAFE, + one ## Progress line naming what each channel actually delivered; always exits 0
 #:  lane-wait        <parent_runfile> [--interval S] [--timeout S]  # delegated to automate-lanes.sh — the coordinator's lane watcher: blocks token-free until a lane needs the owner (a new pending question, or a lane entering a park / failure state), prints one `lane-wait: …` line per event + one relay hint and exits 0 (idle / timeout also exit 0, usage error 2); run as a BACKGROUND command; read-only except its `<parent_run_id>.lane-wait-seen` ledger
@@ -1097,8 +1101,8 @@ main() {
     # automate-lanes.sh, the third carve-out named in the header.
     lane-create|lane-launch|relay-hook|lane-answer|lane-remove) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     lane-convert-ready) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
-    lane-info|init-check|pick-guard|branch-check) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
-    lane-status|lane-feed|lane-readiness|validation-gate|lane-park-notify|lane-wait) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
+    lane-info|lane-park|init-check|pick-guard|branch-check) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
+    lane-status|lane-feed|lane-readiness|lane-drain-check|validation-gate|lane-park-notify|lane-wait) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     fleet-closeout|wave-plan) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     # The wave-branch writer — the sibling automate-wave.sh, the fourth carve-out.
     wave-build) exec bash "$(dirname "$0")/automate-wave.sh" "$cmd" "$@" ;;

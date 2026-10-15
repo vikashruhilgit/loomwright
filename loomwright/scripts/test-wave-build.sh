@@ -317,5 +317,17 @@ check "W6m the literal squash-merge command string appears nowhere in automate-w
 check "W6n helpers dispatches wave-build to automate-wave.sh (one arm)" \
   "$(grep -cE '^ +wave-build\) exec bash "\$\(dirname "\$0"\)/automate-wave.sh" "\$cmd" "\$@" ;;$' "$HERE/automate-helpers.sh" | tr -d ' ')" 1
 
+# ---- W7: single-lane mode (`--parallel 1`, twin-remediation/08b) — no wave, no wave PR ------------------
+SLP=automate-2026-10-14-100000; RFSL="$P/.supervisor/automate/$SLP.md"
+mk_parent "$SLP"; sed 's/^- parallel: 2$/- parallel: 1/' "$RFSL" > "$RFSL.tmp" && mv "$RFSL.tmp" "$RFSL"
+bash "$L" lane-create "$RFSL" "$IA" 1 --parallel 1 >/dev/null 2>&1 || bad "W7 lane-create --parallel 1"
+park_lane "$SLP" 1 "$IA" 71 awaiting_merge awaiting_merge
+R7="$(refs_state)"; N7="$(ncreate)"; S7="$(cksum < "$RFSL")"; G7="$(cat "$T/gh/calls" 2>/dev/null | wc -l | tr -d ' ')"
+out="$(wb "$RFSL")"; rc=$?
+check "W7 a parent whose Run Config carries - parallel: 1 ⇒ refused single-lane mode (no wave PR), exit 1" "$rc:$out" \
+  "1:wave-build: refused — single-lane mode (no wave PR)"
+check "W7b … nothing created or read: refs, worktrees, origin, PRs, gh calls and the parent run file unchanged" \
+  "$(refs_state):$(ncreate):$(cksum < "$RFSL"):$(cat "$T/gh/calls" 2>/dev/null | wc -l | tr -d ' ')" "$R7:$N7:$S7:$G7"
+
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
