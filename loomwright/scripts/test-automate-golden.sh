@@ -25,6 +25,8 @@
 #      tree, no file under it may be gitignored (`FAIL: ignored fixture <path>`): an
 #      ignored fixture exists on the author's disk but never in a clean checkout, so the
 #      suite would pass here and fail in CI (the as05 `*/**/.supervisor/` incident).
+#      And no `<case>/expected.out` may hold the stderr noise line of phase 3's rule
+#      (`FAIL: sigpipe noise pinned in <case>/expected.out`).
 #   3. CASES. Each fixtures/automate-golden/<case>/ holds:
 #        input.md      the run file BEFORE the step (trimmed from a real run)
 #        steps         one invocation per line, in the prose's order (`#`/blank skipped):
@@ -60,6 +62,17 @@
 #      the work dir → `<TMP>`
 #      — then compared byte for byte: `FAIL: <case>: run file differs` /
 #      `FAIL: <case>: step output differs`, each with a unified diff.
+#      ONE STDERR NOISE RULE (step output only, applied identically to actual and expected,
+#      and to what GOLDEN_WRITE writes, so no expected.out ever holds it): a recorded stderr
+#      line matching `^! .*: line [0-9]+: printf: write error: Broken pipe$` is dropped.
+#      Every other stderr line is compared. Why: automate-lanes.sh's validation-gate --waive
+#      pipes _lanes_validation_rows (a `printf` per row inside a `while read` loop) into an
+#      awk that `exit`s on the first matching row. When the process inherits SIGPIPE as
+#      IGNORED (CI runners do; a default-disposition shell is killed silently instead), the
+#      next printf gets EPIPE and bash prints that line — whether it fires depends on the
+#      disposition and on whether awk has exited yet. Stdout, the exit code and the run file
+#      are unaffected; the line carries no contract. A pre-existing helper race (evidence
+#      F9), recorded, not fixed here. Leg M10 proves the rule is that narrow.
 #   4. MUTATION LEGS (AC4; skipped when GOLDEN_SKIP_LEGS=1, which every inner run sets, and under
 #      GOLDEN_WRITE=1; an inner run never inherits GOLDEN_WRITE).
 #      Each runs this suite again against a mutated COPY — never the working tree — and is
@@ -79,6 +92,14 @@
 #        M8 prose copy + a second `### Termination (two exits)` ⇒ duplicate unit
 #        M9 a scratch git repo ignoring `*/**/.supervisor/` holding a fixtures copy with a
 #           `tree/.supervisor/` file                 ⇒ ignored fixture
+#        M10 the stderr noise rule, on fixtures copies of gate-validation-waive (one line
+#           inserted before the waive step's `= ` line of expected.out):
+#           a the Broken-pipe line                   ⇒ the case stays GREEN (`ok:
+#             gate-validation-waive:`); the scrub names it (`sigpipe noise pinned`)
+#           b the same line with `echo:` for `printf:` ⇒ step output differs (red)
+#           c an unrelated `! unexpected stderr` line ⇒ step output differs (red)
+#           d the unmutated case run with SIGPIPE inherited as ignored (the CI condition
+#             that produces the line)             ⇒ stays GREEN
 #
 # ENV OVERRIDES (tests and by-hand mutation control only):
 #   GOLDEN_HELPERS=<bundle path>  run the cases through this helper instead of a fresh
@@ -206,6 +227,15 @@ EOF
   else
     ok "no /Users/ or /home/ path under the fixtures"
   fi
+  # the noise rule's line is never pinned (GOLDEN_WRITE drops it; this catches a hand edit)
+  hits="$(grep -lE "$SIGPIPE_NOISE_RE" "$FIX"/*/expected.out 2>/dev/null | env LC_ALL=C sort)"
+  if [ -n "$hits" ]; then
+    while IFS= read -r f; do no "sigpipe noise pinned in ${f#"$FIX"/}"; done <<EOF
+$hits
+EOF
+  else
+    ok "no expected.out pins the SIGPIPE noise line"
+  fi
 }
 
 check_ignored() { # every file under the fixtures dir IN USE must be committable
@@ -251,6 +281,18 @@ norm() { # <file> — print it normalised (scratch root/work dir → <ROOT>/<TMP
   c="${c//"$CASE_DIR_P"/<CASE>}"; c="${c//"$CASE_DIR"/<CASE>}"
   c="${c//"$WORK_P"/<TMP>}"; c="${c//"$WORK"/<TMP>}"
   printf '%s' "$c" | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g'
+}
+
+SIGPIPE_NOISE_RE='^! .*: line [0-9]+: printf: write error: Broken pipe$'
+drop_sigpipe_noise() { # stdin → stdout minus the ONE stderr noise line (header); bytes else kept
+  local c f
+  c="$(cat; printf x)"; c="${c%x}"
+  f="$(printf '%s' "$c" | grep -vE "$SIGPIPE_NOISE_RE"; printf x)"; f="${f%x}"
+  # grep terminates its last line; keep a missing final newline missing, so the pin stays exact
+  case "$c" in *"
+"|"") ;; *) f="${f%"
+"}" ;; esac
+  printf '%s' "$f"
 }
 
 stage_tree() { # <tree dir> <stage dir> — copy, then every `dot-<name>` component → `.<name>`
@@ -338,7 +380,7 @@ run_case() { # <case dir>
     prev="$o"
   done < "$cd_/steps"
   if [ "${GOLDEN_WRITE:-}" = 1 ]; then
-    unroot "$rf" > "$cd_/expected.md"; unroot "$out" > "$cd_/expected.out"
+    unroot "$rf" > "$cd_/expected.md"; unroot "$out" | drop_sigpipe_noise > "$cd_/expected.out"
     no "$name: WROTE expected.md + expected.out (GOLDEN_WRITE — re-run without it to verify)"
     return
   fi
@@ -347,7 +389,7 @@ run_case() { # <case dir>
   if ! cmp -s "$cw/a.md" "$cw/x.md"; then
     no "$name: run file differs"; diff -u "$cw/x.md" "$cw/a.md" | sed 's/^/    /'; bad=1
   fi
-  norm "$out" > "$cw/a.out"; norm "$cd_/expected.out" > "$cw/x.out"
+  norm "$out" | drop_sigpipe_noise > "$cw/a.out"; norm "$cd_/expected.out" | drop_sigpipe_noise > "$cw/x.out"
   if ! cmp -s "$cw/a.out" "$cw/x.out"; then
     no "$name: step output differs"; diff -u "$cw/x.out" "$cw/a.out" | sed 's/^/    /'; bad=1
   fi
@@ -506,6 +548,46 @@ run_legs() {
     leg_assert M9 "$rc" "$WORK/m9.log" "FAIL: ignored fixture run-record-pr/tree/.supervisor/leak"
   else
     no "M9: scratch repo not built"
+  fi
+  # M10 — the stderr noise rule is exactly one line wide.
+  local wc_="gate-validation-waive" v ins
+  for v in a b c; do
+    case "$v" in
+      a) ins='! <TMP>/bundle/automate-lanes.sh: line 3039: printf: write error: Broken pipe' ;;
+      b) ins='! <TMP>/bundle/automate-lanes.sh: line 3039: echo: write error: Broken pipe' ;;
+      c) ins='! unexpected stderr' ;;
+    esac
+    d="$WORK/m10$v"; mkdir -p "$d"; cp -R "$FIX/." "$d/"
+    # insert before the SECOND `= ` line (the --waive step's exit code)
+    IN="$ins" awk 'BEGIN { s = ENVIRON["IN"] } /^= / && ++n == 2 { print s } { print }' \
+      "$FIX/$wc_/expected.out" > "$d/$wc_/expected.out"
+    if [ "$(grep -c '^= ' "$FIX/$wc_/expected.out")" -ge 2 ] \
+       && [ "$(count_of "$ins" "$FIX/$wc_/expected.out")" = 0 ] && [ "$(count_of "$ins" "$d/$wc_/expected.out")" = 1 ] \
+       && [ "$(wc -l < "$d/$wc_/expected.out")" -eq "$(( $(wc -l < "$FIX/$wc_/expected.out") + 1 ))" ]; then
+      rc="$(inner "$WORK/m10$v.log" GOLDEN_FIXTURES="$d" GOLDEN_CASES="$wc_")"
+      if [ "$v" = a ]; then
+        if grep -qF -- "ok: $wc_: run file + step output match" "$WORK/m10$v.log" \
+           && ! grep -qF -- "FAIL: $wc_:" "$WORK/m10$v.log" \
+           && grep -qF -- "FAIL: sigpipe noise pinned in $wc_/expected.out" "$WORK/m10$v.log"; then
+          ok "M10a: Broken-pipe line dropped (case green), and the scrub names it as pinned"
+        else
+          no "M10a: wanted case green + 'sigpipe noise pinned in $wc_/expected.out'"; tail -n 15 "$WORK/m10$v.log" | sed 's/^/    /'
+        fi
+      else
+        leg_assert "M10$v" "$rc" "$WORK/m10$v.log" "FAIL: $wc_: step output differs"
+      fi
+    else
+      no "M10$v: expected.out mutant not built (want exactly one inserted line)"
+    fi
+  done
+  # M10d — the CI condition itself: SIGPIPE inherited as ignored, unmutated fixtures.
+  env -u GOLDEN_WRITE GOLDEN_SKIP_LEGS=1 GOLDEN_CASES="$wc_" \
+    bash -c 'trap "" PIPE; exec bash "$1"' _ "$SELF" > "$WORK/m10d.log" 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ] && grep -qF -- "ok: $wc_: run file + step output match" "$WORK/m10d.log"; then
+    ok "M10d: $wc_ green with SIGPIPE inherited as ignored"
+  else
+    no "M10d: inner run exit $rc under an ignored SIGPIPE, wanted 0 with $wc_ ok"; tail -n 15 "$WORK/m10d.log" | sed 's/^/    /'
   fi
 }
 

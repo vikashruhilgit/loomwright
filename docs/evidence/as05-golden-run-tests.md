@@ -3,7 +3,7 @@
 Source requirement: `.supervisor/requirements/automate-speed/05-golden-run-tests.md`.
 Suite: `loomwright/scripts/test-automate-golden.sh`; fixtures and map: `loomwright/scripts/fixtures/automate-golden/`.
 Every output below was produced on this branch, on macOS: `bash` on `PATH` is 5.3, and the suite was also run under
-`/bin/bash` 3.2.57 (`/bin/bash loomwright/scripts/test-automate-golden.sh` → `PASS: 57 FAIL: 0`). Repo paths are
+`/bin/bash` 3.2.57 (`/bin/bash loomwright/scripts/test-automate-golden.sh` → `PASS: 62 FAIL: 0`). Repo paths are
 shown as `<repo>`.
 
 ## What the suite pins
@@ -41,6 +41,65 @@ Committing those files exposed them to the other repo gates for the first time. 
 then failed `check-vendor-coupling` on 7 `tree/` requirement/job files carrying harness path, CLI and hook tokens in
 prose no helper reads. Those tokens were rewritten (`.app-harness/`, `<harness> -p`, `Subagent-stop`; each affected
 case's `source` records it). Every case's run file and step output stayed identical.
+
+## CI-red root cause (review iteration 2)
+
+Head `1db705e` had `ci` red on shard `suite (2)`: `FAIL: gate-validation-waive: step output differs`, the diff a
+single added stderr line `! <TMP>/bundle/automate-lanes.sh: line 3039: printf: write error: Broken pipe`. Mechanism:
+Finding F9. It passed locally and in a clean clone because a default-disposition macOS shell kills the reader
+silently. CI's runner hands the job SIGPIPE ignored, so the write fails loudly.
+
+**Harness rule (the only stderr filter).** In step output only, applied identically to the actual and the expected
+`.out` (and to what `GOLDEN_WRITE` writes), a recorded stderr line matching
+`^! .*: line [0-9]+: printf: write error: Broken pipe$` is dropped. Every other stderr line is still compared byte
+for byte, a missing final newline included. The line is the bash builtin's report of the F9 race and carries no
+contract. Guards:
+
+- The scrub phase fails `sigpipe noise pinned in <case>/expected.out` if any committed `expected.out` holds the line.
+- Leg M10 (built in), on fixtures copies of `gate-validation-waive` with one line inserted before the waive step's
+  `= ` line. **a**: the Broken-pipe line → the case stays green and the scrub names it. **b**: the same line with
+  `echo:` for `printf:` → `step output differs`. **c**: `! unexpected stderr` → `step output differs`. **d**: the
+  unmutated case run with SIGPIPE inherited as ignored (the CI condition) → green.
+- Non-vacuity, by hand: a scratch copy of the harness with the filter replaced by `cat`, run under
+  `trap '' PIPE` → `FAIL: gate-validation-waive: step output differs` (the `+! …Broken pipe` line), `PASS: 5 FAIL: 1`.
+  The real harness, same condition → `PASS: 6 FAIL: 0`.
+
+**Class sweep.** Each check below was run on the golden cases (`GOLDEN_SKIP_LEGS=1`), and each was green, 48/48:
+
+| Variant | Result |
+|---|---|
+| SIGPIPE inherited as ignored (`bash -c "trap '' PIPE; exec bash …"`) | 48/48. Before the rule: 5/5 runs red on `gate-validation-waive` only |
+| `TZ=Asia/Kolkata` | 48/48 |
+| `LC_ALL=C` / `LC_ALL=en_US.UTF-8` | 48/48 each |
+| `TMPDIR=<scratch>` | 48/48 |
+
+Static sweep of the helpers the cases call (`automate-{helpers,lanes,trail,dismissed,wave}.sh`, 68 pipes into
+`head` / `grep -q|-m` / `awk … exit` / `sed -n …q`). Only a producer that makes several writes can hit EPIPE after
+its consumer exits: a bash builtin in a loop, or output larger than one stdio buffer. `lanes.sh:3282`
+(`_lanes_validation_rows | awk … exit`, the `--waive` branch) is the only such producer on a path a case runs. The
+other `_lanes_validation_rows` callers read it into a file or a command substitution in full. The rest are
+single-write producers (`printf '%s\n' "$x"` of a short value, `sed`/`jq` over small files) or are not reached by
+any case (`lane-readiness`'s `while … ls -t | head`, `fleet-closeout`, `automate-wave.sh`; the cases' `closeout`
+is `automate-trail.sh`'s). Other nondeterminism the harness could pin:
+
+- pids and `.tmp.$$` names, epoch seconds (`date +%s`), `mktemp` suffixes: none appear in any `expected.out` /
+  `expected.md`. A pid or a second-resolution value would also differ between the five back-to-back runs below,
+  which all match.
+- ISO `…Z` timestamps: normalised to `<TS>`.
+- `date +%z` (lanes.sh): not reached by a case, and the `TZ` variant is green.
+- Listing order: the `ls` steps (`brief-repair-merged`, `resume-config-crash-restore`, `run-config-suppress-restore`)
+  and `resume-glob`'s glob list names whose order is the same under C and UTF-8 collation (both locale variants are
+  green). `learning-emit-end-of-drain` already sorts with `env LC_ALL=C sort`. The harness's own `find` output
+  is either sorted (`check_ignored`) or order-free (`stage_tree` renames).
+
+So no second fix was needed. Limit: the sweep ran on macOS (BSD userland). GNU tools on Linux also report EPIPE
+when SIGPIPE is ignored (`sed: couldn't write …`, `grep: write error`). Those are external-tool messages, not the
+builtin's, so the rule does NOT drop them. The static sweep found no multi-write external producer on a case path.
+
+Verification of this fix: five back-to-back full runs → 5/5 `PASS: 62 FAIL: 0` (validation 1); a clean clone of
+the fix commit → `PASS: 62 FAIL: 0`; `bash scripts/ci-local.sh --affected` → `all 17 self-tests passed`,
+`ci-local --affected: PASS after 50s`, `test-automate-golden.sh` `PASS 48s` (run before this paragraph was
+written; the harness and fixtures are as committed).
 
 ## Findings (behaviour not changed)
 
@@ -92,6 +151,21 @@ prose says, the case still pins today's output and the disagreement is listed he
   helper); the `trail_pr_open`, `live_lane`, `token_ceiling`, `closeout_leftover` and `resume_ambiguous` parks; a
   `limit_reached` exit with `current-set`; the `rate_limit` park (F5); a fix-now re-pass with the pinned re-drain
   lines (`automate-2026-10-01-142337` used the legacy wording).
+**Helper races (nondeterministic output)**
+
+- **F9 — `validation-gate --waive` can print `printf: write error: Broken pipe` on stderr.** `automate-lanes.sh`
+  `lanes_validation_gate`'s waiver branch pipes `_lanes_validation_rows` (the shared Validation reader: one `printf`
+  per row inside a `while … read` loop) into an `awk` that `exit`s on the first matching row. When the process
+  inherits SIGPIPE as IGNORED, the reader's next `printf` after awk exits gets EPIPE and bash prints
+  `<path>/automate-lanes.sh: line <n>: printf: write error: Broken pipe`. With SIGPIPE at its default the reader's
+  subshell is killed silently instead. So the line depends on the inherited disposition and on whether awk has
+  exited yet. Stdout, the exit code (no `set -e` in that file) and the run file are unchanged. Seen in CI on
+  `1db705e` (shard `suite (2)`, case `gate-validation-waive`). Reproduced locally 5/5 by running the suite under
+  `bash -c "trap '' PIPE; exec bash …"`. Not fixed here: the requirement forbids helper behaviour changes. A fix
+  belongs in the helper (read the rows into a variable before filtering, as `automate-helpers.sh` already does with
+  its here-strings). The harness rule below keeps the pin deterministic meanwhile.
+  (The brief named the reader `_lanes_validation_reader`; the function is `_lanes_validation_rows`.)
+
 - Observation, not a disagreement: `current-rebuild` appends `current_rebuilt: …` with no leading timestamp (as the
   real `automate-2026-09-30-054439` line shows); the prose does not require one.
 
@@ -105,7 +179,7 @@ is written through a link). Gate: the anchor occurs exactly once, the mutant is 
 loomwright/scripts/test-automate-golden.sh`. Unmutated, every case is green (validation 1). After all rows,
 `git diff --quiet -- loomwright/scripts ':!loomwright/scripts/fixtures'` held.
 
-Rows M1–M6 are also built-in legs (M7–M9 are built-in legs for the unit-map fence/duplicate guards and the ignored-fixture guard) of the suite (validation 1 shows them red on every run). Every helper subcommand
+Rows M1–M6 are also built-in legs (M7–M9 are built-in legs for the unit-map fence/duplicate guards and the ignored-fixture guard; M10 for the stderr noise rule) of the suite (validation 1 shows them red on every run). Every helper subcommand
 family that appears in any case's `steps` has a row:
 
 | Row | Family (subcommands in `steps`) | Anchor → one-char mutation | Case that must go red | Result |
@@ -186,7 +260,10 @@ working tree: loomwright/scripts unchanged (git diff --quiet)
 
 ## validation 1
 
-`bash loomwright/scripts/test-automate-golden.sh` — **57/57, 0 failures** (map lines elided; the run prints one
+Review iteration 2: five back-to-back runs of `bash loomwright/scripts/test-automate-golden.sh` →
+`PASS: 62 FAIL: 0` all five (5/5), and `/bin/bash` 3.2.57 → `PASS: 62 FAIL: 0`.
+
+`bash loomwright/scripts/test-automate-golden.sh` — **62/62, 0 failures** (map lines elided; the run prints one
 `map: <unit id> → <case>` line for each of the 50 units):
 
 ```text
@@ -196,6 +273,7 @@ working tree: loomwright/scripts unchanged (git diff --quiet)
   ok: unit map read: 50 unit(s) extracted live from resume.md per-item-loop.md modes-and-merge-gate.md
 -- 2. home-path scrub
   ok: no /Users/ or /home/ path under the fixtures
+  ok: no expected.out pins the SIGPIPE noise line
   ok: no gitignored file under the fixtures (a clean checkout sees every fixture)
 -- 3. golden cases
   ok: brief-repair-merged: run file + step output match (4 step(s))
@@ -252,10 +330,15 @@ working tree: loomwright/scripts unchanged (git diff --quiet)
   ok: M7: inner run red (exit 1), names: FAIL: unmapped unit per-item-loop.md|After mixed fence
   ok: M8: inner run red (exit 1), names: FAIL: duplicate unit per-item-loop.md|Termination (two exits)
   ok: M9: inner run red (exit 1), names: FAIL: ignored fixture run-record-pr/tree/.supervisor/leak
-PASS: 57 FAIL: 0
+  ok: M10a: Broken-pipe line dropped (case green), and the scrub names it as pinned
+  ok: M10b: inner run red (exit 1), names: FAIL: gate-validation-waive: step output differs
+  ok: M10c: inner run red (exit 1), names: FAIL: gate-validation-waive: step output differs
+  ok: M10d: gate-validation-waive green with SIGPIPE inherited as ignored
+PASS: 62 FAIL: 0
 ```
 
-Clean clone of the committed fix (CI's shape, no ignored file on disk):
+Clean clone of the committed fix (CI's shape, no ignored file on disk; review iteration 1's record — iteration 2's
+clean-clone run is under "CI-red root cause (review iteration 2)"):
 
 ```text
 $ git clone -q <repo> <scratch>/c && git -C <scratch>/c checkout -q <fix commit>
