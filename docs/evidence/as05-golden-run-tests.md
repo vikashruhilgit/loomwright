@@ -75,8 +75,8 @@ contract. Guards:
 
 Static sweep of the helpers the cases call (`automate-{helpers,lanes,trail,dismissed,wave}.sh`, 68 pipes into
 `head` / `grep -q|-m` / `awk … exit` / `sed -n …q`). Only a producer that makes several writes can hit EPIPE after
-its consumer exits: a bash builtin in a loop, or output larger than one stdio buffer. `lanes.sh:3282`
-(`_lanes_validation_rows | awk … exit`, the `--waive` branch) is the only such producer on a path a case runs. The
+its consumer exits: a bash builtin in a loop, or output larger than one stdio buffer. `automate-lanes.sh`'s
+`--waive` branch of `lanes_validation_gate` (`_lanes_validation_rows | awk … exit`) is the only such producer on a path a case runs. The
 other `_lanes_validation_rows` callers read it into a file or a command substitution in full. The rest are
 single-write producers (`printf '%s\n' "$x"` of a short value, `sed`/`jq` over small files) or are not reached by
 any case (`lane-readiness`'s `while … ls -t | head`, `fleet-closeout`, `automate-wave.sh`; the cases' `closeout`
@@ -259,6 +259,18 @@ working tree: loomwright/scripts unchanged (git diff --quiet)
 ```
 
 ## validation 1
+
+Drain round 1 (refreshed count): `bash loomwright/scripts/test-automate-golden.sh` → `PASS: 64 FAIL: 0`, and the
+same under `bash -c "trap '' PIPE; …"` → `PASS: 64 FAIL: 0`. The two new checks are the phase-2 `$PREV` lint
+(`ok: no step reads $PREV after current-set / runfile-write (or before any step)`) and leg M11
+(`FAIL: pick-time-lane-guard-park: $PREV read after current-set` on the pre-fix steps). Three fixtures had
+pinned `current-set: written`, or blank fields, as their park's Progress line: `pick-time-lane-guard-park`,
+`pick-time-token-ceiling-park` and `closeout-leftover-gate-non-interactive`. Each now caches its producer's stdout
+right after it (`loop: cp "$PREV" "$ROOT/.<name>.line"`), so each gains one step, and its last Progress line is
+the real diagnostic: `refuse: live_lane automate-2026-10-08-033739-L1 L1`, `PARK: ledger_unreadable`, and
+`closeout leftover: automate-2026-10-13-181331 stamp skipped — no done brief`. Running the lint on the pre-fix
+fixtures flags exactly those three cases and no others. The transcript below is review iteration 2's and keeps
+its counts.
 
 Review iteration 2: five back-to-back runs of `bash loomwright/scripts/test-automate-golden.sh` →
 `PASS: 62 FAIL: 0` all five (5/5), and `/bin/bash` 3.2.57 → `PASS: 62 FAIL: 0`.

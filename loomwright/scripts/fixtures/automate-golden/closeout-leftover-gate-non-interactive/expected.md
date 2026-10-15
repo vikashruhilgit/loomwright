@@ -33,4 +33,4 @@
 - dismissed-drafts: 1 per-finding + 1 summary (6 listed in summary)
 - 2026-10-15T09:54:06Z parked awaiting_merge https://github.com/vikashruhilgit/loomwright/pull/555 — 2 dismissed decision(s) pending
 - 2026-10-15T09:56:17Z dismissed decisions asked after the park — ask — fix-now allowed: PR OPEN, parked awaiting_merge, merge watcher armed
-- 2026-10-15T11:00:00Z closeout leftover:   
+- 2026-10-15T11:00:00Z closeout leftover: automate-2026-10-13-181331 stamp skipped — no done brief

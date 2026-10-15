@@ -28,4 +28,4 @@
 - 2026-10-15T09:53:21Z drain READY (converged, 2 rounds, 1 fix cycle; ci green on 953c2d1; claude-review on 953c2d1: prior findings resolved, 1 new LOW dismissed below_fix_floor; rules_gate none)
 - 2026-10-15T09:53:21Z sidecar-check: ok .supervisor/automate/automate-2026-10-13-181331.review-heal-result.md
 - validation-gate: ok — 1 running-system step(s) evidenced
-- 2026-10-15T11:00:00Z current-set: written
+- 2026-10-15T11:00:00Z PARK: ledger_unreadable

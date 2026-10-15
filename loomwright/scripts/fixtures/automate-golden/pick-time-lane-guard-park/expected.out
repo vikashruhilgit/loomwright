@@ -1,10 +1,12 @@
 $ pick-guard "$AD"
 refuse: live_lane automate-2026-10-08-033739-L1 L1
 = 1
+$ loop: cp "$PREV" "$ROOT/.lane-guard.line"
+= 0
 $ loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
 = 0
 $ current-set "$RF" --pause-reason live_lane
 current-set: written
 = 0
-$ loop: bash "$H" progress-append "$RF" "2026-10-15T11:00:00Z $(cat "$PREV")"
+$ loop: bash "$H" progress-append "$RF" "2026-10-15T11:00:00Z $(cat "$ROOT/.lane-guard.line")"
 = 0

@@ -27,6 +27,9 @@
 #      suite would pass here and fail in CI (the as05 `*/**/.supervisor/` incident).
 #      And no `<case>/expected.out` may hold the stderr noise line of phase 3's rule
 #      (`FAIL: sigpipe noise pinned in <case>/expected.out`).
+#      And no step may read $PREV right after a `current-set` / `runfile-write` step, or on
+#      the first step (`FAIL: <case>: $PREV read after <subcommand>` / `… before any step`):
+#      those print a fixed status token, never a diagnostic (the drain-round-1 bug).
 #   3. CASES. Each fixtures/automate-golden/<case>/ holds:
 #        input.md      the run file BEFORE the step (trimmed from a real run)
 #        steps         one invocation per line, in the prose's order (`#`/blank skipped):
@@ -100,6 +103,8 @@
 #           c an unrelated `! unexpected stderr` line ⇒ step output differs (red)
 #           d the unmutated case run with SIGPIPE inherited as ignored (the CI condition
 #             that produces the line)             ⇒ stays GREEN
+#        M11 fixtures copy of pick-time-lane-guard-park/steps restored to its pre-fix shape
+#           (cache step dropped, Progress step reads $PREV) ⇒ $PREV read after current-set
 #
 # ENV OVERRIDES (tests and by-hand mutation control only):
 #   GOLDEN_HELPERS=<bundle path>  run the cases through this helper instead of a fresh
@@ -236,6 +241,40 @@ EOF
   else
     ok "no expected.out pins the SIGPIPE noise line"
   fi
+}
+
+# $PREV is ONLY the immediately preceding step's stdout (run_case reassigns it after every
+# step). `current-set` and `runfile-write` print a fixed status token (`current-set: written`
+# or nothing), never a diagnostic, so a step reading $PREV right after one of them is pinning
+# the wrong producer (the as05 drain-round-1 bug: three parks pinned `current-set: written`
+# instead of their refusal). Cache the producer's stdout right after it instead
+# (`loop: cp "$PREV" "$ROOT/.<name>.line"`). A loop step's subcommand is the last
+# `"$H" <word>` it invokes. A $PREV read on the first step reads the empty prev.none.
+check_prev_reads() {
+  local f c hits=0 msg
+  for f in "$FIX"/*/steps; do
+    [ -f "$f" ] || continue
+    c="${f%/steps}"; c="${c##*/}"
+    while IFS= read -r msg; do
+      [ -n "$msg" ] || continue
+      no "$c: $msg"; hits=$((hits + 1))
+    done <<EOF
+$(awk '
+  /^[ \t]*$/ || /^#/ { next }
+  {
+    if (index($0, "$PREV") > 0) {
+      if (n == 0) print "$PREV read before any step"
+      else if (sub_ == "current-set" || sub_ == "runfile-write") print "$PREV read after " sub_
+    }
+    n++
+    if (substr($0, 1, 6) == "loop: ") {
+      sub_ = "loop"; s = $0
+      while ((i = index(s, "\"$H\" ")) > 0) { s = substr(s, i + 5); split(s, w, /[ \t]/); sub_ = w[1] }
+    } else { split($0, w, /[ \t]/); sub_ = w[1] }
+  }' "$f")
+EOF
+  done
+  [ "$hits" = 0 ] && ok "no step reads \$PREV after current-set / runfile-write (or before any step)"
 }
 
 check_ignored() { # every file under the fixtures dir IN USE must be committable
@@ -589,6 +628,20 @@ run_legs() {
   else
     no "M10d: inner run exit $rc under an ignored SIGPIPE, wanted 0 with $wc_ ok"; tail -n 15 "$WORK/m10d.log" | sed 's/^/    /'
   fi
+  # M11 — the $PREV lint, on a fixtures copy of pick-time-lane-guard-park restored to its
+  # pre-fix shape: the cache step dropped and the Progress step reading $PREV again.
+  local pc="pick-time-lane-guard-park" cache_line='loop: cp "$PREV" "$ROOT/.lane-guard.line"'
+  d="$WORK/m11"; mkdir -p "$d"; cp -R "$FIX/." "$d/"
+  anchor='$(cat "$ROOT/.lane-guard.line")'
+  mutate_file "$FIX/$pc/steps" "$anchor" '$(cat "$PREV")' "$d/$pc/steps.tmp"
+  awk -v c="$cache_line" '$0 != c' "$d/$pc/steps.tmp" > "$d/$pc/steps"; rm -f "$d/$pc/steps.tmp"
+  if [ "$(count_of "$cache_line" "$FIX/$pc/steps")" = 1 ] && [ "$(count_of "$cache_line" "$d/$pc/steps")" = 0 ] \
+     && gate_mutant M11 "$FIX/$pc/steps" "$d/$pc/steps" "$anchor" 0; then
+    rc="$(inner "$WORK/m11.log" GOLDEN_FIXTURES="$d" GOLDEN_CASES=-)"
+    leg_assert M11 "$rc" "$WORK/m11.log" "FAIL: $pc: \$PREV read after current-set"
+  else
+    no "M11: steps mutant not built (want the cache step removed and \$PREV restored)"
+  fi
 }
 
 # --------------------------------------------------------------------------------------
@@ -606,6 +659,7 @@ check_map
 echo "-- 2. home-path scrub"
 check_scrub
 check_ignored
+check_prev_reads
 echo "-- 3. golden cases"
 run_cases
 if [ "${GOLDEN_WRITE:-}" = 1 ]; then

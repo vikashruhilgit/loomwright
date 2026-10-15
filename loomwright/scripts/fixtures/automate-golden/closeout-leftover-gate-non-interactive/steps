@@ -1,3 +1,4 @@
 closeout-classify --run automate-2026-10-13-181331 --item .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md --pr https://github.com/vikashruhilgit/loomwright/pull/555 --record "$RF" < "$ROOT/closeout.out"
+loop: cp "$PREV" "$ROOT/.closeout.line"
 current-set "$RF" --pause-reason closeout_leftover
-loop: tab="$(printf '\t')"; while IFS="$tab" read -r k r i p s d; do bash "$H" progress-append "$RF" "2026-10-15T11:00:00Z closeout leftover: $r $s $d"; done < "$PREV"
+loop: tab="$(printf '\t')"; while IFS="$tab" read -r k r i p s d; do bash "$H" progress-append "$RF" "2026-10-15T11:00:00Z closeout leftover: $r $s $d"; done < "$ROOT/.closeout.line"

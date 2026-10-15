@@ -1,8 +1,10 @@
 $ closeout-classify --run automate-2026-10-13-181331 --item .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md --pr https://github.com/vikashruhilgit/loomwright/pull/555 --record "$RF" < "$ROOT/closeout.out"
 leftover	automate-2026-10-13-181331	.supervisor/requirements/automate-followups/39a-sweep-and-janitor.md	https://github.com/vikashruhilgit/loomwright/pull/555	stamp	skipped — no done brief
 = 0
+$ loop: cp "$PREV" "$ROOT/.closeout.line"
+= 0
 $ current-set "$RF" --pause-reason closeout_leftover
 current-set: written
 = 0
-$ loop: tab="$(printf '\t')"; while IFS="$tab" read -r k r i p s d; do bash "$H" progress-append "$RF" "2026-10-15T11:00:00Z closeout leftover: $r $s $d"; done < "$PREV"
+$ loop: tab="$(printf '\t')"; while IFS="$tab" read -r k r i p s d; do bash "$H" progress-append "$RF" "2026-10-15T11:00:00Z closeout leftover: $r $s $d"; done < "$ROOT/.closeout.line"
 = 0
