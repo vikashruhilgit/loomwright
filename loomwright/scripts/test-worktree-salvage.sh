@@ -95,7 +95,12 @@
 #         drops only that verdict; pin mutation (the coverage verdict deleted) ⇒ the
 #         `.env` leg RED. The regenerable rule is ANCHORED: `src/build/notes.md` (no
 #         manifest beside src/build/), a manifest-less `node_modules/` and a FILE named
-#         node_modules are all named; pin mutation (the manifest check removed) ⇒ RED
+#         node_modules are all named; pin mutation (the manifest check removed) ⇒ RED.
+#         AC-17j pins every other arm via --check-ignored: a SYMLINKED node_modules beside
+#         package.json ⇒ named; a deep __pycache__/ and a deep .DS_Store ⇒ ok; build/ beside
+#         requirements-dev.txt, target/ beside Cargo.toml, .venv/ beside pyproject.toml and
+#         a nested pkg/node_modules/ beside pkg/package.json ⇒ ok; AC-17k pin mutation (the
+#         manifest glob quoted, so requirements*.txt stops expanding) ⇒ the requirements leg RED
 #   AC-18 (af/39a review) the coverage listing fails (git ls-files refused, or mktemp
 #         under a missing TMPDIR) ⇒ `ignored-check: failed — cannot list …` and
 #         `ignored: failed - — …` with no directory; pin mutations on the caller's
@@ -1079,6 +1084,44 @@ if [ -s "$MUT17H" ] && ! cmp -s "$MUT17H" "$SALVAGE" && bash -n "$MUT17H" 2>/dev
   if check_ac17h "$MUT17H"; then no "AC-17i: AC-17h survived the manifest-check-removed mutant (vacuous)"; else ok "AC-17i: AC-17h RED against the mutant matching by name at any depth ($S_OUT)"; fi
 else
   no "AC-17i gate: mutant not usable (empty, identical, or syntax error)"
+fi
+# AC-17j — one --check-ignored leg per remaining ign_regenerable arm (pinning the
+# behaviour its comment states). ac17_track <rel> — commit a manifest at <rel> (the tree
+# stays clean, and its parent is named per-entry rather than collapsed by --directory).
+ac17_track() { mkdir -p "$FX_WT/$(dirname "$1")"; printf 'x\n' > "$FX_WT/$1"; ( cd "$FX_WT" && git add "$1" && git commit -qm "track $1" ) >/dev/null 2>&1; }
+# ac17j <label> <expected stdout> — run --check-ignored on the current FX_WT and assert.
+ac17j() {
+  run_salvage "$SALVAGE" "$FX_WT" --check-ignored
+  [ "$S_RC" -eq 0 ] && [ "$S_OUT" = "$2" ] && ok "AC-17j: $1 ⇒ '$2'" || no "AC-17j $1 (rc=$S_RC out='$S_OUT' err='$S_ERR')"
+}
+fresh_wt ac17j1; ac17_pkg; mkdir -p "$FX_D/nm-target"; ln -s "$FX_D/nm-target" "$FX_WT/node_modules"; ign_extra node_modules
+ac17j "a SYMLINKED node_modules beside package.json (not a real directory)" "ignored-check: unsalvaged node_modules"
+fresh_wt ac17j2; ign_extra __pycache__/; mkdir -p "$FX_WT/sub/__pycache__"; printf 'pyc\n' > "$FX_WT/sub/__pycache__/m.pyc"
+ac17j "a deep sub/__pycache__/ (any depth, no manifest)" "ignored-check: ok"
+fresh_wt ac17j3; ign_extra .DS_Store; printf 'ds\n' > "$FX_WT/sub/.DS_Store"
+ac17j "a deep sub/.DS_Store FILE (any depth)" "ignored-check: ok"
+# check_ac17j_req <script> — build/ beside a tracked requirements-dev.txt: only the UNQUOTED
+# `requirements*.txt` glob expands to it.
+check_ac17j_req() {
+  fresh_wt ac17j4; ac17_track requirements-dev.txt; ign_extra build/; mkdir -p "$FX_WT/build"; printf 'o\n' > "$FX_WT/build/out.o"
+  run_salvage "$1" "$FX_WT" --check-ignored
+  [ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored-check: ok" ]
+}
+if check_ac17j_req "$SALVAGE"; then ok "AC-17j: build/ beside a tracked requirements-dev.txt (the requirements*.txt glob) ⇒ 'ignored-check: ok'"
+else no "AC-17j requirements-dev (rc=$S_RC out='$S_OUT' err='$S_ERR')"; fi
+fresh_wt ac17j5; ac17_track Cargo.toml; ign_extra target/; mkdir -p "$FX_WT/target/debug"; printf 'bin\n' > "$FX_WT/target/debug/app"
+ac17j "target/ beside Cargo.toml" "ignored-check: ok"
+fresh_wt ac17j6; ac17_track pyproject.toml; ign_extra .venv/; mkdir -p "$FX_WT/.venv/bin"; printf 'py\n' > "$FX_WT/.venv/bin/python"
+ac17j ".venv/ beside pyproject.toml" "ignored-check: ok"
+fresh_wt ac17j7; ac17_track pkg/package.json; ign_extra node_modules/; mkdir -p "$FX_WT/pkg/node_modules/dep"; printf 'x\n' > "$FX_WT/pkg/node_modules/dep/i.js"
+ac17j "a nested pkg/node_modules/ beside pkg/package.json (manifest in the SAME parent)" "ignored-check: ok"
+# AC-17k pin mutation: the manifest glob QUOTED ("$m") so requirements*.txt no longer expands ⇒ the requirements-dev leg RED.
+MUT17K="$SCRATCH/mut17k/worktree-salvage.sh"; mkdir -p "$SCRATCH/mut17k"
+sed 's/for f in "\$dir"\/\$m; do/for f in "$dir"\/"$m"; do/' "$SALVAGE" > "$MUT17K"
+if [ -s "$MUT17K" ] && ! cmp -s "$MUT17K" "$SALVAGE" && bash -n "$MUT17K" 2>/dev/null; then
+  if check_ac17j_req "$MUT17K"; then no "AC-17k: the requirements-dev leg survived the quoted-glob mutant (vacuous)"; else ok "AC-17k: the requirements-dev leg RED against the quoted-glob mutant ($S_OUT)"; fi
+else
+  no "AC-17k gate: mutant not usable (empty, identical, or syntax error)"
 fi
 # AC-17g pin mutation: the coverage verdict deleted ⇒ AC-17a RED.
 MUT17="$SCRATCH/mut17/worktree-salvage.sh"; mkdir -p "$SCRATCH/mut17"
