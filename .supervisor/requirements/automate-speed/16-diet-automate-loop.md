@@ -3,7 +3,7 @@
 ## Status: pending
 
 ## Problem
-After items 06–09 the automate-loop skill is a coordinator loop plus global rules, intake and the lane coordinator. `commands/automate.md` still tells the main thread to read every split file "in full, in this order" (the parallel-automate/22 split was move-only, so it saved nothing), and `lanes.md` (54KB) is read even on a sequential run (plan doc §Why now).
+After items 06–09 the automate-loop skill is a coordinator loop plus global rules, intake and the lane coordinator. Item 25 stopped Step 0 from reading the lanes, resume and branch-mode files on runs that do not need them; the coordinator still reads the rest of the skill up front, including sections the driver now runs itself (plan doc §Why now).
 
 ## Goal
 <!-- bump: minor -->
@@ -20,7 +20,10 @@ them.
 - **Part B — stories out.** Every `story` row moves to its rationale doc, linked by anchor; keep a one-line
   "because" only where it blocks a tempting wrong shortcut. A story paragraph that contains a rule is split first:
   the rule gets its own row and home, then the story moves.
-- **Part C — load by mode.** Drop the "read each split file in full" instruction. `lanes.md` and `command-lanes.md` load only with `--parallel`; `resume.md` only on `--resume`; `branch-mode.md` only in branch mode; `intake.md` only when building a Queue.
+- **Part C — load by phase.** Item 25 already made Step 0 read `lanes.md`, `command-lanes.md`, `resume.md`,
+  `branch-mode.md` and `intake.md` only when the run needs them. Extend that to what the driver (items 06–09) left in
+  the coordinator's read set: each remaining section loads at the step that uses it, and nothing the `next-step`
+  driver now owns is read at all.
 
 ## Invariants
 - No rule is dropped: every rule row in the group inventory has a home (`script:` / `hook:` existing leaf /
@@ -49,7 +52,7 @@ them.
   30% smaller; before and after are in the PR body.
 - The history-reference count (`#NNN`, `queue/NN`, dates, `item NN`) in the group's runtime files is recorded before
   and after and is lower.
-- Given a sequential `/automate` run without `--resume`, then `lanes.md`, `command-lanes.md` and `resume.md` are not read (asserted from the coordinator transcript).
+- Given a sequential `/automate` run, then the coordinator reads no section whose steps the `next-step` driver owns (asserted from the coordinator transcript); item 25's conditional reads still hold.
 
 ## Validation (must pass before merge)
 1. `test-loop-inventory.sh`, `check-doc-currency.sh`, `test-citation-drift.sh`, `check-token-budget.sh`, plus the
@@ -59,6 +62,7 @@ them.
 
 ## Depends on
 09
+25
 
 ## Touches
 loomwright/skills/automate-loop/SKILL.md

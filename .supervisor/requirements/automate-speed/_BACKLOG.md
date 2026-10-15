@@ -48,6 +48,13 @@ Recorded 2026-10-15 (owner, Product Owner session):
   not edit `agents/review-pr.md`; item 10 uses a config key, not an `/automate` flag. Item 21 is re-scoped to the test
   file because `automate-helpers.sh` is already split into `automate-helpers.d/`; new modules follow that `<script>.d/`
   convention.
+- **D9** (2026-10-15, owner) Item 25 pulls the load-by-mode quick win out of item 16 into wave 1: Step 0 of
+  `/automate` stops reading `lanes.md`, `command-lanes.md`, `resume.md` and `branch-mode.md` on runs that do not need
+  them (~78K chars per item; seen on vendsy/hub PR #445 and loomwright PR #555). Item 06 now depends on 25.
+- **D10** (2026-10-15, owner) Item 26 adds the subagent prompt diet (code-reviewer, execute-manager, plan-reviewer,
+  worker): subagents were 36% of PR #555's item and every spawn re-pays its prompt. Kept at 7 waves: item 10 documents
+  its config key in `docs/result-schemas/automate-run.md` instead of `ARCHITECTURE_CONTRACTS.md`, and item 18 adds
+  the §"Cost Profiles" pointer; item 18 now also depends on 10 and 26.
 - Flags acknowledged with "Proceed": a live `/automate` run on `feature/af39a-sweep` has uncommitted edits to
   `automate-helpers.sh` / `automate-lanes.sh` (items 19, 21, 24 wait for it); item 09 rewrites the documented
   inline-only rule in `docs/ARCHITECTURE_CONTRACTS.md`.
@@ -55,36 +62,39 @@ Recorded 2026-10-15 (owner, Product Owner session):
 ## Order
 Owner's list → files: 1→04, 2→05, 3→03, 4→06/07/08, 5→09, 6→10, 7→11/12, 8+9+10→13/14/15/16 (by file group),
 11→17, 12→18 (with the ceiling re-baseline), 13→19/20/21 (21 = the helpers' test file, D8), 14→22, 15→dropped (D4),
-16+17→23, 18→24.
+16+17→23, 18→24; quick win → 25 (D9); subagent prompt diet → 26 (D10).
 
 | Item | Delivers | Depends on | Wave |
 |---|---|---|---|
-| 03 | Per-item cost report + committed baseline | none | 1 |
+| 25 | /automate reads lanes, resume, branch-mode files only when the run needs them | none | 1 |
 | 04 | Loop inventory + `test-loop-inventory.sh` | none | 1 |
 | 05 | Golden run-file tests for every per-item-loop branch | none | 1 |
 | 17 | Ceilings for skills and commands | none | 1 |
-| 06 | next-step driver: tail (gate, park, closeout); links 05's cases into the inventory | 04, 05 | 2 |
+| 06 | next-step driver: tail (gate, park, closeout); links 05's cases into the inventory | 04, 05, 25 | 2 |
 | 13 | Diet: Launch Pad + /autonomous | 04 | 2 |
+| 03 | Per-item cost report + committed baseline | none | 2 |
 | 19 | Split automate-lanes / automate-trail into `.d/` modules | none (after af39a merges) | 2 |
-| 20 | Split setup-memory / meta-sync into `.d/` modules | none | 2 |
 | 07 | next-step driver: DRAIN + RUN bookkeeping | 06 | 3 |
 | 11 | next-step inside Supervisor | 06 | 3 |
 | 12 | next-step inside review-heal | 06 | 3 |
-| 21 | Split test-automate-helpers.sh to mirror automate-helpers.d/ | none (after af39a merges) | 3 |
+| 20 | Split setup-memory / meta-sync into `.d/` modules | none | 3 |
 | 08 | next-step driver: PICK, RECONCILE, resume; legacy retired | 07 | 4 |
 | 14 | Diet: review-heal | 12 | 4 |
 | 15 | Diet: Supervisor + self-heal-advisory | 11 | 4 |
-| 22 | Split dreaming / setup / agent-help commands | none | 4 |
+| 21 | Split test-automate-helpers.sh to mirror automate-helpers.d/ | none (after af39a merges) | 4 |
 | 09 | Fresh session per phase | 08 | 5 |
 | 23 | Measure heal rounds + Plan Review attempts | 03 | 5 |
+| 22 | Split dreaming / setup / agent-help commands | none | 5 |
 | 10 | Coordinator model A/B | 09, 03 | 6 |
-| 16 | Diet: automate-loop (load by mode) | 09 | 6 |
+| 16 | Diet: automate-loop (load by phase) | 09, 25 | 6 |
 | 24 | Terse script output | 19, 21 | 6 |
-| 18 | Lock the gains: history-ref lint + lowered ceilings | 13, 14, 15, 16, 17 | 7 |
+| 26 | Diet: code-reviewer, execute-manager, plan-reviewer, worker prompts + preloads | none | 6 |
+| 18 | Lock the gains: history-ref lint + lowered ceilings + Cost Profiles pointer | 10, 13, 14, 15, 16, 17, 26 | 7 |
 
-`plan-waves --max 4` (2026-10-15, after D8) schedules **7 waves**; 3 lanes give 8, 2 give 11, sequential 22. The floor
+`plan-waves --max 4` (2026-10-15, after D8–D9, checklist order below) schedules **7 waves**; 3 lanes give 8, 2 give 11, sequential 22. The floor
 is the driver chain 06 → 07 → 08 → 09 (same files, so never in one wave) plus 16 and 18 after it. The wave column is
-the planner's choice when filler items land early; re-run `plan-waves <this folder> --max 4 --explain` after edits.
+the planner's greedy choice in checklist order — the order matters: items that edit an agent prompt (11, 13, 15, 26) or
+the budget/contract docs (09, 17, 18) conflict pairwise through `.agent/companions.json`, so each needs its own wave; re-run `plan-waves <this folder> --max 4 --explain` after edits.
 
 ## Run
 /automate --backlog .supervisor/requirements/automate-speed/_BACKLOG.md --parallel 4
@@ -119,25 +129,27 @@ the planner's choice when filler items land early; re-run `plan-waves <this fold
 - Item 03's report after item 09 shows the coordinator still above ~100K peak context per item.
 
 ## Checklist
-- [ ] .supervisor/requirements/automate-speed/03-measure-run-cost.md
+- [ ] .supervisor/requirements/automate-speed/25-automate-load-by-mode.md
 - [ ] .supervisor/requirements/automate-speed/04-loop-inventory.md
 - [ ] .supervisor/requirements/automate-speed/05-golden-run-tests.md
 - [ ] .supervisor/requirements/automate-speed/17-prompt-size-ratchet.md
 - [ ] .supervisor/requirements/automate-speed/06-next-step-driver-tail.md
 - [ ] .supervisor/requirements/automate-speed/13-diet-launch-pad-autonomous.md
+- [ ] .supervisor/requirements/automate-speed/03-measure-run-cost.md
 - [ ] .supervisor/requirements/automate-speed/19-split-lanes-and-trail-scripts.md
-- [ ] .supervisor/requirements/automate-speed/20-split-memory-and-meta-scripts.md
 - [ ] .supervisor/requirements/automate-speed/07-next-step-drain-and-run.md
 - [ ] .supervisor/requirements/automate-speed/11-next-step-supervisor.md
 - [ ] .supervisor/requirements/automate-speed/12-next-step-review-heal.md
-- [ ] .supervisor/requirements/automate-speed/21-split-automate-helpers.md
+- [ ] .supervisor/requirements/automate-speed/20-split-memory-and-meta-scripts.md
 - [ ] .supervisor/requirements/automate-speed/08-next-step-pick-and-resume.md
 - [ ] .supervisor/requirements/automate-speed/14-diet-review-heal.md
 - [ ] .supervisor/requirements/automate-speed/15-diet-supervisor.md
-- [ ] .supervisor/requirements/automate-speed/22-split-big-commands.md
+- [ ] .supervisor/requirements/automate-speed/21-split-automate-helpers.md
 - [ ] .supervisor/requirements/automate-speed/09-fresh-session-per-phase.md
 - [ ] .supervisor/requirements/automate-speed/23-measure-review-gates.md
+- [ ] .supervisor/requirements/automate-speed/22-split-big-commands.md
 - [ ] .supervisor/requirements/automate-speed/10-coordinator-model-ab.md
 - [ ] .supervisor/requirements/automate-speed/16-diet-automate-loop.md
 - [ ] .supervisor/requirements/automate-speed/24-terse-script-output.md
+- [ ] .supervisor/requirements/automate-speed/26-diet-subagent-prompts.md
 - [ ] .supervisor/requirements/automate-speed/18-lock-the-gains.md

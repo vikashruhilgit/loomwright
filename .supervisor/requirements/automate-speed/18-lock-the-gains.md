@@ -21,6 +21,8 @@ post-diet measure + ~10%.
   references; a file below ⇒ prints "lower the baseline" (the PR that lowers it updates the json).
 - Wire it into `.github/workflows/ci.yml` (root-scripts tests are listed explicitly there) and `scripts/ci-local.sh`.
 - Re-baseline every ceiling in `prompt-token-budgets.json` to the measured size + ~10% and update the mirror table.
+- `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles": one pointer to the coordinator model key item 10 documented in
+  `docs/result-schemas/automate-run.md`.
 - `CLAUDE.md`: one line pointing at the lint (where a story goes instead: CHANGELOG or `docs/rationale/`).
 
 ## Invariants
@@ -47,11 +49,13 @@ post-diet measure + ~10%.
    in the same change ⇒ still red (the test refuses any baseline entry that rose against the merge base).
 
 ## Depends on
+10
 13
 14
 15
 16
 17
+26
 
 ## Touches
 scripts/check-prompt-history-refs.sh

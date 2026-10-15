@@ -73,6 +73,7 @@ next-step".
 ## Depends on
 04
 05
+25
 
 ## Touches
 loomwright/scripts/automate-next-step.sh

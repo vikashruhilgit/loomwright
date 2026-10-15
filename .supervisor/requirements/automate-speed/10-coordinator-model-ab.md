@@ -19,9 +19,10 @@ questions.
 - `loomwright/evals/coordinator-model/`: `claude plugin eval` cases that drive the coordinator loop over fixed
   fixture items (scratch repos; no network merges), graded on (1) run file byte-identical to the golden expectation,
   (2) no question asked that the instruction did not carry, no instruction skipped, (3) tokens from item 03's report.
-- A coordinator model setting: a `.supervisor/config.json` key read by `automate-next-step.sh`, documented in
-  `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles"; no new `/automate` flag (keeps this item off
-  `commands/automate.md`, which item 16 edits in the same wave). Default unchanged until the evidence says otherwise.
+- A coordinator model setting: a `.supervisor/config.json` key read by `automate-next-step.sh`, documented next to the
+  driver's instruction schema in `docs/result-schemas/automate-run.md`; no new `/automate` flag and no
+  `ARCHITECTURE_CONTRACTS.md` edit (keeps this item off `commands/automate.md`, which item 16 edits in the same wave,
+  and off the contract doc item 26's agent edits pull in; item 18 adds the §"Cost Profiles" pointer). Default unchanged until the evidence says otherwise.
 - `docs/evidence/coordinator-model-ab.md`: the commands, per-model scores, tokens, and the decision.
 - Fold the relevant part of `token-economy/06` (escalate-on-failure valve: ≥3 FAILs in the last 20 ⇒ back to the
   stronger model, one-directional) into the setting; record in the PR body that 06 is superseded for the coordinator.
@@ -55,6 +56,6 @@ questions.
 loomwright/evals/coordinator-model/
 loomwright/scripts/automate-next-step.sh
 loomwright/scripts/test-automate-next-step.sh
-loomwright/docs/ARCHITECTURE_CONTRACTS.md
+loomwright/docs/result-schemas/automate-run.md
 docs/evidence/coordinator-model-ab.md
 changelog.d/as10-coordinator-model-ab.md
