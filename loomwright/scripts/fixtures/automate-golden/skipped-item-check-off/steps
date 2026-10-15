@@ -1,0 +1,5 @@
+queue-checkoff "$RF" .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md "owner re-scoped into item 06" abandoned
+progress-append "$RF" "2026-10-15T11:05:00Z abandoned .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md — owner re-scoped into item 06"
+remaining "$RF"
+trail-pr "$RF" --reason abandoned
+loop: bash "$H" progress-append "$RF" "2026-10-15T11:05:01Z $(cat "$PREV")"

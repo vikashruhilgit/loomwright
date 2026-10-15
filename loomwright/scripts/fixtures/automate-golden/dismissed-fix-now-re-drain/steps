@@ -1,0 +1,11 @@
+park-ask-gate "$RF" .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md https://github.com/vikashruhilgit/loomwright/pull/555
+park-ask-gate "$RF" .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md https://github.com/vikashruhilgit/loomwright/pull/555
+loop: sed 's/^## Status: paused$/## Status: running/' "$RF" | bash "$H" runfile-write "$RF"
+current-set "$RF" --item .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md --status running --pause-reason null
+dismissed-decide "$RF" "$ROOT/.supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md" fix-now
+progress-append "$RF" "2026-10-15T10:21:00Z owned drain started (fix-now re-drain) — /review-pr https://github.com/vikashruhilgit/loomwright/pull/555 --until-mergeable --no-auto-postmortem @ 953c2d1bbf14"
+progress-append "$RF" "2026-10-15T10:40:00Z fix-now re-drain READY (converged, 1 rounds, 1 fix cycles)"
+loop: awk -v n='- owned_drain_started: 2026-10-15T10:21:00Z | owned_drain_result: READY | suppressed_default_dispatch: true' 'index($0, "- owned_drain_started:")==1 && !d {print n; d=1; next} {print}' "$RF" | bash "$H" runfile-write "$RF"
+loop: awk -v n='- pending_decisions: 1 | fix_now_reentered: true' 'index($0, "- pending_decisions:")==1 && !d {print n; d=1; next} {print}' "$RF" | bash "$H" runfile-write "$RF"
+dismissed-drafts "$RF" .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md https://github.com/vikashruhilgit/loomwright/pull/555 --after-fix-now
+dismissed-pending "$RF"

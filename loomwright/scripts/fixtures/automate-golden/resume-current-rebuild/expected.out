@@ -1,0 +1,6 @@
+$ current-rebuild "$RF"
+current_rebuilt: .supervisor/requirements/automate-followups/14-closeout-fail-safe.md pr null state none
+= 0
+$ current-rebuild "$RF"
+current-rebuild: skipped — ## Current set
+= 0

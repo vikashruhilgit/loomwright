@@ -1,0 +1,4 @@
+run: automate-2026-10-13-181331
+lines: the run paused after 39a; the owner abandons pa/18 in ## Queue (§5) — here the loop writes it at step 6
+(queue-checkoff with a reason + mark). trail-pr --reason abandoned runs for real against a scratch bare origin.
+gap: the real run has not abandoned pa/18; the reason text is a placeholder.

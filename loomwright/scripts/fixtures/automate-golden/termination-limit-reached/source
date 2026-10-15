@@ -1,0 +1,6 @@
+run: automate-2026-07-06-100629
+lines: the run's title, Source, Run Config (limit 4) and its first six Queue rows at the moment item 04 closed
+out (01-04 checked), plus the real 19:36:29 line "4/4 limit slots used — run will terminate limit_reached".
+gap: that run predates `current-set` and wrote no pinned limit_reached line; the steps write the prose's exit
+(`## Status: paused`, `pause_reason: limit_reached`, `remaining: <n>`) — Findings: the prose pins no line
+text for `remaining:`.

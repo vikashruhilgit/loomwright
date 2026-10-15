@@ -1,0 +1,13 @@
+$ gate-eval https://github.com/vikashruhilgit/loomwright/pull/555 "$AD/ctx.json" --root "$ROOT"
+PARK: rules_gate_head_mismatch
+= 0
+$ loop: cp "$PREV" "$ROOT/.gate.line"; cat "$PREV"
+PARK: rules_gate_head_mismatch
+= 0
+$ loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
+= 0
+$ current-set "$RF" --item .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md --status awaiting_merge --pr https://github.com/vikashruhilgit/loomwright/pull/555 --branch feature/af39a-sweep --pause-reason awaiting_merge
+current-set: written
+= 0
+$ loop: bash "$H" progress-append "$RF" "2026-10-15T09:54:06Z parked awaiting_merge https://github.com/vikashruhilgit/loomwright/pull/555 — gate-eval $(cat "$ROOT/.gate.line")"
+= 0

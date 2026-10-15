@@ -1,0 +1,5 @@
+run: automate-2026-10-13-181331
+lines: header, Queue, ## Current and Progress of item 39a through its drain READY line; the inputs are the
+real REVIEW_HEAL_RESULT fields (fix_cycles 1, READY, no repeat failure / unresolved feedback) and the
+supervisor-result's heal_iterations 3; the one `gh pr view … files` fetch is supplied as fixed input.
+gap: the changed-paths list is a 2-path excerpt of PR #555's diff (fixed input).

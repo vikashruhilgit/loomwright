@@ -1,0 +1,4 @@
+run: automate-2026-10-13-181331
+lines: the run resumed for pa/18 with `--max-tokens 2000000`; the scratch checkout holds no token ledger, so the
+reader cannot sum anything and the check fails CLOSED (ledger_unreadable), parking token_ceiling.
+gap: the real run never passed --max-tokens; no real run parked token_ceiling.

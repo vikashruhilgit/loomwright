@@ -1,0 +1,4 @@
+run: automate-2026-10-13-181331
+lines: the run after 39a's close-out (paused / awaiting_go), resumed for pa/18; this run's own trail PR is still
+open (the run automate-2026-10-01-142337 trail PR #345 shape), so the PICK-time trail gate parks trail_pr_open.
+gap: no real run parked trail_pr_open (the gate post-dates the #345 incident).

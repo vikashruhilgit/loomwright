@@ -1,0 +1,9 @@
+run: automate-2026-09-30-054439
+lines: title, Source, Run Config and Queue (item 11 unchecked), item 11's `ran /autonomous → PR #305` and
+`owned drain started` lines (03:18:00Z/03:18:16Z, the legacy `owned drain started:` wording kept verbatim).
+The drain was stopped with no terminal REVIEW_HEAL_RESULT because the owner merged #305 mid-drain (real).
+gap: the real run recorded it in prose and, per its own later lines, could not write `superseded_by_merge`
+(off-enum then); NO run holds the pinned `drain superseded_by_merge — …` line. The steps write the prose's
+sequence; closeout runs for real (scratch origin, gh stubbed; the real
+requirement and its real done brief .supervisor/jobs/done/2026-09-30-post-park-lifecycle.md are in the tree).
+The picked timestamp is reconstructed; the stubbed headRefOid is a placeholder (only 8c835ba is recorded).

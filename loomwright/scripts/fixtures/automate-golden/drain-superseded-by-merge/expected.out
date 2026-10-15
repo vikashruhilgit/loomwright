@@ -1,0 +1,25 @@
+$ reconcile-item https://github.com/vikashruhilgit/loomwright/pull/305 running
+merged
+= 0
+$ loop: awk -v n='- owned_drain_started: 2026-09-30T03:18:16Z | owned_drain_result: superseded_by_merge | suppressed_default_dispatch: true' '{print} index($0, "- pause_reason:")==1 && !d {print n; d=1}' "$RF" | bash "$H" runfile-write "$RF"
+= 0
+$ progress-append "$RF" "2026-09-30T04:53:42Z drain superseded_by_merge — PR merged before a terminal REVIEW_HEAL_RESULT"
+= 0
+$ closeout "$RF" .supervisor/requirements/automate-followups/11-post-park-lifecycle.md https://github.com/vikashruhilgit/loomwright/pull/305 --session-id bec3aeba-75d5-447b-9d54-88f8a6d4593c
+brief-repair: skipped — no in-progress brief matches .supervisor/requirements/automate-followups/11-post-park-lifecycle.md
+closeout: skipped — already removed (no worktree on feature/automate-followups-11-post-park-lifecycle)
+closeout: skipped — already synced (main at origin/main)
+closeout: skipped — already deleted (no local feature/automate-followups-11-post-park-lifecycle)
+closeout: stamped — .supervisor/requirements/automate-followups/11-post-park-lifecycle.md (## Status: done, brief .supervisor/jobs/done/2026-09-30-post-park-lifecycle.md)
+closeout: checked — - [x] .supervisor/requirements/automate-followups/11-post-park-lifecycle.md
+closeout: reconciled — ## Current .supervisor/requirements/automate-followups/11-post-park-lifecycle.md status done, pause_reason null
+trail-pr: opened https://github.com/vikashruhilgit/loomwright/pull/311
+= 0
+$ closeout-classify --run automate-2026-09-30-054439 --item .supervisor/requirements/automate-followups/11-post-park-lifecycle.md --pr https://github.com/vikashruhilgit/loomwright/pull/305 --record "$RF" < "$PREV"
+complete
+= 0
+$ loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
+= 0
+$ current-set "$RF" --pause-reason awaiting_go
+current-set: written
+= 0

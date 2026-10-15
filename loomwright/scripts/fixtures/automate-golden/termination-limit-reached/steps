@@ -1,0 +1,4 @@
+remaining "$RF"
+loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
+current-set "$RF" --pause-reason limit_reached
+loop: bash "$H" progress-append "$RF" "2026-07-06T19:40:00Z limit_reached — 4 item(s) processed; remaining: $(bash "$H" remaining "$RF")"

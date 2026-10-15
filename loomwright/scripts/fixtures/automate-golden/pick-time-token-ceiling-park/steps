@@ -1,0 +1,4 @@
+ceiling-check "$RF" 2000000
+loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
+current-set "$RF" --pause-reason token_ceiling
+loop: bash "$H" progress-append "$RF" "2026-10-15T11:00:00Z $(cat "$PREV")"

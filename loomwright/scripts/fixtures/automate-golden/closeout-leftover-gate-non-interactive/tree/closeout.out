@@ -1,0 +1,8 @@
+brief-repair: skipped — no in-progress brief matches .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md
+closeout: skipped — already removed (no worktree on feature/af39a-sweep)
+closeout: synced — main at 514781c
+closeout: removed — branch feature/af39a-sweep (tip == merged head 953c2d1bbf14)
+closeout: skipped — no done brief
+closeout: checked — - [x] .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md
+closeout: reconciled — ## Current .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md status done, pause_reason awaiting_go
+trail-pr: skipped — --no-trail

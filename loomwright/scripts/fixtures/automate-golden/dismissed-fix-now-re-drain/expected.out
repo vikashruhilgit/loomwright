@@ -1,0 +1,30 @@
+$ park-ask-gate "$RF" .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md https://github.com/vikashruhilgit/loomwright/pull/555
+ask — fix-now allowed: PR OPEN, parked awaiting_merge, merge watcher armed
+= 0
+$ park-ask-gate "$RF" .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md https://github.com/vikashruhilgit/loomwright/pull/555
+ask — fix-now allowed: PR OPEN, parked awaiting_merge, merge watcher armed
+= 0
+$ loop: sed 's/^## Status: paused$/## Status: running/' "$RF" | bash "$H" runfile-write "$RF"
+= 0
+$ current-set "$RF" --item .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md --status running --pause-reason null
+current-set: written
+= 0
+$ dismissed-decide "$RF" "$ROOT/.supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md" fix-now
+dismissed-decide: fix-now automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md
+= 0
+$ progress-append "$RF" "2026-10-15T10:21:00Z owned drain started (fix-now re-drain) — /review-pr https://github.com/vikashruhilgit/loomwright/pull/555 --until-mergeable --no-auto-postmortem @ 953c2d1bbf14"
+= 0
+$ progress-append "$RF" "2026-10-15T10:40:00Z fix-now re-drain READY (converged, 1 rounds, 1 fix cycles)"
+= 0
+$ loop: awk -v n='- owned_drain_started: 2026-10-15T10:21:00Z | owned_drain_result: READY | suppressed_default_dispatch: true' 'index($0, "- owned_drain_started:")==1 && !d {print n; d=1; next} {print}' "$RF" | bash "$H" runfile-write "$RF"
+= 0
+$ loop: awk -v n='- pending_decisions: 1 | fix_now_reentered: true' 'index($0, "- pending_decisions:")==1 && !d {print n; d=1; next} {print}' "$RF" | bash "$H" runfile-write "$RF"
+= 0
+$ dismissed-drafts "$RF" .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md https://github.com/vikashruhilgit/loomwright/pull/555 --after-fix-now
+draft	1	-	<ROOT>/.supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md
+draft	summary	-	<ROOT>/.supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md
+dismissed-drafts: 1 per-finding + 1 summary (6 listed in summary)
+= 0
+$ dismissed-pending "$RF"
+2
+= 0

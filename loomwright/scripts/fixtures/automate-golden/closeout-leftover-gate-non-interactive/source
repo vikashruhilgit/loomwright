@@ -1,0 +1,5 @@
+run: automate-2026-10-13-181331
+lines: item 39a parked awaiting_merge; RECONCILE's closeout output is supplied as fixed input (boundary: the
+`skipped — no done brief` leftover needs a missing brief, the one stamp leftover), shaped exactly like the real
+10:50:07Z closeout block. Under --non-interactive-fallback the gate parks closeout_leftover (run-level form).
+gap: no real run parked closeout_leftover.

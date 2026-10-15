@@ -1,0 +1,4 @@
+run: automate-2026-10-13-181331
+lines: header, Run Config, Queue (first 5 rows), ## Current as closeout left item 1 (verified-rule-checks, PR #533) and
+the 2026-10-14T09:15 resume block; steps replay the real 09:15:31Z PICK of 39b.
+gap: none — the real PICK wrote the same picked line.

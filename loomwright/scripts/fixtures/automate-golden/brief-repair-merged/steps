@@ -1,0 +1,4 @@
+brief-repair .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md https://github.com/vikashruhilgit/loomwright/pull/542
+loop: bash "$H" progress-append "$RF" "2026-10-14T15:51:26Z closeout https://github.com/vikashruhilgit/loomwright/pull/542: $(tail -n 1 "$PREV")"
+loop: ls .supervisor/jobs/in-progress .supervisor/jobs/done
+brief-repair .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md https://github.com/vikashruhilgit/loomwright/pull/542

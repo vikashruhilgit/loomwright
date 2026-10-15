@@ -1,0 +1,4 @@
+run: automate-2026-10-13-181331
+lines: the run resumed for pa/18 (## Current 39a done); the checkout also holds a `--parallel` wave's lane table
+whose lane L1 has an unanswered question in its inbox (the real wave automate-2026-10-08-033739's L1 row shape).
+gap: the lane path is relative (the real table holds absolute clone paths); no real run parked live_lane.

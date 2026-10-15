@@ -1,0 +1,12 @@
+$ dismissed-pending "$RF"
+2
+= 0
+$ dismissed-decide "$RF" "$ROOT/.supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md" follow-up
+dismissed-decide: follow-up automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md
+= 0
+$ dismissed-decide "$RF" "$ROOT/.supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md" follow-up
+dismissed-decide: follow-up automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md
+= 0
+$ dismissed-pending "$RF"
+0
+= 0

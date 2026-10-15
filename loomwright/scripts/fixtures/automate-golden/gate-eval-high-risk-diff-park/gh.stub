@@ -1,0 +1,5 @@
+0	pr view https://github.com/vikashruhilgit/loomwright/pull/555 --json headRefOid,baseRefName,statusCheckRollup	{"headRefOid": "22ae0b07ccc0d19ca6fd11d4b2f821e98e0951f5", "baseRefName": "main", "statusCheckRollup": [{"name": "ci", "conclusion": "SUCCESS"}, {"name": "claude-review", "conclusion": "SUCCESS"}]}
+0	pr view https://github.com/vikashruhilgit/loomwright/pull/555 --json reviewDecision	{"reviewDecision": "APPROVED"}
+0	api graphql *	{"data": {"repository": {"pullRequest": {"reviewThreads": {"pageInfo": {"hasNextPage": false}, "nodes": []}}}}}
+0	api repos/vikashruhilgit/loomwright/branches/main/protection	{"required_pull_request_reviews": {"required_approving_review_count": 1}, "required_status_checks": {"strict": true, "contexts": ["ci"]}}
+0	pr merge --squash --match-head-commit * https://github.com/vikashruhilgit/loomwright/pull/555	

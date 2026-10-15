@@ -1,0 +1,5 @@
+run: automate-2026-10-13-181331
+lines: header (mode switched to auto-merge), Queue, ## Current and Progress of item 39a through `validation-gate: ok`;
+the run's own on-disk review-heal-result (READY / converged) and supervisor-result (rubric_score: null ⇒ N/A)
+sidecars; ctx.json carries exactly the six loop-owned keys.
+gap: 39a ran in safe mode, so gate-eval never ran on it; every gh / GraphQL / protection answer is stubbed: condition 1 — ctx drain_result `superseded_by_merge` (the value §10 cond 1 says must park drain_not_ready if ever passed).

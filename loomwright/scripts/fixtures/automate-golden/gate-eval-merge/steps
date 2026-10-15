@@ -1,0 +1,3 @@
+gate-eval https://github.com/vikashruhilgit/loomwright/pull/555 "$AD/ctx.json" --root "$ROOT"
+loop: cp "$PREV" "$ROOT/.gate.line"; cat "$PREV"
+loop: bash "$H" progress-append "$RF" "2026-10-15T09:54:06Z gate-eval: $(cat "$ROOT/.gate.line")"

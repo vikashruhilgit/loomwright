@@ -1,0 +1,4 @@
+run: automate-2026-10-13-181331
+lines: the run resumed (## Current 39a done); the requirements tree holds 39a stamped done and pa/18 pending
+with no merged-PR evidence (gh answers no PR), so the dry run prints no `plan` row and nothing is appended.
+gap: the real resumes all read `reconcile-status: 0 plan rows`; same answer here.

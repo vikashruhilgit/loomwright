@@ -1,0 +1,7 @@
+run: automate-2026-10-13-181331
+lines: item 39a parked awaiting_merge (the real 09:54:06Z park); the owner merged #555 and `--resume`'s RECONCILE
+closes it out (the real 10:50:07Z closeout block came from the watcher; RECONCILE runs the same closeout with
+--session-id). Real requirement file before its stamp, real done brief. Then the PICK-time trail gate and
+trail un-stage, and the next PICK (pa/18).
+gap: branch mode is OFF in the scratch checkout (the real run was in branch mode, where trail-pr pushes the
+metadata branch); trail-pr runs for real against a scratch bare origin with gh stubbed.

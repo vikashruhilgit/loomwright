@@ -1,0 +1,7 @@
+$ resume-glob "$AD"
+<ROOT>/.supervisor/automate/automate-2026-09-30-054439.md
+<ROOT>/.supervisor/automate/automate-2026-10-13-181331.md
+= 0
+$ current-set "$RF" --pause-reason resume_ambiguous
+current-set: written
+= 0

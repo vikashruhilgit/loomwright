@@ -1,0 +1,10 @@
+$ trail-gate "$RF"
+trail-gate: PARK — trail PR open https://github.com/vikashruhilgit/loomwright/pull/561 (merge or close it, then --resume)
+= 0
+$ loop: bash "$H" progress-append "$RF" "$(cat "$PREV")"
+= 0
+$ loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
+= 0
+$ current-set "$RF" --pause-reason trail_pr_open
+current-set: written
+= 0

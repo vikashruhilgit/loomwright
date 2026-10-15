@@ -1,0 +1,6 @@
+$ resume-glob "$AD" --finalize
+<ROOT>/.supervisor/automate/automate-2026-10-13-181331.md
+= 0
+$ resume-glob "$AD"
+<ROOT>/.supervisor/automate/automate-2026-10-13-181331.md
+= 0
