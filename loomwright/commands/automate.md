@@ -82,7 +82,22 @@ Read ${CLAUDE_PLUGIN_ROOT}/commands/review-pr.md           # the owned /review-p
 ```
 <!-- index-only:begin -->
 
-Then read the skill's split files — the `SKILL.md` above is their index (parallel-automate/22, move-only) — each in full, in this order, all under `${CLAUDE_PLUGIN_ROOT}/skills/automate-loop/`: `intake.md`, `resume.md`, `per-item-loop.md`, `modes-and-merge-gate.md`, `invariants.md`, `branch-mode.md`, `lanes.md`, then `command-lanes.md` (this command's own lanes section, moved out of the body below).
+Then read the skill's split files — the `SKILL.md` above is their index (parallel-automate/22, move-only) — each in full, all under `${CLAUDE_PLUGIN_ROOT}/skills/automate-loop/`. The list below keeps the documented order. An **Always** file is read now; an **Only when** file is read the first time its trigger is observed — before acting on the step that observed it — and never re-read once loaded. A run that never observes a trigger never reads that file:
+
+- `intake.md`, **Only when** the start resolves to a NEW run: `resume-glob --finalize` lists no incomplete run, or the owner chose Start new at the resume offer. Never on a `--resume` continue. A NEW run then runs `mkdir -p .supervisor/automate` before `automate-helpers.sh pick-guard .supervisor/automate` and before intake — the one start-order step a fresh run needs from the resume split file's §4 (without the directory `pick-guard` refuses `automate_dir_missing`).
+- `resume.md`, **Only when** `--resume` was passed, or the start's `resume-glob --finalize` lists at least one incomplete run to offer, or the start's `closeout-others` prints any `closeout-others: record — …` line (or a `leftover` row), or a PICK's RECONCILE has something to reconcile (a `## Current` item that is not `done` with a non-null `pr:`, a `closeout-others` `leftover` row, or a Queue row a human checked `# skipped:`/`# abandoned:`) — so a fresh multi-item run (e.g. `--auto-merge`) reads it at the first PICK that has an in-flight item, before that RECONCILE runs.
+- `per-item-loop.md`, **Always** (read now, with the three reads in the code block above).
+- `modes-and-merge-gate.md`, **Always** (read now, with the three reads in the code block above).
+- `invariants.md`, **Always** (read now, with the three reads in the code block above).
+- `branch-mode.md`, **Only when** `meta-entry` prints anything but `meta-entry: off` (equivalently `setup-memory.sh mode` prints `on <branch>`), or a helper line names branch mode (`trail-unstage: skipped — branch mode`, `trail-pr: meta-pushed …`, `meta-push FAILED`).
+- `lanes.md`, **Only when** `--parallel` was passed, or `automate-helpers.sh lane-info` exits 0 (this checkout is a lane), or a helper reports a lane (`pick-guard` prints `refuse: live_lane …`, or any `lane-*` subcommand's output is being acted on), or the run being resumed carries a `- parallel:` line in its `## Run Config` (a coordinator or single-lane parent — `--parallel` is not re-passed on its `--resume`; read as soon as the resume targets that run, before its RECONCILE or first PICK, since such a run continues through the lanes section's loop — per-wave, or one new lane per item in single-lane mode — never a sequential PICK).
+- `command-lanes.md`, **Only when** the lanes trigger of the row above holds (`--parallel` was passed, `automate-helpers.sh lane-info` exits 0, a helper reports a lane, or the run being resumed carries a `- parallel:` line in its `## Run Config` — a coordinator or single-lane parent); this is the command's own lanes section, moved out of the body below.
+
+Read each plugin file with the Read tool, one file per call — never `cat` several in one Bash call: an oversized Bash result is saved to a file and read back, which loads the same text twice.
+
+Run `automate-helpers.sh lane-info` once at start: exit 0 means this checkout is a lane, so it reads the two lanes files above before its first PICK; exit 1 means not a lane.
+
+Run `automate-helpers.sh meta-entry` once at start, before `closeout-others` and `resume-glob --finalize` (after `init-check` when `--parallel` was passed): it prints `meta-entry: off` when branch mode is off; any other line (`pulled <branch>` or `failed — <reason>`) loads the branch-mode split file before the next start step, and a `failed` line is handled there (abort, or park `meta_unreachable`) — never fall through to an empty `resume-glob`.
 <!-- index-only:end -->
 
 This guards against prompt drift: if the loop protocol, `/autonomous`, or `/review-pr` evolves between releases, `/automate` picks up the changes automatically because it re-reads them every run.
