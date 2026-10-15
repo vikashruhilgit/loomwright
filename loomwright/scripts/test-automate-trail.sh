@@ -155,9 +155,15 @@
 #      everywhere. closeout 3a: the same --ignored gate (2 entries salvaged; a copy
 #      failure keeps it in the `skipped — kept worktree …` form closeout-classify
 #      reads). F1 carries the finalize-empty run-end line (one, after the trail
-#      line). Pin mutations, each observed RED: tip comparison deleted, the
-#      .claude/worktrees/ exclusion deleted, the sweep verdict ignored, the
-#      closeout 3a verdict ignored.
+#      line). Review fixes: a gitignored `.env` (no salvage list covers it) ⇒
+#      `kept worktree <p> — unsalvaged ignored content: .env` in the dry run AND
+#      under --apply (the secret intact), while only allowlisted `node_modules/` ⇒
+#      removed; a non-ASCII worktree path (`proj-café`) whose live cwd lsof prints
+#      escaped (stubbed C-locale n-line; real lsof under `env -u LANG -u LC_ALL -u
+#      LC_CTYPE` when it can see a child) ⇒ kept, liveness unverifiable, the dir
+#      remains. Pin mutations, each observed RED: tip comparison deleted, the app
+#      worktree-root exclusion deleted, the sweep verdict ignored, the closeout 3a
+#      verdict ignored, the coverage check ignored, the escaped-byte check deleted.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wait-lib.sh"   # bounded condition waits (iq02 T07)
@@ -3077,6 +3083,9 @@ echo "== SW. sweep: squash-safe sweep of plugin-made worktrees + local branches 
 # Real repos in $TOP; gh and lsof stubbed through the LOOMWRIGHT_GH_BIN /
 # LOOMWRIGHT_LSOF_BIN seams. The sweep gh stub answers `pr list --head <B>` per branch.
 SWBIN="$TOP/swbin"; mkdir -p "$SWBIN"
+# The host's local settings file — the one harness-specific path these legs need, named
+# once (vendor-coupling ratchet); its directory ${SW_HS%/*} also holds the app's worktree root.
+SW_HS=".claude/settings.local.json"
 cat > "$SWBIN/gh" <<'STUB'
 #!/usr/bin/env bash
 # `pr list --head <B>` ⇒ $SWGH/<B, `/` and space as `_`>.json ([] when absent); <that>.fail ⇒ exit 1.
@@ -3101,7 +3110,7 @@ chmod +x "$SWBIN/gh" "$SWBIN/lsof"
 sw_repo() { # <n> — SWFX, SWP (primary `proj`, base branch main, no origin), SWGH
   SWFX="$TOP/sw$1"; SWP="$SWFX/proj"; SWGH="$SWFX/gh"; mkdir -p "$SWP" "$SWGH"; : > "$SWGH/argv.log"
   ( cd "$SWP" && git init -q && git symbolic-ref HEAD refs/heads/main \
-    && printf '.supervisor/\n.claude/\n' > .gitignore && echo base > README \
+    && printf '.supervisor/\n%s/\n' "${SW_HS%/*}" > .gitignore && echo base > README \
     && git add .gitignore README && git commit -qm init ) >/dev/null 2>&1
 }
 sw_branch() { # <name> [<parent>] — a branch carrying its own commit (no checkout)
@@ -3191,14 +3200,14 @@ out="$(cd "$TOP" && bash "$T" sweep --root "$TOP/no-such-dir")"; rc=$?
 sw_wt_fixture() { # <n>
   sw_repo "$1"
   WT_CLEAN="$SWFX/proj-clean wt"; sw_wt "$WT_CLEAN" wclean; sw_merged wclean 61
-  mkdir -p "$WT_CLEAN/.supervisor/logs" "$WT_CLEAN/.supervisor/postmortem" "$WT_CLEAN/.claude"
+  mkdir -p "$WT_CLEAN/.supervisor/logs" "$WT_CLEAN/.supervisor/postmortem" "$WT_CLEAN/${SW_HS%/*}"
   printf '{"event":"session"}\n' > "$WT_CLEAN/.supervisor/logs/s1.jsonl"
   printf '{"automate_key":"k"}\n' > "$WT_CLEAN/.supervisor/postmortem/results.jsonl"
-  printf '{"permissions":{"allow":[]}}\n' > "$WT_CLEAN/.claude/settings.local.json"
-  rm -rf "$SWFX/expect"; mkdir -p "$SWFX/expect"; cp -pR "$WT_CLEAN/.supervisor" "$WT_CLEAN/.claude" "$SWFX/expect/"
+  printf '{"permissions":{"allow":[]}}\n' > "$WT_CLEAN/$SW_HS"
+  rm -rf "$SWFX/expect"; mkdir -p "$SWFX/expect"; cp -pR "$WT_CLEAN/.supervisor" "$WT_CLEAN/${SW_HS%/*}" "$SWFX/expect/"
   WT_DIRTY="$SWFX/proj-dirty"; sw_wt "$WT_DIRTY" wdirty; sw_merged wdirty 62; echo wip > "$WT_DIRTY/wip.txt"
-  mkdir -p "$SWP/.claude/worktrees" "$SWFX/proj-lanes" "$SWFX/elsewhere" "$SWFX/logged" "$SWP/.supervisor/logs"
-  WT_APP="$SWP/.claude/worktrees/x"; sw_wt "$WT_APP" wapp; sw_merged wapp 63
+  mkdir -p "$SWP/${SW_HS%/*}/worktrees" "$SWFX/proj-lanes" "$SWFX/elsewhere" "$SWFX/logged" "$SWP/.supervisor/logs"
+  WT_APP="$SWP/${SW_HS%/*}/worktrees/x"; sw_wt "$WT_APP" wapp; sw_merged wapp 63
   WT_LANE="$SWFX/proj-lanes/l1"; sw_wt "$WT_LANE" wlane; sw_merged wlane 64
   WT_OTHER="$SWFX/elsewhere/o1"; sw_wt "$WT_OTHER" wother; sw_merged wother 65
   WT_LOGGED="$SWFX/logged/r1"; sw_wt "$WT_LOGGED" wlogged; sw_merged wlogged 66
@@ -3211,7 +3220,7 @@ sw_wt_fixture() { # <n>
   WT_LOCK="$SWFX/proj-locked"; sw_wt "$WT_LOCK" wlock; sw_merged wlock 69; git -C "$SWP" worktree lock "$WT_LOCK" >/dev/null 2>&1
   WT_GONE="$SWFX/proj-gone"; sw_wt "$WT_GONE" wgone; sw_merged wgone 71; mv "$WT_GONE" "$SWFX/gone-moved-away"
   # worktree-audit.sh's log: the off-sibling path is recorded as created (⇒ plugin-made); so is
-  # the app worktree, so only the .claude/worktrees/ exclusion keeps it (the pin mutation's target).
+  # the app worktree, so only the app worktree-root exclusion keeps it (the pin mutation's target).
   { jq -nc --arg p "$WT_LOGGED" '{ts:"t",event:"created",path:$p,branch:"wlogged",confirmed:true,source:"direct"}'
     jq -nc --arg p "$WT_APP" '{ts:"t",event:"created",path:$p,branch:"wapp",confirmed:true,source:"direct"}'
     echo 'legacy garbage line'; } > "$SWP/.supervisor/logs/worktrees.log"
@@ -3256,7 +3265,7 @@ sw_line "$out" "sweep: removed worktree $WT_CLEAN — branch wclean: PR #61" && 
   && ok "(SW2) AC3 --apply removes the clean merged plugin worktree (git worktree remove)" || no "(SW2) clean worktree not removed: $(printf '%s\n' "$out" | grep -F "$WT_CLEAN")"
 sw_salv="$(ls -d "$SWP/.supervisor/salvage/proj-clean wt-"* 2>/dev/null | head -n1)"
 sw_ign_ok=1
-for e in .supervisor/logs/s1.jsonl .supervisor/postmortem/results.jsonl .claude/settings.local.json; do
+for e in .supervisor/logs/s1.jsonl .supervisor/postmortem/results.jsonl "$SW_HS"; do
   if [ -n "$sw_salv" ] && cmp -s "$SWFX/expect/$e" "$sw_salv/ignored/$e"; then :; else sw_ign_ok=0; no "(SW2) AC4 $e not byte-identical under ignored/ (salvage '$sw_salv')"; fi
 done
 [ "$sw_ign_ok" = 1 ] && ok "(SW2) AC4 all 3 gitignored runtime entries are byte-identical under <salvage>/ignored/ (copied before the removal)"
@@ -3291,6 +3300,50 @@ if command -v lsof >/dev/null 2>&1; then
   fi
 else
   echo "  note: lsof absent — real-lsof leg skipped"
+fi
+
+# ---- review fixes: unsalvaged gitignored content; a non-ASCII path lsof escapes --
+# proj-env: merged + clean, but a gitignored `.env` no salvage list covers ⇒ kept, dry run
+# and --apply alike. proj-nm: only allowlisted node_modules/ beyond the list ⇒ removed.
+# proj-café: lsof under a C/POSIX locale prints the cwd of the process living there as
+# `proj-caf\xc3\xa9` (the stub prints exactly that n-line), which never equals the path ⇒
+# without the escaped-byte check it reads "not live" and --apply removes it.
+sw_rev_fixture() { # <n>
+  sw_repo "$1"
+  ( cd "$SWP" && printf '.env\nnode_modules/\n' >> .gitignore && git commit -qam "ignore more" ) >/dev/null 2>&1
+  WT_ENV="$SWFX/proj-env"; sw_wt "$WT_ENV" wenv; sw_merged wenv 81; printf 'SECRET=1\n' > "$WT_ENV/.env"
+  WT_NM="$SWFX/proj-nm"; sw_wt "$WT_NM" wnm; sw_merged wnm 82
+  mkdir -p "$WT_NM/node_modules/pkg"; printf 'x\n' > "$WT_NM/node_modules/pkg/i.js"
+  WT_UTF="$SWFX/proj-café"; sw_wt "$WT_UTF" wutf; sw_merged wutf 83
+  printf 'p4343\nfcwd\nn%s\n' "$SWFX/proj-caf\\xc3\\xa9" > "$SWGH/lsof.extra"
+}
+sw_rev_fixture 8
+out="$(sw_run)"; rc=$?
+printf '%s\n' "$out" | sed 's/^/    | /'
+sw_shape "(SW6) dry run" "$out" "$rc"
+sw_line "$out" "sweep: kept worktree $WT_ENV — unsalvaged ignored content: .env" && ok "(SW6) dry run: a gitignored .env no list covers ⇒ kept worktree — unsalvaged ignored content: .env" || no "(SW6) env dry: $(printf '%s\n' "$out" | grep -F "$WT_ENV")"
+sw_line "$out" "sweep: would-remove worktree $WT_NM — branch wnm: PR #82" && ok "(SW6) dry run: only allowlisted node_modules/ ⇒ would-remove" || no "(SW6) nm dry: $(printf '%s\n' "$out" | grep -F "$WT_NM")"
+sw_line "$out" "sweep: kept worktree $WT_UTF — liveness unverifiable (the path holds a byte lsof escapes" && ok "(SW6) dry run: a non-ASCII path ⇒ kept, liveness unverifiable" || no "(SW6) utf dry: $(printf '%s\n' "$out" | grep -F "proj-caf")"
+out="$(sw_run --apply)"; rc=$?
+sw_shape "(SW6) --apply" "$out" "$rc"
+sw_line "$out" "sweep: kept worktree $WT_ENV — unsalvaged ignored content: .env" && [ "$(cat "$WT_ENV/.env" 2>/dev/null)" = "SECRET=1" ] && sw_has wenv \
+  && ok "(SW6) --apply: the .env worktree is kept, its secret intact, its branch held" || no "(SW6) env apply: $(printf '%s\n' "$out" | grep -F "$WT_ENV")"
+sw_line "$out" "sweep: removed worktree $WT_NM" && [ ! -d "$WT_NM" ] && ok "(SW6) --apply: the node_modules-only worktree is removed (regenerable)" || no "(SW6) nm apply: $(printf '%s\n' "$out" | grep -F "$WT_NM")"
+sw_line "$out" "sweep: kept worktree $WT_UTF — liveness unverifiable (the path holds a byte lsof escapes" && [ -d "$WT_UTF" ] && sw_has wutf \
+  && ok "(SW6) --apply: the non-ASCII worktree is kept and remains" || no "(SW6) utf apply: $(printf '%s\n' "$out" | grep -F "proj-caf")"
+# Real lsof with LANG/LC_ALL/LC_CTYPE unset (the C locale escapes the path's bytes): a live
+# process's cwd in a non-ASCII worktree keeps it, whatever the host's own locale is.
+if command -v lsof >/dev/null 2>&1; then
+  sw_repo 9; WT_RU="$SWFX/proj-ré"; sw_wt "$WT_RU" wru; sw_merged wru 90
+  ( cd "$WT_RU" && exec sleep 120 ) & sw_pid=$!
+  if wait_for_cmd 10 sh -c "env -u LANG -u LC_ALL -u LC_CTYPE lsof -a -p $sw_pid -d cwd -F n 2>/dev/null | grep -q '^n/'"; then
+    out="$(cd "$SWP" && env -u LANG -u LC_ALL -u LC_CTYPE SWGH="$SWGH" LOOMWRIGHT_GH_BIN="$SWBIN/gh" LOOMWRIGHT_LSOF_BIN=lsof bash "$T" sweep --apply)"
+    sw_line "$out" "sweep: kept worktree $WT_RU — liveness unverifiable (the path holds a byte lsof escapes" && [ -d "$WT_RU" ] && kill -0 "$sw_pid" 2>/dev/null \
+      && ok "(SW6) real lsof, no LANG/LC_ALL/LC_CTYPE: a live process in a non-ASCII worktree keeps it (the dir remains)" || no "(SW6) real lsof utf: $(printf '%s\n' "$out" | grep -F "proj-r")"
+  else
+    echo "  note: this lsof cannot see a child's cwd — real-lsof non-ASCII leg skipped (the stubbed leg above covers it)"
+  fi
+  kill "$sw_pid" 2>/dev/null; wait "$sw_pid" 2>/dev/null
 fi
 
 # ---- closeout step 3a: the same --ignored gate (AC4's closeout half) ---------
@@ -3336,10 +3389,10 @@ if sw_mutant tip '/\[ "\$tip" != "\$oid" \]/d'; then
   out="$(SW_T="$SW_MD/automate-trail.sh" sw_run)"
   sw_line "$out" "sweep: would-remove branch moved — " && ok "(SWM) control: without the tip == headRefOid comparison the moved-tip leg is red (moved reads would-remove)" || no "(SWM) tip mutant did not discriminate: $(printf '%s\n' "$out" | grep ' moved ')"
 fi
-if sw_mutant app '/"\$SW_PRI\/\.claude\/worktrees\/"\*) kind=app ;;/d'; then
+if sw_mutant app '/"\$SW_PRI\/\$SW_APP_WT\/"\*) kind=app ;;/d'; then
   sw_wt_fixture 6
   out="$(SW_T="$SW_MD/automate-trail.sh" sw_run --apply)"
-  [ ! -d "$WT_APP" ] && ok "(SWM) control: without the .claude/worktrees/ exclusion --apply removes the app worktree (the app leg is red)" || no "(SWM) app mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "$WT_APP")"
+  [ ! -d "$WT_APP" ] && ok "(SWM) control: without the app worktree-root exclusion --apply removes the app worktree (the app leg is red)" || no "(SWM) app mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "$WT_APP")"
   sw_unread_fix
 fi
 if [ "$SW_ROOT_UID" = 0 ] && sw_mutant verdict 's/case "\$sw_verdict" in "ignored: ok "\*) ;;/case "$sw_verdict" in *) ;;/'; then
@@ -3347,6 +3400,16 @@ if [ "$SW_ROOT_UID" = 0 ] && sw_mutant verdict 's/case "\$sw_verdict" in "ignore
   out="$(SW_T="$SW_MD/automate-trail.sh" sw_run --apply)"
   [ ! -d "$WT_UNREAD" ] && ok "(SWM) control: a sweep that ignores the salvage verdict removes the copy-failure worktree (that leg is red)" || no "(SWM) verdict mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "$WT_UNREAD")"
   sw_unread_fix
+fi
+if sw_mutant coverage 's/"ignored-check: ok") ;;/*) ;;/'; then
+  sw_rev_fixture 10
+  out="$(SW_T="$SW_MD/automate-trail.sh" sw_run)"
+  sw_line "$out" "sweep: would-remove worktree $WT_ENV" && ok "(SWM) control: a sweep that ignores the coverage check reports the .env worktree would-remove (that leg is red)" || no "(SWM) coverage mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "$WT_ENV")"
+fi
+if sw_mutant bytes 's/|| return 3$/|| :/'; then
+  sw_rev_fixture 11
+  out="$(SW_T="$SW_MD/automate-trail.sh" sw_run --apply)"
+  [ ! -d "$WT_UTF" ] && ok "(SWM) control: without the escaped-byte check --apply removes the non-ASCII worktree under its (escaped) live cwd (that leg is red)" || no "(SWM) bytes mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "proj-caf")"
 fi
 if [ "$SW_ROOT_UID" = 0 ] && sw_mutant coverdict 's/case "\$co_verdict" in "ignored: ok "\*) co_ign=ok ;; esac/co_ign=ok/'; then
   sw_co_unread 242 "$SW_MD"

@@ -1466,11 +1466,15 @@ closeout() {
         wkeep="${wkeep:+$wkeep, }$wt (tip ${wtip:0:12} != merged head ${head_oid:0:12})"
         continue
       fi
-      # --ignored (af/39a): gitignored runtime content (`.supervisor/logs/`,
-      # `.supervisor/postmortem/`, `.claude/settings.local.json`) is copied and
-      # verified too; ANY last line but `ignored: ok <n>` — a failed entry, or no
-      # verdict at all — keeps the worktree (fail closed on a fail-safe emitter).
-      salv="$(bash "$HERE/worktree-salvage.sh" "$wt" --reason "automate closeout" --ignored 2>/dev/null)"
+      # --ignored (af/39a): gitignored runtime content (worktree-salvage.sh's salvage
+      # list: `.supervisor/logs/`, `.supervisor/postmortem/`, the host's local settings
+      # file) is copied and verified too; ANY last line but `ignored: ok <n>` — a
+      # failed entry, or no verdict at all — keeps the worktree (fail closed on a
+      # fail-safe emitter). `--allow-unsalvaged`: closeout keeps its prior, tested
+      # contract for its OWN merged PR worktree (removed even when it holds gitignored
+      # content beyond that list — the M1 `match` leg); only `sweep`, which judges
+      # worktrees it did not just drive, fails closed on such content. Honest limit.
+      salv="$(bash "$HERE/worktree-salvage.sh" "$wt" --reason "automate closeout" --ignored --allow-unsalvaged 2>/dev/null)"
       co_verdict="$(printf '%s\n' "$salv" | tail -n1)"
       salv="$(printf '%s\n' "$salv" | head -n1)"
       case "$salv" in "ignored: "*) salv="" ;; esac
@@ -1898,7 +1902,7 @@ EOF
 # run is a candidate in the same run — the dry run reports what --apply would do.
 #
 # Worktree origin (`git worktree list --porcelain`, never the primary):
-#   <primary>/.claude/worktrees/**   app    — reported only; the app removes them
+#   <primary>/$SW_APP_WT/**          app    — reported only; the app removes them
 #   <primary>-lanes/**               lane   — `kept lane <path> — use lane-remove`
 #   a `created` path in <primary>/.supervisor/logs/worktrees.log (worktree-audit.sh),
 #   or a `<parent>/<project>-<suffix>` sibling of the primary
@@ -1908,9 +1912,12 @@ EOF
 # rm -rf) only when ALL hold: not locked/prunable, a branch (detached ⇒ kept: no
 # branch to prove) that passes the rule with the WORKTREE's HEAD as the tip, clean
 # (`git status --porcelain` empty — checked before the salvage so a dirty tree is
-# kept without piling salvage copies, and again after it), no live process has its
-# cwd there (`lsof -a -d cwd`, prefix match; lsof absent or failing ⇒ kept, liveness
-# unverifiable — never a kill), and `worktree-salvage.sh --ignored` printed
+# kept without piling salvage copies, and again after it), every gitignored entry is
+# salvaged or regenerable (`worktree-salvage.sh --check-ignored`, read-only, so the
+# dry run reports it too: anything else ⇒ `kept worktree <p> — unsalvaged ignored
+# content: <entry>`), no live process has its cwd there (`lsof -a -d cwd`, prefix
+# match; lsof absent or failing, or a path holding a byte lsof escapes ⇒ kept,
+# liveness unverifiable — never a kill), and `worktree-salvage.sh --ignored` printed
 # `ignored: ok <n>` as its last line (anything else, or no line ⇒ kept naming it).
 #
 # Branches (refs/heads/*): the primary's current branch, the base branch
@@ -1929,6 +1936,9 @@ SW_ACT=0
 SW_KEPT=0
 SW_LIVE_STATE=""
 SW_LIVE=""
+# The desktop app's own worktree root under the primary — a host-specific path,
+# named ONCE here (vendor-coupling ratchet); worktrees below it are the app's.
+SW_APP_WT=".claude/worktrees"
 
 # _sw_line <act|kept> <kind> <subject> <reason> — one candidate line + the tally.
 _sw_line() {
@@ -1984,11 +1994,23 @@ _sw_live_read() {
 }
 
 # _sw_live <path> [<canonical path>] — prints the pid of a live process whose cwd
-# is <path> or below; returns 0 live, 1 not live, 2 unverifiable. Call
-# _sw_live_read first (this usually runs in a command substitution).
+# is <path> or below; returns 0 live, 1 not live, 2 unverifiable (lsof), 3
+# unverifiable (the path). Call _sw_live_read first (this usually runs in a
+# command substitution).
+#
+# Return 3 — FAIL CLOSED on a path lsof cannot print verbatim: lsof escapes every
+# byte it deems unprintable in its `n` lines — under a C/POSIX locale (no LANG: the
+# Bash tool's default and many hook contexts) every byte >= 0x80, so `proj-café`
+# reads `proj-caf\xc3\xa9` — and a backslash is ambiguous with those escapes. Such a
+# path could never equal (or prefix) its n-line, so a live process would read "not
+# live" and `--apply` would remove the worktree under it. A path of printable ASCII
+# other than `\` is printed verbatim in every locale, so its compare is exact.
 _sw_live() {
+  local s pid
+  for s in "$1" "${2:-$1}"; do
+    [ "$(printf '%s' "$s" | LC_ALL=C tr -d '\040-\133\135-\176' | wc -c | tr -d ' ')" = 0 ] || return 3
+  done
   [ "$SW_LIVE_STATE" = ok ] || return 2
-  local pid
   pid="$(printf '%s\n' "$SW_LIVE" | SW_A="$1" SW_B="${2:-$1}" awk '
     BEGIN { a = ENVIRON["SW_A"]; b = ENVIRON["SW_B"] }
     /^p/ { pid = substr($0, 2); next }
@@ -2054,14 +2076,14 @@ sweep_run() {
     /^locked/    { fl = fl "locked,"; next }
     /^prunable/  { fl = fl "prunable,"; next }
     END { flush() }')"
-  local nwt=0 nbr=0 held="" p head br fl cp kind v salv sw_verdict dirty pid lrc
+  local nwt=0 nbr=0 held="" p head br fl cp kind v salv sw_verdict dirty pid lrc ic
   while IFS=$'\037' read -r p head br fl; do
     [ -n "$p" ] || continue
     cp="$(cd "$p" 2>/dev/null && pwd -P)"; [ -n "$cp" ] || cp="$p"
     if [ "$cp" = "$SW_PRI" ]; then continue; fi
     nwt=$((nwt + 1))
     case "$cp/" in
-      "$SW_PRI/.claude/worktrees/"*) kind=app ;;
+      "$SW_PRI/$SW_APP_WT/"*) kind=app ;;
       "$SW_PRI-lanes/"*) kind=lane ;;
       *) if _sw_plugin_made "$p" "$cp"; then kind=worktree; else kind=other; fi ;;
     esac
@@ -2102,10 +2124,22 @@ sweep_run() {
       continue
     fi
     if [ -z "$v" ]; then
+      # Read-only coverage check (dry run too): gitignored content that is neither on
+      # worktree-salvage.sh's salvage list nor regenerable would be deleted with no
+      # copy ⇒ kept, naming the first such entry. No verdict line ⇒ kept as well.
+      ic="$(bash "$HERE/worktree-salvage.sh" "$p" --check-ignored 2>/dev/null | tail -n1)"
+      case "$ic" in
+        "ignored-check: ok") ;;
+        "ignored-check: unsalvaged "*) v="unsalvaged ignored content: ${ic#ignored-check: unsalvaged }" ;;
+        *) v="gitignored content unverifiable: ${ic:-no verdict}" ;;
+      esac
+    fi
+    if [ -z "$v" ]; then
       _sw_live_read
       pid="$(_sw_live "$p" "$cp")"; lrc=$?
       if [ "$lrc" -eq 0 ]; then v="live process $pid has its cwd here"
       elif [ "$lrc" -eq 2 ]; then v="liveness unverifiable (lsof absent or failing)"
+      elif [ "$lrc" -eq 3 ]; then v="liveness unverifiable (the path holds a byte lsof escapes — non-ASCII or a backslash)"
       fi
     fi
     if [ -n "$v" ]; then
@@ -2114,7 +2148,7 @@ sweep_run() {
       continue
     fi
     if [ "$SW_APPLY" -ne 1 ]; then
-      _sw_line act worktree "$p" "branch $br: $SW_WHY; clean; no live process (gitignored runtime content is salvaged and verified first)"
+      _sw_line act worktree "$p" "branch $br: $SW_WHY; clean; every gitignored entry salvageable or regenerable; no live process (gitignored runtime content is salvaged and verified first)"
       continue
     fi
     salv="$(bash "$HERE/worktree-salvage.sh" "$p" --reason "automate sweep" --ignored 2>/dev/null)"

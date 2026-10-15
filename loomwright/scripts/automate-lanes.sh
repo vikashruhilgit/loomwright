@@ -3313,13 +3313,15 @@ _lanes_append_once() {
 # null` authored `pause_reason: null` (finalize-empty's staging — a failure at any step leaves the run
 # file byte-unchanged); then `<ts> wave closed — Queue empty, run finalized`; then `trail-pr <rf>
 # --reason done` (through the TRAIL seam, with this script's meta-sync, in the primary) printed and
-# appended like finalize-empty's; then, branch mode OFF only, `trail-unstage <rf>`. Lines:
+# appended like finalize-empty's; then ONE `fleet closeout sweep (dry run): <sweep summary>` line (the
+# caller's wave-end DRY sweep, af/39a — recorded here and nowhere else, so exactly one lands at done and
+# it is this final wave's); then, branch mode OFF only, `trail-unstage <rf>`. Lines:
 # `fleet-closeout: finalize — <outcome>` (one per step) | `fleet-closeout: finalize — skipped (already
 # done)` (nothing written: a re-run never repeats the trail) | `fleet-closeout: finalize FAILED —
 # <reason>` (nothing written — a refused write, or the run lock held by an owner other than
 # `automate-lanes:<run_id>`; a FREE lock is taken first, so the write is always under it). Returns 0.
 _lanes_fc_finalize() {
-  local rf="$1" primary="$2" mb="$3" tmp out ts l F="fleet-closeout: finalize FAILED —"
+  local rf="$1" primary="$2" mb="$3" sw="${4:-}" tmp out ts l F="fleet-closeout: finalize FAILED —"
   if _lanes_rf_done "$rf"; then echo "fleet-closeout: finalize — skipped (already done)"; return 0; fi
   if grep -q '^- \[ \] ' "$rf" 2>/dev/null; then echo "fleet-closeout: finalize — skipped (Queue items remain)"; return 0; fi
   grep -q '^## Status:' "$rf" 2>/dev/null || { echo "$F the parent run file has no ## Status: line"; return 0; }
@@ -3354,6 +3356,9 @@ _lanes_fc_finalize() {
   l="${l:-trail-pr: skipped — no output}"
   echo "fleet-closeout: finalize — $l"
   bash "$HELPERS" progress-append "$rf" "$ts $l" >/dev/null 2>&1
+  [ -n "$sw" ] || sw="sweep: summary — skipped: no summary line (sweep failed or printed nothing)"
+  bash "$HELPERS" progress-append "$rf" "fleet closeout sweep (dry run): $sw" >/dev/null 2>&1 \
+    || echo "fleet-closeout: WARNING — the sweep line could not be appended" >&2
   if [ -z "$mb" ]; then
     l="$(cd "$primary" && bash "$TRAIL" trail-unstage "$rf" 2>/dev/null </dev/null | tail -n1)"
     echo "fleet-closeout: finalize — ${l:-trail-unstage: skipped — no output}"
@@ -3385,8 +3390,10 @@ _lanes_fc_finalize() {
 #                  empty, else `kept <dir> — contents: <names>`; `lane-status --leaks` (its first line
 #                  appended as `fleet closeout leaks: <line>`, the primary's path written `<primary>`);
 #                  a DRY `automate-trail.sh sweep --root <primary>` (never --apply): its summary line printed
-#                  as `sweep — <summary>` and appended once as `fleet closeout sweep (dry run): <summary>`
-#                  (a failed / silent sweep reads `skipped: …`, exit unchanged); main health — the `ci` check of
+#                  as `sweep — <summary>` on every wave end, and appended to the parent Progress as
+#                  `fleet closeout sweep (dry run): <summary>` ONLY by the parent finalize below (so the one
+#                  line at `## Status: done` is the final wave's; a failed / silent sweep reads `skipped: …`,
+#                  exit unchanged); main health — the `ci` check of
 #                  origin/<base> HEAD via gh: `failure` ⇒ `wave_paused: main_red after <sha>` appended and
 #                  printed (no revert, no block); then, when the parent Queue has no `- [ ]` left,
 #                  the parent FINALIZE under the still-held wave lock (_lanes_fc_finalize: `current-wave
@@ -3502,15 +3509,13 @@ EOF
   _lanes_append_once "$rf" "fleet closeout leaks: $lk" || echo "fleet-closeout: WARNING — the leaks line could not be appended" >&2
   _fc "leaks — $lk"
   # af/39a: a DRY sweep (never --apply) of the primary's leftover plugin worktrees and branches — its
-  # summary line printed and appended once to the parent Progress (the first recorded line stands on a
-  # re-run); a sweep failure or silence is reported, never an exit-code change.
+  # summary line printed on every wave end; the parent Progress records it ONLY at the parent finalize
+  # (_lanes_fc_finalize, below), so a multi-wave run's done-time line is the final wave's, never a
+  # frozen wave-1 snapshot. A sweep failure or silence is reported, never an exit-code change.
   local sw sweep_sh="${LOOMWRIGHT_LANES_SWEEP:-$HERE/automate-trail.sh}"
   sw="$(bash "$sweep_sh" sweep --root "$primary" 2>/dev/null </dev/null | tail -n1)"
   case "$sw" in "sweep: summary — "*) ;; *) sw="sweep: summary — skipped: no summary line (sweep failed or printed nothing)" ;; esac
   case "$sw" in *"$primary"*) sw="$(printf '%s' "$sw" | awk -v p="$primary" '{ while ((i = index($0, p)) > 0) $0 = substr($0, 1, i - 1) "<primary>" substr($0, i + length(p)); print }')" ;; esac
-  if ! grep -q '^- fleet closeout sweep (dry run): ' "$rf" 2>/dev/null; then
-    _lanes_append_once "$rf" "fleet closeout sweep (dry run): $sw" || echo "fleet-closeout: WARNING — the sweep line could not be appended" >&2
-  fi
   _fc "sweep — $sw"
   base="$(_lanes_base_of "$primary")"
   sha="$(git -C "$primary" rev-parse -q --verify "refs/remotes/origin/$base" 2>/dev/null)"
@@ -3532,7 +3537,7 @@ EOF
   if [ "$n" != 0 ]; then _fc "lock kept — $n Queue item(s) remain unchecked (the next wave runs under it)"; return 0; fi
   # The Queue is empty: finalize the parent UNDER the wave lock, then release it on EVERY outcome —
   # a refused finalize prints its FAILED line and never strands the lock.
-  _lanes_fc_finalize "$rf" "$primary" "$mb"
+  _lanes_fc_finalize "$rf" "$primary" "$mb" "$sw"
   if out="$(bash "$RUN_LOCK" release --owner "automate-lanes:$parent" --root "$primary" 2>&1 </dev/null)"; then
     _fc "wave closed — lock released"
   else

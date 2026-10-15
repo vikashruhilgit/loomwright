@@ -15,7 +15,8 @@
 # removal.
 #
 # USAGE
-#   worktree-salvage.sh <abs-or-rel worktree path> [--dest <dir>] [--reason <text>] [--ignored]
+#   worktree-salvage.sh <abs-or-rel worktree path> [--dest <dir>] [--reason <text>] [--ignored [--allow-unsalvaged]]
+#   worktree-salvage.sh <abs-or-rel worktree path> --check-ignored
 #
 #   --dest    destination directory. Default: `<primary>/.supervisor/salvage/`
 #             where <primary> is the parent of `git rev-parse --git-common-dir`
@@ -30,18 +31,34 @@
 #   --ignored OPT-IN gitignored-runtime salvage (af/39a — the 2026-10-12 hand
 #             cleanup lost a worktree's session logs and postmortem ledger, because
 #             DETECTION below skips ignored content by design and `git worktree
-#             remove` deletes it). Each PRESENT entry of the fixed list
-#             `.supervisor/logs/`, `.supervisor/postmortem/`,
-#             `.claude/settings.local.json` is copied to `<salvage>/ignored/<rel>`
-#             and verified byte-identical (`diff -r`), stopping at the first
-#             failure. The VERDICT is the LAST stdout line, always printed in this
-#             mode: `ignored: ok <n>` (n = entries copied; `ignored: ok 0` with no
-#             salvage directory when the tree is clean and no entry is present) or
-#             `ignored: failed <rel> — <reason>` (a script-level failure before any
-#             entry is known names `-`). Exit stays 0. A caller removes the worktree
-#             ONLY on an `ignored: ok` line — anything else, including no line at
-#             all, keeps it (`automate-trail.sh` sweep and closeout step 3a). Without
-#             the flag every output below is byte-unchanged.
+#             remove` deletes it). Each PRESENT entry of the fixed SALVAGE LIST
+#             (ign_salvage_list below: `.supervisor/logs/`, `.supervisor/postmortem/`
+#             and the host's local settings file, IGN_HOST_SETTINGS) is copied to
+#             `<salvage>/ignored/<rel>` and verified byte-identical (`diff -r`),
+#             stopping at the first failure. The VERDICT is the LAST stdout line,
+#             always printed in this mode: `ignored: ok <n>` (n = entries copied;
+#             `ignored: ok 0` with no salvage directory when the tree is clean and no
+#             entry is present) or `ignored: failed <rel> — <reason>` (a script-level
+#             failure before any entry is known names `-`). FAIL CLOSED on what the
+#             list does not cover: when the worktree holds gitignored content that is
+#             neither on the salvage list (or inside one of its entries) nor on the
+#             short REGENERABLE allowlist (IGN_REGEN below: build/cache output), the
+#             verdict is `ignored: failed <entry> — unsalvaged ignored content` — a
+#             `.env`, `.supervisor/state.md`, `.supervisor/jobs/` or `graphify-out/`
+#             would otherwise be deleted with no copy. `--allow-unsalvaged` drops ONLY
+#             that coverage verdict (closeout step 3a's documented limit: its own
+#             merged PR worktree keeps its prior contract and is removed even with such
+#             content — `automate-trail.sh` sweep never passes it). Exit stays 0. A caller removes
+#             the worktree ONLY on an `ignored: ok` line — anything else, including no
+#             line at all, keeps it (`automate-trail.sh` sweep and closeout step 3a).
+#             Without the flag every output below is byte-unchanged.
+#   --check-ignored  READ-ONLY (writes nothing, creates no directory): the same
+#             coverage check alone, so a dry run can report what `--ignored` would
+#             refuse. ONE stdout line: `ignored-check: ok` | `ignored-check:
+#             unsalvaged <entry>` (the first gitignored entry neither salvaged nor
+#             regenerable, as `git ls-files --others --ignored --exclude-standard
+#             --directory` names it — a directory ends in `/`) | `ignored-check:
+#             failed — <reason>` (unreadable ⇒ the caller keeps the worktree). Exit 0.
 #
 # OUTPUT
 #   stdout: the created salvage directory `<dest>/<basename(wt)>-<UTC ts>[-N]`
@@ -143,8 +160,10 @@ set -u
 fail() {
   # ONE stderr line, nothing captured, exit 0 — the always-exit-0 contract.
   # --ignored: the verdict line still comes last on stdout, naming the first
-  # pending entry (or `-` before the entry list is known).
+  # pending entry (or `-` before the entry list is known). --check-ignored: its
+  # one `ignored-check: failed — …` line.
   printf 'worktree-salvage: %s\n' "$1" >&2
+  [ "$CHECK_ONLY" -eq 1 ] && printf 'ignored-check: failed — %s\n' "$1"
   [ "$IGNORED" -eq 1 ] && printf 'ignored: failed %s — %s\n' "${IGN_FIRST:--}" "$1"
   exit 0
 }
@@ -153,7 +172,67 @@ WT=""
 DEST=""
 REASON="unspecified"
 IGNORED=0
+CHECK_ONLY=0
+ALLOW_UNSALV=0
 IGN_FIRST=""
+
+# The host's local settings file — named ONCE here (vendor-coupling ratchet: a
+# harness-specific path, the one this script cannot avoid naming).
+IGN_HOST_SETTINGS=".claude/settings.local.json"
+# ign_salvage_list — the fixed --ignored SALVAGE LIST, one relative path per line
+# (never a word-split variable).
+ign_salvage_list() {
+  printf '%s\n' .supervisor/logs .supervisor/postmortem "$IGN_HOST_SETTINGS"
+}
+# IGN_REGEN — the REGENERABLE allowlist: gitignored build/cache output a removal may
+# delete with no copy, matched against an entry's LAST path component. Deliberately
+# short and named in this one place; anything neither here nor on the salvage list
+# keeps the worktree (--ignored / --check-ignored fail closed on it).
+IGN_REGEN=" node_modules .venv __pycache__ dist build .next target .DS_Store "
+
+# ign_first_unsalvaged — prints the FIRST gitignored entry of $WT_TOP that is neither
+# a salvage-list entry (or inside one) nor regenerable; prints nothing when every
+# entry is covered. A directory that is a proper ANCESTOR of a salvage-list entry
+# (`.supervisor/` collapsed by --directory) is descended one level at a time, so its
+# other children (`state.md`, `jobs/`) are judged on their own. `-z` throughout, so
+# a non-ASCII or newline-bearing name is never C-quoted. Returns 1 when git cannot
+# list the entries (the caller fails closed).
+ign_first_unsalvaged() {
+  local q nq e p last s cover anc c
+  q="$(mktemp "${TMPDIR:-/tmp}/wt-salvage-ign.XXXXXX" 2>/dev/null)" || return 1
+  nq="$(mktemp "${TMPDIR:-/tmp}/wt-salvage-ign.XXXXXX" 2>/dev/null)" || { rm -f "$q"; return 1; }
+  if ! git -C "$WT_TOP" ls-files -z --others --ignored --exclude-standard --directory > "$q" 2>/dev/null; then
+    rm -f "$q" "$nq"; return 1
+  fi
+  while [ -s "$q" ]; do
+    : > "$nq"
+    while IFS= read -r -d '' e; do
+      [ -n "$e" ] || continue
+      p="${e%/}"; last="${p##*/}"; cover=0; anc=0
+      while IFS= read -r s; do
+        [ -n "$s" ] || continue
+        case "$p" in "$s"|"$s"/*) cover=1 ;; esac
+        case "$s" in "$p"/*) anc=1 ;; esac
+      done <<SALV
+$(ign_salvage_list)
+SALV
+      case "$IGN_REGEN" in *" $last "*) cover=1 ;; esac
+      [ "$cover" -eq 1 ] && continue
+      if [ "$anc" -eq 1 ] && [ -d "$WT_TOP/$p" ] && [ ! -L "$WT_TOP/$p" ]; then
+        while IFS= read -r -d '' c; do
+          c="${c#"$WT_TOP/"}"
+          if [ -d "$WT_TOP/$c" ] && [ ! -L "$WT_TOP/$c" ]; then printf '%s/\0' "$c"; else printf '%s\0' "$c"; fi
+        done < <(find "$WT_TOP/$p" -mindepth 1 -maxdepth 1 -print0 2>/dev/null) >> "$nq"
+        continue
+      fi
+      printf '%s\n' "$e"; rm -f "$q" "$nq"; return 0
+    done < "$q"
+    mv -f "$nq" "$q" 2>/dev/null || { rm -f "$q" "$nq"; return 1; }
+    nq="$(mktemp "${TMPDIR:-/tmp}/wt-salvage-ign.XXXXXX" 2>/dev/null)" || { rm -f "$q"; return 1; }
+  done
+  rm -f "$q" "$nq"
+  return 0
+}
 while [ $# -gt 0 ]; do
   case "$1" in
     --dest)
@@ -163,10 +242,12 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || fail "--reason needs a value"
       REASON="$2"; shift 2 ;;
     --ignored) IGNORED=1; shift ;;
+    --check-ignored) CHECK_ONLY=1; shift ;;
+    --allow-unsalvaged) ALLOW_UNSALV=1; shift ;;
     --dest=*)   DEST="${1#--dest=}"; shift ;;
     --reason=*) REASON="${1#--reason=}"; shift ;;
     -h|--help)
-      printf 'usage: worktree-salvage.sh <worktree path> [--dest <dir>] [--reason <text>] [--ignored]\n'
+      printf 'usage: worktree-salvage.sh <worktree path> [--dest <dir>] [--reason <text>] [--ignored [--allow-unsalvaged]]\n       worktree-salvage.sh <worktree path> --check-ignored\n'
       exit 0 ;;
     *)
       if [ -z "$WT" ]; then WT="$1"; shift
@@ -184,6 +265,18 @@ WT_TOP="$(cd "$WT" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" \
   || fail "not a git worktree: $WT"
 [ -n "$WT_TOP" ] || fail "not a git worktree: $WT"
 
+# ---- --check-ignored / --ignored: the coverage check (read-only) --------------
+# The first gitignored entry neither salvaged nor regenerable (empty = all covered).
+# Unlistable ⇒ fail (the verdict is `failed`, so the caller keeps the worktree).
+IGN_UNSALV=""
+if [ "$CHECK_ONLY" -eq 1 ] || { [ "$IGNORED" -eq 1 ] && [ "$ALLOW_UNSALV" -eq 0 ]; }; then
+  IGN_UNSALV="$(ign_first_unsalvaged)" || fail "cannot list the gitignored entries of $WT_TOP"
+fi
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  if [ -n "$IGN_UNSALV" ]; then printf 'ignored-check: unsalvaged %s\n' "$IGN_UNSALV"; else printf 'ignored-check: ok\n'; fi
+  exit 0
+fi
+
 # ---- detection ---------------------------------------------------------------
 TMP="$(mktemp 2>/dev/null)" || fail "cannot create a temp file"
 [ -n "$TMP" ] || fail "cannot create a temp file"
@@ -191,26 +284,34 @@ trap 'rm -f "$TMP"' EXIT
 if ! git -C "$WT_TOP" status --porcelain=v1 -z --untracked-files=all > "$TMP" 2>/dev/null; then
   fail "git status failed in $WT_TOP"
 fi
-# --ignored: the PRESENT entries of the fixed gitignored-runtime list (a literal
-# list — never a word-split variable). Read before the clean-tree exit so a tree
-# that is clean in git's terms but holds runtime logs is still salvaged.
+# --ignored: the PRESENT entries of the fixed salvage list (ign_salvage_list —
+# never a word-split variable). Read before the clean-tree exit so a tree that is
+# clean in git's terms but holds runtime logs is still salvaged.
 IGN_LIST=""
 IGN_N=0
 if [ "$IGNORED" -eq 1 ]; then
-  for IGN_REL in .supervisor/logs .supervisor/postmortem .claude/settings.local.json; do
+  while IFS= read -r IGN_REL; do
+    [ -n "$IGN_REL" ] || continue
     if [ -e "$WT_TOP/$IGN_REL" ] || [ -L "$WT_TOP/$IGN_REL" ]; then
       IGN_LIST="$IGN_LIST$IGN_REL
 "
       IGN_N=$((IGN_N + 1))
       [ -n "$IGN_FIRST" ] || IGN_FIRST="$IGN_REL"
     fi
-  done
+  done <<IGNSALV
+$(ign_salvage_list)
+IGNSALV
 fi
 # Clean worktree ⇒ nothing to keep ⇒ silent, no directory, exit 0 (--ignored with
-# no entry present: the verdict `ignored: ok 0` alone, still no directory).
+# no entry present: the verdict alone, still no directory — `ignored: ok 0`, or
+# the unsalvaged-content failure when the coverage check named an entry).
 if [ ! -s "$TMP" ]; then
   [ "$IGNORED" -eq 1 ] || exit 0
-  [ "$IGN_N" -gt 0 ] || { printf 'ignored: ok 0\n'; exit 0; }
+  if [ "$IGN_N" -eq 0 ]; then
+    if [ -n "$IGN_UNSALV" ]; then printf 'ignored: failed %s — unsalvaged ignored content\n' "$IGN_UNSALV"
+    else printf 'ignored: ok 0\n'; fi
+    exit 0
+  fi
 fi
 
 # ---- destination + name (only now — detection found content) -----------------
@@ -330,6 +431,11 @@ if [ "$IGNORED" -eq 1 ]; then
   done <<IGNLIST
 $IGN_LIST
 IGNLIST
+  # FAIL CLOSED on coverage: every listed entry copied, but gitignored content the
+  # list does not cover (and that is not regenerable) would still be deleted.
+  if [ -z "$IGN_VERDICT" ] && [ -n "$IGN_UNSALV" ]; then
+    IGN_VERDICT="ignored: failed $IGN_UNSALV — unsalvaged ignored content"
+  fi
   [ -n "$IGN_VERDICT" ] || IGN_VERDICT="ignored: ok $IGN_DONE"
 fi
 
@@ -375,7 +481,7 @@ write_readme() {
   if [ "$IGNORED" -eq 1 ]; then
     printf '\n## Gitignored runtime content (--ignored)\n\n'
     printf 'This salvage was asked for it: `ignored/` holds each present entry of\n'
-    printf '`.supervisor/logs/`, `.supervisor/postmortem/`, `.claude/settings.local.json`,\n'
+    printf '`.supervisor/logs/`, `.supervisor/postmortem/`, `%s`,\n' "$IGN_HOST_SETTINGS"
     printf 'verified byte-identical. Verdict: '; printf '%s' "$IGN_VERDICT"; printf '\n'
   fi
 }

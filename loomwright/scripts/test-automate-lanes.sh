@@ -2216,6 +2216,30 @@ check "AF11 branch mode OFF: finalized, trail-pr --reason done then trail-unstag
   "$rc:$(grep -c '^## Status: done$' "$RF14" | tr -d ' '):$(cat "$T_TRAIL_LOG" | tr '\n' '|')" \
   "0:1:trail trail-pr $RF14 --reason done|trail trail-unstage $RF14|"
 has "AF11b … each printed as a finalize line" "$out" "fleet-closeout: finalize — trail-pr: skipped — meta no_changes"
+# AF14 a TWO-wave run: each wave end prints its own dry sweep, but the parent Progress records the
+# sweep ONLY at the parent finalize — so the one line at `## Status: done` is the FINAL wave's summary,
+# never a frozen wave-1 snapshot (af/39a review). A stub sweep prints a per-call summary.
+cat > "$T/sw-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "sweep: summary — dry run: ${SW_STUB_N:-0} would-remove, 0 kept (0 worktree(s), ${SW_STUB_N:-0} branch(es) examined)"
+EOF
+chmod +x "$T/sw-stub.sh"
+fc_parent automate-2026-10-11-140000; RF17="$FCRF"
+printf '%s\n' "- [ ] reqs/b.md" > "$T/af.q"; awk -v f="$T/af.q" '{ print } /^## Queue$/ { while ((getline l < f) > 0) print l }' "$RF17" > "$T/af.rf" && mv "$T/af.rf" "$RF17"
+out="$(SW_STUB_N=1 LOOMWRIGHT_LANES_SWEEP="$T/sw-stub.sh" fc fleet-closeout "$RF17")"
+check "AF14 wave 1 (a Queue item remains): its sweep is printed, NOT recorded, and the lock is kept" \
+  "$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: sweep — sweep: summary — dry run: 1 would-remove, 0 kept (0 worktree(s), 1 branch(es) examined)' | tr -d ' '):$(grep -c '^- fleet closeout sweep (dry run): ' "$RF17" | tr -d ' '):$(lockst)" "1:0:LOCKED"
+sed 's/^- \[ \] reqs\/b.md$/- [x] reqs\/b.md/' "$RF17" > "$T/af.rf" && mv "$T/af.rf" "$RF17"
+out="$(SW_STUB_N=2 LOOMWRIGHT_LANES_SWEEP="$T/sw-stub.sh" fc fleet-closeout "$RF17")"
+check "AF14b wave 2 finalizes: exactly ONE recorded sweep line, and it is the final wave's summary" \
+  "$(grep -c '^## Status: done$' "$RF17" | tr -d ' '):$(grep -c '^- fleet closeout sweep (dry run): ' "$RF17" | tr -d ' '):$(grep -cxF -- '- fleet closeout sweep (dry run): sweep: summary — dry run: 2 would-remove, 0 kept (0 worktree(s), 2 branch(es) examined)' "$RF17" | tr -d ' ')" "1:1:1"
+af14_fin="$(grep -n 'wave closed — Queue empty, run finalized$' "$RF17" | head -n1 | cut -d: -f1)"
+af14_sw="$(grep -n '^- fleet closeout sweep (dry run): ' "$RF17" | head -n1 | cut -d: -f1)"
+check "AF14c … recorded by the finalize, after its finalized line, as the run file's last line" \
+  "$([ -n "$af14_fin" ] && [ -n "$af14_sw" ] && [ "$af14_sw" -gt "$af14_fin" ] && echo after):$(tail -n1 "$RF17" | cut -c1-34)" \
+  "after:- fleet closeout sweep (dry run): "
+out="$(SW_STUB_N=3 LOOMWRIGHT_LANES_SWEEP="$T/sw-stub.sh" fc fleet-closeout "$RF17")"
+check "AF14d a re-run on the done parent records no second sweep line" "$(grep -c '^- fleet closeout sweep (dry run): ' "$RF17" | tr -d ' ')" "1"
 # AF13 the run lock held by ANOTHER owner ⇒ nothing written under it, and it is never stolen
 fc_parent automate-2026-10-11-130000; RF16="$FCRF"
 bash "$HERE/run-lock.sh" release --owner "automate-lanes:automate-2026-10-11-130000" --root "$P" >/dev/null 2>&1
@@ -2227,7 +2251,7 @@ check "AF13 a foreign run lock ⇒ finalize FAILED naming its holder, parent sti
 bash "$HERE/run-lock.sh" release --owner "automate-pick:someone-else" --root "$P" >/dev/null 2>&1
 # AF12 mutation control: with the finalize call deleted, the Queue-empty close leaves the parent running
 mkdir -p "$MUT"; FCM="$SC/automate-lanes-nofinalize.sh"
-awk '!/^  _lanes_fc_finalize "\$rf" "\$primary" "\$mb"$/' "$S" > "$FCM"
+awk '!/^  _lanes_fc_finalize "\$rf" "\$primary" "\$mb" "\$sw"$/' "$S" > "$FCM"
 fc_parent automate-2026-10-11-120000; RF15="$FCRF"
 if ! cmp -s "$S" "$FCM" && bash -n "$FCM"; then
   out="$(FC_S="$FCM" fc fleet-closeout "$RF15")"

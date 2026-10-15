@@ -69,7 +69,7 @@ The intake is **source-agnostic** — only the *intake* differs, and intake is j
 
 ## What This Does
 
-> **`--sweep [--apply]` is checked first, before Step 0:** it runs `bash ${CLAUDE_PLUGIN_ROOT}/scripts/automate-helpers.sh sweep` (plus `--apply` only when the owner typed it), prints the output and stops — no other step below runs (see `## Parameters`).
+> **`--sweep [--apply]` is checked first, before Step 0:** it runs the helper's `sweep` subcommand (`scripts/automate-helpers.sh sweep` under the plugin root, invoked exactly like every helper call in the skill; plus `--apply` only when the owner typed it), prints the output and stops — no other step below runs (see `## Parameters`).
 
 ### Step 0 — Load Canonical Workflow Bodies + Protocol Skill (always)
 
