@@ -46,4 +46,37 @@ version files unchanged
 
 ## Validation 2
 
-Pending: the main thread appends the scratch-repo headless `/automate` run (the `--plugin-dir` it used, plus the fenced list of plugin `file_path`s the session read) before the PR is opened.
+Running system, main thread, 2026-10-15, at branch head `d70321c`. A fresh scratch repo (`git init`, one requirement, a one-line backlog; no remote, no `--parallel`, no incomplete run, branch mode off) ran one headless sequential `/automate` with THIS branch's plugin and the installed copy disabled:
+
+```
+claude -p "/loomwright:automate --backlog .supervisor/backlog.md" \
+  --plugin-dir <lane checkout>/loomwright \
+  --settings '{"enabledPlugins":{"loomwright@atelier":false}}' \
+  --max-turns 14 --output-format stream-json --verbose
+```
+
+The session's init event names the plugin it loaded: `loomwright plugin: <lane checkout>/loomwright` (this branch, not the marketplace cache). Every Read tool `file_path` the session used, in order (paths relative to the lane checkout):
+
+```
+loomwright/skills/automate-loop/SKILL.md
+loomwright/skills/automate-loop/per-item-loop.md
+loomwright/skills/automate-loop/modes-and-merge-gate.md
+loomwright/skills/automate-loop/invariants.md
+loomwright/skills/automate-loop/SKILL.md
+loomwright/skills/automate-loop/per-item-loop.md
+loomwright/commands/autonomous.md
+loomwright/commands/review-pr.md
+loomwright/skills/automate-loop/intake.md
+```
+
+No `lanes.md`, `command-lanes.md`, `resume.md` or `branch-mode.md`. A scan of every tool input in the transcript (Read, Bash, Grep) for those four names returned no match, so no `cat`/`grep`/`wc` touched them either. The run reached the first PICK and parked there for an environmental reason (the scratch repo has no remote, so `trail-gate` fails closed):
+
+```
+- skipped AUT-QUEUE: backlog queue 1 ≤ limit 5
+- trail-gate: PARK — trail PR state unreadable (gh pr list failed)
+- parked trail_pr_open — repo has no git remote; gh cannot read trail PR state (fail closed)
+```
+
+**What the first attempt found (at `ea7a88d`, fixed by `6d4479c` and `d70321c`).** The same run at the first commit did not Read the four files, but `pick-guard` refused `refuse: automate_dir_missing .supervisor/automate`. The only instruction to `mkdir -p .supervisor/automate` before `pick-guard` on a new run lived in the resume split file's §4, which a fresh run no longer reads. The session then ran `grep -n "pick-guard"` over `resume.md` and `lanes.md` (about 7.5K chars) to recover. `6d4479c` puts that one start-order step in the `intake.md` row. `d70321c` closes a second rule of the same kind: the `progress-append` of a start-time `closeout-others: record — …` line also lives only in §4, so that line is now a `resume.md` trigger. The re-run above shows neither the refusal nor any touch of the four files.
+
+**Honest limits.** One run covers the fresh, sequential, branch-mode-off, no-remote shape only. The `closeout-others: record — …` trigger was not exercised (it needs another run with a merged in-flight PR). A run that reads the trigger lines still depends on the model following Step 0's "read when the trigger is observed" instruction; nothing mechanical enforces the late reads.
