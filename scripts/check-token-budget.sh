@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
-# check-token-budget.sh — CI-enforced per-agent prompt token budgets (ratchet).
+# check-token-budget.sh — CI-enforced prompt-size ceilings (ratchet) for every
+# agent, every skill dir and every command doc.
 #
-# WHY: 14 agent prompts x 41 skills accrete words every release and nothing
-# pushes back. Prompt inventory weight grows unmeasured, and every spawn pays
-# for it. This gate makes an agent's effective spawn-time prompt weight — the
-# agent .md PLUS every skill preloaded via its frontmatter `skills:` list — a
-# mechanically enforced contract, exactly like check-doc-currency.sh does for
-# version/count claims. It fails CLOSED (exit 1) on any breach.
+# WHY: agent prompts, skills and command docs accrete words every release and
+# nothing pushes back. Prompt inventory weight grows unmeasured, and every spawn
+# or on-demand read pays for it. This gate makes three sizes mechanically
+# enforced contracts, exactly like check-doc-currency.sh does for version/count
+# claims, and fails CLOSED (exit 1) on any breach:
+#   .agents[<stem>]   — an agent's effective spawn-time weight: the agent .md
+#                       PLUS every skill preloaded via its frontmatter `skills:`.
+#   .skills[<dir>]    — a skill dir's weight: EVERY *.md under the dir, counted
+#                       recursively (a future references/ subfolder is measured,
+#                       never silently skipped). Loose files at the skills root
+#                       (SKILLS_INDEX.md, SKILL_TEMPLATE.md) are not skill dirs.
+#   .commands[<stem>] — a command doc's weight: <commands dir>/<stem>.md.
+# Each table fails CLOSED on a breach, a missing entry, an orphaned entry, a
+# non-integer budget, and a missing or empty dir.
 #
 # IMPORTANT — PROXY, NOT A REAL TOKEN COUNT. The weight is an OFFLINE PROXY
 # (bytes / 4), never a call to Anthropic's count_tokens API (no network in CI).
@@ -15,9 +24,11 @@
 # proxy cannot track tokenizer changes; that is out of scope by design. Every
 # number this gate prints is labeled "proxy tokens" — never an exact count.
 #
-# SCOPE: only skills PRELOADED via agent frontmatter are counted (they are
-# injected at spawn time). Command docs, on-demand skills, and non-preloaded
-# references are deliberately excluded — they are not part of spawn-time weight.
+# SCOPE: an agent row counts only the skills PRELOADED via its frontmatter (they
+# are injected at spawn time). On-demand skills and command docs are not
+# spawn-time weight, so they are gated by their OWN ceilings (.skills/.commands)
+# rather than folded into an agent's row — a preloaded skill is therefore
+# measured twice, once in each agent that preloads it and once in its own row.
 #
 # CAVEAT: the weight sizes the ENTIRE agent .md and SKILL.md, frontmatter
 # included — it is NOT the literal injected system prompt (frontmatter tools/
@@ -29,13 +40,15 @@
 #
 # Budgets are declared in ONE authoritative machine-readable source
 # (loomwright/docs/prompt-token-budgets.json), mirrored for humans in
-# loomwright/docs/ARCHITECTURE_CONTRACTS.md §"Prompt Token Budgets". To raise a
-# budget: raise it in prompt-token-budgets.json in the SAME PR that breaches it,
-# with a one-line justification in the `note` field — the gate reads the JSON,
-# so the raise is visible in the PR diff.
+# loomwright/docs/ARCHITECTURE_CONTRACTS.md §"Prompt Token Budgets" (one mirror
+# table per JSON table). To raise a budget: raise it in prompt-token-budgets.json
+# in the SAME PR that breaches it, with a ONE-line reason in the `note` field
+# (history goes to CHANGELOG.md) — the gate reads the JSON, so the raise is
+# visible in the PR diff.
 #
-# Exit 0 = every agent within budget. Exit 1 = at least one breach OR a broken
-# frontmatter skill reference OR an agent with no declared budget.
+# Exit 0 = every agent, skill dir and command doc within budget. Exit 1 = at
+# least one breach OR a broken frontmatter skill reference OR a missing,
+# orphaned or non-integer entry OR a missing/empty dir OR mirror-table drift.
 #
 # Portability: bash 3.2 safe (macOS). No `${var//...}` pattern-subst on large
 # strings (O(n^2) wedge on macOS bash 3.2). No GNU-only stat/sed/date flags —
@@ -49,6 +62,7 @@ cd "$repo_root"
 # Overridable for the self-test (hermetic fixtures); default to the real repo.
 AGENTS_DIR="${TOKEN_BUDGET_AGENTS_DIR:-loomwright/agents}"
 SKILLS_DIR="${TOKEN_BUDGET_SKILLS_DIR:-loomwright/skills}"
+COMMANDS_DIR="${TOKEN_BUDGET_COMMANDS_DIR:-loomwright/commands}"
 BUDGET_JSON="${TOKEN_BUDGET_JSON:-loomwright/docs/prompt-token-budgets.json}"
 
 command -v jq >/dev/null 2>&1 || { echo "check-token-budget: jq required" >&2; exit 1; }
@@ -203,84 +217,231 @@ done <<EOF
 $(jq -r '.agents | keys[]' "$BUDGET_JSON" 2>/dev/null)
 EOF
 
+
+# check_ceiling TABLE KEY TOTAL DETAIL -> one row for a .skills/.commands entry:
+# ERROR on a missing or non-integer budget, BREACH over it, OK otherwise. Same
+# wording and the same fail-CLOSED rules as the agent rows above. A jq error (a
+# table that is not an object) yields an empty budget, which the non-integer
+# guard turns into an ERROR — never a false green.
+check_ceiling() {
+  local table="$1" key="$2" total="$3" detail="$4" budget
+  budget="$(jq -r --arg t "$table" --arg k "$key" '.[$t][$k].budget // "null"' "$BUDGET_JSON" 2>/dev/null)"
+  if [ "$budget" = "null" ]; then
+    printf "%-22s %8s %8s  %-6s  %s\n" "$key" "$total" "-" "ERROR" "no budget declared in $BUDGET_JSON (add a .$table[\"$key\"] entry)"
+    errors=$((errors + 1))
+    exit_code=1
+    return
+  fi
+  case "$budget" in ''|*[!0-9]*)
+    printf "%-22s %8s %8s  %-6s  %s\n" "$key" "$total" "$budget" "ERROR" "non-integer budget in $BUDGET_JSON (must be a positive integer)"
+    errors=$((errors + 1))
+    exit_code=1
+    return ;;
+  esac
+  if [ "$total" -gt "$budget" ]; then
+    printf "%-22s %8s %8s  %-6s  %s\n" "$key" "$total" "$budget" "BREACH" "over by $((total - budget)) proxy tokens ($detail) — raise .$table[\"$key\"] in the same PR (one-line note) or trim it"
+    breaches=$((breaches + 1))
+    exit_code=1
+  else
+    printf "%-22s %8s %8s  %-6s  %s\n" "$key" "$total" "$budget" "OK" "$((budget - total)) headroom ($detail)"
+  fi
+}
+
+# check_orphans TABLE SEEN-LIST WHAT -> ERROR for every .<TABLE> key that is not
+# in SEEN-LIST (the newline-delimited names this run actually enumerated and
+# measured). Membership is checked against what was measured, not against the
+# filesystem, so a key naming a hidden or nested path can never count as present.
+check_orphans() {
+  local table="$1" seen="$2" what="$3" key nl='
+'
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    case "$nl$seen$nl" in
+      *"$nl$key$nl"*) ;;
+      *)
+        printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "-" "ERROR" "orphaned budget in $BUDGET_JSON — no $what for .$table[\"$key\"] (remove the stale entry)"
+        errors=$((errors + 1))
+        exit_code=1 ;;
+    esac
+  done <<EOF
+$(jq -r --arg t "$table" '.[$t] | keys[]' "$BUDGET_JSON" 2>/dev/null)
+EOF
+}
+
+# skill_weight DIR -> "<proxy tokens> <md files>" summed over EVERY *.md under
+# DIR, recursively (floor per file, then summed — the same per-file proxy the
+# agent rows use). Returns 1 when `find` fails, so an unreadable subtree is an
+# ERROR rather than a silent under-count.
+skill_weight() {
+  local list f t=0 n=0
+  list="$(find "$1" -type f -name '*.md' 2>/dev/null)" || return 1
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    t=$((t + $(proxy_tokens "$f")))
+    n=$((n + 1))
+  done <<EOF
+$list
+EOF
+  echo "$t $n"
+}
+
+# --- Skill dirs: .skills[<dir>] -------------------------------------------------
+# Every non-hidden directory directly under the skills dir is a skill dir; loose
+# files at the root (SKILLS_INDEX.md, SKILL_TEMPLATE.md) are not, need no entry
+# and are not measured. A .skills key naming anything else is an orphan.
+printf "%-22s %8s %8s  %-6s  %s\n" "SKILL DIR" "PROXY" "BUDGET" "STATUS" "DETAIL"
+skill_count=0
+seen_skills=""
+for skill_dir in "$SKILLS_DIR"/*/; do
+  [ -d "$skill_dir" ] || continue
+  skill_dir="${skill_dir%/}"
+  skill_count=$((skill_count + 1))
+  name="$(basename "$skill_dir")"
+  seen_skills="$seen_skills
+$name"
+  if ! weight="$(skill_weight "$skill_dir")"; then
+    printf "%-22s %8s %8s  %-6s  %s\n" "$name" "-" "-" "ERROR" "could not list the *.md files under $skill_dir"
+    errors=$((errors + 1))
+    exit_code=1
+    continue
+  fi
+  check_ceiling skills "$name" "${weight% *}" "${weight#* } .md files"
+done
+
+# Anti-drift: a missing or empty skills dir must fail LOUDLY — a 0-skill run of a
+# fail-closed ratchet is a false green. Runs after the zero-agent guard above.
+if [ "$skill_count" -eq 0 ]; then
+  echo "check-token-budget: no skill dirs found in $SKILLS_DIR (missing or empty) — refusing to pass a 0-skill ratchet" >&2
+  exit 1
+fi
+check_orphans skills "$seen_skills" "skill dir under $SKILLS_DIR/"
+
+# --- Command docs: .commands[<stem>] --------------------------------------------
+printf "%-22s %8s %8s  %-6s  %s\n" "COMMAND DOC" "PROXY" "BUDGET" "STATUS" "DETAIL"
+command_count=0
+seen_commands=""
+for cmd_file in "$COMMANDS_DIR"/*.md; do
+  [ -f "$cmd_file" ] || continue
+  command_count=$((command_count + 1))
+  stem="$(basename "$cmd_file" .md)"
+  seen_commands="$seen_commands
+$stem"
+  check_ceiling commands "$stem" "$(proxy_tokens "$cmd_file")" "$cmd_file"
+done
+
+if [ "$command_count" -eq 0 ]; then
+  echo "check-token-budget: no command .md files found in $COMMANDS_DIR (missing or empty) — refusing to pass a 0-command ratchet" >&2
+  exit 1
+fi
+check_orphans commands "$seen_commands" "command doc $COMMANDS_DIR/<stem>.md"
+
 # Mirror-table sync (mechanized — the ARCHITECTURE_CONTRACTS human mirror was
 # the one unguarded drift surface left; same move as check-skills-index-sync.sh
-# for SKILLS_INDEX version cells). Every JSON agent must have a table row whose
-# budget cell equals .agents[<stem>].budget, and every table row must have a
-# JSON entry (no ghost rows). TOKEN_BUDGET_CONTRACTS_MD set-but-EMPTY skips the
-# check (hermetic self-test fixtures only); unset uses the real file; a missing
-# file fails CLOSED.
+# for SKILLS_INDEX version cells). For each JSON table (agents, skills,
+# commands) every entry must have a row in ITS mirror table whose budget cell
+# equals .<table>[<key>].budget (and whose measured cell, when both sides record
+# one, equals .measured), and every table row must have a JSON entry (no ghost
+# rows). TOKEN_BUDGET_CONTRACTS_MD set-but-EMPTY skips the check (hermetic
+# self-test fixtures only); unset uses the real file; a missing file fails
+# CLOSED.
 CONTRACTS_MD="${TOKEN_BUDGET_CONTRACTS_MD-loomwright/docs/ARCHITECTURE_CONTRACTS.md}"
+SKILLS_MIRROR_HEADING="Skill size ceilings"
+COMMANDS_MIRROR_HEADING="Command size ceilings"
+
+# mirror_rows [SUBHEADING] -> body rows ("| `key` | budget | measured | ...") of
+# ONE mirror table, each bounded to its own block inside §Prompt Token Budgets:
+# no SUBHEADING = the agent table, i.e. the rows BEFORE the section's first
+# "### " heading; SUBHEADING = the rows under "### <SUBHEADING>" only, up to the
+# next "### " or "## ". So a skill/command row is never read as an agent row.
+mirror_rows() {
+  awk -v want="$1" '
+    /^## Prompt Token Budgets/ { insec=1; s=(want==""); next }
+    insec && /^## /            { exit }
+    insec && /^### /           { s=(want!="" && index($0, "### " want)==1); next }
+    insec && s && /^\| `/      { print }
+  ' "$CONTRACTS_MD"
+}
+
+# check_mirror TABLE NOUN [SUBHEADING] -> drift / missing-row / ghost-row ERRORs
+# for one JSON table against its mirror table.
+check_mirror() {
+  local table="$1" noun="$2" want="${3-}" rows where key jbudget row mbudget jmeasured mmeasured rstem
+  rows="$(mirror_rows "$want")"
+  where="§'Prompt Token Budgets'"
+  [ -z "$want" ] || where="§'Prompt Token Budgets' / '### $want'"
+
+  # (a) every JSON entry has a row with an equal budget cell
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    jbudget="$(jq -r --arg t "$table" --arg k "$key" '.[$t][$k].budget' "$BUDGET_JSON")"
+    row="$(printf '%s\n' "$rows" | awk -F'|' -v k="$key" '{s=$2; gsub(/[` ]/,"",s); if (s==k) {print; exit}}')"
+    if [ -z "$row" ]; then
+      printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "$jbudget" "ERROR" "no row in $CONTRACTS_MD $where — add the mirror row in the same edit"
+      errors=$((errors + 1))
+      exit_code=1
+    else
+      mbudget="$(printf '%s\n' "$row" | awk -F'|' '{b=$3; gsub(/[[:space:]]/,"",b); print b}')"
+      if [ "$mbudget" != "$jbudget" ]; then
+        printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "$jbudget" "ERROR" "mirror drift: table budget cell '$mbudget' != JSON budget '$jbudget' in $CONTRACTS_MD — update both in the same edit"
+        errors=$((errors + 1))
+        exit_code=1
+      fi
+      # ALSO sync the MEASURED column (v15.20.0). Previously only the budget cell was
+      # checked, so a raise that also overwrote the frozen `Measured` cell — with the OLD
+      # BUDGET value, contradicting both the authoritative JSON `.measured` and the footnote
+      # that owns the cell — passed CI silently. A falsified historical measurement is worse
+      # than a stale one: it is the baseline every future raise argues from. Footnote markers
+      # (`26357¹`) are stripped before comparison; an EMPTY measured cell is tolerated (some
+      # rows legitimately carry no baseline yet), a MISMATCHED one is not.
+      jmeasured="$(jq -r --arg t "$table" --arg k "$key" '.[$t][$k].measured // ""' "$BUDGET_JSON")"
+      mmeasured="$(printf '%s\n' "$row" | awk -F'|' '{m=$4; gsub(/[[:space:]]/,"",m); print m}' | sed 's/[^0-9]//g')"
+      # `0` (and empty) mean NO BASELINE RECORDED, not "measured zero" — a real agent always
+      # measures > 0. Skipping them keeps the check off rows that have no baseline yet.
+      if [ -n "$jmeasured" ] && [ "$jmeasured" != "0" ] \
+         && [ -n "$mmeasured" ] && [ "$mmeasured" != "0" ] \
+         && [ "$mmeasured" != "$jmeasured" ]; then
+        printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "$jbudget" "ERROR" "mirror drift: table MEASURED cell '$mmeasured' != JSON measured '$jmeasured' in $CONTRACTS_MD — the measured column is a FROZEN baseline; a raise changes only the budget column"
+        errors=$((errors + 1))
+        exit_code=1
+      fi
+    fi
+  done <<EOF
+$(jq -r --arg t "$table" '.[$t] | keys[]' "$BUDGET_JSON" 2>/dev/null)
+EOF
+
+  # (b) no ghost rows (a table row whose key has no JSON entry)
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    rstem="$(printf '%s\n' "$row" | awk -F'|' '{s=$2; gsub(/[` ]/,"",s); print s}')"
+    [ -n "$rstem" ] || continue
+    if ! jq -e --arg t "$table" --arg k "$rstem" '.[$t] | has($k)' "$BUDGET_JSON" >/dev/null 2>&1; then
+      printf "%-22s %8s %8s  %-6s  %s\n" "$rstem" "-" "-" "ERROR" "ghost mirror row: table lists $noun with no .$table entry in $BUDGET_JSON"
+      errors=$((errors + 1))
+      exit_code=1
+    fi
+  done <<EOF
+$rows
+EOF
+}
+
 if [ -n "$CONTRACTS_MD" ]; then
   if [ ! -f "$CONTRACTS_MD" ]; then
     printf "%-22s %8s %8s  %-6s  %s\n" "(mirror)" "-" "-" "ERROR" "contracts mirror file not found: $CONTRACTS_MD"
     errors=$((errors + 1))
     exit_code=1
   else
-    # Body rows of the §Prompt Token Budgets table: "| `stem` | budget | ..."
-    mirror_rows="$(awk '/^## Prompt Token Budgets/{s=1;next} s && /^## /{exit} s && /^\| `/ {print}' "$CONTRACTS_MD")"
-
-    # (a) every JSON agent has a row with an equal budget cell
-    while IFS= read -r key; do
-      [ -n "$key" ] || continue
-      jbudget="$(jq -r --arg k "$key" '.agents[$k].budget' "$BUDGET_JSON")"
-      row="$(printf '%s\n' "$mirror_rows" | awk -F'|' -v k="$key" '{s=$2; gsub(/[` ]/,"",s); if (s==k) {print; exit}}')"
-      if [ -z "$row" ]; then
-        printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "$jbudget" "ERROR" "no row in $CONTRACTS_MD §'Prompt Token Budgets' — add the mirror row in the same edit"
-        errors=$((errors + 1))
-        exit_code=1
-      else
-        mbudget="$(printf '%s\n' "$row" | awk -F'|' '{b=$3; gsub(/[[:space:]]/,"",b); print b}')"
-        if [ "$mbudget" != "$jbudget" ]; then
-          printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "$jbudget" "ERROR" "mirror drift: table budget cell '$mbudget' != JSON budget '$jbudget' in $CONTRACTS_MD — update both in the same edit"
-          errors=$((errors + 1))
-          exit_code=1
-        fi
-        # ALSO sync the MEASURED column (v15.20.0). Previously only the budget cell was
-        # checked, so a raise that also overwrote the frozen `Measured` cell — with the OLD
-        # BUDGET value, contradicting both the authoritative JSON `.measured` and the footnote
-        # that owns the cell — passed CI silently. A falsified historical measurement is worse
-        # than a stale one: it is the baseline every future raise argues from. Footnote markers
-        # (`26357¹`) are stripped before comparison; an EMPTY measured cell is tolerated (some
-        # rows legitimately carry no baseline yet), a MISMATCHED one is not.
-        jmeasured="$(jq -r --arg k "$key" '.agents[$k].measured // ""' "$BUDGET_JSON")"
-        mmeasured="$(printf '%s\n' "$row" | awk -F'|' '{m=$4; gsub(/[[:space:]]/,"",m); print m}' | sed 's/[^0-9]//g')"
-        # `0` (and empty) mean NO BASELINE RECORDED, not "measured zero" — a real agent always
-        # measures > 0. Skipping them keeps the check off rows that have no baseline yet.
-        if [ -n "$jmeasured" ] && [ "$jmeasured" != "0" ] \
-           && [ -n "$mmeasured" ] && [ "$mmeasured" != "0" ] \
-           && [ "$mmeasured" != "$jmeasured" ]; then
-          printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "$jbudget" "ERROR" "mirror drift: table MEASURED cell '$mmeasured' != JSON measured '$jmeasured' in $CONTRACTS_MD — the measured column is a FROZEN baseline; a raise changes only the budget column"
-          errors=$((errors + 1))
-          exit_code=1
-        fi
-      fi
-    done <<EOF
-$(jq -r '.agents | keys[]' "$BUDGET_JSON" 2>/dev/null)
-EOF
-
-    # (b) no ghost rows (a table row whose stem has no JSON entry)
-    while IFS= read -r row; do
-      [ -n "$row" ] || continue
-      rstem="$(printf '%s\n' "$row" | awk -F'|' '{s=$2; gsub(/[` ]/,"",s); print s}')"
-      [ -n "$rstem" ] || continue
-      if ! jq -e --arg k "$rstem" '.agents | has($k)' "$BUDGET_JSON" >/dev/null 2>&1; then
-        printf "%-22s %8s %8s  %-6s  %s\n" "$rstem" "-" "-" "ERROR" "ghost mirror row: table lists an agent with no entry in $BUDGET_JSON"
-        errors=$((errors + 1))
-        exit_code=1
-      fi
-    done <<EOF
-$mirror_rows
-EOF
+    check_mirror agents "an agent"
+    check_mirror skills "a skill dir" "$SKILLS_MIRROR_HEADING"
+    check_mirror commands "a command doc" "$COMMANDS_MIRROR_HEADING"
   fi
 fi
 
 echo "------------------------------------------------------------------------------"
-echo "agents checked: $agent_count | breaches: $breaches | errors: $errors | proxy tokens = bytes/$DIVISOR (NOT exact Anthropic counts)"
+echo "agents checked: $agent_count | skill dirs checked: $skill_count | command docs checked: $command_count | breaches: $breaches | errors: $errors | proxy tokens = bytes/$DIVISOR (NOT exact Anthropic counts)"
 
 if [ "$exit_code" -ne 0 ]; then
   echo "check-token-budget: FAILED — prompt inventory ratchet tripped (see BREACH/ERROR rows above)." >&2
 else
-  echo "check-token-budget: OK — all agents within their declared prompt-inventory budgets."
+  echo "check-token-budget: OK — every agent, skill dir and command doc within its declared prompt-inventory budget."
 fi
 exit "$exit_code"

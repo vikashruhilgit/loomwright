@@ -61,8 +61,8 @@ Full per-agent invariants, the `/autonomous` orchestration shell, the Shared Age
 ## Adding or Modifying Agents
 
 1. **New agent:** `.md` in `loomwright/agents/` with YAML frontmatter; output follows Context Read → Plan → Work → Results → Risks. **Also declare a token budget:** add an `.agents[<stem>]` entry to `loomwright/docs/prompt-token-budgets.json` (measured proxy weight + ~10% headroom) plus the mirror row in `ARCHITECTURE_CONTRACTS.md` §"Prompt Token Budgets" — `check-token-budget.sh` fails CI CLOSED on an agent with no declared budget
-2. **New slash command:** `.md` in `loomwright/commands/` referencing the agent prompt
-3. **New skill:** `SKILL.md` in `loomwright/skills/[name]/` with version frontmatter; update `SKILLS_INDEX.md`
+2. **New slash command:** `.md` in `loomwright/commands/` referencing the agent prompt. Declare its size ceiling in the same change: a `.commands[<stem>]` entry in `loomwright/docs/prompt-token-budgets.json` (measured + ~10%) plus the mirror row in `ARCHITECTURE_CONTRACTS.md` §"Prompt Token Budgets" — `check-token-budget.sh` fails CI CLOSED on a command doc with no entry
+3. **New skill:** `SKILL.md` in `loomwright/skills/[name]/` with version frontmatter; update `SKILLS_INDEX.md`. Declare its size ceiling in the same change: a `.skills[<dir>]` entry in `loomwright/docs/prompt-token-budgets.json` (measured + ~10%, every `*.md` under the dir counted) plus the mirror row in `ARCHITECTURE_CONTRACTS.md` §"Prompt Token Budgets" — `check-token-budget.sh` fails CI CLOSED on a skill dir with no entry
 4. **Test locally:**
    ```
    /plugin uninstall loomwright
