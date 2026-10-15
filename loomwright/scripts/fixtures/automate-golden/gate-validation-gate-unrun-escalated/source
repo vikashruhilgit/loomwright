@@ -4,3 +4,4 @@ requirement file is the real 08b requirement before its done stamp. The PR body 
 real one had for V2 (listed under a "Not verified" heading — the real 02:25:56Z verdict line).
 gap: the owner merged #548 instead of answering AUT-WAIVE (real 02:39:08Z line), so no real escalated park
 was written; this pins the prose's can't-ask branch (non-interactive): decide-then-park escalated.
+neutralised: harness-runtime path/hook/CLI tokens in the tree/ requirement and job prose (no helper reads those lines) were rewritten (`.app-harness/`, `<harness> -p`, `Subagent-stop`) so the committed fixtures pass check-vendor-coupling.

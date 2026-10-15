@@ -7,3 +7,4 @@ gap: the real run recorded it in prose and, per its own later lines, could not w
 sequence; closeout runs for real (scratch origin, gh stubbed; the real
 requirement and its real done brief .supervisor/jobs/done/2026-09-30-post-park-lifecycle.md are in the tree).
 The picked timestamp is reconstructed; the stubbed headRefOid is a placeholder (only 8c835ba is recorded).
+neutralised: harness-runtime path/hook/CLI tokens in the tree/ requirement and job prose (no helper reads those lines) were rewritten (`.app-harness/`, `<harness> -p`, `Subagent-stop`) so the committed fixtures pass check-vendor-coupling.

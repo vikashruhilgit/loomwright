@@ -11,14 +11,20 @@
 #      blocks skipped: (a) every `##`/`###`/`####` heading, id `<file>|<heading text>`;
 #      (b) every column-0 numbered list item, id `<file>|<nearest heading>|L<k>.<n>`
 #      (k = 1-based ordinal of that numbered list under the heading — a list restarts at
-#      `1.` — and n = the item number). The committed map
+#      `1.` — and n = the item number). A fence opens on a 0–3-space-indented run of 3+
+#      backticks or 3+ tildes and closes ONLY on a bare run of the SAME character at least
+#      as long (CommonMark), so a ``` line inside a ~~~ block is content. The committed map
 #      fixtures/automate-golden/MAP.tsv holds data rows `<unit id><TAB><case>` or
 #      `<unit id><TAB>judgment — covered at the step boundary: <case>` (`#` lines and
 #      blank lines are comments). One `map: <unit id> → <target>` line per unit, then:
 #      `FAIL: unmapped unit <id>`, `FAIL: stale map row <id>` (its unit is gone),
-#      `FAIL: map names missing case <case>`, `FAIL: duplicate map row <id>`.
+#      `FAIL: map names missing case <case>`, `FAIL: duplicate map row <id>`,
+#      `FAIL: duplicate unit <id>` (a repeated heading would silently share one map row).
 #   2. SCRUB. No file under the fixtures dir may contain `/Users/` or `/home/`
-#      (`FAIL: home path in <file>`).
+#      (`FAIL: home path in <file>`). And when the fixtures dir in use sits in a git work
+#      tree, no file under it may be gitignored (`FAIL: ignored fixture <path>`): an
+#      ignored fixture exists on the author's disk but never in a clean checkout, so the
+#      suite would pass here and fail in CI (the as05 `*/**/.supervisor/` incident).
 #   3. CASES. Each fixtures/automate-golden/<case>/ holds:
 #        input.md      the run file BEFORE the step (trimmed from a real run)
 #        steps         one invocation per line, in the prose's order (`#`/blank skipped):
@@ -40,7 +46,11 @@
 #                      `<exit code><TAB><bash glob over "$*"><TAB><stdout>`; first match
 #                      wins; an unmatched call exits 1 (stderr `gh-stub: unmatched`)
 #        tree/         copied into the scratch checkout root before the steps (sidecars,
-#                      requirement files, drafts, a merge-watch marker, ctx.json …)
+#                      requirement files, drafts, a merge-watch marker, ctx.json …).
+#                      Dot-paths are STORED as `dot-<name>` (e.g. `tree/dot-supervisor/`,
+#                      `tree/lanes/L1/dot-supervisor/`) because the repo ignores
+#                      `*/**/.supervisor/`; the copy maps every `dot-<name>` path
+#                      component back to `.<name>` in the scratch root.
 #        setup         sourced in the scratch root before the steps (deterministic git
 #                      commits/remotes only); its output is not compared
 #      The case runs in its own `mktemp -d` checkout (`git init`, branch main, HOME and the
@@ -65,6 +75,10 @@
 #        M4 prose copy + `### Scratch heading`       ⇒ unmapped unit
 #        M5 prose copy minus `### Termination (two exits)` ⇒ stale map row
 #        M6 fixtures copy + a `/Users/x/` line        ⇒ home path
+#        M7 prose copy + `~~~` / ``` / `~~~` then `### After mixed fence` ⇒ unmapped unit
+#        M8 prose copy + a second `### Termination (two exits)` ⇒ duplicate unit
+#        M9 a scratch git repo ignoring `*/**/.supervisor/` holding a fixtures copy with a
+#           `tree/.supervisor/` file                 ⇒ ignored fixture
 #
 # ENV OVERRIDES (tests and by-hand mutation control only):
 #   GOLDEN_HELPERS=<bundle path>  run the cases through this helper instead of a fresh
@@ -124,8 +138,14 @@ extract_units() { # <prose dir> — one unit id per line, in file order
     if [ ! -f "$1/$f" ]; then echo "__MISSING_PROSE__|$f"; continue; fi
     awk -v F="$f" '
       { sub(/\r$/, "") }
-      /^(   |  | )?(```|~~~)/ { fence = !fence; next }
-      fence { next }
+      /^(   |  | )?(```|~~~)/ {
+        s = $0; sub(/^ */, "", s); c = substr(s, 1, 1); n = 0
+        while (substr(s, n + 1, 1) == c) n++
+        if (fc == "") { fc = c; fl = n; next }
+        if (c == fc && n >= fl && substr(s, n + 1) ~ /^[ \t]*$/) { fc = ""; fl = 0 }
+        next
+      }
+      fc != "" { next }
       /^(##|###|####) / { h = $0; sub(/^#+ /, "", h); sub(/[ \t]+$/, "", h); print F "|" h; k = 0; next }
       /^[0-9]+\. / { n = $0; sub(/\..*/, "", n); if (n == "1") k++; print F "|" h "|L" k "." n; next }
     ' "$1/$f"
@@ -139,6 +159,12 @@ check_map() {
   if grep -q '^__MISSING_PROSE__|' "$units"; then
     no "prose file missing under $PROSE_DIR: $(grep '^__MISSING_PROSE__|' "$units" | sed 's/^__MISSING_PROSE__|//' | tr '\n' ' ')"
     return
+  fi
+  dup="$(env LC_ALL=C sort "$units" | uniq -d)"
+  if [ -n "$dup" ]; then
+    while IFS= read -r id; do no "duplicate unit $id"; done <<EOF
+$dup
+EOF
   fi
   map="$FIX/MAP.tsv"
   [ -f "$map" ] || { no "MAP.tsv missing under $FIX"; return; }
@@ -182,6 +208,25 @@ EOF
   fi
 }
 
+check_ignored() { # every file under the fixtures dir IN USE must be committable
+  local top hits rc f
+  top="$(git -C "$FIX" rev-parse --show-toplevel 2>/dev/null)" || top=""
+  if [ -z "$top" ]; then
+    echo "  note: $FIX is not in a git work tree — ignored-fixture check not applicable"
+    return
+  fi
+  # read-only: find lists, check-ignore only answers; nothing in the work tree is touched
+  hits="$(cd "$FIX" && find . -type f | sed 's|^\./||' | git check-ignore --stdin)"; rc=$?
+  if [ "$rc" -gt 1 ]; then no "git check-ignore failed (exit $rc) under $FIX"; return; fi
+  if [ -n "$hits" ]; then
+    while IFS= read -r f; do no "ignored fixture $f"; done <<EOF
+$(printf '%s\n' "$hits" | env LC_ALL=C sort)
+EOF
+  else
+    ok "no gitignored file under the fixtures (a clean checkout sees every fixture)"
+  fi
+}
+
 # --------------------------------------------------------------------------------------
 # phase 3 — cases
 # --------------------------------------------------------------------------------------
@@ -206,6 +251,19 @@ norm() { # <file> — print it normalised (scratch root/work dir → <ROOT>/<TMP
   c="${c//"$CASE_DIR_P"/<CASE>}"; c="${c//"$CASE_DIR"/<CASE>}"
   c="${c//"$WORK_P"/<TMP>}"; c="${c//"$WORK"/<TMP>}"
   printf '%s' "$c" | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g'
+}
+
+stage_tree() { # <tree dir> <stage dir> — copy, then every `dot-<name>` component → `.<name>`
+  local p b t
+  cp -R "$1/." "$2/" || return 1
+  # deepest first, so a parent rename never invalidates a listed child path; every rename
+  # stays inside its own parent directory under <stage dir>
+  find "$2" -depth -name 'dot-?*' > "$2.dots" || return 1
+  while IFS= read -r p; do
+    b="${p##*/}"; t="${p%/*}/.${b#dot-}"
+    [ -e "$t" ] && { echo "both ${p#"$2"/} and its dot-form exist" >&2; return 1; }
+    mv "$p" "$t" || return 1
+  done < "$2.dots"
 }
 
 unroot() { # <file> — the file with only the scratch paths normalised (GOLDEN_WRITE)
@@ -240,7 +298,10 @@ run_case() { # <case dir>
     git init -q . && git symbolic-ref HEAD refs/heads/main
   ) >/dev/null 2>&1 || { no "$name: git init failed"; return; }
   cp "$cd_/input.md" "$rf"
-  [ -d "$cd_/tree" ] && cp -R "$cd_/tree/." "$CASE_ROOT/"
+  if [ -d "$cd_/tree" ]; then
+    mkdir "$cw/tree" && stage_tree "$cd_/tree" "$cw/tree" 2>"$cw/tree.log" && cp -R "$cw/tree/." "$CASE_ROOT/" \
+      || { no "$name: tree copy failed"; sed 's/^/    /' "$cw/tree.log"; return; }
+  fi
   if [ -f "$cd_/setup" ]; then
     if ! ( cd "$CASE_ROOT" && export HOME="$home" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=golden \
              GIT_AUTHOR_EMAIL=golden@example.invalid GIT_COMMITTER_NAME=golden \
@@ -417,6 +478,35 @@ run_legs() {
   else
     no "M6: fixture mutant not built"
   fi
+  # M7 — a ``` line inside a ~~~ fence must not close it.
+  d="$WORK/m7"; mkdir -p "$d"; cp "$PROSE_DIR"/*.md "$d/"
+  printf '\n~~~\n```\n~~~\n\n### After mixed fence\n' >> "$d/per-item-loop.md"
+  if [ -s "$d/per-item-loop.md" ] && ! cmp -s "$PROSE_DIR/per-item-loop.md" "$d/per-item-loop.md"; then
+    rc="$(inner "$WORK/m7.log" GOLDEN_PROSE_DIR="$d" GOLDEN_CASES=-)"
+    leg_assert M7 "$rc" "$WORK/m7.log" "FAIL: unmapped unit per-item-loop.md|After mixed fence"
+  else
+    no "M7: prose mutant not built"
+  fi
+  # M8 — a repeated heading.
+  d="$WORK/m8"; mkdir -p "$d"; cp "$PROSE_DIR"/*.md "$d/"
+  anchor="### Termination (two exits)"
+  printf '\n%s\n' "$anchor" >> "$d/per-item-loop.md"
+  if [ "$(count_of "$anchor" "$PROSE_DIR/per-item-loop.md")" = 1 ] && [ "$(count_of "$anchor" "$d/per-item-loop.md")" = 2 ]; then
+    rc="$(inner "$WORK/m8.log" GOLDEN_PROSE_DIR="$d" GOLDEN_CASES=-)"
+    leg_assert M8 "$rc" "$WORK/m8.log" "FAIL: duplicate unit per-item-loop.md|Termination (two exits)"
+  else
+    no "M8: prose mutant not built (anchor must occur once, then twice)"
+  fi
+  # M9 — a fixture the repo ignores (a scratch git repo, never this checkout).
+  d="$WORK/m9"; mkdir -p "$d/fx"; cp -R "$FIX/." "$d/fx/"
+  mkdir -p "$d/fx/run-record-pr/tree/.supervisor"; printf 'x\n' > "$d/fx/run-record-pr/tree/.supervisor/leak"
+  printf '%s\n' '*/**/.supervisor/' > "$d/.gitignore"
+  if git -C "$d" init -q . >/dev/null 2>&1 && [ -f "$d/fx/run-record-pr/tree/.supervisor/leak" ]; then
+    rc="$(inner "$WORK/m9.log" GOLDEN_FIXTURES="$d/fx" GOLDEN_CASES=-)"
+    leg_assert M9 "$rc" "$WORK/m9.log" "FAIL: ignored fixture run-record-pr/tree/.supervisor/leak"
+  else
+    no "M9: scratch repo not built"
+  fi
 }
 
 # --------------------------------------------------------------------------------------
@@ -433,6 +523,7 @@ echo "-- 1. unit map"
 check_map
 echo "-- 2. home-path scrub"
 check_scrub
+check_ignored
 echo "-- 3. golden cases"
 run_cases
 if [ "${GOLDEN_WRITE:-}" = 1 ]; then

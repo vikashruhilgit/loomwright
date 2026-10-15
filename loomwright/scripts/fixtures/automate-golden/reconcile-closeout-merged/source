@@ -5,3 +5,4 @@ closes it out (the real 10:50:07Z closeout block came from the watcher; RECONCIL
 trail un-stage, and the next PICK (pa/18).
 gap: branch mode is OFF in the scratch checkout (the real run was in branch mode, where trail-pr pushes the
 metadata branch); trail-pr runs for real against a scratch bare origin with gh stubbed.
+neutralised: harness-runtime path/hook/CLI tokens in the tree/ requirement and job prose (no helper reads those lines) were rewritten (`.app-harness/`, `<harness> -p`, `Subagent-stop`) so the committed fixtures pass check-vendor-coupling.

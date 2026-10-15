@@ -3,7 +3,7 @@
 Source requirement: `.supervisor/requirements/automate-speed/05-golden-run-tests.md`.
 Suite: `loomwright/scripts/test-automate-golden.sh`; fixtures and map: `loomwright/scripts/fixtures/automate-golden/`.
 Every output below was produced on this branch, on macOS: `bash` on `PATH` is 5.3, and the suite was also run under
-`/bin/bash` 3.2.57 (`/bin/bash loomwright/scripts/test-automate-golden.sh` → `PASS: 53 FAIL: 0`). Repo paths are
+`/bin/bash` 3.2.57 (`/bin/bash loomwright/scripts/test-automate-golden.sh` → `PASS: 57 FAIL: 0`). Repo paths are
 shown as `<repo>`.
 
 ## What the suite pins
@@ -20,6 +20,27 @@ shown as `<repo>`.
 - **Where the loop has no helper**, a step is written `loop: <shell>` (e.g. the `## Status:` line through
   `runfile-write`), so a reader sees exactly which writes are still model-authored (Findings F1, F2).
 - **Provenance.** Each case's `source` names its real run id and what was trimmed or reconstructed.
+- **Committable fixtures.** A case's `tree/` stores dot-paths as `dot-<name>` (`tree/dot-supervisor/`,
+  `tree/lanes/L1/dot-supervisor/`); the harness maps each `dot-<name>` component back to `.<name>` in the scratch
+  root. When the fixtures dir in use is in a git work tree, any file under it that `git check-ignore` reports is a
+  `FAIL: ignored fixture <path>` (leg M9).
+
+## CI-red root cause (review iteration 1)
+
+Head `b645ef1` had the required check `ci` red. Root cause: the 75 files under 28 cases' `tree/.supervisor/` (and
+`tree/lanes/L1/.supervisor/`) matched `.gitignore` `*/**/.supervisor/`, so they were never committed. The suite was
+green only in this checkout, where the ignored files exist on disk. Reproduced in a clean clone of `b645ef1`
+(`GOLDEN_SKIP_LEGS=1`): `PASS: 19 FAIL: 49`, 27 cases red with `run file differs` / `step output differs`.
+Fix: the directories are stored as `dot-supervisor/` (not ignored; `git status --short --ignored
+loomwright/scripts/fixtures/automate-golden` prints nothing) and mapped back at copy time. Prevention: the
+ignored-fixture guard above fails the suite locally, so an uncommittable fixture can no longer be green only on the
+author's disk. The same review added two unit-map guards: a fence closes only on a same-character run at least as
+long as the opening one (leg M7), and a repeated unit id is `FAIL: duplicate unit <id>` (leg M8).
+
+Committing those files exposed them to the other repo gates for the first time. `bash scripts/ci-local.sh --affected`
+then failed `check-vendor-coupling` on 7 `tree/` requirement/job files carrying harness path, CLI and hook tokens in
+prose no helper reads. Those tokens were rewritten (`.app-harness/`, `<harness> -p`, `Subagent-stop`; each affected
+case's `source` records it). Every case's run file and step output stayed identical.
 
 ## Findings (behaviour not changed)
 
@@ -84,7 +105,7 @@ is written through a link). Gate: the anchor occurs exactly once, the mutant is 
 loomwright/scripts/test-automate-golden.sh`. Unmutated, every case is green (validation 1). After all rows,
 `git diff --quiet -- loomwright/scripts ':!loomwright/scripts/fixtures'` held.
 
-Rows M1–M6 are also built-in legs of the suite (validation 1 shows them red on every run). Every helper subcommand
+Rows M1–M6 are also built-in legs (M7–M9 are built-in legs for the unit-map fence/duplicate guards and the ignored-fixture guard) of the suite (validation 1 shows them red on every run). Every helper subcommand
 family that appears in any case's `steps` has a row:
 
 | Row | Family (subcommands in `steps`) | Anchor → one-char mutation | Case that must go red | Result |
@@ -165,7 +186,7 @@ working tree: loomwright/scripts unchanged (git diff --quiet)
 
 ## validation 1
 
-`bash loomwright/scripts/test-automate-golden.sh` — **53/53, 0 failures** (map lines elided; the run prints one
+`bash loomwright/scripts/test-automate-golden.sh` — **57/57, 0 failures** (map lines elided; the run prints one
 `map: <unit id> → <case>` line for each of the 50 units):
 
 ```text
@@ -175,6 +196,7 @@ working tree: loomwright/scripts unchanged (git diff --quiet)
   ok: unit map read: 50 unit(s) extracted live from resume.md per-item-loop.md modes-and-merge-gate.md
 -- 2. home-path scrub
   ok: no /Users/ or /home/ path under the fixtures
+  ok: no gitignored file under the fixtures (a clean checkout sees every fixture)
 -- 3. golden cases
   ok: brief-repair-merged: run file + step output match (4 step(s))
   ok: check-off-progress: run file + step output match (2 step(s))
@@ -227,7 +249,20 @@ working tree: loomwright/scripts unchanged (git diff --quiet)
   ok: M4: inner run red (exit 1), names: FAIL: unmapped unit per-item-loop.md|Scratch heading
   ok: M5: inner run red (exit 1), names: FAIL: stale map row per-item-loop.md|Termination (two exits)
   ok: M6: inner run red (exit 1), names: FAIL: home path in MAP.tsv
-PASS: 53 FAIL: 0
+  ok: M7: inner run red (exit 1), names: FAIL: unmapped unit per-item-loop.md|After mixed fence
+  ok: M8: inner run red (exit 1), names: FAIL: duplicate unit per-item-loop.md|Termination (two exits)
+  ok: M9: inner run red (exit 1), names: FAIL: ignored fixture run-record-pr/tree/.supervisor/leak
+PASS: 57 FAIL: 0
+```
+
+Clean clone of the committed fix (CI's shape, no ignored file on disk):
+
+```text
+$ git clone -q <repo> <scratch>/c && git -C <scratch>/c checkout -q <fix commit>
+$ bash <scratch>/c/loomwright/scripts/test-automate-golden.sh
+  ok: no gitignored file under the fixtures (a clean checkout sees every fixture)
+  ok: M9: inner run red (exit 1), names: FAIL: ignored fixture run-record-pr/tree/.supervisor/leak
+PASS: 57 FAIL: 0
 ```
 
 `bash loomwright/scripts/test-automate-helpers.sh` — **737/737, 0 failures** in a clean local clone of this branch (CI's shape: no gitignored
@@ -266,8 +301,10 @@ FAIL: drain-pinned-start-line-current-not-set: step output differs
 PASS: 52 FAIL: 1
 ```
 
+(Recorded at head `33972e2`, when the suite had 53 checks; the leg set has grown since, so the tally is historical.)
+
 Non-zero exit, naming the case. The other cases stay green because only this case drives the guard over an unset
-`## Current`. The suite's own M1–M6 legs still build their own bundles and pass inside that run.
+`## Current`. The suite's own M1–M6 legs (at that head) still build their own bundles and pass inside that run.
 
 ## ci-local
 
@@ -287,6 +324,11 @@ RESULT: 761 passed, 1 failed
 ci-local: not run locally — ci.yml's sdk-spike step (npm build + node suites); CI still runs it.
 ci-local: FAIL after 879s — see the FAIL banners above (nothing cached)
 ```
+
+Review iteration 1: `bash scripts/ci-local.sh --affected` on the fix (fixtures and harness as committed; this
+evidence file differed by this paragraph only) — `all 17 self-tests passed`, `ci-local --affected: PASS after 44s`,
+`test-automate-golden.sh` `PASS 41s`. The first run of that command, before the token rewrite above, failed only
+`check-vendor-coupling`.
 
 `bash scripts/check-version-bump.sh`:
 
