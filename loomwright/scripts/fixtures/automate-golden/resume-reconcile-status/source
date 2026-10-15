@@ -1,4 +1,7 @@
 run: automate-2026-10-13-181331
-lines: the run resumed (## Current 39a done); the requirements tree holds 39a stamped done and pa/18 pending
-with no merged-PR evidence (gh answers no PR), so the dry run prints no `plan` row and nothing is appended.
-gap: the real resumes all read `reconcile-status: 0 plan rows`; same answer here.
+lines: the run paused after 39a's close-out (## Current done, awaiting_go), resumed; the requirements tree holds the
+real .supervisor/requirements/supervisor-resume-state-lies.md cut before its done stamp — the requirement the lane run
+automate-2026-10-08-033739-L2 reported as `reconcile-status: would stamp …supervisor-resume-state-lies.md (done)`.
+gap: the evidence is stubbed — PR #109 and its merge 19cd52b are real (the requirement's own stamp names them); the
+PR body (an `Implements` line), head branch and changed file are placeholders. Each `plan` row becomes one
+`reconcile-status: would stamp <file> (<status>)` line, the shape the L2 run wrote.
