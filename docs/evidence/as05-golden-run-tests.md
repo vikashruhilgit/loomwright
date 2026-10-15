@@ -271,7 +271,28 @@ Non-zero exit, naming the case. The other cases stay green because only this cas
 
 ## ci-local
 
-__CILOCAL__
+`bash scripts/ci-local.sh` at head `33972e2` (then `bash scripts/ci-local.sh --wait`). The early phase (16 gates,
+vendor-coupling included) was green, and the pool ran **165 of 166 self-tests green**. `test-automate-golden.sh` passed
+(`PASS 41s`). The one red is the env-only W19 assertion inside `test-automate-helpers.sh` described under validation 1:
+ci-local runs in this lane checkout, where the gitignored `.supervisor/` queue is present. In a clean clone that suite
+reads 737/737. The previous attempt (head `351148c`) failed the early vendor-coupling gate on runtime-identity tokens in
+the new files; `33972e2` removed them (no manifest edit).
+
+```text
+ci-local: early phase green after 16s — starting the pool
+PASS 41s loomwright/scripts/test-automate-golden.sh
+RESULT: 761 passed, 1 failed
+1 of 166 self-tests FAILED (wall 863s):
+  loomwright/scripts/test-automate-helpers.sh
+ci-local: not run locally — ci.yml's sdk-spike step (npm build + node suites); CI still runs it.
+ci-local: FAIL after 879s — see the FAIL banners above (nothing cached)
+```
+
+`bash scripts/check-version-bump.sh`:
+
+```text
+bump-version: check OK — not bumped (version 17.3.0, the merge base's); 1 fragment(s) pending — legal, the next bump folds them (base origin/main, merge base f5c2d0e23fb7)
+```
 
 ## Honest limits
 
