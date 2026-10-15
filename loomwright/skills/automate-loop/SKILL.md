@@ -13,7 +13,7 @@ The **single source of truth** for the `/automate` generic automation engine —
 > This is a **reference contract** skill (markdown prose, NOT executable code), in the same spirit as `skills/review-heal/SKILL.md` and `skills/autonomous-loop/SKILL.md`. There is **no `-runner` agent** — `/automate` is inline-only (agents stay 14).
 <!-- index-only:begin -->
 
-> **Split layout (parallel-automate/22, move-only).** This file is the skill's index. A section below that carries only a `See [<file>](<file>).` line was moved verbatim to that file in this directory — read the file for the section; every `§N` number and heading is unchanged. `commands/automate.md` Step 0 reads every split file, so the inline engine still loads the whole protocol. `scripts/test-automate-loop-split.sh` keeps this index and the files in step.
+> **Split layout (parallel-automate/22, move-only).** This file is the skill's index. A section below that carries only a `See [<file>](<file>).` line was moved verbatim to that file in this directory — read the file for the section; every `§N` number and heading is unchanged. Which split file the inline engine reads, and when, is decided in one place: `commands/automate.md` Step 0. `scripts/test-automate-loop-split.sh` keeps this index and the files in step.
 <!-- index-only:end -->
 
 ---
