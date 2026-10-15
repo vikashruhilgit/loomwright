@@ -1935,13 +1935,13 @@ _lanes_resolve() {
   esac
 }
 
-# _lanes_timeline <runfile> <lane_path> <now_epoch> <state> <last_launch_utc> — the lane's step timeline:
+# _lanes_timeline <runfile> <supervisor_dir> <now_epoch> <state> <last_launch_utc> — the lane's step timeline:
 # {started_at, current, label, steps: [{id, name, state, started_at, ended_at, duration_s, lines}],
 #  phase, phase_status, phases: [{phase, at}]} — the last three the lane's Supervisor's (null / []). The seven steps are the per-item loop as
 # a lane records it: pick · plan (Launch Pad) · build (Supervisor up to the PR) · heal (Phase 4.5) ·
 # drain (the owned /review-pr --until-mergeable) · decide (dismissed findings) · merge (park → merge →
 # close-out). Evidence: the run file's timestamped `## Progress` lines, plus the lane's Supervisor
-# `.supervisor/state.md` (`## Session` phase/status, `## Decisions Log` phase timestamps) only when that
+# `<supervisor_dir>/state.md` (the lane's `.supervisor/`, or its salvage copy once removed; `## Session` phase/status, `## Decisions Log` phase timestamps) only when that
 # state was created at or after the pick — a previous item's Supervisor state never shows. A step is
 # reached at its first evidence; the current step is the furthest one reached, its state taken from the
 # lane state (`active`, `waiting` on the owner, `held`, `trouble`; every step `done` once merged/done).
@@ -1950,7 +1950,7 @@ _lanes_resolve() {
 # the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too.
 # Fail-SAFE: anything unreadable ⇒ `null`.
 _lanes_timeline() {
-  local rf="$1" sm="$2/.supervisor/state.md" now="$3" state="$4" llu="$5" out
+  local rf="$1" sm="$2/state.md" now="$3" state="$4" llu="$5" out
   # Validated, never trusted by exit code: under `pipefail` an absent state.md fails the pipeline even
   # when jq printed a good object, and an `|| printf null` there would emit two JSON texts.
   out="$({
@@ -2005,8 +2005,8 @@ _lanes_timeline() {
     | (if ($state | test("^(merged|done)$")) then 7 else $far end) as $cur
     | (if $state == "running" then "active"
        elif ($state | test("^(awaiting_input|answer_pending|ready_for_release|awaiting_merge)$")) then "waiting"
-       elif ($state | test("^(held_for_load|created)$")) then "held"
-       elif ($state | test("^(stalled|died|lost_to_reset|missing|blocked_launch|gone|escalated|failed|rate_limit|drain_died|removed|abandoned)$")) then "trouble"
+       elif ($state | test("^(held_for_load|created|removed)$")) then "held"
+       elif ($state | test("^(stalled|died|lost_to_reset|missing|blocked_launch|gone|escalated|failed|rate_limit|drain_died|abandoned)$")) then "trouble"
        else "active" end) as $cs
     | [range(0; 7) as $i
         | ([$ev[] | select(.step == ids[$i])] | sort_by(.e)) as $mine
@@ -2037,18 +2037,51 @@ _lanes_timeline() {
   if jq -e 'type == "object"' >/dev/null 2>&1 <<<"$out"; then printf '%s' "$out"; else printf 'null'; fi
 }
 
-# _lanes_lane_json <10 lane-table columns> <now_epoch> <ci_json> [<answer-pending file>] — one lane's
-# status object. Classification order (first match wins): removed/abandoned · answer_pending (a HELD
-# answer kept coordinator-side for a question the lane still holds, the process not running — shown,
-# never delivered here) · blocked_launch · held_for_load (a lane holding an unanswered question,
+# _lanes_salvaged_sup <lanes_root> <lane> — the newest copy lane-remove kept of <lane>'s clone (its
+# `salvage/<lane>-removed-<UTC stamp>-<pid>/` dir, the clone's `.supervisor/` saved as `supervisor/`), or nothing.
+# The stamp sorts by time, so the glob's last match is the newest; `L1-` never matches L10's copies.
+_lanes_salvaged_sup() {
+  local d best=""
+  for d in "$1/salvage/$2-removed-"*; do [ -d "$d/supervisor" ] && best="$d"; done
+  printf '%s' "$best"
+}
+
+# _lanes_salvage_time <salvage_dir> — the UTC time in its name (`…-20261015T022615Z-<pid>`) as ISO 8601, or nothing.
+_lanes_salvage_time() {
+  printf '%s' "${1##*/}" | sed -n 's/.*-\([0-9][0-9][0-9][0-9]\)\([0-9][0-9]\)\([0-9][0-9]\)T\([0-9][0-9]\)\([0-9][0-9]\)\([0-9][0-9]\)Z-[0-9]*$/\1-\2-\3T\4:\5:\6Z/p'
+}
+
+# _lanes_last_dated <runfile> — the time of its last dated `## Progress` line, or nothing.
+_lanes_last_dated() {
+  [ -f "${1:-}" ] || return 0
+  awk '/^## / { sec = $0; next }
+    sec == "## Progress" && /^- [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z / { t = substr($0, 3, 20) }
+    END { if (t != "") print t }' "$1" 2>/dev/null
+}
+
+# _lanes_lane_json <10 lane-table columns> <now_epoch> <ci_json> [<answer-pending file>] [<closeout PR>] — one lane's
+# status object. A removed/abandoned lane's clone is gone, so its run file, Supervisor state and readiness are
+# read from the copy lane-remove salvaged (_lanes_salvaged_sup) — never its inbox: a salvaged question is not
+# one the lane still holds. `outcome` says how a removed lane ended: `done` (its run file reads `## Status:
+# done`, or the parent recorded `fleet closeout: <lane> … done (PR <closeout PR>)`), else `removed`;
+# `abandoned`; null for a lane still in the table's live states. `ended_at` is when a lane that no longer works
+# stopped (parked, merged, removed, stopped): its run file's last dated `## Progress` line, else the salvage
+# time; null while it runs, waits on a question, or has not launched — the pane's elapsed clock stops there.
+# Classification order (first match wins): removed/abandoned · answer_pending (a HELD answer kept
+# coordinator-side for a question the lane still holds, the process not running — shown, never delivered here) · blocked_launch · held_for_load (a lane holding an unanswered question,
 # no process running, reads awaiting_input instead) · created · missing · running
 # (lanes_proc_alive) · awaiting_input · parked (merged / gone after reconcile) · lost_to_reset (boot
 # later than the last launch) · died (.died marker) · stalled.
 _lanes_lane_json() {
   local lane="$1" path="$2" item="$3" run="$4" pid="$5" st="$6" sid="$7" ts="$8" llu="$9" why="${10}" now="${11}" ci="${12}" apf="${13:-}"
+  local fcpr="${14:-}" sup sv="" oc="" ended="" tst
   local root log died rf status pause pr lp pd state reason="" held="" qs nq pk prs="" le be rdf rds="" rdsum="" lm la cij
   root="$(dirname "$path")"; log="$root/$lane.stream.log"; died="$root/$lane.died"
-  rf="$path/.supervisor/automate/$run.md"
+  sup="$path/.supervisor"
+  case "$ts" in
+    removed|abandoned) [ -d "$sup" ] || { sv="$(_lanes_salvaged_sup "$root" "$lane")"; [ -z "$sv" ] || sup="$sv/supervisor"; } ;;
+  esac
+  rf="$sup/automate/$run.md"
   IFS="$(printf '\t')" read -r status pause pr lp pd <<<"$(_lanes_runfile_fields "$rf")"
   qs="$(_lanes_questions_json "$path/.supervisor/inbox" "$now")"; nq="$(jq 'length' <<<"$qs" 2>/dev/null)"; nq="${nq:-0}"
   cij='{"state":"unknown","position":null,"held":null}'
@@ -2111,7 +2144,17 @@ _lanes_lane_json() {
       fi ;;
   esac
   fi
-  rdf="$path/.supervisor/automate/$run.merge-readiness.md"
+  case "$state" in
+    removed)
+      if [ "$status" = done ] || _lanes_rf_done "$rf" || [ -n "$fcpr" ]; then oc=done; else oc=removed; fi
+      case "$(_lanes_dash "$pr")" in '') case "$fcpr" in https://*) pr="$fcpr" ;; esac ;; esac ;;
+    abandoned) oc=abandoned ;;
+  esac
+  case "$state" in
+    running|awaiting_input|answer_pending|created|held_for_load|blocked_launch|missing) ;;
+    *) ended="$(_lanes_last_dated "$rf")"; [ -n "$ended" ] || [ -z "$sv" ] || ended="$(_lanes_salvage_time "$sv")" ;;
+  esac
+  rdf="$sup/automate/$run.merge-readiness.md"
   if [ -f "$rdf" ]; then
     rds="$(sed -n 's/^- score: \([0-9]*\/[0-9]*\).*/\1/p' "$rdf" | head -1)"
     rdsum="$(sed -n 's/^- score: .* | summary: //p' "$rdf" | head -1)"
@@ -2119,44 +2162,60 @@ _lanes_lane_json() {
   lm="$(_lanes_last_message "$log")"; la="$(_lanes_last_actions "$log")"
   local pdg tl; pdg="$(_lanes_policy_digest "$path/.supervisor/inbox")"
   jq -e 'type == "object" or . == null' >/dev/null 2>&1 <<<"$pdg" || pdg=null
-  tl="$(_lanes_timeline "$rf" "$path" "$now" "$state" "$llu")"
+  # A lane closed out as done draws every step done, like a merged one; removed without it, the step it stopped at.
+  tst="$state"; [ "$oc" = done ] && tst=done
+  tl="$(_lanes_timeline "$rf" "$sup" "$now" "$tst" "$llu")"
   jq -e 'type == "object" or . == null' >/dev/null 2>&1 <<<"$tl" || tl=null
   jq -n -c --arg lane "$lane" --arg path "$path" --arg item "$(_lanes_dash "$item")" --arg run "$run" --argjson pdg "$pdg" --argjson tl "$tl" \
     --arg state "$state" --arg reason "$reason" --arg pid "$(_lanes_dash "$pid")" --arg sid "$(_lanes_dash "$sid")" \
     --arg llu "$(_lanes_dash "$llu")" --arg status "$(_lanes_dash "$status")" --arg pause "$(_lanes_dash "$pause")" \
     --arg pr "$(_lanes_dash "$pr")" --arg prs "$prs" --arg lp "$(_lanes_dash "$lp")" --arg lm "$lm" --arg la "$la" \
     --argjson qs "$qs" --argjson ci "$cij" --arg held "$held" --arg rdf "$rdf" --arg rds "$rds" --arg rdsum "$rdsum" \
-    --arg br "$(_lanes_runfile_branch "$rf")" \
+    --arg br "$(_lanes_runfile_branch "$rf")" --arg oc "$oc" --arg ended "$ended" \
     'def n: if . == "" then null else . end;
      {lane: $lane, path: $path, item: $item, run_id: $run, state: $state, reason: $reason, pid: ($pid | n),
       session_id: ($sid | n), last_launch_utc: ($llu | n), run_status: ($status | n), pause_reason: ($pause | n),
       pr: ($pr | n), pr_state: ($prs | n), branch: ($br | n), last_progress: $lp, last_actions: ($la | split("\n") | map(select(. != ""))),
       last_message: $lm, questions: $qs, ci_slot: $ci, held_for_load: ($held | n),
       readiness: (if $rds == "" then null else {score: $rds, summary: $rdsum, file: $rdf} end), policy: $pdg,
-      started_at: ($tl.started_at // ($llu | n)), timeline: $tl}'
+      started_at: ($tl.started_at // ($llu | n)), ended_at: ($ended | n), outcome: ($oc | n), timeline: $tl}'
 }
 
 # _lanes_status_doc <table> <parent> <primary> — the full lane-status JSON document.
 _lanes_status_doc() {
-  local table="$1" parent="$2" primary="$3" now ci m hint lanes="" row tab
+  local table="$1" parent="$2" primary="$3" now ci m hint lanes="" row tab prf fc
   tab="$(printf '\t')"; now="$(date -u +%s)"; ci="$(_lanes_ci_json)"; m="$(_lanes_machine_json)"; hint="$(_lanes_keep_awake_hint)"
+  prf="$primary/.supervisor/automate/$parent.md"
+  # fc: `<lane>\t<PR>` per `fleet closeout: <lane> <item> done (PR <url|none recorded>)` line — the parent's
+  # own record that a lane closed out, read when its salvaged run file is gone too.
+  fc="$(awk '/^## / { sec = $0; next }
+    sec == "## Progress" && /fleet closeout: L[0-9]+ .* done \(PR / {
+      x = $0; sub(/.*fleet closeout: /, "", x); l = x; sub(/ .*/, "", l)
+      p = x; sub(/.* done \(PR /, "", p); sub(/\)[[:space:]]*$/, "", p); printf "%s\t%s\n", l, p }' "$prf" 2>/dev/null)"
   local lane path item run pid st sid ts llu why
   while IFS="$tab" read -r lane path item run pid st sid ts llu why; do
     case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
     row="$(_lanes_lane_json "$lane" "$path" "$item" "$run" "$pid" "$st" "$sid" "$ts" "$llu" "${why:--}" "$now" "$ci" \
-      "$primary/.supervisor/automate/$parent.$lane.answer-pending.json")" || continue
+      "$primary/.supervisor/automate/$parent.$lane.answer-pending.json" \
+      "$(printf '%s\n' "$fc" | awk -F'\t' -v l="$lane" '$1 == l { p = $2 } END { print p }')")" || continue
     lanes="$lanes$row
 "
   done < "$table"
   local rs; rs="$(awk '/^## / { sec = $0; next } sec == "## Progress" && /^- [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:]*Z / { print substr($0, 3, 20); exit }' \
     "$primary/.supervisor/automate/$parent.md" 2>/dev/null)"
   # waves: every wave PR this run opened, oldest first, read from wave-build's `## Progress` record
-  # (`<ts> wave built: <branch> — PR <url> (…)`; a hand-built wave writes the same line, its timestamp
-  # sometimes left out). No gh call: lane-status is polled, so the PR's own state is not read here.
+  # (`<ts> wave built: <branch> — PR <url> (lanes: L1 PR #n, …; …)`; a hand-built wave writes the same line,
+  # its timestamp sometimes left out). No gh call: lane-status is polled, so the PR's own state is not read
+  # here — a wave's `state` is `merged` once every lane it names is merged or closed out as done (a lane PR
+  # reads merged only once the wave PR landed it), `open` otherwise, null when the line names no lanes.
+  # next_wave: the lanes no built wave names yet and still in the table's live states — the wave being
+  # worked now — numbered one past the last built wave; null in single-lane mode (`- parallel: 1`).
   local wv; wv="$(awk '/^## / { sec = $0; next } sec == "## Progress" && /^- .*wave built/' "$primary/.supervisor/automate/$parent.md" 2>/dev/null \
     | jq -R -s -c '[split("\n")[]
+        | . as $line
         | capture("^- (?:(?<built_at>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z) )?wave built.*?: (?<branch>[^ ]+) — PR (?<pr>https://[^ ]+)")
         | .pr |= sub("[),.;]+$"; "")
+        | . + {lanes: ((($line | capture("\\(lanes: (?<ls>[^;)]*)").ls) // "") | [scan("L[0-9]+")])}
         | . + {wave: ((.branch | capture("w(?<k>[0-9]+)$").k | tonumber)? // null)}]' 2>/dev/null)"
   [ -n "$wv" ] || wv='[]'
   # utc_offset_s: the machine's local offset, so a client in a sandbox with no time zone can show local
@@ -2165,16 +2224,28 @@ _lanes_status_doc() {
   case "$tz" in [+-][0-9][0-9][0-9][0-9]) tz="$(( (10#${tz:1:2} * 3600 + 10#${tz:3:2} * 60) * (${tz:0:1}1) ))" ;; *) tz=null ;; esac
   printf '%s' "$lanes" | jq -s -c --arg parent "$parent" --arg primary "$primary" --arg at "$(now_utc)" --argjson m "$m" --arg rs "$rs" --argjson tz "$tz" --argjson wv "$wv" \
     --arg hint "$hint" --arg mp "$([ -e "$primary/.supervisor/automate/$parent.memory-pressure" ] && echo true || echo false)" \
-    '{schema_version: 1, parent_run_id: $parent, primary: $primary, generated_at: $at,
-      run_started_at: (if $rs != "" then $rs else ([.[].started_at | select(. != null)] | min) end), utc_offset_s: $tz, waves: $wv, machine: $m,
+    --arg single "$(_lanes_single_parent "$prf" && echo true || echo false)" \
+    '. as $L
+     | def landed: .state == "merged" or .state == "done" or .outcome == "done";
+     ([$wv[].lanes[]]) as $built
+     | ([$L[] | select(.lane as $x | ($built | index($x)) == null) | select(.state != "removed" and .state != "abandoned")]) as $rest
+     | {schema_version: 1, parent_run_id: $parent, primary: $primary, generated_at: $at,
+      run_started_at: (if $rs != "" then $rs else ([.[].started_at | select(. != null)] | min) end), utc_offset_s: $tz,
+      waves: [$wv[] | . as $w | [$L[] | select(.lane as $x | ($w.lanes | index($x)) != null)] as $mine
+        | $w + {state: (if ($w.lanes | length) == 0 then null
+                        elif ($mine | length) == ($w.lanes | length) and all($mine[]; landed) then "merged" else "open" end)}],
+      next_wave: (if $single == "true" or ($rest | length) == 0 then null
+                  else {wave: ((([$wv[].wave | numbers] | max) // 0) + 1), lanes: [$rest[].lane]} end),
+      machine: $m,
       memory_pressure: ($mp == "true"), keep_awake_suggestion: (if $hint == "" then null else $hint end), lanes: .}'
 }
 
 _lanes_render() { # <status JSON> — the plain view
   jq -r '"lane-status: \(.parent_run_id) — \(.lanes | length) lane(s) — \(.generated_at)\(if .run_started_at != null then " — started \(.run_started_at)" else "" end)",
-    ((.waves // [])[] | "wave\(if .wave != null then " " + (.wave | tostring) else "" end) PR: \(.pr)  branch=\(.branch)\(if .built_at != null then "  built " + .built_at else "" end)"),
+    ((.waves // [])[] | "wave\(if .wave != null then " " + (.wave | tostring) else "" end) PR: \(.pr)  branch=\(.branch)\(if .built_at != null then "  built " + .built_at else "" end)\(if .state != null then "  " + .state else "" end)\(if (.lanes // []) != [] then "  lanes " + (.lanes | join(",")) else "" end)"),
     (if all(.lanes[]; .policy == null) then "policy: none answered" else empty end),
-    (.lanes[] | "\(.lane)  \(.state)\(if .reason != "" then " (" + .reason + ")" else "" end)  item=\(.item)  pr=\(.pr // "-")  path=\(.path)",
+    (if .next_wave != null then "wave \(.next_wave.wave) (not built yet): lanes \(.next_wave.lanes | join(","))" else empty end),
+    (.lanes[] | "\(.lane)  \(.state)\(if .outcome != null and .outcome != .state then " — " + .outcome else "" end)\(if .reason != "" then " (" + .reason + ")" else "" end)  item=\(.item)  pr=\(.pr // "-")\(if .ended_at != null then "  ended=" + .ended_at else "" end)  path=\(.path)",
       (if .policy != null then "    policy: \(.policy.answered) answered by policy\(if .policy.answered > 1 and .policy.first_at != null then " since " + .policy.first_at else "" end) — last \(.policy.last_gate // "?") → \(.policy.last_label) \(.policy.last_at // "unknown")" else empty end),
       (if .timeline != null then "    steps: \([.timeline as $t | .timeline.steps[] | if .state == "done" then .name + " ✓" elif .state == "pending" then .name
           else "[\($t.label // .name)\(if .duration_s != null then " " + ((.duration_s / 60 | floor | tostring) + "m") else "" end) \(.state)]" end] | join(" · "))\(if .started_at != null then "  (started \(.started_at))" else "" end)" else empty end),
