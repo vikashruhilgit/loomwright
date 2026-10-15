@@ -26,5 +26,5 @@
 - 2026-10-14T11:02:26Z ran /autonomous → PR https://github.com/vikashruhilgit/loomwright/pull/542 (SUPERVISOR_RESULT completed: heal PASS after 3 reviews / 2 fix rounds — 4cf6a58, 35b8303; 6 fixable issues fixed, 0 remaining; scope = run-lock half, Scopes 3-4 split to 39c)
 - 2026-10-14T11:02:26Z sidecar-check: ok .supervisor/automate/automate-2026-10-13-181331.supervisor-result.md
 - 2026-10-14T11:03:15Z owned drain started — /review-pr https://github.com/vikashruhilgit/loomwright/pull/542 --until-mergeable --no-auto-postmortem @ 35b8303b2d51cd3f5b882522f5a24ffc64bd1560
-- 2026-10-14T11:10:50Z drain round 1: 3 validated claude[bot] findings (CLAUDE_PID 0/1 guard; PPID=1 fallback; changelog headline) → fix 5bcf89d pushed (test-run-lock 82/0); 0 dismissed
+- 2026-10-14T11:10:50Z drain round 1: 3 validated claude[bot] findings (session-pid 0/1 guard; PPID=1 fallback; changelog headline) → fix 5bcf89d pushed (test-run-lock 82/0); 0 dismissed
 - 2026-10-14T11:19:56Z drain READY (converged, 1 round, 1 fix cycle; ci green on 5bcf89d; claude-review on 5bcf89d: no new findings; rules_gate none; 4 already-addressed dismissed)

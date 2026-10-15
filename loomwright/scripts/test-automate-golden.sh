@@ -256,7 +256,7 @@ run_case() { # <case dir>
     k=$((k + 1)); o="$cw/step$k.out"; e="$cw/step$k.err"
     (
       cd "$CASE_ROOT" || exit 98
-      unset LOOMWRIGHT_GH_BIN CLAUDE_PID CLAUDECODE LOOMWRIGHT_HOLDER_PID
+      unset LOOMWRIGHT_GH_BIN LOOMWRIGHT_HOLDER_PID
       export HOME="$home" PATH="$bin:$PATH" GOLDEN_GH_TABLE="$cd_/gh.stub" GIT_CONFIG_NOSYSTEM=1 \
         GIT_AUTHOR_NAME=golden GIT_AUTHOR_EMAIL=golden@example.invalid \
         GIT_COMMITTER_NAME=golden GIT_COMMITTER_EMAIL=golden@example.invalid \
