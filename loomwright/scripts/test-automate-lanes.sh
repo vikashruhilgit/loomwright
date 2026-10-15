@@ -58,6 +58,13 @@
 #   AJ lane timeline: the seven steps from `## Progress` + Supervisor state (pick-guarded), boundaries,
 #     current-step state per lane state, the JSON fields and the plain steps line; `waves` from the
 #     parent run file's wave-build records (undated hand line, colon inside the parenthetical)
+#   E7-E9 init-check single-lane mode: branch mode required for N = 1 (fail CLOSED), no mode read for N > 1
+#   SL single-lane mode `--parallel 1` (twin-remediation/08b): lane.json single_lane (first leg) · lane-park seam ·
+#     fresh lane numbers 1..99 · whole-run token ceiling · lane-remove / fleet-closeout `fleet closeout: <lane>
+#     tokens TOTAL=<n>` line (before the removal) · lane-drain-check (dispatch marker by the dispatcher's own
+#     PR_HASH block, owned drains after the LAST picked — timestamp optional, colon form tolerated — config
+#     backup, unknown) · both tokens-line readers take an optional timestamp · current-set's single_lane
+#     refusal · the merge watcher's documented launch line outlives its parent + a nohup mutation control
 #   AL validation-gate (af36-remainder/01): the #402 replay (pa/16's bullet Validation + PR #402's body,
 #     both fixtures under fixtures/validation-gate/) ⇒ unrun; evidenced ⇒ ok; no running-system step ⇒
 #     none; unreadable PR body / item ⇒ unrun; "Not verified" heading ⇒ NOT-RUN; FAIL ⇒ unrun; the owner
@@ -237,10 +244,29 @@ check "D1 existing hooks kept, relay entry added once" \
 # ---- E: init-check (AC12) ---------------------------------------------------------------------------
 check "E1 --parallel 2 --auto-merge refused" "$(run init-check --parallel 2 --auto-merge)" "refuse: auto_merge_with_parallel"
 run init-check --parallel 2 --auto-merge >/dev/null; check "E2 refusal exits 1" "$?" 1
-check "E3 --parallel 1 --auto-merge ok" "$(run init-check --parallel 1 --auto-merge)" ok
+check "E3 --parallel 1 --auto-merge refused (a single lane never runs the merge gate)" "$(run init-check --parallel 1 --auto-merge)" "refuse: auto_merge_with_parallel"
 check "E4 --parallel 11 out of range" "$(run init-check --parallel 11)" "refuse: parallel_out_of_range"
 check "E5 --parallel 0 out of range" "$(run init-check --parallel 0)" "refuse: parallel_out_of_range"
 check "E6 --parallel 10 ok" "$(run init-check --parallel 10)" ok
+# E7-E9 single-lane mode (twin-remediation/08b): N = 1 needs branch mode ON (setup-memory.sh mode through the
+# SETUP_MEMORY seam); anything but `on <branch>` refuses (fail CLOSED); N > 1 never reads the mode.
+out="$(STUB_MODE_LINE=off run init-check --parallel 1)"; rc=$?
+check "E7 --parallel 1 with branch mode off ⇒ refuse: single_lane_requires_branch_mode (exit 1)" "$rc:$out" "1:refuse: single_lane_requires_branch_mode"
+check "E7b … mode unknown ⇒ refused" "$(STUB_MODE_LINE='unknown no line' run init-check --parallel 1)" "refuse: single_lane_requires_branch_mode"
+printf '#!/usr/bin/env bash\necho "mode-read $*" >> "$E_MODE_LOG"; exit 1\n' > "$T/mode-fail.sh"; printf '#!/usr/bin/env bash\nexit 0\n' > "$T/mode-empty.sh"
+chmod +x "$T/mode-fail.sh" "$T/mode-empty.sh"; export E_MODE_LOG="$T/mode-read.log"; : > "$E_MODE_LOG"
+check "E7c … a failing reader / an empty answer ⇒ refused" \
+  "$(LOOMWRIGHT_LANES_SETUP_MEMORY="$T/mode-fail.sh" run init-check --parallel 1):$(LOOMWRIGHT_LANES_SETUP_MEMORY="$T/mode-empty.sh" run init-check --parallel 1)" \
+  "refuse: single_lane_requires_branch_mode:refuse: single_lane_requires_branch_mode"
+check "E7d … the reader got --root = this checkout's top level" "$(head -1 "$E_MODE_LOG")" "mode-read --root $(git rev-parse --show-toplevel 2>/dev/null || pwd) mode"
+out="$(run init-check --parallel 1)"; rc=$?
+check "E8 --parallel 1 with branch mode on <branch> ⇒ ok" "$rc:$out" "0:ok"
+: > "$E_MODE_LOG"
+check "E9 N > 1 makes NO mode read: outputs byte-identical to base, the loud stub never called" \
+  "$(for a in '--parallel 2' '--parallel 10' '--parallel 2 --auto-merge' '--parallel 11'; do
+       # shellcheck disable=SC2086
+       LOOMWRIGHT_LANES_SETUP_MEMORY="$T/mode-fail.sh" run init-check $a; done | tr '\n' '|'):$(wc -l < "$E_MODE_LOG" | tr -d ' ')" \
+  "ok|ok|refuse: auto_merge_with_parallel|refuse: parallel_out_of_range|:0"
 
 # ---- F: launch authority, regime, host denial (AC Scope 17) -----------------------------------------
 SUM_L1_BEFORE="$(lane_sum "$L1")"
@@ -2196,6 +2222,261 @@ if ! cmp -s "$S" "$FCM" && bash -n "$FCM"; then
     "0:1:fleet-closeout: wave closed — lock released"
 else bad "AF12 mutation control not built"; fi
 rm -f "$FCM"
+
+# ---- SL: single-lane mode `--parallel 1` (twin-remediation/08b) ---------------------------------------
+# lane.json marker (FIRST leg: the requirement's mutation control) · lane-park seam · fresh lane numbers
+# (1..99, never reused) · whole-run token ceiling · lane-remove / fleet-closeout tokens line · drain guard
+# (lane-drain-check) · current-set's single_lane refusal · the merge watcher outlives its launcher (AC 8).
+cat > "$T/sl-ledger.sh" <<'EOF'
+#!/usr/bin/env bash
+root=""; prev=""; for a in "$@"; do [ "$prev" = --root ] && root="$a"; prev="$a"; done
+f="$root/.supervisor/sl-tokens"
+if [ -f "$f" ]; then echo "INPUT=0 OUTPUT=0 CACHE_READ=0 CACHE_CREATE=0 TOTAL=$(cat "$f") EVENTS=1"
+else echo "INPUT=0 OUTPUT=0 CACHE_READ=0 CACHE_CREATE=0 TOTAL=0 EVENTS=0 LEDGER_UNREADABLE=1"; fi
+EOF
+chmod +x "$T/sl-ledger.sh"
+sl() { LOOMWRIGHT_LANES_TOKEN_LEDGER="$T/sl-ledger.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" bash "$S" "$@" 2>&1; }
+sl_parent() { # <parent_id> <N> — a running parent run file with `- parallel: <N>` and the two items queued
+  printf '# Automate Run: %s\n\n## Status: running\n\n## Run Config\n- parallel: %s\n\n## Queue\n- [ ] reqs/a.md\n- [ ] reqs/b.md\n\n## Current\n- item: null | status: null\n- pause_reason: null\n\n## Progress\n- 2026-10-14T00:00:00Z run created\n' "$1" "$2" > "$P/.supervisor/automate/$1.md"
+}
+PARS=automate-2026-10-14-120000; RFS="$P/.supervisor/automate/$PARS.md"; LRS="$T/work/primary-lanes/$PARS"; TBS="$P/.supervisor/automate/$PARS.lanes"
+PARN=automate-2026-10-14-130000; RFN="$P/.supervisor/automate/$PARN.md"; LRN="$T/work/primary-lanes/$PARN"
+sl_parent "$PARS" 1; sl_parent "$PARN" 2
+SL_KEYS='["schema_version","lane","run_id","parent_run_id","primary","parallel","max_tokens","created","policy"]'
+# SL1 (FIRST LEG — the requirement's mutation control): an explicit --parallel 1 writes single_lane: true
+out="$(sl lane-create "$RFS" reqs/a.md 1 --parallel 1)"; rc=$?
+check "SL1 lane-create --parallel 1 ⇒ exit 0 and lane.json carries single_lane: true" "$rc:$(jq -c '.single_lane' "$LRS/L1/.supervisor/lane.json")" "0:true"
+check "SL1b … appended LAST — every other key in today's order" "$(jq -c 'keys_unsorted' "$LRS/L1/.supervisor/lane.json")" \
+  "${SL_KEYS%]},\"single_lane\"]"
+check "SL1c lane-park --root <single lane> ⇒ awaiting_merge (exit 0)" "$(sl lane-park --root "$LRS/L1"; echo "rc=$?")" "awaiting_merge
+rc=0"
+# SL2 no --parallel (par defaults to n, here 1) and --parallel 2 ⇒ NO key; lane-park ⇒ ready_for_release
+sl lane-create "$RFN" reqs/a.md 1 >/dev/null; sl lane-create "$RFN" reqs/b.md 2 --parallel 2 >/dev/null
+check "SL2 lane-create without --parallel (n = 1 ⇒ parallel 1) ⇒ no single_lane key, today's keys and order" \
+  "$(jq -c 'keys_unsorted' "$LRN/L1/.supervisor/lane.json"):$(jq -c '.parallel' "$LRN/L1/.supervisor/lane.json")" "$SL_KEYS:1"
+check "SL2b lane-create --parallel 2 ⇒ no single_lane key" "$(jq -c 'has("single_lane")' "$LRN/L2/.supervisor/lane.json")" false
+check "SL2c lane-park on both ⇒ ready_for_release" "$(sl lane-park --root "$LRN/L1"):$(sl lane-park --root "$LRN/L2")" "ready_for_release:ready_for_release"
+# SL3 lane-park edge cases: no lane.json (not a lane) ⇒ the sequential park; unreadable / not an object /
+# single_lane false ⇒ ready_for_release (the park that arms no watcher)
+mkdir -p "$T/park/none" "$T/park/bad/.supervisor" "$T/park/arr/.supervisor" "$T/park/false/.supervisor" "$T/park/empty/.supervisor"
+printf '{"lane": "L1", ' > "$T/park/bad/.supervisor/lane.json"; printf '[{"single_lane": true}]\n' > "$T/park/arr/.supervisor/lane.json"
+printf '{"schema_version": 1, "single_lane": false}\n' > "$T/park/false/.supervisor/lane.json"; : > "$T/park/empty/.supervisor/lane.json"
+check "SL3 lane-park with NO lane.json (not a lane) ⇒ awaiting_merge" "$(sl lane-park --root "$T/park/none")" awaiting_merge
+check "SL3b lane-park on a malformed lane.json ⇒ ready_for_release" "$(sl lane-park --root "$T/park/bad")" ready_for_release
+check "SL3c … a JSON array, single_lane false, an empty file ⇒ ready_for_release" \
+  "$(sl lane-park --root "$T/park/arr"):$(sl lane-park --root "$T/park/false"):$(sl lane-park --root "$T/park/empty")" "ready_for_release:ready_for_release:ready_for_release"
+check "SL3d lane-park defaults to the current checkout's top level" "$(cd "$LRS/L1" && bash "$S" lane-park)" awaiting_merge
+# SL4 fresh lane numbers: a number already in the table is refused, nothing created
+SL_TB0="$(cksum < "$TBS")"
+out="$(bash "$S" lane-create "$RFS" reqs/b.md 1 --parallel 1 2>&1 >/dev/null)"; rc=$?
+check "SL4 L1 reused under --parallel 1 ⇒ refused on stderr, exit 1" "$rc:$out" \
+  "1:lane-create: refused — lane L1 already used in this run (single-lane takes a fresh number)"
+check "SL4b … nothing created (table byte-unchanged, no salvage, L1 untouched)" \
+  "$(cksum < "$TBS"):$([ -e "$LRS/salvage" ] && echo salvage || echo none):$(cat "$LRS/L1/.supervisor/lane-backlog.md")" "$SL_TB0:none:- [ ] reqs/a.md"
+# SL5 lane numbers 1..99 under --parallel 1 only
+out="$(sl lane-create "$RFS" reqs/b.md 11 --parallel 1)"; rc=$?
+check "SL5 lane number 11 accepted under --parallel 1" "$rc:$([ -d "$LRS/L11" ] && echo created):$(jq -r .run_id "$LRS/L11/.supervisor/lane.json")" "0:created:$PARS-L11"
+out="$(sl lane-create "$RFN" reqs/b.md 11)"; rc=$?
+check "SL5b … still refused without it (1..10)" "$rc:$([ -e "$LRN/L11" ] && echo created || echo none)" "1:none"
+has "SL5c … naming the bound" "$out" "lane number must be 1..10 (got '11')"
+out="$(sl lane-create "$RFS" reqs/b.md 100 --parallel 1)"; check "SL5d 100 refused even under --parallel 1" "$?" 1
+# SL6 whole-run token ceiling: SPENT = live lanes' ledger TOTAL + removed lanes' parent tokens lines
+echo 300 > "$LRS/L1/.supervisor/sl-tokens"; echo 200 > "$LRS/L11/.supervisor/sl-tokens"
+printf 'L5\t%s\treqs/z.md\t%s-L5\t-\t-\t-\tremoved\t-\t-\n' "$LRS/L5" "$PARS" >> "$TBS"   # a removed lane, directory gone
+out="$(sl lane-create "$RFS" reqs/b.md 12 --parallel 1 --max-tokens 1000)"; rc=$?
+check "SL6 a gone lane with no tokens line ⇒ refused token_ceiling ledger_unreadable, nothing created" \
+  "$rc:$(printf '%s\n' "$out" | tail -n1):$([ -e "$LRS/L12" ] && echo created || echo none)" "1:lane-create: refused — token_ceiling ledger_unreadable:none"
+bash "$SC/automate-helpers.sh" progress-append "$RFS" "fleet closeout: L5 tokens TOTAL=100" >/dev/null 2>&1
+out="$(sl lane-create "$RFS" reqs/b.md 12 --parallel 1 --max-tokens 600)"; rc=$?
+check "SL6b SPENT (300 + 200 + gone 100) ≥ T ⇒ refused token_ceiling total=600 max=600, nothing created" \
+  "$rc:$(printf '%s\n' "$out" | tail -n1):$([ -e "$LRS/L12" ] && echo created || echo none)" "1:lane-create: refused — token_ceiling total=600 max=600:none"
+out="$(sl lane-create "$RFS" reqs/b.md 12 --parallel 1 --max-tokens 1000)"; rc=$?
+check "SL6c SPENT < T ⇒ lane.json max_tokens = T − SPENT (1000 − 600), not T / parallel" "$rc:$(jq -c .max_tokens "$LRS/L12/.supervisor/lane.json")" "0:400"
+echo 50 > "$LRS/L12/.supervisor/sl-tokens"; rm -f "$LRS/L11/.supervisor/sl-tokens"
+out="$(sl lane-create "$RFS" reqs/b.md 13 --parallel 1 --max-tokens 5000)"; rc=$?
+check "SL6d a live lane whose reader says LEDGER_UNREADABLE ⇒ refused token_ceiling ledger_unreadable" \
+  "$rc:$(printf '%s\n' "$out" | tail -n1)" "1:lane-create: refused — token_ceiling ledger_unreadable"
+echo 200 > "$LRS/L11/.supervisor/sl-tokens"
+# SL7 lane-remove (plain AND --abandon) on a single-lane parent writes the tokens line before deleting
+out="$(sl lane-remove "$LRS/L12")"; rc=$?
+check "SL7 plain lane-remove on a single-lane parent: removed, ONE tokens line with the lane's TOTAL" \
+  "$rc:$([ -d "$LRS/L12" ] && echo kept || echo removed):$(grep -cxF -- '- fleet closeout: L12 tokens TOTAL=50' "$RFS" | tr -d ' ')" "0:removed:1"
+out="$(sl lane-remove "$LRS/L11" --abandon)"; rc=$?
+check "SL7b lane-remove --abandon: removed, tokens line written before the abandon line" \
+  "$rc:$([ -d "$LRS/L11" ] && echo kept || echo removed):$(awk '/^- fleet closeout: L11 tokens TOTAL=200$/ { t = NR } /^- lane abandoned: L11 / { a = NR } END { print (t && a && t < a) }' "$RFS")" "0:removed:1"
+out="$(sl lane-create "$RFS" reqs/b.md 13 --parallel 1 --max-tokens 1000)"; rc=$?
+check "SL7c … so the next lane-create still reads SPENT (300 + 100 + 50 + 200 = 650 ⇒ max_tokens 350)" "$rc:$(jq -c .max_tokens "$LRS/L13/.supervisor/lane.json" 2>/dev/null)" "0:350"
+bash "$SC/automate-helpers.sh" progress-append "$RFS" "fleet closeout: L13 tokens TOTAL=7" >/dev/null 2>&1
+out="$(sl lane-remove "$LRS/L13")"
+check "SL7d a lane that already has its tokens line gets no second one" "$(grep -c '^- fleet closeout: L13 tokens TOTAL=' "$RFS" | tr -d ' ')" 1
+out="$(sl lane-remove "$LRN/L2")"; rc=$?
+check "SL7e lane-remove on an N>1 parent's lane writes NO tokens line" "$rc:$(grep -c 'tokens TOTAL=' "$RFN" | tr -d ' ')" "0:0"
+# SL7f/g the tokens line is read after one OPTIONAL timestamp token (the run file's own convention), by
+# both readers: the whole-run SPENT sum and lane-remove's "already has its line" skip
+printf 'L7\t%s\treqs/y.md\t%s-L7\t-\t-\t-\tremoved\t-\t-\n' "$LRS/L7" "$PARS" >> "$TBS"   # a gone lane, timestamped line
+bash "$SC/automate-helpers.sh" progress-append "$RFS" "t9 fleet closeout: L7 tokens TOTAL=1000" >/dev/null 2>&1
+out="$(sl lane-create "$RFS" reqs/b.md 14 --parallel 1 --max-tokens 2000)"; rc=$?
+check "SL7f a timestamped tokens line counts toward SPENT (300+100+50+200+7+1000 = 1657 ⇒ max_tokens 343)" \
+  "$rc:$(jq -c .max_tokens "$LRS/L14/.supervisor/lane.json" 2>/dev/null)" "0:343"
+bash "$SC/automate-helpers.sh" progress-append "$RFS" "t9 fleet closeout: L14 tokens TOTAL=3" >/dev/null 2>&1
+out="$(sl lane-remove "$LRS/L14")"; rc=$?
+check "SL7g a lane whose tokens line is timestamped gets no second one" "$rc:$(grep -c 'fleet closeout: L14 tokens TOTAL=' "$RFS" | tr -d ' ')" "0:1"
+# SL8 lane-drain-check: markers, not prose — dispatch marker / owned-drain count after the LAST picked / config backup
+SLD="$LRS/L1"; SLDR="$SLD/.supervisor/automate/$PARS-L1.md"; SLPR="https://github.com/o/r/pull/881"
+sl_drf() { # <progress lines…> — the lane run file at its park with these ## Progress lines
+  { printf '# Automate Run: %s-L1 — reqs/a.md\n\n## Status: paused\n\n## Queue\n- [ ] reqs/a.md\n\n## Current\n- item: reqs/a.md | status: awaiting_merge | pr: %s | branch: feature/sl\n- pause_reason: awaiting_merge\n\n## Progress\n' "$PARS" "$SLPR"
+    for l in "$@"; do printf -- '- %s\n' "$l"; done; } > "$SLDR"
+}
+sl_drf "t0 picked reqs/z.md" "t1 owned drain started — /review-pr x --until-mergeable @ aaa" "t2 picked reqs/a.md" "t3 owned drain started — /review-pr y --until-mergeable @ bbb" "t4 drain READY"
+check "SL8 one owned drain after the LAST picked (an earlier item's drain before it) ⇒ ok" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: ok — 1 owned drain(s), no dispatch marker, no config backup"
+sl_drf "t2 picked reqs/a.md" "t3 owned drain started — a @ b" "t4 owned drain started — a @ c"
+check "SL8b two plain owned drains after the last picked ⇒ violation" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: violation — 2 owned drain(s) after the last picked line (exactly 1 expected)"
+sl_drf "t2 picked reqs/a.md" "t3 owned drain started — a @ b" "t4 owned drain started (fix-now re-drain) — a @ c"
+check "SL8c one plain + one fix-now re-drain ⇒ ok (the forms are counted apart)" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: ok — 2 owned drain(s), no dispatch marker, no config backup"
+sl_drf "t2 picked reqs/a.md" "t3 owned drain started — a @ b" "t4 owned drain started (fix-now re-drain) — a @ c" "t5 owned drain started (fix-now re-drain) — a @ d"
+has "SL8d two fix-now re-drains ⇒ violation" "$(sl lane-drain-check "$SLD")" "drain-guard: violation — 2 fix-now re-drains after the last picked line (at most 1)"
+sl_drf "t2 picked reqs/a.md" "t4 drain READY"
+has "SL8e no owned drain after the last picked ⇒ violation" "$(sl lane-drain-check "$SLD")" "drain-guard: violation — 0 owned drain(s) after the last picked line"
+# SL8k-n the drain-start line is matched after one OPTIONAL timestamp token, colon form tolerated
+sl_drf "t2 picked reqs/a.md" "t3 owned drain started: /review-pr x --until-mergeable @ b"
+check "SL8k a colon-form drain start (legacy run files) ⇒ ok, 1 drain" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: ok — 1 owned drain(s), no dispatch marker, no config backup"
+sl_drf "picked reqs/a.md" "owned drain started — a @ b" "drain READY"
+check "SL8l an untimestamped drain start is counted ⇒ ok, 1 drain" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: ok — 1 owned drain(s), no dispatch marker, no config backup"
+sl_drf "t2 picked reqs/a.md" "owned drain started — a @ b" "t4 owned drain started — a @ c"
+check "SL8m one untimestamped + one timestamped plain drain ⇒ violation, 2 drains" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: violation — 2 owned drain(s) after the last picked line (exactly 1 expected)"
+sl_drf "t2 picked reqs/a.md" "t3 owned drain started: a @ b" "owned drain started (fix-now re-drain) — a @ c" "t5 owned drain started (fix-now re-drain) — a @ d"
+check "SL8n fix-now re-drains still counted apart, timestamp optional (1 plain ok, 2 fix-now ⇒ violation)" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: violation — 2 fix-now re-drains after the last picked line (at most 1)"
+sl_drf "t2 picked reqs/a.md" "t3 owned drain started — a @ b"
+# the marker is named by the DISPATCHER's own PR_HASH block (dispatch-pr-review.sh), run on the lane's PR URL
+SL_HASHBLK="$(awk '/^PR_HASH=""$/ { on = 1 } on && /^MARKER=/ { exit } on' "$HERE/dispatch-pr-review.sh")"
+SL_HASH="$(PR_URL="$SLPR" bash -c "$SL_HASHBLK"'
+printf "%s" "$PR_HASH"')"
+mkdir -p "$SLD/.supervisor/review-dispatch"; : > "$SLD/.supervisor/review-dispatch/$SL_HASH"
+check "SL8f the dispatcher's marker for the lane PR (hash from dispatch-pr-review.sh's own block) ⇒ violation" \
+  "$([ -n "$SL_HASHBLK" ] && echo blk):$(sl lane-drain-check "$SLD")" \
+  "blk:drain-guard: violation — review-dispatch marker for $SLPR (a detached default drain was dispatched)"
+rm -f "$SLD/.supervisor/review-dispatch/$SL_HASH"; : > "$SLD/.supervisor/review-dispatch/0123456789abcdef0123456789abcdef01234567"
+: > "$SLD/.supervisor/automate/$PARS-L1.config-backup.json"
+check "SL8g a config backup ⇒ violation (another PR's dispatch file is not this lane's marker)" "$(sl lane-drain-check "$SLD")" \
+  "drain-guard: violation — config backup $PARS-L1.config-backup.json present (auto_review never restored)"
+rm -f "$SLD/.supervisor/automate/$PARS-L1.config-backup.json"; rm -rf "$SLD/.supervisor/review-dispatch"
+rm -f "$SLDR"
+out="$(sl lane-drain-check "$SLD")"; rc=$?
+check "SL8h an unreadable (absent) lane run file ⇒ unknown, exit 0 (fail SAFE, never ok)" "$rc:$out" "0:drain-guard: unknown — lane run file unreadable ($PARS-L1.md)"
+check "SL8i not a lane ⇒ unknown" "$(sl lane-drain-check "$T/park/none")" "drain-guard: unknown — not a lane: $T/park/none"
+sl_drf "t3 owned drain started — a @ b"
+has "SL8j no picked line ⇒ unknown" "$(sl lane-drain-check "$SLD")" "drain-guard: unknown — no picked line"
+rm -f "$SLDR"
+# SL9 current-set refuses the ready_for_release park in a single_lane checkout (file byte-unchanged)
+sl_crf() { printf '# Automate Run: %s\n\n## Status: running\n\n## Queue\n- [ ] reqs/a.md\n\n## Current\n- item: reqs/a.md | status: running | pr: null | branch: null\n- pause_reason: null\n\n## Progress\n- t0 picked reqs/a.md\n' "$2" > "$1"; }
+SLC="$SLD/.supervisor/automate/$PARS-L1.md"; sl_crf "$SLC" "$PARS-L1"; SLC0="$(cksum < "$SLC")"
+out="$(bash "$SC/automate-helpers.sh" current-set "$SLC" --item reqs/a.md --status ready_for_release --pr "$SLPR" 2>&1 >/dev/null)"; rc=$?
+check "SL9 current-set --status ready_for_release in a single_lane lane ⇒ exit 1, file byte-unchanged, ONE stderr line naming single_lane" \
+  "$rc:$(cksum < "$SLC"):$(printf '%s\n' "$out" | grep -c . | tr -d ' '):$(printf '%s' "$out" | grep -c 'single_lane' | tr -d ' ')" "1:$SLC0:1:1"
+bash "$SC/automate-helpers.sh" current-set "$SLC" --pause-reason ready_for_release >/dev/null 2>&1; rc=$?
+check "SL9b … --pause-reason ready_for_release (run-level form) refused too" "$rc:$(cksum < "$SLC")" "1:$SLC0"
+out="$(bash "$SC/automate-helpers.sh" current-set "$SLC" --item reqs/a.md --status awaiting_merge --pr "$SLPR" --pause-reason awaiting_merge 2>&1)"; rc=$?
+check "SL9c … the awaiting_merge park is written" "$rc:$out:$(grep -c "^- item: reqs/a.md | status: awaiting_merge | pr: $SLPR" "$SLC" | tr -d ' ')" "0:current-set: written:1"
+SLN="$LRN/L1/.supervisor/automate/$PARN-L1.md"; sl_crf "$SLN" "$PARN-L1"
+out="$(bash "$SC/automate-helpers.sh" current-set "$SLN" --item reqs/a.md --status ready_for_release --pause-reason ready_for_release 2>&1)"; rc=$?
+check "SL9d an N>1 lane (no single_lane key) still writes ready_for_release" "$rc:$out" "0:current-set: written"
+rm -f "$SLC" "$SLN"
+# SL10 fleet-closeout on a `- parallel: 1` parent writes `fleet closeout: <lane> tokens TOTAL=<n>` BEFORE lane-remove
+PARF=automate-2026-10-14-140000; RFF="$P/.supervisor/automate/$PARF.md"; LRF="$T/work/primary-lanes/$PARF"; sl_parent "$PARF" 1
+PRF1="https://github.com/o/r/pull/141"
+sl_lane() { # <parent_rf> <lanes_root> <n> <req> <pr> <status> — ae_lane, created as a SINGLE lane
+  local id="$(basename "$1" .md)-L$3"
+  run lane-create "$1" reqs/a.md "$3" --parallel 1 >/dev/null; ABL="$2/L$3"; ABRF="$ABL/.supervisor/automate/$id.md"
+  LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$ABL" --owner-command '/automate --parallel 1' >/dev/null; wait_gone "$ABL"
+  mkdir -p "$ABL/$(dirname "$4")" "$ABL/.supervisor/jobs/done"
+  printf '# req\n\n## Status: pending\n' > "$ABL/$4"
+  printf '# brief\n- **Source requirement:** %s\n\n## Outcome\n- **PR:** %s\n' "$4" "$5" > "$ABL/.supervisor/jobs/done/2026-10-14-$id.md"
+  printf '# Automate Run: %s\n\n## Status: paused\n\n## Source\n- backlog: lane\n\n## Run Config\n- limit: 1\n\n## Queue\n- [ ] %s\n\n## Current\n- item: %s | status: %s | pr: %s | branch: feature/sl\n- pause_reason: %s\n\n## Progress\n- 2026-10-14T00:00:00Z drain READY\n' \
+    "$id" "$4" "$4" "$6" "$5" "$6" > "$ABRF"
+}
+sl_lane "$RFF" "$LRF" 1 ".supervisor/requirements/t/sl1.md" "$PRF1" awaiting_merge; LF1="$ABL"
+echo 4242 > "$LF1/.supervisor/sl-tokens"
+out="$(AF_MERGED="$PRF1" LOOMWRIGHT_LANES_TOKEN_LEDGER="$T/sl-ledger.sh" af fleet-closeout "$RFF")"; rc=$?
+printf '%s\n' "$out" | sed 's/^/       | /'
+check "SL10 single-lane parent: the merged lane is closed out, checked off and removed (exit 0)" \
+  "$rc:$([ -d "$LF1" ] && echo kept || echo removed):$(grep -c '^- \[x\] reqs/a.md$' "$RFF" | tr -d ' ')" "0:removed:1"
+check "SL10b … the tokens line printed BEFORE the lane-remove line" \
+  "$(printf '%s\n' "$out" | awk '$0 == "fleet-closeout: tokens — L1 TOTAL=4242" { t = NR } $0 ~ /^fleet-closeout: remove — L1 removed/ { r = NR } END { print (t && r && t < r) }')" 1
+check "SL10c … and ONE parent ## Progress line carrying the lane's real TOTAL (read while its directory existed)" \
+  "$(grep -cxF -- '- fleet closeout: L1 tokens TOTAL=4242' "$RFF" | tr -d ' ')" 1
+check "SL10d … the next item stays queued under the kept lock" "$(printf '%s\n' "$out" | tail -n1)" \
+  "fleet-closeout: lock kept — 1 Queue item(s) remain unchecked (the next wave runs under it)"
+check "SL10e fleet-closeout on the N>1 parent (AF above) wrote NO tokens line" "$(grep -c 'tokens TOTAL=' "$RF10" | tr -d ' ')" 0
+# SL11 the merge watcher outlives the process that launched it (AC 8, owner decision 2). The launch line
+# is READ from automate-merge-watch.sh's header (its documented source), never typed here; the leg runs it
+# from a short-lived `bash -c` parent against a stub gh that reports OPEN, waits for that parent to exit,
+# then delivers the hang-up a host's exit sends, and asserts the marker pid is alive and is the watcher.
+cat > "$T/ws-gh" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in "pr view") [ -z "${WS_GH_LOG:-}" ] || echo poll >> "$WS_GH_LOG"
+  echo '{"state":"OPEN","headRefOid":"abc","statusCheckRollup":[]}' ;; *) exit 1 ;; esac
+EOF
+chmod +x "$T/ws-gh"
+ws_calls() { # <gh call log> — how many `gh pr view` polls the watcher has made (0 before the first)
+  if [ -f "$1" ]; then wc -l < "$1" | tr -d ' '; else echo 0; fi
+}
+_ws_settled() { # <pid> <gh call log> <n> — the watcher is gone, or it has made <n> polls
+  ! kill -0 "$1" 2>/dev/null || [ "$(ws_calls "$2")" -ge "$3" ]
+}
+ws_line() { # <merge-watch file> — the documented launch line (header + its continuation), placeholders kept
+  awk 'index($0, "#   env -u CLAUDE_PID -u CLAUDECODE ") == 1 && / automate-merge-watch\.sh \\$/ {
+         l = $0; sub(/^#   /, "", l); sub(/ \\$/, "", l); getline n; sub(/^#[ ]+/, "", n); print l " " n; exit }' "$1"
+}
+ws_sub() { # <text> <from> <to> — literal replace-all (values via ENVIRON, never awk -v)
+  WS_T="$1" WS_F="$2" WS_R="$3" awk 'BEGIN { t = ENVIRON["WS_T"]; f = ENVIRON["WS_F"]; r = ENVIRON["WS_R"]; o = ""
+    while ((i = index(t, f)) > 0) { o = o substr(t, 1, i - 1) r; t = substr(t, i + length(f)) } print o t }'
+}
+ws_leg() { # <merge-watch file the line is read from> <tag> — prints `alive` | `dead` | `parent-blocked` | `no-line` | `no-marker` | `unsettled`
+  local src="$1" tag="$2" d rf cmd p i wp gl c0
+  cmd="$(ws_line "$src")"; [ -n "$cmd" ] || { echo no-line; return 0; }
+  d="$T/ws-$tag"; mkdir -p "$d/.supervisor/automate"; rf="$d/.supervisor/automate/ws-$tag.md"
+  printf '# Automate Run: ws-%s\n\n## Current\n- item: reqs/a.md | status: awaiting_merge | pr: %s\n\n## Progress\n' "$tag" "$SLPR" > "$rf"
+  cmd="$(ws_sub "$cmd" '"<runfile dir>/<run_id>.merge-watch.log"' "'$d/.supervisor/automate/ws-$tag.merge-watch.log'")"
+  cmd="$(ws_sub "$cmd" '<runfile> <item> <pr_url>' "'$rf' reqs/a.md '$SLPR'")"
+  cmd="$(ws_sub "$cmd" ' automate-merge-watch.sh ' " '$HERE/automate-merge-watch.sh' ")"
+  gl="$d/gh-calls"
+  LOOMWRIGHT_GH_BIN="$T/ws-gh" WS_GH_LOG="$gl" LOOMWRIGHT_MERGE_WATCH_INTERVAL=1 bash -c "$cmd" </dev/null >/dev/null 2>&1 & p=$!
+  i=0; while kill -0 "$p" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$p" 2>/dev/null; then pkill -TERM -P "$p" 2>/dev/null; kill -TERM "$p" 2>/dev/null; wait "$p" 2>/dev/null; echo parent-blocked; return 0; fi
+  wait "$p" 2>/dev/null
+  i=0; while [ ! -s "$d/.supervisor/automate/ws-$tag.merge-watch" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+  wp="$(awk -F'\t' '$1 == "pid" { print $2 }' "$d/.supervisor/automate/ws-$tag.merge-watch" 2>/dev/null)"
+  [ -n "$wp" ] || { echo no-marker; return 0; }
+  kill -HUP "$wp" 2>/dev/null   # the hang-up a host's exit delivers to what it started
+  # Wait on a CONDITION, never a fixed time: the watcher dies (the hang-up took) or makes two more polls
+  # counted AFTER the kill — a command boundary and a full interruptible nap lie between them, where its
+  # `trap 'exit 0' HUP` would already have run — so `alive` below cannot pass before the signal acted.
+  # A deadline miss with the watcher alive but not polling is `unsettled`, red for both SL11b and SL11c.
+  c0="$(ws_calls "$gl")"
+  if ! wait_for_cmd 20 _ws_settled "$wp" "$gl" "$((c0 + 2))" 2>/dev/null; then
+    echo unsettled
+  elif kill -0 "$wp" 2>/dev/null && case "$(ps -ww -p "$wp" -o command= 2>/dev/null)" in *automate-merge-watch.sh*" $SLPR"*) true ;; *) false ;; esac; then
+    echo alive
+  else echo dead; fi
+  kill -TERM "$wp" 2>/dev/null   # stop it (its trap removes the marker) — nothing may leak into the piped suite
+  i=0; while kill -0 "$wp" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+  kill -KILL "$wp" 2>/dev/null; return 0
+}
+check "SL11 the documented launch line is found in the automate-merge-watch.sh header" \
+  "$(ws_line "$HERE/automate-merge-watch.sh" | grep -c '^env -u CLAUDE_PID -u CLAUDECODE nohup bash automate-merge-watch.sh <runfile> <item> <pr_url> </dev/null >"<runfile dir>/<run_id>.merge-watch.log" 2>&1 &$' | tr -d ' ')" 1
+check "SL11b a watcher launched with that line outlives its parent and the hang-up (marker pid alive, ps shows the watcher + pr_url)" \
+  "$(ws_leg "$HERE/automate-merge-watch.sh" real)" alive
+# mutation control: the same leg on a header whose launch line lost `nohup` must report the watcher dead
+sed 's/^#   env -u CLAUDE_PID -u CLAUDECODE nohup bash automate-merge-watch.sh \\$/#   env -u CLAUDE_PID -u CLAUDECODE bash automate-merge-watch.sh \\/' "$HERE/automate-merge-watch.sh" > "$T/ws-nonohup.sh"
+if cmp -s "$HERE/automate-merge-watch.sh" "$T/ws-nonohup.sh"; then bad "SL11c mutant (nohup removed) not built"
+else check "SL11c mutation control: the line without nohup ⇒ the watcher dies with the hang-up (SL11b would be red)" "$(ws_leg "$T/ws-nonohup.sh" nonohup)" dead; fi
 
 # ---- AG: wave-plan is READ-ONLY (A4) + the no-new-merge-path guards (A3) + mutation control ----------
 PARENT12=automate-2026-10-10-150000; RF12P="$P/.supervisor/automate/$PARENT12.md"; LR12="$T/work/primary-lanes/$PARENT12"

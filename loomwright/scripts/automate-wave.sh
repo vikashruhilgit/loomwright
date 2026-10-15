@@ -15,6 +15,8 @@
 #
 # Steps, in order (owner decision 2026-10-11: the mechanical integration is the engine's; merging the
 # wave PR into the base stays the owner's):
+#   0. single    a parent whose `## Run Config` carries `- parallel: 1` (single-lane mode, no wave) ⇒
+#                `wave-build: refused — single-lane mode (no wave PR)`, exit 1, nothing read or created.
 #   1. resolve   _lanes_wave_resolve (automate-lanes.sh): the wave's lanes in planner order (`## Current`
 #                `- wave: <k> | items: …`, else the lane-table order), each lane PR's head sha and state
 #                (`gh pr view <pr> --json headRefOid,state`), the base (origin/HEAD's name, default main)
@@ -98,6 +100,9 @@ wave_build() {
     esac
   done
   [ -n "$rf" ] || _wb_refuse "usage: wave-build <parent_runfile> [--wave-branch <name>]"
+  # 0. single-lane mode (`## Run Config` `- parallel: 1`): there is no wave — each lane parks
+  # awaiting_merge on its own PR — so nothing is built and nothing is created.
+  if _lanes_single_parent "$rf"; then _wb_refuse "single-lane mode (no wave PR)"; fi
   # 1. resolve — the same resolver wave-plan prints from
   _lanes_wave_resolve "$rf" "$wb" || _wb_refuse "$WV_WHY"
   local parent="$WV_PARENT" primary="$WV_PRIMARY" base="$WV_BASE" k="$WV_K" tab n=0 bad=0

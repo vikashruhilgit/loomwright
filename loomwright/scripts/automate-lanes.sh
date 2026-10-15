@@ -4,11 +4,19 @@
 # A LANE is a local clone of the primary checkout at `<primary>-lanes/<parent_run_id>/L<n>/` that runs
 # the ordinary per-item `/automate` loop for ONE item, headless (`claude -p`), with a question channel
 # (lane shape A + relay). One coordinator in the primary creates, launches and removes lanes through
-# this script. Without `--parallel`, or with N = 1, nothing here is ever called.
+# this script. Without `--parallel` nothing here is ever called. `--parallel 1` is SINGLE-LANE MODE
+# (twin-remediation/08b): each Queue item runs in ONE fresh lane (a new lane number every time) that
+# parks `awaiting_merge` like a sequential item — no wave, no wave PR (skills/automate-loop/lanes.md
+# "Single-lane mode").
 #
 # Usage (standalone: `bash automate-lanes.sh <subcmd> ...`):
 #   lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]
-#        clone + origin-before-fetch + meta pull + carried configs + lane.json + one-line backlog + relay hooks
+#        clone + origin-before-fetch + meta pull + carried configs + lane.json + one-line backlog + relay hooks.
+#        An explicit `--parallel 1` (single-lane mode) writes `"single_lane": true` into lane.json, takes
+#        n in 1..99 and refuses a number already in the lane table (`refused — lane L<n> already used in
+#        this run`), and makes --max-tokens T a WHOLE-RUN ceiling: SPENT = every table lane's ledger TOTAL
+#        (a removed lane's from its parent `fleet closeout: <lane> tokens TOTAL=<n>` line) ⇒ refused
+#        `token_ceiling total=<SPENT> max=<T>` / `token_ceiling ledger_unreadable`, else max_tokens = T − SPENT
 #   lane-launch <lane_dir> --owner-command '<cmd the owner typed>' [--resume-run <run_id> | --continue]
 #        [--without-gate-optout]
 #        detached headless launch (or resume by run id — in the lane's LAST session, a fresh one only
@@ -23,7 +31,9 @@
 #        deliver a kept answer (the poll)
 #   lane-remove <lane_dir> [--stop] [--abandon]          guarded removal (salvages first); --abandon on a
 #        `gone` lane stamps ABANDONED and pushes the lane's metadata through trail-pr's evidence gate;
-#        an unpushed-metadata refusal names the paths (`meta-sync.sh status --paths`)
+#        an unpushed-metadata refusal names the paths (`meta-sync.sh status --paths`); on a single-lane
+#        parent (`## Run Config` `- parallel: 1`) it first appends `fleet closeout: <lane> tokens TOTAL=<n>`
+#        to the parent `## Progress` unless that lane already has one
 #   lane-convert-ready <lane_dir>                        wave end: ready_for_release → awaiting_merge, then
 #        push the lane's metadata (non-claim files by exact list + trail-pr's evidence-gated list); a
 #        re-run once the PR merged first runs `closeout … --no-trail` inside the lane (the done stamp),
@@ -32,12 +42,22 @@
 #        coordinator --resume): meta pull · per-lane backstop (lane-convert-ready on a merged lane) ·
 #        parent Queue check-off · primary sync · lane-remove · lanes dir, leaks, main health, then — Queue
 #        empty — the parent finalize (`## Status: done`, wave line cleared, trail-pr --reason done) and the
-#        lock release
+#        lock release; a single-lane parent also gets `fleet closeout: <lane> tokens TOTAL=<n>` per lane,
+#        written BEFORE that lane's lane-remove
 #   wave-plan <parent_runfile> [--wave-branch <name>]    READ-ONLY: prints the operator's wave-branch
 #        integration commands (one `git merge --no-ff <head sha>` per lane) and the conflict rules;
 #        the preview / manual fallback of automate-wave.sh `wave-build`, which runs those same steps
 #   lane-info [--root <dir>]                             print .supervisor/lane.json (exit 1 when absent)
-#   init-check --parallel N [--auto-merge]               INIT refusals: `ok` | `refuse: <reason>` (exit 1)
+#   init-check --parallel N [--auto-merge]               INIT refusals: `ok` | `refuse: <reason>` (exit 1):
+#        parallel_out_of_range · auto_merge_with_parallel (any N) · N = 1 only: single_lane_requires_branch_mode
+#        (setup-memory.sh mode, --root = this checkout's top level, must print `on <branch>`)
+#   lane-park [--root <dir>]                             READ-ONLY: the READY park a run writes here, one line,
+#        exit 0: `awaiting_merge` (no lane.json — not a lane — or `"single_lane": true`) | `ready_for_release`
+#        (any other lane.json, an unreadable one included: the park that arms no watcher)
+#   lane-drain-check <lane_dir>                          READ-ONLY drain guard at a lane's park, one line, exit 0:
+#        `drain-guard: ok — …` | `drain-guard: violation — <reason>` (a dispatch marker for the lane's PR,
+#        0 or ≥ 2 owned drains / ≥ 2 fix-now re-drains after the LAST `picked`, a config backup) |
+#        `drain-guard: unknown — <reason>` (fail SAFE)
 #   pick-guard <automate_dir>                            PICK guard: `ok` | `refuse: live_lane <run_id> <lane>`
 #   branch-check <lane_dir> <branch>                     remote branch-name check: prints the name to use
 #   lane-status [<parent_runfile>] [--json] [--watch] [--refresh-readiness] [--keep-awake]
@@ -76,7 +96,9 @@
 #                                       the done/ → failed/ brief move and the same push, just before the
 #                                       lane is salvaged and deleted.
 #                                       lane.json carries `policy`: lane-policy.sh `resolve`'s object, run in
-#                                       the PRIMARY at lane-create (the rules stamp is per clone), or null.
+#                                       the PRIMARY at lane-create (the rules stamp is per clone), or null;
+#                                       and `"single_lane": true` (appended last) ONLY from an explicit
+#                                       `--parallel 1` — absent otherwise, never inferred from `parallel`.
 #   <lane>/.supervisor/inbox/questions/<tool_use_id>.json   written by relay-hook (the lane's own hook)
 #   <lane>/.supervisor/inbox/answers/<tool_use_id>.json     written by lane-answer (`source: "human"`), or by
 #                                       relay-hook ITSELF — the lane's own hook, not the coordinator — for a
@@ -204,8 +226,9 @@ RUN_LOCK="${LOOMWRIGHT_LANES_RUN_LOCK:-$HERE/run-lock.sh}"     # fleet-closeout'
 # the GraphQL merge / auto-merge mutations); `gh api graphql` itself stays allowed because a lane's
 # own drain reads review threads through it. Honest limit: a deny list is a TRIPWIRE, not a sandbox —
 # any other route to the merge API (e.g. a raw HTTP client carrying a token) is not covered. The
-# merge invariant's real backstop is that a lane parks at ready_for_release and only the
-# coordinator's automate-loop §10 gate ever executes a merge.
+# merge invariant's real backstop is that a lane only ever parks (`ready_for_release` in an N > 1 lane,
+# `awaiting_merge` in a single lane — `lane-park`) and no lane runs the automate-loop §10 merge gate
+# (`--auto-merge` is refused with any N).
 LANE_ALLOWED_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Task,Agent,AskUserQuestion"
 LANE_DISALLOWED_FIXED="Bash(gh pr merge:*),Bash(gh pr merge *),Bash(*--admin*),Bash(gh api *pulls/*/merge*),Bash(gh api *mergePullRequest*),Bash(gh api *enablePullRequestAutoMerge*),Bash(git push --force:*),Bash(git push -f:*),Bash(git push --force-with-lease:*),Bash(git push *--force*)"
 LANE_SYS="You are running as a HEADLESS lane (claude -p). Ending your turn ENDS this process and stops any background task. Never end your turn to wait for background work (CI, checks, subagents, long commands): wait in the FOREGROUND with a blocking Bash call or a Monitor you wait on. End your turn only when the item is parked, or when you must ask the owner via AskUserQuestion."
@@ -410,17 +433,23 @@ _lanes_merge_hooks() { # <settings_file> <hook_command>
 # ==================================================================================================
 # lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]
 lanes_create() {
-  local runfile="" item="" n="" par="" maxt="" a
+  local runfile="" item="" n="" par="" maxt="" a single=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --parallel) _lanes_need "$#" lane-create "$1"; par="$2"; shift 2 ;;
+      --parallel) _lanes_need "$#" lane-create "$1"; par="$2"; shift 2; if [ "$par" = 1 ]; then single=1; else single=0; fi ;;
       --max-tokens) _lanes_need "$#" lane-create "$1"; maxt="$2"; shift 2 ;;
       *) if [ -z "$runfile" ]; then runfile="$1"; elif [ -z "$item" ]; then item="$1"; elif [ -z "$n" ]; then n="$1"
          else die "lane-create: unexpected argument '$1'"; fi; shift ;;
     esac
   done
   [ -n "$runfile" ] && [ -n "$item" ] && [ -n "$n" ] || die "usage: lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]"
-  case "$n" in [1-9]|10) ;; *) die "lane-create: lane number must be 1..10 (got '$n')" ;; esac
+  # Single-lane mode (an EXPLICIT `--parallel 1` — never inferred from `par`, whose default is n) takes a
+  # fresh lane number per item, so its bound is 1..99; every other caller keeps 1..10.
+  if [ "$single" = 1 ]; then
+    case "$n" in [1-9]|[1-9][0-9]) ;; *) die "lane-create: lane number must be 1..99 in single-lane mode (got '$n')" ;; esac
+  else
+    case "$n" in [1-9]|10) ;; *) die "lane-create: lane number must be 1..10 (got '$n')" ;; esac
+  fi
   [ -n "$par" ] || par="$n"
   case "$par" in [1-9]|10) ;; *) die "lane-create: --parallel must be 1..10 (got '$par')" ;; esac
   case "$maxt" in ''|*[!0-9]*) [ -z "$maxt" ] || die "lane-create: --max-tokens must be a whole number" ;; esac
@@ -438,6 +467,24 @@ lanes_create() {
   [ -n "$url" ] || die "lane-create: refused — the primary has no origin remote"
   local lane="L$n" lroot="$primary-lanes/$parent" C run_id="$parent-L$n" table="$rdir/$parent.lanes"
   C="$lroot/$lane"
+  local spent=""
+  if [ "$single" = 1 ]; then
+    # A single lane takes a FRESH number: one already in this run's table (live, removed or abandoned) is
+    # refused — its run id, salvage and logs belong to an earlier item. Nothing is created.
+    if [ -f "$table" ] && awk -F'\t' -v l="$lane" '$1 == l { f = 1 } END { exit !f }' "$table" 2>/dev/null; then
+      echo "lane-create: refused — lane $lane already used in this run (single-lane takes a fresh number)" >&2
+      return 1
+    fi
+    # Whole-run token ceiling (owner decision 3): T bounds the RUN, not each lane.
+    if [ -n "$maxt" ]; then
+      if ! spent="$(_lanes_single_spent "$table" "$runfile")"; then
+        echo "lane-create: refused — token_ceiling ledger_unreadable" >&2; return 1
+      fi
+      if [ "$spent" -ge "$((10#$maxt))" ]; then
+        echo "lane-create: refused — token_ceiling total=$spent max=$((10#$maxt))" >&2; return 1
+      fi
+    fi
+  fi
   if [ -e "$C" ]; then
     local sv; sv="$(_lanes_salvage "$C" "$lroot/salvage" "$lane-leftover")"
     echo "lane-create: refused — leftover lane directory $C (salvaged to ${sv:-<salvage failed>}); never reused" >&2
@@ -468,7 +515,10 @@ lanes_create() {
   for cf in config.json notify-config.json; do
     if [ -f "$primary/.supervisor/$cf" ]; then cp -p "$primary/.supervisor/$cf" "$C/.supervisor/$cf" || { _abort "cannot copy $cf"; return 1; }; fi
   done
-  local mt=null; [ -n "$maxt" ] && mt=$((10#$maxt / par))
+  local mt=null
+  if [ -n "$maxt" ]; then
+    if [ "$single" = 1 ]; then mt=$((10#$maxt - spent)); else mt=$((10#$maxt / par)); fi
+  fi
   # Policy carry (parallel-automate/21 B5): `lane-policy.sh resolve` runs HERE, in the primary — the rules
   # stamp is keyed per clone, so a lane can never verify the project policy itself. Its report lines
   # (`lane-policy: project policy ignored — …`, `lane-policy: dropped …`) reach this command's stderr
@@ -482,8 +532,10 @@ lanes_create() {
   fi
   jq -n --arg lane "$lane" --arg run "$run_id" --arg parent "$parent" --arg primary "$primary" \
     --argjson parallel "$par" --argjson mt "$mt" --arg created "$(now_utc)" --argjson policy "$pj" \
+    --argjson single "$single" \
     '{schema_version: 1, lane: $lane, run_id: $run, parent_run_id: $parent, primary: $primary,
-      parallel: $parallel, max_tokens: $mt, created: $created, policy: $policy}' > "$C/.supervisor/lane.json" \
+      parallel: $parallel, max_tokens: $mt, created: $created, policy: $policy}
+      + (if $single == 1 then {single_lane: true} else {} end)' > "$C/.supervisor/lane.json" \
     || { _abort "cannot write lane.json"; return 1; }
   printf -- '- [ ] %s\n' "$item" > "$C/.supervisor/lane-backlog.md" || { _abort "cannot write the backlog"; return 1; }
   _lanes_merge_hooks "$C/.claude/settings.local.json" "bash \"$PLUGIN_ROOT/scripts/automate-lanes.sh\" relay-hook" \
@@ -1116,6 +1168,10 @@ lanes_remove() {
     _lanes_remove_refusals || return 1
   fi
   local sv; sv="$(_lanes_salvage "$LN_DIR" "$LN_ROOT/salvage" "$L-removed")" || { _refuse "salvage failed"; return 1; }
+  # Single-lane parent: the lane's token TOTAL survives its directory as one parent ## Progress line
+  # (the whole-run ceiling's only record of a removed lane) — plain and --abandon alike, once per lane.
+  local prf="$LN_PRIMARY/.supervisor/automate/$LN_PARENT.md"
+  if _lanes_single_parent "$prf"; then _lanes_tokens_record "$prf" "$L" "$LN_DIR" "$LN_RUN" >/dev/null; fi
   rm -rf "$LN_DIR" || { echo "lane-remove: could not remove $LN_DIR" >&2; return 1; }
   _lt_set "$LN_TABLE" "$L" 8 "$([ "$abandon" = 1 ] && echo abandoned || echo removed)"
   if [ "$abandon" = 1 ]; then
@@ -1543,7 +1599,18 @@ lanes_init_check() {
   case "$n" in ''|*[!0-9]*) echo "refuse: parallel_out_of_range"; return 1 ;; esac
   n=$((10#$n))
   if [ "$n" -lt 1 ] || [ "$n" -gt 10 ]; then echo "refuse: parallel_out_of_range"; return 1; fi
-  if [ "$n" -gt 1 ] && [ "$am" = 1 ]; then echo "refuse: auto_merge_with_parallel"; return 1; fi
+  # `--auto-merge` is refused with ANY lane (N = 1 included): a lane never runs the §10 merge gate.
+  if [ "$am" = 1 ]; then echo "refuse: auto_merge_with_parallel"; return 1; fi
+  # N = 1 (single-lane mode) only: branch mode must be ON — with it off a single lane's close-out would
+  # open its own trail PR the parent never sees and fleet-closeout could never finalize the lane. Fail
+  # CLOSED: anything but a first line `on <branch>` (off, unknown, empty, a failing reader) refuses.
+  # N > 1 never reads the mode here.
+  if [ "$n" = 1 ]; then
+    local root m
+    root="$(git rev-parse --show-toplevel 2>/dev/null)" || root=""
+    m="$(bash "$SETUP_MEMORY" --root "${root:-$PWD}" mode 2>/dev/null </dev/null | head -1)"
+    case "$m" in "on "?*) ;; *) echo "refuse: single_lane_requires_branch_mode"; return 1 ;; esac
+  fi
   echo ok
 }
 
@@ -2166,6 +2233,155 @@ _lanes_tokens() {
   echo "parent ${po:-unknown}"
   to="$(bash "$rtl" --run-id "$3" "${roots[@]}" 2>/dev/null | head -1)"   # TOTAL-CALL
   echo "total (parent + lanes): ${to:-unknown}"
+}
+
+# ---- single-lane mode (twin-remediation/08b) ----------------------------------------------------------
+# _lanes_single_parent <parent_runfile> — 0 when its `## Run Config` carries `- parallel: 1` (the
+# coordinator-routing marker of single-lane mode); 1 otherwise (N > 1, no line, unreadable).
+_lanes_single_parent() {
+  awk '/^## / { c = ($0 ~ /^## Run Config[[:space:]]*$/); next }
+       c && /^- parallel:[[:space:]]*1[[:space:]]*$/ { f = 1 } END { exit !f }' "${1:-/dev/null}" 2>/dev/null
+}
+
+# _lanes_lane_total <lane run_id> <lane path> — the lane's read-token-ledger.sh TOTAL (the same
+# `--run-id <run> --root <path>` call _lanes_tokens makes per lane), or `unknown` when the reader is
+# absent, prints no TOTAL, or says LEDGER_UNREADABLE=1.
+_lanes_lane_total() {
+  local rtl="${LOOMWRIGHT_LANES_TOKEN_LEDGER:-$HERE/read-token-ledger.sh}" out t
+  [ -f "$rtl" ] && [ -d "${2:-}" ] || { echo unknown; return 0; }
+  out="$(bash "$rtl" --run-id "$1" --root "$2" 2>/dev/null </dev/null | head -1)"
+  case " $out " in *" LEDGER_UNREADABLE=1 "*) echo unknown; return 0 ;; esac
+  t="$(printf '%s\n' "$out" | tr ' ' '\n' | sed -n 's/^TOTAL=\([0-9][0-9]*\)$/\1/p' | head -1)"
+  echo "${t:-unknown}"
+}
+
+# _lanes_single_spent <lane table> <parent_runfile> — SPENT of a single-lane run: the sum over every table
+# lane of its ledger TOTAL (directory present) or of its parent `## Progress` line `fleet closeout: <lane>
+# tokens TOTAL=<n>` (directory gone — the line fleet-closeout / lane-remove write before deleting it; the
+# LAST such line counts). Prints the sum; returns 1 (fail CLOSED ⇒ `token_ceiling ledger_unreadable`) when
+# any lane's TOTAL is unknown — a live lane whose reader cannot answer, or a gone lane with no line (or
+# `TOTAL=unknown`). No table yet ⇒ 0. Honest limit: like every ledger read it never counts the
+# coordinator's own main-thread tokens or CI spend.
+_lanes_single_spent() {
+  local table="$1" rf="$2" tab lane path run v sum=0
+  [ -f "$table" ] || { echo 0; return 0; }
+  tab="$(printf '\t')"
+  while IFS="$tab" read -r lane path _ run _; do
+    case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
+    if [ -d "$path" ]; then v="$(_lanes_lane_total "$run" "$path")"
+    else v="$(_lanes_tokens_line "$rf" "$lane")"; fi
+    case "$v" in ''|*[!0-9]*) return 1 ;; esac
+    sum=$((sum + 10#$v))
+  done < "$table"
+  echo "$sum"
+}
+
+# _lanes_tokens_line <parent_runfile> <lane> — the value of the LAST `## Progress` line `fleet closeout:
+# <lane> tokens TOTAL=<v>`, matched after one OPTIONAL timestamp token (the `^([^ ]+ )?` convention of
+# `picked`, _lanes_vg_has and progress-append's `current_not_set` guard). Prints <v>; exit 1 when no such
+# line. The one reader of that line: _lanes_single_spent sums it, _lanes_tokens_record skips on it.
+_lanes_tokens_line() {
+  L="$2" awk 'BEGIN { p = "fleet closeout: " ENVIRON["L"] " tokens TOTAL=" }
+    /^## / { inp = ($0 ~ /^## Progress/); next }
+    !inp { next }
+    { l = $0; if (sub(/^- /, "", l) == 0) next
+      if (index(l, p) != 1) { sub(/^[^ ]+ /, "", l); if (index(l, p) != 1) next }
+      v = substr(l, length(p) + 1); f = 1 }
+    END { if (!f) exit 1; print v }' "$1" 2>/dev/null
+}
+
+# _lanes_tokens_record <parent_runfile> <lane> <lane path> <lane run_id> — single-lane parents only:
+# append `fleet closeout: <lane> tokens TOTAL=<n|unknown>` to the parent `## Progress` unless that lane
+# already has one. Called BEFORE the lane directory is deleted (fleet-closeout step 5, lane-remove), so
+# the whole-run ceiling can still count a removed lane. Prints the line it wrote (nothing when skipped).
+_lanes_tokens_record() {
+  local rf="$1" lane="$2" t
+  _lanes_tokens_line "$rf" "$lane" >/dev/null && return 0
+  t="$(_lanes_lane_total "$4" "$3")"
+  bash "$HELPERS" progress-append "$rf" "fleet closeout: $lane tokens TOTAL=$t" >/dev/null 2>&1 \
+    || { echo "automate-lanes: WARNING — the tokens line for $lane could not be appended" >&2; return 1; }
+  echo "$lane TOTAL=$t"
+}
+
+# lane-park [--root <dir>] — READ-ONLY: the READY park a run in <root> writes. Exactly one line, exit 0:
+# `awaiting_merge` when <root>/.supervisor/lane.json is absent (not a lane — the sequential park) or
+# carries `"single_lane": true`; `ready_for_release` when lane.json is present without it, or is
+# unreadable / not a JSON object (fail toward the park that arms no watcher and waits for the
+# coordinator). <root> defaults to the current checkout's top level (lane-info's default).
+lanes_park() {
+  local root=""
+  if [ "${1:-}" = "--root" ]; then root="${2:-}"; [ -n "$root" ] || die "lane-park: --root needs a directory"; fi
+  [ -n "$root" ] || root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  local j="$root/.supervisor/lane.json"
+  if [ ! -e "$j" ]; then echo awaiting_merge; return 0; fi
+  if jq -e 'type == "object" and .single_lane == true' "$j" >/dev/null 2>&1; then echo awaiting_merge
+  else echo ready_for_release; fi
+  return 0
+}
+
+# _lanes_pr_hash <pr_url> — the review-dispatch marker name. The SAME derivation as dispatch-pr-review.sh's
+# PR_HASH (shasum → sha1sum → cksum → sanitized URL; drain-rounds.sh mirrors it too), pinned against the
+# dispatcher's own block by test-automate-lanes.sh, so the marker it names is the dispatcher's.
+_lanes_pr_hash() {
+  local u="$1" h=""
+  if command -v shasum >/dev/null 2>&1; then h="$(printf '%s' "$u" | shasum 2>/dev/null | cut -d' ' -f1 || true)"
+  elif command -v sha1sum >/dev/null 2>&1; then h="$(printf '%s' "$u" | sha1sum 2>/dev/null | cut -d' ' -f1 || true)"
+  elif command -v cksum >/dev/null 2>&1; then h="$(printf '%s' "$u" | cksum 2>/dev/null | cut -d' ' -f1 || true)"; fi
+  [ -n "$h" ] || h="$(printf '%s' "$u" | tr -c 'A-Za-z0-9' '-')"
+  printf '%s' "$h"
+}
+
+# lane-drain-check <lane_dir> — READ-ONLY drain guard (single-ownership, CLAUDE.md "/automate
+# single-drain ownership"), run by the coordinator at the lane's park. One line, exit 0:
+#   `drain-guard: violation — <reason>[; <reason>…]` when (a) <lane>/.supervisor/review-dispatch/ holds the
+#     marker named by _lanes_pr_hash of the lane `## Current` `pr:` URL (a detached default dispatch
+#     fired), (b) after the LAST `picked` line of the lane run file's `## Progress` there are 0 or ≥ 2
+#     plain owned-drain starts, or ≥ 2 fix-now re-drain starts, or (c)
+#     <lane>/.supervisor/automate/<run_id>.config-backup.json exists (the auto_review toggle was never
+#     restored). A line is matched after one OPTIONAL timestamp token — the same `^([^ ]+ )?` convention
+#     as `picked`, _lanes_vg_has and progress-append's `current_not_set` guard: `owned drain started (fix-now`
+#     is a fix-now re-drain start (the pinned `… (fix-now re-drain) — …`); any other `owned drain started`
+#     followed by a space, `:` or the line end is a plain start (pinned `<ts> owned drain started — <drain
+#     invocation> @ <head sha>`, per-item-loop.md §6 step 3; legacy `owned drain started: …` is tolerated);
+#   `drain-guard: ok — <n> owned drain(s), no dispatch marker, no config backup` otherwise;
+#   `drain-guard: unknown — <reason>` when the lane, its run file, its PR or its `picked` line cannot be
+#     read (observation fails SAFE — never `ok` on what it could not read).
+lanes_drain_check() {
+  local dir="${1:-}" G="drain-guard:" rf pr after plain fix why=""
+  _lane_ctx "$dir" || { echo "$G unknown — not a lane: ${dir:-<none>}"; return 0; }
+  rf="$LN_DIR/.supervisor/automate/$LN_RUN.md"
+  [ -f "$rf" ] && [ -r "$rf" ] || { echo "$G unknown — lane run file unreadable ($LN_RUN.md)"; return 0; }
+  grep -q '^## Progress' "$rf" 2>/dev/null || { echo "$G unknown — lane run file has no ## Progress ($LN_RUN.md)"; return 0; }
+  pr="$(_lanes_dash "$(_lanes_runfile_fields "$rf" | cut -f3)")"
+  case "$pr" in ''|null) echo "$G unknown — no PR in the lane ## Current ($LN_RUN.md)"; return 0 ;; esac
+  after="$(awk '
+    /^## / { inp = ($0 ~ /^## Progress/); next }
+    !inp { next }
+    { n++; line[n] = $0; l = $0; sub(/^- /, "", l); if (l ~ /^([^ ]+ )?picked /) last = n }
+    END { if (!last) exit 1; for (i = last + 1; i <= n; i++) print line[i] }' "$rf" 2>/dev/null)" \
+    || { echo "$G unknown — no picked line in the lane ## Progress ($LN_RUN.md)"; return 0; }
+  # One pass, one classification per line: the unstripped rest first, then with one timestamp token
+  # stripped (optional timestamp — an untimestamped line is never mis-read by stripping its first word).
+  read -r plain fix <<<"$(printf '%s\n' "$after" | awk '
+    function kind(s,  r) {
+      if (index(s, "owned drain started") != 1) return ""
+      r = substr(s, length("owned drain started") + 1)
+      if (index(r, " (fix-now") == 1) return "fix"
+      if (r == "" || substr(r, 1, 1) == " " || substr(r, 1, 1) == ":") return "plain"
+      return "" }
+    { l = $0; if (sub(/^- /, "", l) == 0) next
+      k = kind(l); if (k == "") { sub(/^[^ ]+ /, "", l); k = kind(l) }
+      if (k == "plain") p++; else if (k == "fix") f++ }
+    END { print p + 0, f + 0 }')"
+  [ -e "$LN_DIR/.supervisor/review-dispatch/$(_lanes_pr_hash "$pr")" ] \
+    && why="${why:+$why; }review-dispatch marker for $pr (a detached default drain was dispatched)"
+  [ "$plain" = 1 ] || why="${why:+$why; }$plain owned drain(s) after the last picked line (exactly 1 expected)"
+  [ "$fix" -lt 2 ] || why="${why:+$why; }$fix fix-now re-drains after the last picked line (at most 1)"
+  [ -e "$LN_DIR/.supervisor/automate/$LN_RUN.config-backup.json" ] \
+    && why="${why:+$why; }config backup $LN_RUN.config-backup.json present (auto_review never restored)"
+  if [ -n "$why" ]; then echo "$G violation — $why"
+  else echo "$G ok — $((plain + fix)) owned drain(s), no dispatch marker, no config backup"; fi
+  return 0
 }
 
 # ---- leak check (Validation 5) ----------------------------------------------------------------------
@@ -3160,7 +3376,9 @@ _lanes_fc_finalize() {
 #   3. check-off   each closed-out lane whose item is still `- [ ]` in the parent `## Queue`:
 #                  `queue-checkoff <parent_runfile> <item>` + `fleet closeout: <lane> <item> done (PR <url>)`.
 #   4. sync        `git pull --ff-only` of the primary (_lanes_sync_primary's refusals are `skipped — …`).
-#   5. remove      `lane-remove <lane_dir>` per closed-out lane (no --stop: a live watcher or process
+#   5. remove      single-lane parent (`## Run Config` `- parallel: 1`) only, first: `fleet closeout: <lane>
+#                  tokens TOTAL=<n|unknown>` appended once per lane (`fleet-closeout: tokens — <lane> TOTAL=<n>`);
+#                  then `lane-remove <lane_dir>` per closed-out lane (no --stop: a live watcher or process
 #                  refuses — `waiting — <lane> <refusal>`, re-checked on the next call). An unpushed-
 #                  metadata refusal names its paths (`… (local_ahead <n>) — paths: <p>, …`).
 #   6. wave end    only once EVERY lane reads removed/abandoned: `rmdir <primary>-lanes/<run_id>/` when
@@ -3182,9 +3400,10 @@ lanes_fleet_closeout() {
   [ -n "$rf" ] && [ "$#" -le 1 ] || die "usage: fleet-closeout <parent_runfile>"
   _lanes_parent_of "$rf" || { echo "fleet-closeout: refused — $LP_WHY"; return 1; }
   local parent="$LP_PARENT" primary="$LP_PRIMARY" table mb out rc tab doc closed="" n
-  local lane path item run state lrf mk w pid st lpr detail
+  local lane path item run state lrf mk w pid st lpr detail single=0 tk
   tab="$(printf '\t')"
   rf="$primary/.supervisor/automate/$parent.md"; table="$primary/.supervisor/automate/$parent.lanes"
+  _lanes_single_parent "$rf" && single=1   # `- parallel: 1` ⇒ the per-lane tokens line (step 5)
   _fc() { echo "fleet-closeout: $*"; }
   [ -f "$table" ] || { _fc "skipped — no lane table ($parent.lanes): no lane to close out"; return 0; }
   # 1. pull
@@ -3256,6 +3475,9 @@ EOF
   # 5. lane removal (closed-out lanes only; a refusal waits for the next call — never --stop, never a wait)
   while IFS="$tab" read -r lane path item run; do
     [ -n "$lane" ] || continue
+    if [ "$single" = 1 ]; then   # BEFORE the removal: the TOTAL is read from the lane directory
+      tk="$(_lanes_tokens_record "$rf" "$lane" "$path" "$run")"; [ -z "$tk" ] || _fc "tokens — $tk"
+    fi
     out="$(bash "$SELF" lane-remove "$path" 2>&1 </dev/null)"; rc=$?
     if [ "$rc" = 0 ]; then _fc "remove — $lane removed (salvage kept under <primary>-lanes/$parent/salvage/)"
     else
@@ -3423,7 +3645,7 @@ EOF
   return 0
 }
 
-_lanes_usage() { awk 'NR >= 9 && /^#$/ { exit } NR >= 9' "$SELF"; }
+_lanes_usage() { awk '/^# Usage \(standalone/ { on = 1 } on && /^#$/ { exit } on' "$SELF"; }
 
 lanes_main() {
   local sub="${1:-}"; shift 2>/dev/null || true
@@ -3435,6 +3657,8 @@ lanes_main() {
     lane-remove) lanes_remove "$@" ;;
     lane-convert-ready) lanes_convert_ready "$@" ;;
     lane-info) lanes_info "$@" ;;
+    lane-park) lanes_park "$@" ;;
+    lane-drain-check) lanes_drain_check "$@" ;;
     init-check) lanes_init_check "$@" ;;
     pick-guard) lanes_pick_guard "$@" ;;
     branch-check) lanes_branch_check "$@" ;;

@@ -241,7 +241,9 @@ _current_build_line() {
 # as passed. Refusals (exit 1, file byte-unchanged): an unknown status/pause_reason,
 # a half-null item form, an item form missing --item or --status, a run-level form
 # missing --pause-reason (or carrying --pr/--branch), an empty value or one holding
-# `|` or a newline, a missing/non-run file, a file with no `## Current` heading.
+# `|` or a newline, a missing/non-run file, a file with no `## Current` heading, and —
+# single-lane mode — a `ready_for_release` status or pause_reason in a checkout whose
+# `.supervisor/lane.json` carries `"single_lane": true` (its READY park is awaiting_merge).
 # Values reach awk through the ENVIRONMENT (never awk -v — SKILL Anti-Patterns); the
 # write goes through `_runfile_install … full` (runfile-write's validation).
 # Idempotent: values already present ⇒ `current-set: unchanged`, nothing written.
@@ -286,6 +288,17 @@ current_set() {
   fi
   if [ "$hr" = 1 ]; then
     case "$CURRENT_PAUSE_ENUM" in *" $reason "*) ;; *) die "$CS unknown pause_reason '$reason'; $out left unchanged" ;; esac
+  fi
+  # Single-lane mode (twin-remediation/08b): a single lane's READY park is `awaiting_merge` (`lane-park`), so
+  # `ready_for_release` (the N>1 wave-PR wait, which arms no watcher) is refused — status or pause_reason —
+  # in the checkout holding the run file (two levels above `.supervisor/automate/`) when its
+  # `.supervisor/lane.json` carries `"single_lane": true` (a `false` or absent key, or no lane.json, is
+  # not single-lane: byte-unchanged behaviour). Checked before any write; reads lane.json only.
+  if { [ "$hi" = 1 ] && [ "$st" = ready_for_release ]; } || { [ "$hr" = 1 ] && [ "$reason" = ready_for_release ]; }; then
+    local sl_json; sl_json="$(cd "$(dirname "$out")/../.." 2>/dev/null && pwd -P)/.supervisor/lane.json"
+    if [ -f "$sl_json" ] && "$JQ" -e 'type == "object" and .single_lane == true' "$sl_json" >/dev/null 2>&1; then
+      die "$CS ready_for_release in a single_lane checkout (lane.json \"single_lane\": true — its READY park is awaiting_merge, see lane-park); $out left unchanged"
+    fi
   fi
   [ -f "$out" ] || die "$CS run file not found: $out"
   is_run_file "$out" || die "$CS not a run file (no '# Automate Run:' title): $out; left unchanged [runfile_write_refused]"

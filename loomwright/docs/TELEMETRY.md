@@ -2343,7 +2343,7 @@ park"). Same two channels as the merge watcher's `notify_as()`: a synthetic
 
 | `gate_type` | Firing site | When (and `--context`) | Fires at most |
 |---|---|---|---|
-| `automate_ready_for_release` | `automate-lanes.sh` `lanes_park_notify` (`lane-park-notify`), called by the lane at its park | The lane's run file reads status and `pause_reason` `ready_for_release`. `"<pr_url> READY — do not merge yet — wave open (/automate item <item>, run <lane run_id>)"` | once per call — the lane calls it once at its park; a run file not at that park ⇒ `skipped`, nothing sent |
+| `automate_ready_for_release` | `automate-lanes.sh` `lanes_park_notify` (`lane-park-notify`), called by an N>1 lane at its `ready_for_release` park (a single lane — `--parallel 1` — parks `awaiting_merge` and never calls it) | The lane's run file reads status and `pause_reason` `ready_for_release`. `"<pr_url> READY — do not merge yet — wave open (/automate item <item>, run <lane run_id>)"` | once per call — the lane calls it once at its park; a run file not at that park ⇒ `skipped`, nothing sent |
 
 Unlike the merge watcher, the helper then appends ONE `## Progress` line naming
 what each channel actually did, read from observable outcomes only (both
