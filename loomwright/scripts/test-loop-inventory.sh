@@ -48,12 +48,18 @@
 # DELIBERATE CHOICES:
 #   * Heading lines and h: anchors are compared with trailing whitespace stripped (two headings in
 #     skills/async-orchestration/SKILL.md end in a space; the inventory's anchors are trimmed).
-#   * Fences are read TWO ways and a line is exempt only when BOTH put it inside a fenced block (so the
-#     test fails toward checking more). Reading 1 is CommonMark, as test-automate-loop-split.sh's
-#     extractor does: a fence opens on 0-3 spaces + 3 or more backticks or tildes and closes only on a
-#     BARE fence of the same character at least as long. Reading 2 is a naive toggle: every fence line
-#     flips the state. They disagree in agents/launch-pad.md, where a ```yaml block is nested inside a
-#     ```markdown one: CommonMark closes the OUTER block at the inner bare ```, so its tail and the
+#   * Fences are read TWO ways and a line is exempt only when BOTH put it inside a fenced block. Reading 1
+#     is CommonMark at top level, as test-automate-loop-split.sh's extractor does: a fence opens on 0-3
+#     spaces + 3 or more backticks or tildes and closes only on a BARE fence of the same character at
+#     least as long. Reading 2 is a naive toggle: every fence line, at ANY indentation, flips the state.
+#     The toggle is indentation-blind on purpose: a list-item fence that opens at 3 spaces and closes at
+#     4+ (valid CommonMark inside a list item; the sources carry 4-6-space fences) leaves Reading 1 open,
+#     and an indentation-bound toggle would stay open with it, exempting every later heading; the blind
+#     toggle pairs the two lines, so the headings after the block are checked (a red fixture leg pins
+#     this). Limit, stated plainly: the union is not "fails toward checking more" in every case — a stray
+#     unpaired fence line can desync both readings at once and exempt headings until the next fence line;
+#     only when both readings are still open at end of file does the never-closes check catch it.
+#     The readings disagree in agents/launch-pad.md, where a ```yaml block is nested inside a ```markdown one: CommonMark closes the OUTER block at the inner bare ```, so its tail and the
 #     headings after it become live text — and the outer block's closing ``` (the one just above that
 #     file's `## Error Handling`) then opens a block CommonMark never closes, which would hide every later
 #     heading. The toggle reading pairs the fences the way the author meant. Picked on purpose: CommonMark
@@ -262,8 +268,10 @@ check_root() {
           COVDONE[s] = 1; fence = ""; tog = 0; split_ = 0
           for (j = 1; j <= NL[s]; j++) {
             l = SRC[s, j]
-            if (match(l, /^( |  |   )?(```+|~~~+)/)) {
+            # toggle reading: a fence line at ANY indentation flips it (list-item fences sit at 4+ spaces)
+            if (l ~ /^ *(```|~~~)/) {
               tog = !tog
+              if (!match(l, /^( |  |   )?(```+|~~~+)/)) continue
               m = substr(l, RSTART, RLENGTH); sub(/^ +/, "", m)
               if (fence == "") { fence = m; continue }
               rest = l; sub(/^ +/, "", rest)
@@ -411,6 +419,14 @@ d="$(new_leg nest-tog)"
 if apply "$d/$PIL" '{print} END {print ""; print "````markdown"; print "```yaml"; print h; print "```"; print "````"}' -v h="$NEWH"; then
   run_leg "$d"; expect_red "fence union (live under the toggle only)" "per-item-loop.md: heading has no h: row: $NEWH"
 else no "fence union (toggle): mutant invalid"; fi
+# A list-item fence opening at 3 spaces and closing at 4 (valid CommonMark inside a list item): CommonMark-at-
+# top-level reads its closer as content, so the indentation-blind toggle must pair it and leave the heading
+# after it live. The later closed block re-syncs both readings by end of file, so the never-closes check
+# cannot stand in for the heading check here (an indentation-bound toggle was green on this mutant).
+d="$(new_leg indent-34)"
+if apply "$d/$PIL" '{print} END {print ""; print "1. item"; print "   ```text"; print "   body"; print "    ```"; print ""; print h; print ""; print "```text"; print "x"; print "```"}' -v h="$NEWH"; then
+  run_leg "$d"; expect_red "fence union (list-item fence, opener 3 / closer 4 spaces)" "per-item-loop.md: heading has no h: row: $NEWH"
+else no "fence union (indent 3/4): mutant invalid"; fi
 d="$(new_leg unclosed)"
 if apply "$d/$PIL" '{print} END {print ""; print "```text"; print h}' -v h="$NEWH"; then
   run_leg "$d"; expect_red "fence never closes" "per-item-loop.md: a fenced block never closes"
