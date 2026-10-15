@@ -2420,9 +2420,16 @@ check "SL10e fleet-closeout on the N>1 parent (AF above) wrote NO tokens line" "
 # then delivers the hang-up a host's exit sends, and asserts the marker pid is alive and is the watcher.
 cat > "$T/ws-gh" <<'EOF'
 #!/usr/bin/env bash
-case "$1 $2" in "pr view") echo '{"state":"OPEN","headRefOid":"abc","statusCheckRollup":[]}' ;; *) exit 1 ;; esac
+case "$1 $2" in "pr view") [ -z "${WS_GH_LOG:-}" ] || echo poll >> "$WS_GH_LOG"
+  echo '{"state":"OPEN","headRefOid":"abc","statusCheckRollup":[]}' ;; *) exit 1 ;; esac
 EOF
 chmod +x "$T/ws-gh"
+ws_calls() { # <gh call log> — how many `gh pr view` polls the watcher has made (0 before the first)
+  if [ -f "$1" ]; then wc -l < "$1" | tr -d ' '; else echo 0; fi
+}
+_ws_settled() { # <pid> <gh call log> <n> — the watcher is gone, or it has made <n> polls
+  ! kill -0 "$1" 2>/dev/null || [ "$(ws_calls "$2")" -ge "$3" ]
+}
 ws_line() { # <merge-watch file> — the documented launch line (header + its continuation), placeholders kept
   awk 'index($0, "#   env -u CLAUDE_PID -u CLAUDECODE ") == 1 && / automate-merge-watch\.sh \\$/ {
          l = $0; sub(/^#   /, "", l); sub(/ \\$/, "", l); getline n; sub(/^#[ ]+/, "", n); print l " " n; exit }' "$1"
@@ -2431,23 +2438,31 @@ ws_sub() { # <text> <from> <to> — literal replace-all (values via ENVIRON, nev
   WS_T="$1" WS_F="$2" WS_R="$3" awk 'BEGIN { t = ENVIRON["WS_T"]; f = ENVIRON["WS_F"]; r = ENVIRON["WS_R"]; o = ""
     while ((i = index(t, f)) > 0) { o = o substr(t, 1, i - 1) r; t = substr(t, i + length(f)) } print o t }'
 }
-ws_leg() { # <merge-watch file the line is read from> <tag> — prints `alive` | `dead` | `parent-blocked` | `no-line` | `no-marker`
-  local src="$1" tag="$2" d rf cmd p i wp
+ws_leg() { # <merge-watch file the line is read from> <tag> — prints `alive` | `dead` | `parent-blocked` | `no-line` | `no-marker` | `unsettled`
+  local src="$1" tag="$2" d rf cmd p i wp gl c0
   cmd="$(ws_line "$src")"; [ -n "$cmd" ] || { echo no-line; return 0; }
   d="$T/ws-$tag"; mkdir -p "$d/.supervisor/automate"; rf="$d/.supervisor/automate/ws-$tag.md"
   printf '# Automate Run: ws-%s\n\n## Current\n- item: reqs/a.md | status: awaiting_merge | pr: %s\n\n## Progress\n' "$tag" "$SLPR" > "$rf"
   cmd="$(ws_sub "$cmd" '"<runfile dir>/<run_id>.merge-watch.log"' "'$d/.supervisor/automate/ws-$tag.merge-watch.log'")"
   cmd="$(ws_sub "$cmd" '<runfile> <item> <pr_url>' "'$rf' reqs/a.md '$SLPR'")"
   cmd="$(ws_sub "$cmd" ' automate-merge-watch.sh ' " '$HERE/automate-merge-watch.sh' ")"
-  LOOMWRIGHT_GH_BIN="$T/ws-gh" LOOMWRIGHT_MERGE_WATCH_INTERVAL=1 bash -c "$cmd" </dev/null >/dev/null 2>&1 & p=$!
+  gl="$d/gh-calls"
+  LOOMWRIGHT_GH_BIN="$T/ws-gh" WS_GH_LOG="$gl" LOOMWRIGHT_MERGE_WATCH_INTERVAL=1 bash -c "$cmd" </dev/null >/dev/null 2>&1 & p=$!
   i=0; while kill -0 "$p" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
   if kill -0 "$p" 2>/dev/null; then pkill -TERM -P "$p" 2>/dev/null; kill -TERM "$p" 2>/dev/null; wait "$p" 2>/dev/null; echo parent-blocked; return 0; fi
   wait "$p" 2>/dev/null
   i=0; while [ ! -s "$d/.supervisor/automate/ws-$tag.merge-watch" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
   wp="$(awk -F'\t' '$1 == "pid" { print $2 }' "$d/.supervisor/automate/ws-$tag.merge-watch" 2>/dev/null)"
   [ -n "$wp" ] || { echo no-marker; return 0; }
-  kill -HUP "$wp" 2>/dev/null; sleep 0.5   # the hang-up a host's exit delivers to what it started
-  if kill -0 "$wp" 2>/dev/null && case "$(ps -ww -p "$wp" -o command= 2>/dev/null)" in *automate-merge-watch.sh*" $SLPR"*) true ;; *) false ;; esac; then
+  kill -HUP "$wp" 2>/dev/null   # the hang-up a host's exit delivers to what it started
+  # Wait on a CONDITION, never a fixed time: the watcher dies (the hang-up took) or makes two more polls
+  # counted AFTER the kill — a command boundary and a full interruptible nap lie between them, where its
+  # `trap 'exit 0' HUP` would already have run — so `alive` below cannot pass before the signal acted.
+  # A deadline miss with the watcher alive but not polling is `unsettled`, red for both SL11b and SL11c.
+  c0="$(ws_calls "$gl")"
+  if ! wait_for_cmd 20 _ws_settled "$wp" "$gl" "$((c0 + 2))" 2>/dev/null; then
+    echo unsettled
+  elif kill -0 "$wp" 2>/dev/null && case "$(ps -ww -p "$wp" -o command= 2>/dev/null)" in *automate-merge-watch.sh*" $SLPR"*) true ;; *) false ;; esac; then
     echo alive
   else echo dead; fi
   kill -TERM "$wp" 2>/dev/null   # stop it (its trap removes the marker) — nothing may leak into the piped suite
