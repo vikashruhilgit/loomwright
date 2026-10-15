@@ -144,7 +144,8 @@
 #   SW. sweep (af/39a) — branches: MERGED at the tip ⇒ would-remove / removed;
 #      moved tip, newest OPEN, CLOSED unmerged, no PR, gh failure, unparseable ⇒
 #      `sweep: kept branch`; current / base / held-in-a-kept-worktree never cost a
-#      gh call. Worktrees (judged first): clean merged sibling (a path with a
+#      gh call, and a removable worktree + its branch cost ONE gh read in total
+#      (SW8, the per-run memo). Worktrees (judged first): clean merged sibling (a path with a
 #      space) and a worktree-audit `created` path ⇒ removed after its 3 gitignored
 #      entries land byte-identical under <salvage>/ignored/; dirty, detached,
 #      live-process cwd (stubbed lsof; real lsof when it can see a child), lsof
@@ -3394,6 +3395,22 @@ sw_uv_remove 14
 grep -qxF "sweep: kept worktree $WT_UV — git worktree remove refused" <<<"$out" && [ -d "$WT_UV" ] && sw_has wuv \
   && ok "(SW7) --apply: git worktree remove refused ⇒ kept, named, the worktree and its branch remain" || no "(SW7) remove: $(printf '%s\n' "$out" | grep -F "$WT_UV")"
 
+# ---- one gh read per examined branch: a removable worktree + its branch ------
+# The worktree phase and the branch phase both judge wpair with the squash-safe rule; the
+# per-run memo answers the second judgment, so the pair costs exactly ONE `pr list` read.
+sw_pair_fixture() { sw_repo "$1"; WT_PAIR="$SWFX/proj-pair"; sw_wt "$WT_PAIR" wpair; sw_merged wpair 95; }
+sw_pair_reads() { grep -c -- "--head wpair " "$SWGH/argv.log"; }
+sw_pair_fixture 17
+out="$(sw_run)"
+sw_line "$out" "sweep: would-remove worktree $WT_PAIR — branch wpair: PR #95" && sw_line "$out" "sweep: would-remove branch wpair — PR #95" \
+  && [ "$(sw_pair_reads)" = 1 ] && ok "(SW8) dry run: a removable worktree + its branch (both would-remove) cost exactly ONE gh pr list read" \
+  || no "(SW8) dry run: $(sw_pair_reads) gh reads for wpair; $(printf '%s\n' "$out" | grep wpair | tr '\n' '|')"
+: > "$SWGH/argv.log"
+out="$(sw_run --apply)"
+sw_line "$out" "sweep: removed worktree $WT_PAIR" && sw_line "$out" "sweep: removed branch wpair — PR #95" && [ ! -d "$WT_PAIR" ] && ! sw_has wpair \
+  && [ "$(sw_pair_reads)" = 1 ] && ok "(SW8) --apply: the pair is removed (worktree, then branch) on ONE gh pr list read" \
+  || no "(SW8) --apply: $(sw_pair_reads) gh reads for wpair; $(printf '%s\n' "$out" | grep wpair | tr '\n' '|')"
+
 # ---- closeout step 3a: the same --ignored gate (AC4's closeout half) ---------
 closeout_fixture 240
 mkdir -p "$FX/wt-pr/.supervisor/logs"; printf '{"event":"x"}\n' > "$FX/wt-pr/.supervisor/logs/x.jsonl"
@@ -3472,6 +3489,13 @@ if sw_mutant bytes 's/|| return 3$/|| :/'; then
   sw_rev_fixture 11
   out="$(SW_T="$SW_MD/automate-trail.sh" sw_run --apply)"
   [ ! -d "$WT_UTF" ] && ok "(SWM) control: without the escaped-byte check --apply removes the non-ASCII worktree under its (escaped) live cwd (that leg is red)" || no "(SWM) bytes mutant did not discriminate: $(printf '%s\n' "$out" | grep -F "proj-caf")"
+fi
+if sw_mutant prcache '/SW_PR_CACHE="\$SW_PR_CACHE\$b/d'; then
+  sw_pair_fixture 18
+  out="$(SW_T="$SW_MD/automate-trail.sh" sw_run)"
+  [ "$(sw_pair_reads)" = 2 ] && ok "(SWM) control: without the per-run gh memo the removable pair costs 2 pr list reads (the SW8 leg is red)" || no "(SWM) prcache mutant did not discriminate: $(sw_pair_reads) reads"
+  sw_line "$out" "sweep: would-remove worktree $WT_PAIR" && sw_line "$out" "sweep: would-remove branch wpair" \
+    && ok "(SWM) control: the memo changes no verdict (the uncached sweep reads the same would-remove pair)" || no "(SWM) prcache verdicts: $(printf '%s\n' "$out" | grep wpair | tr '\n' '|')"
 fi
 if [ "$SW_ROOT_UID" = 0 ] && sw_mutant coverdict 's/case "\$co_verdict" in "ignored: ok "\*) co_ign=ok ;; esac/co_ign=ok/'; then
   sw_co_unread 242 "$SW_MD"

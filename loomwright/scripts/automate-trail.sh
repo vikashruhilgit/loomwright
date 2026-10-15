@@ -1930,7 +1930,9 @@ EOF
 # Output: one `sweep: would-remove|removed|kept <kind> <path-or-branch> — <reason>`
 # line per candidate, then exactly ONE `sweep: summary — …` line, last. Always
 # exit 0 (fail-SAFE emitter; every read failure fails toward KEEPING). Cost: one
-# gh call per examined branch — dry runs only at run end (finalize-empty).
+# gh call per examined branch (memoised per run in SW_PR_CACHE, so a removable
+# worktree's branch is not re-read in the branch phase) — dry runs only at run end
+# (finalize-empty).
 SW_APPLY=0
 SW_ACT=0
 SW_KEPT=0
@@ -1954,16 +1956,32 @@ _sw_line() {
 
 # _sw_rule <branch> <tip> — closeout's squash-safe rule. Sets SW_RULE (pass|fail)
 # and SW_WHY (the reason text). Every read failure is a `fail` naming the case.
+# The gh read is memoised per branch in SW_PR_CACHE (`<branch>\t<newest>` lines —
+# GATE_CACHE's idiom; a read failure is cached as `!rc <n>` / `!unparseable`), so a
+# removable worktree's branch, judged again in the branch phase, costs no second
+# read; the rule itself is re-applied to each caller's own tip. sweep_run resets the
+# cache, so nothing carries across runs or --roots.
+SW_PR_CACHE=""
 _sw_rule() {
-  local b="$1" tip="$2" js rc newest num="" state="" oid=""
+  local b="$1" tip="$2" js rc newest num="" state="" oid="" tab=$'\t'
   SW_RULE=fail
-  js="$(cd "$SW_PRI" 2>/dev/null && "$GH" pr list --state all --head "$b" --json number,state,headRefOid,mergedAt 2>/dev/null)"; rc=$?
-  if [ "$rc" -ne 0 ]; then SW_WHY="gh read failed (pr list --head, rc $rc)"; return 0; fi
-  newest="$(printf '%s' "$js" | "$JQ" -r 'if type != "array" then error("not an array")
-      elif length == 0 then "none"
-      else (max_by(.number) | "\(.number)\u001f\(.state)\u001f\(.headRefOid // "")") end' 2>/dev/null)" || newest=""
-  if [ -z "$newest" ]; then SW_WHY="gh read failed (unparseable pr list)"; return 0; fi
-  if [ "$newest" = none ]; then SW_WHY="no PR for this branch"; return 0; fi
+  newest="$(printf '%s' "$SW_PR_CACHE" | SW_BR="$b" awk 'BEGIN { FS = "\t"; b = ENVIRON["SW_BR"] } $1 == b { print $2; exit }')"
+  if [ -z "$newest" ]; then
+    js="$(cd "$SW_PRI" 2>/dev/null && "$GH" pr list --state all --head "$b" --json number,state,headRefOid,mergedAt 2>/dev/null)"; rc=$?
+    if [ "$rc" -ne 0 ]; then newest="!rc $rc"
+    else
+      newest="$(printf '%s' "$js" | "$JQ" -r 'if type != "array" then error("not an array")
+          elif length == 0 then "none"
+          else (max_by(.number) | "\(.number)\u001f\(.state)\u001f\(.headRefOid // "")") end' 2>/dev/null)" || newest=""
+      [ -n "$newest" ] || newest="!unparseable"
+    fi
+    SW_PR_CACHE="$SW_PR_CACHE$b$tab$newest"$'\n'
+  fi
+  case "$newest" in
+    "!rc "*) SW_WHY="gh read failed (pr list --head, rc ${newest#!rc })"; return 0 ;;
+    "!unparseable") SW_WHY="gh read failed (unparseable pr list)"; return 0 ;;
+    none) SW_WHY="no PR for this branch"; return 0 ;;
+  esac
   IFS=$'\037' read -r num state oid <<SWREC
 $newest
 SWREC
@@ -2038,7 +2056,7 @@ _sw_plugin_made() {
 
 sweep_run() {
   local root="" bad=""
-  SW_APPLY=0; SW_ACT=0; SW_KEPT=0; SW_LIVE_STATE=""; SW_LIVE=""
+  SW_APPLY=0; SW_ACT=0; SW_KEPT=0; SW_LIVE_STATE=""; SW_LIVE=""; SW_PR_CACHE=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --apply) SW_APPLY=1; shift ;;

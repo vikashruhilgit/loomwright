@@ -66,13 +66,31 @@ HELPER_STRIP='s/^[^a-zA-Z]*//'
 # from a mid-line `#` would corrupt any `#` inside a quoted assertion message, and every false
 # positive this actually produced (4 of them, across 4 suites) was a whole-line comment.
 STRIP_COMMENTS="/^[[:space:]]*#/d"
-# Blank DOUBLE-QUOTED spans too. A helper CALL is never inside a quoted string, but assertion
-# MESSAGES routinely contain prose like "...normal=[$x]; expected exactly ..." — and with the
-# position match widened to accept `;`, that prose reads as a separator followed by a helper
-# name. Caught immediately on a real file (test-no-junk-tracked-files.sh) the first time both
-# changes met. Arguments survive as `helper ""`, which still matches HELPER_RE, so real calls
-# are unaffected.
-STRIP_QUOTED='s/"[^"]*"/""/g'
+# Blank QUOTED spans too — double AND single. A helper CALL is never inside a quoted string, but
+# assertion MESSAGES routinely contain prose like "...normal=[$x]; expected exactly ..." — and
+# with the position match widened to accept `;`, that prose reads as a separator followed by a
+# helper name. Caught immediately on a real file (test-no-junk-tracked-files.sh) the first time
+# both changes met. Single-quoted spans carry the same hazard: a mutation leg's sed program must
+# quote the target script's own line verbatim, `|| fail "…"` included (test-worktree-salvage.sh's
+# AC-18b sink mutant), and a double-quote-only strip read that text as a call to an undefined
+# `fail`. Arguments survive as `helper ""`, which still matches HELPER_RE, so real calls are
+# unaffected.
+#
+# ONE left-to-right pass with an alternation, never two sequential strips: at each position the
+# quote that OPENS first owns the span (bash single quotes have no escapes, so `'[^']*'` is the
+# whole span). Two passes in either order let one quote kind's stray character pair across the
+# other kind's span and blank real code between them: single-first turns the apostrophe in
+# "don't" into an opener that swallows everything up to the next `'` on the line; double-first
+# does the same with a lone `"` inside 'say "hi'. The canary below pins both directions.
+STRIP_QUOTED="s/(\"[^\"]*\"|'[^']*')/\"\"/g"
+
+# scan_calls FILE — the helper-shaped call names FILE makes, one per line, sorted and unique.
+# The ONE pipeline both the repo scan and the canary self-test run, so the canary proves the
+# code that actually gates the repo.
+scan_calls() {
+  strip_heredocs "$1" | sed "$STRIP_COMMENTS" | sed -E "$STRIP_QUOTED" | grep -oE "$HELPER_RE" \
+    | sed -E "$HELPER_STRIP" | tr -d ' \t' | sort -u
+}
 
 # strip_heredocs FILE — echo FILE with every heredoc BODY removed (delimiter lines kept, so line
 # structure outside the body is preserved). Handles <<EOF, <<-EOF, <<'EOF', <<"EOF".
@@ -122,7 +140,7 @@ for f in $SUITES; do
 
   stripped="$(strip_heredocs "$f")"
   defs="$(printf '%s\n' "$stripped" | grep -oE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' | tr -d '()' | sort -u)"
-  calls="$(printf '%s\n' "$stripped" | sed "$STRIP_COMMENTS" | sed -E "$STRIP_QUOTED" | grep -oE "$HELPER_RE" | sed -E "$HELPER_STRIP" | tr -d ' \t' | sort -u)"
+  calls="$(scan_calls "$f")"
 
   for c in $calls; do
     [ -n "$c" ] || continue
@@ -146,6 +164,8 @@ fi
 TMPD="$(mktemp -d)"
 trap 'rm -rf "$TMPD"' EXIT
 mkdir -p "$TMPD/loomwright/scripts"
+# Every helper name below except assert_pass is undefined; each case's NAME says whether the
+# gate must report it. Lines are scanned, never run.
 cat > "$TMPD/loomwright/scripts/test-canary.sh" <<'CANARY'
 #!/usr/bin/env bash
 assert_pass() { echo ok; }
@@ -154,20 +174,44 @@ python3 - <<'PY'
 ok = True
 not_a_helper = 1
 PY
+for m in 'sink:s/X="\$(y)" || assert_sq_mutant "cannot list \$Z"/X=1/'; do :; done
+sed 's/x/; assert_in_single y/' /dev/null
+echo "prefix; assert_in_double here"
+echo "don't" ; assert_after_apostrophe "x" ; echo 'tail'
+echo 'say "hi' ; assert_after_lone_dq "x"
+# it's prose; assert_in_comment here
+assert_mid_comment "x" # it's a note; and 'more'
 CANARY
 _c_defs="$(strip_heredocs "$TMPD/loomwright/scripts/test-canary.sh" | grep -oE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' | tr -d '()' | sort -u)"
-_c_calls="$(strip_heredocs "$TMPD/loomwright/scripts/test-canary.sh" | sed "$STRIP_COMMENTS" | sed -E "$STRIP_QUOTED" | grep -oE "$HELPER_RE" | sed -E "$HELPER_STRIP" | tr -d ' \t' | sort -u)"
-_c_dead=0
+_c_calls="$(scan_calls "$TMPD/loomwright/scripts/test-canary.sh")"
+_c_dead=""
 for c in $_c_calls; do
   grep -qx "$c" < <(printf '%s\n' "$_c_defs") && continue
   command -v "$c" >/dev/null 2>&1 && continue
-  _c_dead=$((_c_dead + 1))
+  _c_dead="$_c_dead $c"
 done
-if [ "$_c_dead" -eq 1 ]; then
-  ok "self-test: the gate catches a dead helper AND ignores heredoc-embedded 'ok ='/'not ' lines (found exactly 1)"
-else
-  no "self-test: expected exactly 1 dead helper in the canary fixture, found $_c_dead — the gate is mis-tuned (false positives or fail-open)"
-fi
+_c_dead="${_c_dead# }"
+_c_has() { case " $_c_dead " in *" $1 "*) return 0 ;; esac; return 1; }
+# (ii) a real undefined call in bare code is reported; heredoc `ok =` / `not ` lines are not.
+_c_has assert_ok && ok "self-test: a dead helper call in bare code is reported" \
+  || no "self-test: bare-code dead call assert_ok NOT reported — the gate fails open (dead: [$_c_dead])"
+# (i) a helper-shaped call inside a single-quoted string (a mutant's sed program) is not a call.
+! _c_has assert_sq_mutant && ! _c_has assert_in_single && ok "self-test: helper text inside single-quoted strings is not reported" \
+  || no "self-test: single-quoted text read as a call (dead: [$_c_dead])"
+# (iii) unchanged: inside a double-quoted string is not a call.
+! _c_has assert_in_double && ok "self-test: helper text inside a double-quoted string is not reported" \
+  || no "self-test: double-quoted text read as a call (dead: [$_c_dead])"
+# (iv) an apostrophe in a double-quoted string, a lone `"` in a single-quoted one, or an
+# apostrophe in a comment never swallows a real call later on the line.
+_c_has assert_after_apostrophe && _c_has assert_after_lone_dq && _c_has assert_mid_comment \
+  && ok "self-test: a stray quote inside the other kind of string (or a comment) does not hide a real call after it" \
+  || no "self-test: a real call after a stray quote was hidden (dead: [$_c_dead])"
+! _c_has assert_in_comment && ok "self-test: a whole-line comment with an apostrophe is not scanned" \
+  || no "self-test: comment prose read as a call (dead: [$_c_dead])"
+# Exact set: no false positive beyond the four expected (heredoc `ok =`/`not ` included).
+[ "$_c_dead" = "assert_after_apostrophe assert_after_lone_dq assert_mid_comment assert_ok" ] \
+  && ok "self-test: the canary reports exactly the 4 expected dead helpers" \
+  || no "self-test: expected exactly [assert_after_apostrophe assert_after_lone_dq assert_mid_comment assert_ok], found [$_c_dead] — the gate is mis-tuned (false positives or fail-open)"
 
 echo "----"
 echo "test-suite-helpers-defined: $PASS passed, $FAIL failed ($SCANNED suites scanned)"
