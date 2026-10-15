@@ -50,7 +50,8 @@
 #      the work dir → `<TMP>`
 #      — then compared byte for byte: `FAIL: <case>: run file differs` /
 #      `FAIL: <case>: step output differs`, each with a unified diff.
-#   4. MUTATION LEGS (AC4; skipped when GOLDEN_SKIP_LEGS=1, which every inner run sets).
+#   4. MUTATION LEGS (AC4; skipped when GOLDEN_SKIP_LEGS=1, which every inner run sets, and under
+#      GOLDEN_WRITE=1; an inner run never inherits GOLDEN_WRITE).
 #      Each runs this suite again against a mutated COPY — never the working tree — and is
 #      gated: the mutant is non-empty, differs from the original, the anchor occurs exactly
 #      once, and a mutated script passes `bash -n`; a leg whose mutant cannot be built
@@ -331,7 +332,8 @@ gate_mutant() { # <leg> <original> <mutant> <anchor> <script?1|0> — 0 when the
 
 inner() { # <log> <env assignments…> — run this suite again; prints its exit code
   local log="$1"; shift
-  env GOLDEN_SKIP_LEGS=1 "$@" bash "$SELF" > "$log" 2>&1
+  # Never inherit GOLDEN_WRITE: an inner run under a mutant must not overwrite a case's expected files.
+  env -u GOLDEN_WRITE GOLDEN_SKIP_LEGS=1 "$@" bash "$SELF" > "$log" 2>&1
   echo $?
 }
 
@@ -433,7 +435,9 @@ echo "-- 2. home-path scrub"
 check_scrub
 echo "-- 3. golden cases"
 run_cases
-if [ "${GOLDEN_SKIP_LEGS:-}" != 1 ]; then
+if [ "${GOLDEN_WRITE:-}" = 1 ]; then
+  echo "-- 4. mutation legs skipped (GOLDEN_WRITE authoring run)"
+elif [ "${GOLDEN_SKIP_LEGS:-}" != 1 ]; then
   echo "-- 4. mutation legs"
   run_legs
 fi
