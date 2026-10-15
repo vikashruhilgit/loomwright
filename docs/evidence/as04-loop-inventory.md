@@ -5,11 +5,17 @@ branch `feature/as04-loop-inventory-5-dep` at `af57066` (the four inventory file
 staged changes (the test, the manifest entries, the fragment). Paths are redacted to `<worktree>` and `<mktemp -d>`;
 nothing else in the transcripts was edited.
 
+Refreshed 2026-10-15 on branch `feature/as04-loop-inventory` at `b431319` (review iteration 1, which added the
+indent-34 fixture leg to `test-loop-inventory.sh` and the `--exclude-dir=loop-inventory` to
+`test-closed-enum-pins-seam.sh`): every command in the results table was re-run there, the full test run below was
+re-captured from that run, and the counts in this file match it.
+
 ## Results
 
 | Command | Result | Exit |
 |---|---|---|
-| `bash loomwright/scripts/test-loop-inventory.sh` | **38/38** passed (real tree green: 2182 rows across 4 groups; 2 real-tree checks, 1 precondition, 35 fixture legs) | 0 |
+| `bash loomwright/scripts/test-loop-inventory.sh` | **39/39** passed (real tree green: 2182 rows across 4 groups; 2 real-tree checks, 1 precondition, 36 fixture legs) | 0 |
+| `bash loomwright/scripts/test-closed-enum-pins-seam.sh` | **79/79** passed (`test-closed-enum-pins-seam.sh: 79 passed, 0 failed`) | 0 |
 | `bash loomwright/scripts/test-citation-drift.sh` | **26/26** passed (`citation-drift: 26 passed, 0 failed`) | 0 |
 | `bash scripts/check-doc-currency.sh` | **9/9** surfaces clean (`Scanning 9 surfaces...`, no drift line; the script prints no per-check count, so the surface count is the total) | 0 |
 | `bash scripts/check-vendor-coupling.sh` | **706/706** counted paths at or under allowance (`files scanned: 712 (counted: 706 …) … breaches: 0 \| errors: 0`); `raise_check` against `origin/main`: 4 new allowances, 0 without an added reason | 0 |
@@ -61,6 +67,7 @@ loop-inventory: OK — 2182 rows across 4 groups
   ok: exemption: heading inside a split-index block green
   ok: fence union (live under CommonMark only) red — FAIL skills/automate-loop/per-item-loop.md: heading has no h: row: ### Fixture heading with no inventory row
   ok: fence union (live under the toggle only) red — FAIL skills/automate-loop/per-item-loop.md: heading has no h: row: ### Fixture heading with no inventory row
+  ok: fence union (list-item fence, opener 3 / closer 4 spaces) red — FAIL skills/automate-loop/per-item-loop.md: heading has no h: row: ### Fixture heading with no inventory row
   ok: fence never closes red — FAIL skills/automate-loop/per-item-loop.md: a fenced block never closes, so headings after it were not checked
   (deleted '### Rate-limit park (end of RUN, before DRAIN)' from a scratch copy of per-item-loop.md; its row is AL-001)
   ok: AC4 (anchored heading deleted) red — FAIL AL-001: anchor not found in skills/automate-loop/per-item-loop.md
@@ -92,7 +99,7 @@ loop-inventory: OK — 2182 rows across 4 groups
   ok: shape-count-dup red — FAIL review-heal: ## Counts has two '- GAP:' lines
   ok: shape-gap-line red — FAIL review-heal: malformed ## Gap list line (want `N. <id> — <reason>`): 1. RH-163 - the drain's central READY test is prose-only; a bad edit declares READY with a finding or a red check still open.
   ok: split-unclosed red — FAIL skills/automate-loop/SKILL.md: a split:begin block never closes, so headings after it were not checked
-RESULT: 38/38 passed
+RESULT: 39/39 passed
 ```
 
 ## Pin mutations (brief `## Pin mutations`, one line per pin)
@@ -122,3 +129,19 @@ different from its original, then the test was run in its default mode:
 - Portability: run on BSD awk only. The awk programs avoid interval expressions and octal escapes inside
   regexes (a literal `\|` is handled with `index()`/`substr()`), so gawk and mawk should read them the same way,
   but no Linux run was observed here; CI is the first.
+
+## Scope exception (AC11)
+
+AC11 allows changes only to the six created files, this evidence file, and
+`loomwright/docs/vendor-coupling-manifest.json`. One edit falls outside that set, made in `b431319`, and needs the
+owner's explicit acceptance:
+
+- `loomwright/scripts/test-closed-enum-pins-seam.sh`: the sibling-grep hit set (`HITS`) gained
+  `--exclude-dir=loop-inventory`. Reason: the new `docs/loop-inventory/` inventories quote the authoritative prose
+  verbatim, including a sibling closed-enum value, so they became grep hits that the fixture brief does not list,
+  which broke the test's listed-files == grep-hits equality and turned the required `ci` check red. The inventories
+  are a derived restatement (like `CHANGELOG.md`, already excluded), not a site that implements the enum, and they
+  post-date the fixture's notional base. The assertion and its positive control are unchanged; the test passes
+  79/79 (results table above).
+
+The other file `b431319` touched, `loomwright/scripts/test-loop-inventory.sh`, is one of the six created files.
