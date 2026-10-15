@@ -90,12 +90,14 @@ Then read the skill's split files — the `SKILL.md` above is their index (paral
 - `modes-and-merge-gate.md`, **Always** (read now, with the three reads in the code block above).
 - `invariants.md`, **Always** (read now, with the three reads in the code block above).
 - `branch-mode.md`, **Only when** `meta-entry` prints anything but `meta-entry: off` (equivalently `setup-memory.sh mode` prints `on <branch>`), or a helper line names branch mode (`trail-unstage: skipped — branch mode`, `trail-pr: meta-pushed …`, `meta-push FAILED`).
-- `lanes.md`, **Only when** `--parallel` was passed, or `automate-helpers.sh lane-info` exits 0 (this checkout is a lane), or a helper reports a lane (`pick-guard` prints `refuse: live_lane …`, or any `lane-*` subcommand's output is being acted on).
-- `command-lanes.md`, **Only when** the lanes trigger of the row above holds (`--parallel` was passed, `automate-helpers.sh lane-info` exits 0, or a helper reports a lane); this is the command's own lanes section, moved out of the body below.
+- `lanes.md`, **Only when** `--parallel` was passed, or `automate-helpers.sh lane-info` exits 0 (this checkout is a lane), or a helper reports a lane (`pick-guard` prints `refuse: live_lane …`, or any `lane-*` subcommand's output is being acted on), or the run being resumed carries a `- parallel:` line in its `## Run Config` (a coordinator or single-lane parent — `--parallel` is not re-passed on its `--resume`; read as soon as the resume targets that run, before its RECONCILE or first PICK, since such a run continues through the lanes section's loop — per-wave, or one new lane per item in single-lane mode — never a sequential PICK).
+- `command-lanes.md`, **Only when** the lanes trigger of the row above holds (`--parallel` was passed, `automate-helpers.sh lane-info` exits 0, a helper reports a lane, or the run being resumed carries a `- parallel:` line in its `## Run Config` — a coordinator or single-lane parent); this is the command's own lanes section, moved out of the body below.
 
 Read each plugin file with the Read tool, one file per call — never `cat` several in one Bash call: an oversized Bash result is saved to a file and read back, which loads the same text twice.
 
 Run `automate-helpers.sh lane-info` once at start: exit 0 means this checkout is a lane, so it reads the two lanes files above before its first PICK; exit 1 means not a lane.
+
+Run `automate-helpers.sh meta-entry` once at start, before `closeout-others` and `resume-glob --finalize` (after `init-check` when `--parallel` was passed): it prints `meta-entry: off` when branch mode is off; any other line (`pulled <branch>` or `failed — <reason>`) loads the branch-mode split file before the next start step, and a `failed` line is handled there (abort, or park `meta_unreachable`) — never fall through to an empty `resume-glob`.
 <!-- index-only:end -->
 
 This guards against prompt drift: if the loop protocol, `/autonomous`, or `/review-pr` evolves between releases, `/automate` picks up the changes automatically because it re-reads them every run.
