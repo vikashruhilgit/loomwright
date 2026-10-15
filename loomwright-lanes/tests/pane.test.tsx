@@ -305,13 +305,17 @@ test('each lane shows its current step, a seven-step rail with hover details, an
   await $.command.run(RUN)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface, ...PANE })
-    // The wave: started 07:19:20Z = 12:49 local, running 1 h 34 min.
-    expect(await ui.find({ type: 'Text', text: /^12:49$/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /^running 1 h 34 min$/ })).toBeDefined()
+    // The run, in the header: started 07:19:20Z = 12:49 local, running 1 h 34 min. No Started/Lanes tiles.
+    expect(await ui.find({ type: 'Text', text: /^started 12:49 · running 1 h 34 min$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Lanes$/ })).toBeUndefined()
     // The lane: its step in the title, its own start, one hover scope per step.
     expect(await ui.find({ type: 'Text', text: /^● Build · EXECUTE$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /started 13:22 · 1 h 0 min$/ })).toBeDefined()
     for (const id of ['pick', 'plan', 'build', 'heal', 'drain', 'decide', 'merge']) expect(await ui.find({ key: `L1-step-${id}` })).toBeDefined()
+    // One continuous bar, then ONE line: the current step, its place and time, and what comes next — no row of seven names.
+    expect(await ui.find({ type: 'Text', text: /^step 3 of 7 · 59 min$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^next: Heal$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Heal$/ })).toBeUndefined()
     // The hover cards: the current step's time so far and Supervisor phases, a done step with no time, a pending one's purpose.
     expect(await ui.find({ type: 'Text', text: /^Build · now$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^since 13:24 · 59 min so far$/ })).toBeDefined()
@@ -375,14 +379,14 @@ test('a lane card links its PR and folds repeated actions', async ($, on) => {
   }
 })
 
-test('too narrow for seven names, the rail names the current step alone', async ($, on) => {
+test('in a narrow pane the rail still names the current step once, and keeps every hover card', async ($, on) => {
   const calls: Call[] = []
   stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(RAIL_DOC) }))
   on('ui.toast', async () => ({ value: undefined }))
   await $.command.run(RUN)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface, ...PANE, props: { ...PANE.props, bodyColumns: 40 } })
-    expect(await ui.find({ type: 'Text', text: /^Build ● · step 3 of 7$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^step 3 of 7 · 59 min$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^Heal$/ })).toBeUndefined()
     // The hover cards stay, one per step.
     expect(await ui.find({ key: 'L1-step-heal' })).toBeDefined()
@@ -522,12 +526,12 @@ test('a question already answered elsewhere says so and clears the picks', async
   await ui.unmount()
 })
 
-test('the header links every wave PR, the latest first', async ($, on) => {
+test('the wave card lists every wave oldest first: built waves with their PR and state, then the wave being worked', async ($, on) => {
   const calls: Call[] = []
   const doc = { ...RAIL_DOC, waves: [
-    { wave: 1, branch: 'wave/r-w1', pr: 'https://github.com/o/r/pull/9', built_at: iso(600) },
-    { wave: 2, branch: 'wave/r-w2', pr: 'https://github.com/o/r/pull/12', built_at: null },
-  ] }
+    { wave: 1, branch: 'wave/r-w1', pr: 'https://github.com/o/r/pull/9', built_at: iso(600), lanes: ['L7', 'L8'], state: 'merged' },
+    { wave: 2, branch: 'wave/r-w2', pr: 'https://github.com/o/r/pull/12', built_at: null, lanes: ['L9'], state: 'open' },
+  ], next_wave: { wave: 3, lanes: ['L1'] } }
   stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(doc) }))
   on('ui.toast', async () => ({ value: undefined }))
   await $.command.run(RUN)
@@ -535,10 +539,139 @@ test('the header links every wave PR, the latest first', async ($, on) => {
     const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface, ...PANE })
     const links = await ui.findAll({ type: 'Link' })
     const hrefs = links.map(l => (l.props as { href: string }).href)
-    expect(hrefs.indexOf('https://github.com/o/r/pull/12')).toBe(0)
-    expect(hrefs.indexOf('https://github.com/o/r/pull/9')).toBe(1)
-    expect(await ui.find({ type: 'Text', text: /^Wave 2 PR$/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /^wave\/r-w1 · built 14:13$/ })).toBeDefined()
+    expect(hrefs.indexOf('https://github.com/o/r/pull/9')).toBeLessThan(hrefs.indexOf('https://github.com/o/r/pull/12'))
+    expect(await ui.find({ type: 'Text', text: /^Wave 1$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^merged ✓$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^L7 L8 · built 14:13$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^ready to merge$/ })).toBeDefined()
+    // The wave being worked: its number, its lanes and what they are doing.
+    expect(await ui.find({ type: 'Text', text: /^Wave 3$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^in progress$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^L1 · 1 running$/ })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('a wave record from an older Loomwright (no lanes, no state) still links its PR and names its branch', async ($, on) => {
+  const calls: Call[] = []
+  const doc = { ...RAIL_DOC, waves: [{ wave: 1, branch: 'wave/r-w1', pr: 'https://github.com/o/r/pull/9', built_at: iso(600) }] }
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(doc) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'desktop', ...PANE })
+  expect((await ui.findAll({ type: 'Link' })).some(l => (l.props as { href: string }).href === 'https://github.com/o/r/pull/9')).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /^wave\/r-w1 · built 14:13$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^merged ✓$/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+// A lane closed out and removed: its clone is gone, lane-status reads it from the salvage copy.
+const CLOSED = {
+  ...DOC.lanes[0], lane: 'L3', path: '/w/lanes/L3', item: 'reqs/phase-2/2026-10-14-094204-triggers.md', run_id: 'r-L3', state: 'removed', outcome: 'done',
+  pr: 'https://github.com/o/r/pull/49', branch: 'feature/c', last_message: "Don't merge it yet: the wave is still open.",
+  last_actions: ['Bash gh pr view 49'], ci_slot: { state: 'none', position: null, held: null }, readiness: null,
+  started_at: iso(9000), ended_at: iso(1800),
+  timeline: { started_at: iso(9000), current: null, label: 'Done', phase: null, phase_status: null, phases: [],
+    steps: ['pick', 'plan', 'build', 'heal', 'drain', 'decide', 'merge'].map(id => step(id, id, 'done', null, null)) },
+}
+
+test('a finished lane collapses to one row — how it ended, its PR, its wave, when it finished and how long it ran', async ($, on) => {
+  const calls: Call[] = []
+  const doc = { ...RAIL_DOC, waves: [{ wave: 1, branch: 'wave/r-w1', pr: 'https://github.com/o/r/pull/51', built_at: iso(2400), lanes: ['L3'], state: 'merged' }],
+    next_wave: { wave: 2, lanes: ['L1'] }, lanes: [...RAIL_DOC.lanes, CLOSED] }
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(doc) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface, ...PANE })
+    // No full card: no rail, no stale latest message, no step buttons for L3.
+    expect(await ui.find({ key: 'L3-step-pick' })).toBeUndefined()
+    expect(await ui.find({ key: 'L3:details' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /Don't merge it yet/ })).toBeUndefined()
+    // The compact row.
+    expect(await ui.find({ type: 'Text', text: /^Finished · 1$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^ · 1 merged$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^✓ done$/ })).toBeDefined()
+    const prLink = (await ui.findAll({ type: 'Link' })).find(l => (l.props as { href: string }).href === 'https://github.com/o/r/pull/49')
+    expect(prLink?.children).toEqual(['#49'])
+    // One line: wave, end time (08:23:20Z = 13:53 local), how long it ran (9000 − 1800 s, frozen), the short item name.
+    expect(await ui.find({ type: 'Text', text: /^wave 1 · 13:53 · ran 2 h 0 min · triggers$/ })).toBeDefined()
+    // The live lane keeps its full card.
+    expect(await ui.find({ key: 'L1-step-pick' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test("a parked lane's clock stops at ended_at instead of counting to now", async ($, on) => {
+  const calls: Call[] = []
+  const parked = { ...RAIL_DOC.lanes[0], state: 'ready_for_release', ended_at: iso(640) }
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify({ ...RAIL_DOC, lanes: [parked] }) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'desktop', ...PANE })
+  // started 3640 s ago, stopped 640 s ago: ran 50 min (not 1 h 0 min).
+  expect(await ui.find({ type: 'Text', text: /started 13:22 · ran 50 min$/ })).toBeDefined()
+  // Parked reads as ready (●), never the ◆ a question uses; outside a wave it is the lane's own PR to merge.
+  expect(await ui.find({ type: 'Text', text: /^● Ready to merge$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /◆/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('in a wave a parked lane reads "parked for wave N" — the owner merges the wave PR, not the lane PR', async ($, on) => {
+  const calls: Call[] = []
+  const parked = { ...RAIL_DOC.lanes[0], state: 'ready_for_release', ended_at: iso(640) }
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify({ ...RAIL_DOC, lanes: [parked], next_wave: { wave: 2, lanes: ['L1'] } }) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'desktop', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /^● Parked for wave 2$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^● Ready to merge$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^L1 · 1 parked$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a question header sits inline before the question, not as an all-caps label above it', async ($, on) => {
+  const calls: Call[] = []
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(DOC) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'desktop', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /^Path · $/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^PATH$/ })).toBeUndefined()
+  // The note field carries its own label (a screen reader names the field), not a caption above it.
+  expect((await ui.find({ key: 'toolu_q:note' }))?.props).toMatchObject({ label: 'Note', placeholder: 'optional; guidance, not an answer' })
+  // Send reads dim until every question is answered (buttons have no disabled state; the helper line says why).
+  expect((await ui.find({ key: 'toolu_q:send' }))?.props).toMatchObject({ dimColor: true })
+  expect(await ui.find({ type: 'Text', text: /^Answer every question to send\.$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('Show last 20 steps also lists every step with its state, times and last line — no pointer needed', async ($, on) => {
+  const calls: Call[] = []
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(RAIL_DOC) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'desktop', ...PANE })
+  expect(await ui.find({ key: 'L1-steps' })).toBeUndefined()
+  await ui.press({ key: 'L1:details' })
+  expect(await ui.find({ key: 'L1-steps' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Build · now · since 13:24 · 59 min so far$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Pick · done · 13:22 → 13:23 · 40 s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Heal · pending · Phase 4\.5 integration review and fixes$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ {3}Supervisor PRE_FLIGHT_SYNC: preflight_clear$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('layout holds: a narrow pane stacks the lane title over its PR and times; a Finished row never squeezes its status', async ($, on) => {
+  const calls: Call[] = []
+  const closed = { ...RAIL_DOC.lanes[0], lane: 'L3', state: 'removed', outcome: 'done', pr: 'https://github.com/o/r/pull/49', ended_at: iso(1800), timeline: null }
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify({ ...RAIL_DOC, lanes: [...RAIL_DOC.lanes, closed] }) }))
+  on('ui.toast', async () => ({ value: undefined }))
+  await $.command.run(RUN)
+  for (const [cols, dir] of [[40, 'column'], [120, 'row']] as const) {
+    const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'desktop', ...PANE, props: { ...PANE.props, bodyColumns: cols } })
+    expect((await ui.find({ key: 'L1-head' }))?.props).toMatchObject({ flexDirection: dir })
+    expect((await ui.find({ key: 'done-L3-head' }))?.props).toMatchObject({ flexShrink: 0 })
     await ui.unmount()
   }
 })

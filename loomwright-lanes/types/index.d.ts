@@ -41,6 +41,10 @@ export type LaneRow = {
   policy?: { answered: number; first_at: string | null; last_at: string | null; last_gate: string | null; last_label: string } | null
   /** When the lane started: its run file's first dated line, else its last launch. */
   started_at?: string | null
+  /** When a lane that no longer works stopped (parked, merged, removed, stopped); null while it runs or waits on a question. */
+  ended_at?: string | null
+  /** How a removed lane ended: `done` (closed out), `removed` (taken out unfinished), `abandoned`; null for a live lane. */
+  outcome?: 'done' | 'removed' | 'abandoned' | null
   /** The seven-step rail (pick · plan · build · heal · drain · decide · merge), or null. */
   timeline?: LaneTimeline | null
 }
@@ -87,7 +91,19 @@ export type LaneMachine = {
   keep_awake_holders?: LaneAwakeHolder[]
 }
 
-export type LaneWave = { wave: number | null; branch: string; pr: string; built_at: string | null }
+export type LaneWave = {
+  wave: number | null
+  branch: string
+  pr: string
+  built_at: string | null
+  /** The lanes the wave PR carries (absent before Loomwright's per-wave fields). */
+  lanes?: string[]
+  /** `merged` once every one of its lanes landed, `open` while its PR waits, null when the record names no lanes. */
+  state?: 'merged' | 'open' | null
+}
+
+/** The wave being worked now: the live lanes no built wave carries yet. */
+export type LaneNextWave = { wave: number; lanes: string[] }
 
 export type LaneStatusDoc = {
   schema_version: number
@@ -99,6 +115,8 @@ export type LaneStatusDoc = {
   utc_offset_s?: number | null
   /** Every wave PR the run opened (wave-build's `## Progress` record), oldest first; absent before 0.3.0's Loomwright. */
   waves?: LaneWave[]
+  /** The lanes not in a built wave yet, as the next wave; null in single-lane mode or when none is left. */
+  next_wave?: LaneNextWave | null
   machine: LaneMachine
   memory_pressure?: boolean
   keep_awake_suggestion?: string | null

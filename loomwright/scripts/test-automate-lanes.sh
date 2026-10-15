@@ -2631,7 +2631,7 @@ check "AI10 the opt-out's name never reaches a lane file (lane.json, inbox, sett
 # _lanes_timeline over fixture run files / Supervisor state: 7 steps from `## Progress` lines, the
 # Supervisor phase only when its state was created at/after the pick, the current step colored by state.
 AJ="$T/aj"; mkdir -p "$AJ/lane/.supervisor"; AJRF="$AJ/run.md"; AJSM="$AJ/lane/.supervisor/state.md"
-ajt() { ( . "$S"; _lanes_timeline "$AJRF" "$AJ/lane" "${3:-$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')}" "$1" "${2:--}" ); }
+ajt() { ( . "$S"; _lanes_timeline "$AJRF" "$AJ/lane/.supervisor" "${3:-$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')}" "$1" "${2:--}" ); }
 ajp() { printf '# Automate Run: x\n\n## Current\n- item: a.md | status: running\n\n## Progress\n' > "$AJRF"; printf '%s\n' "$@" >> "$AJRF"; }
 ajp '- 2026-10-11T03:19:01Z run started (lane L1 of p)' '- trail-gate: clear — an undated line is skipped' \
   '- 2026-10-11T03:19:14Z picked a.md' '- 2026-10-11T03:55:09Z launch-pad: Plan Review attempt 1/3 FAIL' \
@@ -2671,6 +2671,8 @@ printf '# State Log\n\n## Session\n- status: running\n- phase: FINALIZE\n' > "$A
 check "AJ8 an undated running Supervisor state still names the phase (no time invented)" \
   "$(ajt running | jq -r '"\(.label)|\(.steps[2].started_at)"')" "Build · FINALIZE|null"
 check "AJ8b … but only while the lane runs" "$(ajt stalled | jq -r '"\(.current)|\(.steps[1].state)"')" "plan|trouble"
+check "AJ8c a lane removed unfinished stops (held), it did not fail; abandoned still reads trouble" \
+  "$(ajt removed | jq -r '.steps[1].state')|$(ajt abandoned | jq -r '.steps[1].state')" "held|trouble"
 rm -f "$AJSM"
 check "AJ9 a question ⇒ the current step waits on the owner" "$(ajt awaiting_input | jq -r '.steps[1].state')" waiting
 rm -f "$AJRF"
@@ -2691,6 +2693,49 @@ check "AJ14 waves: every wave-build record, oldest first — an undated hand lin
   "3|wave/w3|https://github.com/o/r/pull/474|null 4|wave/p-w4|https://github.com/o/r/pull/506|2026-10-13T00:15:43Z"
 has "AJ15 the plain view names the wave PR" "$(run lane-status "$RF2")" "wave 4 PR: https://github.com/o/r/pull/506  branch=wave/p-w4"
 mv "$RF2.aj13" "$RF2"
+# AJ16–AJ22: removed lanes and waves, from a hand-written lane table (no lane process, no gh). A removed lane's
+# clone is gone; lane-status reads its run file from the salvage copy lane-remove kept, else the parent's
+# `fleet closeout: <lane> … done (PR …)` line — so a lane that landed reads Done, not "Pick ✕".
+AK="$T/ak"; AKP="$AK/primary"; AKL="$AK/primary-lanes/pk"; mkdir -p "$AKP/.supervisor/automate" "$AKL"
+AKRF="$AKP/.supervisor/automate/pk.md"; AKT="$AKP/.supervisor/automate/pk.lanes"
+printf '# Automate Run: pk\n\n## Run Config\n- parallel: 3\n\n## Progress\n%s\n%s\n%s\n' \
+  '- 2026-10-14T16:00:00Z run started' \
+  '- 2026-10-15T02:06:59Z wave built: wave/pk-w1 — PR https://github.com/o/r/pull/51 (lanes: L1 PR #48, L2 PR #50; ci pass; release skipped)' \
+  '- fleet closeout: L2 reqs/b.md done (PR https://github.com/o/r/pull/50)' > "$AKRF"
+aksv() { mkdir -p "$AKL/salvage/$1/supervisor/automate"; printf '%s\n' "${@:3}" > "$AKL/salvage/$1/supervisor/automate/$2.md"; }
+aksv L1-removed-20261014T120000Z-1 pk-L1 '# Automate Run: pk-L1' '## Status: running' '' '## Current' '- item: reqs/a.md | status: running | pr: https://github.com/o/r/pull/1 | branch: old'
+aksv L1-removed-20261015T022615Z-37742 pk-L1 '# Automate Run: pk-L1' '## Status: done' '' '## Current' \
+  '- item: reqs/a.md | status: done | pr: https://github.com/o/r/pull/48 | branch: feature/a' '' '## Progress' \
+  '- 2026-10-14T16:34:52Z run started' '- 2026-10-14T16:35:00Z picked reqs/a.md' '- 2026-10-15T02:25:19Z auto-finalized: queue empty after closeout'
+aksv L10-removed-20261016T000000Z-9 pk-L1 '# Automate Run: pk-L1' '## Status: running' '' '## Current' '- item: reqs/z.md | status: running | pr: https://github.com/o/r/pull/999 | branch: wrong'
+{ printf '#lane\tpath\titem\trun_id\tpid\tpid_start\tsession_id\tstate\tlast_launch_utc\tblocked_reason\n'
+  printf '%s\n' "L1 reqs/a.md removed" "L2 reqs/b.md removed" "L3 reqs/c.md removed" "L4 reqs/d.md created" "L5 reqs/e.md abandoned" \
+    | while read -r akn akit akst; do printf '%s\t%s\t%s\tpk-%s\t-\t-\t-\t%s\t2026-10-15T00:31:53Z\t-\n' "$akn" "$AKL/$akn" "$akit" "$akn" "$akst"; done
+  } > "$AKT"
+akd() { ( . "$S"; _lanes_status_doc "$AKT" pk "$AKP" ); }
+akl() { jq -r --arg l "$1" ".lanes[] | select(.lane == \$l) | $2" <<<"$AKJ"; }
+AKJ="$(akd)"
+check "AJ16 removed + salvaged run file done ⇒ outcome done, PR/branch from the NEWEST own copy (never L10's), every step done, ended at its last dated line" \
+  "$(akl L1 '"\(.state)|\(.outcome)|\(.pr)|\(.branch)|\(.ended_at)|\(.timeline.label)|\([.timeline.steps[].state] | unique | join(","))|\(.started_at)"')" \
+  "removed|done|https://github.com/o/r/pull/48|feature/a|2026-10-15T02:25:19Z|Done|done|2026-10-14T16:34:52Z"
+check "AJ17 removed, no salvage, the parent's fleet closeout line ⇒ outcome done, PR from that line, no end time invented" \
+  "$(akl L2 '"\(.outcome)|\(.pr)|\(.ended_at)|\(.timeline.label)"')" "done|https://github.com/o/r/pull/50|null|Done"
+check "AJ18 removed with neither ⇒ outcome removed, its step held (not trouble)" \
+  "$(akl L3 '"\(.outcome)|\(.timeline.current)|\(.timeline.steps[0].state)"')" "removed|pick|held"
+check "AJ19 abandoned ⇒ outcome abandoned; a lane not launched has no outcome and no end" \
+  "$(akl L5 .outcome)|$(akl L4 '"\(.outcome)|\(.ended_at)"')" "abandoned|null|null"
+check "AJ20 a wave whose every lane landed reads merged; the live lanes no wave carries are the next wave (removed/abandoned left out)" \
+  "$(jq -r '"\([.waves[] | "\(.wave):\(.state):\(.lanes | join(","))"] | join(" "))|\(.next_wave.wave):\(.next_wave.lanes | join(","))"' <<<"$AKJ")" \
+  "1:merged:L1,L2|2:L4"
+sed -i.bak '/fleet closeout: L2/d' "$AKRF"
+check "AJ21 one lane not landed yet ⇒ the wave reads open" "$(akd | jq -r '.waves[0].state')" open
+sed -i.bak 's/^- parallel: 3$/- parallel: 1/' "$AKRF"
+check "AJ22 single-lane mode ⇒ no next wave" "$(akd | jq -c '.next_wave')" null
+sed -i.bak 's/^- parallel: 1$/- parallel: 3/' "$AKRF"
+AKV="$( . "$S"; _lanes_render "$(akd)" )"
+has "AJ23 the plain view names each wave's state and lanes" "$AKV" "branch=wave/pk-w1  built 2026-10-15T02:06:59Z  open  lanes L1,L2"
+has "AJ23b … the wave not built yet" "$AKV" "wave 2 (not built yet): lanes L4"
+has "AJ23c … and how a removed lane ended, and when" "$AKV" "L1  removed — done  item=reqs/a.md  pr=https://github.com/o/r/pull/48  ended=2026-10-15T02:25:19Z"
 
 # ---- AL: validation-gate — the READY-park gate (af36-remainder/01) ------------------------------------------
 # Fixtures only (never gh, never .supervisor/): pa16-item.md carries pa/16's `## Validation` section verbatim
