@@ -2040,7 +2040,13 @@ cat > "$T/af-gh" <<'EOF'
 echo "gh $*" >> "$T_AFGH"
 case "$1" in
   auth) exit 0 ;;
-  pr) [ "$2" = view ] || exit 1
+  pr) if [ "$2" = list ]; then   # the dry sweep's read: `pr list --state all --head <B> --json …`
+        if [ -n "${AF_SWEPT_OID:-}" ] && [ "$6" = feature/af-swept ]; then
+          printf '[{"number":7,"state":"MERGED","headRefOid":"%s","mergedAt":"2026-10-10T00:00:00Z"}]\n' "$AF_SWEPT_OID"
+        else echo '[]'; fi
+        exit 0
+      fi
+      [ "$2" = view ] || exit 1
       st=OPEN; case " ${AF_MERGED:-} " in *" $3 "*) st=MERGED ;; esac; case " ${AF_CLOSED:-} " in *" $3 "*) st=CLOSED ;; esac
       ma=null; [ "$st" = MERGED ] && ma='"2026-10-10T00:00:00Z"'
       n="${3##*/}"; oid="$(printf '%040d' "$n")"; case " ${AF_NOHEAD:-} " in *" $3 "*) oid="" ;; esac
@@ -2095,7 +2101,9 @@ check "AF2d the owner merged L2 but its lane is dirty: closed out + checked off,
 check "AF2e … and the wave end waits on it" "$(printf '%s\n' "$out" | tail -n1)" \
   "fleet-closeout: waiting — lane(s) not removed yet: L2 (re-run fleet-closeout on the next --resume)"
 rm -f "$L102/junk.txt"
-out="$(AF_MERGED="$PR101 $PR102" AF_CI=failure af fleet-closeout "$RF10")"; rc=$?
+# a local branch in the primary whose newest PR merged at its tip — the dry sweep's would-remove candidate
+git -C "$P" branch feature/af-swept 2>/dev/null; AFSW_OID="$(git -C "$P" rev-parse feature/af-swept)"
+out="$(AF_SWEPT_OID="$AFSW_OID" AF_MERGED="$PR101 $PR102" AF_CI=failure af fleet-closeout "$RF10")"; rc=$?
 printf '%s\n' "$out" | sed 's/^/       | /'
 check "AF3 the next call removes it: exit 0" "$rc" 0
 has "AF3b … L2 closed out, checked off and removed" "$out" "fleet-closeout: remove — L2 removed"
@@ -2105,13 +2113,15 @@ has "AF3e … salvage among them" "$(printf '%s\n' "$out" | grep 'lanes-dir — 
 has "AF3f leaks vs the wave-start snapshot: none" "$out" "fleet-closeout: leaks — leaks: none (vs snapshot <primary>/.supervisor/automate/$PARENT10.leaks-snapshot)"
 check "AF3g … its first line is in the parent Progress, with no absolute path" \
   "$(grep -c '^- fleet closeout leaks: leaks: none' "$RF10" | tr -d ' '):$(grep -c "$P" "$RF10" | tr -d ' ')" "1:0"
-has "AF3h the sweep is reported unavailable" "$out" "fleet-closeout: sweep: unavailable (automate-followups/22 not shipped)"
+has "AF3h the wave end runs a DRY sweep of the primary: its summary line is printed" "$out" "fleet-closeout: sweep — sweep: summary — dry run: 1 would-remove, "
+check "AF3h2 … appended once to the parent Progress, and the dry run removed nothing" \
+  "$(grep -c '^- fleet closeout sweep (dry run): sweep: summary — dry run: 1 would-remove, ' "$RF10" | tr -d ' '):$(git -C "$P" rev-parse -q --verify refs/heads/feature/af-swept)" "1:$AFSW_OID"
 MSHA="$(git -C "$P" rev-parse origin/main)"
 has "AF3i main health: a red ci check on origin/main HEAD pauses the wave (printed)" "$out" "fleet-closeout: wave_paused: main_red after $MSHA"
 check "AF3j … and appended once to the parent Progress (no revert, no block)" "$(grep -cxF -- "- wave_paused: main_red after $MSHA" "$RF10" | tr -d ' ')" 1
 check "AF3k the Queue is empty ⇒ the wave lock is released (last line)" \
   "$(printf '%s\n' "$out" | tail -n1):$(bash "$HERE/run-lock.sh" status --root "$P")" "fleet-closeout: wave closed — lock released:UNLOCKED"
-check "AF3l the gh calls were reads only (pr view / the check-runs api)" "$(grep -vE '^gh (pr view|api repos/\{owner\}/\{repo\}/commits/[0-9a-f]+/check-runs\?check_name=ci|auth status)' "$T_AFGH" | wc -l | tr -d ' ')" 0
+check "AF3l the gh calls were reads only (pr view / the sweep's pr list / the check-runs api)" "$(grep -vE '^gh (pr view|pr list --state all --head [^ ]+ --json number,state,headRefOid,mergedAt$|api repos/\{owner\}/\{repo\}/commits/[0-9a-f]+/check-runs\?check_name=ci|auth status)' "$T_AFGH" | wc -l | tr -d ' ')" 0
 # AF3m-r the Queue emptied ⇒ the PARENT is finalized as §6 "Termination" ends a sequential run (W3 left
 # it `## Status: running` with its wave line, and the coordinator hand-wrote done + its trail)
 check "AF3m the parent run file reads ## Status: done (no running left)" \
@@ -2132,6 +2142,10 @@ check "AF4 a re-run after the close: exit 0, the parent run file byte-unchanged 
 check "AF4b … still ends wave closed (release is idempotent)" "$(printf '%s\n' "$out" | tail -n1)" "fleet-closeout: wave closed — lock released"
 check "AF4d … the finalize is skipped (already done) and no second trail-pr runs" \
   "$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: finalize — skipped (already done)' | tr -d ' '):$(grep -cxF -- "trail-pr $RF10 --reason done" "$T_ABSPY" | tr -d ' ')" "1:1"
+SRF10="$(cksum < "$RF10")"
+out="$(LOOMWRIGHT_LANES_SWEEP="$T/no-such-sweep.sh" AF_MERGED="$PR101 $PR102" af fleet-closeout "$RF10")"; rc=$?
+check "AF4f a failed sweep is reported, never an exit change, and its line is not appended twice" \
+  "$rc:$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: sweep — sweep: summary — skipped: no summary line (sweep failed or printed nothing)' | tr -d ' '):$(cksum < "$RF10")" "0:1:$SRF10"
 # AF4c the next wave's item is still unchecked ⇒ the lock is kept (the next wave runs under it)
 printf '%s\n' "- [ ] reqs/next.md" > "$T/af.q"; awk -v f="$T/af.q" '{ print } /^## Queue$/ { while ((getline l < f) > 0) print l }' "$RF10" > "$T/af.rf" && mv "$T/af.rf" "$RF10"
 bash "$HERE/run-lock.sh" acquire --owner "automate-lanes:$PARENT10" --root "$P" >/dev/null 2>&1

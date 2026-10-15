@@ -3384,7 +3384,9 @@ _lanes_fc_finalize() {
 #   6. wave end    only once EVERY lane reads removed/abandoned: `rmdir <primary>-lanes/<run_id>/` when
 #                  empty, else `kept <dir> — contents: <names>`; `lane-status --leaks` (its first line
 #                  appended as `fleet closeout leaks: <line>`, the primary's path written `<primary>`);
-#                  `sweep: unavailable (automate-followups/22 not shipped)`; main health — the `ci` check of
+#                  a DRY `automate-trail.sh sweep --root <primary>` (never --apply): its summary line printed
+#                  as `sweep — <summary>` and appended once as `fleet closeout sweep (dry run): <summary>`
+#                  (a failed / silent sweep reads `skipped: …`, exit unchanged); main health — the `ci` check of
 #                  origin/<base> HEAD via gh: `failure` ⇒ `wave_paused: main_red after <sha>` appended and
 #                  printed (no revert, no block); then, when the parent Queue has no `- [ ]` left,
 #                  the parent FINALIZE under the still-held wave lock (_lanes_fc_finalize: `current-wave
@@ -3499,7 +3501,17 @@ EOF
   case "$lk" in *"$primary"*) lk="$(printf '%s' "$lk" | awk -v p="$primary" '{ while ((i = index($0, p)) > 0) $0 = substr($0, 1, i - 1) "<primary>" substr($0, i + length(p)); print }')" ;; esac
   _lanes_append_once "$rf" "fleet closeout leaks: $lk" || echo "fleet-closeout: WARNING — the leaks line could not be appended" >&2
   _fc "leaks — $lk"
-  _fc "sweep: unavailable (automate-followups/22 not shipped)"
+  # af/39a: a DRY sweep (never --apply) of the primary's leftover plugin worktrees and branches — its
+  # summary line printed and appended once to the parent Progress (the first recorded line stands on a
+  # re-run); a sweep failure or silence is reported, never an exit-code change.
+  local sw sweep_sh="${LOOMWRIGHT_LANES_SWEEP:-$HERE/automate-trail.sh}"
+  sw="$(bash "$sweep_sh" sweep --root "$primary" 2>/dev/null </dev/null | tail -n1)"
+  case "$sw" in "sweep: summary — "*) ;; *) sw="sweep: summary — skipped: no summary line (sweep failed or printed nothing)" ;; esac
+  case "$sw" in *"$primary"*) sw="$(printf '%s' "$sw" | awk -v p="$primary" '{ while ((i = index($0, p)) > 0) $0 = substr($0, 1, i - 1) "<primary>" substr($0, i + length(p)); print }')" ;; esac
+  if ! grep -q '^- fleet closeout sweep (dry run): ' "$rf" 2>/dev/null; then
+    _lanes_append_once "$rf" "fleet closeout sweep (dry run): $sw" || echo "fleet-closeout: WARNING — the sweep line could not be appended" >&2
+  fi
+  _fc "sweep — $sw"
   base="$(_lanes_base_of "$primary")"
   sha="$(git -C "$primary" rev-parse -q --verify "refs/remotes/origin/$base" 2>/dev/null)"
   if [ -z "$sha" ]; then _fc "main health — unknown (origin/$base unreadable)"
