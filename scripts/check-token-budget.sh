@@ -72,7 +72,10 @@ command -v jq >/dev/null 2>&1 || { echo "check-token-budget: jq required" >&2; e
 # Proxy divisor (bytes per proxy-token). Sourced from the JSON so the label and
 # the math never drift; defaults to 4 if unset.
 DIVISOR="$(jq -r '.proxy_bytes_per_token // 4' "$BUDGET_JSON")"
-case "$DIVISOR" in ''|*[!0-9]*) DIVISOR=4 ;; esac
+# A leading-zero value ("08") passes a digits-only check but is OCTAL inside
+# $((...)): "08"/"09" abort the arithmetic, so every proxy_tokens call would echo
+# nothing and each row would compare an EMPTY total — a false green. Reject it.
+case "$DIVISOR" in ''|*[!0-9]*|0[0-9]*) DIVISOR=4 ;; esac
 [ "$DIVISOR" -ge 1 ] 2>/dev/null || DIVISOR=4
 
 # proxy_tokens FILE -> echoes floor(bytes / DIVISOR). `wc -c` is portable.
@@ -178,8 +181,10 @@ EOF
 
   # Fail CLOSED on a non-integer budget (float, stray space, quoted typo): the
   # -gt test below would error out falsy and fall into the OK branch — a false
-  # green in a fail-closed gate (§Failure-Mode Invariants).
-  case "$budget" in ''|*[!0-9]*)
+  # green in a fail-closed gate (§Failure-Mode Invariants). A leading-zero value
+  # ("08") is refused too: [ -gt ] reads it as decimal, but $((total - budget))
+  # reads it as OCTAL and aborts the branch before the BREACH is counted.
+  case "$budget" in ''|*[!0-9]*|0[0-9]*)
     printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "$total" "$budget" "ERROR" "non-integer budget in $BUDGET_JSON (must be a positive integer)"
     errors=$((errors + 1))
     exit_code=1
@@ -232,7 +237,8 @@ check_ceiling() {
     exit_code=1
     return
   fi
-  case "$budget" in ''|*[!0-9]*)
+  # Leading zero refused for the same octal reason as the agent rows above.
+  case "$budget" in ''|*[!0-9]*|0[0-9]*)
     printf "%-22s %8s %8s  %-6s  %s\n" "$key" "$total" "$budget" "ERROR" "non-integer budget in $BUDGET_JSON (must be a positive integer)"
     errors=$((errors + 1))
     exit_code=1
@@ -271,9 +277,17 @@ EOF
 # skill_weight DIR -> "<proxy tokens> <md files>" summed over EVERY *.md under
 # DIR, recursively (floor per file, then summed — the same per-file proxy the
 # agent rows use). Returns 1 when `find` fails, so an unreadable subtree is an
-# ERROR rather than a silent under-count.
+# ERROR rather than a silent under-count. Returns 2 (and prints the symlinks)
+# when the subtree holds ANY symlink: `find -type f` neither counts a symlinked
+# file nor descends a symlinked dir, so measuring past one would silently
+# under-count. Fail CLOSED rather than follow (`find -L` risks link loops).
 skill_weight() {
-  local list f t=0 n=0
+  local list links f t=0 n=0
+  links="$(find "$1" -type l 2>/dev/null)" || return 1
+  if [ -n "$links" ]; then
+    printf '%s\n' "$links"
+    return 2
+  fi
   list="$(find "$1" -type f -name '*.md' 2>/dev/null)" || return 1
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -299,7 +313,21 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   name="$(basename "$skill_dir")"
   seen_skills="$seen_skills
 $name"
-  if ! weight="$(skill_weight "$skill_dir")"; then
+  # A symlinked skill dir is never walked by `find` (a start-path symlink is not
+  # followed), so it would measure 0 .md files — fail CLOSED instead.
+  if [ -L "$skill_dir" ]; then
+    printf "%-22s %8s %8s  %-6s  %s\n" "$name" "-" "-" "ERROR" "skill dir is a symlink ($skill_dir) — it cannot be measured; replace it with a real dir"
+    errors=$((errors + 1))
+    exit_code=1
+    continue
+  fi
+  weight="$(skill_weight "$skill_dir")"; wrc=$?
+  if [ "$wrc" -eq 2 ]; then
+    printf "%-22s %8s %8s  %-6s  %s\n" "$name" "-" "-" "ERROR" "symlink under $skill_dir cannot be measured (would be silently skipped): $(printf '%s' "$weight" | tr '\n' ' ')"
+    errors=$((errors + 1))
+    exit_code=1
+    continue
+  elif [ "$wrc" -ne 0 ]; then
     printf "%-22s %8s %8s  %-6s  %s\n" "$name" "-" "-" "ERROR" "could not list the *.md files under $skill_dir"
     errors=$((errors + 1))
     exit_code=1
@@ -321,6 +349,17 @@ printf "%-22s %8s %8s  %-6s  %s\n" "COMMAND DOC" "PROXY" "BUDGET" "STATUS" "DETA
 command_count=0
 seen_commands=""
 for cmd_file in "$COMMANDS_DIR"/*.md; do
+  # A dangling symlinked command doc fails `-f` and would be silently skipped —
+  # fail CLOSED. A live symlink is measured through `wc -c` (target bytes).
+  if [ -L "$cmd_file" ] && [ ! -f "$cmd_file" ]; then
+    command_count=$((command_count + 1))
+    seen_commands="$seen_commands
+$(basename "$cmd_file" .md)"
+    printf "%-22s %8s %8s  %-6s  %s\n" "$(basename "$cmd_file" .md)" "-" "-" "ERROR" "command doc $cmd_file is a dangling symlink — it cannot be measured"
+    errors=$((errors + 1))
+    exit_code=1
+    continue
+  fi
   [ -f "$cmd_file" ] || continue
   command_count=$((command_count + 1))
   stem="$(basename "$cmd_file" .md)"

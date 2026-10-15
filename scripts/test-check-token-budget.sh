@@ -24,7 +24,10 @@
 #       breach, a nested *.md only a recursive walk sees, missing skill/command
 #       entry, skill/command orphan, non-integer skill/command budget, missing or
 #       empty skills dir, missing or empty commands dir — all fail CLOSED; loose
-#       files at the skills root are not skill dirs
+#       files at the skills root are not skill dirs; a leading-zero ("08")
+#       agent/skill/command budget and divisor never false-green (octal
+#       $((...)) abort); a symlinked skill dir, a symlink inside a skill dir and
+#       a dangling symlinked command doc fail CLOSED, a live one is measured
 #   8.  THREE-TABLE MIRROR — skill/command budget drift, measured drift, missing
 #       row and ghost row each fail CLOSED; a valid agents+skills+commands mirror
 #       passes together (the agent-table parse is bounded, so skill/command rows
@@ -382,6 +385,66 @@ mk_tables "$TMP/c7h.json" '"shared": { "budget": 9999, "measured": 0 }' '"noop":
 run_gate "$A7" "$S7" "$TMP/c7h.json"
 check "case7h non-integer command budget exits 1" 1 "$RC"
 contains_line "case7h ERROR names non-integer command budget" "$OUT" "noop" "non-integer budget"
+
+# 7n — LEADING-ZERO budget ("08"): digits-only, so [ -gt ] accepts it, but
+# $((total - budget)) reads it as OCTAL and aborts before the BREACH is counted —
+# a false green. Each table must refuse it. Weights: `big` 1000, noop 2, omega 158.
+S7n="$TMP/c7n/skills"; mkdir -p "$S7n"
+mk_skill "$S7n" "big" 4000
+mk_tables "$TMP/c7n-skill.json" '"big": { "budget": "08", "measured": 0 }' "$NOOP_CMD"
+run_gate "$A7" "$S7n" "$TMP/c7n-skill.json"
+check "case7n leading-zero skill budget exits 1" 1 "$RC"
+contains_line "case7n ERROR names leading-zero skill budget" "$OUT" "big" "non-integer budget"
+mk_tables "$TMP/c7n-cmd.json" '"shared": { "budget": 9999, "measured": 0 }' '"noop": { "budget": "01", "measured": 0 }'
+run_gate "$A7" "$S7" "$TMP/c7n-cmd.json"
+check "case7n leading-zero command budget exits 1" 1 "$RC"
+contains_line "case7n ERROR names leading-zero command budget" "$OUT" "noop" "non-integer budget"
+printf '{ "proxy_bytes_per_token": 4, "agents": { "omega": { "budget": "09", "measured": 0 } }, "skills": { "shared": { "budget": 9999, "measured": 0 } }, "commands": { %s } }\n' "$NOOP_CMD" > "$TMP/c7n-agent.json"
+run_gate "$A7" "$S7" "$TMP/c7n-agent.json"
+check "case7n leading-zero agent budget exits 1" 1 "$RC"
+contains_line "case7n ERROR names leading-zero agent budget" "$OUT" "omega" "non-integer budget"
+
+# 7o — LEADING-ZERO divisor ("08") must not abort every proxy_tokens call (empty
+# totals would read as OK): it falls back to 4, so the `big` breach is still seen.
+printf '{ "proxy_bytes_per_token": "08", "agents": { "omega": { "budget": 9999, "measured": 0 } }, "skills": { "big": { "budget": 500, "measured": 0 } }, "commands": { %s } }\n' "$NOOP_CMD" > "$TMP/c7o.json"
+run_gate "$A7" "$S7n" "$TMP/c7o.json"
+check "case7o leading-zero divisor still catches the breach (exits 1)" 1 "$RC"
+contains_line "case7o BREACH row measured at the fallback divisor" "$OUT" "big" "BREACH"
+
+# 7p / 7q / 7r — SYMLINKS fail CLOSED: `find -type f` neither walks a symlinked
+# skill dir nor counts a symlinked file, so either would be a silent under-count.
+S7p="$TMP/c7p/skills"; mkdir -p "$S7p" "$TMP/c7p/real"
+mk_skill "$S7p" "shared" 400
+mk_skill "$TMP/c7p/real" "linked" 4000
+ln -s "$TMP/c7p/real/linked" "$S7p/linked"
+mk_tables "$TMP/c7p.json" '"shared": { "budget": 9999, "measured": 0 }, "linked": { "budget": 10, "measured": 0 }' "$NOOP_CMD"
+run_gate "$A7" "$S7p" "$TMP/c7p.json"
+check "case7p symlinked skill dir exits 1" 1 "$RC"
+contains_line "case7p ERROR names the symlinked skill dir" "$OUT" "linked" "skill dir is a symlink"
+
+S7q="$TMP/c7q/skills"; mkdir -p "$S7q"
+mk_skill "$S7q" "shared" 400
+{ i=0; while [ "$i" -lt 4000 ]; do printf 'r'; i=$((i+1)); done; echo; } > "$TMP/c7q/ref-target.md"
+ln -s "$TMP/c7q/ref-target.md" "$S7q/shared/ref.md"
+mk_tables "$TMP/c7q.json" '"shared": { "budget": 9999, "measured": 0 }' "$NOOP_CMD"
+run_gate "$A7" "$S7q" "$TMP/c7q.json"
+check "case7q symlinked .md inside a skill dir exits 1" 1 "$RC"
+contains_line "case7q ERROR names the symlink under the skill dir" "$OUT" "shared" "symlink under"
+
+C7r="$TMP/c7r/commands"; mkdir -p "$C7r"
+printf '# noop\n' > "$C7r/noop.md"
+ln -s "$TMP/c7r/no-such-target.md" "$C7r/dangling.md"
+mk_tables "$TMP/c7r.json" '"shared": { "budget": 9999, "measured": 0 }' "$NOOP_CMD"', "dangling": { "budget": 10, "measured": 0 }'
+run_gate "$A7" "$S7" "$TMP/c7r.json" "" "$C7r"
+check "case7r dangling symlinked command doc exits 1" 1 "$RC"
+contains_line "case7r ERROR names the dangling command doc" "$OUT" "dangling" "dangling symlink"
+# a LIVE symlinked command doc is measured through its target (not skipped)
+ln -s "$TMP/c7q/ref-target.md" "$TMP/c7r/linked-cmd.md"
+rm "$C7r/dangling.md"; mv "$TMP/c7r/linked-cmd.md" "$C7r/linked-cmd.md"
+mk_tables "$TMP/c7r-live.json" '"shared": { "budget": 9999, "measured": 0 }' "$NOOP_CMD"', "linked-cmd": { "budget": 10, "measured": 0 }'
+run_gate "$A7" "$S7" "$TMP/c7r-live.json" "" "$C7r"
+check "case7r live symlinked command doc is measured (breach exits 1)" 1 "$RC"
+contains_line "case7r BREACH row for the live symlinked command doc" "$OUT" "linked-cmd" "BREACH"
 
 # 7i / 7j — EMPTY or MISSING commands dir (with an empty .commands table, so only
 # the zero-command guard can catch it).

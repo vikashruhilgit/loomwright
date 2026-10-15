@@ -7,7 +7,7 @@ PATH bash. Every command ran from the repo root. Nothing here touched a producti
 
 | Command | Result |
 |---|---|
-| `bash scripts/test-check-token-budget.sh` | 82/82 (exit 0), also 82/82 under `/bin/bash` 3.2.57 |
+| `bash scripts/test-check-token-budget.sh` | 98/98 (exit 0), also 98/98 under `/bin/bash` 3.2.57 |
 | `bash scripts/check-token-budget.sh` | exit 0 — `agents checked: 14 \| skill dirs checked: 42 \| command docs checked: 23 \| breaches: 0 \| errors: 0` |
 | `bash scripts/check-doc-currency.sh` | exit 0 — ✓ doc-currency: all checked version/count claims match the authoritative source. |
 | `bash scripts/check-version-bump.sh` | exit 0 — not bumped (version 17.3.0, the merge base's); 1 fragment(s) pending — legal |
