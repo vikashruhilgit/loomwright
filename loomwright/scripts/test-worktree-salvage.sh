@@ -79,6 +79,32 @@
 #         its own, it names a real UNMODIFIED file — the only observable trace of an
 #         unconsumed origin field; z.txt alone does not discriminate); in-suite mutant
 #         drops the origin read ⇒ AC-14 RED (phantom appears), AC-1 GREEN
+#   AC-16 (af/39a) `--ignored`: a CLEAN tree holding `.supervisor/logs/`,
+#         `.supervisor/postmortem/` and the host settings file (IGN_HS) ⇒ salvage dir
+#         first, `ignored: ok 3` LAST, each entry cmp-identical under ignored/<rel>,
+#         README section; without the flag the same tree stays silent (default
+#         unchanged); no entry ⇒ exactly `ignored: ok 0`, no directory; a dirty tree
+#         gets both captures; an unreadable entry / unwritable dest ⇒ `ignored: failed
+#         <rel> — <reason>`, exit 0; pin mutation (the copy deleted) ⇒ AC-16a RED
+#   AC-17 (af/39a review) coverage, FAIL CLOSED: a gitignored `.env` ⇒ `--ignored`
+#         ends `ignored: failed .env — unsalvaged ignored content` and the read-only
+#         `--check-ignored` prints `ignored-check: unsalvaged .env` (no directory);
+#         `.supervisor/state.md` beside the salvaged logs is named through the
+#         collapsed `.supervisor/`; only a top-level `node_modules/` beside its
+#         package.json ⇒ `ignored: ok 3` and `ignored-check: ok`; `--allow-unsalvaged`
+#         drops only that verdict; pin mutation (the coverage verdict deleted) ⇒ the
+#         `.env` leg RED. The regenerable rule is ANCHORED: `src/build/notes.md` (no
+#         manifest beside src/build/), a manifest-less `node_modules/` and a FILE named
+#         node_modules are all named; pin mutation (the manifest check removed) ⇒ RED.
+#         AC-17j pins every other arm via --check-ignored: a SYMLINKED node_modules beside
+#         package.json ⇒ named; a deep __pycache__/ and a deep .DS_Store ⇒ ok; build/ beside
+#         requirements-dev.txt, target/ beside Cargo.toml, .venv/ beside pyproject.toml and
+#         a nested pkg/node_modules/ beside pkg/package.json ⇒ ok; AC-17k pin mutation (the
+#         manifest glob quoted, so requirements*.txt stops expanding) ⇒ the requirements leg RED
+#   AC-18 (af/39a review) the coverage listing fails (git ls-files refused, or mktemp
+#         under a missing TMPDIR) ⇒ `ignored-check: failed — cannot list …` and
+#         `ignored: failed - — …` with no directory; pin mutations on the caller's
+#         `|| fail` and on ign_first_unsalvaged's ls-files return ⇒ RED
 #
 # Bash-3.2/BSD-safe: no `timeout`, no `${var//…}` on large strings, `"$@"` under
 # `set -u`. The Bash tool's shell is zsh — run this as `bash test-worktree-salvage.sh`.
@@ -923,6 +949,229 @@ if [ "$S_RC" -eq 0 ] && [ -n "$SDIR" ] && [ -f "$SDIR/untracked/new/dir/f.txt" ]
 else
   no "AC-15 (rc=$S_RC sdir='$SDIR' f_txt=$([ -f "$SDIR/untracked/new/dir/f.txt" ] && echo present || echo absent) guard_hits='$(find "$SDIR" -iname '*guard*' 2>/dev/null)')"
 fi
+
+echo "== AC-16. (af/39a) --ignored: gitignored runtime entries copied byte-identical; verdict line last; default unchanged =="
+# The host's local settings file — the one harness-specific path these legs need,
+# named once (vendor-coupling ratchet); its directory is ${IGN_HS%/*}.
+IGN_HS=".claude/settings.local.json"
+# ign_wt — fresh_wt with the host settings dir ignored too (info/exclude lives in the common
+# dir, so it covers the worktree) and the three runtime entries present; expected copies kept
+# in FX_D/exp-ign.
+ign_wt() {
+  fresh_wt "${1:-wt}"
+  printf '%s/\n' "${IGN_HS%/*}" >> "$FX_REPO/.git/info/exclude"
+  mkdir -p "$FX_WT/.supervisor/logs" "$FX_WT/.supervisor/postmortem" "$FX_WT/${IGN_HS%/*}"
+  printf '{"event":"session_start"}\n' > "$FX_WT/.supervisor/logs/s1.jsonl"
+  printf '{"automate_key":"k"}\n' > "$FX_WT/.supervisor/postmortem/results.jsonl"
+  printf '{"permissions":{"allow":[]}}\n' > "$FX_WT/$IGN_HS"
+  mkdir -p "$FX_D/exp-ign"; cp -pR "$FX_WT/.supervisor" "$FX_WT/${IGN_HS%/*}" "$FX_D/exp-ign/"
+}
+# check_ac16a <script> — clean tree + 3 entries: first stdout line the salvage dir, LAST line
+# `ignored: ok 3`, every entry cmp-identical under <dir>/ignored/<rel>, exit 0.
+check_ac16a() {
+  ign_wt ac16a
+  run_salvage "$1" "$FX_WT" --dest "$FX_D/d16a" --ignored --reason "AC-16a"
+  local dir last e
+  dir="$(printf '%s\n' "$S_OUT" | head -n1)"; last="$(printf '%s\n' "$S_OUT" | tail -n1)"
+  [ "$S_RC" -eq 0 ] && [ -d "$dir" ] && [ "$last" = "ignored: ok 3" ] || return 1
+  for e in .supervisor/logs/s1.jsonl .supervisor/postmortem/results.jsonl "$IGN_HS"; do
+    cmp -s "$FX_D/exp-ign/$e" "$dir/ignored/$e" || return 1
+  done
+  return 0
+}
+if check_ac16a "$SALVAGE"; then ok "AC-16a: clean tree, 3 gitignored entries ⇒ salvage dir first, 'ignored: ok 3' last, each byte-identical under ignored/"
+else no "AC-16a (rc=$S_RC out='$S_OUT' err='$S_ERR')"; fi
+DIR16="$(printf '%s\n' "$S_OUT" | head -n1)"
+grep -q '^## Gitignored runtime content (--ignored)' "$DIR16/README.md" 2>/dev/null && grep -qF 'Verdict: ignored: ok 3' "$DIR16/README.md" \
+  && ok "AC-16a: README names the --ignored section and its verdict" || no "AC-16a README: $(cat "$DIR16/README.md" 2>/dev/null | tail -n4 | tr '\n' '|')"
+run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d16c"
+[ "$S_RC" -eq 0 ] && [ -z "$S_OUT" ] && [ -z "$S_ERR" ] && [ ! -e "$FX_D/d16c" ] \
+  && ok "AC-16c: WITHOUT --ignored the same tree is clean — silent, no directory, exit 0 (default byte-unchanged)" || no "AC-16c (out='$S_OUT' err='$S_ERR')"
+fresh_wt ac16b
+run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d16b" --ignored
+[ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored: ok 0" ] && [ -z "$S_ERR" ] && [ ! -e "$FX_D/d16b" ] \
+  && ok "AC-16b: clean tree, no entry present ⇒ stdout exactly 'ignored: ok 0', no directory" || no "AC-16b (out='$S_OUT' err='$S_ERR')"
+ign_wt ac16d; dirty_wt "$FX_WT"; rm -f "$FX_WT/$IGN_HS"
+run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d16d" --ignored
+DIR16="$(printf '%s\n' "$S_OUT" | head -n1)"
+[ "$S_RC" -eq 0 ] && [ "$(printf '%s\n' "$S_OUT" | tail -n1)" = "ignored: ok 2" ] && cmp -s "$FX_D/exp-a.txt" "$DIR16/modified/a.txt" \
+  && cmp -s "$FX_D/exp-ign/.supervisor/logs/s1.jsonl" "$DIR16/ignored/.supervisor/logs/s1.jsonl" && [ ! -e "$DIR16/ignored/${IGN_HS%/*}" ] \
+  && ok "AC-16d: dirty tree ⇒ the normal capture AND the 2 present entries; an absent entry is not counted" || no "AC-16d (out='$S_OUT')"
+if [ "$(id -u)" -ne 0 ]; then
+  ign_wt ac16e; chmod 000 "$FX_WT/.supervisor/logs/s1.jsonl"
+  run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d16e" --ignored
+  chmod 644 "$FX_WT/.supervisor/logs/s1.jsonl"
+  [ "$S_RC" -eq 0 ] && [ "$(printf '%s\n' "$S_OUT" | tail -n1)" = "ignored: failed .supervisor/logs — copy failed" ] \
+    && ok "AC-16e: an entry that cannot be copied ⇒ last line 'ignored: failed .supervisor/logs — copy failed', exit 0" || no "AC-16e (rc=$S_RC out='$S_OUT')"
+  ign_wt ac16f; mkdir -p "$FX_D/ro16"; chmod 0555 "$FX_D/ro16"
+  run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/ro16/salvage" --ignored
+  chmod 0755 "$FX_D/ro16"
+  [ "$S_RC" -eq 0 ] && [ "$S_ERR_LINES" -eq 1 ] && [ "$S_OUT" = "ignored: failed .supervisor/logs — cannot create destination $FX_D/ro16/salvage" ] \
+    && ok "AC-16f: unwritable destination ⇒ verdict names the first pending entry, one stderr line, exit 0" || no "AC-16f (rc=$S_RC out='$S_OUT' err='$S_ERR')"
+else
+  echo "  note: running as root — AC-16e/f (unreadable / unwritable) skipped"
+fi
+# AC-16g pin mutation: the copy of the ignored entries deleted ⇒ AC-16a RED.
+MUT16="$SCRATCH/mut16/worktree-salvage.sh"; mkdir -p "$SCRATCH/mut16"
+sed 's/! cp -pR "\$WT_TOP\/\$IGN_REL" "\$IGN_DST" 2>\/dev\/null/! true/' "$SALVAGE" > "$MUT16"
+if [ -s "$MUT16" ] && ! cmp -s "$MUT16" "$SALVAGE" && bash -n "$MUT16" 2>/dev/null; then
+  if check_ac16a "$MUT16"; then no "AC-16g: AC-16a survived the copy-deleted mutant (vacuous)"; else ok "AC-16g: AC-16a RED against the mutant without the ignored-entry copy ($(printf '%s\n' "$S_OUT" | tail -n1))"; fi
+else
+  no "AC-16g gate: mutant not usable (empty, identical, or syntax error)"
+fi
+
+echo "== AC-17. (af/39a review) --ignored / --check-ignored: gitignored content the list does not cover fails CLOSED =="
+# ign_extra <pattern> — one more ignore pattern for the fixture (info/exclude covers the worktree).
+ign_extra() { printf '%s\n' "$1" >> "$FX_REPO/.git/info/exclude"; }
+# check_ac17a <script> — the AC-16 tree plus a gitignored `.env` (a secret no list covers):
+# --ignored's LAST line names it; the salvaged entries are still copied.
+check_ac17a() {
+  ign_wt ac17a; ign_extra .env; printf 'SECRET=1\n' > "$FX_WT/.env"
+  run_salvage "$1" "$FX_WT" --dest "$FX_D/d17a" --ignored --reason "AC-17a"
+  [ "$S_RC" -eq 0 ] && [ "$(printf '%s\n' "$S_OUT" | tail -n1)" = "ignored: failed .env — unsalvaged ignored content" ]
+}
+if check_ac17a "$SALVAGE"; then ok "AC-17a: a gitignored .env ⇒ last line 'ignored: failed .env — unsalvaged ignored content', exit 0 (the caller keeps the worktree)"
+else no "AC-17a (rc=$S_RC out='$S_OUT' err='$S_ERR')"; fi
+run_salvage "$SALVAGE" "$FX_WT" --check-ignored
+[ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored-check: unsalvaged .env" ] && [ -z "$S_ERR" ] && [ "$(cat "$FX_WT/.env")" = "SECRET=1" ] \
+  && ok "AC-17b: --check-ignored (read-only) prints exactly 'ignored-check: unsalvaged .env'" || no "AC-17b (out='$S_OUT' err='$S_ERR')"
+run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d17c" --ignored --allow-unsalvaged
+[ "$S_RC" -eq 0 ] && [ "$(printf '%s\n' "$S_OUT" | tail -n1)" = "ignored: ok 3" ] \
+  && ok "AC-17c: --allow-unsalvaged drops only the coverage verdict ('ignored: ok 3')" || no "AC-17c (out='$S_OUT')"
+fresh_wt ac17d; ign_extra .env; printf 'SECRET=1\n' > "$FX_WT/.env"
+run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d17d" --ignored
+[ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored: failed .env — unsalvaged ignored content" ] && [ ! -e "$FX_D/d17d" ] \
+  && ok "AC-17d: a clean tree with no salvage-list entry but a .env ⇒ only the failed verdict, no directory" || no "AC-17d (out='$S_OUT')"
+ign_wt ac17e; printf 'state\n' > "$FX_WT/.supervisor/state.md"
+run_salvage "$SALVAGE" "$FX_WT" --check-ignored
+[ "$S_OUT" = "ignored-check: unsalvaged .supervisor/state.md" ] \
+  && ok "AC-17e: .supervisor/state.md beside the salvaged logs is named (the collapsed .supervisor/ is descended)" || no "AC-17e (out='$S_OUT')"
+# ac17_pkg — a committed package.json at the worktree top (the tree stays clean): the
+# manifest that makes a top-level node_modules/ regenerable.
+ac17_pkg() { printf '{}\n' > "$FX_WT/package.json"; ( cd "$FX_WT" && git add package.json && git commit -qm pkg ) >/dev/null 2>&1; }
+ign_wt ac17f; ac17_pkg; ign_extra node_modules/; mkdir -p "$FX_WT/node_modules/pkg"; printf 'x\n' > "$FX_WT/node_modules/pkg/i.js"
+run_salvage "$SALVAGE" "$FX_WT" --check-ignored; ck17="$S_OUT"
+run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d17f" --ignored
+[ "$ck17" = "ignored-check: ok" ] && [ "$(printf '%s\n' "$S_OUT" | tail -n1)" = "ignored: ok 3" ] && [ ! -e "$(printf '%s\n' "$S_OUT" | head -n1)/ignored/node_modules" ] \
+  && ok "AC-17f: only a top-level node_modules/ beside its package.json beyond the list ⇒ 'ignored-check: ok' and 'ignored: ok 3' (regenerable, not copied)" || no "AC-17f (check='$ck17' out='$S_OUT')"
+# check_ac17h <script> — `build/` ignored, a tracked src/main.c (so git names src/build/ itself,
+# not a collapsed src/), untracked work in src/build/notes.md: a nested dir NAMED like build
+# output, with no manifest beside it, is not regenerable ⇒ named, never ok.
+check_ac17h() {
+  fresh_wt ac17h; ac17_pkg; ign_extra build/; mkdir -p "$FX_WT/src/build"; printf 'int main;\n' > "$FX_WT/src/main.c"
+  ( cd "$FX_WT" && git add src/main.c && git commit -qm src ) >/dev/null 2>&1
+  printf 'hand-written\n' > "$FX_WT/src/build/notes.md"
+  run_salvage "$1" "$FX_WT" --check-ignored
+  [ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored-check: unsalvaged src/build/" ]
+}
+if check_ac17h "$SALVAGE"; then ok "AC-17h: src/build/notes.md (no manifest beside src/build/) ⇒ 'ignored-check: unsalvaged src/build/' (a name match at depth is not regenerable)"
+else no "AC-17h (out='$S_OUT' err='$S_ERR')"; fi
+run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/d17h" --ignored
+[ "$S_OUT" = "ignored: failed src/build/ — unsalvaged ignored content" ] && [ "$(cat "$FX_WT/src/build/notes.md")" = "hand-written" ] \
+  && ok "AC-17h: --ignored on the same tree ⇒ 'ignored: failed src/build/ — unsalvaged ignored content', notes.md intact" || no "AC-17h --ignored (out='$S_OUT')"
+fresh_wt ac17h2; ign_extra node_modules/; mkdir -p "$FX_WT/node_modules/pkg"; printf 'x\n' > "$FX_WT/node_modules/pkg/i.js"
+run_salvage "$SALVAGE" "$FX_WT" --check-ignored
+[ "$S_OUT" = "ignored-check: unsalvaged node_modules/" ] \
+  && ok "AC-17h: a top-level node_modules/ with NO package.json beside it ⇒ named (the manifest anchors the rule)" || no "AC-17h no-manifest (out='$S_OUT')"
+fresh_wt ac17h3; ign_extra node_modules; printf 'not a dir\n' > "$FX_WT/node_modules"; ac17_pkg
+run_salvage "$SALVAGE" "$FX_WT" --check-ignored
+[ "$S_OUT" = "ignored-check: unsalvaged node_modules" ] \
+  && ok "AC-17h: a FILE named node_modules (even beside package.json) ⇒ named (directories only)" || no "AC-17h file (out='$S_OUT')"
+# AC-17i pin mutation: the manifest check short-circuited (the old name-at-any-depth rule) ⇒ AC-17h RED.
+MUT17H="$SCRATCH/mut17h/worktree-salvage.sh"; mkdir -p "$SCRATCH/mut17h"
+sed 's/for f in "\$dir"\/\$m; do \[ -f "\$f" \] \&\& return 0; done/return 0/' "$SALVAGE" > "$MUT17H"
+if [ -s "$MUT17H" ] && ! cmp -s "$MUT17H" "$SALVAGE" && bash -n "$MUT17H" 2>/dev/null; then
+  if check_ac17h "$MUT17H"; then no "AC-17i: AC-17h survived the manifest-check-removed mutant (vacuous)"; else ok "AC-17i: AC-17h RED against the mutant matching by name at any depth ($S_OUT)"; fi
+else
+  no "AC-17i gate: mutant not usable (empty, identical, or syntax error)"
+fi
+# AC-17j — one --check-ignored leg per remaining ign_regenerable arm (pinning the
+# behaviour its comment states). ac17_track <rel> — commit a manifest at <rel> (the tree
+# stays clean, and its parent is named per-entry rather than collapsed by --directory).
+ac17_track() { mkdir -p "$FX_WT/$(dirname "$1")"; printf 'x\n' > "$FX_WT/$1"; ( cd "$FX_WT" && git add "$1" && git commit -qm "track $1" ) >/dev/null 2>&1; }
+# ac17j <label> <expected stdout> — run --check-ignored on the current FX_WT and assert.
+ac17j() {
+  run_salvage "$SALVAGE" "$FX_WT" --check-ignored
+  [ "$S_RC" -eq 0 ] && [ "$S_OUT" = "$2" ] && ok "AC-17j: $1 ⇒ '$2'" || no "AC-17j $1 (rc=$S_RC out='$S_OUT' err='$S_ERR')"
+}
+fresh_wt ac17j1; ac17_pkg; mkdir -p "$FX_D/nm-target"; ln -s "$FX_D/nm-target" "$FX_WT/node_modules"; ign_extra node_modules
+ac17j "a SYMLINKED node_modules beside package.json (not a real directory)" "ignored-check: unsalvaged node_modules"
+fresh_wt ac17j2; ign_extra __pycache__/; mkdir -p "$FX_WT/sub/__pycache__"; printf 'pyc\n' > "$FX_WT/sub/__pycache__/m.pyc"
+ac17j "a deep sub/__pycache__/ (any depth, no manifest)" "ignored-check: ok"
+fresh_wt ac17j3; ign_extra .DS_Store; printf 'ds\n' > "$FX_WT/sub/.DS_Store"
+ac17j "a deep sub/.DS_Store FILE (any depth)" "ignored-check: ok"
+# check_ac17j_req <script> — build/ beside a tracked requirements-dev.txt: only the UNQUOTED
+# `requirements*.txt` glob expands to it.
+check_ac17j_req() {
+  fresh_wt ac17j4; ac17_track requirements-dev.txt; ign_extra build/; mkdir -p "$FX_WT/build"; printf 'o\n' > "$FX_WT/build/out.o"
+  run_salvage "$1" "$FX_WT" --check-ignored
+  [ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored-check: ok" ]
+}
+if check_ac17j_req "$SALVAGE"; then ok "AC-17j: build/ beside a tracked requirements-dev.txt (the requirements*.txt glob) ⇒ 'ignored-check: ok'"
+else no "AC-17j requirements-dev (rc=$S_RC out='$S_OUT' err='$S_ERR')"; fi
+fresh_wt ac17j5; ac17_track Cargo.toml; ign_extra target/; mkdir -p "$FX_WT/target/debug"; printf 'bin\n' > "$FX_WT/target/debug/app"
+ac17j "target/ beside Cargo.toml" "ignored-check: ok"
+fresh_wt ac17j6; ac17_track pyproject.toml; ign_extra .venv/; mkdir -p "$FX_WT/.venv/bin"; printf 'py\n' > "$FX_WT/.venv/bin/python"
+ac17j ".venv/ beside pyproject.toml" "ignored-check: ok"
+fresh_wt ac17j7; ac17_track pkg/package.json; ign_extra node_modules/; mkdir -p "$FX_WT/pkg/node_modules/dep"; printf 'x\n' > "$FX_WT/pkg/node_modules/dep/i.js"
+ac17j "a nested pkg/node_modules/ beside pkg/package.json (manifest in the SAME parent)" "ignored-check: ok"
+# AC-17k pin mutation: the manifest glob QUOTED ("$m") so requirements*.txt no longer expands ⇒ the requirements-dev leg RED.
+MUT17K="$SCRATCH/mut17k/worktree-salvage.sh"; mkdir -p "$SCRATCH/mut17k"
+sed 's/for f in "\$dir"\/\$m; do/for f in "$dir"\/"$m"; do/' "$SALVAGE" > "$MUT17K"
+if [ -s "$MUT17K" ] && ! cmp -s "$MUT17K" "$SALVAGE" && bash -n "$MUT17K" 2>/dev/null; then
+  if check_ac17j_req "$MUT17K"; then no "AC-17k: the requirements-dev leg survived the quoted-glob mutant (vacuous)"; else ok "AC-17k: the requirements-dev leg RED against the quoted-glob mutant ($S_OUT)"; fi
+else
+  no "AC-17k gate: mutant not usable (empty, identical, or syntax error)"
+fi
+# AC-17g pin mutation: the coverage verdict deleted ⇒ AC-17a RED.
+MUT17="$SCRATCH/mut17/worktree-salvage.sh"; mkdir -p "$SCRATCH/mut17"
+sed 's/IGN_VERDICT="ignored: failed \$IGN_UNSALV — unsalvaged ignored content"/:/' "$SALVAGE" > "$MUT17"
+if [ -s "$MUT17" ] && ! cmp -s "$MUT17" "$SALVAGE" && bash -n "$MUT17" 2>/dev/null; then
+  if check_ac17a "$MUT17"; then no "AC-17g: AC-17a survived the coverage-verdict-deleted mutant (vacuous)"; else ok "AC-17g: AC-17a RED against the mutant without the coverage verdict ($(printf '%s\n' "$S_OUT" | tail -n1))"; fi
+else
+  no "AC-17g gate: mutant not usable (empty, identical, or syntax error)"
+fi
+
+
+echo "== AC-18. (af/39a review) the coverage check cannot list the entries ⇒ fail CLOSED ('ignored-check: failed — …') =="
+# ac18_gitstub — a git on PATH that fails ONLY `ls-files … --ignored` (everything else is
+# the real git), so the coverage listing — and nothing before it — fails.
+AC18_REAL_GIT="$(command -v git)"; export AC18_REAL_GIT
+AC18_BIN="$SCRATCH/ac18-bin"; mkdir -p "$AC18_BIN"
+cat > "$AC18_BIN/git" <<'STUB'
+#!/usr/bin/env bash
+case " $* " in *" ls-files "*" --ignored "*) echo "stub: ls-files refused" >&2; exit 128 ;; esac
+exec "$AC18_REAL_GIT" "$@"
+STUB
+chmod +x "$AC18_BIN/git"
+# check_ac18 <script> — both forced failures (git ls-files refused; mktemp under a TMPDIR that
+# does not exist) end --check-ignored with the failed line, and --ignored with the failed
+# verdict naming `-`, no salvage directory; exit 0 throughout.
+check_ac18() {
+  ign_wt ac18; ign_extra .env; printf 'SECRET=1\n' > "$FX_WT/.env"
+  local want="ignored-check: failed — cannot list the gitignored entries of $FX_WT"
+  PATH="$AC18_BIN:$PATH" run_salvage "$1" "$FX_WT" --check-ignored
+  [ "$S_RC" -eq 0 ] && [ "$S_OUT" = "$want" ] || return 1
+  TMPDIR="$SCRATCH/no-such-tmpdir" run_salvage "$1" "$FX_WT" --check-ignored
+  [ "$S_RC" -eq 0 ] && [ "$S_OUT" = "$want" ] || return 1
+  PATH="$AC18_BIN:$PATH" run_salvage "$1" "$FX_WT" --dest "$FX_D/d18" --ignored
+  [ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored: failed - — cannot list the gitignored entries of $FX_WT" ] && [ ! -e "$FX_D/d18" ]
+}
+if check_ac18 "$SALVAGE"; then ok "AC-18a: git ls-files refused / mktemp failing ⇒ exactly 'ignored-check: failed — cannot list the gitignored entries of <wt>'; --ignored ⇒ 'ignored: failed - — …', no directory, exit 0"
+else no "AC-18a (rc=$S_RC out='$S_OUT' err='$S_ERR')"; fi
+# AC-18b pin mutations: each failure arm neutralized ⇒ AC-18a RED.
+#   sink    — the caller's `|| fail` dropped (a listing failure reads as all-covered)
+#   lsfiles — ign_first_unsalvaged's ls-files failure no longer returns 1
+for m18 in 'sink:s/IGN_UNSALV="\$(ign_first_unsalvaged)" || fail "cannot list the gitignored entries of \$WT_TOP"/IGN_UNSALV="$(ign_first_unsalvaged)" || :/' \
+           'lsfiles:/--directory > "\$q" 2>\/dev\/null; then$/{n;s/rm -f "\$q" "\$nq"; return 1/: > "$q"/;}'; do
+  MUT18="$SCRATCH/mut18-${m18%%:*}/worktree-salvage.sh"; mkdir -p "${MUT18%/*}"
+  sed "${m18#*:}" "$SALVAGE" > "$MUT18"
+  if [ -s "$MUT18" ] && ! cmp -s "$MUT18" "$SALVAGE" && bash -n "$MUT18" 2>/dev/null; then
+    if check_ac18 "$MUT18"; then no "AC-18b: AC-18a survived the ${m18%%:*} mutant (vacuous)"; else ok "AC-18b: AC-18a RED against the ${m18%%:*} mutant ($S_OUT)"; fi
+  else
+    no "AC-18b gate: ${m18%%:*} mutant not usable (empty, identical, or syntax error)"
+  fi
+done
 
 echo
 echo "RESULT: $pass passed, $fail failed"

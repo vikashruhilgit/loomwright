@@ -47,7 +47,7 @@ Immediately after step 2 RUN captures `SUPERVISOR_RESULT` and restores `.auto_re
 - **Queue fully resolved** (no `- [ ]` left) ⇒ `## Status: done`, `remaining: 0`, the `/loop` driver stops.
 - **`limit` items processed** with the queue NOT empty ⇒ `## Status: paused`, `pause_reason: limit_reached`, `remaining: <unchecked count>`, loop stops.
 
-On the **`## Status: done`** exit ONLY, the loop runs `trail-pr --reason done` and only then `run-lock.sh release`; the `limit_reached` exit is a park and releases the lock without a trail — see "Trail PR after merge and at run end".
+On the **`## Status: done`** exit ONLY, the loop runs `trail-pr --reason done`, then appends ONE `<ts> sweep (dry run): <summary line>` `## Progress` line (`progress-append`; the summary line is the last line of `automate-helpers.sh sweep` — a DRY run, never `--apply` unattended; no `sweep: summary — ` line ⇒ the line records `sweep: summary — skipped: no output`), and only then `run-lock.sh release`; the `limit_reached` exit is a park and releases the lock without a trail — see "Trail PR after merge and at run end".
 
 (A park on `awaiting_merge`, `ready_for_release` — an N > 1 lane's READY park, §14 —, `escalated` — §8/§9 — or `rate_limit` — the "Rate-limit park" subsection above — or `drain_died` — §4 RECONCILE, a DETACHED drain that exited without a result, red-team-hardening item 04 — or `trail_pr_open` — §6 step 1's trail gate, §8 — also stops the loop with the corresponding `pause_reason`.)
 

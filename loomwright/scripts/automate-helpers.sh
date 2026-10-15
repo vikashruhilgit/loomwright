@@ -18,13 +18,16 @@
 # (outside the explicitly-stubbed `gate-eval` MERGE branch) never calls
 # `gh pr merge` — and `brief-repair`, whose only write is the brief lifecycle
 # move performed by `reconcile-jobs.sh --repair` under `.supervisor/jobs/`,
-# never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`/`closeout-others`/`trail-unstage`/`trail-gate`/`finalize-empty`
+# never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`/`closeout-others`/`trail-unstage`/`trail-gate`/`finalize-empty`/`sweep`
 # (and the read-only `sidecar-check` beside them) are delegated to the sibling
 # `automate-trail.sh`, which is a git/`gh pr create` mutator bounded to this
 # run's trail branch, this PR's local branch/worktree, and — in the primary
 # checkout — index-only entries for this run's own trail paths plus closeout's
 # (and trail-gate's PICK-time) `git checkout <base>` + `git pull --ff-only` sync (never a commit, reset or
-# stash there) — never `gh pr merge`. A second, narrower carve-out:
+# stash there), plus `sweep`'s removals — only proven-merged (closeout's squash-safe
+# rule) plugin-made linked worktrees (`git worktree remove`, never --force) and
+# local branches, and only on `--apply` (a dry run, the default, writes nothing)
+# — never `gh pr merge`. A second, narrower carve-out:
 # `dismissed-drafts`/`dismissed-decide`/`dismissed-pending` (and the read-only
 # `dismissed-cost`) are delegated to the
 # sibling `automate-dismissed.sh`, which writes ONLY this run's dismissed-finding
@@ -71,6 +74,7 @@
 #:  closeout-classify [--run <id> --item <p> --pr <u>] [--record <rf>]  # §6 step 1 close-out leftover gate: reads ONE closeout invocation's output on stdin, classifies its `closeout: ` lines against CLOSEOUT_TABLE (only the partial-removal form `removed — worktree …; kept …` is forced to a leftover; an unknown line is a leftover) ⇒ `complete`, or one `leftover\t<run>\t<item>\t<pr>\t<step>\t<detail>` row per leftover plus one `run_lock_held\t…` row per `run lock held by <owner> (live pid <p>)` line (a live holder: not a leftover, not complete); --record appends `closeout: nothing to close out — <item>` (once per item per run) on a complete close-out that changed nothing; exit 0 (usage error 1)
 #:  closeout-others  <automate_dir> [--record <runfile>]  # §4 start order: delegated to automate-trail.sh — closeout of every OTHER run whose ## Current names a not-done item with a merged PR (own lock, own trail; mode-off trail-unstage), its classify answer, and one `cross-run closeout <run_id> <item>: …` record line (no PR URL) appended to --record's run file; always exits 0
 #:  finalize-empty   <runfile>                          # §3/§4 step 1: delegated to automate-trail.sh — a paused / awaiting_go / remaining-0 / ## Current status-done run ⇒ run lock, `## Status: done` + pause_reason null, `auto-finalized` Progress line, trail-pr --reason done, mode-off trail-unstage; else one `skipped — <reason>` line; always exits 0
+#:  sweep            [--apply] [--root <checkout>]      # §1.5 af/39a: delegated to automate-trail.sh — dry run by default (writes nothing); ONLY --apply removes the plugin-made linked worktrees (`git worktree remove`, never --force; gitignored runtime content salvaged + verified first) and local branches whose newest PR is MERGED at the local tip (closeout's squash-safe rule); app/lane/unknown worktrees reported, never removed; one `sweep: would-remove|removed|kept <kind> <path-or-branch> — <reason>` line each + ONE `sweep: summary — …` line last; always exits 0
 #:  dismissed-drafts <runfile> <item> <pr_url> [--after-fix-now]  # §6 "Dismissed-findings decision step (before the park)": delegated to automate-dismissed.sh — one propose-only draft per dismissed finding over the threshold (+ one undecided summary draft per item) in proposed/, content-addressed names, decisions never reset; TSV `draft` rows + one summary line; always exits 0
 #:  dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>  # §6 decision step / next PICK: delegated to automate-dismissed.sh — records the decision in <run_id>.dismissed-decisions, rewrites (follow-up) or deletes (drop/fix-now) the draft, one Progress line; refuses a foreign path; always exits 0
 #:  dismissed-pending <runfile>                         # §6 step 1 PICK: delegated to automate-dismissed.sh — count of this run's undecided drafts, or `unknown` (treated as non-zero); always exits 0
@@ -1090,6 +1094,7 @@ main() {
     # read-only carve-out named in the header) — one mover per concern.
     sidecar-check|trail-pr|closeout|trail-unstage|trail-gate) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
     finalize-empty) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
+    sweep) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
     closeout-others) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
     # Dismissed-finding drafts (propose-only writes, never git) — the sibling
     # automate-dismissed.sh, the second carve-out named in the header.
