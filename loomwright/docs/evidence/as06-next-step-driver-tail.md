@@ -98,6 +98,32 @@ RED as expected: drop-once —   FAIL: B: subsection lacks: at most ONCE per ite
 RED as expected: drop-written-first —   FAIL: B: GATE step 4 order wrong
 ```
 
+**Remediation after the full `ci-local.sh` run (3 suites red).** (1) `test-automate-trail.sh` NT6 read §6
+steps 5/6 out of the assembled skill's `## §6` section, where only the `per-item-loop.md` stubs remain; its
+legs now read the assembly's `## Legacy tail — ` section (the moved text, byte-unchanged), with a new mutant
+(step 5 without `--no-trail` ⇒ the step-5 leg red) and the rule also pinned on the driver's `sync` /
+`checkoff` case arms (mutant: `sync` without `--no-trail` ⇒ red). (2) `test-no-pipefail-grep-q.sh`: one
+builtin-writer pipe into `grep -q` in `automate-next-step.sh` and three in `test-automate-next-step.sh`,
+rewritten as here-strings / process substitution. (3) `test-automate-helpers.sh` W19 is NOT caused by this
+branch: it reads the gitignored `.supervisor/requirements/parallel-automate/` (absent when the 737/737 run above
+was taken, so W19 skipped then) and fails identically on base 142540b (a throwaway worktree with that dir
+copied in: `RESULT: 761 passed, 1 failed`, the same W19 line) — `22-split-automate-engine-surfaces.md`'s
+closeout block appends `<!-- loomwright:requirement-closeout -->` inside its `## Touches` section, which
+`plan-waves` then reads as an unknown entry (with that one line removed the copy parses known).
+
+```
+test-automate-trail.sh       test-automate-trail: 786 passed, 0 failed   786/786
+test-no-pipefail-grep-q.sh   26 passed, 0 failed       26/26
+test-automate-next-step.sh   PASS: 46 FAIL: 0          46/46
+test-automate-helpers.sh     RESULT: 761 passed, 1 failed   761/762   (W19 only — pre-existing, see above)
+test-automate-dismissed.sh   245 passed, 0 failed      245/245
+test-automate-golden.sh      PASS: 64 FAIL: 0          64/64
+test-loop-inventory.sh       RESULT: 39/39 passed      39/39
+test-automate-loop-split.sh  RESULT: 39 passed, 0 failed    39/39
+test-citation-drift.sh       citation-drift: 26 passed, 0 failed   26/26
+check-doc-currency.sh        OK — all checked version/count claims match
+```
+
 **Inventory re-home and golden-case links.** The 49 rows whose prose moved (AL-267–AL-280, AL-282–AL-287,
 AL-312–AL-340) now name `skills/automate-loop/legacy-tail.md` with home `script:automate-next-step.sh <step>`
 (every `<step>` a real `case` arm); AL-281 (the RECONCILE re-check) stays `prose` in `per-item-loop.md`. A migrated
