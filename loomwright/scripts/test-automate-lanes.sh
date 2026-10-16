@@ -2828,8 +2828,8 @@ check "AJ4e every Plan-stage token is in the AUTONOMOUS_RUN enum, and the enum's
 check "AJ4e2 every Plan-stage status_reason reaches Plan" "$(aj4e $AJ4E_PLAN | tr ',' '\n' | sort -u)" plan
 check "AJ4e3 every other enum value reaches Build" "$(aj4e $AJ4E_BUILD | tr ',' '\n' | sort -u)" build
 check "AJ4e4 a wrapped token still reads; unknown / free text fall back to the Launch Pad match" \
-  "$(aj4d '— no PR: `user_aborted_at_no_go` (why)'),$(aj4d '— no PR: "supervisor_checkpoint" (why)'),$(aj4d '— no PR: unknown (Launch Pad blocked)'),$(aj4d '— no PR: unknown (no reason given)'),$(aj4d '— no PR: blocked by Launch Pad')" \
-  "plan,build,plan,build,plan"
+  "$(aj4d '— no PR: `user_aborted_at_no_go` (why)'),$(aj4d '— no PR: "supervisor_checkpoint" (why)'),$(aj4d '— no PR: (user_aborted_at_plan_review_fail) (why)'),$(aj4d '— no PR: unknown (Launch Pad blocked)'),$(aj4d '— no PR: unknown (no reason given)'),$(aj4d '— no PR: blocked by Launch Pad')" \
+  "plan,build,plan,plan,build,plan"
 has "AJ4e5 per-item-loop.md step 2 pins the no-PR line" "$(cat "$HERE/../skills/automate-loop/per-item-loop.md")" \
   '`<ts> ran /autonomous — no PR: <status_reason> (<one-line why>)`'
 sed 's/"concurrent_session_detected", //' "$S" > "$MUT/lanes-aj4e.sh"
