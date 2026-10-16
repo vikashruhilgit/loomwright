@@ -64,8 +64,8 @@ check "AJ4e4 a wrapped token still reads; unknown / free text fall back to the L
   "plan,build,plan,plan,build,plan"
 has "AJ4e5 per-item-loop.md step 2 pins the no-PR line" "$(cat "$HERE/../skills/automate-loop/per-item-loop.md")" \
   '`<ts> ran /autonomous — no PR: <status_reason> (<one-line why>)`'
-sed 's/"concurrent_session_detected", //' "$S" > "$MUT/lanes-aj4e.sh"
-if ! cmp -s "$S" "$MUT/lanes-aj4e.sh" && bash -n "$MUT/lanes-aj4e.sh"; then
+sed 's/"concurrent_session_detected", //' "$SB" > "$MUT/lanes-aj4e.sh"
+if ! cmp -s "$SB" "$MUT/lanes-aj4e.sh" && bash -n "$MUT/lanes-aj4e.sh"; then
   out="$(ajp '- 2026-10-11T08:01:00Z picked a.md' '- 2026-10-11T08:20:00Z ran /autonomous — no PR: concurrent_session_detected (two briefs)' '- 2026-10-11T08:20:05Z parked escalated (no PR)'
          ( . "$MUT/lanes-aj4e.sh"; _lanes_timeline "$AJRF" "$AJ/lane/.supervisor" "$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')" escalated - ) | jq -r .current)"
   check "AJ4f mutation (a Plan-stage token dropped from planstop) reads Build — the case AJ4e2 catches" "$out" build
@@ -481,8 +481,8 @@ has "AM10 lane-status --inbox lists nothing" "$(run lane-status "$RFAM" --inbox)
 hasnt "AM11 lane-remove no longer refuses awaiting_input" "$(run lane-remove "$LA1")" "awaiting_input"
 # AM12 mutation control: relay-hook without the supersede step replays the incident on a fresh lane —
 # toolu_s1 stays pending, so AM1/AM8 and AM9 would be red.
-sed 's/ && _lanes_supersede_older "\$root" "\$id"$//' "$S" > "$MUT/automate-lanes.sh"
-if cmp -s "$S" "$MUT/automate-lanes.sh" || ! bash -n "$MUT/automate-lanes.sh"; then
+sed 's/ && _lanes_supersede_older "\$root" "\$id"$//' "$SB" > "$MUT/automate-lanes.sh"
+if cmp -s "$SB" "$MUT/automate-lanes.sh" || ! bash -n "$MUT/automate-lanes.sh"; then
   bad "AM12 mutant not built (sed matched nothing, or bash -n failed)"
 else
   LA2="$LAM/L2"; am_seq "$LA2" "$MUT/automate-lanes.sh"; am_ans "$LA2" toolu_s2 >/dev/null; wait_gone "$LA2"

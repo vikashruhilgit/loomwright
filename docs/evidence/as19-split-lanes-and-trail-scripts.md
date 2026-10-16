@@ -260,3 +260,28 @@ The integration commit `5d3c348` broke three consumers that sat outside every la
 3. **`loomwright/scripts/test-automate-trail-modules.sh` (subtask 2's file) and the `check-locale-prefix.sh` early gate.** Why it broke: two `sort` sites (the `ONDISK` pipeline and the `$MODS` comparison) put `LC_ALL=C sort` at command position. The gate rejects that because Homebrew bash 5.3 segfaults restoring the locale in a forked subshell. Hunk: `env LC_ALL=C sort` at both sites. The test is 24/24 before and after; the gate goes from FAIL to OK (373/373 files).
 
 Re-scan for other consumers: `git grep -nE 'automate-(lanes|trail)\.sh' -- 'loomwright/scripts/*.sh' 'scripts/*.sh' 'loomwright/scripts/adapters/*/*.sh'`. Every test file it names was run (§1). No break beyond the three above. The full branch `ci-local.sh` is green (§1).
+
+## 9. Re-based onto `e232771` (PRs #572, #574)
+
+`origin/main` moved to `e232771` after the split was cut: #572 and #574 edited the old monoliths `automate-lanes.sh` and `test-automate-lanes.sh`. They were merged in with a regular merge commit (no rebase). §1 to §8 above record the split against `051553e` and are kept as measured. The module tests' base pin is now `e232771` (`BASE_SHA` in `test-automate-lanes-modules.sh`, `BASE` in `test-automate-trail-modules.sh`; `automate-trail.sh` is byte-identical at both shas).
+
+Port, hunk by hunk and verbatim. Each `git diff -U0 051553e e232771` hunk went to the file that holds its base lines. No hunk sat on a module boundary.
+- `automate-lanes.sh`: 2 header hunks went to the entry point (371 → 378 lines), 3 to `automate-lanes.d/common.sh` (194 → 247; new `_lanes_pending_questions`, `_lanes_supersede_older`, `_lanes_superseded_by`, `_lanes_superseded_msg`), 4 to `relay.sh` (248 → 250) and 7 to `status-read.sh` (740 → 752, now the largest module, under 800). AC3 holds: the stripped bundle equals `git show e232771:loomwright/scripts/automate-lanes.sh` byte-for-byte.
+- `test-automate-lanes.sh`: 2 header hunks went to the runner (216 → 220), 4 to `03-fixes-to-finalize.sh` (759 → 767), and the AJ4e/AJ4f and AM blocks to `05-timeline-and-gate.sh` (403 → 500). After the merge, runner + parts differ from the new monolith by exactly the branch's pre-merge delta (the same `diff` lines as against `051553e`).
+- One non-move hunk in the same class as §3 (a). The two mutant builders the merge brought in, AJ4f and AM12 in `05-timeline-and-gate.sh`, read `"$SB"` instead of `"$S"` (the `sed` input and its `cmp -s` gate; the sed patterns and assertions are unchanged). On the merge commit itself, which reads `"$S"`, both report `mutant not built`, 887/889.
+- Vendor coupling: the AM leg's 2 counted references (`ask_user=1 hook_protocol=1`) now live in `05-timeline-and-gate.sh`, so it gets an allowance of 2. The lanes test files still total main's 46.
+
+Re-measured on 2026-10-16: base is a clean worktree detached at `e232771`; branch is the committed follow-up tree.
+
+| Test / gate | Base `e232771` | Branch | Note |
+|---|---|---|---|
+| `test-automate-lanes.sh` | 887/887 | 889/889 | +2 = AG7a/AG7b |
+| `test-automate-lanes-modules.sh` | absent | 56/56 | |
+| `test-automate-trail.sh` | 782/782 | 782/782 | |
+| `test-automate-trail-modules.sh` | absent | 24/24 | |
+| `test-guard-lane-wait-armed.sh` | 45/45 | 45/45 | |
+| `test-wave-build.sh` | 65/65 | 67/67 | +2 = W6d2/W6d3 |
+| `scripts/test-lanes-addon.sh` | 12/12 | 12/12 | |
+| `scripts/check-vendor-coupling.sh` | OK, 2678 refs | OK, 2679 refs | +1 = the `test-automate-lanes-modules.sh` reference, §5 |
+| `scripts/check-locale-prefix.sh` | OK, 343/343 | OK, 373/373 | |
+| `scripts/check-version-bump.sh` | OK, 4 fragments | OK, 5 fragments | +1 = this item's fragment |
