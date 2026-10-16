@@ -1,0 +1,7 @@
+# next-step.results — termination-queue-resolved: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The case checks off pa/18 as its closeout does (a pre: write this
+# segment's driver does not own), then the done exit (NEXT_STEP_FROM=terminate).
+pre: queue-checkoff "$RF" .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md
+env: NEXT_STEP_FROM=terminate
+call:
+expect: done
