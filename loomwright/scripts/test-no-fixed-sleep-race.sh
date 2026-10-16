@@ -23,7 +23,8 @@
 # THE RATCHET (BASELINE below, "<count> <file>"): a count above its baseline, or a counted file not in
 # the baseline, is red; a count BELOW its baseline is red too, until the baseline is lowered — so it
 # only shrinks. A baseline row whose file is gone is red (stale). Controls (F1)-(F11) prove it fires.
-# Scope: loomwright/scripts/test-*.sh, loomwright/scripts/adapters/*/test-*.sh, scripts/test-*.sh.
+# Scope: loomwright/scripts/test-*.sh, their sourced parts loomwright/scripts/test-*.d/*.sh,
+# loomwright/scripts/adapters/*/test-*.sh, scripts/test-*.sh.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 shopt -s nullglob
@@ -144,7 +145,8 @@ ratchet() {
 # condition or annotate the line instead.
 BASELINE='
 2 loomwright/scripts/test-agent-identity.sh
-3 loomwright/scripts/test-automate-lanes.sh
+2 loomwright/scripts/test-automate-lanes.d/01-create-to-wait.sh
+1 loomwright/scripts/test-automate-lanes.d/02-readiness-to-convert.sh
 1 loomwright/scripts/test-ci-slot.sh
 1 loomwright/scripts/test-classify-bot-review.sh
 2 loomwright/scripts/test-lane-sampler.sh
@@ -163,7 +165,17 @@ T0="$(mktemp -d "${TMPDIR:-/tmp}/test-no-fixed-sleep-race.XXXXXX")" || exit 1
 trap 'rm -rf "$T0"' EXIT
 echo "== the live suite against its baseline =="
 cd "$REPO" || exit 1
-files=(loomwright/scripts/test-*.sh loomwright/scripts/adapters/*/test-*.sh scripts/test-*.sh)
+# suite_files — sets files=(…) to the scan set, relative to the current directory: every test file plus
+# every sourced test part (test-<x>.d/*.sh), so test code moved out of a runner is never exempted.
+suite_files() { files=(loomwright/scripts/test-*.sh loomwright/scripts/test-*.d/*.sh loomwright/scripts/adapters/*/test-*.sh scripts/test-*.sh); }
+# planted fixed sleep in a test PART under a mirror root: the same scan set must count it
+mkdir -p "$T0/mirror/loomwright/scripts/test-planted.d"
+printf '%s\n' '. "$HERE/test-planted.d/01-part.sh"' > "$T0/mirror/loomwright/scripts/test-planted.sh"
+printf '%s\n' 'run_thing &' 'sleep 0.3' 'assert' > "$T0/mirror/loomwright/scripts/test-planted.d/01-part.sh"
+case "$(cd "$T0/mirror" && suite_files && fsr_sites "${files[@]}")" in
+  *"loomwright/scripts/test-planted.d/01-part.sh	2	"*) ok "a planted fixed sleep in a sourced test part (test-*.d/*.sh) IS counted" ;;
+  *) no "a planted fixed sleep in a test part was NOT counted — the scan set misses test parts" ;; esac
+suite_files
 [ "${#files[@]}" -gt 50 ] && ok "scanned ${#files[@]} test files" || no "the globs matched only ${#files[@]} files — refusing a vacuous scan"
 if fsr_sites "${files[@]}" > "$T0/live.sites"; then ok "the counter ran on the live suite"; else no "the counter failed on the live suite — refusing a vacuous pass"; fi
 viol="$(ratchet "$BASELINE" "$(cut -f1 "$T0/live.sites" | env LC_ALL=C sort | uniq -c | awk '{ print $1, $2 }')")"
