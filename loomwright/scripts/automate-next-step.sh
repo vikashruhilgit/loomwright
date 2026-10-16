@@ -56,8 +56,8 @@
 # SIDE EFFECTS that cannot run hermetically go through overridable command lines (word-split, the
 # arguments appended):
 #   NEXT_STEP_WATCH_CMD   <rf> <item> <pr>          default: the §6 "Post-merge close-out" launch line
-#                                                   (env -u CLAUDE_PID -u CLAUDECODE nohup bash
-#                                                   automate-merge-watch.sh …, detached)
+#                                                   (nohup bash automate-merge-watch.sh …, detached;
+#                                                   the watcher drops the host session identity itself)
 #   NEXT_STEP_NOTIFY_CMD  <kind> <rf> <message>     default: awaiting_merge / escalated ⇒ a desktop
 #                                                   notification (notify-desktop.sh); ready_for_release
 #                                                   ⇒ `lane-park-notify` + the advisory `lane-readiness`
@@ -267,7 +267,7 @@ ns_watch() {
     # shellcheck disable=SC2086
     $NEXT_STEP_WATCH_CMD "$RF" "$ITEM" "$PR" </dev/null >/dev/null 2>&1 || ns_err "merge watcher launch failed (reported)"
   else
-    env -u CLAUDE_PID -u CLAUDECODE nohup bash "$HERE/automate-merge-watch.sh" "$RF" "$ITEM" "$PR" \
+    nohup bash "$HERE/automate-merge-watch.sh" "$RF" "$ITEM" "$PR" \
       </dev/null >"$AD/$RUN_ID.merge-watch.log" 2>&1 &
   fi
   return 0
