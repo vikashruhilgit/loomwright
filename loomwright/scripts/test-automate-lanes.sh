@@ -57,7 +57,8 @@
 #     unpushed-metadata refusal — and so fleet-closeout's waiting line — names the paths + two mutations
 #   AJ lane timeline: the seven steps from `## Progress` + Supervisor state (pick-guarded), boundaries,
 #     current-step state per lane state, a park before the drain stays on the step reached (L5 Launch Pad
-#     blocked, unpinned wordings) + mutation control, the JSON fields and the plain steps line; `waves` from the
+#     blocked, unpinned wordings, the pinned no-PR status_reason line) + mutation controls, the JSON fields
+#     and the plain steps line; `waves` from the
 #     parent run file's wave-build records (undated hand line, colon inside the parenthetical)
 #   E7-E9 init-check single-lane mode: branch mode required for N = 1 (fail CLOSED), no mode read for N > 1
 #   SL single-lane mode `--parallel 1` (twin-remediation/08b): lane.json single_lane (first leg) · lane-park seam ·
@@ -80,6 +81,9 @@
 #     `* ` / `+ ` / `N) ` entries parse like `- ` / `N. `, a section that exists but parses to no entry
 #     reads `unrun` (never `none`) with its own mutation control, and the not-run vocabulary matches
 #     whole phrases only ("not running hot" stays PASS) — AL22–AL22h
+#   AM superseded lane questions (L8, 2026-10-16): the lane abandons toolu_s1, re-asks toolu_s2 ⇒ s1 moves to
+#     questions/superseded/ naming s2 + one lane ## Progress line, lane-answer / --deliver-pending refuse s1 by
+#     name, the resume re-fire of s2 supersedes nothing, 0 pending and the lane reads its park + mutation control
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

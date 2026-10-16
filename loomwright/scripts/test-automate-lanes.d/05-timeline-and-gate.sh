@@ -45,6 +45,32 @@ aj4d() { ajp '- 2026-10-11T08:01:00Z picked a.md' "- 2026-10-11T08:20:00Z ran /a
 check "AJ4d unpinned Launch Pad wordings reach Plan; Supervisor / a PR URL reach Build" \
   "$(aj4d '— blocked: Launch Pad NO-GO (no PR)'),$(aj4d '(aborted, status_reason launch_pad_blocked)'),$(aj4d '— no PR: Supervisor failed after Launch Pad'),$(aj4d '→ PR https://x/pull/9 (Launch Pad brief reused)')" \
   "plan,plan,build,build"
+# AJ4e: the PINNED no-PR line (per-item-loop.md step 2) — its status_reason token decides Plan vs Build. The
+# Plan-stage set is written out HERE (never read back from the code), and every other value of the closed
+# AUTONOMOUS_RUN enum must read Build, so a new enum value has to be placed on purpose + mutation control.
+AJ4E_PLAN="launch_pad_blocked user_aborted_at_launch_pad launch_pad_cant_ask_non_interactive user_discarded_at_phase_6
+  user_aborted_at_no_go user_aborted_at_plan_review_fail rubric_dropped_from_brief concurrent_session_detected
+  non_interactive_without_fallback invalid_max_iterations conflicting_mode_flags run_lock_held"
+AJ4E_ENUM="$(grep -m1 '^- \*\*status_reason:\*\*' "$HERE/../skills/autonomous-loop/SKILL.md" | grep -o '"[a-z0-9_]*"' | tr -d '"')"
+AJ4E_BUILD=""; for x in $AJ4E_ENUM; do case " $(echo $AJ4E_PLAN) " in *" $x "*) ;; *) AJ4E_BUILD="$AJ4E_BUILD $x" ;; esac; done
+AJ4E_MISS=""; for x in $AJ4E_PLAN; do case " $(echo $AJ4E_ENUM) " in *" $x "*) ;; *) AJ4E_MISS="$AJ4E_MISS $x" ;; esac; done
+aj4e() { local r=""; for x in "$@"; do r="$r$(aj4d "— no PR: $x (why)"),"; done; printf '%s' "${r%,}"; }
+check "AJ4e every Plan-stage token is in the AUTONOMOUS_RUN enum, and the enum's other values number 13" \
+  "${AJ4E_MISS:-none}|$(echo $AJ4E_BUILD | wc -w | tr -d ' ')" "none|13"
+check "AJ4e2 every Plan-stage status_reason reaches Plan" "$(aj4e $AJ4E_PLAN | tr ',' '\n' | sort -u)" plan
+check "AJ4e3 every other enum value reaches Build" "$(aj4e $AJ4E_BUILD | tr ',' '\n' | sort -u)" build
+check "AJ4e4 a wrapped token still reads; unknown / free text fall back to the Launch Pad match" \
+  "$(aj4d '— no PR: `user_aborted_at_no_go` (why)'),$(aj4d '— no PR: "supervisor_checkpoint" (why)'),$(aj4d '— no PR: (user_aborted_at_plan_review_fail) (why)'),$(aj4d '— no PR: unknown (Launch Pad blocked)'),$(aj4d '— no PR: unknown (no reason given)'),$(aj4d '— no PR: blocked by Launch Pad')" \
+  "plan,build,plan,plan,build,plan"
+has "AJ4e5 per-item-loop.md step 2 pins the no-PR line" "$(cat "$HERE/../skills/automate-loop/per-item-loop.md")" \
+  '`<ts> ran /autonomous — no PR: <status_reason> (<one-line why>)`'
+sed 's/"concurrent_session_detected", //' "$S" > "$MUT/lanes-aj4e.sh"
+if ! cmp -s "$S" "$MUT/lanes-aj4e.sh" && bash -n "$MUT/lanes-aj4e.sh"; then
+  out="$(ajp '- 2026-10-11T08:01:00Z picked a.md' '- 2026-10-11T08:20:00Z ran /autonomous — no PR: concurrent_session_detected (two briefs)' '- 2026-10-11T08:20:05Z parked escalated (no PR)'
+         ( . "$MUT/lanes-aj4e.sh"; _lanes_timeline "$AJRF" "$AJ/lane/.supervisor" "$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')" escalated - ) | jq -r .current)"
+  check "AJ4f mutation (a Plan-stage token dropped from planstop) reads Build — the case AJ4e2 catches" "$out" build
+else bad "AJ4f mutation did not apply (planstop moved)"; fi
+rm -f "$MUT/lanes-aj4e.sh"
 ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md' \
   '- 2026-10-11T08:30:00Z ran /autonomous → PR https://x/pull/2 (SUPERVISOR_RESULT completed; heal PASS iter 1)' \
   '- 2026-10-11T08:31:00Z owned drain started' '- 2026-10-11T08:40:00Z drain round 3: fixed'
@@ -392,6 +418,77 @@ else
   out="$(VG_S="$T/vgmut/automate-lanes.sh" vg "$VGRF" reqs/pa16.md "$VGPR")"
   if [ "$out" != "$AL1_WANT" ]; then ok "AL10 AC9 mutation control: an unconditional ok verdict turns AL1 red (mutant prints: $out)"
   else bad "AL10 AC9 mutant still printed the AL1 verdict — AL1 is vacuous"; fi
+fi
+
+# ---- AM: superseded lane questions (L8 of run automate-2026-10-15-163325, 2026-10-16) ------------------
+# The incident: the lane asked toolu_s1 (relay-hook recorded it and deferred), could not exit deferred,
+# ended a PLAIN turn, and on `--continue` re-asked as toolu_s2, which the owner answered. toolu_s1 never
+# got an answer file, so "question file with no answer file" kept it pending: --inbox and the pane showed
+# it, lane-answer refused it ("parked on another question"), and the parked lane read awaiting_input
+# (refusing lane-convert-ready / wave-build / lane-remove) until the coordinator moved it by hand.
+# The rule: relay-hook recording a NEW id supersedes every older unanswered question of the lane.
+PAM=automate-2026-10-16-040000; RFAM="$P/.supervisor/automate/$PAM.md"; LAM="$T/work/primary-lanes/$PAM"
+printf '# Automate Run: %s\n\n## Progress\n' "$PAM" > "$RFAM"
+for n in 1 2; do run lane-create "$RFAM" reqs/a.md "$n" --parallel 2 >/dev/null; done
+QS1='[{"question":"Save the brief?","header":"Save","multiSelect":false,"options":[{"label":"Save and exit","description":"s"},{"label":"Revise","description":"r"}]}]'
+am_defer() { jq -n -c --arg id "$1" --argjson q "$QS1" '{type: "result", subtype: "success", stop_reason: "tool_deferred", session_id: "sess-123", deferred_tool_use: {id: $id, name: "AskUserQuestion", input: {questions: $q}}}'; }
+am_seq() { # <lane dir> <relay-hook script> — the L8 sequence up to the lane parking deferred on toolu_s2
+  # (the relay hook runs with the REAL automate-helpers.sh, so its ## Progress line lands in the lane run file)
+  local l="$1" hs="$2"
+  printf '# Automate Run: %s\n\n## Current\n- item: reqs/a.md | status: awaiting_merge | pr: https://github.com/o/r/pull/7 | branch: f\n- pause_reason: ready_for_release\n\n## Progress\n' \
+    "$PAM-${l##*/}" > "$l/.supervisor/automate/$PAM-${l##*/}.md"
+  hook_in PreToolUse "$l" toolu_s1 "$QS1" | LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" bash "$hs" relay-hook >/dev/null
+  STUB_MODE=ok LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$l" --owner-command "$OWN" >/dev/null; wait_gone "$l"   # a plain turn end
+  hook_in PreToolUse "$l" toolu_s2 "$QS1" | LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" bash "$hs" relay-hook >/dev/null
+  STUB_DEFER_LINE="$(am_defer toolu_s2)" STUB_MODE=defer LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$l" --owner-command "$OWN" --continue >/dev/null; wait_gone "$l"
+}
+am_pending() { ( . "$S"; _lanes_pending_questions "$1/.supervisor/inbox" | tr '\n' ' ' | sed 's/ $//' ); }
+am_ans() { printf '{"answers":{"0":"Save and exit"}}' | LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-answer "$1" "$2" --owner-command "$OWN" 2>&1; }
+LA1="$LAM/L1"; am_seq "$LA1" "$S"
+SUPF="$LA1/.supervisor/inbox/questions/superseded/toolu_s1.json"
+check "AM1 the re-ask supersedes the abandoned question: only toolu_s2 is pending" "$(am_pending "$LA1")" toolu_s2
+check "AM2 the record is kept (moved, never deleted) and names the newer id" \
+  "$([ -e "$LA1/.supervisor/inbox/questions/toolu_s1.json" ] && echo live || echo moved):$(jq -r '[.id, .superseded_by, (.superseded_at | test("Z$")), (.questions | length)] | map(tostring) | join(",")' "$SUPF")" \
+  "moved:toolu_s1,toolu_s2,true,1"
+check "AM3 ONE lane ## Progress line names it" \
+  "$(grep -c '^- [0-9TZ:-]* question superseded: toolu_s1 by toolu_s2 (the lane re-asked; record kept in .supervisor/inbox/questions/superseded/)$' "$LA1/.supervisor/automate/$PAM-L1.md" | tr -d ' ')" 1
+out="$(am_ans "$LA1" toolu_s1)"; rc=$?
+check "AM4 lane-answer on the superseded id refuses, naming the newer id" \
+  "$rc:$out" "1:automate-lanes: lane-answer: refused — toolu_s1 superseded by toolu_s2 (the lane re-asked; answer toolu_s2)"
+check "AM4b … and writes no answer file for it" "$([ -e "$LA1/.supervisor/inbox/answers/toolu_s1.json" ] && echo written || echo none)" none
+jq -n -c --arg id toolu_s1 '{schema_version: 1, lane: "L1", tool_use_id: $id, answers: {"0": "Save and exit"}, note: null, via: "cli", held_at: "2026-10-16T03:50:00Z"}' \
+  > "$P/.supervisor/automate/$PAM.L1.answer-pending.json"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-answer "$LA1" --deliver-pending --owner-command "$OWN" 2>&1)"; rc=$?
+check "AM5 a HELD answer kept for the superseded id is discarded on delivery, naming the newer id" \
+  "$rc:$out:$([ -e "$P/.supervisor/automate/$PAM.L1.answer-pending.json" ] && echo kept || echo discarded)" \
+  "1:automate-lanes: lane-answer: refused — the pending answer for L1 no longer matches (toolu_s1 superseded by toolu_s2 (the lane re-asked; answer toolu_s2)); discarded — the question is shown again:discarded"
+out="$(am_ans "$LA1" toolu_s2)"; rc=$?
+check "AM6 the newer question is answered as usual" "$rc:$(jq -r '.answers["Save the brief?"]' "$LA1/.supervisor/inbox/answers/toolu_s2.json")" "0:Save and exit"
+wait_gone "$LA1"
+out="$(hook_in PreToolUse "$LA1" toolu_s2 "$QS1" | bash "$S" relay-hook)"
+check "AM7 the resume re-fires the SAME id: allowed with its answer, nothing superseded" \
+  "$(jq -r '.hookSpecificOutput.permissionDecision' <<<"$out"):$(ls "$LA1/.supervisor/inbox/questions/superseded" | tr '\n' ' ')" "allow:toolu_s1.json "
+# AM7b the coordinator's hand fix on 2026-10-16 left a record with no superseded_by: still refused, by its own wording
+jq -n -c --argjson q "$QS1" '{id: "toolu_h1", asked_at: "2026-10-16T03:40:00Z", questions: $q}' > "$LA1/.supervisor/inbox/questions/superseded/toolu_h1.json"
+out="$(am_ans "$LA1" toolu_h1)"; rc=$?
+check "AM7b a hand-moved record (no superseded_by) is refused as superseded, naming no id" \
+  "$rc:$out" "1:automate-lanes: lane-answer: refused — toolu_h1 superseded by a newer question (its record names none)"
+check "AM8 the two-question sequence leaves 0 pending" "$(am_pending "$LA1")" ""
+JAM="$(bash "$S" lane-status "$RFAM" --json 2>/dev/null)"
+check "AM9 lane-status reads the lane's real state (its park), not awaiting_input; no questions (the pane)" \
+  "$(jq -r '.lanes[] | select(.lane == "L1") | "\(.state):\(.questions | length)"' <<<"$JAM")" "ready_for_release:0"
+has "AM10 lane-status --inbox lists nothing" "$(run lane-status "$RFAM" --inbox)" "inbox — 0 pending human question call(s)"
+hasnt "AM11 lane-remove no longer refuses awaiting_input" "$(run lane-remove "$LA1")" "awaiting_input"
+# AM12 mutation control: relay-hook without the supersede step replays the incident on a fresh lane —
+# toolu_s1 stays pending, so AM1/AM8 and AM9 would be red.
+sed 's/ && _lanes_supersede_older "\$root" "\$id"$//' "$S" > "$MUT/automate-lanes.sh"
+if cmp -s "$S" "$MUT/automate-lanes.sh" || ! bash -n "$MUT/automate-lanes.sh"; then
+  bad "AM12 mutant not built (sed matched nothing, or bash -n failed)"
+else
+  LA2="$LAM/L2"; am_seq "$LA2" "$MUT/automate-lanes.sh"; am_ans "$LA2" toolu_s2 >/dev/null; wait_gone "$LA2"
+  JAM="$(bash "$S" lane-status "$RFAM" --json 2>/dev/null)"
+  check "AM12 mutation (supersede step removed): the abandoned question stays pending and the lane reads awaiting_input" \
+    "$(am_pending "$LA2")|$(jq -r '.lanes[] | select(.lane == "L2") | .state' <<<"$JAM")" "toolu_s1|awaiting_input"
 fi
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"

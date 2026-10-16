@@ -43,7 +43,7 @@ lanes_relay_hook() {
   mkdir -p "$(dirname "$q")" "$(dirname "$a")" 2>/dev/null
   if [ ! -s "$a" ]; then
     jq -c --arg at "$(now_utc)" '{id: .tool_use_id, asked_at: $at, questions: .tool_input.questions}' <<<"$in" > "$q.tmp.$$" \
-      && mv "$q.tmp.$$" "$q"
+      && mv "$q.tmp.$$" "$q" && _lanes_supersede_older "$root" "$id"
     # No policy answer (policy null, `human`, any error) ⇒ exactly the pre-policy defer.
     _lanes_policy_apply "$root" "$q" "$a" \
       || { echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"defer"}}'; return 0; }
@@ -179,7 +179,8 @@ lanes_answer() {
     _lanes_deliver_pending "$owner"; return $?
   fi
   case "$id" in ''|*[!A-Za-z0-9_-]*) die "lane-answer: bad tool_use_id '$id'" ;; esac
-  local qf="$LN_INBOX/questions/$id.json" af="$LN_INBOX/answers/$id.json" last in out rc pf
+  local qf="$LN_INBOX/questions/$id.json" af="$LN_INBOX/answers/$id.json" last in out rc pf sup
+  if sup="$(_lanes_superseded_msg "$LN_INBOX" "$id")"; then die "lane-answer: refused — $sup"; fi
   [ -s "$qf" ] || die "lane-answer: refused — no recorded question $id"
   [ -e "$af" ] && die "lane-answer: refused — $id already answered"
   last="$(_lanes_answer_parked "$id")" || die "lane-answer: refused — $last"
@@ -219,7 +220,7 @@ lanes_answer() {
 # _lanes_deliver_pending <owner_cmd> — the delivery form (see lanes_answer). Nothing is written into
 # the lane before every re-check and the full _lanes_gate pass.
 _lanes_deliver_pending() {
-  local owner="$1" pf id qf af last in out sid note via rc
+  local owner="$1" pf id qf af last in out sid note via rc sup
   pf="$(_lanes_pending_file)"
   [ -s "$pf" ] || die "lane-answer: refused — no pending answer for $LN_LANE ($(basename "$pf"))"
   _discard() { rm -f "$pf"; die "lane-answer: refused — the pending answer for $LN_LANE no longer matches ($1); discarded — the question is shown again"; }
@@ -227,6 +228,7 @@ _lanes_deliver_pending() {
   case "$id" in ''|*[!A-Za-z0-9_-]*) _discard "bad tool_use_id" ;; esac
   [ "$(jq -r '.lane // empty' "$pf" 2>/dev/null)" = "$LN_LANE" ] || _discard "recorded for another lane"
   qf="$LN_INBOX/questions/$id.json"; af="$LN_INBOX/answers/$id.json"
+  if sup="$(_lanes_superseded_msg "$LN_INBOX" "$id")"; then _discard "$sup"; fi
   [ -s "$qf" ] || _discard "no recorded question $id"
   [ -e "$af" ] && _discard "$id already answered"
   last="$(_lanes_answer_parked "$id")" || _discard "$last"

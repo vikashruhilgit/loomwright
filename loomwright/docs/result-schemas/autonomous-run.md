@@ -59,7 +59,7 @@ AUTONOMOUS_RUN:
 |---|---|
 | `done` | `null` (rubric satisfied or no rubric present), `"user_stopped_at_rubric_gate"` (user accepted partial rubric; PR exists, run ended on user's terms), `"user_stopped_at_no_rubric_gate"` (v14.0.0+; user picked stop at the no-rubric gate), `"no_rubric_in_non_interactive"` (v14.0.0+; non-interactive fallback at no-rubric gate — see Non-interactive fallback policy in `skills/autonomous-loop/SKILL.md` §"No-rubric gate") |
 | `paused_max_iterations` | `"max_iterations_reached"` |
-| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"`, `"invalid_max_iterations"`, **v14.0.0+:** `"non_interactive_without_fallback"`, `"conflicting_mode_flags"`, `"iter_pr_base_mismatch"`, `"rubric_gate_closed_non_interactive"`, `"user_aborted_gh_retry"`, **v14.2.0+:** `"launch_pad_blocked"`, `"user_aborted_at_launch_pad"`, **agnostic-phase1/04:** `"review_heal_escalated_non_interactive"`, `"launch_pad_cant_ask_non_interactive"` |
+| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"`, `"invalid_max_iterations"`, **v14.0.0+:** `"non_interactive_without_fallback"`, `"conflicting_mode_flags"`, `"iter_pr_base_mismatch"`, `"rubric_gate_closed_non_interactive"`, `"user_aborted_gh_retry"`, **v14.2.0+:** `"launch_pad_blocked"`, `"user_aborted_at_launch_pad"`, **agnostic-phase1/04:** `"review_heal_escalated_non_interactive"`, `"launch_pad_cant_ask_non_interactive"`, **red-team-hardening/06:** `"run_lock_held"`, `"token_ceiling_reached"` |
 | `failed` | `"supervisor_failed_other"`, **v14.0.0+:** `"supervisor_base_branch_mismatch"`, **v14.8.0+:** `"preflight_overlap_detected"` |
 
 Reason-string meanings:
@@ -102,6 +102,11 @@ Two new `policy_decisions[].decision` values also land in v14.2.0 (both audit-on
 
 - `"review_heal_escalated_non_interactive"` — EVALUATE's chained review-and-heal returned `ESCALATED` while the loop runs with `--non-interactive-fallback` (no TTY): nobody can pick continue / stop, so the loop asks nothing and aborts. Pairs with `status: aborted`; the PR stays open with its posted findings. See `skills/autonomous-loop/SKILL.md` §"EVALUATE review-heal step".
 - `"launch_pad_cant_ask_non_interactive"` — the inlined Launch Pad stopped at a question gate it could not ask (it runs with `--non-interactive` under `--non-interactive-fallback`): `LAUNCH_PAD_RESULT.status` is `blocked` or `aborted` and its `summary` leads with the gate's named `*_non_interactive` status (the block has no key for it). Replaces `launch_pad_blocked` / `user_aborted_at_launch_pad` for that case, since no user aborted; summary.md keeps Launch Pad's `summary` verbatim on its `launch_pad_summary` line. Pairs with `status: aborted`. Pre-EXECUTE; `total_iterations: 0`.
+
+**red-team-hardening/06 status_reason additions** (the run lock and the `--max-tokens` ceiling; both were emitted before they were listed here):
+
+- `"run_lock_held"` — INIT found `.supervisor/run.lock` held by another live run (`run-lock.sh acquire` printed `run_lock_held owner=<label> pid=<pid> age=<s>`). Pairs with `status: aborted`. Pre-EXECUTE; `total_iterations: 0`. See `skills/autonomous-loop/SKILL.md` §"INIT" (the `--max-tokens N` token ceiling paragraph).
+- `"token_ceiling_reached"` — EVALUATE's per-iteration ledger check found the session's token TOTAL over `--max-tokens N`, or the ledger unreadable. Pairs with `status: aborted`; the iteration that ran keeps its entry in `iterations[]`.
 
 **Validation rules:**
 - No SubagentStop hook validates this block (autonomous-layer-only). The v1 → v2 bump in v14.0.0 is therefore forward-only — schema-1 emissions remain accepted by downstream tooling. Parsers SHOULD accept either `schema_version: 1` or `schema_version: 2` and SHOULD treat unrecognized `status_reason` values as opaque strings rather than rejecting.

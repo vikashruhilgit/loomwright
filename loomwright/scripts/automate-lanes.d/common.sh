@@ -141,15 +141,68 @@ _lanes_clip() {
   esac
 }
 
-# _lanes_pending_question <inbox> — prints the first recorded question id with no answer file.
-_lanes_pending_question() {
+# _lanes_pending_questions <inbox> — THE pending-question reader: every recorded question id with no
+# answer file, one per line. Every reader goes through it (_lanes_pending_question, lane-status's
+# questions array — so lane-wait and the /lanes pane — `--inbox`, the lane-wait Stop hook). A question
+# the lane abandoned and re-asked was moved to questions/superseded/ (_lanes_supersede_older), which
+# the `questions/*.json` glob never matches.
+_lanes_pending_questions() {
   local q id
   for q in "$1"/questions/*.json; do
     [ -f "$q" ] || continue
     id="$(basename "$q" .json)"
-    [ -e "$1/answers/$id.json" ] || { printf '%s' "$id"; return 0; }
+    [ -e "$1/answers/$id.json" ] || printf '%s\n' "$id"
   done
-  return 1
+}
+
+# _lanes_pending_question <inbox> — prints the first pending question id; returns 1 when there is none.
+_lanes_pending_question() {
+  local id; id="$(_lanes_pending_questions "$1" | head -1)"
+  [ -n "$id" ] || return 1
+  printf '%s' "$id"
+}
+
+# _lanes_supersede_older <lane_root> <new_id> — THE supersede rule, applied by relay-hook when it records
+# a question: a lane runs ONE session and a deferred question ends its process, so a NEW question
+# (another tool_use_id) from the lane means every older unanswered one was abandoned — the session
+# ended a plain turn and re-asked (L8, 2026-10-16), or a bundled call was denied and re-asked. Each
+# moves to questions/superseded/<id>.json (the record is kept, never deleted) with `superseded_by` and
+# `superseded_at` added, and ONE lane `## Progress` line names them. A resume re-fires the SAME id after
+# its answer, so a question never supersedes itself. Fail-SAFE: a failed move leaves the question
+# pending, a failed annotation or Progress append is skipped, and nothing here blocks the hook's reply.
+_lanes_supersede_older() {
+  local root="$1" new="$2" inbox="$1/.supervisor/inbox" sd old ids="" run
+  sd="$inbox/questions/superseded"
+  while IFS= read -r old; do
+    [ -n "$old" ] && [ "$old" != "$new" ] || continue
+    mkdir -p "$sd" 2>/dev/null && mv -f "$inbox/questions/$old.json" "$sd/$old.json" 2>/dev/null || continue
+    jq -c --arg by "$new" --arg at "$(now_utc)" '. + {superseded_by: $by, superseded_at: $at}' "$sd/$old.json" \
+      > "$sd/$old.json.tmp.$$" 2>/dev/null && mv "$sd/$old.json.tmp.$$" "$sd/$old.json" || rm -f "$sd/$old.json.tmp.$$"
+    ids="$ids${ids:+, }$old"
+  done <<EOF
+$(_lanes_pending_questions "$inbox")
+EOF
+  [ -n "$ids" ] || return 0
+  run="$(jq -r '.run_id // empty' "$root/.supervisor/lane.json" 2>/dev/null)"
+  case "$run" in ''|*/*|.*) return 0 ;; esac
+  bash "$HELPERS" progress-append "$root/.supervisor/automate/$run.md" \
+    "$(now_utc) question superseded: $ids by $new (the lane re-asked; record kept in .supervisor/inbox/questions/superseded/)" >/dev/null 2>&1 || true
+  return 0
+}
+
+# _lanes_superseded_by <inbox> <id> — 0 when <id> was superseded (no live question file, a record under
+# questions/superseded/); prints the newer id, or nothing when the record names none (a hand move).
+_lanes_superseded_by() {
+  [ -f "$1/questions/superseded/$2.json" ] && [ ! -f "$1/questions/$2.json" ] || return 1
+  jq -r '.superseded_by // empty' "$1/questions/superseded/$2.json" 2>/dev/null
+  return 0
+}
+
+# _lanes_superseded_msg <inbox> <id> — the refusal text for a superseded id, or returns 1.
+_lanes_superseded_msg() {
+  local by; by="$(_lanes_superseded_by "$1" "$2")" || return 1
+  if [ -n "$by" ]; then printf '%s superseded by %s (the lane re-asked; answer %s)' "$2" "$by" "$by"
+  else printf '%s superseded by a newer question (its record names none)' "$2"; fi
 }
 
 # ---- meta-sync (always with --branch) -----------------------------------------------------------

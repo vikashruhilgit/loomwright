@@ -693,20 +693,28 @@ hasnt "AD11b … and no 'none answered' header while a lane has one" "$out" "pol
 check "AD11c --json carries the digest" "$(run lane-status "$RF8" --json | jq -c '.lanes[] | select(.lane == "L2") | .policy | [.answered, .first_at, .last_gate, .last_label]')" \
   '[2,"2026-10-10T01:00:00Z","AUT-RESUME","Continue"]'
 check "AD11d no lane with a policy answer ⇒ the header line 'policy: none answered'" "$(run lane-status "$RF" | sed -n 2p)" "policy: none answered"
-i=0; for f in "$L82"/.supervisor/inbox/questions/*.json "$L81"/.supervisor/inbox/questions/*.json; do
+# A lane holds ONE pending call: L2 asked p2–p7 unanswered, then p8, and each newly recorded question
+# superseded the one before it (a policy-answered p8 is still a newer question). The multi-question call is L3's own.
+check "AD12g L2's unanswered p2–p7 were each superseded by the next question it asked (records kept)" \
+  "$(jq -r '"\(.id)>\(.superseded_by)"' "$L82"/.supervisor/inbox/questions/superseded/*.json | tr '\n' ' ')" \
+  "toolu_p2>toolu_p3 toolu_p3>toolu_p4 toolu_p4>toolu_p6 toolu_p6>toolu_p7 toolu_p7>toolu_p8 "
+check "AD12h … one lane ## Progress line per supersede" "$(grep -c "^helpers progress-append $L82/.supervisor/automate/$PARENT8-L2.md [0-9TZ:-]* question superseded: toolu_p[0-9] by toolu_p[0-9] " "$HELPERS_LOG" | tr -d ' ')" 5
+out="$(qhook "$LR8/L3" toolu_p9 "$QM" | bash "$S" relay-hook)"
+check "AD12i a multi-question call with one human question in L3 ⇒ defer" "$out:$(ad_ans "$LR8/L3" toolu_p9)" "$DEFER:none"
+i=0; for f in "$L82"/.supervisor/inbox/questions/*.json "$L81"/.supervisor/inbox/questions/*.json "$LR8/L3"/.supervisor/inbox/questions/*.json; do
   i=$((i + 1)); case "$f" in */toolu_p5.json) at="2026-10-10T00:00:01Z" ;; *) at="2026-10-10T00:00:1${i}Z" ;; esac
   jq -c --arg at "$at" '.asked_at = $at' "$f" > "$T/ad.q" && mv "$T/ad.q" "$f"
 done
 out="$(run lane-status "$RF8" --inbox)"
 check "AD12 --inbox: ONE list of pending human questions, oldest asked_at first" "$(printf '%s\n' "$out" | sed -n '1,3p')" \
-  "lane-status: inbox — 6 pending human question call(s), oldest first
+  "lane-status: inbox — 2 pending human question call(s), oldest first
 2026-10-10T00:00:01Z L1 toolu_p5 AUT-QUEUE — Process the queue?
     options: Process (Recommended) | Stop"
 hasnt "AD12b … a policy-answered question is not in the inbox" "$out" "toolu_p1"
 hasnt "AD12c … nor the second one" "$out" "toolu_p8"
-has "AD12d … a multi-question call lists each question" "$out" "L2 toolu_p3 Color — Which color?"
+has "AD12d … a multi-question call lists each question" "$out" "L3 toolu_p9 Color — Which color?"
 check "AD12e … every pending call appears, in asked_at order" "$(printf '%s\n' "$out" | awk '/^2026/ { print $3 }' | uniq | tr '\n' ' ')" \
-  "toolu_p5 toolu_p2 toolu_p3 toolu_p4 toolu_p6 toolu_p7 "
+  "toolu_p5 toolu_p9 "
 check "AD12f a lane-status --inbox with no lane table is fail-SAFE (exit 0)" "$(run lane-status "$T/none.md" --inbox >/dev/null; echo $?)" 0
 
 # ---- AE: lane-convert-ready finalizes a closed-out lane (A1) -----------------------------------------

@@ -79,10 +79,9 @@ _lanes_last_actions() {
 # _lanes_questions_json <inbox> <now_epoch> — JSON array of unanswered questions (asked_at, waiting_s).
 _lanes_questions_json() {
   local q id at e w out="[]" nx
-  for q in "$1"/questions/*.json; do
-    [ -f "$q" ] || continue
-    id="$(basename "$q" .json)"
-    [ -e "$1/answers/$id.json" ] && continue
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    q="$1/questions/$id.json"
     at="$(jq -r '.asked_at // empty' "$q" 2>/dev/null)"
     w=null; if e="$(_lanes_epoch "$at")"; then w=$(( $2 - e )); fi
     # `items`: every question of the call, in order — its index is lane-answer's answer key — with its
@@ -98,7 +97,9 @@ _lanes_questions_json() {
                  | {label: (.label | tostring), description: (.description // null)}))}))}]' <<<"$out" 2>/dev/null)" \
       || nx="$(jq -c --arg id "$id" '. + [{id: $id, asked_at: null, waiting_s: null, question: null, items: []}]' <<<"$out")"
     out="$nx"
-  done
+  done <<EOF
+$(_lanes_pending_questions "$1")
+EOF
   printf '%s' "$out"
 }
 
@@ -122,15 +123,16 @@ _lanes_inbox() {
   tab="$(printf '\t')"
   while IFS="$tab" read -r lane path _; do
     case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
-    for q in "$path"/.supervisor/inbox/questions/*.json; do
-      [ -f "$q" ] || continue
-      id="$(basename "$q" .json)"
-      [ -e "$path/.supervisor/inbox/answers/$id.json" ] && continue
+    while IFS= read -r id; do
+      [ -n "$id" ] || continue
+      q="$path/.supervisor/inbox/questions/$id.json"
       rows="$rows$(jq -c --arg l "$lane" --arg id "$id" '{at: ((.asked_at // "unknown") | tostring), lane: $l, id: $id,
           qs: (if (.questions | type) == "array" then .questions else [] end)}' "$q" 2>/dev/null \
         || jq -n -c --arg l "$lane" --arg id "$id" '{at: "unknown", lane: $l, id: $id, qs: []}')
 "
-    done
+    done <<EOF
+$(_lanes_pending_questions "$path/.supervisor/inbox")
+EOF
   done < "$1"
   printf '%s' "$rows" | jq -r -s 'sort_by(.at, .lane, .id)
     | "lane-status: inbox — \(length) pending human question call(s), oldest first",
@@ -301,9 +303,11 @@ _lanes_resolve() {
 # lane state (`active`, `waiting` on the owner, `held`, `trouble`; every step `done` once merged/done).
 # A step passed without a line of its own reads `done` with null times: the run never said when it ran.
 # Boundaries: the `picked` line ends Pick and starts Plan; a Launch Pad "brief saved" line ends Plan and starts Build (/autonomous hands the brief to
-# the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too, one with no PR
-# URL that names Launch Pad (blocked, NO-GO, `launch_pad_blocked` — the wording is not pinned) and neither the
-# Supervisor nor a saved brief reaches only Plan (the Supervisor never started).
+# the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too. The pinned no-PR
+# line (`ran /autonomous — no PR: <status_reason> (…)`, per-item-loop.md step 2) reaches only Plan when its
+# status_reason token (snake_case, a backtick/quote/paren around it tolerated) is one of `planstop` (the Supervisor
+# never started), else Build; `unknown` or any other free-text line with no
+# PR URL that names Launch Pad and neither the Supervisor nor a saved brief reaches only Plan too.
 # A `parked …` line is the Merge gate's only once the lane reached Drain; a park before that (Launch Pad
 # blocked, an escalated build) reaches no step of its own — it joins the furthest step reached, which the
 # lane state then colors, and every later step stays `pending`.
@@ -332,13 +336,21 @@ _lanes_timeline() {
     def ids: ["pick", "plan", "build", "heal", "drain", "decide", "merge"];
     def names: ["Pick", "Plan", "Build", "Heal", "Drain", "Decide", "Merge"];
     def ord: . as $id | ids | index($id);
+    # AUTONOMOUS_RUN status_reasons that stop /autonomous before the Supervisor starts (INIT, Launch Pad, brief checks).
+    def planstop: ["launch_pad_blocked", "user_aborted_at_launch_pad", "launch_pad_cant_ask_non_interactive",
+      "user_discarded_at_phase_6", "user_aborted_at_no_go", "user_aborted_at_plan_review_fail", "rubric_dropped_from_brief",
+      "concurrent_session_detected", "non_interactive_without_fallback", "invalid_max_iterations", "conflicting_mode_flags",
+      "run_lock_held"];
+    # The token of the pinned no-PR line (per-item-loop.md step 2), tolerating one backtick / quote / paren around it.
+    def noprtok: (capture("no PR: [`\"(]?(?<r>[a-z]+_[a-z0-9_]+)") | .r) // null;
     def cls:
       if test("^parked ") then ["park"]
       elif test("^(closeout |auto-finalized|trail-pr|lane park notify|converted |merged)") then ["merge"]
       elif test("^(dismissed|owner decisions)") then ["decide"]
       elif test("owned drain started|^drain |re-drain") then ["drain"]
       elif test("^/autonomous done") then ["heal"]
-      elif test("^ran /autonomous") then (if test("heal (PASS|FAIL|ESCALATED)") then ["build", "heal"]
+      elif test("^ran /autonomous") then (if noprtok != null then (if (noprtok | IN(planstop[])) then ["plan"] else ["build"] end)
+                                         elif test("heal (PASS|FAIL|ESCALATED)") then ["build", "heal"]
                                          elif (test("PR https?://") | not) and test("launch[ _-]?pad"; "i")
                                               and (test("supervisor|brief saved"; "i") | not) then ["plan"] else ["build"] end)
       elif test("^supervisor:"; "i") then ["build"]

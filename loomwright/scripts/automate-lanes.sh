@@ -100,6 +100,9 @@
 #                                       and `"single_lane": true` (appended last) ONLY from an explicit
 #                                       `--parallel 1` — absent otherwise, never inferred from `parallel`.
 #   <lane>/.supervisor/inbox/questions/<tool_use_id>.json   written by relay-hook (the lane's own hook)
+#   <lane>/.supervisor/inbox/questions/superseded/<tool_use_id>.json   an abandoned question, moved there by
+#                                       relay-hook when the lane asks a newer one (+ `superseded_by`,
+#                                       `superseded_at`); kept as the record, never pending, never answerable
 #   <lane>/.supervisor/inbox/answers/<tool_use_id>.json     written by lane-answer (`source: "human"`), or by
 #                                       relay-hook ITSELF — the lane's own hook, not the coordinator — for a
 #                                       policy answer (`source: "policy"`, `policy_sha`, `gate`, `via: "policy"`)
@@ -169,6 +172,10 @@
 # is refused. The note IS delivered: on resume relay-hook returns `allow` with `updatedInput.answers`
 # and `updatedInput.annotations` = {<question>: {notes: <note>}} for every answered question.
 # A PermissionRequest[AskUserQuestion] (a question bundled with other calls) is denied with a re-ask.
+# Superseded questions: when relay-hook records a NEW question id, every older question of the lane with
+# no answer file was abandoned (a deferred question ends the process, so a new id means the session moved
+# on) and moves to questions/superseded/ with one lane `## Progress` line (_lanes_supersede_older).
+# Pending = _lanes_pending_questions, the one reader; lane-answer refuses a superseded id by name.
 # Policy answers (parallel-automate/21 B6): before deferring, relay-hook asks `lane-policy.sh decide`
 # (an EXACT catalog lookup, never a model judgement) against lane.json's carried `policy`. Only a full
 # answer — every question of the call a catalogued `allowed` gate with a policy label — is applied: it
