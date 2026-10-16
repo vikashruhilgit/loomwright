@@ -65,3 +65,9 @@ none
 loomwright/commands/automate.md
 loomwright/skills/automate-loop/SKILL.md
 changelog.d/as25-automate-load-by-mode.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-16T01:40:37Z
+- **Brief:** .supervisor/jobs/done/2026-10-15-automate-load-by-mode.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/562
