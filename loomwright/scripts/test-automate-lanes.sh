@@ -1040,6 +1040,15 @@ out="$(LOOMWRIGHT_LANES_LSOF="$T/no-lsof" LOOMWRIGHT_LANES_PROC="$T/no-proc" cpl
 check "V25c no cwd reader (lsof, /proc) ⇒ leaks: unknown, exit 0, the body naming why" \
   "$rc:$(printf '%s\n' "$out" | head -1):$(printf '%s\n' "$out" | grep -cxF -- "- claude-p: unknown — no reader for a process's working directory (lsof, /proc)" | tr -d ' ')" \
   "0:leaks: unknown — claude-p unreadable (vs snapshot $SFCP):1"
+# V25e no lsof ⇒ the /proc fallback attributes by `<proc>/<pid>/cwd` (a fake tree: V24's orphan in this
+# run's lane, V22's foreign orphan in its own lane) — the minimal-container path, not only lsof's
+mkdir -p "$T/fakeproc/self" "$T/fakeproc/$OO" "$T/fakeproc/$FO"
+ln -s "$CPL1" "$T/fakeproc/$OO/cwd"; ln -s "$CPF/L1" "$T/fakeproc/$FO/cwd"
+out="$(LOOMWRIGHT_LANES_LSOF="$T/no-lsof" LOOMWRIGHT_LANES_PROC="$T/fakeproc" cpl "$RFCP")"
+check "V25e lsof absent, /proc present ⇒ this run's orphan found by its /proc cwd, the foreign one not" \
+  "$(printf '%s\n' "$out" | head -1):$(printf '%s\n' "$out" | grep -cxF -- "  + $OO $HL --resume orphan 30" | tr -d ' '):$(printf '%s\n' "$out" | grep -c "^  + $FO " | tr -d ' ')" \
+  "leaks: found — claude-p:1:0"
+rm -rf "$T/fakeproc"
 # V25d the unknown sniff is claude-p's alone: a lanes-dir entry NAMED like the fail-SAFE line is a leak
 : > "$T/work/primary-lanes/unknown — decoy"
 out="$(cpl "$RFCP")"
