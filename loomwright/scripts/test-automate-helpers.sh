@@ -194,7 +194,7 @@
 #      unavailable, a `running` item, a missing or foreign marker, a foreign item or PR, a
 #      missing / unreadable / item-less run file ⇒ refuse, usage errors exit 1, READ-ONLY, the
 #      delayed-marker leg (marker ~2s after a --wait 5 call ⇒ ask) and a --wait 1 refusal; the
-#      prose-order leg (QG3) over per-item-loop.md's park-first list and the intake.md leg (QG4).
+#      prose-order leg (QG3) over legacy-tail.md's park-first list and the intake.md leg (QG4).
 #      Every leg has a gated mutant (anchor unique, non-empty, differs, `bash -n`; prose mutants:
 #      non-empty, differs, no line lost) that turns it red.
 
@@ -6068,10 +6068,13 @@ qg_mut_check "QG2a': the judge appends to the run file" '  [ -n "$line" ] || { e
 qg_mut_check "QG2a': the judge appends to the merge-watch marker" '  mp="$(awk -F' "  printf x >> \"\$marker\"; mp=\"\$(awk -F'\\t' '\$1 == \"pr_url\" { print \$2; exit }' \"\$marker\" 2>/dev/null || true)\"" p_ro unchanged
 qg_mut_check "QG2k: no-marker refusal turned into a pass" '    need_marker) echo "refuse — no merge-watch marker' '    need_marker) ;;' p_never "$P_NEVER"
 
-# ---- QG3. prose order (AC5, AC9): the park-first list in per-item-loop.md puts the park write,
-# the watcher arm and the lock release BEFORE park-ask-gate, and park-ask-gate before the ask.
+# ---- QG3. prose order (AC5, AC9): the park-first list puts the park write, the watcher arm and
+# the lock release BEFORE park-ask-gate, and park-ask-gate before the ask. The list moved verbatim
+# with the "Dismissed-findings decision step (before the park)" subsection from per-item-loop.md to
+# legacy-tail.md (automate-speed/06: the default tail is scripts/automate-next-step.sh, the prose
+# is the --legacy path), so QG_LOOP reads that file; every mutant below is built from it.
 QG_LEAD='**Order — sequential interactive READY park (park first, then ask):**'
-QG_LOOP="$HERE/../skills/automate-loop/per-item-loop.md"
+QG_LOOP="$HERE/../skills/automate-loop/legacy-tail.md"
 qg_list() { QG_H="$QG_LEAD" awk 'BEGIN { h = ENVIRON["QG_H"] } $0 == h { f = 1; next } f && /^[0-9]+\. / { s = 1; print; next } f && s { exit }' "$1"; }
 qg_idx() { local n; n="$(grep -nF -m1 -- "$2" "$1" 2>/dev/null)"; n="${n%%:*}"; echo "${n:-0}"; }
 qg_order() {  # <md> — prints the verdict line the leg compares
@@ -6087,7 +6090,7 @@ qg_order() {  # <md> — prints the verdict line the leg compares
     echo "bad order: park=$p watcher=$w release=$r gate=$g ask=$a"
   fi
 }
-qg_is "QG3a per-item-loop.md park-first list: park write, watcher, lock release precede park-ask-gate --wait 75, which precedes the ask" "$(qg_order "$QG_LOOP")" "park-first"
+qg_is "QG3a legacy-tail.md park-first list: park write, watcher, lock release precede park-ask-gate --wait 75, which precedes the ask" "$(qg_order "$QG_LOOP")" "park-first"
 QG_CITED='### Dismissed-findings decision step (before the park)'
 qg_lead() { if [ "$(grep -cxF -- "$QG_LEAD" "$1")" = 1 ] && grep -qxF -- "$QG_CITED" "$1"; then printf ok; else printf bad; fi; }
 qg_is "QG3a' the lead line is unique and the cited heading is byte-unchanged" "$(qg_lead "$QG_LOOP")" ok

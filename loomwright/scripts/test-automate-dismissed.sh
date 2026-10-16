@@ -609,6 +609,28 @@ sub_body() { awk -v h="$SUBH" '$0 == h { f = 1; next } f && /^### / { exit } f {
 SUBF="$TOP/subsection.md"; sub_body > "$SUBF"
 
 grep -qxF -- "$SUBH" "$SK" && ok "B: SKILL carries the subsection heading" || no "B: SKILL lacks '$SUBH'"
+# Where the moved rules now live (automate-speed/06). §6 step 4 GATE and this subsection moved verbatim
+# from per-item-loop.md to legacy-tail.md (the --legacy path; the default tail is
+# scripts/automate-next-step.sh). The assembled $SK includes legacy-tail.md through its SKILL.md
+# split block, so the B legs below read the moved text there. They read the FIRST match, so each
+# anchor must occur exactly once in $SK — in legacy-tail.md, never in a per-item-loop.md pointer stub.
+PIL="$REPO/loomwright/skills/automate-loop/per-item-loop.md"; LGT="$REPO/loomwright/skills/automate-loop/legacy-tail.md"
+anchor_home() {  # <assembled> <stub file> <legacy file> <anchor> — `once`, or the offending counts
+  local a b c
+  a="$(grep -cF -- "$4" "$1")"; b="$(grep -cF -- "$4" "$2")"; c="$(grep -cF -- "$4" "$3")"
+  if [ "$a" = 1 ] && [ "$b" = 0 ] && [ "$c" = 1 ]; then echo once; else echo "bad assembled=$a stub=$b legacy=$c"; fi
+}
+for AH in "4. **GATE**" "$SUBH" '**Order — sequential interactive READY park (park first, then ask):**'; do
+  o="$(anchor_home "$SK" "$PIL" "$LGT" "$AH")"
+  [ "$o" = once ] && ok "B: anchor lives once, in legacy-tail.md only: $AH" || no "B: anchor '$AH' not unique to legacy-tail.md: $o"
+  # mutant: a per-item-loop.md stub that reuses the anchor (appended to a copy) ⇒ the leg goes red
+  AHM="$TOP/stub-anchor-mutant.md"; { cat "$PIL"; printf '%s\n' "$AH"; } > "$AHM"
+  if [ -s "$AHM" ] && ! cmp -s "$PIL" "$AHM" && [ "$(wc -l < "$AHM")" -eq "$(( $(wc -l < "$PIL") + 1 ))" ]; then
+    [ "$(anchor_home "$SK" "$AHM" "$LGT" "$AH")" != once ] && ok "B: stub-anchor mutant ($AH in per-item-loop.md) turns the leg red" || no "B: stub-anchor mutant ($AH) did NOT discriminate"
+  else
+    no "B: stub-anchor mutant ($AH) not gated (empty, identical, or not one line longer)"
+  fi
+done
 # The decide-then-park list (an `escalated` park, every park under --non-interactive-fallback,
 # a lane's ready_for_release park): the ask (step 2) precedes the park write (step 4).
 s_ask="$(ln_of "$SUBF" "2. **Interactive**")"; s_park="$(ln_of "$SUBF" "4. Only then write the park state")"
