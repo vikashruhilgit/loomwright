@@ -12,8 +12,9 @@
 # substitution's status is not part of the pipeline, so a writer's EPIPE can no longer decide the
 # assertion. This gate keeps new ones out.
 #
-# Scope: loomwright/scripts/test-*.sh, loomwright/scripts/adapters/*/test-*.sh and root
-# scripts/test-*.sh — every file that mentions `pipefail`. Comment lines are ignored. Exit 0 = clean,
+# Scope: loomwright/scripts/test-*.sh, their sourced parts loomwright/scripts/test-*.d/*.sh,
+# loomwright/scripts/adapters/*/test-*.sh and root scripts/test-*.sh — every file that mentions
+# `pipefail` (a part: or whose runner does). Comment lines are ignored. Exit 0 = clean,
 # 1 = a violation (or a broken detector — see the controls).
 #
 # RULE 2 — a builtin WRITER (printf / echo) piped into `grep -q`, in ANY shell script, pipefail or
@@ -44,11 +45,14 @@ no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 # and split forms like `-F -q` / `-v -q` alike (a first-token-only match missed the split forms)
 RE='(^[[:space:]]*|[^|])\|[[:space:]]*grep([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*q'
 
-# scan <file...> — prints file:line:text for each violation
+# scan <file...> — prints file:line:text for each violation. A test PART (test-<x>.d/*.sh) is sourced
+# by its runner test-<x>.sh and runs under the runner's `set -o pipefail`, so it is scanned when it OR
+# that runner mentions pipefail (a part never sets it itself — automate-speed/19).
 scan() {
-  local f
+  local f r
   for f in "$@"; do
-    grep -q pipefail "$f" 2>/dev/null || continue
+    r="$f"; case "$f" in */test-*.d/*.sh) r="${f%/*}"; r="${r%.d}.sh" ;; esac
+    { grep -q pipefail "$f" || grep -q pipefail "$r"; } 2>/dev/null || continue
     grep -nE "$RE" "$f" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' | sed "s|^|$f:|"
   done
   return 0
@@ -196,7 +200,20 @@ $rout"
 
 echo "== the suite =="
 shopt -s nullglob
-files=("$REPO_ROOT"/loomwright/scripts/test-*.sh "$REPO_ROOT"/loomwright/scripts/adapters/*/test-*.sh "$REPO_ROOT"/scripts/test-*.sh)
+# suite_files <root> — sets files=(…) to the rule-1 scan set under <root>: every test file, plus every
+# sourced test part (test-<x>.d/*.sh), so test code moved out of a runner is never exempted.
+suite_files() {
+  files=("$1"/loomwright/scripts/test-*.sh "$1"/loomwright/scripts/test-*.d/*.sh "$1"/loomwright/scripts/adapters/*/test-*.sh "$1"/scripts/test-*.sh)
+}
+# planted violation in a test PART (no pipefail of its own; its runner sets it) under a mirror root —
+# the same scan set must reach it, or moved test code would slip past the gate
+PL="$T/mirror/loomwright/scripts"; mkdir -p "$PL/test-planted.d"
+{ echo 'set -uo pipefail'; echo '. "$HERE/test-planted.d/01-part.sh"'; } > "$PL/test-planted.sh"
+{ printf '%s %s grep -q y && echo hit\n' 'printf "%s" "$x"' "$P"; } > "$PL/test-planted.d/01-part.sh"
+suite_files "$T/mirror"
+case "$(scan "${files[@]}")" in *"/test-planted.d/01-part.sh:1:"*) ok "a planted violation in a sourced test part (test-*.d/*.sh) IS flagged" ;;
+  *) no "a planted violation in a test part was NOT flagged — the scan set or the runner-pipefail rule misses test parts" ;; esac
+suite_files "$REPO_ROOT"
 [ "${#files[@]}" -gt 10 ] && ok "scanned ${#files[@]} test files" || no "only ${#files[@]} test files found — the scan set is wrong"
 hits="$(scan "${files[@]}")"
 if [ -z "$hits" ]; then

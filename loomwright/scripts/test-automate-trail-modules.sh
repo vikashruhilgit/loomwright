@@ -214,8 +214,8 @@ while read -r m; do
 done <<<"$MODS"
 if [ -z "$SHAPE" ]; then ok "every module <= 800 lines and parses (bash -n${B32:+, $B32 -n})"
 else no "module shape:$SHAPE"; fi
-ONDISK="$(cd "$MOD_DIR" && for f in *.sh; do [ -e "$f" ] && echo "${f%.sh}"; done | LC_ALL=C sort)"
-if [ "$ONDISK" = "$(LC_ALL=C sort <<<"$MODS")" ]; then ok "the sourced list and the automate-trail.d/ files are the same set (no dead or missing module)"
+ONDISK="$(cd "$MOD_DIR" && for f in *.sh; do [ -e "$f" ] && echo "${f%.sh}"; done | env LC_ALL=C sort)"
+if [ "$ONDISK" = "$(env LC_ALL=C sort <<<"$MODS")" ]; then ok "the sourced list and the automate-trail.d/ files are the same set (no dead or missing module)"
 else no "sourced [$(tr '\n' ' ' <<<"$MODS")] vs on disk [$(tr '\n' ' ' <<<"$ONDISK")]"; fi
 MAP="$(awk '/^# Modules \(sourced in this order from automate-trail\.d\/\):$/ { m = 1; next } m && /^#$/ { exit } m' "$E")"
 MAPMODS="$(sed -n 's/^# - \([a-z][a-z-]*\)\.sh: .*/\1/p' <<<"$MAP")"
