@@ -157,7 +157,13 @@ Recorded, not fixed (AC10 — move-only change).
 4. Signal 1's webhook POST is conditioned "when `--notify` AND `$LOOMWRIGHT_WEBHOOK_URL` are set", while Quick Rules say `send-webhook.sh` resolves the URL itself (env var or the user-scope egress entry) and the call site does not check, and the no-rubric gate's POST says only "when `--notify` set". A run configured only through the egress file would, read literally, skip the rubric-gate POST. Kept verbatim.
 5. The Failure Modes row for `rubric_dropped_from_brief` recommends "re-run without `--allow-multi-iteration` (single-iteration ignores the rubric-preservation gate entirely)", but `--allow-multi-iteration` is a no-op now (multi-iteration is the default) and PLAN step 6 is not mode-gated: it fires in single-iteration mode whenever the requirement carried a rubric. Kept verbatim.
 6. The `ls`-diff fallback's pre-snapshot stale-session-id check asks the user (abort / move / force) and names no can't-ask branch, so under `--non-interactive-fallback` it would ask. Already gap-listed (LP-342).
-7. `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" says the `genuine-parallelism` bounds are restated in "`agents/launch-pad.md`'s worked example"; subtask 2 moved that worked example to `docs/rationale/launch-pad-autonomous.md` §"Complete worked example brief". The pointer is stale; the file is outside this job's lanes, so it is reported here, not edited.
+
+## Pointers repointed in Phase 4.5 (fix iteration 1)
+
+Two pointers outside the four runtime files went stale when this branch moved content; both were repointed in the Phase 4.5 fix commit `6863a0f` ("fix: address review feedback (iteration 1)"). Neither file is in the AC2 read set, so no measured number above changes.
+
+- `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" said the `genuine-parallelism` bounds are restated in "`agents/launch-pad.md`'s worked example"; subtask 2 moved that worked example, so the pointer now names `docs/rationale/launch-pad-autonomous.md` §"Complete worked example brief".
+- `commands/agent-help.md`'s `/autonomous` "Learn More" line sent readers to `commands/autonomous.md` for the signal-extraction algorithm, refined-requirement templates and troubleshooting, which this branch moved out of it; it now names `commands/autonomous.md` §"Flow Diagram", `skills/autonomous-loop/multi-iteration.md` §"Signal 1" / §"Signal 2", and `docs/rationale/launch-pad-autonomous.md` §"/autonomous — usage notes".
 
 ## Proposed hooks
 
