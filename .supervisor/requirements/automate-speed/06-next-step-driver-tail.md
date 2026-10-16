@@ -30,6 +30,13 @@ next-step".
   `script:automate-next-step.sh <step>`; its golden case (item 05) passes through the driver unchanged.
 - The `ask` instruction carries the question, the options and the gate's named can't-ask status, so the coordinator
   never improvises a can't-ask branch.
+- Repoint the tests that pin the migrated prose, in the same change that deletes it (wave-2 Plan Review FAIL×3,
+  2026-10-16: the brief deleted pinned prose while keeping these tests out of scope). `test-automate-helpers.sh`
+  QG3a/QG3a' read `per-item-loop.md` directly and pin the park-first order list ("**Order — sequential interactive
+  READY park (park first, then ask):**") and the `### Dismissed-findings decision step (before the park)` heading;
+  `test-automate-dismissed.sh`'s B legs pin the §6 step-4 GATE text. Repoint each pin to where the rule now lives
+  (the `--legacy` prose or the driver's case arm), keeping every mutation control that makes the pin go red. Exempting
+  that prose from deletion instead is acceptable only if the inventory row says why.
 
 ## Invariants (CLAUDE.md §Failure-Mode Invariants — must hold after this item)
 - `gh pr merge --squash` keeps exactly ONE executor: `gate-eval` in `automate-helpers.sh`. The driver CALLS
@@ -63,7 +70,7 @@ next-step".
   recorded before and after in the PR body.
 
 ## Validation (must pass before merge)
-1. `test-automate-next-step.sh`, `test-automate-golden.sh`, `test-automate-helpers.sh`, `test-loop-inventory.sh`,
+1. `test-automate-next-step.sh`, `test-automate-golden.sh`, `test-automate-helpers.sh`, `test-automate-dismissed.sh`, `test-loop-inventory.sh`,
    `check-doc-currency.sh`, `test-citation-drift.sh`; report `<passed>/<total>`.
 2. Mutation controls: make the driver skip `gate-eval` and park directly ⇒ a golden case goes red; add an unguarded
    `gh pr merge --squash` to the driver ⇒ the invariant grep test goes red.
@@ -78,6 +85,8 @@ next-step".
 ## Touches
 loomwright/scripts/automate-next-step.sh
 loomwright/scripts/test-automate-next-step.sh
+loomwright/scripts/test-automate-helpers.sh
+loomwright/scripts/test-automate-dismissed.sh
 loomwright/scripts/fixtures/automate-golden/
 loomwright/skills/automate-loop/SKILL.md
 loomwright/skills/automate-loop/branch-mode.md
