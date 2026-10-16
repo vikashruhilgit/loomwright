@@ -25,6 +25,10 @@
 #   nothing; a different report is accepted only while `## Current` reads `status: running` (the next
 #   PICK set it), else it exits 2 with nothing written. `--session-id` is this loop's session id:
 #   closeout re-enters the PICK's run lock with it, and the post-park lock windows acquire with it.
+#   `--non-interactive`, `--trust-unprotected`, `--mode`, `--session-id` and `--root` persist in the
+#   sidecar for the rest of this item's tail (a later call without them keeps them; an explicit one
+#   still applies). Pending state is bound to the item + PR its tail started for: when `## Current`
+#   names another item or PR, the sidecar (flags included) is discarded and the call is a fresh entry.
 #
 # STEPS — each is ONE `case` arm of ns_dispatch (the strings inventory homes cite as
 #   `script:automate-next-step.sh <step>`):
@@ -82,9 +86,9 @@
 # branches on or hands to a writer is checked before the first write — `drain_result` is exactly
 # READY | ESCALATED at the `gate` step (anything else, `died` / `superseded_by_merge` / a lowercase or
 # misspelt value included, is refused, never routed down the READY path); `ready_sha` /
-# `escalation_sha` hex (7–40); `escalation_cause` the current-escalation enum; `escalation_run_id` /
-# `escalation_attempt` / `items_processed` a non-negative integer; `progress_note` one line. A drain
-# report starts a tail only while `## Current` reads `status: running` (the first drain and both
+# `escalation_sha` hex (7–40); `escalation_cause` the current-escalation enum; `escalation_attempt` /
+# `items_processed` 1–9 digits (a count `[` can compare), `escalation_run_id` 1–20 digits; `progress_note`
+# one line. A drain report starts a tail only while `## Current` reads `status: running` (the first drain and both
 # fix-now re-drain hand-offs set it): a different report after a terminal park is refused, a
 # byte-identical one is a replay. After a `spawn` the re-drain report REPLACES the first one (no
 # field of the first drain survives into the second GATE pass).
@@ -145,14 +149,18 @@ AD="$(dirname "$RF")"
 RUN_ID="$(basename "$RF" .md)"
 SIDECAR="$AD/$RUN_ID.next-step.json"
 CTXF="$AD/$RUN_ID.gate-ctx.json"
-if [ -z "$ROOT" ]; then
-  case "$AD" in
-    */.supervisor/automate) ROOT="${AD%/.supervisor/automate}" ;;
-    *) ROOT="$(git -C "$AD" rev-parse --show-toplevel 2>/dev/null || pwd)" ;;
-  esac
-fi
-cd "$ROOT" 2>/dev/null || ns_die2 "--root is not a directory: $ROOT"
-ROOT="$(pwd)"
+# ROOT is resolved (and cd'ed into) after the sidecar is read: a --root given earlier in this item's
+# tail is persisted there (see FLAGS below)
+ns_resolve_root() {
+  if [ -z "$ROOT" ]; then
+    case "$AD" in
+      */.supervisor/automate) ROOT="${AD%/.supervisor/automate}" ;;
+      *) ROOT="$(git -C "$AD" rev-parse --show-toplevel 2>/dev/null || pwd)" ;;
+    esac
+  fi
+  cd "$ROOT" 2>/dev/null || ns_die2 "--root is not a directory: $ROOT"
+  ROOT="$(pwd)"
+}
 
 # ------------------------------------------------------------------------------------------------
 # state (the sidecar's JSON, held in NS_STATE; written once at exit)
@@ -195,7 +203,10 @@ ns_trust() {
   if [ -n "$TRUST" ]; then echo true; return; fi
   case "$(ns_kv "$CFG" trust_unprotected)" in true) echo true ;; *) echo false ;; esac
 }
-ns_limit() { local l; l="$(ns_kv "$CFG" limit)"; case "$l" in ''|*[!0-9]*) echo 5 ;; *) echo "$l" ;; esac; }
+# a count the driver compares with `[ -ge/-lt ]` is 1–9 digits: a longer one overflows test's integer
+# ("integer expected", the test is false) — refused, never read as a small number (fail CLOSED)
+ns_count_ok() { [[ "$1" =~ ^[0-9]{1,9}$ ]]; }
+ns_limit() { local l; l="$(ns_kv "$CFG" limit)"; if ns_count_ok "$l"; then echo "$l"; else echo 5; fi; }
 ns_fixnow_reentered() {
   local f; f="$(st fix_now_reentered)"
   [ -n "$f" ] || f="$(ns_kv "$PENDING_LINE" fix_now_reentered)"
@@ -240,6 +251,7 @@ ns_status() { # <running|paused|done>
 }
 ns_pending_write() { # <n> <true|false> — the `- pending_decisions:` line of ## Current (replaced, else after owned_drain_started, else at the block end)
   local line="- pending_decisions: $1 | fix_now_reentered: $2" new e rc
+  ns_count_ok "$1" || { ns_err "dismissed-pending printed '$1', not a count — pending_decisions not written"; NS_RC=1; return 1; }
   new="$(NS_L="$line" NS_HAS="${PENDING_LINE:+1}" awk '
     BEGIN { l = ENVIRON["NS_L"]; has = (ENVIRON["NS_HAS"] == "1") }
     /^## / { if (c && !d) { print l; d = 1 } c = ($0 == "## Current"); print; next }
@@ -342,7 +354,8 @@ ns_field_ok() {
     ready_sha|escalation_sha) [[ "$2" =~ ^[0-9a-fA-F]{7,40}$ ]] ;;
     escalation_cause)
       case "$2" in check_pending|check_red_unrelated|check_red|findings|validation_unrun|other) return 0 ;; *) return 1 ;; esac ;;
-    escalation_run_id|escalation_attempt|items_processed) case "$2" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac ;;
+    escalation_attempt|items_processed) ns_count_ok "$2" ;;
+    escalation_run_id) [[ "$2" =~ ^[0-9]{1,20}$ ]] ;;   # an id, never compared — bounded, not narrowed
     progress_note) case "$2" in *$'\n'*|*$'\r'*) return 1 ;; *) return 0 ;; esac ;;
     *) return 0 ;;
   esac
@@ -917,6 +930,7 @@ ns_checkoff() {
 ns_terminate() {
   local n p lim tl sw
   n="$(bash "$H" remaining "$RF" 2>/dev/null | tail -n 1)"
+  ns_count_ok "$n" || { ns_err "terminate: remaining printed '$n', not a count"; NS_RC=1; return 1; }
   if [ "$n" = 0 ]; then
     ns_status done || return 1
     tl="$(bash "$H" trail-pr "$RF" --reason done 2>/dev/null | tail -n 1)"
@@ -932,7 +946,9 @@ ns_terminate() {
   lim="$(ns_limit)"
   # a count that is not a count is surfaced, never read as "under the limit" (fail CLOSED)
   case "$p" in ''|*[!0-9]*) ns_err "terminate: items_processed '$p' is not a count"; NS_RC=1; return 1 ;; esac
-  if [ "$p" -ge "$lim" ]; then
+  # under the limit ONLY when the comparison itself succeeds: a count test cannot compare (too many
+  # digits ⇒ "integer expected", false) is over the limit — the limit_reached park, never `running`
+  if ! ns_count_ok "$p" || ! [ "$p" -lt "$lim" ] 2>/dev/null; then
     ns_status paused || return 1
     ns_call_writer current-set "$RF" --pause-reason limit_reached || return 1
     ns_progress "$(ns_ts) limit_reached — $p item(s) processed; remaining: $n" || return 1
@@ -966,6 +982,20 @@ ns_dispatch() {
 
 ns_refresh
 NEXT=""; ANSWER=""
+# BINDING: the sidecar's pending state (an ask, a spawn, a failed step to retry, the tail context)
+# belongs to the item + PR its tail started for. When ## Current names another item or PR (the owner
+# left at a post-park ask, the PR merged, the next PICK set a new item running), none of it may be
+# consumed: it is discarded whole and this call is read as a fresh tail's entry (a drain report ⇒
+# gate; anything else answers nothing pending ⇒ exit 2). The fix-now re-drain keeps item AND PR.
+ns_bound() {
+  local i p; i="$(st item)"; p="$(st pr)"
+  [ -z "$i" ] && [ -z "$p" ] && return 0
+  [ "${i#./}" = "${ITEM#./}" ] && [ "$p" = "$PR" ]
+}
+if [ -z "${NEXT_STEP_FROM:-}" ] && ! ns_bound; then
+  ns_err "the sidecar's pending state is for $(st item) ($(st pr)); ## Current names ${ITEM:-no item} (${PR:-no pr}) — discarded, read as a fresh tail"
+  NS_STATE='{}'
+fi
 pending="$(st pending_text)"; PENDING_TEXT="$pending"
 pending_do="$(printf '%s' "$pending" | "$JQ" -r '.do // empty' 2>/dev/null)"
 if [ -n "${NEXT_STEP_FROM:-}" ]; then
@@ -993,6 +1023,19 @@ else
   NS_STATE='{}'; ns_take_report "$RESULT"; NEXT=gate
 fi
 st_del pending_text; st_del failed
+
+# FLAGS that change gate behaviour persist for this item's tail (the sidecar; reset with it, so they
+# never reach the next item's tail): a later call without the flag keeps it — a no-result retry of a
+# failed step never turns interactive — and an explicit flag on a later call still applies.
+# --non-interactive and --trust-unprotected have no "off" form: once given they stay for the tail.
+if [ "$NONINT" = 1 ]; then st_set flag_non_interactive true; elif [ "$(st flag_non_interactive)" = true ]; then NONINT=1; fi
+if [ -n "$TRUST" ]; then st_set flag_trust_unprotected true; elif [ "$(st flag_trust_unprotected)" = true ]; then TRUST=true; fi
+if [ -n "$MODE" ]; then st_set flag_mode "$MODE"
+else case "$(st flag_mode)" in safe|auto-merge) MODE="$(st flag_mode)" ;; esac; fi
+if [ -n "$SID" ]; then st_set flag_session_id "$SID"; else SID="$(st flag_session_id)"; fi
+root_given="${ROOT:+1}"; [ -n "$ROOT" ] || ROOT="$(st flag_root)"
+ns_resolve_root
+[ -n "$root_given" ] && st_set flag_root "$ROOT"
 
 STOPPED=0
 while [ -n "$NEXT" ]; do

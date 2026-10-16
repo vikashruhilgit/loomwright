@@ -42,12 +42,16 @@
 #       answered Keep parked, an invalid answer / non-JSON --result (exit 2, nothing written), a refused
 #       writer (surfaced, then retried by the next call) and the fix-now re-pass (spawn ⇒ re-drain ⇒
 #       re-park with fix_now_reentered: true, fix-now never offered again). B5b/B6: a malformed drain
-#       report (drain_result not READY|ESCALATED, a non-count items_processed, an unknown escalation_cause,
-#       a non-hex sha, a multi-line progress_note — also as a spawn's answer) ⇒ exit 2, nothing printed,
+#       report (drain_result not READY|ESCALATED, a non-count or 20-digit items_processed / escalation_attempt, an unknown
+#       escalation_cause, a non-hex sha, a multi-line progress_note — also as a spawn's answer) ⇒ exit 2, nothing printed,
 #       .supervisor/ byte-unchanged. B7: a different drain report after a terminal park (## Current no
 #       longer running) ⇒ exit 2, nothing written, the park re-prints. B8: the park-first READY park's
 #       side-effect order on the driver itself — watcher armed < run lock released < park-ask-gate
 #       (park-ask-gate recorded by a wrapper automate-helpers.sh beside a driver copy).
+#       B9: item A's post-park ask pending, then the next PICK sets item B running (another PR) — A's
+#       cant_ask / a no-result call ⇒ exit 2, nothing written; B's drain report starts B's own tail at
+#       gate. B10: a 20-digit items_processed (a corrupt sidecar) at terminate ⇒ the limit_reached park.
+#       B11: --non-interactive on the first call only — the flagless retry of a failed step still parks.
 #       Q also enters the post-park decide step under --non-interactive: it parks, never asks.
 #   D   DOC MIRROR: the schema doc's step list equals the driver's `case` arms, and its `do` table
 #       equals the emitter's closed set.
@@ -64,6 +68,10 @@
 #         MQp both post-park --non-interactive guards of decide dropped (two edits) ⇒ Q (c)
 #         MR  the running-status re-entry guard dropped            ⇒ B7
 #         MO  ns_park arms the watcher only after the decide step (two edits; run file unchanged) ⇒ B8
+#         MVbig the 1–9-digit count bound widened to any digits ⇒ B6 (the 20-digit report)
+#         MB  the sidecar's item/PR binding dropped               ⇒ B9
+#         MT  terminate's fail-CLOSED comparison reverted to a bare `-ge` ⇒ B10
+#         MN  the persisted --non-interactive not read back       ⇒ B11
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -289,6 +297,8 @@ BAD_REPORTS='{"drain_result":"BOGUS","termination_reason":"converged","ready_sha
 {"drain_result":"died"}
 {"drain_result":"superseded_by_merge","termination_reason":"converged"}
 {"drain_result":"READY","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96","items_processed":"two"}
+{"drain_result":"READY","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96","items_processed":"99999999999999999999"}
+{"drain_result":"ESCALATED","termination_reason":"bound_hit","escalation_cause":"check_red","escalation_attempt":"99999999999999999999"}
 {"drain_result":"ESCALATED","termination_reason":"bound_hit","escalation_cause":"bogus_cause"}
 {"drain_result":"READY","termination_reason":"converged","ready_sha":"zz|028cbed"}
 {"drain_result":"READY","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96","progress_note":"one\n## Status: done"}'
@@ -318,6 +328,71 @@ leg_reentry() {
   again="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" 2>/dev/null)"
   [ "$rc" = 2 ] && [ -z "$out" ] && [ "$s0" = "$(snapshot)" ] && [ "$again" = "$last" ] \
     || { LEG_MSG="re-entry after the park ⇒ exit $rc, printed '${out:0:60}', .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  return 0
+}
+
+# leg_binding <driver> — B9: item A's post-park AUT-DISMISS ask is pending when its PR merges and the next
+# PICK sets item B running (PR 999). Nothing of A's pending state may reach B: the stale ask's can't-ask
+# answer and a no-result call ⇒ exit 2, nothing written; B's own drain report starts B's tail at gate
+# (its own validation-gate line — B's item file is absent here, so `unrun` — and its own escalated park)
+B9_ITEM=.supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md
+B9_PR=https://github.com/vikashruhilgit/loomwright/pull/999
+leg_binding() {
+  local drv="$1" s0 o rc o2 rc2 cut_
+  new_scratch "$FIX/park-first-ready-park" || { LEG_MSG="scratch"; return 1; }
+  printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"028cbed6b8e3588f93731d6b862f0bc334de1d96\"}'" "expect: ask" \
+    "pre: current-set \"\$RF\" --item $B9_ITEM --status running --pr $B9_PR --branch feature/pa18 --pause-reason null" > "$CASE_DIR/b9.results"
+  drive "$FIX/park-first-ready-park" "$drv" "$CASE_DIR/b9.results"
+  [ -z "$DRIVE_ERR" ] || { LEG_MSG="setup: $DRIVE_ERR"; return 1; }
+  s0="$(snapshot)"; : > "$CASE_DIR/seams.none"
+  o="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" --result '{"cant_ask":true}' 2>/dev/null)"; rc=$?
+  o2="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" 2>/dev/null)"; rc2=$?
+  [ "$rc" = 2 ] && [ -z "$o" ] && [ "$rc2" = 2 ] && [ -z "$o2" ] && [ "$s0" = "$(snapshot)" ] \
+    || { LEG_MSG="A's stale ask consumed on B: cant_ask ⇒ exit $rc '${o:0:70}'; no-result ⇒ exit $rc2 '${o2:0:50}'; .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  cut_="$(wc -l < "$CASE_RF" | tr -d " ")"
+  # B's own DRAIN bookkeeping (model-side, before the driver call) opens B's tail segment
+  in_case "$drv" "$CASE_DIR/seams.none" bash "$H" progress-append "$CASE_RF" "2026-10-16T08:00:00Z owned drain started — /review-pr $B9_PR --until-mergeable --no-auto-postmortem @ 9999999" >/dev/null 2>&1 \
+    && in_case "$drv" "$CASE_DIR/seams.none" bash "$H" progress-append "$CASE_RF" "2026-10-16T08:10:00Z drain READY (converged, 1 round)" >/dev/null 2>&1 \
+    || { LEG_MSG="B's drain lines not appended"; return 1; }
+  o="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" --non-interactive \
+    --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"9999999"}' 2>"$CASE_DIR/b9.err")"; rc=$?
+  tail -n "+$((cut_ + 1))" "$CASE_RF" > "$CASE_DIR/b9.new"
+  [ "$rc" = 0 ] && printf '%s' "$o" | jq -e --arg p "$B9_PR" '.do == "park" and .pr == $p and .pause_reason == "escalated"' >/dev/null 2>&1 \
+    && grep -qF -- "- validation-gate: unrun — item file unreadable: $B9_ITEM" "$CASE_DIR/b9.new" \
+    && grep -qF "parked escalated $B9_PR — validation_unrun" "$CASE_DIR/b9.new" \
+    && grep -qF -- "- item: $B9_ITEM | status: escalated |" "$CASE_RF" \
+    || { LEG_MSG="B's drain report ⇒ exit $rc '${o:0:120}' $(head -n 2 "$CASE_DIR/b9.err" | tr '\n' ' ') new lines: $(tr "\n" ";" < "$CASE_DIR/b9.new" | cut -c1-600)"; return 1; }
+  return 0
+}
+
+# leg_bigcount <driver> — B10: termination-limit-reached from terminate with a 20-digit items_processed in the
+# sidecar (out of a report's reach — ns_check_report refuses it there, B6 — so seeded as a corrupt sidecar)
+leg_bigcount() {
+  local drv="$1" o rc
+  new_scratch "$FIX/termination-limit-reached" || { LEG_MSG="scratch"; return 1; }
+  printf '{"items_processed":"99999999999999999999"}\n' > "$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json"
+  printf 'NEXT_STEP_FROM=terminate\n' > "$CASE_DIR/seams.t"
+  o="$(in_case "$drv" "$CASE_DIR/seams.t" bash "$drv" "$CASE_RF" 2>"$CASE_DIR/b10.err")"; rc=$?
+  [ "$rc" = 0 ] && printf '%s' "$o" | jq -e '.do == "park" and .pause_reason == "limit_reached"' >/dev/null 2>&1 \
+    && grep -qxF -- '- pause_reason: limit_reached' "$CASE_RF" \
+    || { LEG_MSG="exit $rc, printed '${o:0:120}' $(head -n 2 "$CASE_DIR/b10.err" | tr '\n' ' ')"; return 1; }
+  return 0
+}
+# leg_nonint_persist <driver> — B11: B4's refused writer, but the retry carries NO --non-interactive: the
+# persisted flag keeps the AUT-WAIVE gate closed (escalated park, golden run file), never an ask
+leg_nonint_persist() {
+  local drv="$1" rc retry
+  new_scratch "$FIX/gate-validation-gate-unrun-escalated" || { LEG_MSG="scratch"; return 1; }
+  cp "$CASE_RF" "$CASE_DIR/rf.keep"; sed '1d' "$CASE_DIR/rf.keep" > "$CASE_RF"
+  : > "$CASE_DIR/seams.none"
+  in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" --non-interactive \
+    --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"06ce6f59617b3b515a1950dbeb8b13630b54525c"}' >/dev/null 2>&1; rc=$?
+  cp "$CASE_DIR/rf.keep" "$CASE_RF"
+  retry="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" 2>/dev/null)"
+  norm "$CASE_RF" > "$CASE_DIR/a.md"; norm "$FIX/gate-validation-gate-unrun-escalated/expected.md" > "$CASE_DIR/x.md"
+  [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ] && printf '%s' "$retry" | jq -e '.do == "park" and .escalation_cause == "validation_unrun"' >/dev/null 2>&1 \
+    && cmp -s "$CASE_DIR/a.md" "$CASE_DIR/x.md" \
+    || { LEG_MSG="first call exit $rc; flagless retry printed '${retry:0:120}'"; return 1; }
   return 0
 }
 
@@ -623,6 +698,18 @@ for e in "$HERE"/*; do [ "$e" = "$DRIVER" ] || ln -s "$e" "$RECD/$(basename "$e"
 cp "$DRIVER" "$RECD/automate-next-step.sh"; rec_helpers "$RECD/automate-next-step.sh"
 if leg_order "$RECD/automate-next-step.sh"; then ok "B8: park-first READY park — watcher armed, then lock released, then park-ask-gate"
 else no "B8: $LEG_MSG"; fi
+# B9 — the sidecar's pending state is bound to ## Current's item + PR
+LEG_MSG=""
+if leg_binding "$DRIVER"; then ok "B9: A's pending ask never answers for B (exit 2, nothing written); B's report starts B's own tail at gate"
+else no "B9: $LEG_MSG"; fi
+# B10 — a count `[` cannot compare (20 digits, held in the sidecar) at terminate ⇒ the limit_reached park, never running
+LEG_MSG=""
+if leg_bigcount "$DRIVER"; then ok "B10: a 20-digit items_processed at terminate ⇒ limit_reached park (fail CLOSED)"
+else no "B10: $LEG_MSG"; fi
+# B11 — --non-interactive given on the first call only: the no-result retry of the failed step stays non-interactive
+LEG_MSG=""
+if leg_nonint_persist "$DRIVER"; then ok "B11: --non-interactive persists for the tail — the flagless retry parks (validation_unrun), never asks"
+else no "B11: $LEG_MSG"; fi
 
 echo "-- D. the schema doc mirrors the driver (closed lists)"
 DOC="$HERE/../docs/result-schemas/automate-run.md"
@@ -671,7 +758,8 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     else no "M$1: mutant not built"; fi
   }
   mv_leg Vdr 'ns_field_ok drain_result "$dr" ||' 'true ||'
-  mv_leg Vip 'escalation_run_id|escalation_attempt|items_processed) case' 'escalation_run_id|escalation_attempt) case'
+  mv_leg Vip 'escalation_attempt|items_processed) ns_count_ok "$2" ;;' 'escalation_attempt|items_processed) true ;;'
+  mv_leg Vbig 'ns_count_ok() { [[ "$1" =~ ^[0-9]{1,9}$ ]]; }' 'ns_count_ok() { [[ "$1" =~ ^[0-9]+$ ]]; }'
   mv_leg Vec 'check_pending|check_red_unrelated|check_red|findings|validation_unrun|other) return 0 ;; *) return 1 ;; esac ;;' '*) return 0 ;; esac ;;'
   mv_leg Vsha 'ready_sha|escalation_sha) [[' 'ready_sha|escalation_sha) true || [['
   mv_leg Vnote 'progress_note) case "$2" in' 'progress_note) case "x" in'
@@ -689,6 +777,24 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_reentry "$m"; then no "MR: the re-entry leg stayed green with the running-status guard dropped"
     else ok "MR: running-status guard dropped ⇒ re-entry leg red ($LEG_MSG)"; fi
   else no "MR: mutant not built"; fi
+  # MB — the item/PR binding of the sidecar dropped ⇒ B9 red
+  if m="$(build_mutant B 'if [ -z "${NEXT_STEP_FROM:-}" ] && ! ns_bound; then' 'if false; then')"; then
+    LEG_MSG=""
+    if leg_binding "$m"; then no "MB: the binding leg stayed green with the item/PR binding dropped"
+    else ok "MB: item/PR binding dropped ⇒ binding leg red ($LEG_MSG)"; fi
+  else no "MB: mutant not built"; fi
+  # MT — terminate's fail-CLOSED comparison reverted to a bare -ge (an erroring test reads as under) ⇒ B10 red
+  if m="$(build_mutant T 'if ! ns_count_ok "$p" || ! [ "$p" -lt "$lim" ] 2>/dev/null; then' 'if [ "$p" -ge "$lim" ] 2>/dev/null; then')"; then
+    LEG_MSG=""
+    if leg_bigcount "$m"; then no "MT: the big-count leg stayed green with the bare -ge"
+    else ok "MT: bare -ge at terminate ⇒ big-count leg red ($LEG_MSG)"; fi
+  else no "MT: mutant not built"; fi
+  # MN — the persisted --non-interactive no longer read back ⇒ B11 red
+  if m="$(build_mutant N 'elif [ "$(st flag_non_interactive)" = true ]; then NONINT=1; fi' 'fi')"; then
+    LEG_MSG=""
+    if leg_nonint_persist "$m"; then no "MN: the persistence leg stayed green with the flag not read back"
+    else ok "MN: persisted --non-interactive not read back ⇒ persistence leg red ($LEG_MSG)"; fi
+  else no "MN: mutant not built"; fi
   # MO — ns_park reordered: the merge watcher armed only AFTER the post-park decide step (the run file is
   # byte-identical, so only the order leg can see it) ⇒ B8 red
   if m="$(build_mutant2 O '*) ns_watch; ns_notify awaiting_merge' '*) ns_notify awaiting_merge' \

@@ -14,15 +14,15 @@ prose migration) filled the after-values and the migration's suite results.
 
 | Measure | Before (base `142540b`) | After |
 |---|---|---|
-| `wc -c loomwright/skills/automate-loop/*.md` (full glob, `legacy-tail.md` INCLUDED — labelled: not the default read set) | `320545 total` | `328460 total` (+7915: the per-step pointers, `legacy-tail.md`'s header and pointer section, the §1.5 driver row) |
-| Default-mode read set: the Step 0 **Always** files on a sequential run (`SKILL.md` 84444 + `per-item-loop.md` 106350 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900), `legacy-tail.md` excluded | `223857` | `198203` (`SKILL.md` 86071 + `per-item-loop.md` 79069 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900): −25654 bytes, −11.5% |
+| `wc -c loomwright/skills/automate-loop/*.md` (full glob, `legacy-tail.md` INCLUDED — labelled: not the default read set) | `320545 total` | `328679 total` (+8134: the per-step pointers, `legacy-tail.md`'s header and pointer section, the §1.5 driver row, the review-iteration sentences) |
+| Default-mode read set: the Step 0 **Always** files on a sequential run (`SKILL.md` 84444 + `per-item-loop.md` 106350 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900), `legacy-tail.md` excluded | `223857` | `198422` (`SKILL.md` 86071 + `per-item-loop.md` 79182 + `modes-and-merge-gate.md` 27269 + `invariants.md` 5900): −25435 bytes, −11.4% |
 | Conditional Step 0 reads on a sequential run (recorded separately): `intake.md` (new run) / `resume.md` (resume) | `10379` / `18852` | `10379` / `18852` (unchanged) |
-| `--legacy` read set (recorded separately): the default set + `legacy-tail.md` 33407 | — | `231610` (+7753 over base: the old prose plus the pointers that replaced it) |
+| `--legacy` read set (recorded separately): the default set + `legacy-tail.md` 33407 | — | `231829` (+7972 over base: the old prose plus the pointers that replaced it) |
 | Loop-inventory `GAP` count (`docs/loop-inventory/automate-loop.md` `## Counts`, rows 552) | `147` | `132` (rows 560: 8 new rows, 2 of them GAP; 17 rows linked to a test — see below) |
 
-Per-file `wc -c` after: `SKILL.md` 86071, `branch-mode.md` 7592, `command-lanes.md` 4111, `intake.md` 10379,
-`invariants.md` 5900, `lanes.md` 55916, `legacy-tail.md` 33407, `modes-and-merge-gate.md` 27163, `per-item-loop.md` 79069,
-`resume.md` 18852.
+Per-file `wc -c` after (re-measured after review iteration 2, 2026-10-16): `SKILL.md` 86071, `branch-mode.md` 7592,
+`command-lanes.md` 4111, `intake.md` 10379, `invariants.md` 5900, `lanes.md` 55916, `legacy-tail.md` 33407,
+`modes-and-merge-gate.md` 27269, `per-item-loop.md` 79182, `resume.md` 18852.
 
 Per-file `wc -c` at base: `SKILL.md` 84444, `branch-mode.md` 7592, `command-lanes.md` 4111, `intake.md` 10379,
 `invariants.md` 5900, `lanes.md` 55754, `modes-and-merge-gate.md` 27163, `per-item-loop.md` 106350, `resume.md` 18852.
@@ -122,6 +122,23 @@ test-loop-inventory.sh       RESULT: 39/39 passed      39/39
 test-automate-loop-split.sh  RESULT: 39 passed, 0 failed    39/39
 test-citation-drift.sh       citation-drift: 26 passed, 0 failed   26/26
 check-doc-currency.sh        OK — all checked version/count claims match
+```
+
+**Review iterations 1–2 (2026-10-16).** Iteration 1 (`5896fc0`) grew `modes-and-merge-gate.md` 27163 → 27269. Iteration
+2 bound the driver's sidecar to `## Current`'s item + PR (B9), bounded its compared counts and made `terminate`'s limit
+test fail CLOSED (B6's two 20-digit reports, B10), and persisted the gate-changing flags for an item's tail (B11) —
+each with a mutant (MB, MT, MN, MVbig); `per-item-loop.md` 79069 → 79182 (one sentence: the flags persist). Suite after
+iteration 2:
+
+```
+test-automate-next-step.sh   PASS: 65 FAIL: 0          65/65   (also 65/65 under /bin/bash 3.2.57)
+test-automate-golden.sh      PASS: 64 FAIL: 0          64/64
+test-automate-dismissed.sh   245 passed, 0 failed      245/245
+test-loop-inventory.sh       RESULT: 39/39 passed      39/39
+test-citation-drift.sh       citation-drift: 26 passed, 0 failed   26/26
+test-no-pipefail-grep-q.sh   26 passed, 0 failed       26/26
+check-doc-currency.sh        OK — all checked version/count claims match
+check-token-budget.sh        OK — breaches: 0 | errors: 0   (automate-loop 82166/87895)
 ```
 
 **Inventory re-home and golden-case links.** The 49 rows whose prose moved (AL-267–AL-280, AL-282–AL-287,
