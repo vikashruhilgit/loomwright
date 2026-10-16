@@ -8,7 +8,7 @@
 #                          skills/async-orchestration/SKILL.md
 #   review-heal            skills/review-heal/SKILL.md, commands/review-pr.md, agents/review-pr.md
 #   launch-pad-autonomous  agents/launch-pad.md, commands/launch-pad.md, skills/autonomous-loop/SKILL.md,
-#                          commands/autonomous.md
+#                          skills/autonomous-loop/multi-iteration.md, commands/autonomous.md
 #
 # CHECKED (every FAIL line names the row id, or the group/file and heading):
 #   * SHAPE — the file's `## ` sections are exactly Sources, Inventory, Gap list (ordered by risk), Counts,
@@ -65,13 +65,14 @@
 #     this). Limit, stated plainly: the union is not "fails toward checking more" in every case — a stray
 #     unpaired fence line can desync both readings at once and exempt headings until the next fence line;
 #     only when both readings are still open at end of file does the never-closes check catch it.
-#     The readings disagree in agents/launch-pad.md, where a ```yaml block is nested inside a ```markdown one: CommonMark closes the OUTER block at the inner bare ```, so its tail and the
-#     headings after it become live text — and the outer block's closing ``` (the one just above that
-#     file's `## Error Handling`) then opens a block CommonMark never closes, which would hide every later
-#     heading. The toggle reading pairs the fences the way the author meant. Picked on purpose: CommonMark
-#     alone would leave launch-pad.md's last headings unchecked (and red under the never-closes check),
-#     the toggle alone would skip the template headings CommonMark renders; the union checks both, and
-#     the real tree is green under it. A block that never closes under BOTH readings fails.
+#     The readings disagree in agents/launch-pad.md's Phase 4 (DECOMPOSE) output template, where a ```yaml
+#     block is nested inside a ```markdown one: CommonMark closes the OUTER block at the inner bare ```, so
+#     the template's tail headings become live text, and every later bare ``` then flips CommonMark's
+#     reading against the author's until the Phase 5.5 template's ```markdown opener lines the two up
+#     again. The toggle reading pairs the fences the way the author meant. Picked on purpose: CommonMark
+#     alone would leave the headings in that out-of-step stretch (the Phase 5 / Phase 5.5 step headings)
+#     unchecked, the toggle alone would skip the template headings CommonMark renders; the union checks
+#     both, and the real tree is green under it. A block that never closes under BOTH readings fails.
 #   * Coverage asks only for ###/#### headings; rows anchored on `##` headings or table rows are fine.
 #   * This file names no vendor-coupling token (scripts/check-vendor-coupling.sh counts this directory).
 #
@@ -110,7 +111,7 @@ group_sources() {
         printf '%s\n' skills/review-heal/SKILL.md commands/review-pr.md agents/review-pr.md ;;
       launch-pad-autonomous)
         printf '%s\n' agents/launch-pad.md commands/launch-pad.md skills/autonomous-loop/SKILL.md \
-          commands/autonomous.md ;;
+          skills/autonomous-loop/multi-iteration.md commands/autonomous.md ;;
     esac
   )
 }

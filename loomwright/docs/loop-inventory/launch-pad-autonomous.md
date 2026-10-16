@@ -1,11 +1,12 @@
 # Loop inventory — launch-pad-autonomous
 
-This file lists every branch (condition → action) and every standing rule stated in the Launch Pad and `/autonomous` loop prose — one row per `###`/`####` heading outside fenced code blocks, plus one row per list item that states a branch or a rule — so that a later change which moves or deletes prose cannot silently drop an edge case. It restates the prose on purpose; `loomwright/scripts/test-loop-inventory.sh` keeps it in sync (heading coverage, live anchors, real script subcommands, existing test files, unique ids, and the gap list and counts below, which are computed from the table and never hand-maintained). A `home` is `prose`, `script:<file>[ <sub>]`, `hook:<leaf>`, `step-scoped`, `global` or `rationale:<doc>#<anchor>` (the grammar in `test-loop-inventory.sh`'s header): `global` rows are kept short and anchor-checked like `prose`; `step-scoped` rows sit at the one step they govern and are not anchor-checked; a `script:` row's prose was removed because that script enforces it; a `rationale:` row's text lives under that heading of `docs/rationale/launch-pad-autonomous.md`. The Launch Pad rows (`agents/launch-pad.md`, `commands/launch-pad.md`) carry no `story` or `rule` row in `prose`.
+This file lists every branch (condition → action) and every standing rule stated in the Launch Pad and `/autonomous` loop prose — one row per `###`/`####` heading outside fenced code blocks, plus one row per list item that states a branch or a rule — so that a later change which moves or deletes prose cannot silently drop an edge case. It restates the prose on purpose; `loomwright/scripts/test-loop-inventory.sh` keeps it in sync (heading coverage, live anchors, real script subcommands, existing test files, unique ids, and the gap list and counts below, which are computed from the table and never hand-maintained). A `home` is `prose`, `script:<file>[ <sub>]`, `hook:<leaf>`, `step-scoped`, `global` or `rationale:<doc>#<anchor>` (the grammar in `test-loop-inventory.sh`'s header): `global` rows are kept short and anchor-checked like `prose`; `step-scoped` rows sit at the one step they govern and are not anchor-checked; a `script:` row's prose was removed because that script enforces it; a `rationale:` row's text lives under that heading of `docs/rationale/launch-pad-autonomous.md`. No `story` or `rule` row of this group is in `prose`. The multi-iteration-only `/autonomous` protocol has its own source, `skills/autonomous-loop/multi-iteration.md` (read only when the run is not `--single-iteration`); every `###` section moved there out of `skills/autonomous-loop/SKILL.md` keeps its heading in `SKILL.md` as a pointer, so both files carry a heading row for it.
 
 ## Sources
 - `agents/launch-pad.md`
 - `commands/launch-pad.md`
 - `skills/autonomous-loop/SKILL.md`
+- `skills/autonomous-loop/multi-iteration.md`
 - `commands/autonomous.md`
 
 ## Inventory
@@ -297,54 +298,54 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-283 | commands/launch-pad.md | q: If blockers exist or Plan Review FAIL: don't offer save | blockers or FAIL | do not offer save | deterministic | prose | - | GAP |
 | LP-284 | commands/launch-pad.md | q: Brief follows complete template (9 required sections, plus optional Feasibility) | before offering save | brief follows the complete template | rule | step-scoped | - | GAP |
 | LP-285 | commands/launch-pad.md | q: Plan Review gate cleared — PASS, or NEEDS_HUMAN with explicit user override | before offering save | Plan Review PASS or overridden NEEDS_HUMAN | rule | step-scoped | - | GAP |
-| LP-286 | skills/autonomous-loop/SKILL.md | q: The loop owns no schema, mutates no agent. | always | read SUPERVISOR_RESULT and three dirs; write only the session dir, fresh requirement files and one session log line | rule | prose | - | GAP |
-| LP-287 | skills/autonomous-loop/SKILL.md | q: **Multi-iteration is the default mode in v14.0.0** (cap 10, default 3, stacked branches) | no mode flag / --single-iteration / --allow-multi-iteration | multi-iteration (default 3, cap 10) / single-iteration / no-op with a deprecation warning | deterministic | prose | - | GAP |
-| LP-288 | skills/autonomous-loop/SKILL.md | q: Never auto-pick on adjudication. | an adjudication fires | surface the 4 options to the user via Supervisor; never auto-pick | rule | prose | - | GAP |
+| LP-286 | skills/autonomous-loop/SKILL.md | q: The loop owns no schema, mutates no agent. | always | read SUPERVISOR_RESULT and three dirs; write only the session dir, fresh requirement files and one session log line | rule | global | - | GAP |
+| LP-287 | skills/autonomous-loop/SKILL.md | q: **Multi-iteration is the default mode** (cap 10, default 3, stacked branches) | no mode flag / --single-iteration / --allow-multi-iteration | multi-iteration (default 3, cap 10) / single-iteration / no-op with a deprecation warning | deterministic | prose | - | GAP |
+| LP-288 | skills/autonomous-loop/SKILL.md | q: Never auto-pick on adjudication. | an adjudication fires | surface the 4 options to the user via Supervisor; never auto-pick | rule | global | - | GAP |
 | LP-289 | skills/autonomous-loop/SKILL.md | q: Two — and only two — signals trigger re-iteration | rubric_score N<M / failed + inter_subtask_gap on this brief / no rubric | re-iterate (Signal 1) / re-iterate (Signal 2) / no-rubric gate asks continue or stop | deterministic | prose | - | GAP |
-| LP-290 | skills/autonomous-loop/SKILL.md | q: `current_brief_path` (captured at PLAN via `ls`-diff) is the iteration-scoping anchor | jobs/failed/{basename(current_brief_path)} exists | this iteration failed (prior runs can never collide) | deterministic | prose | - | GAP |
+| LP-290 | skills/autonomous-loop/SKILL.md | q: `current_brief_path` (captured at PLAN) is the iteration-scoping anchor | jobs/failed/{basename(current_brief_path)} exists | this iteration failed (prior runs can never collide) | deterministic | prose | - | GAP |
 | LP-291 | skills/autonomous-loop/SKILL.md | q: **Non-interactive safety:** if `[ ! -t 0 ]` OR `$CI` is set | non-TTY or CI, multi-iter, no --non-interactive-fallback | INIT aborts immediately (non_interactive_without_fallback) | deterministic | prose | - | test-non-interactive-gates-seam.sh |
 | LP-292 | skills/autonomous-loop/SKILL.md | q: **Stacked branches:** iter N+1's feature branch is created from | default / --no-stacked-branches | iter N+1 branches from iterations[N].branch / from main (v13 cadence) | deterministic | prose | - | GAP |
-| LP-293 | skills/autonomous-loop/SKILL.md | q: **All gate webhook POSTs go through | --notify set and a webhook URL resolves (env, else user-scope egress entry) | POST through send-webhook.sh --event-type gate; never build gate JSON inline; repo-relative URL is a request, never a grant | rule | prose | script:send-webhook.sh | test-webhook.sh |
-| LP-294 | skills/autonomous-loop/SKILL.md | q: **Fail-loud-on-misconfig (v14.2.2, resolution updated v15.87.0):** | --notify set but no webhook URL resolves | print one visible warning and proceed (never abort); a repo-relative URL alone does not satisfy the check | deterministic | prose | - | GAP |
+| LP-293 | skills/autonomous-loop/SKILL.md | q: **All gate webhook POSTs go through | --notify set and a webhook URL resolves (env, else user-scope egress entry) | POST through send-webhook.sh --event-type gate; never build gate JSON inline; repo-relative URL is a request, never a grant | rule | global | script:send-webhook.sh | test-webhook.sh |
+| LP-294 | skills/autonomous-loop/SKILL.md | q: **Fail-loud-on-misconfig:** at INIT step 0 | --notify set but no webhook URL resolves | print one visible warning and proceed (never abort); a repo-relative URL alone does not satisfy the check | deterministic | prose | - | GAP |
 | LP-295 | skills/autonomous-loop/SKILL.md | q: **N=1 is degenerate but valid:** | --max-iterations 1 and Signal 1/2 would fire | cap-check exits paused_max_iterations, max_iterations_reached | deterministic | prose | - | GAP |
 | LP-296 | skills/autonomous-loop/SKILL.md | q: **N=0 or N>10** rejected at INIT | N=0 or N>10 | aborted, invalid_max_iterations | deterministic | prose | - | GAP |
 | LP-297 | skills/autonomous-loop/SKILL.md | q: Equivalent to `--max-iterations 1` semantically but skips EVALUATE entirely | --single-iteration | INIT, PLAN, EXECUTE, DONE; no EVALUATE, no paused_max_iterations | deterministic | prose | - | GAP |
 | LP-298 | skills/autonomous-loop/SKILL.md | h: ### Migration hint (AC-1) | default multi-iter path with no mode flag / a mode flag passed | print the one-line hint once per INIT (informational) / suppress it | deterministic | prose | - | GAP |
-| LP-299 | skills/autonomous-loop/SKILL.md | q: Before INIT, the main thread `Read`s the canonical command files **and this skill** end-to-end. | every /autonomous invocation | read the launch-pad and supervisor commands and this skill via the plugin-root path; never loomwright/ paths at runtime | rule | prose | - | GAP |
+| LP-299 | skills/autonomous-loop/SKILL.md | q: Before INIT, the main thread `Read`s the canonical command files **and this skill** end-to-end | every /autonomous invocation | read the launch-pad and supervisor commands and this skill via the plugin-root path; never loomwright/ paths at runtime | rule | global | - | GAP |
 | LP-300 | skills/autonomous-loop/SKILL.md | h: ### INIT step 0 — non-interactive detection (AC-6) + flag validation | before any state-writing step | resolve mode, detect non-interactive, validate flags | deterministic | prose | - | test-non-interactive-gates-seam.sh |
 | LP-301 | skills/autonomous-loop/SKILL.md | q: When `--non-interactive-fallback` IS set, gates do not call | --non-interactive-fallback set | rubric gate ⇒ aborted rubric_gate_closed_non_interactive; no-rubric gate ⇒ done no_rubric_in_non_interactive; forward --non-interactive to /supervisor and Launch Pad | deterministic | prose | - | test-non-interactive-gates-seam.sh |
-| LP-302 | skills/autonomous-loop/SKILL.md | q: **Main-thread-only by construction:** | gate keys | key on the explicit flag; the TTY / CI probe is an additional signal, never the only one | rule | prose | - | GAP |
+| LP-302 | skills/autonomous-loop/SKILL.md | q: **Main-thread-only by construction:** | gate keys | key on the explicit flag; the TTY / CI probe is an additional signal, never the only one | rule | global | - | GAP |
 | LP-303 | skills/autonomous-loop/SKILL.md | q: **max-iterations validation (AC-10):** | max_iterations < 1 or > 10 | aborted, invalid_max_iterations, error on stderr | deterministic | prose | - | GAP |
 | LP-304 | skills/autonomous-loop/SKILL.md | q: **Conflicting-flag detection (AC-11):** | --allow-multi-iteration and --single-iteration both set | aborted, conflicting_mode_flags | deterministic | prose | - | GAP |
 | LP-305 | skills/autonomous-loop/SKILL.md | q: If `--allow-multi-iteration` is the only mode-flag passed | only --allow-multi-iteration | log a deprecation warning, proceed multi-iter | deterministic | prose | - | GAP |
-| LP-306 | skills/autonomous-loop/SKILL.md | q: **`--cheap` cost-profile flag (v15.2.0+):** | --cheap passed | carry in memory (not state.json); append --cheap to every inlined /supervisor job | deterministic | prose | - | GAP |
-| LP-307 | skills/autonomous-loop/SKILL.md | q: **`--max-tokens N` token ceiling (red-team-hardening/06):** | --max-tokens N passed / absent | persist max_tokens in state.json and forward to every /supervisor job / byte-identical behaviour | deterministic | prose | - | GAP |
+| LP-306 | skills/autonomous-loop/SKILL.md | q: **`--cheap` cost-profile flag:** | --cheap passed | carry in memory (not state.json); append --cheap to every inlined /supervisor job | deterministic | prose | - | GAP |
+| LP-307 | skills/autonomous-loop/SKILL.md | q: **`--max-tokens N` token ceiling:** | --max-tokens N passed / absent | persist max_tokens in state.json and forward to every /supervisor job / byte-identical behaviour | deterministic | prose | - | GAP |
 | LP-308 | skills/autonomous-loop/SKILL.md | q: `scripts/run-lock.sh acquire --owner autonomous:<session_id> --session-id "<session_id>"` | INIT acquires the run lock: held by another run / reentrant / degraded | abort run_lock_held / proceed (own release a no-op) / note once and proceed | deterministic | prose | script:run-lock.sh acquire | test-run-lock.sh |
-| LP-309 | skills/autonomous-loop/SKILL.md | q: the lock is released at the loop's own completion tail or any abort exit | loop completes or aborts | release the run lock | deterministic | prose | script:run-lock.sh release | test-run-lock.sh |
+| LP-309 | skills/autonomous-loop/SKILL.md | q: lock is released at the loop's own completion tail or any abort exit | loop completes or aborts | release the run lock | deterministic | prose | script:run-lock.sh release | test-run-lock.sh |
 | LP-310 | skills/autonomous-loop/SKILL.md | q: the loop sums its own session's ledger via `scripts/read-token-ledger.sh --session <session_id>` | before each iteration: TOTAL breaches max_tokens or LEDGER_UNREADABLE=1 | aborted, token_ceiling_reached; never a silent continue | deterministic | prose | script:read-token-ledger.sh | test-read-token-ledger.sh |
-| LP-311 | skills/autonomous-loop/SKILL.md | q: **Honest limit:** the ledger counts only what a | reading the token ceiling | ledger excludes main-thread and CI spend; no dollar conversion | rule | prose | - | GAP |
+| LP-311 | skills/autonomous-loop/SKILL.md | q: **Honest limit:** the ledger counts only what a | reading the token ceiling | ledger excludes main-thread and CI spend; no dollar conversion | rule | step-scoped | - | GAP |
 | LP-312 | skills/autonomous-loop/SKILL.md | h: ### INIT step 1+ — requirement intake | INIT | read the requirement, write/keep the requirement file, generate session_id, init state.json + summary.md, log start | deterministic | prose | - | GAP |
 | LP-313 | skills/autonomous-loop/SKILL.md | q: If string-argument: write `.supervisor/requirements/{session_id}-{slug}.md` | requirement given as a string | write a requirement file with a non-header rubric placeholder hint | deterministic | prose | - | GAP |
-| LP-314 | skills/autonomous-loop/SKILL.md | q: **The placeholder MUST NOT begin a line with `## Outcomes Rubric`:** | writing the placeholder | never start a line with the rubric header (has_rubric would treat it as real) | rule | prose | - | GAP |
+| LP-314 | skills/autonomous-loop/SKILL.md | q: **The placeholder MUST NOT begin a line with `## Outcomes Rubric`:** | writing the placeholder | never start a line with the rubric header (has_rubric would treat it as real) | rule | step-scoped | - | GAP |
 | LP-315 | skills/autonomous-loop/SKILL.md | q: If `--requirement <path>` is used and the file already has a real `## Outcomes Rubric` section | --requirement file already has a real rubric | leave it intact | deterministic | prose | - | GAP |
-| LP-316 | skills/autonomous-loop/SKILL.md | q: **Collision risk in v1:** two sessions started in the same second | concurrent activity seen by the brief-save ls-diff | abort concurrent_session_detected | deterministic | prose | - | GAP |
-| LP-317 | skills/autonomous-loop/SKILL.md | h: ### state.json schema | writing state.json | advisory-only schema; never authoritative for resume (summary.md and SUPERVISOR_RESULT are) | rule | prose | - | GAP |
+| LP-316 | skills/autonomous-loop/SKILL.md | q: **Collision risk:** two sessions started in the same second | concurrent activity seen by the brief-save ls-diff | abort concurrent_session_detected | deterministic | prose | - | GAP |
+| LP-317 | skills/autonomous-loop/SKILL.md | h: ### state.json schema | writing state.json | advisory-only schema; never authoritative for resume (summary.md and SUPERVISOR_RESULT are) | rule | step-scoped | - | GAP |
 | LP-318 | skills/autonomous-loop/SKILL.md | h: ### state.json ACQUIRE signals (hook-readable — carve-out from the advisory-only rule) | PR-create hook disambiguates the session | it may read current_branch / current_status (written by the inlined Supervisor at ACQUIRE) | deterministic | prose | script:hook-dispatch-on-pr-create.sh | test-hook-dispatch-on-pr-create.sh |
 | LP-319 | skills/autonomous-loop/SKILL.md | q: The write is best-effort / non-fatal (jq atomic update | ACQUIRE write errors / direct /supervisor job path | logged no-op / write skipped | deterministic | prose | - | GAP |
 | LP-320 | skills/autonomous-loop/SKILL.md | q: **Terminal-status set (consumer treats these as NOT-active), exactly:** | current_status in the terminal set / outside it | session not active / active | deterministic | prose | script:hook-dispatch-on-pr-create.sh | test-hook-dispatch-on-pr-create.sh |
 | LP-321 | skills/autonomous-loop/SKILL.md | q: **No completion flip in state.json:** | ended_at set or brief not in jobs/in-progress/ | hook rejects the session as stale | deterministic | prose | script:hook-dispatch-on-pr-create.sh | test-hook-dispatch-on-pr-create.sh |
-| LP-322 | skills/autonomous-loop/SKILL.md | q: **Residual window (accepted):** | a crashed run leaves its brief in in-progress/ and no ended_at, and a later PR's branch collides | Source 2 may dispatch against it; accepted (narrow, fail-safe, never merges) | story | prose | - | GAP |
+| LP-322 | skills/autonomous-loop/SKILL.md | q: **Residual window (accepted):** | a crashed run leaves its brief in in-progress/ and no ended_at, and a later PR's branch collides | Source 2 may dispatch against it; accepted (narrow, fail-safe, never merges) | story | rationale:docs/rationale/launch-pad-autonomous.md#acquire-signals-residual-window | - | GAP |
 | LP-323 | skills/autonomous-loop/SKILL.md | q: **Rubric-presence test (canonical — used by PLAN step 2, step 6, and step 7).** | checking a rubric | real only with a line-anchored header and ≥1 bullet (has_rubric); never a substring grep | deterministic | prose | - | GAP |
 | LP-324 | skills/autonomous-loop/SKILL.md | q: Reference the loaded `commands/launch-pad.md` workflow. Invoke it inline on the main thread | every iteration | invoke Launch Pad inline with the current requirement; on loop-back set and persist requirement_path to the iter file | deterministic | prose | - | GAP |
 | LP-325 | skills/autonomous-loop/SKILL.md | q: **Launch Pad forward (separate from the `/supervisor` forward set):** | --non-interactive-fallback at INIT / interactive run | append --non-interactive to Launch Pad every iteration / pass the requirement path alone; /supervisor set stays four flags | deterministic | prose | - | test-non-interactive-gates-seam.sh |
 | LP-326 | skills/autonomous-loop/SKILL.md | q: **Inline-instruction to Launch Pad (no source change):** | the requirement has an Outcomes Rubric | instruct Launch Pad to copy it verbatim into the brief at Phase 5 | deterministic | prose | - | GAP |
-| LP-327 | skills/autonomous-loop/SKILL.md | q: **Conditional auto-authoring directive (multi-iteration only, no rubric at intake):** | multi mode AND no real rubric AND no --non-interactive-fallback | also instruct Launch Pad to auto-author a 3-7 bullet rubric | deterministic | prose | - | test-non-interactive-gates-seam.sh |
+| LP-327 | skills/autonomous-loop/multi-iteration.md | q: **Conditional auto-authoring directive (multi-iteration only, no rubric at intake):** | multi mode AND no real rubric AND no --non-interactive-fallback | also instruct Launch Pad to auto-author a 3-7 bullet rubric | deterministic | prose | - | test-non-interactive-gates-seam.sh |
 | LP-328 | skills/autonomous-loop/SKILL.md | q: **When the conditional directive does NOT apply:** | single mode, or the requirement already has a real rubric | preserve-verbatim directive only | deterministic | prose | - | GAP |
-| LP-329 | skills/autonomous-loop/SKILL.md | q: **Never under `--non-interactive-fallback`:** an auto-authored rubric's only approval | --non-interactive-fallback run with no rubric | request no authoring; brief saved without a rubric; iteration ends done, no_rubric_in_non_interactive | deterministic | prose | - | test-non-interactive-gates-seam.sh |
-| LP-330 | skills/autonomous-loop/SKILL.md | q: **Degenerate-rubric fallback:** if Launch Pad cannot derive ≥3 diff-checkable bullets | fewer than 3 bullets derivable | no rubric section; proceed under the no-rubric gate (Signal 1 skipped) | deterministic | prose | - | GAP |
+| LP-329 | skills/autonomous-loop/multi-iteration.md | q: **Never under `--non-interactive-fallback`:** an auto-authored rubric's only approval | --non-interactive-fallback run with no rubric | request no authoring; brief saved without a rubric; iteration ends done, no_rubric_in_non_interactive | deterministic | prose | - | test-non-interactive-gates-seam.sh |
+| LP-330 | skills/autonomous-loop/multi-iteration.md | q: **Degenerate-rubric fallback:** if Launch Pad cannot derive ≥3 diff-checkable bullets | fewer than 3 bullets derivable | no rubric section; proceed under the no-rubric gate (Signal 1 skipped) | deterministic | prose | - | GAP |
 | LP-331 | skills/autonomous-loop/SKILL.md | q: Under the Launch Pad forward (step 1) none of these asks | the Launch Pad forward is active | every inner Launch Pad gate takes its named can't-ask branch (PASS saves) | deterministic | prose | - | GAP |
-| LP-332 | skills/autonomous-loop/SKILL.md | q: **Brief-save detection — primary path: `LAUNCH_PAD_RESULT` (v14.2.0+):** | Launch Pad finished inline | read the last LAUNCH_PAD_RESULT block in the transcript | deterministic | prose | - | GAP |
-| LP-333 | skills/autonomous-loop/SKILL.md | q: **Validate the block before trusting it (closes the inline-path validation gap):** | inline path (the stop hook does not fire) | pipe the block to validate-launch-pad-result.py --raw | deterministic | prose | script:validate-launch-pad-result.py | test-result-validators.sh |
+| LP-332 | skills/autonomous-loop/SKILL.md | q: **Brief-save detection — primary path: `LAUNCH_PAD_RESULT`:** | Launch Pad finished inline | read the last LAUNCH_PAD_RESULT block in the transcript | deterministic | prose | - | GAP |
+| LP-333 | skills/autonomous-loop/SKILL.md | q: **Validate the block before trusting it:** | inline path (the stop hook does not fire) | pipe the block to validate-launch-pad-result.py --raw | deterministic | prose | script:validate-launch-pad-result.py | test-result-validators.sh |
 | LP-334 | skills/autonomous-loop/SKILL.md | q: `{}` (no `decision` key) → block well-formed | validator prints {} | treat as well-formed; take the per-status branch | deterministic | prose | script:validate-launch-pad-result.py | test-result-validators.sh |
 | LP-335 | skills/autonomous-loop/SKILL.md | q: `decision: block` → malformed. Record `policy_decisions[].decision = "launch_pad_result_malformed"` | validator blocks | record launch_pad_result_malformed and fall through to the ls-diff fallback; never abort | deterministic | prose | - | GAP |
 | LP-336 | skills/autonomous-loop/SKILL.md | q: `status: saved` → set `current_brief_path = LAUNCH_PAD_RESULT.saved_brief_path` | status saved / the path fails test -f | set current_brief_path / treat as malformed, fall back | deterministic | prose | - | GAP |
@@ -357,31 +358,31 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-343 | skills/autonomous-loop/SKILL.md | q: If `new_briefs` is empty → user picked discard or refine failed | ls-diff finds no new brief | aborted, user_discarded_at_phase_6; exit | deterministic | prose | - | GAP |
 | LP-344 | skills/autonomous-loop/SKILL.md | q: If `new_briefs` has exactly one entry → that path is `current_brief_path` | exactly one new brief | record it as current_brief_path; proceed | deterministic | prose | - | GAP |
 | LP-345 | skills/autonomous-loop/SKILL.md | q: If `new_briefs` has >1 entries → ambiguity | more than one new brief | abort concurrent_session_detected | deterministic | prose | - | GAP |
-| LP-346 | skills/autonomous-loop/SKILL.md | q: For v14.2.0+ plugins, `LAUNCH_PAD_RESULT.saved_brief_path` is authoritative | plugin emits Phase 7 / pre-v14.2.0 plugin | saved_brief_path authoritative, ls-diff informational / ls-diff is the only mechanism | rule | prose | - | GAP |
+| LP-346 | skills/autonomous-loop/SKILL.md | q: When the block validates, `LAUNCH_PAD_RESULT.saved_brief_path` is authoritative | plugin emits Phase 7 / pre-v14.2.0 plugin | saved_brief_path authoritative, ls-diff informational / ls-diff is the only mechanism | rule | step-scoped | - | GAP |
 | LP-347 | skills/autonomous-loop/SKILL.md | q: User aborted at NO-GO → `status_reason: "user_aborted_at_no_go"` | user aborted at NO-GO | user_aborted_at_no_go; exit | deterministic | prose | - | GAP |
 | LP-348 | skills/autonomous-loop/SKILL.md | q: User aborted after Plan Review FAIL × 3 → `status_reason: "user_aborted_at_plan_review_fail"` | user aborted after FAIL x3 | user_aborted_at_plan_review_fail; exit | deterministic | prose | - | GAP |
 | LP-349 | skills/autonomous-loop/SKILL.md | q: **Rubric preservation verification (when applicable):** | requirement had a real rubric and the saved brief lacks one | aborted, rubric_dropped_from_brief | deterministic | prose | - | GAP |
-| LP-350 | skills/autonomous-loop/SKILL.md | q: **Persist + freeze an authored rubric (multi-iteration only):** | a rubric was authored into the brief | write it back into the requirement body so iteration 2+ templates inherit it | rule | prose | - | GAP |
-| LP-351 | skills/autonomous-loop/SKILL.md | q: **Fires ONLY when ALL of:** `mode == "multi"` AND the **current** requirement file | multi AND current requirement lacks a rubric AND brief has one | freeze exactly once (idempotent); never gate on a run-global had-rubric flag | deterministic | prose | - | GAP |
-| LP-352 | skills/autonomous-loop/SKILL.md | q: **Extract + append + verify (all inside one idempotency guard):** | inside the guard: the append did not take | print a rubric-freeze-failed warning (verification never runs outside the guard) | deterministic | prose | - | GAP |
-| LP-353 | skills/autonomous-loop/SKILL.md | q: **Non-interactive no-op:** under `--non-interactive-fallback` PLAN step 2 requests no authoring | --non-interactive-fallback and the brief carries an unrequested rubric | skip the freeze; never freeze an unapproved rubric | deterministic | prose | - | test-non-interactive-gates-seam.sh |
-| LP-354 | skills/autonomous-loop/SKILL.md | q: **Degenerate-case no-op:** if Launch Pad fell back | no rubric authored | skip append and verification (no misleading warning); no-rubric gate | deterministic | prose | - | GAP |
+| LP-350 | skills/autonomous-loop/multi-iteration.md | q: **PLAN step 7 — persist + freeze an authored rubric:** | a rubric was authored into the brief | write it back into the requirement body so iteration 2+ templates inherit it | rule | step-scoped | - | GAP |
+| LP-351 | skills/autonomous-loop/multi-iteration.md | q: **Fires ONLY when ALL of:** `mode == "multi"` AND the **current** requirement file | multi AND current requirement lacks a rubric AND brief has one | freeze exactly once (idempotent); never gate on a run-global had-rubric flag | deterministic | prose | - | GAP |
+| LP-352 | skills/autonomous-loop/multi-iteration.md | q: **Extract + append + verify (all inside one idempotency guard),** | inside the guard: the append did not take | print a rubric-freeze-failed warning (verification never runs outside the guard) | deterministic | prose | - | GAP |
+| LP-353 | skills/autonomous-loop/multi-iteration.md | q: **Non-interactive no-op:** under `--non-interactive-fallback` PLAN step 2 requests no authoring | --non-interactive-fallback and the brief carries an unrequested rubric | skip the freeze; never freeze an unapproved rubric | deterministic | prose | - | test-non-interactive-gates-seam.sh |
+| LP-354 | skills/autonomous-loop/multi-iteration.md | q: **Degenerate-case no-op:** if Launch Pad authored no rubric | no rubric authored | skip append and verification (no misleading warning); no-rubric gate | deterministic | prose | - | GAP |
 | LP-355 | skills/autonomous-loop/SKILL.md | q: Reference the loaded `commands/supervisor.md` workflow. Invoke it inline on the main thread | every iteration | invoke /supervisor inline with job: current_brief_path plus the forward set | deterministic | prose | - | GAP |
-| LP-356 | skills/autonomous-loop/SKILL.md | q: **`--base-branch` passthrough (v14.0.0 stacked-mode belt-and-suspenders):** | iteration > 1 and stacked | pass --base-branch iterations[-2].branch | deterministic | prose | - | GAP |
-| LP-357 | skills/autonomous-loop/SKILL.md | q: The CLI flag is the **authoritative source** | CLI flag and brief Base Branch field | CLI wins; both must agree at Plan Review or Criterion 13 FAILs | rule | prose | - | GAP |
-| LP-358 | skills/autonomous-loop/SKILL.md | q: **`--no-stacked-branches` mode and iter 1:** do NOT pass `--base-branch` | --no-stacked-branches or iteration 1 | omit --base-branch (Supervisor defaults to main) | deterministic | prose | - | GAP |
+| LP-356 | skills/autonomous-loop/multi-iteration.md | q: When this iteration is iter N+1 of a stacked-mode run | iteration > 1 and stacked | pass --base-branch iterations[-2].branch | deterministic | prose | - | GAP |
+| LP-357 | skills/autonomous-loop/multi-iteration.md | q: The CLI flag is the **authoritative source** | CLI flag and brief Base Branch field | CLI wins; both must agree at Plan Review or Criterion 13 FAILs | rule | step-scoped | - | GAP |
+| LP-358 | skills/autonomous-loop/multi-iteration.md | q: In `--no-stacked-branches` mode and on iter 1, do NOT pass `--base-branch` | --no-stacked-branches or iteration 1 | omit --base-branch (Supervisor defaults to main) | deterministic | prose | - | GAP |
 | LP-359 | skills/autonomous-loop/SKILL.md | q: **`--non-interactive-fallback` mode:** also pass `--non-interactive` to Supervisor | --non-interactive-fallback at INIT | forward --non-interactive to /supervisor | deterministic | prose | - | GAP |
-| LP-360 | skills/autonomous-loop/SKILL.md | q: **`--cheap` cost-profile forward (v15.2.0+):** | --cheap at INIT | append --cheap to every iteration's /supervisor exactly once; not gated on the fallback flag | deterministic | prose | - | GAP |
-| LP-361 | skills/autonomous-loop/SKILL.md | q: **`--max-tokens N` token-ceiling forward (red-team-hardening/06):** | --max-tokens N at INIT | append --max-tokens N to every iteration's /supervisor; not gated on the fallback flag | deterministic | prose | - | GAP |
-| LP-362 | skills/autonomous-loop/SKILL.md | q: **Auto-forwarded flags (the complete `/supervisor` forward set):** | building the /supervisor invocation | forward exactly four flags, each under its own condition | rule | prose | - | test-non-interactive-gates-seam.sh |
-| LP-363 | skills/autonomous-loop/SKILL.md | q: `--skip-preflight-sync` in particular is NOT passed through | any other flag | never forward it to /supervisor (the one other forward goes to Launch Pad) | rule | prose | - | GAP |
-| LP-364 | skills/autonomous-loop/SKILL.md | q: **The Supervisor Phase 4.5 enumeration MUST NOT stop at Rubric Grader.** | inline Supervisor run completes Phase 4.5 | run step 5.5's default-on detached until-mergeable dispatch (opt-outs honoured); it never gates the run | rule | prose | script:dispatch-pr-review.sh | test-dispatch-pr-review.sh |
-| LP-365 | skills/autonomous-loop/SKILL.md | q: **Parity consequence — single-iteration mode reaches the post-PR drain.** | single-iteration run produced a PR | the drain still dispatches via step 5.5 (and the PR-create hook); the per-PR marker keeps it to one dispatch | rule | prose | script:hook-dispatch-on-pr-create.sh | test-hook-dispatch-on-pr-create.sh |
-| LP-366 | skills/autonomous-loop/SKILL.md | q: **The loop's own EVALUATE review-heal is an ADDITIONAL gate, not the only drain.** | multi-iteration EVALUATE | run the extra diff-only review-heal (no --until-mergeable, never merges); never a substitute for step 5.5 | rule | prose | - | GAP |
-| LP-367 | skills/autonomous-loop/SKILL.md | q: **Multi-iteration interplay with the detached drain (R9 — do NOT duplicate or redesign).** | the detached drain may still push to the PR branch | a stacked iter N+1 or a human merge SHOULD wait for a terminal READY / ESCALATED | rule | prose | - | GAP |
-| LP-368 | skills/autonomous-loop/SKILL.md | q: The autonomous loop never touches the job lifecycle. | job moves pending/ → in-progress/ → done/ or failed/ | Supervisor moves it; the loop never does | rule | prose | - | GAP |
+| LP-360 | skills/autonomous-loop/SKILL.md | q: **`--cheap` cost-profile forward:** | --cheap at INIT | append --cheap to every iteration's /supervisor exactly once; not gated on the fallback flag | deterministic | prose | - | GAP |
+| LP-361 | skills/autonomous-loop/SKILL.md | q: **`--max-tokens N` token-ceiling forward:** | --max-tokens N at INIT | append --max-tokens N to every iteration's /supervisor; not gated on the fallback flag | deterministic | prose | - | GAP |
+| LP-362 | skills/autonomous-loop/SKILL.md | q: **Auto-forwarded flags (the complete `/supervisor` forward set):** | building the /supervisor invocation | forward exactly four flags, each under its own condition | rule | global | - | test-non-interactive-gates-seam.sh |
+| LP-363 | skills/autonomous-loop/SKILL.md | q: `--skip-preflight-sync` in particular is NOT passed through | any other flag | never forward it to /supervisor (the one other forward goes to Launch Pad) | rule | global | - | GAP |
+| LP-364 | skills/autonomous-loop/SKILL.md | q: **The Supervisor Phase 4.5 enumeration MUST NOT stop at Rubric Grader.** | inline Supervisor run completes Phase 4.5 | run step 5.5's default-on detached until-mergeable dispatch (opt-outs honoured); it never gates the run | rule | step-scoped | script:dispatch-pr-review.sh | test-dispatch-pr-review.sh |
+| LP-365 | skills/autonomous-loop/SKILL.md | q: **Parity consequence — single-iteration mode reaches the post-PR drain** | single-iteration run produced a PR | the drain still dispatches via step 5.5 (and the PR-create hook); the per-PR marker keeps it to one dispatch | rule | step-scoped | script:hook-dispatch-on-pr-create.sh | test-hook-dispatch-on-pr-create.sh |
+| LP-366 | skills/autonomous-loop/SKILL.md | q: **The loop's own EVALUATE review-heal is an ADDITIONAL gate, not the only drain** | multi-iteration EVALUATE | run the extra diff-only review-heal (no --until-mergeable, never merges); never a substitute for step 5.5 | rule | step-scoped | - | GAP |
+| LP-367 | skills/autonomous-loop/SKILL.md | q: **Multi-iteration interplay with the detached drain (R9 — do NOT duplicate or redesign):** | the detached drain may still push to the PR branch | a stacked iter N+1 or a human merge SHOULD wait for a terminal READY / ESCALATED | rule | step-scoped | - | GAP |
+| LP-368 | skills/autonomous-loop/SKILL.md | q: The autonomous loop never touches the job lifecycle. | job moves pending/ → in-progress/ → done/ or failed/ | Supervisor moves it; the loop never does | rule | global | - | GAP |
 | LP-369 | skills/autonomous-loop/SKILL.md | q: Capture the emitted `SUPERVISOR_RESULT` block (the last one in the transcript | Supervisor emitted a result | record n, brief_path, status, pr_url, rubric_score, branch, summary, error, heal_decision, escalation_reason into iterations[] | deterministic | prose | - | GAP |
-| LP-370 | skills/autonomous-loop/SKILL.md | q: **`review_heal` field (added for the chained EVALUATE review-heal step):** | review-heal skipped / ran | review_heal null / the parsed REVIEW_HEAL_RESULT (never READY from EVALUATE) | deterministic | prose | - | GAP |
+| LP-370 | skills/autonomous-loop/multi-iteration.md | q: When EVALUATE runs the chained review-and-heal step, it attaches the parsed `REVIEW_HEAL_RESULT` | review-heal skipped / ran | review_heal null / the parsed REVIEW_HEAL_RESULT (never READY from EVALUATE) | deterministic | prose | - | GAP |
 | LP-371 | skills/autonomous-loop/SKILL.md | q: **Fallback when Supervisor emits no `SUPERVISOR_RESULT`** | zero SUPERVISOR_RESULT blocks this iteration | infer the loop outcome from filesystem evidence | deterministic | prose | - | GAP |
 | LP-372 | skills/autonomous-loop/SKILL.md | q: If `.supervisor/jobs/in-progress/{basename(current_brief_path)}` still exists | brief still in in-progress/ | half-state; terminate as below | deterministic | prose | - | GAP |
 | LP-373 | skills/autonomous-loop/SKILL.md | q: If `.supervisor/jobs/done/{basename(current_brief_path)}` exists but no `SUPERVISOR_RESULT` was emitted | brief in done/ but no result | result-emission failure; terminate as below | deterministic | prose | - | GAP |
@@ -389,96 +390,96 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-375 | skills/autonomous-loop/SKILL.md | q: In all three cases, v1 terminates the loop with `AUTONOMOUS_RUN.status: failed` | any of the three no-result cases | failed, supervisor_failed_other, plus a synthetic iteration entry (error no_supervisor_result_emitted) | deterministic | prose | - | GAP |
 | LP-376 | skills/autonomous-loop/SKILL.md | q: **AC-2 single-iteration short-circuit:** | single-iteration mode | done, status_reason null, last_phase EXECUTE; never enter EVALUATE | deterministic | prose | - | GAP |
 | LP-377 | skills/autonomous-loop/SKILL.md | h: ### EVALUATE PR-base verification (AC-3 + AC-15) | multi-iteration EVALUATE, before signals | verify the iteration's PR targets the expected base (second line of defense) | deterministic | prose | - | GAP |
-| LP-378 | skills/autonomous-loop/SKILL.md | q: `iteration == 1` — first iteration has no parent iter | iteration 1 | skip PR-base verification | deterministic | prose | - | GAP |
-| LP-379 | skills/autonomous-loop/SKILL.md | q: `--no-stacked-branches` is active — every iter branches from `main` | --no-stacked-branches | skip PR-base verification | deterministic | prose | - | GAP |
-| LP-380 | skills/autonomous-loop/SKILL.md | q: `pr_url` is null — Supervisor failed before creating a PR (merge conflict, env error, etc.) | pr_url null | skip (never gh pr view null); a failed status then takes default termination, supervisor_failed_other | deterministic | prose | - | GAP |
-| LP-381 | skills/autonomous-loop/SKILL.md | q: decision: "pr_base_verify_skipped_non_interactive" | gh pr view baseRefName fails twice and the run is non-interactive | log, record pr_base_verify_skipped_non_interactive, go to signal evaluation | deterministic | prose | - | test-non-interactive-gates-seam.sh |
-| LP-382 | skills/autonomous-loop/SKILL.md | q: AC-14 interactive fallback | gh pr view fails twice, interactive | ask retry / skip-verify-once / abort | deterministic | prose | - | GAP |
-| LP-383 | skills/autonomous-loop/SKILL.md | q: auto-abort with status_reason="user_aborted_gh_retry" | third retry fails, then a second retry pick fails / abort picked | at most one re-prompt, then aborted user_aborted_gh_retry | deterministic | prose | - | GAP |
-| LP-384 | skills/autonomous-loop/SKILL.md | q: status_reason="iter_pr_base_mismatch" | actual base differs from expected base | aborted, iter_pr_base_mismatch; exit | deterministic | prose | - | GAP |
-| LP-385 | skills/autonomous-loop/SKILL.md | q: The verification site here is the **second line of defense** | Supervisor's own Phase 4 self-verify was silenced | this site still catches the mismatch; identical retry policy on both sites | rule | prose | - | GAP |
+| LP-378 | skills/autonomous-loop/multi-iteration.md | q: `iteration == 1` — no parent iter; base is `main`. | iteration 1 | skip PR-base verification | deterministic | prose | - | GAP |
+| LP-379 | skills/autonomous-loop/multi-iteration.md | q: `--no-stacked-branches` is active — every iter branches from `main`. | --no-stacked-branches | skip PR-base verification | deterministic | prose | - | GAP |
+| LP-380 | skills/autonomous-loop/multi-iteration.md | q: `pr_url` is null — Supervisor failed before creating a PR. Do not call | pr_url null | skip (never gh pr view null); a failed status then takes default termination, supervisor_failed_other | deterministic | prose | - | GAP |
+| LP-381 | skills/autonomous-loop/multi-iteration.md | q: decision: "pr_base_verify_skipped_non_interactive" | gh pr view baseRefName fails twice and the run is non-interactive | log, record pr_base_verify_skipped_non_interactive, go to signal evaluation | deterministic | prose | - | test-non-interactive-gates-seam.sh |
+| LP-382 | skills/autonomous-loop/multi-iteration.md | q: AC-14 interactive fallback | gh pr view fails twice, interactive | ask retry / skip-verify-once / abort | deterministic | prose | - | GAP |
+| LP-383 | skills/autonomous-loop/multi-iteration.md | q: auto-aborts with status_reason="user_aborted_gh_retry" | third retry fails, then a second retry pick fails / abort picked | at most one re-prompt, then aborted user_aborted_gh_retry | deterministic | prose | - | GAP |
+| LP-384 | skills/autonomous-loop/multi-iteration.md | q: status_reason="iter_pr_base_mismatch" | actual base differs from expected base | aborted, iter_pr_base_mismatch; exit | deterministic | prose | - | GAP |
+| LP-385 | skills/autonomous-loop/multi-iteration.md | q: This is the **second line of defense** | Supervisor's own Phase 4 self-verify was silenced | this site still catches the mismatch; identical retry policy on both sites | rule | step-scoped | - | GAP |
 | LP-386 | skills/autonomous-loop/SKILL.md | h: ### EVALUATE review-heal step (chained PR review-and-heal — fresh isolated Task context) | PR-base verification passed, before any signal | run the chained review-and-heal step and record its outcome | deterministic | prose | - | GAP |
-| LP-387 | skills/autonomous-loop/SKILL.md | q: **This is an ADDITIONAL multi-iteration-only gate, not the post-PR drain.** | multi-iteration EVALUATE | diff-only review-heal feeding the stacking decision; never replaces step 5.5's drain | rule | prose | - | GAP |
-| LP-388 | skills/autonomous-loop/SKILL.md | q: `pr_url` is null — the iteration did not produce a PR (Supervisor failed | pr_url null | skip review-heal; go to signal evaluation | deterministic | prose | - | GAP |
-| LP-389 | skills/autonomous-loop/SKILL.md | q: `SUPERVISOR_RESULT.status == failed` — the iteration did not complete successfully | Supervisor status failed | skip review-heal (runs only after completed / completed_with_escalation with a PR) | deterministic | prose | - | GAP |
-| LP-390 | skills/autonomous-loop/SKILL.md | q: **Execution form (AC6 — Task step, NOT a nested `claude` process):** | running review-heal from /autonomous | a fresh-context Task step runs the loop body inline; never a nested process, never spawn review-pr-runner | rule | prose | - | GAP |
-| LP-391 | skills/autonomous-loop/SKILL.md | q: **Record the outcome:** attach the parsed `REVIEW_HEAL_RESULT` | review-heal returned | attach the result to iterations[] under review_heal | deterministic | prose | - | GAP |
-| LP-392 | skills/autonomous-loop/SKILL.md | q: **`PASS`** → the PR diff is clean | decision PASS | continue to signal evaluation; no change to iterate-or-stop | deterministic | prose | - | GAP |
-| LP-393 | skills/autonomous-loop/SKILL.md | q: **`ESCALATED`** → review-heal exhausted its bound or the reviewer returned `NEEDS_HUMAN` | decision ESCALATED: interactive / --non-interactive-fallback | surface via the existing escalation prompt (continue / stop), record review_heal_escalated / aborted review_heal_escalated_non_interactive | deterministic | prose | - | test-non-interactive-gates-seam.sh |
-| LP-394 | skills/autonomous-loop/SKILL.md | q: **`READY` / any unrecognized decision** → EVALUATE **never emits `READY`** | READY or an unknown decision | treat as terminal non-re-iterate; fall through like PASS; never loop to PLAN or ask | deterministic | prose | - | GAP |
-| LP-395 | skills/autonomous-loop/SKILL.md | q: **Forward-compat with the additive v2 drain fields** | additive drain fields present | ignore them; key only off decision and the v1 core fields | rule | prose | - | GAP |
-| LP-396 | skills/autonomous-loop/SKILL.md | q: Review-heal **never merges** the PR | review-heal runs | never merges, so it cannot retrigger the loop | rule | prose | - | GAP |
+| LP-387 | skills/autonomous-loop/multi-iteration.md | q: It is an **additional, multi-iteration-only gate** that informs the stacking decision | multi-iteration EVALUATE | diff-only review-heal feeding the stacking decision; never replaces step 5.5's drain | rule | step-scoped | - | GAP |
+| LP-388 | skills/autonomous-loop/multi-iteration.md | q: **Skip** (fall straight through to Signal evaluation) when `pr_url` is null | pr_url null | skip review-heal; go to signal evaluation | deterministic | prose | - | GAP |
+| LP-389 | skills/autonomous-loop/multi-iteration.md | q: or `SUPERVISOR_RESULT.status == failed`. It runs only after a successful iteration | Supervisor status failed | skip review-heal (runs only after completed / completed_with_escalation with a PR) | deterministic | prose | - | GAP |
+| LP-390 | skills/autonomous-loop/multi-iteration.md | q: **Execution form (AC6 — Task step, NOT a nested `claude` process):** | running review-heal from /autonomous | a fresh-context Task step runs the loop body inline; never a nested process, never spawn review-pr-runner | rule | step-scoped | - | GAP |
+| LP-391 | skills/autonomous-loop/multi-iteration.md | q: **Record the outcome** under this iteration's `review_heal` field | review-heal returned | attach the result to iterations[] under review_heal | deterministic | prose | - | GAP |
+| LP-392 | skills/autonomous-loop/multi-iteration.md | q: **`PASS`** → continue normally to Signal evaluation | decision PASS | continue to signal evaluation; no change to iterate-or-stop | deterministic | prose | - | GAP |
+| LP-393 | skills/autonomous-loop/multi-iteration.md | q: **`ESCALATED`** → review-heal exhausted its bound or the reviewer returned `NEEDS_HUMAN` | decision ESCALATED: interactive / --non-interactive-fallback | surface via the existing escalation prompt (continue / stop), record review_heal_escalated / aborted review_heal_escalated_non_interactive | deterministic | prose | - | test-non-interactive-gates-seam.sh |
+| LP-394 | skills/autonomous-loop/multi-iteration.md | q: **`READY` / any unrecognized decision** → treat as a **terminal, non-re-iterate** state | READY or an unknown decision | treat as terminal non-re-iterate; fall through like PASS; never loop to PLAN or ask | deterministic | prose | - | GAP |
+| LP-395 | skills/autonomous-loop/multi-iteration.md | q: **Additive v2 drain fields** | additive drain fields present | ignore them; key only off decision and the v1 core fields | rule | step-scoped | - | GAP |
+| LP-396 | skills/autonomous-loop/multi-iteration.md | q: Review-heal **never merges** the PR | review-heal runs | never merges, so it cannot retrigger the loop | rule | step-scoped | - | GAP |
 | LP-397 | skills/autonomous-loop/SKILL.md | h: ### Signal 1 — `status: completed` AND `rubric_score N/M` with N<M (stacked rubric gate) | completed with rubric_score N<M | pause at the rubric gate | deterministic | prose | - | GAP |
-| LP-398 | skills/autonomous-loop/SKILL.md | q: **AC-5 webhook gate POST (when `--notify` AND `$LOOMWRIGHT_WEBHOOK_URL` are set)** | --notify and a webhook URL | background send-webhook.sh gate rubric POST before asking; never wait for delivery | deterministic | prose | script:send-webhook.sh | test-webhook.sh |
-| LP-399 | skills/autonomous-loop/SKILL.md | q: **Stacked-branch mode (v14 default):** | stacked mode | offer continue-to-next-iteration / stop-here / force-continue-anyway (same as continue) | deterministic | prose | - | GAP |
-| LP-400 | skills/autonomous-loop/SKILL.md | q: **`--no-stacked-branches` mode (v13-compat cadence):** | --no-stacked-branches | offer merge-and-continue / stop-here / force-continue-anyway (risk of conflicting PRs) | deterministic | prose | - | GAP |
-| LP-401 | skills/autonomous-loop/SKILL.md | q: **Non-interactive fallback:** when `--non-interactive-fallback` is set AND no TTY, the gate does NOT call | rubric gate under --non-interactive-fallback | aborted, rubric_gate_closed_non_interactive (never auto-continue or auto-stop) | deterministic | prose | - | test-non-interactive-gates-seam.sh |
-| LP-402 | skills/autonomous-loop/SKILL.md | q: **Stacked mode — `continue-to-next-iteration` (no merge verification needed):** | stacked continue | write the stacked-mode refined requirement; no merge check | deterministic | prose | - | GAP |
-| LP-403 | skills/autonomous-loop/SKILL.md | q: block MUST contain the line `Base Branch: <iter_N_branch_name>` verbatim | stacked iteration brief | Configuration carries Base Branch; Criterion 13 FAILs it otherwise; re-discovery compares against the parent branch | rule | prose | - | GAP |
-| LP-404 | skills/autonomous-loop/SKILL.md | q: Out-of-order merge of stacked PRs corrupts the stack. | merging stacked PRs | merge iter 1 first, then iter 2, in iterations[] order | rule | prose | - | GAP |
-| LP-405 | skills/autonomous-loop/SKILL.md | q: **If user picks `merge-and-continue`, the loop verifies the merge before re-planning.** | merge-and-continue picked | gh state MERGED, else local ancestry on the default branch; unverified ⇒ re-prompt | deterministic | prose | - | GAP |
-| LP-406 | skills/autonomous-loop/SKILL.md | q: **Implementation note — `jq` is illustrative, not required.** | looking up iteration branches | keep them in memory; state.json writes are for persistence only | story | prose | - | GAP |
-| LP-407 | skills/autonomous-loop/SKILL.md | q: **If both `gh` is unavailable AND `iter_N_branch_sha` is unresolvable** | merge cannot be positively verified | re-prompt the user; never proceed | deterministic | prose | - | GAP |
-| LP-408 | skills/autonomous-loop/SKILL.md | q: The loop **never** advances to iteration N+1 on `merge-and-continue` until | merge-and-continue without a confirmed merge | never advance | rule | prose | - | GAP |
-| LP-409 | skills/autonomous-loop/SKILL.md | q: **If `merge-and-continue` (verified):** create refined requirement | merge verified | write the merge-and-continue refined requirement, loop to PLAN, record user_picked_merge_and_continue | deterministic | prose | - | GAP |
-| LP-410 | skills/autonomous-loop/SKILL.md | q: **If `stop-here`:** summary status=done | stop-here picked | done, record rubric_final_score, last_phase EVALUATE; exit | deterministic | prose | - | GAP |
-| LP-411 | skills/autonomous-loop/SKILL.md | q: **If `force-continue-anyway`:** create refined requirement as above | force-continue-anyway picked | write the refined requirement unverified, record user_picked_force_continue_anyway, loop to PLAN | deterministic | prose | - | GAP |
+| LP-398 | skills/autonomous-loop/multi-iteration.md | q: **AC-5 webhook gate POST (when `--notify` AND `$LOOMWRIGHT_WEBHOOK_URL` are set)** | --notify and a webhook URL | background send-webhook.sh gate rubric POST before asking; never wait for delivery | deterministic | prose | script:send-webhook.sh | test-webhook.sh |
+| LP-399 | skills/autonomous-loop/multi-iteration.md | q: **Stacked-branch mode (default):** | stacked mode | offer continue-to-next-iteration / stop-here / force-continue-anyway (same as continue) | deterministic | prose | - | GAP |
+| LP-400 | skills/autonomous-loop/multi-iteration.md | q: **`--no-stacked-branches` mode:** | --no-stacked-branches | offer merge-and-continue / stop-here / force-continue-anyway (risk of conflicting PRs) | deterministic | prose | - | GAP |
+| LP-401 | skills/autonomous-loop/multi-iteration.md | q: **Non-interactive fallback:** when `--non-interactive-fallback` is set AND no TTY, the gate does NOT call | rubric gate under --non-interactive-fallback | aborted, rubric_gate_closed_non_interactive (never auto-continue or auto-stop) | deterministic | prose | - | test-non-interactive-gates-seam.sh |
+| LP-402 | skills/autonomous-loop/multi-iteration.md | q: **Stacked mode — `continue-to-next-iteration` (no merge verification):** | stacked continue | write the stacked-mode refined requirement; no merge check | deterministic | prose | - | GAP |
+| LP-403 | skills/autonomous-loop/multi-iteration.md | q: block MUST contain the line `Base Branch: <iter_N_branch_name>` verbatim | stacked iteration brief | Configuration carries Base Branch; Criterion 13 FAILs it otherwise; re-discovery compares against the parent branch | rule | step-scoped | - | GAP |
+| LP-404 | skills/autonomous-loop/multi-iteration.md | q: Out-of-order merge of stacked PRs corrupts the stack. | merging stacked PRs | merge iter 1 first, then iter 2, in iterations[] order | rule | step-scoped | - | GAP |
+| LP-405 | skills/autonomous-loop/multi-iteration.md | q: **`--no-stacked-branches` mode — `merge-and-continue` (verified):** the loop verifies the merge | merge-and-continue picked | gh state MERGED, else local ancestry on the default branch; unverified ⇒ re-prompt | deterministic | prose | - | GAP |
+| LP-406 | skills/autonomous-loop/SKILL.md | q: **Implementation note — `jq` is illustrative, not required.** | looking up iteration branches | keep them in memory; state.json writes are for persistence only | story | rationale:docs/rationale/launch-pad-autonomous.md#merge-verification-reads-in-memory-state | - | GAP |
+| LP-407 | skills/autonomous-loop/multi-iteration.md | q: **If both `gh` is unavailable AND `iter_N_branch_sha` is unresolvable** | merge cannot be positively verified | re-prompt the user; never proceed | deterministic | prose | - | GAP |
+| LP-408 | skills/autonomous-loop/multi-iteration.md | q: The loop **never** advances to iteration N+1 on `merge-and-continue` until | merge-and-continue without a confirmed merge | never advance | rule | step-scoped | - | GAP |
+| LP-409 | skills/autonomous-loop/multi-iteration.md | q: **If `merge-and-continue` (verified):** create the refined requirement | merge verified | write the merge-and-continue refined requirement, loop to PLAN, record user_picked_merge_and_continue | deterministic | prose | - | GAP |
+| LP-410 | skills/autonomous-loop/multi-iteration.md | q: **If `stop-here`:** summary status=done | stop-here picked | done, record rubric_final_score, last_phase EVALUATE; exit | deterministic | prose | - | GAP |
+| LP-411 | skills/autonomous-loop/multi-iteration.md | q: **If `force-continue-anyway`:** create the refined requirement as above | force-continue-anyway picked | write the refined requirement unverified, record user_picked_force_continue_anyway, loop to PLAN | deterministic | prose | - | GAP |
 | LP-412 | skills/autonomous-loop/SKILL.md | h: ### Signal 2 — `status: failed` AND Option C triggered this iteration | Supervisor returned failed | run the Option C detection algorithm | deterministic | prose | - | GAP |
-| LP-413 | skills/autonomous-loop/SKILL.md | q: **Iteration-scoping anchor — anchor by filename, not by global grep:** | detecting this iteration's Option C | anchor on jobs/failed/{basename(current_brief_path)} existence | rule | prose | - | GAP |
-| LP-414 | skills/autonomous-loop/SKILL.md | q: **Why not `grep "inter_subtask_gap" .supervisor/state.md` directly:** | tempted to grep state.md | never consult state.md (atomic rewrites can leave stale content) | rule | prose | - | GAP |
-| LP-415 | skills/autonomous-loop/SKILL.md | q: Supervisor failed for some reason that didn't move this iteration's | failed brief absent from failed/ | not Option C; default termination | deterministic | prose | - | GAP |
-| LP-416 | skills/autonomous-loop/SKILL.md | q: the grep-stable substring "inter_subtask_gap" (any match = Option C) | failed brief exists | gap detected iff the brief, SUPERVISOR_RESULT.error or .summary contains inter_subtask_gap (error/summary primary) | deterministic | prose | - | GAP |
-| LP-417 | skills/autonomous-loop/SKILL.md | q: Failed brief exists but no gap signal | failed brief, no gap substring | default termination | deterministic | prose | - | GAP |
-| LP-418 | skills/autonomous-loop/SKILL.md | q: If `gap_detected=true`: Option C was the trigger. **No merge prompt** | gap detected | write the Option-C refined requirement, loop to PLAN, record supervisor_option_c_detected; no merge prompt | deterministic | prose | - | GAP |
-| LP-419 | skills/autonomous-loop/SKILL.md | q: The `_detected` suffix is a deliberate naming convention | a policy decision is inferred, not chosen by a user at a loop gate | name it with the _detected suffix | rule | prose | - | GAP |
-| LP-420 | skills/autonomous-loop/SKILL.md | h: ### No-rubric gate (v14.0.0+ — `status: completed` AND `rubric_score` is null) | completed, no rubric, multi-iter | fire the no-rubric gate (continue / stop) | deterministic | prose | - | GAP |
-| LP-421 | skills/autonomous-loop/SKILL.md | q: **AC-5 webhook gate POST first (when `--notify` set):** | --notify set at the no-rubric gate | background send-webhook.sh gate no_rubric POST before asking | deterministic | prose | script:send-webhook.sh | test-webhook.sh |
-| LP-422 | skills/autonomous-loop/SKILL.md | q: **Non-interactive fallback:** when `--non-interactive-fallback` is set AND no TTY, the gate exits with | no-rubric gate under --non-interactive-fallback | done, no_rubric_in_non_interactive (clean exit, not an abort) | deterministic | prose | - | test-non-interactive-gates-seam.sh |
-| LP-423 | skills/autonomous-loop/SKILL.md | q: **`continue`:** create refined requirement (same template shape as Signal 1's | user picks continue | write the refined requirement, loop to PLAN, record user_continued_no_rubric | deterministic | prose | - | GAP |
-| LP-424 | skills/autonomous-loop/SKILL.md | q: **`stop`:** emit AUTONOMOUS_RUN.status=done, status_reason="user_stopped_at_no_rubric_gate" | user picks stop | done, user_stopped_at_no_rubric_gate; exit | deterministic | prose | - | GAP |
+| LP-413 | skills/autonomous-loop/multi-iteration.md | q: **Iteration-scoping anchor — anchor by filename, not by global grep:** | detecting this iteration's Option C | anchor on jobs/failed/{basename(current_brief_path)} existence | rule | step-scoped | - | GAP |
+| LP-414 | skills/autonomous-loop/multi-iteration.md | q: Do not grep `.supervisor/state.md` for the gap. | tempted to grep state.md | never consult state.md (atomic rewrites can leave stale content) | rule | step-scoped | - | GAP |
+| LP-415 | skills/autonomous-loop/multi-iteration.md | q: Supervisor failed without moving this brief to failed/ | failed brief absent from failed/ | not Option C; default termination | deterministic | prose | - | GAP |
+| LP-416 | skills/autonomous-loop/multi-iteration.md | q: the grep-stable substring "inter_subtask_gap" (any match = | failed brief exists | gap detected iff the brief, SUPERVISOR_RESULT.error or .summary contains inter_subtask_gap (error/summary primary) | deterministic | prose | - | GAP |
+| LP-417 | skills/autonomous-loop/multi-iteration.md | q: Failed brief exists but no gap signal | failed brief, no gap substring | default termination | deterministic | prose | - | GAP |
+| LP-418 | skills/autonomous-loop/multi-iteration.md | q: If `gap_detected=true`: Option C was the trigger. **No merge prompt** | gap detected | write the Option-C refined requirement, loop to PLAN, record supervisor_option_c_detected; no merge prompt | deterministic | prose | - | GAP |
+| LP-419 | skills/autonomous-loop/multi-iteration.md | q: The `_detected` suffix is a deliberate naming convention | a policy decision is inferred, not chosen by a user at a loop gate | name it with the _detected suffix | rule | step-scoped | - | GAP |
+| LP-420 | skills/autonomous-loop/SKILL.md | h: ### No-rubric gate (`status: completed` AND `rubric_score` is null) | completed, no rubric, multi-iter | fire the no-rubric gate (continue / stop) | deterministic | prose | - | GAP |
+| LP-421 | skills/autonomous-loop/multi-iteration.md | q: **AC-5 webhook gate POST first (when `--notify` set):** | --notify set at the no-rubric gate | background send-webhook.sh gate no_rubric POST before asking | deterministic | prose | script:send-webhook.sh | test-webhook.sh |
+| LP-422 | skills/autonomous-loop/multi-iteration.md | q: **Non-interactive fallback:** when `--non-interactive-fallback` is set AND no TTY, the gate exits with | no-rubric gate under --non-interactive-fallback | done, no_rubric_in_non_interactive (clean exit, not an abort) | deterministic | prose | - | test-non-interactive-gates-seam.sh |
+| LP-423 | skills/autonomous-loop/multi-iteration.md | q: **`continue`:** create a refined requirement (same template shape as Signal 1's | user picks continue | write the refined requirement, loop to PLAN, record user_continued_no_rubric | deterministic | prose | - | GAP |
+| LP-424 | skills/autonomous-loop/multi-iteration.md | q: **`stop`:** emit AUTONOMOUS_RUN.status=done, status_reason="user_stopped_at_no_rubric_gate" | user picks stop | done, user_stopped_at_no_rubric_gate; exit | deterministic | prose | - | GAP |
 | LP-425 | skills/autonomous-loop/SKILL.md | h: ### Default termination — any other SUPERVISOR_RESULT outcome ends the loop | no signal or gate fired | emit the AUTONOMOUS_RUN summary and exit per the table | deterministic | prose | - | GAP |
-| LP-426 | skills/autonomous-loop/SKILL.md | q: rubric_score = `N/N` (perfect score) | completed with a perfect score | terminate; done, null | deterministic | prose | - | GAP |
-| LP-427 | skills/autonomous-loop/SKILL.md | q: user picks `stop-here` at rubric gate | completed N<M and stop-here | terminate; done, user_stopped_at_rubric_gate | deterministic | prose | - | GAP |
-| LP-428 | skills/autonomous-loop/SKILL.md | q: rubric_score is null, user picks `stop` at no-rubric gate | completed, no rubric, stop | terminate; done, user_stopped_at_no_rubric_gate | deterministic | prose | - | GAP |
-| LP-429 | skills/autonomous-loop/SKILL.md | q: rubric_score is null, non-interactive fallback | completed, no rubric, non-interactive | terminate; done, no_rubric_in_non_interactive | deterministic | prose | - | GAP |
-| LP-430 | skills/autonomous-loop/SKILL.md | q: terminate; populate `escalations_seen` | completed_with_escalation | terminate; done, caveat recorded in escalations_seen | deterministic | prose | - | GAP |
-| LP-431 | skills/autonomous-loop/SKILL.md | q: `pr_url == null` (Supervisor pre-PR failure, AC-15) | failed with no PR | terminate; failed, supervisor_failed_other | deterministic | prose | - | GAP |
-| LP-432 | skills/autonomous-loop/SKILL.md | q: inter_subtask_gap NOT detected, `pr_url` non-null | failed, no gap, PR exists | terminate; failed, supervisor_failed_other | deterministic | prose | - | GAP |
-| LP-433 | skills/autonomous-loop/SKILL.md | q: `base_branch_mismatch` from Supervisor Phase 4.5 cleanup (S3-added path) | failed with base_branch_mismatch | terminate; failed, supervisor_base_branch_mismatch | deterministic | prose | - | GAP |
-| LP-434 | skills/autonomous-loop/SKILL.md | q: terminate (loop stops; do NOT re-iterate) | failed with preflight_overlap_detected | terminate, never re-iterate; failed, preflight_overlap_detected | deterministic | prose | - | GAP |
-| LP-435 | skills/autonomous-loop/SKILL.md | q: terminate (no auto-resume in v1) | Supervisor checkpoint | terminate; aborted, supervisor_checkpoint | deterministic | prose | - | GAP |
-| LP-436 | skills/autonomous-loop/SKILL.md | h: ### Phase 1.5 pre-flight gate — CI fail-closed termination (v14.8.0+) | Supervisor pre-flight classifies OVERLAP / SUPERSEDED | the loop sees it only through SUPERVISOR_RESULT | deterministic | prose | - | GAP |
-| LP-437 | skills/autonomous-loop/SKILL.md | q: **CI fail-closed behavior.** When the inlined `/supervisor` invocation | non-interactive or non-TTY inner Supervisor hits OVERLAP / SUPERSEDED | Supervisor fails closed; the loop terminates with preflight_overlap_detected and does not re-iterate | deterministic | prose | - | GAP |
-| LP-438 | skills/autonomous-loop/SKILL.md | q: **Flag-forwarding note:** the loop's complete `/supervisor` forward set | every iteration | --skip-preflight-sync is never forwarded, so Phase 1.5 runs every iteration; skip only via a manual /supervisor run | rule | prose | - | GAP |
-| LP-439 | skills/autonomous-loop/SKILL.md | q: **Complements — does NOT double-fire with — EVALUATE PR-base verification | pre-flight overlap vs PR base after FINALIZE | distinct gates, timing and status reasons; never overlap | rule | prose | - | GAP |
-| LP-440 | skills/autonomous-loop/SKILL.md | q: Because the pre-flight gate scopes its overlap scan to `$BASE_BRANCH` (AC6) | stacked run's own parent commits / PR | not flagged as overlap | story | prose | - | GAP |
+| LP-426 | skills/autonomous-loop/multi-iteration.md | q: rubric_score = `N/N` (perfect score) | completed with a perfect score | terminate; done, null | deterministic | prose | - | GAP |
+| LP-427 | skills/autonomous-loop/multi-iteration.md | q: user picks `stop-here` at rubric gate | completed N<M and stop-here | terminate; done, user_stopped_at_rubric_gate | deterministic | prose | - | GAP |
+| LP-428 | skills/autonomous-loop/multi-iteration.md | q: rubric_score is null, user picks `stop` at no-rubric gate | completed, no rubric, stop | terminate; done, user_stopped_at_no_rubric_gate | deterministic | prose | - | GAP |
+| LP-429 | skills/autonomous-loop/multi-iteration.md | q: rubric_score is null, non-interactive fallback | completed, no rubric, non-interactive | terminate; done, no_rubric_in_non_interactive | deterministic | prose | - | GAP |
+| LP-430 | skills/autonomous-loop/multi-iteration.md | q: terminate; populate `escalations_seen` | completed_with_escalation | terminate; done, caveat recorded in escalations_seen | deterministic | prose | - | GAP |
+| LP-431 | skills/autonomous-loop/multi-iteration.md | q: `pr_url == null` (Supervisor pre-PR failure, AC-15) | failed with no PR | terminate; failed, supervisor_failed_other | deterministic | prose | - | GAP |
+| LP-432 | skills/autonomous-loop/multi-iteration.md | q: inter_subtask_gap NOT detected, `pr_url` non-null | failed, no gap, PR exists | terminate; failed, supervisor_failed_other | deterministic | prose | - | GAP |
+| LP-433 | skills/autonomous-loop/multi-iteration.md | q: `base_branch_mismatch` from Supervisor Phase 4.5 cleanup | failed with base_branch_mismatch | terminate; failed, supervisor_base_branch_mismatch | deterministic | prose | - | GAP |
+| LP-434 | skills/autonomous-loop/multi-iteration.md | q: terminate (loop stops; do NOT re-iterate) | failed with preflight_overlap_detected | terminate, never re-iterate; failed, preflight_overlap_detected | deterministic | prose | - | GAP |
+| LP-435 | skills/autonomous-loop/multi-iteration.md | q: terminate (no auto-resume) | Supervisor checkpoint | terminate; aborted, supervisor_checkpoint | deterministic | prose | - | GAP |
+| LP-436 | skills/autonomous-loop/SKILL.md | h: ### Phase 1.5 pre-flight gate — CI fail-closed termination | Supervisor pre-flight classifies OVERLAP / SUPERSEDED | the loop sees it only through SUPERVISOR_RESULT | deterministic | prose | - | GAP |
+| LP-437 | skills/autonomous-loop/multi-iteration.md | q: so Supervisor fails closed with `status: failed` and `error`/`status_reason` = `preflight_overlap_detected` | non-interactive or non-TTY inner Supervisor hits OVERLAP / SUPERSEDED | Supervisor fails closed; the loop terminates with preflight_overlap_detected and does not re-iterate | deterministic | prose | - | GAP |
+| LP-438 | skills/autonomous-loop/multi-iteration.md | q: `--skip-preflight-sync` is not in the loop's `/supervisor` forward set | every iteration | --skip-preflight-sync is never forwarded, so Phase 1.5 runs every iteration; skip only via a manual /supervisor run | rule | step-scoped | - | GAP |
+| LP-439 | skills/autonomous-loop/multi-iteration.md | q: It complements, and never double-fires with, EVALUATE PR-base verification | pre-flight overlap vs PR base after FINALIZE | distinct gates, timing and status reasons; never overlap | rule | step-scoped | - | GAP |
+| LP-440 | skills/autonomous-loop/SKILL.md | q: Because the pre-flight gate scopes its overlap scan to `$BASE_BRANCH` (AC6) | stacked run's own parent commits / PR | not flagged as overlap | story | rationale:docs/rationale/launch-pad-autonomous.md#pre-flight-gate-and-stacked-runs | - | GAP |
 | LP-441 | skills/autonomous-loop/SKILL.md | h: ### Max-iterations cap | Signal 1 or 2 would re-plan and iteration + 1 > max_iterations | paused_max_iterations, max_iterations_reached; record the unprocessed intent | deterministic | prose | - | GAP |
-| LP-442 | skills/autonomous-loop/SKILL.md | q: The status enum is **autonomous-layer-only** | emitting AUTONOMOUS_RUN.status | only done / paused_max_iterations / aborted / failed, never a SUPERVISOR_RESULT value | rule | prose | - | GAP |
+| LP-442 | skills/autonomous-loop/SKILL.md | q: The status enum is **autonomous-layer-only** | emitting AUTONOMOUS_RUN.status | only done / paused_max_iterations / aborted / failed, never a SUPERVISOR_RESULT value | rule | step-scoped | - | GAP |
 | LP-443 | skills/autonomous-loop/SKILL.md | h: ### summary.md format | run ends | write summary.md with the listed fields and closed status_reason set | deterministic | prose | - | GAP |
 | LP-444 | skills/autonomous-loop/SKILL.md | q: **launch_pad_summary:** `LAUNCH_PAD_RESULT.summary` verbatim — written only when | status_reason launch_pad_cant_ask_non_interactive / otherwise | write the line verbatim / omit it | deterministic | prose | - | GAP |
-| LP-445 | skills/autonomous-loop/SKILL.md | h: ### state.json (machine-readable sidecar) | writing state.json | same fields as summary.md; not authoritative for resume; no hook validates it | rule | prose | - | GAP |
-| LP-446 | skills/autonomous-loop/SKILL.md | q: **v1-only `_v1_note` field:** | tooling finds _v1_note | refuse it for resume / recovery / cross-session queries; only the two ACQUIRE signals are hook-readable | rule | prose | - | GAP |
-| LP-447 | skills/autonomous-loop/SKILL.md | q: **Concurrent-session safety (v14.2.0+).** | a concurrent /launch-pad writes to pending/ | the result block isolates this loop's save; ls-diff fallback stays single-session-only | rule | prose | - | GAP |
+| LP-445 | skills/autonomous-loop/SKILL.md | h: ### state.json (machine-readable sidecar) | writing state.json | same fields as summary.md; not authoritative for resume; no hook validates it | rule | step-scoped | - | GAP |
+| LP-446 | skills/autonomous-loop/SKILL.md | q: **v1-only `_v1_note` field:** | tooling finds _v1_note | refuse it for resume / recovery / cross-session queries; only the two ACQUIRE signals are hook-readable | rule | step-scoped | - | GAP |
+| LP-447 | skills/autonomous-loop/SKILL.md | q: **Concurrent-session safety.** | a concurrent /launch-pad writes to pending/ | the result block isolates this loop's save; ls-diff fallback stays single-session-only | rule | step-scoped | - | GAP |
 | LP-448 | skills/autonomous-loop/SKILL.md | q: User discards at Phase 6 \| `new_briefs` empty after Phase 6 | discard at Phase 6 | clean exit, aborted | deterministic | prose | - | GAP |
 | LP-449 | skills/autonomous-loop/SKILL.md | q: Launch Pad ignores rubric-preservation inline instruction | saved brief has no rubric | abort rubric_dropped_from_brief; the user must move the stale pending brief before re-running | deterministic | prose | - | GAP |
 | LP-450 | skills/autonomous-loop/SKILL.md | q: Concurrent autonomous run or manual launch-pad | more than one new brief | abort concurrent_session_detected | deterministic | prose | - | GAP |
-| LP-451 | skills/autonomous-loop/SKILL.md | q: Session terminated mid-loop | process killed / terminal closed | unsupported in v1; manual cleanup and restart | story | prose | - | GAP |
+| LP-451 | skills/autonomous-loop/SKILL.md | q: Session terminated mid-loop | process killed / terminal closed | unsupported in v1; manual cleanup and restart | story | rationale:docs/rationale/launch-pad-autonomous.md#session-terminated-mid-loop | - | GAP |
 | LP-452 | skills/autonomous-loop/SKILL.md | q: `gh` unavailable for merge check | gh pr view fails | fall back to git merge-base --is-ancestor; neither confirms ⇒ re-prompt | deterministic | prose | - | GAP |
-| LP-453 | skills/autonomous-loop/SKILL.md | q: `inter_subtask_gap` string drift | the grep-stable string changes | Signal 2 silently fails; default termination supervisor_failed_other | story | prose | - | GAP |
-| LP-454 | skills/autonomous-loop/SKILL.md | q: **Launch Pad inline workflow:** referenced via Step 0 + PLAN invocation | reusing Launch Pad | only the inlined rubric instruction; no Launch Pad source change | rule | prose | - | GAP |
-| LP-455 | skills/autonomous-loop/SKILL.md | q: **Supervisor inline workflow:** referenced via Step 0 + EXECUTE invocation | reusing Supervisor | no instruction modifications | rule | prose | - | GAP |
-| LP-456 | skills/autonomous-loop/SKILL.md | q: **Adjudication 4-option escalation:** Supervisor surfaces existing options | adjudication | Supervisor surfaces A/B/C/D; the loop never auto-picks; Option C yields failed + inter_subtask_gap | rule | prose | - | GAP |
-| LP-457 | skills/autonomous-loop/SKILL.md | q: **SUPERVISOR_RESULT schema (v12.2):** v1 reads existing fields only | reading SUPERVISOR_RESULT | existing fields only; no schema change | rule | prose | - | GAP |
-| LP-458 | skills/autonomous-loop/SKILL.md | q: **`.supervisor/jobs/` lifecycle:** Supervisor remains sole writer/mover | job files | Supervisor is the sole mover; the loop only reads pending/ and failed/ | rule | prose | - | GAP |
-| LP-459 | skills/autonomous-loop/SKILL.md | q: **`.supervisor/state.md`:** the `## Session` block | state.md | the Session block is hook-projected; Context-Keeper writes the other sections; the loop never greps it | rule | prose | - | GAP |
-| LP-460 | commands/autonomous.md | q: **Execute this workflow inline as the main thread.** Do not delegate to any `autonomous-*-runner` | /autonomous invoked | run inline; never add a delegation layer (it could not ask and pushes Task descendants one nesting layer deeper) | rule | prose | - | GAP |
-| LP-461 | commands/autonomous.md | q: **Foreground-assisted automation, not fire-and-forget.** | gates fire in-session | the user must be at the terminal unless --non-interactive-fallback is passed (gates then fail closed) | rule | prose | - | GAP |
+| LP-453 | skills/autonomous-loop/SKILL.md | q: `inter_subtask_gap` string drift | the grep-stable string changes | Signal 2 silently fails; default termination supervisor_failed_other | story | rationale:docs/rationale/launch-pad-autonomous.md#intersubtaskgap-string-drift | - | GAP |
+| LP-454 | skills/autonomous-loop/SKILL.md | q: **Launch Pad inline workflow:** referenced via Step 0 + PLAN invocation | reusing Launch Pad | only the inlined rubric instruction; no Launch Pad source change | rule | global | - | GAP |
+| LP-455 | skills/autonomous-loop/SKILL.md | q: **Supervisor inline workflow:** referenced via Step 0 + EXECUTE invocation | reusing Supervisor | no instruction modifications | rule | global | - | GAP |
+| LP-456 | skills/autonomous-loop/SKILL.md | q: **Adjudication 4-option escalation:** Supervisor surfaces existing options | adjudication | Supervisor surfaces A/B/C/D; the loop never auto-picks; Option C yields failed + inter_subtask_gap | rule | global | - | GAP |
+| LP-457 | skills/autonomous-loop/SKILL.md | q: **SUPERVISOR_RESULT schema (v12.2):** v1 reads existing fields only | reading SUPERVISOR_RESULT | existing fields only; no schema change | rule | global | - | GAP |
+| LP-458 | skills/autonomous-loop/SKILL.md | q: **`.supervisor/jobs/` lifecycle:** Supervisor remains sole writer/mover | job files | Supervisor is the sole mover; the loop only reads pending/ and failed/ | rule | global | - | GAP |
+| LP-459 | skills/autonomous-loop/SKILL.md | q: **`.supervisor/state.md`:** the `## Session` block | state.md | the Session block is hook-projected; Context-Keeper writes the other sections; the loop never greps it | rule | global | - | GAP |
+| LP-460 | commands/autonomous.md | q: **Execute this workflow inline as the main thread.** Do not delegate to any `autonomous-*-runner` | /autonomous invoked | run inline; never add a delegation layer (it could not ask and pushes Task descendants one nesting layer deeper) | rule | global | - | GAP |
+| LP-461 | commands/autonomous.md | q: **Foreground-assisted automation, not fire-and-forget.** | gates fire in-session | the user must be at the terminal unless --non-interactive-fallback is passed (gates then fail closed) | rule | global | - | GAP |
 | LP-462 | commands/autonomous.md | q: if no URL is resolvable, `--notify` warns once at INIT rather than silently doing nothing | --notify with no resolvable URL | warn once at INIT; never silently no-op | deterministic | prose | - | GAP |
-| LP-463 | commands/autonomous.md | q: **Post-PR until-mergeable drain — runs in BOTH single- and multi-iteration mode | any mode produced a PR | Supervisor step 5.5 dispatches the detached drain (never gates); downstream work waits for READY / ESCALATED (R9) | rule | prose | script:dispatch-pr-review.sh | test-dispatch-pr-review.sh |
-| LP-464 | commands/autonomous.md | q: **Chained review-and-heal (after PR-base verification, before Signal evaluation):** | iteration completed with a PR / skipped when no PR or failed | Task-step review-heal; PASS ⇒ signals, ESCALATED ⇒ existing escalation prompt (fail closed non-interactive), READY or unknown ⇒ terminal non-re-iterate | deterministic | prose | - | GAP |
+| LP-463 | commands/autonomous.md | q: **Post-PR until-mergeable drain — runs in BOTH single- and multi-iteration mode | any mode produced a PR | Supervisor step 5.5 dispatches the detached drain (never gates); downstream work waits for READY / ESCALATED (R9) | rule | global | script:dispatch-pr-review.sh | test-dispatch-pr-review.sh |
+| LP-464 | skills/autonomous-loop/multi-iteration.md | q: After PR-base verification and **before** any Signal evaluation, run the standalone PR **review-and-heal** | iteration completed with a PR / skipped when no PR or failed | Task-step review-heal; PASS ⇒ signals, ESCALATED ⇒ existing escalation prompt (fail closed non-interactive), READY or unknown ⇒ terminal non-re-iterate | deterministic | prose | - | GAP |
 | LP-465 | commands/autonomous.md | q: **CI / non-interactive note:** if `[ ! -t 0 ]` OR `$CI` is set | non-TTY or CI, multi-iter, no fallback flag | INIT aborts non_interactive_without_fallback with two recovery commands | deterministic | prose | - | GAP |
-| LP-466 | commands/autonomous.md | q: **Cost-profile note:** `--cheap` **is forwarded** (v15.2.0+) | --cheap passed | appended to every inlined /supervisor job in every iteration | deterministic | prose | - | GAP |
-| LP-467 | commands/autonomous.md | q: **Terminology note:** an **iteration** (this command) | naming units | iteration = one pass on the same goal; /automate item = one goal from a queue | story | prose | - | GAP |
+| LP-466 | commands/autonomous.md | q: `--cheap` **is forwarded** to the inlined `/supervisor` call | --cheap passed | appended to every inlined /supervisor job in every iteration | deterministic | prose | - | GAP |
+| LP-467 | commands/autonomous.md | q: **Terminology note:** an **iteration** (this command) | naming units | iteration = one pass on the same goal; /automate item = one goal from a queue | story | rationale:docs/rationale/launch-pad-autonomous.md#iteration-vs-item | - | GAP |
 | LP-468 | commands/autonomous.md | q: Inline requirement string. Loop writes it to | requirement given inline | write it to the session-id requirement file with an optional rubric placeholder | deterministic | prose | - | GAP |
 | LP-469 | commands/autonomous.md | q: in that auto-author case the loop appends the human-approved rubric back into this file in place | --requirement file without a rubric, multi-iter, rubric approved | the freeze modifies the file on disk (pass a copy to keep the original) | deterministic | prose | - | GAP |
 | LP-470 | commands/autonomous.md | q: Disable multi-iter mode; run Launch Pad + Supervisor once and exit | --single-iteration | one Launch Pad + Supervisor pass, then exit | deterministic | prose | - | GAP |
@@ -488,50 +489,63 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-474 | commands/autonomous.md | q: `N=0` or `N>10` rejected at INIT with `status: aborted, status_reason: "invalid_max_iterations"` | N outside 1..10 | aborted, invalid_max_iterations | deterministic | prose | - | GAP |
 | LP-475 | commands/autonomous.md | q: **Edge case `N=1`:** valid but degenerate | N=1 and Signal 1/2 would fire | paused_max_iterations, max_iterations_reached | deterministic | prose | - | GAP |
 | LP-476 | commands/autonomous.md | q: Combining with `--single-iteration` aborts at INIT with `status_reason: "conflicting_mode_flags"` | --allow-multi-iteration alone / with --single-iteration | no-op with a deprecation warning / abort conflicting_mode_flags | deterministic | prose | - | GAP |
-| LP-477 | commands/autonomous.md | q: **Forward the Sonnet cost profile (v15.2.0+).** | --cheap passed | appended to every /supervisor job; not gated on the fallback flag | deterministic | prose | - | GAP |
-| LP-478 | commands/autonomous.md | q: **Opt-in token-spend ceiling (red-team-hardening/06).** | --max-tokens N: before each iteration the ledger total breaches N or is unreadable | aborted, token_ceiling_reached; persisted in state.json and forwarded to /supervisor | deterministic | prose | script:read-token-ledger.sh | test-read-token-ledger.sh |
-| LP-479 | commands/autonomous.md | q: A `run_lock_reentrant owner=<outer> …` line (exit 0) is NOT an abort | INIT lock acquire answers reentrant / degraded | proceed (own release a no-op) / note once and proceed | deterministic | prose | script:run-lock.sh acquire | test-run-lock.sh |
-| LP-480 | commands/autonomous.md | q: **`--cheap` interaction note (and the complete `/supervisor` forward set):** | building the /supervisor call | exactly four flags under their conditions; no other flag; the one other forward goes to Launch Pad | rule | prose | - | test-non-interactive-gates-seam.sh |
-| LP-481 | commands/autonomous.md | q: **`--skip-preflight-sync` interaction note:** | every iteration | never forwarded; Phase 1.5 runs each iteration; OVERLAP / SUPERSEDED fails closed under the fallback flag | rule | prose | - | GAP |
-| LP-482 | commands/autonomous.md | h: ### Not shipped in v14.0.0 | deferred flags | gate-timeout, status/continue/abort/background/auto-merge are not shipped | story | prose | - | GAP |
-| LP-483 | commands/autonomous.md | q: **`--gate-timeout-minutes`** — explicitly deferred. | unattended run | MUST pass --non-interactive-fallback (no gate timeout exists) | rule | prose | - | GAP |
-| LP-484 | commands/autonomous.md | q: **`--status` / `--continue` / `--abort` / `--background` / `--auto-merge`** — still deferred. | resume or auto-merge wanted | not available | story | prose | - | GAP |
-| LP-485 | commands/autonomous.md | q: **Quoting paths with spaces:** if the `--requirement <path>` value contains spaces | path contains spaces | double-quote the whole path | rule | prose | - | GAP |
-| LP-486 | commands/autonomous.md | h: ### Step 0 — Load Canonical Workflow Bodies + Protocol Skill (always) | every run | read the three canonical files via the plugin-root path, never loomwright/ | rule | prose | - | GAP |
-| LP-487 | commands/autonomous.md | h: ### Multi-Iteration Mode (v14.0.0 default) | multi-iteration run | INIT → PLAN → EXECUTE → EVALUATE loop; branch per the table | deterministic | prose | - | GAP |
-| LP-488 | commands/autonomous.md | q: Run **chained review-and-heal** as a `Task` step | completed / completed_with_escalation with a PR | run review-heal before signals; PASS continue, ESCALATED surface, READY terminal | deterministic | prose | - | GAP |
-| LP-489 | commands/autonomous.md | q: Fire **Signal 1 rubric gate | completed with rubric N<M | stacked: continue / stop-here / force-continue; non-stacked: merge-and-continue with gh verification | deterministic | prose | - | GAP |
-| LP-490 | commands/autonomous.md | q: Fire **no-rubric gate** (new in v14): `continue / stop` | completed, no rubric, multi-iter | no-rubric gate continue / stop | deterministic | prose | - | GAP |
-| LP-491 | commands/autonomous.md | q: Re-plan immediately (no merge needed; job was abandoned via adjudication Option C) | failed with inter_subtask_gap | re-plan immediately | deterministic | prose | - | GAP |
-| LP-492 | commands/autonomous.md | q: Skip PR-base verification entirely (AC-15) | failed with pr_url null | skip base verification; default termination supervisor_failed_other | deterministic | prose | - | GAP |
-| LP-493 | commands/autonomous.md | q: Terminate the loop. Specifically: `completed_with_escalation` → done with escalations_seen | anything else | completed_with_escalation done; failed other failed; checkpoint aborted | deterministic | prose | - | GAP |
+| LP-477 | commands/autonomous.md | q: **Forward the Sonnet cost profile.** | --cheap passed | appended to every /supervisor job; not gated on the fallback flag | deterministic | prose | - | GAP |
+| LP-478 | commands/autonomous.md | q: **Opt-in token-spend ceiling.** | --max-tokens N: before each iteration the ledger total breaches N or is unreadable | aborted, token_ceiling_reached; persisted in state.json and forwarded to /supervisor | deterministic | prose | script:read-token-ledger.sh | test-read-token-ledger.sh |
+| LP-479 | commands/autonomous.md | q: a `run_lock_reentrant owner=<outer> …` line (exit 0) is NOT an abort | INIT lock acquire answers reentrant / degraded | proceed (own release a no-op) / note once and proceed | deterministic | prose | script:run-lock.sh acquire | test-run-lock.sh |
+| LP-480 | commands/autonomous.md | q: **`--cheap` interaction note (and the complete `/supervisor` forward set):** | building the /supervisor call | exactly four flags under their conditions; no other flag; the one other forward goes to Launch Pad | rule | global | - | test-non-interactive-gates-seam.sh |
+| LP-481 | commands/autonomous.md | q: **`--skip-preflight-sync` interaction note:** | every iteration | never forwarded; Phase 1.5 runs each iteration; OVERLAP / SUPERSEDED fails closed under the fallback flag | rule | global | - | GAP |
+| LP-482 | commands/autonomous.md | h: ### Not shipped in v14.0.0 | deferred flags | gate-timeout, status/continue/abort/background/auto-merge are not shipped | story | rationale:docs/rationale/launch-pad-autonomous.md#not-shipped | - | GAP |
+| LP-483 | commands/autonomous.md | q: so unattended runs MUST pass `--non-interactive-fallback` | unattended run | MUST pass --non-interactive-fallback (no gate timeout exists) | rule | global | - | GAP |
+| LP-484 | commands/autonomous.md | q: **`--status` / `--continue` / `--abort` / `--background` / `--auto-merge`** — still deferred. | resume or auto-merge wanted | not available | story | rationale:docs/rationale/launch-pad-autonomous.md#not-shipped | - | GAP |
+| LP-485 | commands/autonomous.md | q: **Quoting paths with spaces:** if the `--requirement <path>` value contains spaces | path contains spaces | double-quote the whole path | rule | global | - | GAP |
+| LP-486 | commands/autonomous.md | h: ### Step 0 — Load Canonical Workflow Bodies + Protocol Skill (always) | every run | read the three canonical files via the plugin-root path, never loomwright/ | rule | global | - | GAP |
+| LP-487 | commands/autonomous.md | h: ### Multi-Iteration Mode (default) | multi-iteration run | INIT → PLAN → EXECUTE → EVALUATE loop; branch per the table | deterministic | prose | - | GAP |
+| LP-488 | skills/autonomous-loop/multi-iteration.md | q: a **`Task`-spawned step with fresh isolated context** | completed / completed_with_escalation with a PR | run review-heal before signals; PASS continue, ESCALATED surface, READY terminal | deterministic | prose | - | GAP |
+| LP-489 | skills/autonomous-loop/multi-iteration.md | q: The prompt branches on stacked vs non-stacked | completed with rubric N<M | stacked: continue / stop-here / force-continue; non-stacked: merge-and-continue with gh verification | deterministic | prose | - | GAP |
+| LP-490 | skills/autonomous-loop/multi-iteration.md | q: When the iteration's brief had no `## Outcomes Rubric` AND multi-iter is active, the loop fires the no-rubric gate | completed, no rubric, multi-iter | no-rubric gate continue / stop | deterministic | prose | - | GAP |
+| LP-491 | skills/autonomous-loop/multi-iteration.md | q: decision: "supervisor_option_c_detected" | failed with inter_subtask_gap | re-plan immediately | deterministic | prose | - | GAP |
+| LP-492 | skills/autonomous-loop/multi-iteration.md | q: Do not call `gh pr view "null"` | failed with pr_url null | skip base verification; default termination supervisor_failed_other | deterministic | prose | - | GAP |
+| LP-493 | skills/autonomous-loop/multi-iteration.md | q: The catch-all when neither Signal 1, Signal 2 nor the no-rubric gate fires | anything else | completed_with_escalation done; failed other failed; checkpoint aborted | deterministic | prose | - | GAP |
 | LP-494 | commands/autonomous.md | h: ### Single-Iteration Mode (`--single-iteration`) | --single-iteration | INIT → PLAN → EXECUTE → DONE; EVALUATE short-circuits to done | deterministic | prose | - | GAP |
-| LP-495 | commands/autonomous.md | h: ### Stacked-branch behavior (v14 default) | iteration N+1 reached | branch per the stacked / non-stacked rules below | deterministic | prose | - | GAP |
-| LP-496 | commands/autonomous.md | q: v13-style (`--no-stacked-branches`): iter N+1's feature branch is created from `main` | --no-stacked-branches | branch iter N+1 from main; merge iter N first or accept independent PRs | deterministic | prose | - | GAP |
-| LP-497 | commands/autonomous.md | q: v14 default (stacked): iter N+1's feature branch is created from `iterations[N].branch` | stacked default | branch from iter N's branch, open the PR with --base iter N branch, verify baseRefName (AC-14 retry) | deterministic | prose | - | GAP |
-| LP-498 | commands/autonomous.md | q: Out-of-order merge of a stacked PR can corrupt `main` | merging a stack | merge bottom-first in iterations[] order | rule | prose | - | GAP |
+| LP-495 | commands/autonomous.md | h: ### Stacked-branch behavior (default) | iteration N+1 reached | branch per the stacked / non-stacked rules below | deterministic | prose | - | GAP |
+| LP-496 | skills/autonomous-loop/multi-iteration.md | q: **`--no-stacked-branches`:** iter N+1's feature branch is created from `main` | --no-stacked-branches | branch iter N+1 from main; merge iter N first or accept independent PRs | deterministic | prose | - | GAP |
+| LP-497 | skills/autonomous-loop/multi-iteration.md | q: **Stacked (default):** iter N+1's feature branch is created from `iterations[N].branch` | stacked default | branch from iter N's branch, open the PR with --base iter N branch, verify baseRefName (AC-14 retry) | deterministic | prose | - | GAP |
+| LP-498 | skills/autonomous-loop/multi-iteration.md | q: **Out-of-order merge of a stacked PR corrupts the stack:** | merging a stack | merge bottom-first in iterations[] order | rule | step-scoped | - | GAP |
 | LP-499 | commands/autonomous.md | h: ### What runs inline (Launch Pad's existing AskUserQuestion gates bubble up) | Launch Pad gates fire / --non-interactive-fallback | prompts surface in-session / Launch Pad gets --non-interactive and takes named branches | deterministic | prose | - | GAP |
 | LP-500 | commands/autonomous.md | h: ### What runs inline (Supervisor's existing AskUserQuestion gates bubble up) | adjudication fires | user answers in-session; never auto-picked; Option C ⇒ failed + inter_subtask_gap ⇒ re-plan | deterministic | prose | - | GAP |
 | LP-501 | commands/autonomous.md | h: ### Inline instruction to Launch Pad (rubric preservation + auto-authoring) | invoking Launch Pad | add the preserve-verbatim directive; multi-iter without a rubric also requests auto-authoring | deterministic | prose | - | GAP |
 | LP-502 | commands/autonomous.md | q: If a real rubric is missing from the saved brief, the iteration aborts cleanly | requirement rubric not in the saved brief (has_rubric) | abort rubric_dropped_from_brief | deterministic | prose | - | GAP |
-| LP-503 | commands/autonomous.md | q: **Single-iteration mode and the already-has-a-rubric case are unchanged — preserve-only, never auto-authored.** | single-iteration or rubric present | preserve only; never author | rule | prose | - | GAP |
-| LP-504 | commands/autonomous.md | h: ### Single-iteration smoke test | example | single-iteration walkthrough | story | prose | - | GAP |
-| LP-505 | commands/autonomous.md | h: ### Multi-iteration with rubric-driven re-planning | example | rubric-gate merge-and-continue walkthrough | story | prose | - | GAP |
-| LP-506 | commands/autonomous.md | h: ### Multi-iteration with Option-C re-planning | example | Option-C re-plan walkthrough | story | prose | - | GAP |
-| LP-507 | commands/autonomous.md | q: **Brief-save detection (v14.2.0+): primary path is `LAUNCH_PAD_RESULT.saved_brief_path` | detecting the saved brief | validated result block primary; ls-diff fallback only (single-session constraint, concurrent_session_detected) | rule | prose | script:validate-launch-pad-result.py | test-result-validators.sh |
-| LP-508 | commands/autonomous.md | q: **Multi-iteration requires user merge between iterations.** | multi-iteration risk | user merge verified via gh or ancestry; force-continue risks conflicting PRs | story | prose | - | GAP |
-| LP-509 | commands/autonomous.md | q: **Rubric per-item PASS/FAIL is not available** | refining a requirement | only the N/M score is available; rely on re-discovery | story | prose | - | GAP |
-| LP-510 | commands/autonomous.md | q: **Crash recovery is unsupported.** | re-run after a crash | may duplicate work; clean up manually first | story | prose | - | GAP |
-| LP-511 | commands/autonomous.md | q: **No QA integration in the loop.** | quality in the loop | trust Phase 4.5 + Rubric Grader; QA is deferred | story | prose | - | GAP |
-| LP-512 | commands/autonomous.md | q: **Cost: multi-iteration loops are genuinely expensive.** | cost | each iteration is a full Launch Pad + Supervisor run | story | prose | - | GAP |
-| LP-513 | commands/autonomous.md | q: **`.gitignore` coverage.** The loop writes to | loop writes under .supervisor/ | state-management keeps .supervisor/ gitignored; re-add it if stripped | rule | prose | - | GAP |
-| LP-514 | commands/autonomous.md | h: ### Loop aborts with `status_reason: "rubric_dropped_from_brief"` | rubric_dropped_from_brief abort | move the stale pending brief to failed/ before re-running | judgment | prose | - | GAP |
-| LP-515 | commands/autonomous.md | h: ### Loop aborts with `status_reason: "concurrent_session_detected"` | concurrent_session_detected abort | kill the other session, clean stray briefs, restart | judgment | prose | - | GAP |
-| LP-516 | commands/autonomous.md | h: ### Iteration N reported `completed` but I don't see PR N's changes in iteration N+1 | force-continue without merging | merge PR N and pick merge-and-continue next time | judgment | prose | - | GAP |
-| LP-517 | commands/autonomous.md | h: ### `inter_subtask_gap` re-plan trigger doesn't fire even though I picked Option C | Option C picked, no re-plan | check the failed/ brief exists or the grep-stable string drifted; re-run manually | judgment | prose | - | GAP |
-| LP-518 | commands/autonomous.md | h: ### Supervisor returned `checkpoint` and the loop aborted | checkpoint abort | run /supervisor --continue manually, then start a new /autonomous | judgment | prose | - | GAP |
+| LP-503 | commands/autonomous.md | q: **Single-iteration mode and the already-has-a-rubric case are unchanged — preserve-only, never auto-authored.** | single-iteration or rubric present | preserve only; never author | rule | global | - | GAP |
+| LP-504 | commands/autonomous.md | h: ### Single-iteration smoke test | example | single-iteration walkthrough | story | rationale:docs/rationale/launch-pad-autonomous.md#example-single-iteration-smoke-test | - | GAP |
+| LP-505 | commands/autonomous.md | h: ### Multi-iteration with rubric-driven re-planning | example | rubric-gate merge-and-continue walkthrough | story | rationale:docs/rationale/launch-pad-autonomous.md#example-multi-iteration-with-rubric-driven-re-planning | - | GAP |
+| LP-506 | commands/autonomous.md | h: ### Multi-iteration with Option-C re-planning | example | Option-C re-plan walkthrough | story | rationale:docs/rationale/launch-pad-autonomous.md#example-multi-iteration-with-option-c-re-planning | - | GAP |
+| LP-507 | commands/autonomous.md | q: **Brief-save detection (v14.2.0+): primary path is `LAUNCH_PAD_RESULT.saved_brief_path` | detecting the saved brief | validated result block primary; ls-diff fallback only (single-session constraint, concurrent_session_detected) | rule | rationale:docs/rationale/launch-pad-autonomous.md#brief-save-detection | script:validate-launch-pad-result.py | test-result-validators.sh |
+| LP-508 | commands/autonomous.md | q: **Multi-iteration requires user merge between iterations.** | multi-iteration risk | user merge verified via gh or ancestry; force-continue risks conflicting PRs | story | rationale:docs/rationale/launch-pad-autonomous.md#risks-and-limitations | - | GAP |
+| LP-509 | commands/autonomous.md | q: **Rubric per-item PASS/FAIL is not available** | refining a requirement | only the N/M score is available; rely on re-discovery | story | rationale:docs/rationale/launch-pad-autonomous.md#risks-and-limitations | - | GAP |
+| LP-510 | commands/autonomous.md | q: **Crash recovery is unsupported.** | re-run after a crash | may duplicate work; clean up manually first | story | rationale:docs/rationale/launch-pad-autonomous.md#risks-and-limitations | - | GAP |
+| LP-511 | commands/autonomous.md | q: **No QA integration in the loop.** | quality in the loop | trust Phase 4.5 + Rubric Grader; QA is deferred | story | rationale:docs/rationale/launch-pad-autonomous.md#risks-and-limitations | - | GAP |
+| LP-512 | commands/autonomous.md | q: **Cost: multi-iteration loops are genuinely expensive.** | cost | each iteration is a full Launch Pad + Supervisor run | story | rationale:docs/rationale/launch-pad-autonomous.md#risks-and-limitations | - | GAP |
+| LP-513 | commands/autonomous.md | q: `.supervisor/` must stay in `.gitignore` | loop writes under .supervisor/ | state-management keeps .supervisor/ gitignored; re-add it if stripped | rule | global | - | GAP |
+| LP-514 | commands/autonomous.md | h: ### Loop aborts with `status_reason: "rubric_dropped_from_brief"` | rubric_dropped_from_brief abort | move the stale pending brief to failed/ before re-running | judgment | rationale:docs/rationale/launch-pad-autonomous.md#troubleshooting-rubricdroppedfrombrief | - | GAP |
+| LP-515 | commands/autonomous.md | h: ### Loop aborts with `status_reason: "concurrent_session_detected"` | concurrent_session_detected abort | kill the other session, clean stray briefs, restart | judgment | rationale:docs/rationale/launch-pad-autonomous.md#troubleshooting-concurrentsessiondetected | - | GAP |
+| LP-516 | commands/autonomous.md | h: ### Iteration N reported `completed` but I don't see PR N's changes in iteration N+1 | force-continue without merging | merge PR N and pick merge-and-continue next time | judgment | rationale:docs/rationale/launch-pad-autonomous.md#troubleshooting-iteration-n1-lacks-pr-ns-changes | - | GAP |
+| LP-517 | commands/autonomous.md | h: ### `inter_subtask_gap` re-plan trigger doesn't fire even though I picked Option C | Option C picked, no re-plan | check the failed/ brief exists or the grep-stable string drifted; re-run manually | judgment | rationale:docs/rationale/launch-pad-autonomous.md#troubleshooting-option-c-re-plan-did-not-fire | - | GAP |
+| LP-518 | commands/autonomous.md | h: ### Supervisor returned `checkpoint` and the loop aborted | checkpoint abort | run /supervisor --continue manually, then start a new /autonomous | judgment | rationale:docs/rationale/launch-pad-autonomous.md#troubleshooting-supervisor-returned-checkpoint | - | GAP |
 | LP-519 | agents/launch-pad.md | h: ### Dependency Graph | Phase 4 output template (outside a fence under a CommonMark closer rule) | draw edges from requires.from entries, each from: X an edge consumer → X | deterministic | prose | - | GAP |
 | LP-520 | agents/launch-pad.md | h: ### Parallelism Analysis | Phase 4 output template (outside a fence under a CommonMark closer rule) | batch subtasks with empty requires first; dependents in later batches | deterministic | prose | - | GAP |
+| LP-521 | skills/autonomous-loop/multi-iteration.md | h: ### `--base-branch` passthrough (stacked mode) | stacked multi-iteration run, iteration > 1 | pass --base-branch <iterations[-2].branch> to /supervisor; never on iter 1 or under --no-stacked-branches | deterministic | prose | - | GAP |
+| LP-522 | skills/autonomous-loop/multi-iteration.md | h: ### `review_heal` field | EVALUATE ran (or skipped) the chained review-heal step | attach REVIEW_HEAL_RESULT to iterations[] under review_heal; null when skipped | deterministic | prose | - | GAP |
+| LP-523 | skills/autonomous-loop/multi-iteration.md | h: ### EVALUATE PR-base verification (AC-3 + AC-15) | multi-iteration EVALUATE, before signals | verify the PR base against the parent iteration's branch (skip conditions, retry, mismatch abort) | deterministic | prose | - | GAP |
+| LP-524 | skills/autonomous-loop/multi-iteration.md | h: ### EVALUATE review-heal step (chained PR review-and-heal — fresh isolated Task context) | successful iteration with a PR, after PR-base verification | run review-heal as a fresh Task step and branch on its decision | deterministic | prose | - | GAP |
+| LP-525 | skills/autonomous-loop/multi-iteration.md | h: ### Signal 1 — `status: completed` AND `rubric_score N/M` with N<M (stacked rubric gate) | completed with rubric_score N<M | fire the rubric gate (webhook first), stacked or merge-and-continue options | deterministic | prose | - | GAP |
+| LP-526 | skills/autonomous-loop/multi-iteration.md | h: ### Signal 2 — `status: failed` AND Option C triggered this iteration | failed and this iteration's brief is in failed/ with inter_subtask_gap | re-plan with the Option-C template, no merge prompt | deterministic | prose | - | GAP |
+| LP-527 | skills/autonomous-loop/multi-iteration.md | h: ### No-rubric gate (`status: completed` AND `rubric_score` is null) | completed with no rubric in multi-iteration mode | ask continue / stop; non-interactive exits done (no_rubric_in_non_interactive) | deterministic | prose | - | GAP |
+| LP-528 | skills/autonomous-loop/multi-iteration.md | h: ### Default termination — any other SUPERVISOR_RESULT outcome ends the loop | no signal or gate fired | terminate per the termination table | deterministic | prose | - | GAP |
+| LP-529 | skills/autonomous-loop/multi-iteration.md | h: ### Phase 1.5 pre-flight gate — CI fail-closed termination | Supervisor returned preflight_overlap_detected | terminate with status_reason preflight_overlap_detected; never re-iterate | deterministic | prose | - | GAP |
+| LP-530 | skills/autonomous-loop/multi-iteration.md | h: ### Max-iterations cap | a signal would re-plan AND iteration + 1 > max_iterations | terminate paused_max_iterations / max_iterations_reached; record the intent | deterministic | prose | - | GAP |
+| LP-531 | skills/autonomous-loop/multi-iteration.md | q: Implementations keep `current_brief_path` and the `iterations[].branch` values in memory | a multi-iteration step needs the current brief path or a branch name (split from LP-406) | read it from in-memory state; the jq reads of state.json are illustrative | rule | step-scoped | - | GAP |
+| LP-532 | skills/autonomous-loop/SKILL.md | q: A `--single-iteration` run (every `/automate` item) never reads `multi-iteration.md` | the run is --single-iteration | Step 0 does not read multi-iteration.md; it reads it otherwise | rule | global | - | GAP |
+| LP-533 | commands/autonomous.md | q: A `--single-iteration` run never reads `multi-iteration.md`. | the run is --single-iteration | Step 0 does not read multi-iteration.md (mirror of the skill's Step 0) | rule | global | - | GAP |
 
 ## Gap list (ordered by risk)
 
@@ -617,348 +631,361 @@ This file lists every branch (condition → action) and every standing rule stat
 80. LP-505 — the worked example uses the deprecated --allow-multi-iteration and the non-stacked merge prompt (stale example)
 81. LP-508 — states a merge is required between iterations, contradicting the stacked-branch default (stale prose)
 82. LP-512 — says token budget caps are deferred though --max-tokens exists (stale prose)
-83. LP-009 — untested deterministic branch in agents/launch-pad.md: the goal value is an existing .md path under .supervisor/requirements/
-84. LP-021 — untested deterministic branch in agents/launch-pad.md: feasibility verdict
-85. LP-022 — untested deterministic branch in agents/launch-pad.md: start of run (unless --skip-validation)
-86. LP-024 — untested deterministic branch in agents/launch-pad.md: uncommitted changes / no gh auth / orphaned worktrees / stale CLAUDE.md
-87. LP-025 — untested deterministic branch in agents/launch-pad.md: input resolves to a specific source doc that is modified or untracked
-88. LP-026 — untested deterministic branch in agents/launch-pad.md: host CLAUDE.md has a level-2 Shared local services heading whose bounded body is non-empty
-89. LP-027 — untested deterministic branch in agents/launch-pad.md: --skip-validation set
-90. LP-035 — untested deterministic branch in agents/launch-pad.md: --discovery set
-91. LP-042 — untested deterministic branch in agents/launch-pad.md: any check is NO-GO
-92. LP-043 — untested deterministic branch in agents/launch-pad.md: some CAUTION, no NO-GO
-93. LP-044 — untested deterministic branch in agents/launch-pad.md: all checks GO
-94. LP-045 — untested deterministic branch in agents/launch-pad.md: verdict GO
-95. LP-046 — untested deterministic branch in agents/launch-pad.md: verdict CAUTION
-96. LP-047 — untested deterministic branch in agents/launch-pad.md: verdict NO-GO
-97. LP-048 — untested deterministic branch in agents/launch-pad.md: user picks Override
-98. LP-049 — untested deterministic branch in agents/launch-pad.md: user picks Revise goal
-99. LP-050 — untested deterministic branch in agents/launch-pad.md: user picks Abort
-100. LP-052 — untested deterministic branch in agents/launch-pad.md: CLAUDE.md lacks tech-stack info
-101. LP-053 — untested deterministic branch in agents/launch-pad.md: after FEASIBILITY (GO, CAUTION, or overridden NO-GO)
-102. LP-063 — untested deterministic branch in agents/launch-pad.md: neither orientation script exists, both emit nothing, or anything errors
-103. LP-069 — untested deterministic branch in agents/launch-pad.md: contract carries incident_history / lacks it
-104. LP-071 — untested deterministic branch in agents/launch-pad.md: no verified contract and both graph groups empty
-105. LP-075 — untested deterministic branch in agents/launch-pad.md: a token is path:digits with a slash or .ext left side
-106. LP-076 — untested deterministic branch in agents/launch-pad.md: direct git show lookup fails
-107. LP-078 — untested deterministic branch in agents/launch-pad.md: computing the as-of column
-108. LP-079 — untested deterministic branch in agents/launch-pad.md: ≥1 ref / 0 refs
-109. LP-088 — untested deterministic branch in agents/launch-pad.md: brief has a single subtask
-110. LP-096 — untested deterministic branch in agents/launch-pad.md: after DECOMPOSE
-111. LP-097 — untested deterministic branch in agents/launch-pad.md: source_requirement resolved / not resolved
-112. LP-098 — untested deterministic branch in agents/launch-pad.md: every brief
-113. LP-099 — untested deterministic branch in agents/launch-pad.md: the brief has no Base commit line
-114. LP-100 — untested deterministic branch in agents/launch-pad.md: shared_local_services set / unset
-115. LP-102 — untested deterministic branch in agents/launch-pad.md: a CAUTION finding / an overridden NO-GO
-116. LP-103 — untested deterministic branch in agents/launch-pad.md: churn surfaced on a touched path / nothing surfaced
-117. LP-104 — untested deterministic branch in agents/launch-pad.md: ≥1 STALE ref / none
-118. LP-107 — untested deterministic branch in agents/launch-pad.md: Phase 2.5 ran
-119. LP-109 — untested deterministic branch in agents/launch-pad.md: target is this plugin's repo AND the brief modifies the plugin doc surface / otherwise
-120. LP-116 — untested deterministic branch in agents/launch-pad.md: fewer than 3 bullets derivable
-121. LP-133 — untested deterministic branch in agents/launch-pad.md: user picks Override and save
-122. LP-134 — untested deterministic branch in agents/launch-pad.md: user picks Refine further on NEEDS_HUMAN
-123. LP-135 — untested deterministic branch in agents/launch-pad.md: user picks Discard
-124. LP-138 — untested deterministic branch in agents/launch-pad.md: interactive run
-125. LP-141 — untested deterministic branch in agents/launch-pad.md: user picks discard (action 2a)
-126. LP-153 — untested deterministic branch in agents/launch-pad.md: user picks Save and exit
-127. LP-154 — untested deterministic branch in agents/launch-pad.md: user picks Refine further on PASS
-128. LP-155 — untested deterministic branch in agents/launch-pad.md: user picks Edit sections
-129. LP-156 — untested deterministic branch in agents/launch-pad.md: PASS on the 3rd spawn
-130. LP-160 — untested deterministic branch in agents/launch-pad.md: user picks Refine offline
-131. LP-161 — untested deterministic branch in agents/launch-pad.md: user picks Discard after FAIL x3
-132. LP-163 — untested deterministic branch in agents/launch-pad.md: on save
-133. LP-164 — untested deterministic branch in agents/launch-pad.md: after save
-134. LP-176 — untested deterministic branch in agents/launch-pad.md: Save and exit or Override and save wrote the brief
-135. LP-177 — untested deterministic branch in agents/launch-pad.md: Phase 6 Discard
-136. LP-178 — untested deterministic branch in agents/launch-pad.md: Phase 1 BLOCKERS, or FAIL x3 then Refine offline / no choice
-137. LP-179 — untested deterministic branch in agents/launch-pad.md: in-session abort, or /autonomous cleanup after rubric-dropped
-138. LP-182 — untested deterministic branch in agents/launch-pad.md: the non-interactive auto-strip removed ≥1 bullet / any other case
-139. LP-186 — untested deterministic branch in agents/launch-pad.md: --non-interactive or --non-interactive-fallback passed
-140. LP-187 — untested deterministic branch in agents/launch-pad.md: CLAUDE.md missing
-141. LP-188 — untested deterministic branch in agents/launch-pad.md: git conflicts
-142. LP-189 — untested deterministic branch in agents/launch-pad.md: gh not authenticated
-143. LP-190 — untested deterministic branch in agents/launch-pad.md: orphaned worktrees
-144. LP-193 — untested deterministic branch in agents/launch-pad.md: feasibility NO-GO
-145. LP-203 — untested deterministic branch in agents/launch-pad.md: proposing a memory
-146. LP-207 — untested deterministic branch in commands/launch-pad.md: either non-interactive spelling passed
-147. LP-209 — untested deterministic branch in commands/launch-pad.md: Plan Review FAIL
-148. LP-221 — untested deterministic branch in commands/launch-pad.md: CLAUDE.md-missing BLOCKER
-149. LP-232 — untested deterministic branch in commands/launch-pad.md: goal value is a .md path under .supervisor/requirements/
-150. LP-235 — untested deterministic branch in commands/launch-pad.md: BLOCKERS
-151. LP-238 — untested deterministic branch in commands/launch-pad.md: NO-GO / CAUTION
-152. LP-239 — untested deterministic branch in commands/launch-pad.md: start (command mirror)
-153. LP-240 — untested deterministic branch in commands/launch-pad.md: a check fails
-154. LP-241 — untested deterministic branch in commands/launch-pad.md: --skip-validation
-155. LP-242 — untested deterministic branch in commands/launch-pad.md: after VALIDATE (command mirror)
-156. LP-243 — untested deterministic branch in commands/launch-pad.md: .md under .supervisor/requirements/ passing test -f
-157. LP-247 — untested deterministic branch in commands/launch-pad.md: --discovery
-158. LP-254 — untested deterministic branch in commands/launch-pad.md: GO
-159. LP-255 — untested deterministic branch in commands/launch-pad.md: CAUTION
-160. LP-256 — untested deterministic branch in commands/launch-pad.md: NO-GO
-161. LP-258 — untested deterministic branch in commands/launch-pad.md: sparse CLAUDE.md
-162. LP-259 — untested deterministic branch in commands/launch-pad.md: after FEASIBILITY (command mirror)
-163. LP-267 — untested deterministic branch in commands/launch-pad.md: no deps and no overlap / otherwise
-164. LP-268 — untested deterministic branch in commands/launch-pad.md: after DECOMPOSE (command mirror)
-165. LP-269 — untested deterministic branch in commands/launch-pad.md: CAUTION finding / overridden NO-GO
-166. LP-272 — untested deterministic branch in commands/launch-pad.md: the source requirement carries Rule conflicts
-167. LP-273 — untested deterministic branch in commands/launch-pad.md: brief assembled (command mirror)
-168. LP-275 — untested deterministic branch in commands/launch-pad.md: PASS with an at-floor issue and attempt < 3
-169. LP-276 — untested deterministic branch in commands/launch-pad.md: PASS
-170. LP-278 — untested deterministic branch in commands/launch-pad.md: FAIL and attempt = 3
-171. LP-280 — untested deterministic branch in commands/launch-pad.md: review allowed save (command mirror)
-172. LP-281 — untested deterministic branch in commands/launch-pad.md: presenting the brief
-173. LP-282 — untested deterministic branch in commands/launch-pad.md: on save
-174. LP-283 — untested deterministic branch in commands/launch-pad.md: blockers or FAIL
-175. LP-287 — untested deterministic branch in skills/autonomous-loop/SKILL.md: no mode flag / --single-iteration / --allow-multi-iteration
-176. LP-289 — untested deterministic branch in skills/autonomous-loop/SKILL.md: rubric_score N<M / failed + inter_subtask_gap on this brief / no rubric
-177. LP-292 — untested deterministic branch in skills/autonomous-loop/SKILL.md: default / --no-stacked-branches
-178. LP-294 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --notify set but no webhook URL resolves
-179. LP-295 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --max-iterations 1 and Signal 1/2 would fire
-180. LP-297 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --single-iteration
-181. LP-298 — untested deterministic branch in skills/autonomous-loop/SKILL.md: default multi-iter path with no mode flag / a mode flag passed
-182. LP-305 — untested deterministic branch in skills/autonomous-loop/SKILL.md: only --allow-multi-iteration
-183. LP-306 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --cheap passed
-184. LP-307 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --max-tokens N passed / absent
-185. LP-312 — untested deterministic branch in skills/autonomous-loop/SKILL.md: INIT
-186. LP-313 — untested deterministic branch in skills/autonomous-loop/SKILL.md: requirement given as a string
-187. LP-315 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --requirement file already has a real rubric
-188. LP-316 — untested deterministic branch in skills/autonomous-loop/SKILL.md: concurrent activity seen by the brief-save ls-diff
-189. LP-319 — untested deterministic branch in skills/autonomous-loop/SKILL.md: ACQUIRE write errors / direct /supervisor job path
-190. LP-324 — untested deterministic branch in skills/autonomous-loop/SKILL.md: every iteration
-191. LP-326 — untested deterministic branch in skills/autonomous-loop/SKILL.md: the requirement has an Outcomes Rubric
-192. LP-328 — untested deterministic branch in skills/autonomous-loop/SKILL.md: single mode, or the requirement already has a real rubric
-193. LP-330 — untested deterministic branch in skills/autonomous-loop/SKILL.md: fewer than 3 bullets derivable
-194. LP-331 — untested deterministic branch in skills/autonomous-loop/SKILL.md: the Launch Pad forward is active
-195. LP-332 — untested deterministic branch in skills/autonomous-loop/SKILL.md: Launch Pad finished inline
-196. LP-347 — untested deterministic branch in skills/autonomous-loop/SKILL.md: user aborted at NO-GO
-197. LP-348 — untested deterministic branch in skills/autonomous-loop/SKILL.md: user aborted after FAIL x3
-198. LP-352 — untested deterministic branch in skills/autonomous-loop/SKILL.md: inside the guard: the append did not take
-199. LP-354 — untested deterministic branch in skills/autonomous-loop/SKILL.md: no rubric authored
-200. LP-355 — untested deterministic branch in skills/autonomous-loop/SKILL.md: every iteration
-201. LP-360 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --cheap at INIT
-202. LP-361 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --max-tokens N at INIT
-203. LP-369 — untested deterministic branch in skills/autonomous-loop/SKILL.md: Supervisor emitted a result
-204. LP-370 — untested deterministic branch in skills/autonomous-loop/SKILL.md: review-heal skipped / ran
-205. LP-372 — untested deterministic branch in skills/autonomous-loop/SKILL.md: brief still in in-progress/
-206. LP-373 — untested deterministic branch in skills/autonomous-loop/SKILL.md: brief in done/ but no result
-207. LP-374 — untested deterministic branch in skills/autonomous-loop/SKILL.md: brief in failed/ but no result
-208. LP-376 — untested deterministic branch in skills/autonomous-loop/SKILL.md: single-iteration mode
-209. LP-377 — untested deterministic branch in skills/autonomous-loop/SKILL.md: multi-iteration EVALUATE, before signals
-210. LP-378 — untested deterministic branch in skills/autonomous-loop/SKILL.md: iteration 1
-211. LP-379 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --no-stacked-branches
-212. LP-391 — untested deterministic branch in skills/autonomous-loop/SKILL.md: review-heal returned
-213. LP-392 — untested deterministic branch in skills/autonomous-loop/SKILL.md: decision PASS
-214. LP-397 — untested deterministic branch in skills/autonomous-loop/SKILL.md: completed with rubric_score N<M
-215. LP-399 — untested deterministic branch in skills/autonomous-loop/SKILL.md: stacked mode
-216. LP-400 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --no-stacked-branches
-217. LP-402 — untested deterministic branch in skills/autonomous-loop/SKILL.md: stacked continue
-218. LP-409 — untested deterministic branch in skills/autonomous-loop/SKILL.md: merge verified
-219. LP-410 — untested deterministic branch in skills/autonomous-loop/SKILL.md: stop-here picked
-220. LP-411 — untested deterministic branch in skills/autonomous-loop/SKILL.md: force-continue-anyway picked
-221. LP-412 — untested deterministic branch in skills/autonomous-loop/SKILL.md: Supervisor returned failed
-222. LP-417 — untested deterministic branch in skills/autonomous-loop/SKILL.md: failed brief, no gap substring
-223. LP-420 — untested deterministic branch in skills/autonomous-loop/SKILL.md: completed, no rubric, multi-iter
-224. LP-423 — untested deterministic branch in skills/autonomous-loop/SKILL.md: user picks continue
-225. LP-424 — untested deterministic branch in skills/autonomous-loop/SKILL.md: user picks stop
-226. LP-425 — untested deterministic branch in skills/autonomous-loop/SKILL.md: no signal or gate fired
-227. LP-426 — untested deterministic branch in skills/autonomous-loop/SKILL.md: completed with a perfect score
-228. LP-427 — untested deterministic branch in skills/autonomous-loop/SKILL.md: completed N<M and stop-here
-229. LP-428 — untested deterministic branch in skills/autonomous-loop/SKILL.md: completed, no rubric, stop
-230. LP-429 — untested deterministic branch in skills/autonomous-loop/SKILL.md: completed, no rubric, non-interactive
-231. LP-430 — untested deterministic branch in skills/autonomous-loop/SKILL.md: completed_with_escalation
-232. LP-431 — untested deterministic branch in skills/autonomous-loop/SKILL.md: failed with no PR
-233. LP-432 — untested deterministic branch in skills/autonomous-loop/SKILL.md: failed, no gap, PR exists
-234. LP-433 — untested deterministic branch in skills/autonomous-loop/SKILL.md: failed with base_branch_mismatch
-235. LP-434 — untested deterministic branch in skills/autonomous-loop/SKILL.md: failed with preflight_overlap_detected
-236. LP-435 — untested deterministic branch in skills/autonomous-loop/SKILL.md: Supervisor checkpoint
-237. LP-436 — untested deterministic branch in skills/autonomous-loop/SKILL.md: Supervisor pre-flight classifies OVERLAP / SUPERSEDED
-238. LP-443 — untested deterministic branch in skills/autonomous-loop/SKILL.md: run ends
-239. LP-444 — untested deterministic branch in skills/autonomous-loop/SKILL.md: status_reason launch_pad_cant_ask_non_interactive / otherwise
-240. LP-448 — untested deterministic branch in skills/autonomous-loop/SKILL.md: discard at Phase 6
-241. LP-450 — untested deterministic branch in skills/autonomous-loop/SKILL.md: more than one new brief
-242. LP-452 — untested deterministic branch in skills/autonomous-loop/SKILL.md: gh pr view fails
-243. LP-462 — untested deterministic branch in commands/autonomous.md: --notify with no resolvable URL
-244. LP-464 — untested deterministic branch in commands/autonomous.md: iteration completed with a PR / skipped when no PR or failed
-245. LP-466 — untested deterministic branch in commands/autonomous.md: --cheap passed
-246. LP-468 — untested deterministic branch in commands/autonomous.md: requirement given inline
-247. LP-469 — untested deterministic branch in commands/autonomous.md: --requirement file without a rubric, multi-iter, rubric approved
-248. LP-470 — untested deterministic branch in commands/autonomous.md: --single-iteration
-249. LP-471 — untested deterministic branch in commands/autonomous.md: --no-stacked-branches (multi-iter only)
-250. LP-472 — untested deterministic branch in commands/autonomous.md: --notify, neither env nor user-scope URL
-251. LP-474 — untested deterministic branch in commands/autonomous.md: N outside 1..10
-252. LP-475 — untested deterministic branch in commands/autonomous.md: N=1 and Signal 1/2 would fire
-253. LP-476 — untested deterministic branch in commands/autonomous.md: --allow-multi-iteration alone / with --single-iteration
-254. LP-477 — untested deterministic branch in commands/autonomous.md: --cheap passed
-255. LP-487 — untested deterministic branch in commands/autonomous.md: multi-iteration run
-256. LP-488 — untested deterministic branch in commands/autonomous.md: completed / completed_with_escalation with a PR
-257. LP-489 — untested deterministic branch in commands/autonomous.md: completed with rubric N<M
-258. LP-490 — untested deterministic branch in commands/autonomous.md: completed, no rubric, multi-iter
-259. LP-491 — untested deterministic branch in commands/autonomous.md: failed with inter_subtask_gap
-260. LP-492 — untested deterministic branch in commands/autonomous.md: failed with pr_url null
-261. LP-493 — untested deterministic branch in commands/autonomous.md: anything else
-262. LP-494 — untested deterministic branch in commands/autonomous.md: --single-iteration
-263. LP-495 — untested deterministic branch in commands/autonomous.md: iteration N+1 reached
-264. LP-496 — untested deterministic branch in commands/autonomous.md: --no-stacked-branches
-265. LP-497 — untested deterministic branch in commands/autonomous.md: stacked default
-266. LP-499 — untested deterministic branch in commands/autonomous.md: Launch Pad gates fire / --non-interactive-fallback
-267. LP-500 — untested deterministic branch in commands/autonomous.md: adjudication fires
-268. LP-502 — untested deterministic branch in commands/autonomous.md: requirement rubric not in the saved brief (has_rubric)
-269. LP-519 — untested deterministic branch in agents/launch-pad.md: Phase 4 output template (outside a fence under a CommonMark closer rule)
-270. LP-520 — untested deterministic branch in agents/launch-pad.md: Phase 4 output template (outside a fence under a CommonMark closer rule)
-271. LP-001 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every Launch Pad run
-272. LP-002 — untested standing rule in agents/launch-pad.md (silent deletion undetected): always
-273. LP-003 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a subtask is not genuinely independent (file overlap)
-274. LP-004 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every file prediction
-275. LP-005 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a path is about to enter the impact map
-276. LP-006 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before saving
-277. LP-007 — untested standing rule in agents/launch-pad.md (silent deletion undetected): spawning subagents
-278. LP-011 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every run
-279. LP-012 — untested standing rule in agents/launch-pad.md (silent deletion undetected): always
-280. LP-013 — untested standing rule in agents/launch-pad.md (silent deletion undetected): subtask not genuinely independent
-281. LP-014 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every file prediction
-282. LP-015 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a path enters the impact map
-283. LP-017 — untested standing rule in agents/launch-pad.md (silent deletion undetected): clarification is needed
-284. LP-058 — untested standing rule in agents/launch-pad.md (silent deletion undetected): churn reader emits anything or nothing
-285. LP-061 — untested standing rule in agents/launch-pad.md (silent deletion undetected): rule text is read
-286. LP-065 — untested standing rule in agents/launch-pad.md (silent deletion undetected): two file groups overlap
-287. LP-070 — untested standing rule in agents/launch-pad.md (silent deletion undetected): deriving a subsystem id
-288. LP-072 — untested standing rule in agents/launch-pad.md (silent deletion undetected): blast-radius prediction exists
-289. LP-085 — untested standing rule in agents/launch-pad.md (silent deletion undetected): analyzing dependencies
-290. LP-091 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a subtask is purely deletion
-291. LP-092 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a provides entry is vague
-292. LP-093 — untested standing rule in agents/launch-pad.md (silent deletion undetected): an outside-scope dependency
-293. LP-095 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every subtask
-294. LP-119 — untested standing rule in agents/launch-pad.md (silent deletion undetected): naming the digest
-295. LP-137 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a Criterion 14 executable_acceptance issue
-296. LP-173 — untested standing rule in agents/launch-pad.md (silent deletion undetected): naming the brief
-297. LP-174 — untested standing rule in agents/launch-pad.md (silent deletion undetected): naming the brief
-298. LP-185 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every run
-299. LP-194 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
-300. LP-195 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
-301. LP-196 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
-302. LP-197 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
-303. LP-198 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
-304. LP-199 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
-305. LP-215 — untested standing rule in commands/launch-pad.md (silent deletion undetected): not a git repo
-306. LP-216 — untested standing rule in commands/launch-pad.md (silent deletion undetected): CLAUDE.md missing
-307. LP-218 — untested standing rule in commands/launch-pad.md (silent deletion undetected): about to run the brief
-308. LP-219 — untested standing rule in commands/launch-pad.md (silent deletion undetected): several goals
-309. LP-226 — untested standing rule in commands/launch-pad.md (silent deletion undetected): every run (command mirror)
-310. LP-227 — untested standing rule in commands/launch-pad.md (silent deletion undetected): always
-311. LP-228 — untested standing rule in commands/launch-pad.md (silent deletion undetected): subtask overlaps
-312. LP-229 — untested standing rule in commands/launch-pad.md (silent deletion undetected): path enters impact map
-313. LP-230 — untested standing rule in commands/launch-pad.md (silent deletion undetected): before saving
-314. LP-234 — untested standing rule in commands/launch-pad.md (silent deletion undetected): every run (command mirror)
-315. LP-237 — untested standing rule in commands/launch-pad.md (silent deletion undetected): unsure about a file/API/path
-316. LP-260 — untested standing rule in commands/launch-pad.md (silent deletion undetected): groups overlap
-317. LP-265 — untested standing rule in commands/launch-pad.md (silent deletion undetected): numbering subtasks
-318. LP-284 — untested standing rule in commands/launch-pad.md (silent deletion undetected): before offering save
-319. LP-285 — untested standing rule in commands/launch-pad.md (silent deletion undetected): before offering save
-320. LP-286 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): always
-321. LP-288 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): an adjudication fires
-322. LP-299 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): every /autonomous invocation
-323. LP-311 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): reading the token ceiling
-324. LP-314 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): writing the placeholder
-325. LP-317 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): writing state.json
-326. LP-346 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): plugin emits Phase 7 / pre-v14.2.0 plugin
-327. LP-350 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): a rubric was authored into the brief
-328. LP-357 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): CLI flag and brief Base Branch field
-329. LP-366 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): multi-iteration EVALUATE
-330. LP-368 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): job moves pending/ → in-progress/ → done/ or failed/
-331. LP-385 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): Supervisor's own Phase 4 self-verify was silenced
-332. LP-387 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): multi-iteration EVALUATE
-333. LP-390 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): running review-heal from /autonomous
-334. LP-395 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): additive drain fields present
-335. LP-396 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): review-heal runs
-336. LP-403 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): stacked iteration brief
-337. LP-404 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): merging stacked PRs
-338. LP-413 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): detecting this iteration's Option C
-339. LP-414 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): tempted to grep state.md
-340. LP-419 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): a policy decision is inferred, not chosen by a user at a loop gate
-341. LP-439 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): pre-flight overlap vs PR base after FINALIZE
-342. LP-442 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): emitting AUTONOMOUS_RUN.status
-343. LP-445 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): writing state.json
-344. LP-446 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): tooling finds _v1_note
-345. LP-447 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): a concurrent /launch-pad writes to pending/
-346. LP-454 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): reusing Launch Pad
-347. LP-455 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): reusing Supervisor
-348. LP-456 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): adjudication
-349. LP-457 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): reading SUPERVISOR_RESULT
-350. LP-458 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): job files
-351. LP-459 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): state.md
-352. LP-461 — untested standing rule in commands/autonomous.md (silent deletion undetected): gates fire in-session
-353. LP-483 — untested standing rule in commands/autonomous.md (silent deletion undetected): unattended run
-354. LP-485 — untested standing rule in commands/autonomous.md (silent deletion undetected): path contains spaces
-355. LP-486 — untested standing rule in commands/autonomous.md (silent deletion undetected): every run
-356. LP-498 — untested standing rule in commands/autonomous.md (silent deletion undetected): merging a stack
-357. LP-503 — untested standing rule in commands/autonomous.md (silent deletion undetected): single-iteration or rubric present
-358. LP-513 — untested standing rule in commands/autonomous.md (silent deletion undetected): loop writes under .supervisor/
-359. LP-030 — model judgment with no check in agents/launch-pad.md: resolved requirement file is empty or not a story
-360. LP-033 — model judgment with no check in agents/launch-pad.md: goal is clear or a requirement file was read
-361. LP-037 — model judgment with no check in agents/launch-pad.md: goal needs a different stack / a major new dependency
-362. LP-038 — model judgment with no check in agents/launch-pad.md: required dependency deprecated or nonexistent / new dependencies needed
-363. LP-039 — model judgment with no check in agents/launch-pad.md: goal contradicts / stretches the architecture
-364. LP-040 — model judgment with no check in agents/launch-pad.md: too large even under a justified split / borderline
-365. LP-041 — model judgment with no check in agents/launch-pad.md: hard blocker found / potential blocker the user might resolve
-366. LP-064 — model judgment with no check in agents/launch-pad.md: LSP is available
-367. LP-066 — model judgment with no check in agents/launch-pad.md: each predicted file
-368. LP-073 — model judgment with no check in agents/launch-pad.md: a task's acceptance depends on a generated/mechanical validation script
-369. LP-074 — model judgment with no check in agents/launch-pad.md: the goal / requirement cites path:line refs
-370. LP-077 — model judgment with no check in agents/launch-pad.md: excerpt read
-371. LP-082 — model judgment with no check in agents/launch-pad.md: after ANALYZE
-372. LP-084 — model judgment with no check in agents/launch-pad.md: a threshold reason fires / none fires
-373. LP-191 — model judgment with no check in agents/launch-pad.md: goal still vague after 2 rounds
-374. LP-192 — model judgment with no check in agents/launch-pad.md: no files match the goal
-375. LP-214 — model judgment with no check in commands/launch-pad.md: complex (>3 subtasks) or plan review wanted / simple, resume or quick fix
-376. LP-217 — model judgment with no check in commands/launch-pad.md: goal is vague
-377. LP-220 — model judgment with no check in commands/launch-pad.md: HIGH risks listed
-378. LP-222 — model judgment with no check in commands/launch-pad.md: wrong file predictions
-379. LP-223 — model judgment with no check in commands/launch-pad.md: more than 7 subtasks
-380. LP-224 — model judgment with no check in commands/launch-pad.md: every subtask BLOCKED
-381. LP-225 — model judgment with no check in commands/launch-pad.md: brief older than 24h
-382. LP-244 — model judgment with no check in commands/launch-pad.md: vague goal
-383. LP-245 — model judgment with no check in commands/launch-pad.md: clear goal
-384. LP-249 — model judgment with no check in commands/launch-pad.md: stack mismatch
-385. LP-250 — model judgment with no check in commands/launch-pad.md: dependency missing
-386. LP-251 — model judgment with no check in commands/launch-pad.md: architecture misfit
-387. LP-252 — model judgment with no check in commands/launch-pad.md: too large / borderline
-388. LP-253 — model judgment with no check in commands/launch-pad.md: hard blocker
-389. LP-261 — model judgment with no check in commands/launch-pad.md: each prediction
-390. LP-264 — model judgment with no check in commands/launch-pad.md: after ANALYZE (command mirror)
-391. LP-266 — model judgment with no check in commands/launch-pad.md: a threshold reason fires / none
-392. LP-514 — model judgment with no check in commands/autonomous.md: rubric_dropped_from_brief abort
-393. LP-515 — model judgment with no check in commands/autonomous.md: concurrent_session_detected abort
-394. LP-516 — model judgment with no check in commands/autonomous.md: force-continue without merging
-395. LP-517 — model judgment with no check in commands/autonomous.md: Option C picked, no re-plan
-396. LP-518 — model judgment with no check in commands/autonomous.md: checkpoint abort
-397. LP-008 — narrative / rationale only, low risk (agents/launch-pad.md): a run starts
-398. LP-010 — narrative / rationale only, low risk (agents/launch-pad.md): a run completes
-399. LP-208 — narrative / rationale only, low risk (commands/launch-pad.md): choosing Launch Pad
-400. LP-210 — narrative / rationale only, low risk (commands/launch-pad.md): user starts
-401. LP-211 — narrative / rationale only, low risk (commands/launch-pad.md): brief presented
-402. LP-212 — narrative / rationale only, low risk (commands/launch-pad.md): brief reviewed
-403. LP-213 — narrative / rationale only, low risk (commands/launch-pad.md): brief saved
-404. LP-231 — narrative / rationale only, low risk (commands/launch-pad.md): run starts (command mirror)
-405. LP-233 — narrative / rationale only, low risk (commands/launch-pad.md): run completes (command mirror)
-406. LP-322 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): a crashed run leaves its brief in in-progress/ and no ended_at, and a later PR's branch collides
-407. LP-406 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): looking up iteration branches
-408. LP-440 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): stacked run's own parent commits / PR
-409. LP-451 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): process killed / terminal closed
-410. LP-453 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): the grep-stable string changes
-411. LP-467 — narrative / rationale only, low risk (commands/autonomous.md): naming units
-412. LP-482 — narrative / rationale only, low risk (commands/autonomous.md): deferred flags
-413. LP-484 — narrative / rationale only, low risk (commands/autonomous.md): resume or auto-merge wanted
-414. LP-504 — narrative / rationale only, low risk (commands/autonomous.md): example
-415. LP-506 — narrative / rationale only, low risk (commands/autonomous.md): example
-416. LP-509 — narrative / rationale only, low risk (commands/autonomous.md): refining a requirement
-417. LP-510 — narrative / rationale only, low risk (commands/autonomous.md): re-run after a crash
-418. LP-511 — narrative / rationale only, low risk (commands/autonomous.md): quality in the loop
+83. LP-531 — the in-memory-state rule split from a story; nothing checks an implementation does not re-read state.json
+84. LP-532 — load-by-mode: a single-iteration run that needed a multi-iteration section would silently lack it; the read condition is untested prose
+85. LP-533 — load-by-mode mirror in the command doc; untested
+86. LP-009 — untested deterministic branch in agents/launch-pad.md: the goal value is an existing .md path under .supervisor/requirements/
+87. LP-021 — untested deterministic branch in agents/launch-pad.md: feasibility verdict
+88. LP-022 — untested deterministic branch in agents/launch-pad.md: start of run (unless --skip-validation)
+89. LP-024 — untested deterministic branch in agents/launch-pad.md: uncommitted changes / no gh auth / orphaned worktrees / stale CLAUDE.md
+90. LP-025 — untested deterministic branch in agents/launch-pad.md: input resolves to a specific source doc that is modified or untracked
+91. LP-026 — untested deterministic branch in agents/launch-pad.md: host CLAUDE.md has a level-2 Shared local services heading whose bounded body is non-empty
+92. LP-027 — untested deterministic branch in agents/launch-pad.md: --skip-validation set
+93. LP-035 — untested deterministic branch in agents/launch-pad.md: --discovery set
+94. LP-042 — untested deterministic branch in agents/launch-pad.md: any check is NO-GO
+95. LP-043 — untested deterministic branch in agents/launch-pad.md: some CAUTION, no NO-GO
+96. LP-044 — untested deterministic branch in agents/launch-pad.md: all checks GO
+97. LP-045 — untested deterministic branch in agents/launch-pad.md: verdict GO
+98. LP-046 — untested deterministic branch in agents/launch-pad.md: verdict CAUTION
+99. LP-047 — untested deterministic branch in agents/launch-pad.md: verdict NO-GO
+100. LP-048 — untested deterministic branch in agents/launch-pad.md: user picks Override
+101. LP-049 — untested deterministic branch in agents/launch-pad.md: user picks Revise goal
+102. LP-050 — untested deterministic branch in agents/launch-pad.md: user picks Abort
+103. LP-052 — untested deterministic branch in agents/launch-pad.md: CLAUDE.md lacks tech-stack info
+104. LP-053 — untested deterministic branch in agents/launch-pad.md: after FEASIBILITY (GO, CAUTION, or overridden NO-GO)
+105. LP-063 — untested deterministic branch in agents/launch-pad.md: neither orientation script exists, both emit nothing, or anything errors
+106. LP-069 — untested deterministic branch in agents/launch-pad.md: contract carries incident_history / lacks it
+107. LP-071 — untested deterministic branch in agents/launch-pad.md: no verified contract and both graph groups empty
+108. LP-075 — untested deterministic branch in agents/launch-pad.md: a token is path:digits with a slash or .ext left side
+109. LP-076 — untested deterministic branch in agents/launch-pad.md: direct git show lookup fails
+110. LP-078 — untested deterministic branch in agents/launch-pad.md: computing the as-of column
+111. LP-079 — untested deterministic branch in agents/launch-pad.md: ≥1 ref / 0 refs
+112. LP-088 — untested deterministic branch in agents/launch-pad.md: brief has a single subtask
+113. LP-096 — untested deterministic branch in agents/launch-pad.md: after DECOMPOSE
+114. LP-097 — untested deterministic branch in agents/launch-pad.md: source_requirement resolved / not resolved
+115. LP-098 — untested deterministic branch in agents/launch-pad.md: every brief
+116. LP-099 — untested deterministic branch in agents/launch-pad.md: the brief has no Base commit line
+117. LP-100 — untested deterministic branch in agents/launch-pad.md: shared_local_services set / unset
+118. LP-102 — untested deterministic branch in agents/launch-pad.md: a CAUTION finding / an overridden NO-GO
+119. LP-103 — untested deterministic branch in agents/launch-pad.md: churn surfaced on a touched path / nothing surfaced
+120. LP-104 — untested deterministic branch in agents/launch-pad.md: ≥1 STALE ref / none
+121. LP-107 — untested deterministic branch in agents/launch-pad.md: Phase 2.5 ran
+122. LP-109 — untested deterministic branch in agents/launch-pad.md: target is this plugin's repo AND the brief modifies the plugin doc surface / otherwise
+123. LP-116 — untested deterministic branch in agents/launch-pad.md: fewer than 3 bullets derivable
+124. LP-133 — untested deterministic branch in agents/launch-pad.md: user picks Override and save
+125. LP-134 — untested deterministic branch in agents/launch-pad.md: user picks Refine further on NEEDS_HUMAN
+126. LP-135 — untested deterministic branch in agents/launch-pad.md: user picks Discard
+127. LP-138 — untested deterministic branch in agents/launch-pad.md: interactive run
+128. LP-141 — untested deterministic branch in agents/launch-pad.md: user picks discard (action 2a)
+129. LP-153 — untested deterministic branch in agents/launch-pad.md: user picks Save and exit
+130. LP-154 — untested deterministic branch in agents/launch-pad.md: user picks Refine further on PASS
+131. LP-155 — untested deterministic branch in agents/launch-pad.md: user picks Edit sections
+132. LP-156 — untested deterministic branch in agents/launch-pad.md: PASS on the 3rd spawn
+133. LP-160 — untested deterministic branch in agents/launch-pad.md: user picks Refine offline
+134. LP-161 — untested deterministic branch in agents/launch-pad.md: user picks Discard after FAIL x3
+135. LP-163 — untested deterministic branch in agents/launch-pad.md: on save
+136. LP-164 — untested deterministic branch in agents/launch-pad.md: after save
+137. LP-176 — untested deterministic branch in agents/launch-pad.md: Save and exit or Override and save wrote the brief
+138. LP-177 — untested deterministic branch in agents/launch-pad.md: Phase 6 Discard
+139. LP-178 — untested deterministic branch in agents/launch-pad.md: Phase 1 BLOCKERS, or FAIL x3 then Refine offline / no choice
+140. LP-179 — untested deterministic branch in agents/launch-pad.md: in-session abort, or /autonomous cleanup after rubric-dropped
+141. LP-182 — untested deterministic branch in agents/launch-pad.md: the non-interactive auto-strip removed ≥1 bullet / any other case
+142. LP-186 — untested deterministic branch in agents/launch-pad.md: --non-interactive or --non-interactive-fallback passed
+143. LP-187 — untested deterministic branch in agents/launch-pad.md: CLAUDE.md missing
+144. LP-188 — untested deterministic branch in agents/launch-pad.md: git conflicts
+145. LP-189 — untested deterministic branch in agents/launch-pad.md: gh not authenticated
+146. LP-190 — untested deterministic branch in agents/launch-pad.md: orphaned worktrees
+147. LP-193 — untested deterministic branch in agents/launch-pad.md: feasibility NO-GO
+148. LP-203 — untested deterministic branch in agents/launch-pad.md: proposing a memory
+149. LP-207 — untested deterministic branch in commands/launch-pad.md: either non-interactive spelling passed
+150. LP-209 — untested deterministic branch in commands/launch-pad.md: Plan Review FAIL
+151. LP-221 — untested deterministic branch in commands/launch-pad.md: CLAUDE.md-missing BLOCKER
+152. LP-232 — untested deterministic branch in commands/launch-pad.md: goal value is a .md path under .supervisor/requirements/
+153. LP-235 — untested deterministic branch in commands/launch-pad.md: BLOCKERS
+154. LP-238 — untested deterministic branch in commands/launch-pad.md: NO-GO / CAUTION
+155. LP-239 — untested deterministic branch in commands/launch-pad.md: start (command mirror)
+156. LP-240 — untested deterministic branch in commands/launch-pad.md: a check fails
+157. LP-241 — untested deterministic branch in commands/launch-pad.md: --skip-validation
+158. LP-242 — untested deterministic branch in commands/launch-pad.md: after VALIDATE (command mirror)
+159. LP-243 — untested deterministic branch in commands/launch-pad.md: .md under .supervisor/requirements/ passing test -f
+160. LP-247 — untested deterministic branch in commands/launch-pad.md: --discovery
+161. LP-254 — untested deterministic branch in commands/launch-pad.md: GO
+162. LP-255 — untested deterministic branch in commands/launch-pad.md: CAUTION
+163. LP-256 — untested deterministic branch in commands/launch-pad.md: NO-GO
+164. LP-258 — untested deterministic branch in commands/launch-pad.md: sparse CLAUDE.md
+165. LP-259 — untested deterministic branch in commands/launch-pad.md: after FEASIBILITY (command mirror)
+166. LP-267 — untested deterministic branch in commands/launch-pad.md: no deps and no overlap / otherwise
+167. LP-268 — untested deterministic branch in commands/launch-pad.md: after DECOMPOSE (command mirror)
+168. LP-269 — untested deterministic branch in commands/launch-pad.md: CAUTION finding / overridden NO-GO
+169. LP-272 — untested deterministic branch in commands/launch-pad.md: the source requirement carries Rule conflicts
+170. LP-273 — untested deterministic branch in commands/launch-pad.md: brief assembled (command mirror)
+171. LP-275 — untested deterministic branch in commands/launch-pad.md: PASS with an at-floor issue and attempt < 3
+172. LP-276 — untested deterministic branch in commands/launch-pad.md: PASS
+173. LP-278 — untested deterministic branch in commands/launch-pad.md: FAIL and attempt = 3
+174. LP-280 — untested deterministic branch in commands/launch-pad.md: review allowed save (command mirror)
+175. LP-281 — untested deterministic branch in commands/launch-pad.md: presenting the brief
+176. LP-282 — untested deterministic branch in commands/launch-pad.md: on save
+177. LP-283 — untested deterministic branch in commands/launch-pad.md: blockers or FAIL
+178. LP-287 — untested deterministic branch in skills/autonomous-loop/SKILL.md: no mode flag / --single-iteration / --allow-multi-iteration
+179. LP-289 — untested deterministic branch in skills/autonomous-loop/SKILL.md: rubric_score N<M / failed + inter_subtask_gap on this brief / no rubric
+180. LP-292 — untested deterministic branch in skills/autonomous-loop/SKILL.md: default / --no-stacked-branches
+181. LP-294 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --notify set but no webhook URL resolves
+182. LP-295 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --max-iterations 1 and Signal 1/2 would fire
+183. LP-297 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --single-iteration
+184. LP-298 — untested deterministic branch in skills/autonomous-loop/SKILL.md: default multi-iter path with no mode flag / a mode flag passed
+185. LP-305 — untested deterministic branch in skills/autonomous-loop/SKILL.md: only --allow-multi-iteration
+186. LP-306 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --cheap passed
+187. LP-307 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --max-tokens N passed / absent
+188. LP-312 — untested deterministic branch in skills/autonomous-loop/SKILL.md: INIT
+189. LP-313 — untested deterministic branch in skills/autonomous-loop/SKILL.md: requirement given as a string
+190. LP-315 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --requirement file already has a real rubric
+191. LP-316 — untested deterministic branch in skills/autonomous-loop/SKILL.md: concurrent activity seen by the brief-save ls-diff
+192. LP-319 — untested deterministic branch in skills/autonomous-loop/SKILL.md: ACQUIRE write errors / direct /supervisor job path
+193. LP-324 — untested deterministic branch in skills/autonomous-loop/SKILL.md: every iteration
+194. LP-326 — untested deterministic branch in skills/autonomous-loop/SKILL.md: the requirement has an Outcomes Rubric
+195. LP-328 — untested deterministic branch in skills/autonomous-loop/SKILL.md: single mode, or the requirement already has a real rubric
+196. LP-330 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: fewer than 3 bullets derivable
+197. LP-331 — untested deterministic branch in skills/autonomous-loop/SKILL.md: the Launch Pad forward is active
+198. LP-332 — untested deterministic branch in skills/autonomous-loop/SKILL.md: Launch Pad finished inline
+199. LP-347 — untested deterministic branch in skills/autonomous-loop/SKILL.md: user aborted at NO-GO
+200. LP-348 — untested deterministic branch in skills/autonomous-loop/SKILL.md: user aborted after FAIL x3
+201. LP-352 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: inside the guard: the append did not take
+202. LP-354 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: no rubric authored
+203. LP-355 — untested deterministic branch in skills/autonomous-loop/SKILL.md: every iteration
+204. LP-360 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --cheap at INIT
+205. LP-361 — untested deterministic branch in skills/autonomous-loop/SKILL.md: --max-tokens N at INIT
+206. LP-369 — untested deterministic branch in skills/autonomous-loop/SKILL.md: Supervisor emitted a result
+207. LP-370 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: review-heal skipped / ran
+208. LP-372 — untested deterministic branch in skills/autonomous-loop/SKILL.md: brief still in in-progress/
+209. LP-373 — untested deterministic branch in skills/autonomous-loop/SKILL.md: brief in done/ but no result
+210. LP-374 — untested deterministic branch in skills/autonomous-loop/SKILL.md: brief in failed/ but no result
+211. LP-376 — untested deterministic branch in skills/autonomous-loop/SKILL.md: single-iteration mode
+212. LP-377 — untested deterministic branch in skills/autonomous-loop/SKILL.md: multi-iteration EVALUATE, before signals
+213. LP-378 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: iteration 1
+214. LP-379 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: --no-stacked-branches
+215. LP-391 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: review-heal returned
+216. LP-392 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: decision PASS
+217. LP-397 — untested deterministic branch in skills/autonomous-loop/SKILL.md: completed with rubric_score N<M
+218. LP-399 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: stacked mode
+219. LP-400 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: --no-stacked-branches
+220. LP-402 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: stacked continue
+221. LP-409 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: merge verified
+222. LP-410 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: stop-here picked
+223. LP-411 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: force-continue-anyway picked
+224. LP-412 — untested deterministic branch in skills/autonomous-loop/SKILL.md: Supervisor returned failed
+225. LP-417 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: failed brief, no gap substring
+226. LP-420 — untested deterministic branch in skills/autonomous-loop/SKILL.md: completed, no rubric, multi-iter
+227. LP-423 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: user picks continue
+228. LP-424 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: user picks stop
+229. LP-425 — untested deterministic branch in skills/autonomous-loop/SKILL.md: no signal or gate fired
+230. LP-426 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed with a perfect score
+231. LP-427 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed N<M and stop-here
+232. LP-428 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed, no rubric, stop
+233. LP-429 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed, no rubric, non-interactive
+234. LP-430 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed_with_escalation
+235. LP-431 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: failed with no PR
+236. LP-432 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: failed, no gap, PR exists
+237. LP-433 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: failed with base_branch_mismatch
+238. LP-434 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: failed with preflight_overlap_detected
+239. LP-435 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: Supervisor checkpoint
+240. LP-436 — untested deterministic branch in skills/autonomous-loop/SKILL.md: Supervisor pre-flight classifies OVERLAP / SUPERSEDED
+241. LP-443 — untested deterministic branch in skills/autonomous-loop/SKILL.md: run ends
+242. LP-444 — untested deterministic branch in skills/autonomous-loop/SKILL.md: status_reason launch_pad_cant_ask_non_interactive / otherwise
+243. LP-448 — untested deterministic branch in skills/autonomous-loop/SKILL.md: discard at Phase 6
+244. LP-450 — untested deterministic branch in skills/autonomous-loop/SKILL.md: more than one new brief
+245. LP-452 — untested deterministic branch in skills/autonomous-loop/SKILL.md: gh pr view fails
+246. LP-462 — untested deterministic branch in commands/autonomous.md: --notify with no resolvable URL
+247. LP-464 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: iteration completed with a PR / skipped when no PR or failed
+248. LP-466 — untested deterministic branch in commands/autonomous.md: --cheap passed
+249. LP-468 — untested deterministic branch in commands/autonomous.md: requirement given inline
+250. LP-469 — untested deterministic branch in commands/autonomous.md: --requirement file without a rubric, multi-iter, rubric approved
+251. LP-470 — untested deterministic branch in commands/autonomous.md: --single-iteration
+252. LP-471 — untested deterministic branch in commands/autonomous.md: --no-stacked-branches (multi-iter only)
+253. LP-472 — untested deterministic branch in commands/autonomous.md: --notify, neither env nor user-scope URL
+254. LP-474 — untested deterministic branch in commands/autonomous.md: N outside 1..10
+255. LP-475 — untested deterministic branch in commands/autonomous.md: N=1 and Signal 1/2 would fire
+256. LP-476 — untested deterministic branch in commands/autonomous.md: --allow-multi-iteration alone / with --single-iteration
+257. LP-477 — untested deterministic branch in commands/autonomous.md: --cheap passed
+258. LP-487 — untested deterministic branch in commands/autonomous.md: multi-iteration run
+259. LP-488 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed / completed_with_escalation with a PR
+260. LP-489 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed with rubric N<M
+261. LP-490 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed, no rubric, multi-iter
+262. LP-491 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: failed with inter_subtask_gap
+263. LP-492 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: failed with pr_url null
+264. LP-493 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: anything else
+265. LP-494 — untested deterministic branch in commands/autonomous.md: --single-iteration
+266. LP-495 — untested deterministic branch in commands/autonomous.md: iteration N+1 reached
+267. LP-496 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: --no-stacked-branches
+268. LP-497 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: stacked default
+269. LP-499 — untested deterministic branch in commands/autonomous.md: Launch Pad gates fire / --non-interactive-fallback
+270. LP-500 — untested deterministic branch in commands/autonomous.md: adjudication fires
+271. LP-502 — untested deterministic branch in commands/autonomous.md: requirement rubric not in the saved brief (has_rubric)
+272. LP-519 — untested deterministic branch in agents/launch-pad.md: Phase 4 output template (outside a fence under a CommonMark closer rule)
+273. LP-520 — untested deterministic branch in agents/launch-pad.md: Phase 4 output template (outside a fence under a CommonMark closer rule)
+274. LP-001 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every Launch Pad run
+275. LP-002 — untested standing rule in agents/launch-pad.md (silent deletion undetected): always
+276. LP-003 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a subtask is not genuinely independent (file overlap)
+277. LP-004 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every file prediction
+278. LP-005 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a path is about to enter the impact map
+279. LP-006 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before saving
+280. LP-007 — untested standing rule in agents/launch-pad.md (silent deletion undetected): spawning subagents
+281. LP-011 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every run
+282. LP-012 — untested standing rule in agents/launch-pad.md (silent deletion undetected): always
+283. LP-013 — untested standing rule in agents/launch-pad.md (silent deletion undetected): subtask not genuinely independent
+284. LP-014 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every file prediction
+285. LP-015 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a path enters the impact map
+286. LP-017 — untested standing rule in agents/launch-pad.md (silent deletion undetected): clarification is needed
+287. LP-058 — untested standing rule in agents/launch-pad.md (silent deletion undetected): churn reader emits anything or nothing
+288. LP-061 — untested standing rule in agents/launch-pad.md (silent deletion undetected): rule text is read
+289. LP-065 — untested standing rule in agents/launch-pad.md (silent deletion undetected): two file groups overlap
+290. LP-070 — untested standing rule in agents/launch-pad.md (silent deletion undetected): deriving a subsystem id
+291. LP-072 — untested standing rule in agents/launch-pad.md (silent deletion undetected): blast-radius prediction exists
+292. LP-085 — untested standing rule in agents/launch-pad.md (silent deletion undetected): analyzing dependencies
+293. LP-091 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a subtask is purely deletion
+294. LP-092 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a provides entry is vague
+295. LP-093 — untested standing rule in agents/launch-pad.md (silent deletion undetected): an outside-scope dependency
+296. LP-095 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every subtask
+297. LP-119 — untested standing rule in agents/launch-pad.md (silent deletion undetected): naming the digest
+298. LP-137 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a Criterion 14 executable_acceptance issue
+299. LP-173 — untested standing rule in agents/launch-pad.md (silent deletion undetected): naming the brief
+300. LP-174 — untested standing rule in agents/launch-pad.md (silent deletion undetected): naming the brief
+301. LP-185 — untested standing rule in agents/launch-pad.md (silent deletion undetected): every run
+302. LP-194 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
+303. LP-195 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
+304. LP-196 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
+305. LP-197 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
+306. LP-198 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
+307. LP-199 — untested standing rule in agents/launch-pad.md (silent deletion undetected): before offering save
+308. LP-215 — untested standing rule in commands/launch-pad.md (silent deletion undetected): not a git repo
+309. LP-216 — untested standing rule in commands/launch-pad.md (silent deletion undetected): CLAUDE.md missing
+310. LP-218 — untested standing rule in commands/launch-pad.md (silent deletion undetected): about to run the brief
+311. LP-219 — untested standing rule in commands/launch-pad.md (silent deletion undetected): several goals
+312. LP-226 — untested standing rule in commands/launch-pad.md (silent deletion undetected): every run (command mirror)
+313. LP-227 — untested standing rule in commands/launch-pad.md (silent deletion undetected): always
+314. LP-228 — untested standing rule in commands/launch-pad.md (silent deletion undetected): subtask overlaps
+315. LP-229 — untested standing rule in commands/launch-pad.md (silent deletion undetected): path enters impact map
+316. LP-230 — untested standing rule in commands/launch-pad.md (silent deletion undetected): before saving
+317. LP-234 — untested standing rule in commands/launch-pad.md (silent deletion undetected): every run (command mirror)
+318. LP-237 — untested standing rule in commands/launch-pad.md (silent deletion undetected): unsure about a file/API/path
+319. LP-260 — untested standing rule in commands/launch-pad.md (silent deletion undetected): groups overlap
+320. LP-265 — untested standing rule in commands/launch-pad.md (silent deletion undetected): numbering subtasks
+321. LP-284 — untested standing rule in commands/launch-pad.md (silent deletion undetected): before offering save
+322. LP-285 — untested standing rule in commands/launch-pad.md (silent deletion undetected): before offering save
+323. LP-286 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): always
+324. LP-288 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): an adjudication fires
+325. LP-299 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): every /autonomous invocation
+326. LP-311 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): reading the token ceiling
+327. LP-314 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): writing the placeholder
+328. LP-317 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): writing state.json
+329. LP-346 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): plugin emits Phase 7 / pre-v14.2.0 plugin
+330. LP-350 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): a rubric was authored into the brief
+331. LP-357 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): CLI flag and brief Base Branch field
+332. LP-366 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): multi-iteration EVALUATE
+333. LP-368 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): job moves pending/ → in-progress/ → done/ or failed/
+334. LP-385 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): Supervisor's own Phase 4 self-verify was silenced
+335. LP-387 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): multi-iteration EVALUATE
+336. LP-390 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): running review-heal from /autonomous
+337. LP-395 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): additive drain fields present
+338. LP-396 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): review-heal runs
+339. LP-403 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): stacked iteration brief
+340. LP-404 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): merging stacked PRs
+341. LP-413 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): detecting this iteration's Option C
+342. LP-414 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): tempted to grep state.md
+343. LP-419 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): a policy decision is inferred, not chosen by a user at a loop gate
+344. LP-439 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): pre-flight overlap vs PR base after FINALIZE
+345. LP-442 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): emitting AUTONOMOUS_RUN.status
+346. LP-445 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): writing state.json
+347. LP-446 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): tooling finds _v1_note
+348. LP-447 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): a concurrent /launch-pad writes to pending/
+349. LP-454 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): reusing Launch Pad
+350. LP-455 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): reusing Supervisor
+351. LP-456 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): adjudication
+352. LP-457 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): reading SUPERVISOR_RESULT
+353. LP-458 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): job files
+354. LP-459 — untested standing rule in skills/autonomous-loop/SKILL.md (silent deletion undetected): state.md
+355. LP-461 — untested standing rule in commands/autonomous.md (silent deletion undetected): gates fire in-session
+356. LP-483 — untested standing rule in commands/autonomous.md (silent deletion undetected): unattended run
+357. LP-485 — untested standing rule in commands/autonomous.md (silent deletion undetected): path contains spaces
+358. LP-486 — untested standing rule in commands/autonomous.md (silent deletion undetected): every run
+359. LP-498 — untested standing rule in commands/autonomous.md (silent deletion undetected): merging a stack
+360. LP-503 — untested standing rule in commands/autonomous.md (silent deletion undetected): single-iteration or rubric present
+361. LP-513 — untested standing rule in commands/autonomous.md (silent deletion undetected): loop writes under .supervisor/
+362. LP-030 — model judgment with no check in agents/launch-pad.md: resolved requirement file is empty or not a story
+363. LP-033 — model judgment with no check in agents/launch-pad.md: goal is clear or a requirement file was read
+364. LP-037 — model judgment with no check in agents/launch-pad.md: goal needs a different stack / a major new dependency
+365. LP-038 — model judgment with no check in agents/launch-pad.md: required dependency deprecated or nonexistent / new dependencies needed
+366. LP-039 — model judgment with no check in agents/launch-pad.md: goal contradicts / stretches the architecture
+367. LP-040 — model judgment with no check in agents/launch-pad.md: too large even under a justified split / borderline
+368. LP-041 — model judgment with no check in agents/launch-pad.md: hard blocker found / potential blocker the user might resolve
+369. LP-064 — model judgment with no check in agents/launch-pad.md: LSP is available
+370. LP-066 — model judgment with no check in agents/launch-pad.md: each predicted file
+371. LP-073 — model judgment with no check in agents/launch-pad.md: a task's acceptance depends on a generated/mechanical validation script
+372. LP-074 — model judgment with no check in agents/launch-pad.md: the goal / requirement cites path:line refs
+373. LP-077 — model judgment with no check in agents/launch-pad.md: excerpt read
+374. LP-082 — model judgment with no check in agents/launch-pad.md: after ANALYZE
+375. LP-084 — model judgment with no check in agents/launch-pad.md: a threshold reason fires / none fires
+376. LP-191 — model judgment with no check in agents/launch-pad.md: goal still vague after 2 rounds
+377. LP-192 — model judgment with no check in agents/launch-pad.md: no files match the goal
+378. LP-214 — model judgment with no check in commands/launch-pad.md: complex (>3 subtasks) or plan review wanted / simple, resume or quick fix
+379. LP-217 — model judgment with no check in commands/launch-pad.md: goal is vague
+380. LP-220 — model judgment with no check in commands/launch-pad.md: HIGH risks listed
+381. LP-222 — model judgment with no check in commands/launch-pad.md: wrong file predictions
+382. LP-223 — model judgment with no check in commands/launch-pad.md: more than 7 subtasks
+383. LP-224 — model judgment with no check in commands/launch-pad.md: every subtask BLOCKED
+384. LP-225 — model judgment with no check in commands/launch-pad.md: brief older than 24h
+385. LP-244 — model judgment with no check in commands/launch-pad.md: vague goal
+386. LP-245 — model judgment with no check in commands/launch-pad.md: clear goal
+387. LP-249 — model judgment with no check in commands/launch-pad.md: stack mismatch
+388. LP-250 — model judgment with no check in commands/launch-pad.md: dependency missing
+389. LP-251 — model judgment with no check in commands/launch-pad.md: architecture misfit
+390. LP-252 — model judgment with no check in commands/launch-pad.md: too large / borderline
+391. LP-253 — model judgment with no check in commands/launch-pad.md: hard blocker
+392. LP-261 — model judgment with no check in commands/launch-pad.md: each prediction
+393. LP-264 — model judgment with no check in commands/launch-pad.md: after ANALYZE (command mirror)
+394. LP-266 — model judgment with no check in commands/launch-pad.md: a threshold reason fires / none
+395. LP-514 — model judgment with no check in commands/autonomous.md: rubric_dropped_from_brief abort
+396. LP-515 — model judgment with no check in commands/autonomous.md: concurrent_session_detected abort
+397. LP-516 — model judgment with no check in commands/autonomous.md: force-continue without merging
+398. LP-517 — model judgment with no check in commands/autonomous.md: Option C picked, no re-plan
+399. LP-518 — model judgment with no check in commands/autonomous.md: checkpoint abort
+400. LP-008 — narrative / rationale only, low risk (agents/launch-pad.md): a run starts
+401. LP-010 — narrative / rationale only, low risk (agents/launch-pad.md): a run completes
+402. LP-208 — narrative / rationale only, low risk (commands/launch-pad.md): choosing Launch Pad
+403. LP-210 — narrative / rationale only, low risk (commands/launch-pad.md): user starts
+404. LP-211 — narrative / rationale only, low risk (commands/launch-pad.md): brief presented
+405. LP-212 — narrative / rationale only, low risk (commands/launch-pad.md): brief reviewed
+406. LP-213 — narrative / rationale only, low risk (commands/launch-pad.md): brief saved
+407. LP-231 — narrative / rationale only, low risk (commands/launch-pad.md): run starts (command mirror)
+408. LP-233 — narrative / rationale only, low risk (commands/launch-pad.md): run completes (command mirror)
+409. LP-322 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): a crashed run leaves its brief in in-progress/ and no ended_at, and a later PR's branch collides
+410. LP-406 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): looking up iteration branches
+411. LP-440 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): stacked run's own parent commits / PR
+412. LP-451 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): process killed / terminal closed
+413. LP-453 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): the grep-stable string changes
+414. LP-467 — narrative / rationale only, low risk (commands/autonomous.md): naming units
+415. LP-482 — narrative / rationale only, low risk (commands/autonomous.md): deferred flags
+416. LP-484 — narrative / rationale only, low risk (commands/autonomous.md): resume or auto-merge wanted
+417. LP-504 — narrative / rationale only, low risk (commands/autonomous.md): example
+418. LP-506 — narrative / rationale only, low risk (commands/autonomous.md): example
+419. LP-509 — narrative / rationale only, low risk (commands/autonomous.md): refining a requirement
+420. LP-510 — narrative / rationale only, low risk (commands/autonomous.md): re-run after a crash
+421. LP-511 — narrative / rationale only, low risk (commands/autonomous.md): quality in the loop
+422. LP-521 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: stacked multi-iteration run, iteration > 1
+423. LP-522 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: EVALUATE ran (or skipped) the chained review-heal step
+424. LP-523 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: multi-iteration EVALUATE, before signals
+425. LP-524 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: successful iteration with a PR, after PR-base verification
+426. LP-525 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed with rubric_score N<M
+427. LP-526 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: failed and this iteration's brief is in failed/ with inter_subtask_gap
+428. LP-527 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed with no rubric in multi-iteration mode
+429. LP-528 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: no signal or gate fired
+430. LP-529 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: Supervisor returned preflight_overlap_detected
+431. LP-530 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: a signal would re-plan AND iteration + 1 > max_iterations
 
 ## Counts
 
-- rows: 520
-- deterministic: 330
+- rows: 533
+- deterministic: 340
 - judgment: 46
-- rule: 119
+- rule: 122
 - story: 25
-- GAP: 418
+- GAP: 431
