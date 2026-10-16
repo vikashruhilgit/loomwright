@@ -27,12 +27,14 @@
 #  15. mutating the reader so numf() always returns 0 makes a KNOWN-non-zero
 #      fixture report TOTAL=0 -- proving the normal (unmutated) script's
 #      non-zero result in test 1 is load-bearing, not a fixture accident.
-#  PI1-PI17. --per-item (automate-speed/03) over token-ledger-fixtures/per-item/:
+#  PI1-PI20. --per-item (automate-speed/03) over token-ledger-fixtures/per-item/:
 #      item + phase rows (PR #533's spans), message-id de-dup and its mutation
 #      control, wall time = phase-timing.sh's, missing boundary / no park / two
 #      drains, no_transcripts, lane attribution, unpicked item, env projects
 #      dir, fail-safe exits, existing modes unchanged, no_usage_in_window (item
-#      and phase), inverted window, sibling-lane 'picked in lane'.
+#      and phase), inverted window, sibling-lane 'picked in lane', an item
+#      parked then resumed (work_after_park), phase row <= item row, and a
+#      /bin/bash (3.2) parse check.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -507,6 +509,64 @@ pi_run "$SUT" --per-item "$PI/sib/run.md" --root "$PI/p" --projects-dir "$PIP"
   && printf '%s\n' "$PI_ERR" | grep -qF 'picked_in_lane — .supervisor/requirements/e.md (run-L1)' \
   && ok "lane-picked parent item names its lane run, not 'not picked'" || no "sibling lane: row=$(pi_row 'e.md') err=$PI_ERR"
 pi_row '| **.supervisor/requirements/d.md** |' | grep -qF "| not picked |" && ok "an item no lane picked still reads 'not picked'" || no "d with sibling lanes: $(pi_row 'd.md')"
+
+echo "== PI18. --per-item: an item parked, then resumed in the same run, counts the resumed work =="
+# picked → parked (escalated) → picked again (resume) → ran /autonomous → drain → parked.
+# phase-timing's .item.park is the FIRST parked line; the resumed work (02:30, 03:10,
+# 03:35) must still land in the item total. The 04:00 message is after the last park.
+mkdir -p "$PI/res/.supervisor/logs" "$PI/res/proj/x"
+printf '{"cc_session_id":"cccccccc-0000-4000-8000-00000000000a"}\n' > "$PI/res/.supervisor/logs/sr.jsonl"
+for m in "m1 2026-10-15T01:05:00Z 10" "m2 2026-10-15T02:30:00Z 100" "m3 2026-10-15T03:10:00Z 1000" "m4 2026-10-15T03:35:00Z 10000" "m5 2026-10-15T04:00:00Z 99999"; do
+  read -r m_id m_ts m_in <<< "$m"
+  printf '{"type":"assistant","timestamp":"%s","message":{"id":"%s","stop_reason":"end_turn","usage":{"input_tokens":%s,"output_tokens":1}}}\n' "$m_ts" "$m_id" "$m_in"
+done > "$PI/res/proj/x/cccccccc-0000-4000-8000-00000000000a.jsonl"
+res_prog='- 2026-10-15T01:00:00Z picked q.md\n- 2026-10-15T01:10:00Z parked escalated (Launch Pad failed) — resume to re-run\n- 2026-10-15T02:00:00Z picked q.md (resume)\n- 2026-10-15T03:00:00Z session_id sr (q.md)\n- 2026-10-15T03:00:00Z ran /autonomous → PR https://github.com/a/b/pull/1\n- 2026-10-15T03:05:00Z owned drain started — /review-pr https://github.com/a/b/pull/1 --until-mergeable\n- 2026-10-15T03:30:00Z drain READY (converged)\n'
+printf "# Automate Run: x\n## Queue\n- [x] q.md\n## Progress\n${res_prog}- 2026-10-15T03:40:00Z parked awaiting_merge — PR https://github.com/a/b/pull/1\n" > "$PI/res/run.md"
+pi_run "$SUT" --per-item "$PI/res/run.md" --root "$PI/res" --projects-dir "$PI/res/proj"
+[ "$(pi_row '| **q.md** |')" = "| **q.md** | 10-15 01:00:00 → 03:40:00 (resumed after park — to the later parked line; wall is pick → first park) | 10m 0s | 11110 (main 11110) | 4 (main 4) | 4 | 10000 | — |" ] \
+  && ok "resumed item: token window runs to the later parked line (11110 = first attempt + resumed work); wall stays pick → first park" || no "resumed item row: $(pi_row '| **q.md** |')"
+pi_row '| ↳ Decide |' | grep -qxF "| ↳ Decide | 10-15 03:30:00 → 03:40:00 | 10m 0s | 10000 (main 10000) | 1 (main 1) | 1 | 10000 | — |" \
+  && ok "resumed item: Decide runs from the last drain to the later parked line (not inverted)" || no "resumed Decide: $(pi_row '| ↳ Decide |')"
+printf '%s\n' "$PI_ERR" | grep -qF 'per-item: work_after_park — q.md (worked after its first parked line 2026-10-15T01:10:00Z; token window runs to 2026-10-15T03:40:00Z)' \
+  && ok "stderr names work_after_park" || no "work_after_park reason missing: $PI_ERR"
+printf '%s\n' "$PI_OUT" | grep -q '^WORK_AFTER_PARK' && no "the WORK_AFTER_PARK sentinel leaked to stdout" || ok "no sentinel on stdout"
+# no later parked line: the window runs to the latest work boundary, named
+printf "# Automate Run: x\n## Queue\n- [x] q.md\n## Progress\n${res_prog}" > "$PI/res/run.md"
+pi_run "$SUT" --per-item "$PI/res/run.md" --root "$PI/res" --projects-dir "$PI/res/proj"
+[ "$(pi_row '| **q.md** |')" = "| **q.md** | 10-15 01:00:00 → 03:30:00 (resumed after park — to drain READY; wall is pick → first park) | 10m 0s | 1110 (main 1110) | 3 (main 3) | 3 | 1000 | — |" ] \
+  && pi_row '| ↳ Decide |' | grep -qxF "| ↳ Decide | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |" \
+  && ok "resumed, no later parked line: window to the last drain end (named), Decide 'not recorded'" || no "resumed no-repark: $(pi_row '| **q.md** |') / $(pi_row '| ↳ Decide |')"
+
+echo "== PI19. invariant: no phase row's context tokens exceed its item row's =="
+# pi_phase_le_item <out> <item row marker> — every ↳ row's context number <= the item row's
+pi_phase_le_item() {
+  printf '%s\n' "$1" | awk -v m="$2" -F' \\| ' '
+    function num(c) { if (c ~ /^[0-9]+ \(main/) { sub(/ .*/, "", c); return c + 0 } return -1 }
+    index($0, m) { on = 1; it = num($4); next }
+    on && /^\| ↳/ { v = num($4); if (it >= 0 && v > it) { print "phase row exceeds item: " $0; bad = 1 } next }
+    on { exit }
+    END { exit bad }'
+}
+pi_run "$SUT" --per-item "$PIF/run.md" --root "$PI/p" --root "$PI/l" --projects-dir "$PIP"
+pi_inv_out="$PI_OUT"
+printf "# Automate Run: x\n## Queue\n- [x] q.md\n## Progress\n${res_prog}- 2026-10-15T03:40:00Z parked awaiting_merge — PR https://github.com/a/b/pull/1\n" > "$PI/res/run.md"
+pi_run "$SUT" --per-item "$PI/res/run.md" --root "$PI/res" --projects-dir "$PI/res/proj"
+pi_inv_bad=""
+for mk in '| **.supervisor/requirements/a.md** |' '| **.supervisor/requirements/b.md** |' '| **[L1] .supervisor/requirements/e.md** |'; do
+  pi_phase_le_item "$pi_inv_out" "$mk" >/dev/null || pi_inv_bad="$pi_inv_bad $mk"
+done
+pi_phase_le_item "$PI_OUT" '| **q.md** |' >/dev/null || pi_inv_bad="$pi_inv_bad q.md(resumed)"
+[ -z "$pi_inv_bad" ] && ok "every phase row <= its item row (a, b, lane e, resumed q)" || no "phase row exceeds item row:$pi_inv_bad"
+# control: the helper does fire on a phase row larger than its item row
+pi_phase_le_item "$(printf '%s\n' '| **z** | w | 1m 0s | 5 (main 5) | 1 (main 1) | 1 | 5 | — |' '| ↳ Drain 1 | w | 1m 0s | 9 (main 9) | 1 (main 1) | 1 | 9 | — |')" '| **z** |' >/dev/null \
+  && no "invariant control: helper missed a phase row larger than its item" || ok "invariant control: helper flags a phase row larger than its item"
+
+echo "== PI20. read-token-ledger.sh parses under /bin/bash (stock macOS bash 3.2) =="
+if [ -x /bin/bash ]; then
+  /bin/bash -n "$SUT" 2>/dev/null && ok "/bin/bash -n read-token-ledger.sh" || no "read-token-ledger.sh does not parse under /bin/bash: $(/bin/bash -n "$SUT" 2>&1 | head -2)"
+else
+  ok "/bin/bash absent — parse check skipped"
+fi
 
 echo "== PI11. existing modes unchanged by the per-item flags (AC5) =="
 mr_out="$(bash "$SUT" --session sa --root "$PI/p" --projects-dir "$PIP")"

@@ -811,7 +811,8 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
       done < <( { [ -f ".supervisor/automate/$pic_id.md" ] && printf '0\t%s\n' ".supervisor/automate/$pic_id.md"
                   for pic_l in ".supervisor/automate/$pic_id"-L*.md; do
                     pic_n="${pic_l##*-L}"; pic_n="${pic_n%.md}"
-                    case "$pic_n" in ''|*[!0-9]*) continue ;; esac
+                    # leading-paren pattern: bash 3.2 ends the <( ) at a bare ')' (`/bin/bash -n`)
+                    case "$pic_n" in (''|*[!0-9]*) continue ;; esac
                     printf '%s\t%s\n' "$pic_n" "$pic_l"
                   done; } | sort -n | cut -f2- )
     done <<< "$pic_sel"

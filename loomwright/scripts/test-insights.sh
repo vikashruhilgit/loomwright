@@ -1028,6 +1028,13 @@ grep -qF "| https://x/12 | 10m 0s | not recorded | not recorded | not recorded |
 [ "$rc" -eq 0 ] && ok "build-insights exits 0 over malformed lines" || no "rc=$rc"
 rm -rf "$ML"
 
+echo "== build-insights.sh parses under /bin/bash (stock macOS bash 3.2 ends a <( ) at a bare case-pattern ')') =="
+if [ -x /bin/bash ]; then
+  /bin/bash -n "$BUILD" 2>/dev/null && ok "/bin/bash -n build-insights.sh" || no "build-insights.sh does not parse under /bin/bash: $(/bin/bash -n "$BUILD" 2>&1 | head -2)"
+else
+  ok "/bin/bash absent — parse check skipped"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

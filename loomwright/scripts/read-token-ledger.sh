@@ -113,10 +113,16 @@
 #     A span with a missing boundary prints `not recorded`, never 0; no
 #     `parked` line ⇒ the item's wall time and Decide print `not recorded` and
 #     the item total runs to the last recorded boundary (named in the Window
-#     cell). A span whose end precedes its start (e.g. a drain ending after the
-#     park) prints `not recorded`; a span holding no usage record prints `no usage
-#     in window` in its token cells. Gaps between boundaries belong to no phase,
-#     so phase rows need not add up to the item row.
+#     cell). An item parked and then resumed in the same run (a work boundary —
+#     launch-pad saved, FINALIZE, iter, `ran /autonomous`, drain end — later than
+#     phase-timing's `.item.park`, which is the FIRST parked line) runs its token
+#     window to the first `parked` line at or after that latest boundary (else to
+#     the boundary), named in the Window cell; Wall stays phase-timing's
+#     pick_to_park and stderr names `work_after_park`. So every phase window lies
+#     inside the item window and no phase row exceeds the item row. A span whose
+#     end precedes its start prints `not recorded`; a span holding no usage record
+#     prints `no usage in window` in its token cells. Gaps between boundaries
+#     belong to no phase, so phase rows need not add up to the item row.
 #   * Lanes: with repeated --root, a root whose `.supervisor/lane.json` names
 #     this run as `parent_run_id` contributes its lane run file's items (shown
 #     as `[L<n>] <item>`), resolved against that lane's own logs. The given run
@@ -131,7 +137,8 @@
 #     but none holds a usage record between pick and the item end — ONE row with
 #     `no usage in window` in every cell. Other stderr reasons:
 #     `run_file_unreadable`, `jq_unavailable`, `phase_timing_unavailable`,
-#     `not_picked`, `picked_in_lane`.
+#     `not_picked`, `picked_in_lane`, `work_after_park` (informational — the row
+#     still prints).
 #   * Honest limits: the /automate engine's own main-thread tokens count only
 #     when its Claude Code session id is resolvable through the chain above; a
 #     Claude Code session that wrote into a plugin session log for unrelated
@@ -402,15 +409,27 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
      | {ts, n: (.text | ascii_downcase | capture("^phase 4\\.5 iter (?<n>[0-9]+)").n)}] as $iters
   | ($I.owned_drains // []) as $drains
   | (if ($drains | length) > 0 then ($drains | last | .end) else null end) as $decide_s
-  | (if $park != null then {e: $park, note: ""}
-     else ([[$lp, "launch-pad saved"], [$fin, "FINALIZE"], ($iters | last | if . == null then [null, ""] else [.ts, "Phase 4.5 iter \(.n)"] end), [$ra, "ran /autonomous"], ($drains | map([.end, "drain \(.result // "end")"]) | .[])]
-           | map(select(.[0] != null)) | sort_by(.[0]) | last) as $l
-          | if $l == null then {e: null, note: ""} else {e: $l[0], note: " (no parked line — to \($l[1]))"} end end) as $iend
+  # the latest work boundary the item recorded (every phase row ends at or before it)
+  | ([[$lp, "launch-pad saved"], [$fin, "FINALIZE"], ($iters | last | if . == null then [null, ""] else [.ts, "Phase 4.5 iter \(.n)"] end), [$ra, "ran /autonomous"], ($drains | map([.end, "drain \(.result // "end")"]) | .[])]
+     | map(select(.[0] != null)) | sort_by(.[0]) | last) as $l
+  # phase-timing.sh `.item.park` is the FIRST parked line; an item parked and then
+  # resumed in the same run did work after it, so its token window runs past that park
+  # to the first parked line at or after the latest work boundary (else to that boundary)
+  | ($park != null and $l != null and $l[0] > $park) as $resumed
+  | (if $resumed then ([$seg[] | select(.text | ascii_downcase | test("^parked( |$)")) | select(.ts >= $l[0])] | first | .ts) else $park end) as $park_eff
+  | (if $park == null then
+       (if $l == null then {e: null, note: ""} else {e: $l[0], note: " (no parked line — to \($l[1]))"} end)
+     elif $resumed then
+       (if $park_eff != null then {e: $park_eff, note: " (resumed after park — to the later parked line; wall is pick → first park)"}
+        else {e: $l[0], note: " (resumed after park — to \($l[1]); wall is pick → first park)"} end)
+     else {e: $park, note: ""} end) as $iend
   # transcripts were read but none holds a usage record inside the item window: ONE
   # sentinel line (the caller prints the named reason and a no-number row)
   | if $pick != null and $iend.e != null and $iend.e >= $pick and stats($pick; $iend.e).n == 0 then
       "NO_USAGE_IN_WINDOW\t\($pick)\t\($iend.e)"
     else
+    # (the caller turns this sentinel into the named work_after_park stderr reason)
+    (if $resumed then "WORK_AFTER_PARK\t\($park)\t\($iend.e)" else empty end),
     row("**\($label)**"; $pick; $iend.e; $I.pick_to_park.seconds; (win($pick; $iend.e) + $iend.note)),
     row("↳ Launch Pad"; $pick; $lp; secs($pick; $lp); win($pick; $lp)),
     row("↳ Build"; $lp; $fin; secs($lp; $fin); win($lp; $fin)),
@@ -424,7 +443,7 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
      else empty end),
     (range(0; $drains | length) as $k | $drains[$k] as $d
       | row("↳ Drain \($k + 1)\(if $d.fix_now then " (fix-now re-drain)" else "" end)\(if $d.result then " — \($d.result)" else "" end)"; $d.start; $d.end; $d.seconds; win($d.start; $d.end))),
-    row("↳ Decide"; $decide_s; $park; secs($decide_s; $park); win($decide_s; $park))
+    row("↳ Decide"; $decide_s; $park_eff; secs($decide_s; $park_eff); win($decide_s; $park_eff))
     end
 '
 
@@ -518,6 +537,10 @@ per_item_report() {
             IFS='	' read -r _ nu_s nu_e <<< "$rendered"
             pi_note "no_usage_in_window — $disp (${nfiles} transcript file(s) read; no assistant message.usage between $nu_s and $nu_e)"
             echo "| **$disp** | no usage in window | no usage in window | no usage in window | no usage in window | no usage in window | no usage in window | no usage in window |" ;;
+          WORK_AFTER_PARK*)
+            IFS='	' read -r _ nu_s nu_e <<< "${rendered%%"$NL"*}"
+            pi_note "work_after_park — $disp (worked after its first parked line $nu_s; token window runs to $nu_e)"
+            printf '%s\n' "${rendered#*"$NL"}" ;;
           *) [ -z "$rendered" ] || printf '%s\n' "$rendered" ;;
         esac
       fi
