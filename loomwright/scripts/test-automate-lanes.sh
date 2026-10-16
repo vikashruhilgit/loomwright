@@ -2940,7 +2940,31 @@ if ! cmp -s "$S" "$MUT/lanes-aj8.sh" && bash -n "$MUT/lanes-aj8.sh"; then
   check "AJ8m mutation (no retrospective-start guard) turns AJ8j red: Build starts after it ended" \
     "$(ajm "$MUT/lanes-aj8.sh" | jq -r "$AJ8J_GOT")" "2026-10-11T09:30:00Z|2026-10-11T09:00:00Z|2026-10-11T09:00:00Z|2026-10-11T09:31:00Z"
 else bad "AJ8m mutation did not apply (the start guard moved)"; fi
-rm -f "$MUT/lanes-aj8.sh" "$AJLOG"
+rm -f "$MUT/lanes-aj8.sh"
+# AJ8n–AJ8q: whose state it is. Real state files carry no `## Checkpoint created:` (1 of 23 lanes across 8 runs;
+# the rest an agent-filled `last_checkpoint:` — a bare date, "(time not captured)", a fake midnight), so only
+# the live branch trusted them and a stopped lane lost its Supervisor phase. A state whose `session_id` is the
+# lane's own session (the 6th argument, the lane table's) is this item's: trusted like a running one, no time.
+ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md'
+aj_state '| 1 | INIT | guard_armed: ok | none |' '| 2 | EXECUTE | subtask 1 merged | r |'; aj_log -
+ajo() { ( . "${3:-$S}"; _lanes_timeline "$AJRF" "$AJ/lane/.supervisor" "$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')" "$1" - "$2" ); }
+AJ8N_GOT='"\(.current)|\(.label)|\(.steps[2].state)|\(.phase)|\(.phase_status)|\(.steps[2].started_at)"'
+check "AJ8n a stopped lane whose state is its own session's keeps its phase: Build · EXECUTE in trouble, no time invented" \
+  "$(ajo stalled "$AJSID" | jq -r "$AJ8N_GOT")" "build|Build · EXECUTE|trouble|EXECUTE|running|null"
+check "AJ8o … another session's state (a previous item's, a hand copy) is still never shown" \
+  "$(ajo stalled sess-other | jq -r '"\(.current)|\(.phase)"'),$(ajo stalled "" | jq -r '"\(.current)|\(.phase)"'),$(ajo stalled - | jq -r '"\(.current)|\(.phase)"')" \
+  "plan|null,plan|null,plan|null"
+aj_state '| 1 | INIT | guard_armed: ok | none |' '| 2 | SELF_HEAL | fix iteration 1 | r |'
+check "AJ8p … its SELF_HEAL table rows reach Heal on a stopped lane (AJ8g's case, now with identity)" \
+  "$(ajo died "$AJSID" | jq -r '"\(.current)|\(.steps[3].state)|\(.steps[3].lines[0])"')" "heal|trouble|Supervisor SELF_HEAL: fix iteration 1"
+aj_state '| 1 | INIT | guard_armed: ok | none |' '| 2 | EXECUTE | subtask 1 merged | r |'
+sed 's/(\$lsid != "" and (\$s.session_id \/\/ "") == \$lsid) as \$own/false as $own/' "$S" > "$MUT/lanes-aj8n.sh"
+if ! cmp -s "$S" "$MUT/lanes-aj8n.sh" && bash -n "$MUT/lanes-aj8n.sh"; then
+  check "AJ8q mutation (identity never trusted) turns AJ8n red: the stopped lane falls back to Plan, no phase" \
+    "$(ajo stalled "$AJSID" "$MUT/lanes-aj8n.sh" | jq -r '"\(.current)|\(.phase)"')" "plan|null"
+else bad "AJ8q mutation did not apply (the identity predicate moved)"; fi
+rm -f "$MUT/lanes-aj8n.sh"
+rm -f "$AJLOG"
 ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md'   # AJ9 reads the AJ6 run file
 rm -f "$AJSM"
 check "AJ9 a question ⇒ the current step waits on the owner" "$(ajt awaiting_input | jq -r '.steps[1].state')" waiting
@@ -2951,6 +2975,18 @@ check "AJ10 no run file ⇒ Pick current, held, started from last_launch_utc" \
 J="$(sj)"
 check "AJ11 lane-status --json carries timeline, started_at and run_started_at" \
   "$(jq -r '"\(has("run_started_at"))|\(.lanes | map(.timeline | type) | unique | join(","))|\(.lanes | map(has("started_at")) | all)"' <<<"$J")" "true|object|true"
+# AJ11b–AJ11c: lane-status hands _lanes_timeline the lane table's session id — a stopped lane of the fixture
+# fleet with its own session's state keeps its phase through the real reader; another session's does not.
+AJL="$(jq -r '[.lanes[] | select(.state != "running" and .state != "removed" and .state != "abandoned")][0].lane // empty' <<<"$J")"
+AJLP="$(awk -F'\t' -v l="$AJL" '$1 == l { p = $2 } END { print p }' "$TABLE2")"; AJLS="$(awk -F'\t' -v l="$AJL" '$1 == l { s = $7 } END { print s }' "$TABLE2")"
+if [ -n "$AJL" ] && [ -d "$AJLP/.supervisor" ] && [ -n "$AJLS" ] && [ "$AJLS" != - ]; then
+  printf '# State Log\n\n## Session\n- session_id: %s\n- status: running\n- phase: EXECUTE\n\n## Checkpoint\n- last_checkpoint: 2026-10-11 (time not captured)\n' "$AJLS" > "$AJLP/.supervisor/state.md"
+  check "AJ11b lane-status passes the lane's session id: stopped $AJL with its own state reads phase EXECUTE" \
+    "$(sj | jq -r --arg l "$AJL" '.lanes[] | select(.lane == $l) | .timeline.phase')" EXECUTE
+  sed -i.bak "s/^- session_id: .*/- session_id: sess-not-$AJL/" "$AJLP/.supervisor/state.md"
+  check "AJ11c … and another session's state is not shown" "$(sj | jq -r --arg l "$AJL" '.lanes[] | select(.lane == $l) | .timeline.phase')" null
+  rm -f "$AJLP/.supervisor/state.md" "$AJLP/.supervisor/state.md.bak"
+else bad "AJ11b no stopped fixture lane with a session id to test (lane=[$AJL] sid=[$AJLS])"; fi
 has "AJ12 the plain view draws the steps line" "$(run lane-status "$RF2")" "    steps: [Pick"
 check "AJ13 no wave built yet ⇒ waves is an empty list" "$(jq -c '.waves' <<<"$J")" "[]"
 cp "$RF2" "$RF2.aj13"

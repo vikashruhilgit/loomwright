@@ -2008,7 +2008,7 @@ _lanes_resolve() {
   esac
 }
 
-# _lanes_timeline <runfile> <supervisor_dir> <now_epoch> <state> <last_launch_utc> — the lane's step timeline:
+# _lanes_timeline <runfile> <supervisor_dir> <now_epoch> <state> <last_launch_utc> [<lane session id>] — the lane's step timeline:
 # {started_at, current, label, steps: [{id, name, state, started_at, ended_at, duration_s, lines}],
 #  phase, phase_status, phases: [{phase, at}]} — the last three the lane's Supervisor's (null / []). The seven steps are the per-item loop as
 # a lane records it: pick · plan (Launch Pad) · build (Supervisor up to the PR) · heal (Phase 4.5) ·
@@ -2027,6 +2027,13 @@ _lanes_resolve() {
 # hook-dispatch-on-pr-create.sh into `<supervisor_dir>/logs/<## Session session_id>.jsonl`) at or after
 # the pick, a TIMED Heal start: FINALIZE opens the PR and Phase 4.5 is always entered right after it
 # (agents/supervisor.md §"Phase 4.5"), and Build is "Supervisor up to the PR" by its own definition.
+# Whose state it is: `## Checkpoint` `created:` (the dated trust) is in almost no real state file — the
+# canonical template writes an agent-filled `last_checkpoint:` (a bare date, "(time not captured)", a fake
+# midnight), so no Checkpoint time is trusted beyond `created:`. Identity is: a lane runs ONE item in one
+# session (lane-create writes a one-line backlog), so a state whose `## Session` `session_id` is the lane's
+# own session (the lane table's, from its stream `system/init`) is this item's. Such a state is trusted like
+# a running one — phase, status, Decisions Log table rows, the Build label — whether or not the lane still
+# runs, and still without a time: a lane that stopped mid-EXECUTE keeps its phase.
 # Boundaries: the `picked` line ends Pick and starts Plan; a Launch Pad "brief saved" line ends Plan and starts Build (/autonomous hands the brief to
 # the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too. The pinned no-PR
 # line (`ran /autonomous — no PR: <status_reason> (…)`, per-item-loop.md step 2) reaches only Plan when its
@@ -2038,7 +2045,7 @@ _lanes_resolve() {
 # lane state then colors, and every later step stays `pending`.
 # Fail-SAFE: anything unreadable ⇒ `null`.
 _lanes_timeline() {
-  local rf="$1" sm="$2/state.md" now="$3" state="$4" llu="$5" out sid
+  local rf="$1" sm="$2/state.md" now="$3" state="$4" llu="$5" lsid="${6:-}" out sid
   # Validated, never trusted by exit code: under `pipefail` an absent state.md fails the pipeline even
   # when jq printed a good object, and an `|| printf null` there would emit two JSON texts.
   out="$({
@@ -2047,7 +2054,7 @@ _lanes_timeline() {
         x = substr($0, 24); gsub(/\t/, " ", x); printf "P\t%s\t%s\n", substr($0, 3, 20), x }' "$rf" 2>/dev/null
     [ -f "$sm" ] && awk 'function val(s) { sub(/^- [a-z_]*: */, "", s); gsub(/\t/, " ", s); return s }
       /^## / { sec = $0; next }
-      sec == "## Session" && /^- (phase|status):/ { k = $2; sub(/:$/, "", k); printf "S\t%s\t%s\n", k, val($0) }
+      sec == "## Session" && /^- (phase|status|session_id):/ { k = $2; sub(/:$/, "", k); printf "S\t%s\t%s\n", k, val($0) }
       sec == "## Checkpoint" && /^- (created|last_updated):/ { k = $2; sub(/:$/, "", k); printf "S\t%s\t%s\n", k, val($0) }
       sec == "## Decisions Log" && /^- phase: / && /timestamp: / {
         ph = $0; sub(/^- phase: */, "", ph); sub(/[, ].*/, "", ph)
@@ -2061,7 +2068,7 @@ _lanes_timeline() {
     [ -n "$sid" ] && [ -f "$2/logs/$sid.jsonl" ] && jq -R -r 'fromjson? | select(.event? == "pr_created")
       | "E\tpr_created\t\(.ts // "")\t\(.url // "" | gsub("[\t\n]"; " "))"' "$2/logs/$sid.jsonl" 2>/dev/null
     true
-  } | jq -R -s -c --arg state "$state" --arg llu "$(_lanes_dash "$llu")" --argjson now "$now" '
+  } | jq -R -s -c --arg state "$state" --arg llu "$(_lanes_dash "$llu")" --arg lsid "$(_lanes_dash "$lsid")" --argjson now "$now" '
     def ep: (try fromdateiso8601 catch null);
     def clip(n): if length > n then .[0:n - 1] + "…" else . end;
     def ids: ["pick", "plan", "build", "heal", "drain", "decide", "merge"];
@@ -2097,6 +2104,8 @@ _lanes_timeline() {
     | (($s.created // "") | ep) as $se
     | ($se != null and ($pick == null or $se >= $pick.e)) as $sup
     | ($se == null and ($s.status // "") == "running" and $state == "running" and ($s.phase // "") != "") as $live
+    | ($lsid != "" and ($s.session_id // "") == $lsid) as $own
+    | (($live or $own) and ($s.phase // "") != "") as $ph
     | ([$p[] | . as $x | ($x.text | cls)[] | {step: ., ts: $x.ts, e: $x.e, text: $x.text}]
        + (if $sup then
             [{step: "build", ts: $s.created, e: $se, text: "Supervisor started"}]
@@ -2107,7 +2116,7 @@ _lanes_timeline() {
             + (if ($s.phase // "") | sstep == "heal" then
                  [{step: "heal", ts: ($s.last_updated // $s.created), e: ((($s.last_updated // "") | ep) // $se),
                    text: ("Supervisor " + $s.phase + " (" + ($s.status // "?") + ")")}] else [] end)
-          elif $live then
+          elif $live or $own then
             [$rows[] | select(.[0] == "T") | {step: (.[1] | sstep), ts: null, e: null,
                text: ("Supervisor " + .[1] + ": " + (.[2] // ""))}]
           else [] end)
@@ -2116,9 +2125,9 @@ _lanes_timeline() {
                | select(.e != null and .e >= $pick.e)] | sort_by(.e) | .[0:1]
             | map({step: "heal", ts, e, text: ("Supervisor opened the PR" + (if .url == "" then "" else " " + .url end) + " — Phase 4.5")})
           end)) as $ev0
-    | ([($ev0[] | select(.step != "park") | .step), (if $live then ($s.phase | sstep) else empty end) | ord] | max // 0) as $reach
+    | ([($ev0[] | select(.step != "park") | .step), (if $ph then ($s.phase | sstep) else empty end) | ord] | max // 0) as $reach
     | [$ev0[] | if .step == "park" then .step = (if $reach >= ("drain" | ord) then "merge" else ids[$reach] end) else . end] as $ev
-    | ([($ev[] | .step), (if $live then ($s.phase | sstep) else empty end) | ord] | max // 0) as $far
+    | ([($ev[] | .step), (if $ph then ($s.phase | sstep) else empty end) | ord] | max // 0) as $far
     | (if ($state | test("^(merged|done)$")) then 7 else $far end) as $cur
     | (if $state == "running" then "active"
        elif ($state | test("^(awaiting_input|answer_pending|ready_for_release|awaiting_merge)$")) then "waiting"
@@ -2146,12 +2155,12 @@ _lanes_timeline() {
     | {started_at: (($p | first | .ts) // (if $llu == "" then null else $llu end)),
        current: ($c.id // null),
        label: (if $c == null then (if $cur >= 7 then "Done" else null end)
-               elif $c.id == "build" and ($sup or $live) and ($s.phase // "") != "" then "Build · " + $s.phase
+               elif $c.id == "build" and ($sup or $live or $own) and ($s.phase // "") != "" then "Build · " + $s.phase
                elif $c.id == "drain" and $round != null then "Drain · round " + $round
                else $c.name end),
        steps: $steps,
-       phase: (if $sup or $live then ($s.phase // null) else null end),
-       phase_status: (if $sup or $live then ($s.status // null) else null end),
+       phase: (if $sup or $live or $own then ($s.phase // null) else null end),
+       phase_status: (if $sup or $live or $own then ($s.status // null) else null end),
        phases: (if $sup then [$rows[] | select(.[0] == "D") | {phase: .[1], at: .[2]}] | group_by(.phase) | map(min_by(.at)) | sort_by(.at)
                 else [] end)}' 2>/dev/null)"
   if jq -e 'type == "object"' >/dev/null 2>&1 <<<"$out"; then printf '%s' "$out"; else printf 'null'; fi
@@ -2284,7 +2293,7 @@ _lanes_lane_json() {
   jq -e 'type == "object" or . == null' >/dev/null 2>&1 <<<"$pdg" || pdg=null
   # A lane closed out as done draws every step done, like a merged one; removed without it, the step it stopped at.
   tst="$state"; [ "$oc" = done ] && tst=done
-  tl="$(_lanes_timeline "$rf" "$sup" "$now" "$tst" "$llu")"
+  tl="$(_lanes_timeline "$rf" "$sup" "$now" "$tst" "$llu" "$sid")"
   jq -e 'type == "object" or . == null' >/dev/null 2>&1 <<<"$tl" || tl=null
   jq -n -c --arg lane "$lane" --arg path "$path" --arg item "$(_lanes_dash "$item")" --arg run "$run" --argjson pdg "$pdg" --argjson tl "$tl" \
     --arg state "$state" --arg reason "$reason" --arg pid "$(_lanes_dash "$pid")" --arg sid "$(_lanes_dash "$sid")" \
