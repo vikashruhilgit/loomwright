@@ -479,32 +479,40 @@ fi
 
 echo "== H. the tests that read moved text read the assembly (C1/C2) =="
 READERS="test-automate-dismissed.sh test-automate-helpers.sh test-automate-trail.sh test-non-interactive-gates-seam.sh test-run-lock.sh test-classify-risk.sh"
-# wiring <reader file> — one line per wiring defect; returns 0 iff none.
+# wiring <reader file> [<part>...] — one line per wiring defect; returns 0 iff none. The reader itself
+# must call assemble.sh; the line checks also run over each sourced test part given (test-<x>.d/*.sh),
+# so a raw read moved out of a runner into a part is still seen (automate-speed/19).
 wiring() {
-  local f="$1" probs=0 l
+  local f="$1" probs=0 l g n
   grep -qF 'fixtures/automate-loop-split/assemble.sh' "$f" || { echo "    ${f##*/}: never calls assemble.sh"; probs=$((probs+1)); }
+  for g in "$@"; do
+  [ -f "$g" ] || continue
+  n="${g##*/}"; case "$g" in */test-*.d/*.sh) n="$(basename "$(dirname "$g")")/$n" ;; esac
   while IFS= read -r l; do
     [ -n "$l" ] || continue
-    case "$l" in *assemble.sh*|*'bash "$ASM"'*) ;; *) echo "    ${f##*/}: raw index read: ${l:0:110}"; probs=$((probs+1)) ;; esac
+    case "$l" in *assemble.sh*|*'bash "$ASM"'*) ;; *) echo "    $n: raw index read: ${l:0:110}"; probs=$((probs+1)) ;; esac
   done <<EOF
-$(grep -E '\$[A-Za-z_{][^" ]*/(automate-loop/SKILL|automate-run)\.md"' "$f" | grep -vE '^[[:space:]]*#' || true)
+$(grep -E '\$[A-Za-z_{][^" ]*/(automate-loop/SKILL|automate-run)\.md"' "$g" | grep -vE '^[[:space:]]*#' || true)
 EOF
   while IFS= read -r l; do
     [ -n "$l" ] || continue
-    case "$l" in *'result-schemas/automate-run/*.md'*) ;; *) echo "    ${f##*/}: result-schemas/*.md glob without automate-run/*.md: ${l:0:110}"; probs=$((probs+1)) ;; esac
+    case "$l" in *'result-schemas/automate-run/*.md'*) ;; *) echo "    $n: result-schemas/*.md glob without automate-run/*.md: ${l:0:110}"; probs=$((probs+1)) ;; esac
   done <<EOF
-$(grep -F 'result-schemas/*.md' "$f" | grep -vE '^[[:space:]]*#' | grep -vF '(+ result-schemas/*.md)' || true)
+$(grep -F 'result-schemas/*.md' "$g" | grep -vE '^[[:space:]]*#' | grep -vF '(+ result-schemas/*.md)' || true)
 EOF
   while IFS= read -r l; do
     [ -n "$l" ] || continue
-    echo "    ${f##*/}: multi-file absence scan of the raw command body: ${l:0:110}"; probs=$((probs+1))
+    echo "    $n: multi-file absence scan of the raw command body: ${l:0:110}"; probs=$((probs+1))
   done <<EOF
-$(grep -F 'commands/automate.md"' "$f" | grep -E 'grep -n|for p in' || true)
+$(grep -F 'commands/automate.md"' "$g" | grep -E 'grep -n|for p in' || true)
 EOF
+  done
   [ "$probs" -eq 0 ]
 }
+# wiring_reader <dir> <reader basename> — wiring over the reader AND its sourced parts <dir>/<reader>.d/*.sh
+wiring_reader() { wiring "$1/$2" "$1/${2%.sh}.d"/*.sh; }
 for r in $READERS; do
-  if out="$(wiring "$HERE/$r")"; then ok "H: $r reads the assembled skill / AUTOMATE_RUN text"
+  if out="$(wiring_reader "$HERE" "$r")"; then ok "H: $r reads the assembled skill / AUTOMATE_RUN text"
   else no "H: $r wiring:"; printf '%s\n' "$out"; fi
 done
 al="$(sed -nE 's/^AL="([^"]+)"$/\1/p' "$HERE/test-rules-gate-seams.sh")"
@@ -634,6 +642,18 @@ if [ -s "$M7" ] && ! cmp -s "$M7" "$HERE/test-run-lock.sh" && bash -n "$M7" 2>/d
   wiring "$M7" >/dev/null && no "MUTATION CONTROL: a reader reading the raw SKILL index was ACCEPTED (H)" \
     || ok "MUTATION CONTROL: a reader reading the raw SKILL index is REJECTED (H)"
 else no "could not build the raw-reader mutant — H control inconclusive"; fi
+# M11 — H over test parts: a raw SKILL-index read planted in ONE sourced part of test-automate-trail.sh
+# (scratch copy of the runner + its test-automate-trail.d/) is REJECTED; the unmutated copy passes first.
+M11="$TMP/m11"; mkdir -p "$M11"; cp "$HERE/test-automate-trail.sh" "$M11/"; cp -R "$HERE/test-automate-trail.d" "$M11/"
+m11_part="$(ls "$M11/test-automate-trail.d" | head -1)"
+if [ -n "$m11_part" ] && wiring_reader "$M11" test-automate-trail.sh >/dev/null; then
+  printf '%s\n' 'AL_SK="$PLUGIN_ROOT/skills/automate-loop/SKILL.md"' >> "$M11/test-automate-trail.d/$m11_part"
+  if ! cmp -s "$M11/test-automate-trail.d/$m11_part" "$HERE/test-automate-trail.d/$m11_part"; then
+    wiring_reader "$M11" test-automate-trail.sh >/dev/null \
+      && no "MUTATION CONTROL: a raw SKILL-index read in a test part (test-automate-trail.d/$m11_part) was ACCEPTED (H)" \
+      || ok "MUTATION CONTROL: a raw SKILL-index read in a test part (test-automate-trail.d/$m11_part) is REJECTED (H)"
+  else no "could not build the test-part raw-reader mutant — H part control inconclusive"; fi
+else no "the unmutated test-automate-trail.sh + parts copy fails H (or has no parts) — H part control inconclusive"; fi
 # M8 — A2: assemble.sh with its .. guard (after-segment reject + plugin-root bound) deleted must
 # ACCEPT the escape and the mid-path cases, so A2's rejections are the guard's doing.
 M8="$TMP/m8-assemble.sh"

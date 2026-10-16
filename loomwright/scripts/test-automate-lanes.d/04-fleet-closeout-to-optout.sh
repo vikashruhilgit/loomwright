@@ -550,8 +550,16 @@ check "AG6 automate-lanes.sh has no executable gh pr merge / gate-eval / git mer
 awk '{ print } /^lanes_wave_plan\(\) \{$/ { print "  git -C \"$LP_PRIMARY\" push origin HEAD >/dev/null 2>&1" }' "$SB" > "$MUT/automate-lanes.sh"
 if [ -s "$MUT/automate-lanes.sh" ] && ! cmp -s "$SB" "$MUT/automate-lanes.sh" && bash -n "$MUT/automate-lanes.sh"; then ok "AG6a mutant valid (non-empty, differs, bash -n)"; else bad "AG6a mutant invalid"; fi
 check "AG6b mutation (an executable git push) is caught by the static guard" "$(ag_exec_hits "$MUT/automate-lanes.sh" | wc -l | tr -d ' ')" 1
+# ag7_callers <scripts dir> — how many sequential-loop files name fleet-closeout / wave-plan; reads
+# automate-trail.sh AND its automate-trail.d/ modules (the trail code moved there, automate-speed/19)
+ag7_callers() { grep -lE 'fleet-closeout|wave-plan' "$1"/automate-helpers.d/*.sh "$1/automate-trail.sh" "$1"/automate-trail.d/*.sh "$1/automate-dismissed.sh" 2>/dev/null | wc -l | tr -d ' '; }
 check "AG7 A5: no sequential-loop script calls fleet-closeout or wave-plan (only the helpers dispatch arm)" \
-  "$(grep -lE 'fleet-closeout|wave-plan' "$HERE"/automate-helpers.d/*.sh "$HERE/automate-trail.sh" "$HERE/automate-dismissed.sh" 2>/dev/null | wc -l | tr -d ' '):$(grep -cE '^ +fleet-closeout\|wave-plan\) exec bash "\$\(dirname "\$0"\)/automate-lanes.sh"' "$HERE/automate-helpers.sh" | tr -d ' ')" "0:1"
+  "$(ag7_callers "$HERE"):$(grep -cE '^ +fleet-closeout\|wave-plan\) exec bash "\$\(dirname "\$0"\)/automate-lanes.sh"' "$HERE/automate-helpers.sh" | tr -d ' ')" "0:1"
+# AG7a planted violation: a fleet-closeout call in one automate-trail.d/ MODULE (scratch copy) is counted
+mkdir -p "$MUT/ag7"; cp -R "$HERE/automate-helpers.d" "$HERE/automate-trail.d" "$HERE/automate-trail.sh" "$HERE/automate-dismissed.sh" "$MUT/ag7/"
+printf '%s\n' '  bash "$HERE/automate-lanes.sh" fleet-closeout "$rf"' >> "$MUT/ag7/automate-trail.d/sweep.sh"
+if ! cmp -s "$HERE/automate-trail.d/sweep.sh" "$MUT/ag7/automate-trail.d/sweep.sh"; then ok "AG7a module mutant valid (differs)"; else bad "AG7a module mutant invalid"; fi
+check "AG7b mutation (a fleet-closeout call in automate-trail.d/sweep.sh) is caught by AG7's input" "$(ag7_callers "$MUT/ag7")" "1"
 
 # ---- AI: gate opt-out carry (lane-guardrails part 3) ---------------------------------------------------
 # A lane launched WITH the test-integrity guard's opt-out inherits it; a resume run from an environment

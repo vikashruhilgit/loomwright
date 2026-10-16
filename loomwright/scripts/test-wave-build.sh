@@ -295,9 +295,26 @@ g_push_target() { g_pushes "$1" | grep -vE 'push[[:space:]]+(-q[[:space:]]+)?(-u
 check "W6 automate-wave.sh has no executable PR merge (pr merge / --squash / --admin)" "$(g_merge "$S")" ""
 check "W6b … no force / mirror / delete / +refspec push" "$(g_force "$S")" ""
 check "W6c … exactly one git push, and it names only the wave-branch variable" "$(g_pushes "$S" | wc -l | tr -d ' '):$(g_push_target "$S")" "1:"
+# W6d reads the lanes code through the entry point's own _lanes_bundle (the entry with every
+# automate-lanes.d/ module expanded at its source point — ONE file, so `grep -n` keeps its `N:` prefix
+# and the comment filter still matches): the guard covers the modules, not just the thin entry point.
+# Its input is automate-lanes.sh + the automate-lanes.d/*.sh modules it sources by name.
+w6d_hits() { grep -nE 'gh pr merge|gate-eval|git( -C [^ ]+)? (merge|push)( |$)' "$1" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE 'LANE_DISALLOWED_FIXED=|disallow="|echo "git |printf .git merge'; }
+eval "$(awk '/^_lanes_bundle\(\) \{$/,/^}$/' "$L")"
+LB="$T/automate-lanes.bundle.sh"
+_lanes_bundle "$L" > "$LB" && [ -s "$LB" ] && bash -n "$LB" || bad "W6d could not build the automate-lanes.sh bundle (entry + automate-lanes.d/)"
 check "W6d automate-lanes.sh still has no executable git merge / push (AG6's shape)" \
-  "$(grep -nE 'gh pr merge|gate-eval|git( -C [^ ]+)? (merge|push)( |$)' "$L" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE 'LANE_DISALLOWED_FIXED=|disallow="|echo "git |printf .git merge')" ""
+  "$(w6d_hits "$LB")" ""
 MUT="$T/mut"; mkdir -p "$MUT"
+# W6d2 planted violation: an executable push in one automate-lanes.d/ MODULE (scratch copy) must be
+# reported by W6d's input — proof the guard reads the modules
+mkdir -p "$MUT/lanes"; cp "$L" "$MUT/lanes/"; cp -R "$HERE/automate-lanes.d" "$MUT/lanes/"
+printf '%s\n' '  git push origin HEAD' >> "$MUT/lanes/automate-lanes.d/wave.sh"
+_lanes_bundle "$MUT/lanes/automate-lanes.sh" > "$MUT/lanes.bundle.sh"
+if ! cmp -s "$HERE/automate-lanes.d/wave.sh" "$MUT/lanes/automate-lanes.d/wave.sh" && [ -s "$MUT/lanes.bundle.sh" ] && bash -n "$MUT/lanes.bundle.sh"; then
+  ok "W6d2 module mutant valid (differs, bundle non-empty, bash -n)"; else bad "W6d2 module mutant invalid"; fi
+check "W6d3 mutation (an executable git push in automate-lanes.d/wave.sh) is caught by W6d's input" \
+  "$(w6d_hits "$MUT/lanes.bundle.sh" | sed 's/^[0-9]*://')" "  git push origin HEAD"
 mut_ok() { [ -s "$1" ] && ! cmp -s "$S" "$1" && bash -n "$1"; }
 awk '{ print } /^  # 10. the wave PR$/ { print "  \"$LANES_GH\" pr merge \"$wb\" --merge >/dev/null 2>&1" }' "$S" > "$MUT/m1.sh"
 if mut_ok "$MUT/m1.sh"; then ok "W6e mutant 1 valid (non-empty, differs, bash -n)"; else bad "W6e mutant 1 invalid"; fi
