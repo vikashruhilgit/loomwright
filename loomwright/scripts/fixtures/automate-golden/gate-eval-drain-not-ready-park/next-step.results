@@ -1,7 +1,10 @@
 # next-step.results — gate-eval-drain-not-ready-park: how test-automate-next-step.sh drives this case through
 # automate-next-step.sh (grammar: the test's header). The case pins gate-eval's PARK verdict and the park writes only (no dismissed-drafts
 # segment): gate-eval runs, the driver stops (NEXT_STEP_UNTIL=gate-eval), then resumes at the park step.
-env: NEXT_STEP_UNTIL=gate-eval
+# It starts AT gate-eval (NEXT_STEP_FROM=gate-eval): the driver's own `gate` step refuses a drain_result
+# other than READY|ESCALATED (exit 2, nothing written), so a `superseded_by_merge` value reaches gate-eval's
+# condition 1 only through the test seam — the case pins gate-eval's second line of defence, not a route.
+env: NEXT_STEP_FROM=gate-eval NEXT_STEP_UNTIL=gate-eval
 call: --result '{"drain_result":"superseded_by_merge","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96"}'
 expect: none
 env: NEXT_STEP_UNTIL= NEXT_STEP_FROM=park

@@ -41,7 +41,14 @@
 #       (MERGE ⇒ drafts + pending record ⇒ SYNC ⇒ leftover kept ⇒ CHECK OFF ⇒ next PICK), AUT-WAIVE
 #       answered Keep parked, an invalid answer / non-JSON --result (exit 2, nothing written), a refused
 #       writer (surfaced, then retried by the next call) and the fix-now re-pass (spawn ⇒ re-drain ⇒
-#       re-park with fix_now_reentered: true, fix-now never offered again).
+#       re-park with fix_now_reentered: true, fix-now never offered again). B5b/B6: a malformed drain
+#       report (drain_result not READY|ESCALATED, a non-count items_processed, an unknown escalation_cause,
+#       a non-hex sha, a multi-line progress_note — also as a spawn's answer) ⇒ exit 2, nothing printed,
+#       .supervisor/ byte-unchanged. B7: a different drain report after a terminal park (## Current no
+#       longer running) ⇒ exit 2, nothing written, the park re-prints. B8: the park-first READY park's
+#       side-effect order on the driver itself — watcher armed < run lock released < park-ask-gate
+#       (park-ask-gate recorded by a wrapper automate-helpers.sh beside a driver copy).
+#       Q also enters the post-park decide step under --non-interactive: it parks, never asks.
 #   D   DOC MIRROR: the schema doc's step list equals the driver's `case` arms, and its `do` table
 #       equals the emitter's closed set.
 #   M   MUTATION CONTROLS — each mutant gated non-empty + differs from the driver + `bash -n` (and
@@ -52,6 +59,11 @@
 #         MI  the no-result re-print replaced by a re-run of the last step  ⇒ I
 #         MQ  the --non-interactive check dropped before an ask    ⇒ Q
 #         MC  `"high_risk": false` added to the ctx                ⇒ C
+#         MV* each drain-report guard dropped (drain_result, items_processed, escalation_cause, sha,
+#             progress_note)                                       ⇒ B6
+#         MQp both post-park --non-interactive guards of decide dropped (two edits) ⇒ Q (c)
+#         MR  the running-status re-entry guard dropped            ⇒ B7
+#         MO  ns_park arms the watcher only after the decide step (two edits; run file unchanged) ⇒ B8
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -255,6 +267,77 @@ leg_cantask() {
     || { LEG_MSG="decisions: pending_decisions: 2 not recorded"; return 1; }
   grep -q 'dismissed decisions asked after the park' "$CASE_RF" && { LEG_MSG="decisions: a post-park ask line was written"; return 1; }
   [ ! -s "$WORK/asks.q" ] || { LEG_MSG="an ask was printed under --non-interactive: $(head -n 1 "$WORK/asks.q")"; return 1; }
+  # (c) the post-park decide step entered under --non-interactive (an item already parked awaiting_merge
+  # with undecided drafts): it parks, never asks, leaves the run file byte-unchanged (its drafts stay
+  # undecided — the park already recorded pending_decisions)
+  ASKS="$WORK/asks.q"
+  new_scratch "$FIX/park-first-decisions-recorded" || { ASKS="$ASKS_SAVE"; LEG_MSG="scratch (c)"; return 1; }
+  printf '%s\n' "env: NEXT_STEP_FROM=decide" "call: --non-interactive" "expect: park" > "$CASE_DIR/nonint-post.results"
+  drive "$FIX/park-first-decisions-recorded" "$drv" "$CASE_DIR/nonint-post.results"
+  ASKS="$ASKS_SAVE"
+  [ -z "$DRIVE_ERR" ] || { LEG_MSG="post-park decide: $DRIVE_ERR"; return 1; }
+  [ ! -s "$WORK/asks.q" ] || { LEG_MSG="post-park decide asked under --non-interactive: $(head -n 1 "$WORK/asks.q")"; return 1; }
+  cmp -s "$FIX/park-first-decisions-recorded/input.md" "$CASE_RF" || { LEG_MSG="post-park decide: the run file was written"; return 1; }
+  return 0
+}
+
+# leg_badreport <driver> — 0 when every malformed drain report exits 2, prints nothing and leaves every
+# file under .supervisor/ byte-unchanged (a running item: the reports would otherwise start its tail)
+BAD_REPORTS='{"drain_result":"BOGUS","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96"}
+{"drain_result":"ready","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96"}
+{"drain_result":"escalated","termination_reason":"bound_hit"}
+{"drain_result":"died"}
+{"drain_result":"superseded_by_merge","termination_reason":"converged"}
+{"drain_result":"READY","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96","items_processed":"two"}
+{"drain_result":"ESCALATED","termination_reason":"bound_hit","escalation_cause":"bogus_cause"}
+{"drain_result":"READY","termination_reason":"converged","ready_sha":"zz|028cbed"}
+{"drain_result":"READY","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96","progress_note":"one\n## Status: done"}'
+leg_badreport() {
+  local drv="$1" s0 r out rc
+  new_scratch "$FIX/park-first-ready-park" || { LEG_MSG="scratch"; return 1; }
+  : > "$CASE_DIR/seams.none"; s0="$(snapshot)"
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    out="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" --result "$r" 2>/dev/null)"; rc=$?
+    [ "$rc" = 2 ] && [ -z "$out" ] && [ "$s0" = "$(snapshot)" ] \
+      || { LEG_MSG="$r ⇒ exit $rc, printed '${out:0:60}', .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  done <<EOF
+$BAD_REPORTS
+EOF
+  return 0
+}
+
+# leg_reentry <driver> — 0 when a DIFFERENT drain report after escalated-park's terminal park exits 2,
+# writes nothing, and the no-result call still re-prints that park
+leg_reentry() {
+  local drv="$1" last s0 out rc again
+  golden_case escalated-park "$drv" || { LEG_MSG="escalated-park did not run: $GC_MSG"; return 1; }
+  last="$LAST_OUT"; s0="$(snapshot)"; : > "$CASE_DIR/seams.none"
+  out="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" \
+    --result '{"drain_result":"ESCALATED","termination_reason":"bound_hit","escalation_cause":"check_red_unrelated","escalation_check":"ci","escalation_sha":"9999999"}' 2>/dev/null)"; rc=$?
+  again="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" 2>/dev/null)"
+  [ "$rc" = 2 ] && [ -z "$out" ] && [ "$s0" = "$(snapshot)" ] && [ "$again" = "$last" ] \
+    || { LEG_MSG="re-entry after the park ⇒ exit $rc, printed '${out:0:60}', .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  return 0
+}
+
+# rec_helpers <driver path> — replace the automate-helpers.sh beside <driver> (a symlink in a built dir)
+# with a wrapper that records each park-ask-gate call into the case's rec.log, then runs the real one
+rec_helpers() {
+  local d; d="$(dirname "$1")"
+  rm -f "$d/automate-helpers.sh"
+  printf '#!/usr/bin/env bash\nif [ "${1:-}" = park-ask-gate ]; then printf "%%s\\n" "$*" >> "$NS_REC_LOG"; fi\nexec bash "%s" "$@"\n' "$H" > "$d/automate-helpers.sh"
+}
+# leg_order <driver> — park-first READY park: the watcher is armed, then the run lock released, and only
+# then park-ask-gate runs (the park is complete before the ask is gated)
+leg_order() {
+  local drv="$1" w r g
+  golden_case park-first-ready-park "$drv" || { LEG_MSG="park-first-ready-park: $GC_MSG"; return 1; }
+  w="$(grep -n -m1 '^watch ' "$CASE_DIR/rec.log" | cut -d: -f1)"
+  r="$(grep -n -m1 '^lock release ' "$CASE_DIR/rec.log" | cut -d: -f1)"
+  g="$(grep -n -m1 '^park-ask-gate ' "$CASE_DIR/rec.log" | cut -d: -f1)"
+  [ -n "$w" ] && [ -n "$r" ] && [ -n "$g" ] && [ "$w" -lt "$r" ] && [ "$r" -lt "$g" ] \
+    || { LEG_MSG="order watch=${w:-none} release=${r:-none} park-ask-gate=${g:-none}: $(tr '\n' ';' < "$CASE_DIR/rec.log" | cut -c1-200)"; return 1; }
   return 0
 }
 
@@ -315,6 +398,21 @@ build_mutant() {
   ! cmp -s "$DRIVER" "$d/automate-next-step.sh" || { echo "mutant does not differ" >&2; return 1; }
   bash -n "$d/automate-next-step.sh" 2>/dev/null || { echo "mutant fails bash -n" >&2; return 1; }
   echo "$d/automate-next-step.sh"
+}
+# build_mutant2 <name> <anchor1> <repl1> <anchor2> <repl2> — two edits (the second applied to the first's
+# output, same gates: its anchor once in that copy, the result non-empty, differing, bash -n)
+build_mutant2() {
+  local m c
+  m="$(build_mutant "$1" "$2" "$3")" || return 1
+  c="$(grep -cF -- "$4" "$m")"
+  [ "$c" = 1 ] || { echo "second anchor occurs $c time(s)" >&2; return 1; }
+  AN="$4" RE="$5" awk 'BEGIN { a = ENVIRON["AN"]; r = ENVIRON["RE"] }
+    { i = index($0, a); if (i > 0 && !d) { $0 = substr($0, 1, i - 1) r substr($0, i + length(a)); d = 1 } print }' \
+    "$m" > "$m.t" || return 1
+  ! cmp -s "$m" "$m.t" || { echo "second edit does not differ" >&2; return 1; }
+  mv "$m.t" "$m"
+  [ -s "$m" ] && ! cmp -s "$DRIVER" "$m" && bash -n "$m" 2>/dev/null || { echo "second edit failed its gates" >&2; return 1; }
+  echo "$m"
 }
 
 # ======================================================================================
@@ -500,6 +598,31 @@ if [ -z "$b5err1$DRIVE_ERR" ] && printf '%s' "$spawn" | jq -e '.what == "fix-now
    && grep -q . "$WORK/asks.b5" && ! grep -qF 'Fix now on this PR' < <(cut -f2- "$WORK/asks.b5"); then
   ok "B5: fix-now ⇒ {do: spawn} ⇒ re-drain report ⇒ re-asked Follow-up/Drop only ⇒ re-park with fix_now_reentered: true"
 else no "B5: fix-now re-pass wrong: $b5err1 $DRIVE_ERR"; tail -n 6 "$CASE_RF" | sed 's/^/    /'; fi
+# B5b — a malformed re-drain report answering the spawn ⇒ exit 2, nothing written, the spawn re-prints
+inline_run dismissed-findings-decision-step "$(printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"0000000\"}'" \
+  "expect: ask" "call: --result '{\"answers\":[\"Fix now on this PR\"]}'" "expect: spawn")"
+spawn="$LAST_OUT"; s0="$(snapshot)"; : > "$CASE_DIR/seams.none"
+b5o="$(in_case "$DRIVER" "$CASE_DIR/seams.none" bash "$DRIVER" "$CASE_RF" --result '{"drain_result":"died"}' 2>/dev/null)"; b5rc=$?
+again="$(in_case "$DRIVER" "$CASE_DIR/seams.none" bash "$DRIVER" "$CASE_RF" 2>/dev/null)"
+if [ -z "$DRIVE_ERR" ] && [ "$b5rc" = 2 ] && [ -z "$b5o" ] && [ "$s0" = "$(snapshot)" ] && [ -n "$spawn" ] && [ "$again" = "$spawn" ]; then
+  ok "B5b: a re-drain report with drain_result 'died' ⇒ exit 2, nothing written, the spawn re-prints"
+else no "B5b: malformed re-drain report: rc $b5rc, out '$b5o', $DRIVE_ERR"; fi
+# B6 — a malformed drain report (drain_result not READY|ESCALATED, a non-count items_processed, an unknown
+# escalation_cause, a non-hex sha, a multi-line progress_note) ⇒ exit 2, nothing printed, nothing written
+LEG_MSG=""
+if leg_badreport "$DRIVER"; then ok "B6: $(grep -c . <<<"$BAD_REPORTS") malformed drain reports ⇒ exit 2, nothing printed, .supervisor/ byte-unchanged"
+else no "B6: $LEG_MSG"; fi
+# B7 — a different drain report after the terminal park (status no longer running) ⇒ exit 2, nothing written
+LEG_MSG=""
+if leg_reentry "$DRIVER"; then ok "B7: a different drain report after the escalated park ⇒ exit 2, nothing written, the park re-prints"
+else no "B7: $LEG_MSG"; fi
+# B8 — park-first order on the driver itself: watcher armed < run lock released < park-ask-gate
+LEG_MSG=""
+RECD="$WORK/rec-real"; mkdir -p "$RECD"
+for e in "$HERE"/*; do [ "$e" = "$DRIVER" ] || ln -s "$e" "$RECD/$(basename "$e")"; done
+cp "$DRIVER" "$RECD/automate-next-step.sh"; rec_helpers "$RECD/automate-next-step.sh"
+if leg_order "$RECD/automate-next-step.sh"; then ok "B8: park-first READY park — watcher armed, then lock released, then park-ask-gate"
+else no "B8: $LEG_MSG"; fi
 
 echo "-- D. the schema doc mirrors the driver (closed lists)"
 DOC="$HERE/../docs/result-schemas/automate-run.md"
@@ -538,6 +661,43 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_ctx "$m"; then no "MC: ctx leg stayed green with high_risk in the ctx"
     else ok "MC: \"high_risk\": false in the ctx ⇒ ctx leg red ($LEG_MSG)"; fi
   else no "MC: mutant not built"; fi
+  # MV* — each drain-report guard dropped ⇒ the malformed-report leg (B6) red
+  mv_leg() { # <name> <anchor> <replacement>
+    local m
+    if m="$(build_mutant "$1" "$2" "$3")"; then
+      LEG_MSG=""
+      if leg_badreport "$m"; then no "M$1: the malformed-report leg stayed green with the guard dropped"
+      else ok "M$1: guard dropped ⇒ malformed-report leg red ($LEG_MSG)"; fi
+    else no "M$1: mutant not built"; fi
+  }
+  mv_leg Vdr 'ns_field_ok drain_result "$dr" ||' 'true ||'
+  mv_leg Vip 'escalation_run_id|escalation_attempt|items_processed) case' 'escalation_run_id|escalation_attempt) case'
+  mv_leg Vec 'check_pending|check_red_unrelated|check_red|findings|validation_unrun|other) return 0 ;; *) return 1 ;; esac ;;' '*) return 0 ;; esac ;;'
+  mv_leg Vsha 'ready_sha|escalation_sha) [[' 'ready_sha|escalation_sha) true || [['
+  mv_leg Vnote 'progress_note) case "$2" in' 'progress_note) case "x" in'
+  # MQp — both post-park --non-interactive guards of the decide step dropped (the first-entry park and
+  # the batch emitter; either alone keeps the ask away) ⇒ Q (c) red
+  if m="$(build_mutant2 Qp 'if ! ns_interactive; then ns_emit_park decide' 'if false; then ns_emit_park decide' \
+       'ns_interactive || return 1   # --non-interactive' 'true || return 1   # --non-interactive')"; then
+    LEG_MSG=""
+    if leg_cantask "$m"; then no "MQp: can't-ask stayed green with the post-park guards dropped"
+    else ok "MQp: post-park --non-interactive guards dropped ⇒ can't-ask red ($LEG_MSG)"; fi
+  else no "MQp: mutant not built"; fi
+  # MR — the running-status re-entry guard dropped ⇒ B7 red
+  if m="$(build_mutant R '[ "$STATUS" = running ] ||' 'true ||')"; then
+    LEG_MSG=""
+    if leg_reentry "$m"; then no "MR: the re-entry leg stayed green with the running-status guard dropped"
+    else ok "MR: running-status guard dropped ⇒ re-entry leg red ($LEG_MSG)"; fi
+  else no "MR: mutant not built"; fi
+  # MO — ns_park reordered: the merge watcher armed only AFTER the post-park decide step (the run file is
+  # byte-identical, so only the order leg can see it) ⇒ B8 red
+  if m="$(build_mutant2 O '*) ns_watch; ns_notify awaiting_merge' '*) ns_notify awaiting_merge' \
+       'if [ "$(st order)" = park-first ]; then NEXT=decide; return 0; fi' 'if [ "$(st order)" = park-first ]; then ns_decide; ns_watch; return 0; fi')"; then
+    rec_helpers "$m"; LEG_MSG=""
+    if golden_case park-first-ready-park "$m"; then mo_gold=green; else mo_gold=red; fi
+    if leg_order "$m"; then no "MO: the order leg stayed green with the watcher armed after park-ask-gate"
+    else ok "MO: watcher armed after the decide step ⇒ order leg red (golden run file $mo_gold: $LEG_MSG)"; fi
+  else no "MO: mutant not built"; fi
 fi
 
 echo "PASS: $pass FAIL: $fail"

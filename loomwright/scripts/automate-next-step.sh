@@ -22,8 +22,9 @@
 #   (idempotent); a `--result` answers the pending `ask` / `spawn`; a `--result` after a terminal
 #   `park` / `done` (or with nothing pending) starts the next item's tail — unless it is a REPLAY (the
 #   same drain report for the same item + PR), which re-prints the terminal instruction and writes
-#   nothing. `--session-id` is this loop's session id: closeout re-enters the PICK's run lock with it,
-#   and the post-park lock windows acquire with it.
+#   nothing; a different report is accepted only while `## Current` reads `status: running` (the next
+#   PICK set it), else it exits 2 with nothing written. `--session-id` is this loop's session id:
+#   closeout re-enters the PICK's run lock with it, and the post-park lock windows acquire with it.
 #
 # STEPS — each is ONE `case` arm of ns_dispatch (the strings inventory homes cite as
 #   `script:automate-next-step.sh <step>`):
@@ -74,10 +75,22 @@
 #                               (the golden leftover case supplies it as fixed input)
 #
 # Exit codes: 0 an instruction printed (or a NEXT_STEP_UNTIL stop); 1 a helper / writer failure
-# (surfaced); 2 usage error, or a `--result` that does not answer what is pending (nothing written).
+# (surfaced); 2 usage error, a `--result` that does not answer what is pending, or a malformed /
+# out-of-state drain report (REPORT VALIDATION below) — nothing written.
 #
-# Honest limits: the driver trusts the drain report for `drain_result` / `termination_reason` /
-# `ready_sha` exactly as the loop did — `gate-eval` cross-checks them against the review-heal sidecar
+# REPORT VALIDATION (fail CLOSED, exit 2, nothing written): every drain-report field the driver
+# branches on or hands to a writer is checked before the first write — `drain_result` is exactly
+# READY | ESCALATED at the `gate` step (anything else, `died` / `superseded_by_merge` / a lowercase or
+# misspelt value included, is refused, never routed down the READY path); `ready_sha` /
+# `escalation_sha` hex (7–40); `escalation_cause` the current-escalation enum; `escalation_run_id` /
+# `escalation_attempt` / `items_processed` a non-negative integer; `progress_note` one line. A drain
+# report starts a tail only while `## Current` reads `status: running` (the first drain and both
+# fix-now re-drain hand-offs set it): a different report after a terminal park is refused, a
+# byte-identical one is a replay. After a `spawn` the re-drain report REPLACES the first one (no
+# field of the first drain survives into the second GATE pass).
+#
+# Honest limits: the driver trusts a well-formed drain report's `drain_result` / `termination_reason`
+# / `ready_sha` exactly as the loop did — `gate-eval` cross-checks them against the review-heal sidecar
 # and the live head, so a false claim can only park. DRAIN/RUN bookkeeping (item 07) and PICK /
 # RECONCILE / resume (item 08) stay prose. The default notifier is desktop-only: no webhook gate type
 # is defined for a sequential park. bash 3.2 + BSD userland + jq.
@@ -320,11 +333,36 @@ ns_emit_park() { # <step> <message>
 # ------------------------------------------------------------------------------------------------
 NS_REPORT_KEYS='["drain_result","termination_reason","ready_sha","escalation_cause","escalation_check","escalation_run_id","escalation_attempt","escalation_sha"]'
 ns_report_key() { printf '%s' "$1" | "$JQ" -cS --argjson k "$NS_REPORT_KEYS" '. as $r | [$k[] | {(.): ($r[.] // null)}] | add' 2>/dev/null; }
-ns_take_report() { # <json>
+NS_REPORT_FIELDS="drain_result termination_reason ready_sha progress_note escalation_cause escalation_check
+  escalation_run_id escalation_attempt escalation_sha items_processed"
+# ns_field_ok <key> <value> — 0 when <value> is well-formed for <key> (keys without a rule pass)
+ns_field_ok() {
+  case "$1" in
+    drain_result) case "$2" in READY|ESCALATED) return 0 ;; *) return 1 ;; esac ;;
+    ready_sha|escalation_sha) [[ "$2" =~ ^[0-9a-fA-F]{7,40}$ ]] ;;
+    escalation_cause)
+      case "$2" in check_pending|check_red_unrelated|check_red|findings|validation_unrun|other) return 0 ;; *) return 1 ;; esac ;;
+    escalation_run_id|escalation_attempt|items_processed) case "$2" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac ;;
+    progress_note) case "$2" in *$'\n'*|*$'\r'*) return 1 ;; *) return 0 ;; esac ;;
+    *) return 0 ;;
+  esac
+}
+# ns_check_report <json> — refuse (exit 2, before any write) a field the driver would branch on or write
+# malformed; drain_result's enum is the `gate` step's own check (the NEXT_STEP_FROM seam may skip gate)
+ns_check_report() {
+  local k v
+  for k in $NS_REPORT_FIELDS; do
+    [ "$k" = drain_result ] && continue
+    v="$(rj "$1" "$k")"
+    [ -z "$v" ] || ns_field_ok "$k" "$v" || ns_die2 "--result: malformed $k '$v' — nothing written"
+  done
+  return 0
+}
+ns_take_report() { # <json> — the report REPLACES every field of a previous one
   st_set report_key "$(ns_report_key "$1")"
   local k v
-  for k in drain_result termination_reason ready_sha progress_note escalation_cause escalation_check \
-           escalation_run_id escalation_attempt escalation_sha items_processed; do
+  for k in $NS_REPORT_FIELDS; do
+    st_del "$k"
     v="$(rj "$1" "$k")"
     [ -n "$v" ] && st_set "$k" "$v"
   done
@@ -338,7 +376,12 @@ ns_gate() {
   local dr
   dr="$(st drain_result)"
   [ -n "$dr" ] || { ns_err "gate: the --result carries no drain_result"; NS_RC=2; return 1; }
+  # fail CLOSED: only the two terminal drain decisions route the tail — nothing else takes the READY path
+  ns_field_ok drain_result "$dr" || { ns_err "gate: drain_result must be READY|ESCALATED (got '$dr') — nothing written"; NS_RC=2; return 1; }
   [ -n "$ITEM" ] && [ -n "$PR" ] && [ "$PR" != null ] || { ns_err "gate: ## Current names no item with a PR"; NS_RC=2; return 1; }
+  # a drain report starts a tail only for a running item (PICK, and both fix-now hand-offs, set it):
+  # a parked / done item already ran its tail — a byte-identical report is a replay, anything else is refused
+  [ "$STATUS" = running ] || { ns_err "gate: ## Current status is '$STATUS', not running — this item's tail already ran (resend the same report to re-print its instruction); nothing written"; NS_RC=2; return 1; }
   st_set item "$ITEM"; st_set pr "$PR"
   if [ "$dr" = ESCALATED ]; then
     st_set park_kind escalated; st_set order decide-first
@@ -346,7 +389,8 @@ ns_gate() {
       local sc="$AD/$RUN_ID.review-heal-result.md" f v
       for f in cause check run_id attempt sha; do
         v="$(sed -n "s/^[[:space:]]*escalation_$f:[[:space:]]*\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*$/\1/p" "$sc" 2>/dev/null | head -n1)"
-        [ -n "$v" ] && [ "$v" != null ] && st_set "escalation_$f" "$v"
+        # a malformed sidecar value is dropped (the cause falls back to `other`) — never handed to a writer
+        [ -n "$v" ] && [ "$v" != null ] && ns_field_ok "escalation_$f" "$v" && st_set "escalation_$f" "$v"
       done
       [ -n "$(st escalation_cause)" ] || st_set escalation_cause other
     fi
@@ -504,8 +548,9 @@ ns_label_decision() {
   esac
 }
 ns_parked() { case "$STATUS" in awaiting_merge|escalated|ready_for_release) return 0 ;; *) return 1 ;; esac; }
-ns_decide_next_batch() { # emit the next ask from the queue, or return 1 when the queue is empty
+ns_decide_next_batch() { # emit the next ask from the queue, or return 1 when the queue is empty (or can't ask)
   local q kind fix cost opts batch
+  ns_interactive || return 1   # --non-interactive: the rest stay undecided (pending_decisions), never asked
   q="$(st queue)"; [ -n "$q" ] && [ "$q" != "[]" ] || return 1
   kind="$(printf '%s' "$q" | "$JQ" -r '.[0].kind')"
   fix="$(st fixnow_offer)"; cost="$(st cost_line)"
@@ -591,6 +636,8 @@ ns_decide() {
   fi
   # first entry: the post-park gate read (park-first), then the queue
   if [ "$post" = post ]; then
+    # --non-interactive never asks, before or after the park: the park already recorded pending_decisions
+    if ! ns_interactive; then ns_emit_park decide "park written; decisions not asked (--non-interactive) — the next interactive PICK asks them"; return 0; fi
     local n; n="$(bash "$H" dismissed-pending "$RF" 2>/dev/null | tail -n 1)"
     if [ "$n" = 0 ] && [ -z "$(ns_undecided)" ]; then ns_emit_park decide "parked; nothing to decide"; return 0; fi
     local gl; gl="$(st ask_gate_line)"
@@ -731,7 +778,8 @@ ns_park() {
     v="$(st escalation_attempt)"; [ -n "$v" ] && a+=(--attempt "$v")
     v="$(st escalation_sha)"; [ -n "$v" ] && a+=(--sha "$v")
     if ! bash "$H" current-escalation "$RF" "${a[@]}" >/dev/null 2>&1; then
-      # a --check value it refuses: the cause alone records the park (§6 step 4 "Validation gate")
+      # a --check value it refuses: the cause alone records the park (the `--check` rule of the
+      # `validation_unrun` park, skills/automate-loop/legacy-tail.md "On `unrun`" — this step runs it by default)
       local b=(--cause "$(st escalation_cause)"); v="$(st escalation_sha)"; [ -n "$v" ] && b+=(--sha "$v")
       ns_call_writer current-escalation "$RF" "${b[@]}" || return 1
     fi
@@ -844,7 +892,8 @@ EOF
   rest="$(printf '%s\n' "$rest" | grep . || true)"
   if [ -n "$rest" ]; then
     st_set leftovers "$rest"; [ "$redo" = 1 ] && st_set leftover_retry 1
-    ns_leftover_ask "$(st leftover_retry)"; return 0
+    if ns_interactive; then ns_leftover_ask "$(st leftover_retry)"; return 0; fi
+    ns_leftover_park; return
   fi
   st_del leftovers; st_del leftover_retry
   NEXT=checkoff
@@ -881,7 +930,9 @@ ns_terminate() {
   p="$(st items_processed)"
   [ -n "$p" ] || p="$(ns_section '## Queue' | grep '^- \[x\] ' | grep -cvE '# (skipped|abandoned):' || true)"
   lim="$(ns_limit)"
-  if [ "$p" -ge "$lim" ] 2>/dev/null; then
+  # a count that is not a count is surfaced, never read as "under the limit" (fail CLOSED)
+  case "$p" in ''|*[!0-9]*) ns_err "terminate: items_processed '$p' is not a count"; NS_RC=1; return 1 ;; esac
+  if [ "$p" -ge "$lim" ]; then
     ns_status paused || return 1
     ns_call_writer current-set "$RF" --pause-reason limit_reached || return 1
     ns_progress "$(ns_ts) limit_reached — $p item(s) processed; remaining: $n" || return 1
@@ -919,7 +970,7 @@ pending="$(st pending_text)"; PENDING_TEXT="$pending"
 pending_do="$(printf '%s' "$pending" | "$JQ" -r '.do // empty' 2>/dev/null)"
 if [ -n "${NEXT_STEP_FROM:-}" ]; then
   NEXT="$NEXT_STEP_FROM"
-  [ "$have_result" = 1 ] && ns_take_report "$RESULT"
+  [ "$have_result" = 1 ] && { ns_check_report "$RESULT"; ns_take_report "$RESULT"; }
   st_set item "$ITEM"; st_set pr "$PR"
 elif [ "$have_result" = 0 ]; then
   if [ -n "$pending" ]; then printf '%s\n' "$pending"; exit 0; fi
@@ -928,8 +979,10 @@ elif [ "$have_result" = 0 ]; then
 elif [ "$pending_do" = ask ]; then
   NEXT="$(st next)"; ANSWER="$RESULT"
 elif [ "$pending_do" = spawn ]; then
+  ns_check_report "$RESULT"
   NEXT=gate; ns_take_report "$RESULT"
 else
+  ns_check_report "$RESULT"
   # a REPLAY — the same drain report for the same item + PR after a terminal instruction — re-prints
   # that instruction and writes nothing (the tail already ran for it)
   if [ -n "$pending" ] && [ "$(st item)" = "$ITEM" ] && [ "$(st pr)" = "$PR" ] \
