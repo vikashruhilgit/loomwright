@@ -114,7 +114,9 @@
 #     `parked` line ⇒ the item's wall time and Decide print `not recorded` and
 #     the item total runs to the last recorded boundary (named in the Window
 #     cell). An item parked and then resumed in the same run (a work boundary —
-#     launch-pad saved, FINALIZE, iter, `ran /autonomous`, drain end — later than
+#     launch-pad saved, FINALIZE, iter, `ran /autonomous`, drain end, or the LAST
+#     item line of a work kind: a resume `picked`, `session_id`, `ran /autonomous`,
+#     `owned drain started` (fix-now re-drains too) — later than
 #     phase-timing's `.item.park`, which is the FIRST parked line) runs its token
 #     window to the first `parked` line at or after that latest boundary (else to
 #     the boundary), named in the Window cell; Wall stays phase-timing's
@@ -137,8 +139,8 @@
 #     but none holds a usage record between pick and the item end — ONE row with
 #     `no usage in window` in every cell. Other stderr reasons:
 #     `run_file_unreadable`, `jq_unavailable`, `phase_timing_unavailable`,
-#     `not_picked`, `picked_in_lane`, `work_after_park` (informational — the row
-#     still prints).
+#     `not_picked`, `picked_in_lane`, `tmpdir_unavailable`, `work_after_park`
+#     (informational — the row still prints).
 #   * Honest limits: the /automate engine's own main-thread tokens count only
 #     when its Claude Code session id is resolvable through the chain above; a
 #     Claude Code session that wrote into a plugin session log for unrelated
@@ -409,8 +411,23 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
      | {ts, n: (.text | ascii_downcase | capture("^phase 4\\.5 iter (?<n>[0-9]+)").n)}] as $iters
   | ($I.owned_drains // []) as $drains
   | (if ($drains | length) > 0 then ($drains | last | .end) else null end) as $decide_s
-  # the latest work boundary the item recorded (every phase row ends at or before it)
-  | ([[$lp, "launch-pad saved"], [$fin, "FINALIZE"], ($iters | last | if . == null then [null, ""] else [.ts, "Phase 4.5 iter \(.n)"] end), [$ra, "ran /autonomous"], ($drains | map([.end, "drain \(.result // "end")"]) | .[])]
+  # the latest work boundary the item recorded (every phase row ends at or before it).
+  # $lp/$fin/$iters/$ra are each the FIRST such line, so the LAST item line of every
+  # work kind in the segment is a boundary too — a resume re-pick, its session_id
+  # line, a second `ran /autonomous`, a drain or fix-now re-drain start (with or
+  # without a recorded end): any of them after the first park means the item worked
+  # past it, and none may leave that usage outside the item window silently
+  | ([[$lp, "launch-pad saved"], [$fin, "FINALIZE"], ($iters | last | if . == null then [null, ""] else [.ts, "Phase 4.5 iter \(.n)"] end), [$ra, "ran /autonomous"], ($drains | map([.end, "drain \(.result // "end")"]) | .[]),
+      ([$seg[] | select(.ts > $pick) | (.text | ascii_downcase) as $t
+        | (if ($t | test("^picked ")) then "resume pick"
+           elif ($t | test("^session_id ")) then "session_id line"
+           elif ($t | test("^ran /autonomous")) then "ran /autonomous"
+           elif ($t | test("^owned drain started")) then "drain start"
+           elif ($t | test("^launch[- ]?pad:?( brief)? saved")) then "launch-pad saved"
+           elif ($t | test("^finalize:")) then "FINALIZE"
+           elif ($t | test("^phase 4\\.5 iter [0-9]+")) then "Phase 4.5 iter"
+           else null end) as $k
+        | select($k != null) | [.ts, $k]] | last // [null, ""])]
      | map(select(.[0] != null)) | sort_by(.[0]) | last) as $l
   # phase-timing.sh `.item.park` is the FIRST parked line; an item parked and then
   # resumed in the same run did work after it, so its token window runs past that park

@@ -561,6 +561,28 @@ pi_phase_le_item "$PI_OUT" '| **q.md** |' >/dev/null || pi_inv_bad="$pi_inv_bad 
 pi_phase_le_item "$(printf '%s\n' '| **z** | w | 1m 0s | 5 (main 5) | 1 (main 1) | 1 | 5 | — |' '| ↳ Drain 1 | w | 1m 0s | 9 (main 9) | 1 (main 1) | 1 | 9 | — |')" '| **z** |' >/dev/null \
   && no "invariant control: helper missed a phase row larger than its item" || ok "invariant control: helper flags a phase row larger than its item"
 
+echo "== PI18b. --per-item: ANY later item event after the first park extends the window (no silent under-count) =="
+# Each run has a `ran /autonomous` at 01:08, parks at 01:10 and again at 03:50 with ONE
+# later item event between the parks and no other work line; usage at 01:05/02:30/03:10/03:35 (11110) is all inside the item.
+# Before the fix a resume re-pick / drain start with no end / lone session_id line left
+# the window at the FIRST park (10) with an empty stderr.
+res_cc='- 2026-10-15T00:59:00Z run created (session cccccccc-0000-4000-8000-00000000000a)\n'
+res_want="| **q.md** | 10-15 01:00:00 → 03:50:00 (resumed after park — to the later parked line; wall is pick → first park) | 10m 0s | 11110 (main 11110) | 4 (main 4) | 4 | 10000 | — |"
+for res_case in \
+  "resume pick|- 2026-10-15T02:00:00Z picked q.md (resume)" \
+  "drain start, no end|- 2026-10-15T02:00:00Z owned drain started (fix-now re-drain) — /review-pr https://github.com/a/b/pull/1 --until-mergeable @ abc" \
+  "session_id line|- 2026-10-15T02:00:00Z session_id sr (q.md)" \
+  "second ran /autonomous|- 2026-10-15T02:00:00Z ran /autonomous → PR https://github.com/a/b/pull/2"; do
+  res_name="${res_case%%|*}"; res_line="${res_case#*|}"
+  printf "# Automate Run: x\n## Queue\n- [x] q.md\n## Progress\n${res_cc}- 2026-10-15T01:00:00Z picked q.md\n- 2026-10-15T01:08:00Z ran /autonomous → PR https://github.com/a/b/pull/1\n- 2026-10-15T01:10:00Z parked escalated — resume to re-run\n%s\n- 2026-10-15T03:50:00Z parked awaiting_merge\n" "$res_line" > "$PI/res/run.md"
+  pi_run "$SUT" --per-item "$PI/res/run.md" --root "$PI/res" --projects-dir "$PI/res/proj"
+  [ "$(pi_row '| **q.md** |')" = "$res_want" ] \
+    && printf '%s\n' "$PI_ERR" | grep -qF 'per-item: work_after_park — q.md (worked after its first parked line 2026-10-15T01:10:00Z; token window runs to 2026-10-15T03:50:00Z)' \
+    && pi_phase_le_item "$PI_OUT" '| **q.md** |' >/dev/null \
+    && ok "$res_name after the first park ⇒ window to the later parked line (11110) + work_after_park; phase <= item" \
+    || no "$res_name after park: row=$(pi_row '| **q.md** |') err=$PI_ERR"
+done
+
 echo "== PI20. read-token-ledger.sh parses under /bin/bash (stock macOS bash 3.2) =="
 if [ -x /bin/bash ]; then
   /bin/bash -n "$SUT" 2>/dev/null && ok "/bin/bash -n read-token-ledger.sh" || no "read-token-ledger.sh does not parse under /bin/bash: $(/bin/bash -n "$SUT" 2>&1 | head -2)"
