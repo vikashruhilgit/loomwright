@@ -1,8 +1,8 @@
 # Evidence: split automate-lanes.sh and automate-trail.sh into sourced modules (automate-speed/19)
 
 Base commit: `051553e` (the brief's `142540b` measurements were superseded by its Pre-flight decision; every "base" below is `051553e`).
-Branch: `feature/as19-split-lanes-and-trail-scripts` (subtask 1 `9560281`, subtask 2 `0f19075`, then the integration commit).
-All runs: macOS (bash 3.2 system shell), 2026-10-16. "Base" numbers come from a clean `git worktree` detached at `051553e`, run earlier in the same session by the previous integration attempt (logs kept in its scratchpad). "Branch" numbers come from the integrated tree that this commit records, re-run in this attempt.
+Branch: `feature/as19-split-lanes-and-trail-scripts` (subtask 1 `9560281`, subtask 2 `0f19075`, the integration commit `5d3c348`, then the three consumer setup fixes `d588537`, §8).
+All runs: macOS (bash 3.2 system shell), 2026-10-16. "Base" numbers come from a clean `git worktree` detached at `051553e`, run earlier in the same session by the previous integration attempt (logs kept in its scratchpad). "Branch" numbers come from the committed tree at `d588537` (integration plus the §8 fixes), re-run after the Phase 3 adjudication.
 
 ## 1. Test and gate totals (AC5 to AC10)
 
@@ -13,13 +13,13 @@ All runs: macOS (bash 3.2 system shell), 2026-10-16. "Base" numbers come from a 
 | `test-automate-lanes.sh` (AC5) | 864/864 | 866/866 | +2 = the AG7a/AG7b planted-violation legs (AC8). Without them the branch is 864/864, as subtask 1 measured |
 | `test-automate-trail.sh` (AC5) | 782/782 | 782/782 | |
 | `test-automate-lanes-modules.sh` (AC6) | absent | 56/56 | |
-| `test-automate-trail-modules.sh` (AC6) | absent | 24/24 | |
+| `test-automate-trail-modules.sh` (AC6) | absent | 24/24 | 24/24 before and after setup fix 3, §8 |
 | `test-no-pipefail-grep-q.sh` (AC7) | 26/26 | 27/27 | +1 = the planted test-part violation leg |
 | `test-no-fixed-sleep-race.sh` (AC7) | 26/26 | 27/27 | +1 = the planted test-part sleep leg |
 | `test-wave-build.sh` (AC8, AC10) | 65/65 | 67/67 | +2 = W6d2/W6d3 (planted push in a module) |
 | `test-automate-loop-split.sh` (amendment iii) | 39/39 | 40/40 | +1 = M11 (raw read planted in a trail test part) |
-| `test-guard-lane-wait-armed.sh` (AC10) | 45/45 | **44/45** | out-of-lane consumer break 1, §8 |
-| `test-reconcile-jobs.sh` (consumer re-scan) | 115/115 | **114/115** | out-of-lane consumer break 2, §8 |
+| `test-guard-lane-wait-armed.sh` (AC10) | 45/45 | 45/45 | was 44/45 before setup fix 1, §8 |
+| `test-reconcile-jobs.sh` (consumer re-scan) | 115/115 | 115/115 | was 114/115 before setup fix 2, §8 |
 | `test-automate-helpers.sh` (AC10) | 737/737 | 737/737 | |
 | `test-automate-helpers-dispatch.sh` (AC10) | 45/45 | 45/45 | |
 | `test-automate-golden.sh` (AC10) | 64/64 | 64/64 | |
@@ -29,6 +29,7 @@ All runs: macOS (bash 3.2 system shell), 2026-10-16. "Base" numbers come from a 
 | `scripts/test-lanes-addon.sh` (AC10) | 12/12 | 12/12 | |
 | `scripts/check-test-hermetic.sh` (AC10) | OK, 169/169 | OK, 171/171 | +2 = the two new `*-modules.sh` tests; parts are not standalone tests |
 | `scripts/check-vendor-coupling.sh` (AC9) | OK, 0 breaches, 2676 refs | OK, 0 breaches, 2677 refs | +1 = a NEW reference in `test-automate-lanes-modules.sh`, §5 |
+| `scripts/check-locale-prefix.sh` | OK | OK, 373/373 files | was FAIL (2 sites in `test-automate-trail-modules.sh`) before setup fix 3, §8 |
 | `scripts/check-version-bump.sh` (AC14) | OK, 2 fragments | OK, 3 fragments | +1 = this item's fragment |
 
 AC10 byte-unchanged files: `git diff --stat 051553e -- loomwright/hooks/hooks.json loomwright/capabilities.json loomwright/.claude-plugin/plugin.json .claude-plugin/marketplace.json CHANGELOG.md` prints nothing.
@@ -38,8 +39,10 @@ AC10 byte-unchanged files: `git diff --stat 051553e -- loomwright/hooks/hooks.js
 | Tree | Result |
 |---|---|
 | Base `051553e` | PASS after 871s: 23 ci.yml gates + 160 self-tests (16 early, 167 in the pool), 183 PASS, 0 FAIL |
-| Branch (this tree) | **FAIL after 34s, early phase**: 15 of 16 early entries pass; `check-locale-prefix.sh` fails, so the pool is skipped. It flags `test-automate-trail-modules.sh` lines 217 and 218 (`LC_ALL=C sort` at command position). That file is new on this branch, so base cannot be red on it. Out-of-lane break 3, §8 |
-| Branch + break-3 fix (scratch copy only) | FAIL after 1063s: 23 ci.yml gates + 162 self-tests (16 early, 169 in the pool). The early phase is green (16/16). The pool has 2 FAILs, `test-guard-lane-wait-armed.sh` and `test-reconcile-jobs.sh` (breaks 1 and 2, §8), both green on base. Overall 183 PASS, 2 FAIL of 185. The +2 entries over base are the two new `*-modules.sh` tests. The tree is a scratch `git worktree` of this branch with the working tree copied in and only the §8 break-3 fix applied |
+| Branch `d588537` | PASS after 821s: 23 ci.yml gates + 162 self-tests (16 early, 169 in the pool), 185 PASS, 0 FAIL. The +2 entries over base are the two new `*-modules.sh` tests. No red leg |
+| Branch `5d3c348` (before the §8 fixes, superseded) | FAIL after 34s in the early phase on `check-locale-prefix.sh`; with that fix alone in a scratch copy, FAIL after 1063s with 183 PASS, 2 FAIL of 185 (`test-guard-lane-wait-armed.sh`, `test-reconcile-jobs.sh`, both green on base) |
+
+The AC10 consumer set on `d588537` (16 entries: the tests in the table above marked AC10, plus `test-automate-loop-split.sh`, `test-reconcile-jobs.sh`, both `*-modules.sh`, `test-automate-lanes.sh`, `test-automate-trail.sh`, and the vendor-coupling, hermetic, locale-prefix and version-bump gates): 16/16 exit 0. `loomwright/hooks/hooks.json` and `loomwright/capabilities.json`: `git diff --quiet origin/main` exits 0.
 
 ## 2. Module list per script (AC4, AC13)
 
@@ -111,8 +114,8 @@ Limit on the W6d and AG7 mutation runs: the brief's one-line mutations append at
 ## 5. Vendor-coupling manifest (AC9)
 
 - Measured references move one for one. `automate-lanes.sh` 34 = entry 10 + common 1 + create 2 + launch 5 + notify-guards 2 + park-leaks 1 + relay 7 + remove 4 + status 2. `test-automate-lanes.sh` 44 measured = runner 5 + 01 23 + 02 3 + 03 5 + 04 8. `automate-trail.sh` 1 = `automate-trail.d/sweep.sh` 1. `test-automate-trail.sh` 6 = runner 1 + 04-watcher-branch-mode 4 + 06-sweep 1. Each new path has the reason `moved by automate-speed/19 split — no reference added`. `schema_version` and every key other than `allowances` / `allowance_reasons` are unchanged.
-- Deviation from AC9's "(46)": base `test-automate-lanes.sh` was 2 below its allowance of 46 (measured 44, "debt paid down"). The allowances move at the measured 44, so the 2 units of headroom are dropped rather than carried into a part.
-- The reference total goes from 2676 to 2677, and the allowance sum from 2699 to 2698. The +1 is not a moved reference: `test-automate-lanes-modules.sh` (new in subtask 1) feeds the Stop hook a payload with the continuation flag (`hook_protocol=1`). Its allowance carries its own "a NEW reference, not a moved one" reason. Net allowance change: −2 headroom + 1 new = −1.
+- Deviation from AC9's "(46)" (accepted owner decision, Phase 3 adjudication): base `test-automate-lanes.sh` was 2 below its allowance of 46 (measured 44, "debt paid down"). The allowances move at the measured 44, so the 2 units of headroom are dropped rather than carried into a part.
+- Accepted owner decision (Phase 3 adjudication): the reference total goes from 2676 to 2677, and the allowance sum from 2699 to 2698. The +1 is not a moved reference: `test-automate-lanes-modules.sh` (new in subtask 1) feeds the Stop hook a payload with the continuation flag (`hook_protocol=1`). Its allowance carries its own "a NEW reference, not a moved one" reason. Net allowance change: −2 headroom + 1 new = −1.
 
 ## 6. Running-system check (AC11)
 
@@ -248,12 +251,12 @@ Resolution rule: `named` = the function's name appears in the entry point's `# M
 
 Golden fixture data (55 lines under `loomwright/scripts/fixtures/automate-golden/*/tree/`): frozen run-file and result-block text that the golden suite replays byte for byte. They quote what a past run wrote, they are not pointers a reader follows, and they must not change; not re-targeted.
 
-## 8. Open owner decisions: consumer breaks outside every lane of this item
+## 8. Consumer breaks outside the original lanes: resolved (Phase 3 adjudication, option D)
 
-The brief says to stop and report these, not edit them. Each proposed fix was tried in a scratch copy of the integrated tree. None is committed.
+The integration commit `5d3c348` broke three consumers that sat outside every lane of this item, so the worker stopped and reported them. The owner chose option D: widen subtask 3's lane to the three files and apply setup-only fixes. The fixes are commit `d588537`. No assertion, expected value or mutation pattern was edited.
 
-1. **`loomwright/scripts/test-guard-lane-wait-armed.sh` leg E2:** base 45/45, branch 44/45. Its mutant dir copies only `automate-lanes.sh` (`MUT="$T/mut"; mkdir -p "$MUT"; cp "$S" "$MUT/"`). The mutant hook sources that copy, the copy cannot find `automate-lanes.d/`, the source returns 1 (AC1's sourced fallback), and the hook allows. So "session-id check removed ⇒ block" reads `allow`. Proposed fix: append `cp -R "$HERE/automate-lanes.d" "$MUT/"` to that line. Scratch copy: 44/45 before, 45/45 after.
-2. **`loomwright/scripts/test-reconcile-jobs.sh` leg 11a:** base 115/115, branch 114/115. `TRAIL="$SCRIPT_DIR/automate-trail.sh"` extracts the closeout stamp `printf` format from the entry point, and that text now lives in `automate-trail.d/closeout.sh`. Proposed fix: `TRAIL="$SCRIPT_DIR/automate-trail.d/closeout.sh"` (or read `_trail_bundle`'s output). Scratch copy: 113/114 before, 114/114 after. The scratch copy is a fresh `git init` of the tree, and it runs one leg fewer than the real checkout (114 vs 115). The 11a failure and its fix are the same in both.
-3. **`loomwright/scripts/test-automate-trail-modules.sh` (subtask 2's lane), `check-locale-prefix.sh` early gate:** lines 217 and 218 put `LC_ALL=C sort` at command position. The gate fails it because Homebrew bash 5.3 segfaults restoring the locale in a forked subshell. Proposed fix: `env LC_ALL=C sort` on both lines. Scratch copy: the modules test is still 24/24, and ci-local results are in §1.
+1. **`loomwright/scripts/test-guard-lane-wait-armed.sh` leg E2.** Why it broke: the mutant dir copied only `automate-lanes.sh` (`cp "$S" "$MUT/"`). The mutant hook sources that copy, the copy cannot find `automate-lanes.d/`, the source returns 1 (AC1's sourced fallback), and the hook allows, so "session-id check removed ⇒ block" read `allow`. Hunk: that line gains `cp -R "$HERE/automate-lanes.d" "$MUT/"`, so the mutant entry has its modules beside it. Before 44/45, after 45/45 (base 45/45).
+2. **`loomwright/scripts/test-reconcile-jobs.sh` leg 11a.** Why it broke: `TRAIL="$SCRIPT_DIR/automate-trail.sh"` pulled the closeout stamp `printf` format out of the entry point, and that text now lives in `automate-trail.d/closeout.sh`. Hunk: `TRAIL="$SCRIPT_DIR/automate-trail.d/closeout.sh"`, plus one comment line naming the module. Before 114/115, after 115/115 (base 115/115).
+3. **`loomwright/scripts/test-automate-trail-modules.sh` (subtask 2's file) and the `check-locale-prefix.sh` early gate.** Why it broke: two `sort` sites (the `ONDISK` pipeline and the `$MODS` comparison) put `LC_ALL=C sort` at command position. The gate rejects that because Homebrew bash 5.3 segfaults restoring the locale in a forked subshell. Hunk: `env LC_ALL=C sort` at both sites. The test is 24/24 before and after; the gate goes from FAIL to OK (373/373 files).
 
-Re-scan for other consumers: `git grep -nE 'automate-(lanes|trail)\.sh' -- 'loomwright/scripts/*.sh' 'scripts/*.sh' 'loomwright/scripts/adapters/*/*.sh'`. Every test file it names was run (§1). No break beyond the three above.
+Re-scan for other consumers: `git grep -nE 'automate-(lanes|trail)\.sh' -- 'loomwright/scripts/*.sh' 'scripts/*.sh' 'loomwright/scripts/adapters/*/*.sh'`. Every test file it names was run (§1). No break beyond the three above. The full branch `ci-local.sh` is green (§1).
