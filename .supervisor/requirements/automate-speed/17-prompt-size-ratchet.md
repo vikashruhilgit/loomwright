@@ -59,3 +59,9 @@ loomwright/docs/prompt-token-budgets.json
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
 CLAUDE.md
 changelog.d/as17-prompt-size-ratchet.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-16T01:41:51Z
+- **Brief:** .supervisor/jobs/done/2026-10-15-as17-prompt-size-ratchet.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/565
