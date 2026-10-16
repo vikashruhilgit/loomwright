@@ -197,7 +197,9 @@
 # (setup-memory.sh path), LOOMWRIGHT_LANES_HELPERS (automate-helpers.sh path),
 # LOOMWRIGHT_LANES_INIT_WAIT_S (default 15: wait for the session id), LOOMWRIGHT_LANES_STOP_GRACE_S
 # (default 60: TERM→KILL grace for --stop), LOOMWRIGHT_MACHINE_LOAD_CMD, LOOMWRIGHT_LANE_RECHECK_S,
-# LOOMWRIGHT_GH_BIN, LOOMWRIGHT_LANES_CI_SLOT, LOOMWRIGHT_LANES_PGREP, LOOMWRIGHT_LANES_CAFFEINATE,
+# LOOMWRIGHT_GH_BIN, LOOMWRIGHT_LANES_CI_SLOT, LOOMWRIGHT_LANES_PGREP, LOOMWRIGHT_LANES_PS (the --leaks
+# claude-p process table), LOOMWRIGHT_LANES_LSOF / LOOMWRIGHT_LANES_PROC (its working-directory readers),
+# LOOMWRIGHT_LANES_CAFFEINATE,
 # LOOMWRIGHT_LANES_UNAME, LOOMWRIGHT_LANES_COORDINATOR_PID, LOOMWRIGHT_LANES_BOOT_EPOCH,
 # LOOMWRIGHT_LANES_TOKEN_LEDGER, LOOMWRIGHT_LANES_WATCH_ITERATIONS, LOOMWRIGHT_LANES_WATCH_INTERVAL_S,
 # LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30: the bound on waiting for a live lock holder),
@@ -2506,13 +2508,84 @@ _lanes_leak_watchers() {
   return 0
 }
 
+# _lanes_path_tied <path> <run_root> <lane_dirs> — 0 when <path> is a lane directory of this run: under
+# <run_root>/ (`<primary>-lanes/<parent>`, '' for none) or equal to / under one of <lane_dirs> (newline
+# list, the lane table's path column). <path> may also be a wrapper's argv tail (`<lane_dir> <log> …`):
+# it is matched from its start, so a lane path containing spaces is never cut at the first one.
+_lanes_path_tied() {
+  local x="$1" root="$2" d
+  [ -n "$x" ] || return 1
+  if [ -n "$root" ]; then case "$x" in "$root"/*) return 0 ;; esac; fi
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    case "$x" in "$d"|"$d"/*|"$d "*) return 0 ;; esac
+  done <<<"$3"
+  return 1
+}
+
+# _lanes_leak_claude <primary> <parent> — the `## claude-p v2` section body: one `<pid> <command>` line
+# per process of THIS run, sorted, from ONE `ps` read: a `_lane-run <lane_dir>` wrapper (an `sh`/`bash`
+# running this script) whose lane_dir _lanes_path_tied accepts, every headless-session child of such a
+# wrapper (by parent pid), and any other headless session whose working directory is such a lane
+# directory (a lane process whose wrapper is gone, or a drain a lane detached). Never a machine-wide
+# match: v1 (a `pgrep -lf` of the headless command) listed every one on the machine, so another repo's healthy wave read as
+# `leaks: found — claude-p` (closing wave 1 of automate-2026-10-15-163325, 2026-10-16). The argv is no
+# tie: `--plugin-dir` is the same plugin root for every coordinator on the machine, and the prompt goes
+# in on stdin. An unreadable process table — or a candidate to attribute with no working-directory
+# reader (lsof, /proc) — prints the one line `unknown — <why>`, which lanes_leaks reports as unknown,
+# never as found. Honest limit: a headless session of this run whose wrapper is gone and whose working
+# directory is outside every lane directory is not listed.
+_lanes_leak_claude() {
+  local p="$1" parent="${2:-}" root="" dirs="" tbl ps_out pid ppid cmd w1 r w2 rest wr=" " cand="" out="" pids cw x
+  local lsof="${LOOMWRIGHT_LANES_LSOF:-lsof}" proc="${LOOMWRIGHT_LANES_PROC:-/proc}"
+  tbl="$p/.supervisor/automate/$parent.lanes"
+  if [ -n "$parent" ]; then
+    root="$p-lanes/$parent"
+    [ -f "$tbl" ] && dirs="$(awk -F'\t' '$1 ~ /^L[0-9][0-9]?$/ && $2 != "" && $2 != "-" { print $2 }' "$tbl" 2>/dev/null)"
+  fi
+  ps_out="$("${LOOMWRIGHT_LANES_PS:-ps}" -ax -ww -o pid= -o ppid= -o command= 2>/dev/null)"
+  [ -n "$ps_out" ] || { echo "unknown — the process table is unreadable (ps)"; return 0; }
+  [ -n "$root$dirs" ] || return 0
+  while read -r pid ppid cmd; do   # this run's wrappers
+    w1="${cmd%% *}"; r="${cmd#* }"; w2="${r%% *}"; rest="${r#* }"
+    case "$w1" in sh|bash|*/sh|*/bash) ;; *) continue ;; esac
+    case "$w2" in automate-lanes.sh|*/automate-lanes.sh) ;; *) continue ;; esac
+    case "$rest" in "_lane-run "*) rest="${rest#_lane-run }" ;; *) continue ;; esac
+    _lanes_path_tied "$rest" "$root" "$dirs" || continue
+    wr="$wr$pid "; out="$out$pid $cmd"$'\n'
+  done <<<"$ps_out"
+  while read -r pid ppid cmd; do   # their headless children; every other headless session is a cwd candidate
+    case "$cmd" in *"automate-lanes.sh _lane-run "*) continue ;; *"claude -p"*) ;; *) continue ;; esac
+    case "$wr" in *" $ppid "*) out="$out$pid $cmd"$'\n'; continue ;; esac
+    cand="$cand$pid"$'\t'"$cmd"$'\n'
+  done <<<"$ps_out"
+  if [ -n "$cand" ]; then
+    pids="$(printf '%s' "$cand" | cut -f1 | paste -sd, -)"
+    if command -v "$lsof" >/dev/null 2>&1; then
+      cw="$("$lsof" -a -d cwd -Fn -p "$pids" 2>/dev/null | awk '/^p/ { q = substr($0, 2) } /^n/ { print q "\t" substr($0, 2) }')"
+    elif [ -d "$proc/self" ]; then
+      cw="$(for x in ${pids//,/ }; do printf '%s\t%s\n' "$x" "$(readlink "$proc/$x/cwd" 2>/dev/null)"; done)"
+    else
+      echo "unknown — no reader for a process's working directory (lsof, /proc)"; return 0
+    fi
+    while IFS=$'\t' read -r pid cmd; do
+      [ -n "$pid" ] || continue
+      x="$(printf '%s\n' "$cw" | awk -F'\t' -v q="$pid" '$1 == q { print $2; exit }')"
+      _lanes_path_tied "$x" "$root" "$dirs" && out="$out$pid $cmd"$'\n'
+    done <<<"$cand"
+  fi
+  printf '%s' "$out" | env LC_ALL=C sort -u
+  return 0
+}
+
 _lanes_leak_sections() { # <primary> <parent>
-  local p="$1" pg="${LOOMWRIGHT_LANES_PGREP:-pgrep}"
+  local p="$1"
   echo "## worktrees"; git -C "$p" worktree list --porcelain 2>/dev/null | awk '/^worktree /'
   echo "## lanes-dir"; _lanes_leak_lanes_dir "$p" "${2:-}"
-  echo "## claude-p"; "$pg" -lf 'claude -p' 2>/dev/null
-  # The format tag IS the header: lanes_leaks compares this section only against a snapshot section
-  # written in the same format (a v1 `## merge-watch` snapshot section is read as not compared).
+  # The format tag IS the header: lanes_leaks compares a tagged section only against a snapshot section
+  # written in the same format (a v1 `## claude-p` / `## merge-watch` section is read as not compared).
+  echo "## claude-p v2"
+  _lanes_leak_claude "$p" "${2:-}"   # >>> claude-p body
   echo "## merge-watch v2"
   _lanes_leak_watchers "$p" "${2:-}"   # >>> merge-watch body
   echo "## config-checksum"
@@ -2524,7 +2597,7 @@ _lanes_leak_sections() { # <primary> <parent>
 # lanes_leaks <primary> <parent> [snapshot 0|1] — `--snapshot` records the wave-start state; otherwise
 # compares now against it. First line: `leaks: none` | `leaks: found — <sections>` | `leaks: unknown — …`.
 lanes_leaks() {
-  local p="$1" parent="$2" snap="${3:-0}" sf tmp sec found="" body="" d hd nc=""
+  local p="$1" parent="$2" snap="${3:-0}" sf tmp sec found="" body="" d hd nc="" v1 unk=""
   sf="$p/.supervisor/automate/$parent.leaks-snapshot"
   if [ "$snap" = 1 ]; then
     # The ONE exception to observation's exit 0: a snapshot request that wrote nothing exits 1 naming
@@ -2541,20 +2614,29 @@ lanes_leaks() {
   tmp="$(mktemp -d 2>/dev/null)" || { echo "leaks: unknown — no temp dir"; return 0; }
   _lanes_leak_sections "$p" "$parent" > "$tmp/now"
   for sec in worktrees lanes-dir claude-p merge-watch config-checksum git-status; do
-    hd="## $sec"
-    if [ "$sec" = merge-watch ]; then
-      hd="## merge-watch v2"
-      # A snapshot taken before the marker-based list (its section is the v1 `## merge-watch` pgrep
-      # output, or absent) is NOT compared: two formats never diff into a false `found`.
-      if ! grep -qxF -- "$hd" "$sf"; then
-        nc="merge-watch not compared — pre-v2 snapshot"
-        body="$body- merge-watch: not compared — the wave-start snapshot predates the marker-based watcher list (v1)
+    hd="## $sec"; v1=""
+    case "$sec" in
+      claude-p) hd="## claude-p v2"; v1="the run-scoped process list (v1 matched every such process on the machine)" ;;
+      merge-watch) hd="## merge-watch v2"; v1="the marker-based watcher list (v1)" ;;
+    esac
+    # A snapshot taken before a tagged section's format (its section is the v1 process-name match, or
+    # absent) is NOT compared on that section: two formats never diff into a false `found`.
+    if [ -n "$v1" ] && ! grep -qxF -- "$hd" "$sf"; then
+      nc="$nc${nc:+; }$sec not compared — pre-v2 snapshot"
+      body="$body- $sec: not compared — the wave-start snapshot predates $v1
 "
-        continue
-      fi
+      continue
     fi
     awk -v s="$hd" '/^## / { on = ($0 == s); next } on' "$sf" | env LC_ALL=C sort > "$tmp/a"
     awk -v s="$hd" '/^## / { on = ($0 == s); next } on' "$tmp/now" | env LC_ALL=C sort > "$tmp/b"
+    # An unreadable side (`unknown — <why>`, the claude-p body's fail-SAFE line) is unknown, never found.
+    # claude-p only: another section's body is data (a lanes-dir entry may be named anything).
+    if [ "$sec" = claude-p ] && grep -q '^unknown — ' "$tmp/a" "$tmp/b" 2>/dev/null; then
+      unk="$unk${unk:+, }$sec"
+      body="$body- $sec: $(cat "$tmp/b" "$tmp/a" | grep -m1 '^unknown — ')
+"
+      continue
+    fi
     if cmp -s "$tmp/a" "$tmp/b"; then body="$body- $sec: same
 "
     else
@@ -2566,7 +2648,9 @@ $d
     fi
   done
   rm -rf "$tmp"
-  if [ -z "$found" ]; then echo "leaks: none (vs snapshot $sf${nc:+; $nc})"; else echo "leaks: found — $found${nc:+ ($nc)}"; fi
+  if [ -n "$found" ]; then [ -n "$unk" ] && nc="$nc${nc:+; }$unk unknown"; echo "leaks: found — $found${nc:+ ($nc)}"
+  elif [ -n "$unk" ]; then echo "leaks: unknown — $unk unreadable (vs snapshot $sf${nc:+; $nc})"
+  else echo "leaks: none (vs snapshot $sf${nc:+; $nc})"; fi
   printf '%s' "$body"
   return 0
 }

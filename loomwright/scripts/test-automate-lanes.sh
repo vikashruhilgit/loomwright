@@ -512,7 +512,6 @@ cat > "$T/pgrep-stub" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
   *caffeinate*) [ -n "${STUB_CAFF_HELD:-}" ] && { echo 777; exit 0; }; exit 1 ;;
-  *"claude -p"*) [ -s "$PGREP_CLAUDE" ] && { cat "$PGREP_CLAUDE"; exit 0; }; exit 1 ;;
   *) exit 1 ;;
 esac
 EOF
@@ -525,14 +524,14 @@ cat > "$T/caff-stub" <<'EOF'
 echo "caffeinate $*" >> "$CAFF_LOG"
 EOF
 chmod +x "$T/pgrep-stub" "$T/ci-stub.sh" "$T/caff-stub"
-export LOOMWRIGHT_LANES_PGREP="$T/pgrep-stub" LOOMWRIGHT_LANES_CI_SLOT="$T/ci-stub.sh" PGREP_CLAUDE="$T/pgrep.claude"
+export LOOMWRIGHT_LANES_PGREP="$T/pgrep-stub" LOOMWRIGHT_LANES_CI_SLOT="$T/ci-stub.sh"
 export LOOMWRIGHT_LANES_CAFFEINATE="$T/caff-stub" CAFF_LOG="$T/caff.log" LOOMWRIGHT_LANES_BOOT_EPOCH=1000000000
 export LOOMWRIGHT_LANES_UNAME=Darwin LOOMWRIGHT_LANES_COORDINATOR_PID=4242
 # pmset stub: prints $PMSET_OUT's content (none by default), so the real Mac's power assertions — the
 # Claude desktop app holds one while it works — never leak into keep_awake.
 printf '%s\n' '#!/usr/bin/env bash' '[ "$*" = "-g assertions" ] && [ -s "${PMSET_OUT:-}" ] && cat "$PMSET_OUT"; exit 0' > "$T/pmset-stub"
 chmod +x "$T/pmset-stub"; export LOOMWRIGHT_LANES_PMSET="$T/pmset-stub" PMSET_OUT="$T/pmset.out"
-: > "$PGREP_CLAUDE"; : > "$CAFF_LOG"; : > "$PMSET_OUT"
+: > "$CAFF_LOG"; : > "$PMSET_OUT"
 sj() { bash "$S" lane-status "$RF2" --json 2>/dev/null; }
 lf() { jq -r --arg l "$1" ".lanes[] | select(.lane == \$l) | $2" <<<"$J"; }
 STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LR2/L1" --owner-command "$OWN" >/dev/null
@@ -898,17 +897,23 @@ cp "$T/L3-runfile.bak" "$RF3"
 out="$(LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-readiness "$L3")"
 
 # ---- V: --leaks, --resources, --tokens -----------------------------------------------------------------
+# V1-V6 read a fixed process table (ps stub: $PS_TABLE's content, the real ps when unset), so the
+# lanes launched above — whose stub `claude` exits after 60s — cannot change between snapshot and check.
+printf '%s\n' '#!/usr/bin/env bash' '[ -n "${PS_TABLE:-}" ] && { cat "$PS_TABLE"; exit 0; }; exec ps "$@"' > "$T/ps-stub"
+chmod +x "$T/ps-stub"; export LOOMWRIGHT_LANES_PS="$T/ps-stub" PS_TABLE="$T/ps.table"
+echo "    1     0 /sbin/launchd" > "$PS_TABLE"
 out="$(run lane-status "$RF2" --leaks)"; has "V1 no snapshot ⇒ unknown, exit 0" "$out" "leaks: unknown — no snapshot"
 out="$(run lane-status "$RF2" --leaks --snapshot)"; has "V2 snapshot written" "$out" "leaks: snapshot written"
 check "V3 unchanged ⇒ leaks: none" "$(run lane-status "$RF2" --leaks | head -1 | cut -c1-11)" "leaks: none"
 cp "$P/.supervisor/config.json" "$T/config.bak"
-echo "4321 claude -p --resume x" > "$PGREP_CLAUDE"; echo '{"auto_review": false}' > "$P/.supervisor/config.json"
+HL="claude -p"   # the headless command the claude-p section matches (one vendor reference for V4-V26)
+echo " 4321     1 bash $S _lane-run $LR2/L1 log died in -- env $HL --resume x" >> "$PS_TABLE"; echo '{"auto_review": false}' > "$P/.supervisor/config.json"
 git -C "$P" worktree add -q "$T/wt-leak" -b leak-wt 2>/dev/null
 out="$(run lane-status "$RF2" --leaks)"
 check "V4 leaks found names each section" "$(printf '%s\n' "$out" | head -1)" "leaks: found — worktrees, claude-p, config-checksum"
-has "V5 the leaked process is listed" "$out" "  + 4321 claude -p --resume x"
+has "V5 the leaked process is listed" "$out" "  + 4321 bash $S _lane-run $LR2/L1 log died in -- env $HL --resume x"
 has "V6 unchanged sections say same" "$out" "- merge-watch: same"
-cp "$T/config.bak" "$P/.supervisor/config.json"; : > "$PGREP_CLAUDE"; git -C "$P" worktree remove --force "$T/wt-leak" 2>/dev/null
+cp "$T/config.bak" "$P/.supervisor/config.json"; unset PS_TABLE; git -C "$P" worktree remove --force "$T/wt-leak" 2>/dev/null
 # V15-V20 (wave-close fix 2) the merge-watch section lists LIVE watchers from their *.merge-watch markers
 # (`## merge-watch v2`), never a process-name match: W3's `leaks: found — merge-watch` was a grep whose
 # argv named scripts/automate-merge-watch.sh. A pgrep wrapper hands the merge-watch pattern to the REAL
@@ -934,7 +939,7 @@ mwl "$RFMW" --snapshot >/dev/null
 check "V15 the snapshot's merge-watch section carries the v2 format tag (and no v1 header)" \
   "$(grep -cxF '## merge-watch v2' "$P/.supervisor/automate/$PARENTMW.leaks-snapshot" | tr -d ' '):$(grep -cxF '## merge-watch' "$P/.supervisor/automate/$PARENTMW.leaks-snapshot" | tr -d ' ')" "1:0"
 # the v1 mutation: the section body back to the process-name match; its own snapshot, before the decoy
-awk '/# >>> merge-watch body$/ { print "  \"$pg\" -lf automate-merge-watch 2>/dev/null"; next } { print }' "$S" > "$MUT/lanes-mw.sh"
+awk '/# >>> merge-watch body$/ { print "  \"${LOOMWRIGHT_LANES_PGREP:-pgrep}\" -lf automate-merge-watch 2>/dev/null"; next } { print }' "$S" > "$MUT/lanes-mw.sh"
 if ! cmp -s "$S" "$MUT/lanes-mw.sh" && bash -n "$MUT/lanes-mw.sh"; then MW_S="$MUT/lanes-mw.sh" mwl "$RFMV" --snapshot >/dev/null; MWMUT=1; else MWMUT=0; fi
 mw_spawn "grep $T/scripts/automate-merge-watch.sh"; MWD="$MWPID"
 out="$(mwl "$RFMW")"
@@ -972,6 +977,100 @@ check "V20 a v1 snapshot section ⇒ leaks: none, the first line naming the unco
   "$(printf '%s\n' "$out" | head -1)" "leaks: none (vs snapshot $SFMW; merge-watch not compared — pre-v2 snapshot)"
 has "V20b … and the body says why" "$out" "- merge-watch: not compared — the wave-start snapshot predates the marker-based watcher list (v1)"
 rm -f "$MUT/lanes-mw.sh"
+# V21-V26 the claude-p section lists only THIS run's processes (`## claude-p v2`), read from the real ps:
+# closing wave 1 of automate-2026-10-15-163325 read `leaks: found — claude-p` from another repo's healthy
+# wave (its `_lane-run <other>-lanes/<run>/L1|L2` wrappers and their headless children). Decoys are
+# `sleep 30`s renamed with `exec -a`; a wrapper decoy forks its headless child (cwd /, so only the
+# parent pid ties it) before it execs, so the child's ppid is the wrapper's pid. All named under $T.
+cp_spawn() { # <cwd> <argv0> — sets CPPID: a lone decoy running in <cwd>
+  ( cd "$1" && exec -a "$2" sleep 30 ) </dev/null >/dev/null 2>&1 &
+  CPPID=$!; BG_PIDS="$BG_PIDS $CPPID"; cp_seen "$CPPID" "$2"
+}
+cp_pair() { # <lane_dir> — sets CPW (a `_lane-run <lane_dir>` wrapper decoy) and CPC (its headless child)
+  bash -c '( cd / && exec -a "$3 --plugin-dir $2" sleep 30 ) & exec -a "bash $2/scripts/automate-lanes.sh _lane-run $1 $1.log $1.died /dev/null -- env $3 --plugin-dir $2" sleep 30' \
+    _ "$1" "$T" "$HL" </dev/null >/dev/null 2>&1 &
+  CPW=$!; BG_PIDS="$BG_PIDS $CPW"; cp_seen "$CPW" "bash $T/scripts/automate-lanes.sh _lane-run $1 "
+  local i=0; CPC=""
+  until [ -n "$CPC" ] || [ "$i" -ge 50 ]; do CPC="$(pgrep -P "$CPW" 2>/dev/null | head -1)"; [ -n "$CPC" ] || sleep 0.1; i=$((i + 1)); done
+  BG_PIDS="$BG_PIDS $CPC"; cp_seen "$CPC" "$HL --plugin-dir $T"
+}
+cp_seen() { local i=0; until case "$(ps -ww -o command= -p "$1" 2>/dev/null)" in "$2"*) true ;; *) false ;; esac || [ "$i" -ge 50 ]; do sleep 0.1; i=$((i + 1)); done; }
+cpl() { bash "${CP_S:-$S}" lane-status "$1" --leaks "${@:2}" 2>&1; }
+PARENTCP=automate-2026-10-16-090000; RFCP="$P/.supervisor/automate/$PARENTCP.md"; SFCP="$P/.supervisor/automate/$PARENTCP.leaks-snapshot"
+CPL1="$T/work/primary-lanes/$PARENTCP/L1"; CPF="$T/work/studio-lanes/automate-2026-10-15-153327"
+mkdir -p "$CPL1" "$CPF/L1" "$CPF/L2"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENTCP" > "$RFCP"
+cpl "$RFCP" --snapshot >/dev/null
+check "V21 the snapshot's claude-p section carries the v2 format tag (and no v1 header)" \
+  "$(grep -cxF '## claude-p v2' "$SFCP" | tr -d ' '):$(grep -cxF '## claude-p' "$SFCP" | tr -d ' ')" "1:0"
+# the v1 mutation: the section body back to the machine-wide match; its own run + snapshot, before the decoys
+PARENTCV=automate-2026-10-16-091000; RFCV="$P/.supervisor/automate/$PARENTCV.md"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENTCV" > "$RFCV"
+awk -v hl="$HL" '/# >>> claude-p body$/ { print "  pgrep -lf '"'"'" hl "'"'"' 2>/dev/null"; next } { print }' "$S" > "$MUT/lanes-cp.sh"
+if ! cmp -s "$S" "$MUT/lanes-cp.sh" && bash -n "$MUT/lanes-cp.sh"; then CP_S="$MUT/lanes-cp.sh" cpl "$RFCV" --snapshot >/dev/null; CPMUT=1; else CPMUT=0; fi
+# V22 another repo's healthy wave: two wrappers + their children, and a headless session whose cwd is its lane
+cp_pair "$CPF/L1"; FW1="$CPW"; FC1="$CPC"; cp_pair "$CPF/L2"; FW2="$CPW"; FC2="$CPC"
+cp_spawn "$CPF/L1" "$HL --resume foreign"; FO="$CPPID"
+out="$(cpl "$RFCP")"
+check "V22 a foreign run's lane processes do not count ⇒ leaks: none, claude-p: same" \
+  "$(printf '%s\n' "$out" | head -1 | cut -c1-11):$(printf '%s\n' "$out" | grep -cxF -- '- claude-p: same' | tr -d ' ')" "leaks: none:1"
+if [ "$CPMUT" = 1 ]; then
+  has "V22b mutation (the v1 machine-wide pgrep restored) trips V22: the foreign wave reads as a leak" "$(CP_S="$MUT/lanes-cp.sh" cpl "$RFCV")" "- claude-p: changed"
+else bad "V22b mutation control not built"; fi
+# V23 this run's leftover lane: its wrapper and (by parent pid alone — cwd /) its headless child
+cp_pair "$CPL1"; OW="$CPW"; OC="$CPC"
+out="$(cpl "$RFCP")"
+check "V23 this run's leftover lane process still reads found — wrapper and child listed, foreign ones not" \
+  "$(printf '%s\n' "$out" | head -1):$(printf '%s\n' "$out" | grep -c "^  + $OW bash $T/scripts/automate-lanes.sh _lane-run $CPL1 " | tr -d ' '):$(printf '%s\n' "$out" | grep -cxF -- "  + $OC $HL --plugin-dir $T 30" | tr -d ' '):$(printf '%s\n' "$out" | grep -cE "^  \+ ($FW1|$FC1|$FW2|$FC2|$FO) " | tr -d ' ')" \
+  "leaks: found — claude-p:1:1:0"
+mw_kill "$OW" "$OC"
+# V24 a headless session of this run whose wrapper is gone, tied by its working directory (a lane of the table)
+printf 'L1\t%s\treqs/a.md\t%s-L1\t-\t-\t-\tcreated\t-\t-\n' "$CPL1" "$PARENTCP" > "$P/.supervisor/automate/$PARENTCP.lanes"
+cp_spawn "$CPL1" "$HL --resume orphan"; OO="$CPPID"
+out="$(cpl "$RFCP")"
+check "V24 an orphaned headless session in this run's lane (cwd) reads found, listed" \
+  "$(printf '%s\n' "$out" | head -1):$(printf '%s\n' "$out" | grep -cxF -- "  + $OO $HL --resume orphan 30" | tr -d ' ')" "leaks: found — claude-p:1"
+# V25 an unreadable process table reads unknown, never found (fail SAFE, exit 0)
+out="$(LOOMWRIGHT_LANES_PS=false cpl "$RFCP")"; rc=$?
+check "V25 ps unreadable ⇒ leaks: unknown naming the section, exit 0" \
+  "$rc:$(printf '%s\n' "$out" | head -1)" "0:leaks: unknown — claude-p unreadable (vs snapshot $SFCP)"
+has "V25b … and the body says why" "$out" "- claude-p: unknown — the process table is unreadable (ps)"
+# V25c a headless session to attribute (V22's foreign orphan still runs) with no working-directory reader
+out="$(LOOMWRIGHT_LANES_LSOF="$T/no-lsof" LOOMWRIGHT_LANES_PROC="$T/no-proc" cpl "$RFCP")"; rc=$?
+check "V25c no cwd reader (lsof, /proc) ⇒ leaks: unknown, exit 0, the body naming why" \
+  "$rc:$(printf '%s\n' "$out" | head -1):$(printf '%s\n' "$out" | grep -cxF -- "- claude-p: unknown — no reader for a process's working directory (lsof, /proc)" | tr -d ' ')" \
+  "0:leaks: unknown — claude-p unreadable (vs snapshot $SFCP):1"
+# V25e no lsof ⇒ the /proc fallback attributes by `<proc>/<pid>/cwd` (a fake tree: V24's orphan in this
+# run's lane, V22's foreign orphan in its own lane) — the minimal-container path, not only lsof's
+mkdir -p "$T/fakeproc/self" "$T/fakeproc/$OO" "$T/fakeproc/$FO"
+ln -s "$CPL1" "$T/fakeproc/$OO/cwd"; ln -s "$CPF/L1" "$T/fakeproc/$FO/cwd"
+out="$(LOOMWRIGHT_LANES_LSOF="$T/no-lsof" LOOMWRIGHT_LANES_PROC="$T/fakeproc" cpl "$RFCP")"
+check "V25e lsof absent, /proc present ⇒ this run's orphan found by its /proc cwd, the foreign one not" \
+  "$(printf '%s\n' "$out" | head -1):$(printf '%s\n' "$out" | grep -cxF -- "  + $OO $HL --resume orphan 30" | tr -d ' '):$(printf '%s\n' "$out" | grep -c "^  + $FO " | tr -d ' ')" \
+  "leaks: found — claude-p:1:0"
+rm -rf "$T/fakeproc"
+# V25d the unknown sniff is claude-p's alone: a lanes-dir entry NAMED like the fail-SAFE line is a leak
+: > "$T/work/primary-lanes/unknown — decoy"
+out="$(cpl "$RFCP")"
+check "V25d a <primary>-lanes entry named 'unknown — …' reads found — lanes-dir, never unknown" \
+  "$(printf '%s\n' "$out" | head -1 | grep -c '^leaks: found — lanes-dir' | tr -d ' '):$(printf '%s\n' "$out" | grep -cxF -- '  + unknown — decoy' | tr -d ' ')" "1:1"
+rm -f "$T/work/primary-lanes/unknown — decoy"
+# V26 a snapshot written before v2 (`## claude-p` + machine-wide pgrep lines) is NOT compared — the
+# orphan of V24 still runs, and still the first line is never a false found
+awk -v hl="$HL" '$0 == "## claude-p v2" { print "## claude-p"; print "4242 " hl " --resume someone-else"; skip = 1; next } /^## / { skip = 0 } !skip' "$SFCP" > "$SFCP.t" && mv "$SFCP.t" "$SFCP"
+out="$(cpl "$RFCP")"
+check "V26 a v1 claude-p snapshot section ⇒ leaks: none, the first line naming the uncompared section" \
+  "$(printf '%s\n' "$out" | head -1)" "leaks: none (vs snapshot $SFCP; claude-p not compared — pre-v2 snapshot)"
+has "V26b … and the body says why" "$out" "- claude-p: not compared — the wave-start snapshot predates the run-scoped process list (v1 matched every such process on the machine)"
+mw_kill "$OO" "$FW1" "$FC1" "$FW2" "$FC2" "$FO"
+# V27 the tie test reads a wrapper's argv tail from its start: a lane path with a space is never cut at it
+check "V27 a wrapper argv tail whose lane path holds a space ties to its run (root and table forms), not to a sibling run" \
+  "$( . "$S"; t() { _lanes_path_tied "$@" && echo y || echo n; }
+     printf '%s' "$(t "/w/my repo-lanes/r1/L1 /w/my repo-lanes/r1/L1.stream.log x" "/w/my repo-lanes/r1" "")"
+     printf '%s' "$(t "/w/my repo-lanes/r1/L1 log x" "" "/w/my repo-lanes/r1/L1")"
+     printf '%s' "$(t "/w/my repo-lanes/r10/L1 /w/my repo-lanes/r1/L1.stream.log x" "/w/my repo-lanes/r1" "/w/my repo-lanes/r1/L1")" )" "yyn"
+rm -f "$MUT/lanes-cp.sh" "$P/.supervisor/automate/$PARENTCP.lanes" "$P/.supervisor/automate/$PARENTCP".* "$P/.supervisor/automate/$PARENTCV".*
+rm -rf "$T/work/primary-lanes/$PARENTCP" "$T/work/studio-lanes"
 out="$(run lane-status "$RF2" --resources)"; has "V7 no fleet.log ⇒ resources unknown" "$out" "resources: unknown"
 printf '2026-10-07T10:00:00Z load1=5 load=ok L1_rss=100M L2_rss=300M nonlane_load=10%%\n2026-10-07T10:00:10Z load1=9 load=busy L1_rss=200M L2_rss=150M nonlane_load=20%%\n' > "$P/.supervisor/automate/$PARENT2.fleet.log"
 out="$(run lane-status "$RF2" --resources)"
