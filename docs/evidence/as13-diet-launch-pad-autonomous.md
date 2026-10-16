@@ -133,7 +133,7 @@ Each run individually from the worktree root:
 
 Also run: `bash scripts/check-version-bump.sh` (exit 0 — not bumped, fragments pending, legal), `bash scripts/check-skills-index-sync.sh` (green), `bash scripts/check-vendor-coupling.sh` (exit 0 — see below).
 
-Vendor-coupling: the subtask-2 rationale doc carried one install-root token over its zero allowance (a BREACH on the inherited tree); it is reworded away. `skills/autonomous-loop/multi-iteration.md` is a new path carrying 13 references moved out of `SKILL.md` (which went from 51 to 29 measured), so `loomwright/docs/vendor-coupling-manifest.json` gains its allowance (13) with a reason; the skill's total fell from 51 to 42.
+Vendor-coupling: the subtask-2 rationale doc carried one install-root token over its zero allowance (a BREACH on the inherited tree); it is reworded away. `skills/autonomous-loop/multi-iteration.md` is a new path carrying 13 references moved out of `SKILL.md` (which went from 51 to 29 measured), so `loomwright/docs/vendor-coupling-manifest.json` gains its allowance (13) with a reason, and `SKILL.md`'s allowance is lowered from 52 to its measured 29 with a re-measured reason; the skill's total fell from 51 to 42 (SKILL.md 29 + multi-iteration.md 13).
 
 ## Validation 2 — mutation control on a real `global` row
 
