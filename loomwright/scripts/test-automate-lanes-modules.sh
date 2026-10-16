@@ -36,8 +36,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 E="$HERE/automate-lanes.sh"
 MOD_DIR="$HERE/automate-lanes.d"
-# The last single-file automate-lanes.sh (the split's base, origin/main after PRs #569, #572, #574).
-BASE_SHA=e2327712af6edf79d381b5a816af49729bc5be9f
+# The last single-file automate-lanes.sh (the split's base, origin/main after PRs #569, #572, #574, #578, #579, #580).
+BASE_SHA=087b9e417e521217e3998381f3d8c2f79695e109
 # The expected function arms (`<sub>:<function>`) and modules — the test's OWN copies, so a dropped
 # or added arm / module fails check 1 / 2 rather than silently changing what is checked.
 ARMS="lane-create:lanes_create lane-launch:lanes_launch relay-hook:lanes_relay_hook lane-answer:lanes_answer

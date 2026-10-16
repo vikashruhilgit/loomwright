@@ -31,7 +31,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 E="$HERE/automate-trail.sh"
 MOD_DIR="$HERE/automate-trail.d"
 # The last single-file automate-trail.sh (the split's base commit).
-BASE=e2327712af6edf79d381b5a816af49729bc5be9f
+BASE=087b9e417e521217e3998381f3d8c2f79695e109
 BASE_PATH=loomwright/scripts/automate-trail.sh
 MISSING_MSG="automate-trail: missing module file: automate-trail.d"
 

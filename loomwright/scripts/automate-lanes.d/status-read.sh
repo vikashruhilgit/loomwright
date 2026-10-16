@@ -291,7 +291,7 @@ _lanes_resolve() {
   esac
 }
 
-# _lanes_timeline <runfile> <supervisor_dir> <now_epoch> <state> <last_launch_utc> — the lane's step timeline:
+# _lanes_timeline <runfile> <supervisor_dir> <now_epoch> <state> <last_launch_utc> [<lane session id>] — the lane's step timeline:
 # {started_at, current, label, steps: [{id, name, state, started_at, ended_at, duration_s, lines}],
 #  phase, phase_status, phases: [{phase, at}]} — the last three the lane's Supervisor's (null / []). The seven steps are the per-item loop as
 # a lane records it: pick · plan (Launch Pad) · build (Supervisor up to the PR) · heal (Phase 4.5) ·
@@ -302,6 +302,21 @@ _lanes_resolve() {
 # reached at its first evidence; the current step is the furthest one reached, its state taken from the
 # lane state (`active`, `waiting` on the owner, `held`, `trouble`; every step `done` once merged/done).
 # A step passed without a line of its own reads `done` with null times: the run never said when it ran.
+# The Supervisor's own phase evidence: `## Session` `phase:` is projected by build-state.sh from two
+# session-log events only (EXECUTE / LOOP), so it reads EXECUTE through FINALIZE and Phase 4.5. Two more
+# sources carry the real phase: (1) the canonical Decisions Log TABLE rows (`| # | Phase | Decision |
+# Rationale |`, state-management SKILL.md) — undated, so reach-only: SELF_HEAL/LOOP reach Heal, any other
+# phase Build — trusted under the same predicate as `phase`; (2) the first `pr_created` event (written by
+# hook-dispatch-on-pr-create.sh into `<supervisor_dir>/logs/<## Session session_id>.jsonl`) at or after
+# the pick, a TIMED Heal start: FINALIZE opens the PR and Phase 4.5 is always entered right after it
+# (agents/supervisor.md §"Phase 4.5"), and Build is "Supervisor up to the PR" by its own definition.
+# Whose state it is: `## Checkpoint` `created:` (the dated trust) is in almost no real state file — the
+# canonical template writes an agent-filled `last_checkpoint:` (a bare date, "(time not captured)", a fake
+# midnight), so no Checkpoint time is trusted beyond `created:`. Identity is: a lane runs ONE item in one
+# session (lane-create writes a one-line backlog), so a state whose `## Session` `session_id` is the lane's
+# own session (the lane table's, from its stream `system/init`) is this item's. Such a state is trusted like
+# a running one — phase, status, Decisions Log table rows, the Build label — whether or not the lane still
+# runs, and still without a time: a lane that stopped mid-EXECUTE keeps its phase.
 # Boundaries: the `picked` line ends Pick and starts Plan; a Launch Pad "brief saved" line ends Plan and starts Build (/autonomous hands the brief to
 # the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too. The pinned no-PR
 # line (`ran /autonomous — no PR: <status_reason> (…)`, per-item-loop.md step 2) reaches only Plan when its
@@ -313,7 +328,7 @@ _lanes_resolve() {
 # lane state then colors, and every later step stays `pending`.
 # Fail-SAFE: anything unreadable ⇒ `null`.
 _lanes_timeline() {
-  local rf="$1" sm="$2/state.md" now="$3" state="$4" llu="$5" out
+  local rf="$1" sm="$2/state.md" now="$3" state="$4" llu="$5" lsid="${6:-}" out sid
   # Validated, never trusted by exit code: under `pipefail` an absent state.md fails the pipeline even
   # when jq printed a good object, and an `|| printf null` there would emit two JSON texts.
   out="$({
@@ -322,15 +337,21 @@ _lanes_timeline() {
         x = substr($0, 24); gsub(/\t/, " ", x); printf "P\t%s\t%s\n", substr($0, 3, 20), x }' "$rf" 2>/dev/null
     [ -f "$sm" ] && awk 'function val(s) { sub(/^- [a-z_]*: */, "", s); gsub(/\t/, " ", s); return s }
       /^## / { sec = $0; next }
-      sec == "## Session" && /^- (phase|status):/ { k = $2; sub(/:$/, "", k); printf "S\t%s\t%s\n", k, val($0) }
+      sec == "## Session" && /^- (phase|status|session_id):/ { k = $2; sub(/:$/, "", k); printf "S\t%s\t%s\n", k, val($0) }
       sec == "## Checkpoint" && /^- (created|last_updated):/ { k = $2; sub(/:$/, "", k); printf "S\t%s\t%s\n", k, val($0) }
       sec == "## Decisions Log" && /^- phase: / && /timestamp: / {
         ph = $0; sub(/^- phase: */, "", ph); sub(/[, ].*/, "", ph)
         ts = $0; sub(/.*timestamp: */, "", ts); sub(/[ ,].*/, "", ts)
         d = $0; sub(/^.*decision: */, "", d); sub(/, (rationale|timestamp):.*/, "", d); gsub(/\t/, " ", d)
-        printf "D\t%s\t%s\t%s\n", ph, ts, d }' "$sm" 2>/dev/null
+        printf "D\t%s\t%s\t%s\n", ph, ts, d }
+      sec == "## Decisions Log" && /^\| *[0-9]+ *\| *[A-Z][A-Z0-9_]* *\|/ {
+        n = split($0, f, "|"); ph = f[3]; gsub(/^ +| +$/, "", ph); d = f[4]; gsub(/^ +| +$/, "", d); gsub(/\t/, " ", d)
+        printf "T\t%s\t%s\n", ph, d }' "$sm" 2>/dev/null
+    sid="$([ -f "$sm" ] && sed -nE 's/^- session_id:[[:space:]]*//p' "$sm" 2>/dev/null | head -1 | tr -cd 'A-Za-z0-9_-')"
+    [ -n "$sid" ] && [ -f "$2/logs/$sid.jsonl" ] && jq -R -r 'fromjson? | select(.event? == "pr_created")
+      | "E\tpr_created\t\(.ts // "")\t\(.url // "" | gsub("[\t\n]"; " "))"' "$2/logs/$sid.jsonl" 2>/dev/null
     true
-  } | jq -R -s -c --arg state "$state" --arg llu "$(_lanes_dash "$llu")" --argjson now "$now" '
+  } | jq -R -s -c --arg state "$state" --arg llu "$(_lanes_dash "$llu")" --arg lsid "$(_lanes_dash "$lsid")" --argjson now "$now" '
     def ep: (try fromdateiso8601 catch null);
     def clip(n): if length > n then .[0:n - 1] + "…" else . end;
     def ids: ["pick", "plan", "build", "heal", "drain", "decide", "merge"];
@@ -366,18 +387,30 @@ _lanes_timeline() {
     | (($s.created // "") | ep) as $se
     | ($se != null and ($pick == null or $se >= $pick.e)) as $sup
     | ($se == null and ($s.status // "") == "running" and $state == "running" and ($s.phase // "") != "") as $live
+    | ($lsid != "" and ($s.session_id // "") == $lsid) as $own
+    | (($live or $own) and ($s.phase // "") != "") as $ph
     | ([$p[] | . as $x | ($x.text | cls)[] | {step: ., ts: $x.ts, e: $x.e, text: $x.text}]
        + (if $sup then
             [{step: "build", ts: $s.created, e: $se, text: "Supervisor started"}]
             + [$rows[] | select(.[0] == "D") | {step: (.[1] | sstep), ts: .[2], e: (.[2] | ep),
                  text: ("Supervisor " + .[1] + ": " + (.[3] // ""))} | select(.e != null)]
+            + [$rows[] | select(.[0] == "T") | {step: (.[1] | sstep), ts: null, e: null,
+                 text: ("Supervisor " + .[1] + ": " + (.[2] // ""))}]
             + (if ($s.phase // "") | sstep == "heal" then
                  [{step: "heal", ts: ($s.last_updated // $s.created), e: ((($s.last_updated // "") | ep) // $se),
                    text: ("Supervisor " + $s.phase + " (" + ($s.status // "?") + ")")}] else [] end)
-          else [] end)) as $ev0
-    | ([($ev0[] | select(.step != "park") | .step), (if $live then ($s.phase | sstep) else empty end) | ord] | max // 0) as $reach
+          elif $live or $own then
+            [$rows[] | select(.[0] == "T") | {step: (.[1] | sstep), ts: null, e: null,
+               text: ("Supervisor " + .[1] + ": " + (.[2] // ""))}]
+          else [] end)
+       + (if $pick == null then [] else
+            [$rows[] | select(.[0] == "E" and .[1] == "pr_created") | {ts: .[2], e: (.[2] | ep), url: (.[3] // "")}
+               | select(.e != null and .e >= $pick.e)] | sort_by(.e) | .[0:1]
+            | map({step: "heal", ts, e, text: ("Supervisor opened the PR" + (if .url == "" then "" else " " + .url end) + " — Phase 4.5")})
+          end)) as $ev0
+    | ([($ev0[] | select(.step != "park") | .step), (if $ph then ($s.phase | sstep) else empty end) | ord] | max // 0) as $reach
     | [$ev0[] | if .step == "park" then .step = (if $reach >= ("drain" | ord) then "merge" else ids[$reach] end) else . end] as $ev
-    | ([($ev[] | .step), (if $live then ($s.phase | sstep) else empty end) | ord] | max // 0) as $far
+    | ([($ev[] | .step), (if $ph then ($s.phase | sstep) else empty end) | ord] | max // 0) as $far
     | (if ($state | test("^(merged|done)$")) then 7 else $far end) as $cur
     | (if $state == "running" then "active"
        elif ($state | test("^(awaiting_input|answer_pending|ready_for_release|awaiting_merge)$")) then "waiting"
@@ -385,14 +418,17 @@ _lanes_timeline() {
        elif ($state | test("^(stalled|died|lost_to_reset|missing|blocked_launch|gone|escalated|failed|rate_limit|drain_died|abandoned)$")) then "trouble"
        else "active" end) as $cs
     | [range(0; 7) as $i
-        | ([$ev[] | select(.step == ids[$i])] | sort_by(.e)) as $mine
+        | ([$ev[] | select(.step == ids[$i])] | sort_by(.e // 9e15)) as $mine
         | {i: $i, first: ($mine | first), last: ($mine | last), lines: [$mine[] | .text | clip(140)][-4:],
            state: (if $i < $cur then "done" elif $i == $cur then $cs else "pending" end)}] as $st
     | [$st[] | . as $x
         | ([$st[($x.i + 1):][] | select(.first != null and .i <= $cur) | .first.e] | min) as $next
         | (if $x.state == "pending" or ($x.i == $cur) then null else ($next // $x.last.e) end) as $end
-        | ($x.first.e // null) as $b
-        | {id: ids[$x.i], name: names[$x.i], state: $x.state, started_at: ($x.first.ts // null),
+        # A step whose first dated line comes after it ended (a retrospective line, e.g. `ran /autonomous`
+        # written once /autonomous returned, past the PR that started Heal) has no known start: null.
+        | ($x.first.e // null) as $b0
+        | (if $b0 != null and $end != null and $b0 > $end then null else $b0 end) as $b
+        | {id: ids[$x.i], name: names[$x.i], state: $x.state, started_at: (if $b == null then null else $x.first.ts end),
            ended_at: (if $end == null then null else ($end | todateiso8601) end),
            duration_s: (if $b == null then null elif $end != null then ($end - $b)
                         elif $x.i == $cur then ([$now - $b, 0] | max) else null end),
@@ -402,12 +438,12 @@ _lanes_timeline() {
     | {started_at: (($p | first | .ts) // (if $llu == "" then null else $llu end)),
        current: ($c.id // null),
        label: (if $c == null then (if $cur >= 7 then "Done" else null end)
-               elif $c.id == "build" and ($sup or $live) and ($s.phase // "") != "" then "Build · " + $s.phase
+               elif $c.id == "build" and ($sup or $live or $own) and ($s.phase // "") != "" then "Build · " + $s.phase
                elif $c.id == "drain" and $round != null then "Drain · round " + $round
                else $c.name end),
        steps: $steps,
-       phase: (if $sup or $live then ($s.phase // null) else null end),
-       phase_status: (if $sup or $live then ($s.status // null) else null end),
+       phase: (if $sup or $live or $own then ($s.phase // null) else null end),
+       phase_status: (if $sup or $live or $own then ($s.status // null) else null end),
        phases: (if $sup then [$rows[] | select(.[0] == "D") | {phase: .[1], at: .[2]}] | group_by(.phase) | map(min_by(.at)) | sort_by(.at)
                 else [] end)}' 2>/dev/null)"
   if jq -e 'type == "object"' >/dev/null 2>&1 <<<"$out"; then printf '%s' "$out"; else printf 'null'; fi
@@ -540,7 +576,7 @@ _lanes_lane_json() {
   jq -e 'type == "object" or . == null' >/dev/null 2>&1 <<<"$pdg" || pdg=null
   # A lane closed out as done draws every step done, like a merged one; removed without it, the step it stopped at.
   tst="$state"; [ "$oc" = done ] && tst=done
-  tl="$(_lanes_timeline "$rf" "$sup" "$now" "$tst" "$llu")"
+  tl="$(_lanes_timeline "$rf" "$sup" "$now" "$tst" "$llu" "$sid")"
   jq -e 'type == "object" or . == null' >/dev/null 2>&1 <<<"$tl" || tl=null
   jq -n -c --arg lane "$lane" --arg path "$path" --arg item "$(_lanes_dash "$item")" --arg run "$run" --argjson pdg "$pdg" --argjson tl "$tl" \
     --arg state "$state" --arg reason "$reason" --arg pid "$(_lanes_dash "$pid")" --arg sid "$(_lanes_dash "$sid")" \

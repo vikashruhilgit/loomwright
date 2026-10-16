@@ -293,3 +293,25 @@ Re-measured on 2026-10-16: base is a clean worktree detached at `e232771`; branc
 | `scripts/check-vendor-coupling.sh` | OK, 2678 refs | OK, 2679 refs | +1 = the `test-automate-lanes-modules.sh` reference, §5 |
 | `scripts/check-locale-prefix.sh` | OK, 343/343 | OK, 373/373 | |
 | `scripts/check-version-bump.sh` | OK, 4 fragments | OK, 5 fragments | +1 = this item's fragment |
+
+## 10. Re-based onto `087b9e4` (PRs #578, #579, #580)
+
+`origin/main` moved again, to `087b9e4`: #578 (`9ebc412`), #579 (`dd56a39`) and #580 (`ba43c77`) edited `automate-lanes.sh` and `test-automate-lanes.sh` (`git diff --stat e232771 087b9e4`: those two, `skills/automate-loop/lanes.md` and three changelog fragments). Merged in with a regular merge commit, no rebase. The module tests' base pin is now `087b9e4` (`BASE_SHA` and `BASE`; `automate-trail.sh` is byte-identical at both shas). This supersedes §9's pin.
+
+Port, hunk by hunk and verbatim: each `git diff e232771 087b9e4` hunk was applied with `patch -F0` (zero fuzz) to the one file it applied to; every hunk matched exactly one file.
+- `automate-lanes.sh`: the `LANE_SYS` hunk went to the entry point (378 → 385 lines); the 8 `_lanes_timeline` / `_lanes_lane_json` hunks to `status-read.sh` (752 → 788, still the largest module, under 800). AC3 holds: the stripped bundle equals `git show 087b9e4:loomwright/scripts/automate-lanes.sh` byte-for-byte (`test-automate-lanes-modules.sh` 56/56).
+- `test-automate-lanes.sh`: H1b–H1f went to `01-create-to-wait.sh` (620 → 626), AJ8d–AJ8q to `05-timeline-and-gate.sh` (500 → 601).
+- One non-move edit in the §3 (a) class: the four mutant builders the merge brought in (AJ8k, AJ8l, AJ8m, AJ8q) read `"$SB"` instead of `"$S"` for the `sed` input and its `cmp -s` gate. On `"$S"` (the thin entry) they report `mutation did not apply`, 907/911.
+- Vendor coupling: the merge brought in no counted reference (base `087b9e4` 2678, unchanged from `e232771`).
+
+Re-measured on 2026-10-16: base is a clean worktree detached at `087b9e4`; branch is the merge commit's tree.
+
+| Test / gate | Base `087b9e4` | Branch | Note |
+|---|---|---|---|
+| `test-automate-lanes.sh` | 909/909 | 911/911 | +2 = AG7a/AG7b |
+| `test-automate-lanes-modules.sh` | absent | 56/56 | |
+| `test-automate-trail.sh` | — | 782/782 | |
+| `test-automate-trail-modules.sh` | absent | 24/24 | |
+| `test-guard-lane-wait-armed.sh` | 45/45 | 45/45 | |
+| `test-reconcile-jobs.sh` | — | 115/115 | |
+| `scripts/check-vendor-coupling.sh` | OK, 2678 refs | OK, 2679 refs | +1 = the `test-automate-lanes-modules.sh` reference, §5 |
