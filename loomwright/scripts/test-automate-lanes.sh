@@ -1035,6 +1035,17 @@ out="$(LOOMWRIGHT_LANES_PS=false cpl "$RFCP")"; rc=$?
 check "V25 ps unreadable ⇒ leaks: unknown naming the section, exit 0" \
   "$rc:$(printf '%s\n' "$out" | head -1)" "0:leaks: unknown — claude-p unreadable (vs snapshot $SFCP)"
 has "V25b … and the body says why" "$out" "- claude-p: unknown — the process table is unreadable (ps)"
+# V25c a headless session to attribute (V22's foreign orphan still runs) with no working-directory reader
+out="$(LOOMWRIGHT_LANES_LSOF="$T/no-lsof" LOOMWRIGHT_LANES_PROC="$T/no-proc" cpl "$RFCP")"; rc=$?
+check "V25c no cwd reader (lsof, /proc) ⇒ leaks: unknown, exit 0, the body naming why" \
+  "$rc:$(printf '%s\n' "$out" | head -1):$(printf '%s\n' "$out" | grep -cxF -- "- claude-p: unknown — no reader for a process's working directory (lsof, /proc)" | tr -d ' ')" \
+  "0:leaks: unknown — claude-p unreadable (vs snapshot $SFCP):1"
+# V25d the unknown sniff is claude-p's alone: a lanes-dir entry NAMED like the fail-SAFE line is a leak
+: > "$T/work/primary-lanes/unknown — decoy"
+out="$(cpl "$RFCP")"
+check "V25d a <primary>-lanes entry named 'unknown — …' reads found — lanes-dir, never unknown" \
+  "$(printf '%s\n' "$out" | head -1 | grep -c '^leaks: found — lanes-dir' | tr -d ' '):$(printf '%s\n' "$out" | grep -cxF -- '  + unknown — decoy' | tr -d ' ')" "1:1"
+rm -f "$T/work/primary-lanes/unknown — decoy"
 # V26 a snapshot written before v2 (`## claude-p` + machine-wide pgrep lines) is NOT compared — the
 # orphan of V24 still runs, and still the first line is never a false found
 awk -v hl="$HL" '$0 == "## claude-p v2" { print "## claude-p"; print "4242 " hl " --resume someone-else"; skip = 1; next } /^## / { skip = 0 } !skip' "$SFCP" > "$SFCP.t" && mv "$SFCP.t" "$SFCP"

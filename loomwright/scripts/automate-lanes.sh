@@ -198,7 +198,8 @@
 # LOOMWRIGHT_LANES_INIT_WAIT_S (default 15: wait for the session id), LOOMWRIGHT_LANES_STOP_GRACE_S
 # (default 60: TERM→KILL grace for --stop), LOOMWRIGHT_MACHINE_LOAD_CMD, LOOMWRIGHT_LANE_RECHECK_S,
 # LOOMWRIGHT_GH_BIN, LOOMWRIGHT_LANES_CI_SLOT, LOOMWRIGHT_LANES_PGREP, LOOMWRIGHT_LANES_PS (the --leaks
-# claude-p process table), LOOMWRIGHT_LANES_CAFFEINATE,
+# claude-p process table), LOOMWRIGHT_LANES_LSOF / LOOMWRIGHT_LANES_PROC (its working-directory readers),
+# LOOMWRIGHT_LANES_CAFFEINATE,
 # LOOMWRIGHT_LANES_UNAME, LOOMWRIGHT_LANES_COORDINATOR_PID, LOOMWRIGHT_LANES_BOOT_EPOCH,
 # LOOMWRIGHT_LANES_TOKEN_LEDGER, LOOMWRIGHT_LANES_WATCH_ITERATIONS, LOOMWRIGHT_LANES_WATCH_INTERVAL_S,
 # LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30: the bound on waiting for a live lock holder),
@@ -2536,6 +2537,7 @@ _lanes_path_tied() {
 # directory is outside every lane directory is not listed.
 _lanes_leak_claude() {
   local p="$1" parent="${2:-}" root="" dirs="" tbl ps_out pid ppid cmd w1 r w2 rest wr=" " cand="" out="" pids cw x
+  local lsof="${LOOMWRIGHT_LANES_LSOF:-lsof}" proc="${LOOMWRIGHT_LANES_PROC:-/proc}"
   tbl="$p/.supervisor/automate/$parent.lanes"
   if [ -n "$parent" ]; then
     root="$p-lanes/$parent"
@@ -2559,10 +2561,10 @@ _lanes_leak_claude() {
   done <<<"$ps_out"
   if [ -n "$cand" ]; then
     pids="$(printf '%s' "$cand" | cut -f1 | paste -sd, -)"
-    if command -v lsof >/dev/null 2>&1; then
-      cw="$(lsof -a -d cwd -Fn -p "$pids" 2>/dev/null | awk '/^p/ { q = substr($0, 2) } /^n/ { print q "\t" substr($0, 2) }')"
-    elif [ -d /proc/self ]; then
-      cw="$(for x in ${pids//,/ }; do printf '%s\t%s\n' "$x" "$(readlink "/proc/$x/cwd" 2>/dev/null)"; done)"
+    if command -v "$lsof" >/dev/null 2>&1; then
+      cw="$("$lsof" -a -d cwd -Fn -p "$pids" 2>/dev/null | awk '/^p/ { q = substr($0, 2) } /^n/ { print q "\t" substr($0, 2) }')"
+    elif [ -d "$proc/self" ]; then
+      cw="$(for x in ${pids//,/ }; do printf '%s\t%s\n' "$x" "$(readlink "$proc/$x/cwd" 2>/dev/null)"; done)"
     else
       echo "unknown — no reader for a process's working directory (lsof, /proc)"; return 0
     fi
@@ -2628,7 +2630,8 @@ lanes_leaks() {
     awk -v s="$hd" '/^## / { on = ($0 == s); next } on' "$sf" | env LC_ALL=C sort > "$tmp/a"
     awk -v s="$hd" '/^## / { on = ($0 == s); next } on' "$tmp/now" | env LC_ALL=C sort > "$tmp/b"
     # An unreadable side (`unknown — <why>`, the claude-p body's fail-SAFE line) is unknown, never found.
-    if grep -q '^unknown — ' "$tmp/a" "$tmp/b" 2>/dev/null; then
+    # claude-p only: another section's body is data (a lanes-dir entry may be named anything).
+    if [ "$sec" = claude-p ] && grep -q '^unknown — ' "$tmp/a" "$tmp/b" 2>/dev/null; then
       unk="$unk${unk:+, }$sec"
       body="$body- $sec: $(cat "$tmp/b" "$tmp/a" | grep -m1 '^unknown — ')
 "
