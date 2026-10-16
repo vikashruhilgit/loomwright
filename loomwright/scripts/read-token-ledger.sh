@@ -166,13 +166,19 @@ ROOT=""
 ROOTS=""
 PROJECTS_DIR=""
 
+# One idiom for every value-taking flag: `need_value "$@"` dies (usage, exit 1)
+# when the flag is the last argument, so the `shift 2` after it always has two
+# arguments to drop. A bare `shift 2` on a lone trailing flag fails WITHOUT
+# shifting, and the loop then re-reads the same flag forever (a hang, not an error).
+need_value() { [ $# -ge 2 ] || die_usage; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --session) MODE="session"; ID="${2:-}"; shift 2 ;;
-    --run-id)  MODE="run-id"; ID="${2:-}"; shift 2 ;;
-    --per-item) MODE="per-item"; ID="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --projects-dir) PROJECTS_DIR="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --root)    ROOT="${2:-}"
+    --session) need_value "$@"; MODE="session"; ID="$2"; shift 2 ;;
+    --run-id)  need_value "$@"; MODE="run-id"; ID="$2"; shift 2 ;;
+    --per-item) need_value "$@"; MODE="per-item"; ID="$2"; shift 2 ;;
+    --projects-dir) need_value "$@"; PROJECTS_DIR="$2"; shift 2 ;;
+    --root)    need_value "$@"; ROOT="$2"
                case "$NL$ROOTS$NL" in *"$NL$ROOT$NL"*) ;; *) ROOTS="${ROOTS:+$ROOTS$NL}$ROOT" ;; esac
                shift 2 ;;
     -h|--help) die_usage ;;
@@ -496,7 +502,7 @@ per_item_report() {
   [ -n "$first_plain" ] || first_plain="$(printf '%s\n' "$ROOTS" | head -1)"
   pairs="${first_plain}	${rf}	${NL}${pairs}"
 
-  echo "**Run \`$run_id\`** — per-item cost. Every token figure is **real usage** (\`message.usage\` from Claude Code transcripts, each message counted once by \`message.id\`); context = input + cache_creation + cache_read; no dollar figures; the proxy ledger is not mixed in."
+  echo "**Run \`$run_id\`** — per-item cost. Every token figure is **real usage** (\`message.usage\` from Claude Code transcripts, each message counted once by \`message.id\`); context = input + cache_creation + cache_read; no dollar figures; the proxy ledger is not mixed in. Phase rows need not add up to their item row: time and tokens in the gaps between phase boundaries belong to no phase."
   echo
   echo "| Item / phase | Window (UTC) | Wall | Context tokens (real usage) | Output tokens (real usage) | Turns (main) | Peak context (real usage, main) | Subagent tokens by type (real usage, context/output) |"
   echo "|---|---|---|---|---|---|---|---|"

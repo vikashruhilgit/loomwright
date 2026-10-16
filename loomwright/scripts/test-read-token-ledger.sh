@@ -34,7 +34,8 @@
 #      dir, fail-safe exits, existing modes unchanged, no_usage_in_window (item
 #      and phase), inverted window, sibling-lane 'picked in lane', an item
 #      parked then resumed (work_after_park), phase row <= item row, and a
-#      /bin/bash (3.2) parse check.
+#      /bin/bash (3.2) parse check. PI21: a value-taking flag given last
+#      (no value) ⇒ usage + exit 1, never a parse-loop hang.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -588,6 +589,24 @@ if [ -x /bin/bash ]; then
   /bin/bash -n "$SUT" 2>/dev/null && ok "/bin/bash -n read-token-ledger.sh" || no "read-token-ledger.sh does not parse under /bin/bash: $(/bin/bash -n "$SUT" 2>&1 | head -2)"
 else
   ok "/bin/bash absent — parse check skipped"
+fi
+
+echo "== PI21. a value-taking flag given last (no value) ⇒ usage, non-zero exit — never a hang =="
+# Before the shared need_value guard, a lone trailing --session/--run-id/--root ran a bare
+# `shift 2` that failed without shifting, and the parse loop re-read the same flag forever.
+# perl's alarm (no `timeout` on macOS) turns a regression back into that hang into rc 142.
+if command -v perl >/dev/null 2>&1; then
+  for tf in --session --run-id --per-item --projects-dir --root; do
+    for pre in "" "--session sa"; do
+      # shellcheck disable=SC2086
+      tf_err="$(perl -e 'alarm 10; exec @ARGV' bash "$SUT" $pre "$tf" 2>&1 >/dev/null)"; tf_rc=$?
+      case "$tf_err" in *"usage: read-token-ledger.sh"*) tf_use=1 ;; *) tf_use=0 ;; esac
+      [ "$tf_rc" -eq 1 ] && [ "$tf_use" -eq 1 ] && ok "trailing $tf${pre:+ after '$pre'} ⇒ usage, exit 1" \
+        || no "trailing $tf${pre:+ after '$pre'}: rc=$tf_rc err='$tf_err'"
+    done
+  done
+else
+  ok "perl absent — trailing-flag hang check skipped"
 fi
 
 echo "== PI11. existing modes unchanged by the per-item flags (AC5) =="

@@ -816,6 +816,8 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
                     printf '%s\t%s\n' "$pic_n" "$pic_l"
                   done; } | sort -n | cut -f2- )
     done <<< "$pic_sel"
+    echo "_**Phase rows need not add up to the item row:** an item's Wall and tokens span pick to park, while time and tokens in the gaps between phase boundaries belong to no phase._"
+    echo
     pic_notx="$(grep -c 'per-item: no_transcripts' "$pic_err" 2>/dev/null)"
     case "$pic_notx" in ''|*[!0-9]*) pic_notx=0 ;; esac
     if [ "$pic_notx" -gt 0 ]; then

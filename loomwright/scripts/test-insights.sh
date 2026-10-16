@@ -959,6 +959,10 @@ grep -qF "Context tokens (real usage)" < <(printf '%s' "$pcsec") && ok "token co
 grep -qF "| **.supervisor/requirements/c.md** | no transcripts | no transcripts |" < <(printf '%s' "$pcsec") && ok "the no-transcript item renders a no-number row" || no "no-transcript row missing"
 grep -qF "**No transcripts:** 1 item(s) above resolved to no Claude Code transcript" < <(printf '%s' "$pcsec") && ok "honest no-transcripts note rendered (never a zero)" || no "no-transcripts note missing: $(grep -F 'No transcripts' < <(printf '%s' "$pcsec"))"
 grep -qF "run.supervisor-result" < <(printf '%s' "$pcsec") && no "a sidecar .md was costed as a run file" || ok "sidecar run-dir .md files are not costed"
+pc_note="$(grep -n 'Phase rows need not add up to the item row:\*\*' < <(printf '%s' "$pcsec") | cut -d: -f1)"
+pc_last_row="$(grep -n '^| ' < <(printf '%s' "$pcsec") | tail -1 | cut -d: -f1)"
+[ -n "$pc_note" ] && [ -n "$pc_last_row" ] && [ "$pc_note" -gt "$pc_last_row" ] \
+  && ok "a note under the per-item table says phase rows need not add up to the item row" || no "phase-sum note missing or above the table (note=$pc_note last_row=$pc_last_row)"
 # PER_ITEM_COST_RUNS: only the most recent N run files (by name) are costed; 0 ⇒ a note, no table.
 cp "$PIF/run.md" "$PC/.supervisor/automate/zz-later.md"
 ( cd "$PC" && HOME="$PC/home" LOOMWRIGHT_CC_PROJECTS_DIR="$PIF/projects" PER_ITEM_COST_RUNS=1 bash "$BUILD" >/dev/null 2>&1 )
