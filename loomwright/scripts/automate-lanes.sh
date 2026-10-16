@@ -1949,8 +1949,9 @@ _lanes_resolve() {
 # lane state (`active`, `waiting` on the owner, `held`, `trouble`; every step `done` once merged/done).
 # A step passed without a line of its own reads `done` with null times: the run never said when it ran.
 # Boundaries: the `picked` line ends Pick and starts Plan; a Launch Pad "brief saved" line ends Plan and starts Build (/autonomous hands the brief to
-# the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too, one reading
-# `no PR: Launch Pad blocked` reaches only Plan (the Supervisor never started).
+# the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too, one with no PR
+# URL that names Launch Pad (blocked, NO-GO, `launch_pad_blocked` — the wording is not pinned) and neither the
+# Supervisor nor a saved brief reaches only Plan (the Supervisor never started).
 # A `parked …` line is the Merge gate's only once the lane reached Drain; a park before that (Launch Pad
 # blocked, an escalated build) reaches no step of its own — it joins the furthest step reached, which the
 # lane state then colors, and every later step stays `pending`.
@@ -1986,7 +1987,8 @@ _lanes_timeline() {
       elif test("owned drain started|^drain |re-drain") then ["drain"]
       elif test("^/autonomous done") then ["heal"]
       elif test("^ran /autonomous") then (if test("heal (PASS|FAIL|ESCALATED)") then ["build", "heal"]
-                                         elif test("no PR: launch[ -]?pad blocked"; "i") then ["plan"] else ["build"] end)
+                                         elif (test("PR https?://") | not) and test("launch[ _-]?pad"; "i")
+                                              and (test("supervisor|brief saved"; "i") | not) then ["plan"] else ["build"] end)
       elif test("^supervisor:"; "i") then ["build"]
       elif test("launch[ -]?pad"; "i") then (if test("brief saved"; "i") then ["plan", "build"] else ["plan"] end)
       elif test("^picked ") then ["pick", "plan"]
