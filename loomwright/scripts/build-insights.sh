@@ -9,6 +9,8 @@
 # own transcripts; the dashboard prints a COST stub pointing to `npx ccusage@latest`.
 # TOKEN ECONOMICS (advisory) separately aggregates additive `token_ledger` JSONL events
 # (real usage when present; otherwise a transcript-byte proxy — never labelled as tokens).
+# Its PER-ITEM COST subsection (automate-speed/03) is read-token-ledger.sh --per-item's
+# table: real per-message transcript usage per /automate item and phase.
 #
 # Usage:  build-insights.sh
 # Exit:   0 always — a reporting tool must never break its caller. Prints the output path.
@@ -759,6 +761,54 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     echo "- **Target:** ≤${ADVISORY_BUDGET_TARGET_BYTES} bytes/run (soft, advisory; override via \`ADVISORY_BUDGET_TARGET_BYTES\`)  ·  **Over target:** ${at_over:-0} of $at_count event(s)"
   fi
   echo
+
+  # --- Per-item cost (automate-speed/03) — read-token-ledger.sh --per-item ---
+  # What each /automate item cost, per phase, in REAL per-message transcript usage. The
+  # sibling reader renders the table (the same one its CLI prints), called the same way
+  # as phase-timing.sh above. This builder takes no arguments, so the transcripts resolve
+  # through the reader's own order: LOOMWRIGHT_CC_PROJECTS_DIR, else Claude Code's default
+  # projects directory (read-token-ledger.sh header). Only the most recent
+  # PER_ITEM_COST_RUNS run files (default 3) are costed — each reads every transcript its
+  # items resolve to. Run files are `.supervisor/automate/<run_id>.md`; a dotted name is a
+  # sidecar (`.supervisor-result.md`, …) and is skipped. Fail-SAFE, "not recorded, never
+  # 0": a missing reader or no run file renders a note, and an item whose sessions resolve
+  # to no transcript gets a no-number row plus the note below.
+  PER_ITEM_COST_RUNS="${PER_ITEM_COST_RUNS:-3}"
+  case "$PER_ITEM_COST_RUNS" in
+    ''|*[!0-9]*|????*) PER_ITEM_COST_RUNS=3 ;;
+    *) PER_ITEM_COST_RUNS=$((10#$PER_ITEM_COST_RUNS)) ;;
+  esac
+  echo "### Per-item cost (real usage)"
+  echo "_What each \`/automate\` item cost, and in which phase — **real usage** summed from the per-message \`message.usage\` in Claude Code's own transcripts (each message counted once, by \`message.id\`), rendered by \`read-token-ledger.sh --per-item\` (the same table its CLI prints). DISTINCT from the ledger rollup above: the proxy ledger is never mixed in, and no dollar figure is shown. Most recent ${PER_ITEM_COST_RUNS} run file(s); override via \`PER_ITEM_COST_RUNS\`. Advisory only — never gates a PR, a run, or a heal decision._"
+  echo
+  pic_runs=()
+  for pic_f in .supervisor/automate/*.md; do
+    case "$(basename "$pic_f" .md)" in *.*) continue ;; esac
+    pic_runs+=("$pic_f")
+  done
+  if [ -z "$SCRIPT_DIR" ] || [ ! -f "$SCRIPT_DIR/read-token-ledger.sh" ]; then
+    echo "_Per-item cost unavailable — \`read-token-ledger.sh\` is not next to this builder; no number is shown rather than a guessed one._"
+  elif [ "$PER_ITEM_COST_RUNS" -eq 0 ]; then
+    echo "_Per-item cost not computed — \`PER_ITEM_COST_RUNS=0\`._"
+  elif [ ${#pic_runs[@]} -eq 0 ]; then
+    echo "_No \`/automate\` run file in \`.supervisor/automate/\` to cost yet._"
+  else
+    pic_err="$(mktemp 2>/dev/null)" || pic_err="/dev/null"
+    pic_n=${#pic_runs[@]}
+    pic_i=$(( pic_n > PER_ITEM_COST_RUNS ? pic_n - PER_ITEM_COST_RUNS : 0 ))
+    while [ "$pic_i" -lt "$pic_n" ]; do
+      bash "$SCRIPT_DIR/read-token-ledger.sh" --per-item "${pic_runs[$pic_i]}" --root "$GITROOT" 2>>"$pic_err"
+      echo
+      pic_i=$((pic_i + 1))
+    done
+    pic_notx="$(grep -c 'per-item: no_transcripts' "$pic_err" 2>/dev/null)"
+    case "$pic_notx" in ''|*[!0-9]*) pic_notx=0 ;; esac
+    if [ "$pic_notx" -gt 0 ]; then
+      echo "_**No transcripts:** $pic_notx item(s) above resolved to no Claude Code transcript (the sessions the run file names have no transcript under the projects directory — removed, or never recorded). Those rows show **no number**, never a 0 that would read as a cheap item._"
+      echo
+    fi
+    [ "$pic_err" = "/dev/null" ] || rm -f "$pic_err" 2>/dev/null
+  fi
 
   # --- Per-session context size (largest transcript) — twin-remediation/08 item 2 ---
   # Groups the SAME transcript-byte proxy lines the per-role table above sums, but by the

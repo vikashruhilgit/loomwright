@@ -1,0 +1,2 @@
+{"type":"assistant","timestamp":"2026-10-13T15:40:01.900Z","message":{"id":"msg_a1","model":"m","stop_reason":"end_turn","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":5}}}
+{"type":"assistant","timestamp":"2026-10-13T16:58:00.000Z","message":{"id":"msg_a9","model":"m","stop_reason":"end_turn","usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}

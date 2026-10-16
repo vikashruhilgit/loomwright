@@ -110,6 +110,47 @@ Whether Claude Code's native spans carry a usable `agent.name` attribute for sub
 
 **How to verify on your first real session:** temporarily set `OTEL_TRACES_EXPORTER=console` (console mode; OTLP keys removed) in the settings env block, run a session that spawns at least one subagent, and inspect the console-printed spans for `agent.name` (or equivalent) values. If the attribute is present and role-specific, per-role attribution will work in Langfuse; if it is absent or redacted, treat traces as session-scoped only. Restore the `otlp` exporters afterwards.
 
+## Per-item `/automate` cost (`read-token-ledger.sh --per-item`)
+
+The Langfuse stack above is opt-in and traces-only. To find out what one `/automate` item cost, and in which phase, there is a local, read-only report that needs no stack at all:
+
+```bash
+read-token-ledger.sh --per-item .supervisor/automate/<run_id>.md [--root <checkout>]... [--projects-dir <dir>]
+```
+
+(the script lives in the plugin's `scripts/` directory). It prints a markdown table: one row per item of the run (every `## Queue` item, plus any picked item the Queue lacks), then one `↳` row per phase under it. Each row has the item's context tokens, output tokens, turns, peak context, subagent tokens by agent type, and wall time. `/insights` renders the same table as `### Per-item cost (real usage)` inside its `## Token economics` section, for the most recent run files (how many: `PER_ITEM_COST_RUNS`, default in `build-insights.sh`). The script's header comment is the authoritative spec. This section summarises it.
+
+**Every token figure is real usage.** The figures are summed from the per-message `message.usage` that Claude Code writes into its own session transcripts. The transcript-byte proxy of the token ledger (`docs/TELEMETRY.md` §"Token ledger") is never read or mixed in. Context = `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`; output = `output_tokens`. Both are shown as the total (main thread + subagents) with the main-thread part in brackets. Turns = distinct main-thread messages; peak context = the largest single main-thread message context; subagent tokens are summed per agent type (`context/output`).
+
+**Session resolution: run file → `.owner` / log `cc_session_id` → transcripts.**
+
+1. Item scope and wall time come from `phase-timing.sh --run <run file> --item <item> --logs-dir <root>/.supervisor/logs`. The report reads its `pick`, `park`, `pick_to_park.seconds`, `ran /autonomous` and `owned_drains[]` as-is and does not re-derive the item segment. An item's wall time is therefore exactly phase-timing's.
+2. The item's plugin session ids are phase-timing's `session_id` plus every `session_id <sid> (<item>)` Progress line that names the item.
+3. Each `<sid>` resolves to Claude Code session ids: the `cc_session_id=` line of `<root>/.supervisor/logs/<sid>.owner`, every distinct `"cc_session_id"` in `<root>/.supervisor/logs/<sid>.jsonl` (one `/autonomous` session can span several Claude Code sessions), and `<sid>` itself (a lane run records the Claude Code id directly). A `run created (session <uuid>)` Progress line adds `<uuid>`.
+4. Each Claude Code id is looked up as `<projects>/*/<id>.jsonl` (the main thread) and `<projects>/*/<id>/subagents/agent-*.jsonl` (subagents; the agent type is the sibling `agent-*.meta.json` `agentType`, last `:` segment). `<projects>` is `--projects-dir`, else `LOOMWRIGHT_CC_PROJECTS_DIR`, else Claude Code's default projects directory under `$HOME`.
+
+The report prints the ids it tried for each item under the table, with the transcript-file count.
+
+**Message-id de-duplication.** A transcript writes one message several times (once per streamed content block), and a forked or resumed session copies earlier messages into its own file. Usage is therefore counted **once per `message.id`** across every file read. The report takes the line with a non-null `stop_reason` when there is one, else the per-field maximum. That is the same rule `emit-token-ledger.sh` applies. A copy that lacks its `meta.json` takes the agent type from a copy that has one.
+
+**Phases** are counted by message timestamp, over half-open windows between Progress lines. Launch Pad runs from `picked` to `launch-pad saved`. Build runs to `FINALIZE:`. Phase 4.5 runs to `ran /autonomous`, with one sub-row per `Phase 4.5 iter <n>` line (each line ENDS iteration n) and a sub-row for any time after the last iter line. There is one Drain row per entry in phase-timing's `owned_drains[]`, and a fix-now re-drain is marked. Decide runs from the last drain's end to `parked`. The model-written lines (`launch-pad saved`, `FINALIZE:`, `Phase 4.5 iter`) are matched case-insensitively as a prefix. A missing boundary makes **both** spans next to it `not recorded`, never 0. With no `parked` line, the item's wall time and Decide print `not recorded`, and the item total runs to the last recorded boundary, which the Window cell names.
+
+**Lanes.** With repeated `--root`, a root whose `.supervisor/lane.json` names this run as `parent_run_id` contributes its lane run file's items, shown as `[L<n>] <item>` and resolved against that lane's own logs. The given run file is read against the first root that is not such a lane.
+
+**Fail SAFE.** The report always exits 0 and names a reason on stderr. `no_transcripts` means an item's ids resolved to no transcript file; that item gets ONE row with `no transcripts` in every cell, never a 0 that reads as cheap. The other reasons are `run_file_unreadable`, `jq_unavailable`, `phase_timing_unavailable` and `not_picked`.
+
+**Honest limits.**
+
+- The `/automate` engine's own main-thread tokens are counted **only when its Claude Code session id is resolvable** through the chain above (a `run created (session <uuid>)` line, or a session log/owner file that names it).
+- A Claude Code session that wrote into a plugin session log for unrelated work is counted too, because the log names it.
+- Gaps between boundaries (for example `ran /autonomous` → `owned drain started`) belong to no phase, so phase rows need not add up to the item row.
+- A message whose final transcript line is missing is counted at its per-field maximum, which can under-count its output.
+- Transcripts that have been removed (pruned sessions, deleted lane clones) read `no_transcripts`.
+- CI-side `claude-review` spend is never seen.
+- **No dollar figures**: the plugin has no price table.
+
+The baseline later automate-speed items are measured against is `docs/evidence/automate-speed-baseline.md` (repo root).
+
 ## Troubleshooting
 
 ### (a) Collector exits / restarts on first boot — file_storage permission failure

@@ -934,6 +934,57 @@ grep -qF "Sessions sized" < <(printf '%s' "$snsec") && no "real-usage-only corpu
 grep -qF "**Not sized here:** 1 session(s)" < <(printf '%s' "$snsec") && ok "real-usage-only corpus still names the unsized session" || no "unsized-session line missing (real-only corpus)"
 rm -rf "$SN"
 
+echo "== AS03. Per-item cost — read-token-ledger.sh --per-item table inside Token economics (AC6) =="
+# Fixture: loomwright/scripts/token-ledger-fixtures/per-item/ (run.md + session logs + synthetic
+# transcripts). build-insights takes no arguments, so the transcripts are pointed at with
+# LOOMWRIGHT_CC_PROJECTS_DIR (and HOME is a sandbox) — the real home projects dir is never read.
+PIF="$HERE/token-ledger-fixtures/per-item"
+PC="$(mktemp -d)"; ( cd "$PC" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$PC/.supervisor/logs" "$PC/.supervisor/automate" "$PC/home"
+cp "$PIF/session-logs/"* "$PC/.supervisor/logs/"
+printf '%s\n' '{"ts":"2026-10-14T02:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$PC/.supervisor/logs/sess-pc.jsonl"
+cp "$PIF/run.md" "$PC/.supervisor/automate/run.md"
+printf 'not a run file\n' > "$PC/.supervisor/automate/run.supervisor-result.md"
+( cd "$PC" && HOME="$PC/home" LOOMWRIGHT_CC_PROJECTS_DIR="$PIF/projects" bash "$BUILD" >/dev/null 2>&1 ); rc=$?
+pcd="$PC/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 (per-item cost fixture)" || no "build rc != 0 (per-item cost, rc=$rc)"
+pc_order="$(awk '/^## Token economics$/{t=NR} /^### Per-item cost/{p=NR} /^### Per-session context size/{s=NR} /^## Recent sessions$/{r=NR} END{print t+0,p+0,s+0,r+0}' "$pcd")"
+set -- $pc_order
+[ "$1" -gt 0 ] && [ "$2" -gt "$1" ] && [ "$3" -gt "$2" ] && [ "$4" -gt "$3" ] && ok "### Per-item cost sits inside Token economics, before Per-session context size" || no "per-item placement wrong (TE=$1 PI=$2 PS=$3 Recent=$4)"
+pcsec="$(sed -n '/^### Per-item cost/,/^### Per-session context size/p' "$pcd" 2>/dev/null)"
+grep -qF "| **.supervisor/requirements/a.md** | 10-13 15:33:58 → 10-14 01:00:27 | 9h 26m 29s | 29510 (main 28210) | 289 (main 276) | 8 | 7000 | code-reviewer 800/8; worker 500/5 |" < <(printf '%s' "$pcsec") \
+  && ok "dashboard renders the reader's item row (real-usage totals from the fixture transcripts)" || no "item row missing: $(grep -F 'a.md' < <(printf '%s' "$pcsec") | head -1)"
+grep -qF "| ↳ Phase 4.5 | 10-13 16:27:01 → 17:52:01 | 1h 25m 0s |" < <(printf '%s' "$pcsec") && ok "phase rows rendered under the item" || no "phase rows missing"
+grep -qF "Context tokens (real usage)" < <(printf '%s' "$pcsec") && ok "token columns labelled real usage" || no "real-usage label missing"
+grep -qF "| **.supervisor/requirements/c.md** | no transcripts | no transcripts |" < <(printf '%s' "$pcsec") && ok "the no-transcript item renders a no-number row" || no "no-transcript row missing"
+grep -qF "**No transcripts:** 1 item(s) above resolved to no Claude Code transcript" < <(printf '%s' "$pcsec") && ok "honest no-transcripts note rendered (never a zero)" || no "no-transcripts note missing: $(grep -F 'No transcripts' < <(printf '%s' "$pcsec"))"
+grep -qF "run.supervisor-result" < <(printf '%s' "$pcsec") && no "a sidecar .md was costed as a run file" || ok "sidecar run-dir .md files are not costed"
+# PER_ITEM_COST_RUNS: only the most recent N run files (by name) are costed; 0 ⇒ a note, no table.
+cp "$PIF/run.md" "$PC/.supervisor/automate/zz-later.md"
+( cd "$PC" && HOME="$PC/home" LOOMWRIGHT_CC_PROJECTS_DIR="$PIF/projects" PER_ITEM_COST_RUNS=1 bash "$BUILD" >/dev/null 2>&1 )
+pcsec="$(sed -n '/^### Per-item cost/,/^### Per-session context size/p' "$pcd" 2>/dev/null)"
+grep -qF '**Run `zz-later`**' < <(printf '%s' "$pcsec") && ! grep -qF '**Run `run`**' < <(printf '%s' "$pcsec") \
+  && ok "PER_ITEM_COST_RUNS=1 costs only the most recent run file" || no "PER_ITEM_COST_RUNS=1: $(grep -F '**Run' < <(printf '%s' "$pcsec"))"
+( cd "$PC" && HOME="$PC/home" LOOMWRIGHT_CC_PROJECTS_DIR="$PIF/projects" PER_ITEM_COST_RUNS=0 bash "$BUILD" >/dev/null 2>&1 )
+pcsec="$(sed -n '/^### Per-item cost/,/^### Per-session context size/p' "$pcd" 2>/dev/null)"
+grep -qF "Per-item cost not computed — \`PER_ITEM_COST_RUNS=0\`." < <(printf '%s' "$pcsec") && ! grep -qF "| Item / phase |" < <(printf '%s' "$pcsec") \
+  && ok "PER_ITEM_COST_RUNS=0 ⇒ a note, no table" || no "PER_ITEM_COST_RUNS=0: $pcsec"
+# Reader absent next to the builder ⇒ a note, the build still succeeds.
+PCB="$(mktemp -d)"; cp "$BUILD" "$PCB/build-insights.sh"
+( cd "$PC" && HOME="$PC/home" LOOMWRIGHT_CC_PROJECTS_DIR="$PIF/projects" bash "$PCB/build-insights.sh" >/dev/null 2>&1 ); rc=$?
+pcsec="$(sed -n '/^### Per-item cost/,/^### Per-session context size/p' "$pcd" 2>/dev/null)"
+[ "$rc" -eq 0 ] && grep -qF "Per-item cost unavailable — \`read-token-ledger.sh\` is not next to this builder" < <(printf '%s' "$pcsec") \
+  && ok "reader absent ⇒ unavailable note, build exits 0" || no "reader-absent case (rc=$rc): $pcsec"
+rm -rf "$PCB"
+rm -f "$PC/.supervisor/automate/zz-later.md"
+# No run file → an honest note, no table.
+rm -f "$PC/.supervisor/automate/"*.md
+( cd "$PC" && HOME="$PC/home" LOOMWRIGHT_CC_PROJECTS_DIR="$PIF/projects" bash "$BUILD" >/dev/null 2>&1 )
+pcsec="$(sed -n '/^### Per-item cost/,/^### Per-session context size/p' "$pcd" 2>/dev/null)"
+grep -qF "No \`/automate\` run file in \`.supervisor/automate/\` to cost yet." < <(printf '%s' "$pcsec") && ! grep -qF "| Item / phase |" < <(printf '%s' "$pcsec") \
+  && ok "no run file ⇒ note, no table" || no "no-run-file case: $pcsec"
+rm -rf "$PC"
+
 echo "== E. malformed / non-object session-log lines are skipped per line (fix-now E) =="
 # A killed session's truncated last line, or a bare non-object line, must not abort the whole read:
 # it once dropped the session_end after it (Sessions undercounted) and every later item_timing row.

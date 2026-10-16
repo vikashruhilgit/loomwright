@@ -27,6 +27,11 @@
 #  15. mutating the reader so numf() always returns 0 makes a KNOWN-non-zero
 #      fixture report TOTAL=0 -- proving the normal (unmutated) script's
 #      non-zero result in test 1 is load-bearing, not a fixture accident.
+#  PI1-PI11. --per-item (automate-speed/03) over token-ledger-fixtures/per-item/:
+#      item + phase rows (PR #533's spans), message-id de-dup and its mutation
+#      control, wall time = phase-timing.sh's, missing boundary / no park / two
+#      drains, no_transcripts, lane attribution, unpicked item, env projects
+#      dir, fail-safe exits, existing modes unchanged.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -308,6 +313,160 @@ mr_out="$(bash "$SUT" --run-id par-7 --root "$MR/P")"
 mr_out="$(bash "$SUT" --session nope --root "$MR/L1" --root "$MR/L2")"
 [ "$mr_out" = "INPUT=0 OUTPUT=0 CACHE_READ=0 CACHE_CREATE=0 TOTAL=0 EVENTS=0 LEDGER_UNREADABLE=1" ] && ok "no root readable ⇒ LEDGER_UNREADABLE=1 (never a silent 0)" || no "none readable: $mr_out"
 rm -rf "$MR"
+
+# ---- --per-item (automate-speed/03) -----------------------------------------
+# Fixture: token-ledger-fixtures/per-item/ — run.md (items a..e; a carries PR #533's
+# exact Progress timestamps), session-logs/ (copied into a mktemp root's
+# .supervisor/logs), projects/ (synthetic transcripts — every call passes
+# --projects-dir or LOOMWRIGHT_CC_PROJECTS_DIR, so the real home dir is never read)
+# and lane/ (a lane clone of run `run`).
+PIF="$HERE/token-ledger-fixtures/per-item"
+PIP="$PIF/projects"
+PI="$(mktemp -d)"
+mkdir -p "$PI/p/.supervisor/logs" "$PI/l/.supervisor/logs" "$PI/l/.supervisor/automate"
+cp "$PIF/session-logs/"* "$PI/p/.supervisor/logs/"
+cp "$PIF/lane/lane.json" "$PI/l/.supervisor/lane.json"
+cp "$PIF/lane/run-L1.md" "$PI/l/.supervisor/automate/run-L1.md"
+pi_run() {  # pi_run <sut> <args...> — stdout → PI_OUT, stderr → PI_ERR, rc → PI_RC
+  local sut="$1"; shift
+  PI_OUT="$(bash "$sut" "$@" 2>"$PI/err")"; PI_RC=$?
+  PI_ERR="$(cat "$PI/err")"
+}
+pi_row() { printf '%s\n' "$PI_OUT" | grep -F -- "$1" | head -1; }
+# pi_rows_after <item row marker> — the item row and the ↳ rows under it
+pi_rows_after() { printf '%s\n' "$PI_OUT" | awk -v m="$1" 'index($0, m) {on=1; print; next} on && /^\| ↳/ {print; next} on {exit}'; }
+fmt_wall() { local s="$1"; if [ "$s" -ge 3600 ]; then echo "$((s/3600))h $(((s%3600)/60))m $((s%60))s"; else echo "$((s/60))m $((s%60))s"; fi; }
+
+echo "== PI1. --per-item: one row per item, phase rows under it, every token figure labelled real usage (AC1) =="
+pi_run "$SUT" --per-item "$PIF/run.md" --root "$PI/p" --root "$PI/l" --projects-dir "$PIP"
+[ "$PI_RC" -eq 0 ] && ok "per-item exits 0" || no "per-item rc=$PI_RC"
+printf '%s\n' "$PI_OUT" | grep -qF "| Item / phase | Window (UTC) | Wall | Context tokens (real usage) | Output tokens (real usage) | Turns (main) | Peak context (real usage, main) | Subagent tokens by type (real usage, context/output) |" \
+  && ok "header labels every token column real usage" || no "header wrong: $(printf '%s\n' "$PI_OUT" | grep -F '| Item / phase' )"
+[ "$(pi_row '| **.supervisor/requirements/a.md** |')" = "| **.supervisor/requirements/a.md** | 10-13 15:33:58 → 10-14 01:00:27 | 9h 26m 29s | 29510 (main 28210) | 289 (main 276) | 8 | 7000 | code-reviewer 800/8; worker 500/5 |" ] \
+  && ok "item row: context/output totals (main part), turns, peak, subagents by type" || no "item a row: $(pi_row '| **.supervisor/requirements/a.md** |')"
+pi_a="$(pi_rows_after '| **.supervisor/requirements/a.md** |')"
+[ "$(printf '%s\n' "$pi_a" | grep -c '^| ↳')" -eq 8 ] && ok "item a has 8 phase/sub rows under it" || no "item a phase rows: $pi_a"
+printf '%s\n' "$pi_a" | grep -qxF "| ↳ Launch Pad | 10-13 15:33:58 → 15:46:53 | 12m 55s | 1110 (main 1110) | 5 (main 5) | 1 | 1110 | — |" \
+  && ok "Launch Pad 12m 55s (picked → launch-pad saved)" || no "Launch Pad row: $(printf '%s\n' "$pi_a" | grep -F 'Launch Pad')"
+printf '%s\n' "$pi_a" | grep -qxF "| ↳ Build | 10-13 15:46:53 → 16:27:01 | 40m 8s | 2500 (main 2000) | 25 (main 20) | 1 | 2000 | worker 500/5 |" \
+  && ok "Build 40m 8s (launch-pad saved → FINALIZE:), worker subagent attributed" || no "Build row: $(printf '%s\n' "$pi_a" | grep -F '↳ Build')"
+printf '%s\n' "$pi_a" | grep -qxF "| ↳ Phase 4.5 | 10-13 16:27:01 → 17:52:01 | 1h 25m 0s | 12900 (main 12100) | 129 (main 121) | 4 | 5000 | code-reviewer 800/8 |" \
+  && ok "Phase 4.5 1h 25m 0s (FINALIZE: → ran /autonomous)" || no "Phase 4.5 row: $(printf '%s\n' "$pi_a" | grep -F '↳ Phase 4.5')"
+printf '%s\n' "$pi_a" | grep -qxF "| ↳ ↳ iter 1 | 10-13 16:27:01 → 17:07:58 | 40m 57s | 3900 (main 3100) | 39 (main 31) | 2 | 3000 | code-reviewer 800/8 |" \
+  && printf '%s\n' "$pi_a" | grep -qxF "| ↳ ↳ iter 2 | 10-13 17:07:58 → 17:29:56 | 21m 58s | 4000 (main 4000) | 40 (main 40) | 1 | 4000 | — |" \
+  && printf '%s\n' "$pi_a" | grep -qxF "| ↳ ↳ after iter 2 (no iter line) | 10-13 17:29:56 → 17:52:01 | 22m 5s | 5000 (main 5000) | 50 (main 50) | 1 | 5000 | — |" \
+  && ok "Phase 4.5 iter sub-rows: each iter line ENDS its iteration; the unlabelled rest is its own sub-row" || no "iter rows: $(printf '%s\n' "$pi_a" | grep -F 'iter')"
+printf '%s\n' "$pi_a" | grep -qxF "| ↳ Drain 1 — READY | 10-13 17:52:42 → 20:03:50 | 2h 11m 8s | 6000 (main 6000) | 60 (main 60) | 1 | 6000 | — |" \
+  && ok "Drain 2h 11m 8s (owned drain started → drain READY)" || no "Drain row: $(printf '%s\n' "$pi_a" | grep -F 'Drain')"
+printf '%s\n' "$pi_a" | grep -qxF "| ↳ Decide | 10-13 20:03:50 → 10-14 01:00:27 | 4h 56m 37s | 7000 (main 7000) | 70 (main 70) | 1 | 7000 | — |" \
+  && ok "Decide (drain READY → parked); the message after the park is excluded" || no "Decide row: $(printf '%s\n' "$pi_a" | grep -F 'Decide')"
+printf '%s\n' "$PI_OUT" | grep -qF "9999999" && no "a message after the item's park leaked into a row" || ok "no message outside the item window is counted"
+printf '%s\n' "$PI_OUT" | grep -qF -- "- \`.supervisor/requirements/a.md\`: session ids tried aaaaaaaa-0000-4000-8000-000000000001, sa, aaaaaaaa-0000-4000-8000-000000000002 — 4 transcript file(s)" \
+  && ok "session resolution: .owner cc_session_id + the session log's cc_session_id values" || no "session line: $(printf '%s\n' "$PI_OUT" | grep -F 'a.md`:')"
+
+echo "== PI2. --per-item: a message written 3 times (and copied into a fork) is counted ONCE (AC2) =="
+# msg_a1 appears 3x in the main transcript (output 1, 1, final 5) + 1x in the second session:
+# counted once ⇒ context 1110, output 5 (the stop_reason line). Counted per line it reads 4440/12.
+printf '%s\n' "$pi_a" | grep -qF "| ↳ Launch Pad | 10-13 15:33:58 → 15:46:53 | 12m 55s | 1110 (main 1110) | 5 (main 5) | 1 |" \
+  && ok "duplicate message id counted once (context 1110, output 5 from the final line, 1 turn)" || no "dedup: $(printf '%s\n' "$pi_a" | grep -F 'Launch Pad')"
+
+echo "== PI3. MUTATION CONTROL: dropping the message-id de-duplication turns PI2 red (Validation 2) =="
+PIM="$(mktemp -d)"
+cp "$SUT" "$PIM/read-token-ledger.sh"; cp "$HERE/phase-timing.sh" "$PIM/phase-timing.sh"
+sed -i.bak 's/^def dedup_by_msg_id: .*$/def dedup_by_msg_id: .;/' "$PIM/read-token-ledger.sh"
+if [ -s "$PIM/read-token-ledger.sh" ] && bash -n "$PIM/read-token-ledger.sh" 2>/dev/null && ! diff -q "$PIM/read-token-ledger.sh" "$SUT" >/dev/null 2>&1; then
+  pi_run "$PIM/read-token-ledger.sh" --per-item "$PIF/run.md" --root "$PI/p" --projects-dir "$PIP"
+  mut_lp="$(pi_row '| ↳ Launch Pad | 10-13 15:33:58')"
+  case "$mut_lp" in
+    *"| 1110 (main 1110) | 5 (main 5) |"*) no "mutation control REFUTED: the dedup-less mutant still reports 1110/5 — the dedup step is not load-bearing ($mut_lp)" ;;
+    *"| 4440 (main 4440) | 12 (main 12) |"*) ok "mutation control: the dedup-less mutant counts every line (4440/12) — the de-duplication is load-bearing" ;;
+    *) no "mutation control inconclusive: mutant row '$mut_lp'" ;;
+  esac
+else
+  no "mutation control: could not build a valid mutant (empty, identical, or bash -n failed)"
+fi
+rm -rf "$PIM"
+
+echo "== PI4. --per-item: item wall time IS phase-timing.sh's .item.pick_to_park.seconds =="
+pt_secs="$(bash "$HERE/phase-timing.sh" --run "$PIF/run.md" --item .supervisor/requirements/a.md --logs-dir "$PI/p/.supervisor/logs" 2>/dev/null | jq -r '.item.pick_to_park.seconds')"
+case "$pt_secs" in
+  ''|*[!0-9]*) no "phase-timing gave no pick_to_park seconds ($pt_secs)" ;;
+  *) case "$(pi_row '| **.supervisor/requirements/a.md** |')" in
+       *"| $(fmt_wall "$pt_secs") |"*) ok "item wall $(fmt_wall "$pt_secs") = phase-timing pick_to_park ${pt_secs}s" ;;
+       *) no "item wall differs from phase-timing's ${pt_secs}s: $(pi_row '| **.supervisor/requirements/a.md** |')" ;;
+     esac ;;
+esac
+
+echo "== PI5. --per-item: missing boundary / no parked line / two drains (AC1) =="
+pi_run "$SUT" --per-item "$PIF/run.md" --root "$PI/p" --projects-dir "$PIP"
+pi_b="$(pi_rows_after '| **.supervisor/requirements/b.md** |')"
+printf '%s\n' "$pi_b" | head -1 | grep -qF "| **.supervisor/requirements/b.md** | 10-14 09:00:00 → 10:45:00 (no parked line — to drain READY) | not recorded | 1000 (main 1000) | 10 (main 10) |" \
+  && ok "no parked line ⇒ item wall 'not recorded' (never 0); total runs to the last recorded boundary, named" || no "item b row: $(printf '%s\n' "$pi_b" | head -1)"
+printf '%s\n' "$pi_b" | grep -qxF "| ↳ Decide | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |" \
+  && ok "no parked line ⇒ Decide 'not recorded'" || no "item b Decide: $(printf '%s\n' "$pi_b" | grep -F Decide)"
+printf '%s\n' "$pi_b" | grep -qxF "| ↳ Build | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |" \
+  && printf '%s\n' "$pi_b" | grep -qxF "| ↳ Phase 4.5 | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |" \
+  && ok "missing FINALIZE: ⇒ BOTH Build and Phase 4.5 'not recorded' (not 0, not merged)" || no "missing-boundary rows: $(printf '%s\n' "$pi_b" | grep -E 'Build|Phase 4.5')"
+printf '%s\n' "$pi_b" | grep -qxF "| ↳ Launch Pad | 10-14 09:00:00 → 09:10:00 | 10m 0s | 100 (main 100) | 1 (main 1) | 1 | 100 | — |" \
+  && ok "'Launch-Pad saved' (other case) still matches as the Launch Pad boundary" || no "item b Launch Pad: $(printf '%s\n' "$pi_b" | grep -F 'Launch Pad')"
+printf '%s\n' "$pi_b" | grep -qxF "| ↳ Drain 1 — READY | 10-14 10:01:00 → 10:20:00 | 19m 0s | 300 (main 300) | 3 (main 3) | 1 | 300 | — |" \
+  && printf '%s\n' "$pi_b" | grep -qxF "| ↳ Drain 2 (fix-now re-drain) — READY | 10-14 10:30:00 → 10:45:00 | 15m 0s | 400 (main 400) | 4 (main 4) | 1 | 400 | — |" \
+  && ok "two owned drains ⇒ two Drain sub-rows, the second marked fix-now, each with its own usage" || no "drain rows: $(printf '%s\n' "$pi_b" | grep -F Drain)"
+
+echo "== PI6. --per-item: no resolvable transcript ⇒ exit 0, named no_transcripts reason, no number (AC4) =="
+pi_c="$(pi_rows_after '| **.supervisor/requirements/c.md** |')"
+[ "$PI_RC" -eq 0 ] && ok "exit 0 with an item that has no transcripts" || no "rc=$PI_RC"
+printf '%s\n' "$PI_ERR" | grep -q 'per-item: no_transcripts — .supervisor/requirements/c.md' && ok "stderr names no_transcripts for item c" || no "stderr: $PI_ERR"
+[ "$(printf '%s\n' "$pi_c" | wc -l | tr -d ' ')" = 1 ] && [ "$(printf '%s\n' "$pi_c" | sed 's/^| \*\*[^|]*\*\* //' | tr -cd '0-9')" = "" ] \
+  && printf '%s\n' "$pi_c" | grep -qF "| no transcripts |" \
+  && ok "item c prints ONE row with no number in any cell" || no "item c rows: $pi_c"
+
+echo "== PI7. --per-item: a lane root's sessions are attributed to the lane's item (AC3) =="
+pi_run "$SUT" --per-item "$PIF/run.md" --root "$PI/p" --root "$PI/l" --projects-dir "$PIP"
+[ "$(pi_row '| **[L1] .supervisor/requirements/e.md** |')" = "| **[L1] .supervisor/requirements/e.md** | 10-15 08:00:00 → 09:05:00 | 1h 5m 0s | 50 (main 50) | 5 (main 5) | 1 | 50 | — |" ] \
+  && ok "lane item row carries the lane transcript's usage" || no "lane row: $(pi_row '[L1]')"
+printf '%s\n' "$PI_OUT" | grep -qF "| **.supervisor/requirements/e.md** |" && no "the lane's item was also listed unattributed under the parent" || ok "the lane's Queue item is reported under its lane only"
+printf '%s\n' "$(pi_rows_after '| **[L1] .supervisor/requirements/e.md** |')" | grep -qxF "| ↳ Launch Pad | 10-15 08:00:00 → 08:10:00 | 10m 0s | 50 (main 50) | 5 (main 5) | 1 | 50 | — |" \
+  && ok "'launch pad: brief saved' variant matches as the Launch Pad boundary" || no "lane Launch Pad: $(pi_rows_after '[L1]')"
+pi_run "$SUT" --per-item "$PIF/run.md" --root "$PI/p" --projects-dir "$PIP"
+printf '%s\n' "$PI_OUT" | grep -qF "[L1]" && no "a lane row appeared without its lane root" || ok "without the lane root no lane row is printed"
+pi_row '| **.supervisor/requirements/e.md** |' | grep -qF "| not picked |" && ok "without the lane root the item reads 'not picked'" || no "e without lane: $(pi_row 'e.md')"
+
+echo "== PI8. --per-item: a never-picked Queue item has a row with no number =="
+[ "$(pi_row '| **.supervisor/requirements/d.md** |')" = "| **.supervisor/requirements/d.md** | not picked | not recorded | not picked | not picked | not picked | not picked | not picked |" ] \
+  && printf '%s\n' "$PI_ERR" | grep -q 'not_picked — .supervisor/requirements/d.md' && ok "unpicked item d: 'not picked' row + not_picked reason" || no "d row: $(pi_row 'd.md')"
+
+echo "== PI9. --per-item: LOOMWRIGHT_CC_PROJECTS_DIR is the projects dir when no --projects-dir is given =="
+PI_OUT="$(LOOMWRIGHT_CC_PROJECTS_DIR="$PIP" bash "$SUT" --per-item "$PIF/run.md" --root "$PI/p" 2>/dev/null)"
+pi_row '| **.supervisor/requirements/a.md** |' | grep -qF "| 29510 (main 28210) |" && ok "env-resolved projects dir reads the same transcripts" || no "env projects dir: $(pi_row 'a.md')"
+
+echo "== PI10. --per-item: fail SAFE (missing run file; jq unavailable) =="
+pi_run "$SUT" --per-item "$PI/nope.md" --root "$PI/p" --projects-dir "$PIP"
+[ "$PI_RC" -eq 0 ] && [ -z "$PI_OUT" ] && printf '%s\n' "$PI_ERR" | grep -q 'per-item: run_file_unreadable' && ok "missing run file ⇒ exit 0, named reason, no table" || no "missing run file: rc=$PI_RC out='$PI_OUT' err='$PI_ERR'"
+PI_OUT="$(LOOMWRIGHT_JQ_BIN=/nonexistent/jq bash "$SUT" --per-item "$PIF/run.md" --root "$PI/p" --projects-dir "$PIP" 2>"$PI/err")"; PI_RC=$?
+[ "$PI_RC" -eq 0 ] && [ -z "$PI_OUT" ] && grep -q 'per-item: jq_unavailable' "$PI/err" && ok "jq unavailable ⇒ exit 0, named reason, never the one-line zero sum" || no "no-jq per-item: rc=$PI_RC out='$PI_OUT'"
+
+echo "== PI12. --per-item: phase-timing.sh absent ⇒ named reason, no-number rows, exit 0 =="
+PIN="$(mktemp -d)"; cp "$SUT" "$PIN/read-token-ledger.sh"
+pi_run "$PIN/read-token-ledger.sh" --per-item "$PIF/run.md" --root "$PI/p" --projects-dir "$PIP"
+[ "$PI_RC" -eq 0 ] && printf '%s\n' "$PI_ERR" | grep -q 'per-item: phase_timing_unavailable — .supervisor/requirements/a.md' \
+  && [ "$(pi_row '| **.supervisor/requirements/a.md** |')" = "| **.supervisor/requirements/a.md** | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |" ] \
+  && ok "no phase-timing.sh ⇒ phase_timing_unavailable + 'not recorded' row" || no "no phase-timing: rc=$PI_RC row=$(pi_row 'a.md') err=$PI_ERR"
+rm -rf "$PIN"
+
+echo "== PI13. --per-item: bare run id resolves under the first root; an item with no session id names that =="
+mkdir -p "$PI/p/.supervisor/automate"; cp "$PIF/run.md" "$PI/p/.supervisor/automate/run.md"
+pi_run "$SUT" --per-item run --root "$PI/p" --projects-dir "$PIP"
+pi_row '| **.supervisor/requirements/a.md** |' | grep -qF "| 29510 (main 28210) |" && ok "--per-item <bare run id> reads <root>/.supervisor/automate/<id>.md" || no "bare run id: $(pi_row 'a.md') err=$PI_ERR"
+printf '# Automate Run: x\n## Queue\n- [x] q.md\n## Progress\n- 2026-10-15T01:00:00Z picked q.md\n- 2026-10-15T01:10:00Z parked\n' > "$PI/nosess.md"
+pi_run "$SUT" --per-item "$PI/nosess.md" --root "$PI/p" --projects-dir "$PIP"
+[ "$PI_RC" -eq 0 ] && printf '%s\n' "$PI_ERR" | grep -qF 'no_transcripts — q.md (no session id recorded for the item' \
+  && pi_row '| **q.md** |' | grep -qF '| no transcripts |' && ok "picked item with no session id ⇒ no_transcripts naming the missing id, no number" || no "no-session item: err=$PI_ERR row=$(pi_row 'q.md')"
+
+echo "== PI11. existing modes unchanged by the per-item flags (AC5) =="
+mr_out="$(bash "$SUT" --session sa --root "$PI/p" --projects-dir "$PIP")"
+[ "$mr_out" = "INPUT=0 OUTPUT=0 CACHE_READ=0 CACHE_CREATE=0 TOTAL=0 EVENTS=0" ] && ok "--session one-line output is the same shape (no token_ledger lines ⇒ zero sums, readable log)" || no "--session with --projects-dir: $mr_out"
+rm -rf "$PI"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
