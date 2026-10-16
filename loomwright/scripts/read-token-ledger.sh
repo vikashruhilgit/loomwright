@@ -517,7 +517,7 @@ per_item_report() {
       fi
       if [ "$(printf '%s' "$ptj" | "$JQ" -r '.item.pick // empty')" = "" ]; then
         # an unpicked Queue item the lanes picked is reported under its lane row only
-        if [ -z "$lane" ] && printf '%s\n' "$lane_items" | grep -qxF "$item"; then continue; fi
+        if [ -z "$lane" ] && grep -qxF "$item" <<<"$lane_items"; then continue; fi
         # a parallel wave's parent: the item was picked by a lane whose run file sits
         # next to this one as <run_id>-L<n>.md (costed there, never "not picked" here)
         inlane=""
