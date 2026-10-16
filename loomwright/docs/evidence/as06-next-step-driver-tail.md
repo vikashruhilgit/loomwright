@@ -8,16 +8,21 @@ drive files: `loomwright/scripts/fixtures/automate-golden/<case>/next-step.resul
 loomwright/scripts/test-automate-next-step.sh` → `PASS: 46 FAIL: 0`).
 
 This file has two parts. Subtask 1 (the driver) recorded the before-values and the driver legs. Subtask 2 (the
-prose migration) fills every line marked **AFTER — subtask 2**.
+prose migration) filled the after-values and the migration's suite results.
 
 ## Before / after
 
 | Measure | Before (base `142540b`) | After |
 |---|---|---|
-| `wc -c loomwright/skills/automate-loop/*.md` (full glob) | `320545 total` | **AFTER — subtask 2** |
-| Default-mode read set: the Step 0 **Always** files on a sequential run (`SKILL.md` 84444 + `per-item-loop.md` 106350 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900), `legacy-tail.md` excluded | `223857` | **AFTER — subtask 2** |
-| Conditional Step 0 reads on a sequential run (recorded separately): `intake.md` (new run) / `resume.md` (resume) | `10379` / `18852` | **AFTER — subtask 2** |
-| Loop-inventory `GAP` count (`docs/loop-inventory/automate-loop.md` `## Counts`, rows 552) | `147` | **AFTER — subtask 2** |
+| `wc -c loomwright/skills/automate-loop/*.md` (full glob, `legacy-tail.md` INCLUDED — labelled: not the default read set) | `320545 total` | `328432 total` (+7887: the per-step pointers, `legacy-tail.md`'s header and pointer section, the §1.5 driver row) |
+| Default-mode read set: the Step 0 **Always** files on a sequential run (`SKILL.md` 84444 + `per-item-loop.md` 106350 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900), `legacy-tail.md` excluded | `223857` | `198175` (`SKILL.md` 86071 + `per-item-loop.md` 79041 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900): −25682 bytes, −11.5% |
+| Conditional Step 0 reads on a sequential run (recorded separately): `intake.md` (new run) / `resume.md` (resume) | `10379` / `18852` | `10379` / `18852` (unchanged) |
+| `--legacy` read set (recorded separately): the default set + `legacy-tail.md` 33407 | — | `231582` (+7725 over base: the old prose plus the pointers that replaced it) |
+| Loop-inventory `GAP` count (`docs/loop-inventory/automate-loop.md` `## Counts`, rows 552) | `147` | `132` (rows 560: 8 new rows, 2 of them GAP; 17 rows linked to a test — see below) |
+
+Per-file `wc -c` after: `SKILL.md` 86071, `branch-mode.md` 7592, `command-lanes.md` 4111, `intake.md` 10379,
+`invariants.md` 5900, `lanes.md` 55916, `legacy-tail.md` 33407, `modes-and-merge-gate.md` 27163, `per-item-loop.md` 79041,
+`resume.md` 18852.
 
 Per-file `wc -c` at base: `SKILL.md` 84444, `branch-mode.md` 7592, `command-lanes.md` 4111, `intake.md` 10379,
 `invariants.md` 5900, `lanes.md` 55754, `modes-and-merge-gate.md` 27163, `per-item-loop.md` 106350, `resume.md` 18852.
@@ -38,7 +43,9 @@ loomwright/skills/automate-loop/per-item-loop.md
 ```
 
 After (subtask 1, with the driver in place): identical. `test-automate-next-step.sh` leg S asserts it.
-**AFTER — subtask 2:** the list after the prose migration.
+After (subtask 2, after the prose migration): identical — the same eight files. No line holding the positive
+literal moved: `modes-and-merge-gate.md` (§9 bullets, §10) is untouched, the `per-item-loop.md` hit is §8's, and
+`legacy-tail.md`, the pointers and the inventory edits carry the string nowhere.
 
 ## Validation 1 — suites (`<passed>/<total>`)
 
@@ -59,7 +66,60 @@ check-version-bump.sh        OK — not bumped; fragments pending (legal)
 check-vendor-coupling.sh     OK — no path exceeds its declared allowance
 ```
 
-**AFTER — subtask 2:** the same suites after the migration, plus `test-loop-inventory.sh` with the re-homed rows.
+After the prose migration (subtask 2):
+
+```
+test-automate-next-step.sh   PASS: 46 FAIL: 0          46/46
+test-automate-golden.sh      PASS: 64 FAIL: 0          64/64   (MAP.tsv: the moved subsection's 13 unit rows removed)
+test-automate-helpers.sh     RESULT: 737 passed, 0 failed   737/737   (QG3a/QG3a' read legacy-tail.md)
+test-automate-dismissed.sh   245 passed, 0 failed      245/245   (+6: the anchor-uniqueness leg, 3 anchors + 3 mutants)
+test-result-schemas-split.sh RESULT: 14 passed, 0 failed    14/14
+test-automate-loop-split.sh  RESULT: 39 passed, 0 failed    39/39
+test-loop-inventory.sh       RESULT: 39/39 passed      39/39   (re-homed rows, legacy-tail.md in ## Sources)
+test-citation-drift.sh       citation-drift: 26 passed, 0 failed   26/26
+check-doc-currency.sh        OK — all checked version/count claims match
+check-token-budget.sh        OK — breaches: 0 | errors: 0   (automate-loop 82025/87895, commands/automate.md 7202/7565)
+```
+
+**Repointed pins and their mutation controls.** `test-automate-helpers.sh` QG3a/QG3a' read `legacy-tail.md`
+(`QG_LOOP`); the `lead-dup.md` / `heading-mut.md` and the three `qg_move` mutants are built from it and still turn
+their legs red. `test-automate-dismissed.sh`'s B legs read the assembled skill, which now includes `legacy-tail.md`
+through its SKILL.md split block, so every B leg and its built-in mutants (`pf-lock-mutant`, `d3-mutant`,
+`d3-batch-mutant`) run on the moved text unchanged. A new leg asserts each first-match anchor (`4. **GATE**`, the
+decision-step heading, the park-first lead line) occurs once in the assembly, in `legacy-tail.md` only, with a
+per-anchor mutant (the anchor appended to a `per-item-loop.md` copy) that turns it red. The B legs with no built-in
+mutant were checked by hand on a scratch copy of the tree (each mutant applied to `legacy-tail.md`):
+
+```
+RED as expected: swap-release-gate —   FAIL: B: park-first order park=2 watcher=3 notify=4 release=5 gate=5 ask=7
+RED as expected: move-park-above-ask —   FAIL: B: subsection order ask=10 park=9
+RED as expected: drop-once —   FAIL: B: subsection lacks: at most ONCE per item
+RED as expected: drop-written-first —   FAIL: B: GATE step 4 order wrong
+```
+
+**Inventory re-home and golden-case links.** The 49 rows whose prose moved (AL-267–AL-280, AL-282–AL-287,
+AL-312–AL-340) now name `skills/automate-loop/legacy-tail.md` with home `script:automate-next-step.sh <step>`
+(every `<step>` a real `case` arm); AL-281 (the RECONCILE re-check) stays `prose` in `per-item-loop.md`. A migrated
+row the driver suite covers names `test-automate-next-step.sh`; one it does not reach keeps its helper test or stays
+GAP (AL-276 no-note waive retry, AL-318 unreadable-draft warning, AL-327 notify, AL-335 merge while a question is
+pending, and the story rows). GAP rows linked to a test:
+
+| Rows | Test cell | Golden case / leg |
+|---|---|---|
+| AL-001, AL-079, AL-259, AL-289 | `test-automate-golden.sh` | `rate-limit-park` |
+| AL-209, AL-219 | `test-automate-golden.sh` | `resume-rate-limit-park` |
+| AL-217 | `test-automate-golden.sh` | `resume-ambiguous-park` |
+| AL-260 | `test-automate-golden.sh` | `run-record-pr` |
+| AL-078, AL-261, AL-389 | `test-automate-golden.sh` | `drain-owned-drain-started` |
+| AL-269, AL-315 | `test-automate-next-step.sh` | `escalated-park`, `dismissed-findings-decision-step` (decide-then-park) |
+| AL-280, AL-337 | `test-automate-next-step.sh` | leg Q (no ask under `--non-interactive`) |
+| AL-319, AL-320 | `test-automate-next-step.sh` | leg B5 (fix-now re-pass, never offered twice) |
+
+Honest residual (132): mostly `story`/`rule` rows and branches no golden case drives (the 429-hint fallback, the
+`drain_died` park, the notify). The requirement's "GAP reaches 0" is not met, as the brief's Feasibility row said;
+no test cell was invented for a row no test reaches. Two new rows are GAP: AL-558 (legacy-tail.md is read only under
+`--legacy`) and AL-559 (Step 0's `--legacy` trigger) — `test-automate-loop-split.sh` F checks that Step 0 names
+`legacy-tail.md` in documented order, not the trigger.
 
 ## Validation 2 — mutation controls (inside `test-automate-next-step.sh`)
 

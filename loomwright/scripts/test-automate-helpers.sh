@@ -194,7 +194,7 @@
 #      unavailable, a `running` item, a missing or foreign marker, a foreign item or PR, a
 #      missing / unreadable / item-less run file ⇒ refuse, usage errors exit 1, READ-ONLY, the
 #      delayed-marker leg (marker ~2s after a --wait 5 call ⇒ ask) and a --wait 1 refusal; the
-#      prose-order leg (QG3) over per-item-loop.md's park-first list and the intake.md leg (QG4).
+#      prose-order leg (QG3) over legacy-tail.md's park-first list and the intake.md leg (QG4).
 #      Every leg has a gated mutant (anchor unique, non-empty, differs, `bash -n`; prose mutants:
 #      non-empty, differs, no line lost) that turns it red.
 
