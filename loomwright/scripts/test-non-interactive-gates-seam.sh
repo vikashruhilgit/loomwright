@@ -41,7 +41,9 @@
 #   (r) no unapproved rubric: autonomous-loop PLAN step 2 requests rubric auto-authoring only when
 #       `--non-interactive-fallback` was NOT passed (the run then ends at `no_rubric_in_non_interactive`
 #       and step 7 freezes nothing); Launch Pad Phase 5 step 7, its Can't-ask rule (agent + command
-#       mirror) and the inventory say so. Each predicate was checked red on the pre-fix files.
+#       mirror) and the inventory say so. Each predicate was checked red on the pre-fix files. The
+#       multi-iteration-only PLAN text (auto-authoring, freeze) lives in
+#       skills/autonomous-loop/multi-iteration.md's `## PLAN — multi-iteration additions` (automate-speed/13).
 #   (m) MUTATION CONTROL: delete the can't-ask branch line from a COPY of agents/product-owner.md;
 #       gate the mutant on non-empty + differs-from-original; the (a) predicate MUST fail on it.
 #       Without this, (a) could be green while asserting nothing.
@@ -232,9 +234,12 @@ LP_CMD="$PLUGIN_ROOT/commands/launch-pad.md"
 SV_AGENT="$PLUGIN_ROOT/agents/supervisor.md"
 SV_CFG="$PLUGIN_ROOT/skills/supervisor-config/SKILL.md"
 AL_SKILL="$PLUGIN_ROOT/skills/autonomous-loop/SKILL.md"
+# The multi-iteration-only protocol (EVALUATE gates, rubric auto-authoring + freeze) moved here; Step 0
+# loads it unless --single-iteration (automate-speed/13).
+AL_MULTI="$PLUGIN_ROOT/skills/autonomous-loop/multi-iteration.md"
 QA_AGENT="$PLUGIN_ROOT/agents/qa-executor.md"
 ARCH="$PLUGIN_ROOT/docs/ARCHITECTURE_CONTRACTS.md"
-for f in "$LP_AGENT" "$LP_CMD" "$SV_AGENT" "$SV_CFG" "$AL_SKILL" "$QA_AGENT" "$ARCH"; do
+for f in "$LP_AGENT" "$LP_CMD" "$SV_AGENT" "$SV_CFG" "$AL_SKILL" "$AL_MULTI" "$QA_AGENT" "$ARCH"; do
   [ -f "$f" ] || no "MISSING surface: $f"
 done
 LP_P2='### Phase 2: DISCOVER'; LP_P25='### Phase 2.5: FEASIBILITY'
@@ -266,9 +271,14 @@ for s in init_input_missing_non_interactive \
 done
 gate_has_status "(g) skills/supervisor-config/SKILL.md INIT" "$SV_CFG" 'init_input_missing_non_interactive'
 for s in non_interactive_without_fallback rubric_gate_closed_non_interactive no_rubric_in_non_interactive \
-         review_heal_escalated_non_interactive pr_base_verify_skipped_non_interactive \
-         launch_pad_cant_ask_non_interactive; do
+         review_heal_escalated_non_interactive launch_pad_cant_ask_non_interactive; do
   gate_has_status "(g) skills/autonomous-loop/SKILL.md" "$AL_SKILL" "$s"
+done
+# The gates themselves (PR-base verification, review-heal escalation, rubric gate, no-rubric gate) live
+# in multi-iteration.md, so each names its can't-ask status there too.
+for s in rubric_gate_closed_non_interactive no_rubric_in_non_interactive \
+         review_heal_escalated_non_interactive pr_base_verify_skipped_non_interactive; do
+  gate_has_status "(g) skills/autonomous-loop/multi-iteration.md" "$AL_MULTI" "$s"
 done
 for s in no_source_non_interactive resume_requires_flag_non_interactive resume_ambiguous; do
   gate_has_status "(g) skills/automate-loop/SKILL.md" "$AUTO_SKILL" "$s"
@@ -373,7 +383,7 @@ lp_rule_rubric_ok() {
   case "$rule" in *'no Outcomes Rubric is auto-authored when the run cannot ask'*) ;; *) return 1 ;; esac
   return 0
 }
-if al_rubric_gate_ok "$AL_SKILL"; then
+if al_rubric_gate_ok "$AL_MULTI"; then
   ok "(r) autonomous-loop PLAN step 2 requests no rubric authoring under --non-interactive-fallback (no-rubric outcome named; step 7 freeze skipped)"
 else
   no "(r) autonomous-loop PLAN step 2/7 do not gate rubric auto-authoring off under --non-interactive-fallback"
