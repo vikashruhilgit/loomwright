@@ -57,3 +57,9 @@ none
 loomwright/scripts/fixtures/automate-golden/
 loomwright/scripts/test-automate-golden.sh
 changelog.d/as05-golden-run-tests.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-16T01:41:29Z
+- **Brief:** .supervisor/jobs/done/2026-10-15-as05-golden-run-tests.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/558
