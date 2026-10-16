@@ -318,6 +318,12 @@ for f in "[-p]" "[--input-format] [stream-json]" "[--output-format] [stream-json
          "[--plugin-dir] [$(cd "$HERE/.." && pwd)]" "[--append-system-prompt] [You are running as a HEADLESS lane"; do
   has "H1 flag $f" "$first" "$f"
 done
+# H1b-H1e: the background-work rules L8 broke on 2026-10-16 (see LANE_SYS's comment), each pinned in the spawned prompt.
+has "H1b the lane is told a turn end waits on background tasks (never that it stops them)" "$first" "this process does not exit until every background task has finished, and a finished background task starts another turn"
+has "H1c … that a timed-out Bash call is moved to the background, so wait loops carry a deadline" "$first" "every wait loop needs its own deadline, shorter than the call's timeout"
+has "H1d … never to poll a subagent's transcript" "$first" "Never poll a subagent's transcript or output files"
+has "H1e … to stop background tasks before asking the owner" "$first" "Before you ask the owner, stop every background task still running"
+hasnt "H1f the false claim that ending the turn stops background tasks is gone" "$first" "stops any background task"
 has "H2 disallow carries the merge command" "$first" "Bash(gh pr merge:*)"
 has "H3 disallow carries force push" "$first" "Bash(git push --force:*)"
 has "H4 disallow carries a push to the base branch" "$first" "Bash(git push origin main:*)"
