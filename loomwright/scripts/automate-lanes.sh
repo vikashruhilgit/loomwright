@@ -1949,9 +1949,10 @@ _lanes_resolve() {
 # lane state (`active`, `waiting` on the owner, `held`, `trouble`; every step `done` once merged/done).
 # A step passed without a line of its own reads `done` with null times: the run never said when it ran.
 # Boundaries: the `picked` line ends Pick and starts Plan; a Launch Pad "brief saved" line ends Plan and starts Build (/autonomous hands the brief to
-# the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too, one with no PR
-# URL that names Launch Pad (blocked, NO-GO, `launch_pad_blocked` — the wording is not pinned) and neither the
-# Supervisor nor a saved brief reaches only Plan (the Supervisor never started).
+# the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too. The pinned no-PR
+# line (`ran /autonomous — no PR: <status_reason> (…)`, per-item-loop.md step 2) reaches only Plan when its
+# status_reason token (snake_case) is one of `planstop` (the Supervisor never started), else Build; a free-text line with no
+# PR URL that names Launch Pad and neither the Supervisor nor a saved brief reaches only Plan too.
 # A `parked …` line is the Merge gate's only once the lane reached Drain; a park before that (Launch Pad
 # blocked, an escalated build) reaches no step of its own — it joins the furthest step reached, which the
 # lane state then colors, and every later step stays `pending`.
@@ -1980,6 +1981,10 @@ _lanes_timeline() {
     def ids: ["pick", "plan", "build", "heal", "drain", "decide", "merge"];
     def names: ["Pick", "Plan", "Build", "Heal", "Drain", "Decide", "Merge"];
     def ord: . as $id | ids | index($id);
+    # AUTONOMOUS_RUN status_reasons that stop /autonomous before the Supervisor starts (INIT, Launch Pad, brief checks).
+    def planstop: ["launch_pad_blocked", "user_aborted_at_launch_pad", "launch_pad_cant_ask_non_interactive",
+      "user_discarded_at_phase_6", "user_aborted_at_no_go", "user_aborted_at_plan_review_fail", "rubric_dropped_from_brief",
+      "concurrent_session_detected", "non_interactive_without_fallback", "invalid_max_iterations", "conflicting_mode_flags"];
     def cls:
       if test("^parked ") then ["park"]
       elif test("^(closeout |auto-finalized|trail-pr|lane park notify|converted |merged)") then ["merge"]
@@ -1987,6 +1992,8 @@ _lanes_timeline() {
       elif test("owned drain started|^drain |re-drain") then ["drain"]
       elif test("^/autonomous done") then ["heal"]
       elif test("^ran /autonomous") then (if test("heal (PASS|FAIL|ESCALATED)") then ["build", "heal"]
+                                         elif test("no PR: [a-z]+_[a-z0-9_]+") then
+                                           (if (capture("no PR: (?<r>[a-z0-9_]+)").r | IN(planstop[])) then ["plan"] else ["build"] end)
                                          elif (test("PR https?://") | not) and test("launch[ _-]?pad"; "i")
                                               and (test("supervisor|brief saved"; "i") | not) then ["plan"] else ["build"] end)
       elif test("^supervisor:"; "i") then ["build"]

@@ -57,7 +57,8 @@
 #     unpushed-metadata refusal — and so fleet-closeout's waiting line — names the paths + two mutations
 #   AJ lane timeline: the seven steps from `## Progress` + Supervisor state (pick-guarded), boundaries,
 #     current-step state per lane state, a park before the drain stays on the step reached (L5 Launch Pad
-#     blocked, unpinned wordings) + mutation control, the JSON fields and the plain steps line; `waves` from the
+#     blocked, unpinned wordings, the pinned no-PR status_reason line) + mutation controls, the JSON fields
+#     and the plain steps line; `waves` from the
 #     parent run file's wave-build records (undated hand line, colon inside the parenthetical)
 #   E7-E9 init-check single-lane mode: branch mode required for N = 1 (fail CLOSED), no mode read for N > 1
 #   SL single-lane mode `--parallel 1` (twin-remediation/08b): lane.json single_lane (first leg) · lane-park seam ·
@@ -2812,6 +2813,25 @@ aj4d() { ajp '- 2026-10-11T08:01:00Z picked a.md' "- 2026-10-11T08:20:00Z ran /a
 check "AJ4d unpinned Launch Pad wordings reach Plan; Supervisor / a PR URL reach Build" \
   "$(aj4d '— blocked: Launch Pad NO-GO (no PR)'),$(aj4d '(aborted, status_reason launch_pad_blocked)'),$(aj4d '— no PR: Supervisor failed after Launch Pad'),$(aj4d '→ PR https://x/pull/9 (Launch Pad brief reused)')" \
   "plan,plan,build,build"
+# AJ4e: the PINNED no-PR line (per-item-loop.md step 2) — its status_reason token decides Plan vs Build, every
+# Plan-stage token is a real AUTONOMOUS_RUN status_reason, and the step-2 prose carries the template + mutation control.
+AJ4E_PLAN="$( ( . "$S"; declare -f _lanes_timeline ) | sed -n '/def planstop:/,/\];/p' | grep -o '"[a-z0-9_]*"' | tr -d '"')"
+aj4e() { local r=""; for x in "$@"; do r="$r$(aj4d "— no PR: $x (why)"),"; done; printf '%s' "${r%,}"; }
+check "AJ4e every Plan-stage status_reason reaches Plan" "$(aj4e $AJ4E_PLAN | tr ',' '\n' | sort -u)" plan
+check "AJ4e2 Supervisor-stage status_reasons reach Build; a free-text no-PR line still falls back" \
+  "$(aj4e supervisor_failed_other preflight_overlap_detected supervisor_checkpoint),$(aj4d '— no PR: blocked by Launch Pad')" "build,build,build,plan"
+AJ4E_ENUM="$(grep -m1 '^- \*\*status_reason:\*\*' "$HERE/../skills/autonomous-loop/SKILL.md")"
+AJ4E_MISS=""; for x in $AJ4E_PLAN; do case "$AJ4E_ENUM" in *"\"$x\""*) ;; *) AJ4E_MISS="$AJ4E_MISS $x" ;; esac; done
+check "AJ4e3 planstop has 11 tokens, each one in the AUTONOMOUS_RUN status_reason enum" "$(printf '%s\n' $AJ4E_PLAN | wc -l | tr -d ' ')|${AJ4E_MISS:-none}" "11|none"
+has "AJ4e4 per-item-loop.md step 2 pins the no-PR line" "$(cat "$HERE/../skills/automate-loop/per-item-loop.md")" \
+  '`<ts> ran /autonomous — no PR: <status_reason> (<one-line why>)`'
+sed 's/def planstop: \["launch_pad_blocked", /def planstop: [/' "$S" > "$MUT/lanes-aj4e.sh"
+if ! cmp -s "$S" "$MUT/lanes-aj4e.sh" && bash -n "$MUT/lanes-aj4e.sh"; then
+  out="$(ajp '- 2026-10-11T08:01:00Z picked a.md' '- 2026-10-11T08:20:00Z ran /autonomous — no PR: launch_pad_blocked (Plan Review FAIL 3/3)' '- 2026-10-11T08:20:05Z parked escalated (no PR)'
+         ( . "$MUT/lanes-aj4e.sh"; _lanes_timeline "$AJRF" "$AJ/lane/.supervisor" "$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')" escalated - ) | jq -r .current)"
+  check "AJ4f mutation (launch_pad_blocked dropped from planstop) trips AJ4e: the pinned L5 line reads Build" "$out" build
+else bad "AJ4f mutation did not apply (planstop moved)"; fi
+rm -f "$MUT/lanes-aj4e.sh"
 ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md' \
   '- 2026-10-11T08:30:00Z ran /autonomous → PR https://x/pull/2 (SUPERVISOR_RESULT completed; heal PASS iter 1)' \
   '- 2026-10-11T08:31:00Z owned drain started' '- 2026-10-11T08:40:00Z drain round 3: fixed'
