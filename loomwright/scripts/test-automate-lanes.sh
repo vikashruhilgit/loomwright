@@ -3247,6 +3247,11 @@ wait_gone "$LA1"
 out="$(hook_in PreToolUse "$LA1" toolu_s2 "$QS1" | bash "$S" relay-hook)"
 check "AM7 the resume re-fires the SAME id: allowed with its answer, nothing superseded" \
   "$(jq -r '.hookSpecificOutput.permissionDecision' <<<"$out"):$(ls "$LA1/.supervisor/inbox/questions/superseded" | tr '\n' ' ')" "allow:toolu_s1.json "
+# AM7b the coordinator's hand fix on 2026-10-16 left a record with no superseded_by: still refused, by its own wording
+jq -n -c --argjson q "$QS1" '{id: "toolu_h1", asked_at: "2026-10-16T03:40:00Z", questions: $q}' > "$LA1/.supervisor/inbox/questions/superseded/toolu_h1.json"
+out="$(am_ans "$LA1" toolu_h1)"; rc=$?
+check "AM7b a hand-moved record (no superseded_by) is refused as superseded, naming no id" \
+  "$rc:$out" "1:automate-lanes: lane-answer: refused — toolu_h1 superseded by a newer question (its record names none)"
 check "AM8 the two-question sequence leaves 0 pending" "$(am_pending "$LA1")" ""
 JAM="$(bash "$S" lane-status "$RFAM" --json 2>/dev/null)"
 check "AM9 lane-status reads the lane's real state (its park), not awaiting_input; no questions (the pane)" \
