@@ -56,7 +56,8 @@
 #     it (a done-headed proposed/ file never), the lane is removable with no hand push; lane-remove's
 #     unpushed-metadata refusal — and so fleet-closeout's waiting line — names the paths + two mutations
 #   AJ lane timeline: the seven steps from `## Progress` + Supervisor state (pick-guarded), boundaries,
-#     current-step state per lane state, the JSON fields and the plain steps line; `waves` from the
+#     current-step state per lane state, a park before the drain stays on the step reached (L5 Launch Pad
+#     blocked, unpinned wordings) + mutation control, the JSON fields and the plain steps line; `waves` from the
 #     parent run file's wave-build records (undated hand line, colon inside the parenthetical)
 #   E7-E9 init-check single-lane mode: branch mode required for N = 1 (fail CLOSED), no mode read for N > 1
 #   SL single-lane mode `--parallel 1` (twin-remediation/08b): lane.json single_lane (first leg) · lane-park seam ·
@@ -2789,6 +2790,28 @@ check "AJ3 the run starts at its first dated line; a step keeps its last 4 lines
   "$(jq -r '"\(.started_at)|\(.steps[4].lines | length)|\(.steps[4].lines[0] | .[0:13])"' <<<"$out")" "2026-10-11T03:19:01Z|4|owned drain s"
 out="$(ajt ready_for_release)"
 check "AJ4 parked ⇒ Merge is current and waiting on the owner" "$(jq -r '"\(.current)|\(.steps[6].state)|\(.steps[5].state)"' <<<"$out")" "merge|waiting|done"
+# AJ4b: a park BEFORE the drain is no Merge evidence (run automate-2026-10-15-163325 L5, 2026-10-16: Launch
+# Pad blocked, the lane read "Merge · escalated, step 7 of 7" with Pick..Decide green). It stays on Plan.
+ajp '- 2026-10-11T08:00:00Z run created (lane L5 of p)' '- 2026-10-11T08:01:00Z picked a.md' \
+  '- 2026-10-11T08:20:00Z ran /autonomous --single-iteration — no PR: Launch Pad blocked (Plan Review FAIL 3/3; owner chose Refine offline)' \
+  '- 2026-10-11T08:20:05Z parked escalated (no PR) — Launch Pad blocked; revised brief draft kept'
+out="$(ajt escalated)"
+AJ4B_GOT='"\(.current)|\(.label)|\(.steps[0].state)|\(.steps[1].state)|\([.steps[2:][].state] | unique | join(","))|\(.steps[1].lines[-1] | .[0:16])"'
+check "AJ4b a park before the drain stays on the step reached: Plan trouble, Build..Merge pending" \
+  "$(jq -r "$AJ4B_GOT" <<<"$out")" "plan|Plan|done|trouble|pending|parked escalated"
+sed 's/if test("^parked ") then \["park"\]/if test("^parked ") then ["merge"]/' "$S" > "$MUT/lanes-aj4b.sh"
+if ! cmp -s "$S" "$MUT/lanes-aj4b.sh" && bash -n "$MUT/lanes-aj4b.sh"; then
+  out="$( ( . "$MUT/lanes-aj4b.sh"; _lanes_timeline "$AJRF" "$AJ/lane/.supervisor" "$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')" escalated - ) )"
+  check "AJ4c mutation (every park is Merge again) trips AJ4b: Merge current, Pick..Decide done" \
+    "$(jq -r "$AJ4B_GOT" <<<"$out")" "merge|Merge|done|done|done,trouble|ran /autonomous "
+else bad "AJ4c mutation did not apply (the park classification moved)"; fi
+rm -f "$MUT/lanes-aj4b.sh"
+# AJ4d: the no-PR RUN line's wording is not pinned — other Launch Pad phrasings reach Plan too; one that names
+# the Supervisor (it started) or carries a PR URL still reaches Build.
+aj4d() { ajp '- 2026-10-11T08:01:00Z picked a.md' "- 2026-10-11T08:20:00Z ran /autonomous $1" '- 2026-10-11T08:20:05Z parked escalated (no PR)'; ajt escalated | jq -r .current; }
+check "AJ4d unpinned Launch Pad wordings reach Plan; Supervisor / a PR URL reach Build" \
+  "$(aj4d '— blocked: Launch Pad NO-GO (no PR)'),$(aj4d '(aborted, status_reason launch_pad_blocked)'),$(aj4d '— no PR: Supervisor failed after Launch Pad'),$(aj4d '→ PR https://x/pull/9 (Launch Pad brief reused)')" \
+  "plan,plan,build,build"
 ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md' \
   '- 2026-10-11T08:30:00Z ran /autonomous → PR https://x/pull/2 (SUPERVISOR_RESULT completed; heal PASS iter 1)' \
   '- 2026-10-11T08:31:00Z owned drain started' '- 2026-10-11T08:40:00Z drain round 3: fixed'
