@@ -27,11 +27,12 @@
 #  15. mutating the reader so numf() always returns 0 makes a KNOWN-non-zero
 #      fixture report TOTAL=0 -- proving the normal (unmutated) script's
 #      non-zero result in test 1 is load-bearing, not a fixture accident.
-#  PI1-PI11. --per-item (automate-speed/03) over token-ledger-fixtures/per-item/:
+#  PI1-PI17. --per-item (automate-speed/03) over token-ledger-fixtures/per-item/:
 #      item + phase rows (PR #533's spans), message-id de-dup and its mutation
 #      control, wall time = phase-timing.sh's, missing boundary / no park / two
 #      drains, no_transcripts, lane attribution, unpicked item, env projects
-#      dir, fail-safe exits, existing modes unchanged.
+#      dir, fail-safe exits, existing modes unchanged, no_usage_in_window (item
+#      and phase), inverted window, sibling-lane 'picked in lane'.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -462,6 +463,50 @@ printf '# Automate Run: x\n## Queue\n- [x] q.md\n## Progress\n- 2026-10-15T01:00
 pi_run "$SUT" --per-item "$PI/nosess.md" --root "$PI/p" --projects-dir "$PIP"
 [ "$PI_RC" -eq 0 ] && printf '%s\n' "$PI_ERR" | grep -qF 'no_transcripts — q.md (no session id recorded for the item' \
   && pi_row '| **q.md** |' | grep -qF '| no transcripts |' && ok "picked item with no session id ⇒ no_transcripts naming the missing id, no number" || no "no-session item: err=$PI_ERR row=$(pi_row 'q.md')"
+
+echo "== PI14. --per-item: a transcript with no usage record in the item window ⇒ no_usage_in_window, no number =="
+# A copy of the fixture projects dir (the tracked fixture keeps c.md transcript-less for PI6)
+# plus a transcript for c's Claude Code session holding only a user line.
+PIQ="$PI/projects-nousage"; cp -R "$PIP" "$PIQ"
+printf '%s\n' '{"type":"user","timestamp":"2026-10-14T11:10:00Z","message":{"role":"user","content":"hi"}}' > "$PIQ/-fixture-proj/cccccccc-0000-4000-8000-000000000001.jsonl"
+pi_run "$SUT" --per-item "$PIF/run.md" --root "$PI/p" --projects-dir "$PIQ"
+pi_c="$(pi_rows_after '| **.supervisor/requirements/c.md** |')"
+[ "$PI_RC" -eq 0 ] && printf '%s\n' "$PI_ERR" | grep -qF 'per-item: no_usage_in_window — .supervisor/requirements/c.md (1 transcript file(s) read' \
+  && [ "$(printf '%s\n' "$pi_c" | wc -l | tr -d ' ')" = 1 ] && [ "$(printf '%s\n' "$pi_c" | sed 's/^| \*\*[^|]*\*\* //' | tr -cd '0-9')" = "" ] \
+  && printf '%s\n' "$pi_c" | grep -qF "| no usage in window |" \
+  && ok "transcript present, zero usage lines ⇒ named reason + ONE no-number row" || no "zero-usage transcript: err=$PI_ERR rows=$pi_c"
+# usage only OUTSIDE the item window (after c's park) is still no usage in the window
+printf '%s\n' '{"type":"assistant","timestamp":"2026-10-14T12:00:00Z","message":{"id":"msg_c_late","stop_reason":"end_turn","usage":{"input_tokens":9,"output_tokens":9}}}' >> "$PIQ/-fixture-proj/cccccccc-0000-4000-8000-000000000001.jsonl"
+pi_run "$SUT" --per-item "$PIF/run.md" --root "$PI/p" --projects-dir "$PIQ"
+pi_c="$(pi_rows_after '| **.supervisor/requirements/c.md** |')"
+printf '%s\n' "$PI_ERR" | grep -qF 'per-item: no_usage_in_window — .supervisor/requirements/c.md' \
+  && [ "$(printf '%s\n' "$pi_c" | sed 's/^| \*\*[^|]*\*\* //' | tr -cd '0-9')" = "" ] \
+  && ok "usage only outside pick → park ⇒ no_usage_in_window, no number" || no "out-of-window usage: err=$PI_ERR rows=$pi_c"
+
+echo "== PI15. --per-item: a phase window with no usage record prints 'no usage in window', never 0 =="
+pi_run "$SUT" --per-item "$PIF/run.md" --root "$PI/p" --projects-dir "$PIP"
+pi_b="$(pi_rows_after '| **.supervisor/requirements/b.md** |')"
+printf '%s\n' "$pi_b" | grep -qxF "| ↳ ↳ after iter 1 (no iter line) | 10-14 09:40:00 → 10:00:00 | 20m 0s | no usage in window | no usage in window | no usage in window | — | — |" \
+  && ok "empty phase window ⇒ 'no usage in window' (wall kept)" || no "empty phase row: $(printf '%s\n' "$pi_b" | grep -F 'after iter 1')"
+printf '%s\n' "$PI_OUT" | grep -qF "| 0 (main 0) |" && no "a 0 (main 0) cell was rendered" || ok "no '0 (main 0)' cell anywhere in the report"
+
+echo "== PI16. --per-item: an inverted phase window (drain ends after the park) is 'not recorded' =="
+mkdir -p "$PI/inv/.supervisor/logs" "$PI/inv/proj/x"
+printf '{"cc_session_id":"cccccccc-0000-4000-8000-000000000009"}\n' > "$PI/inv/.supervisor/logs/sq.jsonl"
+printf '%s\n' '{"type":"assistant","timestamp":"2026-10-15T01:05:00Z","message":{"id":"m1","stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":1}}}' > "$PI/inv/proj/x/cccccccc-0000-4000-8000-000000000009.jsonl"
+printf '# Automate Run: x\n## Queue\n- [x] q.md\n## Progress\n- 2026-10-15T01:00:00Z picked q.md\n- 2026-10-15T01:10:00Z session_id sq (q.md)\n- 2026-10-15T01:10:00Z ran /autonomous → PR https://github.com/a/b/pull/1\n- 2026-10-15T01:30:00Z owned drain started — /review-pr https://github.com/a/b/pull/1 --until-mergeable\n- 2026-10-15T01:40:00Z drain READY (converged)\n- 2026-10-15T01:20:00Z parked awaiting_merge\n' > "$PI/inv/run.md"
+pi_run "$SUT" --per-item "$PI/inv/run.md" --root "$PI/inv" --projects-dir "$PI/inv/proj"
+pi_row '| ↳ Decide |' | grep -qxF "| ↳ Decide | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |" \
+  && ok "Decide with drain end > park ⇒ 'not recorded' (not an empty backwards window of 0s)" || no "inverted Decide: $(pi_row '| ↳ Decide |')"
+
+echo "== PI17. --per-item: a parent item picked by a sibling <run_id>-L<n>.md lane file reads 'picked in lane' =="
+mkdir -p "$PI/sib"; cp "$PIF/run.md" "$PI/sib/run.md"; cp "$PIF/lane/run-L1.md" "$PI/sib/run-L1.md"
+printf '# Automate Run: run-L2\n## Queue\n- [x] other.md\n## Progress\n- 2026-10-15T07:00:00Z picked other.md\n' > "$PI/sib/run-L2.md"
+pi_run "$SUT" --per-item "$PI/sib/run.md" --root "$PI/p" --projects-dir "$PIP"
+[ "$(pi_row '| **.supervisor/requirements/e.md** |')" = "| **.supervisor/requirements/e.md** | picked in lane run-L1 | not recorded | see lane run run-L1 | see lane run run-L1 | see lane run run-L1 | see lane run run-L1 | see lane run run-L1 |" ] \
+  && printf '%s\n' "$PI_ERR" | grep -qF 'picked_in_lane — .supervisor/requirements/e.md (run-L1)' \
+  && ok "lane-picked parent item names its lane run, not 'not picked'" || no "sibling lane: row=$(pi_row 'e.md') err=$PI_ERR"
+pi_row '| **.supervisor/requirements/d.md** |' | grep -qF "| not picked |" && ok "an item no lane picked still reads 'not picked'" || no "d with sibling lanes: $(pi_row 'd.md')"
 
 echo "== PI11. existing modes unchanged by the per-item flags (AC5) =="
 mr_out="$(bash "$SUT" --session sa --root "$PI/p" --projects-dir "$PIP")"

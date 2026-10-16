@@ -102,8 +102,9 @@ done < "${TMPDIR:-/tmp}/as03-runs.txt"
 
 How to read it:
 
-- **Parallel waves.** A wave's parent run file lists every item in its Queue, but the lanes pick them. Measured alone against the primary, the parent's rows therefore read `not picked`. Each lane's own run file, which the primary also holds as `<run_id>-L<n>.md`, is measured separately and carries that item's cost. Of the 77 item rows, 50 are such `not picked` rows.
+- **Parallel waves.** A wave's parent run file lists every item in its Queue, but the lanes pick them. Each lane's own run file, which the primary also holds as `<run_id>-L<n>.md`, is measured separately and carries that item's cost. Of the 77 item rows, 50 are parent rows for such lane-picked items. This output was captured before the reader learned to look at those sibling lane files, so those rows read `not picked` here; the reader now prints `picked in lane <run_id>-L<n>` (stderr reason `picked_in_lane`) for an item a sibling lane file picked, and keeps `not picked` for an item no lane picked. `/insights` likewise selects runs by run id and costs each parent together with its lane files.
 - **`no transcripts` (3 items).** One item recorded no session id at all. The other two have plugin session ids (`auto-…`) whose `.owner` and session log lived in a lane clone that has since been removed, so the chain to a Claude Code session id breaks. They print no number, never a 0.
+- **One `0 (main 0)` Decide row** (run `automate-2026-10-09-072725`'s `| ↳ Decide | 10-09 15:55:51 → 09:07:21 |` row) is an inverted window: the last drain ended after the `parked` line. The reader now prints such a span `not recorded`, and a span that holds no usage record `no usage in window`, so a re-measure would show no `0 (main 0)` cell. An item whose transcripts hold no usage in its window now reads `no_usage_in_window`; none of the items costed here did.
 - **No `parked` line (1 item).** Its wall time is `not recorded`, and the item total runs to the last recorded boundary, which the Window cell names.
 - **24 items are costed.** The report uses no average and no price, so none is quoted here.
 

@@ -113,17 +113,25 @@
 #     A span with a missing boundary prints `not recorded`, never 0; no
 #     `parked` line ⇒ the item's wall time and Decide print `not recorded` and
 #     the item total runs to the last recorded boundary (named in the Window
-#     cell). Gaps between boundaries belong to no phase, so phase rows need not
-#     add up to the item row.
+#     cell). A span whose end precedes its start (e.g. a drain ending after the
+#     park) prints `not recorded`; a span holding no usage record prints `no usage
+#     in window` in its token cells. Gaps between boundaries belong to no phase,
+#     so phase rows need not add up to the item row.
 #   * Lanes: with repeated --root, a root whose `.supervisor/lane.json` names
 #     this run as `parent_run_id` contributes its lane run file's items (shown
 #     as `[L<n>] <item>`), resolved against that lane's own logs. The given run
-#     file is read against the first root that is not such a lane.
+#     file is read against the first root that is not such a lane. Without the
+#     lane root, a Queue item the run did not pick but a sibling lane run file
+#     (`<run_id>-L<n>.md` next to the given one) has a `picked` line for prints
+#     `picked in lane <run_id>-L<n>` (cost that lane file), never `not picked`.
 #   * Fail SAFE: always exits 0. An item whose sessions resolve to no
 #     transcript prints a named `no_transcripts` reason on stderr and ONE row
 #     with `no transcripts` in every cell (no number, no phase rows) — never a
-#     0 that reads as cheap. Other stderr reasons: `run_file_unreadable`, `jq_unavailable`,
-#     `phase_timing_unavailable`, `not_picked`.
+#     0 that reads as cheap. Likewise `no_usage_in_window`: transcripts were read
+#     but none holds a usage record between pick and the item end — ONE row with
+#     `no usage in window` in every cell. Other stderr reasons:
+#     `run_file_unreadable`, `jq_unavailable`, `phase_timing_unavailable`,
+#     `not_picked`, `picked_in_lane`.
 #   * Honest limits: the /automate engine's own main-thread tokens count only
 #     when its Claude Code session id is resolvable through the chain above; a
 #     Claude Code session that wrote into a plugin session log for unrelated
@@ -269,6 +277,23 @@ pi_items() {
   } | sed 's#^\./##' | awk 'NF && !seen[$0]++'
 }
 
+# pi_lane_of <run file> <item> — the lane run id (<run_id>-L<n>, lowest n first)
+# whose run file, next to <run file>, has a `picked <item>` Progress line.
+pi_lane_of() {
+  local dir rid f b
+  dir="$(dirname "$1")"; rid="$(basename "$1" .md)"
+  for f in "$dir/$rid"-L*.md; do
+    b="$(basename "$f" .md)"
+    case "${b#"$rid"-L}" in ''|*[!0-9]*) continue ;; esac
+    [ -f "$f" ] && [ -r "$f" ] || continue
+    if pi_items_picked "$f" | grep -qxF "$2"; then printf '%s\t%s\n' "${b#"$rid"-L}" "$b"; fi
+  done | sort -n | head -1 | cut -f2
+}
+
+pi_items_picked() {
+  grep -oE '^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z picked [^ ]+' "$1" 2>/dev/null | awk '{print $4}' | sed 's#^\./##'
+}
+
 # pi_cc_ids <logs dir> <run file> <item> <phase-timing json> — the Claude Code
 # session ids the item's plugin sessions resolve to (one per line, sanitized).
 pi_cc_ids() {
@@ -349,17 +374,22 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
 | def stats($s; $e):
     [$M[] | select(.ts >= $s and .ts < $e)] as $w
     | ($w | map(select(.kind == "main"))) as $m
-    | {ctx: ($w | map(ctxof) | add // 0), out: ($w | map(.out) | add // 0),
+    | {n: ($w | length), ctx: ($w | map(ctxof) | add // 0), out: ($w | map(.out) | add // 0),
        mctx: ($m | map(ctxof) | add // 0), mout: ($m | map(.out) | add // 0),
        turns: ($m | map(.id) | unique | length),
        peak: ($m | map(ctxof) | max),
        subs: ($w | map(select(.kind != "main")) | group_by(.at)
               | map({at: .[0].at, ctx: (map(ctxof) | add), out: (map(.out) | add)}) | sort_by(-.ctx, .at))};
+  # a window with a missing or inverted boundary is "not recorded"; one that holds no
+  # usage record prints "no usage in window" (never a 0 that reads as a cheap phase)
   def row($label; $s; $e; $wall; $wincell):
-    if $s == null or $e == null then
+    if $s == null or $e == null or $e < $s then
       "| \($label) | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |"
     else stats($s; $e) as $x
-      | "| \($label) | \($wincell) | \(fmt($wall)) | \($x.ctx) (main \($x.mctx)) | \($x.out) (main \($x.mout)) | \($x.turns) | \($x.peak // "—") | \(if ($x.subs | length) == 0 then "—" else ($x.subs | map("\(.at) \(.ctx)/\(.out)") | join("; ")) end) |"
+      | if $x.n == 0 then
+          "| \($label) | \($wincell) | \(fmt($wall)) | no usage in window | no usage in window | no usage in window | — | — |"
+        else "| \($label) | \($wincell) | \(fmt($wall)) | \($x.ctx) (main \($x.mctx)) | \($x.out) (main \($x.mout)) | \($x.turns) | \($x.peak // "—") | \(if ($x.subs | length) == 0 then "—" else ($x.subs | map("\(.at) \(.ctx)/\(.out)") | join("; ")) end) |"
+        end
     end;
   ($pt.item // {}) as $I
   | $I.pick as $pick | $I.park as $park | $I.autonomous.end as $ra
@@ -376,7 +406,12 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
      else ([[$lp, "launch-pad saved"], [$fin, "FINALIZE"], ($iters | last | if . == null then [null, ""] else [.ts, "Phase 4.5 iter \(.n)"] end), [$ra, "ran /autonomous"], ($drains | map([.end, "drain \(.result // "end")"]) | .[])]
            | map(select(.[0] != null)) | sort_by(.[0]) | last) as $l
           | if $l == null then {e: null, note: ""} else {e: $l[0], note: " (no parked line — to \($l[1]))"} end end) as $iend
-  | row("**\($label)**"; $pick; $iend.e; $I.pick_to_park.seconds; (win($pick; $iend.e) + $iend.note)),
+  # transcripts were read but none holds a usage record inside the item window: ONE
+  # sentinel line (the caller prints the named reason and a no-number row)
+  | if $pick != null and $iend.e != null and $iend.e >= $pick and stats($pick; $iend.e).n == 0 then
+      "NO_USAGE_IN_WINDOW\t\($pick)\t\($iend.e)"
+    else
+    row("**\($label)**"; $pick; $iend.e; $I.pick_to_park.seconds; (win($pick; $iend.e) + $iend.note)),
     row("↳ Launch Pad"; $pick; $lp; secs($pick; $lp); win($pick; $lp)),
     row("↳ Build"; $lp; $fin; secs($lp; $fin); win($lp; $fin)),
     row("↳ Phase 4.5"; $fin; $ra; secs($fin; $ra); win($fin; $ra)),
@@ -390,6 +425,7 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
     (range(0; $drains | length) as $k | $drains[$k] as $d
       | row("↳ Drain \($k + 1)\(if $d.fix_now then " (fix-now re-drain)" else "" end)\(if $d.result then " — \($d.result)" else "" end)"; $d.start; $d.end; $d.seconds; win($d.start; $d.end))),
     row("↳ Decide"; $decide_s; $park; secs($decide_s; $park); win($decide_s; $park))
+    end
 '
 
 per_item_report() {
@@ -428,7 +464,7 @@ per_item_report() {
   echo
   echo "| Item / phase | Window (UTC) | Wall | Context tokens (real usage) | Output tokens (real usage) | Turns (main) | Peak context (real usage, main) | Subagent tokens by type (real usage, context/output) |"
   echo "|---|---|---|---|---|---|---|---|"
-  local sess_notes="" root prf label item ptj ccids nfiles prog recs disp
+  local sess_notes="" root prf label item ptj ccids nfiles prog recs disp rendered nu_s nu_e inlane
   while IFS='	' read -r root prf lane; do
     [ -n "$root" ] && [ -n "$prf" ] || continue
     prog="$tmp/prog.json"
@@ -446,6 +482,15 @@ per_item_report() {
       if [ "$(printf '%s' "$ptj" | "$JQ" -r '.item.pick // empty')" = "" ]; then
         # an unpicked Queue item the lanes picked is reported under its lane row only
         if [ -z "$lane" ] && printf '%s\n' "$lane_items" | grep -qxF "$item"; then continue; fi
+        # a parallel wave's parent: the item was picked by a lane whose run file sits
+        # next to this one as <run_id>-L<n>.md (costed there, never "not picked" here)
+        inlane=""
+        [ -z "$lane" ] && inlane="$(pi_lane_of "$prf" "$item")"
+        if [ -n "$inlane" ]; then
+          pi_note "picked_in_lane — $disp ($inlane)"
+          echo "| **$disp** | picked in lane $inlane | not recorded | see lane run $inlane | see lane run $inlane | see lane run $inlane | see lane run $inlane | see lane run $inlane |"
+          continue
+        fi
         pi_note "not_picked — $disp"
         echo "| **$disp** | not picked | not recorded | not picked | not picked | not picked | not picked | not picked |"
         continue
@@ -463,9 +508,18 @@ per_item_report() {
         fi
         echo "| **$disp** | no transcripts | no transcripts | no transcripts | no transcripts | no transcripts | no transcripts | no transcripts |"
       else
-        "$JQ" -r -n --argjson pt "$ptj" --slurpfile prog "$prog" --slurpfile recs "$recs" \
-          --arg item "$item" --arg label "$disp" "$PI_JQ" 2>/dev/null \
-          || echo "| **$disp** | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |"
+        rendered="$("$JQ" -r -n --argjson pt "$ptj" --slurpfile prog "$prog" --slurpfile recs "$recs" \
+          --arg item "$item" --arg label "$disp" "$PI_JQ" 2>/dev/null)" \
+          || rendered="| **$disp** | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |"
+        case "$rendered" in
+          NO_USAGE_IN_WINDOW*)
+            # transcripts exist but hold no usage record inside pick -> end: the same
+            # no-number treatment as no_transcripts (a 0 would read as a cheap item)
+            IFS='	' read -r _ nu_s nu_e <<< "$rendered"
+            pi_note "no_usage_in_window — $disp (${nfiles} transcript file(s) read; no assistant message.usage between $nu_s and $nu_e)"
+            echo "| **$disp** | no usage in window | no usage in window | no usage in window | no usage in window | no usage in window | no usage in window | no usage in window |" ;;
+          *) [ -z "$rendered" ] || printf '%s\n' "$rendered" ;;
+        esac
       fi
       sess_notes="${sess_notes}- \`$disp\`: session ids tried $(printf '%s' "$ccids" | awk 'NF{printf "%s%s", (n++ ? ", " : ""), $0}') — ${nfiles:-0} transcript file(s)${NL}"
     done < <(pi_items "$prf")

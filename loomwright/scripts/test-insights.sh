@@ -977,6 +977,32 @@ pcsec="$(sed -n '/^### Per-item cost/,/^### Per-session context size/p' "$pcd" 2
   && ok "reader absent ⇒ unavailable note, build exits 0" || no "reader-absent case (rc=$rc): $pcsec"
 rm -rf "$PCB"
 rm -f "$PC/.supervisor/automate/zz-later.md"
+# A --parallel wave in the primary: parent run.md + its lane file run-L1.md (glob order puts
+# run-L1.md BEFORE run.md). PER_ITEM_COST_RUNS counts RUNS, so =1 costs run + its lane, the
+# older aa-old run is dropped, and the lane-picked parent item names its lane (not "not picked").
+cp "$PIF/lane/run-L1.md" "$PC/.supervisor/automate/run-L1.md"
+cp "$PIF/run.md" "$PC/.supervisor/automate/aa-old.md"
+( cd "$PC" && HOME="$PC/home" LOOMWRIGHT_CC_PROJECTS_DIR="$PIF/projects" PER_ITEM_COST_RUNS=1 bash "$BUILD" >/dev/null 2>&1 )
+pcsec="$(sed -n '/^### Per-item cost/,/^### Per-session context size/p' "$pcd" 2>/dev/null)"
+grep -qF '**Run `run`**' < <(printf '%s' "$pcsec") && grep -qF '**Run `run-L1`**' < <(printf '%s' "$pcsec") && ! grep -qF '**Run `aa-old`**' < <(printf '%s' "$pcsec") \
+  && ok "PER_ITEM_COST_RUNS=1 selects one RUN: the parent and its -L<n> lane file, not the older run" || no "run selection: $(grep -F '**Run' < <(printf '%s' "$pcsec"))"
+[ "$(grep -n '\*\*Run `run`\*\*' < <(printf '%s' "$pcsec") | cut -d: -f1)" -lt "$(grep -n '\*\*Run `run-L1`\*\*' < <(printf '%s' "$pcsec") | cut -d: -f1)" ] \
+  && ok "the parent's table comes before its lane's" || no "parent/lane order wrong"
+grep -qF "| **.supervisor/requirements/e.md** | picked in lane run-L1 |" < <(printf '%s' "$pcsec") \
+  && ! grep -qF "| **.supervisor/requirements/e.md** | not picked |" < <(printf '%s' "$pcsec") \
+  && ok "a lane-picked parent item reads 'picked in lane run-L1', never 'not picked'" || no "lane item on the parent: $(grep -F 'e.md' < <(printf '%s' "$pcsec") | head -2)"
+grep -qF "| **.supervisor/requirements/e.md** | 10-15 08:00:00 → 09:05:00 | 1h 5m 0s | 50 (main 50) |" < <(printf '%s' "$pcsec") \
+  && ok "the lane file's table carries the item's cost" || no "lane cost row missing: $(grep -F 'e.md' < <(printf '%s' "$pcsec"))"
+rm -f "$PC/.supervisor/automate/run-L1.md" "$PC/.supervisor/automate/aa-old.md"
+# Transcript present but no usage record in the item window ⇒ a no-number row + its own note.
+PCQ="$(mktemp -d)"; cp -R "$PIF/projects/." "$PCQ/"
+printf '%s\n' '{"type":"user","timestamp":"2026-10-14T11:10:00Z","message":{"role":"user","content":"hi"}}' > "$PCQ/-fixture-proj/cccccccc-0000-4000-8000-000000000001.jsonl"
+( cd "$PC" && HOME="$PC/home" LOOMWRIGHT_CC_PROJECTS_DIR="$PCQ" bash "$BUILD" >/dev/null 2>&1 )
+pcsec="$(sed -n '/^### Per-item cost/,/^### Per-session context size/p' "$pcd" 2>/dev/null)"
+grep -qF "| **.supervisor/requirements/c.md** | no usage in window |" < <(printf '%s' "$pcsec") \
+  && grep -qF "**No usage in window:** 1 item(s) above have transcripts" < <(printf '%s' "$pcsec") \
+  && ok "no usage in the item window ⇒ no-number row + its own note" || no "no-usage-in-window: $(grep -F -e 'c.md' -e 'No usage' < <(printf '%s' "$pcsec"))"
+rm -rf "$PCQ"
 # No run file → an honest note, no table.
 rm -f "$PC/.supervisor/automate/"*.md
 ( cd "$PC" && HOME="$PC/home" LOOMWRIGHT_CC_PROJECTS_DIR="$PIF/projects" bash "$BUILD" >/dev/null 2>&1 )
