@@ -240,7 +240,14 @@ RUN_LOCK="${LOOMWRIGHT_LANES_RUN_LOCK:-$HERE/run-lock.sh}"     # fleet-closeout'
 # (`--auto-merge` is refused with any N).
 LANE_ALLOWED_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Task,Agent,AskUserQuestion"
 LANE_DISALLOWED_FIXED="Bash(gh pr merge:*),Bash(gh pr merge *),Bash(*--admin*),Bash(gh api *pulls/*/merge*),Bash(gh api *mergePullRequest*),Bash(gh api *enablePullRequestAutoMerge*),Bash(git push --force:*),Bash(git push -f:*),Bash(git push --force-with-lease:*),Bash(git push *--force*)"
-LANE_SYS="You are running as a HEADLESS lane (claude -p). Ending your turn ENDS this process and stops any background task. Never end your turn to wait for background work (CI, checks, subagents, long commands): wait in the FOREGROUND with a blocking Bash call or a Monitor you wait on. End your turn only when the item is parked, or when you must ask the owner via AskUserQuestion."
+# LANE_SYS — the fixed headless-lane text. What it says about background work is what L8 of run
+# automate-2026-10-15-163325 showed (2026-10-16, its stream log): a foreground `until` loop polling a finished
+# subagent's transcript passed its 600s Bash timeout and was MOVED to the background (not stopped); its condition
+# (the transcript's last line an assistant message) never came true, because the last line was an `attachment`.
+# The lane then asked the owner and its turn ended `tool_deferred`, but under the lane's no-ceiling background wait
+# (step 4 "Spawn" above) the process waited on that task instead of exiting. When the coordinator killed the loop, its completion
+# started a NEW turn that ended plain, so the question park was lost and the question orphaned.
+LANE_SYS="You are running as a HEADLESS lane (claude -p). When your turn ends, this process does not exit until every background task has finished, and a finished background task starts another turn. Never end your turn to wait for background work (CI, checks, subagents, long commands): wait in the FOREGROUND with a blocking Bash call or a Monitor you wait on. A Bash call that outlives its timeout is moved to the background, not stopped, so every wait loop needs its own deadline, shorter than the call's timeout. Never poll a subagent's transcript or output files to tell whether it finished (their format is internal): wait for the subagent's own result. Before you ask the owner, stop every background task still running: one left running keeps this process alive, and its completion ends the question park. End your turn only when the item is parked, or when you must ask the owner via AskUserQuestion."
 LANE_CONTINUE_MSG="continue where you left off; wait in the foreground"
 LT_HEADER="$(printf '#lane\tpath\titem\trun_id\tpid\tpid_start\tsession_id\tstate\tlast_launch_utc\tblocked_reason')"
 
