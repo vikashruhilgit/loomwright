@@ -294,6 +294,10 @@ stop.
 Self-test: `scripts/test-token-ledger.sh` (fixtures under
 `scripts/token-ledger-fixtures/`).
 
+**Per-item `/automate` cost:** `read-token-ledger.sh --per-item` is a separate,
+real-usage report that reads the transcripts directly and never this ledger —
+see `docs/OBSERVABILITY.md` §"Per-item `/automate` cost".
+
 ### Progress state (`subtask_complete` event — one-writer-derived-state, v15.16.0)
 
 **Probe result / why this exists:** progress state (`state.md`'s `## Session`

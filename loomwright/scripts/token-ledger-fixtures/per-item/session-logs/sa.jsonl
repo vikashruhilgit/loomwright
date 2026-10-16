@@ -1,0 +1,3 @@
+{"ts":"2026-10-13T15:48:00Z","event":"autonomous_start","session_id":"sa","cc_session_id":"aaaaaaaa-0000-4000-8000-000000000001"}
+{"ts":"2026-10-13T16:58:00Z","event":"agent_lifecycle","session_id":"sa","cc_session_id":"aaaaaaaa-0000-4000-8000-000000000002","state":"working"}
+not json

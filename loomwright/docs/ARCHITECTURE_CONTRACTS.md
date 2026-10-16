@@ -902,9 +902,10 @@ Default model routing for plugin-invoked **async analysis** spawns — backward-
 ```
 read-token-ledger.sh --session <session_id> [--root <checkout>]
 read-token-ledger.sh --run-id  <automate_run_id | run-file path> [--root <checkout>]
+read-token-ledger.sh --per-item <run file | run id> [--projects-dir <dir>] [--root <checkout>]...
 ```
 
-Sums `token_ledger` JSONL events (`emit-token-ledger.sh`'s SubagentStop emissions, `.supervisor/logs/<session_id>.jsonl`) and prints exactly one line:
+`--per-item` prints a markdown per-item cost table from real Claude Code transcript usage, not a ledger sum — spec: `docs/OBSERVABILITY.md` §"Per-item `/automate` cost". The rest of this section is about `--session` / `--run-id`, which sum `token_ledger` JSONL events (`emit-token-ledger.sh`'s SubagentStop emissions, `.supervisor/logs/<session_id>.jsonl`) and print exactly one line:
 
 ```
 INPUT=<n> OUTPUT=<n> CACHE_READ=<n> CACHE_CREATE=<n> TOTAL=<n> EVENTS=<n> [LEDGER_UNREADABLE=1]
