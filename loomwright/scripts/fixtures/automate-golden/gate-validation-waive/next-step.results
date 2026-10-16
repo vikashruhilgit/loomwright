@@ -1,0 +1,8 @@
+# next-step.results — gate-validation-waive: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The case ends after the waiver's re-read (NEXT_STEP_UNTIL=validation);
+# the owner's AUT-WAIVE answer and words are the case's fixed input.
+env: NEXT_STEP_UNTIL=validation
+call: --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"8f8a52d"}'
+expect: ask
+call: --result '{"answers":["Waive this step"],"note":"V3 needs the released plugin (park-then-ask exists only in this PR); lane runs installed 17.0.2. CI + claude-review green at 8f8a52d. Run V3 on the first /automate --backlog after release."}'
+expect: none

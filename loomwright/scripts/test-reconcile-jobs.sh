@@ -304,10 +304,11 @@ out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
 # no stamp block to extract). Each writer's printf FORMAT is pulled out of the
 # script and EVALUATED with printf, so the fixture is the byte-exact block the
 # writer appends (one line with literal `\n` escapes — `grep -A1` cannot see it):
-#   * the post-merge `closeout` stamp (automate-trail.sh step 5) — `done`;
+#   * the post-merge `closeout` stamp (automate-trail.sh step 5, in the
+#     automate-trail.d/closeout.sh module since the as19 split) — `done`;
 #   * the owner-abandon heading (reconcile-status.sh, the shape trail-pr's
 #     evidence gate exempts) — `done_with_escalation — ABANDONED (…)`.
-TRAIL="$SCRIPT_DIR/automate-trail.sh"
+TRAIL="$SCRIPT_DIR/automate-trail.d/closeout.sh"
 RSTAT="$SCRIPT_DIR/automate-helpers.d/reconcile-status.sh"
 d="$(mktmp)"
 n_stamps=0

@@ -9,6 +9,7 @@ This file lists every branch and rule the `/automate` engine prose states — th
 - `skills/automate-loop/intake.md`
 - `skills/automate-loop/invariants.md`
 - `skills/automate-loop/lanes.md`
+- `skills/automate-loop/legacy-tail.md`
 - `skills/automate-loop/modes-and-merge-gate.md`
 - `skills/automate-loop/per-item-loop.md`
 - `skills/automate-loop/resume.md`
@@ -18,7 +19,7 @@ This file lists every branch and rule the `/automate` engine prose states — th
 
 | id | file | anchor | condition | action | kind | home | implemented by | test |
 |----|------|--------|-----------|--------|------|------|----------------|------|
-| AL-001 | skills/automate-loop/per-item-loop.md | h: ### Rate-limit park (end of RUN, before DRAIN) | after RUN restores `.auto_review`, the loop's own session log has a main-scope `agent_lifecycle` `failed` row with `reason: rate_limit` (or `unknown` + a `429` hint) dated after this item's `picked` line | park `rate_limit` (item and pause_reason), release the lock, no `trail-pr`, stop exit 0 before DRAIN/GATE; never retry RUN in the same tick | deterministic | prose | script:automate-helpers.sh current-set | GAP |
+| AL-001 | skills/automate-loop/per-item-loop.md | h: ### Rate-limit park (end of RUN, before DRAIN) | after RUN restores `.auto_review`, the loop's own session log has a main-scope `agent_lifecycle` `failed` row with `reason: rate_limit` (or `unknown` + a `429` hint) dated after this item's `picked` line | park `rate_limit` (item and pause_reason), release the lock, no `trail-pr`, stop exit 0 before DRAIN/GATE; never retry RUN in the same tick | deterministic | prose | script:automate-helpers.sh current-set | test-automate-golden.sh |
 | AL-002 | skills/automate-loop/SKILL.md | h: ## §1 — Purpose & Layering | always | `/autonomous` nests inside the per-item loop, which nests inside `/automate`; the engine drives `/autonomous --single-iteration` | story | prose | - | GAP |
 | AL-003 | skills/automate-loop/SKILL.md | q: It is **NOT a pluggable adapter framework** | a new source kind is wanted | intake only converts the source into the Queue once; `/backlog` is not a separate command | rule | prose | - | GAP |
 | AL-004 | skills/automate-loop/SKILL.md | h: ### Non-goals (v1) | a proposed feature is outside prompt/folder/backlog-doc sources, a runner agent, QA-in-loop | out of scope for v1 | rule | prose | - | GAP |
@@ -95,8 +96,8 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-075 | skills/automate-loop/SKILL.md | q: Lane w1-10 (run `automate-2026-10-04-103627`) wrote `## Current` once | incident | why `## Current` is never left to prose | story | prose | - | GAP |
 | AL-076 | skills/automate-loop/SKILL.md | q: §6 step 1 PICK (BEFORE its `picked` Progress line) | PICK | `current-set --item <path> --status running --pr null --branch null --pause-reason null` before the `picked` line | deterministic | prose | script:automate-helpers.sh current-set | test-automate-helpers.sh |
 | AL-077 | skills/automate-loop/SKILL.md | q: §6 step 2 RUN produced a PR (BEFORE its `ran /autonomous → PR` line) | RUN produced a PR | `current-set --status running --pr <url> --branch <b>` before the `ran /autonomous` line | deterministic | prose | script:automate-helpers.sh current-set | test-automate-helpers.sh |
-| AL-078 | skills/automate-loop/SKILL.md | q: none — item `status` stays `running` | DRAIN start | no `current-set`; `owned_drain_started` stays its own line | deterministic | prose | - | GAP |
-| AL-079 | skills/automate-loop/SKILL.md | q: --status rate_limit --pause-reason rate_limit | rate-limit park | `current-set --status rate_limit --pause-reason rate_limit` | deterministic | prose | script:automate-helpers.sh current-set | GAP |
+| AL-078 | skills/automate-loop/SKILL.md | q: none — item `status` stays `running` | DRAIN start | no `current-set`; `owned_drain_started` stays its own line | deterministic | prose | - | test-automate-golden.sh |
+| AL-079 | skills/automate-loop/SKILL.md | q: --status rate_limit --pause-reason rate_limit | rate-limit park | `current-set --status rate_limit --pause-reason rate_limit` | deterministic | prose | script:automate-helpers.sh current-set | test-automate-golden.sh |
 | AL-080 | skills/automate-loop/SKILL.md | q: --status drain_died --pause-reason drain_died | `drain_died` park | `current-set --status drain_died --pause-reason drain_died` | deterministic | prose | script:automate-helpers.sh current-set | GAP |
 | AL-081 | skills/automate-loop/SKILL.md | q: `current-set` refuses `ready_for_release` there | lane READY park: N>1 lane vs single lane | N>1 ⇒ `ready_for_release` park; single lane ⇒ `awaiting_merge` park and `current-set` refuses `ready_for_release` | deterministic | prose | script:automate-helpers.sh current-set | test-automate-helpers.sh |
 | AL-082 | skills/automate-loop/SKILL.md | q: --status awaiting_merge --pause-reason awaiting_merge | GATE `awaiting_merge` park | `current-set --status awaiting_merge --pause-reason awaiting_merge` | deterministic | prose | script:automate-helpers.sh current-set | test-automate-helpers.sh |
@@ -226,7 +227,7 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-206 | skills/automate-loop/resume.md | q: **PR closed-unmerged or vanished?** | PR CLOSED unmerged or gone | item is `gone`; run stays paused like `escalated` until human resolution; never re-pick or auto-check | deterministic | prose | script:automate-helpers.sh reconcile-item | test-automate-helpers.sh |
 | AL-207 | skills/automate-loop/resume.md | q: **Branch landed?** `git log origin/main --oneline` | reconciling a merge | verify the branch reached main; never assert merged from memory | rule | prose | - | GAP |
 | AL-208 | skills/automate-loop/resume.md | q: **Requirement stamped?** the requirement file's `## Status: done` stamp. | reconciling | read the requirement's done stamp | deterministic | prose | - | GAP |
-| AL-209 | skills/automate-loop/resume.md | q: **No PR yet (`pr: null`, `pause_reason: rate_limit`)?** | `rate_limit` park with `pr: null` | nothing to reconcile; leave as parked; resuming re-picks and retries RUN | deterministic | prose | - | GAP |
+| AL-209 | skills/automate-loop/resume.md | q: **No PR yet (`pr: null`, `pause_reason: rate_limit`)?** | `rate_limit` park with `pr: null` | nothing to reconcile; leave as parked; resuming re-picks and retries RUN | deterministic | prose | - | test-automate-golden.sh |
 | AL-210 | skills/automate-loop/resume.md | q: **A DETACHED drain died for this item's PR (`drain_died`, red-team-hardening item 04)?** | a `.supervisor/review-dispatch/*.died` marker names this item's PR | `owned_drain_result: died`, park `drain_died`, never `awaiting_merge`; checked before the merged/open/closed reconcile | deterministic | prose | - | GAP |
 | AL-211 | skills/automate-loop/resume.md | q: Reconcile each item, then rewrite `## Queue` checkboxes + `## Current` atomically | after reconciling | rewrite Queue + Current atomically so belief matches truth | deterministic | prose | script:automate-helpers.sh runfile-write | test-automate-helpers.sh |
 | AL-212 | skills/automate-loop/resume.md | q: **RECONCILE also restores a crash-stranded config backup** | `config_backup` sidecar exists at RESUME | restore it (or delete config if originally absent) before proceeding | deterministic | prose | script:automate-helpers.sh config-restore | test-automate-helpers.sh |
@@ -234,9 +235,9 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-214 | skills/automate-loop/resume.md | q: **fail closed — no option is auto-picked.** | cannot ask, exactly one incomplete run, no `--resume` | write nothing, print `automate: resume_requires_flag_non_interactive <run_id>` plus record/leftover lines verbatim, stop | deterministic | prose | - | GAP |
 | AL-215 | skills/automate-loop/resume.md | q: **Bare and source-bearing starts take the same rule:** | a source flag while an incomplete run exists, cannot ask | not an implied start new: no PO run, no Queue, no second run file | rule | prose | - | GAP |
 | AL-216 | skills/automate-loop/resume.md | q: with the id omitted it targets the **most-recent incomplete** run | `--resume` with no id | target the most-recent incomplete run | deterministic | prose | - | GAP |
-| AL-217 | skills/automate-loop/resume.md | q: an **ambiguous** resume (more than one incomplete run and no explicit id) **fails closed** | non-interactive, >1 incomplete run, no id | fail closed `pause_reason: resume_ambiguous`; print record/leftover lines | deterministic | prose | - | GAP |
+| AL-217 | skills/automate-loop/resume.md | q: an **ambiguous** resume (more than one incomplete run and no explicit id) **fails closed** | non-interactive, >1 incomplete run, no id | fail closed `pause_reason: resume_ambiguous`; print record/leftover lines | deterministic | prose | - | test-automate-golden.sh |
 | AL-218 | skills/automate-loop/resume.md | q: **Re-pass non-persisted passthrough flags.** | resuming a cheap/notify/fallback run | re-pass the flags on every `--resume` and `/loop` tick | rule | prose | - | GAP |
-| AL-219 | skills/automate-loop/resume.md | q: **Resuming a `rate_limit` park.** | `continue` of a `rate_limit` park | same RESUME flow; reconcile no-op; fall through to RUN retrying the same item | deterministic | prose | - | GAP |
+| AL-219 | skills/automate-loop/resume.md | q: **Resuming a `rate_limit` park.** | `continue` of a `rate_limit` park | same RESUME flow; reconcile no-op; fall through to RUN retrying the same item | deterministic | prose | - | test-automate-golden.sh |
 | AL-220 | skills/automate-loop/resume.md | q: **RECONCILE also runs reconcile-status** | step 4 resolved to continue | dry-run `reconcile-status`; one `would stamp` Progress line per `plan` row; `info` rows not appended; never on can't-ask stops; never `--apply` | deterministic | prose | script:automate-helpers.sh reconcile-status | test-automate-helpers.sh |
 | AL-221 | skills/automate-loop/resume.md | q: **Pending dismissed-finding decisions (automate-followups/12).** | undecided drafts on RESUME | never park or block; interactive asks at PICK (Follow-up/Drop); non-interactive asks nothing | deterministic | prose | script:automate-dismissed.sh dismissed-pending | test-automate-dismissed.sh |
 | AL-222 | skills/automate-loop/resume.md | q: **Checked-off ⇒ never re-picked** | a skipped/abandoned row | never re-picked; reason also logged in Progress | deterministic | prose | script:automate-helpers.sh queue-checkoff | test-automate-helpers.sh |
@@ -276,37 +277,37 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-256 | skills/automate-loop/per-item-loop.md | q: **write its raw text VERBATIM to `.supervisor/automate/<run_id>.supervisor-result.md`** | `SUPERVISOR_RESULT` carries a `pr_url` | `current-set` with PR/branch before the `ran /autonomous` line; write the sidecar verbatim for gate condition 5 | deterministic | prose | script:automate-helpers.sh current-set | test-automate-helpers.sh |
 | AL-257 | skills/automate-loop/per-item-loop.md | q: **Write-time shape check (automate-followups/20, advisory):** | after writing a result sidecar | `sidecar-check`; `fail …` is progress-appended; never parks or changes a gate | deterministic | prose | script:automate-trail.sh sidecar-check | test-automate-trail.sh |
 | AL-258 | skills/automate-loop/per-item-loop.md | q: **Restore `.auto_review` in a finally-style cleanup immediately after `/autonomous` returns *or fails* | `/autonomous` returns or fails | restore before DRAIN | deterministic | prose | script:automate-helpers.sh config-restore | test-automate-helpers.sh |
-| AL-259 | skills/automate-loop/per-item-loop.md | q: **Then, before proceeding to step 3 DRAIN, check for a rate-limit park** | after RUN | check the rate-limit park; a parked item stops before DRAIN/GATE | deterministic | prose | - | GAP |
-| AL-260 | skills/automate-loop/per-item-loop.md | q: **Session-id recording for the token ledger (red-team-hardening/06).** | `/autonomous` returns (success or not) | read `state.md` `session_id` and append `session_id <id> (<item>)`, unconditionally | deterministic | prose | script:automate-helpers.sh progress-append | GAP |
-| AL-261 | skills/automate-loop/per-item-loop.md | q: **DRAIN** — own **exactly ONE** inline `/review-pr --until-mergeable --no-auto-postmortem` | DRAIN | one inline drain per pass, at most one sequential fix-now re-drain; record `owned_drain_*` and `suppressed_default_dispatch: true`; no `current-set` | deterministic | prose | - | GAP |
+| AL-259 | skills/automate-loop/per-item-loop.md | q: **Then, before proceeding to step 3 DRAIN, check for a rate-limit park** | after RUN | check the rate-limit park; a parked item stops before DRAIN/GATE | deterministic | prose | - | test-automate-golden.sh |
+| AL-260 | skills/automate-loop/per-item-loop.md | q: **Session-id recording for the token ledger (red-team-hardening/06).** | `/autonomous` returns (success or not) | read `state.md` `session_id` and append `session_id <id> (<item>)`, unconditionally | deterministic | prose | script:automate-helpers.sh progress-append | test-automate-golden.sh |
+| AL-261 | skills/automate-loop/per-item-loop.md | q: **DRAIN** — own **exactly ONE** inline `/review-pr --until-mergeable --no-auto-postmortem` | DRAIN | one inline drain per pass, at most one sequential fix-now re-drain; record `owned_drain_*` and `suppressed_default_dispatch: true`; no `current-set` | deterministic | prose | - | test-automate-golden.sh |
 | AL-262 | skills/automate-loop/per-item-loop.md | q: **Pinned drain-start `## Progress` line:** | drain start | append `<ts> owned drain started — <invocation> @ <head sha>` | deterministic | prose | script:automate-lanes.sh lane-drain-check | test-automate-lanes.sh |
 | AL-263 | skills/automate-loop/per-item-loop.md | q: **Also write the terminal `REVIEW_HEAL_RESULT` block's raw text VERBATIM | terminal `REVIEW_HEAL_RESULT` | write the review-heal sidecar for gate condition 1, then `sidecar-check` it | deterministic | prose | script:automate-helpers.sh gate-eval | test-automate-helpers.sh |
 | AL-264 | skills/automate-loop/per-item-loop.md | q: **Then, at the END of DRAIN (BEFORE step 4 GATE), emit the engine-native learning line** | every item that produced a PR | `learning-emit` at end of DRAIN, before GATE | deterministic | prose | script:automate-helpers.sh learning-emit | test-automate-helpers.sh |
 | AL-265 | skills/automate-loop/per-item-loop.md | q: **Drain superseded by a merge (automate-followups/20).** | drain returns with no terminal block and `reconcile-item` says `merged` | write `superseded_by_merge`, no sidecar, no learning-emit, skip GATE and dismissed step, `closeout` through the leftover gate, park `awaiting_go`, release | deterministic | prose | script:automate-helpers.sh reconcile-item | test-automate-helpers.sh |
 | AL-266 | skills/automate-loop/per-item-loop.md | q: Any other `reconcile-item` verdict records nothing for the drain | drain ended without a block and the PR is not merged | record nothing; item stays `running`; next RECONCILE decides | deterministic | prose | - | GAP |
-| AL-267 | skills/automate-loop/per-item-loop.md | q: **GATE** — apply the per-mode decision (§9) | GATE | safe mode parks `awaiting_merge`; `--auto-merge` runs the self-resolving gate with the six-key ctx; `ESCALATED` parks | deterministic | prose | script:automate-helpers.sh gate-eval | test-automate-helpers.sh |
-| AL-268 | skills/automate-loop/per-item-loop.md | q: **A sequential interactive READY park** | sequential interactive READY park | write drafts, park state, watcher, notify, lock release FIRST; ask only after `park-ask-gate` | deterministic | prose | script:automate-helpers.sh park-ask-gate | test-automate-helpers.sh |
-| AL-269 | skills/automate-loop/per-item-loop.md | q: **An `escalated` park, every park under `--non-interactive-fallback` and a lane's READY park keep the decide-then-park order:** | escalated, non-interactive, or lane READY park | decide (and fix-now) before writing the park, arming the watcher, releasing the lock | deterministic | prose | - | GAP |
-| AL-270 | skills/automate-loop/per-item-loop.md | q: After a `--auto-merge` `MERGE` (no park), run only that step's `dismissed-drafts` | `--auto-merge` `MERGE` | run `dismissed-drafts` and record `pending_decisions`; ask nothing | deterministic | prose | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
-| AL-271 | skills/automate-loop/per-item-loop.md | q: the GATE writes the READY park `automate-helpers.sh lane-park` prints | inside a lane | write the park `lane-park` prints; outside a lane never call it | deterministic | prose | script:automate-lanes.sh lane-park | test-automate-lanes.sh |
-| AL-272 | skills/automate-loop/per-item-loop.md | q: **Validation gate (af36-remainder/01) — the FIRST step of a `READY` GATE pass | drain `READY` | run `validation-gate` first, append its line; an `ESCALATED` drain does not run it | deterministic | prose | script:automate-lanes.sh validation-gate | test-automate-lanes.sh |
-| AL-273 | skills/automate-loop/per-item-loop.md | q: `validation-gate: none — …` (no `## Validation` section | `none` / `ok` / `waived` | GATE goes on unchanged | deterministic | prose | script:automate-lanes.sh validation-gate | test-automate-lanes.sh |
-| AL-274 | skills/automate-loop/per-item-loop.md | q: Anything else is `unrun`: `unrun — V<n> <title>: <evidence>` | anything else | `unrun`; step-less failure fails CLOSED; unreadable PR body reads every step not-run | deterministic | prose | script:automate-lanes.sh validation-gate | test-automate-lanes.sh |
-| AL-275 | skills/automate-loop/per-item-loop.md | q: Interactive, with a `V<n>` ⇒ ask gate `AUT-WAIVE` | interactive `unrun` naming `V<n>` | ask human-only `AUT-WAIVE` (Waive this step / Keep parked); waive records the owner's verbatim words via `--waive`; re-run read-only, one ask per step | judgment | prose | script:automate-lanes.sh validation-gate | test-automate-lanes.sh |
-| AL-276 | skills/automate-loop/per-item-loop.md | q: *Waive this step* with no note is asked once more | waive answered with no note | ask once more; a second empty note is Keep parked; a waive refusal is Keep parked; never edit the owner's words | deterministic | prose | - | GAP |
-| AL-277 | skills/automate-loop/per-item-loop.md | q: *Keep parked*, a step-less `unrun` (nothing to waive), and every can't-ask context | Keep parked, step-less unrun, or can't ask | `escalated` park tail with `current-escalation --cause validation_unrun --check "<V<n> <title>>" --sha <head>` | deterministic | prose | script:automate-helpers.sh current-escalation | test-automate-helpers.sh |
-| AL-278 | skills/automate-loop/per-item-loop.md | q: should `current-escalation` still refuse it, re-run it with `--check` omitted | `current-escalation` refuses the check value | re-run without `--check` | deterministic | prose | script:automate-helpers.sh current-escalation | test-automate-helpers.sh |
-| AL-279 | skills/automate-loop/per-item-loop.md | q: so the lane waits `awaiting_input` and writes no READY park until the owner answers | `AUT-WAIVE` inside a lane | relay to the owner; `decide` never answers it; lane waits `awaiting_input` | deterministic | prose | script:lane-policy.sh decide | test-lane-policy.sh |
-| AL-280 | skills/automate-loop/per-item-loop.md | q: A waiver is written ONLY from an interactive owner's answer | any can't-ask path | never write a waiver | rule | prose | - | GAP |
+| AL-267 | skills/automate-loop/legacy-tail.md | q: **GATE** — apply the per-mode decision (§9) | GATE | safe mode parks `awaiting_merge`; `--auto-merge` runs the self-resolving gate with the six-key ctx; `ESCALATED` parks | deterministic | script:automate-next-step.sh gate | script:automate-helpers.sh gate-eval | test-automate-next-step.sh |
+| AL-268 | skills/automate-loop/legacy-tail.md | q: **A sequential interactive READY park** | sequential interactive READY park | write drafts, park state, watcher, notify, lock release FIRST; ask only after `park-ask-gate` | deterministic | script:automate-next-step.sh park | script:automate-helpers.sh park-ask-gate | test-automate-next-step.sh |
+| AL-269 | skills/automate-loop/legacy-tail.md | q: **An `escalated` park, every park under `--non-interactive-fallback` and a lane's READY park keep the decide-then-park order:** | escalated, non-interactive, or lane READY park | decide (and fix-now) before writing the park, arming the watcher, releasing the lock | deterministic | script:automate-next-step.sh decide | - | test-automate-next-step.sh |
+| AL-270 | skills/automate-loop/legacy-tail.md | q: After a `--auto-merge` `MERGE` (no park), run only that step's `dismissed-drafts` | `--auto-merge` `MERGE` | run `dismissed-drafts` and record `pending_decisions`; ask nothing | deterministic | script:automate-next-step.sh dismissed | script:automate-dismissed.sh dismissed-drafts | test-automate-next-step.sh |
+| AL-271 | skills/automate-loop/legacy-tail.md | q: the GATE writes the READY park `automate-helpers.sh lane-park` prints | inside a lane | write the park `lane-park` prints; outside a lane never call it | deterministic | script:automate-next-step.sh gate | script:automate-lanes.sh lane-park | test-automate-next-step.sh |
+| AL-272 | skills/automate-loop/legacy-tail.md | q: **Validation gate (af36-remainder/01) — the FIRST step of a `READY` GATE pass | drain `READY` | run `validation-gate` first, append its line; an `ESCALATED` drain does not run it | deterministic | script:automate-next-step.sh validation | script:automate-lanes.sh validation-gate | test-automate-next-step.sh |
+| AL-273 | skills/automate-loop/legacy-tail.md | q: `validation-gate: none — …` (no `## Validation` section | `none` / `ok` / `waived` | GATE goes on unchanged | deterministic | script:automate-next-step.sh validation | script:automate-lanes.sh validation-gate | test-automate-next-step.sh |
+| AL-274 | skills/automate-loop/legacy-tail.md | q: Anything else is `unrun`: `unrun — V<n> <title>: <evidence>` | anything else | `unrun`; step-less failure fails CLOSED; unreadable PR body reads every step not-run | deterministic | script:automate-next-step.sh validation | script:automate-lanes.sh validation-gate | test-automate-next-step.sh |
+| AL-275 | skills/automate-loop/legacy-tail.md | q: Interactive, with a `V<n>` ⇒ ask gate `AUT-WAIVE` | interactive `unrun` naming `V<n>` | ask human-only `AUT-WAIVE` (Waive this step / Keep parked); waive records the owner's verbatim words via `--waive`; re-run read-only, one ask per step | judgment | script:automate-next-step.sh validation | script:automate-lanes.sh validation-gate | test-automate-next-step.sh |
+| AL-276 | skills/automate-loop/legacy-tail.md | q: *Waive this step* with no note is asked once more | waive answered with no note | ask once more; a second empty note is Keep parked; a waive refusal is Keep parked; never edit the owner's words | deterministic | script:automate-next-step.sh validation | - | GAP |
+| AL-277 | skills/automate-loop/legacy-tail.md | q: *Keep parked*, a step-less `unrun` (nothing to waive), and every can't-ask context | Keep parked, step-less unrun, or can't ask | `escalated` park tail with `current-escalation --cause validation_unrun --check "<V<n> <title>>" --sha <head>` | deterministic | script:automate-next-step.sh validation | script:automate-helpers.sh current-escalation | test-automate-next-step.sh |
+| AL-278 | skills/automate-loop/legacy-tail.md | q: should `current-escalation` still refuse it, re-run it with `--check` omitted | `current-escalation` refuses the check value | re-run without `--check` | deterministic | script:automate-next-step.sh validation | script:automate-helpers.sh current-escalation | test-automate-helpers.sh |
+| AL-279 | skills/automate-loop/legacy-tail.md | q: so the lane waits `awaiting_input` and writes no READY park until the owner answers | `AUT-WAIVE` inside a lane | relay to the owner; `decide` never answers it; lane waits `awaiting_input` | deterministic | script:automate-next-step.sh validation | script:lane-policy.sh decide | test-lane-policy.sh |
+| AL-280 | skills/automate-loop/legacy-tail.md | q: A waiver is written ONLY from an interactive owner's answer | any can't-ask path | never write a waiver | rule | script:automate-next-step.sh validation | - | test-automate-next-step.sh |
 | AL-281 | skills/automate-loop/per-item-loop.md | q: **Re-check at RECONCILE (step 1).** | `--resume` with `escalated`/`validation_unrun` and PR OPEN | re-run read-only `validation-gate`; `ok`/`waived` ⇒ write the READY park (sequential/N>1 lane/single lane forms, no second watcher); else stay escalated; never ask `AUT-WAIVE` | deterministic | prose | script:automate-lanes.sh validation-gate | test-automate-lanes.sh |
-| AL-282 | skills/automate-loop/per-item-loop.md | q: `gate-eval` itself does not run the validation gate | honest limits of the validation gate | a caller skipping this prose bypasses it; title/repro classification, evidence attribution and fixed not-run phrases are limits | story | prose | - | GAP |
-| AL-283 | skills/automate-loop/per-item-loop.md | q: **SYNC** — after a successful merge (auto-merge mode) | `gate-eval` printed `MERGE` | `closeout --no-trail --session-id`; classify through the leftover gate; a skipped sync is a `leftover sync` | deterministic | prose | script:automate-trail.sh closeout | test-automate-trail.sh |
-| AL-284 | skills/automate-loop/per-item-loop.md | q: **`--no-trail` in BOTH branch modes, never plain `closeout`:** | SYNC closeout | always `--no-trail`; the trail ships at the existing triggers | rule | prose | script:automate-trail.sh closeout | test-automate-trail.sh |
-| AL-285 | skills/automate-loop/per-item-loop.md | q: **CHECK OFF + PROGRESS** — mark the item `- [x]` in `## Queue` | CHECK OFF | one atomic write of the check-off + Progress line; report remaining; after `MERGE` do not check off twice | deterministic | prose | script:automate-helpers.sh queue-checkoff | test-automate-helpers.sh |
-| AL-286 | skills/automate-loop/per-item-loop.md | q: the loop runs `automate-helpers.sh trail-pr` FIRST and only then `run-lock.sh release` | the check-off is skipped/abandoned or resolves the Queue | `trail-pr` first, then release; no park path runs it | deterministic | prose | script:automate-trail.sh trail-pr | test-automate-trail.sh |
-| AL-287 | skills/automate-loop/per-item-loop.md | q: The SAME release fires on every OTHER path this item's loop can stop on | any stop path (parks, `limit_reached`) | release the lock; never carried across a park | rule | prose | script:run-lock.sh release | test-run-lock.sh |
+| AL-282 | skills/automate-loop/legacy-tail.md | q: `gate-eval` itself does not run the validation gate | honest limits of the validation gate | a caller skipping this prose bypasses it; title/repro classification, evidence attribution and fixed not-run phrases are limits | story | script:automate-next-step.sh gate-eval | - | GAP |
+| AL-283 | skills/automate-loop/legacy-tail.md | q: **SYNC** — after a successful merge (auto-merge mode) | `gate-eval` printed `MERGE` | `closeout --no-trail --session-id`; classify through the leftover gate; a skipped sync is a `leftover sync` | deterministic | script:automate-next-step.sh sync | script:automate-trail.sh closeout | test-automate-next-step.sh |
+| AL-284 | skills/automate-loop/legacy-tail.md | q: **`--no-trail` in BOTH branch modes, never plain `closeout`:** | SYNC closeout | always `--no-trail`; the trail ships at the existing triggers | rule | script:automate-next-step.sh sync | script:automate-trail.sh closeout | test-automate-trail.sh |
+| AL-285 | skills/automate-loop/legacy-tail.md | q: **CHECK OFF + PROGRESS** — mark the item `- [x]` in `## Queue` | CHECK OFF | one atomic write of the check-off + Progress line; report remaining; after `MERGE` do not check off twice | deterministic | script:automate-next-step.sh checkoff | script:automate-helpers.sh queue-checkoff | test-automate-next-step.sh |
+| AL-286 | skills/automate-loop/legacy-tail.md | q: the loop runs `automate-helpers.sh trail-pr` FIRST and only then `run-lock.sh release` | the check-off is skipped/abandoned or resolves the Queue | `trail-pr` first, then release; no park path runs it | deterministic | script:automate-next-step.sh terminate | script:automate-trail.sh trail-pr | test-automate-next-step.sh |
+| AL-287 | skills/automate-loop/legacy-tail.md | q: The SAME release fires on every OTHER path this item's loop can stop on | any stop path (parks, `limit_reached`) | release the lock; never carried across a park | rule | script:automate-next-step.sh park | script:run-lock.sh release | test-automate-next-step.sh |
 | AL-288 | skills/automate-loop/per-item-loop.md | q: **No new script is needed for this read** | rate-limit check | read the own session log directly (no PR yet to key on) | rule | prose | - | GAP |
-| AL-289 | skills/automate-loop/per-item-loop.md | q: **Classified hit (`reason: "rate_limit"`):** | main-scope `agent_lifecycle` failed row with `reason: rate_limit` after this item's `picked` line | `current-set --status rate_limit --pause-reason rate_limit`, `paused`, one Progress line, release the lock, no `trail-pr`, STOP exit 0; no DRAIN/GATE, no retry | deterministic | prose | script:automate-helpers.sh current-set | GAP |
+| AL-289 | skills/automate-loop/per-item-loop.md | q: **Classified hit (`reason: "rate_limit"`):** | main-scope `agent_lifecycle` failed row with `reason: rate_limit` after this item's `picked` line | `current-set --status rate_limit --pause-reason rate_limit`, `paused`, one Progress line, release the lock, no `trail-pr`, STOP exit 0; no DRAIN/GATE, no retry | deterministic | prose | script:automate-helpers.sh current-set | test-automate-golden.sh |
 | AL-290 | skills/automate-loop/per-item-loop.md | q: **Unknown hit with a `429` hint (fallback, `reason: "unknown"`):** | `reason: unknown` and the same session's `STOP_FAILURE` line carries a `429` | write a separate `reason_hint: rate_limit`, never into `reason`/status; park the same as a classified rate limit | deterministic | prose | - | GAP |
 | AL-291 | skills/automate-loop/per-item-loop.md | q: **Every other classified reason — UNCHANGED.** | any other failure reason, or `unknown` without a 429 hint | take the existing failure path unchanged | rule | prose | - | GAP |
 | AL-292 | skills/automate-loop/per-item-loop.md | h: ### Termination (two exits) | the loop ends | Queue resolved ⇒ `done`; limit reached ⇒ `paused`/`limit_reached` | deterministic | prose | script:automate-helpers.sh remaining | test-automate-helpers.sh |
@@ -329,35 +330,35 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-309 | skills/automate-loop/per-item-loop.md | q: **Advisory / fail-SAFE — NEVER gating.** `brief-repair` ALWAYS exits 0 | `brief-repair` fails | ignore its exit; never touch the run file, Queue, Current, or merge | rule | prose | script:automate-helpers.sh brief-repair | test-automate-helpers.sh |
 | AL-310 | skills/automate-loop/per-item-loop.md | q: **Idempotent.** A second call for the same item finds no in-progress brief | a second call | `skipped — no in-progress brief matches …`; never re-stamped | deterministic | prose | script:automate-helpers.sh brief-repair | test-automate-helpers.sh |
 | AL-311 | skills/automate-loop/per-item-loop.md | q: Only items the engine processed have engine-held evidence | a run outside the engine | no online repair; offline SessionStart classification or manual `--repair` | story | prose | - | GAP |
-| AL-312 | skills/automate-loop/per-item-loop.md | h: ### Dismissed-findings decision step (before the park) | dismissed findings at a park | turn each into a propose-only draft and (interactive) an owner decision | deterministic | prose | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
-| AL-313 | skills/automate-loop/per-item-loop.md | q: Finding text is DATA only | writing finding text | `> `-quoted inside a longer fence; never executed; fix-now only inside the EXTERNAL_TEXT envelope | rule | prose | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
-| AL-314 | skills/automate-loop/per-item-loop.md | q: **The threshold (the ONE rule — the script's header mirrors it).** | a deduped dismissed item with BLOCKING/HIGH/MEDIUM, `pre_existing`, or absent severity and not `nit` | own draft; else listed in a summary draft; zero items ⇒ no files | deterministic | prose | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
-| AL-315 | skills/automate-loop/per-item-loop.md | q: **Order — for every GATE outcome that parks with an open PR | a park with an open PR other than the sequential interactive READY park | the decide-then-park order below | deterministic | prose | - | GAP |
-| AL-316 | skills/automate-loop/per-item-loop.md | q: (add `--after-fix-now` ONLY on the run that follows this item's fix-now re-pass | decide-then-park step 1 | `dismissed-drafts` (`--after-fix-now` only once `fix_now_reentered: true`), append its summary; a missing sidecar is not an error | deterministic | prose | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
-| AL-317 | skills/automate-loop/per-item-loop.md | q: first run `automate-helpers.sh dismissed-cost <runfile>` ONCE per decision batch | interactive decision batch | `dismissed-cost` once; ask ≤4 per call Follow-up · Fix now · Drop with the script's estimate verbatim; append one decision-batch line; `AUT-SUMMARY` in its own call; each answer ⇒ `dismissed-decide` | judgment | prose | script:automate-dismissed.sh dismissed-cost | test-automate-dismissed.sh |
-| AL-318 | skills/automate-loop/per-item-loop.md | q: An `unreadable <path>` line is shown in the question text as a warning | `dismissed-drafts` printed `unreadable <path>` | show it as a warning in the question, never skip silently | deterministic | prose | - | GAP |
-| AL-319 | skills/automate-loop/per-item-loop.md | q: **Any `fix-now` answer ⇒ ONE full re-pass of DRAIN → GATE.** | any fix-now answer | one fix worker (review-heal contract, findings in EXTERNAL_TEXT), one full re-drain, `fix_now_reentered: true`, pinned re-drain lines, GATE re-evaluated; re-drain ESCALATED ⇒ escalated park | deterministic | prose | - | GAP |
-| AL-320 | skills/automate-loop/per-item-loop.md | q: **Fix-now is offered at most ONCE per item:** | `fix_now_reentered: true` | options Follow-up / Drop only | deterministic | prose | - | GAP |
-| AL-321 | skills/automate-loop/per-item-loop.md | q: **Re-dismissed fix-now finding:** | drain-origin fix-now draft re-dismissed after the re-drain | re-write `undecided (fix-now unconfirmed)` and ask again; Phase 4.5-origin or no-re-drain fix-now names stay suppressed | deterministic | prose | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
-| AL-322 | skills/automate-loop/per-item-loop.md | q: Only then write the park state — the verdict of the LAST GATE pass | decide-then-park step 4 | write the last GATE's park with `pending_decisions`/`fix_now_reentered`, then the §9 park tail | deterministic | prose | script:automate-helpers.sh current-set | test-automate-helpers.sh |
-| AL-323 | skills/automate-loop/per-item-loop.md | q: **A sequential interactive READY park is written FIRST (automate-speed/01, owner decisions D2/D3).** | safe-mode or fail-closed auto-merge `awaiting_merge` park, not a lane, interactive | park first; decisions never hold the park (run `automate-2026-10-13-181331` incident) | rule | prose | script:automate-helpers.sh park-ask-gate | test-automate-helpers.sh |
-| AL-324 | skills/automate-loop/per-item-loop.md | q: `progress-append` its summary line; `<n>` = `automate-helpers.sh dismissed-pending <runfile>` | park-first step 1 | `dismissed-drafts`, summary line, `n` from `dismissed-pending` | deterministic | prose | script:automate-dismissed.sh dismissed-pending | test-automate-dismissed.sh |
-| AL-325 | skills/automate-loop/per-item-loop.md | q: dismissed decision(s) pending | park-first step 2 | `paused`, `current-set … awaiting_merge`, pending fields, a `parked awaiting_merge` line | deterministic | prose | script:automate-helpers.sh current-set | test-automate-helpers.sh |
-| AL-326 | skills/automate-loop/per-item-loop.md | q: Arm the merge watcher — the "Post-merge close-out" launch line | park-first step 3 | launch `automate-merge-watch.sh` detached; re-park prints `already running` | deterministic | prose | script:automate-merge-watch.sh | test-automate-trail.sh |
-| AL-327 | skills/automate-loop/per-item-loop.md | q: Notify — best-effort desktop + webhook | park-first step 4 | best-effort ready-to-merge notify | deterministic | prose | - | GAP |
-| AL-328 | skills/automate-loop/per-item-loop.md | q: the watcher's `closeout` must never wait on an unanswered question | park-first step 5 | release the run lock before asking | rule | prose | script:run-lock.sh release | test-run-lock.sh |
-| AL-329 | skills/automate-loop/per-item-loop.md | q: `automate-helpers.sh park-ask-gate <runfile> <item> <pr_url> --wait 75` | park-first step 6 | `park-ask-gate --wait 75`; log the line in one locked window; `refuse` ⇒ ask nothing, next PICK asks | deterministic | prose | script:automate-helpers.sh park-ask-gate | test-automate-helpers.sh |
-| AL-330 | skills/automate-loop/per-item-loop.md | q: is offered only when the gate line reads `ask — fix-now allowed` and `fix_now_reentered` is `false` | park-first step 7 | Fix now only on `fix-now allowed` and not re-entered; else Follow-up / Drop quoting the gate line; write nothing while a question is open | deterministic | prose | script:automate-helpers.sh park-ask-gate | test-automate-helpers.sh |
-| AL-331 | skills/automate-loop/per-item-loop.md | q: Once ALL answers are in, record them in ONE locked window | park-first step 8 | one locked window: batch line, `dismissed-decide` per follow-up/drop, `pending_decisions` rewrite only while Current names this item/PR; fix-now answers go to one hand-off | deterministic | prose | script:automate-dismissed.sh dismissed-decide | test-automate-dismissed.sh |
-| AL-332 | skills/automate-loop/per-item-loop.md | q: **Post-release writes take the run lock.** | any run-file write after the park's lock release | wrap in `run-lock.sh acquire … release` (never across a question); refused acquire retried 3× about 5 s apart, then write nothing | deterministic | prose | script:run-lock.sh acquire | test-run-lock.sh |
-| AL-333 | skills/automate-loop/per-item-loop.md | q: a concurrent `progress-append` lost `closeout`'s `status: done` 60 times in 60 | incident | why post-release writes are locked | story | prose | - | GAP |
-| AL-334 | skills/automate-loop/per-item-loop.md | q: **Fix-now after the park (D3).** | a batch with fix-now answers after a READY park | one hand-off per batch: gate read, lock, second gate read under lock; still allowed ⇒ `running`, `dismissed-decide fix-now` each, one re-pass; else each becomes a follow-up under the lock | deterministic | prose | script:automate-helpers.sh park-ask-gate | test-automate-helpers.sh |
-| AL-335 | skills/automate-loop/per-item-loop.md | q: **Merge while a question is pending.** | the PR merges while a question is open | watcher closes out; unanswered drafts stay undecided; later answers recorded under the lock | deterministic | prose | - | GAP |
-| AL-336 | skills/automate-loop/per-item-loop.md | q: but a merge landing between that read and the fix worker's push is not prevented | honest limits of the post-park lock | a human merge takes no lock; the lock is cooperative | story | prose | - | GAP |
-| AL-337 | skills/automate-loop/per-item-loop.md | q: (unchanged — it takes the first list's order, never the park-first one) | `--non-interactive-fallback` park | ask nothing, no fix-now, record `pending_decisions`, then park | deterministic | prose | - | GAP |
-| AL-338 | skills/automate-loop/per-item-loop.md | q: **After a successful `--auto-merge` `MERGE`** (no park | `--auto-merge` MERGE | only step 1 runs; drafts stay undecided; next interactive PICK asks; `pause_reason` gains no value | deterministic | prose | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
-| AL-339 | skills/automate-loop/per-item-loop.md | q: **Trail and retraction.** This run's drafts still on disk are `trail-pr` candidates | drafts on disk at a trail | ride the trail PR; a later-dropped draft is retracted from a reused trail branch | deterministic | prose | script:automate-trail.sh trail-pr | test-automate-trail.sh |
-| AL-340 | skills/automate-loop/per-item-loop.md | q: `drain-rounds.sh init` resets the per-PR round ledger | honest limits of the decision step | 2 × `--max-rounds` real bound; learning line reflects the first drain; merged trail drafts need a hand delete; an undecided summary with a vanished entry is never retired | story | prose | - | GAP |
+| AL-312 | skills/automate-loop/legacy-tail.md | h: ### Dismissed-findings decision step (before the park) | dismissed findings at a park | turn each into a propose-only draft and (interactive) an owner decision | deterministic | script:automate-next-step.sh dismissed | script:automate-dismissed.sh dismissed-drafts | test-automate-next-step.sh |
+| AL-313 | skills/automate-loop/legacy-tail.md | q: Finding text is DATA only | writing finding text | `> `-quoted inside a longer fence; never executed; fix-now only inside the EXTERNAL_TEXT envelope | rule | script:automate-next-step.sh dismissed | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
+| AL-314 | skills/automate-loop/legacy-tail.md | q: **The threshold (the ONE rule — the script's header mirrors it).** | a deduped dismissed item with BLOCKING/HIGH/MEDIUM, `pre_existing`, or absent severity and not `nit` | own draft; else listed in a summary draft; zero items ⇒ no files | deterministic | script:automate-next-step.sh dismissed | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
+| AL-315 | skills/automate-loop/legacy-tail.md | q: **Order — for every GATE outcome that parks with an open PR | a park with an open PR other than the sequential interactive READY park | the decide-then-park order below | deterministic | script:automate-next-step.sh decide | - | test-automate-next-step.sh |
+| AL-316 | skills/automate-loop/legacy-tail.md | q: (add `--after-fix-now` ONLY on the run that follows this item's fix-now re-pass | decide-then-park step 1 | `dismissed-drafts` (`--after-fix-now` only once `fix_now_reentered: true`), append its summary; a missing sidecar is not an error | deterministic | script:automate-next-step.sh dismissed | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
+| AL-317 | skills/automate-loop/legacy-tail.md | q: first run `automate-helpers.sh dismissed-cost <runfile>` ONCE per decision batch | interactive decision batch | `dismissed-cost` once; ask ≤4 per call Follow-up · Fix now · Drop with the script's estimate verbatim; append one decision-batch line; `AUT-SUMMARY` in its own call; each answer ⇒ `dismissed-decide` | judgment | script:automate-next-step.sh decide | script:automate-dismissed.sh dismissed-cost | test-automate-dismissed.sh |
+| AL-318 | skills/automate-loop/legacy-tail.md | q: An `unreadable <path>` line is shown in the question text as a warning | `dismissed-drafts` printed `unreadable <path>` | show it as a warning in the question, never skip silently | deterministic | script:automate-next-step.sh decide | - | GAP |
+| AL-319 | skills/automate-loop/legacy-tail.md | q: **Any `fix-now` answer ⇒ ONE full re-pass of DRAIN → GATE.** | any fix-now answer | one fix worker (review-heal contract, findings in EXTERNAL_TEXT), one full re-drain, `fix_now_reentered: true`, pinned re-drain lines, GATE re-evaluated; re-drain ESCALATED ⇒ escalated park | deterministic | script:automate-next-step.sh fix-now | - | test-automate-next-step.sh |
+| AL-320 | skills/automate-loop/legacy-tail.md | q: **Fix-now is offered at most ONCE per item:** | `fix_now_reentered: true` | options Follow-up / Drop only | deterministic | script:automate-next-step.sh fix-now | - | test-automate-next-step.sh |
+| AL-321 | skills/automate-loop/legacy-tail.md | q: **Re-dismissed fix-now finding:** | drain-origin fix-now draft re-dismissed after the re-drain | re-write `undecided (fix-now unconfirmed)` and ask again; Phase 4.5-origin or no-re-drain fix-now names stay suppressed | deterministic | script:automate-next-step.sh dismissed | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
+| AL-322 | skills/automate-loop/legacy-tail.md | q: Only then write the park state — the verdict of the LAST GATE pass | decide-then-park step 4 | write the last GATE's park with `pending_decisions`/`fix_now_reentered`, then the §9 park tail | deterministic | script:automate-next-step.sh park | script:automate-helpers.sh current-set | test-automate-next-step.sh |
+| AL-323 | skills/automate-loop/legacy-tail.md | q: **A sequential interactive READY park is written FIRST (automate-speed/01, owner decisions D2/D3).** | safe-mode or fail-closed auto-merge `awaiting_merge` park, not a lane, interactive | park first; decisions never hold the park (run `automate-2026-10-13-181331` incident) | rule | script:automate-next-step.sh park | script:automate-helpers.sh park-ask-gate | test-automate-next-step.sh |
+| AL-324 | skills/automate-loop/legacy-tail.md | q: `progress-append` its summary line; `<n>` = `automate-helpers.sh dismissed-pending <runfile>` | park-first step 1 | `dismissed-drafts`, summary line, `n` from `dismissed-pending` | deterministic | script:automate-next-step.sh dismissed | script:automate-dismissed.sh dismissed-pending | test-automate-next-step.sh |
+| AL-325 | skills/automate-loop/legacy-tail.md | q: dismissed decision(s) pending | park-first step 2 | `paused`, `current-set … awaiting_merge`, pending fields, a `parked awaiting_merge` line | deterministic | script:automate-next-step.sh park | script:automate-helpers.sh current-set | test-automate-next-step.sh |
+| AL-326 | skills/automate-loop/legacy-tail.md | q: Arm the merge watcher — the "Post-merge close-out" launch line | park-first step 3 | launch `automate-merge-watch.sh` detached; re-park prints `already running` | deterministic | script:automate-next-step.sh park | script:automate-merge-watch.sh | test-automate-next-step.sh |
+| AL-327 | skills/automate-loop/legacy-tail.md | q: Notify — best-effort desktop + webhook | park-first step 4 | best-effort ready-to-merge notify | deterministic | script:automate-next-step.sh park | - | GAP |
+| AL-328 | skills/automate-loop/legacy-tail.md | q: the watcher's `closeout` must never wait on an unanswered question | park-first step 5 | release the run lock before asking | rule | script:automate-next-step.sh park | script:run-lock.sh release | test-automate-next-step.sh |
+| AL-329 | skills/automate-loop/legacy-tail.md | q: `automate-helpers.sh park-ask-gate <runfile> <item> <pr_url> --wait 75` | park-first step 6 | `park-ask-gate --wait 75`; log the line in one locked window; `refuse` ⇒ ask nothing, next PICK asks | deterministic | script:automate-next-step.sh decide | script:automate-helpers.sh park-ask-gate | test-automate-helpers.sh |
+| AL-330 | skills/automate-loop/legacy-tail.md | q: is offered only when the gate line reads `ask — fix-now allowed` and `fix_now_reentered` is `false` | park-first step 7 | Fix now only on `fix-now allowed` and not re-entered; else Follow-up / Drop quoting the gate line; write nothing while a question is open | deterministic | script:automate-next-step.sh decide | script:automate-helpers.sh park-ask-gate | test-automate-helpers.sh |
+| AL-331 | skills/automate-loop/legacy-tail.md | q: Once ALL answers are in, record them in ONE locked window | park-first step 8 | one locked window: batch line, `dismissed-decide` per follow-up/drop, `pending_decisions` rewrite only while Current names this item/PR; fix-now answers go to one hand-off | deterministic | script:automate-next-step.sh decide | script:automate-dismissed.sh dismissed-decide | test-automate-next-step.sh |
+| AL-332 | skills/automate-loop/legacy-tail.md | q: **Post-release writes take the run lock.** | any run-file write after the park's lock release | wrap in `run-lock.sh acquire … release` (never across a question); refused acquire retried 3× about 5 s apart, then write nothing | deterministic | script:automate-next-step.sh decide | script:run-lock.sh acquire | test-run-lock.sh |
+| AL-333 | skills/automate-loop/legacy-tail.md | q: a concurrent `progress-append` lost `closeout`'s `status: done` 60 times in 60 | incident | why post-release writes are locked | story | script:automate-next-step.sh decide | - | GAP |
+| AL-334 | skills/automate-loop/legacy-tail.md | q: **Fix-now after the park (D3).** | a batch with fix-now answers after a READY park | one hand-off per batch: gate read, lock, second gate read under lock; still allowed ⇒ `running`, `dismissed-decide fix-now` each, one re-pass; else each becomes a follow-up under the lock | deterministic | script:automate-next-step.sh fix-now | script:automate-helpers.sh park-ask-gate | test-automate-helpers.sh |
+| AL-335 | skills/automate-loop/legacy-tail.md | q: **Merge while a question is pending.** | the PR merges while a question is open | watcher closes out; unanswered drafts stay undecided; later answers recorded under the lock | deterministic | script:automate-next-step.sh decide | - | GAP |
+| AL-336 | skills/automate-loop/legacy-tail.md | q: but a merge landing between that read and the fix worker's push is not prevented | honest limits of the post-park lock | a human merge takes no lock; the lock is cooperative | story | script:automate-next-step.sh fix-now | - | GAP |
+| AL-337 | skills/automate-loop/legacy-tail.md | q: (unchanged — it takes the first list's order, never the park-first one) | `--non-interactive-fallback` park | ask nothing, no fix-now, record `pending_decisions`, then park | deterministic | script:automate-next-step.sh decide | - | test-automate-next-step.sh |
+| AL-338 | skills/automate-loop/legacy-tail.md | q: **After a successful `--auto-merge` `MERGE`** (no park | `--auto-merge` MERGE | only step 1 runs; drafts stay undecided; next interactive PICK asks; `pause_reason` gains no value | deterministic | script:automate-next-step.sh dismissed | script:automate-dismissed.sh dismissed-drafts | test-automate-next-step.sh |
+| AL-339 | skills/automate-loop/legacy-tail.md | q: **Trail and retraction.** This run's drafts still on disk are `trail-pr` candidates | drafts on disk at a trail | ride the trail PR; a later-dropped draft is retracted from a reused trail branch | deterministic | script:automate-next-step.sh dismissed | script:automate-trail.sh trail-pr | test-automate-trail.sh |
+| AL-340 | skills/automate-loop/legacy-tail.md | q: `drain-rounds.sh init` resets the per-PR round ledger | honest limits of the decision step | 2 × `--max-rounds` real bound; learning line reflects the first drain; merged trail drafts need a hand delete; an undecided summary with a vanished entry is never retired | story | script:automate-next-step.sh fix-now | - | GAP |
 | AL-341 | skills/automate-loop/per-item-loop.md | h: ### Trail PR after merge and at run end | committing the tracked `.supervisor` trail | `trail-pr` commits it as ONE PR | deterministic | prose | script:automate-trail.sh trail-pr | test-automate-trail.sh |
 | AL-342 | skills/automate-loop/per-item-loop.md | q: with the mode on, `trail-pr` pushes to the metadata branch through `meta-sync.sh` instead of opening a PR | branch mode ON | push to the metadata branch instead of a PR, same triggers and evidence gate | deterministic | prose | script:automate-trail.sh trail-pr | test-automate-trail.sh |
 | AL-343 | skills/automate-loop/per-item-loop.md | q: **When — this is the ONE authoritative trigger list (and the ONE park-path list).** | (a) inside `closeout` after MERGED unless `--no-trail`; (b) at `## Status: done` before release; (c) at a skip/abandon check-off | run `trail-pr`; at (b)/(c) append its line | deterministic | prose | script:automate-trail.sh trail-pr | test-automate-trail.sh |
@@ -406,7 +407,7 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-386 | skills/automate-loop/per-item-loop.md | q: **Malformed pre-existing config ⇒ ABORT.** | existing config not parseable JSON | abort the tick | deterministic | prose | script:automate-helpers.sh config-suppress | test-automate-helpers.sh |
 | AL-387 | skills/automate-loop/per-item-loop.md | q: **Crash-restore:** RECONCILE (§4) restores a crash-stranded backup | a stranded backup at the next start | RECONCILE restores it | deterministic | prose | script:automate-helpers.sh config-restore | test-automate-helpers.sh |
 | AL-388 | skills/automate-loop/per-item-loop.md | q: On clean restore, **delete** the transient backup sidecar. | clean restore | delete the backup | deterministic | prose | script:automate-helpers.sh config-restore | test-automate-helpers.sh |
-| AL-389 | skills/automate-loop/per-item-loop.md | h: ### Own ONE inline drain | DRAIN after suppression | one inline `/review-pr --until-mergeable --no-auto-postmortem`; a fix-now re-drain only after the first returned; read the result synchronously | deterministic | prose | - | GAP |
+| AL-389 | skills/automate-loop/per-item-loop.md | h: ### Own ONE inline drain | DRAIN after suppression | one inline `/review-pr --until-mergeable --no-auto-postmortem`; a fix-now re-drain only after the first returned; read the result synchronously | deterministic | prose | - | test-automate-golden.sh |
 | AL-390 | skills/automate-loop/per-item-loop.md | q: The **`--no-auto-postmortem`** flag suppresses the owned drain's churn-gated Postmortem Dispatch Tail | owned drain inside `/automate` | pass `--no-auto-postmortem` so only the engine-native learning line is written | rule | prose | - | GAP |
 | AL-391 | skills/automate-loop/per-item-loop.md | q: `owned_drain_result: READY \| ESCALATED \| superseded_by_merge` | drain terminal | record READY / ESCALATED / superseded_by_merge; READY never merges; only `sub_floor_converged` is excluded at gate condition 1 | deterministic | prose | script:drain-rounds.sh check | test-drain-rounds.sh |
 | AL-392 | skills/automate-loop/per-item-loop.md | q: **Verifiable** via those `## Current` fields **plus the absence of any detached `dispatch-pr-review.sh` artifact | verifying single drain | `## Current` fields present and no review-dispatch marker / runner for the PR | deterministic | prose | script:automate-lanes.sh lane-drain-check | test-automate-lanes.sh |
@@ -570,160 +571,154 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-550 | commands/automate.md | q: **Merge watcher + `closeout`:** an `awaiting_merge` or `escalated` park arms | `awaiting_merge`/`escalated` park | arm the watcher; on merge `closeout` + notify; settle re-check report; never reruns or merges | deterministic | prose | script:automate-merge-watch.sh | test-automate-trail.sh |
 | AL-551 | commands/automate.md | q: **Dismissed findings:** dismissed review findings → propose-only drafts | dismissed findings at a park | drafts + owner decision; READY parks first then asks via `park-ask-gate`; escalated decides first; non-interactive records pending | deterministic | prose | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
 | AL-552 | commands/automate.md | q: **Invariant (durable):** `/review-pr` / `review-heal` / Supervisor Phase 4.5 still **NEVER merge** | any review terminal state | never merge; the only executed squash merge is the `--auto-merge` gate | rule | prose | script:automate-helpers.sh gate-eval | test-automate-helpers.sh |
+| AL-553 | skills/automate-loop/per-item-loop.md | q: 4. **GATE — run next-step** (automate-speed/06). | the drain result is in hand (default mode, no `--legacy`) | call `automate-next-step.sh <runfile> --result <drain report>` and do its ONE instruction (spawn ⇒ report the re-drain; ask ⇒ report the answers, or `cant_ask`; park ⇒ stop; done ⇒ next PICK or run end); never write the run file between calls; a non-zero exit is reported, never worked around | deterministic | script:automate-next-step.sh gate | script:automate-next-step.sh gate | test-automate-next-step.sh |
+| AL-554 | skills/automate-loop/per-item-loop.md | q: 5. **SYNC — run next-step.** After `gate-eval` printed `MERGE` | `gate-eval` printed `MERGE` | the driver's `sync` runs `closeout … --no-trail --session-id <sid>` and classifies it through the close-out leftover gate (`leftover`: `AUT-LEFTOVER` ask, or the `closeout_leftover` park non-interactively) | deterministic | script:automate-next-step.sh sync | script:automate-next-step.sh sync | test-automate-next-step.sh |
+| AL-555 | skills/automate-loop/per-item-loop.md | q: A `# skipped:`/`# abandoned:` check-off is still the loop's own | the loop checks an item off `# skipped:`/`# abandoned:` | one atomic `queue-checkoff` with the reason, report remaining, `trail-pr --reason skipped\|abandoned` (line appended), then `run-lock.sh release` as the last action | deterministic | prose | script:automate-trail.sh trail-pr | test-automate-golden.sh |
+| AL-556 | skills/automate-loop/per-item-loop.md | q: Both exits are written by the driver's `terminate` step | the tail of the last processed item finishes | the driver's `terminate` writes `## Status: done` (trail-pr --reason done + the dry sweep line) or the `limit_reached` park | deterministic | script:automate-next-step.sh terminate | script:automate-next-step.sh terminate | test-automate-next-step.sh |
+| AL-557 | skills/automate-loop/legacy-tail.md | h: ### Where the rest of the legacy tail lives | always | §9/§10, Termination, Trail PR, Post-merge close-out and step 4's Re-check at RECONCILE are not copied into legacy-tail.md; each moved anchor lives once, in legacy-tail.md, never in a per-item-loop.md stub | rule | prose | - | test-automate-dismissed.sh |
+| AL-558 | skills/automate-loop/legacy-tail.md | q: **Read ONLY under `/automate --legacy`** | a run without `--legacy` | the tail runs through `automate-next-step.sh`; legacy-tail.md is not read, and under `--legacy` the loop follows it instead of the driver | rule | prose | - | GAP |
+| AL-559 | commands/automate.md | q: `legacy-tail.md`, **Only when** `--legacy` was passed | `--legacy` was passed (not persisted; re-passed on `--resume`) | read legacy-tail.md at Step 0 and run the tail from its prose; without the flag it is never read | deterministic | prose | - | GAP |
+| AL-560 | skills/automate-loop/SKILL.md | q: `automate-next-step.sh <runfile> [--result <json>]` (standalone script) | the loop reaches the tail | the driver is the single reader and writer of the run file for the tail and prints ONE instruction per call; it calls `gate-eval`, never merges itself | deterministic | script:automate-next-step.sh | script:automate-next-step.sh | test-automate-next-step.sh |
 
 ## Gap list (ordered by risk)
+
 1. AL-210 — a died detached drain must park drain_died, never awaiting_merge; the .died marker scan lives only in prose, so a skipped check resumes a PR whose readiness is unknown
 2. AL-080 — the drain_died park transition has no test of its own; current-set validates the enum but no test drives this park
-3. AL-289 — the classified rate_limit park is a prose-only read of the session log; a miss retries RUN into the same rate-limit wall
-4. AL-001 — the whole rate-limit park section (read, park shape, stop before DRAIN) is prose with no test; only the generic current-set write is tested
-5. AL-079 — the rate_limit park transition is never driven by a test; a wrong status/pause_reason pair would go unnoticed
-6. AL-290 — the 429-hint fallback must park without rewriting reason; prose-only, so a hint can be lost or promoted to a false certainty
-7. AL-259 — the rate-limit check sits between RUN and DRAIN only in prose; skipping it lets a dead turn reach DRAIN/GATE
-8. AL-204 — superseded_by_merge must be written before closeout at RECONCILE; untested, a missed write leaves owned_drain_result null on a merged PR
-9. AL-266 — a drain that ends with no terminal block on an unmerged PR must record nothing; an invented result here could reach the gate
-10. AL-269 — decide-then-park order (escalated, non-interactive, lane) is prose-only; a wrong order arms the watcher before decisions or skips them
-11. AL-319 — the fix-now re-pass must be exactly one re-drain; untested, a second re-drain races the PR branch (double drain)
-12. AL-320 — fix-now at most once per item relies on fix_now_reentered alone; untested
-13. AL-389 — exactly ONE inline owned drain per pass is a prose rule; nothing tests that the engine does not drain twice
-14. AL-261 — the DRAIN step's single drain and its owned_drain_* record are prose-only
-15. AL-214 — the can't-ask single-incomplete-run stop must write nothing and pick nothing; untested, a regression continues a run on the owner's behalf
-16. AL-217 — ambiguous non-interactive resume must fail closed resume_ambiguous; untested
-17. AL-099 — a headless tick without --resume must stop, and that stop must also stop /loop; untested
-18. AL-170 — a bare /automate that cannot ask must create no run file; untested
-19. AL-227 — never pick a new item while a PR is open is enforced only by prose at RECONCILE (trail-gate covers only the trail PR)
-20. AL-296 — every park must stop the loop with its pause_reason; untested
-21. AL-229 — a live merge-watch marker must not arm a second watcher; the RECONCILE note is prose-only
-22. AL-335 — a merge while a question is pending must leave unanswered drafts undecided and record later answers under the lock; untested
-23. AL-337 — a non-interactive park must ask nothing and record pending_decisions before the park; untested
-24. AL-096 — untested deterministic park/stop/fail-closed branch — --parallel N ⇒ absent ⇒ no lane code path; N = 1 ⇒ single-lane mode needing branch mode; refused with...
-25. AL-098 — untested deterministic park/stop/fail-closed branch — a tick ends with done or paused ⇒ the /loop driver stops
-26. AL-159 — untested deterministic park/stop/fail-closed branch — --non-interactive-fallback ⇒ queue-confirm skipped, ambiguous resume and flagless resume fail closed, PO ...
-27. AL-171 — untested deterministic park/stop/fail-closed branch — prompt produced 0 files ⇒ record done, remaining: 0, a Progress note; stop
-28. AL-209 — untested deterministic park/stop/fail-closed branch — rate_limit park with pr: null ⇒ nothing to reconcile; leave as parked; resuming re-picks and retries RUN
-29. AL-219 — untested deterministic park/stop/fail-closed branch — continue of a rate_limit park ⇒ same RESUME flow; reconcile no-op; fall through to RUN retrying the same ...
-30. AL-245 — untested deterministic park/stop/fail-closed branch — acquire succeeds degraded ⇒ note once in Progress and proceed; not a park
-31. AL-252 — untested deterministic park/stop/fail-closed branch — non-interactive PICK with pending decisions ⇒ never ask, never block; count stays in ## Current
-32. AL-276 — untested deterministic park/stop/fail-closed branch — waive answered with no note ⇒ ask once more; a second empty note is Keep parked; a waive refusal is Keep ...
-33. AL-315 — untested deterministic park/stop/fail-closed branch — a park with an open PR other than the sequential interactive READY park ⇒ the decide-then-park order below
-34. AL-318 — untested deterministic park/stop/fail-closed branch — dismissed-drafts printed unreadable <path> ⇒ show it as a warning in the question, never skip silently
-35. AL-327 — untested deterministic park/stop/fail-closed branch — park-first step 4 ⇒ best-effort ready-to-merge notify
-36. AL-472 — untested deterministic park/stop/fail-closed branch — a lane park; a rate_limit park in any lane ⇒ park that lane only; rate_limit pauses launching and reports...
-37. AL-525 — untested deterministic park/stop/fail-closed branch — a prompt source ⇒ PO stories become the Queue (plan-doc order); 1 ⇒ single item, N ⇒ loop; po_gate: n...
-38. AL-532 — untested deterministic park/stop/fail-closed branch — --sweep with a source or --resume ⇒ one refusal line, nothing run
-39. AL-536 — untested deterministic park/stop/fail-closed branch — --non-interactive-fallback ⇒ passthrough; queue-confirm skipped; ambiguous and flagless resumes fail clos...
-40. AL-547 — untested deterministic park/stop/fail-closed branch — each item ⇒ lock + guard → RECONCILE + classified closeout → trail-gate → trail-unstage → suppres...
-41. AL-060 — untested deterministic branch — --max-tokens was passed ⇒ write max_tokens: into ## Run Config so a bare --resume still enforces it
-42. AL-061 — untested deterministic branch — a --parallel parent run (N = 1 included) ⇒ write parallel: <N>; absent on sequential runs and inside ever...
-43. AL-064 — untested deterministic branch — a run's status changes ⇒ running / paused / done per the bullets below
-44. AL-078 — untested deterministic branch — DRAIN start ⇒ no current-set; owned_drain_started stays its own line
-45. AL-090 — untested deterministic branch — /automate is invoked ⇒ parse prompt / --folder / --backlog / --limit / --resume / --sweep / mode and pass...
-46. AL-165 — untested deterministic branch — a prompt source ⇒ run /product-owner on the prompt and enqueue the generated files
-47. AL-168 — untested deterministic branch — count of generated files ⇒ 1 ⇒ single-item run; N ⇒ loop
-48. AL-172 — untested deterministic branch — PO ends po_gate: needs_owner ⇒ record done, remaining: 0, note names the gate and flags; never enqueue, r...
-49. AL-173 — untested deterministic branch — --non-interactive-fallback prompt intake ⇒ pass --non-interactive to /product-owner
-50. AL-176 — untested deterministic branch — a sibling _BACKLOG.md has a build order ⇒ defer to backlog-doc ordering; else directory order
-51. AL-186 — untested deterministic branch — --non-interactive-fallback ⇒ enforce the cap without prompt, no queue-confirm call, no Progress line
-52. AL-192 — untested deterministic branch — every start ⇒ init-check (with --parallel) → meta-entry → closeout-others → resume-glob --finalize ...
-53. AL-195 — untested deterministic branch — --resume of an existing run ⇒ not guarded at start; guarded at every PICK instead
-54. AL-208 — untested deterministic branch — reconciling ⇒ read the requirement's done stamp
-55. AL-216 — untested deterministic branch — --resume with no id ⇒ target the most-recent incomplete run
-56. AL-226 — untested deterministic branch — each unchecked Queue item ⇒ process top-down through RECONCILE → RUN → DRAIN → GATE → SYNC → CH...
-57. AL-254 — untested deterministic branch — passthrough flags passed to /automate ⇒ append --non-interactive-fallback / --notify / --cheap / --max-to...
-58. AL-260 — untested deterministic branch — /autonomous returns (success or not) ⇒ read state.md session_id and append session_id <id> (<item>), unco...
-59. AL-300 — untested deterministic branch — building learning-emit args ⇒ parse repo and number from pr_url
-60. AL-443 — untested deterministic branch — any --parallel parent run ⇒ write - parallel: N (absent on sequential runs and in lanes)
-61. AL-447 — untested deterministic branch — each coordinator wave ⇒ meta pull → closeout-others → reconcile lanes → plan → snapshot → creat...
-62. AL-526 — untested deterministic branch — bare /automate ⇒ RESUME first, else ask; can't ask ⇒ no_source_non_interactive / resume_requires_flag_n...
-63. AL-535 — untested deterministic branch — --notify ⇒ passthrough to inner /autonomous
-64. AL-010 — untested safety rule — a contract changes ⇒ prose is the spec; the helper conforms, never the reverse
-65. AL-053 — untested safety rule — N = 1 or a sequential run ⇒ plan-waves is never called
-66. AL-057 — untested safety rule — any helper call ⇒ no source-repo edits or git mutations except gate-eval's merge, brief-repair's jobs mov...
-67. AL-072 — untested safety rule — a rewrite ⇒ only Queue checkboxes and the Current block; Status/Source/Run Config change rarely and atomi...
-68. AL-073 — untested safety rule — run end ⇒ optionally append ONE terminal line to the session log; never the source of truth
-69. AL-100 — untested safety rule — adding a source ⇒ three concrete resolvers, never a pluggable framework
-70. AL-107 — untested safety rule — claiming merge state ⇒ verify via gh pr view --json state,mergedAt / git branch --contains
-71. AL-114 — untested safety rule — own agent_lifecycle: failed row with rate_limit (or unknown + 429 hint) ⇒ park rate_limit and stop; never...
-72. AL-115 — untested safety rule — a 429 text hint ⇒ write a separate reason_hint: rate_limit; never change reason
-73. AL-120 — untested safety rule — an escalated PR ⇒ park; resolve or mark skipped/abandoned, then --resume
-74. AL-135 — untested safety rule — passthrough flags ⇒ --notify/--non-interactive-fallback/--cheap pass through; --cheap never interpreted o...
-75. AL-138 — untested safety rule — a qualifying rate-limit row after this item's picked line ⇒ park before DRAIN/GATE, no retry; resume via ...
-76. AL-158 — untested safety rule — NO-GO, Plan Review FAIL×3, adjudication, rubric gate ⇒ bubble up; never auto-pick an adjudication option
-77. AL-160 — untested safety rule — --cheap ⇒ forward to /autonomous, never interpret, never persist
-78. AL-180 — untested safety rule — an item closes out ⇒ stamp the requirement and check the run Queue; never tick _BACKLOG.md
-79. AL-207 — untested safety rule — reconciling a merge ⇒ verify the branch reached main; never assert merged from memory
-80. AL-224 — untested safety rule — an escalated-parked run ⇒ mark the item skipped/abandoned, then --resume
-81. AL-280 — untested safety rule — any can't-ask path ⇒ never write a waiver
-82. AL-299 — untested safety rule — learning record logic ⇒ the helper owns it; never restated in prose
-83. AL-302 — untested safety rule — passing --item ⇒ the full Queue path verbatim, never a short key (PR #267 incident)
-84. AL-393 — untested safety rule — drain form ⇒ inline, synchronous; never merges
-85. AL-404 — untested safety rule — READY from any review step ⇒ READY leaves the PR open; the merge is the engine's own step
-86. AL-465 — untested safety rule — a wave continued in a new session ⇒ resume only on the owner's typed --resume; a hand-over note may prepa...
-87. AL-496 — untested safety rule — integrating a wave by hand ⇒ marker-only conflicts resolved in the merge commit; anything larger goes to ...
-88. AL-522 — untested safety rule — /automate invoked ⇒ run inline on the main thread; never delegate via the Agent tool (no runner agent)
-89. AL-523 — untested safety rule — inlined inner workflows ⇒ let them spawn their own Task children; never collapse the per-item loop into m...
-90. AL-537 — untested safety rule — --cheap ⇒ forward only, never persist; re-pass each resume/tick
-91. AL-542 — untested safety rule — reading plugin files at runtime ⇒ use ${CLAUDE_PLUGIN_ROOT}, never loomwright/...
-92. AL-003 — untested rule — a new source kind is wanted ⇒ intake only converts the source into the Queue once; /backlog is not a sepa...
-93. AL-004 — untested rule — a proposed feature is outside prompt/folder/backlog-doc sources, a runner agent, QA-in-loop ⇒ out of scop...
-94. AL-005 — untested rule — always ⇒ /automate runs inline; no runner agent is added
-95. AL-008 — untested rule — always ⇒ the single run file is the only tracking artifact
-96. AL-091 — model-judged branch, no test — bare /automate ⇒ resume an incomplete run, else ask what to automate
-97. AL-094 — untested rule — --cheap ⇒ passthrough to /autonomous; not persisted
-98. AL-097 — untested rule — driven by /loop headless ⇒ use /loop /loomwright:automate; bare /automate is unknown under claude -p
-99. AL-101 — untested rule — tracking state ⇒ only the run file persists; everything else is a named sidecar
-100. AL-110 — untested rule — suppress timing ⇒ toggle around RUN; DRAIN is too late
-101. AL-118 — untested rule — reading unresolved threads ⇒ use GraphQL only
-102. AL-126 — untested rule — --limit N ⇒ cap processed items; store the full Queue
-103. AL-127 — untested rule — a run ⇒ one run file, no manifest/runs/progress/dashboard file
-104. AL-166 — untested rule — prompt intake ⇒ reuse Product Owner's story-file output, no new code path
-105. AL-169 — model-judged branch, no test — bare /automate ⇒ RESUME first; else ask "What do you want to automate?" and treat the answer as a prompt ...
-106. AL-183 — untested rule — sequential run or N = 1 ⇒ no lint, no prompt, no gate
-107. AL-184 — untested rule — --limit N ⇒ Queue holds the full list; limit caps completed items (default 5)
-108. AL-215 — untested rule — a source flag while an incomplete run exists, cannot ask ⇒ not an implied start new: no PO run, no Queue,...
-109. AL-218 — untested rule — resuming a cheap/notify/fallback run ⇒ re-pass the flags on every --resume and /loop tick
-110. AL-236 — model-judged branch, no test — interactive leftover ⇒ ask Clean up now / Keep and continue / Stop, ≤4 per question; clean-up re-runs c...
-111. AL-255 — untested rule — timing of the suppress ⇒ wrap RUN; DRAIN is too late
-112. AL-288 — untested rule — rate-limit check ⇒ read the own session log directly (no PR yet to key on)
-113. AL-291 — untested rule — any other failure reason, or unknown without a 429 hint ⇒ take the existing failure path unchanged
-114. AL-297 — untested rule — inner correctness gates ⇒ bubble up; passthrough flags forwarded
-115. AL-305 — untested rule — emitting a learning line ⇒ always pass a real --repo and --plugin-version; an empty repo is silently invi...
-116. AL-390 — untested rule — owned drain inside /automate ⇒ pass --no-auto-postmortem so only the engine-native learning line is written
-117. AL-395 — untested rule — --parallel N lanes ⇒ the invariant holds per lane; the coordinator opens no item PR
-118. AL-398 — untested rule — escalated ⇒ stay paused escalated until a human resolves it; no second PR
-119. AL-409 — model-judged branch, no test — an escalated park ⇒ proceed by resolving the PR, marking the item skipped/abandoned, or (validation_unrun...
-120. AL-428 — model-judged branch, no test — rules_gate_dirty_tree on a clean checkout ⇒ commit an ignore line or use the global ignore; .git/info/exc...
-121. AL-513 — untested rule — lanes and parent state ⇒ per-bullet rules below
-122. AL-530 — untested rule — --resume ⇒ reconcile before trusting checkboxes; re-pass --cheap/--notify/fallback every time
-123. AL-002 — story/rationale, no test; the only copy of this context — always ⇒ /autonomous nests inside the per-item loop, which nests inside /automate; the engine drives /aut...
-124. AL-075 — story/rationale, no test; the only copy of this context — incident ⇒ why ## Current is never left to prose
-125. AL-149 — story/rationale, no test; the only copy of this context — manual push, reverted work, offline machine, stale clone, managed-set conflict, consent-blind abort ⇒ six...
-126. AL-150 — story/rationale, no test; the only copy of this context — /automate --parallel N ⇒ command-level summary of lanes, launch authority, wave close and policy answers
-127. AL-241 — story/rationale, no test; the only copy of this context — incident ⇒ why PICK syncs before un-staging
-128. AL-282 — story/rationale, no test; the only copy of this context — honest limits of the validation gate ⇒ a caller skipping this prose bypasses it; title/repro classificati...
-129. AL-311 — story/rationale, no test; the only copy of this context — a run outside the engine ⇒ no online repair; offline SessionStart classification or manual --repair
-130. AL-333 — story/rationale, no test; the only copy of this context — incident ⇒ why post-release writes are locked
-131. AL-336 — story/rationale, no test; the only copy of this context — honest limits of the post-park lock ⇒ a human merge takes no lock; the lock is cooperative
-132. AL-340 — story/rationale, no test; the only copy of this context — honest limits of the decision step ⇒ 2 × --max-rounds real bound; learning line reflects the first drain...
-133. AL-345 — story/rationale, no test; the only copy of this context — auto-merged items then a lasting park ⇒ their trail rides the next closeout / skip / run end, or a hand t...
-134. AL-354 — story/rationale, no test; the only copy of this context — origin/main moved the ledger after the trail branch was cut ⇒ the trail PR conflicts and syncs refuse (fa...
-135. AL-370 — story/rationale, no test; the only copy of this context — incident ⇒ why a sync alone never appends
-136. AL-378 — story/rationale, no test; the only copy of this context — watcher design ⇒ rejected: dies with the session, unverified headless
-137. AL-400 — story/rationale, no test; the only copy of this context — option (a) ⇒ rejected: not the drain's job, weakens gate condition 2
-138. AL-401 — story/rationale, no test; the only copy of this context — option (b) second form ⇒ rejected: stamps would stay off main
-139. AL-402 — story/rationale, no test; the only copy of this context — option (c) ⇒ not possible: strict checks have no path filter
-140. AL-403 — story/rationale, no test; the only copy of this context — another merge to the base while an item PR is open ⇒ PR stays BEHIND; owner updates it; under --auto-merg...
-141. AL-424 — story/rationale, no test; the only copy of this context — high-risk honest limit ⇒ nearly every agent-orchestration PR parks by construction — intended
-142. AL-427 — story/rationale, no test; the only copy of this context — checkout-pin honest limits ⇒ named uncovered cases (excluded paths, repo config, global ignore, hard link...
-143. AL-429 — story/rationale, no test; the only copy of this context — the drain stops checking the PR head out on the main checkout ⇒ every --auto-merge would park rules_gate_...
-144. AL-436 — story/rationale, no test; the only copy of this context — a readable store with no countable must rule ⇒ verdict none, condition holds; a legacy stamp with an empt...
-145. AL-504 — story/rationale, no test; the only copy of this context — wave PR squash-merged or a lane PR left open ⇒ the lane keeps reading awaiting_merge and fleet-closeout w...
-146. AL-512 — story/rationale, no test; the only copy of this context — policy honest limits ⇒ a created lane keeps its policy; a tampered lane.json can only answer an allowed g...
-147. AL-543 — story/rationale, no test; the only copy of this context — the overview ⇒ a map of the protocol; the skill is the contract
+3. AL-290 — the 429-hint fallback must park without rewriting reason; prose-only, so a hint can be lost or promoted to a false certainty
+4. AL-204 — superseded_by_merge must be written before closeout at RECONCILE; untested, a missed write leaves owned_drain_result null on a merged PR
+5. AL-266 — a drain that ends with no terminal block on an unmerged PR must record nothing; an invented result here could reach the gate
+6. AL-214 — the can't-ask single-incomplete-run stop must write nothing and pick nothing; untested, a regression continues a run on the owner's behalf
+7. AL-099 — a headless tick without --resume must stop, and that stop must also stop /loop; untested
+8. AL-170 — a bare /automate that cannot ask must create no run file; untested
+9. AL-227 — never pick a new item while a PR is open is enforced only by prose at RECONCILE (trail-gate covers only the trail PR)
+10. AL-296 — every park must stop the loop with its pause_reason; untested
+11. AL-229 — a live merge-watch marker must not arm a second watcher; the RECONCILE note is prose-only
+12. AL-335 — a merge while a question is pending must leave unanswered drafts undecided and record later answers under the lock; untested
+13. AL-096 — untested deterministic park/stop/fail-closed branch — --parallel N ⇒ absent ⇒ no lane code path; N = 1 ⇒ single-lane mode needing branch mode; refused with...
+14. AL-098 — untested deterministic park/stop/fail-closed branch — a tick ends with done or paused ⇒ the /loop driver stops
+15. AL-159 — untested deterministic park/stop/fail-closed branch — --non-interactive-fallback ⇒ queue-confirm skipped, ambiguous resume and flagless resume fail closed, PO ...
+16. AL-171 — untested deterministic park/stop/fail-closed branch — prompt produced 0 files ⇒ record done, remaining: 0, a Progress note; stop
+17. AL-245 — untested deterministic park/stop/fail-closed branch — acquire succeeds degraded ⇒ note once in Progress and proceed; not a park
+18. AL-252 — untested deterministic park/stop/fail-closed branch — non-interactive PICK with pending decisions ⇒ never ask, never block; count stays in ## Current
+19. AL-276 — untested deterministic park/stop/fail-closed branch — waive answered with no note ⇒ ask once more; a second empty note is Keep parked; a waive refusal is Keep ...
+20. AL-318 — untested deterministic park/stop/fail-closed branch — dismissed-drafts printed unreadable <path> ⇒ show it as a warning in the question, never skip silently
+21. AL-327 — untested deterministic park/stop/fail-closed branch — park-first step 4 ⇒ best-effort ready-to-merge notify
+22. AL-472 — untested deterministic park/stop/fail-closed branch — a lane park; a rate_limit park in any lane ⇒ park that lane only; rate_limit pauses launching and reports...
+23. AL-525 — untested deterministic park/stop/fail-closed branch — a prompt source ⇒ PO stories become the Queue (plan-doc order); 1 ⇒ single item, N ⇒ loop; po_gate: n...
+24. AL-532 — untested deterministic park/stop/fail-closed branch — --sweep with a source or --resume ⇒ one refusal line, nothing run
+25. AL-536 — untested deterministic park/stop/fail-closed branch — --non-interactive-fallback ⇒ passthrough; queue-confirm skipped; ambiguous and flagless resumes fail clos...
+26. AL-547 — untested deterministic park/stop/fail-closed branch — each item ⇒ lock + guard → RECONCILE + classified closeout → trail-gate → trail-unstage → suppres...
+27. AL-060 — untested deterministic branch — --max-tokens was passed ⇒ write max_tokens: into ## Run Config so a bare --resume still enforces it
+28. AL-061 — untested deterministic branch — a --parallel parent run (N = 1 included) ⇒ write parallel: <N>; absent on sequential runs and inside ever...
+29. AL-064 — untested deterministic branch — a run's status changes ⇒ running / paused / done per the bullets below
+30. AL-090 — untested deterministic branch — /automate is invoked ⇒ parse prompt / --folder / --backlog / --limit / --resume / --sweep / mode and pass...
+31. AL-165 — untested deterministic branch — a prompt source ⇒ run /product-owner on the prompt and enqueue the generated files
+32. AL-168 — untested deterministic branch — count of generated files ⇒ 1 ⇒ single-item run; N ⇒ loop
+33. AL-172 — untested deterministic branch — PO ends po_gate: needs_owner ⇒ record done, remaining: 0, note names the gate and flags; never enqueue, r...
+34. AL-173 — untested deterministic branch — --non-interactive-fallback prompt intake ⇒ pass --non-interactive to /product-owner
+35. AL-176 — untested deterministic branch — a sibling _BACKLOG.md has a build order ⇒ defer to backlog-doc ordering; else directory order
+36. AL-186 — untested deterministic branch — --non-interactive-fallback ⇒ enforce the cap without prompt, no queue-confirm call, no Progress line
+37. AL-192 — untested deterministic branch — every start ⇒ init-check (with --parallel) → meta-entry → closeout-others → resume-glob --finalize ...
+38. AL-195 — untested deterministic branch — --resume of an existing run ⇒ not guarded at start; guarded at every PICK instead
+39. AL-208 — untested deterministic branch — reconciling ⇒ read the requirement's done stamp
+40. AL-216 — untested deterministic branch — --resume with no id ⇒ target the most-recent incomplete run
+41. AL-226 — untested deterministic branch — each unchecked Queue item ⇒ process top-down through RECONCILE → RUN → DRAIN → GATE → SYNC → CH...
+42. AL-254 — untested deterministic branch — passthrough flags passed to /automate ⇒ append --non-interactive-fallback / --notify / --cheap / --max-to...
+43. AL-300 — untested deterministic branch — building learning-emit args ⇒ parse repo and number from pr_url
+44. AL-443 — untested deterministic branch — any --parallel parent run ⇒ write - parallel: N (absent on sequential runs and in lanes)
+45. AL-447 — untested deterministic branch — each coordinator wave ⇒ meta pull → closeout-others → reconcile lanes → plan → snapshot → creat...
+46. AL-526 — untested deterministic branch — bare /automate ⇒ RESUME first, else ask; can't ask ⇒ no_source_non_interactive / resume_requires_flag_n...
+47. AL-535 — untested deterministic branch — --notify ⇒ passthrough to inner /autonomous
+48. AL-010 — untested safety rule — a contract changes ⇒ prose is the spec; the helper conforms, never the reverse
+49. AL-053 — untested safety rule — N = 1 or a sequential run ⇒ plan-waves is never called
+50. AL-057 — untested safety rule — any helper call ⇒ no source-repo edits or git mutations except gate-eval's merge, brief-repair's jobs mov...
+51. AL-072 — untested safety rule — a rewrite ⇒ only Queue checkboxes and the Current block; Status/Source/Run Config change rarely and atomi...
+52. AL-073 — untested safety rule — run end ⇒ optionally append ONE terminal line to the session log; never the source of truth
+53. AL-100 — untested safety rule — adding a source ⇒ three concrete resolvers, never a pluggable framework
+54. AL-107 — untested safety rule — claiming merge state ⇒ verify via gh pr view --json state,mergedAt / git branch --contains
+55. AL-114 — untested safety rule — own agent_lifecycle: failed row with rate_limit (or unknown + 429 hint) ⇒ park rate_limit and stop; never...
+56. AL-115 — untested safety rule — a 429 text hint ⇒ write a separate reason_hint: rate_limit; never change reason
+57. AL-120 — untested safety rule — an escalated PR ⇒ park; resolve or mark skipped/abandoned, then --resume
+58. AL-135 — untested safety rule — passthrough flags ⇒ --notify/--non-interactive-fallback/--cheap pass through; --cheap never interpreted o...
+59. AL-138 — untested safety rule — a qualifying rate-limit row after this item's picked line ⇒ park before DRAIN/GATE, no retry; resume via ...
+60. AL-158 — untested safety rule — NO-GO, Plan Review FAIL×3, adjudication, rubric gate ⇒ bubble up; never auto-pick an adjudication option
+61. AL-160 — untested safety rule — --cheap ⇒ forward to /autonomous, never interpret, never persist
+62. AL-180 — untested safety rule — an item closes out ⇒ stamp the requirement and check the run Queue; never tick _BACKLOG.md
+63. AL-207 — untested safety rule — reconciling a merge ⇒ verify the branch reached main; never assert merged from memory
+64. AL-224 — untested safety rule — an escalated-parked run ⇒ mark the item skipped/abandoned, then --resume
+65. AL-299 — untested safety rule — learning record logic ⇒ the helper owns it; never restated in prose
+66. AL-302 — untested safety rule — passing --item ⇒ the full Queue path verbatim, never a short key (PR #267 incident)
+67. AL-393 — untested safety rule — drain form ⇒ inline, synchronous; never merges
+68. AL-404 — untested safety rule — READY from any review step ⇒ READY leaves the PR open; the merge is the engine's own step
+69. AL-465 — untested safety rule — a wave continued in a new session ⇒ resume only on the owner's typed --resume; a hand-over note may prepa...
+70. AL-496 — untested safety rule — integrating a wave by hand ⇒ marker-only conflicts resolved in the merge commit; anything larger goes to ...
+71. AL-522 — untested safety rule — /automate invoked ⇒ run inline on the main thread; never delegate via the Agent tool (no runner agent)
+72. AL-523 — untested safety rule — inlined inner workflows ⇒ let them spawn their own Task children; never collapse the per-item loop into m...
+73. AL-537 — untested safety rule — --cheap ⇒ forward only, never persist; re-pass each resume/tick
+74. AL-542 — untested safety rule — reading plugin files at runtime ⇒ use ${CLAUDE_PLUGIN_ROOT}, never loomwright/...
+75. AL-003 — untested rule — a new source kind is wanted ⇒ intake only converts the source into the Queue once; /backlog is not a sepa...
+76. AL-004 — untested rule — a proposed feature is outside prompt/folder/backlog-doc sources, a runner agent, QA-in-loop ⇒ out of scop...
+77. AL-005 — untested rule — always ⇒ /automate runs inline; no runner agent is added
+78. AL-008 — untested rule — always ⇒ the single run file is the only tracking artifact
+79. AL-091 — model-judged branch, no test — bare /automate ⇒ resume an incomplete run, else ask what to automate
+80. AL-094 — untested rule — --cheap ⇒ passthrough to /autonomous; not persisted
+81. AL-097 — untested rule — driven by /loop headless ⇒ use /loop /loomwright:automate; bare /automate is unknown under claude -p
+82. AL-101 — untested rule — tracking state ⇒ only the run file persists; everything else is a named sidecar
+83. AL-110 — untested rule — suppress timing ⇒ toggle around RUN; DRAIN is too late
+84. AL-118 — untested rule — reading unresolved threads ⇒ use GraphQL only
+85. AL-126 — untested rule — --limit N ⇒ cap processed items; store the full Queue
+86. AL-127 — untested rule — a run ⇒ one run file, no manifest/runs/progress/dashboard file
+87. AL-166 — untested rule — prompt intake ⇒ reuse Product Owner's story-file output, no new code path
+88. AL-169 — model-judged branch, no test — bare /automate ⇒ RESUME first; else ask "What do you want to automate?" and treat the answer as a prompt ...
+89. AL-183 — untested rule — sequential run or N = 1 ⇒ no lint, no prompt, no gate
+90. AL-184 — untested rule — --limit N ⇒ Queue holds the full list; limit caps completed items (default 5)
+91. AL-215 — untested rule — a source flag while an incomplete run exists, cannot ask ⇒ not an implied start new: no PO run, no Queue,...
+92. AL-218 — untested rule — resuming a cheap/notify/fallback run ⇒ re-pass the flags on every --resume and /loop tick
+93. AL-236 — model-judged branch, no test — interactive leftover ⇒ ask Clean up now / Keep and continue / Stop, ≤4 per question; clean-up re-runs c...
+94. AL-255 — untested rule — timing of the suppress ⇒ wrap RUN; DRAIN is too late
+95. AL-288 — untested rule — rate-limit check ⇒ read the own session log directly (no PR yet to key on)
+96. AL-291 — untested rule — any other failure reason, or unknown without a 429 hint ⇒ take the existing failure path unchanged
+97. AL-297 — untested rule — inner correctness gates ⇒ bubble up; passthrough flags forwarded
+98. AL-305 — untested rule — emitting a learning line ⇒ always pass a real --repo and --plugin-version; an empty repo is silently invi...
+99. AL-390 — untested rule — owned drain inside /automate ⇒ pass --no-auto-postmortem so only the engine-native learning line is written
+100. AL-395 — untested rule — --parallel N lanes ⇒ the invariant holds per lane; the coordinator opens no item PR
+101. AL-398 — untested rule — escalated ⇒ stay paused escalated until a human resolves it; no second PR
+102. AL-409 — model-judged branch, no test — an escalated park ⇒ proceed by resolving the PR, marking the item skipped/abandoned, or (validation_unrun...
+103. AL-428 — model-judged branch, no test — rules_gate_dirty_tree on a clean checkout ⇒ commit an ignore line or use the global ignore; .git/info/exc...
+104. AL-513 — untested rule — lanes and parent state ⇒ per-bullet rules below
+105. AL-530 — untested rule — --resume ⇒ reconcile before trusting checkboxes; re-pass --cheap/--notify/fallback every time
+106. AL-002 — story/rationale, no test; the only copy of this context — always ⇒ /autonomous nests inside the per-item loop, which nests inside /automate; the engine drives /aut...
+107. AL-075 — story/rationale, no test; the only copy of this context — incident ⇒ why ## Current is never left to prose
+108. AL-149 — story/rationale, no test; the only copy of this context — manual push, reverted work, offline machine, stale clone, managed-set conflict, consent-blind abort ⇒ six...
+109. AL-150 — story/rationale, no test; the only copy of this context — /automate --parallel N ⇒ command-level summary of lanes, launch authority, wave close and policy answers
+110. AL-241 — story/rationale, no test; the only copy of this context — incident ⇒ why PICK syncs before un-staging
+111. AL-282 — story/rationale, no test; the only copy of this context — honest limits of the validation gate ⇒ a caller skipping this prose bypasses it; title/repro classificati...
+112. AL-311 — story/rationale, no test; the only copy of this context — a run outside the engine ⇒ no online repair; offline SessionStart classification or manual --repair
+113. AL-333 — story/rationale, no test; the only copy of this context — incident ⇒ why post-release writes are locked
+114. AL-336 — story/rationale, no test; the only copy of this context — honest limits of the post-park lock ⇒ a human merge takes no lock; the lock is cooperative
+115. AL-340 — story/rationale, no test; the only copy of this context — honest limits of the decision step ⇒ 2 × --max-rounds real bound; learning line reflects the first drain...
+116. AL-345 — story/rationale, no test; the only copy of this context — auto-merged items then a lasting park ⇒ their trail rides the next closeout / skip / run end, or a hand t...
+117. AL-354 — story/rationale, no test; the only copy of this context — origin/main moved the ledger after the trail branch was cut ⇒ the trail PR conflicts and syncs refuse (fa...
+118. AL-370 — story/rationale, no test; the only copy of this context — incident ⇒ why a sync alone never appends
+119. AL-378 — story/rationale, no test; the only copy of this context — watcher design ⇒ rejected: dies with the session, unverified headless
+120. AL-400 — story/rationale, no test; the only copy of this context — option (a) ⇒ rejected: not the drain's job, weakens gate condition 2
+121. AL-401 — story/rationale, no test; the only copy of this context — option (b) second form ⇒ rejected: stamps would stay off main
+122. AL-402 — story/rationale, no test; the only copy of this context — option (c) ⇒ not possible: strict checks have no path filter
+123. AL-403 — story/rationale, no test; the only copy of this context — another merge to the base while an item PR is open ⇒ PR stays BEHIND; owner updates it; under --auto-merg...
+124. AL-424 — story/rationale, no test; the only copy of this context — high-risk honest limit ⇒ nearly every agent-orchestration PR parks by construction — intended
+125. AL-427 — story/rationale, no test; the only copy of this context — checkout-pin honest limits ⇒ named uncovered cases (excluded paths, repo config, global ignore, hard link...
+126. AL-429 — story/rationale, no test; the only copy of this context — the drain stops checking the PR head out on the main checkout ⇒ every --auto-merge would park rules_gate_...
+127. AL-436 — story/rationale, no test; the only copy of this context — a readable store with no countable must rule ⇒ verdict none, condition holds; a legacy stamp with an empt...
+128. AL-504 — story/rationale, no test; the only copy of this context — wave PR squash-merged or a lane PR left open ⇒ the lane keeps reading awaiting_merge and fleet-closeout w...
+129. AL-512 — story/rationale, no test; the only copy of this context — policy honest limits ⇒ a created lane keeps its policy; a tampered lane.json can only answer an allowed g...
+130. AL-543 — story/rationale, no test; the only copy of this context — the overview ⇒ a map of the protocol; the skill is the contract
+131. AL-558 — legacy-tail.md's read-only-under-`--legacy` rule has no test of its own; Step 0's entry is checked for presence and order (test-automate-loop-split.sh F), not for its trigger
+132. AL-559 — the `--legacy` Step 0 trigger is prose-only; a run that read legacy-tail.md without the flag would follow two tails
 
 ## Counts
-- rows: 552
-- deterministic: 385
+- rows: 560
+- deterministic: 391
 - judgment: 12
-- rule: 129
+- rule: 131
 - story: 26
-- GAP: 147
+- GAP: 132

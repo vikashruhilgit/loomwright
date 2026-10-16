@@ -1,0 +1,1 @@
+{"type":"assistant","timestamp":"2026-10-13T16:10:00.000Z","message":{"id":"msg_w1","model":"m","stop_reason":"end_turn","usage":{"input_tokens":0,"cache_creation_input_tokens":500,"cache_read_input_tokens":0,"output_tokens":5}}}

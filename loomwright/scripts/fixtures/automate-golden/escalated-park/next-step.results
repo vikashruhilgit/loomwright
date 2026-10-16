@@ -1,0 +1,5 @@
+# next-step.results — escalated-park: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). Natural boundary: the drain report in, the escalated park out.
+# The free-text park line is the model's (progress_note); the escalation fields are the drain's.
+call: --result '{"drain_result":"ESCALATED","termination_reason":"bound_hit","escalation_cause":"check_red_unrelated","escalation_check":"ci","escalation_sha":"247e203","progress_note":"owned drain ESCALATED (pause_reason: escalated) — required check ci cannot execute (runner starvation); merge watcher armed"}'
+expect: park

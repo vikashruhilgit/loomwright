@@ -20,7 +20,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Beads Workflow | `beads-workflow/` | Orchestrator (reference), Product Owner (reference) | ~600 | 1.0.0 | 2026-03 |
 | Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.2.0 | 2026-10 |
 | Memory Tool | `memory-tool/` | — (reference) | ~500 | 1.0.0 | 2026-05-10 |
-| Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,800 [^al-tokens] | 1.5.0 | 2026-09-22 |
+| Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,800 [^al-tokens] | 1.6.0 | 2026-10-16 |
 | Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.17.0 | 2026-10-11 |
 | Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.11.0 | 2026-10-09 |
 | Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded; Part 1 advisory machinery + Part 2 full Phase 4.5 loop protocol) | ~7,000 | 1.11.1 | 2026-10-10 |
@@ -31,7 +31,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Brain Context | `brain-context/` | Launch Pad / Orchestrator (on-demand Read — deliberately NOT preloaded) | ~1,600–1,700 | 1.2.0 | 2026-08-17 |
 | Rules | `rules/` | `/rules` (slash command, reference) | ~1,900 | 1.4.1 | 2026-09-06 |
 
-[^al-tokens]: The `autonomous-loop` skill is intentionally larger than the other reference-category skills (~500–600 tokens). It encodes the full `/autonomous` orchestration protocol (loop phases, EVALUATE branching, signal-extraction algorithms, refined-requirement templates, `AUTONOMOUS_RUN` summary format, failure-modes table) — comprehensive by design because it is the single source of truth for the loop's behavior, read at runtime by the main thread via Step 0. Splitting it across smaller files would fragment the protocol and risk drift; the trade-off is the higher token cost on the one slash command that loads it.
+[^al-tokens]: The `autonomous-loop` skill is intentionally larger than the other reference-category skills (~500–600 tokens). It encodes the full `/autonomous` orchestration protocol (loop phases, EVALUATE branching, signal-extraction algorithms, refined-requirement templates, `AUTONOMOUS_RUN` summary format, failure-modes table) — comprehensive by design because it is the single source of truth for the loop's behavior, read at runtime by the main thread via Step 0. The multi-iteration-only protocol (EVALUATE, stacked branches, the rubric gates, rubric auto-authoring and freeze) lives in `multi-iteration.md`, which Step 0 reads only when the run is not `--single-iteration`, so a single-iteration run (every `/automate` item) pays only for `SKILL.md`.
 
 ## Development Practices
 

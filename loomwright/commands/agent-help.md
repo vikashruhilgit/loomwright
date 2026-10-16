@@ -824,7 +824,7 @@ Each basis is tuned by env vars read by its own script, all optional. Ledger bas
 - Crash recovery → no `--continue` yet; clean up manually and restart (the `SessionStart` hook injects recovery context on resume/clear/compact)
 - Parallel `/autonomous` runs on the same repo → brief-save detection's primary signal is `LAUNCH_PAD_RESULT.saved_brief_path` (validated by `scripts/validate-launch-pad-result.py`); the `ls`-diff is a pre-v14.2.0 fallback only. Still run one autonomous / launch-pad invocation at a time per repo.
 
-**Learn More:** see `loomwright/commands/autonomous.md` for the full flow diagram, signal-extraction algorithm, refined-requirement templates, and troubleshooting. The protocol skill is `loomwright/skills/autonomous-loop/SKILL.md`.
+**Learn More:** the full flow diagram is in `loomwright/commands/autonomous.md` §"Flow Diagram"; the signal-extraction algorithm and refined-requirement (Iteration Note) templates are in `loomwright/skills/autonomous-loop/multi-iteration.md` §"Signal 1" and §"Signal 2"; troubleshooting is in `loomwright/docs/rationale/launch-pad-autonomous.md` §"/autonomous — usage notes". The protocol skill is `loomwright/skills/autonomous-loop/SKILL.md`.
 
 ---
 

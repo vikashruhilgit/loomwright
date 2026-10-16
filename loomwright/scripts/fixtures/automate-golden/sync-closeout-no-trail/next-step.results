@@ -1,0 +1,6 @@
+# next-step.results — sync-closeout-no-trail: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The case is SYNC alone (NEXT_STEP_FROM=sync, NEXT_STEP_UNTIL=sync): closeout
+# --no-trail --session-id, classified complete through the leftover gate.
+env: NEXT_STEP_FROM=sync NEXT_STEP_UNTIL=sync
+call: --session-id auto-2026-10-15-040641
+expect: none
