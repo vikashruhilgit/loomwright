@@ -141,6 +141,23 @@ check-doc-currency.sh        OK — all checked version/count claims match
 check-token-budget.sh        OK — breaches: 0 | errors: 0   (automate-loop 82166/87895)
 ```
 
+**Review iteration 3 (2026-10-16).** `dismissed-pending`'s documented `unknown` is normalised before the first park
+write and recorded as `pending_decisions: unknown`, never a refusal (B12 escalated park, B13 MERGE path; mutant MPu);
+a replayed drain report never stands in for a new one — after a `spawn` the first report re-prints the spawn (B14a,
+MRs), and a left-behind tail's report (`stale_report_key`) or a foreign `pr` exits 2 with nothing written (B14b, MRx).
+No skill file changed. Suite after iteration 3:
+
+```
+test-automate-next-step.sh   PASS: 72 FAIL: 0          72/72   (also 72/72 under /bin/bash 3.2.57)
+test-automate-golden.sh      PASS: 64 FAIL: 0          64/64
+test-automate-dismissed.sh   245 passed, 0 failed      245/245
+test-loop-inventory.sh       RESULT: 39/39 passed      39/39
+test-result-schemas-split.sh RESULT: 14 passed, 0 failed    14/14
+test-citation-drift.sh       citation-drift: 26 passed, 0 failed   26/26
+test-no-pipefail-grep-q.sh   26 passed, 0 failed       26/26
+check-doc-currency.sh        OK — all checked version/count claims match
+```
+
 **Inventory re-home and golden-case links.** The 49 rows whose prose moved (AL-267–AL-280, AL-282–AL-287,
 AL-312–AL-340) now name `skills/automate-loop/legacy-tail.md` with home `script:automate-next-step.sh <step>`
 (every `<step>` a real `case` arm); AL-281 (the RECONCILE re-check) stays `prose` in `per-item-loop.md`. A migrated

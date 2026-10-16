@@ -52,6 +52,11 @@
 #       cant_ask / a no-result call ⇒ exit 2, nothing written; B's drain report starts B's own tail at
 #       gate. B10: a 20-digit items_processed (a corrupt sidecar) at terminate ⇒ the limit_reached park.
 #       B11: --non-interactive on the first call only — the flagless retry of a failed step still parks.
+#       B12/B13: another item's draft with no Decision line (dismissed-pending prints `unknown`) at an
+#       escalated park with a pending_decisions line / after a MERGE ⇒ `pending_decisions: unknown`, the
+#       park (line, watcher, notify, lock release) / SYNC completes. B14a: the first drain report re-sent
+#       after a fix-now spawn ⇒ the spawn re-prints, nothing written; a new re-drain report proceeds.
+#       B14b: item A's drain report while item B runs, or a `pr` not ## Current's ⇒ exit 2, nothing written.
 #       Q also enters the post-park decide step under --non-interactive: it parks, never asks.
 #   D   DOC MIRROR: the schema doc's step list equals the driver's `case` arms, and its `do` table
 #       equals the emitter's closed set.
@@ -72,6 +77,9 @@
 #         MB  the sidecar's item/PR binding dropped               ⇒ B9
 #         MT  terminate's fail-CLOSED comparison reverted to a bare `-ge` ⇒ B10
 #         MN  the persisted --non-interactive not read back       ⇒ B11
+#         MPu ns_pending_write refuses `unknown` (iteration 2)    ⇒ B12 + B13
+#         MRs the spawn branch's replay check dropped             ⇒ B14a
+#         MRx the fresh-tail stale-report check dropped           ⇒ B14b
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -396,6 +404,91 @@ leg_nonint_persist() {
   return 0
 }
 
+# bad_draft — another item's dismissed draft with no `- **Decision:**` line in the case checkout: dismissed-pending's
+# documented `unknown` (run-wide, so ANY item's malformed draft yields it)
+bad_draft() {
+  mkdir -p "$CASE_ROOT/.supervisor/requirements/proposed" \
+    && printf '# A malformed draft\n\n- **Item:** .supervisor/requirements/other/09-other.md\n' \
+      > "$CASE_ROOT/.supervisor/requirements/proposed/$CASE_RUN--other-09--dismissed-abc12345.md"
+}
+# leg_unknown_park <driver> — B12: escalated park with a `pending_decisions:` line already in ## Current and
+# another item's malformed draft ⇒ the park completes (exit 0, park printed, `pending_decisions: unknown`,
+# the park Progress line, watcher + notify + run-lock release all recorded)
+leg_unknown_park() {
+  local drv="$1" o rc
+  new_scratch "$FIX/escalated-park" || { LEG_MSG="scratch"; return 1; }
+  awk '{ print } /^- pause_reason: null$/ { print "- pending_decisions: 0 | fix_now_reentered: false" }' "$CASE_RF" > "$CASE_RF.t" \
+    && mv "$CASE_RF.t" "$CASE_RF" && bad_draft || { LEG_MSG="setup"; return 1; }
+  : > "$CASE_DIR/seams.none"
+  o="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" \
+    --result '{"drain_result":"ESCALATED","termination_reason":"bound_hit","escalation_cause":"check_red_unrelated","escalation_check":"ci","escalation_sha":"247e203"}' 2>"$CASE_DIR/b12.err")"; rc=$?
+  [ "$rc" = 0 ] && printf '%s' "$o" | jq -e '.do == "park" and .pause_reason == "escalated" and .pending_decisions == "unknown"' >/dev/null 2>&1 \
+    && grep -qxF -- '- pending_decisions: unknown | fix_now_reentered: false' "$CASE_RF" \
+    && grep -qF 'parked escalated https://github.com/vikashruhilgit/loomwright/pull/126 — check_red_unrelated' "$CASE_RF" \
+    && grep -q '^watch ' "$CASE_DIR/rec.log" && grep -q '^notify escalated ' "$CASE_DIR/rec.log" && grep -q '^lock release ' "$CASE_DIR/rec.log" \
+    || { LEG_MSG="exit $rc '${o:0:120}' $(head -n 2 "$CASE_DIR/b12.err" | tr '\n' ' ') rec: $(tr '\n' ';' < "$CASE_DIR/rec.log" | cut -c1-200)"; return 1; }
+  return 0
+}
+# leg_unknown_merge <driver> — B13: the --auto-merge MERGE path with another item's malformed draft ⇒
+# `pending_decisions: unknown` recorded and the chain goes on to SYNC (the leftover ask), never a failure
+leg_unknown_merge() {
+  local drv="$1"
+  new_scratch "$FIX/gate-eval-merge" && bad_draft || { LEG_MSG="scratch"; return 1; }
+  printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"eb0e123e1584184cca438b53ed5145da79825acc\"}'" \
+    "expect: ask" > "$CASE_DIR/b13.results"
+  drive "$FIX/gate-eval-merge" "$drv" "$CASE_DIR/b13.results"
+  [ -z "$DRIVE_ERR" ] && grep -qxF -- '- pending_decisions: unknown | fix_now_reentered: false' "$CASE_RF" \
+    && printf '%s' "$LAST_OUT" | jq -e '.gate == "AUT-LEFTOVER"' >/dev/null 2>&1 \
+    || { LEG_MSG="$DRIVE_ERR last '${LAST_OUT:0:100}' $(grep -F pending_decisions "$CASE_RF")"; return 1; }
+  return 0
+}
+# leg_spawn_replay <driver> — B14a: after a fix-now spawn, the FIRST drain report re-sent (pre-fix ready_sha)
+# re-prints the spawn and writes nothing; the genuine re-drain report (a new ready_sha) then proceeds
+leg_spawn_replay() {
+  local drv="$1" spawn s0 o rc o2
+  new_scratch "$FIX/dismissed-findings-decision-step" || { LEG_MSG="scratch"; return 1; }
+  printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"0000000\"}'" \
+    "expect: ask" "call: --result '{\"answers\":[\"Fix now on this PR\"]}'" "expect: spawn" > "$CASE_DIR/b14.results"
+  drive "$FIX/dismissed-findings-decision-step" "$drv" "$CASE_DIR/b14.results"
+  [ -z "$DRIVE_ERR" ] || { LEG_MSG="setup: $DRIVE_ERR"; return 1; }
+  spawn="$LAST_OUT"; s0="$(snapshot)"; : > "$CASE_DIR/seams.none"
+  o="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" \
+    --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"0000000"}' 2>/dev/null)"; rc=$?
+  [ "$rc" = 0 ] && [ "$o" = "$spawn" ] && [ "$s0" = "$(snapshot)" ] \
+    || { LEG_MSG="replayed first report ⇒ exit $rc '${o:0:100}', .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  o2="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" \
+    --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"1111111"}' 2>/dev/null)"; rc=$?
+  [ "$rc" = 0 ] && printf '%s' "$o2" | jq -e '.do == "ask"' >/dev/null 2>&1 \
+    || { LEG_MSG="the genuine re-drain report ⇒ exit $rc '${o2:0:100}'"; return 1; }
+  return 0
+}
+# leg_cross_replay <driver> — B14b: item A's drain report re-sent while ## Current names item B (running) ⇒
+# exit 2, nothing written; a report whose `pr` is not ## Current's ⇒ exit 2; B's own report then starts B's tail
+leg_cross_replay() {
+  local drv="$1" s0 o rc o2 rc2 o3 rc3
+  new_scratch "$FIX/park-first-ready-park" || { LEG_MSG="scratch"; return 1; }
+  printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"028cbed6b8e3588f93731d6b862f0bc334de1d96\"}'" "expect: ask" \
+    "pre: current-set \"\$RF\" --item $B9_ITEM --status running --pr $B9_PR --branch feature/pa18 --pause-reason null" > "$CASE_DIR/b14b.results"
+  drive "$FIX/park-first-ready-park" "$drv" "$CASE_DIR/b14b.results"
+  [ -z "$DRIVE_ERR" ] || { LEG_MSG="setup: $DRIVE_ERR"; return 1; }
+  s0="$(snapshot)"; : > "$CASE_DIR/seams.none"
+  o="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" --non-interactive \
+    --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96"}' 2>/dev/null)"; rc=$?
+  o2="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" --non-interactive \
+    --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"9999999","pr":"https://github.com/vikashruhilgit/loomwright/pull/1"}' 2>/dev/null)"; rc2=$?
+  [ "$rc" = 2 ] && [ -z "$o" ] && [ "$rc2" = 2 ] && [ -z "$o2" ] && [ "$s0" = "$(snapshot)" ] \
+    || { LEG_MSG="A's report on B ⇒ exit $rc '${o:0:80}'; foreign pr ⇒ exit $rc2 '${o2:0:60}'; .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  o3="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" --non-interactive \
+    --result "{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"9999999\",\"pr\":\"$B9_PR\"}" 2>/dev/null)"; rc3=$?
+  [ "$rc3" = 0 ] && printf '%s' "$o3" | jq -e --arg p "$B9_PR" '.do == "park" and .pr == $p' >/dev/null 2>&1 \
+    || { LEG_MSG="B's own report ⇒ exit $rc3 '${o3:0:100}'"; return 1; }
+  # A's report again, now during B's terminal park: still refused (B's tail kept the stale key)
+  o="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" \
+    --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96"}' 2>/dev/null)"; rc=$?
+  [ "$rc" = 2 ] && [ -z "$o" ] || { LEG_MSG="A's report after B's park ⇒ exit $rc '${o:0:80}'"; return 1; }
+  return 0
+}
+
 # rec_helpers <driver path> — replace the automate-helpers.sh beside <driver> (a symlink in a built dir)
 # with a wrapper that records each park-ask-gate call into the case's rec.log, then runs the real one
 rec_helpers() {
@@ -710,6 +803,22 @@ else no "B10: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_nonint_persist "$DRIVER"; then ok "B11: --non-interactive persists for the tail — the flagless retry parks (validation_unrun), never asks"
 else no "B11: $LEG_MSG"; fi
+# B12/B13 — dismissed-pending's documented `unknown` (another item's draft with no Decision line) is recorded,
+# never a refusal: the escalated park completes, and the MERGE path goes on to SYNC
+LEG_MSG=""
+if leg_unknown_park "$DRIVER"; then ok "B12: a malformed draft (unknown) at an escalated park ⇒ pending_decisions: unknown, park line, watcher, notify, lock released"
+else no "B12: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_unknown_merge "$DRIVER"; then ok "B13: a malformed draft (unknown) after a MERGE ⇒ pending_decisions: unknown, SYNC reached"
+else no "B13: $LEG_MSG"; fi
+# B14 — a replayed drain report never stands in for a new one: the first report after a spawn re-prints the
+# spawn (a new re-drain report proceeds); item A's report while B runs, or a foreign `pr`, ⇒ exit 2
+LEG_MSG=""
+if leg_spawn_replay "$DRIVER"; then ok "B14a: the first drain report re-sent after a spawn ⇒ the spawn re-prints, nothing written; a new re-drain report proceeds"
+else no "B14a: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_cross_replay "$DRIVER"; then ok "B14b: A's drain report while B runs / a foreign pr ⇒ exit 2, nothing written; B's own report (pr bound) starts B's tail"
+else no "B14b: $LEG_MSG"; fi
 
 echo "-- D. the schema doc mirrors the driver (closed lists)"
 DOC="$HERE/../docs/result-schemas/automate-run.md"
@@ -795,6 +904,26 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_nonint_persist "$m"; then no "MN: the persistence leg stayed green with the flag not read back"
     else ok "MN: persisted --non-interactive not read back ⇒ persistence leg red ($LEG_MSG)"; fi
   else no "MN: mutant not built"; fi
+  # MPu — ns_pending_write refuses dismissed-pending's documented `unknown` again ⇒ B12 and B13 red
+  if m="$(build_mutant Pu 'ns_count_ok "$1" || [ "$1" = unknown ] ||' 'ns_count_ok "$1" ||')"; then
+    LEG_MSG=""; r12=green; r13=green
+    leg_unknown_park "$m" || r12=red
+    leg_unknown_merge "$m" || r13=red
+    if [ "$r12" = red ] && [ "$r13" = red ]; then ok "MPu: unknown refused ⇒ B12 and B13 red"
+    else no "MPu: unknown refused ⇒ B12 $r12, B13 $r13"; fi
+  else no "MPu: mutant not built"; fi
+  # MRs — the spawn branch's replay check dropped ⇒ B14a red
+  if m="$(build_mutant Rs 'if ns_same_report "$RESULT" "$(st report_key)"; then' 'if false; then')"; then
+    LEG_MSG=""
+    if leg_spawn_replay "$m"; then no "MRs: the spawn-replay leg stayed green with the replay check dropped"
+    else ok "MRs: spawn replay check dropped ⇒ B14a red ($LEG_MSG)"; fi
+  else no "MRs: mutant not built"; fi
+  # MRx — the fresh-tail stale-report check dropped ⇒ B14b red
+  if m="$(build_mutant Rx '  ns_stale_report "$RESULT" && ns_die2 "--result is the drain report of a tail already left behind (another item / PR; ' '  false && ns_die2 "--result is the drain report of a tail already left behind (another item / PR; ')"; then
+    LEG_MSG=""
+    if leg_cross_replay "$m"; then no "MRx: the cross-item replay leg stayed green with the stale check dropped"
+    else ok "MRx: stale-report check dropped ⇒ B14b red ($LEG_MSG)"; fi
+  else no "MRx: mutant not built"; fi
   # MO — ns_park reordered: the merge watcher armed only AFTER the post-park decide step (the run file is
   # byte-identical, so only the order leg can see it) ⇒ B8 red
   if m="$(build_mutant2 O '*) ns_watch; ns_notify awaiting_merge' '*) ns_notify awaiting_merge' \

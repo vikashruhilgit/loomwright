@@ -91,7 +91,16 @@
 # one line. A drain report starts a tail only while `## Current` reads `status: running` (the first drain and both
 # fix-now re-drain hand-offs set it): a different report after a terminal park is refused, a
 # byte-identical one is a replay. After a `spawn` the re-drain report REPLACES the first one (no
-# field of the first drain survives into the second GATE pass).
+# field of the first drain survives into the second GATE pass); the first report re-sent there (same
+# report key, a sha) is a replay — the spawn re-prints, nothing written. A tail's report key outlives the
+# tail as `stale_report_key`: re-sent while ## Current names the next item it is refused (exit 2) on
+# every path that takes a drain report. An optional `pr` field binds a report to its PR: another PR than
+# ## Current's is refused, and a matching one is never read as stale. A sha-less report cannot be told
+# from a replay and is taken (honest limit; `pr` binds it).
+#
+# `pending_decisions` is a count or `unknown` (dismissed-pending's "cannot tell", treated as non-zero): read
+# and normalised before the first park write, never a refusal — the park, watcher, notify and run-lock
+# release always complete.
 #
 # Honest limits: the driver trusts a well-formed drain report's `drain_result` / `termination_reason`
 # / `ready_sha` exactly as the loop did — `gate-eval` cross-checks them against the review-heal sidecar
@@ -249,9 +258,18 @@ ns_status() { # <running|paused|done>
   e="$(printf '%s' "$new" | bash "$H" runfile-write "$RF" 2>&1 >/dev/null)"; rc=$?
   [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh runfile-write exited $rc${e:+: $e}"; NS_RC="$rc"; return 1; }
 }
-ns_pending_write() { # <n> <true|false> — the `- pending_decisions:` line of ## Current (replaced, else after owned_drain_started, else at the block end)
+# ns_pending_n — `dismissed-pending`'s answer, normalised BEFORE any write: a count, else `unknown` (its
+# documented "cannot tell" — a draft of ANY item with no readable Decision line, an unreadable ledger —
+# which every caller treats as non-zero; an empty or garbled output reads the same way, fail closed
+# toward asking). Never an error: a non-count must not block the park, the watcher, the notify or the
+# run-lock release
+ns_pending_n() {
+  local n; n="$(bash "$H" dismissed-pending "$RF" 2>/dev/null | tail -n 1)"
+  if ns_count_ok "$n"; then printf '%s' "$n"; else printf unknown; fi
+}
+ns_pending_write() { # <n|unknown> <true|false> — the `- pending_decisions:` line of ## Current (replaced, else after owned_drain_started, else at the block end)
   local line="- pending_decisions: $1 | fix_now_reentered: $2" new e rc
-  ns_count_ok "$1" || { ns_err "dismissed-pending printed '$1', not a count — pending_decisions not written"; NS_RC=1; return 1; }
+  ns_count_ok "$1" || [ "$1" = unknown ] || { ns_err "pending_decisions '$1' is neither a count nor unknown — not written"; NS_RC=1; return 1; }
   new="$(NS_L="$line" NS_HAS="${PENDING_LINE:+1}" awk '
     BEGIN { l = ENVIRON["NS_L"]; has = (ENVIRON["NS_HAS"] == "1") }
     /^## / { if (c && !d) { print l; d = 1 } c = ($0 == "## Current"); print; next }
@@ -369,8 +387,22 @@ ns_check_report() {
     v="$(rj "$1" "$k")"
     [ -z "$v" ] || ns_field_ok "$k" "$v" || ns_die2 "--result: malformed $k '$v' — nothing written"
   done
+  # the optional `pr` binds the report to its PR: another PR than ## Current's is refused (never stored —
+  # the sidecar's `pr` is ## Current's own)
+  v="$(rj "$1" pr)"
+  [ -z "$v" ] || [ "$v" = "$PR" ] || ns_die2 "--result: pr '$v' is not ## Current's PR (${PR:-none}) — nothing written"
   return 0
 }
+# ns_same_report <json> <key> — 0 when <json> is the drain report <key> was taken from: its key is equal
+# and it names a head (ready_sha / escalation_sha — a fix-now pass or another item always moves it, so a
+# genuinely new report differs). A sha-less report cannot be told from a replay and is taken (honest
+# limit; the optional `pr` field binds it instead)
+ns_same_report() {
+  [ -n "$2" ] && [ -n "$(rj "$1" ready_sha)$(rj "$1" escalation_sha)" ] && [ "$(ns_report_key "$1")" = "$2" ]
+}
+# ns_stale_report <json> — 0 when <json> is the report of a tail this sidecar already left behind (the
+# discarded / previous tail's `stale_report_key`) and carries no `pr` claiming ## Current's PR
+ns_stale_report() { [ -z "$(rj "$1" pr)" ] && ns_same_report "$1" "$(st stale_report_key)"; }
 ns_take_report() { # <json> — the report REPLACES every field of a previous one
   st_set report_key "$(ns_report_key "$1")"
   local k v
@@ -531,7 +563,7 @@ ns_dismissed() {
   case "$(st order)" in
     merge)
       if [ "$(st drafts)" = true ]; then
-        ns_pending_write "$(bash "$H" dismissed-pending "$RF" 2>/dev/null | tail -n 1)" "$(ns_fixnow_reentered)" || return 1
+        ns_pending_write "$(ns_pending_n)" "$(ns_fixnow_reentered)" || return 1
       fi
       NEXT=sync ;;
     park-first) NEXT=park ;;
@@ -651,7 +683,7 @@ ns_decide() {
   if [ "$post" = post ]; then
     # --non-interactive never asks, before or after the park: the park already recorded pending_decisions
     if ! ns_interactive; then ns_emit_park decide "park written; decisions not asked (--non-interactive) — the next interactive PICK asks them"; return 0; fi
-    local n; n="$(bash "$H" dismissed-pending "$RF" 2>/dev/null | tail -n 1)"
+    local n; n="$(ns_pending_n)"
     if [ "$n" = 0 ] && [ -z "$(ns_undecided)" ]; then ns_emit_park decide "parked; nothing to decide"; return 0; fi
     local gl; gl="$(st ask_gate_line)"
     if [ -z "$gl" ]; then # a gate line already recorded after the park (a crash, or a case starting here)
@@ -702,7 +734,7 @@ ns_decide_complete() { # <pre|post> — all answers are in
       ns_refresh
       local i0; i0="$(st item)"
       if [ "${ITEM#./}" = "${i0#./}" ] && [ "$PR" = "$(st pr)" ]; then   # pending_decisions is belief: only for this item + PR
-        ns_pending_write "$(bash "$H" dismissed-pending "$RF" 2>/dev/null | tail -n 1)" "$(ns_fixnow_reentered)" || { ns_release; return 1; }
+        ns_pending_write "$(ns_pending_n)" "$(ns_fixnow_reentered)" || { ns_release; return 1; }
       fi
       ns_release
     else
@@ -781,7 +813,8 @@ ns_park() {
   local kind n="" line note gl fx
   kind="$(st park_kind)"; [ -n "$kind" ] || kind=awaiting_merge
   note="$(st progress_note)"; gl="$(st gate_line)"; fx="$(ns_fixnow_reentered)"
-  if [ "$(st drafts)" = true ] || [ -n "$PENDING_LINE" ]; then n="$(bash "$H" dismissed-pending "$RF" 2>/dev/null | tail -n 1)"; fi
+  # n is read and normalised before the first park write (a count or `unknown`, never a refusal)
+  if [ "$(st drafts)" = true ] || [ -n "$PENDING_LINE" ]; then n="$(ns_pending_n)"; fi
   ns_status paused || return 1
   ns_call_writer current-set "$RF" --item "$ITEM" --status "$kind" --pr "$PR" --branch "$BRANCH" --pause-reason "$kind" || return 1
   if [ "$kind" = escalated ]; then
@@ -992,9 +1025,11 @@ ns_bound() {
   [ -z "$i" ] && [ -z "$p" ] && return 0
   [ "${i#./}" = "${ITEM#./}" ] && [ "$p" = "$PR" ]
 }
+# The discarded tail's report key survives as `stale_report_key`: that report, re-sent while ## Current
+# names the next item, is refused (exit 2, nothing written) on every path that takes a drain report.
 if [ -z "${NEXT_STEP_FROM:-}" ] && ! ns_bound; then
   ns_err "the sidecar's pending state is for $(st item) ($(st pr)); ## Current names ${ITEM:-no item} (${PR:-no pr}) — discarded, read as a fresh tail"
-  NS_STATE='{}'
+  stale="$(st report_key)"; NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
 fi
 pending="$(st pending_text)"; PENDING_TEXT="$pending"
 pending_do="$(printf '%s' "$pending" | "$JQ" -r '.do // empty' 2>/dev/null)"
@@ -1010,6 +1045,13 @@ elif [ "$pending_do" = ask ]; then
   NEXT="$(st next)"; ANSWER="$RESULT"
 elif [ "$pending_do" = spawn ]; then
   ns_check_report "$RESULT"
+  # the drain report the spawn was issued after, re-sent, is a REPLAY — not the re-drain's report: the
+  # pending spawn re-prints and nothing is written (the fix and the re-drain have not run)
+  if ns_same_report "$RESULT" "$(st report_key)"; then
+    ns_err "--result is the drain report this spawn answered, not the re-drain's — re-printing the pending spawn; nothing written"
+    printf '%s\n' "$pending"; exit 0
+  fi
+  ns_stale_report "$RESULT" && ns_die2 "--result is the drain report of a tail already left behind (another item / PR) — not this re-drain's; nothing written"
   NEXT=gate; ns_take_report "$RESULT"
 else
   ns_check_report "$RESULT"
@@ -1019,8 +1061,12 @@ else
      && [ "$(ns_report_key "$RESULT")" = "$(st report_key)" ]; then
     printf '%s\n' "$pending"; exit 0
   fi
-  # a new item's tail: nothing pending, or the previous instruction was terminal (park / done)
-  NS_STATE='{}'; ns_take_report "$RESULT"; NEXT=gate
+  ns_stale_report "$RESULT" && ns_die2 "--result is the drain report of a tail already left behind (another item / PR; ## Current names ${ITEM:-no item} ${PR:-}) — send this item's own report (\"pr\" binds it); nothing written"
+  # a new item's tail: nothing pending, or the previous instruction was terminal (park / done); the
+  # previous tail's report key is kept as stale (it never starts a tail again)
+  stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
+  NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+  ns_take_report "$RESULT"; NEXT=gate
 fi
 st_del pending_text; st_del failed
 
