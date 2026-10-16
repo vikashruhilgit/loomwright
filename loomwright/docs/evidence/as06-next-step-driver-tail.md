@@ -14,14 +14,14 @@ prose migration) filled the after-values and the migration's suite results.
 
 | Measure | Before (base `142540b`) | After |
 |---|---|---|
-| `wc -c loomwright/skills/automate-loop/*.md` (full glob, `legacy-tail.md` INCLUDED — labelled: not the default read set) | `320545 total` | `328432 total` (+7887: the per-step pointers, `legacy-tail.md`'s header and pointer section, the §1.5 driver row) |
-| Default-mode read set: the Step 0 **Always** files on a sequential run (`SKILL.md` 84444 + `per-item-loop.md` 106350 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900), `legacy-tail.md` excluded | `223857` | `198175` (`SKILL.md` 86071 + `per-item-loop.md` 79041 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900): −25682 bytes, −11.5% |
+| `wc -c loomwright/skills/automate-loop/*.md` (full glob, `legacy-tail.md` INCLUDED — labelled: not the default read set) | `320545 total` | `328460 total` (+7915: the per-step pointers, `legacy-tail.md`'s header and pointer section, the §1.5 driver row) |
+| Default-mode read set: the Step 0 **Always** files on a sequential run (`SKILL.md` 84444 + `per-item-loop.md` 106350 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900), `legacy-tail.md` excluded | `223857` | `198203` (`SKILL.md` 86071 + `per-item-loop.md` 79069 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900): −25654 bytes, −11.5% |
 | Conditional Step 0 reads on a sequential run (recorded separately): `intake.md` (new run) / `resume.md` (resume) | `10379` / `18852` | `10379` / `18852` (unchanged) |
-| `--legacy` read set (recorded separately): the default set + `legacy-tail.md` 33407 | — | `231582` (+7725 over base: the old prose plus the pointers that replaced it) |
+| `--legacy` read set (recorded separately): the default set + `legacy-tail.md` 33407 | — | `231610` (+7753 over base: the old prose plus the pointers that replaced it) |
 | Loop-inventory `GAP` count (`docs/loop-inventory/automate-loop.md` `## Counts`, rows 552) | `147` | `132` (rows 560: 8 new rows, 2 of them GAP; 17 rows linked to a test — see below) |
 
 Per-file `wc -c` after: `SKILL.md` 86071, `branch-mode.md` 7592, `command-lanes.md` 4111, `intake.md` 10379,
-`invariants.md` 5900, `lanes.md` 55916, `legacy-tail.md` 33407, `modes-and-merge-gate.md` 27163, `per-item-loop.md` 79041,
+`invariants.md` 5900, `lanes.md` 55916, `legacy-tail.md` 33407, `modes-and-merge-gate.md` 27163, `per-item-loop.md` 79069,
 `resume.md` 18852.
 
 Per-file `wc -c` at base: `SKILL.md` 84444, `branch-mode.md` 7592, `command-lanes.md` 4111, `intake.md` 10379,
@@ -78,6 +78,7 @@ test-automate-loop-split.sh  RESULT: 39 passed, 0 failed    39/39
 test-loop-inventory.sh       RESULT: 39/39 passed      39/39   (re-homed rows, legacy-tail.md in ## Sources)
 test-citation-drift.sh       citation-drift: 26 passed, 0 failed   26/26
 check-doc-currency.sh        OK — all checked version/count claims match
+check-vendor-coupling.sh     OK — legacy-tail.md allowance 1 (the moved ask-tool token), per-item-loop.md 8 → 7
 check-token-budget.sh        OK — breaches: 0 | errors: 0   (automate-loop 82025/87895, commands/automate.md 7202/7565)
 ```
 
