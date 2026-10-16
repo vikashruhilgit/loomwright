@@ -1,0 +1,5 @@
+# next-step.results — gate-validation-gate-unrun-escalated: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). Natural boundary, non-interactive: the can't-ask branch of
+# AUT-WAIVE is the escalated park (validation_unrun); the --sha is the drain's ready_sha (the PR head).
+call: --non-interactive --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"06ce6f59617b3b515a1950dbeb8b13630b54525c"}'
+expect: park

@@ -1,0 +1,11 @@
+# next-step.results — park-first-decisions-recorded: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The case starts after the post-park gate line (NEXT_STEP_FROM=decide, the
+# line read back from the run file); the owner's answers are the real 10:19:53Z batch (2 follow-up).
+env: NEXT_STEP_FROM=decide
+call:
+expect: ask
+env: NEXT_STEP_FROM=
+call: --result '{"answers":["Follow-up (keep draft)"]}'
+expect: ask
+call: --result '{"answers":["Keep summary"]}'
+expect: park

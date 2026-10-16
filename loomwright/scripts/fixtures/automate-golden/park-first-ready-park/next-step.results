@@ -1,0 +1,5 @@
+# next-step.results — park-first-ready-park: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). Natural boundary: safe mode, interactive — the park is written first, then
+# park-ask-gate (the tree's merge-watch marker stands in for the watcher) and the decisions ask.
+call: --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96"}'
+expect: ask

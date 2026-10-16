@@ -1,0 +1,7 @@
+# next-step.results — dismissed-findings-decision-step: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). Natural boundary: a lane (tree lane.json) — decide-then-park, the
+# owner's answer is the real ledger row (follow-up), then the ready_for_release park.
+call: --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"0000000"}'
+expect: ask
+call: --result '{"answers":["Follow-up (keep draft)"]}'
+expect: park

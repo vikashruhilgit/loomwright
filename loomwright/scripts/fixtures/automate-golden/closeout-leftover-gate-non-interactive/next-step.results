@@ -1,0 +1,6 @@
+# next-step.results — closeout-leftover-gate-non-interactive: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). closeout's output is the case's fixed input
+# (NEXT_STEP_CLOSEOUT_OUT, as the golden steps feed it); non-interactive ⇒ the closeout_leftover park.
+env: NEXT_STEP_FROM=sync NEXT_STEP_CLOSEOUT_OUT=$ROOT/closeout.out
+call: --non-interactive
+expect: park
