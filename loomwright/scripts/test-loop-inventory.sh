@@ -22,9 +22,13 @@
 #     and outside `<!-- split:begin … -->`/`<!-- split:end … -->` index blocks, is the `h:` anchor of at
 #     least one row whose file cell names that file (fence reading: see DELIBERATE CHOICES). A fence
 #     (or split block) still open at end of file fails too: it would hide every heading after it.
-#   * LIVE ANCHORS (AC4) — a row whose home is `prose`: an `h:` anchor must equal a line of its file, a `q:`
-#     anchor must be a substring of one line of it; else `FAIL <id>: anchor not found in <file>`. A row
-#     whose home is anything else is not anchor-checked.
+#   * LIVE ANCHORS (AC4) — a row whose home is `prose` or `global`: an `h:` anchor must equal a line of its
+#     file, a `q:` anchor must be a substring of one line of it; else `FAIL <id>: anchor not found in <file>`.
+#     A row whose home is `step-scoped`, `hook:…` or `script:…` is not anchor-checked.
+#   * RATIONALE HOMES — a `rationale:<doc>#<anchor>` home: <doc>, relative to the plugin root, must be
+#     readable (else `FAIL <id>: rationale doc not found: <doc>`), and one of its `#`/`##`/`###` heading
+#     lines must slug to <anchor> (slug = lowercase; spaces -> `-`; characters other than [a-z0-9-]
+#     dropped), else `FAIL <id>: rationale anchor not found: <anchor>`. The row's own anchor is not checked.
 #   * SCRIPT SUBCOMMANDS (AC5) — a `script:<file> <sub>` cell (home or implemented by) passes iff <file>
 #     exists under loomwright/scripts/ and has a line that is a shell `case` arm whose `|`-separated labels
 #     (quotes stripped) include <sub>, followed by `)`. `script:<file>` alone only needs the file.
@@ -36,14 +40,16 @@
 #     repo's scripts/.
 #   * FIXTURE LEGS (AC8, default mode only) on mktemp -d scratch copies: each mutant is checked non-empty
 #     and different from its original before its leg is trusted; red legs assert a non-zero exit AND the
-#     line naming the culprit; green legs assert exit 0 (fence- and split-block exemption, non-prose home).
+#     line naming the culprit; green legs assert exit 0 (fence- and split-block exemption, step-scoped home,
+#     a rationale: home resolving in a scratch rationale doc).
 #     Beyond the AC8 set, the fence-union reading and every remaining FAIL branch (row shape, header,
 #     sections, Sources, count/gap-line shape, unclosed split block) get one red leg each.
 #
 # NOT CHECKED: that a list item stating a branch or rule has its own row (AC3 — reviewer's judgment; the
 # test checks headings only); that a q: anchor is unique in its file or says what the row claims; that
 # the gap list is ordered by risk; that ids are gap-free (ids are never reused, so holes are legal); that
-# a script's case arm is the dispatcher's (any case arm in the named file counts).
+# a script's case arm is the dispatcher's (any case arm in the named file counts); that a rationale doc's
+# matching heading sits outside a fenced block (every `#`/`##`/`###` line of the doc counts).
 #
 # DELIBERATE CHOICES:
 #   * Heading lines and h: anchors are compared with trailing whitespace stripped (two headings in
@@ -163,6 +169,22 @@ check_root() {
       arms(f)
       if (!((f, sc) in ARM)) bad(id ": " what " " f " has no case arm for \047" sc "\047")
     }
+    # slug: lowercase; spaces -> "-"; every character other than [a-z0-9-] dropped.
+    function slug(s) { s = tolower(s); gsub(/ /, "-", s); gsub(/[^a-z0-9-]/, "", s); return s }
+    # check_rationale: a rationale:<doc>#<anchor> home needs <doc> (relative to the plugin root) readable and
+    # one of its #/##/### heading lines whose text slugs to <anchor>.
+    function check_rationale(id, cell,   rest, rdoc, ranc, p, l, hl, found) {
+      rest = substr(cell, 11); rdoc = substr(rest, 1, index(rest, "#") - 1); ranc = substr(rest, index(rest, "#") + 1)
+      if (!readable(root "/" rdoc)) { bad(id ": rationale doc not found: " rdoc); return }
+      p = root "/" rdoc; found = 0
+      while ((getline l < p) > 0) {
+        if (l !~ /^(#|##|###)[ \t]/) continue
+        hl = rstrip(l); sub(/^#+[ \t]+/, "", hl)
+        if (slug(hl) == ranc) found = 1
+      }
+      close(p)
+      if (!found) bad(id ": rationale anchor not found: " ranc)
+    }
     $1 == "G" { ng++; GN[ng] = $2; GP[$2] = $3; GINV[$2] = $4; next }
     $1 == "S" { EXP[$2, $3] = 1; NE[$2]++; ES[$2, NE[$2]] = $3; next }
     END {
@@ -245,12 +267,13 @@ check_root() {
         if (kd != "deterministic" && kd != "judgment" && kd != "rule" && kd != "story") bad(id ": unknown kind \047" kd "\047")
         else KC[g, kd]++
         hm = RHOME[k]
-        if (hm == "prose") {
+        if (hm == "prose" || hm == "global") {
           if (fileok && atype == "h" && !((f, av) in HL)) bad(id ": anchor not found in " f)
           if (fileok && atype == "q" && index(BIG[f], av) == 0) bad(id ": anchor not found in " f)
         }
         else if (hm ~ /^script:./) check_script(id, hm, "home")
-        else if (hm ~ /^hook:./ || hm == "step-scoped" || hm == "global" || hm ~ /^rationale:[^#]+#./) { }
+        else if (hm ~ /^rationale:[^#]+#./) check_rationale(id, hm)
+        else if (hm ~ /^hook:./ || hm == "step-scoped") { }
         else bad(id ": unknown home \047" hm "\047")
         im = RIMPL[k]
         if (im ~ /^script:./) check_script(id, im, "implemented by")
@@ -337,6 +360,11 @@ BASE="$TMP/base"
 mkdir -p "$BASE/loomwright/docs" "$BASE/loomwright/scripts" "$BASE/loomwright/skills" "$BASE/scripts"
 cp -R "$PLUGIN/docs/loop-inventory" "$BASE/loomwright/docs/" && cp -R "$PLUGIN/agents" "$PLUGIN/commands" "$BASE/loomwright/" \
   || { no "fixture: could not copy the inventory and prose into $BASE"; echo "RESULT: $pass/$((pass+fail)) passed"; exit 1; }
+# rationale: homes name docs under docs/rationale, so the base mirrors it whenever the real tree has it.
+if [ -d "$PLUGIN/docs/rationale" ]; then
+  cp -R "$PLUGIN/docs/rationale" "$BASE/loomwright/docs/" \
+    || { no "fixture: could not copy docs/rationale into $BASE"; echo "RESULT: $pass/$((pass+fail)) passed"; exit 1; }
+fi
 for d in automate-loop self-heal-advisory async-orchestration review-heal autonomous-loop; do cp -R "$PLUGIN/skills/$d" "$BASE/loomwright/skills/"; done
 # Scripts: real bodies (the case-arm check reads them); test files as empty stand-ins (only existence is checked).
 for f in "$PLUGIN"/scripts/*; do
@@ -453,6 +481,33 @@ else
   if set_cell "$d/$INV/automate-loop.md" "$hrow" 7 step-scoped && apply "$d/$PIL" "$DEL_HEAD" -v h="$hhead"; then
     run_leg "$d"; expect_green "exemption: home step-scoped, anchor gone"
   else no "non-prose exemption: mutant invalid"; fi
+  # A global home is anchor-checked exactly like prose: the same deletion is red.
+  d="$(new_leg global)"
+  if set_cell "$d/$INV/automate-loop.md" "$hrow" 7 global && apply "$d/$PIL" "$DEL_HEAD" -v h="$hhead"; then
+    run_leg "$d"; expect_red "global row anchor gone" "FAIL $hrow: anchor not found in skills/automate-loop/per-item-loop.md"
+  else no "global row anchor gone: mutant invalid"; fi
+fi
+
+# rationale:<doc>#<anchor> homes — a scratch rationale doc whose heading exercises every slug rule
+# (case, spaces, dropped punctuation); the doc resolves, a missing doc and a missing anchor are red.
+RDOC="docs/rationale/fixture-rationale.md"
+RSLUG="why-the---x-flag--more"
+rat_leg() { # <name> <id> <home cell> [needle] — no needle = expect green
+  local d; d="$(new_leg "$1")"
+  if mkdir -p "$d/loomwright/docs/rationale" \
+    && printf '# Fixture rationale\n\n## Why: the `--x` flag & More\n\nBecause.\n\n#### Not A Slug Source\n' > "$d/loomwright/$RDOC" \
+    && set_cell "$d/$INV/automate-loop.md" "$2" 7 "$3"; then
+    run_leg "$d"; if [ -n "${4:-}" ]; then expect_red "$1" "$4"; else expect_green "$1"; fi
+  else no "$1: mutant invalid"; fi
+}
+rid="$(row_field "$BASE/$INV/automate-loop.md" 1 1)"
+if [ -z "$rid" ]; then no "rationale legs: precondition — automate-loop has no row"
+else
+  rat_leg "rationale row resolves in a scratch rationale doc" "$rid" "rationale:$RDOC#$RSLUG"
+  rat_leg "rationale doc not found" "$rid" "rationale:docs/rationale/no-such-doc.md#$RSLUG" \
+    "FAIL $rid: rationale doc not found: docs/rationale/no-such-doc.md"
+  rat_leg "rationale anchor not found" "$rid" "rationale:$RDOC#not-a-slug-source" \
+    "FAIL $rid: rationale anchor not found: not-a-slug-source"
 fi
 
 # AC5 — script subcommands.

@@ -2,7 +2,7 @@
 description: Prepare a raw goal for autonomous Supervisor execution with codebase analysis, environment validation, file impact estimation, and save to jobs folder
 ---
 
-> **Execute this workflow inline as the main thread.** Do not delegate to `loomwright:launch-pad-runner` via the Agent tool. A delegated runner is a subagent: it has no ask tool, so every question gate takes its can't-ask branch. Each layer it adds also uses subagent nesting depth (three layers by default, and a host setting can lower it; [docs](https://code.claude.com/docs/en/sub-agents), re-read 2026-10-12). Under a lowered limit the workflow aborts with "Task/Agent tool unavailable". See `docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting". To run the agent in its own session instead, launch with `claude --agent loomwright:launch-pad-runner`.
+> **Execute this workflow inline as the main thread.** Do not delegate to `loomwright:launch-pad-runner` via the Agent tool. A delegated runner is a subagent: it has no ask tool, so every question gate takes its can't-ask branch. Each layer it adds also uses subagent nesting depth (three layers by default, and a host setting can lower it); under a lowered limit the workflow aborts with "Task/Agent tool unavailable". See `docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting". To run the agent in its own session instead, launch with `claude --agent loomwright:launch-pad-runner`.
 
 > **Execution contract:** Inline main-thread execution replaces only the top-level `launch-pad-runner`. You MUST still spawn the `plan-reviewer` child agent via the Task tool at the Plan Review gate. Do NOT collapse the workflow into direct main-thread brief-drafting and self-validation.
 
@@ -18,7 +18,7 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 /launch-pad goal: "add user authentication with JWT"
 /launch-pad feature: "customers need order history"
 /launch-pad problem: "login is broken on mobile"
-/launch-pad goal: ".supervisor/requirements/2026-06-14-093000-staff-shift.md"   # requirement file from Beads-absent Product Owner
+/launch-pad goal: ".supervisor/requirements/{YYYY-MM-DD-HHMMSS}-{slug}.md"   # requirement file from Beads-absent Product Owner
 /launch-pad goal: "..." --discovery
 /launch-pad goal: "..." --skip-validation
 /launch-pad goal: "..." --project /path/to/project
@@ -35,94 +35,11 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 | `--skip-validation` | No | Skip environment validation (Phase 1) for speed |
 | `--project` | No | Explicit project path (overrides auto-detect) |
 | `--fix-floor <HIGH\|MEDIUM\|LOW>` | No | Lowest plan-review issue severity Launch Pad refines before save (default `MEDIUM`; `.supervisor/config.json` `.fix_floor`) — the same threshold Supervisor Phase 4.5 and `/review-pr` fix by. A PASS carrying an issue at the floor is refined and re-reviewed (uses one of the 3 review attempts); once attempts run out it saves with the issue listed `deferred` — a below-HIGH issue never blocks save. An invalid value aborts (`fix_floor_invalid`). |
-| `--non-interactive` / `--non-interactive-fallback` | No | No human to ask — forwarded from `/autonomous`'s own `--non-interactive-fallback` flag (accepts either spelling). Every question gate takes its named branch per the **Can't-ask rule** (Critical Rules): Phase 2 `clarification_needed_non_interactive`; Phase 2.5 `no_go_non_interactive`; Phase 6 — a Criterion 14 `executable_acceptance` escalation auto-strips the flagged `cmd:`/bare bullets, a Criterion 17c house-rule conflict aborts (`rule_conflict_non_interactive`), any other NEEDS_HUMAN reason aborts (`status_reason: "needs_human_non_interactive"`), PASS saves (`saved_on_pass_non_interactive`) — the flag is the save opt-in, so a subagent run without it saves nothing (`save_requires_flag_non_interactive`), FAIL × 3 blocks (`plan_review_fail_non_interactive`). Executing as a subagent has the same effect. See `agents/launch-pad.md` §"7-Phase Workflow" Phase 5.5/Phase 6 for the full contract. |
+| `--non-interactive` / `--non-interactive-fallback` | No | No human to ask — forwarded from `/autonomous`'s own `--non-interactive-fallback` flag (accepts either spelling). Every question gate takes its named branch per the **Can't-ask rule** (Critical Rules below); executing as a subagent has the same effect. Full contract: `agents/launch-pad.md` §"7-Phase Workflow" Phase 5.5/Phase 6. |
 
 ## What This Does
 
-The Launch Pad executes a **7-phase readiness workflow** (primary Phases 1–7, including the non-interactive **Phase 7** that emits the `LAUNCH_PAD_RESULT` block for programmatic consumers like `/autonomous`; the FEASIBILITY 2.5 and PLAN REVIEW 5.5 sub-phase gates are enumerated but, per the repo-wide phase-numbering convention, do not change the phase count):
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              LAUNCH PAD — SUPERVISOR READINESS                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Phase 1: VALIDATE (Environment Readiness)                      │
-│     └─> Git, CLAUDE.md, worktrees, gh                           │
-│                                                                 │
-│  Phase 2: DISCOVER (Requirement Refinement)                     │
-│     └─> Product discovery, acceptance criteria, MVP scoping     │
-│                                                                 │
-│  Phase 2.5: FEASIBILITY (Soft Gate)                             │
-│     └─> Tech stack, deps, architecture, scope, blockers         │
-│         → GO / CAUTION (risks) / NO-GO (stop + override option) │
-│                                                                 │
-│  Phase 3: ANALYZE (Codebase Impact Estimation)                  │
-│     └─> Grep/glob codebase, file grouping, overlap detection    │
-│                                                                 │
-│  Phase 4: DECOMPOSE (Subtask Structure)                         │
-│     └─> Decomposition Threshold (default 1; split for a reason) │
-│                                                                 │
-│  Phase 5: PACKAGE (Assemble Brief)                              │
-│     └─> Supervisor-Ready Brief with all sections                │
-│                                                                 │
-│  Phase 5.5: PLAN REVIEW (Mandatory Gate)                        │
-│     └─> Plan Reviewer validates brief (max 3 spawns/session)    │
-│                                                                 │
-│  Phase 6: REFINE & SAVE (Interactive)                           │
-│     └─> Save (on PASS or user override) / Refine / Discard      │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-> **Phase 7 (v14.2.0, non-interactive):** after Phase 6, Launch Pad emits a `LAUNCH_PAD_RESULT` block (`status` + `saved_brief_path`) for programmatic consumers like `/autonomous`. It has no interactive step, so it is not drawn in the box above. See `agents/launch-pad.md` §"Phase 7" and `docs/RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT".
-
-### Why Use Launch Pad?
-
-The Supervisor's context budget gets consumed by Phases 0-2 (planning) before any code execution begins. Launch Pad:
-
-1. **Frees planning context** for Supervisor's execution phases (Phases 0-2 are pre-answered by the brief)
-2. **Enables plan review** before workers start (no wasted effort)
-3. **Prevents environment failures** mid-run (pre-flight validation)
-4. **Improves parallelism** with file impact analysis (accurate overlap detection)
-5. **Provides clean handoff** via `.supervisor/jobs/pending/` (fresh session, full context)
-6. **Catches infeasible goals early** via Phase 2.5 (before wasting tokens on analysis and execution)
-
-## Example Output
-
-```markdown
-# Supervisor Job: Add JWT Authentication
-
-## Environment
-- **Project:** ~/my-project
-- **CLAUDE.md:** ✓ Found (fresh)
-- **Git:** clean, branch: main
-- **GitHub CLI:** ✓ Authenticated
-- **Blockers:** 0 | **Warnings:** 0
-
-## Task
-**Goal:** Add JWT-based authentication with refresh tokens to the NestJS API
-
-## Acceptance Criteria
-- [ ] Given valid credentials, when POST /auth/login, then return JWT + refresh token
-- [ ] Given valid JWT, when accessing protected endpoint, then allow access
-- [ ] Given expired JWT, when accessing protected endpoint, then return 401
-
-## Subtask Structure
-
-| # | Title | Est. Files | Status |
-|---|-------|-----------|--------|
-| 1 | JWT authentication (guard, strategy, refresh, controller) | 6 modify, 5 create | LAUNCHABLE |
-
-## Parallelism Analysis
-single-agent (no fan-out)
-
-- Recommended workers: 1
-
-## Handoff
-/supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
-```
-
-> This example shows the below-threshold default (one subtask). See `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" for when a split is justified, and `agents/launch-pad.md`'s worked example for a `Split reason: genuine-parallelism` case.
+A **7-phase readiness workflow** (primary Phases 1–7; the FEASIBILITY 2.5 and PLAN REVIEW 5.5 sub-phase gates do not change the count): VALIDATE → DISCOVER → FEASIBILITY (soft gate: GO / CAUTION / NO-GO) → ANALYZE → DECOMPOSE → PACKAGE → PLAN REVIEW (mandatory gate, max 3 spawns/session) → REFINE & SAVE → Phase 7, which emits the non-interactive `LAUNCH_PAD_RESULT` block (`status` + `saved_brief_path`) for programmatic consumers like `/autonomous` (`agents/launch-pad.md` §"Phase 7", `docs/RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT"). Example output, how-to steps and when to use it: `docs/rationale/launch-pad-autonomous.md`.
 
 ## Interactive Refinement
 
@@ -138,60 +55,6 @@ After the brief passes Plan Review (Phase 5.5), Launch Pad presents options:
 
 **Note:** "Save and exit" is disabled when Plan Review returns FAIL — FAIL never enables save, and the 3-spawn cap is never reset within a session. After FAIL × 3 the only options are "Refine offline" or "Discard".
 
-## How to Use
-
-### Step 1: Run Launch Pad
-
-```bash
-/launch-pad goal: "add user authentication with JWT"
-```
-
-### Step 2: Review the Brief
-
-- Check acceptance criteria are complete
-- Verify file impact map matches your expectations
-- Confirm subtask boundaries make sense
-- Review parallelism analysis (is it conservative enough?)
-
-### Step 3: Refine or Save
-
-- Choose "Save and exit" if the brief looks good
-- Choose "Refine further" to ask more questions
-- Choose "Edit sections" to change specific parts
-
-### Step 4: Start Fresh Session
-
-```bash
-# In a NEW Claude Code session (clean context):
-/supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
-```
-
-## Workflow Positioning
-
-```
-/launch-pad goal: "..."
-    ↓
-Validates environment, checks feasibility, analyzes codebase, decomposes subtasks
-    ↓
-Plan Reviewer validates brief (mandatory gate, max 3 spawns per session)
-    ↓
-.supervisor/jobs/pending/{date}-{slug}.md  (Supervisor-Ready Brief)
-    ↓
-/supervisor job: .supervisor/jobs/pending/{file}.md  (clean context execution)
-    ↓
-EXECUTE → FINALIZE → PR
-```
-
-### When to Use Launch Pad vs Direct Supervisor
-
-| Scenario | Use |
-|----------|-----|
-| Complex task (>3 subtasks expected) | `/launch-pad` then `/supervisor job:` |
-| Want to review plan before execution | `/launch-pad` then `/supervisor job:` |
-| Simple task (1-2 subtasks) | `/supervisor` directly |
-| Resuming interrupted work | `/supervisor --continue` |
-| Quick fix or bug | `/supervisor task: "fix the bug"` |
-
 ## Prerequisites
 
 1. **Git repository:** Project must be a git repo
@@ -200,21 +63,9 @@ EXECUTE → FINALIZE → PR
 ## Tips
 
 1. **Use `--discovery` for vague goals:** Forces full product discovery even for seemingly clear goals
-2. **Review file impact map carefully:** This is where Launch Pad adds the most value — catch wrong assumptions early
-3. **Start fresh session for Supervisor:** The whole point is clean context — don't run `/supervisor job:` in the same session
-4. **One brief per task:** Don't try to pack multiple goals into one brief
-5. **Trust the parallelism analysis:** If Launch Pad says BLOCKED, there's likely a reason (file overlap or dependency)
-6. **Check the risk assessment:** Known risks are documented — address HIGH risks before launching Supervisor
-
-## Related Commands
-
-| Command | Purpose |
-|---------|---------|
-| `/supervisor` | Execute the workflow (consumes the brief) |
-| `/supervisor job: {path}` | Execute from a Launch Pad brief |
-| `/orchestrator` | Plan tasks without execution (no brief, no file analysis) |
-| `/product-owner` | Define requirements only (no codebase analysis) |
-| `/agent-help` | List all commands |
+2. **Start fresh session for Supervisor:** The whole point is clean context — don't run `/supervisor job:` in the same session
+3. **One brief per task:** Don't try to pack multiple goals into one brief
+4. **Check the risk assessment:** Known risks are documented — address HIGH risks before launching Supervisor
 
 ## Troubleshooting
 
@@ -238,15 +89,6 @@ EXECUTE → FINALIZE → PR
 - Supervisor warns when consuming old briefs
 - Re-run Launch Pad if codebase has changed significantly
 
-## See Also
-
-- `agents/launch-pad.md` — Full agent prompt (7-phase readiness model incl. non-interactive Phase 7 `LAUNCH_PAD_RESULT` emission)
-- `agents/plan-reviewer.md` — Plan Reviewer agent (validates briefs in Phase 5.5)
-- `skills/supervisor-readiness/SKILL.md` — Pre-flight checklist, brief template, jobs convention
-- `skills/product-discovery/SKILL.md` — Discovery framework
-- `skills/claude-md-validation/SKILL.md` — CLAUDE.md freshness validation
-- `commands/supervisor.md` — Supervisor command (consumes briefs)
-
 ---
 
 ## Skills Referenced
@@ -263,17 +105,6 @@ EXECUTE → FINALIZE → PR
 
 # Launch Pad Agent Prompt
 
-
----
-
-# Launch Pad Agent (Supervisor Readiness)
-
----
-
-## Mission
-
-Take any raw user goal and prepare it for autonomous Supervisor execution. Run discovery, feasibility assessment, codebase analysis, file impact estimation, and parallelism pre-analysis. Save a structured Supervisor-Ready Brief to `.supervisor/jobs/pending/` for clean-context handoff.
-
 ### Core Principles
 
 - **Plan, don't execute:** Never invoke Supervisor — save brief to file, user starts fresh session
@@ -283,26 +114,12 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 - **Interactive refinement:** Always present brief for user review before saving
 - **Lightweight:** Minimal subagent spawning — one targeted Plan Reviewer for mandatory validation
 
-### Inputs
-
-- **Goal:** Raw user objective (`goal:`, `feature:`, or `problem:`) — OR a path to a requirement file (see **Requirement-file input** below)
-- **Requirement file (optional):** When the `goal:`/`feature:`/`problem:` value is the path to an existing `.md` file **under `.supervisor/requirements/`** (the Beads-absent Product Owner handoff target), Launch Pad reads that file and treats its contents as the requirement source instead of the literal string. Paths outside that directory (e.g. `README.md`) stay literal goals. Resolves the PO→Launch Pad handoff in Beads-optional mode.
-- **CLAUDE.md:** Project context and patterns
-- **Git state:** Current branch, working tree status
-- **Flags:** `--discovery`, `--skip-validation`, `--project`
-
-### Outputs
-
-- **Supervisor-Ready Brief:** Structured markdown file saved to `.supervisor/jobs/pending/{date}-{slug}.md`
-- **Supervisor command:** Exact `/supervisor job: {path}` command for a fresh-context session
-- **Environment report:** Blockers and warnings from validation
+Inputs and outputs: `docs/rationale/launch-pad-autonomous.md`.
 
 ### Critical Rules
 
-- **Never invoke Supervisor** — saves to file, user starts fresh session with clean context
-- **Conservative parallelism** — only LAUNCHABLE if genuinely independent
-- **Honest estimation** — confidence levels on file predictions (HIGH/MEDIUM/LOW)
-- **Verify every file path** exists before including in impact map
+The Core Principles above are critical rules too. In addition:
+
 - **If environment has blockers:** output fix instructions, don't offer save
 - **Max 2 rounds** of AskUserQuestion for requirement clarification
 - **Can't-ask rule:** this run cannot ask when `--non-interactive`/`--non-interactive-fallback` is set OR it is executing as a subagent (the ask tool is absent from its tool set) — never from a stdin-TTY probe alone. Every question gate then takes its named branch and never improvises: Phase 2 clarification (incl. step 0's unusable requirement file) → `status: aborted, status_reason: "clarification_needed_non_interactive"` with the open questions listed; Phase 2.5 NO-GO → `status: aborted, status_reason: "no_go_non_interactive"`; Phase 6 NEEDS_HUMAN → action 2a auto-strip / action 2b `rule_conflict_non_interactive` / action 2 `needs_human_non_interactive`; Phase 6 PASS → with the explicit flag (the owner's unattended opt-in), save the unmutated PASSed brief, noted `saved_on_pass_non_interactive` (no Outcomes Rubric is auto-authored when the run cannot ask — Phase 5 step 7 is a no-op, so the saved brief carries only a rubric the requirement already had); with no flag (a subagent only) → save nothing, `status: aborted, status_reason: "save_requires_flag_non_interactive"`; Plan Review FAIL × 3 → `status: blocked, status_reason: "plan_review_fail_non_interactive"`; memory candidates → write nothing, list them under `memory_candidates_deferred_non_interactive`. Each named status rides in `LAUNCH_PAD_RESULT.summary` as its leading token (`summary: "no_go_non_interactive: …"`), never as a new key: the block's key set is closed and `validate-launch-pad-result.py --raw` blocks any unknown key, a `status_reason:` line included. Interactive options are unchanged.
@@ -311,19 +128,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ---
 
-## Agent Guidelines
-
-**Launch Pad Responsibilities:**
-- Validate environment readiness (git, CLAUDE.md, worktrees, gh)
-- Refine requirements using product discovery and MVP scoping skills
-- Analyze codebase for file impact estimation (grep/glob/read)
-- Decompose per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (default ONE subtask; split only for a named reason) with dependency analysis
-- Compute parallelism (LAUNCHABLE vs BLOCKED based on file overlap)
-- Assemble and save Supervisor-Ready Brief
-- Provide interactive refinement (save/refine/edit/discard)
-
-**Standard Output Format:** See `skills/agent-output/SKILL.md`
-- Phase 1-6 + Phase 2.5 + Phase 5.5 structured output as documented in agent prompt
+**Standard Output Format:** `skills/agent-output/SKILL.md` — Phase 1-6 + Phase 2.5 + Phase 5.5 structured output as documented in `agents/launch-pad.md`.
 
 ---
 
@@ -434,15 +239,3 @@ Before offering save:
 - [ ] Risk assessment included (with CAUTION findings from Phase 2.5 if any)
 - [ ] Plan Review gate cleared — PASS, or NEEDS_HUMAN with explicit user override
 - [ ] Exact Supervisor command provided
-
----
-
-## Integration Notes
-
-- Used by `/launch-pad` command
-- Outputs: Supervisor-Ready Brief to `.supervisor/jobs/pending/`
-- Consumed by: Supervisor agent via `job:` parameter
-- Spawns one subagent (Plan Reviewer) for mandatory plan validation in Phase 5.5
-- Memory: Learns which files are commonly impacted by goals
-- Skills pre-loaded via frontmatter (7 skills)
-- Uses `.supervisor/` for state management
