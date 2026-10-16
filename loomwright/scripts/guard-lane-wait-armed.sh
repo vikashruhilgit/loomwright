@@ -107,11 +107,12 @@ watcher_live() {
 watcher_live && allow
 [ "${BG_WAIT:-0}" = 1 ] && allow
 
-# Reuse lane-wait's own definitions: _LANES_WAIT_LIVE, lanes_proc_alive, _lanes_quick_state.
+# Reuse lane-wait's own definitions: _LANES_WAIT_LIVE, lanes_proc_alive, _lanes_quick_state,
+# _lanes_pending_questions.
 [ -n "$HOOK_DIR" ] && [ -r "$LANES_SH" ] || allow
 # shellcheck source=automate-lanes.sh
 . "$LANES_SH" >/dev/null 2>&1 || allow
-command -v _lanes_quick_state >/dev/null 2>&1 || allow
+command -v _lanes_quick_state >/dev/null 2>&1 && command -v _lanes_pending_questions >/dev/null 2>&1 || allow
 LIVE_SET="$(jq -r '.[]' <<<"${_LANES_WAIT_LIVE:-[]}" 2>/dev/null)"
 [ -n "$LIVE_SET" ] || allow
 
@@ -126,15 +127,16 @@ while IFS="$TAB" read -r lane path _item _run pid st _sid ts _rest; do
   fi
   # Every unanswered question lane-wait has not reported yet (removed / abandoned lanes never count).
   case "$ts" in removed|abandoned) continue ;; esac
-  for q in "$path"/.supervisor/inbox/questions/*.json; do
-    [ -f "$q" ] || continue
-    qid="$(basename "$q" .json)"
-    [ -e "$path/.supervisor/inbox/answers/$qid.json" ] && continue
+  # The same pending set lane-wait reports (automate-lanes.sh's one reader, superseded questions excluded).
+  while IFS= read -r qid; do
+    [ -n "$qid" ] || continue
     grep -qxF -- "question $lane $qid" "$SEEN" 2>/dev/null && continue
     NEED=1
     case ", $STATES" in *", $lane "*) ;; *) STATES="$STATES${STATES:+, }$lane $s" ;; esac
     QNOTE="$QNOTE${QNOTE:+; }$lane $qid"
-  done
+  done <<EOF
+$(_lanes_pending_questions "$path/.supervisor/inbox")
+EOF
 done < "$TABLE"
 [ "$NEED" = 1 ] || allow
 

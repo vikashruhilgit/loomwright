@@ -100,6 +100,9 @@
 #                                       and `"single_lane": true` (appended last) ONLY from an explicit
 #                                       `--parallel 1` — absent otherwise, never inferred from `parallel`.
 #   <lane>/.supervisor/inbox/questions/<tool_use_id>.json   written by relay-hook (the lane's own hook)
+#   <lane>/.supervisor/inbox/questions/superseded/<tool_use_id>.json   an abandoned question, moved there by
+#                                       relay-hook when the lane asks a newer one (+ `superseded_by`,
+#                                       `superseded_at`); kept as the record, never pending, never answerable
 #   <lane>/.supervisor/inbox/answers/<tool_use_id>.json     written by lane-answer (`source: "human"`), or by
 #                                       relay-hook ITSELF — the lane's own hook, not the coordinator — for a
 #                                       policy answer (`source: "policy"`, `policy_sha`, `gate`, `via: "policy"`)
@@ -169,6 +172,10 @@
 # is refused. The note IS delivered: on resume relay-hook returns `allow` with `updatedInput.answers`
 # and `updatedInput.annotations` = {<question>: {notes: <note>}} for every answered question.
 # A PermissionRequest[AskUserQuestion] (a question bundled with other calls) is denied with a re-ask.
+# Superseded questions: when relay-hook records a NEW question id, every older question of the lane with
+# no answer file was abandoned (a deferred question ends the process, so a new id means the session moved
+# on) and moves to questions/superseded/ with one lane `## Progress` line (_lanes_supersede_older).
+# Pending = _lanes_pending_questions, the one reader; lane-answer refuses a superseded id by name.
 # Policy answers (parallel-automate/21 B6): before deferring, relay-hook asks `lane-policy.sh decide`
 # (an EXACT catalog lookup, never a model judgement) against lane.json's carried `policy`. Only a full
 # answer — every question of the call a catalogued `allowed` gate with a policy label — is applied: it
@@ -381,15 +388,68 @@ _lanes_clip() {
   esac
 }
 
-# _lanes_pending_question <inbox> — prints the first recorded question id with no answer file.
-_lanes_pending_question() {
+# _lanes_pending_questions <inbox> — THE pending-question reader: every recorded question id with no
+# answer file, one per line. Every reader goes through it (_lanes_pending_question, lane-status's
+# questions array — so lane-wait and the /lanes pane — `--inbox`, the lane-wait Stop hook). A question
+# the lane abandoned and re-asked was moved to questions/superseded/ (_lanes_supersede_older), which
+# the `questions/*.json` glob never matches.
+_lanes_pending_questions() {
   local q id
   for q in "$1"/questions/*.json; do
     [ -f "$q" ] || continue
     id="$(basename "$q" .json)"
-    [ -e "$1/answers/$id.json" ] || { printf '%s' "$id"; return 0; }
+    [ -e "$1/answers/$id.json" ] || printf '%s\n' "$id"
   done
-  return 1
+}
+
+# _lanes_pending_question <inbox> — prints the first pending question id; returns 1 when there is none.
+_lanes_pending_question() {
+  local id; id="$(_lanes_pending_questions "$1" | head -1)"
+  [ -n "$id" ] || return 1
+  printf '%s' "$id"
+}
+
+# _lanes_supersede_older <lane_root> <new_id> — THE supersede rule, applied by relay-hook when it records
+# a question: a lane runs ONE session and a deferred question ends its process, so a NEW question
+# (another tool_use_id) from the lane means every older unanswered one was abandoned — the session
+# ended a plain turn and re-asked (L8, 2026-10-16), or a bundled call was denied and re-asked. Each
+# moves to questions/superseded/<id>.json (the record is kept, never deleted) with `superseded_by` and
+# `superseded_at` added, and ONE lane `## Progress` line names them. A resume re-fires the SAME id after
+# its answer, so a question never supersedes itself. Fail-SAFE: a failed move leaves the question
+# pending, a failed annotation or Progress append is skipped, and nothing here blocks the hook's reply.
+_lanes_supersede_older() {
+  local root="$1" new="$2" inbox="$1/.supervisor/inbox" sd old ids="" run
+  sd="$inbox/questions/superseded"
+  while IFS= read -r old; do
+    [ -n "$old" ] && [ "$old" != "$new" ] || continue
+    mkdir -p "$sd" 2>/dev/null && mv -f "$inbox/questions/$old.json" "$sd/$old.json" 2>/dev/null || continue
+    jq -c --arg by "$new" --arg at "$(now_utc)" '. + {superseded_by: $by, superseded_at: $at}' "$sd/$old.json" \
+      > "$sd/$old.json.tmp.$$" 2>/dev/null && mv "$sd/$old.json.tmp.$$" "$sd/$old.json" || rm -f "$sd/$old.json.tmp.$$"
+    ids="$ids${ids:+, }$old"
+  done <<EOF
+$(_lanes_pending_questions "$inbox")
+EOF
+  [ -n "$ids" ] || return 0
+  run="$(jq -r '.run_id // empty' "$root/.supervisor/lane.json" 2>/dev/null)"
+  case "$run" in ''|*/*|.*) return 0 ;; esac
+  bash "$HELPERS" progress-append "$root/.supervisor/automate/$run.md" \
+    "$(now_utc) question superseded: $ids by $new (the lane re-asked; record kept in .supervisor/inbox/questions/superseded/)" >/dev/null 2>&1 || true
+  return 0
+}
+
+# _lanes_superseded_by <inbox> <id> — 0 when <id> was superseded (no live question file, a record under
+# questions/superseded/); prints the newer id, or nothing when the record names none (a hand move).
+_lanes_superseded_by() {
+  [ -f "$1/questions/superseded/$2.json" ] && [ ! -f "$1/questions/$2.json" ] || return 1
+  jq -r '.superseded_by // empty' "$1/questions/superseded/$2.json" 2>/dev/null
+  return 0
+}
+
+# _lanes_superseded_msg <inbox> <id> — the refusal text for a superseded id, or returns 1.
+_lanes_superseded_msg() {
+  local by; by="$(_lanes_superseded_by "$1" "$2")" || return 1
+  if [ -n "$by" ]; then printf '%s superseded by %s (the lane re-asked; answer %s)' "$2" "$by" "$by"
+  else printf '%s superseded by a newer question (its record names none)' "$2"; fi
 }
 
 # ---- meta-sync (always with --branch) -----------------------------------------------------------
@@ -837,7 +897,7 @@ lanes_relay_hook() {
   mkdir -p "$(dirname "$q")" "$(dirname "$a")" 2>/dev/null
   if [ ! -s "$a" ]; then
     jq -c --arg at "$(now_utc)" '{id: .tool_use_id, asked_at: $at, questions: .tool_input.questions}' <<<"$in" > "$q.tmp.$$" \
-      && mv "$q.tmp.$$" "$q"
+      && mv "$q.tmp.$$" "$q" && _lanes_supersede_older "$root" "$id"
     # No policy answer (policy null, `human`, any error) ⇒ exactly the pre-policy defer.
     _lanes_policy_apply "$root" "$q" "$a" \
       || { echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"defer"}}'; return 0; }
@@ -973,7 +1033,8 @@ lanes_answer() {
     _lanes_deliver_pending "$owner"; return $?
   fi
   case "$id" in ''|*[!A-Za-z0-9_-]*) die "lane-answer: bad tool_use_id '$id'" ;; esac
-  local qf="$LN_INBOX/questions/$id.json" af="$LN_INBOX/answers/$id.json" last in out rc pf
+  local qf="$LN_INBOX/questions/$id.json" af="$LN_INBOX/answers/$id.json" last in out rc pf sup
+  if sup="$(_lanes_superseded_msg "$LN_INBOX" "$id")"; then die "lane-answer: refused — $sup"; fi
   [ -s "$qf" ] || die "lane-answer: refused — no recorded question $id"
   [ -e "$af" ] && die "lane-answer: refused — $id already answered"
   last="$(_lanes_answer_parked "$id")" || die "lane-answer: refused — $last"
@@ -1013,7 +1074,7 @@ lanes_answer() {
 # _lanes_deliver_pending <owner_cmd> — the delivery form (see lanes_answer). Nothing is written into
 # the lane before every re-check and the full _lanes_gate pass.
 _lanes_deliver_pending() {
-  local owner="$1" pf id qf af last in out sid note via rc
+  local owner="$1" pf id qf af last in out sid note via rc sup
   pf="$(_lanes_pending_file)"
   [ -s "$pf" ] || die "lane-answer: refused — no pending answer for $LN_LANE ($(basename "$pf"))"
   _discard() { rm -f "$pf"; die "lane-answer: refused — the pending answer for $LN_LANE no longer matches ($1); discarded — the question is shown again"; }
@@ -1021,6 +1082,7 @@ _lanes_deliver_pending() {
   case "$id" in ''|*[!A-Za-z0-9_-]*) _discard "bad tool_use_id" ;; esac
   [ "$(jq -r '.lane // empty' "$pf" 2>/dev/null)" = "$LN_LANE" ] || _discard "recorded for another lane"
   qf="$LN_INBOX/questions/$id.json"; af="$LN_INBOX/answers/$id.json"
+  if sup="$(_lanes_superseded_msg "$LN_INBOX" "$id")"; then _discard "$sup"; fi
   [ -s "$qf" ] || _discard "no recorded question $id"
   [ -e "$af" ] && _discard "$id already answered"
   last="$(_lanes_answer_parked "$id")" || _discard "$last"
@@ -1727,10 +1789,9 @@ _lanes_last_actions() {
 # _lanes_questions_json <inbox> <now_epoch> — JSON array of unanswered questions (asked_at, waiting_s).
 _lanes_questions_json() {
   local q id at e w out="[]" nx
-  for q in "$1"/questions/*.json; do
-    [ -f "$q" ] || continue
-    id="$(basename "$q" .json)"
-    [ -e "$1/answers/$id.json" ] && continue
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    q="$1/questions/$id.json"
     at="$(jq -r '.asked_at // empty' "$q" 2>/dev/null)"
     w=null; if e="$(_lanes_epoch "$at")"; then w=$(( $2 - e )); fi
     # `items`: every question of the call, in order — its index is lane-answer's answer key — with its
@@ -1746,7 +1807,9 @@ _lanes_questions_json() {
                  | {label: (.label | tostring), description: (.description // null)}))}))}]' <<<"$out" 2>/dev/null)" \
       || nx="$(jq -c --arg id "$id" '. + [{id: $id, asked_at: null, waiting_s: null, question: null, items: []}]' <<<"$out")"
     out="$nx"
-  done
+  done <<EOF
+$(_lanes_pending_questions "$1")
+EOF
   printf '%s' "$out"
 }
 
@@ -1770,15 +1833,16 @@ _lanes_inbox() {
   tab="$(printf '\t')"
   while IFS="$tab" read -r lane path _; do
     case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
-    for q in "$path"/.supervisor/inbox/questions/*.json; do
-      [ -f "$q" ] || continue
-      id="$(basename "$q" .json)"
-      [ -e "$path/.supervisor/inbox/answers/$id.json" ] && continue
+    while IFS= read -r id; do
+      [ -n "$id" ] || continue
+      q="$path/.supervisor/inbox/questions/$id.json"
       rows="$rows$(jq -c --arg l "$lane" --arg id "$id" '{at: ((.asked_at // "unknown") | tostring), lane: $l, id: $id,
           qs: (if (.questions | type) == "array" then .questions else [] end)}' "$q" 2>/dev/null \
         || jq -n -c --arg l "$lane" --arg id "$id" '{at: "unknown", lane: $l, id: $id, qs: []}')
 "
-    done
+    done <<EOF
+$(_lanes_pending_questions "$path/.supervisor/inbox")
+EOF
   done < "$1"
   printf '%s' "$rows" | jq -r -s 'sort_by(.at, .lane, .id)
     | "lane-status: inbox — \(length) pending human question call(s), oldest first",

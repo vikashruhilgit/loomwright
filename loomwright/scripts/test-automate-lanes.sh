@@ -81,6 +81,9 @@
 #     `* ` / `+ ` / `N) ` entries parse like `- ` / `N. `, a section that exists but parses to no entry
 #     reads `unrun` (never `none`) with its own mutation control, and the not-run vocabulary matches
 #     whole phrases only ("not running hot" stays PASS) — AL22–AL22h
+#   AM superseded lane questions (L8, 2026-10-16): the lane abandons toolu_s1, re-asks toolu_s2 ⇒ s1 moves to
+#     questions/superseded/ naming s2 + one lane ## Progress line, lane-answer / --deliver-pending refuse s1 by
+#     name, the resume re-fire of s2 supersedes nothing, 0 pending and the lane reads its park + mutation control
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -2069,20 +2072,28 @@ hasnt "AD11b … and no 'none answered' header while a lane has one" "$out" "pol
 check "AD11c --json carries the digest" "$(run lane-status "$RF8" --json | jq -c '.lanes[] | select(.lane == "L2") | .policy | [.answered, .first_at, .last_gate, .last_label]')" \
   '[2,"2026-10-10T01:00:00Z","AUT-RESUME","Continue"]'
 check "AD11d no lane with a policy answer ⇒ the header line 'policy: none answered'" "$(run lane-status "$RF" | sed -n 2p)" "policy: none answered"
-i=0; for f in "$L82"/.supervisor/inbox/questions/*.json "$L81"/.supervisor/inbox/questions/*.json; do
+# A lane holds ONE pending call: L2 asked p2–p7 unanswered, then p8, and each newly recorded question
+# superseded the one before it (a policy-answered p8 is still a newer question). The multi-question call is L3's own.
+check "AD12g L2's unanswered p2–p7 were each superseded by the next question it asked (records kept)" \
+  "$(jq -r '"\(.id)>\(.superseded_by)"' "$L82"/.supervisor/inbox/questions/superseded/*.json | tr '\n' ' ')" \
+  "toolu_p2>toolu_p3 toolu_p3>toolu_p4 toolu_p4>toolu_p6 toolu_p6>toolu_p7 toolu_p7>toolu_p8 "
+check "AD12h … one lane ## Progress line per supersede" "$(grep -c "^helpers progress-append $L82/.supervisor/automate/$PARENT8-L2.md [0-9TZ:-]* question superseded: toolu_p[0-9] by toolu_p[0-9] " "$HELPERS_LOG" | tr -d ' ')" 5
+out="$(qhook "$LR8/L3" toolu_p9 "$QM" | bash "$S" relay-hook)"
+check "AD12i a multi-question call with one human question in L3 ⇒ defer" "$out:$(ad_ans "$LR8/L3" toolu_p9)" "$DEFER:none"
+i=0; for f in "$L82"/.supervisor/inbox/questions/*.json "$L81"/.supervisor/inbox/questions/*.json "$LR8/L3"/.supervisor/inbox/questions/*.json; do
   i=$((i + 1)); case "$f" in */toolu_p5.json) at="2026-10-10T00:00:01Z" ;; *) at="2026-10-10T00:00:1${i}Z" ;; esac
   jq -c --arg at "$at" '.asked_at = $at' "$f" > "$T/ad.q" && mv "$T/ad.q" "$f"
 done
 out="$(run lane-status "$RF8" --inbox)"
 check "AD12 --inbox: ONE list of pending human questions, oldest asked_at first" "$(printf '%s\n' "$out" | sed -n '1,3p')" \
-  "lane-status: inbox — 6 pending human question call(s), oldest first
+  "lane-status: inbox — 2 pending human question call(s), oldest first
 2026-10-10T00:00:01Z L1 toolu_p5 AUT-QUEUE — Process the queue?
     options: Process (Recommended) | Stop"
 hasnt "AD12b … a policy-answered question is not in the inbox" "$out" "toolu_p1"
 hasnt "AD12c … nor the second one" "$out" "toolu_p8"
-has "AD12d … a multi-question call lists each question" "$out" "L2 toolu_p3 Color — Which color?"
+has "AD12d … a multi-question call lists each question" "$out" "L3 toolu_p9 Color — Which color?"
 check "AD12e … every pending call appears, in asked_at order" "$(printf '%s\n' "$out" | awk '/^2026/ { print $3 }' | uniq | tr '\n' ' ')" \
-  "toolu_p5 toolu_p2 toolu_p3 toolu_p4 toolu_p6 toolu_p7 "
+  "toolu_p5 toolu_p9 "
 check "AD12f a lane-status --inbox with no lane table is fail-SAFE (exit 0)" "$(run lane-status "$T/none.md" --inbox >/dev/null; echo $?)" 0
 
 # ---- AE: lane-convert-ready finalizes a closed-out lane (A1) -----------------------------------------
@@ -3186,6 +3197,77 @@ else
   out="$(VG_S="$T/vgmut/automate-lanes.sh" vg "$VGRF" reqs/pa16.md "$VGPR")"
   if [ "$out" != "$AL1_WANT" ]; then ok "AL10 AC9 mutation control: an unconditional ok verdict turns AL1 red (mutant prints: $out)"
   else bad "AL10 AC9 mutant still printed the AL1 verdict — AL1 is vacuous"; fi
+fi
+
+# ---- AM: superseded lane questions (L8 of run automate-2026-10-15-163325, 2026-10-16) ------------------
+# The incident: the lane asked toolu_s1 (relay-hook recorded it and deferred), could not exit deferred,
+# ended a PLAIN turn, and on `--continue` re-asked as toolu_s2, which the owner answered. toolu_s1 never
+# got an answer file, so "question file with no answer file" kept it pending: --inbox and the pane showed
+# it, lane-answer refused it ("parked on another question"), and the parked lane read awaiting_input
+# (refusing lane-convert-ready / wave-build / lane-remove) until the coordinator moved it by hand.
+# The rule: relay-hook recording a NEW id supersedes every older unanswered question of the lane.
+PAM=automate-2026-10-16-040000; RFAM="$P/.supervisor/automate/$PAM.md"; LAM="$T/work/primary-lanes/$PAM"
+printf '# Automate Run: %s\n\n## Progress\n' "$PAM" > "$RFAM"
+for n in 1 2; do run lane-create "$RFAM" reqs/a.md "$n" --parallel 2 >/dev/null; done
+QS1='[{"question":"Save the brief?","header":"Save","multiSelect":false,"options":[{"label":"Save and exit","description":"s"},{"label":"Revise","description":"r"}]}]'
+am_defer() { jq -n -c --arg id "$1" --argjson q "$QS1" '{type: "result", subtype: "success", stop_reason: "tool_deferred", session_id: "sess-123", deferred_tool_use: {id: $id, name: "AskUserQuestion", input: {questions: $q}}}'; }
+am_seq() { # <lane dir> <relay-hook script> — the L8 sequence up to the lane parking deferred on toolu_s2
+  # (the relay hook runs with the REAL automate-helpers.sh, so its ## Progress line lands in the lane run file)
+  local l="$1" hs="$2"
+  printf '# Automate Run: %s\n\n## Current\n- item: reqs/a.md | status: awaiting_merge | pr: https://github.com/o/r/pull/7 | branch: f\n- pause_reason: ready_for_release\n\n## Progress\n' \
+    "$PAM-${l##*/}" > "$l/.supervisor/automate/$PAM-${l##*/}.md"
+  hook_in PreToolUse "$l" toolu_s1 "$QS1" | LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" bash "$hs" relay-hook >/dev/null
+  STUB_MODE=ok LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$l" --owner-command "$OWN" >/dev/null; wait_gone "$l"   # a plain turn end
+  hook_in PreToolUse "$l" toolu_s2 "$QS1" | LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" bash "$hs" relay-hook >/dev/null
+  STUB_DEFER_LINE="$(am_defer toolu_s2)" STUB_MODE=defer LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$l" --owner-command "$OWN" --continue >/dev/null; wait_gone "$l"
+}
+am_pending() { ( . "$S"; _lanes_pending_questions "$1/.supervisor/inbox" | tr '\n' ' ' | sed 's/ $//' ); }
+am_ans() { printf '{"answers":{"0":"Save and exit"}}' | LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-answer "$1" "$2" --owner-command "$OWN" 2>&1; }
+LA1="$LAM/L1"; am_seq "$LA1" "$S"
+SUPF="$LA1/.supervisor/inbox/questions/superseded/toolu_s1.json"
+check "AM1 the re-ask supersedes the abandoned question: only toolu_s2 is pending" "$(am_pending "$LA1")" toolu_s2
+check "AM2 the record is kept (moved, never deleted) and names the newer id" \
+  "$([ -e "$LA1/.supervisor/inbox/questions/toolu_s1.json" ] && echo live || echo moved):$(jq -r '[.id, .superseded_by, (.superseded_at | test("Z$")), (.questions | length)] | map(tostring) | join(",")' "$SUPF")" \
+  "moved:toolu_s1,toolu_s2,true,1"
+check "AM3 ONE lane ## Progress line names it" \
+  "$(grep -c '^- [0-9TZ:-]* question superseded: toolu_s1 by toolu_s2 (the lane re-asked; record kept in .supervisor/inbox/questions/superseded/)$' "$LA1/.supervisor/automate/$PAM-L1.md" | tr -d ' ')" 1
+out="$(am_ans "$LA1" toolu_s1)"; rc=$?
+check "AM4 lane-answer on the superseded id refuses, naming the newer id" \
+  "$rc:$out" "1:automate-lanes: lane-answer: refused — toolu_s1 superseded by toolu_s2 (the lane re-asked; answer toolu_s2)"
+check "AM4b … and writes no answer file for it" "$([ -e "$LA1/.supervisor/inbox/answers/toolu_s1.json" ] && echo written || echo none)" none
+jq -n -c --arg id toolu_s1 '{schema_version: 1, lane: "L1", tool_use_id: $id, answers: {"0": "Save and exit"}, note: null, via: "cli", held_at: "2026-10-16T03:50:00Z"}' \
+  > "$P/.supervisor/automate/$PAM.L1.answer-pending.json"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-answer "$LA1" --deliver-pending --owner-command "$OWN" 2>&1)"; rc=$?
+check "AM5 a HELD answer kept for the superseded id is discarded on delivery, naming the newer id" \
+  "$rc:$out:$([ -e "$P/.supervisor/automate/$PAM.L1.answer-pending.json" ] && echo kept || echo discarded)" \
+  "1:automate-lanes: lane-answer: refused — the pending answer for L1 no longer matches (toolu_s1 superseded by toolu_s2 (the lane re-asked; answer toolu_s2)); discarded — the question is shown again:discarded"
+out="$(am_ans "$LA1" toolu_s2)"; rc=$?
+check "AM6 the newer question is answered as usual" "$rc:$(jq -r '.answers["Save the brief?"]' "$LA1/.supervisor/inbox/answers/toolu_s2.json")" "0:Save and exit"
+wait_gone "$LA1"
+out="$(hook_in PreToolUse "$LA1" toolu_s2 "$QS1" | bash "$S" relay-hook)"
+check "AM7 the resume re-fires the SAME id: allowed with its answer, nothing superseded" \
+  "$(jq -r '.hookSpecificOutput.permissionDecision' <<<"$out"):$(ls "$LA1/.supervisor/inbox/questions/superseded" | tr '\n' ' ')" "allow:toolu_s1.json "
+# AM7b the coordinator's hand fix on 2026-10-16 left a record with no superseded_by: still refused, by its own wording
+jq -n -c --argjson q "$QS1" '{id: "toolu_h1", asked_at: "2026-10-16T03:40:00Z", questions: $q}' > "$LA1/.supervisor/inbox/questions/superseded/toolu_h1.json"
+out="$(am_ans "$LA1" toolu_h1)"; rc=$?
+check "AM7b a hand-moved record (no superseded_by) is refused as superseded, naming no id" \
+  "$rc:$out" "1:automate-lanes: lane-answer: refused — toolu_h1 superseded by a newer question (its record names none)"
+check "AM8 the two-question sequence leaves 0 pending" "$(am_pending "$LA1")" ""
+JAM="$(bash "$S" lane-status "$RFAM" --json 2>/dev/null)"
+check "AM9 lane-status reads the lane's real state (its park), not awaiting_input; no questions (the pane)" \
+  "$(jq -r '.lanes[] | select(.lane == "L1") | "\(.state):\(.questions | length)"' <<<"$JAM")" "ready_for_release:0"
+has "AM10 lane-status --inbox lists nothing" "$(run lane-status "$RFAM" --inbox)" "inbox — 0 pending human question call(s)"
+hasnt "AM11 lane-remove no longer refuses awaiting_input" "$(run lane-remove "$LA1")" "awaiting_input"
+# AM12 mutation control: relay-hook without the supersede step replays the incident on a fresh lane —
+# toolu_s1 stays pending, so AM1/AM8 and AM9 would be red.
+sed 's/ && _lanes_supersede_older "\$root" "\$id"$//' "$S" > "$MUT/automate-lanes.sh"
+if cmp -s "$S" "$MUT/automate-lanes.sh" || ! bash -n "$MUT/automate-lanes.sh"; then
+  bad "AM12 mutant not built (sed matched nothing, or bash -n failed)"
+else
+  LA2="$LAM/L2"; am_seq "$LA2" "$MUT/automate-lanes.sh"; am_ans "$LA2" toolu_s2 >/dev/null; wait_gone "$LA2"
+  JAM="$(bash "$S" lane-status "$RFAM" --json 2>/dev/null)"
+  check "AM12 mutation (supersede step removed): the abandoned question stays pending and the lane reads awaiting_input" \
+    "$(am_pending "$LA2")|$(jq -r '.lanes[] | select(.lane == "L2") | .state' <<<"$JAM")" "toolu_s1|awaiting_input"
 fi
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
