@@ -1949,7 +1949,11 @@ _lanes_resolve() {
 # lane state (`active`, `waiting` on the owner, `held`, `trouble`; every step `done` once merged/done).
 # A step passed without a line of its own reads `done` with null times: the run never said when it ran.
 # Boundaries: the `picked` line ends Pick and starts Plan; a Launch Pad "brief saved" line ends Plan and starts Build (/autonomous hands the brief to
-# the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too.
+# the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too, one reading
+# `no PR: Launch Pad blocked` reaches only Plan (the Supervisor never started).
+# A `parked …` line is the Merge gate's only once the lane reached Drain; a park before that (Launch Pad
+# blocked, an escalated build) reaches no step of its own — it joins the furthest step reached, which the
+# lane state then colors, and every later step stays `pending`.
 # Fail-SAFE: anything unreadable ⇒ `null`.
 _lanes_timeline() {
   local rf="$1" sm="$2/state.md" now="$3" state="$4" llu="$5" out
@@ -1976,11 +1980,13 @@ _lanes_timeline() {
     def names: ["Pick", "Plan", "Build", "Heal", "Drain", "Decide", "Merge"];
     def ord: . as $id | ids | index($id);
     def cls:
-      if test("^(closeout |auto-finalized|trail-pr|parked |lane park notify|converted |merged)") then ["merge"]
+      if test("^parked ") then ["park"]
+      elif test("^(closeout |auto-finalized|trail-pr|lane park notify|converted |merged)") then ["merge"]
       elif test("^(dismissed|owner decisions)") then ["decide"]
       elif test("owned drain started|^drain |re-drain") then ["drain"]
       elif test("^/autonomous done") then ["heal"]
-      elif test("^ran /autonomous") then (if test("heal (PASS|FAIL|ESCALATED)") then ["build", "heal"] else ["build"] end)
+      elif test("^ran /autonomous") then (if test("heal (PASS|FAIL|ESCALATED)") then ["build", "heal"]
+                                         elif test("no PR: launch[ -]?pad blocked"; "i") then ["plan"] else ["build"] end)
       elif test("^supervisor:"; "i") then ["build"]
       elif test("launch[ -]?pad"; "i") then (if test("brief saved"; "i") then ["plan", "build"] else ["plan"] end)
       elif test("^picked ") then ["pick", "plan"]
@@ -2002,7 +2008,9 @@ _lanes_timeline() {
             + (if ($s.phase // "") | sstep == "heal" then
                  [{step: "heal", ts: ($s.last_updated // $s.created), e: ((($s.last_updated // "") | ep) // $se),
                    text: ("Supervisor " + $s.phase + " (" + ($s.status // "?") + ")")}] else [] end)
-          else [] end)) as $ev
+          else [] end)) as $ev0
+    | ([($ev0[] | select(.step != "park") | .step), (if $live then ($s.phase | sstep) else empty end) | ord] | max // 0) as $reach
+    | [$ev0[] | if .step == "park" then .step = (if $reach >= ("drain" | ord) then "merge" else ids[$reach] end) else . end] as $ev
     | ([($ev[] | .step), (if $live then ($s.phase | sstep) else empty end) | ord] | max // 0) as $far
     | (if ($state | test("^(merged|done)$")) then 7 else $far end) as $cur
     | (if $state == "running" then "active"
