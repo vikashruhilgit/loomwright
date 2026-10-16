@@ -49,19 +49,11 @@ per-item-loop.md|Rate-limit park (end of RUN, before DRAIN)	rate-limit-park
 per-item-loop.md|Termination (two exits)	termination-limit-reached
 per-item-loop.md|Learning-emit at end-of-DRAIN (engine-native ground-truth signal)	learning-emit-end-of-drain
 per-item-loop.md|Brief-repair at RECONCILE and SYNC (merge-evidenced lifecycle repair)	brief-repair-merged
-per-item-loop.md|Dismissed-findings decision step (before the park)	dismissed-findings-decision-step
-per-item-loop.md|Dismissed-findings decision step (before the park)|L1.1	dismissed-findings-decision-step
-per-item-loop.md|Dismissed-findings decision step (before the park)|L1.2	judgment — covered at the step boundary: dismissed-findings-decision-step
-per-item-loop.md|Dismissed-findings decision step (before the park)|L1.3	judgment — covered at the step boundary: dismissed-fix-now-re-drain
-per-item-loop.md|Dismissed-findings decision step (before the park)|L1.4	dismissed-findings-decision-step
-per-item-loop.md|Dismissed-findings decision step (before the park)|L2.1	park-first-ready-park
-per-item-loop.md|Dismissed-findings decision step (before the park)|L2.2	park-first-ready-park
-per-item-loop.md|Dismissed-findings decision step (before the park)|L2.3	judgment — covered at the step boundary: park-first-ready-park
-per-item-loop.md|Dismissed-findings decision step (before the park)|L2.4	judgment — covered at the step boundary: park-first-ready-park
-per-item-loop.md|Dismissed-findings decision step (before the park)|L2.5	judgment — covered at the step boundary: park-first-ready-park
-per-item-loop.md|Dismissed-findings decision step (before the park)|L2.6	park-first-ready-park
-per-item-loop.md|Dismissed-findings decision step (before the park)|L2.7	judgment — covered at the step boundary: park-first-decisions-recorded
-per-item-loop.md|Dismissed-findings decision step (before the park)|L2.8	park-first-decisions-recorded
+# per-item-loop.md|Dismissed-findings decision step (before the park) and its two lists moved verbatim to
+# legacy-tail.md (automate-speed/06; read only under --legacy, not a unit source here). Their cases —
+# dismissed-findings-decision-step, park-first-ready-park, park-first-decisions-recorded — are driven
+# through scripts/automate-next-step.sh by test-automate-next-step.sh; dismissed-fix-now-re-drain stays
+# a golden case here, unmapped to a unit (the fix-now re-pass prose moved with the subsection).
 per-item-loop.md|Trail PR after merge and at run end	termination-queue-resolved
 per-item-loop.md|Post-merge close-out (`closeout` + the merge watcher)	reconcile-closeout-merged
 per-item-loop.md|§7 — Single drain (no double-dispatch) + the config-toggle contract	judgment — covered at the step boundary: drain-owned-drain-started

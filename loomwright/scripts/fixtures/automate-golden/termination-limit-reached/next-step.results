@@ -1,0 +1,6 @@
+# next-step.results — termination-limit-reached: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The case is the limit exit (NEXT_STEP_FROM=terminate): 4 merged rows,
+# limit 4, 2 rows left ⇒ the limit_reached park.
+env: NEXT_STEP_FROM=terminate
+call:
+expect: park
