@@ -4,13 +4,15 @@ Base commit: `051553e` (the brief's `142540b` measurements were superseded by it
 Branch: `feature/as19-split-lanes-and-trail-scripts` (subtask 1 `9560281`, subtask 2 `0f19075`, the integration commit `5d3c348`, then the three consumer setup fixes `d588537`, §8).
 All runs: macOS (bash 3.2 system shell), 2026-10-16. "Base" numbers come from a clean `git worktree` detached at `051553e`, run earlier in the same session by the previous integration attempt (logs kept in its scratchpad). "Branch" numbers come from the committed tree at `d588537` (integration plus the §8 fixes), re-run after the Phase 3 adjudication.
 
-## 1. Test and gate totals (AC5 to AC10)
+**Pre-merge vs. merged tree.** The merge `efb349d` brought in `origin/main` `e232771` (PRs #572, #574), which edited `automate-lanes.sh` and `test-automate-lanes.sh`. §2 and §7 are regenerated on the merged tree (`ef57b60`). §1, §5 and §6 stay as measured on `d588537` before the merge; each figure the merge changed is labelled "pre-merge" there and its merged value is given beside it or in §9.
 
-`<passed>/<total>` as each test prints it. Absent on base = the file is new on this branch.
+## 1. Test and gate totals (AC5 to AC10), pre-merge (`051553e` vs `d588537`)
+
+`<passed>/<total>` as each test prints it. Absent on base = the file is new on this branch. Measured before the merge; the rows the merge changed are marked, and §9 re-measures them against `e232771`. Rows not marked are for files the merge did not touch (`git diff --stat 051553e e232771` names only the two lanes monoliths, `guard-lane-wait-armed.sh`, two changelog fragments and six docs).
 
 | Test / gate | Base `051553e` | Branch | Note |
 |---|---|---|---|
-| `test-automate-lanes.sh` (AC5) | 864/864 | 866/866 | +2 = the AG7a/AG7b planted-violation legs (AC8). Without them the branch is 864/864, as subtask 1 measured |
+| `test-automate-lanes.sh` (AC5) | 864/864 | 866/866 | pre-merge. +2 = the AG7a/AG7b planted-violation legs (AC8). Without them the branch is 864/864, as subtask 1 measured. Merged tree: 889/889 vs base `e232771` 887/887 (§9) |
 | `test-automate-trail.sh` (AC5) | 782/782 | 782/782 | |
 | `test-automate-lanes-modules.sh` (AC6) | absent | 56/56 | |
 | `test-automate-trail-modules.sh` (AC6) | absent | 24/24 | 24/24 before and after setup fix 3, §8 |
@@ -27,10 +29,10 @@ All runs: macOS (bash 3.2 system shell), 2026-10-16. "Base" numbers come from a 
 | `test-verify-queue.sh` (consumer re-scan) | 44/44 | 44/44 | |
 | `test-session-resume.sh` | 338/338 | 338/338 | |
 | `scripts/test-lanes-addon.sh` (AC10) | 12/12 | 12/12 | |
-| `scripts/check-test-hermetic.sh` (AC10) | OK, 169/169 | OK, 171/171 | +2 = the two new `*-modules.sh` tests; parts are not standalone tests |
-| `scripts/check-vendor-coupling.sh` (AC9) | OK, 0 breaches, 2676 refs | OK, 0 breaches, 2677 refs | +1 = a NEW reference in `test-automate-lanes-modules.sh`, §5 |
+| `scripts/check-test-hermetic.sh` (AC10) | OK, 169/169 | OK, 171/171 | +2 = the two new `*-modules.sh` tests; parts are not standalone tests. Unchanged on the merged tree (re-run on `ef57b60`: 171/171) |
+| `scripts/check-vendor-coupling.sh` (AC9) | OK, 0 breaches, 2676 refs | OK, 0 breaches, 2677 refs | pre-merge. +1 = a NEW reference in `test-automate-lanes-modules.sh`, §5. Merged tree: 2679 vs base `e232771` 2678 (§9) |
 | `scripts/check-locale-prefix.sh` | OK | OK, 373/373 files | was FAIL (2 sites in `test-automate-trail-modules.sh`) before setup fix 3, §8 |
-| `scripts/check-version-bump.sh` (AC14) | OK, 2 fragments | OK, 3 fragments | +1 = this item's fragment |
+| `scripts/check-version-bump.sh` (AC14) | OK, 2 fragments | OK, 3 fragments | pre-merge. +1 = this item's fragment. Merged tree: 5 fragments vs base `e232771` 4 (§9) |
 
 AC10 byte-unchanged files: `git diff --stat 051553e -- loomwright/hooks/hooks.json loomwright/capabilities.json loomwright/.claude-plugin/plugin.json .claude-plugin/marketplace.json CHANGELOG.md` prints nothing.
 
@@ -39,25 +41,25 @@ AC10 byte-unchanged files: `git diff --stat 051553e -- loomwright/hooks/hooks.js
 | Tree | Result |
 |---|---|
 | Base `051553e` | PASS after 871s: 23 ci.yml gates + 160 self-tests (16 early, 167 in the pool), 183 PASS, 0 FAIL |
-| Branch `d588537` | PASS after 821s: 23 ci.yml gates + 162 self-tests (16 early, 169 in the pool), 185 PASS, 0 FAIL. The +2 entries over base are the two new `*-modules.sh` tests. No red leg |
+| Branch `d588537` (pre-merge) | PASS after 821s: 23 ci.yml gates + 162 self-tests (16 early, 169 in the pool), 185 PASS, 0 FAIL. The +2 entries over base are the two new `*-modules.sh` tests. No red leg |
 | Branch `5d3c348` (before the §8 fixes, superseded) | FAIL after 34s in the early phase on `check-locale-prefix.sh`; with that fix alone in a scratch copy, FAIL after 1063s with 183 PASS, 2 FAIL of 185 (`test-guard-lane-wait-armed.sh`, `test-reconcile-jobs.sh`, both green on base) |
 
 The AC10 consumer set on `d588537` (16 entries: the tests in the table above marked AC10, plus `test-automate-loop-split.sh`, `test-reconcile-jobs.sh`, both `*-modules.sh`, `test-automate-lanes.sh`, `test-automate-trail.sh`, and the vendor-coupling, hermetic, locale-prefix and version-bump gates): 16/16 exit 0. `loomwright/hooks/hooks.json` and `loomwright/capabilities.json`: `git diff --quiet origin/main` exits 0.
 
 ## 2. Module list per script (AC4, AC13)
 
-Measured with `wc -l` and `sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)\(\) \{.*/\1/p'` on the branch. The largest module is 740 lines, under the 800 limit.
+Measured with `wc -l` and `sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)\(\) \{.*/\1/p'` on the merged tree (`ef57b60`, after `efb349d` brought in `e232771`). The largest module is `status-read.sh` at 752 lines, under the 800 limit. Rows the merge changed: the lanes entry (371 → 378), `common.sh` (194 → 247, four new functions), `relay.sh` (248 → 250), `status-read.sh` (740 → 752); §9 lists the hunks.
 
 | Module | Lines | Functions |
 |---|---|---|
-| `automate-lanes.sh` (entry) | 371 | `die`, `_lanes_source`, `_lanes_bundle`, `_lanes_usage`, `lanes_main` (+ header, config block, direct-run guard) |
-| `automate-lanes.d/common.sh` | 194 | now_utc _trim_ws _clean _lanes_need _lt_me _lt_holder _lt_holder_dead _lt_reclaim _lt_lock _lt_unlock _lt_set _lt_get _lane_ctx lanes_proc_alive _lanes_clip _lanes_pending_question _lanes_meta_branch _lanes_salvage _lanes_merge_hooks |
+| `automate-lanes.sh` (entry) | 378 | `die`, `_lanes_source`, `_lanes_bundle`, `_lanes_usage`, `lanes_main` (+ header, config block, direct-run guard) |
+| `automate-lanes.d/common.sh` | 247 | now_utc _trim_ws _clean _lanes_need _lt_me _lt_holder _lt_holder_dead _lt_reclaim _lt_lock _lt_unlock _lt_set _lt_get _lane_ctx lanes_proc_alive _lanes_clip _lanes_pending_questions _lanes_pending_question _lanes_supersede_older _lanes_superseded_by _lanes_superseded_msg _lanes_meta_branch _lanes_salvage _lanes_merge_hooks |
 | `automate-lanes.d/create.sh` | 123 | lanes_create |
 | `automate-lanes.d/launch.sh` | 237 | _lanes_regime_ok _lanes_admission _lanes_launch_lock _lanes_launch_unlock _lanes_optout_set _lanes_optout_file _lanes_optout_record _lanes_gate _lanes_spawn lanes_run_wrapper lanes_launch _lanes_launch_go _lanes_session_id _lanes_last_result |
-| `automate-lanes.d/relay.sh` | 248 | _lanes_hook_root lanes_relay_hook _lanes_policy_apply _lanes_pending_file _lanes_validate_answers _lanes_answer_parked _lanes_answer_write_resume lanes_answer _lanes_deliver_pending |
+| `automate-lanes.d/relay.sh` | 250 | _lanes_hook_root lanes_relay_hook _lanes_policy_apply _lanes_pending_file _lanes_validate_answers _lanes_answer_parked _lanes_answer_write_resume lanes_answer _lanes_deliver_pending |
 | `automate-lanes.d/remove.sh` | 415 | _lanes_stop_pid _lanes_live_watchers _lanes_status_named _lanes_remove_refusals lanes_remove _lanes_meta_extras _lanes_noclaim_files _lanes_meta_trail _lanes_abandon_meta _lanes_current_item _lanes_no_host_identity lanes_convert_ready |
 | `automate-lanes.d/notify-guards.sh` | 191 | _lanes_click_action _lanes_os_notifier lanes_park_notify lanes_info lanes_init_check lanes_pick_guard lanes_branch_check |
-| `automate-lanes.d/status-read.sh` | 740 | _lanes_dash _lanes_epoch _lanes_boot_epoch _lanes_runfile_fields _lanes_runfile_branch _lanes_parked _lanes_last_message _lanes_last_actions _lanes_questions_json _lanes_policy_digest _lanes_inbox _lanes_keep_awake_holders _lanes_keep_awake_state _lanes_keep_awake_lasting _lanes_coordinator_pid _lanes_keep_awake_hint _lanes_keep_awake_start _lanes_machine_json _lanes_ci_json _lanes_table_for _lanes_state_of _lanes_parent_of _lanes_resolve _lanes_timeline _lanes_salvaged_sup _lanes_salvage_time _lanes_last_dated _lanes_lane_json _lanes_status_doc _lanes_render _lanes_resources _lanes_tokens _lanes_single_parent _lanes_lane_total _lanes_single_spent _lanes_tokens_line _lanes_tokens_record |
+| `automate-lanes.d/status-read.sh` | 752 | _lanes_dash _lanes_epoch _lanes_boot_epoch _lanes_runfile_fields _lanes_runfile_branch _lanes_parked _lanes_last_message _lanes_last_actions _lanes_questions_json _lanes_policy_digest _lanes_inbox _lanes_keep_awake_holders _lanes_keep_awake_state _lanes_keep_awake_lasting _lanes_coordinator_pid _lanes_keep_awake_hint _lanes_keep_awake_start _lanes_machine_json _lanes_ci_json _lanes_table_for _lanes_state_of _lanes_parent_of _lanes_resolve _lanes_timeline _lanes_salvaged_sup _lanes_salvage_time _lanes_last_dated _lanes_lane_json _lanes_status_doc _lanes_render _lanes_resources _lanes_tokens _lanes_single_parent _lanes_lane_total _lanes_single_spent _lanes_tokens_line _lanes_tokens_record |
 | `automate-lanes.d/park-leaks.sh` | 279 | lanes_park _lanes_pr_hash lanes_drain_check _lanes_leak_lanes_dir _lanes_leak_watchers _lanes_path_tied _lanes_leak_claude _lanes_leak_sections lanes_leaks |
 | `automate-lanes.d/status.sh` | 291 | lanes_status _lanes_watch _lanes_wait_print _lanes_wait_unmark _lanes_quick_state lanes_wait lanes_feed |
 | `automate-lanes.d/readiness.sh` | 468 | _lanes_rd_section _lanes_validation_rows lanes_readiness _lanes_vg_itemf _lanes_vg_after_pick _lanes_vg_last_pick _lanes_vg_has lanes_validation_gate |
@@ -70,7 +72,7 @@ Measured with `wc -l` and `sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)\(\) \{.*/\1/p'` 
 | `automate-trail.d/finalize.sh` | 247 | fe_release _fe_ineligible _in_lane_clone _lane_run_id finalize_empty closeout_others |
 | `automate-trail.d/sweep.sh` | 332 | _sw_line _sw_rule _sw_live_read _sw_live _sw_plugin_made sweep_run |
 
-Test parts (line counts): lanes runner 216; `test-automate-lanes.d/` 01-create-to-wait 620, 02-readiness-to-convert 560, 03-fixes-to-finalize 759, 04-fleet-closeout-to-optout 641, 05-timeline-and-gate 403. Trail runner 323; `test-automate-trail.d/` 01-sidecar-trail-pr 560, 02-closeout 362, 03-stamps-gate 484, 04-watcher-branch-mode 676, 05-finalize-closeout-others 706, 06-sweep 422.
+Test parts (line counts, merged tree): lanes runner 220; `test-automate-lanes.d/` 01-create-to-wait 620, 02-readiness-to-convert 560, 03-fixes-to-finalize 767, 04-fleet-closeout-to-optout 641, 05-timeline-and-gate 500. Trail runner 323; `test-automate-trail.d/` 01-sidecar-trail-pr 560, 02-closeout 362, 03-stamps-gate 484, 04-watcher-branch-mode 676, 05-finalize-closeout-others 706, 06-sweep 422.
 
 ## 3. Non-move hunks (AC3 and AC5)
 
@@ -113,11 +115,16 @@ Limit on the W6d and AG7 mutation runs: the brief's one-line mutations append at
 
 ## 5. Vendor-coupling manifest (AC9)
 
+The first three bullets are the pre-merge state (`d588537`); the last bullet gives the merged tree.
+
 - Measured references move one for one. `automate-lanes.sh` 34 = entry 10 + common 1 + create 2 + launch 5 + notify-guards 2 + park-leaks 1 + relay 7 + remove 4 + status 2. `test-automate-lanes.sh` 44 measured = runner 5 + 01 23 + 02 3 + 03 5 + 04 8. `automate-trail.sh` 1 = `automate-trail.d/sweep.sh` 1. `test-automate-trail.sh` 6 = runner 1 + 04-watcher-branch-mode 4 + 06-sweep 1. Each new path has the reason `moved by automate-speed/19 split — no reference added`. `schema_version` and every key other than `allowances` / `allowance_reasons` are unchanged.
 - Deviation from AC9's "(46)" (accepted owner decision, Phase 3 adjudication): base `test-automate-lanes.sh` was 2 below its allowance of 46 (measured 44, "debt paid down"). The allowances move at the measured 44, so the 2 units of headroom are dropped rather than carried into a part.
 - Accepted owner decision (Phase 3 adjudication): the reference total goes from 2676 to 2677, and the allowance sum from 2699 to 2698. The +1 is not a moved reference: `test-automate-lanes-modules.sh` (new in subtask 1) feeds the Stop hook a payload with the continuation flag (`hook_protocol=1`). Its allowance carries its own "a NEW reference, not a moved one" reason. Net allowance change: −2 headroom + 1 new = −1.
+- Merged tree (`ef57b60`, `check-vendor-coupling.sh` re-run): 2679 refs, 0 breaches, allowance sum 2700 (base `e232771`: 2678 refs, allowance sum 2699). The merge brought in the AM leg's 2 references (`ask_user=1 hook_protocol=1`), which now sit in `05-timeline-and-gate.sh` with an allowance of 2, so the lanes test files measure 46 = runner 5 + 01 23 + 02 3 + 03 5 + 04 8 + 05 2, equal to main's allowance of 46. The 2 units of dropped headroom above no longer apply: net allowance change against `e232771` is +1, the new `test-automate-lanes-modules.sh` reference only. `automate-lanes.sh`'s 34 is unchanged.
 
 ## 6. Running-system check (AC11)
+
+Run on `d588537`, before the merge; not re-run on the merged tree, although the merge added 7 hunks to `status-read.sh` (§9). The base-vs-branch byte-identity below holds for the pre-merge pair only.
 
 Input: the real parent run file `.supervisor/automate/automate-2026-10-14-041009.md` in the primary checkout (2 lanes, 1 merged wave). All runs use that checkout as cwd, back to back. Script: `ac11b.sh` in the session scratchpad.
 
@@ -159,7 +166,7 @@ rc=0
 
 ## 7. Prose citations of moved code (AC12, AC13)
 
-Command: `git grep -nE 'automate-(lanes|trail)\.sh' -- '*.md' ':!CHANGELOG.md' ':!docs/evidence/*'` (script: a line counts when it also names a function now defined in a `.d` module, or says header / comment block). citing-lines=332 with-moved-function=116 header-or-comment-cites=44.
+Command: `git grep -nE 'automate-(lanes|trail)\.sh' -- '*.md' ':!CHANGELOG.md' ':!docs/evidence/*'` (script: a line counts when it also names a function now defined in a `.d` module, or says header / comment block). Re-run on the merged tree (`ef57b60`): citing-lines=333 with-moved-function=117 header-or-comment-cites=44. The pre-merge run counted 332 / 116 / 44; the +1 is `per-item-loop.md:18`, whose `_lanes_timeline` mention came in with `origin/main` (`3a62900`, `8092cd0`). Every other row below still resolves at the same line on the merged tree.
 
 Resolution rule: `named` = the function's name appears in the entry point's `# Modules` map; `range` = the map gives its module as a `first … last` range in base order (the function sits between them in that module). `[header]` = the line points at a header or comment block.
 
@@ -240,6 +247,7 @@ Resolution rule: `named` = the function's name appears in the entry point's `# M
 | `loomwright/skills/automate-loop/lanes.md:61` | closeout → automate-trail.d/closeout.sh(named) |
 | `loomwright/skills/automate-loop/lanes.md:65` | closeout → automate-trail.d/closeout.sh(named) [header] |
 | `loomwright/skills/automate-loop/lanes.md:78` | closeout → automate-trail.d/closeout.sh(named) |
+| `loomwright/skills/automate-loop/per-item-loop.md:18` | _lanes_timeline → automate-lanes.d/status-read.sh(range) |
 | `loomwright/skills/automate-loop/per-item-loop.md:25` |  [header] |
 | `loomwright/skills/automate-loop/per-item-loop.md:107` | _run_lock_in → automate-trail.d/closeout.sh(named) closeout → automate-trail.d/closeout.sh(named) |
 | `loomwright/skills/automate-loop/per-item-loop.md:123` | closeout → automate-trail.d/closeout.sh(named) |
@@ -263,7 +271,7 @@ Re-scan for other consumers: `git grep -nE 'automate-(lanes|trail)\.sh' -- 'loom
 
 ## 9. Re-based onto `e232771` (PRs #572, #574)
 
-`origin/main` moved to `e232771` after the split was cut: #572 and #574 edited the old monoliths `automate-lanes.sh` and `test-automate-lanes.sh`. They were merged in with a regular merge commit (no rebase). §1 to §8 above record the split against `051553e` and are kept as measured. The module tests' base pin is now `e232771` (`BASE_SHA` in `test-automate-lanes-modules.sh`, `BASE` in `test-automate-trail-modules.sh`; `automate-trail.sh` is byte-identical at both shas).
+`origin/main` moved to `e232771` after the split was cut: #572 and #574 edited the old monoliths `automate-lanes.sh` and `test-automate-lanes.sh`. They were merged in with a regular merge commit (no rebase). §1, §3 to §6 and §8 above record the split against `051553e` and are kept as measured, with the merge-changed figures labelled; §2 and §7 are regenerated on the merged tree. The module tests' base pin is now `e232771` (`BASE_SHA` in `test-automate-lanes-modules.sh`, `BASE` in `test-automate-trail-modules.sh`; `automate-trail.sh` is byte-identical at both shas).
 
 Port, hunk by hunk and verbatim. Each `git diff -U0 051553e e232771` hunk went to the file that holds its base lines. No hunk sat on a module boundary.
 - `automate-lanes.sh`: 2 header hunks went to the entry point (371 → 378 lines), 3 to `automate-lanes.d/common.sh` (194 → 247; new `_lanes_pending_questions`, `_lanes_supersede_older`, `_lanes_superseded_by`, `_lanes_superseded_msg`), 4 to `relay.sh` (248 → 250) and 7 to `status-read.sh` (740 → 752, now the largest module, under 800). AC3 holds: the stripped bundle equals `git show e232771:loomwright/scripts/automate-lanes.sh` byte-for-byte.
