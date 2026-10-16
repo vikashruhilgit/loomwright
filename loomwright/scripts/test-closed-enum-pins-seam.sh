@@ -191,8 +191,10 @@ SHOWN="$(grep -F -- '> Sibling grep at base' "$FIX/brief-complete.md" | head -1)
 bhas "$SHOWN" "grep -rnF 'rules_gate_unresolved' --exclude=CHANGELOG.md loomwright" && ok "complete: shows its sibling grep" \
   || no "complete: sibling grep line"
 # The fixtures and this test name the sibling too; at the fixture's notional base they did not exist.
+# docs/loop-inventory/ (AS-04) quotes the authoritative prose verbatim — a derived restatement, like
+# CHANGELOG.md, not a site that implements the enum — and also post-dates the fixture's base.
 HITS="$(cd "$REPO" && grep -rlF 'rules_gate_unresolved' --exclude=CHANGELOG.md --exclude-dir=closed-enum-pins \
-  --exclude=test-closed-enum-pins-seam.sh loomwright 2>/dev/null | sort -u)"
+  --exclude-dir=loop-inventory --exclude=test-closed-enum-pins-seam.sh loomwright 2>/dev/null | sort -u)"
 LISTED="$(block "$FIX/brief-complete.md" '^## Closed enumerations touched$' '^## Pin mutations$' \
   | sed -n 's/^  - `\([^`]*\)` — .*/\1/p' | sort -u)"
 [ -n "$HITS" ] && [ "$HITS" = "$LISTED" ] && ok "complete: listed files == the sibling grep's hit files" \

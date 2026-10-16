@@ -1,0 +1,6 @@
+run: automate-2026-08-06-175851
+lines: title, Source, Run Config, the first three Queue rows, its `17:59 picked` and `21:10 ran /autonomous -> PR #126`
+lines (the run's pre-ISO timestamp format, kept verbatim); the drain ESCALATED on required-check runner starvation.
+gap: that run predates current-set/current-escalation and recorded the park in prose (its 16:55 line); the owned_drain
+timestamp and the PR URL/branch are reconstructed from its lines (#126). Cause `check_red_unrelated` is what
+escalation-cause would answer for a red required check unrelated to the diff (not run: needs gh run logs).

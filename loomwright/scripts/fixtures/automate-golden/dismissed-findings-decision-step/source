@@ -1,0 +1,8 @@
+run: automate-2026-10-08-033739-L2
+lines: the lane run file (title, Source, Run Config, one-row Queue, ## Current at the drain, Progress through
+"drain READY (converged, 0 fix cycles, 1 finding dismissed …)"); its own on-disk supervisor-result and
+review-heal-result sidecars; its requirement file as it read before the abandon (## Status: pending).
+The owner's answer is the real ledger row `…--dismissed-7de02129.md follow-up` (fixed input).
+gap: lane.json is reconstructed (run_id/lane/parent_run_id only — the lane clone is gone). The real run predates
+the `owner decisions (dismissed)` batch line and `pending_decisions` rewrite; both are written as the prose orders.
+Mutation leg M3 targets this case (dismissed-decide's `dismissed: <decision>` Progress prefix).

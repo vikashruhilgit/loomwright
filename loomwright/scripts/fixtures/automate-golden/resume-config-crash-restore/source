@@ -1,0 +1,4 @@
+run: automate-2026-10-13-181331
+lines: the run mid-RUN of 39b (auto_review suppressed line, no restored line) — the tick died; the config backup
+sidecar named in ## Run Config is still on disk (the original config had no auto_review key).
+gap: no real run stranded a backup; the config bytes are a placeholder holding a repo_allowlist only.

@@ -1,0 +1,5 @@
+run: automate-2026-10-13-181331
+lines: header, Queue, the 39b item's Progress through `ran /autonomous` (2026-10-14T11:02:26Z).
+gap: the real run had `## Current` set when its drain started; here `## Current` is the never-set
+null line (the lane w1-10 shape the guard exists for) so the step pins the guard: the line IS appended,
+`current_not_set:` goes to stderr, exit 3. Mutation leg M1 targets this case.

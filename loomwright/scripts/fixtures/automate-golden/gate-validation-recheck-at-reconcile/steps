@@ -1,0 +1,3 @@
+validation-gate "$RF" .supervisor/requirements/twin-remediation/08b-single-lane-sequential.md https://github.com/vikashruhilgit/loomwright/pull/548
+loop: bash "$H" progress-append "$RF" "$(cat "$PREV")"
+current-set "$RF" --item .supervisor/requirements/twin-remediation/08b-single-lane-sequential.md --status awaiting_merge --pr https://github.com/vikashruhilgit/loomwright/pull/548 --branch feature/tr08b-single-lane-sequential --pause-reason awaiting_merge

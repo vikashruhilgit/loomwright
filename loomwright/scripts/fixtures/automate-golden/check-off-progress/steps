@@ -1,0 +1,2 @@
+remaining "$RF"
+loop: bash "$H" progress-append "$RF" "2026-10-15T10:50:07Z checked off .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md — merged https://github.com/vikashruhilgit/loomwright/pull/555; remaining: $(cat "$PREV")"

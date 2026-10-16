@@ -1,0 +1,18 @@
+$ queue-checkoff "$RF" .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md
+= 0
+$ remaining "$RF"
+0
+= 0
+$ loop: sed 's/^## Status: running$/## Status: done/' "$RF" | bash "$H" runfile-write "$RF"
+= 0
+$ trail-pr "$RF" --reason done
+trail-pr: opened https://github.com/vikashruhilgit/loomwright/pull/560
+= 0
+$ loop: bash "$H" progress-append "$RF" "2026-10-15T11:00:00Z $(cat "$PREV")"
+= 0
+$ sweep --root "$ROOT"
+sweep: kept branch main — current branch of the primary
+sweep: summary — dry run: 0 would-remove, 1 kept (0 worktree(s), 1 branch(es) examined)
+= 0
+$ loop: bash "$H" progress-append "$RF" "2026-10-15T11:00:01Z sweep (dry run): $(grep '^sweep: summary — ' "$PREV" | tail -n 1)"
+= 0

@@ -1,0 +1,6 @@
+run: automate-2026-10-13-181331
+lines: item 39a parked awaiting_merge, as park-first-decisions-recorded. The owner answers Fix now on the
+per-finding draft (fixed input); both gate reads see OPEN; the re-drain's start/terminal lines use the pinned
+shapes with the real READY head 953c2d1bbf14.
+gap: 39a had no fix-now. The fix-now flow is from automate-2026-10-01-142337 (legacy wording, before the pinned
+lines); the re-drain sidecar is not rewritten here, so --after-fix-now finds the fixed finding re-dismissed.

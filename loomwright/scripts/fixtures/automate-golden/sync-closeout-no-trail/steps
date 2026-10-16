@@ -1,0 +1,2 @@
+closeout "$RF" .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md https://github.com/vikashruhilgit/loomwright/pull/555 --no-trail --session-id auto-2026-10-15-040641
+closeout-classify --run automate-2026-10-13-181331 --item .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md --pr https://github.com/vikashruhilgit/loomwright/pull/555 --record "$RF" < "$PREV"

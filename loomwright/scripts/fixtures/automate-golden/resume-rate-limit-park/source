@@ -1,0 +1,4 @@
+run: automate-2026-10-12-181635-L1
+lines: as rate-limit-park, with that case's park applied (status rate_limit, pr null).
+gap: no real run resumed a rate_limit park (see rate-limit-park); the resume replays §4 step 6: current-rebuild
+is a no-op, reconcile has no PR, and continue re-picks the SAME item at §6 step 1.

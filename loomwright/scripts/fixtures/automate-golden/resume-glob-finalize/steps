@@ -1,0 +1,2 @@
+resume-glob "$AD" --finalize
+resume-glob "$AD"

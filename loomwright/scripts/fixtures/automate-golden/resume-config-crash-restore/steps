@@ -1,0 +1,2 @@
+config-restore "$ROOT/.supervisor/config.json" "$AD/automate-2026-10-13-181331.config-backup.json"
+loop: cat "$ROOT/.supervisor/config.json"; ls "$AD"

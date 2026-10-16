@@ -1,0 +1,16 @@
+$ dismissed-cost "$RF"
+fix_now_cost: ≈ 1h06m (default: loomwright's own 2026-10 baseline; no fix-now re-drain recorded here yet — median of 6 fix-now re-drains 2026-09-30 → 10-08, range 14m–2h53m)
+= 0
+$ loop: bash "$H" progress-append "$RF" "2026-10-15T10:19:53Z owner decisions (dismissed): 0 fix-now, 2 follow-up, 0 drop (est. fix_now_cost ≈ $(sed -n 's/^fix_now_cost: ≈ \([^ ]*\) .*/\1/p' "$PREV"), n=default)"
+= 0
+$ dismissed-decide "$RF" "$ROOT/.supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md" follow-up
+dismissed-decide: follow-up automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md
+= 0
+$ dismissed-decide "$RF" "$ROOT/.supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md" follow-up
+dismissed-decide: follow-up automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md
+= 0
+$ dismissed-pending "$RF"
+0
+= 0
+$ loop: awk -v n='- pending_decisions: 0 | fix_now_reentered: false' 'index($0, "- pending_decisions:")==1 && !d {print n; d=1; next} {print}' "$RF" | bash "$H" runfile-write "$RF"
+= 0

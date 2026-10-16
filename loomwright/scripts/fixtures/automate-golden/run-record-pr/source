@@ -1,0 +1,5 @@
+run: automate-2026-10-13-181331
+lines: header, Queue, the 39b PICK; steps replay the real 2026-10-14T11:02 RUN return (session_id, the
+current-set that records PR #542, the `ran /autonomous` line) and the write-time sidecar-check on the run's
+on-disk supervisor-result sidecar (written for item 39a).
+gap: the real run appended the `sidecar-check: ok` line; the prose appends only `fail …` (Findings).

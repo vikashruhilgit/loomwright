@@ -1,0 +1,8 @@
+run: automate-2026-10-13-181331
+lines: header, Queue, ## Current for 39b (PR #542), Progress through `ran /autonomous`; the drain
+start/round/READY lines are the real 2026-10-14T11:03:15Z..11:19:56Z lines; the review-heal sidecar is the
+run's on-disk sidecar (written for item 39a — the sidecar is transient, overwritten per item).
+gap: the real run also progress-appended `sidecar-check: ok …`; the prose appends only a `fail …` line —
+recorded under Findings.
+edit: the real drain-round line names a session environment variable; it reads "session-pid 0/1 guard" here so
+the fixture carries no harness token (vendor-coupling ratchet).

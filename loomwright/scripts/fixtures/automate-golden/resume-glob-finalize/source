@@ -1,0 +1,4 @@
+run: automate-2026-10-13-181331
+lines: this run paused awaiting_merge on 39a (ineligible for finalize); beside it the run's two result sidecars
+(no `## Status:` line) and a finished lane run file (automate-2026-10-08-033739-L2, `## Status: done`).
+gap: none — the glob/finalize answer is read-only for every file here.

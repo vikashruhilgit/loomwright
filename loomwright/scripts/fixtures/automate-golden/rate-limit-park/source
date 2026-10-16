@@ -1,0 +1,6 @@
+run: automate-2026-10-12-181635-L1
+lines: the lane run file's header, one-row Queue and its Progress through the 12:50:34Z PICK.
+gap: this is the only real run with a main-scope rate-limit row (15:21Z) after `picked`, but RUN resumed
+and produced PR #502, so it was NOT parked (its Progress says so). No real run holds the park; the steps
+write the prose's park (`current-set --status rate_limit --pause-reason rate_limit`, `## Status: paused`, one
+rate-limited line) at that row's time. Recorded under Findings.

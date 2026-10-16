@@ -1,0 +1,17 @@
+$ dismissed-drafts "$RF" .supervisor/requirements/twin-loop/01-commit-the-distilled-twin.md https://github.com/vikashruhilgit/loomwright/pull/126
+dismissed-drafts: no automate-2026-08-06-175851.supervisor-result.md — skipped
+dismissed-drafts: no automate-2026-08-06-175851.review-heal-result.md — skipped
+dismissed-drafts: 0 per-finding + 0 summary (0 listed in summary)
+= 0
+$ loop: bash "$H" progress-append "$RF" "$(tail -n 1 "$PREV")"
+= 0
+$ loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
+= 0
+$ current-set "$RF" --item .supervisor/requirements/twin-loop/01-commit-the-distilled-twin.md --status escalated --pause-reason escalated
+current-set: written
+= 0
+$ current-escalation "$RF" --cause check_red_unrelated --check ci --sha 247e203
+current-escalation: written
+= 0
+$ progress-append "$RF" "2026-08-06T22:40:00Z owned drain ESCALATED (pause_reason: escalated) — required check ci cannot execute (runner starvation); merge watcher armed"
+= 0

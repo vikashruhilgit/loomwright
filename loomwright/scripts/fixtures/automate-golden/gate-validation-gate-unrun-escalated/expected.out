@@ -1,0 +1,22 @@
+$ validation-gate "$RF" .supervisor/requirements/twin-remediation/08b-single-lane-sequential.md https://github.com/vikashruhilgit/loomwright/pull/548
+validation-gate: unrun — V2 Running system: one real `--parallel 1` run of a trivial ite: listed under a "Not verified" / "Not run" heading in the PR body
+= 0
+$ loop: cp "$PREV" "$ROOT/.gate.line"; bash "$H" progress-append "$RF" "$(cat "$PREV")"
+= 0
+$ dismissed-drafts "$RF" .supervisor/requirements/twin-remediation/08b-single-lane-sequential.md https://github.com/vikashruhilgit/loomwright/pull/548
+dismissed-drafts: no automate-2026-10-13-181331.supervisor-result.md — skipped
+dismissed-drafts: no automate-2026-10-13-181331.review-heal-result.md — skipped
+dismissed-drafts: 0 per-finding + 0 summary (0 listed in summary)
+= 0
+$ loop: bash "$H" progress-append "$RF" "$(tail -n 1 "$PREV")"
+= 0
+$ loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"
+= 0
+$ current-set "$RF" --item .supervisor/requirements/twin-remediation/08b-single-lane-sequential.md --status escalated --pause-reason escalated
+current-set: written
+= 0
+$ loop: c="$(sed -n 's/^validation-gate: unrun — \(V[0-9][0-9]* [^:]*\): .*/\1/p' "$ROOT/.gate.line")"; bash "$H" current-escalation "$RF" --cause validation_unrun --check "$c" --sha 06ce6f59617b3b515a1950dbeb8b13630b54525c
+current-escalation: written
+= 0
+$ progress-append "$RF" "2026-10-15T02:39:08Z parked escalated https://github.com/vikashruhilgit/loomwright/pull/548 — validation_unrun"
+= 0

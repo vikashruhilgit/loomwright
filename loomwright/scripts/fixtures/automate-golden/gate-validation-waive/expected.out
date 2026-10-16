@@ -1,0 +1,11 @@
+$ validation-gate "$RF" .supervisor/requirements/automate-speed/01-question-gates-dont-stall.md https://github.com/vikashruhilgit/loomwright/pull/537
+validation-gate: unrun — V3 Running system: one real `/automate --backlog` run in this r: no evidence in the PR body
+= 0
+$ validation-gate "$RF" .supervisor/requirements/automate-speed/01-question-gates-dont-stall.md https://github.com/vikashruhilgit/loomwright/pull/537 --waive 3 --words 'V3 needs the released plugin (park-then-ask exists only in this PR); lane runs installed 17.0.2. CI + claude-review green at 8f8a52d. Run V3 on the first /automate --backlog after release.'
+validation-gate: waiver recorded — V3 Running system: one real `/automate --backlog` run in this r
+= 0
+$ validation-gate "$RF" .supervisor/requirements/automate-speed/01-question-gates-dont-stall.md https://github.com/vikashruhilgit/loomwright/pull/537
+validation-gate: waived — V3 Running system: one real `/automate --backlog` run in this r
+= 0
+$ loop: bash "$H" progress-append "$RF" "$(cat "$PREV")"
+= 0

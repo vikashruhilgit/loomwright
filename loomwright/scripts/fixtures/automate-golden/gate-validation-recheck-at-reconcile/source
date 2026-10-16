@@ -1,0 +1,6 @@
+run: automate-2026-10-13-181331
+lines: item 08b parked escalated with `escalation_cause: validation_unrun` (the gate-validation-gate-unrun-escalated
+end state); the owner then pasted V2's fenced output into the PR body (validation 2 + a fence). `--resume`'s
+RECONCILE re-runs the read-only gate and writes the READY park through the item form of current-set.
+gap: the real owner merged instead; the pasted evidence is a placeholder fence.
+neutralised: harness-runtime path/hook/CLI tokens in the tree/ requirement and job prose (no helper reads those lines) were rewritten (`.app-harness/`, `<harness> -p`, `Subagent-stop`) so the committed fixtures pass check-vendor-coupling.

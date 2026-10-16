@@ -1,0 +1,6 @@
+run: automate-2026-10-13-181331
+lines: header, Queue, ## Current and Progress of item 39b parked awaiting_merge (PR #542); the in-progress
+brief is .supervisor/jobs/done/2026-10-14-af39b-run-lock-holder.md's pointer line, placed back in
+in-progress/ so the repair has something to move.
+gap: the real close-out printed `brief-repair: skipped — no in-progress brief matches …` (Supervisor had
+already moved the brief); this case pins the repairing branch.

@@ -1,0 +1,4 @@
+run: automate-2026-10-13-181331
+lines: item 39a after the SYNC close-out of sync-closeout-no-trail (Queue row checked, ## Current done/null);
+step 6 finds the row already `- [x]` and only appends its Progress line.
+gap: no real auto-merge run in this repo checked off after SYNC; the line text is the loop's (prose pins none).

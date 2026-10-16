@@ -1,0 +1,8 @@
+{
+  "drain_result": "READY",
+  "termination_reason": "converged",
+  "ready_sha": "eb0e123e1584184cca438b53ed5145da79825acc",
+  "trust_unprotected": false,
+  "review_heal_result_path": ".supervisor/automate/automate-2026-10-13-181331.review-heal-result.md",
+  "supervisor_result_path": ".supervisor/automate/automate-2026-10-13-181331.supervisor-result.md"
+}

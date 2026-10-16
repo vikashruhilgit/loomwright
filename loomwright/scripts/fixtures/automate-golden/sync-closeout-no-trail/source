@@ -1,0 +1,6 @@
+run: automate-2026-10-13-181331
+lines: header in `--auto-merge` mode, Queue, ## Current and Progress of item 39a through `validation-gate: ok`;
+the real requirement file (before its stamp) and the real done brief .supervisor/jobs/done/2026-10-15-af39a-sweep.md.
+gap: the real run was safe mode (the owner merged #555 and the watcher's closeout ran); this replays §6 step 5 SYNC
+after a gate-eval MERGE: `closeout … --no-trail --session-id`, classified through the close-out leftover gate.
+neutralised: harness-runtime path/hook/CLI tokens in the tree/ requirement and job prose (no helper reads those lines) were rewritten (`.app-harness/`, `<harness> -p`, `Subagent-stop`) so the committed fixtures pass check-vendor-coupling.

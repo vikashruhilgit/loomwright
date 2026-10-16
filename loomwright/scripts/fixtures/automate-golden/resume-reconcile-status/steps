@@ -1,0 +1,2 @@
+reconcile-status "$ROOT/.supervisor/requirements"
+loop: tab="$(printf '\t')"; grep '^plan' "$PREV" | while IFS="$tab" read -r k f st ev; do bash "$H" progress-append "$RF" "reconcile-status: would stamp $f (${st%% (*})"; done
