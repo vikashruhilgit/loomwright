@@ -2871,6 +2871,71 @@ check "AJ8 an undated running Supervisor state still names the phase (no time in
 check "AJ8b … but only while the lane runs" "$(ajt stalled | jq -r '"\(.current)|\(.steps[1].state)"')" "plan|trouble"
 check "AJ8c a lane removed unfinished stops (held), it did not fail; abandoned still reads trouble" \
   "$(ajt removed | jq -r '.steps[1].state')|$(ajt abandoned | jq -r '.steps[1].state')" "held|trouble"
+# AJ8d–AJ8m: the real Supervisor phase (run automate-2026-10-15-163325, 2026-10-16: L8 and L9 sat in Phase 4.5
+# with PRs #577 / #575 open while the timeline read "Build · EXECUTE" for hours). build-state.sh projects
+# `phase:` from subtask_complete / session_end only, so it reads EXECUTE through FINALIZE and Phase 4.5, and the
+# canonical Decisions Log is a TABLE with no timestamp (the `- phase: … timestamp:` bullets above are the only
+# shape the timeline read). Fixtures below are the canonical shapes, copied from those lanes' state.md:
+# `- last_checkpoint:` (no `created:`), so only the undated-live branch trusts the state.
+AJSID=sess-aj8; AJLOG="$AJ/lane/.supervisor/logs/$AJSID.jsonl"; mkdir -p "$AJ/lane/.supervisor/logs"
+aj_state() { # <table rows (| n | PHASE | decision | why |) …> — a canonical state.md, phase EXECUTE, status running
+  { printf '# State Log\n\n## Session\n- session_id: %s\n- branch: feature/x\n- status: running\n- phase: EXECUTE\n\n## Decisions Log\n| # | Phase | Decision | Rationale |\n|---|-------|----------|-----------|\n' "$AJSID"
+    printf '%s\n' "$@"; printf '\n## Checkpoint\n- last_checkpoint: 2026-10-11 (time not captured)\n- current_phase: INIT\n'; } > "$AJSM"; }
+aj_log() { # <pr_created ts|-> — the session log: two subtask_complete + (optionally) the hook's pr_created
+  { printf '{"event":"subtask_complete","ts":"2026-10-11T08:40:00Z","session_id":"%s"}\n' "$AJSID"
+    printf '{"event":"agent_lifecycle","state":"working","ts":"2026-10-11T08:41:00Z"}\nnot json\n'
+    [ "$1" = - ] || printf '{"event":"pr_created","ts":"%s","url":"https://x/pull/7","session_id":"%s"}\n' "$1" "$AJSID"; } > "$AJLOG"; }
+ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md' '- 2026-10-11T08:20:00Z launch-pad: brief saved .supervisor/jobs/pending/x.md'
+AJ8_GOT='"\(.current)|\(.label)|\(.steps[2].state)|\(.steps[2].ended_at)|\(.steps[3].state)|\(.steps[3].started_at)|\(.phase)"'
+aj_state '| 1 | INIT | guard_armed: ok | none |' '| 2 | EXECUTE | subtasks merged | r |' \
+  '| 3 | SELF_HEAL | brief_conformance: non-empty | 9 ACs |' '| 4 | SELF_HEAL | fix iteration 1 | review FAIL, fixed |'
+aj_log 2026-10-11T09:00:00Z
+check "AJ8d L9's shape (phase EXECUTE, SELF_HEAL table rows, PR opened) ⇒ Heal current from the PR's time, Build done; phase stays the recorded one" \
+  "$(ajt running | jq -r "$AJ8_GOT")" "heal|Heal|done|2026-10-11T09:00:00Z|active|2026-10-11T09:00:00Z|EXECUTE"
+has "AJ8d2 … Heal lists the PR line and the SELF_HEAL decisions" "$(ajt running | jq -r '.steps[3].lines | join(" / ")')" \
+  "Supervisor opened the PR https://x/pull/7 — Phase 4.5 / Supervisor SELF_HEAL: brief_conformance: non-empty / Supervisor SELF_HEAL: fix iteration 1"
+aj_state '| 1 | INIT | guard_armed: ok | none |' '| 2 | EXECUTE | subtask3 requeued | r |'
+check "AJ8e L8's shape (no SELF_HEAL row yet, PR opened) ⇒ Heal by the PR alone" "$(ajt running | jq -r "$AJ8_GOT")" \
+  "heal|Heal|done|2026-10-11T09:00:00Z|active|2026-10-11T09:00:00Z|EXECUTE"
+aj_state '| 1 | INIT | guard_armed: ok | none |' '| 2 | SELF_HEAL | fix iteration 1 | r |'; aj_log -
+check "AJ8f SELF_HEAL table rows alone (no PR event) ⇒ Heal reached, no time invented" \
+  "$(ajt running | jq -r '"\(.current)|\(.steps[3].started_at)|\(.steps[2].state)"')" "heal|null|done"
+check "AJ8g … table rows are trusted like phase: not once the lane stopped (Build from the saved brief, never Heal)" "$(ajt stalled | jq -r .current)" build
+aj_state '| 1 | INIT | guard_armed: ok | none |' '| 2 | EXECUTE | r | r |'; aj_log 2026-10-11T07:30:00Z
+check "AJ8h a pr_created before the pick (the previous item's session) never counts" "$(ajt running | jq -r '"\(.current)|\(.label)"')" "build|Build · EXECUTE"
+aj_log 2026-10-11T09:00:00Z
+check "AJ8i a dated PR event stands without the live predicate: a stalled lane past its PR is in trouble at Heal" \
+  "$(ajt stalled | jq -r '"\(.current)|\(.steps[3].state)"')" "heal|trouble"
+# AJ8j: the only dated Build line is retrospective (`ran /autonomous → PR`, written once /autonomous returned,
+# after the PR that started Heal) ⇒ Build has no known start, never one later than its end.
+ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md' \
+  '- 2026-10-11T09:30:00Z ran /autonomous → PR https://x/pull/7 (SUPERVISOR_RESULT completed; heal PASS iter 1)' '- 2026-10-11T09:31:00Z owned drain started'
+AJ8J_GOT='"\(.steps[2].started_at)|\(.steps[2].ended_at)|\(.steps[3].started_at)|\(.steps[3].ended_at)"'
+check "AJ8j a retrospective Build line after the PR ⇒ Build started_at null, ended at the PR; Heal from the PR to the drain" \
+  "$(ajt running | jq -r "$AJ8J_GOT")" "null|2026-10-11T09:00:00Z|2026-10-11T09:00:00Z|2026-10-11T09:31:00Z"
+# Mutation controls: each evidence source removed turns its leg red.
+ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md' '- 2026-10-11T08:20:00Z launch-pad: brief saved .supervisor/jobs/pending/x.md'
+aj_state '| 1 | INIT | guard_armed: ok | none |' '| 2 | EXECUTE | subtask3 requeued | r |'; aj_log 2026-10-11T09:00:00Z
+ajm() { ( . "$1"; _lanes_timeline "$AJRF" "$AJ/lane/.supervisor" "$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')" "${2:-running}" - ); }
+sed 's/select(.event? == "pr_created")/select(.event? == "pr_created_off")/' "$S" > "$MUT/lanes-aj8.sh"
+if ! cmp -s "$S" "$MUT/lanes-aj8.sh" && bash -n "$MUT/lanes-aj8.sh"; then
+  check "AJ8k mutation (pr_created not read) turns AJ8e red: L8 reads Build · EXECUTE again" "$(ajm "$MUT/lanes-aj8.sh" | jq -r '"\(.current)|\(.label)"')" "build|Build · EXECUTE"
+else bad "AJ8k mutation did not apply (the pr_created reader moved)"; fi
+aj_state '| 1 | INIT | guard_armed: ok | none |' '| 2 | SELF_HEAL | fix iteration 1 | r |'; aj_log -
+sed 's/printf "T\\t%s\\t%s\\n", ph, d }/}/' "$S" > "$MUT/lanes-aj8.sh"
+if ! cmp -s "$S" "$MUT/lanes-aj8.sh" && bash -n "$MUT/lanes-aj8.sh"; then
+  check "AJ8l mutation (table rows not read) turns AJ8f red: Build · EXECUTE" "$(ajm "$MUT/lanes-aj8.sh" | jq -r '"\(.current)|\(.label)"')" "build|Build · EXECUTE"
+else bad "AJ8l mutation did not apply (the table-row reader moved)"; fi
+ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md' \
+  '- 2026-10-11T09:30:00Z ran /autonomous → PR https://x/pull/7 (SUPERVISOR_RESULT completed; heal PASS iter 1)' '- 2026-10-11T09:31:00Z owned drain started'
+aj_state '| 1 | INIT | guard_armed: ok | none |'; aj_log 2026-10-11T09:00:00Z
+sed 's/(if \$b0 != null and \$end != null and \$b0 > \$end then null else \$b0 end) as \$b/$b0 as $b/' "$S" > "$MUT/lanes-aj8.sh"
+if ! cmp -s "$S" "$MUT/lanes-aj8.sh" && bash -n "$MUT/lanes-aj8.sh"; then
+  check "AJ8m mutation (no retrospective-start guard) turns AJ8j red: Build starts after it ended" \
+    "$(ajm "$MUT/lanes-aj8.sh" | jq -r "$AJ8J_GOT")" "2026-10-11T09:30:00Z|2026-10-11T09:00:00Z|2026-10-11T09:00:00Z|2026-10-11T09:31:00Z"
+else bad "AJ8m mutation did not apply (the start guard moved)"; fi
+rm -f "$MUT/lanes-aj8.sh" "$AJLOG"
+ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md'   # AJ9 reads the AJ6 run file
 rm -f "$AJSM"
 check "AJ9 a question ⇒ the current step waits on the owner" "$(ajt awaiting_input | jq -r '.steps[1].state')" waiting
 rm -f "$AJRF"
