@@ -286,7 +286,7 @@ surface_list() {
   {
     ( cd "$REPO" && grep -rn -- "$pat" loomwright/ | grep -viE "no |never |not " | cut -d: -f1 ) \
       | grep -vxF loomwright/scripts/automate-next-step.sh
-    if grep -n -- "$pat" "$drv" | grep -viE "no |never |not " | grep -q .; then echo loomwright/scripts/automate-next-step.sh; fi
+    if grep -q . < <(grep -n -- "$pat" "$drv" | grep -viE "no |never |not "); then echo loomwright/scripts/automate-next-step.sh; fi
   } | env LC_ALL=C sort -u
 }
 leg_surface() {
@@ -430,7 +430,7 @@ if new_scratch "$V3/fx"; then
      && grep -qF -- '- item: .supervisor/requirements/v3/01-scratch-item.md | status: awaiting_merge |' "$CASE_RF" \
      && grep -qE -- '^- [0-9TZ:-]+ parked awaiting_merge https://github.com/example/scratch/pull/7 — 0 dismissed decision\(s\) pending$' "$CASE_RF" \
      && grep -qxF "watch $CASE_RF .supervisor/requirements/v3/01-scratch-item.md https://github.com/example/scratch/pull/7" "$CASE_DIR/rec.log" \
-     && ! printf '%s' "$st_after" | grep -q "automate:$CASE_RUN"; then
+     && ! grep -q "automate:$CASE_RUN" <<<"$st_after"; then
     ok "V: one item's tail from a READY drain report to the awaiting_merge park (watcher armed, the real run lock released)"
   else
     no "V: tail run wrong (acquire $hrc, driver $vrc: $(head -n 3 "$V3/err" | tr '\n' ' '))"
@@ -497,7 +497,7 @@ drive "$FIX/dismissed-findings-decision-step" "$DRIVER" "$CASE_DIR/b5b.results";
 if [ -z "$b5err1$DRIVE_ERR" ] && printf '%s' "$spawn" | jq -e '.what == "fix-now re-drain" and (.findings | length) == 1' >/dev/null \
    && grep -qF -- 'owner decisions (dismissed): 1 fix-now, 0 follow-up, 0 drop' "$CASE_RF" \
    && grep -qxF -- '- pending_decisions: 0 | fix_now_reentered: true' "$CASE_RF" \
-   && grep -q . "$WORK/asks.b5" && ! cut -f2- "$WORK/asks.b5" | grep -qF 'Fix now on this PR'; then
+   && grep -q . "$WORK/asks.b5" && ! grep -qF 'Fix now on this PR' < <(cut -f2- "$WORK/asks.b5"); then
   ok "B5: fix-now ⇒ {do: spawn} ⇒ re-drain report ⇒ re-asked Follow-up/Drop only ⇒ re-park with fix_now_reentered: true"
 else no "B5: fix-now re-pass wrong: $b5err1 $DRIVE_ERR"; tail -n 6 "$CASE_RF" | sed 's/^/    /'; fi
 

@@ -470,7 +470,7 @@ ns_dismissed() {
     # a lane run's line carries its timestamp (the recorded lane shape); a sequential one is verbatim
     if [ "$(st lane)" = true ]; then ns_progress "$(ns_ts) $sum" || return 1; else ns_progress "$sum" || return 1; fi
   fi
-  if printf '%s\n' "$out" | grep -q "^draft$(printf '\t')" || [ -n "$PENDING_LINE" ]; then st_set drafts true; fi
+  if grep -q "^draft$(printf '\t')" <<<"$out" || [ -n "$PENDING_LINE" ]; then st_set drafts true; fi
   case "$(st order)" in
     merge)
       if [ "$(st drafts)" = true ]; then
