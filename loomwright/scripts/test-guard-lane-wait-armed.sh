@@ -224,7 +224,7 @@ if [ -r "$TABLE" ]; then ok "C6 SKIP — running as a user that ignores mode bit
 chmod 644 "$TABLE"
 
 # ---- E: mutation control — the session-id match is load-bearing ----------------------------------------
-MUT="$T/mut"; mkdir -p "$MUT"; cp "$S" "$MUT/"
+MUT="$T/mut"; mkdir -p "$MUT"; cp "$S" "$MUT/"; cp -R "$HERE/automate-lanes.d" "$MUT/"  # the entry sources its modules from beside it
 grep -v '\[ "\$LOCK_SID" = "\$SID" \] || allow' "$H" > "$MUT/guard-lane-wait-armed.sh"
 if ! cmp -s "$H" "$MUT/guard-lane-wait-armed.sh" && bash -n "$MUT/guard-lane-wait-armed.sh"; then ok "E0 mutant valid (differs, bash -n)"; else bad "E0 mutant invalid"; fi
 hook "$(pl sess-someone-else)"; check "E1 the real hook allows another session" "$OUT" "{}"
