@@ -110,7 +110,9 @@
 #      (F14–F19): self_heal_rounds + one self_heal_churn entry asserted through the REAL
 #      read-postmortem.sh output, a no-flag byte-identity pin against the base-commit
 #      helper, fail-safe normalization + the restated zero-rule, self-heal-before-drain
-#      ordering, key-unchanged idempotency, and a validated mutation control.
+#      ordering, key-unchanged idempotency, and a validated mutation control; PLUS (F20)
+#      a flag-first call (ledger path omitted: --repo / --run-id / --help / empty first
+#      arg) writes nothing in the cwd and prints ONE stderr usage line, with a mutation control.
 #   G. brief-repair (fail-SAFE evidence-positive engine seam, v15.65.0): MERGED ⇒
 #      the sibling reconcile-jobs.sh --repair --evidence moves the brief (AC-1/2/3/8),
 #      OPEN/CLOSED ⇒ skipped with the reconciler NOT invoked (AC-6), TEN separate
@@ -3448,6 +3450,62 @@ else
   no "self-heal-rounds mutation control: mutant invalid (empty / identical to original / bash -n failed / anchor not found)"
 fi
 rm -rf "$WD10"
+
+# F20. flag-first call (ledger path omitted) — the ledger path is the FIRST positional, so
+#      `learning-emit --repo …` used to append the line to a file literally named `--repo`
+#      in the cwd (seen in lane clones and the primary checkout: `--repo`, `--run-id`,
+#      `--help`). Each such call must exit 0, leave the cwd EMPTY, and print exactly ONE
+#      stderr line naming the expected call shape; a ledger-first call still appends one line.
+# le_flag_first_holds <helper> — 0 iff every flag-first/empty-ledger case holds.
+le_flag_first_holds() {
+  local helper="$1" c d err rc
+  for c in repo run-id help empty; do
+    d="$(mktemp -d)"
+    case "$c" in
+      repo)   err="$( cd "$d" && bash "$helper" learning-emit --repo acme/widgets --pr-url "$PR" --run-id run-ff --item item-ff 2>&1 >/dev/null )"; rc=$? ;;
+      run-id) err="$( cd "$d" && bash "$helper" learning-emit --run-id run-ff --repo acme/widgets --pr-url "$PR" --item item-ff 2>&1 >/dev/null )"; rc=$? ;;
+      help)   err="$( cd "$d" && bash "$helper" learning-emit --help 2>&1 >/dev/null )"; rc=$? ;;
+      empty)  err="$( cd "$d" && bash "$helper" learning-emit "" --repo acme/widgets --pr-url "$PR" --run-id run-ff --item item-ff 2>&1 >/dev/null )"; rc=$? ;;
+    esac
+    if [ "$rc" -ne 0 ] || [ -n "$(ls -A "$d")" ] \
+       || [ "$(printf '%s' "$err" | grep -c '')" != "1" ] \
+       || [ "$(printf '%s' "$err" | grep -cF 'learning-emit <ledger_path> --repo')" != "1" ]; then
+      LE_FF_WHY="case=$c rc=$rc cwd='$(ls -A "$d" | tr '\n' ' ')' stderr='$err'"
+      rm -rf "$d"; return 1
+    fi
+    rm -rf "$d"
+  done
+  return 0
+}
+LE_FF_WHY=""
+if le_flag_first_holds "$H"; then
+  ok "flag-first learning-emit (--repo / --run-id / --help / empty first arg): exit 0, cwd unchanged, ONE stderr usage line"
+else
+  no "flag-first learning-emit wrote or misreported ($LE_FF_WHY)"
+fi
+WD11="$(mktemp -d)"
+( cd "$WD11" && bash "$H" learning-emit results.jsonl --repo acme/widgets --pr-url "$PR" --run-id run-ff --item item-ff )
+if [ "$(ls -A "$WD11")" = "results.jsonl" ] && [ "$(wc -l < "$WD11/results.jsonl" | tr -d ' ')" = "1" ]; then
+  ok "ledger-first learning-emit still appends exactly ONE line (and nothing else in the cwd)"
+else
+  no "ledger-first learning-emit wrong (cwd='$(ls -A "$WD11" | tr '\n' ' ')')"
+fi
+rm -rf "$WD11"
+# Mutation control: a validated copy of the bundle whose refusal pattern can never match
+# must FAIL the predicate (else F20 is vacuous).
+WD12="$(mktemp -d)"; MUT="$WD12/automate-helpers.sh"
+sed "s/''|-\*)   # not a ledger path/__never__)   # not a ledger path/" "$H" > "$MUT"
+if [ -s "$MUT" ] && ! cmp -s "$H" "$MUT" && bash -n "$MUT" 2>/dev/null \
+   && [ "$(grep -c '__never__)   # not a ledger path' "$MUT")" = "1" ]; then
+  if le_flag_first_holds "$MUT"; then
+    no "flag-first mutation control: the predicate still PASSES with the refusal disabled (vacuous)"
+  else
+    ok "flag-first mutation control: a mutant with the refusal disabled FAILS the F20 predicate"
+  fi
+else
+  no "flag-first mutation control: mutant invalid (empty / identical to original / bash -n failed / anchor not found)"
+fi
+rm -rf "$WD12"
 
 # =============================================================================
 echo "== G. brief-repair (fail-SAFE, evidence-positive engine seam; ONE mover) =="
