@@ -1,7 +1,7 @@
 # ---- Z: Validation 4/5 fixes (parallel-automate/23) ---------------------------------------------------
 # Each leg fails against the pre-fix lane code at 91adff5 (identical to #426's head 8226dfe) and passes here.
 # Z-F5 lane-readiness writes its report when the Validation names no repro (empty erows / vrows)
-run lane-create "$RF" reqs/a.md 2 >/dev/null; LZ5="$LR/L2"; RDZ="$LZ5/.supervisor/automate/$PARENT-L2.merge-readiness.md"
+run lane-create "$RF" reqs/a.md 12 --parallel 2 >/dev/null; LZ5="$LR/L12"; RDZ="$LZ5/.supervisor/automate/$PARENT-L12.merge-readiness.md"
 out="$(LOOMWRIGHT_GH_BIN="$T/absent-gh" run lane-readiness "$LZ5")"; rc=$?
 check "Z-F5a no named repro (empty erows) ⇒ the report IS written" "$rc:$([ -f "$RDZ" ] && echo written || echo missing)" "0:written"
 has "Z-F5b … with the headline-repro n/a line" "$(cat "$RDZ" 2>/dev/null)" "headline-repro: PASS — n/a (the Validation names no repro)"
