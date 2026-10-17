@@ -1003,7 +1003,7 @@ ns_learning_emit() {
   del="$(printf '%s' "$view" | "$JQ" -r '.deletions // empty' 2>/dev/null)"
   cf="$(printf '%s' "$view" | "$JQ" -r '.changedFiles // empty' 2>/dev/null)"
   if [ -z "$paths" ] || ! ns_count_ok "$add" || ! ns_count_ok "$del" || ! ns_count_ok "$cf"; then paths='[]'; add=0; del=0; cf=0; fi
-  pv="$("$JQ" -r '.version // empty' "${CLAUDE_PLUGIN_ROOT:-$HERE/..}/.claude-plugin/plugin.json" 2>/dev/null)"
+  pv="$("$JQ" -r '.version // empty' "$HERE/../.claude-plugin/plugin.json" 2>/dev/null)"
   summ="drain ${dec:-unknown}${tr:+ $tr}"
   a=("$ROOT/.supervisor/postmortem/results.jsonl" --run-id "$RUN_ID" --item "$ITEM" --pr-url "$pr" --source automate_drain
      --repo "$repo" --number "$num" --branch "$BRANCH" --drain-result "$dec" --fix-cycles "${fc:-0}"

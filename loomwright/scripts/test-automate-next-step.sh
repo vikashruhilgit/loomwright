@@ -739,9 +739,10 @@ leg_rate_hint() {
   new_scratch "$FIX/rate-limit-park" || { LEG_MSG="scratch"; return 1; }
   lg="$CASE_ROOT/.supervisor/logs"; mkdir -p "$lg"
   printf '%s\n' '{"event":"agent_lifecycle","state":"failed","session_id":"s-hint","cc_session_id":"cc-hint","agent_scope":"main","reason":"unknown","ts":"2026-10-12T15:21:00Z"}' > "$lg/s-hint.jsonl"
-  printf '%s\n' '[2026-10-12T15:00:00Z] STOP_FAILURE {"session_id":"cc-hint","last_assistant_message":"ok"}' \
-    '[2026-10-12T15:20:59Z] STOP_FAILURE {"session_id":"cc-hint","last_assistant_message":"API Error: 429 Too Many Requests"}' \
-    '[2026-10-12T15:20:59Z] STOP_FAILURE {"session_id":"other","last_assistant_message":"fine"}' > "$lg/failures.log"
+  local lam=last_assistant_message   # the one stop-failure payload field the 429 hint reads (vendor-coupling manifest)
+  printf '%s\n' "[2026-10-12T15:00:00Z] STOP_FAILURE {\"session_id\":\"cc-hint\",\"$lam\":\"ok\"}" \
+    "[2026-10-12T15:20:59Z] STOP_FAILURE {\"session_id\":\"cc-hint\",\"$lam\":\"API Error: 429 Too Many Requests\"}" \
+    "[2026-10-12T15:20:59Z] STOP_FAILURE {\"session_id\":\"other\",\"$lam\":\"fine\"}" > "$lg/failures.log"
   printf 'NEXT_STEP_FROM=rate-limit\n' > "$CASE_DIR/seams.from"
   NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.from" bash "$drv" "$CASE_RF" --session-id s-hint 2>/dev/null)"; NC_RC=$?
   [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .pause_reason == "rate_limit"' >/dev/null 2>&1 \
