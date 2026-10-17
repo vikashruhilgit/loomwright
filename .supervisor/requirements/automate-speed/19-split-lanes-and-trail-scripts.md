@@ -55,3 +55,9 @@ loomwright/scripts/test-automate-trail.sh
 loomwright/scripts/automate-lanes.d/
 loomwright/scripts/automate-trail.d/
 changelog.d/as19-split-lanes-and-trail-scripts.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-17T03:47:06Z
+- **Brief:** .supervisor/jobs/done/2026-10-16-split-lanes-and-trail-scripts.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/577
