@@ -11,14 +11,13 @@ lanes_create() {
     esac
   done
   [ -n "$runfile" ] && [ -n "$item" ] && [ -n "$n" ] || die "usage: lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]"
-  # Single-lane mode (an EXPLICIT `--parallel 1` — never inferred from `par`, whose default is n) takes a
-  # fresh lane number per item, so its bound is 1..99; every other caller keeps 1..10.
-  if [ "$single" = 1 ]; then
-    case "$n" in [1-9]|[1-9][0-9]) ;; *) die "lane-create: lane number must be 1..99 in single-lane mode (got '$n')" ;; esac
-  else
-    case "$n" in [1-9]|10) ;; *) die "lane-create: lane number must be 1..10 (got '$n')" ;; esac
+  # The lane NUMBER is an identity across the whole run (waves and re-run lanes included), not the
+  # parallel count, so every caller takes 1..99 and a FRESH number (the table refusal below). Single-lane
+  # mode is an EXPLICIT `--parallel 1` — never inferred from `par`, whose default is n.
+  case "$n" in [1-9]|[1-9][0-9]) ;; *) die "lane-create: lane number must be 1..99 (got '$n')" ;; esac
+  if [ -z "$par" ]; then
+    case "$n" in [1-9]|10) par="$n" ;; *) die "lane-create: lane number $n needs an explicit --parallel N (the default N is the lane number)" ;; esac
   fi
-  [ -n "$par" ] || par="$n"
   case "$par" in [1-9]|10) ;; *) die "lane-create: --parallel must be 1..10 (got '$par')" ;; esac
   case "$maxt" in ''|*[!0-9]*) [ -z "$maxt" ] || die "lane-create: --max-tokens must be a whole number" ;; esac
   case "$item" in /*|*..*) die "lane-create: item must be the canonical repo-relative path (got '$item')" ;; esac
@@ -36,13 +35,14 @@ lanes_create() {
   local lane="L$n" lroot="$primary-lanes/$parent" C run_id="$parent-L$n" table="$rdir/$parent.lanes"
   C="$lroot/$lane"
   local spent=""
+  # Every lane takes a FRESH number: one already in this run's table (live, removed or abandoned) is
+  # refused — its run id, salvage, logs and `<run_id>-L<n>` metadata on the meta branch belong to an
+  # earlier item, and reusing it would overwrite them. Nothing is created.
+  if [ -f "$table" ] && awk -F'\t' -v l="$lane" '$1 == l { f = 1 } END { exit !f }' "$table" 2>/dev/null; then
+    echo "lane-create: refused — lane $lane already used in this run (each lane takes a fresh number)" >&2
+    return 1
+  fi
   if [ "$single" = 1 ]; then
-    # A single lane takes a FRESH number: one already in this run's table (live, removed or abandoned) is
-    # refused — its run id, salvage and logs belong to an earlier item. Nothing is created.
-    if [ -f "$table" ] && awk -F'\t' -v l="$lane" '$1 == l { f = 1 } END { exit !f }' "$table" 2>/dev/null; then
-      echo "lane-create: refused — lane $lane already used in this run (single-lane takes a fresh number)" >&2
-      return 1
-    fi
     # Whole-run token ceiling (owner decision 3): T bounds the RUN, not each lane.
     if [ -n "$maxt" ]; then
       if ! spent="$(_lanes_single_spent "$table" "$runfile")"; then
@@ -115,7 +115,11 @@ lanes_create() {
     { printf '%s\n' "$LT_HEADER"
       printf '# not carried into lanes: .claude/settings.local.json (relay hooks only), the rules stamp, Claude auto-memory\n'; } > "$table"
   fi
-  awk -F'\t' -v l="$lane" '$1 != l' "$table" > "$table.tmp.$$" && mv "$table.tmp.$$" "$table"
+  # Re-check under the lock (the fresh-number refusal above ran unlocked): a row that appeared since is
+  # never replaced.
+  if awk -F'\t' -v l="$lane" '$1 == l { f = 1 } END { exit !f }' "$table" 2>/dev/null; then
+    _lt_unlock "$table"; _abort "lane $lane already used in this run (each lane takes a fresh number)"; return 1
+  fi
   printf '%s\t%s\t%s\t%s\t-\t-\t-\tcreated\t-\t-\n' "$lane" "$C" "$(_clean "$item")" "$run_id" >> "$table"
   _lt_unlock "$table"
   echo "lane-create: $lane $C run_id=$run_id item=$item meta=${mb:-off} policy=$ps"
