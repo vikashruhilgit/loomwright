@@ -1,0 +1,5 @@
+# next-step.results — pick-time-token-ceiling-park: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The whole PICK from its entry (--start pick):
+# the run-lock acquire, pick-guard ok, then ceiling-check (## Run Config max_tokens) reads no ledger ⇒ PARK: ledger_unreadable ⇒ the token_ceiling park.
+call: --start pick --session-id auto-2026-10-15-040641
+expect: park

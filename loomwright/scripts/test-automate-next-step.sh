@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# test-automate-next-step.sh — self-test for automate-next-step.sh, the `/automate` loop's driver from
-# RUN on (automate-speed/06 the tail, automate-speed/07 RUN and DRAIN). UNCOUNTED by the doc-currency
+# test-automate-next-step.sh — self-test for automate-next-step.sh, the `/automate` loop's driver
+# (automate-speed/06 the tail, automate-speed/07 RUN and DRAIN, automate-speed/08 PICK / RECONCILE / resume). UNCOUNTED by the doc-currency
 # gate. One tally (`PASS: <n> FAIL: <m>`,
 # exit 1 on any failure). Hermetic: every case runs in its own `mktemp -d` checkout (git init, HOME
 # and the git identity sandboxed, a stub `gh` first on PATH — no network), the merge watcher, the
@@ -26,6 +26,8 @@
 #         pre: <subcommand> <args> `bash automate-helpers.sh <subcommand> <args>` — a write the
 #                                  segment's driver does not own (named, like a golden `loop:` line)
 #         call: <args…>            `bash automate-next-step.sh "$RF" <args…>`
+#         call-bare: <args…>       `bash automate-next-step.sh <args…>` — no run file: the resume entry
+#                                  (`--resume "$AD" [--run <id>|latest]`, automate-speed/08) picks it
 #         expect: <do>|none        the last call printed {"do":"<do>",…} (none = an UNTIL stop or
 #                                  a failed call)
 #         expect-exit: <n>         the last call exited <n> (directly after its call:; without it a
@@ -105,6 +107,20 @@
 #       run-lock.sh held as PICK holds it, one item from PICK through --start run → the RUN report →
 #       the DRAIN report → the awaiting_merge park; the Progress lines are printed between `V3-07>`
 #       markers.
+#   P   PICK / RECONCILE / resume (automate-speed/08). P1 (AC2): an OPEN in-flight PR (awaiting_merge,
+#       escalated) or this run's open trail PR ⇒ `--start pick` parks, releases the lock it took, writes no
+#       `picked` line and no new ## Current item. P2 (AC3): RECONCILE's closeout leftovers ⇒ AUT-LEFTOVER (≤ 4
+#       a call, the catalog labels, header ""); cant_ask / --non-interactive ⇒ the closeout_leftover park, one
+#       line per leftover, no trail-pr. P3 (AC4): one run, no --run, can't ask ⇒ the
+#       resume_requires_flag_non_interactive stop with .supervisor/ byte-unchanged; AUT-RESUME asked and
+#       re-printed; its cant_ask / Start new write nothing to the run; continue restores a stranded config
+#       backup. P4 (AC3): closeout-others at start — a `run_lock_held` row is a record, never a leftover; a
+#       `leftover` row parks closeout_leftover before the PICK lock (a wrapper automate-helpers.sh beside a
+#       driver copy prints the fixed closeout-others answer). P5: current-set BEFORE the `picked` line. P6:
+#       brief-repair-merged through RECONCILE's closeout (the case itself is a pure helper call).
+#   V8  RUNNING SYSTEM (Validation 3 of automate-speed/08): a scratch repo (gh stubbed, the real run-lock.sh),
+#       a run parked awaiting_merge whose PR the stub reads MERGED, driven through `--resume`: the closeout
+#       lines through the next `picked` line are printed between `V3-08>` markers.
 #   D   DOC MIRROR: the schema doc's step list equals the driver's `case` arms, and its `do` table
 #       equals the emitter's closed set.
 #   M   MUTATION CONTROLS — each mutant gated non-empty + differs from the driver + `bash -n` (and
@@ -140,6 +156,11 @@
 #         M7j the reserved-prefix case fold dropped                   ⇒ R10
 #         M7k the RUN report replay dropped                           ⇒ R7
 #         M7l the DRAIN report replay at an open ask dropped          ⇒ R9
+#         M8a the open-PR park skipped (Validation 2 of automate-speed/08) ⇒ P1
+#         M8b the trail-gate park skipped                             ⇒ P1
+#         M8c any closeout-classify answer read as complete           ⇒ P2
+#         M8d Continue auto-picked when the resume cannot ask         ⇒ P3
+#         M8e the picked line written before current-set               ⇒ P5
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -168,7 +189,11 @@ gate-validation-gate-unrun-escalated gate-validation-waive gate-eval-merge sync-
 check-off-progress termination-limit-reached termination-queue-resolved
 closeout-leftover-gate-non-interactive dismissed-findings-decision-step
 run-config-suppress-restore run-record-pr drain-owned-drain-started drain-pinned-start-line-current-not-set
-drain-superseded-by-merge learning-emit-end-of-drain rate-limit-park dismissed-fix-now-re-drain"
+drain-superseded-by-merge learning-emit-end-of-drain rate-limit-park dismissed-fix-now-re-drain
+pick-current-set-then-picked pick-pending-decisions-ask pick-time-lane-guard-park pick-time-token-ceiling-park
+pick-time-trail-gate-park reconcile-closeout-merged gate-validation-recheck-at-reconcile resume-ambiguous-park
+resume-config-crash-restore resume-current-rebuild resume-glob-finalize resume-rate-limit-park
+resume-reconcile-status skipped-item-check-off"
 
 # --------------------------------------------------------------------------------------
 # the scratch checkout — the shape of test-automate-golden.sh's run_case (stub gh, tree
@@ -306,10 +331,11 @@ drive() {
       "pre: "*)
         eval "set -- $rest"
         in_case "$drv" "$seams" bash "$H" "$@" >/dev/null 2>"$CASE_DIR/pre.err" || DRIVE_ERR="${DRIVE_ERR}pre failed: $rest; " ;;
-      "call:"*)
+      "call:"*|"call-bare:"*)
         k=$((k + 1)); o="$CASE_DIR/call$k.out"; e="$CASE_DIR/call$k.err"
         eval "set -- $rest"
-        in_case "$drv" "$seams" bash "$drv" "$CASE_RF" "$@" > "$o" 2> "$e"
+        case "$line" in "call:"*) set -- "$CASE_RF" "$@" ;; esac
+        in_case "$drv" "$seams" bash "$drv" "$@" > "$o" 2> "$e"
         rc=$?; LAST_RC=$rc
         LAST_OUT="$(cat "$o")"
         [ "$rc" -eq 0 ] || pend="call $k exit $rc ($(head -n 3 "$e" | tr '\n' ' ')); "
@@ -1012,6 +1038,179 @@ leg_session_id() {
   return 0
 }
 
+# --------------------------------------------------------------------------------------
+# PICK / RECONCILE / resume legs (automate-speed/08)
+# --------------------------------------------------------------------------------------
+P_SID=auto-2026-10-15-040641
+P_RUN=automate-2026-10-13-181331
+p_call() { # <driver> <args…> — a call WITHOUT the run file (the resume entry); sets NC_OUT NC_RC NC_ERR
+  local drv="$1"; shift
+  NC_OUT="$(in_case "$drv" "$R_SEAMS" bash "$drv" "$@" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  NC_ERR="$(cat "$CASE_DIR/nc.err")"
+}
+p_seamed() { # <seams file> <driver> <args…> — one driver call (run file first) under <seams>
+  local sf="$1" drv="$2"; shift 2
+  NC_OUT="$(in_case "$drv" "$sf" bash "$drv" "$CASE_RF" "$@" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  NC_ERR="$(cat "$CASE_DIR/nc.err")"
+}
+p_no_new_pick() { # <copy of the run file before> — no new `picked` line, ## Current's item line unchanged
+  [ "$(grep -c ' picked ' "$CASE_RF")" = "$(grep -c ' picked ' "$1")" ] \
+    && [ "$(grep -m1 '^- item: ' "$CASE_RF")" = "$(grep -m1 '^- item: ' "$1")" ]
+}
+# leg_open_pr_park <driver> — AC2: the in-flight item's PR is OPEN (awaiting_merge, escalated) ⇒ `--start pick`
+# parks (## Status: paused, pause_reason unchanged), the run lock it took is released, and NO picked line /
+# no current-set for a new item; this run's own trail PR open ⇒ the trail_pr_open park, the same guarantees.
+# The gh rows make every later PICK step clear, so a PICK that skipped the park would reach current-set + picked
+leg_open_pr_park() {
+  local drv="$1" st
+  for st in awaiting_merge escalated; do
+    new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+    printf '0\tpr view https://github.com/vikashruhilgit/loomwright/pull/555 --json state,mergedAt\t{"state":"OPEN","mergedAt":null}\n0\tpr list --state open *\t[]\n0\tpr list *\t[]\n0\tauth status*\t\n' >> "$CASE_GH"
+    if [ "$st" = escalated ]; then
+      in_case "$drv" "$R_SEAMS" bash "$H" current-set "$CASE_RF" --item .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md \
+        --status escalated --pr https://github.com/vikashruhilgit/loomwright/pull/555 --branch feature/af39a-sweep --pause-reason escalated >/dev/null 2>&1 \
+        || { LEG_MSG="escalated: seed refused"; return 1; }
+    fi
+    cp "$CASE_RF" "$CASE_DIR/before.md"
+    ns_call "$drv" --start pick --session-id "$P_SID"
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e --arg s "$st" '.do == "park" and .step == "reconcile" and .pause_reason == $s' >/dev/null 2>&1 \
+      || { LEG_MSG="$st: --start pick ⇒ exit $NC_RC '${NC_OUT:0:160}' ${NC_ERR:0:160}"; return 1; }
+    p_no_new_pick "$CASE_DIR/before.md" || { LEG_MSG="$st: a picked line or a new ## Current item was written"; return 1; }
+    grep -qx '## Status: paused' "$CASE_RF" || { LEG_MSG="$st: ## Status is not paused"; return 1; }
+    grep -q "^lock acquire --owner automate:$P_RUN" "$CASE_DIR/rec.log" && grep -q "^lock release --owner automate:$P_RUN" "$CASE_DIR/rec.log" \
+      || { LEG_MSG="$st: the run lock was not acquired then released: $(tr '\n' ';' < "$CASE_DIR/rec.log" | cut -c1-200)"; return 1; }
+  done
+  golden_case pick-time-trail-gate-park "$drv" || { LEG_MSG="trail PR open: $GC_MSG"; return 1; }
+  printf '%s' "$LAST_OUT" | jq -e '.do == "park" and .pause_reason == "trail_pr_open"' >/dev/null 2>&1 \
+    && ! grep -q ' picked .supervisor/requirements/parallel-automate/18' "$CASE_RF" && grep -q '^lock release ' "$CASE_DIR/rec.log" \
+    || { LEG_MSG="trail PR open: not the trail_pr_open park, a picked line, or the lock kept"; return 1; }
+  return 0
+}
+# leg_reconcile_leftover <driver> — AC3: RECONCILE's closeout leaves 5 leftovers ⇒ interactive: AUT-LEFTOVER
+# (header "", the catalog labels, 4 questions in the first call), no PICK; cant_ask ⇒ the closeout_leftover park
+# (one `closeout leftover:` line per leftover, no trail-pr, no picked); --non-interactive ⇒ that park directly
+P_LEFT='closeout: bogus — a
+closeout: bogus — b
+closeout: bogus — c
+closeout: bogus — d
+closeout: bogus — e'
+leg_reconcile_leftover() {
+  local drv="$1" mode n
+  for mode in ask nonint; do
+    new_scratch "$FIX/reconcile-closeout-merged" || { LEG_MSG="scratch"; return 1; }
+    printf '%s\n' "$P_LEFT" > "$CASE_DIR/co.out"
+    printf 'NEXT_STEP_FROM=reconcile\nNEXT_STEP_CLOSEOUT_OUT=%s\n' "$CASE_DIR/co.out" > "$CASE_DIR/seams.lo"
+    cp "$CASE_RF" "$CASE_DIR/before.md"
+    if [ "$mode" = ask ]; then
+      p_seamed "$CASE_DIR/seams.lo" "$drv" --session-id "$P_SID"
+      [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-LEFTOVER" and .header == "" and (.questions | length) == 4
+          and .options == ["Clean up now","Keep and continue","Stop"] and .cant_ask == "closeout_leftover park"' >/dev/null 2>&1 \
+        || { LEG_MSG="interactive: not the AUT-LEFTOVER ask: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:160}"; return 1; }
+      p_no_new_pick "$CASE_DIR/before.md" && ! grep -q 'trail-gate' <(diff "$CASE_DIR/before.md" "$CASE_RF") \
+        || { LEG_MSG="interactive: the PICK went on past the leftover"; return 1; }
+      ns_call "$drv" --result '{"cant_ask":true}'
+    else
+      p_seamed "$CASE_DIR/seams.lo" "$drv" --session-id "$P_SID" --non-interactive
+    fi
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .pause_reason == "closeout_leftover"' >/dev/null 2>&1 \
+      || { LEG_MSG="$mode: not the closeout_leftover park: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:160}"; return 1; }
+    n="$(grep -cE "^- [0-9TZ:-]+ closeout leftover: $P_RUN unknown bogus — [a-e]\$" "$CASE_RF")"
+    [ "$n" = 5 ] && grep -qx '## Status: paused' "$CASE_RF" && p_no_new_pick "$CASE_DIR/before.md" \
+      && ! diff "$CASE_DIR/before.md" "$CASE_RF" | grep -q 'trail-pr' \
+      || { LEG_MSG="$mode: $n leftover line(s) (want 5), or a picked / trail-pr line, or not paused"; return 1; }
+  done
+  return 0
+}
+# leg_resume_entry <driver> — AC4: one incomplete run, no --run, can't ask ⇒ the
+# `automate: resume_requires_flag_non_interactive <run_id>` stop, NOTHING written (.supervisor/ byte-unchanged);
+# interactive ⇒ AUT-RESUME (header + the catalog labels), re-printed by a second call; its cant_ask ⇒ the same
+# stop, Start new ⇒ `done` choice start_new — the run file unchanged throughout; continue on a crash-stranded
+# config backup ⇒ config.json restored byte-for-byte, the backup deleted, no line
+leg_resume_entry() {
+  local drv="$1" s0 ask1 ad
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+  ad="$CASE_ROOT/.supervisor/automate"; s0="$(snapshot)"
+  p_call "$drv" --resume "$ad" --non-interactive --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e --arg r "$P_RUN" '.do == "done" and .step == "resume" and .stop == "resume_requires_flag_non_interactive"
+      and (.message | startswith("automate: resume_requires_flag_non_interactive " + $r))' >/dev/null 2>&1 && [ "$s0" = "$(snapshot)" ] \
+    || { LEG_MSG="can't ask: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:120}, .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  p_call "$drv" --resume "$ad" --session-id "$P_SID"; ask1="$NC_OUT"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e --arg r "$P_RUN" '.do == "ask" and .gate == "AUT-RESUME" and .header == "AUT-RESUME"
+      and .options == ["Continue","Start new","Archive"] and (.run_file | endswith("/" + $r + ".md"))' >/dev/null 2>&1 \
+    || { LEG_MSG="interactive: not the AUT-RESUME ask: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:120}"; return 1; }
+  p_call "$drv" --resume "$ad" --session-id "$P_SID"
+  [ "$NC_OUT" = "$ask1" ] || { LEG_MSG="a second --resume did not re-print the pending AUT-RESUME ask"; return 1; }
+  ns_call "$drv" --result '{"cant_ask":true}'
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.stop == "resume_requires_flag_non_interactive"' >/dev/null 2>&1 \
+    || { LEG_MSG="cant_ask: exit $NC_RC '${NC_OUT:0:160}'"; return 1; }
+  p_call "$drv" --resume "$ad" --session-id "$P_SID"; ns_call "$drv" --result '{"answers":["Start new"]}'
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .choice == "start_new"' >/dev/null 2>&1 \
+    || { LEG_MSG="Start new: exit $NC_RC '${NC_OUT:0:160}' ${NC_ERR:0:120}"; return 1; }
+  cmp -s "$FIX/resume-glob-finalize/input.md" "$CASE_RF" || { LEG_MSG="the run file was written by an ask / a stop / a choice"; return 1; }
+  # continue (--run): RECONCILE restores the crash-stranded backup (resume-config-crash-restore)
+  new_scratch "$FIX/resume-config-crash-restore" || { LEG_MSG="scratch (restore)"; return 1; }
+  printf 'NEXT_STEP_UNTIL=reconcile\n' > "$CASE_DIR/seams.u"
+  NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.u" bash "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run "$P_RUN" --non-interactive --session-id "$P_SID" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  [ "$NC_RC" = 0 ] && [ -z "$NC_OUT" ] && [ "$(cat "$CASE_ROOT/.supervisor/config.json")" = '{"repo_allowlist":["vikashruhilgit/loomwright"]}' ] \
+    && [ ! -e "$CASE_ROOT/.supervisor/automate/$P_RUN.config-backup.json" ] && cmp -s "$FIX/resume-config-crash-restore/input.md" "$CASE_RF" \
+    || { LEG_MSG="continue: config not restored / backup left / run file written: exit $NC_RC $(head -c 160 "$CASE_DIR/nc.err")"; return 1; }
+  return 0
+}
+# leg_start_closeout_others <driver> — AC3 at START: closeout-others' `run_lock_held` row (a live holder) is not a
+# leftover — its record line is appended, no gate, no park; a `leftover` row goes through the leftover gate
+# before the first PICK (--non-interactive ⇒ the closeout_leftover park). A wrapper automate-helpers.sh beside a
+# driver copy prints the fixed closeout-others answer (a live lock holder cannot be staged hermetically)
+co_helpers() { # <driver path> <closeout-others output file>
+  local d; d="$(dirname "$1")"
+  rm -f "$d/automate-helpers.sh"
+  printf '#!/usr/bin/env bash\nif [ "${1:-}" = closeout-others ]; then cat "%s"; exit 0; fi\nexec bash "%s" "$@"\n' "$2" "$H" > "$d/automate-helpers.sh"
+}
+leg_start_closeout_others() {
+  local drv="$1" co="$WORK/co-others.out"
+  co_helpers "$drv" "$co"
+  printf 'closeout-others: automate-2026-09-30-054439 .supervisor/requirements/x.md https://github.com/o/r/pull/1\nrun_lock_held\tautomate-2026-09-30-054439\t.supervisor/requirements/x.md\thttps://github.com/o/r/pull/1\tlock\trun lock held by automate:z (live pid 4242)\ncloseout-others: record — cross-run closeout automate-2026-09-30-054439 .supervisor/requirements/x.md: run_lock_held — run lock held by automate:z (live pid 4242); retried at the next start\n' > "$co"
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+  printf 'NEXT_STEP_UNTIL=resume-continue\n' > "$CASE_DIR/seams.u"
+  NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.u" bash "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run "$P_RUN" --non-interactive --session-id "$P_SID" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  grep -qE '^- [0-9TZ:-]+ cross-run closeout automate-2026-09-30-054439 \.supervisor/requirements/x\.md: run_lock_held — ' "$CASE_RF" \
+    && ! grep -q 'closeout leftover' "$CASE_RF" && ! grep -q 'pause_reason: closeout_leftover' "$CASE_RF" && [ "$NC_RC" = 0 ] \
+    || { LEG_MSG="run_lock_held row: exit $NC_RC '${NC_OUT:0:120}' $(head -c 160 "$CASE_DIR/nc.err") — record line / no leftover gate"; return 1; }
+  printf 'leftover\tautomate-2026-09-30-054439\t.supervisor/requirements/x.md\thttps://github.com/o/r/pull/1\tworktree\tkept /tmp/wt (dirty)\ncloseout-others: record — cross-run closeout automate-2026-09-30-054439 .supervisor/requirements/x.md: leftover worktree — kept /tmp/wt (dirty)\n' > "$co"
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+  p_call "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run "$P_RUN" --non-interactive --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .pause_reason == "closeout_leftover"' >/dev/null 2>&1 \
+    && grep -qE '^- [0-9TZ:-]+ closeout leftover: automate-2026-09-30-054439 worktree kept /tmp/wt \(dirty\)$' "$CASE_RF" \
+    && ! grep -q "^lock acquire " "$CASE_DIR/rec.log" \
+    || { LEG_MSG="leftover row: exit $NC_RC '${NC_OUT:0:160}' ${NC_ERR:0:120} (want the closeout_leftover park before the PICK lock)"; return 1; }
+  return 0
+}
+# leg_pick_order <driver> — current-set BEFORE the `picked` line: on a never-set ## Current the PICK pair writes
+# both (exit 0); the reverse order trips progress-append's exit 3 current_not_set, which must surface
+leg_pick_order() {
+  local drv="$1"
+  new_scratch "$FIX/resume-current-rebuild" || { LEG_MSG="scratch"; return 1; }
+  printf 'NEXT_STEP_FROM=picked\nNEXT_STEP_UNTIL=picked\n' > "$CASE_DIR/seams.p"
+  p_seamed "$CASE_DIR/seams.p" "$drv" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && grep -qxF -- '- item: .supervisor/requirements/automate-followups/14-closeout-fail-safe.md | status: running | pr: null | branch: null' "$CASE_RF" \
+    && grep -qE '^- [0-9TZ:-]+ picked \.supervisor/requirements/automate-followups/14-closeout-fail-safe\.md$' "$CASE_RF" \
+    || { LEG_MSG="exit $NC_RC ${NC_ERR:0:200}"; return 1; }
+  return 0
+}
+# leg_brief_repair <driver> — brief-repair-merged through the driver: RECONCILE's closeout (gh authenticated)
+# passes the repairing brief-repair line through and moves the brief (the case's own steps are a pure helper
+# call, not a driver step — evidence file, AC1 exceptions)
+leg_brief_repair() {
+  local drv="$1"
+  new_scratch "$FIX/brief-repair-merged" || { LEG_MSG="scratch"; return 1; }
+  printf '0\tauth status*\t\n' >> "$CASE_GH"
+  printf 'NEXT_STEP_FROM=reconcile\nNEXT_STEP_UNTIL=reconcile\n' > "$CASE_DIR/seams.b"
+  p_seamed "$CASE_DIR/seams.b" "$drv" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && grep -qE '^- [0-9TZ:-]+ closeout https://github\.com/vikashruhilgit/loomwright/pull/542: brief-repair: repaired \.supervisor/jobs/in-progress/2026-10-14-af39b-run-lock-holder\.md → \.supervisor/jobs/done/2026-10-14-af39b-run-lock-holder\.md' "$CASE_RF" \
+    && [ -f "$CASE_ROOT/.supervisor/jobs/done/2026-10-14-af39b-run-lock-holder.md" ] && [ ! -e "$CASE_ROOT/.supervisor/jobs/in-progress/2026-10-14-af39b-run-lock-holder.md" ] \
+    || { LEG_MSG="exit $NC_RC ${NC_ERR:0:160}; brief-repair line / brief move missing"; return 1; }
+  return 0
+}
+
 # rec_helpers <driver path> — replace the automate-helpers.sh beside <driver> (a symlink in a built dir)
 # with a wrapper that records each park-ask-gate call into the case's rec.log, then runs the real one
 rec_helpers() {
@@ -1382,6 +1581,26 @@ LEG_MSG=""
 if leg_session_id "$DRIVER"; then ok "R11: --start run without / with a malformed --session-id ⇒ exit 2, nothing written; the loop's log parks rate_limit; no session id / no log at the check ⇒ ONE pinned skipped line"
 else no "R11: $LEG_MSG"; fi
 
+echo "-- P. PICK / RECONCILE / resume (automate-speed/08)"
+LEG_MSG=""
+if leg_open_pr_park "$DRIVER"; then ok "P1 (AC2): an OPEN in-flight PR (awaiting_merge, escalated) / this run's open trail PR ⇒ --start pick parks, releases its lock, no picked line, no new ## Current item"
+else no "P1: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_reconcile_leftover "$DRIVER"; then ok "P2 (AC3): RECONCILE's closeout leftovers ⇒ AUT-LEFTOVER (4 a call, catalog labels, header \"\"); cant_ask / --non-interactive ⇒ closeout_leftover park, one line per leftover, no trail-pr, no PICK"
+else no "P2: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_resume_entry "$DRIVER"; then ok "P3 (AC4): one run, no --run, can't ask ⇒ resume_requires_flag_non_interactive stop, nothing written; AUT-RESUME asked + re-printed; cant_ask / Start new write nothing; continue restores a stranded config backup"
+else no "P3: $LEG_MSG"; fi
+LEG_MSG=""
+if m="$(build_mutant co - '-append:# co-helpers')" && leg_start_closeout_others "$m"; then ok "P4 (AC3): closeout-others at start — a run_lock_held row is recorded, never a leftover; a leftover row ⇒ the closeout_leftover park before the PICK lock"
+else no "P4: ${LEG_MSG:-driver copy not built}"; fi
+LEG_MSG=""
+if leg_pick_order "$DRIVER"; then ok "P5: PICK's pair — current-set BEFORE the picked line (a never-set ## Current: both written, exit 0)"
+else no "P5: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_brief_repair "$DRIVER"; then ok "P6: brief-repair-merged through RECONCILE's closeout — the repairing brief-repair line passed through, the brief moved"
+else no "P6: $LEG_MSG"; fi
+
 echo "-- V7. running system (Validation 3 of automate-speed/07): PICK → RUN → DRAIN → the tail, one item"
 V7="$WORK/v7"; mkdir -p "$V7/fx"
 V7_PR=https://github.com/example/scratch/pull/9
@@ -1445,6 +1664,32 @@ if new_scratch "$V7/fx"; then
   fi
 else
   no "V7: scratch repo not built"
+fi
+
+echo "-- V8. running system (Validation 3 of automate-speed/08): a run parked awaiting_merge whose PR merged, through the resume entry"
+if new_scratch "$FIX/reconcile-closeout-merged"; then
+  o8="$(NS_REAL_LOCK=1 in_case "$DRIVER" /dev/null bash "$DRIVER" --resume "$CASE_ROOT/.supervisor/automate" --run "$CASE_RUN" \
+    --non-interactive --session-id auto-2026-10-17-080000 2>"$WORK/v8.err")"; r8=$?
+  st8="$(NS_REAL_LOCK=1 in_case "$DRIVER" /dev/null bash "$HERE/run-lock.sh" status 2>&1)"
+  echo "V3-08> --resume <automate_dir> --run $CASE_RUN --non-interactive (gh stub: PR #555 MERGED): exit $r8, $(printf '%s' "$o8" | jq -c '{do, step, what, invocation}' 2>/dev/null)"
+  echo "V3-08> ## Progress, the closeout lines through the next picked line:"
+  sed -n '/ closeout https:\/\/github.com\/vikashruhilgit\/loomwright\/pull\/555: /,/ picked /p' "$CASE_RF" | sed 's/^/V3-08>   /'
+  echo "V3-08> ## Status / ## Current after it:"; grep -E '^## Status: |^- item: |^- pause_reason: ' "$CASE_RF" | sed 's/^/V3-08>   /'
+  echo "V3-08> run-lock.sh status (PICK holds it through RUN): $(printf '%s' "$st8" | head -n 1)"
+  if [ "$r8" = 0 ] && printf '%s' "$o8" | jq -e '.do == "spawn" and .what == "/autonomous run" and .invocation == "/autonomous --single-iteration --requirement .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md --non-interactive-fallback"' >/dev/null 2>&1 \
+     && in_order "$CASE_RF" "closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: reconciled" "trail-unstage: unstaged" \
+          "picked .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md" \
+     && [ "$(grep -c '^- trail-gate: clear' "$CASE_RF")" = 2 ] && tail -n 1 "$CASE_RF" | grep -q ' auto_review suppressed (backup ' \
+     && grep -qx '## Status: running' "$CASE_RF" \
+     && grep -qxF -- '- [x] .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md' "$CASE_RF" \
+     && grep -qF -- '- item: .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md | status: running | pr: null | branch: null' "$CASE_RF" \
+     && grep -q "automate:$CASE_RUN" <<<"$st8"; then
+    ok "V8: resume → PICK (real run lock) → RECONCILE closeout of the merged PR → trail gate / un-stage → current-set + picked → the /autonomous spawn"
+  else
+    no "V8: drive wrong (exit $r8: $(head -n 3 "$WORK/v8.err" | tr '\n' ' '))"
+  fi
+else
+  no "V8: scratch repo not built"
 fi
 
 echo "-- D. the schema doc mirrors the driver (closed lists)"
@@ -1641,6 +1886,36 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_order "$m"; then no "MO: the order leg stayed green with the watcher armed after park-ask-gate"
     else ok "MO: watcher armed after the decide step ⇒ order leg red (golden run file $mo_gold: $LEG_MSG)"; fi
   else no "MO: mutant not built"; fi
+  # M8a (Validation 2 of automate-speed/08) — the open-PR park skipped: PICK falls through to current-set + picked ⇒ P1 red
+  if m="$(build_mutant 8a '  ns_open_pr_park   # §8: an open PR blocks PICK' '  ns_after_reconcile; return 0   # M8a')"; then
+    LEG_MSG=""
+    if leg_open_pr_park "$m"; then no "M8a: the open-PR leg stayed green with the open-PR park skipped"
+    else ok "M8a: open-PR park skipped (current-set + picked reached) ⇒ P1 red ($LEG_MSG)"; fi
+  else no "M8a: mutant not built"; fi
+  # M8b — the trail-gate park skipped (an open trail PR no longer parks) ⇒ P1 red
+  if m="$(build_mutant 8b 'ns_run_park trail-gate trail_pr_open "" 1' 'NEXT=trail-unstage; return 0; ns_run_park trail-gate trail_pr_open "" 1')"; then
+    LEG_MSG=""
+    if leg_open_pr_park "$m"; then no "M8b: the open-PR leg stayed green with the trail-gate park skipped"
+    else ok "M8b: trail-gate park skipped ⇒ P1 red ($LEG_MSG)"; fi
+  else no "M8b: mutant not built"; fi
+  # M8c — any closeout-classify answer read as complete ⇒ P2 red
+  if m="$(build_mutant 8c 'ns_classify_complete() { [ "$1" = complete ]; }' 'ns_classify_complete() { return 0; }')"; then
+    LEG_MSG=""
+    if leg_reconcile_leftover "$m"; then no "M8c: the leftover leg stayed green with every answer read as complete"
+    else ok "M8c: every closeout-classify answer read as complete ⇒ P2 red ($LEG_MSG)"; fi
+  else no "M8c: mutant not built"; fi
+  # M8d — the can't-ask resume auto-picks Continue ⇒ P3 red
+  if m="$(build_mutant 8d '  ns_resume_stop   # one run, no --run, can not ask: fail closed, never auto-continued' '  NEXT=rebuild; return 0   # M8d')"; then
+    LEG_MSG=""
+    if leg_resume_entry "$m"; then no "M8d: the resume leg stayed green with Continue auto-picked"
+    else ok "M8d: Continue auto-picked when the run cannot ask ⇒ P3 red ($LEG_MSG)"; fi
+  else no "M8d: mutant not built"; fi
+  # M8e — the picked line written BEFORE current-set (exit 3 current_not_set must surface) ⇒ P5 red
+  if m="$(build_mutant 8e 'ns_once once_pk_current ns_call_writer current-set' 'ns_once once_pk_line ns_progress "$(ns_ts) picked $it" || return 1; ns_once once_pk_current ns_call_writer current-set')"; then
+    LEG_MSG=""
+    if leg_pick_order "$m"; then no "M8e: the PICK-order leg stayed green with the writes swapped"
+    else ok "M8e: picked before current-set ⇒ P5 red ($LEG_MSG)"; fi
+  else no "M8e: mutant not built"; fi
 fi
 
 echo "PASS: $pass FAIL: $fail"

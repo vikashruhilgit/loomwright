@@ -1,0 +1,6 @@
+# next-step.results — pick-current-set-then-picked: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The case is the PICK's own write pair alone
+# (NEXT_STEP_FROM=picked, NEXT_STEP_UNTIL=picked): current-set BEFORE the `picked` line, the next unchecked row.
+env: NEXT_STEP_FROM=picked NEXT_STEP_UNTIL=picked
+call: --session-id auto-2026-10-14-091517
+expect: none

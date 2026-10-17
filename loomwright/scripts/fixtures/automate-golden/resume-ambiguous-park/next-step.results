@@ -1,0 +1,5 @@
+# next-step.results — resume-ambiguous-park: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The resume entry, can't ask (--non-interactive), no --run:
+# two incomplete runs ⇒ the resume_ambiguous park on the most recent (current-set --pause-reason; no lock taken).
+call-bare: --resume "$AD" --non-interactive --session-id auto-2026-10-15-040641
+expect: park
