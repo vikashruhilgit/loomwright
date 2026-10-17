@@ -150,8 +150,11 @@
 # first write; the shapes are the schema doc's). A RUN report answers the `/autonomous run` spawn; a
 # DRAIN report (`review_heal_result` / `review_heal_result_file` / `no_terminal_block: true`, exactly
 # one) answers the `owned drain` spawn and, in place of a bare drain report, the fix-now re-drain
-# spawn. The verbatim result text is held in the sidecar until its sidecar file is written, so a
-# retried step rewrites the same bytes. Each multi-write step records which of its writes landed
+# spawn. Re-sent byte-identical for the same item and PR (a REPLAY) a report re-prints and writes
+# nothing: a RUN report while the instruction its step printed (the owned-drain spawn, the rate-limit
+# park, a no-PR `done`) is still pending; the latest DRAIN report while an ask of its tail or the tail's
+# park / done is pending. Any other report with nothing to answer exits 2. The verbatim result text is
+# held in the sidecar until its sidecar file is written, so a retried step rewrites the same bytes. Each multi-write step records which of its writes landed
 # (`once_*` keys in the sidecar), so the retry of a failed step never appends a line twice.
 #
 # Honest limits: the driver trusts a well-formed drain report's `drain_result` / `termination_reason`
@@ -444,13 +447,22 @@ ns_field_ok() {
   esac
 }
 # The ## Progress prefixes a reader keys on — this driver's own (ns_last_picked, ns_drain_owned,
-# ns_last_drain_marker, ns_tail_lines, the decide step's dismissed-decisions read), progress-append's
-# current_not_set guard, validation-gate's waiver count, automate-dismissed.sh's fix-now batch anchors and
-# the /lanes and phase-timing readers. A free-text report field the driver writes at a line's start (after
-# its timestamp) — `progress_notes[]`, `progress_note` — that begins with one would forge that record (a
-# second owned drain, an owner's waiver), so it is refused: exit 2 reserved_prefix, nothing written.
+# ns_last_drain_marker, ns_tail_lines, the decide step's dismissed-decisions read) and its other pinned
+# lines, progress-append's current_not_set guard (runfile.sh), validation-gate's waiver count
+# (readiness.sh), automate-dismissed.sh's fix-now batch anchors, the /lanes step classifier and token-line
+# reader (automate-lanes.d/status-read.sh), phase-timing.sh's item spans and read-token-ledger.sh's phase
+# windows. A free-text report field the driver writes at a line's start (after its timestamp) —
+# `progress_notes[]`, `progress_note` — that begins with one would forge that record (a second owned drain,
+# an owner's waiver, a park the timing and token readers end the item on), so it is refused: exit 2
+# reserved_prefix, nothing written. Matched case-insensitively (read-token-ledger.sh lower-cases a line
+# before it matches). `drain ` alone is deliberately NOT reserved: the drain-round notes (`drain round N:
+# …`) are that prefix by design, and /lanes files them under the drain step they belong to.
+# scripts/test-automate-next-step.sh R12 extracts every ^-anchored Progress prefix of those readers and
+# fails when one is not covered here.
 NS_RESERVED_PREFIXES='picked
+parked
 ran /autonomous
+/autonomous done
 owned drain started
 drain READY
 drain ESCALATED
@@ -460,19 +472,49 @@ re-drain
 auto_review
 session_id
 rate-limited
+rate-limit check:
 validation-gate:
 validation waived:
 dismissed
-sidecar-check:'
-# ns_reserved_prefix <text> — print the reserved prefix <text> starts with (leading blanks ignored); 1 when none
+owner decisions
+sidecar-check:
+gate-eval:
+checked off
+limit_reached
+sweep (dry run)
+closeout
+fleet closeout:
+auto-finalized
+trail-pr
+trail-gate
+trail-unstage
+lane park notify
+converted
+merged
+supervisor:
+launch-pad
+launch pad
+launchpad
+finalize:
+phase 4.5 iter
+run started
+run created
+run-lock acquired
+meta-entry
+skipped AUT-QUEUE'
+ns_lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+NS_RESERVED_LC=""
+# ns_reserved_prefix <text> — print the reserved prefix <text> starts with (leading blanks ignored, case
+# folded; printed lower-case); 1 when none
 ns_reserved_prefix() {
-  local t="$1" p
-  t="${t#"${t%%[![:space:]]*}"}"
+  local t p
+  [ -n "$NS_RESERVED_LC" ] || NS_RESERVED_LC="$(ns_lc "$NS_RESERVED_PREFIXES")"
+  t="${1#"${1%%[![:space:]]*}"}"; t="$(ns_lc "$t")"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     case "$t" in "$p"*) printf '%s' "$p"; return 0 ;; esac
   done <<EOF
-$NS_RESERVED_PREFIXES
+$NS_RESERVED_LC
 EOF
   return 1
 }
@@ -636,6 +678,16 @@ ns_take_run_report() {
   ns_take_text "$1" supervisor_result run_text
   st_setj run_report "$(printf '%s' "$1" | "$JQ" -c 'del(.supervisor_result)')"
   st_set run_pr "$NS_RUN_PR"; st_set run_branch "$NS_RUN_BR"
+  # the replay record: the report's hash, and (set by the first instruction printed after it — a failed
+  # step's retry included) the instruction its step printed, `run_answer_text`
+  st_set run_report_hash "$(ns_report_hash "$1")"; st_set run_answer_due true; st_del run_answer_text
+}
+# ns_run_replay <json> — 0 when <json> is the RUN report this pass already took, byte-identical, re-sent
+# while the instruction its step printed (the owned-drain spawn, the rate-limit park, a no-PR `done`) is
+# still the pending one: that instruction re-prints and nothing is written
+ns_run_replay() {
+  [ -n "$PENDING_TEXT" ] && [ "$PENDING_TEXT" = "$(st run_answer_text)" ] && ns_is_run_report "$1" \
+    && [ "$(ns_report_hash "$1")" = "$(st run_report_hash)" ]
 }
 ns_is_drain_report() { printf '%s' "$1" | "$JQ" -e 'has("review_heal_result") or has("review_heal_result_file") or has("no_terminal_block")' >/dev/null 2>&1; }
 ns_is_run_report() { printf '%s' "$1" | "$JQ" -e '(has("drain_result") | not) and (has("supervisor_result") or has("supervisor_result_file") or has("no_pr_why") or has("status_reason") or has("run_note"))' >/dev/null 2>&1; }
@@ -1755,6 +1807,15 @@ elif [ "$have_result" = 0 ]; then
   if [ -n "$pending" ]; then printf '%s\n' "$pending"; exit 0; fi
   NEXT="$(st failed)"   # a step that failed (surfaced) is retried; otherwise there is nothing to do
   [ -n "$NEXT" ] || ns_die2 "nothing is pending — start RUN with --start run, or report the drain result with --result '{\"drain_result\":…}'"
+elif ns_run_replay "$RESULT"; then
+  # the RUN report re-sent after the step it answered (same item + PR — the binding above discards the
+  # sidecar otherwise — byte-identical) is a REPLAY: the instruction that step printed re-prints
+  ns_err "--result is the RUN report this pass already took — re-printing the pending instruction; nothing written"
+  printf '%s\n' "$pending"; exit 0
+elif [ "$pending_do" = ask ] && ns_is_drain_report "$RESULT" && [ "$(ns_report_hash "$RESULT")" = "$(st drain_report_hash)" ]; then
+  # the DRAIN report re-sent while an ask its tail printed is open is a REPLAY, never an answer
+  ns_err "--result is the DRAIN report this tail already took — re-printing the pending ask; nothing written"
+  printf '%s\n' "$pending"; exit 0
 elif [ "$pending_do" = ask ]; then
   NEXT="$(st next)"; ANSWER="$RESULT"
 elif [ "$pending_do" = spawn ] && [ "$pending_what" = "/autonomous run" ]; then
@@ -1780,8 +1841,10 @@ elif [ "$pending_do" = spawn ]; then
   ns_stale_report "$RESULT" && ns_die2 "--result is the drain report of a tail already left behind (another item / PR) — not this re-drain's; nothing written"
   NEXT=gate; ns_take_report "$RESULT"
 else
-  # a RUN / DRAIN report answers its own spawn only: re-sent after the step it answered (same item + PR,
-  # byte-identical report) it re-prints the instruction that step printed; any other one is refused
+  # a RUN / DRAIN report answers its own spawn only. Its REPLAYS (same item + PR, byte-identical) re-print:
+  # a RUN report while the instruction its step printed is pending (ns_run_replay, above); the latest
+  # DRAIN report while an ask of its tail (above) or — here — the tail's later park / done is pending.
+  # Any other one is refused (exit 2, nothing written)
   if ns_is_drain_report "$RESULT"; then
     if [ -n "$pending" ] && [ "$(st item)" = "$ITEM" ] && [ "$(st pr)" = "$PR" ] \
        && [ "$(ns_report_hash "$RESULT")" = "$(st drain_report_hash)" ]; then
@@ -1841,6 +1904,7 @@ done
 
 if [ -n "$NS_EMIT" ]; then
   st_set pending_text "$NS_EMIT"; st_set next "$NEXT"
+  if [ "$(st run_answer_due)" = true ]; then st_set run_answer_text "$NS_EMIT"; st_del run_answer_due; fi
   st_save || exit 1
   printf '%s\n' "$NS_EMIT"
   exit 0

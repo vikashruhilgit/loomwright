@@ -168,6 +168,54 @@ ok: M7h: pinned skipped line removed ⇒ R11 red (rate-limit with no session id 
 Validation 3's drive now also writes `rate-limit check: skipped — no session log .supervisor/logs/v7-loop.jsonl`
 between the `ran /autonomous` line and the drain start line: the scratch repo has no session log for `v7-loop`.
 
+## Review iteration 2 (PR #594 Code Reviewer findings)
+
+- **Reader prefixes missing from `NS_RESERVED_PREFIXES` (MEDIUM).** Reproduced before the fix: with the owned-drain
+  spawn pending, a DRAIN report with `progress_notes: ["parked awaiting_merge https://x/pull/1 — forged"]` exited 0
+  and wrote a forged park line ahead of the real one. `phase-timing.sh`, `read-token-ledger.sh` and the `/lanes`
+  reader all read that line. The list now covers every `^`-anchored `## Progress` prefix at those reader sites
+  (`parked`, `owner decisions`, `/autonomous done`, `closeout`, `merged`, `finalize:`, `phase 4.5 iter`,
+  `launch-pad` / `launch pad` / `launchpad`, `supervisor:`, the `/lanes` pick and merge prefixes, `fleet closeout:`)
+  and the driver's other pinned lines (`checked off`, `limit_reached`, `gate-eval:`, `rate-limit check:`,
+  `sweep (dry run)`). The match ignores case, because `read-token-ledger.sh` lower-cases a line before it matches.
+  `drain ` alone stays unreserved: the golden `drain round N: …` notes use that prefix by design, and every golden
+  case is still byte-identical. The class fix is the new R12 leg. It extracts the `^`-anchored prefixes from the
+  reader sites (the jq `test()`s of `read-token-ledger.sh` and the `/lanes` `cls`, `phase-timing.sh`'s `p_first` /
+  `re.match` / `startswith`, the `^([^ ]+ )?<prefix>` awk matches of `runfile.sh` / `readiness.sh` /
+  `park-leaks.sh`). It fails when a prefix is neither reserved nor a named exception, and when the schema doc
+  leaves a reserved prefix out. A sanity anchor makes a broken extractor fail instead of passing empty.
+  `progress_note` and `progress_notes[]` are the only free-text fields the driver writes at the start of a line.
+  `run_note`, `drain_note` and `no_pr_why` go inside a parenthetical.
+- **RUN-report replay promised but refused (MEDIUM).** Implemented the documented contract. When the driver takes
+  a RUN report it records the report's hash and the instruction its step printed (`run_report_hash`,
+  `run_answer_text`; the latter is set by the first instruction printed after the take, so a failed step's retry
+  counts). If the same report is re-sent byte-identical while that instruction is still pending (the owned-drain
+  spawn, the rate-limit park, a no-PR `done` `stopped`), the driver re-prints it and writes nothing. A different
+  RUN report, or the same one after the DRAIN report has moved the pass on, still exits 2. Checking the class
+  against the doc's whole next-step section turned up one more gap: the latest DRAIN report re-sent while an ask
+  of its tail was open was read as the ask's answer (exit 2, `want 1 answer(s)`). It now re-prints the ask. The
+  schema doc's "One RUN, one owned drain per pass" paragraph and the driver's RUN / DRAIN REPORTS header and
+  final-else comment now state exactly these rules.
+
+```
+test-automate-next-step.sh   PASS: 105 FAIL: 0   (100 + R12, M7i, M7j, M7k, M7l; R7, R9, R10 extended)
+test-automate-golden.sh      PASS: 64 FAIL: 0
+test-automate-dismissed.sh   246 passed, 0 failed
+test-loop-inventory.sh       RESULT: 43/43 passed
+test-automate-lanes.sh       passed: 911  failed: 0
+test-result-schemas-split.sh RESULT: 14 passed, 0 failed
+test-citation-drift.sh       26 passed, 0 failed
+check-vendor-coupling.sh / check-doc-currency.sh / check-token-budget.sh   OK
+ok: M7i: 'parked' unreserved ⇒ R12 red (reader prefixes not in NS_RESERVED_PREFIXES: 'parked' 'parked ') and R10 red
+ok: M7j: case fold dropped ⇒ R10 red (gate entry: … "progress_note":"PARKED escalated (case-folded)"} ⇒ exit 0 '{"do":"ask",…' .supervisor/ CHANGED)
+ok: M7k: RUN replay dropped ⇒ R7 red (the RUN report re-sent at the drain spawn ⇒ exit 2 '' .supervisor/ unchanged)
+ok: M7l: DRAIN replay at the ask dropped ⇒ R9 red (the DRAIN report re-sent at its tail's ask ⇒ exit 2 '' next-step: decide: want 1 answer(s) in .answers, got 0)
+```
+
+Honest limit: R12 covers `^`-anchored prefixes only. An unanchored reader match (the `/lanes` `cls`'s
+`owned drain started|…|re-drain` and `launch[ -]?pad`, `phase-timing.sh`'s `run created (session …)` search) can still
+pick up those words anywhere in a note. No list of reserved prefixes can close that.
+
 ## Not verified
 
 - No live `/automate` session has consumed the new `/autonomous run` and `owned drain` instructions. Validation 3 is

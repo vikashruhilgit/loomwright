@@ -85,15 +85,22 @@
 #       byte-identical, no review-heal sidecar, no ledger line, the awaiting_go park; the same no-block
 #       report while the PR reads OPEN ⇒ nothing written, done/stopped. R5/R6: malformed RUN / DRAIN
 #       reports ⇒ exit 2, nothing written; a no-PR RUN report ⇒ the pinned no-PR line. R7: the new spawns
-#       re-print (idempotent), a re-sent report or --start run is refused. R8: the 429-hint rate-limit
-#       park (reason_hint) and a stale failed row (no park). R9: the first drain's DRAIN report re-sent
-#       at the fix-now re-drain spawn ⇒ the spawn re-prints, nothing written (B14a's rule, DRAIN reports).
+#       re-print (idempotent); the RUN report re-sent byte-identical at the owned-drain spawn / the no-PR
+#       done re-prints it, nothing written; a different RUN report there, the RUN report after the DRAIN
+#       report, or --start run is refused. R8: the 429-hint rate-limit
+#       park (reason_hint) and a stale failed row (no park). R9: the first DRAIN report re-sent at its
+#       tail's ask ⇒ the ask re-prints; re-sent at the fix-now re-drain spawn ⇒ the spawn re-prints,
+#       nothing written (B14a's rule, DRAIN reports).
 #       R10: a progress_notes entry / progress_note starting with a reserved prefix (a line the driver or
-#       a helper keys on — `picked `, `owned drain started`, `validation waived:`, …) ⇒ exit 2
+#       a helper keys on — `picked `, `parked `, `owned drain started`, `validation waived:`, …, case
+#       folded) ⇒ exit 2
 #       reserved_prefix, nothing written, at the gate entry and the owned-drain spawn; mid-line it is a
 #       note, and the pass still owns ONE drain. R11: --start run without / with a malformed
 #       --session-id ⇒ exit 2 session_id_missing / session_id_malformed, nothing written; the loop's own
-#       log parks rate_limit; no session id / no log at the check ⇒ ONE pinned skipped line.
+#       log parks rate_limit; no session id / no log at the check ⇒ ONE pinned skipped line. R12: every
+#       ^-anchored ## Progress prefix extracted from the reader sites (phase-timing, read-token-ledger,
+#       the /lanes `cls`, runfile / readiness / park-leaks) is in NS_RESERVED_PREFIXES or a named
+#       exception, and the schema doc names every reserved prefix.
 #   V7  RUNNING SYSTEM (Validation 3 of automate-speed/07): a scratch git repo (gh stubbed), the real
 #       run-lock.sh held as PICK holds it, one item from PICK through --start run → the RUN report →
 #       the DRAIN report → the awaiting_merge park; the Progress lines are printed between `V3-07>`
@@ -129,6 +136,10 @@
 #         M7f the reserved-prefix check of the free-text notes removed ⇒ R10
 #         M7g both --start run session-id refusals removed (two edits) ⇒ R11
 #         M7h the rate-limit check's pinned skipped line removed ⇒ R11
+#         M7i `parked` dropped from NS_RESERVED_PREFIXES               ⇒ R12 and R10
+#         M7j the reserved-prefix case fold dropped                   ⇒ R10
+#         M7k the RUN report replay dropped                           ⇒ R7
+#         M7l the DRAIN report replay at an open ask dropped          ⇒ R9
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -576,6 +587,7 @@ leg_cross_replay() {
 # the 39b RUN report (PR #542) and a READY DRAIN report, as the fixtures carry them
 R_RUN="$(sed -n "s/^call: --result '\(.*\)'$/\1/p" "$FIX/run-record-pr/next-step.results")"
 R_DRAIN="$(sed -n "s/^call: --result '\(.*\)'$/\1/p" "$FIX/drain-pinned-start-line-current-not-set/next-step.results")"
+R_NOPR='{"status_reason":"plan_review_failed","no_pr_why":"Plan Review FAIL x3 on the brief","session_id":"auto-2026-10-14-091531"}'
 R_SEAMS="$WORK/seams.none"; : > "$R_SEAMS"
 ns_call() { # <driver> <args…> — one driver call in the current case; sets NC_OUT NC_RC NC_ERR
   local drv="$1"; shift
@@ -727,7 +739,9 @@ EOF
   return 0
 }
 # leg_run_idem <driver> — the /autonomous and owned-drain spawns re-print on a no-result call (and on a re-sent
-# --start run) and write nothing; --start run while the drain spawn is pending ⇒ run_already_started
+# --start run) and write nothing; the RUN report re-sent byte-identical at the owned-drain spawn (or at the
+# no-PR `done`) is a replay — the pending instruction re-prints, nothing written — while a different RUN
+# report there ⇒ exit 2; --start run while the drain spawn is pending ⇒ run_already_started
 leg_run_idem() {
   local drv="$1" s0 sp
   new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
@@ -736,9 +750,24 @@ leg_run_idem() {
   ns_call "$drv" --start run --session-id s-run; [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="a re-sent --start run did not re-print / wrote"; return 1; }
   ns_call "$drv" --result "$R_RUN"; sp="$NC_OUT"; s0="$(snapshot)"
   ns_call "$drv"; [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="no-result call did not re-print the owned-drain spawn"; return 1; }
-  ns_call "$drv" --result "$R_RUN"; [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="the RUN report re-sent at the drain spawn ⇒ exit $NC_RC"; return 1; }
+  ns_call "$drv" --result "$R_RUN"; [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="the RUN report re-sent at the drain spawn ⇒ exit $NC_RC '${NC_OUT:0:80}' .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  ns_call "$drv" --result "$(printf '%s' "$R_RUN" | jq -c '.run_note = "a different note"')"
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="a different RUN report at the drain spawn ⇒ exit $NC_RC '${NC_OUT:0:80}'"; return 1; }
   ns_call "$drv" --start run --session-id s-run
   [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'run_already_started' <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="--start run at the drain spawn ⇒ exit $NC_RC ${NC_ERR:0:100}"; return 1; }
+  # the DRAIN report moves the pass on: the RUN report re-sent after it answers nothing (exit 2)
+  ns_call "$drv" --non-interactive --result "$R_DRAIN"; s0="$(snapshot)"
+  [ "$NC_RC" = 0 ] || { LEG_MSG="the DRAIN report ⇒ exit $NC_RC ${NC_ERR:0:100}"; return 1; }
+  ns_call "$drv" --result "$R_RUN"
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="the RUN report re-sent after the DRAIN report ⇒ exit $NC_RC '${NC_OUT:0:80}'"; return 1; }
+  # a no-PR RUN: its byte-identical re-send re-prints the `done` `stopped`, a different one ⇒ exit 2
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch (no PR)"; return 1; }
+  ns_call "$drv" --start run --session-id s-run
+  ns_call "$drv" --result "$R_NOPR"; sp="$NC_OUT"; s0="$(snapshot)"
+  printf '%s' "$sp" | jq -e '.do == "done" and .status == "stopped"' >/dev/null 2>&1 || { LEG_MSG="no-PR RUN report ⇒ '${sp:0:80}'"; return 1; }
+  ns_call "$drv" --result "$R_NOPR"; [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="the no-PR RUN report re-sent ⇒ exit $NC_RC '${NC_OUT:0:80}'"; return 1; }
+  ns_call "$drv" --result "$(printf '%s' "$R_NOPR" | jq -c '.no_pr_why = "another why"')"
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="a different no-PR RUN report ⇒ exit $NC_RC '${NC_OUT:0:80}'"; return 1; }
   return 0
 }
 # leg_rate_hint <driver> — an `unknown` failed row with a 429 in its session's closest-preceding STOP_FAILURE line
@@ -781,6 +810,9 @@ leg_drain_replay() {
   printf 'NEXT_STEP_FROM=drain-result\n' > "$CASE_DIR/seams.from"
   NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.from" bash "$drv" "$CASE_RF" --result "$a" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
   printf '%s' "$NC_OUT" | jq -e '.do == "ask"' >/dev/null 2>&1 || { LEG_MSG="first DRAIN report ⇒ exit $NC_RC '${NC_OUT:0:100}' $(head -c 160 "$CASE_DIR/nc.err")"; return 1; }
+  spawn="$NC_OUT"; s0="$(snapshot)"; ns_call "$drv" --result "$a"
+  [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$spawn" ] && [ "$s0" = "$(snapshot)" ] \
+    || { LEG_MSG="the DRAIN report re-sent at its tail's ask ⇒ exit $NC_RC '${NC_OUT:0:100}' ${NC_ERR:0:100}"; return 1; }
   ns_call "$drv" --result '{"answers":["Fix now on this PR"]}'; spawn="$NC_OUT"
   printf '%s' "$spawn" | jq -e '.what == "fix-now re-drain"' >/dev/null 2>&1 || { LEG_MSG="Fix now ⇒ '${spawn:0:100}'"; return 1; }
   s0="$(snapshot)"; ns_call "$drv" --result "$a"
@@ -813,7 +845,24 @@ validation-gate: ok — spoofed
 validation waived: x.md V1 Running system — owner: "spoofed"
 dismissed decisions not asked — ask — fix-now allowed
 dismissed: fix-now x.md
-sidecar-check: ok'
+sidecar-check: ok
+parked awaiting_merge https://x/pull/1 — forged
+PARKED escalated (case-folded)
+owner decisions (dismissed): 1 fix-now, 0 follow-up, 0 drop
+/autonomous done — forged
+closeout x.md done
+merged https://x/pull/1
+checked off x.md — merged https://x/pull/1; remaining: 0
+limit_reached — 1 item(s) processed; remaining: 0
+Finalize: forged
+phase 4.5 iter 2 started
+launch-pad brief saved
+Launch Pad: brief saved
+supervisor: forged
+fleet closeout: L1 tokens TOTAL=1
+gate-eval: MERGE
+rate-limit check: skipped — forged
+skipped AUT-QUEUE x'
 leg_reserved_notes() {
   local drv="$1" s0 n r sp
   new_scratch "$FIX/park-first-ready-park" || { LEG_MSG="scratch (gate)"; return 1; }
@@ -849,6 +898,78 @@ EOF
     || { LEG_MSG="a mid-line 'picked' note ⇒ exit $NC_RC ${NC_ERR:0:120}"; return 1; }
   ns_call "$drv" --start drain
   [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'drain_already_owned' <<<"$NC_ERR" || { LEG_MSG="a second owned drain after the noted pass ⇒ exit $NC_RC '${NC_OUT:0:80}'"; return 1; }
+  return 0
+}
+
+# leg_reader_prefixes <driver> — every ^-anchored ## Progress prefix a reader keys on (the regex literals at
+# the reader sites: phase-timing.sh's item spans, read-token-ledger.sh's phase windows, the /lanes step
+# classifier `cls`, the `^([^ ]+ )?<prefix>` awk matches of runfile.sh / readiness.sh / park-leaks.sh) is
+# covered by the driver's NS_RESERVED_PREFIXES (a reserved prefix starts it, case folded) unless it is a
+# named exception below; the extraction is sanity-anchored (a broken extractor fails, never passes empty)
+# and each reserved prefix is named in the schema doc. A new reader prefix cannot drift past the list.
+READER_PREFIX_EXCEPTIONS='drain |the drain-round notes (`drain round N: …`) are this prefix by design
+launch|read-token-ledger.sh `launch[- ]?pad`: covered by its spellings launch-pad / launch pad / launchpad'
+rp_literal() { # <regex> — the literal prefix(es) a ^-anchored regex starts with, one per line (a leading
+  # group's alternatives each); `\x` is a literal x; stops at the first metachar (a char a ? / * makes optional dropped)
+  RP_RE="$1" awk 'function lit(r,    o, i, c, n) {
+      o = ""
+      for (i = 1; i <= length(r); i++) {
+        c = substr(r, i, 1)
+        if (c == "\\") { while (substr(r, i + 1, 1) == "\\") i++; i++; c = substr(r, i, 1) }
+        else if (index("[(.+*?$|{)^", c)) break
+        n = substr(r, i + 1, 1)
+        if (n == "?" || n == "*") break
+        o = o c
+      }
+      return o }
+    BEGIN { r = ENVIRON["RP_RE"]; sub(/^\^/, "", r); sub(/^- /, "", r); sub(/^\(\[\^ \]\+ \)\?/, "", r)
+      if (substr(r, 1, 1) == "(") {
+        d = 0; g = ""
+        for (i = 2; i <= length(r); i++) { c = substr(r, i, 1); if (c == "(") d++; if (c == ")") { if (!d) break; d-- } g = g c }
+        n = split(g, alt, "|"); for (j = 1; j <= n; j++) print lit(alt[j])
+      } else print lit(r) }'
+}
+rp_extract() { # the reader regexes (one per line) → their literal prefixes, lower-cased, de-duplicated
+  {
+    # jq: a ^-anchored test(), or the ^-anchored alternatives of an unanchored one (`a|^drain |b`)
+    { grep -oE 'test\("[^"]*"' "$HERE/read-token-ledger.sh"
+      awk '/def cls:/,/else \[\] end;/' "$HERE/automate-lanes.d/status-read.sh" | grep -oE 'test\("[^"]*"'
+    } | sed 's/^test("//; s/"$//' | while IFS= read -r re; do
+      case "$re" in "^"*) printf '%s\n' "$re" ;; *) printf '%s\n' "$re" | tr '|' '\n' | grep '^\^' ;; esac
+    done
+    grep -oE 'p_first\(r"[^"]*"|re\.match\(r"[^"]*", t2?\)|t2?\.startswith\("[^"]*"\)' "$HERE/phase-timing.sh" \
+      | sed -E 's/^p_first\(r"//; s/^re\.match\(r"/^/; s/", t2?\)$//; s/^t2?\.startswith\("/^/; s/"\)$//; s/"$//'
+    # an awk /regex/ ends at its unescaped `/`, a quoted 'regex' at its quote; comment lines are prose, not readers
+    for f in automate-helpers.d/runfile.sh automate-lanes.d/readiness.sh automate-lanes.d/park-leaks.sh; do
+      grep -vE '^[[:space:]]*#' "$HERE/$f" | grep -oE '/\^(- )?\(\[\^ \]\+ \)\?(\\/|[^/])*/' | sed 's|^/||; s|/$||'
+      grep -vE '^[[:space:]]*#' "$HERE/$f" | grep -oE "'\^(- )?\(\[\^ \]\+ \)\?[^']*'" | sed "s/^'//; s/'\$//"
+    done
+  } | while IFS= read -r re; do [ -n "$re" ] && rp_literal "$re"; done | tr '[:upper:]' '[:lower:]' | grep -v '^$' | env LC_ALL=C sort -u
+}
+leg_reader_prefixes() {
+  local drv="$1" lits list miss="" l p ok_ e
+  list="$(sed -n "/^NS_RESERVED_PREFIXES='/,/'\$/p" "$drv" | sed "s/^NS_RESERVED_PREFIXES='//; s/'\$//" | tr '[:upper:]' '[:lower:]')"
+  [ "$(grep -c . <<<"$list")" -ge 20 ] || { LEG_MSG="NS_RESERVED_PREFIXES not read from the driver ($(grep -c . <<<"$list") entries)"; return 1; }
+  lits="$(rp_extract)"
+  for e in 'parked' 'finalize:' 'phase 4.5 iter ' 'owner decisions' '/autonomous done' 'picked ' 'ran /autonomous' 'skipped aut-queue' 'launch' 'drain '; do
+    grep -qxF -- "$e" <<<"$lits" || { LEG_MSG="extractor sanity: '$e' not extracted from the readers (got: $(tr '\n' ',' <<<"$lits"))"; return 1; }
+  done
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    ok_=0
+    while IFS= read -r p; do [ -n "$p" ] || continue; case "$l" in "$p"*) ok_=1; break ;; esac; done <<<"$list"
+    if [ "$ok_" = 0 ]; then
+      e="$(grep -F -- "$l|" <<<"$READER_PREFIX_EXCEPTIONS" | head -n 1)"
+      [ "${e%%|*}" = "$l" ] || miss="$miss '$l'"
+    fi
+  done <<<"$lits"
+  [ -z "$miss" ] || { LEG_MSG="reader prefixes not in NS_RESERVED_PREFIXES:$miss"; return 1; }
+  for p in launch-pad 'launch pad' launchpad; do grep -qxF -- "$p" <<<"$list" || { LEG_MSG="the 'launch' exception needs '$p' reserved"; return 1; }; done
+  # the schema doc names each reserved prefix (its progress_note bullet)
+  l="$(grep -F -- '- **`progress_note`**:' "$HERE/../docs/result-schemas/automate-run.md" | tr '[:upper:]' '[:lower:]')"
+  while IFS= read -r p; do [ -n "$p" ] || continue; case "$l" in *"\`$p\`"*) ;; *) miss="$miss '$p'" ;; esac; done <<<"$list"
+  [ -z "$miss" ] || { LEG_MSG="reserved prefixes the schema doc's progress_note bullet does not name:$miss"; return 1; }
+  RP_N="$(grep -c . <<<"$lits")"
   return 0
 }
 
@@ -1239,17 +1360,21 @@ LEG_MSG=""
 if leg_bad_drain_reports "$DRIVER"; then ok "R6: $(grep -c . <<<"$BAD_DRAIN") malformed DRAIN reports (and a bare drain report) at the owned-drain spawn ⇒ exit 2, nothing written"
 else no "R6: $LEG_MSG"; fi
 LEG_MSG=""
-if leg_run_idem "$DRIVER"; then ok "R7: the /autonomous and owned-drain spawns re-print, write nothing; a re-sent RUN report / --start run at the drain spawn ⇒ exit 2"
+if leg_run_idem "$DRIVER"; then ok "R7: the /autonomous and owned-drain spawns re-print, write nothing; the RUN report re-sent at the drain spawn / the no-PR done ⇒ re-print; a different one, or after the DRAIN report ⇒ exit 2; --start run at the drain spawn ⇒ exit 2"
 else no "R7: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_rate_hint "$DRIVER"; then ok "R8: unknown + a 429 STOP_FAILURE hint ⇒ rate_limit park with a separate reason_hint line; a row older than picked ⇒ no park"
 else no "R8: $LEG_MSG"; fi
 LEG_MSG=""
-if leg_drain_replay "$DRIVER"; then ok "R9: the first drain's DRAIN report re-sent at the fix-now spawn ⇒ the spawn re-prints, nothing written; the re-drain's own report proceeds"
+if leg_drain_replay "$DRIVER"; then ok "R9: the first DRAIN report re-sent at its tail's ask ⇒ the ask re-prints; re-sent at the fix-now spawn ⇒ the spawn re-prints, nothing written; the re-drain's own report proceeds"
 else no "R9: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_reserved_notes "$DRIVER"; then ok "R10: $(grep -c . <<<"$RESERVED_NOTES") reserved-prefix notes (progress_notes[] / progress_note) at the gate entry and the owned-drain spawn ⇒ exit 2 reserved_prefix, nothing written; mid-line ⇒ a note; still ONE owned drain"
 else no "R10: $LEG_MSG"; fi
+LEG_MSG=""
+LEG_MSG=""
+if leg_reader_prefixes "$DRIVER"; then ok "R12: all $RP_N ^-anchored ## Progress prefixes of the readers (phase-timing / read-token-ledger / /lanes cls / runfile / readiness / park-leaks) are reserved or a named exception; the doc names every reserved prefix"
+else no "R12: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_session_id "$DRIVER"; then ok "R11: --start run without / with a malformed --session-id ⇒ exit 2, nothing written; the loop's log parks rate_limit; no session id / no log at the check ⇒ ONE pinned skipped line"
 else no "R11: $LEG_MSG"; fi
@@ -1464,6 +1589,33 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_reserved_notes "$m"; then no "M7f: the reserved-prefix leg stayed green with the check removed"
     else ok "M7f: reserved-prefix check removed ⇒ R10 red ($LEG_MSG)"; fi
   else no "M7f: mutant not built"; fi
+  # M7i — a reader prefix dropped from NS_RESERVED_PREFIXES (`parked`) ⇒ R12 red and R10 red (the forged park note)
+  if m="$(build_mutant 7i - '-append:# M7i')" && awk '$0 != "parked"' "$m" > "$m.t" && mv "$m.t" "$m" \
+     && [ -s "$m" ] && ! grep -qx parked "$m" && bash -n "$m"; then
+    LEG_MSG=""; if leg_reserved_notes "$m"; then m7i_r10=green; else m7i_r10=red; fi
+    LEG_MSG=""
+    if leg_reader_prefixes "$m"; then no "M7i: the reader-prefix leg stayed green with 'parked' unreserved (R10 $m7i_r10)"
+    elif [ "$m7i_r10" = red ]; then ok "M7i: 'parked' unreserved ⇒ R12 red ($LEG_MSG) and R10 red"
+    else no "M7i: 'parked' unreserved ⇒ R12 red but R10 stayed green"; fi
+  else no "M7i: mutant not built"; fi
+  # M7j — the case fold dropped (a reader lower-cases before it matches: `Finalize:` / `PARKED`) ⇒ R10 red
+  if m="$(build_mutant 7j 'ns_lc() { printf '"'"'%s'"'"' "$1" | tr '"'"'[:upper:]'"'"' '"'"'[:lower:]'"'"'; }' 'ns_lc() { printf '"'"'%s'"'"' "$1"; }')"; then
+    LEG_MSG=""
+    if leg_reserved_notes "$m"; then no "M7j: the reserved-prefix leg stayed green with the case fold dropped"
+    else ok "M7j: case fold dropped ⇒ R10 red ($LEG_MSG)"; fi
+  else no "M7j: mutant not built"; fi
+  # M7k — the RUN report replay dropped (a byte-identical re-send is refused again) ⇒ R7 red
+  if m="$(build_mutant 7k 'elif ns_run_replay "$RESULT"; then' 'elif false; then')"; then
+    LEG_MSG=""
+    if leg_run_idem "$m"; then no "M7k: the RUN-idempotency leg stayed green with the RUN replay dropped"
+    else ok "M7k: RUN replay dropped ⇒ R7 red ($LEG_MSG)"; fi
+  else no "M7k: mutant not built"; fi
+  # M7l — the DRAIN replay at an open ask dropped (the report read as the ask's answer) ⇒ R9 red
+  if m="$(build_mutant 7l 'elif [ "$pending_do" = ask ] && ns_is_drain_report "$RESULT" && [ "$(ns_report_hash "$RESULT")" = "$(st drain_report_hash)" ]; then' 'elif false; then')"; then
+    LEG_MSG=""
+    if leg_drain_replay "$m"; then no "M7l: the drain-replay leg stayed green with the ask replay dropped"
+    else ok "M7l: DRAIN replay at the ask dropped ⇒ R9 red ($LEG_MSG)"; fi
+  else no "M7l: mutant not built"; fi
   # M7g — both --start run session-id refusals removed (RUN starts with no id) ⇒ R11 red
   if m="$(build_mutant2 7g '[ -n "$SID" ] || { ns_err "session_id_missing' 'true || { ns_err "session_id_missing' \
        'ns_sid_ok "$SID" || { ns_err "session_id_malformed' 'true || { ns_err "session_id_malformed')"; then
