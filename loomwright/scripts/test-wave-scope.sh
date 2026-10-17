@@ -143,7 +143,7 @@ R="$T/pw"; mkdir -p "$R/q"
 printf '# a\n## Touches\nsrc/\nb/c.ts\nsrc/x.ts\n' > "$R/q/01-a.md"
 printf '# b\n## Touches\nunknown\n' > "$R/q/02-b.md"
 printf '# c\n## Depends on\nnone\n' > "$R/q/03-c.md"
-before="$(cd "$R" && find . -type f | LC_ALL=C sort | xargs cksum)"
+before="$(cd "$R" && find . -type f | env LC_ALL=C sort | xargs cksum)"
 o="$(bash "$H" plan-waves "$R/q/01-a.md" --touches --root "$R" 2>/dev/null)"; rc=$?
 check "F4 known ⇒ \`known\` + normalized, sorted, unique entries, exit 0" "$rc|$(printf '%s' "$o" | paste -sd ',' -)" "0|known,b/c.ts,src,src/x.ts"
 o="$(bash "$H" plan-waves "$R/q/02-b.md" --touches --root "$R" 2>/dev/null)"; rc=$?
@@ -157,7 +157,7 @@ o="$(bash "$H" plan-waves "$R/q" --touches --root "$R" 2>/dev/null)"; rc=$?
 check "F4e a directory is not ONE item ⇒ usage, exit 1" "$rc|$o" "1|"
 o="$(bash "$H" plan-waves "$R/q/01-a.md" --touches --lint --root "$R" 2>/dev/null)"; rc=$?
 check "F4f --touches with --lint ⇒ usage, exit 1" "$rc|$o" "1|"
-check "F4g read-only: the fixture tree is unchanged" "$(cd "$R" && find . -type f | LC_ALL=C sort | xargs cksum)" "$before"
+check "F4g read-only: the fixture tree is unchanged" "$(cd "$R" && find . -type f | env LC_ALL=C sort | xargs cksum)" "$before"
 
 # ---- S1: the Product Owner shaping procedure, run as the skill writes it ------------------------------
 SK="$HERE/../skills/user-story-writing/SKILL.md"
