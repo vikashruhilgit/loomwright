@@ -529,7 +529,7 @@ a merge that happens out-of-band. Two mitigations are in place:
 | Admission | Memory trip file, load `overloaded`, or load `busy` within the recheck window ⇒ `HELD`, exit 4, no process. Guards stop STARTING; nothing kills a lane automatically. |
 | Failure posture | Correctness gates (`init-check`, `pick-guard`, launch authority, `lane-remove` refusals, origin-before-fetch, remote branch-name hit, `wave-build` refusals) fail CLOSED; observation (`lane-status`, `lane-feed`, `lane-readiness`, `lane-wait`, `lane-sampler.sh`, notifications) fails SAFE and exits 0 — the ONE exception: `lane-status --leaks --snapshot` exits 1 naming why when it wrote no snapshot (with no lane table yet it derives the parent run id and primary from `<parent_runfile>`). |
 | Merge | Lanes never merge: a READY lane parks the park `lane-park` prints — `ready_for_release` in an N>1 lane (the wave PR is the owner's to merge), `awaiting_merge` with a merge watcher in a single lane (`single_lane`; the owner merges its own PR); `--auto-merge` with any `--parallel N` is refused at INIT. |
-| Wave branch | `wave-build` (`scripts/automate-wave.sh`) is the ONE writer of a wave branch — a correctness-bearing mutator. It resolves the wave through the same reader `wave-plan` prints from, builds in a temporary worktree off fresh `origin/<base>` (never the primary's working tree, branch or index), pushes ONLY the wave branch (a regular push) and opens the wave PR; it never merges a PR, never pushes a lane branch, never force-pushes. Refusals (a lane PR not OPEN, a lane not parked, the branch already on origin or local, an unreadable read) exit 1 with nothing created; a conflict, red local CI, failed release step or failed push STOPS (exit 2) with nothing pushed and the worktree kept; an OPEN wave PR makes a re-run `done` (exit 0). Its own per-run mkdir lock (`<run_id>.wave-build.lock`), never `run-lock.sh`. Merging the wave PR stays the owner's. |
+| Wave branch | `wave-build` (`scripts/automate-wave.sh`) is the ONE writer of a wave branch — a correctness-bearing mutator. It resolves the wave through the same reader `wave-plan` prints from, builds in a temporary worktree off fresh `origin/<base>` (never the primary's working tree, branch or index), pushes ONLY the wave branch (a regular push) and opens the wave PR; it never merges a PR, never pushes a lane branch, never force-pushes. Refusals (a lane PR not OPEN, a lane not parked, the branch already on origin or local, an unreadable read) exit 1 with nothing created; a conflict, red local CI, failed release step or failed push STOPS (exit 2) with nothing pushed and the worktree kept; an OPEN wave PR makes a re-run `done` (exit 0). Before creating anything it prints the same-wave overlap check (`_lanes_wave_overlap`, shared with `wave-plan`): the files more than one lane of the wave changed, from each lane PR's diff, carried into the wave PR body and its result line — WARN-ONLY, never a refusal, hold or reorder (owner decision 2026-10-17). Its own per-run mkdir lock (`<run_id>.wave-build.lock`), never `run-lock.sh`. Merging the wave PR stays the owner's. |
 
 ## Worktree Naming Convention
 
@@ -732,7 +732,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `supervisor-readiness` | 12605 | 11459 |
 | `telemetry` | 3216 | 2923 |
 | `unit-testing` | 1691 | 1537 |
-| `user-story-writing` | 4006 | 3641 |
+| `user-story-writing` | 4731 | 4301 |
 | `verify-walkthrough` | 9454 | 8594 |
 | `workflow-management` | 4915 | 4468 |
 

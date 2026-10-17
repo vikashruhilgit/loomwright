@@ -1,7 +1,7 @@
 # ---- Z: Validation 4/5 fixes (parallel-automate/23) ---------------------------------------------------
 # Each leg fails against the pre-fix lane code at 91adff5 (identical to #426's head 8226dfe) and passes here.
 # Z-F5 lane-readiness writes its report when the Validation names no repro (empty erows / vrows)
-run lane-create "$RF" reqs/a.md 2 >/dev/null; LZ5="$LR/L2"; RDZ="$LZ5/.supervisor/automate/$PARENT-L2.merge-readiness.md"
+run lane-create "$RF" reqs/a.md 12 --parallel 2 >/dev/null; LZ5="$LR/L12"; RDZ="$LZ5/.supervisor/automate/$PARENT-L12.merge-readiness.md"
 out="$(LOOMWRIGHT_GH_BIN="$T/absent-gh" run lane-readiness "$LZ5")"; rc=$?
 check "Z-F5a no named repro (empty erows) ⇒ the report IS written" "$rc:$([ -f "$RDZ" ] && echo written || echo missing)" "0:written"
 has "Z-F5b … with the headline-repro n/a line" "$(cat "$RDZ" 2>/dev/null)" "headline-repro: PASS — n/a (the Validation names no repro)"
@@ -185,7 +185,8 @@ for a in "$@"; do case "$prev" in --root) root="$a" ;; --paths-from) pf="$a" ;; 
 managed() { (cd "$root" && find .supervisor/requirements .supervisor/jobs/done .supervisor/jobs/failed .supervisor/automate .supervisor/postmortem \
   -type f \( -name '*.md' -o -name '*.dismissed-decisions' -o -name results.jsonl \) 2>/dev/null | env LC_ALL=C sort); }
 case "$1" in
-  push) while IFS= read -r p; do [ -n "$p" ] || continue
+  push) echo "f11-paths: $(tr '\n' ' ' < "$pf")" >> "$META_LOG"
+        while IFS= read -r p; do [ -n "$p" ] || continue
           if [ -f "$root/$p" ]; then mkdir -p "$REMOTE11/$(dirname "$p")"; cp "$root/$p" "$REMOTE11/$p"; else rm -f "$REMOTE11/$p"; fi
         done < "$pf"; echo "meta_sync: pushed abc"; exit 0 ;;
   status) n=0; ps=""; for p in $(managed); do cmp -s "$root/$p" "$REMOTE11/$p" || { n=$((n + 1)); ps="$ps  $p
@@ -619,6 +620,39 @@ check "AK6a mutation dropped --paths from the status read" "$(grep -cF -- '--roo
 out="$(AC_S="$MUT/automate-lanes.sh" ac lane-remove "$L514")"; rc=$?
 check "AK6b mutation: the refusal reads the bare pre-fix line, no path named" \
   "$rc:$(printf '%s\n' "$out" | grep -c 'metadata not pushed (local_ahead 1)$' | tr -d ' ')" "1:1"
+
+# ---- AN: a lane whose Launch Pad kept a revised brief draft is removable with no hand push ------------
+# Run automate-2026-10-15-163325 (L5, L9): the lane's Launch Pad kept `.supervisor/automate/<run_id>.brief-draft.md`
+# (Plan Review FAIL×3 → "Refine offline"). A managed path on neither wave-end push — not the exact list,
+# not a trail-pr candidate — so fleet-closeout waited on `local_ahead 1 — paths: …brief-draft.md` until
+# the owner approved a hand `meta-sync push --paths-from`. Same real scripts and fake remote as AC / AK.
+ac_lane 5 "https://github.com/o/r/pull/65"; L515="$ABL"
+AND=".supervisor/automate/$PARENT6-L5.brief-draft.md"; ANF=".supervisor/automate/$PARENT6-L9.brief-draft.md"
+printf '# Brief draft (revised after Plan Review FAIL 3/3)\n\nkept by %s\n' L5 > "$L515/$AND"
+printf '# another run'"'"'s draft\n' > "$L515/$ANF"   # not this lane's run id: never on the list
+: > "$META_LOG"
+out="$(STUB_PR_STATE=OPEN ac lane-convert-ready "$L515")"; rc=$?
+check "AN1 wave-end conversion (PR open) exits 0 and pushes the lane's brief draft" \
+  "$rc:$(cmp -s "$L515/$AND" "$T/remote-ac/$AND" && echo pushed)" "0:pushed"
+has "AN1b … the exact non-claim push list names the draft" "$(grep '^f11-paths:' "$META_LOG" | head -1)" " $AND "
+check "AN1c … another run id's brief draft is never on the list" \
+  "$([ -e "$T/remote-ac/$ANF" ] && echo pushed || echo kept-local):$(grep -c "$ANF" "$META_LOG" | tr -d ' ')" "kept-local:0"
+rm -f "$L515/$ANF"
+out="$(STUB_PR_STATE=MERGED ac lane-convert-ready "$L515")"; rc=$?
+check "AN2 the merged re-run closes out (exit 0, closeout complete)" "$rc:$(printf '%s\n' "$out" | tail -n1 | grep -c '; closeout complete$' | tr -d ' ')" "0:1"
+out="$(ac lane-remove "$L515")"; rc=$?
+check "AN3 lane-remove then removes the lane — the brief draft needed no hand push" "$rc:$([ -d "$L515" ] && echo kept || echo removed)" "0:removed"
+# AN4 mutation control: the brief-draft entry dropped from the exact list reproduces the incident —
+# closeout complete, then lane-remove refuses and names the one unpushed draft.
+sed 's| "\$LN_RUN.brief-draft.md"; do$|; do|' "$SB" > "$MUT/automate-lanes.sh"
+check "AN4a mutation removed the brief-draft entry" "$(grep -c 'LN_RUN.brief-draft.md"; do$' "$MUT/automate-lanes.sh" | tr -d ' ')" 0
+ac_lane 6 "https://github.com/o/r/pull/66"; L516="$ABL"
+printf '# Brief draft (revised after Plan Review FAIL 3/3)\n\nkept by %s\n' L6 > "$L516/.supervisor/automate/$PARENT6-L6.brief-draft.md"
+AC_S="$MUT/automate-lanes.sh" STUB_PR_STATE=OPEN ac lane-convert-ready "$L516" >/dev/null
+AC_S="$MUT/automate-lanes.sh" STUB_PR_STATE=MERGED ac lane-convert-ready "$L516" >/dev/null
+out="$(AC_S="$MUT/automate-lanes.sh" ac lane-remove "$L516")"; rc=$?
+check "AN4b mutation: lane-remove refuses on the unpushed brief draft (the L5 / L9 incident)" \
+  "$rc:$(printf '%s\n' "$out" | grep -cF "metadata not pushed (local_ahead 1) — paths: .supervisor/automate/$PARENT6-L6.brief-draft.md" | tr -d ' ')" "1:1"
 
 # ---- AD: policy carry (B5), relay-hook policy apply (B6), no policy ⇒ unchanged (B10), digest + inbox (B7)
 # lane-policy.sh is the REAL script (Subtask 1); the policies are a wave-policy file and a project policy

@@ -274,16 +274,40 @@ check "SL3d lane-park defaults to the current checkout's top level" "$(cd "$LRS/
 SL_TB0="$(cksum < "$TBS")"
 out="$(bash "$S" lane-create "$RFS" reqs/b.md 1 --parallel 1 2>&1 >/dev/null)"; rc=$?
 check "SL4 L1 reused under --parallel 1 ⇒ refused on stderr, exit 1" "$rc:$out" \
-  "1:lane-create: refused — lane L1 already used in this run (single-lane takes a fresh number)"
+  "1:lane-create: refused — lane L1 already used in this run (each lane takes a fresh number)"
 check "SL4b … nothing created (table byte-unchanged, no salvage, L1 untouched)" \
   "$(cksum < "$TBS"):$([ -e "$LRS/salvage" ] && echo salvage || echo none):$(cat "$LRS/L1/.supervisor/lane-backlog.md")" "$SL_TB0:none:- [ ] reqs/a.md"
-# SL5 lane numbers 1..99 under --parallel 1 only
+# SL5 lane numbers 1..99 for every caller: the number is the lane's identity across the whole run, not N
 out="$(sl lane-create "$RFS" reqs/b.md 11 --parallel 1)"; rc=$?
 check "SL5 lane number 11 accepted under --parallel 1" "$rc:$([ -d "$LRS/L11" ] && echo created):$(jq -r .run_id "$LRS/L11/.supervisor/lane.json")" "0:created:$PARS-L11"
 out="$(sl lane-create "$RFN" reqs/b.md 11)"; rc=$?
-check "SL5b … still refused without it (1..10)" "$rc:$([ -e "$LRN/L11" ] && echo created || echo none)" "1:none"
-has "SL5c … naming the bound" "$out" "lane number must be 1..10 (got '11')"
+check "SL5b … refused WITHOUT --parallel (N defaults to n, and N is 1..10)" "$rc:$([ -e "$LRN/L11" ] && echo created || echo none)" "1:none"
+has "SL5c … naming why" "$out" "lane-create: lane number 11 needs an explicit --parallel N (the default N is the lane number)"
 out="$(sl lane-create "$RFS" reqs/b.md 100 --parallel 1)"; check "SL5d 100 refused even under --parallel 1" "$?" 1
+# SL5e-SL5j (lane-number bound regression): a multi-wave `--parallel 4` run used L1..L10 and died
+# `lane number must be 1..10 (got '11')` at wave 3. N > 1 takes the same fresh-number rule as N = 1.
+PARW=automate-2026-10-17-110000; RFW="$P/.supervisor/automate/$PARW.md"; LRW="$T/work/primary-lanes/$PARW"; TBW="$P/.supervisor/automate/$PARW.lanes"
+sl_parent "$PARW" 4
+out="$(sl lane-create "$RFW" reqs/a.md 11 --parallel 4)"; rc=$?
+check "SL5e lane number 11 accepted under --parallel 4 (run id, N and no single_lane key)" \
+  "$rc:$([ -d "$LRW/L11" ] && echo created):$(jq -r '"\(.run_id):\(.parallel):\(has("single_lane"))"' "$LRW/L11/.supervisor/lane.json" 2>/dev/null)" \
+  "0:created:$PARW-L11:4:false"
+SL_TBW0="$(cksum < "$TBW")"
+out="$(bash "$S" lane-create "$RFW" reqs/b.md 11 --parallel 4 2>&1 >/dev/null)"; rc=$?
+check "SL5f L11 re-created under --parallel 4 ⇒ refused on stderr, exit 1" "$rc:$out" \
+  "1:lane-create: refused — lane L11 already used in this run (each lane takes a fresh number)"
+check "SL5g … nothing created (table byte-unchanged, no salvage, L11 keeps its item)" \
+  "$(cksum < "$TBW"):$([ -e "$LRW/salvage" ] && echo salvage || echo none):$(cat "$LRW/L11/.supervisor/lane-backlog.md")" "$SL_TBW0:none:- [ ] reqs/a.md"
+printf 'L3\t%s\treqs/z.md\t%s-L3\t-\t-\t-\tremoved\t-\t-\n' "$LRW/L3" "$PARW" >> "$TBW"   # a removed lane, directory gone
+printf 'L4\t%s\treqs/z.md\t%s-L4\t-\t-\t-\tabandoned\t-\t-\n' "$LRW/L4" "$PARW" >> "$TBW"
+out="$(bash "$S" lane-create "$RFW" reqs/b.md 3 --parallel 4 2>&1 >/dev/null)"; rc=$?
+out2="$(bash "$S" lane-create "$RFW" reqs/b.md 4 --parallel 4 2>&1 >/dev/null)"; rc2=$?
+check "SL5h a removed AND an abandoned number are refused under --parallel 4, nothing created" \
+  "$rc:$rc2:$([ -e "$LRW/L3" ] || [ -e "$LRW/L4" ] && echo created || echo none):$(printf '%s\n%s' "$out" "$out2" | grep -c 'already used in this run')" "1:1:none:2"
+out="$(sl lane-create "$RFW" reqs/b.md 100 --parallel 4)"; rc=$?
+check "SL5i 100 refused under --parallel 4, naming the 1..99 bound" "$rc:$(printf '%s\n' "$out" | tail -n1)" "1:automate-lanes: lane-create: lane number must be 1..99 (got '100')"
+out="$(sl lane-create "$RFW" reqs/b.md 12 --parallel 11)"; rc=$?
+check "SL5j --parallel itself stays 1..10" "$rc:$([ -e "$LRW/L12" ] && echo created || echo none):$(printf '%s\n' "$out" | grep -c -- '--parallel must be 1..10')" "1:none:1"
 # SL6 whole-run token ceiling: SPENT = live lanes' ledger TOTAL + removed lanes' parent tokens lines
 echo 300 > "$LRS/L1/.supervisor/sl-tokens"; echo 200 > "$LRS/L11/.supervisor/sl-tokens"
 printf 'L5\t%s\treqs/z.md\t%s-L5\t-\t-\t-\tremoved\t-\t-\n' "$LRS/L5" "$PARS" >> "$TBS"   # a removed lane, directory gone
@@ -507,13 +531,14 @@ bash scripts/ci-local.sh
 # run this project's release step
 git push -u origin wave/$PARENT12-w2
 gh pr create --base main --head wave/$PARENT12-w2
+# overlap — NOT-RUN — L2 PR #122 diff unreadable
 # Conflict rules (Part S):
 #   - a marker-only conflict is resolved in the merge commit itself
 #   - anything larger stops the integration: hand it to the owner
 #   - never rewrite or push a lane branch
 #   - a lane broken on the wave branch is fixed on its own PR, and its new head is re-merged"
 check "AG2 GUARD: every ref and the working tree of the primary and the lanes are byte-identical after it" "$(ag_state)" "$AG0"
-check "AG2b … and its only gh calls were pr view reads" "$(grep -vc '^gh pr view ' "$T_AFGH" | tr -d ' ')" 0
+check "AG2b … and its only gh calls were pr view / pr diff reads" "$(grep -vcE '^gh pr (view|diff) ' "$T_AFGH" | tr -d ' ')" 0
 mkdir -p "$P/scripts"; printf '#!/usr/bin/env bash\n' > "$P/scripts/bump-version.sh"
 out="$(af wave-plan "$RF12P" --wave-branch release/w2)"
 has "AG3 a repo with scripts/bump-version.sh gets it as the release step" "$out" "
@@ -566,7 +591,7 @@ check "AG7b mutation (a fleet-closeout call in automate-trail.d/sweep.sh) is cau
 # that lacks it would silently have the guard block the lane. The FACT is recorded coordinator-side at
 # first launch; every resume path refuses (exit 3, no spawn, nothing in the lane) until the owner re-runs
 # with it set or passes --without-gate-optout. The opt-out is never ADDED to a resume's environment.
-PARENT6=automate-2026-10-11-100000; RF6="$P/.supervisor/automate/$PARENT6.md"; LR6="$T/work/primary-lanes/$PARENT6"
+PARENT6=automate-2026-10-11-150000; RF6="$P/.supervisor/automate/$PARENT6.md"; LR6="$T/work/primary-lanes/$PARENT6"
 printf '# Automate Run: %s\n\n## Progress\n' "$PARENT6" > "$RF6"
 for n in 1 2 3; do run lane-create "$RF6" reqs/a.md "$n" --parallel 3 >/dev/null; done
 L61="$LR6/L1"; L62="$LR6/L2"; L63="$LR6/L3"; TABLE6="$P/.supervisor/automate/$PARENT6.lanes"

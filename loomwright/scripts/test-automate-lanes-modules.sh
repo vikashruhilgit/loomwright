@@ -19,15 +19,22 @@
 #      The two sourcing callers keep their own fallback: guard-lane-wait-armed.sh prints `{}` (it
 #      BLOCKS with the complete copy — control) and automate-wave.sh refuses `automate-lanes.sh
 #      unreadable`.
-#   5. AC3 verbatim move: _lanes_bundle's output, with the loader block, the source-marker lines and
-#      the header's module map removed, equals the last single-file automate-lanes.sh (BASE_SHA's
-#      blob via `git show`) byte-for-byte; a one-character edit in a module (each module in turn)
-#      breaks the equality; a missing or empty module makes _lanes_bundle fail naming it.
-#   6. `--help` / `-h` / `help`, no-arg and an unknown subcommand: stdout, stderr and exit code equal
-#      the BASE_SHA blob's; every arm's no-arg invocation equals base too, after normalising bash's own
-#      `<file>: line <n>:` diagnostics (the only text a move changes — the moved code reports its
-#      module and line). Mutation control: _lanes_usage's header anchor flipped ⇒ the --help check fails.
-#   Checks 5 and 6 need the BASE_SHA blob: a shallow clone without it prints a named SKIP for each.
+#   5. AC3 verbatim move: _lanes_bundle's output for the split AS IT LANDED (the entry point and modules
+#      at SPLIT_SHA, via `git show`), with the loader block, the source-marker lines and the header's
+#      module map removed, equals the last single-file automate-lanes.sh (BASE_SHA's blob) byte-for-byte;
+#      a one-character edit in a split module (each in turn) breaks the equality; a missing or empty
+#      module makes _lanes_bundle fail naming it. The proof is of the split commit, never of the working
+#      tree: comparing the CURRENT modules to BASE froze them, so the first later edit of any module
+#      (the scope-fence / wave-overlap PR, 2026-10-17) failed a check that was only ever about the move.
+#   6. `--help` / `-h` / `help`, no-arg and an unknown subcommand of the split AS IT LANDED (SPLIT_SHA,
+#      like check 5): stdout, stderr and exit code equal the BASE_SHA blob's; every arm's no-arg
+#      invocation equals base too, after normalising bash's own `<file>: line <n>:` diagnostics (the only
+#      text a move changes — the moved code reports its module and line). Mutation control:
+#      _lanes_usage's header anchor flipped ⇒ the --help check fails. Run against the working tree it
+#      froze the entry point's header (the usage text), so the first later usage edit (the lane-number
+#      PR, 2026-10-17) failed a check that was only ever about the move.
+#   Checks 5 and 6 need the BASE_SHA blob and the SPLIT_SHA tree: a shallow clone without them prints a
+#   named SKIP for each.
 #   Every mutant / copy is gated on non-empty + differs + `bash -n` before it is used.
 # Exit 0 = all pass, 1 = any failure.
 
@@ -38,6 +45,10 @@ E="$HERE/automate-lanes.sh"
 MOD_DIR="$HERE/automate-lanes.d"
 # The last single-file automate-lanes.sh (the split's base, origin/main after PRs #569, #572, #574, #578, #579, #580).
 BASE_SHA=087b9e417e521217e3998381f3d8c2f79695e109
+# The first main commit holding the split (wave 2's PR #582, which carried as/19's PR #577) — check 5's
+# subject, and SPLIT_MODS its module list then (the test's own copy, like MODS_WANT).
+SPLIT_SHA=c7d4f9a770326e6b6ebb975c5ac544f167c4667a
+SPLIT_MODS="common create launch relay remove notify-guards status-read park-leaks status readiness wave"
 # The expected function arms (`<sub>:<function>`) and modules — the test's OWN copies, so a dropped
 # or added arm / module fails check 1 / 2 rather than silently changing what is checked.
 ARMS="lane-create:lanes_create lane-launch:lanes_launch relay-hook:lanes_relay_hook lane-answer:lanes_answer
@@ -62,6 +73,11 @@ mkdir -p "$T/bin" "$T/cwd" "$T/home"
 # The base blob, read with the REAL git before any stub is on PATH. Empty ⇒ checks 5 and 6 SKIP.
 BASE_BLOB="$T/base-automate-lanes.sh"
 git -C "$HERE" show "$BASE_SHA:loomwright/scripts/automate-lanes.sh" > "$BASE_BLOB" 2>/dev/null || : > "$BASE_BLOB"
+# The split as it landed (SPLIT_SHA), likewise; any blob unreadable ⇒ $SPLIT_DIR is removed and check 5 SKIPs.
+SPLIT_DIR="$T/split"; mkdir -p "$SPLIT_DIR/automate-lanes.d"
+{ git -C "$HERE" show "$SPLIT_SHA:loomwright/scripts/automate-lanes.sh" > "$SPLIT_DIR/automate-lanes.sh" \
+  && for _m in $SPLIT_MODS; do git -C "$HERE" show "$SPLIT_SHA:loomwright/scripts/automate-lanes.d/$_m.sh" > "$SPLIT_DIR/automate-lanes.d/$_m.sh" || exit 1; done
+} 2>/dev/null || rm -rf "$SPLIT_DIR"
 
 # failing git / gh / claude stubs, so no arm can reach a real remote, repo or session
 for s in git gh claude; do printf '#!/usr/bin/env bash\nexit 1\n' > "$T/bin/$s"; chmod +x "$T/bin/$s"; done
@@ -217,17 +233,18 @@ else
   if [ "$brc" = 0 ] && [ -s "$T/bundle.sh" ] && bash -n "$T/bundle.sh" && ! grep -q '^_lanes_source [a-z]' "$T/bundle.sh"; then
     ok "_lanes_bundle builds ONE self-contained file (no _lanes_source line left, bash -n)"
   else no "_lanes_bundle failed (rc=$brc) or left a _lanes_source line"; fi
-  if [ ! -s "$BASE_BLOB" ]; then
-    skp "AC3 verbatim move: base blob $BASE_SHA unreachable (shallow clone?)"
+  if [ ! -s "$BASE_BLOB" ] || [ ! -d "$SPLIT_DIR" ]; then
+    skp "AC3 verbatim move: base blob $BASE_SHA or split commit $SPLIT_SHA unreachable (shallow clone?)"
   else
-    strip_split "$T/bundle.sh" > "$T/bundle.stripped"
-    if cmp -s "$T/bundle.stripped" "$BASE_BLOB"; then ok "AC3: stripped bundle == git show ${BASE_SHA:0:7}:loomwright/scripts/automate-lanes.sh byte-for-byte"
-    else no "AC3: stripped bundle differs from the base file: $(diff "$BASE_BLOB" "$T/bundle.stripped" | head -4 | tr '\n' ' ')"; fi
-    # Mutation control: one moved line edited (a trailing space on its first line), each module in turn.
-    for m in $MODS_WANT; do
-      C="$(mk_copy)"; M="$(dirname "$C")/automate-lanes.d/$m.sh"
-      sed '1s/$/ /' "$MOD_DIR/$m.sh" > "$M"
-      if [ ! -s "$M" ] || cmp -s "$MOD_DIR/$m.sh" "$M" || ! bash -n "$M"; then no "AC3 mutant $m: not built"; continue; fi
+    _lanes_bundle "$SPLIT_DIR/automate-lanes.sh" > "$T/split-bundle.sh" 2>/dev/null
+    strip_split "$T/split-bundle.sh" > "$T/bundle.stripped"
+    if cmp -s "$T/bundle.stripped" "$BASE_BLOB"; then ok "AC3: the split as it landed (${SPLIT_SHA:0:7}), stripped and bundled == git show ${BASE_SHA:0:7}:loomwright/scripts/automate-lanes.sh byte-for-byte"
+    else no "AC3: the stripped split bundle differs from the base file: $(diff "$BASE_BLOB" "$T/bundle.stripped" | head -4 | tr '\n' ' ')"; fi
+    # Mutation control: one moved line edited (a trailing space on its first line), each split module in turn.
+    for m in $SPLIT_MODS; do
+      C="$(mktemp -d "$T/splitcopy.XXXXXX")"; cp -R "$SPLIT_DIR/." "$C/"; C="$C/automate-lanes.sh"; M="$(dirname "$C")/automate-lanes.d/$m.sh"
+      sed '1s/$/ /' "$SPLIT_DIR/automate-lanes.d/$m.sh" > "$M"
+      if [ ! -s "$M" ] || cmp -s "$SPLIT_DIR/automate-lanes.d/$m.sh" "$M" || ! bash -n "$M"; then no "AC3 mutant $m: not built"; continue; fi
       _lanes_bundle "$C" > "$T/mb.sh" 2>/dev/null; strip_split "$T/mb.sh" > "$T/mb.stripped"
       if cmp -s "$T/mb.stripped" "$BASE_BLOB"; then no "AC3 mutant $m: an edited moved line still compared equal — the check is vacuous"
       else ok "AC3 mutant $m: one moved line edited ⇒ the verbatim-move check fails"; fi
@@ -244,9 +261,9 @@ else
 fi
 
 echo "== 6. help / no-arg / unknown output, and every arm's no-arg output, equal the base file's"
-if [ ! -s "$BASE_BLOB" ]; then
-  skp "help / unknown equal base: base blob $BASE_SHA unreachable (shallow clone?)"
-  skp "every arm's no-arg output equal base: base blob $BASE_SHA unreachable (shallow clone?)"
+if [ ! -s "$BASE_BLOB" ] || [ ! -d "$SPLIT_DIR" ]; then
+  skp "help / unknown equal base: base blob $BASE_SHA or split commit $SPLIT_SHA unreachable (shallow clone?)"
+  skp "every arm's no-arg output equal base: base blob $BASE_SHA or split commit $SPLIT_SHA unreachable (shallow clone?)"
 else
   # The base file in a dir of symlinks to every other scripts/ entry, so its sibling lookups resolve
   # exactly as the entry point's do.
@@ -255,9 +272,17 @@ else
     case "$(basename "$e")" in automate-lanes.sh|automate-lanes.d) ;; *) ln -s "$e" "$BD/$(basename "$e")" ;; esac
   done
   cp "$BASE_BLOB" "$BD/automate-lanes.sh"
+  # The split as it landed, laid out the same way: its entry point + modules beside the same symlinks.
+  SD="$T/splitrun"; mkdir -p "$SD"
+  for e in "$HERE"/*; do
+    case "$(basename "$e")" in automate-lanes.sh|automate-lanes.d) ;; *) ln -s "$e" "$SD/$(basename "$e")" ;; esac
+  done
+  cp -R "$SPLIT_DIR/." "$SD/"; SE="$SD/automate-lanes.sh"
   # same_as_base <entry> [<arg>] — stdout, stderr and rc of <entry> equal the base file's (paths and
   # bash's `<file>: line <n>:` locations normalised: the move changes the file and line, nothing else)
-  norm() { sed -e "s#$HERE/automate-lanes\.d/[a-z-]*\.sh: line [0-9]*:#<script>: line <n>:#g" \
+  norm() { sed -e "s#$SD/automate-lanes\.d/[a-z-]*\.sh: line [0-9]*:#<script>: line <n>:#g" \
+               -e "s#$SD/automate-lanes\.sh: line [0-9]*:#<script>: line <n>:#g" -e "s#$SD/#<D>/#g" \
+               -e "s#$HERE/automate-lanes\.d/[a-z-]*\.sh: line [0-9]*:#<script>: line <n>:#g" \
                -e "s#$HERE/automate-lanes\.sh: line [0-9]*:#<script>: line <n>:#g" \
                -e "s#$BD/automate-lanes\.sh: line [0-9]*:#<script>: line <n>:#g" -e "s#$BD/#<D>/#g" -e "s#$HERE/#<D>/#g" "$1"; }
   same_as_base() {
@@ -267,17 +292,17 @@ else
     [ "$rb" = "$rn" ] && cmp -s "$T/b.out" "$T/n.out" && cmp -s "$T/b.err" "$T/n.err"
   }
   for a in --help -h help "" no-such-subcommand; do
-    if same_as_base "$E" "$a"; then ok "'${a:-<no-arg>}': stdout, stderr and exit code equal base ($(wc -l < "$T/n.out" | tr -d ' ')+$(wc -l < "$T/n.err" | tr -d ' ') lines)"
+    if same_as_base "$SE" "$a"; then ok "'${a:-<no-arg>}': stdout, stderr and exit code equal base ($(wc -l < "$T/n.out" | tr -d ' ')+$(wc -l < "$T/n.err" | tr -d ' ') lines)"
     else no "'${a:-<no-arg>}': differs from base — $(diff "$T/b.out" "$T/n.out" | head -2 | tr '\n' ' ')$(diff "$T/b.err" "$T/n.err" | head -2 | tr '\n' ' ')"; fi
   done
   ARMDIFF=""
-  for a in $ARMS; do same_as_base "$E" "${a%%:*}" || ARMDIFF="$ARMDIFF ${a%%:*}"; done
+  for a in $ARMS; do same_as_base "$SE" "${a%%:*}" || ARMDIFF="$ARMDIFF ${a%%:*}"; done
   if [ -z "$ARMDIFF" ]; then ok "every arm's no-arg invocation: stdout, stderr and exit code equal base"
   else no "arms whose no-arg output differs from base:$ARMDIFF"; fi
   # Mutation control: the usage reader's header anchor flipped ⇒ --help no longer equals base.
-  C="$(mk_copy)"
-  sed 's|^_lanes_usage() { awk '"'"'/^# Usage \\(standalone/|_lanes_usage() { awk '"'"'/^# Usage \\(standalonX/|' "$E" > "$C"
-  if [ ! -s "$C" ] || cmp -s "$E" "$C" || ! bash -n "$C"; then no "usage mutant not built (empty, sed matched nothing, or bash -n failed)"
+  C="$(mktemp -d "$T/splitcopy.XXXXXX")"; cp -R "$SPLIT_DIR/." "$C/"; cp "$HERE/resolve-loomwright-root.sh" "$C/" 2>/dev/null; C="$C/automate-lanes.sh"
+  sed 's|^_lanes_usage() { awk '"'"'/^# Usage \\(standalone/|_lanes_usage() { awk '"'"'/^# Usage \\(standalonX/|' "$SE" > "$C"
+  if [ ! -s "$C" ] || cmp -s "$SE" "$C" || ! bash -n "$C"; then no "usage mutant not built (empty, sed matched nothing, or bash -n failed)"
   elif same_as_base "$C" --help; then no "usage mutant (anchor flipped) still equal to base — the --help check is vacuous"
   else ok "usage mutant (_lanes_usage anchor flipped) ⇒ the --help comparison fails"; fi
 fi

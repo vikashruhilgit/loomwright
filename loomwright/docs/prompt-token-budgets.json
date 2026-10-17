@@ -59,7 +59,7 @@
     "supervisor-readiness": {"budget": 12605, "measured": 11459, "note": "initial ceiling: measured + ~10% (as17)"},
     "telemetry": {"budget": 3216, "measured": 2923, "note": "initial ceiling: measured + ~10% (as17)"},
     "unit-testing": {"budget": 1691, "measured": 1537, "note": "initial ceiling: measured + ~10% (as17)"},
-    "user-story-writing": {"budget": 4006, "measured": 3641, "note": "initial ceiling: measured + ~10% (as17)"},
+    "user-story-writing": {"budget": 4731, "measured": 4301, "note": "Raised 4006->4731: new Shaping a set for parallel waves section (product-owner plans waves before the plan doc)"},
     "verify-walkthrough": {"budget": 9454, "measured": 8594, "note": "initial ceiling: measured + ~10% (as17)"},
     "workflow-management": {"budget": 4915, "measured": 4468, "note": "initial ceiling: measured + ~10% (as17)"}
   },

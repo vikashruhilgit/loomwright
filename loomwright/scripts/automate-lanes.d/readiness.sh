@@ -4,7 +4,10 @@
 #   validation     each `## Validation` entry of the item: PASS only with pasted output (a fenced block)
 #                  in the PR body's matching section; mentioned without output, or absent ⇒ NOT-RUN
 #   carried-notes  the brief's carried MEDIUM/LOW Plan Review notes, accounted for in the PR body
-#   scope-fence    `gh pr diff --name-only` ⊆ the item's `## Touches` / the brief's lanes + changelog.d/
+#   scope-fence    `gh pr diff --name-only` ⊆ the item's Touches set as the planner reserved it (`plan-waves
+#                  --touches`: strict grammar + companions) / the brief's lanes + changelog.d/; advisory —
+#                  whether drift collides with another lane of the same wave is wave-plan / wave-build's
+#                  overlap check (wave.sh _lanes_wave_overlap), not this per-lane report
 #   gates          required checks on the current head, dismissed-finding decisions, children-settled
 #   headline-repro the Validation entry naming a mutation / repro (PASS n/a when none is named)
 # Called by the lane at its ready_for_release park; re-written on demand (`lane-status --refresh-readiness`,
@@ -176,6 +179,52 @@ _lanes_validation_rows() {
   done
 }
 
+# ---- the declared set: ONE reader for lane-readiness's scope fence AND wave.sh's _lanes_wave_overlap, so a
+# file one of them calls declared the other never calls drift (PR #586 review: the overlap check once read
+# Touches only, the fence Touches + the brief).
+# _lanes_brief_of <lane_dir> <item> — the newest `.supervisor/jobs/*/*.md` brief naming <item>; empty when none.
+_lanes_brief_of() {
+  local bl
+  [ -n "${2:-}" ] || return 0
+  bl="$(grep -l -F "$2" "$1"/.supervisor/jobs/*/*.md 2>/dev/null)"
+  [ -n "$bl" ] || return 0
+  printf '%s\n' "$bl" | while IFS= read -r f; do ls -t "$f"; done 2>/dev/null | head -1
+}
+# _lanes_declared <lane_dir> <item> <brief> <out> — writes the declared set to <out>: the item's Touches set
+# exactly as the planner reserved it for the wave (`plan-waves --touches`: the planner's own parser +
+# companion expansion, so no reader parses a Touches section a second way) + the brief's `path:` lines.
+# The planner's helper is called directly, never through the $HELPERS seam: it is read-only and must be the
+# real grammar. Sets LD_TOUCHES (known | unknown) and LD_NOTE (empty, or the fence line's `; Touches …` note).
+_lanes_declared() {
+  local d="$1" item="$2" brief="$3" out="$4" tw
+  LD_TOUCHES=known; LD_NOTE=""
+  tw="$(bash "$HERE/automate-helpers.sh" plan-waves "$d/$item" --touches --root "$d" 2>/dev/null)" || tw=""
+  case "$tw" in
+    known*) ;;
+    unknown*) LD_TOUCHES=unknown; LD_NOTE="; Touches ${tw} — only the brief's paths are declared (the item ran alone in its wave)"; tw="" ;;
+    *) LD_TOUCHES=unknown; LD_NOTE="; Touches unreadable (plan-waves --touches failed) — only the brief's paths are declared"; tw="" ;;
+  esac
+  {
+    [ -n "$tw" ] && printf '%s\n' "$tw" | sed '1d'   # already normalized: a top-level dir reads `src`
+    [ -n "$brief" ] && sed -n 's/.*path: *"\([^"]*\)".*/\1/p; s/^ *- *"\([^"]*\)" *$/\1/p' "$brief" \
+      | sed 's#^\./##' | awk 'index($0, "/") || index($0, ".")'
+  } 2>/dev/null | env LC_ALL=C sort -u > "$out"
+}
+# _lanes_is_declared <file> <declared set file> — 0 when <file> is inside one entry: equal, a path ending in
+# `/<entry>`, under `<entry>/` (a normalized directory), under an entry written with a trailing `/`, or
+# matching an entry carrying `*` (a brief glob).
+_lanes_is_declared() {
+  local dcl
+  while IFS= read -r dcl; do
+    [ -n "$dcl" ] || continue
+    case "$1" in "$dcl"|*/"$dcl"|"$dcl"/*) return 0 ;; esac
+    case "$dcl" in */) case "$1" in "$dcl"*) return 0 ;; esac ;; esac
+    # shellcheck disable=SC2254 # unquoted on purpose: a brief entry with `*` is a glob
+    case "$dcl" in *'*'*) case "$1" in $dcl) return 0 ;; esac ;; esac
+  done < "$2"
+  return 1
+}
+
 lanes_readiness() {
   local target="${1:-}" dir
   dir="$(_lanes_resolve "$target")"
@@ -222,8 +271,7 @@ lanes_readiness() {
   else eline="headline-repro: $eworst — the Validation's named repro"; fi
   # ---- b: carried Plan Review notes
   local cline crows="" nc
-  local bl; bl="$(grep -l -F "$item" "$LN_DIR"/.supervisor/jobs/*/*.md 2>/dev/null)"
-  [ -n "$item" ] && [ -n "$bl" ] && brief="$(printf '%s\n' "$bl" | while IFS= read -r f; do ls -t "$f"; done 2>/dev/null | head -1)"
+  brief="$(_lanes_brief_of "$LN_DIR" "$item")"
   local cworst
   if [ -z "$item" ] || [ -z "$brief" ]; then cworst=NOT-RUN; cline="carried-notes: NOT-RUN — no brief naming $item found in the lane"
   else
@@ -234,30 +282,20 @@ lanes_readiness() {
     else cworst=NOT-RUN; cline="carried-notes: NOT-RUN — $nc carried note(s), no accounting in the PR body"; fi
     crows="$(sed 's/^/  - /' "$tmp/carried")"
   fi
-  # ---- c: scope fence
-  local fline frows="" fworst f dcl outside=""
-  {
-    awk '/^## /{ on = ($0 ~ /^## Touches/); next } on' "$itemf" 2>/dev/null | grep -o '`[^`]*`' | tr -d '`'
-    [ -n "$brief" ] && sed -n 's/.*path: *"\([^"]*\)".*/\1/p; s/^ *- *"\([^"]*\)" *$/\1/p' "$brief"
-  } 2>/dev/null | sed 's#^\./##' | awk 'index($0, "/") || index($0, ".")' | env LC_ALL=C sort -u > "$tmp/declared"
+  # ---- c: scope fence — declared = _lanes_declared (above): Touches as the planner reserved it + the brief.
+  local fline frows="" fworst f outside="" tnote
+  _lanes_declared "$LN_DIR" "$item" "$brief" "$tmp/declared"; tnote="$LD_NOTE"
   if [ -z "$pr" ] || ! "$LANES_GH" pr diff "$pr" --name-only > "$tmp/files" 2>/dev/null; then
     fworst=NOT-RUN; if [ -n "$pr" ]; then fline="scope-fence: NOT-RUN — gh pr diff unreadable ($pr)"; else fline="scope-fence: NOT-RUN — gh pr diff unreadable: no PR recorded"; fi
   else
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       case "$f" in changelog.d/*) continue ;; esac
-      local okf=0
-      while IFS= read -r dcl; do
-        [ -n "$dcl" ] || continue
-        case "$f" in "$dcl"|*/"$dcl") okf=1; break ;; esac
-        case "$dcl" in */) case "$f" in "$dcl"*) okf=1; break ;; esac ;; esac
-        case "$dcl" in *'*'*) case "$f" in $dcl) okf=1; break ;; esac ;; esac
-      done < "$tmp/declared"
-      [ "$okf" = 1 ] || outside="$outside$f
+      _lanes_is_declared "$f" "$tmp/declared" || outside="$outside$f
 "
     done < "$tmp/files"
-    if [ -z "$outside" ]; then fworst=PASS; fline="scope-fence: PASS — $(grep -c . "$tmp/files" | tr -d ' ') file(s) within the declared files + changelog.d/"
-    else fworst=FAIL; fline="scope-fence: FAIL — file(s) outside the declared files + changelog.d/"; frows="$(printf '%s' "$outside" | sed '/^$/d; s/^/  - /')"; fi
+    if [ -z "$outside" ]; then fworst=PASS; fline="scope-fence: PASS — $(grep -c . "$tmp/files" | tr -d ' ') file(s) within the declared files + changelog.d/$tnote"
+    else fworst=FAIL; fline="scope-fence: FAIL — file(s) outside the declared files + changelog.d/$tnote"; frows="$(printf '%s' "$outside" | sed '/^$/d; s/^/  - /')"; fi
   fi
   # ---- d: gates
   local gline grows="" gworst=PASS cj cs

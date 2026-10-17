@@ -146,13 +146,17 @@ lanes_remove() {
 # ==================================================================================================
 # ---- the lane's metadata at the wave end (F11) --------------------------------------------------
 # _lanes_meta_extras <branch> <message> — pushes the lane's own NON-claim metadata, exactly listed:
-# its run file, `<run_id>.merge-readiness.md` and `<run_id>.dismissed-decisions` (each when present),
-# plus its Orchestrator task plans and the requirement drafts it filed (_lanes_noclaim_files). None of
-# them is a done claim. Prints meta-sync's reason and returns 1 on failure.
+# its run file, `<run_id>.merge-readiness.md`, `<run_id>.dismissed-decisions` and `<run_id>.brief-draft.md`
+# (each when present), plus its Orchestrator task plans and the requirement drafts it filed
+# (_lanes_noclaim_files). None of them is a done claim. The brief draft is the revised brief the lane's
+# Launch Pad keeps (Plan Review FAIL×3 → "Refine offline", or a PASS that kept a draft): a managed
+# `.supervisor/automate/*.md` path no trail-pr candidate carries, so before this list carried it the
+# lane read `local_ahead 1` forever and lane-remove refused it (run automate-2026-10-15-163325: L5, L9,
+# each hand-pushed). Only this lane's own run id. Prints meta-sync's reason and returns 1 on failure.
 _lanes_meta_extras() {
   local mb="$1" msg="$2" list f out rc=0
   list="$(mktemp "${TMPDIR:-/tmp}/lane-meta.XXXXXX" 2>/dev/null)" || { echo "could not stage the push list"; return 1; }
-  { for f in "$LN_RUN.md" "$LN_RUN.merge-readiness.md" "$LN_RUN.dismissed-decisions"; do
+  { for f in "$LN_RUN.md" "$LN_RUN.merge-readiness.md" "$LN_RUN.dismissed-decisions" "$LN_RUN.brief-draft.md"; do
       if [ -f "$LN_DIR/.supervisor/automate/$f" ]; then printf '%s\n' ".supervisor/automate/$f"; fi
     done
     _lanes_noclaim_files
@@ -279,8 +283,8 @@ _lanes_abandon_meta() {
 # `done`, branch mode runs `finalize-empty` inside the lane before the pushes (A1, parallel-automate/21 —
 # see the comment at its call). Each then runs the pushes, so a re-run is idempotent. Branch mode (`on <Y>`) then
 # pushes (1) the lane's non-claim files by exact list (_lanes_meta_extras: the run file, its
-# merge-readiness report, its dismissed-decisions ledger, its task plans, the requirement drafts it filed
-# under proposed/) and (2) everything else through trail-pr's
+# merge-readiness report, its dismissed-decisions ledger, its kept brief draft, its task plans, the
+# requirement drafts it filed under proposed/) and (2) everything else through trail-pr's
 # evidence-gated candidate list (_lanes_meta_trail, `--reason wave-end`): a done stamp or a jobs/done/
 # brief whose PR is not MERGED is excluded and named, so while the PR is open the lane keeps reading
 # `local_ahead` and lane-remove keeps refusing — after the owner merges, the re-run's closeout writes
