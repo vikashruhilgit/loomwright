@@ -73,3 +73,9 @@ loomwright/skills/automate-loop/resume.md
 loomwright/commands/automate.md
 loomwright/docs/loop-inventory/automate-loop.md
 changelog.d/as07-next-step-drain-and-run.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-17T13:55:10Z
+- **Brief:** .supervisor/jobs/done/2026-10-17-next-step-drain-and-run.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/594
