@@ -148,8 +148,19 @@ absent). Progress lines from `auto_review suppressed` to `drain READY`:
   `per-item-loop.md`, so the leg would no longer catch a PICK ask that drifted below the step-2 pointer. The pin was kept
   byte-identical, as the brief asks (repoint only when an anchor cannot stay). Tightening it to the pointer
   (`2. **RUN — run next-step**`) is a follow-up.
-- `scripts/check-vendor-coupling.sh` (a CI gate outside Validation 1) still reports two BREACH rows, both from
-  subtask 1's committed driver files: `automate-next-step.sh` +2 (`last_assistant_message`, `CLAUDE_PLUGIN_ROOT`) and
-  `test-automate-next-step.sh` +3. Subtask 2's own breach is fixed. `legacy-tail.md` had gained two references moved
-  verbatim from `per-item-loop.md`, and that allowance moved with them in `docs/vendor-coupling-manifest.json`
-  (`legacy-tail.md` 1 → 3, `per-item-loop.md` 7 → 5, net zero).
+- `scripts/check-vendor-coupling.sh` (a CI gate outside Validation 1) flagged subtask 1's driver files after the prose
+  move; fixed in the follow-up commit: the plugin-version read now resolves from the script's own location (coupling
+  removed), and the one stop-failure payload field the rate-limit hint needs is a declared allowance of 1 for the driver
+  and its test, with an `allowance_reasons` entry in `loomwright/docs/vendor-coupling-manifest.json`.
+
+## Full local CI (`bash scripts/ci-local.sh`, on the final tree)
+
+```
+1 of 170 self-tests FAILED (wall 826s):
+  loomwright/scripts/test-automate-helpers.sh   (RESULT: 761 passed, 1 failed — W19 only)
+```
+
+W19 is environmental, not a regression: `test-automate-helpers.sh` run on a clean worktree of the base commit
+(c7d4f9a) with the same gitignored `.supervisor/requirements/` queue copied in fails the same leg the same way
+(`RESULT: 761 passed, 1 failed`, `FAIL: W19 real 22-split-automate-engine-surfaces.md ## Touches parses (known)`).
+In CI the queue is absent and W19 skips. `check-vendor-coupling.sh` passes on this tree.
