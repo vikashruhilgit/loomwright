@@ -445,10 +445,10 @@ if new_scratch "$FIX/plan-path-parallel"; then
   sn_call "$DRIVER" --result '{"subtasks":[{"id":"a"},{"id":"a"}]}'; r_dup=$NC_RC
   s1="$(snapshot)"
   sn_call "$DRIVER" --result '{"subtasks":[{"id":"a","title":"A"},{"id":"b","title":"B"}]}'
-  if printf '%s' "$o_plan" | jq -e '.do == "spawn" and .what == "orchestrator" and .model == "sonnet" and .criteria == "2 acceptance criteria — read the brief'"'"'s ## Acceptance Criteria"' >/dev/null 2>&1 \
+  if printf '%s' "$o_plan" | jq -e '.do == "spawn" and .what == "orchestrator" and .cost_profile == "cheap" and .criteria == "2 acceptance criteria — read the brief'"'"'s ## Acceptance Criteria"' >/dev/null 2>&1 \
      && [ "$r_dup" = 2 ] && [ "$s0" = "$s1" ] \
-     && printf '%s' "$NC_OUT" | jq -e '.what == "execute-manager" and .plan_source == "orchestrator" and .subtasks == ["a","b"] and .model == "sonnet"' >/dev/null 2>&1; then
-    ok "B1: no subtask table ⇒ the orchestrator spawn (--cheap ⇒ sonnet); a duplicate id exits 2, nothing written; its plan ⇒ the parallel spawn"
+     && printf '%s' "$NC_OUT" | jq -e '.what == "execute-manager" and .plan_source == "orchestrator" and .subtasks == ["a","b"] and .cost_profile == "cheap"' >/dev/null 2>&1; then
+    ok "B1: no subtask table ⇒ the orchestrator spawn (--cheap ⇒ cost_profile cheap); a duplicate id exits 2, nothing written; its plan ⇒ the parallel spawn"
   else no "B1: orchestrator route wrong (plan: $(printf '%s' "$o_plan" | head -c 160); dup rc $r_dup; then: $(printf '%s' "$NC_OUT" | head -c 160))"; fi
 else no "B1: scratch not built"; fi
 # B2 — a malformed confirmation / report exits 2, nothing written, and the instruction re-prints

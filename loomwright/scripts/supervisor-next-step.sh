@@ -424,7 +424,7 @@ sn_preflight() {
     return 0
   fi
   sn_spawn preflight preflight-sync preflight-route "$("$JQ" -cn --arg b "$(st base_branch)" '{base_branch: $b,
-    invocation: "Read ${CLAUDE_PLUGIN_ROOT}/skills/preflight-sync/SKILL.md and run its actions 2-5 (gather remote state, the anticipated file set, classify, stacked-iteration scoping) inside its tool-call budget; do not act on the classification, report it",
+    invocation: "Read skills/preflight-sync/SKILL.md (under the plugin install root) and run its actions 2-5 (gather remote state, the anticipated file set, classify, stacked-iteration scoping) inside its tool-call budget; do not act on the classification, report it",
     then: "--result {\"classification\": \"CLEAR|OVERLAP|SUPERSEDED|UNVERIFIED\", \"version\": \"<canonical version>\", \"base_tip\": \"<base tip sha>\", \"citations\": \"<the overlapping commits / PRs and the intersecting paths — OVERLAP and SUPERSEDED>\", \"advisory\": \"<churn_since_brief / premise_check notes, optional>\", \"warning\": \"<the one tooling warning — UNVERIFIED>\"}"}')"
 }
 
@@ -522,7 +522,7 @@ sn_plan() {
       brief_note: "read only the sections you need", criteria: $c,
       preflight_sync: (if $p == "" then null else $p end)}
     + (if $w != "" then {preflight_warning: $w} else {} end)
-    + (if $ch == "true" then {model: "sonnet"} else {} end)
+    + (if $ch == "true" then {cost_profile: "cheap"} else {} end)
     + {then: "--result {\"subtasks\": [{\"id\": \"<subtask id>\", \"title\": \"<title>\"}, …]} — the plan, in order"}')"
 }
 
@@ -562,7 +562,7 @@ sn_execute() {
         --argjson w "$(st max_workers)" --arg base "$(st base_branch)" --arg ps "$(st plan_source)" --arg ch "$ch" \
         '{agent: "loomwright:execute-manager", path: "parallel", plan_source: $ps, brief: $b,
           brief_note: "read only the sections you need", subtasks: $s, max_workers: $w, base_branch: $base}
-        + (if $ch == "true" then {model: "sonnet"} else {} end)
+        + (if $ch == "true" then {cost_profile: "cheap"} else {} end)
         + {then: "--result {\"result\": \"<the EXECUTE_RESULT block, verbatim>\"}"}')" ;;
     single-agent|sequential)
       i="$(st seq_index)"; [ -n "$i" ] || i=0
@@ -571,7 +571,7 @@ sn_execute() {
       sn_spawn execute worker execute-result "$("$JQ" -cn --arg p "$p" --arg b "$(st job)" --arg id "$id" --arg r "$ROOT" \
         --arg ps "$(st plan_source)" --arg ch "$ch" '{agent: "loomwright:worker", path: $p, plan_source: $ps, subtask: $id, brief: $b,
           brief_note: "read only your subtask'"'"'s sections", worktree: $r}
-        + (if $ch == "true" then {model: "sonnet"} else {} end)
+        + (if $ch == "true" then {cost_profile: "cheap"} else {} end)
         + {then: "--result {\"result\": \"<the WORKER_RESULT block, verbatim>\"}"}')" ;;
     *) sn_fail "execute: no execution path selected (plan-result has not run)"; return 1 ;;
   esac
