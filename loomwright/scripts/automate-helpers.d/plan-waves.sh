@@ -351,9 +351,9 @@ plan_waves() {
       --root)
         case "${2:-}" in ""|-*) _pw_usage "--root requires a checkout path (got '${2:-}')" ;; esac
         root="$2"; shift 2 ;;
-      --explain) case "$mode" in lint|touches) _pw_usage "--explain, --lint and --touches are separate modes" ;; esac; mode=explain; shift ;;
-      --lint) case "$mode" in explain|touches) _pw_usage "--explain, --lint and --touches are separate modes" ;; esac; mode=lint; shift ;;
-      --touches) case "$mode" in explain|lint) _pw_usage "--explain, --lint and --touches are separate modes" ;; esac; mode=touches; shift ;;
+      --explain) case "$mode" in lint) _pw_usage "--explain and --lint are separate modes" ;; touches) _pw_usage "--touches is a separate mode" ;; esac; mode=explain; shift ;;
+      --lint) case "$mode" in explain) _pw_usage "--explain and --lint are separate modes" ;; touches) _pw_usage "--touches is a separate mode" ;; esac; mode=lint; shift ;;
+      --touches) case "$mode" in explain|lint) _pw_usage "--touches is a separate mode" ;; esac; mode=touches; shift ;;
       -*) _pw_usage "unknown option $1" ;;
       *) [ -z "$input" ] || _pw_usage "more than one input ($input, $1)"; input="$1"; shift ;;
     esac
