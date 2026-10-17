@@ -356,19 +356,20 @@ EOF
 # in a STOPPED wave-build (a textual conflict) or in a clean merge nobody reviewed as one change; drift
 # into a file no other wave lane changed is harmless here (a later wave starts from the merged base).
 # Advisory and WARN-ONLY (owner decision 2026-10-17): it never refuses, holds or reorders a lane.
-# READ-ONLY: per `ok` row ONE `gh pr diff <pr> --name-only` read (changelog.d/ dropped) and the item's
-# declared set through `plan-waves --touches` in the lane checkout — the reader lane-readiness's scope
-# fence uses, so "declared" means the same thing in both. Sets WO_N (the number of shared files) and
+# READ-ONLY: per `ok` row ONE `gh pr diff <pr> --name-only` read (changelog.d/ dropped) and the lane's
+# declared set through readiness.sh's _lanes_declared + _lanes_is_declared — the SAME reader and matcher
+# lane-readiness's scope fence uses (Touches as the planner reserved it + the lane's brief `path:` lines),
+# so a file is "declared" in one exactly when it is in the other. Sets WO_N (the number of shared files) and
 # WO_LINES, one `<kind> — <detail>` line each, in this order:
 #   overlap — <file> changed by L1 (outside its Touches), L3 (declared)   one per shared file, by path
 #   drift — <lane> changed <n> file(s) outside its Touches; no other lane of this wave changed them
 #           (`with its Touches unknown` in place of `outside its Touches` for an unknown-Touches lane)
 #   overlap — NOT-RUN — <lane> PR #<n> diff unreadable                   that lane is left out
 #   overlap — none — no file is changed by more than one lane of this wave   (no shared file, every diff read)
-# A lane's annotation is `declared`, `outside its Touches`, or `Touches unknown` (its Touches section is
-# unknown to the planner, which ran it alone — so it should share no file). Returns 0.
+# A lane's annotation is `declared` (Touches or brief), `outside its Touches`, or `Touches unknown` (its
+# Touches section is unknown to the planner, which ran it alone — so it should share no file). Returns 0.
 _lanes_wave_overlap() {
-  local tab kind lane path item run pr num sha st tw tmp unread=""
+  local tab kind lane path item run pr num sha st tmp f fs unread=""
   WO_LINES=""; WO_N=0; tab="$(printf '\t')"
   tmp="$(mktemp -d 2>/dev/null)" || { WO_LINES="overlap — NOT-RUN — no temp dir"; return 0; }
   : > "$tmp/all"
@@ -378,14 +379,15 @@ _lanes_wave_overlap() {
       unread="${unread}overlap — NOT-RUN — $lane PR #$num diff unreadable
 "; continue
     fi
-    tw="$(bash "$HERE/automate-helpers.sh" plan-waves "$path/$item" --touches --root "$path" 2>/dev/null)" || tw=""
-    case "$tw" in known*) printf '%s\n' "$tw" | sed '1d' > "$tmp/d"; tw=known ;; *) : > "$tmp/d"; tw=unknown ;; esac
-    WO_DF="$tmp/d" WO_L="$lane" WO_U="$tw" env LC_ALL=C awk '
-      BEGIN { while ((getline x < ENVIRON["WO_DF"]) > 0) D[++n] = x }
-      $0 == "" || /^changelog\.d\// { next }
-      { s = (ENVIRON["WO_U"] == "unknown") ? "Touches unknown" : "outside its Touches"
-        for (i = 1; i <= n; i++) if ($0 == D[i] || index($0, D[i] "/") == 1) { s = "declared"; break }
-        print $0 "\t" ENVIRON["WO_L"] "\t" s }' "$tmp/f" >> "$tmp/all"
+    _lanes_declared "$path" "$item" "$(_lanes_brief_of "$path" "$item")" "$tmp/d"
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      case "$f" in changelog.d/*) continue ;; esac
+      if _lanes_is_declared "$f" "$tmp/d"; then fs=declared
+      elif [ "$LD_TOUCHES" = known ]; then fs="outside its Touches"
+      else fs="Touches unknown"; fi
+      printf '%s\t%s\t%s\n' "$f" "$lane" "$fs" >> "$tmp/all"
+    done < "$tmp/f"
   done <<EOF
 $WV_ROWS
 EOF

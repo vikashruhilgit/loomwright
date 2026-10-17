@@ -379,6 +379,13 @@ pl="$(bash "$L" wave-plan "$RFC" 2>&1)"
 has "W8d an unreadable lane diff ⇒ one NOT-RUN line, never a silent 'none'" "$pl" "# overlap — NOT-RUN — L2 PR #32 diff unreadable"
 has "W8d2 … the other lanes are still checked" "$pl" "# drift — L1 changed 2 file(s) outside its Touches"
 mv "$T/gh/diff.32.off" "$T/gh/diff.32"
+# PR #586 review: one declared set for both readers — a file L1's BRIEF declares (`path:`) is declared in the
+# overlap check too, exactly as lane-readiness's scope fence counts it, never "outside its Touches".
+mkdir -p "$D1/.supervisor/jobs/in-progress"; printf '# brief for %s\nfiles:\n  - path: "shared2.txt"\n' "$IA" > "$D1/.supervisor/jobs/in-progress/b1.md"
+pl="$(bash "$L" wave-plan "$RFC" 2>&1)"
+check "W8m a brief-declared path reads declared in the overlap check, as the scope fence reads it" "$(printf '%s\n' "$pl" | grep '^# overlap')" \
+  "# overlap — shared2.txt changed by L1 (declared), L2 (declared)"
+rm -rf "$D1/.supervisor/jobs"
 out="$(wb "$RFC")"; rc=$?
 printf '%s\n' "$out" | sed 's/^/       | /'
 URL8="$(printf '%s\n' "$out" | sed -n 's/^wave-build: opened — \(https:[^ ]*\).*/\1/p')"
