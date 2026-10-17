@@ -74,3 +74,9 @@ loomwright/scripts/test-insights.sh
 loomwright/docs/OBSERVABILITY.md
 docs/evidence/automate-speed-baseline.md
 changelog.d/as03-measure-run-cost.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-17T03:46:40Z
+- **Brief:** .supervisor/jobs/done/2026-10-16-as03-measure-run-cost.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/570
