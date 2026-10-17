@@ -234,14 +234,14 @@ strip_split() {
 if ! declare -F _lanes_bundle >/dev/null; then
   no "_lanes_bundle could not be extracted from the entry point"
 else
-  _lanes_bundle "$SE" > "$T/bundle.sh"; brc=$?
+  _lanes_bundle "$E" > "$T/bundle.sh"; brc=$?
   if [ "$brc" = 0 ] && [ -s "$T/bundle.sh" ] && bash -n "$T/bundle.sh" && ! grep -q '^_lanes_source [a-z]' "$T/bundle.sh"; then
     ok "_lanes_bundle builds ONE self-contained file (no _lanes_source line left, bash -n)"
   else no "_lanes_bundle failed (rc=$brc) or left a _lanes_source line"; fi
   if [ ! -s "$BASE_BLOB" ]; then
     skp "AC3 verbatim move: base blob $BASE_SHA or split tree $SPLIT_SHA unreachable (shallow clone?)"
   else
-    strip_split "$T/bundle.sh" > "$T/bundle.stripped"
+    _lanes_bundle "$SE" > "$T/split-bundle.sh" 2>/dev/null; strip_split "$T/split-bundle.sh" > "$T/bundle.stripped"
     if cmp -s "$T/bundle.stripped" "$BASE_BLOB"; then ok "AC3: stripped bundle of ${SPLIT_SHA:0:7} == git show ${BASE_SHA:0:7}:loomwright/scripts/automate-lanes.sh byte-for-byte"
     else no "AC3: stripped bundle differs from the base file: $(diff "$BASE_BLOB" "$T/bundle.stripped" | head -4 | tr '\n' ' ')"; fi
     # Mutation control: one moved line edited (a trailing space on its first line), each module in turn.
