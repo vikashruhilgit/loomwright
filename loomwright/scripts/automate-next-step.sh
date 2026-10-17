@@ -120,8 +120,9 @@
 # (surfaced); 2 usage error, a `--result` that does not answer what is pending, or a malformed /
 # out-of-state drain report (REPORT VALIDATION below), or a named refusal on stderr —
 # `next-step: config_malformed — …` (`config-suppress`'s exit 2: no spawn, no line, config.json
-# byte-unchanged, no backup), `config_backup_stranded`, `run_already_started`, `drain_already_owned`
-# — nothing written. A writer's own non-zero code is passed through (progress-append's 3,
+# byte-unchanged, no backup), `config_backup_stranded`, `session_id_missing` / `session_id_malformed`
+# (`--start run` without this loop's session id), `run_already_started`, `drain_already_owned`,
+# `reserved_prefix` — nothing written. A writer's own non-zero code is passed through (progress-append's 3,
 # `current_not_set`, on the drain start line included).
 #
 # REPORT VALIDATION (fail CLOSED, exit 2, nothing written): every drain-report field the driver
@@ -130,7 +131,8 @@
 # misspelt value included, is refused, never routed down the READY path); `ready_sha` /
 # `escalation_sha` hex (7–40); `escalation_cause` the current-escalation enum; `escalation_attempt` /
 # `items_processed` 1–9 digits (a count `[` can compare), `escalation_run_id` 1–20 digits; `progress_note`
-# one line. A drain report starts a tail only while `## Current` reads `status: running` (the first drain and both
+# one line; `progress_note` and every `progress_notes` entry never start with a reserved prefix
+# (NS_RESERVED_PREFIXES — a line the driver or a helper keys on). A drain report starts a tail only while `## Current` reads `status: running` (the first drain and both
 # fix-now re-drain hand-offs set it): a different report after a terminal park is refused, a
 # byte-identical one is a replay. After a `spawn` the re-drain report REPLACES the first one (no
 # field of the first drain survives into the second GATE pass); the first report re-sent there (same
@@ -441,6 +443,56 @@ ns_field_ok() {
     *) return 0 ;;
   esac
 }
+# The ## Progress prefixes a reader keys on — this driver's own (ns_last_picked, ns_drain_owned,
+# ns_last_drain_marker, ns_tail_lines, the decide step's dismissed-decisions read), progress-append's
+# current_not_set guard, validation-gate's waiver count, automate-dismissed.sh's fix-now batch anchors and
+# the /lanes and phase-timing readers. A free-text report field the driver writes at a line's start (after
+# its timestamp) — `progress_notes[]`, `progress_note` — that begins with one would forge that record (a
+# second owned drain, an owner's waiver), so it is refused: exit 2 reserved_prefix, nothing written.
+NS_RESERVED_PREFIXES='picked
+ran /autonomous
+owned drain started
+drain READY
+drain ESCALATED
+drain superseded_by_merge
+fix-now re-drain
+re-drain
+auto_review
+session_id
+rate-limited
+validation-gate:
+validation waived:
+dismissed
+sidecar-check:'
+# ns_reserved_prefix <text> — print the reserved prefix <text> starts with (leading blanks ignored); 1 when none
+ns_reserved_prefix() {
+  local t="$1" p
+  t="${t#"${t%%[![:space:]]*}"}"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$t" in "$p"*) printf '%s' "$p"; return 0 ;; esac
+  done <<EOF
+$NS_RESERVED_PREFIXES
+EOF
+  return 1
+}
+# ns_check_free_text <json> — every free-text field written at a line's start, against the reserved prefixes
+ns_check_free_text() {
+  local v p
+  v="$(rj "$1" progress_note)"
+  if [ -n "$v" ] && p="$(ns_reserved_prefix "$v")"; then
+    ns_die2 "--result: reserved_prefix — progress_note starts with '$p', a line the driver itself writes and reads — nothing written"
+  fi
+  while IFS= read -r v; do
+    [ -n "$v" ] || continue
+    if p="$(ns_reserved_prefix "$v")"; then
+      ns_die2 "--result: reserved_prefix — a progress_notes entry starts with '$p', a line the driver itself writes and reads — nothing written"
+    fi
+  done <<EOF
+$(printf '%s' "$1" | "$JQ" -r '(.progress_notes // []) | if type == "array" then .[] | strings else empty end' 2>/dev/null)
+EOF
+  return 0
+}
 # ns_check_report <json> — refuse (exit 2, before any write) a field the driver would branch on or write
 # malformed; drain_result's enum is the `gate` step's own check (the NEXT_STEP_FROM seam may skip gate)
 ns_check_report() {
@@ -450,6 +502,7 @@ ns_check_report() {
     v="$(rj "$1" "$k")"
     [ -z "$v" ] || ns_field_ok "$k" "$v" || ns_die2 "--result: malformed $k '$v' — nothing written"
   done
+  ns_check_free_text "$1"
   # the optional `pr` binds the report to its PR: another PR than ## Current's is refused (never stored —
   # the sidecar's `pr` is ## Current's own)
   v="$(rj "$1" pr)"
@@ -619,6 +672,7 @@ ns_check_drain_report() {
   for k in progress_note items_processed escalation_cause escalation_check escalation_run_id escalation_attempt escalation_sha; do
     v="$(rj "$r" "$k")"; [ -z "$v" ] || ns_field_ok "$k" "$v" || ns_die2 "--result: malformed $k '$v' — nothing written"
   done
+  ns_check_free_text "$r"
   v="$(rj "$r" pr)"; k="$(st pr)"; [ -n "$k" ] && [ "$k" != null ] || k="$PR"
   [ -z "$v" ] || [ "$v" = "$k" ] || ns_die2 "--result: pr '$v' is not this drain's PR (${k:-none}) — nothing written"
   return 0
@@ -724,6 +778,10 @@ ns_run() {
   [ -z "$PR" ] || [ "$PR" = null ] || { ns_err "run: ## Current already records PR $PR for $ITEM — RUN already ran this pass; nothing written"; NS_RC=2; return 1; }
   lp="$(ns_last_picked)"; pit="${lp#*"$TAB"}"
   [ "${pit#./}" = "${ITEM#./}" ] || { ns_err "run: the last picked line names '${pit:-no item}', not $ITEM — nothing written"; NS_RC=2; return 1; }
+  # the rate-limit park (end of RUN) reads THIS loop's session log: without its id the check could only
+  # read "clean", so RUN never starts without one (fail CLOSED)
+  [ -n "$SID" ] || { ns_err "session_id_missing — --start run needs --session-id <this loop's session id> (the rate-limit park reads that session's log) — nothing written"; NS_RC=2; return 1; }
+  ns_sid_ok "$SID" || { ns_err "session_id_malformed — --session-id '$SID' is not a session id — nothing written"; NS_RC=2; return 1; }
   ns_cfg_paths
   if [ "$(st suppressed)" != true ]; then
     # a backup that already exists is a crash-stranded one (RECONCILE restores it): suppressing over it
@@ -806,8 +864,14 @@ ns_429_hint() { # <payload session id> <row ts> — the closest-preceding STOP_F
       | last | ((.p.last_assistant_message // "") | tostring | test("429"))' "$f" 2>/dev/null | grep -qx true
 }
 ns_rate_limit() {
-  local pts log rows cls="" hint="" reason rts csid
-  if [ -n "$SID" ] && ns_sid_ok "$SID"; then
+  local pts log rows cls="" hint="" reason rts csid skip=""
+  # an unread check is never "clean": no session id (or no log for it) writes ONE pinned skipped line
+  if [ -z "$SID" ] || ! ns_sid_ok "$SID"; then skip="no session id"
+  elif [ ! -f "$ROOT/.supervisor/logs/$SID.jsonl" ] || [ ! -r "$ROOT/.supervisor/logs/$SID.jsonl" ]; then
+    skip="no session log .supervisor/logs/$SID.jsonl"
+  fi
+  if [ -n "$skip" ]; then ns_once once_rl_skip ns_progress "$(ns_ts) rate-limit check: skipped — $skip" || return 1; fi
+  if [ -z "$skip" ]; then
     pts="$(ns_last_picked)"; pts="${pts%%"$TAB"*}"
     log="$ROOT/.supervisor/logs/$SID.jsonl"
     if [ -f "$log" ]; then

@@ -10,7 +10,7 @@ pinned no-PR line), the verbatim supervisor-result sidecar with its `sidecar-che
 check. The DRAIN report gets the pinned start and terminal drain lines (the fix-now re-drain's too), `owned_drain_*`,
 the verbatim review-heal sidecar with its `sidecar-check` and `learning-emit`, then GATE. A drain with no terminal
 block whose PR merged becomes `superseded_by_merge` and goes to the close-out (no sidecar, no learning line, no
-GATE). A second owned-drain spawn in the same pass exits 2 `drain_already_owned`. New driver steps (`run`,
+GATE). A second owned-drain spawn in the same pass exits 2 `drain_already_owned`. `--start run` needs the loop's `--session-id` (exit 2 `session_id_missing` otherwise), and a rate-limit check that cannot read its session log writes a pinned `rate-limit check: skipped` line instead of reading clean. A `progress_notes` / `progress_note` value starting with a line the driver itself keys on (`picked `, `owned drain started`, `validation waived:`, …) exits 2 `reserved_prefix`, nothing written. New driver steps (`run`,
 `run-result`, `run-record`, `rate-limit`, `drain`, `drain-result`, `superseded`, `awaiting-go`, `learning-emit`), the
 `spawn` values `"/autonomous run"` and `"owned drain"`, the RUN and DRAIN report shapes and `done` `status: "stopped"`
 are documented in `docs/result-schemas/automate-run.md` §"next-step instruction". `test-automate-next-step.sh` drives

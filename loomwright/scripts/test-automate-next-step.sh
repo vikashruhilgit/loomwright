@@ -88,6 +88,12 @@
 #       re-print (idempotent), a re-sent report or --start run is refused. R8: the 429-hint rate-limit
 #       park (reason_hint) and a stale failed row (no park). R9: the first drain's DRAIN report re-sent
 #       at the fix-now re-drain spawn ⇒ the spawn re-prints, nothing written (B14a's rule, DRAIN reports).
+#       R10: a progress_notes entry / progress_note starting with a reserved prefix (a line the driver or
+#       a helper keys on — `picked `, `owned drain started`, `validation waived:`, …) ⇒ exit 2
+#       reserved_prefix, nothing written, at the gate entry and the owned-drain spawn; mid-line it is a
+#       note, and the pass still owns ONE drain. R11: --start run without / with a malformed
+#       --session-id ⇒ exit 2 session_id_missing / session_id_malformed, nothing written; the loop's own
+#       log parks rate_limit; no session id / no log at the check ⇒ ONE pinned skipped line.
 #   V7  RUNNING SYSTEM (Validation 3 of automate-speed/07): a scratch git repo (gh stubbed), the real
 #       run-lock.sh held as PICK holds it, one item from PICK through --start run → the RUN report →
 #       the DRAIN report → the awaiting_merge park; the Progress lines are printed between `V3-07>`
@@ -120,6 +126,9 @@
 #         M7c config-suppress's non-zero exit ignored              ⇒ R3
 #         M7d the review-heal sidecar written on the superseded path ⇒ R4
 #         M7e progress-append's exit swallowed on the drain start line ⇒ G drain-pinned-start-line-current-not-set
+#         M7f the reserved-prefix check of the free-text notes removed ⇒ R10
+#         M7g both --start run session-id refusals removed (two edits) ⇒ R11
+#         M7h the rate-limit check's pinned skipped line removed ⇒ R11
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -581,7 +590,7 @@ leg_run_order() {
   new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
   cfg="$CASE_ROOT/.supervisor/config.json"; bak="$CASE_ROOT/.supervisor/automate/$CASE_RUN.config-backup.json"
   printf '{"auto_review": true, "keep": [1, 2]}\n' > "$cfg"; cp "$cfg" "$CASE_DIR/cfg.orig"
-  ns_call "$drv" --start run
+  ns_call "$drv" --start run --session-id s-run
   [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "spawn" and .what == "/autonomous run" and (.invocation | startswith("/autonomous --single-iteration --requirement "))' >/dev/null 2>&1 \
     || { LEG_MSG="--start run ⇒ exit $NC_RC '${NC_OUT:0:120}' ${NC_ERR:0:160}"; return 1; }
   jq -e '.auto_review == false and .keep == [1, 2]' "$cfg" >/dev/null 2>&1 && cmp -s "$bak" "$CASE_DIR/cfg.orig" \
@@ -629,7 +638,7 @@ leg_config_malformed() {
   local drv="$1" s0 cfg
   new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
   cfg="$CASE_ROOT/.supervisor/config.json"; printf '{"auto_review": true,\n' > "$cfg"; cp "$cfg" "$CASE_DIR/cfg.bad"
-  s0="$(snapshot)"; ns_call "$drv" --start run
+  s0="$(snapshot)"; ns_call "$drv" --start run --session-id s-run
   [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'next-step: config_malformed — ' <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] \
     && cmp -s "$cfg" "$CASE_DIR/cfg.bad" && [ ! -e "$CASE_ROOT/.supervisor/automate/$CASE_RUN.config-backup.json" ] \
     && ! grep -q 'auto_review suppressed' "$CASE_RF" \
@@ -669,7 +678,7 @@ BAD_RUN='{"supervisor_result":"SUPERVISOR_RESULT:\n  pr_url: https://github.com/
 leg_bad_run_reports() {
   local drv="$1" s0 r
   new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
-  ns_call "$drv" --start run; [ "$NC_RC" = 0 ] || { LEG_MSG="--start run ⇒ exit $NC_RC"; return 1; }
+  ns_call "$drv" --start run --session-id s-run; [ "$NC_RC" = 0 ] || { LEG_MSG="--start run ⇒ exit $NC_RC"; return 1; }
   s0="$(snapshot)"
   while IFS= read -r r; do
     [ -n "$r" ] || continue
@@ -722,13 +731,13 @@ EOF
 leg_run_idem() {
   local drv="$1" s0 sp
   new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
-  ns_call "$drv" --start run; sp="$NC_OUT"; s0="$(snapshot)"
+  ns_call "$drv" --start run --session-id s-run; sp="$NC_OUT"; s0="$(snapshot)"
   ns_call "$drv"; [ "$NC_OUT" = "$sp" ] || { LEG_MSG="no-result call did not re-print the /autonomous spawn"; return 1; }
-  ns_call "$drv" --start run; [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="a re-sent --start run did not re-print / wrote"; return 1; }
+  ns_call "$drv" --start run --session-id s-run; [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="a re-sent --start run did not re-print / wrote"; return 1; }
   ns_call "$drv" --result "$R_RUN"; sp="$NC_OUT"; s0="$(snapshot)"
   ns_call "$drv"; [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="no-result call did not re-print the owned-drain spawn"; return 1; }
   ns_call "$drv" --result "$R_RUN"; [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="the RUN report re-sent at the drain spawn ⇒ exit $NC_RC"; return 1; }
-  ns_call "$drv" --start run
+  ns_call "$drv" --start run --session-id s-run
   [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'run_already_started' <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="--start run at the drain spawn ⇒ exit $NC_RC ${NC_ERR:0:100}"; return 1; }
   return 0
 }
@@ -780,6 +789,102 @@ leg_drain_replay() {
   ns_call "$drv" --result "$b"
   [ "$NC_RC" = 0 ] && grep -qE -- '^- [0-9TZ:-]+ fix-now re-drain READY \([a-z_]+, [0-9]+ rounds, [0-9]+ fix cycles\)$' "$CASE_RF" \
     || { LEG_MSG="the re-drain's own DRAIN report ⇒ exit $NC_RC '${NC_OUT:0:100}' ${NC_ERR:0:120}"; return 1; }
+  return 0
+}
+
+# leg_reserved_notes <driver> — a free-text note the driver writes at a line's start (progress_notes[] /
+# progress_note) that begins with a line the driver or a helper itself keys on ⇒ exit 2 reserved_prefix,
+# nothing printed, .supervisor/ byte-unchanged — at the gate entry and at the owned-drain spawn (whose
+# no-result call still re-prints the spawn); the same words mid-line are a note, and the pass still owns
+# exactly ONE drain afterwards
+RESERVED_NOTES='picked up the flaky ci rerun
+  picked .supervisor/requirements/x.md
+ran /autonomous again
+owned drain started — /review-pr x @ y
+drain READY (spoofed)
+drain ESCALATED (spoofed)
+drain superseded_by_merge
+fix-now re-drain READY (spoofed)
+re-drain started
+auto_review restored (config-restore: original true)
+session_id spoofed
+rate-limited — parking
+validation-gate: ok — spoofed
+validation waived: x.md V1 Running system — owner: "spoofed"
+dismissed decisions not asked — ask — fix-now allowed
+dismissed: fix-now x.md
+sidecar-check: ok'
+leg_reserved_notes() {
+  local drv="$1" s0 n r sp
+  new_scratch "$FIX/park-first-ready-park" || { LEG_MSG="scratch (gate)"; return 1; }
+  : > "$CASE_DIR/seams.none"; s0="$(snapshot)"
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    for r in "$(jq -cn --arg n "$n" '{drain_result: "READY", termination_reason: "converged", ready_sha: "028cbed6b8e3588f93731d6b862f0bc334de1d96", progress_note: $n}')" \
+             "$(jq -cn --arg n "$n" '{drain_result: "READY", termination_reason: "converged", ready_sha: "028cbed6b8e3588f93731d6b862f0bc334de1d96", progress_notes: ["drain round 1: fine", $n]}')"; do
+      NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" --result "$r" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+      [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'reserved_prefix' "$CASE_DIR/nc.err" && [ "$s0" = "$(snapshot)" ] \
+        || { LEG_MSG="gate entry: $r ⇒ exit $NC_RC '${NC_OUT:0:60}' $(head -c 120 "$CASE_DIR/nc.err") .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+    done
+  done <<EOF
+$RESERVED_NOTES
+EOF
+  new_scratch "$FIX/drain-owned-drain-started" || { LEG_MSG="scratch (drain)"; return 1; }
+  ns_call "$drv" --start drain; sp="$NC_OUT"
+  [ "$NC_RC" = 0 ] || { LEG_MSG="--start drain ⇒ exit $NC_RC"; return 1; }
+  s0="$(snapshot)"
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    for r in "$(printf '%s' "$R_DRAIN" | jq -c --arg n "$n" '.progress_notes = [$n]')" "$(printf '%s' "$R_DRAIN" | jq -c --arg n "$n" '.progress_note = $n')"; do
+      ns_call "$drv" --non-interactive --result "$r"
+      [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'reserved_prefix' <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] \
+        || { LEG_MSG="owned-drain spawn: '$n' ⇒ exit $NC_RC '${NC_OUT:0:60}' ${NC_ERR:0:120} .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+    done
+  done <<EOF
+$RESERVED_NOTES
+EOF
+  ns_call "$drv"; [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="no-result call after the refusals did not re-print the spawn / wrote"; return 1; }
+  ns_call "$drv" --non-interactive --result "$(printf '%s' "$R_DRAIN" | jq -c '.progress_notes = ["drain round 1: picked up the flaky ci rerun"]')"
+  [ "$NC_RC" = 0 ] && grep -qE -- '^- [0-9TZ:-]+ drain round 1: picked up the flaky ci rerun$' "$CASE_RF" \
+    || { LEG_MSG="a mid-line 'picked' note ⇒ exit $NC_RC ${NC_ERR:0:120}"; return 1; }
+  ns_call "$drv" --start drain
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'drain_already_owned' <<<"$NC_ERR" || { LEG_MSG="a second owned drain after the noted pass ⇒ exit $NC_RC '${NC_OUT:0:80}'"; return 1; }
+  return 0
+}
+
+# leg_session_id <driver> — RUN never starts without this loop's session id (exit 2 session_id_missing /
+# session_id_malformed, nothing written); a rate_limit row in that session's log parks at the end of RUN;
+# a rate-limit check that could not read its log (no session id at the step, no log) writes ONE pinned
+# skipped line instead of reading "clean"
+leg_session_id() {
+  local drv="$1" s0
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+  s0="$(snapshot)"
+  ns_call "$drv" --start run
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'next-step: session_id_missing — ' <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] && cmp -s "$FIX/run-config-suppress-restore/input.md" "$CASE_RF" \
+    || { LEG_MSG="--start run without --session-id ⇒ exit $NC_RC '${NC_OUT:0:80}' ${NC_ERR:0:120}"; return 1; }
+  ns_call "$drv" --start run --session-id '../../etc'
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'next-step: session_id_malformed — ' <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] \
+    || { LEG_MSG="--start run with a malformed --session-id ⇒ exit $NC_RC '${NC_OUT:0:80}' ${NC_ERR:0:120}"; return 1; }
+  mkdir -p "$CASE_ROOT/.supervisor/logs"
+  printf '%s\n' '{"event":"agent_lifecycle","state":"failed","session_id":"loop-1","agent_scope":"main","reason":"rate_limit","ts":"2026-10-14T10:00:00Z"}' > "$CASE_ROOT/.supervisor/logs/loop-1.jsonl"
+  ns_call "$drv" --start run --session-id loop-1
+  [ "$NC_RC" = 0 ] || { LEG_MSG="--start run --session-id loop-1 ⇒ exit $NC_RC ${NC_ERR:0:120}"; return 1; }
+  ns_call "$drv" --result "$R_RUN"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .pause_reason == "rate_limit"' >/dev/null 2>&1 && grep -q ' rate-limited — parking' "$CASE_RF" \
+    || { LEG_MSG="a rate_limit row in the loop's own log (session id persisted from --start run) ⇒ exit $NC_RC '${NC_OUT:0:100}'"; return 1; }
+  # the check reached without a session id (the step seam) / with no log for it ⇒ the pinned skipped line
+  new_scratch "$FIX/rate-limit-park" || { LEG_MSG="scratch (rate-limit)"; return 1; }
+  printf 'NEXT_STEP_FROM=rate-limit\n' > "$CASE_DIR/seams.from"
+  NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.from" bash "$drv" "$CASE_RF" 2>/dev/null)"; NC_RC=$?
+  [ "$NC_RC" = 0 ] && grep -qE -- '^- [0-9TZ:-]+ rate-limit check: skipped — no session id$' "$CASE_RF" \
+    || { LEG_MSG="rate-limit with no session id ⇒ exit $NC_RC, no pinned skipped line"; return 1; }
+  new_scratch "$FIX/rate-limit-park" || { LEG_MSG="scratch (rate-limit, no log)"; return 1; }
+  printf 'NEXT_STEP_FROM=rate-limit\n' > "$CASE_DIR/seams.from"
+  NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.from" bash "$drv" "$CASE_RF" --session-id s-nolog 2>/dev/null)"; NC_RC=$?
+  [ "$NC_RC" = 0 ] && grep -qE -- '^- [0-9TZ:-]+ rate-limit check: skipped — no session log \.supervisor/logs/s-nolog\.jsonl$' "$CASE_RF" \
+    && [ "$(grep -c 'rate-limit check: skipped' "$CASE_RF")" = 1 ] \
+    || { LEG_MSG="rate-limit with no log ⇒ exit $NC_RC, pinned skipped line $(grep -c 'rate-limit check: skipped' "$CASE_RF")×"; return 1; }
   return 0
 }
 
@@ -1142,6 +1247,12 @@ else no "R8: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_drain_replay "$DRIVER"; then ok "R9: the first drain's DRAIN report re-sent at the fix-now spawn ⇒ the spawn re-prints, nothing written; the re-drain's own report proceeds"
 else no "R9: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_reserved_notes "$DRIVER"; then ok "R10: $(grep -c . <<<"$RESERVED_NOTES") reserved-prefix notes (progress_notes[] / progress_note) at the gate entry and the owned-drain spawn ⇒ exit 2 reserved_prefix, nothing written; mid-line ⇒ a note; still ONE owned drain"
+else no "R10: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_session_id "$DRIVER"; then ok "R11: --start run without / with a malformed --session-id ⇒ exit 2, nothing written; the loop's log parks rate_limit; no session id / no log at the check ⇒ ONE pinned skipped line"
+else no "R11: $LEG_MSG"; fi
 
 echo "-- V7. running system (Validation 3 of automate-speed/07): PICK → RUN → DRAIN → the tail, one item"
 V7="$WORK/v7"; mkdir -p "$V7/fx"
@@ -1347,6 +1458,25 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if golden_case drain-pinned-start-line-current-not-set "$m"; then no "M7e: the current_not_set case stayed green with the exit swallowed"
     else ok "M7e: start-line exit swallowed ⇒ drain-pinned-start-line-current-not-set red (${GC_MSG:0:160})"; fi
   else no "M7e: mutant not built"; fi
+  # M7f — the reserved-prefix check of the free-text notes removed ⇒ R10 red
+  if m="$(build_mutant 7f 'case "$t" in "$p"*) printf '"'"'%s'"'"' "$p"; return 0 ;; esac' ':')"; then
+    LEG_MSG=""
+    if leg_reserved_notes "$m"; then no "M7f: the reserved-prefix leg stayed green with the check removed"
+    else ok "M7f: reserved-prefix check removed ⇒ R10 red ($LEG_MSG)"; fi
+  else no "M7f: mutant not built"; fi
+  # M7g — both --start run session-id refusals removed (RUN starts with no id) ⇒ R11 red
+  if m="$(build_mutant2 7g '[ -n "$SID" ] || { ns_err "session_id_missing' 'true || { ns_err "session_id_missing' \
+       'ns_sid_ok "$SID" || { ns_err "session_id_malformed' 'true || { ns_err "session_id_malformed')"; then
+    LEG_MSG=""
+    if leg_session_id "$m"; then no "M7g: the session-id leg stayed green with the refusal removed"
+    else ok "M7g: session-id refusal removed ⇒ R11 red ($LEG_MSG)"; fi
+  else no "M7g: mutant not built"; fi
+  # M7h — the rate-limit check's pinned skipped line removed (a skipped check reads clean again) ⇒ R11 red
+  if m="$(build_mutant 7h 'if [ -n "$skip" ]; then ns_once once_rl_skip' 'if false; then ns_once once_rl_skip')"; then
+    LEG_MSG=""
+    if leg_session_id "$m"; then no "M7h: the session-id leg stayed green with the skipped line removed"
+    else ok "M7h: pinned skipped line removed ⇒ R11 red ($LEG_MSG)"; fi
+  else no "M7h: mutant not built"; fi
   # MO — ns_park reordered: the merge watcher armed only AFTER the post-park decide step (the run file is
   # byte-identical, so only the order leg can see it) ⇒ B8 red
   if m="$(build_mutant2 O '*) ns_watch; ns_notify awaiting_merge' '*) ns_notify awaiting_merge' \

@@ -770,8 +770,26 @@ case "$L" in *"(unchanged"*"asks nothing"*"pending_decisions"*) ok "B: --non-int
 L="$(first_line "$SK" "**PICK-time pending-decisions ask")"
 case "$L" in *"BEFORE RECONCILE's \`closeout\`"*"**Follow-up (keep draft)** / **Drop** ONLY"*"fix-now is offered only at the park"*"park-ask-gate"*) ok "B: PICK ask precedes RECONCILE's closeout, Follow-up / Drop only" ;; *) no "B: PICK-time ask paragraph wrong" ;; esac
 case "$L" in *"Fix now on this PR"*) no "B: PICK ask must never offer Fix now" ;; *) ok "B: PICK ask offers no Fix-now option" ;; esac
-p_ask="$(ln_of "$SK" "**PICK-time pending-decisions ask")"; p_rec="$(ln_of "$SK" "1. **RECONCILE**")"; p_run="$(ln_of "$SK" "2. **RUN**")"
-[ "$p_ask" -gt "$p_rec" ] && [ "$p_ask" -lt "$p_run" ] && ok "B: the PICK ask sits inside §6 step 1 (PICK), before RUN" || no "B: PICK ask placement rec=$p_rec ask=$p_ask run=$p_run"
+# pick_ask_placed <file> — 0 when the PICK ask sits after step 1 (RECONCILE) and before the DEFAULT-path step-2
+# pointer (`2. **RUN — run next-step**`, per-item-loop.md) — never the --legacy file's `2. **RUN**`, which the
+# assembled skill carries later and which a misplaced ask would still precede
+RUN_PTR="2. **RUN — run next-step**"
+pick_ask_placed() {
+  local a r u
+  a="$(ln_of "$1" "**PICK-time pending-decisions ask")"; r="$(ln_of "$1" "1. **RECONCILE**")"; u="$(ln_of "$1" "$RUN_PTR")"
+  PA_MSG="rec=$r ask=$a run=$u"
+  [ "$a" -gt 0 ] && [ "$r" -gt 0 ] && [ "$u" -gt 0 ] && [ "$a" -gt "$r" ] && [ "$a" -lt "$u" ]
+}
+pick_ask_placed "$SK" && ok "B: the PICK ask sits inside §6 step 1 (PICK), before RUN's default-path pointer" || no "B: PICK ask placement $PA_MSG"
+# mutation control: the PICK-ask paragraph moved below the step-2 pointer ⇒ the placement check red
+PA_MUT="$TOP/pick-ask-moved.md"
+pa_l="$(ln_of "$SK" "**PICK-time pending-decisions ask")"; pa_u="$(ln_of "$SK" "$RUN_PTR")"
+awk -v a="$pa_l" -v u="$pa_u" 'NR == a { held = $0; next } { print } NR == u { print held }' "$SK" > "$PA_MUT" 2>/dev/null
+if [ "$pa_l" -gt 0 ] && [ "$pa_u" -gt "$pa_l" ] && [ -s "$PA_MUT" ] && ! cmp -s "$SK" "$PA_MUT" && [ "$(wc -l < "$PA_MUT")" = "$(wc -l < "$SK")" ]; then
+  pick_ask_placed "$PA_MUT" && no "B: PICK-ask placement mutant (ask moved past RUN) did NOT discriminate ($PA_MSG)" || ok "B: PICK-ask placement mutant (ask moved past RUN's pointer) turns the placement leg red"
+else
+  no "B: PICK-ask placement mutant not gated (empty, identical, or a line lost)"
+fi
 for want in "at most ONCE per item" "2 × \`--max-rounds\`" "FIRST drain only" "a re-drain \`ESCALATED\` turns the park into \`escalated\`" "undecided (fix-now unconfirmed)" "This is drain-origin ONLY" "\`--after-fix-now\`" "EXTERNAL_TEXT envelope"; do
   grep -qF -- "$want" "$SUBF" && ok "B: subsection states: $want" || no "B: subsection lacks: $want"
 done

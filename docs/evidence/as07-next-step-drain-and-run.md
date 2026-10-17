@@ -93,8 +93,9 @@ now sit in `legacy-tail.md`, read only under `--legacy`. `per-item-loop.md` keep
 (steps 2 and 3, and a §7 paragraph). §7's lead paragraph stays where it was: it states the single-drain rule, not a step.
 The five moved headings left `MAP.tsv` (units no longer extracted from `per-item-loop.md`), and §6 L1.2 / L1.3 stay as
 units. 42 inventory rows were re-homed to `script:automate-next-step.sh <step>`, every one naming a real `case` arm.
-AL-387 (§7's "Crash-restore" bullet) keeps `script:automate-helpers.sh config-restore` and never a driver step:
-RECONCILE's crash-restore stays prose in `resume.md` §4. Three rows were added for the new pointers. Seven GAP rows now
+AL-387 (§7's "Crash-restore" bullet) is homed at `rationale:skills/automate-loop/resume.md#4--resume--glob--reconcile-run-file-is-belief-gitgh-is-truth`
+(review iteration 1; the §4 heading that holds RECONCILE step 3), never a driver step: RECONCILE's crash-restore stays
+prose in `resume.md` §4, and `automate-helpers.sh config-restore` stays its `implemented by`. Three rows were added for the new pointers. Seven GAP rows now
 name the driver suite, because a driver leg covers them (AL-255 R1/M7a, AL-266 R4, AL-288 and AL-290 R8 /
 `rate-limit-park`, AL-302 the `learning-emit-end-of-drain` key, AL-390 and AL-393 V7's owned-drain invocation). Five stay
 GAP because no leg asserts them (AL-254 passthrough flags beyond `--non-interactive-fallback`, AL-291 other failure
@@ -133,6 +134,40 @@ absent). Progress lines from `auto_review suppressed` to `drain READY`:
 - 2026-10-17T06:21:06Z drain READY (converged, 1 round, 0 fix cycles; ci green on 2222222)
 ```
 
+## Review iteration 1 (PR #594 Code Reviewer findings)
+
+- **Reserved prefixes (HIGH).** A DRAIN report's `progress_notes` entry is written `<ts> <note>` at a line's start, and
+  the gate entry's `progress_note` the same way, while the driver's own readers (and progress-append's `current_not_set`
+  guard, validation-gate's waiver count, `automate-dismissed.sh`'s fix-now anchors) key on line prefixes. Reproduced
+  before the fix: `progress_notes: ["picked up the flaky ci rerun"]` made progress-append exit 3 with the line appended.
+  Both fields are now checked before the first write against `NS_RESERVED_PREFIXES` (a list in the driver); a hit exits 2
+  `reserved_prefix`, nothing written. The RUN report has no free-text field written at a line's start (`run_note` and
+  `no_pr_why` go inside the parenthetical, `status_reason` / `session_id` are token-checked).
+- **Rate-limit check on an empty session id (MEDIUM).** `--start run` now exits 2 with `session_id_missing` (or
+  `session_id_malformed`), nothing written. The `rate-limit` step itself writes ONE pinned
+  `<ts> rate-limit check: skipped — no session id` / `— no session log .supervisor/logs/<sid>.jsonl` line when it cannot
+  read the log, instead of reading clean. The `run-config-suppress-restore` case's `--start run` call now passes the
+  session id (its run-file output is unchanged).
+- **PICK-ask placement leg (MEDIUM).** `test-automate-dismissed.sh` now measures against the default-path pointer
+  `2. **RUN — run next-step**`, with a mutation control that moves the PICK-ask paragraph past it (leg red).
+- **AL-387 (MEDIUM).** Re-homed to resume.md's RECONCILE section (above). `## Counts` is unchanged (the kind and test
+  columns did not move).
+
+```
+test-automate-next-step.sh   PASS: 100 FAIL: 0   (95 + R10, R11, M7f, M7g, M7h)
+test-automate-golden.sh      PASS: 64 FAIL: 0
+test-automate-dismissed.sh   246 passed, 0 failed (245 + the placement mutant)
+test-loop-inventory.sh       RESULT: 43/43 passed
+test-citation-drift.sh       26 passed, 0 failed
+check-vendor-coupling.sh / check-doc-currency.sh / check-token-budget.sh   OK
+ok: M7f: reserved-prefix check removed ⇒ R10 red (gate entry: … "progress_note":"picked up the flaky ci rerun"} ⇒ exit 3 '' … progress-append exited 3: current_not_set … .supervisor/ CHANGED)
+ok: M7g: session-id refusal removed ⇒ R11 red (--start run without --session-id ⇒ exit 0 '{"do":"spawn","step":"run",…')
+ok: M7h: pinned skipped line removed ⇒ R11 red (rate-limit with no session id ⇒ exit 0, no pinned skipped line)
+```
+
+Validation 3's drive now also writes `rate-limit check: skipped — no session log .supervisor/logs/v7-loop.jsonl`
+between the `ran /autonomous` line and the drain start line: the scratch repo has no session log for `v7-loop`.
+
 ## Not verified
 
 - No live `/automate` session has consumed the new `/autonomous run` and `owned drain` instructions. Validation 3 is
@@ -143,11 +178,6 @@ absent). Progress lines from `auto_review suppressed` to `drain READY`:
   in CI). The failure is in `plan-waves`, which this change does not touch.
 - The drain's start line is written when its report arrives, stamped with the spawn time. A crash mid-drain leaves
   no start line in `## Progress`; the sidecar's pending spawn is the evidence (schema doc honest notes).
-- `test-automate-dismissed.sh`'s B leg "the PICK ask sits inside §6 step 1 (PICK), before RUN" still reads the first
-  `2. **RUN**` in the assembly. That anchor now lives only in `legacy-tail.md`, which the assembly places after
-  `per-item-loop.md`, so the leg would no longer catch a PICK ask that drifted below the step-2 pointer. The pin was kept
-  byte-identical, as the brief asks (repoint only when an anchor cannot stay). Tightening it to the pointer
-  (`2. **RUN — run next-step**`) is a follow-up.
 - `scripts/check-vendor-coupling.sh` (a CI gate outside Validation 1) flagged subtask 1's driver files after the prose
   move; fixed in the follow-up commit: the plugin-version read now resolves from the script's own location (coupling
   removed), and the one stop-failure payload field the rate-limit hint needs is a declared allowance of 1 for the driver
