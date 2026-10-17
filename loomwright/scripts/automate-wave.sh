@@ -36,6 +36,16 @@
 #                must read `awaiting_merge` or `ready_for_release`); the wave branch already on origin
 #                (no open PR from it) or already a local branch (a STOPPED build's — remove it first);
 #                `git fetch origin` failed; origin/<base> or a head sha not fetchable.
+#   4b. overlap  _lanes_wave_overlap (automate-lanes.sh, wave.sh): per lane ONE `gh pr diff --name-only`
+#                read + the item's declared set (`plan-waves --touches`); one `wave-build: overlap — <file>
+#                changed by L1 (outside its Touches), L3 (declared)` line per file 2+ lanes of the wave
+#                changed, one `wave-build: drift — …` line per lane whose other drift no lane shares, or
+#                `wave-build: overlap — none — …`. WARN-ONLY (owner decision 2026-10-17): it never
+#                refuses, holds or reorders a lane; an unreadable diff is one `overlap — NOT-RUN` line.
+#                The shared files also go into the wave PR body ("Files changed by more than one lane"),
+#                the record line (`; overlap <n> file(s) changed by 2+ lanes` | `; overlap none`) and the
+#                result line (`opened — <url> (overlap: <n> file(s) …)`), so the owner sees them in the
+#                one line the coordinator relays.
 #   5. worktree  `git worktree add -b <wave-branch> <tmp>/wt origin/<base>` off a fresh fetch — never
 #                in the primary's working tree; the primary's checked-out branch and index never change.
 #   6. merge     `git merge --no-ff <sha> -m "Merge lane <L> (<item>) PR #<n>"` per lane, planner order.
@@ -49,9 +59,10 @@
 #                force push, never a lane branch, never the base). Failure ⇒ STOPPED, nothing on origin.
 #  10. pr        `gh pr create --base <base> --head <wave-branch>` (title `Wave <k> (<run_id>): <ids>`).
 #  11. record    ONE parent `## Progress` line via `automate-helpers.sh progress-append`:
-#                `<ts> wave built: <wave-branch> — PR <url> (lanes: L1 PR #n, …; ci pass|skipped; release v<x>|skipped)`.
+#                `<ts> wave built: <wave-branch> — PR <url> (lanes: L1 PR #n, …; ci pass|skipped; release v<x>|skipped;
+#                overlap none|<n> file(s) changed by 2+ lanes)`.
 #  12. cleanup   the temporary worktree is removed (the branch stays: it is pushed); last line
-#                `wave-build: opened — <url>`.
+#                `wave-build: opened — <url>` (+ ` (overlap: <n> file(s) …)` when step 4b found shared files).
 # It NEVER merges any PR (the sole merge executor is automate-helpers.sh gate-eval, SKILL §11), NEVER
 # merges into the base, NEVER pushes or rewrites a lane branch, NEVER force-pushes.
 #
@@ -165,6 +176,13 @@ EOF
 $WV_ROWS
 EOF
   [ "$bad" = 0 ] || exit 1
+  # 4b. overlap — the files more than one lane of this wave changed (warn-only: printed here, carried
+  # into the wave PR body, the ## Progress record and the result line; never a refusal or a hold)
+  _lanes_wave_overlap
+  local wo_line
+  while IFS= read -r wo_line; do [ -n "$wo_line" ] && _wb "$wo_line"; done <<EOF
+$WO_LINES
+EOF
   # 5. worktree — off the fresh origin/<base>, never in the primary's working tree
   local tmp wt ids="" lanes_s="" lanes_t=""
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/automate-wave-$parent-w$k.XXXXXX" 2>/dev/null)" || _wb_refuse "mktemp failed"
@@ -231,7 +249,16 @@ EOF
   fi
   _wb "push — origin/$wb at $(git -C "$wt" rev-parse --short=12 HEAD)"
   # 10. the wave PR
-  local title body cil rel
+  local title body cil rel wo_body=""
+  if [ "$WO_N" != 0 ]; then
+    wo_body="
+### Files changed by more than one lane
+
+Every lane of this wave was built on the same base without seeing the others, so these files merged cleanly (or by hand) without anyone reviewing the lanes' changes to them together. Review each one as a single change before merging:
+
+$(printf '%s\n' "$WO_LINES" | sed -n 's/^overlap — \(.*\) changed by \(.*\)$/- `\1` — \2/p')
+"
+  fi
   title="Wave $k ($parent): $ids"
   if [ "$ci" = pass ]; then cil="pass${civ:+ (\`$civ\`)}"; else cil="skipped (no \`scripts/ci-local.sh\`; this PR's CI is the gate)"; fi
   if [ -n "$rsha" ]; then rel="\`${rsha:0:12}\` — v$ver (\`scripts/bump-version.sh\`), the last commit"; else rel="skipped (no \`scripts/bump-version.sh\`; run this project's release step on this branch before merging)"; fi
@@ -242,7 +269,7 @@ EOF
 $lanes_t
 - Local CI: $cil
 - Release commit: $rel
-
+$wo_body
 Merging this PR with a merge commit also marks each lane PR above merged on GitHub (their heads are ancestors of this branch; a squash merge would not). Then \`/automate --resume $parent\` runs \`fleet-closeout\`, which closes out and removes every lane. Nothing in the engine merges this PR — that stays the owner's.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
@@ -254,13 +281,15 @@ Merging this PR with a merge commit also marks each lane PR above merged on GitH
   [ -n "$url" ] || url="(url unreadable — see gh pr list --head $wb)"
   # 11. record
   local line rel_s=skipped; [ -z "$ver" ] || rel_s="v$ver"
-  line="$(date -u +%Y-%m-%dT%H:%M:%SZ) wave built: $wb — PR $url (lanes: $lanes_s; ci $ci; release $rel_s)"
+  local wo_s="none"; [ "$WO_N" = 0 ] || wo_s="$WO_N file(s) changed by 2+ lanes"
+  line="$(date -u +%Y-%m-%dT%H:%M:%SZ) wave built: $wb — PR $url (lanes: $lanes_s; ci $ci; release $rel_s; overlap $wo_s)"
   if bash "$HELPERS" progress-append "$WV_RF" "$line" >/dev/null 2>&1; then _wb "record — $parent ## Progress: $line"
   else _wb "record — WARNING: the ## Progress line could not be appended to $parent.md: $line"; fi
   # 12. cleanup — the branch stays (it is pushed); the temporary worktree goes
   if git -C "$primary" worktree remove --force "$wt" >/dev/null 2>&1; then rm -rf "$tmp"; _wb "cleanup — worktree removed ($wb kept, pushed)"
   else _wb "cleanup — WARNING: git worktree remove refused; remove $wt by hand"; fi
-  _wb "opened — $url"
+  if [ "$WO_N" = 0 ]; then _wb "opened — $url"
+  else _wb "opened — $url (overlap: $WO_N file(s) changed by 2+ lanes of this wave — listed in the PR body; review them before merging)"; fi
   return 0
 }
 

@@ -3,8 +3,8 @@ L3="$LR2/L3"
 cat > "$L3/reqs/a.md" <<'EOF'
 # a
 ## Touches
-- `reqs/a.md`
-- `src/`
+reqs/a.md
+src/
 ## Validation (must pass before merge)
 1. **Baseline:** full loop on base and branch.
 2. **Running system:** run it for real and paste the output.
@@ -31,6 +31,7 @@ has "U2 a Validation step with pasted output ⇒ PASS" "$(cat "$RD")" "V1 Baseli
 has "U3 a running-system step with no pasted output ⇒ NOT-RUN, never PASS" "$(cat "$RD")" "V2 Running system: NOT-RUN — mentioned in the PR body without pasted output"
 has "U4 scope fence lists the file outside the brief" "$(cat "$RD")" "  - docs/other.md"
 has "U4b scope fence FAIL" "$(cat "$RD")" "- scope-fence: FAIL"
+hasnt "U4c a bare-path Touches entry (the strict grammar) is declared: src/ covers src/x.sh" "$(cat "$RD")" "  - src/x.sh"
 has "U5 carried note listed, NOT-RUN without accounting" "$(cat "$RD")" "carried-notes: NOT-RUN — 1 carried note(s)"
 has "U6 gates PASS (checks green on head, decisions, children settled)" "$(cat "$RD")" "- gates: PASS"
 has "U7 headline repro evidenced" "$(cat "$RD")" "V3 A failure this must catch: PASS"

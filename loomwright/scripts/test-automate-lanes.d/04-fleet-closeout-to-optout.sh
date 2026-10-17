@@ -531,13 +531,14 @@ bash scripts/ci-local.sh
 # run this project's release step
 git push -u origin wave/$PARENT12-w2
 gh pr create --base main --head wave/$PARENT12-w2
+# overlap — NOT-RUN — L2 PR #122 diff unreadable
 # Conflict rules (Part S):
 #   - a marker-only conflict is resolved in the merge commit itself
 #   - anything larger stops the integration: hand it to the owner
 #   - never rewrite or push a lane branch
 #   - a lane broken on the wave branch is fixed on its own PR, and its new head is re-merged"
 check "AG2 GUARD: every ref and the working tree of the primary and the lanes are byte-identical after it" "$(ag_state)" "$AG0"
-check "AG2b … and its only gh calls were pr view reads" "$(grep -vc '^gh pr view ' "$T_AFGH" | tr -d ' ')" 0
+check "AG2b … and its only gh calls were pr view / pr diff reads" "$(grep -vcE '^gh pr (view|diff) ' "$T_AFGH" | tr -d ' ')" 0
 mkdir -p "$P/scripts"; printf '#!/usr/bin/env bash\n' > "$P/scripts/bump-version.sh"
 out="$(af wave-plan "$RF12P" --wave-branch release/w2)"
 has "AG3 a repo with scripts/bump-version.sh gets it as the release step" "$out" "

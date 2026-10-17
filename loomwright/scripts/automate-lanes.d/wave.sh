@@ -351,6 +351,66 @@ EOF
   return 0
 }
 
+# _lanes_wave_overlap — after _lanes_wave_resolve: which files more than one lane of THIS wave changed.
+# Lanes of one wave share one base and never see each other, so a file two of them changed ends either
+# in a STOPPED wave-build (a textual conflict) or in a clean merge nobody reviewed as one change; drift
+# into a file no other wave lane changed is harmless here (a later wave starts from the merged base).
+# Advisory and WARN-ONLY (owner decision 2026-10-17): it never refuses, holds or reorders a lane.
+# READ-ONLY: per `ok` row ONE `gh pr diff <pr> --name-only` read (changelog.d/ dropped) and the lane's
+# declared set through readiness.sh's _lanes_declared + _lanes_is_declared — the SAME reader and matcher
+# lane-readiness's scope fence uses (Touches as the planner reserved it + the lane's brief `path:` lines),
+# so a file is "declared" in one exactly when it is in the other. Sets WO_N (the number of shared files) and
+# WO_LINES, one `<kind> — <detail>` line each, in this order:
+#   overlap — <file> changed by L1 (outside its Touches), L3 (declared)   one per shared file, by path
+#   drift — <lane> changed <n> file(s) outside its Touches; no other lane of this wave changed them
+#           (`with its Touches unknown` in place of `outside its Touches` for an unknown-Touches lane)
+#   overlap — NOT-RUN — <lane> PR #<n> diff unreadable                   that lane is left out
+#   overlap — none — no file is changed by more than one lane of this wave   (no shared file, every diff read)
+# A lane's annotation is `declared` (Touches or brief), `outside its Touches`, or `Touches unknown` (its
+# Touches section is unknown to the planner, which ran it alone — so it should share no file). Returns 0.
+_lanes_wave_overlap() {
+  local tab kind lane path item run pr num sha st tmp f fs unread=""
+  WO_LINES=""; WO_N=0; tab="$(printf '\t')"
+  tmp="$(mktemp -d 2>/dev/null)" || { WO_LINES="overlap — NOT-RUN — no temp dir"; return 0; }
+  : > "$tmp/all"
+  while IFS="$tab" read -r kind lane path item run pr num sha st; do
+    [ "$kind" = ok ] || continue
+    if ! "$LANES_GH" pr diff "$pr" --name-only > "$tmp/f" 2>/dev/null </dev/null; then
+      unread="${unread}overlap — NOT-RUN — $lane PR #$num diff unreadable
+"; continue
+    fi
+    _lanes_declared "$path" "$item" "$(_lanes_brief_of "$path" "$item")" "$tmp/d"
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      case "$f" in changelog.d/*) continue ;; esac
+      if _lanes_is_declared "$f" "$tmp/d"; then fs=declared
+      elif [ "$LD_TOUCHES" = known ]; then fs="outside its Touches"
+      else fs="Touches unknown"; fi
+      printf '%s\t%s\t%s\n' "$f" "$lane" "$fs" >> "$tmp/all"
+    done < "$tmp/f"
+  done <<EOF
+$WV_ROWS
+EOF
+  # Shared files: one line per path (path order), its lanes in planner order (the order of $tmp/all).
+  env LC_ALL=C awk -F'\t' '{ if (!($1 in C)) P[++np] = $1; C[$1]++; L[$1] = L[$1] (C[$1] > 1 ? ", " : "") $2 " (" $3 ")" }
+    END { for (i = 1; i <= np; i++) if (C[P[i]] > 1) print P[i] "\t" L[P[i]] }' "$tmp/all" | env LC_ALL=C sort > "$tmp/shared"
+  WO_N="$(grep -c . "$tmp/shared" | tr -d ' ')"
+  {
+    [ "$WO_N" != 0 ] || [ -n "$unread" ] || echo "overlap — none — no file is changed by more than one lane of this wave"
+    awk -F'\t' '{ print "overlap — " $1 " changed by " $2 }' "$tmp/shared"
+    # Harmless drift: per lane (planner order), the files outside its Touches no other lane changed.
+    WO_SF="$tmp/shared" env LC_ALL=C awk -F'\t' '
+      BEGIN { while ((getline x < ENVIRON["WO_SF"]) > 0) { split(x, a, "\t"); S[a[1]] = 1 } }
+      $3 != "declared" && !($1 in S) { if (!($2 in N)) O[++no] = $2; N[$2]++; if ($3 == "Touches unknown") U[$2] = 1 }
+      END { for (i = 1; i <= no; i++) printf "drift — %s changed %d file(s) %s; no other lane of this wave changed them\n", O[i], N[O[i]],
+              (O[i] in U) ? "with its Touches unknown" : "outside its Touches" }' "$tmp/all"
+    printf '%s' "$unread"
+  } > "$tmp/out"
+  WO_LINES="$(cat "$tmp/out")"
+  rm -rf "$tmp"
+  return 0
+}
+
 # wave-plan <parent_runfile> [--wave-branch <name>] — Part S, READ-ONLY (owner decision 2026-10-10: the
 # operator merges; since then `wave-build` in automate-wave.sh runs these same steps, and this stays the
 # read-only preview and the manual fallback). Executes no git mutation, no push and no gh write: it
@@ -361,6 +421,8 @@ EOF
 # (an unreadable sha ⇒ `# <lane>: head unreadable — resolve before integrating`, that lane skipped),
 # `bash scripts/ci-local.sh`, the release step (`bash scripts/bump-version.sh` only when the repo has
 # it, else `# run this project's release step`), the push and `gh pr create`, then the conflict rules.
+# Before the conflict rules it prints the same-wave overlap check (_lanes_wave_overlap above) as `# overlap
+# — …` / `# drift — …` comment lines — the files more than one lane of this wave changed, warn-only.
 # Exit 0 printed · 1 refused (bad parent run file, no lane table, bad branch name).
 lanes_wave_plan() {
   local rf="" wb=""
@@ -393,6 +455,9 @@ EOF
   else echo "# run this project's release step"; fi
   echo "git push -u origin $wb"
   echo "gh pr create --base $base --head $wb"
+  # The same-wave overlap check wave-build prints before it creates anything (warn-only).
+  _lanes_wave_overlap
+  printf '%s\n' "$WO_LINES" | sed '/^$/d; s/^/# /'
   echo "# Conflict rules (Part S):"
   echo "#   - a marker-only conflict is resolved in the merge commit itself"
   echo "#   - anything larger stops the integration: hand it to the owner"
