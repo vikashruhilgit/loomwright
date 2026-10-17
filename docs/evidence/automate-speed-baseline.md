@@ -653,3 +653,69 @@ $ bash loomwright/scripts/read-token-ledger.sh --per-item <primary>/.supervisor/
 - `.supervisor/requirements/automate-speed/17-prompt-size-ratchet.md`: session ids tried 1d53b8d4-7125-4ec4-b2ac-cdb8ea590a89 — 11 transcript file(s)
 
 ```
+
+## Item 08 — next-step driver head
+
+automate-speed/08, subtask 1 (branch `feature/as08-next-step-pick-and-resume`, base `a8819a38100d77fbeddc2ff1a56963e91f172a5d`). `loomwright/scripts/automate-next-step.sh` now drives the head of the per-item loop. That covers the resume entry (`--resume <automate_dir> [--run <run_id>|latest]`), PICK (`--start pick`), RECONCILE, the trail gate and un-stage, and the `current-set` + `picked` pair, which runs straight on into RUN. The instruction schema is `loomwright/docs/result-schemas/automate-run.md` §"next-step instruction". The read-set section of this item (`Read set (item 08)`) belongs to subtask 3 and is not written here.
+
+### AC1 — golden cases through the driver
+
+The 15 named cases were checked. Fourteen carry a new `next-step.results`, replay through `automate-next-step.sh` byte for byte against their `expected.md`, and are on `REQUIRED_CASES`: `pick-current-set-then-picked`, `pick-pending-decisions-ask`, `pick-time-lane-guard-park`, `pick-time-token-ceiling-park`, `pick-time-trail-gate-park`, `reconcile-closeout-merged`, `gate-validation-recheck-at-reconcile`, `resume-ambiguous-park`, `resume-config-crash-restore`, `resume-current-rebuild`, `resume-glob-finalize`, `resume-rate-limit-park`, `resume-reconcile-status` and `skipped-item-check-off`. Three run the whole entry from its start: the three PICK-time parks run `--start pick` and `resume-ambiguous-park` runs `--resume`. The other cases replay a segment through the test seams `NEXT_STEP_FROM` / `NEXT_STEP_UNTIL`, because their `expected.md` pins one step and not the steps around it. For example, `reconcile-closeout-merged` keeps `## Status: paused`, which the `pick` step would rewrite.
+
+Fixed input a case lacked is added in its results file, never in the case's own files:
+- `gate-validation-recheck-at-reconcile` gets two `gh:` rows, so its PR reads `OPEN`.
+- `resume-rate-limit-park` gets a `file:` line holding the lane's `lane.json`. The run is lane L1's own run, and `resume-glob` lists a lane run only inside its own lane.
+- In `skipped-item-check-off`, the owner's `# abandoned:` check-off and its reason line arrive as `pre:` lines. RECONCILE then runs the abandon `trail-pr`.
+
+The grammar gained one directive, `call-bare:` (a call without the run file, for the resume entry). It is documented in the test header.
+
+**Exception — `brief-repair-merged`.** Its steps are one pure helper call (`brief-repair`) plus a hand-written `closeout <pr>: …` line, and no driver step makes that call alone. RECONCILE reaches `brief-repair` only through `closeout`, which also checks the item off in `## Queue`. That check-off is a line the case's `expected.md` does not carry, so a driver replay cannot be byte-identical. Leg P6 covers it instead. P6 runs RECONCILE's `closeout` on this case's tree with `gh` authenticated, then asserts the repairing `brief-repair: repaired … → …` line is passed through and the brief moved from `in-progress/` to `done/`.
+
+### Validation 2 — mutation control (inside `test-automate-next-step.sh`)
+
+M8a builds a driver copy whose RECONCILE skips the open-PR park and falls through to the trail gate, the un-stage, `current-set` and `picked`. The copy passed the non-empty, differs and `bash -n` gates. P1 (AC2) goes red:
+
+```
+  ok: P1 (AC2): an OPEN in-flight PR (awaiting_merge, escalated) / this run's open trail PR ⇒ --start pick parks, releases its lock, no picked line, no new ## Current item
+  ok: M8a: open-PR park skipped (current-set + picked reached) ⇒ P1 red (awaiting_merge: --start pick ⇒ exit 0 '{"do":"spawn","step":"run","run_id":"automate-2026-10-13-181331","item":".supervisor/requirements/automate-followups/39a-sweep-and-janitor.md","pr":null,"what":' )
+```
+
+M8b–M8e are the other pins: the trail-gate park skipped, any `closeout-classify` answer read as `complete`, Continue auto-picked when the resume cannot ask, and the `picked` line written before `current-set`. Each one turns its leg red (P1, P2, P3 and P5).
+
+### Validation 3 — hermetic scratch drive
+
+The drive runs in a scratch `git init` repo with a bare origin, `gh` stubbed and no network, using the real `run-lock.sh`. The run is `reconcile-closeout-merged`'s input: parked `awaiting_merge` on PR #555, which the stub reads `MERGED`. It is driven through the resume entry: `--resume <automate_dir> --run automate-2026-10-13-181331 --non-interactive`. The output below is from leg V8 of the final run. The `closeout` lines and the next `picked` line in it are from the run file's `## Progress`:
+
+```
+V3-08> --resume <automate_dir> --run automate-2026-10-13-181331 --non-interactive (gh stub: PR #555 MERGED): exit 0, {"do":"spawn","step":"run","what":"/autonomous run","invocation":"/autonomous --single-iteration --requirement .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md --non-interactive-fallback"}
+V3-08> ## Progress, the closeout lines through the next picked line:
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: brief-repair: skipped — no in-progress brief matches .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: skipped — already removed (no worktree on feature/af39a-sweep)
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: skipped — already synced (main at origin/main)
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: skipped — already deleted (no local feature/af39a-sweep)
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: stamped — .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md (## Status: done, brief .supervisor/jobs/done/2026-10-15-af39a-sweep.md)
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: checked — - [x] .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: reconciled — ## Current .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md status done, pause_reason null
+V3-08>   - trail-gate: clear — no open trail PR; sync skipped — already synced (main at origin/main)
+V3-08>   - trail-unstage: unstaged 7 path(s) — .supervisor/automate/automate-2026-10-13-181331.md, .supervisor/automate/automate-2026-10-13-181331.review-heal-result.md, .supervisor/automate/automate-2026-10-13-181331.supervisor-result.md, .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md, .supervisor/jobs/done/2026-10-15-af39a-sweep.md, .supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md, .supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md
+V3-08>   - 2026-10-17T15:24:06Z picked .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md
+V3-08> ## Status / ## Current after it:
+V3-08>   ## Status: running
+V3-08>   - item: .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md | status: running | pr: null | branch: null
+V3-08>   - pause_reason: null
+V3-08> run-lock.sh status (PICK holds it through RUN): LOCKED owner=automate:automate-2026-10-13-181331 pid=11826 age=4
+  ok: V8: resume → PICK (real run lock) → RECONCILE closeout of the merged PR → trail gate / un-stage → current-set + picked → the /autonomous spawn
+```
+
+**Not verified.** A live `/automate --resume` session was not run in the lane. Neither was a live PICK in a real `--parallel` wave (the `live_lane` park is covered only by the golden case's lane table). The coordinator prose that tells the model to call `--resume` / `--start pick` is subtasks 2–3 of this item.
+
+### Validation 1 — the suites this subtask reports (`<passed>/<total>`)
+
+| Suite | Result |
+|---|---|
+| `bash loomwright/scripts/test-automate-next-step.sh` | 131/131 |
+| `bash loomwright/scripts/test-automate-golden.sh` | 64/64 |
+| `bash loomwright/scripts/test-loop-inventory.sh` | 43/43 |
+| `bash loomwright/scripts/test-result-schemas-split.sh` | 14/14 |
+
+The repo-level checks were also run on this branch, and each exited 0: `check-doc-currency.sh`, `test-citation-drift.sh` (26/26), `check-token-budget.sh`, `check-version-bump.sh` (one pending fragment, not bumped) and `check-vendor-coupling.sh`. The suites that subtasks 2–3 change (`test-automate-helpers.sh`, `test-automate-dismissed.sh`, `test-automate-trail.sh`, `test-automate-loop-split.sh`, `test-automate-lanes.sh`) are reported with those subtasks.
