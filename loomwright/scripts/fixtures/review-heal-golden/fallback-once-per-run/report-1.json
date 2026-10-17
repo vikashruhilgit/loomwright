@@ -1,0 +1,1 @@
+{"findings":[{"verdict":"confirmed","finding":"widget.sh drops the error from load_config","severity":"HIGH","auto_fixable":true,"fingerprint":"src/widget.sh|new|unchecked-status"}]}

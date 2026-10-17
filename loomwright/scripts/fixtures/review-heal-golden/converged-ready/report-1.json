@@ -1,0 +1,1 @@
+{"findings":[{"id":"r1-1","verdict":"dismissed","finding":"load_config ignores the exit status of jq","reason":"already-addressed: src/widget.sh checks jq's status on the current branch"}]}

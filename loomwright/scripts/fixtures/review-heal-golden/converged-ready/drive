@@ -1,0 +1,4 @@
+# converged READY: one claude[bot] finding, validated as already-addressed ⇒ dismissed; the marker comment
+# posts; the fallback is not earned (a lens posted); READY converged with no fix and no ledger bump.
+call: --start drain
+call: --result-file "$CASE/report-1.json"

@@ -1,0 +1,2 @@
+notify READY https://github.com/acme/widgets/pull/7 ready to merge — https://github.com/acme/widgets/pull/7 (converged); CI review lens: static-only (execution: none)
+postmortem https://github.com/acme/widgets/pull/7 --fix-cycles 0 --decision READY --postmortem-churn-threshold 2

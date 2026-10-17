@@ -1,0 +1,2 @@
+notify ESCALATED https://github.com/acme/widgets/pull/7 ESCALATED — https://github.com/acme/widgets/pull/7 (bound_hit)
+postmortem https://github.com/acme/widgets/pull/7 --fix-cycles 1 --decision ESCALATED --postmortem-churn-threshold 2 --unresolved-bot-feedback

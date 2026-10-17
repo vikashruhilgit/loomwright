@@ -1,0 +1,3 @@
+# fix_floor_invalid: fix-floor.sh refuses `--fix-floor urgent` (exit 2) ⇒ one PR comment naming
+# fix_floor_invalid and its stderr line ⇒ ESCALATED (other, remaining 0) before the ledger is initialised.
+call: --start drain --fix-floor urgent

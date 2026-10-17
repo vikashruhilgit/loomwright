@@ -1,0 +1,9 @@
+# gh.table — <rc><TAB><times|*><TAB><glob over the gh argv><TAB><@file relative to this case | inline | empty>
+0	*	pr view * --json baseRefName,headRefName,isCrossRepository	@../_common/meta.json
+0	*	pr view * --json headRefOid	@../_common/head-a.json
+0	*	api --method GET repos/acme/widgets/branches/main/protection/required_status_checks	@../_common/required.json
+0	*	pr view * --json statusCheckRollup*	@../_common/core-green.json
+0	*	api graphql *	@../_common/threads-empty.json
+1	*	api --method GET repos/acme/widgets/issues/7/comments*	
+0	*	api --method GET repos/acme/widgets/check-runs/*/annotations	@../_common/annotations-empty.json
+0	*	pr comment *	

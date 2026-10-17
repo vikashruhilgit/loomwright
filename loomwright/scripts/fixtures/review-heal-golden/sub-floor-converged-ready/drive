@@ -1,0 +1,5 @@
+# sub_floor_converged: the round's whole fixed yield is one MEDIUM (fixed at the MEDIUM fix floor, below the
+# HIGH severity floor) ⇒ eligible ⇒ the SHA-bound confirming pass is green on the pushed sha ⇒ decide READY.
+call: --start drain
+call: --result-file "$CASE/report-1.json"
+call: --result-file "$CASE/report-2.json"
