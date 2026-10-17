@@ -1,0 +1,14 @@
+# next-step.results — dismissed-fix-now-re-drain: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The owner's Fix now answer on the per-finding draft is fixed input
+# (the sidecar's answers, as the post-park decide step leaves them); the case starts at the fix-now hand-off
+# (NEXT_STEP_FROM=fix-now): both park-ask-gate reads see OPEN, the run is set running, the draft decided fix-now, and the
+# fix-now re-drain spawn printed. The re-drain's DRAIN report (head 953c2d1bbf14, 1 round, 1 fix cycle) answers it:
+# drain-result writes the pinned fix-now re-drain start and terminal lines, owned_drain_* and pending_decisions with
+# fix_now_reentered: true — the case stops there (NEXT_STEP_UNTIL=drain-result), before GATE, as its steps do.
+sidecar: "{\"answers\":[{\"draft\":\"$ROOT/.supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md\",\"name\":\"automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md\",\"title\":\"Dismissed finding: the sibling-naming fallback of _sw_plugin_made\",\"decision\":\"fix-now\"}]}"
+env: NEXT_STEP_FROM=fix-now
+call:
+expect: spawn
+env: NEXT_STEP_FROM= NEXT_STEP_UNTIL=drain-result
+call: --result '{"review_heal_result":"REVIEW_HEAL_RESULT:\n  schema_version: 2\n  decision: READY\n  iterations: 1\n  issues_fixed: 3\n  remaining_issues: 0\n  pr_url: \"https://github.com/vikashruhilgit/loomwright/pull/555\"\n  notified: true\n  rounds: 1\n  max_rounds: 5\n  fix_cycles: 1\n  repeat_check_failure: false\n  unresolved_bot_feedback: false\n  termination_reason: converged\n  rules_gate: none","head_sha":"953c2d1bbf14","ready_sha":"953c2d1bbf14"}'
+expect: none

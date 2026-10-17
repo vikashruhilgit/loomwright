@@ -95,7 +95,7 @@ so **the tested code IS the executed code** (one implementation, guarded by `scr
 | `wave-build` | §14 "Wave close" | Delegated to `automate-wave.sh` (the one writer of a wave branch). `wave-build <parent_runfile> [--wave-branch <name>]` — builds the wave `wave-plan` prints in a temporary worktree off fresh `origin/<base>` (`--no-ff` lane merges, `ci-local.sh`, the release commit last), pushes ONLY the wave branch and opens the wave PR; one `wave-build: <step> — <detail>` line per step, result last. Exit 0 opened / done (already open) · 1 refused (nothing created) · 2 STOPPED (worktree kept, nothing pushed). Never merges a PR, never pushes a lane branch, never force-pushes. Run as a BACKGROUND command. |
 | `lane-policy.sh catalog\|wave-set\|resolve\|decide` (standalone script) | §14 "Policy answers" | NOT an `automate-helpers.sh` subcommand: `scripts/lane-policy.sh` holds the ONE authoritative gate catalog (`catalog`), writes the owner's per-wave policy (`wave-set`), resolves the stamped project policy plus the wave policy at `lane-create` (`resolve`) and is the lane relay hook's exact lookup (`decide`). Its header is the contract. |
 | `plan-waves` | `--parallel N>1` only (item 05) | **Read-only wave planner (parallel-automate/04).** `plan-waves <runfile\|dir\|item-list> --max N [--root <checkout>]`. **Input:** a run file ⇒ its unchecked `- [ ]` Queue rows (checked rows say which dependencies are merged-done); a directory ⇒ `resolve-folder`'s output; any other file ⇒ one item path per non-blank, non-`#` line (rows/lines resolved against `--root`, default `git rev-parse --show-toplevel`, else `$PWD`). **Grammar** (outside ```` ``` ```` fences, blank lines ignored, a section ends at the next `#`/`##` heading): `## Touches` = one repo-relative path per line (`[A-Za-z0-9._/@+-]`, no leading `/`, no `.` or `..` segment, no `//`; trailing `/` = directory) or the sole line `unknown` — any bad line, `unknown` mixed in, an empty or doubled section ⇒ the whole section is unknown; `## Depends on` = `none`, a 1–3 digit same-folder id, or a relative `*.md` path, one per line — unparseable = missing. **Rules:** a missing `Depends on` depends on every earlier plan-set item; an out-of-set dependency must be merged-done (plain `- [x]` Queue row, or `is_done` on ANY `## Status:` line; an `ABANDONED` stamp and a `# skipped:`/`# abandoned:` row mark both win over a done stamp) else the item prints `blocked` (`waits on <id>` / `… (<skipped\|abandoned> — never landed)` / `depends on <parked\|proposed> <id>`), and dependents of a blocked item are blocked; every comparison uses the physical absolute path; waves fill greedily in input order, ≤ N items, no two whose companion-expanded `Touches` sets intersect (literal prefix: equal, or one is the other plus `/…`), a missing/`unknown` `Touches` item alone in its wave. **Companions:** `<root>/.agent/companions.json`, strict shape `{"schema_version":1,"companions":[{"when":"<case glob>",["new":true,]"add":["<path>",…]},…]}` — `when` is an unquoted, case-sensitive bash `case` pattern (`*` crosses `/`) for a file entry (`"new": true` only when the file is absent under `--root`); `when`/`add` obey the `Touches` path rules (no leading `/`, `//`, `.` or `..` segment) or the table is malformed; a directory entry `D/` fires a rule whose literal prefix (text before the first glob character) starts with `D/` or prefixes it; ONE pass. This repo's `.agent/companions.json` is the shipped example; its `"new": true` `add` lists copy `scripts/check-doc-currency.sh`'s `FILES` array, which is the authority (a `test-automate-helpers.sh` assertion fails on drift). **Exit:** 0 with `wave <k>: <item> …` lines then `blocked <item>: …` lines; 1 with nothing on stdout on usage errors, `item not found: <item>` (a plan-set entry — Queue row, item-list line or resolve-folder result — names no file on disk), `unknown dependency <id> in <item>`, `dependency cycle: <items>`, or `companions_malformed <reason>` (malformed table or `jq` missing — fail CLOSED); an absent table is one stderr note and no expansion. **Read-only; called only by `--parallel N>1` (item 05); never called when N = 1 (`--max 1` is not queue order once an item depends on a later-numbered one); the sequential loop never calls it.** **`--explain`** (parallel-automate/10, read-only, same inputs and `--max`): the `wave`/`blocked` lines and exit codes are unchanged; then, for each PLACED item not in wave 1 (wave order, then input order), `explain <item> (wave <k>):` and one indented line per distinct reason it stayed out of an earlier wave — `conflicts with <item> on <path> (declared)` / `(companion: <when>)` (the contained path of the intersecting pair; companion when either side's entry came from a rule), `depends on <item>`, `runs alone: Touches unknown (missing)` / `(unparsable line <N>: "<text>")` / `(declared unknown)`, `runs alone: Depends on missing ⇒ depends on every earlier item`, `wave <w> full (--max <N>)`, `wave <w> runs <item> alone (Touches unknown)`; a blocked item's reason is its `blocked` line. **`plan-waves --lint`** (parallel-automate/10, read-only; `plan-waves <item\|dir\|runfile\|item-list> --lint [--root <checkout>]`, `--max` not needed): a directory ⇒ the `resolve-folder` set (what the folder intake would enqueue), a run file ⇒ its unchecked Queue rows, any other `*.md` ⇒ that one item, any other file ⇒ an item list; prints ONE line per item `<item>: Touches <v>; Depends on <v>` with `<v>` = `ok`, `ok (declared unknown)` (a sole `unknown` Touches — legal), `missing section`, or `line <N>: "<text>" — <reason>` (N = 1-based line in the item file; ` (+<k> more)` when more lines are bad; reasons: `"- " bullet`, `backticks`, `parenthetical/prose`, `comma list`, `leading/trailing whitespace`, `leading /`, `. or .. segment`, `//`, `character outside [A-Za-z0-9._/@+-]`, `unknown mixed with paths`, `empty section`, `duplicated section`, `fenced block inside the section`; for `Depends on` also `none mixed with ids`, `none repeated`, `not an id or *.md path`), then `<k> of <n> items will run alone: <items\|none>` (Touches not known, declared included) and `<m> of <n> items depend on every earlier item: <items\|none>`. **Exit 1** when either section of any item is missing or unparsable (a bad `Touches` runs it alone, a bad `Depends on` serialises it), else 0; exit 1 with nothing on stdout on usage / `item not found`. Lint and explain take their verdict from the SAME awk pass the planner reads (one grammar), so lint `ok` ⇔ the planner reads the section as known. Grammar only — `--lint` does not resolve dependency ids (an unresolvable one still fails the planner run itself). |
-| `automate-next-step.sh <runfile> [--result <json>]` (standalone script) | §6 steps 4–6 (the tail), §9 / §10 | NOT an `automate-helpers.sh` subcommand: `scripts/automate-next-step.sh` (automate-speed/06), self-tested by `scripts/test-automate-next-step.sh`. The single reader and writer of the run file for the per-item loop's TAIL: from the drain report on it runs the validation gate, safe mode's park or `--auto-merge`'s `gate-eval` (it calls that subcommand and never merges itself), the dismissed-findings decision step, the park writes (park state, merge watcher, notify, `run-lock.sh release`), SYNC's `closeout … --no-trail`, the close-out leftover gate, CHECK OFF and termination, and prints exactly ONE JSON instruction (`spawn` / `ask` / `park` / `done`); a call with no `--result` re-prints the pending one and writes nothing. Its steps are the script's own `case` arms (the list lives in its header; the schema doc mirrors it, held equal by the test). Instruction schema: `docs/result-schemas/automate-run.md` §"next-step instruction". Not called under `/automate --legacy` (the loop then follows `legacy-tail.md`). |
+| `automate-next-step.sh <runfile> [--start run\|drain] [--result <json>]` (standalone script) | §6 steps 2–6 (RUN, DRAIN and the tail), §7, §9 / §10 | NOT an `automate-helpers.sh` subcommand: `scripts/automate-next-step.sh` (automate-speed/06 the tail, 07 RUN and DRAIN), self-tested by `scripts/test-automate-next-step.sh`. The single reader and writer of the run file for the per-item loop from RUN on: `--start run` runs `config-suppress` and prints the `/autonomous` spawn; the RUN report gets the `config-restore` (before any drain spawn), the session-id line, the PR record and the supervisor-result sidecar, then the rate-limit park check and the owned-drain spawn (one per pass, `drain_already_owned` otherwise); the DRAIN report gets the pinned drain lines, `owned_drain_*`, the review-heal sidecar and `learning-emit` (or the superseded-by-merge close-out); then it runs the validation gate, safe mode's park or `--auto-merge`'s `gate-eval` (it calls that subcommand and never merges itself), the dismissed-findings decision step, the park writes (park state, merge watcher, notify, `run-lock.sh release`), SYNC's `closeout … --no-trail`, the close-out leftover gate, CHECK OFF and termination, and prints exactly ONE JSON instruction (`spawn` / `ask` / `park` / `done`); a call with no `--result` re-prints the pending one and writes nothing. Its steps are the script's own `case` arms (the list lives in its header; the schema doc mirrors it, held equal by the test). Instruction schema: `docs/result-schemas/automate-run.md` §"next-step instruction". Not called under `/automate --legacy` (the loop then follows `legacy-tail.md`). |
 
 `scripts/read-token-ledger.sh --session <id> | --run-id <run_id> [--root <checkout>]` and `scripts/run-lock.sh acquire|release|status --owner <label> [--session-id <id>] [--root <checkout>] [--force-unlock]` are **standalone scripts, not `automate-helpers.sh` subcommands** (they are shared with `/autonomous` and `/supervisor`, so they live at the top level of `scripts/` rather than inside this engine's own helper). `read-token-ledger.sh` is the fail-SAFE reader `ceiling-check` shells out to (row above) — `--session <id>` and `--run-id <id>` both print `INPUT=<n> OUTPUT=<n> CACHE_READ=<n> CACHE_CREATE=<n> TOTAL=<n> EVENTS=<n>` (plus `LEDGER_UNREADABLE=1` when nothing could be read); see the script's own header for the proxy-line honest limit. `run-lock.sh` is the single-run-per-repo lock (§11) acquired at PICK below, released at item completion/park. `scripts/automate-merge-watch.sh <runfile> <item> <pr_url>` is this engine's detached merge watcher (§6 "Post-merge close-out") — a standalone script too, because it runs OUTSIDE any Claude session and calls `automate-helpers.sh closeout` itself.
 
@@ -197,9 +197,9 @@ queued (- [ ]) → running → rate_limit (parks, no PR yet) | pr-open → await
 | Transition | Call |
 |---|---|
 | §6 step 1 PICK (BEFORE its `picked` Progress line) | `current-set <rf> --item <path> --status running --pr null --branch null --pause-reason null` |
-| §6 step 2 RUN produced a PR (BEFORE its `ran /autonomous → PR` line) | `current-set <rf> --item <path> --status running --pr <url> --branch <b>` |
-| §6 step 3 DRAIN start | none — item `status` stays `running`; `owned_drain_started` stays its own line |
-| Rate-limit park (§6) | `current-set <rf> --item <path> --status rate_limit --pause-reason rate_limit` |
+| §6 step 2 RUN produced a PR (BEFORE its `ran /autonomous → PR` line) — driver step `run-record` | `current-set <rf> --item <path> --status running --pr <url> --branch <b>` |
+| §6 step 3 DRAIN start — driver step `drain-result` | none — item `status` stays `running`; `owned_drain_started` stays its own line |
+| Rate-limit park (§6 step 2 — driver step `rate-limit`) | `current-set <rf> --item <path> --status rate_limit --pause-reason rate_limit` |
 | `drain_died` park (§4) | `current-set <rf> --item <path> --status drain_died --pause-reason drain_died` |
 | Lane READY park (§14 — inside an N>1 lane only, replaces the `awaiting_merge` park; a single lane — `lane-park` prints `awaiting_merge` — writes the `awaiting_merge` park, and `current-set` refuses `ready_for_release` there) | `current-set <rf> --item <path> --status ready_for_release --pause-reason ready_for_release` |
 | GATE `awaiting_merge` park (§9) | `current-set <rf> --item <path> --status awaiting_merge --pause-reason awaiting_merge` |
@@ -231,15 +231,7 @@ See [resume.md](resume.md).
 
 See [per-item-loop.md](per-item-loop.md).
 
-### Rate-limit park (end of RUN, before DRAIN)
-
-See [per-item-loop.md](per-item-loop.md).
-
 ### Termination (two exits)
-
-See [per-item-loop.md](per-item-loop.md).
-
-### Learning-emit at end-of-DRAIN (engine-native ground-truth signal)
 
 See [per-item-loop.md](per-item-loop.md).
 
@@ -259,29 +251,37 @@ See [per-item-loop.md](per-item-loop.md).
 
 See [per-item-loop.md](per-item-loop.md).
 
-### Suppress window (wrap the RUN phase)
-
-See [per-item-loop.md](per-item-loop.md).
-
-### Config-toggle contract (byte-for-byte; absent-delete; malformed-abort)
-
-See [per-item-loop.md](per-item-loop.md).
-
-### Own ONE inline drain
-
-See [per-item-loop.md](per-item-loop.md).
-
 ## §8 — Single-open-PR invariant (BOTH modes)
 
 See [per-item-loop.md](per-item-loop.md).
 <!-- split:end per-item-loop.md -->
 
 <!-- split:begin legacy-tail.md -->
-## Legacy tail — §6 steps 4–6 and the dismissed-findings decision step, as prose (read only under `--legacy`)
+## Legacy tail — §6 steps 2–6, §7's subsections and the dismissed-findings decision step, as prose (read only under `--legacy`)
+
+See [legacy-tail.md](legacy-tail.md).
+
+### Rate-limit park (end of RUN, before DRAIN)
+
+See [legacy-tail.md](legacy-tail.md).
+
+### Learning-emit at end-of-DRAIN (engine-native ground-truth signal)
 
 See [legacy-tail.md](legacy-tail.md).
 
 ### Dismissed-findings decision step (before the park)
+
+See [legacy-tail.md](legacy-tail.md).
+
+### Suppress window (wrap the RUN phase)
+
+See [legacy-tail.md](legacy-tail.md).
+
+### Config-toggle contract (byte-for-byte; absent-delete; malformed-abort)
+
+See [legacy-tail.md](legacy-tail.md).
+
+### Own ONE inline drain
 
 See [legacy-tail.md](legacy-tail.md).
 
@@ -334,7 +334,7 @@ See [invariants.md](invariants.md).
 /automate ... --non-interactive-fallback     # passthrough to inner /autonomous + engine gates fail closed
 /automate ... --cheap                        # passthrough to inner /autonomous (Sonnet cost profile → /supervisor; not persisted — re-pass on --resume)
 /automate ... --max-tokens N                 # opt-in spend ceiling (red-team-hardening/06) — PARKS before PICK on breach; PERSISTED in ## Run Config (unlike --cheap/--notify)
-/automate ... --legacy                       # the tail (§6 steps 4–6) from legacy-tail.md's prose instead of scripts/automate-next-step.sh; not persisted — re-pass on --resume
+/automate ... --legacy                       # RUN, DRAIN and the tail (§6 steps 2–6) from legacy-tail.md's prose instead of scripts/automate-next-step.sh; not persisted — re-pass on --resume
 /automate ... --parallel N                   # opt-in lanes (§14): up to N independent items at once, each in its own local clone; absent ⇒ no lane code path; N = 1 ⇒ single-lane mode (one fresh lane per item, parked awaiting_merge; needs branch mode); refused with --auto-merge
 ```
 

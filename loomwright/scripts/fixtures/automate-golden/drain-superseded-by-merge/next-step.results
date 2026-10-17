@@ -1,0 +1,9 @@
+# next-step.results — drain-superseded-by-merge: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The drain returned with no terminal REVIEW_HEAL_RESULT
+# (no_terminal_block); reconcile-item reads PR #305 merged (gh stubbed) ⇒ owned_drain_result: superseded_by_merge (the
+# pass's legacy start line is kept, its timestamp is owned_drain_started), the pinned superseded line, NO review-heal
+# sidecar, NO learning-emit, NO GATE — closeout --session-id runs for real (scratch origin), classified complete, then
+# ## Status: paused + pause_reason: awaiting_go and the park instruction.
+env: NEXT_STEP_FROM=drain-result
+call: --session-id bec3aeba-75d5-447b-9d54-88f8a6d4593c --result '{"no_terminal_block":true}'
+expect: park

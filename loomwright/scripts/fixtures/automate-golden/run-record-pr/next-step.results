@@ -1,0 +1,8 @@
+# next-step.results — run-record-pr: how test-automate-next-step.sh drives this case through automate-next-step.sh
+# (grammar: the test's header). The case is RUN's record alone (NEXT_STEP_FROM=run-record, NEXT_STEP_UNTIL=run-record):
+# the session_id line, current-set with PR #542 BEFORE the ran /autonomous line (its parenthetical is the report's
+# run_note), the verbatim supervisor-result sidecar and its sidecar-check (ok ⇒ no line). The RUN report is fixed input:
+# the case's on-disk sidecar is 39a's (PR #555), so the report carries a 39b SUPERVISOR_RESULT for PR #542.
+env: NEXT_STEP_FROM=run-record NEXT_STEP_UNTIL=run-record
+call: --result '{"supervisor_result":"SUPERVISOR_RESULT:\n  schema_version: 1\n  task_id: af39b\n  status: completed\n  pr_url: https://github.com/vikashruhilgit/loomwright/pull/542\n  branch: feature/af39b-run-lock-holder\n  subtasks_completed: 2\n  subtasks_failed: 0\n  heal_loop_ran: true\n  heal_iterations: 3\n  heal_decision: PASS\n  heal_fixable_issues_fixed: 6\n  heal_remaining_issues: 0\n  summary: \"run-lock half of af39b; heal PASS after 3 reviews / 2 fix rounds (4cf6a58, 35b8303)\"\n","session_id":"auto-2026-10-14-091531","run_note":"SUPERVISOR_RESULT completed: heal PASS after 3 reviews / 2 fix rounds — 4cf6a58, 35b8303; 6 fixable issues fixed, 0 remaining; scope = run-lock half, Scopes 3-4 split to 39c"}'
+expect: none
