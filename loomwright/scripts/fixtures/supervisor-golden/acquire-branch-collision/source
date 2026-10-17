@@ -1,0 +1,2 @@
+synthetic: no recorded acquire_branch_collision (the guard shipped in v15.16.x and has not fired in a kept run).
+Built from agents/supervisor.md Phase 1 step 4: feature/golden-collide carries one commit beyond main ⇒ the failed park acquire_branch_collision; nothing is checked out or deleted and the job stays in in-progress/ (moved at Phase 0).

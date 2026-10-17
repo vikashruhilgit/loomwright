@@ -1,0 +1,5 @@
+# the branch exists with zero commits beyond main ⇒ reuse
+call: --job .supervisor/jobs/pending/2026-10-17-golden-reuse.md
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn

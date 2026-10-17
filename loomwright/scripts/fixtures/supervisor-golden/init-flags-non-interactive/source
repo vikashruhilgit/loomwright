@@ -1,0 +1,2 @@
+synthetic: no recorded `/supervisor --non-interactive` session kept its INIT Context-Keeper calls (the autonomous loop passes the flag, but its state.md is rewritten per run and no archive was kept).
+Built from skills/supervisor-config/SKILL.md steps 4-7 and the 5a preamble: a state.md a crashed prior session left with both crash-recovery flags set (base_mismatch_detected, non_interactive) — the two clear_flag ops clear them, set_flag re-arms non_interactive (source supervisor_flag).

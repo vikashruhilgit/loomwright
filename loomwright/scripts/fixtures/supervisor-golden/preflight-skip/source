@@ -1,0 +1,2 @@
+synthetic: no kept run passed --skip-preflight-sync.
+Built from skills/preflight-sync/SKILL.md action 1: the skip is recorded as a deliberate choice (record_decision preflight_skipped, rationale "--skip-preflight-sync flag") and nothing else of the gate runs.

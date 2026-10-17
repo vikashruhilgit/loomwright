@@ -1,0 +1,7 @@
+# one subtask ⇒ single-agent
+call: --job .supervisor/jobs/pending/2026-10-17-golden-single.md --skip-preflight-sync
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn

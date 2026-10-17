@@ -1,0 +1,2 @@
+synthetic: --max-tokens (red-team-hardening/06) is opt-in and no recorded session set it.
+Built from skills/supervisor-config/SKILL.md step 0.5: --max-tokens N recorded as a Phase Flag (key max_tokens) beside the clear-on-start ops; --cheap resolves cost_profile cheap; Workers: 3 from the brief.

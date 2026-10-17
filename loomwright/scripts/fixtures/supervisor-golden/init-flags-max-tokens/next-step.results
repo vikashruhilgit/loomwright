@@ -1,0 +1,3 @@
+# Phase 0 with --max-tokens 50000 --cheap: set_flag max_tokens; initialize carries cost_profile cheap and the brief's Workers: 3
+call: --job .supervisor/jobs/pending/2026-10-17-golden-tokens.md --max-tokens 50000 --cheap
+expect: spawn

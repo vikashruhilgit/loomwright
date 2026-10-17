@@ -1,0 +1,34 @@
+{
+  "answer_arm": "execute-result",
+  "base_branch": "main",
+  "base_sync": "ok",
+  "branch": "feature/golden-unverified",
+  "branch_action": "CREATED",
+  "cost_profile": "default",
+  "flags": {
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": false,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/in-progress/2026-10-17-golden-unverified.md",
+  "last_arm": "execute",
+  "max_workers": 2,
+  "mode": "parallel",
+  "path": "single-agent",
+  "pending_text": "{\"do\":\"spawn\",\"step\":\"execute\",\"session_id\":\"golden-unverified\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-unverified.md\",\"branch\":\"feature/golden-unverified\",\"what\":\"worker\",\"agent\":\"loomwright:worker\",\"path\":\"single-agent\",\"plan_source\":\"brief\",\"subtask\":\"1\",\"brief\":\".supervisor/jobs/in-progress/2026-10-17-golden-unverified.md\",\"brief_note\":\"read only your subtask's sections\",\"worktree\":\"<ROOT>\",\"then\":\"--result {\\\"result\\\": \\\"<the WORKER_RESULT block, verbatim>\\\"}\"}",
+  "plan_source": "brief",
+  "preflight_citations": "",
+  "preflight_class": "UNVERIFIED",
+  "preflight_sync": "unverified",
+  "preflight_warning": "gh pr list failed (not authenticated) — pre-flight unverified",
+  "seq_index": 0,
+  "subtasks": [
+    "1"
+  ],
+  "task_id": "2026-10-17-golden-unverified",
+  "title": "Golden preflight unverified"
+}

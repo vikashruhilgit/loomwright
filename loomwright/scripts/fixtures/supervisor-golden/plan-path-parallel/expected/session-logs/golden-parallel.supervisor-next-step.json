@@ -1,0 +1,33 @@
+{
+  "answer_arm": "execute-result",
+  "base_branch": "main",
+  "base_sync": "ok",
+  "branch": "feature/golden-parallel",
+  "branch_action": "CREATED",
+  "cost_profile": "cheap",
+  "flags": {
+    "cheap": true,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": true,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/in-progress/2026-10-17-golden-parallel.md",
+  "last_arm": "execute",
+  "max_workers": 3,
+  "mode": "parallel",
+  "path": "parallel",
+  "pending_text": "{\"do\":\"spawn\",\"step\":\"execute\",\"session_id\":\"golden-parallel\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-parallel.md\",\"branch\":\"feature/golden-parallel\",\"what\":\"execute-manager\",\"agent\":\"loomwright:execute-manager\",\"path\":\"parallel\",\"plan_source\":\"brief\",\"brief\":\".supervisor/jobs/in-progress/2026-10-17-golden-parallel.md\",\"brief_note\":\"read only the sections you need\",\"subtasks\":[\"1a\",\"1b\",\"1c\"],\"max_workers\":3,\"base_branch\":\"main\",\"model\":\"sonnet\",\"then\":\"--result {\\\"result\\\": \\\"<the EXECUTE_RESULT block, verbatim>\\\"}\"}",
+  "plan_source": "brief",
+  "preflight_sync": "skipped",
+  "seq_index": 0,
+  "subtasks": [
+    "1a",
+    "1b",
+    "1c"
+  ],
+  "task_id": "2026-10-17-golden-parallel",
+  "title": "Golden parallel"
+}

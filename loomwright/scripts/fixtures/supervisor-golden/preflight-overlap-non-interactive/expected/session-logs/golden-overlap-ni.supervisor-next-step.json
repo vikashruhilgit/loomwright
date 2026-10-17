@@ -1,0 +1,25 @@
+{
+  "base_branch": "main",
+  "base_sync": "ok",
+  "branch": "feature/golden-overlap-ni",
+  "branch_action": "CREATED",
+  "cost_profile": "default",
+  "flags": {
+    "cheap": false,
+    "non_interactive": true,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": false,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/failed/2026-10-17-golden-overlap-ni.md",
+  "last_arm": "preflight-route",
+  "max_workers": 2,
+  "mode": "parallel",
+  "pending_text": "{\"do\":\"park\",\"step\":\"preflight-route\",\"session_id\":\"golden-overlap-ni\",\"job\":\".supervisor/jobs/failed/2026-10-17-golden-overlap-ni.md\",\"branch\":\"feature/golden-overlap-ni\",\"status\":\"failed\",\"error\":\"preflight_overlap_detected\",\"preflight_sync\":null,\"message\":\"OVERLAP cannot be asked (--non-interactive, a subagent, or a cant_ask answer) and fails closed — only --skip-preflight-sync proceeds past it: PR #41 (feature/docs-sweep) touches docs/a.md. No worker spawned; the job brief is in failed/.\"}",
+  "preflight_citations": "PR #41 (feature/docs-sweep) touches docs/a.md",
+  "preflight_class": "OVERLAP",
+  "task_id": "2026-10-17-golden-overlap-ni",
+  "title": "Golden overlap non-interactive"
+}

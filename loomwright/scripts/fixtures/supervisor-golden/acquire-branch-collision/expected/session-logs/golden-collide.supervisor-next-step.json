@@ -1,0 +1,21 @@
+{
+  "base_branch": "main",
+  "base_sync": "ok",
+  "cost_profile": "default",
+  "flags": {
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": false,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/in-progress/2026-10-17-golden-collide.md",
+  "last_arm": "acquire",
+  "max_workers": 2,
+  "mode": "parallel",
+  "pending_text": "{\"do\":\"park\",\"step\":\"acquire\",\"session_id\":\"golden-collide\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-collide.md\",\"branch\":null,\"status\":\"failed\",\"error\":\"acquire_branch_collision: feature/golden-collide diverges from main tip\",\"preflight_sync\":null,\"message\":\"branch 'feature/golden-collide' already exists and is NOT identical to main tip (<SHA> vs <SHA>). Inspect: git log feature/golden-collide --oneline -5 ; git diff main...feature/golden-collide --stat. Then resume it yourself if it is your crashed run, delete/rename it if disposable, or pass a different --branch. Nothing was acquired; the job file stays where it is.\"}",
+  "task_id": "2026-10-17-golden-collide",
+  "title": "Golden branch collision"
+}

@@ -1,0 +1,7 @@
+# Phase 1.5 OVERLAP, interactive ⇒ the SUP-OVERLAP ask (the driver never picks)
+call: --job .supervisor/jobs/pending/2026-10-17-golden-overlap.md
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"classification":"OVERLAP","version":"2.4.0","citations":"PR #41 (feature/docs-sweep) touches docs/a.md; 1f2e3d4 on origin/main touched docs/b.md"}'
+expect: ask
