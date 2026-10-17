@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
-# test-automate-next-step.sh — self-test for automate-next-step.sh, the `/automate` loop's TAIL
-# driver (automate-speed/06). UNCOUNTED by the doc-currency gate. One tally (`PASS: <n> FAIL: <m>`,
+# test-automate-next-step.sh — self-test for automate-next-step.sh, the `/automate` loop's driver from
+# RUN on (automate-speed/06 the tail, automate-speed/07 RUN and DRAIN). UNCOUNTED by the doc-currency
+# gate. One tally (`PASS: <n> FAIL: <m>`,
 # exit 1 on any failure). Hermetic: every case runs in its own `mktemp -d` checkout (git init, HOME
 # and the git identity sandboxed, a stub `gh` first on PATH — no network), the merge watcher, the
 # notify and (in the golden legs) the run lock replaced by recorders through the driver's
 # NEXT_STEP_WATCH_CMD / NEXT_STEP_NOTIFY_CMD / NEXT_STEP_LOCK_CMD.
 #
 # LEGS
-#   G   GOLDEN PARITY (AC1). Every TAIL golden case under fixtures/automate-golden/ carries a
-#       `next-step.results` file; the case's input.md + tree/ + gh.stub + setup are staged exactly
-#       as test-automate-golden.sh stages them (the dot-<name> mapping, the stub table, the sourced
-#       setup), the results file drives the driver, and the run file must equal the case's
-#       expected.md byte for byte after the same normalisation (ISO ts → <TS>, scratch root →
-#       <ROOT>, case dir → <CASE>, work dir → <TMP>). The required case list is asserted present.
+#   G   GOLDEN PARITY (AC1). Every TAIL golden case and every RUN/DRAIN one (automate-speed/07)
+#       under fixtures/automate-golden/ carries a `next-step.results` file; the case's input.md + tree/
+#       (where present) + gh.stub (where present) + setup (where present) are staged exactly as
+#       test-automate-golden.sh stages them (the dot-<name> mapping, the stub table — a scratch copy, so
+#       `gh:` rows add to it —, the sourced setup), the results file drives the driver, and the run
+#       file must equal the case's expected.md byte for byte after the same normalisation (ISO ts →
+#       <TS>, scratch root → <ROOT>, case dir → <CASE>, work dir → <TMP>). The required case list is
+#       asserted present. The case's own files are read-only: anything a RUN/DRAIN case needs that the
+#       loop's model would hand over (a SUPERVISOR_RESULT, a REVIEW_HEAL_RESULT, a free-text line) is
+#       fixed input in the results file.
 #       next-step.results grammar (one directive per line, `#` / blank skipped; $RF $ROOT $AD
 #       $RUN_ID expanded by eval):
 #         env: <NAME>=<value> …    set (an empty value unsets) a driver env var for the calls below
@@ -21,7 +26,19 @@
 #         pre: <subcommand> <args> `bash automate-helpers.sh <subcommand> <args>` — a write the
 #                                  segment's driver does not own (named, like a golden `loop:` line)
 #         call: <args…>            `bash automate-next-step.sh "$RF" <args…>`
-#         expect: <do>|none        the last call printed {"do":"<do>",…} (none = an UNTIL stop)
+#         expect: <do>|none        the last call printed {"do":"<do>",…} (none = an UNTIL stop or
+#                                  a failed call)
+#         expect-exit: <n>         the last call exited <n> (directly after its call:; without it a
+#                                  non-zero exit is a broken expectation) — the current_not_set 3
+#         gh: <rc>\t<pattern>\t<out>  one stub-table row (gh.stub's tab-separated form), appended
+#                                  to the case's scratch table — fixed `gh` input
+#         file: <path> <content>   write <content> (one shell word, `$'…'` allowed) to <path> under
+#                                  the scratch root — fixed input a case has no tree/ file for
+#         sidecar: <json>          merge <json> into the driver's sidecar before the next call — the
+#                                  state an earlier, unrecorded driver call left (a FROM case)
+#         out: <command>           run <command> in the case's sandbox; its normalised stdout must
+#                                  equal the output block under `$ loop: <command>` in expected.out
+#                                  (the learning-emit case's ledger projection)
 #   I   IDEMPOTENCY (AC2). After a case ends on an instruction, two calls with no --result print the
 #       byte-identical instruction (the one the case's last call printed) and leave every file under
 #       the scratch .supervisor/ (run file, sidecars, drafts) byte-unchanged. A replayed drain report
@@ -58,6 +75,23 @@
 #       after a fix-now spawn ⇒ the spawn re-prints, nothing written; a new re-drain report proceeds.
 #       B14b: item A's drain report while item B runs, or a `pr` not ## Current's ⇒ exit 2, nothing written.
 #       Q also enters the post-park decide step under --non-interactive: it parks, never asks.
+#   R   RUN / DRAIN (automate-speed/07). R1 (AC5): `.auto_review` suppressed before the /autonomous
+#       spawn prints, restored byte-for-byte (backup deleted, the original read backup-first into ## Run
+#       Config) when the RUN report arrives and before the owned-drain spawn prints. R2 (AC2): another
+#       owned-drain spawn for the same pass ⇒ exit 2 `drain_already_owned`, nothing printed, .supervisor/
+#       byte-unchanged — while the spawn is pending, after its report, and with only the run file's
+#       record left. R3 (AC3): a malformed config.json ⇒ exit 2 `config_malformed` before the spawn,
+#       config.json byte-unchanged, no backup. R4 (AC4): drain-superseded-by-merge through the driver ⇒
+#       byte-identical, no review-heal sidecar, no ledger line, the awaiting_go park; the same no-block
+#       report while the PR reads OPEN ⇒ nothing written, done/stopped. R5/R6: malformed RUN / DRAIN
+#       reports ⇒ exit 2, nothing written; a no-PR RUN report ⇒ the pinned no-PR line. R7: the new spawns
+#       re-print (idempotent), a re-sent report or --start run is refused. R8: the 429-hint rate-limit
+#       park (reason_hint) and a stale failed row (no park). R9: the first drain's DRAIN report re-sent
+#       at the fix-now re-drain spawn ⇒ the spawn re-prints, nothing written (B14a's rule, DRAIN reports).
+#   V7  RUNNING SYSTEM (Validation 3 of automate-speed/07): a scratch git repo (gh stubbed), the real
+#       run-lock.sh held as PICK holds it, one item from PICK through --start run → the RUN report →
+#       the DRAIN report → the awaiting_merge park; the Progress lines are printed between `V3-07>`
+#       markers.
 #   D   DOC MIRROR: the schema doc's step list equals the driver's `case` arms, and its `do` table
 #       equals the emitter's closed set.
 #   M   MUTATION CONTROLS — each mutant gated non-empty + differs from the driver + `bash -n` (and
@@ -80,6 +114,12 @@
 #         MPu ns_pending_write refuses `unknown` (iteration 2)    ⇒ B12 + B13
 #         MRs the spawn branch's replay check dropped             ⇒ B14a
 #         MRx the fresh-tail stale-report check dropped           ⇒ B14b
+#         M7a the config restore moved from run-result to drain-result (two edits; Validation 2a)
+#                                                                  ⇒ R1 (+ run-config-suppress-restore)
+#         M7b the second-drain refusal removed (Validation 2b)     ⇒ R2
+#         M7c config-suppress's non-zero exit ignored              ⇒ R3
+#         M7d the review-heal sidecar written on the superseded path ⇒ R4
+#         M7e progress-append's exit swallowed on the drain start line ⇒ G drain-pinned-start-line-current-not-set
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -106,7 +146,9 @@ ASKS="$WORK/asks.log"; : > "$ASKS"
 REQUIRED_CASES="escalated-park park-first-ready-park park-first-decisions-recorded
 gate-validation-gate-unrun-escalated gate-validation-waive gate-eval-merge sync-closeout-no-trail
 check-off-progress termination-limit-reached termination-queue-resolved
-closeout-leftover-gate-non-interactive dismissed-findings-decision-step"
+closeout-leftover-gate-non-interactive dismissed-findings-decision-step
+run-config-suppress-restore run-record-pr drain-owned-drain-started drain-pinned-start-line-current-not-set
+drain-superseded-by-merge learning-emit-end-of-drain rate-limit-park dismissed-fix-now-re-drain"
 
 # --------------------------------------------------------------------------------------
 # the scratch checkout — the shape of test-automate-golden.sh's run_case (stub gh, tree
@@ -171,7 +213,11 @@ new_scratch() {
     ( cd "$CASE_ROOT" && export HOME="$CASE_HOME" && eval "export $GIT_ENV" && ROOT="$CASE_ROOT" RF="$CASE_RF" \
         RUN_ID="$CASE_RUN" && . "$cd_/setup" ) >"$cw/setup.log" 2>&1 || return 1
   fi
-  CASE_GH="$cd_/gh.stub"
+  # the stub table is a scratch copy of gh.stub (where present), so a case's `gh:` rows add fixed input
+  # without touching the read-only fixture
+  CASE_GH="$cw/gh.table"
+  if [ -f "$cd_/gh.stub" ]; then cp "$cd_/gh.stub" "$CASE_GH" || return 1; else : > "$CASE_GH"; fi
+  if [ -s "$CASE_GH" ] && [ -n "$(tail -c 1 "$CASE_GH")" ]; then echo >> "$CASE_GH"; fi
   return 0
 }
 
@@ -200,13 +246,38 @@ in_case() {
 # drive <case dir> <driver> <results file> — runs the directives; sets LAST_OUT (last call's stdout)
 # and DRIVE_ERR (non-empty on a broken expectation); every printed ask goes to $ASKS
 drive() {
-  local cd_="$1" drv="$2" rs="$3" line rest k=0 o e rc seams want got w nm
+  local cd_="$1" drv="$2" rs="$3" line rest k=0 o e rc seams want got w nm pend="" sc n=0
   local RF="$CASE_RF" ROOT="$CASE_ROOT" AD="$CASE_ROOT/.supervisor/automate" RUN_ID="$CASE_RUN"
-  seams="$CASE_DIR/seams.env"; : > "$seams"; LAST_OUT=""; DRIVE_ERR=""
+  seams="$CASE_DIR/seams.env"; : > "$seams"; LAST_OUT=""; DRIVE_ERR=""; LAST_RC=0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in ""|"#"*) continue ;; esac
     rest="${line#*:}"; rest="${rest# }"
+    # a call's non-zero exit is a broken expectation unless the very next directive expects it
+    case "$line" in "expect-exit: "*) ;; *) DRIVE_ERR="$DRIVE_ERR$pend"; pend="" ;; esac
     case "$line" in
+      "expect-exit: "*)
+        [ "$LAST_RC" = "$rest" ] || DRIVE_ERR="${DRIVE_ERR}call $k exit $LAST_RC, want $rest; "
+        pend="" ;;
+      "gh: "*) printf '%s\n' "$rest" >> "$CASE_GH" ;;
+      "file: "*)
+        eval "set -- $rest"
+        if [ "$#" = 2 ] && case "$1" in "$CASE_ROOT"/*) true ;; *) false ;; esac; then
+          mkdir -p "$(dirname "$1")" && printf '%s' "$2" > "$1" || DRIVE_ERR="${DRIVE_ERR}file not written: $1; "
+        else DRIVE_ERR="${DRIVE_ERR}file: wants <path under the scratch root> <content>: $rest; "; fi ;;
+      "sidecar: "*)
+        eval "set -- $rest"; sc="$AD/$RUN_ID.next-step.json"
+        [ -f "$sc" ] || printf '{}\n' > "$sc"
+        jq -S --argjson x "$1" '. + $x' "$sc" > "$sc.t" 2>/dev/null && mv "$sc.t" "$sc" || DRIVE_ERR="${DRIVE_ERR}sidecar seed refused: $rest; " ;;
+      "out: "*)
+        n=$((n + 1))
+        in_case "$drv" "$seams" bash -c "$rest" > "$CASE_DIR/out$n.txt" 2>/dev/null
+        LINE_="\$ loop: $rest" awk 'BEGIN { w = ENVIRON["LINE_"] } f && /^= [0-9]+$/ { exit } f { print } $0 == w { f = 1 }' \
+          "$cd_/expected.out" > "$CASE_DIR/want$n.txt"
+        norm "$CASE_DIR/out$n.txt" > "$CASE_DIR/got$n.txt"
+        if [ ! -s "$CASE_DIR/want$n.txt" ]; then DRIVE_ERR="${DRIVE_ERR}out: no '\$ loop: $rest' block in expected.out; "
+        elif ! cmp -s "$CASE_DIR/want$n.txt" "$CASE_DIR/got$n.txt"; then
+          DRIVE_ERR="${DRIVE_ERR}out: '$rest' printed $(head -c 300 "$CASE_DIR/got$n.txt" | tr '\n' ' '), want $(head -c 300 "$CASE_DIR/want$n.txt" | tr '\n' ' '); "
+        fi ;;
       "env: "*)
         eval "set -- $rest"
         for w in "$@"; do
@@ -219,9 +290,9 @@ drive() {
         k=$((k + 1)); o="$CASE_DIR/call$k.out"; e="$CASE_DIR/call$k.err"
         eval "set -- $rest"
         in_case "$drv" "$seams" bash "$drv" "$CASE_RF" "$@" > "$o" 2> "$e"
-        rc=$?
+        rc=$?; LAST_RC=$rc
         LAST_OUT="$(cat "$o")"
-        [ "$rc" -eq 0 ] || DRIVE_ERR="${DRIVE_ERR}call $k exit $rc ($(head -n 3 "$e" | tr '\n' ' ')); "
+        [ "$rc" -eq 0 ] || pend="call $k exit $rc ($(head -n 3 "$e" | tr '\n' ' ')); "
         grep '"do":"ask"' "$o" | sed "s|^|$(basename "$cd_")$TAB|" >> "$ASKS" ;;
       "expect: "*)
         want="$rest"
@@ -230,6 +301,7 @@ drive() {
       *) DRIVE_ERR="${DRIVE_ERR}bad directive: $line; " ;;
     esac
   done < "$rs"
+  DRIVE_ERR="$DRIVE_ERR$pend"
 }
 
 # golden_case <case> <driver> — 0 when the run file matches expected.md (and every expectation held)
@@ -486,6 +558,227 @@ leg_cross_replay() {
   o="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" \
     --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"028cbed6b8e3588f93731d6b862f0bc334de1d96"}' 2>/dev/null)"; rc=$?
   [ "$rc" = 2 ] && [ -z "$o" ] || { LEG_MSG="A's report after B's park ⇒ exit $rc '${o:0:80}'"; return 1; }
+  return 0
+}
+
+# --------------------------------------------------------------------------------------
+# RUN / DRAIN legs (automate-speed/07)
+# --------------------------------------------------------------------------------------
+# the 39b RUN report (PR #542) and a READY DRAIN report, as the fixtures carry them
+R_RUN="$(sed -n "s/^call: --result '\(.*\)'$/\1/p" "$FIX/run-record-pr/next-step.results")"
+R_DRAIN="$(sed -n "s/^call: --result '\(.*\)'$/\1/p" "$FIX/drain-pinned-start-line-current-not-set/next-step.results")"
+R_SEAMS="$WORK/seams.none"; : > "$R_SEAMS"
+ns_call() { # <driver> <args…> — one driver call in the current case; sets NC_OUT NC_RC NC_ERR
+  local drv="$1"; shift
+  NC_OUT="$(in_case "$drv" "$R_SEAMS" bash "$drv" "$CASE_RF" "$@" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  NC_ERR="$(cat "$CASE_DIR/nc.err")"
+}
+# leg_run_order <driver> — AC5: suppress BEFORE the /autonomous spawn is printed, restore (byte-for-byte,
+# backup deleted, auto_review_original read backup-first) when the RUN report arrives and BEFORE the
+# owned-drain spawn is printed
+leg_run_order() {
+  local drv="$1" cfg bak
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+  cfg="$CASE_ROOT/.supervisor/config.json"; bak="$CASE_ROOT/.supervisor/automate/$CASE_RUN.config-backup.json"
+  printf '{"auto_review": true, "keep": [1, 2]}\n' > "$cfg"; cp "$cfg" "$CASE_DIR/cfg.orig"
+  ns_call "$drv" --start run
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "spawn" and .what == "/autonomous run" and (.invocation | startswith("/autonomous --single-iteration --requirement "))' >/dev/null 2>&1 \
+    || { LEG_MSG="--start run ⇒ exit $NC_RC '${NC_OUT:0:120}' ${NC_ERR:0:160}"; return 1; }
+  jq -e '.auto_review == false and .keep == [1, 2]' "$cfg" >/dev/null 2>&1 && cmp -s "$bak" "$CASE_DIR/cfg.orig" \
+    || { LEG_MSG="at the /autonomous spawn: config.json not suppressed or the backup is not byte-for-byte"; return 1; }
+  grep -qxF -- '- auto_review_original: true | config_backup: automate-2026-10-13-181331.config-backup.json' "$CASE_RF" \
+    || { LEG_MSG="auto_review_original not recorded as true (read backup-first): $(grep -F auto_review_original "$CASE_RF")"; return 1; }
+  ns_call "$drv" --result "$R_RUN"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "spawn" and .what == "owned drain"' >/dev/null 2>&1 \
+    || { LEG_MSG="RUN report ⇒ exit $NC_RC '${NC_OUT:0:120}' ${NC_ERR:0:160}"; return 1; }
+  cmp -s "$cfg" "$CASE_DIR/cfg.orig" && [ ! -e "$bak" ] \
+    || { LEG_MSG="at the owned-drain spawn: config.json not restored byte-for-byte (or the backup left): $(jq -c . "$cfg" 2>/dev/null)"; return 1; }
+  in_order "$CASE_RF" "auto_review suppressed (backup $CASE_RUN.config-backup.json)" "auto_review restored (config-restore: original true)" \
+    "session_id auto-2026-10-14-091531" "ran /autonomous → PR https://github.com/vikashruhilgit/loomwright/pull/542 (" \
+    || { LEG_MSG="RUN lines out of order: $(grep -nE 'auto_review|session_id|ran /autonomous' "$CASE_RF" | tr '\n' ';')"; return 1; }
+  ! grep -q 'owned drain started' "$CASE_RF" || { LEG_MSG="a drain start line was written before the drain ran"; return 1; }
+  return 0
+}
+# leg_drain_once <driver> — AC2: another owned-drain spawn for the same pass ⇒ exit 2 drain_already_owned,
+# nothing printed, .supervisor/ byte-unchanged — while the spawn is pending, after its report, and with
+# only the run file's record left (the sidecar gone)
+leg_drain_once() {
+  local drv="$1" s0
+  new_scratch "$FIX/drain-owned-drain-started" || { LEG_MSG="scratch"; return 1; }
+  ns_call "$drv" --start drain
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.what == "owned drain"' >/dev/null 2>&1 || { LEG_MSG="first --start drain ⇒ exit $NC_RC '${NC_OUT:0:100}' ${NC_ERR:0:120}"; return 1; }
+  s0="$(snapshot)"; ns_call "$drv" --start drain
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'next-step: drain_already_owned — ' <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] \
+    || { LEG_MSG="second spawn before the report ⇒ exit $NC_RC '${NC_OUT:0:100}' ${NC_ERR:0:120} .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  ns_call "$drv" --non-interactive --result "$R_DRAIN"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park"' >/dev/null 2>&1 || { LEG_MSG="the DRAIN report ⇒ exit $NC_RC '${NC_OUT:0:100}' ${NC_ERR:0:160}"; return 1; }
+  s0="$(snapshot)"; ns_call "$drv" --start drain
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'drain_already_owned' <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] \
+    || { LEG_MSG="a spawn after the report ⇒ exit $NC_RC '${NC_OUT:0:100}' ${NC_ERR:0:120}"; return 1; }
+  # the run file is the durable record: the sidecar gone, the item running again, still refused
+  rm -f "$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json"
+  in_case "$drv" "$R_SEAMS" bash "$H" current-set "$CASE_RF" --item .supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md --status running --pause-reason null >/dev/null 2>&1
+  s0="$(snapshot)"; ns_call "$drv" --start drain
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'drain_already_owned' <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] \
+    || { LEG_MSG="sidecar gone ⇒ exit $NC_RC '${NC_OUT:0:100}' ${NC_ERR:0:120}"; return 1; }
+  return 0
+}
+# leg_config_malformed <driver> — AC3: a malformed config.json ⇒ exit 2 config_malformed before the spawn: no
+# line, config.json byte-unchanged, no backup (and nothing else under .supervisor/ written)
+leg_config_malformed() {
+  local drv="$1" s0 cfg
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+  cfg="$CASE_ROOT/.supervisor/config.json"; printf '{"auto_review": true,\n' > "$cfg"; cp "$cfg" "$CASE_DIR/cfg.bad"
+  s0="$(snapshot)"; ns_call "$drv" --start run
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'next-step: config_malformed — ' <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] \
+    && cmp -s "$cfg" "$CASE_DIR/cfg.bad" && [ ! -e "$CASE_ROOT/.supervisor/automate/$CASE_RUN.config-backup.json" ] \
+    && ! grep -q 'auto_review suppressed' "$CASE_RF" \
+    || { LEG_MSG="malformed config ⇒ exit $NC_RC '${NC_OUT:0:100}' ${NC_ERR:0:160} .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  return 0
+}
+# leg_superseded <driver> — AC4: the superseded case through the driver is byte-identical, writes no review-heal
+# sidecar and no ledger line, parks awaiting_go; a no-block drain whose PR reads OPEN writes nothing
+leg_superseded() {
+  local drv="$1"
+  golden_case drain-superseded-by-merge "$drv" || { LEG_MSG="parity: $GC_MSG"; return 1; }
+  [ ! -e "$CASE_ROOT/.supervisor/automate/$CASE_RUN.review-heal-result.md" ] || { LEG_MSG="a review-heal sidecar was written on the superseded path"; return 1; }
+  [ ! -s "$CASE_ROOT/.supervisor/postmortem/results.jsonl" ] || { LEG_MSG="a learning line was written on the superseded path"; return 1; }
+  printf '%s' "$LAST_OUT" | jq -e '.do == "park" and .pause_reason == "awaiting_go"' >/dev/null 2>&1 || { LEG_MSG="not the awaiting_go park: $LAST_OUT"; return 1; }
+  new_scratch "$FIX/drain-superseded-by-merge" || { LEG_MSG="scratch (open)"; return 1; }
+  printf '0\tpr view https://github.com/vikashruhilgit/loomwright/pull/305 --json state,mergedAt\t{"state":"OPEN","mergedAt":null}\n' > "$CASE_GH"
+  printf 'NEXT_STEP_FROM=drain-result\n' > "$CASE_DIR/seams.from"
+  NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.from" bash "$drv" "$CASE_RF" --result '{"no_terminal_block":true}' 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "stopped"' >/dev/null 2>&1 \
+    && cmp -s "$FIX/drain-superseded-by-merge/input.md" "$CASE_RF" && [ ! -e "$CASE_ROOT/.supervisor/automate/$CASE_RUN.review-heal-result.md" ] \
+    || { LEG_MSG="no block + OPEN ⇒ exit $NC_RC '${NC_OUT:0:120}' $(head -c 160 "$CASE_DIR/nc.err"); run file $(cmp -s "$FIX/drain-superseded-by-merge/input.md" "$CASE_RF" && echo unchanged || echo CHANGED)"; return 1; }
+  return 0
+}
+# leg_bad_run_reports <driver> — a malformed RUN report at the /autonomous spawn ⇒ exit 2, nothing printed,
+# .supervisor/ byte-unchanged; then a no-PR report writes the pinned no-PR line and stops
+BAD_RUN='{"supervisor_result":"SUPERVISOR_RESULT:\n  pr_url: https://github.com/o/r/pull/1\n  branch: b","run_note":"two\nlines"}
+{"supervisor_result":"SUPERVISOR_RESULT:\n  pr_url: https://github.com/o/r/pull/1\n  branch: b","pr_url":"https://github.com/o/r/pull/2"}
+{"supervisor_result":"SUPERVISOR_RESULT:\n  pr_url: not-a-pr-url\n  branch: b"}
+{"supervisor_result":"SUPERVISOR_RESULT:\n  pr_url: https://github.com/o/r/pull/1"}
+{"pr_url":"https://github.com/o/r/pull/1","branch":"b"}
+{"status_reason":"plan_review_failed"}
+{"supervisor_result":"x","supervisor_result_file":"/etc/hosts","no_pr_why":"y"}
+{"supervisor_result_file":"/nonexistent/sup.md","no_pr_why":"y"}
+{"no_pr_why":"y","session_id":"../../etc"}
+{"no_pr_why":"y","status_reason":"has space"}
+{"review_heal_result":"REVIEW_HEAL_RESULT:\n  decision: READY"}'
+leg_bad_run_reports() {
+  local drv="$1" s0 r
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+  ns_call "$drv" --start run; [ "$NC_RC" = 0 ] || { LEG_MSG="--start run ⇒ exit $NC_RC"; return 1; }
+  s0="$(snapshot)"
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    ns_call "$drv" --result "$r"
+    [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && [ "$s0" = "$(snapshot)" ] \
+      || { LEG_MSG="$r ⇒ exit $NC_RC '${NC_OUT:0:60}' .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  done <<EOF
+$BAD_RUN
+EOF
+  ns_call "$drv" --result '{"status_reason":"plan_review_failed","no_pr_why":"Plan Review FAIL x3 on the brief","session_id":"auto-2026-10-14-091531"}'
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "stopped" and .step == "rate-limit"' >/dev/null 2>&1 \
+    && grep -qE -- '^- [0-9TZ:-]+ ran /autonomous — no PR: plan_review_failed \(Plan Review FAIL x3 on the brief\)$' "$CASE_RF" \
+    && [ ! -e "$CASE_ROOT/.supervisor/automate/$CASE_RUN.supervisor-result.md" ] && [ ! -e "$CASE_ROOT/.supervisor/config.json" ] \
+    && grep -q '^lock release ' "$CASE_DIR/rec.log" \
+    || { LEG_MSG="no-PR report ⇒ exit $NC_RC '${NC_OUT:0:120}' ${NC_ERR:0:120} $(grep -F 'ran /autonomous' "$CASE_RF")"; return 1; }
+  return 0
+}
+# leg_bad_drain_reports <driver> — a malformed DRAIN report at the owned-drain spawn ⇒ exit 2, nothing printed,
+# .supervisor/ byte-unchanged (a bare drain report there is refused too: the driver owns DRAIN's lines)
+BAD_DRAIN='{"ready_sha":"35b8303"}
+{"review_heal_result":"REVIEW_HEAL_RESULT:\n  decision: READY","no_terminal_block":true}
+{"no_terminal_block":false}
+{"review_heal_result":"REVIEW_HEAL_RESULT:\n  decision: ready"}
+{"review_heal_result":"no block here, decision: READY"}
+{"review_heal_result":"REVIEW_HEAL_RESULT:\n  decision: READY\n  fix_cycles: many"}
+{"review_heal_result":"REVIEW_HEAL_RESULT:\n  decision: READY","head_sha":"zz|35b8303"}
+{"review_heal_result":"REVIEW_HEAL_RESULT:\n  decision: READY","started_at":"yesterday"}
+{"review_heal_result":"REVIEW_HEAL_RESULT:\n  decision: READY","progress_notes":["one\n## Status: done"]}
+{"review_heal_result":"REVIEW_HEAL_RESULT:\n  decision: READY","progress_notes":"not an array"}
+{"review_heal_result":"REVIEW_HEAL_RESULT:\n  decision: READY","drain_note":"two\nlines"}
+{"review_heal_result":"REVIEW_HEAL_RESULT:\n  decision: READY","pr":"https://github.com/vikashruhilgit/loomwright/pull/1"}
+{"drain_result":"READY","termination_reason":"converged","ready_sha":"35b8303"}'
+leg_bad_drain_reports() {
+  local drv="$1" s0 r
+  new_scratch "$FIX/drain-owned-drain-started" || { LEG_MSG="scratch"; return 1; }
+  ns_call "$drv" --start drain; [ "$NC_RC" = 0 ] || { LEG_MSG="--start drain ⇒ exit $NC_RC"; return 1; }
+  s0="$(snapshot)"
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    ns_call "$drv" --result "$r"
+    [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && [ "$s0" = "$(snapshot)" ] \
+      || { LEG_MSG="$r ⇒ exit $NC_RC '${NC_OUT:0:60}' .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  done <<EOF
+$BAD_DRAIN
+EOF
+  return 0
+}
+# leg_run_idem <driver> — the /autonomous and owned-drain spawns re-print on a no-result call (and on a re-sent
+# --start run) and write nothing; --start run while the drain spawn is pending ⇒ run_already_started
+leg_run_idem() {
+  local drv="$1" s0 sp
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+  ns_call "$drv" --start run; sp="$NC_OUT"; s0="$(snapshot)"
+  ns_call "$drv"; [ "$NC_OUT" = "$sp" ] || { LEG_MSG="no-result call did not re-print the /autonomous spawn"; return 1; }
+  ns_call "$drv" --start run; [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="a re-sent --start run did not re-print / wrote"; return 1; }
+  ns_call "$drv" --result "$R_RUN"; sp="$NC_OUT"; s0="$(snapshot)"
+  ns_call "$drv"; [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="no-result call did not re-print the owned-drain spawn"; return 1; }
+  ns_call "$drv" --result "$R_RUN"; [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="the RUN report re-sent at the drain spawn ⇒ exit $NC_RC"; return 1; }
+  ns_call "$drv" --start run
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -q 'run_already_started' <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="--start run at the drain spawn ⇒ exit $NC_RC ${NC_ERR:0:100}"; return 1; }
+  return 0
+}
+# leg_rate_hint <driver> — an `unknown` failed row with a 429 in its session's closest-preceding STOP_FAILURE line
+# parks rate_limit with a separate reason_hint line; a failed row older than the picked line is never a hit
+leg_rate_hint() {
+  local drv="$1" lg
+  new_scratch "$FIX/rate-limit-park" || { LEG_MSG="scratch"; return 1; }
+  lg="$CASE_ROOT/.supervisor/logs"; mkdir -p "$lg"
+  printf '%s\n' '{"event":"agent_lifecycle","state":"failed","session_id":"s-hint","cc_session_id":"cc-hint","agent_scope":"main","reason":"unknown","ts":"2026-10-12T15:21:00Z"}' > "$lg/s-hint.jsonl"
+  printf '%s\n' '[2026-10-12T15:00:00Z] STOP_FAILURE {"session_id":"cc-hint","last_assistant_message":"ok"}' \
+    '[2026-10-12T15:20:59Z] STOP_FAILURE {"session_id":"cc-hint","last_assistant_message":"API Error: 429 Too Many Requests"}' \
+    '[2026-10-12T15:20:59Z] STOP_FAILURE {"session_id":"other","last_assistant_message":"fine"}' > "$lg/failures.log"
+  printf 'NEXT_STEP_FROM=rate-limit\n' > "$CASE_DIR/seams.from"
+  NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.from" bash "$drv" "$CASE_RF" --session-id s-hint 2>/dev/null)"; NC_RC=$?
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .pause_reason == "rate_limit"' >/dev/null 2>&1 \
+    && in_order "$CASE_RF" "- pause_reason: rate_limit" "- reason_hint: rate_limit" "## Progress" \
+    && grep -qF -- '| status: rate_limit |' "$CASE_RF" \
+    || { LEG_MSG="429 hint ⇒ exit $NC_RC '${NC_OUT:0:100}' $(sed -n '/^## Current/,/^## Progress/p' "$CASE_RF" | tr '\n' ';')"; return 1; }
+  new_scratch "$FIX/rate-limit-park" || { LEG_MSG="scratch (stale)"; return 1; }
+  mkdir -p "$CASE_ROOT/.supervisor/logs"; printf 'NEXT_STEP_FROM=rate-limit\n' > "$CASE_DIR/seams.from"
+  printf '%s\n' '{"event":"agent_lifecycle","state":"failed","session_id":"s-old","agent_scope":"main","reason":"rate_limit","ts":"2026-10-12T12:00:00Z"}' > "$CASE_ROOT/.supervisor/logs/s-old.jsonl"
+  NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.from" bash "$drv" "$CASE_RF" --session-id s-old 2>/dev/null)"; NC_RC=$?
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "stopped"' >/dev/null 2>&1 \
+    && cmp -s "$FIX/rate-limit-park/input.md" "$CASE_RF" \
+    || { LEG_MSG="a row before the picked line ⇒ exit $NC_RC '${NC_OUT:0:100}'"; return 1; }
+  return 0
+}
+
+# leg_drain_replay <driver> — the first drain's DRAIN report re-sent at the fix-now re-drain spawn ⇒ the spawn
+# re-prints, nothing written; the re-drain's own DRAIN report then proceeds (the B14a rule for DRAIN reports)
+leg_drain_replay() {
+  local drv="$1" a b spawn s0 sc
+  new_scratch "$FIX/dismissed-findings-decision-step" || { LEG_MSG="scratch"; return 1; }
+  # the first drain's report names the case's own review-heal sidecar (its dismissed list makes the drafts);
+  # the re-drain's carries the same block inline, at a new head
+  sc="$CASE_ROOT/.supervisor/automate/$CASE_RUN.review-heal-result.md"
+  a="$(jq -cn --arg f "$sc" '{review_heal_result_file: $f, ready_sha: "0000000"}')"
+  b="$(jq -cn --rawfile t "$sc" '{review_heal_result: $t, ready_sha: "1111111"}')"
+  printf 'NEXT_STEP_FROM=drain-result\n' > "$CASE_DIR/seams.from"
+  NC_OUT="$(in_case "$drv" "$CASE_DIR/seams.from" bash "$drv" "$CASE_RF" --result "$a" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  printf '%s' "$NC_OUT" | jq -e '.do == "ask"' >/dev/null 2>&1 || { LEG_MSG="first DRAIN report ⇒ exit $NC_RC '${NC_OUT:0:100}' $(head -c 160 "$CASE_DIR/nc.err")"; return 1; }
+  ns_call "$drv" --result '{"answers":["Fix now on this PR"]}'; spawn="$NC_OUT"
+  printf '%s' "$spawn" | jq -e '.what == "fix-now re-drain"' >/dev/null 2>&1 || { LEG_MSG="Fix now ⇒ '${spawn:0:100}'"; return 1; }
+  s0="$(snapshot)"; ns_call "$drv" --result "$a"
+  [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$spawn" ] && [ "$s0" = "$(snapshot)" ] \
+    || { LEG_MSG="the first DRAIN report re-sent ⇒ exit $NC_RC '${NC_OUT:0:100}', .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  ns_call "$drv" --result "$b"
+  [ "$NC_RC" = 0 ] && grep -qE -- '^- [0-9TZ:-]+ fix-now re-drain READY \([a-z_]+, [0-9]+ rounds, [0-9]+ fix cycles\)$' "$CASE_RF" \
+    || { LEG_MSG="the re-drain's own DRAIN report ⇒ exit $NC_RC '${NC_OUT:0:100}' ${NC_ERR:0:120}"; return 1; }
   return 0
 }
 
@@ -820,6 +1113,100 @@ LEG_MSG=""
 if leg_cross_replay "$DRIVER"; then ok "B14b: A's drain report while B runs / a foreign pr ⇒ exit 2, nothing written; B's own report (pr bound) starts B's tail"
 else no "B14b: $LEG_MSG"; fi
 
+echo "-- R. RUN and DRAIN (automate-speed/07)"
+LEG_MSG=""
+if leg_run_order "$DRIVER"; then ok "R1 (AC5): suppressed before the /autonomous spawn; restored byte-for-byte (backup deleted, original read backup-first) before the owned-drain spawn"
+else no "R1 (AC5): $LEG_MSG"; fi
+LEG_MSG=""
+if leg_drain_once "$DRIVER"; then ok "R2 (AC2): another owned-drain spawn for the pass ⇒ exit 2 drain_already_owned, nothing written (pending, after the report, sidecar gone)"
+else no "R2 (AC2): $LEG_MSG"; fi
+LEG_MSG=""
+if leg_config_malformed "$DRIVER"; then ok "R3 (AC3): malformed config.json ⇒ exit 2 config_malformed before the spawn; config.json byte-unchanged, no backup, no line"
+else no "R3 (AC3): $LEG_MSG"; fi
+LEG_MSG=""
+if leg_superseded "$DRIVER"; then ok "R4 (AC4): superseded_by_merge ⇒ byte-identical, no review-heal sidecar, no ledger line, awaiting_go park; an OPEN PR ⇒ nothing written"
+else no "R4 (AC4): $LEG_MSG"; fi
+LEG_MSG=""
+if leg_bad_run_reports "$DRIVER"; then ok "R5: $(grep -c . <<<"$BAD_RUN") malformed RUN reports ⇒ exit 2, nothing written; a no-PR report ⇒ the pinned no-PR line, done/stopped, lock released"
+else no "R5: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_bad_drain_reports "$DRIVER"; then ok "R6: $(grep -c . <<<"$BAD_DRAIN") malformed DRAIN reports (and a bare drain report) at the owned-drain spawn ⇒ exit 2, nothing written"
+else no "R6: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_run_idem "$DRIVER"; then ok "R7: the /autonomous and owned-drain spawns re-print, write nothing; a re-sent RUN report / --start run at the drain spawn ⇒ exit 2"
+else no "R7: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_rate_hint "$DRIVER"; then ok "R8: unknown + a 429 STOP_FAILURE hint ⇒ rate_limit park with a separate reason_hint line; a row older than picked ⇒ no park"
+else no "R8: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_drain_replay "$DRIVER"; then ok "R9: the first drain's DRAIN report re-sent at the fix-now spawn ⇒ the spawn re-prints, nothing written; the re-drain's own report proceeds"
+else no "R9: $LEG_MSG"; fi
+
+echo "-- V7. running system (Validation 3 of automate-speed/07): PICK → RUN → DRAIN → the tail, one item"
+V7="$WORK/v7"; mkdir -p "$V7/fx"
+V7_PR=https://github.com/example/scratch/pull/9
+cat > "$V7/fx/input.md" <<'EOF'
+# Automate Run: v7 scratch backlog
+## Status: running
+## Source
+- backlog .supervisor/requirements/v7/_BACKLOG.md
+## Run Config
+- mode: safe | limit: 5 | trust_unprotected: false
+- auto_review_original: absent | config_backup: automate-2026-10-17-000000.config-backup.json
+## Queue
+- [ ] .supervisor/requirements/v7/01-scratch-item.md
+- [ ] .supervisor/requirements/v7/02-next-item.md
+## Current
+- item: .supervisor/requirements/v7/01-scratch-item.md | status: running | pr: null | branch: null
+- pause_reason: null
+## Progress
+- 2026-10-17T09:00:00Z picked .supervisor/requirements/v7/01-scratch-item.md
+EOF
+printf 'run: automate-2026-10-17-000000\nscratch: Validation 3 of automate-speed/07\n' > "$V7/fx/source"
+mkdir -p "$V7/fx/tree/dot-supervisor/requirements/v7"
+printf '# Scratch item\n\n## Status: pending\n\n## Task\nA one-line doc change.\n' > "$V7/fx/tree/dot-supervisor/requirements/v7/01-scratch-item.md"
+printf '0\tpr view %s --json headRefOid\t{"headRefOid":"2222222222222222222222222222222222222222"}\n0\tpr view %s --json files,additions,deletions,changedFiles\t{"files":[{"path":"README.md"}],"additions":1,"deletions":0,"changedFiles":1}\n0\tpr view %s --json state\t{"state":"OPEN"}\n' "$V7_PR" "$V7_PR" "$V7_PR" > "$V7/fx/gh.stub"
+V7_SUP="$(printf 'SUPERVISOR_RESULT:\n  schema_version: 1\n  task_id: v7\n  status: completed\n  pr_url: %s\n  branch: feature/v7-scratch\n  subtasks_completed: 1\n  subtasks_failed: 0\n  heal_loop_ran: true\n  heal_iterations: 1\n  heal_decision: PASS\n  heal_fixable_issues_fixed: 0\n  heal_remaining_issues: 0\n  summary: "one-line doc change"\n' "$V7_PR")"
+V7_RH="$(printf 'REVIEW_HEAL_RESULT:\n  schema_version: 2\n  decision: READY\n  iterations: 1\n  issues_fixed: 0\n  remaining_issues: 0\n  pr_url: "%s"\n  notified: true\n  rounds: 1\n  fix_cycles: 0\n  repeat_check_failure: false\n  unresolved_bot_feedback: false\n  termination_reason: converged\n' "$V7_PR")"
+if new_scratch "$V7/fx"; then
+  hold="$(NS_REAL_LOCK=1 in_case "$DRIVER" /dev/null bash -c 'LOOMWRIGHT_HOLDER_PID='"$$"' bash "'"$HERE"'/run-lock.sh" acquire --owner "automate:'"$CASE_RUN"'" 2>&1')"; hrc=$?
+  o1="$(NS_REAL_LOCK=1 in_case "$DRIVER" /dev/null bash "$DRIVER" "$CASE_RF" --start run --non-interactive --session-id v7-loop 2>"$V7/e1")"; r1=$?
+  c1="$([ -f "$CASE_ROOT/.supervisor/config.json" ] && jq -c . "$CASE_ROOT/.supervisor/config.json")"
+  o2="$(NS_REAL_LOCK=1 in_case "$DRIVER" /dev/null bash "$DRIVER" "$CASE_RF" \
+    --result "$(jq -cn --arg t "$V7_SUP" '{supervisor_result: $t, session_id: "auto-2026-10-17-090001", run_note: "SUPERVISOR_RESULT completed: heal PASS, 1 review"}')" 2>"$V7/e2")"; r2=$?
+  c2="$([ -f "$CASE_ROOT/.supervisor/config.json" ] && echo present || echo absent)"
+  o3="$(NS_REAL_LOCK=1 in_case "$DRIVER" /dev/null bash "$DRIVER" "$CASE_RF" \
+    --result "$(jq -cn --arg t "$V7_RH" '{review_heal_result: $t, ready_sha: "2222222222222222222222222222222222222222", progress_notes: ["drain round 1: 0 validated findings; ci green on 2222222"], drain_note: "converged, 1 round, 0 fix cycles; ci green on 2222222"}')" 2>"$V7/e3")"; r3=$?
+  st_after="$(NS_REAL_LOCK=1 in_case "$DRIVER" /dev/null bash "$HERE/run-lock.sh" status 2>&1)"
+  echo "V3-07> acquire (PICK's lock, real run-lock.sh): exit $hrc"
+  echo "V3-07> call 1 --start run: exit $r1, $(printf '%s' "$o1" | jq -c '{do, step, what, invocation}' 2>/dev/null); config.json at the spawn: $c1"
+  echo "V3-07> call 2 RUN report: exit $r2, $(printf '%s' "$o2" | jq -c '{do, step, what, invocation, head_sha}' 2>/dev/null); config.json at the drain spawn: $c2"
+  echo "V3-07> call 3 DRAIN report: exit $r3, $(printf '%s' "$o3" | jq -c '{do, step, pause_reason, message}' 2>/dev/null)"
+  echo "V3-07> ## Progress, auto_review suppressed .. drain READY:"
+  sed -n '/auto_review suppressed/,/ drain READY /p' "$CASE_RF" | sed 's/^/V3-07>   /'
+  echo "V3-07> ## Progress after it:"; sed -n '/ drain READY /,$p' "$CASE_RF" | sed '1d; s/^/V3-07>   /'
+  echo "V3-07> run-lock.sh status after: $st_after"
+  if [ "$hrc$r1$r2$r3" = 0000 ] && [ "$c1" = '{"auto_review":false}' ] && [ "$c2" = absent ] \
+     && printf '%s' "$o1" | jq -e '.what == "/autonomous run" and .invocation == "/autonomous --single-iteration --requirement .supervisor/requirements/v7/01-scratch-item.md --non-interactive-fallback"' >/dev/null 2>&1 \
+     && printf '%s' "$o2" | jq -e --arg p "$V7_PR" '.what == "owned drain" and .invocation == ("/review-pr " + $p + " --until-mergeable --no-auto-postmortem") and .head_sha == "2222222222222222222222222222222222222222"' >/dev/null 2>&1 \
+     && printf '%s' "$o3" | jq -e '.do == "park" and .pause_reason == "awaiting_merge"' >/dev/null 2>&1 \
+     && in_order "$CASE_RF" "auto_review suppressed (backup automate-2026-10-17-000000.config-backup.json)" "auto_review restored (config-restore: original absent)" \
+          "session_id auto-2026-10-17-090001" "ran /autonomous → PR $V7_PR (SUPERVISOR_RESULT completed" \
+          "owned drain started — /review-pr $V7_PR --until-mergeable --no-auto-postmortem @ 2222222222222222222222222222222222222222" \
+          "drain round 1: 0 validated findings" "drain READY (converged, 1 round, 0 fix cycles" "validation-gate: none" "parked awaiting_merge $V7_PR" \
+     && grep -qE -- '^- owned_drain_started: [0-9]{4}-[0-9TZ:-]+ \| owned_drain_result: READY \| suppressed_default_dispatch: true$' "$CASE_RF" \
+     && grep -qF -- "- item: .supervisor/requirements/v7/01-scratch-item.md | status: awaiting_merge | pr: $V7_PR | branch: feature/v7-scratch" "$CASE_RF" \
+     && [ -s "$CASE_ROOT/.supervisor/automate/$CASE_RUN.review-heal-result.md" ] && [ -s "$CASE_ROOT/.supervisor/automate/$CASE_RUN.supervisor-result.md" ] \
+     && grep -q '"source":"automate_drain"' "$CASE_ROOT/.supervisor/postmortem/results.jsonl" \
+     && ! grep -q "automate:$CASE_RUN" <<<"$st_after"; then
+    ok "V7: PICK → RUN (suppress, /autonomous spawn, restore) → DRAIN (owned-drain spawn, pinned lines, sidecars, learning line) → awaiting_merge park; the real run lock released"
+  else
+    no "V7: drive wrong (acquire $hrc, calls $r1/$r2/$r3: $(cat "$V7/e1" "$V7/e2" "$V7/e3" | head -n 4 | tr '\n' ' '))"
+  fi
+else
+  no "V7: scratch repo not built"
+fi
+
 echo "-- D. the schema doc mirrors the driver (closed lists)"
 DOC="$HERE/../docs/result-schemas/automate-run.md"
 arms="$(awk '/^ns_dispatch\(\) \{/,/^}/' "$DRIVER" | sed -n 's/^    \([a-z][a-z-]*\)) .*/\1/p' | env LC_ALL=C sort | tr '\n' ' ')"
@@ -924,6 +1311,41 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_cross_replay "$m"; then no "MRx: the cross-item replay leg stayed green with the stale check dropped"
     else ok "MRx: stale-report check dropped ⇒ B14b red ($LEG_MSG)"; fi
   else no "MRx: mutant not built"; fi
+  # M7a (Validation 2a) — the config restore moved from the RUN-result step to the drain-result step ⇒ R1 red
+  # (config.json still suppressed when the owned-drain spawn prints) and run-config-suppress-restore red
+  if m="$(build_mutant2 7a 'ns_once once_rr_restore ns_config_restore || return 1   # the RUN-result restore: before the drain spawn' \
+       ':   # restore moved to DRAIN' \
+       '  ns_once once_dr_start ns_drain_start_line "$kind" "$pr" || return 1' \
+       '  ns_once once_rr_restore ns_config_restore || return 1; ns_once once_dr_start ns_drain_start_line "$kind" "$pr" || return 1')"; then
+    LEG_MSG=""; if golden_case run-config-suppress-restore "$m"; then m7a_gold=green; else m7a_gold=red; fi
+    if leg_run_order "$m"; then no "M7a: the restore-order leg stayed green with the restore at DRAIN (parity $m7a_gold)"
+    else ok "M7a: restore moved to drain-result ⇒ R1 red ($LEG_MSG); run-config-suppress-restore parity $m7a_gold"; fi
+  else no "M7a: mutant not built"; fi
+  # M7b (Validation 2b) — the second-drain refusal removed ⇒ R2 red
+  if m="$(build_mutant 7b 'if ns_drain_owned; then' 'if false; then')"; then
+    LEG_MSG=""
+    if leg_drain_once "$m"; then no "M7b: the second-drain leg stayed green with the refusal removed"
+    else ok "M7b: second-drain refusal removed ⇒ R2 red ($LEG_MSG)"; fi
+  else no "M7b: mutant not built"; fi
+  # M7c — config-suppress's non-zero exit ignored (the /autonomous spawn printed anyway) ⇒ R3 red
+  if m="$(build_mutant 7c 'e="$(bash "$H" config-suppress "$CFG_PATH" "$BAK_PATH" 2>&1 >/dev/null)"; rc=$?' 'e="$(bash "$H" config-suppress "$CFG_PATH" "$BAK_PATH" 2>&1 >/dev/null)"; rc=0')"; then
+    LEG_MSG=""
+    if leg_config_malformed "$m"; then no "M7c: the malformed-config leg stayed green with the abort ignored"
+    else ok "M7c: config-suppress exit ignored ⇒ R3 red ($LEG_MSG)"; fi
+  else no "M7c: mutant not built"; fi
+  # M7d — the review-heal sidecar written on the superseded path ⇒ R4 red
+  if m="$(build_mutant 7d '  # NO review-heal sidecar, NO learning-emit, NO GATE / decision step: close the item out as RECONCILE does' \
+       '  ns_write_text drain_text "$AD/$RUN_ID.review-heal-result.md"')"; then
+    LEG_MSG=""
+    if leg_superseded "$m"; then no "M7d: the superseded leg stayed green with a review-heal sidecar written"
+    else ok "M7d: sidecar written on the superseded path ⇒ R4 red ($LEG_MSG)"; fi
+  else no "M7d: mutant not built"; fi
+  # M7e — progress-append's exit swallowed on the drain start line ⇒ drain-pinned-start-line-current-not-set red
+  if m="$(build_mutant 7e 'ns_progress "$ts owned drain started$tag — /review-pr $2 --until-mergeable --no-auto-postmortem @ $h"' \
+       'ns_progress "$ts owned drain started$tag — /review-pr $2 --until-mergeable --no-auto-postmortem @ $h" || true')"; then
+    if golden_case drain-pinned-start-line-current-not-set "$m"; then no "M7e: the current_not_set case stayed green with the exit swallowed"
+    else ok "M7e: start-line exit swallowed ⇒ drain-pinned-start-line-current-not-set red (${GC_MSG:0:160})"; fi
+  else no "M7e: mutant not built"; fi
   # MO — ns_park reordered: the merge watcher armed only AFTER the post-park decide step (the run file is
   # byte-identical, so only the order leg can see it) ⇒ B8 red
   if m="$(build_mutant2 O '*) ns_watch; ns_notify awaiting_merge' '*) ns_notify awaiting_merge' \
