@@ -12,9 +12,12 @@
 # Usage (standalone: `bash automate-lanes.sh <subcmd> ...`):
 #   lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]
 #        clone + origin-before-fetch + meta pull + carried configs + lane.json + one-line backlog + relay hooks.
-#        An explicit `--parallel 1` (single-lane mode) writes `"single_lane": true` into lane.json, takes
-#        n in 1..99 and refuses a number already in the lane table (`refused — lane L<n> already used in
-#        this run`), and makes --max-tokens T a WHOLE-RUN ceiling: SPENT = every table lane's ledger TOTAL
+#        n is the lane's identity across the WHOLE run (every wave, re-run lanes included), not the
+#        parallel count: every caller takes n in 1..99 and a number already in the lane table (live,
+#        removed or abandoned) is refused (`refused — lane L<n> already used in this run`), nothing
+#        created; N stays 1..10, and omitting --parallel (N defaults to n) needs n ≤ 10.
+#        An explicit `--parallel 1` (single-lane mode) writes `"single_lane": true` into lane.json and
+#        makes --max-tokens T a WHOLE-RUN ceiling: SPENT = every table lane's ledger TOTAL
 #        (a removed lane's from its parent `fleet closeout: <lane> tokens TOTAL=<n>` line) ⇒ refused
 #        `token_ceiling total=<SPENT> max=<T>` / `token_ceiling ledger_unreadable`, else max_tokens = T − SPENT
 #   lane-launch <lane_dir> --owner-command '<cmd the owner typed>' [--resume-run <run_id> | --continue]
