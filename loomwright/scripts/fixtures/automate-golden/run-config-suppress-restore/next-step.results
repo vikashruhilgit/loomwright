@@ -1,0 +1,10 @@
+# next-step.results — run-config-suppress-restore: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). RUN from PICK: --start run (with the loop's --session-id, which it requires) runs config-suppress (no config ⇒ the
+# absent-marker backup), the auto_review suppressed line and prints the /autonomous spawn; the RUN report (fixed input:
+# the 39b SUPERVISOR_RESULT, PR #542) answers it and run-result restores (absent ⇒ config.json and the backup deleted) and
+# writes the auto_review restored line — the case stops there (NEXT_STEP_UNTIL=run-result), as its steps do.
+call: --start run --session-id 9d1f6c2e-l1-session
+expect: spawn
+env: NEXT_STEP_UNTIL=run-result
+call: --result '{"supervisor_result":"SUPERVISOR_RESULT:\n  schema_version: 1\n  task_id: af39b\n  status: completed\n  pr_url: https://github.com/vikashruhilgit/loomwright/pull/542\n  branch: feature/af39b-run-lock-holder\n  subtasks_completed: 2\n  subtasks_failed: 0\n  heal_loop_ran: true\n  heal_iterations: 3\n  heal_decision: PASS\n  heal_fixable_issues_fixed: 6\n  heal_remaining_issues: 0\n  summary: \"run-lock half of af39b; heal PASS after 3 reviews / 2 fix rounds (4cf6a58, 35b8303)\"\n","session_id":"auto-2026-10-14-091531","run_note":"SUPERVISOR_RESULT completed: heal PASS after 3 reviews / 2 fix rounds — 4cf6a58, 35b8303; 6 fixable issues fixed, 0 remaining; scope = run-lock half, Scopes 3-4 split to 39c"}'
+expect: none

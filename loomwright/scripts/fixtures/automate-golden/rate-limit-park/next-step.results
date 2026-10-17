@@ -1,0 +1,9 @@
+# next-step.results — rate-limit-park: how test-automate-next-step.sh drives this case through automate-next-step.sh
+# (grammar: the test's header). The case is the rate-limit check alone (NEXT_STEP_FROM=rate-limit): the loop's own
+# session log (fixed input, a file: row) holds a main-scope agent_lifecycle failed row with reason rate_limit at the
+# row's real 15:21Z, after this item's 12:50:34Z picked line ⇒ current-set rate_limit, ## Status: paused, the
+# rate-limited line, the run-lock release and the park instruction.
+file: "$ROOT/.supervisor/logs/9d1f6c2e-l1-session.jsonl" '{"event":"agent_lifecycle","state":"failed","session_id":"9d1f6c2e-l1-session","agent_scope":"main","reason":"rate_limit","ts":"2026-10-12T15:21:00Z"}'
+env: NEXT_STEP_FROM=rate-limit
+call: --session-id 9d1f6c2e-l1-session
+expect: park

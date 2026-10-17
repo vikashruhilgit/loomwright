@@ -1,23 +1,37 @@
 #!/usr/bin/env bash
-# automate-next-step.sh — the `/automate` per-item loop's TAIL driver (automate-speed/06).
+# automate-next-step.sh — the `/automate` per-item loop's driver from RUN on (automate-speed/06
+# the tail, automate-speed/07 RUN and DRAIN).
 #
-# The single reader and writer of a `/automate` run file for the loop's tail: GATE (the validation
-# gate, safe mode's park, `--auto-merge`'s `gate-eval`), the dismissed-findings decision step, the
-# park writes (park state, merge-watcher arming, notify, run-lock release) and the close-out
-# (SYNC's `closeout … --no-trail`, the close-out leftover gate, CHECK OFF, termination). Called with
-# the run file it runs every deterministic tail step itself and prints exactly ONE JSON instruction
-# for the model on stdout — `{"do":"spawn",…}` / `{"do":"ask",…}` / `{"do":"park",…}` / `{"do":"done",…}`
-# — and the model reports a step's result back with `--result <json>`. The instruction schema (the
-# closed `do` enum, every field, the `--result` shapes incl. `progress_note`) is documented in
+# The single reader and writer of a `/automate` run file from RUN to the item's end: RUN's
+# bookkeeping (the `.auto_review` suppress / restore that wraps `/autonomous`, the session-id line,
+# the PR record, the supervisor-result sidecar and its `sidecar-check`, the rate-limit park), DRAIN's
+# (the pinned drain lines, `owned_drain_*`, the review-heal sidecar and its `sidecar-check`, the
+# drain-superseded-by-merge close-out, learning-emit), GATE (the validation gate, safe mode's park,
+# `--auto-merge`'s `gate-eval`), the dismissed-findings decision step, the park writes (park state,
+# merge-watcher arming, notify, run-lock release) and the close-out (SYNC's `closeout … --no-trail`,
+# the close-out leftover gate, CHECK OFF, termination). Called with the run file it runs every
+# deterministic step itself and prints exactly ONE JSON instruction for the model on stdout —
+# `{"do":"spawn",…}` / `{"do":"ask",…}` / `{"do":"park",…}` / `{"do":"done",…}` — and the model
+# reports a step's result back with `--result <json>`. The instruction schema (the closed `do` enum,
+# every field, the `--result` shapes incl. `progress_note`) is documented in
 # `docs/result-schemas/automate-run.md` §"next-step instruction"; the protocol it executes is
-# `skills/automate-loop/` §6 steps 4–6 and §9/§10 (this script sequences, it never re-specifies).
+# `skills/automate-loop/` §6 steps 2–6, §7 and §9/§10 (this script sequences, it never re-specifies).
 #
 # USAGE
-#   automate-next-step.sh <runfile> [--result <json> | --result-file <f>] [--mode safe|auto-merge]
-#                         [--non-interactive] [--trust-unprotected] [--root <checkout>]
-#                         [--session-id <sid>]
-#   Entry point: "drain result reported" — the model has done DRAIN's own bookkeeping (item 07 moves
-#   it here later) and calls `--result '{"drain_result":"READY|ESCALATED",…}'`. A call with no
+#   automate-next-step.sh <runfile> [--start run|drain] [--result <json> | --result-file <f>]
+#                         [--mode safe|auto-merge] [--non-interactive] [--trust-unprotected]
+#                         [--root <checkout>] [--session-id <sid>] [--notify] [--cheap]
+#                         [--max-tokens <N>]
+#   Entry points: `--start run` right after PICK (`## Current` `status: running`, `pr: null`, the last
+#   `picked` line naming the item) — the driver suppresses `.auto_review` and prints the `/autonomous`
+#   spawn (`--non-interactive` adds `--non-interactive-fallback`; `--notify`, `--cheap` and
+#   `--max-tokens N` — else `## Run Config`'s `max_tokens:` — pass through; none is written to the run
+#   file); the RUN report answers it, and the driver goes on to print the owned-drain spawn, whose
+#   DRAIN report starts GATE. `--start drain` prints the owned-drain spawn for a running item that
+#   already has its PR (refused — `drain_already_owned`, exit 2 — once this pass spawned its drain).
+#   "drain result reported" stays an entry too (back-compat): with nothing pending, a
+#   `--result '{"drain_result":"READY|ESCALATED",…}'` from a model that did DRAIN's bookkeeping itself
+#   (`--legacy`) starts GATE. A call with no
 #   `--result` while an instruction is pending RE-PRINTS that instruction verbatim and writes nothing
 #   (idempotent); a `--result` answers the pending `ask` / `spawn`; a `--result` after a terminal
 #   `park` / `done` (or with nothing pending) starts the next item's tail — unless it is a REPLAY (the
@@ -32,6 +46,25 @@
 #
 # STEPS — each is ONE `case` arm of ns_dispatch (the strings inventory homes cite as
 #   `script:automate-next-step.sh <step>`):
+#   run         `--start run`: `config-suppress` (malformed config ⇒ `config_malformed`, exit 2,
+#               nothing written), `auto_review_original` via `config-orig <config> <backup>` (into
+#               `## Run Config` when it differs), the `auto_review suppressed` line, the `/autonomous`
+#               spawn
+#   run-result  the RUN report: `config-restore` + the `auto_review restored` line — BEFORE any drain
+#               spawn (the suppress window wraps RUN only)
+#   run-record  the `session_id` line, `current-set … --pr --branch` BEFORE the `ran /autonomous → PR`
+#               line (or the pinned no-PR line), the verbatim supervisor-result sidecar + `sidecar-check`
+#   rate-limit  the loop's own session log: a main-scope `failed` row (`rate_limit`, or `unknown` + a
+#               `429` hint ⇒ `reason_hint`) after this item's `picked` line ⇒ the rate_limit park;
+#               else the drain (a PR) or `{"do":"done","status":"stopped"}` (no PR)
+#   drain       the owned-drain spawn — ONE per pass (`drain_already_owned`, exit 2, nothing written)
+#   drain-result the DRAIN report: the pinned start line, the report's free-text lines, the terminal
+#               drain line, `owned_drain_*`, `pending_decisions` after a fix-now re-drain, the verbatim
+#               review-heal sidecar + `sidecar-check`; no terminal block ⇒ `reconcile-item`
+#   superseded  no terminal block and the PR merged: `owned_drain_result: superseded_by_merge`, its
+#               line, NO sidecar, NO learning-emit, NO GATE — `closeout … --session-id`, classified
+#   awaiting-go the close-out stop: `## Status: paused` + `pause_reason: awaiting_go` + run-lock release
+#   learning-emit `automate-helpers.sh learning-emit` (always exit 0, never a decision), then GATE
 #   gate        entry: the drain report ⇒ ESCALATED ⇒ dismissed (decide-then-park), else validation
 #   validation  `validation-gate`; none/ok/waived ⇒ the mode's gate; unrun ⇒ AUT-WAIVE ask
 #               (interactive, a V<n> step) or the escalated park (validation_unrun)
@@ -39,10 +72,12 @@
 #               merge executor; this script never merges anything itself
 #   dismissed   `dismissed-drafts` (+ its summary line); after a MERGE also the pending record
 #   decide      the owner's decisions on the drafts (before the park, or after it — park-first)
-#   fix-now     the post-park fix-now hand-off (D3) and the fix-now re-drain `spawn`
+#   fix-now     the post-park fix-now hand-off (D3) and the fix-now re-drain `spawn` (its DRAIN report
+#               goes through drain-result: the pinned fix-now re-drain lines are the driver's)
 #   park        the park writes + watcher / notify / run-lock release
 #   sync        SYNC after a MERGE: `closeout … --no-trail`, classified by `closeout-classify`
-#   leftover    the close-out leftover gate (AUT-LEFTOVER ask, or the closeout_leftover park)
+#   leftover    the close-out leftover gate (AUT-LEFTOVER ask, or the closeout_leftover park); after a
+#               superseded close-out it goes on to awaiting-go, else to checkoff
 #   checkoff    CHECK OFF + its Progress line
 #   terminate   the two exits: `## Status: done` (trail-pr --reason done + dry sweep line) or the
 #               limit_reached park; otherwise `{"do":"done","status":"running"}` (next PICK)
@@ -69,6 +104,9 @@
 #   NEXT_STEP_LOCK_CMD    acquire|release --owner automate:<run_id> [--session-id <sid>]
 #                                                   default: bash run-lock.sh
 #   NEXT_STEP_LOCK_RETRY_SECONDS  pause between the 3 retries of a refused post-release acquire (5)
+#   `gh` (LOOMWRIGHT_GH_BIN overrides it, as in every helper) — the drain spawn's head-sha read and
+#   learning-emit's one `gh pr view <pr> --json files,additions,deletions,changedFiles` fetch (a
+#   failure degrades to `[]` / 0 — learning-emit's own documented degraded line); tests stub it on PATH
 #
 # TEST SEAMS (tests only — never set in a real run; each widens nothing a real run can reach):
 #   NEXT_STEP_FROM=<step>       start at <step> (a golden case that begins mid-tail); `--result`, if
@@ -80,7 +118,12 @@
 #
 # Exit codes: 0 an instruction printed (or a NEXT_STEP_UNTIL stop); 1 a helper / writer failure
 # (surfaced); 2 usage error, a `--result` that does not answer what is pending, or a malformed /
-# out-of-state drain report (REPORT VALIDATION below) — nothing written.
+# out-of-state drain report (REPORT VALIDATION below), or a named refusal on stderr —
+# `next-step: config_malformed — …` (`config-suppress`'s exit 2: no spawn, no line, config.json
+# byte-unchanged, no backup), `config_backup_stranded`, `session_id_missing` / `session_id_malformed`
+# (`--start run` without this loop's session id), `run_already_started`, `drain_already_owned`,
+# `reserved_prefix` — nothing written. A writer's own non-zero code is passed through (progress-append's 3,
+# `current_not_set`, on the drain start line included).
 #
 # REPORT VALIDATION (fail CLOSED, exit 2, nothing written): every drain-report field the driver
 # branches on or hands to a writer is checked before the first write — `drain_result` is exactly
@@ -88,7 +131,8 @@
 # misspelt value included, is refused, never routed down the READY path); `ready_sha` /
 # `escalation_sha` hex (7–40); `escalation_cause` the current-escalation enum; `escalation_attempt` /
 # `items_processed` 1–9 digits (a count `[` can compare), `escalation_run_id` 1–20 digits; `progress_note`
-# one line. A drain report starts a tail only while `## Current` reads `status: running` (the first drain and both
+# one line; `progress_note` and every `progress_notes` entry never start with a reserved prefix
+# (NS_RESERVED_PREFIXES — a line the driver or a helper keys on). A drain report starts a tail only while `## Current` reads `status: running` (the first drain and both
 # fix-now re-drain hand-offs set it): a different report after a terminal park is refused, a
 # byte-identical one is a replay. After a `spawn` the re-drain report REPLACES the first one (no
 # field of the first drain survives into the second GATE pass); the first report re-sent there (same
@@ -102,11 +146,25 @@
 # and normalised before the first park write, never a refusal — the park, watcher, notify and run-lock
 # release always complete.
 #
+# RUN / DRAIN REPORTS (validated the same way — fail CLOSED, exit 2, nothing written — before the
+# first write; the shapes are the schema doc's). A RUN report answers the `/autonomous run` spawn; a
+# DRAIN report (`review_heal_result` / `review_heal_result_file` / `no_terminal_block: true`, exactly
+# one) answers the `owned drain` spawn and, in place of a bare drain report, the fix-now re-drain
+# spawn. Re-sent byte-identical for the same item and PR (a REPLAY) a report re-prints and writes
+# nothing: a RUN report while the instruction its step printed (the owned-drain spawn, the rate-limit
+# park, a no-PR `done`) is still pending; the latest DRAIN report while an ask of its tail or the tail's
+# park / done is pending. Any other report with nothing to answer exits 2. The verbatim result text is
+# held in the sidecar until its sidecar file is written, so a retried step rewrites the same bytes. Each multi-write step records which of its writes landed
+# (`once_*` keys in the sidecar), so the retry of a failed step never appends a line twice.
+#
 # Honest limits: the driver trusts a well-formed drain report's `drain_result` / `termination_reason`
 # / `ready_sha` exactly as the loop did — `gate-eval` cross-checks them against the review-heal sidecar
-# and the live head, so a false claim can only park. DRAIN/RUN bookkeeping (item 07) and PICK /
-# RECONCILE / resume (item 08) stay prose. The default notifier is desktop-only: no webhook gate type
-# is defined for a sequential park. bash 3.2 + BSD userland + jq.
+# and the live head, so a false claim can only park. A DRAIN report's free-text lines (`progress_notes`,
+# `drain_note`) are the model's and are stamped when the report arrives; the drain's start line carries
+# the time the owned-drain spawn was printed (or the report's `started_at`), so a crash mid-drain
+# leaves no start line — the sidecar's pending spawn is the evidence. PICK / RECONCILE / resume (item
+# 08) stay prose, including RECONCILE's crash-restore of a stranded config backup. The default notifier
+# is desktop-only: no webhook gate type is defined for a sequential park. bash 3.2 + BSD userland + jq.
 
 set -uo pipefail
 
@@ -115,7 +173,7 @@ H="$HERE/automate-helpers.sh"
 JQ="${JQ:-jq}"
 
 ns_usage() {
-  sed -n 's/^#   automate-next-step.sh /automate-next-step.sh /p; s/^#                         \[/                      [/p' "${BASH_SOURCE[0]}" | head -n 3
+  sed -n 's/^#   automate-next-step.sh /automate-next-step.sh /p; s/^#                         \[/                      [/p' "${BASH_SOURCE[0]}" | head -n 4
 }
 ns_die2() { echo "next-step: $*" >&2; exit 2; }
 ns_err() { echo "next-step: $*" >&2; }
@@ -128,8 +186,18 @@ command -v "$JQ" >/dev/null 2>&1 || { ns_err "jq not on PATH"; exit 1; }
 # arguments
 # ------------------------------------------------------------------------------------------------
 RF=""; RESULT=""; MODE=""; NONINT=0; TRUST=""; ROOT=""; SID=""; have_result=0
+START=""; NOTIFY=0; CHEAP=0; MAXTOK=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --start)
+      [ "$#" -ge 2 ] || ns_die2 "--start needs a value"
+      case "$2" in run|drain) START="$2" ;; *) ns_die2 "--start must be run|drain: '$2'" ;; esac
+      shift 2 ;;
+    --notify) NOTIFY=1; shift ;;
+    --cheap) CHEAP=1; shift ;;
+    --max-tokens)
+      [ "$#" -ge 2 ] && [[ "$2" =~ ^[0-9]{1,12}$ ]] || ns_die2 "--max-tokens needs a token count"
+      MAXTOK="$2"; shift 2 ;;
     --result) [ "$#" -ge 2 ] || ns_die2 "--result needs a value"; RESULT="$2"; have_result=1; shift 2 ;;
     --result-file)
       [ "$#" -ge 2 ] || ns_die2 "--result-file needs a value"
@@ -378,6 +446,95 @@ ns_field_ok() {
     *) return 0 ;;
   esac
 }
+# The ## Progress prefixes a reader keys on — this driver's own (ns_last_picked, ns_drain_owned,
+# ns_last_drain_marker, ns_tail_lines, the decide step's dismissed-decisions read) and its other pinned
+# lines, progress-append's current_not_set guard (runfile.sh), validation-gate's waiver count
+# (readiness.sh), automate-dismissed.sh's fix-now batch anchors, the /lanes step classifier and token-line
+# reader (automate-lanes.d/status-read.sh), phase-timing.sh's item spans and read-token-ledger.sh's phase
+# windows. A free-text report field the driver writes at a line's start (after its timestamp) —
+# `progress_notes[]`, `progress_note` — that begins with one would forge that record (a second owned drain,
+# an owner's waiver, a park the timing and token readers end the item on), so it is refused: exit 2
+# reserved_prefix, nothing written. Matched case-insensitively (read-token-ledger.sh lower-cases a line
+# before it matches). `drain ` alone is deliberately NOT reserved: the drain-round notes (`drain round N:
+# …`) are that prefix by design, and /lanes files them under the drain step they belong to.
+# scripts/test-automate-next-step.sh R12 extracts every ^-anchored Progress prefix of those readers and
+# fails when one is not covered here.
+NS_RESERVED_PREFIXES='picked
+parked
+ran /autonomous
+/autonomous done
+owned drain started
+drain READY
+drain ESCALATED
+drain superseded_by_merge
+fix-now re-drain
+re-drain
+auto_review
+session_id
+rate-limited
+rate-limit check:
+validation-gate:
+validation waived:
+dismissed
+owner decisions
+sidecar-check:
+gate-eval:
+checked off
+limit_reached
+sweep (dry run)
+closeout
+fleet closeout:
+auto-finalized
+trail-pr
+trail-gate
+trail-unstage
+lane park notify
+converted
+merged
+supervisor:
+launch-pad
+launch pad
+launchpad
+finalize:
+phase 4.5 iter
+run started
+run created
+run-lock acquired
+meta-entry
+skipped AUT-QUEUE'
+ns_lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+NS_RESERVED_LC=""
+# ns_reserved_prefix <text> — print the reserved prefix <text> starts with (leading blanks ignored, case
+# folded; printed lower-case); 1 when none
+ns_reserved_prefix() {
+  local t p
+  [ -n "$NS_RESERVED_LC" ] || NS_RESERVED_LC="$(ns_lc "$NS_RESERVED_PREFIXES")"
+  t="${1#"${1%%[![:space:]]*}"}"; t="$(ns_lc "$t")"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$t" in "$p"*) printf '%s' "$p"; return 0 ;; esac
+  done <<EOF
+$NS_RESERVED_LC
+EOF
+  return 1
+}
+# ns_check_free_text <json> — every free-text field written at a line's start, against the reserved prefixes
+ns_check_free_text() {
+  local v p
+  v="$(rj "$1" progress_note)"
+  if [ -n "$v" ] && p="$(ns_reserved_prefix "$v")"; then
+    ns_die2 "--result: reserved_prefix — progress_note starts with '$p', a line the driver itself writes and reads — nothing written"
+  fi
+  while IFS= read -r v; do
+    [ -n "$v" ] || continue
+    if p="$(ns_reserved_prefix "$v")"; then
+      ns_die2 "--result: reserved_prefix — a progress_notes entry starts with '$p', a line the driver itself writes and reads — nothing written"
+    fi
+  done <<EOF
+$(printf '%s' "$1" | "$JQ" -r '(.progress_notes // []) | if type == "array" then .[] | strings else empty end' 2>/dev/null)
+EOF
+  return 0
+}
 # ns_check_report <json> — refuse (exit 2, before any write) a field the driver would branch on or write
 # malformed; drain_result's enum is the `gate` step's own check (the NEXT_STEP_FROM seam may skip gate)
 ns_check_report() {
@@ -387,6 +544,7 @@ ns_check_report() {
     v="$(rj "$1" "$k")"
     [ -z "$v" ] || ns_field_ok "$k" "$v" || ns_die2 "--result: malformed $k '$v' — nothing written"
   done
+  ns_check_free_text "$1"
   # the optional `pr` binds the report to its PR: another PR than ## Current's is refused (never stored —
   # the sidecar's `pr` is ## Current's own)
   v="$(rj "$1" pr)"
@@ -412,6 +570,571 @@ ns_take_report() { # <json> — the report REPLACES every field of a previous on
     [ -n "$v" ] && st_set "$k" "$v"
   done
   return 0
+}
+
+# ------------------------------------------------------------------------------------------------
+# RUN / DRAIN reports (automate-speed/07): validated before the first write, held in the sidecar
+# ------------------------------------------------------------------------------------------------
+TAB="$(printf '\t')"
+ns_one_line() { case "$1" in *$'\n'*|*$'\r'*) return 1 ;; *) return 0 ;; esac; }
+ns_sha_ok() { [[ "$1" =~ ^[0-9a-fA-F]{7,40}$ ]]; }
+ns_iso_ok() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; }
+ns_pr_ok() { [[ "$1" =~ ^https?://[^[:space:]|]+/pull/[0-9]+$ ]]; }
+ns_sid_ok() { [[ "$1" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] && [ "$1" != . ] && [ "$1" != .. ]; }
+# ns_block_field <block name> <key> [raw]  (text on stdin) — a TOP-LEVEL key of the LAST `<name>` block, in
+# either shape result_block_parser.find_last_block recognises: the YAML form (`<name>:` then `key: v` at
+# the indent of the block's first key) or the markdown-bullet form (`## <name>` then `- key: v` at the
+# first bullet's indent). A nested key is never read; a ``` fence, a shallower line or (bullet form) a
+# heading / a non-bullet line ends the block. Quotes stripped; `null` reads as empty unless `raw` is given.
+ns_block_field() {
+  NS_B="$1" NS_K="$2" NS_RAW="${3:-}" awk '
+    BEGIN { b = ENVIRON["NS_B"]; k = ENVIRON["NS_K"] ":"; raw = (ENVIRON["NS_RAW"] == "raw") }
+    { line[NR] = $0 }
+    END {
+      s = 0; md = 0
+      for (i = 1; i <= NR; i++) {
+        l = line[i]; sub(/^[ \t]+/, "", l); sub(/[ \t]+$/, "", l)
+        if (l == b ":") { s = i; md = 0 }
+        else if (l ~ /^#+ / && substr(l, index(l, " ") + 1) == b) { s = i; md = 1 }
+      }
+      if (!s) exit
+      ind = -1
+      for (i = s + 1; i <= NR; i++) {
+        l = line[i]
+        if (l ~ /^[ \t]*```/) break
+        if (l ~ /^[ \t]*$/) continue
+        if (md && l ~ /^[ \t]*#/) break
+        match(l, /^ */); n = RLENGTH
+        if (ind < 0) ind = n
+        if (n < ind) break
+        if (n != ind) continue
+        r = substr(l, n + 1)
+        if (md) { if (substr(r, 1, 2) != "- ") break; r = substr(r, 3) }
+        if (index(r, k) == 1) {
+          v = substr(r, length(k) + 1); sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
+          if (v ~ /^".*"$/) v = substr(v, 2, length(v) - 2)
+          if (v == "null" && !raw) v = ""
+          print v; exit
+        }
+      }
+    }'
+}
+ns_report_text() { # <json> <field> — the verbatim text a report carries inline (<field>) or by path (<field>_file)
+  local f; f="$(rj "$1" "$2_file")"
+  if [ -n "$f" ]; then cat "$f" 2>/dev/null; else printf '%s' "$1" | "$JQ" -r --arg k "$2" '.[$k] // empty | strings'; fi
+}
+ns_take_text() { # <json> <field> <state key> — the verbatim bytes into the sidecar (written out later by ns_write_text)
+  local f; f="$(rj "$1" "$2_file")"
+  if [ -n "$f" ]; then
+    NS_STATE="$(printf '%s' "$NS_STATE" | "$JQ" -c --arg k "$3" --rawfile t "$f" '.[$k] = $t')"
+  else
+    NS_STATE="$(printf '%s' "$NS_STATE" | "$JQ" -c --arg k "$3" --argjson r "$1" --arg f "$2" '.[$k] = ($r[$f] // null)')"
+  fi
+}
+ns_write_text() { # <state key> <path> — the held verbatim text, byte for byte (temp + rename)
+  local t="$2.tmp.$$"
+  printf '%s' "$NS_STATE" | "$JQ" -j --arg k "$1" '.[$k] // empty' > "$t" 2>/dev/null && mv -f "$t" "$2" \
+    || { rm -f "$t"; ns_err "cannot write $2"; NS_RC=1; return 1; }
+}
+ns_check_text_pair() { # <json> <field> — the inline text and the file path are exclusive; the text is a string, the file readable
+  local f
+  printf '%s' "$1" | "$JQ" -e --arg k "$2" '(.[$k] == null or (.[$k] | type) == "string") and (.[$k + "_file"] == null or (.[$k + "_file"] | type) == "string")' >/dev/null 2>&1 \
+    || ns_die2 "--result: $2 / $2_file must be strings — nothing written"
+  f="$(rj "$1" "$2_file")"
+  [ -z "$f" ] || [ -z "$(rj "$1" "$2")" ] || ns_die2 "--result: $2 and $2_file are exclusive — nothing written"
+  [ -z "$f" ] || { [ -f "$f" ] && [ -r "$f" ]; } || ns_die2 "--result: $2_file is not a readable file: $f — nothing written"
+}
+ns_check_one_line() { # <json> <field…> — each present field one line
+  local r="$1" k v; shift
+  for k in "$@"; do v="$(rj "$r" "$k")"; ns_one_line "$v" || ns_die2 "--result: $k must be one line — nothing written"; done
+}
+
+# ns_check_run_report <json> — the RUN report (answer to the `/autonomous run` spawn): the verbatim
+# SUPERVISOR_RESULT (`supervisor_result` | `supervisor_result_file`), `session_id`, `run_note`, or —
+# with no PR — `status_reason` + `no_pr_why`. The PR / branch are read from the SUPERVISOR_RESULT
+# text (`pr_url` / `branch` fields only fill a gap and must agree with it). Sets NS_RUN_PR / NS_RUN_BR.
+ns_check_run_report() {
+  local r="$1" t tpr tbr pr br v
+  ns_check_text_pair "$r" supervisor_result
+  ns_check_one_line "$r" session_id run_note status_reason no_pr_why pr_url branch
+  v="$(rj "$r" session_id)"; [ -z "$v" ] || ns_sid_ok "$v" || ns_die2 "--result: malformed session_id '$v' — nothing written"
+  v="$(rj "$r" status_reason)"; [ -z "$v" ] || [[ "$v" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || ns_die2 "--result: malformed status_reason '$v' — nothing written"
+  t="$(ns_report_text "$r" supervisor_result)"
+  tpr="$(printf '%s\n' "$t" | ns_block_field SUPERVISOR_RESULT pr_url)"; tbr="$(printf '%s\n' "$t" | ns_block_field SUPERVISOR_RESULT branch)"
+  pr="$(rj "$r" pr_url)"; br="$(rj "$r" branch)"
+  [ -z "$pr" ] || [ -z "$tpr" ] || [ "$pr" = "$tpr" ] || ns_die2 "--result: pr_url '$pr' disagrees with the SUPERVISOR_RESULT's '$tpr' — nothing written"
+  [ -z "$br" ] || [ -z "$tbr" ] || [ "$br" = "$tbr" ] || ns_die2 "--result: branch '$br' disagrees with the SUPERVISOR_RESULT's '$tbr' — nothing written"
+  pr="${tpr:-$pr}"; br="${tbr:-$br}"
+  if [ -n "$pr" ]; then
+    ns_pr_ok "$pr" || ns_die2 "--result: malformed pr_url '$pr' — nothing written"
+    [[ "$br" =~ ^[^[:space:]|]{1,200}$ ]] || ns_die2 "--result: a RUN report with a PR needs its branch (got '${br}') — nothing written"
+    [ -n "$t" ] || ns_die2 "--result: a RUN report with a PR carries the verbatim SUPERVISOR_RESULT (supervisor_result / supervisor_result_file) — nothing written"
+  else
+    [ -n "$(rj "$r" no_pr_why)" ] || ns_die2 "--result: a RUN report without a PR carries no_pr_why (the one-line why of the pinned no-PR line) — nothing written"
+  fi
+  NS_RUN_PR="$pr"; NS_RUN_BR="$br"
+}
+ns_take_run_report() {
+  ns_take_text "$1" supervisor_result run_text
+  st_setj run_report "$(printf '%s' "$1" | "$JQ" -c 'del(.supervisor_result)')"
+  st_set run_pr "$NS_RUN_PR"; st_set run_branch "$NS_RUN_BR"
+  # the replay record: the report's hash, and (set by the first instruction printed after it — a failed
+  # step's retry included) the instruction its step printed, `run_answer_text`
+  st_set run_report_hash "$(ns_report_hash "$1")"; st_set run_answer_due true; st_del run_answer_text
+}
+# ns_run_replay <json> — 0 when <json> is the RUN report this pass already took, byte-identical, re-sent
+# while the instruction its step printed (the owned-drain spawn, the rate-limit park, a no-PR `done`) is
+# still the pending one: that instruction re-prints and nothing is written
+ns_run_replay() {
+  [ -n "$PENDING_TEXT" ] && [ "$PENDING_TEXT" = "$(st run_answer_text)" ] && ns_is_run_report "$1" \
+    && [ "$(ns_report_hash "$1")" = "$(st run_report_hash)" ]
+}
+ns_is_drain_report() { printf '%s' "$1" | "$JQ" -e 'has("review_heal_result") or has("review_heal_result_file") or has("no_terminal_block")' >/dev/null 2>&1; }
+ns_is_run_report() { printf '%s' "$1" | "$JQ" -e '(has("drain_result") | not) and (has("supervisor_result") or has("supervisor_result_file") or has("no_pr_why") or has("status_reason") or has("run_note"))' >/dev/null 2>&1; }
+# ns_check_drain_report <json> — the DRAIN report (answer to the `owned drain` spawn / the fix-now re-drain
+# spawn): exactly one of `review_heal_result` | `review_heal_result_file` | `no_terminal_block: true`;
+# the block's `decision` exactly READY | ESCALATED; `head_sha` / `ready_sha` hex, `started_at` ISO-8601 Z,
+# `drain_note` one line, `progress_notes` an array (≤ 20) of one-line strings; the legacy drain-report
+# fields (`progress_note`, `items_processed`, `escalation_*`, `pr`) under their own rules
+ns_check_drain_report() {
+  local r="$1" t n k v
+  ns_check_text_pair "$r" review_heal_result
+  n=0; [ -n "$(rj "$r" review_heal_result)" ] && n=$((n + 1)); [ -n "$(rj "$r" review_heal_result_file)" ] && n=$((n + 1))
+  v="$(rj "$r" no_terminal_block)"
+  case "$v" in "") ;; true) n=$((n + 1)) ;; *) ns_die2 "--result: no_terminal_block must be true — nothing written" ;; esac
+  [ "$n" = 1 ] || ns_die2 "--result: a DRAIN report carries exactly one of review_heal_result | review_heal_result_file | no_terminal_block: true — nothing written"
+  if [ "$v" != true ]; then
+    t="$(ns_report_text "$r" review_heal_result)"
+    v="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT decision)"
+    ns_field_ok drain_result "$v" || ns_die2 "--result: the REVIEW_HEAL_RESULT block's decision must be READY|ESCALATED (got '${v}') — nothing written"
+    v="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT termination_reason)"
+    [ -z "$v" ] || [[ "$v" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || ns_die2 "--result: malformed termination_reason '$v' — nothing written"
+    for k in rounds fix_cycles; do
+      v="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT "$k")"; [ -z "$v" ] || ns_count_ok "$v" || ns_die2 "--result: malformed $k '$v' — nothing written"
+    done
+    for k in repeat_check_failure unresolved_bot_feedback; do
+      v="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT "$k")"; case "$v" in ""|true|false) ;; *) ns_die2 "--result: malformed $k '$v' — nothing written" ;; esac
+    done
+  fi
+  for k in head_sha ready_sha; do v="$(rj "$r" "$k")"; [ -z "$v" ] || ns_sha_ok "$v" || ns_die2 "--result: malformed $k '$v' — nothing written"; done
+  v="$(rj "$r" started_at)"; [ -z "$v" ] || ns_iso_ok "$v" || ns_die2 "--result: malformed started_at '$v' — nothing written"
+  ns_check_one_line "$r" drain_note
+  printf '%s' "$r" | "$JQ" -e '(.progress_notes // []) | type == "array" and length <= 20 and all(.[]; type == "string" and (test("[\n\r]") | not))' >/dev/null 2>&1 \
+    || ns_die2 "--result: progress_notes must be an array of at most 20 one-line strings — nothing written"
+  for k in progress_note items_processed escalation_cause escalation_check escalation_run_id escalation_attempt escalation_sha; do
+    v="$(rj "$r" "$k")"; [ -z "$v" ] || ns_field_ok "$k" "$v" || ns_die2 "--result: malformed $k '$v' — nothing written"
+  done
+  ns_check_free_text "$r"
+  v="$(rj "$r" pr)"; k="$(st pr)"; [ -n "$k" ] && [ "$k" != null ] || k="$PR"
+  [ -z "$v" ] || [ "$v" = "$k" ] || ns_die2 "--result: pr '$v' is not this drain's PR (${k:-none}) — nothing written"
+  return 0
+}
+ns_report_hash() { printf '%s' "$1" | "$JQ" -cS . 2>/dev/null | cksum | tr -d ' \t'; }
+ns_take_drain_report() {
+  ns_take_text "$1" review_heal_result drain_text
+  st_setj drain_report "$(printf '%s' "$1" | "$JQ" -c 'del(.review_heal_result)')"
+  st_set drain_report_hash "$(ns_report_hash "$1")"
+}
+
+# ------------------------------------------------------------------------------------------------
+# RUN / DRAIN helpers
+# ------------------------------------------------------------------------------------------------
+# ns_once <state key> <command…> — run a write once per step attempt chain: a retried step skips the
+# writes that already landed (the key is set only after the command succeeded)
+ns_once() { local k="$1"; shift; [ "$(st "$k")" = true ] && return 0; "$@" || return 1; st_set "$k" true; }
+ns_clear_once() { # <prefix> — forget the once-keys of a step chain (a new drain starts over)
+  NS_STATE="$(printf '%s' "$NS_STATE" | "$JQ" -c --arg p "$1" 'with_entries(select(.key | startswith($p) | not))')"
+}
+ns_cfg_paths() { CFG_PATH="$ROOT/.supervisor/config.json"; BAK_PATH="$AD/$RUN_ID.config-backup.json"; }
+ns_strip_ts() { # <progress line without "- "> — the line after one optional ISO timestamp token
+  case "$1" in [0-9][0-9][0-9][0-9]-*) printf '%s' "${1#* }" ;; *) printf '%s' "$1" ;; esac
+}
+ns_last_picked() { # "<ts>\t<item>" of the last `picked` line in ## Progress
+  ns_section '## Progress' | awk '
+    { x = $0; sub(/^- /, "", x); ts = ""
+      if (x ~ /^[0-9][0-9][0-9][0-9]-/) { ts = x; sub(/ .*/, "", ts); sub(/^[^ ]+ /, "", x) }
+      if (index(x, "picked ") == 1) { p = substr(x, 8); sub(/[ ;,].*/, "", p); last = ts "\t" p } }
+    END { if (last != "") print last }'
+}
+# ns_last_drain_marker — the last ## Progress line (timestamp stripped) that opens or closes a RUN /
+# DRAIN span: `ran /autonomous`, `owned drain started`, a terminal drain line
+ns_last_drain_marker() {
+  ns_section '## Progress' | while IFS= read -r l; do
+    l="$(ns_strip_ts "${l#- }")"
+    case "$l" in "ran /autonomous"*|"owned drain started"*|"drain READY"*|"drain ESCALATED"*|"drain superseded_by_merge"*|"fix-now re-drain READY"*|"fix-now re-drain ESCALATED"*) printf '%s\n' "$l" ;; esac
+  done | tail -n 1
+}
+ns_last_start_ts() { # the timestamp of the last `owned drain started` line
+  ns_section '## Progress' | sed -nE 's/^- ([0-9]{4}-[^ ]+) owned drain started.*/\1/p' | tail -n 1
+}
+# ns_current_line <prefix> <line> <anchor prefixes, |-separated> — replace the first ## Current line that
+# starts with <prefix>; else insert <line> after the last ## Current line starting with an anchor prefix
+# (else at the end of the block). One runfile-write (validated before rename).
+ns_current_line() {
+  local new e rc
+  new="$(NS_P="$1" NS_L="$2" NS_A="$3" awk '
+    BEGIN { p = ENVIRON["NS_P"]; l = ENVIRON["NS_L"]; na = split(ENVIRON["NS_A"], A, "|") }
+    { line[NR] = $0 }
+    END {
+      c = 0; hs = 0; be = 0; an = 0; rep = 0
+      for (i = 1; i <= NR; i++) {
+        if (line[i] ~ /^## /) { if (c) break; if (line[i] == "## Current") { c = 1; hs = i; be = i } continue }
+        if (!c) continue
+        be = i
+        if (!rep && index(line[i], p) == 1) rep = i
+        for (j = 1; j <= na; j++) if (index(line[i], A[j]) == 1) an = i
+      }
+      pos = an ? an : be
+      for (i = 1; i <= NR; i++) {
+        if (rep && i == rep) { print l; continue }
+        print line[i]
+        if (!rep && hs && i == pos) print l
+      }
+    }' "$RF"; printf x)"
+  new="${new%x}"
+  e="$(printf '%s' "$new" | bash "$H" runfile-write "$RF" 2>&1 >/dev/null)"; rc=$?
+  [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh runfile-write exited $rc${e:+: $e}"; NS_RC="$rc"; return 1; }
+  ns_refresh
+}
+ns_sidecar_check() { # <path> — the advisory write-time shape check; only a `fail …` line is appended
+  local out; out="$(bash "$H" sidecar-check "$(ns_rel "$1")" 2>/dev/null | tail -n 1)"
+  case "$out" in "fail "*) ns_progress "$(ns_ts) sidecar-check: $out" || return 1 ;; esac
+  return 0
+}
+ns_gh() { "${LOOMWRIGHT_GH_BIN:-gh}" "$@" </dev/null 2>/dev/null; }
+ns_pr_head() { local h; h="$(ns_gh pr view "$1" --json headRefOid | "$JQ" -r '.headRefOid // empty' 2>/dev/null)"; ns_sha_ok "$h" && printf '%s' "$h"; return 0; }
+
+# ================================================================================================
+# step: run — suppress `.auto_review` (§7), then the `/autonomous` spawn (§6 step 2)
+# ================================================================================================
+ns_record_orig() { # <true|false|absent> — ## Run Config's auto_review_original, rewritten only when it differs
+  local l cur new e rc
+  case "$1" in true|false|absent) ;; *) return 0 ;; esac
+  l="$(ns_section '## Run Config' | grep -m1 '^- auto_review_original: ' || true)"
+  [ -n "$l" ] || return 0
+  cur="$(ns_kv "$l" auto_review_original)"
+  [ "$cur" = "$1" ] && return 0
+  new="$(NS_V="$1" awk 'BEGIN { v = ENVIRON["NS_V"] }
+    /^## / { c = ($0 == "## Run Config") }
+    c && !d && index($0, "- auto_review_original: ") == 1 { s = $0; sub(/^- auto_review_original: [^ |]*/, "", s); print "- auto_review_original: " v s; d = 1; next }
+    { print }' "$RF"; printf x)"
+  new="${new%x}"
+  e="$(printf '%s' "$new" | bash "$H" runfile-write "$RF" 2>&1 >/dev/null)"; rc=$?
+  [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh runfile-write exited $rc${e:+: $e}"; NS_RC="$rc"; return 1; }
+  ns_refresh
+}
+ns_run() {
+  local lp pit e rc orig inv mt x
+  [ -n "$ITEM" ] && [ "$ITEM" != null ] || { ns_err "run: ## Current names no item (PICK's current-set runs first) — nothing written"; NS_RC=2; return 1; }
+  case "$STATUS" in running) ;; *) ns_err "run: ## Current status is '$STATUS', not running — nothing written"; NS_RC=2; return 1 ;; esac
+  [ -z "$PR" ] || [ "$PR" = null ] || { ns_err "run: ## Current already records PR $PR for $ITEM — RUN already ran this pass; nothing written"; NS_RC=2; return 1; }
+  lp="$(ns_last_picked)"; pit="${lp#*"$TAB"}"
+  [ "${pit#./}" = "${ITEM#./}" ] || { ns_err "run: the last picked line names '${pit:-no item}', not $ITEM — nothing written"; NS_RC=2; return 1; }
+  # the rate-limit park (end of RUN) reads THIS loop's session log: without its id the check could only
+  # read "clean", so RUN never starts without one (fail CLOSED)
+  [ -n "$SID" ] || { ns_err "session_id_missing — --start run needs --session-id <this loop's session id> (the rate-limit park reads that session's log) — nothing written"; NS_RC=2; return 1; }
+  ns_sid_ok "$SID" || { ns_err "session_id_malformed — --session-id '$SID' is not a session id — nothing written"; NS_RC=2; return 1; }
+  ns_cfg_paths
+  if [ "$(st suppressed)" != true ]; then
+    # a backup that already exists is a crash-stranded one (RECONCILE restores it): suppressing over it
+    # would back up the SUPPRESSED config and lose the original — refused, nothing written
+    [ ! -e "$BAK_PATH" ] || { ns_err "config_backup_stranded — $BAK_PATH exists (a crash-stranded suppress); RECONCILE's crash-restore restores it first — nothing written"; NS_RC=2; return 1; }
+    e="$(bash "$H" config-suppress "$CFG_PATH" "$BAK_PATH" 2>&1 >/dev/null)"; rc=$?
+    if [ "$rc" = 2 ]; then ns_err "config_malformed — ${e:-config-suppress refused $CFG_PATH}; the /autonomous spawn is not printed, nothing written"; NS_RC=2; return 1; fi
+    [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh config-suppress exited $rc${e:+: $e}"; NS_RC="$rc"; return 1; }
+    st_set suppressed true
+    # the ORIGINAL — read backup-first (call-order-safe), before the backup can be deleted
+    orig="$(bash "$H" config-orig "$CFG_PATH" "$BAK_PATH" 2>/dev/null | tail -n 1)"
+    st_set auto_review_original "$orig"
+  fi
+  ns_once once_run_cfg ns_record_orig "$(st auto_review_original)" || return 1
+  ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running /autonomous --single-iteration" || return 1
+  st_set item "$ITEM"; st_set pr "$PR"
+  inv="/autonomous --single-iteration --requirement $ITEM"
+  ns_interactive || inv="$inv --non-interactive-fallback"
+  [ "$NOTIFY" = 1 ] && inv="$inv --notify"
+  [ "$CHEAP" = 1 ] && inv="$inv --cheap"
+  mt="$MAXTOK"; [ -n "$mt" ] || mt="$(ns_section '## Run Config' | sed -n 's/^- max_tokens: \([0-9][0-9]*\)$/\1/p' | head -n 1)"
+  [ -n "$mt" ] && inv="$inv --max-tokens $mt"
+  x="$("$JQ" -cn --arg i "$inv" --arg b "$RUN_ID.config-backup.json" '{what: "/autonomous run", invocation: $i, config_backup: $b,
+      then: "run the invocation; then --result with the RUN report: {\"supervisor_result\": <the verbatim SUPERVISOR_RESULT text> (or \"supervisor_result_file\": <a path holding it>), \"session_id\": <.supervisor/state.md session_id>, \"run_note\": <one line, the ran-line parenthetical>} — with no PR {\"status_reason\": <AUTONOMOUS_RUN status_reason>, \"no_pr_why\": <one line>, \"session_id\": …}; report a failed run the same way. The driver restores .auto_review, writes the session_id / ran /autonomous lines, the sidecar and its sidecar-check, and checks the rate-limit park"}')"
+  ns_emit spawn run "$x"
+  NEXT=run-result
+}
+
+# ================================================================================================
+# step: run-result — restore `.auto_review` when RUN returns (or fails), BEFORE any drain spawn (§7)
+# ================================================================================================
+ns_config_restore() {
+  local e rc
+  ns_cfg_paths
+  e="$(bash "$H" config-restore "$CFG_PATH" "$BAK_PATH" 2>&1 >/dev/null)"; rc=$?
+  [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh config-restore exited $rc${e:+: $e}"; NS_RC="$rc"; return 1; }
+  st_del suppressed
+}
+ns_run_result() {
+  local orig; orig="$(st auto_review_original)"
+  ns_once once_rr_restore ns_config_restore || return 1   # the RUN-result restore: before the drain spawn
+  ns_once once_rr_line ns_progress "$(ns_ts) auto_review restored (config-restore: original ${orig:-unknown})" || return 1
+  NEXT=run-record
+}
+
+# ================================================================================================
+# step: run-record — the session-id line, the PR (current-set BEFORE the ran line), the sidecar
+# ================================================================================================
+ns_run_record() {
+  local r sid note pr br sr why line sc
+  r="$(st run_report)"; [ -n "$r" ] || r='{}'
+  sid="$(rj "$r" session_id)"
+  [ -n "$sid" ] || { sid="$(sed -n 's/^- session_id:[[:space:]]*//p' "$ROOT/.supervisor/state.md" 2>/dev/null | head -n 1)"; ns_sid_ok "$sid" || sid=""; }
+  if [ -n "$sid" ]; then ns_once once_rc_sid ns_progress "$(ns_ts) session_id $sid ($ITEM)" || return 1; fi
+  pr="$(st run_pr)"; br="$(st run_branch)"
+  if [ -n "$pr" ]; then
+    ns_once once_rc_current ns_call_writer current-set "$RF" --item "$ITEM" --status running --pr "$pr" --branch "$br" || return 1
+    ns_refresh; st_set pr "$PR"
+    note="$(rj "$r" run_note)"
+    line="$(ns_ts) ran /autonomous → PR $pr"; [ -n "$note" ] && line="$line ($note)"
+    ns_once once_rc_ran ns_progress "$line" || return 1
+    sc="$AD/$RUN_ID.supervisor-result.md"
+    ns_once once_rc_sidecar ns_write_text run_text "$sc" || return 1
+    ns_once once_rc_check ns_sidecar_check "$sc" || return 1
+  else
+    sr="$(rj "$r" status_reason)"; why="$(rj "$r" no_pr_why)"
+    ns_once once_rc_ran ns_progress "$(ns_ts) ran /autonomous — no PR: ${sr:-unknown} ($why)" || return 1
+  fi
+  NEXT=rate-limit
+}
+
+# ================================================================================================
+# step: rate-limit — §6 "Rate-limit park (end of RUN, before DRAIN)": the loop's own session log
+# ================================================================================================
+ns_429_hint() { # <payload session id> <row ts> — the closest-preceding STOP_FAILURE line of that session names a 429
+  local f="$ROOT/.supervisor/logs/failures.log"
+  [ -f "$f" ] || return 1
+  "$JQ" -Rn --arg s "$1" --arg t "$2" '[inputs | (capture("^\\[(?<ts>[0-9TZ:.-]+)\\] STOP_FAILURE (?<p>.*)$")? // empty)
+      | .p = (.p | fromjson? // null) | select(.p != null and (.p.session_id // "") == $s and .ts <= $t)]
+      | last | ((.p.last_assistant_message // "") | tostring | test("429"))' "$f" 2>/dev/null | grep -qx true
+}
+ns_rate_limit() {
+  local pts log rows cls="" hint="" reason rts csid skip=""
+  # an unread check is never "clean": no session id (or no log for it) writes ONE pinned skipped line
+  if [ -z "$SID" ] || ! ns_sid_ok "$SID"; then skip="no session id"
+  elif [ ! -f "$ROOT/.supervisor/logs/$SID.jsonl" ] || [ ! -r "$ROOT/.supervisor/logs/$SID.jsonl" ]; then
+    skip="no session log .supervisor/logs/$SID.jsonl"
+  fi
+  if [ -n "$skip" ]; then ns_once once_rl_skip ns_progress "$(ns_ts) rate-limit check: skipped — $skip" || return 1; fi
+  if [ -z "$skip" ]; then
+    pts="$(ns_last_picked)"; pts="${pts%%"$TAB"*}"
+    log="$ROOT/.supervisor/logs/$SID.jsonl"
+    if [ -f "$log" ]; then
+      rows="$("$JQ" -Rr --arg p "$pts" 'fromjson? | select(type == "object" and .event == "agent_lifecycle" and .state == "failed"
+          and .agent_scope == "main" and (has("agent_id") | not) and ((.ts // "") > $p))
+          | [(.reason // "unknown"), .ts, (.cc_session_id // .session_id // "")] | @tsv' "$log" 2>/dev/null)"
+      while IFS="$TAB" read -r reason rts csid; do
+        [ -n "$reason" ] || continue
+        if [ "$reason" = rate_limit ]; then cls=1; break; fi
+        if [ "$reason" = unknown ] && ns_429_hint "$csid" "$rts"; then hint=1; fi
+      done <<EOF
+$rows
+EOF
+    fi
+  fi
+  if [ -n "$cls$hint" ]; then
+    ns_once once_rl_current ns_call_writer current-set "$RF" --item "$ITEM" --status rate_limit --pause-reason rate_limit || return 1
+    if [ -z "$cls" ]; then ns_once once_rl_hint ns_current_line "- reason_hint:" "- reason_hint: rate_limit" "- pause_reason:" || return 1; fi
+    ns_status paused || return 1
+    ns_once once_rl_line ns_progress "$(ns_ts) rate-limited — parking, resume once the window clears" || return 1
+    ns_release
+    ns_emit_park rate-limit "rate-limited at the end of RUN — parked rate_limit; --resume once the window clears"
+    return 0
+  fi
+  if [ -n "$PR" ] && [ "$PR" != null ]; then NEXT=drain; return 0; fi
+  ns_release
+  ns_emit done rate-limit '{"status":"stopped","message":"/autonomous produced no PR — the no-PR line is written and there is nothing to drain; the loop stops here and reports (the /autonomous correctness gate that stopped it is the owner'"'"'s)"}'
+}
+
+# ================================================================================================
+# step: drain — the ONE owned drain of this pass (§6 step 3, §7 "Own ONE inline drain")
+# ================================================================================================
+ns_pass_key() { local p; p="$(ns_last_picked)"; printf '%s|%s|%s' "${ITEM#./}" "$PR" "${p%%"$TAB"*}"; }
+# ns_drain_owned — 0 when this pass already owns its drain: the sidecar printed its spawn (bound to
+# item + PR + the pass's picked line), or this item's segment since its last picked line holds a
+# first-drain start line (the run file — the durable record). The fix-now re-drain is the driver's
+# fix-now step, never this one.
+ns_drain_owned() {
+  [ "$(st drain_pass)" = "$(ns_pass_key)" ] && return 0
+  ns_section '## Progress' | NS_I="${ITEM#./}" awk '
+    BEGIN { it = ENVIRON["NS_I"] }
+    { x = $0; sub(/^- /, "", x); if (x ~ /^[0-9][0-9][0-9][0-9]-/) sub(/^[^ ]+ /, "", x)
+      if (index(x, "picked ") == 1) { p = substr(x, 8); sub(/[ ;,].*/, "", p); sub(/^\.\//, "", p); seg = (p == it); own = 0; next }
+      if (seg && index(x, "owned drain started") == 1 && index(x, "(fix-now re-drain)") == 0) own = 1 }
+    END { exit (own ? 0 : 1) }'
+}
+ns_drain_reset() { # a new drain: forget the previous drain's report and its once-keys (its hash is kept as
+  # prev_drain_report_hash: that report re-sent as the new drain's is a replay, never the new drain's)
+  local h; h="$(st drain_report_hash)"
+  ns_clear_once once_dr_; ns_clear_once once_sp_
+  st_del drain_report; st_del drain_text; st_del drain_report_hash; st_del drain_head_sha; st_del drain_started_at
+  [ -n "$h" ] && st_set prev_drain_report_hash "$h"
+  return 0
+}
+ns_drain() {
+  local h x
+  if ns_drain_owned; then
+    ns_err "drain_already_owned — this pass of $ITEM (${PR:-no pr}) already spawned its ONE owned drain; at most one owner-requested fix-now re-drain per item, and only through the fix-now step — no instruction printed, nothing written"
+    NS_RC=2; return 1
+  fi
+  [ -n "$ITEM" ] && [ "$ITEM" != null ] && [ -n "$PR" ] && [ "$PR" != null ] || { ns_err "drain: ## Current names no item with a PR — nothing written"; NS_RC=2; return 1; }
+  case "$STATUS" in running) ;; *) ns_err "drain: ## Current status is '$STATUS', not running — nothing written"; NS_RC=2; return 1 ;; esac
+  h="$(ns_pr_head "$PR")"
+  ns_drain_reset
+  st_set drain_pass "$(ns_pass_key)"; st_set drain_kind first; st_set drain_started_at "$(ns_ts)"
+  [ -n "$h" ] && st_set drain_head_sha "$h"
+  st_set item "$ITEM"; st_set pr "$PR"
+  x="$("$JQ" -cn --arg i "/review-pr $PR --until-mergeable --no-auto-postmortem" --arg h "$h" '{what: "owned drain", invocation: $i,
+      head_sha: (if $h == "" then null else $h end),
+      then: "run the invocation inline (ONE drain; never a second one for this pass); then --result with the DRAIN report: {\"review_heal_result\": <the verbatim terminal REVIEW_HEAL_RESULT text> (or \"review_heal_result_file\": <a path holding it>), \"ready_sha\": <the PR head the drain ended READY on>, \"head_sha\": <the head it started on, when known>, \"progress_notes\": [<one-line drain round notes>], \"drain_note\": <one line, the terminal drain line parenthetical>} — or {\"no_terminal_block\": true} when it ended without a terminal block. The driver writes the pinned drain lines, owned_drain_*, the sidecar and its sidecar-check, learning-emit, then runs GATE"}')"
+  ns_emit spawn drain "$x"
+  NEXT=drain-result
+}
+
+# ================================================================================================
+# step: drain-result — the DRAIN report's bookkeeping (§6 step 3; the fix-now re-drain's too)
+# ================================================================================================
+ns_drain_pr() { local p; p="$(st pr)"; [ -n "$p" ] && [ "$p" != null ] || p="$PR"; printf '%s' "$p"; }
+ns_drain_start_line() { # <first|fixnow> <pr> — the pinned start line, unless this drain's is already there
+  local ts h tag="" r
+  case "$(ns_last_drain_marker)" in "owned drain started"*) return 0 ;; esac
+  r="$(st drain_report)"
+  ts="$(rj "$r" started_at)"; [ -n "$ts" ] || ts="$(st drain_started_at)"; [ -n "$ts" ] || ts="$(ns_ts)"
+  h="$(rj "$r" head_sha)"; [ -n "$h" ] || h="$(st drain_head_sha)"; [ -n "$h" ] || h=unknown
+  [ "$1" = fixnow ] && tag=" (fix-now re-drain)"
+  ns_progress "$ts owned drain started$tag — /review-pr $2 --until-mergeable --no-auto-postmortem @ $h"
+}
+ns_owned_drain_line() { # <READY|ESCALATED|superseded_by_merge> — ## Current's owned_drain_* line (the pass's start kept)
+  local ts; ts="$(ns_last_start_ts)"; [ -n "$ts" ] || ts="$(st drain_started_at)"; [ -n "$ts" ] || ts="$(ns_ts)"
+  ns_current_line "- owned_drain_started:" "- owned_drain_started: $ts | owned_drain_result: $1 | suppressed_default_dispatch: true" "- pause_reason:|- wave:"
+}
+ns_drain_notes() { # the report's free-text lines, each `<ts> <note>`, in order (once each)
+  local r i=0 n; r="$(st drain_report)"
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    i=$((i + 1)); ns_once "once_dr_note_$i" ns_progress "$(ns_ts) $n" || return 1
+  done <<EOF
+$(printf '%s' "$r" | "$JQ" -r '(.progress_notes // [])[]')
+EOF
+  return 0
+}
+ns_drain_block() { printf '%s' "$NS_STATE" | "$JQ" -r '.drain_text // empty'; }
+ns_drain_result() {
+  local r kind pr v t dec tr rounds fc note line
+  r="$(st drain_report)"; [ -n "$r" ] || { ns_err "drain-result: no DRAIN report is held"; NS_RC=2; return 1; }
+  kind="$(st drain_kind)"; [ -n "$kind" ] || kind=first
+  pr="$(ns_drain_pr)"
+  [ -n "$pr" ] && [ "$pr" != null ] || { ns_err "drain-result: no PR for this drain — nothing written"; NS_RC=2; return 1; }
+  if [ "$(rj "$r" no_terminal_block)" = true ]; then
+    v="$(bash "$H" reconcile-item "$pr" running 2>/dev/null | tail -n 1)"
+    if [ "$v" = merged ]; then NEXT=superseded; return 0; fi
+    # any other verdict records nothing for the drain: the item stays running, RECONCILE decides
+    ns_release
+    ns_emit done drain-result "$("$JQ" -cn --arg v "$v" '{status: "stopped", message: ("the drain ended without a terminal REVIEW_HEAL_RESULT and reconcile-item reads " + $v + " — nothing recorded for the drain; the item stays running and the next start'"'"'s RECONCILE decides")}')"
+    return 0
+  fi
+  t="$(ns_drain_block)"
+  dec="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT decision)"
+  tr="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT termination_reason)"
+  rounds="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT rounds)"
+  fc="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT fix_cycles)"
+  ns_once once_dr_start ns_drain_start_line "$kind" "$pr" || return 1
+  ns_drain_notes || return 1
+  if [ "$kind" = fixnow ]; then
+    line="$(ns_ts) fix-now re-drain $dec (${tr:-unknown}, ${rounds:-0} rounds, ${fc:-0} fix cycles)"
+  else
+    note="$(rj "$r" drain_note)"
+    if [ -n "$note" ]; then line="$(ns_ts) drain $dec ($note)"; else line="$(ns_ts) drain $dec (${tr:-unknown}, ${rounds:-0} rounds, ${fc:-0} fix cycles)"; fi
+  fi
+  ns_once once_dr_term ns_progress "$line" || return 1
+  ns_once once_dr_owned ns_owned_drain_line "$dec" || return 1
+  # a fix-now re-drain's re-pass is recorded at once (legacy-tail decision step 3: fix_now_reentered: true)
+  if [ "$kind" = fixnow ] && [ -n "$PENDING_LINE" ]; then ns_once once_dr_pending ns_pending_write "$(ns_pending_n)" true || return 1; fi
+  ns_once once_dr_sidecar ns_write_text drain_text "$AD/$RUN_ID.review-heal-result.md" || return 1
+  ns_once once_dr_check ns_sidecar_check "$AD/$RUN_ID.review-heal-result.md" || return 1
+  NEXT=learning-emit
+}
+
+# ================================================================================================
+# step: superseded — the drain ended with no terminal block and the PR merged (§6 step 3)
+# ================================================================================================
+ns_superseded() {
+  local pr out cls rc
+  pr="$(ns_drain_pr)"
+  ns_once once_dr_start ns_drain_start_line "$(st drain_kind)" "$pr" || return 1
+  ns_once once_sp_owned ns_owned_drain_line superseded_by_merge || return 1
+  ns_once once_sp_line ns_progress "$(ns_ts) drain superseded_by_merge — PR merged before a terminal REVIEW_HEAL_RESULT" || return 1
+  # NO review-heal sidecar, NO learning-emit, NO GATE / decision step: close the item out as RECONCILE does
+  if [ "$(st once_sp_closeout)" != true ]; then
+    out="$(bash "$H" closeout "$RF" "$ITEM" "$pr" ${SID:+--session-id "$SID"} 2>/dev/null)"
+    cls="$(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$RUN_ID" --item "$ITEM" --pr "$pr" --record "$RF" 2>/dev/null)"; rc=$?
+    [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh closeout-classify exited $rc"; NS_RC="$rc"; return 1; }
+    st_set once_sp_closeout true
+    ns_refresh
+    if [ "$cls" != complete ]; then st_set leftovers "$cls"; st_set after_leftover awaiting-go; NEXT=leftover; return 0; fi
+  fi
+  NEXT=awaiting-go
+}
+
+# ================================================================================================
+# step: awaiting-go — stop the run as a close-out leaves it (SKILL §3 "After a close-out")
+# ================================================================================================
+ns_awaiting_go() {
+  ns_status paused || return 1
+  ns_call_writer current-set "$RF" --pause-reason awaiting_go || return 1
+  ns_release
+  ns_emit_park awaiting-go "PR merged before the drain's terminal REVIEW_HEAL_RESULT — the item is closed out; the next item waits for /automate --resume"
+}
+
+# ================================================================================================
+# step: learning-emit — §6 "Learning-emit at end-of-DRAIN" (always exit 0; never a decision)
+# ================================================================================================
+ns_learning_emit() {
+  local t dec tr fc rcf ubf hi shr="" repo="" num=0 pr view paths add del cf pv summ rep
+  local -a a
+  t="$(ns_drain_block)"; [ -n "$t" ] || t="$(cat "$AD/$RUN_ID.review-heal-result.md" 2>/dev/null)"
+  dec="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT decision)"
+  tr="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT termination_reason)"
+  fc="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT fix_cycles)"
+  rcf="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT repeat_check_failure)"
+  ubf="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT unresolved_bot_feedback)"
+  # heal_iterations is the OBSERVED count: N ⇒ N, null ⇒ 0, no line at all ⇒ the flag is omitted
+  # — read only from THIS PR's sidecar (it is transient, overwritten per item: another item's is never read)
+  pr="$(ns_drain_pr)"
+  if [ "$(ns_block_field SUPERVISOR_RESULT pr_url < "$AD/$RUN_ID.supervisor-result.md" 2>/dev/null)" = "$pr" ]; then
+    hi="$(ns_block_field SUPERVISOR_RESULT heal_iterations raw < "$AD/$RUN_ID.supervisor-result.md" 2>/dev/null)"
+  fi
+  case "${hi:-}" in "") ;; null) shr=0 ;; *) ns_count_ok "$hi" && shr="$hi" ;; esac
+  if [[ "$pr" =~ ^https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)$ ]]; then repo="${BASH_REMATCH[1]}"; num="${BASH_REMATCH[2]}"; fi
+  view="$(ns_gh pr view "$pr" --json files,additions,deletions,changedFiles)"
+  paths="$(printf '%s' "$view" | "$JQ" -c '[.files[]?.path | strings]' 2>/dev/null)"
+  add="$(printf '%s' "$view" | "$JQ" -r '.additions // empty' 2>/dev/null)"
+  del="$(printf '%s' "$view" | "$JQ" -r '.deletions // empty' 2>/dev/null)"
+  cf="$(printf '%s' "$view" | "$JQ" -r '.changedFiles // empty' 2>/dev/null)"
+  if [ -z "$paths" ] || ! ns_count_ok "$add" || ! ns_count_ok "$del" || ! ns_count_ok "$cf"; then paths='[]'; add=0; del=0; cf=0; fi
+  pv="$("$JQ" -r '.version // empty' "$HERE/../.claude-plugin/plugin.json" 2>/dev/null)"
+  summ="drain ${dec:-unknown}${tr:+ $tr}"
+  a=("$ROOT/.supervisor/postmortem/results.jsonl" --run-id "$RUN_ID" --item "$ITEM" --pr-url "$pr" --source automate_drain
+     --repo "$repo" --number "$num" --branch "$BRANCH" --drain-result "$dec" --fix-cycles "${fc:-0}"
+     --repeat-check-failure "${rcf:-false}" --unresolved-bot-feedback "${ubf:-false}")
+  [ -n "$shr" ] && a+=(--self-heal-rounds "$shr")
+  a+=(--changed-paths-json "$paths" --additions "$add" --deletions "$del" --changed-files "$cf")
+  [ -n "$pv" ] && a+=(--plugin-version "$pv")
+  a+=(--ts "$(ns_ts)" --summary "$summ")
+  bash "$H" learning-emit "${a[@]}" </dev/null >/dev/null 2>&1 || true   # advisory: its exit is never read
+  # GATE's drain report, derived from the terminal block (+ the report's own sha / park-line fields)
+  rep="$("$JQ" -cn --arg d "$dec" --arg t "$tr" --argjson r "$(st drain_report)" '{drain_result: $d}
+      + (if $t != "" then {termination_reason: $t} else {} end)
+      + ($r | with_entries(select(.key as $k | ["ready_sha","progress_note","items_processed","escalation_cause","escalation_check","escalation_run_id","escalation_attempt","escalation_sha"] | index($k))))')"
+  ns_take_report "$rep"
+  NEXT=gate
 }
 
 # ================================================================================================
@@ -751,11 +1474,14 @@ ns_decide_complete() { # <pre|post> — all answers are in
 }
 ns_spawn_fixnow() {
   st_set fix_now_reentered true; st_del gate_line; st_del ask_gate_line; st_del progress_note; st_del drafts
+  # the re-drain is a new drain: its DRAIN report goes through drain-result (the pinned fix-now lines)
+  ns_drain_reset; st_set drain_kind fixnow; st_set drain_started_at "$(ns_ts)"
   local x
-  x="$(printf '%s' "$(st answers)" | "$JQ" -c --arg b "$BRANCH" '{what: "fix-now re-drain", agent: "general-purpose",
+  x="$(printf '%s' "$(st answers)" | "$JQ" -c --arg b "$BRANCH" --arg i "/review-pr $PR --until-mergeable --no-auto-postmortem" '{what: "fix-now re-drain", agent: "general-purpose",
        branch: $b, contract: "skills/review-heal/SKILL.md §U3.5 (fix-worker spawn); the findings go inside the EXTERNAL_TEXT envelope",
        findings: [.[] | select(.decision == "fix-now") | {draft: .name, finding_untrusted: .title}],
-       then: "a complete DRAIN (/review-pr --until-mergeable --no-auto-postmortem; pinned fix-now re-drain Progress lines), then --result with the re-drain drain report"}')"
+       drain_invocation: $i,
+       then: "the ONE fix worker, then a complete inline DRAIN (the drain_invocation); then --result with the re-drain DRAIN report: {\"review_heal_result\": <the verbatim terminal REVIEW_HEAL_RESULT text> (or \"review_heal_result_file\"), \"head_sha\": <the head the re-drain started on>, \"started_at\": <ISO-8601 Z, when the re-drain started>, \"ready_sha\": <the head it ended READY on>} — or {\"no_terminal_block\": true}. The driver writes the pinned fix-now re-drain Progress lines, owned_drain_*, pending_decisions (fix_now_reentered: true) and the sidecar itself"}')"
   ns_emit spawn fix-now "$x"
   NEXT=gate
 }
@@ -942,7 +1668,8 @@ EOF
     ns_leftover_park; return
   fi
   st_del leftovers; st_del leftover_retry
-  NEXT=checkoff
+  # a superseded-by-merge close-out stops at awaiting_go; SYNC's goes on to CHECK OFF
+  NEXT="$(st after_leftover)"; st_del after_leftover; [ -n "$NEXT" ] || NEXT=checkoff
 }
 
 # ================================================================================================
@@ -998,6 +1725,15 @@ ns_terminate() {
 # ================================================================================================
 ns_dispatch() {
   case "$1" in
+    run) ns_run ;;
+    run-result) ns_run_result ;;
+    run-record) ns_run_record ;;
+    rate-limit) ns_rate_limit ;;
+    drain) ns_drain ;;
+    drain-result) ns_drain_result ;;
+    superseded) ns_superseded ;;
+    awaiting-go) ns_awaiting_go ;;
+    learning-emit) ns_learning_emit ;;
     gate) ns_gate ;;
     validation) ns_validation ;;
     gate-eval) ns_gate_eval ;;
@@ -1033,16 +1769,67 @@ if [ -z "${NEXT_STEP_FROM:-}" ] && ! ns_bound; then
 fi
 pending="$(st pending_text)"; PENDING_TEXT="$pending"
 pending_do="$(printf '%s' "$pending" | "$JQ" -r '.do // empty' 2>/dev/null)"
+pending_what="$(printf '%s' "$pending" | "$JQ" -r '.what // empty' 2>/dev/null)"
 if [ -n "${NEXT_STEP_FROM:-}" ]; then
   NEXT="$NEXT_STEP_FROM"
-  [ "$have_result" = 1 ] && { ns_check_report "$RESULT"; ns_take_report "$RESULT"; }
-  st_set item "$ITEM"; st_set pr "$PR"
+  if [ "$have_result" = 1 ]; then # --result is the report the starting step reads
+    case "$NEXT" in
+      run-result|run-record|rate-limit) ns_check_run_report "$RESULT"; ns_take_run_report "$RESULT" ;;
+      drain-result|superseded|learning-emit) ns_check_drain_report "$RESULT"; ns_take_drain_report "$RESULT" ;;
+      *) ns_check_report "$RESULT"; ns_take_report "$RESULT" ;;
+    esac
+  fi
+  # a case seeding the sidecar's item / PR (a drain whose ## Current was never set) keeps them
+  [ -n "$(st item)" ] || st_set item "$ITEM"; [ -n "$(st pr)" ] || st_set pr "$PR"
+elif [ -n "$START" ]; then
+  [ "$have_result" = 0 ] || ns_die2 "--start takes no --result (a report answers the pending spawn)"
+  case "$START" in
+    run)
+      # the same /autonomous spawn still pending is re-printed (idempotent); any other open instruction
+      # of this item's pass is refused — RUN already started
+      [ "$pending_do" = spawn ] && [ "$pending_what" = "/autonomous run" ] && { printf '%s\n' "$pending"; exit 0; }
+      case "$pending_do" in
+        ask|spawn) ns_die2 "run_already_started — a pending ${pending_what:-$pending_do} instruction belongs to $ITEM's pass (a no-result call re-prints it) — nothing written" ;;
+      esac
+      stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
+      NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+      NEXT=run ;;
+    drain)
+      # an open ask, or a spawn other than this pass's owned drain (whose re-request the drain step
+      # refuses by name), is never answered by --start
+      case "$pending_do" in ask) ns_die2 "an ask is pending for $ITEM (a no-result call re-prints it) — nothing written" ;; esac
+      if [ "$pending_do" = spawn ] && [ "$pending_what" != "owned drain" ]; then
+        ns_die2 "a pending ${pending_what} spawn belongs to $ITEM's pass (a no-result call re-prints it) — nothing written"
+      fi
+      NEXT=drain ;;
+  esac
 elif [ "$have_result" = 0 ]; then
   if [ -n "$pending" ]; then printf '%s\n' "$pending"; exit 0; fi
   NEXT="$(st failed)"   # a step that failed (surfaced) is retried; otherwise there is nothing to do
-  [ -n "$NEXT" ] || ns_die2 "nothing is pending — report the drain result with --result '{\"drain_result\":…}'"
+  [ -n "$NEXT" ] || ns_die2 "nothing is pending — start RUN with --start run, or report the drain result with --result '{\"drain_result\":…}'"
+elif ns_run_replay "$RESULT"; then
+  # the RUN report re-sent after the step it answered (same item + PR — the binding above discards the
+  # sidecar otherwise — byte-identical) is a REPLAY: the instruction that step printed re-prints
+  ns_err "--result is the RUN report this pass already took — re-printing the pending instruction; nothing written"
+  printf '%s\n' "$pending"; exit 0
+elif [ "$pending_do" = ask ] && ns_is_drain_report "$RESULT" && [ "$(ns_report_hash "$RESULT")" = "$(st drain_report_hash)" ]; then
+  # the DRAIN report re-sent while an ask its tail printed is open is a REPLAY, never an answer
+  ns_err "--result is the DRAIN report this tail already took — re-printing the pending ask; nothing written"
+  printf '%s\n' "$pending"; exit 0
 elif [ "$pending_do" = ask ]; then
   NEXT="$(st next)"; ANSWER="$RESULT"
+elif [ "$pending_do" = spawn ] && [ "$pending_what" = "/autonomous run" ]; then
+  ns_check_run_report "$RESULT"; ns_take_run_report "$RESULT"; NEXT=run-result
+elif [ "$pending_do" = spawn ] && ns_is_drain_report "$RESULT" && [ "$(ns_report_hash "$RESULT")" = "$(st prev_drain_report_hash)" ]; then
+  # the previous drain's report re-sent at this drain's spawn is a REPLAY: the spawn re-prints, nothing written
+  ns_err "--result is the previous drain's DRAIN report, not this drain's — re-printing the pending spawn; nothing written"
+  printf '%s\n' "$pending"; exit 0
+elif [ "$pending_do" = spawn ] && [ "$pending_what" = "owned drain" ]; then
+  ns_is_drain_report "$RESULT" || ns_die2 "--result does not answer the owned-drain spawn: send the DRAIN report (review_heal_result | review_heal_result_file | no_terminal_block) — nothing written"
+  ns_check_drain_report "$RESULT"; ns_take_drain_report "$RESULT"; NEXT=drain-result
+elif [ "$pending_do" = spawn ] && ns_is_drain_report "$RESULT"; then
+  # the fix-now re-drain answered with a DRAIN report: the driver writes the pinned re-drain lines
+  ns_check_drain_report "$RESULT"; ns_take_drain_report "$RESULT"; st_set drain_kind fixnow; NEXT=drain-result
 elif [ "$pending_do" = spawn ]; then
   ns_check_report "$RESULT"
   # the drain report the spawn was issued after, re-sent, is a REPLAY — not the re-drain's report: the
@@ -1054,6 +1841,18 @@ elif [ "$pending_do" = spawn ]; then
   ns_stale_report "$RESULT" && ns_die2 "--result is the drain report of a tail already left behind (another item / PR) — not this re-drain's; nothing written"
   NEXT=gate; ns_take_report "$RESULT"
 else
+  # a RUN / DRAIN report answers its own spawn only. Its REPLAYS (same item + PR, byte-identical) re-print:
+  # a RUN report while the instruction its step printed is pending (ns_run_replay, above); the latest
+  # DRAIN report while an ask of its tail (above) or — here — the tail's later park / done is pending.
+  # Any other one is refused (exit 2, nothing written)
+  if ns_is_drain_report "$RESULT"; then
+    if [ -n "$pending" ] && [ "$(st item)" = "$ITEM" ] && [ "$(st pr)" = "$PR" ] \
+       && [ "$(ns_report_hash "$RESULT")" = "$(st drain_report_hash)" ]; then
+      printf '%s\n' "$pending"; exit 0
+    fi
+    ns_die2 "--result is a DRAIN report, but no owned-drain / fix-now re-drain spawn is pending for $ITEM — nothing written"
+  fi
+  ns_is_run_report "$RESULT" && ns_die2 "--result is a RUN report, but no /autonomous spawn is pending (start RUN with --start run) — nothing written"
   ns_check_report "$RESULT"
   # a REPLAY — the same drain report for the same item + PR after a terminal instruction — re-prints
   # that instruction and writes nothing (the tail already ran for it)
@@ -1083,24 +1882,29 @@ root_given="${ROOT:+1}"; [ -n "$ROOT" ] || ROOT="$(st flag_root)"
 ns_resolve_root
 [ -n "$root_given" ] && st_set flag_root "$ROOT"
 
-STOPPED=0
+STOPPED=0; first_arm=1
 while [ -n "$NEXT" ]; do
   arm="$NEXT"; NEXT=""
   st_set last_arm "$arm"
   if ! ns_dispatch "$arm"; then
     # exit 2 = a usage error or a --result that answers nothing pending: every arm checks that BEFORE
-    # its first write, so nothing was written — leave the sidecar (and its pending instruction) as it was
-    [ "$NS_RC" = 2 ] && exit 2
+    # its first write, so nothing was written — leave the sidecar (and its pending instruction) as it was.
+    # Only the call's FIRST arm can say so: a later arm refusing ran after earlier arms of this call
+    # wrote, so it is a surfaced failure (exit 1, the sidecar saved at that arm, retried next call)
+    if [ "$first_arm" = 1 ]; then [ "$NS_RC" = 2 ] && exit 2; fi
+    [ "$NS_RC" = 2 ] && NS_RC=1
     st_set next "$arm"; st_set failed "$arm"; st_save
     [ "$NS_RC" -ne 0 ] || NS_RC=1
     exit "$NS_RC"
   fi
+  first_arm=0
   [ -n "$NS_EMIT" ] && break
   if [ -n "${NEXT_STEP_UNTIL:-}" ] && [ "$arm" = "$NEXT_STEP_UNTIL" ]; then STOPPED=1; break; fi
 done
 
 if [ -n "$NS_EMIT" ]; then
   st_set pending_text "$NS_EMIT"; st_set next "$NEXT"
+  if [ "$(st run_answer_due)" = true ]; then st_set run_answer_text "$NS_EMIT"; st_del run_answer_due; fi
   st_save || exit 1
   printf '%s\n' "$NS_EMIT"
   exit 0

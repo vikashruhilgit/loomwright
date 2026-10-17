@@ -1,0 +1,10 @@
+# next-step.results — drain-pinned-start-line-current-not-set: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). ## Current is the never-set null line, so the drain's item and PR
+# come from a seeded sidecar (what the RUN step left there) and the case starts at drain-result: its FIRST write, the
+# pinned start line, trips progress-append's current_not_set guard — the line IS appended, the driver surfaces exit 3
+# and writes nothing after it.
+sidecar: '{"item":".supervisor/requirements/automate-followups/39b-run-lock-and-guard-arm.md","pr":"https://github.com/vikashruhilgit/loomwright/pull/542"}'
+env: NEXT_STEP_FROM=drain-result
+call: --result '{"review_heal_result":"REVIEW_HEAL_RESULT:\n  schema_version: 2\n  decision: READY\n  iterations: 1\n  issues_fixed: 3\n  remaining_issues: 0\n  pr_url: \"https://github.com/vikashruhilgit/loomwright/pull/542\"\n  notified: true\n  rounds: 1\n  max_rounds: 5\n  fix_cycles: 1\n  repeat_check_failure: false\n  unresolved_bot_feedback: false\n  termination_reason: converged\n  rules_gate: none","head_sha":"35b8303b2d51cd3f5b882522f5a24ffc64bd1560"}'
+expect-exit: 3
+expect: none
