@@ -62,6 +62,7 @@ case "$1 ${2:-}" in
     jq -c --arg h "$h" --arg u "$url" --argjson n "$((900 + k))" '. + [{number: $n, url: $u, state: "OPEN", headRefName: $h}]' \
       "$G/prs.json" > "$G/prs.tmp" && mv "$G/prs.tmp" "$G/prs.json"
     echo "$url" ;;
+  "pr diff") n="${3##*/}"; cat "$G/diff.$n" 2>/dev/null || exit 1 ;;
   "pr merge"|"api "*) echo "FORBIDDEN gh $*" >> "$G/FORBIDDEN"; exit 1 ;;
   *) echo "FORBIDDEN-UNKNOWN gh $*" >> "$G/FORBIDDEN"; exit 1 ;;
 esac
@@ -126,7 +127,7 @@ mk_lane() {
   d="$T/work/primary-lanes/$parent/L$n"; tbl="$P/.supervisor/automate/$parent.lanes"
   git -C "$d" checkout -q -b "feature/$parent-$n"; echo "$c" > "$d/$f"; git -C "$d" add "$f"; git -C "$d" commit -qm "lane $n work"
   git -C "$d" push -q origin "feature/$parent-$n" 2>/dev/null
-  git -C "$d" rev-parse HEAD > "$T/gh/head.$pr"
+  git -C "$d" rev-parse HEAD > "$T/gh/head.$pr"; printf '%s\n' "$f" > "$T/gh/diff.$pr"
   awk -F'\t' -v OFS='\t' -v l="L$n" '$1 == l { $8 = "launched" } { print }' "$tbl" > "$tbl.tmp" && mv "$tbl.tmp" "$tbl"
   park_lane "$parent" "$n" "$item" "$pr" awaiting_merge awaiting_merge
 }
@@ -180,7 +181,7 @@ has "W1k body: local CI result" "$BODY" "Local CI: pass"
 has "W1l body: release commit" "$BODY" "v1.1.0 (\`scripts/bump-version.sh\`), the last commit"
 has "W1m body: merging marks the lane PRs merged, then --resume runs fleet-closeout" "$BODY" "\`/automate --resume $A\` runs \`fleet-closeout\`"
 check "W1n body ends with the Claude Code line" "$(tail -n1 "$T/gh/create.1")" "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
-check "W1o ONE parent Progress line, timestamped like every other" "$(grep -cE -- "^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z wave built: $WBR — PR https://github.com/o/r/pull/901 \(lanes: L2 PR #12, L1 PR #11; ci pass; release v1\.1\.0\)$" "$RFA" | tr -d ' ')" 1
+check "W1o ONE parent Progress line, timestamped like every other" "$(grep -cE -- "^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z wave built: $WBR — PR https://github.com/o/r/pull/901 \(lanes: L2 PR #12, L1 PR #11; ci pass; release v1\.1\.0; overlap none\)$" "$RFA" | tr -d ' ')" 1
 WT1="$(printf '%s\n' "$out" | sed -n 's/^wave-build: worktree — \([^ ]*\) on .*/\1/p')"
 check "W1p the temporary worktree is removed (and its tmp dir), the branch kept locally" \
   "$([ -e "$WT1" ] && echo kept || echo gone):$([ -e "$(dirname "$WT1")" ] && echo kept || echo gone):$(git -C "$P" worktree list | wc -l | tr -d ' '):$(git -C "$P" rev-parse "$WBR")" \
@@ -189,7 +190,10 @@ check "W1q GUARD: the primary's branch, HEAD, status and index are byte-identica
 check "W1r the wave-build lock is released" "$([ -e "$P/.supervisor/automate/$A.wave-build.lock" ] && echo held || echo free)" free
 check "W1s no lane branch was touched on origin" "$(git --git-dir="$ORIGIN" rev-parse "feature/$A-1"):$(git --git-dir="$ORIGIN" rev-parse "feature/$A-2")" "$SHA11:$SHA12"
 check "W1t one line per step, in order" "$(printf '%s\n' "$out" | sed -n 's/^wave-build: \([a-z]*\) — .*/\1/p' | paste -sd ' ' -)" \
-  "worktree merge merge ci release push record cleanup opened"
+  "overlap drift drift worktree merge merge ci release push record cleanup opened"
+has "W1u the overlap check ran first: no file shared by two lanes" "$out" "wave-build: overlap — none — no file is changed by more than one lane of this wave"
+has "W1v … each lane's other drift is one line (these items declare no Touches)" "$out" "wave-build: drift — L2 changed 1 file(s) with its Touches unknown; no other lane of this wave changed them"
+hasnt "W1w … and a wave with no shared file adds no PR-body section" "$BODY" "Files changed by more than one lane"
 
 # ---- W2: idempotent re-run (through the helpers dispatcher) -----------------------------------------
 R0="$(refs_state)"; SP="$(cksum < "$RFA")"
@@ -259,6 +263,8 @@ KW="$(kept_wt "$out")"
 check "W4e a conflict ⇒ STOPPED naming the lane, PR and files, exit 2 (lane-table order, wave 1)" \
   "$rc:$(printf '%s\n' "$out" | tail -n1)" \
   "2:wave-build: STOPPED — conflict merging L2 (PR #22) in shared.txt — integrate by hand per wave-plan's conflict rules; worktree kept at $KW"
+has "W4e2 … the overlap check named the shared file and both lanes BEFORE anything was created" \
+  "$(printf '%s\n' "$out" | sed -n '1,/^wave-build: worktree/p')" "wave-build: overlap — shared.txt changed by L1 (Touches unknown), L2 (Touches unknown)"
 check "W4f … merge aborted (clean, no MERGE_HEAD), L1 merged before it, nothing pushed, no pr create, ci never ran" \
   "$(git -C "$KW" status --porcelain | wc -l | tr -d ' '):$(git -C "$KW" rev-parse -q --verify MERGE_HEAD >/dev/null && echo merging || echo none):$(git -C "$KW" log --merges --format=%s origin/main..HEAD):$(origin_has "wave/$B-w1"):$(ncreate):$(wc -l < "$T/ci.calls" | tr -d ' ')" \
   "0:none:Merge lane L1 ($IA) PR #21:no:1:3"
@@ -282,7 +288,7 @@ out="$(wb "$RFA" --wave-branch wave/noscripts)"; rc=$?
 has "W5 ci skipped line" "$out" "wave-build: ci — skipped (no scripts/ci-local.sh; the wave PR's CI is the gate)"
 has "W5b release skipped line" "$out" "wave-build: release — skipped (no scripts/bump-version.sh; run this project's release step on the wave branch)"
 check "W5c … the PR is still opened, exit 0; the last commit is the last merge; Progress line says skipped" \
-  "$rc:$(printf '%s\n' "$out" | tail -n1):$(git --git-dir="$ORIGIN" log -1 --format=%s wave/noscripts):$(grep -c 'wave built: wave/noscripts — PR https://github.com/o/r/pull/902 (lanes: L2 PR #12, L1 PR #11; ci skipped; release skipped)$' "$RFA" | tr -d ' '):$(wc -l < "$T/ci.calls" | tr -d ' ')" \
+  "$rc:$(printf '%s\n' "$out" | tail -n1):$(git --git-dir="$ORIGIN" log -1 --format=%s wave/noscripts):$(grep -c 'wave built: wave/noscripts — PR https://github.com/o/r/pull/902 (lanes: L2 PR #12, L1 PR #11; ci skipped; release skipped; overlap none)$' "$RFA" | tr -d ' '):$(wc -l < "$T/ci.calls" | tr -d ' ')" \
   "0:wave-build: opened — https://github.com/o/r/pull/902:Merge lane L1 ($IA) PR #11:1:$NC0"
 check "W5d gh was never asked to merge (no pr merge / api call in the whole suite)" "$(cat "$T/gh/FORBIDDEN" 2>/dev/null)" ""
 
@@ -345,6 +351,57 @@ check "W7 a parent whose Run Config carries - parallel: 1 ⇒ refused single-lan
   "1:wave-build: refused — single-lane mode (no wave PR)"
 check "W7b … nothing created or read: refs, worktrees, origin, PRs, gh calls and the parent run file unchanged" \
   "$(refs_state):$(ncreate):$(cksum < "$RFSL"):$(cat "$T/gh/calls" 2>/dev/null | wc -l | tr -d ' ')" "$R7:$N7:$S7:$G7"
+
+# ---- W8: same-wave overlap (warn-only, owner decision 2026-10-17) ---------------------------------------
+# L1 declares a1.txt but also edits shared2.txt (line 1) and d1.txt; L2 declares shared2.txt and edits
+# line 10. The merge is clean, so only the overlap check says the two lanes changed one file.
+git -C "$T/other" pull -q --ff-only origin main 2>/dev/null
+seq 1 10 > "$T/other/shared2.txt"; git -C "$T/other" add shared2.txt; git -C "$T/other" commit -qm "shared2"; git -C "$T/other" push -q origin main 2>/dev/null
+git -C "$P" pull -q --ff-only origin main 2>/dev/null
+C=automate-2026-10-17-100000; RFC="$P/.supervisor/automate/$C.md"
+mk_parent "$C" "- wave: 1 | items: $IA, $IB"
+mk_lane "$C" 1 "$IA" 31 a1.txt "lane one"
+mk_lane "$C" 2 "$IB" 32 shared2.txt "$(seq 1 9; echo ten-by-L2)"
+D1="$T/work/primary-lanes/$C/L1"; D2="$T/work/primary-lanes/$C/L2"
+{ echo one-by-L1; seq 2 10; } > "$D1/shared2.txt"; echo drift > "$D1/d1.txt"
+git -C "$D1" add shared2.txt d1.txt; git -C "$D1" commit -qm "lane 1 drift"; git -C "$D1" push -q origin "feature/$C-1" 2>/dev/null
+git -C "$D1" rev-parse HEAD > "$T/gh/head.31"; printf 'a1.txt\nd1.txt\nshared2.txt\nchangelog.d/c.md\n' > "$T/gh/diff.31"
+printf '# a\n\n## Touches\na1.txt\n' > "$D1/$IA"; printf '# b\n\n## Touches\nshared2.txt\n' > "$D2/$IB"
+G8="$(cat "$T/gh/calls" | wc -l | tr -d ' ')"; R8="$(refs_state)"
+pl="$(bash "$L" wave-plan "$RFC" 2>&1)"; rc=$?
+check "W8 wave-plan (read-only) prints the shared file, both lanes and their Touches standing, exit 0" "$rc:$(printf '%s\n' "$pl" | grep '^# overlap' | paste -sd '|' -)" \
+  "0:# overlap — shared2.txt changed by L1 (outside its Touches), L2 (declared)"
+check "W8b … and L1's other drift as one line (shared2.txt is not counted twice; changelog.d/ never counts)" "$(printf '%s\n' "$pl" | grep '^# drift')" \
+  "# drift — L1 changed 1 file(s) outside its Touches; no other lane of this wave changed them"
+check "W8c … wave-plan stayed read-only (refs unchanged, only gh reads)" "$(refs_state):$(sed -n "$((G8 + 1)),\$p" "$T/gh/calls" | awk '{ print $2 " " $3 }' | sort -u | paste -sd ',' -)" "$R8:pr diff,pr view"
+mv "$T/gh/diff.32" "$T/gh/diff.32.off"
+pl="$(bash "$L" wave-plan "$RFC" 2>&1)"
+has "W8d an unreadable lane diff ⇒ one NOT-RUN line, never a silent 'none'" "$pl" "# overlap — NOT-RUN — L2 PR #32 diff unreadable"
+has "W8d2 … the other lanes are still checked" "$pl" "# drift — L1 changed 2 file(s) outside its Touches"
+mv "$T/gh/diff.32.off" "$T/gh/diff.32"
+# PR #586 review: one declared set for both readers — a file L1's BRIEF declares (`path:`) is declared in the
+# overlap check too, exactly as lane-readiness's scope fence counts it, never "outside its Touches".
+mkdir -p "$D1/.supervisor/jobs/in-progress"; printf '# brief for %s\nfiles:\n  - path: "shared2.txt"\n' "$IA" > "$D1/.supervisor/jobs/in-progress/b1.md"
+pl="$(bash "$L" wave-plan "$RFC" 2>&1)"
+check "W8m a brief-declared path reads declared in the overlap check, as the scope fence reads it" "$(printf '%s\n' "$pl" | grep '^# overlap')" \
+  "# overlap — shared2.txt changed by L1 (declared), L2 (declared)"
+rm -rf "$D1/.supervisor/jobs"
+out="$(wb "$RFC")"; rc=$?
+printf '%s\n' "$out" | sed 's/^/       | /'
+URL8="$(printf '%s\n' "$out" | sed -n 's/^wave-build: opened — \(https:[^ ]*\).*/\1/p')"
+check "W8e warn-only: the wave is still built and its PR opened, exit 0; the result line names the overlap" "$rc:$(printf '%s\n' "$out" | tail -n1)" \
+  "0:wave-build: opened — $URL8 (overlap: 1 file(s) changed by 2+ lanes of this wave — listed in the PR body; review them before merging)"
+has "W8f the overlap line is printed before the worktree is created" "$(printf '%s\n' "$out" | sed -n '1,/^wave-build: worktree/p')" \
+  "wave-build: overlap — shared2.txt changed by L1 (outside its Touches), L2 (declared)"
+check "W8g both lanes merged (the clean merge the check exists for)" "$(git --git-dir="$ORIGIN" log --merges --format=%s "main..wave/$C-w1" | wc -l | tr -d ' '):$(git --git-dir="$ORIGIN" show "wave/$C-w1:shared2.txt" | sed -n '1p;10p' | paste -sd ',' -)" "2:one-by-L1,ten-by-L2"
+BODY8="$(cat "$T/gh/create.$(ncreate)")"
+has "W8h the wave PR body lists the shared file under its own heading" "$BODY8" "### Files changed by more than one lane"
+has "W8i … with both lanes and their Touches standing" "$BODY8" "- \`shared2.txt\` — L1 (outside its Touches), L2 (declared)"
+check "W8j the Progress record carries the overlap count" "$(grep -c "wave built: wave/$C-w1 — PR $URL8 (lanes: L1 PR #31, L2 PR #32; ci skipped; release skipped; overlap 1 file(s) changed by 2+ lanes)$" "$RFC" | tr -d ' ')" 1
+check "W8k lane-status still reads the wave record (lanes + PR) with the overlap clause appended" \
+  "$(bash "$L" lane-status "$RFC" --json 2>/dev/null | jq -c --arg u "$URL8" '[.waves[] | select(.pr == $u) | .lanes]')" '[["L1","L2"]]'
+check "W8l no lane was held or reordered: both lane PR heads are merged parents" \
+  "$(git --git-dir="$ORIGIN" log --merges --format=%P "main..wave/$C-w1" | awk '{ print $2 }' | sort | paste -sd ',' -)" "$(printf '%s\n%s\n' "$(cat "$T/gh/head.31")" "$(cat "$T/gh/head.32")" | sort | paste -sd ',' -)"
 
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

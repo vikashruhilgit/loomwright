@@ -66,6 +66,18 @@ No mechanical size check ships yet: count by hand. Too small to pay a run ⇒ me
 - **Evidence lives in a committed file, never the PR body.** A criterion that needs pasted commands, measured values or rejected alternatives names a committed evidence file as where they go: "then `docs/evidence/<slug>.md` contains …, and the PR body links to it" (Markdown, never `*.log`, which is commonly gitignored). The PR body is written before review and no fix task can edit it, so a criterion that only the body can satisfy is never healed (`skills/supervisor-readiness/SKILL.md` §"Acceptance Criteria"; Plan Reviewer Criterion 20 FAILs it on the Launch Pad path). `## Validation (must pass before merge)` running-system steps are different: their output is pasted into the PR body by whoever ran them, and the `/automate` validation gate reads it there and parks rather than looping a heal round.
 - **New findings join an existing theme.** A new item, Part, or "considered and not queued" row goes into that theme's plan doc. Do not start a new `*-followups` folder.
 
+### Shaping a set for parallel waves
+
+`/automate --parallel N` runs up to N items at once, each lane on the same base and blind to the others, so a set is only as parallel as its `## Touches` are disjoint, and only as safe as they are honest. For a set of 2+ items, after `--lint` passes and before the plan doc:
+
+1. **Plan it.** Write the item paths (Checklist order) one per line to a temp file; run `automate-helpers.sh plan-waves <file> --max <item count> --explain`. A width of the item count caps nothing, so the waves show the set's natural parallelism, and `explain` names why each later item waits.
+2. **Reshape needless serialisation.** For `conflicts with <item> on <path>`: merge same-file items into one item with Parts, move the shared change into one item the others depend on, or split until Touches are disjoint. Name the files of a `Touches unknown` item if you can. Keep real dependencies, and never drop a path to widen a wave: an undeclared file is the drift that collides inside a wave. Re-lint and re-plan, at most two rounds; report what still serialises and why.
+3. **Name the hotspots**: files many items may edit without declaring them (a barrel `index.ts`, shared types, test helpers, top-level docs). Give each to exactly one item per wave (declared there; the others' Scope says to leave it alone), or, when the coupling is structural (editing X always means editing Y), propose a `.agent/companions.json` rule (`{"when": "<glob>", "add": ["<path>"]}`) in the plan doc. Never write that file: it is a committed standing rule for every later plan, so the owner adds it.
+4. **Choose N from the plan, never a fixed default**: the owner's N when the request names one; else the widest wave the work justifies, lower when items are large or risky (a wave merges as one PR the owner reviews). 1 is a valid answer.
+5. **Record it in the plan doc's `## Run`**: the `/automate --backlog <plan doc> --parallel N` line (no `--parallel` when N is 1) and why that N, the final `wave <k>:` lines, one line per remaining serialisation (`03 waits on 01: both edit src/index.ts`), each hotspot and its owner, any proposed companions rule.
+
+Afterwards the engine checks: at wave end `wave-build` names every file two lanes of one wave changed (warn-only), so an undeclared hotspot shows there, after the lanes ran.
+
 ### Plan-doc template
 
 A requirement set has ONE plan doc, `<folder>/_BACKLOG.md` (the name `/automate --backlog` reads; Product Owner names its own `_BACKLOG-{YYYY-MM-DD-HHMMSS}-{slug}.md`). Sections in this order:
@@ -91,6 +103,7 @@ A requirement set has ONE plan doc, `<folder>/_BACKLOG.md` (the name `/automate 
 ## Run
 /automate --backlog <path of this file>
 <mode (safe / --auto-merge / --parallel N) and run rules, e.g. "no new follow-up items">
+<--parallel N only: why that N, the final wave lines, serialisations, hotspots (§"Shaping a set for parallel waves")>
 
 ## Considered and not queued
 <idea — why not, so nobody re-proposes it without new evidence>
@@ -280,6 +293,7 @@ Before finalizing a story:
 - [ ] Assumptions made explicit
 - [ ] Dependencies listed
 - [ ] `## Depends on` written (`none` when none) and `## Touches` filled from Scope — `plan-waves --lint` says `ok`
+- [ ] A set of 2+ items was planned with `plan-waves --explain`, reshaped where it serialised needlessly, and its waves and N are in the plan doc's `## Run` (§"Shaping a set for parallel waves")
 - [ ] Risks identified
 - [ ] Story is estimable (not too vague, not too large) and its shape was decided first — it fits one PR (§"Requirement Shape")
 
