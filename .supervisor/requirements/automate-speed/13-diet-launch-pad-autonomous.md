@@ -68,3 +68,9 @@ loomwright/commands/autonomous.md
 loomwright/docs/rationale/launch-pad-autonomous.md
 loomwright/docs/loop-inventory/launch-pad-autonomous.md
 changelog.d/as13-diet-launch-pad-autonomous.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-17T03:46:12Z
+- **Brief:** .supervisor/jobs/done/2026-10-16-diet-launch-pad-autonomous.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/573
