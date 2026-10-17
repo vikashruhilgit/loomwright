@@ -45,21 +45,24 @@ per-item-loop.md|§6 — The per-item loop|L1.3	judgment — covered at the step
 per-item-loop.md|§6 — The per-item loop|L1.4	gate-validation-gate-unrun-escalated
 per-item-loop.md|§6 — The per-item loop|L1.5	sync-closeout-no-trail
 per-item-loop.md|§6 — The per-item loop|L1.6	check-off-progress
-per-item-loop.md|Rate-limit park (end of RUN, before DRAIN)	rate-limit-park
 per-item-loop.md|Termination (two exits)	termination-limit-reached
-per-item-loop.md|Learning-emit at end-of-DRAIN (engine-native ground-truth signal)	learning-emit-end-of-drain
 per-item-loop.md|Brief-repair at RECONCILE and SYNC (merge-evidenced lifecycle repair)	brief-repair-merged
 # per-item-loop.md|Dismissed-findings decision step (before the park) and its two lists moved verbatim to
 # legacy-tail.md (automate-speed/06; read only under --legacy, not a unit source here). Their cases —
 # dismissed-findings-decision-step, park-first-ready-park, park-first-decisions-recorded — are driven
 # through scripts/automate-next-step.sh by test-automate-next-step.sh; dismissed-fix-now-re-drain stays
 # a golden case here, unmapped to a unit (the fix-now re-pass prose moved with the subsection).
+# per-item-loop.md|Rate-limit park (end of RUN, before DRAIN), Learning-emit at end-of-DRAIN (engine-native
+# ground-truth signal) and §7's three subsections — Suppress window (wrap the RUN phase), Config-toggle contract
+# (byte-for-byte; absent-delete; malformed-abort), Own ONE inline drain — moved verbatim to legacy-tail.md with
+# §6 steps 2–3's prose (automate-speed/07; read only under --legacy, not a unit source here). §6 steps 2–3 stay
+# units (L1.2 / L1.3, now "run next-step" pointers). Their cases — rate-limit-park, learning-emit-end-of-drain,
+# run-config-suppress-restore, run-record-pr, drain-owned-drain-started, drain-pinned-start-line-current-not-set,
+# drain-superseded-by-merge, dismissed-fix-now-re-drain — are also driven through scripts/automate-next-step.sh by
+# test-automate-next-step.sh.
 per-item-loop.md|Trail PR after merge and at run end	termination-queue-resolved
 per-item-loop.md|Post-merge close-out (`closeout` + the merge watcher)	reconcile-closeout-merged
 per-item-loop.md|§7 — Single drain (no double-dispatch) + the config-toggle contract	judgment — covered at the step boundary: drain-owned-drain-started
-per-item-loop.md|Suppress window (wrap the RUN phase)	run-config-suppress-restore
-per-item-loop.md|Config-toggle contract (byte-for-byte; absent-delete; malformed-abort)	run-config-suppress-restore
-per-item-loop.md|Own ONE inline drain	judgment — covered at the step boundary: drain-owned-drain-started
 per-item-loop.md|§8 — Single-open-PR invariant (BOTH modes)	pick-time-trail-gate-park
 
 # ---- modes-and-merge-gate.md
