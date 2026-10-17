@@ -326,6 +326,7 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-305 | skills/automate-loop/per-item-loop.md | q: **Visibility is gated by BOTH `changed_paths` AND `repo` | emitting a learning line | always pass a real `--repo` and `--plugin-version`; an empty repo is silently invisible | rule | prose | - | GAP |
 | AL-306 | skills/automate-loop/per-item-loop.md | q: **Idempotency:** pass `--run-id <run_id> --item <item> --pr-url <pr_url> --source automate_drain` | crash or `--resume` re-entry | key yields exactly one line per (run/item/pr/source, completeness) | deterministic | prose | script:automate-helpers.sh learning-emit | test-automate-helpers.sh |
 | AL-307 | skills/automate-loop/per-item-loop.md | q: **Advisory / fail-SAFE — NEVER gating.** `learning-emit` ALWAYS exits 0 | `learning-emit` fails | ignore its exit; never change drain result, GATE, Status, Current or inner gates | rule | prose | script:automate-helpers.sh learning-emit | test-automate-helpers.sh |
+| AL-561 | skills/automate-loop/per-item-loop.md | q: A call that starts with a flag (or an empty path) writes nothing | `learning-emit`'s first argument is empty or starts with `-` (ledger path omitted) | write nothing, print one stderr usage line, exit 0 | deterministic | prose | script:automate-helpers.sh learning-emit | test-automate-helpers.sh |
 | AL-308 | skills/automate-loop/per-item-loop.md | h: ### Brief-repair at RECONCILE and SYNC (merge-evidenced lifecycle repair) | RECONCILE or SYNC closeout | `brief-repair` as closeout's step 2; its line lands in Progress verbatim; only `MERGED` proceeds; exact `--evidence` match | deterministic | prose | script:automate-helpers.sh brief-repair | test-automate-helpers.sh |
 | AL-309 | skills/automate-loop/per-item-loop.md | q: **Advisory / fail-SAFE — NEVER gating.** `brief-repair` ALWAYS exits 0 | `brief-repair` fails | ignore its exit; never touch the run file, Queue, Current, or merge | rule | prose | script:automate-helpers.sh brief-repair | test-automate-helpers.sh |
 | AL-310 | skills/automate-loop/per-item-loop.md | q: **Idempotent.** A second call for the same item finds no in-progress brief | a second call | `skipped — no in-progress brief matches …`; never re-stamped | deterministic | prose | script:automate-helpers.sh brief-repair | test-automate-helpers.sh |
@@ -716,8 +717,8 @@ This file lists every branch and rule the `/automate` engine prose states — th
 132. AL-559 — the `--legacy` Step 0 trigger is prose-only; a run that read legacy-tail.md without the flag would follow two tails
 
 ## Counts
-- rows: 560
-- deterministic: 391
+- rows: 561
+- deterministic: 392
 - judgment: 12
 - rule: 131
 - story: 26
