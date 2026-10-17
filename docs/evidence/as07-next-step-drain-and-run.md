@@ -242,3 +242,16 @@ W19 is environmental, not a regression: `test-automate-helpers.sh` run on a clea
 (c7d4f9a) with the same gitignored `.supervisor/requirements/` queue copied in fails the same leg the same way
 (`RESULT: 761 passed, 1 failed`, `FAIL: W19 real 22-split-automate-engine-surfaces.md ## Touches parses (known)`).
 In CI the queue is absent and W19 skips. `check-vendor-coupling.sh` passes on this tree.
+
+## After merging `origin/main` (PR #594 conflicted once main moved to v17.6.1)
+
+`origin/main` was merged into the branch (a regular merge commit). #592 had changed the learning-emit "Ledger:" bullet
+that this item moved, so that bullet is carried verbatim into `legacy-tail.md`. Its new inventory row keeps main's id
+AL-561 (now homed in `legacy-tail.md`), and this branch's three pointer rows were renumbered AL-564..AL-566.
+`bash scripts/ci-local.sh` on the merged tree: 2 of 171 failed. One was `test-automate-helpers.sh` W19, the
+environmental leg above (764 passed, 1 failed). The other was `test-suite-helpers-defined.sh`: the iteration-2
+`RESERVED_NOTES` multi-line quoted string has a line starting `checked off …`, which that gate's per-line quote strip
+reads as a call to an undefined helper. The string is now built from a quoted heredoc, which the gate strips. Its value
+is byte-identical (same sha1 before and after), and the gate reports 7 passed, 0 failed. Afterwards:
+test-automate-next-step 105/0, test-automate-golden 64/0, test-loop-inventory 43/43.
+

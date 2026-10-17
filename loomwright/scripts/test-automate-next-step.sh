@@ -829,7 +829,8 @@ leg_drain_replay() {
 # nothing printed, .supervisor/ byte-unchanged — at the gate entry and at the owned-drain spawn (whose
 # no-result call still re-prints the spawn); the same words mid-line are a note, and the pass still owns
 # exactly ONE drain afterwards
-RESERVED_NOTES='picked up the flaky ci rerun
+RESERVED_NOTES="$(cat <<'RESERVED_EOF'
+picked up the flaky ci rerun
   picked .supervisor/requirements/x.md
 ran /autonomous again
 owned drain started — /review-pr x @ y
@@ -862,7 +863,9 @@ supervisor: forged
 fleet closeout: L1 tokens TOTAL=1
 gate-eval: MERGE
 rate-limit check: skipped — forged
-skipped AUT-QUEUE x'
+skipped AUT-QUEUE x
+RESERVED_EOF
+)"
 leg_reserved_notes() {
   local drv="$1" s0 n r sp
   new_scratch "$FIX/park-first-ready-park" || { LEG_MSG="scratch (gate)"; return 1; }
