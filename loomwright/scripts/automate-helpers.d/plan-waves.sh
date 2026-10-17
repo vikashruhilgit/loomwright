@@ -2,12 +2,15 @@
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/plan-waves.golden.
 #:  plan-waves       <runfile|dir|item-list> --max N [--explain] [--root <checkout>]  # parallel-automate/04: READ-ONLY wave planner — `## Depends on` / `## Touches` (strict grammar) + <root>/.agent/companions.json expansion ⇒ `wave <k>: …` + `blocked <item>: …` lines (`--explain`, parallel-automate/10: then one `explain <item> (wave <k>):` block per placed item not in wave 1); exit 1 + empty stdout on usage / item not found / unknown dependency / cycle / companions_malformed; called ONLY by `--parallel N>1` (item 05), never by the sequential loop
 #:  plan-waves       <item|dir|runfile|item-list> --lint [--root <checkout>]  # parallel-automate/10: READ-ONLY lint of both sections with the planner's OWN parser — one `<item>: Touches <verdict>; Depends on <verdict>` line per item + two count lines; exit 1 when any section is missing/unparsable (a sole `unknown` Touches is `ok (declared unknown)`); never needs --max
+#:  plan-waves       <item> --touches [--root <checkout>]  # READ-ONLY: ONE item's Touches set exactly as the planner reserves it (its OWN parser + <root>/.agent/companions.json expansion) ⇒ `known` then one normalized path per line, or the one line `unknown <why>`; exit 1 + empty stdout on usage (incl. an input that does not exist or is not *.md) / companions_malformed; lane-readiness's scope fence reads it
 
 # --------------------------------------------------------------------------- #
-# plan-waves — read-only wave planner (parallel-automate/04). Its ONLY caller is the
+# plan-waves — read-only wave planner (parallel-automate/04). Its ONLY planning caller is the
 # `--parallel N>1` coordinator (item 05); the sequential loop never calls it, and it is
 # never called when N = 1 (`--max 1` is NOT queue order once an item depends on a
-# later-numbered one, so the guarantee is by not calling it).
+# later-numbered one, so the guarantee is by not calling it). Product Owner also runs a
+# planning pass on the stories it just wrote, to shape them for a wave (its output is only
+# read, never acted on by the engine); `--lint` / `--touches` plan nothing.
 # --------------------------------------------------------------------------- #
 #
 # plan-waves <runfile|dir|item-list> --max N [--root <checkout>]
@@ -67,11 +70,21 @@
 # ANY section of ANY item is missing or unparsable, else 0; exit 1 + empty stdout on usage /
 # item not found. The verdict is a by-product of the SAME awk pass the planner reads
 # (_pw_touches / _pw_depends with a diag file), so lint `ok` ⇔ the planner reads the section as known.
+# --touches — `<item> --touches`: ONE `*.md` item's Touches set as the planner reserves it for that
+# item in a wave: the SAME _pw_touches pass, then the SAME _pw_expand (one pass of
+# <root>/.agent/companions.json; absent ⇒ the planner's one stderr note). Stdout: `known` then one
+# normalized entry per line (trailing `/` stripped, sorted, unique — the planner's intersection
+# input: a path is inside an entry when it equals it or starts with it plus `/`), or the ONE line
+# `unknown <why>` (<why> as in `runs alone: Touches unknown (<why>)`: `missing`, `declared unknown`,
+# `unparsable line <N>: "<text>"`), exit 0. Exit 1 + empty stdout on usage (an input that does not
+# exist, or is not a `*.md` file) or companions_malformed. `--max` is not needed (ignored when given). Its reader is lane-readiness's
+# scope fence (automate-lanes.d/readiness.sh), so the fence and the planner cannot read one Touches
+# section two ways.
 
 _PW_TMP=""
 _PW_EXPLAIN=0
 _pw_fail()  { echo "plan-waves: $*" >&2; exit 1; }
-_pw_usage() { echo "plan-waves: ${1:-bad usage}" >&2; echo "usage: automate-helpers.sh plan-waves <runfile|dir|item-list> --max N [--explain] [--root <checkout>]" >&2; echo "       automate-helpers.sh plan-waves <item|dir|runfile|item-list> --lint [--root <checkout>]" >&2; exit 1; }
+_pw_usage() { echo "plan-waves: ${1:-bad usage}" >&2; echo "usage: automate-helpers.sh plan-waves <runfile|dir|item-list> --max N [--explain] [--root <checkout>]" >&2; echo "       automate-helpers.sh plan-waves <item|dir|runfile|item-list> --lint [--root <checkout>]" >&2; echo "       automate-helpers.sh plan-waves <item> --touches [--root <checkout>]" >&2; exit 1; }
 
 # _pw_abs <path> — "<physical dir>/<basename>"; non-zero when the directory does not exist.
 _pw_abs() {
@@ -338,15 +351,16 @@ plan_waves() {
       --root)
         case "${2:-}" in ""|-*) _pw_usage "--root requires a checkout path (got '${2:-}')" ;; esac
         root="$2"; shift 2 ;;
-      --explain) [ "$mode" != lint ] || _pw_usage "--explain and --lint are separate modes"; mode=explain; shift ;;
-      --lint) [ "$mode" != explain ] || _pw_usage "--explain and --lint are separate modes"; mode=lint; shift ;;
+      --explain) case "$mode" in lint|touches) _pw_usage "--explain, --lint and --touches are separate modes" ;; esac; mode=explain; shift ;;
+      --lint) case "$mode" in explain|touches) _pw_usage "--explain, --lint and --touches are separate modes" ;; esac; mode=lint; shift ;;
+      --touches) case "$mode" in explain|lint) _pw_usage "--explain, --lint and --touches are separate modes" ;; esac; mode=touches; shift ;;
       -*) _pw_usage "unknown option $1" ;;
       *) [ -z "$input" ] || _pw_usage "more than one input ($input, $1)"; input="$1"; shift ;;
     esac
   done
   [ -n "$input" ] || _pw_usage "missing <runfile|dir|item-list>"
   [ -e "$input" ] || _pw_usage "input not found: $input"
-  if [ "$mode" != lint ]; then
+  if [ "$mode" = plan ] || [ "$mode" = explain ]; then
     case "$max" in ""|*[!0-9]*) _pw_usage "--max must be a positive integer (got '$max')" ;; esac
     [ "${#max}" -le 6 ] && [ "$((10#$max))" -ge 1 ] || _pw_usage "--max must be a positive integer (got '$max')"
     max=$((10#$max))
@@ -361,6 +375,18 @@ plan_waves() {
   _PW_TMP="$(mktemp -d)" || _pw_fail "mktemp -d failed"
   trap 'rm -rf "$_PW_TMP"' EXIT
   : > "$_PW_TMP/checked"; : > "$_PW_TMP/plan"
+
+  # 0. --touches: ONE item, no plan set, no dependency resolution, no waves.
+  if [ "$mode" = touches ]; then
+    case "$input" in *.md) [ -f "$input" ] || _pw_fail "item not found: $input" ;; *) _pw_usage "--touches reads ONE *.md item (got $input)" ;; esac
+    _pw_touches "$input" "$_PW_TMP/tdiag" > "$_PW_TMP/t"
+    if [ "$(head -n1 "$_PW_TMP/t")" != known ]; then echo "unknown $(_pw_touches_why "$_PW_TMP/tdiag")"; return 0; fi
+    _pw_load_companions "$root"
+    sed '1d' "$_PW_TMP/t" > "$_PW_TMP/raw"
+    _pw_expand "$_PW_TMP/raw" "$root" "$_PW_TMP/set"
+    echo known; cat "$_PW_TMP/set"
+    return 0
+  fi
 
   # 1. The plan set, as `<display>\t<path to open>` lines.
   if [ -d "$input" ]; then

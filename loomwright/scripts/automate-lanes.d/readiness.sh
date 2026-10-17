@@ -4,7 +4,10 @@
 #   validation     each `## Validation` entry of the item: PASS only with pasted output (a fenced block)
 #                  in the PR body's matching section; mentioned without output, or absent ⇒ NOT-RUN
 #   carried-notes  the brief's carried MEDIUM/LOW Plan Review notes, accounted for in the PR body
-#   scope-fence    `gh pr diff --name-only` ⊆ the item's `## Touches` / the brief's lanes + changelog.d/
+#   scope-fence    `gh pr diff --name-only` ⊆ the item's Touches set as the planner reserved it (`plan-waves
+#                  --touches`: strict grammar + companions) / the brief's lanes + changelog.d/; advisory —
+#                  whether drift collides with another lane of the same wave is wave-plan / wave-build's
+#                  overlap check (wave.sh _lanes_wave_overlap), not this per-lane report
 #   gates          required checks on the current head, dismissed-finding decisions, children-settled
 #   headline-repro the Validation entry naming a mutation / repro (PASS n/a when none is named)
 # Called by the lane at its ready_for_release park; re-written on demand (`lane-status --refresh-readiness`,
@@ -234,12 +237,22 @@ lanes_readiness() {
     else cworst=NOT-RUN; cline="carried-notes: NOT-RUN — $nc carried note(s), no accounting in the PR body"; fi
     crows="$(sed 's/^/  - /' "$tmp/carried")"
   fi
-  # ---- c: scope fence
-  local fline frows="" fworst f dcl outside=""
+  # ---- c: scope fence — declared = the item's Touches set exactly as the planner reserved it for the
+  # wave (`plan-waves --touches`: the planner's own parser + companion expansion, so the fence never
+  # reads a Touches section a second way) + the brief's `path:` lines. The planner's helper is called
+  # directly, never through the $HELPERS seam: it is read-only and must be the real grammar.
+  local fline frows="" fworst f dcl outside="" tw tnote=""
+  tw="$(bash "$HERE/automate-helpers.sh" plan-waves "$itemf" --touches --root "$LN_DIR" 2>/dev/null)" || tw=""
+  case "$tw" in
+    known*) ;;
+    unknown*) tnote="; Touches ${tw} — only the brief's paths are declared (the item ran alone in its wave)"; tw="" ;;
+    *) tnote="; Touches unreadable (plan-waves --touches failed) — only the brief's paths are declared"; tw="" ;;
+  esac
   {
-    awk '/^## /{ on = ($0 ~ /^## Touches/); next } on' "$itemf" 2>/dev/null | grep -o '`[^`]*`' | tr -d '`'
-    [ -n "$brief" ] && sed -n 's/.*path: *"\([^"]*\)".*/\1/p; s/^ *- *"\([^"]*\)" *$/\1/p' "$brief"
-  } 2>/dev/null | sed 's#^\./##' | awk 'index($0, "/") || index($0, ".")' | env LC_ALL=C sort -u > "$tmp/declared"
+    [ -n "$tw" ] && printf '%s\n' "$tw" | sed '1d'   # already normalized: a top-level dir reads `src`
+    [ -n "$brief" ] && sed -n 's/.*path: *"\([^"]*\)".*/\1/p; s/^ *- *"\([^"]*\)" *$/\1/p' "$brief" \
+      | sed 's#^\./##' | awk 'index($0, "/") || index($0, ".")'
+  } 2>/dev/null | env LC_ALL=C sort -u > "$tmp/declared"
   if [ -z "$pr" ] || ! "$LANES_GH" pr diff "$pr" --name-only > "$tmp/files" 2>/dev/null; then
     fworst=NOT-RUN; if [ -n "$pr" ]; then fline="scope-fence: NOT-RUN — gh pr diff unreadable ($pr)"; else fline="scope-fence: NOT-RUN — gh pr diff unreadable: no PR recorded"; fi
   else
@@ -249,15 +262,15 @@ lanes_readiness() {
       local okf=0
       while IFS= read -r dcl; do
         [ -n "$dcl" ] || continue
-        case "$f" in "$dcl"|*/"$dcl") okf=1; break ;; esac
+        case "$f" in "$dcl"|*/"$dcl"|"$dcl"/*) okf=1; break ;; esac
         case "$dcl" in */) case "$f" in "$dcl"*) okf=1; break ;; esac ;; esac
         case "$dcl" in *'*'*) case "$f" in $dcl) okf=1; break ;; esac ;; esac
       done < "$tmp/declared"
       [ "$okf" = 1 ] || outside="$outside$f
 "
     done < "$tmp/files"
-    if [ -z "$outside" ]; then fworst=PASS; fline="scope-fence: PASS — $(grep -c . "$tmp/files" | tr -d ' ') file(s) within the declared files + changelog.d/"
-    else fworst=FAIL; fline="scope-fence: FAIL — file(s) outside the declared files + changelog.d/"; frows="$(printf '%s' "$outside" | sed '/^$/d; s/^/  - /')"; fi
+    if [ -z "$outside" ]; then fworst=PASS; fline="scope-fence: PASS — $(grep -c . "$tmp/files" | tr -d ' ') file(s) within the declared files + changelog.d/$tnote"
+    else fworst=FAIL; fline="scope-fence: FAIL — file(s) outside the declared files + changelog.d/$tnote"; frows="$(printf '%s' "$outside" | sed '/^$/d; s/^/  - /')"; fi
   fi
   # ---- d: gates
   local gline grows="" gworst=PASS cj cs
