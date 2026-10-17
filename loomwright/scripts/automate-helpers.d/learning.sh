@@ -62,12 +62,23 @@
 # and a failure must NEVER gate the engine. We `set +e` at the top (this lib is `set -euo pipefail`) so any failing
 # command (jq absent, unwritable ledger, bad JSON, missing arg) degrades to a
 # no-op / degraded line and returns 0 — same posture as dispatch-pr-postmortem.sh /
-# send-webhook.sh.
+# send-webhook.sh. A missing ledger path (first argument empty or flag-shaped) is a
+# no-op with ONE stderr usage line, never a write to a file named after the flag.
 learning_emit() {
   set +e   # FAIL-SAFE: always exit 0; never die/abort inside the per-item loop.
 
+  # The ledger path is POSITIONAL and FIRST. A caller that leaves it out and starts with a
+  # flag (`learning-emit --repo …`, `--run-id …`, `--help`) would otherwise append the line
+  # to a file literally named after the flag in its cwd — the real ledger gets nothing and
+  # the junk file dirties lane clones / the primary checkout. Refuse it: write nothing, say
+  # so in ONE stderr line, and still return 0 (fail-SAFE; the per-item loop ignores the
+  # exit). A real path that starts with `-` can be passed as `./-name`.
   local ledger="${1:-}"; shift || true
-  [ -n "$ledger" ] || return 0
+  case "$ledger" in
+    ''|-*)   # not a ledger path: empty, or a flag the caller put first
+      echo "automate-helpers: learning-emit: no ledger path (first argument '${ledger}') — nothing written; usage: learning-emit <ledger_path> --repo … --pr-url … --run-id … --item …" >&2
+      return 0 ;;
+  esac
 
   # Defaults.
   local repo="" number="0" pr_url="" run_id="" item=""
