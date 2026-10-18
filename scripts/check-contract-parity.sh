@@ -412,6 +412,7 @@ agents/plan-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
 skills/self-heal-advisory/SKILL.md|status|pass,advisory_failures,advisory_violations,unverified,skipped,failed,checkpoint,enum
 skills/preflight-sync/SKILL.md|status|checkpoint,failed,enum
 skills/supervisor-config/SKILL.md|status|failed,enum
+docs/supervisor-legacy-phases.md|status|completed,completed_with_escalation,failed,checkpoint,enum,pass,advisory_failures,unverified,skipped,running
 skills/self-heal-advisory/SKILL.md|heal_decision|PASS,ESCALATED,null,enum
 "
 
