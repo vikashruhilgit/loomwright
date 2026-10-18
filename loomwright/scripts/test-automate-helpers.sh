@@ -205,7 +205,7 @@
 # verbatim, in base order, into test-automate-helpers.d/NN-<name>.sh, sourced BY NAME at top level; a
 # missing part aborts (exit 1). Section E's all-pass MERGE leg stays inline here, after 05-gate-eval.
 # `bash test-automate-helpers.sh [<part>...]` (names without .sh) runs only those parts plus their
-# prerequisites (05-gate-eval / 06-gate-eval-tail / 07-rules-gate need 05-gate-eval-harness), in order.
+# prerequisites (the tah_prereq map in the loader below), in base order.
 # <<< runner-only
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -319,17 +319,30 @@ TAH_D="$HERE/test-automate-helpers.d"
 TAH_PARTS="01-config 02-runfile 03-intake 04-resume 05-gate-eval-harness 05-gate-eval 06-gate-eval-tail 07-rules-gate 08-learning-emit 09-brief-repair 10-reconcile-status 11-ceiling 12-meta 13-plan-waves 14-escalation 15-lane-seams 16-queue-gates"
 tah_prereq() { case "$1" in 05-gate-eval|06-gate-eval-tail|07-rules-gate) echo 05-gate-eval-harness ;; esac; }
 # A part that does not parse would make `.` fail, skip every leg in it and leave the suite green, which
-# the one-file base could not do. So a part must also pass `bash -n` before anything is sourced.
+# the one-file base could not do. So a part must also pass `-n` before anything is sourced, under the
+# SAME interpreter that will source it ($BASH), not whichever bash is first on PATH.
 tah_part() {
   [ -f "$TAH_D/$1.sh" ] && [ -r "$TAH_D/$1.sh" ] || { echo "  FAIL: missing test part: test-automate-helpers.d/$1.sh"; exit 1; }
-  bash -n "$TAH_D/$1.sh" 2>/dev/null || { echo "  FAIL: test part does not parse (bash -n): test-automate-helpers.d/$1.sh"; exit 1; }
+  "${BASH:-bash}" -n "$TAH_D/$1.sh" 2>/dev/null || { echo "  FAIL: test part does not parse (bash -n): test-automate-helpers.d/$1.sh"; exit 1; }
 }
+tah_known() { local p; for p in $TAH_PARTS; do [ "$p" = "$1" ] && return 0; done; return 1; }
+# The part list is stated four ways (TAH_PARTS, the tah_prereq map, the files in test-automate-helpers.d/
+# and the source lines below); each must agree with TAH_PARTS or a part is silently never run.
+for tah_p in $TAH_PARTS; do
+  for tah_q in $(tah_prereq "$tah_p"); do
+    tah_known "$tah_q" || { echo "  FAIL: prerequisite of $tah_p not in TAH_PARTS: $tah_q"; exit 1; }
+  done
+done
+for tah_f in "$TAH_D"/*.sh; do
+  [ -e "$tah_f" ] || continue
+  tah_p="$(basename "$tah_f" .sh)"
+  tah_known "$tah_p" || { echo "  FAIL: test part not in TAH_PARTS: test-automate-helpers.d/$tah_p.sh"; exit 1; }
+done
 TAH_ONLY=""; TAH_SEL=" $TAH_PARTS "
 if [ "$#" -gt 0 ]; then
   TAH_ONLY=1; TAH_SEL=" "
   for tah_a in "$@"; do
-    tah_k=""; for tah_p in $TAH_PARTS; do [ "$tah_p" = "$tah_a" ] && tah_k=1; done
-    [ -n "$tah_k" ] || { echo "  FAIL: unknown test part: $tah_a (known: $TAH_PARTS)"; exit 1; }
+    tah_known "$tah_a" || { echo "  FAIL: unknown test part: $tah_a (known: $TAH_PARTS)"; exit 1; }
     for tah_p in $(tah_prereq "$tah_a") "$tah_a"; do
       case "$TAH_SEL" in *" $tah_p "*) ;; *) TAH_SEL="$TAH_SEL$tah_p " ;; esac
     done
@@ -337,7 +350,16 @@ if [ "$#" -gt 0 ]; then
 fi
 set --
 tah_sel() { case "$TAH_SEL" in *" $1 "*) return 0 ;; esac; return 1; }
-tah_run() { tah_sel "$1" || return 1; tah_part "$1"; }
+# tah_run gates each source line: the name must be in TAH_PARTS and appear on one source line only;
+# tah_done accumulates what was sourced, compared with tah_list (selection, base order) before RESULT.
+tah_done=""; tah_seen=" "
+tah_run() {
+  tah_known "$1" || { echo "  FAIL: part not in TAH_PARTS: $1"; exit 1; }
+  case "$tah_seen" in *" $1 "*) echo "  FAIL: part has more than one source line: $1"; exit 1 ;; esac
+  tah_seen="$tah_seen$1 "
+  tah_sel "$1" || return 1
+  tah_part "$1"; tah_done="$tah_done $1"
+}
 tah_list=""; for tah_p in $TAH_PARTS; do tah_sel "$tah_p" && { tah_part "$tah_p"; tah_list="$tah_list $tah_p"; }; done
 if [ -n "$TAH_ONLY" ]; then echo "== test-automate-helpers: parts$tah_list (in this order, prerequisites included) =="; fi
 # <<< runner-only
@@ -379,6 +401,7 @@ tah_run 15-lane-seams && . "$TAH_D/15-lane-seams.sh"
 tah_run 16-queue-gates && . "$TAH_D/16-queue-gates.sh"
 # >>> runner-only
 if [ -n "$TAH_ONLY" ]; then rm -rf "$SPLIT_D"; fi
+[ "$tah_done" = "$tah_list" ] || { echo "  FAIL: parts sourced ($tah_done ) differ from parts selected ($tah_list ): a TAH_PARTS entry has no source line, or source lines are out of TAH_PARTS order"; exit 1; }
 # <<< runner-only
 echo
 echo "RESULT: $pass passed, $fail failed"
