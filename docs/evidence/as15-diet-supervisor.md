@@ -300,3 +300,211 @@ One bounded pass for duplicated text only — no rule reworded, no pinned needle
 Searched and left alone: (1) the spawn prompts — the code-reviewer prompt's lines are pinned substring-by-substring (brief-conformance (a), deviations (e)/(f), validate-code-review-result's verdict window, execution-directive, phase45-rounds) and the DIFFERENT-LENS class list is held to mirror parity with `skills/quality-checklist/SKILL.md`; the fix-task and contract-builder prompts go to `general-purpose` Tasks, which carry no agent prompt of their own, so nothing in them is already carried by the spawned agent. (2) Same-rule-twice inside a split file: the remaining repeats (step 1g vs §"Deviations advisory", steps 1e/1f vs their sections) carry needles pinned on both copies.
 
 Group all-modes after this pass: 78,917 + 41,274 + 137,882 + 24,137 + 8,168 = **289,378 bytes** (base 391,294; −26.0%); default path without `multi-voter.md`: 280,449. **AC2 is still NOT met — 15,473 bytes over 273,905.** Closing it needs a reword of pinned or agent-facing prompt text, which this item rules out; stopped here as instructed. All gates and pinning tests re-run green after the pass (same set as the results table above, 29/29 scripts rc 0).
+
+## Final measurements (subtask 4)
+
+Measured on the finished branch (HEAD `0c80063`, clean tree) on 2026-10-19, from the repo root unless a `cd` is shown. The records above are left as written. One arithmetic slip in them: the subtask 3 duplication-pass line gives self-heal-advisory as 137,882; the five files sum to 136,882 (see below). The 289,378 total on that line is correct.
+
+### AC2 — runtime read set (`wc -c`) — **AC2 NOT MET**
+
+Before, re-measured at the base commit into a scratch dir (same commands as §"Baseline"):
+
+```bash
+S=$(mktemp -d)
+for f in agents/supervisor.md commands/supervisor.md skills/self-heal-advisory/SKILL.md skills/async-orchestration/SKILL.md; do
+  mkdir -p "$S/loomwright/$(dirname "$f")"; git show 3a03dfa:loomwright/$f > "$S/loomwright/$f"
+done
+cd "$S/loomwright" && wc -c agents/supervisor.md commands/supervisor.md skills/self-heal-advisory/SKILL.md skills/async-orchestration/SKILL.md
+```
+
+```
+  105710 agents/supervisor.md
+   60305 commands/supervisor.md
+  176146 skills/self-heal-advisory/SKILL.md
+   49133 skills/async-orchestration/SKILL.md
+  391294 total
+```
+
+After, all modes. These are the four sources plus every split file this item created. `git diff --name-status 3a03dfa -- loomwright/skills loomwright/agents loomwright/commands` lists the five `A` files below and no others. The rationale and inventory docs are not counted.
+
+```bash
+cd loomwright && wc -c agents/supervisor.md commands/supervisor.md \
+  skills/self-heal-advisory/SKILL.md skills/self-heal-advisory/on-entry.md skills/self-heal-advisory/completion-tail.md \
+  skills/self-heal-advisory/escalation.md skills/self-heal-advisory/multi-voter.md \
+  skills/async-orchestration/SKILL.md skills/async-orchestration/finalize.md
+```
+
+```
+   78917 agents/supervisor.md
+   41274 commands/supervisor.md
+   54843 skills/self-heal-advisory/SKILL.md
+   16188 skills/self-heal-advisory/on-entry.md
+   52521 skills/self-heal-advisory/completion-tail.md
+    4401 skills/self-heal-advisory/escalation.md
+    8929 skills/self-heal-advisory/multi-voter.md
+   24137 skills/async-orchestration/SKILL.md
+    8168 skills/async-orchestration/finalize.md
+  289378 total
+```
+
+| Read set | Bytes | Change vs 391,294 | Against AC2 target ≤ 273,905 |
+|---|---|---|---|
+| **All modes**: all nine files (the AC2 measure) | **289,378** | −101,916 (**−26.0%**) | **NOT MET**: 15,473 bytes over |
+| Default path: no `--multi-voter-heal` and no escalation, so without `multi-voter.md` and `escalation.md` | 276,048 | −115,246 (−29.5%) | also over, by 2,143 |
+| Default path including `escalation.md` (a base mismatch or a fix-task crash) | 280,449 | −110,845 (−28.3%) | over, by 6,544 |
+| *Information only, NOT the honest read-set figure:* the requirement's literal Touches list, the four original files alone | 199,171 | −192,123 (−49.1%) | n/a |
+
+The last row is not a read-set measure. It leaves out the 90,207 bytes of split-file text that a run still Reads at the step that needs it. Most of that text moved out of the four files and was not cut. The figure is here because the requirement's Touches list names only the four files. It does not count toward AC2.
+
+Per source, all modes: `agents/supervisor.md` −25.3%; `commands/supervisor.md` −31.6%; self-heal-advisory (five files, 136,882) −22.3%; async-orchestration (two files, 32,305) −34.2%.
+
+**AC2 is NOT met.** The all-modes total is 289,378 bytes, 26.0% below the base, against a target of at least 30%. The default-path set (29.5%) also misses the target. Subtask 3 recorded why it stopped: most of the remaining bytes are text that a test pins byte-for-byte, or text that a spawned agent receives verbatim. That includes the code-reviewer spawn prompt (~12.4 KB, pinned line by line by six seam tests), the fix-task prompt (~6.1 KB), the contract-builder prompt (~4.3 KB) and the loop pseudo-code (~14 KB). Every further cut there means rewording a pinned or agent-facing instruction, and this item rules that out twice: by its no-behaviour-change non-goal, and by AC7 (pinned text is never reworded). The bounded duplication pass (above) took the pair's Phase 4.5 restatements that subtask 3 had listed as candidates. That pass moved the total from 292,073 to 289,378. Nothing it left can be cut without rewording. Closing the remaining 15,473 bytes needs an owner decision: either allow the pinned needles to be reworded together with their tests, or accept the 26.0% reduction.
+
+### AC3 — history references
+
+The requirement's regex, per file, over the base-commit scratch copy and the after tree:
+
+```bash
+RX='#[0-9]{2,4}\b|queue/[0-9]+|20[0-9]{2}-[0-9]{2}-[0-9]{2}|item [0-9]+'
+# before: in "$S/loomwright", the four sources; after: in loomwright/, the nine files above
+for f in <files>; do printf '%s %s\n' "$f" "$(grep -oE "$RX" "$f" | wc -l | tr -d ' ')"; done
+grep -noE "$RX" agents/supervisor.md commands/supervisor.md skills/self-heal-advisory/*.md skills/async-orchestration/*.md   # after, the hits
+```
+
+- Before (base commit): **31** (`agents/supervisor.md` 3, `commands/supervisor.md` 5, `skills/self-heal-advisory/SKILL.md` 19, `skills/async-orchestration/SKILL.md` 4).
+- After: **9**. AC3 is met (9 < 31). Each of the nine is kept on purpose:
+
+```
+agents/supervisor.md:290:#512                         the Phase 4 gate line test-release-refold.sh pins byte-for-byte
+skills/self-heal-advisory/SKILL.md:5:2026-10-19       frontmatter lastUpdated
+skills/self-heal-advisory/SKILL.md:71:#431            ### House-rule verdicts line heading (an h: inventory anchor and a §-citation target)
+skills/self-heal-advisory/SKILL.md:71:#432            same heading
+skills/self-heal-advisory/SKILL.md:361:#512           the release re-fold comment in the loop
+skills/self-heal-advisory/SKILL.md:403:#512           the error-table row test-release-refold.sh pins
+skills/async-orchestration/SKILL.md:6:2026-10-19      frontmatter lastUpdated
+skills/async-orchestration/finalize.md:53:#512        step 5.5 heading line (pinned by test-release-refold.sh)
+skills/async-orchestration/finalize.md:98:#511       ## Evidence explainer (pinned by test-pr-body-evidence-seam.sh)
+```
+
+`commands/supervisor.md`, `on-entry.md`, `completion-tail.md`, `escalation.md` and `multi-voter.md` carry none.
+
+### AC1 — story and rule rows by home
+
+Command (every `story` and `rule` row of the group, counted by home; the rationale anchor and a `script:` home's sub-key are stripped):
+
+```bash
+AWKC='/^\| SV-[0-9]+ \|/ { n = split($0, c, " \\| "); k = c[6]; h = c[7]; sub(/#.*/, "", h); sub(/ .*/, "", h); if (k == "story" || k == "rule") print k "\t" h }'
+git show 3a03dfa:loomwright/docs/loop-inventory/supervisor.md | awk "$AWKC" | sort | uniq -c   # before
+awk "$AWKC" loomwright/docs/loop-inventory/supervisor.md | sort | uniq -c                     # after
+```
+
+Before:
+
+```
+ 298 rule	prose
+   5 rule	script:supervisor-next-step.sh
+  21 story	prose
+```
+
+After:
+
+```
+ 147 rule	global
+   1 rule	script:build-state.sh
+   5 rule	script:supervisor-next-step.sh
+   1 rule	script:validate-worker-result.py
+   1 rule	script:verify-provides.sh
+   1 rule	script:worktree-audit.sh
+ 151 rule	step-scoped
+  31 story	rationale:docs/rationale/supervisor.md
+```
+
+Zero `story` or `rule` rows are homed `prose`. No `rule` row has a `rationale:` home. The 307 rule rows and 31 story rows match the inventory's `## Counts` (`rule: 307`, `story: 31`, `rows: 759`, `GAP: 505`). The rule total grew 303 → 307 and the story total 21 → 31, because rows were added for new headings and split stories (see the subtask 1 and 2 results).
+
+### AC4 — the multi-voter Read is conditional everywhere
+
+The command is `cd loomwright && grep -rn 'multi-voter\.md' agents/supervisor.md commands/supervisor.md skills/self-heal-advisory/*.md skills/async-orchestration/*.md`, re-run on the final tree. Every hit is conditional on `MULTI_VOTER_HEAL` / `--multi-voter-heal`, or is descriptive (no Read). The matched text:
+
+```
+agents/supervisor.md:67     … `multi-voter.md` only under `--multi-voter-heal`). …
+agents/supervisor.md:302    … `multi-voter.md` ONLY when `MULTI_VOTER_HEAL` is true (never on the default path); …
+agents/supervisor.md:339    … Protocol authority …: `skills/self-heal-advisory/multi-voter.md`, Read only when `MULTI_VOTER_HEAL` is true.
+commands/supervisor.md:73   … `multi-voter.md` only when `MULTI_VOTER_HEAL` is true, …
+skills/self-heal-advisory/SKILL.md:3     (frontmatter description) … multi-voter.md (only under --multi-voter-heal) …
+skills/self-heal-advisory/SKILL.md:17    | `multi-voter.md` | only when `MULTI_VOTER_HEAL == true` | multi-voter verification |
+skills/self-heal-advisory/SKILL.md:384   … only when `MULTI_VOTER_HEAL == true`, Read `multi-voter.md` … When `MULTI_VOTER_HEAL == false` (the default) do NOT Read it …
+skills/self-heal-advisory/on-entry.md:107   … `multi-voter.md` §"Delay-vs-decide" … (a citation, no Read)
+```
+
+A second grep, `grep -rnE 'self-heal-advisory/\*|self-heal-advisory/"|every file (in|of) this skill' <same files>`, found no whole-directory or glob Read. Its only hit is the HARD ADVISORY CONTRACT line in `SKILL.md`, which says the contract applies "in every file of this skill" and is not a Read. The transcript-level assertion (a default-path run never Reads the file) is part of Validation 3 below.
+
+### Validation 1 — AC12 gates and every repointed test
+
+These ran one after another from the worktree root on the final tree. Each output went to its own log, and each script's own summary line is quoted below.
+
+| Gate / test | Exit | Result |
+|---|---|---|
+| `bash loomwright/scripts/test-loop-inventory.sh` | 0 | `RESULT: 43/43 passed` (`loop-inventory: OK — 2238 rows across 4 groups`) |
+| `bash scripts/check-doc-currency.sh` | 0 | `✓ doc-currency: all checked version/count claims match the authoritative source.` (no pass/total; exit code reported) |
+| `bash loomwright/scripts/test-citation-drift.sh` | 0 | `citation-drift: 26 passed, 0 failed` |
+| `bash scripts/check-token-budget.sh` | 0 | `breaches: 0 \| errors: 0` (`.agents.supervisor` 19729 / 30378, `.commands.supervisor` 10318 / 16002, `.skills["self-heal-advisory"]` 34219 / 48440 (5 files), `.skills["async-orchestration"]` 8076 / 15760 (2 files) proxy tokens) |
+| `bash scripts/check-contract-parity.sh` | 0 | `✓ contract-parity: all hook-enforced fields present and all status/decision literals in-enum.` (no pass/total; exit code reported) |
+| `bash scripts/check-vendor-coupling.sh` | 0 | `breaches: 0 \| errors: 0` (`agents/supervisor.md` 37/40, `commands/supervisor.md` 15/15, self-heal `SKILL.md` 7/7, `completion-tail.md` 16/16, `on-entry.md` 5/5, `multi-voter.md` 1/1, async `SKILL.md` 18/18) |
+
+The repointed tests are every `test-*.sh` that `git diff --name-only 3a03dfa -- 'loomwright/scripts/test-*'` lists. `test-loop-inventory.sh` is in the table above. `test-automate-trail.d/05-finalize-closeout-others.sh` runs inside `test-automate-trail.sh`.
+
+| Test | Exit | Result | Pin-mutation control |
+|---|---|---|---|
+| `test-brief-conformance-seam.sh` | 0 | 26 passed, 0 failed | subtask 3 table |
+| `test-check-children-settled.sh` | 0 | 61 passed, 0 failed | subtask 2 table |
+| `test-check-contract-parity.sh` | 0 | 23/23 passed | its own red legs for the new ENUMS rows (subtasks 2, 3) |
+| `test-classify-risk.sh` | 0 | 45 passed, 0 failed | subtask 3 table (E4) |
+| `test-closed-enum-pins-seam.sh` | 0 | 79 passed, 0 failed | subtask 3 table |
+| `test-execution-directive-seam.sh` | 0 | 50 passed, 0 failed | subtask 3 table |
+| `test-not-verified-transport-seam.sh` | 0 | 25 passed, 0 failed | subtask 2 (e), subtask 3 (f) |
+| `test-pr-body-evidence-seam.sh` | 0 | 77 passed, 0 failed | subtask 2 table |
+| `test-reconcile-resume-state.sh` | 0 | 23 passed, 0 failed | comment-anchor change only, so no needle; the pinned citations in `reconcile-resume-state.sh` get the control below |
+| `test-release-refold.sh` | 0 | 26 passed, 0 failed | subtask 2 table |
+| `test-rules-audit-line.sh` | 0 | 32 passed, 0 failed | subtask 3 table |
+| `test-rules-seams.sh` | 0 | 139 passed, 0 failed | subtask 3 table |
+| `test-system-contract.sh` | 0 | 124 passed, 0 failed | subtask 3 table (§20) |
+| `test-validate-code-review-result.sh` | 0 | `pass=86 fail=0` | subtask 3 table |
+| `test-worktree-salvage.sh` | 0 | 71 passed, 0 failed | subtask 2 table |
+| `test-automate-trail.sh` | 0 | 786 passed, 0 failed | subtask 3 table (DS3) |
+
+All 22 scripts exited 0 (6 gates and 16 test scripts).
+
+The subtask 3 controls were run in place on the committed split file and then restored with `git checkout --`. That is a recorded deviation from the scratch-copy procedure, and the tree is clean now (`git status --short` prints nothing).
+
+**Citation pin control (`reconcile-resume-state.sh` → `finalize.md`).** This was run on a `mktemp -d` scratch repo: `loomwright/`, `scripts/` and `.gitignore` copied in, then `git init` and `git add -A`, with `HOME` relocated. The `subtask: {subtask_a} — {title}` line (line 15) was deleted from the copy of `finalize.md`. The mutant is non-empty and differs from the original (100 → 99 lines, `cmp`). The unmutated scratch run already fails one check, `citation-drift: 25 passed, 1 failed`. That failure is `(C2)` for the allowlist entry `loomwright/skills/claude-md-validation/SKILL.md|CLAUDE.md:42`: the scratch copy has no root `CLAUDE.md`, so that bare citation does not resolve. It is environmental and unrelated to this pin. The mutant adds the pin's own failure:
+
+```
+rc=1
+    loomwright/scripts/reconcile-resume-state.sh cites loomwright/skills/async-orchestration/finalize.md:15 but 'subtask: {subtask_a} — {title}' is not within +/-3 lines of it
+    loomwright/scripts/reconcile-resume-state.sh cites loomwright/skills/async-orchestration/finalize.md:15 but 'subtask: {subtask_a} — {title}' is not within +/-3 lines of it
+FAIL: (B) 2 pinned citation(s) have DRIFTED off their anchor
+citation-drift: 24 passed, 2 failed
+```
+
+### Validation 2 — mutation control on a real `global` row
+
+The row is SV-349 (`skills/self-heal-advisory/SKILL.md`, `q: no advisory step ever changes `heal_decision`, triggers a fix iteration`, home `global`). It is the HARD ADVISORY CONTRACT line and the only `global` row in self-heal-advisory. The control ran on a `mktemp -d` scratch copy (`cp -R loomwright scripts "$M/"`, `HOME="$M/home"`). The anchored line was deleted with `grep -vF` from the copy of `SKILL.md`. The mutant was checked first: non-empty, 407 → 406 lines, and `cmp`-different. The test then ran as `bash loomwright/scripts/test-loop-inventory.sh --root "$M/loomwright"`.
+
+```
+# unmutated scratch copy
+loop-inventory: OK — 2238 rows across 4 groups
+rc=0
+# mutant
+FAIL SV-349: anchor not found in skills/self-heal-advisory/SKILL.md
+loop-inventory: FAIL — 1 problem(s)
+rc=1
+```
+
+## Not run — Validation 3
+
+Validation 3 is a running-system step: one real item that exercises this group after the change, with the phase's result block pasted. It is a **pre-merge owner step outside this job**. This job does not run it and does not make up its result block. It is also the only place AC4's transcript assertion can be checked: on a run without `--multi-voter-heal`, Phase 4.5 never Reads `skills/self-heal-advisory/multi-voter.md`. The grep above shows only that every Read instruction is conditional. Before merge, the owner does one of two things:
+
+- Run one live item on the changed prompts. For example, `/automate` on a one-item queue drives `/autonomous --single-iteration` and, through it, the Supervisor's Phase 4 FINALIZE and Phase 4.5. Paste that run's fenced `SUPERVISOR_RESULT` block into the PR body, and confirm from the transcript that `finalize.md` was Read at Phase 4 only and `multi-voter.md` was never Read.
+- Or waive Validation 3 through the human-only `AUT-WAIVE` ask that `/automate`'s `validation-gate` raises.
+
+Until one of the two happens, the gap stays visible and the gate fails closed.
