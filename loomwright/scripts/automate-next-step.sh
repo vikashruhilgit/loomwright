@@ -1001,8 +1001,10 @@ ns_resume_cant() { # the can't-ask outcome of the resume entry
 }
 # a `--parallel` COORDINATOR run (`## Run Config` carries `- parallel: N`, `1` = single-lane mode) never takes
 # §6's per-item PICK in the primary: every continue (rebuild / pick) goes through lanes.md's per-wave loop (single-lane
-# mode for N = 1). A lane's own run file has no such line, so a lane is never refused here.
-ns_parallel() { ns_section '## Run Config' | sed -n 's/^- parallel: \([0-9][0-9]*\)[[:space:]]*$/\1/p' | head -n 1; }
+# mode for N = 1). A lane's own run file has no such line, so a lane is never refused here. Whitespace-tolerant
+# like the plugin's other reader of this line (`_lanes_single_parent`, automate-lanes.d/status-read.sh: `- parallel:1`,
+# trailing blanks) and wider still (`-  parallel:`, a trailing `# comment`): a missed marker would PICK a coordinator run.
+ns_parallel() { ns_section '## Run Config' | sed -n 's/^-[[:space:]]*parallel:[[:space:]]*\([0-9][0-9]*\)\([[:space:]].*\)\{0,1\}$/\1/p' | head -n 1; }
 ns_coordinator_stop() { # <step> — 0 (a `done` stopped instruction; this step writes nothing) when this is a coordinator run
   local n x loop
   n="$(ns_parallel)"; [ -n "$n" ] || return 1

@@ -1300,6 +1300,19 @@ leg_coordinator() {
       && ! grep -q '^lock acquire ' "$CASE_DIR/rec.log" \
       || { LEG_MSG="parallel $n: the run file written or the run lock acquired at the ask / Continue"; return 1; }
   done
+  # whitespace-tolerant marker (the `_lanes_single_parent` convention): `- parallel:2`, a trailing comment
+  local v
+  for v in '- parallel:2' '- parallel: 2  # wave'; do
+    new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+    V="$v" awk '{ print } /^## Run Config$/ { print ENVIRON["V"] }' "$CASE_RF" > "$CASE_RF.t" && mv "$CASE_RF.t" "$CASE_RF"
+    grep -qxF -- "$v" "$CASE_RF" || { LEG_MSG="'$v' not seeded"; return 1; }
+    s0="$(snapshot)"
+    ns_call "$drv" --start pick --non-interactive --session-id "$P_SID"
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.step == "pick" and .stop == "coordinator_run" and .parallel == 2' >/dev/null 2>&1 \
+      || { LEG_MSG="'$v', --start pick --non-interactive: exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+    [ "$s0" = "$(snapshot)" ] && ! grep -q '^lock acquire ' "$CASE_DIR/rec.log" \
+      || { LEG_MSG="'$v': .supervisor/ written or the run lock acquired"; return 1; }
+  done
   return 0
 }
 # leg_watch_note <driver> — per-item-loop.md §6 step 1: a LIVE `<run_id>.merge-watch` watcher of the in-flight
@@ -1720,7 +1733,7 @@ LEG_MSG=""
 if m="$(build_mutant cls - '-append:# cls-helpers')" && cls_helpers "$m" && leg_leftover_retry "$m"; then ok "P7: a crashed / silent closeout-classify on the Clean up now retry stays a leftover (re-ask, then the closeout_leftover park naming it); a silent one at RECONCILE is one leftover — never a PICK"
 else no "P7: ${LEG_MSG:-driver copy not built}"; fi
 LEG_MSG=""
-if leg_coordinator "$DRIVER"; then ok "P8: a --parallel coordinator run (parallel: 2 / single-lane 1) ⇒ --resume --run, Continue and --start pick print done/stopped coordinator_run, a bare start asks AUT-RESUME / stops resume_requires_flag_non_interactive, nothing written, no run lock"
+if leg_coordinator "$DRIVER"; then ok "P8: a --parallel coordinator run (parallel: 2 / single-lane 1; also parallel:2 / a trailing comment) ⇒ --resume --run, Continue and --start pick print done/stopped coordinator_run, a bare start asks AUT-RESUME / stops resume_requires_flag_non_interactive, nothing written, no run lock"
 else no "P8: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_watch_note "$DRIVER"; then ok "P9: a live merge watcher of the in-flight open PR ⇒ ONE merge-watch noted line at the open-PR park (not repeated); a dead one ⇒ none"
