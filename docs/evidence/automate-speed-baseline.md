@@ -823,7 +823,7 @@ Run one at a time on this branch after the last skill / inventory / budget edit 
 
 | Suite | Result |
 |---|---|
-| `bash loomwright/scripts/test-automate-next-step.sh` | 137/137 after review iteration 2 (P8 now also drives a bare start of a coordinator run: AUT-RESUME interactive, `resume_requires_flag_non_interactive` headless, `coordinator_run` after Continue; M8g still turns it red); 137/137 after iteration 1 (P7–P9 + M8f–M8h; 131/131 before) (its S leg — AC9 — prints the base file list) |
+| `bash loomwright/scripts/test-automate-next-step.sh` | 141/141 after drain review round 1 (P10: the run_done / pick_already_started / run_not_incomplete refusals; P11: the meta-push-failed report; M8i / M8j turn them red; P8 also seeds `-  parallel: 2`); 137/137 after review iteration 2 (P8 now also drives a bare start of a coordinator run: AUT-RESUME interactive, `resume_requires_flag_non_interactive` headless, `coordinator_run` after Continue; M8g still turns it red); 137/137 after iteration 1 (P7–P9 + M8f–M8h; 131/131 before) (its S leg — AC9 — prints the base file list) |
 | `bash loomwright/scripts/test-automate-golden.sh` | 64/64 (`MAP.tsv` unchanged: no unit moved) |
 | `bash loomwright/scripts/test-automate-helpers.sh` | 765/766 — the one failure is W19 (`22-split-automate-engine-surfaces.md ## Touches parses`), the pre-existing local-only leg: it needs this checkout's `.agent/companions.json`, which a scratch copy lacks (`plan-waves: no …/.agent/companions.json`); unrelated to this change |
 | `bash loomwright/scripts/test-automate-lanes.sh` | 925/925 |

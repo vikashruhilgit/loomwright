@@ -124,7 +124,14 @@
 #       AUT-RESUME Continue and --start pick print done/stopped coordinator_run, .supervisor/ byte-unchanged, no
 #       lock; a bare start still asks AUT-RESUME / stops resume_requires_flag_non_interactive (AC4). P9: a live merge watcher
 #       (a real process carrying automate-merge-watch.sh + the PR) ⇒ ONE `merge-watch noted:` line at the
-#       open-PR park, not repeated by a second --start pick; a dead one ⇒ none.
+#       open-PR park, not repeated by a second --start pick; a dead one ⇒ none. P8 also seeds the marker
+#       whitespace variants `- parallel:2`, `- parallel: 2  # wave` and `-  parallel: 2`. P10: the named
+#       refusals — `--start pick` on a `## Status: done` run (run_done), `--start pick` while this pass's
+#       /autonomous spawn is pending (pick_already_started; the spawn still re-prints), `--resume --run` naming
+#       no incomplete run (run_not_incomplete) ⇒ exit 2, the exact stderr line, nothing printed, .supervisor/
+#       byte-unchanged, no run-lock acquire. P11: a non-empty `meta-push-failed` answer ⇒ ONE `meta-push-failed:`
+#       ## Progress line + the stderr report and the PICK proceeds (next: pending) — a report, never a block
+#       (branch-mode.md); not repeated on a second pass; no marker ⇒ nothing written.
 #   V8  RUNNING SYSTEM (Validation 3 of automate-speed/08): a scratch repo (gh stubbed, the real run-lock.sh),
 #       a run parked awaiting_merge whose PR the stub reads MERGED, driven through `--resume`: the closeout
 #       lines through the next `picked` line are printed between `V3-08>` markers.
@@ -171,6 +178,8 @@
 #         M8f the Clean up now retry's classify guard dropped          ⇒ P7
 #         M8g the coordinator-run (`- parallel:`) detection dropped     ⇒ P8
 #         M8h the live merge-watcher note dropped                       ⇒ P9
+#         M8i the run_done refusal dropped                              ⇒ P10
+#         M8j the meta-push-failed ## Progress report line dropped      ⇒ P11
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -1300,9 +1309,10 @@ leg_coordinator() {
       && ! grep -q '^lock acquire ' "$CASE_DIR/rec.log" \
       || { LEG_MSG="parallel $n: the run file written or the run lock acquired at the ask / Continue"; return 1; }
   done
-  # whitespace-tolerant marker (the `_lanes_single_parent` convention): `- parallel:2`, a trailing comment
+  # whitespace-tolerant marker (the `_lanes_single_parent` convention): `- parallel:2`, a trailing comment,
+  # an extra space before `parallel:`
   local v
-  for v in '- parallel:2' '- parallel: 2  # wave'; do
+  for v in '- parallel:2' '- parallel: 2  # wave' '-  parallel: 2'; do
     new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
     V="$v" awk '{ print } /^## Run Config$/ { print ENVIRON["V"] }' "$CASE_RF" > "$CASE_RF.t" && mv "$CASE_RF.t" "$CASE_RF"
     grep -qxF -- "$v" "$CASE_RF" || { LEG_MSG="'$v' not seeded"; return 1; }
@@ -1337,6 +1347,77 @@ leg_watch_note() {
   ns_call "$drv" --start pick --session-id "$P_SID"
   c="$(grep -c ' merge-watch noted: ' "$CASE_RF")"
   [ "$NC_RC" = 0 ] && [ "$c" = 1 ] || { LEG_MSG="dead watcher: exit $NC_RC, $c note line(s) (want still 1)"; return 1; }
+  return 0
+}
+# leg_stops <driver> — the three named refusals of the PICK / resume entry, each exit 2 with its exact
+# stderr line, nothing on stdout, .supervisor/ byte-unchanged and no run-lock acquire:
+#   run_done             `--start pick` on a `## Status: done` run
+#   pick_already_started `--start pick` while this pass's /autonomous spawn is pending (a no-result call then
+#                        still re-prints that spawn byte-identically)
+#   run_not_incomplete   `--resume <dir> --run <id>` naming no incomplete run
+leg_stops() {
+  local drv="$1" s0 sp want
+  # run_done
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch (run_done)"; return 1; }
+  sed 's/^## Status: paused$/## Status: done/' "$CASE_RF" > "$CASE_RF.t" && mv "$CASE_RF.t" "$CASE_RF"
+  grep -qx '## Status: done' "$CASE_RF" || { LEG_MSG="run_done: ## Status: done not seeded"; return 1; }
+  s0="$(snapshot)"
+  ns_call "$drv" --start pick --session-id "$P_SID"
+  want='next-step: run_done — ## Status: done; nothing to pick — nothing written'
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -qxF -- "$want" <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] \
+    && ! grep -q '^lock acquire ' "$CASE_DIR/rec.log" \
+    || { LEG_MSG="run_done: exit $NC_RC '${NC_OUT:0:120}' ${NC_ERR:0:200}, .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  # pick_already_started
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch (pick_already_started)"; return 1; }
+  ns_call "$drv" --start run --session-id s-run
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "spawn" and .what == "/autonomous run"' >/dev/null 2>&1 \
+    || { LEG_MSG="pick_already_started: --start run ⇒ exit $NC_RC '${NC_OUT:0:120}' ${NC_ERR:0:160}"; return 1; }
+  sp="$NC_OUT"; s0="$(snapshot)"; : > "$CASE_DIR/rec.log"
+  ns_call "$drv" --start pick --session-id "$P_SID"
+  want="next-step: pick_already_started — a pending /autonomous run instruction belongs to $(sed -n 's/^- item: \([^ ]*\) .*/\1/p' "$CASE_RF" | head -n 1)'s pass (a no-result call re-prints it) — nothing written"
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && grep -qxF -- "$want" <<<"$NC_ERR" && [ "$s0" = "$(snapshot)" ] \
+    && ! grep -q '^lock acquire ' "$CASE_DIR/rec.log" \
+    || { LEG_MSG="pick_already_started: exit $NC_RC '${NC_OUT:0:120}' ${NC_ERR:0:240}, .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  ns_call "$drv"
+  [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$sp" ] && [ "$s0" = "$(snapshot)" ] \
+    || { LEG_MSG="pick_already_started: the pending spawn was not re-printed byte-identically after the refusal: exit $NC_RC"; return 1; }
+  # run_not_incomplete
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch (run_not_incomplete)"; return 1; }
+  s0="$(snapshot)"
+  p_call "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run automate-1999-01-01-000000 --session-id "$P_SID"
+  want="next-step: run_not_incomplete — --run automate-1999-01-01-000000 names no incomplete run in $CASE_ROOT/.supervisor/automate — nothing written"
+  [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && { grep -qxF -- "$want" <<<"$NC_ERR" || grep -qxF -- "${want//"$CASE_ROOT"/$CASE_ROOT_P}" <<<"$NC_ERR"; } \
+    && [ "$s0" = "$(snapshot)" ] && ! grep -q '^lock acquire ' "$CASE_DIR/rec.log" \
+    || { LEG_MSG="run_not_incomplete: exit $NC_RC '${NC_OUT:0:120}' ${NC_ERR:0:240}, .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  return 0
+}
+# leg_meta_push <driver> — branch-mode.md "PICK report": a non-empty `meta-push-failed` answer (the
+# `<run_id>.meta-push-failed` marker's first line) is ONE `meta-push-failed: <answer>` ## Progress line plus the
+# stderr report, and the PICK proceeds (exit 0, next step `pending`) — a report, never a block; a second pass
+# of the step adds no second line; no marker ⇒ no line, still proceeds
+leg_meta_push() {
+  local drv="$1" mk ans c
+  ans='2026-10-17T08:00:00Z conflict — meta-sync push rejected (no_remote_branch)'
+  new_scratch "$FIX/pick-current-set-then-picked" || { LEG_MSG="scratch"; return 1; }
+  mk="$CASE_ROOT/.supervisor/automate/$CASE_RUN.meta-push-failed"
+  printf '%s\nmeta_sync: scrub x: rule a\n' "$ans" > "$mk"
+  printf 'NEXT_STEP_FROM=meta-push\nNEXT_STEP_UNTIL=meta-push\n' > "$CASE_DIR/seams.mp"
+  cp "$CASE_RF" "$CASE_DIR/before.md"
+  p_seamed "$CASE_DIR/seams.mp" "$drv" --session-id "$P_SID"
+  c="$(grep -cxE -- "- [0-9TZ:-]+ meta-push-failed: $(printf '%s' "$ans" | sed 's/[][\.*^$()+?{}|]/\\&/g')" "$CASE_RF")"
+  [ "$NC_RC" = 0 ] && [ "$c" = 1 ] && grep -qxF -- "next-step: meta-push-failed: $ans (reported — not a block)" <<<"$NC_ERR" \
+    && grep -qF -- 'next: pending' <<<"$NC_ERR" && [ "$(jq -r '.next // empty' "$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json" 2>/dev/null)" = pending ] \
+    && [ "$(diff "$CASE_DIR/before.md" "$CASE_RF" | grep -c '^>')" = 1 ] \
+    || { LEG_MSG="marker: exit $NC_RC, $c report line(s) (want 1), stderr '${NC_ERR:0:240}', next=$(jq -r '.next // empty' "$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json" 2>/dev/null)"; return 1; }
+  p_seamed "$CASE_DIR/seams.mp" "$drv" --session-id "$P_SID"
+  c="$(grep -c ' meta-push-failed: ' "$CASE_RF")"
+  [ "$NC_RC" = 0 ] && [ "$c" = 1 ] || { LEG_MSG="a second meta-push pass: exit $NC_RC, $c report line(s) (want still 1)"; return 1; }
+  new_scratch "$FIX/pick-current-set-then-picked" || { LEG_MSG="scratch (no marker)"; return 1; }
+  printf 'NEXT_STEP_FROM=meta-push\nNEXT_STEP_UNTIL=meta-push\n' > "$CASE_DIR/seams.mp"
+  p_seamed "$CASE_DIR/seams.mp" "$drv" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && cmp -s "$FIX/pick-current-set-then-picked/input.md" "$CASE_RF" && ! grep -q 'meta-push-failed' <<<"$NC_ERR" \
+    && [ "$(jq -r '.next // empty' "$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json" 2>/dev/null)" = pending ] \
+    || { LEG_MSG="no marker: exit $NC_RC, run file $(cmp -s "$FIX/pick-current-set-then-picked/input.md" "$CASE_RF" && echo unchanged || echo WRITTEN), stderr '${NC_ERR:0:160}'"; return 1; }
   return 0
 }
 
@@ -1733,11 +1814,17 @@ LEG_MSG=""
 if m="$(build_mutant cls - '-append:# cls-helpers')" && cls_helpers "$m" && leg_leftover_retry "$m"; then ok "P7: a crashed / silent closeout-classify on the Clean up now retry stays a leftover (re-ask, then the closeout_leftover park naming it); a silent one at RECONCILE is one leftover — never a PICK"
 else no "P7: ${LEG_MSG:-driver copy not built}"; fi
 LEG_MSG=""
-if leg_coordinator "$DRIVER"; then ok "P8: a --parallel coordinator run (parallel: 2 / single-lane 1; also parallel:2 / a trailing comment) ⇒ --resume --run, Continue and --start pick print done/stopped coordinator_run, a bare start asks AUT-RESUME / stops resume_requires_flag_non_interactive, nothing written, no run lock"
+if leg_coordinator "$DRIVER"; then ok "P8: a --parallel coordinator run (parallel: 2 / single-lane 1; also parallel:2 / a trailing comment / an extra space before parallel:) ⇒ --resume --run, Continue and --start pick print done/stopped coordinator_run, a bare start asks AUT-RESUME / stops resume_requires_flag_non_interactive, nothing written, no run lock"
 else no "P8: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_watch_note "$DRIVER"; then ok "P9: a live merge watcher of the in-flight open PR ⇒ ONE merge-watch noted line at the open-PR park (not repeated); a dead one ⇒ none"
 else no "P9: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_stops "$DRIVER"; then ok "P10: run_done (--start pick on a done run) / pick_already_started (a pending /autonomous spawn) / run_not_incomplete (--resume --run naming no incomplete run) ⇒ exit 2, the exact refusal line, nothing printed, .supervisor/ byte-unchanged, no run lock"
+else no "P10: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_meta_push "$DRIVER"; then ok "P11: a non-empty meta-push-failed answer ⇒ ONE meta-push-failed: ## Progress line + the stderr report, the PICK proceeds (next: pending); no marker ⇒ nothing written"
+else no "P11: $LEG_MSG"; fi
 
 echo "-- V7. running system (Validation 3 of automate-speed/07): PICK → RUN → DRAIN → the tail, one item"
 V7="$WORK/v7"; mkdir -p "$V7/fx"
@@ -2072,6 +2159,18 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_watch_note "$m"; then no "M8h: the watch-note leg stayed green with the note dropped"
     else ok "M8h: merge-watch note dropped ⇒ P9 red ($LEG_MSG)"; fi
   else no "M8h: mutant not built"; fi
+  # M8i — the run_done refusal dropped (a done run is picked: the PICK lock is acquired) ⇒ P10 red
+  if m="$(build_mutant 8i '[ "$(ns_run_status)" != done ] || { ns_err "run_done' 'true || { ns_err "run_done')"; then
+    LEG_MSG=""
+    if leg_stops "$m"; then no "M8i: the stop leg stayed green with the run_done refusal dropped"
+    else ok "M8i: run_done refusal dropped ⇒ P10 red ($LEG_MSG)"; fi
+  else no "M8i: mutant not built"; fi
+  # M8j — the meta-push-failed report's ## Progress line dropped (only the stderr report left) ⇒ P11 red
+  if m="$(build_mutant 8j 'ns_once once_pk_meta ns_progress "$(ns_ts) meta-push-failed: $l" || return 1' ':')"; then
+    LEG_MSG=""
+    if leg_meta_push "$m"; then no "M8j: the meta-push leg stayed green with the report line dropped"
+    else ok "M8j: meta-push-failed report line dropped ⇒ P11 red ($LEG_MSG)"; fi
+  else no "M8j: mutant not built"; fi
 fi
 
 echo "PASS: $pass FAIL: $fail"
