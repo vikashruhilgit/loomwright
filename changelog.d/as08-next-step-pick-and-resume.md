@@ -13,3 +13,8 @@ an unrun validation step, and parks on an open PR without picking. Then come the
 un-stage, `current-set` before the `picked` line, and RUN. Fourteen PICK / RECONCILE / resume golden cases now
 replay through the driver byte for byte, and new legs and mutation controls in `test-automate-next-step.sh`
 cover the open-PR park, the leftover gate, the resume stops and the pick order.
+The `--legacy` flag and its prose tail (`skills/automate-loop/legacy-tail.md`) are retired, so every run takes
+the driver path. `/automate`'s Step 0 now reads only `SKILL.md` (which carries the new coordinator loop) and
+`invariants.md` up front; the driver-owned `per-item-loop.md`, `modes-and-merge-gate.md`, `resume.md` and the
+§1.5 helper table (moved verbatim to `helpers.md`) are read only when a driver call fails or the owner asks for
+the step they hold, which cuts the default read set from 180686 to 50078 bytes.
