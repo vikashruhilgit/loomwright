@@ -23,7 +23,7 @@
     "agent-output": {"budget": 1495, "measured": 1359, "note": "initial ceiling: measured + ~10% (as17)"},
     "agent-teams": {"budget": 3231, "measured": 2937, "note": "initial ceiling: measured + ~10% (as17)"},
     "async-orchestration": {"budget": 15760, "measured": 14327, "note": "initial ceiling: measured + ~10% (as17)"},
-    "automate-loop": {"budget": 87895, "measured": 79904, "note": "initial ceiling: measured + ~10% (as17)"},
+    "automate-loop": {"budget": 77733, "measured": 70666, "note": "lowered for as08: driver-owned prose read only when; ceiling = measured + ~10%"},
     "autonomous-loop": {"budget": 28168, "measured": 25607, "note": "initial ceiling: measured + ~10% (as17)"},
     "beads-workflow": {"budget": 1658, "measured": 1507, "note": "initial ceiling: measured + ~10% (as17)"},
     "brain-context": {"budget": 1809, "measured": 1644, "note": "initial ceiling: measured + ~10% (as17)"},
@@ -65,7 +65,7 @@
   },
   "commands": {
     "agent-help": {"budget": 23236, "measured": 21123, "note": "initial ceiling: measured + ~10% (as17)"},
-    "automate": {"budget": 7565, "measured": 6001, "note": "raised for as25 (#562): its Step 0 load-by-mode rows grow the doc to 6877; ceiling = 6877 + ~10%"},
+    "automate": {"budget": 7565, "measured": 7302, "note": "raised for as25 (#562): its Step 0 load-by-mode rows grow the doc to 6877; ceiling = 6877 + ~10%"},
     "autonomous": {"budget": 11846, "measured": 10769, "note": "initial ceiling: measured + ~10% (as17)"},
     "capability-check": {"budget": 6680, "measured": 6072, "note": "initial ceiling: measured + ~10% (as17)"},
     "code-reviewer": {"budget": 2837, "measured": 2579, "note": "initial ceiling: measured + ~10% (as17)"},
