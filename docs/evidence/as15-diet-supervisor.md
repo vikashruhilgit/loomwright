@@ -76,6 +76,26 @@ What moved to `docs/rationale/supervisor.md` (new sections §"Async orchestratio
 
 `docs/vendor-coupling-manifest.json`: `finalize.md` carries no counted token (the gate does not list it), so it gets no allowance; `SKILL.md` measured 18 (base 22: two task-output polls, one spawn-type key and one ask-tool name deleted with restated text, none moved) and its allowance was lowered 23 → 18 with a note.
 
+### Subtask 3 — self-heal-advisory
+
+After subtask 3 (`cd loomwright && wc -c skills/self-heal-advisory/*.md agents/supervisor.md commands/supervisor.md`):
+
+```
+   54843 skills/self-heal-advisory/SKILL.md
+   52730 skills/self-heal-advisory/completion-tail.md
+    4401 skills/self-heal-advisory/escalation.md
+    8929 skills/self-heal-advisory/multi-voter.md
+   16188 skills/self-heal-advisory/on-entry.md
+   79620 agents/supervisor.md
+   43057 commands/supervisor.md
+```
+
+self-heal-advisory went from 176,146 to 137,091 bytes all-modes (−39,055, −22.2%). Per Phase 4.5 run without `--multi-voter-heal`, the multi-voter file (8,929) is never Read; an ordinary iteration needs `SKILL.md` alone (54,843, −68.9% against the old whole-file Read), entry adds `on-entry.md`, the post-loop step adds `completion-tail.md`, and `escalation.md` is Read only on a base mismatch or a fix-task crash.
+
+Group running total after subtask 3 (`wc -c` on the four sources + `finalize.md` + the four self-heal split files): 79,620 + 43,057 + 137,091 + 24,137 + 8,168 = **292,073 bytes all-modes** (base 391,294; −25.4%). Default path (no `--multi-voter-heal`, so `multi-voter.md` excluded): 283,144 bytes (−27.6%). **AC2 is NOT met by subtask 3: the all-modes target ≤ 273,905 is short by 18,168 bytes.** Why it stopped here: the remaining bulk is text a test pins byte-for-byte or a spawned agent receives verbatim — the code-reviewer spawn prompt (~12.4 KB, pinned line by line by six seam tests), the fix-task prompt (~6.1 KB), the contract-builder prompt (~4.3 KB), the loop pseudo-code (~14 KB) — and every further cut there is a reword of a pinned or agent-facing instruction, which this item's non-goal (no behaviour change) and AC7 (never reword pinned text) rule out. Candidates for whoever closes the gap, none attempted: the pair's Phase 4.5 restatements (`commands/supervisor.md` §"What This Does" until-mergeable / timing / R9 / observability paragraphs, ~4.5 KB; `agents/supervisor.md` Phase 4.5 one-line pointers, ~2.5 KB) — each carries inventory anchors and an AC8 invariant, so each needs its rows re-anchored in the same change.
+
+History references (same regex) in self-heal-advisory: 19 → 5 across the five files — all in `SKILL.md`: `#431/#432` in the `### House-rule verdicts line` heading (an `h:` inventory anchor and a §-citation target), `#512` twice (the release re-fold comment in the loop and the error-table row `test-release-refold.sh` pins byte-for-byte), and the frontmatter `lastUpdated` date. The split files carry none.
+
 ## Behaviour questions
 
 Found while moving text; listed here and not fixed (AC9).
@@ -87,11 +107,21 @@ Found while moving text; listed here and not fixed (AC9).
 5. **Two out-of-lane citations still point at `SKILL.md` for text now in `finalize.md`.** `loomwright/docs/supervisor-legacy-phases.md` (§"Phase 4 (FINALIZE)" protocol-authority line, the `--legacy` path) names `skills/async-orchestration/SKILL.md` **Part 2 — Supervisor FINALIZE Protocol** — it still resolves, one hop later, through the `# Part 2` stub. `loomwright/scripts/validate-execute-result.py` (a comment) cites `skills/async-orchestration/SKILL.md` §"Cleanup worktrees", which is now `finalize.md` step 4. Neither file is in subtask 2's lanes; not edited.
 6. **The adjudication text dropped its ask-tool mention.** `SKILL.md` §"Scope Expansion Adjudication" said the Supervisor presents the four options "to the user via" the host's ask tool; the same section's closing sentence already says the Supervisor presents them, and `agents/supervisor.md` §"Adjudication Handling" (driver `ask`, Can't-ask rule ⇒ `adjudication_required_non_interactive`) is where that happens. The restatement was removed, not the rule; listed because an unconditional "via the ask tool" read as if the Execute Manager-side text promised an ask even under `--non-interactive`.
 
+
+Subtask 3 (self-heal-advisory):
+
+7. **`$NO_CMD_FLAG` is read before the step that defines it.** The per-iteration rules-check replay (`SKILL.md` §"Rules-check replay") "reuses `$NO_CMD_FLAG` UNCHANGED from the Ground-truth execution step", but ground truth runs after the loop (`completion-tail.md`). On the first iteration the owning step has not run yet, so the replay depends on the model deriving the same `NON_INTERACTIVE ? "--no-cmd" : ""` value early. True before the split too (the order was hidden by both sections sitting in Part 1); not changed.
+8. **Step 1g is an on-entry step that runs every iteration.** It is numbered with the on-entry actions but the loop pseudo-code never calls it explicitly at the top of an iteration; only the reviewer prompt's DEVIATIONS ADVISORY line and the `fixer_deviations` carriage imply the re-run. It now sits in `SKILL.md` (the every-iteration file) with a pointer from `on-entry.md`; the loop text is unchanged.
+9. **Out-of-lane comment citations name `SKILL.md` for text now in a split file.** `scripts/adapters/providers/lens-run.sh` (§"Multi-voter verification"), `scripts/classify-risk.sh` (§"Advisory red-team lens"), `scripts/rules-audit-line.sh` (§"Rules-store audit"), `scripts/run-ground-truth.sh`, `scripts/read-system-contract.sh`, `scripts/session-resume.sh` / `scripts/reconcile-jobs.sh` / `scripts/verify-run.sh` / `scripts/pr-postmortem-gather.sh` (completion-tail steps 2 / 2.5 / 5), and the next-step driver's handover string (`SKILL.md Part 2`, deliberately unedited). Each still resolves one hop later through `SKILL.md`'s pointer list and index; repointing them is outside this lane.
+10. **Fix-task crash is stated twice.** `SKILL.md`'s error-handling table row and `escalation.md` §"Fix task crash handling" both say "pause with `status: checkpoint`; the resume counter increments at the next entry". They agree; the table stayed in `SKILL.md` because its other rows apply on every iteration.
 ## Proposed hooks
 
 None from subtask 1. No rule in the pair needed a new hook to leave the prompt: every `rule` row was either kept short in place (`global`, anchor-checked), sat at the one step it governs (`step-scoped`), or was already enforced by an existing script (SV-058 → `script:build-state.sh`, its one line kept so the model does not write the `## Session` block itself).
 
 None from subtask 2 either: every async-orchestration `rule` row is `global` (anchor-checked), `step-scoped`, or homed on the script that already enforces it (`supervisor-next-step.sh`, `verify-provides.sh`, `validate-worker-result.py`, `worktree-audit.sh report`).
+
+
+None from subtask 3: every self-heal-advisory `rule` row is `step-scoped` at the step it governs (100 rows) or `global` (1: the HARD ADVISORY CONTRACT line, anchor-checked); no rule needed a new hook to leave the prompt.
 
 ## Pin mutations
 
@@ -120,6 +150,40 @@ Controls, each on a scratch copy (`cp -R loomwright scripts "$SCRATCH/pm-<test>/
 | `scripts/check-contract-parity.sh` new ENUMS row | `sed 's/SUPERVISOR_RESULT.status: failed/SUPERVISOR_RESULT.status: refused/'` on `finalize.md`, gate run with `--root "$SCRATCH/mut"` | rc 0 | rc 1: `PARITY [enum-literal] skills/async-orchestration/finalize.md: 'status: refused' is outside the allowed set` |
 | `test-loop-inventory.sh` `global` row | `grep -vF 'Read by the Supervisor at Phase 4 FINALIZE entry only.'` (that line also carries SV-678's anchor) | `loop-inventory: OK — 2238 rows across 4 groups` | rc 1: `FAIL SV-678` and `FAIL SV-750: anchor not found in skills/async-orchestration/finalize.md` |
 | `test-loop-inventory.sh` group sources | drop `skills/async-orchestration/finalize.md` from the `supervisor)` arm of a scratch copy of the test | rc 0 | rc 1: `## Sources lists skills/async-orchestration/finalize.md, which is not a source of the group`, then one `file '…finalize.md' is not a source of the supervisor group` per row (53 FAIL lines; `finalize.md` has no `###`/`####` heading, so this — not heading coverage — is the line that names it) |
+
+### Subtask 3 — repointed pins
+
+Tests repointed (needles byte-identical; only the file a needle is read from changed): `test-brief-conformance-seam.sh` (new `SKILL_ENTRY` = `on-entry.md` for the `25 bullets` cap and step `1f.`), `test-execution-directive-seam.sh` (new `SKILL_MV` = `multi-voter.md` for the refute-scope leg), `test-closed-enum-pins-seam.sh` (new `SHA_TAIL` = `completion-tail.md` for the Heal-reason list, `also pre-increment`, `**Rules-check replay line`, `already escalated with`; its two fixture briefs name `completion-tail.md` for those three rows and in their touch sets — out of lane, see the worker result), `test-system-contract.sh` §20, `test-rules-audit-line.sh`, `test-classify-risk.sh` E4, `test-not-verified-transport-seam.sh` (f), `test-automate-trail.d/05-finalize-closeout-others.sh` DS3 (all → `completion-tail.md`), `test-rules-seams.sh` (`on-entry.md` added to `SEAMS`, and it replaces `SKILL.md` in `ARGS_BEARING` and the after-span `c_mut_run` — the args-bearing `read-rules.sh` call moved there), `test-validate-code-review-result.sh` (the `--with-ids` read check reads `on-entry.md`; the HOUSE-RULES prompt anchor still reads `SKILL.md`). New: two ENUMS rows each for `completion-tail.md` and `escalation.md` in `scripts/check-contract-parity.sh` (allowlists copied from `SKILL.md`'s rows), fixture files and two red legs in `test-check-contract-parity.sh`.
+
+Controls: the needle's line(s) were deleted (`grep -vF`) **in place in the committed split file** (not the `SKILL.md` pointer), the test run, and the file restored with `git checkout --` (`git status` clean afterwards) — a deviation from subtask 2's scratch-copy procedure, taken for the turn budget; every mutant was checked non-empty and `cmp`-different first. Each test was green unmutated in the same tree (Results below).
+
+| Pin | Mutation (`grep -vF`, split file) | Mutant |
+|---|---|---|
+| `test-brief-conformance-seam.sh` cap | `25 bullets` in `on-entry.md` | rc 1: `(b) cap token '25 bullets' count: total=0 in-section=0` |
+| `test-rules-seams.sh` (D)/(C) | `read-rules.sh" <touched files...>` in `on-entry.md` | rc 1: `[self-heal-advisory/on-entry.md] (D) read-rules.sh invoked with NO path-argument placeholder` |
+| `test-validate-code-review-result.sh` `--with-ids` | same line in `on-entry.md` | rc 1 (house_rule_verdicts parity) |
+| `test-system-contract.sh` §20 | `if twin_store_status == "dark" or touched_contract_withheld:` in `completion-tail.md` | rc 1: `(20) SEED FAILED — could not locate the three anchors (withheld= …)` |
+| `test-rules-audit-line.sh` AC1 | `rules_audit: clean` in `completion-tail.md` | rc 1: `AC1 self-heal-advisory is missing the rules-audit-line invocation / state trace` |
+| `test-classify-risk.sh` E4 | every `classify-risk.sh` line in `completion-tail.md` | rc 1: `E4 lens still restates the heuristic or lacks the call` |
+| `test-not-verified-transport-seam.sh` (f) | `appended to the brief itself, on BOTH the PASS/loop-skipped and ESCALATED outcomes` | rc 1: `(f) step 2 does not state the both-outcomes rule` |
+| `test-execution-directive-seam.sh` (c) | `2. **Second-opinion refute check` in `multi-voter.md` | rc 1: `(c) multi-voter refute: only the code-reviewer-lens refute carries the directive` |
+| `test-closed-enum-pins-seam.sh` | `also pre-increment` in `completion-tail.md` | rc 1: `anchor gone from self-heal-advisory completion-tail.md: also pre-increment` |
+| `test-automate-trail.sh` DS3 | `2.5. **Requirement close-out` in `completion-tail.md` | rc 1 (DS3) |
+| `test-loop-inventory.sh` group sources | drop `skills/self-heal-advisory/multi-voter.md` from the `supervisor)` arm | rc 1: `FAIL supervisor: ## Sources lists skills/self-heal-advisory/multi-voter.md, which is not a source of the group`, `FAIL SV-513: file '…multi-voter.md' is not a source of the supervisor group` |
+| `scripts/check-contract-parity.sh` new ENUMS rows | fixture legs in `test-check-contract-parity.sh`: `status: paused` appended to `completion-tail.md`, `heal_decision: FAILED` appended to `escalation.md` | both legs rc 1 as asserted (23/23 passed) |
+
+**AC4 grep** (`cd loomwright && grep -rn 'multi-voter\.md' agents/supervisor.md commands/supervisor.md skills/self-heal-advisory/*.md skills/async-orchestration/*.md`) — every hit is conditional or descriptive, none an unconditional Read:
+
+```
+agents/supervisor.md:67   … `multi-voter.md` only under `--multi-voter-heal`)
+agents/supervisor.md:302  … `multi-voter.md` ONLY when `MULTI_VOTER_HEAL` is true (never on the default path) …
+agents/supervisor.md:339  … Protocol authority …: `skills/self-heal-advisory/multi-voter.md`, Read only when `MULTI_VOTER_HEAL` is true.
+commands/supervisor.md:73 … `multi-voter.md` only when `MULTI_VOTER_HEAL` is true …
+skills/self-heal-advisory/SKILL.md:3    (frontmatter description) multi-voter.md (only under --multi-voter-heal)
+skills/self-heal-advisory/SKILL.md:17   | `multi-voter.md` | only when `MULTI_VOTER_HEAL == true` | …
+skills/self-heal-advisory/SKILL.md:384  … only when `MULTI_VOTER_HEAL == true`, Read `multi-voter.md` … When `MULTI_VOTER_HEAL == false` (the default) do NOT Read it …
+skills/self-heal-advisory/on-entry.md:107  (a §"Delay-vs-decide" citation, no Read)
+```
 
 ## Results
 
@@ -193,3 +257,34 @@ awk -F' \\| ' '/^\| SV-/ && ($2 ~ /async-orchestration/) && ($6=="rule" || $6=="
 ```
 
 `finalize.md` joined the group's `## Sources` and the `supervisor)` arm of `test-loop-inventory.sh` (and its header comment). Rows whose text moved to `finalize.md` had their file cell changed (SV-616–618, SV-678–SV-718); re-anchored rows: SV-609, SV-616–618, SV-622, SV-633, SV-651, SV-677, SV-678, SV-695, SV-713–715, SV-722, SV-727, SV-728, SV-736, and the pair rows SV-066, SV-143, SV-152, SV-746 (action/anchor text follows the new Read routing). Twelve rows added: SV-749 (the Part 2 stub routing rule) and SV-750 (finalize.md load-by-phase rule), both `global`; SV-748, SV-751–SV-759, `story` rows homed in the rationale doc. `## Counts` and the gap list recomputed (rows 747 → 759, rule 305 → 307, story 21 → 31, GAP 493 → 505).
+
+### Subtask 3 — results
+
+Subtask 3, after the change (each script's own summary line; all run in one tree after the last edit):
+
+| Gate / test | Result |
+|---|---|
+| `loomwright/scripts/test-loop-inventory.sh` | 43/43 passed |
+| `scripts/check-doc-currency.sh` | OK |
+| `loomwright/scripts/test-citation-drift.sh` | 26 passed, 0 failed |
+| `scripts/check-token-budget.sh` | OK |
+| `scripts/check-contract-parity.sh` | OK (four new rows: `skills/self-heal-advisory/{completion-tail,escalation}.md\|status\|…` and `…\|heal_decision\|…`; existing rows byte-identical) |
+| `scripts/check-vendor-coupling.sh` | OK (`SKILL.md` 7 / 7, `completion-tail.md` 16, `on-entry.md` 5, `multi-voter.md` 1; `escalation.md` and the rationale doc carry no counted token) |
+| pinning tests | `test-brief-conformance-seam.sh` 26/26, `test-deviations-advisory-seam.sh` 30/30, `test-execution-directive-seam.sh` 50/50, `test-closed-enum-pins-seam.sh` 79/79, `test-rules-gate-seams.sh` 26/26, `test-rules-seams.sh` 139/139, `test-rules-audit-line.sh` 32/32, `test-phase45-rounds-seam.sh` 61/61, `test-not-verified-transport-seam.sh` 25/25, `test-pr-body-evidence-seam.sh` 77/77, `test-system-contract.sh` 124/124, `test-classify-risk.sh` 45/45, `test-validate-code-review-result.sh` 86/86, `test-release-refold.sh` 26/26, `test-read-rules.sh` 117/117, `test-automate-dismissed.sh` 246/246, `test-automate-trail.sh` 786/786, `test-check-contract-parity.sh` 23/23 |
+| pair tests | `test-check-children-settled.sh` 61/61, `test-run-lock.sh` 82/82, `test-non-interactive-gates-seam.sh` 64/64, `test-build-handoff.sh` 93/93, `test-verify-provides.sh` 163/163 |
+
+Inventory rows of self-heal-advisory after subtask 3 (no `story` or `rule` row homed `prose`; same `awk` as subtask 2 with `self-heal` in place of `async-orchestration`):
+
+```
+   1 skills/self-heal-advisory/SKILL.md rule global
+  30 skills/self-heal-advisory/SKILL.md rule step-scoped
+  45 skills/self-heal-advisory/completion-tail.md rule step-scoped
+   1 skills/self-heal-advisory/completion-tail.md story rationale:docs/rationale/supervisor.md
+   7 skills/self-heal-advisory/escalation.md rule step-scoped
+   7 skills/self-heal-advisory/multi-voter.md rule step-scoped
+   1 skills/self-heal-advisory/multi-voter.md story rationale:docs/rationale/supervisor.md
+  11 skills/self-heal-advisory/on-entry.md rule step-scoped
+   1 skills/self-heal-advisory/on-entry.md story rationale:docs/rationale/supervisor.md
+```
+
+The four split files joined the group's `## Sources` and the `supervisor)` arm of `test-loop-inventory.sh` (and its header comment). Every self-heal row's file cell follows its text; 70 rows were re-anchored to the trimmed wording (SV-346–SV-587 range); the kind counts and the gap list are unchanged (no row added or removed). Stories moved to `docs/rationale/supervisor.md` §"Self-heal advisory — why the protocol reads as it does" (no install-root token; two vendor tokens reworded out on the gate's first run).

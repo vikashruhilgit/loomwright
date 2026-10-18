@@ -864,7 +864,7 @@ Applies when `/supervisor --cheap` is passed. Supervisor and Execute Manager app
 | red-team-reviewer | inherit | inherit (adversarial creativity; as multi-voter VOTER see the phase45-multi-voter-verification row) |
 | qa-executor | inherit | future — not spawned by `/supervisor`; deferred to v2 when `/qa-executor --cheap` ships |
 
-The `phase45-multi-voter-verification` stage exists only when `--multi-voter-heal` is ON (authority: `skills/self-heal-advisory/SKILL.md` Part 2 §Multi-voter verification); when NOT in `--cheap`, Phase 4.5 verification spawns should route at the strongest available session tier — `model: inherit` stays the default everywhere, and no model IDs are hardcoded (Fable-class models are only available when the session itself runs on them).
+The `phase45-multi-voter-verification` stage exists only when `--multi-voter-heal` is ON (authority: `skills/self-heal-advisory/multi-voter.md` §Multi-voter verification, Read only under that flag); when NOT in `--cheap`, Phase 4.5 verification spawns should route at the strongest available session tier — `model: inherit` stays the default everywhere, and no model IDs are hardcoded (Fable-class models are only available when the session itself runs on them).
 
 **Semantics:** `--cheap` overrides roles marked **sonnet** in the table to Sonnet, full stop. No runtime session detection. Consequences:
 - Opus session + `--cheap` → roles marked **sonnet** run on Sonnet (intended saving)
