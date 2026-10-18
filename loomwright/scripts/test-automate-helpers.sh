@@ -313,11 +313,13 @@ bash "$HERE/fixtures/automate-loop-split/assemble.sh" "$HERE/../docs/result-sche
 # >>> runner-only
 
 # ---- legs: test-automate-helpers.d/<part>.sh (automate-speed/21) -------------------------------
-# TAH_PARTS is the ONE part list (base order), tah_prereq the ONE prerequisite map; no argument = every
-# part, as before. "$@" is cleared before any part is sourced, so legs see the empty "$@" of base.
+# TAH_PARTS is the ONE part list (base order), TAH_PREREQ the ONE prerequisite map (<part>:<prerequisite>);
+# no argument = every part, as before. "$@" is cleared before any part is sourced, so legs see the empty
+# "$@" of base.
 TAH_D="$HERE/test-automate-helpers.d"
 TAH_PARTS="01-config 02-runfile 03-intake 04-resume 05-gate-eval-harness 05-gate-eval 06-gate-eval-tail 07-rules-gate 08-learning-emit 09-brief-repair 10-reconcile-status 11-ceiling 12-meta 13-plan-waves 14-escalation 15-lane-seams 16-queue-gates"
-tah_prereq() { case "$1" in 05-gate-eval|06-gate-eval-tail|07-rules-gate) echo 05-gate-eval-harness ;; esac; }
+TAH_PREREQ="05-gate-eval:05-gate-eval-harness 06-gate-eval-tail:05-gate-eval-harness 07-rules-gate:05-gate-eval-harness"
+tah_prereq() { local e; for e in $TAH_PREREQ; do [ "${e%%:*}" = "$1" ] && echo "${e#*:}"; done; }
 # A part that does not parse would make `.` fail, skip every leg in it and leave the suite green, which
 # the one-file base could not do. So a part must also pass `-n` before anything is sourced, under the
 # SAME interpreter that will source it ($BASH), not whichever bash is first on PATH.
@@ -326,18 +328,25 @@ tah_part() {
   "${BASH:-bash}" -n "$TAH_D/$1.sh" 2>/dev/null || { echo "  FAIL: test part does not parse (bash -n): test-automate-helpers.d/$1.sh"; exit 1; }
 }
 tah_known() { local p; for p in $TAH_PARTS; do [ "$p" = "$1" ] && return 0; done; return 1; }
-# The part list is stated four ways (TAH_PARTS, the tah_prereq map, the files in test-automate-helpers.d/
-# and the source lines below); each must agree with TAH_PARTS or a part is silently never run.
-for tah_p in $TAH_PARTS; do
-  for tah_q in $(tah_prereq "$tah_p"); do
-    tah_known "$tah_q" || { echo "  FAIL: prerequisite of $tah_p not in TAH_PARTS: $tah_q"; exit 1; }
-  done
+# Every other place a part name is written must be a name in TAH_PARTS, or a part is silently never run:
+# both sides of each TAH_PREREQ pair, each file in test-automate-helpers.d/, each tah_sel argument (the
+# inline MERGE leg's guard), and BOTH copies on each source line (tah_run's argument and the sourced path).
+for tah_e in $TAH_PREREQ; do
+  tah_known "${tah_e%%:*}" || { echo "  FAIL: prerequisite map names a part not in TAH_PARTS: ${tah_e%%:*}"; exit 1; }
+  tah_known "${tah_e#*:}" || { echo "  FAIL: prerequisite of ${tah_e%%:*} not in TAH_PARTS: ${tah_e#*:}"; exit 1; }
 done
 for tah_f in "$TAH_D"/*.sh; do
   [ -e "$tah_f" ] || continue
   tah_p="$(basename "$tah_f" .sh)"
   tah_known "$tah_p" || { echo "  FAIL: test part not in TAH_PARTS: test-automate-helpers.d/$tah_p.sh"; exit 1; }
 done
+# The runner reads its own text: its source lines must be exactly one `tah_run <p>` line sourcing
+# $TAH_D/<p>.sh per TAH_PARTS entry, in TAH_PARTS order, and no other line may source from $TAH_D.
+# Checked before any leg runs. (This comment, the grep pattern and the printf format are written so the
+# grep does not match them.)
+tah_want="$(for tah_p in $TAH_PARTS; do printf 'tah_run %s && . "%s/%s.sh"\n' "$tah_p" '$TAH_D' "$tah_p"; done)"
+tah_have="$(grep -E '^tah_run |\. "\$TAH_D/' "${BASH_SOURCE[0]}")"
+[ "$tah_have" = "$tah_want" ] || { echo "  FAIL: part-source lines differ from TAH_PARTS: want one 'tah_run <part> && . \"\$TAH_D/<part>.sh\"' per part, same name twice, in TAH_PARTS order"; exit 1; }
 TAH_ONLY=""; TAH_SEL=" $TAH_PARTS "
 if [ "$#" -gt 0 ]; then
   TAH_ONLY=1; TAH_SEL=" "
@@ -349,17 +358,14 @@ if [ "$#" -gt 0 ]; then
   done
 fi
 set --
-tah_sel() { case "$TAH_SEL" in *" $1 "*) return 0 ;; esac; return 1; }
-# tah_run gates each source line: the name must be in TAH_PARTS and appear on one source line only;
-# tah_done accumulates what was sourced, compared with tah_list (selection, base order) before RESULT.
-tah_done=""; tah_seen=" "
-tah_run() {
+tah_sel() {
   tah_known "$1" || { echo "  FAIL: part not in TAH_PARTS: $1"; exit 1; }
-  case "$tah_seen" in *" $1 "*) echo "  FAIL: part has more than one source line: $1"; exit 1 ;; esac
-  tah_seen="$tah_seen$1 "
-  tah_sel "$1" || return 1
-  tah_part "$1"; tah_done="$tah_done $1"
+  case "$TAH_SEL" in *" $1 "*) return 0 ;; esac; return 1
 }
+# tah_done accumulates what was actually sourced, compared with tah_list (selection, base order) before
+# RESULT: a backstop for a source line that is present but never executed.
+tah_done=""
+tah_run() { tah_sel "$1" || return 1; tah_part "$1"; tah_done="$tah_done $1"; }
 tah_list=""; for tah_p in $TAH_PARTS; do tah_sel "$tah_p" && { tah_part "$tah_p"; tah_list="$tah_list $tah_p"; }; done
 if [ -n "$TAH_ONLY" ]; then echo "== test-automate-helpers: parts$tah_list (in this order, prerequisites included) =="; fi
 # <<< runner-only

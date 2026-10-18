@@ -18,6 +18,7 @@ from base ranges plus the runner-only blocks. No leg was edited by hand.
 | Base (copy of `3a03dfa`, run 2) | `RESULT: 765 passed, 1 failed` | 1 |
 | Branch (runner before review) | `RESULT: 765 passed, 1 failed` | 1 |
 | Branch (runner after review iteration 1) | `RESULT: 765 passed, 1 failed` | 1 |
+| Branch (runner after review iteration 2) | `RESULT: 765 passed, 1 failed` | 1 |
 
 The one failure on every run is the pre-existing, environment-dependent W19 leg (`W19 real
 22-split-automate-engine-surfaces.md ## Touches parses`). It reads the gitignored queue under
@@ -43,12 +44,13 @@ normalized base vs branch2: identical (766 lines)
 normalized base2 vs branch2: identical (766 lines)
 normalized base vs branch (final runner): identical
 normalized base (fresh copy, 2026-10-19) vs branch (review iteration 1 runner): identical (766 lines)
+normalized base vs branch (review iteration 2 runner): identical (766 lines)
 ```
 
 ## 2. Move-only proof (AC2)
 
 The runner adds four kinds of lines to base text:
-1. five `# >>> runner-only` … `# <<< runner-only` blocks (71 lines with markers). They hold the header
+1. five `# >>> runner-only` … `# <<< runner-only` blocks (77 lines with markers). They hold the header
    paragraph, the loader (with its list-agreement checks), the `if`/`fi` around the inline MERGE leg, and
    the subset-mode cleanup plus the sourced-vs-selected check;
 2. 17 part-source lines of the form `tah_run <part> && . "$TAH_D/<part>.sh"`;
@@ -56,8 +58,8 @@ The runner adds four kinds of lines to base text:
    block, and its first line occurs exactly once in the runner (`grep -nxF` → `308:`);
 4. nothing else.
 
-Runner size: 320 base lines (1–299, the hoist, the MERGE leg 1999–2011 and the tail 6214–6216) + 71
-runner-only + 17 part-source = 408 lines.
+Runner size: 320 base lines (1–299, the hoist, the MERGE leg 1999–2011 and the tail 6214–6216) + 77
+runner-only + 17 part-source = 414 lines.
 
 Expansion script (`expand-runner.sh <scripts-dir>`). It fails if the hoist start occurs anywhere but once
 outside the runner-only blocks:
@@ -88,8 +90,9 @@ done < "$stripped"
 rm -f "$stripped" "$hoist"
 ```
 
-The hoist goes back after line 3 of `09-brief-repair` (base 3510 + 3 = 3513). Command and output on the
-final tree:
+The hoist goes back after line 3 of `09-brief-repair` (base 3510 + 3 = 3513). The part-source line shape
+did not change in review iteration 2, so the script is unchanged. Command and output on the final tree
+(re-run on the review iteration 2 runner, same output):
 
 ```
 $ bash expand-runner.sh loomwright/scripts > expanded.sh
@@ -128,9 +131,9 @@ its range minus the hoisted 3513–3517.
 | `16-queue-gates` | queue gates (QG1–QG4) | 5973–6213 | 241 |
 | *(runner)* summary | — | 6214–6216 | 3 |
 
-Largest part: `07-rules-gate`, 754 lines (limit 800). The runner is 408 lines, above the problem
+Largest part: `07-rules-gate`, 754 lines (limit 800). The runner is 414 lines, above the problem
 statement's "~350". The floor is the 320 base lines the brief keeps in the runner (the 202-line header,
-the setup, the hoist, the inline MERGE leg and the summary); the other 88 are the loader and its checks.
+the setup, the hoist, the inline MERGE leg and the summary); the other 94 are the loader and its checks.
 
 ## 4. Loader behavior (AC4, AC5)
 
@@ -149,11 +152,15 @@ Every case below ran from one script, `loader-cases.sh <repo> <workdir>`, on a f
 | an unparseable `03-intake.sh` (line 11 deleted, leaving an empty `then`), `03-intake` | `  FAIL: test part does not parse (bash -n): test-automate-helpers.d/03-intake.sh` | 1 |
 | `01-config.sh` gains `echo a \|& cat` (bash 4+ syntax); runner run as `/bin/bash` 3.2 with bash 5.3 first on `PATH`, `01-config` | `  FAIL: test part does not parse (bash -n): test-automate-helpers.d/01-config.sh` | 1 |
 | reviewer repro: probe parts + `17-probe.sh` (one `no` leg) + a `tah_run 17-probe && . …` line, not in `TAH_PARTS`, no args | `  FAIL: test part not in TAH_PARTS: test-automate-helpers.d/17-probe.sh` (before any leg) | 1 |
-| probe parts + the `tah_run 17-probe` line only (no file), `01-config` | `ok: probe 01-config argc=0`, then `  FAIL: part not in TAH_PARTS: 17-probe` | 1 |
-| probe parts + `17-probe` in `TAH_PARTS` and a file, but no source line, `17-probe` | `  FAIL: parts sourced ( ) differ from parts selected ( 17-probe ): …` | 1 |
-| probe parts + a second `tah_run 01-config` line, `01-config` | `ok: probe 01-config argc=0`, then `  FAIL: part has more than one source line: 01-config` | 1 |
-| probe parts, the `12-meta` source line moved below `13-plan-waves`, `12-meta 13-plan-waves` | both probes, then `  FAIL: parts sourced ( 13-plan-waves 12-meta ) differ from parts selected ( 12-meta 13-plan-waves ): …` | 1 |
-| probe parts, `tah_prereq` names `05-gate-eval-harnes`, `11-ceiling` | `  FAIL: prerequisite of 05-gate-eval not in TAH_PARTS: 05-gate-eval-harnes` (before any leg) | 1 |
+| probe parts + the `tah_run 17-probe` line only (no file), `01-config` | `  FAIL: part-source lines differ from TAH_PARTS: …` (before any leg; iteration 1: after the 01-config probe) | 1 |
+| probe parts + `17-probe` in `TAH_PARTS` and a file, but no source line, `17-probe` | `  FAIL: part-source lines differ from TAH_PARTS: …` (before any leg; iteration 1: at the end) | 1 |
+| probe parts + a second `tah_run 01-config` line, `01-config` | `  FAIL: part-source lines differ from TAH_PARTS: …` (before any leg; iteration 1: after the 01-config probe) | 1 |
+| probe parts, the `12-meta` source line moved below `13-plan-waves`, `12-meta 13-plan-waves` | `  FAIL: part-source lines differ from TAH_PARTS: …` (before any leg; iteration 1: after both probes) | 1 |
+| **reviewer repro, iteration 2:** probe parts, line `tah_run 12-meta && . "$TAH_D/11-ceiling.sh"` (name right, path wrong), no args | `  FAIL: part-source lines differ from TAH_PARTS: …` (before any leg). Iteration 1 sourced 11-ceiling twice, never ran 12-meta, exit 0 | 1 |
+| probe parts + an extra bare `. "$TAH_D/01-config.sh"` line (no `tah_run`), no args | `  FAIL: part-source lines differ from TAH_PARTS: …` (before any leg) | 1 |
+| probe parts, `TAH_PREREQ` value `05-gate-eval-harnes`, `11-ceiling` | `  FAIL: prerequisite of 05-gate-eval not in TAH_PARTS: 05-gate-eval-harnes` (before any leg) | 1 |
+| probe parts, `TAH_PREREQ` key `06-gate-eval-tial`, `11-ceiling` | `  FAIL: prerequisite map names a part not in TAH_PARTS: 06-gate-eval-tial` (before any leg; iteration 1 did not check the map's keys) | 1 |
+| probe parts, MERGE-leg guard `if tah_sel 05-gate-evl`, `05-gate-eval` | both probes, then `  FAIL: part not in TAH_PARTS: 05-gate-evl` (iteration 1 skipped the leg silently) | 1 |
 | probe parts, `16-queue-gates 01-config 01-config` | 01-config then 16-queue-gates, each once, `argc=0`; `RESULT: 2 passed, 0 failed` | 0 |
 | probe parts, `07-rules-gate 05-gate-eval-harness` | the harness once, then 07; `RESULT: 2 passed, 0 failed` | 0 |
 | probe parts, `06-gate-eval-tail` | the harness pulled in, then 06; `RESULT: 2 passed, 0 failed` | 0 |
@@ -166,20 +173,38 @@ AC8's first mutation: without it, an unparseable part made `.` fail, all of that
 skipped, and the run printed `RESULT: 0 passed, 0 failed` with exit 0. The one-file base could not do
 that, because there a syntax error ends the script.
 
-The part list is stated four ways: `TAH_PARTS`, the `tah_prereq` map, the files in
-`test-automate-helpers.d/`, and the 17 source lines. Review iteration 1 added a check for each against
-`TAH_PARTS`: every prerequisite and every `*.sh` file in the directory must be named in it (checked at
-start, before any leg); `tah_run` refuses a name not in it and a second source line for the same name;
-and before `RESULT:` the sourced list (`tah_done`, appended only when a part is actually sourced) must
-equal the selected list in `TAH_PARTS` order (`tah_list`). That catches a `TAH_PARTS` entry with no
-source line and source lines out of order. Before this, the reviewer's repro (a `17-probe` part with
-only a failing `no` leg, sourced but not listed) gave `RESULT: 18 passed, 0 failed`, exit 0. Names are
+Part names are written in several places besides `TAH_PARTS`: both sides of each `TAH_PREREQ` pair,
+the files in `test-automate-helpers.d/`, the `tah_sel` guard of the inline MERGE leg, and each of the 17
+source lines, which names its part twice (the `tah_run` argument and the sourced path). Each copy is
+checked against `TAH_PARTS`:
+- before any leg: every `TAH_PREREQ` key and value, and every `*.sh` file in the directory, must be named
+  in `TAH_PARTS`;
+- before any leg: the runner greps its own file (`${BASH_SOURCE[0]}`, the runner even when parts are
+  sourced or the runner itself is sourced) for lines that start with `tah_run ` or source
+  `. "$TAH_D/`. The result must equal one `tah_run <p> && . "$TAH_D/<p>.sh"` line per `TAH_PARTS` entry,
+  in `TAH_PARTS` order. That one comparison covers an unknown name, a duplicate, a missing line, a wrong
+  order, a path that names a different part than its `tah_run` argument, and a bare source line. The
+  grep pattern, the expected-line format and the comment above them are written so the grep does not
+  match them;
+- at run time: `tah_sel` refuses a name not in `TAH_PARTS`. That covers the MERGE-leg guard, which is
+  the one copy only checked when it runs (exit 1, not silent);
+- before `RESULT:` (kept as a backstop): the sourced list (`tah_done`, appended only when a part is
+  actually sourced) must equal the selected list in `TAH_PARTS` order (`tah_list`). This catches a
+  source line that is present but never executes.
+
+Review iteration 1 had compared only the `tah_run` argument, so in iteration 2 the reviewer changed the
+12-meta line to source `11-ceiling.sh`: 11-ceiling ran twice, 12-meta's 32 legs never ran, and the run
+exited 0. That is now the "reviewer repro, iteration 2" row above. Iteration 1's per-call checks in
+`tah_run` (unknown name, second source line) are removed because the load-time comparison covers them.
+In iteration 1, the reviewer's repro (a `17-probe` part with only a failing `no` leg, sourced but not
+listed) gave `RESULT: 18 passed, 0 failed`, exit 0. Names are
 compared exactly, not by substring: a first draft used `case " $TAH_PARTS " in *" $1 "*`, which accepted
 the one-argument `"01-config 02-runfile"`; the scratch run above caught it before commit. The directory
 check reads the directory with a glob only to compare names; parts are still sourced by name (AC4).
 
 Each part run alone (`bash loomwright/scripts/test-automate-helpers.sh <part>`, re-run on the review
-iteration 1 runner, same totals as before):
+iteration 1 runner, same totals as before. On the iteration 2 runner, `05-gate-eval`, `06-gate-eval-tail`,
+`07-rules-gate` (the three `TAH_PREREQ` dependents) and `12-meta` were re-run with the same totals):
 
 | Part | Parts run (prerequisites included) | Result | exit |
 |---|---|---|---|
@@ -268,10 +293,11 @@ AC9: `git diff --stat 3a03dfa` lists only the runner, the 17 parts, `vendor-coup
 the changelog fragment and this file. `automate-helpers.sh` and every `automate-helpers.d/*.sh` are
 unchanged.
 
-After review iteration 1, these were re-run on the branch with the same results as in the table:
+After review iterations 1 and 2, these were re-run on the branch with the same results as in the table:
 `test-automate-loop-split.sh`, `test-no-pipefail-grep-q.sh`, `check-locale-prefix.sh` (421/421),
 `check-test-hermetic.sh` (177/177), `check-version-bump.sh` (1 fragment) and `check-vendor-coupling.sh`.
-The `ci-local` row below is from before review iteration 1.
+The `ci-local` row below is from before review iteration 1. After iteration 2, `test-no-fixed-sleep-race.sh`
+(27 passed, 0 failed) was also re-run.
 
 ### `bash scripts/ci-local.sh`
 
@@ -286,10 +312,14 @@ is not run locally; CI runs it.
 
 ## 8. Known limits
 
-- The loader branches (missing, unreadable, unparseable, wrong-interpreter parse, unknown, the four
+- The loader branches (missing, unreadable, unparseable, wrong-interpreter parse, unknown, the
   list-agreement checks, subset selection) are proven by the recorded scratch runs in §4, not by a
   committed CI leg. AC9 forbids a new file and AC1 fixes the `RESULT:` count, so the follow-up is a
   separate `test-automate-helpers-modules.sh` (automate-speed/19 precedent).
+- The source-line check matches the documented shape (`tah_run …` at line start, or `. "$TAH_D/`). A
+  part sourced some other way (`source`, `${TAH_D}`, an unquoted path) is not seen by the load-time
+  check. Only the end-of-run `tah_done`/`tah_list` backstop covers it, and only when the line also goes
+  through `tah_run`.
 - Prose pointers elsewhere name `test-automate-helpers.sh §X7` / `section R` / `ESC` (for example in
   `automate-helpers.d/plan-waves.sh` and `automate-dismissed.sh`). They remain true, because running
   the runner runs those sections. They are not re-pointed to the parts: AC9 freezes the helper files,
