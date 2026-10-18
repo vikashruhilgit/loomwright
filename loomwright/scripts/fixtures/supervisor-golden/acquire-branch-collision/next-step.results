@@ -1,0 +1,5 @@
+# the branch carries a commit beyond main ⇒ STOP, the named park
+call: --job .supervisor/jobs/pending/2026-10-17-golden-collide.md
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: park

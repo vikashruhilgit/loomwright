@@ -1,0 +1,31 @@
+{
+  "answer_arm": "preflight-answer",
+  "ask_options": [
+    "proceed-anyway",
+    "revise-scope",
+    "abort"
+  ],
+  "base_branch": "main",
+  "base_sync": "ok",
+  "branch": "feature/golden-overlap",
+  "branch_action": "CREATED",
+  "cost_profile": "default",
+  "flags": {
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": false,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/in-progress/2026-10-17-golden-overlap.md",
+  "last_arm": "preflight-route",
+  "max_workers": 2,
+  "mode": "parallel",
+  "pending_text": "{\"do\":\"ask\",\"step\":\"preflight-route\",\"session_id\":\"golden-overlap\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-overlap.md\",\"branch\":\"feature/golden-overlap\",\"gate\":\"SUP-OVERLAP\",\"question\":\"Pre-flight sync classified this task OVERLAP: PR #41 (feature/docs-sweep) touches docs/a.md; 1f2e3d4 on origin/main touched docs/b.md. Proceed anyway, revise the scope (checkpoint), or abort?\",\"header\":\"\",\"options\":[\"proceed-anyway\",\"revise-scope\",\"abort\"],\"cant_ask\":\"preflight_overlap_detected\",\"questions\":[{\"question\":\"Pre-flight sync classified this task OVERLAP: PR #41 (feature/docs-sweep) touches docs/a.md; 1f2e3d4 on origin/main touched docs/b.md. Proceed anyway, revise the scope (checkpoint), or abort?\",\"header\":\"\",\"options\":[\"proceed-anyway\",\"revise-scope\",\"abort\"]}],\"answer_with\":\"--result {\\\"answers\\\": [<one option label>], \\\"note\\\": \\\"<free text, optional>\\\"}; when the ask tool is unavailable --result {\\\"cant_ask\\\": true}\"}",
+  "preflight_citations": "PR #41 (feature/docs-sweep) touches docs/a.md; 1f2e3d4 on origin/main touched docs/b.md",
+  "preflight_class": "OVERLAP",
+  "task_id": "2026-10-17-golden-overlap",
+  "title": "Golden overlap"
+}

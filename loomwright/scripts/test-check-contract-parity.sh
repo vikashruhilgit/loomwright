@@ -29,7 +29,8 @@ make_fixture() { # $1 = fixture dir; writes a minimal valid tree
   mkdir -p "$d/loomwright/hooks" "$d/loomwright/agents" "$d/loomwright/scripts" \
            "$d/loomwright/skills/self-heal-advisory" \
            "$d/loomwright/skills/preflight-sync" \
-           "$d/loomwright/skills/supervisor-config"
+           "$d/loomwright/skills/supervisor-config" \
+           "$d/loomwright/docs"
   # the gate's ENUMS scope includes this skill (v14.23.0 supervisor diet) and
   # errs loudly when a scoped file is missing — fixtures must provide it
   cat >"$d/loomwright/skills/self-heal-advisory/SKILL.md" <<'EOF2'
@@ -43,6 +44,11 @@ Preflight emit sites: status: checkpoint on revise-scope, status: failed on abor
 EOF2
   cat >"$d/loomwright/skills/supervisor-config/SKILL.md" <<'EOF2'
 Resume-gate refusal emit: status: failed with error resume_state_invalid.
+EOF2
+  # automate-speed/11 moved Supervisor Phase 0-4 emit prose (preflight / FINALIZE parks) into the
+  # --legacy file; the ENUMS scope covers it, so fixtures must provide it
+  cat >"$d/loomwright/docs/supervisor-legacy-phases.md" <<'EOF2'
+Legacy emit sites: status: checkpoint on revise-scope, status: failed on a fail-closed park.
 EOF2
   # hooks.json mentioning every manifest field for every matcher (pin guard satisfied)
   python3 - "$d/loomwright/hooks/hooks.json" <<'PY'
@@ -244,6 +250,11 @@ check "missing hook-required field fails" 1 bash "$GUARD" --root "$TMP/missing-f
 make_fixture "$TMP/bad-enum"
 printf '\nOn crash: pause the phase (status: paused) and exit.\n' >> "$TMP/bad-enum/loomwright/agents/supervisor.md"
 check "out-of-enum status literal fails" 1 bash "$GUARD" --root "$TMP/bad-enum"
+
+# automate-speed/11: the ENUMS coverage moved with the text into docs/supervisor-legacy-phases.md
+make_fixture "$TMP/bad-enum-legacy"
+printf '\nOn a stop: park it (status: parked) and exit.\n' >> "$TMP/bad-enum-legacy/loomwright/docs/supervisor-legacy-phases.md"
+check "out-of-enum status literal in the --legacy file fails" 1 bash "$GUARD" --root "$TMP/bad-enum-legacy"
 
 # 4. Pin-drift: hooks.json drops a field the manifest still pins → fails
 make_fixture "$TMP/pin-drift"

@@ -1,0 +1,83 @@
+{
+  "ask_options": [
+    "proceed anyway",
+    "investigate",
+    "abort"
+  ],
+  "base_branch": "main",
+  "base_sync": "ok",
+  "branch": "feature/golden-exec",
+  "branch_action": "CREATED",
+  "children_extra": "",
+  "children_from": "finalize-children",
+  "children_ids": "a2222222222222222",
+  "cost_profile": "default",
+  "exec_result": {
+    "branches": [],
+    "completed": [
+      {
+        "branch": "feature/exec-a",
+        "review_decision": "PASS",
+        "status": "completed",
+        "task_id": "a"
+      },
+      {
+        "branch": "feature/exec-b",
+        "review_decision": "PASS",
+        "status": "completed",
+        "task_id": "b"
+      }
+    ],
+    "failed": [],
+    "merge_order": [
+      "feature/exec-a",
+      "feature/exec-b"
+    ],
+    "summary": "2/2 subtasks completed.",
+    "worktrees": [
+      {
+        "branch": "feature/exec-a",
+        "path": "../repo-a",
+        "status": "completed",
+        "task_id": "a"
+      },
+      {
+        "branch": "feature/exec-b",
+        "path": "../repo-b",
+        "status": "completed",
+        "task_id": "b"
+      }
+    ]
+  },
+  "flags": {
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": true,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/failed/2026-10-17-golden-exec.md",
+  "last_arm": "finalize-stop",
+  "max_workers": 2,
+  "mode": "parallel",
+  "path": "parallel",
+  "pending_text": "{\"do\":\"park\",\"step\":\"finalize-stop\",\"session_id\":\"golden-finalize-children-unsettled\",\"job\":\".supervisor/jobs/failed/2026-10-17-golden-exec.md\",\"branch\":\"feature/golden-exec\",\"status\":\"failed\",\"error\":\"children_unsettled: a2222222222222222\",\"preflight_sync\":\"skipped\",\"message\":\"FINALIZE point 5 stopped the run (the owner chose abort): unsettled a2222222222222222. Nothing was published; the job brief is in failed/.\"}",
+  "plan_source": "brief",
+  "preflight_sync": "skipped",
+  "premerge": "passed",
+  "seq_index": 0,
+  "stop": {
+    "error": "children_unsettled: a2222222222222222",
+    "fail_job": true,
+    "message": "FINALIZE point 5 stopped the run (the owner chose abort): unsettled a2222222222222222. Nothing was published; the job brief is in failed/.",
+    "status": "failed"
+  },
+  "subtasks": [
+    "a",
+    "b"
+  ],
+  "task_id": "2026-10-17-golden-exec",
+  "title": "Golden exec"
+}

@@ -1,0 +1,1 @@
+synthetic: an EXECUTE_RESULT whose merge_order names a failed subtask's branch — the exact defect pre-merge point 1 (no failed/partial in the merge set) exists to stop; no kept run produced one.

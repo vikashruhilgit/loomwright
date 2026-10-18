@@ -1,0 +1,17 @@
+# gh fails, the ONE retry fails ⇒ the SUP-GH-RETRY ask; retry ⇒ gh answers main ⇒ the hand-over (base verified)
+call: --job .supervisor/jobs/pending/2026-10-17-golden-finalize.md --skip-preflight-sync
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+run: printf 'driver\n' > driver.sh
+call: --result '{"subtask":"1","agent_id":"ac394bd015ea3ff94","status":"completed","gates":"passed"}'
+expect: spawn
+run: git add -A && git commit -qm 'feat(supervisor): golden finalize'
+call: --result '{"merged":[],"conflict":null,"refold":"ok"}'
+expect: spawn
+call: --result '{"pr_url":"https://github.com/golden/repo/pull/12"}'
+expect: ask
+call: --result '{"answers":["retry"]}'
+expect: done

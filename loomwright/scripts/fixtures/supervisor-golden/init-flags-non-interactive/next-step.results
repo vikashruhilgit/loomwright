@@ -1,0 +1,3 @@
+# Phase 0 under --non-interactive: the job moves pending/ -> in-progress/, ONE Context-Keeper spawn
+call: --job .supervisor/jobs/pending/2026-10-17-golden-init.md --non-interactive
+expect: spawn

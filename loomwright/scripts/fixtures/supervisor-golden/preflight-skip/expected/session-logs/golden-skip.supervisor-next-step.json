@@ -1,0 +1,25 @@
+{
+  "answer_arm": "plan",
+  "base_branch": "main",
+  "base_sync": "ok",
+  "branch": "feature/golden-skip",
+  "branch_action": "CREATED",
+  "cost_profile": "default",
+  "flags": {
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": true,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/in-progress/2026-10-17-golden-skip.md",
+  "last_arm": "preflight",
+  "max_workers": 2,
+  "mode": "parallel",
+  "pending_text": "{\"do\":\"spawn\",\"step\":\"preflight\",\"session_id\":\"golden-skip\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-skip.md\",\"branch\":\"feature/golden-skip\",\"branch_action\":\"CREATED\",\"what\":\"context-keeper\",\"agent\":\"loomwright:context-keeper\",\"state_file\":\".supervisor/state.md\",\"ops\":[\"Context-Keeper(operation: record_decision, phase: PRE_FLIGHT_SYNC, decision: \\\"preflight_skipped\\\", rationale: \\\"--skip-preflight-sync flag\\\")\"],\"then\":\"--result {\\\"confirmed\\\": true} once Context-Keeper applied every op, in order\"}",
+  "preflight_sync": "skipped",
+  "task_id": "2026-10-17-golden-skip",
+  "title": "Golden preflight skip"
+}

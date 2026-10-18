@@ -1,6 +1,6 @@
 # Loop inventory — supervisor
 
-This file lists every branch and rule the Supervisor loop states in prose — the `/supervisor` command, the `supervisor-runner` agent prompt, the Phase 4.5 self-heal advisory skill and the async-orchestration skill (worker spawn, poll and FINALIZE protocol) — one row per `###`/`####` heading outside fenced and split-index blocks, and one row per list item (or load-bearing bold paragraph) that states a condition→action branch or a rule. Pure enumerations (flag lists, file lists, illustrative examples) are covered by their section's heading row. It restates prose on purpose so a later move of a branch into a script, or of a story out of the prose, cannot silently drop an edge case. `loomwright/scripts/test-loop-inventory.sh` keeps it in sync with the sources (heading coverage, live anchors, real script subcommands, unique ids, the gap list and the counts below); the counts and the gap list are computed from the table, never hand-maintained.
+This file lists every branch and rule the Supervisor loop states in prose — the `/supervisor` command, the `supervisor-runner` agent prompt, the Phase 4.5 self-heal advisory skill and the async-orchestration skill (worker spawn, poll and FINALIZE protocol) — one row per `###`/`####` heading outside fenced and split-index blocks, and one row per list item (or load-bearing bold paragraph) that states a condition→action branch or a rule. Pure enumerations (flag lists, file lists, illustrative examples) are covered by their section's heading row. It restates prose on purpose so a later move of a branch into a script, or of a story out of the prose, cannot silently drop an edge case. `loomwright/scripts/test-loop-inventory.sh` keeps it in sync with the sources (heading coverage, live anchors, real script subcommands, unique ids, the gap list and the counts below); the counts and the gap list are computed from the table, never hand-maintained. A row whose home is `script:supervisor-next-step.sh <step>` (automate-speed/11) names a branch that driver now runs. A re-homed row keeps its original file and anchor cells: the anchored prose lives on verbatim in `docs/supervisor-legacy-phases.md` (read only on the legacy path, and not a source of this group) while its file keeps a pointer to the driver step. The rows added with the driver (SV-737 onward) anchor those pointers themselves.
 
 ## Sources
 - `agents/supervisor.md`
@@ -50,12 +50,12 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-036 | agents/supervisor.md | q: What the budget number does and does NOT claim | quoting the token-budget saving | it is spawn-time weight, not a session total; routed skills redistribute cost | story | prose | - | GAP |
 | SV-037 | agents/supervisor.md | q: Phase-numbering convention | phase numbering | 1.5 and 4.5 are sub-phase gates; the "7-Phase" name is unchanged | rule | prose | - | GAP |
 | SV-038 | agents/supervisor.md | h: ### Phase 0: INIT (Interactive Configuration) | session start (fresh or --continue) | run Phase 0 INIT via supervisor-config skill Read | deterministic | prose | - | GAP |
-| SV-039 | agents/supervisor.md | q: When a `job:` brief is supplied, the planning questions are pre-answered | `job:` brief supplied | skip env validation; move brief pending/ → in-progress/ (skip if not under pending/); jump to Phase 1 | deterministic | prose | - | GAP |
+| SV-039 | agents/supervisor.md | q: When a `job:` brief is supplied, the planning questions are pre-answered | `job:` brief supplied | skip env validation; move brief pending/ → in-progress/ (skip if not under pending/); jump to Phase 1 | deterministic | script:supervisor-next-step.sh init | - | test-supervisor-next-step.sh |
 | SV-040 | agents/supervisor.md | q: and execute that protocol: environment auto-detection, resume-state | Phase 0 entry | Read supervisor-config SKILL.md on demand (not preloaded) | rule | prose | - | GAP |
 | SV-041 | agents/supervisor.md | q: **Run-lock acquired (red-team-hardening/06 — FIRST action of Phase 0, | Phase 0 first action | `run-lock.sh acquire --owner supervisor:<sid> --session-id <sid>`; held ⇒ status failed, error run_lock_held; reentrant/degraded ⇒ proceed | deterministic | prose | script:run-lock.sh acquire | test-run-lock.sh |
 | SV-042 | agents/supervisor.md | q: Resolved config recorded in session memory and echoed for cross-phase | config resolved | echo BASE_BRANCH, NON_INTERACTIVE, RED_TEAM_ENABLED, MAX_TOKENS in Session Configuration | rule | prose | - | GAP |
-| SV-043 | agents/supervisor.md | q: `--non-interactive` recorded as a Phase Flag (`set_flag | `--non-interactive` / `--max-tokens N` present | record as Phase Flag; clear stale crash-recovery flags on entry | deterministic | prose | - | GAP |
-| SV-044 | agents/supervisor.md | q: `cost_profile` resolved: `--cheap` → `cheap`, else `default` (resume | `--cheap` present | cost_profile = cheap, else default; consumed at every spawn | deterministic | prose | - | GAP |
+| SV-043 | agents/supervisor.md | q: `--non-interactive` recorded as a Phase Flag (`set_flag | `--non-interactive` / `--max-tokens N` present | record as Phase Flag; clear stale crash-recovery flags on entry | deterministic | script:supervisor-next-step.sh init | - | test-supervisor-next-step.sh |
+| SV-044 | agents/supervisor.md | q: `cost_profile` resolved: `--cheap` → `cheap`, else `default` (resume | `--cheap` present | cost_profile = cheap, else default; carried as `cost_profile` on every later spawn instruction | deterministic | script:supervisor-next-step.sh init | - | test-supervisor-next-step.sh |
 | SV-045 | agents/supervisor.md | q: Resume path (`--continue`): loaded state MUST pass the fail-closed | `--continue` with state failing the resume gate | status failed, error resume_state_invalid; under-reporting state ⇒ resume_state_stale; never fall back to fresh | deterministic | prose | script:reconcile-resume-state.sh | test-reconcile-resume-state.sh |
 | SV-046 | agents/supervisor.md | h: ### Phase 1: ACQUIRE (Task Selection + Branch) | Phase 1 entry | select task and create branch (non-negotiable) | deterministic | prose | - | GAP |
 | SV-047 | agents/supervisor.md | q: **Consult project memory (advisory — read-only):** run `bash | Phase 1 action 0 | read project memory; advisory, subordinate to CLAUDE.md; empty ⇒ proceed | rule | prose | script:read-project-memory.sh | test-project-memory.sh |
@@ -66,24 +66,24 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-052 | agents/supervisor.md | q: Or load from job file (if `job:` parameter used) | `job:` parameter used | load title and criteria from the job file | deterministic | prose | - | GAP |
 | SV-053 | agents/supervisor.md | q: If requirements are vague (no acceptance criteria): spawn Product Owner | requirements vague (no acceptance criteria) | spawn Product Owner (blocking) | judgment | prose | - | GAP |
 | SV-054 | agents/supervisor.md | q: If clear criteria exist: proceed | clear criteria exist | proceed | judgment | prose | - | GAP |
-| SV-055 | agents/supervisor.md | q: **MANDATORY: Create feature branch** (before ANY code work) — | feature branch already exists | tip == base tip ⇒ reuse; else exit 1 (never delete); absent ⇒ checkout -b | deterministic | prose | - | GAP |
-| SV-056 | agents/supervisor.md | q: On `exit 1` above: MUST NOT proceed to Phase 1.5/2 | branch guard exit 1 | do not proceed; status failed, error acquire_branch_collision; leave job file untouched | deterministic | prose | - | GAP |
+| SV-055 | agents/supervisor.md | q: **MANDATORY: Create feature branch** (before ANY code work) — | feature branch already exists | tip == base tip ⇒ reuse; else exit 1 (never delete); absent ⇒ checkout -b | deterministic | script:supervisor-next-step.sh acquire | - | test-supervisor-next-step.sh |
+| SV-056 | agents/supervisor.md | q: On `exit 1` above: MUST NOT proceed to Phase 1.5/2 | branch guard exit 1 | do not proceed; status failed, error acquire_branch_collision; leave job file untouched | deterministic | script:supervisor-next-step.sh acquire | - | test-supervisor-next-step.sh |
 | SV-057 | agents/supervisor.md | q: HARD RULE (unchanged): | feature branch parent | must be the tip of $BASE_BRANCH; Phase 4 self-verify checks baseRefName | rule | prose | - | GAP |
 | SV-058 | agents/supervisor.md | q: Progress state (the canonical lowercase `## Session` block — | progress state at ACQUIRE | not written; derived by hook at worker SubagentStop | rule | prose | script:emit-progress-event.sh | test-progress-state.sh |
 | SV-059 | agents/supervisor.md | q: Checkpoint:** none — no progress-state file | after branch creation | no checkpoint file; branch + derived state.md are the only evidence | rule | prose | - | GAP |
 | SV-060 | agents/supervisor.md | h: ### Phase 1.5: PRE-FLIGHT SYNC (Remote-State Reconciliation) | after ACQUIRE, before PLAN | run PRE-FLIGHT SYNC via preflight-sync skill Read; classify CLEAR/OVERLAP/SUPERSEDED | deterministic | prose | - | GAP |
-| SV-061 | agents/supervisor.md | q: **CLEAR** → proceed to Phase 2 silently (`preflight_sync = clear`). | pre-flight classification CLEAR | proceed to Phase 2 silently; preflight_sync = clear | deterministic | prose | - | GAP |
-| SV-062 | agents/supervisor.md | q: **OVERLAP / SUPERSEDED (interactive)** → soft-gate `AskUserQuestion` | OVERLAP / SUPERSEDED, interactive | AskUserQuestion: proceed / revise-scope (checkpoint) / abort with preflight_overlap_detected | judgment | prose | - | GAP |
-| SV-063 | agents/supervisor.md | q: **OVERLAP / SUPERSEDED under `--non-interactive` / CI / | OVERLAP / SUPERSEDED under --non-interactive / CI / no TTY | fail closed: status failed, error preflight_overlap_detected | deterministic | prose | - | test-non-interactive-gates-seam.sh |
-| SV-064 | agents/supervisor.md | q: **Tooling failure (`gh` / `git fetch` / timeout)** → graceful | gh / git fetch / timeout failure in pre-flight | one warning, preflight_sync unverified, continue — never hard-block | deterministic | prose | - | GAP |
-| SV-065 | agents/supervisor.md | q: **`--skip-preflight-sync`** → short-circuit straight to Phase 2 as a | `--skip-preflight-sync` | skip to Phase 2; record decision preflight_skipped; preflight_sync = skipped | deterministic | prose | - | GAP |
+| SV-061 | agents/supervisor.md | q: **CLEAR** → proceed to Phase 2 silently (`preflight_sync = clear`). | pre-flight classification CLEAR | proceed to Phase 2 silently; preflight_sync = clear | deterministic | script:supervisor-next-step.sh preflight-route | - | test-supervisor-next-step.sh |
+| SV-062 | agents/supervisor.md | q: **OVERLAP / SUPERSEDED (interactive)** → soft-gate `AskUserQuestion` | OVERLAP / SUPERSEDED, interactive | SUP-OVERLAP ask: proceed-anyway / revise-scope (checkpoint) / abort (preflight_overlap_detected); the driver never picks | judgment | script:supervisor-next-step.sh preflight-route | script:supervisor-next-step.sh preflight-answer | test-supervisor-next-step.sh |
+| SV-063 | agents/supervisor.md | q: **OVERLAP / SUPERSEDED under `--non-interactive` / CI / | OVERLAP / SUPERSEDED under --non-interactive / CI / no TTY | fail closed: status failed, error preflight_overlap_detected | deterministic | script:supervisor-next-step.sh preflight-route | - | test-supervisor-next-step.sh |
+| SV-064 | agents/supervisor.md | q: **Tooling failure (`gh` / `git fetch` / timeout)** → graceful | gh / git fetch / timeout failure in pre-flight | one warning, preflight_sync unverified, continue — never hard-block | deterministic | script:supervisor-next-step.sh preflight-route | - | test-supervisor-next-step.sh |
+| SV-065 | agents/supervisor.md | q: **`--skip-preflight-sync`** → short-circuit straight to Phase 2 as a | `--skip-preflight-sync` | skip to Phase 2; record decision preflight_skipped; preflight_sync = skipped | deterministic | script:supervisor-next-step.sh preflight | - | test-supervisor-next-step.sh |
 | SV-066 | agents/supervisor.md | h: ### Phase 2: PLAN (Decompose + Analyze Parallelism) | Phase 2 entry | Read async-orchestration SKILL.md (first load); decompose and analyze parallelism | deterministic | prose | - | GAP |
-| SV-067 | agents/supervisor.md | q: Input: `goal: "{task_id}: {title}"` + brief pointer ({brief_path}, "read | Orchestrator spawn input | pass brief pointer + ≤200-char criteria summary, never pasted brief bodies | rule | prose | - | GAP |
-| SV-068 | agents/supervisor.md | q: When `cost_profile=cheap`: include `model: "sonnet"` in the Task call | cost_profile=cheap at Orchestrator spawn | include model: sonnet in the Task call | deterministic | prose | - | GAP |
+| SV-067 | agents/supervisor.md | q: Input: `goal: "{task_id}: {title}"` + brief pointer ({brief_path}, "read | Orchestrator spawn input | a brief's Subtask Structure ids are the plan; only a table naming no id gets the orchestrator spawn (goal + brief pointer, never the pasted body) | rule | script:supervisor-next-step.sh plan | - | test-supervisor-next-step.sh |
+| SV-068 | agents/supervisor.md | q: When `cost_profile=cheap`: include `model: "sonnet"` in the Task call | cost_profile=cheap at Orchestrator spawn | `cost_profile: cheap` on the orchestrator spawn instruction (the spawn takes that profile's model override) | deterministic | script:supervisor-next-step.sh plan | - | test-supervisor-next-step.sh |
 | SV-069 | agents/supervisor.md | q: Mark each subtask as LAUNCHABLE or BLOCKED | subtask dependencies + file overlap analyzed | mark each subtask LAUNCHABLE or BLOCKED | deterministic | prose | - | GAP |
 | SV-070 | agents/supervisor.md | q: If `--sequential` flag: mark all as sequential (no parallelism) | `--sequential` | mark all subtasks sequential (no parallelism) | deterministic | prose | - | GAP |
 | SV-071 | agents/supervisor.md | q: Progress state is not written here — see the pointer in Phase 1 | Phase 2 | progress state is not written here | rule | prose | - | GAP |
-| SV-072 | agents/supervisor.md | q: Path selection: exactly 1 subtask → Single-Agent Path (skip worktree | subtask count == 1 / --sequential with > 1 / otherwise | Single-Agent Path / Sequential Path / Parallel Path (Execute Manager); never a per-subtask reviewer | deterministic | prose | - | GAP |
+| SV-072 | agents/supervisor.md | q: Path selection: exactly 1 subtask → Single-Agent Path (skip worktree | subtask count == 1 / --sequential with > 1 / otherwise | Single-Agent Path / Sequential Path / Parallel Path (Execute Manager); never a per-subtask reviewer | deterministic | script:supervisor-next-step.sh plan-result | - | test-supervisor-next-step.sh |
 | SV-073 | agents/supervisor.md | q: Parallelism rules: | no unresolved depends_on, no file overlap, worktrees < max_workers | LAUNCHABLE; else BLOCKED | deterministic | prose | - | GAP |
 | SV-074 | agents/supervisor.md | h: ### Phase 3: EXECUTE (Delegated to Execute Manager) | Phase 3 entry | execute via the selected path | deterministic | prose | - | GAP |
 | SV-075 | agents/supervisor.md | h: #### `--sdk-runner` branch (EXPERIMENTAL — opt-in, default OFF) | `--sdk-runner` passed | do not Task-spawn execute-manager; run the spike runner instead | deterministic | prose | - | GAP |
@@ -121,30 +121,30 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-107 | agents/supervisor.md | q: **Terminal-lifecycle-event join (completion authority, v15.80.0) — | Sequential lifecycle join | same retry-once-then-pause / fail-closed / ended_without_result handling as step 3b | deterministic | prose | script:check-children-settled.sh | test-check-children-settled.sh |
 | SV-108 | agents/supervisor.md | q: Skip all worktree logic and Execute Manager delegation | Sequential path done | skip worktree logic and Execute Manager delegation | deterministic | prose | - | GAP |
 | SV-109 | agents/supervisor.md | h: #### Parallel Path (multi-subtask) | multi-subtask, not --sequential | delegate Phase 3 to Execute Manager in one Task call | deterministic | prose | - | GAP |
-| SV-110 | agents/supervisor.md | q: **`subtasks_failed`: escalation ⇔ `subtasks_failed` is non-empty** | parsing EXECUTE_RESULT | escalation ⇔ subtasks_failed non-empty (no top-level status field) | deterministic | prose | script:validate-execute-result.py | test-result-validators.sh |
-| SV-111 | agents/supervisor.md | q: EXECUTE_RESULT, `subtasks_failed` empty (completed) | EXECUTE_RESULT, subtasks_failed empty | extract merge data, proceed to FINALIZE | deterministic | prose | - | GAP |
-| SV-112 | agents/supervisor.md | q: EXECUTE_RESULT, `subtasks_failed` non-empty + `subtasks_completed` | subtasks_failed and subtasks_completed both non-empty | FINALIZE the completed subset per merge_order, then report the failed ones as escalation | deterministic | prose | - | GAP |
-| SV-113 | agents/supervisor.md | q: EXECUTE_RESULT, `subtasks_completed` empty (all-failed escalation) | subtasks_completed empty | checkpoint, report with resume command; nothing to merge | deterministic | prose | - | GAP |
-| SV-114 | agents/supervisor.md | q: EXECUTE_CHECKPOINT (partial) | EXECUTE_CHECKPOINT (partial) | checkpoint; ask user: merge completed subset or continue with a fresh Execute Manager | judgment | prose | - | GAP |
-| SV-115 | agents/supervisor.md | q: EXECUTE_CHECKPOINT (`adjudication_required: true`) | EXECUTE_CHECKPOINT adjudication_required: true | pause EXECUTE; 4-option AskUserQuestion (Adjudication Handling) | deterministic | prose | - | GAP |
-| SV-116 | agents/supervisor.md | q: Execute Manager crash | Execute Manager crash | checkpoint, report worktree state, exit with resume | deterministic | prose | - | GAP |
-| SV-117 | agents/supervisor.md | q: Tool budget warning | tool budget warning during EXECUTE | checkpoint, exit with resume command | deterministic | prose | - | GAP |
+| SV-110 | agents/supervisor.md | q: **`subtasks_failed`: escalation ⇔ `subtasks_failed` is non-empty** | parsing EXECUTE_RESULT | escalation ⇔ subtasks_failed non-empty (no top-level status field) | deterministic | script:supervisor-next-step.sh execute-result | script:validate-execute-result.py | test-supervisor-next-step.sh |
+| SV-111 | agents/supervisor.md | q: EXECUTE_RESULT, `subtasks_failed` empty (completed) | EXECUTE_RESULT, subtasks_failed empty | extract merge data, proceed to FINALIZE | deterministic | script:supervisor-next-step.sh execute-result | - | test-supervisor-next-step.sh |
+| SV-112 | agents/supervisor.md | q: EXECUTE_RESULT, `subtasks_failed` non-empty + `subtasks_completed` | subtasks_failed and subtasks_completed both non-empty | FINALIZE the completed subset per merge_order, then report the failed ones as escalation | deterministic | script:supervisor-next-step.sh execute-result | - | test-supervisor-next-step.sh |
+| SV-113 | agents/supervisor.md | q: EXECUTE_RESULT, `subtasks_completed` empty (all-failed escalation) | subtasks_completed empty | checkpoint, report with resume command; nothing to merge | deterministic | script:supervisor-next-step.sh execute-result | - | test-supervisor-next-step.sh |
+| SV-114 | agents/supervisor.md | q: EXECUTE_CHECKPOINT (partial) | EXECUTE_CHECKPOINT (partial) | checkpoint park naming the resume command (on resume: merge the completed subset or continue with a fresh Execute Manager); no ask on the driver path | deterministic | script:supervisor-next-step.sh execute-result | - | test-supervisor-next-step.sh |
+| SV-115 | agents/supervisor.md | q: EXECUTE_CHECKPOINT (`adjudication_required: true`) | EXECUTE_CHECKPOINT adjudication_required: true | pause EXECUTE; the SUP-ADJ-GAP / SUP-ADJ-LANE ask (Adjudication Handling) | deterministic | script:supervisor-next-step.sh execute-result | - | test-supervisor-next-step.sh |
+| SV-116 | agents/supervisor.md | q: Execute Manager crash | Execute Manager crash | checkpoint, report worktree state, exit with resume | deterministic | script:supervisor-next-step.sh execute-result | - | test-supervisor-next-step.sh |
+| SV-117 | agents/supervisor.md | q: At a tool-budget limit, checkpoint and exit with the resume command | tool budget warning during EXECUTE | checkpoint, exit with resume command | deterministic | prose | - | GAP |
 | SV-118 | agents/supervisor.md | h: #### Adjudication Handling (CHECKPOINT with adjudication_required) | EXECUTE_CHECKPOINT with adjudication_required | run the adjudication procedure | deterministic | prose | - | test-non-interactive-gates-seam.sh |
 | SV-119 | agents/supervisor.md | q: TWO raisers, two option sets | adjudication checkpoint received | branch on adjudication_kind, never on the reason prose | deterministic | prose | - | GAP |
 | SV-120 | agents/supervisor.md | q: `requires_gap` (default when the field is ABSENT — every pre-v15.20.0 | adjudication_kind requires_gap or absent | use producer/consumer/requires option set; Option C reason inter_subtask_gap | deterministic | prose | - | GAP |
 | SV-121 | agents/supervisor.md | q: `lane_collision` (v15.20.0, D6) | adjudication_kind lane_collision | use writer/lane-owner/declaration option set; Option C reason lane_collision | deterministic | prose | - | GAP |
 | SV-122 | agents/supervisor.md | q: Do not adjudicate a lane collision with the `requires_gap` options. | lane collision | never adjudicate with requires_gap options; never emit inter_subtask_gap (it triggers /autonomous re-plan) | rule | prose | - | GAP |
-| SV-123 | agents/supervisor.md | q: **Pause the EXECUTE phase** — do not spawn further workers, do not | adjudication pending | pause EXECUTE; spawn nothing, advance nothing until a choice is made | deterministic | prose | - | GAP |
-| SV-124 | agents/supervisor.md | q: **Read `adjudication_kind`, the matching evidence array, and | presenting adjudication options | read kind/evidence/options; absent kind ⇒ requires_gap; present options verbatim as emitted | deterministic | prose | - | GAP |
-| SV-125 | agents/supervisor.md | q: **Present all four options to the user via `AskUserQuestion`** | adjudication and cannot ask | pick no option; checkpoint; status failed, error adjudication_required_non_interactive; brief stays in in-progress/ | deterministic | prose | - | test-non-interactive-gates-seam.sh |
-| SV-126 | agents/supervisor.md | q: **A: Re-queue producer** — Execute Manager re-spawns the producing | requires_gap option A chosen | Execute Manager re-spawns the producer with the missing outputs in its criteria | judgment | prose | - | GAP |
-| SV-127 | agents/supervisor.md | q: **B: Insert remediation subtask** — Supervisor inserts a new ad-hoc | requires_gap option B chosen | insert a remediation subtask providing the missing items; consumer blocked on it | judgment | prose | - | GAP |
-| SV-128 | agents/supervisor.md | q: **C: Exit to Launch Pad** — Supervisor checkpoints state, marks the | requires_gap option C chosen | checkpoint, mark job failed reason inter_subtask_gap, exit; user reruns /launch-pad | judgment | prose | - | GAP |
-| SV-129 | agents/supervisor.md | q: **D: Update consumer brief** — Supervisor edits the in-progress brief | requires_gap option D chosen | edit the in-progress brief to drop the failing requires entry; re-emit consumer | judgment | prose | - | GAP |
-| SV-130 | agents/supervisor.md | q: **A: Re-queue writer with the sibling lane excluded** — Execute | lane_collision option A chosen | re-spawn this_subtask with the path named off-limits | judgment | prose | - | GAP |
-| SV-131 | agents/supervisor.md | q: **B: Serialize the pair (add a requires edge)** — Supervisor adds a | lane_collision option B chosen | add a requires edge; re-verify the graph stays acyclic before applying | judgment | prose | - | GAP |
-| SV-132 | agents/supervisor.md | q: **C: Exit to Launch Pad** — Supervisor checkpoints state, marks the | lane_collision option C chosen | mark job failed reason lane_collision (NOT inter_subtask_gap), exit | judgment | prose | - | GAP |
-| SV-133 | agents/supervisor.md | q: **D: Widen the writer's declared lane** — Supervisor edits the | lane_collision option D chosen | add path to this_subtask lanes:; only sound when the pair does not race | judgment | prose | - | GAP |
+| SV-123 | agents/supervisor.md | q: **Pause the EXECUTE phase** — do not spawn further workers, do not | adjudication pending | pause EXECUTE; spawn nothing, advance nothing until a choice is made | deterministic | script:supervisor-next-step.sh execute-result | - | test-supervisor-next-step.sh |
+| SV-124 | agents/supervisor.md | q: **Read `adjudication_kind`, the matching evidence array, and | presenting adjudication options | read kind/evidence/options; absent kind ⇒ requires_gap; present options verbatim as emitted | deterministic | script:supervisor-next-step.sh execute-result | - | test-supervisor-next-step.sh |
+| SV-125 | agents/supervisor.md | q: **Present all four options to the user via `AskUserQuestion`** | adjudication and cannot ask | pick no option; checkpoint; status failed, error adjudication_required_non_interactive; brief stays in in-progress/ | deterministic | script:supervisor-next-step.sh execute-result | - | test-supervisor-next-step.sh |
+| SV-126 | agents/supervisor.md | q: **A: Re-queue producer** — Execute Manager re-spawns the producing | requires_gap option A chosen | Execute Manager re-spawns the producer with the missing outputs in its criteria | judgment | script:supervisor-next-step.sh execute-answer | - | test-supervisor-next-step.sh |
+| SV-127 | agents/supervisor.md | q: **B: Insert remediation subtask** — Supervisor inserts a new ad-hoc | requires_gap option B chosen | insert a remediation subtask providing the missing items; consumer blocked on it | judgment | script:supervisor-next-step.sh execute-answer | - | test-supervisor-next-step.sh |
+| SV-128 | agents/supervisor.md | q: **C: Exit to Launch Pad** — Supervisor checkpoints state, marks the | requires_gap option C chosen | checkpoint, mark job failed reason inter_subtask_gap, exit; user reruns /launch-pad | judgment | script:supervisor-next-step.sh execute-answer | - | test-supervisor-next-step.sh |
+| SV-129 | agents/supervisor.md | q: **D: Update consumer brief** — Supervisor edits the in-progress brief | requires_gap option D chosen | edit the in-progress brief to drop the failing requires entry; re-emit consumer | judgment | script:supervisor-next-step.sh execute-answer | - | test-supervisor-next-step.sh |
+| SV-130 | agents/supervisor.md | q: **A: Re-queue writer with the sibling lane excluded** — Execute | lane_collision option A chosen | re-spawn this_subtask with the path named off-limits | judgment | script:supervisor-next-step.sh execute-answer | - | test-supervisor-next-step.sh |
+| SV-131 | agents/supervisor.md | q: **B: Serialize the pair (add a requires edge)** — Supervisor adds a | lane_collision option B chosen | add a requires edge; re-verify the graph stays acyclic before applying | judgment | script:supervisor-next-step.sh execute-answer | - | test-supervisor-next-step.sh |
+| SV-132 | agents/supervisor.md | q: **C: Exit to Launch Pad** — Supervisor checkpoints state, marks the | lane_collision option C chosen | mark job failed reason lane_collision (NOT inter_subtask_gap), exit | judgment | script:supervisor-next-step.sh execute-answer | - | test-supervisor-next-step.sh |
+| SV-133 | agents/supervisor.md | q: **D: Widen the writer's declared lane** — Supervisor edits the | lane_collision option D chosen | add path to this_subtask lanes:; only sound when the pair does not race | judgment | script:supervisor-next-step.sh execute-answer | - | test-supervisor-next-step.sh |
 | SV-134 | agents/supervisor.md | q: **A:** spawn a fresh Execute Manager invocation with the producer | apply requires_gap A | spawn a fresh Execute Manager with the producer re-queued | deterministic | prose | - | GAP |
 | SV-135 | agents/supervisor.md | q: **B:** insert the remediation subtask into the plan (update parallelism | apply requires_gap B | insert remediation subtask, update parallelism graph, resume | deterministic | prose | - | GAP |
 | SV-136 | agents/supervisor.md | q: **C:** mark the job `failed` with `reason: inter_subtask_gap`, move the | apply requires_gap C | job failed reason inter_subtask_gap; move brief to jobs/failed/; exit | deterministic | prose | - | GAP |
@@ -155,18 +155,18 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-141 | agents/supervisor.md | q: **D:** edit the in-progress brief to add `path` to `this_subtask`'s | apply lane_collision D | add path to lanes:, record_decision, resume | deterministic | prose | - | GAP |
 | SV-142 | agents/supervisor.md | q: the Supervisor never picks an option silently | any adjudication | never pick an option silently; auto-selection forbidden | rule | prose | - | GAP |
 | SV-143 | agents/supervisor.md | h: ### Phase 4: FINALIZE (Merge + Commit + PR) | EXECUTE complete with merge data (incl. partial subset) | run FINALIZE: Read async-orchestration + commit skills; execute Part 2 | deterministic | prose | - | GAP |
-| SV-144 | agents/supervisor.md | q: **Pre-merge safety gate:** the 5-point pre-merge checklist (all | any of the 5 pre-merge checklist points fails | abort merge, log, move job to failed/; missing worktree/branch ⇒ checkpoint and exit with resume | deterministic | prose | - | GAP |
-| SV-145 | agents/supervisor.md | q: **Point 5 — children settled (completion authority, v15.80.0):** run | Point 5: check-children-settled --all + --expect-id per recorded worker | settled / no_identity_rows (only when nothing spawned) pass; unsettled or unverifiable fail | deterministic | prose | script:check-children-settled.sh | test-check-children-settled.sh |
-| SV-146 | agents/supervisor.md | q: error: "children_unsettled: {unsettled_agent_ids}"` | Point 5 unsettled under --non-interactive / CI / no TTY | fail closed: status failed, error children_unsettled; interactive ⇒ ask proceed / investigate / abort | deterministic | prose | - | test-non-interactive-gates-seam.sh |
-| SV-147 | agents/supervisor.md | q: short-circuits this ONE point as a deliberate choice | `--skip-children-check` | skip Point 5 only; record user_skipped_children_check; children_check: skipped | deterministic | prose | - | test-check-children-settled.sh |
-| SV-148 | agents/supervisor.md | q: Publish is blocked until this point passes | git push / gh pr create in a live run | denied by the PreToolUse guard until the finalize-gate marker names HEAD; write it only via write-marker; unparsed Worker Results ⇒ worker_results_unparsed | deterministic | prose | script:guard-finalize-publish.sh | test-guard-finalize-publish.sh |
-| SV-149 | agents/supervisor.md | q: **Merge conflict → STOP:** never force-resolve. Report the conflicting | merge conflict | STOP, never force-resolve; report files; checkpoint merged/unmerged lists; exit with resume | deterministic | prose | - | GAP |
+| SV-144 | agents/supervisor.md | q: **Pre-merge safety gate:** the 5-point pre-merge checklist (all | any of the 5 pre-merge checklist points fails | abort merge, log, move job to failed/; missing worktree/branch ⇒ checkpoint and exit with resume | deterministic | prose | script:supervisor-next-step.sh finalize | test-supervisor-next-step.sh |
+| SV-145 | agents/supervisor.md | q: **Point 5 — children settled (completion authority, v15.80.0):** run | Point 5: check-children-settled --all + --expect-id per recorded worker | settled / no_identity_rows (only when nothing spawned) pass; unsettled or unverifiable fail | deterministic | script:supervisor-next-step.sh finalize-children | script:check-children-settled.sh | test-supervisor-next-step.sh |
+| SV-146 | agents/supervisor.md | q: error: "children_unsettled: {unsettled_agent_ids}"` | Point 5 unsettled under --non-interactive / CI / no TTY | fail closed: status failed, error children_unsettled; interactive ⇒ ask proceed / investigate / abort | deterministic | script:supervisor-next-step.sh finalize-children | - | test-supervisor-next-step.sh |
+| SV-147 | agents/supervisor.md | q: short-circuits this ONE point as a deliberate choice | `--skip-children-check` | skip Point 5 only; record user_skipped_children_check; children_check: skipped | deterministic | script:supervisor-next-step.sh finalize-children | - | test-supervisor-next-step.sh |
+| SV-148 | agents/supervisor.md | q: Publish is blocked until this point passes | git push / gh pr create in a live run | denied by the PreToolUse guard until the finalize-gate marker names HEAD; write it only via write-marker; unparsed Worker Results ⇒ worker_results_unparsed | deterministic | script:supervisor-next-step.sh finalize-marker | script:guard-finalize-publish.sh | test-supervisor-next-step.sh |
+| SV-149 | agents/supervisor.md | q: **Merge conflict → STOP:** never force-resolve. Report the conflicting | merge conflict | STOP, never force-resolve; report files; checkpoint merged/unmerged lists; exit with resume | deterministic | prose | script:supervisor-next-step.sh finalize-merged | test-supervisor-next-step.sh |
 | SV-150 | agents/supervisor.md | q: **Salvage before remove (v15.67.0):** `bash | before each worktree remove | run worktree-salvage.sh as its own statement; dirty refusal reported with salvage path, never force-removed | deterministic | prose | script:worktree-salvage.sh | test-worktree-salvage.sh |
-| SV-151 | agents/supervisor.md | q: **PR-base self-verify (REQUIRED):** immediately after `gh pr create | after gh pr create | verify baseRefName == $BASE_BRANCH; mismatch / gh failure ⇒ set base_mismatch_detected once, fall through to Phase 4.5 cleanup (never emit here) | deterministic | prose | - | GAP |
+| SV-151 | agents/supervisor.md | q: **PR-base self-verify (REQUIRED):** immediately after `gh pr create | after gh pr create | verify baseRefName == $BASE_BRANCH; mismatch / gh failure ⇒ set base_mismatch_detected once, fall through to Phase 4.5 cleanup (never emit here) | deterministic | prose | script:supervisor-next-step.sh pr-verify | test-supervisor-next-step.sh |
 | SV-152 | agents/supervisor.md | q: **Release re-fold before the first push (#512):** at skill step 5.5 — | before the first push (step 5.5) | run release-refold.sh; non-zero ⇒ no push/PR, status failed, error release_refold_refused, lock released | deterministic | prose | script:release-refold.sh | test-release-refold.sh |
-| SV-153 | agents/supervisor.md | q: PR created against `$BASE_BRANCH` + base self-verified → exit FINALIZE | PR created and base verified | go to Phase 4.5; do not mark completed or move job here | deterministic | prose | - | GAP |
-| SV-154 | agents/supervisor.md | q: Base mismatch / unrecoverable `gh` failure → `base_mismatch_detected` | base mismatch / unrecoverable gh failure | set base_mismatch_detected; status failed emitted in Phase 4.5 only | deterministic | prose | - | GAP |
-| SV-155 | agents/supervisor.md | q: Merge conflict or failed pre-merge validation → STOP as above; exit | merge conflict or failed pre-merge validation | STOP; exit with resume command | deterministic | prose | - | GAP |
+| SV-153 | agents/supervisor.md | q: PR created against `$BASE_BRANCH` + base self-verified → exit FINALIZE | PR created and base verified | go to Phase 4.5; do not mark completed or move job here | deterministic | script:supervisor-next-step.sh handover | - | test-supervisor-next-step.sh |
+| SV-154 | agents/supervisor.md | q: Base mismatch / unrecoverable `gh` failure → `base_mismatch_detected` | base mismatch / unrecoverable gh failure | set base_mismatch_detected; status failed emitted in Phase 4.5 only | deterministic | script:supervisor-next-step.sh pr-verify | - | test-supervisor-next-step.sh |
+| SV-155 | agents/supervisor.md | q: Merge conflict or failed pre-merge validation → STOP as above; exit | merge conflict or failed pre-merge validation | STOP; exit with resume command | deterministic | script:supervisor-next-step.sh finalize-stop | - | test-supervisor-next-step.sh |
 | SV-156 | agents/supervisor.md | h: ### Phase 4.5: SELF_HEAL (Integration Review + Bounded Fix Loop) | after FINALIZE | Read self-heal-advisory + state-management; run the Part 2 loop protocol | deterministic | prose | - | GAP |
 | SV-157 | agents/supervisor.md | q: **Purpose:** Run a holistic Code Reviewer pass on the integrated feature | Phase 4.5 fix scope | auto-fix bounded new issues at or above FIX_FLOOR (default MEDIUM; BLOCKING always); escalate the rest | rule | prose | script:fix-floor.sh meets | test-fix-floor.sh |
 | SV-158 | agents/supervisor.md | q: The `--skip-self-heal` flag does NOT skip the phase | `--skip-self-heal` | does NOT skip Phase 4.5; only the review-and-fix loop; transition and completion tail always run | rule | prose | - | GAP |
@@ -281,8 +281,8 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-267 | commands/supervisor.md | q: `--no-multi-voter-heal` | `--no-multi-voter-heal` | suppress multi-voter; wins over --multi-voter-heal | deterministic | prose | - | GAP |
 | SV-268 | commands/supervisor.md | q: `--voter-provider <name>[:<model>]` | `--voter-provider` set with --multi-voter-heal | shell out to lens-run.sh instead of red-team-reviewer Task; flag wins over config | deterministic | prose | - | GAP |
 | SV-269 | commands/supervisor.md | q: Both experimental flags (`--sdk-runner`, `--multi-voter-heal`) are | `--sdk-runner` / `--multi-voter-heal` | supervisor-only; never forwarded by /autonomous or /automate (forward set is four flags) | rule | prose | - | GAP |
-| SV-270 | commands/supervisor.md | q: Branch creation is **idempotent** | ACQUIRE finds a same-named branch | reuse only when tip == base tip; else acquire_branch_collision | deterministic | prose | - | GAP |
-| SV-271 | commands/supervisor.md | q: CLEAR proceeds silently. | Phase 1.5 classification | CLEAR silent; OVERLAP/SUPERSEDED ask or fail closed; gh/fetch failure ⇒ unverified, continue | deterministic | prose | - | GAP |
+| SV-270 | commands/supervisor.md | q: Branch creation is **idempotent** | ACQUIRE finds a same-named branch | reuse only when tip == base tip; else acquire_branch_collision | deterministic | script:supervisor-next-step.sh acquire | - | test-supervisor-next-step.sh |
+| SV-271 | commands/supervisor.md | q: CLEAR proceeds silently. | Phase 1.5 classification | CLEAR silent; OVERLAP/SUPERSEDED ask or fail closed; gh/fetch failure ⇒ unverified, continue | deterministic | script:supervisor-next-step.sh preflight-route | - | test-supervisor-next-step.sh |
 | SV-272 | commands/supervisor.md | q: Supervisor spawns a fix task that addresses them | Phase 4.5 review finds new issues at/above the fix floor | spawn fix task, push; retry up to --heal-iterations; PASS ⇒ completed; NEEDS_HUMAN/max ⇒ completed_with_escalation + PR comment | deterministic | prose | - | GAP |
 | SV-273 | commands/supervisor.md | q: auto-dispatches a detached until-mergeable review drain | completion tail with a fresh PR | auto-dispatch detached until-mergeable drain; fire-and-forget, exit 0, never merges or waits on a human | deterministic | prose | script:dispatch-pr-review.sh | test-dispatch-pr-review.sh |
 | SV-274 | commands/supervisor.md | q: that workaround is retired now that the drain is working-tree-isolated | drain overlaps inline Phase 4.5 | harmless (own worktree); do NOT write auto_review false as a race workaround | rule | prose | - | GAP |
@@ -291,9 +291,9 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-277 | commands/supervisor.md | q: A marker exists IFF the dispatcher ran for this PR | dispatch marker found / not found | true with log path / false only when no marker; best-effort, never gates | deterministic | prose | - | GAP |
 | SV-278 | commands/supervisor.md | h: ### Inline-path canonical state writes (Phase 1 ACQUIRE + Phase 4.5 completion tail) | inline path | directives the inline path needs live in this command file (it never loads agents/supervisor.md) | rule | prose | - | GAP |
 | SV-279 | commands/supervisor.md | q: block (`session_id`/`branch`/`status`/`phase`) is not written by the Supervisor on any path. | `## Session` block | never Supervisor-written on any path; derived by emit-progress-event.sh + build-state.sh | rule | prose | script:build-state.sh | test-progress-state.sh |
-| SV-280 | commands/supervisor.md | q: Phase 1 ACQUIRE — `/autonomous`-only `state.json` write | inline Supervisor under /autonomous with an active state.json | at ACQUIRE set top-level current_branch and current_status "running" | deterministic | prose | - | GAP |
+| SV-280 | commands/supervisor.md | q: Phase 1 ACQUIRE — `/autonomous`-only `state.json` write | inline Supervisor under /autonomous with an active state.json | at ACQUIRE set top-level current_branch and current_status "running" | deterministic | prose | script:supervisor-next-step.sh acquire | test-supervisor-next-step.sh |
 | SV-281 | commands/supervisor.md | q: a POSITIVE, non-terminal active status set at ACQUIRE | consumer hook reads current_status | terminal set: completed, completed_with_escalation, failed, aborted, done, paused_max_iterations | rule | prose | - | GAP |
-| SV-282 | commands/supervisor.md | q: If that is ambiguous or no such session is identifiable | active session ambiguous or unidentifiable | SKIP the write; jq atomic update; any error ⇒ logged no-op; never gates | deterministic | prose | - | GAP |
+| SV-282 | commands/supervisor.md | q: If that is ambiguous or no such session is identifiable | active session ambiguous or unidentifiable | SKIP the write; jq atomic update; any error ⇒ logged no-op; never gates | deterministic | script:supervisor-next-step.sh acquire | - | test-supervisor-next-step.sh |
 | SV-283 | commands/supervisor.md | q: this `state.json` write does NOT help the direct | direct /supervisor job: path | the state.json write does not apply; the projector produces the branch | rule | prose | - | GAP |
 | SV-284 | commands/supervisor.md | q: terminal status:** `.supervisor/state.md`'s terminal | Phase 4.5 completion tail | terminal status derived by build-state.sh from session_end; never flipped here; state.json not flipped | rule | prose | script:build-state.sh | test-progress-state.sh |
 | SV-285 | commands/supervisor.md | h: ### Architecture | section | architecture sketch (no per-subtask reviewer) | story | prose | - | GAP |
@@ -317,7 +317,7 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-303 | commands/supervisor.md | q: 30-40 (80%): YELLOW — aggressive compression | 30-40 tool calls | YELLOW — aggressive compression | deterministic | prose | - | GAP |
 | SV-304 | commands/supervisor.md | q: 40-46 (92%): RED — force checkpoint, suggest new session | 40-46 tool calls | RED — force checkpoint, suggest new session | deterministic | prose | - | GAP |
 | SV-305 | commands/supervisor.md | q: 46+: RED — checkpoint + exit with resume command | 46+ tool calls | RED — checkpoint + exit with resume | deterministic | prose | - | GAP |
-| SV-306 | commands/supervisor.md | q: Path selection is by subtask count | subtask count / --sequential | 1 ⇒ Single-Agent; --sequential with > 1 ⇒ Sequential; else Parallel | deterministic | prose | - | GAP |
+| SV-306 | commands/supervisor.md | q: Path selection is by subtask count | subtask count / --sequential | 1 ⇒ Single-Agent; --sequential with > 1 ⇒ Sequential; else Parallel | deterministic | prose | script:supervisor-next-step.sh plan-result | test-supervisor-next-step.sh |
 | SV-307 | commands/supervisor.md | h: ### Single-Agent Path (exactly 1 subtask, default below threshold) | exactly 1 subtask | Single-Agent Path | deterministic | prose | - | GAP |
 | SV-308 | commands/supervisor.md | q: **No per-subtask Code Reviewer spawned** — Phase 4.5's holistic Code | Single-Agent Path | no per-subtask Code Reviewer | rule | prose | - | GAP |
 | SV-309 | commands/supervisor.md | q: Deterministic gate only (`outputs_verified`/`outputs_gap` plus | Single-Agent Path | deterministic gate only; LSP diagnostics are the worker's own | rule | prose | script:verify-provides.sh | test-verify-provides.sh |
@@ -690,19 +690,19 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-676 | skills/async-orchestration/SKILL.md | q: [ ] Error handling covers crash, timeout, conflict | before completing async orchestration | error handling covers crash, timeout, conflict | rule | prose | - | GAP |
 | SV-677 | skills/async-orchestration/SKILL.md | q: [ ] No per-subtask reviewer is spawned at any threshold — Single-Agent | any threshold | no per-subtask reviewer; deterministic gate + Phase 4.5 review | rule | prose | - | GAP |
 | SV-678 | skills/async-orchestration/SKILL.md | q: the three sections below were moved VERBATIM | Part 2 provenance | moved verbatim; step numbering 1–7 incl. 6.5 preserved for cross-references | rule | prose | - | GAP |
-| SV-679 | skills/async-orchestration/SKILL.md | q: **Pre-merge safety gate** (ALL must pass before any merge): | any pre-merge checklist point fails (worker not completed, orphan worktree, branch not ahead, child unsettled) | abort merge, log, move job to failed/; reviewer-PASS point vacuously satisfied | deterministic | prose | - | GAP |
-| SV-680 | skills/async-orchestration/SKILL.md | q: **N/A at every threshold** | checklist point 2 (reviewer PASS) | N/A at every threshold; vacuously satisfied | rule | prose | - | GAP |
-| SV-681 | skills/async-orchestration/SKILL.md | q: **Point 5 in full — children settled:** run | Point 5 | check-children-settled.sh --all + --expect-id per recorded worker id | deterministic | prose | script:check-children-settled.sh | test-check-children-settled.sh |
-| SV-682 | skills/async-orchestration/SKILL.md | q: `status: "no_identity_rows"` — no expected id and zero | status no_identity_rows (nothing spawned) | PASS, reported children_check: no_identity_rows — never settled | deterministic | prose | script:check-children-settled.sh | test-check-children-settled.sh |
-| SV-683 | skills/async-orchestration/SKILL.md | q: `status: "settled"` — every `agent_identity` row has a matching | status settled | PASS, children_check: settled | deterministic | prose | script:check-children-settled.sh | test-check-children-settled.sh |
-| SV-684 | skills/async-orchestration/SKILL.md | q: `status: "unsettled"` — `unsettled_agent_ids[]` names at least one | status unsettled | interactive: SUP-CHILDREN ask (proceed / investigate / abort); non-interactive: fail closed children_unsettled | deterministic | prose | - | test-non-interactive-gates-seam.sh |
-| SV-685 | skills/async-orchestration/SKILL.md | q: `status: "unverifiable"` (`jq_missing`) — treated the same as | status unverifiable (jq_missing) | treated as unsettled; never a silent pass | deterministic | prose | script:check-children-settled.sh | test-check-children-settled.sh |
-| SV-686 | skills/async-orchestration/SKILL.md | q: **`--skip-children-check`** (escape hatch, mirrors | `--skip-children-check` | skip Point 5 only; record user_skipped_children_check; children_check: skipped | deterministic | prose | script:guard-finalize-publish.sh | test-guard-finalize-publish.sh |
-| SV-687 | skills/async-orchestration/SKILL.md | q: **finalize-gate — publish blocked until this point passes | a publish (push or PR creation) in a live Supervisor run | denied until the finalize-gate marker names HEAD; write-marker only; session_log_missing / worker_results_unparsed refuse; a moved HEAD invalidates it | deterministic | prose | script:guard-finalize-publish.sh | test-guard-finalize-publish.sh |
-| SV-688 | skills/async-orchestration/SKILL.md | q: `ended_without_result_ids[]` (agents whose terminal row was a | ended_without_result_ids non-empty | surface alongside unsettled ids for a SendMessage resume | deterministic | prose | script:check-children-settled.sh | test-check-children-settled.sh |
-| SV-689 | skills/async-orchestration/SKILL.md | q: `rejected_stop_ids[]` (v15.83.0, diagnostic only) names every child with | rejected_stop_ids non-empty | diagnostic only; surface in the same line; status alone decides | deterministic | prose | script:check-children-settled.sh | test-check-children-settled.sh |
-| SV-690 | skills/async-orchestration/SKILL.md | q: A read-only subtask (`WORKER_RESULT.no_changes: true`) is deliberately absent | read-only subtask (no_changes: true) | absent from merge_order; its worktree still cleaned up in step 4 | rule | prose | - | GAP |
-| SV-691 | skills/async-orchestration/SKILL.md | q: If any verification fails → checkpoint, report missing worktree/branch | worktree / branch / has-changes verification fails | checkpoint, report missing worktree/branch, exit with resume | deterministic | prose | - | GAP |
+| SV-679 | skills/async-orchestration/SKILL.md | q: **Pre-merge safety gate** (ALL must pass before any merge): | any pre-merge checklist point fails (worker not completed, orphan worktree, branch not ahead, child unsettled) | points 1-4: WORKER_RESULTs completed, per-subtask gate decision PASS, no orphaned worktrees and every merge_order worktree / branch present with changes, branch holds the base tip; a failure ⇒ abort, log, job → failed/ | deterministic | script:supervisor-next-step.sh finalize | - | test-supervisor-next-step.sh |
+| SV-680 | skills/async-orchestration/SKILL.md | q: **N/A at every threshold** | checklist point 2 (reviewer PASS) | point 2 reads each completed subtask's per-subtask gate decision (review_decision — no per-subtask reviewer runs); vacuous on the inline paths | rule | script:supervisor-next-step.sh finalize | - | test-supervisor-next-step.sh |
+| SV-681 | skills/async-orchestration/SKILL.md | q: **Point 5 in full — children settled:** run | Point 5 | check-children-settled.sh --all + --expect-id per recorded worker id | deterministic | script:supervisor-next-step.sh finalize-children | script:check-children-settled.sh | test-supervisor-next-step.sh |
+| SV-682 | skills/async-orchestration/SKILL.md | q: `status: "no_identity_rows"` — no expected id and zero | status no_identity_rows (nothing spawned) | PASS, reported children_check: no_identity_rows — never settled | deterministic | script:supervisor-next-step.sh finalize-children | script:check-children-settled.sh | test-supervisor-next-step.sh |
+| SV-683 | skills/async-orchestration/SKILL.md | q: `status: "settled"` — every `agent_identity` row has a matching | status settled | PASS, children_check: settled | deterministic | script:supervisor-next-step.sh finalize-children | script:check-children-settled.sh | test-supervisor-next-step.sh |
+| SV-684 | skills/async-orchestration/SKILL.md | q: `status: "unsettled"` — `unsettled_agent_ids[]` names at least one | status unsettled | interactive: SUP-CHILDREN ask (proceed / investigate / abort); non-interactive: fail closed children_unsettled | deterministic | script:supervisor-next-step.sh finalize-children | - | test-supervisor-next-step.sh |
+| SV-685 | skills/async-orchestration/SKILL.md | q: `status: "unverifiable"` (`jq_missing`) — treated the same as | status unverifiable (jq_missing) | treated as unsettled; never a silent pass | deterministic | script:supervisor-next-step.sh finalize-children | script:check-children-settled.sh | test-supervisor-next-step.sh |
+| SV-686 | skills/async-orchestration/SKILL.md | q: **`--skip-children-check`** (escape hatch, mirrors | `--skip-children-check` | skip Point 5 only; record user_skipped_children_check; children_check: skipped | deterministic | script:supervisor-next-step.sh finalize-children | script:guard-finalize-publish.sh | test-supervisor-next-step.sh |
+| SV-687 | skills/async-orchestration/SKILL.md | q: **finalize-gate — publish blocked until this point passes | a publish (push or PR creation) in a live Supervisor run | denied until the finalize-gate marker names HEAD; write-marker only; session_log_missing / worker_results_unparsed refuse; a moved HEAD invalidates it | deterministic | script:supervisor-next-step.sh finalize-marker | script:guard-finalize-publish.sh | test-supervisor-next-step.sh |
+| SV-688 | skills/async-orchestration/SKILL.md | q: `ended_without_result_ids[]` (agents whose terminal row was a | ended_without_result_ids non-empty | surface alongside unsettled ids for a SendMessage resume | deterministic | script:supervisor-next-step.sh finalize-children | script:check-children-settled.sh | test-supervisor-next-step.sh |
+| SV-689 | skills/async-orchestration/SKILL.md | q: `rejected_stop_ids[]` (v15.83.0, diagnostic only) names every child with | rejected_stop_ids non-empty | diagnostic only; surface in the same line; status alone decides | deterministic | script:supervisor-next-step.sh finalize-children | script:check-children-settled.sh | test-supervisor-next-step.sh |
+| SV-690 | skills/async-orchestration/SKILL.md | q: a read-only subtask (`WORKER_RESULT.no_changes: true`) is absent from it | read-only subtask (no_changes: true) | absent from merge_order; its worktree still cleaned up in step 4 | rule | prose | - | GAP |
+| SV-691 | skills/async-orchestration/SKILL.md | q: If any verification fails → checkpoint, report missing worktree/branch | worktree / branch / has-changes verification fails | checkpoint, report missing worktree/branch, exit with resume | deterministic | script:supervisor-next-step.sh finalize | - | test-supervisor-next-step.sh |
 | SV-692 | skills/async-orchestration/SKILL.md | q: **Commit worker changes in worktrees** (before merging): | before merging | commit worker changes in each worktree (in merge_order) | rule | prose | - | GAP |
 | SV-693 | skills/async-orchestration/SKILL.md | q: **Sequential merge** of each subtask branch into feature branch (in | sequential merge conflict | STOP, never force-resolve; checkpoint merged / not-yet-merged lists; exit with resume | deterministic | prose | - | GAP |
 | SV-694 | skills/async-orchestration/SKILL.md | q: **Cleanup worktrees** (ONLY after successful merge): | worktree cleanup | ONLY after successful merge; salvage as its own statement first; dirty refusal ⇒ report with salvage path, never a --force reflex | rule | prose | script:worktree-salvage.sh | test-worktree-salvage.sh |
@@ -711,18 +711,18 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-697 | skills/async-orchestration/SKILL.md | q: **NEVER code-fence the message.** | commit message | NEVER code-fence it; first line is the conventional subject | rule | prose | - | GAP |
 | SV-698 | skills/async-orchestration/SKILL.md | q: **Release re-fold (#512) — after step 5 | after step 5 commits, before write-marker and the push | run release-refold.sh; non-zero ⇒ abort with no push/PR, status failed, release_refold_refused, lock released | deterministic | prose | script:release-refold.sh | test-release-refold.sh |
 | SV-699 | skills/async-orchestration/SKILL.md | q: **Push and create PR (against `BASE_BRANCH` — defaults to `main`):** | push and PR creation | push the feature branch with upstream, then create the PR with --base "$BASE_BRANCH" (default main) | rule | prose | - | GAP |
-| SV-700 | skills/async-orchestration/SKILL.md | q: returns successfully, before declaring Phase 4 complete | PR creation returned | verify PR baseRefName matches BASE_BRANCH before declaring Phase 4 complete | deterministic | prose | - | GAP |
-| SV-701 | skills/async-orchestration/SKILL.md | q: **First `gh pr view` non-zero exit** → `sleep 5; retry once`. | first gh pr view non-zero | sleep 5; retry once | deterministic | prose | - | GAP |
-| SV-702 | skills/async-orchestration/SKILL.md | q: **Second non-zero exit AND `NON_INTERACTIVE == true`** (read live from | second gh pr view failure and NON_INTERACTIVE (read live from Context-Keeper) | set base_mismatch_detected (gh_unavailable_non_interactive); fall through to Phase 4.5 | deterministic | prose | - | GAP |
-| SV-703 | skills/async-orchestration/SKILL.md | q: **Second non-zero exit AND `NON_INTERACTIVE == false`** → | second gh pr view failure, interactive | AskUserQuestion: retry / skip-verify-once / abort | judgment | prose | - | GAP |
-| SV-704 | skills/async-orchestration/SKILL.md | q: **retry** — run `gh pr view --json baseRefName` once more; on success | user picks retry | run gh pr view once more; failure ⇒ treat as abort | deterministic | prose | - | GAP |
-| SV-705 | skills/async-orchestration/SKILL.md | q: **skip-verify-once** — record `record_decision(phase: FINALIZE, | user picks skip-verify-once | record user_skipped_base_verify; continue as verified | deterministic | prose | - | GAP |
-| SV-706 | skills/async-orchestration/SKILL.md | q: **abort** — `set_flag base_mismatch_detected value: {expected: | user picks abort | set base_mismatch_detected (user_aborted_gh_retry); fall through to Phase 4.5 cleanup | deterministic | prose | - | GAP |
-| SV-707 | skills/async-orchestration/SKILL.md | q: If `ACTUAL_BASE == BASE_BRANCH`: verification passed, continue to step | ACTUAL_BASE == BASE_BRANCH | verification passed; continue to step 7 | deterministic | prose | - | GAP |
-| SV-708 | skills/async-orchestration/SKILL.md | q: If `ACTUAL_BASE != BASE_BRANCH`: this is a real base-branch mismatch | ACTUAL_BASE != BASE_BRANCH | set base_mismatch_detected (phase4_self_verify); do NOT emit SUPERVISOR_RESULT here | deterministic | prose | - | GAP |
-| SV-709 | skills/async-orchestration/SKILL.md | q: Phase 4 sets the flag at most once per session | base mismatch | Phase 4 sets the flag at most once and never emits; Phase 4.5 cleanup is the single emission | rule | prose | - | GAP |
-| SV-710 | skills/async-orchestration/SKILL.md | q: **Exit FINALIZE.** Task is NOT yet marked completed, and the job file is | exit FINALIZE | task NOT marked completed, job NOT moved (Phase 4.5 completion tail does it) | rule | prose | - | GAP |
-| SV-711 | skills/async-orchestration/SKILL.md | q: FINALIZE exits after PR | FINALIZE scope | exits after PR creation; job move and state completion live in Phase 4.5 | rule | prose | - | GAP |
+| SV-700 | skills/async-orchestration/SKILL.md | q: returns successfully, before declaring Phase 4 complete | PR creation returned | verify PR baseRefName matches BASE_BRANCH before declaring Phase 4 complete | deterministic | script:supervisor-next-step.sh pr-verify | - | test-supervisor-next-step.sh |
+| SV-701 | skills/async-orchestration/SKILL.md | q: **First `gh pr view` non-zero exit** → `sleep 5; retry once`. | first gh pr view non-zero | sleep 5; retry once | deterministic | script:supervisor-next-step.sh pr-verify | - | test-supervisor-next-step.sh |
+| SV-702 | skills/async-orchestration/SKILL.md | q: **Second non-zero exit AND `NON_INTERACTIVE == true`** (read live from | second gh pr view failure and NON_INTERACTIVE (read live from Context-Keeper) | set base_mismatch_detected (gh_unavailable_non_interactive); fall through to Phase 4.5 | deterministic | script:supervisor-next-step.sh pr-verify | - | test-supervisor-next-step.sh |
+| SV-703 | skills/async-orchestration/SKILL.md | q: **Second non-zero exit AND `NON_INTERACTIVE == false`** → | second gh pr view failure, interactive | AskUserQuestion: retry / skip-verify-once / abort | judgment | script:supervisor-next-step.sh pr-verify | script:supervisor-next-step.sh pr-verify-answer | test-supervisor-next-step.sh |
+| SV-704 | skills/async-orchestration/SKILL.md | q: **retry** — run `gh pr view --json baseRefName` once more; on success | user picks retry | run gh pr view once more; failure ⇒ treat as abort | deterministic | script:supervisor-next-step.sh pr-verify-answer | - | test-supervisor-next-step.sh |
+| SV-705 | skills/async-orchestration/SKILL.md | q: **skip-verify-once** — record `record_decision(phase: FINALIZE, | user picks skip-verify-once | record user_skipped_base_verify; continue as verified | deterministic | script:supervisor-next-step.sh pr-verify-answer | - | test-supervisor-next-step.sh |
+| SV-706 | skills/async-orchestration/SKILL.md | q: **abort** — `set_flag base_mismatch_detected value: {expected: | user picks abort | set base_mismatch_detected (user_aborted_gh_retry); fall through to Phase 4.5 cleanup | deterministic | script:supervisor-next-step.sh pr-verify-answer | - | test-supervisor-next-step.sh |
+| SV-707 | skills/async-orchestration/SKILL.md | q: If `ACTUAL_BASE == BASE_BRANCH`: verification passed, continue to step | ACTUAL_BASE == BASE_BRANCH | verification passed; continue to step 7 | deterministic | script:supervisor-next-step.sh pr-verify | - | test-supervisor-next-step.sh |
+| SV-708 | skills/async-orchestration/SKILL.md | q: If `ACTUAL_BASE != BASE_BRANCH`: this is a real base-branch mismatch | ACTUAL_BASE != BASE_BRANCH | set base_mismatch_detected (phase4_self_verify); do NOT emit SUPERVISOR_RESULT here | deterministic | script:supervisor-next-step.sh pr-verify | - | test-supervisor-next-step.sh |
+| SV-709 | skills/async-orchestration/SKILL.md | q: Phase 4 sets the flag at most once per session | base mismatch | Phase 4 sets the flag at most once and never emits; Phase 4.5 cleanup is the single emission | rule | script:supervisor-next-step.sh pr-verify | - | test-supervisor-next-step.sh |
+| SV-710 | skills/async-orchestration/SKILL.md | q: **Exit FINALIZE.** Task is NOT yet marked completed, and the job file is | exit FINALIZE | task NOT marked completed, job NOT moved (Phase 4.5 completion tail does it) | rule | script:supervisor-next-step.sh handover | - | test-supervisor-next-step.sh |
+| SV-711 | skills/async-orchestration/SKILL.md | q: FINALIZE exits after PR | FINALIZE scope | exits after PR creation; job move and state completion live in Phase 4.5 | rule | script:supervisor-next-step.sh handover | - | test-supervisor-next-step.sh |
 | SV-712 | skills/async-orchestration/SKILL.md | q: Worker code lives in git branches until explicitly merged — can always | safety | worker code stays in branches until merged — always recoverable | rule | prose | - | GAP |
 | SV-713 | skills/async-orchestration/SKILL.md | q: Worktrees are removed ONLY after successful merge | safety | worktrees removed ONLY after successful merge | rule | prose | - | GAP |
 | SV-714 | skills/async-orchestration/SKILL.md | q: Merge conflicts always escalate to human | safety | merge conflicts always escalate to human | rule | prose | - | GAP |
@@ -748,555 +748,513 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-734 | skills/async-orchestration/SKILL.md | q: Retry context: {optional, from a previous outputs_verified gate gap | worker retry context | only from an outputs_verified gap, a crash/timeout, or pin-mutation not_held lines (as data); no review-retry path | rule | prose | - | test-phase45-rounds-seam.sh |
 | SV-735 | skills/async-orchestration/SKILL.md | q: **No per-subtask Code Reviewer spawn contract (any threshold):** | any threshold | no per-subtask code-reviewer spawn follows a worker; Phase 4.5 is the sole code-reviewer spawn | rule | prose | - | GAP |
 | SV-736 | skills/async-orchestration/SKILL.md | q: ## Git Worktree Lifecycle (phase sequence) | worktree lifecycle | branches + worktrees created by Execute Manager in Phase 3 Step 2a, never in Phase 2 | rule | prose | - | GAP |
+| SV-737 | agents/supervisor.md | q: **Next-step driver (Phases 0–4, automate-speed/11).** | a `job:` brief on a fresh start (no `--legacy` / `--continue` / `--sdk-runner`) | call supervisor-next-step.sh once after the run-lock acquire with the run's flags (`--subagent` when a subagent); do each instruction and answer with `--result`; never write state.md, never pick an ask option; park ⇒ SUPERVISOR_RESULT; done ⇒ Phase 4.5 | deterministic | script:supervisor-next-step.sh | script:supervisor-next-step.sh init | test-supervisor-next-step.sh |
+| SV-738 | agents/supervisor.md | q: `--legacy`, `--continue`, `--sdk-runner` and a run with no `job:` brief follow | `--legacy`, `--continue`, `--sdk-runner` or no `job:` brief (delegated path) | run the Phase 0-4 steps from docs/supervisor-legacy-phases.md, never the driver | deterministic | prose | - | GAP |
+| SV-739 | agents/supervisor.md | q: On the driver path, step 1's spawn is the driver's `execute` instruction | Single-Agent Path on the driver path | the worker spawn is the driver's; after steps 2-3b report {subtask, agent_id, status, gates passed\|paused}; passed ⇒ FINALIZE, paused ⇒ checkpoint | deterministic | script:supervisor-next-step.sh execute-result | - | test-supervisor-next-step.sh |
+| SV-740 | agents/supervisor.md | q: On the driver path, each subtask's worker spawn is the driver's `execute` instruction | Sequential Path on the driver path | spawns in order; the token-ceiling check runs before acting on each (a breach stops the run, no `--result`); passed ⇒ next subtask (FINALIZE after the last), paused ⇒ checkpoint | deterministic | script:supervisor-next-step.sh execute | - | test-supervisor-next-step.sh |
+| SV-741 | commands/supervisor.md | q: Run Phases 0–4 from the pre-driver prose in `docs/supervisor-legacy-phases.md` | `--legacy` passed | Phases 0-4 from the legacy file, never the driver; Phase 4.5 / 5 unchanged; not forwarded by /autonomous or /automate | deterministic | prose | - | GAP |
+| SV-742 | commands/supervisor.md | q: **Entry (Phase 0).** Run the run-lock acquire first | Phase 0 on the driver path | run-lock acquire first (run_lock_held parks); then ONE driver call with `--session-id <sid> --job <brief>` and the run's flags; the flags persist in the sidecar | deterministic | script:supervisor-next-step.sh init | - | test-supervisor-next-step.sh |
+| SV-743 | commands/supervisor.md | q: **Loop.** Do what the printed instruction says | each printed instruction | spawn ⇒ the spawn contract (context-keeper ops in order, worker gates yours); ask ⇒ ask verbatim and hand back the label, never pick (cant_ask when you cannot ask); park ⇒ SUPERVISOR_RESULT; no `--result` re-prints; exit 2 ⇒ fix the report, exit 1 ⇒ retry | deterministic | script:supervisor-next-step.sh | - | test-supervisor-next-step.sh |
+| SV-744 | commands/supervisor.md | q: **Hand-over.** `done` (`step: handover`) ends Phase 4 | done (handover) | Phase 4.5 with its fields; base_mismatch_detected ⇒ the base-mismatch cleanup; escalation ⇒ report the failed subtasks | deterministic | script:supervisor-next-step.sh handover | - | test-supervisor-next-step.sh |
+| SV-745 | commands/supervisor.md | q: **Legacy path.** `/supervisor --legacy` runs Phases 0–4 from | `--legacy`, `--continue`, no `job:` brief, or `--sdk-runner` (inline path) | Phases 0-4 from the legacy file's prose; the driver is never called on that path | deterministic | prose | - | GAP |
 
 ## Gap list (ordered by risk)
 1. SV-010 — branch-first principle only in prose
 2. SV-019 — branch gate before PLAN only in prose
 3. SV-025 — inline-spawn rule only in prose; skipping review is guarded only by the completion tail
 4. SV-046 — phase heading for the branch gate
-5. SV-050 — resume-consumption gate only in prose
-6. SV-055 — branch-collision guard is an inline prose code block, untested
-7. SV-056 — collision status only in prose
-8. SV-057 — ancestry rule only in prose; mismatch breaks stacked iterations silently
-9. SV-060 — remote-reconciliation gate only in prose
-10. SV-072 — path-selection switch only in prose
+5. SV-738 — the legacy-path trigger on the delegated path is prose-only; a run of one of those shapes that called the driver would skip their protocol
+6. SV-741 — the `--legacy` flag is prose-only; nothing checks the legacy file is read only on that path
+7. SV-745 — the inline legacy-path routing is prose-only
+8. SV-050 — resume-consumption gate only in prose
+9. SV-057 — ancestry rule only in prose; mismatch breaks stacked iterations silently
+10. SV-060 — remote-reconciliation gate only in prose
 11. SV-076 — fail-closed probe only in prose
 12. SV-081 — default-path heading; most runs take it
 13. SV-097 — review-bypass warning only in prose
-14. SV-112 — partial-escalation routing only in prose; wrong branch merges failed work
-15. SV-115 — adjudication routing only in prose
-16. SV-119 — kind-not-prose dispatch only in prose
-17. SV-120 — absent-means-requires_gap default only in prose
-18. SV-121 — lane-collision option set only in prose
-19. SV-122 — control-signal misuse would cause a spurious re-plan; only in prose
-20. SV-123 — pause rule only in prose
-21. SV-131 — acyclicity check only in prose; a cycle deadlocks execution
-22. SV-140 — terminal-vs-replan distinction only in prose
-23. SV-142 — no-auto-select rule only in prose
-24. SV-143 — phase-entry routing only in prose
-25. SV-144 — pre-merge gate only in prose
-26. SV-149 — conflict stop only in prose
-27. SV-151 — PR-base self-verify only in prose
-28. SV-154 — single-emission rule only in prose
-29. SV-156 — phase-entry routing only in prose
-30. SV-158 — skip semantics only in prose
-31. SV-159 — review mandate enforced only by a prose guard
-32. SV-163 — hard-failure routing only in prose
-33. SV-164 — completion-tail guard only in prose
-34. SV-166 — guard abort only in prose; no test drives a skipped review
-35. SV-167 — guard output only in prose
-36. SV-168 — guard negative action only in prose
-37. SV-169 — guard negative action only in prose
-38. SV-178 — marker-reconcile rule only in prose; false negatives otherwise
-39. SV-182 — single-emission rule only in prose
-40. SV-201 — thrash counter only in prose
-41. SV-206 — review-lane contract restated only in prose
-42. SV-216 — checklist item only in prose
-43. SV-233 — status mapping only in prose (validator checks shape, not mapping)
-44. SV-234 — status mapping only in prose
-45. SV-245 — inline-only rule lives in prose; delegation silently flips every gate to can't-ask
-46. SV-246 — execution contract only in prose
-47. SV-249 — review-bypass semantics only in prose
-48. SV-266 — voter-cannot-flip rule only in prose
-49. SV-270 — mirror of the agent branch guard; untested
-50. SV-276 — marker-reconcile rule + awk snippet untested
-51. SV-278 — placement rule only in prose
-52. SV-306 — mirror of path selection; untested
-53. SV-308 — review-lane rule only in prose
-54. SV-315 — review-lane rule only in prose
-55. SV-325 — error table only in prose
-56. SV-329 — fallback stated only here and in troubleshooting; untested
-57. SV-330 — inline mirror only in prose
-58. SV-336 — closed enums restated here; drift risk vs state-management
-59. SV-338 — fail-closed distinction only in prose
-60. SV-349 — advisory-contract fail-safe only in prose
-61. SV-361 — unverified-not-clean branch only in prose
-62. SV-363 — advisory-only verdict rule only in prose
-63. SV-376 — advisory-only rule only in prose
-64. SV-379 — status derivation is pseudo-code; a nested test once hid a 100% capability loss
-65. SV-391 — advisory-only rule only in prose
-66. SV-412 — advisory-only rule only in prose
-67. SV-419 — PASS-only builder gate only in prose
-68. SV-440 — entry rule only in prose
-69. SV-449 — guard input only in prose
-70. SV-452 — single-increment rule only in prose
-71. SV-453 — thrash guard only in prose
-72. SV-454 — skip branch only in prose
-73. SV-455 — cleanup trigger only in prose
-74. SV-460 — clear-on-start invariant only in prose
-75. SV-463 — single-exit rule only in prose
-76. SV-467 — loop entry condition only in prose
-77. SV-469 — loop bound is pseudo-code only
-78. SV-473 — diff-scope override is prompt text only
-79. SV-483 — sole-review framing is prompt text only
-80. SV-485 — guard-input flip only in pseudo-code
-81. SV-490 — CI conversion is pseudo-code only
-82. SV-491 — floor conversion is pseudo-code only
-83. SV-496 — loop exit is pseudo-code only
-84. SV-497 — loop exit is pseudo-code only
-85. SV-498 — fix selection is pseudo-code only
-86. SV-500 — data-not-instruction rule is prompt text only
-87. SV-503 — self-regression review is prompt text only
-88. SV-505 — explicitly unvalidated: no hook enforces it
-89. SV-506 — self-review gate is pseudo-code only
-90. SV-510 — no-force rule only in pseudo-code
-91. SV-512 — max-iteration escalation is pseudo-code only
-92. SV-514 — gate-ownership rule only in prose
-93. SV-515 — voter scope rule only in prose
-94. SV-518 — merge rule only in prose
-95. SV-519 — delay-vs-decide invariant only in prose
-96. SV-522 — fully-refuted FAIL is a human call; only in prose
-97. SV-531 — advisory rule only in prose
-98. SV-536 — advisory contract only in prose
-99. SV-545 — advisory contract only in prose
-100. SV-547 — fail-safe invariant only in prose
-101. SV-549 — crash-pause branch only in prose
-102. SV-550 — guard pointer only in prose
-103. SV-551 — outcome mapping only in prose
-104. SV-552 — outcome mapping only in prose
-105. SV-557 — no-early-stamp rule only in prose; a false done claim is unrecoverable
-106. SV-569 — PASS-only builder gate only in prose
-107. SV-582 — marker reconcile snippet untested
-108. SV-589 — crash-pause branch only in prose
-109. SV-594 — thrash branch only in prose
-110. SV-602 — launchability rule is pseudo-code only
-111. SV-606 — review-lane rule only in prose
-112. SV-609 — review-lane rule only in prose
-113. SV-614 — conflict rule only in prose
-114. SV-615 — conflict rule only in prose
-115. SV-620 — spawn-type rule only in prose; a wrong type silently disables every worker hook
-116. SV-629 — hard budget exit is pseudo-code only
-117. SV-635 — review-lane rule only in prose
-118. SV-638 — materialization rule only in prose
-119. SV-639 — HEAD-safety rule only in prose
-120. SV-643 — invariant only in prose
-121. SV-644 — invariant only in prose
-122. SV-646 — conflict policy only in prose
-123. SV-649 — hold-and-checkpoint branch only in prose
-124. SV-651 — adjudication trigger only in prose
-125. SV-652 — no-self-pick rule only in prose
-126. SV-661 — fallback only in prose; untested
-127. SV-666 — error table only in prose
-128. SV-667 — error table only in prose
-129. SV-668 — error table only in prose
-130. SV-677 — review-lane rule only in prose
-131. SV-679 — checklist is pseudo-code only
-132. SV-691 — verification branch only in prose
-133. SV-693 — conflict stop only in prose
-134. SV-697 — fence ban only in prose
-135. SV-700 — self-verify only in prose
-136. SV-702 — retry policy only in prose
-137. SV-708 — mismatch branch only in prose
-138. SV-709 — single-emission invariant only in prose
-139. SV-713 — safety guarantee only in prose
-140. SV-714 — safety guarantee only in prose
-141. SV-716 — partial-merge rule only in prose
-142. SV-721 — pointer rule only in prose (POINTER_AUDIT lists exceptions)
-143. SV-733 — lanes paste requirement only in prose
-144. SV-735 — review-lane rule only in prose
-145. SV-002 — safety rule only in prose
-146. SV-003 — conflict-escalation rule only in prose
-147. SV-007 — delegation rule only in prose
-148. SV-011 — gate-verdict routing only in prose
-149. SV-014 — tool-call budget only in prose; no counter enforces it
-150. SV-018 — section heading; rules below carry the branches
-151. SV-022 — orphan-worktree rule only in prose
-152. SV-023 — sequential-merge rule only in prose
-153. SV-024 — budget-exit branch only in prose
-154. SV-038 — phase-entry routing only in prose
-155. SV-039 — job-brief entry branch only in prose
-156. SV-043 — read-on-start/clear-on-start flag handling only in prose
-157. SV-044 — cost-profile resolution only in prose
-158. SV-053 — vagueness judgment and PO spawn only in prose
-159. SV-061 — pre-flight routing only in prose
-160. SV-062 — soft-gate options only in prose
-161. SV-064 — degradation branch only in prose; an inverted fail-closed would block runs
-162. SV-066 — phase-entry Read only in prose
-163. SV-067 — pointer-not-payload spawn rule only in prose
-164. SV-069 — parallelism classification only in prose
-165. SV-073 — parallelism rule is a prose code block, untested
-166. SV-074 — phase heading for path routing
-167. SV-075 — experimental branch only in prose
-168. SV-078 — runner-result consumption only in prose
-169. SV-079 — FINALIZE delta only in prose
-170. SV-082 — spawn rule only in prose
-171. SV-088 — carve-out routing only in prose
-172. SV-098 — sequential-path heading only in prose
-173. SV-100 — documented limit; parallel runs can overrun MAX_TOKENS
-174. SV-104 — record-only lane rule only in prose
-175. SV-109 — parallel delegation only in prose
-176. SV-111 — result routing table only in prose
-177. SV-113 — all-failed routing only in prose
-178. SV-114 — checkpoint choice only in prose
-179. SV-116 — crash routing only in prose
-180. SV-117 — budget-exit routing only in prose
-181. SV-124 — verbatim-option rule only in prose
-182. SV-126 — option semantics only in prose
-183. SV-127 — option semantics only in prose
-184. SV-128 — option semantics only in prose
-185. SV-129 — brief-mutation option only in prose
-186. SV-130 — option semantics only in prose
-187. SV-132 — option semantics only in prose
-188. SV-133 — signal-suppressing option only in prose
-189. SV-134 — apply step only in prose
-190. SV-135 — apply step only in prose
-191. SV-136 — apply step only in prose
-192. SV-137 — apply step only in prose
-193. SV-138 — apply step only in prose
-194. SV-139 — apply step only in prose
-195. SV-141 — apply step only in prose
-196. SV-153 — scope-reduction rule only in prose
-197. SV-155 — exit routing only in prose
-198. SV-160 — invariant tracking only in prose
-199. SV-161 — exit routing only in prose
-200. SV-162 — exit routing only in prose
-201. SV-165 — guard exception only in prose
-202. SV-170 — guard record only in prose
-203. SV-171 — guard negative action only in prose
-204. SV-172 — guard exit only in prose
-205. SV-176 — grader spawn condition only in prose
-206. SV-180 — multi-voter merge rule only in prose
-207. SV-181 — loop heading only in prose
-208. SV-184 — return-to-base only in prose
-209. SV-186 — loop-continue threshold only in prose
-210. SV-187 — budget band only in prose
-211. SV-189 — soft budget; no counter enforces it
-212. SV-193 — budget band only in prose
-213. SV-194 — budget band only in prose
-214. SV-195 — budget band only in prose
-215. SV-198 — flag semantics only in prose
-216. SV-202 — error-table row only in prose
-217. SV-203 — missing-result retry only in prose
-218. SV-204 — error-table row only in prose
-219. SV-209 — pointer heading only in prose
-220. SV-215 — ownership rule only in prose
-221. SV-217 — checklist item only in prose
-222. SV-218 — checklist item only in prose
-223. SV-219 — checklist item only in prose
-224. SV-220 — checklist item only in prose
-225. SV-232 — additive-field rule only in prose
-226. SV-235 — phase-dependent mapping is ambiguous and only in prose
-227. SV-237 — status mapping only in prose
-228. SV-248 — brief lifecycle only in prose
-229. SV-250 — iteration bound only in prose
-230. SV-252 — cost-profile scope only in prose
-231. SV-255 — brief/flag agreement only in prose
-232. SV-257 — escape-hatch semantics only in prose
-233. SV-269 — forward-set boundary only in prose
-234. SV-271 — mirror of the agent pre-flight branches
-235. SV-272 — loop summary only in prose
-236. SV-274 — retired-workaround rule only in prose
-237. SV-275 — ordering advice only in prose; stacking on a mutating branch
-238. SV-277 — marker semantics only in prose
-239. SV-280 — cross-layer write only in prose
-240. SV-281 — closed terminal set only in prose
-241. SV-282 — best-effort branch only in prose
-242. SV-292 — gate table only in prose
-243. SV-293 — gate table only in prose
-244. SV-294 — gate table only in prose
-245. SV-295 — gate table only in prose
-246. SV-296 — lifecycle move only in prose
-247. SV-297 — lifecycle move only in prose
-248. SV-299 — resume priority only in prose
-249. SV-303 — mirror of the agent budget bands
-250. SV-304 — mirror of the agent budget bands
-251. SV-305 — mirror of the agent budget bands
-252. SV-307 — path heading
-253. SV-311 — path heading
-254. SV-313 — precedence rule only here
-255. SV-314 — path heading
-256. SV-317 — dependency wait only in prose
-257. SV-318 — merge rule only in prose
-258. SV-320 — permission table only in prose
-259. SV-323 — error table only in prose
-260. SV-324 — error table only in prose
-261. SV-327 — error table only in prose
-262. SV-328 — retry-once rule stated only in this table
-263. SV-337 — recovery rule only in prose
-264. SV-340 — opposite-remedy rule only in prose
-265. SV-344 — troubleshooting advice only
-266. SV-345 — fallback restated; untested
-267. SV-346 — scope statement only in prose
-268. SV-359 — line projection is pseudo-code only
-269. SV-360 — projection branch only in prose
-270. SV-362 — projection branch only in prose
-271. SV-367 — reviewer carve-out only in prose
-272. SV-368 — rubric lane rule only in prose
-273. SV-374 — ordering rule only in prose
-274. SV-380 — status derivation is pseudo-code only
-275. SV-381 — status derivation is pseudo-code only
-276. SV-382 — naming rule only in prose
-277. SV-383 — no-op branch only in prose
-278. SV-385 — status invariant only in prose
-279. SV-386 — read-only rule only in prose
-280. SV-394 — parse-miss branch only in prose
-281. SV-402 — line projection is pseudo-code only
-282. SV-406 — known gap only in prose
-283. SV-408 — surfacing rule only in prose
-284. SV-421 — no-fabrication rule only in prose
-285. SV-422 — spawn shape only in prose
-286. SV-428 — non-fatal branch only in prose
-287. SV-432 — flat-only rule only in prose
-288. SV-439 — numbering-stability rule only in prose
-289. SV-448 — invariant init only in prose
-290. SV-450 — init-order rule only in prose
-291. SV-451 — resume counter only in prose
-292. SV-456 — PR close branch only in prose
-293. SV-457 — lifecycle move only in prose
-294. SV-459 — documented residual: stale running status uncaught by any check
-295. SV-461 — reset only in prose
-296. SV-471 — pin-run routing only in prose
-297. SV-474 — lens switch is prompt text only
-298. SV-475 — checklist application is prompt text only
-299. SV-476 — anti-overlap is prompt text only
-300. SV-501 — class-sweep and cap are prompt text only
-301. SV-504 — scope fence is prompt text only
-302. SV-511 — re-review guarantee only in prose
-303. SV-513 — flag resolution only in prose
-304. SV-516 — provider branch only in prose
-305. SV-517 — provider branch only in prose; lens-run.sh test not wired to this seam
-306. SV-520 — edge rule only in prose
-307. SV-521 — edge rule only in prose
-308. SV-523 — fail-safe degradation only in prose
-309. SV-525 — independence rule only in prose
-310. SV-526 — no-alias rule only in prose
-311. SV-529 — grader branch is pseudo-code only
-312. SV-530 — grader rule only in prose
-313. SV-533 — parse-failure branch only in prose
-314. SV-535 — ordering pointer only in prose
-315. SV-538 — placement rule only in prose
-316. SV-540 — enable guard is pseudo-code only
-317. SV-541 — risk branch is pseudo-code only
-318. SV-542 — risk branch is pseudo-code only
-319. SV-543 — comment branch only in pseudo-code
-320. SV-544 — fail-safe branch only in pseudo-code
-321. SV-546 — feed rule only in prose
-322. SV-548 — recording rule only in prose
-323. SV-554 — escalated Outcome shape only in prose
-324. SV-559 — routing rule only in prose
-325. SV-565 — fail-safe branch only in prose
-326. SV-566 — reset only in prose
-327. SV-570 — invariant restated only in prose
-328. SV-572 — invariant restated only in prose
-329. SV-573 — invariant restated only in prose
-330. SV-576 — round-number formula only in prose (was wrong twice in review)
-331. SV-581 — retired-workaround rule only in prose
-332. SV-584 — placement rule only in prose
-333. SV-588 — retry-once branch only in prose
-334. SV-590 — push-failure branch only in prose
-335. SV-593 — comment-failure branch only in prose
-336. SV-595 — budget branch only in prose
-337. SV-598 — quick rule only in prose
-338. SV-600 — quick rule only in prose
-339. SV-603 — overlap rule only in prose
-340. SV-604 — path rule only in prose
-341. SV-605 — path rule only in prose
-342. SV-608 — path rule only in prose
-343. SV-610 — ownership rule only in prose
-344. SV-617 — conflict step only in prose
-345. SV-619 — spawn shape only in prose
-346. SV-622 — pointer rule only in prose
-347. SV-623 — poll-loop ownership only in prose
-348. SV-624 — poll bound is pseudo-code only
-349. SV-625 — poll branch is pseudo-code only
-350. SV-627 — launch branch is pseudo-code only
-351. SV-628 — back-off is pseudo-code only
-352. SV-631 — summary fallback only in prose
-353. SV-632 — collection rule only in prose
-354. SV-641 — step only in prose
-355. SV-642 — ordering rule only in prose
-356. SV-645 — invariant only in prose
-357. SV-653 — option semantics only in prose
-358. SV-654 — option semantics only in prose
-359. SV-655 — option semantics only in prose
-360. SV-656 — option semantics only in prose
-361. SV-658 — presentation rule only in prose
-362. SV-659 — error table only in prose
-363. SV-660 — error table only in prose
-364. SV-662 — error table only in prose
-365. SV-664 — error table only in prose
-366. SV-670 — checklist item only in prose
-367. SV-674 — checklist item only in prose
-368. SV-678 — numbering-stability rule only in prose
-369. SV-680 — vacuous-pass rule only in prose
-370. SV-690 — no_changes merge rule only in prose
-371. SV-692 — commit step only in prose
-372. SV-696 — commit format only in prose
-373. SV-699 — PR base rule only in prose
-374. SV-701 — retry policy only in prose
-375. SV-703 — retry options only in prose
-376. SV-704 — option only in prose
-377. SV-705 — option only in prose
-378. SV-706 — option only in prose
-379. SV-707 — mismatch branch only in prose
-380. SV-710 — scope-reduction rule only in prose
-381. SV-711 — scope-reduction rule only in prose
-382. SV-712 — safety guarantee only in prose
-383. SV-715 — safety guarantee only in prose
-384. SV-719 — spawn-contract heading only in prose
-385. SV-724 — spawn shape only in prose
-386. SV-725 — spawn shape only in prose
-387. SV-726 — spawn shape only in prose
-388. SV-727 — field rule only in prose
-389. SV-728 — spawn rule only in prose
-390. SV-736 — ownership rule only in prose
-391. SV-001 — shared-prefix mission rule only in prose (mirrored by check-shared-prefix, not behaviour-tested)
-392. SV-004 — output-shape default only in prose
-393. SV-005 — section heading; principles below carry the branches
-394. SV-006 — context-budget principle only in prose
-395. SV-008 — parallelism principle only in prose
-396. SV-012 — self-heal principle only in prose
-397. SV-015 — enumeration heading; low risk
-398. SV-016 — enumeration heading; low risk
-399. SV-017 — escalation output trigger only in prose
-400. SV-020 — context budget unmeasured
-401. SV-027 — routing rationale; the Reads it justifies are rows of their own
-402. SV-028 — routing rationale only
-403. SV-029 — routing rationale only
-404. SV-030 — routing rationale only
-405. SV-031 — routing rationale only
-406. SV-032 — records an accepted content loss; only in prose
-407. SV-033 — routing rationale only
-408. SV-034 — routing rationale only
-409. SV-035 — routing rationale only
-410. SV-036 — claim-scoping caveat only in prose
-411. SV-037 — naming convention only in prose
-412. SV-040 — on-demand Read rule only in prose
-413. SV-042 — config echo only in prose
-414. SV-049 — task-source branch only in prose
-415. SV-051 — task-source branch only in prose
-416. SV-052 — task-source branch only in prose
-417. SV-054 — complement branch only in prose
-418. SV-059 — checkpoint absence documented only in prose
-419. SV-065 — skip-flag branch only in prose
-420. SV-068 — cheap-profile override only in prose
-421. SV-070 — sequential flag branch only in prose
-422. SV-071 — pointer rule only in prose
-423. SV-077 — known unforwarded flags only in prose
-424. SV-080 — spike caveat only in prose
-425. SV-083 — cheap-profile override only in prose
-426. SV-089 — ownership rule only in prose
-427. SV-092 — fail-safe branch only in prose
-428. SV-096 — path tail only in prose
-429. SV-101 — spawn rule only in prose
-430. SV-102 — cheap-profile override only in prose
-431. SV-108 — path tail only in prose
-432. SV-173 — complement branch only in prose
-433. SV-174 — rationale only
-434. SV-183 — history save only in prose
-435. SV-185 — interactive prompt only in prose
-436. SV-188 — exit branch only in prose
-437. SV-190 — budget caveat only in prose
-438. SV-191 — budget caveat only in prose
-439. SV-192 — budget band only in prose
-440. SV-196 — context-budget table only in prose
-441. SV-200 — error-table row only in prose
-442. SV-205 — spawn table only in prose
-443. SV-207 — summary templates only in prose
-444. SV-210 — cost-profile rule only in prose
-445. SV-213 — retention rule only in prose
-446. SV-221 — checklist item only in prose
-447. SV-222 — checklist item only in prose
-448. SV-223 — checklist item only in prose
-449. SV-224 — checklist item only in prose
-450. SV-225 — checklist item only in prose
-451. SV-226 — checklist item only in prose
-452. SV-227 — checklist item only in prose
-453. SV-229 — integration note only in prose
-454. SV-231 — additive-field rule only in prose
-455. SV-265 — flag precedence only in prose
-456. SV-267 — flag precedence only in prose
-457. SV-268 — provider switch only in prose
-458. SV-283 — scope note only in prose
-459. SV-285 — diagram heading; low risk
-460. SV-286 — description heading only in prose
-461. SV-287 — prerequisite only in prose
-462. SV-288 — prerequisite only in prose
-463. SV-289 — prerequisite only in prose
-464. SV-291 — gate table only in prose
-465. SV-300 — budget unenforced
-466. SV-301 — budget unenforced
-467. SV-302 — mirror of the agent budget bands
-468. SV-310 — selection rule only in prose
-469. SV-312 — path rule only in prose
-470. SV-316 — concurrency bound only in prose
-471. SV-319 — permission table only in prose
-472. SV-321 — permission table only in prose
-473. SV-322 — permission table only in prose
-474. SV-326 — error table only in prose
-475. SV-331 — benefit note only in prose
-476. SV-332 — usage advice only in prose
-477. SV-333 — troubleshooting advice only
-478. SV-334 — troubleshooting advice only
-479. SV-335 — troubleshooting advice only
-480. SV-342 — incident rationale only
-481. SV-343 — troubleshooting advice only
-482. SV-347 — provenance only in prose
-483. SV-348 — scope guard only in prose
-484. SV-350 — read-once rule only in prose
-485. SV-387 — run-condition only in prose
-486. SV-395 — mapping only in prose
-487. SV-403 — projection branch only in prose
-488. SV-407 — state glossary only in prose
-489. SV-410 — rationale only in prose
-490. SV-420 — incident-map derivation only in prose
-491. SV-423 — bound/dedupe rule only in prose
-492. SV-424 — shape rule only in prose
-493. SV-435 — shape rule only in prose
-494. SV-436 — skip-form rule only in prose
-495. SV-438 — reader default only in prose
-496. SV-442 — read confirmation only in prose
-497. SV-443 — retirement note only
-498. SV-458 — record only in prose
-499. SV-464 — field semantics only in prose
-500. SV-465 — field semantics only in prose
-501. SV-466 — reason disambiguation only in prose
-502. SV-478 — prompt-line inclusion only in prose
-503. SV-484 — cheap override only in prose
-504. SV-492 — metric capture only in pseudo-code
-505. SV-499 — pointer-audit exception only in prose
-506. SV-524 — counter carriage only in prose
-507. SV-527 — dual-role note only in prose
-508. SV-528 — cost rationale only
-509. SV-532 — grader rule only in prose
-510. SV-534 — comment rule only in prose
-511. SV-537 — channel rule only in prose
-512. SV-556 — back-compat branch only in prose
-513. SV-560 — record only in prose
-514. SV-562 — history only
-515. SV-563 — proposal step only in prose
-516. SV-567 — record only in prose
-517. SV-585 — placement rule only in prose
-518. SV-586 — placement rule only in prose
-519. SV-596 — quick rule only in prose
-520. SV-597 — quick rule only in prose
-521. SV-599 — quick rule only in prose
-522. SV-601 — quick rule only in prose
-523. SV-607 — path rule only in prose
-524. SV-612 — naming rule only in prose
-525. SV-616 — conflict step only in prose
-526. SV-618 — conflict step only in prose
-527. SV-630 — budget bands are pseudo-code only
-528. SV-636 — budget table only
-529. SV-637 — budget table only
-530. SV-640 — step only in prose
-531. SV-650 — rationale only
-532. SV-663 — error table only in prose
-533. SV-665 — error table only in prose
-534. SV-669 — checklist item only in prose
-535. SV-671 — checklist item only in prose
-536. SV-672 — checklist item only in prose
-537. SV-673 — checklist item only in prose
-538. SV-675 — checklist item only in prose
-539. SV-676 — checklist item only in prose
-540. SV-720 — cache discipline only in prose
-541. SV-723 — spawn shape only in prose
-542. SV-731 — paste exception only in prose
+14. SV-119 — kind-not-prose dispatch only in prose
+15. SV-120 — absent-means-requires_gap default only in prose
+16. SV-121 — lane-collision option set only in prose
+17. SV-122 — control-signal misuse would cause a spurious re-plan; only in prose
+18. SV-140 — terminal-vs-replan distinction only in prose
+19. SV-142 — no-auto-select rule only in prose
+20. SV-143 — phase-entry routing only in prose
+21. SV-156 — phase-entry routing only in prose
+22. SV-158 — skip semantics only in prose
+23. SV-159 — review mandate enforced only by a prose guard
+24. SV-163 — hard-failure routing only in prose
+25. SV-164 — completion-tail guard only in prose
+26. SV-166 — guard abort only in prose; no test drives a skipped review
+27. SV-167 — guard output only in prose
+28. SV-168 — guard negative action only in prose
+29. SV-169 — guard negative action only in prose
+30. SV-178 — marker-reconcile rule only in prose; false negatives otherwise
+31. SV-182 — single-emission rule only in prose
+32. SV-201 — thrash counter only in prose
+33. SV-206 — review-lane contract restated only in prose
+34. SV-216 — checklist item only in prose
+35. SV-233 — status mapping only in prose (validator checks shape, not mapping)
+36. SV-234 — status mapping only in prose
+37. SV-245 — inline-only rule lives in prose; delegation silently flips every gate to can't-ask
+38. SV-246 — execution contract only in prose
+39. SV-249 — review-bypass semantics only in prose
+40. SV-266 — voter-cannot-flip rule only in prose
+41. SV-276 — marker-reconcile rule + awk snippet untested
+42. SV-278 — placement rule only in prose
+43. SV-308 — review-lane rule only in prose
+44. SV-315 — review-lane rule only in prose
+45. SV-325 — error table only in prose
+46. SV-329 — fallback stated only here and in troubleshooting; untested
+47. SV-330 — inline mirror only in prose
+48. SV-336 — closed enums restated here; drift risk vs state-management
+49. SV-338 — fail-closed distinction only in prose
+50. SV-349 — advisory-contract fail-safe only in prose
+51. SV-361 — unverified-not-clean branch only in prose
+52. SV-363 — advisory-only verdict rule only in prose
+53. SV-376 — advisory-only rule only in prose
+54. SV-379 — status derivation is pseudo-code; a nested test once hid a 100% capability loss
+55. SV-391 — advisory-only rule only in prose
+56. SV-412 — advisory-only rule only in prose
+57. SV-419 — PASS-only builder gate only in prose
+58. SV-440 — entry rule only in prose
+59. SV-449 — guard input only in prose
+60. SV-452 — single-increment rule only in prose
+61. SV-453 — thrash guard only in prose
+62. SV-454 — skip branch only in prose
+63. SV-455 — cleanup trigger only in prose
+64. SV-460 — clear-on-start invariant only in prose
+65. SV-463 — single-exit rule only in prose
+66. SV-467 — loop entry condition only in prose
+67. SV-469 — loop bound is pseudo-code only
+68. SV-473 — diff-scope override is prompt text only
+69. SV-483 — sole-review framing is prompt text only
+70. SV-485 — guard-input flip only in pseudo-code
+71. SV-490 — CI conversion is pseudo-code only
+72. SV-491 — floor conversion is pseudo-code only
+73. SV-496 — loop exit is pseudo-code only
+74. SV-497 — loop exit is pseudo-code only
+75. SV-498 — fix selection is pseudo-code only
+76. SV-500 — data-not-instruction rule is prompt text only
+77. SV-503 — self-regression review is prompt text only
+78. SV-505 — explicitly unvalidated: no hook enforces it
+79. SV-506 — self-review gate is pseudo-code only
+80. SV-510 — no-force rule only in pseudo-code
+81. SV-512 — max-iteration escalation is pseudo-code only
+82. SV-514 — gate-ownership rule only in prose
+83. SV-515 — voter scope rule only in prose
+84. SV-518 — merge rule only in prose
+85. SV-519 — delay-vs-decide invariant only in prose
+86. SV-522 — fully-refuted FAIL is a human call; only in prose
+87. SV-531 — advisory rule only in prose
+88. SV-536 — advisory contract only in prose
+89. SV-545 — advisory contract only in prose
+90. SV-547 — fail-safe invariant only in prose
+91. SV-549 — crash-pause branch only in prose
+92. SV-550 — guard pointer only in prose
+93. SV-551 — outcome mapping only in prose
+94. SV-552 — outcome mapping only in prose
+95. SV-557 — no-early-stamp rule only in prose; a false done claim is unrecoverable
+96. SV-569 — PASS-only builder gate only in prose
+97. SV-582 — marker reconcile snippet untested
+98. SV-589 — crash-pause branch only in prose
+99. SV-594 — thrash branch only in prose
+100. SV-602 — launchability rule is pseudo-code only
+101. SV-606 — review-lane rule only in prose
+102. SV-609 — review-lane rule only in prose
+103. SV-614 — conflict rule only in prose
+104. SV-615 — conflict rule only in prose
+105. SV-620 — spawn-type rule only in prose; a wrong type silently disables every worker hook
+106. SV-629 — hard budget exit is pseudo-code only
+107. SV-635 — review-lane rule only in prose
+108. SV-638 — materialization rule only in prose
+109. SV-639 — HEAD-safety rule only in prose
+110. SV-643 — invariant only in prose
+111. SV-644 — invariant only in prose
+112. SV-646 — conflict policy only in prose
+113. SV-649 — hold-and-checkpoint branch only in prose
+114. SV-651 — adjudication trigger only in prose
+115. SV-652 — no-self-pick rule only in prose
+116. SV-661 — fallback only in prose; untested
+117. SV-666 — error table only in prose
+118. SV-667 — error table only in prose
+119. SV-668 — error table only in prose
+120. SV-677 — review-lane rule only in prose
+121. SV-693 — conflict stop only in prose
+122. SV-697 — fence ban only in prose
+123. SV-713 — safety guarantee only in prose
+124. SV-714 — safety guarantee only in prose
+125. SV-716 — partial-merge rule only in prose
+126. SV-721 — pointer rule only in prose (POINTER_AUDIT lists exceptions)
+127. SV-733 — lanes paste requirement only in prose
+128. SV-735 — review-lane rule only in prose
+129. SV-002 — safety rule only in prose
+130. SV-003 — conflict-escalation rule only in prose
+131. SV-007 — delegation rule only in prose
+132. SV-011 — gate-verdict routing only in prose
+133. SV-014 — tool-call budget only in prose; no counter enforces it
+134. SV-018 — section heading; rules below carry the branches
+135. SV-022 — orphan-worktree rule only in prose
+136. SV-023 — sequential-merge rule only in prose
+137. SV-024 — budget-exit branch only in prose
+138. SV-038 — phase-entry routing only in prose
+139. SV-053 — vagueness judgment and PO spawn only in prose
+140. SV-066 — phase-entry Read only in prose
+141. SV-069 — parallelism classification only in prose
+142. SV-073 — parallelism rule is a prose code block, untested
+143. SV-074 — phase heading for path routing
+144. SV-075 — experimental branch only in prose
+145. SV-078 — runner-result consumption only in prose
+146. SV-079 — FINALIZE delta only in prose
+147. SV-082 — spawn rule only in prose
+148. SV-088 — carve-out routing only in prose
+149. SV-098 — sequential-path heading only in prose
+150. SV-100 — documented limit; parallel runs can overrun MAX_TOKENS
+151. SV-104 — record-only lane rule only in prose
+152. SV-109 — parallel delegation only in prose
+153. SV-117 — budget-exit routing only in prose
+154. SV-134 — apply step only in prose
+155. SV-135 — apply step only in prose
+156. SV-136 — apply step only in prose
+157. SV-137 — apply step only in prose
+158. SV-138 — apply step only in prose
+159. SV-139 — apply step only in prose
+160. SV-141 — apply step only in prose
+161. SV-160 — invariant tracking only in prose
+162. SV-161 — exit routing only in prose
+163. SV-162 — exit routing only in prose
+164. SV-165 — guard exception only in prose
+165. SV-170 — guard record only in prose
+166. SV-171 — guard negative action only in prose
+167. SV-172 — guard exit only in prose
+168. SV-176 — grader spawn condition only in prose
+169. SV-180 — multi-voter merge rule only in prose
+170. SV-181 — loop heading only in prose
+171. SV-184 — return-to-base only in prose
+172. SV-186 — loop-continue threshold only in prose
+173. SV-187 — budget band only in prose
+174. SV-189 — soft budget; no counter enforces it
+175. SV-193 — budget band only in prose
+176. SV-194 — budget band only in prose
+177. SV-195 — budget band only in prose
+178. SV-198 — flag semantics only in prose
+179. SV-202 — error-table row only in prose
+180. SV-203 — missing-result retry only in prose
+181. SV-204 — error-table row only in prose
+182. SV-209 — pointer heading only in prose
+183. SV-215 — ownership rule only in prose
+184. SV-217 — checklist item only in prose
+185. SV-218 — checklist item only in prose
+186. SV-219 — checklist item only in prose
+187. SV-220 — checklist item only in prose
+188. SV-232 — additive-field rule only in prose
+189. SV-235 — phase-dependent mapping is ambiguous and only in prose
+190. SV-237 — status mapping only in prose
+191. SV-248 — brief lifecycle only in prose
+192. SV-250 — iteration bound only in prose
+193. SV-252 — cost-profile scope only in prose
+194. SV-255 — brief/flag agreement only in prose
+195. SV-257 — escape-hatch semantics only in prose
+196. SV-269 — forward-set boundary only in prose
+197. SV-272 — loop summary only in prose
+198. SV-274 — retired-workaround rule only in prose
+199. SV-275 — ordering advice only in prose; stacking on a mutating branch
+200. SV-277 — marker semantics only in prose
+201. SV-281 — closed terminal set only in prose
+202. SV-292 — gate table only in prose
+203. SV-293 — gate table only in prose
+204. SV-294 — gate table only in prose
+205. SV-295 — gate table only in prose
+206. SV-296 — lifecycle move only in prose
+207. SV-297 — lifecycle move only in prose
+208. SV-299 — resume priority only in prose
+209. SV-303 — mirror of the agent budget bands
+210. SV-304 — mirror of the agent budget bands
+211. SV-305 — mirror of the agent budget bands
+212. SV-307 — path heading
+213. SV-311 — path heading
+214. SV-313 — precedence rule only here
+215. SV-314 — path heading
+216. SV-317 — dependency wait only in prose
+217. SV-318 — merge rule only in prose
+218. SV-320 — permission table only in prose
+219. SV-323 — error table only in prose
+220. SV-324 — error table only in prose
+221. SV-327 — error table only in prose
+222. SV-328 — retry-once rule stated only in this table
+223. SV-337 — recovery rule only in prose
+224. SV-340 — opposite-remedy rule only in prose
+225. SV-344 — troubleshooting advice only
+226. SV-345 — fallback restated; untested
+227. SV-346 — scope statement only in prose
+228. SV-359 — line projection is pseudo-code only
+229. SV-360 — projection branch only in prose
+230. SV-362 — projection branch only in prose
+231. SV-367 — reviewer carve-out only in prose
+232. SV-368 — rubric lane rule only in prose
+233. SV-374 — ordering rule only in prose
+234. SV-380 — status derivation is pseudo-code only
+235. SV-381 — status derivation is pseudo-code only
+236. SV-382 — naming rule only in prose
+237. SV-383 — no-op branch only in prose
+238. SV-385 — status invariant only in prose
+239. SV-386 — read-only rule only in prose
+240. SV-394 — parse-miss branch only in prose
+241. SV-402 — line projection is pseudo-code only
+242. SV-406 — known gap only in prose
+243. SV-408 — surfacing rule only in prose
+244. SV-421 — no-fabrication rule only in prose
+245. SV-422 — spawn shape only in prose
+246. SV-428 — non-fatal branch only in prose
+247. SV-432 — flat-only rule only in prose
+248. SV-439 — numbering-stability rule only in prose
+249. SV-448 — invariant init only in prose
+250. SV-450 — init-order rule only in prose
+251. SV-451 — resume counter only in prose
+252. SV-456 — PR close branch only in prose
+253. SV-457 — lifecycle move only in prose
+254. SV-459 — documented residual: stale running status uncaught by any check
+255. SV-461 — reset only in prose
+256. SV-471 — pin-run routing only in prose
+257. SV-474 — lens switch is prompt text only
+258. SV-475 — checklist application is prompt text only
+259. SV-476 — anti-overlap is prompt text only
+260. SV-501 — class-sweep and cap are prompt text only
+261. SV-504 — scope fence is prompt text only
+262. SV-511 — re-review guarantee only in prose
+263. SV-513 — flag resolution only in prose
+264. SV-516 — provider branch only in prose
+265. SV-517 — provider branch only in prose; lens-run.sh test not wired to this seam
+266. SV-520 — edge rule only in prose
+267. SV-521 — edge rule only in prose
+268. SV-523 — fail-safe degradation only in prose
+269. SV-525 — independence rule only in prose
+270. SV-526 — no-alias rule only in prose
+271. SV-529 — grader branch is pseudo-code only
+272. SV-530 — grader rule only in prose
+273. SV-533 — parse-failure branch only in prose
+274. SV-535 — ordering pointer only in prose
+275. SV-538 — placement rule only in prose
+276. SV-540 — enable guard is pseudo-code only
+277. SV-541 — risk branch is pseudo-code only
+278. SV-542 — risk branch is pseudo-code only
+279. SV-543 — comment branch only in pseudo-code
+280. SV-544 — fail-safe branch only in pseudo-code
+281. SV-546 — feed rule only in prose
+282. SV-548 — recording rule only in prose
+283. SV-554 — escalated Outcome shape only in prose
+284. SV-559 — routing rule only in prose
+285. SV-565 — fail-safe branch only in prose
+286. SV-566 — reset only in prose
+287. SV-570 — invariant restated only in prose
+288. SV-572 — invariant restated only in prose
+289. SV-573 — invariant restated only in prose
+290. SV-576 — round-number formula only in prose (was wrong twice in review)
+291. SV-581 — retired-workaround rule only in prose
+292. SV-584 — placement rule only in prose
+293. SV-588 — retry-once branch only in prose
+294. SV-590 — push-failure branch only in prose
+295. SV-593 — comment-failure branch only in prose
+296. SV-595 — budget branch only in prose
+297. SV-598 — quick rule only in prose
+298. SV-600 — quick rule only in prose
+299. SV-603 — overlap rule only in prose
+300. SV-604 — path rule only in prose
+301. SV-605 — path rule only in prose
+302. SV-608 — path rule only in prose
+303. SV-610 — ownership rule only in prose
+304. SV-617 — conflict step only in prose
+305. SV-619 — spawn shape only in prose
+306. SV-622 — pointer rule only in prose
+307. SV-623 — poll-loop ownership only in prose
+308. SV-624 — poll bound is pseudo-code only
+309. SV-625 — poll branch is pseudo-code only
+310. SV-627 — launch branch is pseudo-code only
+311. SV-628 — back-off is pseudo-code only
+312. SV-631 — summary fallback only in prose
+313. SV-632 — collection rule only in prose
+314. SV-641 — step only in prose
+315. SV-642 — ordering rule only in prose
+316. SV-645 — invariant only in prose
+317. SV-653 — option semantics only in prose
+318. SV-654 — option semantics only in prose
+319. SV-655 — option semantics only in prose
+320. SV-656 — option semantics only in prose
+321. SV-658 — presentation rule only in prose
+322. SV-659 — error table only in prose
+323. SV-660 — error table only in prose
+324. SV-662 — error table only in prose
+325. SV-664 — error table only in prose
+326. SV-670 — checklist item only in prose
+327. SV-674 — checklist item only in prose
+328. SV-678 — numbering-stability rule only in prose
+329. SV-690 — no_changes merge rule only in prose
+330. SV-692 — commit step only in prose
+331. SV-696 — commit format only in prose
+332. SV-699 — PR base rule only in prose
+333. SV-712 — safety guarantee only in prose
+334. SV-715 — safety guarantee only in prose
+335. SV-719 — spawn-contract heading only in prose
+336. SV-724 — spawn shape only in prose
+337. SV-725 — spawn shape only in prose
+338. SV-726 — spawn shape only in prose
+339. SV-727 — field rule only in prose
+340. SV-728 — spawn rule only in prose
+341. SV-736 — ownership rule only in prose
+342. SV-001 — shared-prefix mission rule only in prose (mirrored by check-shared-prefix, not behaviour-tested)
+343. SV-004 — output-shape default only in prose
+344. SV-005 — section heading; principles below carry the branches
+345. SV-006 — context-budget principle only in prose
+346. SV-008 — parallelism principle only in prose
+347. SV-012 — self-heal principle only in prose
+348. SV-015 — enumeration heading; low risk
+349. SV-016 — enumeration heading; low risk
+350. SV-017 — escalation output trigger only in prose
+351. SV-020 — context budget unmeasured
+352. SV-027 — routing rationale; the Reads it justifies are rows of their own
+353. SV-028 — routing rationale only
+354. SV-029 — routing rationale only
+355. SV-030 — routing rationale only
+356. SV-031 — routing rationale only
+357. SV-032 — records an accepted content loss; only in prose
+358. SV-033 — routing rationale only
+359. SV-034 — routing rationale only
+360. SV-035 — routing rationale only
+361. SV-036 — claim-scoping caveat only in prose
+362. SV-037 — naming convention only in prose
+363. SV-040 — on-demand Read rule only in prose
+364. SV-042 — config echo only in prose
+365. SV-049 — task-source branch only in prose
+366. SV-051 — task-source branch only in prose
+367. SV-052 — task-source branch only in prose
+368. SV-054 — complement branch only in prose
+369. SV-059 — checkpoint absence documented only in prose
+370. SV-070 — sequential flag branch only in prose
+371. SV-071 — pointer rule only in prose
+372. SV-077 — known unforwarded flags only in prose
+373. SV-080 — spike caveat only in prose
+374. SV-083 — cheap-profile override only in prose
+375. SV-089 — ownership rule only in prose
+376. SV-092 — fail-safe branch only in prose
+377. SV-096 — path tail only in prose
+378. SV-101 — spawn rule only in prose
+379. SV-102 — cheap-profile override only in prose
+380. SV-108 — path tail only in prose
+381. SV-173 — complement branch only in prose
+382. SV-174 — rationale only
+383. SV-183 — history save only in prose
+384. SV-185 — interactive prompt only in prose
+385. SV-188 — exit branch only in prose
+386. SV-190 — budget caveat only in prose
+387. SV-191 — budget caveat only in prose
+388. SV-192 — budget band only in prose
+389. SV-196 — context-budget table only in prose
+390. SV-200 — error-table row only in prose
+391. SV-205 — spawn table only in prose
+392. SV-207 — summary templates only in prose
+393. SV-210 — cost-profile rule only in prose
+394. SV-213 — retention rule only in prose
+395. SV-221 — checklist item only in prose
+396. SV-222 — checklist item only in prose
+397. SV-223 — checklist item only in prose
+398. SV-224 — checklist item only in prose
+399. SV-225 — checklist item only in prose
+400. SV-226 — checklist item only in prose
+401. SV-227 — checklist item only in prose
+402. SV-229 — integration note only in prose
+403. SV-231 — additive-field rule only in prose
+404. SV-265 — flag precedence only in prose
+405. SV-267 — flag precedence only in prose
+406. SV-268 — provider switch only in prose
+407. SV-283 — scope note only in prose
+408. SV-285 — diagram heading; low risk
+409. SV-286 — description heading only in prose
+410. SV-287 — prerequisite only in prose
+411. SV-288 — prerequisite only in prose
+412. SV-289 — prerequisite only in prose
+413. SV-291 — gate table only in prose
+414. SV-300 — budget unenforced
+415. SV-301 — budget unenforced
+416. SV-302 — mirror of the agent budget bands
+417. SV-310 — selection rule only in prose
+418. SV-312 — path rule only in prose
+419. SV-316 — concurrency bound only in prose
+420. SV-319 — permission table only in prose
+421. SV-321 — permission table only in prose
+422. SV-322 — permission table only in prose
+423. SV-326 — error table only in prose
+424. SV-331 — benefit note only in prose
+425. SV-332 — usage advice only in prose
+426. SV-333 — troubleshooting advice only
+427. SV-334 — troubleshooting advice only
+428. SV-335 — troubleshooting advice only
+429. SV-342 — incident rationale only
+430. SV-343 — troubleshooting advice only
+431. SV-347 — provenance only in prose
+432. SV-348 — scope guard only in prose
+433. SV-350 — read-once rule only in prose
+434. SV-387 — run-condition only in prose
+435. SV-395 — mapping only in prose
+436. SV-403 — projection branch only in prose
+437. SV-407 — state glossary only in prose
+438. SV-410 — rationale only in prose
+439. SV-420 — incident-map derivation only in prose
+440. SV-423 — bound/dedupe rule only in prose
+441. SV-424 — shape rule only in prose
+442. SV-435 — shape rule only in prose
+443. SV-436 — skip-form rule only in prose
+444. SV-438 — reader default only in prose
+445. SV-442 — read confirmation only in prose
+446. SV-443 — retirement note only
+447. SV-458 — record only in prose
+448. SV-464 — field semantics only in prose
+449. SV-465 — field semantics only in prose
+450. SV-466 — reason disambiguation only in prose
+451. SV-478 — prompt-line inclusion only in prose
+452. SV-484 — cheap override only in prose
+453. SV-492 — metric capture only in pseudo-code
+454. SV-499 — pointer-audit exception only in prose
+455. SV-524 — counter carriage only in prose
+456. SV-527 — dual-role note only in prose
+457. SV-528 — cost rationale only
+458. SV-532 — grader rule only in prose
+459. SV-534 — comment rule only in prose
+460. SV-537 — channel rule only in prose
+461. SV-556 — back-compat branch only in prose
+462. SV-560 — record only in prose
+463. SV-562 — history only
+464. SV-563 — proposal step only in prose
+465. SV-567 — record only in prose
+466. SV-585 — placement rule only in prose
+467. SV-586 — placement rule only in prose
+468. SV-596 — quick rule only in prose
+469. SV-597 — quick rule only in prose
+470. SV-599 — quick rule only in prose
+471. SV-601 — quick rule only in prose
+472. SV-607 — path rule only in prose
+473. SV-612 — naming rule only in prose
+474. SV-616 — conflict step only in prose
+475. SV-618 — conflict step only in prose
+476. SV-630 — budget bands are pseudo-code only
+477. SV-636 — budget table only
+478. SV-637 — budget table only
+479. SV-640 — step only in prose
+480. SV-650 — rationale only
+481. SV-663 — error table only in prose
+482. SV-665 — error table only in prose
+483. SV-669 — checklist item only in prose
+484. SV-671 — checklist item only in prose
+485. SV-672 — checklist item only in prose
+486. SV-673 — checklist item only in prose
+487. SV-675 — checklist item only in prose
+488. SV-676 — checklist item only in prose
+489. SV-720 — cache discipline only in prose
+490. SV-723 — spawn shape only in prose
+491. SV-731 — paste exception only in prose
 
 ## Counts
-- rows: 736
-- deterministic: 381
-- judgment: 31
+- rows: 745
+- deterministic: 391
+- judgment: 30
 - rule: 303
 - story: 21
-- GAP: 542
+- GAP: 491

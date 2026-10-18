@@ -1,0 +1,4 @@
+run: auto-2026-10-17-143254 (session ae60dadd-8fcf-4650-976a-93bf87a87708 — the /automate lane L11 run of this very job)
+Its state.json as Launch Pad saved it (current_brief_path in pending/, no current_branch / current_status); the inline Supervisor's ACQUIRE then wrote current_branch "feature/as11-next-step-supervisor" and current_status "running" — the two keys appended at the end, as the live file shows.
+One synthetic addition: an ENDED older session (auto-2026-10-16-090000, ended_at set) naming the same brief basename — never a candidate, byte-unchanged.
+Trimmed: the brief keeps its title, Environment base commit, the nine AC headlines, ## Configuration and ## Subtask Structure verbatim; the session log keeps one lifecycle row.

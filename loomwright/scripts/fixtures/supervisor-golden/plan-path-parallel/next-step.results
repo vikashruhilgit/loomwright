@@ -1,0 +1,7 @@
+# three subtasks, parallel mode ⇒ the execute-manager spawn
+call: --job .supervisor/jobs/pending/2026-10-17-golden-parallel.md --skip-preflight-sync --cheap
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn

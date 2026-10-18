@@ -1,0 +1,79 @@
+{
+  "base_branch": "main",
+  "base_sync": "ok",
+  "branch": "feature/golden-exec",
+  "branch_action": "CREATED",
+  "cost_profile": "default",
+  "escalation": [
+    {
+      "error": "tests fail after 3 retries (ui.md render)",
+      "task_id": "b"
+    }
+  ],
+  "exec_result": {
+    "branches": [],
+    "completed": [
+      {
+        "branch": "feature/exec-a",
+        "review_decision": "PASS",
+        "status": "completed",
+        "task_id": "a"
+      }
+    ],
+    "failed": [
+      {
+        "error": "tests fail after 3 retries (ui.md render)",
+        "task_id": "b"
+      }
+    ],
+    "merge_order": [
+      "feature/exec-a",
+      "feature/exec-b"
+    ],
+    "summary": "1/2 subtasks completed; b failed.",
+    "worktrees": [
+      {
+        "branch": "feature/exec-a",
+        "path": "../repo-a",
+        "status": "completed",
+        "task_id": "a"
+      },
+      {
+        "branch": "feature/exec-b",
+        "path": "../repo-b",
+        "status": "failed",
+        "task_id": "b"
+      }
+    ]
+  },
+  "flags": {
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": true,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/failed/2026-10-17-golden-exec.md",
+  "last_arm": "finalize-stop",
+  "max_workers": 2,
+  "mode": "parallel",
+  "path": "parallel",
+  "pending_text": "{\"do\":\"park\",\"step\":\"finalize-stop\",\"session_id\":\"golden-finalize-premerge-gate-fail\",\"job\":\".supervisor/jobs/failed/2026-10-17-golden-exec.md\",\"branch\":\"feature/golden-exec\",\"status\":\"failed\",\"error\":\"pre-merge safety gate point 1 (all WORKER_RESULT statuses completed) failed: feature/exec-b is not a completed subtask's branch\",\"preflight_sync\":\"skipped\",\"message\":\"The pre-merge safety gate failed at point 1 (all WORKER_RESULT statuses completed): feature/exec-b is not a completed subtask's branch. Nothing was merged; the job brief is in failed/.\"}",
+  "plan_source": "brief",
+  "preflight_sync": "skipped",
+  "seq_index": 0,
+  "stop": {
+    "error": "pre-merge safety gate point 1 (all WORKER_RESULT statuses completed) failed: feature/exec-b is not a completed subtask's branch",
+    "fail_job": true,
+    "message": "The pre-merge safety gate failed at point 1 (all WORKER_RESULT statuses completed): feature/exec-b is not a completed subtask's branch. Nothing was merged; the job brief is in failed/.",
+    "status": "failed"
+  },
+  "subtasks": [
+    "a",
+    "b"
+  ],
+  "task_id": "2026-10-17-golden-exec",
+  "title": "Golden exec"
+}

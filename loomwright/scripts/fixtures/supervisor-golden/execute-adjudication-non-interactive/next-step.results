@@ -1,0 +1,11 @@
+call: --job .supervisor/jobs/pending/2026-10-17-golden-exec.md --skip-preflight-sync --non-interactive
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+# a lane_collision adjudication under --non-interactive ⇒ no option picked: the record, then the failed park; the brief stays in in-progress/
+call: --result '{"result":"Execute Manager paused.\n\nEXECUTE_CHECKPOINT:\n  schema_version: 1\n  completed_so_far:\n    - task_id: a\n      status: completed\n      branch: feature/exec-a\n      files_modified: [api.md]\n  remaining:\n    - task_id: b\n      status: pending\n      dependencies: [a]\n  resume_context:\n    tool_calls_used: 21\n    active_worktrees: [../repo-a]\n    feature_branch: feature/golden-exec\n  reason: subtask b wrote api.md, inside subtask a'\''s declared lanes\n  adjudication_required: true\n  adjudication_kind: lane_collision\n  colliding_lanes:\n    - path: api.md\n      owning_subtask: a\n      this_subtask: b\n  adjudication_options: [\"A: Re-queue writer with the sibling lane excluded\", \"B: Serialize the pair (add a requires edge)\", \"C: Exit to Launch Pad\", \"D: Widen the writer'\''s declared lane\"]"}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: park

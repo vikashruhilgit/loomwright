@@ -1,0 +1,77 @@
+{
+  "base_branch": "main",
+  "base_sync": "ok",
+  "base_verify": "verified",
+  "branch": "feature/golden-exec",
+  "branch_action": "CREATED",
+  "children_check": "settled",
+  "cost_profile": "default",
+  "escalation": [
+    {
+      "error": "tests fail after 3 retries (ui.md render)",
+      "task_id": "b"
+    }
+  ],
+  "exec_result": {
+    "branches": [],
+    "completed": [
+      {
+        "branch": "feature/exec-a",
+        "review_decision": "PASS",
+        "status": "completed",
+        "task_id": "a"
+      }
+    ],
+    "failed": [
+      {
+        "error": "tests fail after 3 retries (ui.md render)",
+        "task_id": "b"
+      }
+    ],
+    "merge_order": [
+      "feature/exec-a"
+    ],
+    "summary": "1/2 subtasks completed; b failed after 3 retries (escalation).",
+    "worktrees": [
+      {
+        "branch": "feature/exec-a",
+        "path": "../repo-a",
+        "status": "completed",
+        "task_id": "a"
+      },
+      {
+        "branch": "feature/exec-b",
+        "path": "../repo-b",
+        "status": "failed",
+        "task_id": "b"
+      }
+    ]
+  },
+  "flags": {
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": true,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/in-progress/2026-10-17-golden-exec.md",
+  "last_arm": "handover",
+  "marker_children_check": "settled",
+  "max_workers": 2,
+  "mode": "parallel",
+  "path": "parallel",
+  "pending_text": "{\"do\":\"done\",\"step\":\"handover\",\"session_id\":\"golden-execute-result-partial\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-exec.md\",\"branch\":\"feature/golden-exec\",\"next\":\"phase-4.5\",\"pr_url\":\"https://github.com/golden/repo/pull/7\",\"base_verify\":\"verified\",\"base_mismatch_detected\":false,\"children_check\":\"settled\",\"preflight_sync\":\"skipped\",\"escalation\":{\"subtasks_failed\":[{\"error\":\"tests fail after 3 retries (ui.md render)\",\"task_id\":\"b\"}]},\"message\":\"FINALIZE complete: https://github.com/golden/repo/pull/7 against main (base verified). Run Phase 4.5 SELF_HEAL; its completion tail marks the task completed and moves the job; report the failed subtasks (b) as an escalation in this run\"}",
+  "plan_source": "brief",
+  "pr_url": "https://github.com/golden/repo/pull/7",
+  "preflight_sync": "skipped",
+  "premerge": "passed",
+  "seq_index": 0,
+  "subtasks": [
+    "a",
+    "b"
+  ],
+  "task_id": "2026-10-17-golden-exec",
+  "title": "Golden exec"
+}

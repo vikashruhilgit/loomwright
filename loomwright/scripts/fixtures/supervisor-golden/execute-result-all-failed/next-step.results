@@ -1,0 +1,11 @@
+call: --job .supervisor/jobs/pending/2026-10-17-golden-exec.md --skip-preflight-sync
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+# subtasks_completed empty ⇒ checkpoint via Context-Keeper, report with the resume command — nothing to merge
+call: --result '{"result":"Phase 3 done.\n\nEXECUTE_RESULT:\n  schema_version: 1\n  subtasks_completed: []\n  subtasks_failed:\n    - task_id: a\n      status: failed\n      error: verify-provides missing api.md after 3 retries\n      retry_count: 3\n    - task_id: b\n      status: failed\n      error: tests fail after 3 retries (ui.md render)\n      retry_count: 3\n  merge_order: []\n  worktrees:\n    - task_id: a\n      path: ../repo-a\n      branch: feature/exec-a\n      status: failed\n    - task_id: b\n      path: ../repo-b\n      branch: feature/exec-b\n      status: failed\n  summary: 0/2 subtasks completed; all failed (escalation)."}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: park

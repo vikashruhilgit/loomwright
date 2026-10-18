@@ -530,43 +530,7 @@ Before completing async orchestration:
 
 **Actions:**
 
-1. **Pre-merge safety gate** (ALL must pass before any merge):
-   ```
-   FINALIZE pre-merge checklist:
-     1. All WORKER_RESULT status = completed (no failed/partial in merge set)
-     2. All Code Reviewer decisions = PASS (no FAIL/NEEDS_HUMAN in merge set) — **N/A at every threshold**: no per-subtask reviewer runs on the Single-Agent Path, the above-threshold parallel path, or the Sequential Path, so this item produces zero reviewer decisions to check. The deterministic `outputs_verified` + tests/lint (plus the worker's own LSP diagnostics) gate and Phase 4.5's integrated review replace it, so treat this item as vacuously satisfied (mirrors Plan Reviewer Criterion 6's vacuous pass)
-     3. No orphaned worktrees (all accounted for in EXECUTE_RESULT)
-     4. Feature branch exists and is ahead of base
-     5. Every spawned child settled (completion authority, v15.80.0) — see below
-   If ANY fail → abort merge, log reason, move job to failed/ (if job file used)
-   ```
-
-   **Point 5 in full — children settled:** run
-   ```bash
-   bash scripts/check-children-settled.sh --log .supervisor/logs/{session_id}.jsonl --all \
-     --expect-id {worker_id}   # one per `### {worker-id} ({subtask-id})` heading or `agent_id:`/`worker_id:` key under state.md `## Worker Results`
-   ```
-   (protocol form — the runtime-resolvable form lives in `agents/supervisor.md` §"Phase 4 FINALIZE" Gates Point 5, same convention as `worktree-salvage.sh` above)
-   (`{session_id}` = the session_id already recorded in this run's `.supervisor/state.md` `## Session` block — the SAME per-session log `emit-progress-event.sh` / `emit-agent-identity.sh` / `emit-lifecycle.sh` write to.) The script joins every `agent_identity` row this session ever wrote — and every expected id (the Task-returned worker ids Context-Keeper's `record_worker_result` recorded, each already joined by its per-subtask gate), whether or not its identity row landed — against a terminal lifecycle row (`subtask_complete` / `token_ledger` / `agent_lifecycle: failed` / `agent_lifecycle: ended`) for that same `agent_id` — see `scripts/check-children-settled.sh`'s own header for the exact three-way join; it is the ONE implementation, cited here rather than restated, and is the SAME script + join the per-subtask completion gates in `agents/execute-manager.md` §"v12 outputs_verified gate" and `agents/supervisor.md`'s Single-Agent Path step 3b / Sequential Path use (a per-agent-id check there, `--agent-id <id>` instead of `--all`).
-   - `status: "no_identity_rows"` — no expected id and zero `agent_identity` rows, i.e. the run spawned nothing (pre-2026-09-07 logs, or a session that never spawned a Task): PASSES, reported `children_check: no_identity_rows` — **never** `settled` (nothing to check is not evidence of settlement).
-   - `status: "settled"` — every `agent_identity` row has a matching terminal row: PASSES, reported `children_check: settled`.
-   - `status: "unsettled"` — `unsettled_agent_ids[]` names at least one `agent_identity` row or expected id with NO matching terminal row: FAILS this point. Interactively, `AskUserQuestion` (proceed anyway / investigate / abort) — gate `SUP-CHILDREN`: ask it with `header: "SUP-CHILDREN"` and exactly the options `proceed anyway` · `investigate` · `abort` (gate catalog: `docs/LANE_GATES.md`). Under `--non-interactive` / CI / stdin-not-a-TTY, **fail CLOSED**: `SUPERVISOR_RESULT.status: failed` with `error: "children_unsettled: {unsettled_agent_ids}"` — same shape as the Phase 1.5 `preflight_overlap_detected` fail-closed path (`agents/supervisor.md` §"Phase 1.5: PRE-FLIGHT SYNC").
-   - `status: "unverifiable"` (`jq_missing`) — treated the same as `unsettled`: an unrun check is never a silent pass.
-   - **`--skip-children-check`** (escape hatch, mirrors `--skip-preflight-sync`): short-circuits this ONE point as a deliberate choice, recorded via `Context-Keeper(operation: record_decision, phase: FINALIZE, decision: "user_skipped_children_check")`; the run summary carries `children_check: skipped`.
-   - **finalize-gate — publish blocked until this point passes (automate-followups/33):** the push and the PR are refused by mechanism, not by step order. A fail-CLOSED `PreToolUse[Bash]` hook, `scripts/guard-finalize-publish.sh` (no `|| true` on its leaf), denies `git push` / `gh pr create` in a live Supervisor run ("run FINALIZE point 5 first") until `.supervisor/logs/{session_id}.finalize-gate` exists with `head_sha` equal to the current HEAD. The marker is written ONLY by `bash scripts/guard-finalize-publish.sh write-marker [--skip-children-check]`, which runs the `--all` check above itself (with the same `## Worker Results` ids as `--expect-id` — read from `### {worker-id} ({subtask-id})` headings and from `agent_id:` / `worker_id:` keys on a bullet, YAML-continuation or pipe-separated line, never from a table row or prose) and writes `{children_check: "settled"|"no_identity_rows"|"skipped", children_status, head_sha, ts}` only on `settled` / `no_identity_rows` (recorded verbatim, never as `settled`) / the skip — a missing session log (`session_log_missing`), a `## Worker Results` section with content but zero readable ids (`worker_results_unparsed` — fail CLOSED, since reading it as "no workers" would pass a run that spawned workers as `no_identity_rows`; an absent, blank or `(empty)` section is not refused), or any other outcome removes a stale marker and writes nothing; `--skip-children-check` bypasses every one of these, recorded as `skipped`. Never hand-write it. A moved HEAD (e.g. a Phase 4.5 fix commit) invalidates it: re-run `write-marker` before every push, including each Phase 4.5 heal push (`self-heal-advisory` runs it before its `git push`). Arm/allow/deny contract: `docs/HOOKS.md`.
-   - `ended_without_result_ids[]` (agents whose terminal row was a `subtask_complete` with `result_block_present: false`, an `agent_lifecycle: failed` row, or — automate-followups/33 — an `agent_lifecycle: ended` row with no result-bearing row beside it for a worker or a turn-limit `reason`) are surfaced alongside `unsettled_agent_ids[]` in the same message/log line so an operator can `SendMessage` either kind of child's `agent_id` to resume it (memory `subagents-hit-turn-limit-resume-via-sendmessage`) instead of re-running the subtask cold — this point only surfaces the ids, it does not implement the resume.
-   - `rejected_stop_ids[]` (v15.83.0, diagnostic only) names every child with at least one `subtask_complete` row carrying `rejected: true` — a stop `validate-worker-result.py` rejected (`decision: block`), which is NOT a terminal row. An id that is in BOTH `unsettled_agent_ids[]` and `rejected_stop_ids[]` is a worker that was told to continue and has not yet produced an accepted result (or was forced to stop at the runtime's continuation cap with a malformed one) — surface it in the same line; the verdict itself is unchanged (`status` alone decides). See `docs/RESULT_SCHEMAS.md` §"Completion authority join".
-
-   ```bash
-   # Verify all worktree paths exist
-   ls -d ../project-{subtask_a} ../project-{subtask_c} ../project-{subtask_b}
-   # Verify all branches exist
-   git branch --list feature/{subtask_a} feature/{subtask_c} feature/{subtask_b}
-   # Verify each worktree has changes (every branch in merge_order)
-   git -C ../project-{subtask_a} diff --stat HEAD
-   ```
-   The has-changes check, and steps 2–3 below, cover the branches in `merge_order` only. A read-only subtask (`WORKER_RESULT.no_changes: true`) is deliberately absent from `merge_order` — it has nothing to commit or merge — but its worktree is still in `worktrees` and is cleaned up in step 4.
-   If any verification fails → checkpoint, report missing worktree/branch, exit with resume.
+1. **Pre-merge safety gate** (ALL must pass before any merge) — **run by `scripts/supervisor-next-step.sh`** (automate-speed/11). Its `finalize` step checks points 1–4: every WORKER_RESULT in the merge set `completed`; every completed subtask's per-subtask gate decision `PASS` (`review_decision` — no per-subtask reviewer runs at any threshold; vacuous on the inline paths); no orphaned worktrees, every `merge_order` worktree / branch present with changes; the feature branch exists and holds the base tip. A failed point ⇒ the reason logged, the merge aborted, the job to `failed/`; a missing worktree / branch ⇒ checkpoint with the resume command. Its `finalize-children` step runs point 5 — `check-children-settled.sh --all` — before any merge: `settled` / `no_identity_rows` pass; `unsettled` / `unverifiable` ⇒ the SUP-CHILDREN ask or, under the Can't-ask rule, `children_unsettled: {ids}` (fail CLOSED), with `ended_without_result_ids` / `rejected_stop_ids` surfaced beside the ids; `--skip-children-check` ⇒ `user_skipped_children_check`. After steps 2–5.5 its `finalize-marker` step calls `guard-finalize-publish.sh write-marker` (the finalize-gate marker's only writer) and prints the publish instruction only once it exits 0. Steps 2–3 cover the branches in `merge_order` only; a read-only subtask (`WORKER_RESULT.no_changes: true`) is absent from it, but its worktree is still removed in step 4. Pre-driver text of this step (the checklist, its verification commands, Point 5 in full): `docs/supervisor-legacy-phases.md`.
 
 2. **Commit worker changes in worktrees** (before merging):
    ```bash
@@ -614,42 +578,9 @@ Before completing async orchestration:
    ```
    `BASE_BRANCH` is the value resolved at Phase 0 (the base-branch + non-interactive preamble in `skills/supervisor-config/SKILL.md`) from the `--base-branch` flag, defaulting to `main`. The autonomous-loop multi-iteration mode passes a sibling feature branch (e.g., `feature/v14-iter1`) so iteration N+1 stacks on iteration N's PR.
 
-6.5. **Phase 4 FINALIZE self-verify — PR base branch (v14.0.0, AC-7 + AC-14):**
+6.5. **Phase 4 FINALIZE self-verify — PR base branch (v14.0.0, AC-7 + AC-14)** — run by the driver's `pr-verify` / `pr-verify-answer` steps from the PR URL you report after step 6: `gh pr view --json baseRefName` equal to `BASE_BRANCH` ⇒ verified, hand-over; different ⇒ the `base_mismatch_detected` flag (`reason: phase4_self_verify`) as a Context-Keeper instruction; a `gh` failure ⇒ ONE retry after 5 s, then the SUP-GH-RETRY ask (retry / skip-verify-once — recorded `user_skipped_base_verify` / abort — the flag with `reason: user_aborted_gh_retry`), or under `--non-interactive` the flag with `reason: gh_unavailable_non_interactive`. Phase 4 sets the flag at most once and never emits `SUPERVISOR_RESULT` on this path — Phase 4.5's base-mismatch cleanup (`skills/self-heal-advisory/SKILL.md` Part 2 §"Phase 4.5 base-mismatch cleanup") is the single emission point. Pre-driver text: `docs/supervisor-legacy-phases.md`.
 
-   Immediately after `gh pr create` returns successfully, before declaring Phase 4 complete, verify the created PR's actual base matches `BASE_BRANCH`:
-
-   ```bash
-   ACTUAL_BASE=$(gh pr view "$PR_URL" --json baseRefName --jq .baseRefName)
-   ```
-
-   **Retry policy (AC-14):**
-   - **First `gh pr view` non-zero exit** → `sleep 5; retry once`.
-   - **Second non-zero exit AND `NON_INTERACTIVE == true`** (read live from `Context-Keeper(operation: get_flag, key: "non_interactive")` — do NOT trust in-context state alone, W-NEW-10):
-     ```
-     Context-Keeper(operation: set_flag, key: "base_mismatch_detected",
-                    value: {expected: "$BASE_BRANCH", actual: null, pr_url: "$PR_URL",
-                            detected_at: "<ISO>", reason: "gh_unavailable_non_interactive"})
-     ```
-     Fall through to Phase 4.5 — its cleanup block owns the single `SUPERVISOR_RESULT` emission.
-   - **Second non-zero exit AND `NON_INTERACTIVE == false`** → `AskUserQuestion` with exactly three options:
-     1. **retry** — run `gh pr view --json baseRefName` once more; on success continue verification, on failure treat as user-aborted (option 3).
-     2. **skip-verify-once** — record `record_decision(phase: FINALIZE, decision: "user_skipped_base_verify", rationale: "gh repeatedly unavailable")` and continue as if verified (`ACTUAL_BASE := $BASE_BRANCH`).
-     3. **abort** — `set_flag base_mismatch_detected value: {expected: "$BASE_BRANCH", actual: null, pr_url: "$PR_URL", detected_at: "<ISO>", reason: "user_aborted_gh_retry"}` and fall through to Phase 4.5 cleanup.
-
-   **Mismatch detection (after `gh pr view` succeeds):**
-   - If `ACTUAL_BASE == BASE_BRANCH`: verification passed, continue to step 7.
-   - If `ACTUAL_BASE != BASE_BRANCH`: this is a real base-branch mismatch (rare; most likely cause is a misconfigured remote or a race between `gh pr create` and a downstream automation). Set the flag — but **do NOT emit `SUPERVISOR_RESULT` here.** Fall through to Phase 4.5 which owns the single emission per task (W-NEW-14):
-     ```
-     Context-Keeper(operation: set_flag, key: "base_mismatch_detected",
-                    value: {expected: "$BASE_BRANCH", actual: "$ACTUAL_BASE", pr_url: "$PR_URL",
-                            detected_at: "<ISO>", reason: "phase4_self_verify"})
-     ```
-
-   **Invariant:** Phase 4 sets the flag at most once per session and never emits `SUPERVISOR_RESULT` directly on mismatch. The single emission point for the failure path is Phase 4.5's base-mismatch cleanup block (`skills/self-heal-advisory/SKILL.md` Part 2 §"Phase 4.5 base-mismatch cleanup").
-
-7. **Exit FINALIZE.** Task is NOT yet marked completed, and the job file is NOT yet moved. Those actions happen in Phase 4.5 SELF_HEAL's completion tail so that self-heal outcomes are captured in the completion record.
-
-**FINALIZE scope reduction (v11.0.0):** FINALIZE exits after PR creation. Task-completion side-effects (job-file move from `in-progress/` → `done/`, state marked completed via Context-Keeper) have been relocated to Phase 4.5 SELF_HEAL's completion tail. Do not perform them here.
+7. **Exit FINALIZE** — the driver's `handover` step (`done`, `next: "phase-4.5"`). The task is NOT yet marked completed and the job file is NOT yet moved — Phase 4.5 SELF_HEAL's completion tail does both, so self-heal outcomes reach the completion record (FINALIZE scope reduction, v11.0.0). Pre-driver text: `docs/supervisor-legacy-phases.md`.
 
 **Safety guarantees:**
 - Worker code lives in git branches until explicitly merged — can always recover

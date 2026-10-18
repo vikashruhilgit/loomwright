@@ -1,0 +1,9 @@
+# the brief's 3 subtasks + Mode: sequential ⇒ the Sequential Path, worker for subtask 1
+call: --job .supervisor/jobs/pending/2026-10-17-next-step-supervisor.md --branch feature/as11-next-step-supervisor
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"classification":"CLEAR","version":"17.7.0","base_tip":"a8819a3","advisory":"open PRs 0; churn_since_brief=0; premise_check=n/a"}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn

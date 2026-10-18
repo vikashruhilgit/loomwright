@@ -1,0 +1,1 @@
+synthetic: a session log in which worker b's agent_identity row has no terminal row (a lagging subagent-stop hook), the case check-children-settled.sh --all reports unsettled; no kept run hit it.

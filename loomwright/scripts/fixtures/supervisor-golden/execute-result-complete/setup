@@ -1,0 +1,4 @@
+git worktree add -q -b feature/exec-a ../repo-a main
+git worktree add -q -b feature/exec-b ../repo-b main
+printf "api\n" > ../repo-a/api.md
+printf "ui\n" > ../repo-b/ui.md

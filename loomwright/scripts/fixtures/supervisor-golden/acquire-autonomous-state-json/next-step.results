@@ -1,0 +1,5 @@
+# ACQUIRE writes the matching active /autonomous state.json (jq, temp + rename)
+call: --job .supervisor/jobs/pending/2026-10-17-next-step-supervisor.md --branch feature/as11-next-step-supervisor
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn

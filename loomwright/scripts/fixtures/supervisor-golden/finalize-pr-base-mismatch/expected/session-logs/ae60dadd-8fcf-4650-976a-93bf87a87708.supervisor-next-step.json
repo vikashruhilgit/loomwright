@@ -1,0 +1,42 @@
+{
+  "base_branch": "main",
+  "base_sync": "ok",
+  "base_verify": "phase4_self_verify",
+  "branch": "feature/golden-finalize",
+  "branch_action": "CREATED",
+  "children_check": "settled",
+  "cost_profile": "default",
+  "flags": {
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": true,
+    "subagent": false
+  },
+  "inline_results": [
+    {
+      "agent_id": "ac394bd015ea3ff94",
+      "status": "completed",
+      "subtask": "1"
+    }
+  ],
+  "job": ".supervisor/jobs/in-progress/2026-10-17-golden-finalize.md",
+  "last_arm": "handover",
+  "marker_children_check": "settled",
+  "max_workers": 1,
+  "mode": "sequential",
+  "path": "single-agent",
+  "pending_text": "{\"do\":\"done\",\"step\":\"handover\",\"session_id\":\"ae60dadd-8fcf-4650-976a-93bf87a87708\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-finalize.md\",\"branch\":\"feature/golden-finalize\",\"next\":\"phase-4.5\",\"pr_url\":\"https://github.com/golden/repo/pull/12\",\"base_verify\":\"phase4_self_verify\",\"base_mismatch_detected\":true,\"children_check\":\"settled\",\"preflight_sync\":\"skipped\",\"message\":\"base_mismatch_detected is set (phase4_self_verify): run Phase 4.5 base-mismatch cleanup (skills/self-heal-advisory/SKILL.md Part 2), the single SUPERVISOR_RESULT emission point of this path\"}",
+  "plan_source": "brief",
+  "pr_url": "https://github.com/golden/repo/pull/12",
+  "preflight_sync": "skipped",
+  "premerge": "passed",
+  "seq_index": 0,
+  "subtasks": [
+    "1"
+  ],
+  "task_id": "2026-10-17-golden-finalize",
+  "title": "Golden finalize"
+}

@@ -1,0 +1,3 @@
+run: ae60dadd-8fcf-4650-976a-93bf87a87708 (the /automate lane L11 session auto-2026-10-17-143254 that ran this very job)
+Its Decisions Log row 3: PRE_FLIGHT_SYNC | preflight_clear | version=17.7.0, base_tip=a8819a3, no overlap; open PRs 0; churn_since_brief=0; premise_check=n/a — the CLEAR report below carries those values and the driver's record_decision rationale reproduces the row byte for byte.
+Trimmed: the brief keeps its title, Environment base commit, the nine AC headlines, ## Configuration and ## Subtask Structure verbatim; the session log keeps one lifecycle row.

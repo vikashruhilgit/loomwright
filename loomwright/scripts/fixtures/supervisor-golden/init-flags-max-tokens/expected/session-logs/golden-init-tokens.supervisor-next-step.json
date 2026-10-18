@@ -1,0 +1,22 @@
+{
+  "answer_arm": "acquire",
+  "base_branch": "main",
+  "cost_profile": "cheap",
+  "flags": {
+    "cheap": true,
+    "max_tokens": 50000,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": false,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/in-progress/2026-10-17-golden-tokens.md",
+  "last_arm": "init",
+  "max_workers": 3,
+  "mode": "parallel",
+  "pending_text": "{\"do\":\"spawn\",\"step\":\"init\",\"session_id\":\"golden-init-tokens\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-tokens.md\",\"branch\":null,\"what\":\"context-keeper\",\"agent\":\"loomwright:context-keeper\",\"state_file\":\".supervisor/state.md\",\"ops\":[\"Context-Keeper(operation: initialize, config: {\\\"max_workers\\\":3,\\\"mode\\\":\\\"parallel\\\",\\\"cost_profile\\\":\\\"cheap\\\"}, session: {\\\"session_id\\\":\\\"golden-init-tokens\\\",\\\"task_id\\\":\\\"2026-10-17-golden-tokens\\\"})\",\"Context-Keeper(operation: clear_flag, key: \\\"base_mismatch_detected\\\")\",\"Context-Keeper(operation: clear_flag, key: \\\"non_interactive\\\")\",\"Context-Keeper(operation: set_flag, key: \\\"max_tokens\\\", value: {\\\"limit\\\":50000,\\\"set_at\\\":\\\"<TS>\\\"})\",\"Context-Keeper(operation: record_decision, phase: INIT, decision: \\\"guard_armed: ok\\\", rationale: \\\"guard-arm.sh arm supervisor exited 0\\\")\"],\"then\":\"--result {\\\"confirmed\\\": true} once Context-Keeper applied every op, in order\"}",
+  "task_id": "2026-10-17-golden-tokens",
+  "title": "Golden init max tokens"
+}
