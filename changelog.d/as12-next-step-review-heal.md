@@ -10,8 +10,8 @@ a second request exits 2 `fallback_already_spawned`), the dismissed-findings mar
 `termination_reason` decision, the sub-floor stop, anti-churn bookkeeping, `escalation_cause`, the notification, the
 result block and the postmortem tail. It never merges and never force-pushes. The instruction shape is documented once
 in `docs/result-schemas/review-heal-next-step.md`. `no_review_lens_posted` is read from each review-producing
-check's OUTPUT, never its conclusion (a red review job that posted nothing earns the fallback): its annotations, minus the
-runner's own `.github` ones, plus the check run's `output.{title,summary,text}` through a new read-only
+check's OUTPUT, never its conclusion (a red review job that posted nothing earns the fallback): its file-anchored annotations
+(file-less `.github` ones stay candidate text but never count as posted alone) plus the check run's `output.{title,summary,text}` through a new read-only
 `drain-gh-read.sh check-run`. `rounds` counts every drain round actually run (a READY or ESCALATED final round
 included, bumped once). The notification is desktop + webhook (`send-webhook.sh` gate types `review_heal_ready` /
 `review_heal_escalated`) and surfaces open human threads and `REVIEW_REQUIRED`, never awaiting them. Eleven golden cases under `scripts/fixtures/review-heal-golden/` pin

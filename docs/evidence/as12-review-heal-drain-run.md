@@ -227,7 +227,9 @@ leg of `test-review-heal-next-step.sh` red (119 passed, 2 failed).
 
 - The runner-annotation shape the driver filters (path `.github`, `Process completed with exit code 1.`, output
   `title`/`summary`/`text` all null) was read from a real failed Actions job (`vikashruhilgit/loomwright` check run
-  117607920672) with `gh api`; the driver itself never read a live check run.
+  117607920672) with `gh api`; the driver itself never read a live check run. Check run 117609486984 showed a step's
+  file-less `::error::job suite: failure` also lands on path `.github`, so the driver drops only the exit-code line
+  and the runner-images notice, and keeps every other `.github` annotation as ambiguous candidate text.
 - Not verified: live-PR drain through the branch's driver. Every `gh` call above went to the stub; no real PR, no real
   GitHub check run, review comment or branch protection was read, and no comment was posted to GitHub.
 - The run reached one path (a fix round, then READY `converged` with one dismissal). The other terminal paths are

@@ -106,8 +106,11 @@
 #
 # Honest limits: a check run's id is read from its `detailsUrl` (`/job/<id>`, a GitHub Actions job id —
 # the check run id); a check with no such URL has no output read, which reads `no_review_lens_posted`
-# as ambiguous ⇒ true (fail closed toward running the fallback). Runner-made annotations (path `.github`)
-# are not review output. The `rules_replay` finding names the failing rule id, not its check text.
+# as ambiguous ⇒ true (fail closed toward running the fallback). File-less annotations (path `.github` —
+# the runner's AND a step's `::error::msg`) are candidate text for an allow-listed check but never by
+# themselves a posted lens; only "Process completed with exit code N." and the runner-images notice are
+# dropped as runner plumbing (other runner notices, e.g. deprecation warnings, stay candidate text and are
+# left to validate-then-fix). The `rules_replay` finding names the failing rule id, not its check text.
 # bash 3.2 + BSD + jq.
 
 set -uo pipefail
@@ -373,7 +376,7 @@ rh_wait() {
 rh_unknown() { rh_escalate_to "channel_unknown" other 0 "channel_unknown — $1: an unknown gated channel never claims READY"; }
 
 rh_read() {
-  local core threads comments rollup req rp scoped outputs id ann run_ text name c
+  local core threads comments rollup req rp scoped outputs id ann run_ text aux name c
   core="$(rh_gh pr view "$PR" --json statusCheckRollup,reviews,latestReviews,reviewDecision,mergeable,mergeStateStatus)" \
     && printf '%s' "$core" | "$JQ" -e '(.statusCheckRollup | type == "array")' >/dev/null 2>&1 \
     || { rh_unknown "statusCheckRollup unreadable"; return 0; }
@@ -409,7 +412,7 @@ EOF
     name="$(rj "$c" name)"
     id="$(printf '%s' "$(rj "$c" detailsUrl)" | sed -n 's#.*/job/\([0-9][0-9]*\).*#\1#p')"
     if [ -z "$id" ]; then
-      outputs="$(printf '%s' "$outputs" | "$JQ" -c --arg n "$name" '. + [{name: $n, text: null}]')"
+      outputs="$(printf '%s' "$outputs" | "$JQ" -c --arg n "$name" '. + [{name: $n, text: null, aux: null}]')"
       continue
     fi
     ann="$(rh_ghread check-annotations "$SLUG" "$id")" \
@@ -418,12 +421,21 @@ EOF
     run_="$(rh_ghread check-run "$SLUG" "$id")" \
       && printf '%s' "$run_" | "$JQ" -e 'type == "object"' >/dev/null 2>&1 \
       || { rh_unknown "check output of $name errored"; return 0; }
-    # the check's text = its output.{title,summary,text} + its annotations' message/title; a runner-made
-    # annotation (path `.github`: "Process completed with exit code 1.", a runner-image notice) is the job's
-    # own plumbing, not review output, so a review job that died with nothing posted reads EMPTY
+    # the check's text, split in two. `text` = its output.{title,summary,text} + the message/title of its
+    # file-anchored annotations — unambiguous review output. `aux` = its FILE-LESS annotations (GitHub files
+    # every annotation emitted without a file under path `.github` — the runner's own AND a step's
+    # `::error::msg`, probed on a real Actions job), minus the two runner plumbing shapes grounded by that
+    # probe ("Process completed with exit code N." and the runner-images notice). `aux` stays candidate text
+    # (an allow-listed check's file-less finding is never lost) but never makes the lens read as posted: a
+    # `.github` annotation may be a review job's own failure line, so it is ambiguous, and an ambiguous lens
+    # fails toward running the fallback review
     text="$("$JQ" -rn --argjson a "$ann" --argjson r "$run_" '[(($r.output // {}) | .title, .summary, .text),
         ($a[] | select(.path != ".github") | (.message // .title))] | map(select(type == "string" and . != "")) | join("\n")')"
-    outputs="$(printf '%s' "$outputs" | "$JQ" -c --arg n "$name" --arg t "$text" '. + [{name: $n, text: $t}]')"
+    aux="$("$JQ" -rn --argjson a "$ann" '[$a[] | select(.path == ".github")
+        | select(((.message // "") | test("^Process completed with exit code [0-9]+\\.$")) | not)
+        | select((.annotation_level == "notice" and ((.message // "") | contains("github.com/actions/runner-images"))) | not)
+        | (.message // .title)] | map(select(type == "string" and . != "")) | join("\n")')"
+    outputs="$(printf '%s' "$outputs" | "$JQ" -c --arg n "$name" --arg t "$text" --arg x "$aux" '. + [{name: $n, text: $t, aux: $x}]')"
   done <<EOF
 $(printf '%s' "$rollup" | "$JQ" -c --argjson s "$scoped" '.[] | select(.name as $n | $s | index($n))')
 EOF
@@ -448,7 +460,7 @@ rh_envelope() { # <channel> <item json>
   printf '[%s]' "$2" | bash "$HERE/wrap-external-text.sh" --channel "$1" --trusted-actors "$TRUSTED" 2>/dev/null
 }
 rh_classify() {
-  local n rev thr com allow checks cands found nrlp item src text ambiguous posted rf c i
+  local n rev thr com allow checks cands found nrlp firm item src text ambiguous posted rf c i
   st_add round_number 1; n="$(st round_number)"
   st_set dismissed_before_round "$(jlen "$(stj dismissed '[]')")"
   rev="$(rh_classify_one "$(stj round_reviews)")"
@@ -458,23 +470,30 @@ rh_classify() {
   com="$(rh_classify_one "$(stj round_comments)")"
   allow="$("$JQ" -c '.review_producing_checks // [] | map(select(type == "string"))' "$USER_DIR/drain-allowlist.json" 2>/dev/null || echo '[]')"
   [ -n "$allow" ] || allow='[]'
-  checks="$(stj round_outputs | "$JQ" -c --argjson a "$allow" '[.[] | select(.text != null and .text != "" and (.name as $n | $a | index($n)))
-      | {user: {login: .name}, body: .text}]')"
+  # an allow-listed check's candidate body = its `text` plus its file-less `aux` annotations; `firm` marks a
+  # body carrying `text` (only a firm candidate counts as a posted lens below — an aux-only one is ambiguous)
+  checks="$(stj round_outputs | "$JQ" -c --argjson a "$allow" '[.[] | select(.name as $n | $a | index($n))
+      | ([.text, .aux] | map(select(type == "string" and . != "")) | join("\n")) as $body | select($body != "")
+      | {firm: ((.text // "") != ""), item: {user: {login: .name}, body: $body}}]')"
   cands="$("$JQ" -cn --argjson a "$rev" --argjson b "$thr" --argjson c "$com" --argjson d "$checks" \
     '[($a[] | {source: "reviews", item: .}), ($b[] | {source: "reviewThreads", item: .}),
-      ($c[] | {source: "issue_comments", item: .}), ($d[] | {source: "check_outputs", item: .})]')"
+      ($c[] | {source: "issue_comments", item: .}), ($d[] | {source: "check_outputs", item: .item, firm: .firm})]')"
   # no_review_lens_posted (§"Earned Fallback Review"): this round's union is empty AND no review-producing
   # check posted anything. Decided from each check's OUTPUT, never its state (a red review job that died with
   # nothing posted — a billing block, a subscription cap — posted nothing): skipped/neutral ⇒ skipped; a
   # non-empty output ⇒ posted; an empty one ⇒ empty; an output this read could not see (no check run id) is
-  # AMBIGUOUS — fail CLOSED toward running the review (true)
+  # AMBIGUOUS — fail CLOSED toward running the review (true). A check candidate built only from file-less
+  # `.github` annotations (firm false) is ambiguous the same way: it stays a candidate, never a posted lens
   posted="$(stj round_rollup | "$JQ" -r --argjson rp "$(stj round_rp)" --argjson o "$(stj round_outputs)" '
       [.[] | select(.name as $n | $rp | index($n)) | . as $c
        | ($o | map(select(.name == $c.name)) | first // {text: null}) as $out
        | if ($c.state == "SKIPPED" or $c.state == "NEUTRAL") then "skipped"
          elif $out.text == null then "ambiguous" elif $out.text == "" then "empty" else "posted" end]
       | if index("posted") then "posted" else "quiet" end')"
-  if [ "$(jlen "$cands")" -eq 0 ] && [ "$posted" = quiet ]; then nrlp=true; else nrlp=false; fi
+  firm="$(printf '%s' "$cands" | "$JQ" '[.[] | select(.firm != false)] | length' 2>/dev/null)"
+  # an uncountable firm set reads 0 — the trigger fails toward running the review
+  case "$firm" in ''|0|*[!0-9]*) firm=0 ;; esac
+  if [ "$firm" -eq 0 ] && [ "$posted" = quiet ]; then nrlp=true; else nrlp=false; fi
   st_set no_review_lens_posted "$nrlp"
   # the round's red required checks (a required context absent from the rollup is not green)
   rf="$(stj round_rollup | "$JQ" -c --argjson req "$(stj round_required)" --argjson g "$GREEN_STATES" '. as $r

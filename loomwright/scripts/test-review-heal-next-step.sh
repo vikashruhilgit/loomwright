@@ -39,7 +39,10 @@
 #   B   BRANCHES the goldens do not reach: confirmed-not-auto-fixable ⇒ ESCALATED findings; a rules gate
 #       `unresolved` ⇒ ESCALATED other with termination_reason unset; a fork PR ⇒ no fix spawn, ESCALATED;
 #       a GraphQL thread error / an annotation-fetch or check-run output-read error on a scoped check ⇒
-#       UNKNOWN ⇒ ESCALATED; check-run output text counts as a posted lens;
+#       UNKNOWN ⇒ ESCALATED; check-run output text counts as a posted lens; an allow-listed check's
+#       file-less `.github` annotation finding stays a candidate but alone never a posted lens (the
+#       fallback still runs), the runner's exit-code / runner-images lines are dropped, a file-anchored
+#       annotation is a posted lens;
 #       unreadable required-check metadata and a SETTLED `required=unknown` line ⇒ ESCALATED unless
 #       `--required-checks all-non-neutral`; a human-authored unresolved thread and a resolved bot thread are
 #       never candidates (and never block READY); a countable rule failing then reading `unstamped` ⇒
@@ -488,6 +491,38 @@ drv "$DRIVER" --start drain
 [ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] && ! grep -q '"what":"fallback review"' "$C/last.out" \
   && ok "B: a review check with output text (check-run output) is a posted lens ⇒ no fallback" \
   || no "B: check-run output ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision}' 2>/dev/null)"
+# file-less annotations (path `.github`): GitHub files a step's `::error::msg` there beside the runner's own
+# lines, so an allow-listed check's `.github` finding stays a candidate — but, being ambiguous (it may be the
+# review job's own failure line), never a posted lens: dismissed, the fallback still runs. The runner's
+# exit-code line and runner-images notice are dropped and read as no lens; a file-anchored annotation is firm.
+B_ALLOW_REL=".claude/loomwright/drain-allowlist.json"   # the driver's user-scope review_producing_checks[] list, under the sandbox HOME
+b_allow() { mkdir -p "$(dirname "$C_HOME/$B_ALLOW_REL")" && printf '%s\n' '{"review_producing_checks":["claude-review"]}' > "$C_HOME/$B_ALLOW_REL"; }
+B_DISMISS='{"findings":[{"id":"r1-1","verdict":"dismissed","finding":"widget.sh line 9 quotes nothing","reason":"invalid"}]}'
+setup_case "$FIX/fallback-no-review-lens"; b_allow
+gh_row 'api --method GET repos/acme/widgets/check-runs/*/annotations' 0 '[{"path":".github","start_line":12,"end_line":12,"annotation_level":"failure","title":"","message":"MEDIUM: widget.sh line 9 quotes nothing"}]'
+drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.what')" = "validate findings" ] && [ "$(printf '%s' "$OUT" | jq -r '[.findings[] | .source] | join(",")')" = check_outputs ] \
+  && printf '%s' "$OUT" | jq -e '.findings[0].text | contains("widget.sh line 9 quotes nothing")' >/dev/null \
+  && ok "B: an allow-listed check's file-less (.github) annotation finding stays a check_outputs candidate" \
+  || no "B: .github finding ⇒ $(printf '%s' "$OUT" | jq -c '{what, sources: [.findings[]?.source]}' 2>/dev/null)"
+drv "$DRIVER" --result "$B_DISMISS"
+[ "$(printf '%s' "$OUT" | jq -r '.what')" = "fallback review" ] \
+  && ok "B: that .github-only candidate dismissed ⇒ never a posted lens ⇒ the fallback still spawns" \
+  || no "B: .github-only dismissed ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision}' 2>/dev/null)"
+setup_case "$FIX/fallback-no-review-lens"; b_allow
+gh_row 'api --method GET repos/acme/widgets/check-runs/*/annotations' 0 '[{"path":".github","start_line":42,"end_line":42,"annotation_level":"failure","title":"","message":"Process completed with exit code 1."},{"path":".github","start_line":1,"end_line":1,"annotation_level":"notice","title":"","message":"The ubuntu-latest label will migrate to Ubuntu 26. For more information, see https://github.com/actions/runner-images/issues/14748"}]'
+drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.what')" = "fallback review" ] \
+  && ok "B: the runner's exit-code line and runner-images notice (allow-listed check) are no candidate, no lens ⇒ fallback" \
+  || no "B: runner plumbing ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, sources: [.findings[]?.source]}' 2>/dev/null)"
+setup_case "$FIX/fallback-no-review-lens"; b_allow
+gh_row 'api --method GET repos/acme/widgets/check-runs/*/annotations' 0 '[{"path":"src/widget.sh","start_line":9,"end_line":9,"annotation_level":"warning","title":"","message":"MEDIUM: widget.sh line 9 quotes nothing"}]'
+drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '[.findings[]? | .source] | join(",")')" = check_outputs ] || no "B: file-anchored annotation not a candidate"
+drv "$DRIVER" --result "$B_DISMISS"
+[ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] && ! grep -q '"what":"fallback review"' "$C/last.out" \
+  && ok "B: a file-anchored annotation is a firm posted lens ⇒ dismissed, no fallback, READY" \
+  || no "B: file-anchored ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision}' 2>/dev/null)"
 # required-check metadata unavailable: ESCALATED (cause other) by default; --required-checks all-non-neutral proceeds
 setup_case "$FIX/converged-ready"; gh_row 'api --method GET repos/acme/widgets/branches/main/protection/required_status_checks' 1
 drv "$DRIVER" --start drain
