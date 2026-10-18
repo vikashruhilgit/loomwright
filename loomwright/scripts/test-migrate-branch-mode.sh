@@ -338,6 +338,7 @@ grep -qE 'xargs +(-[a-zA-Z0-9]+ +)*-r( |$)' "$SUT" && no "SUT uses GNU-only xarg
 build_mutant() {
   mkdir -p "$1"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$1/"; done
   cp -R "$HERE/automate-helpers.d" "$1/" || return 1
+  cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$1/" || return 1  # the copied entries source them (automate-speed/20)
   sed -e "$2" "$SUT" > "$1/migrate-branch-mode.sh" || return 1
   cmp -s "$SUT" "$1/migrate-branch-mode.sh" && return 1
   grep -qF "$3" "$1/migrate-branch-mode.sh" || return 1
@@ -373,10 +374,12 @@ else no "mutation control (after-merge put-back) did not build — counts as FAI
 
 echo "== 10. rehearse: wired to meta-sync-rehearsal.sh with the recorded branch =="
 RD="$TROOT/reh-none"; mkdir -p "$RD"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$RD/"; done; rm -f "$RD/meta-sync-rehearsal.sh"
+cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$RD/"
 mkworld history; mb A preflight --repo owner/repo
 SCRIPT="$RD/migrate-branch-mode.sh"; mb A rehearse; SCRIPT="$SUT"
 { [ "$RC" -eq 1 ] && has "not available" && [ "$(st A rehearse)" = FAIL ]; }; check $? "no harness -> rehearse exit 1, not available, FAIL recorded (rc=$RC)"
 RL="$TROOT/reh-log"; mkdir -p "$RL"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$RL/"; done
+cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$RL/"
 printf '#!/bin/bash\necho "$*" > "%s/args"\nexit 0\n' "$TROOT" > "$RL/meta-sync-rehearsal.sh"
 mkworld history; mb A preflight --repo owner/repo; mb A scrub; mb A init --branch "$BR"
 SCRIPT="$RL/migrate-branch-mode.sh"; mb A rehearse
@@ -814,8 +817,13 @@ diverged_learning_leg grant; check $? "consent grant: the same, and the branch's
 # mutation control: meta-sync.sh WITHOUT the tracked-learning hold (the sibling the SUT calls)
 MUT="$TROOT/mut-ms-tracked"
 mkdir -p "$MUT"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$MUT/"; done
-sed -e 's/^tracked_learning_hold() {$/tracked_learning_hold() { TRACKED_N=0; return 0  # mutant tracked/' "$HERE/meta-sync.sh" > "$MUT/meta-sync.sh"
-if ! cmp -s "$HERE/meta-sync.sh" "$MUT/meta-sync.sh" && grep -qF '# mutant tracked' "$MUT/meta-sync.sh" && bash -n "$MUT/meta-sync.sh"; then
+cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$MUT/"
+# The mutant's source is meta-sync.sh as ONE file — its own _ms_bundle output (automate-speed/20):
+# tracked_learning_hold now lives in meta-sync.d/, and a mutant written from the bundle is self-contained.
+MSB="$TROOT/meta-sync.bundle.sh"
+( eval "$(awk '/^_ms_bundle\(\) \{$/,/^}$/' "$HERE/meta-sync.sh")"; _ms_bundle "$HERE/meta-sync.sh" ) > "$MSB"
+sed -e 's/^tracked_learning_hold() {$/tracked_learning_hold() { TRACKED_N=0; return 0  # mutant tracked/' "$MSB" > "$MUT/meta-sync.sh"
+if ! cmp -s "$MSB" "$MUT/meta-sync.sh" && grep -qF '# mutant tracked' "$MUT/meta-sync.sh" && bash -n "$MUT/meta-sync.sh"; then
   SCRIPT="$MUT/migrate-branch-mode.sh"
   for cs in none grant; do
     if diverged_learning_leg "$cs"; then no "mutation control REFUTED: meta-sync without the tracked-learning hold kept the consent-$cs leg green"
@@ -952,6 +960,7 @@ else no "mutation control (untrack-pr order) did not build — counts as FAIL"; 
 # half-untracked index. setup-memory.sh is stubbed in a copied scripts dir: only `apply` refuses.
 STUBSM="$TROOT/stub-apply-refuses"; mkdir -p "$STUBSM"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$STUBSM/"; done
 cp -R "$HERE/automate-helpers.d" "$STUBSM/"
+cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$STUBSM/"
 cat > "$STUBSM/setup-memory.sh" <<STUB
 #!/bin/bash
 for a in "\$@"; do [ "\$a" = apply ] && { echo "apply: refused (test stub)"; exit 1; }; done
@@ -1005,6 +1014,7 @@ echo "== 29. script-event telemetry: a failing follow-up (A ⊆ B) seed reports 
 # The SUT is copied unmodified; the mutant below differs from it only in the extraction.
 STUBPUSH="$TROOT/stub-push-noop"; mkdir -p "$STUBPUSH"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$STUBPUSH/"; done
 cp -R "$HERE/automate-helpers.d" "$STUBPUSH/"
+cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$STUBPUSH/"
 cat > "$STUBPUSH/meta-sync.sh" <<STUB
 #!/bin/bash
 [ "\${1:-}" = push ] && exit 0

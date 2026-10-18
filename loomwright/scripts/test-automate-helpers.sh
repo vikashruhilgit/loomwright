@@ -3854,7 +3854,7 @@ rs_run() {
 # rs_mutant <exact helper line> <replacement> — a copy of the helper with that ONE
 # line replaced; RSM names the copy's dir. Returns 1 when the line is not found.
 rs_mutant() {
-  RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null
+  RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$RSM/"
   OLD="$1" NEW="$2" awk '$0 == ENVIRON["OLD"] { print ENVIRON["NEW"]; next } { print }' "$H" > "$RSM/automate-helpers.sh"
   ! cmp -s "$H" "$RSM/automate-helpers.sh"
 }
@@ -4165,7 +4165,7 @@ else
   no "H7 trail PR read as evidence (dry='$DRY_OUT' apply='$RUN_OUT')"
 fi
 # Mutation control: the exclusion neutered in a copy of the helper ⇒ the same fixture plans both files again.
-RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null
+RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$RSM/"
 sed 's/^    _rs_is_trail_branch "\$headref" && continue$/    :/' "$H" > "$RSM/automate-helpers.sh"
 if cmp -s "$H" "$RSM/automate-helpers.sh"; then
   no "H7 mutation control: the exclusion line was not found (the sed no longer matches)"
