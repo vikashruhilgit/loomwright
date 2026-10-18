@@ -953,7 +953,7 @@ for d in 'Write(./.git)' 'Write(./.git/**)' 'Edit(./.git/**)' 'Write(./.claude/*
   case ",$DT28," in *",$d,"*) ;; *) f28="$f28 not-denied:$d" ;; esac
 done
 # Drift guard: every plugin script the drain prose names must be admitted. A new
-# `scripts/<x>.sh` call in review-heal / the runner without an allowlist entry
+# `scripts/<x>.sh` call in review-heal (every skills/review-heal/*.md) / the runner without an allowlist entry
 # would be denied at runtime under dontAsk — the same silent breakage as F1.
 # Exempt: scripts the prose names but the drain model never runs itself.
 #   dispatch-pr-review.sh  — this dispatcher (the drain never re-dispatches itself)
@@ -962,12 +962,12 @@ done
 #                            release-refold.sh, which are admitted
 #   automate-helpers.sh    — admitted per subcommand (checked above)
 EXEMPT28=" dispatch-pr-review.sh worktree-salvage.sh pr-postmortem-gather.sh bump-version.sh automate-helpers.sh "
-for s28 in $(grep -ohE 'scripts/[a-z0-9_-]+\.(sh|py)' "$HERE/../skills/review-heal/SKILL.md" "$HERE/../agents/review-pr.md" | sed 's#scripts/##' | sort -u); do
+for s28 in $(grep -ohE 'scripts/[a-z0-9_-]+\.(sh|py)' "$HERE/../skills/review-heal/"*.md "$HERE/../agents/review-pr.md" | sed 's#scripts/##' | sort -u); do
   case "$EXEMPT28" in *" $s28 "*) continue ;; esac
   case "$AT28" in *"Bash(bash $HERE/$s28 *)"*) ;; *) f28="$f28 script-not-admitted:$s28" ;; esac
 done
 # ...and the prose must not tell the drain to call raw `gh api` (it would be denied).
-grep -nE '^(gh api|  *gh api)' "$HERE/../skills/review-heal/SKILL.md" "$HERE/../agents/review-pr.md" >/dev/null && f28="$f28 prose-raw-gh-api"
+grep -nE '^(gh api|  *gh api)' "$HERE/../skills/review-heal/"*.md "$HERE/../agents/review-pr.md" >/dev/null && f28="$f28 prose-raw-gh-api"
 if [ -z "$f28" ]; then
   ok "drain allowlist shape: no gh api / gh pr merge, gate-eval unreachable, exact push, no literal-star or \${} rules, .git/.claude denied, every drain script admitted"
 else
