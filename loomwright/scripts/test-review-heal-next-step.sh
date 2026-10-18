@@ -661,7 +661,6 @@ RH-047	skills/review-heal/SKILL.md	**NEEDS_HUMAN** (reviewer escalates) **or loo
 RH-048	skills/review-heal/SKILL.md	### Never `--force`
 RH-048	skills/review-heal/SKILL.md	Pushes that update the PR branch are **regular pushes only**. A force-pu
 RH-051	skills/review-heal/SKILL.md	**Fork / cross-repo PR** (`isCrossRepository == true`, head NOT on `origin`)
-RH-052	skills/review-heal/SKILL.md	This closes a latent gap in the prior bare
 RH-053	skills/review-heal/SKILL.md	## Step 3 — Notify on NEEDS_HUMAN (best-effort, fire-and-forget)
 RH-053	skills/review-heal/SKILL.md	When the loop exits as `ESCALATED` (reviewer `NEEDS_HUMAN`, or exhausted
 RH-056	skills/review-heal/SKILL.md	Set `notified: true` in `REVIEW_HEAL_RESULT` whenever
@@ -763,38 +762,12 @@ RH-254	skills/review-heal/SKILL.md	The tail's exit status is **ignored**
 RH-255	skills/review-heal/SKILL.md	## Anti-Patterns
 RH-255	skills/review-heal/SKILL.md	**`prose_subfloor_stop` — deciding sub-floor termination in prose instea
 RH-258	skills/review-heal/SKILL.md	**`background_wait` — backgrounding the scoped check-wait (red-team-hardening item 04).**
-RH-259	skills/review-heal/SKILL.md	**Force-pushing the PR branch.**
-RH-260	skills/review-heal/SKILL.md	**Pushing to `origin` for a fork/cross-repo PR.**
-RH-262	skills/review-heal/SKILL.md	**Auto-merging on PASS.** Removes the human gate; explicitly forbidden.
-RH-263	skills/review-heal/SKILL.md	**Task-spawning the runner.** AC9 forbids
-RH-264	skills/review-heal/SKILL.md	**Creating a PR from `/review-pr`.**
-RH-265	skills/review-heal/SKILL.md	**Letting notify failures abort the loop.**
-RH-266	skills/review-heal/SKILL.md	**Re-coining any pinned name.**
 RH-268	skills/review-heal/SKILL.md	**Claiming READY when any gated channel signal is unknown.**
-RH-269	skills/review-heal/SKILL.md	**Reading only one channel (or only metadata).**
 RH-272	skills/review-heal/SKILL.md	**"Find-then-defer" (reading A) for `sub_floor_converged`.**
 RH-275	skills/review-heal/SKILL.md	**Blocking READY on a human.**
-RH-278	skills/review-heal/SKILL.md	## Related Skills
-RH-278	skills/review-heal/SKILL.md	`skills/autonomous-loop/SKILL.md` — the `/autonomous` outer loop; its EV
-RH-280	skills/review-heal/SKILL.md	## Quality Gates
-RH-280	skills/review-heal/SKILL.md	PR-URL → head resolved via `gh pr view <pr-url> --json headRefName`. **I
-RH-281	skills/review-heal/SKILL.md	PR-URL → head resolved via `gh pr view <pr-url> --json headRefName`.
-RH-282	skills/review-heal/SKILL.md	Review uses `CODE_REVIEW_RESULT` v3 with `review_mode: diff_review`.
-RH-283	skills/review-heal/SKILL.md	Loop is bounded (default 3); fix worker is `general-purpose` with NO Task in its allowlist.
-RH-284	skills/review-heal/SKILL.md	PR-branch pushes are **fork-aware**
-RH-285	skills/review-heal/SKILL.md	**`PASS`, `ESCALATED`, and — under `--until-mergeable` only — `READY` are the terminal `decision` values**
-RH-286	skills/review-heal/SKILL.md	NEEDS_HUMAN / exhaustion posts findings to the PR and fires best-effort notifications
-RH-287	skills/review-heal/SKILL.md	`REVIEW_HEAL_RESULT` emitted with all seven fields at `schema_version: 1` (default loop)
-RH-288	skills/review-heal/SKILL.md	**`--until-mergeable` absent ⇒ default loop byte-for-byte unchanged** (AC7)
-RH-289	skills/review-heal/SKILL.md	Under `--until-mergeable`: ALL channels read each round
-RH-291	skills/review-heal/SKILL.md	**Under `--until-mergeable` the drain is heal-only by default**
 RH-292	commands/review-pr.md	> **Execute this workflow inline as the main thread.**
 RH-293	commands/review-pr.md	You MUST still spawn first-level child agents via the Task tool
 RH-294	commands/review-pr.md	the `review-pr-runner` is **never itself Task-spawned**
-RH-295	commands/review-pr.md	## Purpose
-RH-295	commands/review-pr.md	`/review-pr` runs the **standalone PR review-and-heal loop** against an
-RH-296	commands/review-pr.md	## Usage
-RH-296	commands/review-pr.md	**PR-URL → branch resolution.** `HEAD_REF=$(gh pr view <pr-url> --json h
 RH-297	commands/review-pr.md	## Parameters
 RH-297	commands/review-pr.md	**PR-URL → branch resolution.** `HEAD_REF=$(gh pr view <pr-url> --json h
 RH-300	commands/review-pr.md	Default behavior **fails CLOSED** — unreadable metadata ⇒ the loop MUST NOT claim READY
@@ -812,16 +785,10 @@ RH-311	commands/review-pr.md	## `--until-mergeable` mode (opt-in drain)
 RH-311	commands/review-pr.md	When `--until-mergeable` is passed, a **heal-only** drain loop runs **in
 RH-315	commands/review-pr.md	**Validate → fix → push → re-poll.**
 RH-316	commands/review-pr.md	**Earned fallback review (`no_review_lens_posted`, AC3) — the ONE exception to heal-only.**
-RH-322	commands/review-pr.md	`LOOMWRIGHT_UNTIL_MERGEABLE` (truthy ⇒ runner forwards `--until-mergeable`; absent/falsy ⇒ default diff-only loop)
-RH-323	commands/review-pr.md	`LOOMWRIGHT_CHECK_WAIT_TIMEOUT` (⇒ `--check-wait-timeout`),
-RH-324	commands/review-pr.md	`LOOMWRIGHT_REVIEW_CHECK_PATTERN` (⇒ `--review-check-pattern`), and
-RH-325	commands/review-pr.md	`LOOMWRIGHT_FIX_FLOOR` (⇒ `--fix-floor`, in both loops
 RH-326	commands/review-pr.md	## Output — `REVIEW_HEAL_RESULT`
 RH-326	commands/review-pr.md	The run ends by emitting a `REVIEW_HEAL_RESULT` block (defined by the `r
 RH-327	commands/review-pr.md	## Prerequisites
 RH-327	commands/review-pr.md	**GitHub CLI:** `gh` installed and authenticated (for `gh pr view` and `
-RH-328	commands/review-pr.md	## See Also
-RH-328	commands/review-pr.md	`skills/review-heal/SKILL.md` — the authoritative loop contract (pinned
 RH-330	agents/review-pr.md	**Escalation:** merge conflicts always escalate — never force-resolve.
 RH-331	agents/review-pr.md	> **Model Warning:** This runner orchestrates a bounded review→fix→re-review loop
 RH-332	agents/review-pr.md	## Mission
@@ -866,8 +833,6 @@ RH-370	agents/review-pr.md	**Never-merge invariant.**
 RH-372	agents/review-pr.md	Under `--until-mergeable`, emit `REVIEW_HEAL_RESULT` at `schema_version: 2`
 RH-373	agents/review-pr.md	## Output — `REVIEW_HEAL_RESULT`
 RH-373	agents/review-pr.md	End every run by emitting the `REVIEW_HEAL_RESULT` block defined by the
-RH-374	agents/review-pr.md	## Related
-RH-374	agents/review-pr.md	`skills/review-heal/SKILL.md` — **the authority** for this loop (pinned
 RH-375	skills/review-heal/SKILL.md	**The loop is executed by `scripts/review-heal-next-step.sh` (automate-speed/12), not re-derived from this section.**
 RH-376	skills/review-heal/SKILL.md	**Which step executes what.**
 RH-377	commands/review-pr.md	**The driver runs the drain.**
