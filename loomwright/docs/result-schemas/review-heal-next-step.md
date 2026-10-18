@@ -71,7 +71,7 @@ Each step is ONE `case` arm of the driver's dispatcher. These are the strings th
 | `marker` | The dismissed-findings marker comment (`<!-- loomwright:dismissed round=<n> -->`), posted at most once per round that has ≥1 new dismissal |
 | `decide` | In order: the rules-gate escalation, READY `converged`, `ci_untrusted`, `findings`, the fork case (no push), and otherwise the `fix worker` spawn |
 | `fix` | The fix report: `fix_cycles`, `issues_fixed`, `checks_ever_fixed` |
-| `subfloor` | `drain-subfloor-decision.sh eligible` |
+| `subfloor` | The earned-fallback gate first: while `no_review_lens_posted` is true and `fallback_review_ran` is not, the sub-floor stop is withheld and the round churns, so the next round's READY evaluation runs the fallback (past `--max-rounds` that round ends `ESCALATED` `bound_hit`). Otherwise `drain-subfloor-decision.sh eligible` |
 | `confirm` | The SHA-bound confirming pass (`wait-for-checks.sh --required-only --names` on the pushed sha), the rules re-read, then `drain-subfloor-decision.sh decide`. READY is `sub_floor_converged` |
 | `churn` | The anti-churn fingerprints (a trip sets the next fix worker's `fix_the_class`), `drain-rounds.sh bump`, then the next round. A round that ends at a terminal exit is bumped there instead (READY in `decide` / `confirm`, ESCALATED in `escalate`), once |
 | `escalate` | Bumps the open round (an ESCALATED exit after the check still ran it), then `escalation_cause`. At the check-driven sites it copies the line `automate-helpers.sh escalation-cause` prints. It is `findings` for human-judgment findings and `other` everywhere else |

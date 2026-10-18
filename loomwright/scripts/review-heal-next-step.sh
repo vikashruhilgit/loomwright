@@ -62,7 +62,8 @@
 #   decide      rules escalation / READY converged / ci_untrusted / findings / fork, else the
 #               `fix worker` spawn (regular push only)
 #   fix         the fix worker's report: fix_cycles, issues_fixed, checks_ever_fixed
-#   subfloor    `drain-subfloor-decision.sh eligible`
+#   subfloor    the earned-fallback gate (fallback owed ⇒ churn, never `confirm`), then
+#               `drain-subfloor-decision.sh eligible`
 #   confirm     the SHA-bound confirming pass (`wait-for-checks.sh --required-only --names`), the rules
 #               re-read, `drain-subfloor-decision.sh decide`
 #   churn       anti-churn fingerprints, then `drain-rounds.sh bump` and the next round (a round that ends
@@ -330,7 +331,9 @@ rh_round() {
           --argjson f "$(stj auto_fixable | "$JQ" -c --argjson n "$(stj needs_human)" --argjson r "$(stj required_failing_fixable)" \
             '. + $n + [$r[] | {finding: ("required check " + .name + " red"), source: "checks"}]')" \
           '"bound_hit — --max-rounds " + $m + " reached; the last round'"'"'s findings (fixed and pushed, not re-verified):",
-           (if ($f | length) == 0 then "- none recorded" else ($f[] | "- " + .finding + " (" + .source + ")") end)')" "$h" ;;
+           (if ($f | length) == 0 then "- none recorded" else ($f[] | "- " + .finding + " (" + .source + ")") end)')$(
+          [ "$(st fallback_owed)" = true ] && [ "$(st fallback_review_ran)" != true ] && printf '\n%s' \
+            "- the earned fallback review never ran: no review lens posted, and the sub-floor stop was withheld so it could")" "$h" ;;
     *) rh_escalate_to unreadable_round_ledger other 0 "unreadable_round_ledger — drain-rounds.sh check: ${gate:-no output}" ;;
   esac
 }
@@ -696,8 +699,17 @@ rh_round_json() {
     --arg sf "$(st flag_severity_floor)" '{required_failing: $rf, needs_human: $nh,
       auto_fixable: [$af[] | {finding, source} + (if .severity then {severity} else {} end)], severity_floor: $sf}'
 }
+# the earned-fallback gate on the sub-floor path (SKILL.md AC12 — reinstated). `confirm` is the drain's only
+# READY that skips a re-scan, so it never runs while the fallback is still owed: an aux-only round (its sole
+# candidate a file-less `.github` annotation, so no_review_lens_posted stayed true though a finding was fixed)
+# churns instead, and the next round's READY evaluation runs the fallback. The bound holds: past
+# --max-rounds that next round's `check` ends ESCALATED bound_hit (its comment names the unrun fallback) —
+# never a READY with no review lens and no fallback.
 rh_subfloor() {
   local step
+  if [ "$(st no_review_lens_posted)" = true ] && [ "$(st fallback_review_ran)" != true ]; then
+    st_set fallback_owed true; NEXT=churn; return 0
+  fi
   step="$(rh_round_json | bash "$HERE/drain-subfloor-decision.sh" eligible - 2>/dev/null)"
   if [ "$step" = confirm ]; then NEXT=confirm; else NEXT=churn; fi
 }
