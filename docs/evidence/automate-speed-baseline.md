@@ -730,11 +730,11 @@ after and are not counted, as in as06.
 
 | Measure | Before item 06 | Before item 08 (base `a8819a3`) | After |
 |---|---|---|---|
-| Default read set (Step 0 **Always** files) | `223857` (`SKILL.md` 84444 + `per-item-loop.md` 106350 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900) | `180686` (`SKILL.md` 86697 + `per-item-loop.md` 60818 + `modes-and-merge-gate.md` 27271 + `invariants.md` 5900) | `50078` (`SKILL.md` 44178 + `invariants.md` 5900) |
-| Smaller than before item 06 | — | 19.3% | **77.6%** (target ≥ 60%, i.e. ≤ `89542`: met) |
+| Default read set (Step 0 **Always** files) | `223857` (`SKILL.md` 84444 + `per-item-loop.md` 106350 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900) | `180686` (`SKILL.md` 86697 + `per-item-loop.md` 60818 + `modes-and-merge-gate.md` 27271 + `invariants.md` 5900) | `50412` (`SKILL.md` 44512 + `invariants.md` 5900) |
+| Smaller than before item 06 | — | 19.3% | **77.5%** (target ≥ 60%, i.e. ≤ `89542`: met) |
 
 How it was reached — by moving, not cutting:
-- `SKILL.md` gained `## Coordinator loop — run next-step; do the one instruction; report the result` (2735 bytes):
+- `SKILL.md` gained `## Coordinator loop — run next-step; do the one instruction; report the result` (3101 bytes, heading through the line before the next `##`, after review iteration 2):
   the start call, the four instruction kinds, the flags, the exit codes and the one run-file write that stays
   the main thread's. Its §1.5 helper table moved verbatim to the new split file `helpers.md` (44906 bytes;
   `cmp` against §1.5 at `6d51a9a` is byte-identical), leaving a 162-byte index entry.
@@ -759,7 +759,7 @@ at their unchanged triggers.
 
 | File | Before (base `a8819a3`) | After |
 |---|---|---|
-| `SKILL.md` | 86697 | 44178 |
+| `SKILL.md` | 86697 | 44512 |
 | `branch-mode.md` | 7592 | 7592 |
 | `command-lanes.md` | 4111 | 4111 |
 | `helpers.md` | — | 44906 |
@@ -771,9 +771,9 @@ at their unchanged triggers.
 | `per-item-loop.md` | 60818 | 62045 |
 | `resume.md` | 18885 | 18885 |
 | `commands/automate.md` | 28946 | 29208 |
-| total | 366431 | 311884 |
+| total | 366431 | 312218 |
 
-The prompt budgets were re-measured in the same change: `.skills[automate-loop]` measures 70666 proxy tokens
+The prompt budgets were re-measured in the same change: `.skills[automate-loop]` measures 70750 proxy tokens
 (ceiling lowered from 87895 to 77733, measured + ~10%), and `.commands[automate]` measures 7302 (ceiling 7565,
 unchanged), each with its `ARCHITECTURE_CONTRACTS.md` mirror row.
 
@@ -823,7 +823,7 @@ Run one at a time on this branch after the last skill / inventory / budget edit 
 
 | Suite | Result |
 |---|---|
-| `bash loomwright/scripts/test-automate-next-step.sh` | 137/137 after review iteration 1 (P7–P9 + M8f–M8h; 131/131 before) (its S leg — AC9 — prints the base file list) |
+| `bash loomwright/scripts/test-automate-next-step.sh` | 137/137 after review iteration 2 (P8 now also drives a bare start of a coordinator run: AUT-RESUME interactive, `resume_requires_flag_non_interactive` headless, `coordinator_run` after Continue; M8g still turns it red); 137/137 after iteration 1 (P7–P9 + M8f–M8h; 131/131 before) (its S leg — AC9 — prints the base file list) |
 | `bash loomwright/scripts/test-automate-golden.sh` | 64/64 (`MAP.tsv` unchanged: no unit moved) |
 | `bash loomwright/scripts/test-automate-helpers.sh` | 765/766 — the one failure is W19 (`22-split-automate-engine-surfaces.md ## Touches parses`), the pre-existing local-only leg: it needs this checkout's `.agent/companions.json`, which a scratch copy lacks (`plan-waves: no …/.agent/companions.json`); unrelated to this change |
 | `bash loomwright/scripts/test-automate-lanes.sh` | 925/925 |
@@ -836,6 +836,7 @@ Run one at a time on this branch after the last skill / inventory / budget edit 
 | `bash loomwright/scripts/test-citation-drift.sh` | 26/26 |
 | `bash scripts/check-token-budget.sh` | exit 0 (0 breaches) |
 | `bash scripts/check-version-bump.sh` | exit 0 (not bumped; one pending fragment) |
+| `bash scripts/ci-local.sh` (full, on `43698e6`, review iteration 1) | 170/171 self-tests — the one failure is W19, the same pre-existing local-only leg as above (it needs the checkout's `.agent/companions.json`) |
 | `bash scripts/check-vendor-coupling.sh` | exit 0 after the fix; the first run was 1 BREACH: `helpers.md` carried §1.5's one install-root reference with no allowance. The allowance moved with the text (`SKILL.md` 4 → 3, `helpers.md` 1, both with a reason) |
 
 AC9: `grep -rn "gh pr merge --squash" loomwright/ | grep -viE "no |never |not " | cut -d: -f1 | sort -u` prints
@@ -861,6 +862,5 @@ loomwright/skills/automate-loop/per-item-loop.md
   AL-568 to AL-571 are GAP rows).
 - The Only-when triggers for the four driver-owned files are prose; no test checks that a failing driver call
   actually leads the model to read the right split file.
-- The driver's RECONCILE does not write the prose's one-line note for a live merge-watch marker (AL-229). Nothing
-  pins that line, and no golden case has it. It is recorded as a gap, not fixed here: the fix belongs in the
-  driver, which is outside this subtask's lanes.
+- The AL-229 merge-watch note (written by the driver's RECONCILE since review iteration 1, leg P9) is pinned by
+  that leg only: no golden case carries a live watcher, so no `expected.md` holds the line.

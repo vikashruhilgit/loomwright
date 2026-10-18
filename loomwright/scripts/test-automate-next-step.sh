@@ -120,8 +120,9 @@
 #       brief-repair-merged through RECONCILE's closeout (the case itself is a pure helper call). P7: a crashed /
 #       silent closeout-classify on the AUT-LEFTOVER Clean up now retry (a wrapper automate-helpers.sh beside a
 #       driver copy) stays a leftover — re-ask, then the closeout_leftover park — never trail gate / PICK; silent at
-#       RECONCILE ⇒ one leftover. P8: a --parallel coordinator run (`- parallel: 2` / `1`) ⇒ --resume and --start
-#       pick print done/stopped coordinator_run, .supervisor/ byte-unchanged, no lock. P9: a live merge watcher
+#       RECONCILE ⇒ one leftover. P8: a --parallel coordinator run (`- parallel: 2` / `1`) ⇒ --resume --run, the
+#       AUT-RESUME Continue and --start pick print done/stopped coordinator_run, .supervisor/ byte-unchanged, no
+#       lock; a bare start still asks AUT-RESUME / stops resume_requires_flag_non_interactive (AC4). P9: a live merge watcher
 #       (a real process carrying automate-merge-watch.sh + the PR) ⇒ ONE `merge-watch noted:` line at the
 #       open-PR park, not repeated by a second --start pick; a dead one ⇒ none.
 #   V8  RUNNING SYSTEM (Validation 3 of automate-speed/08): a scratch repo (gh stubbed, the real run-lock.sh),
@@ -1264,9 +1265,10 @@ leg_leftover_retry() {
   return 0
 }
 # leg_coordinator <driver> — a `--parallel` coordinator run (`- parallel: N` in ## Run Config, N = 2 and the
-# single-lane N = 1) is never picked in the primary: the resume entry (--run <id> non-interactive, a bare
-# interactive start) and --start pick print done / stopped `coordinator_run` naming lanes.md's loop, with
-# .supervisor/ byte-unchanged and no run-lock acquire
+# single-lane N = 1) is never picked in the primary: a continue (--run <id> non-interactive, the AUT-RESUME
+# Continue) and --start pick print done / stopped `coordinator_run` naming lanes.md's loop, with .supervisor/
+# byte-unchanged on the fresh calls (the run file throughout) and no run-lock acquire; a BARE start is not a
+# continue (AC4): --non-interactive ⇒ the resume_requires_flag_non_interactive stop, interactive ⇒ AUT-RESUME
 leg_coordinator() {
   local drv="$1" n s0 ad w
   for n in 2 1; do
@@ -1277,16 +1279,26 @@ leg_coordinator() {
     ad="$CASE_ROOT/.supervisor/automate"; s0="$(snapshot)"
     p_call "$drv" --resume "$ad" --run "$P_RUN" --non-interactive --session-id "$P_SID"
     [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e --arg w "$w" --argjson n "$n" '.do == "done" and .status == "stopped" and .stop == "coordinator_run"
-        and .parallel == $n and (.message | contains($w))' >/dev/null 2>&1 \
+        and .step == "rebuild" and .parallel == $n and (.message | contains($w))' >/dev/null 2>&1 \
       || { LEG_MSG="parallel $n, --resume --run: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:120}"; return 1; }
-    p_call "$drv" --resume "$ad" --session-id "$P_SID"
-    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.stop == "coordinator_run"' >/dev/null 2>&1 \
-      || { LEG_MSG="parallel $n, interactive --resume: exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+    p_call "$drv" --resume "$ad" --non-interactive --session-id "$P_SID"
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e --arg r "$P_RUN" '.step == "resume" and .stop == "resume_requires_flag_non_interactive"
+        and (.message | startswith("automate: resume_requires_flag_non_interactive " + $r))' >/dev/null 2>&1 \
+      || { LEG_MSG="parallel $n, bare --non-interactive --resume: not the resume_requires_flag stop: exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
     ns_call "$drv" --start pick --session-id "$P_SID"
     [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.step == "pick" and .stop == "coordinator_run"' >/dev/null 2>&1 \
       || { LEG_MSG="parallel $n, --start pick: exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
     [ "$s0" = "$(snapshot)" ] && ! grep -q '^lock acquire ' "$CASE_DIR/rec.log" \
       || { LEG_MSG="parallel $n: .supervisor/ written or the run lock acquired"; return 1; }
+    p_call "$drv" --resume "$ad" --session-id "$P_SID"
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-RESUME"' >/dev/null 2>&1 \
+      || { LEG_MSG="parallel $n, bare interactive --resume: not the AUT-RESUME ask: exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+    ns_call "$drv" --result '{"answers":["Continue"]}'
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.step == "rebuild" and .stop == "coordinator_run"' >/dev/null 2>&1 \
+      || { LEG_MSG="parallel $n, Continue: not coordinator_run: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:120}"; return 1; }
+    grep -qx -- "- parallel: $n" "$CASE_RF" && sed '/^- parallel: /d' "$CASE_RF" | cmp -s - "$FIX/resume-glob-finalize/input.md" \
+      && ! grep -q '^lock acquire ' "$CASE_DIR/rec.log" \
+      || { LEG_MSG="parallel $n: the run file written or the run lock acquired at the ask / Continue"; return 1; }
   done
   return 0
 }
@@ -1708,7 +1720,7 @@ LEG_MSG=""
 if m="$(build_mutant cls - '-append:# cls-helpers')" && cls_helpers "$m" && leg_leftover_retry "$m"; then ok "P7: a crashed / silent closeout-classify on the Clean up now retry stays a leftover (re-ask, then the closeout_leftover park naming it); a silent one at RECONCILE is one leftover — never a PICK"
 else no "P7: ${LEG_MSG:-driver copy not built}"; fi
 LEG_MSG=""
-if leg_coordinator "$DRIVER"; then ok "P8: a --parallel coordinator run (parallel: 2 / single-lane 1) ⇒ --resume (--run, bare) and --start pick print done/stopped coordinator_run, nothing written, no run lock"
+if leg_coordinator "$DRIVER"; then ok "P8: a --parallel coordinator run (parallel: 2 / single-lane 1) ⇒ --resume --run, Continue and --start pick print done/stopped coordinator_run, a bare start asks AUT-RESUME / stops resume_requires_flag_non_interactive, nothing written, no run lock"
 else no "P8: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_watch_note "$DRIVER"; then ok "P9: a live merge watcher of the in-flight open PR ⇒ ONE merge-watch noted line at the open-PR park (not repeated); a dead one ⇒ none"

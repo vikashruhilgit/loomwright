@@ -32,13 +32,17 @@
 #   Entry points: `--resume <automate_dir>` is every `/automate` start that may continue a run (a bare
 #   start: no `--run`; `/automate --resume`: `--run latest`; `/automate --resume <id>`: `--run <id>`):
 #   `closeout-others`, `resume-glob --finalize`, then the AUT-RESUME ask (or, without the ask, the
-#   `resume_requires_flag_non_interactive` stop — nothing written — or the `resume_ambiguous` park); on
+#   `resume_requires_flag_non_interactive` stop — the driver writes nothing past those two start steps —
+#   or the `resume_ambiguous` park); on
 #   continue `current-rebuild`, the start's `closeout-others` record lines and leftover gate, then PICK.
 #   No incomplete run ⇒ `{"do":"done","status":"stopped","choice":"start_new"}` (intake is the model's).
 #   A `--parallel` coordinator run (`## Run Config` carries `- parallel: N`) is never picked here: the
-#   resume entry, `rebuild` and `pick` print `{"do":"done","status":"stopped","stop":"coordinator_run",…}`
-#   before any lock or write (it continues through `skills/automate-loop/lanes.md`'s per-wave loop —
-#   single-lane mode for N = 1); a lane's own run file carries no such line.
+#   continue paths (an explicit `--run`, `--run latest` naming one run, the AUT-RESUME `Continue`) reach
+#   `rebuild`, which — like `pick` — prints `{"do":"done","status":"stopped","stop":"coordinator_run",…}`
+#   before any lock or write of its own (a bare start still asks AUT-RESUME / takes its can't-ask stop
+#   first; the start steps `closeout-others` — its `--record` line lands in a `--run <id>` run file — and
+#   `resume-glob --finalize` already ran). It continues through `skills/automate-loop/lanes.md`'s per-wave
+#   loop — single-lane mode for N = 1; a lane's own run file carries no such line.
 #   `--start pick` is the loop's per-item entry (the first item of a new run, and every
 #   `{"do":"done","status":"running"}`): PICK → RECONCILE → trail gate → un-stage → `current-set` +
 #   `picked`, then straight on to RUN's `/autonomous` spawn. Both need `--session-id` (the PICK lock is
@@ -67,7 +71,8 @@
 #   `script:automate-next-step.sh <step>`):
 #   resume      `--resume`: the target run (`--run <id>`, else the most recent incomplete one), the
 #               AUT-RESUME ask (Continue / Start new / Archive), or without it the
-#               `resume_requires_flag_non_interactive` stop (one run, no `--run`; nothing written) / the
+#               `resume_requires_flag_non_interactive` stop (one run, no `--run`; nothing written past the
+#               start steps) / the
 #               `resume_ambiguous` park (more than one run, no `--run <id>`)
 #   rebuild     `current-rebuild` (it appends its own `current_rebuilt:` line); a rebuilt ## Current asks
 #               AUT-RESUME again (interactive) or parks `resume_ambiguous` (can't ask)
@@ -300,7 +305,7 @@ if [ -n "$RESUME_DIR" ]; then
        [ -n "$RF" ] || ns_die2 "run_not_incomplete — --run $RUN_SEL names no incomplete run in $RESUME_DIR — nothing written" ;;
   esac
   if [ -z "$RF" ]; then
-    # nothing to continue: intake (a new run) is the model's — nothing written, no sidecar
+    # nothing to continue: intake (a new run) is the model's — nothing written past the start steps, no sidecar
     "$JQ" -cn --arg co "$NS_RES_CO" '{do: "done", step: "resume", run_id: null, item: null, pr: null, status: "stopped", choice: "start_new",
         message: "no incomplete run — start a new run (intake)", closeout_others: ($co | split("\n") | map(select(length > 0)))}'
     exit 0
@@ -959,7 +964,7 @@ ns_resume_q() { # <rebuilt line or ""> — the AUT-RESUME question list
 ns_resume_ask() { # <step> <rebuilt line or ""> — AUT-RESUME (an `allowed` gate: header is its code)
   local cant
   if [ -n "$2" ] || [ "$(st resume_n)" != 1 ]; then cant="resume_ambiguous park"
-  else cant="automate: resume_requires_flag_non_interactive stop (nothing written)"; fi
+  else cant="automate: resume_requires_flag_non_interactive stop (nothing written past the start steps)"; fi
   ns_emit_ask "$1" AUT-RESUME "$cant" "$(ns_resume_q "$2")"
   NS_EMIT="$(printf '%s' "$NS_EMIT" | "$JQ" -c --arg f "$RF" '. + {run_file: $f,
       answer_with: ("automate-next-step.sh " + $f + " --result {\"answers\": [\"Continue\" | \"Start new\" | \"Archive\"]}; when the ask tool is unavailable --result {\"cant_ask\": true}")}')"
@@ -967,10 +972,10 @@ ns_resume_ask() { # <step> <rebuilt line or ""> — AUT-RESUME (an `allowed` gat
   NEXT=resume
 }
 ns_co_json() { st co_lines | "$JQ" -Rsc 'split("\n") | map(select(length > 0))'; }
-ns_resume_stop() { # one incomplete run, no --run, can't ask: fail closed — nothing written to the run
+ns_resume_stop() { # one incomplete run, no --run, can't ask: fail closed — the driver writes nothing past the start steps
   local x
   x="$("$JQ" -cn --arg r "$RUN_ID" --arg f "$RF" --argjson co "$(ns_co_json)" '{status: "stopped", stop: "resume_requires_flag_non_interactive", run_file: $f,
-      message: ("automate: resume_requires_flag_non_interactive " + $r + " — re-run with --resume [" + $r + "] to continue it (or interactively, to start new / archive); nothing was written to the run"),
+      message: ("automate: resume_requires_flag_non_interactive " + $r + " — re-run with --resume [" + $r + "] to continue it (or interactively, to start new / archive); nothing was written past the start steps (closeout-others, resume-glob --finalize — their lines: closeout_others)"),
       closeout_others: $co}')"
   ns_emit done resume "$x"
   [ "${NS_FRESH_RESUME:-0}" = 1 ] && NS_NOSAVE=1
@@ -984,10 +989,10 @@ ns_resume_ambiguous() { # <step> — more than one incomplete run (or a rebuilt 
   [ -n "$(st co_lines)" ] && m="$m; closeout-others at start: $(st co_lines | tr '\n' ';' | tr '\t' ' ')"
   ns_run_park "$1" resume_ambiguous "" 0 "$m"   # the run lock was never taken
 }
-ns_resume_choice() { # <start_new|archive> — the owner's choice; nothing written (the model carries it out)
+ns_resume_choice() { # <start_new|archive> — the owner's choice; nothing written past the start steps (the model carries it out)
   local x
   x="$("$JQ" -cn --arg c "$1" --arg f "$RF" --argjson co "$(ns_co_json)" '{status: "stopped", choice: $c, run_file: $f, closeout_others: $co,
-      message: (if $c == "archive" then "the owner chose Archive — archive the run file (the incomplete run is left untouched by this script), then start a new run or stop" else "the owner chose Start new — the incomplete run is left as it is; run intake for the new run" end)}')"
+      message: (if $c == "archive" then "the owner chose Archive — archive the run file (past the start steps — closeout-others, resume-glob --finalize — this script leaves the incomplete run untouched), then start a new run or stop" else "the owner chose Start new — the incomplete run is left as the start steps left it; run intake for the new run" end)}')"
   ns_emit done resume "$x"
 }
 ns_resume_cant() { # the can't-ask outcome of the resume entry
@@ -995,16 +1000,16 @@ ns_resume_cant() { # the can't-ask outcome of the resume entry
   ns_resume_stop   # one run, no --run, can not ask: fail closed, never auto-continued
 }
 # a `--parallel` COORDINATOR run (`## Run Config` carries `- parallel: N`, `1` = single-lane mode) never takes
-# §6's per-item PICK in the primary: on every --resume it continues through lanes.md's per-wave loop (single-lane
+# §6's per-item PICK in the primary: every continue (rebuild / pick) goes through lanes.md's per-wave loop (single-lane
 # mode for N = 1). A lane's own run file has no such line, so a lane is never refused here.
 ns_parallel() { ns_section '## Run Config' | sed -n 's/^- parallel: \([0-9][0-9]*\)[[:space:]]*$/\1/p' | head -n 1; }
-ns_coordinator_stop() { # <step> — 0 (a `done` stopped instruction, nothing written) when this is a coordinator run
+ns_coordinator_stop() { # <step> — 0 (a `done` stopped instruction; this step writes nothing) when this is a coordinator run
   local n x loop
   n="$(ns_parallel)"; [ -n "$n" ] || return 1
   if [ "$n" = 1 ]; then loop="lanes.md \"Single-lane mode (--parallel 1)\" (On each --resume: lane-status, fleet-closeout, then the next item in a NEW lane)"
   else loop="lanes.md §14's per-wave loop (lane-status, lane-wait, wave-build / fleet-closeout)"; fi
   x="$("$JQ" -cn --arg f "$RF" --arg n "$n" --arg l "$loop" --argjson co "$(ns_co_json)" '{status: "stopped", stop: "coordinator_run", run_file: $f, parallel: ($n | tonumber), closeout_others: $co,
-      message: ("coordinator_run — ## Run Config reads parallel: " + $n + ", a --parallel coordinator run: it continues through " + $l + ", never through the per-item PICK in the primary; nothing was written to the run")}')"
+      message: ("coordinator_run — ## Run Config reads parallel: " + $n + ", a --parallel coordinator run: it continues through " + $l + ", never through the per-item PICK in the primary; this step wrote nothing (on a --resume start, closeout-others — its --record line with --run <id> — and resume-glob --finalize ran first: closeout_others)")}')"
   ns_emit done "$1" "$x"
   # a fresh start (the resume entry, --start pick) leaves the sidecar as it was too
   if [ "${NS_FRESH_RESUME:-0}" = 1 ] || [ "${first_arm:-0}" = 1 ]; then NS_NOSAVE=1; fi
@@ -1027,7 +1032,6 @@ ns_resume() {
     esac
     return 0
   fi
-  ns_coordinator_stop resume && return 0
   # an explicit `--run <id>` (`/automate --resume <id>`) is the owner's continue; `--run latest` is too when
   # it names exactly one run
   case "$sel" in ""|latest) ;; *) NEXT=rebuild; return 0 ;; esac
