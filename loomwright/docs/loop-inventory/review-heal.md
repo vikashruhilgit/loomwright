@@ -399,13 +399,14 @@ This file lists every branch and rule that the standalone PR review-and-heal loo
 | RH-383 | skills/review-heal/SKILL.md | h: ### Churn gate (AC9/AC10/AC11) — fires only on meaningful churn | a `§"Churn gate"` citation is followed | keep this heading as a pointer to the same heading in `skills/review-heal/dispatch.md` | rule | global | - | test-review-heal-next-step.sh |
 | RH-384 | skills/review-heal/SKILL.md | h: ### Opt-out (AC13) | a `§"Opt-out"` citation is followed | keep this heading as a pointer to the same heading in `skills/review-heal/dispatch.md` | rule | global | - | test-review-heal-next-step.sh |
 | RH-385 | skills/review-heal/SKILL.md | h: ### Launch form (R10 — fresh detached process, NEVER a nested Task) | a `§"Launch form"` citation is followed | keep this heading as a pointer to the same heading in `skills/review-heal/dispatch.md` | rule | global | - | test-review-heal-next-step.sh |
+| RH-386 | commands/review-pr.md | q: **Read rule.** A drain round reads `skills/review-heal/SKILL.md` | a `--until-mergeable` drain round reads its contract | read `SKILL.md`; read `fallback-review.md` only when the driver prints a `spawn` with `what: "fallback review"`, `escalation.md` only when the run ends `ESCALATED`; never read `dispatch.md` (the dispatching side's) | rule | global | - | test-review-heal-next-step.sh |
 
 ## Gap list (ordered by risk)
 
 ## Counts
-- rows: 385
+- rows: 386
 - deterministic: 184
 - judgment: 16
-- rule: 174
+- rule: 175
 - story: 11
 - GAP: 0

@@ -843,6 +843,10 @@ RH-384	skills/review-heal/SKILL.md	### Opt-out (AC13)
 RH-384	skills/review-heal/SKILL.md	Moved to `skills/review-heal/dispatch.md` §"Opt-out (AC13)".
 RH-385	skills/review-heal/SKILL.md	### Launch form (R10 — fresh detached process, NEVER a nested Task)
 RH-385	skills/review-heal/SKILL.md	Moved to `skills/review-heal/dispatch.md` §"Launch form (R10 — fresh detached process, NEVER a nested Task)".
+RH-386	commands/review-pr.md	**Read rule.** A drain round reads `skills/review-heal/SKILL.md`
+RH-386	commands/review-pr.md	reads `skills/review-heal/fallback-review.md` only when the driver prints a `spawn` with `what: "fallback review"`
+RH-386	commands/review-pr.md	reads `skills/review-heal/escalation.md` only when the run ends `ESCALATED`
+RH-386	commands/review-pr.md	`skills/review-heal/dispatch.md` is the dispatching side's — a drain round never reads it.
 PROSE_PINS_EOF
 )"
 # pins_missing <plugin root> — prints one `<id> <file>: <literal>` line per pin whose text is absent

@@ -161,6 +161,90 @@ No `rule` or `story` row is in `prose`.
 - File cell moved with the text: RH-193 … RH-200 to `fallback-review.md`, RH-217 … RH-221 to `escalation.md`, RH-231 … RH-254 to `dispatch.md`.
 - `test-loop-inventory.sh`'s `review-heal)` arm, its header comment and the inventory's `## Sources` list the three files; the inventory intro names them.
 
+## Final (after subtask 3)
+
+Subtask 3 added the read rule to `commands/review-pr.md` (§"`--until-mergeable` mode", the `**Read rule.**` paragraph: a drain round reads `skills/review-heal/SKILL.md`; it reads `skills/review-heal/fallback-review.md` only when the driver prints a `spawn` with `what: "fallback review"`, `skills/review-heal/escalation.md` only when the run ends `ESCALATED`, and never `skills/review-heal/dispatch.md`). It is the new `global` row RH-386 (next free id), pinned in the P leg. `SKILL.md`'s frontmatter `version:` is unchanged from base (`git diff 3a03dfa -- loomwright/skills/review-heal/SKILL.md` touches neither `version:` nor `lastUpdated:`), so the `review-heal` row of `skills/SKILLS_INDEX.md` was left as it was. The final numbers below are taken on the committed tree.
+
+### AC2 — drain-round read set (`wc -c`)
+
+Before: the `## Before` block above (`git show 3a03dfa:<path> | wc -c`, 129051 total).
+
+After — the drain-round read set (a round that runs neither the Earned Fallback Review nor an escalation reads no split file; `cd loomwright && wc -c skills/review-heal/SKILL.md commands/review-pr.md`):
+
+```
+   71170 skills/review-heal/SKILL.md
+    9225 commands/review-pr.md
+   80395 total
+```
+
+80395 ≤ 90335; 48656 bytes (37.7%) smaller than 129051.
+
+The requirement's literal measure — every file in its `## Touches` except the rationale and inventory docs (`wc -c loomwright/skills/review-heal/SKILL.md loomwright/commands/review-pr.md changelog.d/as14-diet-review-heal.md`; the fragment did not exist at base, so its before is 0 and the before total stays 129051):
+
+```
+   71170 loomwright/skills/review-heal/SKILL.md
+    9225 loomwright/commands/review-pr.md
+    1705 changelog.d/as14-diet-review-heal.md
+   82100 total
+```
+
+82100 is 46951 bytes (36.4%) smaller than 129051.
+
+All modes — every `*.md` under `skills/review-heal/` + `commands/review-pr.md` (`cd loomwright && wc -c skills/review-heal/*.md commands/review-pr.md`):
+
+```
+   71170 skills/review-heal/SKILL.md
+    8106 skills/review-heal/dispatch.md
+    1348 skills/review-heal/escalation.md
+    5038 skills/review-heal/fallback-review.md
+    9225 commands/review-pr.md
+   94887 total
+```
+
+94887 < 129051 (34164 bytes, 26.5% lower). The 360 bytes `commands/review-pr.md` gained over subtask 2's interim figure are the read-rule paragraph.
+
+### AC3 — history references
+
+Command (AC3's regex over the drain-round read set):
+
+```bash
+cat loomwright/skills/review-heal/SKILL.md loomwright/commands/review-pr.md \
+  | grep -oE '#[0-9]{2,4}\b|queue/[0-9]+|20[0-9]{2}-[0-9]{2}-[0-9]{2}|item [0-9]+' | wc -l
+```
+
+Before (the `## Before` command at `3a03dfa`): **41**. After: **4** — `2026-10-09` (frontmatter `lastUpdated:`), `item 01` twice (RH-076's pinned bold lead and the §"Untrusted-Text Envelope" heading other files cite), `item 04` (RH-258's pin literal). Over all modes (the same regex over `skills/review-heal/*.md` + `commands/review-pr.md`): 5 — the extra one is `#512` in `skills/review-heal/dispatch.md`, which a drain round does not read.
+
+Version tags, information only (`grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | wc -l` over the same files): 5 at base, 2 after (drain-round set), 2 over all modes.
+
+### AC1 — `story` / `rule` rows by home
+
+Command: the `AWKC` block in `## Before` (before = `git show 3a03dfa:…`, after = the working file). Before: `## Before` above (`160 rule prose`, `11 story prose`). After:
+
+```
+ 118 rule	global
+  22 rule	rationale:docs/rationale/review-heal.md
+   1 rule	script:classify-bot-review.sh
+   3 rule	script:dispatch-pr-postmortem.sh
+   6 rule	script:dispatch-pr-review.sh
+   1 rule	script:drain-gh-read.sh review-threads
+   1 rule	script:fix-floor.sh meets
+   1 rule	script:resolve-egress-config.sh
+   1 rule	script:review-heal-next-step.sh classify
+   1 rule	script:review-heal-next-step.sh confirm
+   1 rule	script:review-heal-next-step.sh decide
+   1 rule	script:review-heal-next-step.sh fallback
+   1 rule	script:review-heal-next-step.sh probe
+   3 rule	script:review-heal-next-step.sh read
+   1 rule	script:review-heal-next-step.sh validate
+   2 rule	script:review-heal-next-step.sh wait
+   1 rule	script:wait-for-checks.sh
+   1 rule	script:wrap-external-text.sh
+   9 rule	step-scoped
+  11 story	rationale:docs/rationale/review-heal.md
+```
+
+No `rule` or `story` row has home `prose`. The one change from subtask 2's table is `global` 117 → 118: RH-386, the read rule.
+
 ## Pin mutations
 
 Subtask 1 repointed and added no pin. It deleted the 35 `PROSE_PINS` lines of the 29 rows whose home left `prose`/`global` and whose text left the runtime file: RH-052, RH-259, RH-260, RH-262 … RH-266, RH-269, RH-278, RH-280 … RH-289, RH-291, RH-295, RH-296, RH-322 … RH-325, RH-328, RH-374 (RH-374's text still sits in the unedited `agents/review-pr.md`; its home is the rationale doc). Pins on the two step-scoped rows whose text stayed (RH-025, RH-305) were kept. No needle was loosened: every kept pin's literal is byte-identical.
@@ -211,6 +295,14 @@ Each mutation ran on a `mktemp -d` scratch copy of `loomwright/` + `scripts/` (`
 | `test-dispatch-pr-review.sh` drift guard — read repointed to `skills/review-heal/*.md` | append a line naming `` `scripts/not-admitted-probe.sh` `` to `fallback-review.md` in a scratch copy | rc=1, `drain allowlist shape wrong: script-not-admitted:not-admitted-probe.sh`, `RESULT: 51 passed, 1 failed` |
 
 The seams whose text stayed in `SKILL.md` were not repointed: `test-rules-gate-seams.sh` (§U4 rules block, READY clause), `test-automate-dismissed.sh` leg B (the marker bullet), `test-phase45-rounds-seam.sh` and `test-no-self-matching-wait.sh` (the Step 2 and §U4 fix-worker prompts), `test-release-refold.sh` (both `push_fix_to_pr()` call sites) and `test-execution-directive-seam.sh` (f) (the CI-lens paragraph); all stay green with their own mutants (gate table below).
+
+### Subtask 3
+
+Subtask 3 added four `PROSE_PINS` lines for one new row, RH-386 (`commands/review-pr.md`, the read rule): the paragraph's bold lead plus its three clauses (fallback, escalation, dispatch). It repointed and deleted no pin. The mutation ran on a `mktemp -d` scratch copy of `loomwright/` + `scripts/` (`HOME` relocated), deleting the line carrying the read-rule sentence with `grep -vF '**Read rule.** A drain round reads'` (mutant 70 lines vs 71), then running the copied test; the file was restored afterwards. In the red result the test's own `|` separators between missed pins are escaped as `\|` so the table stays one row.
+
+| Pin | Mutation (one line, applied to the protected text the pin guards) | Red result |
+|-----|-------------------------------------------------------------|------------|
+| `test-review-heal-next-step.sh` P — RH-386 (new pin, `commands/review-pr.md`) | delete the read-rule sentence (``reads `skills/review-heal/fallback-review.md` only when the driver prints a `spawn` with `what: "fallback review"` ``) from `commands/review-pr.md` | rc=1, ``FAIL: P: pinned rule text missing — RH-386 commands/review-pr.md: **Read rule.** A drain round reads `skills/review-heal/SKILL.md`\|RH-386 commands/review-pr.md: reads `skills/review-heal/fallback-review.md` only when the driver prints a `spawn` with `what: "fallback review"`\|RH-386 commands/review-pr.md: reads `skills/review-heal/escalation.md` only when the run ends `ESCALATED`\|RH-386 commands/review-pr.md: `skills/review-heal/dispatch.md` is the dispatching side's — a drain round never reads it.``, `PASS: 143 FAIL: 5` |
 
 ## Step-scoped anchors
 
@@ -269,6 +361,56 @@ Subtask 2 (`grep -nF` of the anchor in its file):
 | `bash scripts/check-token-budget.sh` | rc=0, `check-token-budget: OK` |
 | `bash scripts/check-vendor-coupling.sh` (split files staged) | rc=0, `breaches: 0` |
 | `bash scripts/check-skills-index-sync.sh` | rc=0 |
+
+## Validation 1 — final gate run (subtask 3)
+
+Every AC12 gate, run serially from the repo root on the final tree (each `bash <gate> > <file> 2>&1`, then the exit code and the last line read from that file):
+
+| Gate | Result |
+|---|---|
+| `bash loomwright/scripts/test-loop-inventory.sh` | rc=0, `loop-inventory: OK — 2233 rows across 4 groups`, `RESULT: 43/43 passed` |
+| `bash scripts/check-doc-currency.sh` | rc=0, `✓ doc-currency: all checked version/count claims match the authoritative source.` |
+| `bash loomwright/scripts/test-citation-drift.sh` | rc=0, `citation-drift: 26 passed, 0 failed` |
+| `bash scripts/check-token-budget.sh` | rc=0, `check-token-budget: OK — every agent, skill dir and command doc within its declared prompt-inventory budget.` (`review-heal` skill dir 21414 of 36700, 4 .md files; `review-pr` command 2306 of 5779) |
+| `bash loomwright/scripts/test-review-heal-next-step.sh` | rc=0, `PASS: 148 FAIL: 0` (`P: all 223 prose pins present`; `every one of the 174 prose rows that names this test has a pin`) |
+| `bash loomwright/scripts/test-execution-directive-seam.sh` | rc=0, `RESULT: 50 passed, 0 failed` |
+| `bash loomwright/scripts/test-no-self-matching-wait.sh` | rc=0, `test-no-self-matching-wait: 5 passed, 0 failed` |
+| `bash loomwright/scripts/test-phase45-rounds-seam.sh` | rc=0, `test-phase45-rounds-seam.sh: 61 passed, 0 failed` |
+| `bash loomwright/scripts/test-release-refold.sh` | rc=0, `RESULT: 26 passed, 0 failed` |
+| `bash loomwright/scripts/test-rules-gate-seams.sh` | rc=0, `26 passed, 0 failed` |
+| `bash loomwright/scripts/test-automate-dismissed.sh` | rc=0, `test-automate-dismissed: 246 passed, 0 failed` |
+| `bash loomwright/scripts/test-dispatch-pr-review.sh` | rc=0, `RESULT: 52 passed, 0 failed` |
+| `bash loomwright/scripts/test-closed-enum-pins-seam.sh` | rc=0, `test-closed-enum-pins-seam.sh: 79 passed, 0 failed` |
+| `bash loomwright/scripts/test-drain-rounds.sh` | rc=0, `== SUMMARY: 35 passed, 0 failed ==` |
+| `bash scripts/check-version-bump.sh` (AC11) | rc=0, `bump-version: check OK — not bumped (version 17.8.0, the merge base's); 1 fragment(s) pending — legal, the next bump folds them (base origin/main, merge base 3a03dfa66d7d)` |
+| `bash scripts/check-vendor-coupling.sh` (not in AC12; run because the split files are new) | rc=0, `check-vendor-coupling: OK — …` |
+| `bash scripts/check-skills-index-sync.sh` (not in AC12) | rc=0 |
+
+The fragment `changelog.d/as14-diet-review-heal.md` requests `<!-- bump: minor -->`. This branch is a lane of a parallel wave, so it carries the fragment only; the release lane runs `bash scripts/bump-version.sh` once for the wave (`changelog.d/README.md` §"Who runs the bump, and the content rule").
+
+## Validation 2 — mutation control (`global` row)
+
+On a `mktemp -d` scratch copy of `loomwright/` + `scripts/`, the line carrying `global` row RH-020's anchor (`The runner is **NEVER Task-spawned**.`, one occurrence) was deleted from `skills/review-heal/SKILL.md` with `grep -vF` (mutant 558 lines vs 559), then `bash <scratch>/loomwright/scripts/test-loop-inventory.sh --root <scratch>/loomwright`:
+
+```
+FAIL RH-020: anchor not found in skills/review-heal/SKILL.md
+GAP automate-loop: 127
+GAP supervisor: 491
+GAP review-heal: 0
+GAP launch-pad-autonomous: 431
+loop-inventory: FAIL — 1 problem(s)
+```
+
+Exit 1, naming RH-020. Control with the original line restored on the same scratch copy: `loop-inventory: OK — 2233 rows across 4 groups`, exit 0.
+
+## Not run — Validation 3
+
+The source requirement's Validation 3 is a running-system step: one real item that exercises this group after the change, with the phase's result block pasted, and the transcript showing that `skills/review-heal/fallback-review.md` is not read on a drain round that does not run the Earned Fallback Review. It was **not run** by this job, and no result block is recorded here: this job never fabricates one.
+
+It is a pre-merge owner step outside this job. Before merge the owner does one of:
+
+1. Runs one live `/review-pr --until-mergeable` drain on the changed prompts and pastes its fenced `REVIEW_HEAL_RESULT` block into the PR body, with the drain transcript showing `fallback-review.md` unread on a round whose driver printed no `spawn` with `what: "fallback review"`; or
+2. Waives Validation 3 through the human-only `AUT-WAIVE` ask that `/automate`'s `validation-gate` raises.
 
 ## Behaviour questions
 
