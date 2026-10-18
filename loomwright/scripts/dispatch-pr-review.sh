@@ -298,7 +298,9 @@ drain_allowed_commands_extra() {
 # also holds `gate-eval`, the sanctioned merge executor: only its
 # `escalation-cause` subcommand is admitted. Adding a script call to the drain
 # prose without adding it here fails test-dispatch-pr-review.sh (drift guard).
-DRAIN_SCRIPTS="drain-gh-read.sh drain-rounds.sh drain-subfloor-decision.sh fix-floor.sh wait-for-checks.sh ci-run-probe.sh classify-bot-review.sh wrap-external-text.sh rules-gate-verdict.sh release-refold.sh guard-arm.sh notify-desktop.sh send-webhook.sh dispatch-pr-postmortem.sh"
+# review-heal-next-step.sh is the drain loop's driver (automate-speed/12): the
+# runner calls it, and it runs the other drain scripts itself as subprocesses.
+DRAIN_SCRIPTS="drain-gh-read.sh drain-rounds.sh drain-subfloor-decision.sh fix-floor.sh wait-for-checks.sh ci-run-probe.sh classify-bot-review.sh wrap-external-text.sh rules-gate-verdict.sh release-refold.sh guard-arm.sh notify-desktop.sh send-webhook.sh dispatch-pr-postmortem.sh review-heal-next-step.sh"
 DRAIN_SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 
 # build_allowed_tools <head_ref> — the single shared construction for the

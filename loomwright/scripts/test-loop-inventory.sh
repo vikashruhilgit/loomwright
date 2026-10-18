@@ -550,10 +550,14 @@ d="$(new_leg ac7b)"
 if apply "$d/$INV/review-heal.md" '/^- GAP:/ {next} {print}'; then
   run_leg "$d"; expect_red "AC7 (missing GAP count line)" "FAIL review-heal: ## Counts has no '- GAP:' line"
 else no "AC7 missing line: mutant invalid"; fi
-gid="$(awk '/^## Gap list/ {s = 1; next} s && /^[0-9]+\. RH-/ { sub(/^[0-9]+\. /, ""); sub(/ .*/, ""); print; exit }' "$BASE/$INV/review-heal.md")"
+# The gap row is synthesized in the scratch copy (review-heal reached GAP 0 in automate-speed/12, so it has no
+# gap-list line left to delete): the first row whose test cell is not GAP becomes a GAP row, the GAP count
+# follows it, and no gap-list line names it.
+gid="$(row_field "$BASE/$INV/review-heal.md" 'c[10] != "GAP"' 1)"
 d="$(new_leg ac7c)"
-if [ -n "$gid" ] && apply "$d/$INV/review-heal.md" '/^## Gap list/ {s = 1} s && !done && /^[0-9]+\. RH-/ {done = 1; next} {print}'; then
-  run_leg "$d"; expect_red "AC7 (gap-list line deleted)" "FAIL $gid: GAP row missing from the review-heal ## Gap list"
+if [ -n "$gid" ] && set_cell "$d/$INV/review-heal.md" "$gid" 9 GAP \
+   && apply "$d/$INV/review-heal.md" '{ if (!done && match($0, /^- GAP: [0-9]+$/)) { $0 = "- GAP: " (substr($0, 8) + 1); done = 1 } print }'; then
+  run_leg "$d"; expect_red "AC7 (GAP row missing from the gap list)" "FAIL $gid: GAP row missing from the review-heal ## Gap list"
 else no "AC7 gap-list drift: mutant invalid (gap id '$gid')"; fi
 
 # AC7b — a test cell naming a file that does not exist.
@@ -594,7 +598,8 @@ file_leg shape-header "$ALF" "FAIL automate-loop: the ## Inventory table header 
 file_leg shape-sections "$ALF" "FAIL automate-loop: ## sections must be exactly" '{ if ($0 == "## Counts") $0 = "## Totals"; print }'
 file_leg shape-count-line "$ALF" "FAIL automate-loop: malformed ## Counts line: - rows: many" '{ sub(/^- rows: [0-9]+$/, "- rows: many"); print }'
 file_leg shape-count-dup "$INV/review-heal.md" "FAIL review-heal: ## Counts has two '- GAP:' lines" '{print} /^- GAP:/ {print}'
-file_leg shape-gap-line "$INV/review-heal.md" "FAIL review-heal: malformed ## Gap list line" '/^## Gap list/ {s = 1} { if (s && !d && sub(/ — /, " - ")) d = 1; print }'
+# a synthesized gap-list line with a hyphen where the em dash belongs (works whether or not review-heal has gaps)
+file_leg shape-gap-line "$INV/review-heal.md" "FAIL review-heal: malformed ## Gap list line" '{print} /^## Gap list/ {print "1. RH-001 - reason"}'
 file_leg split-unclosed "loomwright/skills/automate-loop/SKILL.md" "SKILL.md: a split:begin block never closes" \
   '{print} END {print ""; print "<!-- split:begin x.md -->"}'
 

@@ -835,8 +835,12 @@ done
 n="$(cat "$RSD/supervisor-result.md" "$RSD/review-heal-result.md" 2>/dev/null | grep -cF 'severity?: string}]')"; [ "${n:-0}" -ge 2 ] && ok "B: RESULT_SCHEMAS field lines carry optional severity (heal_dismissed + dismissed)" || no "B: RESULT_SCHEMAS severity field lines: ${n:-0}"
 grep -qF '`[{finding, reason, source, severity?}]`' "$RSD/review-heal-result.md" && ok "B: REVIEW_HEAL_RESULT table row carries severity?" || no "B: dismissed table row lacks severity?"
 grep -qF 'severity: i.severity' "$REPO/loomwright/skills/self-heal-advisory/SKILL.md" && ok "B: self-heal-advisory Part 2 producer carries severity" || no "B: self-heal-advisory producer lacks severity"
-grep -qF '({severity: stated_severity(f)} if stated_severity(f) else {})' "$REPO/loomwright/skills/review-heal/SKILL.md" && ok "B: review-heal §U3.5 main pass carries severity only when stated" || no "B: review-heal main pass severity"
-grep -qF 'severity: f.severity}' "$REPO/loomwright/skills/review-heal/SKILL.md" && ok "B: review-heal Earned Fallback pass carries f.severity" || no "B: review-heal fallback severity"
+# The drain's dismissed-list producer moved from review-heal §U4's pseudocode into the drain driver
+# (automate-speed/12): its validate step copies severity only when the report states one, and its report
+# check requires a severity on every fallback-review finding (a CODE_REVIEW_RESULT issue always has one).
+RHD="$REPO/loomwright/scripts/review-heal-next-step.sh"
+[ "$(grep -cF '+ (if .severity then {severity: .severity} else {} end)]' "$RHD")" -ge 2 ] && ok "B: review-heal driver validate step carries severity only when stated" || no "B: review-heal main pass severity"
+grep -qF 'if $m == "fallback" and .verdict != "rejected" then (.severity | IN("BLOCKING","HIGH","MEDIUM","LOW"))' "$RHD" && ok "B: review-heal driver requires severity on every Earned Fallback finding" || no "B: review-heal fallback severity"
 grep -qF -- '- **<finding>** — <reason> (<source>)' "$REPO/loomwright/skills/review-heal/SKILL.md" && ok "B: marker-comment bullet format unchanged" || no "B: marker-comment bullet format changed"
 # §1.5 rows, §3 + AUTOMATE_RUN ## Current line
 for sc in dismissed-drafts dismissed-decide dismissed-pending; do
