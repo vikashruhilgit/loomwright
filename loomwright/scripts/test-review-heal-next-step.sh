@@ -276,7 +276,7 @@ fi
 a_refusal() {
   local d="$1" want="$2" lbl="$3" s1 s2
   s1="$(snapshot)"; drv "$d" --start fallback; s2="$(snapshot)"
-  if [ "$RCV" = 2 ] && [ -z "$OUT" ] && printf '%s' "$ERR" | grep -q "^review-heal-next-step: $want — " && [ "$s1" = "$s2" ]; then
+  if [ "$RCV" = 2 ] && [ -z "$OUT" ] && grep -q "^review-heal-next-step: $want — " <<<"$ERR" && [ "$s1" = "$s2" ]; then
     ok "A: $lbl ⇒ exit 2 $want, nothing printed or written"; return 0
   fi
   no "A: $lbl ⇒ rc $RCV, stdout '${OUT:0:60}', stderr '${ERR:0:120}', files $( [ "$s1" = "$s2" ] && echo same || echo changed)"; return 1
@@ -313,7 +313,7 @@ leg_s() { # <driver> <instructions file> — 0 when clean
 }
 if leg_s "$DRIVER" "$EMITTED"; then ok "S: no instruction / driver line carries a merge command or --force; no new invariant surface"
 else no "S: $LEG_MSG"; fi
-if grep -h '"what":"fix worker"' "$EMITTED" | jq -r '.push[1]' | grep -qx 'git push origin HEAD:feature/widget-config'; then
+if grep -qx 'git push origin HEAD:feature/widget-config' < <(grep -h '"what":"fix worker"' "$EMITTED" | jq -r '.push[1]'); then
   ok "S: the fix worker's push is the regular explicit-refspec push"
 else no "S: the fix worker's push line is not git push origin HEAD:<head_ref>"; fi
 
@@ -324,9 +324,9 @@ echo "E/D: closed enums and the schema doc"
 ARMS="$(sed -n '/^rh_dispatch() {/,/^}/p' "$DRIVER" | sed -n 's/^    \([a-z-]*\)) rh_.*/\1/p')"
 bad="$(jq -r '.do' "$EMITTED" | grep -vxE 'spawn|done' | sort -u)"
 [ -z "$bad" ] && ok "E: every do is spawn|done" || no "E: unlisted do value(s): $bad"
-bad="$(jq -r 'select(.do == "spawn") | .what' "$EMITTED" | sort -u | while IFS= read -r w; do printf '%s\n' "$WHAT_ENUM" | grep -qxF "$w" || echo "$w"; done)"
+bad="$(jq -r 'select(.do == "spawn") | .what' "$EMITTED" | sort -u | while IFS= read -r w; do grep -qxF "$w" <<<"$WHAT_ENUM" || echo "$w"; done)"
 [ -z "$bad" ] && ok "E: every spawn.what is in the closed what enum" || no "E: unlisted what value(s): $bad"
-bad="$(jq -r '.step' "$EMITTED" | sort -u | while IFS= read -r s; do printf '%s\n' "$ARMS" | grep -qxF "$s" || echo "$s"; done)"
+bad="$(jq -r '.step' "$EMITTED" | sort -u | while IFS= read -r s; do grep -qxF "$s" <<<"$ARMS" || echo "$s"; done)"
 [ -z "$bad" ] && ok "E: every step is a driver case arm" || no "E: step(s) not a case arm: $bad"
 if [ -f "$SCHEMA_DOC" ]; then
   doc_what="$(sed -n '/<!-- what-enum:begin -->/,/<!-- what-enum:end -->/p' "$SCHEMA_DOC" | sed -n 's/^| `"\([^"]*\)"` |.*/\1/p')"
@@ -347,7 +347,7 @@ echo "R: report validation"
 r_refuse() { # <label> <json> [stderr pattern]
   local s1 s2
   s1="$(snapshot)"; drv "$DRIVER" --result "$2"; s2="$(snapshot)"
-  if [ "$RCV" = 2 ] && [ -z "$OUT" ] && [ "$s1" = "$s2" ] && { [ -z "${3:-}" ] || printf '%s' "$ERR" | grep -q -- "$3"; }; then
+  if [ "$RCV" = 2 ] && [ -z "$OUT" ] && [ "$s1" = "$s2" ] && { [ -z "${3:-}" ] || grep -q -- "$3" <<<"$ERR"; }; then
     ok "R: $1 ⇒ exit 2, nothing printed or written"
   else no "R: $1 ⇒ rc $RCV stdout '${OUT:0:60}' stderr '${ERR:0:100}' files $( [ "$s1" = "$s2" ] && echo same || echo changed)"; fi
 }
@@ -380,7 +380,7 @@ echo "W: resumable wait"
 setup_case "$FIX/converged-ready"
 { echo "CONTINUE sha=a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 remaining=600 pending=ci"; cat "$FIX/converged-ready/wait.lines"; } > "$C/seq/wait.lines"
 drv "$DRIVER" --start drain
-[ "$RCV" = 3 ] && [ -z "$OUT" ] && printf '%s' "$ERR" | grep -q CONTINUE && ok "W: CONTINUE ⇒ exit 3, nothing printed" || no "W: CONTINUE ⇒ rc $RCV stdout '${OUT:0:60}'"
+[ "$RCV" = 3 ] && [ -z "$OUT" ] && grep -q CONTINUE <<<"$ERR" && ok "W: CONTINUE ⇒ exit 3, nothing printed" || no "W: CONTINUE ⇒ rc $RCV stdout '${OUT:0:60}'"
 drv "$DRIVER"
 if [ "$RCV" = 0 ] && [ "$(printf '%s' "$OUT" | jq -r '.what')" = "validate findings" ] && grep -q '^wait .* --continue$' "$C/calls.log"; then
   ok "W: the next no-result call resumes the wait with --continue"
@@ -393,16 +393,16 @@ echo "B: other terminal branches"
 setup_case "$FIX/converged-ready"
 drv "$DRIVER" --start drain
 drv "$DRIVER" --result '{"findings":[{"id":"r1-1","verdict":"confirmed","finding":"load_config ignores the exit status of jq","auto_fixable":false}]}'
-if [ "$(printf '%s' "$OUT" | jq -r '.decision')" = ESCALATED ] && printf '%s' "$OUT" | jq -r '.review_heal_result' | grep -qx '  escalation_cause: findings' \
-   && printf '%s' "$OUT" | jq -r '.review_heal_result' | grep -qx '  remaining_issues: 1'; then
+if [ "$(printf '%s' "$OUT" | jq -r '.decision')" = ESCALATED ] && grep -qx '  escalation_cause: findings' < <(printf '%s' "$OUT" | jq -r '.review_heal_result') \
+   && grep -qx '  remaining_issues: 1' < <(printf '%s' "$OUT" | jq -r '.review_heal_result'); then
   ok "B: confirmed-not-auto-fixable ⇒ ESCALATED findings, remaining 1"
 else no "B: needs-human ⇒ $(printf '%s' "$OUT" | jq -c '{do, decision}' 2>/dev/null)"; fi
 setup_case "$FIX/fallback-no-review-lens"
 printf '%s\n' '{"verdict":"unresolved","selected":["R1"],"countable":["R1"],"advisory":[],"passed":[],"failing":[],"unresolved":["R1"],"checks_passed":null}' > "$C/seq/rules.lines"
 drv "$DRIVER" --start drain
 blk="$(printf '%s' "$OUT" | jq -r '.review_heal_result' 2>/dev/null)"
-if [ "$(printf '%s' "$OUT" | jq -r '.do')" = done ] && printf '%s' "$blk" | grep -qx '  rules_gate: unresolved' \
-   && ! printf '%s' "$blk" | grep -q 'termination_reason' && printf '%s' "$blk" | grep -qx '  escalation_cause: other'; then
+if [ "$(printf '%s' "$OUT" | jq -r '.do')" = done ] && grep -qx '  rules_gate: unresolved' <<<"$blk" \
+   && ! grep -q 'termination_reason' <<<"$blk" && grep -qx '  escalation_cause: other' <<<"$blk"; then
   ok "B: rules gate unresolved ⇒ ESCALATED other, termination_reason unset, no fallback"
 else no "B: rules unresolved ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision}' 2>/dev/null)"; fi
 setup_case "$FIX/converged-ready"
@@ -420,9 +420,9 @@ setup_case "$FIX/converged-ready"
 echo "ELAPSED sha=$SHA_A required=green review_producing=elapsed pending=claude-review" > "$C/seq/wait.lines"
 echo "escalation_cause: check_pending check=claude-review run_id=1002 attempt=1 sha=$SHA_A" > "$C/seq/escalation.lines"
 drv "$DRIVER" --start drain
-if [ "$(printf '%s' "$OUT" | jq -r '.message')" = check_wait_elapsed ] && b_block | grep -qx '  escalation_cause: check_pending' \
-   && b_block | grep -qx '  escalation_check: "claude-review"' && b_block | grep -qx '  escalation_run_id: "1002"' \
-   && b_block | grep -qx '  escalation_attempt: 1' && ! b_block | grep -q termination_reason \
+if [ "$(printf '%s' "$OUT" | jq -r '.message')" = check_wait_elapsed ] && grep -qx '  escalation_cause: check_pending' < <(b_block) \
+   && grep -qx '  escalation_check: "claude-review"' < <(b_block) && grep -qx '  escalation_run_id: "1002"' < <(b_block) \
+   && grep -qx '  escalation_attempt: 1' < <(b_block) && ! grep -q termination_reason < <(b_block) \
    && grep -qx "escalation escalation-cause $PR --sha $SHA_A" "$C/calls.log"; then
   ok "B: the scoped wait ELAPSED ⇒ ESCALATED with the classifier's cause, check, run id and attempt"
 else no "B: wait elapsed ⇒ $(printf '%s' "$OUT" | jq -c '{do, decision, message}' 2>/dev/null)"; fi
@@ -430,14 +430,14 @@ else no "B: wait elapsed ⇒ $(printf '%s' "$OUT" | jq -c '{do, decision, messag
 setup_case "$FIX/converged-ready"
 sed 's#@../_common/threads-empty.json#{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true},"nodes":[]}}}}}#' "$C/gh.table" > "$C/gh.t" && mv "$C/gh.t" "$C/gh.table"
 drv "$DRIVER" --start drain
-[ "$(printf '%s' "$OUT" | jq -r '.message')" = channel_unknown ] && b_block | grep -qx '  escalation_cause: other' \
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = channel_unknown ] && grep -qx '  escalation_cause: other' < <(b_block) \
   && ok "B: reviewThreads hasNextPage ⇒ UNKNOWN ⇒ ESCALATED" || no "B: truncated threads ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
 # the release re-fold refused ⇒ no push ⇒ ESCALATED other
 setup_case "$FIX/converged-ready"
 drv "$DRIVER" --start drain; drv "$DRIVER" --result "$GOOD"
 drv "$DRIVER" --result '{"pushed":false,"refold_refused":"CHANGELOG.md was hand-edited"}'
-[ "$(printf '%s' "$OUT" | jq -r '.message')" = release_refold_refused ] && b_block | grep -qx '  escalation_cause: other' \
-  && b_block | grep -qx '  fix_cycles: 0' && grep -q 'CHANGELOG.md was hand-edited' "$C/comments.log" \
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = release_refold_refused ] && grep -qx '  escalation_cause: other' < <(b_block) \
+  && grep -qx '  fix_cycles: 0' < <(b_block) && grep -q 'CHANGELOG.md was hand-edited' "$C/comments.log" \
   && ok "B: refold_refused ⇒ ESCALATED other, its reason posted, no fix cycle counted" || no "B: refold refused ⇒ $(printf '%s' "$OUT" | jq -c '{do, message}' 2>/dev/null)"
 # the sub-floor confirming pass red on the pushed sha ⇒ ESCALATED, the ledger still bumped
 setup_case "$FIX/sub-floor-converged-ready"
@@ -445,8 +445,8 @@ setup_case "$FIX/sub-floor-converged-ready"
 echo "escalation_cause: check_red check=ci run_id=1003 attempt=1 sha=$SHA_B" > "$C/seq/escalation.lines"
 drv "$DRIVER" --start drain; drv "$DRIVER" --result-file "$FIX/sub-floor-converged-ready/report-1.json"
 drv "$DRIVER" --result-file "$FIX/sub-floor-converged-ready/report-2.json"
-if [ "$(printf '%s' "$OUT" | jq -r '.message')" = confirming_pass_failed ] && b_block | grep -qx '  escalation_cause: check_red' \
-   && b_block | grep -qx '  rounds: 1' && ! b_block | grep -q 'termination_reason' && ! b_block | grep -q sub_floor_fixed \
+if [ "$(printf '%s' "$OUT" | jq -r '.message')" = confirming_pass_failed ] && grep -qx '  escalation_cause: check_red' < <(b_block) \
+   && grep -qx '  rounds: 1' < <(b_block) && ! grep -q 'termination_reason' < <(b_block) && ! grep -q sub_floor_fixed < <(b_block) \
    && grep -q "^wait $PR --sha $SHA_B .*--required-only --names" "$C/calls.log"; then
   ok "B: a red confirming pass ⇒ ESCALATED check_red, never READY, the ledger bumped"
 else no "B: red confirming pass ⇒ $(printf '%s' "$OUT" | jq -c '{do, decision, message}' 2>/dev/null)"; fi
@@ -467,7 +467,7 @@ gh_row() {
 # b_unknown <label> — the last call ended ESCALATED channel_unknown (cause other) with no spawn printed
 b_unknown() {
   [ "$(printf '%s' "$OUT" | jq -r '.do')" = done ] && [ "$(printf '%s' "$OUT" | jq -r '.message')" = channel_unknown ] \
-    && b_block | grep -qx '  escalation_cause: other' && ok "B: $1 ⇒ UNKNOWN ⇒ ESCALATED before any finding" \
+    && grep -qx '  escalation_cause: other' < <(b_block) && ok "B: $1 ⇒ UNKNOWN ⇒ ESCALATED before any finding" \
     || no "B: $1 ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
 }
 # an errored GraphQL thread read, and an errored annotation fetch on a scoped (claude-review / required) check
@@ -477,7 +477,7 @@ drv "$DRIVER" --start drain; b_unknown "an errored annotation fetch on a scoped 
 # required-check metadata unavailable: ESCALATED (cause other) by default; --required-checks all-non-neutral proceeds
 setup_case "$FIX/converged-ready"; gh_row 'api --method GET repos/acme/widgets/branches/main/protection/required_status_checks' 1
 drv "$DRIVER" --start drain
-[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && b_block | grep -qx '  escalation_cause: other' \
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && grep -qx '  escalation_cause: other' < <(b_block) \
   && ! grep -q '^wait ' "$C/calls.log" && ok "B: unreadable required-check metadata ⇒ ESCALATED other before the wait (fail closed)" \
   || no "B: required metadata unavailable ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
 setup_case "$FIX/converged-ready"; gh_row 'api --method GET repos/acme/widgets/branches/main/protection/required_status_checks' 1
@@ -488,7 +488,7 @@ drv "$DRIVER" --start drain --required-checks all-non-neutral
 setup_case "$FIX/converged-ready"
 echo "SETTLED sha=$SHA_A required=unknown review_producing=settled" > "$C/seq/wait.lines"
 drv "$DRIVER" --start drain
-[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && b_block | grep -qx '  escalation_cause: other' \
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = required_checks_unavailable ] && grep -qx '  escalation_cause: other' < <(b_block) \
   && ok "B: SETTLED with required=unknown ⇒ ESCALATED, never READY" || no "B: required=unknown ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
 setup_case "$FIX/converged-ready"
 echo "SETTLED sha=$SHA_A required=unknown review_producing=settled" > "$C/seq/wait.lines"
@@ -511,8 +511,8 @@ setup_case "$FIX/fallback-no-review-lens"
   printf '%s\n' '{"verdict":"unstamped","selected":["R7"],"countable":["R7"],"advisory":[],"passed":[],"failing":[],"unresolved":[],"checks_passed":null}'; } > "$C/seq/rules.lines"
 drv "$DRIVER" --start drain
 drv "$DRIVER" --result "{\"pushed\":true,\"pushed_sha\":\"$SHA_B\",\"self_review\":\"self_review: ordering, run-once guards — clean\"}"
-[ "$(printf '%s' "$OUT" | jq -r '.message')" = rules_fail_then_unstamped ] && b_block | grep -qx '  rules_gate: unstamped' \
-  && ! b_block | grep -q termination_reason && grep -q 'rules_fail_then_unstamped: R7 failed earlier, now unstamped' "$C/comments.log" \
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = rules_fail_then_unstamped ] && grep -qx '  rules_gate: unstamped' < <(b_block) \
+  && ! grep -q termination_reason < <(b_block) && grep -q 'rules_fail_then_unstamped: R7 failed earlier, now unstamped' "$C/comments.log" \
   && ok "B: a remembered countable fail turning unstamped ⇒ ESCALATED rules_fail_then_unstamped, termination_reason unset" \
   || no "B: fail-then-unstamped ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision, message}' 2>/dev/null)"
 
@@ -793,7 +793,7 @@ npins="$(printf '%s\n' "$PROSE_PINS" | grep -c .)"
 unpinned="$(awk -F' [|] ' '/^[|] RH-[0-9]/ { id = $1; sub(/^[|] /, "", id); t = $9; sub(/ [|]$/, "", t)
   if (t == "test-review-heal-next-step.sh" && ($7 == "prose" || $7 == "global")) print id }' \
   "$PLUGIN/docs/loop-inventory/review-heal.md" | while IFS= read -r id; do
-    printf '%s\n' "$PROSE_PINS" | grep -q "^$id	" || printf '%s ' "$id"; done)"
+    grep -q "^$id	" <<<"$PROSE_PINS" || printf '%s ' "$id"; done)"
 nrows="$(awk -F' [|] ' '/^[|] RH-[0-9]/ { t = $9; sub(/ [|]$/, "", t); if (t == "test-review-heal-next-step.sh" && ($7 == "prose" || $7 == "global")) n++ } END { print n + 0 }' "$PLUGIN/docs/loop-inventory/review-heal.md")"
 [ "$nrows" -gt 0 ] && [ -z "$unpinned" ] && ok "P: every one of the $nrows prose rows that names this test has a pin" \
   || no "P: prose rows naming this test without a pin ($nrows rows): $unpinned"
@@ -839,7 +839,7 @@ if [ "${RH_SKIP_MUTANTS:-0}" != 1 ] && [ -z "${RH_CASES:-}" ]; then
   echo "M: mutation controls"
   # MF (AC8) — the fallback spawn line deleted (the whole physical line replaced by `:`)
   anchor='      rh_emit spawn fallback "$('
-  if grep -cF -- "$anchor" "$DRIVER" | grep -qx 1; then
+  if [ "$(grep -cF -- "$anchor" "$DRIVER")" = 1 ]; then
     lineno="$(grep -nF -- "$anchor" "$DRIVER" | cut -d: -f1)"
     d="$WORK/mut-F"; mkdir -p "$d"; for e in "$HERE"/*; do [ "$e" = "$DRIVER" ] || ln -s "$e" "$d/$(basename "$e")"; done
     awk -v n="$lineno" 'NR == n {print "      :"; next} {print}' "$DRIVER" > "$d/review-heal-next-step.sh"
