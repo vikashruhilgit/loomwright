@@ -71,3 +71,9 @@ loomwright/commands/automate.md
 loomwright/docs/loop-inventory/automate-loop.md
 docs/evidence/automate-speed-baseline.md
 changelog.d/as08-next-step-pick-and-resume.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-18T10:57:42Z
+- **Brief:** .supervisor/jobs/done/2026-10-17-next-step-pick-and-resume.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/599
