@@ -56,6 +56,14 @@ EOF2
   cat >"$d/loomwright/skills/async-orchestration/finalize.md" <<'EOF2'
 FINALIZE emit site: SUPERVISOR_RESULT.status: failed with error release_refold_refused.
 EOF2
+  # automate-speed/15 split self-heal-advisory: the completion tail and the base-mismatch cleanup carry
+  # status / heal_decision literals, so the ENUMS scope covers both split files
+  cat >"$d/loomwright/skills/self-heal-advisory/completion-tail.md" <<'EOF2'
+Completion tail: status: pass, status: skipped, status: unverified; heal_decision: PASS.
+EOF2
+  cat >"$d/loomwright/skills/self-heal-advisory/escalation.md" <<'EOF2'
+Base-mismatch cleanup: status: failed, heal_decision: null; fix-task crash: status: checkpoint.
+EOF2
   # hooks.json mentioning every manifest field for every matcher (pin guard satisfied)
   python3 - "$d/loomwright/hooks/hooks.json" <<'PY'
 import json,sys
@@ -265,6 +273,13 @@ check "out-of-enum status literal in the --legacy file fails" 1 bash "$GUARD" --
 make_fixture "$TMP/bad-enum-finalize"
 printf '\nOn a refused re-fold: status: refused and exit.\n' >> "$TMP/bad-enum-finalize/loomwright/skills/async-orchestration/finalize.md"
 check "out-of-enum status literal in async-orchestration finalize.md fails" 1 bash "$GUARD" --root "$TMP/bad-enum-finalize"
+# automate-speed/15: the ENUMS coverage moved with the completion-tail and escalation text into the self-heal-advisory split files
+make_fixture "$TMP/bad-enum-tail"
+printf '\nOn a stop: status: paused and exit.\n' >> "$TMP/bad-enum-tail/loomwright/skills/self-heal-advisory/completion-tail.md"
+check "out-of-enum status literal in self-heal-advisory completion-tail.md fails" 1 bash "$GUARD" --root "$TMP/bad-enum-tail"
+make_fixture "$TMP/bad-enum-escalation"
+printf '\nOn a mismatch: heal_decision: FAILED and exit.\n' >> "$TMP/bad-enum-escalation/loomwright/skills/self-heal-advisory/escalation.md"
+check "out-of-enum heal_decision literal in self-heal-advisory escalation.md fails" 1 bash "$GUARD" --root "$TMP/bad-enum-escalation"
 
 # 4. Pin-drift: hooks.json drops a field the manifest still pins → fails
 make_fixture "$TMP/pin-drift"

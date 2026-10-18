@@ -665,3 +665,69 @@ FINALIZE exits without marking the task completed or moving the job file (v11.0.
 ### PR body evidence and not-verified sections
 
 The `## Evidence` section (#511) only points at files: a brief criterion's evidence lives in the committed file, which the review reads in the diff and a fix task can heal, never in the PR body, which FINALIZE writes once before Phase 4.5 and nothing edits afterwards (Plan Reviewer Criterion 20). A file a Phase 4.5 fix adds later is in the diff but not listed. When every worker's `not_verified` list is empty, the PR body is byte-identical to the template with the `## Not verified` block removed.
+
+## Self-heal advisory — why the protocol reads as it does
+
+### Self-heal advisory split
+
+The Phase 4.5 protocol used to be one file Read whole at phase entry: the multi-voter section loaded on every run although `--multi-voter-heal` is default-off, and the completion tail, base-mismatch cleanup and first-iteration enrichments sat in the read set of every iteration. The skill is now split by when each part runs (automate-speed/15): `SKILL.md` keeps what every review-and-fix iteration executes; `on-entry.md` holds the on-entry actions and the first-iteration pre-review enrichments; `escalation.md` the base-mismatch cleanup and fix-task crash path; `multi-voter.md` the opt-in vote, Read only under `MULTI_VOTER_HEAL`; `completion-tail.md` everything after the loop. Step numbering is unchanged, so a citation such as "Phase 4.5 step 5.5" still resolves (through the index in `SKILL.md`). The Phase 4.5 procedure itself was moved verbatim out of the agent prompt earlier, which kept only the gate surface (the phase stanza, the completion-tail guard, the Output block and the SUPERVISOR_RESULT definition).
+
+### Retired on-entry steps 1b and 1d
+
+Steps 1b (graph brain consult) and 1d (area-knowledge bridge advisory) were removed when the graphify tier was retired. The surviving step letters were kept so cross-references to steps 1c and 1e stay valid.
+
+### House rules pasted verbatim
+
+The HOUSE-RULES ADVISORY line is pasted verbatim because one run's summary of the reader output dropped 12 of 18 rules (#431): a paraphrase or subset silently drops rules the reviewer is then never asked about. The per-rule verdicts line (#431/#432) exists so the owner sees every rule the diff breaks, including ones a requirement told it to break, which brief conformance counts as addressed.
+
+### Brief conformance and the PR body
+
+A criterion whose only evidence is the PR body is `cannot_determine`, never a finding: the body is not in the diff, FINALIZE writes it before Phase 4.5 runs, and no fix task can edit it (#511). The cap on criteria plus rubric bullets is stated once; with 20 criteria and 8 rubric bullets, 3 rubric bullets are omitted and none of the criteria, because criteria come first.
+
+### Contract-conformance store-health probe
+
+"Was this checkable?" has two independent answers, so the probe reads two scopes and unions them. Measured on a store with one verified and one dropped contract: the whole store reads `degraded` (emitted 1, dropped 1, stored 2); `--subsystem <dropped>` reads `dark` (emitted 0, dropped 1, stored 1 — stored, withheld); `--subsystem <verified>` reads `healthy`; `--subsystem <unstored>` reads `empty` (nothing to withhold). So a per-id read says `dark` exactly when that id had a stored contract the gate withheld, which is why "worst status across the loop" is safe once scoped to touched ids. The global scope catches a store dark for ids this PR does not touch; the per-id scope catches the commoner case, a merely degraded store whose one dropped subsystem is the one this PR touches.
+
+Rejected, recorded so it is not re-derived: sampling the store status inside the loop and keeping the last value. That makes the verdict depend on the order of the touched ids — a dark id followed by an unstored id ends on `empty` and records `skipped`.
+
+The withheld test is evaluated first and is not nested under "not checked". A previous revision nested it, so a run that verified any touched subsystem stopped asking whether another was withheld: a PR touching A (verified, clean) and B (withheld in a degraded store) reported `pass`. Recording a withheld contract as `pass` or `skipped` is what hid a two-week, total capability loss (all contracts dark from 2026-08-12, found 2026-09-01) behind a green field. Withheld ids go in the decision line rather than the violation count, because a check that did not happen is not a violation and inflating the count would make a dark store look like a wave of new violations.
+
+### Ground-truth safety valve correction
+
+An earlier comment equated `NON_INTERACTIVE == true` with any `/autonomous`-originated run (red-team-hardening item 05). That premise was false: `/autonomous` forwards `--non-interactive` to the inlined `/supervisor` only when its outer call had `--non-interactive-fallback`, so a default interactive `/autonomous` run executes `cmd:` bullets exactly as a plain interactive `/supervisor` does. The real guard on those paths is the content-keyed stamp gate inside `run-ground-truth.sh`. The runner needs the pinned repo-root working directory because it lives in the plugin's install directory — outside any git repo on a marketplace install — and derives the project root from the caller.
+
+### Rules-check replay and the PR body
+
+Executable-rule-candidates/01 asked for the rules-check line in the PR body. The PR body is written at Phase 4 FINALIZE, before Phase 4.5 runs, so the line is surfaced in the Phase 4.5 report only and no PR-body writer was added — a recorded deviation from that brief.
+
+### Re-review guarantee and sweep budget
+
+Every fix iteration's edits, including the step-1a fix-the-class sweep, are re-reviewed at the top of the next iteration; the only un-re-reviewed case is a fix on the final allowed iteration, which escalates and says so in the posted comment, so a sweep never ships as a silent clean PASS. Budget tension, accepted: a large class sweep enlarges the next re-review's diff and can spend heal iterations faster — bounded by step 1a's "within the changed surface" guardrail. An auditable swept-instances field on FIX_RESULT was considered and deferred as premature schema growth.
+
+### Fix prompt findings paste
+
+The findings list in the fix-task prompt is a deliberate paste (see `docs/POINTER_AUDIT.md`): `CODE_REVIEW_RESULT` exists only in the reviewer Task's transcript, never on disk; the list is bounded by construction (category `new`, at or above the fix floor); and the fix worker needs each finding's full location, description and suggestion every time — they are the work items. Writing them to a scratch file only to point at it would add a write path to a review seam that has none.
+
+### Rubric grader model resolution
+
+The rubric grader is invoked with no per-call model override so its Haiku frontmatter model applies. A per-call override would be honoured — it is first in Claude Code's resolution order and is what `--cheap` relies on — so passing one would override Haiku. Its plan permission mode is kept for user-level agent-directory compatibility but is ignored for plugin-distributed agents, so it is not relied on as a runtime gate.
+
+### Base-mismatch cleanup residual
+
+The base-mismatch exit returns without the standard completion tail and never emits `session_end`, so `build-state.sh` has no terminal-status evidence and `state.md` keeps `running`. `reconcile-resume-state.sh` only resolves the branch from `## Session` and diffs the `## Subtasks` Status column against commit-message evidence; it never reads `.supervisor/jobs/failed/` or the Decisions Log, so neither the moved job file's `## Outcome` block nor the `base_mismatch_cleanup` decision is consulted. This is a known, accepted gap (a residual extending Risk R4), not a bug to patch with a state write on this path.
+
+### Multi-voter cost
+
+Multi-voter verification costs about two review spawns per heal iteration plus the bounded refute spawn. It stays opt-in and default-off, and graduates to default only if the `docs/SPIKES/FABLE_PARITY_EVAL.md` arm-3 runs show it earns its cost (fewer post-merge defects or review rounds without more than 1.5× token cost).
+
+### Dismissed marker round anchor
+
+Phase 4.5 is not round-numbered the way the drain is, and the loop's `heal_iterations += 1` sits at the bottom of the loop body, so the exit path changes what the post-loop value means (PR #264 review). On the break exits (`PASS`, `NEEDS_HUMAN`, and the two rules-gate escalations) the count is pre-increment, so the round is `heal_iterations + 1`; on loop exhaustion the final increment already ran, so adding one would overcount (posting `round=4` after three iterations). `heal_decision == ESCALATED` alone cannot tell the two escalation cases apart, which is why the rule keys on `heal_iterations == max_heal_iterations`, the same test as the loop-exit guard.
+
+### Requirement close-out deferral
+
+Before automate-followups/37 the completion tail stamped the requirement `## Status: done` / `done_with_escalation` itself while the PR was still open (pa/05 Validation 4, finding F7). `trail-pr`'s evidence gate kept that early stamp off `main`, but any other push path (a whole-lane `meta-sync.sh push`) carried a done claim for never-merged work, and any clone holding the stamp read the item as done. `reconcile-status --apply` promotes a `brief-shipped` requirement on the same merged-PR evidence it requires of any other not-done one (`skills/automate-loop/SKILL.md` §1.5); without that evidence it lists the file as an `info` row. The trade is deliberate: a missed done stamp is recoverable, a false one is not.
+
+### Terminal status reprojection
+
+The terminal-status flip used to be a prompt instruction in the completion tail. It now fires mechanically (PR #116 review, Finding 1): `reproject-state-on-terminal.sh` re-runs the projector on the very Bash call that appends `session_end`. A hypothetical non-Bash `session_end` writer would wait for that session's next Bash call; the fix for that shape is another hook site, not a written instruction.

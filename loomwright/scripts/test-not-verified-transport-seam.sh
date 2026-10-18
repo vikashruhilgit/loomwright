@@ -68,7 +68,7 @@ ASYNCORCH="$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
 # The FINALIZE PR Body Template and its explainers moved to the split file (automate-speed/15);
 # the Sequential/Single-Agent cross-reference stays in SKILL.md's Subagent Spawn Contracts.
 ASYNCFIN="$PLUGIN_ROOT/skills/async-orchestration/finalize.md"
-SELFHEAL="$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md"
+SELFHEAL="$PLUGIN_ROOT/skills/self-heal-advisory/completion-tail.md"   # automate-speed/15: completion tail split out
 # docs/RESULT_SCHEMAS.md is an index; the EXECUTE_RESULT section lives in its split file.
 SCHEMAS="$PLUGIN_ROOT/docs/result-schemas/execute-result.md"
 

@@ -1038,7 +1038,7 @@ echo "== 20. the Phase 4.5 status decision tests WITHHELD before it tests checke
 # invisible dropped contract (PR #163 round-4 review). This is the "prompt is program" convention:
 # a static invariant over a prompt surface, which is weaker than a behavioural test and much
 # stronger than nothing.
-SK="$(cd "$HERE/../.." && pwd)/loomwright/skills/self-heal-advisory/SKILL.md"
+SK="$(cd "$HERE/../.." && pwd)/loomwright/skills/self-heal-advisory/completion-tail.md"   # automate-speed/15 split
 if [ ! -r "$SK" ]; then
   no "(20) self-heal-advisory/SKILL.md not readable at $SK — this section would assert nothing"
 else
