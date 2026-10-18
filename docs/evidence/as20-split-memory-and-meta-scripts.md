@@ -90,6 +90,7 @@ Measured by inlining each runner's parts (`tsm_part` / `tms_part` lines replaced
 |---|---|---|
 | `test-setup-memory.sh` | `MEMB` block: the `_sm_bundle` output written once to `$FIXTURE_ROOT/bundle/setup-memory.sh`, fail-closed if it cannot be built | AC5 (a): the single-file text that every text read uses |
 | `test-setup-memory.sh` | `TSM_D`, `tsm_part` and five `tsm_part N; . "$TSM_D/N.sh"` lines | AC5 (c): parts loader, by name |
+| `test-setup-memory.sh` | header comment: the mkdir / `ln -s` / `chmod 000` audit recipe greps `"$0"` AND `test-setup-memory.d/*.sh`; the "allowlist config read/write" and "EVERY LEDGER ASSERTION" notes name the parts instead of "below" / "this file" | Phase 4.5 iteration 1 review finding: header audit recipe re-pointed to the test parts; comment-only |
 | `test-setup-memory.d/*` | 34 lines whose only change is `"$MEM"` → `"$MEMB"` (sed/awk/grep sources and their `cmp -s` gates, incl. the MA_SUT helpers, the `do_consent` awk, bm-f/bm-l, the fn/vb/am/cs mutants) | AC5 (a). Checked mechanically: with `"$MEMB"` mapped back to `"$MEM"` the 34 changed lines equal the base lines exactly |
 | `test-meta-sync.sh` | `SUTB` block (`_ms_bundle` output written once, fail-closed), `TMS_D`, `tms_part` + four part lines | AC5 (a), (c) |
 | `test-meta-sync.d/01-sync-core.sh` | leg 19's forbidden-forms grep reads `"$SUTB"` | AC5 (a) |

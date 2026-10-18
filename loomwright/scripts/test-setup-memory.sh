@@ -21,7 +21,8 @@
 # its `.supervisor/config.json`, or the developer's `$HOME/.claude/`; group (k) asserts that
 # mechanically by checksumming this repo's own `.gitignore` before and after the whole run.
 # (The plugin repo's `.supervisor/config.json` is engine-owned at runtime — nothing here may
-# write it, which is why every allowlist config read/write below happens in a fixture.)
+# write it, which is why every allowlist config read/write in the test-setup-memory.d/ parts
+# happens in a fixture.)
 #
 # Every fixture repo pins `core.excludesFile=/dev/null` so a developer's global gitignore can
 # never leak into a `git check-ignore` assertion.
@@ -35,8 +36,10 @@
 # One MECHANICALLY AUDITABLE class, stated exactly so this note cannot rot into a claim the code
 # does not back: the setup calls that FAIL on a pre-existing path or a refused mode change —
 # bare `mkdir`, bare `ln -s`, and `chmod 000`. To audit, run
-# `grep -n 'mkdir "\|ln -s \|chmod 000' "$0"` and confirm every CALL SITE it lists is followed by
-# a `|| setup_fail …` — on the same line, or on the next one where the call is line-continued.
+# `grep -n 'mkdir "\|ln -s \|chmod 000' "$0" "$(dirname "$0")"/test-setup-memory.d/*.sh` and
+# confirm every CALL SITE it lists is followed by a `|| setup_fail …` — on the same line, or on
+# the next one where the call is line-continued. The legs live in the test-setup-memory.d/ parts
+# (automate-speed/20), so a grep of "$0" alone finds only this comment.
 # It resolves to exactly four call sites (f5, f6, f7, l9). Its other hits are PROSE, not calls:
 # this comment's own self-match, the (f7)/(l9) group headers explaining chmod-000, and assertion
 # and setup_fail message strings that mention it. Read the hits, do not just count the lines.
@@ -148,7 +151,7 @@
 #        branch-mode disclosure names the learning stores and the consent ask; mutation control: a
 #        writer aimed at the repo root instead of $HOME turns the containment assertion red
 #
-# EVERY LEDGER ASSERTION IN THIS FILE USES jq, NEVER grep. A findings ledger mixes compact
+# EVERY LEDGER ASSERTION IN THIS SUITE (this file and its test-setup-memory.d/ parts) USES jq, NEVER grep. A findings ledger mixes compact
 # (`"repo":"x"`) and spaced (`"repo": "x"`) JSON — this plugin's own ledger carries one spaced
 # record among 88 — so `grep -c '"repo":"owner/name"'` silently under-counts AND a foreign record
 # appended in the spaced form evades a compact grep entirely. The ledger_count / ledger_has_repo
