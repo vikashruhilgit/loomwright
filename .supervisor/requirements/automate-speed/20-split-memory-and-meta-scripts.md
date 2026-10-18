@@ -45,3 +45,9 @@ loomwright/scripts/test-meta-sync.sh
 loomwright/scripts/setup-memory.d/
 loomwright/scripts/meta-sync.d/
 changelog.d/as20-split-memory-and-meta-scripts.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-18T10:57:16Z
+- **Brief:** .supervisor/jobs/done/2026-10-17-split-memory-and-meta-scripts.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/598
