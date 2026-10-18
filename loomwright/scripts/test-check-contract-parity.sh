@@ -30,6 +30,7 @@ make_fixture() { # $1 = fixture dir; writes a minimal valid tree
            "$d/loomwright/skills/self-heal-advisory" \
            "$d/loomwright/skills/preflight-sync" \
            "$d/loomwright/skills/supervisor-config" \
+           "$d/loomwright/skills/async-orchestration" \
            "$d/loomwright/docs"
   # the gate's ENUMS scope includes this skill (v14.23.0 supervisor diet) and
   # errs loudly when a scoped file is missing — fixtures must provide it
@@ -49,6 +50,11 @@ EOF2
   # --legacy file; the ENUMS scope covers it, so fixtures must provide it
   cat >"$d/loomwright/docs/supervisor-legacy-phases.md" <<'EOF2'
 Legacy emit sites: status: checkpoint on revise-scope, status: failed on a fail-closed park.
+EOF2
+  # automate-speed/15 moved the FINALIZE procedure (release re-fold abort: status: failed) into
+  # this split file; the ENUMS scope covers it, so fixtures must provide it
+  cat >"$d/loomwright/skills/async-orchestration/finalize.md" <<'EOF2'
+FINALIZE emit site: SUPERVISOR_RESULT.status: failed with error release_refold_refused.
 EOF2
   # hooks.json mentioning every manifest field for every matcher (pin guard satisfied)
   python3 - "$d/loomwright/hooks/hooks.json" <<'PY'
@@ -255,6 +261,10 @@ check "out-of-enum status literal fails" 1 bash "$GUARD" --root "$TMP/bad-enum"
 make_fixture "$TMP/bad-enum-legacy"
 printf '\nOn a stop: park it (status: parked) and exit.\n' >> "$TMP/bad-enum-legacy/loomwright/docs/supervisor-legacy-phases.md"
 check "out-of-enum status literal in the --legacy file fails" 1 bash "$GUARD" --root "$TMP/bad-enum-legacy"
+# automate-speed/15: the ENUMS coverage moved with the FINALIZE text into async-orchestration/finalize.md
+make_fixture "$TMP/bad-enum-finalize"
+printf '\nOn a refused re-fold: status: refused and exit.\n' >> "$TMP/bad-enum-finalize/loomwright/skills/async-orchestration/finalize.md"
+check "out-of-enum status literal in async-orchestration finalize.md fails" 1 bash "$GUARD" --root "$TMP/bad-enum-finalize"
 
 # 4. Pin-drift: hooks.json drops a field the manifest still pins → fails
 make_fixture "$TMP/pin-drift"

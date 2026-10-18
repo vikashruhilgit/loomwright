@@ -66,8 +66,9 @@ PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"
 SCRIPT="$HERE/check-children-settled.sh"
 EM="$PLUGIN_ROOT/agents/execute-manager.md"
 SUP="$PLUGIN_ROOT/agents/supervisor.md"
+ASYNC="$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
 # The Phase 4 FINALIZE procedure (Point 5) moved to the async-orchestration split file (automate-speed/15).
-ASYNC="$PLUGIN_ROOT/skills/async-orchestration/finalize.md"
+ASYNC_FIN="$PLUGIN_ROOT/skills/async-orchestration/finalize.md"
 CMD="$PLUGIN_ROOT/commands/supervisor.md"
 # docs/RESULT_SCHEMAS.md is an index; the agent_lifecycle section (which documents the
 # children-settled join) lives in its split file.
@@ -273,7 +274,7 @@ grep -q "children_unsettled" "$SUP" && grep -q -- "--skip-children-check" "$SUP"
   && ok "supervisor.md documents children_unsettled + --skip-children-check" \
   || no "supervisor.md missing children_unsettled or --skip-children-check"
 
-grep -q "check-children-settled.sh" "$ASYNC" && grep -q "children_unsettled" "$ASYNC" \
+grep -q "check-children-settled.sh" "$ASYNC_FIN" && grep -q "children_unsettled" "$ASYNC_FIN" \
   && ok "async-orchestration SKILL.md Phase 4 checklist cites the script + children_unsettled" \
   || no "async-orchestration SKILL.md missing the script cite or children_unsettled"
 
@@ -295,7 +296,7 @@ grep -q "rejected_stops" "$EM" \
   && ok "execute-manager.md's unsettled branch names rejected_stops (a validator-rejected stop is a documented cause of unsettled)" \
   || no "execute-manager.md does not mention rejected_stops"
 
-grep -q "rejected_stop_ids" "$ASYNC" \
+grep -q "rejected_stop_ids" "$ASYNC_FIN" \
   && ok "async-orchestration SKILL.md Point 5 names rejected_stop_ids" \
   || no "async-orchestration SKILL.md does not mention rejected_stop_ids"
 
