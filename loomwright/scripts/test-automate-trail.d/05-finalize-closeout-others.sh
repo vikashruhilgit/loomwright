@@ -686,34 +686,40 @@ for v in inline ownline real dwe; do
 done
 
 # (NT6) SKILL / command / --help wiring (Scope 2 + 3 text).
-# §6 steps 4–6 moved VERBATIM from per-item-loop.md to legacy-tail.md (automate-speed/06: the default
-# tail is scripts/automate-next-step.sh, the prose is the --legacy path), so the step-5/6 legs read the
-# `## Legacy tail — ` section of the assembled skill (index + split files) — never §6, whose
-# per-item-loop.md stub line `6. **CHECK OFF + PROGRESS — run next-step…` a first-match read would hit.
-nt_legacy() { awk '/^## Legacy tail — /{s=1;next} s&&/^## /{exit} s' "$1"; }
-nt_s6="$(nt_legacy "$SKILL")"
-nt_st5="$(grep -m1 -F '5. **SYNC**' <<<"$nt_s6")"
-nt_t1='`automate-helpers.sh closeout <runfile> <item> <pr_url> --no-trail --session-id <this loop'"'"'s session id>`'
-for t in "$nt_t1" 'closeout-classify --run <run_id> --item <item> --pr <pr_url> --record <runfile>' '**Close-out leftover gate**' 'BOTH branch modes' 'closeout_leftover' "closeout's step 2 IS \`brief-repair\`"; do
-  grep -qF -- "$t" <<<"$nt_st5" && ok "(NT6) legacy-tail.md §6 step 5 SYNC names $t" || no "(NT6) §6 step 5 SYNC missing $t"
-done
-grep -qF 'git checkout main && git pull` so the next item' <<<"$nt_st5" && no "(NT6) SYNC still runs its own git pull" || ok "(NT6) SYNC no longer runs its own git checkout main && git pull"
-grep -qF 'does NOT check it off twice' <<<"$(grep -m1 -F '6. **CHECK OFF' <<<"$nt_s6")" && ok "(NT6) legacy-tail.md §6 step 6: an auto-merged item is already - [x], not checked off twice" || no "(NT6) step 6 double check-off not addressed"
-# Mutation control: the assembled skill with `--no-trail` dropped from the moved step-5 line turns the
-# step-5 leg red (gated: non-empty, differs, no line lost) — proves the leg reads the moved text.
-nt_mut="$TOP/nt6-legacy-mutant.md"
-awk '/^5\. \*\*SYNC\*\*/ { sub(/ --no-trail --session-id/, " --session-id") } 1' "$SKILL" > "$nt_mut"
-if [ -s "$nt_mut" ] && ! cmp -s "$SKILL" "$nt_mut" && [ "$(wc -l < "$nt_mut")" = "$(wc -l < "$SKILL")" ]; then
-  grep -qF -- "$nt_t1" <<<"$(grep -m1 -F '5. **SYNC**' <<<"$(nt_legacy "$nt_mut")")" \
-    && no "(NT6) mutant (step 5 without --no-trail) still passes the step-5 leg" || ok "(NT6) mutant (step 5 without --no-trail) turns the step-5 leg red"
-else
-  no "(NT6) step-5 mutant could not be built (empty, identical or a line lost)"
-fi
-# The rule is now ALSO enforced by the driver's `sync` / `checkoff` case arms (the default tail):
-# sync runs `closeout … --no-trail` and classifies it with closeout-classify; checkoff calls
-# queue-checkoff only for a still-unchecked row (no double check-off after closeout).
+# §6 steps 5–6 (SYNC, CHECK OFF) are run by scripts/automate-next-step.sh's `sync` / `leftover` /
+# `checkoff` case arms: automate-speed/08 retired the --legacy prose (legacy-tail.md) the step-5/6 legs
+# used to read, so they read the driver — the function each arm calls (never a first-match read of the
+# assembled skill, whose per-item-loop.md stub lines only point at the driver).
 nt_drv="$HERE/automate-next-step.sh"
 nt_fn() { awk -v f="$2" '$0 ~ "^" f "\\(\\) \\{" { s = 1 } s { print } s && /^\}/ { exit }' "$1"; }
+nt_st5="$(nt_fn "$nt_drv" ns_sync)"
+nt_t1='closeout "$RF" "$ITEM" "$PR" --no-trail ${SID:+--session-id "$SID"}'
+for t in "$nt_t1" 'closeout-classify --run "$RUN_ID" --item "$ITEM" --pr "$PR" --record "$RF"' 'st_set leftovers "$cls"; NEXT=leftover'; do
+  grep -qF -- "$t" <<<"$nt_st5" && ok "(NT6) driver ns_sync (step 5 SYNC) names $t" || no "(NT6) driver ns_sync (step 5 SYNC) missing $t"
+done
+# BOTH branch modes: SYNC's --no-trail is unconditional (no branch-mode read in the sync step), and
+# closeout's step 2 IS brief-repair (SYNC runs no brief-repair of its own)
+grep -qE 'meta|branch' <<<"$nt_st5" && no "(NT6) driver ns_sync reads the branch mode (--no-trail must hold in BOTH branch modes)" || ok "(NT6) driver ns_sync passes --no-trail in BOTH branch modes (no branch-mode read)"
+grep -qF 'brief-repair' <<<"$nt_st5" && no "(NT6) driver ns_sync runs its own brief-repair (closeout's step 2 IS brief-repair)" || ok "(NT6) driver ns_sync leaves brief-repair to closeout's step 2"
+grep -qF -- 'current-set "$RF" --pause-reason closeout_leftover' <<<"$(nt_fn "$nt_drv" ns_leftover_park)" && ok "(NT6) driver leftover park writes pause_reason closeout_leftover" || no "(NT6) driver leftover park lacks closeout_leftover"
+grep -qE 'git (checkout|pull)' <<<"$nt_st5" && no "(NT6) SYNC still runs its own git checkout main && git pull" || ok "(NT6) SYNC no longer runs its own git checkout main && git pull"
+nt_ck_ok() {  # <driver> — ok iff checkoff calls queue-checkoff only for a still-unchecked row and writes ONE line
+  local b; b="$(nt_fn "$1" ns_checkoff)"
+  if grep -qE '^[[:space:]]+checkoff\) ns_checkoff ;;' "$1" && grep -qF -- 'grep -qxF -- "- [ ] $ITEM"; then' <<<"$b" \
+     && [ "$(grep -c 'queue-checkoff' <<<"$b")" = 1 ] && [ "$(grep -cF 'checked off $ITEM' <<<"$b")" = 1 ]; then printf ok; else printf bad; fi
+}
+[ "$(nt_ck_ok "$nt_drv")" = ok ] && ok "(NT6) driver checkoff (step 6): an auto-merged item is already - [x], not checked off twice" || no "(NT6) step 6 double check-off not addressed"
+# Mutation control (repointed from the --legacy prose mutant): a driver copy whose checkoff checks the
+# item off a second time (an unguarded queue-checkoff after the guarded one) turns the step-6 leg red
+# (gated: non-empty, differs, bash -n).
+nt_mut="$TOP/nt6-legacy-mutant.sh"
+awk '/^ns_checkoff\(\) \{/ { s = 1 } { print } s && /^  fi$/ { print "  ns_call_writer queue-checkoff \"$RF\" \"$ITEM\" || return 1"; s = 0 }' "$nt_drv" > "$nt_mut"
+if [ -s "$nt_mut" ] && ! cmp -s "$nt_drv" "$nt_mut" && bash -n "$nt_mut" 2>/dev/null; then
+  [ "$(nt_ck_ok "$nt_mut")" = bad ] && ok "(NT6) mutant driver (checkoff checks the item off a second time) turns the step-6 leg red" || no "(NT6) mutant driver (double check-off) still passes the step-6 leg"
+else
+  no "(NT6) step-6 mutant could not be built (empty, identical or bash -n failed)"
+fi
+# The --no-trail rule's own driver leg (the sync arm), with its mutant below.
 nt_sync_ok() {  # <driver> — ok iff the sync arm exists and its function runs closeout --no-trail + closeout-classify
   local b; b="$(nt_fn "$1" ns_sync)"
   if grep -qE '^[[:space:]]+sync\) ns_sync ;;' "$1" && grep -qF 'closeout "$RF" "$ITEM" "$PR" --no-trail' <<<"$b" \

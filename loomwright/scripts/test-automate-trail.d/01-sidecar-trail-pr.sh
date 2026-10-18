@@ -510,7 +510,14 @@ precedes() { # <regex identifying the line> <label>
 }
 precedes '^6\. \*\*CHECK OFF' "§6 step 6 (skip/abandon check-off + done)"
 precedes '^On the \*\*`## Status: done`\*\* exit ONLY' "Termination (done)"
-grep -qE '^6\. \*\*CHECK OFF.*`# skipped:`/`# abandoned:`.*`## Status: done`.*no park path runs it' "$SKILL" && ok "§6 step 6 scopes trail-pr to skip/abandon + done, no park" || no "§6 step 6 trail scope"
+# §6 step 6's scope (automate-speed/08 retired the --legacy prose that stated it on one line): the
+# step-6 pointer runs trail-pr for a skip/abandon, the driver's terminate step for `## Status: done`,
+# and the trigger list says no park calls it (nor does the driver's park step).
+ts_drv="$HERE/automate-next-step.sh"
+ts_fn() { awk -v n="$1() {" 'index($0, n) == 1 { s = 1 } s { print } s && /^}/ { exit }' "$ts_drv"; }
+if grep -qE '^6\. \*\*CHECK OFF.*`# skipped:`/`# abandoned:`.*trail-pr <runfile> --reason skipped\|abandoned' "$SKILL" \
+   && grep -qF 'trail-pr "$RF" --reason done' <<<"$(ts_fn ns_terminate)" && ! grep -qF 'trail-pr' <<<"$(ts_fn ns_park)" \
+   && grep -qF '**No park calls it:**' "$SKILL"; then ok "§6 step 6 scopes trail-pr to skip/abandon + done, no park"; else no "§6 step 6 trail scope"; fi
 grep -qE '^1\. \*\*RECONCILE.*`# skipped:`/`# abandoned:` by a human.*trail-pr <runfile> --reason skipped\|abandoned.*BEFORE PICK' "$SKILL" && ok "RECONCILE runs trail-pr for a human skip/abandon, before PICK" || no "RECONCILE human skip trigger missing"
 grep -qE '\*\*trail\*\* via `automate-helpers.sh trail-pr <runfile> --reason closeout`' "$SKILL" && ok "closeout steps end with trail-pr --reason closeout" || no "closeout trail step missing"
 co_fn="$(awk '/^closeout\(\) \{/{s=1} s{print} s&&/^}/{exit}' "$TB" | grep -vE '^[[:space:]]*#')"
@@ -523,7 +530,7 @@ no_trail_on() { # <regex identifying the park line> <label>
   if [ -n "$line" ] && ! grep -qF 'trail-pr --reason' <<<"$line" && grep -qiE 'no `trail-pr`|without a trail' <<<"$line"; then ok "$2: no trail-pr at this park"; else no "$2: park line still runs trail-pr (or does not say it does not)"; fi
 }
 no_trail_on '^   \*\*PICK-time token-ceiling check' "token_ceiling park"
-no_trail_on '^- \*\*Classified hit' "rate_limit park"
+no_trail_on '^Run by `automate-next-step.sh` step `rate-limit`' "rate_limit park"  # the per-item-loop.md stub (automate-speed/08)
 no_trail_on '^   \*\*PICK-time trail gate' "trail_pr_open park"
 no_trail_on '^   \*\*PICK-time run-lock acquire' "live_lane park (PICK-time lane guard)"
 no_trail_on '^- \*\*Safe mode \(default\):' "§9 awaiting_merge park"

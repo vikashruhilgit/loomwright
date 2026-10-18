@@ -1588,7 +1588,7 @@ ns_drain_result() {
   fi
   ns_once once_dr_term ns_progress "$line" || return 1
   ns_once once_dr_owned ns_owned_drain_line "$dec" || return 1
-  # a fix-now re-drain's re-pass is recorded at once (legacy-tail decision step 3: fix_now_reentered: true)
+  # a fix-now re-drain's re-pass is recorded at once (the decision step's re-pass: fix_now_reentered: true)
   if [ "$kind" = fixnow ] && [ -n "$PENDING_LINE" ]; then ns_once once_dr_pending ns_pending_write "$(ns_pending_n)" true || return 1; fi
   ns_once once_dr_sidecar ns_write_text drain_text "$AD/$RUN_ID.review-heal-result.md" || return 1
   ns_once once_dr_check ns_sidecar_check "$AD/$RUN_ID.review-heal-result.md" || return 1
@@ -2084,7 +2084,7 @@ ns_park() {
     v="$(st escalation_sha)"; [ -n "$v" ] && a+=(--sha "$v")
     if ! bash "$H" current-escalation "$RF" "${a[@]}" >/dev/null 2>&1; then
       # a --check value it refuses: the cause alone records the park (the `--check` rule of the
-      # `validation_unrun` park, skills/automate-loop/legacy-tail.md "On `unrun`" — this step runs it by default)
+      # `validation_unrun` park, the `validation` step above)
       local b=(--cause "$(st escalation_cause)"); v="$(st escalation_sha)"; [ -n "$v" ] && b+=(--sha "$v")
       ns_call_writer current-escalation "$RF" "${b[@]}" || return 1
     fi
