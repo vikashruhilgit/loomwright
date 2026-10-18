@@ -1,0 +1,9 @@
+call: --job .supervisor/jobs/pending/2026-10-17-golden-exec.md --skip-preflight-sync
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+# 2/2 completed ⇒ FINALIZE: gate points 1-4 pass, point 5 settled ⇒ the merge spawn
+call: --result '{"result":"Phase 3 done.\n\nEXECUTE_RESULT:\n  schema_version: 1\n  subtasks_completed:\n    - task_id: a\n      status: completed\n      branch: feature/exec-a\n      files_modified: [api.md]\n      review_decision: PASS\n    - task_id: b\n      status: completed\n      branch: feature/exec-b\n      files_modified: [ui.md]\n      review_decision: PASS\n  merge_order: [feature/exec-a, feature/exec-b]\n  worktrees:\n    - task_id: a\n      path: ../repo-a\n      branch: feature/exec-a\n      status: completed\n    - task_id: b\n      path: ../repo-b\n      branch: feature/exec-b\n      status: completed\n  summary: 2/2 subtasks completed. API and UI layers implemented."}'
+expect: spawn

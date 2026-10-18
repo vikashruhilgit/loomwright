@@ -1,0 +1,26 @@
+# Validation 3 (the brief's ## Validation item 3): one item from Phase 0 through the driver to the Phase 4.5
+# hand-over, hermetic. Each spawn is answered with a fixed result; the agents' own git work (the Execute
+# Manager's worktrees, the FINALIZE commits / merges / cleanup, the push to the local bare origin) runs for
+# real in run: lines, and so do write-marker and the PreToolUse guard (deny before the marker, allow after).
+call: --job .supervisor/jobs/pending/2026-10-18-golden-v3.md
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"classification":"CLEAR","version":"1.0.0","base_tip":"abcdef1","advisory":"open PRs 0"}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+# the Execute Manager's work: two worktrees, one change each
+run: git worktree add -q -b feature/v3-a ../repo-a main && printf 'api\n' > ../repo-a/api.md && git worktree add -q -b feature/v3-b ../repo-b main && printf 'ui\n' > ../repo-b/ui.md
+call: --result '{"result":"Phase 3 done.\n\nEXECUTE_RESULT:\n  schema_version: 1\n  subtasks_completed:\n    - task_id: a\n      status: completed\n      branch: feature/v3-a\n      files_modified: [api.md]\n      review_decision: PASS\n    - task_id: b\n      status: completed\n      branch: feature/v3-b\n      files_modified: [ui.md]\n      review_decision: PASS\n  merge_order: [feature/v3-a, feature/v3-b]\n  worktrees:\n    - task_id: a\n      path: ../repo-a\n      branch: feature/v3-a\n      status: completed\n    - task_id: b\n      path: ../repo-b\n      branch: feature/v3-b\n      status: completed\n  summary: 2/2 subtasks completed."}'
+expect: spawn
+# before write-marker the fail-CLOSED guard denies the push (exit 2)
+run: printf '%s' '{"tool_input":{"command":"git push -u origin feature/golden-v3"},"session_id":"golden-v3"}' | bash "$SN_SCRIPTS/guard-finalize-publish.sh" >/dev/null 2>&1; test $? -eq 2
+# FINALIZE steps 2-5.5 for real: commit each worktree, merge in merge_order, salvage then remove, re-fold
+run: for s in a b; do git -C ../repo-$s add -A && git -C ../repo-$s commit -qm "subtask: $s" || exit 1; done; git merge -q --no-ff feature/v3-a -m "merge: a API layer" && git merge -q --no-ff feature/v3-b -m "merge: b UI layer" || exit 1; for s in a b; do bash "$SN_SCRIPTS/worktree-salvage.sh" ../repo-$s --reason "FINALIZE step 4" >/dev/null; git worktree remove ../repo-$s && git branch -q -d feature/v3-$s || exit 1; done; bash "$SN_SCRIPTS/release-refold.sh" >/dev/null
+call: --result '{"merged":["feature/v3-a","feature/v3-b"],"conflict":null,"refold":"ok"}'
+expect: spawn
+# after write-marker the guard allows the push; the push lands on the local bare origin; the PR create is stubbed
+run: printf '%s' '{"tool_input":{"command":"git push -u origin feature/golden-v3"},"session_id":"golden-v3"}' | bash "$SN_SCRIPTS/guard-finalize-publish.sh" >/dev/null 2>&1 && git push -q -u origin feature/golden-v3 && gh pr create --base main --title "2026-10-18-golden-v3: Golden v3" --body "golden" >/dev/null
+call: --result '{"pr_url":"https://github.com/golden/repo/pull/21"}'
+expect: done

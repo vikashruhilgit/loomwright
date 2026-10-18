@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# automate-next-step.sh — the `/automate` per-item loop's driver from RUN on (automate-speed/06
-# the tail, automate-speed/07 RUN and DRAIN).
+# automate-next-step.sh — the `/automate` per-item loop's driver (automate-speed/06 the tail,
+# automate-speed/07 RUN and DRAIN, automate-speed/08 PICK, RECONCILE and resume).
 #
-# The single reader and writer of a `/automate` run file from RUN to the item's end: RUN's
-# bookkeeping (the `.auto_review` suppress / restore that wraps `/autonomous`, the session-id line,
+# The single reader and writer of a `/automate` run file from the resume entry and PICK to the item's
+# end: resume (`closeout-others`, `resume-glob --finalize`, the AUT-RESUME continue / start new /
+# archive choice and its can't-ask stops, `current-rebuild`), PICK (the run-lock acquire, `pick-guard`,
+# `ceiling-check`, the `meta-push-failed` report, the pending-decisions ask), RECONCILE (the stranded
+# config-backup restore, the `drain_died` marker, the in-flight item vs `gh`: `closeout` on a merge,
+# classified by `closeout-classify`, the validation re-check, the open-PR park, a skip/abandon
+# `trail-pr`, the `reconcile-status` dry-run lines on a resume), the trail gate and un-stage, the
+# `current-set` + `picked` pair; RUN's bookkeeping (the `.auto_review` suppress / restore that wraps `/autonomous`, the session-id line,
 # the PR record, the supervisor-result sidecar and its `sidecar-check`, the rate-limit park), DRAIN's
 # (the pinned drain lines, `owned_drain_*`, the review-heal sidecar and its `sidecar-check`, the
 # drain-superseded-by-merge close-out, learning-emit), GATE (the validation gate, safe mode's park,
@@ -15,23 +21,40 @@
 # reports a step's result back with `--result <json>`. The instruction schema (the closed `do` enum,
 # every field, the `--result` shapes incl. `progress_note`) is documented in
 # `docs/result-schemas/automate-run.md` §"next-step instruction"; the protocol it executes is
-# `skills/automate-loop/` §6 steps 2–6, §7 and §9/§10 (this script sequences, it never re-specifies).
+# `skills/automate-loop/` §4, §6, §7, §8 and §9/§10 (this script sequences, it never re-specifies).
 #
 # USAGE
-#   automate-next-step.sh <runfile> [--start run|drain] [--result <json> | --result-file <f>]
+#   automate-next-step.sh <runfile> [--start pick|run|drain] [--result <json> | --result-file <f>]
 #                         [--mode safe|auto-merge] [--non-interactive] [--trust-unprotected]
 #                         [--root <checkout>] [--session-id <sid>] [--notify] [--cheap]
 #                         [--max-tokens <N>]
-#   Entry points: `--start run` right after PICK (`## Current` `status: running`, `pr: null`, the last
+#   automate-next-step.sh --resume <automate_dir> [--run <run_id>|latest] --session-id <sid> [same flags]
+#   Entry points: `--resume <automate_dir>` is every `/automate` start that may continue a run (a bare
+#   start: no `--run`; `/automate --resume`: `--run latest`; `/automate --resume <id>`: `--run <id>`):
+#   `closeout-others`, `resume-glob --finalize`, then the AUT-RESUME ask (or, without the ask, the
+#   `resume_requires_flag_non_interactive` stop — the driver writes nothing past those two start steps —
+#   or the `resume_ambiguous` park); on
+#   continue `current-rebuild`, the start's `closeout-others` record lines and leftover gate, then PICK.
+#   No incomplete run ⇒ `{"do":"done","status":"stopped","choice":"start_new"}` (intake is the model's).
+#   A `--parallel` coordinator run (`## Run Config` carries `- parallel: N`) is never picked here: the
+#   continue paths (an explicit `--run`, `--run latest` naming one run, the AUT-RESUME `Continue`) reach
+#   `rebuild`, which — like `pick` — prints `{"do":"done","status":"stopped","stop":"coordinator_run",…}`
+#   before any lock or write of its own (a bare start still asks AUT-RESUME / takes its can't-ask stop
+#   first; the start steps `closeout-others` — its `--record` line lands in a `--run <id>` run file — and
+#   `resume-glob --finalize` already ran). It continues through `skills/automate-loop/lanes.md`'s per-wave
+#   loop — single-lane mode for N = 1; a lane's own run file carries no such line.
+#   `--start pick` is the loop's per-item entry (the first item of a new run, and every
+#   `{"do":"done","status":"running"}`): PICK → RECONCILE → trail gate → un-stage → `current-set` +
+#   `picked`, then straight on to RUN's `/autonomous` spawn. Both need `--session-id` (the PICK lock is
+#   acquired with it; RECONCILE's `closeout` re-enters it). `--start run` right after PICK (`## Current` `status: running`, `pr: null`, the last
 #   `picked` line naming the item) — the driver suppresses `.auto_review` and prints the `/autonomous`
 #   spawn (`--non-interactive` adds `--non-interactive-fallback`; `--notify`, `--cheap` and
 #   `--max-tokens N` — else `## Run Config`'s `max_tokens:` — pass through; none is written to the run
 #   file); the RUN report answers it, and the driver goes on to print the owned-drain spawn, whose
 #   DRAIN report starts GATE. `--start drain` prints the owned-drain spawn for a running item that
 #   already has its PR (refused — `drain_already_owned`, exit 2 — once this pass spawned its drain).
-#   "drain result reported" stays an entry too (back-compat): with nothing pending, a
-#   `--result '{"drain_result":"READY|ESCALATED",…}'` from a model that did DRAIN's bookkeeping itself
-#   (`--legacy`) starts GATE. A call with no
+#   "drain result reported" stays an entry too (back-compat): with nothing pending, a bare
+#   `--result '{"drain_result":"READY|ESCALATED",…}'` starts GATE. A call with no
 #   `--result` while an instruction is pending RE-PRINTS that instruction verbatim and writes nothing
 #   (idempotent); a `--result` answers the pending `ask` / `spawn`; a `--result` after a terminal
 #   `park` / `done` (or with nothing pending) starts the next item's tail — unless it is a REPLAY (the
@@ -46,6 +69,32 @@
 #
 # STEPS — each is ONE `case` arm of ns_dispatch (the strings inventory homes cite as
 #   `script:automate-next-step.sh <step>`):
+#   resume      `--resume`: the target run (`--run <id>`, else the most recent incomplete one), the
+#               AUT-RESUME ask (Continue / Start new / Archive), or without it the
+#               `resume_requires_flag_non_interactive` stop (one run, no `--run`; nothing written past the
+#               start steps) / the
+#               `resume_ambiguous` park (more than one run, no `--run <id>`)
+#   rebuild     `current-rebuild` (it appends its own `current_rebuilt:` line); a rebuilt ## Current asks
+#               AUT-RESUME again (interactive) or parks `resume_ambiguous` (can't ask)
+#   resume-continue the start's `closeout-others` record lines, its `leftover` rows through the leftover
+#               gate (a `run_lock_held` row is not a leftover), then PICK
+#   pick        `--start pick`: the run-lock acquire FIRST (`run_lock_held` ⇒ park, nothing else touched;
+#               `run_lock_degraded` ⇒ one note), then `## Status: running`
+#   lane-guard  `pick-guard <automate_dir>`: anything but `ok` ⇒ the `live_lane` park
+#   ceiling     `ceiling-check` when `--max-tokens` / `## Run Config` `max_tokens` is set: anything but
+#               `OK …` ⇒ the `token_ceiling` park
+#   meta-push   `meta-push-failed`: a non-empty answer is one `meta-push-failed:` line (a report, never a block)
+#   pending     interactive only: `dismissed-pending` non-zero / `unknown` ⇒ AUT-PENDING (per-finding,
+#               ≤ 4 a call) and AUT-SUMMARY (one summary draft a call) asks, each answer a `dismissed-decide`
+#   reconcile   the stranded config-backup restore; a skip/abandon check-off of ## Current ⇒ `trail-pr`;
+#               the `drain_died` marker park; `reconcile-item`: merged ⇒ (superseded drain lines) +
+#               `closeout --session-id` classified (leftover ⇒ the leftover gate); open ⇒ the validation
+#               re-check, then the open-PR park (single-open-PR invariant); gone ⇒ park
+#   reconcile-status  on a resume: one `reconcile-status: would stamp <file> (<status>)` line per plan row
+#   trail-gate  `trail-gate`: its line; `PARK — …` (or any unreadable answer) ⇒ the `trail_pr_open` park
+#   trail-unstage `trail-unstage`: its line
+#   picked      `current-set … --status running --pr null --branch null --pause-reason null` BEFORE the
+#               `<ts> picked <item>` line (no unchecked row ⇒ terminate), then RUN
 #   run         `--start run`: `config-suppress` (malformed config ⇒ `config_malformed`, exit 2,
 #               nothing written), `auto_review_original` via `config-orig <config> <backup>` (into
 #               `## Run Config` when it differs), the `auto_review suppressed` line, the `/autonomous`
@@ -121,9 +170,11 @@
 # out-of-state drain report (REPORT VALIDATION below), or a named refusal on stderr —
 # `next-step: config_malformed — …` (`config-suppress`'s exit 2: no spawn, no line, config.json
 # byte-unchanged, no backup), `config_backup_stranded`, `session_id_missing` / `session_id_malformed`
-# (`--start run` without this loop's session id), `run_already_started`, `drain_already_owned`,
+# (`--start run|pick` / `--resume` without this loop's session id), `run_already_started`,
+# `pick_already_started` (a spawn of this pass is pending), `run_done` (`--start pick` on a `## Status:
+# done` run), `run_not_incomplete` (`--resume --run <id>` naming no incomplete run), `drain_already_owned`,
 # `reserved_prefix` — nothing written. A writer's own non-zero code is passed through (progress-append's 3,
-# `current_not_set`, on the drain start line included).
+# `current_not_set`, on the drain start line and the `picked` line included).
 #
 # REPORT VALIDATION (fail CLOSED, exit 2, nothing written): every drain-report field the driver
 # branches on or hands to a writer is checked before the first write — `drain_result` is exactly
@@ -162,9 +213,12 @@
 # and the live head, so a false claim can only park. A DRAIN report's free-text lines (`progress_notes`,
 # `drain_note`) are the model's and are stamped when the report arrives; the drain's start line carries
 # the time the owned-drain spawn was printed (or the report's `started_at`), so a crash mid-drain
-# leaves no start line — the sidecar's pending spawn is the evidence. PICK / RECONCILE / resume (item
-# 08) stay prose, including RECONCILE's crash-restore of a stranded config backup. The default notifier
-# is desktop-only: no webhook gate type is defined for a sequential park. bash 3.2 + BSD userland + jq.
+# leaves no start line — the sidecar's pending spawn is the evidence. Intake (a new run's source →
+# Queue → run file), `init-check` and `meta-entry` stay the coordinator's, before this script is called;
+# Archive / Start new are reported back as a `done` choice and carried out by the model. RECONCILE arms
+# no merge watcher (the park armed one) and runs no `gate-eval` (a re-checked validation park waits for a
+# human merge). The default notifier is desktop-only: no webhook gate type is defined for a sequential
+# park. bash 3.2 + BSD userland + jq.
 
 set -uo pipefail
 
@@ -173,7 +227,7 @@ H="$HERE/automate-helpers.sh"
 JQ="${JQ:-jq}"
 
 ns_usage() {
-  sed -n 's/^#   automate-next-step.sh /automate-next-step.sh /p; s/^#                         \[/                      [/p' "${BASH_SOURCE[0]}" | head -n 4
+  sed -n 's/^#   automate-next-step.sh /automate-next-step.sh /p; s/^#                         \[/                      [/p' "${BASH_SOURCE[0]}" | head -n 5
 }
 ns_die2() { echo "next-step: $*" >&2; exit 2; }
 ns_err() { echo "next-step: $*" >&2; }
@@ -186,13 +240,17 @@ command -v "$JQ" >/dev/null 2>&1 || { ns_err "jq not on PATH"; exit 1; }
 # arguments
 # ------------------------------------------------------------------------------------------------
 RF=""; RESULT=""; MODE=""; NONINT=0; TRUST=""; ROOT=""; SID=""; have_result=0
-START=""; NOTIFY=0; CHEAP=0; MAXTOK=""
+START=""; NOTIFY=0; CHEAP=0; MAXTOK=""; RESUME_DIR=""; RUN_SEL=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --start)
       [ "$#" -ge 2 ] || ns_die2 "--start needs a value"
-      case "$2" in run|drain) START="$2" ;; *) ns_die2 "--start must be run|drain: '$2'" ;; esac
+      case "$2" in pick|run|drain) START="$2" ;; *) ns_die2 "--start must be pick|run|drain: '$2'" ;; esac
       shift 2 ;;
+    --resume) [ "$#" -ge 2 ] && [ -n "$2" ] || ns_die2 "--resume needs the automate dir"; RESUME_DIR="$2"; shift 2 ;;
+    --run)
+      [ "$#" -ge 2 ] && [[ "$2" =~ ^[A-Za-z0-9._-]{1,128}$ ]] && [ "$2" != . ] && [ "$2" != .. ] || ns_die2 "--run needs a run id (or latest)"
+      RUN_SEL="$2"; shift 2 ;;
     --notify) NOTIFY=1; shift ;;
     --cheap) CHEAP=1; shift ;;
     --max-tokens)
@@ -216,6 +274,45 @@ while [ "$#" -gt 0 ]; do
     *) [ -z "$RF" ] || ns_die2 "one run file only (got '$RF' and '$1')"; RF="$1"; shift ;;
   esac
 done
+
+# ------------------------------------------------------------------------------------------------
+# the resume entry (automate-speed/08): the start steps every start runs, then the target run file
+# ------------------------------------------------------------------------------------------------
+# NS_RES_* carry what the start printed into the target's sidecar (set after the sidecar is read)
+NS_RES_N=""; NS_RES_RUNS=""; NS_RES_CO=""
+if [ -n "$RESUME_DIR" ]; then
+  [ -z "$RF" ] || ns_die2 "--resume takes the automate dir, not a run file (name a run with --run <run_id>)"
+  [ -z "$START" ] || ns_die2 "--resume and --start are exclusive (--resume continues into PICK itself)"
+  [ "$have_result" = 0 ] || ns_die2 "--resume takes no --result: answer the resume ask on its run file (<run_file> --result …)"
+  [ -n "$SID" ] || ns_die2 "session_id_missing — --resume needs --session-id <this loop's session id> (PICK acquires the run lock with it) — nothing written"
+  [ -d "$RESUME_DIR" ] || ns_die2 "--resume: not a directory: $RESUME_DIR"
+  RESUME_DIR="$(cd "$RESUME_DIR" && pwd)"
+  if [ -z "$ROOT" ]; then
+    case "$RESUME_DIR" in */.supervisor/automate) ROOT="${RESUME_DIR%/.supervisor/automate}" ;; *) ROOT="$(git -C "$RESUME_DIR" rev-parse --show-toplevel 2>/dev/null || pwd)" ;; esac
+  fi
+  cd "$ROOT" 2>/dev/null || ns_die2 "--root is not a directory: $ROOT"
+  # §4 start order: closeout-others (BEFORE any PICK lock — each close-out takes its own lock), then the
+  # finalize glob. Their writes are the ground-truth start steps no owner choice gates.
+  rec=""; case "$RUN_SEL" in ""|latest) ;; *) [ -f "$RESUME_DIR/$RUN_SEL.md" ] && rec="$RESUME_DIR/$RUN_SEL.md" ;; esac
+  NS_RES_CO="$(bash "$H" closeout-others "$RESUME_DIR" ${rec:+--record "$rec"} 2>/dev/null)"
+  # a crashed resume-glob is surfaced (exit 1), never read as "no incomplete run" (which starts a new run)
+  NS_RES_RUNS="$(bash "$H" resume-glob "$RESUME_DIR" --finalize 2>/dev/null | env LC_ALL=C sort)" \
+    || { ns_err "automate-helpers.sh resume-glob exited non-zero — the incomplete runs are unknown; nothing picked"; exit 1; }
+  NS_RES_N="$(printf '%s\n' "$NS_RES_RUNS" | grep -c . || true)"
+  case "$RUN_SEL" in
+    ""|latest) RF="$(printf '%s\n' "$NS_RES_RUNS" | grep . | tail -n 1)" ;;
+    *) RF="$(printf '%s\n' "$NS_RES_RUNS" | NS_B="$RUN_SEL.md" awk 'BEGIN { b = ENVIRON["NS_B"] } { n = split($0, p, "/"); if (p[n] == b) { print; exit } }')"
+       [ -n "$RF" ] || ns_die2 "run_not_incomplete — --run $RUN_SEL names no incomplete run in $RESUME_DIR — nothing written" ;;
+  esac
+  if [ -z "$RF" ]; then
+    # nothing to continue: intake (a new run) is the model's — nothing written past the start steps, no sidecar
+    "$JQ" -cn --arg co "$NS_RES_CO" '{do: "done", step: "resume", run_id: null, item: null, pr: null, status: "stopped", choice: "start_new",
+        message: "no incomplete run — start a new run (intake)", closeout_others: ($co | split("\n") | map(select(length > 0)))}'
+    exit 0
+  fi
+elif [ -n "$RUN_SEL" ]; then
+  ns_die2 "--run needs --resume <automate_dir>"
+fi
 [ -n "$RF" ] || { ns_usage >&2; ns_die2 "usage: automate-next-step.sh <runfile> [options]"; }
 [ -f "$RF" ] && [ -r "$RF" ] || ns_die2 "run file not found or unreadable: $RF"
 if [ "$have_result" = 1 ]; then
@@ -404,7 +501,7 @@ ns_notify() { # <kind> <message>
 NS_EMIT=""
 ns_base() { # <do> <step> — the common fields as a JSON object
   "$JQ" -cn --arg d "$1" --arg s "$2" --arg r "$RUN_ID" --arg i "$ITEM" --arg p "$PR" \
-    '{do: $d, step: $s, run_id: $r, item: (if $i == "" then null else $i end), pr: (if $p == "" or $p == "null" then null else $p end)}'
+    '{do: $d, step: $s, run_id: $r, item: (if $i == "" or $i == "null" then null else $i end), pr: (if $p == "" or $p == "null" then null else $p end)}'
 }
 ns_emit() { NS_EMIT="$(printf '%s' "$(ns_base "$1" "$2")" | "$JQ" -c --argjson x "$3" '. + $x')"; }
 ns_emit_ask() { # <step> <gate> <cant_ask> <questions json array>
@@ -458,7 +555,10 @@ ns_field_ok() {
 # before it matches). `drain ` alone is deliberately NOT reserved: the drain-round notes (`drain round N:
 # …`) are that prefix by design, and /lanes files them under the drain step they belong to.
 # scripts/test-automate-next-step.sh R12 extracts every ^-anchored Progress prefix of those readers and
-# fails when one is not covered here.
+# fails when one is not covered here. The PICK / RECONCILE / resume lines (automate-speed/08 — the run-lock
+# park and degraded note, the lane-guard and token-ceiling park lines, the meta-push report, the
+# reconcile-status dry-run lines, current-rebuild's line, closeout-others' record lines, the drain_died park
+# line, the live merge-watcher note) are reserved too: a forged one would fake a park or a ground-truth record.
 NS_RESERVED_PREFIXES='picked
 parked
 ran /autonomous
@@ -501,7 +601,18 @@ run started
 run created
 run-lock acquired
 meta-entry
-skipped AUT-QUEUE'
+skipped AUT-QUEUE
+run_lock_held
+run_lock_degraded
+refuse: live_lane
+PARK: token_ceiling
+PARK: ledger_unreadable
+meta-push
+reconcile-status:
+current_rebuilt
+cross-run closeout
+drain_died
+merge-watch noted'
 ns_lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 NS_RESERVED_LC=""
 # ns_reserved_prefix <text> — print the reserved prefix <text> starts with (leading blanks ignored, case
@@ -805,6 +916,498 @@ ns_gh() { "${LOOMWRIGHT_GH_BIN:-gh}" "$@" </dev/null 2>/dev/null; }
 ns_pr_head() { local h; h="$(ns_gh pr view "$1" --json headRefOid | "$JQ" -r '.headRefOid // empty' 2>/dev/null)"; ns_sha_ok "$h" && printf '%s' "$h"; return 0; }
 
 # ================================================================================================
+# PICK / RECONCILE / resume (automate-speed/08) — §4, §6 step 1, §8
+# ================================================================================================
+ns_run_status() { sed -n 's/^## Status: //p' "$RF" | head -n 1; }
+# ns_run_park <step> <pause_reason> <Progress line|""> <release 1|0> <message> — a RUN-level park:
+# `## Status: paused`, `current-set --pause-reason` (the item line is never touched), its one line, the
+# run-lock release (only when this PICK holds it), the park instruction
+ns_run_park() {
+  ns_status paused || return 1
+  ns_once "once_rp_$2" ns_call_writer current-set "$RF" --pause-reason "$2" || return 1
+  if [ -n "$3" ]; then ns_once "once_rp_$2_line" ns_progress "$3" || return 1; fi
+  [ "$4" = 1 ] && ns_release
+  ns_emit_park "$1" "$5"
+}
+ns_lock_capture() { # the PICK acquire, its stdout + stderr (run_lock_held / run_lock_degraded / run_lock_reentrant)
+  local a=""; [ -n "$SID" ] && a="--session-id"
+  if [ -n "${NEXT_STEP_LOCK_CMD:-}" ]; then
+    # shellcheck disable=SC2086
+    $NEXT_STEP_LOCK_CMD acquire --owner "automate:$RUN_ID" ${a:+"$a" "$SID"} </dev/null 2>&1
+  else
+    bash "$HERE/run-lock.sh" acquire --owner "automate:$RUN_ID" ${a:+"$a" "$SID"} </dev/null 2>&1
+  fi
+}
+ns_next_item() { # the first `- [ ]` Queue row (top-down)
+  ns_section '## Queue' | sed -n 's/^- \[ \] //p' | head -n 1 | sed 's/[[:space:]][[:space:]]*#.*$//; s/[[:space:]]*$//'
+}
+ns_max_tokens() { # --max-tokens, else ## Run Config's max_tokens (on the mode line or its own line)
+  local v="$MAXTOK"
+  [ -n "$v" ] || v="$(ns_kv "$CFG" max_tokens)"
+  [ -n "$v" ] || v="$(ns_section '## Run Config' | sed -n 's/^- max_tokens: \([0-9][0-9]*\)$/\1/p' | head -n 1)"
+  [[ "$v" =~ ^[0-9]{1,12}$ ]] && printf '%s' "$v"
+  return 0
+}
+
+# ------------------------------------------------------------------------------------------------
+# step: resume — the target, the AUT-RESUME ask or its can't-ask stops (§4 step 4)
+# ------------------------------------------------------------------------------------------------
+ns_resume_q() { # <rebuilt line or ""> — the AUT-RESUME question list
+  local q cur others
+  cur="$(ns_section '## Current' | grep -m1 '^- item: ' | sed 's/^- //')"
+  others="$(st resume_others)"
+  q="An incomplete /automate run exists: $RUN_ID (## Status: $(ns_run_status); ## Current $cur)"
+  [ -n "$1" ] && q="$q — its ## Current was unset and has been rebuilt: $1"
+  [ -n "$others" ] && q="$q; other incomplete runs: $others (continue one of them with --resume <run_id>)"
+  "$JQ" -cn --arg q "$q. Continue it, start a new run, or archive it?" '[{question: $q, header: "AUT-RESUME", options: ["Continue","Start new","Archive"]}]'
+}
+ns_resume_ask() { # <step> <rebuilt line or ""> — AUT-RESUME (an `allowed` gate: header is its code)
+  local cant
+  if [ -n "$2" ] || [ "$(st resume_n)" != 1 ]; then cant="resume_ambiguous park"
+  else cant="automate: resume_requires_flag_non_interactive stop (nothing written past the start steps)"; fi
+  ns_emit_ask "$1" AUT-RESUME "$cant" "$(ns_resume_q "$2")"
+  NS_EMIT="$(printf '%s' "$NS_EMIT" | "$JQ" -c --arg f "$RF" '. + {run_file: $f,
+      answer_with: ("automate-next-step.sh " + $f + " --result {\"answers\": [\"Continue\" | \"Start new\" | \"Archive\"]}; when the ask tool is unavailable --result {\"cant_ask\": true}")}')"
+  st_set item "$ITEM"; st_set pr "$PR"
+  NEXT=resume
+}
+ns_co_json() { st co_lines | "$JQ" -Rsc 'split("\n") | map(select(length > 0))'; }
+ns_resume_stop() { # one incomplete run, no --run, can't ask: fail closed — the driver writes nothing past the start steps
+  local x
+  x="$("$JQ" -cn --arg r "$RUN_ID" --arg f "$RF" --argjson co "$(ns_co_json)" '{status: "stopped", stop: "resume_requires_flag_non_interactive", run_file: $f,
+      message: ("automate: resume_requires_flag_non_interactive " + $r + " — re-run with --resume [" + $r + "] to continue it (or interactively, to start new / archive); nothing was written past the start steps (closeout-others, resume-glob --finalize — their lines: closeout_others)"),
+      closeout_others: $co}')"
+  ns_emit done resume "$x"
+  [ "${NS_FRESH_RESUME:-0}" = 1 ] && NS_NOSAVE=1
+  ns_err "automate: resume_requires_flag_non_interactive $RUN_ID"
+  return 0
+}
+ns_resume_ambiguous() { # <step> — more than one incomplete run (or a rebuilt ## Current) and no ask
+  local m
+  m="resume_ambiguous — $(st resume_n) incomplete run(s), this one ($RUN_ID) parked; re-run with --resume <run_id>"
+  [ -n "$(st rebuilt_line)" ] && m="resume_ambiguous — ## Current was rebuilt ($(st rebuilt_line)); re-run interactively, or with --resume $RUN_ID once checked"
+  [ -n "$(st co_lines)" ] && m="$m; closeout-others at start: $(st co_lines | tr '\n' ';' | tr '\t' ' ')"
+  ns_run_park "$1" resume_ambiguous "" 0 "$m"   # the run lock was never taken
+}
+ns_resume_choice() { # <start_new|archive> — the owner's choice; nothing written past the start steps (the model carries it out)
+  local x
+  x="$("$JQ" -cn --arg c "$1" --arg f "$RF" --argjson co "$(ns_co_json)" '{status: "stopped", choice: $c, run_file: $f, closeout_others: $co,
+      message: (if $c == "archive" then "the owner chose Archive — archive the run file (past the start steps — closeout-others, resume-glob --finalize — this script leaves the incomplete run untouched), then start a new run or stop" else "the owner chose Start new — the incomplete run is left as the start steps left it; run intake for the new run" end)}')"
+  ns_emit done resume "$x"
+}
+ns_resume_cant() { # the can't-ask outcome of the resume entry
+  if [ -n "$(st rebuilt_line)" ] || [ "$(st resume_n)" != 1 ]; then ns_resume_ambiguous resume; return; fi
+  ns_resume_stop   # one run, no --run, can not ask: fail closed, never auto-continued
+}
+# a `--parallel` COORDINATOR run (`## Run Config` carries `- parallel: N`, `1` = single-lane mode) never takes
+# §6's per-item PICK in the primary: every continue (rebuild / pick) goes through lanes.md's per-wave loop (single-lane
+# mode for N = 1). A lane's own run file has no such line, so a lane is never refused here. Whitespace-tolerant
+# like the plugin's other reader of this line (`_lanes_single_parent`, automate-lanes.d/status-read.sh: `- parallel:1`,
+# trailing blanks) and wider still (`-  parallel:`, a trailing `# comment`): a missed marker would PICK a coordinator run.
+ns_parallel() { ns_section '## Run Config' | sed -n 's/^-[[:space:]]*parallel:[[:space:]]*\([0-9][0-9]*\)\([[:space:]].*\)\{0,1\}$/\1/p' | head -n 1; }
+ns_coordinator_stop() { # <step> — 0 (a `done` stopped instruction; this step writes nothing) when this is a coordinator run
+  local n x loop
+  n="$(ns_parallel)"; [ -n "$n" ] || return 1
+  if [ "$n" = 1 ]; then loop="lanes.md \"Single-lane mode (--parallel 1)\" (On each --resume: lane-status, fleet-closeout, then the next item in a NEW lane)"
+  else loop="lanes.md §14's per-wave loop (lane-status, lane-wait, wave-build / fleet-closeout)"; fi
+  x="$("$JQ" -cn --arg f "$RF" --arg n "$n" --arg l "$loop" --argjson co "$(ns_co_json)" '{status: "stopped", stop: "coordinator_run", run_file: $f, parallel: ($n | tonumber), closeout_others: $co,
+      message: ("coordinator_run — ## Run Config reads parallel: " + $n + ", a --parallel coordinator run: it continues through " + $l + ", never through the per-item PICK in the primary; this step wrote nothing (on a --resume start, closeout-others — its --record line with --run <id> — and resume-glob --finalize ran first: closeout_others)")}')"
+  ns_emit done "$1" "$x"
+  # a fresh start (the resume entry, --start pick) leaves the sidecar as it was too
+  if [ "${NS_FRESH_RESUME:-0}" = 1 ] || [ "${first_arm:-0}" = 1 ]; then NS_NOSAVE=1; fi
+  ns_err "coordinator_run — $RUN_ID is a --parallel coordinator run (parallel: $n); not picked"
+  return 0
+}
+ns_resume() {
+  local ans="$ANSWER" sel n a; ANSWER=""
+  sel="$(st resume_sel)"; n="$(st resume_n)"
+  if [ -n "$ans" ]; then
+    if [ "$(rj "$ans" cant_ask)" = true ]; then ns_resume_cant; return; fi
+    a="$(printf '%s' "$ans" | "$JQ" -r '(.answers[0]? // .answer // empty) | strings')"
+    a="${a% (Recommended)}"
+    printf '%s' "$PENDING_TEXT" | "$JQ" -e --arg l "$a" '.options | index($l) != null' >/dev/null 2>&1 \
+      || { ns_err "resume: answer must be Continue, Start new or Archive (got '${a}')"; NS_RC=2; return 1; }
+    case "$a" in
+      Continue) if [ -n "$(st rebuilt_line)" ]; then NEXT=resume-continue; else NEXT=rebuild; fi ;;
+      "Start new") ns_resume_choice start_new ;;
+      Archive) ns_resume_choice archive ;;
+    esac
+    return 0
+  fi
+  # an explicit `--run <id>` (`/automate --resume <id>`) is the owner's continue; `--run latest` is too when
+  # it names exactly one run
+  case "$sel" in ""|latest) ;; *) NEXT=rebuild; return 0 ;; esac
+  if [ "$sel" = latest ] && [ "$n" = 1 ]; then NEXT=rebuild; return 0; fi
+  if ns_interactive; then ns_resume_ask resume ""; return 0; fi
+  ns_resume_cant
+}
+
+# ------------------------------------------------------------------------------------------------
+# step: rebuild — `current-rebuild` (§4 step 2): a rebuilt ## Current stops at the ask again
+# ------------------------------------------------------------------------------------------------
+ns_rebuild() {
+  local out rc l
+  ns_coordinator_stop rebuild && return 0   # before current-rebuild's write
+  out="$(bash "$H" current-rebuild "$RF" 2>&1)"; rc=$?
+  [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh current-rebuild exited $rc: $(printf '%s' "$out" | head -c 300)"; NS_RC="$rc"; return 1; }
+  l="$(printf '%s\n' "$out" | grep -m1 '^current_rebuilt: ' || true)"
+  [ -n "$l" ] || { NEXT=resume-continue; return 0; }
+  # rebuilt as `running` with pause_reason null (the helper appended its own line): never a close-out — the
+  # owner confirms it, or the run parks resume_ambiguous-style
+  ns_refresh; st_set rebuilt_line "$l"
+  if ns_interactive; then ns_resume_ask rebuild "$l"; return 0; fi
+  ns_resume_ambiguous rebuild
+}
+
+# ------------------------------------------------------------------------------------------------
+# step: resume-continue — the start's closeout-others records and leftovers (§4 start order), then PICK
+# ------------------------------------------------------------------------------------------------
+ns_resume_continue() {
+  local co rl i=0 lo
+  co="$(st co_lines)"
+  while IFS= read -r rl; do
+    case "$rl" in
+      "closeout-others: record — "*) i=$((i + 1)); ns_once "once_rsc_$i" ns_progress "$(ns_ts) ${rl#closeout-others: record — }" || return 1 ;;
+    esac
+  done <<EOF
+$co
+EOF
+  st_set resume_status_due true
+  # a `leftover` row goes through the leftover gate before the first PICK (and before the PICK lock — a
+  # Clean up now re-runs that run's closeout, which takes its own lock); a `run_lock_held` row is not a
+  # leftover: the next start retries it
+  lo="$(printf '%s\n' "$co" | grep "^leftover$TAB" || true)"
+  if [ -n "$lo" ] && [ "$(st once_rsc_lo)" != true ]; then
+    st_set once_rsc_lo true; st_set leftovers "$lo"; st_set after_leftover pick; NEXT=leftover; return 0
+  fi
+  NEXT=pick
+}
+
+# ------------------------------------------------------------------------------------------------
+# step: pick — the run-lock acquire FIRST (§6 step 1 "PICK-time run-lock acquire")
+# ------------------------------------------------------------------------------------------------
+ns_pick() {
+  local out rc l
+  [ "$(ns_run_status)" != done ] || { ns_err "run_done — ## Status: done; nothing to pick — nothing written"; NS_RC=2; return 1; }
+  ns_coordinator_stop pick && return 0   # before the PICK lock: every entry that reaches PICK (--start pick included)
+  if [ "$(st once_pk_lock)" != true ]; then
+    out="$(ns_lock_capture)"; rc=$?
+    if [ "$rc" -ne 0 ]; then
+      l="$(printf '%s\n' "$out" | grep -m1 '^run_lock_held ' || true)"
+      [ -n "$l" ] || l="run_lock_held (run-lock.sh acquire exited $rc: $(printf '%s\n' "$out" | head -n 1))"
+      # another run / process holds it: park, nothing else touched, nothing released (it is not ours)
+      ns_run_park pick run_lock_held "$(ns_ts) $l" 0 "the run lock is held ($l) — parked run_lock_held; --resume once it is free (run-lock.sh --force-unlock is human-only)"
+      return
+    fi
+    st_set once_pk_lock true
+    l="$(printf '%s\n' "$out" | grep -m1 '^run_lock_degraded' || true)"
+    if [ -n "$l" ]; then ns_once once_pk_degraded ns_progress "$(ns_ts) $l — the run lock is TTL-only; proceeding" || return 1; fi
+  fi
+  ns_status running || return 1
+  NEXT=lane-guard
+}
+
+# step: lane-guard — `pick-guard` right after the acquire (§6 step 1 "Lane guard", §14)
+ns_lane_guard() {
+  local out rc l
+  out="$(bash "$H" pick-guard "$AD" 2>/dev/null)"; rc=$?
+  l="$(printf '%s\n' "$out" | grep . | tail -n 1)"
+  if [ "$rc" -eq 0 ] && [ "$l" = ok ]; then NEXT=ceiling; return 0; fi
+  case "$l" in "refuse: "*) ;; *) l="refuse: live_lane — pick-guard answered '${l:-nothing}' (exit $rc), fail CLOSED" ;; esac
+  ns_run_park lane-guard live_lane "$(ns_ts) $l" 1 "a lane of an open --parallel wave is live ($l) — parked live_lane; --resume once the wave is over (lane-status)"
+}
+
+# step: ceiling — `ceiling-check` when a token ceiling is set (§6 step 1 "PICK-time token-ceiling check")
+ns_ceiling() {
+  local mt l
+  mt="$(ns_max_tokens)"
+  [ -n "$mt" ] || { NEXT=meta-push; return 0; }
+  l="$(bash "$H" ceiling-check "$RF" "$mt" --root "$ROOT" 2>/dev/null | grep . | tail -n 1)"
+  case "$l" in "OK"*) NEXT=meta-push; return 0 ;; "PARK: "*) ;; *) l="PARK: token_ceiling — ceiling-check answered '${l:-nothing}', fail CLOSED" ;; esac
+  ns_run_park ceiling token_ceiling "$(ns_ts) $l" 1 "token ceiling $mt: $l — parked token_ceiling"
+}
+
+# step: meta-push — a failed branch-mode trail push is reported before picking (§13; a report, never a block)
+ns_meta_push() {
+  local l; l="$(bash "$H" meta-push-failed "$RF" 2>/dev/null | head -n 1)"
+  if [ -n "$l" ]; then
+    ns_once once_pk_meta ns_progress "$(ns_ts) meta-push-failed: $l" || return 1
+    ns_err "meta-push-failed: $l (reported — not a block)"
+  fi
+  NEXT=pending
+}
+
+# ------------------------------------------------------------------------------------------------
+# step: pending — the PICK-time pending-decisions ask (§6 step 1, automate-followups/12): interactive only
+# ------------------------------------------------------------------------------------------------
+ns_run_undecided() { # "<finding|summary>\t<path>" per undecided draft of THIS RUN (every item's), per-finding first
+  local f
+  for f in "$ROOT/.supervisor/requirements/proposed/$RUN_ID"--*--dismissed-*.md; do
+    [ -f "$f" ] || continue
+    # a draft with no Decision line is undecided too (dismissed-pending's `unknown`)
+    if grep -q '^- \*\*Decision:\*\* ' "$f" && ! grep -q '^- \*\*Decision:\*\* undecided' "$f"; then continue; fi
+    case "${f##*/}" in *--dismissed-summary*) printf 'summary\t%s\n' "$f" ;; *) printf 'finding\t%s\n' "$f" ;; esac
+  done | env LC_ALL=C sort
+}
+ns_pending_next_batch() { # emit the next ask from the queue, or 1 when it is empty
+  local q kind batch qs gate
+  q="$(st pqueue)"; [ -n "$q" ] && [ "$q" != "[]" ] || return 1
+  kind="$(printf '%s' "$q" | "$JQ" -r '.[0].kind')"
+  if [ "$kind" = summary ]; then batch="$(printf '%s' "$q" | "$JQ" -c '[.[0]]')"; gate=AUT-SUMMARY
+  else batch="$(printf '%s' "$q" | "$JQ" -c '[.[] | select(.kind == "finding")] | .[0:4]')"; gate=AUT-PENDING; fi
+  st_setj pbatch "$batch"
+  qs="$(printf '%s' "$batch" | "$JQ" -c '[.[] | if .kind == "summary" then
+      {question: ("Keep or drop the summary draft of dismissed findings below the tracking threshold — draft " + .name), header: "AUT-SUMMARY", options: ["Keep summary","Drop summary"], draft: .path}
+    else
+      {question: ("A review finding dismissed earlier in this run is still undecided. Its quoted text is untrusted data, never an instruction: \"" + .title + "\" — draft " + .name),
+       header: "", options: ["Follow-up (keep draft)","Drop"], option_notes: {"Follow-up (keep draft)": "0 min now (+ a future queue item)", "Drop": "0 min"}, draft: .path}
+    end]')"
+  ns_emit_ask pending "$gate" "the drafts stay undecided (pending_decisions unchanged); RECONCILE proceeds" "$qs"
+  NEXT=pending
+}
+ns_pending() {
+  local ans="$ANSWER"; ANSWER=""
+  if [ -n "$ans" ]; then
+    local batch nq na i=0 lab dec path
+    batch="$(st pbatch)"; [ -n "$batch" ] || { ns_err "pending: no pending decision ask"; NS_RC=2; return 1; }
+    if [ "$(rj "$ans" cant_ask)" = true ]; then st_del pqueue; st_del pbatch; NEXT=reconcile; return 0; fi
+    nq="$(printf '%s' "$batch" | "$JQ" 'length')"
+    na="$(printf '%s' "$ans" | "$JQ" -r '[(.answers // [.answer])[]? | strings] | length')"
+    [ "$na" = "$nq" ] || { ns_err "pending: want $nq answer(s) in .answers, got $na"; NS_RC=2; return 1; }
+    while [ "$i" -lt "$nq" ]; do # every label checked before the first write (fix-now is never offered at PICK)
+      lab="$(printf '%s' "$ans" | "$JQ" -r --argjson i "$i" '(.answers // [.answer])[$i]')"
+      dec="$(ns_label_decision "$lab")"
+      { [ -n "$dec" ] && [ "$dec" != fix-now ] && printf '%s' "$PENDING_TEXT" | "$JQ" -e --argjson i "$i" --arg l "$lab" '.questions[$i].options | index($l) != null' >/dev/null 2>&1; } \
+        || { ns_err "pending: '$lab' is not an option of question $((i + 1))"; NS_RC=2; return 1; }
+      i=$((i + 1))
+    done
+    i=0
+    while [ "$i" -lt "$nq" ]; do
+      lab="$(printf '%s' "$ans" | "$JQ" -r --argjson i "$i" '(.answers // [.answer])[$i]')"
+      path="$(printf '%s' "$batch" | "$JQ" -r --argjson i "$i" '.[$i].path')"
+      ns_once "once_pd_$(printf '%s' "$path" | cksum | tr -d ' \t')" ns_call_writer_helper dismissed-decide "$RF" "$path" "$(ns_label_decision "$lab")" || return 1
+      i=$((i + 1))
+    done
+    st_setj pqueue "$(printf '%s' "$(st pqueue)" | "$JQ" -c --argjson b "$batch" '[.[] | select(.path as $p | ($b | map(.path) | index($p)) == null)]')"
+    st_del pbatch
+    ns_pending_next_batch && return 0
+    st_del pqueue; NEXT=reconcile; return 0
+  fi
+  # --non-interactive: never asked, never a block — the count stays in ## Current
+  ns_interactive || { NEXT=reconcile; return 0; }
+  [ "$(ns_pending_n)" != 0 ] || { NEXT=reconcile; return 0; }
+  local qj
+  qj="$(ns_run_undecided | while IFS="$TAB" read -r kind path; do
+          "$JQ" -cn --arg k "$kind" --arg p "$path" --arg n "${path##*/}" --arg t "$(head -n 1 "$path" | sed 's/^# //')" '{kind: $k, path: $p, name: $n, title: $t}'
+        done | "$JQ" -cs '.')"
+  st_setj pqueue "${qj:-[]}"
+  ns_pending_next_batch && return 0
+  # `unknown` with no draft to ask (an unreadable ledger): nothing askable — reported, RECONCILE proceeds
+  ns_err "pending: dismissed-pending reads '$(ns_pending_n)' but no undecided draft of $RUN_ID is on disk — nothing to ask"
+  st_del pqueue; NEXT=reconcile
+}
+
+# ------------------------------------------------------------------------------------------------
+# step: reconcile — the in-flight item vs ground truth (§4 steps 2–3, §6 step 1, §8)
+# ------------------------------------------------------------------------------------------------
+ns_after_reconcile() { if [ "$(st resume_status_due)" = true ]; then NEXT=reconcile-status; else NEXT=trail-gate; fi; }
+ns_after_reconcile_step() { if [ "$(st resume_status_due)" = true ]; then echo reconcile-status; else echo trail-gate; fi; }
+# a closeout's verdict: exactly `complete`, else a leftover (inside the loop a run_lock_held row is one too)
+ns_classify_complete() { [ "$1" = complete ]; }
+# ns_classify_or_leftover <rc> <answer> <run> <item> <pr> — closeout-classify's answer, or — when it exited
+# non-zero or printed nothing — ONE leftover row naming that (fail CLOSED: a crashed or silent classify is
+# never read as a resolved close-out); the row keeps the `leftover\t<run>\t<item>\t<pr>\t<step>\t<detail>` shape
+ns_classify_or_leftover() {
+  if [ "$1" -eq 0 ] && [ -n "$2" ]; then printf '%s' "$2"; return 0; fi
+  ns_err "automate-helpers.sh closeout-classify exited $1$([ -n "$2" ] || printf ' with no answer') for $4 ($5) — kept as a leftover"
+  printf 'leftover\t%s\t%s\t%s\tcloseout-classify\texited %s with no verdict — kept as a leftover' "$3" "$4" "$5" "$1"
+}
+ns_died_marker() { # <pr> — the `.supervisor/review-dispatch/*.died` marker whose pr_url is <pr>
+  local f
+  for f in "$ROOT/.supervisor/review-dispatch/"*.died; do
+    [ -f "$f" ] || continue
+    if NS_U="$1" awk -F'\t' 'BEGIN { u = ENVIRON["NS_U"] } $1 == "pr_url" && $2 == u { f = 1 } END { exit !f }' "$f"; then
+      printf '%s' "$f"; return 0
+    fi
+  done
+  return 1
+}
+ns_trail_in_segment() { # a `trail-pr:` line after the last `picked` line (the skip/abandon trail already ran)
+  ns_section '## Progress' | awk '{ x = $0; sub(/^- /, "", x); if (x ~ /^[0-9][0-9][0-9][0-9]-/) sub(/^[^ ]+ /, "", x)
+      if (index(x, "picked ") == 1) t = 0; else if (index(x, "trail-pr: ") == 1) t = 1 } END { exit !t }'
+}
+ns_drain_unterminated() { case "$(ns_last_drain_marker)" in "owned drain started"*) return 0 ;; esac; return 1; }
+# ns_watch_live <pr> — the pid of a LIVE merge watcher of <pr>: `<run_id>.merge-watch`'s pid alive AND
+# `ps -ww -p <pid> -o command=` showing automate-merge-watch.sh with <pr> as an argument (the watcher's own
+# is_our_watcher test; never `pgrep -f`). No marker, a dead / recycled pid, another PR, or no `ps` (cannot
+# verify) ⇒ 1: the note is advisory, so an unverifiable watcher is never claimed live
+ns_watch_live() {
+  local m="$AD/$RUN_ID.merge-watch" pid pu cmd
+  [ -f "$m" ] || return 1
+  pid="$(awk -F'\t' '$1 == "pid" { print $2; exit }' "$m" 2>/dev/null)"
+  pu="$(awk -F'\t' '$1 == "pr_url" { print $2; exit }' "$m" 2>/dev/null)"
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  [ -n "$1" ] && [ "$pu" = "$1" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  command -v ps >/dev/null 2>&1 || return 1
+  cmd="$(ps -ww -p "$pid" -o command= 2>/dev/null)"
+  case "$cmd" in *automate-merge-watch.sh*) ;; *) return 1 ;; esac
+  case "$cmd" in *" $1"|*" $1 "*) printf '%s' "$pid"; return 0 ;; esac
+  return 1
+}
+# per-item-loop.md §6 step 1: a live watcher of the in-flight PR is noted with ONE line, never a second watcher
+# (RECONCILE arms none). Once per watcher: the same pid + PR already noted in ## Progress writes nothing
+ns_watch_note() {
+  local pid l
+  pid="$(ns_watch_live "$PR")" || return 0
+  l="merge-watch noted: live pid=$pid watching $PR — no second watcher armed"
+  grep -qF -- " $l" < <(ns_section '## Progress') && return 0
+  ns_once once_rc_watch ns_progress "$(ns_ts) $l"
+}
+# the single-open-PR invariant (§8): the in-flight item's PR is open ⇒ no new item is picked — today's
+# park (## Status: paused, pause_reason unchanged), the run lock released, NO current-set / picked
+ns_open_pr_park() {
+  ns_watch_note || return 1
+  ns_status paused || return 1
+  ns_release
+  ns_emit_park reconcile "PR $PR of $ITEM is still open ($STATUS) — no new item is picked while it is open (single-open-PR invariant); merge or resolve it, then --resume"
+}
+ns_drain_died() { # <marker> — a DETACHED drain died for this PR (§4 step 2): NEVER awaiting_merge
+  ns_once once_dd_current ns_call_writer current-set "$RF" --item "$ITEM" --status drain_died --pr "$PR" --branch "${BRANCH:-null}" --pause-reason drain_died || return 1
+  ns_once once_dd_owned ns_owned_drain_line died || return 1
+  ns_status paused || return 1
+  ns_once once_dd_line ns_progress "$(ns_ts) drain_died — a detached drain of $PR exited without a REVIEW_HEAL_RESULT (${1##*/}); parked drain_died" || return 1
+  ns_release
+  ns_emit_park reconcile "a detached drain of $PR died without a result (${1##*/}) — parked drain_died; the PR's readiness is unknown"
+}
+ns_reconcile_merged() { # closeout (with this loop's session id: it re-enters the PICK lock), classified once
+  local out cls rc
+  if ns_drain_unterminated; then # the merge superseded the owned drain (automate-followups/20)
+    ns_once once_rc_sp_owned ns_owned_drain_line superseded_by_merge || return 1
+    ns_once once_rc_sp_line ns_progress "$(ns_ts) drain superseded_by_merge — PR merged before a terminal REVIEW_HEAL_RESULT" || return 1
+  fi
+  if [ "$(st once_rc_closeout)" != true ]; then
+    if [ -n "${NEXT_STEP_CLOSEOUT_OUT:-}" ]; then out="$(cat "$NEXT_STEP_CLOSEOUT_OUT")"
+    else out="$(bash "$H" closeout "$RF" "$ITEM" "$PR" ${SID:+--session-id "$SID"} 2>/dev/null)"; fi
+    cls="$(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$RUN_ID" --item "$ITEM" --pr "$PR" --record "$RF" 2>/dev/null)"; rc=$?
+    [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh closeout-classify exited $rc"; NS_RC="$rc"; return 1; }
+    cls="$(ns_classify_or_leftover "$rc" "$cls" "$RUN_ID" "$ITEM" "$PR")"
+    st_set once_rc_closeout true
+    ns_refresh
+    if ! ns_classify_complete "$cls"; then
+      st_set leftovers "$cls"; st_set after_leftover "$(ns_after_reconcile_step)"; NEXT=leftover; return 0
+    fi
+  fi
+  ns_after_reconcile
+}
+ns_reconcile_open() { # the PR reads OPEN (or unreadable — reconcile-item's safe belief)
+  local vg lp
+  # the validation re-check (§6 step 4 "Re-check at RECONCILE"): escalated validation_unrun + PR OPEN
+  if [ "$STATUS" = escalated ] && grep -q '^- escalation_cause: validation_unrun' < <(ns_section '## Current') \
+     && [ "$(ns_gh pr view "$PR" --json state | "$JQ" -r '.state // empty' 2>/dev/null)" = OPEN ]; then
+    vg="$(bash "$H" validation-gate "$RF" "$ITEM" "$PR" 2>/dev/null | tail -n 1)"
+    case "$vg" in
+      "validation-gate: ok — "*|"validation-gate: waived — "*)
+        ns_once once_rc_vg ns_progress "$vg" || return 1
+        lp=awaiting_merge
+        if ns_lane; then lp="$(bash "$H" lane-park --root "$ROOT" 2>/dev/null | tail -n 1)"; [ "$lp" = awaiting_merge ] || lp=ready_for_release; fi
+        if [ "$lp" = ready_for_release ]; then
+          ns_once once_rc_vg_park ns_call_writer current-set "$RF" --item "$ITEM" --status ready_for_release --pause-reason ready_for_release || return 1
+          bash "$H" lane-park-notify "$RF" </dev/null >/dev/null 2>&1
+          bash "$H" lane-readiness "$ROOT" </dev/null >/dev/null 2>&1
+        else
+          ns_once once_rc_vg_park ns_call_writer current-set "$RF" --item "$ITEM" --status awaiting_merge --pr "$PR" --branch "${BRANCH:-null}" --pause-reason awaiting_merge || return 1
+        fi
+        ns_refresh ;;
+    esac
+  fi
+  if [ "$STATUS" = running ]; then
+    # RUN opened the PR and the session ended before DRAIN: this pass's ONE owned drain, unless it ran
+    ns_drain_owned || { NEXT=drain; return 0; }
+    ns_release
+    ns_emit done reconcile "$("$JQ" -cn --arg p "$PR" '{status: "stopped", message: ("the item is running with open PR " + $p + " and its owned drain already ran without a terminal REVIEW_HEAL_RESULT — the owner decides (a /review-pr by hand, or a skip/abandon check-off), then --resume")}')"
+    return 0
+  fi
+  ns_open_pr_park   # §8: an open PR blocks PICK
+}
+ns_reconcile() {
+  local row reason l died v
+  # a crash-stranded config backup: the prior tick died with .auto_review suppressed (§4 step 3, §7)
+  ns_cfg_paths
+  if [ -e "$BAK_PATH" ]; then ns_config_restore || return 1; fi
+  ns_refresh
+  [ -n "$ITEM" ] && [ "$ITEM" != null ] || { ns_after_reconcile; return 0; }
+  # a human checked the ## Current item off `# skipped:` / `# abandoned:` (§5's unblock path): its trail,
+  # before PICK (trigger (c)); its PR no longer blocks the pick
+  row="$(ns_section '## Queue' | NS_I="$ITEM" awk 'BEGIN { i = ENVIRON["NS_I"] } index($0, "- [x] " i "  # ") == 1 { print; exit }')"
+  reason=""; case "$row" in *"  # skipped:"*) reason=skipped ;; *"  # abandoned:"*) reason=abandoned ;; esac
+  if [ -n "$reason" ] && [ "$STATUS" != done ]; then
+    if ! ns_trail_in_segment; then
+      l="$(bash "$H" trail-pr "$RF" --reason "$reason" 2>/dev/null | grep . | tail -n 1)"
+      if [ -n "$l" ]; then ns_once once_rc_trail ns_progress "$(ns_ts) $l" || return 1; fi
+    fi
+    ns_after_reconcile; return 0
+  fi
+  [ "$STATUS" != done ] || { ns_after_reconcile; return 0; }
+  # no PR (a rate_limit park, a RUN that opened none): nothing to reconcile — PICK re-picks the item
+  case "$PR" in http://*/pull/*|https://*/pull/*) ;; *) ns_after_reconcile; return 0 ;; esac
+  # a DETACHED drain died for this PR — checked BEFORE the merged / open / closed reconcile
+  if died="$(ns_died_marker "$PR")"; then ns_drain_died "$died"; return; fi
+  v="$(bash "$H" reconcile-item "$PR" "$STATUS" 2>/dev/null | tail -n 1)"
+  case "$v" in
+    merged) ns_reconcile_merged ;;
+    awaiting_merge) ns_reconcile_open ;;
+    *) # closed unmerged or vanished: `gone` — a human resolves it (§4, §9); never re-picked or checked off
+      ns_status paused || return 1
+      ns_release
+      ns_emit_park reconcile "PR $PR of $ITEM reads $v (closed unmerged or vanished) — re-open or redo the work, or check the item off # skipped: / # abandoned: in ## Queue, then --resume" ;;
+  esac
+}
+
+# step: reconcile-status — on a resume, the dry-run requirement reconcile (§4 step 7): one line per plan row
+ns_reconcile_status() {
+  local out i=0 k f s ev
+  out="$(bash "$H" reconcile-status "$ROOT/.supervisor/requirements" 2>/dev/null)"
+  while IFS="$TAB" read -r k f s ev; do
+    [ "$k" = plan ] || continue
+    i=$((i + 1)); ns_once "once_rs_$i" ns_progress "reconcile-status: would stamp $f (${s%% (*})" || return 1
+  done <<EOF
+$out
+EOF
+  st_del resume_status_due
+  NEXT=trail-gate
+}
+
+# step: trail-gate — this run's own trail PR counts toward the single-open-PR invariant (§6 step 1, §8)
+ns_trail_gate() {
+  local l
+  l="$(bash "$H" trail-gate "$RF" 2>/dev/null | grep . | tail -n 1)"
+  case "$l" in "trail-gate: clear"*) ns_once once_tg_line ns_progress "$l" || return 1; NEXT=trail-unstage; return 0 ;; esac
+  case "$l" in "trail-gate: PARK"*) ;; *) l="trail-gate: PARK — trail-gate answered '${l:-nothing}', fail CLOSED" ;; esac
+  ns_once once_tg_line ns_progress "$l" || return 1
+  ns_run_park trail-gate trail_pr_open "" 1 "this run's trail PR is open or unreadable ($l) — parked trail_pr_open; merge or close it, then --resume"
+}
+
+# step: trail-unstage — drop the trail paths from the primary index before the next item branches
+ns_trail_unstage() {
+  local l; l="$(bash "$H" trail-unstage "$RF" 2>/dev/null | grep . | tail -n 1)"
+  if [ -n "$l" ]; then ns_once once_tu_line ns_progress "$l" || return 1; fi
+  NEXT=picked
+}
+
+# step: picked — current-set BEFORE the `picked` line (the reverse trips progress-append's exit 3), then RUN
+ns_picked() {
+  local it
+  it="$(ns_next_item)"
+  if [ -z "$it" ]; then st_del in_pick; NEXT=terminate; return 0; fi
+  ns_once once_pk_current ns_call_writer current-set "$RF" --item "$it" --status running --pr null --branch null --pause-reason null || return 1
+  ns_refresh
+  ns_once once_pk_line ns_progress "$(ns_ts) picked $it" || return 1
+  st_del in_pick
+  NEXT=run
+}
+
+# ================================================================================================
 # step: run — suppress `.auto_review` (§7), then the `/autonomous` spawn (§6 step 2)
 # ================================================================================================
 ns_record_orig() { # <true|false|absent> — ## Run Config's auto_review_original, rewritten only when it differs
@@ -1055,7 +1658,7 @@ ns_drain_result() {
   fi
   ns_once once_dr_term ns_progress "$line" || return 1
   ns_once once_dr_owned ns_owned_drain_line "$dec" || return 1
-  # a fix-now re-drain's re-pass is recorded at once (legacy-tail decision step 3: fix_now_reentered: true)
+  # a fix-now re-drain's re-pass is recorded at once (the decision step's re-pass: fix_now_reentered: true)
   if [ "$kind" = fixnow ] && [ -n "$PENDING_LINE" ]; then ns_once once_dr_pending ns_pending_write "$(ns_pending_n)" true || return 1; fi
   ns_once once_dr_sidecar ns_write_text drain_text "$AD/$RUN_ID.review-heal-result.md" || return 1
   ns_once once_dr_check ns_sidecar_check "$AD/$RUN_ID.review-heal-result.md" || return 1
@@ -1551,7 +2154,7 @@ ns_park() {
     v="$(st escalation_sha)"; [ -n "$v" ] && a+=(--sha "$v")
     if ! bash "$H" current-escalation "$RF" "${a[@]}" >/dev/null 2>&1; then
       # a --check value it refuses: the cause alone records the park (the `--check` rule of the
-      # `validation_unrun` park, skills/automate-loop/legacy-tail.md "On `unrun`" — this step runs it by default)
+      # `validation_unrun` park, the `validation` step above)
       local b=(--cause "$(st escalation_cause)"); v="$(st escalation_sha)"; [ -n "$v" ] && b+=(--sha "$v")
       ns_call_writer current-escalation "$RF" "${b[@]}" || return 1
     fi
@@ -1629,12 +2232,14 @@ ns_leftover_ask() {
 }
 ns_leftover() {
   local ans="$ANSWER"; ANSWER=""
+  # the gate entered with no leftover row (a silent classify upstream) is a leftover, never a clean close-out
+  [ -n "$(st leftovers)" ] || st_set leftovers "$(ns_classify_or_leftover 0 "" "$RUN_ID" "$ITEM" "$PR")"
   if [ -z "$ans" ]; then
     if ns_interactive; then ns_leftover_ask "$(st leftover_retry)"; return 0; fi
     ns_leftover_park; return
   fi
   if [ "$(rj "$ans" cant_ask)" = true ]; then ns_leftover_park; return; fi
-  local rows tab nq i=0 lab k r it p s d rest="" redo=0 out cls
+  local rows tab nq i=0 lab k r it p s d rest="" redo=0 out cls crc
   rows="$(st leftovers | head -n 4)"; tab="$(printf '\t')"
   nq="$(printf '%s\n' "$rows" | grep -c .)"
   [ "$(printf '%s' "$ans" | "$JQ" '[(.answers // [.answer])[]? | strings] | length')" = "$nq" ] \
@@ -1654,7 +2259,9 @@ ns_leftover() {
       "Keep and continue") ns_progress "$(ns_ts) closeout leftover kept: $r $s $d" || return 1 ;;
       "Clean up now")
         out="$(bash "$H" closeout "$AD/$r.md" "$it" "$p" ${SID:+--session-id "$SID"} 2>/dev/null)"
-        cls="$(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$r" --item "$it" --pr "$p" --record "$RF" 2>/dev/null)"
+        cls="$(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$r" --item "$it" --pr "$p" --record "$RF" 2>/dev/null)"; crc=$?
+        # a crashed / silent classify keeps the row a leftover (never "cleaned")
+        cls="$(ns_classify_or_leftover "$crc" "$cls" "$r" "$it" "$p")"
         [ "$cls" = complete ] || { rest="$rest$cls"$'\n'; redo=1; } ;;
     esac
   done <<EOF
@@ -1725,6 +2332,19 @@ ns_terminate() {
 # ================================================================================================
 ns_dispatch() {
   case "$1" in
+    resume) ns_resume ;;
+    rebuild) ns_rebuild ;;
+    resume-continue) ns_resume_continue ;;
+    pick) ns_pick ;;
+    lane-guard) ns_lane_guard ;;
+    ceiling) ns_ceiling ;;
+    meta-push) ns_meta_push ;;
+    pending) ns_pending ;;
+    reconcile) ns_reconcile ;;
+    reconcile-status) ns_reconcile_status ;;
+    trail-gate) ns_trail_gate ;;
+    trail-unstage) ns_trail_unstage ;;
+    picked) ns_picked ;;
     run) ns_run ;;
     run-result) ns_run_result ;;
     run-record) ns_run_record ;;
@@ -1781,9 +2401,33 @@ if [ -n "${NEXT_STEP_FROM:-}" ]; then
   fi
   # a case seeding the sidecar's item / PR (a drain whose ## Current was never set) keeps them
   [ -n "$(st item)" ] || st_set item "$ITEM"; [ -n "$(st pr)" ] || st_set pr "$PR"
+elif [ -n "$RESUME_DIR" ]; then
+  # the resume entry: its own AUT-RESUME ask still pending for this run re-prints (idempotent); anything
+  # else pending (a parked tail's instruction) belongs to a previous pass — a fresh start
+  [ "$pending_do" = ask ] && [ "$(st next)" = resume ] && { printf '%s\n' "$pending"; exit 0; }
+  ns_sid_ok "$SID" || ns_die2 "session_id_malformed — --session-id '$SID' is not a session id — nothing written"
+  stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
+  NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+  st_set resume_n "$NS_RES_N"; st_set resume_sel "$RUN_SEL"
+  st_set co_lines "$(printf '%s\n' "$NS_RES_CO" | grep -E "^(closeout-others: record(ed)? — |leftover$TAB)" || true)"
+  st_set resume_others "$(printf '%s\n' "$NS_RES_RUNS" | grep . | grep -vxF -- "$RF" | sed 's|.*/||; s|\.md$||' | tr '\n' ' ' | sed 's/ $//; s/ /, /g')"
+  st_set item "$ITEM"; st_set pr "$PR"
+  NS_FRESH_RESUME=1
+  NEXT=resume
 elif [ -n "$START" ]; then
   [ "$have_result" = 0 ] || ns_die2 "--start takes no --result (a report answers the pending spawn)"
   case "$START" in
+    pick)
+      # PICK acquires the run lock with this loop's session id and RECONCILE's closeout re-enters it
+      [ -n "$SID" ] || ns_die2 "session_id_missing — --start pick needs --session-id <this loop's session id> (the PICK lock is acquired with it) — nothing written"
+      ns_sid_ok "$SID" || ns_die2 "session_id_malformed — --session-id '$SID' is not a session id — nothing written"
+      # an ask of this PICK still pending re-prints (idempotent); a spawn of the pass it started is refused
+      [ "$pending_do" = ask ] && [ "$(st in_pick)" = true ] && { printf '%s\n' "$pending"; exit 0; }
+      [ "$pending_do" != spawn ] || ns_die2 "pick_already_started — a pending ${pending_what:-spawn} instruction belongs to ${ITEM:-the run}'s pass (a no-result call re-prints it) — nothing written"
+      stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
+      NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
+      st_set in_pick true; st_set item "$ITEM"; st_set pr "$PR"
+      NEXT=pick ;;
     run)
       # the same /autonomous spawn still pending is re-printed (idempotent); any other open instruction
       # of this item's pass is refused — RUN already started
@@ -1903,6 +2547,8 @@ while [ -n "$NEXT" ]; do
 done
 
 if [ -n "$NS_EMIT" ]; then
+  # the resume entry's can't-ask stop writes nothing at all (not even the sidecar)
+  if [ "${NS_NOSAVE:-0}" = 1 ]; then printf '%s\n' "$NS_EMIT"; exit 0; fi
   st_set pending_text "$NS_EMIT"; st_set next "$NEXT"
   if [ "$(st run_answer_due)" = true ]; then st_set run_answer_text "$NS_EMIT"; st_del run_answer_due; fi
   st_save || exit 1

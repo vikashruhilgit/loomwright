@@ -1,0 +1,6 @@
+review-heal drain ESCALATED (fix_floor_invalid)
+
+fix_floor_invalid — fix-floor: --fix-floor 'urgent' is not HIGH, MEDIUM or LOW
+
+CI review lens: static-only (execution: none)
+----

@@ -1,0 +1,3 @@
+run: ae60dadd-8fcf-4650-976a-93bf87a87708 (the /automate lane L11 session auto-2026-10-17-143254 that ran this very job)
+Its Decisions Log row 4: PLAN | plan_from_brief | job brief pre-answers PLAN: 3 subtasks, sequential path (Mode: sequential, Workers 1), order 1→2→3, no orchestrator spawn — and its first Phase 3 spawn was the worker for subtask 1. The PLAN record itself was the model's note, not a protocol step, so the driver does not reproduce it.
+Trimmed: the brief keeps its title, Environment base commit, the nine AC headlines, ## Configuration and ## Subtask Structure verbatim; the session log keeps one lifecycle row.

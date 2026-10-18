@@ -1,0 +1,7 @@
+# Phase 1.5 UNVERIFIED ⇒ straight to PLAN
+call: --job .supervisor/jobs/pending/2026-10-17-golden-unverified.md
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"classification":"UNVERIFIED","warning":"gh pr list failed (not authenticated) — pre-flight unverified"}'
+expect: spawn

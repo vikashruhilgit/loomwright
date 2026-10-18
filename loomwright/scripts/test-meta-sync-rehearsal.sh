@@ -140,10 +140,17 @@ run --branch "$BR"; { [ "$RC" -eq 1 ] && red scratch-mode-off && red init && ! h
 
 # ---- mutation controls ---------------------------------------------------------------------------
 # build_mutant <dir> <file> <sed-script> <must-appear> — copies every sibling script, seds <file>
+# (automate-speed/20) meta-sync.sh is read as ONE file — its own _ms_bundle output in MSB, so a sed
+# finds the code its modules hold and the mutant is self-contained; the copied entries source
+# setup-memory.d/ and meta-sync.d/, so those are copied too.
+MSB="$TROOT/meta-sync.bundle.sh"
+( eval "$(awk '/^_ms_bundle\(\) \{$/,/^}$/' "$HERE/meta-sync.sh")"; _ms_bundle "$HERE/meta-sync.sh" ) > "$MSB"
 build_mutant() {
+  local src="$HERE/$2"; [ "$2" = meta-sync.sh ] && src="$MSB"
   mkdir -p "$1"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$1/"; done
-  sed -f "$3" "$HERE/$2" > "$1/$2" || return 1
-  cmp -s "$HERE/$2" "$1/$2" && return 1
+  cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$1/" || return 1
+  sed -f "$3" "$src" > "$1/$2" || return 1
+  cmp -s "$src" "$1/$2" && return 1
   grep -qF "$4" "$1/$2" || return 1
   bash -n "$1/$2" || return 1
 }

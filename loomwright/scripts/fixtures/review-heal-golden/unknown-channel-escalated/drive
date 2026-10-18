@@ -1,0 +1,4 @@
+# unknown channel: the issue-comment read errors ⇒ the channel is UNKNOWN ⇒ ESCALATED (other,
+# termination_reason unset) at the read step — the fallback trigger (which this otherwise quiet PR would
+# earn) is never evaluated.
+call: --start drain

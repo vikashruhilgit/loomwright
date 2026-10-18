@@ -14,6 +14,8 @@ This skill is the single source of truth for the Supervisor's **Phase 1.5 PRE-FL
 executes the protocol below; `agents/supervisor.md` keeps only a short phase stanza with the
 entry/exit conditions. The protocol prose below is moved verbatim from the Supervisor prompt.
 
+> **Driver path (automate-speed/11).** Actions 1 and 6 — the skip check and acting on the classification — are `scripts/supervisor-next-step.sh`'s `preflight` / `preflight-route` / `preflight-answer` / `preflight-stop` steps. Its `preflight-sync` spawn asks you to run actions 2–5 and report the classification; you never act on it yourself. On the legacy path (`--legacy`, `--continue`, `--sdk-runner`, no `job:` brief) the pre-driver text of actions 1 and 6 is in `docs/supervisor-legacy-phases.md`.
+
 ---
 
 ## Protocol
@@ -49,12 +51,7 @@ passes `"a.md b.md"` as ONE pathspec under zsh, matches nothing, and returns an 
 
 **Actions:**
 
-1. **Skip check (AC5):** If `--skip-preflight-sync` was passed (parsed in Phase 0's base-branch / non-interactive preamble — see `skills/supervisor-config/SKILL.md`), record the skip as a deliberate choice and short-circuit straight to Phase 2:
-   ```
-   Context-Keeper(operation: record_decision, phase: PRE_FLIGHT_SYNC,
-                  decision: "preflight_skipped", rationale: "--skip-preflight-sync flag")
-   ```
-   Set `preflight_sync = skipped` and proceed to Phase 2. Do NOT run any of the steps below.
+1. **Skip check (AC5)** — *run by the driver's `preflight` step*: `--skip-preflight-sync` ⇒ the `preflight_skipped` record (`preflight_sync = skipped`) and straight to Phase 2 — none of the actions below run. Pre-driver text: `docs/supervisor-legacy-phases.md`.
 
 2. **Gather remote state (bounded):**
    ```bash
@@ -106,28 +103,7 @@ passes `"a.md b.md"` as ONE pathspec under zsh, matches nothing, and returns an 
 
 5. **Stacked-iteration scoping (AC6):** when `$BASE_BRANCH ≠ main` (the `/autonomous` loop stacks iteration N+1 on iteration N's branch), scope the overlap comparison to `$BASE_BRANCH` only and do NOT flag the **parent iteration's own commits or PR** as overlap — those are the legitimate base this iteration builds on, not a competing change. No false positive against the stacked-PR chain.
 
-6. **Act on the classification:**
-
-   - **CLEAR (AC2 — silent):** proceed to Phase 2 with no extra prompt. Record a one-line pre-flight summary and set `preflight_sync = clear`:
-     ```
-     Context-Keeper(operation: record_decision, phase: PRE_FLIGHT_SYNC,
-                    decision: "preflight_clear",
-                    rationale: "version={canonical_version}, base_tip={BASE_TIP}, no overlap")
-     ```
-
-   - **OVERLAP / SUPERSEDED in an interactive session (AC3):** present an `AskUserQuestion` (mirroring **Launch Pad's** Phase 2.5 feasibility soft-gate) BEFORE spawning any worker. The question MUST cite the **specific overlapping commit SHAs / PR numbers AND the intersecting file paths**. Three options:
-     - **proceed-anyway** → set `preflight_sync = overlap_proceed` (OVERLAP) or `superseded_proceed` (SUPERSEDED); record the decision (`record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_overlap_proceed" | "preflight_superseded_proceed", rationale: "{cited commits/PRs + paths}")`); continue to Phase 2.
-     - **revise-scope** → pause and checkpoint; do NOT spawn any worker. Keep the existing feature branch, `record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_revise_scope", rationale: "{cited overlap}")`, and emit a single `SUPERVISOR_RESULT` with `status: checkpoint` and `preflight_sync: null` (the classification lives in the Decisions Log entry above, not the field — and a well-formed result block keeps the SubagentStop validator happy), then exit with a resume command. The user re-invokes `/supervisor` with the narrowed/redirected task (reusing the branch, or `git checkout $BASE_BRANCH && git branch -D feature/{old}` first if the new scope warrants a different branch name); Phase 1.5 then re-evaluates the revised scope against remote state on the next run. Do NOT silently fall through to Phase 2.
-     - **abort** → fail the run cleanly (no worker spawned): record `record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_abort", rationale: "{classification} — {cited commits/PRs + paths}")`, mark the task `failed`, move the job brief to `failed/` if a `job:` was used, and emit a single `SUPERVISOR_RESULT` with `status: failed`, `error: "preflight_overlap_detected: {classification} — {cited commits/PRs + paths}"`. Do NOT proceed to Phase 2.
-
-   - **OVERLAP / SUPERSEDED under CI / non-interactive (AC4 — fail closed):** re-read the non-interactive state LIVE (do NOT trust in-context state alone — W-NEW-10):
-     ```
-     ni = Context-Keeper(operation: get_flag, key: "non_interactive")
-     ```
-     If `ni` is set (or `--non-interactive` was passed) OR **stdin is not a TTY**, an OVERLAP/SUPERSEDED classification **FAILS CLOSED** — UNLESS `--skip-preflight-sync` was passed (which would already have short-circuited in step 1). Abort with a diagnostic: mark the task `failed`, move the job brief to `failed/` if a `job:` was used, and emit a single `SUPERVISOR_RESULT` with:
-     - `status: failed`
-     - `SUPERVISOR_RESULT.error = "preflight_overlap_detected"` (the dedicated reason — surfaced by the `/autonomous` loop as `AUTONOMOUS_RUN.status_reason: "preflight_overlap_detected"`)
-     Do NOT spawn any worker, do NOT proceed to Phase 2.
+6. **Act on the classification** — *run by the driver's `preflight-route` / `preflight-answer` / `preflight-stop` steps* from the report you hand back (`{"classification", "version", "base_tip", "citations", "advisory", "warning"}`): CLEAR ⇒ the `preflight_clear` record (`version={canonical_version}, base_tip={BASE_TIP}, no overlap`), silent; UNVERIFIED ⇒ Phase 2 with `preflight_sync = unverified`; OVERLAP / SUPERSEDED ⇒ the SUP-OVERLAP ask citing the commits / PRs AND the intersecting paths — proceed-anyway (`preflight_overlap_proceed` | `preflight_superseded_proceed`), revise-scope (`preflight_revise_scope`, checkpoint, no worker) or abort (`preflight_abort`, job → `failed/`, `error: "preflight_overlap_detected: {classification} — {citations}"`) — or, under `--non-interactive` / the Can't-ask rule, fail CLOSED: job → `failed/`, `SUPERVISOR_RESULT.error = "preflight_overlap_detected"`, no worker, no Phase 2. Pre-driver text: `docs/supervisor-legacy-phases.md`.
 
 **`preflight_sync` field (SUPERVISOR_RESULT, see the Supervisor's "Result Block"):** records this phase's outcome — `clear` (CLEAR, silent), `overlap_proceed` (OVERLAP, user proceeded), `superseded_proceed` (SUPERSEDED, user proceeded), `skipped` (`--skip-preflight-sync`), or `unverified` (graceful degradation). Optional/additive — `schema_version` stays 1.
 

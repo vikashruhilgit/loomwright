@@ -1,0 +1,9 @@
+# next-step.results — resume-glob-finalize: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The resume entry (closeout-others,
+# resume-glob --finalize — the done lane run and the result sidecars are never listed): exactly one incomplete run
+# and no --run ⇒ can't ask: the resume_requires_flag_non_interactive stop (nothing written); interactive: the
+# AUT-RESUME ask. The run file is unchanged either way.
+call-bare: --resume "$AD" --non-interactive --session-id auto-2026-10-15-040641
+expect: done
+call-bare: --resume "$AD" --session-id auto-2026-10-15-040641
+expect: ask

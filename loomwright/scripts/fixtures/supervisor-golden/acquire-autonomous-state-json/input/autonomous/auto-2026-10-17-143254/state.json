@@ -1,0 +1,22 @@
+{
+  "_v1_note": "Advisory-only in v13.0.0 — this file is NOT AUTHORITATIVE for resume / recovery / cross-session state.",
+  "session_id": "auto-2026-10-17-143254",
+  "requirement_path": ".supervisor/requirements/automate-speed/11-next-step-supervisor.md",
+  "mode": "single",
+  "allow_multi_iteration": false,
+  "iteration": 1,
+  "max_iterations": 1,
+  "current_brief_path": ".supervisor/jobs/pending/2026-10-17-next-step-supervisor.md",
+  "iterations": [],
+  "policy_decisions": [
+    {
+      "iteration": 1,
+      "phase": "PLAN",
+      "decision": "user_picked_save",
+      "source": "launch_pad_phase_6"
+    }
+  ],
+  "escalations_seen": [],
+  "started_at": "2026-10-17T14:32:54Z",
+  "last_updated": "2026-10-17T14:32:54Z"
+}

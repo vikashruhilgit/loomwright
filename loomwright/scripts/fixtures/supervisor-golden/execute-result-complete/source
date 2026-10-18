@@ -1,0 +1,2 @@
+synthetic: no kept run took the Parallel Path, so no real EXECUTE_RESULT exists locally; the block is docs/result-schemas/execute-result.md's example shape (two completed subtasks, review_decision PASS, merge_order, worktrees).
+The worktrees are real (setup), the session log settles both workers and the Execute Manager, so the driver routes straight into FINALIZE and stops at the merge spawn.

@@ -1,0 +1,5 @@
+# --skip-preflight-sync ⇒ the preflight_skipped record, no classification spawn
+call: --job .supervisor/jobs/pending/2026-10-17-golden-skip.md --skip-preflight-sync
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn

@@ -1,0 +1,3 @@
+notify READY https://github.com/acme/widgets/pull/7 ready to merge — https://github.com/acme/widgets/pull/7 (sub_floor_converged); CI review lens: static-only (execution: none); surfaced, never awaited: reviewDecision REVIEW_REQUIRED
+webhook --event-type gate --gate-type review_heal_ready --context ready to merge — https://github.com/acme/widgets/pull/7 (sub_floor_converged); CI review lens: static-only (execution: none); surfaced, never awaited: reviewDecision REVIEW_REQUIRED
+postmortem https://github.com/acme/widgets/pull/7 --fix-cycles 1 --decision READY --postmortem-churn-threshold 2

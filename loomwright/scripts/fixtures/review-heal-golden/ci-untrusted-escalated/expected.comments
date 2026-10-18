@@ -1,0 +1,7 @@
+review-heal drain ESCALATED (ci_untrusted)
+
+ci_untrusted — the only remaining READY-blockers are required checks classified untrusted_infra:
+- ci: classified untrusted_infra (zero_steps) — re-run when infra is healthy: `gh run rerun 1001 --failed`
+
+CI review lens: static-only (execution: none)
+----

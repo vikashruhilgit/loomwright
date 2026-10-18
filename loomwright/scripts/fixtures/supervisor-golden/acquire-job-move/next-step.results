@@ -1,0 +1,5 @@
+# Phase 0 + Phase 1: the job move, then the branch guard creates the feature branch
+call: --job .supervisor/jobs/pending/2026-10-17-next-step-supervisor.md --branch feature/as11-next-step-supervisor
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn

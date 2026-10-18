@@ -1,0 +1,3 @@
+<!-- loomwright:dismissed round=1 -->
+- **load_config ignores the exit status of jq** — already-addressed: src/widget.sh checks jq's status on the current branch (issue_comments)
+----

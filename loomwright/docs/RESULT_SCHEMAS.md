@@ -113,6 +113,10 @@ See [result-schemas/context-digest.md](result-schemas/context-digest.md).
 
 See [result-schemas/review-heal-result.md](result-schemas/review-heal-result.md).
 
+## REVIEW_HEAL_NEXT_STEP
+
+See [result-schemas/review-heal-next-step.md](result-schemas/review-heal-next-step.md).
+
 ## FLOOR_PROJECTION
 
 See [result-schemas/floor-projection.md](result-schemas/floor-projection.md).

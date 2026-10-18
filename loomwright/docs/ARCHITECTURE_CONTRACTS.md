@@ -696,7 +696,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `agent-output` | 1495 | 1359 |
 | `agent-teams` | 3231 | 2937 |
 | `async-orchestration` | 15760 | 14327 |
-| `automate-loop` | 87895 | 79904 |
+| `automate-loop` | 77733 | 70750 |
 | `autonomous-loop` | 28168 | 25607 |
 | `beads-workflow` | 1658 | 1507 |
 | `brain-context` | 1809 | 1644 |
@@ -743,7 +743,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | Command doc (`loomwright/commands/<stem>.md`) | Budget (proxy tokens) | Measured (proxy tokens) |
 |---|---|---|
 | `agent-help` | 23236 | 21123 |
-| `automate` | 7565 | 6001 |
+| `automate` | 7565 | 7302 |
 | `autonomous` | 11846 | 10769 |
 | `capability-check` | 6680 | 6072 |
 | `code-reviewer` | 2837 | 2579 |
@@ -809,7 +809,7 @@ Every question gate in `agents/`, `commands/` and `skills/` and what it does whe
 | `/automate` RESUME continue / start new / archive | automate-loop §4 step 4 | as above | ambiguous ⇒ `resume_ambiguous`; one run: undefined | ambiguous unchanged; one run and no `--resume` ⇒ `automate: resume_requires_flag_non_interactive`, no option picked and nothing started, for bare and source-bearing starts alike. `--resume [<run_id>]` is the opt-in and is unchanged |
 | `/automate` PICK pending-decisions | automate-loop §6 step 1 | as above | interactive runs only: drafts stay undecided, `pending_decisions: <n>` | unchanged |
 | `/automate` dismissed-findings decision | automate-loop §6 "Dismissed-findings decision step" | as above | asks nothing; `pending_decisions: <n>` | unchanged. Also never asked, in an interactive run, when a sequential READY park's `park-ask-gate` prints `refuse — <reason>` (park not written, no merge-watch marker for the PR, `## Current` naming another item or PR, an unreadable run file; automate-speed/01): the drafts stay undecided with `pending_decisions: <n>` and the next interactive PICK asks them |
-| `/automate` READY-park validation waiver (`AUT-WAIVE`, human-only) | `scripts/automate-next-step.sh` step `validation` (automate-loop §6 step 4 GATE; under `--legacy`, `legacy-tail.md` "Validation gate"); §14 "Terminal park" (a lane relays it to the owner) | MI; MN; HP | new gate (af36-remainder/01) | not asked; the item stays escalated, escalation_cause: validation_unrun |
+| `/automate` READY-park validation waiver (`AUT-WAIVE`, human-only) | `scripts/automate-next-step.sh` step `validation` (automate-loop §6 step 4 GATE); §14 "Terminal park" (a lane relays it to the owner) | MI; MN; HP | new gate (af36-remainder/01) | not asked; the item stays escalated, escalation_cause: validation_unrun |
 | `/automate --parallel` wave-policy ask | automate-loop §14 "The per-wave loop" step 4, "Policy answers" | MI only (the coordinator, at wave planning) | new gate (parallel-automate/21) | not asked and no `wave-set`: no wave policy, so only a stamped project policy can answer a routine lane question; everything else is relayed to the owner |
 | qa-executor VERIFY sign-in | `agents/qa-executor.md` invocation notes; `skills/verify-walkthrough/SKILL.md` credential rule | SA only (Task-spawned by `/qa-executor`, `/verify`) | `status: paused`, `pause_reason: needs_auth` / `session_expired` | unchanged |
 | qa-executor URL fallback (found by the spawn-site audit; prose names no tool) | `agents/qa-executor.md` Phase 3 DETECT URL | SA only | undefined ("Ask user for URL") | `status: needs_human`, `error: "base_url_unresolved: {what was tried}"` (QA_RESULT, returned to `/qa-executor`) |

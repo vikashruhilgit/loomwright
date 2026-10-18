@@ -1,0 +1,5 @@
+git checkout -q -b feature/golden-collide
+printf "wip\n" > wip.txt
+git add wip.txt
+git commit -q -m "unattributable work"
+git checkout -q main

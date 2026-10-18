@@ -1,0 +1,13 @@
+# next-step.results — resume-rate-limit-park: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The resume entry with an explicit run
+# (continue) through the PICK's lock and ## Status: running (NEXT_STEP_UNTIL=pick); then the PICK's write pair
+# (NEXT_STEP_FROM=picked): ## Current has no PR, so it re-picks the SAME item. The run is lane L1's own run, so
+# the scratch checkout is that lane's (its lane.json is fixed input the case lacks): resume-glob lists a lane
+# run only inside its own lane.
+file: "$ROOT/.supervisor/lane.json" '{"run_id":"automate-2026-10-12-181635-L1"}'
+env: NEXT_STEP_UNTIL=pick
+call-bare: --resume "$AD" --run automate-2026-10-12-181635-L1 --non-interactive --session-id auto-2026-10-12-175306
+expect: none
+env: NEXT_STEP_FROM=picked NEXT_STEP_UNTIL=picked
+call: --session-id auto-2026-10-12-175306
+expect: none

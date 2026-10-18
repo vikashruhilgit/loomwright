@@ -1,0 +1,6 @@
+# next-step.results — resume-current-rebuild: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The resume entry with an explicit run,
+# interactive: current-rebuild rebuilds the never-set ## Current (its own current_rebuilt line) ⇒ the resume
+# stops at the AUT-RESUME ask again, with the rebuilt ## Current shown; nothing else is written.
+call-bare: --resume "$AD" --run automate-2026-09-30-054439 --session-id auto-2026-10-06-154500
+expect: ask

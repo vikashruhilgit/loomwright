@@ -1107,7 +1107,7 @@
     "state_dir_env": "LOOMWRIGHT_HOST_STATE_DIR"
   },
   "plugin_name": "loomwright",
-  "plugin_version": "17.7.0",
+  "plugin_version": "17.8.0",
   "result_schemas": [
     {
       "name": "AUTOMATE_RUN",
@@ -1196,6 +1196,10 @@
     {
       "name": "RED_TEAM_RESULT",
       "schema_version": 1
+    },
+    {
+      "name": "REVIEW_HEAL_NEXT_STEP",
+      "schema_version": null
     },
     {
       "name": "REVIEW_HEAL_RESULT",

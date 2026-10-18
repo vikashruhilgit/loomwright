@@ -1529,7 +1529,7 @@ test_branch_mode_hint() {
   ctx_s="$(run_hook_ctx "$r" startup)"; ctx_r="$(run_hook_ctx "$r" resume)"
   if grep -qF 'has not been pulled' < <(printf '%s\n%s' "$ctx_s" "$ctx_r"); then no "branch mode: meta-base present still emits the hint"; else ok "branch mode: meta-base present ⇒ no hint line"; fi
   # Mode off ⇒ byte-identical to a copy of the hook whose hint function returns nothing.
-  mutd="$(mktmp)"; cp "$SCRIPT_DIR"/*.sh "$SCRIPT_DIR"/*.py "$mutd/" 2>/dev/null
+  mutd="$(mktmp)"; cp "$SCRIPT_DIR"/*.sh "$SCRIPT_DIR"/*.py "$mutd/" 2>/dev/null; cp -R "$SCRIPT_DIR/setup-memory.d" "$mutd/"
   awk '/^meta_branch_hint_line\(\) \{$/ { print; print "  return 0"; next } { print }' "$HOOK" > "$mutd/session-resume.sh"
   # Two identical repos per source: the hook's debounce markers live in the repo, so a second run in
   # the SAME repo would differ for reasons unrelated to branch mode.
@@ -1679,7 +1679,7 @@ zh_run
   && ok "(zh) overall deadline: a hanging gh costs 2 calls (budget spent), not 5; all five items unverified, exit 0 (${ZH_SECS}s)" \
   || no "(zh) calls=$(wc -l < "$AGHLOG") unverified=$(grep -c 'merge state unverified$' <<<"$ZH_OUT") rc=$(lastrc) ${ZH_SECS}s"
 # Mutation control: the pre-fix probe (per-call timeout only, no shared budget) makes all 5 calls.
-ZHM="$(mktmp)"; cp "$SCRIPT_DIR"/*.sh "$ZHM/" 2>/dev/null
+ZHM="$(mktmp)"; cp "$SCRIPT_DIR"/*.sh "$ZHM/" 2>/dev/null; cp -R "$SCRIPT_DIR/setup-memory.d" "$ZHM/"
 sed -e 's/^    if \[ "\$calls" -ge 5 \] || \[ "\$left" -le 0 \]; then state=unverified$/    if [ "$calls" -ge 5 ]; then state=unverified  # mutant: no overall deadline/' \
     -e 's/^  case "\$max" in .*$/  :  # mutant: no budget clamp/' "$HOOK" > "$ZHM/session-resume.sh"
 if grep -q 'mutant: no overall deadline' "$ZHM/session-resume.sh" && grep -q 'mutant: no budget clamp' "$ZHM/session-resume.sh" && bash -n "$ZHM/session-resume.sh"; then

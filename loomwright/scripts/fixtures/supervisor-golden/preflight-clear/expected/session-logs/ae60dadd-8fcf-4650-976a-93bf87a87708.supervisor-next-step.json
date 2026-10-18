@@ -1,0 +1,28 @@
+{
+  "answer_arm": "plan",
+  "base_branch": "main",
+  "base_sync": "ok",
+  "branch": "feature/as11-next-step-supervisor",
+  "branch_action": "CREATED",
+  "cost_profile": "default",
+  "flags": {
+    "branch": "feature/as11-next-step-supervisor",
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": false,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/in-progress/2026-10-17-next-step-supervisor.md",
+  "last_arm": "preflight-route",
+  "max_workers": 1,
+  "mode": "sequential",
+  "pending_text": "{\"do\":\"spawn\",\"step\":\"preflight-route\",\"session_id\":\"ae60dadd-8fcf-4650-976a-93bf87a87708\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-next-step-supervisor.md\",\"branch\":\"feature/as11-next-step-supervisor\",\"what\":\"context-keeper\",\"agent\":\"loomwright:context-keeper\",\"state_file\":\".supervisor/state.md\",\"ops\":[\"Context-Keeper(operation: record_decision, phase: PRE_FLIGHT_SYNC, decision: \\\"preflight_clear\\\", rationale: \\\"version=17.7.0, base_tip=a8819a3, no overlap; open PRs 0; churn_since_brief=0; premise_check=n/a\\\")\"],\"then\":\"--result {\\\"confirmed\\\": true} once Context-Keeper applied every op, in order\"}",
+  "preflight_citations": "",
+  "preflight_class": "CLEAR",
+  "preflight_sync": "clear",
+  "task_id": "2026-10-17-next-step-supervisor",
+  "title": "next-step driver for Supervisor Phases 0–4 (supervisor-next-step.sh)"
+}

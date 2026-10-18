@@ -2385,6 +2385,23 @@ line never says `sent`), or `failed (<its stderr line>)`. Self-test:
 exactly one desktop + one `automate_merge_watch` webhook per watcher, and
 counts `automate_escalation_recheck` separately — legs WE).
 
+### `/review-pr --until-mergeable` drain gate events (automate-speed/12)
+
+A further ADDITIVE pair, fired by ONE step — the `notify` step of
+`scripts/review-heal-next-step.sh` (the drain driver), once per drain run at
+its terminal exit. Same two channels as the merge watcher: a synthetic
+`Notification` payload (`notification_type` = `review_heal`) piped to
+`notify-desktop.sh`, and `send-webhook.sh --event-type gate --gate-type <value>
+--context <message>`; both fail-SAFE, `--iteration`/`--session-id` not passed.
+
+| `gate_type` | Firing site | When (and `--context`) | Fires at most |
+|---|---|---|---|
+| `review_heal_ready` | `review-heal-next-step.sh` `notify` step | The drain ended `READY` (`converged` or `sub_floor_converged`). `"ready to merge — <pr_url> (<termination_reason>); CI review lens: static-only (execution: none)"`, plus `"; surfaced, never awaited: <n> unresolved human/unknown-author thread(s), reviewDecision REVIEW_REQUIRED"` (each part only when present) | once per drain run |
+| `review_heal_escalated` | `review-heal-next-step.sh` `notify` step | The drain ended `ESCALATED`. `"ESCALATED — <pr_url> (<reason slug>)"`, plus the same surfaced suffix | once per drain run |
+
+Pinned by `scripts/test-review-heal-next-step.sh` (the golden `expected.side`
+recorder lines, `RH_WEBHOOK_CMD` seam; mutant MW).
+
 ---
 
 ## Future work (out of scope for this PR)

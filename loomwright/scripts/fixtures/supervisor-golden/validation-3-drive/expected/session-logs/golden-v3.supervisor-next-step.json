@@ -1,0 +1,75 @@
+{
+  "base_branch": "main",
+  "base_sync": "ok",
+  "base_verify": "verified",
+  "branch": "feature/golden-v3",
+  "branch_action": "CREATED",
+  "children_check": "settled",
+  "cost_profile": "default",
+  "exec_result": {
+    "branches": [],
+    "completed": [
+      {
+        "branch": "feature/v3-a",
+        "review_decision": "PASS",
+        "status": "completed",
+        "task_id": "a"
+      },
+      {
+        "branch": "feature/v3-b",
+        "review_decision": "PASS",
+        "status": "completed",
+        "task_id": "b"
+      }
+    ],
+    "failed": [],
+    "merge_order": [
+      "feature/v3-a",
+      "feature/v3-b"
+    ],
+    "summary": "2/2 subtasks completed.",
+    "worktrees": [
+      {
+        "branch": "feature/v3-a",
+        "path": "../repo-a",
+        "status": "completed",
+        "task_id": "a"
+      },
+      {
+        "branch": "feature/v3-b",
+        "path": "../repo-b",
+        "status": "completed",
+        "task_id": "b"
+      }
+    ]
+  },
+  "flags": {
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": false,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/in-progress/2026-10-18-golden-v3.md",
+  "last_arm": "handover",
+  "marker_children_check": "settled",
+  "max_workers": 2,
+  "mode": "parallel",
+  "path": "parallel",
+  "pending_text": "{\"do\":\"done\",\"step\":\"handover\",\"session_id\":\"golden-v3\",\"job\":\".supervisor/jobs/in-progress/2026-10-18-golden-v3.md\",\"branch\":\"feature/golden-v3\",\"next\":\"phase-4.5\",\"pr_url\":\"https://github.com/golden/repo/pull/21\",\"base_verify\":\"verified\",\"base_mismatch_detected\":false,\"children_check\":\"settled\",\"preflight_sync\":\"clear\",\"message\":\"FINALIZE complete: https://github.com/golden/repo/pull/21 against main (base verified). Run Phase 4.5 SELF_HEAL; its completion tail marks the task completed and moves the job\"}",
+  "plan_source": "brief",
+  "pr_url": "https://github.com/golden/repo/pull/21",
+  "preflight_citations": "",
+  "preflight_class": "CLEAR",
+  "preflight_sync": "clear",
+  "premerge": "passed",
+  "seq_index": 0,
+  "subtasks": [
+    "a",
+    "b"
+  ],
+  "task_id": "2026-10-18-golden-v3",
+  "title": "Golden v3"
+}

@@ -1,0 +1,3 @@
+# ci_untrusted: the only READY-blocker is the red required `ci`, which ci-run-probe.sh classifies
+# untrusted_infra ⇒ ESCALATED ci_untrusted (escalation_cause other), the re-run suggestion posted.
+call: --start drain

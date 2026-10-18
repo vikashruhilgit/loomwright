@@ -1,0 +1,7 @@
+review-heal drain ESCALATED (bound_hit)
+
+bound_hit — --max-rounds 1 reached; the last round's findings (fixed and pushed, not re-verified):
+- load_config ignores the exit status of jq (issue_comments)
+
+CI review lens: static-only (execution: none)
+----

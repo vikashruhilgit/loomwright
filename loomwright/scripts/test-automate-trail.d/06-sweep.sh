@@ -363,7 +363,7 @@ sw_calls="$(grep -n 'sweep_run --' "$TB" | grep -v '^[0-9]*:[[:space:]]*#')"
 
 # ---- pin mutations (scratch copies; each must turn its leg red) ---------------
 sw_mutant() { # <name> <sed program> → SW_MD=$TOP/swm-<name> (every script copied, automate-trail.sh mutated)
-  SW_MD="$TOP/swm-$1"; mkdir -p "$SW_MD"; cp "$HERE"/*.sh "$HERE"/*.py "$SW_MD/"; cp -R "$HERE/automate-helpers.d" "$SW_MD/"; cp -R "$HERE/automate-trail.d" "$SW_MD/"
+  SW_MD="$TOP/swm-$1"; mkdir -p "$SW_MD"; cp "$HERE"/*.sh "$HERE"/*.py "$SW_MD/"; cp -R "$HERE/automate-helpers.d" "$SW_MD/"; cp -R "$HERE/automate-trail.d" "$SW_MD/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$SW_MD/"
   sed "$2" "$TB" > "$SW_MD/automate-trail.sh"
   if cmp -s "$TB" "$SW_MD/automate-trail.sh" || ! bash -n "$SW_MD/automate-trail.sh" 2>/dev/null; then no "(SWM) mutant $1 not built (sed matched nothing or broke the syntax)"; return 1; fi
   return 0

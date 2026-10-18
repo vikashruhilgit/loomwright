@@ -61,7 +61,7 @@ new_fixture 58; stamp_req "$REQB" done_with_escalation "- **PR:** https://github
 out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason skipped)"
 case "$out" in *"; excluded $REQB — pr not merged"*) ! grep -qxF -- "$REQB" < <(trail_names) && ok "(f) skipped item stamped done for a CLOSED PR ⇒ excluded" || no "(f) committed" ;; *) no "(f): $out" ;; esac
 # mutation control: without the _evidence_gate call, (a)'s world commits the stamp
-EGM="$TOP/egmut"; mkdir -p "$EGM"; cp "$HERE"/*.sh "$HERE"/*.py "$EGM/"; cp -R "$HERE/automate-helpers.d" "$EGM/"; cp -R "$HERE/automate-trail.d" "$EGM/"
+EGM="$TOP/egmut"; mkdir -p "$EGM"; cp "$HERE"/*.sh "$HERE"/*.py "$EGM/"; cp -R "$HERE/automate-helpers.d" "$EGM/"; cp -R "$HERE/automate-trail.d" "$EGM/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$EGM/"
 sed 's/^\([[:space:]]*\)_evidence_gate$/\1:/' "$TB" > "$EGM/automate-trail.sh"
 if ! cmp -s "$TB" "$EGM/automate-trail.sh" && bash -n "$EGM/automate-trail.sh"; then
   new_fixture 59; stamp_req "$REQ" done "$PRL"; set_pr "$PRURL" OPEN
@@ -117,7 +117,7 @@ printf '# req a\n\n## Status: done_with_escalation \342\200\224 ABANDONED (%s)\n
 out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason abandoned)"
 grep -qxF -- "$REQ" < <(trail_names) && [ "$(grep -c '^pr view' "$GH_STUB_DIR/argv.log")" = "0" ] && ok "(d2) the genuine reconcile-status ABANDONED stamp rides with 0 gh calls" || no "(d2) genuine stamp: $out"
 # mutation control: the pre-fix loose `/ABANDONED/` test lets the comment spoof ride
-ABM="$TOP/abmut"; mkdir -p "$ABM"; cp "$HERE"/*.sh "$HERE"/*.py "$ABM/"; cp -R "$HERE/automate-helpers.d" "$ABM/"; cp -R "$HERE/automate-trail.d" "$ABM/"
+ABM="$TOP/abmut"; mkdir -p "$ABM"; cp "$HERE"/*.sh "$HERE"/*.py "$ABM/"; cp -R "$HERE/automate-helpers.d" "$ABM/"; cp -R "$HERE/automate-trail.d" "$ABM/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$ABM/"
 awk '/if \(!\(index\(\$0, ab\) == 1/ { print "      if ($0 !~ /ABANDONED/) { inb = 1; seen = 0 }"; next } { print }' "$TB" > "$ABM/automate-trail.sh"
 if ! cmp -s "$TB" "$ABM/automate-trail.sh" && bash -n "$ABM/automate-trail.sh"; then
   spoof_leg 88 mutant "## Status: done <!-- ABANDONED -->" "$ABM"
@@ -168,7 +168,7 @@ echo "== R. retract: a reused OPEN trail branch never keeps a done claim for unm
 # (main's version, or removed when main lacks the file), name it, and leave no
 # done blob staged. REQ3 is a requirement main does not have.
 REQ3=".supervisor/requirements/f/03-c.md"
-RETM="$TOP/retmut"; mkdir -p "$RETM"; cp "$HERE"/*.sh "$HERE"/*.py "$RETM/"; cp -R "$HERE/automate-helpers.d" "$RETM/"; cp -R "$HERE/automate-trail.d" "$RETM/"
+RETM="$TOP/retmut"; mkdir -p "$RETM"; cp "$HERE"/*.sh "$HERE"/*.py "$RETM/"; cp -R "$HERE/automate-helpers.d" "$RETM/"; cp -R "$HERE/automate-trail.d" "$RETM/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$RETM/"
 sed 's/^\([[:space:]]*\)retract="\${retract:+.*$/\1:/' "$TB" > "$RETM/automate-trail.sh"
 cmp -s "$TB" "$RETM/automate-trail.sh" && no "retract mutant not generated"
 for rv in fixed mutant; do
@@ -290,7 +290,7 @@ for v in control unstage; do
   fi
 done
 # (ii) the owner merges closeout's trail PR, then hand-pulls main ⇒ needs _stage_tip.
-STM="$TOP/d3stm"; mkdir -p "$STM"; cp "$HERE"/*.sh "$HERE"/*.py "$STM/"; cp -R "$HERE/automate-helpers.d" "$STM/"; cp -R "$HERE/automate-trail.d" "$STM/"
+STM="$TOP/d3stm"; mkdir -p "$STM"; cp "$HERE"/*.sh "$HERE"/*.py "$STM/"; cp -R "$HERE/automate-helpers.d" "$STM/"; cp -R "$HERE/automate-trail.d" "$STM/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$STM/"
 awk '{ if ($0 == "_stage_tip() {") { print "_stage_tip() { return 0; }"; print "_stage_tip_dead() {" } else print }' "$TB" > "$STM/automate-trail.sh"
 for v in kept mutant; do
   if [ "$v" = kept ]; then closeout_fixture 62; D="$SPYD"; else closeout_fixture 63; D="$STM"; fi
@@ -354,7 +354,7 @@ out="$(tg_gate)"; rc=$?
 [ "$out" = "trail-gate: PARK — trail PR open $TG_URL (merge or close it, then --resume)" ] && [ "$rc" -eq 0 ] && ok "[G1] open trail PR ⇒ '$out', exit 0" || no "[G1] open trail PR ⇒ '$out' rc=$rc"
 [ "$head0" = "$(git -C "$P" rev-parse HEAD)" ] && [ "$idx0" = "$(git -C "$P" ls-files -s | cksum)" ] && ok "[G1] a PARK touches neither HEAD nor the index" || no "[G1] PARK moved the primary"
 # Mutation control: the OPEN filter neutered ⇒ the same state reads clear (the PARK is load-bearing).
-TGM="$TOP/tgm"; mkdir -p "$TGM"; cp "$HERE"/*.sh "$HERE"/*.py "$TGM/"; cp -R "$HERE/automate-helpers.d" "$TGM/"; cp -R "$HERE/automate-trail.d" "$TGM/"
+TGM="$TOP/tgm"; mkdir -p "$TGM"; cp "$HERE"/*.sh "$HERE"/*.py "$TGM/"; cp -R "$HERE/automate-helpers.d" "$TGM/"; cp -R "$HERE/automate-trail.d" "$TGM/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$TGM/"
 sed 's/select((.state \/\/ "") == "OPEN") | //' "$TB" > "$TGM/automate-trail.sh"
 if cmp -s "$TB" "$TGM/automate-trail.sh"; then no "[G1] mutation control: the patch changed nothing — inconclusive"
 else
@@ -388,7 +388,7 @@ case "$out" in "trail-gate: clear — no open trail PR; sync skipped — primary
 closeout_fixture 122
 run_closeout >/dev/null
 tg_merge_trail
-TGS="$TOP/tgs"; mkdir -p "$TGS"; cp "$HERE"/*.sh "$HERE"/*.py "$TGS/"; cp -R "$HERE/automate-helpers.d" "$TGS/"; cp -R "$HERE/automate-trail.d" "$TGS/"
+TGS="$TOP/tgs"; mkdir -p "$TGS"; cp "$HERE"/*.sh "$HERE"/*.py "$TGS/"; cp -R "$HERE/automate-helpers.d" "$TGS/"; cp -R "$HERE/automate-trail.d" "$TGS/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$TGS/"
 sed 's/^  if _sync_primary "\$rf_rel" "\$run_id" "\$base_branch" "" "\$bm"; then$/  if false; then/' "$TB" > "$TGS/automate-trail.sh"
 if cmp -s "$TB" "$TGS/automate-trail.sh"; then no "[G2] mutation control: the patch changed nothing — inconclusive"
 else

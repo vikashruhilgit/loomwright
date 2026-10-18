@@ -1,0 +1,6 @@
+# bound_hit: --max-rounds 1; round 1 confirms one auto-fixable finding with no stated severity (never
+# sub-floor eligible), the fix worker pushes, the churn step bumps the ledger to 1, and round 2's check
+# prints BOUND_HIT ⇒ ESCALATED bound_hit with the classifier's escalation_cause line.
+call: --start drain --max-rounds 1
+call: --result-file "$CASE/report-1.json"
+call: --result-file "$CASE/report-2.json"

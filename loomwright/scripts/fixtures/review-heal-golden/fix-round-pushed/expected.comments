@@ -1,0 +1,3 @@
+<!-- loomwright:dismissed round=2 -->
+- **load_config ignores the exit status of jq** — already-addressed by the round-1 fix (src/widget.sh:42 now checks jq's status) (issue_comments)
+----

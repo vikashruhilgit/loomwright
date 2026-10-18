@@ -1,0 +1,7 @@
+# Phase 1.5 OVERLAP under --non-interactive ⇒ fail closed
+call: --job .supervisor/jobs/pending/2026-10-17-golden-overlap-ni.md --non-interactive
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"classification":"OVERLAP","citations":"PR #41 (feature/docs-sweep) touches docs/a.md"}'
+expect: park

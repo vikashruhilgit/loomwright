@@ -196,7 +196,7 @@
 #      unavailable, a `running` item, a missing or foreign marker, a foreign item or PR, a
 #      missing / unreadable / item-less run file ⇒ refuse, usage errors exit 1, READ-ONLY, the
 #      delayed-marker leg (marker ~2s after a --wait 5 call ⇒ ask) and a --wait 1 refusal; the
-#      prose-order leg (QG3) over legacy-tail.md's park-first list and the intake.md leg (QG4).
+#      park-first order leg (QG3) over automate-next-step.sh's park / decide steps and the intake.md leg (QG4).
 #      Every leg has a gated mutant (anchor unique, non-empty, differs, `bash -n`; prose mutants:
 #      non-empty, differs, no line lost) that turns it red.
 
@@ -3719,7 +3719,8 @@ g6_check "(x) missing argument" "$R" "missing argument" b.md
 [ "$RUN_OUT" = "brief-repair: skipped — missing argument" ] && ok "G6 AC-5 (x) reason is the missing-argument one, not 'gh output unparseable' (gh never asked)" || no "G6 AC-5 (x) unexpected reason: $RUN_OUT"
 rm -rf "$R"
 
-# G7. AC-9(a) static seam pins on the SKILL, with per-line mutants. The assertion
+# G7. AC-9(a) static seam pins on the SKILL, with per-line mutants (step 5 is the per-item-loop.md
+#     `5. **SYNC — run next-step.**` pointer since automate-speed/08 retired legacy-tail.md). The assertion
 #     helper takes the SKILL path so the SAME code runs on the real file and on
 #     each mutant.
 seam_has() {  # seam_has <skill_path> <anchor> -> 0 when the line starting with <anchor> contains brief-repair
@@ -3728,18 +3729,18 @@ seam_has() {  # seam_has <skill_path> <anchor> -> 0 when the line starting with 
   case "$line" in *brief-repair*) return 0 ;; *) return 1 ;; esac
 }
 seam_has "$SKILL_FILE" '1. **RECONCILE**' && ok "G7 AC-2 prose seam: SKILL §6 step 1 (RECONCILE) names brief-repair" || no "G7 §6 step 1 lacks brief-repair"
-seam_has "$SKILL_FILE" '5. **SYNC**'      && ok "G7 AC-1 prose seam: SKILL §6 step 5 (SYNC) names brief-repair"      || no "G7 §6 step 5 lacks brief-repair"
+seam_has "$SKILL_FILE" '5. **SYNC'        && ok "G7 AC-1 prose seam: SKILL §6 step 5 (SYNC) names brief-repair"      || no "G7 §6 step 5 lacks brief-repair"
 grep -q 'brief-repair' < <(grep -F -- '**PR merged?**' "$SKILL_FILE") && ok "G7 §4 step 2 'PR merged?' bullet references the repair" || no "G7 §4 'PR merged?' bullet lacks the reference"
 skill_mutant() {  # skill_mutant <anchor> <out> — strip every `brief-repair` token from the anchored line only
   awk -v a="$1" 'index($0,a)==1 {gsub(/brief-repair/,"brief_removed")} {print}' "$SKILL_FILE" > "$2"
 }
 MW="$(mktemp -d)"
-skill_mutant '5. **SYNC**' "$MW/no-step5.md"; skill_mutant '1. **RECONCILE**' "$MW/no-step1.md"
+skill_mutant '5. **SYNC' "$MW/no-step5.md"; skill_mutant '1. **RECONCILE**' "$MW/no-step1.md"
 for m in no-step5 no-step1; do
   [ -s "$MW/$m.md" ] && ! cmp -s "$SKILL_FILE" "$MW/$m.md" || no "G7 mutant $m not gated (empty or identical)"
 done
-if ! seam_has "$MW/no-step5.md" '5. **SYNC**' && seam_has "$MW/no-step5.md" '1. **RECONCILE**'; then ok "G7 (mutant) token gone from step 5 only ⇒ AC-1 pin red, AC-2 pin green"; else no "G7 step-5 mutant not discriminated"; fi
-if ! seam_has "$MW/no-step1.md" '1. **RECONCILE**' && seam_has "$MW/no-step1.md" '5. **SYNC**'; then ok "G7 (mutant) token gone from step 1 only ⇒ AC-2 pin red, AC-1 pin green"; else no "G7 step-1 mutant not discriminated"; fi
+if ! seam_has "$MW/no-step5.md" '5. **SYNC' && seam_has "$MW/no-step5.md" '1. **RECONCILE**'; then ok "G7 (mutant) token gone from step 5 only ⇒ AC-1 pin red, AC-2 pin green"; else no "G7 step-5 mutant not discriminated"; fi
+if ! seam_has "$MW/no-step1.md" '1. **RECONCILE**' && seam_has "$MW/no-step1.md" '5. **SYNC'; then ok "G7 (mutant) token gone from step 1 only ⇒ AC-2 pin red, AC-1 pin green"; else no "G7 step-1 mutant not discriminated"; fi
 rm -rf "$MW"
 
 # G8. AC-9(b) helper mutant: the `bash "$recon" …` invocation removed. Post-PASS
@@ -3854,7 +3855,7 @@ rs_run() {
 # rs_mutant <exact helper line> <replacement> — a copy of the helper with that ONE
 # line replaced; RSM names the copy's dir. Returns 1 when the line is not found.
 rs_mutant() {
-  RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null
+  RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$RSM/"
   OLD="$1" NEW="$2" awk '$0 == ENVIRON["OLD"] { print ENVIRON["NEW"]; next } { print }' "$H" > "$RSM/automate-helpers.sh"
   ! cmp -s "$H" "$RSM/automate-helpers.sh"
 }
@@ -4165,7 +4166,7 @@ else
   no "H7 trail PR read as evidence (dry='$DRY_OUT' apply='$RUN_OUT')"
 fi
 # Mutation control: the exclusion neutered in a copy of the helper ⇒ the same fixture plans both files again.
-RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null
+RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$RSM/"
 sed 's/^    _rs_is_trail_branch "\$headref" && continue$/    :/' "$H" > "$RSM/automate-helpers.sh"
 if cmp -s "$H" "$RSM/automate-helpers.sh"; then
   no "H7 mutation control: the exclusion line was not found (the sed no longer matches)"
@@ -6126,58 +6127,75 @@ qg_mut_check "QG2a': the judge appends to the run file" '  [ -n "$line" ] || { e
 qg_mut_check "QG2a': the judge appends to the merge-watch marker" '  mp="$(awk -F' "  printf x >> \"\$marker\"; mp=\"\$(awk -F'\\t' '\$1 == \"pr_url\" { print \$2; exit }' \"\$marker\" 2>/dev/null || true)\"" p_ro unchanged
 qg_mut_check "QG2k: no-marker refusal turned into a pass" '    need_marker) echo "refuse — no merge-watch marker' '    need_marker) ;;' p_never "$P_NEVER"
 
-# ---- QG3. prose order (AC5, AC9): the park-first list puts the park write, the watcher arm and
-# the lock release BEFORE park-ask-gate, and park-ask-gate before the ask. The list moved verbatim
-# with the "Dismissed-findings decision step (before the park)" subsection from per-item-loop.md to
-# legacy-tail.md (automate-speed/06: the default tail is scripts/automate-next-step.sh, the prose
-# is the --legacy path), so QG_LOOP reads that file; every mutant below is built from it.
-QG_LEAD='**Order — sequential interactive READY park (park first, then ask):**'
-QG_LOOP="$HERE/../skills/automate-loop/legacy-tail.md"
-qg_list() { QG_H="$QG_LEAD" awk 'BEGIN { h = ENVIRON["QG_H"] } $0 == h { f = 1; next } f && /^[0-9]+\. / { s = 1; print; next } f && s { exit }' "$1"; }
-qg_idx() { local n; n="$(grep -nF -m1 -- "$2" "$1" 2>/dev/null)"; n="${n%%:*}"; echo "${n:-0}"; }
-qg_order() {  # <md> — prints the verdict line the leg compares
-  local L p w r g a
+# ---- QG3. park-first order (AC5, AC9): the sequential interactive READY park writes the park, arms
+# the watcher and releases the run lock BEFORE park-ask-gate --wait 75, and park-ask-gate runs before
+# the ask. automate-speed/08 retired the --legacy prose that held this order as a numbered list; the
+# order now lives in scripts/automate-next-step.sh — its `park` step (park write, watcher, release,
+# then the park-first hand-off to `decide`) and the post-park entry of its `decide` step (the gate
+# read, then the ask). QG_LOOP is that driver; qg_list prints the two bodies in execution order and
+# every mutant below is a driver copy (non-empty, differs, no line lost, `bash -n`).
+QG_LEAD='  # first entry: the post-park gate read (park-first), then the queue'
+QG_LOOP="$HERE/automate-next-step.sh"
+qg_list() {
+  awk '/^ns_park\(\) \{/ { f = 1 } f { print } f && /^}/ { exit }' "$1"
+  QG_H="$QG_LEAD" awk 'BEGIN { h = ENVIRON["QG_H"] } $0 == h { f = 1 } f { print } f && /^}/ { exit }' "$1"
+}
+qg_idx() { local n; n="$(grep -n${3:-} -m1 -F -- "$2" "$1" 2>/dev/null)"; n="${n%%:*}"; echo "${n:-0}"; }
+qg_order() {  # <driver> — prints the verdict line the leg compares
+  local L p w r d g a
   L="$QG/list.md"; qg_list "$1" > "$L"
-  p="$(qg_idx "$L" "--status awaiting_merge")"; w="$(qg_idx "$L" "automate-merge-watch.sh")"; r="$(qg_idx "$L" "run-lock.sh release")"
-  g="$(qg_idx "$L" "park-ask-gate")"; a="$(qg_idx "$L" "Ask the owner")"
-  if [ "$p" -gt 0 ] && [ "$w" -gt 0 ] && [ "$r" -gt 0 ] && [ "$g" -gt 0 ] && [ "$a" -gt 0 ] \
-     && [ "$p" -lt "$g" ] && [ "$w" -lt "$g" ] && [ "$r" -lt "$g" ] && [ "$g" -lt "$a" ] \
+  p="$(qg_idx "$L" '--status "$kind" --pr "$PR"')"; w="$(qg_idx "$L" 'ns_watch; ns_notify awaiting_merge')"
+  r="$(qg_idx "$L" '  ns_release' x)"; d="$(qg_idx "$L" 'then NEXT=decide; return 0; fi')"
+  g="$(qg_idx "$L" "park-ask-gate")"; a="$(qg_idx "$L" "ns_decide_next_batch && return 0")"
+  if [ "$p" -gt 0 ] && [ "$w" -gt 0 ] && [ "$r" -gt 0 ] && [ "$d" -gt 0 ] && [ "$g" -gt 0 ] && [ "$a" -gt 0 ] \
+     && [ "$p" -lt "$d" ] && [ "$w" -lt "$d" ] && [ "$r" -lt "$d" ] && [ "$d" -lt "$g" ] && [ "$g" -lt "$a" ] \
      && grep -qF -- "--wait 75" < <(grep -F -m1 -- "park-ask-gate" "$L"); then
     echo "park-first"
   else
-    echo "bad order: park=$p watcher=$w release=$r gate=$g ask=$a"
+    echo "bad order: park=$p watcher=$w release=$r handoff=$d gate=$g ask=$a"
   fi
 }
-qg_is "QG3a legacy-tail.md park-first list: park write, watcher, lock release precede park-ask-gate --wait 75, which precedes the ask" "$(qg_order "$QG_LOOP")" "park-first"
-QG_CITED='### Dismissed-findings decision step (before the park)'
+qg_is "QG3a automate-next-step.sh park-first order: park write, watcher, lock release precede the decide hand-off, then park-ask-gate --wait 75, then the ask" "$(qg_order "$QG_LOOP")" "park-first"
+QG_CITED='# step: park — the park writes, then watcher / notify / run-lock release'
 qg_lead() { if [ "$(grep -cxF -- "$QG_LEAD" "$1")" = 1 ] && grep -qxF -- "$QG_CITED" "$1"; then printf ok; else printf bad; fi; }
-qg_is "QG3a' the lead line is unique and the cited heading is byte-unchanged" "$(qg_lead "$QG_LOOP")" ok
-QG_H="$QG_LEAD" awk 'BEGIN { h = ENVIRON["QG_H"] } { print } !d && $0 == h { d = 1; print }' "$QG_LOOP" > "$QG/lead-dup.md"
-qg_prose_check "QG3a': the lead line duplicated" "$QG_LOOP" "$QG/lead-dup.md" qg_lead ok
-QG_H="$QG_CITED" awk 'BEGIN { h = ENVIRON["QG_H"] } $0 == h { $0 = "### Dismissed-findings decision step (at the park)" } { print }' "$QG_LOOP" > "$QG/heading-mut.md"
-qg_prose_check "QG3a': the cited heading altered" "$QG_LOOP" "$QG/heading-mut.md" qg_lead ok
-# qg_move <out> <line anchor> <after anchor> — move the first list line holding <line anchor>
-# below the first list line holding <after anchor>, inside the park-first list only.
+qg_is "QG3a' the post-park lead line is unique and the park step's banner is byte-unchanged" "$(qg_lead "$QG_LOOP")" ok
+qg_drv_check() {  # <label> <mutant> <scenario_fn> <expected> — qg_prose_check + `bash -n` (a driver copy)
+  if bash -n "$2" 2>/dev/null; then qg_prose_check "$1" "$QG_LOOP" "$2" "$3" "$4"; else no "QG driver mutant ($1) not gated (bash -n failed)"; rm -f "$2"; fi
+}
+QG_H="$QG_LEAD" awk 'BEGIN { h = ENVIRON["QG_H"] } { print } !d && $0 == h { d = 1; print }' "$QG_LOOP" > "$QG/lead-dup.sh"
+qg_drv_check "QG3a': the lead line duplicated" "$QG/lead-dup.sh" qg_lead ok
+QG_H="$QG_CITED" awk 'BEGIN { h = ENVIRON["QG_H"] } $0 == h { $0 = "# step: park — the park writes, then notify / run-lock release" } { print }' "$QG_LOOP" > "$QG/heading-mut.sh"
+qg_drv_check "QG3a': the park step's banner altered" "$QG/heading-mut.sh" qg_lead ok
+# qg_move <out> <target line> — a driver copy with the park-ask-gate --wait 75 line moved to just
+# before line <target> (or after it, when <target> is negative: -N) — the Pin-mutations row.
 qg_move() {
-  QG_H="$QG_LEAD" QG_M="$2" QG_T="$3" awk '
-    BEGIN { h = ENVIRON["QG_H"]; m = ENVIRON["QG_M"]; t = ENVIRON["QG_T"] }
-    $0 == h { f = 1 }
-    f && !held && !mv && /^[0-9]+\. / && index($0, m) { held = $0; next }
+  local gl; gl="$(qg_idx "$QG_LOOP" 'park-ask-gate "$RF" "$ITEM" "$PR" --wait 75')"
+  QG_G="$gl" QG_T="$2" awk 'BEGIN { g = ENVIRON["QG_G"] + 0; t = ENVIRON["QG_T"] + 0 }
+    FNR == NR { if (FNR == g) held = $0; next }
+    FNR == g { next }
+    t > 0 && FNR == t { print held }
     { print }
-    f && held && !mv && /^[0-9]+\. / && index($0, t) { print held; mv = 1 }' "$QG_LOOP" > "$1"
+    t < 0 && FNR == -t { print held }' "$QG_LOOP" "$QG_LOOP" > "$1"
 }
-qg_prose_mut() {  # <label> <line anchor> <after anchor>
-  local m="$QG/loop-mutant.md"
-  qg_move "$m" "$2" "$3"
-  if [ -s "$m" ] && ! cmp -s "$QG_LOOP" "$m" && [ "$(wc -l < "$m")" = "$(wc -l < "$QG_LOOP")" ]; then
-    if [ "$(qg_order "$m")" != "park-first" ]; then ok "QG3 prose mutant ($1) turns the order leg red: $(qg_order "$m")"; else no "QG3 prose mutant ($1) did NOT discriminate"; fi
+qg_prose_mut() {  # <label> <target line> — the order leg must turn red on the moved copy
+  local m="$QG/loop-mutant.sh"
+  qg_move "$m" "$2"
+  if [ "$2" != 0 ] && [ "$2" != -0 ] && [ -s "$m" ] && ! cmp -s "$QG_LOOP" "$m" && [ "$(wc -l < "$m")" = "$(wc -l < "$QG_LOOP")" ] && bash -n "$m" 2>/dev/null; then
+    if [ "$(qg_order "$m")" != "park-first" ]; then ok "QG3 driver mutant ($1) turns the order leg red: $(qg_order "$m")"; else no "QG3 driver mutant ($1) did NOT discriminate"; fi
   else
-    no "QG3 prose mutant ($1) not gated (empty, identical, or a line was lost)"
+    no "QG3 driver mutant ($1) not gated (empty, identical, a line was lost, or bash -n failed)"
   fi
+  rm -f "$m"
 }
-qg_prose_mut "watcher arm moved after the park-ask-gate step" "automate-merge-watch.sh" "park-ask-gate"
-qg_prose_mut "park write (current-set --status awaiting_merge) moved after the ask" "--status awaiting_merge" "Ask the owner"
-qg_prose_mut "lock release moved after the park-ask-gate step" "run-lock.sh release" "park-ask-gate"
+QG_PK="$(qg_idx "$QG_LOOP" 'ns_park() {')"; QG_DL="$(qg_idx "$QG_LOOP" "$QG_LEAD" x)"
+qg_after() { local n; n="$(awk -v s="$2" -v t="$3" 'NR > s && index($0, t) { print NR; exit }' "$1")"; echo "${n:-0}"; }
+qg_t() {  # <after line> <anchor> <offset> — the target line, or 0 when the anchor is missing
+  local n; n="$(qg_after "$QG_LOOP" "$1" "$2")"; if [ "$1" -gt 0 ] && [ "$n" -gt 0 ]; then echo $((n + $3)); else echo 0; fi
+}
+qg_prose_mut "park-ask-gate moved before the park write" "$(qg_t "$QG_PK" '--status "$kind" --pr "$PR"' 0)"
+qg_prose_mut "park-ask-gate moved before the watcher arm" "$(qg_t "$QG_PK" 'ns_progress "$line" || return 1' 1)"
+qg_prose_mut "park-ask-gate moved before the lock release" "$(qg_t "$QG_PK" 'then NEXT=decide; return 0; fi' -1)"
+qg_prose_mut "park-ask-gate moved after the ask" "-$(qg_t "$QG_DL" 'ns_decide_next_batch && return 0' 0)"
 
 # ---- QG4. intake prose (AC2): §2 "--limit N" calls queue-confirm, asks AUT-QUEUE only on `ask`,
 # and appends ONE `skipped AUT-QUEUE: <reason>` line on a skip.
