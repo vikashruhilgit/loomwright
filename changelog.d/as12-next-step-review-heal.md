@@ -19,6 +19,6 @@ the result block and ledger byte for byte through `test-review-heal-next-step.sh
 re-prints, the fallback refusal, no-merge / no-force, the closed enums, report validation, the resumable wait, the
 fail-closed branches and the prose rules that stay, with mutation controls. The drain's pseudocode and code blocks in
 `skills/review-heal/SKILL.md` and the `--until-mergeable` mechanics in `commands/review-pr.md` are replaced by pointers
-to the driver steps (the review-heal read set shrinks from 175663 to 149342 bytes), the driver is admitted to the
+to the driver steps (the review-heal read set shrinks from 175663 to 150246 bytes), the driver is admitted to the
 detached drain's pinned allowlist (`DRAIN_SCRIPTS` in `dispatch-pr-review.sh`), and the review-heal loop inventory
 reaches `GAP review-heal: 0`: every row names a driver step or a test that fails when its text or behaviour is removed.

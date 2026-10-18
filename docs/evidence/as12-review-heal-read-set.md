@@ -27,12 +27,12 @@ wc -c < loomwright/agents/review-pr.md
 
 | File | Before (`a8819a3`) | After | Change |
 |---|---|---|---|
-| `loomwright/skills/review-heal/SKILL.md` | 133454 | 109850 | −23604 (−17.7%) |
+| `loomwright/skills/review-heal/SKILL.md` | 133454 | 110754 | −22700 (−17.0%) |
 | `loomwright/commands/review-pr.md` | 21014 | 18297 | −2717 (−12.9%) |
 | `loomwright/agents/review-pr.md` | 21195 | 21195 | 0 (not edited, by the brief's non-goal) |
-| **Read set** | **175663** | **149342** | **−26321 (−15.0%)** |
+| **Read set** | **175663** | **150246** | **−25417 (−14.5%)** |
 
-`check-token-budget.sh` after the change (proxy tokens = bytes / 4): `review-heal` 27462 / 36700, `review-pr` (command)
+`check-token-budget.sh` after the change (proxy tokens = bytes / 4): `review-heal` 27688 / 36700, `review-pr` (command)
 4574 / 5779. Both budgets may only shrink and neither was raised.
 
 ## What was removed and what stayed
@@ -60,7 +60,7 @@ other tests pin: the defaults, the rules-gate mapping (`test-rules-gate-seams.sh
 ## Honest limits
 
 - This measures bytes of prose, not what a session actually reads. A drain now also reads the driver's JSON
-  instructions (one per call) and may open `loomwright/docs/result-schemas/review-heal-next-step.md` (14051 bytes),
+  instructions (one per call) and may open `loomwright/docs/result-schemas/review-heal-next-step.md` (17003 bytes),
   which did not exist at base. The saving is in what the model re-derives from prose each round, not a guaranteed
   per-session token cut.
 - `agents/review-pr.md` still restates parts of the drain (its rows are pinned, not migrated), so the runner agent's own

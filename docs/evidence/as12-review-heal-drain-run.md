@@ -210,7 +210,7 @@ REVIEW_HEAL_RESULT:
 ## Suite results on the same tree
 
 ```
-test-review-heal-next-step.sh   139/139   (PASS: 139 FAIL: 0 — mutation controls included)
+test-review-heal-next-step.sh   148/148   (PASS: 148 FAIL: 0 — mutation controls included)
 test-classify-bot-review.sh      27/27    (RESULT: 27 passed, 0 failed)
 test-dispatch-pr-review.sh       52/52    (RESULT: 52 passed, 0 failed — test 28 admits review-heal-next-step.sh)
 test-drain-gh-read.sh            23/23    (RESULT: 23 passed, 0 failed — the check-run read included)
@@ -220,8 +220,8 @@ test-loop-inventory.sh           43/43    (RESULT: 43/43 passed; GAP review-heal
 Pin mutations checked on a scratch copy of the tree: deleting `review-heal-next-step.sh` from `DRAIN_SCRIPTS` makes
 `test-dispatch-pr-review.sh` print `FAIL: drain allowlist shape wrong: script-not-admitted:review-heal-next-step.sh`;
 deleting the checker's `GAP row missing from the` branch makes `test-loop-inventory.sh` red at the `AC7 (GAP row
-missing from the gap list)` leg (42/43); dropping the driver's `select(.isResolved != true)` filter makes the new thread
-leg of `test-review-heal-next-step.sh` red (119 passed, 2 failed).
+missing from the gap list)` leg (42/43); dropping the driver's `select(.isResolved != true)` filter makes the three thread
+legs of `test-review-heal-next-step.sh` red (145 passed, 3 failed).
 
 ## Not verified
 
