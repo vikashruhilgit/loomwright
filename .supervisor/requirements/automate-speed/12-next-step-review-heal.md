@@ -58,3 +58,9 @@ loomwright/skills/review-heal/SKILL.md
 loomwright/commands/review-pr.md
 loomwright/docs/loop-inventory/review-heal.md
 changelog.d/as12-next-step-review-heal.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-18T10:56:50Z
+- **Brief:** .supervisor/jobs/done/2026-10-17-next-step-review-heal.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/600
