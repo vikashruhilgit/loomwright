@@ -117,9 +117,13 @@ run; rc=$?
 
 echo "== 6. mutation control: the real gitignore_gate line with its env dropped => red =="
 MEM="$script_dir/../loomwright/scripts/setup-memory.sh"
+# The text read goes through setup-memory.sh as ONE file — its own _sm_bundle output (automate-speed/20):
+# gitignore_gate moved into setup-memory.d/, the entry point only sources it.
+MEMB="$tmp/setup-memory.bundle.sh"
+( eval "$(awk '/^_sm_bundle\(\) \{$/,/^}$/' "$MEM")"; _sm_bundle "$MEM" ) > "$MEMB" 2>/dev/null
 rm -rf "$tmp/r"; mkdir -p "$tmp/r"
-if grep -qF '! env LC_ALL=C tr -d' "$MEM"; then
-  sed 's/\(! \)env \(LC_ALL\)\(=C tr -d\)/\1\2\3/' "$MEM" > "$tmp/r/setup-memory.sh"
+if grep -qF '! env LC_ALL=C tr -d' "$MEMB"; then
+  sed 's/\(! \)env \(LC_ALL\)\(=C tr -d\)/\1\2\3/' "$MEMB" > "$tmp/r/setup-memory.sh"
   run; rc=$?
   [ "$rc" -ne 0 ] && grep -qF 'OFFENDER setup-memory.sh:' "$tmp/out" && grep -q '1 temporary locale' "$tmp/out" \
     && ok "6. reverting gitignore_gate's env prefix turns the gate red" || no "6. rc=$rc: $(cat "$tmp/out")"
