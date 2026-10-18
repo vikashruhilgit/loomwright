@@ -7,4 +7,5 @@
 0	*	api graphql *	@../_common/threads-empty.json
 0	*	api --method GET repos/acme/widgets/issues/7/comments*	@../_common/comments-finding.json
 0	*	api --method GET repos/acme/widgets/check-runs/*/annotations	@../_common/annotations-empty.json
+0	*	api --method GET repos/acme/widgets/check-runs/[0-9]*[0-9]	@../_common/checkrun-empty.json
 0	*	pr comment *	

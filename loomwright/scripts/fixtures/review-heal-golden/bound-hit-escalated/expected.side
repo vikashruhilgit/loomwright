@@ -1,2 +1,3 @@
-notify ESCALATED https://github.com/acme/widgets/pull/7 ESCALATED — https://github.com/acme/widgets/pull/7 (bound_hit)
+notify ESCALATED https://github.com/acme/widgets/pull/7 ESCALATED — https://github.com/acme/widgets/pull/7 (bound_hit); surfaced, never awaited: reviewDecision REVIEW_REQUIRED
+webhook --event-type gate --gate-type review_heal_escalated --context ESCALATED — https://github.com/acme/widgets/pull/7 (bound_hit); surfaced, never awaited: reviewDecision REVIEW_REQUIRED
 postmortem https://github.com/acme/widgets/pull/7 --fix-cycles 1 --decision ESCALATED --postmortem-churn-threshold 2 --unresolved-bot-feedback

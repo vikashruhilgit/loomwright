@@ -4,12 +4,12 @@
 REVIEW_HEAL_RESULT:
   schema_version: 2
   decision: ESCALATED
-  iterations: 0
+  iterations: 1
   issues_fixed: 0
   remaining_issues: 0
   pr_url: "https://github.com/acme/widgets/pull/7"
   notified: true
-  rounds: 0
+  rounds: 1
   max_rounds: 5
   fix_cycles: 0
   churn_rounds: 0

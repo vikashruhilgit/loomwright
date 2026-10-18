@@ -46,7 +46,8 @@
 #   wait        `wait-for-checks.sh` on the scoped set (`--call-max 540`; CONTINUE ⇒ exit 3, the next
 #               no-result call resumes with `--continue`); ELAPSED ⇒ ESCALATED (check-driven cause)
 #   read        the all-channel read — one `gh pr view` (rollup + formal reviews) and `drain-gh-read.sh`
-#               review-threads / issue-comments / check-annotations; an errored or truncated gated channel
+#               review-threads / issue-comments / check-annotations + check-run (output.{title,summary,text});
+#               an errored or truncated gated channel
 #               is UNKNOWN ⇒ ESCALATED before any finding or the fallback trigger is evaluated
 #   classify    `classify-bot-review.sh` per comment channel, allow-listed check output, the
 #               `no_review_lens_posted` trigger, the round's red required checks, the EXTERNAL_TEXT
@@ -64,9 +65,10 @@
 #   subfloor    `drain-subfloor-decision.sh eligible`
 #   confirm     the SHA-bound confirming pass (`wait-for-checks.sh --required-only --names`), the rules
 #               re-read, `drain-subfloor-decision.sh decide`
-#   churn       anti-churn fingerprints, then `drain-rounds.sh bump` and the next round
+#   churn       anti-churn fingerprints, then `drain-rounds.sh bump` and the next round (a round that ends
+#               terminally — READY or ESCALATED after its check — is bumped at that exit instead, once)
 #   escalate    `escalation_cause` (`automate-helpers.sh escalation-cause` at the check-driven sites)
-#   notify      the terminal PR comment (ESCALATED) and the notification
+#   notify      the terminal PR comment (ESCALATED) and the notification (desktop + webhook)
 #   result      the `REVIEW_HEAL_RESULT` block (rounds read from the ledger) into the result file
 #   postmortem  the churn-gated `dispatch-pr-postmortem.sh` tail — after the block is written
 #   finish      the `done` instruction carrying the block verbatim
@@ -83,6 +85,8 @@
 #   RH_RULES_CMD       --root <checkout>              default: bash rules-gate-verdict.sh
 #   RH_ESCALATION_CMD  escalation-cause <pr> --sha <sha>   default: bash automate-helpers.sh
 #   RH_NOTIFY_CMD      <decision> <pr> <message>      default: notify-desktop.sh (a Notification payload)
+#   RH_WEBHOOK_CMD     --event-type gate --gate-type <review_heal_ready|review_heal_escalated> --context <message>
+#                                                     default: bash send-webhook.sh
 #   RH_POSTMORTEM_CMD  <dispatch-pr-postmortem.sh args>   default: bash dispatch-pr-postmortem.sh
 #   `gh` (LOOMWRIGHT_GH_BIN overrides it, as in every helper; drain-gh-read.sh receives it as GH) — the
 #   PR reads and the PR comments; tests stub it on PATH.
@@ -102,8 +106,9 @@
 #
 # Honest limits: a check run's id is read from its `detailsUrl` (`/job/<id>`, a GitHub Actions job id —
 # the check run id); a check with no such URL has no output read, which reads `no_review_lens_posted`
-# as ambiguous ⇒ true (fail closed toward running the fallback). The `rules_replay` finding names the
-# failing rule id, not its check text. The default notifier is desktop-only. bash 3.2 + BSD + jq.
+# as ambiguous ⇒ true (fail closed toward running the fallback). Runner-made annotations (path `.github`)
+# are not review output. The `rules_replay` finding names the failing rule id, not its check text.
+# bash 3.2 + BSD + jq.
 
 set -uo pipefail
 
@@ -229,13 +234,23 @@ rh_probe_call() { if [ -n "${RH_PROBE_CMD:-}" ]; then $RH_PROBE_CMD "$@" </dev/n
 rh_rules_call() { if [ -n "${RH_RULES_CMD:-}" ]; then $RH_RULES_CMD --root "$ROOT" </dev/null 2>/dev/null; else bash "$HERE/rules-gate-verdict.sh" --root "$ROOT" </dev/null 2>/dev/null; fi; }
 # shellcheck disable=SC2086
 rh_escalation_call() { if [ -n "${RH_ESCALATION_CMD:-}" ]; then $RH_ESCALATION_CMD escalation-cause "$@" </dev/null 2>/dev/null; else bash "$HERE/automate-helpers.sh" escalation-cause "$@" </dev/null 2>/dev/null; fi; }
-rh_notify_call() { # <decision> <message> — fire-and-forget
+rh_notify_call() { # <decision> <message> — fire-and-forget: the desktop banner, then the webhook
+  local gt=review_heal_escalated
+  [ "$1" = READY ] && gt=review_heal_ready
   if [ -n "${RH_NOTIFY_CMD:-}" ]; then
     # shellcheck disable=SC2086
     $RH_NOTIFY_CMD "$1" "$PR" "$2" </dev/null >/dev/null 2>&1
   else
     "$JQ" -cn --arg m "$2" '{hook_event_name: "Notification", notification_type: "review_heal", message: $m}' \
       | bash "$HERE/notify-desktop.sh" >/dev/null 2>&1
+  fi
+  # the webhook leg: send-webhook.sh builds the gate payload with `jq --arg` itself (never JSON templated
+  # here); no URL resolved ⇒ its own silent no-op; it always exits 0
+  if [ -n "${RH_WEBHOOK_CMD:-}" ]; then
+    # shellcheck disable=SC2086
+    $RH_WEBHOOK_CMD --event-type gate --gate-type "$gt" --context "$2" </dev/null >/dev/null 2>&1
+  else
+    bash "$HERE/send-webhook.sh" --event-type gate --gate-type "$gt" --context "$2" </dev/null >/dev/null 2>&1
   fi
   return 0
 }
@@ -305,7 +320,7 @@ rh_round() {
   st_set head_sha "$h"
   gate="$(bash "$HERE/drain-rounds.sh" check "$PR" 2>/dev/null)"; rc=$?
   case "$rc:$gate" in
-    0:OK) NEXT=required ;;
+    0:OK) st_set round_open true; NEXT=required ;;
     1:BOUND_HIT)
       st_set termination_reason bound_hit
       rh_escalate_to bound_hit check "$(rh_n last_fixable_count)" "$("$JQ" -rn --arg m "$(st flag_max_rounds)" \
@@ -358,7 +373,7 @@ rh_wait() {
 rh_unknown() { rh_escalate_to "channel_unknown" other 0 "channel_unknown — $1: an unknown gated channel never claims READY"; }
 
 rh_read() {
-  local core threads comments rollup req rp scoped outputs id ann text name c
+  local core threads comments rollup req rp scoped outputs id ann run_ text name c
   core="$(rh_gh pr view "$PR" --json statusCheckRollup,reviews,latestReviews,reviewDecision,mergeable,mergeStateStatus)" \
     && printf '%s' "$core" | "$JQ" -e '(.statusCheckRollup | type == "array")' >/dev/null 2>&1 \
     || { rh_unknown "statusCheckRollup unreadable"; return 0; }
@@ -400,7 +415,14 @@ EOF
     ann="$(rh_ghread check-annotations "$SLUG" "$id")" \
       && printf '%s' "$ann" | "$JQ" -e 'type == "array"' >/dev/null 2>&1 \
       || { rh_unknown "check output of $name errored"; return 0; }
-    text="$(printf '%s' "$ann" | "$JQ" -r '[.[] | (.message // .title // "") | select(. != "")] | join("\n")')"
+    run_="$(rh_ghread check-run "$SLUG" "$id")" \
+      && printf '%s' "$run_" | "$JQ" -e 'type == "object"' >/dev/null 2>&1 \
+      || { rh_unknown "check output of $name errored"; return 0; }
+    # the check's text = its output.{title,summary,text} + its annotations' message/title; a runner-made
+    # annotation (path `.github`: "Process completed with exit code 1.", a runner-image notice) is the job's
+    # own plumbing, not review output, so a review job that died with nothing posted reads EMPTY
+    text="$("$JQ" -rn --argjson a "$ann" --argjson r "$run_" '[(($r.output // {}) | .title, .summary, .text),
+        ($a[] | select(.path != ".github") | (.message // .title))] | map(select(type == "string" and . != "")) | join("\n")')"
     outputs="$(printf '%s' "$outputs" | "$JQ" -c --arg n "$name" --arg t "$text" '. + [{name: $n, text: $t}]')"
   done <<EOF
 $(printf '%s' "$rollup" | "$JQ" -c --argjson s "$scoped" '.[] | select(.name as $n | $s | index($n))')
@@ -412,6 +434,7 @@ EOF
       | select(.isResolved != true) | .comments.nodes[0] // empty
       | {user: {login: (.author.login // "")}, author: .author, body: (.body // "")}]')"
   st_setj round_comments "$comments"
+  st_set review_decision "$(printf '%s' "$core" | "$JQ" -r '.reviewDecision // empty | tostring')"
   st_setj channels_scanned '["reviews","latestReviews","reviewThreads","issue_comments","check_outputs"]'
   st_setj checks_waited "$(stj checks_waited '[]' | "$JQ" -c --argjson s "$scoped" --argjson r "$rollup" \
       '. as $w | reduce ($s[] | select(. as $n | $r | map(.name) | index($n))) as $n ($w; if index($n) then . else . + [$n] end)')"
@@ -430,6 +453,8 @@ rh_classify() {
   st_set dismissed_before_round "$(jlen "$(stj dismissed '[]')")"
   rev="$(rh_classify_one "$(stj round_reviews)")"
   thr="$(rh_classify_one "$(stj round_threads)")"
+  # human / unknown-author unresolved threads: surfaced in the notification, never a READY blocker (§U3)
+  st_set human_threads "$(( $(jlen "$(stj round_threads)") - $(jlen "$thr") ))"
   com="$(rh_classify_one "$(stj round_comments)")"
   allow="$("$JQ" -c '.review_producing_checks // [] | map(select(type == "string"))' "$USER_DIR/drain-allowlist.json" 2>/dev/null || echo '[]')"
   [ -n "$allow" ] || allow='[]'
@@ -438,15 +463,17 @@ rh_classify() {
   cands="$("$JQ" -cn --argjson a "$rev" --argjson b "$thr" --argjson c "$com" --argjson d "$checks" \
     '[($a[] | {source: "reviews", item: .}), ($b[] | {source: "reviewThreads", item: .}),
       ($c[] | {source: "issue_comments", item: .}), ($d[] | {source: "check_outputs", item: .})]')"
-  # no_review_lens_posted (§"Earned Fallback Review"): this round's union is empty AND every review-producing
-  # check is green-with-empty-output, absent or skipped; an output this read could not see (no check run id)
-  # is AMBIGUOUS — fail CLOSED toward running the review (true)
-  posted="$(stj round_rollup | "$JQ" -r --argjson rp "$(stj round_rp)" --argjson o "$(stj round_outputs)" --argjson g "$GREEN_STATES" '
+  # no_review_lens_posted (§"Earned Fallback Review"): this round's union is empty AND no review-producing
+  # check posted anything. Decided from each check's OUTPUT, never its state (a red review job that died with
+  # nothing posted — a billing block, a subscription cap — posted nothing): skipped/neutral ⇒ skipped; a
+  # non-empty output ⇒ posted; an empty one ⇒ empty; an output this read could not see (no check run id) is
+  # AMBIGUOUS — fail CLOSED toward running the review (true)
+  posted="$(stj round_rollup | "$JQ" -r --argjson rp "$(stj round_rp)" --argjson o "$(stj round_outputs)" '
       [.[] | select(.name as $n | $rp | index($n)) | . as $c
        | ($o | map(select(.name == $c.name)) | first // {text: null}) as $out
        | if ($c.state == "SKIPPED" or $c.state == "NEUTRAL") then "skipped"
-         elif ($c.state == "SUCCESS") then (if $out.text == null then "ambiguous" elif $out.text == "" then "empty" else "posted" end)
-         else "posted" end] | if index("posted") then "posted" else "quiet" end')"
+         elif $out.text == null then "ambiguous" elif $out.text == "" then "empty" else "posted" end]
+      | if index("posted") then "posted" else "quiet" end')"
   if [ "$(jlen "$cands")" -eq 0 ] && [ "$posted" = quiet ]; then nrlp=true; else nrlp=false; fi
   st_set no_review_lens_posted "$nrlp"
   # the round's red required checks (a required context absent from the rollup is not green)
@@ -599,6 +626,8 @@ rh_decide() {
     return 0
   fi
   if [ "$rf" -eq 0 ] && [ "$af" -eq 0 ] && [ "$nh" -eq 0 ]; then
+    # this READY round counts (it ran); bumped before the stop, never re-checked, so it cannot trip bound_hit
+    rh_close_round || { rh_escalate_to unreadable_round_ledger other 0 "unreadable_round_ledger — drain-rounds.sh bump failed"; return 0; }
     st_set decision READY; st_set termination_reason converged; st_set remaining 0
     NEXT=notify; return 0
   fi
@@ -654,7 +683,12 @@ rh_subfloor() {
   if [ "$step" = confirm ]; then NEXT=confirm; else NEXT=churn; fi
 }
 
+# rounds = drain rounds actually run: a round counts once it passed the ledger `check` (round_open), and it
+# is bumped exactly ONCE when it ends — at the churn step, or at whichever terminal exit ends it (READY
+# converged / sub_floor_converged, and every ESCALATED site after the check, via the escalate step). The
+# flag is cleared with the bump, in the same sidecar save, so a replayed/retried call never re-bumps.
 rh_bump() { bash "$HERE/drain-rounds.sh" bump "$PR" >/dev/null 2>&1; }
+rh_close_round() { [ "$(st round_open)" = true ] || return 0; rh_bump || return 1; st_del round_open; }
 rh_confirm() {
   local sha args line rules out rj_ seen fixed rc
   sha="$(st pushed_sha)"
@@ -672,13 +706,12 @@ rh_confirm() {
       --rules-failed-seen "$seen" --checks-ever-fixed "$fixed" 2>/dev/null)"
   case "$out" in
     "READY sub_floor_converged sub_floor_fixed="*)
-      rh_once bump_final rh_bump || { rh_escalate_to unreadable_round_ledger other 0 "unreadable_round_ledger — drain-rounds.sh bump failed"; return 0; }
+      rh_close_round || { rh_escalate_to unreadable_round_ledger other 0 "unreadable_round_ledger — drain-rounds.sh bump failed"; return 0; }
       st_setj sub_floor_fixed "${out#READY sub_floor_converged sub_floor_fixed=}"
       st_set decision READY; st_set termination_reason sub_floor_converged; st_set remaining 0
       NEXT=notify ;;
     "ESCALATED repeat_check_failure="*)
       [ "${out#ESCALATED repeat_check_failure=}" = true ] && st_set repeat_check_failure true
-      rh_once bump_final rh_bump || true
       rh_escalate_to confirming_pass_failed check "$(st last_fixable_count)" "confirming_pass_failed — the pushed commit's required checks are not green ($line)" "$sha" ;;
     *) NEXT=churn ;;
   esac
@@ -694,12 +727,15 @@ rh_churn() {
   if [ "$shrink" = true ]; then st_set churn_rounds 0; else st_add churn_rounds 1; fi
   if [ "$rep" = true ] || [ "$(st churn_rounds)" -ge 2 ]; then st_set deep_review_due true; fi
   st_setj fingerprints_prev "$now"
-  rh_bump || { rh_escalate_to unreadable_round_ledger other 0 "unreadable_round_ledger — drain-rounds.sh bump failed"; return 0; }
+  rh_close_round || { rh_escalate_to unreadable_round_ledger other 0 "unreadable_round_ledger — drain-rounds.sh bump failed"; return 0; }
   NEXT=round
 }
 
 rh_escalate() {
   local line rest
+  # an ESCALATED exit after the round's check passed still ran that round; a failed bump here is
+  # reported, never a second escalation (the drain is already ESCALATED)
+  rh_close_round || rh_err "drain-rounds.sh bump failed at the ESCALATED exit (rounds may read one low)"
   case "$(st esc_mode)" in
     check)
       line="$(rh_escalation_call "$PR" --sha "$(st esc_sha)" | head -n 1)"
@@ -720,7 +756,7 @@ rh_escalate() {
 }
 
 rh_notify() {
-  local d msg
+  local d msg surf
   d="$(st decision)"
   if [ "$d" = ESCALATED ] && [ "$(st once_comment)" != true ]; then
     rh_comment "$(printf 'review-heal drain ESCALATED (%s)\n\n%s\n\nCI review lens: static-only (execution: none)' "$(st esc_reason)" "$(st esc_detail)")"
@@ -728,6 +764,12 @@ rh_notify() {
   fi
   if [ "$d" = READY ]; then msg="ready to merge — $PR ($(st termination_reason)); CI review lens: static-only (execution: none)"
   else msg="ESCALATED — $PR ($(st esc_reason))"; fi
+  # human signals are surfaced, never awaited (§"READY redefinition"): open human/unknown-author threads and
+  # a REVIEW_REQUIRED review decision ride on the notification text
+  surf=""
+  [ "$(rh_n human_threads)" -gt 0 ] && surf="$(rh_n human_threads) unresolved human/unknown-author thread(s)"
+  [ "$(st review_decision)" = REVIEW_REQUIRED ] && surf="${surf:+$surf, }reviewDecision REVIEW_REQUIRED"
+  [ -n "$surf" ] && msg="$msg; surfaced, never awaited: $surf"
   rh_once notify rh_notify_call "$d" "$msg"
   NEXT=result
 }

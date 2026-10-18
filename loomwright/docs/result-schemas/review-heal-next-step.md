@@ -59,10 +59,10 @@ Each step is ONE `case` arm of the driver's dispatcher. These are the strings th
 | Step | What it runs |
 |---|---|
 | `start` | `fix-floor.sh resolve` once. A refused value is `fix_floor_invalid`: one PR comment, then `ESCALATED` before any fix and before the ledger exists. It also reads the PR's base, head ref and fork flag (`gh pr view`) and runs `drain-rounds.sh init` |
-| `round` | Reads the PR head and runs `drain-rounds.sh check`. `BOUND_HIT` ends as `bound_hit` with a check-driven cause. An unreadable ledger ends `ESCALATED` with `termination_reason` unset |
+| `round` | Reads the PR head and runs `drain-rounds.sh check`. On `OK` the round is open: it is bumped once when it ends (`churn`, or the terminal exit). `BOUND_HIT` ends as `bound_hit` with a check-driven cause. An unreadable ledger ends `ESCALATED` with `termination_reason` unset |
 | `required` | Required-check discovery (`drain-gh-read.sh required-checks`). If the metadata is unavailable, the drain ends `ESCALATED` unless `--required-checks all-non-neutral` is set |
 | `wait` | `wait-for-checks.sh` on the scoped set with `--call-max 540`. `CONTINUE` exits 3, and the next no-result call adds `--continue`. `ELAPSED` ends `ESCALATED` with a check-driven cause. `required=unknown` ends `ESCALATED` with cause `other` |
-| `read` | The all-channel read: one `gh pr view` (rollup, reviews, latestReviews) plus `drain-gh-read.sh` review-threads, issue-comments and the check-annotations of every scoped check. An errored, unparseable or truncated gated channel is UNKNOWN and ends `ESCALATED` here, before any finding is classified and before the fallback trigger is evaluated |
+| `read` | The all-channel read: one `gh pr view` (rollup, reviews, latestReviews) plus `drain-gh-read.sh` review-threads, issue-comments, and the check-annotations and check-run (`output.{title,summary,text}`) of every scoped check. An errored, unparseable or truncated gated channel is UNKNOWN and ends `ESCALATED` here, before any finding is classified and before the fallback trigger is evaluated |
 | `classify` | Runs `classify-bot-review.sh` on reviews, unresolved threads and issue comments, plus allow-listed check output (user-scope `review_producing_checks[]`). It evaluates `no_review_lens_posted`, finds the round's red required checks, and wraps each candidate in its `EXTERNAL_TEXT` envelope |
 | `probe` | `ci-run-probe.sh` on at most `--max-probes` red required checks. `untrusted_infra` goes into `checks_untrusted` and leaves the fix pool |
 | `validate` | The `validate findings` spawn and its report: rejections, dismissals, and `fix-floor.sh split` (below the floor ⇒ dismissed `below_fix_floor`) |
@@ -73,9 +73,9 @@ Each step is ONE `case` arm of the driver's dispatcher. These are the strings th
 | `fix` | The fix report: `fix_cycles`, `issues_fixed`, `checks_ever_fixed` |
 | `subfloor` | `drain-subfloor-decision.sh eligible` |
 | `confirm` | The SHA-bound confirming pass (`wait-for-checks.sh --required-only --names` on the pushed sha), the rules re-read, then `drain-subfloor-decision.sh decide`. READY is `sub_floor_converged` |
-| `churn` | The anti-churn fingerprints (a trip sets the next fix worker's `fix_the_class`), `drain-rounds.sh bump`, then the next round |
-| `escalate` | `escalation_cause`. At the check-driven sites it copies the line `automate-helpers.sh escalation-cause` prints. It is `findings` for human-judgment findings and `other` everywhere else |
-| `notify` | The terminal PR comment on `ESCALATED` (it carries `CI review lens: static-only (execution: none)`) and the notification (READY: "ready to merge") |
+| `churn` | The anti-churn fingerprints (a trip sets the next fix worker's `fix_the_class`), `drain-rounds.sh bump`, then the next round. A round that ends at a terminal exit is bumped there instead (READY in `decide` / `confirm`, ESCALATED in `escalate`), once |
+| `escalate` | Bumps the open round (an ESCALATED exit after the check still ran it), then `escalation_cause`. At the check-driven sites it copies the line `automate-helpers.sh escalation-cause` prints. It is `findings` for human-judgment findings and `other` everywhere else |
+| `notify` | The terminal PR comment on `ESCALATED` (it carries `CI review lens: static-only (execution: none)`) and the notification: the desktop banner (`notify-desktop.sh`) and the webhook (`send-webhook.sh --event-type gate --gate-type review_heal_ready` or `review_heal_escalated`, `--context` the message; the script builds the payload with `jq --arg`). READY's message is "ready to merge". Human signals are surfaced on the message, never awaited: `; surfaced, never awaited: <n> unresolved human/unknown-author thread(s)[, reviewDecision REVIEW_REQUIRED]` when present |
 | `result` | The `REVIEW_HEAL_RESULT` block, with `rounds` read from the ledger, written to the result file |
 | `postmortem` | The churn-gated `dispatch-pr-postmortem.sh` tail. It runs after the block is written and can never change it |
 | `finish` | The `done` instruction |
@@ -94,14 +94,15 @@ Each step is ONE `case` arm of the driver's dispatcher. These are the strings th
 
 - The sidecar is `<root>/.supervisor/review-heal/<pr_hash>.next-step.json` and the result file is `<pr_hash>.review-heal-result.md` beside it. `<pr_hash>` is `drain-rounds.sh`'s key. The ledger is `drain-rounds.sh`'s own file, read with `drain-rounds.sh read` at emit time.
 - The only PR writes are `gh pr comment`: the marker comment and the terminal `ESCALATED` comment. The driver never merges, approves or pushes. The one push it hands out is the fix worker's regular push.
-- Test seams (tests only): `RH_WAIT_CMD`, `RH_PROBE_CMD`, `RH_RULES_CMD`, `RH_ESCALATION_CMD`, `RH_NOTIFY_CMD`, `RH_POSTMORTEM_CMD` (command lines, word-split, arguments appended), `LOOMWRIGHT_GH_BIN` (passed to `drain-gh-read.sh` as `GH`), and `RH_FROM` / `RH_UNTIL` (start or stop at a step).
+- Test seams (tests only): `RH_WAIT_CMD`, `RH_PROBE_CMD`, `RH_RULES_CMD`, `RH_ESCALATION_CMD`, `RH_NOTIFY_CMD`, `RH_WEBHOOK_CMD`, `RH_POSTMORTEM_CMD` (command lines, word-split, arguments appended), `LOOMWRIGHT_GH_BIN` (passed to `drain-gh-read.sh` as `GH`), and `RH_FROM` / `RH_UNTIL` (start or stop at a step).
 
 ### Shapes the driver fixes where the prose left room (honest notes)
 
-- `rounds` is the ledger. A READY `converged` round is not bumped (§U4 breaks before `bump`), so a drain that converges on its first read reports `rounds: 0`. The sub-floor exits and the churn step bump.
-- The `no_review_lens_posted` inputs are the rollup checks that match `--review-check-pattern`, a required one included. A required check outside the pattern is not counted as a lens. A matching check whose output the read cannot see (its `detailsUrl` names no check run) is ambiguous, so the trigger fails closed to true.
-- A check run's id comes from its `detailsUrl` (`/job/<id>`, the GitHub Actions job id). A check with no such URL gets no annotation read.
+- `rounds` is the ledger and counts the drain rounds actually run: a round counts once it passes `drain-rounds.sh check`, and is bumped exactly once when it ends (`churn`, or its terminal READY / ESCALATED exit). A drain that converges on its first read reports `rounds: 1`; a fix round followed by a converging round reports 2. The flag that marks a round open is cleared with its bump in the same sidecar save, so a re-printed or replayed call never bumps twice. An ESCALATED exit before the round's check (`fix_floor_invalid`, an unreadable PR head, `bound_hit`) bumps nothing. A failed bump at an ESCALATED exit is reported on stderr and the count reads one low.
+- The `no_review_lens_posted` inputs are the rollup checks that match `--review-check-pattern`, a required one included. A required check outside the pattern is not counted as a lens. Each one is read by its OUTPUT, never its conclusion: skipped / neutral ⇒ skipped; non-empty text ⇒ posted; empty ⇒ empty; a check whose output the read cannot see (its `detailsUrl` names no check run) is ambiguous, so the trigger fails closed to true. A red review job that posted nothing therefore earns the fallback.
+- A check's text is its check run's `output.{title,summary,text}` plus its annotations' `message` (or `title`). Annotations with path `.github` are the runner's own (`Process completed with exit code 1.`, runner-image notices — probed on a real failed Actions job) and are not review output.
+- A check run's id comes from its `detailsUrl` (`/job/<id>`, the GitHub Actions job id). A check with no such URL gets no output read.
 - `remaining_issues` at `bound_hit` is the last round's fix pool. Those findings were fixed and pushed but not re-verified. `unresolved_bot_feedback` is true when an `ESCALATED` drain that ran at least one fix cycle still holds a validated bot finding.
 - The `rules_replay` finding names the failing rule id, not its check text.
-- The default notifier is desktop-only (`notify-desktop.sh`), because no webhook gate type is defined for a drain.
+- The webhook fires only when a webhook URL resolves (`send-webhook.sh`'s own gate); otherwise it is a silent no-op. Test seams `RH_NOTIFY_CMD` / `RH_WEBHOOK_CMD` replace the two legs independently.
 - The sidecar has no lock. Run one drain per PR per checkout at a time: two concurrent calls for the same PR race on the sidecar, and the last writer wins.

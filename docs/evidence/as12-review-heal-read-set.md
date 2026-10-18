@@ -27,13 +27,13 @@ wc -c < loomwright/agents/review-pr.md
 
 | File | Before (`a8819a3`) | After | Change |
 |---|---|---|---|
-| `loomwright/skills/review-heal/SKILL.md` | 133454 | 108962 | −24492 (−18.4%) |
-| `loomwright/commands/review-pr.md` | 21014 | 18277 | −2737 (−13.0%) |
+| `loomwright/skills/review-heal/SKILL.md` | 133454 | 109850 | −23604 (−17.7%) |
+| `loomwright/commands/review-pr.md` | 21014 | 18297 | −2717 (−12.9%) |
 | `loomwright/agents/review-pr.md` | 21195 | 21195 | 0 (not edited, by the brief's non-goal) |
-| **Read set** | **175663** | **148434** | **−27229 (−15.5%)** |
+| **Read set** | **175663** | **149342** | **−26321 (−15.0%)** |
 
-`check-token-budget.sh` after the change (proxy tokens = bytes / 4): `review-heal` 27240 / 36700, `review-pr` (command)
-4569 / 5779. Both budgets may only shrink and neither was raised.
+`check-token-budget.sh` after the change (proxy tokens = bytes / 4): `review-heal` 27462 / 36700, `review-pr` (command)
+4574 / 5779. Both budgets may only shrink and neither was raised.
 
 ## What was removed and what stayed
 

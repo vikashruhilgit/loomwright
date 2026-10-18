@@ -18,7 +18,7 @@
 #   I   IDEMPOTENCY (AC3). After every call that printed an instruction, two calls with no --result print
 #       it byte for byte and change nothing (every file under the sandbox .supervisor/, the PR-comment,
 #       side-effect and stub-call logs); `--start drain` while a spawn is pending re-prints it too.
-#   A   EARNED FALLBACK (AC2). Exactly ONE `fallback review` spawn in the two no-lens cases and in the
+#   A   EARNED FALLBACK (AC2). Exactly ONE `fallback review` spawn in the three no-lens cases and in the
 #       once-per-run case (none in any other case, none in the unknown-channel case); `--start fallback`
 #       while that spawn is pending and after the run's `done` exits 2 with
 #       `review-heal-next-step: fallback_already_spawned — …` on stderr, prints nothing, writes nothing;
@@ -38,7 +38,8 @@
 #       wait with `--continue` and reaches the validate spawn.
 #   B   BRANCHES the goldens do not reach: confirmed-not-auto-fixable ⇒ ESCALATED findings; a rules gate
 #       `unresolved` ⇒ ESCALATED other with termination_reason unset; a fork PR ⇒ no fix spawn, ESCALATED;
-#       a GraphQL thread error / an annotation-fetch error on a scoped check ⇒ UNKNOWN ⇒ ESCALATED;
+#       a GraphQL thread error / an annotation-fetch or check-run output-read error on a scoped check ⇒
+#       UNKNOWN ⇒ ESCALATED; check-run output text counts as a posted lens;
 #       unreadable required-check metadata and a SETTLED `required=unknown` line ⇒ ESCALATED unless
 #       `--required-checks all-non-neutral`; a human-authored unresolved thread and a resolved bot thread are
 #       never candidates (and never block READY); a countable rule failing then reading `unstamped` ⇒
@@ -54,6 +55,8 @@
 #         MI  the no-result re-print replaced by a re-run of the step  ⇒ I
 #         MP  `--force` added to the fix worker's push line             ⇒ S
 #         MB  the bound-hit termination_reason flipped to converged     ⇒ G bound-hit-escalated
+#         MR  the review-lens read gated on check state (red ⇒ posted)  ⇒ G fallback-red-review-check
+#         MW  the webhook leg of the notification removed               ⇒ G converged-ready
 #         MS  one unguarded merge-command line appended (built here at run time from pieces, so this file
 #             never holds the positive literal on one line)            ⇒ S
 #
@@ -74,7 +77,7 @@ WHAT_ENUM="validate findings
 fallback review
 fix worker"
 REQUIRED_BRANCHES="converged bound_hit sub_floor_converged ci_untrusted fix_round no_review_lens_posted
-no_review_lens_posted_ambiguous channel_unknown fix_floor_invalid fallback_review_ran"
+no_review_lens_posted_ambiguous no_review_lens_posted_red_check channel_unknown fix_floor_invalid fallback_review_ran"
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass + 1)); }
@@ -151,6 +154,7 @@ drv() {
     export RH_CALLS="$C/calls.log"
     export RH_WAIT_CMD="$C_BIN/seq wait" RH_PROBE_CMD="$C_BIN/seq probe" RH_RULES_CMD="$C_BIN/seq rules"
     export RH_ESCALATION_CMD="$C_BIN/seq escalation" RH_NOTIFY_CMD="$C_BIN/rec notify" RH_POSTMORTEM_CMD="$C_BIN/rec postmortem"
+    export RH_WEBHOOK_CMD="$C_BIN/rec webhook"
     bash "$d" "$PR" "$@"
   ) > "$C/last.out" 2> "$C/last.err"
   RCV=$?
@@ -260,7 +264,7 @@ done
 echo "A: earned fallback"
 count_fallback() { grep -c '"what":"fallback review"' "$WORK/transcript.$1" 2>/dev/null || true; }
 if [ -z "${RH_CASES:-}" ]; then
-  for n in fallback-no-review-lens fallback-ambiguous-output fallback-once-per-run; do
+  for n in fallback-no-review-lens fallback-ambiguous-output fallback-red-review-check fallback-once-per-run; do
     [ "$(count_fallback "$n")" = 1 ] && ok "A: $n spawns exactly one fallback review" || no "A: $n spawned $(count_fallback "$n") fallback reviews"
   done
   for n in converged-ready bound-hit-escalated sub-floor-converged-ready ci-untrusted-escalated fix-round-pushed \
@@ -474,6 +478,16 @@ b_unknown() {
 setup_case "$FIX/converged-ready"; gh_row 'api graphql *' 1; drv "$DRIVER" --start drain; b_unknown "a GraphQL thread read that errors"
 setup_case "$FIX/converged-ready"; gh_row 'api --method GET repos/acme/widgets/check-runs/*/annotations' 1
 drv "$DRIVER" --start drain; b_unknown "an errored annotation fetch on a scoped check"
+setup_case "$FIX/converged-ready"; gh_row 'api --method GET repos/acme/widgets/check-runs/[0-9]*[0-9]' 1
+drv "$DRIVER" --start drain; b_unknown "an errored check-run output read on a scoped check"
+# a check run's output.{title,summary,text} is read: a review-producing check whose output carries text is a
+# posted lens (no fallback), the same PR with that output empty earns it
+setup_case "$FIX/fallback-no-review-lens"
+gh_row 'api --method GET repos/acme/widgets/check-runs/[0-9]*[0-9]' 0 '{"id":2002,"output":{"title":"Review","summary":"MEDIUM: widget.sh line 9 quotes nothing","text":null}}'
+drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] && ! grep -q '"what":"fallback review"' "$C/last.out" \
+  && ok "B: a review check with output text (check-run output) is a posted lens ⇒ no fallback" \
+  || no "B: check-run output ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision}' 2>/dev/null)"
 # required-check metadata unavailable: ESCALATED (cause other) by default; --required-checks all-non-neutral proceeds
 setup_case "$FIX/converged-ready"; gh_row 'api --method GET repos/acme/widgets/branches/main/protection/required_status_checks' 1
 drv "$DRIVER" --start drain
@@ -505,6 +519,10 @@ drv "$DRIVER" --start drain
 drv "$DRIVER" --result-file "$FIX/converged-ready/report-1.json"
 [ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] && ok "B: an unresolved human thread never blocks READY" \
   || no "B: human thread ⇒ $(printf '%s' "$OUT" | jq -c '{do, decision, message}' 2>/dev/null)"
+grep -q '^webhook .*surfaced, never awaited: 1 unresolved human/unknown-author thread(s), reviewDecision REVIEW_REQUIRED$' "$C/side.log" \
+  && grep -q '^notify READY .*surfaced, never awaited: 1 unresolved human/unknown-author thread(s)' "$C/side.log" \
+  && ok "B: the human thread and REVIEW_REQUIRED are surfaced in the notification (desktop + webhook), never awaited" \
+  || no "B: human signals not surfaced: $(cat "$C/side.log")"
 # a countable rule FAILS in round 1, then reads `unstamped` in round 2 ⇒ ESCALATED rules_fail_then_unstamped
 setup_case "$FIX/fallback-no-review-lens"
 { printf '%s\n' '{"verdict":"fail","selected":["R7"],"countable":["R7"],"advisory":[],"passed":[],"failing":["R7"],"unresolved":[],"checks_passed":"0/1"}'
@@ -872,6 +890,14 @@ if [ "${RH_SKIP_MUTANTS:-0}" != 1 ] && [ -z "${RH_CASES:-}" ]; then
   if m="$(build_mutant B 'st_set termination_reason bound_hit' 'st_set termination_reason converged')"; then
     if run_golden bound-hit-escalated "$m" 0; then no "MB: flipping bound_hit left G green"; else ok "MB: flipping bound_hit to converged turns G bound-hit-escalated red"; fi
   else no "MB: mutant not built"; fi
+  # MR — the review-lens read gated on the check's STATE again (a red review check counted as posted)
+  if m="$(build_mutant R 'elif $out.text == null then "ambiguous"' 'elif $c.state != "SUCCESS" then "posted" elif $out.text == null then "ambiguous"')"; then
+    if run_golden fallback-red-review-check "$m" 0; then no "MR: a state-gated lens read left G green"; else ok "MR: reading a red review check as posted turns G fallback-red-review-check red"; fi
+  else no "MR: mutant not built"; fi
+  # MW — the webhook leg of the notification removed
+  if m="$(build_mutant W '$RH_WEBHOOK_CMD --event-type gate' ': --event-type gate')"; then
+    if run_golden converged-ready "$m" 0; then no "MW: dropping the webhook leg left G green"; else ok "MW: dropping the webhook leg turns G converged-ready red"; fi
+  else no "MW: mutant not built"; fi
   # MS — one unguarded merge-command line appended
   if m="$(build_mutant S - "-append:$(printf '%s %s %s "$PR"' "$MP_A" "$MP_B" "$MP_C")")"; then
     if leg_s "$m" /dev/null; then no "MS: an appended merge line left S green"; else ok "MS: an appended merge line turns S red"; fi
