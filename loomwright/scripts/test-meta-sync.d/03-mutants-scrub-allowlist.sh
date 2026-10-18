@@ -572,8 +572,14 @@ check $? "A2: ... and the resolver names it on stderr: 'allowlist: ignored other
 echo "== 64. mutation control (xvi): delete the request-file layer call from setup-memory.sh -> the A1 assertion (63) must turn red =="
 MUT_XVI="$TROOT/mutant-xvi"; mkdir -p "$MUT_XVI"
 cp "$SUT" "$MUT_XVI/meta-sync.sh"
-sed -e 's/^    granted="\$(meta_allowlist_grants "\$own")"$/    granted=""  # mutant (xvi)/' "$HERE/setup-memory.sh" > "$MUT_XVI/setup-memory.sh"
-if [ -s "$MUT_XVI/setup-memory.sh" ] && ! cmp -s "$HERE/setup-memory.sh" "$MUT_XVI/setup-memory.sh" \
+cp -R "$HERE/meta-sync.d" "$MUT_XVI/"
+# The mutant's source is setup-memory.sh as ONE file (its own _sm_bundle output, automate-speed/20):
+# load_allowlist now lives in setup-memory.d/allowlist.sh, and a mutant written from the bundle is
+# self-contained beside the copied meta-sync.sh.
+SMB_XVI="$TROOT/setup-memory.bundle-xvi.sh"
+( eval "$(awk '/^_sm_bundle\(\) \{$/,/^}$/' "$HERE/setup-memory.sh")"; _sm_bundle "$HERE/setup-memory.sh" ) > "$SMB_XVI"
+sed -e 's/^    granted="\$(meta_allowlist_grants "\$own")"$/    granted=""  # mutant (xvi)/' "$SMB_XVI" > "$MUT_XVI/setup-memory.sh"
+if [ -s "$MUT_XVI/setup-memory.sh" ] && ! cmp -s "$SMB_XVI" "$MUT_XVI/setup-memory.sh" \
    && grep -qF 'granted=""  # mutant (xvi)' "$MUT_XVI/setup-memory.sh" && bash -n "$MUT_XVI/setup-memory.sh"; then
   SCRIPT="$MUT_XVI/meta-sync.sh"
   if ra_scenario; then

@@ -10,7 +10,7 @@ RF_REL=".supervisor/automate/$RUN_ID.md"
 # Every scripts-dir copy here also takes automate-helpers.d/ — the dispatcher
 # sources its helper families from beside itself (parallel-automate/11).
 SPYD="$TOP/spyd"; mkdir -p "$SPYD"
-cp "$HERE"/*.sh "$HERE"/*.py "$SPYD/"; cp -R "$HERE/automate-helpers.d" "$SPYD/"; cp -R "$HERE/automate-trail.d" "$SPYD/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SPYD/"; cp -R "$HERE/automate-helpers.d" "$SPYD/"; cp -R "$HERE/automate-trail.d" "$SPYD/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$SPYD/"
 mv "$SPYD/automate-helpers.sh" "$SPYD/automate-helpers.real.sh"
 cat > "$SPYD/automate-helpers.sh" <<'SHIM'
 #!/usr/bin/env bash
@@ -93,7 +93,7 @@ it_count() { jq -c 'select(.event=="item_timing")' "$1" 2>/dev/null | wc -l | tr
 grep -q '^pr merge' "$GH_STUB_DIR/argv.log" && no "gh pr merge called" || ok "closeout never calls gh pr merge"
 # Control: the same two closeouts through a gated copy WITHOUT the idempotence guard append a
 # second item_timing — so the exactly-ONE assertion above is load-bearing (red on the pre-fix code).
-MUTI="$TOP/mutd-itiming"; mkdir -p "$MUTI"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTI/"; cp -R "$HERE/automate-helpers.d" "$MUTI/"; cp -R "$HERE/automate-trail.d" "$MUTI/"
+MUTI="$TOP/mutd-itiming"; mkdir -p "$MUTI"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTI/"; cp -R "$HERE/automate-helpers.d" "$MUTI/"; cp -R "$HERE/automate-trail.d" "$MUTI/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$MUTI/"
 if [ "$(grep -c 'item_timing-idempotence guard' "$TB")" != 1 ]; then no "item_timing mutant anchor is not unique"
 else
   grep -v 'item_timing-idempotence guard' "$TB" > "$MUTI/automate-trail.sh"
@@ -116,7 +116,7 @@ echo "== C. closeout idempotent AFTER its own trail PR merged (the sync moves; n
 # AC11 leg above never merges the trail PR between runs, so its sync skips and
 # it stayed green. Control: the same world with `did=1` restored on the synced
 # line turns every assertion red.
-MUTS="$TOP/mutd-sync"; mkdir -p "$MUTS"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTS/"; cp -R "$HERE/automate-helpers.d" "$MUTS/"; cp -R "$HERE/automate-trail.d" "$MUTS/"
+MUTS="$TOP/mutd-sync"; mkdir -p "$MUTS"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTS/"; cp -R "$HERE/automate-helpers.d" "$MUTS/"; cp -R "$HERE/automate-trail.d" "$MUTS/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$MUTS/"
 [ "$(grep -c '^    sy="closeout: synced — ' "$TB")" = 1 ] || no "sync mutant anchor is not unique"
 awk 'index($0, "sy=\"closeout: synced — ")==5 { print $0 "; did=1"; next } { print }' "$TB" > "$MUTS/automate-trail.sh"
 for v in fixed mutant; do
@@ -164,7 +164,7 @@ grep -qxF -- "## Status: paused" "$P/$RF_REL" && ok "## Status is never rewritte
 grep -qE "^- .* closeout $PRURL: closeout: reconciled — ## Current " "$P/$RF_REL" && ok "## Progress records the ## Current reconcile" || no "no Progress line for the reconcile"
 case "$out" in *"closeout: reconciled — ## Current $REQ status done, pause_reason awaiting_go"*) ok "closeout prints the reconciled line" ;; *) no "reconciled line missing: $out" ;; esac
 # Control (red without the fix): closeout with step 7b deleted leaves the studio state.
-MUTD="$TOP/mutd-current"; mkdir -p "$MUTD"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTD/"; cp -R "$HERE/automate-helpers.d" "$MUTD/"; cp -R "$HERE/automate-trail.d" "$MUTD/"
+MUTD="$TOP/mutd-current"; mkdir -p "$MUTD"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTD/"; cp -R "$HERE/automate-helpers.d" "$MUTD/"; cp -R "$HERE/automate-trail.d" "$MUTD/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$MUTD/"
 sed '/^  cu="\$(_co_current "\$rf_rel" "\$item" "\$pr_url")"$/d' "$TB" > "$MUTD/automate-trail.sh"
 if ! cmp -s "$TB" "$MUTD/automate-trail.sh" && bash -n "$MUTD/automate-trail.sh"; then
   closeout_fixture 102
@@ -183,7 +183,7 @@ grep -qxF -- "- item: $REQ | status: done | pr: $PRURL | branch: feature/x" "$P/
   && grep -qxF -- "- pause_reason: null" "$P/$RF_REL" && grep -qxF -- "## Status: running" "$P/$RF_REL" \
   && ok "## Current (matching item+PR, running): status done + pause_reason null; ## Status stays running" || no "running-branch reconcile wrong: $(cur_block "$P/$RF_REL" | tr '\n' '|')"
 # Control (red without the branch): want forced to awaiting_go regardless of status.
-MUTW="$TOP/mutd-want"; mkdir -p "$MUTW"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTW/"; cp -R "$HERE/automate-helpers.d" "$MUTW/"; cp -R "$HERE/automate-trail.d" "$MUTW/"
+MUTW="$TOP/mutd-want"; mkdir -p "$MUTW"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTW/"; cp -R "$HERE/automate-helpers.d" "$MUTW/"; cp -R "$HERE/automate-trail.d" "$MUTW/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$MUTW/"
 sed 's/^  if \[ "\$run_status" = "paused" \]; then want="awaiting_go"; else want="null"; fi$/  want="awaiting_go"/' "$TB" > "$MUTW/automate-trail.sh"
 if ! cmp -s "$TB" "$MUTW/automate-trail.sh" && bash -n "$MUTW/automate-trail.sh"; then
   closeout_fixture 106
@@ -209,7 +209,7 @@ case "$out" in *"closeout: skipped — ## Current is $LATER (https://github.com/
 grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && ok "the closed-out item is still checked off" || no "check-off lost"
 # Control (red without the guard): the same world, closeout with the item/PR
 # comparison neutered, overwrites the later item's ## Current.
-MUTG="$TOP/mutd-guard"; mkdir -p "$MUTG"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTG/"; cp -R "$HERE/automate-helpers.d" "$MUTG/"; cp -R "$HERE/automate-trail.d" "$MUTG/"
+MUTG="$TOP/mutd-guard"; mkdir -p "$MUTG"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTG/"; cp -R "$HERE/automate-helpers.d" "$MUTG/"; cp -R "$HERE/automate-trail.d" "$MUTG/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$MUTG/"
 sed 's/^  if \[ "\$cur_item" != "\$item" \] || \[ "\$cur_pr" != "\$pr" \]; then$/  if false; then/' "$TB" > "$MUTG/automate-trail.sh"
 if ! cmp -s "$TB" "$MUTG/automate-trail.sh" && bash -n "$MUTG/automate-trail.sh"; then
   closeout_fixture 104
@@ -325,7 +325,7 @@ echo "== C. closeout: a refused pull restores the re-staged index entries (L6) =
 # main), the index must go back to its prior state. trail-pr is stubbed out so
 # its own checkout-contract staging does not mask the assertion; a mutant
 # without the restore call is the control.
-L6D="$TOP/l6d"; mkdir -p "$L6D"; cp "$SPYD"/*.sh "$SPYD"/*.py "$L6D/"; cp -R "$SPYD/automate-helpers.d" "$L6D/"; cp -R "$SPYD/automate-trail.d" "$L6D/"
+L6D="$TOP/l6d"; mkdir -p "$L6D"; cp "$SPYD"/*.sh "$SPYD"/*.py "$L6D/"; cp -R "$SPYD/automate-helpers.d" "$L6D/"; cp -R "$SPYD/automate-trail.d" "$L6D/"; cp -R "$SPYD/setup-memory.d" "$SPYD/meta-sync.d" "$L6D/"
 cat > "$L6D/automate-helpers.sh" <<'SHIM'
 #!/usr/bin/env bash
 if [ "${1:-}" = trail-pr ]; then echo "trail-pr: skipped — stubbed"; exit 0; fi

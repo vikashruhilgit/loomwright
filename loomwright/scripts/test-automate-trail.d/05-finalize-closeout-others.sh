@@ -26,7 +26,7 @@ fe_invariant() { # <fixture-n> <scripts-dir> → 0 when the run stayed paused/aw
   [ "$(bash "$H" remaining "$P/$RF_REL")" = 0 ] && grep -qxF -- "## Status: paused" "$P/$RF_REL" && grep -qxF -- "- pause_reason: awaiting_go" "$P/$RF_REL"
 }
 if fe_invariant 200 "$SPYD"; then ok "(F0) closeout checking off the last item leaves ## Status: paused / awaiting_go (remaining 0) — closeout never writes done"; else no "(F0) closeout state: $(grep -E '^## Status|^- pause_reason' "$P/$RF_REL" | tr '\n' '|')"; fi
-MUTF="$TOP/mutd-done"; mkdir -p "$MUTF"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTF/"; cp -R "$HERE/automate-helpers.d" "$MUTF/"; cp -R "$HERE/automate-trail.d" "$MUTF/"
+MUTF="$TOP/mutd-done"; mkdir -p "$MUTF"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTF/"; cp -R "$HERE/automate-helpers.d" "$MUTF/"; cp -R "$HERE/automate-trail.d" "$MUTF/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$MUTF/"
 awk '{ print } index($0, "    echo \"closeout: reconciled — ## Current $item status done, pause_reason $want\"")==1 { print "    { sed \"s/^## Status: paused/## Status: done/\" \"$rf\" > \"$rf.m\" && mv \"$rf.m\" \"$rf\"; }" }' "$TB" > "$MUTF/automate-trail.sh"
 if cmp -s "$TB" "$MUTF/automate-trail.sh" || ! bash -n "$MUTF/automate-trail.sh"; then no "(F0) closeout-writes-done mutant not built"
 elif fe_invariant 201 "$MUTF"; then no "(F0) mutation control REFUTED: a closeout that writes done still passed the invariant leg"
@@ -64,7 +64,7 @@ fe_tr="$(grep -nE '^- [^ ]+ trail-pr: (opened|pushed|skipped)' "$P/$RF_REL" | ta
   || no "(F1) sweep line(s) at '$(printf '%s' "$fe_sw" | tr '\n' ' ')' vs trail line $fe_tr"
 grep -q '^sweep' "$FX/fe.err" && no "(F1) the sweep line leaked into finalize-empty's printed output" || ok "(F1) the sweep summary is appended to ## Progress only (finalize-empty's printed lines unchanged)"
 # Control: without the mode-off trail-unstage the finalized run's trail blobs stay staged.
-MUTU="$TOP/mutd-unstage"; mkdir -p "$MUTU"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTU/"; cp -R "$HERE/automate-helpers.d" "$MUTU/"; cp -R "$HERE/automate-trail.d" "$MUTU/"
+MUTU="$TOP/mutd-unstage"; mkdir -p "$MUTU"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTU/"; cp -R "$HERE/automate-helpers.d" "$MUTU/"; cp -R "$HERE/automate-trail.d" "$MUTU/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$MUTU/"
 grep -v 'l="$(bash "$HLP" trail-unstage "$rf_abs"' "$TB" > "$MUTU/automate-trail.sh"
 if cmp -s "$TB" "$MUTU/automate-trail.sh" || ! bash -n "$MUTU/automate-trail.sh"; then no "(F1) unstage mutant not built"
 else
@@ -82,7 +82,7 @@ grep -qE "^current-set /[^ ]*/$AUTD/$RUN_ID\.md\.fe\.[A-Za-z0-9]+ --pause-reason
 [ -z "$(cd "$P/$AUTD" && ls -A | grep -F '.fe.')" ] && ok "(F1b) no staged .fe. copy left behind" || no "(F1b) leftover: $(ls -A "$P/$AUTD" | tr '\n' ' ')"
 # A refusing current-set leaves the run file byte-unchanged and still eligible
 # (still listed; a later --finalize retries) — never a half-finalized done+awaiting_go.
-MUTC="$TOP/mutd-cs"; mkdir -p "$MUTC"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTC/"; cp -R "$HERE/automate-helpers.d" "$MUTC/"; cp -R "$HERE/automate-trail.d" "$MUTC/"
+MUTC="$TOP/mutd-cs"; mkdir -p "$MUTC"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTC/"; cp -R "$HERE/automate-helpers.d" "$MUTC/"; cp -R "$HERE/automate-trail.d" "$MUTC/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$MUTC/"
 mv "$MUTC/automate-helpers.sh" "$MUTC/automate-helpers.real.sh"
 cat > "$MUTC/automate-helpers.sh" <<'SHIM'
 #!/usr/bin/env bash
@@ -104,7 +104,7 @@ lst="$(fe_glob)"
 # trail-pr, because the trail PR carries that stamp. So a FAILED trail-pr is not retried by a later
 # --finalize (the run is no longer paused); its line sits in ## Progress and the recovery is a hand
 # `trail-pr <runfile> --reason done`. A stub trail-pr records the run file's ## Status when called.
-FTD="$TOP/fetrail"; mkdir -p "$FTD"; cp "$HERE"/*.sh "$HERE"/*.py "$FTD/"; cp -R "$HERE/automate-helpers.d" "$FTD/"; cp -R "$HERE/automate-trail.d" "$FTD/"
+FTD="$TOP/fetrail"; mkdir -p "$FTD"; cp "$HERE"/*.sh "$HERE"/*.py "$FTD/"; cp -R "$HERE/automate-helpers.d" "$FTD/"; cp -R "$HERE/automate-trail.d" "$FTD/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$FTD/"
 mv "$FTD/automate-helpers.sh" "$FTD/automate-helpers.real.sh"
 cat > "$FTD/automate-helpers.sh" <<'SHIM'
 #!/usr/bin/env bash
@@ -254,7 +254,7 @@ echo "== CL. a real close-out that kept a worktree + a branch (tip != merged hea
 REALGIT="$(command -v git)"
 GSHIM="$TOP/gshim"; mkdir -p "$GSHIM"
 printf '#!/usr/bin/env bash\necho "git $*" >> "$GITLOG"\nexec "%s" "$@"\n' "$REALGIT" > "$GSHIM/git"; chmod +x "$GSHIM/git"
-CUD="$TOP/cud"; mkdir -p "$CUD"; cp "$SPYD"/*.sh "$SPYD"/*.py "$CUD/"; cp -R "$SPYD/automate-helpers.d" "$CUD/"; cp -R "$SPYD/automate-trail.d" "$CUD/"
+CUD="$TOP/cud"; mkdir -p "$CUD"; cp "$SPYD"/*.sh "$SPYD"/*.py "$CUD/"; cp -R "$SPYD/automate-helpers.d" "$CUD/"; cp -R "$SPYD/automate-trail.d" "$CUD/"; cp -R "$SPYD/setup-memory.d" "$SPYD/meta-sync.d" "$CUD/"
 cat > "$CUD/automate-helpers.sh" <<'SHIM'
 #!/usr/bin/env bash
 if [ "${1:-}" = trail-pr ]; then echo "trail-pr: skipped — stubbed"; exit 0; fi
@@ -321,7 +321,7 @@ grep -qE "^- [^ ]+ cross-run closeout $RUN_ID $REQ: complete\$" "$P/$RBF" && ! g
 [ -z "$(git -C "$P" diff --cached --name-only)" ] && grep -q '^trail-unstage: unstaged' <<<"$out" && ok "(CO1) mode off: no A trail path left staged in the primary index" || no "(CO1) staged: $(git -C "$P" diff --cached --name-only | tr '\n' ' ')"
 o2="$(co_others --record "$RBF")"
 [ -z "$o2" ] && ok "(CO1) a second run is silent (A's item is now done)" || no "(CO1) second run: $o2"
-MUTCO="$TOP/mutd-co"; mkdir -p "$MUTCO"; cp "$SPYD"/*.sh "$SPYD"/*.py "$MUTCO/"; cp -R "$SPYD/automate-helpers.d" "$MUTCO/"; cp -R "$SPYD/automate-trail.d" "$MUTCO/"
+MUTCO="$TOP/mutd-co"; mkdir -p "$MUTCO"; cp "$SPYD"/*.sh "$SPYD"/*.py "$MUTCO/"; cp -R "$SPYD/automate-helpers.d" "$MUTCO/"; cp -R "$SPYD/automate-trail.d" "$MUTCO/"; cp -R "$SPYD/setup-memory.d" "$SPYD/meta-sync.d" "$MUTCO/"
 grep -vF 'l="$(bash "$HLP" trail-unstage "$f"' "$TB" > "$MUTCO/automate-trail.sh"
 if cmp -s "$TB" "$MUTCO/automate-trail.sh" || ! bash -n "$MUTCO/automate-trail.sh"; then no "(CO1) unstage mutant not built"
 else
@@ -429,7 +429,7 @@ grep -qxF -- "closeout: skipped — run lock held by automate:$RUN_ID-L1 (holder
 # (CO8c) race: the refused holder (dead) releases and a LIVE newcomer takes the lock before the
 # liveness read. The verdict is bound to the refused pid, so it fails toward the leftover — never
 # the newcomer's 'alive'. A run-lock.sh wrapper swaps the meta right after a refused acquire.
-RACELK="$TOP/race-lock"; mkdir -p "$RACELK"; cp "$SPYD"/*.sh "$SPYD"/*.py "$RACELK/"; cp -R "$SPYD/automate-helpers.d" "$RACELK/"; cp -R "$SPYD/automate-trail.d" "$RACELK/"
+RACELK="$TOP/race-lock"; mkdir -p "$RACELK"; cp "$SPYD"/*.sh "$SPYD"/*.py "$RACELK/"; cp -R "$SPYD/automate-helpers.d" "$RACELK/"; cp -R "$SPYD/automate-trail.d" "$RACELK/"; cp -R "$SPYD/setup-memory.d" "$SPYD/meta-sync.d" "$RACELK/"
 mv "$RACELK/run-lock.sh" "$RACELK/run-lock.real.sh"
 cat > "$RACELK/run-lock.sh" <<'SHIM'
 #!/usr/bin/env bash
@@ -452,7 +452,7 @@ rm -rf "$P/.supervisor/run.lock"
   && ok "(CO8c) refusal→liveness race (dead holder replaced by a live one) ⇒ still 'not running' + leftover lock" \
   || no "(CO8c) raced=$raced out=$(printf '%s' "$o" | tr '\n' '|')"
 # (CO9) mutation control: drop the live-holder check ⇒ a live holder reads as a leftover again (CO7 red).
-MUTLK="$TOP/mutd-lock"; mkdir -p "$MUTLK"; cp "$SPYD"/*.sh "$SPYD"/*.py "$MUTLK/"; cp -R "$SPYD/automate-helpers.d" "$MUTLK/"; cp -R "$SPYD/automate-trail.d" "$MUTLK/"
+MUTLK="$TOP/mutd-lock"; mkdir -p "$MUTLK"; cp "$SPYD"/*.sh "$SPYD"/*.py "$MUTLK/"; cp -R "$SPYD/automate-helpers.d" "$MUTLK/"; cp -R "$SPYD/automate-trail.d" "$MUTLK/"; cp -R "$SPYD/setup-memory.d" "$SPYD/meta-sync.d" "$MUTLK/"
 sed 's/^    if \[ "\$hlive" = alive \]; then$/    if false; then  # mutant A1/' "$TB" > "$MUTLK/automate-trail.sh"
 if grep -q '# mutant A1' "$MUTLK/automate-trail.sh" && bash -n "$MUTLK/automate-trail.sh"; then
   co_live_leg "$MUTLK/automate-helpers.sh"

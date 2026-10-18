@@ -554,7 +554,7 @@ if bm_unmerged 81 "$H"; then ok "(bm-b) unmerged item's done stamp is NOT on the
 case "$BM_OUT" in "trail-pr: meta-pushed $BMB"*"; excluded $REQ — pr not merged"*) ok "(bm-b) '$BM_OUT'" ;; *) no "(bm-b) output: '$BM_OUT'" ;; esac
 # Mutation control (ii): a patched copy that bypasses _evidence_gate on the mode-on push list MUST
 # turn (bm-b) red.
-MUTD="$TOP/bm-mut"; mkdir -p "$MUTD"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTD/" 2>/dev/null; cp -R "$HERE/automate-helpers.d" "$MUTD/"; cp -R "$HERE/automate-trail.d" "$MUTD/"
+MUTD="$TOP/bm-mut"; mkdir -p "$MUTD"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTD/" 2>/dev/null; cp -R "$HERE/automate-helpers.d" "$MUTD/"; cp -R "$HERE/automate-trail.d" "$MUTD/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$MUTD/"
 awk 'skip && /^  _evidence_gate$/ { skip = 0; next } { skip = 0 } /^  TRAIL_SKIP_IGNORE_DROP=0$/ { skip = 1 } { print }' "$TB" > "$MUTD/automate-trail.sh"
 if cmp -s "$TB" "$MUTD/automate-trail.sh"; then no "(bm-b) mutation control (ii): the patch changed nothing — control inconclusive"
 elif bm_unmerged 82 "$MUTD/automate-helpers.sh"; then no "(bm-b) mutation control (ii) REFUTED: bypassing _evidence_gate still kept the stamp off the branch"
