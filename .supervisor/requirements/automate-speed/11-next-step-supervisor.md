@@ -64,3 +64,9 @@ loomwright/skills/self-heal-advisory/SKILL.md
 loomwright/skills/async-orchestration/SKILL.md
 loomwright/docs/loop-inventory/supervisor.md
 changelog.d/as11-next-step-supervisor.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-18T10:56:22Z
+- **Brief:** .supervisor/jobs/done/2026-10-17-next-step-supervisor.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/601
