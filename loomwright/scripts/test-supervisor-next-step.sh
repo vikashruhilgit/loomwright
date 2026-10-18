@@ -484,7 +484,7 @@ done
 badsrc=""
 for d in "$FIX"/*/; do
   c="$(basename "$d")"
-  head -n 1 "$d/source" 2>/dev/null | grep -qE '^(run: [^ ]+|synthetic: .+)' || badsrc="$badsrc $c"
+  grep -qE '^(run: [^ ]+|synthetic: .+)' < <(head -n 1 "$d/source" 2>/dev/null) || badsrc="$badsrc $c"
 done
 [ -z "$badsrc" ] && ok "every case's source names its real run (run: <id>) or says synthetic and why" || no "source:$badsrc"
 sel="${SN_CASES:-}"
