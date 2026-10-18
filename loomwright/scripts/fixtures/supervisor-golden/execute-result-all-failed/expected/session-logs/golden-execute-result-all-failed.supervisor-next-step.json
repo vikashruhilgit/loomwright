@@ -1,0 +1,67 @@
+{
+  "base_branch": "main",
+  "base_sync": "ok",
+  "branch": "feature/golden-exec",
+  "branch_action": "CREATED",
+  "cost_profile": "default",
+  "exec_result": {
+    "branches": [],
+    "completed": [],
+    "failed": [
+      {
+        "error": "verify-provides missing api.md after 3 retries",
+        "task_id": "a"
+      },
+      {
+        "error": "tests fail after 3 retries (ui.md render)",
+        "task_id": "b"
+      }
+    ],
+    "merge_order": [],
+    "summary": "0/2 subtasks completed; all failed (escalation).",
+    "worktrees": [
+      {
+        "branch": "feature/exec-a",
+        "path": "../repo-a",
+        "status": "failed",
+        "task_id": "a"
+      },
+      {
+        "branch": "feature/exec-b",
+        "path": "../repo-b",
+        "status": "failed",
+        "task_id": "b"
+      }
+    ]
+  },
+  "flags": {
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": true,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/in-progress/2026-10-17-golden-exec.md",
+  "last_arm": "execute-stop",
+  "max_workers": 2,
+  "mode": "parallel",
+  "path": "parallel",
+  "pending_text": "{\"do\":\"park\",\"step\":\"execute-stop\",\"session_id\":\"golden-execute-result-all-failed\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-exec.md\",\"branch\":\"feature/golden-exec\",\"status\":\"checkpoint\",\"preflight_sync\":\"skipped\",\"message\":\"EXECUTE ended with every subtask failed (a, b): nothing to merge, no PR. Resume with /supervisor --continue task: 2026-10-17-golden-exec once the failures are addressed.\"}",
+  "plan_source": "brief",
+  "preflight_sync": "skipped",
+  "seq_index": 0,
+  "stop": {
+    "error": "",
+    "fail_job": false,
+    "message": "EXECUTE ended with every subtask failed (a, b): nothing to merge, no PR. Resume with /supervisor --continue task: 2026-10-17-golden-exec once the failures are addressed.",
+    "status": "checkpoint"
+  },
+  "subtasks": [
+    "a",
+    "b"
+  ],
+  "task_id": "2026-10-17-golden-exec",
+  "title": "Golden exec"
+}

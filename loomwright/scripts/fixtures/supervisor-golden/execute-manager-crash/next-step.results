@@ -1,0 +1,11 @@
+call: --job .supervisor/jobs/pending/2026-10-17-golden-exec.md --skip-preflight-sync
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+# the Execute Manager returned no block ⇒ checkpoint, report the worktree state, stop with the resume command
+call: --result '{"crashed":true,"error":"the Task call returned no EXECUTE_RESULT / EXECUTE_CHECKPOINT (turn limit)"}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: park

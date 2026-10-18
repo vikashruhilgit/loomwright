@@ -13,7 +13,9 @@
 #                      `session-logs/` stands for `logs/` (the repo's .gitignore drops any `logs/` dir) and
 #                      holds exactly one `<sid>.jsonl` — its basename is the case's session id
 #   setup              optional, sourced in the scratch checkout after the base commit (branches, commits)
-#   gh.stub            optional stub table, `<rc>\t<argv glob>\t<stdout>` per row (no Phase 0-2 step calls gh)
+#   gh.stub            optional stub table, `<rc>\t<argv glob>\t<stdout>` per row, first match wins; an rc
+#                      written `<rc>@<n>` answers only its first n matches, then the row is skipped (a gh
+#                      that fails twice and then answers); every matched call is logged beside the table
 #   next-step.results  the directives that drive the driver (grammar below)
 #   expected/          the scratch `.supervisor/` after the run, file for file (`session-logs/` again);
 #                      empty directories are not compared (git keeps none)
@@ -29,6 +31,8 @@
 #     gh: <rc>\t<glob>\t<out> one stub-table row appended to the case's scratch table
 #     file: <path> <content> write <content> (one shell word) to <path> under the scratch root
 #     sidecar: <json>        merge <json> into the driver's sidecar before the next call (a mid-run case)
+#     run: <shell…>          run a shell line in the scratch checkout (the model's own git work between
+#                            two calls — the merges, a commit); a non-zero exit is a broken expectation
 #
 # LEGS
 #   G   GOLDEN PARITY (AC1). Every case in REQUIRED_CASES exists with source / input / next-step.results
@@ -50,7 +54,21 @@
 #       names no `code-reviewer` spawn.
 #   B   BRANCHES the golden cases do not reach: the orchestrator route (a brief with no subtask table),
 #       malformed reports / confirmations (exit 2, nothing written, the instruction re-prints), a run
-#       that ended (exit 2), the abort / revise-scope answers.
+#       that ended (exit 2), the abort / revise-scope answers; Phase 3 (B7–B11: malformed blocks, the
+#       lane / gap adjudications both ways, Option C's reason per kind, a budget checkpoint), FINALIZE
+#       (B12–B15: pre-merge points 2–4 and a missing worktree, point 5's answers / --non-interactive /
+#       --skip-children-check, a conflict, a refused re-fold, write-marker refusals), the inline paths
+#       (B16) and every step-6.5 branch (B17).
+#   P   PUBLISH ORDER (AC3). Every publish spawn a golden case prints is printed with the finalize-gate
+#       marker on disk naming HEAD; guard-finalize-publish.sh and check-children-settled.sh are
+#       byte-unchanged since the merge-base with origin/main (skipped, uncounted, without that ref).
+#   A   QUESTION GATES (AC4, AC5). The SUP-ADJ-GAP / SUP-ADJ-LANE / SUP-CHILDREN / SUP-GH-RETRY asks carry
+#       the catalog labels, the catalog header only for an allowed gate, and their named can't-ask status;
+#       an interactive adjudication never picks; a first gh failure is retried exactly once.
+#   K   BRACE EXPANSION OFF. The driver carries `set +B` (bash 3.2 brace-expands the source of a "$(…)"
+#       argument, splitting its jq programs); where /bin/bash is 3.x, a spawn driven under it is well-formed.
+#   V   VALIDATION 3. validation-3-drive (also a golden case) ends at the verified hand-over with the
+#       guard's deny-then-allow and the real merges / push holding; SN_V3_PRINT=1 prints `do step` per line.
 #   D   DOC MIRROR. docs/result-schemas/supervisor-result.md §"supervisor next-step instruction" names
 #       exactly the driver's `case` arms and its `what` values, and its `do` values are a subset of the
 #       shared closed enum.
@@ -61,8 +79,15 @@
 #         MS  one un-negated merge-command line (assembled from pieces here, so this file never holds the
 #             positive literal on one line)                         ⇒ S
 #         MR  the plan step spawns `code-reviewer`                 ⇒ R
+#         M2a the publish spawn printed before write-marker        ⇒ P
+#         M2c no step-6.5 retry (the first gh failure sets the flag) ⇒ A4 (and the gh-retry case)
+#         M2d an interactive adjudication auto-picks option A      ⇒ A5
+#         MB  brace expansion left on (`set -B`)                    ⇒ K
 #
 # ENV: SN_CASES="<a> <b>" runs only those golden cases (G only); SN_SKIP_MUTANTS=1 skips M.
+#   SN_WRITE_EXPECTED=1 (authoring only, honoured only together with SN_CASES): each selected case's
+#   normalised tree and stream are written over its expected/ and expected.out, and the case still
+#   reports its pre-write verdict — review the result with `git diff` before committing it.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -87,15 +112,26 @@ INSTR="$WORK/instructions.log"; : > "$INSTR"
 REQUIRED_CASES="init-flags-non-interactive init-flags-max-tokens acquire-job-move acquire-branch-reuse-tip-equal
 acquire-branch-collision acquire-autonomous-state-json preflight-clear preflight-overlap-ask
 preflight-overlap-non-interactive preflight-skip preflight-unverified plan-path-single-agent
-plan-path-sequential plan-path-parallel"
+plan-path-sequential plan-path-parallel execute-result-complete execute-result-partial execute-result-all-failed
+execute-adjudication-ask execute-adjudication-non-interactive execute-manager-crash finalize-premerge-gate-fail
+finalize-children-unsettled finalize-marker-written finalize-pr-base-verified finalize-pr-base-mismatch
+finalize-pr-base-gh-retry"
 
 GH_STUB_BODY='#!/usr/bin/env bash
-all="$*"
+all="$*"; n=0
 if [ -n "${GOLDEN_GH_TABLE:-}" ] && [ -f "$GOLDEN_GH_TABLE" ]; then
   while IFS="	" read -r rc pat out || [ -n "$rc" ]; do
+    n=$((n + 1))
     case "$rc" in ""|"#"*) continue ;; esac
     # shellcheck disable=SC2254
-    case "$all" in $pat) [ -n "$out" ] && printf "%s\n" "$out"; exit "$rc" ;; esac
+    case "$all" in $pat) ;; *) continue ;; esac
+    case "$rc" in *@*)
+      c="$GOLDEN_GH_TABLE.used.$n"; u="$(cat "$c" 2>/dev/null || echo 0)"
+      [ "$u" -lt "${rc#*@}" ] || continue
+      echo "$((u + 1))" > "$c"; rc="${rc%@*}" ;;
+    esac
+    printf "%s\n" "$all" >> "$GOLDEN_GH_TABLE.calls"
+    [ -n "$out" ] && printf "%s\n" "$out"; exit "$rc"
   done < "$GOLDEN_GH_TABLE"
 fi
 echo "gh-stub: unmatched: $all" >&2
@@ -155,11 +191,12 @@ in_case() {
   local seams="$1"; shift
   (
     cd "$CASE_ROOT" || exit 98
-    unset LOOMWRIGHT_GH_BIN SUPERVISOR_NEXT_STEP_FROM SUPERVISOR_NEXT_STEP_GUARD_CMD
+    unset LOOMWRIGHT_GH_BIN SUPERVISOR_NEXT_STEP_FROM SUPERVISOR_NEXT_STEP_GUARD_CMD LOOMWRIGHT_HOST_MODE CLAUDE_PROJECT_DIR
     export HOME="$CASE_HOME" PATH="$CASE_BIN:$PATH" GOLDEN_GH_TABLE="$CASE_GH" SN_REC_LOG="$CASE_DIR/rec.log"
+    export SUPERVISOR_NEXT_STEP_RETRY_SECONDS=0
     eval "export $GIT_ENV"
     export SUPERVISOR_NEXT_STEP_GUARD_CMD="$CASE_BIN/rec guard"
-    export ROOT="$CASE_ROOT" SID="$CASE_SID"
+    export ROOT="$CASE_ROOT" SID="$CASE_SID" SN_SCRIPTS="$HERE"
     local n v
     while IFS= read -r n; do
       [ -n "$n" ] || continue
@@ -172,11 +209,13 @@ in_case() {
 
 # drive <case dir> <driver> <results file> — runs the directives; writes $CASE_DIR/stream.out (the
 # instruction stream), sets LAST_OUT / LAST_RC and DRIVE_ERR (non-empty on a broken expectation); every
-# printed instruction is appended to $INSTR
+# printed instruction is appended to $INSTR. After every call that printed the publish spawn
+# (`what: finalize-publish`) the finalize-gate marker is probed: it must exist and name HEAD at that
+# moment (PUB_SEEN / PUB_BAD — the AC3 order leg)
 drive() {
-  local cd_="$1" drv="$2" rs="$3" line rest k=0 o e rc seams want got w nm pend="" sc
+  local cd_="$1" drv="$2" rs="$3" line rest k=0 o e rc seams want got w nm pend="" sc mk
   local ROOT="$CASE_ROOT" SID="$CASE_SID"
-  seams="$CASE_DIR/seams.env"; : > "$seams"; LAST_OUT=""; DRIVE_ERR=""; LAST_RC=0
+  seams="$CASE_DIR/seams.env"; : > "$seams"; LAST_OUT=""; DRIVE_ERR=""; LAST_RC=0; PUB_SEEN=0; PUB_BAD=""
   : > "$CASE_DIR/stream.out"
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in ""|"#"*) continue ;; esac
@@ -208,7 +247,14 @@ drive() {
         LAST_OUT="$(cat "$o")"
         { printf '$ call: %s\n' "$rest"; cat "$o"; printf '= %s\n' "$rc"; } >> "$CASE_DIR/stream.out"
         [ "$rc" -eq 0 ] || pend="call $k exit $rc ($(head -n 3 "$e" | tr '\n' ' ')); "
-        [ -s "$o" ] && sed "s|^|$(basename "$cd_")$TAB|" "$o" >> "$INSTR" ;;
+        [ -s "$o" ] && sed "s|^|$(basename "$cd_")$TAB|" "$o" >> "$INSTR"
+        if printf '%s' "$LAST_OUT" | jq -e '.what == "finalize-publish"' >/dev/null 2>&1; then
+          PUB_SEEN=$((PUB_SEEN + 1)); mk="$CASE_ROOT/.supervisor/logs/$CASE_SID.finalize-gate"
+          [ -f "$mk" ] && [ "$(jq -r '.head_sha // empty' "$mk" 2>/dev/null)" = "$(git -C "$CASE_ROOT" rev-parse HEAD 2>/dev/null)" ] \
+            || PUB_BAD="${PUB_BAD}call $k printed the publish spawn with no finalize-gate marker naming HEAD; "
+        fi ;;
+      "run: "*)
+        in_case "$seams" bash -c "$rest" >> "$CASE_DIR/run.log" 2>&1 || DRIVE_ERR="${DRIVE_ERR}run failed: $rest; " ;;
       "expect: "*)
         want="$rest"
         if [ -z "$LAST_OUT" ]; then got=none; else got="$(printf '%s' "$LAST_OUT" | jq -r '.do // "?"' 2>/dev/null)"; fi
@@ -320,6 +366,88 @@ leg_doc() {
   return 0
 }
 
+# leg_scripts_unchanged — AC3: the driver CALLS guard-finalize-publish.sh / check-children-settled.sh and
+# never edits them: no change on this branch since its merge-base with origin/main (skipped, uncounted,
+# when that ref is absent — a shallow or offline clone)
+leg_scripts_unchanged() {
+  local mb f
+  mb="$(git -C "$REPO" merge-base HEAD origin/main 2>/dev/null)"
+  if [ -z "$mb" ]; then echo "  skip: origin/main not resolvable — the scripts-unchanged leg did not run"; return 0; fi
+  for f in loomwright/scripts/guard-finalize-publish.sh loomwright/scripts/check-children-settled.sh; do
+    if git -C "$REPO" diff --quiet "$mb" -- "$f"; then ok "AC3: $f byte-unchanged since the merge-base ($(printf '%s' "$mb" | cut -c1-7))"
+    else no "AC3: $f changed on this branch — the driver must call it, never edit it"; fi
+  done
+}
+# payload <case> <n> — the n-th `call: --result '<json>'` payload of a case's results file
+payload() {
+  awk -v n="$2" 'index($0, "call: --result '"'"'") == 1 { k++; if (k == n) { s = substr($0, 17); print substr(s, 1, length(s) - 1); exit } }' \
+    "$FIX/$1/next-step.results" | sed "s/'\\\\''/'/g"
+}
+B_DRV="$DRIVER"
+# b_exec <case> [flags…] — a scratch from <case>'s inputs, driven (--skip-preflight-sync) to its Phase 3 spawn
+b_exec() {
+  local c="$1"; shift
+  new_scratch "$FIX/$c" || return 1
+  sn_call "$B_DRV" --job ".supervisor/jobs/pending/$(ls "$FIX/$c/input/jobs/pending")" --skip-preflight-sync "$@"
+  sn_call "$B_DRV" --result '{"confirmed":true}'
+  sn_call "$B_DRV" --result '{"confirmed":true}'
+  printf '%s' "$NC_OUT" | jq -e '.step == "execute" and .do == "spawn"' >/dev/null 2>&1
+}
+# b_fin <case> [flags…] — a Single-Agent finalize scratch driven to its publish spawn (the real commit included)
+b_fin() {
+  local c="$1"; shift
+  b_exec "$c" "$@" || return 1
+  in_case /dev/null bash -c 'printf "driver\n" > driver.sh' || return 1
+  sn_call "$B_DRV" --result '{"subtask":"1","agent_id":"ac394bd015ea3ff94","status":"completed","gates":"passed"}'
+  in_case /dev/null bash -c 'git add -A && git commit -qm "feat: golden"' || return 1
+  sn_call "$B_DRV" --result '{"merged":[],"conflict":null,"refold":"ok"}'
+  printf '%s' "$NC_OUT" | jq -e '.what == "finalize-publish"' >/dev/null 2>&1
+}
+jqo() { printf '%s' "$NC_OUT" | jq -e "$@" >/dev/null 2>&1; }   # the last call's instruction matches
+catalog_labels() { bash "$HERE/lane-policy.sh" catalog | awk -F'\t' -v c="$1" '$1 == c { print $3 }'; }
+# leg_adj_ask <driver> — AC5 / Validation 2d: an interactive adjudication prints the SUP-ADJ-GAP ask with
+# the catalog labels, header "" and the named can't-ask status — never a pick
+leg_adj_ask() {
+  B_DRV="$1"
+  b_exec execute-adjudication-ask || { B_DRV="$DRIVER"; LEG_MSG="scratch not built"; return 1; }
+  sn_call "$1" --result "$(payload execute-adjudication-ask 3)"
+  B_DRV="$DRIVER"
+  jqo --arg l "$(catalog_labels SUP-ADJ-GAP)" '.do == "ask" and .gate == "SUP-ADJ-GAP" and .header == ""
+      and .options == ($l | split("|")) and .cant_ask == "adjudication_required_non_interactive"
+      and (.question | test("api.md:ApiClient")) and (has("choice") | not)' \
+    || { LEG_MSG="an interactive adjudication printed: $(printf '%s' "$NC_OUT" | head -c 200)"; return 1; }
+}
+# leg_retry_once <driver> — AC4 / Validation 2c: a first gh failure is retried ONCE; the retry's answer
+# decides (verified, no ask, no flag) and gh was called exactly twice
+leg_retry_once() {
+  B_DRV="$1"
+  b_fin finalize-pr-base-verified || { B_DRV="$DRIVER"; LEG_MSG="scratch not built"; return 1; }
+  printf '1@1\tpr view *\t\n0\tpr view *\tmain\n' > "$CASE_GH"; rm -f "$CASE_GH.calls"
+  sn_call "$1" --result '{"pr_url":"https://github.com/golden/repo/pull/12"}'
+  B_DRV="$DRIVER"
+  jqo '.do == "done" and .step == "handover" and .base_verify == "verified" and .base_mismatch_detected == false' \
+    && [ "$(wc -l < "$CASE_GH.calls" | tr -d ' ')" = 2 ] \
+    || { LEG_MSG="after one gh failure: $(printf '%s' "$NC_OUT" | head -c 200) (gh calls: $(wc -l < "$CASE_GH.calls" 2>/dev/null | tr -d ' '))"; return 1; }
+}
+
+# leg_brace_off <driver> — bash 3.2 (macOS /bin/bash) brace-expands the source of a "$(…)" argument, which
+# splits the driver's jq programs: the driver must run with brace expansion off. Static: the `set +B` line.
+# Dynamic, where /bin/bash is 3.x: the orchestrator spawn (a jq object built inside a "$(…)" argument)
+# driven under /bin/bash is one well-formed instruction
+leg_brace_off() {
+  local o
+  grep -qx 'set +B' "$1" || { LEG_MSG="the driver has no top-level 'set +B' line"; return 1; }
+  case "$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null)" in 3) ;; *) return 0 ;; esac
+  new_scratch "$FIX/plan-path-parallel" || { LEG_MSG="scratch not built"; return 1; }
+  printf '# Supervisor Job: No table\n\n## Acceptance Criteria\n- [ ] one\n\n## Subtask Structure\n\nnone\n' \
+    > "$CASE_ROOT/.supervisor/jobs/pending/2026-10-17-golden-notable.md"
+  in_case /dev/null /bin/bash "$1" --session-id "$CASE_SID" --job .supervisor/jobs/pending/2026-10-17-golden-notable.md --skip-preflight-sync >/dev/null 2>&1
+  in_case /dev/null /bin/bash "$1" --session-id "$CASE_SID" --result '{"confirmed":true}' >/dev/null 2>&1
+  o="$(in_case /dev/null /bin/bash "$1" --session-id "$CASE_SID" --result '{"confirmed":true}' 2>/dev/null)"
+  printf '%s' "$o" | jq -e '.what == "orchestrator" and .brief_note == "read only the sections you need"' >/dev/null 2>&1 \
+    || { LEG_MSG="under /bin/bash 3.x the orchestrator spawn came out as: $(printf '%s' "$o" | head -c 160)"; return 1; }
+}
+
 # build_mutant <name> <anchor> <replacement|-append:<line>> — a driver copy beside symlinks to every other
 # scripts/ entry; prints its path; gated: anchor once, non-empty, differs, bash -n
 build_mutant() {
@@ -361,12 +489,17 @@ done
 [ -z "$badsrc" ] && ok "every case's source names its real run (run: <id>) or says synthetic and why" || no "source:$badsrc"
 sel="${SN_CASES:-}"
 if [ -z "$sel" ]; then for d in "$FIX"/*/next-step.results; do sel="$sel $(basename "$(dirname "$d")")"; done; fi
-W_BAD=""
+W_BAD=""; P_SEEN=0; P_BAD=""
 for c in $sel; do
   GC_MSG=""; GC_DIFF=""
   if golden_case "$c" "$DRIVER"; then ok "$c: .supervisor/ tree and instruction stream match"
   else no "$c: $GC_MSG"; [ -n "$GC_DIFF" ] && printf '%s\n' "$GC_DIFF" | sed 's/^/    /'; fi
+  if [ -n "${SN_CASES:-}" ] && [ "${SN_WRITE_EXPECTED:-}" = 1 ] && [ -d "$CASE_DIR/got" ]; then
+    rm -rf "$FIX/$c/expected" && cp -R "$CASE_DIR/got" "$FIX/$c/expected" && norm "$CASE_DIR/stream.out" > "$FIX/$c/expected.out" \
+      && echo "  wrote: $c/expected/ and $c/expected.out" || no "$c: SN_WRITE_EXPECTED could not write"
+  fi
   state_untouched || W_BAD="$W_BAD $c"
+  P_SEEN=$((P_SEEN + PUB_SEEN)); [ -z "$PUB_BAD" ] || P_BAD="$P_BAD $c: $PUB_BAD"
 done
 [ -n "${SN_CASES:-}" ] && { echo "PASS: $pass FAIL: $fail"; [ "$fail" -eq 0 ]; exit $?; }
 
@@ -374,18 +507,28 @@ echo "-- W. state.md untouched by the driver (AC2)"
 [ -z "$W_BAD" ] && ok "W: state.md byte-identical before/after the driver calls in every golden case" \
   || no "W: state.md changed in:$W_BAD"
 nflag="$(cut -f2- "$INSTR" | jq -r 'select(.what == "context-keeper") | .ops[]' 2>/dev/null \
-  | grep -cE 'operation: (set_flag|clear_flag|record_decision|initialize)' || true)"
+  | grep -cE 'operation: (set_flag|clear_flag|record_decision|record_error|initialize)' || true)"
 ckbad="$(cut -f2- "$INSTR" | jq -c 'select(.what == "context-keeper") | select((.ops | type) != "array" or (.ops | length) == 0 or any(.ops[]; (startswith("Context-Keeper(operation: ") | not)))' 2>/dev/null)"
 [ "$nflag" -gt 0 ] && [ -z "$ckbad" ] && ok "W: $nflag flag / decision / initialize op(s) were printed as context-keeper spawns carrying the operation text" \
   || no "W: context-keeper ops: $nflag, malformed: ${ckbad:-none}"
+# the ops are read ONCE into a variable: `jq … | grep -q` under pipefail SIGPIPEs jq on an early match
+ckops="$(cut -f2- "$INSTR" | jq -r 'select(.what == "context-keeper") | .ops[]' 2>/dev/null)"
 for want in 'clear_flag, key: "base_mismatch_detected"' 'clear_flag, key: "non_interactive"' 'set_flag, key: "non_interactive"' \
-  'set_flag, key: "max_tokens"' 'decision: "preflight_clear"' 'decision: "preflight_skipped"'; do
-  cut -f2- "$INSTR" | jq -r 'select(.what == "context-keeper") | .ops[]' 2>/dev/null | grep -qF -- "$want" \
+  'set_flag, key: "max_tokens"' 'decision: "preflight_clear"' 'decision: "preflight_skipped"' \
+  'set_flag, key: "base_mismatch_detected"' 'operation: record_error, phase: FINALIZE' 'operation: record_error, phase: EXECUTE' \
+  'decision: "adjudication requires_gap: B: Insert remediation subtask"'; do
+  grep -qF -- "$want" <<<"$ckops" \
     && ok "W: a context-keeper spawn carries $want" || no "W: no context-keeper spawn carries $want"
 done
 
+echo "-- P. the publish spawn only after write-marker (AC3)"
+[ "$P_SEEN" -gt 0 ] && [ -z "$P_BAD" ] \
+  && ok "P: $P_SEEN publish spawn(s) across the golden cases, each printed with the finalize-gate marker on disk naming HEAD" \
+  || no "P: publish order broken (seen $P_SEEN):$P_BAD"
+leg_scripts_unchanged
+
 echo "-- I. idempotency"
-for c in init-flags-non-interactive preflight-overlap-ask plan-path-parallel; do
+for c in init-flags-non-interactive preflight-overlap-ask plan-path-parallel execute-adjudication-ask finalize-pr-base-gh-retry; do
   if golden_case "$c" "$DRIVER"; then
     last="$LAST_OUT"; s0="$(snapshot)"
     sn_call "$DRIVER"; o1="$NC_OUT"; r1=$NC_RC
@@ -515,6 +658,251 @@ if new_scratch "$FIX/preflight-skip"; then
   else no "B6: absolute job / guard failure wrong: $(printf '%s' "$o" | head -c 300)"; fi
 else no "B6: scratch not built"; fi
 
+echo "-- A. the Phase 3 / FINALIZE question gates (AC4, AC5)"
+LEG_MSG=""
+if leg_adj_ask "$DRIVER"; then ok "A5: an interactive requires_gap adjudication prints the SUP-ADJ-GAP ask (catalog labels, header \"\", cant_ask adjudication_required_non_interactive) — never a pick"
+else no "A5: $LEG_MSG"; fi
+if grep "^execute-adjudication-non-interactive$TAB" "$INSTR" | cut -f2- | jq -e 'select(.do == "ask")' >/dev/null 2>&1; then
+  no "A5: --non-interactive printed an adjudication ask"
+else ok "A5: under --non-interactive the adjudication prints the record + park, never an ask"; fi
+a="$(grep "^finalize-children-unsettled$TAB" "$INSTR" | cut -f2- | jq -c 'select(.do == "ask")' 2>/dev/null)"
+printf '%s' "$a" | jq -e --arg l "$(catalog_labels SUP-CHILDREN)" '.gate == "SUP-CHILDREN" and .header == "SUP-CHILDREN"
+    and .options == ($l | split("|")) and .cant_ask == "children_unsettled"' >/dev/null 2>&1 \
+  && ok "A5: the SUP-CHILDREN ask carries its catalog header (an allowed gate), the labels and cant_ask children_unsettled" \
+  || no "A5: SUP-CHILDREN ask shape wrong: $(printf '%s' "$a" | head -c 200)"
+a="$(grep "^finalize-pr-base-gh-retry$TAB" "$INSTR" | cut -f2- | jq -c 'select(.do == "ask")' 2>/dev/null)"
+printf '%s' "$a" | jq -e --arg l "$(catalog_labels SUP-GH-RETRY)" '.gate == "SUP-GH-RETRY" and .header == ""
+    and .options == ($l | split("|")) and .cant_ask == "gh_unavailable_non_interactive"' >/dev/null 2>&1 \
+  && ok "A4: the SUP-GH-RETRY ask carries retry|skip-verify-once|abort, header \"\" and cant_ask gh_unavailable_non_interactive" \
+  || no "A4: SUP-GH-RETRY ask shape wrong: $(printf '%s' "$a" | head -c 200)"
+LEG_MSG=""
+if leg_retry_once "$DRIVER"; then ok "A4: a first gh failure is retried once; the retry's main ⇒ the verified hand-over, two gh calls, no flag, no ask"
+else no "A4: $LEG_MSG"; fi
+
+echo "-- B. Phase 3 / FINALIZE branches the golden cases do not reach"
+# B7 — malformed Phase 3 answers exit 2, nothing written, the spawn re-prints
+if b_exec execute-result-complete; then
+  pend="$NC_OUT"; s0="$(snapshot)"
+  sn_call "$DRIVER" --result '{"result":"no block in this text"}'; r1=$NC_RC
+  sn_call "$DRIVER" --result "$(jq -cn '{result: "EXECUTE_RESULT:\n  schema_version: 1\n  merge_order: [a\n"}')"; r2=$NC_RC
+  sn_call "$DRIVER" --result '{"crashed":true}'; r3=$NC_RC
+  sn_call "$DRIVER" --result "$(jq -cn '{result: "EXECUTE_RESULT:\n  schema_version: 1\n  subtasks_completed: []\n  merge_order: []\n  worktrees: []\n  summary: nothing"}')"; r4=$NC_RC
+  s1="$(snapshot)"; sn_call "$DRIVER"
+  [ "$r1$r2$r3$r4" = 2222 ] && [ "$s0" = "$s1" ] && [ "$NC_OUT" = "$pend" ] \
+    && ok "B7: no block, an unparseable block, an error-less crash, an empty EXECUTE_RESULT ⇒ exit 2, nothing written, the spawn re-prints" \
+    || no "B7: Phase 3 refusals wrong (rc $r1 $r2 $r3 $r4)"
+else no "B7: scratch not built"; fi
+# B8 — lane_collision, interactive: the SUP-ADJ-LANE ask; C ⇒ lane_collision (not inter_subtask_gap), job → failed/
+if b_exec execute-adjudication-non-interactive; then
+  sn_call "$DRIVER" --result "$(payload execute-adjudication-non-interactive 3)"; o_ask="$NC_OUT"
+  sn_call "$DRIVER" --result '{"answers":["C: Exit to Launch Pad"]}'; o_rec="$NC_OUT"
+  sn_call "$DRIVER" --result '{"confirmed":true}'
+  printf '%s' "$o_ask" | jq -e --arg l "$(catalog_labels SUP-ADJ-LANE)" '.do == "ask" and .gate == "SUP-ADJ-LANE" and .header == ""
+      and .options == ($l | split("|")) and .cant_ask == "adjudication_required_non_interactive"' >/dev/null 2>&1 \
+    && printf '%s' "$o_rec" | jq -e '.ops[0] | test("decision: \"adjudication lane_collision: C: Exit to Launch Pad\"")' >/dev/null 2>&1 \
+    && jqo '.do == "park" and .status == "failed" and .error == "lane_collision"' \
+    && [ -f "$CASE_ROOT/.supervisor/jobs/failed/2026-10-17-golden-exec.md" ] \
+    && ok "B8: lane_collision asks SUP-ADJ-LANE (its own labels); C ⇒ the record, then failed with lane_collision, job → failed/" \
+    || no "B8: lane adjudication wrong ($(printf '%s' "$NC_OUT" | head -c 200))"
+else no "B8: scratch not built"; fi
+# B9 — requires_gap under --non-interactive: no ask, adjudication_required_non_interactive: requires_gap, job stays
+if b_exec execute-adjudication-ask --non-interactive; then
+  sn_call "$DRIVER" --result "$(payload execute-adjudication-ask 3)"; o1="$NC_OUT"
+  sn_call "$DRIVER" --result '{"confirmed":true}'
+  printf '%s' "$o1" | jq -e '.what == "context-keeper"' >/dev/null 2>&1 \
+    && jqo '.do == "park" and .status == "failed" and .error == "adjudication_required_non_interactive: requires_gap"' \
+    && [ -f "$CASE_ROOT/.supervisor/jobs/in-progress/2026-10-17-golden-exec.md" ] \
+    && ok "B9: requires_gap under --non-interactive ⇒ no option picked, adjudication_required_non_interactive: requires_gap, brief stays in-progress" \
+    || no "B9: non-interactive requires_gap wrong ($(printf '%s' "$NC_OUT" | head -c 200))"
+else no "B9: scratch not built"; fi
+# B10 — requires_gap ask: an off-list label exits 2; cant_ask takes the can't-ask park; C ⇒ inter_subtask_gap
+if b_exec execute-adjudication-ask; then
+  sn_call "$DRIVER" --result "$(payload execute-adjudication-ask 3)"
+  s0="$(snapshot)"; sn_call "$DRIVER" --result '{"answers":["E: Pick for me"]}'; r1=$NC_RC; s1="$(snapshot)"
+  sn_call "$DRIVER" --result '{"cant_ask":true}'; sn_call "$DRIVER" --result '{"confirmed":true}'
+  [ "$r1" = 2 ] && [ "$s0" = "$s1" ] && jqo '.status == "failed" and .error == "adjudication_required_non_interactive: requires_gap"' \
+    && ok "B10: an off-list adjudication label exits 2, nothing written; cant_ask ⇒ adjudication_required_non_interactive" \
+    || no "B10: adjudication answers wrong (off-list rc $r1; $(printf '%s' "$NC_OUT" | head -c 160))"
+fi
+if b_exec execute-adjudication-ask; then
+  sn_call "$DRIVER" --result "$(payload execute-adjudication-ask 3)"
+  sn_call "$DRIVER" --result '{"answers":["C: Exit to Launch Pad"]}'; sn_call "$DRIVER" --result '{"confirmed":true}'
+  jqo '.status == "failed" and .error == "inter_subtask_gap"' && [ -f "$CASE_ROOT/.supervisor/jobs/failed/2026-10-17-golden-exec.md" ] \
+    && ok "B10: requires_gap C ⇒ failed with inter_subtask_gap, job → failed/" || no "B10: requires_gap C wrong ($(printf '%s' "$NC_OUT" | head -c 160))"
+fi
+# B11 — a budget EXECUTE_CHECKPOINT (no adjudication): the record, then the checkpoint park
+if b_exec execute-result-complete; then
+  sn_call "$DRIVER" --result "$(payload execute-adjudication-ask 3 | jq -c '.result |= (split("\n") | map(select(test("adjudication|missing_outputs|    - item|      producing|      check_run") | not)) | join("\n") | sub("reason: [^\n]*"; "reason: tool budget reached"))')"
+  o1="$NC_OUT"; sn_call "$DRIVER" --result '{"confirmed":true}'
+  printf '%s' "$o1" | jq -e '.ops[0] | test("decision: \"execute_checkpoint: tool budget reached\"")' >/dev/null 2>&1 \
+    && jqo '.do == "park" and .status == "checkpoint" and (has("error") | not)' \
+    && ok "B11: a non-adjudication EXECUTE_CHECKPOINT ⇒ the execute_checkpoint record, then the checkpoint park with the resume command" \
+    || no "B11: budget checkpoint wrong ($(printf '%s' "$o1" | head -c 160) / $(printf '%s' "$NC_OUT" | head -c 160))"
+fi
+# B12 — pre-merge points 2, 3 (orphan; a missing worktree ⇒ checkpoint) and 4
+if b_exec execute-result-complete; then
+  sn_call "$DRIVER" --result "$(payload execute-result-complete 3 | sed 's/review_decision: PASS\\n    - task_id: b/review_decision: FAIL\\n    - task_id: b/')"
+  sn_call "$DRIVER" --result '{"confirmed":true}'
+  jqo '.status == "failed" and (.error | startswith("pre-merge safety gate point 2"))' && [ -f "$CASE_ROOT/.supervisor/jobs/failed/2026-10-17-golden-exec.md" ] \
+    && ok "B12: a review_decision other than PASS ⇒ point 2 fails, job → failed/" || no "B12: point 2 wrong ($(printf '%s' "$NC_OUT" | head -c 200))"
+fi
+if b_exec execute-result-complete; then
+  sn_call "$DRIVER" --result "$(payload execute-result-complete 3 | jq -c '.result |= sub("\n    - task_id: b\n      path: ../repo-b\n      branch: feature/exec-b\n      status: completed"; "")')"
+  sn_call "$DRIVER" --result '{"confirmed":true}'
+  jqo '.status == "failed" and (.error | test("point 3 .*feature/exec-b"))' \
+    && ok "B12: a registered worktree on a result branch that the result does not list ⇒ point 3 (orphan) fails" || no "B12: orphan wrong ($(printf '%s' "$NC_OUT" | head -c 200))"
+fi
+if b_exec execute-result-complete; then
+  in_case /dev/null bash -c 'git worktree remove --force ../repo-b' >/dev/null 2>&1
+  sn_call "$DRIVER" --result "$(payload execute-result-complete 3)"; o1="$NC_OUT"
+  sn_call "$DRIVER" --result '{"confirmed":true}'
+  printf '%s' "$o1" | jq -e '.ops[0] | test("missing worktree ../repo-b")' >/dev/null 2>&1 \
+    && jqo '.status == "checkpoint"' && [ -f "$CASE_ROOT/.supervisor/jobs/in-progress/2026-10-17-golden-exec.md" ] \
+    && ok "B12: a missing worktree ⇒ checkpoint (reported, nothing merged), the job stays in-progress" || no "B12: missing worktree wrong ($(printf '%s' "$o1" | head -c 200))"
+fi
+if b_exec execute-result-complete; then
+  in_case /dev/null bash -c 'git checkout -q main && git commit -q --allow-empty -m drift && git checkout -q feature/golden-exec' >/dev/null 2>&1
+  sn_call "$DRIVER" --result "$(payload execute-result-complete 3)"; sn_call "$DRIVER" --result '{"confirmed":true}'
+  jqo '.status == "failed" and (.error | startswith("pre-merge safety gate point 4"))' \
+    && ok "B12: a feature branch that does not hold the base tip ⇒ point 4 fails" || no "B12: point 4 wrong ($(printf '%s' "$NC_OUT" | head -c 200))"
+fi
+# B13 — point 5: proceed anyway (the skip is recorded and the marker says skipped), investigate,
+# --non-interactive (fail closed, no ask), and the --skip-children-check flag
+if b_exec finalize-children-unsettled; then
+  sn_call "$DRIVER" --result "$(payload finalize-children-unsettled 3)"
+  sn_call "$DRIVER" --result '{"answers":["proceed anyway"]}'; o_rec="$NC_OUT"
+  sn_call "$DRIVER" --result '{"confirmed":true}'; o_m="$NC_OUT"
+  sn_call "$DRIVER" --result '{"merged":["feature/exec-a","feature/exec-b"],"conflict":null,"refold":"ok"}'
+  printf '%s' "$o_rec" | jq -e '.ops[0] | test("decision: \"user_skipped_children_check\"")' >/dev/null 2>&1 \
+    && printf '%s' "$o_m" | jq -e '.what == "finalize-merge"' >/dev/null 2>&1 \
+    && jqo '.what == "finalize-publish" and .children_check == "skipped"' \
+    && [ "$(jq -r .children_check "$CASE_ROOT/.supervisor/logs/$CASE_SID.finalize-gate" 2>/dev/null)" = skipped ] \
+    && ok "B13: proceed anyway ⇒ user_skipped_children_check recorded, write-marker --skip-children-check, publish says skipped" \
+    || no "B13: proceed anyway wrong ($(printf '%s' "$NC_OUT" | head -c 200))"
+fi
+if b_exec finalize-children-unsettled; then
+  sn_call "$DRIVER" --result "$(payload finalize-children-unsettled 3)"; sn_call "$DRIVER" --result '{"answers":["investigate"]}'
+  jqo '.do == "park" and .status == "checkpoint" and (.message | test("a2222222222222222"))' && [ -f "$CASE_ROOT/.supervisor/jobs/in-progress/2026-10-17-golden-exec.md" ] \
+    && ok "B13: investigate ⇒ the checkpoint park naming the id, the job stays in-progress" || no "B13: investigate wrong"
+fi
+if b_exec finalize-children-unsettled --non-interactive; then
+  sn_call "$DRIVER" --result "$(payload finalize-children-unsettled 3)"; o1="$NC_OUT"; sn_call "$DRIVER" --result '{"confirmed":true}'
+  printf '%s' "$o1" | jq -e '.what == "context-keeper"' >/dev/null 2>&1 && jqo '.status == "failed" and .error == "children_unsettled: a2222222222222222"' \
+    && [ -f "$CASE_ROOT/.supervisor/jobs/failed/2026-10-17-golden-exec.md" ] \
+    && ok "B13: --non-interactive ⇒ no ask, children_unsettled: <ids> (fail closed), job → failed/" || no "B13: non-interactive point 5 wrong ($(printf '%s' "$NC_OUT" | head -c 200))"
+fi
+if b_exec finalize-children-unsettled --skip-children-check; then
+  sn_call "$DRIVER" --result "$(payload finalize-children-unsettled 3)"; o1="$NC_OUT"; sn_call "$DRIVER" --result '{"confirmed":true}'
+  printf '%s' "$o1" | jq -e '.ops == ["Context-Keeper(operation: record_decision, phase: FINALIZE, decision: \"user_skipped_children_check\", rationale: \"--skip-children-check flag\")"]' >/dev/null 2>&1 \
+    && jqo '.what == "finalize-merge"' && ok "B13: --skip-children-check ⇒ the user_skipped_children_check record, then the merge spawn" \
+    || no "B13: --skip-children-check wrong ($(printf '%s' "$o1" | head -c 200))"
+fi
+# B14 — the merge report: a conflict STOPs (checkpoint, merged / not-merged lists); a refused re-fold
+# aborts (release_refold_refused, job → failed/); a merged list short of merge_order exits 2
+if b_exec execute-result-complete; then
+  sn_call "$DRIVER" --result "$(payload execute-result-complete 3)"
+  s0="$(snapshot)"; sn_call "$DRIVER" --result '{"merged":["feature/exec-a"],"conflict":null,"refold":"ok"}'; r1=$NC_RC; s1="$(snapshot)"
+  sn_call "$DRIVER" --result '{"merged":["feature/exec-a"],"conflict":{"branch":"feature/exec-b","files":["ui.md"]},"refold":"ok"}'; o1="$NC_OUT"
+  sn_call "$DRIVER" --result '{"confirmed":true}'
+  [ "$r1" = 2 ] && [ "$s0" = "$s1" ] && printf '%s' "$o1" | jq -e '.ops[0] | test("merge conflict: feature/exec-b: ui.md") and test("not merged: feature/exec-b")' >/dev/null 2>&1 \
+    && jqo '.status == "checkpoint"' && ok "B14: a short merged list exits 2; a conflict ⇒ STOP: the record with the merged / not-merged lists, the checkpoint park" \
+    || no "B14: conflict wrong (rc $r1; $(printf '%s' "$o1" | head -c 200))"
+fi
+if b_exec execute-result-complete; then
+  sn_call "$DRIVER" --result "$(payload execute-result-complete 3)"
+  sn_call "$DRIVER" --result '{"merged":["feature/exec-a","feature/exec-b"],"conflict":null,"refold":"refused","refold_reason":"fragment unfolded"}'
+  sn_call "$DRIVER" --result '{"confirmed":true}'
+  jqo '.status == "failed" and .error == "release_refold_refused"' && [ -f "$CASE_ROOT/.supervisor/jobs/failed/2026-10-17-golden-exec.md" ] \
+    && [ ! -f "$CASE_ROOT/.supervisor/logs/$CASE_SID.finalize-gate" ] \
+    && ok "B14: a refused re-fold ⇒ release_refold_refused, job → failed/, no marker, no publish" || no "B14: refold wrong ($(printf '%s' "$NC_OUT" | head -c 200))"
+fi
+# B15 — write-marker refuses: a missing session log ⇒ the checkpoint park and no publish; a Worker Results
+# id with no terminal row ⇒ children_unsettled at the marker ⇒ the SUP-CHILDREN ask from finalize-marker
+if b_exec finalize-marker-written; then
+  sn_call "$DRIVER" --result '{"subtask":"1","agent_id":"ac394bd015ea3ff94","status":"completed","gates":"passed"}'
+  in_case /dev/null bash -c 'printf "d\n" > d.sh && git add -A && git commit -qm x' >/dev/null 2>&1
+  rm -f "$CASE_ROOT/.supervisor/logs/$CASE_SID.jsonl"
+  sn_call "$DRIVER" --result '{"merged":[],"conflict":null,"refold":"ok"}'
+  jqo '.do == "park" and .step == "finalize-marker" and .status == "checkpoint" and (.message | test("session_log_missing"))' \
+    && ! grep -q '"what":"finalize-publish"' <<<"$NC_OUT" \
+    && ok "B15: write-marker refusing (session_log_missing) ⇒ the checkpoint park, nothing published" || no "B15: marker refusal wrong ($(printf '%s' "$NC_OUT" | head -c 200))"
+fi
+if b_exec execute-result-complete; then
+  printf '### a9999999999999999 (c)\n- agent_id: a9999999999999999\n' >> "$CASE_ROOT/.supervisor/state.md.tmp"
+  awk '1; /^## Worker Results/ { while ((getline l < ARGV[2]) > 0) print l }' "$CASE_ROOT/.supervisor/state.md" "$CASE_ROOT/.supervisor/state.md.tmp" > "$CASE_ROOT/.supervisor/state.md.new" 2>/dev/null
+  mv "$CASE_ROOT/.supervisor/state.md.new" "$CASE_ROOT/.supervisor/state.md"; rm -f "$CASE_ROOT/.supervisor/state.md.tmp"
+  sn_call "$DRIVER" --result "$(payload execute-result-complete 3)"
+  sn_call "$DRIVER" --result '{"merged":["feature/exec-a","feature/exec-b"],"conflict":null,"refold":"ok"}'; o_ask="$NC_OUT"
+  sn_call "$DRIVER" --result '{"answers":["proceed anyway"]}'; sn_call "$DRIVER" --result '{"confirmed":true}'
+  printf '%s' "$o_ask" | jq -e '.do == "ask" and .step == "finalize-marker" and .gate == "SUP-CHILDREN" and (.question | test("a9999999999999999"))' >/dev/null 2>&1 \
+    && jqo '.what == "finalize-publish" and .children_check == "skipped"' \
+    && ok "B15: an expected Worker Results id unsettled at write-marker ⇒ the SUP-CHILDREN ask; proceed anyway re-runs it with --skip-children-check" \
+    || no "B15: marker-time unsettled wrong ($(printf '%s' "$o_ask" | head -c 200))"
+fi
+# B16 — the inline paths: the next sequential worker; a wrong subtask id / a passed partial exit 2; paused ⇒ checkpoint
+if b_exec plan-path-sequential; then
+  s0="$(snapshot)"
+  sn_call "$DRIVER" --result '{"subtask":"2","agent_id":"a1","status":"completed","gates":"passed"}'; r1=$NC_RC
+  sn_call "$DRIVER" --result '{"subtask":"1","agent_id":"a1","status":"partial","gates":"passed"}'; r2=$NC_RC
+  s1="$(snapshot)"
+  sn_call "$DRIVER" --result '{"subtask":"1","agent_id":"a1","status":"completed","gates":"passed"}'; o2="$NC_OUT"
+  sn_call "$DRIVER" --result '{"subtask":"2","agent_id":"a2","status":"partial","gates":"paused","reason":"outputs_gap empty: spec unreadable"}'
+  [ "$r1$r2" = 22 ] && [ "$s0" = "$s1" ] && printf '%s' "$o2" | jq -e '.what == "worker" and .subtask == "2"' >/dev/null 2>&1 \
+    && jqo '.do == "park" and .status == "checkpoint" and (.message | test("Subtask 2 paused"))' \
+    && ok "B16: sequential ⇒ the next subtask's worker; a wrong id / a passed partial exit 2; paused ⇒ the checkpoint park" \
+    || no "B16: inline routing wrong (rc $r1 $r2; $(printf '%s' "$o2" | head -c 120))"
+else no "B16: scratch not built"; fi
+# B17 — step 6.5 branches: --non-interactive (no ask; gh_unavailable_non_interactive), skip-verify-once,
+# abort, a failing retry, a cant_ask answer; a failed publish ⇒ checkpoint; a non-PR URL exits 2
+b17() { # <flags…> — a finalize scratch whose gh always fails, at the pr_url answer
+  b_fin finalize-pr-base-verified "$@" || return 1
+  printf '1\tpr view *\t\n' > "$CASE_GH"
+  sn_call "$DRIVER" --result '{"pr_url":"https://github.com/golden/repo/pull/12"}'
+}
+if b17 --non-interactive; then
+  o1="$NC_OUT"; sn_call "$DRIVER" --result '{"confirmed":true}'
+  printf '%s' "$o1" | jq -e '.what == "context-keeper" and (.ops[0] | test("reason\":\"gh_unavailable_non_interactive"))' >/dev/null 2>&1 \
+    && jqo '.do == "done" and .base_mismatch_detected == true and .base_verify == "gh_unavailable_non_interactive"' \
+    && ok "B17: --non-interactive, gh failing twice ⇒ no ask; base_mismatch_detected (gh_unavailable_non_interactive) ⇒ the cleanup hand-over" \
+    || no "B17: non-interactive gh wrong ($(printf '%s' "$o1" | head -c 200))"
+fi
+if b17; then
+  sn_call "$DRIVER" --result '{"answers":["skip-verify-once"]}'; o1="$NC_OUT"; sn_call "$DRIVER" --result '{"confirmed":true}'
+  printf '%s' "$o1" | jq -e '.ops[0] | test("decision: \"user_skipped_base_verify\", rationale: \"gh repeatedly unavailable\"")' >/dev/null 2>&1 \
+    && jqo '.do == "done" and .base_verify == "skipped" and .base_mismatch_detected == false' \
+    && ok "B17: skip-verify-once ⇒ user_skipped_base_verify recorded, the hand-over as verified" || no "B17: skip-verify-once wrong"
+fi
+for ans in abort retry cant_ask; do
+  if b17; then
+    if [ "$ans" = cant_ask ]; then sn_call "$DRIVER" --result '{"cant_ask":true}'; else sn_call "$DRIVER" --result "{\"answers\":[\"$ans\"]}"; fi
+    o1="$NC_OUT"; sn_call "$DRIVER" --result '{"confirmed":true}'
+    want=user_aborted_gh_retry; [ "$ans" = cant_ask ] && want=gh_unavailable_non_interactive
+    printf '%s' "$o1" | jq -e --arg w "$want" '.ops[0] | test("reason\":\"" + $w)' >/dev/null 2>&1 && jqo --arg w "$want" '.base_mismatch_detected == true and .base_verify == $w' \
+      && ok "B17: $ans ⇒ base_mismatch_detected ($want) ⇒ the cleanup hand-over" || no "B17: $ans wrong ($(printf '%s' "$o1" | head -c 200))"
+  fi
+done
+if b_fin finalize-pr-base-verified; then
+  s0="$(snapshot)"; sn_call "$DRIVER" --result '{"pr_url":"not a url"}'; r1=$NC_RC; s1="$(snapshot)"
+  sn_call "$DRIVER" --result '{"publish_failed":"push denied: run FINALIZE point 5 first"}'
+  [ "$r1" = 2 ] && [ "$s0" = "$s1" ] && jqo '.do == "park" and .status == "checkpoint" and (.message | test("push denied"))' \
+    && ok "B17: a non-PR URL exits 2, nothing written; a failed publish ⇒ the checkpoint park" || no "B17: publish answers wrong (rc $r1)"
+fi
+
+echo "-- V. Validation 3: one item from Phase 0 to the Phase 4.5 hand-over (hermetic)"
+if golden_case validation-3-drive "$DRIVER"; then
+  seq3="$(grep -v '^\$ call\|^= ' "$CASE_DIR/stream.out" | jq -r '"\(.do) \(.step)"')"
+  if [ "$(printf '%s\n' "$seq3" | tail -n 1)" = "done handover" ] \
+     && printf '%s' "$LAST_OUT" | jq -e '.base_verify == "verified" and .children_check == "settled"' >/dev/null 2>&1; then
+    ok "V: Phase 0 → hand-over in $(printf '%s\n' "$seq3" | wc -l | tr -d ' ') instructions; the guard denied the push before write-marker and allowed it after; base verified"
+  else no "V: the drive did not end at a verified hand-over: $(printf '%s' "$LAST_OUT" | head -c 200)"; fi
+  if [ "${SN_V3_PRINT:-}" = 1 ]; then printf '%s\n' "$seq3" | sed 's/^/    v3: /'; fi
+else no "V: validation-3-drive: $GC_MSG"; fi
+
+echo "-- K. brace expansion off (bash 3.2)"
+LEG_MSG=""
+if leg_brace_off "$DRIVER"; then ok "K: the driver runs with set +B$( [ "$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null)" = 3 ] && printf ' and its orchestrator spawn is well-formed under /bin/bash 3.x')"
+else no "K: $LEG_MSG"; fi
+
 echo "-- R. no per-subtask reviewer (AC9)"
 LEG_MSG=""
 if leg_reviewer "$DRIVER" "$INSTR"; then ok "R: no printed instruction and no driver line spawns code-reviewer"; else no "R: $LEG_MSG"; fi
@@ -542,6 +930,24 @@ if [ "${SN_SKIP_MUTANTS:-}" != 1 ]; then
   if m="$(build_mutant S - "-append:$(printf '%s %s "$PR"' "$MC_PIECE_A" "$MC_PIECE_B")")"; then
     LEG_MSG=""; if leg_surface "$m"; then no "MS: S stayed green with an unguarded merge line"; else ok "MS: an unguarded merge-command line ⇒ S red"; fi
   else no "MS: mutant not built"; fi
+  # M2a — the publish spawn printed before write-marker ran ⇒ P red
+  if m="$(build_mutant 2a '  [ "$(st children_check)" = skipped ] && args=(--skip-children-check)' '  sn_publish; return 0')"; then
+    golden_case finalize-marker-written "$m" >/dev/null 2>&1
+    [ "$PUB_SEEN" -gt 0 ] && [ -n "$PUB_BAD" ] && ok "M2a: the publish spawn before write-marker ⇒ P red" || no "M2a: P stayed green (seen $PUB_SEEN)"
+  else no "M2a: mutant not built"; fi
+  # M2c — no step-6.5 retry: the first gh failure sets the mismatch flag ⇒ A4 (and G) red
+  if m="$(build_mutant 2c '  sleep "$(sn_retry_seconds)"' '  sn_pr_flag pr-verify "" gh_unavailable_non_interactive; return')"; then
+    LEG_MSG=""; if leg_retry_once "$m"; then no "M2c: A4 stayed green without the retry"; else ok "M2c: the retry removed ⇒ A4 red"; fi
+    golden_case finalize-pr-base-gh-retry "$m" >/dev/null 2>&1 && no "M2c: the gh-retry golden case stayed green" || ok "M2c: … and the gh-retry golden case goes red"
+  else no "M2c: mutant not built"; fi
+  # M2d — an interactive adjudication auto-picks option A instead of asking ⇒ A5 red
+  if m="$(build_mutant 2d '  sn_ask execute-result "$gate" adjudication_required_non_interactive \' '  sn_emit done execute-result '"'"'{"choice":"A: Re-queue producer"}'"'"'; return 0; : \')"; then
+    LEG_MSG=""; if leg_adj_ask "$m"; then no "M2d: A5 stayed green with an auto-pick"; else ok "M2d: an auto-picked adjudication ⇒ A5 red"; fi
+  else no "M2d: mutant not built"; fi
+  # MB — brace expansion left on ⇒ K red
+  if m="$(build_mutant B 'set +B' 'set -B')"; then
+    LEG_MSG=""; if leg_brace_off "$m"; then no "MB: K stayed green with brace expansion on"; else ok "MB: brace expansion on ⇒ K red ($LEG_MSG)"; fi
+  else no "MB: mutant not built"; fi
   # MR — the plan step spawns code-reviewer instead of orchestrator ⇒ R red
   if m="$(build_mutant R 'sn_spawn plan orchestrator plan-result' 'sn_spawn plan code-reviewer plan-result')"; then
     LEG_MSG=""; if leg_reviewer "$m" "$INSTR"; then no "MR: R stayed green with a code-reviewer spawn"; else ok "MR: a code-reviewer spawn ⇒ R red ($LEG_MSG)"; fi

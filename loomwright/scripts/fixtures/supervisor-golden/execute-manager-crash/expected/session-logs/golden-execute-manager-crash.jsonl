@@ -1,0 +1,2 @@
+{"event":"agent_lifecycle","state":"working","session_id":"golden-execute-manager-crash","cc_session_id":"golden-execute-manager-crash","branch":"main","ts":"<TS>"}
+{"event":"agent_identity","session_id":"golden-execute-manager-crash","cc_session_id":"golden-execute-manager-crash","agent_id":"aeeeeeeeeeeeeeeee","agent_type":"loomwright:loomwright:execute-manager","recorded_at":"<TS>"}

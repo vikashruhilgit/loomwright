@@ -1,0 +1,2 @@
+synthetic: the run ae60dadd-8fcf-4650-976a-93bf87a87708 had not reached FINALIZE when this case was built; its inputs are that run's own (trimmed): the state.md Session block and the Worker Results record of worker ac394bd015ea3ff94 (subtask 1), and that worker's agent_identity / subtask_complete / token_ledger / agent_lifecycle ended rows.
+gh pr view is stubbed to fail twice (rc 1), then answer main.

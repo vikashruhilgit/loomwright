@@ -1,0 +1,71 @@
+{
+  "answer_arm": "finalize-merged",
+  "base_branch": "main",
+  "base_sync": "ok",
+  "branch": "feature/golden-exec",
+  "branch_action": "CREATED",
+  "children_check": "settled",
+  "cost_profile": "default",
+  "exec_result": {
+    "branches": [],
+    "completed": [
+      {
+        "branch": "feature/exec-a",
+        "review_decision": "PASS",
+        "status": "completed",
+        "task_id": "a"
+      },
+      {
+        "branch": "feature/exec-b",
+        "review_decision": "PASS",
+        "status": "completed",
+        "task_id": "b"
+      }
+    ],
+    "failed": [],
+    "merge_order": [
+      "feature/exec-a",
+      "feature/exec-b"
+    ],
+    "summary": "2/2 subtasks completed. API and UI layers implemented.",
+    "worktrees": [
+      {
+        "branch": "feature/exec-a",
+        "path": "../repo-a",
+        "status": "completed",
+        "task_id": "a"
+      },
+      {
+        "branch": "feature/exec-b",
+        "path": "../repo-b",
+        "status": "completed",
+        "task_id": "b"
+      }
+    ]
+  },
+  "flags": {
+    "cheap": false,
+    "non_interactive": false,
+    "root": "<ROOT>",
+    "sequential": false,
+    "skip_children_check": false,
+    "skip_preflight_sync": true,
+    "subagent": false
+  },
+  "job": ".supervisor/jobs/in-progress/2026-10-17-golden-exec.md",
+  "last_arm": "finalize-merge",
+  "max_workers": 2,
+  "mode": "parallel",
+  "path": "parallel",
+  "pending_text": "{\"do\":\"spawn\",\"step\":\"finalize-merge\",\"session_id\":\"golden-execute-result-complete\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-exec.md\",\"branch\":\"feature/golden-exec\",\"what\":\"finalize-merge\",\"path\":\"parallel\",\"feature_branch\":\"feature/golden-exec\",\"base_branch\":\"main\",\"merge_order\":[\"feature/exec-a\",\"feature/exec-b\"],\"worktrees\":[{\"task_id\":\"a\",\"path\":\"../repo-a\",\"branch\":\"feature/exec-a\",\"status\":\"completed\"},{\"task_id\":\"b\",\"path\":\"../repo-b\",\"branch\":\"feature/exec-b\",\"status\":\"completed\"}],\"procedure\":\"skills/async-orchestration/SKILL.md Part 2 steps 2-5.5: commit each worktree in merge_order, check out the feature branch and merge each branch with --no-ff in merge_order (a conflict is a STOP — never force-resolve; report it), salvage then remove each worktree (worktree-salvage.sh as its own statement), create the commits per skills/commit/SKILL.md, then run release-refold.sh. Do not push.\",\"then\":\"--result {\\\"merged\\\": [\\\"<branch>\\\", …], \\\"conflict\\\": null, \\\"refold\\\": \\\"ok\\\"}; at a merge conflict \\\"conflict\\\": {\\\"branch\\\": \\\"<branch>\\\", \\\"files\\\": [\\\"<path>\\\", …]}; when release-refold.sh exits non-zero \\\"refold\\\": \\\"refused\\\" with \\\"refold_reason\\\": \\\"<its printed reason>\\\"\"}",
+  "plan_source": "brief",
+  "preflight_sync": "skipped",
+  "premerge": "passed",
+  "seq_index": 0,
+  "subtasks": [
+    "a",
+    "b"
+  ],
+  "task_id": "2026-10-17-golden-exec",
+  "title": "Golden exec"
+}

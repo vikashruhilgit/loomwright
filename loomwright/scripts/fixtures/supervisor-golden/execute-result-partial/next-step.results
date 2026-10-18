@@ -1,0 +1,14 @@
+call: --job .supervisor/jobs/pending/2026-10-17-golden-exec.md --skip-preflight-sync
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+call: --result '{"confirmed":true}'
+expect: spawn
+# a completed, b failed ⇒ FINALIZE the completed subset per merge_order, carry b as an escalation to the hand-over
+call: --result '{"result":"Phase 3 done.\n\nEXECUTE_RESULT:\n  schema_version: 1\n  subtasks_completed:\n    - task_id: a\n      status: completed\n      branch: feature/exec-a\n      files_modified: [api.md]\n      review_decision: PASS\n  subtasks_failed:\n    - task_id: b\n      status: failed\n      error: tests fail after 3 retries (ui.md render)\n      retry_count: 3\n  merge_order: [feature/exec-a]\n  worktrees:\n    - task_id: a\n      path: ../repo-a\n      branch: feature/exec-a\n      status: completed\n    - task_id: b\n      path: ../repo-b\n      branch: feature/exec-b\n      status: failed\n  summary: 1/2 subtasks completed; b failed after 3 retries (escalation)."}'
+expect: spawn
+run: git -C ../repo-a add -A && git -C ../repo-a commit -qm 'subtask: a — API layer' && git merge -q --no-ff feature/exec-a -m 'merge: a API layer'
+call: --result '{"merged":["feature/exec-a"],"conflict":null,"refold":"ok"}'
+expect: spawn
+call: --result '{"pr_url":"https://github.com/golden/repo/pull/7"}'
+expect: done
