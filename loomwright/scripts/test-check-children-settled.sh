@@ -2,7 +2,7 @@
 # test-check-children-settled.sh — static suite for check-children-settled.sh (the ONE join between
 # agent_identity rows and terminal lifecycle rows) AND the seam grep-gate over its consumers
 # (agents/execute-manager.md poll-loop gate, agents/supervisor.md Single-Agent step 3b + Sequential
-# step, skills/async-orchestration/SKILL.md Phase 4 checklist Point 5, commands/supervisor.md
+# step, skills/async-orchestration/finalize.md Phase 4 checklist Point 5, commands/supervisor.md
 # Parameters table, docs/RESULT_SCHEMAS.md, docs/FAILURE_ESCALATION.md).
 #
 # Modelled on test-verify-provides.sh: ok()/no() DEFINED here, pass/fail counters, "RESULT: N passed,
@@ -21,7 +21,7 @@
 #             skipped, not fatal; JSON validity via `jq -e .`.
 #   seams   — EM cites check-children-settled.sh + provides_present_agent_unsettled; Supervisor
 #             Single-Agent step 3b AND Sequential step cite it with --agent-id; Supervisor FINALIZE
-#             gate + async-orchestration SKILL.md Point 5 cite it with --all + children_unsettled;
+#             gate + async-orchestration finalize.md Point 5 cite it with --all + children_unsettled;
 #             commands/supervisor.md Parameters table documents --skip-children-check;
 #             RESULT_SCHEMAS.md documents the join + children_unsettled; FAILURE_ESCALATION.md
 #             documents the children-unsettled FINALIZE gate.
@@ -66,7 +66,8 @@ PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"
 SCRIPT="$HERE/check-children-settled.sh"
 EM="$PLUGIN_ROOT/agents/execute-manager.md"
 SUP="$PLUGIN_ROOT/agents/supervisor.md"
-ASYNC="$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
+# The Phase 4 FINALIZE procedure (Point 5) moved to the async-orchestration split file (automate-speed/15).
+ASYNC="$PLUGIN_ROOT/skills/async-orchestration/finalize.md"
 CMD="$PLUGIN_ROOT/commands/supervisor.md"
 # docs/RESULT_SCHEMAS.md is an index; the agent_lifecycle section (which documents the
 # children-settled join) lives in its split file.

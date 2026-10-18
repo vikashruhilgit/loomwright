@@ -60,7 +60,7 @@ SKILL="$PLUGIN/skills/supervisor-readiness/SKILL.md"
 USW="$PLUGIN/skills/user-story-writing/SKILL.md"
 QC="$PLUGIN/skills/quality-checklist/SKILL.md"
 SHA="$PLUGIN/skills/self-heal-advisory/SKILL.md"
-AO="$PLUGIN/skills/async-orchestration/SKILL.md"
+AO="$PLUGIN/skills/async-orchestration/finalize.md"   # FINALIZE PR Body Template (split out of SKILL.md, automate-speed/15)
 SCHEMA="$PLUGIN/docs/result-schemas/plan-review-result.md"
 FIX="$HERE/fixtures/pr-body-evidence"
 

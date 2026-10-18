@@ -552,3 +552,116 @@ The `/autonomous`-only `state.json` ACQUIRE write (Fix B producer) is a cross-la
 ### Resume state stale incident
 
 `resume_state_stale` exists because of a real incident (2026-07-27): all 5 subtasks had merged while `state.md` read `phase: ACQUIRE` with every subtask `PENDING` — schema-valid, and therefore invisible to the resume validation gate's schema checks. `scripts/reconcile-resume-state.sh` reconciles the `## Subtasks` rows against `subtask:` / `merge:` commits reachable from the asserted branch. The two refusals take opposite remedies on purpose: an invalid file is fixed or deleted, a stale file must not be deleted (it is a usable session that only needs its rows corrected).
+
+## Async orchestration — why the rules read as they do
+
+Stories, examples and explanations moved out of `skills/async-orchestration/SKILL.md` (automate-speed/15, subtask 2). The rules they explain stay in `SKILL.md` or `skills/async-orchestration/finalize.md`.
+
+### FINALIZE split to finalize.md
+
+`SKILL.md` is read twice per run without FINALIZE: by Phase 2 PLAN (for §"Subagent Spawn Contracts") and by every Execute Manager spawn (it is that agent's one preloaded skill). Before this split both reads paid for the Phase 4 FINALIZE procedure and the PR Body Template, which only the Supervisor at Phase 4 executes. They now live in `finalize.md`, read only at Phase 4 entry. `SKILL.md` keeps its `# Part 2` heading and a `## Phase 4 FINALIZE procedure (steps 1–7)` stub naming `finalize.md`, so the next-step driver's instruction strings (`skills/async-orchestration/SKILL.md Part 2 steps 2-5.5`, `Part 2 PR Body Template`) and the golden fixtures pinned on them stay valid without editing the driver. The Phase 4 Read no longer re-reads `SKILL.md`: its old purpose, a compaction refresh of the Part 2 FINALIZE procedure after a long Phase 3, is served by reading `finalize.md` itself.
+
+### Async orchestration Part 2 provenance
+
+> **Provenance & authority:** the three sections below were moved VERBATIM from
+> `agents/supervisor.md` (slice D of the supervisor prompt refactor, following the
+> `self-heal-advisory` Part 2 precedent). Zero behavior change: every gate, command
+> shape, bound, and grep-stable string keeps identical semantics. `agents/supervisor.md`
+> keeps the short Phase 4 stanza (entry/exit conditions, the mandatory 4-point pre-merge
+> safety gate, the merge-conflict STOP rule, the salvage-before-remove gate (v15.67.0), the
+> PR-base self-verify requirement, and the phase Output block), the "Agents Spawned by Supervisor" table + Summary Extraction
+> rules, and the worktree-ownership invariant (branches + worktrees are created by the
+> Execute Manager in Phase 3 Step 2a, never in Phase 2) — and points here for the
+> procedures. The Supervisor Reads this file at Phase 4 FINALIZE entry. As of the 4f
+> routing change (v15.19.0) this skill is no longer in the Supervisor's preloaded
+> `skills:` list (the list is now empty) — Phase 2 PLAN performs the session's genuine
+> first Read of this file, and the Phase 4 FINALIZE Read is a second, refresh Read, not
+> the first load. Step numbering (1–7 incl. 6.5) is preserved verbatim,
+> so cross-file references to e.g. "Phase 4 self-verify (step 6.5)" remain valid — they
+> now resolve here.
+
+The "three sections" were the FINALIZE procedure, the Subagent Spawn Contracts and the worktree-lifecycle phase sequence. After automate-speed/15 the FINALIZE procedure is in `finalize.md`, the spawn contracts stay in `SKILL.md` Part 2, and the phase sequence collapsed into `SKILL.md` §"Git Worktree Lifecycle" (Phase 3) plus `finalize.md` steps 2–4 (Phase 4), which restated it.
+
+### Async orchestration examples
+
+File overlap, as the Orchestrator's file lists show it:
+
+```
+subtask_a.files = [src/auth/guard.ts, src/auth/guard.spec.ts]
+subtask_b.files = [src/auth/refresh.ts, src/auth/refresh.spec.ts]
+subtask_c.files = [src/auth/guard.ts, src/auth/module.ts]
+
+→ A and B: no overlap → can run in parallel
+→ A and C: overlap (guard.ts) → must serialize
+→ B and C: no overlap → can run in parallel
+```
+
+Worktree layout under the `{project-dir}-{subtask-id}` naming convention:
+
+```
+my-project/                    ← main worktree (feature/BD-XX-desc)
+my-project-BD-XXa/             ← worktree for subtask a
+my-project-BD-XXc/             ← worktree for subtask c
+```
+
+The Supervisor state tracks, per dispatched worker: `worker_id`, `subtask_id`, `output_file`, `worktree`, `status`. The skill used to show an illustrative `WORKER_RESULT` block (an older field set with `notes:`); the schema is `docs/RESULT_SCHEMAS.md` §WORKER_RESULT, so the example was dropped rather than kept as a second, drifting copy.
+
+### Execute context budget
+
+Execute Manager holds (isolated from Supervisor):
+
+| Data | Tokens |
+|------|--------|
+| Config (max_workers, mode) | ~50 |
+| Active workers (id, subtask, worktree_path) | ~100 per worker |
+| Parallelism state (launchable, blocked lists) | ~100 |
+| **Total (2 workers, no reviewer — none is spawned above threshold or on the Sequential Path)** | **~350 tokens** |
+
+Supervisor holds during Phase 3:
+
+| Data | Tokens |
+|------|--------|
+| Single Task call to Execute Manager | ~50 |
+| **Total** | **~50 tokens** |
+
+Phase 3 poll loop context stays in Execute Manager, not Supervisor. Everything else lives in the state file, managed by Context-Keeper.
+
+### Why the pre-spawn gate exists
+
+The producer branch claimed to provide an item — this gate verifies the claim against disk. Without it, a worker would be spawned into a worktree that doesn't actually contain the symbols/types/files it expects, and would either fabricate them, fail mid-implementation, or silently drift. The gate fails fast at the boundary between producer and consumer. A failed check means the producer's `provides` declaration was a lie or the producer drifted from its acceptance criteria — neither is something the Execute Manager can resolve unilaterally, hence the adjudication checkpoint. The four adjudication options' full cost notes: A costs one extra worker run; B costs an extra subtask and dependency edge, and downstream telemetry/audit becomes harder to interpret; C costs a full restart but catches structural problems before deeper damage; D's silent scope reduction can break callers of the consumer downstream, because the consumer no longer integrates the producer's output.
+
+### Why the worker contract pastes provides and lanes
+
+`provides:` is REQUIRED input — the worker's Step 5.5 outputs-verification re-reads it from the spawn brief; omitting it silently no-ops the v12 outputs gate. `lanes:` is REQUIRED input for the SAME reason — the worker's lane-check step re-reads `lanes:` from the spawn brief to populate `out_of_lane`; omitting it silently no-ops the lane gate. This paste MUST match the parallel path (`agents/execute-manager.md` §Task template), which already marks it REQUIRED — and it matters MOST here, because the Single-Agent path is the DEFAULT shape post-Fix-1, so a gap on this template no-ops the lane gate on the path most runs actually take. Both are deliberate paste exceptions (`docs/POINTER_AUDIT.md`): the `provides:` YAML is small, and a pointer would make the gate depend on a file read the worker may skip. The acceptance criteria travel as pointer + bounded summary instead.
+
+House rules are injected VERBATIM because a paraphrase drops rules (#431). The reader always exits 0 and emits EMPTY on no valid rule — never a "no rules" sentinel — so empty output means inject nothing. The injection is advisory and fail-safe: it never fails a worker, never gates a PR, is never a `SUPERVISOR_RESULT` field and never bumps `schema_version`; a rule's `check` is surfaced to the worker as DATA, never executed.
+
+`subtask_ordinal` was added by harness-port/01-worker-rules; absent the shared-local-services rule's `<PORT_ENV>` mechanism the field is inert by design, per that requirement's Non-goals. The context digest pointer was added in v15.20.0 (D6); a pre-v15.20.0 brief, or a job whose Launch Pad Phase 5 has not run yet, has no digest file, which is why its absence never blocks a spawn.
+
+## Phase 4 FINALIZE — why the steps read as they do
+
+Explanations moved out of the FINALIZE procedure (now `skills/async-orchestration/finalize.md`).
+
+### Salvage before remove
+
+Salvage before remove arrived in v15.67.0. The salvage line runs as its own statement, never joined to the remove by `&&`, because an absent script exits 127 and would otherwise skip the remove. The removals themselves are unchanged by it.
+
+### Worktree cleanup audit
+
+Cleanup is verifiable (v15.66.0): the worktree observer hook records both the literal `../{project}-{subtask_id}` add and the remove (a path token left unexpanded — `$(basename $(pwd))` — is recovered through the branch argument only when the resulting worktree's path ends with the literal suffix after the `$(…)`, so a failed add pairs with a foreign worktree only when that worktree's path ends with the same literal suffix — an advisory-only phantom row, never a removal; it is gated on `.supervisor/` existing, which it always does here), and `bash scripts/worktree-audit.sh report` (plugin-relative, read-only) lists any sibling recorded as created that git still shows.
+
+### Release re-fold placement
+
+The same re-fold line runs before every Phase 4.5 heal push and every `/review-pr` fix push, so no later commit can leave a fragment unfolded (in this plugin's own repo, CI's `scripts/check-version-bump.sh` re-checks the content on every PR to `main`).
+
+### Stacked base branches
+
+The autonomous-loop multi-iteration mode passes a sibling feature branch (e.g., `feature/v14-iter1`) as `--base-branch`, so iteration N+1 stacks on iteration N's PR. The PR-base self-verify (step 6.5) arrived in v14.0.0 (AC-7 + AC-14).
+
+### FINALIZE scope reduction
+
+FINALIZE exits without marking the task completed or moving the job file (v11.0.0): Phase 4.5 SELF_HEAL's completion tail does both, so self-heal outcomes reach the completion record.
+
+### PR body evidence and not-verified sections
+
+The `## Evidence` section (#511) only points at files: a brief criterion's evidence lives in the committed file, which the review reads in the diff and a fix task can heal, never in the PR body, which FINALIZE writes once before Phase 4.5 and nothing edits afterwards (Plan Reviewer Criterion 20). A file a Phase 4.5 fix adds later is in the diff but not listed. When every worker's `not_verified` list is empty, the PR body is byte-identical to the template with the `## Not verified` block removed.

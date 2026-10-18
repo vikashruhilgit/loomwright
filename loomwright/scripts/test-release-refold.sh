@@ -136,7 +136,7 @@ RR_UNDER_TEST="$TMP/rr-nocommit.sh" run_rr "$D"
 # ---- Part 2: the seams, in document order ----------------------------------------------------
 echo "# seams: where the prompts run the release step"
 SHA="$LW/skills/self-heal-advisory/SKILL.md"
-AO="$LW/skills/async-orchestration/SKILL.md"
+AO="$LW/skills/async-orchestration/finalize.md"   # FINALIZE steps 5-6 (split out of SKILL.md, automate-speed/15)
 RH="$LW/skills/review-heal/SKILL.md"
 SUP="$LW/agents/supervisor.md"
 REFOLD='bash "${CLAUDE_PLUGIN_ROOT}/scripts/release-refold.sh"'
