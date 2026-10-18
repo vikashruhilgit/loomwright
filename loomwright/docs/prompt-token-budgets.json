@@ -23,7 +23,7 @@
     "agent-output": {"budget": 1495, "measured": 1359, "note": "initial ceiling: measured + ~10% (as17)"},
     "agent-teams": {"budget": 3231, "measured": 2937, "note": "initial ceiling: measured + ~10% (as17)"},
     "async-orchestration": {"budget": 15760, "measured": 14327, "note": "initial ceiling: measured + ~10% (as17)"},
-    "automate-loop": {"budget": 77733, "measured": 70666, "note": "lowered for as08: driver-owned prose read only when; ceiling = measured + ~10%"},
+    "automate-loop": {"budget": 77733, "measured": 70749, "note": "lowered for as08: driver-owned prose read only when; ceiling = measured + ~10%"},
     "autonomous-loop": {"budget": 28168, "measured": 25607, "note": "initial ceiling: measured + ~10% (as17)"},
     "beads-workflow": {"budget": 1658, "measured": 1507, "note": "initial ceiling: measured + ~10% (as17)"},
     "brain-context": {"budget": 1809, "measured": 1644, "note": "initial ceiling: measured + ~10% (as17)"},

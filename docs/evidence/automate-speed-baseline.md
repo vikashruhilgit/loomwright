@@ -810,9 +810,10 @@ anchored on the per-item-loop.md heading, a judgment row `test-loop-inventory.sh
 
 Rows touched beyond the homes: AL-227 (never pick while a PR is open) now names `test-automate-next-step.sh`,
 whose P1 leg drives that park, and left the gap list; AL-210's gap reason now names the driver's reconcile
-step; AL-229's home is `automate-merge-watch.sh` (its single-instance marker refuses a second watcher), and
-its gap reason records that the driver's RECONCILE does not write the prose's one-line note of a live
-merge-watch marker; AL-218 (re-pass the non-persisted flags) is re-anchored to the coordinator loop in
+step; AL-229 (a live merge-watch marker is noted, never a second watcher) is homed on the driver's
+`reconcile` step — the open-PR park writes one `merge-watch noted:` line per live watcher of the in-flight PR,
+using the watcher's own `ps -ww` liveness test — and names `test-automate-next-step.sh` (its P9 leg, mutation
+control M8h), so it left the gap list (review iteration 1); AL-218 (re-pass the non-persisted flags) is re-anchored to the coordinator loop in
 `SKILL.md`; AL-568 to AL-571 are the coordinator loop's own rows (GAP: the driver is tested, the model's
 adherence to the loop is not).
 
@@ -822,7 +823,7 @@ Run one at a time on this branch after the last skill / inventory / budget edit 
 
 | Suite | Result |
 |---|---|
-| `bash loomwright/scripts/test-automate-next-step.sh` | 131/131 (its S leg — AC9 — prints the base file list) |
+| `bash loomwright/scripts/test-automate-next-step.sh` | 137/137 after review iteration 1 (P7–P9 + M8f–M8h; 131/131 before) (its S leg — AC9 — prints the base file list) |
 | `bash loomwright/scripts/test-automate-golden.sh` | 64/64 (`MAP.tsv` unchanged: no unit moved) |
 | `bash loomwright/scripts/test-automate-helpers.sh` | 765/766 — the one failure is W19 (`22-split-automate-engine-surfaces.md ## Touches parses`), the pre-existing local-only leg: it needs this checkout's `.agent/companions.json`, which a scratch copy lacks (`plan-waves: no …/.agent/companions.json`); unrelated to this change |
 | `bash loomwright/scripts/test-automate-lanes.sh` | 925/925 |

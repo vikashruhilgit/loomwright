@@ -35,6 +35,10 @@
 #   `resume_requires_flag_non_interactive` stop — nothing written — or the `resume_ambiguous` park); on
 #   continue `current-rebuild`, the start's `closeout-others` record lines and leftover gate, then PICK.
 #   No incomplete run ⇒ `{"do":"done","status":"stopped","choice":"start_new"}` (intake is the model's).
+#   A `--parallel` coordinator run (`## Run Config` carries `- parallel: N`) is never picked here: the
+#   resume entry, `rebuild` and `pick` print `{"do":"done","status":"stopped","stop":"coordinator_run",…}`
+#   before any lock or write (it continues through `skills/automate-loop/lanes.md`'s per-wave loop —
+#   single-lane mode for N = 1); a lane's own run file carries no such line.
 #   `--start pick` is the loop's per-item entry (the first item of a new run, and every
 #   `{"do":"done","status":"running"}`): PICK → RECONCILE → trail gate → un-stage → `current-set` +
 #   `picked`, then straight on to RUN's `/autonomous` spawn. Both need `--session-id` (the PICK lock is
@@ -286,7 +290,9 @@ if [ -n "$RESUME_DIR" ]; then
   # finalize glob. Their writes are the ground-truth start steps no owner choice gates.
   rec=""; case "$RUN_SEL" in ""|latest) ;; *) [ -f "$RESUME_DIR/$RUN_SEL.md" ] && rec="$RESUME_DIR/$RUN_SEL.md" ;; esac
   NS_RES_CO="$(bash "$H" closeout-others "$RESUME_DIR" ${rec:+--record "$rec"} 2>/dev/null)"
-  NS_RES_RUNS="$(bash "$H" resume-glob "$RESUME_DIR" --finalize 2>/dev/null | env LC_ALL=C sort)"
+  # a crashed resume-glob is surfaced (exit 1), never read as "no incomplete run" (which starts a new run)
+  NS_RES_RUNS="$(bash "$H" resume-glob "$RESUME_DIR" --finalize 2>/dev/null | env LC_ALL=C sort)" \
+    || { ns_err "automate-helpers.sh resume-glob exited non-zero — the incomplete runs are unknown; nothing picked"; exit 1; }
   NS_RES_N="$(printf '%s\n' "$NS_RES_RUNS" | grep -c . || true)"
   case "$RUN_SEL" in
     ""|latest) RF="$(printf '%s\n' "$NS_RES_RUNS" | grep . | tail -n 1)" ;;
@@ -547,7 +553,7 @@ ns_field_ok() {
 # fails when one is not covered here. The PICK / RECONCILE / resume lines (automate-speed/08 — the run-lock
 # park and degraded note, the lane-guard and token-ceiling park lines, the meta-push report, the
 # reconcile-status dry-run lines, current-rebuild's line, closeout-others' record lines, the drain_died park
-# line) are reserved too: a forged one would fake a park or a ground-truth record.
+# line, the live merge-watcher note) are reserved too: a forged one would fake a park or a ground-truth record.
 NS_RESERVED_PREFIXES='picked
 parked
 ran /autonomous
@@ -600,7 +606,8 @@ meta-push
 reconcile-status:
 current_rebuilt
 cross-run closeout
-drain_died'
+drain_died
+merge-watch noted'
 ns_lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 NS_RESERVED_LC=""
 # ns_reserved_prefix <text> — print the reserved prefix <text> starts with (leading blanks ignored, case
@@ -987,6 +994,23 @@ ns_resume_cant() { # the can't-ask outcome of the resume entry
   if [ -n "$(st rebuilt_line)" ] || [ "$(st resume_n)" != 1 ]; then ns_resume_ambiguous resume; return; fi
   ns_resume_stop   # one run, no --run, can not ask: fail closed, never auto-continued
 }
+# a `--parallel` COORDINATOR run (`## Run Config` carries `- parallel: N`, `1` = single-lane mode) never takes
+# §6's per-item PICK in the primary: on every --resume it continues through lanes.md's per-wave loop (single-lane
+# mode for N = 1). A lane's own run file has no such line, so a lane is never refused here.
+ns_parallel() { ns_section '## Run Config' | sed -n 's/^- parallel: \([0-9][0-9]*\)[[:space:]]*$/\1/p' | head -n 1; }
+ns_coordinator_stop() { # <step> — 0 (a `done` stopped instruction, nothing written) when this is a coordinator run
+  local n x loop
+  n="$(ns_parallel)"; [ -n "$n" ] || return 1
+  if [ "$n" = 1 ]; then loop="lanes.md \"Single-lane mode (--parallel 1)\" (On each --resume: lane-status, fleet-closeout, then the next item in a NEW lane)"
+  else loop="lanes.md §14's per-wave loop (lane-status, lane-wait, wave-build / fleet-closeout)"; fi
+  x="$("$JQ" -cn --arg f "$RF" --arg n "$n" --arg l "$loop" --argjson co "$(ns_co_json)" '{status: "stopped", stop: "coordinator_run", run_file: $f, parallel: ($n | tonumber), closeout_others: $co,
+      message: ("coordinator_run — ## Run Config reads parallel: " + $n + ", a --parallel coordinator run: it continues through " + $l + ", never through the per-item PICK in the primary; nothing was written to the run")}')"
+  ns_emit done "$1" "$x"
+  # a fresh start (the resume entry, --start pick) leaves the sidecar as it was too
+  if [ "${NS_FRESH_RESUME:-0}" = 1 ] || [ "${first_arm:-0}" = 1 ]; then NS_NOSAVE=1; fi
+  ns_err "coordinator_run — $RUN_ID is a --parallel coordinator run (parallel: $n); not picked"
+  return 0
+}
 ns_resume() {
   local ans="$ANSWER" sel n a; ANSWER=""
   sel="$(st resume_sel)"; n="$(st resume_n)"
@@ -1003,6 +1027,7 @@ ns_resume() {
     esac
     return 0
   fi
+  ns_coordinator_stop resume && return 0
   # an explicit `--run <id>` (`/automate --resume <id>`) is the owner's continue; `--run latest` is too when
   # it names exactly one run
   case "$sel" in ""|latest) ;; *) NEXT=rebuild; return 0 ;; esac
@@ -1016,6 +1041,7 @@ ns_resume() {
 # ------------------------------------------------------------------------------------------------
 ns_rebuild() {
   local out rc l
+  ns_coordinator_stop rebuild && return 0   # before current-rebuild's write
   out="$(bash "$H" current-rebuild "$RF" 2>&1)"; rc=$?
   [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh current-rebuild exited $rc: $(printf '%s' "$out" | head -c 300)"; NS_RC="$rc"; return 1; }
   l="$(printf '%s\n' "$out" | grep -m1 '^current_rebuilt: ' || true)"
@@ -1057,6 +1083,7 @@ EOF
 ns_pick() {
   local out rc l
   [ "$(ns_run_status)" != done ] || { ns_err "run_done — ## Status: done; nothing to pick — nothing written"; NS_RC=2; return 1; }
+  ns_coordinator_stop pick && return 0   # before the PICK lock: every entry that reaches PICK (--start pick included)
   if [ "$(st once_pk_lock)" != true ]; then
     out="$(ns_lock_capture)"; rc=$?
     if [ "$rc" -ne 0 ]; then
@@ -1181,6 +1208,14 @@ ns_after_reconcile() { if [ "$(st resume_status_due)" = true ]; then NEXT=reconc
 ns_after_reconcile_step() { if [ "$(st resume_status_due)" = true ]; then echo reconcile-status; else echo trail-gate; fi; }
 # a closeout's verdict: exactly `complete`, else a leftover (inside the loop a run_lock_held row is one too)
 ns_classify_complete() { [ "$1" = complete ]; }
+# ns_classify_or_leftover <rc> <answer> <run> <item> <pr> — closeout-classify's answer, or — when it exited
+# non-zero or printed nothing — ONE leftover row naming that (fail CLOSED: a crashed or silent classify is
+# never read as a resolved close-out); the row keeps the `leftover\t<run>\t<item>\t<pr>\t<step>\t<detail>` shape
+ns_classify_or_leftover() {
+  if [ "$1" -eq 0 ] && [ -n "$2" ]; then printf '%s' "$2"; return 0; fi
+  ns_err "automate-helpers.sh closeout-classify exited $1$([ -n "$2" ] || printf ' with no answer') for $4 ($5) — kept as a leftover"
+  printf 'leftover\t%s\t%s\t%s\tcloseout-classify\texited %s with no verdict — kept as a leftover' "$3" "$4" "$5" "$1"
+}
 ns_died_marker() { # <pr> — the `.supervisor/review-dispatch/*.died` marker whose pr_url is <pr>
   local f
   for f in "$ROOT/.supervisor/review-dispatch/"*.died; do
@@ -1196,9 +1231,37 @@ ns_trail_in_segment() { # a `trail-pr:` line after the last `picked` line (the s
       if (index(x, "picked ") == 1) t = 0; else if (index(x, "trail-pr: ") == 1) t = 1 } END { exit !t }'
 }
 ns_drain_unterminated() { case "$(ns_last_drain_marker)" in "owned drain started"*) return 0 ;; esac; return 1; }
+# ns_watch_live <pr> — the pid of a LIVE merge watcher of <pr>: `<run_id>.merge-watch`'s pid alive AND
+# `ps -ww -p <pid> -o command=` showing automate-merge-watch.sh with <pr> as an argument (the watcher's own
+# is_our_watcher test; never `pgrep -f`). No marker, a dead / recycled pid, another PR, or no `ps` (cannot
+# verify) ⇒ 1: the note is advisory, so an unverifiable watcher is never claimed live
+ns_watch_live() {
+  local m="$AD/$RUN_ID.merge-watch" pid pu cmd
+  [ -f "$m" ] || return 1
+  pid="$(awk -F'\t' '$1 == "pid" { print $2; exit }' "$m" 2>/dev/null)"
+  pu="$(awk -F'\t' '$1 == "pr_url" { print $2; exit }' "$m" 2>/dev/null)"
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  [ -n "$1" ] && [ "$pu" = "$1" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  command -v ps >/dev/null 2>&1 || return 1
+  cmd="$(ps -ww -p "$pid" -o command= 2>/dev/null)"
+  case "$cmd" in *automate-merge-watch.sh*) ;; *) return 1 ;; esac
+  case "$cmd" in *" $1"|*" $1 "*) printf '%s' "$pid"; return 0 ;; esac
+  return 1
+}
+# per-item-loop.md §6 step 1: a live watcher of the in-flight PR is noted with ONE line, never a second watcher
+# (RECONCILE arms none). Once per watcher: the same pid + PR already noted in ## Progress writes nothing
+ns_watch_note() {
+  local pid l
+  pid="$(ns_watch_live "$PR")" || return 0
+  l="merge-watch noted: live pid=$pid watching $PR — no second watcher armed"
+  grep -qF -- " $l" < <(ns_section '## Progress') && return 0
+  ns_once once_rc_watch ns_progress "$(ns_ts) $l"
+}
 # the single-open-PR invariant (§8): the in-flight item's PR is open ⇒ no new item is picked — today's
 # park (## Status: paused, pause_reason unchanged), the run lock released, NO current-set / picked
 ns_open_pr_park() {
+  ns_watch_note || return 1
   ns_status paused || return 1
   ns_release
   ns_emit_park reconcile "PR $PR of $ITEM is still open ($STATUS) — no new item is picked while it is open (single-open-PR invariant); merge or resolve it, then --resume"
@@ -1222,6 +1285,7 @@ ns_reconcile_merged() { # closeout (with this loop's session id: it re-enters th
     else out="$(bash "$H" closeout "$RF" "$ITEM" "$PR" ${SID:+--session-id "$SID"} 2>/dev/null)"; fi
     cls="$(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$RUN_ID" --item "$ITEM" --pr "$PR" --record "$RF" 2>/dev/null)"; rc=$?
     [ "$rc" -eq 0 ] || { ns_err "automate-helpers.sh closeout-classify exited $rc"; NS_RC="$rc"; return 1; }
+    cls="$(ns_classify_or_leftover "$rc" "$cls" "$RUN_ID" "$ITEM" "$PR")"
     st_set once_rc_closeout true
     ns_refresh
     if ! ns_classify_complete "$cls"; then
@@ -1233,7 +1297,7 @@ ns_reconcile_merged() { # closeout (with this loop's session id: it re-enters th
 ns_reconcile_open() { # the PR reads OPEN (or unreadable — reconcile-item's safe belief)
   local vg lp
   # the validation re-check (§6 step 4 "Re-check at RECONCILE"): escalated validation_unrun + PR OPEN
-  if [ "$STATUS" = escalated ] && ns_section '## Current' | grep -q '^- escalation_cause: validation_unrun' \
+  if [ "$STATUS" = escalated ] && grep -q '^- escalation_cause: validation_unrun' < <(ns_section '## Current') \
      && [ "$(ns_gh pr view "$PR" --json state | "$JQ" -r '.state // empty' 2>/dev/null)" = OPEN ]; then
     vg="$(bash "$H" validation-gate "$RF" "$ITEM" "$PR" 2>/dev/null | tail -n 1)"
     case "$vg" in
@@ -2162,12 +2226,14 @@ ns_leftover_ask() {
 }
 ns_leftover() {
   local ans="$ANSWER"; ANSWER=""
+  # the gate entered with no leftover row (a silent classify upstream) is a leftover, never a clean close-out
+  [ -n "$(st leftovers)" ] || st_set leftovers "$(ns_classify_or_leftover 0 "" "$RUN_ID" "$ITEM" "$PR")"
   if [ -z "$ans" ]; then
     if ns_interactive; then ns_leftover_ask "$(st leftover_retry)"; return 0; fi
     ns_leftover_park; return
   fi
   if [ "$(rj "$ans" cant_ask)" = true ]; then ns_leftover_park; return; fi
-  local rows tab nq i=0 lab k r it p s d rest="" redo=0 out cls
+  local rows tab nq i=0 lab k r it p s d rest="" redo=0 out cls crc
   rows="$(st leftovers | head -n 4)"; tab="$(printf '\t')"
   nq="$(printf '%s\n' "$rows" | grep -c .)"
   [ "$(printf '%s' "$ans" | "$JQ" '[(.answers // [.answer])[]? | strings] | length')" = "$nq" ] \
@@ -2187,7 +2253,9 @@ ns_leftover() {
       "Keep and continue") ns_progress "$(ns_ts) closeout leftover kept: $r $s $d" || return 1 ;;
       "Clean up now")
         out="$(bash "$H" closeout "$AD/$r.md" "$it" "$p" ${SID:+--session-id "$SID"} 2>/dev/null)"
-        cls="$(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$r" --item "$it" --pr "$p" --record "$RF" 2>/dev/null)"
+        cls="$(printf '%s\n' "$out" | bash "$H" closeout-classify --run "$r" --item "$it" --pr "$p" --record "$RF" 2>/dev/null)"; crc=$?
+        # a crashed / silent classify keeps the row a leftover (never "cleaned")
+        cls="$(ns_classify_or_leftover "$crc" "$cls" "$r" "$it" "$p")"
         [ "$cls" = complete ] || { rest="$rest$cls"$'\n'; redo=1; } ;;
     esac
   done <<EOF

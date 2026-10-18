@@ -696,7 +696,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `agent-output` | 1495 | 1359 |
 | `agent-teams` | 3231 | 2937 |
 | `async-orchestration` | 15760 | 14327 |
-| `automate-loop` | 77733 | 70666 |
+| `automate-loop` | 77733 | 70749 |
 | `autonomous-loop` | 28168 | 25607 |
 | `beads-workflow` | 1658 | 1507 |
 | `brain-context` | 1809 | 1644 |

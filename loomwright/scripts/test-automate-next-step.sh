@@ -117,7 +117,13 @@
 #       backup. P4 (AC3): closeout-others at start — a `run_lock_held` row is a record, never a leftover; a
 #       `leftover` row parks closeout_leftover before the PICK lock (a wrapper automate-helpers.sh beside a
 #       driver copy prints the fixed closeout-others answer). P5: current-set BEFORE the `picked` line. P6:
-#       brief-repair-merged through RECONCILE's closeout (the case itself is a pure helper call).
+#       brief-repair-merged through RECONCILE's closeout (the case itself is a pure helper call). P7: a crashed /
+#       silent closeout-classify on the AUT-LEFTOVER Clean up now retry (a wrapper automate-helpers.sh beside a
+#       driver copy) stays a leftover — re-ask, then the closeout_leftover park — never trail gate / PICK; silent at
+#       RECONCILE ⇒ one leftover. P8: a --parallel coordinator run (`- parallel: 2` / `1`) ⇒ --resume and --start
+#       pick print done/stopped coordinator_run, .supervisor/ byte-unchanged, no lock. P9: a live merge watcher
+#       (a real process carrying automate-merge-watch.sh + the PR) ⇒ ONE `merge-watch noted:` line at the
+#       open-PR park, not repeated by a second --start pick; a dead one ⇒ none.
 #   V8  RUNNING SYSTEM (Validation 3 of automate-speed/08): a scratch repo (gh stubbed, the real run-lock.sh),
 #       a run parked awaiting_merge whose PR the stub reads MERGED, driven through `--resume`: the closeout
 #       lines through the next `picked` line are printed between `V3-08>` markers.
@@ -161,6 +167,9 @@
 #         M8c any closeout-classify answer read as complete           ⇒ P2
 #         M8d Continue auto-picked when the resume cannot ask         ⇒ P3
 #         M8e the picked line written before current-set               ⇒ P5
+#         M8f the Clean up now retry's classify guard dropped          ⇒ P7
+#         M8g the coordinator-run (`- parallel:`) detection dropped     ⇒ P8
+#         M8h the live merge-watcher note dropped                       ⇒ P9
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -1116,7 +1125,7 @@ leg_reconcile_leftover() {
       || { LEG_MSG="$mode: not the closeout_leftover park: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:160}"; return 1; }
     n="$(grep -cE "^- [0-9TZ:-]+ closeout leftover: $P_RUN unknown bogus — [a-e]\$" "$CASE_RF")"
     [ "$n" = 5 ] && grep -qx '## Status: paused' "$CASE_RF" && p_no_new_pick "$CASE_DIR/before.md" \
-      && ! diff "$CASE_DIR/before.md" "$CASE_RF" | grep -q 'trail-pr' \
+      && ! grep -q 'trail-pr' < <(diff "$CASE_DIR/before.md" "$CASE_RF") \
       || { LEG_MSG="$mode: $n leftover line(s) (want 5), or a picked / trail-pr line, or not paused"; return 1; }
   done
   return 0
@@ -1208,6 +1217,101 @@ leg_brief_repair() {
   [ "$NC_RC" = 0 ] && grep -qE '^- [0-9TZ:-]+ closeout https://github\.com/vikashruhilgit/loomwright/pull/542: brief-repair: repaired \.supervisor/jobs/in-progress/2026-10-14-af39b-run-lock-holder\.md → \.supervisor/jobs/done/2026-10-14-af39b-run-lock-holder\.md' "$CASE_RF" \
     && [ -f "$CASE_ROOT/.supervisor/jobs/done/2026-10-14-af39b-run-lock-holder.md" ] && [ ! -e "$CASE_ROOT/.supervisor/jobs/in-progress/2026-10-14-af39b-run-lock-holder.md" ] \
     || { LEG_MSG="exit $NC_RC ${NC_ERR:0:160}; brief-repair line / brief move missing"; return 1; }
+  return 0
+}
+# leg_leftover_retry <driver> — a crashed (exit 1) or silent (exit 0, no answer) closeout-classify is never a
+# resolved close-out: on the AUT-LEFTOVER "Clean up now" retry the row stays a leftover (the re-ask without
+# Clean up now, then cant_ask ⇒ the closeout_leftover park naming closeout-classify) — no trail gate, no PICK;
+# a silent classify at RECONCILE itself is one leftover too. A wrapper automate-helpers.sh beside a driver
+# copy makes closeout print nothing and closeout-classify fail once <driver dir>/cls.mode is written
+cls_helpers() { # <driver path>
+  local d; d="$(dirname "$1")"
+  rm -f "$d/automate-helpers.sh"
+  printf '#!/usr/bin/env bash\nm="$(cat "%s/cls.mode" 2>/dev/null)"\nif [ -n "$m" ]; then\n  case "${1:-}" in\n    closeout) exit 0 ;;\n    closeout-classify) cat >/dev/null; [ "$m" = fail ] && exit 1; exit 0 ;;\n  esac\nfi\nexec bash "%s" "$@"\n' "$d" "$H" > "$d/automate-helpers.sh"
+}
+leg_leftover_retry() {
+  local drv="$1" mode want d; d="$(dirname "$drv")"
+  for mode in fail empty; do
+    new_scratch "$FIX/reconcile-closeout-merged" || { LEG_MSG="scratch"; return 1; }
+    rm -f "$d/cls.mode"
+    printf 'closeout: bogus — a\n' > "$CASE_DIR/co.out"
+    printf 'NEXT_STEP_FROM=reconcile\nNEXT_STEP_CLOSEOUT_OUT=%s\n' "$CASE_DIR/co.out" > "$CASE_DIR/seams.lo"
+    cp "$CASE_RF" "$CASE_DIR/before.md"
+    p_seamed "$CASE_DIR/seams.lo" "$drv" --session-id "$P_SID"
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-LEFTOVER" and (.questions | length) == 1' >/dev/null 2>&1 \
+      || { LEG_MSG="$mode: not the first AUT-LEFTOVER ask: exit $NC_RC '${NC_OUT:0:160}'"; return 1; }
+    printf '%s\n' "$mode" > "$d/cls.mode"
+    ns_call "$drv" --result '{"answers":["Clean up now"]}'
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-LEFTOVER" and .options == ["Keep and continue","Stop"]
+        and (.question | contains("closeout-classify"))' >/dev/null 2>&1 \
+      || { LEG_MSG="$mode: Clean up now with a $mode classify was not re-asked as a leftover: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:120}"; return 1; }
+    p_no_new_pick "$CASE_DIR/before.md" && ! grep -q 'trail-gate' < <(diff "$CASE_DIR/before.md" "$CASE_RF") \
+      || { LEG_MSG="$mode: the PICK went on past a $mode classify"; return 1; }
+    ns_call "$drv" --result '{"cant_ask":true}'
+    want=1; [ "$mode" = empty ] && want=0
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .pause_reason == "closeout_leftover"' >/dev/null 2>&1 \
+      && grep -qE "^- [0-9TZ:-]+ closeout leftover: $P_RUN closeout-classify exited $want with no verdict — kept as a leftover\$" "$CASE_RF" \
+      || { LEG_MSG="$mode: not the closeout_leftover park naming closeout-classify: exit $NC_RC '${NC_OUT:0:160}'"; return 1; }
+  done
+  # a silent classify at RECONCILE itself: one leftover row, never an empty gate
+  new_scratch "$FIX/reconcile-closeout-merged" || { LEG_MSG="scratch (reconcile)"; return 1; }
+  printf 'closeout: bogus — a\n' > "$CASE_DIR/co.out"; printf 'empty\n' > "$d/cls.mode"
+  printf 'NEXT_STEP_FROM=reconcile\nNEXT_STEP_CLOSEOUT_OUT=%s\n' "$CASE_DIR/co.out" > "$CASE_DIR/seams.lo"
+  p_seamed "$CASE_DIR/seams.lo" "$drv" --session-id "$P_SID"; rm -f "$d/cls.mode"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-LEFTOVER" and (.questions | length) == 1
+      and (.question | contains("closeout-classify — exited 0 with no verdict"))' >/dev/null 2>&1 \
+    || { LEG_MSG="reconcile: a silent classify is not one leftover: exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+  return 0
+}
+# leg_coordinator <driver> — a `--parallel` coordinator run (`- parallel: N` in ## Run Config, N = 2 and the
+# single-lane N = 1) is never picked in the primary: the resume entry (--run <id> non-interactive, a bare
+# interactive start) and --start pick print done / stopped `coordinator_run` naming lanes.md's loop, with
+# .supervisor/ byte-unchanged and no run-lock acquire
+leg_coordinator() {
+  local drv="$1" n s0 ad w
+  for n in 2 1; do
+    new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+    awk -v n="$n" '{ print } /^## Run Config$/ { print "- parallel: " n }' "$CASE_RF" > "$CASE_RF.t" && mv "$CASE_RF.t" "$CASE_RF"
+    grep -qx -- "- parallel: $n" "$CASE_RF" || { LEG_MSG="parallel: $n not seeded"; return 1; }
+    w="per-wave loop"; [ "$n" = 1 ] && w="Single-lane mode"
+    ad="$CASE_ROOT/.supervisor/automate"; s0="$(snapshot)"
+    p_call "$drv" --resume "$ad" --run "$P_RUN" --non-interactive --session-id "$P_SID"
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e --arg w "$w" --argjson n "$n" '.do == "done" and .status == "stopped" and .stop == "coordinator_run"
+        and .parallel == $n and (.message | contains($w))' >/dev/null 2>&1 \
+      || { LEG_MSG="parallel $n, --resume --run: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:120}"; return 1; }
+    p_call "$drv" --resume "$ad" --session-id "$P_SID"
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.stop == "coordinator_run"' >/dev/null 2>&1 \
+      || { LEG_MSG="parallel $n, interactive --resume: exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+    ns_call "$drv" --start pick --session-id "$P_SID"
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.step == "pick" and .stop == "coordinator_run"' >/dev/null 2>&1 \
+      || { LEG_MSG="parallel $n, --start pick: exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+    [ "$s0" = "$(snapshot)" ] && ! grep -q '^lock acquire ' "$CASE_DIR/rec.log" \
+      || { LEG_MSG="parallel $n: .supervisor/ written or the run lock acquired"; return 1; }
+  done
+  return 0
+}
+# leg_watch_note <driver> — per-item-loop.md §6 step 1: a LIVE `<run_id>.merge-watch` watcher of the in-flight
+# OPEN PR is noted with ONE `merge-watch noted:` line at the open-PR park (a second --start pick adds none);
+# once the watcher is dead nothing is noted. The fake watcher is a real process whose argv carries
+# automate-merge-watch.sh and the PR url (the watcher's own `ps -ww` liveness test)
+leg_watch_note() {
+  local drv="$1" pr=https://github.com/vikashruhilgit/loomwright/pull/555 wp i c rc=0
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+  printf '0\tpr view %s --json state,mergedAt\t{"state":"OPEN","mergedAt":null}\n0\tpr list --state open *\t[]\n0\tpr list *\t[]\n0\tauth status*\t\n' "$pr" >> "$CASE_GH"
+  mkdir -p "$CASE_DIR/w"; printf 'while :; do sleep 1; done\n' > "$CASE_DIR/w/automate-merge-watch.sh"
+  bash "$CASE_DIR/w/automate-merge-watch.sh" "$CASE_RF" item "$pr" </dev/null >/dev/null 2>&1 &
+  wp=$!
+  i=0; while [ "$i" -lt 50 ]; do case "$(ps -ww -p "$wp" -o command= 2>/dev/null)" in *automate-merge-watch.sh*) break ;; esac; sleep 0.1; i=$((i + 1)); done
+  printf 'pid\t%s\npr_url\t%s\nstarted\t2026-10-17T09:00:00Z\n' "$wp" "$pr" > "$CASE_ROOT/.supervisor/automate/$P_RUN.merge-watch"
+  ns_call "$drv" --start pick --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .step == "reconcile"' >/dev/null 2>&1 || rc=1
+  ns_call "$drv" --start pick --session-id "$P_SID"
+  c="$(grep -cE "^- [0-9TZ:-]+ merge-watch noted: live pid=$wp watching $pr — no second watcher armed\$" "$CASE_RF")"
+  kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null
+  [ "$rc" = 0 ] && [ "$c" = 1 ] || { LEG_MSG="live watcher: park $([ "$rc" = 0 ] && echo ok || echo missing), $c note line(s) after two --start pick (want 1): '${NC_OUT:0:120}' ${NC_ERR:0:120}"; return 1; }
+  ns_call "$drv" --start pick --session-id "$P_SID"
+  c="$(grep -c ' merge-watch noted: ' "$CASE_RF")"
+  [ "$NC_RC" = 0 ] && [ "$c" = 1 ] || { LEG_MSG="dead watcher: exit $NC_RC, $c note line(s) (want still 1)"; return 1; }
   return 0
 }
 
@@ -1600,6 +1704,15 @@ else no "P5: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_brief_repair "$DRIVER"; then ok "P6: brief-repair-merged through RECONCILE's closeout — the repairing brief-repair line passed through, the brief moved"
 else no "P6: $LEG_MSG"; fi
+LEG_MSG=""
+if m="$(build_mutant cls - '-append:# cls-helpers')" && cls_helpers "$m" && leg_leftover_retry "$m"; then ok "P7: a crashed / silent closeout-classify on the Clean up now retry stays a leftover (re-ask, then the closeout_leftover park naming it); a silent one at RECONCILE is one leftover — never a PICK"
+else no "P7: ${LEG_MSG:-driver copy not built}"; fi
+LEG_MSG=""
+if leg_coordinator "$DRIVER"; then ok "P8: a --parallel coordinator run (parallel: 2 / single-lane 1) ⇒ --resume (--run, bare) and --start pick print done/stopped coordinator_run, nothing written, no run lock"
+else no "P8: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_watch_note "$DRIVER"; then ok "P9: a live merge watcher of the in-flight open PR ⇒ ONE merge-watch noted line at the open-PR park (not repeated); a dead one ⇒ none"
+else no "P9: $LEG_MSG"; fi
 
 echo "-- V7. running system (Validation 3 of automate-speed/07): PICK → RUN → DRAIN → the tail, one item"
 V7="$WORK/v7"; mkdir -p "$V7/fx"
@@ -1679,7 +1792,7 @@ if new_scratch "$FIX/reconcile-closeout-merged"; then
   if [ "$r8" = 0 ] && printf '%s' "$o8" | jq -e '.do == "spawn" and .what == "/autonomous run" and .invocation == "/autonomous --single-iteration --requirement .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md --non-interactive-fallback"' >/dev/null 2>&1 \
      && in_order "$CASE_RF" "closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: reconciled" "trail-unstage: unstaged" \
           "picked .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md" \
-     && [ "$(grep -c '^- trail-gate: clear' "$CASE_RF")" = 2 ] && tail -n 1 "$CASE_RF" | grep -q ' auto_review suppressed (backup ' \
+     && [ "$(grep -c '^- trail-gate: clear' "$CASE_RF")" = 2 ] && grep -q ' auto_review suppressed (backup ' < <(tail -n 1 "$CASE_RF") \
      && grep -qx '## Status: running' "$CASE_RF" \
      && grep -qxF -- '- [x] .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md' "$CASE_RF" \
      && grep -qF -- '- item: .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md | status: running | pr: null | branch: null' "$CASE_RF" \
@@ -1916,6 +2029,24 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_pick_order "$m"; then no "M8e: the PICK-order leg stayed green with the writes swapped"
     else ok "M8e: picked before current-set ⇒ P5 red ($LEG_MSG)"; fi
   else no "M8e: mutant not built"; fi
+  # M8f — the Clean up now retry's classify guard dropped (a crashed classify reads as cleaned) ⇒ P7 red
+  if m="$(build_mutant 8f 'cls="$(ns_classify_or_leftover "$crc" "$cls" "$r" "$it" "$p")"' ':')"; then
+    cls_helpers "$m"; LEG_MSG=""
+    if leg_leftover_retry "$m"; then no "M8f: the leftover-retry leg stayed green with the classify guard dropped"
+    else ok "M8f: retry classify guard dropped ⇒ P7 red ($LEG_MSG)"; fi
+  else no "M8f: mutant not built"; fi
+  # M8g — the coordinator-run detection dropped (a --parallel run is picked in the primary) ⇒ P8 red
+  if m="$(build_mutant 8g 'ns_parallel() { ns_section' 'ns_parallel() { return 0; ns_section')"; then
+    LEG_MSG=""
+    if leg_coordinator "$m"; then no "M8g: the coordinator leg stayed green with the parallel line ignored"
+    else ok "M8g: coordinator detection dropped ⇒ P8 red ($LEG_MSG)"; fi
+  else no "M8g: mutant not built"; fi
+  # M8h — the live merge-watcher note dropped at the open-PR park ⇒ P9 red
+  if m="$(build_mutant 8h '  ns_watch_note || return 1' '  :')"; then
+    LEG_MSG=""
+    if leg_watch_note "$m"; then no "M8h: the watch-note leg stayed green with the note dropped"
+    else ok "M8h: merge-watch note dropped ⇒ P9 red ($LEG_MSG)"; fi
+  else no "M8h: mutant not built"; fi
 fi
 
 echo "PASS: $pass FAIL: $fail"
