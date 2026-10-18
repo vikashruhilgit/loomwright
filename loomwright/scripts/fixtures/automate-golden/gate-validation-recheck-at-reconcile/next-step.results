@@ -1,0 +1,10 @@
+# next-step.results — gate-validation-recheck-at-reconcile: how test-automate-next-step.sh drives this case
+# through automate-next-step.sh (grammar: the test's header). RECONCILE (NEXT_STEP_FROM=reconcile) on the
+# escalated validation_unrun item: its PR reads OPEN (the two gh rows are fixed input the case's stub lacks), the
+# read-only validation-gate now reads ok ⇒ its line + the READY park through the item form of current-set; the PR
+# is still open, so the single-open-PR invariant parks the run (no PICK).
+gh: 0	pr view https://github.com/vikashruhilgit/loomwright/pull/548 --json state,mergedAt	{"state":"OPEN","mergedAt":null}
+gh: 0	pr view https://github.com/vikashruhilgit/loomwright/pull/548 --json state	{"state":"OPEN"}
+env: NEXT_STEP_FROM=reconcile
+call: --session-id auto-2026-10-15-040641
+expect: park

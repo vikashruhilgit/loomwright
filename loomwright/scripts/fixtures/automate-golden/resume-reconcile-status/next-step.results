@@ -1,0 +1,7 @@
+# next-step.results — resume-reconcile-status: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The resume's reconcile-status step alone
+# (NEXT_STEP_FROM=reconcile-status, NEXT_STEP_UNTIL=reconcile-status): each `plan` row of the dry run becomes one
+# `reconcile-status: would stamp <file> (<status>)` line; nothing is applied.
+env: NEXT_STEP_FROM=reconcile-status NEXT_STEP_UNTIL=reconcile-status
+call: --session-id auto-2026-10-15-040641
+expect: none

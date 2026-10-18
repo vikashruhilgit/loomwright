@@ -653,3 +653,214 @@ $ bash loomwright/scripts/read-token-ledger.sh --per-item <primary>/.supervisor/
 - `.supervisor/requirements/automate-speed/17-prompt-size-ratchet.md`: session ids tried 1d53b8d4-7125-4ec4-b2ac-cdb8ea590a89 — 11 transcript file(s)
 
 ```
+
+## Item 08 — next-step driver head
+
+automate-speed/08, subtask 1 (branch `feature/as08-next-step-pick-and-resume`, base `a8819a38100d77fbeddc2ff1a56963e91f172a5d`). `loomwright/scripts/automate-next-step.sh` now drives the head of the per-item loop. That covers the resume entry (`--resume <automate_dir> [--run <run_id>|latest]`), PICK (`--start pick`), RECONCILE, the trail gate and un-stage, and the `current-set` + `picked` pair, which runs straight on into RUN. The instruction schema is `loomwright/docs/result-schemas/automate-run.md` §"next-step instruction". The read-set section of this item (`Read set (item 08)`) belongs to subtask 3 and is not written here.
+
+### AC1 — golden cases through the driver
+
+The 15 named cases were checked. Fourteen carry a new `next-step.results`, replay through `automate-next-step.sh` byte for byte against their `expected.md`, and are on `REQUIRED_CASES`: `pick-current-set-then-picked`, `pick-pending-decisions-ask`, `pick-time-lane-guard-park`, `pick-time-token-ceiling-park`, `pick-time-trail-gate-park`, `reconcile-closeout-merged`, `gate-validation-recheck-at-reconcile`, `resume-ambiguous-park`, `resume-config-crash-restore`, `resume-current-rebuild`, `resume-glob-finalize`, `resume-rate-limit-park`, `resume-reconcile-status` and `skipped-item-check-off`. Three run the whole entry from its start: the three PICK-time parks run `--start pick` and `resume-ambiguous-park` runs `--resume`. The other cases replay a segment through the test seams `NEXT_STEP_FROM` / `NEXT_STEP_UNTIL`, because their `expected.md` pins one step and not the steps around it. For example, `reconcile-closeout-merged` keeps `## Status: paused`, which the `pick` step would rewrite.
+
+Fixed input a case lacked is added in its results file, never in the case's own files:
+- `gate-validation-recheck-at-reconcile` gets two `gh:` rows, so its PR reads `OPEN`.
+- `resume-rate-limit-park` gets a `file:` line holding the lane's `lane.json`. The run is lane L1's own run, and `resume-glob` lists a lane run only inside its own lane.
+- In `skipped-item-check-off`, the owner's `# abandoned:` check-off and its reason line arrive as `pre:` lines. RECONCILE then runs the abandon `trail-pr`.
+
+The grammar gained one directive, `call-bare:` (a call without the run file, for the resume entry). It is documented in the test header.
+
+**Exception — `brief-repair-merged`.** Its steps are one pure helper call (`brief-repair`) plus a hand-written `closeout <pr>: …` line, and no driver step makes that call alone. RECONCILE reaches `brief-repair` only through `closeout`, which also checks the item off in `## Queue`. That check-off is a line the case's `expected.md` does not carry, so a driver replay cannot be byte-identical. Leg P6 covers it instead. P6 runs RECONCILE's `closeout` on this case's tree with `gh` authenticated, then asserts the repairing `brief-repair: repaired … → …` line is passed through and the brief moved from `in-progress/` to `done/`.
+
+### Validation 2 — mutation control (inside `test-automate-next-step.sh`)
+
+M8a builds a driver copy whose RECONCILE skips the open-PR park and falls through to the trail gate, the un-stage, `current-set` and `picked`. The copy passed the non-empty, differs and `bash -n` gates. P1 (AC2) goes red:
+
+```
+  ok: P1 (AC2): an OPEN in-flight PR (awaiting_merge, escalated) / this run's open trail PR ⇒ --start pick parks, releases its lock, no picked line, no new ## Current item
+  ok: M8a: open-PR park skipped (current-set + picked reached) ⇒ P1 red (awaiting_merge: --start pick ⇒ exit 0 '{"do":"spawn","step":"run","run_id":"automate-2026-10-13-181331","item":".supervisor/requirements/automate-followups/39a-sweep-and-janitor.md","pr":null,"what":' )
+```
+
+M8b–M8e are the other pins: the trail-gate park skipped, any `closeout-classify` answer read as `complete`, Continue auto-picked when the resume cannot ask, and the `picked` line written before `current-set`. Each one turns its leg red (P1, P2, P3 and P5).
+
+### Validation 3 — hermetic scratch drive
+
+The drive runs in a scratch `git init` repo with a bare origin, `gh` stubbed and no network, using the real `run-lock.sh`. The run is `reconcile-closeout-merged`'s input: parked `awaiting_merge` on PR #555, which the stub reads `MERGED`. It is driven through the resume entry: `--resume <automate_dir> --run automate-2026-10-13-181331 --non-interactive`. The output below is from leg V8 of the final run. The `closeout` lines and the next `picked` line in it are from the run file's `## Progress`:
+
+```
+V3-08> --resume <automate_dir> --run automate-2026-10-13-181331 --non-interactive (gh stub: PR #555 MERGED): exit 0, {"do":"spawn","step":"run","what":"/autonomous run","invocation":"/autonomous --single-iteration --requirement .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md --non-interactive-fallback"}
+V3-08> ## Progress, the closeout lines through the next picked line:
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: brief-repair: skipped — no in-progress brief matches .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: skipped — already removed (no worktree on feature/af39a-sweep)
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: skipped — already synced (main at origin/main)
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: skipped — already deleted (no local feature/af39a-sweep)
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: stamped — .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md (## Status: done, brief .supervisor/jobs/done/2026-10-15-af39a-sweep.md)
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: checked — - [x] .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md
+V3-08>   - 2026-10-17T15:24:03Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: reconciled — ## Current .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md status done, pause_reason null
+V3-08>   - trail-gate: clear — no open trail PR; sync skipped — already synced (main at origin/main)
+V3-08>   - trail-unstage: unstaged 7 path(s) — .supervisor/automate/automate-2026-10-13-181331.md, .supervisor/automate/automate-2026-10-13-181331.review-heal-result.md, .supervisor/automate/automate-2026-10-13-181331.supervisor-result.md, .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md, .supervisor/jobs/done/2026-10-15-af39a-sweep.md, .supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md, .supervisor/requirements/proposed/automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md
+V3-08>   - 2026-10-17T15:24:06Z picked .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md
+V3-08> ## Status / ## Current after it:
+V3-08>   ## Status: running
+V3-08>   - item: .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md | status: running | pr: null | branch: null
+V3-08>   - pause_reason: null
+V3-08> run-lock.sh status (PICK holds it through RUN): LOCKED owner=automate:automate-2026-10-13-181331 pid=11826 age=4
+  ok: V8: resume → PICK (real run lock) → RECONCILE closeout of the merged PR → trail gate / un-stage → current-set + picked → the /autonomous spawn
+```
+
+**Not verified.** A live `/automate --resume` session was not run in the lane. Neither was a live PICK in a real `--parallel` wave (the `live_lane` park is covered only by the golden case's lane table). The coordinator prose that tells the model to call `--resume` / `--start pick` is subtasks 2–3 of this item.
+
+### Validation 1 — the suites this subtask reports (`<passed>/<total>`)
+
+| Suite | Result |
+|---|---|
+| `bash loomwright/scripts/test-automate-next-step.sh` | 131/131 |
+| `bash loomwright/scripts/test-automate-golden.sh` | 64/64 |
+| `bash loomwright/scripts/test-loop-inventory.sh` | 43/43 |
+| `bash loomwright/scripts/test-result-schemas-split.sh` | 14/14 |
+
+The repo-level checks were also run on this branch, and each exited 0: `check-doc-currency.sh`, `test-citation-drift.sh` (26/26), `check-token-budget.sh`, `check-version-bump.sh` (one pending fragment, not bumped) and `check-vendor-coupling.sh`. The suites that subtasks 2–3 change (`test-automate-helpers.sh`, `test-automate-dismissed.sh`, `test-automate-trail.sh`, `test-automate-loop-split.sh`, `test-automate-lanes.sh`) are reported with those subtasks.
+
+## Read set (item 08)
+
+automate-speed/08, subtask 3 (same branch and base `a8819a3`). The default read set is defined exactly as as06
+defined it (`docs/evidence/as06-next-step-driver-tail.md` "Before / after"): the skill files Step 0 of
+`commands/automate.md` marks **Always** on a sequential `/automate` run. The command body itself and the two
+inlined workflow bodies (`commands/autonomous.md`, `commands/review-pr.md`) are read on every run before and
+after and are not counted, as in as06.
+
+| Measure | Before item 06 | Before item 08 (base `a8819a3`) | After |
+|---|---|---|---|
+| Default read set (Step 0 **Always** files) | `223857` (`SKILL.md` 84444 + `per-item-loop.md` 106350 + `modes-and-merge-gate.md` 27163 + `invariants.md` 5900) | `180686` (`SKILL.md` 86697 + `per-item-loop.md` 60818 + `modes-and-merge-gate.md` 27271 + `invariants.md` 5900) | `50412` (`SKILL.md` 44512 + `invariants.md` 5900) |
+| Smaller than before item 06 | — | 19.3% | **77.5%** (target ≥ 60%, i.e. ≤ `89542`: met) |
+
+How it was reached — by moving, not cutting:
+- `SKILL.md` gained `## Coordinator loop — run next-step; do the one instruction; report the result` (3101 bytes, heading through the line before the next `##`, after review iteration 2):
+  the start call, the four instruction kinds, the flags, the exit codes and the one run-file write that stays
+  the main thread's. Its §1.5 helper table moved verbatim to the new split file `helpers.md` (44906 bytes;
+  `cmp` against §1.5 at `6d51a9a` is byte-identical), leaving a 162-byte index entry.
+- Step 0 now reads `per-item-loop.md`, `modes-and-merge-gate.md`, `resume.md` and `helpers.md` **Only when** a
+  driver call exits non-zero, an instruction leaves a step unexplained, the owner asks for the step one of them
+  holds (a skip / abandon check-off, an archive, "why did the gate park"), or a helper prints a line its step
+  does not explain. The driver runs every step those files describe.
+- No prose was deleted. The migrated prose in `per-item-loop.md`, `resume.md` and `modes-and-merge-gate.md`
+  stays as the reference read on a driver failure. Deleting it was not needed for the target, and the brief
+  puts any further diet in item 16. It is also pinned: `test-automate-golden.sh` extracts its units live from
+  those three files (`MAP.tsv` names each), and the assembled-skill readers in suites outside this subtask's
+  lanes (`test-automate-helpers.sh`, `test-automate-trail.sh`, `test-run-lock.sh`, `test-classify-risk.sh`,
+  `test-non-interactive-gates-seam.sh`, `test-rules-gate-seams.sh`, `test-automate-lanes.d/05`) grep its text.
+  `MAP.tsv`, `PROSE_FILES` and the M5 / M8 `### Termination (two exits)` anchor are unchanged.
+
+Conditional reads, recorded separately (not in the default set): `helpers.md` 44906, `resume.md` 18885,
+`per-item-loop.md` 62045, `modes-and-merge-gate.md` 27208 (each read at most once per session, at its
+trigger); `intake.md` 10379 on a new run; `branch-mode.md` 7592, `lanes.md` 57472 and `command-lanes.md` 4111
+at their unchanged triggers.
+
+`wc -c loomwright/skills/automate-loop/*.md loomwright/commands/automate.md`:
+
+| File | Before (base `a8819a3`) | After |
+|---|---|---|
+| `SKILL.md` | 86697 | 44512 |
+| `branch-mode.md` | 7592 | 7592 |
+| `command-lanes.md` | 4111 | 4111 |
+| `helpers.md` | — | 44906 |
+| `intake.md` | 10379 | 10379 |
+| `invariants.md` | 5900 | 5900 |
+| `lanes.md` | 57580 | 57472 |
+| `legacy-tail.md` | 58252 | — (deleted, subtask 2) |
+| `modes-and-merge-gate.md` | 27271 | 27208 |
+| `per-item-loop.md` | 60818 | 62045 |
+| `resume.md` | 18885 | 18885 |
+| `commands/automate.md` | 28946 | 29208 |
+| total | 366431 | 312218 |
+
+The prompt budgets were re-measured in the same change: `.skills[automate-loop]` measures 70750 proxy tokens
+(ceiling lowered from 87895 to 77733, measured + ~10%), and `.commands[automate]` measures 7302 (ceiling 7565,
+unchanged), each with its `ARCHITECTURE_CONTRACTS.md` mirror row.
+
+### Inventory (`loomwright/docs/loop-inventory/automate-loop.md`)
+
+`## Counts`, before (base `a8819a3`) → after: rows 564 → 569, deterministic 395 → 397, judgment 12 → 13,
+rule 131 → 133, story 26 → 26, GAP 125 → 128. Homes, before → after: `prose` 465 (10 of them `judgment`) →
+11 (all `judgment`); `script:` 98 → 284; `step-scoped` 0 → 124; `global` 0 → 130; `rationale:` 1 → 20.
+
+How the rows were re-homed (owner decision D1: the home is recorded before any prose moves; the inventory
+commit precedes the Step 0 commit, and no row was dropped):
+- `script:automate-next-step.sh <step>` — a rule the driver's `case` arm executes (PICK, RECONCILE, resume, the
+  tail); `script:automate-helpers.sh <sub>` (or `classify-risk.sh`, `rules-gate-verdict.sh`,
+  `automate-merge-watch.sh`, `session-resume.sh`, `run-lock.sh acquire`, `lane-policy.sh decide`,
+  `read-token-ledger.sh`) — a rule a helper enforces. `test-loop-inventory.sh` checks every arm is real.
+- `global` — every remaining row of `SKILL.md`, `invariants.md` and the command body (the default read set;
+  anchor-checked).
+- `step-scoped` — rows of the split files read only at their Step 0 trigger (`intake.md`, `branch-mode.md`,
+  `lanes.md`, `command-lanes.md`, the rows of `helpers.md` no single helper arm owns, and the two owner-driven
+  writes in `resume.md` / `per-item-loop.md`: the skip / abandon unblock and check-off).
+- `rationale:skills/automate-loop/<file>#<heading>` — each story row of an Only-when split file, homed to the
+  heading it sits under (`docs/rationale/automate-loop.md` is item 16's to create, so no new rationale doc).
+
+**The reading of "homed `global` or `judgment`".** The requirement's AC says no `automate-loop` row stays
+`prose` except rows homed `global` or `judgment`. In `test-loop-inventory.sh`'s grammar `judgment` is a row
+KIND, not a home (homes: `prose`, `script:<file>[ <sub>]`, `hook:<leaf>`, `step-scoped`, `global`,
+`rationale:<doc>#<anchor>`). The faithful reading, used here: no row keeps home `prose` unless its kind is
+`judgment`. The 11 that do (AL-089, AL-091, AL-169, AL-213, AL-236, AL-251, AL-409, AL-428, AL-451, AL-471,
+AL-567) are the owner's or the model's judgment calls: the bare-start and resume asks, the leftover and
+pending-decisions asks, the dismissed-findings decision, how to unblock an escalated park, the dirty-tree fix
+hint, the wave policy, a died lane, and one honest limit of a `picked` line. One of them, AL-567, is new: the owner's dismissed-findings decision
+anchored on the per-item-loop.md heading, a judgment row `test-loop-inventory.sh`'s AC4 fixture leg also needs
+(it deletes a prose-homed heading anchor in a scratch copy).
+
+Rows touched beyond the homes: AL-227 (never pick while a PR is open) now names `test-automate-next-step.sh`,
+whose P1 leg drives that park, and left the gap list; AL-210's gap reason now names the driver's reconcile
+step; AL-229 (a live merge-watch marker is noted, never a second watcher) is homed on the driver's
+`reconcile` step — the open-PR park writes one `merge-watch noted:` line per live watcher of the in-flight PR,
+using the watcher's own `ps -ww` liveness test — and names `test-automate-next-step.sh` (its P9 leg, mutation
+control M8h), so it left the gap list (review iteration 1); AL-218 (re-pass the non-persisted flags) is re-anchored to the coordinator loop in
+`SKILL.md`; AL-568 to AL-571 are the coordinator loop's own rows (GAP: the driver is tested, the model's
+adherence to the loop is not).
+
+### Validation 1 — every suite (`<passed>/<total>`)
+
+Run one at a time on this branch after the last skill / inventory / budget edit (2026-10-18):
+
+| Suite | Result |
+|---|---|
+| `bash loomwright/scripts/test-automate-next-step.sh` | 141/141 after drain review round 1 (P10: the run_done / pick_already_started / run_not_incomplete refusals; P11: the meta-push-failed report; M8i / M8j turn them red; P8 also seeds `-  parallel: 2`); 137/137 after review iteration 2 (P8 now also drives a bare start of a coordinator run: AUT-RESUME interactive, `resume_requires_flag_non_interactive` headless, `coordinator_run` after Continue; M8g still turns it red); 137/137 after iteration 1 (P7–P9 + M8f–M8h; 131/131 before) (its S leg — AC9 — prints the base file list) |
+| `bash loomwright/scripts/test-automate-golden.sh` | 64/64 (`MAP.tsv` unchanged: no unit moved) |
+| `bash loomwright/scripts/test-automate-helpers.sh` | 765/766 — the one failure is W19 (`22-split-automate-engine-surfaces.md ## Touches parses`), the pre-existing local-only leg: it needs this checkout's `.agent/companions.json`, which a scratch copy lacks (`plan-waves: no …/.agent/companions.json`); unrelated to this change |
+| `bash loomwright/scripts/test-automate-lanes.sh` | 925/925 |
+| `bash loomwright/scripts/test-loop-inventory.sh` | 43/43 |
+| `bash loomwright/scripts/test-automate-dismissed.sh` | 246/246 |
+| `bash loomwright/scripts/test-automate-trail.sh` | 786/786 |
+| `bash loomwright/scripts/test-automate-loop-split.sh` | 40/40 (F: Step 0 names all 9 split files, `helpers.md` first; E SKIPs, as before) |
+| `bash loomwright/scripts/test-result-schemas-split.sh` | 14/14 |
+| `bash scripts/check-doc-currency.sh` | exit 0 |
+| `bash loomwright/scripts/test-citation-drift.sh` | 26/26 |
+| `bash scripts/check-token-budget.sh` | exit 0 (0 breaches) |
+| `bash scripts/check-version-bump.sh` | exit 0 (not bumped; one pending fragment) |
+| `bash scripts/ci-local.sh` (full, on `43698e6`, review iteration 1) | 170/171 self-tests — the one failure is W19, the same pre-existing local-only leg as above (it needs the checkout's `.agent/companions.json`) |
+| `bash scripts/check-vendor-coupling.sh` | exit 0 after the fix; the first run was 1 BREACH: `helpers.md` carried §1.5's one install-root reference with no allowance. The allowance moved with the text (`SKILL.md` 4 → 3, `helpers.md` 1, both with a reason) |
+
+AC9: `grep -rn "gh pr merge --squash" loomwright/ | grep -viE "no |never |not " | cut -d: -f1 | sort -u` prints
+the base list unchanged (`helpers.md` carries §1.5's merge mentions, but each line is negated, as it was in
+`SKILL.md`):
+
+```
+loomwright/commands/agent-help.md
+loomwright/docs/loop-inventory/automate-loop.md
+loomwright/scripts/automate-helpers.sh
+loomwright/scripts/fixtures/automate-golden/drain-superseded-by-merge/tree/dot-supervisor/requirements/automate-followups/11-post-park-lifecycle.md
+loomwright/scripts/result_block_parser.py
+loomwright/scripts/test-automate-helpers.sh
+loomwright/skills/automate-loop/modes-and-merge-gate.md
+loomwright/skills/automate-loop/per-item-loop.md
+```
+
+### Not verified
+
+- No live `/automate` run used the new Step 0. That a coordinator holding only `SKILL.md` and
+  `invariants.md` (plus the instruction each call prints) carries an item end to end is a claim about the
+  model, not the scripts; the driver's contract is tested, the model's adherence to the loop is not (AL-559,
+  AL-568 to AL-571 are GAP rows).
+- The Only-when triggers for the four driver-owned files are prose; no test checks that a failing driver call
+  actually leads the model to read the right split file.
+- The AL-229 merge-watch note (written by the driver's RECONCILE since review iteration 1, leg P9) is pinned by
+  that leg only: no golden case carries a live watcher, so no `expected.md` holds the line.

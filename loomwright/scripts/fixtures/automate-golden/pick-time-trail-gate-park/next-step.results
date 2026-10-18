@@ -1,0 +1,5 @@
+# next-step.results — pick-time-trail-gate-park: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The whole PICK from its entry (--start pick):
+# the run-lock acquire, pick-guard ok, no ceiling, no pending draft, RECONCILE finds the ## Current item done, then the trail gate reads this run's trail PR open ⇒ the trail_pr_open park.
+call: --start pick --session-id auto-2026-10-15-040641
+expect: park

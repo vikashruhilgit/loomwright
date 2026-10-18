@@ -1,0 +1,7 @@
+# next-step.results — reconcile-closeout-merged: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). RECONCILE through the PICK (NEXT_STEP_FROM=reconcile,
+# NEXT_STEP_UNTIL=picked): reconcile-item reads the parked PR merged ⇒ closeout --session-id, classified complete;
+# the trail gate (clear), the trail un-stage, then current-set + the `picked` line of the next row.
+env: NEXT_STEP_FROM=reconcile NEXT_STEP_UNTIL=picked
+call: --session-id auto-2026-10-15-040641 --non-interactive
+expect: none

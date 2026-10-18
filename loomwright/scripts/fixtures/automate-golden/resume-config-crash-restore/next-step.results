@@ -1,0 +1,8 @@
+# next-step.results — resume-config-crash-restore: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The resume entry with an explicit run
+# (--run, so continue), through PICK to RECONCILE (NEXT_STEP_UNTIL=reconcile): RECONCILE finds the crash-stranded
+# config backup and restores it (config-restore; no Progress line); ## Current (39b running, no PR) has nothing
+# to reconcile. The restored config.json and the deleted backup are asserted by the R-08 resume leg.
+env: NEXT_STEP_UNTIL=reconcile
+call-bare: --resume "$AD" --run automate-2026-10-13-181331 --non-interactive --session-id auto-2026-10-15-040641
+expect: none

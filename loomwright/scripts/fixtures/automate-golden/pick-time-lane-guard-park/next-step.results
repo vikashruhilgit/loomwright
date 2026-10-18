@@ -1,0 +1,5 @@
+# next-step.results — pick-time-lane-guard-park: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The whole PICK from its entry (--start pick):
+# the run-lock acquire, then pick-guard refuses (a lane holds an unanswered question) ⇒ the live_lane park.
+call: --start pick --session-id auto-2026-10-15-040641
+expect: park

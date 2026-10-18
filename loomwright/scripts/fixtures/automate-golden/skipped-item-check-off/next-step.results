@@ -1,0 +1,9 @@
+# next-step.results — skipped-item-check-off: how test-automate-next-step.sh drives this case through
+# automate-next-step.sh (grammar: the test's header). The `# abandoned:` check-off and its reason line are the
+# owner's (fixed input, `pre:`); RECONCILE (NEXT_STEP_FROM=reconcile, NEXT_STEP_UNTIL=reconcile) finds the
+# ## Current item checked off abandoned ⇒ `trail-pr --reason abandoned` (against the scratch bare origin), its line.
+pre: queue-checkoff "$RF" .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md "owner re-scoped into item 06" abandoned
+pre: progress-append "$RF" "2026-10-15T11:05:00Z abandoned .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md — owner re-scoped into item 06"
+env: NEXT_STEP_FROM=reconcile NEXT_STEP_UNTIL=reconcile
+call: --session-id auto-2026-10-15-040641
+expect: none
