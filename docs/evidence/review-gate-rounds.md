@@ -33,12 +33,12 @@ Requirement: `.supervisor/requirements/automate-speed/23-measure-review-gates.md
 | Group (post / pre) | ledger `plugin_version` | `post` when `plugin_version` >= 17.2.0, compared as numbers split on `.` (jq array compare, so 17.10.0 sorts after 17.2.0). `plugin_version` is the installed plugin when the drain ran. For the earliest post rows (run `automate-2026-10-13-181331`), the run file records "verified on installed v17.2.0" at 2026-10-14T09:23:03Z, before #542's Phase 4.5. A row with a non-numeric `plugin_version` (`unknown`) is excluded and listed. |
 | Merged | recorded live read | The post group is filtered on the frozen list `MERGED_POST`. Every PR in both groups was MERGED except #429 (CLOSED), which is in `NOT_MERGED` and excluded. |
 | Phase 4.5 rounds | ledger `self_heal_rounds`, else sidecar `heal_iterations` | The sidecar is used only when its `pr_url` is this item's PR. Ledger rows before 2026-09-27 carry no `self_heal_rounds`, and a run's sidecar holds only that run's last item, so 54 earlier items read `not recorded`. A sidecar value is marked `(sidecar)`. "3/3" means `self_heal_rounds == 3`, the default `--heal-iterations` cap. No row in either group records more than 3. |
-| Phase 4.5 duration | run file | From the item's PR-opened line to its end-of-RUN line. The end of RUN is the first `/autonomous done` or `ran supervisor` line, else the first `ran /autonomous` line. The PR-opened line is the first line before it that starts `FINALIZE:`, or that names this PR (`pull/N` or `PR #N`) and says `FINALIZE` or `PR opened` (e.g. `PR opened …/pull/538 (FINALIZE; …)`, `supervisor FINALIZE: … PR …/pull/402`). When a run writes a `/autonomous done` line, its earlier `ran /autonomous → PR …` line is the PR-opened line (#382, #408, #464, #470). `read-token-ledger.sh --per-item` reads only the `FINALIZE:` shape for its Phase 4.5 row; where that shape exists both give the same window, including the 85m the requirement quotes for #533. |
-| Termination | sidecar, else run file | `heal_decision` from the PR's sidecar, else `heal PASS`, `heal ESCALATED` or `heal FAIL` from the end-of-RUN line. The reason in brackets is the first `max_iterations_reached` or `needs_human` found in the sidecar `error`, the end-of-RUN line or the sidecar `summary`. Sidecars carry no `escalation_reason` key. |
-| Plan Review attempts | run file, else brief | The largest `Plan Review … N/M` between the item's `picked` line and its brief-saved line. Else the first `attempt N/M` in the `## Plan Review` section of the brief named by the run file's close-out `stamped — <item> (… brief <path>)` line, marked `(brief)`. N is read as attempts used, as the requirement reads "Plan Review PASS 3/3" on #533. |
+| Phase 4.5 duration | run file | From the item's PR-opened line to its end-of-RUN line. The end of RUN is the first `/autonomous done` or `ran supervisor` line, else the first `ran /autonomous` line. The PR-opened line is the first line before it that starts `FINALIZE:`, or that names this PR (`pull/N` or `PR #N`) and says `FINALIZE` or `PR opened` (e.g. `PR opened …/pull/538 (FINALIZE; …)`, `supervisor FINALIZE: … PR …/pull/402`). When a run writes a `/autonomous done` line, its earlier `ran /autonomous → PR …` line is the PR-opened line (#382, #408, #464, #470). A negated mention (`no PR opened`, `no FINALIZE`, `not ran /autonomous`) does not count for any of these selectors: #134's `RECONCILE: PR #134 … no PR opened for it yet` line is not a PR-opened line. `read-token-ledger.sh --per-item` reads only the `FINALIZE:` shape for its Phase 4.5 row; where that shape exists both give the same window, including the 85m the requirement quotes for #533. |
+| Termination | sidecar, else run file | `heal_decision` from the PR's sidecar, else `heal PASS`, `heal ESCALATED` or `heal FAIL` from the end-of-RUN line. The reason in brackets is the first `max_iterations_reached` or `needs_human` found in the sidecar `error`, the end-of-RUN line or the sidecar `summary`. A negated mention (`no heal FAIL`, `not needs_human`) is skipped. Sidecars carry no `escalation_reason` key. |
+| Plan Review attempts | run file, else brief | The largest `Plan Review … N/M` between the item's `picked` line and its brief-saved line, across lines and within one line. On each line that says `Plan Review` (or `plan-review`), the first `N/M` after it with no digit or `;` in between, else the first `attempt N/M` after it with no `;` in between, sets the cap M. N is then the largest N of every `N/M` on that line with the same M, so `FAIL 1/3 → FAIL 2/3 → PASS 3/3` reads 3/3 and `FAIL x1 attempt 1/3 … PASS attempt 2/3` reads 2/3. An `N/M` with another M (a count such as `47/52`) is ignored. Else the largest `attempt N/M` with the first one's M in the `## Plan Review` section of the brief named by the run file's close-out `stamped — <item> (… brief <path>)` line, marked `(brief)`. N is read as attempts used, as the requirement reads "Plan Review PASS 3/3" on #533. |
 | Launch Pad duration | run file | From the item's `picked` line to its first brief-saved line: one that says `brief saved`, `launch-pad saved`, `Launch Pad saved` or `LAUNCH_PAD_RESULT saved` (any case). A negated line (`no brief saved`, `never saved`, `not saved`) is not one; #294 and #450 each carry one before the item ran. |
 
-The item segment of a run file starts at its first `picked <item>` line and ends at the next `picked` line for a different item. A `picked` line is `- ` (or `- - `), at most two words before `picked` (a timestamp in any format, or none), then `picked` in any case and a `.md` name, bare or as `item N (<name>)`. The name matches the item when it equals the item path with a leading `./` or `.supervisor/requirements/` removed, or, when it has no `/`, the item's file name. Only `YYYY-MM-DDTHH:MM:SSZ` timestamps are used, after the `- ` or `- - ` prefix. Older run files with other formats read `not recorded (run file: …)`.
+The item segment of a run file starts at its first `picked <item>` line and ends at the next `picked` line for a different item. A `picked` line is `- ` (or `- - `), at most two words before `picked` (a timestamp in any format, or none), then `picked` (not `not picked`) in any case and a `.md` name, bare or as `item N (<name>)`. The name matches the item when it equals the item path with a leading `./` or `.supervisor/requirements/` removed, or, when it has no `/`, the item's file name. Only `YYYY-MM-DDTHH:MM:SSZ` timestamps are used, after the `- ` or `- - ` prefix. Older run files with other formats read `not recorded (run file: …)`.
 
 ## Post-v17.2.0 items
 
@@ -111,9 +111,9 @@ The item segment of a run file starts at its first `picked <item>` line and ends
 | #204 | invention/02a-product-context-store.md | 15.56.1 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no FINALIZE or PR-opened line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 3/3 | 28m |
 | #208 | reconciler-repair/01-brief-pointer-extraction.md | 15.63.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no FINALIZE or PR-opened line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 3/3 | 25m |
 | #209 | reconciler-repair/02-reconcile-on-fresh-session.md | 15.61.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 1/3 | 7m |
-| #210 | reconciler-repair/03-merge-evidenced-repair.md | 15.65.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 1/3 | 40m |
+| #210 | reconciler-repair/03-merge-evidenced-repair.md | 15.65.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 3/3 | 40m |
 | #211 | reconciler-repair/04-worktree-audit-log-is-blind.md | 15.65.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 3/3 | 1h 17m |
-| #212 | reconciler-repair/05-salvage-before-removal.md | 15.66.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 1/3 | 26m |
+| #212 | reconciler-repair/05-salvage-before-removal.md | 15.66.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 3/3 | 26m |
 | #213 | reconciler-repair/06-retention-without-amnesia.md | 15.66.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 3/3 | not recorded (run file: no brief-saved line) |
 | #215 | review-gate-brief-conformance/01-brief-conformance-in-phase45-review.md | 15.68.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 2/3 | 10m |
 | #217 | review-gate-brief-conformance/02-manager-reverifies-provides.md | 15.68.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 2/3 | 43m |
@@ -122,27 +122,27 @@ The item segment of a run file starts at its first `picked <item>` line and ends
 | #222 | verify-walkthrough/02-verify-evidence-store.md | 15.72.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no FINALIZE or PR-opened line) | PASS | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: no brief-saved line) |
 | #223 | verify-walkthrough/03-verify-command-and-mode.md | 15.74.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | 12m | PASS | not recorded (run file, brief: no Plan Review N/M) | 24m |
 | #226 | verify-walkthrough/04-verify-auth-pause.md | 15.77.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | not recorded (run file, brief: no Plan Review N/M) | 20m |
-| #264 | harness-port/05-dismissed-findings.md | 15.98.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: timestamp not ISO-8601 UTC) |
-| #265 | harness-port/06-shared-local-services.md | 15.99.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: timestamp not ISO-8601 UTC) |
+| #264 | harness-port/05-dismissed-findings.md | 15.98.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 2/3 | not recorded (run file: timestamp not ISO-8601 UTC) |
+| #265 | harness-port/06-shared-local-services.md | 15.99.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 2/3 | not recorded (run file: timestamp not ISO-8601 UTC) |
 | #266 | harness-port/07-ci-trust-probe.md | 15.100.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 1/3 | not recorded (run file: timestamp not ISO-8601 UTC) |
 | #267 | twin-loop/08-executable-rule-candidates.md | 15.98.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | not recorded (run file: no end-of-RUN line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 1/3 | not recorded (run file: timestamp not ISO-8601 UTC) |
 | #269 | token-economy/07-verify-spec-replay.md | 15.98.0 | 1 (sidecar) | not recorded (run file: no end-of-RUN line) | PASS | 1/3 | 44m |
 | #272 | automate-followups/01-learning-emit-counts-self-heal-rounds.md | 15.98.0 | not recorded (ledger: no self_heal_rounds; sidecar: none for this PR) | 11m | PASS | 2/3 | 27m |
 | #281 | automate-followups/02-ci-review-bot-cannot-execute.md | 15.106.2 | 1 | 8m | PASS | 3/3 | 3h 52m |
 | #288 | automate-followups/03-resume-glob-lists-sidecar-artifacts.md | 15.108.1 | 0 | 4m | PASS | 2/3 | 1h 9m |
-| #290 | automate-followups/04-hermetic-test-notifier-egress.md | 15.108.1 | 0 | 28m | PASS | 1/3 | 1h 15m |
-| #292 | automate-followups/05-plan-time-rule-routing.md | 15.108.4 | 0 | 53m | PASS | 1/3 | 2h 41m |
+| #290 | automate-followups/04-hermetic-test-notifier-egress.md | 15.108.1 | 0 | 28m | PASS | 3/3 | 1h 15m |
+| #292 | automate-followups/05-plan-time-rule-routing.md | 15.108.4 | 0 | 53m | PASS | 2/3 | 2h 41m |
 | #294 | automate-followups/06-worker-rule-self-check.md | 15.108.4 | 1 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 3/3 | not recorded (run file: no brief-saved line) |
-| #296 | automate-followups/07-rule-enforcement-at-review-and-merge.md | 15.108.4 | 1 | 49m | PASS | 1/3 | 25m |
+| #296 | automate-followups/07-rule-enforcement-at-review-and-merge.md | 15.108.4 | 1 | 49m | PASS | 2/3 | 25m |
 | #299 | automate-followups/09-audit-rules-at-phase45-and-gate-trigger-nudge.md | 15.112.0 | 1 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 1/3 | 5h 48m |
 | #301 | automate-followups/10-rules-reach-standalone-review.md | 15.113.0 | 2 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 1/3 | 28m |
-| #314 | automate-followups/12-dismissed-findings-become-tracked-decisions.md | 15.114.2 | 2 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 2/3 | 32m |
-| #319 | automate-followups/13-dismissed-findings-triage-sweep.md | 15.115.0 | 1 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 1/3 | 25m |
-| #327 | parallel-automate/01-version-bump-script.md | 15.115.0 | 0 | not recorded (run file: no FINALIZE or PR-opened line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 1/3 | 23m |
-| #334 | parallel-automate/02-meta-sync-script.md | 15.115.0 | 3 | not recorded (run file: no FINALIZE or PR-opened line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 1/3 | 5h 49m |
+| #314 | automate-followups/12-dismissed-findings-become-tracked-decisions.md | 15.114.2 | 2 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 3/3 | 32m |
+| #319 | automate-followups/13-dismissed-findings-triage-sweep.md | 15.115.0 | 1 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 3/3 | 25m |
+| #327 | parallel-automate/01-version-bump-script.md | 15.115.0 | 0 | not recorded (run file: no FINALIZE or PR-opened line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 3/3 | 23m |
+| #334 | parallel-automate/02-meta-sync-script.md | 15.115.0 | 3 | not recorded (run file: no FINALIZE or PR-opened line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 3/3 | 5h 49m |
 | #347 | parallel-automate/03-branch-mode-engine.md | 15.117.2 | 3 | not recorded (run file: no FINALIZE or PR-opened line) | not recorded (sidecar: none for this PR; run file: no heal decision) | 1/3 | 41m |
 | #365 | parallel-automate/04-wave-planner.md | 15.119.2 | 2 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 2/3 | not recorded (run file: no brief-saved line) |
-| #374 | automate-followups/19-is-run-file-tolerant-title.md | 15.119.2 | 0 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 1/3 | 7m |
+| #374 | automate-followups/19-is-run-file-tolerant-title.md | 15.119.2 | 0 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 2/3 | 7m |
 | #372 | automate-followups/18-fail-to-unstamped-escalates.md | 15.119.2 | 1 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | 1/3 | 7m |
 | #375 | parallel-automate/08-shared-ci-slots.md | 15.119.2 | 1 | 38m | PASS | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: no brief-saved line) |
 | #377 | parallel-automate/10-touches-backfill-lint-and-explain.md | 15.119.2 | 1 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: no brief-saved line) |
@@ -157,12 +157,12 @@ The item segment of a run file starts at its first `picked <item>` line and ends
 | #392 | parallel-automate/09-ci-local-fewer-full-runs.md | 15.122.0 | 1 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: no brief-saved line) |
 | #395 | automate-followups/32-run-file-lifecycle.md | 15.122.0 | 1 | 44m | PASS | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: no brief-saved line) |
 | #402 | parallel-automate/16-machine-load-guard.md | 15.123.1 | 1 | 22m | PASS | 3/3 | 11m |
-| #403 | agnostic-phase1/04-non-interactive-gates.md | 15.123.1 | 3 | not recorded (run file: no FINALIZE or PR-opened line) | ESCALATED (max_iterations_reached) | 1/3 | 8m |
-| #408 | parallel-automate/11-split-shared-hotspot-files.md | 15.123.1 | 1 | 21m | PASS | 1/3 | 35m |
+| #403 | agnostic-phase1/04-non-interactive-gates.md | 15.123.1 | 3 | not recorded (run file: no FINALIZE or PR-opened line) | ESCALATED (max_iterations_reached) | 3/3 | 8m |
+| #408 | parallel-automate/11-split-shared-hotspot-files.md | 15.123.1 | 1 | 21m | PASS | 3/3 | 35m |
 | #410 | automate-followups/33-children-settled-gate.md | 15.124.0 | 1 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: no brief-saved line) |
 | #412 | host-contract/01-published-capability-contract.md | 15.124.0 | 2 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: no brief-saved line) |
 | #417 | meta-sync-followups/07-onboard-any-repo-to-branch-mode.md | 15.124.0 | 3 | not recorded (run file: no FINALIZE or PR-opened line) | ESCALATED (max_iterations_reached) | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: no brief-saved line) |
-| #415 | automate-followups/31-transient-escalation-recheck.md | 15.124.0 | 3 | not recorded (run file: no FINALIZE or PR-opened line) | ESCALATED (max_iterations_reached) | 1/3 | 41m |
+| #415 | automate-followups/31-transient-escalation-recheck.md | 15.124.0 | 3 | not recorded (run file: no FINALIZE or PR-opened line) | ESCALATED (max_iterations_reached) | 3/3 | 41m |
 | #426 | parallel-automate/05-lane-coordinator.md | 15.125.1 | 1 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: no brief-saved line) |
 | #434 | parallel-automate/23-pa05-validation-fixes-a.md | 15.125.1 | 1 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: no brief-saved line) |
 | #435 | parallel-automate/24-pa05-validation-fixes-b.md | 15.125.1 | 2 | not recorded (run file: no FINALIZE or PR-opened line) | PASS | not recorded (run file, brief: no Plan Review N/M) | not recorded (run file: no brief-saved line) |
@@ -196,7 +196,7 @@ The item segment of a run file starts at its first `picked <item>` line and ends
 post: 5 of 16 items at 3/3 (31.2%); rounds 0/1/2/3 = 1/3/7/5; 0 item(s) with rounds not recorded left out
 post: Plan Review attempts 1/3, 2/3, 3/3 = 0, 3, 10; other caps 0; not recorded 3
 pre: 15 of 58 items at 3/3 (25.9%); rounds 0/1/2/3 = 16/20/7/15; 54 item(s) with rounds not recorded left out
-pre: Plan Review attempts 1/3, 2/3, 3/3 = 20, 9, 22; other caps 0; not recorded 61
+pre: Plan Review attempts 1/3, 2/3, 3/3 = 8, 13, 32; other caps 0; not recorded 59
 pre (plugin >= 16.0.0): 7 of 7 items at 3/3 (100.0%); rounds 0/1/2/3 = 0/0/0/7; 0 item(s) with rounds not recorded left out
 pre (plugin >= 16.0.0): Plan Review attempts 1/3, 2/3, 3/3 = 0, 0, 6; other caps 0; not recorded 1
 ```
@@ -333,7 +333,8 @@ table() {
       hd=$(scv "$sc" heal_decision); hi=$(scv "$sc" heal_iterations); he=$(scv "$sc" error); hs=$(scv "$sc" summary)
     fi
     bf=$(grep -F "stamped — $item (" "$rf" 2>/dev/null | sed -nE 's/.*, brief ([^ )]+)\).*/\1/p' | head -n 1)
-    bpr=$( [ -n "$bf" ] && sed -n '/^## Plan Review/,/^## [^P]/p' "$bf" 2>/dev/null | grep -oE 'attempt [0-9]+/[0-9]+' | head -n 1 | cut -d' ' -f2)
+    bpr=$( [ -n "$bf" ] && sed -n '/^## Plan Review/,/^## [^P]/p' "$bf" 2>/dev/null | grep -oE 'attempt [0-9]+/[0-9]+' | cut -d' ' -f2 \
+      | awk -F/ 'NR == 1 { c = $2 } $2 == c && $1 + 0 > n + 0 { n = $1 } END { if (NR) print n "/" c }')
     { [ -f "$rf" ] && cat "$rf" || printf ''; } | jq -Rrs --arg item "$item" --arg url "$url" --arg ver "$ver" --arg rl "$rl" \
       --arg hd "$hd" --arg hi "$hi" --arg he "$he" --arg hs "$hs" --arg bpr "$bpr" '
       def t: (capture("^(- )+(?<t>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z) ") | .t) // null;
@@ -341,10 +342,17 @@ table() {
         else ((($b | fromdateiso8601) - ($a | fromdateiso8601)) / 60 | round) as $m
         | if $m < 0 then null elif $m >= 60 then "\($m / 60 | floor)h \($m % 60)m" else "\($m)m" end end;
       def nr($why): "not recorded (\($why))";
+      def unneg($re): gsub("\\b(no|not|never|nor|without) (a |the |yet )?(" + $re + ")"; ""; "i");
       def norm: sub("^[.]/"; "") | sub("^[.]supervisor/requirements/"; "");
-      def picked: (capture("^(- )+([^ ]+ ){0,2}picked (item [0-9]+ [(](?<q>[^)]+[.]md)[)]|(?<p>[^ ;]+[.]md))"; "i")
+      def picked: (unneg("picked") | capture("^(- )+([^ ]+ ){0,2}picked (item [0-9]+ [(](?<q>[^)]+[.]md)[)]|(?<p>[^ ;]+[.]md))"; "i")
         | (.q // .p) | norm) // null;
       def same: . != null and (. == ($item | norm) or ((contains("/") | not) and . == ($item | split("/") | last)));
+      def prn: unneg("plan[- ]review") as $l
+        | ([($l | capture("plan[- ]review[^0-9;]*(?<n>[0-9]+)/(?<c>[0-9]+)(?![0-9/])"; "i")),
+            ($l | capture("plan[- ]review[^;]*?attempt ?(?<n>[0-9]+)/(?<c>[0-9]+)(?![0-9/])"; "i"))] | first) as $f
+        | if $f == null then empty else
+            {n: ([$f.n, ($l | capture("(?:^|[^0-9/])(?<n>[0-9]+)/(?<c>[0-9]+)(?![0-9/])"; "g") | select(.c == $f.c) | .n)]
+                 | map(tonumber) | max), c: $f.c} end;
       def saved: test("brief saved|launch[- ]pad saved|launch_pad_result saved"; "i")
         and (test("(no|not|never) (brief )?saved"; "i") | not);
       ($url | split("/") | last) as $n
@@ -354,17 +362,17 @@ table() {
       | (if $s == null then [] else
            $ls[$s:([$p[] | select(. > $s and ($ls[.] | picked | same | not))] | first // ($ls | length))] end) as $seg
       | ([range(0; $seg | length) | select($seg[.] | saved)] | first) as $si
-      | ([range(0; $seg | length) | select($seg[.] | test("ran /autonomous"))] | first) as $ri
-      | ([range(0; $seg | length) | select($seg[.] | test("^(- )+[^ ]+ (/autonomous done|ran supervisor)[ :]"))] | first) as $di
+      | ([range(0; $seg | length) | select($seg[.] | unneg("ran /autonomous") | test("ran /autonomous"))] | first) as $ri
+      | ([range(0; $seg | length) | select($seg[.] | unneg("/autonomous done|ran supervisor") | test("^(- )+[^ ]+ (/autonomous done|ran supervisor)[ :]"))] | first) as $di
       | ($di // $ri) as $ei
       | (if $ei == null then null else $seg[$ei] end) as $ran
       | ([range(0; $ei // ($seg | length)) | select(($seg[.] | test("^(- )+[^ ]+ FINALIZE: "))
-          or (($seg[.] | test("(pull/|PR #)\($n)([^0-9]|$)")) and (($seg[.] | test("FINALIZE|PR opened")) or . == $ri)))]
+          or (($seg[.] | test("(pull/|PR #)\($n)([^0-9]|$)")) and (($seg[.] | unneg("FINALIZE|PR opened") | test("FINALIZE|PR opened")) or . == $ri)))]
           | first) as $fi
       | ([$seg[0:(if $si == null then ($seg | length) else $si + 1 end)][]
-          | capture("plan review[^0-9;]*(?<n>[0-9]+)/(?<c>[0-9]+)"; "i")] | max_by(.n | tonumber)) as $pr
-      | (if $hd != "" then $hd else ([($ran // "") | capture("heal (?<d>PASS|ESCALATED|FAIL)") | .d] | first) end) as $dec
-      | ([[$he, ($ran // ""), $hs][] | capture("(?<r>max_iterations_reached|needs_human)"; "i") | .r | ascii_downcase] | first) as $why
+          | prn] | max_by(.n)) as $pr
+      | (if $hd != "" then $hd else ([($ran // "") | unneg("heal (PASS|ESCALATED|FAIL)") | capture("heal (?<d>PASS|ESCALATED|FAIL)") | .d] | first) end) as $dec
+      | ([[$he, ($ran // ""), $hs][] | unneg("max_iterations_reached|needs_human") | capture("(?<r>max_iterations_reached|needs_human)"; "i") | .r | ascii_downcase] | first) as $why
       | [ "#\($n)", ($item | sub("^[.]supervisor/requirements/"; "")), $ver,
           (if $rl != "-" then $rl elif $hi != "" then "\($hi) (sidecar)" else nr("ledger: no self_heal_rounds; sidecar: none for this PR") end),
           (if $s == null then nr("run file: no picked line")
@@ -476,14 +484,14 @@ For the pre group, `gh pr list --repo vikashruhilgit/loomwright --state merged -
 
 ## Validation
 
-Run 2026-10-18 on the branch's worktree, from the repo root. Re-run 2026-10-19 after the run-file line selectors were widened (PR-opened, end-of-RUN, `picked` and brief-saved shapes); the results below are from the re-run.
+Run 2026-10-18 on the branch's worktree, from the repo root. Re-run 2026-10-19 after the run-file line selectors were widened (PR-opened, end-of-RUN, `picked` and brief-saved shapes), and again the same day after the Plan Review extractor was changed from the first `N/M` on a line to the largest with that line's cap and every free-text selector skipped negated mentions. That second change moved 15 pre-v17.2.0 Plan Review cells (#210, #212, #290, #314, #319, #327, #334, #403, #408, #415 to 3/3; #292, #296, #374 to 2/3; #264, #265 from `not recorded` to 2/3) and no other cell. The results below are from the last re-run.
 
 | Check | Result |
 |---|---|
 | `bash scripts/check-doc-currency.sh` | exit 0. Last line: `✓ doc-currency: all checked version/count claims match the authoritative source.` |
 | `bash scripts/check-version-bump.sh` | exit 0: `bump-version: check OK — not bumped (version 17.8.0, the merge base's); 1 fragment(s) pending — legal, the next bump folds them (base origin/main, merge base 3a03dfa66d7d)` |
-| `bash scripts/ci-local.sh --affected` | 16/16 passed: `ci-local --affected: PASS after 19s — 16 of the full run's 191 entries` |
-| `## Commands` block 3 (re-run check) | `all four blocks match` in bash 3.2 and zsh. Mutation control: on a scratch copy of this file with #542's rounds changed from 2 to 3, block 3 prints that one-line diff and exits 1. |
+| `bash scripts/ci-local.sh --affected` | 16/16 passed: `ci-local --affected: PASS after 36s — 16 of the full run's 191 entries` |
+| `## Commands` block 3 (re-run check) | `all four blocks match` in bash 3.2 and zsh. Mutation control: on a scratch copy of this file with #319's Plan Review cell changed from 3/3 to 1/3, block 3 prints that one-line diff and exits 1 in both shells. |
 | Frozen-cutoff control | see `## Commands`: an appended later row leaves `table post` byte-identical |
 
 This change adds two files and edits nothing else. It does not touch `CHANGELOG.md`, `loomwright/.claude-plugin/plugin.json` or `.claude-plugin/marketplace.json`, and `bump-version.sh` was not run: this is a `--parallel` lane, so the wave branch carries the bump.
