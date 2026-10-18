@@ -23,7 +23,7 @@
 
 ## Closed enumerations touched
 
-> Sibling grep at base `0000000000000000000000000000000000000000`: `grep -rnF 'rules_gate_unresolved' --exclude=CHANGELOG.md loomwright` → 8 hits in 2 files.
+> Sibling grep at base `0000000000000000000000000000000000000000`: `grep -rnF 'rules_gate_unresolved' --exclude=CHANGELOG.md loomwright` → 9 hits in 3 files.
 
 - **`rules_gate_unreadable`** (sibling: `rules_gate_unresolved`) — must be named in:
   - `loomwright/skills/self-heal-advisory/SKILL.md` — the closed `**Heal reason:** {needs_human|` list in the completion tail — extend.
@@ -32,6 +32,7 @@
   - `loomwright/skills/self-heal-advisory/SKILL.md` — the fail-CLOSED leg's `record_decision` and PR-comment lines (2 hits) — extend: the leg branches on `unreadable`.
   - `loomwright/skills/self-heal-advisory/SKILL.md` — step 7's `**Rules-check replay line` paragraph (`already escalated with`) — extend.
   - `loomwright/skills/review-heal/SKILL.md` — the drain's escalation comment and its ESCALATED description (2 hits) — no change: the drain keeps one reason for both causes; this brief is Phase 4.5-only.
+  - `loomwright/scripts/review-heal-next-step.sh` — the drain driver's `rules_gate_unresolved` escalation (its `rh_escalate_to rules_gate_unresolved` line) — no change: the drain keeps one reason for both causes; this brief is Phase 4.5-only.
 
 ## Pin mutations
 

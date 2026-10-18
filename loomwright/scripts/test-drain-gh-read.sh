@@ -37,6 +37,9 @@ else no "issue-comments argv wrong (rc=$RC argv='$(argv_line)')"; fi
 run check-annotations acme/widget 9001
 [ "$RC" -eq 0 ] && [ "$(argv_line)" = "api --method GET repos/acme/widget/check-runs/9001/annotations " ] \
   && ok "check-annotations → GET .../check-runs/9001/annotations" || no "check-annotations argv wrong ($(argv_line))"
+run check-run acme/widget 9001
+[ "$RC" -eq 0 ] && [ "$(argv_line)" = "api --method GET repos/acme/widget/check-runs/9001 " ] \
+  && ok "check-run → GET .../check-runs/9001" || no "check-run argv wrong ($(argv_line))"
 run required-checks acme/widget release/2.x
 [ "$RC" -eq 0 ] && [ "$(argv_line)" = "api --method GET repos/acme/widget/branches/release/2.x/protection/required_status_checks " ] \
   && ok "required-checks → GET .../branches/release/2.x/protection/required_status_checks" || no "required-checks argv wrong ($(argv_line))"
@@ -64,6 +67,8 @@ for args in \
   "issue-comments acme 42" \
   "issue-comments acme/widget 42abc" \
   "check-annotations acme/widget ../1" \
+  "check-run acme/widget 1/annotations" \
+  "check-run acme/widget -X" \
   "required-checks acme/widget -fmerge" \
   "required-checks acme/widget a..b" \
   "review-threads acme/widget 1 --jq" \

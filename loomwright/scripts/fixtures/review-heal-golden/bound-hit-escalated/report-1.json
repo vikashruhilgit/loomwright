@@ -1,0 +1,1 @@
+{"findings":[{"id":"r1-1","verdict":"confirmed","finding":"load_config ignores the exit status of jq","auto_fixable":true,"evidence":"src/widget.sh:42"}]}

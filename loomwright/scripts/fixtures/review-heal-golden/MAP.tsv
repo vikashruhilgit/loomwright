@@ -1,0 +1,22 @@
+# MAP.tsv — review-heal golden case → the deterministic drain branch it pins (automate-speed/12).
+# Read by test-review-heal-next-step.sh (leg G): every row names an existing case directory, every case
+# directory (all but _common/) has exactly one row, and every branch in the test's REQUIRED_BRANCHES list
+# has a row. Data row: <case dir><TAB><branch id><TAB><what the case drives>.
+# A case directory holds: drive (the `call:` lines, run in order), gh.table (the stubbed gh argv → output
+# table), <name>.lines (the wait / probe / rules / escalation stubs — one line per call, the last line
+# repeats; _common/ supplies a missing one), report-<n>.json (the model's --result reports — fixed input
+# for the judgment the driver hands out), and the expected files: expected.out (each call's printed
+# instruction and exit code), expected.result.md (the REVIEW_HEAL_RESULT block), expected.ledger.json
+# (`drain-rounds.sh read` after the last call), expected.comments (the PR comments posted) and
+# expected.side (the notify / postmortem recorder lines).
+converged-ready	converged	a dismissed channel finding, the marker comment, READY converged with no fix
+bound-hit-escalated	bound_hit	--max-rounds 1: one fix round, then BOUND_HIT ⇒ ESCALATED with the classifier cause
+sub-floor-converged-ready	sub_floor_converged	a MEDIUM fixed below the HIGH severity floor, confirming pass green ⇒ READY
+ci-untrusted-escalated	ci_untrusted	the red required check classified untrusted_infra is the only blocker ⇒ ESCALATED
+fix-round-pushed	fix_round	a confirmed HIGH fixed and pushed, the next round re-scans and converges
+fallback-no-review-lens	no_review_lens_posted	no lens posted ⇒ ONE fallback review spawn, its LOW dismissed below_fix_floor
+fallback-ambiguous-output	no_review_lens_posted_ambiguous	a review-producing output that cannot be read ⇒ the trigger fails closed to true
+unknown-channel-escalated	channel_unknown	an errored issue-comment read ⇒ ESCALATED before the fallback trigger
+fix-floor-invalid-escalated	fix_floor_invalid	a refused --fix-floor ⇒ the comment and ESCALATED before any fix
+fallback-once-per-run	fallback_review_ran	the fallback spawns in round 1 and never again in the same drain run
+fallback-red-review-check	no_review_lens_posted_red_check	a red, non-required review-producing check whose output is empty (only a runner annotation) ⇒ the fallback still spawns

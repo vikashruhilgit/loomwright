@@ -1,0 +1,1 @@
+{"findings":[{"verdict":"confirmed","finding":"widget.sh prints the config path without quoting it","severity":"LOW","auto_fixable":true}]}

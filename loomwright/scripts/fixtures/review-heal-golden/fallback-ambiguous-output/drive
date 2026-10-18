@@ -1,0 +1,5 @@
+# ambiguous trigger: every gated channel read succeeded, but claude-review's detailsUrl names no check run,
+# so its output emptiness cannot be read ⇒ no_review_lens_posted reads true (fail CLOSED toward running) ⇒
+# the fallback spawns; it finds nothing ⇒ READY converged.
+call: --start drain
+call: --result-file "$CASE/report-1.json"

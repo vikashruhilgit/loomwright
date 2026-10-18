@@ -1,0 +1,1 @@
+[{"id":9001,"user":{"login":"claude[bot]","type":"Bot"},"body":"Reviewed a1b2c3d. One finding:\n1. `src/widget.sh` `load_config` ignores the exit status of `jq` (line 42), so a malformed config reads as an empty one.\n\nexecution: none — static review; this reviewer does not run code"}]

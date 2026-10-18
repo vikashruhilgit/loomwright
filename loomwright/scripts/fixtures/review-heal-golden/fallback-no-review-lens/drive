@@ -1,0 +1,5 @@
+# no_review_lens_posted: no bot finding in any channel and claude-review green with empty output ⇒ ONE
+# `fallback review` spawn; its one confirmed LOW is below the MEDIUM fix floor ⇒ dismissed below_fix_floor
+# (source code_reviewer) ⇒ READY converged.
+call: --start drain
+call: --result-file "$CASE/report-1.json"

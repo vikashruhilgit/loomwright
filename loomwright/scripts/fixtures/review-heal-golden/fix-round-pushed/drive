@@ -1,0 +1,7 @@
+# fix round: round 1 confirms one HIGH (not below the HIGH severity floor ⇒ not sub-floor eligible), the fix
+# worker pushes, churn bumps the ledger; round 2 re-reads the same comment, validated already-addressed ⇒
+# dismissed (marker round=2) ⇒ READY converged after one fix cycle.
+call: --start drain
+call: --result-file "$CASE/report-1.json"
+call: --result-file "$CASE/report-2.json"
+call: --result-file "$CASE/report-3.json"

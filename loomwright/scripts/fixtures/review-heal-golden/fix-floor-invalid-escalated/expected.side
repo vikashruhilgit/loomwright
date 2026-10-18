@@ -1,0 +1,3 @@
+notify ESCALATED https://github.com/acme/widgets/pull/7 ESCALATED — https://github.com/acme/widgets/pull/7 (fix_floor_invalid)
+webhook --event-type gate --gate-type review_heal_escalated --context ESCALATED — https://github.com/acme/widgets/pull/7 (fix_floor_invalid)
+postmortem https://github.com/acme/widgets/pull/7 --fix-cycles 0 --decision ESCALATED --postmortem-churn-threshold 2

@@ -1,0 +1,6 @@
+review-heal drain ESCALATED (channel_unknown)
+
+channel_unknown — issue_comments read errored: an unknown gated channel never claims READY
+
+CI review lens: static-only (execution: none)
+----

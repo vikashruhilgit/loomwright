@@ -1,0 +1,6 @@
+# a red review lens that posted nothing: claude-review (review-producing, NOT required) concluded FAILURE —
+# the job died before posting (a billing block, a subscription cap) — with no comment in any channel, no
+# check output and only the runner's own `.github` annotation ⇒ no_review_lens_posted reads true from the
+# OUTPUT, never the red state ⇒ ONE fallback review spawn; it finds nothing ⇒ READY converged.
+call: --start drain
+call: --result-file "$CASE/report-1.json"

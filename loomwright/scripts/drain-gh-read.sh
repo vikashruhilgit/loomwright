@@ -21,6 +21,7 @@
 #   drain-gh-read.sh issue-comments    <owner>/<repo> <pr_number>      [--jq <expr>]
 #   drain-gh-read.sh review-threads    <owner>/<repo> <pr_number>      [--jq <expr>]
 #   drain-gh-read.sh check-annotations <owner>/<repo> <check_run_id>   [--jq <expr>]
+#   drain-gh-read.sh check-run         <owner>/<repo> <check_run_id>   [--jq <expr>]
 #   drain-gh-read.sh required-checks   <owner>/<repo> <base_branch>    [--jq <expr>]
 #
 # These are exactly the reads skills/review-heal/SKILL.md §U1 (b)/(c)/(d) and
@@ -41,7 +42,7 @@ set -u
 GH="${GH:-gh}"
 
 usage() {
-  printf 'usage: drain-gh-read.sh {issue-comments|review-threads|check-annotations|required-checks} <owner>/<repo> <id> [--jq <expr>]\n' >&2
+  printf 'usage: drain-gh-read.sh {issue-comments|review-threads|check-annotations|check-run|required-checks} <owner>/<repo> <id> [--jq <expr>]\n' >&2
   exit 2
 }
 
@@ -64,7 +65,7 @@ esac
 owner="${slug%%/*}"; repo="${slug#*/}"
 
 case "$op" in
-  issue-comments|review-threads|check-annotations)
+  issue-comments|review-threads|check-annotations|check-run)
     [[ "$id" =~ ^[0-9]+$ ]] || usage ;;
   required-checks)
     # A git ref name: no leading dash, no whitespace, no `..`.
@@ -78,6 +79,9 @@ case "$op" in
     exec "$GH" api --method GET "repos/$owner/$repo/issues/$id/comments?per_page=100" ${jq_args[@]+"${jq_args[@]}"} ;;
   check-annotations)
     exec "$GH" api --method GET "repos/$owner/$repo/check-runs/$id/annotations" ${jq_args[@]+"${jq_args[@]}"} ;;
+  check-run)
+    # the check run itself — its `output.{title,summary,text}` (§U1's check-output text)
+    exec "$GH" api --method GET "repos/$owner/$repo/check-runs/$id" ${jq_args[@]+"${jq_args[@]}"} ;;
   required-checks)
     exec "$GH" api --method GET "repos/$owner/$repo/branches/$id/protection/required_status_checks" ${jq_args[@]+"${jq_args[@]}"} ;;
   review-threads)
