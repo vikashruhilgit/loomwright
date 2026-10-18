@@ -184,7 +184,7 @@ record_decision(phase: SELF_HEAL, decision: "ground_truth: {status} ({checks_pas
 
 Re-validate the committed `.agent/rules/` store once per Phase 4.5 run through ONE deterministic always-exit-0 helper, `scripts/rules-audit-line.sh`, which runs the read-only `audit-rules.sh` engine (`skills/rules/SKILL.md` §11) over the feature-branch checkout and maps its report to exactly one `rules_audit:` line (plus an optional `rules_gate_trigger:` line). It EXECUTES NOTHING — every rule `check` is linted as text — so it has no `$NO_CMD_FLAG` valve and no stamp interplay.
 
-> **HARD ADVISORY CONTRACT — this check NEVER changes a gate.** It **NEVER changes `heal_decision`**, **NEVER triggers a fix iteration**, and **NEVER blocks the PR**. Nothing it reports enters Part 2's findings or the review-and-fix loop, and nothing escalates. It is read-only and the helper ALWAYS exits 0. Unlike `SKILL.md` §"Rules-check replay" (a correctness gate, re-run every iteration), it runs ONCE per Phase 4.5 run and lints the store, not the diff.
+> **HARD ADVISORY CONTRACT — this check NEVER changes a gate.** Nothing it reports enters Part 2's findings or the review-and-fix loop, and nothing escalates. Read-only; the helper ALWAYS exits 0; it runs ONCE per run and lints the store, not the diff.
 ```
 out = run(bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-audit-line.sh" --root <the feature-branch checkout>)
 # Contract: always exit 0; stdout is EXACTLY one or two lines (mapping: the helper's own header — not restated here).

@@ -288,3 +288,15 @@ Inventory rows of self-heal-advisory after subtask 3 (no `story` or `rule` row h
 ```
 
 The four split files joined the group's `## Sources` and the `supervisor)` arm of `test-loop-inventory.sh` (and its header comment). Every self-heal row's file cell follows its text; 70 rows were re-anchored to the trimmed wording (SV-346–SV-587 range); the kind counts and the gap list are unchanged (no row added or removed). Stories moved to `docs/rationale/supervisor.md` §"Self-heal advisory — why the protocol reads as it does" (no install-root token; two vendor tokens reworded out on the gate's first run).
+
+### Subtask 3 — bounded duplication pass (coordinator request)
+
+One bounded pass for duplicated text only — no rule reworded, no pinned needle touched, every inventory anchor kept live (no row needed re-anchoring):
+
+- `commands/supervisor.md` §"What This Does": the until-mergeable, timing-note, R9 and observability paragraphs now state each rule once and point at `skills/self-heal-advisory/completion-tail.md` step 5.5 for the procedure; the awk snippet and the inline-path sections are unchanged (43,057 → 41,274).
+- `agents/supervisor.md` Phase 4.5 one-line pointers (rubric condition, drain dispatch, marker rule, red-team lens) cut to the rule plus a pointer; the heal-only / earned-fallback invariant kept (79,620 → 78,917).
+- `completion-tail.md`: the rules-store audit's contract blockquote no longer restates what its state trace says (52,730 → 52,521).
+
+Searched and left alone: (1) the spawn prompts — the code-reviewer prompt's lines are pinned substring-by-substring (brief-conformance (a), deviations (e)/(f), validate-code-review-result's verdict window, execution-directive, phase45-rounds) and the DIFFERENT-LENS class list is held to mirror parity with `skills/quality-checklist/SKILL.md`; the fix-task and contract-builder prompts go to `general-purpose` Tasks, which carry no agent prompt of their own, so nothing in them is already carried by the spawned agent. (2) Same-rule-twice inside a split file: the remaining repeats (step 1g vs §"Deviations advisory", steps 1e/1f vs their sections) carry needles pinned on both copies.
+
+Group all-modes after this pass: 78,917 + 41,274 + 137,882 + 24,137 + 8,168 = **289,378 bytes** (base 391,294; −26.0%); default path without `multi-voter.md`: 280,449. **AC2 is still NOT met — 15,473 bytes over 273,905.** Closing it needs a reword of pinned or agent-facing prompt text, which this item rules out; stopped here as instructed. All gates and pinning tests re-run green after the pass (same set as the results table above, 29/29 scripts rc 0).
