@@ -118,10 +118,13 @@ r="$(bash "$H" sidecar-check "$SD/sn-sup-skip.md")"
 #   off   — no skip relaxation at all        ⇒ the skip-form positive reads fail
 #   any   — relaxation ignores `checked`     ⇒ {checked: true, status: skipped} reads ok
 #   nochk — any + `checked` also dropped     ⇒ {status: skipped} reads ok
+# The nested tables live in result_nested_keys.py (issue #616), imported from the checker's own
+# directory: a mutant dir holds the bundle unchanged plus a sed'd copy of the module.
+NK="$HERE/result_nested_keys.py"
 sn_skip_mutant() {  # sn_skip_mutant <name> <sed program> → $TOP/sn-skip-<name>/automate-trail.sh
-  local d="$TOP/sn-skip-$1"; mkdir -p "$d"; cp "$HERE/result_block_parser.py" "$d/"
-  sed "$2" "$TB" > "$d/automate-trail.sh"
-  cmp -s "$TB" "$d/automate-trail.sh" && { no "SN skip mutant $1: sed changed nothing"; return 1; }
+  local d="$TOP/sn-skip-$1"; mkdir -p "$d"; cp "$HERE/result_block_parser.py" "$d/"; cp "$TB" "$d/automate-trail.sh"
+  sed "$2" "$NK" > "$d/result_nested_keys.py"
+  cmp -s "$NK" "$d/result_nested_keys.py" && { no "SN skip mutant $1: sed changed nothing"; return 1; }
   return 0
 }
 if sn_skip_mutant off 's/    if key in SKIP_OPTIONAL and isinstance/    if False and isinstance/'; then
@@ -140,10 +143,10 @@ fi
 # Mutation control: a scratch copy of automate-trail.sh whose NESTED loop iterates an empty
 # table. Every SN negative must then read `ok` — so each leg above is red without the check.
 SNM="$TOP/sn-mutant"; mkdir -p "$SNM"
-cp "$HERE/result_block_parser.py" "$SNM/"
-sed 's/in sorted(NESTED\[name\]\.items()):/in sorted({}.items()):/' "$TB" > "$SNM/automate-trail.sh"
-if cmp -s "$TB" "$SNM/automate-trail.sh"; then
-  no "SN mutant: the sed did not change automate-trail.sh (NESTED loop line moved?)"
+cp "$HERE/result_block_parser.py" "$SNM/"; cp "$TB" "$SNM/automate-trail.sh"
+sed 's/in sorted(NESTED\[name\]\.items()):/in sorted({}.items()):/' "$NK" > "$SNM/result_nested_keys.py"
+if cmp -s "$NK" "$SNM/result_nested_keys.py"; then
+  no "SN mutant: the sed did not change result_nested_keys.py (NESTED loop line moved?)"
 else
   sn_mut_ok=0; sn_mut_n=0
   while IFS='|' read -r f base expr want; do
@@ -466,7 +469,7 @@ out="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/nope.md")"; rc=$?
 
 # run-lock spy: a copy of the script beside a spy run-lock.sh
 SPY="$TOP/spy"; mkdir -p "$SPY"
-cp "$T" "$HERE/result_block_parser.py" "$HERE/brief-pointer.sh" "$HERE/worktree-salvage.sh" "$SPY/"; cp -R "$HERE/automate-trail.d" "$SPY/"
+cp "$T" "$HERE/result_block_parser.py" "$HERE/result_nested_keys.py" "$HERE/brief-pointer.sh" "$HERE/worktree-salvage.sh" "$SPY/"; cp -R "$HERE/automate-trail.d" "$SPY/"
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/runlock.log"\n' "$SPY" > "$SPY/run-lock.sh"
 out="$(cd "$P" && bash "$SPY/automate-trail.sh" trail-pr ".supervisor/automate/$RUN_ID.md" --reason done)"
 case "$out" in "trail-pr: opened "*) ok "spy copy ran trail-pr ($out)" ;; *) no "spy run: $out" ;; esac

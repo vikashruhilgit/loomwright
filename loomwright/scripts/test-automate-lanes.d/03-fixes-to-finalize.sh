@@ -654,6 +654,61 @@ out="$(AC_S="$MUT/automate-lanes.sh" ac lane-remove "$L516")"; rc=$?
 check "AN4b mutation: lane-remove refuses on the unpushed brief draft (the L5 / L9 incident)" \
   "$rc:$(printf '%s\n' "$out" | grep -cF "metadata not pushed (local_ahead 1) — paths: .supervisor/automate/$PARENT6-L6.brief-draft.md" | tr -d ' ')" "1:1"
 
+# ---- AO: a lane whose own result sidecar fails sidecar-check is removable (issue #616) -------------------
+# Run automate-2026-10-15-163325 (L16): the lane's Supervisor wrote ground_truth with pass_rate and no
+# counts, trail-pr's evidence gate excluded the sidecar (correctly), and that one excluded file then held
+# lane-remove at `local_ahead 1` forever — the only way out was a hand exact-path push that bypasses the
+# gate. lane-remove now exempts ONLY this lane's own failing result sidecars, proves salvage holds them
+# byte-for-byte, and names them; a valid unpushed sidecar, any other path, or a conflict still refuses.
+ao_sidecar() { # <lane dir> <lane n> <ground_truth flow value> — this lane's supervisor-result sidecar
+  printf 'SUPERVISOR_RESULT:\n  schema_version: 1\n  task_id: ao%s\n  status: completed\n  pr_url: https://github.com/o/r/pull/7%s\n  branch: feature/ao\n  subtasks_completed: 1\n  subtasks_failed: 0\n  heal_loop_ran: false\n  heal_iterations: null\n  heal_decision: null\n  heal_fixable_issues_fixed: 0\n  heal_remaining_issues: 0\n  summary: ao\n  ground_truth: %s\n' \
+    "$2" "$2" "$3" > "$1/.supervisor/automate/$PARENT6-L$2.supervisor-result.md"
+}
+AOBAD='{checked: true, status: pass, pass_rate: "2/2"}'
+ac_lane 7 "https://github.com/o/r/pull/77"; L517="$ABL"; ao_sidecar "$L517" 7 "$AOBAD"
+AOS=".supervisor/automate/$PARENT6-L7.supervisor-result.md"
+STUB_PR_STATE=OPEN ac lane-convert-ready "$L517" >/dev/null; STUB_PR_STATE=MERGED ac lane-convert-ready "$L517" >/dev/null
+check "AO0 precondition: the malformed sidecar is unpushed and fails sidecar-check" \
+  "$([ -e "$T/remote-ac/$AOS" ] && echo pushed || echo local):$(bash "$SC/automate-helpers.sh" sidecar-check "$L517/$AOS" | grep -c '^fail ' | tr -d ' ')" "local:1"
+cp "$L517/$AOS" "$T/ao-orig.md"
+out="$(ac lane-remove "$L517")"; rc=$?
+check "AO1 lane-remove removes the lane — the excluded sidecar no longer holds it" "$rc:$([ -d "$L517" ] && echo kept || echo removed)" "0:removed"
+has "AO1b … and the removed line names the sidecar kept in salvage only" "$out" "kept in salvage only (failed sidecar-check, never pushed): $PARENT6-L7.supervisor-result.md"
+aosv="$(ls -d "$LR6"/salvage/L7-removed-* 2>/dev/null | head -1)"
+check "AO1c … salvage holds it byte-for-byte" "$(cmp -s "$T/ao-orig.md" "$aosv/supervisor/automate/$PARENT6-L7.supervisor-result.md" && echo same)" same
+ac_lane 8 "https://github.com/o/r/pull/78"; L518="$ABL"
+STUB_PR_STATE=OPEN ac lane-convert-ready "$L518" >/dev/null; STUB_PR_STATE=MERGED ac lane-convert-ready "$L518" >/dev/null
+# written AFTER the pushes: a valid sidecar would ride trail-pr, so only a late one is unpushed
+ao_sidecar "$L518" 8 '{checked: false, status: skipped}'
+out="$(ac lane-remove "$L518")"; rc=$?
+check "AO2 a VALID unpushed sidecar still refuses (only a failing one is exempt) and is named" \
+  "$rc:$(printf '%s\n' "$out" | grep -cF "metadata not pushed (local_ahead 1) — paths: .supervisor/automate/$PARENT6-L8.supervisor-result.md" | tr -d ' ')" "1:1"
+rm -f "$L518/.supervisor/automate/$PARENT6-L8.supervisor-result.md"
+ac_lane 9 "https://github.com/o/r/pull/79"; L519="$ABL"; ao_sidecar "$L519" 9 "$AOBAD"
+printf '# filed\n\n## Status: proposed\n\nby L9\n' > "$L519/.supervisor/requirements/ao9-extra.md"
+STUB_PR_STATE=OPEN ac lane-convert-ready "$L519" >/dev/null; STUB_PR_STATE=MERGED ac lane-convert-ready "$L519" >/dev/null
+printf '# changed after the push\n' >> "$L519/.supervisor/requirements/ao9-extra.md"
+out="$(ac lane-remove "$L519")"; rc=$?
+check "AO3 a failing sidecar plus any other unpushed path still refuses" "$rc:$([ -d "$L519" ] && echo kept)" "1:kept"
+cat > "$T/meta-conflict.sh" <<EOF
+#!/usr/bin/env bash
+case "\$1" in status) printf 'conflict 1\n  %s\n' "$AOS" | sed 's/L7/L9/' ;; *) exit 0 ;; esac
+EOF
+git -C "$L519" checkout -q -- . 2>/dev/null; rm -f "$L519/.supervisor/requirements/ao9-extra.md"
+out="$(LOOMWRIGHT_LANES_META_SYNC="$T/meta-conflict.sh" REMOTE11="$T/remote-ac" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" \
+  LOOMWRIGHT_LANES_TRAIL="$T/ab-spy.sh" LOOMWRIGHT_GH_BIN="$T/ab-gh" bash "$S" lane-remove "$L519" 2>&1)"; rc=$?
+check "AO4 a conflict on the failing sidecar still refuses (exempt only on local_ahead)" \
+  "$rc:$(printf '%s\n' "$out" | grep -c 'metadata not pushed (conflict 1)' | tr -d ' ')" "1:1"
+# AO5 mutation control: the exemption dropped ⇒ the L16 incident (refuses naming the sidecar).
+sed 's|_lanes_only_bad_sidecars "\$ms" \|\||false \|\||' "$SB" > "$MUT/automate-lanes.sh"
+check "AO5a mutation removed the exemption call" "$(grep -c '_lanes_only_bad_sidecars "\$ms" ||' "$MUT/automate-lanes.sh" | tr -d ' ')" 0
+ac_lane 10 "https://github.com/o/r/pull/80"; L520="$ABL"; ao_sidecar "$L520" 10 "$AOBAD"
+AC_S="$MUT/automate-lanes.sh" STUB_PR_STATE=OPEN ac lane-convert-ready "$L520" >/dev/null
+AC_S="$MUT/automate-lanes.sh" STUB_PR_STATE=MERGED ac lane-convert-ready "$L520" >/dev/null
+out="$(AC_S="$MUT/automate-lanes.sh" ac lane-remove "$L520")"; rc=$?
+check "AO5b mutation: lane-remove refuses on the excluded sidecar (the L16 incident)" \
+  "$rc:$(printf '%s\n' "$out" | grep -cF "metadata not pushed (local_ahead 1) — paths: .supervisor/automate/$PARENT6-L10.supervisor-result.md" | tr -d ' ')" "1:1"
+
 # ---- AD: policy carry (B5), relay-hook policy apply (B6), no policy ⇒ unchanged (B10), digest + inbox (B7)
 # lane-policy.sh is the REAL script (Subtask 1); the policies are a wave-policy file and a project policy
 # file written in this suite's own temp primary. HELPERS is the logging stub (progress-append recorded).

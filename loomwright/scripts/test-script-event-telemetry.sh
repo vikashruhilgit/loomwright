@@ -226,7 +226,7 @@ echo "== S7. mutation controls =="
 consent   # S6 ran without consent (TEE only); the mutants below need a would-send path
 mutant() { # mutant <name> <python replace: old> <new> — a core copy with one edit; 0 = built
   local d="$T/mut-$1"; mkdir -p "$d"
-  for f in send-telemetry-core.sh resolve-egress-config.sh result_block_parser.py validate-code-review-result.py validate-qa-result.py validate-supervisor-result.py; do cp "$HERE/$f" "$d/"; done
+  for f in send-telemetry-core.sh resolve-egress-config.sh result_block_parser.py result_nested_keys.py validate-code-review-result.py validate-qa-result.py validate-supervisor-result.py; do cp "$HERE/$f" "$d/"; done
   python3 - "$d/send-telemetry-core.sh" "$2" "$3" <<'PY' || return 1
 import sys
 p, a, b = sys.argv[1:4]

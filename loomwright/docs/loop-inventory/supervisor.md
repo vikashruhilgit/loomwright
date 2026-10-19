@@ -410,8 +410,8 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-391 | skills/self-heal-advisory/completion-tail.md | q: findings are `severity: advisory` only. The runner ALWAYS exits 0 | ground-truth result | advisory only; never changes heal_decision or blocks the PR; runner always exits 0 | rule | step-scoped | - | GAP |
 | SV-392 | skills/self-heal-advisory/completion-tail.md | q: bullet executes ONLY when the brief's `## Configuration` section carries a stamp | --brief cmd:/bare bullet without a matching ## Configuration stamp | not executed; unverified, reason cmd_unapproved | deterministic | prose | script:run-ground-truth.sh | test-run-ground-truth.sh |
 | SV-393 | skills/self-heal-advisory/completion-tail.md | q: NO_CMD_FLAG = (NON_INTERACTIVE == true) ? "--no-cmd" : "" | NON_INTERACTIVE true | pass --no-cmd: cmd:/bare checks skipped (cmd_disabled) | deterministic | prose | script:run-ground-truth.sh | test-run-ground-truth.sh |
-| SV-394 | skills/self-heal-advisory/completion-tail.md | q: Parse the single `GROUND_TRUTH_JSON: {...}` line; a parse miss | GROUND_TRUTH_JSON parse miss | checked false, status unverified | deterministic | prose | - | GAP |
-| SV-395 | skills/self-heal-advisory/completion-tail.md | q: for c in gt.per_check where c.status == "fail": | a per_check entry failed | add advisory finding (never blocking/high) | deterministic | prose | - | GAP |
+| SV-394 | skills/self-heal-advisory/completion-tail.md | q: No GROUND_TRUTH_NESTED line (runner failed / not run) | GROUND_TRUTH_NESTED line missing | checked false, status unverified | deterministic | prose | - | GAP |
+| SV-395 | skills/self-heal-advisory/completion-tail.md | q: (the failing per_check entries, severity "advisory") when any failed | a per_check entry failed | add advisory finding (never blocking/high) | deterministic | prose | script:run-ground-truth.sh | test-run-ground-truth.sh |
 | SV-396 | skills/self-heal-advisory/completion-tail.md | q: The runner resolves checks from the brief's optional `## Executable | no Executable Acceptance section and no ground-truth.json | checked false, skipped, 0/0; never an error | deterministic | prose | script:run-ground-truth.sh | test-run-ground-truth.sh |
 | SV-397 | skills/self-heal-advisory/completion-tail.md | q: `status: pass` requires zero failing checks (and ≥1 check executed); | ground-truth status | pass needs 0 failing and ≥1 executed; advisory_failures ≥1 failing; unverified on tooling failure / only deferred checks | deterministic | prose | script:run-ground-truth.sh | test-run-ground-truth.sh |
 | SV-398 | skills/self-heal-advisory/completion-tail.md | q: `qa-executor:` checks are DEFERRED to M2b slice 1b | qa-executor: checks / cmd: bullets | qa-executor deferred (unverified, never blocks pass); cmd: runs bash -c with full privileges — trust-sensitive | rule | step-scoped | script:run-ground-truth.sh | test-run-ground-truth.sh |
@@ -1212,77 +1212,76 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 432. SV-348 — scope guard only in prose
 433. SV-350 — read-once rule only in prose
 434. SV-387 — run-condition only in prose
-435. SV-395 — mapping only in prose
-436. SV-403 — projection branch only in prose
-437. SV-407 — state glossary only in prose
-438. SV-410 — rationale only in prose
-439. SV-420 — incident-map derivation only in prose
-440. SV-423 — bound/dedupe rule only in prose
-441. SV-424 — shape rule only in prose
-442. SV-435 — shape rule only in prose
-443. SV-436 — skip-form rule only in prose
-444. SV-438 — reader default only in prose
-445. SV-442 — read confirmation only in prose
-446. SV-443 — retirement note only
-447. SV-458 — record only in prose
-448. SV-464 — field semantics only in prose
-449. SV-465 — field semantics only in prose
-450. SV-466 — reason disambiguation only in prose
-451. SV-478 — prompt-line inclusion only in prose
-452. SV-484 — cheap override only in prose
-453. SV-492 — metric capture only in pseudo-code
-454. SV-499 — pointer-audit exception only in prose
-455. SV-524 — counter carriage only in prose
-456. SV-527 — dual-role note only in prose
-457. SV-528 — cost rationale only
-458. SV-532 — grader rule only in prose
-459. SV-534 — comment rule only in prose
-460. SV-537 — channel rule only in prose
-461. SV-556 — back-compat branch only in prose
-462. SV-560 — record only in prose
-463. SV-562 — history only
-464. SV-563 — proposal step only in prose
-465. SV-567 — record only in prose
-466. SV-585 — placement rule only in prose
-467. SV-586 — placement rule only in prose
-468. SV-596 — quick rule only in prose
-469. SV-597 — quick rule only in prose
-470. SV-599 — quick rule only in prose
-471. SV-601 — quick rule only in prose
-472. SV-607 — path rule only in prose
-473. SV-612 — naming rule only in prose
-474. SV-616 — conflict step only in prose
-475. SV-618 — conflict step only in prose
-476. SV-630 — budget bands are pseudo-code only
-477. SV-636 — budget table only
-478. SV-637 — budget table only
-479. SV-640 — step only in prose
-480. SV-650 — rationale only
-481. SV-663 — error table only in prose
-482. SV-665 — error table only in prose
-483. SV-669 — checklist item only in prose
-484. SV-671 — checklist item only in prose
-485. SV-672 — checklist item only in prose
-486. SV-673 — checklist item only in prose
-487. SV-675 — checklist item only in prose
-488. SV-676 — checklist item only in prose
-489. SV-720 — cache discipline only in prose
-490. SV-723 — spawn shape only in prose
-491. SV-731 — paste exception only in prose
-492. SV-746 — on-demand skill routing only in prose
-493. SV-747 — two-lens review rule restated in prose only
-494. SV-749 — Part 2 stub routing rule only in prose
-495. SV-750 — finalize.md load-by-phase rule only in prose
-496. SV-748 — rationale only
-497. SV-751 — rationale only
-498. SV-752 — rationale only
-499. SV-753 — rationale only
-500. SV-754 — rationale only
-501. SV-755 — rationale only
-502. SV-756 — rationale only
-503. SV-757 — rationale only
-504. SV-758 — rationale only
-505. SV-759 — rationale only
+435. SV-403 — projection branch only in prose
+436. SV-407 — state glossary only in prose
+437. SV-410 — rationale only in prose
+438. SV-420 — incident-map derivation only in prose
+439. SV-423 — bound/dedupe rule only in prose
+440. SV-424 — shape rule only in prose
+441. SV-435 — shape rule only in prose
+442. SV-436 — skip-form rule only in prose
+443. SV-438 — reader default only in prose
+444. SV-442 — read confirmation only in prose
+445. SV-443 — retirement note only
+446. SV-458 — record only in prose
+447. SV-464 — field semantics only in prose
+448. SV-465 — field semantics only in prose
+449. SV-466 — reason disambiguation only in prose
+450. SV-478 — prompt-line inclusion only in prose
+451. SV-484 — cheap override only in prose
+452. SV-492 — metric capture only in pseudo-code
+453. SV-499 — pointer-audit exception only in prose
+454. SV-524 — counter carriage only in prose
+455. SV-527 — dual-role note only in prose
+456. SV-528 — cost rationale only
+457. SV-532 — grader rule only in prose
+458. SV-534 — comment rule only in prose
+459. SV-537 — channel rule only in prose
+460. SV-556 — back-compat branch only in prose
+461. SV-560 — record only in prose
+462. SV-562 — history only
+463. SV-563 — proposal step only in prose
+464. SV-567 — record only in prose
+465. SV-585 — placement rule only in prose
+466. SV-586 — placement rule only in prose
+467. SV-596 — quick rule only in prose
+468. SV-597 — quick rule only in prose
+469. SV-599 — quick rule only in prose
+470. SV-601 — quick rule only in prose
+471. SV-607 — path rule only in prose
+472. SV-612 — naming rule only in prose
+473. SV-616 — conflict step only in prose
+474. SV-618 — conflict step only in prose
+475. SV-630 — budget bands are pseudo-code only
+476. SV-636 — budget table only
+477. SV-637 — budget table only
+478. SV-640 — step only in prose
+479. SV-650 — rationale only
+480. SV-663 — error table only in prose
+481. SV-665 — error table only in prose
+482. SV-669 — checklist item only in prose
+483. SV-671 — checklist item only in prose
+484. SV-672 — checklist item only in prose
+485. SV-673 — checklist item only in prose
+486. SV-675 — checklist item only in prose
+487. SV-676 — checklist item only in prose
+488. SV-720 — cache discipline only in prose
+489. SV-723 — spawn shape only in prose
+490. SV-731 — paste exception only in prose
+491. SV-746 — on-demand skill routing only in prose
+492. SV-747 — two-lens review rule restated in prose only
+493. SV-749 — Part 2 stub routing rule only in prose
+494. SV-750 — finalize.md load-by-phase rule only in prose
+495. SV-748 — rationale only
+496. SV-751 — rationale only
+497. SV-752 — rationale only
+498. SV-753 — rationale only
+499. SV-754 — rationale only
+500. SV-755 — rationale only
+501. SV-756 — rationale only
+502. SV-757 — rationale only
+503. SV-758 — rationale only
+504. SV-759 — rationale only
 
 ## Counts
 - rows: 759
@@ -1290,4 +1289,4 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 - judgment: 30
 - rule: 307
 - story: 31
-- GAP: 505
+- GAP: 504

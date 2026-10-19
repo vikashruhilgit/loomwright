@@ -624,11 +624,13 @@ SUPERVISOR_RESULT:
     checks_passed: integer
     findings:                                # advisory; failing checks only; severity is info|advisory by construction
       - { check: string, detail: string, severity: enum [info, advisory] }
+  heal_dismissed:                            # optional (dismissed-findings-01) — Phase 4.5 findings NOT dispatched to a fixer; empty ⇒ absent (never []). Each item exactly these keys.
+    - { finding: string, reason: enum [pre_existing, nit, drift, below_severity_floor], source: string, severity: string }   # severity optional
 ```
 
 **`knowledge_sources_used` additive field (v14.28.0):** optional and ADVISORY — `schema_version` stays `1`, the SubagentStop hook does not enumerate it, it is never gated on, and an absent field reads as "none used". Two shapes, same data: the nested array above and the FLAT `knowledge_sources_used` array on the `session_end` JSONL line (what `build-insights.sh` reads).
 
-**System Twin additive fields (`contract_conformance`, `benchmark_result`, `ground_truth`):** optional objects — `schema_version` stays `1` and the SubagentStop hook does not enumerate them. `contract_conformance` and `ground_truth` NEVER change `heal_decision` and NEVER block the PR; `benchmark_result` is informational. The SAME data is also emitted as the FLAT `session_end` JSONL fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`, `ground_truth_status`, `ground_truth_checks_total`, `ground_truth_checks_passed`, `ground_truth_pass_rate`) — a hard contract with `build-insights.sh`; never rename them. Authoritative definitions: `docs/RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" and §"`session_end` JSONL hard-signal fields".
+**System Twin additive fields (`contract_conformance`, `benchmark_result`, `ground_truth`):** optional objects — `schema_version` stays `1`; present, each (and each `heal_dismissed` item) carries exactly its documented key set (the SubagentStop hook's rule 15 and `/automate`'s RUN-report check refuse any other shape — `ground_truth` is the runner's `GROUND_TRUTH_NESTED:` line copied verbatim, issue #616). `contract_conformance` and `ground_truth` NEVER change `heal_decision` and NEVER block the PR; `benchmark_result` is informational. The SAME data is also emitted as the FLAT `session_end` JSONL fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`, `ground_truth_status`, `ground_truth_checks_total`, `ground_truth_checks_passed`, `ground_truth_pass_rate`) — a hard contract with `build-insights.sh`; never rename them. Authoritative definitions: `docs/RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" and §"`session_end` JSONL hard-signal fields".
 
 **Status mapping (machine-readable):**
 - `heal_decision=PASS` OR `heal_loop_ran=false` (loop skipped via `--skip-self-heal`) → `status: completed`

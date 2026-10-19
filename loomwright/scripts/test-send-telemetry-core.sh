@@ -116,7 +116,7 @@ user_scope_write_raw() { printf '%s' "$1" > "$SB_EGRESS"; }
 copy_core_siblings() {
   local d="$1" f
   mkdir -p "$d"
-  for f in resolve-egress-config.sh result_block_parser.py validate-code-review-result.py \
+  for f in resolve-egress-config.sh result_block_parser.py result_nested_keys.py validate-code-review-result.py \
            validate-qa-result.py validate-supervisor-result.py; do
     cp "$SCRIPT_DIR/$f" "$d/"
   done
