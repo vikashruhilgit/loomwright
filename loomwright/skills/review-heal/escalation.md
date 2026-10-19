@@ -1,6 +1,6 @@
 # Review-heal — Escalation cause
 
-Read this file only when the drain ends `ESCALATED` (the driver's `escalate` step has already set the fields it describes); a drain that ends `READY` never reads it. `SKILL.md` keeps the heading below as a pointer, so every `§"Escalation cause"` citation still resolves.
+Read this file only when the drain ends `ESCALATED` (the driver's `escalate` step has already set the fields it describes); a drain that ends `READY` never reads it. `SKILL.md` keeps the heading below as a pointer, so every `§"Escalation cause"` citation still resolves. The bare `§U2.5` below names a section of `SKILL.md`.
 
 ### Escalation cause (automate-followups/31)
 

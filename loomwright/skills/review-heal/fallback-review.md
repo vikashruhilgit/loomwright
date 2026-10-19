@@ -1,6 +1,6 @@
 # Review-heal — Earned Fallback Review
 
-Read this file only when `scripts/review-heal-next-step.sh` prints a `spawn` with `what: "fallback review"`; a drain round that runs no fallback never reads it. `SKILL.md` keeps the heading below as a pointer, so every `§"Earned Fallback Review — …"` citation (the driver's `contract` string included) still resolves.
+Read this file only when `scripts/review-heal-next-step.sh` prints a `spawn` with `what: "fallback review"`; a drain round that runs no fallback never reads it. `SKILL.md` keeps the heading below as a pointer, so every `§"Earned Fallback Review — …"` citation (the driver's `contract` string included) still resolves. Every other bare `§U…` citation in this file, and "Step 2", names a section of `SKILL.md`.
 
 ### Earned Fallback Review — `no_review_lens_posted` (AC3, PINNED)
 

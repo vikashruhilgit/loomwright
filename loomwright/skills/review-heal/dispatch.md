@@ -1,6 +1,6 @@
 # Review-heal — Until-mergeable dispatch signal and postmortem tail
 
-The dispatching side of the drain: the signal the Supervisor dispatcher (`scripts/dispatch-pr-review.sh`) sets and the `review-pr-runner` reads, and the churn-gated postmortem tail the driver's `postmortem` step fires after the result block is written. A drain round never reads this file; read it when changing the dispatcher, the runner's env-var reading, or the postmortem tail. `SKILL.md` keeps every heading below as a pointer, so each `§"…"` citation still resolves.
+The dispatching side of the drain: the signal the Supervisor dispatcher (`scripts/dispatch-pr-review.sh`) sets and the `review-pr-runner` reads, and the churn-gated postmortem tail the driver's `postmortem` step fires after the result block is written. A drain round never reads this file; read it when changing the dispatcher, the runner's env-var reading, or the postmortem tail. `SKILL.md` keeps every heading below as a pointer, so each `§"…"` citation still resolves. A `§"…"` citation below with no file named before it names a section of `SKILL.md`.
 
 ## Until-Mergeable Dispatch Signal (AC7 signal contract — PINNED)
 
