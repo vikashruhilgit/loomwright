@@ -54,7 +54,9 @@ TRAIL_EXCLUDED=""
 TRAIL_SKIP_IGNORE_DROP=0   # 1 only on the branch-mode push path (_trail_meta_push)
 # _trail_sidecar_code <sidecar-check fail reason> — #618: the reason as a fixed plugin token for the
 # script event (never the reason text, which names keys and paths): the phrasings come from
-# sidecar.sh / result_nested_keys.py; anything else is the catch-all sidecar_invalid.
+# sidecar.sh / result_nested_keys.py; anything else is the catch-all sidecar_invalid. DRIFT: these
+# patterns match that text — test-script-event-telemetry.sh S8 (c2) drives every branch with the REAL
+# sidecar-check output, so a reworded reason turns it red; update both in the same change.
 _trail_sidecar_code() {
   case "$1" in
     *"missing required key"*) echo sidecar_missing_key ;;

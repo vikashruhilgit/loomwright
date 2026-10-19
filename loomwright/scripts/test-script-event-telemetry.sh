@@ -301,6 +301,17 @@ printf 'SUPERVISOR_RESULT:\n  schema_version: 1\n  task_id: t\n  status: complet
 on8; x="$(cand)"; off8
 { [ "$(evs)" = "automate-trail/trail-pr/pass/sidecars_ok sidecars=1" ] && [ -z "$x" ]; }; check $? "every sidecar passing ⇒ pass sidecars_ok ($(evs))"
 
+# (c2) every _trail_sidecar_code branch, driven by the REAL sidecar_check failure text (not a copied string)
+SUPV='SUPERVISOR_RESULT:\n  schema_version: 1\n  task_id: t\n  status: completed\n  pr_url: https://github.com/o/r/pull/1\n  branch: b\n  subtasks_completed: 1\n  subtasks_failed: 0\n  heal_loop_ran: false\n  heal_iterations: null\n  heal_decision: null\n  heal_fixable_issues_fixed: 0\n  heal_remaining_issues: 0\n  summary: s\n'
+sc_code() { # <name> <file content (printf format)> — the code the real check's reason maps to
+  printf "$2" > "$T/sc-$1.md"
+  local q; q="$(bash "$HERE/automate-helpers.sh" sidecar-check "$T/sc-$1.md" | tail -n1)"
+  HERE="$HERE" bash -c '. "$HERE/automate-trail.d/trail-pr.sh"; _trail_sidecar_code "$1"' _ "${q#"fail $T/sc-$1.md: "}"
+}
+c2="$(sc_code missing 'SUPERVISOR_RESULT:\n  schema_version: 1\n'):$(sc_code extra "${SUPV}  bogus: 1\n"):$(sc_code shape "${SUPV}  ground_truth: x\n"):$(sc_code noblock 'no block here\n'):$(sc_code schema 'SUPERVISOR_RESULT:\n  schema_version: 2\n')"
+[ "$c2" = "sidecar_missing_key:sidecar_non_schema_key:sidecar_wrong_shape:sidecar_unreadable:sidecar_invalid" ]
+check $? "_trail_sidecar_code maps each real sidecar-check failure to its token ($c2)"
+
 # (d) lane-remove — only a STUCK refusal reports; the normal waits send nothing; removed ⇒ pass
 on8; HERE_L="$HERE" bash -c '. "$HERE_L/automate-lanes.sh"; LN_PRIMARY="$1"
   _lanes_remove_event "dirty working tree"
@@ -318,6 +329,25 @@ automate-lanes/lane-remove/fail/stop_failed
 automate-lanes/lane-remove/fail/abandon_record_failed
 automate-lanes/lane-remove/fail/abandon_push_failed
 automate-lanes/lane-remove/pass/removed" ] && ! leaky; }; check $? "lane-remove: stuck refusals only, normal waits silent, removed ⇒ pass ($(evs | tr '\n' ';'))"
+
+# (d2) DRIFT GUARD for lane-remove's message→code classifier (like CLOSEOUT_TABLE's): every `_refuse "…"`
+# template in the REAL remove.sh (variables → X) must either map to a code or be a listed normal wait.
+# A reworded refusal that matches neither turns this red instead of silently stopping its telemetry.
+LR_WAITS='awaiting_input — |gone (PR closed unmerged)|live '   # the documented normal waits (TELEMETRY.md)
+LR_T="$(grep -v '^[[:space:]]*#' "$HERE/automate-lanes.d/remove.sh" | grep -o '[^_a-z]_refuse "[^"]*"' | sed 's/^._refuse "//; s/"$//' \
+  | sed -E 's/\$\([^)]*$/X/; s/\$\{[^}]*\}/X/g; s/\$[A-Za-z_][A-Za-z_0-9]*/X/g' | env LC_ALL=C sort -u)"
+lr_n=0; lr_bad=""
+while IFS= read -r t; do
+  [ -n "$t" ] || continue; lr_n=$((lr_n + 1))
+  on8; HERE_L="$HERE" bash -c '. "$HERE_L/automate-lanes.sh"; LN_PRIMARY="$1"; _lanes_remove_event "$2"' _ "$T/r1" "$t"; off8
+  n_ev="$(grep -c . "$EV8" | tr -d ' ')"
+  wait=0; IFS='|' read -ra _w <<<"$LR_WAITS"; for w in "${_w[@]}"; do case "$t" in "$w"*) wait=1 ;; esac; done
+  if [ "$wait" = 1 ]; then [ "$n_ev" = 0 ] || lr_bad="$lr_bad [wait sent: $t]"
+  else { [ "$n_ev" = 1 ] && grep -q '"outcome": "fail"' "$EV8"; } || lr_bad="$lr_bad [unmapped: $t]"; fi
+done <<EOF
+$LR_T
+EOF
+{ [ "$lr_n" -ge 15 ] && [ -z "$lr_bad" ]; }; check $? "every lane-remove refusal template ($lr_n) maps to a code or is a listed normal wait${lr_bad:+ —$lr_bad}"
 
 # (e) fleet-closeout — the real subcommand: an unreadable metadata mode ⇒ pull FAILED ⇒ fail pull_failed, rooted at the primary
 FP="$T/fp"; mkrepo "$FP" acme/secret-repo; mkdir -p "$FP/.supervisor/automate"

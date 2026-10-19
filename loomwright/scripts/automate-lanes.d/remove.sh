@@ -42,6 +42,9 @@ _lanes_event() {
   [ -n "${LN_PRIMARY:-}" ] && [ -d "$LN_PRIMARY" ] || return 0
   bash "$HERE/emit-script-event.sh" --root "$LN_PRIMARY" automate-lanes "$@" >/dev/null 2>&1 </dev/null || true
 }
+# DRIFT: the patterns below match `_refuse "…"` TEXT in this file. test-script-event-telemetry.sh S8
+# (d2) extracts every template and fails on one that maps to no code and is not a listed normal wait —
+# reword a refusal and update this case (or the test's wait list) in the same change.
 # _lanes_remove_event <refusal reason> — the reason as a fixed token, ONLY for a refusal that means
 # something is stuck (unpushed metadata, a dirty tree, unpushed commits, an unreadable status, a
 # failed salvage). The normal waits — a live process or watcher, an open question, a gone PR — send
