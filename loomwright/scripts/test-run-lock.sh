@@ -94,6 +94,15 @@
 #      once aged, refused while young. Mutation control: the pre-fix
 #      `echo "$PPID ppid"` records 1, and where `kill -0 1` succeeds (root)
 #      the aged lock is never reclaimed. SKIPs where a subreaper adopts orphans.
+#  35. cross-session re-entrancy (fresh session per phase): a lock held by
+#      `automate:<run_id>` with session S; a process with
+#      LOOMWRIGHT_RUN_LOCK_SESSION_ID=S acquiring with ITS OWN owner + session
+#      id -> run_lock_reentrant owner=<outer> session_id=S, exit 0, meta
+#      byte-identical; its release (own owner / own session, env still set)
+#      leaves the lock held; another / empty env value -> run_lock_held; the
+#      outer release clears it. Mutation controls: the env comparison deleted
+#      from acquire -> run_lock_held; the env comparison added to release ->
+#      the phase release frees the lock.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -101,6 +110,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SUT="$HERE/run-lock.sh"
 # An ambient holder pin (a close-out's own, an operator's) must not decide any leg.
 unset LOOMWRIGHT_HOLDER_PID
+# … nor an ambient coordinator session (a phase session running this suite): only test 35 sets it.
+unset LOOMWRIGHT_RUN_LOCK_SESSION_ID
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
@@ -953,6 +964,54 @@ fi
 rm -rf "$STUB34"
 rm -f "$D34.ppid" "$D34.err" "${D34m:-}.ppid" "${D34m:-}.err"
 rm -rf "$PSSTUB" "$TBL" "$RUN_ERR_FILE"
+
+echo "== 35. cross-session re-entrancy via LOOMWRIGHT_RUN_LOCK_SESSION_ID (acquire only, never release) =="
+# t35_leg <sut> <root> — the coordinator takes the lock, a phase session (env = the coordinator's
+# session) acquires and releases with its own owner / session id; prints
+# `<acquire rc>|<acquire stdout>|<meta unchanged 0/1>|<status after the phase release>`.
+t35_leg() {
+  local sut="$1" root="$2" out rc before same
+  bash "$sut" acquire --owner automate:run35 --session-id sessC35 --root "$root" >/dev/null 2>&1
+  before="$(cat "$(meta_file "$root")")"
+  out="$(LOOMWRIGHT_RUN_LOCK_SESSION_ID=sessC35 bash "$sut" acquire --owner supervisor:sessP35 --session-id sessP35 --root "$root" 2>/dev/null)"; rc=$?
+  [ "$(cat "$(meta_file "$root" )" 2>/dev/null)" = "$before" ] && same=1 || same=0
+  LOOMWRIGHT_RUN_LOCK_SESSION_ID=sessC35 bash "$sut" release --owner supervisor:sessP35 --session-id sessP35 --root "$root" >/dev/null 2>&1
+  printf '%s|%s|%s|%s' "$rc" "$out" "$same" "$(bash "$sut" status --root "$root" 2>/dev/null | cut -d' ' -f1-2)"
+}
+D35="$(fresh_root)"
+r35="$(t35_leg "$SUT" "$D35")"
+if [ "$r35" = "0|run_lock_reentrant owner=automate:run35 session_id=sessC35|1|LOCKED owner=automate:run35" ]; then
+  ok "phase session with the coordinator's session re-enters (meta unchanged) and its own release leaves the lock held: $r35"
+else
+  no "cross-session re-entry / no-release: want '0|run_lock_reentrant owner=automate:run35 session_id=sessC35|1|LOCKED owner=automate:run35', got '$r35'"
+fi
+LOOMWRIGHT_RUN_LOCK_SESSION_ID=sessOTHER run_sut acquire --owner supervisor:x --session-id sessP35 --root "$D35"
+if [ "$RUN_RC" -eq 1 ] && case "$RUN_OUT" in "run_lock_held owner=automate:run35 "*) true ;; *) false ;; esac; then
+  ok "a different LOOMWRIGHT_RUN_LOCK_SESSION_ID is refused: $RUN_OUT"
+else
+  no "a different coordinator session must be refused: rc=$RUN_RC out='$RUN_OUT'"
+fi
+LOOMWRIGHT_RUN_LOCK_SESSION_ID= run_sut acquire --owner supervisor:x --session-id sessP35 --root "$D35"
+if [ "$RUN_RC" -eq 1 ]; then ok "an empty LOOMWRIGHT_RUN_LOCK_SESSION_ID never re-enters"; else no "empty env must not re-enter: rc=$RUN_RC out='$RUN_OUT'"; fi
+run_sut release --owner automate:run35 --root "$D35"
+run_sut status --root "$D35"
+if [ "$RUN_OUT" = "UNLOCKED" ]; then ok "the coordinator's own release clears it"; else no "coordinator release should clear: $RUN_OUT"; fi
+# Mutation controls, each on a gated scratch copy.
+MUT35="$(mktemp -d)"
+awk '/^  if \[ -n "\$\{LOOMWRIGHT_RUN_LOCK_SESSION_ID:-\}" \] && \[ "\$lk_session" = "\$LOOMWRIGHT_RUN_LOCK_SESSION_ID" \]; then$/ { skip = 1 }
+     skip { if ($0 ~ /^  fi$/) skip = 0; next } { print }' "$SUT" > "$MUT35/acq.sh"
+if [ -s "$MUT35/acq.sh" ] && ! cmp -s "$SUT" "$MUT35/acq.sh" && bash -n "$MUT35/acq.sh"; then
+  r35m="$(t35_leg "$MUT35/acq.sh" "$(fresh_root)")"
+  case "$r35m" in "1|run_lock_held owner=automate:run35 "*) ok "mutation control: env comparison deleted from acquire ⇒ run_lock_held ($r35m)" ;;
+    *) no "mutation control (acquire) did not trip: $r35m" ;; esac
+else no "mutation control (acquire): mutant not built"; fi
+sed 's/^     || { \[ -n "\$SESSION_ID" \] && \[ -n "\$lk_session" \] && \[ "\$lk_session" = "\$SESSION_ID" \]; }; then$/     || { [ -n "$SESSION_ID" ] \&\& [ -n "$lk_session" ] \&\& [ "$lk_session" = "$SESSION_ID" ]; } || [ "$lk_session" = "${LOOMWRIGHT_RUN_LOCK_SESSION_ID:-}" ]; then/' "$SUT" > "$MUT35/rel.sh"
+if [ -s "$MUT35/rel.sh" ] && ! cmp -s "$SUT" "$MUT35/rel.sh" && bash -n "$MUT35/rel.sh"; then
+  r35r="$(t35_leg "$MUT35/rel.sh" "$(fresh_root)")"
+  case "$r35r" in *"|UNLOCKED") ok "mutation control: env comparison added to release ⇒ the phase release frees the lock ($r35r)" ;;
+    *) no "mutation control (release) did not trip: $r35r" ;; esac
+else no "mutation control (release): mutant not built"; fi
+rm -rf "$MUT35"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
