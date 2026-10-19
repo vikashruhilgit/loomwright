@@ -21,8 +21,11 @@
 #   (a) security / financial / migration surfaces — path OR content, case-insensitive:
 #       *auth*, *authz*, *security*, *crypto*, *secret*, *token*, *payment*, migrations/, *migration*
 #   (b) workflow-automation / orchestration / cross-agent prompt surfaces —
-#       any changed path under .github/workflows/, hooks/, agents/, commands/, skills/ (the directory
-#       at the path root or anywhere below it), OR path/content matching (case-insensitive):
+#       any changed path under .github/workflows/, hooks/, agents/, commands/, command-parts/, skills/
+#       (the directory at the path root or anywhere below it — `command-parts/` is where the split
+#       command docs' moved text lives, `docs/command-parts/<cmd>/`, so a parts-only edit to /setup,
+#       /dreaming or /agent-help is as high-risk as the same edit to its router), OR path/content
+#       matching (case-insensitive):
 #       workflow, automation, orchestration
 #   (c) sheer size — changed_lines > 400 OR changed_files > 15, where changed_lines is the count of
 #       `+`/`-` lines of `git diff <base>...<head>` (the `+++`/`---` file headers excluded) and
@@ -78,7 +81,7 @@ SELF="classify-risk.sh"
 # The heuristic as DATA — the classifier and --kind-table both read these lists (no second copy).
 # ---------------------------------------------------------------------------
 GENERIC_GLOBS='*auth* *authz* *security* *crypto* *secret* *token* *payment* migrations/ *migration*'
-GENERIC_DIRS='.github/workflows/ hooks/ agents/ commands/ skills/'
+GENERIC_DIRS='.github/workflows/ hooks/ agents/ commands/ command-parts/ skills/'
 GENERIC_WORDS='workflow automation orchestration'
 SIZE_LINES=400
 SIZE_FILES=15

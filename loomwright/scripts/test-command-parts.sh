@@ -43,7 +43,12 @@
 #      an unreferenced part (C), a moved heading deleted from a part (D), a kept heading deleted (E),
 #      one changed byte in a part (E), a router padded past 20480 bytes inside an index-only block (F
 #      — E keeps running, the assembly is unchanged), the `memory` mapping removed from /setup's read
-#      rule (G), a part gaining an un-negated `runs <the squash-merge command>` line (H).
+#      rule (G), a part gaining an un-negated `runs <the squash-merge command>` line (H); and M-I, a
+#      scratch copy of the suite over a tree with one part edited after the split, which must exit 0
+#      with exactly one SKIP line per edited command (E retired for it). The E-proof controls (M-D2 / M-E)
+#      are gated per command on the LIVE tree: once a command is edited since the split they print
+#      a `note:` (E's SKIP is that command's one retirement line), and M-F compares the padded
+#      mirror's retirement state with the live tree's.
 # Read-only; scratch files under mktemp -d. Exit 0 = all pass, 1 = any failure.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -399,28 +404,47 @@ else no "the unmutated mirror fails D (or dreaming has no part) — the D contro
 # M-D2 / M-E — the move-only proof, run on a mirror: a KEPT heading deleted from dreaming.md, and
 # one changed byte (a trailing space) on a moved line of setup/memory.md, each fail it.
 # proof_on <mirror root> <command> — 0 iff the mirror's assembly matches the fixture's original row.
+# Each control is gated on ITS OWN command: once the live tree has edited that command since the
+# split, E has retired it to a SKIP and the mirror (built from the live tree) has no passing
+# baseline to mutate, so the control prints a `note:` (not a second SKIP — E's one SKIP line per
+# command is the retirement record) and the other command's control still runs. Same shape as the
+# precedent's M9 note (test-automate-loop-split.sh).
 proof_on() { bash "$ASM" "$1/loomwright/commands/$2.md" "$TMP/proof-on.$$" 2>/dev/null && proof_matches "loomwright/commands/$2.md" "$TMP/proof-on.$$"; }
 ME="$TMP/me"; mk_mirror "$ME"
-if printf 'x' | sha256 >/dev/null 2>&1 && proof_on "$ME" dreaming && proof_on "$ME" setup; then
-  f="$ME/loomwright/commands/dreaming.md"
-  kept="$(blocks "$PLUGIN/commands/dreaming.md" | awk -F '\t' '{print $2 "\t" $3}' > "$TMP/me.blk"; \
-          awk 'NR == FNR {b[++n] = $1; e[n] = $2; next} /^## / {for (i = 1; i <= n; i++) if (FNR >= b[i] && FNR <= e[i]) next; print; exit}' "$TMP/me.blk" "$PLUGIN/commands/dreaming.md")"
-  awk -v h="$kept" '!d && $0 == h {d = 1; next} {print}' "$PLUGIN/commands/dreaming.md" > "$f"
-  if [ -n "$kept" ] && mutated "$f" "$PLUGIN/commands/dreaming.md"; then
-    check_headings "$f" >/dev/null && dh=1 || dh=0
-    proof_on "$ME" dreaming && no "MUTATION CONTROL: a deleted kept heading ('$kept') passed the move-only proof (E)" \
-      || ok "MUTATION CONTROL: a deleted kept heading fails the move-only proof (E; D alone $([ "$dh" = 1 ] && echo 'cannot see it — both sides lose it' || echo 'also rejects it'))"
-  else no "could not build the kept-heading mutant — E control inconclusive"; fi
-  cp "$PLUGIN/commands/dreaming.md" "$f"
-  f="$ME/loomwright/docs/command-parts/setup/memory.md"
-  awk 'NR == 3 {print $0 " "; next} {print}' "$PLUGIN/docs/command-parts/setup/memory.md" > "$f"
-  if mutated "$f" "$PLUGIN/docs/command-parts/setup/memory.md"; then
-    proof_on "$ME" setup && no "MUTATION CONTROL: a part with one changed byte passed the move-only proof (E)" \
-      || ok "MUTATION CONTROL: a part with one changed byte fails the move-only proof (E)"
-    case "$(edited_since_split "$ME" setup)" in *"docs/command-parts/setup/memory.md"*) ok "MUTATION CONTROL: the changed part retires /setup's proof to a SKIP naming it (E gating)" ;;
-      *) no "MUTATION CONTROL: the changed part did NOT retire /setup's proof (E gating)" ;; esac
-  else no "could not build the changed-byte mutant — E control inconclusive"; fi
-else no "the unmutated mirror fails the move-only proof (or no sha256 tool) — the E controls are inconclusive"; fi
+if ! printf 'x' | sha256 >/dev/null 2>&1; then
+  no "no sha256 tool — the E controls are inconclusive"
+else
+  if [ -n "$(edited_since_split "$REPO" dreaming)" ]; then
+    echo "  note: /dreaming is edited since the split (E retired) — the M-D2 kept-heading control has no unedited baseline to mutate"
+  elif ! proof_on "$ME" dreaming; then
+    no "the unmutated mirror fails the /dreaming move-only proof — the M-D2 control is inconclusive"
+  else
+    f="$ME/loomwright/commands/dreaming.md"
+    kept="$(blocks "$PLUGIN/commands/dreaming.md" | awk -F '\t' '{print $2 "\t" $3}' > "$TMP/me.blk"; \
+            awk 'NR == FNR {b[++n] = $1; e[n] = $2; next} /^## / {for (i = 1; i <= n; i++) if (FNR >= b[i] && FNR <= e[i]) next; print; exit}' "$TMP/me.blk" "$PLUGIN/commands/dreaming.md")"
+    awk -v h="$kept" '!d && $0 == h {d = 1; next} {print}' "$PLUGIN/commands/dreaming.md" > "$f"
+    if [ -n "$kept" ] && mutated "$f" "$PLUGIN/commands/dreaming.md"; then
+      check_headings "$f" >/dev/null && dh=1 || dh=0
+      proof_on "$ME" dreaming && no "MUTATION CONTROL: a deleted kept heading ('$kept') passed the move-only proof (E)" \
+        || ok "MUTATION CONTROL: a deleted kept heading fails the move-only proof (E; D alone $([ "$dh" = 1 ] && echo 'cannot see it — both sides lose it' || echo 'also rejects it'))"
+    else no "could not build the kept-heading mutant — E control inconclusive"; fi
+    cp "$PLUGIN/commands/dreaming.md" "$f"
+  fi
+  if [ -n "$(edited_since_split "$REPO" setup)" ]; then
+    echo "  note: /setup is edited since the split (E retired) — the M-E changed-byte control has no unedited baseline to mutate"
+  elif ! proof_on "$ME" setup; then
+    no "the unmutated mirror fails the /setup move-only proof — the M-E control is inconclusive"
+  else
+    f="$ME/loomwright/docs/command-parts/setup/memory.md"
+    awk 'NR == 3 {print $0 " "; next} {print}' "$PLUGIN/docs/command-parts/setup/memory.md" > "$f"
+    if mutated "$f" "$PLUGIN/docs/command-parts/setup/memory.md"; then
+      proof_on "$ME" setup && no "MUTATION CONTROL: a part with one changed byte passed the move-only proof (E)" \
+        || ok "MUTATION CONTROL: a part with one changed byte fails the move-only proof (E)"
+      case "$(edited_since_split "$ME" setup)" in *"docs/command-parts/setup/memory.md"*) ok "MUTATION CONTROL: the changed part retires /setup's proof to a SKIP naming it (E gating)" ;;
+        *) no "MUTATION CONTROL: the changed part did NOT retire /setup's proof (E gating)" ;; esac
+    else no "could not build the changed-byte mutant — E control inconclusive"; fi
+  fi
+fi
 
 # M-F — setup.md padded past the limit INSIDE an index-only block: F rejects it, while the assembly
 # is unchanged and E keeps running (index-only prose never retires the proof).
@@ -430,8 +454,11 @@ awk -v p="$pad" '{print} !d && $0 == "<!-- index-only:begin -->" {print p; d = 1
 if mutated "$f" "$PLUGIN/commands/setup.md"; then
   [ "$(wc -c < "$f" | tr -d ' ')" -lt "$LIMIT" ] && no "MUTATION CONTROL: a router padded past $LIMIT bytes was ACCEPTED (F)" \
     || ok "MUTATION CONTROL: a router padded past $LIMIT bytes is REJECTED (F)"
-  bash "$ASM" "$f" "$TMP/mf.asm" 2>/dev/null && cmp -s "$TMP/mf.asm" "$TMP/asm-setup.md" && [ -z "$(edited_since_split "$MF" setup)" ] \
-    && ok "MUTATION CONTROL: the index-only padding leaves the assembly identical and E running (only F trips)" \
+  # The padding must not change E's retirement state: compared with the LIVE tree's (empty on an
+  # unedited tree, the same retired file list once /setup is edited since the split).
+  bash "$ASM" "$f" "$TMP/mf.asm" 2>/dev/null && cmp -s "$TMP/mf.asm" "$TMP/asm-setup.md" \
+    && [ "$(edited_since_split "$MF" setup)" = "$(edited_since_split "$REPO" setup)" ] \
+    && ok "MUTATION CONTROL: the index-only padding leaves the assembly identical and E's retirement state unchanged (only F trips)" \
     || no "MUTATION CONTROL: the index-only padding changed the assembly or retired E — the F control is not isolated"
 else no "could not build the padded mutant — F control inconclusive"; fi
 
@@ -456,6 +483,36 @@ if [ -z "$(squash_hits "$MH/loomwright/docs/command-parts/")" ]; then
       || ok "MUTATION CONTROL: a part with a positive-form squash line is REJECTED (H)"
   else no "could not build the squash mutant — H control inconclusive"; fi
 else no "the unmutated mirror fails H — the H control is inconclusive"; fi
+
+# M-I — E retirement, end to end: a scratch copy of this suite + the three routers and their parts,
+# with ONE byte appended to a moved line of setup/memory.md, must exit 0 with exactly one SKIP line
+# for /setup (E's, naming memory.md) and one per command the live tree already edited — an edit after the split retires the proof, it never reds
+# the suite. The nested copy skips M-I itself (TEST_COMMAND_PARTS_NESTED) so it cannot recurse.
+if [ -n "${TEST_COMMAND_PARTS_NESTED:-}" ]; then
+  echo "  note: M-I skipped inside the nested run (no recursion)"
+else
+  MI="$TMP/mi"; mk_mirror "$MI"
+  mkdir -p "$MI/loomwright/scripts/fixtures/automate-loop-split" "$MI/loomwright/scripts/fixtures/command-parts"
+  cp "$HERE/test-command-parts.sh" "$HERE/hermetic-test-env.sh" "$MI/loomwright/scripts/"
+  cp "$ASM" "$MI/loomwright/scripts/fixtures/automate-loop-split/"
+  cp "$FIXTURE" "$MI/loomwright/scripts/fixtures/command-parts/"
+  f="$MI/loomwright/docs/command-parts/setup/memory.md"
+  awk 'NR == 3 {print $0 " "; next} {print}' "$PLUGIN/docs/command-parts/setup/memory.md" > "$f"
+  if mutated "$f" "$PLUGIN/docs/command-parts/setup/memory.md" && [ -n "$(edited_since_split "$MI" setup)" ]; then
+    TEST_COMMAND_PARTS_NESTED=1 bash "$MI/loomwright/scripts/test-command-parts.sh" > "$TMP/mi.out" 2>&1; mrc=$?
+    nskip="$(grep -c '^  SKIP:' "$TMP/mi.out")"
+    # One SKIP per command edited in the scratch tree: /setup (this edit) plus any command the LIVE
+    # tree has already edited since the split (the mirror is copied from it).
+    want=0; for c in $COMMANDS; do [ -n "$(edited_since_split "$MI" "$c")" ] && want=$((want+1)); done
+    nsetup="$(grep -c '^  SKIP: E move-only proof for /setup .*docs/command-parts/setup/memory.md' "$TMP/mi.out")"
+    if [ "$mrc" -eq 0 ] && [ "$nskip" = "$want" ] && [ "$nsetup" = "1" ]; then
+      ok "MUTATION CONTROL: one part edited after the split ⇒ the suite exits 0 with exactly ONE named SKIP for /setup ($nskip SKIP line(s), one per edited command)"
+    else
+      no "MUTATION CONTROL: one part edited after the split ⇒ rc=$mrc, $nskip SKIP line(s), $nsetup for /setup (want rc 0, $want total, exactly 1 naming /setup + memory.md):"
+      grep -E '^  (FAIL|SKIP):' "$TMP/mi.out" | sed -n '1,8s/^/    /p'
+    fi
+  else no "could not build the edited-part tree — M-I control inconclusive"; fi
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

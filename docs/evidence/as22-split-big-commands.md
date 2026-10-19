@@ -6,6 +6,14 @@ Base `626f35fab85796da1c0a4da0b2e80480a8249a02`. Every "base" number below was m
 
 The requirement asked for "router + parts no larger than the original". Under the move-only index convention every moved heading stays in the router as an index entry. That keeps every citation of a heading resolving without an edit, and it adds the entries, markers and read rules on top of the original bytes. The brief reads the AC as "the content is exactly the original": the assembled text is byte-identical (check E below). The routing overhead is measured per command in the part map. The alternative, no index entries with every citation re-pointed to its part, would meet the literal byte bound but drop the citation-safety net. **Default taken: index entries.**
 
+## Owner decision OD2 — `/dreaming`'s `## Purpose` / `## Usage` / `## Parameters` live in a part (AC2 keep list vs the size bound)
+
+AC2's `/dreaming` keep list names `## Purpose`, `## Usage` and `## Parameters` as router sections, and AC2/AC6 F also require the router to be < 20480 bytes. Both cannot hold. Measured on this branch: the router is 18916 B; putting `overview.md` (5450 B, exactly those three sections) back in place of its 447 B split block gives **23919 B** (18916 − 447 + 5450) — 3439 B over the bound, before any other keep-list section returns. So the three sections moved to `docs/command-parts/dreaming/overview.md`, and the router keeps their headings as index entries (citations still resolve). **Why a readiness decline still reads no part:** the decline path is `### Step 0 — readiness` and `### Run report (four mandatory lines)`, both still in the router; the read rule loads `overview.md` only once readiness passes (or `--force`), before Phase 1 GATHER. **Decision for the owner:** accept the deviation on record (the size bound wins; AC2's keep list is read as "every section a declined run needs"), or amend AC2's keep list to drop the three sections. No code change either way.
+
+## Owner decision OD3 — vendor-coupling flat total 2654 → 2664 (AC10 "unchanged" vs AC3's read rules)
+
+AC10 asks for the flat total unchanged; AC3 requires each read rule to name the parts by their `${CLAUDE_PLUGIN_ROOT}/docs/command-parts/<command>/` runtime paths, and each such path is a counted install-root reference. Both cannot hold: the read rules add 9 references (setup 7, dreaming 1, agent-help 1) and the new test's needle adds 1, so the total is 2664 (table under AC10 below). The manifest records the real counts; a flat total would need either a read rule without runtime paths (breaks AC3) or an allowance that lies about what the file carries. **Decision for the owner:** accept the +10 on record, or amend AC10 to "unchanged except for the read rules' runtime paths". No manifest change.
+
 ## Part map per command (part → headings it holds → bytes), router bytes vs base
 
 ### /setup
@@ -175,7 +183,7 @@ loomwright/skills/automate-loop/per-item-loop.md:  - **Honest limits.** The gate
 
 | Gate / test | Base | Branch | Note |
 |---|---|---|---|
-| `loomwright/scripts/test-command-parts.sh` (AC6, new) | absent | 37/37 | A–H + 12 mutation controls |
+| `loomwright/scripts/test-command-parts.sh` (AC6, new) | absent | 38/38 | A–H + 13 mutation controls (review iteration 1 added M-I: one part edited after the split ⇒ exit 0, one SKIP for that command) |
 | `scripts/check-token-budget.sh` (AC7) | OK, exit 0 | OK, exit 0 | `.commands` rows now router + parts |
 | `scripts/test-check-token-budget.sh` (AC7) | 98/98 | 111/111 | +13: parts counted / nested part / router alone / empty parts dir / orphaned parts dir / symlink under parts dir / 2 mutation controls |
 | `scripts/check-doc-currency.sh` (AC8, AC11) | OK, 9 surfaces | OK, 16 surfaces | + the 7 agent-help parts; agents/commands/skills = 14/23/42 on both |
@@ -210,7 +218,7 @@ The `.commands[<stem>]` weight is now `<commands dir>/<stem>.md` + every `*.md` 
 | `dreaming` | 34378 | 36313 | 37813 | no (1500 headroom) |
 | `agent-help` | 21178 | 23868 | 23236 → **25926** | yes — breached by 632; raised by exactly the measured overhead 23868 − 21178 = **2690** proxy tokens (≤ overhead + ~10%), restoring the base headroom of 2058; `measured` 21123 → 23868; note `as22: router + parts = base + index/read-rule overhead (2690 proxy tokens)`; the ARCHITECTURE_CONTRACTS mirror row moved in the same edit |
 
-## AC10 — vendor coupling (a recorded departure from the AC's "flat total unchanged")
+## AC10 — vendor coupling (a recorded departure from the AC's "flat total unchanged" — owner decision OD3 above)
 
 Measured with `bash scripts/check-vendor-coupling.sh --print-allowances` after `git add`. The allowances moved to the router and part paths that now carry the references, and each part has the reason `moved by automate-speed/22 split — no reference added`. **The flat total is not unchanged. It cannot be, because the read rules genuinely add install-root references.** Writing "no reference added" for the routers, or fudging a count, would have been false.
 
@@ -244,6 +252,6 @@ Flat reference total **2654 → 2664** (+9 from the three read rules, +1 from th
 
 ## Honest limits and follow-ups
 
-- `loomwright/scripts/test-meta-sync.d/03-mutants-scrub-allowlist.sh` case 54 scans `agents/`, `commands/` and `skills/` for literal home-path examples, and so does not see `docs/command-parts/`. Today the parts carry **0** hits, as did the three docs at base, so the guard loses no live finding. A future home path written into a part would escape it. Follow-up: add `docs/command-parts` to that scan. It was not edited here because it is outside this subtask's lanes.
+- Fixed in review iteration 1: `loomwright/scripts/test-meta-sync.d/03-mutants-scrub-allowlist.sh` case 54's home-path guard now scans `docs/command-parts/` alongside `agents/`, `commands/` and `skills/`, with a fixture case proving it fires on a part. The same iteration added `command-parts/` to `classify-risk.sh`'s `GENERIC_DIRS`, so a parts-only edit to a split command classifies `high_risk: true` like the same edit to its router (test case B5b).
 - Check D (router heading sequence == assembled) cannot see a deleted **kept** heading, because both sides lose it. The move-only proof E sees it, and mutation M-D2 shows E catching it. The brief's pin for D ("delete one kept heading") is therefore proved by E, and D's own mutant deletes a moved heading from a part.
 - The running-system runs withheld Bash from bare `/setup` and `/agent-help` on purpose (read-only proof). The bare dashboard therefore could not run its probes, and its output says so.

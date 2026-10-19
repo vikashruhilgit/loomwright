@@ -12,5 +12,7 @@ each with a mutation control. `scripts/check-token-budget.sh` now counts a comma
 `agent-help` ceiling is raised by exactly the routing overhead. `scripts/check-doc-currency.sh` also scans the
 agent-help parts. The readers in `test-curation-status.sh`, `test-rules-docs.sh` and the setup-memory branch-mode
 part read the assembled text. Vendor-coupling allowances move to the paths that now carry the references; the read
-rules add install-root references, each counted with its reason. Measurements and the running-system transcript:
+rules add install-root references, each counted with its reason. `classify-risk.sh` adds `command-parts/` to its
+workflow-surface directories, so a parts-only edit to a split command classifies high-risk like the same edit to its
+router (the `--auto-merge` gate's condition 6), and the meta-sync home-path guard scans the parts too. Measurements and the running-system transcript:
 `docs/evidence/as22-split-big-commands.md`.

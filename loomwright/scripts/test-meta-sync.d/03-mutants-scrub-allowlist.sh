@@ -251,13 +251,18 @@ echo "== 54. no literal home-path example in the shipped prompts (ms/04's accept
 # The guard reads the SHIPPED home_path rule out of meta-sync.sh, so it can never drift from the scrub.
 HP_RE="$(sed -n 's/^home_path\${TAB}i\${TAB}//p' "$SUTB")"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
-home_examples() { env LC_ALL=C grep -rniE -e "$HP_RE" "$1/loomwright/agents" "$1/loomwright/commands" "$1/loomwright/skills" 2>/dev/null; }
+# docs/command-parts/ holds the split command docs' moved text (automate-speed/22) — same prose
+# surface as commands/, so the guard scans it too.
+home_examples() { env LC_ALL=C grep -rniE -e "$HP_RE" "$1/loomwright/agents" "$1/loomwright/commands" "$1/loomwright/docs/command-parts" "$1/loomwright/skills" 2>/dev/null; }
 [ -n "$HP_RE" ]; check $? "the home_path rule was read from meta-sync.sh ($HP_RE)"
 hits="$(home_examples "$REPO_ROOT")"
-[ -z "$hits" ]; check $? "agents/commands/skills carry no literal home-path example — use /Users/<name>/ (got: $(printf '%s' "$hits" | head -3 | tr '\n' '|'))"
+[ -z "$hits" ]; check $? "agents/commands/command-parts/skills carry no literal home-path example — use /Users/<name>/ (got: $(printf '%s' "$hits" | head -3 | tr '\n' '|'))"
 FX="$TROOT/guard-fixture"; mkdir -p "$FX/loomwright/agents" "$FX/loomwright/commands" "$FX/loomwright/skills/x"
 printf '%s\n' '- **Project:** /Users/name/my-project' > "$FX/loomwright/skills/x/SKILL.md"
 [ -n "$(home_examples "$FX")" ]; check $? "the guard fires on a fixture that reintroduces a literal example (/Users/name/)"
+FXP="$TROOT/guard-fixture-parts"; mkdir -p "$FXP/loomwright/docs/command-parts/setup"
+printf '%s\n' '- **Project:** /Users/name/my-project' > "$FXP/loomwright/docs/command-parts/setup/x.md"
+[ -n "$(home_examples "$FXP")" ]; check $? "the guard fires on a literal example in a split command part (docs/command-parts/)"
 
 echo "== 55. mutation control (xii): the old unanchored home_path rule -> the API-route assertion (53) must turn red =="
 MUT_XII="$TROOT/mutant-xii"
