@@ -69,25 +69,38 @@ _trail_event() {
   local root; root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
   bash "$HERE/emit-script-event.sh" --root "$root" automate-trail trail-pr "$@" >/dev/null 2>&1 </dev/null || true
 }
+# _trail_report_shape — #618: report what the LAST _trail_candidates call found about the run's
+# result sidecars. Called by the two trail-pr paths only (trail_pr, _trail_meta_push), never from
+# _trail_candidates itself: that builder is shared with trail-unstage, trail-gate and closeout's
+# sync step, which would re-send (and mislabel as trail-pr) the same result on every close-out.
+TRAIL_SC_N=0; TRAIL_SC_CODES=""
+_trail_report_shape() {
+  local c
+  if [ -n "$TRAIL_SC_CODES" ]; then
+    for c in $TRAIL_SC_CODES; do _trail_event warn "$c"; done
+  elif [ "$TRAIL_SC_N" -gt 0 ]; then
+    # every result sidecar passed ⇒ close any open shape thread; the evidence gate's
+    # `pr not merged` exclusions are expected and never reported
+    _trail_event pass sidecars_ok --count "sidecars=$TRAIL_SC_N"
+  fi
+  return 0
+}
 _trail_candidates() {
   local rf_rel="$1" run_id="$2"
-  local cands="" p q item n_sc=0 n_bad=0
-  TRAIL_EXCLUDED=""
+  local cands="" p q item
+  TRAIL_EXCLUDED=""; TRAIL_SC_N=0; TRAIL_SC_CODES=""
   cands="$rf_rel"
   local sc_dir; sc_dir="$(dirname "$rf_rel")"
   for p in "$sc_dir/$run_id.review-heal-result.md" "$sc_dir/$run_id.supervisor-result.md"; do
     [ -f "$p" ] || continue
-    n_sc=$((n_sc + 1))
+    TRAIL_SC_N=$((TRAIL_SC_N + 1))
     q="$(sidecar_check "$p")"
     case "$q" in
       "ok $p") cands="$cands"$'\n'"$p" ;;
-      *) TRAIL_EXCLUDED="$TRAIL_EXCLUDED; excluded $p — ${q#"fail $p: "}"; n_bad=$((n_bad + 1))
-         _trail_event warn "$(_trail_sidecar_code "${q#"fail $p: "}")" ;;
+      *) TRAIL_EXCLUDED="$TRAIL_EXCLUDED; excluded $p — ${q#"fail $p: "}"
+         TRAIL_SC_CODES="${TRAIL_SC_CODES:+$TRAIL_SC_CODES }$(_trail_sidecar_code "${q#"fail $p: "}")" ;;
     esac
   done
-  # every result sidecar this run has passed sidecar-check ⇒ close any open shape thread (#618);
-  # the evidence gate's `pr not merged` exclusions are expected and never reported
-  [ "$n_sc" -gt 0 ] && [ "$n_bad" = 0 ] && _trail_event pass sidecars_ok --count "sidecars=$n_sc"
   local queue
   queue="$(awk '/^## Queue/{q=1;next} /^## /{q=0} q && /^- \[[ xX]\] /{sub(/^- \[[ xX]\] /,""); sub(/[[:space:]]+#.*$/,""); sub(/[[:space:]]+$/,""); print}' "$rf_rel" 2>/dev/null)"
   while IFS= read -r item; do
@@ -362,7 +375,7 @@ _trail_meta_push() {
   esac
   local branch="${bm#on }"
   TRAIL_SKIP_IGNORE_DROP=1
-  _trail_candidates "$rf_rel" "$run_id"
+  _trail_candidates "$rf_rel" "$run_id"; _trail_report_shape
   TRAIL_SKIP_IGNORE_DROP=0
   _evidence_gate
   local excluded="$TRAIL_EXCLUDED" list dl dn dd dp
@@ -439,7 +452,7 @@ trail_pr() {
   fi
 
   # ---- candidate paths (explicit; never -A / .) ----------------------------
-  _trail_candidates "$rf_rel" "$run_id"
+  _trail_candidates "$rf_rel" "$run_id"; _trail_report_shape
   # Evidence-gated stamps: a done-stamped requirement / done brief rides only
   # when its PR reads merged (never a done claim for unmerged work).
   _evidence_gate

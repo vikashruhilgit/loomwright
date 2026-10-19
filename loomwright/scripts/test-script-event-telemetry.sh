@@ -289,7 +289,11 @@ on8; ( cd "$T/r1" && printf 'closeout: skipped — run lock held by automate:x (
 TR="$T/tr"; mkrepo "$TR" acme/secret-repo; mkdir -p "$TR/.supervisor/automate"
 printf '# Automate Run: r\n## Status: running\n## Queue\n## Current\n## Progress\n' > "$TR/.supervisor/automate/r.md"
 printf 'SUPERVISOR_RESULT:\n  schema_version: 1\n  status: completed\n' > "$TR/.supervisor/automate/r.supervisor-result.md"
-cand() { ( cd "$TR" && HERE="$HERE" bash -c '. "$HERE/automate-trail.d/sidecar.sh"; . "$HERE/automate-trail.d/trail-pr.sh"; _trail_candidates .supervisor/automate/r.md r >/dev/null; printf "%s" "$TRAIL_EXCLUDED"' ); }
+cand() { ( cd "$TR" && HERE="$HERE" bash -c '. "$HERE/automate-trail.d/sidecar.sh"; . "$HERE/automate-trail.d/trail-pr.sh"; _trail_candidates .supervisor/automate/r.md r >/dev/null; [ "${1:-}" = builder-only ] || _trail_report_shape; printf "%s" "$TRAIL_EXCLUDED"' _ "${1:-}" ); }
+# the shared builder alone (trail-unstage / trail-gate / closeout's sync call it) reports NOTHING
+on8; x="$(cand builder-only)"; off8
+{ [ ! -s "$EV8" ] && case "$x" in *"excluded .supervisor/automate/r.supervisor-result.md"*) true ;; *) false ;; esac; }
+check $? "the shared candidate builder sends no event (only trail-pr's two paths report)"
 on8; x="$(cand)"; off8
 { [ "$(evs)" = "automate-trail/trail-pr/warn/sidecar_missing_key" ] && case "$x" in *"excluded .supervisor/automate/r.supervisor-result.md"*) true ;; *) false ;; esac && ! leaky; }
 check $? "a sidecar excluded for its shape ⇒ warn sidecar_missing_key, never its text ($(evs))"
