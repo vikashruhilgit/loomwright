@@ -41,3 +41,9 @@ still 3/3 on most items, a propose-only draft explains why each round found new 
 ## Touches
 docs/evidence/review-gate-rounds.md
 changelog.d/as23-measure-review-gates.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-19T07:49:58Z
+- **Brief:** .supervisor/jobs/done/2026-10-18-measure-review-gates.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/607
