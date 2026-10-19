@@ -44,7 +44,7 @@
  *     featureBranch` inherits everything already landed. Fails CLOSED on conflict
  *     (merge aborted, tree left clean, run marked failed).
  *   - branch lifecycle: the runner commits worker output on each per-subtask
- *     branch (mirroring FINALIZE step 2 of skills/async-orchestration/SKILL.md)
+ *     branch (mirroring FINALIZE step 2 of skills/async-orchestration/finalize.md)
  *     AND now merges each wave into the feature branch as it goes. The caller
  *     still owns the FINAL merge of the feature branch and branch deletion.
  */
@@ -902,7 +902,7 @@ function addWorktree(repoRoot: string, wtPath: string, subtaskId: string, featur
 /**
  * Persist the worker's output: commit inside the worktree so the per-subtask
  * branch actually carries the work after the worktree is removed. Mirrors
- * FINALIZE step 2 of skills/async-orchestration/SKILL.md — work lives on
+ * FINALIZE step 2 of skills/async-orchestration/finalize.md — work lives on
  * branches; the caller merges them per merge_order and deletes them.
  * Returns true if a commit was created; skips when the worktree is clean.
  */
@@ -935,7 +935,7 @@ function commitWorktree(wtPath: string, subtask: Subtask): boolean {
  * FAILS CLOSED. A conflicting merge is aborted and thrown, never left half-applied: continuing with
  * a conflicted index would hand the next wave a broken tree and corrupt every downstream subtask.
  * The caller marks the run failed. This mirrors FINALIZE's pre-merge safety gate
- * (skills/async-orchestration/SKILL.md) — the merge is the dangerous step, so it is the guarded one.
+ * (skills/async-orchestration/finalize.md step 1) — the merge is the dangerous step, so it is the guarded one.
  */
 export function materializeWave(repoRoot: string, featureBranch: string, branches: string[]): void {
   if (branches.length === 0) return;

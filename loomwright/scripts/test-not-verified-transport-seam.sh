@@ -135,7 +135,7 @@ case "$sequential_sec" in
   *) no "(d) Sequential Path step does not name not_verified in the recording sentence" ;;
 esac
 
-# ---- (e) async-orchestration/SKILL.md PR Body Template + cross-reference ----------------------
+# ---- (e) async-orchestration/finalize.md PR Body Template + cross-reference --------------------
 pr_template="$(awk '/^\*\*PR Body Template:\*\*/{flag=1} flag{print; if (/^```$/ && count++) exit}' "$ASYNCFIN")"
 order_check="$(printf '%s\n' "$pr_template" | grep -nE '^## (Test Plan|Not verified|Task)$' | awk -F: '{print $2}')"
 if [ "$order_check" = "## Test Plan
