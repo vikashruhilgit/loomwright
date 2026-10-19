@@ -783,7 +783,40 @@ ns_check_run_report() {
   else
     [ -n "$(rj "$r" no_pr_why)" ] || ns_die2 "--result: a RUN report without a PR carries no_pr_why (the one-line why of the pinned no-PR line) — nothing written"
   fi
+  # Nested objects (ground_truth, contract_conformance, benchmark_result, risk_classification,
+  # heal_dismissed) are refused HERE, at write time, while the session that wrote the block can
+  # still fix it (issue #616) — the trail push excludes a malformed sidecar, and the excluded file
+  # then held lane-remove forever. Top-level key checks stay advisory (ns_sidecar_check).
+  if [ -n "$t" ]; then
+    v="$(ns_nested_error "$t")"
+    [ -z "$v" ] || ns_die2 "--result: $v — re-emit the SUPERVISOR_RESULT with that object in its schema shape (docs/result-schemas/supervisor-result.md \"Nested-object key sets\"; ground_truth = the GROUND_TRUTH_NESTED line verbatim) and report again — nothing written"
+  fi
   NS_RUN_PR="$pr"; NS_RUN_BR="$br"
+}
+# ns_nested_error <text> — the FIRST nested-object key-set error of the last SUPERVISOR_RESULT block in
+# <text>, from the same table sidecar-check uses (result_nested_keys.py); empty when clean, when no
+# block parses (the advisory top-level check reports that) or when python3/the table is unavailable
+# (fail-safe: the trail's sidecar-check still applies).
+ns_nested_error() {
+  command -v python3 >/dev/null 2>&1 || return 0
+  printf '%s' "$1" | python3 -I -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import result_block_parser as R
+    import result_nested_keys as NK
+except Exception:
+    sys.exit(0)
+name, block = R.find_last_named_block(sys.stdin.read(), ("SUPERVISOR_RESULT",))
+if block is None:
+    sys.exit(0)
+fields, errors = R.parse_block(block)
+if errors:
+    sys.exit(0)
+errs = NK.nested_errors(name, fields)
+if errs:
+    print(errs[0][1])
+' "$HERE" 2>/dev/null || true
 }
 ns_take_run_report() {
   ns_take_text "$1" supervisor_result run_text

@@ -159,18 +159,17 @@ NO_CMD_FLAG = (NON_INTERACTIVE == true) ? "--no-cmd" : ""
 # check.sh as EVAL_PROJECT_ROOT) from the caller's git toplevel. `--project <dir>` exists for callers
 # that cannot pin CWD.
 gt = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-ground-truth.sh --brief <brief_path> $NO_CMD_FLAG
-# Parse the single `GROUND_TRUTH_JSON: {...}` line; a parse miss → ground_truth.checked=false, status:"unverified".
-
-# Mapping from the runner's GROUND_TRUTH_JSON to the SUPERVISOR_RESULT ground_truth object:
-ground_truth.checked       = gt.ran            # true when >=1 check actually executed
-ground_truth.status        = gt.status         # pass | advisory_failures | unverified | skipped
-ground_truth.checks_total  = gt.checks_total
-ground_truth.checks_passed = gt.checks_passed
-# findings[] = the FAILING per_check entries only (status == "fail"), mapped advisory-by-construction:
-for c in gt.per_check where c.status == "fail":
-  ground_truth.findings += { check: "<c.kind>:<c.target>",
-                             detail: "<c.reason or 'exit non-zero'>",
-                             severity: "advisory" }   # always "advisory" here (the schema enum [info, advisory] reserves "info"); NEVER blocking/high (mirror contract_conformance.findings)
+# The runner prints TWO machine lines (issue #616 — two hand-mapped objects wrote `ran`/`pass_rate` and
+# were refused at the trail push):
+#   GROUND_TRUTH_NESTED: {...}  — the SUPERVISOR_RESULT ground_truth object ALREADY in schema shape:
+#                                 checked (<- ran), status, checks_total, checks_passed, and findings[]
+#                                 (the failing per_check entries, severity "advisory") when any failed.
+#   GROUND_TRUTH_JSON: {...}    — the runner's own record; the FLAT session_end fields read it.
+ground_truth = <the GROUND_TRUTH_NESTED value, copied VERBATIM>   # never add, rename or drop a key
+# No GROUND_TRUTH_NESTED line (runner failed / not run) → ground_truth = {checked: false, status: unverified}.
+# /automate refuses a RUN report whose ground_truth has any other key set (exit 2, nothing written).
+# Flat fields (Hard-signal dual emission below): ground_truth_status/_checks_total/_checks_passed from
+# either line; ground_truth_pass_rate = GROUND_TRUTH_JSON's pass_rate — FLAT ONLY.
 
 record_decision(phase: SELF_HEAL, decision: "ground_truth: {status} ({checks_passed}/{checks_total})", rationale: "advisory only — heal_decision unchanged")
 ```
@@ -505,7 +504,7 @@ The contract-conformance, benchmark and ground-truth results are emitted as **th
    | `ground_truth_pass_rate` (string "M/N") | the runner's `pass_rate` — FLAT ONLY: never a key of the nested `ground_truth` |
 
    **Nested shapes, exactly (`/automate` `sidecar-check` fails any other key set; `docs/result-schemas/supervisor-result.md` "Nested-object key sets"):** the flat table above maps nested → flat and never the reverse, so no flat-only field (`pass_rate` / `ground_truth_pass_rate`) is ever copied into a nested object.
-   - `ground_truth: {checked: <bool>, status: <s>, checks_total: <n>, checks_passed: <n>, findings: [...]}` — `checked` is ALWAYS present (`gt.ran`), including on `status: pass`.
+   - `ground_truth: {checked: <bool>, status: <s>, checks_total: <n>, checks_passed: <n>, findings: [...]}` — `checked` is ALWAYS present (`gt.ran`), including on `status: pass`. Write it by copying the runner's `GROUND_TRUTH_NESTED:` line verbatim — it is already this shape.
    - `contract_conformance: {checked: <bool>, status: <s>, contracts_evaluated: <n>, violations: <n>, findings: [...]}`.
    - `benchmark_result: {ran, status, name, metric, value, baseline, delta, unit}` — on a parse miss `{ran: false, status: unverified}`.
    - **Skip form** (nothing to check): `ground_truth: {checked: false, status: skipped}` / `contract_conformance: {checked: false, status: skipped}` (or `status: unverified`) — complete as written; the counts and `findings` may be written as `0` / `[]` or omitted.

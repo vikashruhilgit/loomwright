@@ -2459,6 +2459,7 @@ V_R14="$TMPROOT/r14-skip/validate-supervisor-result.py"
 mkdir -p "$(dirname "$V_R14")"
 cp "$V_SUPERVISOR" "$V_R14"
 cp "$(dirname "$V_SUPERVISOR")/result_block_parser.py" "$(dirname "$V_R14")/result_block_parser.py"
+cp "$(dirname "$V_SUPERVISOR")/result_nested_keys.py" "$(dirname "$V_R14")/result_nested_keys.py"
 python3 - "$V_R14" <<'PY'
 import sys
 p = sys.argv[1]
@@ -2616,10 +2617,9 @@ EOF
 run_v "$V_SUPERVISOR" "$F"
 assert_pass "supervisor: ABSENT rubric_score accepted (rule 13 forbids rejecting on absence)"
 
-# --- heal_dismissed (dismissed-findings-01, additive, non-enumerated) --------
-# Purely additive, NOT enumerated by the validator (same precedent as
-# risk_classification / branch_base / pr_state) — a block validates identically
-# WITH or WITHOUT it.
+# --- heal_dismissed (dismissed-findings-01, additive) -------------------------
+# Purely additive: a block validates identically WITH or WITHOUT it. When present,
+# its items carry the nested key set (rule 15, issue #616 — legs below).
 cat_mk sup-heal-dismissed-present.md sup-ran-base <<'EOF'
   heal_iterations: 1
   heal_decision: ESCALATED
@@ -2640,6 +2640,72 @@ cat_mk sup-heal-dismissed-absent.md sup-ran-base <<'EOF'
 EOF
 run_v "$V_SUPERVISOR" "$F"
 assert_pass "supervisor: heal_dismissed ABSENT (empty ⇒ absent) validates identically [dismissed-findings-01]"
+
+# --- rule 15: nested objects carry their exact schema key sets (issue #616) ----
+# The two shapes real Supervisors wrote (ground_truth without `checked`; with pass_rate
+# and no counts) block AT THE HOOK now — before, they passed here and failed only at the
+# /automate trail push, where the excluded sidecar held lane-remove forever.
+R15_BODY='  heal_iterations: 1
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 0
+  heal_remaining_issues: 0
+  summary: nested-object shape legs'
+r15() { # r15 <name> <nested line> — sup-ran-base + R15_BODY + <line>
+  { cat "$TMPROOT/sup-ran-base"; printf '%s\n%s\n' "$R15_BODY" "$2"; } > "$TMPROOT/$1"; F="$TMPROOT/$1"
+}
+r15 sup-r15-gt-nochecked.md '  ground_truth: {status: skipped}'; R15_BAD_FILE="$F"
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: ground_truth {status: skipped} (no checked) blocks [rule 15, #616]" \
+  "SUPERVISOR_RESULT ground_truth missing required key checked (rule 15)"
+r15 sup-r15-gt-passrate.md '  ground_truth: {checked: true, status: pass, pass_rate: "2/2"}'
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: ground_truth with pass_rate and no counts blocks [rule 15, #616]" \
+  "SUPERVISOR_RESULT ground_truth missing required key checks_total (rule 15)"
+r15 sup-r15-dismissed-item.md '  heal_dismissed: [{finding: x}]'
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: a heal_dismissed item missing reason/source blocks [rule 15]" \
+  "heal_dismissed[0] missing required key reason"
+r15 sup-r15-gt-nested-line.md '  ground_truth: {"checked":true,"status":"advisory_failures","checks_total":2,"checks_passed":1,"findings":[{"check":"cmd:false","detail":"exit non-zero","severity":"advisory"}]}'
+run_v "$V_SUPERVISOR" "$F"
+assert_pass "supervisor: the GROUND_TRUTH_NESTED line copied verbatim validates [rule 15]"
+r15 sup-r15-gt-skip.md '  ground_truth: {checked: false, status: skipped}'
+run_v "$V_SUPERVISOR" "$F"
+assert_pass "supervisor: the skip form {checked: false, status: skipped} validates [rule 15]"
+
+# Module missing: rule 15 is skipped (the bad nested shape passes) but rules 1-14 still
+# block — the module has its own import guard, never the parser's fail-safe-pass one.
+V_R15_NOMOD="$TMPROOT/r15-nomod/validate-supervisor-result.py"
+mkdir -p "$(dirname "$V_R15_NOMOD")"
+cp "$V_SUPERVISOR" "$V_R15_NOMOD"
+cp "$(dirname "$V_SUPERVISOR")/result_block_parser.py" "$(dirname "$V_R15_NOMOD")/"
+run_v "$V_R15_NOMOD" "$R15_BAD_FILE"
+assert_pass "supervisor: result_nested_keys.py missing ⇒ rule 15 skipped (fail-safe for that rule only)"
+cat_mk sup-r15-nomod-nosummary.md sup-ran-base <<'EOF'
+  heal_iterations: 1
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 0
+  heal_remaining_issues: 0
+  ground_truth: {status: skipped}
+EOF
+run_v "$V_R15_NOMOD" "$F"
+assert_fail "supervisor: result_nested_keys.py missing ⇒ rules 1-14 still block (missing summary)" \
+  "summary"
+
+# MUTATION CONTROL: the module's nested loop iterates an empty table ⇒ the bad
+# shape FLIPS to accepted (rule 15 is load-bearing).
+V_R15="$TMPROOT/r15-mut/validate-supervisor-result.py"
+mkdir -p "$(dirname "$V_R15")"
+cp "$V_SUPERVISOR" "$V_R15"
+cp "$(dirname "$V_SUPERVISOR")/result_block_parser.py" "$(dirname "$V_R15")/"
+sed 's/in sorted(NESTED\[name\]\.items()):/in sorted({}.items()):/' \
+  "$(dirname "$V_SUPERVISOR")/result_nested_keys.py" > "$(dirname "$V_R15")/result_nested_keys.py"
+if ! cmp -s "$(dirname "$V_SUPERVISOR")/result_nested_keys.py" "$(dirname "$V_R15")/result_nested_keys.py"; then
+  ok "supervisor: rule 15 mutation control — the module mutant differs"
+else
+  no "supervisor: rule 15 mutation control — sed changed nothing (module loop line moved?)"
+fi
+run_v "$V_R15" "$R15_BAD_FILE"
+assert_pass "supervisor: rule 15 mutation control — without the nested table the {status: skipped} ground_truth FLIPS to accepted"
 
 # --- FINDING 3 (validator level): an internal blank line must not truncate ---
 # SUPERVISOR_RESULT carries ~20 fields including nested blocks, so this is the

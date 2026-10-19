@@ -779,6 +779,42 @@ jT13="$(gt_json "$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$RUN" \
   || no "(t13f) forger got '$(rstat "$jT13" forger)': $jT13"
 rm -f "$CANARY"
 
+echo "== (u) GROUND_TRUTH_NESTED — the SUPERVISOR_RESULT ground_truth object, schema-shaped (issue #616) =="
+# Every exit prints it after GROUND_TRUTH_JSON; dropped into a complete SUPERVISOR_RESULT it passes the
+# same sidecar-check the /automate trail push applies, while the two hand-mapped shapes #616 recorded fail.
+gt_nested() { printf '%s\n' "$1" | sed -n 's/^GROUND_TRUTH_NESTED: //p' | head -n1; }
+sup_with_gt() { # <ground_truth value> <file>
+  printf 'SUPERVISOR_RESULT:\n  schema_version: 1\n  task_id: t\n  status: completed\n  pr_url: https://github.com/o/r/pull/1\n  branch: b\n  subtasks_completed: 1\n  subtasks_failed: 0\n  heal_loop_ran: false\n  heal_iterations: null\n  heal_decision: null\n  heal_fixable_issues_fixed: 0\n  heal_remaining_issues: 0\n  summary: s\n  ground_truth: %s\n' "$1" > "$2"
+}
+sc_of() { bash "$HERE/automate-helpers.sh" sidecar-check "$1" | cut -d' ' -f1; }
+U_CMD='cmd: printf "%s" "a, b: {c} '"'"'q'"'"'"; false'
+for u in "pass|--check|cmd: true" "fail|--check|$U_CMD" "skip||" "nojq|--check|cmd: true" "badproj|--project|$TMP/nope"; do
+  name="${u%%|*}"; rest="${u#*|}"; flag="${rest%%|*}"; val="${rest#*|}"
+  if [ "$name" = nojq ]; then oU="$( cd "$CWD" && GROUND_TRUTH_FORCE_NO_JQ=1 bash "$RUN" $flag "$val" 2>/dev/null )"
+  elif [ -n "$flag" ]; then oU="$( cd "$CWD" && bash "$RUN" $flag "$val" 2>/dev/null )"
+  else oU="$( cd "$CWD" && bash "$RUN" 2>/dev/null )"; fi
+  nU="$(gt_nested "$oU")"; jU="$(gt_json "$oU")"
+  order="$(printf '%s\n' "$oU" | grep -oE '^GROUND_TRUTH_(JSON|NESTED):' | tr '\n' ' ')"
+  [ "$order" = "GROUND_TRUTH_JSON: GROUND_TRUTH_NESTED: " ] \
+    && ok "(u-$name) both machine lines, JSON first" || no "(u-$name) machine lines: '$order'"
+  printf '%s' "$nU" | jq -e --argjson j "${jU:-null}" '
+      (keys - ["checked","status","checks_total","checks_passed","findings"]) == []
+      and .checked == $j.ran and .status == $j.status and .checks_total == $j.checks_total
+      and .checks_passed == $j.checks_passed
+      and ((.findings // []) | length) == ([$j.per_check[] | select(.status=="fail")] | length)
+      and all((.findings // [])[]; .severity == "advisory")' >/dev/null 2>&1 \
+    && ok "(u-$name) nested = JSON mapped (checked<-ran, findings = failing per_check, no pass_rate/per_check)" \
+    || no "(u-$name) nested '$nU' vs json '$jU'"
+  sup_with_gt "$nU" "$TMP/u-$name.md"
+  [ "$(sc_of "$TMP/u-$name.md")" = ok ] && ok "(u-$name) copied verbatim into SUPERVISOR_RESULT ⇒ sidecar-check ok" \
+    || no "(u-$name) sidecar-check: $(bash "$HERE/automate-helpers.sh" sidecar-check "$TMP/u-$name.md")"
+done
+sup_with_gt '{checked: true, status: pass, pass_rate: "2/2"}' "$TMP/u-516.md"
+sup_with_gt '{status: skipped}' "$TMP/u-nochk.md"
+[ "$(sc_of "$TMP/u-516.md"):$(sc_of "$TMP/u-nochk.md")" = "fail:fail" ] \
+  && ok "(u) the two hand-mapped #616 shapes (pass_rate / no checked) still fail sidecar-check" \
+  || no "(u) #616 shapes: $(sc_of "$TMP/u-516.md"):$(sc_of "$TMP/u-nochk.md")"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

@@ -32,6 +32,12 @@ that exact string is reproduced below.
   (14) heal_first_decision / heal_new_findings (iq02 IQ01, additive): absent
        or null accepted; present => PASS|FAIL|NEEDS_HUMAN / non-negative int;
        non-null with heal_loop_ran=false is rejected
+  (15) nested objects (issue #616) — ground_truth, contract_conformance,
+       benchmark_result, risk_classification, heal_dismissed: when present,
+       each carries exactly its schema key set (result_nested_keys.py, the
+       table /automate's sidecar-check and RUN-report refusal also use).
+       The module is imported in its OWN guard: if it is missing, rule 15 is
+       skipped and rules 1-14 still run.
 
 NULLABLE-BUT-REQUIRED: rule (6) demands heal_iterations and heal_decision be
 NULL, not absent. This validator therefore asserts key PRESENCE via
@@ -81,7 +87,26 @@ except BaseException as _import_exc:  # noqa: BLE001 — LAST LINE OF DEFENCE
         pass
     os._exit(0)
 
+# Rule 15's table, in its own guard: a missing/broken module skips ONLY rule 15
+# (never rules 1-14 — the shared-guard failure mode above would pass everything).
+try:
+    import result_nested_keys as _NK  # noqa: E402
+except BaseException as _nk_exc:  # noqa: BLE001
+    _NK = None
+    try:
+        sys.stderr.write(
+            "validate-supervisor-result: result_nested_keys unavailable, rule 15 "
+            "skipped: %s: %s\n" % (type(_nk_exc).__name__, _nk_exc)
+        )
+    except BaseException:
+        pass
+
 BLOCK = "SUPERVISOR_RESULT"
+
+# Rule 15 checks exactly these nested fields (shapes from result_nested_keys.py). Named
+# here, not only in the module, so check-contract-parity.sh pins them against this source.
+R15_FIELDS = ("benchmark_result", "contract_conformance", "ground_truth",
+              "heal_dismissed", "risk_classification")
 
 VALID_STATUS = ("completed", "completed_with_escalation", "failed", "checkpoint")
 PR_REQUIRED_STATUS = ("completed", "completed_with_escalation")
@@ -317,6 +342,15 @@ def main():
             if _bad or _n < 0:
                 emit(False, "heal_new_findings must be a non-negative integer "
                      "or null; got %r (rule 14)" % as_text(_raw))
+
+    # ── (15) nested objects — exact schema key sets (issue #616) ─────────────
+    if _NK is not None:
+        _nerrs = _NK.nested_errors(
+            BLOCK, {k: v for k, v in fields.items() if k in R15_FIELDS})
+        if _nerrs:
+            emit(False, "%s (rule 15) — ground_truth is the run-ground-truth.sh "
+                 "GROUND_TRUTH_NESTED line verbatim; see docs/result-schemas/"
+                 "supervisor-result.md \"Nested-object key sets\"" % _nerrs[0][1])
 
     emit(True)
 

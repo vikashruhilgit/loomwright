@@ -3,8 +3,14 @@
 Emitted by `scripts/run-ground-truth.sh` — the System Twin **ground-truth instrument** (M2b slice
 1a). It resolves a set of project-declared **executable acceptance checks**, runs each one (exit 0 =
 pass, non-zero = fail), and emits a single hard PASS/FAIL signal. The script prints a human/grep
-per-check block plus a `Checks passed: M/N` line, AND exactly ONE machine-readable line
-`GROUND_TRUTH_JSON: {...}` (jq-built for injection safety). The runner ALWAYS exits 0 (a check's
+per-check block plus a `Checks passed: M/N` line, AND exactly TWO machine-readable lines, in this order
+on every exit: `GROUND_TRUTH_JSON: {...}` (below) and `GROUND_TRUTH_NESTED: {checked, status,
+checks_total, checks_passed[, findings]}` — the `SUPERVISOR_RESULT.ground_truth` object already in schema
+shape (`checked` ⇐ `ran`; `findings` = the failing `per_check` entries as `{check: "<kind>:<target>",
+detail: <reason or "exit non-zero">, severity: advisory}`, present only when a check failed; no
+`pass_rate`/`per_check`/`ran`), which Phase 4.5 copies verbatim (issue #616). Both are jq-built for
+injection safety (a fixed printf line on the no-jq path); readers take each with `grep '^<PREFIX>: ' |
+head -n1`. The runner ALWAYS exits 0 (a check's
 non-zero exit is a normal `fail` tally, never a script crash). **Trust boundary (not a sandbox):** the
 runner ITSELF performs no repo writes and makes no network calls, but a `cmd:` check runs an arbitrary
 `bash -c` with full shell privileges — the "no writes / no network" property holds for the runner, NOT
@@ -20,8 +26,8 @@ OTHER path, a `cmd:`/bare bullet sourced from a brief is gated by the **content-
 described under §"`## Executable Acceptance` (brief convention)" below (red-team-hardening item 05,
 "cmd: valve by provenance", v15.90.0) — this supersedes the prior framing that `--no-cmd` alone was
 the only control on the unattended path; see that subsection for the full contract. It is consumed by
-Supervisor Phase 4.5, which maps it onto the
-`SUPERVISOR_RESULT.ground_truth` object and the flat `ground_truth_*` `session_end` fields (advisory
+Supervisor Phase 4.5, which copies the NESTED line into the
+`SUPERVISOR_RESULT.ground_truth` object and fills the flat `ground_truth_*` `session_end` fields from this one (advisory
 only — NEVER changes `heal_decision`, NEVER blocks the PR).
 
 ```json

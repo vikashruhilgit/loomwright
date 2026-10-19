@@ -363,7 +363,7 @@ echo "==== T8: mutation controls ===="
 mutant() {
   local name="$1" mark="$2" repl="$3" dir="$SANDBOX/mutant-$1" f
   mkdir -p "$dir"
-  for f in resolve-egress-config.sh result_block_parser.py validate-code-review-result.py \
+  for f in resolve-egress-config.sh result_block_parser.py result_nested_keys.py validate-code-review-result.py \
            validate-qa-result.py validate-supervisor-result.py; do cp "$SCRIPT_DIR/$f" "$dir/"; done
   awk -v b="# MUTATION_CONTROL_BEGIN: $mark" -v e="# MUTATION_CONTROL_END: $mark" -v r="$repl" '
     index($0, b) { print; while ((getline line < r) > 0) print line; skip = 1; next }

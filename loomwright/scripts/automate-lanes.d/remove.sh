@@ -35,9 +35,33 @@ _lanes_status_named() {
     | awk -v k="$((n - 5))" '{ printf "%s%s", (NR > 1 ? ", " : ""), $0 } END { if (k > 0) printf ", +%d more", k }')"
 }
 
+# _lanes_only_bad_sidecars <meta-sync status --paths output> — issue #616: 0 when EVERY unpushed path
+# is one of this lane's own result sidecars (`<run_id>.supervisor-result.md` / `.review-heal-result.md`)
+# that sidecar-check fails — the file trail-pr's evidence gate excluded, which no push will ever carry,
+# so `local_ahead` alone held the lane forever. Sets `exempt` (space-separated basenames) for the
+# salvage check and the removed line. No path lines (an older meta-sync), any other path, a sidecar
+# that passes, or an unreadable check ⇒ 1 (the refusal stands — fail CLOSED).
+_lanes_only_bad_sidecars() {
+  local p n=0 sc
+  exempt=""
+  while IFS= read -r p; do
+    case "$p" in "  "*) ;; *) continue ;; esac
+    p="${p#  }"; n=$((n + 1))
+    case "$p" in
+      ".supervisor/automate/$LN_RUN.supervisor-result.md"|".supervisor/automate/$LN_RUN.review-heal-result.md") ;;
+      *) return 1 ;;
+    esac
+    [ -f "$LN_DIR/$p" ] || return 1
+    sc="$(bash "$HELPERS" sidecar-check "$LN_DIR/$p" 2>/dev/null | tail -n 1)"
+    case "$sc" in "fail $LN_DIR/$p: "*) exempt="${exempt:+$exempt }${p##*/}" ;; *) return 1 ;; esac
+  done <<<"$(printf '%s\n' "$1" | sed 1d)"
+  [ "$n" -gt 0 ]
+}
+
 # _lanes_remove_refusals — every lane-remove refusal that does not depend on process liveness. Runs
-# in lanes_remove's dynamic scope (reads/sets its locals L, abandon, state, rf, q, b, u, mb, ms).
+# in lanes_remove's dynamic scope (reads/sets its locals L, abandon, state, rf, q, b, u, mb, ms, exempt).
 _lanes_remove_refusals() {
+  exempt=""
   rstate="$(_lanes_state_of "$L")"   # the lane's real state, from lane-status's own reader (F10)
   # >>> awaiting-input check
   rf="$LN_DIR/.supervisor/automate/$LN_RUN.md"
@@ -66,7 +90,9 @@ _lanes_remove_refusals() {
     # which file to push (wave W4: a worker-filed proposed/ draft found only by a hand list-managed diff).
     ms="$(bash "$META_SYNC" status --branch "$mb" --root "$LN_DIR" --paths 2>/dev/null)" || { _refuse "metadata status unreadable"; return 1; }
     case "$(printf '%s\n' "$ms" | head -1)" in
-      local_ahead*|conflict*|*local_ahead*|*conflict*) _refuse "metadata not pushed $(_lanes_status_named "$ms")"; return 1 ;;
+      conflict*|*conflict*) _refuse "metadata not pushed $(_lanes_status_named "$ms")"; return 1 ;;
+      local_ahead*|*local_ahead*)
+        _lanes_only_bad_sidecars "$ms" || { _refuse "metadata not pushed $(_lanes_status_named "$ms")"; return 1; } ;;
     esac
   fi
   # >>> unpushed-commit check (fail CLOSED: an unreadable branch list or count refuses, never reads 0)
@@ -96,7 +122,7 @@ lanes_remove() {
     esac
   done
   _lane_ctx "$dir" || die "lane-remove: not a lane: ${dir:-<none>}"
-  local L="$LN_LANE" pid st mp mu q state rstate="" rf b u mb ms live_pid="" watchers="" ab_ok=0
+  local L="$LN_LANE" pid st mp mu q state rstate="" rf b u mb ms live_pid="" watchers="" ab_ok=0 exempt="" e kept=""
   _refuse() { echo "lane-remove: refused — $L — $1"; return 1; }
   # >>> live-process check
   pid="$(_lt_get "$LN_TABLE" "$L" 5)"; st="$(_lt_get "$LN_TABLE" "$L" 6)"
@@ -128,6 +154,13 @@ lanes_remove() {
     _lanes_remove_refusals || return 1
   fi
   local sv; sv="$(_lanes_salvage "$LN_DIR" "$LN_ROOT/salvage" "$L-removed")" || { _refuse "salvage failed"; return 1; }
+  # An exempted sidecar (#616) exists nowhere else once the lane is gone: prove the salvage holds it
+  # byte-for-byte before removing anything (the salvage copy discards its own errors).
+  for e in $exempt; do
+    cmp -s "$LN_DIR/.supervisor/automate/$e" "$sv/supervisor/automate/$e" \
+      || { _refuse "salvage does not hold $e byte-for-byte (an unpushed sidecar would be lost)"; return 1; }
+  done
+  [ -z "$exempt" ] || kept="; kept in salvage only (failed sidecar-check, never pushed): $exempt"
   # Single-lane parent: the lane's token TOTAL survives its directory as one parent ## Progress line
   # (the whole-run ceiling's only record of a removed lane) — plain and --abandon alike, once per lane.
   local prf="$LN_PRIMARY/.supervisor/automate/$LN_PARENT.md"
@@ -140,7 +173,7 @@ lanes_remove() {
     bash "$HELPERS" progress-append "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.md" \
       "lane abandoned: $L ($LN_RUN) — state ${rstate:-unknown}; salvage kept at <primary>-lanes/$LN_PARENT/salvage/${sv##*/}" >/dev/null 2>&1 || true
   fi
-  echo "lane-remove: removed $L ($LN_DIR); salvage $sv"
+  echo "lane-remove: removed $L ($LN_DIR); salvage $sv$kept"
 }
 
 # ==================================================================================================

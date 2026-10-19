@@ -46,8 +46,8 @@ CHANNELS = set(["reviews", "latestReviews", "reviewThreads", "issue_comments",
                 "check_outputs"])
 
 # SUPERVISOR_RESULT key tables — mirror docs/RESULT_SCHEMAS.md §SUPERVISOR_RESULT
-# (the yaml block). validate-supervisor-result.py exposes only main(), so there is
-# no importable table to reuse. `error` is required only when status == failed.
+# (the yaml block) — the top-level keys only; the nested-object tables are the shared
+# result_nested_keys.py module below. `error` is required only when status == failed.
 SUP_REQUIRED = ["schema_version", "task_id", "status", "pr_url", "branch",
                 "subtasks_completed", "subtasks_failed", "heal_loop_ran",
                 "heal_iterations", "heal_decision", "heal_fixable_issues_fixed",
@@ -107,78 +107,16 @@ if name == "SUPERVISOR_RESULT" and R.present(fields, "risk_classification"):
     if not isinstance(rc, dict) or "reasons" not in rc:
         say("fail %s: risk_classification present without reasons" % path)
 
-# NESTED key tables (automate-followups/20) — mirror the "Nested-object key sets"
-# paragraphs of docs/result-schemas/supervisor-result.md and review-heal-result.md.
-# Update together with them. Per field: (shape, required, optional, item_tables)
-# where shape is "map" (one mapping) or "list" (a list of mappings, each item
-# checked against required/optional; None = items must be mappings, keys unpinned),
-# and item_tables maps a list-valued key of the mapping to its own (required,
-# optional) item table. Value enums are not checked here — key shape only.
-GT_FINDING = (["check", "detail", "severity"], [])
-CC_FINDING = (["subsystem", "invariant", "severity", "detail"], [])
-DISMISSED_ITEM = (["finding", "reason", "source"], ["severity"])
-NESTED = {
-    "SUPERVISOR_RESULT": {
-        "ground_truth": ("map", ["checked", "status", "checks_total", "checks_passed"],
-                         ["findings"], {"findings": GT_FINDING}),
-        "contract_conformance": ("map", ["checked", "status", "contracts_evaluated", "violations"],
-                                 ["findings"], {"findings": CC_FINDING}),
-        "benchmark_result": ("map", ["ran", "status"],
-                             ["name", "metric", "value", "baseline", "delta", "unit"], {}),
-        "risk_classification": ("map", ["high_risk", "reasons"], [], {}),
-        "heal_dismissed": ("list",) + DISMISSED_ITEM + ({},),
-    },
-    "REVIEW_HEAL_RESULT": {
-        "dismissed": ("list",) + DISMISSED_ITEM + ({},),
-        "checks_untrusted": ("list", ["check", "reason", "run_id"], [], {}),
-        "sub_floor_fixed": ("list", None, None, {}),
-    },
-}
-
-# The documented skip form (supervisor-result.md "Nested-object key sets"): these keys
-# become optional when checked is false and status is skipped or unverified.
-SKIP_OPTIONAL = {
-    "ground_truth": ["checks_total", "checks_passed"],
-    "contract_conformance": ["contracts_evaluated", "violations"],
-}
-
-def check_map(label, obj, required, optional):
-    if not isinstance(obj, dict):
-        say("fail %s: %s %s is not a mapping" % (path, name, label))
-    if required is None:
-        return
-    for k in required:
-        if k not in obj:
-            say("fail %s: %s %s missing required key %s" % (path, name, label, k))
-    allowed_keys = set(required) | set(optional)
-    for k in obj:
-        if k not in allowed_keys:
-            say("fail %s: %s %s carries non-schema key %s" % (path, name, label, k))
-
-def check_list(label, val, required, optional):
-    if not isinstance(val, list):
-        say("fail %s: %s %s is not a list" % (path, name, label))
-    for i, item in enumerate(val):
-        check_map("%s[%d]" % (label, i), item, required, optional)
-
-for key, (shape, required, optional, items) in sorted(NESTED[name].items()):
-    if not R.present(fields, key):
-        continue
-    val = fields.get(key)
-    if shape == "list":
-        check_list(key, val, required, optional)
-        continue
-    # Skip form: checked false + status skipped|unverified makes the count/list keys
-    # optional (absent reads as 0 / []). `checked` itself stays required.
-    if key in SKIP_OPTIONAL and isinstance(val, dict) \
-            and R.as_bool(val.get("checked"))[0] is False \
-            and R.as_text(val.get("status")).strip() in ("skipped", "unverified"):
-        required = [k for k in required if k not in SKIP_OPTIONAL[key]]
-        optional = optional + SKIP_OPTIONAL[key]
-    check_map(key, val, required, optional)
-    for sub, (ireq, iopt) in sorted(items.items()):
-        if sub in val:
-            check_list("%s.%s" % (key, sub), val[sub], ireq, iopt)
+# NESTED key tables (automate-followups/20) live in result_nested_keys.py (issue #616) — one
+# table shared with the write-time RUN-report refusal (automate-next-step.sh) and the
+# supervisor-runner hook (validate-supervisor-result.py). First error wins here, as before.
+try:
+    import result_nested_keys as NK
+except Exception as exc:  # pragma: no cover - defensive
+    say("fail %s: nested key table unavailable (%s)" % (path, exc))
+nerrs = NK.nested_errors(name, fields)
+if nerrs:
+    say("fail %s: %s" % (path, nerrs[0][1]))
 
 say("ok %s" % path)
 PY

@@ -9,10 +9,17 @@
 # "ground-truth" != "eval" != "benchmark" — kept distinct by name and intent.
 #
 # Output shape on stdout: a human/grep per-check block (one `  [PASS]/[FAIL]/[DEFERRED] <kind>:<target>`
-# line per resolved check) + a `Checks passed: M/N` line, AND exactly ONE machine-readable line:
+# line per resolved check) + a `Checks passed: M/N` line, AND exactly TWO machine-readable lines,
+# always in this order, on every exit:
 #   GROUND_TRUTH_JSON: {schema_version,ran,status,checks_total,checks_passed,pass_rate,per_check,commit,date}
-# The JSON line is jq-built for injection safety (--arg/--argjson), with a printf fallback only on
-# the no-jq path (mirrors run-benchmark.sh).
+#   GROUND_TRUTH_NESTED: {checked,status,checks_total,checks_passed[,findings]}
+# The JSON line is the runner's own record (flat session_end fields read it, incl. pass_rate). The
+# NESTED line is the SUPERVISOR_RESULT `ground_truth` object already in schema shape
+# (docs/result-schemas/supervisor-result.md "Nested-object key sets"): checked <- ran, findings <- the
+# failing per_check entries, and no pass_rate / per_check / ran keys — Phase 4.5 copies it verbatim
+# instead of hand-mapping (issue #616: two hand-mapped objects wrote ran/pass_rate and failed
+# sidecar-check at the trail push). Both lines are jq-built for injection safety (--arg/--argjson),
+# with a printf fallback only on the no-jq path (mirrors run-benchmark.sh).
 #
 # Fail-safe: ALWAYS exits 0. A check's non-zero exit is a normal `fail` tally, NEVER a script crash.
 #   - status "skipped"            — no check source resolved (no --check, no --brief Executable
@@ -240,6 +247,7 @@ emit_no_jq_unverified() {
   echo "Checks passed: 0/0"
   printf 'GROUND_TRUTH_JSON: {"schema_version":1,"ran":false,"status":"unverified","checks_total":0,"checks_passed":0,"pass_rate":"0/0","per_check":[],"commit":"%s","date":"%s"}\n' \
     "$COMMIT" "$DATE"
+  printf '%s\n' 'GROUND_TRUTH_NESTED: {"checked":false,"status":"unverified","checks_total":0,"checks_passed":0}'
 }
 
 # emit_jq <ran-bool> <status> <total> <passed> <pass_rate> <per_check_json>
@@ -257,6 +265,19 @@ emit_jq() {
     --arg date "$DATE" \
     '{schema_version:1,ran:$ran,status:$status,checks_total:$total,checks_passed:$passed,pass_rate:$pr,per_check:$per_check,commit:$commit,date:$date}' \
     | sed 's/^/GROUND_TRUTH_JSON: /'
+  # The SUPERVISOR_RESULT `ground_truth` object, in schema shape. findings appears only when a
+  # check failed (status advisory_failures requires a non-empty findings[]).
+  jq -cn \
+    --argjson ran "$ran" \
+    --arg status "$status" \
+    --argjson total "$total" \
+    --argjson passed "$passed" \
+    --argjson per_check "$per_check" \
+    '[$per_check[] | select(.status == "fail")
+       | {check: (.kind + ":" + .target), detail: (.reason // "exit non-zero"), severity: "advisory"}] as $f
+     | {checked:$ran,status:$status,checks_total:$total,checks_passed:$passed}
+       + (if ($f | length) > 0 then {findings:$f} else {} end)' \
+    | sed 's/^/GROUND_TRUTH_NESTED: /'
 }
 
 # ---- fail-safe: no jq -----------------------------------------------------

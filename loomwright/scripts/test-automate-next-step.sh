@@ -753,6 +753,36 @@ EOF
     || { LEG_MSG="no-PR report ⇒ exit $NC_RC '${NC_OUT:0:120}' ${NC_ERR:0:120} $(grep -F 'ran /autonomous' "$CASE_RF")"; return 1; }
   return 0
 }
+# leg_nested_run_reports <driver> — issue #616: a RUN report whose SUPERVISOR_RESULT carries a nested
+# object off its schema shape ⇒ exit 2 naming the key, nothing written — the two real #616 shapes
+# (ground_truth without checked; ground_truth with pass_rate and no counts), a bad heal_dismissed item,
+# a contract_conformance missing its counts, and a top-level partial that also carries a nested error;
+# then the runner's GROUND_TRUTH_NESTED line copied verbatim ⇒ accepted (the pinned no-PR line).
+NESTED_RUN='ground_truth|{"supervisor_result":"SUPERVISOR_RESULT:\n  status: failed\n  ground_truth: {status: skipped}","no_pr_why":"y"}
+ground_truth|{"supervisor_result":"SUPERVISOR_RESULT:\n  status: failed\n  ground_truth: {checked: true, status: pass, pass_rate: \"2/2\"}","no_pr_why":"y"}
+heal_dismissed|{"supervisor_result":"SUPERVISOR_RESULT:\n  status: failed\n  heal_dismissed: [{finding: x}]","no_pr_why":"y"}
+contract_conformance|{"supervisor_result":"SUPERVISOR_RESULT:\n  status: failed\n  contract_conformance: {checked: true, status: pass}","no_pr_why":"y"}
+ground_truth|{"supervisor_result":"SUPERVISOR_RESULT:\n  pr_url: https://github.com/o/r/pull/1\n  branch: b\n  ground_truth: {checked: true, status: pass, pass_rate: \"2/2\"}"}'
+leg_nested_run_reports() {
+  local drv="$1" s0 line key r
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+  ns_call "$drv" --start run --session-id s-run; [ "$NC_RC" = 0 ] || { LEG_MSG="--start run ⇒ exit $NC_RC"; return 1; }
+  s0="$(snapshot)"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    key="${line%%|*}"; r="${line#*|}"
+    ns_call "$drv" --result "$r"
+    [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && [ "$s0" = "$(snapshot)" ] && printf '%s' "$NC_ERR" | grep -qF "$key" \
+      && printf '%s' "$NC_ERR" | grep -qF 'GROUND_TRUTH_NESTED' \
+      || { LEG_MSG="$key ⇒ exit $NC_RC '${NC_OUT:0:60}' err '${NC_ERR:0:160}' .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
+  done <<EOF
+$NESTED_RUN
+EOF
+  ns_call "$drv" --result '{"supervisor_result":"SUPERVISOR_RESULT:\n  status: failed\n  ground_truth: {\"checked\":false,\"status\":\"skipped\",\"checks_total\":0,\"checks_passed\":0}","status_reason":"plan_review_failed","no_pr_why":"Plan Review FAIL x3 on the brief"}'
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "stopped"' >/dev/null 2>&1 \
+    || { LEG_MSG="the GROUND_TRUTH_NESTED shape ⇒ exit $NC_RC '${NC_OUT:0:120}' ${NC_ERR:0:160}"; return 1; }
+  return 0
+}
 # leg_bad_drain_reports <driver> — a malformed DRAIN report at the owned-drain spawn ⇒ exit 2, nothing printed,
 # .supervisor/ byte-unchanged (a bare drain report there is refused too: the driver owns DRAIN's lines)
 BAD_DRAIN='{"ready_sha":"35b8303"}
@@ -1483,7 +1513,9 @@ leg_surface() {
 # scripts/ entry; prints its path; gated: anchor once, non-empty, differs, bash -n
 build_mutant() {
   local name="$1" anchor="$2" repl="$3" d c
-  d="$WORK/mut-$name"; mkdir -p "$d"
+  # a fresh dir every time: re-linking into a reused one makes `ln -s` follow the old directory
+  # symlinks and write self-links into the real scripts/ tree (two mutants sharing a name did)
+  d="$WORK/mut-$name"; rm -rf "$d"; mkdir -p "$d"
   for e in "$HERE"/*; do [ "$e" = "$DRIVER" ] || ln -s "$e" "$d/$(basename "$e")"; done
   case "$repl" in
     -append:*) cp "$DRIVER" "$d/automate-next-step.sh"; printf '%s\n' "${repl#-append:}" >> "$d/automate-next-step.sh" ;;
@@ -1769,6 +1801,9 @@ LEG_MSG=""
 if leg_bad_run_reports "$DRIVER"; then ok "R5: $(grep -c . <<<"$BAD_RUN") malformed RUN reports ⇒ exit 2, nothing written; a no-PR report ⇒ the pinned no-PR line, done/stopped, lock released"
 else no "R5: $LEG_MSG"; fi
 LEG_MSG=""
+if leg_nested_run_reports "$DRIVER"; then ok "R5b (#616): $(grep -c . <<<"$NESTED_RUN") RUN reports with a nested object off its schema shape ⇒ exit 2 naming the key, nothing written; the GROUND_TRUTH_NESTED shape ⇒ accepted"
+else no "R5b (#616): $LEG_MSG"; fi
+LEG_MSG=""
 if leg_bad_drain_reports "$DRIVER"; then ok "R6: $(grep -c . <<<"$BAD_DRAIN") malformed DRAIN reports (and a bare drain report) at the owned-drain spawn ⇒ exit 2, nothing written"
 else no "R6: $LEG_MSG"; fi
 LEG_MSG=""
@@ -1944,6 +1979,11 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_idem escalated-park "$m"; then no "MI: idempotency stayed green with the re-print replaced"
     else ok "MI: re-run instead of re-print ⇒ idempotency red ($LEG_MSG)"; fi
   else no "MI: mutant not built"; fi
+  # MG (#616) — the write-time nested-object refusal dropped ⇒ R5b red
+  if m="$(build_mutant G616 'v="$(ns_nested_error "$t")"' 'v=""')"; then
+    if leg_nested_run_reports "$m"; then no "MG: R5b stayed green with the nested-object refusal dropped"
+    else ok "MG: nested-object refusal dropped ⇒ R5b red ($LEG_MSG)"; fi
+  else no "MG: mutant not built"; fi
   # MQ — the --non-interactive check dropped before an ask
   if m="$(build_mutant Q 'ns_interactive() { [ "$NONINT" != 1 ]; }' 'ns_interactive() { return 0; }')"; then
     if leg_cantask "$m"; then no "MQ: can't-ask stayed green with the --non-interactive check dropped"
