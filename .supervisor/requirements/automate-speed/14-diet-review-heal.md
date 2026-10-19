@@ -68,3 +68,9 @@ loomwright/commands/review-pr.md
 loomwright/docs/rationale/review-heal.md
 loomwright/docs/loop-inventory/review-heal.md
 changelog.d/as14-diet-review-heal.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-19T07:48:30Z
+- **Brief:** .supervisor/jobs/done/2026-10-18-diet-review-heal.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/613
