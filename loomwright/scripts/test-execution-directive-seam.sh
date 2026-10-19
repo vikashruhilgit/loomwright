@@ -40,6 +40,7 @@ PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"
 REPO_ROOT="$(cd "$PLUGIN_ROOT/.." && pwd)"
 
 SKILL="$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md"
+SKILL_MV="$PLUGIN_ROOT/skills/self-heal-advisory/multi-voter.md"   # automate-speed/15: multi-voter split out
 REVIEWER="$PLUGIN_ROOT/agents/code-reviewer.md"
 HEAL="$PLUGIN_ROOT/skills/review-heal/SKILL.md"
 WORKFLOW="$REPO_ROOT/.github/workflows/claude-code-review.yml"
@@ -147,7 +148,7 @@ chk_refute_scope() {
   has "$l" "$REFUTE_SCOPE" && has "$l" '**voter lens**' && has "$l" 'does NOT'
 }
 check_with_mutant "(c) multi-voter refute: only the code-reviewer-lens refute carries the directive" \
-  chk_refute_scope "$SKILL" strip_in_line "$REFUTE_ANCHOR" "$REFUTE_SCOPE"
+  chk_refute_scope "$SKILL_MV" strip_in_line "$REFUTE_ANCHOR" "$REFUTE_SCOPE"
 
 # ---- (d) agents/code-reviewer.md --------------------------------------------------------------------
 chk_mktemp()  { grep -qF -- 'mktemp -d' "$1"; }

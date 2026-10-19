@@ -26,11 +26,11 @@
 > Sibling grep at base `0000000000000000000000000000000000000000`: `grep -rnF 'rules_gate_unresolved' --exclude=CHANGELOG.md loomwright` → 9 hits in 3 files.
 
 - **`rules_gate_unreadable`** (sibling: `rules_gate_unresolved`) — must be named in:
-  - `loomwright/skills/self-heal-advisory/SKILL.md` — the closed `**Heal reason:** {needs_human|` list in the completion tail — extend.
-  - `loomwright/skills/self-heal-advisory/SKILL.md` — the dismissed-findings `round=<n>` paragraph's list of loop breaks that skip the round increment (`also pre-increment`) — extend.
+  - `loomwright/skills/self-heal-advisory/completion-tail.md` — the closed `**Heal reason:** {needs_human|` list in the completion tail — extend.
+  - `loomwright/skills/self-heal-advisory/completion-tail.md` — the dismissed-findings `round=<n>` paragraph's list of loop breaks that skip the round increment (`also pre-increment`) — extend.
   - `loomwright/skills/self-heal-advisory/SKILL.md` — Part 1's `**The verdict decides; the line reports.**` paragraph, which names the reason every unaffirmed verdict escalates with — extend.
   - `loomwright/skills/self-heal-advisory/SKILL.md` — the fail-CLOSED leg's `record_decision` and PR-comment lines (2 hits) — extend: the leg branches on `unreadable`.
-  - `loomwright/skills/self-heal-advisory/SKILL.md` — step 7's `**Rules-check replay line` paragraph (`already escalated with`) — extend.
+  - `loomwright/skills/self-heal-advisory/completion-tail.md` — step 7's `**Rules-check replay line` paragraph (`already escalated with`) — extend.
   - `loomwright/skills/review-heal/SKILL.md` — the drain's escalation comment and its ESCALATED description (2 hits) — no change: the drain keeps one reason for both causes; this brief is Phase 4.5-only.
   - `loomwright/scripts/review-heal-next-step.sh` — the drain driver's `rules_gate_unresolved` escalation (its `rh_escalate_to rules_gate_unresolved` line) — no change: the drain keeps one reason for both causes; this brief is Phase 4.5-only.
 
@@ -51,7 +51,7 @@
 
 | Group | Files to Modify | Files to Create | Confidence |
 |-------|----------------|-----------------|------------|
-| phase45 | `loomwright/skills/self-heal-advisory/SKILL.md` | — | HIGH |
+| phase45 | `loomwright/skills/self-heal-advisory/SKILL.md`, `loomwright/skills/self-heal-advisory/completion-tail.md` | — | HIGH |
 | tests | `loomwright/scripts/test-rules-gate-seams.sh` | — | HIGH |
 
 ## Subtask Contracts
@@ -64,6 +64,7 @@ provides:
 requires: []
 lanes:
   - "loomwright/skills/self-heal-advisory/SKILL.md"
+  - "loomwright/skills/self-heal-advisory/completion-tail.md"
   - "loomwright/scripts/test-rules-gate-seams.sh"
 external_requires: []
 ```

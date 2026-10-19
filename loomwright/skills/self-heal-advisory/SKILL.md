@@ -1,189 +1,76 @@
 ---
 name: self-heal-advisory
-description: Supervisor Phase 4.5 protocol authority. Part 1 — advisory-only machinery (pre-review enrichments, System Twin conformance/benchmark/ground-truth, contract-builder WRITE path, delta line, hard-signal dual emission; never changes heal_decision or blocks the PR). Part 2 — the full Phase 4.5 SELF_HEAL loop protocol (on-entry actions, base-mismatch cleanup, bounded review-and-fix loop, rubric grading, red-team lens, completion-tail procedure), Read on demand at Phase 4.5 entry, deliberately not preloaded.
-version: "1.11.1"
-lastUpdated: "2026-10-10"
+description: Supervisor Phase 4.5 protocol authority, split by when each part runs — SKILL.md (every review-and-fix iteration), on-entry.md (phase entry and the first-iteration pre-review enrichments), escalation.md (base-mismatch cleanup, fix-task crash), multi-voter.md (only under --multi-voter-heal) and completion-tail.md (post-loop advisory checks, rubric, red-team lens, completion tail). Advisory steps never change heal_decision or block the PR. Read on demand at Phase 4.5, deliberately not preloaded.
+version: "1.12.0"
+lastUpdated: "2026-10-19"
 ---
 
 # Self-Heal Protocol (Supervisor Phase 4.5)
 
-This skill is the **Phase 4.5 protocol authority**, in two parts:
+This skill is the **Phase 4.5 protocol authority**, split by when each part runs. Read a file only at the step that names it:
 
-- **Part 1 (below)** — the **advisory-only machinery**: pre-review enrichments
-  (`prior_churn` / `house_rules` / `brief_conformance`), System Twin
-  conformance/benchmark/ground-truth checks, the contract-builder WRITE path, the
-  advisory Twin delta line, and hard-signal dual emission. Nothing in Part 1 ever
-  changes `heal_decision` or blocks the PR.
-- **Part 2 (bottom of this file)** — the **Phase 4.5 SELF_HEAL loop protocol**, moved
-  verbatim from `agents/supervisor.md`: on-entry actions, base-mismatch cleanup, the
-  bounded review-and-fix loop, Outcomes Rubric grading, the advisory red-team lens,
-  fix-task crash handling, and the completion-tail procedure.
+| File | Read when | Holds |
+|------|-----------|-------|
+| `SKILL.md` (this file) | Phase 4.5 entry; used on every iteration | Part 1's per-iteration advisories (deviations, house-rule verdicts line, rules-check replay), Part 2's review-and-fix loop, the error-handling table |
+| `on-entry.md` | Phase 4.5 entry, before the first Code Reviewer spawn | on-entry actions 1–5 and the first-iteration pre-review enrichments (prior churn, house rules, brief conformance) |
+| `escalation.md` | only when on-entry step 5 finds `base_mismatch_detected` set, or a fix Task() crashes | base-mismatch cleanup (step 5), fix-task crash handling |
+| `multi-voter.md` | only when `MULTI_VOTER_HEAL == true` | multi-voter verification |
+| `completion-tail.md` | once the review-and-fix loop exits or is skipped | Outcomes Rubric grading, post-review advisory checks, the advisory red-team lens, the completion tail |
 
-`agents/supervisor.md` keeps the load-bearing gate surface visible in the agent prompt —
-the short Phase 4.5 stanza (entry/exit conditions, mandate, invariant tracking), the
-VERBATIM completion-tail guard, the phase Output block, and the SUPERVISOR_RESULT block
-definition — and points here for the procedure.
+`agents/supervisor.md` keeps the gate surface — the Phase 4.5 stanza, the VERBATIM completion-tail guard, the phase Output block and the SUPERVISOR_RESULT block definition. For the STANDALONE `/review-pr` loop the authority is `skills/review-heal/SKILL.md`; Part 2 here is the Supervisor-embedded instance of that loop. Why the skill is split this way: `docs/rationale/supervisor.md` §"Self-heal advisory split".
 
-**Scope guard:** for the STANDALONE review→fix→re-review machinery keyed off a PR URL
-(`/review-pr`), the extracted-contract authority remains `skills/review-heal/SKILL.md`.
-Part 2 here is the Supervisor-embedded Phase 4.5 instance of that loop.
-
-**HARD ADVISORY CONTRACT (applies to every step in Part 1):** nothing in Part 1 ever
-changes `heal_decision`, triggers a fix iteration, blocks the PR, or fails the task.
-Every failure path is non-fatal: log via `record_decision(...)` and continue. Under
-tool-budget pressure (YELLOW/RED zones), Part 1 steps are the FIRST to skip — the gates
-still run (Part 2's review-and-fix loop + the completion-tail guard in
-`agents/supervisor.md`).
-
-**When to read this file:** the Supervisor reads it ONCE at Phase 4.5 entry (it is
-deliberately NOT in the Supervisor's preloaded `skills:` list — preloading would
-re-inject ~950 lines into every session; on-demand reading keeps the agent prompt
-focused on gates).
+**HARD ADVISORY CONTRACT (applies to every advisory step in every file of this skill):** no advisory step ever changes `heal_decision`, triggers a fix iteration, blocks the PR, or fails the task. Every failure path is non-fatal: log via `record_decision(...)` and continue. Under tool-budget pressure (YELLOW/RED zones), advisory steps are the FIRST to skip — the gates still run (Part 2's review-and-fix loop + the completion-tail guard in `agents/supervisor.md`).
 
 ---
 
 # Part 1 — Advisory machinery
 
-## Prior-churn advisory (pre-review enrichment)
+Moved sections — a §"…" citation of this file resolves through this list:
 
-Unlike the three post-review checks below (which run AFTER the Code Reviewer loop has
-completed), this advisory runs **at Phase 4.5 entry, BEFORE the first Code Reviewer
-spawn** — because its sole purpose is to enrich the reviewer prompt. It feeds the
-prior-churn miss-classes of the integrated diff's touched files into the Code Reviewer
-prompt so the self-heal review prioritizes sweeping for root-cause classes that have
-**churned before on those same files** (recurring `self_heal_miss` / root-cause classes /
-flow stages mined from the postmortem corpus).
+- §"Prior-churn advisory (pre-review enrichment)", §"House-rules advisory (committed convention enrichment)" and §"Brief-conformance advisory (acceptance-criteria enrichment)" (which holds "the cap in Part 1") → `on-entry.md`.
+- §"Post-review advisory checks" with its §"Contract-conformance check (READ path …)", §"Benchmark run …", §"Ground-truth execution …" and §"Rules-store audit …", plus §"Contract builder (WRITE path — completion tail only)", §"Advisory Twin delta line (informational ONLY)" and §"Hard-signal dual emission (ST3 — written in BOTH shapes)" → `completion-tail.md`.
+- §"Deviations advisory", §"House-rule verdicts line" and §"Rules-check replay" stay below: they run on every iteration.
 
-> **HARD ADVISORY CONTRACT — `prior_churn` is advisory input to the REVIEW lens ONLY.**
-> Exactly like the contract-conformance / benchmark / ground-truth checks and the Rubric
-> Grader, `prior_churn` is **advisory only**: it **NEVER changes `heal_decision`**,
-> **NEVER drives the fix task** (the corpus is NOT passed to workers/fixers — only the
-> Code Reviewer prompt receives the summary, per the roadmap non-goal), **NEVER triggers a
-> fix iteration on its own**, and **NEVER gates or blocks the PR**. It is **fail-safe**:
-> the reader (`read-postmortem.sh`) ALWAYS exits 0, and on empty output the phase proceeds
-> with **no enrichment** (the reviewer prompt simply omits the prior-churn line). The reader
-> emits **EMPTY output on a NO-HIT** (corpus present but no touched-path overlap) — it does
-> NOT print a "no prior churn" sentinel line — so an empty `prior_churn` reliably means
-> "no prior churn" and the enrichment is omitted; a non-empty `prior_churn` always denotes a
-> real hit. (Never thread a "no prior churn recorded" string into the reviewer prompt.) Under
-> tool-budget pressure this step is among the first to skip — the gates still run
-> (Part 2's review-and-fix loop + the completion-tail guard in `agents/supervisor.md`).
+## Deviations advisory (worker- and fixer-recorded plan drift)
 
+The FOURTH pre-review enrichment (sibling of the three in `on-entry.md`), run at Phase 4.5 entry AND on EVERY LATER iteration — fixer-recorded entries arrive one iteration at a time. Workers record `deviations` on `WORKER_RESULT` and fix tasks on `FIX_RESULT` (`docs/RESULT_SCHEMAS.md`; ≤12 entries, ≤200 chars, prefixed `plan:`/`edge:`/`open:`/`test:`/`rule:` — `rule:` is worker-only, from `scripts/worker-rule-selfcheck.sh`; unprefixed reads as `other:`).
+
+> **HARD ADVISORY CONTRACT — `deviations_advisory` is advisory input to the REVIEW lens ONLY:** it NEVER changes `heal_decision`, adds no gate or schema field (R1), is NEVER fed to a worker or fixer as an instruction, and never blocks the PR on its own. **Like `brief_conformance` (R2):** the reviewer's response IS ordinary `category: new` findings — one per deviation that contradicts a stated acceptance criterion or rubric bullet; **a deviation that is merely unexpected is NOT a finding.** Subordinate to CLAUDE.md. Fail-safe: every skip condition yields EMPTY output and the prompt omits the line (no "no deviations found" sentinel).
 ```
-# touched files = the same integrated-diff scope the Code Reviewer reviews. When
-# BASE_BRANCH==main this is `git diff origin/main...HEAD`; for a stacked iteration
-# (BASE_BRANCH != main) it is `git diff $BASE_BRANCH...HEAD` — the SAME DIFF-SCOPE OVERRIDE.
-touched = paths from the integrated diff (read-only):
-          BASE_BRANCH==main  -> git diff --name-only origin/main...HEAD
-          BASE_BRANCH!=main  -> git diff --name-only $BASE_BRANCH...HEAD
+# Two sources, unioned:
+#   (1) `state.md`'s `## Worker Results` — every subtask's `- deviations: [...]` bullet,
+#       prefixed by that subtask's id (worker deviations survive worktree removal here).
+#   (2) `fixer_deviations` — a per-run, in-memory list maintained by the review-and-fix loop
+#       (Part 2 below): on EACH iteration, append that iteration's FIX_RESULT.deviations
+#       entries, each prefixed `fix-<iteration>` (fixers bypass Context-Keeper, so this list is
+#       the ONLY durable carriage for fixer-recorded deviations; record each append via
+#       `record_decision` in `## Decisions Log` so the list survives a resume/compaction).
 
-prior_churn = ""   # advisory summary; empty string when no prior churn (proceed with no enrichment)
+deviations_advisory = ""   # advisory summary; empty string on every skip condition
 
-# Pass the touched paths as COMMAND-LINE ARGUMENTS (args take precedence — STDIN is NEVER
-# read, so an args-bearing call can never block on an open-but-idle pipe in a non-TTY agent
-# context). NEVER pipe the paths on stdin. See ${CLAUDE_PLUGIN_ROOT}/scripts/read-postmortem.sh.
-if touched is non-empty:
-  prior_churn = bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-postmortem.sh" <touched files...>
-  # The reader emits a bounded markdown summary ONLY on a REAL hit (recurring root-cause classes /
-  # flow stages / self_heal_miss for files that churned before). On a NO-HIT (corpus present but no
-  # overlap) OR absent/empty corpus OR missing jq it emits NOTHING — no sentinel line — and ALWAYS
-  # exits 0. So an empty `prior_churn` reliably means "no prior churn": proceed with no enrichment.
-  # Guard the reviewer-prompt enrichment on `prior_churn` being NON-EMPTY; never thread a
-  # "no prior churn recorded" string into the prompt. Do NOT restate the reader's internals here.
+# SKIP CONDITIONS — silent on each, `record_decision` below still runs:
+#   1. no `state.md` (no state file for this run yet);
+#   2. `state.md` has no `## Worker Results` section;
+#   3. zero entries across BOTH sources (no worker deviations AND no fixer_deviations).
+if state.md is readable AND ## Worker Results section exists:
+  entries = every "{subtask_id}: {entry text}" pair from every subtask's `deviations` bullet
+          + every "fix-{iteration}: {entry text}" pair from fixer_deviations
+  if entries is non-empty:
+    # CAP: the SAME cap as the brief-conformance advisory ("the cap in Part 1", on-entry.md), with a
+    # VISIBLE omitted-count marker on truncation (the reviewer must see it, not merely the log).
+    deviations_advisory = "deviations:" + the kept entries
+                        + (the omitted-count marker "(+N deviations omitted — see state.md)", when truncated)
 
-record_decision(phase: SELF_HEAL, decision: "prior_churn: {non-empty | empty}", rationale: "advisory pre-review enrichment — heal_decision unchanged, fixers never see the corpus")
+record_decision(phase: SELF_HEAL, decision: "deviations_advisory: {non-empty | empty}", rationale: "advisory pre-review enrichment (worker- and fixer-recorded plan drift) — heal_decision unchanged; findings it yields are ordinary category:new findings through the existing gate; NEVER fed to workers/fixers as an instruction")
 ```
+Threaded into the reviewer prompt as the **DEVIATIONS ADVISORY** line (Part 2 §"Review-and-fix loop"); not a SUPERVISOR_RESULT field.
 
-`prior_churn` is threaded into the `code-reviewer` Task prompt as advisory, non-gating
-context (the exact prompt line lives in Part 2 §"Review-and-fix loop" below).
-It is NOT emitted as a SUPERVISOR_RESULT field and does NOT bump `schema_version` — it is
-additive prose enrichment of the reviewer prompt only.
-
----
-
-## House-rules advisory (committed convention enrichment)
-
-A **sibling** to the "Prior-churn advisory (pre-review enrichment)" section above — it runs
-at the SAME point (**Phase 4.5 entry, BEFORE the first Code Reviewer spawn**) on the SAME
-integrated-diff touched-file scope, and enriches the SAME reviewer prompt. Where prior-churn
-joins by EXACT path against the postmortem corpus, this advisory
-reads the committed **house-rules substrate** (`.agent/rules/*.json`) via `read-rules.sh` and
-threads the surviving valid team conventions into the reviewer prompt as a bias for the review
-lens. It is the house-rules companion to `read-postmortem.sh` — see the
-substrate + reader contract in `skills/rules/SKILL.md`.
-
-> **HARD ADVISORY CONTRACT — `house_rules` is advisory input to the REVIEW lens ONLY.**
-> Exactly like `prior_churn`, the contract-conformance / benchmark /
-> ground-truth checks, and the Rubric Grader, `house_rules` is **advisory only**: it **NEVER
-> changes `heal_decision`**, **NEVER drives the fix task** (the rules text is NOT passed to
-> workers/fixers via this seam — only the Code Reviewer prompt receives it, keeping the review
-> lens independent), **NEVER triggers a fix iteration on its own**, and **NEVER gates or blocks
-> the PR**. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** It is
-> **fail-safe**: the reader (`read-rules.sh`) ALWAYS exits 0, and on empty output the phase
-> proceeds with **no enrichment** (the reviewer prompt simply omits the house-rules line). The
-> reader emits **EMPTY output on no valid rule** (substrate absent, no `*.json`, or zero valid
-> rules survive) — it does NOT print a "no rules" sentinel line — so an empty `house_rules`
-> reliably means "no house rules" and the enrichment is omitted; a non-empty `house_rules`
-> always denotes at least one surviving valid rule. (Never thread a "no house rules recorded"
-> string into the reviewer prompt.) The reviewer's per-rule answer (`house_rule_verdicts`) is
-> advisory too — reported, never a gate (§"House-rule verdicts line" below). The reader emits each rule's `check` as **DATA (text) only —
-> it NEVER executes, evals, sources, or `bash -c`s a `check`**; this seam calls the READER ONLY
-> and NEVER pipes/evals/sources the reader output. Under tool-budget pressure (YELLOW/RED zones)
-> this step is among the FIRST to skip — the gates still run (Part 2's review-and-fix loop + the completion-tail guard in `agents/supervisor.md`).
-
-```
-# touched files = the same integrated-diff scope the Code Reviewer reviews (and the same the
-# prior-churn advisory above uses). When BASE_BRANCH==main this is
-# `git diff origin/main...HEAD`; for a stacked iteration (BASE_BRANCH != main) it is
-# `git diff $BASE_BRANCH...HEAD` — the SAME DIFF-SCOPE OVERRIDE.
-touched = paths from the integrated diff (read-only):
-          BASE_BRANCH==main  -> git diff --name-only origin/main...HEAD
-          BASE_BRANCH!=main  -> git diff --name-only $BASE_BRANCH...HEAD
-
-house_rules = ""   # advisory summary; empty string when no valid house rules (proceed with no enrichment)
-
-# Pass the touched paths as COMMAND-LINE ARGUMENTS (args take precedence — STDIN is NEVER read,
-# so an args-bearing call can never block on an open-but-idle pipe in a non-TTY agent context).
-# NEVER pipe the paths on stdin. read-rules.sh self-gates on .agent/rules/*.json — call it
-# UNCONDITIONALLY (NOT wrapped in any "if a rules store is detected" conditional), exactly like
-# read-postmortem.sh self-gates on its corpus. See ${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh.
-#
-# PATH ROUTING (the args are a REAL filter): read-rules.sh routes on each rule's `applies_to`, so
-# the diff scope passed here DETERMINES which rules come back. A rule with `applies_to: null` (or no
-# such key) is repo-wide and always emitted; a rule with a non-empty glob array is emitted only when
-# one of these touched paths matches it. Everything ambiguous fails OPEN (malformed `applies_to`, and
-# an EMPTY path set, both emit repo-wide) — so a degraded/empty diff can never silently suppress the
-# house rules. Pass the paths as ARGS, never stdin. The reader NEVER executes a `check` — checks are
-# surfaced as DATA only.
-house_rules = bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <touched files...> --with-ids
-  # --with-ids adds each rule's `id:`/`enforcement:` lines: the reviewer answers every rule BY ID
-  # (`house_rule_verdicts`, agents/code-reviewer.md step 5c). The flag changes nothing else.
-  # The reader emits a bounded advisory markdown block (subordinate-to-CLAUDE.md header + one bullet
-  # per surviving valid rule, `must` rules flagged, each `check` shown as DATA text) ONLY when >=1
-  # valid rule survives. On no valid rule (absent substrate / no *.json / all skipped) OR missing jq
-  # it emits NOTHING — no sentinel line — and ALWAYS exits 0. So an empty `house_rules` reliably means
-  # "no house rules": proceed with no enrichment. Guard the reviewer-prompt enrichment on `house_rules`
-  # being NON-EMPTY; never thread a "no house rules recorded" string into the prompt. Do NOT restate
-  # the reader's internals here.
-
-record_decision(phase: SELF_HEAL, decision: "house_rules: {non-empty | empty}", rationale: "advisory pre-review enrichment (committed house rules) — heal_decision unchanged, subordinate to CLAUDE.md, fixers never act on it as a gate")
-```
-
-`house_rules` is threaded into the `code-reviewer` Task prompt as advisory, non-gating
-context (the exact **HOUSE-RULES ADVISORY** prompt line lives in Part 2
-§"Review-and-fix loop" below, included only when non-empty) — **pasted VERBATIM, every rule the
-reader emitted**: a paraphrase or subset silently drops rules the reviewer is then never asked
-about (#431: one run's summary dropped 12 of 18). It is NOT emitted as a SUPERVISOR_RESULT
-field and does NOT bump `schema_version`. The reviewer answers it in `CODE_REVIEW_RESULT`'s
-optional advisory `house_rule_verdicts` (the next subsection).
+Step 1g of the on-entry actions (re-run on every iteration, so it lives here):
+1g. **Deviations advisory (worker- and fixer-recorded plan drift — pre-review enrichment, ADVISORY ONLY, fail-safe):** run the section above to compute `deviations_advisory`, a sibling to steps 1c/1e/1f: every `deviations` entry from `state.md`'s `## Worker Results` (prefixed by `subtask_id`) plus the per-run `fixer_deviations` list (prefixed `fix-<iteration>`), bound to **the same cap Part 1 uses for `brief_conformance`** with a **VISIBLE** omitted-count marker. Skip silently on the three skip conditions above; `record_decision(phase: SELF_HEAL, decision: "deviations_advisory: {non-empty | empty}", …)` on every path, including every append to `fixer_deviations`. **UNLIKE steps 1c/1e/1f, this step RUNS ON EVERY ITERATION of the review-and-fix loop, not only the first.** Fed to the REVIEW lens only, NEVER to workers/fixers as an instruction; the reviewer's response is one `category: new` finding per deviation that contradicts a stated acceptance criterion or an `## Outcomes Rubric` bullet (quoting both) — a merely unexpected deviation is not a finding. Subordinate to CLAUDE.md; no `schema_version` bump. Threaded as the **DEVIATIONS ADVISORY** line, directly after the BRIEF-CONFORMANCE ADVISORY line, only when non-empty.
 
 ### House-rule verdicts line (report line ONLY — #431/#432)
 
-The reviewer returns one `house_rule_verdicts` entry per rule id it was given
-(`followed` | `violated` | `conflicts_with_requirement` | `not_applicable`, one-line `reason`;
-field contract: `docs/RESULT_SCHEMAS.md` §CODE_REVIEW_RESULT). Part 2 projects each iteration's
-entries into ONE line so the owner sees every rule the diff breaks — including the ones a
-requirement told it to break, which brief conformance counts as `addressed`:
+The reviewer returns one `house_rule_verdicts` entry per rule id it was given (`followed` | `violated` | `conflicts_with_requirement` | `not_applicable`, one-line `reason`; `docs/RESULT_SCHEMAS.md` §CODE_REVIEW_RESULT). Part 2 projects each iteration's entries into ONE line, so the owner sees every rule the diff breaks — including ones a requirement told it to break:
 
 ```
 given    = the `id:` values in house_rules           # [] when house_rules is empty
@@ -198,362 +85,23 @@ house_rules_line += "; unanswered {comma-separated ids}"         when some given
 record_decision(phase: SELF_HEAL, decision: house_rules_line, rationale: "advisory per-rule verdicts — heal_decision unchanged")
 ```
 
-> **ADVISORY — the line never gates.** No verdict enters `fixable_issues`, triggers a fix
-> iteration, escalates, or changes `heal_decision`; a `violated` advisory rule on a PASS run
-> stays a PASS. A `must` rule's verdict is the reviewer's static read only — the stamped-check
-> gate in §"Rules-check replay" below is unchanged and is the only thing that gates on it. A
-> `conflicts_with_requirement` entry is a decision for the human (which wins, the rule or the
-> requirement); this line is where they see it.
+> **ADVISORY — the line never gates.** No verdict enters `fixable_issues`, triggers a fix iteration, escalates, or changes `heal_decision`; a `violated` advisory rule on a PASS run stays a PASS. Only the stamped-check gate in §"Rules-check replay" below gates on a `must` rule. A `conflicts_with_requirement` entry is the human's decision (rule or requirement); this line is where they see it.
 
----
-
-## Brief-conformance advisory (acceptance-criteria enrichment)
-
-The THIRD pre-review enrichment — a **sibling** of the prior-churn and house-rules advisories
-above. It runs at the SAME point (**Phase 4.5 entry, BEFORE the first Code Reviewer spawn**)
-and enriches the SAME reviewer prompt. Where the two above bias WHERE the reviewer looks, this
-one tells the reviewer **what was asked for**: it feeds the in-progress brief's acceptance
-criteria (plus its rubric bullets, orientation only) to the gating Code Reviewer, so a diff that
-cleanly implements the wrong or partial thing stops landing as `heal_decision: PASS` with only a
-low advisory `rubric_score` nobody acts on. Owner decisions R1/R2/R4 are carried in and not
-re-litigated here.
-
-> **HARD ADVISORY CONTRACT — `brief_conformance` is advisory input to the REVIEW lens ONLY.**
-> Exactly like `prior_churn` and `house_rules`, `brief_conformance` itself **NEVER changes
-> `heal_decision`**, **NEVER introduces a new gate or a new schema field** (R1: `heal_decision`
-> still derives ONLY from `CODE_REVIEW_RESULT` plus the deterministic co-gates (rules, red required CI), §"Delay-vs-decide";
-> the rubric / ground_truth / contract_conformance objects stay advisory), **NEVER drives the fix task via this seam** (the criteria text is NOT
-> passed to workers/fixers — only the Code Reviewer prompt receives it; fixers receive only the
-> resulting ORDINARY findings, exactly as they receive every other finding), and **NEVER gates or
-> blocks the PR on its own**. **The one deliberate difference from the two advisories above (R2):**
-> the reviewer's response to this line IS ordinary `category: new` / severity HIGH findings, and
-> those enter the existing `CODE_REVIEW_RESULT` gate exactly like any other `new` HIGH finding —
-> so an unaddressed criterion is fixed by the existing fix loop, through the existing gate, not by
-> a new one. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** It is
-> **fail-safe**: every skip condition below yields an EMPTY `brief_conformance` and the phase
-> proceeds with **no enrichment** (the reviewer prompt simply omits the BRIEF-CONFORMANCE line) —
-> never thread a "no criteria found" sentinel string into the reviewer prompt. Under tool-budget
-> pressure (YELLOW/RED zones) this step is among the FIRST to skip — the gates still run (Part 2's
-> review-and-fix loop + the completion-tail guard in `agents/supervisor.md`).
-
-```
-# Source = the in-progress brief at `brief_path` — the SAME path `run-ground-truth.sh --brief`
-# and `parse_rubric(brief_path)` (Part 2 §"Outcomes Rubric grading") already read. There is no
-# other source: no brief ⇒ no criteria ⇒ no enrichment.
-
-brief_conformance = ""   # advisory summary; empty string on every skip condition (proceed with no enrichment)
-
-# SKIP CONDITIONS — an explicit ORDERED list, each yielding EMPTY `brief_conformance` SILENTLY
-# (record_decision below still runs; nothing errors, nothing is logged as a failure):
-#   1. no `brief_path` (or the file at brief_path is unreadable) — a direct `/supervisor task:"..."`
-#      invocation without Launch Pad (the same back-compat case the completion tail's "job file is
-#      not in `in-progress/`" rule handles);
-#   2. the brief has no `## Acceptance Criteria` section;
-#   3. the section exists but ZERO bullets parse from it.
-if brief_path is set AND the file at brief_path is readable:
-  # PARSE RULE (the rubric parser's rule, applied twice):
-  #   criteria = every leading-`-` bullet under `## Acceptance Criteria`, read up to the next
-  #              `## ` heading; strip a leading `[ ]` / `[x]` checkbox prefix from each bullet.
-  #   rubric   = every leading-`-` bullet under `## Outcomes Rubric` when that section is present
-  #              (same up-to-the-next-`## `-heading rule); [] when absent.
-  if criteria is non-empty:                      # conditions 2 and 3 both land here as empty
-    # CAP (stated here ONCE — house rule: one authoritative place; step 1f, the prompt line, and
-    # the seam test all refer to "the cap in Part 1" rather than restating the number):
-    #   brief_conformance carries at most 25 bullets total — criteria FIRST, then rubric bullets
-    #   — and when anything is truncated it ends with the marker `(+N bullets omitted — see brief)`
-    #   where N counts ALL omitted bullets (criteria + rubric) — the marker says "bullets", not
-    #   "criteria", because in the common case the omitted bullets are rubric bullets only: criteria
-    #   come first, so rubric bullets are the first to be dropped (with 20 criteria and 8 rubric
-    #   bullets, 3 rubric bullets are omitted, no criterion is, and N = 3); with 40 criteria and
-    #   any rubric, every rubric bullet is omitted and N = (40 - cap) + len(rubric).
-    brief_conformance = "criteria:" + the kept criteria bullets
-                      + ("rubric (orientation only):" + the kept rubric bullets, when any survive the cap)
-                      + (the omitted-marker, when anything was truncated)
-
-record_decision(phase: SELF_HEAL, decision: "brief_conformance: {non-empty | empty}", rationale: "advisory pre-review enrichment (brief acceptance criteria) — heal_decision unchanged; findings it yields are ordinary category:new findings through the existing gate; fixers never see the brief via this seam")
-```
-
-`brief_conformance` is threaded into the `code-reviewer` Task prompt as the
-**BRIEF-CONFORMANCE ADVISORY** line (exact wording in Part 2 §"Review-and-fix loop" below,
-included only when non-empty). It is NOT emitted as a SUPERVISOR_RESULT field and does NOT bump
-`schema_version` — it is additive prose enrichment of the reviewer prompt only. The reviewer
-decides `addressed` from the **diff text only** — it does not execute anything — which is why a
-runtime-only criterion (latency, throughput) is reported as a `cannot_determine` entry with a
-reason and never becomes a finding. So is a criterion whose only evidence is the PR body: the body
-is not in the diff, FINALIZE writes it before this phase, and no fix task can edit it (#511). A
-criterion that points at a committed evidence file is judged on that file, which a fix task can write. Rubric bullets are orientation only: they NEVER produce
-findings (they stay the Rubric Grader's lane, R1). The standalone `/review-pr` drain
-(`skills/review-heal/SKILL.md`) is untouched — a bare PR URL has no brief to conform to (R4).
-
----
-
-## Deviations advisory (worker- and fixer-recorded plan drift)
-
-The FOURTH pre-review enrichment — a **sibling** of the prior-churn, house-rules, and
-brief-conformance advisories above. It runs at the SAME point (**Phase 4.5 entry, BEFORE the
-first Code Reviewer spawn**) and enriches the SAME reviewer prompt, but **also runs again on
-EVERY LATER iteration of the review-and-fix loop** (Part 2 §"Review-and-fix loop" below), unlike
-the three siblings above which compute once at entry — fixer-recorded entries arrive one
-iteration at a time, so a step that only ran once at entry would never see them. Where
-`brief_conformance` tells the reviewer what was asked for, this one tells the reviewer **where
-the implementing agents said they departed from it**: workers record `deviations` on their
-`WORKER_RESULT` (`docs/RESULT_SCHEMAS.md` §WORKER_RESULT) and Phase 4.5 fix tasks record it on
-their `FIX_RESULT` (§FIX_RESULT) — both optional, additive, bounded (≤12 entries, ≤200 chars
-each), by convention prefixed `plan:`/`edge:`/`open:`/`test:`/`rule:` (`rule:` is worker-only,
-emitted by `scripts/worker-rule-selfcheck.sh`; unprefixed reads as `other:`).
-
-> **HARD ADVISORY CONTRACT — `deviations_advisory` is advisory input to the REVIEW lens ONLY.**
-> Exactly like `prior_churn` and `house_rules`, it **NEVER changes `heal_decision`**, **NEVER
-> introduces a new gate or a new schema field** (R1), **NEVER drives the fix task or worker via
-> this seam** (fed to the Code Reviewer prompt only — never back to a worker or a fixer as an
-> instruction), and **NEVER gates or blocks the PR on its own**. **Like `brief_conformance` and
-> unlike `prior_churn`/`house_rules` (R2):** the reviewer's response to a deviation IS ordinary
-> `category: new` findings — one per deviation that contradicts a stated acceptance criterion or
-> an `## Outcomes Rubric` bullet (quoting both) — through the existing `CODE_REVIEW_RESULT` gate
-> and fix selection. **A deviation that is merely unexpected is NOT a finding** — the question is
-> "does this break a stated criterion?", not "would I have done it differently?". It is
-> **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** It is **fail-safe**: every skip
-> condition below yields EMPTY output and the phase proceeds with no enrichment (the reviewer
-> prompt simply omits the DEVIATIONS ADVISORY line) — never thread a "no deviations found"
-> sentinel string into the reviewer prompt.
-
-```
-# Two sources, unioned:
-#   (1) `state.md`'s `## Worker Results` — every subtask's `- deviations: [...]` bullet,
-#       prefixed by that subtask's id (worker deviations survive worktree removal here).
-#   (2) `fixer_deviations` — a per-run, in-memory list maintained by the review-and-fix loop
-#       (Part 2 below): on EACH iteration, append that iteration's FIX_RESULT.deviations
-#       entries, each prefixed `fix-<iteration>` (fixers bypass Context-Keeper entirely — see
-#       Part 2 §5b of the source requirement — so this list is the ONLY durable carriage for
-#       fixer-recorded deviations; record each append via `record_decision` in `## Decisions
-#       Log` so the list survives a resume/compaction, per the invariant below).
-
-deviations_advisory = ""   # advisory summary; empty string on every skip condition
-
-# SKIP CONDITIONS — silent on each, `record_decision` below still runs:
-#   1. no `state.md` (no state file for this run yet);
-#   2. `state.md` has no `## Worker Results` section;
-#   3. zero entries across BOTH sources (no worker deviations AND no fixer_deviations).
-if state.md is readable AND ## Worker Results section exists:
-  entries = every "{subtask_id}: {entry text}" pair from every subtask's `deviations` bullet
-          + every "fix-{iteration}: {entry text}" pair from fixer_deviations
-  if entries is non-empty:
-    # CAP: the SAME cap Part 1's brief-conformance advisory uses (see "the cap in Part 1"
-    # above) — bounded, with a VISIBLE omitted-count marker on truncation (item 02 §9 exempts
-    # truncated advisories from its reviewer clause, so the marker MUST be visible to the
-    # reviewer, not merely logged).
-    deviations_advisory = "deviations:" + the kept entries
-                        + (the omitted-count marker "(+N deviations omitted — see state.md)", when truncated)
-
-record_decision(phase: SELF_HEAL, decision: "deviations_advisory: {non-empty | empty}", rationale: "advisory pre-review enrichment (worker- and fixer-recorded plan drift) — heal_decision unchanged; findings it yields are ordinary category:new findings through the existing gate; NEVER fed to workers/fixers as an instruction")
-```
-
-`deviations_advisory` is threaded into the `code-reviewer` Task prompt as the **DEVIATIONS
-ADVISORY** line (exact wording in Part 2 §"Review-and-fix loop" below, placed directly after the
-**BRIEF-CONFORMANCE ADVISORY** line, included only when non-empty). It is NOT emitted as a
-SUPERVISOR_RESULT field and does NOT bump any `schema_version` — additive prose enrichment of the
-reviewer prompt only. It runs on **every** Phase 4.5 iteration (not only the first), because
-`fixer_deviations` grows one entry-set at a time as the loop fixes issues.
-
----
-
-## Post-review advisory checks
-
-Run the checks in this section after the Code Reviewer loop has completed (regardless of
-`heal_decision`); the contract-conformance, benchmark and ground-truth checks populate the `contract_conformance`, `benchmark_result`, and
-`ground_truth` objects consumed by the completion-tail "Emit SUPERVISOR_RESULT" step (step 5) in Part 2 below. (§"Rules-check replay" is the exception — it runs per review-and-fix iteration; §"Rules-store audit" runs once, here, and feeds only a report line.)
-
-### Contract-conformance check (READ path — runs after the Code Reviewer pass)
-
-After the Code Reviewer loop has run (regardless of `heal_decision`), check the **integrated feature-branch diff** against any existing System Contracts for the touched subsystems. This produces the `contract_conformance` object on `SUPERVISOR_RESULT` (and the matching flat `session_end` fields — see "Hard-signal dual emission" below).
-
-> **HARD ADVISORY CONTRACT — this check NEVER changes a gate.** Exactly like the Rubric Grader, the contract-conformance check is **advisory only**: it **NEVER changes `heal_decision`**, **NEVER triggers a fix iteration**, and **NEVER blocks the PR**. Its findings carry `severity: info | advisory` by construction — never `blocking`/`high`. It is reported in `SUPERVISOR_RESULT` for human review and aggregated by ST4; it is not a quality gate. It runs read-only against committed state and dispatches no fixes.
-
-```
-# touched subsystems = the files/paths in the integrated diff (the same scope the Code Reviewer
-# reviewed). When BASE_BRANCH==main this is `git diff origin/main...HEAD`; for a stacked iteration
-# (BASE_BRANCH != main) it is `git diff $BASE_BRANCH...HEAD` — same DIFF-SCOPE OVERRIDE the reviewer used.
-touched = paths from the integrated diff (read-only):
-          BASE_BRANCH==main  -> git diff --name-only origin/main...HEAD
-          BASE_BRANCH!=main  -> git diff --name-only $BASE_BRANCH...HEAD
-
-contract_conformance = { checked: false, status: "skipped", contracts_evaluated: 0, violations: 0, findings: [] }
-
-# STORE-HEALTH PROBE — TWO scopes, because "was this checkable?" has two independent answers and
-# either one alone is blind. MEASURED, on a store with one verified and one dropped contract:
-#
-#   whole store        -> degraded (emitted 1, dropped 1, stored 2)
-#   --subsystem <dropped>  -> dark    (emitted 0, dropped 1, stored 1)   stored, withheld
-#   --subsystem <verified> -> healthy (emitted 1, dropped 0, stored 1)
-#   --subsystem <unstored> -> empty   (emitted 0, dropped 0, stored 0)   nothing to withhold
-#
-# So a `--subsystem` read says `dark` EXACTLY when that id had a stored contract and the gate
-# withheld it — which is the per-id discriminator, and it is why "worst status across the loop"
-# is safe once scoped to touched ids only (an unstored id reports `empty`, never `dark`).
-#
-# GLOBAL scope catches a store that is dark for ids this PR does not touch — real, and invisible
-# to the loop. PER-ID scope catches the far more common case the global probe misses: a merely
-# DEGRADED store where the one subsystem this PR touches is the dropped one. Take the union.
-#
-# Rejected, recorded so it is not re-derived: sampling `twin_store_status` INSIDE the loop and
-# keeping the LAST value. That makes the verdict depend on `touched` ordering — a dark id followed
-# by an unstored id ends on `empty` and records `skipped`, reintroducing the exact silent loss
-# this probe exists to end.
-twin_store_status = bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh | grep '^twin_store_status:'
-  # -> empty | healthy | degraded | dark. Always exits 0; an unreadable/absent reader leaves this
-  #    unset, which is treated as "not dark" below (fail-safe: never invent a dark verdict).
-touched_contract_withheld = false
-
-for each subsystem id derivable from `touched` (a path or a logical subsystem name):
-  # read-side provenance gate; NEVER `cat` the contract files directly.
-  contract = bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh --subsystem "<id>"
-  if that output's `twin_store_status:` is `dark`:
-    # This id HAS a stored contract and the gate withheld it. Not "nothing to check" — could not
-    # check. True even when the store as a whole is only `degraded`.
-    touched_contract_withheld = true
-  if contract has a verified body (not "(no verified System Twin contracts)"):
-    contract_conformance.checked = true
-    contract_conformance.contracts_evaluated += 1
-    # Compare the integrated diff against the contract's `invariants` / `behavioral_specs`.
-    # Any apparent divergence is recorded as an ADVISORY finding (severity info|advisory only).
-    for each invariant the diff appears to violate:
-      contract_conformance.findings += { subsystem: "<id>", invariant: "<text>", severity: "advisory", detail: "<what in the diff diverges>" }
-
-contract_conformance.violations = len(contract_conformance.findings)
-
-# STATUS. The withheld test is FIRST and is NOT nested under `not checked`, and that is the whole
-# correction. Nesting it there — which is what the previous revision did — means a run that
-# verified ANY touched subsystem stops asking whether another one was withheld: a PR touching A
-# (verified, clean) and B (stored contract withheld in a merely `degraded` store) sets
-# `checked = true`, finds zero divergences among what it could read, and reports `pass`. That is a
-# clean advisory field over an invisible dropped contract — this incident's exact shape, relocated
-# from the whole run to one subsystem of it. `pass` must mean "checked, and clean"; a run that
-# could not read a contract it was supposed to check has not earned it.
-if twin_store_status == "dark" or touched_contract_withheld:
-  # A contract EXISTS and the gate withheld it — for every subsystem (`dark` store) or for one this
-  # PR touched (`touched_contract_withheld`, reachable while the store is only `degraded`). This
-  # run could not fully check. Recording it as `pass` or `skipped` is what hid a two-week, 100%
-  # capability loss (all 21 contracts dark from 2026-08-12, found 2026-09-01) behind a green field.
-  #
-  # It does NOT suppress real findings: divergences among the subsystems that COULD be read are
-  # still reported, because an actual violation is more actionable than an incomplete-check notice.
-  if contract_conformance.violations >= 1:
-    contract_conformance.status = "advisory_violations"
-  else:
-    contract_conformance.status = "unverified"     # never `pass`, never `skipped`
-elif not contract_conformance.checked:
-  # Nothing was stored for any touched subsystem, or the reader emitted nothing (no sha tool /
-  # empty store) — and nothing was withheld. Genuinely nothing to do. Graceful no-op.
-  contract_conformance.status = "skipped"        # (use "unverified" instead when the tooling itself was unavailable)
-elif contract_conformance.violations == 0:
-  contract_conformance.status = "pass"
-else:
-  contract_conformance.status = "advisory_violations"
-
-# NAME THE WITHHELD IDS. `violations` deliberately counts invariant divergences ONLY — a withheld
-# contract is a check that did not happen, not a violation, and inflating the count would make a
-# dark store look like a wave of new violations. So the ids are carried in the decision line
-# instead, which is the surface that keeps them from vanishing when `status` alone cannot say
-# WHICH subsystem went unchecked.
-record_decision(phase: SELF_HEAL, decision: "contract_conformance: {status} ({violations} advisory{, N withheld: <ids> if any})", rationale: "advisory only — heal_decision unchanged")
-```
-
-**Contract-conformance rules:**
-- Absent contracts (empty `.supervisor/twin/`, or `read-system-contract.sh` emits nothing) → `checked: false`, `status: skipped` (or `unverified` if the tooling itself was unavailable), `contracts_evaluated: 0`, `violations: 0`. Graceful no-op — never an error, never a fix.
-- **A WITHHELD contract is not an absent one.** Record `status: unverified`, not `skipped`, in either of two cases: the whole-store probe prints `twin_store_status: dark`, or a `--subsystem` read for a touched id prints `dark` (that id has a stored contract the gate withheld — reachable while the store overall is only `degraded`, which is the commoner shape). An unstored id reports `empty`, never `dark`, so this cannot fire on a subsystem that simply has no contract. **The withheld test is evaluated FIRST, independently of `checked`** — a run that verified some other touched subsystem must still not report `pass`, because `pass` means "checked, and clean" and this run could not read a contract it was meant to check. Real divergences still win the status (`advisory_violations`) since they are more actionable; the withheld ids are named in the decision line rather than counted as violations, because a check that did not happen is not a violation. These stay advisory — the difference is that `unverified` is honest about a capability that is *missing*, and `skipped` reads as *nothing to do*. The reader also prints a loud `!!` block naming the repair (`scripts/reprovenance-twin-contracts.sh`); surface it rather than swallowing it. Never work around a drop by `cat`-ing the contract files — the gate is deliberately strict and the drop is its verdict, not a malfunction.
-- `status: pass` requires `violations: 0`; `status: advisory_violations` requires `violations >= 1` and a non-empty `findings[]` (each `severity: info | advisory`).
-- This is a READ of the twin store via `read-system-contract.sh` only — it NEVER writes the twin store (the WRITE happens in the completion tail, below).
-- It runs on EVERY Phase 4.5 (PASS or ESCALATED); unlike the Rubric Grader it is not gated on PASS, because conformance reporting is informational and does not depend on trusting the code state.
-
-
-### Benchmark run (populates `benchmark_result`)
-
-Run the deterministic "provable-done" benchmark to populate `benchmark_result`:
-
-```
-bench = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-benchmark.sh
-# Parse the single `BENCHMARK_JSON: {...}` line -> benchmark_result (ran, status, name, metric,
-# value, baseline, delta, unit). The script is deterministic, reads/writes its baseline under
-# .supervisor/twin/benchmark-baseline.json (gitignored), and ALWAYS exits 0 — on any failure it
-# emits status: unverified with value: null. Treat a parse miss as benchmark_result.ran=false,
-# status: unverified. The benchmark is informational; it NEVER changes heal_decision or blocks the PR.
-```
-
-`run-benchmark.sh` does not update its baseline on a plain run (the `--update-baseline` flag is the sole write path, reserved for an explicit operator/maintainer baseline-set); Phase 4.5 invokes it WITHOUT that flag, so the heal loop measures-but-does-not-move the baseline.
-
-
-### Ground-truth execution (M2b slice 1a — runs after the Code Reviewer pass)
-
-After the Code Reviewer loop has run (regardless of `heal_decision`), execute the project-declared **executable acceptance checks** for this run and report whether they pass. This produces the `ground_truth` object on `SUPERVISOR_RESULT` (and the matching flat `session_end` fields — see "Hard-signal dual emission" below). Where the contract-conformance check reads the twin store and the benchmark validates the hard-signal fixtures, this runner executes the *actual acceptance checks the brief/project declares* and reports a hard PASS/FAIL signal. It runs on EVERY Phase 4.5 (PASS or ESCALATED), read-only against committed state, after the Code Reviewer loop — exactly like the contract-conformance block, it is NOT gated on PASS.
-
-> **HARD ADVISORY CONTRACT — this check NEVER changes a gate.** Exactly like the contract-conformance check and the Rubric Grader, the ground-truth execution is **advisory only**: it **NEVER changes `heal_decision`**, **NEVER triggers a fix iteration**, and **NEVER blocks the PR**. Its findings carry `severity: advisory` by construction — never `blocking`/`high`. It is reported in `SUPERVISOR_RESULT` for human review and aggregated by ST4; it is not a quality gate. The runner ALWAYS exits 0 (a check's non-zero exit is a normal `fail` tally, never a script crash), so this step can never fail the phase.
-
-```
-# Resolve checks from the in-progress brief's `## Executable Acceptance` section (pass --brief),
-# falling back to .supervisor/twin/ground-truth.json when the brief has no such section.
-ground_truth = { checked: false, status: "skipped", checks_total: 0, checks_passed: 0, findings: [] }
-
-# SAFETY VALVE (--no-cmd — CORRECTED, red-team-hardening item 05: the prior comment here falsely
-# equated NON_INTERACTIVE == true with any /autonomous-originated run. That premise was false:
-# /autonomous forwards --non-interactive to this inlined /supervisor invocation ONLY when the
-# OUTER /autonomous call itself was given --non-interactive-fallback (skills/autonomous-loop/
-# SKILL.md) — a default, interactive `/autonomous "goal"` run has NON_INTERACTIVE == false, so
-# NO_CMD_FLAG is empty and a `cmd:`/bare bullet runs exactly as it would under a plain interactive
-# `/supervisor`. --no-cmd skips cmd:/bare checks entirely (recorded unverified/"cmd_disabled");
-# corpus-task:/qa-executor: checks are unaffected either way.
-#
-# The REAL guard on every OTHER path (interactive /supervisor, interactive /autonomous, and the
-# --no-cmd-less non-interactive edge above) is the content-keyed stamp gate `run-ground-truth.sh`
-# itself now enforces via `scripts/exec-acceptance-hash.sh` / `scripts/exec-acceptance-lib.sh`: a
-# --brief-sourced `cmd:`/bare bullet executes ONLY when the brief's `## Configuration` section
-# carries a stamp whose hash matches the CURRENT bullet list exactly (absent/stale -> unverified,
-# reason "cmd_unapproved", never executed) — see `docs/RESULT_SCHEMAS.md` §"`## Executable
-# Acceptance`" and `agents/plan-reviewer.md` Criterion 14 (which escalates an unstamped bullet to
-# NEEDS_HUMAN at brief-save time, before Phase 4.5 ever runs this script).
-NO_CMD_FLAG = (NON_INTERACTIVE == true) ? "--no-cmd" : ""
-# The runner derives the PROJECT ROOT every check is evaluated against from the caller's CWD (git
-# toplevel) and hands it to each corpus-task check.sh as EVAL_PROJECT_ROOT — this is why the pinned
-# repo-root CWD matters here: the runner lives in the plugin's install dir (outside any git repo on a
-# marketplace install), never in the project. `--project <dir>` exists for callers that cannot pin CWD.
-gt = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-ground-truth.sh --brief <brief_path> $NO_CMD_FLAG
-# Parse the single `GROUND_TRUTH_JSON: {...}` line. A parse miss → treat as
-# ground_truth.checked=false, status:"unverified" (mirror the benchmark "treat a parse miss as
-# unverified" rule). The runner always exits 0, so this can never fail the phase.
-
-# Mapping from the runner's GROUND_TRUTH_JSON to the SUPERVISOR_RESULT ground_truth object:
-ground_truth.checked       = gt.ran            # true when >=1 check actually executed
-ground_truth.status        = gt.status         # pass | advisory_failures | unverified | skipped
-ground_truth.checks_total  = gt.checks_total
-ground_truth.checks_passed = gt.checks_passed
-# findings[] = the FAILING per_check entries only (status == "fail"), mapped advisory-by-construction:
-for c in gt.per_check where c.status == "fail":
-  ground_truth.findings += { check: "<c.kind>:<c.target>",
-                             detail: "<c.reason or 'exit non-zero'>",
-                             severity: "advisory" }   # always "advisory" here (the schema enum [info, advisory] reserves "info"); NEVER blocking/high (mirror contract_conformance.findings)
-
-record_decision(phase: SELF_HEAL, decision: "ground_truth: {status} ({checks_passed}/{checks_total})", rationale: "advisory only — heal_decision unchanged")
-```
-
-**Ground-truth execution rules:**
-- The runner resolves checks from the brief's optional `## Executable Acceptance` section (priority) or `.supervisor/twin/ground-truth.json` (fallback). No source → `checked: false`, `status: skipped`, `0/0`, empty `findings[]`. Graceful no-op — never an error, never a fix.
-- `status: pass` requires zero failing checks (and ≥1 check executed); `status: advisory_failures` requires ≥1 failing check and a non-empty `findings[]` (each `severity: advisory`); `status: unverified` is the fail-safe tooling path (no `jq`, or checks resolved but none could be verified — e.g. only deferred `qa-executor` checks).
-- `qa-executor:` checks are recognized but DEFERRED to M2b slice 1b — the runner records them `unverified` (reason `qa_executor_dispatch_deferred_m2b_1b`) and they never block a `pass`. **Trust boundary (not a sandbox):** the runner itself does no repo writes and no network, but a `cmd:` check runs arbitrary `bash -c` with full shell privileges — so a `## Executable Acceptance` `cmd:` bullet is a trust-sensitive surface (review it at Plan Review, especially for `/autonomous`-generated briefs). `corpus-task` ids are constrained to a single path segment so they cannot escape `eval-corpus`.
+## Rules-check replay and per-iteration gate inputs
 
 ### Rules-check replay (executable-rule-candidates/01; the rules gate replay since automate-followups/07)
 
-Replay any HUMAN-CONFIRMED `.agent/rules/` `must`-rule checks through ONE fail-CLOSED helper, `scripts/rules-gate-verdict.sh`, which DELEGATES to the content-keyed, user-scope stamp `rules-check.sh --if-stamped` established (`skills/rules/SKILL.md` §8.1) — it never reads the store and never runs a `check` itself (`rules-check.sh` stays the sole executor, §9). **A stamped FAILING check of a gate-COUNTABLE rule is a correctness gate** (automate-followups/07, owner decisions D1–D4, 2026-09-28 — CLAUDE.md §"Failure-Mode Invariants"): Part 2 below synthesizes one BLOCKING finding per countable failing id and it enters the review-and-fix loop like any other `new` BLOCKING finding. Everything else this step reports — `unstamped`, `cmd_disabled`, `none`, and every ADVISORY (non-countable) id's pass/fail — stays report-only, exactly as advisory as before, except `unstamped` after a countable id FAILED earlier in the same loop (the remembered-fail exception in the rules below). Countability is the rule's human `binds` declaration checked by `rules-check.sh --list-gateable` (`skills/rules/SKILL.md` §8.1/§8.2 — not restated here).
-
+Replay any HUMAN-CONFIRMED `.agent/rules/` `must`-rule checks through ONE fail-CLOSED helper, `scripts/rules-gate-verdict.sh`, which DELEGATES to the content-keyed, user-scope stamp `rules-check.sh --if-stamped` established (`skills/rules/SKILL.md` §8.1) — it never reads the store and never runs a `check` itself (`rules-check.sh` stays the sole executor, §9). **A stamped FAILING check of a gate-COUNTABLE rule is a correctness gate** (automate-followups/07, owner decisions D1–D4 — CLAUDE.md §"Failure-Mode Invariants"): Part 2 below synthesizes one BLOCKING finding per countable failing id and it enters the review-and-fix loop like any other `new` BLOCKING finding. Everything else this step reports — `unstamped`, `cmd_disabled`, `none`, and every ADVISORY (non-countable) id's pass/fail — stays report-only, except `unstamped` after a countable id FAILED earlier in the same loop (the remembered-fail exception in the rules below). Countability is the rule's human `binds` declaration checked by `rules-check.sh --list-gateable` (`skills/rules/SKILL.md` §8.1/§8.2 — not restated here).
 ```
 # Runs ONCE PER REVIEW-AND-FIX ITERATION (Part 2 calls it right after the code-reviewer returns — a fix
 # can change the outcome), replacing the former once-per-phase `rules-check.sh --if-stamped` call.
-# Reuses $NO_CMD_FLAG UNCHANGED from the Ground-truth execution step above (never re-derived, so the
-# two calls can never disagree about whether cmd execution is disabled this run):
+# Reuses $NO_CMD_FLAG UNCHANGED from the Ground-truth execution step (`completion-tail.md`; never
+# re-derived, so the two calls can never disagree about whether cmd execution is disabled this run):
 if $NO_CMD_FLAG is non-empty: export RULES_CHECK_NO_CMD=1     # the SAME valve — the helper then NEVER invokes --if-stamped
 out = run(bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-gate-verdict.sh" --root <the feature-branch checkout>)
-# Contract: ONE JSON object, always exit 0: {verdict: ok|none|fail|unresolved|unstamped|cmd_disabled|unreadable,
-#   selected, countable, advisory[{id, reason}], passed, failing, unresolved, checks_passed: "n/m"|null,
-#   unstamped_reason? (only on `unstamped`; message text, never read here)}
-# (field contract + verdict state trace: the helper's own header — not restated here).
+# Contract: ONE JSON object, always exit 0 — {verdict: ok|none|fail|unresolved|unstamped|cmd_disabled|unreadable,
+#   selected, countable, advisory[{id, reason}], passed, failing, unresolved, checks_passed: "n/m"|null}
+#   (field contract + verdict state trace: the helper's own header — not restated here).
 # ALLOW-LISTED read (never a deny-list of bad values):
 if out.exit_code == 0 and out.stdout parses as ONE JSON object whose `verdict` is a STRING in
    ("ok", "none", "unstamped", "cmd_disabled", "fail", "unresolved", "unreadable"):
@@ -563,14 +111,11 @@ else:
   # non-string verdict, or an unrecognised verdict string — is treated as unreadable (⇒ Part 2 ESCALATES):
   rules = {verdict: "unreadable", selected: [], countable: [], advisory: [], passed: [], failing: [], unresolved: [], checks_passed: null}
 RULES_PASSABLE = ("ok", "none", "unstamped", "cmd_disabled")   # the allow-list Part 2 branches on
-# The helper unsets
-# the ambient confirm env var and never passes --confirm, so the environment can never turn this replay
-# into a fresh, stamp-writing confirmation; `--if-stamped` itself never prompts (no TTY concern).
+# The helper unsets the ambient confirm env var and never passes --confirm, so this replay can never become a
+# stamp-writing confirmation; `--if-stamped` never prompts.
 
-# A PROJECTION of `rules.verdict` ONLY — first match wins, and no branch reads $NO_CMD_FLAG: the export
-# above already makes the helper answer `cmd_disabled` wherever the valve decides, and where an EARLIER
-# verdict outranks it (unreadable, countable-set drift `unstamped`, advisory-only/empty `none`) the line
-# must name THAT verdict — the one Part 2 acts on — never `cmd_disabled` (automate-followups/39 C.1).
+# A PROJECTION of `rules.verdict` ONLY — first match wins; no branch reads $NO_CMD_FLAG (an EARLIER verdict
+# outranks `cmd_disabled`, so the line names the verdict Part 2 acts on).
 rules_check_line =
   if rules.verdict == "unreadable":       "rules_check: unreadable"
   elif rules.verdict == "unresolved":     "rules_check: unresolved {countable ids in rules.unresolved, \"; \"}"
@@ -584,285 +129,25 @@ record_decision(phase: SELF_HEAL, decision: rules_check_line, rationale: "rules 
 ```
 
 **Rules-check replay rules:**
-- **The verdict decides; the line reports.** Only `rules.verdict` feeds Part 2, through an ALLOW-LIST: `fail` ⇒ a BLOCKING finding per countable failing id (the loop iterates on it); `ok` / `none` / `unstamped` / `cmd_disabled` (`RULES_PASSABLE`) ⇒ nothing; EVERY other value — `unresolved`, `unreadable`, and any helper output the read above cannot affirm (absent helper, non-zero exit, non-JSON, missing or unknown verdict), all normalised to `unreadable` — ⇒ the loop escalates with `rules_gate_unresolved` (fail CLOSED — a verdict the gate could not compute never passes silently; the one deliberate departure from "byte-identical", since those states did not exist before); `ok` / `none` / `unstamped` / `cmd_disabled` ⇒ the loop is BYTE-IDENTICAL to a run with no rules store. An advisory id's pass/fail NEVER changes the verdict — it is reported in the line only. **The one exception — a remembered fail (automate-followups/18, owner decision Option A):** Part 2 remembers every countable id seen failing in `rules_failed_seen`, and an `unstamped` verdict while that set is non-empty escalates `rules_fail_then_unstamped` instead of passing — typically a fix edited a file the rule binds, so the stamp moved and the earlier FAIL was never confirmed cleared. It fires on ANY such `unstamped`, deliberately NOT only when the remembered id is still in `rules.countable`: an `unstamped` verdict never runs the replay (`rules.failing` is empty) and the helper turns countability drift into `unstamped`, so a fix that also dropped the rule's countability must not clear it silently. A rule never seen failing in this loop stays advisory when `unstamped` (D3 unchanged). Honest limit: `cmd_disabled` after a `fail` has the same no-replay shape but stays passable — it takes an environment change mid-loop, not a branch edit.
-- **Line states:** `passed n/m` (a countable pass, or an advisory-only store whose replay reached a trailer — a failing ADVISORY check is reported honestly as `n < m` and never gates), `unstamped` (no human has run `/rules check --confirm` on THIS machine for the current hash input, a rule changed since, or a PR edited a file a rule `binds` — the hash moved; or the gate-countable id set changed since the last confirm — `skills/rules/SKILL.md` §8.1), `cmd_disabled` (the helper answered `cmd_disabled` — `RULES_CHECK_NO_CMD=1`, exported from $NO_CMD_FLAG or set ambiently — which it does only past its earlier verdicts: an unparseable store stays `unreadable`, countable-set drift stays `unstamped` and an advisory-only store or empty selection stays `none`, per the `rules-gate-verdict.sh` VERDICT DERIVATION, and the line names that earlier verdict, so a `--no-cmd` run that escalates never posts `cmd_disabled` — mirrors the ground-truth step's own unattended trust valve), `none` (no must+checkable rule selected, or an all-advisory store whose replay produced no accepted trailer — the helper's JSON does not distinguish those, an honest limit), `unresolved <ids>` / `unreadable` (the escalating states), each optionally followed by one `rules_advisory: <id> (<reason>)` clause per non-countable id (`binds_undeclared` | `binds_invalid` | `unbound:<paths>`). A countable passing store prints `rules_check: passed 1/1` — byte-identical to the pre-gate line for that state. Edge: a repo with no `.agent/rules/` store (or no must+checkable rule) is `none`.
-- **One line, one place:** `rules_check_line` is surfaced in the Phase 4.5 report and (per the completion tail below) travels alongside the Advisory Twin delta line into the run's advisory output — it is prose only; the GATING effect travels through Part 2's findings, not through this line. **Deviation from the brief (executable-rule-candidates/01 AC4):** the PR body is written at Phase 4 FINALIZE, before Phase 4.5 runs, so the line is surfaced in the Phase 4.5 report only — no PR-body writer is added. `docs/RESULT_SCHEMAS.md` carries no nested `SUPERVISOR_RESULT` field and no flat `session_end` field for it.
+- **The verdict decides; the line reports.** Only `rules.verdict` feeds Part 2, through an ALLOW-LIST: `fail` ⇒ a BLOCKING finding per countable failing id (the loop iterates on it); `ok` / `none` / `unstamped` / `cmd_disabled` (`RULES_PASSABLE`) ⇒ nothing — the loop is BYTE-IDENTICAL to a run with no rules store; EVERY other value (`unresolved`, `unreadable`, and any helper output the read above cannot affirm, all normalised to `unreadable`) ⇒ the loop escalates with `rules_gate_unresolved` (fail CLOSED). An advisory id's pass/fail NEVER changes the verdict. **Remembered fail (automate-followups/18, Option A):** Part 2 keeps every countable id seen failing in `rules_failed_seen`; an `unstamped` verdict while that set is non-empty escalates `rules_fail_then_unstamped` — on ANY such `unstamped`, deliberately NOT only when the remembered id is still in `rules.countable`. A rule never seen failing stays advisory when `unstamped` (D3). Honest limit: `cmd_disabled` after a `fail` stays passable.
+- **Line states:** `passed n/m` (a countable pass, or an advisory-only store whose replay reached a trailer — a failing ADVISORY check shows as `n < m` and never gates), `unstamped` (no human ran `/rules check --confirm` on THIS machine for the current hash input, or the hash / gate-countable id set moved since — `skills/rules/SKILL.md` §8.1), `cmd_disabled` (the helper answered it from `RULES_CHECK_NO_CMD=1`; an earlier verdict — `unreadable`, drift `unstamped`, `none` — outranks it, so a `--no-cmd` run that escalates never posts `cmd_disabled`), `none` (no must+checkable rule selected, or no accepted trailer; also a repo with no `.agent/rules/` store), `unresolved <ids>` / `unreadable` (the escalating states), each optionally followed by one `rules_advisory: <id> (<reason>)` clause per non-countable id (`binds_undeclared` | `binds_invalid` | `unbound:<paths>`). A countable passing store prints `rules_check: passed 1/1`.
+- **One line, one place:** `rules_check_line` is surfaced in the Phase 4.5 report and (per the completion tail) travels alongside the Advisory Twin delta line into the run's advisory output — it is prose only; the GATING effect travels through Part 2's findings, not through this line. The PR body is written at Phase 4 FINALIZE, before Phase 4.5 runs, so the line goes in the Phase 4.5 report only. `docs/RESULT_SCHEMAS.md` carries no nested `SUPERVISOR_RESULT` field and no flat `session_end` field for it.
 - **The helper always exits 0** — a verdict, including `unreadable`, is a normal outcome and never fails the phase; the CONSUMER (Part 2) decides.
-- **Never a second review pass.** It reads no diff and asks no question — it replays a command a human already ran and confirmed themselves, on their own machine; it runs once per iteration only because a fix can change what the command observes.
-
-### Rules-store audit (automate-followups/09 — advisory, NEVER gates)
-
-Re-validate the committed `.agent/rules/` store itself, once per Phase 4.5 run, through ONE deterministic always-exit-0 helper, `scripts/rules-audit-line.sh`, which runs the read-only `audit-rules.sh` engine (`skills/rules/SKILL.md` §11) over the feature-branch checkout and maps its report to exactly one `rules_audit:` line (plus an optional `rules_gate_trigger:` line). The engine re-runs the write-time correctness checks plus the store-wide ones (the finding-kind list is owned by `audit-rules.sh` / `skills/rules/SKILL.md` §11 — not restated here). It EXECUTES NOTHING: every rule `check` is read as text and statically linted, never run — which is why this step has no `$NO_CMD_FLAG` valve and no stamp interplay (there is no command to disable and nothing a human must have confirmed).
-
-> **HARD ADVISORY CONTRACT — this check NEVER changes a gate.** Exactly like the contract-conformance check and the ground-truth execution above, the rules-store audit is **advisory only**: it **NEVER changes `heal_decision`**, **NEVER triggers a fix iteration**, and **NEVER blocks the PR**. Nothing it reports enters Part 2's findings or the review-and-fix loop, and nothing escalates. It is read-only (the helper never writes; the engine has no write mode) and the helper ALWAYS exits 0, so this step can never fail the phase. Unlike §"Rules-check replay" above (a correctness gate since automate-followups/07, re-run every iteration), this step runs ONCE per Phase 4.5 run, at the same post-review advisory point as the other checks in this section — it lints the store, not the diff, and adds no loop coupling.
-
-```
-out = run(bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-audit-line.sh" --root <the feature-branch checkout>)
-# Contract: always exit 0; stdout is EXACTLY one or two lines (mapping: the helper's own header — not restated here).
-lines = out.stdout split on newlines
-rules_audit_line        = lines[0] if lines[0] starts with "rules_audit: " else "rules_audit: unexamined"   # an absent/garbled helper never reads as clean
-rules_gate_trigger_line = lines[1] if lines[1] starts with "rules_gate_trigger: " else none
-
-record_decision(phase: SELF_HEAL, decision: rules_audit_line [+ "; " + rules_gate_trigger_line when present], rationale: "read-only store audit (audit-rules.sh via rules-audit-line.sh)")
-```
-
-**Rules-store audit state trace** (exactly one `rules_audit:` line per run):
-- `rules_audit: clean` — the engine examined the store and found no BLOCKING finding (a store with no `.agent/rules/` directory is also `clean`: zero rules, a small-N result). `heal_decision` is unchanged; nothing enters Part 2's findings or the loop; nothing escalates.
-- `rules_audit: findings <n> (<kinds>)` — the engine reported `<n>` BLOCKING store findings of the listed kinds (e.g. `findings 1 (no_mechanism)`). `heal_decision` is unchanged; the findings are NOT synthesized into Part 2's findings, NOT fed to the review-and-fix loop, and NOT escalated — a human reads the line and runs `/rules audit` for the evidence and the recommended `/rules add --supersedes` / retract action.
-- `rules_audit: unexamined` — the engine could not examine the store (its exit 2, an absent or garbled engine/helper, a disagreeing report). Could-not-examine is NEVER reported as `clean`. `heal_decision` is unchanged; nothing enters Part 2's findings or the loop; nothing escalates.
-- `rules_gate_trigger: …` (optional second line, any state) — the store now holds at least one `must` rule with a non-empty `check` while the parked `proposed/automate-followups-08-…` file still exists: that parked item is now actionable. Promotion stays a human act; nothing is moved, stamped or gated.
-
+- **Never a second review pass** — it replays a command a human already confirmed; it runs once per iteration only because a fix can change what the command observes.
 ---
-
-### Contract builder (WRITE path — completion tail only)
-
-**Runs only on a PASS outcome** (`heal_decision == PASS` or loop-skipped — i.e. the same outcomes that move the job to `done/` in completion-tail step 2, Part 2 below). On the ESCALATED / base-mismatch / invariant-violation paths, SKIP the builder (do not record contracts for a code state we did not pass). This is **propose-only, advisory, and reversible** — it writes the advisory twin store, never plugin code, never a gate.
-
-**First, compute a per-subsystem incident map for THIS run** (advisory blast-radius history — see `docs/RESULT_SCHEMAS.md` §SYSTEM_CONTRACT `incident_history`). This map records ONLY incidents observed *this run* and is passed into the builder Task so it can append (never backfill) `incident_history` entries. Derive it from two sources already computed earlier in Phase 4.5:
-
-```
-incident_map = {}   # subsystem id -> [ {kind, summary} ]   (this-run incidents only)
-
-# (a) Conformance violations — group contract_conformance.findings by subsystem.
-for f in contract_conformance.findings:           # each: {subsystem, invariant, severity, detail}
-  incident_map[f.subsystem] += { kind: "conformance_violation",
-                                 summary: f.invariant }   # the violated invariant text (short human string)
-
-# (b) Self-heal fixes — map each fix iteration's modified files to a subsystem id.
-#     Use the SAME id convention the builder uses (docs/RESULT_SCHEMAS.md §SYSTEM_CONTRACT):
-#     repo-root-relative PATH for a file-backed subsystem; a stable LOGICAL name for a
-#     cross-file concern. For file-backed paths the id IS the repo-root-relative path.
-for each fix iteration that ran in the review-and-fix loop:        # FIX_RESULT per iteration
-  for path in FIX_RESULT.files_modified:
-    sid = subsystem_id_for(path)                  # repo-root-relative path (file-backed)
-    incident_map[sid] += { kind: "self_heal_fix",
-                           summary: "self-heal fixed {FIX_RESULT.issues_addressed} issue(s) in {path}" }
-```
-
-A subsystem absent from `incident_map` has **no incident this run** → the builder must NOT add an entry for it (and must carry that subsystem's prior `incident_history` unchanged — never fabricate). `incident_history` is **additive / advisory, bounded, deduped, this-run-only**, NEVER a gate, NEVER backfilled, and `schema_version` stays `1` — consistent with the ST1 schema note in `docs/RESULT_SCHEMAS.md` §SYSTEM_CONTRACT.
-
-Spawn an **ephemeral, Bash-capable builder Task** (a `general-purpose` Task — **NOT a new permanent agent**, NOT Context-Keeper) that derives one SYSTEM_CONTRACT per touched subsystem from the integrated feature-branch diff and writes each via `write-system-contract.sh`, passing `incident_map` so it can record this run's `incident_history`:
-
-```
-Task(
-  subagent_type: "general-purpose",
-  # Tool allowlist: Read, Bash, Glob, Grep (no Task — the builder may not dispatch further subagents).
-  working_dir: PINNED REPO-ROOT CWD — the main checkout (NEVER a worktree).
-  prompt: "You are the ephemeral System Twin contract builder (advisory, propose-only).
-
-    Repo root (CWD): {repo_root}     # the main checkout — you MUST run from here.
-    Touched diff scope: {BASE_BRANCH==main ? 'git diff origin/main...HEAD' : 'git diff $BASE_BRANCH...HEAD'}
-    Provenance derived_from: {commit SHA or that diff expression}
-    Run timestamp (ISO 8601): {run_iso8601}     # use as incident_history entry `date`
-    Session id: {session-id}                      # use as incident_history entry `source` (== --source)
-    This-run incident map (subsystem id -> [{kind, summary}], this-run incidents ONLY):
-      {incident_map as derived above — empty {} if this run had no conformance violation and no self-heal fix}
-
-    For EACH touched subsystem, derive a structured SYSTEM_CONTRACT (schema in docs/RESULT_SCHEMAS.md
-    §SYSTEM_CONTRACT): subsystem, invariants, dependencies, behavioral_specs, and provenance
-    (derived_from = the diff/commit above, source = this session id).
-    Pick the `subsystem` id per the convention in docs/RESULT_SCHEMAS.md §SYSTEM_CONTRACT — the
-    repo-root-relative PATH for a file-backed subsystem (e.g. 'scripts/build-insights.sh') or a
-    stable LOGICAL name for a cross-file concern (e.g. 'supervisor-phase45'). Use the SAME id the
-    Launch Pad reader would derive (it is the lookup key); do not abbreviate the path.
-    Do NOT populate provenance.content_hash — that field is informational only and a file cannot
-    contain its own hash. OMIT it from the contract body you write; write-system-contract.sh
-    computes the authoritative content_hash from the written bytes and records it in the ledger.
-
-    INCIDENT HISTORY (additive/advisory, bounded, deduped, this-run-only — see
-    docs/RESULT_SCHEMAS.md §SYSTEM_CONTRACT). For EACH touched subsystem you derive a contract for:
-      1. Read the subsystem's EXISTING contract FIRST to recover any prior incident_history:
-           bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh --subsystem '<id>'
-         Graceful: if none / not verified / no prior incident_history, start from the empty list [].
-      2. If the This-run incident map above has an entry for THIS subsystem id, APPEND one new
-         incident_history entry PER mapped incident to the (prior) list:
-           {date: "{run_iso8601}", kind: <kind from map>, summary: "<summary from map>", source: "{session-id}"}
-         If the map has NO entry for this subsystem, carry the prior list UNCHANGED (never fabricate).
-      3. DEDUPE: do not add an entry identical in kind+summary+source to one already present.
-      4. BOUND: keep only the most recent 5 entries. The list is chronological oldest-first —
-         always APPEND new entries at the end (step 2) and drop from the FRONT so the newest entry
-         is always the last line (the Launch Pad reader, ST3, treats the last line as most recent).
-      5. Write the merged list into the contract body using EXACTLY this on-disk shape — one entry
-         per line as an inline YAML flow-map (HARD contract with the Launch Pad reader, ST3):
-           incident_history:
-             - {date: "<ISO8601>", kind: <conformance_violation|self_heal_fix|other>, summary: "<short text>", source: "<session-id>"}
-         Omit the `incident_history:` key entirely when the merged list is empty.
-      This is additive (schema_version stays 1), advisory, bounded, deduped, and this-run-only —
-      NEVER a gate, NEVER backfilled.
-
-    Write each contract from THIS pinned repo-root CWD via:
-      bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-system-contract.sh \\
-           --subsystem '<id>' --contract-file <tmpfile> --source '<session-id>'
-
-    HARD RULES:
-    - Run write-system-contract.sh ONLY from the repo-root CWD. It REFUSES (exit 3) from a linked
-      git worktree (the sole-writer / pinned-CWD guard). Worktrees were already removed by Phase 4
-      FINALIZE, so the repo root is the natural and correct location — do NOT cd into any worktree.
-    - This is advisory/propose-only. A non-zero exit from the writer (e.g. exit 0 no-op when no sha
-      tool, exit 2 bad call) MUST NOT fail the task — log it and continue.
-    - Do NOT write .supervisor/state.md or any other state; the twin store is owned solely by
-      write-system-contract.sh, and Context-Keeper is NOT in this path.
-
-    Emit a one-line summary: how many contracts written / skipped."
-)
-```
-
-- **Context-Keeper is explicitly OUT of this path.** It writes only `## Decisions Log` / `## Worker Results` / `## Error Log` / `## Phase Flags` in `state.md` (the `## Session` block is derived, not written by Context-Keeper — see `skills/state-management/SKILL.md` §"Progress state"); it neither writes nor gates `.supervisor/twin/`. The twin store's sole writer is `write-system-contract.sh`, whose worktree-guard is the real enforcement.
-- **Pinned repo-root CWD, never a worktree.** `write-system-contract.sh` exits 3 from a linked worktree (top-level `.git` is a FILE, not a dir). By the completion tail, Phase 4 FINALIZE has already removed all worktrees and returned to the main checkout, so the repo root is both natural and correct.
-- **Failure is non-fatal.** Any writer non-zero exit, missing-sha-tool no-op, or builder crash is logged via `record_decision(phase: SELF_HEAL, decision: "twin_builder: {n} written / {m} skipped", rationale: "advisory — non-fatal")` and the task proceeds. The builder NEVER changes `heal_decision`, NEVER blocks the PR, and runs AFTER the PR already exists.
-
----
-
-### Advisory Twin delta line (informational ONLY)
-
-Print one human-readable line summarizing THIS run's Twin hard signal, built from the
-`contract_conformance` / `benchmark_result` values already computed above in this phase.
-This is a pure echo of `format-twin-delta.sh` output — it NEVER changes `heal_decision`,
-NEVER blocks or alters the PR, and NEVER affects control flow. The Supervisor result/gate
-behavior is byte-identical with or without this line. The script always exits 0; when this
-run produced no Twin signal (fields null/absent, e.g. Twin not exercised) it prints a benign
-`Twin: no signal this run` (or pass `--from-session-end` the session_end line instead).
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/format-twin-delta.sh" \
-  --conformance-status "{contract_conformance.status}" \
-  --violations "{contract_conformance.violations}" \
-  --benchmark-status "{benchmark_result.status}" \
-  --benchmark-name "{benchmark_result.name}" \
-  --benchmark-metric "{benchmark_result.metric}" \
-  --benchmark-value "{benchmark_result.value}" \
-  --benchmark-delta "{benchmark_result.delta}"
-# echo the single line into the Phase 4.5 output (advisory). Never gates.
-```
-
----
-
-### Hard-signal dual emission (ST3 — written in BOTH shapes)
-
-The contract-conformance result, the benchmark result, and the ground-truth result are emitted as **the same data in two shapes**, per `docs/RESULT_SCHEMAS.md` §"`session_end` JSONL hard-signal fields":
-
-1. **Nested objects on `SUPERVISOR_RESULT`** (completion-tail step 5 in Part 2 below; block definition in `agents/supervisor.md` §"Result Block (SUPERVISOR_RESULT)"): `contract_conformance`, `benchmark_result`, and `ground_truth` (see the "Result Block" schema). Optional/additive — `schema_version` stays `1`.
-2. **FLAT scalar fields on the `session_end` JSONL event** in `.supervisor/logs/{session_id}.jsonl` — this is what `build-insights.sh` (ST4) aggregates via `select(.event=="session_end")`. Write all of them, with the SAME data as the nested objects (field correspondence below). **These flat field names are a hard contract with ST4 — do NOT rename them:**
-
-   | flat `session_end` field | from nested |
-   |--------------------------|-------------|
-   | `contract_conformance_status` | `contract_conformance.status` |
-   | `contract_violations` | `contract_conformance.violations` |
-   | `benchmark_status` | `benchmark_result.status` |
-   | `benchmark_metric` | `benchmark_result.metric` |
-   | `benchmark_value` (number\|null) | `benchmark_result.value` |
-   | `benchmark_delta` (number\|null) | `benchmark_result.delta` |
-   | `ground_truth_status` | `ground_truth.status` |
-   | `ground_truth_checks_total` | `ground_truth.checks_total` |
-   | `ground_truth_checks_passed` | `ground_truth.checks_passed` |
-   | `ground_truth_pass_rate` (string "M/N") | the runner's `pass_rate` — FLAT ONLY: never a key of the nested `ground_truth` |
-
-   **Nested shapes, exactly (automate-followups/20 — `/automate` `sidecar-check` fails any other key set; `docs/result-schemas/supervisor-result.md` "Nested-object key sets"):** the flat table above maps nested → flat and never the reverse, so no flat-only field (`pass_rate` / `ground_truth_pass_rate`) is ever copied into a nested object.
-   - `ground_truth: {checked: <bool>, status: <s>, checks_total: <n>, checks_passed: <n>, findings: [...]}` — `checked` is ALWAYS present (`gt.ran`), including on `status: pass`.
-   - `contract_conformance: {checked: <bool>, status: <s>, contracts_evaluated: <n>, violations: <n>, findings: [...]}`.
-   - `benchmark_result: {ran, status, name, metric, value, baseline, delta, unit}` — on a parse miss `{ran: false, status: unverified}`.
-   - **Skip form** (nothing to check): `ground_truth: {checked: false, status: skipped}` / `contract_conformance: {checked: false, status: skipped}` (or `status: unverified`) — complete as written; the counts and `findings` may be written as `0` / `[]` or omitted.
-
-   **Findings-per-item fields (iq02 IQ01, additive, same value in both shapes, same names):** `heal_first_decision` (the review-and-fix loop's first `iter_decision` — `PASS` / `FAIL` / `NEEDS_HUMAN`) and `heal_new_findings` (integer — `category: new` `review.issues` summed over every iteration) go on `SUPERVISOR_RESULT` AND on the flat `session_end` line; both are `null` when `heal_loop_ran == false`. They are REPORT-ONLY: never read by the loop, never change `heal_decision` (whose enum is unchanged), and are what `/insights` turns into the first-pass PASS rate and findings per item.
-
-   See the `session_end` log line in `skills/state-management/SKILL.md` §"Session Logging (moved from agents/supervisor.md)" for the exact shape. The flat fields are additive — a `session_end` event without them remains valid (a reader treats absent fields as "not reported this session"; for the `ground_truth_*` fields a reader treats absent as `skipped`).
-
----
-
 # Part 2 — Phase 4.5 SELF_HEAL Loop Protocol (moved from `agents/supervisor.md`)
-
-> **Provenance & authority:** this Part is the Supervisor Phase 4.5 SELF_HEAL procedure, moved
-> VERBATIM from `agents/supervisor.md` §"Phase 4.5: SELF_HEAL" (which keeps only the short phase
-> stanza — Purpose / Entry / mandate / invariant tracking / exit conditions — plus the VERBATIM
-> **completion-tail guard** and the phase **Output** block). Zero behavior change: every gate,
-> error value, bound, and grep-stable string keeps identical semantics. The Supervisor Reads this
-> file at Phase 4.5 entry (still NOT preloaded) and executes this Part as the protocol authority.
-> Step numbering (on-entry steps 1–4, cleanup step 5, and the completion-tail steps below, incl. 2.5 / 4.5 /
-> 5.5) is preserved verbatim, so cross-file references to e.g. "Phase 4.5 step 5.5" remain valid —
-> they now resolve here. The `SUPERVISOR_RESULT` block definition stays in `agents/supervisor.md`
-> §"Result Block (SUPERVISOR_RESULT)"; the completion-tail guard (step 0) stays in the agent file —
-> gates stay visible in the agent.
-
+> **Provenance & authority:** the Supervisor Phase 4.5 SELF_HEAL procedure. `agents/supervisor.md`
+> §"Phase 4.5: SELF_HEAL" keeps the short phase stanza, the VERBATIM **completion-tail guard** and
+> the phase **Output** block; §"Result Block (SUPERVISOR_RESULT)" keeps the block definition. Step
+> numbering (on-entry steps 1–5, the completion-tail steps incl. 2.5 / 4.5 / 5.5) is stable across the
+> split files, so a reference such as "Phase 4.5 step 5.5" resolves in the file the index above names.
 **Entry / skip semantics, the Phase 4.5 mandate, invariant-tracking summary, and exit conditions**
 live in the `agents/supervisor.md` Phase 4.5 stanza — not restated here. Recap of the one
 load-bearing entry rule: the phase ALWAYS runs after Phase 4 FINALIZE; `--skip-self-heal`
 short-circuits the review-and-fix LOOP only — the phase transition and the completion tail
 always execute.
 
-**On-entry actions:**
-1. Progress state (session phase) is not written here — it is derived by the hook-triggered `scripts/emit-progress-event.sh` + `scripts/build-state.sh` projector. See `docs/TELEMETRY.md`.
-1a. Confirm the protocol read: `Read("${CLAUDE_PLUGIN_ROOT}/skills/self-heal-advisory/SKILL.md")` — this file (the Phase 4.5 stanza in `agents/supervisor.md` mandates the Read at phase entry, so executing this Part means it already happened). Part 1 above governs the System Twin advisory steps referenced later in this phase (deliberately NOT preloaded; one read at entry keeps the agent prompt gate-focused).
-1b/1d. *(Retired.)* Steps 1b (graph brain consult) and 1d (area-knowledge bridge advisory) were removed when the graphify tier was retired; the surviving step letters are preserved so cross-references to steps 1c / 1e stay valid.
-1c. **Prior-churn advisory (pre-review enrichment — ADVISORY ONLY, fail-safe):** run the **"Prior-churn advisory (pre-review enrichment)"** step from Part 1 of this skill (read at step 1a) to compute the `prior_churn` summary BEFORE the review-and-fix loop. It computes the integrated diff's touched files (`git diff --name-only "$BASE_BRANCH"...HEAD`, defaulting to `origin/main` when `BASE_BRANCH==main` — the SAME DIFF-SCOPE OVERRIDE the reviewer uses) and runs `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-postmortem.sh" <touched files...>` passing the paths as **command-line ARGUMENTS** (never stdin — an args-bearing call can never block). Capture its bounded markdown as the advisory `prior_churn` summary; **skip silently on empty output** (the reader always exits 0, so `prior_churn` simply stays empty and the reviewer prompt omits the enrichment line). This is **strictly advisory / fail-safe / non-gating** — `prior_churn` NEVER changes `heal_decision`, NEVER drives the fix task (the corpus is fed to the REVIEW lens ONLY, never to workers/fixers), and NEVER gates or blocks the PR. It is threaded into the `code-reviewer` Task prompt in the review-and-fix loop below as advisory context.
-1e. **House-rules advisory (committed convention enrichment — pre-review enrichment, ADVISORY ONLY, fail-safe):** run the **"House-rules advisory (committed convention enrichment)"** step from Part 1 of this skill (read at step 1a) to compute the `house_rules` summary BEFORE the review-and-fix loop, as a sibling to step 1c. On the SAME integrated-diff touched-file scope (`git diff --name-only "$BASE_BRANCH"...HEAD`, defaulting to `origin/main` when `BASE_BRANCH==main` — the SAME DIFF-SCOPE OVERRIDE the reviewer uses), run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <touched files...> --with-ids` passing the paths as **command-line ARGUMENTS** (never stdin — an args-bearing call can never block). Capture its bounded advisory markdown, ids included, as `house_rules` — kept VERBATIM, never summarized; **skip silently on empty output** (the reader always exits 0, so `house_rules` simply stays empty and the reviewer prompt omits the enrichment line). **Run this step UNCONDITIONALLY like step 1c — do NOT gate it on any "if a rules store is detected" conditional.** `read-rules.sh` self-gates on `.agent/rules/*.json` (exactly as `read-postmortem.sh` self-gates on its corpus), so no detection wrapper is needed or wanted. **Call-shape NOTE:** the diff scope is a REAL filter — `read-rules.sh` routes on each rule's `applies_to`, so passing the integrated-diff paths is what scopes `house_rules` to the change under review. A rule with `applies_to: null` / no such key stays repo-wide; every ambiguous shape, and an empty path set, fail OPEN to repo-wide, so a degraded diff can never silently suppress the house rules. Pass them as args, never stdin (the no-hang shape). This is **strictly advisory / fail-safe / non-gating** — `house_rules` NEVER changes `heal_decision`, NEVER drives the fix task (the rules text is fed to the REVIEW lens ONLY via this seam, never to workers/fixers as a gate), and NEVER gates or blocks the PR. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** This seam calls the READER ONLY — it NEVER pipes/evals/sources/`bash -c`s the reader output; each rule's `check` is surfaced as DATA (text) only, NEVER executed. Do NOT bump any `schema_version`. It is threaded into the `code-reviewer` Task prompt in the review-and-fix loop below as advisory context (the **HOUSE-RULES ADVISORY** line, included only when `house_rules` is non-empty).
-1f. **Brief-conformance advisory (acceptance-criteria enrichment — pre-review enrichment, ADVISORY ONLY, fail-safe):** run the **"Brief-conformance advisory (acceptance-criteria enrichment)"** step from Part 1 of this skill (read at step 1a) to compute the `brief_conformance` summary BEFORE the review-and-fix loop, as a sibling to steps 1c and 1e. Source is the in-progress brief at `brief_path` (the SAME path `run-ground-truth.sh --brief` and `parse_rubric` use) — parse its `## Acceptance Criteria` bullets (checkbox prefix stripped) plus its `## Outcomes Rubric` bullets when present, per the parse rule in Part 1, bounded by **the cap in Part 1** (criteria first, then rubric bullets; the omitted-count marker is appended on truncation and counts every omitted bullet — do NOT restate the number here). **Skip silently — `brief_conformance` stays EMPTY and the reviewer prompt omits the line — on any of the three skip conditions in Part 1: (1) no `brief_path` (a direct `/supervisor task:` invocation with no brief — the same back-compat case the completion tail handles for a job file absent from `.supervisor/jobs/in-progress/`; this step must not error on the missing path), (2) no `## Acceptance Criteria` section in the brief, (3) zero bullets parse.** Record `record_decision(phase: SELF_HEAL, decision: "brief_conformance: {non-empty | empty}", …)` on every path. This is **strictly advisory / fail-safe / non-gating** — `brief_conformance` itself NEVER changes `heal_decision` and adds NO new gate and NO new schema field (R1); NEVER drives the fix task via this seam (the criteria text is fed to the REVIEW lens ONLY, never to workers/fixers — fixers receive only the resulting ordinary findings, as they do every other finding); and NEVER gates or blocks the PR on its own. **Unlike steps 1c and 1e, the reviewer's response to this enrichment IS ordinary `category: new` / HIGH findings (R2)** — one per acceptance criterion the integrated diff does not address, quoting the criterion verbatim — and those pass through the existing `CODE_REVIEW_RESULT` gate and the existing `category=new + severity>=HIGH` fix selection exactly like any other finding. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** Do NOT bump any `schema_version`. It is threaded into the `code-reviewer` Task prompt in the review-and-fix loop below (the **BRIEF-CONFORMANCE ADVISORY** line, placed directly after the HOUSE-RULES ADVISORY line, included only when `brief_conformance` is non-empty).
-1g. **Deviations advisory (worker- and fixer-recorded plan drift — pre-review enrichment, ADVISORY ONLY, fail-safe):** run the **"Deviations advisory (worker- and fixer-recorded plan drift)"** step from Part 1 of this skill (read at step 1a) to compute the `deviations_advisory` summary, as a sibling to steps 1c/1e/1f. Collect every `deviations` entry from `state.md`'s `## Worker Results` (prefixed by `subtask_id`) plus the per-run `fixer_deviations` list (appended from each iteration's `FIX_RESULT.deviations`, prefixed `fix-<iteration>`) — bound to **the same cap Part 1 uses for `brief_conformance`**, with a **VISIBLE** omitted-count marker on truncation (item 02 §9 exempts truncated advisories from its reviewer clause, so the marker must be visible to the reviewer, not merely logged). **Skip silently — `deviations_advisory` stays EMPTY and the reviewer prompt omits the line — on any of the three skip conditions in Part 1: (1) no `state.md`, (2) no `## Worker Results` section, (3) zero entries across both sources.** Record `record_decision(phase: SELF_HEAL, decision: "deviations_advisory: {non-empty | empty}", …)` on every path — including every append to `fixer_deviations` itself (Part 1's carriage note), so the list survives a resume/compaction. **UNLIKE steps 1c/1e/1f, this step RUNS ON EVERY ITERATION of the review-and-fix loop below, not only the first** — `fixer_deviations` grows one entry-set at a time as the loop fixes issues, so a first-iteration-only computation would never see later iterations' fixer entries. Contract, stated verbatim: `deviations_advisory` is fed to the REVIEW lens only, NEVER to workers/fixers as an instruction; it NEVER changes `heal_decision`, adds NO new gate and NO new schema field; **like step 1f and unlike 1c/1e, the reviewer's response IS ordinary findings** — one `category: new` finding per deviation that contradicts a stated acceptance criterion or an `## Outcomes Rubric` bullet (quoting both); a deviation that is merely unexpected is not a finding. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** Do NOT bump any `schema_version`. It is threaded into the `code-reviewer` Task prompt in the review-and-fix loop below (the **DEVIATIONS ADVISORY** line, placed directly after the BRIEF-CONFORMANCE ADVISORY line, included only when `deviations_advisory` is non-empty).
-2. **Initialize invariant tracking:**
-   - `skip_self_heal_requested` — set from INIT-parsed flags (true iff `--skip-self-heal` was passed on the command line). Set once here, never mutated.
-   - `phase45_review_invoked` — initialize to `false`. Flip to `true` only when the `code-reviewer` Task call below actually executes (first iteration of the review-and-fix loop).
-   - `red_team_advisory` — initialize to `"disabled"` HERE, BEFORE the resume-thrash / `--skip-self-heal` early-jump checks below, so the completion-tail Outcome line always has a value even when this phase is bypassed and the Advisory red-team lens (further down) never runs. The lens overrides this to `ran` / `skipped_low_risk` / `error` (or re-affirms `disabled`) when it executes; on a bypass path it remains `"disabled"` (lens never ran).
-3. **Resume-thrash guard (if this is a `--continue` run landing in SELF_HEAL):**
-   - `Context-Keeper(operation: record_self_heal_resume, increment: true)` → reads the returned count
-   - This is the ONLY place the resume counter is incremented: exactly once, at Phase 4.5 entry of a `--continue` run. A pause/crash earlier in the same run does NOT increment — the increment belongs to the next run's entry.
-   - If count ≥ 3: abort the loop, mark task `completed_with_escalation` with reason `"self_heal_resume_thrash"`, skip to completion tail with `heal_loop_ran=true, heal_decision=ESCALATED, error: "self_heal_resume_thrash"`. Set `heal_remaining_issues` to the last known open-issue count from state (it may legitimately be 0 — the escalation result is valid because `error` is non-empty, per the SUPERVISOR_RESULT ESCALATED invariant). Do NOT set `phase45_review_invoked=true` based on a prior run's review — that flag tracks only the current run and is not persisted. `red_team_advisory` stays `"disabled"` (initialized in step 2 — the advisory lens lives later in this phase and is bypassed on this early jump).
-4. Check `--skip-self-heal` flag: if set, record `record_decision(phase: SELF_HEAL, decision: "loop_skipped", rationale: "--skip-self-heal flag")` and jump to completion tail with `heal_loop_ran=false`. `red_team_advisory` stays `"disabled"` (initialized in step 2; the advisory red-team lens is part of this phase and is bypassed when self-heal is skipped).
-
-5. **Phase 4.5 base-mismatch cleanup (v14.0.0, AC-7 — short-circuits the review-and-fix loop):**
-
-   Before running the heal loop, check whether Phase 4 detected a base-branch mismatch:
-
-   ```
-   mismatch = Context-Keeper(operation: get_flag, key: "base_mismatch_detected")
-   ```
-
-   If `mismatch` is non-null (Phase 4 set the flag — either real mismatch or `gh pr view` failure under `--non-interactive`):
-
-   1. **Close the orphan PR best-effort** (do not abort on failure — the PR may already be closed, or `gh` may still be unavailable):
-      ```bash
-      gh pr close "$PR_URL" --comment "Automatically closed by /autonomous loop: base branch mismatch detected — expected ${mismatch.expected}, found ${mismatch.actual}. See SUPERVISOR_RESULT for details. Reason: ${mismatch.reason}." || true
-      ```
-      Capture the exit code:
-      - `0` → `PR_STATE="closed_by_loop"`
-      - non-zero → `PR_STATE="close_attempt_failed"`
-   2. **Move brief to `failed/`:** if `job:` parameter was used, move the brief from `.supervisor/jobs/in-progress/` → `.supervisor/jobs/failed/` and append an `## Outcome` block with `**Status:** failed`, `**Reason:** base_branch_mismatch`, `**Expected:** ${mismatch.expected}`, `**Actual:** ${mismatch.actual}`, `**PR state:** ${PR_STATE}`.
-   3. **Record the decision:** `record_decision(phase: SELF_HEAL, decision: "base_mismatch_cleanup", rationale: "expected=${mismatch.expected}, actual=${mismatch.actual}, pr_state=${PR_STATE}")`.
-   4. Progress state is not written here — it is derived (see the pointer in "On-entry actions" step 1). This exit path (step 8 below) returns without running the standard completion tail and never emits a `session_end` event, so `build-state.sh` has no terminal-status evidence for this run: `state.md` keeps whatever its `- status:` line last derived to, which on this path is `running`. **No automated read-side check currently catches this residual** — `scripts/reconcile-resume-state.sh` only (a) resolves `branch` from `## Session` and checks it resolves locally, and (b) diffs the `## Subtasks` Status column against `subtask:`/`merge:` commit-message evidence; it never reads `.supervisor/jobs/failed/` and never reads `## Decisions Log`, so it does not consult either the job-file move from step 2 or the `record_decision` entry from step 3. The evidence a human (or future tooling) would use to catch a stale `running` status here is exactly those two artifacts — the `failed/` job file's `## Outcome` block from step 2, and the `record_decision` entry from step 3 — but nothing consults them today. This is a KNOWN, accepted gap — an additional residual extending Risk R4 — not a bug to patch by adding a state write here; do not reintroduce a "write your state" instruction for this path.
-   5. **Clear the flag (REQUIRED before returning, even on `gh pr close` failure — read-on-start-clear-on-start invariant):**
-      ```
-      Context-Keeper(operation: clear_flag, key: "base_mismatch_detected")
-      ```
-   6. **Reset resume counter:** `Context-Keeper(operation: record_self_heal_resume, increment: false)`.
-   7. **Emit single `SUPERVISOR_RESULT` block** with:
-      ```yaml
-      SUPERVISOR_RESULT:
-        schema_version: 1
-        task_id: {task_id}
-        status: failed
-        pr_url: {PR_URL}
-        branch: {feature_branch}
-        branch_base: {mismatch.expected}    # the BASE_BRANCH we expected
-        subtasks_completed: {N}
-        subtasks_failed: 0
-        heal_loop_ran: false
-        heal_iterations: null
-        heal_decision: null
-        heal_first_decision: null
-        heal_new_findings: null
-        heal_fixable_issues_fixed: 0
-        heal_remaining_issues: 0
-        error: "base_branch_mismatch: expected ${mismatch.expected}, found ${mismatch.actual} (reason: ${mismatch.reason})"
-        pr_state: {PR_STATE}                # "closed_by_loop" | "close_attempt_failed"
-        summary: "Phase 4 self-verify detected PR base-branch mismatch; Phase 4.5 closed PR best-effort and moved job to failed/. No code changes were merged."
-        cost_profile: {default|cheap|null}
-        rubric_score: null
-      ```
-   8. **Return** from Phase 4.5 — do NOT run the review-and-fix loop, do NOT run the standard completion tail. This is a single exit point that emits exactly one `SUPERVISOR_RESULT`.
-
-   **Field semantics:**
-   - `branch_base` is the BASE_BRANCH we expected the PR to target. It is included so the autonomous-loop EVALUATE phase can detect the failure mode without re-parsing `error`.
-   - `pr_state` is a new optional field on `SUPERVISOR_RESULT` (v14.0.0 — see schema update in S5). Values: `"closed_by_loop"` | `"close_attempt_failed"` | absent (when no PR action was taken).
-   - On absent `gh` (`actual: null`), report `actual` as `null` in the error message and rely on the `reason` field to disambiguate (`gh_unavailable_non_interactive` vs `user_aborted_gh_retry`).
-
+**On-entry actions** (steps 1–4, the first-iteration enrichments 1c / 1e / 1f, and step 5's base-mismatch check) are in `on-entry.md`, Read at phase entry before the first Code Reviewer spawn. Step 1g runs on every iteration and lives in Part 1 above. Step 5's cleanup procedure is in `escalation.md`, Read only when the `base_mismatch_detected` flag is set.
 **Review-and-fix loop (runs only when flag is not set, thrash guard passed, AND no base-mismatch cleanup triggered):**
 
 > The standalone equivalent of this loop (the same bounded review→fix→re-review machinery keyed off a PR URL, run by `/review-pr`) is documented in `skills/review-heal/SKILL.md` — that skill is the single source of truth for the extracted contract.
@@ -879,25 +164,20 @@ max_heal_iterations = {--heal-iterations value, default 3}
 # BLOCKING is always at the floor; an unreadable severity reads as at the floor (never a silent pass). Evaluate it
 # per iteration with ONE `fix-floor.sh split "$FIX_FLOOR" -` over the `new` issues rather than per-item calls.
 # FIX_FLOOR == HIGH reproduces the pre-fix_floor behaviour (new + BLOCKING/HIGH) byte-for-byte.
-heal_dismissed = []                 # ITEMISED {finding, reason, source, severity} list (dismissed-findings-01) — review.issues
-                                     # entries excluded from fixable_issues each iteration (pre_existing / nit / drift /
-                                     # below_severity_floor); the self-heal-side PARALLEL to review-heal's `dismissed`
-rules_failed_seen = {}              # countable rule ids seen FAILING in any iteration of THIS loop (automate-followups/18) —
-                                     # a later `unstamped` while non-empty escalates; on resume, rebuilt from the
-                                     # `rules_failed_seen: added` decisions below
+heal_dismissed = []                 # ITEMISED {finding, reason, source, severity} — review.issues entries excluded from
+                                     # fixable_issues each iteration; the PARALLEL to review-heal's `dismissed`
+rules_failed_seen = {}              # countable rule ids seen FAILING in THIS loop (automate-followups/18); a later
+                                     # `unstamped` while non-empty escalates; on resume, rebuilt from the `rules_failed_seen: added` decisions
 
 while heal_iterations < max_heal_iterations:
-  # PIN MUTATIONS (automate-speed/02) — once per code state, by script, BEFORE the reviewer spawn. Same
-  # command and cache as the Single-Agent / Sequential Phase 3 gate (same tree), unscoped (every row —
-  # sibling-owned rows included); a parallel subtask's worktree cache (`{stem}.{subtask_id}.tsv`) is
-  # never read here. An iteration whose protected files did not change re-runs nothing (every line `(cached)`):
+  # PIN MUTATIONS (automate-speed/02) — once per code state, by script, BEFORE the reviewer spawn; same command
+  # and cache as the Single-Agent / Sequential Phase 3 gate, unscoped; unchanged protected files ⇒ every line `(cached)`.
   # (<plugin root>: invoked from the plugin install root like every other script in this file)
   # BOUNDED: ONE Bash call with `timeout: 600000`; `--budget 540` ends the script (summary printed,
   # finished rows already cached) before that cap, and the next iteration resumes from the cache.
   pin_out = Bash(`bash "<plugin root>/scripts/run-pin-mutations.sh" {brief_path} --root . --cache .supervisor/pin-mutations/{brief basename without .md}.tsv --budget 540`)
-  # Exit 0 / 1 / 2 never pauses the run and never reaches adjudication — the verdict lines (verdict set:
-  # the script's header) go to the reviewer as the PIN-MUTATION VERDICTS block below. A missing script or
-  # brief, or `pin-mutations: none`, ⇒ record it (record_decision, phase: SELF_HEAL) and omit the block.
+  # Exit 0 / 1 / 2 never pauses the run; the verdict lines go to the reviewer as the PIN-MUTATION VERDICTS block.
+  # A missing script or brief, or `pin-mutations: none`, ⇒ record it (record_decision, phase: SELF_HEAL) and omit the block.
   # INCOMPLETE run (no `pin-mutations: <h> held, …` summary line, or an exit other than 0/1/2): hand over
   # the lines it did print; every row with no printed line is `unverified` (the reviewer's D1 fallback).
   review = Task(
@@ -936,9 +216,8 @@ while heal_iterations < max_heal_iterations:
   # HOUSE-RULE VERDICTS (report only): compute + record this iteration's house_rules_line per Part 1
   # §"House-rule verdicts line" — never read by the gate below, never fed to the fix task.
 
-  # RULES GATE (automate-followups/07 — a DETERMINISTIC co-gate beside the LLM review, with the CI READ below; Part 1
-  # §"Rules-check replay"). Re-run THIS iteration via `scripts/rules-gate-verdict.sh` (a fix can change
-  # the outcome); record this iteration's rules_check_line per Part 1.
+  # RULES GATE (automate-followups/07 — a DETERMINISTIC co-gate beside the LLM review, with the CI READ below):
+  # re-run THIS iteration (a fix can change the outcome); record this iteration's rules_check_line per Part 1.
   rules = rules-gate-verdict (Part 1 call — its ALLOW-LISTED read: anything unaffirmed is already `unreadable`)
   rule_findings = []
   if rules.verdict == "fail":
@@ -955,10 +234,8 @@ while heal_iterations < max_heal_iterations:
       record_decision(phase: SELF_HEAL, decision: "rules_failed_seen: added {sorted new_seen}", rationale: "remembered countable fails — a later unstamped escalates; survives resume/compaction")
   # ok / none / unstamped / cmd_disabled ⇒ rule_findings == [] and everything below is BYTE-IDENTICAL —
   # except `unstamped` with a non-empty rules_failed_seen, which escalates below (rules_fail_then_unstamped).
-  # State trace: PASS+fail ⇒ FAIL (fix task); FAIL+fail ⇒ fix task with the rule findings appended;
-  # NEEDS_HUMAN+fail ⇒ ESCALATED with the rule findings in the posted comment.
-  # CI READ (automate-speed/02) — ONE read of the required checks on the current head, AFTER the review
-  # (right after a push the new head's checks are almost always pending; the review takes minutes):
+  # State trace: PASS+fail ⇒ FAIL (fix task); FAIL+fail ⇒ fix task + rule findings; NEEDS_HUMAN+fail ⇒ ESCALATED.
+  # CI READ (automate-speed/02) — ONE read of the required checks on the current head, AFTER the review:
   # BOUNDED: one zero-wait check read + at most --max-probes (default 5) ci-run-probe.sh probes + one `--log-failed`
   # fetch per red required check (authority: the script header) — ONE Bash call, `timeout: 600000`. Killed or cut
   # short ⇒ its printed JSON lines are findings; none ⇒ no CI finding this iteration (fail-safe; the owned drain still reads CI).
@@ -983,19 +260,12 @@ while heal_iterations < max_heal_iterations:
     heal_first_decision = iter_decision          # PASS | FAIL | NEEDS_HUMAN
   heal_new_findings += count(review.issues where category=new)   # every severity
 
-  # dismissed-findings-01: itemise EVERY review.issues entry excluded from the fix-time filter
-  # (the SAME filter the FAIL branch's `fixable_issues` computes below — at_floor). Computed
-  # HERE, once per iteration, BEFORE the three-way decision branch, so it also covers PASS/NEEDS_HUMAN
-  # iterations whose review.issues can still carry pre_existing/nit/drift entries (a PASS decision
-  # means zero new+BLOCKING/HIGH issues — it does NOT mean review.issues is empty). `reason` is a
-  # CLOSED enum here (unlike review-heal's free-text dismissed.reason): the finding's own `category`
+  # dismissed-findings-01: itemise EVERY review.issues entry excluded by at_floor — HERE, once per iteration,
+  # BEFORE the decision branch, so PASS/NEEDS_HUMAN iterations are itemised too. `reason` is a CLOSED enum: the
+  # finding's own `category`
   # when it is pre_existing/nit/drift (docs/result-schemas/code-review-result.md:29 [pins: `category: enum [new, pre_existing, nit, drift]`]), else "below_severity_floor" for a
-  # `new` finding whose severity is below the fix-time FIX_FLOOR (the enum value keeps its name). `source` is "code_reviewer"
-  # for every item accumulated here — the single-voter loop's one review lens (see docs/RESULT_SCHEMAS.md
-  # §SUPERVISOR_RESULT for the full `source` enum, including the multi-voter `red_team`/`voter:<provider>`
-  # values this pass does not yet emit). `severity` (automate-followups/12, OPTIONAL in the schema) is the
-  # issue's own CODE_REVIEW_RESULT severity — always present on a review.issues entry, so it is always
-  # carried here; `/automate`'s dismissed-findings decision step thresholds on it
+  # `new` finding below FIX_FLOOR. `source` is "code_reviewer" (full enum: docs/RESULT_SCHEMAS.md §SUPERVISOR_RESULT).
+  # `severity` is the issue's own severity; `/automate`'s dismissed-findings decision step thresholds on it
   # (skills/automate-loop/SKILL.md §6 "Dismissed-findings decision step (before the park)"). The
   # marker-comment bullet format below is unchanged — severity is not rendered there.
   heal_dismissed += [
@@ -1050,12 +320,9 @@ while heal_iterations < max_heal_iterations:
   Task(
     subagent_type: "general-purpose",
     # Tool allowlist: Read, Write, Edit, Bash, Glob, Grep (no Task — fix agent may not dispatch further subagents)
-    # Pointer-audit note (deliberate paste — see docs/POINTER_AUDIT.md): the findings list below is
-    # NOT file-backed (CODE_REVIEW_RESULT exists only in the reviewer Task's transcript, never on
-    # disk), is already bounded by construction (category=new + at or above FIX_FLOOR only), and the fix
-    # worker provably needs each finding's full file:line + description + suggestion every time —
-    # they ARE the work items. Keep the paste; do NOT write findings to a scratch file just to
-    # point at it (that would add a write path to a review seam that has none).
+    # Pointer-audit note: the findings list below is a deliberate paste (docs/POINTER_AUDIT.md) — the
+    # findings ARE the work items and exist only in the reviewer transcript; never write them to a
+    # scratch file just to point at it.
     working_dir: main checkout on feature branch,
     prompt: "You are fixing a feature branch before review passes.
              Feature branch: {branch}
@@ -1084,14 +351,9 @@ while heal_iterations < max_heal_iterations:
   # and report the pre-push self-review, or surface it for the next re-review. A missing note must never
   # silently pass as a finished fix. (Best-effort, observable; never --force, never merge.)
 
-  # fixer_deviations carriage (worker-deviations item, Part 1 §"Deviations advisory"): FIX_RESULT
-  # bypasses Context-Keeper entirely (fixers are not workers — their result never reaches
-  # `record_worker_result` / `## Worker Results`), so this per-run in-memory list is the ONLY
-  # durable carriage for fixer-recorded deviations. Append each of THIS iteration's
-  # FIX_RESULT.deviations entries, prefixed `fix-{heal_iterations+1}:`, when non-empty; record the
-  # append via `record_decision(phase: SELF_HEAL, decision: "fixer_deviations: appended {n} from fix-{heal_iterations+1}", …)`
-  # so the list survives a resume/compaction. Step 1g (on-entry actions, re-run every iteration)
-  # reads this list alongside `## Worker Results` on the NEXT review spawn.
+  # fixer_deviations carriage (Part 1 §"Deviations advisory"): FIX_RESULT bypasses Context-Keeper, so this
+  # per-run list is the ONLY durable carriage for fixer-recorded deviations; step 1g (Part 1, re-run every
+  # iteration) reads it alongside `## Worker Results` on the NEXT review spawn.
   if FIX_RESULT.deviations is non-empty:
     fixer_deviations += [f"fix-{heal_iterations+1}: {entry}" for entry in FIX_RESULT.deviations]
     record_decision(phase: SELF_HEAL, decision: f"fixer_deviations: appended {len(FIX_RESULT.deviations)} from fix-{heal_iterations+1}", rationale: "carriage for step 1g's Deviations advisory — FIX_RESULT bypasses Context-Keeper")
@@ -1111,298 +373,26 @@ while heal_iterations < max_heal_iterations:
   heal_iterations += 1
 
 # Loop exit
-# Re-review guarantee (v14.21.0 self-heal hardening): every fix iteration's edits —
-# INCLUDING the fix-the-class SWEEP from step 1a — are re-reviewed at the TOP of the next
-# loop iteration (the `review = Task(...)` above). The only un-re-reviewed case is a
-# fix/sweep on the FINAL allowed iteration: the loop then exits ESCALATED below and posts
-# findings to the PR for human review. So a sweep never ships as a silent clean PASS — it
-# is always either re-reviewed by the next iteration or surfaced to a human via ESCALATED.
-# Budget tension (accepted): a large class-sweep also enlarges the next iteration's re-review
-# diff, so it can consume heal iterations / reviewer call-budget faster — an accepted trade for
-# breaking the post-PR review loop, kept bounded by step 1a's "within the changed surface"
-# guardrail. (An auditable FIX_RESULT swept-instances field was considered and DEFERRED —
-# premature schema growth on a still-soaking advisory instrument.)
+# Every fix iteration's edits (incl. the step-1a class sweep) are re-reviewed at the TOP of the next
+# iteration; only a fix on the FINAL allowed iteration is not, so the loop escalates below and says so.
 if heal_iterations == max_heal_iterations AND iter_decision != PASS:
   heal_decision = ESCALATED
   heal_remaining_issues = count(review.issues where at_floor) + len(rule_findings) + len(ci_findings)   # an unfixed rule or CI finding escalates like any other BLOCKING finding
   post findings to PR as comment (when a step-1a class-sweep ran on this FINAL iteration, the comment MUST also note: "class-sweep applied on the final heal iteration — its own edits were NOT re-reviewed; eyeball the swept files", so a human knows to check them)
 ```
 
-**Multi-voter verification (`--multi-voter-heal` — OPT-IN, DEFAULT OFF; changes WHICH findings get fixed, not the gate shape):**
+**Multi-voter verification (`--multi-voter-heal` — OPT-IN, DEFAULT OFF; changes WHICH findings get fixed, not the gate shape):** only when `MULTI_VOTER_HEAL == true`, Read `multi-voter.md` (this skill's directory) before the first iteration and apply it to every iteration. When `MULTI_VOTER_HEAL == false` (the default) do NOT Read it — the review-and-fix loop above runs EXACTLY as written. Its §"Delay-vs-decide" and §"Interaction with the standalone `--red-team` advisory lens" sub-notes live there.
 
-Resolved at Phase 0 INIT (`skills/supervisor-config/SKILL.md` preamble step 2.9, recorded as `MULTI_VOTER_HEAL`): `--multi-voter-heal` on the command line OR `.supervisor/config.json` `.multi_voter_heal: true` turns it ON; the flag wins over config, and `--no-multi-voter-heal` suppresses even a `true` config value. When `MULTI_VOTER_HEAL == false` (the default), the review-and-fix loop above runs EXACTLY as written — zero behavior change. Which CLI casts the vote is a separate, independent resolution — `VOTER_PROVIDER` (step 2.9a, same preamble) — see the provider-substitution branch inside point 1 below.
-
-When ON, each iteration of the review-and-fix loop above changes in exactly two places:
-
-1. **Two independent parallel reviewers (the vote).** The iteration's review step spawns TWO reviewers in parallel on the SAME integrated feature-branch diff (same DIFF-SCOPE OVERRIDE, same BASE_BRANCH):
-   - the existing `loomwright:code-reviewer` Task — **unchanged contract, spawn prompt verbatim as above** (advisory enrichments and the EXECUTION DIRECTIVE line included, `phase45_review_invoked` still flips on it). Its `CODE_REVIEW_RESULT` remains **THE LLM gating signal** (the deterministic co-gates' `rule_findings` and `ci_findings` are never sent to a refute check, never voted away; they join the surviving set as-is): the loop's PASS / NEEDS_HUMAN / FAIL branching and the `heal_decision` derivation stay keyed to it exactly as written above.
-   - a **verification voter** on the same diff scope — this is NOT the standalone advisory red-team lens (see the interaction sub-note below); the voter runs INSIDE the loop, once per iteration, and its findings at or above `FIX_FLOOR` on this branch's newly-introduced surface (map its severity vocabulary to BLOCKING/HIGH/MEDIUM/LOW, then apply the same `at_floor` rule; pre-existing issues stay out of scope, mirroring the `category=new` filter) enter the merge rule below. It votes on findings; it never decides the gate — `heal_decision` NEVER derives from its output (a surviving voter finding can only delay finalization within the existing bound; see the delay-vs-decide invariant below). **Which CLI produces this vote is provider-selectable, resolved by `VOTER_PROVIDER` (`skills/supervisor-config/SKILL.md` preamble step 2.9a):**
-     - `VOTER_PROVIDER == ""` (the DEFAULT — absent flag AND absent config) — spawn a `loomwright:red-team-reviewer` Task exactly as before. Byte-identical to pre-existing behavior; nothing below in this bullet applies.
-     - `VOTER_PROVIDER != ""` (e.g. `cursor:gpt-5`) — instead of spawning the Task, invoke `${CLAUDE_PLUGIN_ROOT}/scripts/adapters/providers/lens-run.sh --provider "$VOTER_PROVIDER" --role review --diff <diff-file> --prompt <prompt-file> --out <out-file> [--commit <sha>]` via Bash, where the diff file is the SAME integrated feature-branch diff (same DIFF-SCOPE OVERRIDE, same BASE_BRANCH) the code-reviewer Task reviews, and the prompt file states the verification-voter role (findings on newly-introduced surface only, same BLOCKING/HIGH/MEDIUM/LOW and new/pre_existing/nit vocabulary the merge rule already expects). Read the resulting `--out` JSON: `lens_status: "ok"` — treat `issues[]` (already normalized to the `docs/RESULT_SCHEMAS.md` `issues[]` shape) as this iteration's voter findings, exactly as if the Task had produced them; any other `lens_status` (`provider_unavailable`, `lens_mutated_tree`, `lens_unparseable`) is the SAME "voter errored/timed out" fail-safe degradation the existing single-voter fallback below already specifies — log one line via `record_decision` and degrade that iteration to the single-voter default (code-reviewer findings fixed as written; no voter findings to merge that iteration). The refute check, merge rule, and `heal_decision` derivation in the rest of this section are UNCHANGED by which branch ran here.
-2. **Second-opinion refute check (the merge rule — decides WHICH findings get fixed).** Collect the iteration's `at_floor` findings (`new`, at or above `FIX_FLOOR`) from BOTH lenses. A finding triggers a fix task ONLY if it **survives a refute check by the OTHER lens**: ask the other lens — via at most ONE bounded refute spawn PER LENS per iteration (batch that lens's cross-findings into it), or by folding the refute question into the next combined prompt — whether each finding is a false positive, unreachable, or already handled; the refute step's ceiling is therefore ≤2 spawns per iteration (one per lens). **EXECUTION DIRECTIVE scope on refutes:** ONLY the refute spawn sent to the **code-reviewer lens** carries the EXECUTION DIRECTIVE line verbatim (same trust level as the Phase 4.5 review itself); the refute sent to the **voter lens** — the `loomwright:red-team-reviewer` Task, or `lens-run.sh` when `VOTER_PROVIDER` is set — does NOT, because §5's procedure is meaningless to red-team-reviewer and a third-party CLI must never be told to execute code. Findings the other lens REFUTES are **LOGGED, NOT FIXED**: record each via `record_decision(phase: SELF_HEAL, decision: "multi_voter_refuted", rationale: "<finding> refuted by <lens>")` and include them in the PR comment, clearly labelled refuted/not-fixed. Findings that SURVIVE form the iteration's `fixable_issues` set fed to the fix task above (replacing the single-lens `fixable_issues` derivation for that iteration; the fix-task spawn contract is otherwise unchanged).
-
-**Delay-vs-decide (the precise invariant):** `heal_decision` — the GATE — still derives ONLY from the code-reviewer's `CODE_REVIEW_RESULT` plus the deterministic co-gates above (PASS only from a code-reviewer PASS with no `rule_findings` and no `ci_findings`; ESCALATED on NEEDS_HUMAN / max iterations / thrash); the `--heal-iterations` bound, never-merge, the completion-tail guard, and the completion-tail procedure below are all IDENTICAL to the single-voter path. What the voter CAN do is extend LOOP CONTINUATION within that existing bound: a code-reviewer PASS becomes FINAL only once the iteration's surviving finding set is empty (or the bound escalates), so a surviving voter finding can DELAY finalization by another bounded fix-and-re-review iteration — it can never FLIP a decision (never turns a PASS into FAIL, nor a FAIL into PASS). Multi-voter edits the `fixable_issues` set and the finalization timing inside each iteration; nothing else. Edge rules:
-- Code-reviewer PASS + zero surviving red-team findings → PASS, exactly as above.
-- Code-reviewer PASS + ≥1 surviving red-team `at_floor` finding → spawn a fix task on the surviving set and re-review next iteration (still bounded by `--heal-iterations`; the PASS becomes final only when the surviving set is empty or the bound escalates).
-- Code-reviewer FAIL with ALL of its findings refuted (surviving set empty) → do NOT spawn a fix task and do NOT auto-PASS; exit the loop with `heal_decision = ESCALATED` and post the refutation log to the PR — a fully-refuted FAIL is a human call, never a silent pass.
-- **Fail-safe degradation:** if the red-team voter (or a refute spawn) errors/times out, log one line via `record_decision` and degrade THAT iteration to the single-voter default above (code-reviewer findings fixed as written; unrefutable voter findings logged, not fixed). Never abort the run on the voter path.
-
-**Per-run counters (additive prose — NO schema bump):** track across all iterations `findings_raised` (`at_floor` findings raised by either lens), `findings_refuted` (refuted → logged, not fixed), and `findings_fixed` (survived → dispatched to fix tasks), and carry them inside the `SUPERVISOR_RESULT` `summary` string (e.g. `multi_voter: findings_raised=3 findings_refuted=1 findings_fixed=2`) and the job `## Outcome` block — additive prose only, exactly the `red_team_advisory`-in-summary precedent; do NOT add a new `SUPERVISOR_RESULT` field; `schema_version` stays `1` (see `docs/RESULT_SCHEMAS.md` §SUPERVISOR_RESULT).
-
-**Interaction with the standalone `--red-team` advisory lens (this sub-note is the ONE authority for the interaction — other surfaces cross-reference it, never restate it):**
-- The standalone `--red-team` / `--no-red-team` advisory lens (further down in this Part) is **UNTOUCHED and fully independent**: it stays advisory-only, high-risk-only, non-gating, a single pass OUTSIDE the heal loop, resolved by its own `RED_TEAM_ENABLED` (supervisor-config step 2.7) — none of its semantics change whether multi-voter is ON or OFF.
-- The flags do NOT alias each other: `--multi-voter-heal` does not enable the advisory lens, `--red-team` does not enable multi-voter, `--no-red-team` does not suppress the verification voter, and `--no-multi-voter-heal` does not suppress the lens.
-- When BOTH are active, `red-team-reviewer` may legitimately be spawned twice in one Phase 4.5 with different roles: (1) the verification VOTER inside the loop (per-iteration; feeds the merge rule) and (2) the advisory LENS outside it (single pass, high-risk-only; never feeds any fix). Record their outcomes distinctly (the `multi_voter` counters vs `red_team_advisory`).
-
-**Cost note:** multi-voter is ~2× review spawns per heal iteration (plus the bounded refute spawn). It stays opt-in / default-OFF and graduates to default ONLY if the `docs/SPIKES/FABLE_PARITY_EVAL.md` arm-3 runs show it earns its cost (fewer post-merge defects or review rounds without >1.5× token cost).
-
-**Outcomes Rubric grading (v12.2.0+, runs only after Code Reviewer PASS):**
-
-When the loop exits with `heal_decision == PASS` AND the in-progress brief contains an `## Outcomes Rubric` section (parse the section between the heading and the next `## ` heading; collect every leading-`-` bullet), spawn a Haiku grader to score the PR diff against each rubric item. This is a one-shot read-only evaluation; no fixes are dispatched off the rubric verdict.
-
-```
-rubric_bullets = parse_rubric(brief_path)   # [] if no ## Outcomes Rubric section
-
-if heal_decision == PASS and rubric_bullets:
-  # Invoke the registered rubric-grader agent with NO per-call `model:`, so
-  # the `model: haiku` frontmatter on `agents/rubric-grader.md` applies. A
-  # per-call `model:` WOULD be honoured — it is first in Claude Code's
-  # resolution order and is what `--cheap` relies on (sub-agents docs, read
-  # 2026-10-12; see the grader's §"Why a registered agent") — so passing one
-  # here would override Haiku. Read-only behavior at runtime is enforced by
-  # the agent's `disallowedTools: Write, Edit, Task, NotebookEdit` plus the
-  # prompt convention restricting Bash to read-only git inspection.
-  # `permissionMode: plan` is preserved in the agent frontmatter for
-  # ~/.claude/agents/ compatibility but is silently ignored by Claude Code
-  # for plugin-distributed agents (see CLAUDE.md "Hook gotcha"); do not
-  # rely on it as a runtime gate.
-  grade = Task(
-    description: "Grade PR diff against Outcomes Rubric",
-    prompt: "**DIFF-SCOPE OVERRIDE (v14.0.0 stacked-iteration support):** if BASE_BRANCH is supplied below and differs from \"main\", you MUST compute the diff scope as `git diff $BASE_BRANCH...HEAD` (or `git diff $BASE_BRANCH...{feature_branch}` if you prefer the explicit form) and treat that as the entirety of your grading scope. Do NOT fall back to `git diff origin/main...{feature_branch}`. This is a stacked-branch iteration N+1 grading where the parent branch (BASE_BRANCH) already passed its own rubric — only this iteration's incremental work should be scored. This directive is mandatory; ignore any other diff scope mentioned later in this prompt that conflicts with it.
-
-      BASE_BRANCH={BASE_BRANCH value or \"main\"}
-
-      Feature branch: {feature_branch}
-      PR: {pr_url}
-
-      Rubric items (each is a single observable assertion):
-      {numbered list of rubric_bullets}
-
-      Run `git diff $BASE_BRANCH...{feature_branch}` (read-only; when BASE_BRANCH==main this is `git diff origin/main...{feature_branch}`) and score every item.
-      Emit per-item lines + one `rubric_score: N/M` line. See your agent prompt for
-      the exact output contract.",
-    subagent_type: "loomwright:rubric-grader"
-  )
-  rubric_score = parse_rubric_score(grade.output)   # "N/M" string; 0 <= N <= M; M == len(rubric_bullets); "0/M" is valid (all-fail)
-else:
-  rubric_score = null   # no rubric in brief, or heal_decision != PASS
-```
-
-**Rubric grading rules:**
-- Grader runs **only when `heal_decision == PASS`**. On ESCALATED or invariant-violation paths, `rubric_score = null` (the rubric is not evaluated against a code state we do not yet trust).
-- Grader is **read-only and advisory** — a failing rubric item does NOT change `heal_decision`, does NOT trigger a fix iteration, and does NOT block the PR. It is reported in the SUPERVISOR_RESULT for human review.
-- If the brief has no `## Outcomes Rubric` section: `rubric_score = null`. Backward-compatible — pre-v12.2.0 briefs continue to work unchanged.
-- If parsing the grader output fails (no `rubric_score: N/M` line): record `record_decision(phase: SELF_HEAL, decision: "rubric_grader_parse_failed", ...)` and set `rubric_score = null`. Do NOT fail the task.
-- Grader output is appended to the PR as a comment alongside the heal report (best-effort; comment failure does not fail the task).
-
-**System Twin advisory checks (ADVISORY ONLY — protocol in Part 1 of this skill):**
-
-After the Code Reviewer loop has run (regardless of `heal_decision`), execute the three System Twin advisory steps — **contract-conformance check** (READ of the twin store via `read-system-contract.sh`), **benchmark run** (`run-benchmark.sh`), and **ground-truth execution** (`run-ground-truth.sh --brief <brief_path>`, with `--no-cmd` when `NON_INTERACTIVE == true`) — following the full protocol in Part 1 §"Post-review advisory checks" above (read at Phase 4.5 entry; deliberately not preloaded). They populate the `contract_conformance`, `benchmark_result`, and `ground_truth` objects consumed by completion-tail step 5 below.
-
-> **HARD ADVISORY CONTRACT:** none of these checks ever changes `heal_decision`, triggers a fix iteration, or blocks the PR. Every failure path (missing tooling, parse miss, failing check) is non-fatal — record it and continue. Under budget pressure (YELLOW/RED), skip these first; the gates still run.
-
+**After the loop** (it exited, or was skipped by on-entry step 3 or 4): Read `completion-tail.md` (this skill's directory) and run, in order, §"Outcomes Rubric grading", §"Post-review advisory checks" (the System Twin advisory checks and the rules-store audit), §"Advisory red-team lens" and §"Completion tail".
 **Integration-review invocation details:** Code Reviewer auto-detects Beads (`test -d .beads && bd --version`). When Beads is not active, the CODE_REVIEW_RESULT block is the sole output channel the Supervisor parses. See `agents/code-reviewer.md` "Detect Beads Integration" for full semantics.
-
-**Advisory red-team lens (opt-in, high-risk-only — OPT-IN / DEFAULT-OFF / FAIL-SAFE / strictly NON-GATING):**
-
-Runs AFTER the Code Reviewer holistic pass has produced its decision (and alongside / independent of the System Twin advisory checks), and BEFORE the completion tail. It is a SINGLE pass that lives **OUTSIDE the bounded fix loop** — never a new heal iteration. It is itself opt-in (default-OFF; `--red-team` / `.red_team_high_risk`), mirroring the paired-flag precedent of `--auto-review` / `--no-auto-review` (a `--flag` / `--no-flag` toggle backed by a `.supervisor/config.json` key — note the auto-review *dispatch* is default-ON, only its flag-pairing shape is the precedent), and applies a second, adversarial lens to high-risk integrated diffs.
-
-```
-# High-risk classification — UNCONDITIONAL (decision D1): one deterministic Bash call, no LLM,
-# runs on every Phase 4.5 that reaches this lens, BEFORE the RED_TEAM_ENABLED guard, so
-# SUPERVISOR_RESULT.risk_classification is present whether or not the spawn is enabled.
-# The heuristic lives in ONE place — scripts/classify-risk.sh (branches a/b/c + the add-only
-# .agent/risk.json project extension; `classify-risk.sh --kind-table` prints the rules, and
-# docs/RESULT_SCHEMAS.md §SUPERVISOR_RESULT carries the one committed copy). Do NOT restate
-# the pattern list here. The same script is condition 6 of the /automate trusted-merge gate,
-# which re-runs it on the SHA it judges — this value is advisory and never gates anything.
-rc = JSON of `classify-risk.sh "$BASE_BRANCH" HEAD`   # the plugin's scripts/classify-risk.sh, invoked like the sibling scripts in this Part
-     # fail-SAFE emitter, always exit 0: {"high_risk": true|false|null, "reasons": [...], ...}
-     # null = unclassifiable (bad ref / git or jq failure) — the safe direction for an
-     # ADVISORY lens is to run it, so null is treated like true below.
-high_risk = rc.high_risk                      # true | false | null
-risk_classification = {high_risk: rc.high_risk, reasons: rc.reasons}   # → SUPERVISOR_RESULT (additive, optional)
-record_decision(phase: SELF_HEAL, decision: "risk_classification: {true|false|null}",
-                rationale: "<rc.reasons joined '; ', or the unclassifiable reason>")
-
-# Guard: default path is a zero-behavior-change silent skip (the classification above still ran).
-if RED_TEAM_ENABLED != true:
-    red_team_advisory = "disabled"
-    # skip silently — no spawn, no PR comment, no note beyond the one-word record below.
-else:
-    if high_risk == false:
-        red_team_advisory = "skipped_low_risk"
-        # record a one-line note; do NOT spawn.
-    else:   # true OR null — spawn
-        # Spawn EXACTLY ONE advisory pass — single, outside the heal loop, never a heal iteration.
-        try:
-          rt = Task(
-            subagent_type: "loomwright:red-team-reviewer",
-            description: "Advisory red-team lens on integrated high-risk diff (non-gating)",
-            prompt: "Advisory, NON-GATING adversarial review of the integrated feature-branch diff.
-                     Feature branch: {branch}
-                     PR: {pr_url}
-                     Diff scope: git diff $BASE_BRANCH...HEAD (BASE_BRANCH={BASE_BRANCH value or \"main\"}).
-                     This is a SINGLE advisory pass OUTSIDE the self-heal loop. Your findings are
-                     informational only — they do NOT gate the PR and do NOT drive any fix.
-                     Report your attack-vector findings per your normal red-team output contract."
-          )
-          # Post findings to the PR as a clearly-labelled NON-GATING comment.
-          # Capture the exit status — a comment-post failure is a fail-safe no-op recorded as
-          # "error" per the ADVISORY CONTRACT below, NOT silently masked as a successful "ran".
-          # (Do NOT use a bare `|| true` here: it would swallow the failure and mis-record "ran".)
-          if gh pr comment "$PR_URL" --body "🔴 Advisory red-team review (non-gating) — high-risk diff\n\n{rt findings summary}" ; then
-            red_team_advisory = "ran"
-            rt_findings_oneline = "{one-line risk/findings summary from rt}"
-          else:
-            # comment post failed — fail-safe: log a one-line no-op, record "error", CONTINUE.
-            record_decision(phase: SELF_HEAL, decision: "red_team_advisory_comment_failed", rationale: "gh pr comment returned non-zero")
-            red_team_advisory = "error"
-        catch (any spawn error / timeout / non-zero):
-          # FAIL-SAFE: log one line and CONTINUE. Never abort the run on this path.
-          record_decision(phase: SELF_HEAL, decision: "red_team_advisory_error", rationale: "{brief error}")
-          red_team_advisory = "error"
-```
 
 **ADVISORY CONTRACT (NON-NEGOTIABLE):**
 - Red-team findings **NEVER change `heal_decision`**, **NEVER directly drive the fix task**, **NEVER block the PR or run**, and introduce **NO new gate**. The Code Reviewer's `CODE_REVIEW_RESULT` remains the **SOLE LLM gating signal** (beside it sit only the deterministic co-gates — a stamped countable `must`-rule failure and a red required check; §"Delay-vs-decide").
 - If the Code Reviewer INDEPENDENTLY also flags an issue the red-team raised as a `new` finding at or above `FIX_FLOOR`, the EXISTING class-based fix path handles it — driven by `CODE_REVIEW_RESULT`, **not** by the red-team output. The red-team lens never feeds the fixer.
 - **FAIL-SAFE (mirrors the CLAUDE.md "side-effect emitters fail SAFE" invariant):** any red-team spawn error/timeout, or any `gh pr comment` failure, is a **logged one-line no-op** — record `red_team_advisory = "error"` and CONTINUE. It MUST NOT propagate to `SUPERVISOR_RESULT.status`, MUST NOT raise the completion-tail guard, and MUST NOT abort the run.
-- **Recording (no `schema_version` bump):** carry `red_team_advisory` (`ran` | `skipped_low_risk` | `disabled` | `error`) into `SUPERVISOR_RESULT.summary` and into the job's `## Outcome` block (e.g. `red_team_advisory: ran`). Also carry the classification itself as the additive optional `SUPERVISOR_RESULT.risk_classification: {high_risk, reasons}` object (`docs/RESULT_SCHEMAS.md` §SUPERVISOR_RESULT) — present whenever this lens ran (including `disabled`, since the classification precedes the guard); ABSENT on the Phase 4.5 bypass paths (`--skip-self-heal` / resume-thrash / base-mismatch cleanup), and absent ⇒ valid. `disabled` covers BOTH "`RED_TEAM_ENABLED` was false" AND "the self-heal phase was bypassed (`--skip-self-heal` / resume-thrash) so the lens never ran" — the value is initialized to `"disabled"` at phase entry (step 2) so the Outcome line is never empty. This is an additive-optional note only — do NOT add a new required `SUPERVISOR_RESULT` field; `schema_version` stays `1`.
+- **Recording (no `schema_version` bump):** carry `red_team_advisory` (`ran` | `skipped_low_risk` | `disabled` | `error`) into `SUPERVISOR_RESULT.summary` and the job's `## Outcome` block, and the classification as the additive optional `SUPERVISOR_RESULT.risk_classification: {high_risk, reasons}` — present whenever the lens ran (including `disabled`), ABSENT on the bypass paths (`--skip-self-heal` / resume-thrash / base-mismatch cleanup). `disabled` also covers a bypassed phase (initialized at on-entry step 2). No new required field.
 
-**Fix task crash handling:**
-- If the fix Task() returns an error or no FIX_RESULT block: pause the phase by emitting `SUPERVISOR_RESULT` with `status: checkpoint` (the schema has no `paused` status — `checkpoint` is the pause analogue) and exit with the resume command. Do NOT increment the resume counter now — the increment happens at Phase 4.5 entry of the next `--continue` run (on-entry step 3).
-
-**Completion tail (always runs — both when the loop ran and when it was skipped):**
-
-0. **Completion-tail guard — LIVES VERBATIM IN `agents/supervisor.md` (deliberately NOT moved
-   here; gates stay visible in the agent file):** before any other completion-tail action, apply
-   the guard exactly as written in the `agents/supervisor.md` Phase 4.5 stanza — subject to its
-   thrash-escalation exception, if `skip_self_heal_requested == false` AND
-   `phase45_review_invoked == false`, abort with `status: failed` per the agent file and do NOT
-   proceed to the steps below.
-
-1. Determine outcome:
-   - `heal_decision == PASS` OR `heal_loop_ran == false` (loop skipped): task succeeds cleanly
-   - `heal_decision == ESCALATED`: task succeeds with escalation
-
-2. **Job lifecycle completion** (if `job:` parameter was used):
-   - On PASS / loop-skipped: Move brief from `in-progress/` → `done/`, append outcome section:
-     ```markdown
-     ## Outcome
-     - **Status:** completed
-     - **Completed:** {ISO 8601 timestamp}
-     - **PR:** {PR URL}
-     - **Branch:** {feature branch name}
-     - **Files changed:** {count}
-     - **Heal loop ran:** {true|false}
-     - **Heal decision:** {PASS|null}
-     - **Heal iterations:** {N|null}
-     - **Red team advisory:** {ran|skipped_low_risk|disabled|error}
-     - **Red team findings:** {one-line risk/findings summary — include this line ONLY when `red_team_advisory == ran`; omit entirely otherwise. Mirrors the findings carried into `SUPERVISOR_RESULT.summary`; additive markdown only, no schema field.}
-     - **Until-mergeable dispatched:** {true|false}
-     - **Until-mergeable log:** {RUN_LOG path under .supervisor/logs/ — include this line ONLY when `until_mergeable_dispatched == true`; omit otherwise. Additive markdown only, no schema field. Resolved from the per-PR dispatch marker — the visible trail a branch-dependent downstream consumer reads to know a detached drain is in flight (AC8b).}
-     - **Summary:** {brief description of what was done}
-     ```
-   - On ESCALATED: Move brief from `in-progress/` → `done/`, append outcome section with `**Status:** completed_with_escalation`, plus `**Heal reason:** {needs_human|max_iterations_reached|self_heal_resume_thrash|rules_gate_unresolved|rules_fail_then_unstamped}`, `**Heal remaining issues:** {count}`, and the same `**Red team advisory:** {ran|skipped_low_risk|disabled|error}` line (plus the `**Red team findings:**` one-liner when it ran) — the red-team lens runs before the completion tail regardless of `heal_decision`, so its outcome is recorded on both the PASS and ESCALATED paths.
-   - **`## Not verified` section (optional, harness-port/04) — appended to the brief itself, on BOTH the PASS/loop-skipped and ESCALATED outcomes above:** aggregate every worker's `not_verified` sub-list from `state.md`'s `## Worker Results` — the SAME aggregation the FINALIZE PR body's `## Not verified` section uses (`skills/async-orchestration/SKILL.md` Part 2) — and append one `## Not verified` section to the brief (after the `## Outcome` block just appended), one bullet per item across ALL workers: `- **<surface>** — <reason> (subtask <id>)`. **OMITTED ENTIRELY** (no heading, no "none" line) when every worker's `not_verified` list is absent/empty. This is the surface `/verify`'s `acs <ticket>` command reads back (`loomwright/scripts/verify-run.sh`) — the PR body's copy of the same section is for the human only. REPORT-ONLY: never gates this step, `heal_decision`, or the job-lifecycle move.
-   - Backward compatibility: If job file is not in `in-progress/`, skip the move step (direct `/supervisor task:` invocation without Launch Pad).
-
-2.5. **Requirement close-out — deferred to the post-merge `closeout` (this step writes NOTHING to the requirement):**
-
-   On every outcome that reaches this step (**PASS / loop-skipped / ESCALATED**) the completion tail writes **nothing** to the originating requirement file named by the brief's `- **Source requirement:**` pointer: no `## Status:` line of any value, and no sentinel-led close-out block. A requirement's done stamp means **its PR merged** — `automate-helpers.sh`'s `is_done` drives folder intake, `plan-waves`, `resolve-backlog` and `reconcile-status` — and at this point the PR FINALIZE opened is still OPEN.
-
-   - **Who closes it out:** `automate-helpers.sh closeout` (`scripts/automate-trail.sh`) is the sole writer of the requirement's sentinel-led done block, and it stamps only after its evidence gate reads the PR `MERGED` (`skills/automate-loop/SKILL.md` §6 "Post-merge close-out"; the block's byte shape is the `printf` in that script's step 5, not restated here). The only other writer of a done claim for shipped work is the human-run `reconcile-status --apply`, which is evidence-gated on a merged PR too (its and `lane-remove --abandon`'s `ABANDONED` heading records an owner decision, not shipped work).
-   - **Where Phase 4.5's verdict goes:** the brief's `## Outcome` block (step 2: `**Status:** completed` / `completed_with_escalation`, `**Heal reason:**`, `**Heal remaining issues:**`) and, under `/automate`, the run file — never the requirement.
-   - **Record:** `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: deferred_to_post_merge", rationale: "requirement done stamp is written only by closeout after the PR reads MERGED")`, then continue to step 2.6. Fail-SAFE: recording is the step's only action, and a failure to record never changes `SUPERVISOR_RESULT.status`.
-   - **Honest limit — one path gets no automatic done stamp:** a plain `/supervisor` or `/autonomous` run outside `/automate`. `closeout` needs an `/automate` run file and a caller — its callers are `/automate --resume`'s RECONCILE (`skills/automate-loop/SKILL.md` §6 step 1, this run's `## Current` item), the merge watcher (`automate-merge-watch.sh`, armed only at an `/automate` park), `closeout-others` (another run's `## Current` item), `--auto-merge` SYNC (§6 step 5, `closeout --no-trail` right after `gate-eval` merged the PR) and a merged `--parallel` lane's `lane-convert-ready` re-run (§14, `closeout --no-trail` inside the lane) — so a requirement is closed out only as an `/automate` run's item whose PR merged; for every other requirement `/automate --resume` runs `reconcile-status` as a dry run only (§4 step 7). For that path, recovery after the merge is a human step: `automate-helpers.sh reconcile-status <requirements_root> --apply`, or a hand-written `## Status: done`. Meanwhile `stamp-requirement-status.sh` (run on session start and when a Supervisor runner agent finishes — its two `hooks.json` seams) records `## Status: brief-shipped` on a requirement carrying no `## Status` heading once the brief lands in `done/` — deliberately not a done value (`is_done` does not match it), so `resolve-folder` keeps listing the merged item until that human step. `reconcile-status --apply` promotes a `brief-shipped` requirement on the same merged-PR evidence it requires of any other not-done one (which candidates it promotes, and on what evidence, is the `reconcile-status` row of `skills/automate-loop/SKILL.md` §1.5 — not restated here), appending the done stamp under the kept `brief-shipped` heading; without that evidence it lists the file as an `info` row and leaves it unchanged, and only then does it need a hand-written `## Status: done`. The trade stays deliberate: a missed done stamp is recoverable, a false one is not.
-   - **History (before automate-followups/37):** this step stamped the requirement `## Status: done` / `done_with_escalation` itself, while the PR was still open (pa/05 Validation 4, finding F7). `trail-pr`'s evidence gate kept that early stamp off `main`, but any other push path (a whole-lane `meta-sync.sh push`) carried a done claim for never-merged work, and any clone holding the stamp read the item as done.
-
-2.6. **Orientation memo proposals (success-only, fail-safe side-effect — additive):**
-
-   Runs on the SAME successful outcomes as step 2.5 — **PASS / loop-skipped / ESCALATED** only; it MUST NOT run on the `failed` / abort / `checkpoint` / invariant-violation / base-mismatch-cleanup paths. The run **MAY** (optional — skip silently when there is nothing durable to say) propose per-area **orientation memos** for the areas this run touched, by writing one proposal file named `<area-slug>.md` (a single `[a-z0-9-]+` segment — the same slug rules `add-orientation.sh` enforces, `readme` reserved) per area to the **gitignored** `.supervisor/orientation-proposals/` directory (`mkdir -p` it first). Each proposal uses the SAME memo format the committed store documents in `.agent/orientation/README.md`: line 1 a machine-parsed header comment `<!-- written_at: <ISO-8601 UTC> | head_sha: <short HEAD sha> | areas: <space-separated repo-relative path prefixes> -->`, line 2 a one-line summary, then a free-form markdown body — the WHOLE file ≤1000 chars (an over-cap proposal would be rejected at promotion time by `add-orientation.sh`, so cap it here).
-
-   **NEVER writes the committed `.agent/orientation/` store.** Promotion into the committed store happens ONLY via the `/dreaming` per-item-approval flow calling `add-orientation.sh` (the store's confirm-gated sole writer) — an automated run proposing memos here can never mutate the committed store.
-
-   This whole step is a **runtime side-effect emitter and MUST fail SAFE** per the CLAUDE.md bimodal-failure invariant: ANY write failure (unwritable/uncreatable dir, disk error) is a **silent logged no-op** — record `record_decision(phase: SELF_HEAL, decision: "orientation_proposals: {n written|noop_write_failed|skipped}", rationale: "advisory — non-fatal")` and continue. It NEVER blocks the completion tail, NEVER changes `heal_decision`, NEVER gates the PR or the run — always continue to step 3 regardless of outcome.
-
-3. **Reset resume counter (unconditional — runs on every exit path: PASS, ESCALATED, or loop-skipped):** `Context-Keeper(operation: record_self_heal_resume, increment: false)`. The completion tail itself is unconditional; so is the reset.
-
-4. **Record the outcome:** `record_decision(phase: SELF_HEAL, decision: "{PASS|ESCALATED|loop_skipped}", rationale: "{final reason}")`.
-   - **Terminal status is derived, not flipped here — and it now fires mechanically (PR #116 review Finding 1).** `scripts/build-state.sh` derives `.supervisor/state.md`'s `- status:` (`completed` / `completed_with_escalation` / `failed`) from the run's `session_end` event — see `docs/TELEMETRY.md`. A second hook, `scripts/reproject-state-on-terminal.sh` (registered under the existing `PostToolUse[Bash]` matcher), re-invokes the projector as soon as a non-terminal `state.md` and a `session_end`-carrying log are both observed — which in practice is the very Bash call that appended `session_end` itself, since that append happens via a Bash-tool command. Do not close the remaining narrow edge (a hypothetical non-Bash `session_end` writer would wait for that session's next Bash call) by re-adding a status-flip prompt instruction here — the fix for that shape is another mechanical hook site, not a written instruction.
-
-4.5. **System Twin contract builder (WRITE path — completion tail only):**
-
-   **Runs only on a PASS outcome** (`heal_decision == PASS` or loop-skipped — the same outcomes that move the job to `done/` in step 2); SKIP on the ESCALATED / base-mismatch / invariant-violation paths. Compute the per-subsystem incident map for THIS run and spawn the ephemeral, Bash-capable builder Task exactly per Part 1 §"Contract builder (WRITE path)" above — the spawn prompt there is verbatim and authoritative.
-
-   Invariants that must survive any summarization of this step:
-   - **Propose-only, advisory, reversible** — writes the advisory twin store, never plugin code, never a gate.
-   - **Pinned repo-root CWD, never a worktree** — `write-system-contract.sh` exits 3 from a linked worktree; Phase 4 already removed the worktrees.
-   - **Context-Keeper is OUT of this path** — sole writer of the twin store is `write-system-contract.sh`.
-   - **Failure is non-fatal** — log `record_decision(phase: SELF_HEAL, decision: "twin_builder: {n} written / {m} skipped", rationale: "advisory — non-fatal")` and continue.
-
-5. **Emit SUPERVISOR_RESULT block for this task** (see `agents/supervisor.md` §"Result Block (SUPERVISOR_RESULT)" — the block definition deliberately stays in the agent file, untouched, and the SubagentStop hook validation is unchanged). Exactly one block per task, emitted here — Phase 5 LOOP emits nothing. When looping to a new task, the next task's Phase 4.5 tail will emit its own block. The SubagentStop hook validates the last block; earlier blocks must still be schema-valid. Include the additive `contract_conformance`, `benchmark_result`, and `ground_truth` objects (computed earlier in this phase), the additive `knowledge_sources_used` array (the memory sources consulted this run, per the tag vocabulary in the Result Block section), and also emit the FLAT hard-signal fields — including a flat `knowledge_sources_used` array carrying the SAME value — onto the `session_end` JSONL event — see "Hard-signal fields (System Twin)" below.
-
-   **`heal_dismissed` (dismissed-findings-01) — include when non-empty, omit when empty ("empty ⇒ absent", same rule as `REVIEW_HEAL_RESULT.dismissed`, `docs/RESULT_SCHEMAS.md` §SUPERVISOR_RESULT).** `heal_dismissed` accumulated across every loop iteration (the `review.issues` minus fix-time-filter itemisation computed right after each `review = Task(...)` call, above) is the field's value verbatim.
-
-   **Dismissed-findings marker comment (same shape as the drain's — `skills/review-heal/SKILL.md` §"Dismissed-findings marker comment", not restated here).** When `heal_dismissed` is non-empty, post ONE `gh pr comment` at this same completion-tail point, body `<!-- loomwright:dismissed round=<n> -->` followed by one `- **<finding>** — <reason> (<source>)` bullet per `heal_dismissed` item. **Round-number anchor (recorded choice, exit-path-aware — PR #264 review):** Phase 4.5 is not round-numbered the way the drain is (there is no per-round ledger), and Part 2's `heal_iterations += 1` sits at the BOTTOM of the loop body, so which exit path fired changes what the post-loop value of `heal_iterations` means: on the two break-based exits (`PASS`, `NEEDS_HUMAN` — both break BEFORE that iteration's own increment) `heal_iterations` still holds the PRE-increment count, so `<n> = heal_iterations + 1` (1-indexed, matching this file's own `fixer_deviations` prefix convention above AND the drain side's 1-indexed `round_number`). On the loop-EXHAUSTION exit (every iteration up to `max_heal_iterations` was `FAIL`, no `break` fires, the `while` condition goes false naturally) the FINAL iteration's own `heal_iterations += 1` already ran before the loop exits, so `heal_iterations` already equals the true count of iterations run — use `<n> = heal_iterations` UNCHANGED there (adding +1 would overcount by one, e.g. posting `round=4` for a 3-iteration exhaustion under the default `--heal-iterations 3`). **Discriminating the two ESCALATED sub-cases (PR #264 review round 3):** `heal_decision == ESCALATED` alone cannot tell you which formula applies — BOTH the `NEEDS_HUMAN` break and loop-exhaustion set `heal_decision = ESCALATED`, with no separate flag distinguishing them. Use the SAME condition the "Loop exit" exhaustion-detection guard earlier in this same Part 2 loop already applies (`if heal_iterations == max_heal_iterations AND iter_decision != PASS:`): `heal_iterations == max_heal_iterations` ⇒ exhaustion (`<n> = heal_iterations`); `heal_iterations < max_heal_iterations` ⇒ the `NEEDS_HUMAN` break (or the `rules_gate_unresolved` / `rules_fail_then_unstamped` break — also pre-increment) fired (`<n> = heal_iterations + 1`). `heal_decision == PASS` is unambiguous on its own (only the `PASS` break sets it) and always takes the `+1` form. When `heal_loop_ran=false` (the loop was skipped, so `heal_iterations=null` and `heal_dismissed` is necessarily empty — nothing accumulates outside the loop), no comment is posted. Post-once, never edited later — same append-only, one-comment discipline as the drain side. `classify-bot-review.sh`'s `--skip-marker` default-ON filter (see `skills/review-heal/SKILL.md` §U1) also protects this comment from ever being mis-classified as a human finding by the `--until-mergeable` drain, should one run on the same PR afterward (step 5.5, below).
-
-5.5. **Until-mergeable review-drain dispatch (DEFAULT ON — opt-out, best-effort, fire-and-forget):**
-
-   Runs ONLY on a PASS / normal completion that produced a PR (i.e. `PR_URL` is set; skip entirely on the base-mismatch cleanup path, on `status: failed`/`checkpoint`, and whenever no PR was created). When eligible, hand the PR URL to the dispatcher, which launches a fresh, detached standalone review-and-heal run via the **`--agent` runner form** (`loomwright:review-pr-runner`) and, **by default, threads the until-mergeable drain signal** so the runner forwards `--until-mergeable` to its inline `/review-pr` (the external-channel drain — required CI checks, bot reviews/threads/comments, check outputs). **As of AC7 this dispatch is ON BY DEFAULT** after PR creation: it dispatches UNLESS suppressed via `--no-auto-review` OR `.supervisor/config.json` `.auto_review == false`. The until-mergeable signal itself is opt-out via `--no-until-mergeable` OR `.auto_until_mergeable == false` (when opted out the runner runs the plain diff-only `/review-pr`). The signal is threaded via **environment variables** (NOT a `/review-pr` slash string, NOT a positional) per the S2-pinned contract in `skills/review-heal/SKILL.md` §"Until-Mergeable Dispatch Signal" — the `--agent` form has no flag surface, which avoids the 11.1.1 spawn-depth auto-delegation trap. A per-PR marker guards against re-dispatch on a `--continue` re-run, so there is exactly ONE dispatch per PR.
-
-   ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-pr-review.sh" \
-     --pr-url "{PR_URL}" \
-     {if AUTO_REVIEW_FLAG == suppress: --no-auto-review}{if AUTO_REVIEW_FLAG == force: --auto-review} \
-     {if UNTIL_MERGEABLE_FLAG == suppress: --no-until-mergeable} \
-     {if CHECK_WAIT_TIMEOUT set: --check-wait-timeout "{CHECK_WAIT_TIMEOUT}"} \
-     {if REVIEW_CHECK_PATTERN set: --review-check-pattern "{REVIEW_CHECK_PATTERN}"}
-   # always exits 0. Default-ON dispatch (suppressed only by --no-auto-review / .auto_review==false).
-   # Default until-mergeable signal (LOOMWRIGHT_UNTIL_MERGEABLE=1 exported by the dispatcher);
-   # opted out by --no-until-mergeable / .auto_until_mergeable==false. The optional tuning flags are
-   # forwarded ONLY when set; the dispatcher exports them as LOOMWRIGHT_CHECK_WAIT_TIMEOUT /
-   # LOOMWRIGHT_REVIEW_CHECK_PATTERN. Omit --auto-review/--no-auto-review when AUTO_REVIEW_FLAG == none.
-   ```
-
-   The dispatched drain **NEVER merges** and **NEVER waits on a human** — it stops at a terminal `READY` / `ESCALATED` state and fires a best-effort notification on **both** terminal states (see `skills/review-heal/SKILL.md` §"READY redefinition" for the readiness semantics — not restated here). This step is **strictly best-effort**: the dispatcher ALWAYS exits 0 (missing `claude`/`jq`/config or any error logs one line and exits 0), so it can NEVER hard-fail the completion tail. It NEVER changes `heal_decision`, NEVER alters the PR, and NEVER affects control flow or `SUPERVISOR_RESULT.status` — always continue to step 6 regardless of outcome. Because `/review-pr` never creates a PR, there is no review→review recursion.
-
-   **Hook backstop (v14.34.0 — defense-in-depth).** A `PostToolUse[Bash]` hook (`${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatch-on-pr-create.sh`, registered in `hooks/hooks.json`) ALSO backstops this dispatch: it fires on the actual `gh pr create` Bash tool call and invokes the SAME `dispatch-pr-review.sh`, so the until-mergeable drain still runs even if this prompt step is skipped on the inline `/autonomous`/`/supervisor` path (where the Supervisor is the main thread and `SubagentStop(supervisor-runner)` never fires). The hook is session-scope gated — an in-progress job exists AND authorization resolves from ONE coherent source: a non-terminal, branch-matching `state.md`, OR (when `state.md` is stale/terminal) a UNIQUE active autonomous `state.json` (matching `current_branch` + brief in `jobs/in-progress/` + non-terminal `current_status` + null `ended_at`); a stale terminal `state.md` no longer short-circuits ahead of the state.json fallback — so it never hijacks unrelated manual PRs. If BOTH this step and the hook fire for the same PR, the dispatcher's per-PR idempotency marker guarantees exactly ONE dispatch — so keeping step 5.5 alongside the hook causes no double-dispatch. **Timing note:** the hook fires at PR-creation time (Phase 4 FINALIZE), one phase EARLIER than step 5.5's completion-tail dispatch (which runs after Phase 4.5 SELF_HEAL). When both paths are live the earlier hook dispatch wins, so the detached drain runs at the same time as the inline self-heal rather than after it. **This timing overlap is now harmless because the two no longer share a checkout:** the detached drain runs in its OWN dispatcher-created sibling worktree (detached-HEAD at the PR head SHA — see `scripts/dispatch-pr-review.sh` and `skills/review-heal/SKILL.md` §"Isolated worktree for the detached dispatched drain"), so it has a separate working dir + index and can no longer check-out / stage / commit in the inline self-heal's working tree. The drain still does only regular pushes (NEVER --force) + re-polls, so a concurrent push at worst yields a non-fast-forward rejection the runner recovers from; nothing is force-clobbered or merged. **Do NOT write `.supervisor/config.json {"auto_review": false}` to suppress the drain for this self-heal race — that rationale is retired now that the drain is working-tree-isolated.** (The `auto_review` flag itself remains as a general opt-out for not wanting the drain at all; it is no longer a workaround for the collision.)
-
-   **Observability (AC8b) — reconcile against the MARKER, never from "did I dispatch".** The drain may have been dispatched by EITHER this step OR the `PostToolUse[Bash]` hook backstop — and the hook fires at `gh pr create` (one phase earlier) and is **invisible to this main-thread context**, returning no signal. So `until_mergeable_dispatched` MUST be resolved from the on-disk per-PR dispatch marker, NOT keyed on whether *this step* invoked the dispatcher. On the inline path this step is sometimes skipped while the hook still dispatched; keying on "did I dispatch" records a **false negative** (this is the exact defect that made a prior run misreport "not dispatched" while the drain was live). Resolve it deterministically — the dispatcher writes a marker whose body contains the exact PR URL, and (post-fix) a `RUN_LOG` whose header line contains `url={PR_URL}` followed by a tab, so both lookups are hash-implementation-agnostic and do not confuse prefix-related PRs (for example `/pull/7` vs `/pull/72`):
-   ```bash
-   # MARKER present ⇔ the dispatcher ran past its claude-on-PATH check for this PR
-   # (via step 5.5 OR the hook). Match the marker BODY's exact PR URL, not the
-   # hash-keyed filename or a URL substring, so this is independent of the dispatcher's hashing tool.
-   if awk -v url="{PR_URL}" '$0 == url || $2 == url { found=1; exit } END { exit(found ? 0 : 1) }' .supervisor/review-dispatch/* 2>/dev/null; then
-     UM_DISPATCHED=true
-     # Best-effort log pointer: the RUN_LOG header carries `url={PR_URL}` followed by a tab (first match — the per-PR marker means normally exactly one log per PR).
-     UM_LOG="$(grep -rlF "$(printf 'url=%s\t' "{PR_URL}")" .supervisor/logs/review-pr-dispatch-*.log 2>/dev/null | head -1)"
-   else
-     UM_DISPATCHED=false; UM_LOG=
-   fi
-   ```
-   Then record `until_mergeable_dispatched: {UM_DISPATCHED}` and (only when true AND a log was found) `until_mergeable_log: {UM_LOG}` on the job's `## Outcome` block (step 2 above) AND on the `session_end` JSONL event. Additively/optionally also surface them on `SUPERVISOR_RESULT` (no `schema_version` bump — additive, advisory, never gated, following the `branch_base`/`pr_state` precedent). **NEVER assert `false` from "I skipped step 5.5" alone** — a marker means the drain is live regardless of which path fired. `false` is truthful ONLY when no marker exists (opted out / no PR / dispatcher no-op). The drain itself fires the terminal `READY`/`ESCALATED` notification asynchronously; the marker + log path are the Supervisor-side trail a downstream consumer reads to know a drain is in flight.
-
-6. **Advisory Twin delta line (informational ONLY):** echo one human-readable line via `format-twin-delta.sh`, built from the `contract_conformance` / `benchmark_result` values computed above — exact invocation in Part 1 §"Advisory Twin delta line" above. The script always exits 0; the line never gates, never alters the PR, never affects control flow.
-7. **Rules-check replay line (report line, executable-rule-candidates/01; its gating effect lives in Part 2, automate-followups/07):** surface the LAST iteration's `rules_check_line` computed per Part 1 §"Rules-check replay" above (`passed n/m` | `unstamped` | `cmd_disabled` | `none` | `unresolved <ids>` | `unreadable`, plus any `rules_advisory: <id> (<reason>)` clauses) alongside the Advisory Twin delta line from step 6 — same completion-tail moment, same advisory-report placement, no new mechanism of its own. It goes in the Phase 4.5 report only, not the PR body (written at Phase 4 FINALIZE, before this phase runs). The LINE itself never alters the PR or control flow and (unlike step 6's `contract_conformance`/`benchmark_result` pair) carries NO nested `SUPERVISOR_RESULT` field and NO flat `session_end` field; the gate it reports on already acted inside the loop — a countable stamped `fail` became BLOCKING `rule_findings` (so a `heal_decision: PASS` means every countable stamped check passed or none was countable), and `unresolved`/`unreadable` already escalated with `rules_gate_unresolved` (an `unstamped` after a remembered countable fail, with `rules_fail_then_unstamped`).
-8. **Rules-store audit line (report line ONLY, automate-followups/09):** surface the `rules_audit_line` computed ONCE per run per Part 1 §"Rules-store audit" above (`clean` | `findings <n> (<kinds>)` | `unexamined`), followed by `rules_gate_trigger_line` when present, alongside step 7's line — same completion-tail moment, same placement contract step 7 states: the Phase 4.5 report only, NOT the PR body, NO nested `SUPERVISOR_RESULT` field, NO flat `session_end` field. Unlike step 7, there is no gate behind this line at all: it never alters `heal_decision`, the PR, or control flow.
-9. **House-rule verdicts line (report line ONLY, #431/#432):** surface the LAST iteration's `house_rules_line` (Part 1 §"House-rule verdicts line") alongside steps 7–8 — same placement contract: the Phase 4.5 report only, NOT the PR body, NO nested `SUPERVISOR_RESULT` field, NO flat `session_end` field. It names every `violated` / `conflicts_with_requirement` rule with its reason; it never alters `heal_decision`, the PR, or control flow.
-
-**Hard-signal fields (System Twin / ST3 — written in BOTH shapes):**
-
-Emit the contract-conformance, benchmark, and ground-truth results as the SAME data in two shapes: (1) nested objects on `SUPERVISOR_RESULT` (step 5 above) and (2) FLAT scalar fields on the `session_end` JSONL event in `.supervisor/logs/{session_id}.jsonl` — the shape `build-insights.sh` (ST4) aggregates. **The flat field names are a hard contract with ST4 — do NOT rename them.** The exact nested→flat field correspondence table lives in Part 1 §"Hard-signal dual emission" above and `docs/RESULT_SCHEMAS.md` §"`session_end` JSONL hard-signal fields". Flat fields are additive — a `session_end` event without them remains valid. Also stamp the additive `plugin_version` field (string, e.g. `"14.24.0"`) onto the same `session_end` event — read it at emission time via `jq -r '.version // "unknown"' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"` (fall back to `"unknown"` when the manifest is unreadable); absent `plugin_version` stays valid — `build-insights.sh` groups such events under `"unknown"` in its per-version section. Also stamp the additive FLAT `knowledge_sources_used` array (v14.28.0) onto the same `session_end` event with the SAME value as the nested `SUPERVISOR_RESULT.knowledge_sources_used` array — the surface `build-insights.sh` / `/insights` reads. It is additive and ADVISORY: readers treat an absent field as "none used", it is NEVER gated on, and it does NOT bump `schema_version`. As of v14.33.0 `build-insights.sh` / `/insights` aggregates and surfaces this field in the `## Knowledge sources (memory APPLY)` dashboard section (runs-reporting-a-source count, top source tags, per-version usage); this surface ensures emission.
-
+**Fix task crash handling:** if the fix Task() returns an error or no FIX_RESULT block, Read `escalation.md` (this skill's directory) and follow its §"Fix task crash handling".
 **Error handling table:**
 
 | Situation | Action |
@@ -1415,6 +405,3 @@ Emit the contract-conformance, benchmark, and ground-truth results as the SAME d
 | `gh pr comment` fails at escalation | Record findings in `.supervisor/state.md` decisions log; do NOT fail the task — escalation still succeeds, just without PR comment |
 | Resume counter ≥ 3 | Abort loop, mark ESCALATED with `self_heal_resume_thrash` reason, run completion tail |
 | Tool budget exceeded mid-loop | Checkpoint with `current_phase: SELF_HEAL`, exit with resume command |
-
-The phase **Output** block (the `### Phase 4.5: SELF_HEAL` report format) also stays in
-`agents/supervisor.md` — emit it as specified there.

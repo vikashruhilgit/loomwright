@@ -132,6 +132,7 @@ SEAMS=(
   "$PLUGIN_ROOT/agents/supervisor.md"
   "$PLUGIN_ROOT/agents/execute-manager.md"
   "$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md"
+  "$PLUGIN_ROOT/skills/self-heal-advisory/on-entry.md"
   "$PLUGIN_ROOT/agents/code-reviewer.md"
   "$PLUGIN_ROOT/scripts/session-resume.sh"
 )
@@ -412,7 +413,7 @@ done
 # plus whitespace) and about the placeholder wording (`paths`/`files`, singular or plural) — it is the
 # SHAPE that is load-bearing, not the prose. What it cannot tolerate is the args disappearing.
 ARGS_BEARING=(
-  "$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md"
+  "$PLUGIN_ROOT/skills/self-heal-advisory/on-entry.md"
   "$PLUGIN_ROOT/agents/execute-manager.md"
   "$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
   "$PLUGIN_ROOT/agents/code-reviewer.md"
@@ -522,7 +523,7 @@ C_MUT_AFTER_SPAN_ENV='s#(bash [^`]*read-rules\.sh[^`]*<[^`<>]*>[^`]*`)#\1 | env 
 c_mut_run in-span     "$CR" 's#(read-rules\.sh"[[:space:]]*<[^<>]*>)#\1 | bash#'
 c_mut_run end-of-line "$CR" '/read-rules\.sh"[[:space:]]*<[^<>]*>/ s#$# | bash#'
 c_mut_run after-span  "$PLUGIN_ROOT/agents/execute-manager.md" "$C_MUT_AFTER_SPAN"
-c_mut_run after-span  "$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md" "$C_MUT_AFTER_SPAN"
+c_mut_run after-span  "$PLUGIN_ROOT/skills/self-heal-advisory/on-entry.md" "$C_MUT_AFTER_SPAN"
 # One leg per widened seam_c_is_sink shape, in-span on agents/code-reviewer.md (C_MUT_INV = its real
 # invocation from `bash ` through the path placeholder):
 C_MUT_INV='(bash "[^"`]*read-rules\.sh"[[:space:]]*<[^<>]*>)'

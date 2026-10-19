@@ -178,12 +178,16 @@ has "$FIX/brief-bare.md" '`rules_gate_unreadable`' && has "$FIX/brief-bare.md" '
   && ok "brief-bare: a new value and a pinned test (Criterion 19's gate fires)" || no "brief-bare does not trigger the gate"
 # Every anchor the Criterion 19 fixtures quote must still be in the file they name (fixture rot guard).
 SHA="$REPO/loomwright/skills/self-heal-advisory/SKILL.md"
-has "$SHA" '**Heal reason:** {needs_human|' && ok "anchor: Heal reason closed list" || no "anchor gone: Heal reason list"
+SHA_TAIL="$REPO/loomwright/skills/self-heal-advisory/completion-tail.md"   # automate-speed/15: completion tail split out
+has "$SHA_TAIL" '**Heal reason:** {needs_human|' && ok "anchor: Heal reason closed list" || no "anchor gone: Heal reason list"
 has "$SHA" 'record_decision(phase: SELF_HEAL, decision: "rules_gate_unresolved"' && ok "anchor: sibling escalation leg" \
   || no "anchor gone: sibling record_decision"
-for a in 'also pre-increment' '**The verdict decides; the line reports.**' '**Rules-check replay line' 'already escalated with' \
+for a in '**The verdict decides; the line reports.**' \
          'if rules.verdict not in RULES_PASSABLE and rules.verdict != "fail":'; do
   has "$SHA" "$a" && ok "anchor: $a" || no "anchor gone from self-heal-advisory: $a"
+done
+for a in 'also pre-increment' '**Rules-check replay line' 'already escalated with'; do
+  has "$SHA_TAIL" "$a" && ok "anchor: $a" || no "anchor gone from self-heal-advisory completion-tail.md: $a"
 done
 has "$REPO/loomwright/scripts/test-rules-gate-seams.sh" 'PINS="' && ok "anchor: PINS line" || no "anchor gone: PINS line"
 # The sibling grep the complete brief shows: its hit FILES must be exactly the files the entry lists.

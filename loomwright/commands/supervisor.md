@@ -2,7 +2,7 @@
 description: Autonomously manage development workflow with parallel execution from task pickup to PR creation
 ---
 
-> **Execute this workflow inline as the main thread.** Do not delegate to `loomwright:supervisor-runner` via the Agent tool. A delegated runner is a subagent: it has no ask tool, so every question gate takes its can't-ask branch. Each layer it adds also uses subagent nesting depth (three layers by default, and a host setting can lower it; [docs](https://code.claude.com/docs/en/sub-agents), re-read 2026-10-12). Under a lowered limit the workflow aborts with "Task/Agent tool unavailable". See `docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting". To run the agent in its own session instead, launch with `claude --agent loomwright:supervisor-runner`.
+> **Execute this workflow inline as the main thread.** Do not delegate to `loomwright:supervisor-runner` via the Agent tool. A delegated runner is a subagent: it has no ask tool, so every question gate takes its can't-ask branch, and it spends a layer of subagent nesting depth — under a lowered host limit the workflow aborts with "Task/Agent tool unavailable" (`docs/ARCHITECTURE_CONTRACTS.md` §"Subagent nesting"). To run the agent in its own session instead, launch with `claude --agent loomwright:supervisor-runner`.
 
 > **Execution contract:** Inline main-thread execution replaces only the top-level `supervisor-runner`. You MUST still spawn first-level child agents via the Task tool for every phase that requires them: `orchestrator` (Phase 2), `execute-manager` or Single-Agent/Sequential-path worker (Phase 3), and the Phase 4.5 `code-reviewer` + fix-task loop. Do NOT collapse the workflow into direct main-thread implementation. Phase 4.5 is mandatory unless `--skip-self-heal` was explicitly passed — reaching the completion tail without invoking `code-reviewer` and without the flag is an internal workflow error (enforced by the Phase 4.5 completion-tail guard, which lives verbatim in `agents/supervisor.md`; the full Phase 4.5 procedure lives in `skills/self-heal-advisory/SKILL.md` Part 2, Read at phase entry).
 
@@ -12,39 +12,7 @@ description: Autonomously manage development workflow with parallel execution fr
 
 The Supervisor agent v4 autonomously manages the complete development workflow. It picks up tasks, delegates Phase 3 execution to the Execute Manager, orchestrates parallel workers via git worktrees, manages quality gates, and creates Pull Requests. Uses `.supervisor/` for all state management.
 
-## Usage
-
-```bash
-/supervisor                                    # Auto-select next ready task
-/supervisor task: BD-XX                        # Work on specific task
-/supervisor --max-workers 3                    # Up to 3 parallel workers
-/supervisor --sequential                       # Force sequential (no worktrees)
-/supervisor --continue                         # Resume from last checkpoint
-/supervisor --continue task: BD-XX             # Resume specific task
-/supervisor --dry-run                          # Preview workflow without executing
-/supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md   # Execute from Launch Pad brief
-/supervisor --skip-self-heal                   # Skip Phase 4.5 review+fix loop (emergency bypass)
-/supervisor --heal-iterations 5                # Allow up to 5 fix iterations before escalating (default 3)
-/supervisor --cheap                            # Cost-optimized: orchestrator, execute-manager, workers, code-reviewer, fix tasks run on Sonnet
-/supervisor --base-branch feature/v14-iter1    # Stack PR on a non-main base (v14 autonomous-loop multi-iter)
-/supervisor --non-interactive                  # Fail closed instead of prompting on gh/adjudication gates (set by /autonomous loop)
-/supervisor --skip-preflight-sync              # Short-circuit the Phase 1.5 remote-overlap reconciliation gate (escape hatch)
-/supervisor --skip-children-check              # Short-circuit Phase 4 FINALIZE's children-settled pre-merge check (escape hatch)
-/supervisor                                    # DEFAULT: after PR creation, auto-dispatch the detached until-mergeable review drain (opt-out below)
-/supervisor --no-until-mergeable               # Opt the auto-dispatched drain out of --until-mergeable (runner runs plain diff-only /review-pr)
-/supervisor --no-auto-review                   # Suppress the post-completion review-drain dispatch entirely (overrides config)
-/supervisor --check-wait-timeout 300           # Forward a scoped check-wait bound (seconds) to the until-mergeable drain
-/supervisor --review-check-pattern 'claude*'   # Forward a review-producing check selector glob to the until-mergeable drain
-/supervisor --red-team                         # Opt in: advisory (non-gating) red-team review of high-risk integrated diffs in Phase 4.5
-/supervisor --no-red-team                      # Suppress the advisory red-team review (overrides config)
-/supervisor --multi-voter-heal                 # Opt in (default OFF): Phase 4.5 review spawns a second independent red-team-reviewer verification vote + refute check before fixing
-/supervisor --no-multi-voter-heal              # Suppress multi-voter heal (overrides config)
-/supervisor --voter-provider cursor:gpt-5      # With --multi-voter-heal: cast the verification vote via lens-run.sh (isolated provider CLI) instead of the red-team-reviewer Task
-/supervisor --fix-floor HIGH                    # Phase 4.5 fixes only BLOCKING/HIGH this run (default MEDIUM; config .fix_floor)
-/supervisor --sdk-runner                       # EXPERIMENTAL (opt-in, default OFF): Phase 3 shells out to the quarantined SDK spike runner; fail-closed if node/runner absent
-/supervisor --max-tokens 50000                 # Opt-in token-spend ceiling (red-team-hardening/06): Phase 3 poll loop parks BEFORE spawning another worker/reviewer round once the session's own ledger exceeds N
-/supervisor --legacy                           # Run Phases 0–4 from the pre-driver prose (docs/supervisor-legacy-phases.md) instead of scripts/supervisor-next-step.sh
-```
+Every flag is in §Parameters below; invocation examples: `docs/rationale/supervisor.md`.
 
 ## Parameters
 
@@ -53,34 +21,34 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 | `task:` | No | Specific task ID to work on (e.g., `task: BD-15` or `task: user-auth`) |
 | `--max-workers N` | No | Maximum parallel worktrees (default: 2) |
 | `--sequential` | No | Force sequential execution — no worktrees or parallelism |
-| `--continue` | No | Resume workflow from last checkpoint. Resumed state is **schema-validated fail-closed** (v15.3.0): before any loaded state is consumed, the `## Session` block must exist, `phase`/`status` must be in the closed enums, and any asserted `branch:` must `git rev-parse --verify` — per `skills/state-management/SKILL.md` §"Resume validation gate". An invalid file refuses the resume with `error: "resume_state_invalid"` (no override flag — inspect or delete `.supervisor/state.md`; see Troubleshooting). |
+| `--continue` | No | Resume workflow from last checkpoint. Resumed state is **schema-validated fail-closed**: before any loaded state is consumed, the `## Session` block must exist, `phase`/`status` must be in the closed enums, and any asserted `branch:` must `git rev-parse --verify` — per `skills/state-management/SKILL.md` §"Resume validation gate". An invalid file refuses the resume with `error: "resume_state_invalid"` (no override flag — inspect or delete `.supervisor/state.md`; see §"Checkpoints and Resume"). |
 | `--dry-run` | No | Preview the workflow phases without executing any actions |
 | `job:` | No | Path to Supervisor-Ready Brief from Launch Pad (e.g., `.supervisor/jobs/pending/{file}.md`) — skips Phases 0-2, moves brief through lifecycle (pending → in-progress → done/failed) |
-| `--skip-self-heal` | No | **⚠️ Leaves NO semantic review at all — true at EVERY threshold, not just single-subtask jobs.** No Phase 3 path (Single-Agent, Sequential, or Parallel) spawns a per-subtask reviewer any more (Fix 7 — see `agents/orchestrator.md` §"Review Gate Policy"), so Phase 4.5's Code Reviewer is the ONLY LLM review lens regardless of job shape, and this flag bypasses it, leaving only the deterministic `outputs_verified` + tests/lint (plus the worker's own LSP diagnostics) gate. Pre-v15.15.0 the Single-Agent-shaped fast path reviewed regardless of this flag, and pre-Fix-7 the Sequential/Parallel paths spawned a per-subtask reviewer unconditionally. Bypass the Phase 4.5 integration review + fix loop. Phase 4.5 still transitions in state and runs the completion tail, but no review is performed. Use for emergency merges; the heal fields in SUPERVISOR_RESULT will show `heal_loop_ran: false`. **Absence of this flag makes Phase 4.5 mandatory** — reaching the completion tail without having invoked the `code-reviewer` Task is an internal workflow error (the completion-tail guard will emit `status: failed` and leave the job in `in-progress/`). |
+| `--skip-self-heal` | No | **⚠️ Leaves NO semantic review at all — true at EVERY threshold, not just single-subtask jobs.** No Phase 3 path spawns a per-subtask reviewer (`agents/orchestrator.md` §"Review Gate Policy"), so Phase 4.5's Code Reviewer is the ONLY LLM review lens, and this flag bypasses it, leaving only the deterministic `outputs_verified` + tests/lint (plus the worker's own LSP diagnostics) gate. Bypass the Phase 4.5 integration review + fix loop. Phase 4.5 still transitions in state and runs the completion tail, but no review is performed. Use for emergency merges; the heal fields in SUPERVISOR_RESULT will show `heal_loop_ran: false`. **Absence of this flag makes Phase 4.5 mandatory** — reaching the completion tail without having invoked the `code-reviewer` Task is an internal workflow error (the completion-tail guard will emit `status: failed` and leave the job in `in-progress/`). |
 | `--heal-iterations N` | No | Maximum self-heal fix iterations before escalating (default: 3). Each iteration is: integration review → fix task → re-review. Lower values escalate sooner; higher values attempt more fixes but risk never passing. |
 | `--fix-floor <HIGH\|MEDIUM\|LOW>` | No | Lowest finding severity the Phase 4.5 review-and-fix loop **fixes**; anything below it passes and is recorded as a dismissed follow-up (BLOCKING is always fixed). Default **MEDIUM**; `.supervisor/config.json` `.fix_floor` sets it for every step (Launch Pad plan review, Phase 4.5, `/review-pr`), the flag overrides it for this run. An invalid value stops the run (`fix_floor_invalid`). Resolved by `scripts/fix-floor.sh`. |
 | `--cheap` | No | Cost-optimized profile: spawns orchestrator, execute-manager, workers, code-reviewer, Phase 4.5 fix tasks, and — when `--multi-voter-heal` is ON — the multi-voter verification voters/refute spawn with `model: "sonnet"` override at spawn time. **N/A for a `--voter-provider` voter:** that path is a Bash shell-out to `lens-run.sh`, not a Task spawn, so there is no spawn-time `model:` override — the model comes from the `name:model` suffix. Default behavior (`inherit` for all) is unchanged when flag is absent. **Caution:** on Haiku sessions, listed roles upgrade to Sonnet (costs more). See `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles". |
 | `--max-tokens N` | No | **Opt-in token-spend ceiling (red-team-hardening/06).** Parsed at Phase 0 INIT and recorded as a Phase Flag (same re-read-after-context-loss convention as `--non-interactive`). At Phase 0 INIT, also acquires `.supervisor/run.lock` (`scripts/run-lock.sh acquire --owner supervisor:<session_id> --session-id <session_id>` — `<session_id>` is the Claude Code runtime session id, matching `/automate` PICK's acquire shape, so a crashed session's lock is reclaimable) — a held lock PARKs the run BEFORE any work begins, printing `run_lock_held owner=<label> pid=<pid> age=<s>`, never proceeding silently (a `run_lock_reentrant owner=<outer> …` line, exit 0, is NOT a park: an enclosing `/automate`/`/autonomous` in the same session holds the lock — proceed; this run's own release is then a no-op; a `run_lock_degraded` stderr line, exit 0, means the lock is TTL-only and is NOT a park either — note it once and proceed); released at the completion tail / any Phase 4 abort. When `--max-tokens` is set, each Phase 3 poll-loop iteration entry sums this session's ledger via `scripts/read-token-ledger.sh --session <session_id>` and compares against N; a breach OR `LEDGER_UNREADABLE=1` ⇒ the run parks with `SUPERVISOR_RESULT.status: failed`, `error: "token_ceiling_reached"` before spawning another worker/reviewer round. Forwarded automatically by `/autonomous` and `/automate` when they were passed the same flag (see their own `--max-tokens` docs). Default: unset (no ceiling, byte-identical behavior). **Honest limit:** the ledger counts only what a SubagentStop hook saw — never this session's own main-thread tokens, never CI-side (`claude-review`) spend. No dollar conversion (no price table). See `docs/ARCHITECTURE_CONTRACTS.md` §"Token ceiling". |
-| `--base-branch <name>` | No | Override default base branch for FINALIZE PR creation. Default: `main`. Set by the `/autonomous` loop's multi-iteration mode so iteration N+1 stacks on iteration N's feature branch (v14.0.0). The brief's `## Configuration` block may also carry a `Base Branch:` field — when present it MUST match this flag (Plan Reviewer validates the brief field independently). Phase 4 FINALIZE self-verifies the created PR's `baseRefName` matches this value and aborts via Phase 4.5 cleanup on mismatch. |
-| `--non-interactive` | No | Suppress `AskUserQuestion` fallbacks; on `gh` failures and ambiguous gates, fail closed with a diagnostic instead of prompting. Executing as a subagent has the same effect (named statuses: `agents/supervisor.md` Can't-ask rule). Set automatically by the `/autonomous` loop when chaining iterations; rarely passed by humans. Recorded as a Phase Flag at Phase 0 so later phases can re-read after context loss (W-NEW-10 mitigation). |
+| `--base-branch <name>` | No | Override default base branch for FINALIZE PR creation. Default: `main`. Set by the `/autonomous` loop's multi-iteration mode so iteration N+1 stacks on iteration N's feature branch. The brief's `## Configuration` block may also carry a `Base Branch:` field — when present it MUST match this flag (Plan Reviewer validates the brief field independently). Phase 4 FINALIZE self-verifies the created PR's `baseRefName` matches this value and aborts via Phase 4.5 cleanup on mismatch. |
+| `--non-interactive` | No | Suppress `AskUserQuestion` fallbacks; on `gh` failures and ambiguous gates, fail closed with a diagnostic instead of prompting. Executing as a subagent has the same effect (named statuses: `agents/supervisor.md` Can't-ask rule). Set automatically by the `/autonomous` loop when chaining iterations; rarely passed by humans. Recorded as a Phase Flag at Phase 0 so later phases can re-read after context loss. |
 | `--skip-preflight-sync` | No | Short-circuit the Phase 1.5 PRE-FLIGHT SYNC gate, which reconciles the requested work against recent `origin/$BASE_BRANCH` commits and open PRs (same-file overlap + already-merged equivalents) and classifies the task CLEAR / OVERLAP / SUPERSEDED. The skip is recorded as a deliberate choice (`record_decision`) and `preflight_sync` is set to `skipped`. Escape hatch for when remote-overlap reconciliation is known-unnecessary or when intentionally re-doing landed work. Under `--non-interactive` / CI this is also the only way to proceed past an OVERLAP/SUPERSEDED classification (which otherwise fails closed). |
-| `--skip-children-check` | No | Short-circuit Phase 4 FINALIZE's pre-merge safety-gate "children settled" check (v15.80.0): every `agent_identity` row this session wrote, and every worker id recorded under `.supervisor/state.md`'s `## Worker Results` (passed as `--expect-id`), must have a matching terminal lifecycle row (`subtask_complete` / `token_ledger` / `agent_lifecycle: failed` / `agent_lifecycle: ended`) for the same `agent_id`, or the gate fails closed with `error: "children_unsettled: {ids}"` under `--non-interactive` (interactively, `AskUserQuestion`); ids are read from `### {worker-id} ({subtask-id})` headings and `agent_id:` / `worker_id:` keys, and a non-empty section with none refuses `worker_results_unparsed` (this flag bypasses that refusal too). The skip is recorded as a deliberate choice (`record_decision(phase: FINALIZE, decision: "user_skipped_children_check")`) and the run summary carries `children_check: skipped`. Escape hatch for a known-benign unsettled child (already resolved out-of-band) that should not block the merge. |
-| `--no-until-mergeable` | No | Opt the auto-dispatched post-completion review drain OUT of `--until-mergeable`. **NEW DEFAULT (AC7): Supervisor now auto-dispatches the until-mergeable drain after PR creation** — on a PASS/normal completion that produced a PR, Phase 4.5's completion tail launches a fresh, detached standalone review-and-heal run (`/review-pr` via the `loomwright:review-pr-runner` `--agent` form) and threads the until-mergeable signal (via env vars — see `skills/review-heal/SKILL.md` §"Until-Mergeable Dispatch Signal") so it drains ALL external review channels (required CI checks, bot reviews/threads/comments, check outputs). **The dispatched drain is heal-only by default** — under `--until-mergeable` it spawns no `code-reviewer` diff review of its own (only the `general-purpose` fix worker), with **exactly one earned-fallback exception**: when its own read shows no review lens actually posted (`no_review_lens_posted`), it runs exactly one diff review per drain run before declaring readiness, fail-CLOSED toward running it — see `skills/review-heal/SKILL.md` §"Earned Fallback Review" (semantics owned there, not restated here). **Ownership note:** `--until-mergeable` itself is a `/review-pr` flag, not a `/supervisor` flag — Supervisor never passes it literally; the dispatched runner receives the signal only through those env vars and forwards `--until-mergeable` to its own inline `/review-pr`. Passing `--no-until-mergeable` (or `.auto_until_mergeable: false`) makes the dispatched runner run the plain **diff-only** `/review-pr` loop instead. The drain **NEVER merges** and **NEVER waits on a human** (stops at terminal `READY`/`ESCALATED`, fires a best-effort notification on both). Default for `auto_until_mergeable` is **true**. |
+| `--skip-children-check` | No | Short-circuit Phase 4 FINALIZE's pre-merge safety-gate "children settled" check: every `agent_identity` row this session wrote, and every worker id recorded under `.supervisor/state.md`'s `## Worker Results` (passed as `--expect-id`), must have a matching terminal lifecycle row (`subtask_complete` / `token_ledger` / `agent_lifecycle: failed` / `agent_lifecycle: ended`) for the same `agent_id`, or the gate fails closed with `error: "children_unsettled: {ids}"` under `--non-interactive` (interactively, `AskUserQuestion`); ids are read from `### {worker-id} ({subtask-id})` headings and `agent_id:` / `worker_id:` keys, and a non-empty section with none refuses `worker_results_unparsed` (this flag bypasses that refusal too). The skip is recorded as a deliberate choice (`record_decision(phase: FINALIZE, decision: "user_skipped_children_check")`) and the run summary carries `children_check: skipped`. Escape hatch for a known-benign unsettled child (already resolved out-of-band) that should not block the merge. |
+| `--no-until-mergeable` | No | Opt the auto-dispatched post-completion review drain OUT of `--until-mergeable`. **By default Supervisor auto-dispatches the until-mergeable drain after PR creation** — on a PASS/normal completion that produced a PR, Phase 4.5's completion tail launches a fresh, detached standalone review-and-heal run (`/review-pr` via the `loomwright:review-pr-runner` `--agent` form) and threads the until-mergeable signal (via env vars — see `skills/review-heal/SKILL.md` §"Until-Mergeable Dispatch Signal") so it drains ALL external review channels (required CI checks, bot reviews/threads/comments, check outputs). **The dispatched drain is heal-only by default** — under `--until-mergeable` it spawns no `code-reviewer` diff review of its own (only the `general-purpose` fix worker), with **exactly one earned-fallback exception**: when its own read shows no review lens actually posted (`no_review_lens_posted`), it runs exactly one diff review per drain run before declaring readiness, fail-CLOSED toward running it — see `skills/review-heal/SKILL.md` §"Earned Fallback Review" (semantics owned there, not restated here). **Ownership note:** `--until-mergeable` itself is a `/review-pr` flag, not a `/supervisor` flag — Supervisor never passes it literally; the dispatched runner receives the signal only through those env vars and forwards `--until-mergeable` to its own inline `/review-pr`. Passing `--no-until-mergeable` (or `.auto_until_mergeable: false`) makes the dispatched runner run the plain **diff-only** `/review-pr` loop instead. The drain **NEVER merges** and **NEVER waits on a human** (stops at terminal `READY`/`ESCALATED`, fires a best-effort notification on both). Default for `auto_until_mergeable` is **true**. |
 | `--check-wait-timeout N` | No | Forward a scoped check-wait bound (seconds) to the auto-dispatched until-mergeable drain (the §"Wait-For-Settled-Checks" bound). Forwarded ONLY when set; threaded to the runner via `LOOMWRIGHT_CHECK_WAIT_TIMEOUT`. Config equivalent: `.check_wait_timeout`. No effect when the drain is opted out of `--until-mergeable`. |
 | `--review-check-pattern <glob>` | No | Forward a review-producing-check selector glob to the auto-dispatched until-mergeable drain (widens the scoped wait/scan set per §"All-Channel Read"). Forwarded ONLY when set; threaded via `LOOMWRIGHT_REVIEW_CHECK_PATTERN`. Config equivalent: `.review_check_pattern`. No effect when the drain is opted out of `--until-mergeable`. |
-| `--auto-review` | No | Legacy explicit-enable for the post-completion review-drain dispatch. **Now redundant** with the AC7 default (the drain dispatches by default after PR creation) but still honored as a no-op-equivalent. Equivalent to `.auto_review: true` in `.supervisor/config.json` (legacy `.supervisor/notify-config.json` is still read as a fallback; the new path wins when both exist). Best-effort and fire-and-forget — the dispatcher always exits 0 and never affects the Supervisor result, the PR, or control flow. Because `/review-pr` never creates a PR, there is no review→review recursion. |
+| `--auto-review` | No | Legacy explicit-enable for the post-completion review-drain dispatch — redundant with the default (the drain dispatches after PR creation) but still honored. Equivalent to `.auto_review: true` in `.supervisor/config.json` (legacy `.supervisor/notify-config.json` is still read as a fallback; the new path wins when both exist). Best-effort and fire-and-forget — the dispatcher always exits 0 and never affects the Supervisor result, the PR, or control flow. Because `/review-pr` never creates a PR, there is no review→review recursion. |
 | `--no-auto-review` | No | Suppress the post-completion review-drain dispatch **entirely** (no `/review-pr` run at all — neither until-mergeable nor diff-only), even when `.supervisor/config.json` has `.auto_review: true`. Equivalent to `.auto_review: false`. This is the master opt-out; `--no-until-mergeable` is the narrower opt-out (still dispatches, just without the drain). Wins over `--auto-review` if both are passed. |
 | `--red-team` | No | Opt in to an advisory red-team review in Phase 4.5: after the Code Reviewer holistic pass, if the integrated diff is **high-risk** — per `scripts/classify-risk.sh --kind-table`, the ONE heuristic (committed once in `docs/RESULT_SCHEMAS.md` §SUPERVISOR_RESULT; not restated here) — spawn exactly ONE `red-team-reviewer` pass (outside the heal loop) and post its findings to the PR as a clearly-labelled non-gating comment. **OFF by default** and **high-risk-only** (enabled-but-low-risk skips silently). The classification itself runs **unconditionally** in Phase 4.5 and is recorded as `SUPERVISOR_RESULT.risk_classification` (`{high_risk, reasons}`, advisory); only the spawn is opt-in. **Advisory & strictly NON-GATING** — it NEVER changes `heal_decision`, never drives the fix task, never gates, and never blocks the PR; the Code Reviewer's `CODE_REVIEW_RESULT` remains the sole LLM gating signal (a stamped countable `must`-rule failure and a red required check are the deterministic co-gates). **Fail-safe** — any spawn error/timeout or comment failure is a logged no-op and the run continues. Equivalent to setting `.red_team_high_risk: true` in `.supervisor/config.json`. |
 | `--no-red-team` | No | Suppress the advisory red-team review even when `.supervisor/config.json` has `.red_team_high_risk: true`. Wins over `--red-team` if both are passed. |
 | `--multi-voter-heal` | No | **Opt in (default OFF)** to multi-voter Phase 4.5 verification: the review step spawns TWO independent parallel reviewers on the integrated diff — the existing `code-reviewer` (unchanged contract; its `CODE_REVIEW_RESULT` stays the sole LLM gating signal — a stamped countable `must`-rule failure and a red required check are the deterministic co-gates) plus a `red-team-reviewer` verification vote — and a BLOCKING/HIGH `new` finding is fixed ONLY if it survives the other lens's refute check (refuted findings are logged, not fixed; per-run `findings_raised`/`findings_refuted`/`findings_fixed` counters are carried in the `SUPERVISOR_RESULT` `summary` — additive prose, no schema bump). `heal_decision` (the gate) still derives ONLY from the code-reviewer's `CODE_REVIEW_RESULT` plus those deterministic co-gates; a surviving voter finding can only extend loop continuation within the existing `--heal-iterations` bound (a code-reviewer PASS finalizes once the surviving set is empty or the bound escalates) — the voter can DELAY finalization, never FLIP a decision. `--heal-iterations` bounds, never-merge, and the completion tail are unchanged. ~2× review spawns per iteration. Equivalent to `.multi_voter_heal: true` in `.supervisor/config.json`. **Not the standalone `--red-team` advisory lens** — independent flags, no aliasing (full merge rule + the `--red-team` interaction authority: `skills/self-heal-advisory/SKILL.md` Part 2 §"Multi-voter verification"). |
 | `--no-multi-voter-heal` | No | Suppress multi-voter Phase 4.5 verification even when `.supervisor/config.json` has `.multi_voter_heal: true`. Wins over `--multi-voter-heal` if both are passed. Does not affect the standalone `--red-team`/`--no-red-team` advisory lens. |
 | `--voter-provider <name>[:<model>]` | No | **Only meaningful with `--multi-voter-heal`.** Select which CLI casts the multi-voter verification vote. When absent (and `.supervisor/config.json` `.voter_provider` is absent/empty), the voter is the existing `loomwright:red-team-reviewer` Task — byte-identical default. When set (e.g. `cursor:gpt-5`), Phase 4.5 shells out to `${CLAUDE_PLUGIN_ROOT}/scripts/adapters/providers/lens-run.sh --provider <name>[:<model>]` instead of that Task. Flag wins over config (same precedence as `--multi-voter-heal`). Does not change `heal_decision`, the merge/refute rule, or never-merge. Protocol authority: `skills/supervisor-config/SKILL.md` step 2.9a and `skills/self-heal-advisory/SKILL.md` Part 2 §"Multi-voter verification". |
-| `--sdk-runner` | No | **EXPERIMENTAL — opt-in, default OFF.** When passed, Phase 3 EXECUTE shells out to the quarantined spike runner — `node "${CLAUDE_PLUGIN_ROOT}/sdk-spike/dist/runner.js" --brief <brief path> --branch <feature branch>` (cwd stays the user project; CLI contract: `sdk-spike/README.md`) — instead of Task-spawning `execute-manager` (or the inline Single-Agent/Sequential-path worker loop). **Fail CLOSED:** if `node` is unavailable (`command -v node` fails) OR `"${CLAUDE_PLUGIN_ROOT}/sdk-spike/dist/runner.js"` is absent OR the SDK dependency does not resolve (`(cd "${CLAUDE_PLUGIN_ROOT}/sdk-spike" && node -e "require.resolve('@anthropic-ai/claude-agent-sdk')")` fails — catches `node_modules/` pruned after the build) when the flag is passed, the run aborts with `error: "sdk_runner_unavailable"` — it NEVER silently falls back to the default path. Error guidance: `dist/` is gitignored and marketplace installs ship source only — build once with `npm install && npm run build` inside `${CLAUDE_PLUGIN_ROOT}/sdk-spike`. The runner emits an **EXECUTE_RESULT-equivalent** block consumed exactly as if it came from the Execute Manager. **FINALIZE delta:** the runner pre-commits each subtask's work on its `sdk-spike/subtask-N` branch and removes its worktrees on exit, so when consuming a runner-emitted result the Phase 4 FINALIZE procedure (`skills/async-orchestration/SKILL.md` Part 2, steps 1–7) adjusts: **(a)** step 1 verifies BRANCHES instead of worktrees — each `merge_order` branch exists (`git branch --list sdk-spike/subtask-*`) and is ahead of the feature branch (`git log <branch> --not <feature-branch> --oneline` non-empty) — skipping the worktree-exists/dirty checks; **(b)** skip step 2 entirely (work already committed by the runner); **(c)** step 4 tolerates already-removed worktrees and deletes the `sdk-spike/subtask-N` branches after merge (the runner keeps them by contract). Steps 3 and 5–7 are unchanged. The brief's Max-workers and the `--cheap` cost profile are NOT threaded to the runner in this spike (its `--max-workers`/`--model` flags exist but are unforwarded; default 2 concurrent lanes). Zero change to the default path when the flag is absent (byte-identical behavior with flag off). Spike-grade (see `docs/SPIKES/SDK_RUNNER_SPIKE.md`): `hooks.json` validators may not fire for SDK-spawned workers — the runner self-validates result schemas. Recorded at Phase 0 INIT like the other flags (`skills/supervisor-config/SKILL.md`). Both experimental flags (`--sdk-runner`, `--multi-voter-heal`) are **supervisor-only**: deliberately NOT forwarded by `/autonomous` or `/automate` (their forward set stays exactly four flags — `--base-branch` / `--non-interactive` / `--cheap` / `--max-tokens`, red-team-hardening/06); reachable only via a direct `/supervisor` invocation or the eval's arm-3 procedure (`docs/SPIKES/FABLE_PARITY_EVAL.md`). |
-| `--legacy` | No | Run Phases 0–4 from the pre-driver prose in `docs/supervisor-legacy-phases.md` (moved verbatim, frozen at base `a8819a3`) instead of `scripts/supervisor-next-step.sh` (automate-speed/11, owner decision D5; retired later, the automate-speed/08 pattern). Phase 4.5 and Phase 5 are unchanged. The same file serves the runs the driver does not cover — `--continue`, a run with no `job:` brief, `--sdk-runner` — see §"Next-step driver (Phases 0–4)". Supervisor-only: `/autonomous` and `/automate` do not forward it. |
+| `--sdk-runner` | No | **EXPERIMENTAL — opt-in, default OFF.** When passed, Phase 3 EXECUTE shells out to the quarantined spike runner — `node "${CLAUDE_PLUGIN_ROOT}/sdk-spike/dist/runner.js" --brief <brief path> --branch <feature branch>` (cwd stays the user project; CLI contract: `sdk-spike/README.md`) — instead of Task-spawning `execute-manager` (or the inline Single-Agent/Sequential-path worker loop). **Fail CLOSED:** if `node` is unavailable (`command -v node` fails) OR `"${CLAUDE_PLUGIN_ROOT}/sdk-spike/dist/runner.js"` is absent OR the SDK dependency does not resolve (`(cd "${CLAUDE_PLUGIN_ROOT}/sdk-spike" && node -e "require.resolve('@anthropic-ai/claude-agent-sdk')")` fails — catches `node_modules/` pruned after the build) when the flag is passed, the run aborts with `error: "sdk_runner_unavailable"` — it NEVER silently falls back to the default path. Error guidance: `dist/` is gitignored and marketplace installs ship source only — build once with `npm install && npm run build` inside `${CLAUDE_PLUGIN_ROOT}/sdk-spike`. The runner emits an **EXECUTE_RESULT-equivalent** block consumed exactly as if it came from the Execute Manager. **FINALIZE delta:** the runner pre-commits each subtask's work on its `sdk-spike/subtask-N` branch and removes its worktrees on exit, so when consuming a runner-emitted result the Phase 4 FINALIZE procedure (`skills/async-orchestration/SKILL.md` Part 2, steps 1–7) adjusts: **(a)** step 1 verifies BRANCHES instead of worktrees — each `merge_order` branch exists (`git branch --list sdk-spike/subtask-*`) and is ahead of the feature branch (`git log <branch> --not <feature-branch> --oneline` non-empty) — skipping the worktree-exists/dirty checks; **(b)** skip step 2 entirely (work already committed by the runner); **(c)** step 4 tolerates already-removed worktrees and deletes the `sdk-spike/subtask-N` branches after merge (the runner keeps them by contract). Steps 3 and 5–7 are unchanged. The brief's Max-workers and the `--cheap` cost profile are NOT threaded to the runner in this spike (its `--max-workers`/`--model` flags exist but are unforwarded; default 2 concurrent lanes). Zero change to the default path when the flag is absent (byte-identical behavior with flag off). Spike-grade (see `docs/SPIKES/SDK_RUNNER_SPIKE.md`): `hooks.json` validators may not fire for SDK-spawned workers — the runner self-validates result schemas. Both experimental flags (`--sdk-runner`, `--multi-voter-heal`) are **supervisor-only**: deliberately NOT forwarded by `/autonomous` or `/automate` (their forward set stays exactly four flags — `--base-branch` / `--non-interactive` / `--cheap` / `--max-tokens`, red-team-hardening/06); reachable only via a direct `/supervisor` invocation or the eval's arm-3 procedure (`docs/SPIKES/FABLE_PARITY_EVAL.md`). |
+| `--legacy` | No | Run Phases 0–4 from the pre-driver prose in `docs/supervisor-legacy-phases.md` instead of `scripts/supervisor-next-step.sh`. Phase 4.5 and Phase 5 are unchanged. The same file serves the runs the driver does not cover — `--continue`, a run with no `job:` brief, `--sdk-runner` — see §"Next-step driver (Phases 0–4)". Supervisor-only: `/autonomous` and `/automate` do not forward it. |
 
 ## Next-step driver (Phases 0–4)
 
-Phases 0–4's deterministic sequencing and bookkeeping run through ONE script, `scripts/supervisor-next-step.sh` under the plugin install root (automate-speed/11), which hands this main thread exactly ONE instruction per call. The judgment stays yours: every spawned agent's work, the Phase 1.5 classification, the merges / commits / push, and every answer to an `ask`.
+Phases 0–4's deterministic sequencing and bookkeeping run through ONE script, `scripts/supervisor-next-step.sh` under the plugin install root, which hands this main thread exactly ONE instruction per call. The judgment stays yours: every spawned agent's work, the Phase 1.5 classification, the merges / commits / push, and every answer to an `ask`.
 
 1. **Entry (Phase 0).** Run the run-lock acquire first (`skills/supervisor-config/SKILL.md` step 5a.0 — a `run_lock_held` line parks the run there), then call `supervisor-next-step.sh --session-id <sid> --job <brief>` ONCE with the run's flags: `--non-interactive` (also when `/autonomous` passed it), `--subagent` when this run executes as a subagent (the Can't-ask rule), `--cheap`, `--max-tokens N`, `--base-branch B`, `--skip-preflight-sync`, `--skip-children-check`, `--sequential`, `--max-workers N`. `<sid>` is this Claude Code session's id — the run lock's `--session-id`. The flags persist in the driver's gitignored sidecar (`.supervisor/logs/<sid>.supervisor-next-step.json`); never re-pass them.
 2. **Loop.** Do what the printed instruction says, then call `supervisor-next-step.sh --session-id <sid> --result '<json>'` with its answer. `spawn` ⇒ make that spawn per `skills/async-orchestration/SKILL.md` Part 2 §"Subagent Spawn Contracts" (a `context-keeper` spawn applies its `ops` in order — the driver never writes `.supervisor/state.md`; a `worker` spawn's `gates` are yours before you answer). `ask` ⇒ ask it with its `question`, `options` and `header` verbatim and hand back the chosen label — never pick one yourself; `{"cant_ask": true}` when you cannot ask. `park` ⇒ stop and emit `SUPERVISOR_RESULT` with its `status` / `error`. A call with no `--result` re-prints the pending instruction byte for byte. Exit 2 = the `--result` did not answer what is pending (nothing written — correct it and call again); exit 1 = a write or helper failed (call again with no `--result` to retry that step).
@@ -88,63 +56,29 @@ Phases 0–4's deterministic sequencing and bookkeeping run through ONE script, 
 
 Instruction and `--result` shapes, every `step` and `what` value: `docs/result-schemas/supervisor-result.md` §"supervisor next-step instruction" (the authority — not restated here).
 
-**Legacy path.** `/supervisor --legacy` runs Phases 0–4 from `docs/supervisor-legacy-phases.md` — the pre-driver prose, moved verbatim and frozen at base `a8819a3` — and never calls the driver. The same file serves the runs the driver does not cover: `--continue` (once the Resume validation gate passes, resume the saved phase from it), a run with no `job:` brief (`task:`, interactive or auto-selected), and `--sdk-runner` (the driver does not run the SDK runner). Nothing else changes on that path.
+**Legacy path.** `/supervisor --legacy` runs Phases 0–4 from `docs/supervisor-legacy-phases.md` — the pre-driver prose — and never calls the driver. The same file serves the runs the driver does not cover: `--continue` (once the Resume validation gate passes, resume the saved phase from it), a run with no `job:` brief (`task:`, interactive or auto-selected), and `--sdk-runner` (the driver does not run the SDK runner). Nothing else changes on that path.
 
 ## What This Does
 
-The Supervisor executes a **7-phase parallel workflow**:
+The Supervisor executes a **7-phase parallel workflow** — INIT → ACQUIRE → PRE-FLIGHT SYNC → PLAN → EXECUTE → FINALIZE → SELF_HEAL → LOOP (1.5 and 4.5 are sub-phase gates; overview diagram: `docs/rationale/supervisor.md`).
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              SUPERVISOR v4 — PARALLEL WORKFLOW                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Phase 0: INIT (Interactive Configuration)                      │
-│     └─> Detect env, ask preferences, create .supervisor/        │
-│                                                                 │
-│  Phase 1: ACQUIRE (Task Selection + Branch — MANDATORY)         │
-│     └─> Select task → Create feature branch (NON-NEGOTIABLE)    │
-│                                                                 │
-│  Phase 1.5: PRE-FLIGHT SYNC (Remote-State Reconciliation) [NEW] │
-│     └─> Fetch + scan recent commits/open PRs → classify         │
-│         CLEAR/OVERLAP/SUPERSEDED → silent | ask | fail-closed   │
-│                                                                 │
-│  Phase 2: PLAN (Decompose + Parallelism Analysis)               │
-│     └─> Orchestrator → Subtasks → Parallelism graph             │
-│                                                                 │
-│  Phase 3: EXECUTE (Delegated to Execute Manager)                │
-│     └─> Execute Manager → Worktrees → Workers → Gate            │
-│                                                                 │
-│  Phase 4: FINALIZE (Merge + Commit + PR)                        │
-│     └─> Sequential merge → Commit → Push → PR → exit            │
-│                                                                 │
-│  Phase 4.5: SELF_HEAL (Integration Review + Fix Loop)  [NEW]    │
-│     └─> Holistic Code Reviewer → bounded auto-fix loop →        │
-│         completion tail (job → done/, state completed)          │
-│                                                                 │
-│  Phase 5: LOOP (Next Task or Exit)                              │
-│     └─> More tasks? → Phase 1 | No tasks → Done                 │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Phase 0 (INIT):** the run-lock acquire, the fail-closed Resume validation gate on `--continue`, the config questions a `job:` brief does not pre-answer and the Phase 4.5 flags run from `skills/supervisor-config/SKILL.md` (Read at phase entry — deliberately not preloaded); the rest of INIT — the `.supervisor/` bootstrap, the brief's `pending/` → `in-progress/` move, the run config, the guard arm, the Context-Keeper `initialize` and the Phase Flags — is the driver's `init` step (§"Next-step driver (Phases 0–4)" above). `agents/supervisor.md` "Phase 0: INIT" keeps the short phase stanza. The user-facing flag table above remains this command surface's own authority for flag syntax.
+**Phase 0 (INIT):** the run-lock acquire, the fail-closed Resume validation gate on `--continue`, the config questions a `job:` brief does not pre-answer and the Phase 4.5 flags run from `skills/supervisor-config/SKILL.md` (Read at phase entry — deliberately not preloaded); the rest of INIT — the `.supervisor/` bootstrap, the brief's `pending/` → `in-progress/` move, the run config, the guard arm, the Context-Keeper `initialize` and the Phase Flags — is the driver's `init` step (§"Next-step driver (Phases 0–4)" above). `agents/supervisor.md` "Phase 0: INIT" keeps the short phase stanza. The flag table above is this command's authority for flag syntax.
 
 **Phase 1 (ACQUIRE):** task selection (`agents/supervisor.md` "Phase 1: ACQUIRE" actions 0–3 — a `job:` brief pre-answers 1–3) stays yours; the mandatory feature-branch creation is the driver's `acquire` step — idempotent: an existing same-named branch is reused only when its tip equals the fetched `$BASE_BRANCH` tip, otherwise the run parks `error: "acquire_branch_collision"` and deletes nothing.
 
 **Phase 1.5 (PRE-FLIGHT SYNC):** the driver's `preflight` step has you run `skills/preflight-sync/SKILL.md` actions 2–5 (Read at phase entry) — the bounded CLEAR / OVERLAP / SUPERSEDED reconciliation of the requested work against recent `origin/$BASE_BRANCH` commits and open PRs; the classification is yours — and routes your report: CLEAR proceeds silently, UNVERIFIED proceeds with one warning, OVERLAP / SUPERSEDED asks (proceed-anyway / revise-scope / abort) or, under `--non-interactive`, fails closed with `preflight_overlap_detected`; `--skip-preflight-sync` skips it as a recorded choice.
 
-**Phase 4 (FINALIZE):** the driver runs the gates — pre-merge points 1–4 (`finalize`), point 5's children-settled check (`finalize-children`), the finalize-gate marker (`finalize-marker` → `guard-finalize-publish.sh write-marker`) and the step 6.5 PR-base self-verify with its one retry (`pr-verify`). The merge / commit / push / PR work it hands you as `finalize-merge` and `finalize-publish` spawns follows `skills/async-orchestration/SKILL.md` **Part 2 — Supervisor FINALIZE Protocol** (steps 2–6 and the PR Body Template — Read at Phase 4 entry) and `skills/commit/SKILL.md`. `agents/supervisor.md` "Phase 4: FINALIZE" keeps the mandatory gate list (pre-merge safety gate, merge-conflict STOP, salvage before remove, PR-base self-verify).
+**Phase 4 (FINALIZE):** the driver runs the gates — pre-merge points 1–4 (`finalize`), point 5's children-settled check (`finalize-children`), the finalize-gate marker (`finalize-marker` → `guard-finalize-publish.sh write-marker`) and the step 6.5 PR-base self-verify with its one retry (`pr-verify`). The merge / commit / push / PR work it hands you as `finalize-merge` and `finalize-publish` spawns follows `skills/async-orchestration/finalize.md` — the async-orchestration **Part 2 — Supervisor FINALIZE Protocol** the driver's `SKILL.md Part 2` strings name (steps 2–6 and the PR Body Template — Read at Phase 4 entry; Phase 2 does not need it) — and `skills/commit/SKILL.md`. `agents/supervisor.md` "Phase 4: FINALIZE" keeps the mandatory gate list (pre-merge safety gate, merge-conflict STOP, salvage before remove, PR-base self-verify).
 
-**Phase 4.5 (v11.0.0):** After the PR is created, Supervisor runs a holistic Code Reviewer on the full feature-branch diff. If it finds `new` issues at or above the fix floor (`--fix-floor` / `.fix_floor`, default MEDIUM — so BLOCKING, HIGH and MEDIUM), Supervisor spawns a fix task that addresses them and pushes updates to the PR. The loop retries up to `--heal-iterations` times (default 3). On PASS the task is marked `completed`; on NEEDS_HUMAN or max iterations the task is marked `completed_with_escalation` with findings posted as a PR comment. Eliminates the manual review-and-fix cycle. The phase always runs (unless `--skip-self-heal` short-circuits the loop); it owns the completion tail (job-file move, state marked completed) so the record captures the heal outcome. **Protocol authority:** the full Phase 4.5 procedure (on-entry advisory enrichments, base-mismatch cleanup, the review-and-fix loop, rubric grading, red-team lens, and the completion-tail procedure's numbered steps) lives in `skills/self-heal-advisory/SKILL.md` **Part 2** — `Read("${CLAUDE_PLUGIN_ROOT}/skills/self-heal-advisory/SKILL.md")` at Phase 4.5 entry on BOTH the inline and delegated paths (deliberately not preloaded); `agents/supervisor.md` keeps the short phase stanza with entry/exit conditions plus the verbatim completion-tail guard.
+**Phase 4.5:** After the PR is created, Supervisor runs a holistic Code Reviewer on the full feature-branch diff. If it finds `new` issues at or above the fix floor (`--fix-floor` / `.fix_floor`, default MEDIUM — so BLOCKING, HIGH and MEDIUM), Supervisor spawns a fix task that addresses them and pushes updates to the PR. The loop retries up to `--heal-iterations` times (default 3). On PASS the task is marked `completed`; on NEEDS_HUMAN or max iterations the task is marked `completed_with_escalation` with findings posted as a PR comment. The phase always runs (unless `--skip-self-heal` short-circuits the loop); it owns the completion tail (job-file move, state marked completed) so the record captures the heal outcome. **Protocol authority:** `skills/self-heal-advisory/` **Part 2**, split by when each part runs — at Phase 4.5 entry on BOTH the inline and delegated paths `Read("${CLAUDE_PLUGIN_ROOT}/skills/self-heal-advisory/SKILL.md")` (every iteration) and `on-entry.md` from the same directory (on-entry actions, first-iteration enrichments); `escalation.md` only on base-mismatch cleanup or a fix-task crash, `multi-voter.md` only when `MULTI_VOTER_HEAL` is true, `completion-tail.md` once the loop exits or is skipped (none preloaded). `agents/supervisor.md` keeps the short phase stanza plus the verbatim completion-tail guard.
 
-**Until-mergeable review drain — NEW DEFAULT (AC7):** the SAME completion tail then **auto-dispatches a detached until-mergeable review drain** against the freshly-created PR (via `scripts/dispatch-pr-review.sh` → the `loomwright:review-pr-runner` `--agent` form, with the until-mergeable signal threaded as env vars). This drains ALL external review channels (required CI checks, bot reviews/threads/comments, check outputs), auto-fixing validated bot findings and pushing — until a terminal `READY` (required checks green + scoped review-producing checks settled + no unresolved validated bot findings) or `ESCALATED`. It is **fire-and-forget, best-effort, always `exit 0`** — it NEVER merges, NEVER waits on a human, and NEVER affects `SUPERVISOR_RESULT` or control flow. Opt out of the drain with `--no-until-mergeable` (runner runs plain diff-only `/review-pr`), or out of the dispatch entirely with `--no-auto-review`. The readiness semantics live in `skills/review-heal/SKILL.md` §"READY redefinition" (not restated here).
+**Until-mergeable review drain (default on):** the SAME completion tail then **auto-dispatches a detached until-mergeable review drain** against the PR (`scripts/dispatch-pr-review.sh` → the `loomwright:review-pr-runner` `--agent` form); it is fire-and-forget, never merges, never waits on a human, and never affects `SUPERVISOR_RESULT` or control flow. Opt out of the drain with `--no-until-mergeable`, or out of the dispatch entirely with `--no-auto-review`. Procedure: `skills/self-heal-advisory/completion-tail.md` step 5.5; readiness: `skills/review-heal/SKILL.md` §"READY redefinition".
 
-> **Timing note — drain is working-tree-isolated (do NOT suppress for the self-heal race).** The detached drain can fire one phase earlier than this completion-tail dispatch (the `PostToolUse[Bash]` hook backstops it at `gh pr create`), so it may run at the same time as the inline Phase 4.5 self-heal. **That timing overlap is harmless because the two no longer share a checkout:** the detached drain runs in its OWN dispatcher-created sibling worktree (detached-HEAD at the PR head SHA — see `scripts/dispatch-pr-review.sh` and `skills/review-heal/SKILL.md` §"Isolated worktree for the detached dispatched drain"), with a separate working dir + index, so it can no longer check-out / stage / commit in the self-heal's working tree. **Do NOT write `.supervisor/config.json {"auto_review": false}` to suppress the drain for this race — that workaround is retired now that the drain is working-tree-isolated.** (The `auto_review` flag remains a general opt-out for not wanting the drain at all; it is no longer a collision workaround.) This mirrors the Phase 4.5 protocol authority — `skills/self-heal-advisory/SKILL.md` Part 2, completion-tail step 5.5 "Timing note" (moved there from `agents/supervisor.md`) — keep the two in sync.
+> **Timing note — drain is working-tree-isolated (do NOT suppress for the self-heal race).** The hook backstop may dispatch the drain one phase earlier, alongside the inline self-heal — harmless, it runs in its own worktree. **Do NOT write `.supervisor/config.json {"auto_review": false}` for this race — that workaround is retired now that the drain is working-tree-isolated.** Mirrors `skills/self-heal-advisory/completion-tail.md` step 5.5 "Hook backstop" — keep the two in sync.
 
-> **R9 — downstream ordering (branch-dependent work must wait for the drain).** Because the drain is **detached**, it may keep pushing fix commits to the PR branch **after** the `/supervisor` run is marked complete. **Branch-dependent downstream work** — a stacked `/autonomous` iteration N+1 that branches from this PR's head, or a human merge — SHOULD wait until the drain reaches a terminal state (`READY` / `ESCALATED`) before proceeding, otherwise it may stack on or merge a branch that the drain is still mutating. The visible trail to check: the job `## Outcome` block's `**Until-mergeable dispatched:** true` + `**Until-mergeable log:** {path}` markers (mirrored on `SUPERVISOR_RESULT` as `until_mergeable_dispatched` / `until_mergeable_log` and on the `session_end` JSONL event), plus the best-effort terminal `READY`/`ESCALATED` notification the drain fires. A human may intentionally proceed before the drain settles, accepting that the branch may still change.
+> **R9 — downstream ordering (branch-dependent work must wait for the drain).** The detached drain may keep pushing after the run completes, so a stacked `/autonomous` iteration or a human merge SHOULD wait for its terminal `READY` / `ESCALATED` (trail: the job `## Outcome` block's `**Until-mergeable dispatched:**` / `**Until-mergeable log:**` lines, plus the drain's notification); a human may proceed earlier, accepting the branch may still change.
 
-**Observability — reconcile `until_mergeable_dispatched` from the MARKER, not from "did I dispatch" (load-bearing on the inline path).** On the inline path you ARE the main thread, and on this path the drain is most often dispatched by the **`PostToolUse[Bash]` hook backstop** at `gh pr create` — which fires out-of-band, one phase earlier, and returns **no signal to this context**. So you CANNOT know from your own control flow whether the drain ran. **NEVER record `until_mergeable_dispatched: false` because you skipped (or are unsure about) the step-5.5 dispatch** — that is the exact false-negative that made a prior inline run misreport "not dispatched" while the drain was live (PID alive, marker written). Resolve it from the on-disk per-PR dispatch marker instead (hash-implementation-agnostic, exact-URL match — inspect the marker BODY, which contains the PR URL, without confusing prefix-related PRs like `/pull/7` and `/pull/72`):
+**Observability — reconcile `until_mergeable_dispatched` from the MARKER, not from "did I dispatch" (load-bearing on the inline path).** On the inline path the hook backstop dispatches out-of-band and returns no signal, so **NEVER record `until_mergeable_dispatched: false` because you skipped (or are unsure about) the step-5.5 dispatch** — resolve it from the per-PR marker BODY (exact-URL match, no prefix confusion):
 ```bash
 if awk -v url="{PR_URL}" '$0 == url || $2 == url { found=1; exit } END { exit(found ? 0 : 1) }' .supervisor/review-dispatch/* 2>/dev/null; then
   UM_DISPATCHED=true
@@ -153,46 +87,23 @@ else
   UM_DISPATCHED=false; UM_LOG=
 fi
 ```
-Record `until_mergeable_dispatched: {UM_DISPATCHED}` on the job `## Outcome` block + `session_end` JSONL (and optionally `SUPERVISOR_RESULT`), with `until_mergeable_log: {UM_LOG}` only when true and a log was found. A marker exists IFF the dispatcher ran for this PR (step 5.5 OR the hook), so `true` is truthful regardless of which path fired; `false` is truthful ONLY when no marker exists. This mirrors the Phase 4.5 protocol authority — `skills/self-heal-advisory/SKILL.md` Part 2, completion-tail step 5.5 "Observability (AC8b)" (the awk snippet's agent-side copy moved there from `agents/supervisor.md`; THIS commands-side copy stays in place because the inline path loads this file) — keep the two in sync. Same fail-safe posture as every inline-path write: best-effort, never gates, never blocks the PR.
+Record `until_mergeable_dispatched: {UM_DISPATCHED}` (and `until_mergeable_log: {UM_LOG}` only when true and a log was found) on the job `## Outcome` block + `session_end` JSONL. A marker exists IFF the dispatcher ran for this PR, so `false` is truthful ONLY when no marker exists. Mirrors `skills/self-heal-advisory/completion-tail.md` step 5.5 "Observability (AC8b)" (kept here because the inline path loads this file) — keep the two in sync; best-effort, never gates.
 
 ### Inline-path canonical state writes (Phase 1 ACQUIRE + Phase 4.5 completion tail)
 
-> **Why this lives here:** the inline `/supervisor` and `/autonomous` paths execute this workflow on the **main thread** by reading `commands/launch-pad.md` + `commands/supervisor.md` (this file) at Step 0 — they **never load `agents/supervisor.md`**. Directives that must be visible to the inline path therefore live here too, not only in `agents/supervisor.md`.
+> The inline `/supervisor` and `/autonomous` paths run this workflow on the main thread from this file and never load `agents/supervisor.md`, so these directives live here too.
 
-**`.supervisor/state.md`'s `## Session` block (`session_id`/`branch`/`status`/`phase`) is not written by the Supervisor on any path.** It is derived by the hook-triggered `scripts/emit-progress-event.sh` — fired at the `loomwright:worker` `SubagentStop` hook, which fires on the inline path too, since the Single-Agent and Sequential paths both spawn a worker Task — and projected into `.supervisor/state.md` by `scripts/build-state.sh`. See `docs/TELEMETRY.md` and CLAUDE.md §Failure-Mode Invariants. This pointer is mirrored with `agents/supervisor.md` Phase 1 ACQUIRE step 5 and `skills/self-heal-advisory/SKILL.md`'s completion-tail step 4 — keep the three in sync.
+**`.supervisor/state.md`'s `## Session` block (`session_id`/`branch`/`status`/`phase`) is not written by the Supervisor on any path.** It is derived by the hook-triggered `scripts/emit-progress-event.sh` — fired at the `loomwright:worker` `SubagentStop` hook, which fires on the inline path too, since the Single-Agent and Sequential paths both spawn a worker Task — and projected into `.supervisor/state.md` by `scripts/build-state.sh` (`docs/TELEMETRY.md`). Mirrored in `agents/supervisor.md` Phase 1 ACQUIRE step 5 and `skills/self-heal-advisory/SKILL.md`'s completion-tail step 4 — keep the three in sync.
 
 **Phase 1 ACQUIRE — `/autonomous`-only `state.json` write (Fix B producer):** In the SAME ACQUIRE location (after branch creation, before `gh pr create`), **when the inline Supervisor is running under `/autonomous`** — i.e. the autonomous loop inlined this `commands/supervisor.md` at its EXECUTE step and an active `.supervisor/autonomous/{session_id}/state.json` exists for THIS run — additionally update that ONE `state.json` with two **top-level** fields:
-- `current_branch`: string — the feature-branch name just created. (Today this is `null`/absent in every state.json; the branch only reaches `iterations[-1].branch` at EVALUATE, which is post-PR / too late for the hook.)
+- `current_branch`: string — the feature-branch name just created.
 - `current_status`: the literal string `"running"` — a POSITIVE, non-terminal active status set at ACQUIRE. The **terminal status set** (the consumer hook treats these as NOT-active) is exactly: `completed`, `completed_with_escalation`, `failed`, `aborted`, `done`, `paused_max_iterations`.
 
   **Run by the driver's `acquire` step:** the active session is the one whose `current_brief_path` basename matches this `job:` brief (among sessions with `ended_at` null); ambiguous or none ⇒ the write is skipped; a jq temp-file + rename update; best-effort — never gates or fails the run. The pre-driver text of this paragraph is in `docs/supervisor-legacy-phases.md`.
 
-  **This is a CROSS-LAYER write** — the inlined Supervisor updating the autonomous *loop's* own state.json. This is the placement-risk site, which is exactly why this directive MUST live in the loaded `commands/supervisor.md` (not only `agents/supervisor.md`). **Note:** this `state.json` write does NOT help the direct `/supervisor job:` path (there is no autonomous `state.json` there) — the hook-triggered `scripts/emit-progress-event.sh` + `scripts/build-state.sh` projector (pointer above) is the cross-path producer of the session branch the hook reads.
+  **Note:** this `state.json` write does NOT help the direct `/supervisor job:` path (there is no autonomous `state.json` there) — the `scripts/emit-progress-event.sh` + `scripts/build-state.sh` projector (pointer above) is the cross-path producer of the session branch the hook reads.
 
 **Phase 4.5 completion tail — terminal status:** `.supervisor/state.md`'s terminal `- status:` (`completed` / `completed_with_escalation` / `failed`) is derived by `scripts/build-state.sh` from the run's `session_end` event (see the pointer above) — it is not flipped here on any path. (The autonomous `state.json` is NOT flipped at completion here — the consumer additionally guards on `ended_at` being null and the `current_brief_path` basename being present in `jobs/in-progress/`, so a stale `state.json` with `current_status:"running"` but a moved-out brief is correctly rejected.)
-
-### Architecture
-
-```
-SUPERVISOR (pure orchestrator, budget: 50 tool calls)
-    ├─> Context-Keeper (blocking, state mutations)
-    ├─> Product Owner (blocking, if vague requirements)
-    ├─> Orchestrator (blocking, task decomposition)
-    └─> Execute Manager (blocking, Phase 3, budget: 60 tool calls)
-        ├─> Worker A (background, git worktree A) → outputs_verified gate
-        └─> Worker B (background, git worktree B) → outputs_verified gate
-        (no per-subtask reviewer — Phase 4.5's holistic Code Reviewer is the sole LLM review, run once after FINALIZE)
-```
-
-### Parallel Execution via Git Worktree
-
-```
-project/                    ← main worktree (feature branch)
-project-BD-15a/             ← worktree for worker A
-project-BD-15c/             ← worktree for worker C
-```
-
-Each parallel worker operates in its own worktree — no file conflicts, no git stash dance. After review passes, subtask branches merge sequentially into the feature branch.
 
 ## Prerequisites
 
@@ -200,71 +111,7 @@ Each parallel worker operates in its own worktree — no file conflicts, no git 
 2. **Clean git state:** No uncommitted changes (or approve stashing)
 3. **GitHub CLI:** `gh` installed and authenticated (for PR creation)
 
-## Example Session
-
-```bash
-$ /supervisor
-
-## SUPERVISOR v4: Starting Parallel Workflow
-
-## ENVIRONMENT
-**Path:** ~/my-project
-**CLAUDE.md:** ✓ Found
-**Git:** clean
-**Branch:** main
-**Config:** workers=2, mode=parallel
-
----
-
-### Phase 1: ACQUIRE
-- Task: BD-15 (high)
-- Title: User authentication with JWT
-- Criteria: 5 items
-- Branch: feature/BD-15-user-auth ← CREATED
-
-### Phase 1.5: PRE-FLIGHT SYNC (abbreviated — full output adds "Open PRs scanned", "Recent commits scanned", "PRs file-inspected" lines; see `skills/preflight-sync/SKILL.md`)
-- Canonical version: 14.8.0 | Base tip: a1b2c3d
-- Classification: CLEAR (no same-file overlap, no superseding merge)
-- Decision: proceed (silent)
-
-### Phase 2: PLAN
-- Subtasks: 3 (BD-15a, BD-15b, BD-15c)
-- Parallelism: 2 launchable, 1 blocked
-- First batch: [BD-15a, BD-15c]
-
-### Phase 3: EXECUTE — BD-15a
-- Worker: parallel
-- Files: src/auth/jwt.guard.ts
-- Gate: outputs_verified + tests/lint PASS ✓
-
-### Phase 3: EXECUTE — BD-15c
-- Worker: parallel
-- Files: src/auth/cookie.service.ts
-- Gate: outputs_verified + tests/lint PASS ✓
-
-### Phase 3: EXECUTE — BD-15b (unblocked)
-- Worker: parallel
-- Files: src/auth/refresh.controller.ts
-- Gate: outputs_verified + tests/lint PASS ✓
-
-### Phase 4: FINALIZE
-- Merges: 3 branches → feature/BD-15-user-auth
-- Commit: a1b2c3d — feat(auth): implement JWT auth
-- PR: #42 — https://github.com/org/repo/pull/42
-- Task: BD-15 [MERGED — pending self-heal]
-
-### Phase 4.5: SELF_HEAL
-- Heal loop ran: true
-- Iterations: 1 (review: FAIL → fix task fixed 2 issues → review: PASS)
-- Decision: PASS
-- Fixable issues fixed: 2
-- Remaining issues: 0
-- Task: BD-15 [COMPLETED]
-
-### Phase 5: LOOP
-- Outcome: completed (heal_decision=PASS, iterations=1, remaining=0)
-- Continuing with BD-18...
-```
+## Result block
 
 The `SUPERVISOR_RESULT` block (schema v1, validated by the SubagentStop hook) is emitted from Phase 4.5's completion tail — one block per task. Phase 5 LOOP emits nothing. In multi-task sessions, multiple blocks appear in order; the hook validates the last one. See `docs/RESULT_SCHEMAS.md` for the full schema.
 
@@ -303,16 +150,7 @@ The `.supervisor/` directory is auto-created and gitignored.
 
 ## Checkpoints and Resume
 
-The Supervisor does not checkpoint on every phase transition — `.supervisor/state.md`'s `## Session` block is derived automatically (not agent-written) at each worker completion and at session end (see `docs/TELEMETRY.md`), so a pause between those points has no fresher on-disk snapshot to resume from than the last derived one:
-
-```bash
-# If workflow pauses (NEEDS_HUMAN, merge conflict, or context limit):
-# The most recently derived state.md is what --continue reads
-
-# Resume from checkpoint:
-/supervisor --continue                   # Resume last task
-/supervisor --continue task: BD-15       # Resume specific task
-```
+The Supervisor does not checkpoint on every phase transition — `.supervisor/state.md`'s `## Session` block is derived automatically (not agent-written) at each worker completion and at session end (`docs/TELEMETRY.md`), so a pause (NEEDS_HUMAN, merge conflict, context limit) resumes from the most recently derived `state.md`: `/supervisor --continue [task: <id>]`.
 
 **Checkpoint data includes:**
 - Current phase and status (`## Session` — derived from the session's event log by `scripts/build-state.sh`, not written by Context-Keeper or the Supervisor; see `skills/state-management/SKILL.md` §"Progress state")
@@ -323,6 +161,10 @@ The Supervisor does not checkpoint on every phase transition — `.supervisor/st
 **Resume priority:**
 1. Scratchpad state (same session)
 2. `.supervisor/state.md` (cross-session)
+
+**Resume refusals (fail-closed — the Supervisor never silently falls back to a fresh start on an invalid file; a *missing* state file still starts fresh):**
+- `resume_state_invalid` — the loaded state failed the **resume validation gate** (missing `## Session`, `phase`/`status` outside the closed enums, or an asserted `branch:` that `git rev-parse --verify` rejects; `skills/state-management/SKILL.md` §"Resume validation gate"). Recover: fix the offending field in `.supervisor/state.md`, or delete it and start fresh without `--continue` — deliberately no override flag.
+- `resume_state_stale` — the file is schema-valid but behind reality: `scripts/reconcile-resume-state.sh` found subtasks it lists as pending already committed on the branch. Recover: **do NOT delete the state file**; correct the `Status` of each printed `stale_subtask:` row and `--continue` again (or delete it deliberately to start fresh). `VERDICT: UNKNOWN` (ground truth unreadable) also refuses — this gate fails closed.
 
 ## Context Management
 
@@ -352,7 +194,7 @@ Path selection is by subtask count, per `skills/supervisor-readiness/SKILL.md` �
 
 ### Sequential Path (`--sequential`, more than 1 subtask)
 - All subtasks execute one at a time, no git worktrees created
-- **No per-subtask Code Reviewer spawned (Fix 7)** — the deterministic `outputs_verified`/tests-lint gate is each subtask's gate, and Phase 4.5's holistic Code Reviewer is the sole LLM review of the integrated result, same as every other threshold (see `agents/orchestrator.md` §"Review Gate Policy" and `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule"); `--sequential` keeps its existing meaning (no worktrees, serial execution) and remains a distinct path from Single-Agent above, selected by the flag rather than subtask count. **Single-Agent takes precedence at a count of 1:** `--sequential` on a single-subtask brief resolves to the Single-Agent Path
+- **No per-subtask Code Reviewer spawned** — the deterministic `outputs_verified`/tests-lint gate is each subtask's gate, and Phase 4.5's holistic Code Reviewer is the sole LLM review (`agents/orchestrator.md` §"Review Gate Policy"); a distinct path from Single-Agent above, selected by the flag rather than subtask count. **Single-Agent takes precedence at a count of 1:** `--sequential` on a single-subtask brief resolves to the Single-Agent Path
 - Useful for debugging or constrained environments
 
 ### Parallel Path (multi-subtask, default above threshold)
@@ -388,136 +230,6 @@ Path selection is by subtask count, per `skills/supervisor-readiness/SKILL.md` �
 
 **Rule:** Never force-resolve merge conflicts — a merge conflict always STOPs the run and escalates to a human (mirrored from the shared agent prefix; inline command surfaces never load the agents/*.md block).
 
-## Dry Run Mode
+## More
 
-Preview without executing:
-
-```bash
-$ /supervisor --dry-run
-
-## SUPERVISOR v4: Dry Run Mode
-
-**Would execute:**
-Phase 0: INIT — Detect env, configure session
-Phase 1: ACQUIRE — Task BD-15, branch feature/BD-15-user-auth
-Phase 2: PLAN — Orchestrator decompose, parallelism analysis
-Phase 3: EXECUTE — 3 subtasks (2 parallel, 1 sequential)
-Phase 4: FINALIZE — Merge, commit, PR
-Phase 5: LOOP — Check for next task
-
-**Estimated parallel batches:** 2 (batch 1: BD-15a,BD-15c; batch 2: BD-15b)
-
-**No changes made.** Run `/supervisor` to execute.
-```
-
-## Plan-First Workflow (with Launch Pad)
-
-For complex tasks, use Launch Pad to plan and Supervisor to execute:
-
-```bash
-# 1. Prepare the brief (analyzes codebase, decomposes subtasks)
-/launch-pad goal: "add JWT authentication"
-
-# 2. Review the brief
-# Launch Pad presents the brief for your review
-# Choose: Save / Refine / Edit / Discard
-
-# 3. Execute in a fresh session (clean context)
-/supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
-```
-
-**Benefits:**
-- **Planning context freed** for execution (Supervisor skips Phases 0-2 — pre-answered by the brief)
-- **Plan review** before any code is written
-- **File impact analysis** prevents parallelism mistakes
-- **Clean context** — fresh session for Supervisor
-
-**When to use Plan-First:**
-- Complex tasks (>3 expected subtasks)
-- Want to review plan before workers start
-- Need accurate file overlap detection
-- Working on unfamiliar codebase
-
-## Workflow Comparison
-
-| Feature | Manual Workflow | Supervisor v3 | Supervisor v4 |
-|---------|-----------------|---------------|---------------|
-| Task pickup | Manual | Auto (Beads optional) | Auto (`.supervisor/` only) |
-| Branch creation | Manual | **MANDATORY** | **MANDATORY** |
-| Agent coordination | Run each manually | Parallel (inline poll) | **Parallel (Execute Manager)** |
-| State management | In-context only | Externalized | **Externalized + tool call budget** |
-| Cross-session resume | Not possible | `.supervisor/` + Beads | **`.supervisor/` only** |
-| Parallel workers | Not possible | Git worktrees | **Git worktrees** |
-| Context growth | Unbounded | Unbounded in Phase 3 | **Bounded via Execute Manager** |
-
-## Tips
-
-1. **Start with dry-run:** Use `--dry-run` to preview before executing
-2. **Use sequential for debugging:** `--sequential` simplifies troubleshooting
-3. **Monitor .supervisor/:** Check `.supervisor/state.md` for current state
-4. **Resume after pause:** `/supervisor --continue` picks up exactly where it left off
-5. **Limit workers:** Use `--max-workers 1` for resource-constrained environments
-6. **Plan first for complex tasks:** Use `/launch-pad` to prepare a brief, then `/supervisor job:` for clean-context execution
-
-## Related Commands
-
-| Command | Purpose |
-|---------|---------|
-| `/launch-pad` | Prepare brief for clean-context execution |
-| `/orchestrator` | Plan tasks without executing |
-| `/code-reviewer` | Review specific files |
-| `/commit` | Create commits manually |
-| `/product-owner` | Refine requirements |
-| `/red-team-reviewer` | Adversarial audit |
-
-## Troubleshooting
-
-**"No tasks provided"**
-- Provide task description directly with `task:` parameter
-- Or run interactively and describe the task when prompted
-
-**"Dirty working tree"**
-- Commit or stash changes before running Supervisor
-- Supervisor will warn and ask for approval
-
-**"Context limit reached"**
-- Supervisor exits with a resume command; `.supervisor/state.md` reflects whatever the derivation mechanism (`scripts/build-state.sh`) last projected as of the most recent worker completion or session end — not a fresh write at this exact moment
-- Resume with: `/supervisor --continue task: BD-XX`
-
-**"Resume aborted with `resume_state_invalid`"**
-- `--continue` loaded a state file (scratchpad or `.supervisor/state.md`) that failed the fail-closed **resume validation gate**: missing `## Session` block, `phase`/`status` outside the closed enums (`phase`: `INIT | ACQUIRE | PLAN | EXECUTE | FINALIZE | SELF_HEAL | LOOP`; `status`: `running | paused | completed | completed_with_escalation | failed`), or an asserted `branch:` that no longer exists locally (`git rev-parse --verify` failed). Authoritative contract: `skills/state-management/SKILL.md` §"Resume validation gate"
-- Recover: inspect `.supervisor/state.md` and fix the offending field, or delete the file and start fresh without `--continue`. There is deliberately no override flag — deleting the bad state file IS the escape hatch
-- The Supervisor never silently falls back to a fresh start on an invalid file (that would mask corruption); a *missing* state file still starts fresh normally
-
-**"Resume aborted with `resume_state_stale`"**
-- Distinct from `resume_state_invalid`, and the recovery is the **opposite**. The file is intact and schema-valid — it is simply **behind reality**: subtasks it lists as pending are already committed on the branch. Resuming would re-execute merged work. Detected by `scripts/reconcile-resume-state.sh`, which reconciles the `## Subtasks` rows against `subtask:` / `merge:` commits reachable from the asserted branch
-- Recover: **do NOT delete the state file** (that is the `invalid` remedy and would discard a usable session). The refusal prints one `stale_subtask:` line per divergence plus the branch carrying the real work — correct those rows' `Status` to match, then `--continue` again. Or, if the run is not worth resuming, delete it deliberately and start fresh
-- `VERDICT: UNKNOWN` (ground truth unreadable — no git, unresolvable branch) also refuses, by design: this gate fails closed
-- Real incident it exists to prevent (2026-07-27): all 5 subtasks merged while `state.md` read `phase: ACQUIRE` / all `PENDING`. Schema-valid, therefore invisible to the checks above
-
-**"NEEDS_HUMAN escalation"**
-- Read the escalation message for context
-- Fix the issue manually
-- Resume with: `/supervisor --continue`
-
-**"Merge conflict in FINALIZE"**
-- Supervisor reports conflicting files
-- Resolve manually in the feature branch
-- Resume with: `/supervisor --continue`
-
-**"Worktree creation failed"**
-- Supervisor automatically falls back to sequential mode
-- Check disk space and git worktree state: `git worktree list`
-
-## See Also
-
-- `agents/supervisor.md` - Full agent prompt (7-phase model; Phase 4.5 stanza + completion-tail guard)
-- `skills/self-heal-advisory/SKILL.md` - Phase 4.5 protocol authority (Part 1 advisory machinery + Part 2 loop protocol; Read at Phase 4.5 entry)
-- `agents/execute-manager.md` - Phase 3 execution agent
-- `agents/context-keeper.md` - State management agent
-- `agents/worker.md` - Implementation worker agent
-- `skills/async-orchestration/SKILL.md` - Parallel dispatch patterns
-- `skills/state-management/SKILL.md` - State file schema
-- `skills/workflow-management/SKILL.md` - Workflow patterns
-- `skills/supervisor-readiness/SKILL.md` - Pre-flight checklist and brief template
-- `skills/context-summarization/SKILL.md` - Output compression
+Dry-run output, the plan-first workflow with Launch Pad, troubleshooting, related commands and further reading: `docs/rationale/supervisor.md`.

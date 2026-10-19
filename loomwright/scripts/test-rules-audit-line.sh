@@ -91,7 +91,7 @@ expect_line() {
 }
 
 echo "== AC1: Phase 4.5 prose pin (runtime invocation form) =="
-SKILL_REL="loomwright/skills/self-heal-advisory/SKILL.md"
+SKILL_REL="loomwright/skills/self-heal-advisory/completion-tail.md"   # automate-speed/15 split
 INVOKE='bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-audit-line.sh" --root'
 # pin_ok <skill-file> — the invocation, the one-line contract and all three states are present.
 pin_ok() {

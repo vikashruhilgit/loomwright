@@ -268,7 +268,7 @@ grep -q '`\*token\*`' "$TMP/table" && grep -q 'changed_lines > 400' "$TMP/table"
 # The lens and the loop POINT at the table instead of restating the pattern list.
 # automate-loop is a split index (parallel-automate/22): read its documented-order assembly (index
 # segments + split files); a failed assembly leaves no file, so both greps below fail closed.
-LENS="$HERE/../skills/self-heal-advisory/SKILL.md"; LOOP="$TMP/automate-loop-skill.md"
+LENS="$HERE/../skills/self-heal-advisory/completion-tail.md"; LOOP="$TMP/automate-loop-skill.md"
 bash "$HERE/fixtures/automate-loop-split/assemble.sh" "$HERE/../skills/automate-loop/SKILL.md" "$LOOP"
 grep -q 'classify-risk.sh' "$LENS" && ! grep -q '\*authz\*' "$LENS" \
   && ok "E4 self-heal-advisory lens calls classify-risk.sh and no longer restates the pattern list" || no "E4 lens still restates the heuristic or lacks the call"
