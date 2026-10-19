@@ -225,7 +225,7 @@ check_with_mutant "(e) workflow prompt mandates the marker as the LAST line of e
 chk_static() {
   grep -qF -- 'The CI lens is static-only (`execution: none`)' "$1" \
     && grep -qF -- '`CI review lens: static-only (execution: none)`' "$1" \
-    && grep -qF -- "the trigger's DEFINITION above is unchanged" "$1"
+    && grep -qF -- "the trigger's DEFINITION (in \`skills/review-heal/fallback-review.md\`) is unchanged" "$1"
 }
 check_with_mutant "(f) review-heal labels the CI lens static-only and keeps the fallback trigger unchanged" \
   chk_static "$HEAL" del_lines 'The CI lens is static-only'
