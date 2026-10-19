@@ -68,3 +68,9 @@ loomwright/skills/async-orchestration/SKILL.md
 loomwright/docs/rationale/supervisor.md
 loomwright/docs/loop-inventory/supervisor.md
 changelog.d/as15-diet-supervisor.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-19T07:49:03Z
+- **Brief:** .supervisor/jobs/done/2026-10-18-as15-diet-supervisor.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/611
