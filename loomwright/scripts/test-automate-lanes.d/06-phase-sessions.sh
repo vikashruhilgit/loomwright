@@ -52,11 +52,14 @@ QP='[{"question":"Proceed with the plan?","header":"SV-GO","multiSelect":false,"
 HIN="$(hook_in PreToolUse "$L91" toolu_p1 "$QP")"
 DLP="$(jq -n -c --argjson q "$QP" '{type: "result", subtype: "success", stop_reason: "tool_deferred", session_id: "sess-123", deferred_tool_use: {id: "toolu_p1", name: "AskUserQuestion", input: {questions: $q}}}')"
 n0="$(claude_calls)"
+PHSC="$L91/.supervisor/automate/$PARENT9-L1.supervisor-result.md"
+printf 'SUPERVISOR_RESULT:\n  task_id: a-previous-item\n' > "$PHSC"   # a previous item's sidecar, left beside the run file
 out="$(STUB_MODE=defer STUB_DEFER_LINE="$DLP" STUB_HOOK_INPUT="$HIN" LOOMWRIGHT_HOLDER_PID=4242 CLAUDECODE=1 CLAUDE_PID=4242 \
   an_launch supervisor --owner-command "$PHOWN" --coordinator-session sess-coord -- '/loomwright:supervisor job: .supervisor/jobs/pending/x.md')"; rc=$?
 check "AN5 phase-launch launched (exit 0)" "$rc:$(printf '%s' "$out" | grep -c '^phase-launch: launched supervisor (pid [0-9]*, session sess-123) (launch)' | tr -d ' ')" "0:1"
 wait_gone "$L91"
 check "AN5b one process started" "$(claude_calls)" "$((n0 + 1))"
+check "AN5s a fresh launch removed the previous item's result sidecar" "$([ -e "$PHSC" ] && echo stale || echo none)" none
 pa="$(grep '^ARGS' "$STUB_LOG" | tail -1)"
 for f in "[-p]" "[--permission-prompt-tool] [stdio]" "[--permission-mode] [acceptEdits]" \
          "[--allowedTools] [Bash,Read,Edit,Write,Glob,Grep,Task,Agent,AskUserQuestion]" "Bash(gh pr merge:*)" \
@@ -65,11 +68,11 @@ for f in "[-p]" "[--permission-prompt-tool] [stdio]" "[--permission-mode] [accep
 done
 has "AN6b --settings carries the relay hook" "$pa" "[--settings] [{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"AskUserQuestion\",\"hooks\":[{\"type\":\"command\",\"command\":\"bash \\\"$S\\\" relay-hook\"}]}]"
 hasnt "AN6c a fresh launch carries no --resume" "$pa" "[--resume]"
-check "AN6d nothing written into the checkout's .claude/settings*.json (only the lane's own relay entry)" \
+check "AN6d nothing written into the checkout's settings files (only the lane's own relay entry)" \
   "$(jq -c '[(.hooks.PreToolUse | length), (.hooks.PermissionRequest | length)]' "$L91/.claude/settings.local.json" 2>/dev/null):$(ls "$L91/.claude" | tr '\n' ' ')" "[1,1]:settings.local.json "
 check "AN7 cwd = the run's checkout" "$(grep '^CWD' "$STUB_LOG" | tail -1)" "CWD $L91"
 check "AN8 env: phase dir + the coordinator's run-lock session set" "$(grep '^PHASEENV' "$STUB_LOG" | tail -1)" "PHASEENV dir=$PHS lock=sess-coord"
-has "AN8b env: ceiling 0, CLAUDECODE / CLAUDE_PID unset" "$(grep '^ENV' "$STUB_LOG" | tail -1)" "CEIL=0 CC=unset PID=unset"
+has "AN8b env: ceiling 0, the runtime-identity vars unset" "$(grep '^ENV' "$STUB_LOG" | tail -1)" "CEIL=0 CC=unset PID=unset"
 check "AN8c env: the coordinator's holder pin unset" "$(grep '^HOLDERENV' "$STUB_LOG" | tail -1)" "HOLDERENV unset"
 has "AN9 the phase prompt is the session's first message" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "/loomwright:supervisor job: .supervisor/jobs/pending/x.md"
 check "AN10 the hook (fired from --settings, in the phase env) defers" "$(grep '^HOOKOUT' "$STUB_LOG" | tail -1)" 'HOOKOUT {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"defer"}}'
@@ -117,8 +120,12 @@ has "AN15c the resume carries --resume <the SAME session>" "$pa" "[--resume] [se
 has "AN15d … and the relay hook settings again" "$pa" "[--settings]"
 check "AN15e … in the phase env, the coordinator session read back from the phase dir" "$(grep '^PHASEENV' "$STUB_LOG" | tail -1)" "PHASEENV dir=$PHS lock=sess-coord"
 check "AN15f the re-fired hook answers with the owner's label + note" \
-  "$(grep '^HOOKOUT' "$STUB_LOG" | tail -1 | sed 's/^HOOKOUT //' | jq -r '[.hookSpecificOutput.permissionDecision, .hookSpecificOutput.updatedInput.answers["Proceed with the plan?"], .hookSpecificOutput.updatedInput.annotations["Proceed with the plan?"].notes, .hookSpecificOutput.permissionDecisionReason] | join("|")')" \
+  "$(grep '^HOOKOUT' "$STUB_LOG" | tail -1 | sed 's/^HOOKOUT //' | jq -r '.hookSpecificOutput as $h | [$h.permissionDecision, $h.updatedInput.answers["Proceed with the plan?"], $h.updatedInput.annotations["Proceed with the plan?"].notes, $h.permissionDecisionReason] | join("|")')" \
   "allow|Proceed|keep it small|answered by the owner via automate-lanes.sh phase-answer"
+out="$(run phase-wait "$RFL" supervisor --timeout 10)"; rc=$?
+check "AN16a a result line but no result sidecar ⇒ died (exit 6), never done" "$rc:$out" \
+  "6:phase-wait: died — the session ended without writing its result sidecar ($PHSC)"
+printf 'SUPERVISOR_RESULT:\n  task_id: this-item\n' > "$PHSC"   # the phase session's own result block
 out="$(run phase-wait "$RFL" supervisor --timeout 10)"; rc=$?
 check "AN16 phase-wait ⇒ done, naming the session and the sidecar (exit 0)" "$rc:$out" \
   "0:phase-wait: done — session sess-123 result $L91/.supervisor/automate/$PARENT9-L1.supervisor-result.md"

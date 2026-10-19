@@ -52,10 +52,14 @@ lanes_relay_hook() {
       && mv "$q.tmp.$$" "$q" && _lanes_supersede_older "$root" "$id"
     # No policy answer (policy null, `human`, any error) ⇒ exactly the pre-policy defer.
     _lanes_policy_apply "$root" "$q" "$a" \
-      || { echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"defer"}}'; return 0; }
+      || { _lanes_relay_defer; return 0; }
   fi
   _lanes_relay_allow "$in" "$a" "automate-lanes.sh lane-answer"
 }
+
+# _lanes_relay_defer — THE unanswered branch's reply (lane and phase session alike): `defer`, so the
+# headless session stops on the question until an answer file exists and the session is resumed.
+_lanes_relay_defer() { echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"defer"}}'; }
 
 # _lanes_relay_allow <hook JSON> <answer_file> <human writer> — the answered branch's reply: `allow` with
 # `updatedInput.answers` (+ the note as `annotations`). The reason names the policy, or the human writer
@@ -99,7 +103,7 @@ _lanes_relay_phase() {
   if [ ! -s "$a" ]; then
     jq -c --arg at "$(now_utc)" '{id: .tool_use_id, asked_at: $at, questions: .tool_input.questions}' <<<"$in" > "$q.tmp.$$" \
       && mv "$q.tmp.$$" "$q" || rm -f "$q.tmp.$$"
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"defer"}}'
+    _lanes_relay_defer
     return 0
   fi
   _lanes_relay_allow "$in" "$a" "automate-lanes.sh phase-answer"

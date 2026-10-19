@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Phase sessions (automate-speed/09, fresh session per phase). By default `/automate` runs each phase of
 # a Queue item — `launch-pad` (the brief), `supervisor` (implement + Phase 4.5), `drain` (the owned
-# `/review-pr --until-mergeable`) — as its OWN headless `claude -p` session in the run's checkout. The
+# `/review-pr --until-mergeable`) — as its OWN headless session in the run's checkout. The
 # session reads its inputs from disk and writes its result block to a sidecar; a question it asks reaches
 # the coordinator through the relay hook (defer + resume), exactly like a lane's.
 #
@@ -17,9 +17,10 @@
 #                                600 s cap) and prints ONE line: `phase-wait: done — session <sid> result
 #                                <sidecar>` (exit 0: the process exited with a `"type":"result"` line) |
 #                                `phase-wait: running — session <sid>` (exit 3: call again) | `phase-wait:
-#                                question — <tool_use_id> <question file>` (exit 5: deferred on AskUserQuestion)
-#                                | `phase-wait: died — <reason>` (exit 6: `.died` marker, no result line, or a
-#                                deferral with no recorded question)
+#                                question — <tool_use_id> <question file>` (exit 5: deferred on the ask-user tool)
+#                                | `phase-wait: died — <reason>` (exit 6: `.died` marker, no result line, a
+#                                deferral with no recorded question, or no result sidecar — a fresh launch
+#                                removes the previous one, so a stale sidecar never reads as this one's)
 #   phase-answer <runfile> <phase> <tool_use_id> --owner-command '<cmd>'   (stdin {"answers":{…},"note":"…"})
 #                                validates exactly as lane-answer (the question's own labels only; a note alone
 #                                refused), writes the answer file, resumes the SAME session with `--resume`,
@@ -34,11 +35,11 @@
 #
 # Spawn: the lane's own nohup `_lane-run` wrapper and flag list (_lanes_claude_flags: LANE_ALLOWED_TOOLS,
 # LANE_DISALLOWED_FIXED + the base-branch pushes, LANE_SYS), cwd = the run's checkout, plus `--settings`
-# carrying ONLY the relay hook (PreToolUse + PermissionRequest `AskUserQuestion` → `automate-lanes.sh
-# relay-hook`) — nothing is written into `.claude/settings*.json`. Env: CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0,
-# CLAUDECODE / CLAUDE_PID / LOOMWRIGHT_HOLDER_PID unset, LOOMWRIGHT_PHASE_DIR=<phase dir> (relay-hook routes the
-# question there) and LOOMWRIGHT_RUN_LOCK_SESSION_ID=<coordinator sid> (run-lock.sh acquire re-enters the
-# coordinator's lock instead of parking run_lock_held; release never matches on it). A lane spawn strips both.
+# carrying ONLY the relay hook (PreToolUse + PermissionRequest on the ask-user tool → `automate-lanes.sh
+# relay-hook`) — nothing is written into the checkout's settings files. Env: the lane spawn's (background-wait
+# ceiling 0; the host's runtime-identity vars and LOOMWRIGHT_HOLDER_PID unset), plus LOOMWRIGHT_PHASE_DIR=
+# <phase dir> (relay-hook routes the question there) and LOOMWRIGHT_RUN_LOCK_SESSION_ID=<coordinator sid>
+# (run-lock.sh acquire re-enters the coordinator's lock instead of parking run_lock_held; release never matches on it). A lane spawn strips both.
 
 # _lanes_phase_ctx <runfile> <phase> <subcmd> — sets PH_* or dies (exit 1) naming why.
 _lanes_phase_ctx() {
@@ -159,6 +160,9 @@ lanes_phase_launch() {
   if ! { printf '%s\n' "$csid" > "$PH_DIR/coordinator.tmp.$$" && mv "$PH_DIR/coordinator.tmp.$$" "$PH_DIR/coordinator"; }; then
     rm -f "$PH_DIR/coordinator.tmp.$$"; _lt_unlock "$PH_DIR/launch"; die "phase-launch: cannot record the coordinator session ($PH_DIR/coordinator)"
   fi
+  # the sidecar beside the run file is per run, not per item: a previous item's copy left there would read as
+  # THIS launch's result, so a fresh launch clears it (a resume after phase-answer keeps what the session wrote)
+  rm -f "$PH_SIDECAR"
   _lanes_phase_spawn "$prompt" "" launched "(launch)" "$csid"; rc=$?
   _lt_unlock "$PH_DIR/launch"
   return "$rc"
@@ -194,6 +198,7 @@ lanes_phase_wait() {
     [ -e "$PH_DIR/inbox/answers/$id.json" ] && { echo "phase-wait: died — $id answered but the session was not resumed"; return 6; }
     echo "phase-wait: question — $id $qf"; return 5
   fi
+  [ -s "$PH_SIDECAR" ] || { echo "phase-wait: died — the session ended without writing its result sidecar ($PH_SIDECAR)"; return 6; }
   echo "phase-wait: done — session ${sid:-unknown} result $PH_SIDECAR"
 }
 

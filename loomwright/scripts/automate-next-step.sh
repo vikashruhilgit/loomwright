@@ -37,8 +37,9 @@
 #   `phase_relay_unavailable`, nothing picked. `--inline-phases` (persisted for the item's tail, no off
 #   form) keeps today's inline `/autonomous` + inline drain: every instruction and run-file write is
 #   exactly the pre-09 one. `--owner-command <cmd>` (the /automate command the owner typed in this
-#   session; persisted for the item's tail) goes into each `launch` line as phase-launch's launch
-#   authority — without it the line has none and phase-launch refuses it (BLOCKED, exit 3).
+#   session; persisted for the item's tail, reused only by a call of the SAME --session-id) goes into each
+#   `launch` line as phase-launch's launch authority — without it the line has none and phase-launch
+#   refuses it (BLOCKED, exit 3); a pending launch line re-printed to another session loses it too.
 #   Entry points: `--resume <automate_dir>` is every `/automate` start that may continue a run (a bare
 #   start: no `--run`; `/automate --resume`: `--run latest`; `/automate --resume <id>`: `--run <id>`):
 #   `closeout-others`, `resume-glob --finalize`, then the AUT-RESUME ask (or, without the ask, the
@@ -1528,7 +1529,7 @@ ns_phase_then() {
   local w a
   w="bash $(ns_sq "$H") phase-wait $(ns_sq "$RF") $1"
   a="bash $(ns_sq "$H") phase-answer $(ns_sq "$RF") $1 <tool_use_id> --owner-command <launch's owner command>"
-  printf '%s' "run launch: it starts the $1 phase as its own headless session in this checkout (\`phase-launch: BLOCKED — … no owner command\` ⇒ add --owner-command '<the /automate command the owner typed in this session>' before \` -- \` and run it again; never invent one). Then run \`$w\` (Bash timeout 600000) until it exits 0 — exit 3 (running): run it again; exit 5 (\`phase-wait: question — <tool_use_id> <question file>\`): ask the owner with ONE AskUserQuestion carrying that question file's header, question text and option labels verbatim (never answer it yourself; when the ask tool is unavailable, the gate's named can't-ask status), then \`$a\` with stdin {\"answers\":{\"0\":\"<label>\"},\"note\":\"<optional>\"}, and run phase-wait again; exit 6 (\`phase-wait: died — …\`): report the failure to the owner, then --result $3; exit 0 (\`phase-wait: done — session <sid> result <file>\`): --result $2"
+  printf '%s' "run launch: it starts the $1 phase as its own headless session in this checkout (\`phase-launch: BLOCKED — … no owner command\` ⇒ add --owner-command '<the /automate command the owner typed in this session>' before \` -- \` and run it again; never invent one). Then run \`$w\` (Bash timeout 600000) until it exits 0 — exit 3 (running): run it again; exit 5 (\`phase-wait: question — <tool_use_id> <question file>\`): ask the owner with ONE structured ask-user question carrying that question file's header, question text and option labels verbatim (never answer it yourself; when the ask tool is unavailable, the gate's named can't-ask status), then \`$a\` with stdin {\"answers\":{\"0\":\"<label>\"},\"note\":\"<optional>\"}, and run phase-wait again; exit 6 (\`phase-wait: died — …\`): report the failure to the owner, then --result $3; exit 0 (\`phase-wait: done — session <sid> result <file>\`): --result $2"
 }
 # ns_segment_brief — the brief this item's pass saved: the last `launch-pad saved <brief>` line after its
 # last `picked` line (the durable record a `--start run` re-entry reads; the sidecar may be gone)
@@ -1699,7 +1700,7 @@ ns_run() {
     mt="$MAXTOK"; [ -n "$mt" ] || mt="$(ns_section '## Run Config' | sed -n 's/^- max_tokens: \([0-9][0-9]*\)$/\1/p' | head -n 1)"
     [ -n "$mt" ] && inv="$inv --max-tokens $mt"
     p="$inv — When Supervisor finishes, write its SUPERVISOR_RESULT block verbatim (the whole block, nothing else) to $AD/$RUN_ID.supervisor-result.md."
-    st_set run_fresh true
+    st_set run_fresh true; st_set run_spawn_epoch "$(date +%s)"   # the freshness floor for .supervisor/state.md (run-record)
     x="$("$JQ" -cn --arg i "$inv" --arg p "$p" --arg b "$RUN_ID.config-backup.json" --arg l "$(ns_phase_launch supervisor "$p")" --arg s "$RUN_ID.supervisor-result.md" \
         --arg t "$(ns_phase_then supervisor '{"supervisor_result_file": "<the result file phase-wait printed>", "session_id": "<the session id phase-wait printed>", "run_note": <one line, the ran-line parenthetical>} — add "status_reason" (its SUPERVISOR_RESULT status_reason) and "no_pr_why" (one line) when the SUPERVISOR_RESULT names no PR' '{"status_reason": "phase_died", "no_pr_why": "<the phase-wait died line>", "session_id": "<its session id, when known>"}'). The driver restores .auto_review, records the Supervisor session id (.supervisor/state.md first), writes the session_id / ran /autonomous lines, the sidecar and its sidecar-check, and checks the rate-limit park" \
         '{what: "/autonomous run", session: "fresh", phase: "supervisor", invocation: $i, prompt: $p, config_backup: $b, launch: $l, sidecar: $s, then: $t}')"
@@ -1739,13 +1740,33 @@ ns_run_result() {
 # ================================================================================================
 # step: run-record — the session-id line, the PR (current-set BEFORE the ran line), the sidecar
 # ================================================================================================
+# ns_state_md_fresh — 0 only when .supervisor/state.md was (re)written at or after this pass's Supervisor phase
+# spawn was printed (run_spawn_epoch). Fail CLOSED: no floor, no file or an unreadable mtime ⇒ 1 (stale).
+# GNU `stat -c %Y` first — BSD `stat -f %m` "succeeds" with garbage on Linux — each answer checked numeric.
+ns_state_md_fresh() {
+  local f="$ROOT/.supervisor/state.md" since m
+  since="$(st run_spawn_epoch)"
+  case "$since" in ''|*[!0-9]*) return 1 ;; esac
+  [ -f "$f" ] || return 1
+  m="$(stat -c %Y "$f" 2>/dev/null)"
+  case "$m" in ''|*[!0-9]*) m="$(stat -f %m "$f" 2>/dev/null)" ;; esac
+  case "$m" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$m" -ge "$since" ]
+}
 ns_run_record() {
   local r sid note pr br sr why line sc
   r="$(st run_report)"; [ -n "$r" ] || r='{}'
   if [ "$(st run_fresh)" = true ]; then
     # a Supervisor phase session files its token ledger under the plugin id in .supervisor/state.md
-    # (emit-token-ledger.sh's preference), so that id is the phase's; the reported one only fills a gap
-    sid="$(sed -n 's/^- session_id:[[:space:]]*//p' "$ROOT/.supervisor/state.md" 2>/dev/null | head -n 1)"; ns_sid_ok "$sid" || sid=""
+    # (emit-token-ledger.sh's preference), so that id is the phase's; the reported one only fills a gap.
+    # state.md persists between runs and is rewritten only at the next Supervisor INIT, so it is trusted only
+    # when THIS pass's phase rewrote it (ns_state_md_fresh) — a phase that died before INIT leaves the
+    # PREVIOUS run's id there — and never when it names the coordinator's own session
+    sid=""
+    if ns_state_md_fresh; then
+      sid="$(sed -n 's/^- session_id:[[:space:]]*//p' "$ROOT/.supervisor/state.md" 2>/dev/null | head -n 1)"; ns_sid_ok "$sid" || sid=""
+      [ "$sid" != "$SID" ] || sid=""
+    fi
     [ -n "$sid" ] || sid="$(rj "$r" session_id)"
     if [ -n "$sid" ]; then ns_once once_rc_sid ns_progress "$(ns_ts) session_id $sid ($ITEM) phase=supervisor" || return 1; fi
   else
@@ -2680,7 +2701,17 @@ if [ -z "${NEXT_STEP_FROM:-}" ] && ! ns_bound; then
   ns_err "the sidecar's pending state is for $(st item) ($(st pr)); ## Current names ${ITEM:-no item} (${PR:-no pr}) — discarded, read as a fresh tail"
   stale="$(st report_key)"; NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
 fi
-pending="$(st pending_text)"; PENDING_TEXT="$pending"
+pending="$(st pending_text)"
+# --owner-command is launch authority of the session that typed it: a pending fresh spawn's `launch` line
+# printed in session A carries A's command, so re-printed to ANOTHER session (a different --session-id) it is
+# printed without it — phase-launch then answers BLOCKED until that session's owner command is given
+ns_owner_cmd_sid="$(st flag_owner_command_sid)"
+if [ -n "$pending" ] && [ -n "$(st flag_owner_command)" ] && [ "${SID:-$(st flag_session_id)}" != "$ns_owner_cmd_sid" ]; then
+  pending="$(printf '%s' "$pending" | "$JQ" -c --arg o " --owner-command $(ns_sq "$(st flag_owner_command)")" \
+    'if (.launch | type) == "string" then .launch |= (split($o) | join("")) else . end' 2>/dev/null)" || pending=""
+  [ -n "$pending" ] || ns_die2 "pending instruction unreadable — nothing written"
+fi
+PENDING_TEXT="$pending"
 pending_do="$(printf '%s' "$pending" | "$JQ" -r '.do // empty' 2>/dev/null)"
 pending_what="$(printf '%s' "$pending" | "$JQ" -r '.what // empty' 2>/dev/null)"
 if [ -n "${NEXT_STEP_FROM:-}" ]; then
@@ -2820,9 +2851,13 @@ if [ -n "$MODE" ]; then st_set flag_mode "$MODE"
 else case "$(st flag_mode)" in safe|auto-merge) MODE="$(st flag_mode)" ;; esac; fi
 if [ -n "$SID" ]; then st_set flag_session_id "$SID"; else SID="$(st flag_session_id)"; fi
 # --inline-phases has no off form either; --owner-command is the launch authority every fresh spawn's
-# `launch` line carries (this session's command, re-given at each item's first call like --session-id)
+# `launch` line carries — the command the owner typed in THIS session, so it persists bound to the session id
+# it was given with and is reused only by a later call of that SAME session: a call from another session
+# (a different --session-id, e.g. a `--resume` from a new session) gets none until it gives its own, and its
+# launch lines are refused BLOCKED (fail CLOSED: no session id ⇒ no reuse)
 if [ "$INLINE" = 1 ]; then st_set flag_inline_phases true; elif [ "$(st flag_inline_phases)" = true ]; then INLINE=1; fi
-if [ -n "$OWNER_CMD" ]; then st_set flag_owner_command "$OWNER_CMD"; else OWNER_CMD="$(st flag_owner_command)"; fi
+if [ -n "$OWNER_CMD" ]; then st_set flag_owner_command "$OWNER_CMD"; st_set flag_owner_command_sid "$SID"
+elif [ -n "$SID" ] && [ "$SID" = "$(st flag_owner_command_sid)" ]; then OWNER_CMD="$(st flag_owner_command)"; fi
 root_given="${ROOT:+1}"; [ -n "$ROOT" ] || ROOT="$(st flag_root)"
 ns_resolve_root
 [ -n "$root_given" ] && st_set flag_root "$ROOT"

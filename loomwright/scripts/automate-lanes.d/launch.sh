@@ -98,7 +98,7 @@ _lanes_gate() {
 # carries LOOMWRIGHT_LANE_RESUME_PATH = LN_RESUME_PATH (set only by a `--resume-run` launch; empty
 # otherwise) — how the lane's own engine learns which resume path it is on (§14 INIT).
 LN_RESUME_PATH=""; LN_SPAWN_PID=""; LN_SPAWN_SID=""
-# _lanes_claude_flags <checkout> — sets the LN_FLAGS array: THE headless `claude -p` flag list (stream-json
+# _lanes_claude_flags <checkout> — sets the LN_FLAGS array: THE headless-session flag list (stream-json
 # in/out, the pinned permission regime, the allowlist, the deny list with the checkout's own base-branch
 # pushes added, the plugin root, LANE_SYS). One list for a lane (_lanes_spawn) and a phase session
 # (phase.sh _lanes_phase_spawn), so the merge / force-push tripwire can never differ between the two.
