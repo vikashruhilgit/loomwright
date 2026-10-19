@@ -163,7 +163,7 @@ No `rule` or `story` row is in `prose`.
 
 ## Final (after subtask 3)
 
-Subtask 3 added the read rule to `commands/review-pr.md` (§"`--until-mergeable` mode", the `**Read rule.**` paragraph: a drain round reads `skills/review-heal/SKILL.md`; it reads `skills/review-heal/fallback-review.md` only when the driver prints a `spawn` with `what: "fallback review"`, `skills/review-heal/escalation.md` only when the run ends `ESCALATED`, and never `skills/review-heal/dispatch.md`). It is the new `global` row RH-386 (next free id), pinned in the P leg. `SKILL.md`'s frontmatter `version:` is unchanged from base (`git diff 3a03dfa -- loomwright/skills/review-heal/SKILL.md` touches neither `version:` nor `lastUpdated:`), so the `review-heal` row of `skills/SKILLS_INDEX.md` was left as it was. The final numbers below are taken on the committed tree.
+Subtask 3 added the read rule to `commands/review-pr.md` (§"`--until-mergeable` mode", the `**Read rule.**` paragraph: a drain round reads `skills/review-heal/SKILL.md`; it reads `skills/review-heal/fallback-review.md` only when the driver prints a `spawn` with `what: "fallback review"`, `skills/review-heal/escalation.md` only when the run ends `ESCALATED`, and never `skills/review-heal/dispatch.md`). It is the new `global` row RH-386 (next free id), pinned in the P leg. `SKILL.md`'s frontmatter `version:` is unchanged from base (`git diff 3a03dfa -- loomwright/skills/review-heal/SKILL.md` touches neither `version:` nor `lastUpdated:`), so the `review-heal` row of `skills/SKILLS_INDEX.md` was left as it was. The final numbers below were re-taken on commit `b3c78bc` (fix iteration 1), the last commit that changed a measured runtime file: it re-worded one line each in `SKILL.md` and the three split files, growing `SKILL.md` by 113 bytes, `dispatch.md` by 87, `escalation.md` by 55 and `fallback-review.md` by 94 with no line added or removed. Fix iteration 2 edited only this evidence file.
 
 ### AC2 — drain-round read set (`wc -c`)
 
@@ -172,36 +172,36 @@ Before: the `## Before` block above (`git show 3a03dfa:<path> | wc -c`, 129051 t
 After — the drain-round read set (a round that runs neither the Earned Fallback Review nor an escalation reads no split file; `cd loomwright && wc -c skills/review-heal/SKILL.md commands/review-pr.md`):
 
 ```
-   71170 skills/review-heal/SKILL.md
+   71283 skills/review-heal/SKILL.md
     9225 commands/review-pr.md
-   80395 total
+   80508 total
 ```
 
-80395 ≤ 90335; 48656 bytes (37.7%) smaller than 129051.
+80508 ≤ 90335; 48543 bytes (37.6%) smaller than 129051.
 
 The requirement's literal measure — every file in its `## Touches` except the rationale and inventory docs (`wc -c loomwright/skills/review-heal/SKILL.md loomwright/commands/review-pr.md changelog.d/as14-diet-review-heal.md`; the fragment did not exist at base, so its before is 0 and the before total stays 129051):
 
 ```
-   71170 loomwright/skills/review-heal/SKILL.md
+   71283 loomwright/skills/review-heal/SKILL.md
     9225 loomwright/commands/review-pr.md
     1705 changelog.d/as14-diet-review-heal.md
-   82100 total
+   82213 total
 ```
 
-82100 is 46951 bytes (36.4%) smaller than 129051.
+82213 is 46838 bytes (36.3%) smaller than 129051.
 
 All modes — every `*.md` under `skills/review-heal/` + `commands/review-pr.md` (`cd loomwright && wc -c skills/review-heal/*.md commands/review-pr.md`):
 
 ```
-   71170 skills/review-heal/SKILL.md
-    8106 skills/review-heal/dispatch.md
-    1348 skills/review-heal/escalation.md
-    5038 skills/review-heal/fallback-review.md
+   71283 skills/review-heal/SKILL.md
+    8193 skills/review-heal/dispatch.md
+    1403 skills/review-heal/escalation.md
+    5132 skills/review-heal/fallback-review.md
     9225 commands/review-pr.md
-   94887 total
+   95236 total
 ```
 
-94887 < 129051 (34164 bytes, 26.5% lower). The 360 bytes `commands/review-pr.md` gained over subtask 2's interim figure are the read-rule paragraph.
+95236 < 129051 (33815 bytes, 26.2% lower). Of the 709 bytes over subtask 2's interim all-modes figure (94527), 360 are the read-rule paragraph `commands/review-pr.md` gained in subtask 3 and 349 are fix iteration 1's re-worded lines in the four `skills/review-heal/*.md` files.
 
 ### AC3 — history references
 
@@ -212,7 +212,7 @@ cat loomwright/skills/review-heal/SKILL.md loomwright/commands/review-pr.md \
   | grep -oE '#[0-9]{2,4}\b|queue/[0-9]+|20[0-9]{2}-[0-9]{2}-[0-9]{2}|item [0-9]+' | wc -l
 ```
 
-Before (the `## Before` command at `3a03dfa`): **41**. After: **4** — `2026-10-09` (frontmatter `lastUpdated:`), `item 01` twice (RH-076's pinned bold lead and the §"Untrusted-Text Envelope" heading other files cite), `item 04` (RH-258's pin literal). Over all modes (the same regex over `skills/review-heal/*.md` + `commands/review-pr.md`): 5 — the extra one is `#512` in `skills/review-heal/dispatch.md`, which a drain round does not read.
+Before (the `## Before` command at `3a03dfa`): **41**. After: **4** — `2026-10-09` (frontmatter `lastUpdated:`), `item 01` twice (RH-076's pinned bold lead and the §"Untrusted-Text Envelope" heading other files cite), `item 04` (RH-258's pin literal). Over all modes (the same regex over `skills/review-heal/*.md` + `commands/review-pr.md`): 5 — the extra one is `#512` in `skills/review-heal/escalation.md` (the RH-220 pin literal), which a drain round reads only when it ends `ESCALATED`. (Earlier drafts of this line placed it in `dispatch.md`; `grep -oE` over the three split files on `cafb891`, `df47d89` and `b3c78bc` finds it in `escalation.md` only.)
 
 Version tags, information only (`grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | wc -l` over the same files): 5 at base, 2 after (drain-round set), 2 over all modes.
 
@@ -364,14 +364,14 @@ Subtask 2 (`grep -nF` of the anchor in its file):
 
 ## Validation 1 — final gate run (subtask 3)
 
-Every AC12 gate, run serially from the repo root on the final tree (each `bash <gate> > <file> 2>&1`, then the exit code and the last line read from that file):
+Every AC12 gate, run serially from the repo root on the final tree (each `bash <gate> > <file> 2>&1`, then the exit code and the last line read from that file). Re-run in fix iteration 2 on `b3c78bc` (runtime files) with this evidence file's iteration-2 edits in the working tree: every result below is unchanged except the `review-heal` skill-dir token figure, which fix iteration 1's re-worded lines raised.
 
 | Gate | Result |
 |---|---|
 | `bash loomwright/scripts/test-loop-inventory.sh` | rc=0, `loop-inventory: OK — 2233 rows across 4 groups`, `RESULT: 43/43 passed` |
 | `bash scripts/check-doc-currency.sh` | rc=0, `✓ doc-currency: all checked version/count claims match the authoritative source.` |
 | `bash loomwright/scripts/test-citation-drift.sh` | rc=0, `citation-drift: 26 passed, 0 failed` |
-| `bash scripts/check-token-budget.sh` | rc=0, `check-token-budget: OK — every agent, skill dir and command doc within its declared prompt-inventory budget.` (`review-heal` skill dir 21414 of 36700, 4 .md files; `review-pr` command 2306 of 5779) |
+| `bash scripts/check-token-budget.sh` | rc=0, `check-token-budget: OK — every agent, skill dir and command doc within its declared prompt-inventory budget.` (`review-heal` skill dir 21501 of 36700, 4 .md files; `review-pr` command 2306 of 5779) |
 | `bash loomwright/scripts/test-review-heal-next-step.sh` | rc=0, `PASS: 148 FAIL: 0` (`P: all 223 prose pins present`; `every one of the 174 prose rows that names this test has a pin`) |
 | `bash loomwright/scripts/test-execution-directive-seam.sh` | rc=0, `RESULT: 50 passed, 0 failed` |
 | `bash loomwright/scripts/test-no-self-matching-wait.sh` | rc=0, `test-no-self-matching-wait: 5 passed, 0 failed` |
