@@ -2,7 +2,7 @@
 # test-phase-timing.sh — phase-timing.sh (iq02 Part T04): the 2026-10-08 replay
 # (committed trimmed fixtures), owner-wait exact / fallback / null / 0, missing
 # endpoints ⇒ null, ci-local attribution by tree key only, fail-SAFE input (incl. a
-# value-less flag never swallowing the next --flag), and six mutation controls run
+# value-less flag never swallowing the next --flag), the fresh-phase supervisor pick, and mutation controls run
 # against COPIES (gated non-empty + differs + bash -n).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
@@ -105,6 +105,23 @@ printf '%s\n' '- 2026-10-01T12:30:00Z picked b.md (resume)' '- 2026-10-01T12:40:
 cat "$I2" "$T/i/automate/r2.tail" > "$T/i/automate/r2.md"
 OUT="$(bash "$PT" --run "$T/i/automate/r2.md" --item b.md 2>/dev/null)"
 [ "$(pt_item)" = "s-b2 2026-10-01T11:00:00Z 2026-10-01T12:00:00Z 3600 2026-10-01T11:32:00Z" ] && ok "a resume re-pick of the same item stays in its segment (first pick kept, latest session_id)" || no "re-pick scope: $(pt_item)"
+echo "== P. fresh phases (automate-speed/09): the supervisor phase's session is the one timed =="
+# one item, three phase sessions (`session_id <sid> (<item>) phase=<phase>`), the drain's line LAST: the
+# Supervisor spans read the phase=supervisor session's log, never the launch-pad / drain one
+mkdir -p "$T/p/automate" "$T/p/logs"
+printf '%s\n' '## Progress' '- 2026-10-01T09:00:00Z picked a.md' '- 2026-10-01T09:20:00Z session_id s-lp (a.md) phase=launch-pad' \
+  '- 2026-10-01T09:20:01Z launch-pad saved .supervisor/jobs/pending/a.md' '- 2026-10-01T10:00:00Z session_id s-sup (a.md) phase=supervisor' \
+  '- 2026-10-01T10:00:01Z ran /autonomous → PR https://github.com/o/r/pull/1' '- 2026-10-01T10:01:00Z owned drain started — /review-pr x @ y' \
+  '- 2026-10-01T10:20:00Z session_id s-dr (a.md) phase=drain' '- 2026-10-01T10:20:01Z drain READY (converged)' \
+  '- 2026-10-01T10:21:00Z parked awaiting_merge' > "$T/p/automate/r.md"
+printf '%s\n' '{"event":"autonomous_start","ts":"2026-10-01T09:21:00Z"}' > "$T/p/logs/s-sup.jsonl"
+printf '%s\n' '{"event":"autonomous_start","ts":"2026-10-01T10:05:00Z"}' > "$T/p/logs/s-dr.jsonl"
+OUT="$(bash "$PT" --run "$T/p/automate/r.md" 2>/dev/null)"
+[ "$(q '.session_id')" = "s-sup" ] && ok "three phase lines (drain last) ⇒ the phase=supervisor session s-sup is timed" || no "fresh phases timed $(q '.session_id'), not s-sup"
+printf '%s\n' '## Progress' '- 2026-10-01T09:00:00Z picked a.md' '- 2026-10-01T09:20:00Z session_id s-lp (a.md) phase=launch-pad' \
+  '- 2026-10-01T10:20:00Z session_id s-dr (a.md) phase=drain' > "$T/p/automate/r2.md"
+OUT="$(bash "$PT" --run "$T/p/automate/r2.md" 2>/dev/null)"
+[ "$(q '.session_id')" = "s-dr" ] && ok "no supervisor / un-suffixed line ⇒ the last session_id line (as before)" || no "no-supervisor fallback: $(q '.session_id')"
 echo "== N. missing endpoint ⇒ null, never 0; stranded close-out ⇒ null completion =="
 mkdir -p "$T/n/automate" "$T/n/logs"
 printf '## Progress\n- 2026-10-01T10:00:00Z picked x.md\n- 2026-10-01T10:05:00Z session_id s-n\n' > "$T/n/automate/r.md"
@@ -203,6 +220,11 @@ if [ -n "$M8" ]; then
   [ "$(q '.item.owner_seconds')" = "660" ] && no "M8 pairing a permission_prompt with an answered row stayed green" || ok "M8 pair permission_prompt by order ⇒ it steals the ask_user answer (owner $(q '.item.owner_seconds')) — red"
 else no "M8 mutant not built"; fi
 
+M9="$(mutant nosup '            if not ph or ph.group(1) == "supervisor":' '            if not ph:')"
+if [ -n "$M9" ]; then
+  OUT="$(bash "$M9" --run "$T/p/automate/r.md" 2>/dev/null)"
+  if [ "$(q '.session_id')" = "s-sup" ]; then no "M9 the phase=supervisor preference deleted left the supervisor phase timed"; else ok "M9 delete the phase=supervisor preference ⇒ the drain session $(q '.session_id') is timed (red)"; fi
+else no "M9 mutant not built"; fi
 M5="$(mutant noclamp '            end = hi' '            end = ans')"
 if [ -n "$M5" ]; then
   OUT="$(bash "$M5" --run "$O5" 2>/dev/null)"
