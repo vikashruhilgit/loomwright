@@ -48,3 +48,9 @@ none
 loomwright/scripts/test-automate-helpers.sh
 loomwright/scripts/test-automate-helpers.d/
 changelog.d/as21-split-automate-helpers-tests.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-19T07:49:32Z
+- **Brief:** .supervisor/jobs/done/2026-10-18-as21-split-automate-helpers-tests.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/609
