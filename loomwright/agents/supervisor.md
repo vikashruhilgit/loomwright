@@ -624,6 +624,8 @@ SUPERVISOR_RESULT:
     checks_passed: integer
     findings:                                # advisory; failing checks only; severity is info|advisory by construction
       - { check: string, detail: string, severity: enum [info, advisory] }
+  heal_dismissed:                            # optional (dismissed-findings-01) — Phase 4.5 findings NOT dispatched to a fixer; empty ⇒ absent (never []). Each item exactly these keys.
+    - { finding: string, reason: enum [pre_existing, nit, drift, below_severity_floor], source: string, severity: string }   # severity optional
 ```
 
 **`knowledge_sources_used` additive field (v14.28.0):** optional and ADVISORY — `schema_version` stays `1`, the SubagentStop hook does not enumerate it, it is never gated on, and an absent field reads as "none used". Two shapes, same data: the nested array above and the FLAT `knowledge_sources_used` array on the `session_end` JSONL line (what `build-insights.sh` reads).

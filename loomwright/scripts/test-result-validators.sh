@@ -2665,6 +2665,10 @@ r15 sup-r15-dismissed-item.md '  heal_dismissed: [{finding: x}]'
 run_v "$V_SUPERVISOR" "$F"
 assert_fail "supervisor: a heal_dismissed item missing reason/source blocks [rule 15]" \
   "heal_dismissed[0] missing required key reason"
+case "$LAST_OUT" in
+  *GROUND_TRUTH_NESTED*) no "supervisor: rule 15's GROUND_TRUTH_NESTED hint appears only for a ground_truth error (got it on heal_dismissed)" ;;
+  *) ok "supervisor: rule 15's GROUND_TRUTH_NESTED hint appears only for a ground_truth error" ;;
+esac
 r15 sup-r15-gt-nested-line.md '  ground_truth: {"checked":true,"status":"advisory_failures","checks_total":2,"checks_passed":1,"findings":[{"check":"cmd:false","detail":"exit non-zero","severity":"advisory"}]}'
 run_v "$V_SUPERVISOR" "$F"
 assert_pass "supervisor: the GROUND_TRUTH_NESTED line copied verbatim validates [rule 15]"

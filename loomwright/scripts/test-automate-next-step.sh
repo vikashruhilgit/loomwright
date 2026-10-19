@@ -773,7 +773,8 @@ leg_nested_run_reports() {
     key="${line%%|*}"; r="${line#*|}"
     ns_call "$drv" --result "$r"
     [ "$NC_RC" = 2 ] && [ -z "$NC_OUT" ] && [ "$s0" = "$(snapshot)" ] && printf '%s' "$NC_ERR" | grep -qF "$key" \
-      && printf '%s' "$NC_ERR" | grep -qF 'GROUND_TRUTH_NESTED' \
+      && { [ "$key" = ground_truth ] && printf '%s' "$NC_ERR" | grep -qF 'GROUND_TRUTH_NESTED' \
+           || { [ "$key" != ground_truth ] && ! printf '%s' "$NC_ERR" | grep -qF 'GROUND_TRUTH_NESTED'; }; } \
       || { LEG_MSG="$key ⇒ exit $NC_RC '${NC_OUT:0:60}' err '${NC_ERR:0:160}' .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
   done <<EOF
 $NESTED_RUN

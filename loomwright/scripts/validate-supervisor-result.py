@@ -348,9 +348,11 @@ def main():
         _nerrs = _NK.nested_errors(
             BLOCK, {k: v for k, v in fields.items() if k in R15_FIELDS})
         if _nerrs:
-            emit(False, "%s (rule 15) — ground_truth is the run-ground-truth.sh "
-                 "GROUND_TRUTH_NESTED line verbatim; see docs/result-schemas/"
-                 "supervisor-result.md \"Nested-object key sets\"" % _nerrs[0][1])
+            _msg = _nerrs[0][1]
+            _hint = ("ground_truth is the run-ground-truth.sh GROUND_TRUTH_NESTED "
+                     "line verbatim; " if " ground_truth" in _msg else "")
+            emit(False, "%s (rule 15) — %ssee docs/result-schemas/supervisor-result.md "
+                 "\"Nested-object key sets\"" % (_msg, _hint))
 
     emit(True)
 

@@ -789,7 +789,10 @@ ns_check_run_report() {
   # then held lane-remove forever. Top-level key checks stay advisory (ns_sidecar_check).
   if [ -n "$t" ]; then
     v="$(ns_nested_error "$t")"
-    [ -z "$v" ] || ns_die2 "--result: $v — re-emit the SUPERVISOR_RESULT with that object in its schema shape (docs/result-schemas/supervisor-result.md \"Nested-object key sets\"; ground_truth = the GROUND_TRUTH_NESTED line verbatim) and report again — nothing written"
+    if [ -n "$v" ]; then
+      case "$v" in *" ground_truth"*) v="$v — ground_truth is the GROUND_TRUTH_NESTED line verbatim" ;; esac
+      ns_die2 "--result: $v — re-emit the SUPERVISOR_RESULT with that object in its schema shape (docs/result-schemas/supervisor-result.md \"Nested-object key sets\") and report again — nothing written"
+    fi
   fi
   NS_RUN_PR="$pr"; NS_RUN_BR="$br"
 }
