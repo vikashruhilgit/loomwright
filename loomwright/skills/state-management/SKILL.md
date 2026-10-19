@@ -36,8 +36,18 @@ Patterns for externalizing Supervisor state to files, enabling cross-session res
 # Create directory
 mkdir -p .supervisor/history
 
-# Add to .gitignore (idempotent)
-grep -qxF '.supervisor/' .gitignore 2>/dev/null || echo '.supervisor/' >> .gitignore
+# Keep it ignored (idempotent)
+# `.supervisor/` must stay ignored (a bare line, or `/setup memory`'s managed block). Ask git, not the
+# file text: the managed block ignores the contents (`.supervisor/*` + `!.supervisor/memory/`) with no
+# bare line, and a bare line appended after it re-ignores the memory store. `.supervisor` itself is not
+# reliably reported, so probe two child paths; outside a repo / without git, fall back to the exact line
+gi=ignored
+for p in .supervisor/state.md .supervisor/logs/x.json; do
+  git check-ignore -q --no-index "$p" >/dev/null 2>&1
+  case $? in 0) ;; 1) gi=append ;; *) gi=fallback; break ;; esac
+done
+[ "$gi" = fallback ] && grep -qxF '.supervisor/' .gitignore 2>/dev/null && gi=ignored
+[ "$gi" = ignored ] || echo '.supervisor/' >> .gitignore
 ```
 
 ### Directory Structure
@@ -52,7 +62,7 @@ grep -qxF '.supervisor/' .gitignore 2>/dev/null || echo '.supervisor/' >> .gitig
 
 ### Gitignore Check
 
-Before creating `.supervisor/`, verify `.gitignore` exists. If not, create it with `.supervisor/` entry.
+Before creating `.supervisor/`, make sure git will ignore it. `.supervisor/` must stay ignored (a bare line, or `/setup memory`'s managed block); the snippet above adds the bare line only when git does not already ignore the directory's contents, and creates `.gitignore` when there is none. Never add a bare line below the managed block: it re-ignores `.supervisor/memory/`.
 
 ---
 
@@ -391,7 +401,7 @@ When a session completes (Phase 5 LOOP → no more tasks):
 ## Quality Checklist
 
 Before completing state management:
-- [ ] `.supervisor/` directory exists with `.gitignore` entry
+- [ ] `.supervisor/` directory exists and stays ignored (a bare line, or `/setup memory`'s managed block)
 - [ ] State file has all required sections
 - [ ] `## Session` reflects the latest `subtask_complete`/`session_end` event (verify via the log, not a written checkpoint — see "Progress state")
 - [ ] Resume tested from both scratchpad and `.supervisor/`

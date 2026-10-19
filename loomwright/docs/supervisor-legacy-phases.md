@@ -34,7 +34,17 @@ These two bullets followed the run-lock and Session Configuration bullets, which
 4. Create `.supervisor/` directory structure if not exists:
    ```bash
    mkdir -p .supervisor/history .supervisor/jobs/pending .supervisor/jobs/in-progress .supervisor/jobs/done .supervisor/jobs/failed .supervisor/logs
-   grep -qxF '.supervisor/' .gitignore 2>/dev/null || echo '.supervisor/' >> .gitignore
+   # `.supervisor/` must stay ignored (a bare line, or `/setup memory`'s managed block). Ask git, not the
+   # file text: the managed block ignores the contents (`.supervisor/*` + `!.supervisor/memory/`) with no
+   # bare line, and a bare line appended after it re-ignores the memory store. `.supervisor` itself is not
+   # reliably reported, so probe two child paths; outside a repo / without git, fall back to the exact line
+   gi=ignored
+   for p in .supervisor/state.md .supervisor/logs/x.json; do
+     git check-ignore -q --no-index "$p" >/dev/null 2>&1
+     case $? in 0) ;; 1) gi=append ;; *) gi=fallback; break ;; esac
+   done
+   [ "$gi" = fallback ] && grep -qxF '.supervisor/' .gitignore 2>/dev/null && gi=ignored
+   [ "$gi" = ignored ] || echo '.supervisor/' >> .gitignore
    ```
 5. Initialize scratchpad state file via Context-Keeper:
    ```

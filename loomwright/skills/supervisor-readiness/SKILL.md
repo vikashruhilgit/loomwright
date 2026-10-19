@@ -109,11 +109,12 @@ After Supervisor completes successfully:
 
 ### Gitignore
 
-The `.supervisor/` directory should be gitignored (Supervisor auto-adds this):
+`.supervisor/` must stay ignored (a bare line, or `/setup memory`'s managed block). Supervisor adds the bare line only when git does not already ignore the directory's contents:
 ```
 # .gitignore
 .supervisor/
 ```
+With `/setup memory` on, leave its managed block as it is: it ignores the contents (`.supervisor/*`) and re-includes `.supervisor/memory/`, and a bare `.supervisor/` line below it re-ignores the memory store.
 
 ## Supervisor-Ready Brief Template
 

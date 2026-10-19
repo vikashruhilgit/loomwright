@@ -47,7 +47,7 @@ Supervisor prompt.
    - "Max parallel workers?" (default: 2; skip if `--sequential`)
    - "Specific task to work on?" (or user provides via `task:` parameter)
    - **Cannot ask** (`--non-interactive`, or executing as a subagent — the ask tool is absent): ask nothing; max parallel workers = the default 2 (`--sequential` ⇒ 1), task from `job:`/`task:`. No task source ⇒ fail closed: `SUPERVISOR_RESULT.status: failed`, `error: "init_input_missing_non_interactive"`.
-3a.–5. *Run by the driver's `init` step* — `--cheap` ⇒ `cost_profile: "cheap"` on every spawn instruction (else `default`); the `.supervisor/` directory bootstrap and its `.gitignore` line; the Context-Keeper `initialize` with `{max_workers, mode, cost_profile}`. Pre-driver text: `docs/supervisor-legacy-phases.md`.
+3a.–5. *Run by the driver's `init` step* — `--cheap` ⇒ `cost_profile: "cheap"` on every spawn instruction (else `default`); the `.supervisor/` directory bootstrap (`.supervisor/` must stay ignored — a bare line, or `/setup memory`'s managed block; the bare line is appended only when git does not already ignore the directory's contents); the Context-Keeper `initialize` with `{max_workers, mode, cost_profile}`. Pre-driver text: `docs/supervisor-legacy-phases.md`.
 
 5a. **Base-branch + non-interactive preamble (v14.0.0):**
 

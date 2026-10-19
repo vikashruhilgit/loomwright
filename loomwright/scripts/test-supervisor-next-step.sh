@@ -58,7 +58,8 @@
 #       lane / gap adjudications both ways, Option C's reason per kind, a budget checkpoint), FINALIZE
 #       (B12–B15: pre-merge points 2–4 and a missing worktree, point 5's answers / --non-interactive /
 #       --skip-children-check, a conflict, a refused re-fold, write-marker refusals), the inline paths
-#       (B16) and every step-6.5 branch (B17).
+#       (B16), every step-6.5 branch (B17) and the step-4 .gitignore bootstrap under `/setup memory`'s
+#       managed block (B18).
 #   P   PUBLISH ORDER (AC3). Every publish spawn a golden case prints is printed with the finalize-gate
 #       marker on disk naming HEAD; guard-finalize-publish.sh and check-children-settled.sh are
 #       byte-unchanged since the merge-base with origin/main (skipped, uncounted, without that ref).
@@ -83,6 +84,7 @@
 #         M2c no step-6.5 retry (the first gh failure sets the flag) ⇒ A4 (and the gh-retry case)
 #         M2d an interactive adjudication auto-picks option A      ⇒ A5
 #         MB  brace expansion left on (`set -B`)                    ⇒ K
+#         MG  step 4 back on the exact-line .gitignore test          ⇒ B18
 #
 # ENV: SN_CASES="<a> <b>" runs only those golden cases (G only); SN_SKIP_MUTANTS=1 skips M.
 #   SN_WRITE_EXPECTED=1 (authoring only, honoured only together with SN_CASES): each selected case's
@@ -887,6 +889,67 @@ if b_fin finalize-pr-base-verified; then
   [ "$r1" = 2 ] && [ "$s0" = "$s1" ] && jqo '.do == "park" and .status == "checkpoint" and (.message | test("push denied"))' \
     && ok "B17: a non-PR URL exits 2, nothing written; a failed publish ⇒ the checkpoint park" || no "B17: publish answers wrong (rc $r1)"
 fi
+# B18 — step 4 asks git, not the .gitignore text (#615). Under `/setup memory`'s branch-mode managed block
+# (`.supervisor/*` + `!.supervisor/memory/`, no bare line) two real inits — the second a fresh session
+# re-entering through in-progress/ (a second --job in the same session only re-prints) — leave .gitignore
+# byte-unchanged, the memory store committable and the tree clean. Controls: with no rule the line is
+# appended exactly once across both runs (onto its own line); outside a repo the exact-line test holds
+B18_JOB=.supervisor/jobs/pending/2026-10-17-golden-tokens.md
+b18_init_twice() { # <driver> — two real inits; B18_RAN = how many reached step 4 (it recreates history/)
+  local s o
+  B18_RAN=0
+  for s in "$CASE_SID" "$CASE_SID-b18"; do
+    rmdir "$CASE_ROOT/.supervisor/history" 2>/dev/null
+    o="$(in_case /dev/null bash "$1" --session-id "$s" --job "$B18_JOB" 2>/dev/null)"
+    [ -d "$CASE_ROOT/.supervisor/history" ] && printf '%s' "$o" | jq -e '.do == "spawn" and .step == "init"' >/dev/null 2>&1 \
+      && B18_RAN=$((B18_RAN + 1))
+  done
+}
+b18_managed() { # <driver> — sets LEG_MSG on failure
+  local rc
+  new_scratch "$FIX/init-flags-max-tokens" || { LEG_MSG="scratch not built"; return 1; }
+  ( cd "$CASE_ROOT" && export HOME="$CASE_HOME" && eval "export $GIT_ENV" \
+      && bash "$HERE/setup-memory.sh" apply --branch-mode loomwright-meta && rm -f .gitignore.backup.* \
+      && git add -A && git commit -q -m "setup memory" ) >"$CASE_DIR/b18-setup.log" 2>&1 \
+    || { LEG_MSG="setup-memory apply / commit failed (see $CASE_DIR/b18-setup.log)"; return 1; }
+  grep -qxF '.supervisor/*' "$CASE_ROOT/.gitignore" && ! grep -qxF '.supervisor/' "$CASE_ROOT/.gitignore" \
+    || { LEG_MSG="setup-memory did not leave a managed block without a bare line"; return 1; }
+  [ -z "$(in_case /dev/null git status --porcelain)" ] || { LEG_MSG="tree not clean before the runs"; return 1; }
+  cp "$CASE_ROOT/.gitignore" "$CASE_DIR/gitignore.before"
+  b18_init_twice "$1"
+  [ "$B18_RAN" = 2 ] || { LEG_MSG="the bootstrap ran $B18_RAN of 2 times"; return 1; }
+  cmp -s "$CASE_DIR/gitignore.before" "$CASE_ROOT/.gitignore" \
+    || { LEG_MSG=".gitignore changed: $(diff "$CASE_DIR/gitignore.before" "$CASE_ROOT/.gitignore" | grep '^[<>]' | tr '\n' ' ')"; return 1; }
+  in_case /dev/null git check-ignore -q .supervisor/memory/LESSONS.md; rc=$?
+  [ "$rc" = 1 ] || { LEG_MSG="git check-ignore .supervisor/memory/LESSONS.md exited $rc, want 1"; return 1; }
+  [ -z "$(in_case /dev/null git status --porcelain)" ] \
+    || { LEG_MSG="tree dirty: $(in_case /dev/null git status --porcelain | tr '\n' ' ')"; return 1; }
+}
+b18_append() { # <driver> <.gitignore before: printf format, or - for none> <want: printf format> [norepo]
+  new_scratch "$FIX/init-flags-max-tokens" || { LEG_MSG="scratch not built"; return 1; }
+  rm -f "$CASE_ROOT/.gitignore"
+  [ "$2" = - ] || printf "$2" > "$CASE_ROOT/.gitignore"
+  if [ "${4:-}" = norepo ]; then
+    rm -rf "$CASE_ROOT/.git"
+    ! in_case /dev/null git rev-parse --git-dir >/dev/null 2>&1 || { LEG_MSG="the scratch still sits inside a git repo"; return 1; }
+  fi
+  printf "$3" > "$CASE_DIR/gitignore.want"
+  b18_init_twice "$1"
+  [ "$B18_RAN" = 2 ] || { LEG_MSG="the bootstrap ran $B18_RAN of 2 times"; return 1; }
+  cmp -s "$CASE_DIR/gitignore.want" "$CASE_ROOT/.gitignore" \
+    || { LEG_MSG=".gitignore is '$(tr '\n' '|' < "$CASE_ROOT/.gitignore" 2>/dev/null)', want '$(tr '\n' '|' < "$CASE_DIR/gitignore.want")'"; return 1; }
+}
+LEG_MSG=""
+if b18_managed "$DRIVER"; then ok "B18: under /setup memory's managed block two inits leave .gitignore byte-unchanged, .supervisor/memory/ committable and the tree clean"
+else no "B18: managed block: $LEG_MSG"; fi
+LEG_MSG=""
+if b18_append "$DRIVER" - '.supervisor/\n' && b18_append "$DRIVER" 'node_modules' 'node_modules\n.supervisor/\n'; then
+  ok "B18: with no ignore rule the bare line is appended exactly once across two inits (on its own line)"
+else no "B18: no-rule control: $LEG_MSG"; fi
+LEG_MSG=""
+if b18_append "$DRIVER" 'node_modules\n' 'node_modules\n.supervisor/\n' norepo && b18_append "$DRIVER" '.supervisor/\n' '.supervisor/\n' norepo; then
+  ok "B18: outside a git repo the exact-line test holds (appended once; a present bare line left alone)"
+else no "B18: outside-a-repo control: $LEG_MSG"; fi
 
 echo "-- V. Validation 3: one item from Phase 0 to the Phase 4.5 hand-over (hermetic)"
 if golden_case validation-3-drive "$DRIVER"; then
@@ -948,6 +1011,10 @@ if [ "${SN_SKIP_MUTANTS:-}" != 1 ]; then
   if m="$(build_mutant B 'set +B' 'set -B')"; then
     LEG_MSG=""; if leg_brace_off "$m"; then no "MB: K stayed green with brace expansion on"; else ok "MB: brace expansion on ⇒ K red ($LEG_MSG)"; fi
   else no "MB: mutant not built"; fi
+  # MG — step 4 back on the exact-line test (git's answer ignored, so the fallback always runs) ⇒ B18 red
+  if m="$(build_mutant G '    git check-ignore -q --no-index "$gp" >/dev/null 2>&1' '    (exit 128)')"; then
+    LEG_MSG=""; if b18_managed "$m"; then no "MG: B18 stayed green on the exact-line test"; else ok "MG: the exact-line test restored ⇒ B18 red ($LEG_MSG)"; fi
+  else no "MG: mutant not built"; fi
   # MR — the plan step spawns code-reviewer instead of orchestrator ⇒ R red
   if m="$(build_mutant R 'sn_spawn plan orchestrator plan-result' 'sn_spawn plan code-reviewer plan-result')"; then
     LEG_MSG=""; if leg_reviewer "$m" "$INSTR"; then no "MR: R stayed green with a code-reviewer spawn"; else ok "MR: a code-reviewer spawn ⇒ R red ($LEG_MSG)"; fi
