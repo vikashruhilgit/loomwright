@@ -198,7 +198,7 @@ loomwright/skills/automate-loop/per-item-loop.md:  - **Honest limits.** The gate
 
 ### Validation 1 — `bash scripts/ci-local.sh`
 
-CI_LOCAL_PLACEHOLDER
+Integrated branch (subtasks 1–4 merged), run by the Execute Manager in this session: **175/176 self-tests pass**. The one red leg is `loomwright/scripts/test-automate-trail-modules.sh` (23/24); the same test run alone on the base worktree at `626f35f` fails identically (23/24), so it is pre-existing and not caused by this change. A full base-side `ci-local.sh` run was not made — only that leg was re-run on base.
 
 ## AC7 — token budget
 
