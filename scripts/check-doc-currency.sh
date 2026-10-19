@@ -57,7 +57,12 @@ HOOKS="$(jq '[.hooks[][].hooks[]] | length' "$HOOKS_JSON")"
 
 echo "Authoritative → version=$VERSION  agents=$AGENTS  commands=$COMMANDS  skills=$SKILLS  hooks=$HOOKS"
 
-# Doc/config surfaces that carry current-state claims.
+# Doc/config surfaces that carry current-state claims. ONE list, ONE assignment: every surface —
+# literal or glob — is an entry of this block, because FILES-mirroring guards (W20 in
+# loomwright/scripts/test-automate-helpers.d/13-plan-waves.sh) parse this block and nothing else; a
+# separate `FILES+=` append would be invisible to them. nullglob is on for the assignment only, so a
+# glob entry with no match adds nothing and is not an error.
+shopt -s nullglob
 FILES=(
   CLAUDE.md
   README.md
@@ -73,12 +78,11 @@ FILES=(
   # so a count claim there would force a workflow edit on every counts-bump PR — which then
   # guarantees a red claude-review check on that same PR. Workflow prompts must stay free of
   # current-tense version/count claims (point at CLAUDE.md instead of naming numbers).
+  # /agent-help is a router since automate-speed/22: its moved sections live verbatim in parts, so
+  # scan every part too (expanded at run time, sorted) — no claim that moved out of the router
+  # escapes this gate. An empty expansion adds nothing (nullglob); the router stays listed above.
+  loomwright/docs/command-parts/agent-help/*.md
 )
-# /agent-help is a router since automate-speed/22: its moved sections live verbatim in parts, so
-# scan every part too (expanded at run time, sorted) — no claim that moved out of the router
-# escapes this gate. An empty expansion adds nothing (nullglob); the router stays listed above.
-shopt -s nullglob
-FILES+=(loomwright/docs/command-parts/agent-help/*.md)
 shopt -u nullglob
 
 fail=0
