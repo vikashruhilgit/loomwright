@@ -39,7 +39,9 @@
 #   exactly the pre-09 one. `--owner-command <cmd>` (the /automate command the owner typed in this
 #   session; persisted for the item's tail, reused only by a call of the SAME --session-id) goes into each
 #   `launch` line as phase-launch's launch authority — without it the line has none and phase-launch
-#   refuses it (BLOCKED, exit 3); a pending launch line re-printed to another session loses it too.
+#   refuses it (BLOCKED, exit 3). A re-printed pending fresh spawn's `launch` is rebuilt from the
+#   re-printing call's identity (its --session-id, else the stored one, and the owner command bound to
+#   that session id), never replayed from another session; the identity a re-print gives persists.
 #   Entry points: `--resume <automate_dir>` is every `/automate` start that may continue a run (a bare
 #   start: no `--run`; `/automate --resume`: `--run latest`; `/automate --resume <id>`: `--run <id>`):
 #   `closeout-others`, `resume-glob --finalize`, then the AUT-RESUME ask (or, without the ask, the
@@ -67,7 +69,8 @@
 #   "drain result reported" stays an entry too (back-compat): with nothing pending, a bare
 #   `--result '{"drain_result":"READY|ESCALATED",…}'` starts GATE. A call with no
 #   `--result` while an instruction is pending RE-PRINTS that instruction verbatim and writes nothing
-#   (idempotent); a `--result` answers the pending `ask` / `spawn`; a `--result` after a terminal
+#   (idempotent — a NEW --session-id / --owner-command it gives is persisted, and a fresh spawn's
+#   `launch` carries it; see PHASES); a `--result` answers the pending `ask` / `spawn`; a `--result` after a terminal
 #   `park` / `done` (or with nothing pending) starts the next item's tail — unless it is a REPLAY (the
 #   same drain report for the same item + PR), which re-prints the terminal instruction and writes
 #   nothing; a different report is accepted only while `## Current` reads `status: running` (the next
@@ -1590,6 +1593,20 @@ ns_plan_result() {
   if [ -n "$sid" ]; then ns_once once_pl_sid ns_progress "$(ns_ts) session_id $sid ($ITEM) phase=launch-pad" || return 1; fi
   if [ -n "$(rj "$r" no_pr_why)" ]; then
     sr="$(rj "$r" status_reason)"; why="$(rj "$r" no_pr_why)"
+    # a phase that DIED (phase-wait's died line — e.g. it ended without writing its result sidecar) may still
+    # have saved its brief: the same ls-diff fallback a malformed block gets, so a saved brief is never stranded
+    # in .supervisor/jobs/pending/. Exactly one new brief ⇒ that brief; several ⇒ concurrent_session_detected;
+    # none (or no snapshot) ⇒ the died line as reported
+    if [ "$sr" = phase_died ] && printf '%s' "$NS_STATE" | "$JQ" -e '(.plan_briefs_before | type) == "array"' >/dev/null 2>&1; then
+      before="$(printf '%s' "$NS_STATE" | "$JQ" -r '.plan_briefs_before[]' 2>/dev/null)"
+      new="$(ns_pending_briefs | NS_B="$before" awk 'BEGIN { n = split(ENVIRON["NS_B"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") s[a[i]] = 1 } !($0 in s)')"
+      n="$(printf '%s\n' "$new" | grep -c . || true)"
+      case "$n" in
+        0) ;;
+        1) brief="$new"; sr=""; why="" ;;
+        *) sr=concurrent_session_detected; why="$why; $n new briefs in .supervisor/jobs/pending/" ;;
+      esac
+    fi
   else
     t="$(printf '%s' "$NS_STATE" | "$JQ" -r '.plan_text // empty')"
     # the validator's verdict: `{}` = well-formed; a block, no python3 or no answer = malformed (fail CLOSED)
@@ -1626,10 +1643,10 @@ ns_plan_result() {
         esac
       fi
     fi
-    # PLAN step 6: a real rubric in the requirement must survive into the saved brief
-    if [ -n "$brief" ] && ns_has_rubric "$ITEM" && ! ns_has_rubric "$brief"; then
-      sr=rubric_dropped_from_brief; why="the requirement's ## Outcomes Rubric is missing from the saved brief $brief"; brief=""
-    fi
+  fi
+  # PLAN step 6: a real rubric in the requirement must survive into the saved brief (a died phase's brief too)
+  if [ -n "$brief" ] && ns_has_rubric "$ITEM" && ! ns_has_rubric "$brief"; then
+    sr=rubric_dropped_from_brief; why="the requirement's ## Outcomes Rubric is missing from the saved brief $brief"; brief=""
   fi
   if [ -n "$brief" ]; then
     st_set plan_brief "$brief"
@@ -1786,9 +1803,28 @@ ns_run_record() {
     ns_once once_rc_check ns_sidecar_check "$sc" || return 1
   else
     sr="$(rj "$r" status_reason)"; why="$(rj "$r" no_pr_why)"
+    if [ "$(st run_fresh)" = true ] && [ "$sr" = phase_died ]; then
+      local opr; opr="$(ns_died_open_pr)"
+      [ -n "$opr" ] && why="$why; the phase left PR ${opr%%"$TAB"*} open on ${opr#*"$TAB"} — not drained (it wrote no SUPERVISOR_RESULT), left for the owner"
+    fi
     ns_once once_rc_ran ns_progress "$(ns_ts) ran /autonomous — no PR: ${sr:-unknown} ($why)" || return 1
   fi
   NEXT=rate-limit
+}
+# ns_died_open_pr — "<url>\t<branch>" of an OPEN PR a Supervisor phase that died (no SUPERVISOR_RESULT) left on
+# its feature branch, else empty. The branch is read from .supervisor/state.md only when THIS pass's phase rewrote
+# it (ns_state_md_fresh — a stale file names a previous run's branch); a PR this run file already records (another
+# item's) is never this phase's. Read-only through the driver's gh seam (LOOMWRIGHT_GH_BIN); a gh failure or no
+# branch ⇒ empty — the no-PR line then reads as it always did (an annotation, never a gate).
+ns_died_open_pr() {
+  local br url
+  ns_state_md_fresh || return 0
+  br="$(sed -n 's/^- branch:[[:space:]]*//p' "$ROOT/.supervisor/state.md" 2>/dev/null | head -n 1)"
+  [[ "$br" =~ ^[^[:space:]|]{1,200}$ ]] || return 0
+  url="$(ns_gh pr list --head "$br" --state open --json url --limit 1 | "$JQ" -r '.[0].url // empty' 2>/dev/null)"
+  ns_pr_ok "$url" || return 0
+  grep -qF -- "PR $url" "$RF" 2>/dev/null && return 0
+  printf '%s\t%s' "$url" "$br"
 }
 
 # ================================================================================================
@@ -2701,17 +2737,37 @@ if [ -z "${NEXT_STEP_FROM:-}" ] && ! ns_bound; then
   ns_err "the sidecar's pending state is for $(st item) ($(st pr)); ## Current names ${ITEM:-no item} (${PR:-no pr}) — discarded, read as a fresh tail"
   stale="$(st report_key)"; NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
 fi
-pending="$(st pending_text)"
-# --owner-command is launch authority of the session that typed it: a pending fresh spawn's `launch` line
-# printed in session A carries A's command, so re-printed to ANOTHER session (a different --session-id) it is
-# printed without it — phase-launch then answers BLOCKED until that session's owner command is given
-ns_owner_cmd_sid="$(st flag_owner_command_sid)"
-if [ -n "$pending" ] && [ -n "$(st flag_owner_command)" ] && [ "${SID:-$(st flag_session_id)}" != "$ns_owner_cmd_sid" ]; then
-  pending="$(printf '%s' "$pending" | "$JQ" -c --arg o " --owner-command $(ns_sq "$(st flag_owner_command)")" \
-    'if (.launch | type) == "string" then .launch |= (split($o) | join("")) else . end' 2>/dev/null)" || pending=""
-  [ -n "$pending" ] || ns_die2 "pending instruction unreadable — nothing written"
-fi
-PENDING_TEXT="$pending"
+pending="$(st pending_text)"; PENDING_TEXT="$pending"
+# A pending fresh spawn's `launch` line carries the identity of the session it was printed in: its
+# --coordinator-session and (when known) its --owner-command, the launch authority of the session that typed
+# it. A re-print therefore never replays the stored line to whichever session asks: its `launch` is REBUILT
+# from THIS call's identity — the --session-id given now (else the stored one) and the owner command bound to
+# that session (given now, else the stored one only when it was given by that same session id). Within ONE
+# session the rebuilt line is the stored one, so the re-print stays byte for byte (the stored text is kept
+# when they match). PENDING_TEXT keeps the stored text: the replay checks compare against what was printed.
+# ns_reprint — print the pending instruction (its fresh-spawn `launch` rebuilt as above) and exit 0. The
+# session identity this call gave (--session-id, --owner-command) persists FIRST, so a later bare call (no
+# --session-id) inherits THIS session's identity — never the session that printed the instruction. A call
+# that gives neither (or gives the identity already stored) writes nothing.
+ns_reprint() {
+  local sid own l ch=0 out="$pending"
+  sid="${SID:-$(st flag_session_id)}"; own="$OWNER_CMD"
+  if [ -z "$own" ] && [ -n "$sid" ] && [ "$sid" = "$(st flag_owner_command_sid)" ]; then own="$(st flag_owner_command)"; fi
+  if printf '%s' "$out" | "$JQ" -e '.session == "fresh" and (.launch | type) == "string" and (.phase | type) == "string" and (.prompt | type) == "string"' >/dev/null 2>&1; then
+    [[ "$sid" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || ns_die2 "session_id_malformed — the pending fresh spawn's launch line needs a coordinator session id of [A-Za-z0-9_-]+ (got '$sid') — nothing written"
+    l="$(SID="$sid"; OWNER_CMD="$own"; ns_phase_launch "$(printf '%s' "$out" | "$JQ" -r .phase)" "$(printf '%s' "$out" | "$JQ" -r .prompt)")"
+    if [ "$l" != "$(printf '%s' "$out" | "$JQ" -r .launch)" ]; then
+      out="$(printf '%s' "$out" | "$JQ" -c --arg l "$l" '.launch = $l' 2>/dev/null)" || out=""
+      [ -n "$out" ] || ns_die2 "pending instruction unreadable — nothing written"
+    fi
+  fi
+  if [ -n "$SID" ] && ns_sid_ok "$SID" && [ "$SID" != "$(st flag_session_id)" ]; then st_set flag_session_id "$SID"; ch=1; fi
+  if [ -n "$OWNER_CMD" ] && { [ "$OWNER_CMD" != "$(st flag_owner_command)" ] || [ "$sid" != "$(st flag_owner_command_sid)" ]; }; then
+    st_set flag_owner_command "$OWNER_CMD"; st_set flag_owner_command_sid "$sid"; ch=1
+  fi
+  [ "$ch" = 0 ] || st_save || exit 1
+  printf '%s\n' "$out"; exit 0
+}
 pending_do="$(printf '%s' "$pending" | "$JQ" -r '.do // empty' 2>/dev/null)"
 pending_what="$(printf '%s' "$pending" | "$JQ" -r '.what // empty' 2>/dev/null)"
 if [ -n "${NEXT_STEP_FROM:-}" ]; then
@@ -2747,7 +2803,7 @@ elif [ -n "$START" ]; then
       [ -n "$SID" ] || ns_die2 "session_id_missing — --start pick needs --session-id <this loop's session id> (the PICK lock is acquired with it) — nothing written"
       ns_sid_ok "$SID" || ns_die2 "session_id_malformed — --session-id '$SID' is not a session id — nothing written"
       # an ask of this PICK still pending re-prints (idempotent); a spawn of the pass it started is refused
-      [ "$pending_do" = ask ] && [ "$(st in_pick)" = true ] && { printf '%s\n' "$pending"; exit 0; }
+      [ "$pending_do" = ask ] && [ "$(st in_pick)" = true ] && ns_reprint
       [ "$pending_do" != spawn ] || ns_die2 "pick_already_started — a pending ${pending_what:-spawn} instruction belongs to ${ITEM:-the run}'s pass (a no-result call re-prints it) — nothing written"
       stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
       NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
@@ -2756,7 +2812,7 @@ elif [ -n "$START" ]; then
     run)
       # the same /autonomous (or, fresh phases, Launch Pad phase) spawn still pending is re-printed
       # (idempotent); any other open instruction of this item's pass is refused — RUN already started
-      [ "$pending_do" = spawn ] && { [ "$pending_what" = "/autonomous run" ] || [ "$pending_what" = "launch pad phase" ]; } && { printf '%s\n' "$pending"; exit 0; }
+      [ "$pending_do" = spawn ] && { [ "$pending_what" = "/autonomous run" ] || [ "$pending_what" = "launch pad phase" ]; } && ns_reprint
       case "$pending_do" in
         ask|spawn) ns_die2 "run_already_started — a pending ${pending_what:-$pending_do} instruction belongs to $ITEM's pass (a no-result call re-prints it) — nothing written" ;;
       esac
@@ -2773,18 +2829,18 @@ elif [ -n "$START" ]; then
       NEXT=drain ;;
   esac
 elif [ "$have_result" = 0 ]; then
-  if [ -n "$pending" ]; then printf '%s\n' "$pending"; exit 0; fi
+  if [ -n "$pending" ]; then ns_reprint; fi
   NEXT="$(st failed)"   # a step that failed (surfaced) is retried; otherwise there is nothing to do
   [ -n "$NEXT" ] || ns_die2 "nothing is pending — start RUN with --start run, or report the drain result with --result '{\"drain_result\":…}'"
 elif ns_run_replay "$RESULT"; then
   # the RUN report re-sent after the step it answered (same item + PR — the binding above discards the
   # sidecar otherwise — byte-identical) is a REPLAY: the instruction that step printed re-prints
   ns_err "--result is the RUN report this pass already took — re-printing the pending instruction; nothing written"
-  printf '%s\n' "$pending"; exit 0
+  ns_reprint
 elif [ "$pending_do" = ask ] && ns_is_drain_report "$RESULT" && [ "$(ns_report_hash "$RESULT")" = "$(st drain_report_hash)" ]; then
   # the DRAIN report re-sent while an ask its tail printed is open is a REPLAY, never an answer
   ns_err "--result is the DRAIN report this tail already took — re-printing the pending ask; nothing written"
-  printf '%s\n' "$pending"; exit 0
+  ns_reprint
 elif [ "$pending_do" = ask ]; then
   NEXT="$(st next)"; ANSWER="$RESULT"
 elif [ "$pending_do" = spawn ] && [ "$pending_what" = "launch pad phase" ]; then
@@ -2795,7 +2851,7 @@ elif [ "$pending_do" = spawn ] && [ "$pending_what" = "/autonomous run" ]; then
 elif [ "$pending_do" = spawn ] && ns_is_drain_report "$RESULT" && [ "$(ns_report_hash "$RESULT")" = "$(st prev_drain_report_hash)" ]; then
   # the previous drain's report re-sent at this drain's spawn is a REPLAY: the spawn re-prints, nothing written
   ns_err "--result is the previous drain's DRAIN report, not this drain's — re-printing the pending spawn; nothing written"
-  printf '%s\n' "$pending"; exit 0
+  ns_reprint
 elif [ "$pending_do" = spawn ] && [ "$pending_what" = "owned drain" ]; then
   ns_is_drain_report "$RESULT" || ns_die2 "--result does not answer the owned-drain spawn: send the DRAIN report (review_heal_result | review_heal_result_file | no_terminal_block) — nothing written"
   ns_check_drain_report "$RESULT"; ns_take_drain_report "$RESULT"; NEXT=drain-result
@@ -2808,7 +2864,7 @@ elif [ "$pending_do" = spawn ]; then
   # pending spawn re-prints and nothing is written (the fix and the re-drain have not run)
   if ns_same_report "$RESULT" "$(st report_key)"; then
     ns_err "--result is the drain report this spawn answered, not the re-drain's — re-printing the pending spawn; nothing written"
-    printf '%s\n' "$pending"; exit 0
+    ns_reprint
   fi
   ns_stale_report "$RESULT" && ns_die2 "--result is the drain report of a tail already left behind (another item / PR) — not this re-drain's; nothing written"
   NEXT=gate; ns_take_report "$RESULT"
@@ -2820,7 +2876,7 @@ else
   if ns_is_drain_report "$RESULT"; then
     if [ -n "$pending" ] && [ "$(st item)" = "$ITEM" ] && [ "$(st pr)" = "$PR" ] \
        && [ "$(ns_report_hash "$RESULT")" = "$(st drain_report_hash)" ]; then
-      printf '%s\n' "$pending"; exit 0
+      ns_reprint
     fi
     ns_die2 "--result is a DRAIN report, but no owned-drain / fix-now re-drain spawn is pending for $ITEM — nothing written"
   fi
@@ -2830,7 +2886,7 @@ else
   # that instruction and writes nothing (the tail already ran for it)
   if [ -n "$pending" ] && [ "$(st item)" = "$ITEM" ] && [ "$(st pr)" = "$PR" ] \
      && [ "$(ns_report_key "$RESULT")" = "$(st report_key)" ]; then
-    printf '%s\n' "$pending"; exit 0
+    ns_reprint
   fi
   ns_stale_report "$RESULT" && ns_die2 "--result is the drain report of a tail already left behind (another item / PR; ## Current names ${ITEM:-no item} ${PR:-}) — send this item's own report (\"pr\" binds it); nothing written"
   # a new item's tail: nothing pending, or the previous instruction was terminal (park / done); the

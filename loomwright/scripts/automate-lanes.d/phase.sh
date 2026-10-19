@@ -20,7 +20,9 @@
 #                                question — <tool_use_id> <question file>` (exit 5: deferred on the ask-user tool)
 #                                | `phase-wait: died — <reason>` (exit 6: `.died` marker, no result line, a
 #                                deferral with no recorded question, or no result sidecar — a fresh launch
-#                                removes the previous one, so a stale sidecar never reads as this one's)
+#                                removes the previous one, so a stale sidecar never reads as this one's). A died
+#                                phase is not "nothing happened": the driver still runs its fallbacks on the
+#                                died report (the Launch Pad pending-brief diff; the Supervisor open-PR check)
 #   phase-answer <runfile> <phase> <tool_use_id> --owner-command '<cmd>'   (stdin {"answers":{…},"note":"…"})
 #                                validates exactly as lane-answer (the question's own labels only; a note alone
 #                                refused), writes the answer file, resumes the SAME session with `--resume`,
@@ -198,6 +200,8 @@ lanes_phase_wait() {
     [ -e "$PH_DIR/inbox/answers/$id.json" ] && { echo "phase-wait: died — $id answered but the session was not resumed"; return 6; }
     echo "phase-wait: question — $id $qf"; return 5
   fi
+  # no sidecar ⇒ died (never `done`: the file a done line names must be THIS session's). The driver's died-report
+  # path keeps the downstream fallbacks — a saved brief or an opened PR is still found there
   [ -s "$PH_SIDECAR" ] || { echo "phase-wait: died — the session ended without writing its result sidecar ($PH_SIDECAR)"; return 6; }
   echo "phase-wait: done — session ${sid:-unknown} result $PH_SIDECAR"
 }

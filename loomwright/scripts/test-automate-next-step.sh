@@ -1496,14 +1496,14 @@ f_spawn_ok() { # <instruction> <step> <phase> — a fresh-phase spawn
       and (.launch | type) == "string" and (.prompt | type) == "string" and (.sidecar | endswith("-result.md"))
       and (.then | contains("phase-wait") and contains("phase-answer") and contains("ONE structured ask-user question") and contains("exit 5") and contains("exit 6"))' >/dev/null 2>&1
 }
-# f_argv_ok <instruction> <phase> <owner command or ""> — `launch` parses (as the shell runs it) into exactly
-# bash <automate-helpers.sh> phase-launch <runfile> <phase> [--owner-command <cmd>] --coordinator-session
-# coord-1 -- <the instruction's prompt>
+# f_argv_ok <instruction> <phase> <owner command or ""> [<coordinator session, default coord-1>] — `launch` parses
+# (as the shell runs it) into exactly bash <automate-helpers.sh> phase-launch <runfile> <phase> [--owner-command
+# <cmd>] --coordinator-session <coordinator session> -- <the instruction's prompt>
 f_argv_ok() {
   local l p got want
   l="$(printf '%s' "$1" | jq -r .launch)"; p="$(printf '%s' "$1" | jq -r .prompt)"
   got="$(bash -c 'eval "set -- $1"; printf "%s\n" "$@"' _ "$l" | sed '2s|.*/automate-helpers\.sh$|<H>|')"
-  want="$(printf '%s\n' bash '<H>' phase-launch "$CASE_RF" "$2"; [ -n "$3" ] && printf '%s\n' --owner-command "$3"; printf '%s\n' --coordinator-session coord-1 -- "$p")"
+  want="$(printf '%s\n' bash '<H>' phase-launch "$CASE_RF" "$2"; [ -n "$3" ] && printf '%s\n' --owner-command "$3"; printf '%s\n' --coordinator-session "${4:-coord-1}" -- "$p")"
   [ "$got" = "$want" ]
 }
 # leg_fresh_walk <driver> — AC1: one Queue item without --inline-phases: PICK (phase-check ok) → the Launch Pad
@@ -1643,6 +1643,23 @@ EOF
   f_claude 1; f_call "$drv" --start run --session-id coord-1
   f_call "$drv" --result '{"status_reason":"phase_died","no_pr_why":"phase-wait: died — no result line since the last launch","session_id":"lp-sess-1"}'
   f_nopr_ok "ran /autonomous — no PR: phase_died (phase-wait: died — no result line since the last launch)" || { LEG_MSG="died: $LEG_MSG"; return 1; }
+  # review fix (iteration 2): a phase that died AFTER saving its brief (e.g. it wrote no result sidecar) still gets
+  # the ls-diff fallback — one new brief ⇒ the Supervisor phase spawn on it (never stranded in pending/); two ⇒
+  # concurrent_session_detected
+  local died='{"status_reason":"phase_died","no_pr_why":"phase-wait: died — the session ended without writing its result sidecar","session_id":"lp-sess-1"}'
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+  f_claude 1; f_call "$drv" --start run --session-id coord-1
+  mkdir -p "$CASE_ROOT/.supervisor/jobs/pending" && printf '# Brief\n' > "$CASE_ROOT/.supervisor/jobs/pending/died.md"
+  f_call "$drv" --result "$died"
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" run supervisor && printf '%s' "$NC_OUT" | jq -e '.invocation == "/loomwright:supervisor job: .supervisor/jobs/pending/died.md"' >/dev/null 2>&1 \
+    && grep -qE -- '^- [0-9TZ:-]+ launch-pad saved \.supervisor/jobs/pending/died\.md$' "$CASE_RF" && ! grep -q 'ran /autonomous — no PR' "$CASE_RF" \
+    || { LEG_MSG="died after saving its brief ⇒ exit $NC_RC '${NC_OUT:0:160}' ${NC_ERR:0:160}"; return 1; }
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+  f_claude 1; f_call "$drv" --start run --session-id coord-1
+  mkdir -p "$CASE_ROOT/.supervisor/jobs/pending" && printf '# Brief\n' > "$CASE_ROOT/.supervisor/jobs/pending/d1.md" && printf '# Brief\n' > "$CASE_ROOT/.supervisor/jobs/pending/d2.md"
+  f_call "$drv" --result "$died"
+  f_nopr_ok "ran /autonomous — no PR: concurrent_session_detected (phase-wait: died — the session ended without writing its result sidecar; 2 new briefs in .supervisor/jobs/pending/)" \
+    || { LEG_MSG="died + two new briefs: $LEG_MSG"; return 1; }
   return 0
 }
 # leg_fresh_state_stale <driver> — review fix: .supervisor/state.md persists between runs (rewritten only at the next
@@ -1652,7 +1669,7 @@ EOF
 # is not the phase's either
 leg_fresh_state_stale() {
   local drv="$1" item rep want lp='LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: saved\n  saved_brief_path: %s\n  summary: PASS\n'
-  local rq=$'# Item\n\n## Outcomes Rubric\n- the thing works\n\n## Task\nx\n' c state stamp
+  local rq=$'# Item\n\n## Outcomes Rubric\n- the thing works\n\n## Task\nx\n' c state stamp opr=https://github.com/vikashruhilgit/loomwright/pull/777 left
   for c in stale-reported stale-none fresh-coord; do
     # shellcheck disable=SC2059
     f_plan_case "$drv" "$(printf "$lp" .supervisor/jobs/pending/r.md)" "$rq" .supervisor/jobs/pending/r.md "$rq"
@@ -1663,37 +1680,51 @@ leg_fresh_state_stale() {
       stale-none) state=old-sup-1; stamp=old; rep=''; want='' ;;
       fresh-coord) state=coord-1; stamp=now; rep='"session_id":"sup-r-3",'; want="session_id sup-r-3 ($item) phase=supervisor" ;;
     esac
-    printf -- '- session_id: %s\n' "$state" > "$CASE_ROOT/.supervisor/state.md"
+    # review fix (iteration 2): the died phase left an OPEN PR on the feature branch state.md records — named on the
+    # no-PR line only when state.md is THIS phase's (fresh); a stale state.md's branch is a previous run's
+    printf -- '- session_id: %s\n- branch: feature/died-x\n' "$state" > "$CASE_ROOT/.supervisor/state.md"
+    printf '0\tpr list --head feature/died-x *\t[{"url":"%s"}]\n' "$opr" >> "$CASE_GH"
     [ "$stamp" = old ] && touch -t 202001010000 "$CASE_ROOT/.supervisor/state.md"
+    if [ "$stamp" = old ]; then left=0; else left=1; fi
     f_call "$drv" --result "{${rep}\"status_reason\":\"phase_died\",\"no_pr_why\":\"phase-wait: died — no result line since the last launch\"}"
     [ "$NC_RC" = 0 ] && grep -q 'ran /autonomous — no PR: phase_died' "$CASE_RF" && ! grep -q "session_id $state " "$CASE_RF" \
+      && if [ "$left" = 1 ]; then grep -qF -- "no PR: phase_died (phase-wait: died — no result line since the last launch; the phase left PR $opr open on feature/died-x — not drained" "$CASE_RF"; else ! grep -q 'the phase left PR' "$CASE_RF"; fi \
       && if [ -n "$want" ]; then grep -qE -- "^- [0-9TZ:-]+ $(printf '%s' "$want" | sed 's/[().]/\\&/g')\$" "$CASE_RF"; else ! grep -q 'phase=supervisor' "$CASE_RF"; fi \
       || { LEG_MSG="$c: exit $NC_RC ${NC_ERR:0:160}; ## Progress: $(grep 'session_id\|no PR' "$CASE_RF" | tr '\n' '|' | head -c 400)"; return 1; }
   done
   return 0
 }
-# leg_fresh_owner_session <driver> — review fix: --owner-command is the launch authority of the session that typed
-# it. Given by coord-1 it is reused by coord-1's later calls (re-print and next spawn), but a call from ANOTHER
-# session (coord-2) gets a launch line without it — a re-printed pending one included — so phase-launch would
-# answer BLOCKED until coord-2 supplies its own
+# leg_fresh_owner_session <driver> — review fixes (iterations 1 + 2): --owner-command is the launch authority of the
+# session that typed it, and a pending fresh spawn's `launch` line is REBUILT from the re-printing call's identity.
+# coord-1's own re-print stays byte for byte (its owner command, --coordinator-session coord-1). Re-printed with
+# --session-id coord-2 it carries no owner command and --coordinator-session coord-2; that identity PERSISTS, so a
+# later bare re-print and a bare --result (the Supervisor spawn) carry coord-2 and no owner command (X1, X3). A
+# second case: coord-2's OWN --owner-command given on a re-print is used, and inherited by the bare calls (X2)
 leg_fresh_owner_session() {
-  local drv="$1" b=.supervisor/jobs/pending/o.md ad
-  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
-  f_claude 1; ad="$CASE_ROOT/.supervisor/automate"
-  f_call "$drv" --start run --session-id coord-1 --owner-command "$F_OWNER"
-  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad && f_argv_ok "$NC_OUT" launch-pad "$F_OWNER" \
-    || { LEG_MSG="coord-1 --start run ⇒ exit $NC_RC '${NC_OUT:0:160}' ${NC_ERR:0:160}"; return 1; }
-  f_call "$drv"
-  [ "$NC_RC" = 0 ] && f_argv_ok "$NC_OUT" launch-pad "$F_OWNER" || { LEG_MSG="coord-1 re-print lost its own owner command: '${NC_OUT:0:200}'"; return 1; }
-  f_call "$drv" --session-id coord-2
-  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad && f_argv_ok "$NC_OUT" launch-pad "" \
-    || { LEG_MSG="coord-2 re-print carried coord-1's owner command: exit $NC_RC '${NC_OUT:0:240}'"; return 1; }
-  mkdir -p "$CASE_ROOT/.supervisor/jobs/pending" && printf '# Brief\n\n## Task\no\n' > "$CASE_ROOT/$b"
-  printf 'LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: saved\n  saved_brief_path: %s\n  summary: PASS\n' "$b" > "$ad/$CASE_RUN.launch-pad-result.md"
-  f_call "$drv" --session-id coord-2 --result "$(jq -cn --arg f "$ad/$CASE_RUN.launch-pad-result.md" '{launch_pad_result_file: $f, session_id: "lp-sess-1"}')"
-  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" run supervisor && ! printf '%s' "$NC_OUT" | jq -r .launch | grep -q -- '--owner-command' \
-    && printf '%s' "$NC_OUT" | jq -r .launch | grep -q -- '--coordinator-session coord-2 ' \
-    || { LEG_MSG="coord-2's Supervisor spawn carried coord-1's owner command: exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:160}"; return 1; }
+  local drv="$1" b=.supervisor/jobs/pending/o.md ad first own c rep
+  for c in none own; do
+    new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+    f_claude 1; ad="$CASE_ROOT/.supervisor/automate"
+    f_call "$drv" --start run --session-id coord-1 --owner-command "$F_OWNER"; first="$NC_OUT"
+    [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad && f_argv_ok "$NC_OUT" launch-pad "$F_OWNER" \
+      || { LEG_MSG="$c: coord-1 --start run ⇒ exit $NC_RC '${NC_OUT:0:160}' ${NC_ERR:0:160}"; return 1; }
+    f_call "$drv"
+    [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$first" ] || { LEG_MSG="$c: coord-1's bare re-print is not byte for byte its spawn: '${NC_OUT:0:200}'"; return 1; }
+    f_call "$drv" --session-id coord-1
+    [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$first" ] || { LEG_MSG="$c: coord-1's re-print (--session-id coord-1) is not byte for byte its spawn"; return 1; }
+    if [ "$c" = own ]; then own='/automate --resume coord-2-typed'; rep=(--session-id coord-2 --owner-command "$own"); else own=""; rep=(--session-id coord-2); fi
+    f_call "$drv" "${rep[@]}"
+    [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad && f_argv_ok "$NC_OUT" launch-pad "$own" coord-2 \
+      || { LEG_MSG="$c: coord-2 re-print ⇒ exit $NC_RC '${NC_OUT:0:240}' (want owner '${own}', coord-2)"; return 1; }
+    f_call "$drv"
+    [ "$NC_RC" = 0 ] && f_argv_ok "$NC_OUT" launch-pad "$own" coord-2 \
+      || { LEG_MSG="$c: the bare re-print after coord-2's did not inherit coord-2's identity: '${NC_OUT:0:240}'"; return 1; }
+    mkdir -p "$CASE_ROOT/.supervisor/jobs/pending" && printf '# Brief\n\n## Task\no\n' > "$CASE_ROOT/$b"
+    printf 'LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: saved\n  saved_brief_path: %s\n  summary: PASS\n' "$b" > "$ad/$CASE_RUN.launch-pad-result.md"
+    f_call "$drv" --result "$(jq -cn --arg f "$ad/$CASE_RUN.launch-pad-result.md" '{launch_pad_result_file: $f, session_id: "lp-sess-1"}')"
+    [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" run supervisor && f_argv_ok "$NC_OUT" supervisor "$own" coord-2 \
+      || { LEG_MSG="$c: the bare --result's Supervisor spawn ⇒ exit $NC_RC '${NC_OUT:0:240}' (want owner '${own}', coord-2) ${NC_ERR:0:160}"; return 1; }
+  done
   return 0
 }
 # rec_helpers <driver path> — replace the automate-helpers.sh beside <driver> (a symlink in a built dir)
@@ -2114,11 +2145,11 @@ LEG_MSG=""
 if leg_fresh_unavailable "$DRIVER"; then ok "F2 (AC3): phase-check unavailable (no --permission-prompt-tool) / a session id phase-launch cannot carry ⇒ the phase_relay_unavailable park at phase-guard: no picked line, no current-set, no spawn, no RECONCILE, the run lock released"
 else no "F2: $LEG_MSG"; fi
 LEG_MSG=""
-if leg_fresh_plan_mapping "$DRIVER"; then ok "F3 (AC7): LAUNCH_PAD_RESULT discarded / blocked / aborted / *_non_interactive / malformed / rubric dropped / a died phase ⇒ the no-PR line with /autonomous PLAN step 4's status_reason, no Supervisor spawn, no suppress; saved (and a malformed block + ONE new brief) ⇒ the Supervisor phase spawn"
+if leg_fresh_plan_mapping "$DRIVER"; then ok "F3 (AC7): LAUNCH_PAD_RESULT discarded / blocked / aborted / *_non_interactive / malformed / rubric dropped / a died phase ⇒ the no-PR line with /autonomous PLAN step 4's status_reason, no Supervisor spawn, no suppress; saved (and a malformed block or a died phase + ONE new brief) ⇒ the Supervisor phase spawn; a died phase + two new briefs ⇒ concurrent_session_detected"
 else no "F3: $LEG_MSG"; fi
-if leg_fresh_state_stale "$DRIVER"; then ok "F3b (review fix): a stale .supervisor/state.md (older than the Supervisor phase spawn) + phase_died ⇒ the REPORTED session id on the phase=supervisor line (none reported ⇒ no line); a state.md naming the coordinator is not the phase's"
+if leg_fresh_state_stale "$DRIVER"; then ok "F3b (review fixes): a stale .supervisor/state.md (older than the Supervisor phase spawn) + phase_died ⇒ the REPORTED session id on the phase=supervisor line (none reported ⇒ no line); a state.md naming the coordinator is not the phase's; an open PR on a FRESH state.md's branch is named on the no-PR line, a stale one's never"
 else no "F3b: $LEG_MSG"; fi
-if leg_fresh_owner_session "$DRIVER"; then ok "F3c (review fix): --owner-command is reused only by the session that gave it — another --session-id's re-print and next spawn carry no owner command (phase-launch BLOCKED)"
+if leg_fresh_owner_session "$DRIVER"; then ok "F3c (review fixes): a re-printed fresh launch line is rebuilt from the re-printing session's identity — coord-1's re-print byte for byte; coord-2's re-print, the bare re-print after it and the bare --result's Supervisor spawn carry --coordinator-session coord-2 and no owner command (or coord-2's own when it gave one)"
 else no "F3c: $LEG_MSG"; fi
 
 echo "-- V7. running system (Validation 3 of automate-speed/07): PICK → RUN → DRAIN → the tail, one item"
@@ -2241,7 +2272,7 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     else ok "M2b: an unguarded merge-command line ⇒ surface leg red"; fi
   else no "M2b: mutant not built"; fi
   # MI — the no-result path re-runs the last step instead of re-printing
-  if m="$(build_mutant I "then printf '%s\n' \"\$pending\"; exit 0; fi" 'then NS_STATE="$(printf '"'"'%s'"'"' "$NS_STATE" | "$JQ" -c '"'"'.failed = .last_arm'"'"')"; fi')"; then
+  if m="$(build_mutant I "then ns_reprint; fi" 'then NS_STATE="$(printf '"'"'%s'"'"' "$NS_STATE" | "$JQ" -c '"'"'.failed = .last_arm'"'"')"; fi')"; then
     if leg_idem escalated-park "$m"; then no "MI: idempotency stayed green with the re-print replaced"
     else ok "MI: re-run instead of re-print ⇒ idempotency red ($LEG_MSG)"; fi
   else no "MI: mutant not built"; fi
