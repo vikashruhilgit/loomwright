@@ -304,9 +304,15 @@ on8; HERE_L="$HERE" bash -c '. "$HERE_L/automate-lanes.sh"; LN_PRIMARY="$1"
   _lanes_remove_event "live merge watcher (pid 1, pr); use --stop"
   _lanes_remove_event "awaiting_input — unanswered question q"
   _lanes_remove_event "gone (PR closed unmerged) — a human runs lane-remove --abandon"
+  _lanes_remove_event "lane process (pid 1) still alive after --stop"
+  _lanes_remove_event "could not write the ABANDONED stamp on reqs/a.md"
+  _lanes_remove_event "evidence-gated trail push failed: meta-sync exit 1"
   _lanes_event lane-remove pass removed' _ "$T/r1"; off8
 { [ "$(evs)" = "automate-lanes/lane-remove/fail/dirty_tree
 automate-lanes/lane-remove/fail/metadata_not_pushed
+automate-lanes/lane-remove/fail/stop_failed
+automate-lanes/lane-remove/fail/abandon_record_failed
+automate-lanes/lane-remove/fail/abandon_push_failed
 automate-lanes/lane-remove/pass/removed" ] && ! leaky; }; check $? "lane-remove: stuck refusals only, normal waits silent, removed ⇒ pass ($(evs | tr '\n' ';'))"
 
 # (e) fleet-closeout — the real subcommand: an unreadable metadata mode ⇒ pull FAILED ⇒ fail pull_failed, rooted at the primary

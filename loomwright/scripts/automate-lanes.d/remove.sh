@@ -55,6 +55,10 @@ _lanes_remove_event() {
     "branch "*" commit(s) not on origin"*) c=unpushed_commits ;;
     "metadata mode unknown"*|"metadata status unreadable"*|*"unreadable"*) c=status_unreadable ;;
     "salvage "*) c=salvage_failed ;;
+    *"still alive after --stop") c=stop_failed ;;
+    # --abandon's own record: an owner typed it, but a failed stamp / move / push leaves the lane stuck
+    "could not write the ABANDONED stamp"*|"could not move "*) c=abandon_record_failed ;;
+    "metadata push failed"*|"evidence-gated trail push failed"*) c=abandon_push_failed ;;
     *) return 0 ;;
   esac
   _lanes_event lane-remove fail "$c"
