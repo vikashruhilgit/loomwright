@@ -124,6 +124,6 @@ EVALUATE ▶ PR-base verification ▶ chained review-and-heal ▶ token ceiling
 DONE    ▶ write .supervisor/autonomous/{sid}/summary.md + state.json; echo AUTONOMOUS_RUN (iterations[] is merge order)
 ```
 
-`.supervisor/` must stay in `.gitignore` (the `state-management` skill ensures it at session start); if you stripped that line, re-add it before running `/autonomous`.
+`.supervisor/` must stay ignored (a bare line, or `/setup memory`'s managed block; the `state-management` skill ensures it at session start); if you stripped that rule, restore it before running `/autonomous`.
 
 Examples, limitations, troubleshooting and related commands: `docs/rationale/launch-pad-autonomous.md` §"/autonomous — usage notes".

@@ -90,7 +90,8 @@
 # Decisions Log / Worker Results / Error Log / Checkpoint / Phase Flags, and `## Session` is
 # `scripts/build-state.sh`'s. Every flag and decision it decides is a `context-keeper` spawn carrying the
 # exact operation text, answered by `--result {"confirmed": true}`. It writes only: the `.supervisor/`
-# directories (and the `.supervisor/` line of `.gitignore`, as Phase 0 step 4 does), the job brief's
+# directories (and, only when git does not already ignore `.supervisor/`'s contents, a `.supervisor/` line
+# appended to `.gitignore`, as Phase 0 step 4 does — a `/setup memory` managed block counts), the job brief's
 # lifecycle moves, the git branch, the matching `/autonomous` `state.json`'s two ACQUIRE fields (jq,
 # temp + rename; skipped when no single active session matches), and its own sidecar. A failed write is
 # SURFACED — stderr names it, no instruction is printed, the exit code is 1 and the sidecar stays at the
@@ -337,7 +338,7 @@ sn_job_fail() {
 
 # init — Phase 0 (skills/supervisor-config/SKILL.md steps 4–7 and the 5a preamble's flag records)
 sn_init() {
-  local jp b t title ops gc ge gd ni_src mode maxw cost bm bw bb base
+  local jp b t title ops gc ge gd ni_src mode maxw cost bm bw bb base gi gp
   jp="$JOB_ARG"
   case "$jp" in
     /*) t="$(cd "$(dirname "$jp")" 2>/dev/null && pwd -P)"; [ -z "$t" ] || jp="$t/${jp##*/}" ;;
@@ -353,8 +354,21 @@ sn_init() {
   # step 4: the .supervisor/ bootstrap
   mkdir -p .supervisor/history .supervisor/jobs/pending .supervisor/jobs/in-progress .supervisor/jobs/done \
     .supervisor/jobs/failed .supervisor/logs || { sn_fail "cannot create the .supervisor/ directories"; return 1; }
-  grep -qxF '.supervisor/' .gitignore 2>/dev/null || printf '%s\n' '.supervisor/' >> .gitignore \
-    || { sn_fail "cannot append .supervisor/ to .gitignore"; return 1; }
+  # `.supervisor/` must stay ignored: a bare line, or `/setup memory`'s managed block (`.supervisor/*` +
+  # `!.supervisor/memory/`, no bare line — a bare line appended after it re-ignores the memory store and
+  # dirties the tracked .gitignore, #615). So ask git, not the file text, about two child paths
+  # (`.supervisor` itself is not reliably reported): both ignored ⇒ nothing to write; either not ⇒
+  # append; any other exit (128 outside a repo, 127 with no git) ⇒ the exact-line test
+  gi=ignored
+  for gp in .supervisor/state.md .supervisor/logs/x.json; do
+    git check-ignore -q --no-index "$gp" >/dev/null 2>&1
+    case "$?" in 0) ;; 1) gi=append ;; *) gi=fallback; break ;; esac
+  done
+  if [ "$gi" = fallback ] && grep -qxF '.supervisor/' .gitignore 2>/dev/null; then gi=ignored; fi
+  if [ "$gi" != ignored ]; then
+    { [ ! -s .gitignore ] || [ -z "$(tail -c 1 .gitignore)" ] || printf '\n' >> .gitignore; } \
+      && printf '%s\n' '.supervisor/' >> .gitignore || { sn_fail "cannot append .supervisor/ to .gitignore"; return 1; }
+  fi
   # step 6: pending/ → in-progress/ (a brief outside pending/ — the old flat layout — stays where it is)
   case "$jp" in
     .supervisor/jobs/pending/*)
