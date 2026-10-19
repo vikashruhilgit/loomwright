@@ -346,8 +346,13 @@ mrs="$(bash "$FN_D/onoff.sh" --root "$Bon" mode 2>/dev/null)"
 hasF 'RESERVED' "$(bash "$MEM" --help 2>/dev/null)" && ok "(fn-4) --help states that 'off' is reserved" || no "(fn-4) --help is silent about the reserved 'off'"
 o="$(bash "$MEM" --root "$Bon" apply --branch-mode 2>/dev/null)"
 hasF 'or off (reserved — never a branch name)' "$o" && ok "(fn-4) the --branch-mode usage error states 'off' is reserved" || no "(fn-4) --branch-mode usage: $o"
-hasF '**`off` is reserved**' "$(cat "$HERE/../commands/setup.md" 2>/dev/null)" && ok "(fn-4) commands/setup.md §Branch mode states 'off' is reserved" || no "(fn-4) commands/setup.md does not state 'off' is reserved"
-hasF '`branch mode — on <branch>, stays ignored here`' "$(cat "$HERE/../commands/setup.md" 2>/dev/null)" && ok "(fn-1) commands/setup.md §Branch mode documents the branch-mode ledger line the helper prints" || no "(fn-1) commands/setup.md does not document the branch-mode ledger line"
+# commands/setup.md is a router since automate-speed/22 (§Branch mode lives in a part): the two doc
+# checks below read the ASSEMBLED text (router + docs/command-parts/setup/), written once.
+SETUP_ASM="$FIXTURE_ROOT/setup-assembled.md"
+bash "$HERE/fixtures/automate-loop-split/assemble.sh" "$HERE/../commands/setup.md" "$SETUP_ASM" \
+  || no "(fn-4) cannot assemble commands/setup.md (router + docs/command-parts/setup/)"
+hasF '**`off` is reserved**' "$(cat "$SETUP_ASM" 2>/dev/null)" && ok "(fn-4) commands/setup.md §Branch mode states 'off' is reserved" || no "(fn-4) commands/setup.md does not state 'off' is reserved"
+hasF '`branch mode — on <branch>, stays ignored here`' "$(cat "$SETUP_ASM" 2>/dev/null)" && ok "(fn-1) commands/setup.md §Branch mode documents the branch-mode ledger line the helper prints" || no "(fn-1) commands/setup.md does not document the branch-mode ledger line"
 sed 's/-\*|HEAD|@|off) return 1/-*|HEAD|@) return 1/' "$MEMB" > "$FN_D/mut4.sh"
 Bro2="$(bmf_fix)"; bmf_sub "$Bro2" "${MLINE}off"
 mm="$(bash "$FN_D/mut4.sh" --root "$Bro2" mode 2>/dev/null)"
