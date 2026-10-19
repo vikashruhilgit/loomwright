@@ -39,7 +39,8 @@
 #       listed in a summary draft. Zero items ⇒ no files. BEFORE dedupe, an item
 #       with no recognised severity whose whole text is a no-finding verdict
 #       (`claude[bot] review of <sha>: no new findings`, `no new findings on <sha>`,
-#       `… reported no findings`, `no finding raised` — the NO_FINDING list below)
+#       `Reviewed <sha>: no new findings`, `… reported no findings`,
+#       `no finding raised` — the NO_FINDING list below)
 #       is NOT a finding (#617): never drafted or counted, one `not-a-finding`
 #       line, and an UNDECIDED own draft of it already on disk is retired
 #       (`moved` row). The drain records a clean review as `clean` since #617, so
@@ -248,14 +249,16 @@ SEVS = ("BLOCKING", "HIGH", "MEDIUM", "LOW", "INFO")
 # when it states NO recognised severity AND its norm()'d text FULLY matches one of these paraphrases
 # (case-insensitive, anchored, optional trailing period) — built from real validator lines:
 # `claude[bot] review of <sha>: no new findings`, `claude-review on <sha> reported no findings`,
-# `no new findings on <sha>`, `no finding raised`. Anything after the verdict ("no new findings;
-# notes …") fails the anchor, so a mixed item is still drafted.
+# `no new findings on <sha>`, the bots' own `Reviewed <sha>: no new findings`, `no finding raised`.
+# Anything after the verdict ("no new findings; notes …") fails the anchor, so a mixed item is still
+# drafted.
 NF_SHA = r"[0-9a-f]{7,40}"
 NF_ACTOR = r"(?:[\w\[\]@./-]+ ){0,3}"
 NO_FINDING = [re.compile(p + r"\.?", re.I) for p in (
     NF_ACTOR + r"(?:of|on|for) " + NF_SHA + r":? (?:reported )?no (?:new )?findings?",
     r"no (?:new )?findings? (?:on|of|for|at) " + NF_SHA,
     NF_ACTOR + r"reported no (?:new )?findings?",
+    NF_ACTOR + r"reviewed " + NF_SHA + r"[:.]? no (?:new )?findings?",
     r"no (?:new )?findings? raised",
 )]
 def no_finding(text):
