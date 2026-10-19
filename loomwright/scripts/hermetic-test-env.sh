@@ -16,12 +16,13 @@
 # What sourcing it does:
 #   (a) unsets every env var that routes data OUT (list derived below, next to the `unset`);
 #   (b) exports LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0 — notify-desktop.sh's own "Opt-out gate";
-#   (c) prepends a per-process shim dir to PATH whose osascript / notify-send / terminal-notifier /
+#   (c) defaults LOOMWRIGHT_SCRIPT_EVENTS=0 — script events off unless a test turns them on (#618);
+#   (d) prepends a per-process shim dir to PATH whose osascript / notify-send / terminal-notifier /
 #       curl / wget stubs append "<name> <argv>" to $HERMETIC_EGRESS_LOG and exit 0. `gh` is
 #       deliberately NOT stubbed: tests stub gh themselves, and a global stub could mask a test's
 #       own stub ordering (test-hermetic-egress.sh probes the telemetry route instead);
-#   (d) exports HERMETIC_TEST_ENV=1 (the marker test-run-self-tests.sh and the probe read);
-#   (e) never touches HOME — tests keep their own HOME isolation where they have it.
+#   (e) exports HERMETIC_TEST_ENV=1 (the marker test-run-self-tests.sh and the probe read);
+#   (f) never touches HOME — tests keep their own HOME isolation where they have it.
 #
 # SCOPE LIMIT — what this does NOT cover: egress configured OUTSIDE the environment. The user-scope
 # $HOME-rooted egress.json (resolve-egress-config.sh, keyed by repo slug) still supplies
@@ -74,7 +75,13 @@ unset LOOMWRIGHT_WEBHOOK_URL LOOMWRIGHT_WEBHOOK_FORMAT LOOMWRIGHT_TELEMETRY_REPO
 # (b) The OS-notifier opt-out that notify-desktop.sh already honours as its first gate.
 export LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0
 
-# (c) Recording stubs.
+# (c) Script events (emit-script-event.sh) default OFF in tests (#618): the /automate engine seams
+# emit on ordinary fail/pass paths, and an emit runs the telemetry wrapper, which writes
+# <root>/.supervisor/logs/ into fixture roots. A test that asserts on events sets
+# LOOMWRIGHT_SCRIPT_EVENTS=1 itself (or unsets it after sourcing this file); a caller's explicit value wins.
+export LOOMWRIGHT_SCRIPT_EVENTS="${LOOMWRIGHT_SCRIPT_EVENTS:-0}"
+
+# (d) Recording stubs.
 _hermetic_stub_names="osascript notify-send terminal-notifier curl wget"
 
 _hermetic_shim_dir_ok() {
@@ -121,7 +128,7 @@ fi
 unset -f _hermetic_shim_dir_ok
 unset _hermetic_stub_names
 
-# (d) Marker.
+# (e) Marker.
 export HERMETIC_TEST_ENV=1
 
 # hermetic_path_without_shims — print $PATH minus every hermetic shim dir (any entry carrying the

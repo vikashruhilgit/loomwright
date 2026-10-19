@@ -219,6 +219,9 @@ rj() { printf '%s' "$1" | "$JQ" -r --arg k "$2" '.[$k] // empty | if type == "st
 
 SN_RC=0
 sn_refuse() { sn_err "$*"; SN_RC=2; return 1; }   # input refused before any write of this step
+# sn_event <outcome> <code> — #618: an opt-in telemetry script event (docs/TELEMETRY.md "What the engine
+# reports") from this checkout; fire-and-forget — it never changes what this call prints or returns.
+sn_event() { bash "$HERE/emit-script-event.sh" --root "$ROOT" supervisor-next-step run "$1" "$2" >/dev/null 2>&1 </dev/null || true; }
 sn_fail() { sn_err "$*"; SN_RC=1; return 1; }     # a write / helper failure, surfaced
 
 # ------------------------------------------------------------------------------------------------
@@ -1262,6 +1265,9 @@ while [ -n "$NEXT" ]; do
     if [ "$first_arm" = 1 ] && [ "$SN_RC" = 2 ]; then exit 2; fi
     SN_STATE="$(printf '%s' "$SN_STATE" | "$JQ" -c --arg a "$arm" '.failed = $a | del(.pending_text)')"
     st_save
+    # a surfaced failure of a dispatch arm — any refusal past this call's first write included; the
+    # code is the arm (a step name from sn_dispatch's case list), never the message text
+    case "$arm" in ''|*[!a-z-]*) ;; *) sn_event fail "$arm-failed" ;; esac
     [ "$SN_RC" = 2 ] && SN_RC=1
     [ "$SN_RC" -ne 0 ] || SN_RC=1
     exit "$SN_RC"
@@ -1274,6 +1280,8 @@ if [ -n "$SN_EMIT" ]; then
   st_set pending_text "$SN_EMIT"
   st_save || exit 1
   printf '%s\n' "$SN_EMIT"
+  # the run reached handover (FINALIZE done) ⇒ close this checkout's open supervisor-next-step threads
+  [ "$arm" != handover ] || sn_event pass ok
   exit 0
 fi
 SN_STATE="$SN_SAVED"

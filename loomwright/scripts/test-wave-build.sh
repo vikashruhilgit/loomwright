@@ -151,9 +151,18 @@ mk_lane "$A" 1 "$IA" 11 a.txt "lane one"
 mk_lane "$A" 2 "$IB" 12 b.txt "lane two"
 SHA11="$(cat "$T/gh/head.11")"; SHA12="$(cat "$T/gh/head.12")"
 
+# #618 script events: W1 / W3 / W4 run with events ON (TEE, no consent — HOME is sandboxed) and each
+# asserts its ONE event; the byte-identical primary checks then also prove the emit disturbs nothing.
+EVW="$T/events.jsonl"
+ev_on() { : > "$EVW"; export LOOMWRIGHT_SCRIPT_EVENTS=1 LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVW"; }
+ev_off() { export LOOMWRIGHT_SCRIPT_EVENTS=0; unset LOOMWRIGHT_SCRIPT_EVENT_TEE; }
+ev_got() { python3 -I -c 'import json,sys
+print(";".join("%s/%s/%s/%s" % (d["script"], d["step"], d["outcome"], d["code"]) for d in (json.loads(l) for l in open(sys.argv[1]) if l.strip())))' "$EVW"; }
+
 # ---- W1: happy path ---------------------------------------------------------------------------------
 P0="$(pstate)"
-out="$(wb "$RFA")"; rc=$?
+ev_on; out="$(wb "$RFA")"; rc=$?; ev_off
+check "W1x (#618) one script event: pass ok" "$(ev_got)" "automate-wave/wave-build/pass/ok"
 printf '%s\n' "$out" | sed 's/^/       | /'
 WBR="wave/$A-w3"
 check "W1 exit 0, last line names the opened PR" "$rc:$(printf '%s\n' "$out" | tail -n1)" "0:wave-build: opened — https://github.com/o/r/pull/901"
@@ -204,7 +213,8 @@ check "W2b … no new commit, ref, worktree or PR; the parent run file byte-unch
 # ---- W3: refusals — exit 1, nothing created ---------------------------------------------------------
 R0="$(refs_state)"
 echo MERGED > "$T/gh/state.12"
-out="$(wb "$RFA" --wave-branch wave/not-open)"; rc=$?
+ev_on; out="$(wb "$RFA" --wave-branch wave/not-open)"; rc=$?; ev_off
+check "W3x (#618) one script event: fail lane_not_ready (never the lane / PR text)" "$(ev_got)" "automate-wave/wave-build/fail/lane_not_ready"
 check "W3 a lane PR not OPEN ⇒ refused, exit 1" "$rc:$(printf '%s\n' "$out" | grep -cxF 'wave-build: refused — L2 PR #12 is MERGED, not OPEN' | tr -d ' ')" "1:1"
 check "W3b … nothing created (refs, worktrees, origin), no pr create" "$(refs_state):$(ncreate)" "$R0:1"
 rm -f "$T/gh/state.12"
@@ -242,7 +252,8 @@ rc=1"
 
 # ---- W4: STOPs — exit 2, nothing pushed, worktree kept -----------------------------------------------
 P0="$(pstate)"
-out="$(STUB_CI_RC=1 wb "$RFA" --wave-branch wave/ci-fail)"; rc=$?
+ev_on; out="$(STUB_CI_RC=1 wb "$RFA" --wave-branch wave/ci-fail)"; rc=$?; ev_off
+check "W4x (#618) one script event: fail ci_failed" "$(ev_got)" "automate-wave/wave-build/fail/ci_failed"
 KW="$(kept_wt "$out")"
 check "W4 a failing local CI ⇒ STOPPED, exit 2" "$rc:$(printf '%s\n' "$out" | tail -n1 | grep -c '^wave-build: STOPPED — local CI failed (exit 1: ci-local: FAIL (stub)) — log .*/ci-local.log; nothing pushed; worktree kept at ' | tr -d ' ')" "2:1"
 check "W4b … nothing pushed, no pr create, the worktree kept (both merges in it), lock released" \

@@ -340,6 +340,13 @@ EOF
 # close out — <item>` unless that exact line (after its one leading timestamp
 # token) is already in ## Progress — at most one per item per run. Exit 0; a
 # usage error exits 1 (the caller reads anything but `complete` — or, at start, `run_lock_held` rows alone — as a leftover).
+# _co_event <outcome> <code> [--count k=n] — #618: an opt-in telemetry script event (docs/TELEMETRY.md
+# "What the engine reports") from the checkout this classifier runs in; fire-and-forget, never
+# changes this function's output or status. No git toplevel ⇒ nothing sent.
+_co_event() {
+  local root; root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  bash "$(dirname "$0")/emit-script-event.sh" --root "$root" automate-closeout closeout "$@" >/dev/null 2>&1 </dev/null || true
+}
 closeout_classify() {
   local run="-" item="-" pr="-" rec=""
   while [ "$#" -gt 0 ]; do
@@ -366,8 +373,18 @@ closeout_classify() {
     [ "$cls" = run_lock_held ] && held="${held}run_lock_held$tab$run$tab$item$tab$pr$tab$step$tab${t//$tab/ }"$'\n'
   done
   [ "$n" -gt 0 ] || rows="leftover$tab$run$tab$item$tab$pr${tab}none${tab}no closeout: line in the input"$'\n'
-  if [ -n "$rows" ] || [ -n "$held" ]; then printf '%s%s' "$rows" "$held"; return 0; fi
+  if [ -n "$rows" ] || [ -n "$held" ]; then
+    printf '%s%s' "$rows" "$held"
+    # #618: one warn event per distinct leftover step (the closed step set above — a plugin token,
+    # never the detail text); a run_lock_held-only result is a retry, not a leftover, and sends nothing.
+    local st
+    for st in $(printf '%s' "$rows" | awk -F'\t' 'NF { print $5 }' | env LC_ALL=C sort -u); do
+      _co_event warn "leftover_$st" --count "rows=$(printf '%s' "$rows" | awk -F'\t' -v s="$st" '$5 == s' | grep -c .)"
+    done
+    return 0
+  fi
   echo "complete"
+  _co_event pass complete
   if [ -n "$rec" ] && [ "$item" != "-" ] && [ "$changed" = 0 ] && [ -f "$rec" ]; then
     local want="closeout: nothing to close out — $item"
     if ! _progress_block "$rec" | AH_W="$want" awk '

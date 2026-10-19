@@ -52,18 +52,55 @@ _trail_is_run_draft() {
 TRAIL_KEPT=""
 TRAIL_EXCLUDED=""
 TRAIL_SKIP_IGNORE_DROP=0   # 1 only on the branch-mode push path (_trail_meta_push)
+# _trail_sidecar_code <sidecar-check fail reason> — #618: the reason as a fixed plugin token for the
+# script event (never the reason text, which names keys and paths): the phrasings come from
+# sidecar.sh / result_nested_keys.py; anything else is the catch-all sidecar_invalid. DRIFT: these
+# patterns match that text — test-script-event-telemetry.sh S8 (c2) drives every branch with the REAL
+# sidecar-check output, so a reworded reason turns it red; update both in the same change.
+_trail_sidecar_code() {
+  case "$1" in
+    *"missing required key"*) echo sidecar_missing_key ;;
+    *"non-schema key"*) echo sidecar_non_schema_key ;;
+    *"is not a mapping"*|*"is not a list"*) echo sidecar_wrong_shape ;;
+    *"file not found"*|*"unreadable"*|*"parse error"*|*"no REVIEW_HEAL_RESULT or SUPERVISOR_RESULT block"*) echo sidecar_unreadable ;;
+    *) echo sidecar_invalid ;;
+  esac
+}
+# _trail_event <outcome> <code> [--count k=n] — #618: an opt-in telemetry script event from this checkout.
+_trail_event() {
+  local root; root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  bash "$HERE/emit-script-event.sh" --root "$root" automate-trail trail-pr "$@" >/dev/null 2>&1 </dev/null || true
+}
+# _trail_report_shape — #618: report what the LAST _trail_candidates call found about the run's
+# result sidecars. Called by the two trail-pr paths only (trail_pr, _trail_meta_push), never from
+# _trail_candidates itself: that builder is shared with trail-unstage, trail-gate and closeout's
+# sync step, which would re-send (and mislabel as trail-pr) the same result on every close-out.
+TRAIL_SC_N=0; TRAIL_SC_CODES=""
+_trail_report_shape() {
+  local c
+  if [ -n "$TRAIL_SC_CODES" ]; then
+    for c in $TRAIL_SC_CODES; do _trail_event warn "$c"; done
+  elif [ "$TRAIL_SC_N" -gt 0 ]; then
+    # every result sidecar passed ⇒ close any open shape thread; the evidence gate's
+    # `pr not merged` exclusions are expected and never reported
+    _trail_event pass sidecars_ok --count "sidecars=$TRAIL_SC_N"
+  fi
+  return 0
+}
 _trail_candidates() {
   local rf_rel="$1" run_id="$2"
   local cands="" p q item
-  TRAIL_EXCLUDED=""
+  TRAIL_EXCLUDED=""; TRAIL_SC_N=0; TRAIL_SC_CODES=""
   cands="$rf_rel"
   local sc_dir; sc_dir="$(dirname "$rf_rel")"
   for p in "$sc_dir/$run_id.review-heal-result.md" "$sc_dir/$run_id.supervisor-result.md"; do
     [ -f "$p" ] || continue
+    TRAIL_SC_N=$((TRAIL_SC_N + 1))
     q="$(sidecar_check "$p")"
     case "$q" in
       "ok $p") cands="$cands"$'\n'"$p" ;;
-      *) TRAIL_EXCLUDED="$TRAIL_EXCLUDED; excluded $p — ${q#"fail $p: "}" ;;
+      *) TRAIL_EXCLUDED="$TRAIL_EXCLUDED; excluded $p — ${q#"fail $p: "}"
+         TRAIL_SC_CODES="${TRAIL_SC_CODES:+$TRAIL_SC_CODES }$(_trail_sidecar_code "${q#"fail $p: "}")" ;;
     esac
   done
   local queue
@@ -340,7 +377,7 @@ _trail_meta_push() {
   esac
   local branch="${bm#on }"
   TRAIL_SKIP_IGNORE_DROP=1
-  _trail_candidates "$rf_rel" "$run_id"
+  _trail_candidates "$rf_rel" "$run_id"; _trail_report_shape
   TRAIL_SKIP_IGNORE_DROP=0
   _evidence_gate
   local excluded="$TRAIL_EXCLUDED" list dl dn dd dp
@@ -417,7 +454,7 @@ trail_pr() {
   fi
 
   # ---- candidate paths (explicit; never -A / .) ----------------------------
-  _trail_candidates "$rf_rel" "$run_id"
+  _trail_candidates "$rf_rel" "$run_id"; _trail_report_shape
   # Evidence-gated stamps: a done-stamped requirement / done brief rides only
   # when its PR reads merged (never a done claim for unmerged work).
   _evidence_gate

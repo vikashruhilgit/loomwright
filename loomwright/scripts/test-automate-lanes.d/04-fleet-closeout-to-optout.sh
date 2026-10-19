@@ -217,7 +217,8 @@ check "AF13 a foreign run lock ⇒ finalize FAILED naming its holder, parent sti
 bash "$HERE/run-lock.sh" release --owner "automate-pick:someone-else" --root "$P" >/dev/null 2>&1
 # AF12 mutation control: with the finalize call deleted, the Queue-empty close leaves the parent running
 mkdir -p "$MUT"; FCM="$SC/automate-lanes-nofinalize.sh"
-awk '!/^  _lanes_fc_finalize "\$rf" "\$primary" "\$mb" "\$sw"$/' "$SB" > "$FCM"
+# (#618: the call's output is captured to report a FAILED finalize — the mutation empties the capture)
+awk '{ if ($0 == "  local fo; fo=\"$(_lanes_fc_finalize \"$rf\" \"$primary\" \"$mb\" \"$sw\")\"") print "  local fo=\"\""; else print }' "$SB" > "$FCM"
 fc_parent automate-2026-10-11-120000; RF15="$FCRF"
 if ! cmp -s "$SB" "$FCM" && bash -n "$FCM"; then
   out="$(FC_S="$FCM" fc fleet-closeout "$RF15")"
