@@ -56,9 +56,10 @@ lane-remove:lanes_remove lane-convert-ready:lanes_convert_ready lane-info:lanes_
 lane-drain-check:lanes_drain_check init-check:lanes_init_check pick-guard:lanes_pick_guard
 branch-check:lanes_branch_check lane-status:lanes_status lane-feed:lanes_feed lane-readiness:lanes_readiness
 validation-gate:lanes_validation_gate lane-park-notify:lanes_park_notify lane-wait:lanes_wait
-fleet-closeout:lanes_fleet_closeout wave-plan:lanes_wave_plan _lane-run:lanes_run_wrapper
-_merge-hooks:_lanes_merge_hooks"
-MODS_WANT="common create launch relay remove notify-guards status-read park-leaks status readiness wave"
+fleet-closeout:lanes_fleet_closeout wave-plan:lanes_wave_plan phase-check:lanes_phase_check
+phase-launch:lanes_phase_launch phase-wait:lanes_phase_wait phase-answer:lanes_phase_answer
+_lane-run:lanes_run_wrapper _merge-hooks:_lanes_merge_hooks"
+MODS_WANT="common create launch relay remove notify-guards status-read park-leaks status readiness wave phase"
 USAGE_HEAD='# Usage (standalone: `bash automate-lanes.sh <subcmd> ...`):'
 MISSING_MSG='automate-lanes: missing module file: automate-lanes.d/'
 

@@ -34,6 +34,12 @@ lanes_relay_hook() {
     return 0
   fi
   [ "$ev" = "PreToolUse" ] || { echo '{}'; return 0; }
+  # >>> phase-dir routing (fresh session per phase, D2): a phase session's hook environment names its
+  # phase dir, so its question goes there — never to a lane inbox, even inside a lane clone (whose own
+  # relay hook then fires with the same variable and writes the same file: idempotent) — and the lane
+  # lookup below is skipped. Unset ⇒ everything below is unchanged.
+  if [ -n "${LOOMWRIGHT_PHASE_DIR:-}" ]; then _lanes_relay_phase "$in"; return 0; fi
+  # <<< phase-dir routing
   cwd="$(jq -r '.cwd // empty' <<<"$in" 2>/dev/null)"; [ -n "$cwd" ] || cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
   root="$(_lanes_hook_root "$cwd")" || { echo '{}'; return 0; }   # HOOK-ROOT
   [ -s "$root/.supervisor/lane.json" ] || { echo '{}'; return 0; }
@@ -48,14 +54,55 @@ lanes_relay_hook() {
     _lanes_policy_apply "$root" "$q" "$a" \
       || { echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"defer"}}'; return 0; }
   fi
-  jq -c --slurpfile ans "$a" '
+  _lanes_relay_allow "$in" "$a" "automate-lanes.sh lane-answer"
+}
+
+# _lanes_relay_allow <hook JSON> <answer_file> <human writer> — the answered branch's reply: `allow` with
+# `updatedInput.answers` (+ the note as `annotations`). The reason names the policy, or the human writer
+# (`automate-lanes.sh lane-answer` for a lane, `automate-lanes.sh phase-answer` for a phase session).
+_lanes_relay_allow() {
+  jq -c --slurpfile ans "$2" --arg hw "$3" '
     ($ans[0].answers) as $A | ($ans[0].note) as $N
     | {hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow",
         permissionDecisionReason: (if $ans[0].source == "policy"
           then "answered by the stamped lane policy (gate \($ans[0].gate // "?"), policy_sha \(($ans[0].policy_sha // "?")[0:12])) via automate-lanes.sh relay-hook"
-          else "answered by the owner via automate-lanes.sh lane-answer" end),
+          else "answered by the owner via \($hw)" end),
         updatedInput: ({questions: .tool_input.questions, answers: $A}
-          + (if ($N // "") == "" then {} else {annotations: ($A | with_entries(.value = {notes: $N}))} end))}}' <<<"$in"
+          + (if ($N // "") == "" then {} else {annotations: ($A | with_entries(.value = {notes: $N}))} end))}}' <<<"$1"
+}
+
+# _lanes_phase_dir_ok <dir> — 0 only for an existing ABSOLUTE phase dir `<checkout>/.supervisor/automate/
+# <run_id>.phase/<phase>` (<phase> launch-pad | supervisor | drain; no `.`/`..` or empty component).
+_lanes_phase_dir_ok() {
+  local pd="$1" run
+  case "$pd" in /*) ;; *) return 1 ;; esac
+  case "$pd/" in *//*|*/./*|*/../*) return 1 ;; esac
+  case "${pd##*/}" in launch-pad|supervisor|drain) ;; *) return 1 ;; esac
+  run="${pd%/*}"; run="${run##*/}"
+  case "$run" in .*|*[!A-Za-z0-9_.-]*) return 1 ;; ?*.phase) ;; *) return 1 ;; esac
+  case "${pd%/*/*}" in */.supervisor/automate) ;; *) return 1 ;; esac
+  [ -d "$pd" ]
+}
+
+# _lanes_relay_phase <hook JSON> — relay-hook inside a phase session (LOOMWRIGHT_PHASE_DIR set): the same
+# question / answer JSON shapes as a lane, under <phase dir>/inbox/{questions,answers}/. No policy lookup
+# (the lane policy is lane-only: every phase question reaches the coordinator) and no supersede step
+# (phase-wait reads the id the session deferred on). A variable naming no valid phase dir ⇒ `{}`, never a
+# lane inbox write. Always exit 0, like the hook itself.
+_lanes_relay_phase() {
+  local in="$1" pd="${LOOMWRIGHT_PHASE_DIR%/}" id q a
+  _lanes_phase_dir_ok "$pd" || { echo '{}'; return 0; }
+  id="$(jq -r '.tool_use_id // empty' <<<"$in" 2>/dev/null)"
+  case "$id" in ''|*[!A-Za-z0-9_-]*) echo '{}'; return 0 ;; esac
+  q="$pd/inbox/questions/$id.json"; a="$pd/inbox/answers/$id.json"
+  mkdir -p "$(dirname "$q")" "$(dirname "$a")" 2>/dev/null
+  if [ ! -s "$a" ]; then
+    jq -c --arg at "$(now_utc)" '{id: .tool_use_id, asked_at: $at, questions: .tool_input.questions}' <<<"$in" > "$q.tmp.$$" \
+      && mv "$q.tmp.$$" "$q" || rm -f "$q.tmp.$$"
+    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"defer"}}'
+    return 0
+  fi
+  _lanes_relay_allow "$in" "$a" "automate-lanes.sh phase-answer"
 }
 
 # _lanes_policy_apply <lane_root> <question_file> <answer_file> — B6: the lane's OWN hook applies a
@@ -146,15 +193,23 @@ _lanes_answer_parked() {
   printf '%s' "$last"
 }
 
+# _lanes_answer_file_write <answer_file> <validated> <note> <via> — THE human answer file (lane-answer and
+# phase-answer): {answers, note (null when empty), source: "human", via, at}, written atomically; returns 1
+# (nothing left behind) when it cannot be written.
+_lanes_answer_file_write() {
+  local af="$1"
+  if ! { jq -n --argjson a "$2" --arg note "$3" --arg via "$4" --arg at "$(now_utc)" \
+      '{answers: $a, note: (if $note == "" then null else $note end), source: "human", via: $via, at: $at}' > "$af.tmp.$$" \
+      && mv "$af.tmp.$$" "$af"; }; then
+    rm -f "$af.tmp.$$"; return 1
+  fi
+}
+
 # _lanes_answer_write_resume <id> <validated> <note> <via> <sid> — caller holds the launch lock and
 # passed _lanes_gate: writes the lane's answer file, drops any pending copy, resumes the session.
 _lanes_answer_write_resume() {
   local id="$1" out="$2" note="$3" via="$4" sid="$5" af="$LN_INBOX/answers/$1.json" rc
-  if ! { jq -n --argjson a "$out" --arg note "$note" --arg via "$via" --arg at "$(now_utc)" \
-      '{answers: $a, note: (if $note == "" then null else $note end), source: "human", via: $via, at: $at}' > "$af.tmp.$$" \
-      && mv "$af.tmp.$$" "$af"; }; then
-    rm -f "$af.tmp.$$"; _lanes_launch_unlock; die "lane-answer: cannot write the answer file"
-  fi
+  _lanes_answer_file_write "$af" "$out" "$note" "$via" || { _lanes_launch_unlock; die "lane-answer: cannot write the answer file"; }
   rm -f "$(_lanes_pending_file)"
   [ -n "$note" ] && echo "lane-answer: note recorded and delivered to the lane as an annotation (never the decision)"
   _lanes_spawn "" "$sid" "(resume after answer $id via $via)"; rc=$?
