@@ -79,7 +79,7 @@ Code Reviewer returns NEEDS_HUMAN
 - NEEDS_HUMAN always escalates immediately (no partial-workflow continuation — Phase 4.5 is a single integrated review, not per-subtask)
 - `heal_decision` is derived ONLY from the Code Reviewer's `CODE_REVIEW_RESULT` plus the deterministic co-gates — a stamped countable `must`-rule failure and a red required check read by `phase45-ci-read.sh` (PASS only from a reviewer PASS with neither; ESCALATED on NEEDS_HUMAN, max iterations, or resume-thrash)
 - Supervisor never force-resolves review issues; ESCALATED always leaves the PR open for a human — the heal loop never merges
-- A fully-refuted FAIL (multi-voter mode) is still a human call, never a silent auto-PASS (`skills/self-heal-advisory/SKILL.md` §"Delay-vs-decide")
+- A fully-refuted FAIL (multi-voter mode) is still a human call, never a silent auto-PASS (`skills/self-heal-advisory/multi-voter.md` §"Delay-vs-decide")
 
 ---
 
@@ -184,7 +184,7 @@ other pre-merge safety-gate failure above).
 **Rules:**
 - Same fail-closed shape as `preflight_overlap_detected` (above, Phase 1.5) — interactive soft-gate, non-interactive hard-fail, one named escape-hatch flag.
 - This is the SECOND, independent completion condition alongside `verify-provides.sh`'s disk check (see `docs/RESULT_SCHEMAS.md` §"Completion authority join") — the per-subtask analogue (`provides_present_agent_unsettled`) is a transient retry state, NOT an escalation; only the per-SESSION aggregate at FINALIZE escalates.
-- Full join semantics, script usage, and the `ended_without_result` resume-surfacing convention: `docs/RESULT_SCHEMAS.md` §"Completion authority join" and `skills/async-orchestration/SKILL.md` §"Phase 4 FINALIZE procedure" step 1 Point 5.
+- Full join semantics, script usage, and the `ended_without_result` resume-surfacing convention: `docs/RESULT_SCHEMAS.md` §"Completion authority join" and `skills/async-orchestration/finalize.md` §"Phase 4 FINALIZE procedure (steps 1–7)" step 1 Point 5.
 
 ---
 

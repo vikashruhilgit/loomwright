@@ -540,7 +540,7 @@ echo "== DS. automate-followups/37: a requirement's done stamp is written only b
 # it is simulated by APPLYING whatever requirement stamp block the self-heal skill's step 2.5
 # instructs (extracted, never hand-typed): on the base commit that block is a sentinel-led
 # `## Status: done` and DS1 fails; since this item the step instructs none and the file is untouched.
-DS_SKILL="$HERE/../skills/self-heal-advisory/SKILL.md"
+DS_SKILL="$HERE/../skills/self-heal-advisory/completion-tail.md"   # automate-speed/15: completion tail split out
 # ds_tail_stamp <skill> — the first requirement stamp block the completion tail's step 2.5 tells the
 # agent to write: the lines from an un-backticked sentinel line to the closing code fence, de-indented.
 ds_tail_stamp() {

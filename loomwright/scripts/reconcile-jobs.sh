@@ -6,7 +6,7 @@
 # WHY THIS EXISTS
 # ---------------
 # The brief lifecycle move `in-progress/` -> `done/` is completion-tail step 2
-# (authority: skills/self-heal-advisory/SKILL.md; its step 2.5 stamped the
+# (authority: skills/self-heal-advisory/completion-tail.md; its step 2.5 stamped the
 # originating requirement until automate-followups/37 and now writes nothing).
 # It is a PROMPT-INSTRUCTED step executed by the agent, not code. When the
 # agent dies before reaching it — e.g. a

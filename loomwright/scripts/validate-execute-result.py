@@ -163,7 +163,7 @@ def _check_worktree_paths(worktrees, payload):
     verified — an earlier revision justified this with the claim that "the
     Execute Manager removes worktrees during cleanup BEFORE emitting its result
     block", which is FALSE: worktree removal is Supervisor Phase 4 FINALIZE
-    step 4 (`skills/async-orchestration/SKILL.md` §"Cleanup worktrees"), which
+    step 4 (`skills/async-orchestration/finalize.md` step 4 "Cleanup worktrees"), which
     runs AFTER the Execute Manager has returned, and the Execute Manager's own
     Output Format records `worktrees:` explicitly "for cleanup"
     (`agents/execute-manager.md` §"Output Format"). The real reasons:

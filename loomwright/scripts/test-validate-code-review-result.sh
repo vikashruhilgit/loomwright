@@ -477,7 +477,7 @@ for rel, anchor in surfaces.items():
     for val in enum:
         if not re.search(r"(?<![a-z_])%s(?![a-z_])" % val, window):
             bad.append("%s: verdict %s not restated next to %r" % (rel, val, anchor))
-for rel in ("agents/code-reviewer.md", "skills/self-heal-advisory/SKILL.md"):
+for rel in ("agents/code-reviewer.md", "skills/self-heal-advisory/on-entry.md"):
     text = open(os.path.join(root, rel), encoding="utf-8").read()
     if not re.search(r'read-rules\.sh" <[^<>]{0,40}> --with-ids', text):
         bad.append("%s: the house-rules read no longer passes --with-ids" % rel)

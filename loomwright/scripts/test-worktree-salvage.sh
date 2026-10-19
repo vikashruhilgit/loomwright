@@ -60,7 +60,7 @@
 #   AC-11 static seams: exactly 3 NON-COMMENT `worktree remove --force` lines in the
 #         dispatcher, each preceded within 5 lines by a non-comment `bash "$…` call
 #         carrying that site's `--reason "…"` literal; every `git worktree remove` in
-#         async-orchestration + workflow-management has a salvage line directly above;
+#         async-orchestration (SKILL.md + finalize.md) + workflow-management has a salvage line directly above;
 #         the FINALIZE step-4 salvage line sits above its remove; in-suite mutant
 #         comments out the trap's salvage call in a scratch copy ⇒ dispatcher seam RED
 #   AC-12 untracked NESTED REPOSITORY (`?? nested/` — an untracked dir reaches the
@@ -116,6 +116,7 @@ SALVAGE="$HERE/worktree-salvage.sh"
 DISPATCH="$HERE/dispatch-pr-review.sh"
 AUDIT="$HERE/worktree-audit.sh"
 ASYNC_SKILL="$HERE/../skills/async-orchestration/SKILL.md"
+ASYNC_FINALIZE="$HERE/../skills/async-orchestration/finalize.md"   # FINALIZE step 4 (split out, automate-speed/15)
 WORKFLOW_SKILL="$HERE/../skills/workflow-management/SKILL.md"
 
 pass=0; fail=0
@@ -830,15 +831,15 @@ echo "== AC-11. static seams: 3 non-comment --force sites each preceded by its -
 SEAM_OK=0; dispatcher_seam_ok "$DISPATCH" && SEAM_OK=1
 # every `git worktree remove` line in the two skills has a salvage line directly above
 PROSE_OK=1; PROSE_MISS=""
-for F in "$ASYNC_SKILL" "$WORKFLOW_SKILL"; do
+for F in "$ASYNC_SKILL" "$ASYNC_FINALIZE" "$WORKFLOW_SKILL"; do
   for N in $(grep -n '^[[:space:]]*git worktree remove' "$F" | cut -d: -f1); do
     # The line directly above must be a NON-COMMENT salvage call (same rule as the
     # dispatcher seam — a `# … worktree-salvage.sh …` comment does not satisfy it).
     if ! sed -n "$((N-1))p" "$F" | grep -vE '^[[:space:]]*#' | grep -q 'worktree-salvage.sh'; then PROSE_OK=0; PROSE_MISS="$PROSE_MISS $(basename "$(dirname "$F")"):$N"; fi
   done
 done
-L_SALV="$(grep -n 'worktree-salvage.sh ../{project}-{subtask_id}' "$ASYNC_SKILL" | head -1 | cut -d: -f1)"
-L_RM="$(grep -n 'git worktree remove ../{project}-{subtask_id}' "$ASYNC_SKILL" | head -1 | cut -d: -f1)"
+L_SALV="$(grep -n 'worktree-salvage.sh ../{project}-{subtask_id}' "$ASYNC_FINALIZE" | head -1 | cut -d: -f1)"
+L_RM="$(grep -n 'git worktree remove ../{project}-{subtask_id}' "$ASYNC_FINALIZE" | head -1 | cut -d: -f1)"
 FIN_OK=0; [ -n "$L_SALV" ] && [ -n "$L_RM" ] && [ "$L_SALV" -lt "$L_RM" ] && FIN_OK=1
 if [ "$SEAM_OK" -eq 1 ] && [ "$PROSE_OK" -eq 1 ] && [ "$FIN_OK" -eq 1 ]; then
   ok "AC-11 seams: $N_SITES non-comment --force sites each preceded by its --reason call; every prose remove has a salvage line above; FINALIZE salvage (line $L_SALV) precedes remove (line $L_RM)"

@@ -42,7 +42,7 @@
 #       every project using the plugin). Always exits 0 (this leaf is
 #       `|| true` in hooks.json; a hook backstop that failed loudly would be
 #       worse than a silently-skipped arm — see
-#       skills/self-heal-advisory/SKILL.md "Hook backstop" note).
+#       skills/self-heal-advisory/completion-tail.md "Hook backstop" note).
 #   disarm-session
 #       Reads a SessionEnd hook payload from stdin, removes ONLY the file
 #       named by the payload's own `session_id`. The single disarm point in

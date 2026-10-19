@@ -24,12 +24,12 @@
 #       `not_verified` in the "including the worker's ... fields" sentence (the ACTUAL location of
 #       this prose — see (e) for the accurate cross-reference the brief expected in
 #       async-orchestration/SKILL.md instead).
-#   (e) skills/async-orchestration/SKILL.md: the FINALIZE PR Body Template's `## Not verified`
+#   (e) skills/async-orchestration/finalize.md: the FINALIZE PR Body Template's `## Not verified`
 #       section sits AFTER `## Test Plan` and BEFORE `## Task` (order-checked, not just presence);
 #       the explanatory sentence states the aggregation source, the bullet shape, and the
 #       omitted-entirely-when-empty rule; AND a cross-reference sentence exists naming
 #       `agents/supervisor.md` as the actual Sequential/Single-Agent recording site.
-#   (f) skills/self-heal-advisory/SKILL.md step 2 (the step that appends `## Outcome` to the BRIEF,
+#   (f) skills/self-heal-advisory/completion-tail.md step 2 (the step that appends `## Outcome` to the BRIEF,
 #       NOT step 2.5, the separate REQUIREMENT close-out step) appends the same `## Not verified`
 #       section to the brief, on both the PASS/loop-skipped and ESCALATED outcomes, omitted when
 #       empty, and states it (not the PR body) is what `/verify` reads.
@@ -65,7 +65,10 @@ STATEMGMT="$PLUGIN_ROOT/skills/state-management/SKILL.md"
 EXECMGR="$PLUGIN_ROOT/agents/execute-manager.md"
 SUPERVISOR="$PLUGIN_ROOT/agents/supervisor.md"
 ASYNCORCH="$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
-SELFHEAL="$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md"
+# The FINALIZE PR Body Template and its explainers moved to the split file (automate-speed/15);
+# the Sequential/Single-Agent cross-reference stays in SKILL.md's Subagent Spawn Contracts.
+ASYNCFIN="$PLUGIN_ROOT/skills/async-orchestration/finalize.md"
+SELFHEAL="$PLUGIN_ROOT/skills/self-heal-advisory/completion-tail.md"   # automate-speed/15: completion tail split out
 # docs/RESULT_SCHEMAS.md is an index; the EXECUTE_RESULT section lives in its split file.
 SCHEMAS="$PLUGIN_ROOT/docs/result-schemas/execute-result.md"
 
@@ -132,8 +135,8 @@ case "$sequential_sec" in
   *) no "(d) Sequential Path step does not name not_verified in the recording sentence" ;;
 esac
 
-# ---- (e) async-orchestration/SKILL.md PR Body Template + cross-reference ----------------------
-pr_template="$(awk '/^\*\*PR Body Template:\*\*/{flag=1} flag{print; if (/^```$/ && count++) exit}' "$ASYNCORCH")"
+# ---- (e) async-orchestration/finalize.md PR Body Template + cross-reference --------------------
+pr_template="$(awk '/^\*\*PR Body Template:\*\*/{flag=1} flag{print; if (/^```$/ && count++) exit}' "$ASYNCFIN")"
 order_check="$(printf '%s\n' "$pr_template" | grep -nE '^## (Test Plan|Not verified|Task)$' | awk -F: '{print $2}')"
 if [ "$order_check" = "## Test Plan
 ## Not verified
@@ -142,7 +145,7 @@ if [ "$order_check" = "## Test Plan
 else
   no "(e) PR Body Template heading order wrong: $(printf '%s' "$order_check" | tr '\n' '|')"
 fi
-nv_explainer="$(grep -F '**`## Not verified` section (optional, harness-port/04):**' "$ASYNCORCH" | head -1)"
+nv_explainer="$(grep -F '**`## Not verified` section (optional, harness-port/04):**' "$ASYNCFIN" | head -1)"
 case "$nv_explainer" in
   *"state.md"*"## Worker Results"*) ok "(e) PR-body explainer names state.md's ## Worker Results as the aggregation source" ;;
   *) no "(e) PR-body explainer does not name the aggregation source" ;;
@@ -157,7 +160,7 @@ case "$xref" in
   *) no "(e) cross-reference sentence missing or does not name agents/supervisor.md: $xref" ;;
 esac
 
-# ---- (f) self-heal-advisory/SKILL.md step 2 (brief-touching step, not step 2.5) ----------------
+# ---- (f) self-heal-advisory/completion-tail.md step 2 (brief-touching step, not step 2.5) -------
 step2_sec="$(awk '/^2\. \*\*Job lifecycle completion\*\*/{flag=1} flag{print; if (/^2\.5\. /) exit}' "$SELFHEAL")"
 if [ -n "$step2_sec" ]; then
   ok "(f) self-heal-advisory step 2 (Job lifecycle completion) section found"

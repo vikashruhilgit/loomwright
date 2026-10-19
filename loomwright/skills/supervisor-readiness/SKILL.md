@@ -157,7 +157,7 @@ Success looks like {measurable outcome}.
 - [ ] Given {precondition}, when {action}, then {outcome}
 - [ ] ...
 
-**Evidence rule (Launch Pad Phase 2 action 3; Plan Reviewer Criterion 20):** a criterion's evidence lives in the diff, never only in the PR body. FINALIZE writes the PR body before Phase 4.5, and no fix task can edit it, so a criterion only the body can satisfy fails every heal round. Write it as "then a committed evidence file `docs/evidence/<slug>.md` contains {the commands, values or rejected alternatives}, and the PR body links to it": Markdown, never `*.log` (`*.log` is commonly gitignored, so `git add` would skip it), and a File Impact Map create. FINALIZE lists each such file in the PR body's `## Evidence` section (`skills/async-orchestration/SKILL.md` §"PR Body Template").
+**Evidence rule (Launch Pad Phase 2 action 3; Plan Reviewer Criterion 20):** a criterion's evidence lives in the diff, never only in the PR body. FINALIZE writes the PR body before Phase 4.5, and no fix task can edit it, so a criterion only the body can satisfy fails every heal round. Write it as "then a committed evidence file `docs/evidence/<slug>.md` contains {the commands, values or rejected alternatives}, and the PR body links to it": Markdown, never `*.log` (`*.log` is commonly gitignored, so `git add` would skip it), and a File Impact Map create. FINALIZE lists each such file in the PR body's `## Evidence` section (`skills/async-orchestration/finalize.md` §"PR Body Template").
 
 ## Outcomes Rubric (optional — v12.2.0+)
 

@@ -109,7 +109,7 @@ each query's terminal result message (`SDKResultSuccess` at `sdk.d.ts:4024` —
    runner **commits the worker's output inside its worktree** (`git -C <wt>
    add -A && git commit`, skipped when the worktree is clean) so the
    per-subtask branch actually carries the work — mirroring FINALIZE step 2 of
-   `skills/async-orchestration/SKILL.md` (work persists on branches, merged
+   `skills/async-orchestration/finalize.md` (work persists on branches, merged
    later). Worktrees are then removed on exit; **branches are KEPT** and
    listed in `merge_order` / `branches` for the caller to merge and delete.
    Finally an **EXECUTE_RESULT-equivalent** JSON block is printed to stdout

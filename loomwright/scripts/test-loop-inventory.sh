@@ -5,8 +5,11 @@
 # GROUPS (the group -> source-file map lives HERE, once; each inventory's `## Sources` must equal it):
 #   automate-loop          skills/automate-loop/*.md (a glob, so a new split file needs rows) + commands/automate.md
 #   supervisor             agents/supervisor.md, commands/supervisor.md, skills/self-heal-advisory/SKILL.md,
-#                          skills/async-orchestration/SKILL.md
-#   review-heal            skills/review-heal/SKILL.md, commands/review-pr.md, agents/review-pr.md
+#                          skills/self-heal-advisory/{on-entry,escalation,multi-voter,completion-tail}.md,
+#                          skills/async-orchestration/SKILL.md, skills/async-orchestration/finalize.md
+#   review-heal            skills/review-heal/SKILL.md, skills/review-heal/fallback-review.md,
+#                          skills/review-heal/escalation.md, skills/review-heal/dispatch.md,
+#                          commands/review-pr.md, agents/review-pr.md
 #   launch-pad-autonomous  agents/launch-pad.md, commands/launch-pad.md, skills/autonomous-loop/SKILL.md,
 #                          skills/autonomous-loop/multi-iteration.md, commands/autonomous.md
 #
@@ -106,9 +109,12 @@ group_sources() {
         printf '%s\n' commands/automate.md ;;
       supervisor)
         printf '%s\n' agents/supervisor.md commands/supervisor.md skills/self-heal-advisory/SKILL.md \
-          skills/async-orchestration/SKILL.md ;;
+          skills/self-heal-advisory/on-entry.md skills/self-heal-advisory/escalation.md \
+          skills/self-heal-advisory/multi-voter.md skills/self-heal-advisory/completion-tail.md \
+          skills/async-orchestration/SKILL.md skills/async-orchestration/finalize.md ;;
       review-heal)
-        printf '%s\n' skills/review-heal/SKILL.md commands/review-pr.md agents/review-pr.md ;;
+        printf '%s\n' skills/review-heal/SKILL.md skills/review-heal/fallback-review.md \
+          skills/review-heal/escalation.md skills/review-heal/dispatch.md commands/review-pr.md agents/review-pr.md ;;
       launch-pad-autonomous)
         printf '%s\n' agents/launch-pad.md commands/launch-pad.md skills/autonomous-loop/SKILL.md \
           skills/autonomous-loop/multi-iteration.md commands/autonomous.md ;;

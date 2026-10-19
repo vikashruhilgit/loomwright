@@ -661,7 +661,6 @@ RH-047	skills/review-heal/SKILL.md	**NEEDS_HUMAN** (reviewer escalates) **or loo
 RH-048	skills/review-heal/SKILL.md	### Never `--force`
 RH-048	skills/review-heal/SKILL.md	Pushes that update the PR branch are **regular pushes only**. A force-pu
 RH-051	skills/review-heal/SKILL.md	**Fork / cross-repo PR** (`isCrossRepository == true`, head NOT on `origin`)
-RH-052	skills/review-heal/SKILL.md	This closes a latent gap in the prior bare
 RH-053	skills/review-heal/SKILL.md	## Step 3 — Notify on NEEDS_HUMAN (best-effort, fire-and-forget)
 RH-053	skills/review-heal/SKILL.md	When the loop exits as `ESCALATED` (reviewer `NEEDS_HUMAN`, or exhausted
 RH-056	skills/review-heal/SKILL.md	Set `notified: true` in `REVIEW_HEAL_RESULT` whenever
@@ -677,7 +676,6 @@ RH-063	skills/review-heal/SKILL.md	**NEVER waits on a human**
 RH-064	skills/review-heal/SKILL.md	**AC7 — absent ⇒ unchanged.**
 RH-065	skills/review-heal/SKILL.md	### Step U1 — All-Channel Read each round (AC1, AC2, AC2b, PINNED)
 RH-065	skills/review-heal/SKILL.md	**"All-Channel Read" is canonical (single source of truth).** The readin
-RH-066	skills/review-heal/SKILL.md	do **not** invent a `--json reviewThreads` flag (it does not exist)
 RH-071	skills/review-heal/SKILL.md	**Per-channel BODY/CONTENT extraction (AC2b — critical):**
 RH-072	skills/review-heal/SKILL.md	**formal reviews** (`reviews` / `latestReviews`) → each review's **`.body`** text
 RH-073	skills/review-heal/SKILL.md	**inline review threads** (`reviewThreads`) → each thread's first-comment **`body`**
@@ -698,7 +696,6 @@ RH-097	skills/review-heal/SKILL.md	**Escape hatch:** `--required-checks all-non-
 RH-101	skills/review-heal/SKILL.md	**Include/exclude policy (explicit):**
 RH-106	skills/review-heal/SKILL.md	**Never run this wait in the background and never end the turn while waiting
 RH-108	skills/review-heal/SKILL.md	**Re-scan after settle:** once the scoped set settles
-RH-109	skills/review-heal/SKILL.md	**Default sizing — 1200 s, measured, not guessed
 RH-111	skills/review-heal/SKILL.md	### Step U3 — Bot-vs-human thread classification (AC15)
 RH-111	skills/review-heal/SKILL.md	An unresolved review thread is a **READY-blocker ONLY** when its first c
 RH-112	skills/review-heal/SKILL.md	`author.__typename == "Bot"`, **OR**
@@ -711,7 +708,6 @@ RH-117	skills/review-heal/SKILL.md	**Confirmed + auto-fixable + at the fix floor
 RH-118	skills/review-heal/SKILL.md	**Confirmed but NOT auto-fixable (needs human judgment) → BLOCKS READY.**
 RH-120	skills/review-heal/SKILL.md	**Validated as stale / invalid / already-addressed → DISMISSED.**
 RH-121	skills/review-heal/SKILL.md	Only **case-3 (confirmed-but-not-auto-fixable)** findings remain as READY-blockers after a round
-RH-123	skills/review-heal/SKILL.md	**Why a PR comment, not just the result block.**
 RH-124	skills/review-heal/SKILL.md	at most once per round, ONLY when that round's Step U3.5
 RH-128	skills/review-heal/SKILL.md	`max_rounds` has exactly ONE authoritative default below (5)
 RH-141	skills/review-heal/SKILL.md	**NOTE (AC1):** the drain deliberately spawns NO `Task(loomwright:code-reviewer)` of its own
@@ -722,17 +718,12 @@ RH-170	skills/review-heal/SKILL.md	# Self-review gate (v14.43.0, drain): the dra
 RH-185	skills/review-heal/SKILL.md	**PINNED SEMANTICS — reading B (fix-then-stop) only; reading A (find-then-defer) is FORBIDDEN.**
 RH-187	skills/review-heal/SKILL.md	**WHERE the check sits (mandatory shape — split the skipped work, never skip the whole round).**
 RH-190	skills/review-heal/SKILL.md	Same discipline as §U2.5's call above: foreground, blocking `wait-for-checks.sh` calls
-RH-192	skills/review-heal/SKILL.md	**The residual (R2 — the honest cost).**
-RH-194	skills/review-heal/SKILL.md	The drain is **heal-only by default** (§U4) — it spawns no `code-reviewer` of its own.
-RH-195	skills/review-heal/SKILL.md	`bot_findings` (the §U1 UNION across reviews/latestReviews/reviewThreads/issue-comments/check-outputs) holds no firm
-RH-196	skills/review-heal/SKILL.md	every **review-producing** check (§U2.5's classification) is **green-with-empty-output, absent, or skipped**
-RH-197	skills/review-heal/SKILL.md	**The issue-comment channel is authoritative for "posted"; never gate on `--json reviews` alone.**
-RH-198	skills/review-heal/SKILL.md	**Effect — exactly one fallback review per drain run.**
-RH-199	skills/review-heal/SKILL.md	**Fail-CLOSED direction is TO RUNNING the review
-RH-200	skills/review-heal/SKILL.md	**Why the `Task(loomwright:code-reviewer)` spawn is legal here
-RH-201	skills/review-heal/SKILL.md	it is a **non-`--until-mergeable` caller** and therefore continues to emit `schema_version: 1`
-RH-202	skills/review-heal/SKILL.md	and, separately, it runs as a **Task-spawned step** with fresh isolated context
-RH-203	skills/review-heal/SKILL.md	Routing the drain through a Task step in the future would make this fallback depend on nesting depth.
+RH-195	skills/review-heal/fallback-review.md	`bot_findings` (the §U1 UNION across reviews/latestReviews/reviewThreads/issue-comments/check-outputs) holds no firm
+RH-196	skills/review-heal/fallback-review.md	every **review-producing** check (§U2.5's classification) is **green-with-empty-output, absent, or skipped**
+RH-197	skills/review-heal/fallback-review.md	**The issue-comment channel is authoritative for "posted"; never gate on `--json reviews` alone.**
+RH-198	skills/review-heal/fallback-review.md	**Effect — exactly one fallback review per drain run.**
+RH-199	skills/review-heal/fallback-review.md	**Fail-CLOSED direction is TO RUNNING the review
+RH-200	skills/review-heal/fallback-review.md	**Why the `Task(loomwright:code-reviewer)` spawn is legal here
 RH-206	skills/review-heal/SKILL.md	**Human signals are surfaced but NEVER blocking**
 RH-207	skills/review-heal/SKILL.md	"No unresolved validated bot findings" means: after §U3.5 Validate-Then-Fix
 RH-210	skills/review-heal/SKILL.md	**`sub_floor_converged` is a variant READY, not a separate condition.**
@@ -741,8 +732,8 @@ RH-213	skills/review-heal/SKILL.md	### Terminal states (until-mergeable)
 RH-213	skills/review-heal/SKILL.md	**`READY`** — the READY redefinition above holds: required checks green
 RH-214	skills/review-heal/SKILL.md	**`READY`** — the READY redefinition above holds
 RH-216	skills/review-heal/SKILL.md	**`ESCALATED`** — `--max-rounds` exhausted with signals remaining
-RH-219	skills/review-heal/SKILL.md	only human-judgment findings | `findings`
-RH-220	skills/review-heal/SKILL.md	release re-fold refused (#512), required-check metadata unavailable
+RH-219	skills/review-heal/escalation.md	only human-judgment findings | `findings`
+RH-220	skills/review-heal/escalation.md	release re-fold refused (#512), required-check metadata unavailable
 RH-222	skills/review-heal/SKILL.md	There is **no `READY`-that-merges**.
 RH-223	skills/review-heal/SKILL.md	## Anti-Churn Guardrail
 RH-223	skills/review-heal/SKILL.md	The drain loop (and, by extension, any review→fix loop) can **oscillate*
@@ -755,46 +746,20 @@ RH-227	skills/review-heal/SKILL.md	`churn_rounds ≥ 2` (the same finding-class 
 RH-228	skills/review-heal/SKILL.md	### On a trip — ONE deep "fix-the-class" self-review
 RH-228	skills/review-heal/SKILL.md	When tripped, run **exactly one** deep "fix-the-class" self-review pass
 RH-229	skills/review-heal/SKILL.md	The deep pass runs **once per trip** — it does not re-fire every round.
-RH-237	skills/review-heal/SKILL.md	The runner reads these env vars and **translates them into the corresponding `/review-pr` flags**
-RH-241	skills/review-heal/SKILL.md	The loop's `decision` is **computed and emitted BEFORE** the tail runs.
-RH-243	skills/review-heal/SKILL.md	`/pr-postmortem` is **read-only** on the analyzed repo and **only appends** one JSONL line
-RH-244	skills/review-heal/SKILL.md	`postmortem_dispatched` is informational, NEVER a gate input
-RH-254	skills/review-heal/SKILL.md	The tail's exit status is **ignored**
+RH-237	skills/review-heal/dispatch.md	The runner reads these env vars and **translates them into the corresponding `/review-pr` flags**
+RH-241	skills/review-heal/dispatch.md	The loop's `decision` is **computed and emitted BEFORE** the tail runs.
+RH-243	skills/review-heal/dispatch.md	`/pr-postmortem` is **read-only** on the analyzed repo and **only appends** one JSONL line
+RH-244	skills/review-heal/dispatch.md	`postmortem_dispatched` is informational, NEVER a gate input
+RH-254	skills/review-heal/dispatch.md	The tail's exit status is **ignored**
 RH-255	skills/review-heal/SKILL.md	## Anti-Patterns
 RH-255	skills/review-heal/SKILL.md	**`prose_subfloor_stop` — deciding sub-floor termination in prose instea
 RH-258	skills/review-heal/SKILL.md	**`background_wait` — backgrounding the scoped check-wait (red-team-hardening item 04).**
-RH-259	skills/review-heal/SKILL.md	**Force-pushing the PR branch.**
-RH-260	skills/review-heal/SKILL.md	**Pushing to `origin` for a fork/cross-repo PR.**
-RH-262	skills/review-heal/SKILL.md	**Auto-merging on PASS.** Removes the human gate; explicitly forbidden.
-RH-263	skills/review-heal/SKILL.md	**Task-spawning the runner.** AC9 forbids
-RH-264	skills/review-heal/SKILL.md	**Creating a PR from `/review-pr`.**
-RH-265	skills/review-heal/SKILL.md	**Letting notify failures abort the loop.**
-RH-266	skills/review-heal/SKILL.md	**Re-coining any pinned name.**
 RH-268	skills/review-heal/SKILL.md	**Claiming READY when any gated channel signal is unknown.**
-RH-269	skills/review-heal/SKILL.md	**Reading only one channel (or only metadata).**
 RH-272	skills/review-heal/SKILL.md	**"Find-then-defer" (reading A) for `sub_floor_converged`.**
 RH-275	skills/review-heal/SKILL.md	**Blocking READY on a human.**
-RH-278	skills/review-heal/SKILL.md	## Related Skills
-RH-278	skills/review-heal/SKILL.md	`skills/autonomous-loop/SKILL.md` — the `/autonomous` outer loop; its EV
-RH-280	skills/review-heal/SKILL.md	## Quality Gates
-RH-280	skills/review-heal/SKILL.md	PR-URL → head resolved via `gh pr view <pr-url> --json headRefName`. **I
-RH-281	skills/review-heal/SKILL.md	PR-URL → head resolved via `gh pr view <pr-url> --json headRefName`.
-RH-282	skills/review-heal/SKILL.md	Review uses `CODE_REVIEW_RESULT` v3 with `review_mode: diff_review`.
-RH-283	skills/review-heal/SKILL.md	Loop is bounded (default 3); fix worker is `general-purpose` with NO Task in its allowlist.
-RH-284	skills/review-heal/SKILL.md	PR-branch pushes are **fork-aware**
-RH-285	skills/review-heal/SKILL.md	**`PASS`, `ESCALATED`, and — under `--until-mergeable` only — `READY` are the terminal `decision` values**
-RH-286	skills/review-heal/SKILL.md	NEEDS_HUMAN / exhaustion posts findings to the PR and fires best-effort notifications
-RH-287	skills/review-heal/SKILL.md	`REVIEW_HEAL_RESULT` emitted with all seven fields at `schema_version: 1` (default loop)
-RH-288	skills/review-heal/SKILL.md	**`--until-mergeable` absent ⇒ default loop byte-for-byte unchanged** (AC7)
-RH-289	skills/review-heal/SKILL.md	Under `--until-mergeable`: ALL channels read each round
-RH-291	skills/review-heal/SKILL.md	**Under `--until-mergeable` the drain is heal-only by default**
 RH-292	commands/review-pr.md	> **Execute this workflow inline as the main thread.**
 RH-293	commands/review-pr.md	You MUST still spawn first-level child agents via the Task tool
 RH-294	commands/review-pr.md	the `review-pr-runner` is **never itself Task-spawned**
-RH-295	commands/review-pr.md	## Purpose
-RH-295	commands/review-pr.md	`/review-pr` runs the **standalone PR review-and-heal loop** against an
-RH-296	commands/review-pr.md	## Usage
-RH-296	commands/review-pr.md	**PR-URL → branch resolution.** `HEAD_REF=$(gh pr view <pr-url> --json h
 RH-297	commands/review-pr.md	## Parameters
 RH-297	commands/review-pr.md	**PR-URL → branch resolution.** `HEAD_REF=$(gh pr view <pr-url> --json h
 RH-300	commands/review-pr.md	Default behavior **fails CLOSED** — unreadable metadata ⇒ the loop MUST NOT claim READY
@@ -812,16 +777,10 @@ RH-311	commands/review-pr.md	## `--until-mergeable` mode (opt-in drain)
 RH-311	commands/review-pr.md	When `--until-mergeable` is passed, a **heal-only** drain loop runs **in
 RH-315	commands/review-pr.md	**Validate → fix → push → re-poll.**
 RH-316	commands/review-pr.md	**Earned fallback review (`no_review_lens_posted`, AC3) — the ONE exception to heal-only.**
-RH-322	commands/review-pr.md	`LOOMWRIGHT_UNTIL_MERGEABLE` (truthy ⇒ runner forwards `--until-mergeable`; absent/falsy ⇒ default diff-only loop)
-RH-323	commands/review-pr.md	`LOOMWRIGHT_CHECK_WAIT_TIMEOUT` (⇒ `--check-wait-timeout`),
-RH-324	commands/review-pr.md	`LOOMWRIGHT_REVIEW_CHECK_PATTERN` (⇒ `--review-check-pattern`), and
-RH-325	commands/review-pr.md	`LOOMWRIGHT_FIX_FLOOR` (⇒ `--fix-floor`, in both loops
 RH-326	commands/review-pr.md	## Output — `REVIEW_HEAL_RESULT`
 RH-326	commands/review-pr.md	The run ends by emitting a `REVIEW_HEAL_RESULT` block (defined by the `r
 RH-327	commands/review-pr.md	## Prerequisites
 RH-327	commands/review-pr.md	**GitHub CLI:** `gh` installed and authenticated (for `gh pr view` and `
-RH-328	commands/review-pr.md	## See Also
-RH-328	commands/review-pr.md	`skills/review-heal/SKILL.md` — the authoritative loop contract (pinned
 RH-330	agents/review-pr.md	**Escalation:** merge conflicts always escalate — never force-resolve.
 RH-331	agents/review-pr.md	> **Model Warning:** This runner orchestrates a bounded review→fix→re-review loop
 RH-332	agents/review-pr.md	## Mission
@@ -866,11 +825,28 @@ RH-370	agents/review-pr.md	**Never-merge invariant.**
 RH-372	agents/review-pr.md	Under `--until-mergeable`, emit `REVIEW_HEAL_RESULT` at `schema_version: 2`
 RH-373	agents/review-pr.md	## Output — `REVIEW_HEAL_RESULT`
 RH-373	agents/review-pr.md	End every run by emitting the `REVIEW_HEAL_RESULT` block defined by the
-RH-374	agents/review-pr.md	## Related
-RH-374	agents/review-pr.md	`skills/review-heal/SKILL.md` — **the authority** for this loop (pinned
 RH-375	skills/review-heal/SKILL.md	**The loop is executed by `scripts/review-heal-next-step.sh` (automate-speed/12), not re-derived from this section.**
 RH-376	skills/review-heal/SKILL.md	**Which step executes what.**
 RH-377	commands/review-pr.md	**The driver runs the drain.**
+RH-378	skills/review-heal/SKILL.md	**Default 1200 s — measured, not guessed.**
+RH-379	skills/review-heal/SKILL.md	### Earned Fallback Review — `no_review_lens_posted` (AC3, PINNED)
+RH-379	skills/review-heal/SKILL.md	Moved to `skills/review-heal/fallback-review.md` — read it only when the driver prints a `spawn` with `what: "fallback review"`
+RH-380	skills/review-heal/SKILL.md	### Escalation cause (automate-followups/31)
+RH-380	skills/review-heal/SKILL.md	Moved to `skills/review-heal/escalation.md` — read it only when the run ends `ESCALATED`
+RH-381	skills/review-heal/SKILL.md	## Until-Mergeable Dispatch Signal (AC7 signal contract — PINNED)
+RH-381	skills/review-heal/SKILL.md	Moved to `skills/review-heal/dispatch.md` — the dispatching side
+RH-382	skills/review-heal/SKILL.md	### Cardinal guarantee (AC12, R9)
+RH-382	skills/review-heal/SKILL.md	Moved to `skills/review-heal/dispatch.md` §"Cardinal guarantee (AC12, R9)".
+RH-383	skills/review-heal/SKILL.md	### Churn gate (AC9/AC10/AC11) — fires only on meaningful churn
+RH-383	skills/review-heal/SKILL.md	Moved to `skills/review-heal/dispatch.md` §"Churn gate (AC9/AC10/AC11) — fires only on meaningful churn".
+RH-384	skills/review-heal/SKILL.md	### Opt-out (AC13)
+RH-384	skills/review-heal/SKILL.md	Moved to `skills/review-heal/dispatch.md` §"Opt-out (AC13)".
+RH-385	skills/review-heal/SKILL.md	### Launch form (R10 — fresh detached process, NEVER a nested Task)
+RH-385	skills/review-heal/SKILL.md	Moved to `skills/review-heal/dispatch.md` §"Launch form (R10 — fresh detached process, NEVER a nested Task)".
+RH-386	commands/review-pr.md	**Read rule.** A drain round reads `skills/review-heal/SKILL.md`
+RH-386	commands/review-pr.md	reads `skills/review-heal/fallback-review.md` only when the driver prints a `spawn` with `what: "fallback review"`
+RH-386	commands/review-pr.md	reads `skills/review-heal/escalation.md` only when the run ends `ESCALATED`
+RH-386	commands/review-pr.md	`skills/review-heal/dispatch.md` is the dispatching side's — a drain round never reads it.
 PROSE_PINS_EOF
 )"
 # pins_missing <plugin root> — prints one `<id> <file>: <literal>` line per pin whose text is absent
@@ -897,7 +873,7 @@ nrows="$(awk -F' [|] ' '/^[|] RH-[0-9]/ { t = $9; sub(/ [|]$/, "", t); if (t == 
 for fam in 'This loop **NEVER merges a PR.**' 'under this flag the drain runs **no `code-reviewer` of its own by default**' \
            'Pushes that update the PR branch are **regular pushes only**.' '**Fork / cross-repo PR** (`isCrossRepository == true`'; do
   d="$WORK/pins-mut"; rm -rf "$d"; mkdir -p "$d/skills/review-heal" "$d/commands" "$d/agents"
-  cp "$PLUGIN/skills/review-heal/SKILL.md" "$d/skills/review-heal/"; cp "$PLUGIN/commands/review-pr.md" "$d/commands/"
+  cp "$PLUGIN/skills/review-heal/"*.md "$d/skills/review-heal/"; cp "$PLUGIN/commands/review-pr.md" "$d/commands/"
   cp "$PLUGIN/agents/review-pr.md" "$d/agents/"
   if [ -n "$(pins_missing "$d")" ]; then no "P mutation: the unmutated scratch copy already misses a pin"; continue; fi
   grep -vF -- "$fam" "$PLUGIN/skills/review-heal/SKILL.md" > "$d/skills/review-heal/SKILL.md"

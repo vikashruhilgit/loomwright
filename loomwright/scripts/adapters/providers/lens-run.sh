@@ -23,7 +23,7 @@
 #                header (e.g. "review"). Not branched on here — a caller-owned
 #                convention, kept generic for future roles (e.g. a future
 #                "refute" role used by the multi-voter refute check — see
-#                skills/self-heal-advisory/SKILL.md §"Multi-voter verification").
+#                skills/self-heal-advisory/multi-voter.md §"Multi-voter verification").
 #   --diff       REQUIRED. Path to a file containing the diff text to review.
 #   --prompt     REQUIRED. Path to a file containing the review instructions
 #                (caller-authored; folded verbatim into the composed prompt).

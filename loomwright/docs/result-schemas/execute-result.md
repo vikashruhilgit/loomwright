@@ -14,7 +14,7 @@ Produced by Execute Manager when all subtasks are completed.
 > `record_worker_result` parameter contract, landing in `state.md`'s `## Worker
 > Results` — and from there is aggregated into the FINALIZE PR body's optional
 > `## Not verified` section (`skills/async-orchestration/SKILL.md` Part 2) and the
-> done brief's own `## Not verified` section (`skills/self-heal-advisory/SKILL.md`
+> done brief's own `## Not verified` section (`skills/self-heal-advisory/completion-tail.md`
 > step 2), which `verify-run.sh acs` parses back for `/verify`. `EXECUTE_RESULT`
 > stays at `schema_version: 1`, unchanged.
 

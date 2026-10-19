@@ -1,14 +1,14 @@
 ---
 name: async-orchestration
-description: Background dispatch patterns, non-blocking polling, parallelism decisions, and git worktree lifecycle. Use when running parallel workers in Supervisor workflows. Part 2 — the Supervisor Phase 4 FINALIZE protocol (pre-merge safety gate, sequential merge, worktree cleanup, commit/push/PR creation, PR-base self-verify), the verbatim Subagent Spawn Contracts, and the worktree-lifecycle phase sequence, moved from agents/supervisor.md.
+description: Background dispatch patterns, non-blocking polling, parallelism decisions, git worktree lifecycle and the verbatim Subagent Spawn Contracts. Use when running parallel workers in Supervisor workflows. The Supervisor Phase 4 FINALIZE procedure and PR Body Template live in finalize.md, Read at Phase 4 entry only.
 allowed-tools: [Read, Bash]
-version: "1.6.3"
-lastUpdated: "2026-10-10"
+version: "1.7.0"
+lastUpdated: "2026-10-19"
 ---
 
 # Async Orchestration Skill
 
-Patterns for parallel task execution using background workers, git worktrees, and non-blocking polling.
+Parallel task execution with background workers, git worktrees and non-blocking polling. Why the rules read as they do: `docs/rationale/supervisor.md` §"Async orchestration — why the rules read as they do".
 
 ## Quick Rules
 
@@ -18,14 +18,7 @@ Patterns for parallel task execution using background workers, git worktrees, an
 - Poll with `block: false` first; fall back to `block: true` on idle
 - Sequential merge into feature branch after all workers complete
 - Clean up worktrees immediately after merge
-
-## When to Use This Skill
-
-- Dispatching parallel implementation workers
-- Managing background task collection
-- Creating and managing git worktrees
-- Deciding which subtasks can run in parallel
-- Merging parallel work back into feature branch
+- No per-subtask reviewer at any threshold, on any path: the `outputs_verified` gate + tests/lint is the per-subtask gate; Phase 4.5's integrated review is the sole LLM gate (`agents/orchestrator.md` §"Review Gate Policy")
 
 ---
 
@@ -33,14 +26,10 @@ Patterns for parallel task execution using background workers, git worktrees, an
 
 ### Determining LAUNCHABLE vs BLOCKED
 
-After the Orchestrator produces a subtask list with dependencies:
-
 ```
 For each subtask S:
   LAUNCHABLE if:
-    1. All depends_on tasks are completed (deterministic outputs_verified + tests/lint
-       gate passed — no per-subtask reviewer decision gates this at any threshold; see
-       "Single-Agent / Sequential Paths" below and `agents/orchestrator.md` §"Review Gate Policy")
+    1. All depends_on tasks are completed (per-subtask gate passed)
     2. S.files do NOT overlap with any other LAUNCHABLE subtask's files
     3. Number of active worktrees < config.max_workers
 
@@ -52,17 +41,7 @@ For each subtask S:
 
 ### File Overlap Detection
 
-Parse file lists from Orchestrator output. Two subtasks overlap if they modify any of the same files.
-
-```
-subtask_a.files = [src/auth/guard.ts, src/auth/guard.spec.ts]
-subtask_b.files = [src/auth/refresh.ts, src/auth/refresh.spec.ts]
-subtask_c.files = [src/auth/guard.ts, src/auth/module.ts]
-
-→ A and B: no overlap → can run in parallel
-→ A and C: overlap (guard.ts) → must serialize
-→ B and C: no overlap → can run in parallel
-```
+Parse file lists from Orchestrator output. Two subtasks overlap if they modify any of the same files; overlapping subtasks must serialize.
 
 ### Single-Agent / Sequential Paths: Skip Worktrees
 
@@ -71,9 +50,9 @@ subtask_c.files = [src/auth/guard.ts, src/auth/module.ts]
 - NO per-subtask Code Reviewer — Phase 4.5 holistic review is the single review
 - Skip all worktree lifecycle
 
-**Sequential Path** (`--sequential`, more than 1 subtask — NOT the single-agent path, per `agents/supervisor.md` §"Sequential Path"):
+**Sequential Path** (`--sequential`, more than 1 subtask — per `agents/supervisor.md` §"Sequential Path"):
 - Execute all subtasks inline, sequentially; no worktrees, no background dispatch
-- **NO per-subtask Code Reviewer** — same as the Single-Agent Path and the above-threshold parallel path, no per-subtask reviewer is spawned on the Sequential Path either. The deterministic `outputs_verified` gate plus tests/lint is each subtask's gate; Phase 4.5's integrated review (Supervisor, post-FINALIZE) is the sole LLM gate. See `agents/orchestrator.md` §"Review Gate Policy" (authoritative).
+- **NO per-subtask Code Reviewer** (Quick Rules)
 
 ---
 
@@ -81,21 +60,17 @@ subtask_c.files = [src/auth/guard.ts, src/auth/module.ts]
 
 ### Phase 3 (EXECUTE — Execute Manager Step 2a): Create Branches
 
-After Phase 2's parallelism analysis, the **Execute Manager** creates branches for launchable subtasks at Phase 3 entry (its Step 2a) — never the Supervisor in Phase 2; Phase 2 (PLAN) runs no git commands (the same ownership invariant stated in Part 2 §"Git Worktree Lifecycle (phase sequence)"):
+The **Execute Manager** creates branches for launchable subtasks at Phase 3 entry (its Step 2a) — never the Supervisor in Phase 2; Phase 2 (PLAN) runs no git commands:
 
 ```bash
-# From the feature branch
 git checkout feature/BD-XX-desc
-
-# Create subtask branches (from current feature branch HEAD)
-git branch feature/BD-XXa
+git branch feature/BD-XXa      # from the feature branch HEAD
 git branch feature/BD-XXc
 ```
 
 ### Phase 3 (EXECUTE): Create Worktrees
 
 ```bash
-# Create worktrees for parallel workers
 # Path: sibling directory with subtask suffix — write the LITERAL project name
 # (the form execute-manager.md uses), never `$(basename $(pwd))`: the worktree
 # audit observer parses the command string unexpanded (see its header, limit e)
@@ -105,59 +80,13 @@ git worktree add ../{project}-BD-XXc feature/BD-XXc
 
 **Naming convention:** `{project-dir}-{subtask-id}`
 
-Example:
-```
-my-project/                    ← main worktree (feature/BD-XX-desc)
-my-project-BD-XXa/             ← worktree for subtask a
-my-project-BD-XXc/             ← worktree for subtask c
-```
-
 ### Phase 4 (FINALIZE): Merge and Cleanup
 
-**Sequential merge** (order matters if subtasks have dependencies):
-
-```bash
-# Switch to feature branch
-git checkout feature/BD-XX-desc
-
-# Merge each subtask branch (in dependency order)
-git merge feature/BD-XXa --no-ff -m "merge: BD-XXa implement JwtGuard"
-git merge feature/BD-XXc --no-ff -m "merge: BD-XXc cookie storage"
-git merge feature/BD-XXb --no-ff -m "merge: BD-XXb refresh endpoint"
-```
-
-**Cleanup:**
-
-```bash
-# Salvage uncommitted content, then remove worktrees, then branches
-bash scripts/worktree-salvage.sh ../my-project-BD-XXa --reason "FINALIZE step 4"   # protocol form — prints a .supervisor/salvage/ path only when there was uncommitted content
-git worktree remove ../my-project-BD-XXa
-bash scripts/worktree-salvage.sh ../my-project-BD-XXc --reason "FINALIZE step 4"
-git worktree remove ../my-project-BD-XXc
-
-git branch -d feature/BD-XXa
-git branch -d feature/BD-XXc
-```
+Supervisor-only, at Phase 4: `skills/async-orchestration/finalize.md` steps 2–4 (commit each worktree, merge `--no-ff` in dependency order, salvage → remove each worktree → delete its branch).
 
 ### Merge Conflict Handling
 
-If merge fails:
-1. **Do NOT force resolve** — escalate to human
-2. Report which files conflict
-3. Checkpoint current state
-4. Provide resume command
-
-```markdown
-## MERGE CONFLICT
-
-**Feature branch:** feature/BD-XX-desc
-**Merging:** feature/BD-XXb
-**Conflicting files:** [list]
-
-**Options:**
-1. Resolve manually, then: /supervisor --continue task: BD-XX
-2. Abort merge: git merge --abort
-```
+If a merge fails: **Do NOT force resolve** — escalate to human (report, checkpoint and resume command: `finalize.md` step 3).
 
 ---
 
@@ -176,15 +105,6 @@ Task(
 ```
 
 A worker is always `loomwright:worker`: the worker hooks (`validate-worker-result.py`, `emit-progress-event.sh`, `guard-arm.sh arm-from-payload`) match that type, so a `general-purpose` worker runs with none of them.
-
-**Track in Supervisor state (minimal):**
-```
-worker_id: agent-xxx
-subtask_id: BD-XXa
-output_file: /path/to/output
-worktree: ../my-project-BD-XXa
-status: running
-```
 
 ### Worker Prompt Template
 
@@ -208,12 +128,7 @@ You are an implementation worker operating in a git worktree.
 {retry_context if applicable}
 ```
 
-> **Pointer, not payload:** the acceptance criteria travel as a bounded ≤200-char summary plus the
-> pinned MAIN-CHECKOUT ABSOLUTE brief path (the gitignored brief is absent inside linked worktrees —
-> the worktree-reality case). This template teaches the dispatch mechanics only; the fully-specified
-> spawn shapes — including the verbatim `provides:` paste exception, the house-rules advisory line,
-> and the no-brief (`/supervisor task:`) fallback — live in Part 2 §"Subagent Spawn Contracts" and
-> `agents/execute-manager.md` Step 3 (the authorities). See `docs/POINTER_AUDIT.md`.
+Pointer, not payload: the criteria travel as the summary + pinned brief path. Full spawn shapes: §"Subagent Spawn Contracts" below and `agents/execute-manager.md` Step 3.
 
 ---
 
@@ -221,7 +136,7 @@ You are an implementation worker operating in a git worktree.
 
 ### Poll Loop Pattern (Execute Manager)
 
-The poll loop runs inside the Execute Manager (not the Supervisor), with iteration limits and back-off. **No per-subtask reviewer is spawned above threshold** — the deterministic `outputs_verified` gate (`agents/execute-manager.md` Step 4, the authoritative pseudocode) plus tests/lint is the per-subtask gate; Phase 4.5's integrated review (Supervisor, post-FINALIZE) is the sole LLM gate. See `agents/orchestrator.md` §"Review Gate Policy".
+The poll loop runs inside the Execute Manager (not the Supervisor), with iteration limits and back-off; `agents/execute-manager.md` Step 4 is the authoritative pseudocode.
 
 ```
 active_workers = {worker_id: {subtask_id, output_file, worktree_path, status}}
@@ -248,26 +163,14 @@ for iteration in 1..max_iterations:
       tool_calls += 1
       # If missing: fall back to parsing full TaskOutput
 
-      # Record worker result (direct call — de-batched, one call per event)
+      # Record worker result (direct call — one call per event)
       Task(Context-Keeper, operation: record_worker_result,
            worker_id: {worker_id}, subtask_id: {subtask_id},
            result: {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error},
            state_file: {state_file_path})
       tool_calls += 1
-      # NOTE: the `## Session` block (session_id/branch/status/phase) is
-      # separately derived by the hook-triggered emitter
-      # (scripts/emit-progress-event.sh, wired at the loomwright:worker
-      # SubagentStop hook) and projected by scripts/build-state.sh — it does
-      # NOT populate `## Worker Results`, which the call above is for.
-      #
       # No reviewer is spawned here. If the on-disk outputs_verified gate passed
-      # (verify-provides.sh, no gap; read agents/execute-manager.md Step 4 for
-      # the gate pseudocode), the subtask is complete: no `record_review` call
-      # exists to make (there is no reviewer decision to log), and there is no
-      # separate reviewer-polling arm below. Newly-launchable subtasks are
-      # checked in step 2 below regardless — dependency materialization
-      # (Step 2a/2b) was already keyed on producer completion, never on a
-      # reviewer decision.
+      # (verify-provides.sh, no gap), the subtask is complete — no record_review call.
       → Move worker to completed
       → Check if blocked subtasks now launchable
 
@@ -298,26 +201,11 @@ for iteration in 1..max_iterations:
 
 ### Worker Summary File Protocol
 
-Workers write `.worker-summary.md` in their worktree before outputting WORKER_RESULT. The Execute Manager reads this file (~200 tokens) instead of parsing full TaskOutput (~5,000+ tokens):
-
-```
-# After TaskOutput confirms worker is complete:
-summary = Read("{worktree_path}/.worker-summary.md")
-if summary exists:
-  → Use summary data for Context-Keeper recording
-else:
-  → Fall back to parsing full TaskOutput
-```
-
-No per-subtask reviewer is spawned above threshold or on the Sequential Path, so there is no separate reviewer-result channel here — see "Poll Loop Pattern" above.
+Workers write `.worker-summary.md` in their worktree before outputting WORKER_RESULT. After TaskOutput confirms the worker is complete, the Execute Manager reads that file (~200 tokens); if it does not exist, it falls back to parsing the full TaskOutput.
 
 ### Result Collection
 
-After TaskOutput returns:
-
-1. Read the summary file from worktree (preferred) or parse full output (fallback)
-2. Extract: files modified, test results, outputs_verified gate outcome
-3. Record the extracted data to Context-Keeper via `record_worker_result` (direct per-event call, see the poll loop above — no `record_review` call, since no per-subtask reviewer decision exists to log). Only the derived `## Session` block (session_id/branch/status/phase) is recorded by the hook-triggered `scripts/emit-progress-event.sh` instead — not `## Worker Results` or the `## Subtasks` table, which stay Result Collection's responsibility.
+Record each completed worker's files modified, test results and `outputs_verified` outcome to Context-Keeper via `record_worker_result` (no `record_review` call). Only `## Session` is hook-derived (`scripts/emit-progress-event.sh`); `## Worker Results` and the `## Subtasks` table stay this step's job.
 
 ---
 
@@ -325,59 +213,17 @@ After TaskOutput returns:
 
 ### Worker Output Format
 
-Workers MUST output a structured result block:
-
-```markdown
-## WORKER_RESULT
-- subtask_id: BD-XXa
-- status: completed | failed
-- files_modified: [file1, file2]
-- files_created: [file3]
-- lines_added: 145
-- lines_removed: 12
-- tests_run: 8
-- tests_passed: 8
-- tests_failed: 0
-- error: none | {error description}
-- notes: {brief implementation notes}
-```
+Workers emit a `WORKER_RESULT` block (`docs/RESULT_SCHEMAS.md` §WORKER_RESULT; hook-validated by `validate-worker-result.py`).
 
 ### No Per-Subtask Reviewer Output
 
-No per-subtask reviewer is spawned above threshold or on the Sequential Path — there is
-no `REVIEW_RESULT`/`CODE_REVIEW_RESULT` block to collect here. The `outputs_verified` gate
-(parsed from the worker's own `WORKER_RESULT`) plus tests/lint is the per-subtask gate;
-Phase 4.5's integrated review (Supervisor, post-FINALIZE) is the sole LLM gate and
-produces its own `CODE_REVIEW_RESULT` with a `PASS | FAIL | NEEDS_HUMAN` decision — see
-`agents/code-reviewer.md` and `docs/RESULT_SCHEMAS.md` §CODE_REVIEW_RESULT.
-
----
-
-## Context Budget During EXECUTE
-
-### Execute Manager holds (isolated from Supervisor):
-
-| Data | Tokens |
-|------|--------|
-| Config (max_workers, mode) | ~50 |
-| Active workers (id, subtask, worktree_path) | ~100 per worker |
-| Parallelism state (launchable, blocked lists) | ~100 |
-| **Total (2 workers, no reviewer — none is spawned above threshold or on the Sequential Path)** | **~350 tokens** |
-
-### Supervisor holds during Phase 3:
-
-| Data | Tokens |
-|------|--------|
-| Single Task call to Execute Manager | ~50 |
-| **Total** | **~50 tokens** |
-
-Phase 3 poll loop context stays in Execute Manager, not Supervisor. Everything else lives in the state file, managed by Context-Keeper.
+None to collect (Quick Rules): the gate reads the worker's own `WORKER_RESULT.outputs_verified`.
 
 ---
 
 ## Dependency Materialization
 
-BLOCKED subtasks declare `requires` against producing subtasks (see `skills/supervisor-readiness/SKILL.md` for the schema). Before spawning a BLOCKED subtask whose producers are complete, the Execute Manager must materialize each producer's outputs into the dependent worktree by **merging the producer branch into the dependent branch — never onto the main repo HEAD**.
+BLOCKED subtasks declare `requires` against producing subtasks (schema: `skills/supervisor-readiness/SKILL.md`). Before spawning a BLOCKED subtask whose producers are complete, the Execute Manager must materialize each producer's outputs into the dependent worktree by **merging the producer branch into the dependent branch — never onto the main repo HEAD**.
 
 **Materialization steps:**
 
@@ -385,19 +231,19 @@ BLOCKED subtasks declare `requires` against producing subtasks (see `skills/supe
    ```bash
    git branch feature/<task>-<sub>-dep <feature_branch>
    ```
-   `git checkout -b` would move the main worktree off the feature branch and break sibling parallel subtasks; use `git branch` (creates the ref without switching HEAD) instead.
+   Never `git checkout -b` — it moves the main worktree off the feature branch and breaks sibling parallel subtasks.
 
 2. Create a worktree for the dependent subtask:
    ```bash
    git worktree add ../<repo>-<sub>-dep feature/<task>-<sub>-dep
    ```
-   Equivalent one-shot form: `git worktree add -b feature/<task>-<sub>-dep ../<repo>-<sub>-dep <feature_branch>` — both leave the main worktree's HEAD untouched.
+   Equivalent one-shot form: `git worktree add -b feature/<task>-<sub>-dep ../<repo>-<sub>-dep <feature_branch>`.
 
 3. Materialize each producer's outputs by merging the producer branch INTO the dependent worktree:
    ```bash
    git -C ../<repo>-<sub>-dep merge --no-ff feature/<task>-<producer-sub>
    ```
-   Repeat this for every producer listed in the dependent's `requires` set (one merge per producer).
+   One merge per producer listed in the dependent's `requires` set.
 
 4. Only then spawn the worker into the dependent worktree.
 
@@ -413,41 +259,28 @@ BLOCKED subtasks declare `requires` against producing subtasks (see `skills/supe
 
 ## Pre-Spawn Verification Gate
 
-After dependency materialization and **before** spawning the worker, the Execute Manager runs a verification gate that proves each declared `requires` entry actually exists in the dependent worktree. The producer branch claimed to provide an item — this gate verifies the claim against disk.
+After dependency materialization and **before** spawning the worker, the Execute Manager runs a verification gate that proves each declared `requires` entry actually exists in the dependent worktree.
 
-For each `requires` entry on the dependent subtask, run one check against `<worktree>/<path>`: the commands are the three rows `scripts/verify-provides.sh --kind-table` prints (the ONE implementation; the Execute Manager's Step 2b carries the runtime invocation; committed copy in `docs/RESULT_SCHEMAS.md` §WORKER_RESULT between the `kind-table:begin`/`end` markers) with `<root>` = the worktree. Not restated here — a copy drifts.
+For each `requires` entry on the dependent subtask, run one check against `<worktree>/<path>`: the commands are the three rows `scripts/verify-provides.sh --kind-table` prints (the ONE implementation; runtime invocation: Execute Manager Step 2b) with `<root>` = the worktree — never restated here.
 
 **Pass criterion:** ALL checks for ALL `requires` entries must PASS.
 
-**Fail handling:** If any check fails, the dependent subtask is held back (worker is NOT spawned) and an `EXECUTE_CHECKPOINT` is emitted with `adjudication_required: true` (see Scope Expansion Adjudication below). The producer's `provides` declaration was a lie or the producer drifted from its acceptance criteria — neither is something the Execute Manager can resolve unilaterally.
-
-**Why this gate exists:** Without it, a worker would be spawned into a worktree that doesn't actually contain the symbols/types/files it expects, and would either fabricate them, fail mid-implementation, or silently drift. The gate fails fast at the boundary between producer and consumer.
+**Fail handling:** If any check fails, the dependent subtask is held back (worker is NOT spawned) and an `EXECUTE_CHECKPOINT` is emitted with `adjudication_required: true` (see Scope Expansion Adjudication below) — the Execute Manager cannot resolve a producer's false `provides` claim unilaterally.
 
 ---
 
 ## Scope Expansion Adjudication
 
-When pre-spawn verification fails (a producer didn't actually emit the symbol it promised) OR a worker reports `outputs_gap` non-empty in its WORKER_RESULT, the Execute Manager emits an `EXECUTE_CHECKPOINT` with `adjudication_required: true` and presents four options to the Supervisor / user.
+When pre-spawn verification fails OR a worker reports `outputs_gap` non-empty in its WORKER_RESULT, the Execute Manager emits an `EXECUTE_CHECKPOINT` with `adjudication_required: true` carrying four options.
 
-The Execute Manager **NEVER picks an option itself** — it always escalates to the Supervisor, which presents options to the user via `AskUserQuestion`.
+The Execute Manager **NEVER picks an option itself** — it always escalates to the Supervisor.
 
 **The four options:**
 
-- **A: Re-queue producer** — retry the producing subtask with the missing outputs added to its acceptance criteria.
-  - Cost: one extra worker run.
-  - Risk: same gap recurs if the root cause is brief drift, not worker error.
-
-- **B: Insert remediation subtask** — add a new subtask whose sole job is to provide the missing outputs.
-  - Cost: extra subtask + extra dependency edge.
-  - Risk: brief no longer matches the executed plan; downstream telemetry/audit becomes harder to interpret.
-
+- **A: Re-queue producer** — retry the producing subtask with the missing outputs added to its acceptance criteria. Risk: the gap recurs on brief drift.
+- **B: Insert remediation subtask** — add a new subtask whose sole job is to provide the missing outputs. Risk: the brief no longer matches the executed plan.
 - **C: Exit to Launch Pad** — abort the run; the brief itself is incoherent and needs replanning.
-  - Cost: full restart.
-  - Benefit: catches structural problems early before deeper damage.
-
-- **D: Update consumer brief** — consumer no longer needs the missing item; remove the `requires` entry.
-  - Cost: silent scope reduction.
-  - Risk: callers of the consumer downstream may break because the consumer no longer integrates the producer's output.
+- **D: Update consumer brief** — consumer no longer needs the missing item; remove the `requires` entry. Risk: silent scope reduction.
 
 **EXECUTE_CHECKPOINT block fields** (adjudication-specific additions — the emission must ALSO carry the hook-required base fields `schema_version`, `completed_so_far`, `remaining`, `resume_context`, `reason`):
 
@@ -496,126 +329,15 @@ Before completing async orchestration:
 - [ ] Sequential merge preserves dependency order
 - [ ] All worktrees cleaned up after merge
 - [ ] Error handling covers crash, timeout, conflict
-- [ ] No per-subtask reviewer is spawned at any threshold — Single-Agent path, the above-threshold parallel path, and the Sequential path (`--sequential`) all rely on the deterministic `outputs_verified`/tests-lint gate plus Phase 4.5's integrated review
-
-## See Also
-
-- `skills/state-management/SKILL.md` - State file schema and checkpoints
-- `skills/workflow-management/SKILL.md` - Workflow patterns
-- `agents/worker.md` - Worker agent template
-- `agents/context-keeper.md` - State management agent
+- [ ] No per-subtask reviewer is spawned at any threshold
 
 ---
 
-# Part 2 — Supervisor FINALIZE Protocol, Spawn Contracts & Worktree Lifecycle (moved from `agents/supervisor.md`)
-
-> **Provenance & authority:** the three sections below were moved VERBATIM from
-> `agents/supervisor.md` (slice D of the supervisor prompt refactor, following the
-> `self-heal-advisory` Part 2 precedent). Zero behavior change: every gate, command
-> shape, bound, and grep-stable string keeps identical semantics. `agents/supervisor.md`
-> keeps the short Phase 4 stanza (entry/exit conditions, the mandatory 4-point pre-merge
-> safety gate, the merge-conflict STOP rule, the salvage-before-remove gate (v15.67.0), the
-> PR-base self-verify requirement, and the phase Output block), the "Agents Spawned by Supervisor" table + Summary Extraction
-> rules, and the worktree-ownership invariant (branches + worktrees are created by the
-> Execute Manager in Phase 3 Step 2a, never in Phase 2) — and points here for the
-> procedures. The Supervisor Reads this file at Phase 4 FINALIZE entry. As of the 4f
-> routing change (v15.19.0) this skill is no longer in the Supervisor's preloaded
-> `skills:` list (the list is now empty) — Phase 2 PLAN performs the session's genuine
-> first Read of this file, and the Phase 4 FINALIZE Read is a second, refresh Read, not
-> the first load. Step numbering (1–7 incl. 6.5) is preserved verbatim,
-> so cross-file references to e.g. "Phase 4 self-verify (step 6.5)" remain valid — they
-> now resolve here.
+# Part 2 — Supervisor FINALIZE Protocol (`finalize.md`) & Spawn Contracts
 
 ## Phase 4 FINALIZE procedure (steps 1–7)
 
-**Actions:**
-
-1. **Pre-merge safety gate** (ALL must pass before any merge) — **run by `scripts/supervisor-next-step.sh`** (automate-speed/11). Its `finalize` step checks points 1–4: every WORKER_RESULT in the merge set `completed`; every completed subtask's per-subtask gate decision `PASS` (`review_decision` — no per-subtask reviewer runs at any threshold; vacuous on the inline paths); no orphaned worktrees, every `merge_order` worktree / branch present with changes; the feature branch exists and holds the base tip. A failed point ⇒ the reason logged, the merge aborted, the job to `failed/`; a missing worktree / branch ⇒ checkpoint with the resume command. Its `finalize-children` step runs point 5 — `check-children-settled.sh --all` — before any merge: `settled` / `no_identity_rows` pass; `unsettled` / `unverifiable` ⇒ the SUP-CHILDREN ask or, under the Can't-ask rule, `children_unsettled: {ids}` (fail CLOSED), with `ended_without_result_ids` / `rejected_stop_ids` surfaced beside the ids; `--skip-children-check` ⇒ `user_skipped_children_check`. After steps 2–5.5 its `finalize-marker` step calls `guard-finalize-publish.sh write-marker` (the finalize-gate marker's only writer) and prints the publish instruction only once it exits 0. Steps 2–3 cover the branches in `merge_order` only; a read-only subtask (`WORKER_RESULT.no_changes: true`) is absent from it, but its worktree is still removed in step 4. Pre-driver text of this step (the checklist, its verification commands, Point 5 in full): `docs/supervisor-legacy-phases.md`.
-
-2. **Commit worker changes in worktrees** (before merging):
-   ```bash
-   # For each completed subtask (in merge_order from EXECUTE_RESULT):
-   git -C ../project-{subtask_a} add -A
-   git -C ../project-{subtask_a} commit -m "subtask: {subtask_a} — {title}"
-   ```
-   This ensures worker code is committed to the subtask branch before merge.
-
-3. **Sequential merge** of each subtask branch into feature branch (in merge_order):
-   ```bash
-   git checkout feature/{task_id}-{desc}
-   git merge feature/{subtask_a} --no-ff -m "merge: {subtask_a} {title}"
-   git merge feature/{subtask_c} --no-ff -m "merge: {subtask_c} {title}"
-   git merge feature/{subtask_b} --no-ff -m "merge: {subtask_b} {title}"
-   ```
-   If merge conflict: **STOP** — never force-resolve. Report conflicting files. Checkpoint with list of already-merged and not-yet-merged branches. Exit with resume command.
-
-4. **Cleanup worktrees** (ONLY after successful merge):
-   ```bash
-   # Salvage uncommitted content, then remove the worktree, then the branch
-   bash scripts/worktree-salvage.sh ../{project}-{subtask_id} --reason "FINALIZE step 4"   # protocol form — the runtime-resolvable form is agents/supervisor.md §Phase 4 gates; prints a .supervisor/salvage/ path only when there was uncommitted content
-   git worktree remove ../{project}-{subtask_id}
-   git branch -d feature/{subtask_id}
-   ```
-   Salvage before remove (v15.67.0): the salvage line runs as its own statement — never joined to the remove by `&&` (an absent script exits 127 and would otherwise skip the remove) — and always exits 0; a clean worktree prints nothing. The plain remove still refuses a dirty tree; if it refuses, report the refusal AND the salvage path the line above printed — do NOT reach for `--force` as a reflex, and never without the salvage line having run (the removals themselves are unchanged).
-   Cleanup is verifiable (v15.66.0): the `PostToolUse (Bash)` observer records both the literal `../{project}-{subtask_id}` add above and this remove (a path token left unexpanded — `$(basename $(pwd))` — is recovered through the branch argument only when the resulting worktree's path ends with the literal suffix after the `$(…)`, so a failed add pairs with a foreign worktree only when that worktree's path ends with the same literal suffix — an advisory-only phantom row, never a removal; it is gated on `.supervisor/` existing, which it always does here), and `bash scripts/worktree-audit.sh report` (plugin-relative, read-only) lists any sibling recorded as created that git still shows — it reports, never removes.
-
-5. **Create commits** (inline, following `skills/commit/SKILL.md`):
-   - Stage all changes
-   - Write conventional commit message with task linking
-   - Format: `feat|fix|refactor({scope}): {message}\n\nCloses {task_id}`
-   - **NEVER code-fence the message.** The first line passed to `git commit` MUST be the conventional-commit subject (e.g. `feat({scope}): {message}`) — never a ```` ``` ```` / ```` ```bash ```` fence. Pass multi-line messages as separate `-m` flags or via `git commit -F -` / a heredoc (see `skills/commit/SKILL.md` → "Passing the Message to git"). A fence as the first line makes ```` ``` ```` the commit/PR subject.
-
-5.5. **Release re-fold (#512) — after step 5's commits, BEFORE `write-marker` and step 6's push:**
-   ```bash
-   bash scripts/release-refold.sh   # protocol form — the runtime-resolvable form is agents/supervisor.md §Phase 4 FINALIZE gate 5
-   ```
-   A no-op (exit 0) unless the project has a fold-capable `scripts/bump-version.sh` and this branch already carries a bump with a `changelog.d/` fragment still pending; then it re-folds every fragment into that ONE bump and commits it (HEAD moves, so it runs before `write-marker`). It then runs `bump-version.sh --check`, so a hand-edited version file or CHANGELOG.md also exits non-zero. The same line runs before every Phase 4.5 heal push and every `/review-pr` fix push, so no later commit can leave a fragment unfolded (in this plugin's own repo, CI's `scripts/check-version-bump.sh` re-checks the content on every PR to `main`). Non-zero ⇒ abort FINALIZE before the push, like a failed pre-merge gate: no push, no PR, log its printed reason, `SUPERVISOR_RESULT.status: failed` with `error: "release_refold_refused"`, run lock released on this abort exit.
-
-6. **Push and create PR (against `BASE_BRANCH` — defaults to `main`):**
-   ```bash
-   git push -u origin feature/{task_id}-{desc}
-   gh pr create --base "$BASE_BRANCH" --title "{task_id}: {title}" --body "{PR body}"
-   ```
-   `BASE_BRANCH` is the value resolved at Phase 0 (the base-branch + non-interactive preamble in `skills/supervisor-config/SKILL.md`) from the `--base-branch` flag, defaulting to `main`. The autonomous-loop multi-iteration mode passes a sibling feature branch (e.g., `feature/v14-iter1`) so iteration N+1 stacks on iteration N's PR.
-
-6.5. **Phase 4 FINALIZE self-verify — PR base branch (v14.0.0, AC-7 + AC-14)** — run by the driver's `pr-verify` / `pr-verify-answer` steps from the PR URL you report after step 6: `gh pr view --json baseRefName` equal to `BASE_BRANCH` ⇒ verified, hand-over; different ⇒ the `base_mismatch_detected` flag (`reason: phase4_self_verify`) as a Context-Keeper instruction; a `gh` failure ⇒ ONE retry after 5 s, then the SUP-GH-RETRY ask (retry / skip-verify-once — recorded `user_skipped_base_verify` / abort — the flag with `reason: user_aborted_gh_retry`), or under `--non-interactive` the flag with `reason: gh_unavailable_non_interactive`. Phase 4 sets the flag at most once and never emits `SUPERVISOR_RESULT` on this path — Phase 4.5's base-mismatch cleanup (`skills/self-heal-advisory/SKILL.md` Part 2 §"Phase 4.5 base-mismatch cleanup") is the single emission point. Pre-driver text: `docs/supervisor-legacy-phases.md`.
-
-7. **Exit FINALIZE** — the driver's `handover` step (`done`, `next: "phase-4.5"`). The task is NOT yet marked completed and the job file is NOT yet moved — Phase 4.5 SELF_HEAL's completion tail does both, so self-heal outcomes reach the completion record (FINALIZE scope reduction, v11.0.0). Pre-driver text: `docs/supervisor-legacy-phases.md`.
-
-**Safety guarantees:**
-- Worker code lives in git branches until explicitly merged — can always recover
-- Worktrees are removed ONLY after successful merge
-- Merge conflicts always escalate to human
-- Checkpoint includes which branches were merged and which remain
-- If EXECUTE_CHECKPOINT (partial): only merge subtasks whose `outputs_verified` gate passed (no per-subtask reviewer decision to gate on), leave in-progress worktrees intact
-
-**PR Body Template:**
-```markdown
-## Summary
-{One paragraph describing the changes}
-
-## Changes
-- {Bullet list of key changes}
-
-## Test Plan
-- {How to verify the changes}
-
-## Evidence
-- `docs/evidence/{slug}.md`
-
-## Not verified
-- **{surface}** — {reason} (subtask {id})
-
-## Task
-Closes {task_id}
-
----
-Generated by Supervisor Agent v4
-```
-
-**`## Evidence` section (optional, #511):** one bullet per file the branch adds or modifies under `docs/evidence/` — `git diff --name-only --diff-filter=AM "origin/$BASE_BRANCH...HEAD" -- docs/evidence/`. **OMITTED ENTIRELY** (no heading, no "none" line) when that prints nothing. It only points at the files: a brief criterion's evidence lives in the committed file, which the review reads in the diff and a fix task can heal, never in this body, which FINALIZE writes once before Phase 4.5 and nothing edits afterwards (Plan Reviewer Criterion 20). A file a Phase 4.5 fix adds later is in the diff but not listed here.
-
-**`## Not verified` section (optional, harness-port/04):** aggregated by reading `state.md`'s `## Worker Results` section and collecting every worker's `not_verified` sub-list — one bullet per item, across ALL workers, `- **<surface>** — <reason> (subtask <id>)`. **OMITTED ENTIRELY** (no heading, no "none" line) when every worker's `not_verified` list is absent/empty — a zero-item PR body is byte-identical to the template above with the `## Not verified` block removed (the `## Evidence` block follows its own rule above). REPORT-ONLY: this section never gates FINALIZE, Phase 4.5, or a merge decision.
+Steps 1–7 (incl. 5.5, 6.5), the safety guarantees and the **PR Body Template** live in `skills/async-orchestration/finalize.md`, Read at Phase 4 FINALIZE entry only; a citation of this file's "Part 2" steps or "Part 2 PR Body Template" (the next-step driver's included) means that file. §"Subagent Spawn Contracts" stays here (needed from Phase 2 on).
 
 ## Subagent Spawn Contracts
 
@@ -623,9 +345,9 @@ Exact Task tool call shapes for each subagent.
 
 **Prompt-cache discipline:** Within each `prompt:` string, put stable content (role/skill guidance, project patterns, cost_profile notes, house-rules advisory text) before volatile interpolations (task id, title, criteria, worktree/feature_branch/state_file paths, resume context, files_modified, operation/data payloads). Prompt caching is prefix-match — an early volatile value invalidates the cache for every subsequent spawn.
 
-**Pointers, not payloads (transport discipline):** when a spawn input is file-backed (the job brief, a plan file, a corpus), pass its PATH plus a bounded ≤200-char summary plus the instruction "Read only the sections you need" — do not paste the body into the prompt. Worktree reality: gitignored `.supervisor/` artifacts do NOT exist inside linked worktrees, so a pointer handed to a worktree-resident consumer must pin the MAIN-CHECKOUT absolute path and say so in the prompt text; consumers running at the project root (Orchestrator, Execute Manager, Single-Agent Worker, Sequential-path Worker) can use the repo-relative path directly. Deliberate paste exceptions (e.g. the worker `provides:` YAML below) are enumerated with justifications in `docs/POINTER_AUDIT.md`. This is a transport-only rule: it changes how content travels, never which gates, schemas, decisions, or spawn cardinality apply.
+**Pointers, not payloads (transport discipline):** pass a file-backed spawn input (brief, plan file, corpus) as its PATH + a ≤200-char summary + "Read only the sections you need" — never the body. Gitignored `.supervisor/` artifacts do NOT exist inside linked worktrees: a worktree-resident consumer gets the MAIN-CHECKOUT absolute path, said so in the prompt; project-root consumers use the repo-relative path. **No brief file** (`/supervisor task:` no-brief mode, or `task: BD-XX` Beads mode): every `Brief:` line below points at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or passes the criteria inline. Paste exceptions (e.g. the worker `provides:` YAML) and the no-brief exception: `docs/POINTER_AUDIT.md`. Transport-only: never changes which gates, schemas, decisions or spawn cardinality apply.
 
-**Context digest pointer (D6, v15.20.0):** every worker spawn — Single-Agent Worker, Sequential-path Worker, and the parallel-path worker spawned by `agents/execute-manager.md` Step 3 — additionally carries the per-job `CONTEXT_DIGEST` artifact (`docs/RESULT_SCHEMAS.md` §"CONTEXT_DIGEST") as a pointer: **path + ≤200-char summary + "Read only the sections you need"** — never pasted, following exactly the "Pointers, not payloads" rule above. Project-root-resident workers (Single-Agent-/Sequential-path) use the repo-relative path `.supervisor/jobs/context-digests/{basename(brief_path)}` directly. **Parallel-path (worktree-resident) workers MUST receive the MAIN-CHECKOUT ABSOLUTE path instead, and the prompt text must say so explicitly** — gitignored `.supervisor/` artifacts do not exist inside linked git worktrees (`docs/POINTER_AUDIT.md` §"Worktree reality"), the exact same rule already governing the brief pointer at row 5 of that audit table. The Supervisor hands Execute Manager the main-checkout absolute digest path (Execute Manager itself runs at the project root, so the absolute path resolves for it too); Execute Manager forwards that same absolute path unchanged to each worker it spawns into a worktree. When the digest file is absent (a pre-v15.20.0 brief, or a job whose Launch Pad Phase 5 has not run yet), the worker is told to proceed without it — the digest is advisory context, never a hard gate, and its absence must never block a spawn.
+**Context digest pointer:** every worker spawn also carries the per-job `CONTEXT_DIGEST` (`docs/RESULT_SCHEMAS.md` §"CONTEXT_DIGEST") as a pointer — **path + ≤200-char summary + "Read only the sections you need"**, never pasted: repo-relative `.supervisor/jobs/context-digests/{basename(brief_path)}` for project-root workers; **parallel-path (worktree-resident) workers MUST receive the MAIN-CHECKOUT ABSOLUTE path instead, and the prompt text must say so** (the Supervisor hands it to Execute Manager, which forwards it unchanged). An absent digest never blocks a spawn — the worker proceeds without it.
 
 **Context-Keeper:**
 ```
@@ -641,11 +363,6 @@ Task(
 Task(
   description: "Plan: decompose {task_id}",
   prompt: "Project context: {CLAUDE.md summary}\ngoal: \"{task_id}: {title}\"\nBrief: {brief_path} — read only the sections you need (## Task, ## Acceptance Criteria, ## Subtask Structure if present).\nAcceptance-criteria summary (≤200 chars): {bounded summary}",
-  # Pointer, not payload: {brief_path} is the in-progress job brief (gitignored `.supervisor/` path —
-  # it resolves for the Orchestrator, which runs at the project root, NOT in a worktree). Do NOT paste
-  # the brief body or the full criteria into this prompt. When no brief file exists (`task: BD-XX`
-  # Beads mode), point at the Beads issue instead (`bd show {task_id}`) or pass the criteria inline —
-  # a documented exception, see docs/POINTER_AUDIT.md.
   subagent_type: "loomwright:orchestrator",
   model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
 )
@@ -658,15 +375,11 @@ Task(
   prompt: "cost_profile: {default|cheap}
     Config: max_workers={N}, project={name}, feature_branch={branch}
     State file: {path}
-    Brief: {brief_path} — read only the sections you need (## Subtask Structure, ## Subtask Contracts, per-subtask criteria, per-subtask `lanes:`). Gitignored main-checkout path: it resolves for YOU (you run at the project root) but NOT inside worker worktrees. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    Brief: {brief_path} — read only the sections you need (## Subtask Structure, ## Subtask Contracts, per-subtask criteria, per-subtask `lanes:`). Gitignored main-checkout path: it resolves for YOU (you run at the project root) but NOT inside worker worktrees.
     Context digest: {context_digest_path} — MAIN-CHECKOUT ABSOLUTE path (resolves for you at the project root; forward it UNCHANGED, still as the main-checkout absolute path, to each worker you spawn into a worktree — see §"Context digest pointer" above) + ≤200-char summary + "Read only the sections you need". Advisory only — proceed without it if the file does not exist.
     Subtask index (compact — ids/titles/deps only, no pasted criteria/file lists): [{ids, titles, deps}]
     Parallelism graph: [{launchable, blocked}]
     Resume context: {optional, from previous EXECUTE_CHECKPOINT}",
-  # Pointer, not payload: the Execute Manager reads each subtask's criteria, files, skills, and
-  # `provides:`/`requires:`/`lanes:` contracts from the brief itself, then injects the small
-  # per-subtask slice into worker prompts (workers sit in worktrees where the gitignored brief is
-  # absent — see agents/execute-manager.md Step 3 for the worker-prompt shape).
   subagent_type: "loomwright:execute-manager",
   model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
 )
@@ -674,11 +387,11 @@ Task(
 
 **Single-Agent Worker (Single-Agent path, exactly 1 subtask):** same shape as the Sequential-path Worker contract below, except `Subtask ID`/`Title` become `Task ID`/`Title` and the `Brief:` line reads ALL acceptance criteria (## Task, the FULL ## Acceptance Criteria list) instead of one subtask's row. No Code Reviewer accompanies it — see `agents/supervisor.md` §"Single-Agent Path" for the gate that replaces it. `subtask_ordinal` is `1` on this path (the only subtask).
 
-**`subtask_ordinal` (harness-port/01-worker-rules):** every worker spawn — Single-Agent, Sequential-path, and the parallel-path worker spawned by `agents/execute-manager.md` Step 3 — carries `subtask_ordinal: <N>`, the subtask's 1-based position in the brief's `## Subtask Structure` table row order. NOT to be confused with, and never renamed to, "Subtask index" (the DIFFERENT, unrelated compact `{ids, titles, deps}` list the Supervisor passes to Execute Manager itself, above). The Sequential/Single-Agent Worker contract below carries it as an explicit `Subtask ordinal:` field; Execute Manager derives it the same way (row order in the brief it already reads) and forwards it on its own worker spawn. Consumed only by the worker's shared-local-services rule (`agents/worker.md` §"Critical Rules") to derive a per-worker port offset — absent that rule's `<PORT_ENV>` mechanism, the field is otherwise inert (by design, per the source requirement's Non-goals).
+**`subtask_ordinal`:** every worker spawn (Single-Agent, Sequential-path, and Execute Manager's Step 3 parallel-path spawn) carries `subtask_ordinal: <N>`, the subtask's 1-based row position in the brief's `## Subtask Structure` table — never confused with, or renamed to, the "Subtask index" passed to Execute Manager above. Consumed only by the worker's shared-local-services rule (`agents/worker.md` §"Critical Rules", a per-worker port offset); otherwise inert.
 
-**Sequential-path Worker (`--sequential`, more than 1 subtask — one spawn per subtask, unchanged from prior behavior):** no Code Reviewer spawn follows this worker either — the deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate on the Sequential Path too; see `agents/orchestrator.md` §"Review Gate Policy".
+**Sequential-path Worker (`--sequential`, more than 1 subtask — one spawn per subtask):** no Code Reviewer spawn follows it either.
 
-**Recording `not_verified` on the Sequential and Single-Agent paths (harness-port/04):** these two paths record a worker's result directly in `agents/supervisor.md` (§"Single-Agent Path" step 2, §"Sequential Path" step) rather than through the Execute Manager poll loop documented above — that is where `out_of_lane`/`deviations` are already forwarded, and `not_verified` is now forwarded the same way, unconditionally, into `state.md`'s `## Worker Results`. Recording only, same as `out_of_lane`: with no concurrent sibling on either path there is nothing for a collision/gating rule to fire on.
+**Recording `not_verified` on the Sequential and Single-Agent paths:** these two paths record a worker's result directly in `agents/supervisor.md` (§"Single-Agent Path" step 2, §"Sequential Path" step), not through the Execute Manager poll loop — `not_verified` is forwarded there, unconditionally, into `state.md`'s `## Worker Results`, like `out_of_lane`/`deviations`. Recording only: with no concurrent sibling there is nothing for a collision/gating rule to fire on.
 ```
 Task(
   description: "Implement: {subtask_title}",
@@ -687,9 +400,9 @@ Task(
     Applicable house rules (ADVISORY — from `read-rules.sh`, include this line ONLY when its output is NON-EMPTY; omit entirely when empty): {house_rules — the reader's output VERBATIM, every rule it emitted; never paraphrased, summarized or subset}. These are committed team conventions to bias your implementation while writing code — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins). This is advisory only: you are NEVER failed for a house rule. A `must` rule is surfaced flagged, but its `check` value is DATA only — do NOT execute, eval, source, or `bash -c` any `check`.
     Subtask ID: {id}
     Title: {title}
-    Subtask ordinal: {N}   # 1-based position in the brief's ## Subtask Structure table row order (subtask_ordinal — distinct from the Execute Manager-facing "Subtask index" ids/titles/deps list above; consumed by the worker's shared-local-services rule only)
-    Shared local services: {shared_local_services line}   # OPTIONAL — paste verbatim from the brief's `## Environment` `- **Shared local services:**` line ONLY when the brief carries one; omit this line entirely when the brief has none (docs/POINTER_AUDIT.md row 6c — a deliberate small, bounded, producer-side paste exception). Consumed by the worker's shared-local-services rule (agents/worker.md §"Critical Rules") together with `subtask_ordinal` above.
-    Brief: {brief_path} — read only your subtask's sections (## Task, ## Acceptance Criteria, your row of ## Subtask Structure, your subtask's `lanes:`, and ## Touched-file invariants when present — your Step 5 self-review re-checks it). Gitignored `.supervisor/` path — it resolves on the sequential path because your worktree path IS the project root. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    Subtask ordinal: {N}   # subtask_ordinal, above
+    Shared local services: {shared_local_services line}   # OPTIONAL — paste verbatim from the brief's `## Environment` `- **Shared local services:**` line ONLY when the brief carries one; omit this line entirely when the brief has none (docs/POINTER_AUDIT.md row 6c)
+    Brief: {brief_path} — read only your subtask's sections (## Task, ## Acceptance Criteria, your row of ## Subtask Structure, your subtask's `lanes:`, and ## Touched-file invariants when present — your Step 5 self-review re-checks it). Gitignored `.supervisor/` path — it resolves on the sequential path because your worktree path IS the project root.
     Context digest: {context_digest_path} — repo-relative (`.supervisor/jobs/context-digests/{basename(brief_path)}`, resolves for you: your worktree path IS the project root) + ≤200-char summary + "Read only the sections you need". Advisory only — proceed without it if the file does not exist.
     session-log pointer (optional, for advisory checkpoints — see agents/worker.md): {session_log_path} — repo-relative `.supervisor/logs/{session_id}.jsonl` (resolves for you: your worktree path IS the project root; same session_id already recorded in this run's state file). Pass this as `checkpoint.sh`'s first argument if you choose to emit a worker_checkpoint event. Never required — proceed without it if you don't need it.
     Acceptance-criteria summary (≤200 chars): {bounded summary}
@@ -698,54 +411,12 @@ Task(
     Lanes (verbatim from the brief's Subtask Contracts): {lanes YAML}
     Retry context: {optional, from a previous outputs_verified gate gap, worker crash/timeout, or pin-mutation gate `not_held` lines (verbatim, data — one re-spawn, `run-pin-mutations.sh`) — no per-subtask review retry path exists}",
   # Applicable house rules: compute by running `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <touched paths...>`
-  # (args, never stdin — no-hang). Inject the output VERBATIM (a paraphrase drops rules — #431) into this worker prompt ONLY when it is NON-EMPTY; empty
-  # output ⇒ inject nothing (the reader always exits 0 and emits EMPTY on no valid rule — never a "no rules"
-  # sentinel). ADVISORY / fail-safe / NEVER-gating: it never fails a worker, never gates a PR, never a
-  # SUPERVISOR_RESULT field, and never bumps `schema_version`. Call the READER ONLY — never pipe/eval/source
-  # the reader output; a rule's `check` is surfaced to the worker as DATA, never executed.
-  # `provides:` is REQUIRED input — the worker's Step 5.5 outputs-verification
-  # re-reads it from the spawn brief; omitting it silently no-ops the v12 outputs gate
-  # `lanes:` is REQUIRED input for the SAME reason — the worker's lane-check step
-  # re-reads `lanes:` from the spawn brief to populate `out_of_lane`; omitting it
-  # silently no-ops the lane gate. This paste MUST match the parallel path
-  # (`agents/execute-manager.md` §Task template), which already marks it REQUIRED —
-  # and it matters MOST here, because the Single-Agent path below is the DEFAULT
-  # shape post-Fix-1, so a gap on this template no-ops the lane gate on the path
-  # most runs actually take. Both are deliberate paste exceptions (docs/POINTER_AUDIT.md).
-  # Pointer-audit note: the `provides:` YAML is a DELIBERATE paste exception (small, and required
-  # verbatim in the spawn prompt by the outputs gate above — a pointer would make the gate depend on
-  # a file read the worker may skip). The acceptance criteria travel as pointer + bounded summary
-  # instead; see docs/POINTER_AUDIT.md.
+  # (args, never stdin); inject VERBATIM only when NON-EMPTY. Advisory, never gating; never pipe/eval/source its output.
+  # `provides:` and `lanes:` are REQUIRED pastes (omitting either silently no-ops the outputs / lane gate);
+  # they match agents/execute-manager.md's Task template.
   subagent_type: "loomwright:worker",
   model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
 )
 ```
 
-**No per-subtask Code Reviewer spawn contract (any threshold):** above threshold, on the Sequential Path, and on the Single-Agent Path alike, no `Task(subagent_type: "loomwright:code-reviewer", ...)` spawn follows a worker. The deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate; the Supervisor's integrated Phase 4.5 review (post-FINALIZE, holistic, over the merged feature branch) is the sole `loomwright:code-reviewer` spawn in the default flow. See `agents/orchestrator.md` §"Review Gate Policy" (authoritative) for why no per-subtask lens survives here.
-
-## Git Worktree Lifecycle (phase sequence)
-
-Ownership: subtask branches AND worktrees are both created by the **Execute Manager in
-Phase 3** (its Step 2a — see `agents/execute-manager.md`), never by the Supervisor in
-Phase 2 — Phase 2 (PLAN) runs no git commands. (The load-bearing ownership invariant
-statement stays in `agents/supervisor.md` §"Git Worktree Lifecycle".)
-
-```
-Phase 3 (EXECUTE — Execute Manager Step 2a):
-  git branch feature/BD-XXa              # from feature branch HEAD (ref only, no checkout)
-  git branch feature/BD-XXc
-  git worktree add ../{project}-BD-XXa feature/BD-XXa
-  git worktree add ../{project}-BD-XXc feature/BD-XXc
-  # Workers operate in worktrees...
-
-Phase 4 (FINALIZE):
-  git checkout feature/BD-XX-desc
-  git merge feature/BD-XXa --no-ff
-  git merge feature/BD-XXc --no-ff
-  bash scripts/worktree-salvage.sh ../{project}-BD-XXa --reason "FINALIZE step 4"
-  git worktree remove ../{project}-BD-XXa
-  bash scripts/worktree-salvage.sh ../{project}-BD-XXc --reason "FINALIZE step 4"
-  git worktree remove ../{project}-BD-XXc
-  git branch -d feature/BD-XXa
-  git branch -d feature/BD-XXc
-```
+**No per-subtask Code Reviewer spawn contract (any threshold):** no `loomwright:code-reviewer` spawn follows a worker on any path; Phase 4.5's integrated review is the sole one in the default flow.

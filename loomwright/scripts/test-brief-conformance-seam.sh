@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-brief-conformance-seam.sh — static wiring test for the BRIEF-CONFORMANCE enrichment of the
-# Supervisor Phase 4.5 gating Code Reviewer (skills/self-heal-advisory/SKILL.md Part 1
-# §"Brief-conformance advisory", Part 2 step 1f + the BRIEF-CONFORMANCE ADVISORY spawn-prompt line)
+# Supervisor Phase 4.5 gating Code Reviewer (skills/self-heal-advisory/on-entry.md
+# §"Brief-conformance advisory" and step 1f, plus SKILL.md Part 2 + the BRIEF-CONFORMANCE ADVISORY spawn-prompt line)
 # and its two mirrors (agents/code-reviewer.md, skills/quality-checklist/SKILL.md).
 #
 # Every surface here is MARKDOWN — prompt text that an agent executes — so there is nothing to run;
@@ -40,6 +40,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"
 
 SKILL="$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md"
+# automate-speed/15 split: Part 1 §"Brief-conformance advisory" (the cap) and on-entry step 1f live in on-entry.md
+SKILL_ENTRY="$PLUGIN_ROOT/skills/self-heal-advisory/on-entry.md"
 REVIEWER="$PLUGIN_ROOT/agents/code-reviewer.md"
 CHECKLIST="$PLUGIN_ROOT/skills/quality-checklist/SKILL.md"
 
@@ -128,19 +130,19 @@ case "$line" in
 esac
 
 # ---- (b) the cap stated ONCE, inside Part 1; step 1f references it + names the skip conditions ----
-cap_total="$(grep -c -- '25 bullets' "$SKILL" || true)"
+cap_total="$(grep -c -- '25 bullets' "$SKILL_ENTRY" || true)"
 cap_in_section="$(awk '
   /^## Brief-conformance advisory/ { in_sec = 1; next }
   in_sec && /^## / { in_sec = 0 }
   in_sec && /25 bullets/ { n++ }
   END { print n + 0 }
-' "$SKILL")"
+' "$SKILL_ENTRY")"
 if [ "$cap_total" -eq 1 ] && [ "$cap_in_section" -eq 1 ]; then
   ok "(b) cap token '25 bullets' appears exactly once, inside ## Brief-conformance advisory"
 else
   no "(b) cap token '25 bullets' count: total=$cap_total in-section=$cap_in_section (expected 1 / 1)"
 fi
-step1f="$(grep -E '^1f\. ' "$SKILL" | head -1)"
+step1f="$(grep -E '^1f\. ' "$SKILL_ENTRY" | head -1)"
 if [ -n "$step1f" ]; then
   ok "(b) Part 2 on-entry step 1f. exists"
 else
