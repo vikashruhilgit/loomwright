@@ -134,12 +134,14 @@ This file lists every branch and rule that the standalone PR review-and-heal loo
 | RH-118 | skills/review-heal/SKILL.md | q: **Confirmed but NOT auto-fixable (needs human judgment) → BLOCKS READY.** | a finding is confirmed but needs human judgment | surface/escalate it (counts in `remaining_issues`); no blind fix | judgment | prose | - | test-review-heal-next-step.sh |
 | RH-119 | skills/review-heal/SKILL.md | q: **Confirmed but its stated severity is below `FIX_FLOOR` → DISMISSED as `below_fix_floor`** | a confirmed finding's stated severity is below `FIX_FLOOR` | dismiss as `below_fix_floor`; not fixed, does not block READY, travels as a follow-up | deterministic | prose | script:fix-floor.sh meets | test-fix-floor.sh |
 | RH-120 | skills/review-heal/SKILL.md | q: **Validated as stale / invalid / already-addressed → DISMISSED.** | a finding is stale, invalid or already addressed | record it in `findings_dismissed` + itemised `dismissed` (optional `severity`); not fixed, does not block READY | judgment | prose | - | test-review-heal-next-step.sh |
-| RH-121 | skills/review-heal/SKILL.md | q: Only **case-3 (confirmed-but-not-auto-fixable)** findings remain as READY-blockers after a round | a round's validation finishes | only case-3 findings remain READY-blockers; `findings_validated` = cases 2+3, `findings_dismissed` = 3a+4 | deterministic | prose | - | test-review-heal-next-step.sh |
+| RH-121 | skills/review-heal/SKILL.md | q: Only **case-3 (confirmed-but-not-auto-fixable)** findings remain as READY-blockers after a round | a round's validation finishes | only case-3 findings remain READY-blockers; `findings_validated` = cases 2+3, `findings_dismissed` = 3a+4, `findings_clean` = case 5 (in neither) | deterministic | prose | - | test-review-heal-next-step.sh |
+| RH-387 | skills/review-heal/SKILL.md | q: **The whole text raises no issue at all → CLEAN** | a candidate's whole text raises no issue (a bot review that only says it found nothing) | validate it `clean`: counted in `findings_clean` only, never dismissed, drafted or fixed, never blocks READY; a text that raises anything after "no new findings" is case 2/3/3a/4; classification unchanged, so it still counts as a posted lens | judgment | prose | script:review-heal-next-step.sh validate | test-review-heal-next-step.sh |
 | RH-122 | skills/review-heal/SKILL.md | h: ### Dismissed-findings marker comment (dismissed-findings-01) | a dismissed-findings comment is posted (review-heal or Phase 4.5) | this subsection is the single source of truth for its byte-identical format; `pr-postmortem-gather.sh` parses only this shape | rule | global | script:pr-postmortem-gather.sh | test-pr-postmortem-gather.sh |
 | RH-123 | skills/review-heal/SKILL.md | q: **Why a PR comment, not just the result block.** | dismissals must reach a later postmortem | post a PR comment — the result block has no durable transport across the process boundary | story | rationale:docs/rationale/review-heal.md#why-the-dismissed-findings-marker-is-a-pr-comment | - | test-review-heal-next-step.sh |
 | RH-124 | skills/review-heal/SKILL.md | q: at most once per round, ONLY when that round's Step U3.5 | a round produced ≥1 NEW dismissal vs the `dismissed_before_round` snapshot | post the marker comment once; zero new dismissals ⇒ post nothing | deterministic | prose | - | test-review-heal-next-step.sh |
 | RH-125 | skills/review-heal/SKILL.md | q: **Format (fixed, script-parseable — do NOT freelance the shape):** | the marker comment is written | first line `<!-- loomwright:dismissed round=<n> -->`, then one bullet per new dismissal in order; never a second comment per round, never an edit | rule | global | script:pr-postmortem-gather.sh | test-pr-postmortem-gather.sh |
 | RH-126 | skills/review-heal/SKILL.md | q: **Self-skip on the NEXT round (MUST — mechanized, not prose-only).** | the next round classifies issue comments | `classify-bot-review.sh` default `--skip-marker` drops the drain's own marker comment (disable only via `--skip-marker ''`) | deterministic | prose | script:classify-bot-review.sh | test-classify-bot-review.sh |
+| RH-388 | skills/review-heal/SKILL.md | h: ### Clean-review marker comment (#617) | a round has ≥1 `clean` item | post one `<!-- loomwright:clean round=<n> -->` comment after the dismissed one, never a section of it (the postmortem counts every dismissed-marker bullet) | deterministic | prose | script:review-heal-next-step.sh marker | test-review-heal-next-step.sh |
 | RH-127 | skills/review-heal/SKILL.md | h: ### Step U4 — The bounded drain loop | an until-mergeable drain runs (inline or detached runner) | run this SAME §U4 body on both entry paths; the round ceiling is the shared `drain-rounds.sh` ledger, never a private counter | rule | global | script:drain-rounds.sh | test-drain-rounds.sh |
 | RH-128 | skills/review-heal/SKILL.md | q: `max_rounds` has exactly ONE authoritative default below (5) | the drain's round default is read or changed | exactly one authoritative default (5), here; `--max-rounds N` overrides | rule | global | - | test-review-heal-next-step.sh |
 | RH-129 | skills/review-heal/SKILL.md | q: max_probes = 5 | red required checks are probed in a round | probe at most `max_probes` (default 5) per round, one jobs call each, no pagination | deterministic | prose | script:ci-run-probe.sh | test-ci-run-probe.sh |
@@ -404,9 +406,9 @@ This file lists every branch and rule that the standalone PR review-and-heal loo
 ## Gap list (ordered by risk)
 
 ## Counts
-- rows: 386
-- deterministic: 184
-- judgment: 16
+- rows: 388
+- deterministic: 185
+- judgment: 17
 - rule: 175
 - story: 11
 - GAP: 0

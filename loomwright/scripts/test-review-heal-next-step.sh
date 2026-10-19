@@ -30,10 +30,12 @@
 #       closed spawn|ask|park|done), every `what` is in WHAT_ENUM, every `step` is a driver `case` arm.
 #   D   DOC MIRROR. The schema doc's `what` table equals WHAT_ENUM and its step table equals the driver's
 #       `case` arms; RESULT_SCHEMAS.md points at the schema doc.
-#   R   REPORT VALIDATION. Malformed reports (an unknown / missing id, a bad verdict, a multi-line finding,
+#   R   REPORT VALIDATION. Malformed reports (an unknown / missing id, a bad verdict, `clean` in a fallback
+#       review report, a multi-line finding,
 #       confirmed without auto_fixable, a fix report without a self_review line ⇒ `self_review_missing`,
 #       a non-hex pushed_sha, a --result with nothing pending) exit 2, print nothing and write nothing; a
-#       report re-sent after it was taken re-prints the pending instruction and writes nothing.
+#       report re-sent after it was taken re-prints the pending instruction and writes nothing. A validate
+#       report's `clean` with no finding line is taken (#617: READY, findings_clean 1).
 #   W   RESUMABLE WAIT. A CONTINUE line ⇒ exit 3, nothing printed; the next no-result call re-calls the
 #       wait with `--continue` and reaches the validate spawn.
 #   B   BRANCHES the goldens do not reach: confirmed-not-auto-fixable ⇒ ESCALATED findings; a rules gate
@@ -82,7 +84,8 @@ WHAT_ENUM="validate findings
 fallback review
 fix worker"
 REQUIRED_BRANCHES="converged bound_hit sub_floor_converged ci_untrusted fix_round no_review_lens_posted
-no_review_lens_posted_ambiguous no_review_lens_posted_red_check channel_unknown fix_floor_invalid fallback_review_ran"
+no_review_lens_posted_ambiguous no_review_lens_posted_red_check channel_unknown fix_floor_invalid fallback_review_ran
+clean_verdict"
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass + 1)); }
@@ -273,9 +276,17 @@ if [ -z "${RH_CASES:-}" ]; then
     [ "$(count_fallback "$n")" = 1 ] && ok "A: $n spawns exactly one fallback review" || no "A: $n spawned $(count_fallback "$n") fallback reviews"
   done
   for n in converged-ready bound-hit-escalated sub-floor-converged-ready ci-untrusted-escalated fix-round-pushed \
-           unknown-channel-escalated fix-floor-invalid-escalated; do
+           unknown-channel-escalated fix-floor-invalid-escalated clean-review-not-dismissed; do
     [ "$(count_fallback "$n")" = 0 ] && ok "A: $n spawns no fallback review" || no "A: $n spawned a fallback review"
   done
+  # #617: a clean review is no dismissal — the result has findings_clean and no dismissed key, and
+  # the only PR comment is the clean marker (never the dismissed one the postmortem counts)
+  CR="$FIX/clean-review-not-dismissed"
+  if grep -qx '  findings_clean: 1' "$CR/expected.result.md" && grep -qx '  findings_dismissed: 0' "$CR/expected.result.md" \
+     && ! grep -q '^  dismissed:' "$CR/expected.result.md" && grep -q '"decision":"READY","termination_reason":"converged"' "$WORK/transcript.clean-review-not-dismissed" \
+     && grep -qx '<!-- loomwright:clean round=1 -->' "$CR/expected.comments" && ! grep -q 'loomwright:dismissed' "$CR/expected.comments"; then
+    ok "A: a clean review ⇒ READY converged, findings_clean 1, no dismissed key, its own clean marker"
+  else no "A: the clean-review case is not READY converged with findings_clean 1 and no dismissal"; fi
   if grep -q '"decision":"ESCALATED"' "$WORK/transcript.unknown-channel-escalated" \
      && ! grep -q '"what":"fallback review"' "$WORK/transcript.unknown-channel-escalated"; then
     ok "A: unknown channel ⇒ ESCALATED, the fallback trigger never evaluated"
@@ -368,6 +379,8 @@ drv "$DRIVER" --start drain; PEND="$OUT"
 r_refuse "an unknown id" '{"findings":[{"id":"r9-9","verdict":"dismissed","finding":"x","reason":"stale"}]}' 'every candidate id'
 r_refuse "a missing id" '{"findings":[]}' 'every candidate id'
 r_refuse "a bad verdict" '{"findings":[{"id":"r1-1","verdict":"maybe","finding":"x","reason":"stale"}]}' 'malformed'
+r_refuse "an unknown verdict next to clean" '{"findings":[{"id":"r1-1","verdict":"cleaned"}]}' 'malformed'
+r_refuse "a clean verdict with a multi-line finding" '{"findings":[{"id":"r1-1","verdict":"clean","finding":"a\nb"}]}' 'malformed'
 r_refuse "a multi-line finding" '{"findings":[{"id":"r1-1","verdict":"dismissed","finding":"a\nb","reason":"stale"}]}' 'malformed'
 r_refuse "confirmed without auto_fixable" '{"findings":[{"id":"r1-1","verdict":"confirmed","finding":"x"}]}' 'malformed'
 r_refuse "an unknown severity" '{"findings":[{"id":"r1-1","verdict":"confirmed","finding":"x","auto_fixable":true,"severity":"CRITICAL"}]}' 'malformed'
@@ -381,6 +394,19 @@ s1="$(snapshot)"; drv "$DRIVER" --result "$GOOD"; s2="$(snapshot)"
 r_refuse "a fix report without self_review" '{"pushed":true,"pushed_sha":"b2c3d4e5f60718293a4b5c6d7e8f901234567890"}' 'self_review_missing'
 r_refuse "a non-hex pushed_sha" '{"pushed":true,"pushed_sha":"not-a-sha","self_review":"self_review: clean"}' 'hex'
 r_refuse "a validate report at the fix spawn" '{"findings":[]}' 'pushed true|false'
+# #617: clean is a validate-mode verdict only — accepted there with no finding line, refused by the
+# fallback review (whose contract stays {"findings": []} for a clean review)
+setup_case "$FIX/converged-ready"
+drv "$DRIVER" --start drain
+drv "$DRIVER" --result '{"findings":[{"id":"r1-1","verdict":"clean"}]}'
+if [ "$RCV" = 0 ] && [ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] \
+   && grep -qx '  findings_clean: 1' <<<"$(printf '%s' "$OUT" | jq -r '.review_heal_result')"; then
+  ok "R: clean without a finding line is accepted (READY, findings_clean 1)"
+else no "R: clean without a finding ⇒ rc $RCV, decision $(printf '%s' "$OUT" | jq -r '.decision' 2>/dev/null)"; fi
+setup_case "$FIX/fallback-no-review-lens"
+drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.what' 2>/dev/null)" = "fallback review" ] || no "R: the no-lens case did not reach the fallback spawn"
+r_refuse "clean in a fallback review report" '{"findings":[{"verdict":"clean","finding":"no new findings","severity":"LOW"}]}' 'malformed'
 
 # --------------------------------------------------------------------------------------
 # W — resumable wait
@@ -709,6 +735,9 @@ RH-118	skills/review-heal/SKILL.md	**Confirmed but NOT auto-fixable (needs human
 RH-120	skills/review-heal/SKILL.md	**Validated as stale / invalid / already-addressed → DISMISSED.**
 RH-121	skills/review-heal/SKILL.md	Only **case-3 (confirmed-but-not-auto-fixable)** findings remain as READY-blockers after a round
 RH-124	skills/review-heal/SKILL.md	at most once per round, ONLY when that round's Step U3.5
+RH-387	skills/review-heal/SKILL.md	**The whole text raises no issue at all → CLEAN**
+RH-388	skills/review-heal/SKILL.md	### Clean-review marker comment (#617)
+RH-388	skills/review-heal/SKILL.md	**When:** at most once per round, ONLY when that round's Step U3.5 produced **≥1** case-5
 RH-128	skills/review-heal/SKILL.md	`max_rounds` has exactly ONE authoritative default below (5)
 RH-141	skills/review-heal/SKILL.md	**NOTE (AC1):** the drain deliberately spawns NO `Task(loomwright:code-reviewer)` of its own
 RH-147	skills/review-heal/SKILL.md	No finding is ever declined a fix on `--severity-floor` grounds

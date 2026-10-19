@@ -36,7 +36,16 @@
 #       threshold (SKILL §6 subsection; mirrored here): an item gets its OWN
 #       draft when severity ∈ {BLOCKING, HIGH, MEDIUM}, OR reason == pre_existing,
 #       OR severity is absent/unrecognized and reason != nit; every other item is
-#       listed in a summary draft. Zero items ⇒ no files. Per-finding names are
+#       listed in a summary draft. Zero items ⇒ no files. BEFORE dedupe, an item
+#       with no recognised severity whose whole text is a no-finding verdict
+#       (`claude[bot] review of <sha>: no new findings`, `no new findings on <sha>`,
+#       `Reviewed <sha>: no new findings`, `… reported no findings`,
+#       `no finding raised` — the NO_FINDING list below)
+#       is NOT a finding (#617): never drafted or counted, one `not-a-finding`
+#       line, and an UNDECIDED own draft of it already on disk is retired
+#       (`moved` row). The drain records a clean review as `clean` since #617, so
+#       this is defence in depth for older sidecars; Phase 4.5 `heal_dismissed`
+#       always states a severity, so it never hits this rule. Per-finding names are
 #       content addressed: h8 = first 8 hex of sha1("origin\tsource\tnormalized
 #       finding"). Summary SLOTS are `summary.md`, `summary-2.md`, …: a decided
 #       slot covers exactly the entries its `summary-member` rows name; every
@@ -74,7 +83,9 @@
 #       file written or kept, message lines (`dismissed-drafts: no <sidecar> —
 #       skipped`, `dismissed-drafts: unreadable <path>`, `dismissed-drafts:
 #       refused <name> — <reason>`, `dismissed-drafts: retired <name> — its
-#       finding moved to the other bucket`, `dismissed-drafts: kept <name> — …`),
+#       finding moved to the other bucket`, `dismissed-drafts: not-a-finding <h8>
+#       — no-finding verdict`, `dismissed-drafts: retired <name> — not a finding
+#       (no-finding verdict)`, `dismissed-drafts: kept <name> — …`),
 #       then ONE summary line
 #       `dismissed-drafts: <n> per-finding + <s> summary (<m> listed in summary)`
 #       (s = summary files written or kept; m = current entries listed in one of
@@ -232,6 +243,28 @@ def norm(v):
 # Phase 4.5 heal_dismissed and Earned-Fallback items carry CODE_REVIEW_RESULT's closed BLOCKING|HIGH|MEDIUM|LOW.
 SEVS = ("BLOCKING", "HIGH", "MEDIUM", "LOW", "INFO")
 
+# A no-finding verdict (#617): the drain's validator records a clean bot review as `clean`, never
+# `dismissed`; a sidecar written before that (or a validator that still dismissed one) carries the
+# review's own "nothing found" line as a finding. Such an item is skipped (never drafted, never asked)
+# when it states NO recognised severity AND its norm()'d text FULLY matches one of these paraphrases
+# (case-insensitive, anchored, optional trailing period) — built from real validator lines:
+# `claude[bot] review of <sha>: no new findings`, `claude-review on <sha> reported no findings`,
+# `no new findings on <sha>`, the bots' own `Reviewed <sha>: no new findings`, `no finding raised`.
+# Anything after the verdict ("no new findings; notes …") fails the anchor, so a mixed item is still
+# drafted.
+NF_SHA = r"[0-9a-f]{7,40}"
+NF_ACTOR = r"(?:[\w\[\]@./-]+ ){0,3}"
+NO_FINDING = [re.compile(p + r"\.?", re.I) for p in (
+    NF_ACTOR + r"(?:of|on|for) " + NF_SHA + r":? (?:reported )?no (?:new )?findings?",
+    r"no (?:new )?findings? (?:on|of|for|at) " + NF_SHA,
+    NF_ACTOR + r"reported no (?:new )?findings?",
+    NF_ACTOR + r"reviewed " + NF_SHA + r"[:.]? no (?:new )?findings?",
+    r"no (?:new )?findings? raised",
+)]
+def no_finding(text):
+    t = norm(text)
+    return any(p.fullmatch(t) for p in NO_FINDING)
+
 # The ledger FIRST. Missing ⇒ empty (no decision yet). EXISTING but unreadable
 # (EACCES, a non-UTF-8 byte, a directory, a dangling symlink) ⇒ abort the whole
 # pass: read as empty, every decision would look undecided, a dropped draft
@@ -252,7 +285,7 @@ if os.path.lexists(ledger_path):
         elif len(parts) >= 2 and parts[0]:
             ledger[parts[0]] = parts[1]
 
-entries, seen = [], set()
+entries, seen, not_finding = [], set(), []
 for origin, fname, block, key, round_key in (
     ("phase_4_5", run_id + ".supervisor-result.md", "SUPERVISOR_RESULT", "heal_dismissed", "heal_iterations"),
     ("drain", run_id + ".review-heal-result.md", "REVIEW_HEAL_RESULT", "dismissed", "rounds"),
@@ -293,6 +326,12 @@ for origin, fname, block, key, round_key in (
         if sev not in SEVS:
             sev = ""  # absent OR unrecognized ⇒ unspecified (fail toward tracking)
         k = (origin, source, norm(finding))
+        if sev == "" and no_finding(finding):
+            h8 = hashlib.sha1("\t".join(k).encode("utf-8")).hexdigest()[:8]
+            if h8 not in not_finding:
+                not_finding.append(h8)
+                emit("msg", "dismissed-drafts: not-a-finding %s — no-finding verdict" % h8)
+            continue
         if k in seen:
             continue
         seen.add(k)
@@ -555,6 +594,13 @@ elif on_disk(undecided_slot) and not foreign(undecided_slot):
     if keys and keys <= cur and all(home.get(h) is not None for h in keys):
         deps = sorted(set(home[h] for h in keys if home[h]))
         emit("retire", "-", "-", undecided_slot, "/".join(deps) or "-", "moved", "0")
+# An UNDECIDED own draft a no-finding item left on disk (written before #617) is retired the same way:
+# a `moved` row, then the file. A decided one stays; one whose h8 is also a current entry stays.
+cur_h8 = set(x["h8"] for x in entries)
+for h in not_finding:
+    nm = prefix + h + ".md"
+    if h not in cur_h8 and decided(nm) is None and on_disk(nm) and not foreign(nm):
+        emit("retire", "notfinding", "-", nm, "-", "moved", "0")
 print("\n".join(out))
 PY
   local prc=$?
@@ -607,7 +653,11 @@ PY
           esac
           if printf '%s\t%s\t%s\n' "$name" moved "$(_ts)" >> "$ledger" 2>/dev/null; then
             rm -f -- "$out_abs/$name" 2>/dev/null
-            printf 'dismissed-drafts: retired %s — its finding moved to the other bucket\n' "$name"
+            if [ "$kname" = notfinding ]; then
+              printf 'dismissed-drafts: retired %s — not a finding (no-finding verdict)\n' "$name"
+            else
+              printf 'dismissed-drafts: retired %s — its finding moved to the other bucket\n' "$name"
+            fi
           fi
         fi ;;
       keep)

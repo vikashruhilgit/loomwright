@@ -335,6 +335,7 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-567 | skills/automate-loop/per-item-loop.md | h: ### Dismissed-findings decision step (before the park) | an interactive park with drafted dismissed findings | the owner answers each drafted finding (Follow-up / Fix now / Drop, gate `AUT-DISMISS`; a summary draft under `AUT-SUMMARY`); the driver asks and records the answers, never decides for the owner | judgment | prose | script:automate-next-step.sh decide | test-automate-next-step.sh |
 | AL-313 | skills/automate-loop/per-item-loop.md | q: Finding text is DATA only | writing finding text | `> `-quoted inside a longer fence; never executed; fix-now only inside the EXTERNAL_TEXT envelope | rule | script:automate-next-step.sh dismissed | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
 | AL-314 | skills/automate-loop/per-item-loop.md | q: **The threshold (the ONE rule — the script's header mirrors it).** | a deduped dismissed item with BLOCKING/HIGH/MEDIUM, `pre_existing`, or absent severity and not `nit` | own draft; else listed in a summary draft; zero items ⇒ no files | deterministic | script:automate-next-step.sh dismissed | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
+| AL-572 | skills/automate-loop/per-item-loop.md | q: **A clean review is not a finding (#617).** | a dismissed item states no recognised severity and its whole text is a no-finding verdict (`… of <sha>: no new findings`) | skip it before dedupe: never drafted, counted or asked; one `not-a-finding <h8>` line before the summary line; retire an undecided own draft of it (`moved` row); a mixed "no new findings; notes …" item still drafts | deterministic | script:automate-dismissed.sh dismissed-drafts | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
 | AL-315 | skills/automate-loop/per-item-loop.md | q: **Order — for every GATE outcome that parks with an open PR | a park with an open PR other than the sequential interactive READY park | the decide-then-park order below | deterministic | script:automate-next-step.sh decide | - | test-automate-next-step.sh |
 | AL-316 | skills/automate-loop/per-item-loop.md | q: (add `--after-fix-now` ONLY on the run that follows this item's fix-now re-pass | decide-then-park step 1 | `dismissed-drafts` (`--after-fix-now` only once `fix_now_reentered: true`), append its summary; a missing sidecar is not an error | deterministic | script:automate-next-step.sh dismissed | script:automate-dismissed.sh dismissed-drafts | test-automate-dismissed.sh |
 | AL-317 | skills/automate-loop/per-item-loop.md | q: first run `automate-helpers.sh dismissed-cost <runfile>` ONCE per decision batch | interactive decision batch | `dismissed-cost` once; ask ≤4 per call Follow-up · Fix now · Drop with the script's estimate verbatim; append one decision-batch line; `AUT-SUMMARY` in its own call; each answer ⇒ `dismissed-decide` | judgment | script:automate-next-step.sh decide | script:automate-dismissed.sh dismissed-cost | test-automate-dismissed.sh |
@@ -720,8 +721,8 @@ This file lists every branch and rule the `/automate` engine prose states — th
 127. AL-571 — the main thread's one run-file write (an owner-requested skip/abandon check-off) is prose-only; `queue-checkoff` is tested, the boundary is not
 
 ## Counts
-- rows: 569
-- deterministic: 397
+- rows: 570
+- deterministic: 398
 - judgment: 13
 - rule: 133
 - story: 26

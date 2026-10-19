@@ -1,0 +1,13 @@
+$ dismissed-drafts "$RF" .supervisor/requirements/phase-4/01-message-routing.md https://github.com/acme/widgets/pull/89
+dismissed-drafts: no automate-2026-10-19-001356-L1.supervisor-result.md — skipped
+dismissed-drafts: not-a-finding 517469c8 — no-finding verdict
+dismissed-drafts: not-a-finding 9d970cf8 — no-finding verdict
+draft	1	-	<ROOT>/.supervisor/requirements/proposed/automate-2026-10-19-001356-L1--01-message-routing-4ad9ab--dismissed-7d3ebeb3.md
+dismissed-drafts: retired automate-2026-10-19-001356-L1--01-message-routing-4ad9ab--dismissed-517469c8.md — not a finding (no-finding verdict)
+dismissed-drafts: 1 per-finding + 0 summary (0 listed in summary)
+= 0
+$ loop: bash "$H" progress-append "$RF" "2026-10-18T19:39:30Z $(tail -n 1 "$PREV")"
+= 0
+$ dismissed-pending "$RF"
+1
+= 0

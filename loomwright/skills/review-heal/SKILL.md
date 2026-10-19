@@ -324,15 +324,16 @@ Human-authored — or **unknown/unclassifiable** — unresolved threads are **su
 
 > **"Validate-Then-Fix" is canonical.** It **replaces** the old `fixable = actionable BLOCKING/HIGH items …` severity floor. Severity is no longer a gate on *whether* a finding is considered — EVERY detected bot finding (from any channel, at any stated severity) is run through validation. A real **MEDIUM** must be fixed; the old floor would have silently dropped it. **Fix floor (§"Fix floor"):** after validation, a confirmed finding whose STATED severity ranks below `FIX_FLOOR` is not fixed — it is itemised in `dismissed` with `reason: below_fix_floor` (a follow-up, the same treatment Phase 4.5 gives a below-floor finding). At the default `MEDIUM` floor a MEDIUM is still fixed; a finding with no stated severity is always fixed.
 
-For each finding in the classified `bot_findings` UNION (§U1), apply this three-way decision:
+For each finding in the classified `bot_findings` UNION (§U1), apply exactly one of the cases below (a candidate the Rejection rule above screened out is `rejected` and never reaches them):
 
 1. **Validate (evidence-citing — mitigates R4, no rubber-stamping).** The finding is **confirmed** ONLY when it (a) maps to a **concrete current-branch location** (file + line/region that still exists in the checked-out head state) AND (b) is **actionable** (describes a change that can be made). Validation must **cite the evidence** (the grounding location); a finding that **cannot be grounded** on the current branch is **dismissed, not fixed** — never rubber-stamp a finding into a fix without grounding it.
 2. **Confirmed + auto-fixable + at the fix floor → FIX.** Dispatch the existing fix-worker model: `Task(general-purpose)` with tool allowlist **Read / Write / Edit / Bash / Glob / Grep — NO Task**, told to address ONLY the validated findings; then **fork-aware push** (same-repo: explicit refspec, **REGULAR push, NEVER `--force`**; fork: no push → degrade to ESCALATED — see "Fork-aware push"); then **re-scan ALL channels** (U1). A confirmed finding at or above `FIX_FLOOR` is fixed exactly like a confirmed HIGH; no OTHER severity gate exists.
 3. **Confirmed but NOT auto-fixable (needs human judgment) → BLOCKS READY.** It is surfaced/escalated (counted in `remaining_issues`); it does not get a blind fix.
 3a. **Confirmed but its stated severity is below `FIX_FLOOR` → DISMISSED as `below_fix_floor`** (auto-fixable or not). It does **NOT** block READY and is **not** fixed; it travels as a follow-up like any dismissed finding.
 4. **Validated as stale / invalid / already-addressed → DISMISSED.** Recorded as dismissed (`findings_dismissed`, the count; `dismissed`, the itemised `{finding, reason, source}` list, plus an OPTIONAL `severity` when the finding stated one — dismissed-findings-01 / automate-followups/12, `docs/RESULT_SCHEMAS.md` §REVIEW_HEAL_RESULT); does **NOT** block READY and is **not** fixed.
+5. **The whole text raises no issue at all → CLEAN** (#617, `verdict: clean`). A bot review that only says it found nothing (`claude[bot] review of <sha>: no new findings`) is not a finding, so it is never dismissed: it does **NOT** block READY, is **not** fixed, is not itemised in `dismissed`, and so `/automate`'s dismissed-findings step never drafts or asks about it. Narrow by design: a text that says "no new findings" and then raises anything (a nit, a note, a pre-existing issue) is case 2/3/3a/4, never clean. Classification (§U1) is unchanged, so a clean review still counts as a posted review lens and never earns the fallback review.
 
-`findings_validated` counts findings confirmed (cases 2+3); `findings_dismissed` counts cases 3a+4. Only **case-3 (confirmed-but-not-auto-fixable)** findings remain as READY-blockers after a round — case-2 findings are fixed (and may recur, governed by the Anti-Churn Guardrail), case-4 findings are gone.
+`findings_validated` counts findings confirmed (cases 2+3); `findings_dismissed` counts cases 3a+4; `findings_clean` counts case 5, which is in neither of the other two. Only **case-3 (confirmed-but-not-auto-fixable)** findings remain as READY-blockers after a round — case-2 findings are fixed (and may recur, governed by the Anti-Churn Guardrail), case-4 findings and case-5 items are gone.
 
 ### Dismissed-findings marker comment (dismissed-findings-01)
 
@@ -352,6 +353,18 @@ For each finding in the classified `bot_findings` UNION (§U1), apply this three
 One `gh pr comment --body "..."` call per qualifying round; the body's FIRST line is the marker (`<!-- loomwright:dismissed round=<n> -->`, `<n>` = `round_number`, this run's plain round ordinal — the driver's `round` field, distinct from the ledger's `rounds`), followed by exactly one `- **<finding>** — <reason> (<source>)` bullet per item in `dismissed_this_round`, in order. Never a second comment for the same round; never an edit of an earlier round's comment (append-only, one comment per qualifying round — mirrors the Non-goals in the source requirement this item shipped from).
 
 **Self-skip on the NEXT round (MUST — mechanized, not prose-only).** This marker comment is posted under the operator's own `gh` login, so the issue-comment classification (§U1) would read it as a HUMAN-authored finding on every later round; `scripts/classify-bot-review.sh` drops any body starting `<!-- loomwright:` before the author/marker test, by default on every call (disabled only by `--skip-marker ''`).
+
+### Clean-review marker comment (#617)
+
+**When:** at most once per round, ONLY when that round's Step U3.5 produced **≥1** case-5 (`clean`) item. The driver's `marker` step posts it after the dismissed-findings comment. A separate comment, never a section of the dismissed one: `scripts/pr-postmortem-gather.sh` reads every bullet of a `loomwright:dismissed` comment as a dismissal, so a clean item listed there would be counted as one.
+
+```
+<!-- loomwright:clean round=<n> -->
+Clean reviews — no finding raised, nothing dismissed:
+- <finding> (<source>)
+```
+
+The `<!-- loomwright:` prefix makes the next round's classification skip it like the dismissed marker. `<finding>` is the validator's one-line note, or `clean review` when it sent none.
 
 ### Step U4 — The bounded drain loop
 
@@ -475,7 +488,7 @@ Moved to `skills/review-heal/fallback-review.md` — read it only when the drive
 > **`READY ⇔ required checks green AND review-producing checks settled (the scoped set — unrelated optional checks excluded) AND no unresolved validated bot findings remain across ALL channels (reviews + latestReviews + reviewThreads + PR issue comments + check outputs) AND no countable human-stamped must-rule check is failing (rules-gate-verdict.sh verdict ok or none).`**
 
 - **Human signals are surfaced but NEVER blocking** (never-wait-on-humans preserved): human approval, `reviewDecision: REVIEW_REQUIRED`, and human-authored / unknown-author findings & threads are surfaced/notified but are explicitly **not** READY blockers.
-- "No unresolved validated bot findings" means: after §U3.5 Validate-Then-Fix, there is no remaining **confirmed** finding — neither an auto-fixable one awaiting a fix nor a confirmed-but-not-auto-fixable (case-3) one. Dismissed (case-4) findings never block.
+- "No unresolved validated bot findings" means: after §U3.5 Validate-Then-Fix, there is no remaining **confirmed** finding — neither an auto-fixable one awaiting a fix nor a confirmed-but-not-auto-fixable (case-3) one. Dismissed (case-4) findings and clean (case-5) items never block.
 - "Review-producing checks settled" is enforced by §U2.5 — the round cannot even reach the READY test while a scoped check is in flight; an unrelated optional check pending is excluded from the gate.
 - `--max-rounds` is the hard ceiling (mechanized — `scripts/drain-rounds.sh`) and the Anti-Churn Guardrail still governs oscillation; neither weakens this READY definition.
 - **`sub_floor_converged` is a variant READY, not a separate condition.** It holds this SAME definition for a round's fixed findings, confirmed via the SHA-bound confirming required-check pass instead of a fresh all-channel re-scan — see §"Termination-only severity floor (`sub_floor_converged`)". It is READY for terminal-state purposes (PR left open, notified) but explicitly **not** auto-merge-eligible (AC9).
