@@ -112,11 +112,14 @@ printf '# Automate Run: seq-1 — queue\n## Status: paused\n## Queue\n- [ ] a.md
 lg_item0="$(grep '^- item: ' "$LG_RF")"
 run_h bash "$H" current-set "$LG_RF" --pause-reason live_lane
 if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: live_lane' "$LG_RF" && [ "$(grep '^- item: ' "$LG_RF")" = "$lg_item0" ]; then ok "LANEGUARD current-set accepts --pause-reason live_lane (run-level form, item line unchanged)"; else no "LANEGUARD current-set live_lane refused (rc=$RUN_RC): $(tr '\n' '|' < "$LG_RF")"; fi
+# phase_relay_unavailable (automate-speed/09) is the PICK-time phase-guard's RUN-level park: the same run-level form
+run_h bash "$H" current-set "$LG_RF" --pause-reason phase_relay_unavailable
+if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: phase_relay_unavailable' "$LG_RF" && [ "$(grep '^- item: ' "$LG_RF")" = "$lg_item0" ]; then ok "PHASEGUARD current-set accepts --pause-reason phase_relay_unavailable (run-level form, item line unchanged)"; else no "PHASEGUARD current-set phase_relay_unavailable refused (rc=$RUN_RC): $(tr '\n' '|' < "$LG_RF")"; fi
 # Every enum copy carries live_lane (runfile.sh validator, SKILL §3 template, automate-run.md template).
 lg_bad=""
 grep -q '^CURRENT_PAUSE_ENUM=.* live_lane ' "$HERE/automate-helpers.d/runfile.sh" || lg_bad="$lg_bad runfile.sh"
-grep -q '^- pause_reason: .*|live_lane|null' "$SKILL_FILE" || lg_bad="$lg_bad SKILL§3"
-grep -q '^- pause_reason: .*|live_lane|null' "$RUN_DOC" || lg_bad="$lg_bad automate-run.md"
+grep -q '^- pause_reason: .*|live_lane|.*null' "$SKILL_FILE" || lg_bad="$lg_bad SKILL§3"
+grep -q '^- pause_reason: .*|live_lane|.*null' "$RUN_DOC" || lg_bad="$lg_bad automate-run.md"
 grep -qF -- '`meta_unreachable`, `closeout_leftover`, `live_lane` | `current-set <rf> --pause-reason <reason>`' "$SKILL_FILE" || lg_bad="$lg_bad SKILL-transition-table"
 if [ -z "$lg_bad" ]; then ok "LANEGUARD live_lane is in every pause_reason enum copy"; else no "LANEGUARD live_lane missing from:$lg_bad"; fi
 # Prose seams (same helper on the real SKILL and on a mutant, like G7): §6 step 1's PICK-time run-lock

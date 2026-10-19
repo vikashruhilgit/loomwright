@@ -135,8 +135,19 @@
 #   V8  RUNNING SYSTEM (Validation 3 of automate-speed/08): a scratch repo (gh stubbed, the real run-lock.sh),
 #       a run parked awaiting_merge whose PR the stub reads MERGED, driven through `--resume`: the closeout
 #       lines through the next `picked` line are printed between `V3-08>` markers.
-#   D   DOC MIRROR: the schema doc's step list equals the driver's `case` arms, and its `do` table
-#       equals the emitter's closed set.
+#   F   FRESH PHASE SESSIONS (automate-speed/09) — the driver's default; every other leg runs under
+#       --inline-phases, which in_case adds to each driver call (AC2: the pre-09 expectations unchanged),
+#       and a fresh leg sets NS_FRESH=1 with a `claude` stub on the case's PATH (phase-check reads its
+#       --help). F1 (AC1): PICK (phase-check ok) → three `spawn`s with "session":"fresh" and phase
+#       launch-pad, supervisor, drain in that order, each `launch` a runnable phase-launch line (BLOCKED,
+#       exit 3, while no --owner-command is known), and ONE `session_id <sid> (<item>) phase=<phase>` line
+#       per phase with three distinct ids. F2 (AC3): phase-check unavailable (or a session id phase-launch
+#       cannot carry) ⇒ the phase_relay_unavailable park: no picked line, no spawn, the lock released. F3
+#       (AC7): LAUNCH_PAD_RESULT discarded / blocked / aborted / *_non_interactive / malformed / rubric
+#       dropped / a died phase ⇒ /autonomous PLAN step 4's status_reason on the no-PR line, no RUN; saved
+#       (or ONE new brief behind a malformed block) ⇒ the Supervisor phase spawn.
+#   D   DOC MIRROR: the schema doc's step list equals the driver's `case` arms, its `do` table the
+#       emitter's closed set, and its spawn row the emitters' `what` values.
 #   M   MUTATION CONTROLS — each mutant gated non-empty + differs from the driver + `bash -n` (and
 #       its anchor occurring exactly once); each must turn its leg red:
 #         M2a gate-eval replaced by a direct awaiting_merge park   ⇒ G gate-eval-merge
@@ -180,6 +191,10 @@
 #         M8h the live merge-watcher note dropped                       ⇒ P9
 #         M8i the run_done refusal dropped                              ⇒ P10
 #         M8j the meta-push-failed ## Progress report line dropped      ⇒ P11
+#         M9a the phase-check answer test flipped (unavailable proceeds) ⇒ F2
+#         M9b --inline-phases parsed as off                             ⇒ R1
+#         M9c the Supervisor phase spawn marked "session":"inline"      ⇒ F1
+#         M9d a discarded LAUNCH_PAD_RESULT taken down the saved branch  ⇒ F3
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -288,6 +303,11 @@ new_scratch() {
 # in_case <driver> <seam env file> <command…> — run one command in the case's sandbox
 in_case() {
   local drv="$1" seams="$2"; shift 2
+  # AC2 of automate-speed/09: every pre-09 leg and golden case runs the driver under --inline-phases (the
+  # inline-parity form — its expectations unchanged); the fresh-phase legs set NS_FRESH=1 to run the default
+  if [ "${NS_FRESH:-}" != 1 ] && [ "$#" -ge 2 ] && [ "$1" = bash ] && [ "$2" = "$drv" ]; then
+    set -- bash "$drv" --inline-phases "${@:3}"
+  fi
   (
     cd "$CASE_ROOT" || exit 98
     unset LOOMWRIGHT_GH_BIN LOOMWRIGHT_HOLDER_PID NEXT_STEP_FROM NEXT_STEP_UNTIL NEXT_STEP_CLOSEOUT_OUT
@@ -1452,6 +1472,179 @@ leg_meta_push() {
   return 0
 }
 
+# --------------------------------------------------------------------------------------
+# F. fresh phase sessions (automate-speed/09) — the driver's default: no --inline-phases (NS_FRESH=1)
+# --------------------------------------------------------------------------------------
+F_ITEM=.supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md
+F_PR=https://github.com/vikashruhilgit/loomwright/pull/601
+F_SHA=3333333333333333333333333333333333333333
+F_OWNER='/automate --resume automate-2026-10-13-181331'
+f_claude() { # <1|0> — a `claude` stub first on the case's PATH: phase-check reads its --help (1 = the
+  # pinnable regime advertised, 0 = no --permission-prompt-tool)
+  local h='--permission-prompt-tool <tool> --allowedTools <tools> --disallowedTools <tools>'
+  [ "$1" = 1 ] || h='--allowedTools <tools> --disallowedTools <tools>'
+  printf '#!/usr/bin/env bash\ncase "$*" in *--help*) echo "Usage: claude [options] %s" ;; esac\nexit 0\n' "$h" > "$CASE_BIN/claude"
+  chmod +x "$CASE_BIN/claude"
+}
+f_call() { # <driver> <args…> — one fresh-phase driver call (the real run-lock.sh); sets NC_OUT NC_RC NC_ERR
+  local drv="$1"; shift
+  NC_OUT="$(NS_FRESH=1 NS_REAL_LOCK=1 in_case "$drv" "$R_SEAMS" bash "$drv" "$CASE_RF" "$@" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  NC_ERR="$(cat "$CASE_DIR/nc.err")"
+}
+f_spawn_ok() { # <instruction> <step> <phase> — a fresh-phase spawn
+  printf '%s' "$1" | jq -e --arg s "$2" --arg p "$3" '.do == "spawn" and .step == $s and .session == "fresh" and .phase == $p
+      and (.launch | type) == "string" and (.prompt | type) == "string" and (.sidecar | endswith("-result.md"))
+      and (.then | contains("phase-wait") and contains("phase-answer") and contains("AskUserQuestion") and contains("exit 5") and contains("exit 6"))' >/dev/null 2>&1
+}
+# f_argv_ok <instruction> <phase> <owner command or ""> — `launch` parses (as the shell runs it) into exactly
+# bash <automate-helpers.sh> phase-launch <runfile> <phase> [--owner-command <cmd>] --coordinator-session
+# coord-1 -- <the instruction's prompt>
+f_argv_ok() {
+  local l p got want
+  l="$(printf '%s' "$1" | jq -r .launch)"; p="$(printf '%s' "$1" | jq -r .prompt)"
+  got="$(bash -c 'eval "set -- $1"; printf "%s\n" "$@"' _ "$l" | sed '2s|.*/automate-helpers\.sh$|<H>|')"
+  want="$(printf '%s\n' bash '<H>' phase-launch "$CASE_RF" "$2"; [ -n "$3" ] && printf '%s\n' --owner-command "$3"; printf '%s\n' --coordinator-session coord-1 -- "$p")"
+  [ "$got" = "$want" ]
+}
+# leg_fresh_walk <driver> — AC1: one Queue item without --inline-phases: PICK (phase-check ok) → the Launch Pad
+# phase spawn → its report → the Supervisor phase spawn → the RUN report → the drain phase spawn → the DRAIN
+# report; three `spawn`s with "session":"fresh" and phase launch-pad, supervisor, drain in that order, and ONE
+# `session_id <sid> (<item>) phase=<phase>` line per phase (three distinct ids: the Launch Pad and drain ones as
+# reported, the Supervisor one from .supervisor/state.md). A launch line printed before any --owner-command is
+# runnable and refused BLOCKED (exit 3, no process)
+leg_fresh_walk() {
+  local drv="$1" sp ad b la rc
+  new_scratch "$FIX/reconcile-closeout-merged" || { LEG_MSG="scratch"; return 1; }
+  f_claude 1
+  printf '0\tpr view %s*\t{"headRefOid":"%s","state":"OPEN","files":[{"path":"README.md"}],"additions":1,"deletions":0,"changedFiles":1}\n' "$F_PR" "$F_SHA" >> "$CASE_GH"
+  ad="$CASE_ROOT/.supervisor/automate"; b=.supervisor/jobs/pending/2026-10-19-fresh.md
+  f_call "$drv" --start pick --non-interactive --session-id coord-1; sp="$NC_OUT"
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$sp" plan launch-pad \
+    && printf '%s' "$sp" | jq -e --arg i "$F_ITEM" --arg s "$CASE_RUN.launch-pad-result.md" '.what == "launch pad phase" and .sidecar == $s
+         and .invocation == ("/loomwright:launch-pad goal: " + $i + " --non-interactive")
+         and (.prompt | contains("has an ## Outcomes Rubric section, copy it verbatim into the saved brief") and contains($s))' >/dev/null 2>&1 \
+    && f_argv_ok "$sp" launch-pad "" && grep -qE "^- [0-9TZ:-]+ picked $F_ITEM\$" "$CASE_RF" \
+    || { LEG_MSG="--start pick ⇒ exit $NC_RC '${sp:0:200}' ${NC_ERR:0:200}"; return 1; }
+  la="$(NS_FRESH=1 in_case "$drv" "$R_SEAMS" bash -c "$(printf '%s' "$sp" | jq -r .launch)" 2>&1)"; rc=$?
+  [ "$rc" = 3 ] && [ "$la" = "phase-launch: BLOCKED — launch-pad — no owner command — need the owner" ] && [ ! -e "$ad/$CASE_RUN.phase/launch-pad/pid" ] \
+    || { LEG_MSG="the launch line without an owner command ⇒ exit $rc '$la'"; return 1; }
+  mkdir -p "$CASE_ROOT/.supervisor/jobs/pending" && printf '# Brief\n\n## Task\nfresh\n' > "$CASE_ROOT/$b"
+  printf 'LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: saved\n  saved_brief_path: %s\n  summary: Plan Review PASS 1/3\n' "$b" > "$ad/$CASE_RUN.launch-pad-result.md"
+  f_call "$drv" --owner-command "$F_OWNER" --result "$(jq -cn --arg f "$ad/$CASE_RUN.launch-pad-result.md" '{launch_pad_result_file: $f, session_id: "lp-sess-1"}')"; sp="$NC_OUT"
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$sp" run supervisor && f_argv_ok "$sp" supervisor "$F_OWNER" \
+    && printf '%s' "$sp" | jq -e --arg b "$b" --arg s "$CASE_RUN.supervisor-result.md" '.what == "/autonomous run" and .sidecar == $s
+         and .invocation == ("/loomwright:supervisor job: " + $b + " --non-interactive") and .config_backup != null' >/dev/null 2>&1 \
+    && [ "$(jq -c . "$CASE_ROOT/.supervisor/config.json" 2>/dev/null)" = '{"auto_review":false}' ] \
+    || { LEG_MSG="Launch Pad report ⇒ exit $NC_RC '${sp:0:200}' ${NC_ERR:0:200}"; return 1; }
+  printf -- '- session_id: sup-sess-2\n' > "$CASE_ROOT/.supervisor/state.md"
+  printf 'SUPERVISOR_RESULT:\n  schema_version: 1\n  task_id: f\n  status: completed\n  pr_url: %s\n  branch: feature/f-fresh\n  subtasks_completed: 1\n  subtasks_failed: 0\n  heal_loop_ran: true\n  heal_iterations: 1\n  heal_decision: PASS\n  heal_fixable_issues_fixed: 0\n  heal_remaining_issues: 0\n  summary: "fresh"\n' "$F_PR" > "$ad/$CASE_RUN.supervisor-result.md"
+  f_call "$drv" --result "$(jq -cn --arg f "$ad/$CASE_RUN.supervisor-result.md" '{supervisor_result_file: $f, session_id: "cc-sup-9", run_note: "fresh supervisor phase"}')"; sp="$NC_OUT"
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$sp" drain drain && f_argv_ok "$sp" drain "$F_OWNER" \
+    && printf '%s' "$sp" | jq -e --arg p "$F_PR" --arg h "$F_SHA" '.what == "owned drain" and .head_sha == $h
+         and .invocation == ("/review-pr " + $p + " --until-mergeable --no-auto-postmortem")' >/dev/null 2>&1 \
+    && [ ! -e "$CASE_ROOT/.supervisor/config.json" ] \
+    || { LEG_MSG="RUN report ⇒ exit $NC_RC '${sp:0:200}' ${NC_ERR:0:200}"; return 1; }
+  printf 'REVIEW_HEAL_RESULT:\n  schema_version: 2\n  decision: READY\n  iterations: 1\n  issues_fixed: 0\n  remaining_issues: 0\n  pr_url: "%s"\n  notified: true\n  rounds: 1\n  fix_cycles: 0\n  repeat_check_failure: false\n  unresolved_bot_feedback: false\n  termination_reason: converged\n' "$F_PR" > "$ad/$CASE_RUN.review-heal-result.md"
+  f_call "$drv" --result "$(jq -cn --arg f "$ad/$CASE_RUN.review-heal-result.md" --arg h "$F_SHA" '{review_heal_result_file: $f, session_id: "dr-sess-3", ready_sha: $h, drain_note: "converged, 1 round"}')"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" or .do == "ask" or .do == "done"' >/dev/null 2>&1 \
+    || { LEG_MSG="DRAIN report ⇒ exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:200}"; return 1; }
+  in_order "$CASE_RF" "picked $F_ITEM" "session_id lp-sess-1 ($F_ITEM) phase=launch-pad" "launch-pad saved $b" \
+      "auto_review suppressed (backup $CASE_RUN.config-backup.json) — running the supervisor phase (fresh session)" \
+      "session_id sup-sess-2 ($F_ITEM) phase=supervisor" "ran /autonomous → PR $F_PR (fresh supervisor phase)" \
+      "owned drain started — /review-pr $F_PR --until-mergeable --no-auto-postmortem @ $F_SHA" \
+      "session_id dr-sess-3 ($F_ITEM) phase=drain" "drain READY (converged, 1 round)" \
+    && [ "$(grep -cE "^- [0-9TZ:-]+ session_id [A-Za-z0-9_-]+ \\($F_ITEM\\) phase=(launch-pad|supervisor|drain)\$" "$CASE_RF")" = 3 ] \
+    && ! grep -q 'session_id cc-sup-9' "$CASE_RF" \
+    || { LEG_MSG="## Progress: $(sed -n '/ picked .*18-backlog/,$p' "$CASE_RF" | tr '\n' '|' | head -c 900)"; return 1; }
+  FRESH_RF="$CASE_RF"
+  return 0
+}
+# leg_fresh_unavailable <driver> — AC3: no relay (the `claude` stub advertises no --permission-prompt-tool, so
+# phase-check prints `unavailable — …`) and no --inline-phases ⇒ PICK parks phase_relay_unavailable: no picked
+# line, no current-set, no spawn, RECONCILE never reached, the run lock released; a session id phase-launch
+# cannot carry parks the same way
+leg_fresh_unavailable() {
+  local drv="$1" sid want
+  for sid in coord-1 auto.2026-10-19; do
+    new_scratch "$FIX/reconcile-closeout-merged" || { LEG_MSG="scratch"; return 1; }
+    if [ "$sid" = coord-1 ]; then f_claude 0; want='phase-check: unavailable — CLI advertises no pinnable permission regime'
+    else f_claude 1; want="phase-check: unavailable — the session id $sid is not one phase-launch accepts"; fi
+    cp "$CASE_RF" "$CASE_DIR/before.md"
+    f_call "$drv" --start pick --non-interactive --session-id "$sid"
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .step == "phase-guard" and .pause_reason == "phase_relay_unavailable" and (.message | contains("--inline-phases"))' >/dev/null 2>&1 \
+      && p_no_new_pick "$CASE_DIR/before.md" && grep -qx '## Status: paused' "$CASE_RF" && grep -qxF -- '- pause_reason: phase_relay_unavailable' "$CASE_RF" \
+      && grep -qE -- "^- [0-9TZ:-]+ $want" "$CASE_RF" && ! grep -q ' closeout https' < <(diff "$CASE_DIR/before.md" "$CASE_RF") \
+      && ! grep -q "automate:$CASE_RUN" <<<"$(NS_REAL_LOCK=1 in_case "$drv" "$R_SEAMS" bash "$HERE/run-lock.sh" status 2>&1)" \
+      || { LEG_MSG="$sid: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:200}; $(diff "$CASE_DIR/before.md" "$CASE_RF" | tr '\n' '|' | head -c 400)"; return 1; }
+  done
+  return 0
+}
+# f_plan_case <driver> <LAUNCH_PAD_RESULT text> [<requirement text> [<brief path> <brief text>]] — a fresh
+# `--start run` (the pass has no saved brief ⇒ the Launch Pad phase spawn first), then — the brief the phase
+# "saved" written after the spawn — the Launch Pad report; NC_* hold the report's answer
+f_plan_case() {
+  local drv="$1" t="$2" ad item
+  new_scratch "$FIX/run-config-suppress-restore" || { NC_RC=98; return 1; }
+  f_claude 1; ad="$CASE_ROOT/.supervisor/automate"
+  item="$(sed -n 's/^- item: \([^ ]*\) .*/\1/p' "$CASE_RF" | head -n 1)"
+  if [ -n "${3:-}" ]; then mkdir -p "$CASE_ROOT/$(dirname "$item")" && printf '%s' "$3" > "$CASE_ROOT/$item"; fi
+  f_call "$drv" --start run --session-id coord-1
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad || { NC_RC=99; return 1; }
+  mkdir -p "$CASE_ROOT/.supervisor/jobs/pending"
+  if [ -n "${4:-}" ]; then printf '%s' "$5" > "$CASE_ROOT/$4"; fi
+  printf '%s' "$t" > "$ad/$CASE_RUN.launch-pad-result.md"
+  f_call "$drv" --result "$(jq -cn --arg f "$ad/$CASE_RUN.launch-pad-result.md" '{launch_pad_result_file: $f, session_id: "lp-sess-1"}')"
+}
+f_nopr_ok() { # <want line after the timestamp> — the plan's no-PR outcome: done/stopped, the pinned line, no RUN
+  local row
+  row="$(grep -E -- '^- [0-9TZ:-]+ ran /autonomous — no PR: ' "$CASE_RF" | tail -n 1 | sed -E 's/^- [0-9TZ:-]+ //')"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .status == "stopped"' >/dev/null 2>&1 \
+    && [ "$row" = "$1" ] && ! grep -q 'auto_review suppressed' "$CASE_RF" && [ ! -e "$CASE_ROOT/.supervisor/config.json" ] \
+    && grep -q 'session_id lp-sess-1 (.*) phase=launch-pad$' "$CASE_RF" && ! grep -q 'launch-pad saved' "$CASE_RF" \
+    || { LEG_MSG="exit $NC_RC '${NC_OUT:0:160}' line '$row' (want '$1') ${NC_ERR:0:160}"; return 1; }
+}
+# leg_fresh_plan_mapping <driver> — AC7: a Launch Pad report whose LAUNCH_PAD_RESULT is discarded / blocked /
+# aborted (a named *_non_interactive summary included) / malformed with no new brief / a saved brief that dropped
+# the requirement's rubric, or a phase that died ⇒ the no-PR line with /autonomous PLAN step 4's (step 6's)
+# status_reason and the block's own summary, NO Supervisor spawn, no .auto_review suppress, `done` `stopped`. A
+# saved brief (and a malformed block with exactly ONE new brief — the ls-diff fallback) ⇒ the Supervisor phase
+# spawn on it
+leg_fresh_plan_mapping() {
+  local drv="$1" st sum want lp='LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: %s\n  saved_brief_path: %s\n  summary: %s\n'
+  local rq=$'# Item\n\n## Outcomes Rubric\n- the thing works\n\n## Task\nx\n'
+  while IFS='|' read -r st sum want; do
+    [ -n "$st" ] || continue
+    # shellcheck disable=SC2059
+    f_plan_case "$drv" "$(printf "$lp" "$st" null "$sum")"
+    f_nopr_ok "$want" || { LEG_MSG="$st: $LEG_MSG"; return 1; }
+  done <<EOF
+discarded|User chose Discard at Phase 6|ran /autonomous — no PR: user_discarded_at_phase_6 (LAUNCH_PAD_RESULT discarded: User chose Discard at Phase 6)
+blocked|Plan Review FAIL x3|ran /autonomous — no PR: launch_pad_blocked (LAUNCH_PAD_RESULT blocked: Plan Review FAIL x3)
+aborted|owner aborted at NO-GO|ran /autonomous — no PR: user_aborted_at_launch_pad (LAUNCH_PAD_RESULT aborted: owner aborted at NO-GO)
+blocked|plan_review_fail_non_interactive — FAIL x3, nobody to ask|ran /autonomous — no PR: launch_pad_cant_ask_non_interactive (LAUNCH_PAD_RESULT blocked: plan_review_fail_non_interactive — FAIL x3, nobody to ask)
+EOF
+  f_plan_case "$drv" "$(printf 'LAUNCH_PAD_RESULT:\n  status: saved\n')"
+  f_nopr_ok "ran /autonomous — no PR: user_discarded_at_phase_6 (malformed LAUNCH_PAD_RESULT (schema_version must be the integer 1; got None); no new brief in .supervisor/jobs/pending/)" \
+    || { LEG_MSG="malformed: $LEG_MSG"; return 1; }
+  # shellcheck disable=SC2059
+  f_plan_case "$drv" "$(printf "$lp" saved .supervisor/jobs/pending/r.md PASS)" "$rq" .supervisor/jobs/pending/r.md $'# Brief\n\n## Task\nx\n'
+  f_nopr_ok "ran /autonomous — no PR: rubric_dropped_from_brief (the requirement's ## Outcomes Rubric is missing from the saved brief .supervisor/jobs/pending/r.md)" \
+    || { LEG_MSG="rubric dropped: $LEG_MSG"; return 1; }
+  # shellcheck disable=SC2059
+  f_plan_case "$drv" "$(printf "$lp" saved .supervisor/jobs/pending/r.md PASS)" "$rq" .supervisor/jobs/pending/r.md "$rq"
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" run supervisor && printf '%s' "$NC_OUT" | jq -e '.invocation == "/loomwright:supervisor job: .supervisor/jobs/pending/r.md"' >/dev/null 2>&1 \
+    && grep -qE -- '^- [0-9TZ:-]+ launch-pad saved \.supervisor/jobs/pending/r\.md$' "$CASE_RF" && ! grep -q 'ran /autonomous — no PR' "$CASE_RF" \
+    || { LEG_MSG="saved (rubric kept) ⇒ exit $NC_RC '${NC_OUT:0:160}' ${NC_ERR:0:160}"; return 1; }
+  f_plan_case "$drv" 'no block at all' "" .supervisor/jobs/pending/new.md $'# Brief\n'
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" run supervisor && printf '%s' "$NC_OUT" | jq -e '.invocation == "/loomwright:supervisor job: .supervisor/jobs/pending/new.md"' >/dev/null 2>&1 \
+    || { LEG_MSG="malformed + one new brief (ls-diff fallback) ⇒ exit $NC_RC '${NC_OUT:0:160}' ${NC_ERR:0:160}"; return 1; }
+  # a phase that died (no result) reports no_pr_why ⇒ the no-PR line, no RUN
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+  f_claude 1; f_call "$drv" --start run --session-id coord-1
+  f_call "$drv" --result '{"status_reason":"phase_died","no_pr_why":"phase-wait: died — no result line since the last launch","session_id":"lp-sess-1"}'
+  f_nopr_ok "ran /autonomous — no PR: phase_died (phase-wait: died — no result line since the last launch)" || { LEG_MSG="died: $LEG_MSG"; return 1; }
+  return 0
+}
 # rec_helpers <driver path> — replace the automate-helpers.sh beside <driver> (a symlink in a built dir)
 # with a wrapper that records each park-ask-gate call into the case's rec.log, then runs the real one
 rec_helpers() {
@@ -1862,6 +2055,17 @@ LEG_MSG=""
 if leg_meta_push "$DRIVER"; then ok "P11: a non-empty meta-push-failed answer ⇒ ONE meta-push-failed: ## Progress line + the stderr report, the PICK proceeds (next: pending); no marker ⇒ nothing written"
 else no "P11: $LEG_MSG"; fi
 
+echo "-- F. fresh phase sessions (automate-speed/09): the default, without --inline-phases"
+LEG_MSG=""
+if leg_fresh_walk "$DRIVER"; then ok "F1 (AC1): PICK (phase-check ok) → three fresh spawns — launch-pad, supervisor, drain, in that order — each a runnable phase-launch line (BLOCKED, exit 3, without an owner command); ONE session_id <sid> (<item>) phase=<phase> line per phase, three distinct ids (the Supervisor one from state.md)"
+else no "F1: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_fresh_unavailable "$DRIVER"; then ok "F2 (AC3): phase-check unavailable (no --permission-prompt-tool) / a session id phase-launch cannot carry ⇒ the phase_relay_unavailable park at phase-guard: no picked line, no current-set, no spawn, no RECONCILE, the run lock released"
+else no "F2: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_fresh_plan_mapping "$DRIVER"; then ok "F3 (AC7): LAUNCH_PAD_RESULT discarded / blocked / aborted / *_non_interactive / malformed / rubric dropped / a died phase ⇒ the no-PR line with /autonomous PLAN step 4's status_reason, no Supervisor spawn, no suppress; saved (and a malformed block + ONE new brief) ⇒ the Supervisor phase spawn"
+else no "F3: $LEG_MSG"; fi
+
 echo "-- V7. running system (Validation 3 of automate-speed/07): PICK → RUN → DRAIN → the tail, one item"
 V7="$WORK/v7"; mkdir -p "$V7/fx"
 V7_PR=https://github.com/example/scratch/pull/9
@@ -1962,6 +2166,12 @@ dos="$(grep -oE 'ns_emit (spawn|ask|park|done|[a-z]+) ' "$DRIVER" | awk '{print 
 docdos="$(grep -E '^\| `[a-z]+` \| ' "$DOC" | sed -n 's/^| `\([a-z]*\)` | .*/\1/p' | env LC_ALL=C sort -u | tr '\n' ' ')"
 [ "$dos" = "ask done park spawn " ] && [ "$docdos" = "$dos" ] && ok "D: the closed do enum (spawn | ask | park | done) — emitter and doc agree" \
   || no "D: do enum: driver '$dos' vs doc '$docdos'"
+# the spawn's `what` values (automate-speed/09 added "launch pad phase"): the driver's emitters vs the doc's spawn row
+whats="$(grep -oE 'what: "[^"]+"' "$DRIVER" | sed 's/^what: //' | tr -d '"' | env LC_ALL=C sort -u | tr '\n' '|')"
+docwhats="$(grep -E '^\| `spawn` \| ' "$DOC" | grep -oE '`"[^"`]+"`' | tr -d '`"' | env LC_ALL=C sort -u | tr '\n' '|')"
+[ "$whats" = "/autonomous run|fix-now re-drain|launch pad phase|owned drain|" ] && [ "$docwhats" = "$whats" ] \
+  && ok "D: the spawn's what values (/autonomous run | fix-now re-drain | launch pad phase | owned drain) — emitter and doc agree" \
+  || no "D: what values: driver '$whats' vs doc '$docwhats'"
 
 if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
   echo "-- M. mutation controls"
@@ -2212,6 +2422,30 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_meta_push "$m"; then no "M8j: the meta-push leg stayed green with the report line dropped"
     else ok "M8j: meta-push-failed report line dropped ⇒ P11 red ($LEG_MSG)"; fi
   else no "M8j: mutant not built"; fi
+  # M9a — the phase-check answer test flipped (an `unavailable` answer proceeds to PICK) ⇒ F2 red
+  if m="$(build_mutant 9a '  if [ "$l" = "phase-check: ok" ]; then' '  if [ "$l" != "phase-check: ok" ]; then')"; then
+    LEG_MSG=""
+    if leg_fresh_unavailable "$m"; then no "M9a: F2 stayed green with an unavailable phase-check proceeding"
+    else ok "M9a: phase-check unavailable proceeds ⇒ F2 red ($LEG_MSG)"; fi
+  else no "M9a: mutant not built"; fi
+  # M9b — --inline-phases parsed as off (every call runs fresh phases) ⇒ R1 (an inline-parity leg) red
+  if m="$(build_mutant 9b '    --inline-phases) INLINE=1; shift ;;' '    --inline-phases) INLINE=0; shift ;;')"; then
+    LEG_MSG=""
+    if leg_run_order "$m"; then no "M9b: R1 stayed green with --inline-phases ignored"
+    else ok "M9b: --inline-phases ignored ⇒ R1 red ($LEG_MSG)"; fi
+  else no "M9b: mutant not built"; fi
+  # M9c — the Supervisor phase spawn marked "session":"inline" ⇒ F1 red
+  if m="$(build_mutant 9c '{what: "/autonomous run", session: "fresh"' '{what: "/autonomous run", session: "inline"')"; then
+    LEG_MSG=""
+    if leg_fresh_walk "$m"; then no "M9c: F1 stayed green with the Supervisor spawn not fresh"
+    else ok "M9c: the Supervisor spawn not fresh ⇒ F1 red ($LEG_MSG)"; fi
+  else no "M9c: mutant not built"; fi
+  # M9d — a discarded LAUNCH_PAD_RESULT taken down the saved branch ⇒ F3 red
+  if m="$(build_mutant 9d '        saved) if [ -n "$path" ]' '        saved|discarded) if [ -n "$path" ]')"; then
+    LEG_MSG=""
+    if leg_fresh_plan_mapping "$m"; then no "M9d: F3 stayed green with discarded mapped to saved"
+    else ok "M9d: discarded mapped to the saved branch ⇒ F3 red ($LEG_MSG)"; fi
+  else no "M9d: mutant not built"; fi
 fi
 
 echo "PASS: $pass FAIL: $fail"
