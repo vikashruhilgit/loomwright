@@ -388,7 +388,7 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Check:** Does any acceptance criterion put its only evidence in the PR body?
 
-**Why:** FINALIZE writes the PR body from a fixed template before Phase 4.5 runs (`skills/async-orchestration/SKILL.md` §"PR Body Template"), and no Phase 4.5 or `/review-pr` fix task can edit it: fixers only commit to the branch. Brief conformance judges each criterion from the diff (`agents/code-reviewer.md` step 5a), and the PR body is not in the diff. A criterion that only the PR body can satisfy fails every heal round until a human edits the body by hand (#511).
+**Why:** FINALIZE writes the PR body from a fixed template before Phase 4.5 runs (`skills/async-orchestration/finalize.md` §"PR Body Template"), and no Phase 4.5 or `/review-pr` fix task can edit it: fixers only commit to the branch. Brief conformance judges each criterion from the diff (`agents/code-reviewer.md` step 5a), and the PR body is not in the diff. A criterion that only the PR body can satisfy fails every heal round until a human edits the body by hand (#511).
 
 **How:**
 - **Conditional gate:** read every `## Acceptance Criteria` bullet and every Subtask Structure criteria subset. None names the PR body, PR description or pull-request description as the place its result is recorded, pasted, listed or shown → skip silently.

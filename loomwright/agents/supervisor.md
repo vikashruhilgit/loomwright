@@ -569,7 +569,7 @@ Before completing workflow:
 
 ## Result Block (SUPERVISOR_RESULT)
 
-**Exactly one SUPERVISOR_RESULT block is emitted per task**, from inside Phase 4.5's completion tail (the "Emit SUPERVISOR_RESULT" step — step 5 in `skills/self-heal-advisory/SKILL.md` Part 2). Phase 5 LOOP emits nothing. When a session processes multiple tasks via LOOP → ACQUIRE, multiple blocks appear in the transcript — one per task, in order. The SubagentStop hook in `hooks/hooks.json` validates the last block in the output; earlier blocks must still be schema-valid. See `docs/RESULT_SCHEMAS.md` for the full schema definition.
+**Exactly one SUPERVISOR_RESULT block is emitted per task**, from inside Phase 4.5's completion tail (the "Emit SUPERVISOR_RESULT" step — step 5 in `skills/self-heal-advisory/completion-tail.md`). Phase 5 LOOP emits nothing. When a session processes multiple tasks via LOOP → ACQUIRE, multiple blocks appear in the transcript — one per task, in order. The SubagentStop hook in `hooks/hooks.json` validates the last block in the output; earlier blocks must still be schema-valid. See `docs/RESULT_SCHEMAS.md` for the full schema definition.
 
 ```yaml
 SUPERVISOR_RESULT:

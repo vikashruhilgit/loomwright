@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-brief-conformance-seam.sh — static wiring test for the BRIEF-CONFORMANCE enrichment of the
-# Supervisor Phase 4.5 gating Code Reviewer (skills/self-heal-advisory/SKILL.md Part 1
-# §"Brief-conformance advisory", Part 2 step 1f + the BRIEF-CONFORMANCE ADVISORY spawn-prompt line)
+# Supervisor Phase 4.5 gating Code Reviewer (skills/self-heal-advisory/on-entry.md
+# §"Brief-conformance advisory" and step 1f, plus SKILL.md Part 2 + the BRIEF-CONFORMANCE ADVISORY spawn-prompt line)
 # and its two mirrors (agents/code-reviewer.md, skills/quality-checklist/SKILL.md).
 #
 # Every surface here is MARKDOWN — prompt text that an agent executes — so there is nothing to run;

@@ -539,11 +539,11 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 
 ### Dispatch observability false negative
 
-The marker-reconcile rule (resolve `until_mergeable_dispatched` from the on-disk per-PR dispatch marker, never from "did I dispatch") exists because a prior inline run misreported "not dispatched" while the drain was live (PID alive, marker written): the `PostToolUse[Bash]` hook backstop had dispatched it out-of-band. The awk marker-check snippet's agent-side copy moved from `agents/supervisor.md` to `skills/self-heal-advisory/SKILL.md` completion-tail step 5.5; the commands-side copy stays because the inline path loads `commands/supervisor.md`.
+The marker-reconcile rule (resolve `until_mergeable_dispatched` from the on-disk per-PR dispatch marker, never from "did I dispatch") exists because a prior inline run misreported "not dispatched" while the drain was live (PID alive, marker written): the `PostToolUse[Bash]` hook backstop had dispatched it out-of-band. The awk marker-check snippet's agent-side copy moved from `agents/supervisor.md` to `skills/self-heal-advisory/completion-tail.md` step 5.5; the commands-side copy stays because the inline path loads `commands/supervisor.md`.
 
 ### Drain timing and the retired workaround
 
-The detached drain runs in its own dispatcher-created sibling worktree (detached HEAD at the PR head SHA — `scripts/dispatch-pr-review.sh`), with a separate working directory and index, so it can no longer check out, stage or commit in the self-heal's working tree. Writing `.supervisor/config.json {"auto_review": false}` was once the workaround for that collision; it is retired, and the flag remains only a general opt-out. The timing note moved into `skills/self-heal-advisory/SKILL.md` completion-tail step 5.5 from `agents/supervisor.md`.
+The detached drain runs in its own dispatcher-created sibling worktree (detached HEAD at the PR head SHA — `scripts/dispatch-pr-review.sh`), with a separate working directory and index, so it can no longer check out, stage or commit in the self-heal's working tree. Writing `.supervisor/config.json {"auto_review": false}` was once the workaround for that collision; it is retired, and the flag remains only a general opt-out. The timing note moved into `skills/self-heal-advisory/completion-tail.md` step 5.5 from `agents/supervisor.md`.
 
 ### Inline-path state.json write
 

@@ -29,7 +29,7 @@
 #       the explanatory sentence states the aggregation source, the bullet shape, and the
 #       omitted-entirely-when-empty rule; AND a cross-reference sentence exists naming
 #       `agents/supervisor.md` as the actual Sequential/Single-Agent recording site.
-#   (f) skills/self-heal-advisory/SKILL.md step 2 (the step that appends `## Outcome` to the BRIEF,
+#   (f) skills/self-heal-advisory/completion-tail.md step 2 (the step that appends `## Outcome` to the BRIEF,
 #       NOT step 2.5, the separate REQUIREMENT close-out step) appends the same `## Not verified`
 #       section to the brief, on both the PASS/loop-skipped and ESCALATED outcomes, omitted when
 #       empty, and states it (not the PR body) is what `/verify` reads.
@@ -160,7 +160,7 @@ case "$xref" in
   *) no "(e) cross-reference sentence missing or does not name agents/supervisor.md: $xref" ;;
 esac
 
-# ---- (f) self-heal-advisory/SKILL.md step 2 (brief-touching step, not step 2.5) ----------------
+# ---- (f) self-heal-advisory/completion-tail.md step 2 (brief-touching step, not step 2.5) -------
 step2_sec="$(awk '/^2\. \*\*Job lifecycle completion\*\*/{flag=1} flag{print; if (/^2\.5\. /) exit}' "$SELFHEAL")"
 if [ -n "$step2_sec" ]; then
   ok "(f) self-heal-advisory step 2 (Job lifecycle completion) section found"

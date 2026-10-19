@@ -751,7 +751,7 @@ fi
 # .supervisor/jobs/in-progress/ under the heading "In-progress briefs
 # (Supervisor was mid-run)". That heading is an ASSERTION the hook cannot
 # make. The brief lifecycle move to done/ is a PROMPT-INSTRUCTED completion-tail
-# step (skills/self-heal-advisory/SKILL.md step 2), so an agent that dies before
+# step (skills/self-heal-advisory/completion-tail.md step 2), so an agent that dies before
 # reaching it — e.g. a Phase 4.5 reviewer failing with a server error, observed
 # 2026-08-30 on PR #160 — strands a brief whose PR has already merged and
 # shipped. The old wording then pointed the reader at `/supervisor --continue`
