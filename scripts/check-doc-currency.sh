@@ -74,6 +74,12 @@ FILES=(
   # guarantees a red claude-review check on that same PR. Workflow prompts must stay free of
   # current-tense version/count claims (point at CLAUDE.md instead of naming numbers).
 )
+# /agent-help is a router since automate-speed/22: its moved sections live verbatim in parts, so
+# scan every part too (expanded at run time, sorted) — no claim that moved out of the router
+# escapes this gate. An empty expansion adds nothing (nullglob); the router stays listed above.
+shopt -s nullglob
+FILES+=(loomwright/docs/command-parts/agent-help/*.md)
+shopt -u nullglob
 
 fail=0
 report() { echo "  DRIFT [$1] $2:$3 — \"$4\""; fail=1; }

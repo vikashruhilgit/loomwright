@@ -32,6 +32,11 @@
 #       row and ghost row each fail CLOSED; a valid agents+skills+commands mirror
 #       passes together (the agent-table parse is bounded, so skill/command rows
 #       are never read as agent ghost rows)
+#   9.  COMMAND PARTS (automate-speed/22) — a split command's parts under the
+#       parts dir are counted into its .commands row (router fits, router + parts
+#       breaches; a nested part counts), an orphaned parts dir and a symlink under
+#       a parts dir fail CLOSED, no parts dir = the router alone; mutation controls
+#       prove the parts-add line and the orphan check are each load-bearing
 #   6.  LIVE REPO — the real gate passes against the checked-in repo (this run
 #       also exercises the REAL mirror tables, since no override is set)
 #
@@ -94,11 +99,13 @@ printf '# noop command doc fixture\n' > "$CMDS/noop.md"
 # Minimum .skills/.commands tables for a fixture whose skills dir holds `shared`.
 MIN_TABLES='"skills": { "shared": { "budget": 9999, "measured": 0 } }, "commands": { "noop": { "budget": 9999, "measured": 0 } }'
 
-run_gate() { # run_gate <agents> <skills> <json> [contracts-md] [commands-dir]  -> sets OUT, RC
+run_gate() { # run_gate <agents> <skills> <json> [contracts-md] [commands-dir] [parts-dir]  -> sets OUT, RC
   # 4th arg omitted (or "") => TOKEN_BUDGET_CONTRACTS_MD set EMPTY, which skips the
   # mirror-table check (hermetic fixtures). Pass a fixture path to exercise it.
   # 5th arg omitted => the shared one-command dir $CMDS.
-  OUT="$(TOKEN_BUDGET_AGENTS_DIR="$1" TOKEN_BUDGET_SKILLS_DIR="$2" TOKEN_BUDGET_JSON="$3" TOKEN_BUDGET_CONTRACTS_MD="${4-}" TOKEN_BUDGET_COMMANDS_DIR="${5-$CMDS}" bash "$GATE" 2>&1)"
+  # 6th arg omitted => a parts dir that does not exist (no command has parts), so the
+  # legs that predate command parts measure exactly what they did before.
+  OUT="$(TOKEN_BUDGET_AGENTS_DIR="$1" TOKEN_BUDGET_SKILLS_DIR="$2" TOKEN_BUDGET_JSON="$3" TOKEN_BUDGET_CONTRACTS_MD="${4-}" TOKEN_BUDGET_COMMANDS_DIR="${5-$CMDS}" TOKEN_BUDGET_COMMAND_PARTS_DIR="${6-$TMP/no-such-parts-dir}" bash "${GATE_UNDER_TEST:-$GATE}" 2>&1)"
   RC=$?
 }
 
@@ -537,6 +544,70 @@ SKILL_ROWS="$OK_SKILL" CMD_ROWS="$OK_CMD
 run_gate "$A" "$S" "$TMP/c8.json" "$TMP/c8-cghost.md"
 check "case8 command ghost row exits 1" 1 "$RC"
 contains_line "case8 names the command ghost row" "$OUT" "phantom-cmd" "ghost mirror row"
+
+# ---------------------------------------------------------------------------
+# Case 9 — COMMAND PARTS (.commands[<stem>] = router + every *.md under
+# <parts dir>/<stem>/, recursive). `split` router 400B => 100 proxy; parts
+# a.md 1000B + sub/b.md 1000B => 250 + 250. Budget 300: the router alone fits,
+# router + parts (600) breaches.
+# ---------------------------------------------------------------------------
+C9="$TMP/c9/commands"; P9="$TMP/c9/parts"; mkdir -p "$C9" "$P9/split/sub"
+printf '# noop\n' > "$C9/noop.md"
+{ i=0; while [ "$i" -lt 399 ]; do printf 'c'; i=$((i+1)); done; echo; } > "$C9/split.md"
+{ i=0; while [ "$i" -lt 999 ]; do printf 'p'; i=$((i+1)); done; echo; } > "$P9/split/a.md"
+cp "$P9/split/a.md" "$P9/split/sub/b.md"
+mk_tables "$TMP/c9.json" '"shared": { "budget": 9999, "measured": 0 }' "$NOOP_CMD"', "split": { "budget": 300, "measured": 0 }'
+run_gate "$A7" "$S7" "$TMP/c9.json" "" "$C9" "$P9"
+check "case9a router fits but router + parts breaches (exits 1)" 1 "$RC"
+contains_line "case9a BREACH row for the split command" "$OUT" "split" "BREACH"
+contains_line "case9a row counts router + parts (600 proxy)" "$OUT" "split" " 600 "
+contains_line "case9a detail names the part count (nested part included)" "$OUT" "split" "2 part(s) under $P9/split/"
+
+# 9d — NO parts dir for any command: the router alone is measured (100 <= 300).
+run_gate "$A7" "$S7" "$TMP/c9.json" "" "$C9" "$TMP/c9/no-parts-here"
+check "case9d no parts dir => the router alone passes (exits 0)" 0 "$RC"
+contains_line "case9d row is the router alone (100 proxy, no part count)" "$OUT" "split" "$C9/split.md)"
+# ...and a parts dir that exists but has no dir for this command: the router alone too.
+P9e="$TMP/c9/parts-other"; mkdir -p "$P9e"
+run_gate "$A7" "$S7" "$TMP/c9.json" "" "$C9" "$P9e"
+check "case9d an empty parts dir => the router alone passes (exits 0)" 0 "$RC"
+
+# 9b — ORPHANED parts dir: parts for a command doc that does not exist.
+P9b="$TMP/c9b/parts"; mkdir -p "$P9b/ghost-cmd"
+printf '## Ghost\n' > "$P9b/ghost-cmd/x.md"
+mk_tables "$TMP/c9b.json" '"shared": { "budget": 9999, "measured": 0 }' "$NOOP_CMD"', "split": { "budget": 9999, "measured": 0 }'
+run_gate "$A7" "$S7" "$TMP/c9b.json" "" "$C9" "$P9b"
+check "case9b orphaned parts dir exits 1" 1 "$RC"
+contains_line "case9b ERROR names the orphaned parts dir" "$OUT" "ghost-cmd" "orphaned parts dir"
+
+# 9c — a SYMLINK under a parts dir fails CLOSED (find -type f would skip it).
+P9c="$TMP/c9c/parts"; mkdir -p "$P9c/split"
+cp "$P9/split/a.md" "$P9c/split/a.md"
+ln -s "$P9/split/a.md" "$P9c/split/linked.md"
+run_gate "$A7" "$S7" "$TMP/c9b.json" "" "$C9" "$P9c"
+check "case9c symlink under a parts dir exits 1" 1 "$RC"
+contains_line "case9c ERROR names the symlink under the parts dir" "$OUT" "split" "symlink under"
+
+# 9m — MUTATION CONTROLS: each mutant gate (gated on non-empty + differs + bash -n)
+# must turn its leg's verdict, or the leg proves nothing about that line.
+mut_gate() { # mut_gate <out> <fixed-string line to delete> -> 0 iff the mutant is usable
+  mkdir -p "$(dirname "$1")"
+  grep -vF -- "$2" "$GATE" > "$1"
+  [ -s "$1" ] && ! cmp -s "$1" "$GATE" && bash -n "$1" 2>/dev/null
+}
+M9a="$TMP/m9a/scripts/check-token-budget.sh"
+if mut_gate "$M9a" 'total=$((total + ${weight% *}))'; then
+  GATE_UNDER_TEST="$M9a" run_gate "$A7" "$S7" "$TMP/c9.json" "" "$C9" "$P9"
+  check "case9m mutant without the parts-add line wrongly passes 9a (exits 0) — the line is load-bearing" 0 "$RC"
+else fail=$((fail+1)); echo "FAIL - case9m could not build the parts-add mutant — control inconclusive"; fi
+# The orphan check is a whole loop (deleting one line would leave a script that fails
+# bash -n), so this mutant drops the loop from its `for parts in` line to its `done`.
+M9b="$TMP/m9b/scripts/check-token-budget.sh"; mkdir -p "$(dirname "$M9b")"
+awk '/^for parts in "\$COMMAND_PARTS_DIR"\/\*\/; do$/ {skip = 1} skip && /^done$/ {skip = 0; next} !skip' "$GATE" > "$M9b"
+if [ -s "$M9b" ] && ! cmp -s "$M9b" "$GATE" && bash -n "$M9b" 2>/dev/null; then
+  GATE_UNDER_TEST="$M9b" run_gate "$A7" "$S7" "$TMP/c9b.json" "" "$C9" "$P9b"
+  check "case9m mutant without the orphaned-parts loop wrongly passes 9b (exits 0) — the check is load-bearing" 0 "$RC"
+else fail=$((fail+1)); echo "FAIL - case9m could not build the orphan-check mutant — control inconclusive"; fi
 
 # ---------------------------------------------------------------------------
 # Case 6 — LIVE REPO: the real gate passes against the checked-in budgets
