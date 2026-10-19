@@ -252,5 +252,71 @@ if mutant no-group-close '    if rec["success"] and GROUP_KEY:' '    if False:';
 else no "mutation control (group close) did not build — counts as FAIL"; fi
 
 echo
+echo "== S8. the /automate engine seams report (#618) =="
+# (a) the five engine names are known scripts: a fail event dry-runs to an open thread
+for se in automate-wave automate-closeout automate-trail automate-lanes supervisor-next-step; do
+  core "$T/r1" "$(ev "$se" step-x fail code_x "e8$se")" --dry-run
+  { [ "$RC" -eq 0 ] && has "THREAD_ACTION=open" && has "TITLE=[Telemetry] $se step-x: code_x"; }; check $? "$se is a known script (rc=$RC)"
+done
+# every seam leg below runs the REAL script with events on, the TEE, and NO consent: nothing is posted
+rm -f "$LW/egress.json"
+EV8="$T/ev8.jsonl"
+on8() { : > "$EV8"; export LOOMWRIGHT_SCRIPT_EVENTS=1 LOOMWRIGHT_SCRIPT_EVENT_TEE="$EV8"; }
+off8() { export LOOMWRIGHT_SCRIPT_EVENTS=0; unset LOOMWRIGHT_SCRIPT_EVENT_TEE; }
+evs() { python3 -I -c 'import json,sys
+for l in open(sys.argv[1]):
+    l=l.strip()
+    if l:
+        d=json.loads(l); print("%s/%s/%s/%s%s" % (d["script"], d["step"], d["outcome"], d["code"], "".join(" %s=%s" % kv for kv in sorted(d["counts"].items()))))' "$EV8"; }
+leaky() { grep -qE '/Users/|/home/|/private/|/tmp/|https?://|\.md|L[0-9]|feature/' "$EV8"; }
+
+# (b) closeout-classify — a leftover per distinct step (warn), complete (pass), run_lock_held-only (nothing)
+H8="$HERE/automate-helpers.sh"
+CO_LEFT='closeout: skipped — git fetch failed
+closeout: skipped — git pull --ff-only refused (diverged)
+closeout: skipped — branch checked out in primary (feature/secret)'
+off8; o0="$(cd "$T/r1" && printf '%s\n' "$CO_LEFT" | bash "$H8" closeout-classify --run r --item reqs/a.md --pr https://github.com/acme/secret-repo/pull/9)"
+on8; o1="$(cd "$T/r1" && printf '%s\n' "$CO_LEFT" | bash "$H8" closeout-classify --run r --item reqs/a.md --pr https://github.com/acme/secret-repo/pull/9)"; off8
+{ [ "$o0" = "$o1" ] && [ "$(evs)" = "automate-closeout/closeout/warn/leftover_branch rows=1
+automate-closeout/closeout/warn/leftover_sync rows=2" ] && ! leaky; }
+check $? "closeout leftovers: one warn per distinct step with its row count, output byte-identical events off/on, no path/PR/branch ($(evs | tr '\n' ';'))"
+on8; ( cd "$T/r1" && printf 'closeout: synced — main at abc\ncloseout: checked — - [x] reqs/a.md\n' | bash "$H8" closeout-classify >/dev/null ); off8
+[ "$(evs)" = "automate-closeout/closeout/pass/complete" ]; check $? "closeout complete ⇒ pass complete ($(evs))"
+on8; ( cd "$T/r1" && printf 'closeout: skipped — run lock held by automate:x (live pid 1)\n' | bash "$H8" closeout-classify >/dev/null ); off8
+[ ! -s "$EV8" ]; check $? "a run_lock_held-only result is a retry: no event"
+
+# (c) trail-pr's sidecar shape exclusion (warn) vs every sidecar passing (pass); the real candidate builder
+TR="$T/tr"; mkrepo "$TR" acme/secret-repo; mkdir -p "$TR/.supervisor/automate"
+printf '# Automate Run: r\n## Status: running\n## Queue\n## Current\n## Progress\n' > "$TR/.supervisor/automate/r.md"
+printf 'SUPERVISOR_RESULT:\n  schema_version: 1\n  status: completed\n' > "$TR/.supervisor/automate/r.supervisor-result.md"
+cand() { ( cd "$TR" && HERE="$HERE" bash -c '. "$HERE/automate-trail.d/sidecar.sh"; . "$HERE/automate-trail.d/trail-pr.sh"; _trail_candidates .supervisor/automate/r.md r >/dev/null; printf "%s" "$TRAIL_EXCLUDED"' ); }
+on8; x="$(cand)"; off8
+{ [ "$(evs)" = "automate-trail/trail-pr/warn/sidecar_missing_key" ] && case "$x" in *"excluded .supervisor/automate/r.supervisor-result.md"*) true ;; *) false ;; esac && ! leaky; }
+check $? "a sidecar excluded for its shape ⇒ warn sidecar_missing_key, never its text ($(evs))"
+printf 'SUPERVISOR_RESULT:\n  schema_version: 1\n  task_id: t\n  status: completed\n  pr_url: https://github.com/o/r/pull/1\n  branch: b\n  subtasks_completed: 1\n  subtasks_failed: 0\n  heal_loop_ran: false\n  heal_iterations: null\n  heal_decision: null\n  heal_fixable_issues_fixed: 0\n  heal_remaining_issues: 0\n  summary: s\n' > "$TR/.supervisor/automate/r.supervisor-result.md"
+on8; x="$(cand)"; off8
+{ [ "$(evs)" = "automate-trail/trail-pr/pass/sidecars_ok sidecars=1" ] && [ -z "$x" ]; }; check $? "every sidecar passing ⇒ pass sidecars_ok ($(evs))"
+
+# (d) lane-remove — only a STUCK refusal reports; the normal waits send nothing; removed ⇒ pass
+on8; HERE_L="$HERE" bash -c '. "$HERE_L/automate-lanes.sh"; LN_PRIMARY="$1"
+  _lanes_remove_event "dirty working tree"
+  _lanes_remove_event "metadata not pushed (local_ahead 1) — paths: .supervisor/automate/x.md"
+  _lanes_remove_event "live merge watcher (pid 1, pr); use --stop"
+  _lanes_remove_event "awaiting_input — unanswered question q"
+  _lanes_remove_event "gone (PR closed unmerged) — a human runs lane-remove --abandon"
+  _lanes_event lane-remove pass removed' _ "$T/r1"; off8
+{ [ "$(evs)" = "automate-lanes/lane-remove/fail/dirty_tree
+automate-lanes/lane-remove/fail/metadata_not_pushed
+automate-lanes/lane-remove/pass/removed" ] && ! leaky; }; check $? "lane-remove: stuck refusals only, normal waits silent, removed ⇒ pass ($(evs | tr '\n' ';'))"
+
+# (e) fleet-closeout — the real subcommand: an unreadable metadata mode ⇒ pull FAILED ⇒ fail pull_failed, rooted at the primary
+FP="$T/fp"; mkrepo "$FP" acme/secret-repo; mkdir -p "$FP/.supervisor/automate"
+printf '# Automate Run: P\n## Status: running\n## Queue\n- [ ] reqs/a.md\n## Current\n## Progress\n' > "$FP/.supervisor/automate/P.md"
+printf 'L1\t-\treqs/a.md\n' > "$FP/.supervisor/automate/P.lanes"
+printf '#!/usr/bin/env bash\necho "unknown stubbed"\n' > "$T/sm-unknown.sh"
+on8; fo="$(LOOMWRIGHT_LANES_SETUP_MEMORY="$T/sm-unknown.sh" bash "$HERE/automate-lanes.sh" fleet-closeout "$FP/.supervisor/automate/P.md" 2>&1)"; frc=$?; off8
+{ [ "$frc" = 2 ] && grep -q 'pull FAILED — metadata mode unknown' <<<"$fo" && [ "$(evs)" = "automate-lanes/fleet-closeout/fail/pull_failed" ] && [ -f "$FP/.supervisor/logs/telemetry.log" ]; }
+check $? "fleet-closeout pull FAILED ⇒ fail pull_failed from the primary (rc=$frc, $(evs))"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

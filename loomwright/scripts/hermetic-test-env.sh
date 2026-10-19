@@ -74,6 +74,12 @@ unset LOOMWRIGHT_WEBHOOK_URL LOOMWRIGHT_WEBHOOK_FORMAT LOOMWRIGHT_TELEMETRY_REPO
 # (b) The OS-notifier opt-out that notify-desktop.sh already honours as its first gate.
 export LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0
 
+# (c) Script events (emit-script-event.sh) default OFF in tests (#618): the /automate engine seams
+# emit on ordinary fail/pass paths, and an emit runs the telemetry wrapper, which writes
+# <root>/.supervisor/logs/ into fixture roots. A test that asserts on events sets
+# LOOMWRIGHT_SCRIPT_EVENTS=1 itself (or unsets it after sourcing this file); a caller's explicit value wins.
+export LOOMWRIGHT_SCRIPT_EVENTS="${LOOMWRIGHT_SCRIPT_EVENTS:-0}"
+
 # (c) Recording stubs.
 _hermetic_stub_names="osascript notify-send terminal-notifier curl wget"
 

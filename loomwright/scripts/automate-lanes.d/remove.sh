@@ -35,6 +35,31 @@ _lanes_status_named() {
     | awk -v k="$((n - 5))" '{ printf "%s%s", (NR > 1 ? ", " : ""), $0 } END { if (k > 0) printf ", +%d more", k }')"
 }
 
+# _lanes_event <step> <outcome> <code> [--count k=n] — #618: an opt-in telemetry script event
+# (docs/TELEMETRY.md "What the engine reports") rooted at the PRIMARY, never the lane dir (a lane is
+# about to be salvaged and removed, and the wrapper writes <root>/.supervisor/logs/). Fire-and-forget.
+_lanes_event() {
+  [ -n "${LN_PRIMARY:-}" ] && [ -d "$LN_PRIMARY" ] || return 0
+  bash "$HERE/emit-script-event.sh" --root "$LN_PRIMARY" automate-lanes "$@" >/dev/null 2>&1 </dev/null || true
+}
+# _lanes_remove_event <refusal reason> — the reason as a fixed token, ONLY for a refusal that means
+# something is stuck (unpushed metadata, a dirty tree, unpushed commits, an unreadable status, a
+# failed salvage). The normal waits — a live process or watcher, an open question, a gone PR — send
+# nothing: fleet-closeout re-runs lane-remove on every --resume and they clear by themselves.
+_lanes_remove_event() {
+  local c
+  case "$1" in
+    "metadata not pushed"*) c=metadata_not_pushed ;;
+    "meta-push failure marker"*) c=meta_push_failed ;;
+    "dirty working tree"*) c=dirty_tree ;;
+    "branch "*" commit(s) not on origin"*) c=unpushed_commits ;;
+    "metadata mode unknown"*|"metadata status unreadable"*|*"unreadable"*) c=status_unreadable ;;
+    "salvage "*) c=salvage_failed ;;
+    *) return 0 ;;
+  esac
+  _lanes_event lane-remove fail "$c"
+}
+
 # _lanes_only_bad_sidecars <meta-sync status --paths output> — issue #616: 0 when EVERY unpushed path
 # is one of this lane's own result sidecars (`<run_id>.supervisor-result.md` / `.review-heal-result.md`)
 # that sidecar-check fails — the file trail-pr's evidence gate excluded, which no push will ever carry,
@@ -123,7 +148,7 @@ lanes_remove() {
   done
   _lane_ctx "$dir" || die "lane-remove: not a lane: ${dir:-<none>}"
   local L="$LN_LANE" pid st mp mu q state rstate="" rf b u mb ms live_pid="" watchers="" ab_ok=0 exempt="" e kept=""
-  _refuse() { echo "lane-remove: refused — $L — $1"; return 1; }
+  _refuse() { echo "lane-remove: refused — $L — $1"; _lanes_remove_event "$1"; return 1; }
   # >>> live-process check
   pid="$(_lt_get "$LN_TABLE" "$L" 5)"; st="$(_lt_get "$LN_TABLE" "$L" 6)"
   if lanes_proc_alive "$pid" "$st" "$LN_DIR"; then
@@ -173,6 +198,7 @@ lanes_remove() {
     bash "$HELPERS" progress-append "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.md" \
       "lane abandoned: $L ($LN_RUN) — state ${rstate:-unknown}; salvage kept at <primary>-lanes/$LN_PARENT/salvage/${sv##*/}" >/dev/null 2>&1 || true
   fi
+  _lanes_event lane-remove pass removed
   echo "lane-remove: removed $L ($LN_DIR); salvage $sv$kept"
 }
 

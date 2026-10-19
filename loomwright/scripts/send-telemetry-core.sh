@@ -250,7 +250,10 @@ except Exception as e:
 # field that fails its shape skips the event (exit 5); an optional entry that
 # fails is dropped and counted in raw_data.dropped.
 # MUTATION_CONTROL_BEGIN: script-event-field-selection
-SCRIPT_EVENT_SCRIPTS = ("migrate-branch-mode", "setup-memory")
+SCRIPT_EVENT_SCRIPTS = ("migrate-branch-mode", "setup-memory",
+                        # #618 — the /automate engine seams (docs/TELEMETRY.md "What the engine reports")
+                        "automate-wave", "automate-closeout", "automate-trail", "automate-lanes",
+                        "supervisor-next-step")
 SCRIPT_EVENT_OUTCOMES = ("pass", "fail", "warn")
 SCRIPT_EVENT_KIND_GROUPS = ("b_only", "a_only", "blob_mismatch")
 SCRIPT_EVENT_KINDS = ("md", "dismissed-decisions", "results-jsonl", "brain-baseline-jsonl",

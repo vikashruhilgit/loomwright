@@ -84,11 +84,23 @@ WAVE_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOUR
 . "$(dirname "$WAVE_SELF")/automate-lanes.sh" || { echo "wave-build: refused — automate-lanes.sh unreadable"; exit 1; }
 
 WB_LOCKF=""; WB_WT=""
+# #618 — one opt-in script event per wave-build (docs/TELEMETRY.md "What the engine reports"): a fixed
+# code token set at the site (`_wb_refuse @code …` / `_wb_stop @code …`, or WB_CODE before an exit),
+# emitted from the EXIT trap. No code ⇒ no event (usage, single-lane mode, an unresolvable run file).
+WB_CODE=""; WB_OUTCOME=fail; WB_ROOT=""
 
 _wb() { echo "wave-build: $*"; }
-_wb_refuse() { _wb "refused — $*"; exit 1; }
-_wb_stop() { _wb "STOPPED — $*"; exit 2; }
-_wb_on_exit() { [ -n "$WB_LOCKF" ] && _lt_unlock "$WB_LOCKF"; return 0; }
+_wb_code() { case "${1:-}" in @*) WB_CODE="${1#@}"; return 0 ;; esac; return 1; }
+_wb_refuse() { _wb_code "${1:-}" && shift; _wb "refused — $*"; exit 1; }
+_wb_stop() { _wb_code "${1:-}" && shift; _wb "STOPPED — $*"; exit 2; }
+_wb_on_exit() {
+  [ -n "$WB_LOCKF" ] && _lt_unlock "$WB_LOCKF"
+  if [ -n "$WB_CODE" ] && [ -n "$WB_ROOT" ]; then
+    bash "$(dirname "$WAVE_SELF")/emit-script-event.sh" --root "$WB_ROOT" automate-wave wave-build \
+      "$WB_OUTCOME" "$WB_CODE" >/dev/null 2>&1 </dev/null || true
+  fi
+  return 0
+}
 
 # _wb_short_id <item> — `<initials of the parent dir's hyphen words>/<leading number>` (the W2 commit
 # precedent `pa/21, ch/01, tl/07`); no leading number ⇒ the basename; a one-word dir ⇒ its first 2 chars.
@@ -103,6 +115,7 @@ _wb_short_id() {
 
 wave_build() {
   local rf="" wb=""
+  trap _wb_on_exit EXIT
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --wave-branch) [ "$#" -ge 2 ] || _wb_refuse "--wave-branch needs a value"; wb="$2"; shift 2 ;;
@@ -117,35 +130,35 @@ wave_build() {
   # 1. resolve — the same resolver wave-plan prints from
   _lanes_wave_resolve "$rf" "$wb" || _wb_refuse "$WV_WHY"
   local parent="$WV_PARENT" primary="$WV_PRIMARY" base="$WV_BASE" k="$WV_K" tab n=0 bad=0
+  WB_ROOT="$primary"
   local kind lane path item run pr num sha st ls out rc j url
   wb="$WV_WB"; tab="$(printf '\t')"
   n="$(printf '%s' "$WV_ROWS" | grep -c . | tr -d ' ')"
-  [ "$n" != 0 ] || _wb_refuse "no wave lanes in $parent.lanes"
+  [ "$n" != 0 ] || _wb_refuse @no_wave_lanes "no wave lanes in $parent.lanes"
   # 2. lock — one wave-build per run at a time (see the header: never run-lock.sh)
   WB_LOCKF="$primary/.supervisor/automate/$parent.wave-build"
-  trap _wb_on_exit EXIT
   if ! LOOMWRIGHT_LANES_LOCK_WAIT_S="${LOOMWRIGHT_WAVE_LOCK_WAIT_S:-6}" _lt_lock "$WB_LOCKF"; then
     local h; h="$(_lt_holder "$WB_LOCKF.lock")"; WB_LOCKF=""
-    _wb_refuse "another wave-build for $parent is running (lock $primary/.supervisor/automate/$parent.wave-build.lock, holder pid ${h%% *})"
+    _wb_refuse @lock_busy "another wave-build for $parent is running (lock $primary/.supervisor/automate/$parent.wave-build.lock, holder pid ${h%% *})"
   fi
   # 3. done — an open PR from the wave branch means the build already finished
   if ! j="$(cd "$primary" && "$LANES_GH" pr list --head "$wb" --state all --json number,url,state,headRefName --limit 50 2>/dev/null </dev/null)" \
      || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$j"; then
-    _wb_refuse "cannot read the PRs from $wb (gh pr list failed) — fail closed"
+    _wb_refuse @gh_read_failed "cannot read the PRs from $wb (gh pr list failed) — fail closed"
   fi
   url="$(jq -r --arg b "$wb" '[.[] | select(.headRefName == $b and .state == "OPEN") | .url] | first // empty' <<<"$j" 2>/dev/null)"
-  if [ -n "$url" ]; then _wb "done — wave PR $url already open"; return 0; fi
+  if [ -n "$url" ]; then WB_OUTCOME=pass; WB_CODE=ok; _wb "done — wave PR $url already open"; return 0; fi
   url="$(jq -r --arg b "$wb" '[.[] | select(.headRefName == $b and .state == "MERGED") | .url] | first // empty' <<<"$j" 2>/dev/null)"
-  [ -z "$url" ] || _wb_refuse "wave PR $url from $wb is already merged — run fleet-closeout"
+  [ -z "$url" ] || _wb_refuse @already_merged "wave PR $url from $wb is already merged — run fleet-closeout"
   # 4. refusals — nothing is created before every one of them passed
   git -C "$primary" ls-remote --exit-code --heads origin "refs/heads/$wb" >/dev/null 2>&1; rc=$?
   case "$rc" in
-    0) _wb_refuse "$wb already exists on origin with no open PR — open one by hand, or delete the branch, or pass --wave-branch" ;;
+    0) _wb_refuse @branch_exists "$wb already exists on origin with no open PR — open one by hand, or delete the branch, or pass --wave-branch" ;;
     2) ;;
-    *) _wb_refuse "cannot read origin (git ls-remote exit $rc) — fail closed" ;;
+    *) _wb_refuse @origin_unreadable "cannot read origin (git ls-remote exit $rc) — fail closed" ;;
   esac
   if git -C "$primary" rev-parse -q --verify "refs/heads/$wb" >/dev/null 2>&1; then
-    _wb_refuse "local branch $wb already exists (a STOPPED build? see git worktree list) — remove it (git worktree remove <path>; git branch -D $wb) or pass --wave-branch"
+    _wb_refuse @branch_exists "local branch $wb already exists (a STOPPED build? see git worktree list) — remove it (git worktree remove <path>; git branch -D $wb) or pass --wave-branch"
   fi
   LN_TABLE="$WV_TABLE"; LN_PRIMARY="$primary"; LN_PARENT="$parent"
   while IFS="$tab" read -r kind lane path item run pr num sha st; do
@@ -163,10 +176,10 @@ wave_build() {
   done <<EOF
 $WV_ROWS
 EOF
-  [ "$bad" = 0 ] || exit 1
-  git -C "$primary" fetch -q origin </dev/null >/dev/null 2>&1 || _wb_refuse "git fetch origin failed"
+  [ "$bad" = 0 ] || { WB_CODE=lane_not_ready; exit 1; }
+  git -C "$primary" fetch -q origin </dev/null >/dev/null 2>&1 || _wb_refuse @fetch_failed "git fetch origin failed"
   local bsha; bsha="$(git -C "$primary" rev-parse -q --verify "refs/remotes/origin/$base^{commit}" 2>/dev/null)"
-  [ -n "$bsha" ] || _wb_refuse "origin/$base not found after the fetch"
+  [ -n "$bsha" ] || _wb_refuse @fetch_failed "origin/$base not found after the fetch"
   while IFS="$tab" read -r kind lane path item run pr num sha st; do
     [ "$kind" = ok ] || continue
     git -C "$primary" cat-file -e "$sha^{commit}" 2>/dev/null && continue
@@ -175,7 +188,7 @@ EOF
   done <<EOF
 $WV_ROWS
 EOF
-  [ "$bad" = 0 ] || exit 1
+  [ "$bad" = 0 ] || { WB_CODE=fetch_failed; exit 1; }
   # 4b. overlap — the files more than one lane of this wave changed (warn-only: printed here, carried
   # into the wave PR body, the ## Progress record and the result line; never a refusal or a hold)
   _lanes_wave_overlap
@@ -185,10 +198,10 @@ $WO_LINES
 EOF
   # 5. worktree — off the fresh origin/<base>, never in the primary's working tree
   local tmp wt ids="" lanes_s="" lanes_t=""
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/automate-wave-$parent-w$k.XXXXXX" 2>/dev/null)" || _wb_refuse "mktemp failed"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/automate-wave-$parent-w$k.XXXXXX" 2>/dev/null)" || _wb_refuse @worktree_failed "mktemp failed"
   wt="$tmp/wt"
   if ! out="$(git -C "$primary" worktree add -q --no-track -b "$wb" "$wt" "$bsha" 2>&1 </dev/null)"; then
-    rm -rf "$tmp"; _wb_refuse "git worktree add failed: $(printf '%s\n' "$out" | head -1)"
+    rm -rf "$tmp"; _wb_refuse @worktree_failed "git worktree add failed: $(printf '%s\n' "$out" | head -1)"
   fi
   WB_WT="$wt"
   _wb "worktree — $wt on $wb off origin/$base ${bsha:0:12}"
@@ -201,9 +214,9 @@ EOF
       files="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | paste -sd ',' - | sed 's/,/, /g')"
       git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && git -C "$wt" merge --abort >/dev/null 2>&1
       if [ -n "$files" ]; then
-        _wb_stop "conflict merging $lane (PR #$num) in $files — integrate by hand per wave-plan's conflict rules; worktree kept at $wt"
+        _wb_stop @merge_conflict "conflict merging $lane (PR #$num) in $files — integrate by hand per wave-plan's conflict rules; worktree kept at $wt"
       fi
-      _wb_stop "merging $lane (PR #$num) failed: $(printf '%s\n' "$out" | sed '/^$/d' | head -1) — worktree kept at $wt"
+      _wb_stop @merge_failed "merging $lane (PR #$num) failed: $(printf '%s\n' "$out" | sed '/^$/d' | head -1) — worktree kept at $wt"
     fi
     _wb "merge — $lane ($item) PR #$num ${sha:0:12}"
     ids="${ids:+$ids, }$(_wb_short_id "$item")"
@@ -218,25 +231,25 @@ EOF
   if [ -f "$wt/scripts/ci-local.sh" ]; then
     (cd "$wt" && bash scripts/ci-local.sh) > "$tmp/ci-local.log" 2>&1 </dev/null; rc=$?
     civ="$(grep '^ci-local: ' "$tmp/ci-local.log" 2>/dev/null | tail -1 | cut -c1-200)"
-    [ "$rc" = 0 ] || _wb_stop "local CI failed (exit $rc${civ:+: $civ}) — log $tmp/ci-local.log; nothing pushed; worktree kept at $wt"
+    [ "$rc" = 0 ] || _wb_stop @ci_failed "local CI failed (exit $rc${civ:+: $civ}) — log $tmp/ci-local.log; nothing pushed; worktree kept at $wt"
     ci=pass; _wb "ci — pass${civ:+ ($civ)}"
   else
     _wb "ci — skipped (no scripts/ci-local.sh; the wave PR's CI is the gate)"
   fi
   dirty="$(git -C "$wt" status --porcelain 2>/dev/null | head -3 | cut -c4- | paste -sd ',' - | sed 's/,/, /g')"
-  [ -z "$dirty" ] || _wb_stop "the worktree is not clean before the release step ($dirty) — nothing pushed; worktree kept at $wt"
+  [ -z "$dirty" ] || _wb_stop @worktree_dirty "the worktree is not clean before the release step ($dirty) — nothing pushed; worktree kept at $wt"
   # 8. release step — the LAST commit
   local ver="" rsha=""
   if [ -f "$wt/scripts/bump-version.sh" ]; then
     (cd "$wt" && bash scripts/bump-version.sh) > "$tmp/bump.log" 2>&1 </dev/null; rc=$?
-    [ "$rc" = 0 ] || _wb_stop "release step failed (bump-version.sh exit $rc: $(grep . "$tmp/bump.log" 2>/dev/null | tail -1 | cut -c1-200)) — log $tmp/bump.log; nothing pushed; worktree kept at $wt"
+    [ "$rc" = 0 ] || _wb_stop @release_failed "release step failed (bump-version.sh exit $rc: $(grep . "$tmp/bump.log" 2>/dev/null | tail -1 | cut -c1-200)) — log $tmp/bump.log; nothing pushed; worktree kept at $wt"
     if [ -f "$wt/loomwright/.claude-plugin/plugin.json" ]; then ver="$(jq -r '.version // empty' "$wt/loomwright/.claude-plugin/plugin.json" 2>/dev/null)"; fi
     [ -n "$ver" ] || ver="$(sed -n 's/^bump-version: bumped [^ ]* -> \([^ ]*\) .*/\1/p' "$tmp/bump.log" | tail -1)"
     ver="${ver#v}"
-    [ -n "$ver" ] || _wb_stop "release step ran but the new version is unreadable — log $tmp/bump.log; nothing pushed; worktree kept at $wt"
-    [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || _wb_stop "release step changed nothing — nothing pushed; worktree kept at $wt"
+    [ -n "$ver" ] || _wb_stop @release_failed "release step ran but the new version is unreadable — log $tmp/bump.log; nothing pushed; worktree kept at $wt"
+    [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || _wb_stop @release_failed "release step changed nothing — nothing pushed; worktree kept at $wt"
     if ! out="$(git -C "$wt" add -A 2>&1 && git -C "$wt" commit -q -m "chore(release): v$ver — fold wave $k fragments ($ids)" 2>&1 </dev/null)"; then
-      _wb_stop "release commit failed: $(printf '%s\n' "$out" | sed '/^$/d' | head -1) — nothing pushed; worktree kept at $wt"
+      _wb_stop @release_failed "release commit failed: $(printf '%s\n' "$out" | sed '/^$/d' | head -1) — nothing pushed; worktree kept at $wt"
     fi
     rsha="$(git -C "$wt" rev-parse HEAD)"
     _wb "release — v$ver committed ${rsha:0:12}"
@@ -245,7 +258,7 @@ EOF
   fi
   # 9. push — the wave branch only, a regular push
   if ! out="$(git -C "$wt" push -q -u origin "$wb" 2>&1 </dev/null)"; then
-    _wb_stop "the push of $wb failed: $(printf '%s\n' "$out" | sed '/^$/d' | head -1) — nothing pushed; worktree kept at $wt"
+    _wb_stop @push_failed "the push of $wb failed: $(printf '%s\n' "$out" | sed '/^$/d' | head -1) — nothing pushed; worktree kept at $wt"
   fi
   _wb "push — origin/$wb at $(git -C "$wt" rev-parse --short=12 HEAD)"
   # 10. the wave PR
@@ -274,7 +287,7 @@ Merging this PR with a merge commit also marks each lane PR above merged on GitH
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
   if ! out="$(cd "$wt" && "$LANES_GH" pr create --base "$base" --head "$wb" --title "$title" --body "$body" 2>&1 </dev/null)"; then
-    _wb_stop "gh pr create failed: $(printf '%s\n' "$out" | sed '/^$/d' | tail -1 | cut -c1-200) — $wb IS pushed; open the PR by hand: gh pr create --base $base --head $wb; worktree kept at $wt"
+    _wb_stop @pr_create_failed "gh pr create failed: $(printf '%s\n' "$out" | sed '/^$/d' | tail -1 | cut -c1-200) — $wb IS pushed; open the PR by hand: gh pr create --base $base --head $wb; worktree kept at $wt"
   fi
   url="$(printf '%s\n' "$out" | grep -E '^https?://' | tail -1)"
   [ -n "$url" ] || url="$(cd "$wt" && "$LANES_GH" pr list --head "$wb" --state open --json url --jq '.[0].url' 2>/dev/null </dev/null)"
@@ -288,6 +301,7 @@ Merging this PR with a merge commit also marks each lane PR above merged on GitH
   # 12. cleanup — the branch stays (it is pushed); the temporary worktree goes
   if git -C "$primary" worktree remove --force "$wt" >/dev/null 2>&1; then rm -rf "$tmp"; _wb "cleanup — worktree removed ($wb kept, pushed)"
   else _wb "cleanup — WARNING: git worktree remove refused; remove $wt by hand"; fi
+  WB_OUTCOME=pass; WB_CODE=ok
   if [ "$WO_N" = 0 ]; then _wb "opened — $url"
   else _wb "opened — $url (overlap: $WO_N file(s) changed by 2+ lanes of this wave — listed in the PR body; review them before merging)"; fi
   return 0

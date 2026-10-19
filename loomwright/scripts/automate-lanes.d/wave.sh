@@ -153,13 +153,17 @@ lanes_fleet_closeout() {
   rf="$primary/.supervisor/automate/$parent.md"; table="$primary/.supervisor/automate/$parent.lanes"
   _lanes_single_parent "$rf" && single=1   # `- parallel: 1` ⇒ the per-lane tokens line (step 5)
   _fc() { echo "fleet-closeout: $*"; }
+  # #618: script events — a fixed code per failure line; `pass` (which closes the open threads of this
+  # step) only when this call reported nothing worse. Lane-level lines are lane-remove's own events.
+  local fc_bad=0
+  _fc_ev() { [ "$1" = pass ] || fc_bad=1; LN_PRIMARY="$primary" _lanes_event fleet-closeout "$@"; }
   [ -f "$table" ] || { _fc "skipped — no lane table ($parent.lanes): no lane to close out"; return 0; }
   # 1. pull
-  if ! mb="$(_lanes_meta_branch "$primary")"; then _fc "pull FAILED — metadata mode unknown"; return 2; fi
+  if ! mb="$(_lanes_meta_branch "$primary")"; then _fc "pull FAILED — metadata mode unknown"; _fc_ev fail pull_failed; return 2; fi
   if [ -n "$mb" ]; then
     out="$(bash "$META_SYNC" pull --branch "$mb" --root "$primary" 2>&1 </dev/null)"; rc=$?
     if [ "$rc" != 0 ]; then
-      _fc "pull FAILED — $(printf '%s\n' "$out" | sed '/^$/d' | head -1 | cut -c1-200)${out:+ }(meta-sync exit $rc)"; return 2
+      _fc "pull FAILED — $(printf '%s\n' "$out" | sed '/^$/d' | head -1 | cut -c1-200)${out:+ }(meta-sync exit $rc)"; _fc_ev fail pull_failed; return 2
     fi
     _fc "pull — pulled $mb"
   else _fc "pull — skipped (metadata mode off)"; fi
@@ -213,7 +217,7 @@ EOF
         || echo "fleet-closeout: WARNING — the ## Progress line for $lane could not be appended" >&2
       _fc "check-off — $lane $item"
     else
-      _fc "check-off FAILED — $lane $item: $(printf '%s\n' "$out" | head -1)"
+      _fc "check-off FAILED — $lane $item: $(printf '%s\n' "$out" | head -1)"; _fc_ev fail checkoff_failed
     fi
   done <<EOF
 $closed
@@ -267,20 +271,27 @@ EOF
       failure)
         line="wave_paused: main_red after $sha"
         _lanes_append_once "$rf" "$line" || echo "fleet-closeout: WARNING — the main_red line could not be appended" >&2
-        _fc "$line" ;;
+        _fc "$line"; _fc_ev warn main_red ;;
       "") _fc "main health — unknown (ci check of origin/$base ${sha:0:12} unreadable)" ;;
       *) _fc "main health — ci $concl on origin/$base ${sha:0:12}" ;;
     esac
   fi
   n="$(grep -c '^- \[ \] ' "$rf" 2>/dev/null)"; n="${n:-0}"
-  if [ "$n" != 0 ]; then _fc "lock kept — $n Queue item(s) remain unchecked (the next wave runs under it)"; return 0; fi
+  if [ "$n" != 0 ]; then
+    _fc "lock kept — $n Queue item(s) remain unchecked (the next wave runs under it)"
+    [ "$fc_bad" = 1 ] || _fc_ev pass ok
+    return 0
+  fi
   # The Queue is empty: finalize the parent UNDER the wave lock, then release it on EVERY outcome —
   # a refused finalize prints its FAILED line and never strands the lock.
-  _lanes_fc_finalize "$rf" "$primary" "$mb" "$sw"
+  local fo; fo="$(_lanes_fc_finalize "$rf" "$primary" "$mb" "$sw")"
+  [ -z "$fo" ] || printf '%s\n' "$fo"
+  case "$fo" in *"finalize FAILED"*) _fc_ev fail finalize_failed ;; esac
   if out="$(bash "$RUN_LOCK" release --owner "automate-lanes:$parent" --root "$primary" 2>&1 </dev/null)"; then
     _fc "wave closed — lock released"
+    [ "$fc_bad" = 1 ] || _fc_ev pass ok
   else
-    _fc "lock release FAILED — $(printf '%s\n' "$out" | head -1)"
+    _fc "lock release FAILED — $(printf '%s\n' "$out" | head -1)"; _fc_ev fail lock_release_failed
   fi
   return 0
 }

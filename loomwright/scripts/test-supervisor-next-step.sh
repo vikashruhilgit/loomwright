@@ -951,6 +951,28 @@ if b18_append "$DRIVER" 'node_modules\n' 'node_modules\n.supervisor/\n' norepo &
   ok "B18: outside a git repo the exact-line test holds (appended once; a present bare line left alone)"
 else no "B18: outside-a-repo control: $LEG_MSG"; fi
 
+# B19 — #618 script events (TEE, events ON; the case HOME holds no consent, so nothing is posted):
+# a surfaced arm failure ⇒ ONE `fail <arm>-failed`; the hand-over ⇒ ONE `pass ok`; no message text.
+SNEV="$WORK/sn-events.jsonl"
+sn_ev() { python3 -I -c 'import json,sys
+print(";".join("%s/%s/%s/%s" % (d["script"], d["step"], d["outcome"], d["code"]) for d in (json.loads(l) for l in open(sys.argv[1]) if l.strip())))' "$SNEV"; }
+if new_scratch "$FIX/init-flags-max-tokens"; then
+  rm -rf "$CASE_ROOT/.supervisor/history"; chmod 555 "$CASE_ROOT/.supervisor"   # init's mkdir now fails ⇒ sn_fail
+  : > "$SNEV"
+  LOOMWRIGHT_SCRIPT_EVENTS=1 LOOMWRIGHT_SCRIPT_EVENT_TEE="$SNEV" sn_call "$DRIVER" --job .supervisor/jobs/pending/2026-10-17-golden-tokens.md
+  chmod 755 "$CASE_ROOT/.supervisor"
+  [ "$NC_RC" = 1 ] && [ "$(sn_ev)" = "supervisor-next-step/run/fail/init-failed" ] \
+    && ok "B19: a surfaced init failure (exit 1) ⇒ one script event fail init-failed" \
+    || no "B19: init failure ⇒ exit $NC_RC, events '$(sn_ev)'"
+else no "B19: scratch not built"; fi
+if b_fin finalize-pr-base-verified; then
+  printf '0\tpr view *\tmain\n' > "$CASE_GH"; : > "$SNEV"
+  LOOMWRIGHT_SCRIPT_EVENTS=1 LOOMWRIGHT_SCRIPT_EVENT_TEE="$SNEV" sn_call "$DRIVER" --result '{"pr_url":"https://github.com/golden/repo/pull/12"}'
+  jqo '.do == "done" and .step == "handover"' && [ "$(sn_ev)" = "supervisor-next-step/run/pass/ok" ] \
+    && ok "B19: the hand-over ⇒ one script event pass ok (closes the run's open threads)" \
+    || no "B19: hand-over ⇒ '$(printf '%s' "$NC_OUT" | head -c 120)' events '$(sn_ev)'"
+else no "B19: finalize scratch not built"; fi
+
 echo "-- V. Validation 3: one item from Phase 0 to the Phase 4.5 hand-over (hermetic)"
 if golden_case validation-3-drive "$DRIVER"; then
   seq3="$(grep -v '^\$ call\|^= ' "$CASE_DIR/stream.out" | jq -r '"\(.do) \(.step)"')"

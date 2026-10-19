@@ -984,11 +984,11 @@ echo "== 28. script-event telemetry: a failure reports only its own counts (#536
 # seam records the payload; this world has no consent, so nothing is sent.
 EVTEE="$TROOT/events.jsonl"
 hist_to_untrack; : > "$EVTEE"
-export LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; verify_newfile; V28="$?"; unset LOOMWRIGHT_SCRIPT_EVENT_TEE
+export LOOMWRIGHT_SCRIPT_EVENTS=1 LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; verify_newfile; V28="$?"; export LOOMWRIGHT_SCRIPT_EVENTS=0; unset LOOMWRIGHT_SCRIPT_EVENT_TEE
 { [ "$V28" -eq 0 ] && grep -q '"code": "pr_leaves_tracked"' "$EVTEE" && grep -q '"paths": 1' "$EVTEE" \
   && ! grep -qE '"(a|u|b|extra_owner_decision)": ' "$EVTEE" && ! grep -q '"kinds": {"' "$EVTEE"; }
 check $? "verify-pr: A/B passes, then pr_leaves_tracked reports paths=1 and no stale A/B counts or kinds ($(cat "$EVTEE"))"
-: > "$EVTEE"; export LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; mb A verify-pr; unset LOOMWRIGHT_SCRIPT_EVENT_TEE
+: > "$EVTEE"; export LOOMWRIGHT_SCRIPT_EVENTS=1 LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; mb A verify-pr; export LOOMWRIGHT_SCRIPT_EVENTS=0; unset LOOMWRIGHT_SCRIPT_EVENT_TEE
 { [ "$RC" -eq 2 ] && [ ! -s "$EVTEE" ]; }; check $? "a step's own usage error (verify-pr with no PR number, exit 2) reports nothing (rc=$RC)"
 MUT="$TROOT/mut-evt-accumulate"
 if build_mutant "$MUT" 's/^  EVT_CODE="\$1"; EVT_ARGS=""; shift$/  EVT_CODE="$1"; shift/' '  EVT_CODE="$1"; shift' \
@@ -1002,7 +1002,7 @@ open(p, "w").write(s.replace(a, '  if true; then\n    if [ "$AB_REL" = subset ];
 PYM
 then
   SCRIPT="$MUT/migrate-branch-mode.sh"; hist_to_untrack; : > "$EVTEE"
-  export LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; verify_newfile; unset LOOMWRIGHT_SCRIPT_EVENT_TEE; SCRIPT="$SUT"
+  export LOOMWRIGHT_SCRIPT_EVENTS=1 LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; verify_newfile; export LOOMWRIGHT_SCRIPT_EVENTS=0; unset LOOMWRIGHT_SCRIPT_EVENT_TEE; SCRIPT="$SUT"
   if grep -q '"a": ' "$EVTEE"; then ok "mutation control: accumulating evt + always-reporting ab_check leaks the passing A/B counts into pr_leaves_tracked"
   else no "mutation control REFUTED: the accumulate mutant reported no stale counts ($(cat "$EVTEE"))"; fi
 else no "mutation control (evt accumulate) did not build — counts as FAIL"; fi
@@ -1022,7 +1022,7 @@ exec bash "$HERE/meta-sync.sh" "\$@"
 STUB
 race_late >/dev/null; R29="$?"
 SCRIPT="$STUBPUSH/migrate-branch-mode.sh"; : > "$EVTEE"
-export LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; mb A seed; unset LOOMWRIGHT_SCRIPT_EVENT_TEE; SCRIPT="$SUT"
+export LOOMWRIGHT_SCRIPT_EVENTS=1 LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; mb A seed; export LOOMWRIGHT_SCRIPT_EVENTS=0; unset LOOMWRIGHT_SCRIPT_EVENT_TEE; SCRIPT="$SUT"
 { [ "$R29" -eq 0 ] && [ "$RC" -eq 1 ] && has "A ⊄ B" && has ".supervisor/jobs/done/late.md" && [ "$(st A followup)" = 1 ] \
   && grep -q '"code": "ab_names_mismatch"' "$EVTEE" && grep -q '"a_only": {"md": 1}' "$EVTEE" && ! grep -q '"b_only"' "$EVTEE" \
   && grep -q '"a": 1' "$EVTEE" && ! grep -q 'late' "$EVTEE"; }
@@ -1031,7 +1031,7 @@ MUT="$TROOT/mut-subset-extract"
 if build_mutant "$MUT" 's/^    if \[ "\$AB_REL" = subset \]; then$/    if false; then/' '    if false; then'; then
   cp "$STUBPUSH/meta-sync.sh" "$MUT/meta-sync.sh"
   SCRIPT="$MUT/migrate-branch-mode.sh"; : > "$EVTEE"
-  export LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; mb A seed; unset LOOMWRIGHT_SCRIPT_EVENT_TEE; SCRIPT="$SUT"
+  export LOOMWRIGHT_SCRIPT_EVENTS=1 LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"; mb A seed; export LOOMWRIGHT_SCRIPT_EVENTS=0; unset LOOMWRIGHT_SCRIPT_EVENT_TEE; SCRIPT="$SUT"
   if [ "$RC" -eq 1 ] && grep -q '"code": "ab_names_mismatch"' "$EVTEE" && ! grep -q '"a_only"' "$EVTEE"; then
     ok "mutation control: the diff-prefix extraction on the subset round's comm output loses kinds.a_only"
   else no "mutation control REFUTED: the pre-fix extraction still reported a_only (rc=$RC; $(cat "$EVTEE"))"; fi

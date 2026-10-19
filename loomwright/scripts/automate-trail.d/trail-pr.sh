@@ -52,20 +52,42 @@ _trail_is_run_draft() {
 TRAIL_KEPT=""
 TRAIL_EXCLUDED=""
 TRAIL_SKIP_IGNORE_DROP=0   # 1 only on the branch-mode push path (_trail_meta_push)
+# _trail_sidecar_code <sidecar-check fail reason> — #618: the reason as a fixed plugin token for the
+# script event (never the reason text, which names keys and paths): the phrasings come from
+# sidecar.sh / result_nested_keys.py; anything else is the catch-all sidecar_invalid.
+_trail_sidecar_code() {
+  case "$1" in
+    *"missing required key"*) echo sidecar_missing_key ;;
+    *"non-schema key"*) echo sidecar_non_schema_key ;;
+    *"is not a mapping"*|*"is not a list"*) echo sidecar_wrong_shape ;;
+    *"file not found"*|*"unreadable"*|*"parse error"*|*"no REVIEW_HEAL_RESULT or SUPERVISOR_RESULT block"*) echo sidecar_unreadable ;;
+    *) echo sidecar_invalid ;;
+  esac
+}
+# _trail_event <outcome> <code> [--count k=n] — #618: an opt-in telemetry script event from this checkout.
+_trail_event() {
+  local root; root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  bash "$HERE/emit-script-event.sh" --root "$root" automate-trail trail-pr "$@" >/dev/null 2>&1 </dev/null || true
+}
 _trail_candidates() {
   local rf_rel="$1" run_id="$2"
-  local cands="" p q item
+  local cands="" p q item n_sc=0 n_bad=0
   TRAIL_EXCLUDED=""
   cands="$rf_rel"
   local sc_dir; sc_dir="$(dirname "$rf_rel")"
   for p in "$sc_dir/$run_id.review-heal-result.md" "$sc_dir/$run_id.supervisor-result.md"; do
     [ -f "$p" ] || continue
+    n_sc=$((n_sc + 1))
     q="$(sidecar_check "$p")"
     case "$q" in
       "ok $p") cands="$cands"$'\n'"$p" ;;
-      *) TRAIL_EXCLUDED="$TRAIL_EXCLUDED; excluded $p — ${q#"fail $p: "}" ;;
+      *) TRAIL_EXCLUDED="$TRAIL_EXCLUDED; excluded $p — ${q#"fail $p: "}"; n_bad=$((n_bad + 1))
+         _trail_event warn "$(_trail_sidecar_code "${q#"fail $p: "}")" ;;
     esac
   done
+  # every result sidecar this run has passed sidecar-check ⇒ close any open shape thread (#618);
+  # the evidence gate's `pr not merged` exclusions are expected and never reported
+  [ "$n_sc" -gt 0 ] && [ "$n_bad" = 0 ] && _trail_event pass sidecars_ok --count "sidecars=$n_sc"
   local queue
   queue="$(awk '/^## Queue/{q=1;next} /^## /{q=0} q && /^- \[[ xX]\] /{sub(/^- \[[ xX]\] /,""); sub(/[[:space:]]+#.*$/,""); sub(/[[:space:]]+$/,""); print}' "$rf_rel" 2>/dev/null)"
   while IFS= read -r item; do

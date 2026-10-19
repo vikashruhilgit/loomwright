@@ -1137,12 +1137,16 @@ append path.
 ## Script events
 
 A plugin **script** (not an agent) can report that one of its steps passed,
-warned or failed. The first users are the branch-mode migration
+warned or failed. The first users were the branch-mode migration
 (`migrate-branch-mode.sh`, every step except the read-only `plan` / `state`)
 and `setup-memory.sh apply`'s readiness verdict — the two places where, on
 2026-10-13, a real migration failed (`seed`'s A/B check, A = 63 / B = 66) and
 printed a false readiness warning, and the only report the plugin got was a
-human pasting it from the session.
+human pasting it from the session. Since #618 the `/automate` engine reports
+too (§"What the engine reports" below): its wave, close-out, trail, lane and
+Supervisor-driver failures had produced no telemetry at all, and three bugs of
+one run (#615–#617) reached this repo only because a human read the
+coordinator output.
 
 **Same pipeline, same gates.** `scripts/emit-script-event.sh` builds the
 payload and pipes it to the wrapper (`send-telemetry.sh`) from the reporting
@@ -1166,7 +1170,7 @@ repo slug — is never rendered):
 | Field | Shape | Missing / wrong shape |
 |---|---|---|
 | `kind` | `"script_event"` | not a script event |
-| `script` | one of the known scripts (`migrate-branch-mode`, `setup-memory`) | skipped, exit 5 `script_event_invalid` |
+| `script` | one of the known scripts (`migrate-branch-mode`, `setup-memory`, and the engine's `automate-wave`, `automate-closeout`, `automate-trail`, `automate-lanes`, `supervisor-next-step`) | skipped, exit 5 `script_event_invalid` |
 | `step`, `code` | token `^[a-z][a-z0-9_-]{0,39}$` — a plugin-defined code, never message text | skipped, exit 5 |
 | `outcome` | `pass` \| `fail` \| `warn` | skipped, exit 5 |
 | `event_id` | token, one per invocation (the round identity) | skipped, exit 5 |
@@ -1204,6 +1208,28 @@ unrelated failure in the same step reports only its own (pinned by
 or `ok` (pass) with the leaked / blocked path COUNTS and, when the migration
 ran it, `caller: migrate-branch-mode.<step>`; a `gated` verdict is not
 reported (it reflects the repo's own ledger, not plugin behaviour).
+
+**What the engine reports (#618).** Every seam sends a fixed code chosen at
+the site, never message text, a path, a lane id, a PR number or a branch name.
+A `pass` closes that step's threads, so each seam sends one only when the same
+call reported nothing worse. Expected states send nothing.
+
+| `script` / `step` | Root (where `telemetry.log` lands) | `fail` / `warn` codes | `pass` | Sends nothing for |
+|---|---|---|---|---|
+| `automate-wave` / `wave-build` | the primary | `no_wave_lanes`, `lock_busy`, `gh_read_failed`, `already_merged`, `branch_exists`, `origin_unreadable`, `lane_not_ready`, `fetch_failed`, `worktree_failed`, `merge_conflict`, `merge_failed`, `ci_failed`, `worktree_dirty`, `release_failed`, `push_failed`, `pr_create_failed` (all `fail`) | `ok` — opened, or already open | usage, single-lane mode, an unresolvable run file |
+| `automate-closeout` / `closeout` | the checkout `closeout-classify` runs in | `leftover_<step>` (`warn`, `count rows`), one per distinct leftover step of the closed step set | `complete` | a `run_lock_held`-only result (a retry) |
+| `automate-trail` / `trail-pr` | the checkout `trail-pr` runs in | `sidecar_missing_key`, `sidecar_non_schema_key`, `sidecar_wrong_shape`, `sidecar_unreadable`, `sidecar_invalid` (`warn`; a result sidecar excluded for its SHAPE) | `sidecars_ok` — every result sidecar passed | the evidence gate's `pr not merged` exclusion (expected) |
+| `automate-lanes` / `lane-remove` | the primary, never the lane dir | `metadata_not_pushed`, `meta_push_failed`, `dirty_tree`, `unpushed_commits`, `status_unreadable`, `salvage_failed` (`fail`) | `removed` | the normal waits: a live process or watcher, an open question, a `gone` PR |
+| `automate-lanes` / `fleet-closeout` | the primary | `pull_failed`, `checkoff_failed`, `finalize_failed`, `lock_release_failed` (`fail`), `main_red` (`warn`) | `ok` — the wave closed (lock kept or released) | lane-level lines (lane-remove reports those) |
+| `supervisor-next-step` / `run` | the run's checkout (a lane's, inside a wave) | `<arm>-failed` (`fail`) — a dispatch arm's surfaced failure, a later arm's refusal included; the arm is a step name from `sn_dispatch` | `ok` at `handover` | a refusal before the call's first write, usage errors |
+
+Honest limits: the emit is synchronous (about 0.6 s without consent, a few
+seconds when it posts), so the seams are kept to failure paths plus one
+`pass` each. Under host mode the wrapper skips the core, so engine events are
+dropped. `supervisor-next-step` events land in the lane's own
+`.supervisor/logs/` during a wave. Tests: `hermetic-test-env.sh` defaults
+`LOOMWRIGHT_SCRIPT_EVENTS=0`, and a test that asserts on events sets it to `1`.
+`scripts/test-script-event-telemetry.sh` S8 pins every seam.
 
 ---
 
