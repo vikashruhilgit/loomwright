@@ -1,0 +1,5 @@
+# clean review (#617): the only bot comment says "no new findings" and raises nothing ⇒ validated clean;
+# no dismissed marker, a clean marker of its own, findings_clean: 1, no dismissed: key; the fallback is
+# not earned (the clean review is a posted lens); READY converged with no fix.
+call: --start drain
+call: --result-file "$CASE/report-1.json"

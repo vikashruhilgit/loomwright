@@ -14,7 +14,10 @@
 #   A2. threshold edges: absent-severity non-nit ⇒ own draft; absent-severity nit ⇒
 #       summary; LOW non-pre_existing ⇒ summary; nit MEDIUM ⇒ own draft (severity
 #       wins); drain free-text reason without severity ⇒ own draft; zero items ⇒ no
-#       files (proposed/ not even created).
+#       files (proposed/ not even created). #617: a no-severity item whose whole text is
+#       a no-finding verdict ⇒ skipped + a not-a-finding <h8> line (summary line still last);
+#       a mixed "no new findings; notes …" item still drafts; a pre-existing undecided
+#       draft of it is retired (moved row), a decided one kept.
 #   A4. canary: `$(touch …)`, backticks, `; rm -rf`, a ``` run and a newline ⇒
 #       nothing executed, text byte-for-byte inside a longer fence, every line `> `;
 #       line-anchor canary: `## Status: done` / `- **PR:**` lines never at column 0,
@@ -171,6 +174,41 @@ fx 3; sup 0 ''
 drafts
 [ ! -e "$PROP" ] && ok "zero items ⇒ no files (proposed/ not created)" || no "zero items created $(ls "$PROP")"
 case "$dd_out" in *"dismissed-drafts: no $RUN_ID.review-heal-result.md — skipped"*"dismissed-drafts: 0 per-finding + 0 summary (0 listed in summary)") ok "missing drain sidecar named + zero summary line" ;; *) no "zero-items output: $dd_out" ;; esac
+# #617: a no-finding verdict (a clean bot review the drain dismissed before `clean` existed) is NOT a
+# finding — skipped before dedupe, logged by h8, never drafted; a mixed item ("no new findings; notes
+# …") and a severity-carrying one still draft; the summary line stays LAST (ns_dismissed's tail -n 1).
+h8of() { printf 'drain\t%s\t%s' "$1" "$2" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest()[:8])'; }
+NF1="claude[bot] review of defb2b0: no new findings"; NF2="no new findings on 4cbcb02"
+NFM="claude[bot] review of 7d79906: no new findings; notes a stale docstring in store.ts"
+fx 4
+rh 2 "[{finding: \"$NF1\", reason: \"invalid — not a finding (clean review)\", source: issue_comments}, {finding: \"$NF2\", reason: invalid, source: reviews}, {finding: \"$NFM\", reason: \"invalid — a note, not a finding\", source: issue_comments}, {finding: \"claude-review on 15af6487 reported no findings\", reason: stale, source: reviews, severity: LOW}]"
+drafts
+H1="$(h8of issue_comments "$NF1")"; H2="$(h8of reviews "$NF2")"
+if grep -qxF -- "dismissed-drafts: not-a-finding $H1 — no-finding verdict" <<<"$dd_out" \
+   && grep -qxF -- "dismissed-drafts: not-a-finding $H2 — no-finding verdict" <<<"$dd_out"; then
+  ok "each no-finding verdict logged once by its h8 (not-a-finding line)"
+else no "not-a-finding lines: $dd_out"; fi
+[ -z "$(draft_with "$NF1")" ] && [ -z "$(draft_with "$NF2")" ] && [ ! -e "$PROP/$NS--dismissed-$H1.md" ] \
+  && ok "a no-finding verdict is never drafted (no own draft, no summary line)" || no "a no-finding verdict was drafted"
+[ -n "$(draft_with "$NFM")" ] && ok "a mixed item (no new findings; notes …) is still its own draft" || no "the mixed item was skipped"
+grep -lF -- "> claude-review on 15af6487 reported no findings" "$(path_of summary)" >/dev/null 2>&1 \
+  && ok "a no-finding phrase WITH a stated severity is not skipped (summary)" || no "the severity-carrying item was skipped"
+[ "$(printf '%s\n' "$dd_out" | tail -n1)" = "dismissed-drafts: 1 per-finding + 1 summary (1 listed in summary)" ] \
+  && ok "the summary line stays last and counts no skipped item" || no "counts: $(printf '%s\n' "$dd_out" | tail -n1)"
+# an UNDECIDED own draft of a no-finding item already on disk (written before #617) is retired with a
+# `moved` row; a DECIDED one (follow-up) is kept
+cp "$(draft_with "$NFM")" "$PROP/$NS--dismissed-$H1.md"
+cp "$(draft_with "$NFM")" "$PROP/$NS--dismissed-$H2.md"
+printf '%s\t%s\t%s\n' "$NS--dismissed-$H2.md" follow-up 2026-01-01T00:00:00Z >> "$AD/$RUN_ID.dismissed-decisions"
+drafts
+if [ ! -e "$PROP/$NS--dismissed-$H1.md" ] \
+   && grep -qxF -- "dismissed-drafts: retired $NS--dismissed-$H1.md — not a finding (no-finding verdict)" <<<"$dd_out" \
+   && grep -q "^$NS--dismissed-$H1.md	moved	" "$AD/$RUN_ID.dismissed-decisions"; then
+  ok "a pre-existing undecided no-finding draft is retired (moved row, then removed)"
+else no "pre-existing no-finding draft not retired: $dd_out"; fi
+[ -f "$PROP/$NS--dismissed-$H2.md" ] && ok "a decided (follow-up) no-finding draft is kept" || no "a decided no-finding draft was retired"
+[ "$(printf '%s\n' "$dd_out" | tail -n1)" = "dismissed-drafts: 1 per-finding + 1 summary (1 listed in summary)" ] \
+  && ok "the retire pass keeps the summary line last" || no "retire-pass counts: $(printf '%s\n' "$dd_out" | tail -n1)"
 
 # =============================================================================
 echo "== A4. canary: finding text is data, never executed =="

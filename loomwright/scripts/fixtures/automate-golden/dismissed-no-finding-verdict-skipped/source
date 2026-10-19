@@ -1,0 +1,9 @@
+run: automate-2026-10-19-001356-L1
+lines: the lane run file's title, Run Config, one-row Queue, ## Current at the drain and Progress through
+"drain READY (converged, 1 round, 0 fix cycles)"; its review-heal-result sidecar's two clean-review
+`dismissed` items verbatim (`claude[bot] review of defb2b0: no new findings`, `… of f1f4799: …`), which the
+real run drafted and asked the owner about (#617).
+gap: the item path, PR URL and branch are renamed (acme/widgets, 01-message-routing) — the real run is
+another project's; its supervisor-result sidecar is left out (the drafter reports it skipped). Added: a
+mixed item from the 10-17 shape ("no new findings; its one note …"), which must still draft, and the
+undecided draft the real run wrote for defb2b0 before #617, which must be retired (`moved` row).

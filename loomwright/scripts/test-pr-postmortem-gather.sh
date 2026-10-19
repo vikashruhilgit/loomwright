@@ -446,6 +446,25 @@ cat > "$FIX_DISMISSED_SPOOFED" <<'FIX'
 ]
 FIX
 
+# #617: the drain's clean-review marker sits beside a dismissed marker on the same PR. It is its
+# own comment (`<!-- loomwright:clean round=<n> -->`, the body review-heal-next-step.sh posts), so
+# the dismissed parse must count only the dismissed bullet. The second fixture is the mutation
+# control: the same clean line moved under the dismissed marker in the dismissed bullet shape IS
+# counted — the reason the driver never lists clean items inside the dismissed comment.
+FIX_DISMISSED_CLEAN="$TMP/fixture-dismissed-clean.json"
+cat > "$FIX_DISMISSED_CLEAN" <<'FIX'
+[
+  {"user": {"login": "vikashruhilgit"}, "created_at": "2026-01-01T12:00:00Z", "body": "<!-- loomwright:dismissed round=2 -->\n- **missing: null check** — already fixed in a prior round (reviewThreads)"},
+  {"user": {"login": "vikashruhilgit"}, "created_at": "2026-01-01T12:00:01Z", "body": "<!-- loomwright:clean round=2 -->\nClean reviews — no finding raised, nothing dismissed:\n- claude[bot] review of a1b2c3d: no new findings (issue_comments)"}
+]
+FIX
+FIX_DISMISSED_CLEAN_INLINE="$TMP/fixture-dismissed-clean-inline.json"
+cat > "$FIX_DISMISSED_CLEAN_INLINE" <<'FIX'
+[
+  {"user": {"login": "vikashruhilgit"}, "created_at": "2026-01-01T12:00:00Z", "body": "<!-- loomwright:dismissed round=2 -->\n- **missing: null check** — already fixed in a prior round (reviewThreads)\n- **claude[bot] review of a1b2c3d: no new findings** — clean (issue_comments)"}
+]
+FIX
+
 # First-commit fixtures (13): the churn-ledger PR #43 round-1 shape — the PR's OPENING
 # feature commit carries "self-heal" in its subject, which review_fix_re matches. No
 # review can precede the first commit, so it must never count as a review-fix round.
@@ -509,6 +528,8 @@ make_gh_stub() {
     dismissedmarker)    api_fixture="$FIX_DISMISSED_MARKER" ;;
     dismissedmalformed) api_fixture="$FIX_DISMISSED_MALFORMED" ;;
     dismissedspoofed)   api_fixture="$FIX_DISMISSED_SPOOFED" ;;
+    dismissedclean)     api_fixture="$FIX_DISMISSED_CLEAN" ;;
+    dismissedcleaninline) api_fixture="$FIX_DISMISSED_CLEAN_INLINE" ;;
   esac
   cat > "$BIN/gh" <<STUB
 #!/usr/bin/env bash
@@ -936,6 +957,24 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '.dismissed_findings ==
   ok "unresolvable operator login => dismissed_findings [] (fail-safe toward excluding, never toward accepting all)"
 else
   no "(12) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 12b. dismissed_findings: a clean-review marker beside a dismissed one adds nothing (#617) =="
+make_gh_stub ok dismissedclean
+run_gather "$PR_URL"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (.dismissed_findings | length == 1) and (.dismissed_findings[0].finding == "missing: null check")
+  ' >/dev/null 2>&1; then
+  ok "a loomwright:clean marker comment => dismissed_findings still 1 (the clean review is not a dismissal)"
+else
+  no "(12b) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+make_gh_stub ok dismissedcleaninline
+run_gather "$PR_URL"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '.dismissed_findings | length == 2' >/dev/null 2>&1; then
+  ok "(mutation control) the same clean line inside the dismissed marker IS counted => the separate marker is load-bearing"
+else
+  no "(12b mutation control) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
 echo "== 13. first commit is never a review-fix => commits[0] false, adds no round; a later match still counts =="

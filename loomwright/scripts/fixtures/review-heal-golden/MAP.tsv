@@ -20,3 +20,4 @@ unknown-channel-escalated	channel_unknown	an errored issue-comment read ⇒ ESCA
 fix-floor-invalid-escalated	fix_floor_invalid	a refused --fix-floor ⇒ the comment and ESCALATED before any fix
 fallback-once-per-run	fallback_review_ran	the fallback spawns in round 1 and never again in the same drain run
 fallback-red-review-check	no_review_lens_posted_red_check	a red, non-required review-producing check whose output is empty (only a runner annotation) ⇒ the fallback still spawns
+clean-review-not-dismissed	clean_verdict	a bot review that raises no issue validated clean: own marker, findings_clean, no dismissed key, READY converged, no fallback

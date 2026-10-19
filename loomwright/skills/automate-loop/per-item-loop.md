@@ -85,6 +85,8 @@ Run by `automate-next-step.sh` step `rate-limit` (step 2): after `run-result` re
 
 Run by `automate-next-step.sh` steps `dismissed` → `decide` → `park` / `fix-now` (step 4; the instruction schema is `docs/result-schemas/automate-run.md` §"next-step instruction", the drafting threshold is `scripts/automate-dismissed.sh`'s header). A sequential interactive READY park is written, watched and released FIRST and asked after `park-ask-gate --wait 75`; an `escalated` park, every park under `--non-interactive-fallback` and a lane's READY park decide first. A fix-now answer runs ONE owner-requested fix pass and full re-drain — at most one owner-requested fix-now re-drain per item, strictly sequential (never concurrent).
 
+**A clean review is not a finding (#617).** The drain validates a bot review that raises no issue at all as `clean` (`findings_clean`), never `dismissed`, so it is never drafted or asked. As defence in depth, `dismissed-drafts` skips an item with no recognised severity whose whole text is a no-finding verdict (`… of <sha>: no new findings`, `no new findings on <sha>`) and logs it as `not-a-finding <h8>`; a mixed item ("no new findings; notes …") is still drafted.
+
 **Honest limits.** `drain-rounds.sh init` resets the per-PR round ledger, so the real bound on one item is 2 × `--max-rounds` drain rounds. `learning-emit` writes at most one complete line per run/item/PR/source, so the engine-native learning line reflects the FIRST drain only. The re-dismissed fix-now check is drain-origin ONLY: `<run_id>.supervisor-result.md` is written once per item, so a Phase 4.5-origin fix-now name stays suppressed.
 
 ## §7 — Single drain (no double-dispatch) + the config-toggle contract

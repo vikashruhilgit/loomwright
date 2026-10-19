@@ -38,7 +38,9 @@ RH_V2_ALLOWED = set(RH_V2_REQUIRED + [
     "dismissed", "rules_gate", "checks_untrusted",
     # automate-followups/31: the escalation cause (present only on ESCALATED).
     "escalation_cause", "escalation_check", "escalation_run_id",
-    "escalation_attempt", "escalation_sha"])
+    "escalation_attempt", "escalation_sha",
+    # #617: the count of clean reviews (§U3.5 case 5 — no finding, never dismissed).
+    "findings_clean"])
 RH_V1_ALLOWED = set(RH_V1_REQUIRED)
 # channels_scanned vocabulary — mirrors skills/review-heal/SKILL.md
 # §"Step U1 — All-Channel Read" (RESULT_SCHEMAS lists channels only as "e.g.").
