@@ -22,7 +22,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Memory Tool | `memory-tool/` | — (reference) | ~500 | 1.0.0 | 2026-05-10 |
 | Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,800 [^al-tokens] | 1.6.0 | 2026-10-16 |
 | Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.17.0 | 2026-10-11 |
-| Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.11.0 | 2026-10-09 |
+| Review Heal | `review-heal/` | `review-pr-runner` (preload, `SKILL.md` only), `/review-pr` + Supervisor + `/autonomous` (reference) — a drain round reads `SKILL.md`; `fallback-review.md` only on a `spawn` with `what: "fallback review"`, `escalation.md` only when the drain ends `ESCALATED`; `dispatch.md` is the dispatching side's, never read by a drain round | ~3,000 | 1.12.0 | 2026-10-19 |
 | Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded; `SKILL.md` + `on-entry.md` at entry, `escalation.md` / `completion-tail.md` only at the step that needs them, `multi-voter.md` only under `--multi-voter-heal`) | ~7,000 | 1.12.0 | 2026-10-19 |
 | Preflight Sync | `preflight-sync/` | Supervisor (on-demand Read at Phase 1.5 entry — deliberately NOT preloaded) | ~1,900 | 1.3.0 | 2026-09-24 |
 | Supervisor Config | `supervisor-config/` | Supervisor (on-demand Read at Phase 0 entry — deliberately NOT preloaded) | ~2,400 | 1.3.0 | 2026-09-22 |
