@@ -2,24 +2,28 @@
 
 Requirement: `.supervisor/requirements/automate-speed/09-fresh-session-per-phase.md` (gitignored; a clone may not have it).
 Branch: `feature/fresh-session-per-phase`. Code commits: `9d407a9` and `f63bb27` (phase runner, relay routing, run-lock
-re-entry), then `a45e25c` and `c8e57ee` (driver and phase-timing). Doc commits: `49cb927` and `7a33706`.
+re-entry), then `a45e25c` and `c8e57ee` (driver and phase-timing), then the two review-fix commits `6316c0c`
+(iteration 1) and `05aa192` (iteration 2: re-print identity rebuilt per session, died-phase fallbacks). Doc commits:
+`49cb927`, `7a33706` and `36f1bb7`.
 
-## Validation step 1 — the suites (run at `7a33706`, macOS, bash 3.2)
+## Validation step 1 — the suites (run at `05aa192`, the final code head; macOS, bash 3.2)
 
-Each suite ran in the foreground, one call at a time. Every script these suites exercise is byte-identical
-between `c8e57ee` and `7a33706`, because the two doc commits change only docs, skills and command prose.
+Every count below was measured at `05aa192`, the last commit that changes code or tests. The only commit after it is
+this evidence refresh, which changes nothing but this file, so the counts hold for the branch head. Each suite ran
+in the foreground, one call at a time.
 
 | Suite | Result line | Passed / total | Wall |
 |---|---|---|---|
-| `loomwright/scripts/test-automate-next-step.sh` | `PASS: 151 FAIL: 0` | 151/151 | 328 s |
-| `loomwright/scripts/test-automate-lanes.sh` | `passed: 993  failed: 0` | 993/993 | 215 s |
-| `loomwright/scripts/test-automate-golden.sh` | `PASS: 65 FAIL: 0` | 65/65 | 51 s |
+| `loomwright/scripts/test-automate-next-step.sh` | `PASS: 153 FAIL: 0` | 153/153 | 327 s |
+| `loomwright/scripts/test-automate-lanes.sh` | `passed: 995  failed: 0` | 995/995 | 207 s |
+| `loomwright/scripts/test-automate-golden.sh` | `PASS: 65 FAIL: 0` | 65/65 | 48 s |
 | `loomwright/scripts/test-run-lock.sh` | `RESULT: 88 passed, 0 failed` | 88/88 | 8 s |
 
-The doc gates also pass at `7a33706`:
+The doc gates also pass at `05aa192`:
 
 - `scripts/check-doc-currency.sh`
-- `scripts/check-token-budget.sh` (`commands/automate.md` 7524/7565 proxy tokens, no ceiling raised)
+- `scripts/check-token-budget.sh` (`commands/automate.md` 7521/7565 proxy tokens, no ceiling raised)
+- `scripts/check-vendor-coupling.sh` (0 breaches)
 - `loomwright/scripts/test-loop-inventory.sh` (43/43)
 - `loomwright/scripts/test-citation-drift.sh` (26/26)
 - `loomwright/scripts/test-automate-loop-split.sh` (40/40)
@@ -64,3 +68,6 @@ the real CLI:
 - Fresh phases do not forward `--notify`. Its gate webhooks belong to `/autonomous`, which fresh phases bypass, so
   `--notify` takes effect only under `--inline-phases`. The fresh Supervisor prompt's `--cheap` / `--max-tokens`
   forwarding has no test (loop-inventory GAP AL-586).
+- A Supervisor phase that dies without a `SUPERVISOR_RESULT` still stops the item with the no-PR line. An open PR it
+  left is named on that line only when `.supervisor/state.md` was rewritten by that phase and records the branch.
+  The PR is never drained or merged; the owner handles it.
