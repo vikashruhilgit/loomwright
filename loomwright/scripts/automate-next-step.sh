@@ -1701,7 +1701,34 @@ ns_picked() {
   ns_refresh
   ns_once once_pk_line ns_progress "$(ns_ts) picked $it" || return 1
   st_del in_pick
-  if ns_fresh; then NEXT=plan; else NEXT=run; fi
+  # a checkpointed pass resumes its Supervisor run (ns_run's --continue spawn), never a fresh Launch Pad
+  if ns_fresh && [ -z "$(ns_checkpoint_task)" ]; then NEXT=plan; else NEXT=run; fi
+}
+# ns_checkpoint_task — the Supervisor task this item's checkpointed pass left to finish, else empty. Keyed on
+# BOTH durable records: the item's LAST `ran /autonomous` line (across all its `picked` segments) is the no-PR
+# `checkpoint` line, and that task's brief is still in .supervisor/jobs/in-progress/ (Supervisor INIT moved it
+# there; only FINALIZE moves it on). The task is the line's `--continue task: <id>` (the SUPERVISOR_RESULT's
+# resume hint), else the basename of the brief saved before it (a task id is its brief's name). A `launch-pad
+# saved` line AFTER the checkpoint line is a newer plan and supersedes it. Any part missing or unsafe ⇒ empty: a fresh Launch Pad, as before (wave 7, lane L23: a re-pick after a
+# checkpoint re-planned an item whose subtasks were already done on its feature branches)
+ns_checkpoint_task() {
+  local t
+  t="$(ns_section '## Progress' | NS_I="${ITEM#./}" awk '
+    BEGIN { i = ENVIRON["NS_I"] }
+    { x = $0; sub(/^- /, "", x); if (x ~ /^[0-9][0-9][0-9][0-9]-/) sub(/^[^ ]+ /, "", x)
+      if (index(x, "picked ") == 1) { p = substr(x, 8); sub(/[ ;,].*/, "", p); sub(/^\.\//, "", p); cur = (p == i); next }
+      if (!cur) next
+      if (index(x, "ran /autonomous") == 1) { last = x; rb = b; later = 0 }
+      else if (index(x, "launch-pad saved ") == 1) { b = substr(x, 18); later = 1 } }
+    END {
+      if (later || index(last, "ran /autonomous — no PR: checkpoint (") != 1) exit
+      t = ""; s = last
+      while (match(s, /--continue task: [A-Za-z0-9._-]+/)) { t = substr(s, RSTART + 17, RLENGTH - 17); s = substr(s, RSTART + RLENGTH) }
+      if (t == "" && rb != "") { t = rb; sub(/^.*\//, "", t); sub(/\.md$/, "", t) }
+      print t }')"
+  case "$t" in ''|.*|*[!A-Za-z0-9._-]*) return 0 ;; esac
+  [ -f "$ROOT/.supervisor/jobs/in-progress/$t.md" ] || return 0
+  printf '%s' "$t"
 }
 
 # ================================================================================================
@@ -1866,14 +1893,20 @@ ns_record_orig() { # <true|false|absent> — ## Run Config's auto_review_origina
   ns_refresh
 }
 ns_run() {
-  local e rc orig inv mt x brief="" p
+  local e rc orig inv mt x brief="" p cont=""
   # the rate-limit park (end of RUN) reads THIS loop's session log: without its id the check could only
   # read "clean", so RUN never starts without one (fail CLOSED)
   ns_run_precheck run || return 1
   if ns_fresh; then
-    # the Supervisor phase runs on the brief this pass's Launch Pad phase saved; none recorded ⇒ plan first
-    brief="$(st plan_brief)"; [ -n "$brief" ] || brief="$(ns_segment_brief)"
-    [ -n "$brief" ] || { NEXT=plan; return 0; }
+    # a checkpointed Supervisor run this item left resumes (`--continue task: <id>`, re-derived from the run file on
+    # every entry — the brief its pass saved was that run's, already consumed); else the Supervisor phase runs on the
+    # brief this pass's Launch Pad phase saved; none recorded ⇒ plan first
+    cont="$(ns_checkpoint_task)"
+    if [ -n "$cont" ]; then brief=".supervisor/jobs/in-progress/$cont.md"
+    else
+      brief="$(st plan_brief)"; [ -n "$brief" ] || brief="$(ns_segment_brief)"
+      [ -n "$brief" ] || { NEXT=plan; return 0; }
+    fi
     ns_phase_sid_ok || { ns_err "session_id_malformed — phase-launch needs a coordinator session id of [A-Za-z0-9_-]+ (got '$SID') — nothing written"; NS_RC=2; return 1; }
   fi
   ns_cfg_paths
@@ -1890,7 +1923,9 @@ ns_run() {
     st_set auto_review_original "$orig"
   fi
   ns_once once_run_cfg ns_record_orig "$(st auto_review_original)" || return 1
-  if [ -n "$brief" ]; then
+  if [ -n "$cont" ]; then
+    ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running the supervisor phase (fresh session, --continue task: $cont — the checkpointed run, no fresh Launch Pad)" || return 1
+  elif [ -n "$brief" ]; then
     ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running the supervisor phase (fresh session)" || return 1
   else
     ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running /autonomous --single-iteration" || return 1
@@ -1900,6 +1935,7 @@ ns_run() {
     # the Supervisor phase: /autonomous EXECUTE's /supervisor call with its forward set (--non-interactive,
     # --cheap, --max-tokens), in its own session; the result block lands in the run's supervisor sidecar
     inv="/loomwright:supervisor job: $brief"
+    [ -n "$cont" ] && inv="/loomwright:supervisor --continue task: $cont"
     ns_interactive || inv="$inv --non-interactive"
     [ "$CHEAP" = 1 ] && inv="$inv --cheap"
     mt="$MAXTOK"; [ -n "$mt" ] || mt="$(ns_section '## Run Config' | sed -n 's/^- max_tokens: \([0-9][0-9]*\)$/\1/p' | head -n 1)"

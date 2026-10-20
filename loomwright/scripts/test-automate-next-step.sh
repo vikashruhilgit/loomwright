@@ -145,7 +145,9 @@
 #       cannot carry) ⇒ the phase_relay_unavailable park: no picked line, no spawn, the lock released. F3
 #       (AC7): LAUNCH_PAD_RESULT discarded / blocked / aborted / *_non_interactive / malformed / rubric
 #       dropped / a died phase ⇒ /autonomous PLAN step 4's status_reason on the no-PR line, no RUN; saved
-#       (or ONE new brief behind a malformed block) ⇒ the Supervisor phase spawn.
+#       (or ONE new brief behind a malformed block) ⇒ the Supervisor phase spawn. F4: an item whose last RUN
+#       checkpointed (the no-PR `checkpoint` line) with its brief still in .supervisor/jobs/in-progress/ ⇒ the
+#       re-pick / `--start run` spawns `/loomwright:supervisor --continue task: <id>`, never a fresh Launch Pad.
 #   D   DOC MIRROR: the schema doc's step list equals the driver's `case` arms, its `do` table the
 #       emitter's closed set, and its spawn row the emitters' `what` values; its coordinator_model closed
 #       list equals the driver's NS_CM_VALUES and its Common fields name coordinator_model.
@@ -173,6 +175,7 @@
 #         MV* each drain-report guard dropped (drain_result, items_processed, escalation_cause, sha,
 #             progress_note)                                       ⇒ B6
 #         MQp both post-park --non-interactive guards of decide dropped (two edits) ⇒ Q (c)
+#         M9e the re-pick ignoring the checkpoint / M9f the in-progress brief check dropped  ⇒ F4
 #         MR  the running-status re-entry guard dropped            ⇒ B7
 #         MO  ns_park arms the watcher only after the decide step (two edits; run file unchanged) ⇒ B8
 #         MVbig the 1–9-digit count bound widened to any digits ⇒ B6 (the 20-digit report)
@@ -1758,6 +1761,60 @@ leg_fresh_state_stale() {
   done
   return 0
 }
+# leg_fresh_checkpoint <driver> — wave 7 (lane L23): an item whose last RUN checkpointed (the no-PR `checkpoint` line)
+# with its task's brief still in .supervisor/jobs/in-progress/ resumes as the Supervisor phase spawn
+# `/loomwright:supervisor --continue task: <id>` — no Launch Pad spawn — on the `--start pick` re-pick (the L23 path)
+# and on a `--start run` re-entry; with no `--continue task:` on the line the brief saved before it names the task.
+# The in-progress brief gone, or a newer `launch-pad saved` after the checkpoint line ⇒ the pre-fix routing (the Launch
+# Pad spawn / that newer brief)
+leg_fresh_checkpoint() {
+  local drv="$1" c tid=2026-10-14-af39b hint want sp
+  for c in pick run-brief-name no-inprogress superseded; do
+    new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+    f_claude 1
+    hint="; resume with /supervisor --continue task: $tid"; [ "$c" = run-brief-name ] && hint=""
+    { printf -- '- 2026-10-14T09:20:00Z launch-pad saved .supervisor/jobs/pending/%s.md\n' "$tid"
+      printf -- '- 2026-10-14T09:20:00Z auto_review suppressed (backup %s.config-backup.json) — running the supervisor phase (fresh session)\n' "$CASE_RUN"
+      printf -- '- 2026-10-14T11:00:00Z auto_review restored (config-restore: original absent)\n'
+      printf -- '- 2026-10-14T11:00:01Z ran /autonomous — no PR: checkpoint (Supervisor checkpointed at Phase 3 EXECUTE (subtask 4 hit its turn limit)%s)\n' "$hint"
+      if [ "$c" = superseded ]; then
+        printf -- '- 2026-10-14T12:00:00Z picked %s\n' "$(sed -n 's/^- item: \([^ ]*\) .*/\1/p' "$CASE_RF" | head -n 1)"
+        printf -- '- 2026-10-14T12:10:00Z launch-pad saved .supervisor/jobs/pending/newer.md\n'
+      fi; } >> "$CASE_RF"
+    [ "$c" = no-inprogress ] || { mkdir -p "$CASE_ROOT/.supervisor/jobs/in-progress" && printf '# Brief\n' > "$CASE_ROOT/.supervisor/jobs/in-progress/$tid.md"; }
+    case "$c" in
+      pick|no-inprogress) # PICK's trail-gate reads this run's open trail PR: none
+        printf '0\tpr list --state open *\t[]\n0\tpr list *\t[]\n' >> "$CASE_GH"
+        f_call "$drv" --start pick --non-interactive --session-id coord-1 ;;
+      *) f_call "$drv" --start run --session-id coord-1 ;;
+    esac
+    sp="$NC_OUT"
+    case "$c" in
+      pick) want="/loomwright:supervisor --continue task: $tid --non-interactive" ;;
+      run-brief-name) want="/loomwright:supervisor --continue task: $tid" ;;
+      superseded) want="/loomwright:supervisor job: .supervisor/jobs/pending/newer.md" ;;
+      no-inprogress) want="" ;;
+    esac
+    if [ -n "$want" ]; then
+      [ "$NC_RC" = 0 ] && f_spawn_ok "$sp" run supervisor && printf '%s' "$sp" | jq -e --arg i "$want" '.invocation == $i and (.prompt | startswith($i + " — "))' >/dev/null 2>&1 \
+        && [ "$(jq -c . "$CASE_ROOT/.supervisor/config.json" 2>/dev/null)" = '{"auto_review":false}' ] \
+        || { LEG_MSG="$c ⇒ exit $NC_RC '${sp:0:240}' ${NC_ERR:0:200}"; return 1; }
+    else
+      [ "$NC_RC" = 0 ] && f_spawn_ok "$sp" plan launch-pad || { LEG_MSG="$c (no in-progress brief) ⇒ not the Launch Pad spawn: exit $NC_RC '${sp:0:240}' ${NC_ERR:0:200}"; return 1; }
+    fi
+    case "$c" in
+      # the re-pick's own `picked` line (the LAST one) follows the checkpoint line, and the --continue suppress line follows it
+      pick) local nck npk nct
+            nck="$(grep -nF -- "ran /autonomous — no PR: checkpoint (" "$CASE_RF" | tail -n 1 | cut -d: -f1)"
+            npk="$(grep -nE -- '^- [0-9TZ:-]+ picked ' "$CASE_RF" | tail -n 1 | cut -d: -f1)"
+            nct="$(grep -nxF -- "- $(grep -oE '^- [0-9TZ:-]+ auto_review suppressed .*--continue task: .*' "$CASE_RF" | tail -n 1 | sed 's/^- //')" "$CASE_RF" | cut -d: -f1)"
+            [ -n "$nck" ] && [ -n "$npk" ] && [ "$npk" -gt "$nck" ] && [ -n "$nct" ] && [ "$nct" -gt "$npk" ] \
+              && grep -qE -- "^- [0-9TZ:-]+ auto_review suppressed \(backup $CASE_RUN\.config-backup\.json\) — running the supervisor phase \(fresh session, --continue task: $tid — the checkpointed run, no fresh Launch Pad\)\$" "$CASE_RF" \
+            || { LEG_MSG="pick: ## Progress $(sed -n '/## Progress/,$p' "$CASE_RF" | tr '\n' '|' | head -c 900)"; return 1; } ;;
+    esac
+  done
+  return 0
+}
 # leg_fresh_owner_session <driver> — review fixes (iterations 1 + 2): --owner-command is the launch authority of the
 # session that typed it, and a pending fresh spawn's `launch` line is REBUILT from the re-printing call's identity.
 # coord-1's own re-print stays byte for byte (its owner command, --coordinator-session coord-1). Re-printed with
@@ -2425,6 +2482,8 @@ if leg_fresh_state_stale "$DRIVER"; then ok "F3b (review fixes): a stale .superv
 else no "F3b: $LEG_MSG"; fi
 if leg_fresh_owner_session "$DRIVER"; then ok "F3c (review fixes): a re-printed fresh launch line is rebuilt from the re-printing session's identity — coord-1's re-print byte for byte; coord-2's re-print, the bare re-print after it and the bare --result's Supervisor spawn carry --coordinator-session coord-2 and no owner command (or coord-2's own when it gave one)"
 else no "F3c: $LEG_MSG"; fi
+if leg_fresh_checkpoint "$DRIVER"; then ok "F4 (wave 7, L23): a re-pick (--start pick) / --start run of an item whose last RUN checkpointed, its brief still in .supervisor/jobs/in-progress/ ⇒ the Supervisor phase spawn /loomwright:supervisor --continue task: <id> (the line's id, else the brief saved before it), no Launch Pad spawn; no in-progress brief ⇒ the Launch Pad spawn; a newer saved brief after the checkpoint ⇒ that brief"
+else no "F4: $LEG_MSG"; fi
 
 echo "-- V7. running system (Validation 3 of automate-speed/07): PICK → RUN → DRAIN → the tail, one item"
 V7="$WORK/v7"; mkdir -p "$V7/fx"
@@ -2849,6 +2908,18 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_fresh_plan_mapping "$m"; then no "M9d: F3 stayed green with discarded mapped to saved"
     else ok "M9d: discarded mapped to the saved branch ⇒ F3 red ($LEG_MSG)"; fi
   else no "M9d: mutant not built"; fi
+  # M9e — the re-pick ignores the checkpoint (PICK always plans first under fresh phases) ⇒ F4 red
+  if m="$(build_mutant 9e '  if ns_fresh && [ -z "$(ns_checkpoint_task)" ]; then NEXT=plan;' '  if ns_fresh; then NEXT=plan;')"; then
+    LEG_MSG=""
+    if leg_fresh_checkpoint "$m"; then no "M9e: F4 stayed green with the re-pick planning a checkpointed item afresh"
+    else ok "M9e: a checkpointed item re-picked into a fresh Launch Pad ⇒ F4 red ($LEG_MSG)"; fi
+  else no "M9e: mutant not built"; fi
+  # M9f — the in-progress brief check dropped (a checkpoint line alone resumes) ⇒ F4 red
+  if m="$(build_mutant 9f '  [ -f "$ROOT/.supervisor/jobs/in-progress/$t.md" ] || return 0' '  :')"; then
+    LEG_MSG=""
+    if leg_fresh_checkpoint "$m"; then no "M9f: F4 stayed green with the in-progress brief check dropped"
+    else ok "M9f: the in-progress brief check dropped ⇒ F4 red ($LEG_MSG)"; fi
+  else no "M9f: mutant not built"; fi
   # M10* — the coordinator_model pins (automate-speed/10, the brief's Pin mutations): each mutant must turn
   # its CM leg red
   cm_other="$(for v in $CM_VALUES; do [ "$v" = "$CM_DEFAULT" ] || { echo "$v"; break; }; done)"
