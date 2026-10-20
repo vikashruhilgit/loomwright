@@ -103,6 +103,7 @@ if [ $? -ne 0 ]; then
     else
       # AC-14 interactive fallback: AskUserQuestion(retry / skip-verify-once / abort)
       AskUserQuestion(
+        header: "AN-PR-BASE",
         "gh pr view --json baseRefName failed twice for PR ${pr_url}. Pick one:",
         ["retry", "skip-verify-once", "abort"]
       )
@@ -151,7 +152,7 @@ review_heal = Task(
 **Branch on `decision`:**
 
 - **`PASS`** → continue normally to Signal evaluation; PASS does not itself change the iterate-or-stop decision.
-- **`ESCALATED`** → review-heal exhausted its bound or the reviewer returned `NEEDS_HUMAN`; findings were posted to the PR. Surface it through the loop's **existing `AskUserQuestion` escalation surface** — **do NOT invent a new gate or prompt mechanism**: name `remaining_issues` and `pr_url`, offer the existing continue / stop choices, and record `{iteration: N, phase: EVALUATE, decision: "review_heal_escalated", source: "autonomous_review_heal"}` in `policy_decisions`. Under `--non-interactive-fallback` (no TTY) it asks nothing and fails closed: `status: aborted, status_reason: "review_heal_escalated_non_interactive"` (the PR stays open with its posted findings).
+- **`ESCALATED`** → review-heal exhausted its bound or the reviewer returned `NEEDS_HUMAN`; findings were posted to the PR. Surface it through the loop's **existing `AskUserQuestion` escalation surface** (`header: "AN-ESCALATED"`) — **do NOT invent a new gate or prompt mechanism**: name `remaining_issues` and `pr_url`, offer the existing continue / stop choices, and record `{iteration: N, phase: EVALUATE, decision: "review_heal_escalated", source: "autonomous_review_heal"}` in `policy_decisions`. Under `--non-interactive-fallback` (no TTY) it asks nothing and fails closed: `status: aborted, status_reason: "review_heal_escalated_non_interactive"` (the PR stays open with its posted findings).
 - **`READY` / any unrecognized decision** → treat as a **terminal, non-re-iterate** state: do NOT loop back to PLAN and do NOT fire the escalation `AskUserQuestion`; fall through to Signal evaluation exactly as for `PASS`.
 - **Additive v2 drain fields** (`channels_scanned`, `findings_validated`, `findings_dismissed`, `checks_waited`, the postmortem fields) → ignored: EVALUATE keys **only** off `decision` and the v1 core fields it records, so an extra field never changes its behavior.
 
@@ -171,7 +172,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh" \
 # Backgrounded, fire-and-forget (exit 0 always); the question below does not wait on delivery.
 ```
 
-Main-thread `AskUserQuestion` then fires. The prompt branches on stacked vs non-stacked:
+Main-thread `AskUserQuestion` then fires with `header: "AN-RUBRIC"`. The prompt branches on stacked vs non-stacked: `continue-to-next-iteration` (stacked) or `merge-and-continue` (non-stacked), then `stop-here` and `force-continue-anyway`:
 
 **Stacked-branch mode (default):**
 
@@ -187,7 +188,7 @@ Main-thread `AskUserQuestion` then fires. The prompt branches on stacked vs non-
 > - *(b) stop-here (accept the current rubric score, exit),*
 > - *(c) force-continue-anyway (proceed without merge; risk: iteration {N+1}'s branch won't include iteration {N}'s changes, likely producing conflicting PRs)."*
 
-**Non-interactive fallback:** when `--non-interactive-fallback` is set AND no TTY, the gate does NOT call `AskUserQuestion`; the loop exits with `status: aborted, status_reason: "rubric_gate_closed_non_interactive"` (fail closed — never silently `continue`, never silently `stop`).
+**Non-interactive fallback:** when `--non-interactive-fallback` is set AND no TTY, the gate does NOT call `AskUserQuestion`; the loop exits with `status: aborted, status_reason: "rubric_gate_closed_non_interactive"` (fail closed — never silently continue, never silently stop).
 
 **Stacked mode — `continue-to-next-iteration` (no merge verification):** iter N+1's branch is created from `iterations[N].branch` at the start of the next EXECUTE; no `gh pr view` merge check. Write the stacked-mode refined requirement at `.supervisor/requirements/{session_id}-iter{N+1}.md`:
 
@@ -234,6 +235,7 @@ fi
 if [ -z "$merged" ]; then
   # Reached only after an INTERACTIVE merge-and-continue pick: a run that cannot ask
   # already stopped at the rubric gate (rubric_gate_closed_non_interactive).
+  # header: "AN-MERGE-VFY"; options: "merge-and-continue" | "stop-here" | "force-continue-anyway"
   AskUserQuestion "PR #$X is not yet showing as merged (gh: ${state:-unknown}; local ancestry: $( [ -n "$iter_N_branch_sha" ] && echo "checked" || echo "branch SHA unresolvable" )). Refresh and pick merge-and-continue again, or pick stop-here / force-continue-anyway."
 fi
 ```
@@ -325,7 +327,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh" \
   --context "iter $iteration completed PR $pr_url without rubric; awaiting continue/stop decision" &
 ```
 
-Then `AskUserQuestion`:
+Then `AskUserQuestion` with `header: "AN-NO-RUBRIC"` and the options `continue` · `stop`:
 
 > *"Iteration {N} completed with PR #{X}. The brief had no `## Outcomes Rubric`, so there is no per-item score to evaluate. Continue to iteration {N+1} (re-plan to refine or extend), or stop here? Options:*
 > - *(a) continue (loop to PLAN with a refined-requirement note appended),*

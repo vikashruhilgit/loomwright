@@ -48,7 +48,7 @@
 #   Q   QUESTION GATES (AC3). Under --non-interactive no call prints {"do":"ask"}: the AUT-WAIVE gate
 #       parks escalated with escalation_cause validation_unrun, the park-first decisions record
 #       pending_decisions: <n> instead of asking. Every ask any leg printed carries question,
-#       header (a string, empty for human-only gates), options and cant_ask.
+#       header (its gate code, human-only gates included), options (the catalog labels) and cant_ask.
 #   S   MERGE-SURFACE INVARIANT (AC4). The positive-grep file list (CLAUDE.md §Failure-Mode
 #       Invariants) equals the base commit's list; the driver contributes no positive line and
 #       calls `automate-helpers.sh gate-eval`.
@@ -110,7 +110,7 @@
 #   P   PICK / RECONCILE / resume (automate-speed/08). P1 (AC2): an OPEN in-flight PR (awaiting_merge,
 #       escalated) or this run's open trail PR ⇒ `--start pick` parks, releases the lock it took, writes no
 #       `picked` line and no new ## Current item. P2 (AC3): RECONCILE's closeout leftovers ⇒ AUT-LEFTOVER (≤ 4
-#       a call, the catalog labels, header ""); cant_ask / --non-interactive ⇒ the closeout_leftover park, one
+#       a call, the catalog labels, header "AUT-LEFTOVER"); cant_ask / --non-interactive ⇒ the closeout_leftover park, one
 #       line per leftover, no trail-pr. P3 (AC4): one run, no --run, can't ask ⇒ the
 #       resume_requires_flag_non_interactive stop with .supervisor/ byte-unchanged; AUT-RESUME asked and
 #       re-printed; its cant_ask / Start new write nothing to the run; continue restores a stranded config
@@ -1184,7 +1184,7 @@ leg_open_pr_park() {
   return 0
 }
 # leg_reconcile_leftover <driver> — AC3: RECONCILE's closeout leaves 5 leftovers ⇒ interactive: AUT-LEFTOVER
-# (header "", the catalog labels, 4 questions in the first call), no PICK; cant_ask ⇒ the closeout_leftover park
+# (header "AUT-LEFTOVER", the catalog labels, 4 questions in the first call), no PICK; cant_ask ⇒ the closeout_leftover park
 # (one `closeout leftover:` line per leftover, no trail-pr, no picked); --non-interactive ⇒ that park directly
 P_LEFT='closeout: bogus — a
 closeout: bogus — b
@@ -1200,7 +1200,7 @@ leg_reconcile_leftover() {
     cp "$CASE_RF" "$CASE_DIR/before.md"
     if [ "$mode" = ask ]; then
       p_seamed "$CASE_DIR/seams.lo" "$drv" --session-id "$P_SID"
-      [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-LEFTOVER" and .header == "" and (.questions | length) == 4
+      [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-LEFTOVER" and .header == "AUT-LEFTOVER" and (.questions | length) == 4
           and .options == ["Clean up now","Keep and continue","Stop"] and .cant_ask == "closeout_leftover park"' >/dev/null 2>&1 \
         || { LEG_MSG="interactive: not the AUT-LEFTOVER ask: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:160}"; return 1; }
       p_no_new_pick "$CASE_DIR/before.md" && ! grep -q 'trail-gate' <(diff "$CASE_DIR/before.md" "$CASE_RF") \
@@ -2200,9 +2200,16 @@ bad="$(cut -f2- "$ASKS" | jq -c 'select((.question | type) != "string" or (.ques
 gates="$(cut -f2- "$ASKS" | jq -r '.gate' 2>/dev/null | env LC_ALL=C sort -u | tr '\n' ' ')"
 if [ "$n_ask" -gt 0 ] && [ -z "$bad" ]; then ok "Q: all $n_ask ask(s) carry question, header, options, cant_ask (gates: $gates)"
 else no "Q: $n_ask ask(s); malformed: ${bad:-none}"; fi
-if cut -f2- "$ASKS" | jq -e 'select(.gate == "AUT-WAIVE" or .gate == "AUT-DISMISS" or .gate == "AUT-LEFTOVER") | select(.header != "")' >/dev/null 2>&1; then
-  no "Q: a human-only gate carries a catalog code in its header"
-else ok "Q: human-only gates (AUT-WAIVE / AUT-DISMISS / AUT-LEFTOVER) carry an empty header"; fi
+# Every ask — human-only gates included — names its gate in every header and offers exactly the catalog's
+# labels (all of them, or a row's non-`?` core): wave 7 relayed AUT-WAIVE / AUT-DISMISS asks with header "".
+CATJ="$(bash "$HERE/lane-policy.sh" catalog | jq -Rnc '[inputs | split("\t") | (.[2] | split("|")) as $l
+  | {key: .[0], value: {all: ($l | map(sub("\\?$"; "")) | sort), core: ($l | map(select(endswith("?") | not)) | sort)}}] | from_entries')"
+drift="$(cut -f2- "$ASKS" | jq -c --argjson cat "$CATJ" '.gate as $g | select(.header != $g or any(.questions[]; .header != $g)
+    or any(.questions[]; (.options | sort) as $o | ($cat[.header] // {}) as $r | $o != $r.all and $o != $r.core)) | .gate' 2>&1)"
+gates_seen="$(cut -f2- "$ASKS" | jq -r '.gate' | env LC_ALL=C sort -u | tr '\n' ' ')"
+case "$gates_seen" in *AUT-WAIVE*AUT-DISMISS*|*AUT-DISMISS*AUT-WAIVE*) gs_ok=1 ;; *) gs_ok=0 ;; esac
+if [ -z "$drift" ] && [ "$gs_ok" = 1 ]; then ok "Q: every ask's header is its gate code and its options are the catalog's labels (gates: $gates_seen)"
+else no "Q: header/label drift in [${drift:-none}] (gates seen: $gates_seen)"; fi
 if cut -f2- "$ASKS" | jq -e 'select(.gate == "AUT-SUMMARY") | select(.header != "AUT-SUMMARY" or .options != ["Keep summary","Drop summary"])' >/dev/null 2>&1; then
   no "Q: an AUT-SUMMARY ask lacks its code or labels"
 else ok "Q: AUT-SUMMARY asks carry header AUT-SUMMARY and exactly its two labels"; fi
@@ -2431,7 +2438,7 @@ LEG_MSG=""
 if leg_open_pr_park "$DRIVER"; then ok "P1 (AC2): an OPEN in-flight PR (awaiting_merge, escalated) / this run's open trail PR ⇒ --start pick parks, releases its lock, no picked line, no new ## Current item"
 else no "P1: $LEG_MSG"; fi
 LEG_MSG=""
-if leg_reconcile_leftover "$DRIVER"; then ok "P2 (AC3): RECONCILE's closeout leftovers ⇒ AUT-LEFTOVER (4 a call, catalog labels, header \"\"); cant_ask / --non-interactive ⇒ closeout_leftover park, one line per leftover, no trail-pr, no PICK"
+if leg_reconcile_leftover "$DRIVER"; then ok "P2 (AC3): RECONCILE's closeout leftovers ⇒ AUT-LEFTOVER (4 a call, catalog labels, header \"AUT-LEFTOVER\"); cant_ask / --non-interactive ⇒ closeout_leftover park, one line per leftover, no trail-pr, no PICK"
 else no "P2: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_resume_entry "$DRIVER"; then ok "P3 (AC4): one run, no --run, can't ask ⇒ resume_requires_flag_non_interactive stop, nothing written; AUT-RESUME asked + re-printed; cant_ask / Start new write nothing; continue restores a stranded config backup"

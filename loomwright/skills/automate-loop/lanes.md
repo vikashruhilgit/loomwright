@@ -83,7 +83,7 @@ Neither `wave-build` nor `fleet-closeout` merges a PR or pushes a lane branch; t
 
 A **policy answer** is the owner's own answer to a routine lane question, given in advance and applied by an exact lookup — never a model judgement. The gate catalog, the project-policy stamp, the wave policy, resolve/decide and their limits are owned by `scripts/lane-policy.sh` (`catalog`, `resolve`, `wave-set`, `decide`) and documented in `docs/LANE_GATES.md`; this skill does not restate them.
 
-- **Gate catalog — one authority.** The engine asks each `allowed` gate with `header` = its catalog code and the catalog's labels (a `(Recommended)` marker is allowed); a human-only gate is asked with no code; a question whose `header` is not a catalog code is ALWAYS the owner's.
+- **Gate catalog — one authority.** The engine asks every gate with `header` = its catalog code and the catalog's labels (a `(Recommended)` marker is allowed; `?` labels optional as a group); a human-only code is never policy-answered; a question whose `header` is not a catalog code is ALWAYS the owner's.
 - **Project policy — human-stamped.** `.agent/lane-policy.json` counts only while stamped through the EXISTING `rules-check.sh` stamp valve (there is no second valve); otherwise it is ignored and reported (`lane-policy: project policy ignored — <reason>`), never partially applied.
 - **Wave policy — owner-set.** The coordinator calls `lane-policy.sh wave-set` ONLY with the owner's own answers to the wave-planning ask (per-wave loop step 4).
 - **Resolve and carry.** `lane-create` resolves the policy in the PRIMARY and carries it in the lane's `lane.json`.

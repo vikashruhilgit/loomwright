@@ -132,7 +132,7 @@ Run one check per `requires` entry against `<worktree>/<path>`. The commands are
   - `reason: "Pre-spawn verification failed for {subtask_id}: missing required outputs"`
   - `adjudication_required: true`
   - `missing_outputs: [{item: "<requires item>", producing_subtask: "<from>", check_run: "<command + exit code>"}, ...]`
-  - `adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask", "C: Exit to Launch Pad", "D: Update consumer brief"]`
+  - `adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask", "C: Exit to Launch Pad", "D: Update consumer brief"]` (gate `SUP-ADJ-GAP`)
 - Wait for the Supervisor to surface the choice to the user and reply with the chosen option (A/B/C/D). Do not advance the subtask until then.
 
 **If ALL checks PASS:** proceed to spawn the worker into the dependent worktree (Step 3 — existing Spawn Background Workers behavior).
@@ -251,7 +251,7 @@ for iteration in 1..max_iterations:
              check_run: v.check_run // "worker self-report (Step 5.5)"}   # the script's command + exit-code string; the fallback label only on the legacy/no-brief fall-through
             for each missing entry v
           ]
-          adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
+          adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",   # gate SUP-ADJ-GAP
                                  "C: Exit to Launch Pad", "D: Update consumer brief"]
           reason: "{disk.source // 'worker self-report'}: {disk.outputs_gap}"
         # Supervisor resolves adjudication and instructs next action.
@@ -339,7 +339,7 @@ for iteration in 1..max_iterations:
                   declared lane(s) of sibling(s) {owning_subtasks}, none of which is
                   reachable from {subtask_id} in either direction over the requires DAG
                   (divergent-interface hazard). See colliding_lanes[] for the full set."
-                # Lane-specific options — never the requires-gap gate's strings.
+                # Lane-specific options (gate SUP-ADJ-LANE) — never the requires-gap gate's strings.
                 adjudication_options: ["A: Re-queue writer with the sibling lane excluded",
                                        "B: Serialize the pair (add a requires edge)",
                                        "C: Exit to Launch Pad",
@@ -506,7 +506,7 @@ rejects block scalars (`>` / `|`) outright. So a list must be either a **single-
 flow sequence or a **block sequence** (`- "..."` on its own lines, used below), and every
 quoted scalar — `reason` in particular — must be emitted on **one line**, however long.
 A template wrapped for readability parses as malformed and is rejected before rule 6
-is ever reached. `emit-block-parses` in the eval corpus asserts this.
+is ever reached. `emit-block-parses` in the eval corpus asserts this. The options are gate `SUP-ADJ-GAP`'s catalog labels (`docs/LANE_GATES.md`).
 
 ```yaml
 EXECUTE_CHECKPOINT:
@@ -532,7 +532,7 @@ EXECUTE_CHECKPOINT:
 ```
 
 For the lane-collision kind, swap the discriminator, the evidence array, and the options
-(the option strings are lane-specific by design — do not reuse the requires-gap wording):
+(the option strings are gate `SUP-ADJ-LANE`'s, lane-specific by design — do not reuse the requires-gap wording):
 
 ```yaml
 EXECUTE_CHECKPOINT:

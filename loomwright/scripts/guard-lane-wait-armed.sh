@@ -33,8 +33,9 @@
 #      no running `background_tasks[]` entry mentions `lane-wait` (the watcher was just launched and has
 #      not written its marker yet). On that path the marker is re-read once after 0.1 s.
 # The lane states come from `_lanes_quick_state` (automate-lanes.sh, sourced): the lane table, lane
-# process liveness (`lanes_proc_alive`) and the lane inbox only — no gh, no ci-slot, no full
-# `lane-status` reconcile — so the hook stays fast at every turn end of every session.
+# process liveness (`lanes_proc_alive`), the lane inbox and — for a dead lane whose question was just
+# answered — the last lines of its stream log only; no gh, no ci-slot, no full `lane-status` reconcile —
+# so the hook stays fast at every turn end of every session.
 #
 # FAIL SAFE: this is a reminder, not a correctness gate (a wedged main thread is worse than a missed
 # nudge): missing jq, an unparseable payload, an unreadable lock / table, a missing automate-lanes.sh —

@@ -121,7 +121,7 @@ Goal → Discovery → Feasibility → Analysis → Decomposition → Brief → 
 0. **Resolve requirement-file input (do FIRST):** Auto-resolution is **scoped to the handoff directory** to avoid hijacking a goal that merely names a repo file. If the `goal:`/`feature:`/`problem:` value is a path **under `.supervisor/requirements/`** ending in `.md` that resolves with `test -f` (the Beads-absent Product Owner handoff target), then `Read` that file and use its contents (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks) as the requirement source. Carry forward any acceptance criteria the file already defines rather than re-deriving them. If the file resolves but is empty or clearly not a requirement/story, stop and ask rather than planning from its contents. Resolve the path relative to the **project root** (the `--project` value when given, else the auto-detected root), not the current working directory. **Any other value — including a bare path to an existing repo file such as `README.md` or `docs/spec.md` — is treated as a literal goal string** (so "improve `README.md`" is never silently reinterpreted as a spec to plan from). Never invent a file — a `.supervisor/requirements/` path that fails `test -f` falls back to literal-string handling and is noted. **When (and only when) the input resolves to a `.supervisor/requirements/*.md` file, record its repo-root-relative path (e.g. `.supervisor/requirements/{slug}.md`) as `source_requirement` and hold it in session memory for Phase 5 PACKAGE.** A literal-string goal or a repo file outside `.supervisor/requirements/` leaves `source_requirement` unset.
 1. If goal is vague (no clear outcome or acceptance criteria) — and no requirement file supplied them:
    - Apply product discovery framework (`skills/product-discovery/SKILL.md`)
-   - Ask clarifying questions (max 2 rounds via `AskUserQuestion`); cannot ask (Can't-ask rule) ⇒ `status: aborted, status_reason: "clarification_needed_non_interactive"`
+   - Ask clarifying questions (max 2 rounds via `AskUserQuestion`, `header: "LP-CLARIFY"`); cannot ask (Can't-ask rule) ⇒ `status: aborted, status_reason: "clarification_needed_non_interactive"`
 2. If goal is clear (specific outcome described, or a requirement file was read):
    - Extract acceptance criteria directly from goal / requirement file
 3. Write/refine criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`). A criterion whose evidence would live in the PR body — one carried forward at step 0 included — is written in the evidence-file form instead (`skills/supervisor-readiness/SKILL.md` §"Acceptance Criteria"), and its `docs/evidence/<slug>.md` joins the Phase 3 File Impact Map as a create; Plan Reviewer Criterion 20 FAILs it otherwise
@@ -182,7 +182,7 @@ Goal → Discovery → Feasibility → Analysis → Decomposition → Brief → 
 **Flow control:**
 - **GO:** Proceed to Phase 3 silently
 - **CAUTION:** Proceed to Phase 3. Findings auto-injected into Risk Assessment (Phase 5) with source "Feasibility (Phase 2.5)"
-- **NO-GO:** Stop pipeline. Use `AskUserQuestion` with 3 options:
+- **NO-GO:** Stop pipeline. Use `AskUserQuestion` with `header: "LP-NO-GO"` and 3 options:
   - **"Override and continue"** → proceed to Phase 3, NO-GO findings become HIGH risks in Phase 5
   - **"Revise goal"** → loop back to Phase 2 DISCOVER (max 1 revision)
   - **"Abort"** → exit Launch Pad
@@ -527,8 +527,8 @@ Subtask 2 (independent)
    - **PASS carrying an issue at the fix floor (attempt < 3):** an issue whose `fix-floor.sh meets "<severity>" "$FIX_FLOOR"` prints `fix` — excluding a `category: executable_acceptance` visibility finding, which no refine resolves — is refined exactly like a FAIL issue: fix it in the brief, re-run MATERIALIZE, re-spawn (consumes an attempt). No human is needed (the same author-side fix the FAIL branch makes), so this runs on both paths.
    - **PASS** (no issue at the floor, or attempt = 3): Proceed to Phase 6 (save enabled). An at-floor issue still open after the third review never blocks — it is listed in the Phase 5.5 table with Resolution `deferred` and save stays enabled; only BLOCKING/HIGH (FAIL) ever blocks save.
    - **FAIL (attempt < 3):** Fix issues identified in the review, re-assemble affected brief sections, re-spawn reviewer. A 17c issue is fixed only by revising the brief to honor the rule, never by writing a `Rule override:` line (Phase 6 action 2b). A Criterion 20 `pr_body_evidence` issue is fixed by rewriting that criterion in the evidence-file form its suggestion gives (the file added to the File Impact Map and the subtask's `lanes:`), never by deleting the criterion
-   - **FAIL (attempt = 3):** Present all unresolved issues to user. Offer: "Refine offline" (exit, `status: blocked` — fix and start a new session) or "Discard". Do NOT save; the 3-spawn cap is never reset within a session.
-   - **NEEDS_HUMAN:** Proceed to Phase 6, which branches on WHY: a Criterion 14 `executable_acceptance` escalation goes through action 2a (`approve-and-stamp` / `strip-cmd-bullets` / `discard`, interactive; auto-strip, non-interactive); a Criterion 17c house-rule conflict goes through action 2b (`record-override` / `honor-rule` / `discard`; `rule_conflict_non_interactive` when it cannot ask); any other reason uses the generic "Override and save" / "Refine further" / "Discard" prompt (or aborts `needs_human_non_interactive` when non-interactive)
+   - **FAIL (attempt = 3):** Present all unresolved issues to user. Offer (`LP-FAIL`): "Refine offline" (exit, `status: blocked` — fix and start a new session) or "Discard". Do NOT save; the 3-spawn cap is never reset within a session.
+   - **NEEDS_HUMAN:** Proceed to Phase 6, which branches on WHY: a Criterion 14 `executable_acceptance` escalation goes through action 2a (`LP-EXEC-ACC`: `approve-and-stamp` / `strip-cmd-bullets` / `discard`, interactive; auto-strip, non-interactive); a Criterion 17c house-rule conflict goes through action 2b (`LP-RULE-OVR`: `record-override` / `honor-rule` / `discard`; `rule_conflict_non_interactive` when it cannot ask); any other reason uses the generic `LP-NEEDHUMAN` "Override and save" / "Refine further" / "Discard" prompt (or aborts `needs_human_non_interactive` when non-interactive)
 
 **Retry loop:**
 
@@ -554,7 +554,7 @@ loop:
         → auto-strip flagged cmd:/bare bullets, record cmd_bullets_stripped_non_interactive=true
         → RE-RUN Phase 5 step 9 MATERIALIZE, re-review (consumes an attempt), loop
       else:
-        → AskUserQuestion quoting flagged bullets verbatim
+        → AskUserQuestion (header "LP-EXEC-ACC") quoting flagged bullets verbatim
         → options: "approve-and-stamp" | "strip-cmd-bullets" | "discard"
         → approve-and-stamp: write the Configuration stamp (exec-acceptance-hash.sh),
           RE-RUN MATERIALIZE, re-review (consumes an attempt), loop
@@ -566,14 +566,14 @@ loop:
       # Phase 6 action 2b — the owner overrides the advisory rule or the brief honors it.
       if non_interactive:
         → abort: status: aborted, summary "rule_conflict_non_interactive: <ids>"
-      → AskUserQuestion per flagged id: "record-override" | "honor-rule" | "discard"
+      → AskUserQuestion (header "LP-RULE-OVR") per flagged id: "record-override" | "honor-rule" | "discard"
       → record-override / honor-rule: edit the brief, RE-RUN MATERIALIZE,
         re-review (consumes an attempt), loop
     else:
       # Generic NEEDS_HUMAN (no executable_acceptance or 17c issue involved).
       if non_interactive:
         → abort: status: aborted, status_reason: "needs_human_non_interactive"
-      → present issues to user via AskUserQuestion
+      → present issues to user via AskUserQuestion (header "LP-NEEDHUMAN")
       → options: "Override and save" | "Refine further" | "Discard"
       → if override: proceed to Phase 6 with user-acknowledged warnings
       → if refine: loop back to relevant phase, then re-review
@@ -583,8 +583,8 @@ loop:
 
   if result.decision == FAIL:
     if attempt >= max_attempts:
-      → present all unresolved issues to user
-      → options: "Refine offline (exit, status: blocked)" | "Discard"
+      → present all unresolved issues to user (header "LP-FAIL")
+      → options: "Refine offline" (exit, status: blocked) | "Discard"
       → do NOT allow save to pending/ — FAIL never enables save,
         and the cap is never reset within a session
     else:
@@ -649,7 +649,7 @@ Check all 20 review criteria. Output a PLAN_REVIEW_RESULT block.",
 **Actions:**
 
 1. Present the assembled brief from Phase 5 with Plan Review status
-2. If Plan Review returned NEEDS_HUMAN, **first check whether the escalation is (at least in part) a Criterion 14 `executable_acceptance` issue** (`PLAN_REVIEW_RESULT.issues[].category == "executable_acceptance"` — the unstamped/stale `cmd:`/bare bullet gate). Action **2a** handles it on BOTH paths, in place of the generic prompt. A Criterion 17c house-rule conflict goes to action **2b** (after 2a when both fire). Otherwise (no `executable_acceptance` or 17c issue), use the generic 3-option `AskUserQuestion`:
+2. If Plan Review returned NEEDS_HUMAN, **first check whether the escalation is (at least in part) a Criterion 14 `executable_acceptance` issue** (`PLAN_REVIEW_RESULT.issues[].category == "executable_acceptance"` — the unstamped/stale `cmd:`/bare bullet gate). Action **2a** handles it on BOTH paths, in place of the generic prompt. A Criterion 17c house-rule conflict goes to action **2b** (after 2a when both fire). Otherwise (no `executable_acceptance` or 17c issue), use the generic 3-option `AskUserQuestion` with `header: "LP-NEEDHUMAN"` (no review attempt left ⇒ no "Refine further"):
    - **"Override and save"** — User acknowledges warnings and takes responsibility. Write brief to `.supervisor/jobs/pending/{date}-{slug}.md` with `## Plan Review: NEEDS_HUMAN (user override)` section
    - **"Refine further"** — Loop back to fix issues, **re-run Phase 5 step 9 MATERIALIZE** (rewrites the scratch file + rebuilds the digest from the revised text), then re-run Plan Review
    - **"Discard"** — Cancel without saving
@@ -658,7 +658,7 @@ Check all 20 review criteria. Output a PLAN_REVIEW_RESULT block.",
 
 2a. **Executable Acceptance `cmd:`/bare-bullet NEEDS_HUMAN (Criterion 14).** The flagged bullets are the `executable_acceptance` issue's `description` (verbatim) — quote them exactly, never paraphrase them away.
 
-   - **Interactive (no `--non-interactive`/`--non-interactive-fallback`):** use `AskUserQuestion`, quoting every flagged bullet verbatim in the question text, with exactly three options:
+   - **Interactive (no `--non-interactive`/`--non-interactive-fallback`):** use `AskUserQuestion` with `header: "LP-EXEC-ACC"`, quoting every flagged bullet verbatim in the question text, with exactly three options:
      - **`approve-and-stamp`** — compute the current stamp and write it into the brief's `## Configuration` section (append `- **Executable Acceptance Approved:** {stamp}` — create the `## Configuration` section if the brief has none), using `Edit`/`Write`:
        ```bash
        bash "${CLAUDE_PLUGIN_ROOT}/scripts/exec-acceptance-hash.sh" <scratch-brief-path>
@@ -671,7 +671,7 @@ Check all 20 review criteria. Output a PLAN_REVIEW_RESULT block.",
 
 2b. **House-rule override NEEDS_HUMAN (Criterion 17c).** Fires for each `category: "rule_conformance"` issue whose description starts `17c:` (an AC, design or scope line that contradicts an applicable advisory rule, with no owner override). Quote the issue's description verbatim.
 
-   - **Interactive:** one `AskUserQuestion` per flagged rule id, with no header code (human-only: `docs/LANE_GATES.md` `LP-RULE-OVR`), naming the rule and the contradicting text, with exactly three options:
+   - **Interactive:** one `AskUserQuestion` per flagged rule id, `header: "LP-RULE-OVR"` (human-only, `docs/LANE_GATES.md`), naming the rule and the contradicting text, with exactly three options:
      - **`record-override`** — the answer's note is the owner's reason. Write `- Rule override: <id> — <the note, verbatim> (acknowledged by the owner: Launch Pad Phase 6, <YYYY-MM-DD>)` into the brief's `## Rule conflicts (open decisions)` section (create it after `## House Rules` if absent; set any pending conflict line for that id to `Owner's choice: override`). An empty note records nothing: ask again.
      - **`honor-rule`** — revise the contradicting AC, design or scope text so the brief honors the rule (set any pending line to `Owner's choice: honor the rule`).
      - **`discard`** — cancel without saving (`status: discarded`).
@@ -679,14 +679,14 @@ Check all 20 review criteria. Output a PLAN_REVIEW_RESULT block.",
    - **Cannot ask** (Can't-ask rule): write no override and revise nothing; save nothing, `status: aborted`, summary leading `rule_conflict_non_interactive: <ids>`.
    - **Never author an override.** A `Rule override:` line reaches the brief only verbatim from the source requirement (Phase 5 action 6a (iii)) or from this action's owner answer, never from the FAIL or at-floor refine loop.
 
-3. If Plan Review returned PASS: use `AskUserQuestion` with 4 options — `header: "LP-SAVE"` ONLY when the PASS carries zero issues; a PASS with any issue or note gets no code, so it always reaches a human (gate catalog: `docs/LANE_GATES.md`):
+3. If Plan Review returned PASS: use `AskUserQuestion` with these exact labels — `header: "LP-SAVE"` when the PASS carries zero issues, `header: "LP-SAVE-NOTE"` (human-only, so it always reaches a human) when it carries any issue or note; never another header (gate catalog: `docs/LANE_GATES.md`):
    - **"Save and exit"** — Write brief to `.supervisor/jobs/pending/{date}-{slug}.md`, output `/supervisor job: {path}` command
    - **"Refine further"** — Ask clarifying questions, update sections, **re-run Phase 5 step 9 MATERIALIZE**, then **re-run Plan Review before save** (consumes an attempt from the shared 3-spawn cap; the PASS is void once the brief is mutated)
    - **"Edit sections"** — User specifies what to change, update in-place, **re-run Phase 5 step 9 MATERIALIZE**, then **re-run Plan Review before save** (same rule: any post-PASS mutation voids the PASS and requires re-review; consumes an attempt from the shared cap). **Corner case:** if the PASS landed on the 3rd (final) spawn, no attempts remain — "Refine further"/"Edit sections" are not offered; only "Save and exit" (the unmutated PASSed brief) or "Discard"
    - **"Discard"** — Cancel without saving
    - **Cannot ask** (Can't-ask rule), **explicit `--non-interactive`/`--non-interactive-fallback` set:** "Save and exit" with the unmutated PASSed brief — never Refine/Edit (they need a human's content) — noted `saved_on_pass_non_interactive` in the Phase 6 output (the flag is the owner's opt-in to an unattended save, and the mandatory Plan Review passed).
    - **Cannot ask only because this is a subagent (no flag):** nothing stands in for the owner's go — save nothing, write nothing to `.supervisor/jobs/pending/`; `status: aborted, status_reason: "save_requires_flag_non_interactive"`, the PASSed scratch brief path in the output so the owner can re-run with the flag or interactively.
-4. If Plan Review returned FAIL (after 3 attempts — the cap is exhausted): use `AskUserQuestion` with 2 options. **FAIL never enables save**, and the 3-spawn cap is never reset within a session:
+4. If Plan Review returned FAIL (after 3 attempts — the cap is exhausted): use `AskUserQuestion` with `header: "LP-FAIL"` and 2 options. **FAIL never enables save**, and the 3-spawn cap is never reset within a session:
    - **"Refine offline"** — Exit without saving (`status: blocked`); the user fixes the issues and starts a new Launch Pad session
    - **"Discard"** — Cancel without saving (`status: discarded`)
    - **Cannot ask** (Can't-ask rule): `status: blocked, status_reason: "plan_review_fail_non_interactive"` (the Refine-offline outcome; nothing saved)
@@ -701,7 +701,7 @@ Check all 20 review criteria. Output a PLAN_REVIEW_RESULT block.",
    ```
    /supervisor job: .supervisor/jobs/pending/{date}-{slug}.md
    ```
-7. **Propose project-memory candidates (human-gated, optional):** if during ANALYZE you learned **durable, reusable, decision-changing** facts about *this codebase* that pass the Memory Core Principle asset test (`AGENT_GUIDELINES.md` §"Memory Core Principle") and are **not already** in `CLAUDE.md` or the project memory read in Phase 3, propose them via `AskUserQuestion` — e.g. *"📝 Remember for next time? — `<one-line fact>`"*, each individually acceptable/skippable. For every fact the user **explicitly approves**, write it:
+7. **Propose project-memory candidates (human-gated, optional):** if during ANALYZE you learned **durable, reusable, decision-changing** facts about *this codebase* that pass the Memory Core Principle asset test (`AGENT_GUIDELINES.md` §"Memory Core Principle") and are **not already** in `CLAUDE.md` or the project memory read in Phase 3, propose them via `AskUserQuestion` (`header: "LP-MEMORY"`) — e.g. *"📝 Remember for next time? — `<one-line fact>`"*, each individually acceptable/skippable. For every fact the user **explicitly approves**, write it:
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-project-memory.sh" --fact "<approved fact>" --source "launch-pad:{slug}" --confirm
    ```
@@ -709,10 +709,10 @@ Check all 20 review criteria. Output a PLAN_REVIEW_RESULT block.",
 
 **Save rules:**
 - If environment has BLOCKERS from Phase 1: output fix instructions, don't offer save
-- If Plan Review did not pass (FAIL after 3 attempts): don't offer save, only "Refine offline" (exit, status: blocked) or "Discard"
-- If Plan Review returned NEEDS_HUMAN for a non-`executable_acceptance` reason: offer "Override and save" (user takes responsibility), "Refine further", or "Discard" — non-interactively, abort with `status_reason: "needs_human_non_interactive"` instead (action 2)
-- If Plan Review returned NEEDS_HUMAN for a Criterion 17c house-rule conflict (action 2b): offer `record-override` / `honor-rule` / `discard`; non-interactively, abort with `rule_conflict_non_interactive`
-- If Plan Review returned NEEDS_HUMAN for a Criterion 14 `executable_acceptance` reason (action 2a): interactively offer `approve-and-stamp` / `strip-cmd-bullets` / `discard`; non-interactively, auto-strip the flagged bullets and re-review — never proceed with an unreviewed executable brief
+- If Plan Review did not pass (FAIL after 3 attempts): don't offer save, only (`LP-FAIL`) "Refine offline" (exit, status: blocked) or "Discard"
+- If Plan Review returned NEEDS_HUMAN for a non-`executable_acceptance` reason: offer (`LP-NEEDHUMAN`) "Override and save" (user takes responsibility), "Refine further", or "Discard" — non-interactively, abort with `status_reason: "needs_human_non_interactive"` instead (action 2)
+- If Plan Review returned NEEDS_HUMAN for a Criterion 17c house-rule conflict (action 2b): offer (`LP-RULE-OVR`) `record-override` / `honor-rule` / `discard`; non-interactively, abort with `rule_conflict_non_interactive`
+- If Plan Review returned NEEDS_HUMAN for a Criterion 14 `executable_acceptance` reason (action 2a): interactively offer (`LP-EXEC-ACC`) `approve-and-stamp` / `strip-cmd-bullets` / `discard`; non-interactively, auto-strip the flagged bullets and re-review — never proceed with an unreviewed executable brief
 - Slug derived from goal (lowercase, hyphens, max 40 chars)
 - Date in ISO format (YYYY-MM-DD)
 
@@ -746,7 +746,7 @@ Check all 20 review criteria. Output a PLAN_REVIEW_RESULT block.",
 1. Determine the terminal `status` based on what actually happened in this run:
    - **`saved`** — Phase 6 chose "Save and exit" OR "Override and save"; the brief file was written.
    - **`discarded`** — Phase 6 chose "Discard"; no file written.
-   - **`blocked`** — Phase 1 had BLOCKERS that suppressed the save offer, OR Plan Review FAILed × 3 and the user chose "Refine offline" (or no choice was offered); save was never enabled. Precedence: an explicit user "Discard" always wins — FAIL × 3 followed by Discard is `discarded`, not `blocked`.
+   - **`blocked`** — Phase 1 had BLOCKERS that suppressed the save offer, OR Plan Review FAILed × 3 and the user chose (`LP-FAIL`) "Refine offline" (or no choice was offered); save was never enabled. Precedence: an explicit user "Discard" always wins — FAIL × 3 followed by Discard is `discarded`, not `blocked`.
    - **`aborted`** — User aborted the run mid-flight, or `/autonomous` cleanup fired after rubric-dropped; no clean Phase 6 outcome. (A killed session emits nothing — this value covers in-session aborts that still reach Phase 7.)
 
 2. Compute `saved_brief_path`:

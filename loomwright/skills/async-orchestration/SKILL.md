@@ -290,7 +290,7 @@ missing_outputs:
   - item: "<requires item — file path, symbol, or contract field>"
     producing_subtask: "<producer-sub>"
     check_run: "<exact verification command and its exit/output>"
-adjudication_options:
+adjudication_options:                 # gate SUP-ADJ-GAP (docs/LANE_GATES.md)
   - "A: Re-queue producer"
   - "B: Insert remediation subtask"
   - "C: Exit to Launch Pad"

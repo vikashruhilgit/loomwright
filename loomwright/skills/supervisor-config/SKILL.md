@@ -43,7 +43,7 @@ Supervisor prompt.
      a. **Before jumping to the saved phase**, hydrate session config from the loaded state: read `config.cost_profile` (default `default` if absent — handles pre-cheap state files). This ensures `cost_profile` is in memory for every subsequent spawn, regardless of which phase is resumed.
      b. If `--cheap` was also passed on this invocation: override to `cost_profile = cheap`.
      c. Jump to the saved phase.
-3. Ask user (via `AskUserQuestion`) if not resuming:
+3. Ask user (via `AskUserQuestion`, `header: "SUP-INIT"`) if not resuming:
    - "Max parallel workers?" (default: 2; skip if `--sequential`)
    - "Specific task to work on?" (or user provides via `task:` parameter)
    - **Cannot ask** (`--non-interactive`, or executing as a subagent — the ask tool is absent): ask nothing; max parallel workers = the default 2 (`--sequential` ⇒ 1), task from `job:`/`task:`. No task source ⇒ fail closed: `SUPERVISOR_RESULT.status: failed`, `error: "init_input_missing_non_interactive"`.

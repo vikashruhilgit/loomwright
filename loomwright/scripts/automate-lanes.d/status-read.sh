@@ -483,11 +483,11 @@ _lanes_last_dated() {
 # coordinator-side for a question the lane still holds, the process not running — shown, never delivered here) · blocked_launch · held_for_load (a lane holding an unanswered question,
 # no process running, reads awaiting_input instead) · created · missing · running
 # (lanes_proc_alive) · awaiting_input · parked (merged / gone after reconcile) · lost_to_reset (boot
-# later than the last launch) · died (.died marker) · stalled.
+# later than the last launch) · died (.died marker) · running (_lanes_resume_in_flight: resume in flight) · stalled.
 _lanes_lane_json() {
   local lane="$1" path="$2" item="$3" run="$4" pid="$5" st="$6" sid="$7" ts="$8" llu="$9" why="${10}" now="${11}" ci="${12}" apf="${13:-}"
   local fcpr="${14:-}" sup sv="" oc="" ended="" tst
-  local root log died rf status pause pr lp pd state reason="" held="" qs nq pk prs="" le be rdf rds="" rdsum="" lm la cij
+  local root log died rf status pause pr lp pd state reason="" held="" qs nq pk prs="" le be rdf rds="" rdsum="" lm la cij rs
   root="$(dirname "$path")"; log="$root/$lane.stream.log"; died="$root/$lane.died"
   sup="$path/.supervisor"
   case "$ts" in
@@ -551,8 +551,11 @@ _lanes_lane_json() {
         state=lost_to_reset; reason="machine booted after the last launch ($llu); resume with lane-launch --resume-run $run"
       elif [ -e "$died" ]; then
         state=died; reason="process exited with no terminal result ($(awk -F'\t' '$1 == "died_at" { print $2 }' "$died" 2>/dev/null))"
+      elif rs="$(_lanes_resume_in_flight "$log" "$path/.supervisor/inbox" "$now")"; then
+        state=running; reason="resuming after answer $rs"
       else
         state=stalled; reason="process gone, run file not parked, no pending question — resume once with lane-launch --continue"
+        rs="$(_lanes_resume_in_flight "$log" "$path/.supervisor/inbox" "$now" any)" && reason="process gone after answer $rs, no resumed process — resume once with lane-launch --continue"
       fi ;;
   esac
   fi

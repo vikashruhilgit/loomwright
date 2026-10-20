@@ -212,7 +212,9 @@
 # lane holds an unanswered question and no process runs), created, missing, running
 # (lanes_proc_alive), awaiting_input, the run
 # file's park (merged / gone after reconcile-item), lost_to_reset (boot later than the last launch),
-# died (.died marker), stalled (process gone, not parked, no question). Keep-awake is SUGGESTED on macOS
+# died (.died marker), running again while an answered deferred question's resume is not yet visible
+# (answer written ≤ LOOMWRIGHT_LANES_RESUME_GRACE_S ago, default 120), stalled (process gone, not parked,
+# no question). Keep-awake is SUGGESTED on macOS
 # (`caffeinate -i -w <coordinator pid>`); only `lane-status --keep-awake` starts it.
 #
 # Test seams: LOOMWRIGHT_LANES_META_SYNC (meta-sync.sh path), LOOMWRIGHT_LANES_SETUP_MEMORY
@@ -225,6 +227,7 @@
 # LOOMWRIGHT_LANES_UNAME, LOOMWRIGHT_LANES_COORDINATOR_PID, LOOMWRIGHT_LANES_BOOT_EPOCH,
 # LOOMWRIGHT_LANES_TOKEN_LEDGER, LOOMWRIGHT_LANES_WATCH_ITERATIONS, LOOMWRIGHT_LANES_WATCH_INTERVAL_S,
 # LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30: the bound on waiting for a live lock holder),
+# LOOMWRIGHT_LANES_RESUME_GRACE_S (default 120: the answer-relaunch gap read as running, not stalled),
 # LOOMWRIGHT_LANES_TRAIL (default: the helpers path — whose `trail-pr` runs the lane's gated push),
 # LOOMWRIGHT_LANES_NOTIFY_DESKTOP / LOOMWRIGHT_LANES_SEND_WEBHOOK (lane-park-notify's two notifiers),
 # LOOMWRIGHT_LANES_POLICY (lane-policy.sh path), LOOMWRIGHT_LANES_RUN_LOCK (run-lock.sh path, fleet-closeout).
