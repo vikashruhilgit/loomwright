@@ -152,6 +152,38 @@ What moved where:
 - Inventory: five anchors updated where a bold label lost its history tag (AL-439, AL-474, AL-486, AL-491, AL-152); `## Counts` recomputed (598 rows, 139 rule, 38 story, 143 GAP); AL-591 … AL-600 added to the gap list. Rows homed `script:…` / `step-scoped` whose prose was deleted keep their old `q:` anchor, as in Subtask 2 (those homes are not anchor-checked).
 - `vendor-coupling-manifest.json`: unchanged — none of the three files carries a counted token (no allowance at base), and the moved text carries none into the rationale doc.
 
+### Subtask 4 — modes-and-merge-gate.md and intake.md
+
+The same loop as Subtask 1, on the Subtask 4 working tree:
+
+```
+loomwright/skills/automate-loop/SKILL.md bytes=21154 hist=1
+loomwright/skills/automate-loop/branch-mode.md bytes=3931 hist=0
+loomwright/skills/automate-loop/command-lanes.md bytes=1093 hist=0
+loomwright/skills/automate-loop/intake.md bytes=8057 hist=0
+loomwright/skills/automate-loop/invariants.md bytes=6090 hist=0
+loomwright/skills/automate-loop/lanes.md bytes=25763 hist=0
+loomwright/skills/automate-loop/modes-and-merge-gate.md bytes=12923 hist=0
+loomwright/skills/automate-loop/per-item-loop.md bytes=29940 hist=0
+loomwright/skills/automate-loop/resume.md bytes=9919 hist=0
+loomwright/skills/automate-loop/run-file.md bytes=10598 hist=0
+loomwright/commands/automate.md bytes=19850 hist=0
+TOTAL bytes=149318 hist=1
+helpers.md bytes=45618
+```
+
+- Measured set: 165,925 → **149,318** bytes (−16,607 this subtask; −126,450 / −45.9% from the 275,768 baseline). `modes-and-merge-gate.md` 27,208 → 12,923; `intake.md` 10,379 → 8,057. The AC2 target (≤ 193,037) stays met.
+- Default-path read set: unchanged at 47,094 bytes (neither file is read by default; `SKILL.md` and the command body were not edited).
+- History references: 4 → **1** (`modes-and-merge-gate.md` 3 → 0: `red-team-hardening item 03`, `item 01` and the `2026-09-28` owner-decision date moved to the rationale doc or were cut; the one left is in `SKILL.md`).
+- `helpers.md`: 45,618 → 45,618 (not edited; nothing was moved into it).
+
+What moved where:
+- **Stories → rationale `## merge gate and intake`** (4 existing `story` rows re-homed `rationale:docs/rationale/automate-loop.md#…`: AL-424 the high-risk honest limit and AL-436 the rules-gate dormancy limit, both under "Honest limits of the high-risk and rules conditions"; AL-427 the checkout-pin honest limits; AL-429 the checkout pin's premise; all four were homed at a `rationale:` heading inside `modes-and-merge-gate.md`). Seven new `story` rows, AL-601 … AL-607, home the story and explanation halves split out of rule/deterministic rows: why the merge is the engine's own step (AL-404), why the gate is self-resolving (AL-411), how condition 1 treats `sub_floor_converged` / `ci_untrusted` / died and superseded values (AL-415), how the checkout pin reads a clean tree and why `.supervisor/` and the agent-memory store are excluded (AL-426), why the Queue is confirmed and when it is skipped (AL-187 / AL-189), why a named file's stamp counts as done and the engine never ticks the backlog doc (AL-179 / AL-180), why the parallel intake lint is information only (AL-182).
+- **Script-owned prose deleted** (rows homed `script:automate-helpers.sh gate-eval`, `script:automate-next-step.sh gate|validation|park|gate-eval`, `script:classify-risk.sh`, `script:rules-gate-verdict.sh`, `script:automate-helpers.sh resolve-backlog|resolve-folder` — `test-loop-inventory.sh` checks each arm): the fenced `ctx.json` JSON (the driver writes it — `automate-next-step.sh`'s gate-eval step, `<run_id>.gate-ctx.json`), the verbatim GraphQL block, condition 1's `ci_untrusted` / died-drain reasoning, the checkout pin's git-read recipe (c)/(d), the `unstamped_reason` message texts, the `cmd_disabled` verdict ranking, the backlog path-resolution detail. `gate_eval()`'s header comment in `automate-helpers.sh` already carries the full recipe and every park reason, so §10 now points at it (the house rule's pointer form) instead of keeping a second copy. One line stays wherever the coordinator could otherwise act by hand or the owner needs the park reason: never merge by hand, never write `ctx.json` by hand, every named `PARK:` reason, the no-override wording of conditions 4, 6 and 7, the fix hint.
+- **Kept byte-identical (pinned):** both `##` headings, the `§10` numbered list 1–7 (`fixtures/automate-golden/MAP.tsv` maps `§9`, `§10` and `L1.1`–`L1.7`), every `###` heading of `intake.md` (one `SKILL.md` entry each, and `§2 "--limit N"` / `"Backlog-doc source"` / `"Prompt source"` citations), the `--auto-merge` bullet and the bold labels and phrase order `test-automate-dismissed.sh` reads from the §9 bullets, `test-rules-gate-seams.sh` pin 6's needles, the positive-form merge line `On all seven holding: …`, `test-classify-risk.sh` E5's `classify-risk.sh` mention, the queue-confirm bullet's four QG4 needles, the lane bullet's `skipped AUT-QUEUE: lane backlog written by lane-create from the owner's --parallel command`, the bare-`/automate` statuses `test-non-interactive-gates-seam.sh` reads, and the two `prose` anchors AL-409 (`**resolve the PR** (fix + merge, or close), **OR**`) and AL-428 (`**Fix hint for a \`rules_gate_dirty_tree\` park on a clean checkout:**`).
+- Inventory: ten anchors updated where a bold label lost its history tag or its sentence was rewritten (AL-405, AL-411, AL-412, AL-418, AL-419, AL-421, AL-422, AL-426, AL-187, AL-189); `## Counts` recomputed (605 rows, 45 story, 150 GAP); AL-601 … AL-607 added to the gap list. The four re-homed story rows keep their old `q:` anchor, as in Subtasks 2–3 (a `rationale:` row's own anchor is not checked).
+- `vendor-coupling-manifest.json`: `modes-and-merge-gate.md` 4 → 1 (the trusted-actor path and two agent-memory mentions left with the moved text; one `.claude/` stays in the checkout-pin rule) and its note records the cut; `intake.md` keeps its one (`AskUserQuestion` in the bare-`/automate` bullet). The rationale doc carries no counted token and no positive-form merge mention.
+
 ## Read set (Step 0)
 
 After Subtask 1, `commands/automate.md` Step 0 reads (one line per entry; `grep -nE '^Read |\*\*Always\*\*|\*\*Only when\*\*' loomwright/commands/automate.md`):
@@ -200,6 +232,10 @@ Why each after-tree `SKILL.md` section stays in the default read set:
 - **(Subtask 3) The lane's `lane resume: <value>` Progress line is written by the model, not a script.** `automate-lanes.d/launch.sh` only sets `LOOMWRIGHT_LANE_RESUME_PATH`; nothing in `automate-next-step.sh` or the helpers reads it, so the line exists only if the lane's engine follows `lanes.md` INIT. Kept as prose; the owner decides whether the driver's entry should write it.
 - **(Subtask 3) `lanes.md` points at the `automate-lanes.sh` header for `lane-status`'s state list and each subcommand's outputs.** The header is now the only full copy; a later header edit has no doc twin to drift from, but the header is a code comment that no test pins against the prose.
 
+- **(Subtask 4) §10 condition 3 said the gate runs `review-heal/SKILL.md` §U1 (b)'s GraphQL query "VERBATIM … (never re-derived)",** while `gate_eval()`'s header says the query is "adapted from review-heal/SKILL.md §U1(b) (same query minus the unused `body` field)". The runtime line now matches the script ("its own copy … minus the unused `body` field"). No test compares the two queries; the owner decides whether one should.
+- **(Subtask 4) The folder source's "sibling `_BACKLOG.md` documents a build order ⇒ defer to backlog-doc ordering" rule (AL-176) is model-run only.** `resolve-folder` lists the directory and never looks for a sibling `_BACKLOG.md`, so the rule holds only if the coordinator checks the folder for one before calling the helper. Kept as prose, unchanged.
+- **(Subtask 4) §10 now summarises and points at `gate_eval()`'s header comment,** which in turn names `skills/automate-loop/SKILL.md §10 condition 7` as the place `D3's middle form` is explained. Both still resolve (§10 keeps the D3 sentence), but the full park-reason list and the checkout pin's git-read recipe now live only in that header comment, which no test pins against the prose.
+
 ## Proposed hooks
 
 - (Subtask 1) None — no rule in SKILL.md, invariants.md or the command body needed a new hook to leave the prompt.
@@ -207,6 +243,8 @@ Why each after-tree `SKILL.md` section stays in the default read set:
 - (Subtask 2) None — every rule left in `per-item-loop.md` / `resume.md` is either executed by an existing driver or helper arm or stays as one prose line; no rule needed a new hook.
 
 - (Subtask 3) None — every lane, wave and branch-mode rule left in the three files is executed by an existing `automate-lanes.sh` / `automate-wave.sh` / `lane-policy.sh` / `meta-sync.sh` arm, the `guard-lane-wait-armed.sh` Stop hook, or stays as one prose line.
+
+- (Subtask 4) None — every merge-gate rule is executed by `automate-helpers.sh gate-eval` (with `classify-risk.sh` / `rules-gate-verdict.sh`) or the driver's `gate` / `validation` / `park` / `gate-eval` steps, and every intake rule by `resolve-folder` / `resolve-backlog` / `queue-confirm` / `plan-waves` or stays as one prose line. The one rule no script runs (AL-176, above) needs a helper change, not a hook.
 
 ## Pin mutations
 
@@ -257,6 +295,20 @@ mut: RED
 ```
 
 The RH-329 line is the same `--root` artifact as in Subtask 2; the mutant adds exactly the AL-471 failure.
+
+- **(Subtask 4) No test repointed** — every pinned needle stayed in `modes-and-merge-gate.md` / `intake.md`, which their readers already take (`test-rules-gate-seams.sh` `AL=` and `16-queue-gates.sh` `QG_INTAKE=` raw; the others through `fixtures/automate-loop-split/assemble.sh`). Both of those raw readers run their own gated prose mutants on every run (pin 6's first needle deleted; QG1d' `written by → made by`, QG4 `queue-confirm` call removed), and all three still turn red on the after tree (Results). Mutation control for the kept `prose` anchor AL-428: on a `mktemp -d` copy of `loomwright/` (with `HOME` relocated), the line holding ``**Fix hint for a `rules_gate_dirty_tree` park on a clean checkout:**`` deleted from `modes-and-merge-gate.md`, then `test-loop-inventory.sh --root <copy>`:
+
+```
+mutant gated: non-empty, differs (59 -> 58 lines)
+FAIL AL-428: anchor not found in skills/automate-loop/modes-and-merge-gate.md
+FAIL RH-329: test cell names no existing test-*.sh under loomwright/scripts/ or scripts/: test-check-shared-prefix.sh
+loop-inventory: FAIL — 2 problem(s)
+# control:
+FAIL RH-329: test cell names no existing test-*.sh under loomwright/scripts/ or scripts/: test-check-shared-prefix.sh
+loop-inventory: FAIL — 1 problem(s)
+```
+
+The RH-329 line is the same `--root` artifact as in Subtasks 2–3; the mutant adds exactly the AL-428 failure.
 
 ## Results
 
@@ -331,3 +383,24 @@ Run on the Subtask 3 tree (each script from the repo root, `bash <script>`; four
 | `scripts/check-doc-currency.sh`, `scripts/check-token-budget.sh`, `scripts/check-vendor-coupling.sh`, `scripts/check-skills-index-sync.sh` | OK |
 | `loomwright/scripts/test-automate-helpers.sh` | 769 passed, 1 failed — the base failure (`W19 … ## Touches parses`) |
 | `loomwright/scripts/test-automate-lanes.sh` | 953 passed, 42 failed — re-run alone; the sorted `FAIL` id list is identical to a run of the same script on `git archive HEAD` (the Subtask 2 tree) extracted to a scratch directory (`diff` empty). The first run, beside the other groups, read 949/46: the four extra were the timing-sensitive `lane-wait` legs AH1g, AH2, AH3b, AH16, none of which reads a group file. |
+
+### Subtask 4 — results
+
+Run on the Subtask 4 tree (each script from the repo root, `bash <script>`; other lanes ran suites at the same time, load average about 28):
+
+| Gate / test | Result |
+|---|---|
+| `loomwright/scripts/test-loop-inventory.sh` | 43/43 passed |
+| `loomwright/scripts/test-automate-loop-split.sh` | 40 passed, 0 failed |
+| `loomwright/scripts/test-automate-next-step.sh` | 153 passed, 0 failed; the positive-form merge grep prints exactly `SURFACE_BASE` (`diff` empty) |
+| `loomwright/scripts/test-rules-gate-seams.sh` | 26 passed, 0 failed (pin 6 read from `modes-and-merge-gate.md`; its gated mutant red) |
+| `loomwright/scripts/test-automate-golden.sh` | 65 passed, 0 failed (`§9`, `§10`, `L1.1`–`L1.7` still mapped) |
+| `loomwright/scripts/test-automate-dismissed.sh` | 255 passed, 0 failed (the three §9 bullet-order legs) |
+| `loomwright/scripts/test-non-interactive-gates-seam.sh` / `test-classify-risk.sh` | 64 / 46 passed, 0 failed |
+| `loomwright/scripts/test-automate-trail.sh` / `test-run-lock.sh` / `test-session-resume.sh` | 786 / 88 / 338 passed, 0 failed |
+| `loomwright/scripts/test-build-handoff.sh` / `test-build-loop-evidence.sh` / `test-context-digest.sh` / `test-harvest-conventions.sh` | 93 / 30 / 37 of 37 / 172 passed, 0 failed |
+| `loomwright/scripts/test-command-parts.sh` / `test-curation-status.sh` / `test-rules-docs.sh` / `test-setup-memory.sh` | 37 / 333 / 46 / 574 passed, 0 failed |
+| `loomwright/scripts/test-citation-drift.sh` | 26 passed, 0 failed |
+| `scripts/check-doc-currency.sh`, `scripts/check-token-budget.sh`, `scripts/check-vendor-coupling.sh`, `scripts/check-skills-index-sync.sh` | OK |
+| `loomwright/scripts/test-automate-helpers.sh` | 769 passed, 1 failed — the base failure (`W19 … ## Touches parses`); QG1d', QG4 and both intake prose mutants pass |
+| `loomwright/scripts/test-automate-lanes.sh` | Not run here — none of its legs reads `modes-and-merge-gate.md` or `intake.md` (`grep -rlF` of both names under `loomwright/scripts/` and `scripts/` does not list it) |
