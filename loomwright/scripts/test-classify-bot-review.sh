@@ -57,6 +57,13 @@
 #                  load-bearing. A custom --skip-marker <prefix> overrides the
 #                  built-in default. An unmarked body is unaffected (no
 #                  false-positive drop, no stderr note when dropped==0).
+#  28-31. terse default (automate-speed/24) -> cases 1-27 assert the machine
+#                  contract, so they pass --verbose. 28: the DEFAULT prints exactly
+#                  one `kept <K> of <N> (skipped_self <S>)` line. 29: --verbose is
+#                  byte-identical to goldens captured from the PRE-change script
+#                  (fixtures/terse-output/classify-bot-review/). 30: each fail-safe
+#                  path prints one `kept 0 of 0 (reason <token>)` line, exit 0.
+#                  31: never-closing stdin names reason stdin_timeout.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -74,7 +81,7 @@ fi
 
 # run_classify <json-on-stdin> — capture stdout in RUN_OUT, rc in RUN_RC.
 run_classify() {
-  RUN_OUT="$( printf '%s' "$1" | bash "$CLASSIFY" 2>/dev/null )"
+  RUN_OUT="$( printf '%s' "$1" | bash "$CLASSIFY" --verbose 2>/dev/null )"
   RUN_RC=$?
 }
 
@@ -212,7 +219,7 @@ jq -cn '
              + ([range(0;30)] | map("\($emdash) padding lorem ipsum \($emdash) review note \($bot) ") | add)) } ]' \
   > "$BIG"
 BIG_BYTES=$(wc -c < "$BIG" | tr -d ' ')
-bounded_sh 20 "$TMP/c7.out" "cat '$BIG' | bash '$CLASSIFY'"
+bounded_sh 20 "$TMP/c7.out" "cat '$BIG' | bash '$CLASSIFY' --verbose"
 # A fast read must NOT emit the timeout breadcrumb (no false positive on healthy input).
 if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] \
    && ! grep -q 'timed out' "$TMP/c7.err" 2>/dev/null \
@@ -230,7 +237,7 @@ echo "== 8. never-closing stdin => bounded read self-exits to [] (does NOT hang)
 # read timeout. With CLASSIFY_STDIN_TIMEOUT=1 the read gives up at ~1s and degrades
 # to []; the outer 8s watchdog must NOT have to fire. A plain `cat` would block here
 # until the producer finally closed (the latent hang this fix also closes).
-bounded_sh 8 "$TMP/c8.out" "( sleep 3 ) | CLASSIFY_STDIN_TIMEOUT=1 bash '$CLASSIFY'"
+bounded_sh 8 "$TMP/c8.out" "( sleep 3 ) | CLASSIFY_STDIN_TIMEOUT=1 bash '$CLASSIFY' --verbose"
 # On timeout: stdout is [], outer watchdog never fires, AND the stderr breadcrumb fires
 # (so a timeout is distinguishable from an empty endpoint in logs).
 if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] \
@@ -246,7 +253,7 @@ echo "== 9. slow / incomplete stdin => partial fragment degrades to [] (does NOT
 # Producer dribbles an incomplete, non-array fragment then stalls without closing.
 # The bounded read gives up at ~1s; the fragment is not a valid JSON array, so jq
 # + the defensive fallback degrade to []. No hang, exit 0.
-bounded_sh 8 "$TMP/c9.out" "( printf 'partial-fragment-no-eof' ; sleep 3 ) | CLASSIFY_STDIN_TIMEOUT=1 bash '$CLASSIFY'"
+bounded_sh 8 "$TMP/c9.out" "( printf 'partial-fragment-no-eof' ; sleep 3 ) | CLASSIFY_STDIN_TIMEOUT=1 bash '$CLASSIFY' --verbose"
 if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] && printf '%s' "$(cat "$TMP/c9.out")" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
   ok "slow/incomplete stdin: partial fragment degrades to [] under the bounded read, no hang"
 else
@@ -295,8 +302,8 @@ if cmp -s "$CLASSIFY" "$MUTANT"; then
 elif ! grep -qF 'def review_marker_re: "\\breview\\b";' "$MUTANT"; then
   no "(11) UNPROVEN: mutant does not carry the exact pre-fix regex line: $(grep -n 'def review_marker_re' "$MUTANT")"
 else
-  MUT_OUT="$( printf '%s' "$PR223" | bash "$MUTANT" 2>/dev/null )"; MUT_RC=$?
-  ORIG_OUT="$( printf '%s' "$PR223" | bash "$CLASSIFY" 2>/dev/null )"
+  MUT_OUT="$( printf '%s' "$PR223" | bash "$MUTANT" --verbose 2>/dev/null )"; MUT_RC=$?
+  ORIG_OUT="$( printf '%s' "$PR223" | bash "$CLASSIFY" --verbose 2>/dev/null )"
   if [ "$MUT_RC" -eq 0 ] \
      && printf '%s' "$MUT_OUT" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1 \
      && printf '%s' "$ORIG_OUT" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1; then
@@ -330,7 +337,7 @@ fi
 echo "== 13. --trusted-actors: exact-listed login classified IN, bot_author_re NOT consulted =="
 printf '["realbot"]' > "$TMP/trusted.json"
 IN13='[{"id": 1301, "user": {"login": "realbot"}, "body": "This is a review finding: MEDIUM issue"}]'
-OUT13="$( printf '%s' "$IN13" | bash "$CLASSIFY" --trusted-actors "$TMP/trusted.json" 2>/dev/null )"; RC13=$?
+OUT13="$( printf '%s' "$IN13" | bash "$CLASSIFY" --verbose --trusted-actors "$TMP/trusted.json" 2>/dev/null )"; RC13=$?
 if [ "$RC13" -eq 0 ] && printf '%s' "$OUT13" | jq -e '(type=="array") and (length==1) and (.[0].user.login=="realbot")' >/dev/null 2>&1; then
   ok "--trusted-actors exact match: non-bot-looking but exact-listed login classified IN"
 else
@@ -339,7 +346,7 @@ fi
 
 echo "== 14. --trusted-actors: a bot_author_re-matching login NOT on the list is classified OUT =="
 IN14='[{"id": 1401, "user": {"login": "claude[bot]"}, "body": "This is a review finding: MEDIUM issue"}]'
-OUT14="$( printf '%s' "$IN14" | bash "$CLASSIFY" --trusted-actors "$TMP/trusted.json" 2>/dev/null )"; RC14=$?
+OUT14="$( printf '%s' "$IN14" | bash "$CLASSIFY" --verbose --trusted-actors "$TMP/trusted.json" 2>/dev/null )"; RC14=$?
 if [ "$RC14" -eq 0 ] && printf '%s' "$OUT14" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
   ok "--trusted-actors exact-match mode: bot_author_re match alone is insufficient when the list is present"
 else
@@ -347,7 +354,7 @@ else
 fi
 
 echo "== 15. --trusted-actors with a MISSING file: falls back to bot_author_re + logs actor_allowlist_absent once =="
-OUT15="$( printf '%s' "$IN14" | bash "$CLASSIFY" --trusted-actors "$TMP/does-not-exist.json" 2>"$TMP/stderr15.log" )"; RC15=$?
+OUT15="$( printf '%s' "$IN14" | bash "$CLASSIFY" --verbose --trusted-actors "$TMP/does-not-exist.json" 2>"$TMP/stderr15.log" )"; RC15=$?
 ERRTXT15="$(cat "$TMP/stderr15.log")"
 if [ "$RC15" -eq 0 ] \
    && printf '%s' "$OUT15" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1 \
@@ -359,7 +366,7 @@ else
 fi
 
 echo "== 16. --trusted-actors NEVER passed: behavior 100% unchanged, no log line =="
-OUT16="$( printf '%s' "$IN14" | bash "$CLASSIFY" 2>"$TMP/stderr16.log" )"; RC16=$?
+OUT16="$( printf '%s' "$IN14" | bash "$CLASSIFY" --verbose 2>"$TMP/stderr16.log" )"; RC16=$?
 ERRTXT16="$(cat "$TMP/stderr16.log")"
 if [ "$RC16" -eq 0 ] \
    && printf '%s' "$OUT16" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1 \
@@ -371,7 +378,7 @@ fi
 
 echo "== 17. --trusted-actors with an unreadable/malformed-JSON file: treated like missing (falls back) =="
 printf 'not valid json' > "$TMP/malformed.json"
-OUT17="$( printf '%s' "$IN14" | bash "$CLASSIFY" --trusted-actors "$TMP/malformed.json" 2>"$TMP/stderr17.log" )"; RC17=$?
+OUT17="$( printf '%s' "$IN14" | bash "$CLASSIFY" --verbose --trusted-actors "$TMP/malformed.json" 2>"$TMP/stderr17.log" )"; RC17=$?
 ERRTXT17="$(cat "$TMP/stderr17.log")"
 if [ "$RC17" -eq 0 ] \
    && printf '%s' "$OUT17" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1 \
@@ -387,7 +394,7 @@ fi
 
 echo "== 18. tightened bot_author_re: 'claude' (human, no [bot] suffix) is classified OUT =="
 IN18A='[{"id": 1801, "user": {"login": "claude"}, "body": "This is a review finding: MEDIUM issue"}]'
-OUT18A="$( printf '%s' "$IN18A" | bash "$CLASSIFY" 2>/dev/null )"; RC18A=$?
+OUT18A="$( printf '%s' "$IN18A" | bash "$CLASSIFY" --verbose 2>/dev/null )"; RC18A=$?
 if [ "$RC18A" -eq 0 ] && printf '%s' "$OUT18A" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
   ok "bare login 'claude' (no [bot] suffix) classified OUT — no longer trusted as a human-typo bot"
 else
@@ -396,7 +403,7 @@ fi
 
 echo "== 19. tightened bot_author_re: 'github-actions-fan' (prefix match only) is classified OUT =="
 IN18B='[{"id": 1802, "user": {"login": "github-actions-fan"}, "body": "This is a review finding: MEDIUM issue"}]'
-OUT18B="$( printf '%s' "$IN18B" | bash "$CLASSIFY" 2>/dev/null )"; RC18B=$?
+OUT18B="$( printf '%s' "$IN18B" | bash "$CLASSIFY" --verbose 2>/dev/null )"; RC18B=$?
 if [ "$RC18B" -eq 0 ] && printf '%s' "$OUT18B" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
   ok "'github-actions-fan' (merely starts with github-actions) classified OUT — bare-prefix alternative dropped"
 else
@@ -405,7 +412,7 @@ fi
 
 echo "== 20. tightened bot_author_re: 'claude[bot]' is still classified IN =="
 IN18C='[{"id": 1803, "user": {"login": "claude[bot]"}, "body": "This is a review finding: MEDIUM issue"}]'
-OUT18C="$( printf '%s' "$IN18C" | bash "$CLASSIFY" 2>/dev/null )"; RC18C=$?
+OUT18C="$( printf '%s' "$IN18C" | bash "$CLASSIFY" --verbose 2>/dev/null )"; RC18C=$?
 if [ "$RC18C" -eq 0 ] && printf '%s' "$OUT18C" | jq -e '(type=="array") and (length==1) and (.[0].user.login=="claude[bot]")' >/dev/null 2>&1; then
   ok "'claude[bot]' still classified IN under the tightened regex"
 else
@@ -414,7 +421,7 @@ fi
 
 echo "== 21. tightened bot_author_re: 'github-actions[bot]' is still classified IN =="
 IN18D='[{"id": 1804, "user": {"login": "github-actions[bot]"}, "body": "This is a review finding: MEDIUM issue"}]'
-OUT18D="$( printf '%s' "$IN18D" | bash "$CLASSIFY" 2>/dev/null )"; RC18D=$?
+OUT18D="$( printf '%s' "$IN18D" | bash "$CLASSIFY" --verbose 2>/dev/null )"; RC18D=$?
 if [ "$RC18D" -eq 0 ] && printf '%s' "$OUT18D" | jq -e '(type=="array") and (length==1) and (.[0].user.login=="github-actions[bot]")' >/dev/null 2>&1; then
   ok "'github-actions[bot]' still classified IN under the tightened regex"
 else
@@ -423,7 +430,7 @@ fi
 
 echo "== 22. tightened bot_author_re: any other login ending in [bot] ('anything[bot]') is still classified IN =="
 IN18E='[{"id": 1805, "user": {"login": "anything[bot]"}, "body": "This is a review finding: MEDIUM issue"}]'
-OUT18E="$( printf '%s' "$IN18E" | bash "$CLASSIFY" 2>/dev/null )"; RC18E=$?
+OUT18E="$( printf '%s' "$IN18E" | bash "$CLASSIFY" --verbose 2>/dev/null )"; RC18E=$?
 if [ "$RC18E" -eq 0 ] && printf '%s' "$OUT18E" | jq -e '(type=="array") and (length==1) and (.[0].user.login=="anything[bot]")' >/dev/null 2>&1; then
   ok "'anything[bot]' (generic [bot]-suffix login) still classified IN under the tightened regex"
 else
@@ -440,7 +447,7 @@ echo "== 23. --skip-marker DEFAULT ON: a marker-prefixed body that would otherwi
 # marker prefix. Without the filter this classifies IN on every earlier case's
 # logic; WITH the default-on filter it must be dropped BEFORE that test runs.
 MARK23='[{"id": 2301, "user": {"login": "claude[bot]"}, "body": "<!-- loomwright:dismissed round=1 -->\n- **X** — stale (reviewThreads)\n\nThis is a review comment."}]'
-OUT23="$(printf '%s' "$MARK23" | bash "$CLASSIFY" 2>"$TMP/stderr23.log")"; RC23=$?
+OUT23="$(printf '%s' "$MARK23" | bash "$CLASSIFY" --verbose 2>"$TMP/stderr23.log")"; RC23=$?
 ERRTXT23="$(cat "$TMP/stderr23.log")"
 if [ "$RC23" -eq 0 ] \
    && printf '%s' "$OUT23" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1 \
@@ -453,7 +460,7 @@ fi
 echo "== 24. MUTATION CONTROL for 23: --skip-marker '' (explicitly disabled) classifies the SAME marker-prefixed body IN =="
 # Proves the filter in case 23 is load-bearing, not a coincidence of some other
 # gate: with the filter off, the identical fixture is classified IN.
-OUT24="$(printf '%s' "$MARK23" | bash "$CLASSIFY" --skip-marker '' 2>"$TMP/stderr24.log")"; RC24=$?
+OUT24="$(printf '%s' "$MARK23" | bash "$CLASSIFY" --verbose --skip-marker '' 2>"$TMP/stderr24.log")"; RC24=$?
 ERRTXT24="$(cat "$TMP/stderr24.log")"
 if [ "$RC24" -eq 0 ] \
    && printf '%s' "$OUT24" | jq -e '(type=="array") and (length==1) and (.[0].id==2301)' >/dev/null 2>&1 \
@@ -467,8 +474,8 @@ echo "== 25. --skip-marker with a custom prefix overrides the built-in default =
 # A body prefixed with a DIFFERENT marker string is dropped only when that
 # exact prefix is passed; the built-in default does not apply to it.
 CUSTOM25='[{"id": 2501, "user": {"login": "claude[bot]"}, "body": "<<<CUSTOM-MARKER>>> review finding here."}]'
-OUT25_DEFAULT="$(printf '%s' "$CUSTOM25" | bash "$CLASSIFY" 2>/dev/null)"
-OUT25_CUSTOM="$(printf '%s' "$CUSTOM25" | bash "$CLASSIFY" --skip-marker '<<<CUSTOM-MARKER>>>' 2>/dev/null)"
+OUT25_DEFAULT="$(printf '%s' "$CUSTOM25" | bash "$CLASSIFY" --verbose 2>/dev/null)"
+OUT25_CUSTOM="$(printf '%s' "$CUSTOM25" | bash "$CLASSIFY" --verbose --skip-marker '<<<CUSTOM-MARKER>>>' 2>/dev/null)"
 if printf '%s' "$OUT25_DEFAULT" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1 \
    && printf '%s' "$OUT25_CUSTOM" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
   ok "--skip-marker <custom prefix>: the built-in default does not drop a differently-prefixed body; the custom override does"
@@ -478,7 +485,7 @@ fi
 
 echo "== 26. --skip-marker DEFAULT ON: a body that does NOT start with the prefix is unaffected (no false-positive drop, no stderr note) =="
 UNMARKED26='[{"id": 2601, "user": {"login": "claude[bot]"}, "body": "This is an ordinary review finding with no marker prefix."}]'
-OUT26="$(printf '%s' "$UNMARKED26" | bash "$CLASSIFY" 2>"$TMP/stderr26.log")"; RC26=$?
+OUT26="$(printf '%s' "$UNMARKED26" | bash "$CLASSIFY" --verbose 2>"$TMP/stderr26.log")"; RC26=$?
 ERRTXT26="$(cat "$TMP/stderr26.log")"
 if [ "$RC26" -eq 0 ] \
    && printf '%s' "$OUT26" | jq -e '(type=="array") and (length==1) and (.[0].id==2601)' >/dev/null 2>&1 \
@@ -494,8 +501,8 @@ WF27="$(dirname "$0")/../../.github/workflows/claude-code-review.yml"
 IN27="$(jq -cn --arg b "LGTM, nothing to flag in the diff.
 $MARKER27" '[{id: 2701, user: {login: "claude[bot]"}, body: $b}]')"
 BARE27='[{"id": 2702, "user": {"login": "claude[bot]"}, "body": "LGTM, nothing to flag in the diff."}]'
-OUT27="$(printf '%s' "$IN27" | bash "$CLASSIFY" 2>/dev/null)"
-OUTB27="$(printf '%s' "$BARE27" | bash "$CLASSIFY" 2>/dev/null)"
+OUT27="$(printf '%s' "$IN27" | bash "$CLASSIFY" --verbose 2>/dev/null)"
+OUTB27="$(printf '%s' "$BARE27" | bash "$CLASSIFY" --verbose 2>/dev/null)"
 if printf '%s' "$OUT27" | jq -e '(length==1) and (.[0].id==2701)' >/dev/null 2>&1 \
    && printf '%s' "$OUTB27" | jq -e 'length==0' >/dev/null 2>&1 \
    && { [ ! -f "$WF27" ] || grep -qF -- "$MARKER27" "$WF27"; }; then
@@ -506,6 +513,62 @@ if printf '%s' "$OUT27" | jq -e '(length==1) and (.[0].id==2701)' >/dev/null 2>&
   fi
 else
   no "(27) wrong (with-marker=$OUT27 bare=$OUTB27)"
+fi
+
+# =============================================================================
+# Terse default (automate-speed/24). The fixture holds 5 elements: 2 classify IN,
+# 1 is dropped by the default-ON self-skip marker, 2 classify OUT.
+# =============================================================================
+FIX="$HERE/fixtures/terse-output/classify-bot-review"
+
+echo "== 28. DEFAULT prints exactly one summary line: kept 2 of 5 (skipped_self 1) =="
+OUT28="$(bash "$CLASSIFY" < "$FIX/input.json" 2>/dev/null)"; RC28=$?
+if [ "$RC28" -eq 0 ] && [ "$OUT28" = "classify-bot-review: kept 2 of 5 (skipped_self 1)" ] \
+   && [ "$(printf '%s\n' "$OUT28" | wc -l | tr -d ' ')" -eq 1 ]; then
+  ok "default output is the one-line summary with K/N/S counts"
+else
+  no "(28) wrong (rc=$RC28): <<$OUT28>>"
+fi
+
+echo "== 29. --verbose is byte-identical to the pre-change goldens =="
+if [ ! -f "$FIX/verbose.golden" ] || [ ! -f "$FIX/verbose-failsafe.golden" ]; then
+  no "(29) golden fixture missing under $FIX"
+elif bash "$CLASSIFY" --verbose < "$FIX/input.json" 2>/dev/null | cmp -s - "$FIX/verbose.golden" \
+   && printf 'not json at all' | bash "$CLASSIFY" --verbose 2>/dev/null | cmp -s - "$FIX/verbose-failsafe.golden"; then
+  ok "--verbose stdout equals verbose.golden (classified array) and verbose-failsafe.golden ([])"
+else
+  no "(29) --verbose differs from golden: $(bash "$CLASSIFY" --verbose < "$FIX/input.json" 2>/dev/null | head -c 200)"
+fi
+
+echo "== 30. fail-safe paths: one 'kept 0 of 0 (reason <token>)' line, exit 0 =="
+fs30=0
+for pair in "|empty_input" "   |empty_input" "not json at all|invalid_json" '{"not":"an array"}|not_array' "42|not_array"; do
+  in="${pair%|*}"; want="classify-bot-review: kept 0 of 0 (reason ${pair##*|})"
+  got="$(printf '%s' "$in" | bash "$CLASSIFY" 2>/dev/null)"; rc=$?
+  if [ "$rc" -ne 0 ] || [ "$got" != "$want" ]; then
+    fs30=1; echo "    sub-case failed for <<<$in>>>: rc=$rc got=<<$got>> want=<<$want>>"
+  fi
+done
+# jq missing: run bash by absolute path with a PATH that holds no jq.
+BASH_BIN="$(command -v bash)"
+mkdir -p "$TMP/nojq-bin"
+got="$(PATH="$TMP/nojq-bin" "$BASH_BIN" "$CLASSIFY" < "$FIX/input.json" 2>/dev/null)"; rc=$?
+if [ "$rc" -ne 0 ] || [ "$got" != "classify-bot-review: kept 0 of 0 (reason jq_missing)" ]; then
+  fs30=1; echo "    sub-case failed for jq missing: rc=$rc got=<<$got>>"
+fi
+if [ "$fs30" -eq 0 ]; then
+  ok "empty/blank, invalid JSON, non-array and jq-missing inputs each print one reason line, exit 0"
+else
+  no "(30) one or more fail-safe reason sub-cases wrong"
+fi
+
+echo "== 31. never-closing stdin on the default path => reason stdin_timeout, exit 0 =="
+bounded_sh 8 "$TMP/c31.out" "( sleep 3 ) | CLASSIFY_STDIN_TIMEOUT=1 bash '$CLASSIFY'"
+if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] \
+   && [ "$(cat "$TMP/c31.out")" = "classify-bot-review: kept 0 of 0 (reason stdin_timeout)" ]; then
+  ok "stdin timeout on the default path prints the stdin_timeout reason line, exit 0"
+else
+  no "(31) wrong (B_TIMEDOUT=$B_TIMEDOUT B_RC=$B_RC): $(head -c 120 "$TMP/c31.out")"
 fi
 
 echo
