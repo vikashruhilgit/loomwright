@@ -148,6 +148,9 @@
 #       (or ONE new brief behind a malformed block) ⇒ the Supervisor phase spawn. F4: an item whose last RUN
 #       checkpointed (the no-PR `checkpoint` line) with its brief still in .supervisor/jobs/in-progress/ ⇒ the
 #       re-pick / `--start run` spawns `/loomwright:supervisor --continue task: <id>`, never a fresh Launch Pad.
+#       F4i: the same under --inline-phases — an inline spawn (the /autonomous forward set: --non-interactive,
+#       --cheap, --max-tokens; --notify dropped), the task id written onto the `supervisor_checkpoint` line from
+#       the reported SUPERVISOR_RESULT's task_id.
 #   D   DOC MIRROR: the schema doc's step list equals the driver's `case` arms, its `do` table the
 #       emitter's closed set, and its spawn row the emitters' `what` values; its coordinator_model closed
 #       list equals the driver's NS_CM_VALUES and its Common fields name coordinator_model.
@@ -176,6 +179,8 @@
 #             progress_note)                                       ⇒ B6
 #         MQp both post-park --non-interactive guards of decide dropped (two edits) ⇒ Q (c)
 #         M9e the re-pick ignoring the checkpoint / M9f the in-progress brief check dropped  ⇒ F4
+#         M9g the inline resume re-running /autonomous / M9h the no-PR line's task_id hint dropped /
+#             M9i the `supervisor_checkpoint` line ignored        ⇒ F4i
 #         MR  the running-status re-entry guard dropped            ⇒ B7
 #         MO  ns_park arms the watcher only after the decide step (two edits; run file unchanged) ⇒ B8
 #         MVbig the 1–9-digit count bound widened to any digits ⇒ B6 (the 20-digit report)
@@ -1815,6 +1820,54 @@ leg_fresh_checkpoint() {
   done
   return 0
 }
+# leg_inline_checkpoint <driver> — F4's --inline-phases twin. `record`: an inline RUN whose SUPERVISOR_RESULT is a
+# checkpoint, reported with /autonomous's `supervisor_checkpoint` token and a why that names no task, writes the
+# no-PR line with `resume with /supervisor --continue task: <task_id>` (the block's task_id; inline has no
+# `launch-pad saved` line to fall back on); with the brief in .supervisor/jobs/in-progress/, the re-pick then
+# prints the inline `/loomwright:supervisor --continue task: <id>` spawn (no `session`, no Launch Pad) whose `then`
+# asks for the SUPERVISOR_RESULT RUN report, and its suppress line names the resumed task. `flags`: a `--start run`
+# with --notify --cheap --max-tokens forwards --cheap and --max-tokens, never --notify or --non-interactive-fallback.
+# `no-inprogress`: the brief gone ⇒ the pre-fix `/autonomous --single-iteration` spawn
+leg_inline_checkpoint() {
+  local drv="$1" c tid=2026-10-14-af39b it sp want sr
+  for c in record flags no-inprogress; do
+    new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+    it="$(sed -n 's/^- item: \([^ ]*\) .*/\1/p' "$CASE_RF" | head -n 1)"
+    if [ "$c" = record ]; then
+      f_call "$drv" --inline-phases --start run --non-interactive --session-id coord-1; sp="$NC_OUT"
+      [ "$NC_RC" = 0 ] && printf '%s' "$sp" | jq -e --arg i "/autonomous --single-iteration --requirement $it --non-interactive-fallback" '.do == "spawn" and .step == "run" and .invocation == $i' >/dev/null 2>&1 \
+        || { LEG_MSG="record: --start run ⇒ exit $NC_RC '${sp:0:240}' ${NC_ERR:0:200}"; return 1; }
+      sr="$(printf 'SUPERVISOR_RESULT:\n  schema_version: 1\n  task_id: %s\n  status: checkpoint\n  pr_url: null\n  branch: feature/%s\n  subtasks_completed: 3\n  subtasks_failed: 0\n  heal_loop_ran: false\n  heal_iterations: null\n  heal_decision: null\n  heal_fixable_issues_fixed: 0\n  heal_remaining_issues: 0\n  summary: "checkpointed at Phase 3 EXECUTE"\n' "$tid" "$tid")"
+      f_call "$drv" --result "$(jq -cn --arg s "$sr" '{supervisor_result: $s, status_reason: "supervisor_checkpoint", no_pr_why: "Supervisor checkpointed at Phase 3 EXECUTE (subtask 4 hit its turn limit)", session_id: "inl-sess-1"}')"
+      [ "$NC_RC" = 0 ] && grep -qxE -- "- [0-9TZ:-]+ ran /autonomous — no PR: supervisor_checkpoint \(Supervisor checkpointed at Phase 3 EXECUTE \(subtask 4 hit its turn limit\); resume with /supervisor --continue task: $tid\)" "$CASE_RF" \
+        || { LEG_MSG="record: the checkpoint RUN report ⇒ exit $NC_RC ${NC_ERR:0:200} ## Progress $(sed -n '/## Progress/,$p' "$CASE_RF" | tr '\n' '|' | tail -c 600)"; return 1; }
+    fi
+    [ "$c" = no-inprogress ] && printf -- '- 2026-10-14T11:00:01Z ran /autonomous — no PR: supervisor_checkpoint (Supervisor checkpointed; resume with /supervisor --continue task: %s)\n' "$tid" >> "$CASE_RF"
+    [ "$c" = flags ] && printf -- '- 2026-10-14T11:00:01Z ran /autonomous — no PR: supervisor_checkpoint (Supervisor checkpointed; resume with /supervisor --continue task: %s)\n' "$tid" >> "$CASE_RF"
+    [ "$c" = no-inprogress ] || { mkdir -p "$CASE_ROOT/.supervisor/jobs/in-progress" && printf '# Brief\n' > "$CASE_ROOT/.supervisor/jobs/in-progress/$tid.md"; }
+    case "$c" in
+      record) # the re-pick: PICK's trail-gate reads this run's open trail PR: none
+        printf '0\tpr list --state open *\t[]\n0\tpr list *\t[]\n' >> "$CASE_GH"
+        f_call "$drv" --inline-phases --start pick --non-interactive --session-id coord-1
+        want="/loomwright:supervisor --continue task: $tid --non-interactive" ;;
+      flags) f_call "$drv" --inline-phases --start run --notify --cheap --max-tokens 900000 --session-id coord-1
+        want="/loomwright:supervisor --continue task: $tid --cheap --max-tokens 900000" ;;
+      no-inprogress) f_call "$drv" --inline-phases --start run --session-id coord-1
+        want="/autonomous --single-iteration --requirement $it" ;;
+    esac
+    sp="$NC_OUT"
+    [ "$NC_RC" = 0 ] && printf '%s' "$sp" | jq -e --arg i "$want" '.do == "spawn" and .step == "run" and .what == "/autonomous run"
+          and (has("session") | not) and (has("launch") | not) and .invocation == $i and (.then | contains("SUPERVISOR_RESULT"))' >/dev/null 2>&1 \
+      && [ "$(jq -c . "$CASE_ROOT/.supervisor/config.json" 2>/dev/null)" = '{"auto_review":false}' ] \
+      || { LEG_MSG="$c ⇒ exit $NC_RC '${sp:0:300}' ${NC_ERR:0:200}"; return 1; }
+    if [ "$c" != no-inprogress ]; then
+      printf '%s' "$sp" | jq -e '.then | contains("inline") and contains("no Launch Pad")' >/dev/null 2>&1 \
+        && grep -qE -- "^- [0-9TZ:-]+ auto_review suppressed \(backup $CASE_RUN\.config-backup\.json\) — running /loomwright:supervisor --continue task: $tid \(inline — the checkpointed run, no fresh Launch Pad\)\$" "$CASE_RF" \
+        || { LEG_MSG="$c: then '$(printf '%s' "$sp" | jq -r .then | head -c 200)' ## Progress $(sed -n '/## Progress/,$p' "$CASE_RF" | tr '\n' '|' | tail -c 600)"; return 1; }
+    fi
+  done
+  return 0
+}
 # leg_fresh_owner_session <driver> — review fixes (iterations 1 + 2): --owner-command is the launch authority of the
 # session that typed it, and a pending fresh spawn's `launch` line is REBUILT from the re-printing call's identity.
 # coord-1's own re-print stays byte for byte (its owner command, --coordinator-session coord-1). Re-printed with
@@ -2484,6 +2537,8 @@ if leg_fresh_owner_session "$DRIVER"; then ok "F3c (review fixes): a re-printed 
 else no "F3c: $LEG_MSG"; fi
 if leg_fresh_checkpoint "$DRIVER"; then ok "F4 (wave 7, L23): a re-pick (--start pick) / --start run of an item whose last RUN checkpointed, its brief still in .supervisor/jobs/in-progress/ ⇒ the Supervisor phase spawn /loomwright:supervisor --continue task: <id> (the line's id, else the brief saved before it), no Launch Pad spawn; no in-progress brief ⇒ the Launch Pad spawn; a newer saved brief after the checkpoint ⇒ that brief"
 else no "F4: $LEG_MSG"; fi
+if leg_inline_checkpoint "$DRIVER"; then ok "F4i (--inline-phases): an inline checkpoint RUN report (supervisor_checkpoint, its SUPERVISOR_RESULT's task_id) writes the no-PR line with --continue task: <id>; the re-pick / --start run with the brief in .supervisor/jobs/in-progress/ ⇒ the inline /loomwright:supervisor --continue task: <id> spawn (--non-interactive / --cheap / --max-tokens forwarded, --notify dropped), then asking for the SUPERVISOR_RESULT; no in-progress brief ⇒ the /autonomous spawn"
+else no "F4i: $LEG_MSG"; fi
 
 echo "-- V7. running system (Validation 3 of automate-speed/07): PICK → RUN → DRAIN → the tail, one item"
 V7="$WORK/v7"; mkdir -p "$V7/fx"
@@ -2920,6 +2975,24 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_fresh_checkpoint "$m"; then no "M9f: F4 stayed green with the in-progress brief check dropped"
     else ok "M9f: the in-progress brief check dropped ⇒ F4 red ($LEG_MSG)"; fi
   else no "M9f: mutant not built"; fi
+  # M9g — the inline resume spawns the pre-fix /autonomous (a fresh Launch Pad) ⇒ F4i red
+  if m="$(build_mutant 9g '    inv="/loomwright:supervisor --continue task: $cont"' '    inv="/autonomous --single-iteration --requirement $ITEM"')"; then
+    LEG_MSG=""
+    if leg_inline_checkpoint "$m"; then no "M9g: F4i stayed green with the inline resume re-running /autonomous"
+    else ok "M9g: the inline resume re-runs /autonomous ⇒ F4i red ($LEG_MSG)"; fi
+  else no "M9g: mutant not built"; fi
+  # M9h — the no-PR line no longer takes the task from the SUPERVISOR_RESULT's task_id ⇒ F4i red
+  if m="$(build_mutant 9h '*) why="$why; resume with /supervisor --continue task: $tid" ;;' '*) ;;')"; then
+    LEG_MSG=""
+    if leg_inline_checkpoint "$m"; then no "M9h: F4i stayed green with the task_id hint dropped"
+    else ok "M9h: the task_id hint dropped ⇒ F4i red ($LEG_MSG)"; fi
+  else no "M9h: mutant not built"; fi
+  # M9i — the checkpoint read keys on `checkpoint` only (inline's `supervisor_checkpoint` line ignored) ⇒ F4i red
+  if m="$(build_mutant 9i 'index(last, "ran /autonomous — no PR: supervisor_checkpoint (") != 1)) exit' '1)) exit')"; then
+    LEG_MSG=""
+    if leg_inline_checkpoint "$m"; then no "M9i: F4i stayed green with the supervisor_checkpoint line ignored"
+    else ok "M9i: the supervisor_checkpoint line ignored ⇒ F4i red ($LEG_MSG)"; fi
+  else no "M9i: mutant not built"; fi
   # M10* — the coordinator_model pins (automate-speed/10, the brief's Pin mutations): each mutant must turn
   # its CM leg red
   cm_other="$(for v in $CM_VALUES; do [ "$v" = "$CM_DEFAULT" ] || { echo "$v"; break; }; done)"
