@@ -113,3 +113,61 @@ Before `resume-glob --finalize`, every finished single-item run stayed `paused` 
 ### Why a lane clone skips the cross-run close-out
 
 `run-lock.sh` is per checkout, so two lanes — separate clones — could once close out or finalize the same run file each in its own clone. Inside a lane clone `closeout-others` now closes nothing and `resume-glob --finalize` finalizes only the lane's own run; the coordinator runs `closeout-others` once in the primary before it launches a wave. In branch mode `meta-sync.sh push` still arbitrates any residual double push (a conflict fails loudly, never a silent overwrite).
+
+## lanes and branch mode
+
+### Why the primary stays locked for a whole wave
+
+The run lock's liveness is the session's pid, and a wave outlives a session: the coordinator's `automate-lanes:<run_id>` lock alone is reclaimable once its session ends. So every sequential PICK and every new run's start in the primary also runs `pick-guard`, which refuses while a lane's process is alive (`lanes_proc_alive`) or a lane holds a pending question. A coordinator's own `--resume` is not guarded, because it is resuming those very lanes.
+
+### Why single-lane mode needs branch mode
+
+Lanes arrived with parallel-automate/05; single-lane mode (`--parallel 1`) with twin-remediation/08b (owner decisions 2026-10-14). With branch mode off, a single lane's close-out would open its own trail PR that the parent never sees, and `fleet-closeout` could never finalize the lane, so `init-check` fails closed on N = 1 unless `setup-memory.sh mode` (read with `--root` = the checkout's top level) prints `on <branch>`. A lane never runs the §10 merge gate, which is why `--auto-merge` is refused with any N.
+
+### Why the coordinator arms a lane watcher
+
+Without a watcher a lane's question sat unseen until the owner looked: in wave W3 (2026-10-11) two lanes waited 22–24 minutes. `lane-wait` blocks, token-free, until a lane needs the owner — a new pending question, or a lane entering any state that is neither live (`created`, `running`, `held_for_load`, `answer_pending`) nor coordinator-driven (`awaiting_merge`, `awaiting_go`, `done`, `removed`, `abandoned`) — so every other park, failure or unknown state wakes the coordinator. It prints one `lane-wait: …` line per event and a hint per event kind (`act` for a state, `relay` for a question). It never answers or launches anything, so it needs no launch authority. The re-arm was prose only until the `Stop` hook `guard-lane-wait-armed.sh` made it enforced for the coordinator session.
+
+### How lane-status reads a lane's step timeline
+
+`lane-status --json` gives every lane a `timeline` of steps (`pick` · `plan` · `build` · `heal` · `drain` · `decide` · `merge`), each with its `state` (`done`, `pending`, or the current step's `active` / `waiting` / `held` / `trouble`, taken from the lane state; every step `done` once `merged`), `started_at`, `ended_at`, `duration_s` and its last few lines, plus a `label` for the current step (`Build · EXECUTE`, `Drain · round 2`). It is read from the lane run file's dated `## Progress` lines and, for the Supervisor phase, the lane's `.supervisor/state.md` — only when that state is this item's (its `## Session` `session_id` is the lane's own session, it was created at or after the pick, or it reads running while the lane runs), so a previous item's never shows and a lane that stopped keeps its phase. The `picked` line starts Plan, a Launch Pad "brief saved" line starts Build, and a step passed with no line of its own reads `done` with null times. The state's `phase:` reads EXECUTE until the session ends, so Heal is read from the Supervisor's first `pr_created` session-log event at or after the pick (which dates Heal's start) and from the Decisions Log's SELF_HEAL / LOOP rows (which only show that Heal was reached). A step whose only dated line comes after it ended reads a null start. The document also carries `waves` — every wave PR the run opened, oldest first, as `{wave, branch, pr, built_at}`, read from `wave-build`'s `wave built: <branch> — PR <url>` `## Progress` record — and makes no `gh` call for it, so the wave PR's own state is not shown.
+
+### Honest limits of lane answers and resumes
+
+A kept (`answer_pending`) answer's re-check proves that the stored answer is a VALID label for the question still pending, not that the owner chose it — the same trust level as the lane inbox's answer file the relay hook reads. The pending file is not owner-authenticated, which is why it never carries, or stands in for, an owner command. A `--resume-run` resumes the lane's LAST session (a `--resume <session id>` spawn) so the lane's own `run.lock` — re-entrant only for the same session id — does not stall it; the fresh-session fallback still waits on a dead session's lock until `run-lock.sh`'s own reclaim (dead pid AND age at least its TTL).
+
+### Why the wave end pushes a lane's non-claim files by exact list
+
+`lane-convert-ready` pushes a lane's non-claim files by an exact list — its run file, `<run_id>.merge-readiness.md`, `<run_id>.dismissed-decisions`, `<run_id>.brief-draft.md`, the Orchestrator's task plans and the requirement drafts the lane filed under `.supervisor/requirements/proposed/` — and everything else through `trail-pr --reason wave-end`'s evidence gate, never a whole-lane push, so a done claim rides only for MERGED work. Each list entry exists because a path no other push carried stranded a lane: without the brief draft, L5 and L9 of run `automate-2026-10-15-163325` each read `local_ahead 1` until a hand push; without the task plans, `lane-remove` refused a lane forever; wave W4's `twin-remediation-11` draft rode neither push and needed a hand push. This is the wave end's metadata step, not a fourth §6 trail trigger: the lane's item is parked and the gate drops every unmerged claim. The re-run after the merge runs `closeout … --no-trail` before the pushes (automate-followups/38) so the done stamp rides them, and the lane finalize (parallel-automate/21 A1) follows only in branch mode — with it off, finalize would open a trail PR.
+
+### Watcher survival in single-lane mode
+
+Owner decision 2 of twin-remediation/08b: the merge watcher is armed by the lane, never by the coordinator. `test-automate-lanes.sh` proves a watcher launched with the documented launch line outlives the process that launched it and a hang-up; whether it outlives a real headless lane's exit is the operator's running-system check. The `--resume` → `fleet-closeout` → `lane-convert-ready` path is the fallback either way. Owner decision 3 made `--max-tokens` a whole-run ceiling; a removed lane's spend is read from its parent `fleet closeout: <lane> tokens TOTAL=<n>` line, and an abandoned lane writes that line too so the ceiling never sticks at `ledger_unreadable`.
+
+### Honest limits of the wave close
+
+The mechanical integration is the engine's and only merging the wave PR stays the owner's (parallel-automate/21 Part A; owner decision 2026-10-11). A lane counts as merged only when its OWN PR reads `MERGED` (`reconcile-item`): GitHub marks a lane PR merged when the wave PR is merged with a merge commit (its head is then an ancestor of the base); a squash merge does not. A lane PR the wave integration left open keeps reading `awaiting_merge`, and `fleet-closeout` waits on it.
+
+### Honest limits of policy answers
+
+Policy answers arrived with parallel-automate/21 Part B; their full contract and limits are in `docs/LANE_GATES.md`. Removing the stamp turns policy answering off at the NEXT `lane-create`; a lane already created keeps the policy carried at its creation. `lane.json` is writable inside the lane (the lane's deny list is a tripwire, not a sandbox): the worst a tampered policy can do is answer an `allowed` gate with one of that gate's own labels, because codes are checked against the catalog at `wave-set`, at `resolve` and again at `decide`, and `decide` rejects a policy whose `policy_sha` does not match its answers. The wave-policy file is not owner-authenticated either. The stamp hashes the whole selected must-rule set and `/rules check --confirm` runs every must-check, so a project's `lane-policy` rule keeps a check that is trivially true on a valid file.
+
+### Why lane token totals are real now
+
+Before parallel-automate/24 F8 every ledger line was a transcript-byte proxy and every TOTAL read 0, so no ceiling could trip — sequential runs included. `emit-token-ledger.sh` now reads each subagent's own transcript usage, once per message id, and the worker hook matcher runs the emitter too (before the PR #435 fix-now it did not, so the usually-largest share never reached `--max-tokens`). `TOTAL` includes cache-read tokens. Still not counted: the main thread's own tokens, CI-side review spend, a `--parallel` coordinator's own run, and the output tokens of a message whose final transcript line is absent (an under-count). No "checked between waves" claim is made — a one-wave run would never be checked.
+
+### Why the leak check reads markers and this run's processes
+
+The `merge-watch` section lists live watchers from the `*.merge-watch` markers of the primary and every lane, never a process-name match, which also caught any process merely naming the script (wave W3 read `leaks: found — merge-watch` with no watcher running); a watcher with no marker is not listed. The `claude-p` section lists only this run's processes, from one `ps` read (a lane's `_lane-run` wrapper, its headless children, and any headless session whose working directory is a lane), never a machine-wide match, which read another repo's healthy wave as `leaks: found — claude-p` (closing wave 1 of `automate-2026-10-15-163325`); a session whose wrapper is gone and whose working directory is outside every lane is not listed. A snapshot written before either format reads `not compared` for that section, never a false `found`. The `lanes-dir` section excludes the kept salvage and log artifacts by name, never by glob.
+
+### What keep-awake counts
+
+`machine.keep_awake` reads macOS power assertions, not only a `caffeinate` process: the desktop app's "Keep computer awake while Claude works" hold counts as `held`, but it lasts only while a Code session works and headless lanes are not Code sessions, so `keep_awake_lasting` is true for a `caffeinate` holder alone and `--keep-awake` still starts one when only the app holds.
+
+### Why the command body keeps only a lanes pointer
+
+The command body's lanes block (`command-lanes.md`, its split target) was a second, longer copy of skill §14 — the per-subcommand detail of `lane-create`, `wave-build`, `fleet-closeout` and the policy lookup — read under the same trigger as `lanes.md` itself. It is now a short owner-facing summary that points at §14. Launch authority was a new stance when lanes arrived: before them the plugin had no notion of which session may start a headless session on the owner's behalf.
+
+### Honest limits of branch mode
+
+(1) A manual whole-set `meta-sync.sh push` bypasses the evidence gate — only `trail-pr` applies it; a `--parallel` lane's metadata therefore never takes that route. (2) A done claim already on the branch for work later reverted stays there — no retroactive retraction on this path; `reconcile-status` is the tool. (3) `meta-entry`'s pull needs the network, so an offline machine in branch mode cannot start or resume a run — deliberate; the alternative is silent amnesia (every reader answers empty with exit 0 and a second run starts beside a paused one). (4) The SessionStart hint reads only `meta-base` presence, so a stale-but-once-synced clone gets no hint (the entry pull covers it); it never calls `meta-sync.sh status`, which fetches. (5) `meta-sync.sh push` plans over the WHOLE managed set even under `--paths-from`, so a conflict on ANY managed path blocks this run's trail push until a human resolves it; a twin-set conflict is the one exception. (6) That abort ignores consent: an agent-memory proposal both sides changed fails `meta-entry`'s pull and any push, even on a machine that declined to publish the learning stores. Extending the twin set's hold-don't-abort rule to the other learning stores is a follow-up candidate. Switching the mode never untracks already-committed run history (a separate operator step).
