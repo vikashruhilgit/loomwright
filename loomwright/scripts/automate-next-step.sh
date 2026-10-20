@@ -1706,8 +1706,9 @@ ns_picked() {
 }
 # ns_checkpoint_task — the Supervisor task this item's checkpointed pass left to finish, else empty. Keyed on
 # BOTH durable records: the item's LAST `ran /autonomous` line (across all its `picked` segments) is the no-PR
-# `checkpoint` line, and that task's brief is still in .supervisor/jobs/in-progress/ (Supervisor INIT moved it
-# there; only FINALIZE moves it on). The task is the line's `--continue task: <id>` (the SUPERVISOR_RESULT's
+# `checkpoint` line (`supervisor_checkpoint` under --inline-phases: an inline RUN reports /autonomous's token, a
+# Supervisor phase or an inline --continue run the SUPERVISOR_RESULT's), and that task's brief is still in
+# .supervisor/jobs/in-progress/ (Supervisor INIT moved it there; only FINALIZE moves it on). The task is the line's `--continue task: <id>` (the SUPERVISOR_RESULT's
 # resume hint), else the basename of the brief saved before it (a task id is its brief's name). A `launch-pad
 # saved` line AFTER the checkpoint line is a newer plan and supersedes it. Any part missing or unsafe ⇒ empty: a fresh Launch Pad, as before (wave 7, lane L23: a re-pick after a
 # checkpoint re-planned an item whose subtasks were already done on its feature branches)
@@ -1721,7 +1722,8 @@ ns_checkpoint_task() {
       if (index(x, "ran /autonomous") == 1) { last = x; rb = b; later = 0 }
       else if (index(x, "launch-pad saved ") == 1) { b = substr(x, 18); later = 1 } }
     END {
-      if (later || index(last, "ran /autonomous — no PR: checkpoint (") != 1) exit
+      if (later || (index(last, "ran /autonomous — no PR: checkpoint (") != 1 &&
+          index(last, "ran /autonomous — no PR: supervisor_checkpoint (") != 1)) exit
       t = ""; s = last
       while (match(s, /--continue task: [A-Za-z0-9._-]+/)) { t = substr(s, RSTART + 17, RLENGTH - 17); s = substr(s, RSTART + RLENGTH) }
       if (t == "" && rb != "") { t = rb; sub(/^.*\//, "", t); sub(/\.md$/, "", t) }
@@ -1897,11 +1899,11 @@ ns_run() {
   # the rate-limit park (end of RUN) reads THIS loop's session log: without its id the check could only
   # read "clean", so RUN never starts without one (fail CLOSED)
   ns_run_precheck run || return 1
+  # a checkpointed Supervisor run this item left resumes (`--continue task: <id>`, re-derived from the run file on
+  # every entry — the brief its pass saved was that run's, already consumed), fresh phases and --inline-phases alike
+  cont="$(ns_checkpoint_task)"
   if ns_fresh; then
-    # a checkpointed Supervisor run this item left resumes (`--continue task: <id>`, re-derived from the run file on
-    # every entry — the brief its pass saved was that run's, already consumed); else the Supervisor phase runs on the
-    # brief this pass's Launch Pad phase saved; none recorded ⇒ plan first
-    cont="$(ns_checkpoint_task)"
+    # else the Supervisor phase runs on the brief this pass's Launch Pad phase saved; none recorded ⇒ plan first
     if [ -n "$cont" ]; then brief=".supervisor/jobs/in-progress/$cont.md"
     else
       brief="$(st plan_brief)"; [ -n "$brief" ] || brief="$(ns_segment_brief)"
@@ -1923,8 +1925,10 @@ ns_run() {
     st_set auto_review_original "$orig"
   fi
   ns_once once_run_cfg ns_record_orig "$(st auto_review_original)" || return 1
-  if [ -n "$cont" ]; then
+  if [ -n "$cont" ] && [ -n "$brief" ]; then
     ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running the supervisor phase (fresh session, --continue task: $cont — the checkpointed run, no fresh Launch Pad)" || return 1
+  elif [ -n "$cont" ]; then
+    ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running /loomwright:supervisor --continue task: $cont (inline — the checkpointed run, no fresh Launch Pad)" || return 1
   elif [ -n "$brief" ]; then
     ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running the supervisor phase (fresh session)" || return 1
   else
@@ -1949,14 +1953,29 @@ ns_run() {
     NEXT=run-result
     return 0
   fi
+  mt="$MAXTOK"; [ -n "$mt" ] || mt="$(ns_section '## Run Config' | sed -n 's/^- max_tokens: \([0-9][0-9]*\)$/\1/p' | head -n 1)"
+  if [ -n "$cont" ]; then
+    # --inline-phases resume: the checkpointed Supervisor run, inline, with /autonomous EXECUTE's /supervisor forward
+    # set. /autonomous's own two flags map as its EXECUTE step does: --non-interactive-fallback becomes Supervisor's
+    # --non-interactive; --notify has no Supervisor form (its gate webhooks are /autonomous-layer gates, none of which
+    # a --continue run reaches) and /autonomous never forwards it, so it is dropped
+    inv="/loomwright:supervisor --continue task: $cont"
+    ns_interactive || inv="$inv --non-interactive"
+    [ "$CHEAP" = 1 ] && inv="$inv --cheap"
+    [ -n "$mt" ] && inv="$inv --max-tokens $mt"
+    x="$("$JQ" -cn --arg i "$inv" --arg b "$RUN_ID.config-backup.json" '{what: "/autonomous run", invocation: $i, config_backup: $b,
+        then: "run the invocation inline (the checkpointed Supervisor run, resumed — no Launch Pad); then --result with the RUN report: {\"supervisor_result\": <the verbatim SUPERVISOR_RESULT text> (or \"supervisor_result_file\": <a path holding it>), \"session_id\": <.supervisor/state.md session_id>, \"run_note\": <one line, the ran-line parenthetical>} — with no PR also {\"status_reason\": <its SUPERVISOR_RESULT status>, \"no_pr_why\": <one line>}; report a failed run the same way. The driver restores .auto_review, writes the session_id / ran /autonomous lines, the sidecar and its sidecar-check, and checks the rate-limit park"}')"
+    ns_emit spawn run "$x"
+    NEXT=run-result
+    return 0
+  fi
   inv="/autonomous --single-iteration --requirement $ITEM"
   ns_interactive || inv="$inv --non-interactive-fallback"
   [ "$NOTIFY" = 1 ] && inv="$inv --notify"
   [ "$CHEAP" = 1 ] && inv="$inv --cheap"
-  mt="$MAXTOK"; [ -n "$mt" ] || mt="$(ns_section '## Run Config' | sed -n 's/^- max_tokens: \([0-9][0-9]*\)$/\1/p' | head -n 1)"
   [ -n "$mt" ] && inv="$inv --max-tokens $mt"
   x="$("$JQ" -cn --arg i "$inv" --arg b "$RUN_ID.config-backup.json" '{what: "/autonomous run", invocation: $i, config_backup: $b,
-      then: "run the invocation; then --result with the RUN report: {\"supervisor_result\": <the verbatim SUPERVISOR_RESULT text> (or \"supervisor_result_file\": <a path holding it>), \"session_id\": <.supervisor/state.md session_id>, \"run_note\": <one line, the ran-line parenthetical>} — with no PR {\"status_reason\": <AUTONOMOUS_RUN status_reason>, \"no_pr_why\": <one line>, \"session_id\": …}; report a failed run the same way. The driver restores .auto_review, writes the session_id / ran /autonomous lines, the sidecar and its sidecar-check, and checks the rate-limit park"}')"
+      then: "run the invocation; then --result with the RUN report: {\"supervisor_result\": <the verbatim SUPERVISOR_RESULT text> (or \"supervisor_result_file\": <a path holding it>), \"session_id\": <.supervisor/state.md session_id>, \"run_note\": <one line, the ran-line parenthetical>} — with no PR {\"status_reason\": <AUTONOMOUS_RUN status_reason>, \"no_pr_why\": <one line>, \"session_id\": …} — after a Supervisor checkpoint add its SUPERVISOR_RESULT as above (its task_id is what a re-pick resumes with --continue); report a failed run the same way. The driver restores .auto_review, writes the session_id / ran /autonomous lines, the sidecar and its sidecar-check, and checks the rate-limit park"}')"
   ns_emit spawn run "$x"
   NEXT=run-result
 }
@@ -1996,7 +2015,7 @@ ns_state_md_fresh() {
   [ "$m" -ge "$since" ]
 }
 ns_run_record() {
-  local r sid note pr br sr why line sc
+  local r sid note pr br sr why line sc tt tid
   r="$(st run_report)"; [ -n "$r" ] || r='{}'
   if [ "$(st run_fresh)" = true ]; then
     # a Supervisor phase session files its token ledger under the plugin id in .supervisor/state.md
@@ -2032,6 +2051,16 @@ ns_run_record() {
       local opr; opr="$(ns_died_open_pr)"
       [ -n "$opr" ] && why="$why; the phase left PR ${opr%%"$TAB"*} open on ${opr#*"$TAB"} — not drained (it wrote no SUPERVISOR_RESULT), left for the owner"
     fi
+    # a checkpoint's resume task, from the reported SUPERVISOR_RESULT itself (status checkpoint + task_id) when the
+    # one-line why does not already name it: ns_checkpoint_task keys a re-pick on this line, and under
+    # --inline-phases no `launch-pad saved` line exists to name the task otherwise
+    case "$why" in *"--continue task: "*) ;; *)
+      tt="$(st run_text)"
+      if [ -n "$tt" ] && [ "$(printf '%s\n' "$tt" | ns_block_field SUPERVISOR_RESULT status)" = checkpoint ]; then
+        tid="$(printf '%s\n' "$tt" | ns_block_field SUPERVISOR_RESULT task_id)"
+        case "$tid" in ''|.*|*[!A-Za-z0-9._-]*) ;; *) why="$why; resume with /supervisor --continue task: $tid" ;; esac
+      fi ;;
+    esac
     ns_once once_rc_ran ns_progress "$(ns_ts) ran /autonomous — no PR: ${sr:-unknown} ($why)" || return 1
   fi
   NEXT=rate-limit
