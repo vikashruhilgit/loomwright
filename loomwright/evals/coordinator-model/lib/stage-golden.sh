@@ -186,6 +186,9 @@ hasres=0; for a in "$@"; do case "$a" in --result|--result-file) hasres=1 ;; esa
   cd "$W" || exit 98
   unset LOOMWRIGHT_GH_BIN LOOMWRIGHT_HOLDER_PID NEXT_STEP_FROM NEXT_STEP_UNTIL NEXT_STEP_CLOSEOUT_OUT
   export PATH="$E/stub:$PATH" GOLDEN_GH_TABLE="$E/gh.table" NS_REC_LOG="$E/rec.log"
+  # the eval child's OS sandbox may refuse its inherited TMPDIR (validation-gate's mktemp then fails "no temp
+  # dir"): every helper gets a temp dir inside the sandbox cwd
+  mkdir -p "$E/tmp" && export TMPDIR="$E/tmp"
   export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=golden GIT_AUTHOR_EMAIL=golden@example.invalid \
     GIT_COMMITTER_NAME=golden GIT_COMMITTER_EMAIL=golden@example.invalid
   export NEXT_STEP_WATCH_CMD="$E/stub/rec watch" NEXT_STEP_NOTIFY_CMD="$E/stub/rec notify" \

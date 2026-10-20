@@ -27,7 +27,7 @@ while IFS="$(printf '\t')" read -r name run score g turns cost tp err; do
   if [ -n "$tp" ] && [ -f "$tp" ]; then
     kd="$(dirname "$(dirname "$tp")")"
     chmod u+rwx "$kd" "$kd/sealed" 2>/dev/null
-    vf="$(find "$kd/sealed" -path '*/cwd/.eval/verdict.txt' 2>/dev/null | head -n 1)"
+    vf="$(find "$kd/sealed" -maxdepth 4 -path '*/cwd/.eval/verdict.txt' 2>/dev/null | head -n 1)"
     if [ -n "$vf" ] && [ -f "$vf" ]; then
       wq="$(sed -n 's/^WRONG_QUESTIONS: //p' "$vf")"; sk="$(sed -n 's/^SKIPPED: //p' "$vf")"
       calls="$(sed -n 's/^CALLS: //p' "$vf")"; last="$(sed -n 's/^LAST_DO: //p' "$vf")"

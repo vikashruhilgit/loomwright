@@ -35,7 +35,8 @@ rf() { printf '.supervisor/automate/%s.md' "$(cat "$SB/.eval/run_id")"; }
 # reference <stop-at> — the reference coordinator; <stop-at> = spawn|ask stops before answering that do
 reference() {
   local stop="${1:-}" n=0 p
-  ( cd "$SB" && HOME="$SB/../home" eval "$(cat .eval/entry.txt)" ) >/dev/null 2>&1
+  # TMPDIR poisoned the way the eval child's OS sandbox refuses it: the wrapper must supply its own
+  ( cd "$SB" && HOME="$SB/../home" TMPDIR="$WORK/no-such-tmp" eval "$(cat .eval/entry.txt)" ) >/dev/null 2>&1
   while [ "$n" -lt 20 ]; do
     n=$((n + 1))
     case "$(last_do)" in
@@ -43,7 +44,7 @@ reference() {
         [ "$(last_do)" != "$stop" ] || return 0
         if [ "$(last_do)" = spawn ]; then p="$(cd "$SB" && bash bin/spawn-phase 2>/dev/null)"; else p="$(cd "$SB" && bash bin/ask-owner 2>/dev/null)"; fi
         [ -n "$p" ] || return 1
-        ( cd "$SB" && HOME="$SB/../home" bash bin/automate-next-step.sh "$(rf)" --result-file "$p" ) >/dev/null 2>&1 ;;
+        ( cd "$SB" && HOME="$SB/../home" TMPDIR="$WORK/no-such-tmp" bash bin/automate-next-step.sh "$(rf)" --result-file "$p" ) >/dev/null 2>&1 ;;
       *) return 0 ;;
     esac
   done
