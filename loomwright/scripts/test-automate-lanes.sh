@@ -157,6 +157,10 @@ case "${STUB_MODE:-ok}" in
   sleep) trap 'kill $! 2>/dev/null; exit 143' TERM; sleep 60 & wait $! ;;
   defer) printf '%s\n' "$STUB_DEFER_LINE" ;;
   die) exit 1 ;;
+  # flood (AN21): a result line EARLY, then far more output than a pipe holds — the stream shape that made the
+  # wrapper's old `tail | grep -q` exit 141 under pipefail (a false .died on a finished session)
+  flood) echo '{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":"sess-123"}'
+         awk 'BEGIN { for (i = 0; i < 20000; i++) printf "{\"type\":\"assistant\",\"pad\":\"%060d\"}\n", i }' ;;
   *) echo '{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":"sess-123"}' ;;
 esac
 EOF

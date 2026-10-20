@@ -163,7 +163,7 @@ _lanes_spawn() {
 
 # _lane-run <lane_dir> <log> <died> <stdin> -- <cmd...> — the nohup wrapper (its argv carries the lane dir).
 lanes_run_wrapper() {
-  local dir="$1" log="$2" died="$3" in="$4" off cp rc=0; shift 4; [ "${1:-}" = "--" ] && shift
+  local dir="$1" log="$2" died="$3" in="$4" off cp n rc=0; shift 4; [ "${1:-}" = "--" ] && shift
   off="$(wc -c < "$log" 2>/dev/null | tr -d ' ')"; off="${off:-0}"
   cd "$dir" || exit 1
   "$@" < "$in" &
@@ -171,9 +171,12 @@ lanes_run_wrapper() {
   trap 'kill -TERM "$cp" 2>/dev/null' TERM INT HUP
   wait "$cp"; rc=$?
   while kill -0 "$cp" 2>/dev/null; do wait "$cp"; rc=$?; done
-  if ! tail -c +"$((off + 1))" "$log" 2>/dev/null | grep -q '"type": *"result"'; then
-    printf 'died_at\t%s\nexit\t%s\n' "$(now_utc)" "$rc" > "$died"
-  fi
+  # a COUNT, never a pipeline's exit status: under this script's `pipefail`, `tail | grep -q` exits 141 whenever
+  # grep's first-match exit SIGPIPEs tail mid-stream (a result line followed by more output than a pipe holds),
+  # which read as "no result line" — a false `.died` on a session that finished (wave 7, lane L22). `grep -c`
+  # reads to EOF, so tail is never cut off, and the decision reads the number, not the pipe
+  n="$(tail -c +"$((off + 1))" "$log" 2>/dev/null | grep -c '"type": *"result"')"
+  case "$n" in ''|*[!0-9]*|0) printf 'died_at\t%s\nexit\t%s\n' "$(now_utc)" "$rc" > "$died" ;; esac
   exit "$rc"
 }
 

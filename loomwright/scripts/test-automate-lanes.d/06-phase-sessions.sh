@@ -160,6 +160,30 @@ for v in LOOMWRIGHT_RUN_LOCK_SESSION_ID LOOMWRIGHT_PHASE_DIR; do
   else bad "AN20b mutant for $v not built"; fi
 done
 
+# AN21: a finished session whose result line is followed by more output than a pipe holds is NOT died (wave 7, lane
+# L22: the wrapper's `tail | grep -q` under pipefail exited 141 when grep's early exit SIGPIPEd tail — a false .died,
+# phase-wait exit 6 on a Supervisor phase that had opened its PR). The mutant restores that line and must write .died
+PHD="$L91/.supervisor/automate/$PARENT9-L1.phase/launch-pad"; PHDS="$L91/.supervisor/automate/$PARENT9-L1.launch-pad-result.md"
+STUB_MODE=flood an_launch launch-pad --owner-command "$PHOWN" --coordinator-session sess-coord -- x >/dev/null; wait_gone "$L91"
+check "AN21 fixture: the result line is early in a stream larger than a pipe" \
+  "$([ "$(grep -n '"type":"result"' "$PHD/stream.log" | tail -1 | cut -d: -f1)" -lt 5 ] && [ "$(wc -c < "$PHD/stream.log")" -gt 1000000 ] && echo ok)" ok
+check "AN21b no .died marker for a session that wrote its result line" "$([ -e "$PHD/.died" ] && echo died || echo none)" none
+printf 'LAUNCH_PAD_RESULT:\n  status: saved\n' > "$PHDS"
+out="$(run phase-wait "$RFL" launch-pad --timeout 5)"; rc=$?
+check "AN21c … and phase-wait reads it done (exit 0)" "$rc:$out" "0:phase-wait: done — session sess-123 result $PHDS"
+# the old line is assembled from pieces (the pipe character in p) so this file never holds a literal pipe into
+# grep -q itself — test-no-pipefail-grep-q.sh gates exactly that shape
+awk -v q="'" -v p='|' '
+  index($0, p " grep -c " q "\"type\": *\"result\"" q) { print "  if ! tail -c +\"$((off + 1))\" \"$log\" 2>/dev/null " p " grep -q " q "\"type\": *\"result\"" q "; then printf " q "died_at\\t%s\\nexit\\t%s\\n" q " \"$(now_utc)\" \"$rc\" > \"$died\"; fi"; skip = 1; next }
+  skip && index($0, "case \"$n\" in") { skip = 0; next }
+  { print }' "$SB" > "$MUT/automate-lanes.sh"
+if [ -s "$MUT/automate-lanes.sh" ] && ! cmp -s "$SB" "$MUT/automate-lanes.sh" && bash -n "$MUT/automate-lanes.sh" \
+   && grep -qF 'if ! tail -c +"$((off + 1))" "$log"' "$MUT/automate-lanes.sh"; then
+  STUB_MODE=flood bash "$MUT/automate-lanes.sh" phase-launch "$RFL" launch-pad --owner-command "$PHOWN" --coordinator-session sess-coord -- x >/dev/null 2>&1; wait_gone "$L91"
+  check "AN21d mutation (the old tail-into-grep -q pipe under pipefail) ⇒ the same stream writes a false .died (exit 0)" \
+    "$(sed -n 's/^exit\t//p' "$PHD/.died" 2>/dev/null)" 0
+else bad "AN21d mutant not built"; fi
+
 # AN-z: nothing this part started outlives it (AA-F12z closed part 05, before these launches)
 for p in $(pgrep -f "_lane-run $T" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
 i=0; while pgrep -f "_lane-run $T" >/dev/null 2>&1 && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
