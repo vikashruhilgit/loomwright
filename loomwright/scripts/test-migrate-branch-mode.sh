@@ -1079,7 +1079,7 @@ mb A protect --waive --reason "$(printf 'private repo on the Free plan:\nruleset
 export LOOMWRIGHT_SCRIPT_EVENTS=0; unset LOOMWRIGHT_SCRIPT_EVENT_TEE
 { [ "$RC" -eq 0 ] && [ "$(st A protect)" = WAIVED ] && [ "$(st A protect_waive_reason)" = "private repo on the Free plan: rulesets unavailable" ] \
   && case "$(st A protect_waive_evidence)" in "HTTP 403: Upgrade to GitHub Pro"*) true ;; *) false ;; esac \
-  && st A protect_waive_at | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'; }
+  && grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' < <(st A protect_waive_at); }
 check $? "403 evidence -> protect=WAIVED with the one-line reason, GitHub's message and a UTC stamp (rc=$RC)"
 { has "UNPROTECTED" && has "never force-pushes" && has "delete it or force-push it"; }; check $? "the waiver prints the exposure: unprotected, deletable / force-pushable, meta-sync never force-pushes"
 { grep -q '"outcome": "warn"' "$EVTEE" && grep -q '"code": "protect_waived"' "$EVTEE" && ! grep -q '"outcome": "pass"' "$EVTEE" && ! grep -q 'Free plan' "$EVTEE"; }; check $? "telemetry: warn protect_waived, never a pass, and no reason text ($(cat "$EVTEE"))"
