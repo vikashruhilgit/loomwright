@@ -54,3 +54,9 @@ loomwright/commands/setup.md
 loomwright/commands/agent-help.md
 loomwright/docs/command-parts/
 changelog.d/as22-split-big-commands.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-20T04:42:31Z
+- **Brief:** .supervisor/jobs/done/2026-10-19-split-big-commands.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/626
