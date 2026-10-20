@@ -506,7 +506,7 @@ rejects block scalars (`>` / `|`) outright. So a list must be either a **single-
 flow sequence or a **block sequence** (`- "..."` on its own lines, used below), and every
 quoted scalar — `reason` in particular — must be emitted on **one line**, however long.
 A template wrapped for readability parses as malformed and is rejected before rule 6
-is ever reached. `emit-block-parses` in the eval corpus asserts this.
+is ever reached. `emit-block-parses` in the eval corpus asserts this. The options are gate `SUP-ADJ-GAP`'s catalog labels (`docs/LANE_GATES.md`).
 
 ```yaml
 EXECUTE_CHECKPOINT:
@@ -523,7 +523,7 @@ EXECUTE_CHECKPOINT:
     - item: {requires item}
       producing_subtask: {from subtask_id}
       check_run: "{command + exit code}"
-  adjudication_options:                 # block sequence (gate SUP-ADJ-GAP) — see the wrapping note above
+  adjudication_options:                 # block sequence — see the wrapping note above
     - "A: Re-queue producer"
     - "B: Insert remediation subtask"
     - "C: Exit to Launch Pad"
@@ -532,7 +532,7 @@ EXECUTE_CHECKPOINT:
 ```
 
 For the lane-collision kind, swap the discriminator, the evidence array, and the options
-(the option strings are lane-specific by design — do not reuse the requires-gap wording):
+(the option strings are gate `SUP-ADJ-LANE`'s, lane-specific by design — do not reuse the requires-gap wording):
 
 ```yaml
 EXECUTE_CHECKPOINT:
@@ -549,7 +549,7 @@ EXECUTE_CHECKPOINT:
     - path: {out-of-lane path}
       owning_subtask: {sibling whose lanes: declares it}
       this_subtask: {subtask_id}
-  adjudication_options:                 # gate SUP-ADJ-LANE
+  adjudication_options:
     - "A: Re-queue writer with the sibling lane excluded"
     - "B: Serialize the pair (add a requires edge)"
     - "C: Exit to Launch Pad"

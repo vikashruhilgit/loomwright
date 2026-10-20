@@ -556,7 +556,7 @@ if [ -n "$asks" ] && [ "$pol" = human-only ] && printf '%s\n' "$asks" | jq -e --
      '.gate == "SUP-OVERLAP" and (.question | type) == "string" and (.question | test("PR #")) and .header == "SUP-OVERLAP"
       and .options == ($l | split("|")) and .cant_ask == "preflight_overlap_detected"
       and .questions[0].options == .options' >/dev/null 2>&1; then
-  ok "Q: the SUP-OVERLAP ask carries the citing question, the catalog labels ($labels), header \"\" and cant_ask preflight_overlap_detected"
+  ok "Q: the SUP-OVERLAP ask carries the citing question, the catalog labels ($labels), header \"SUP-OVERLAP\" (its code, human-only too) and cant_ask preflight_overlap_detected"
 else no "Q: SUP-OVERLAP ask shape wrong: $(printf '%s' "$asks" | head -c 300)"; fi
 if grep "^preflight-overlap-non-interactive$TAB" "$INSTR" | cut -f2- | jq -e 'select(.do == "ask")' >/dev/null 2>&1; then
   no "Q: --non-interactive printed an ask"
@@ -662,7 +662,7 @@ else no "B6: scratch not built"; fi
 
 echo "-- A. the Phase 3 / FINALIZE question gates (AC4, AC5)"
 LEG_MSG=""
-if leg_adj_ask "$DRIVER"; then ok "A5: an interactive requires_gap adjudication prints the SUP-ADJ-GAP ask (catalog labels, header \"\", cant_ask adjudication_required_non_interactive) — never a pick"
+if leg_adj_ask "$DRIVER"; then ok "A5: an interactive requires_gap adjudication prints the SUP-ADJ-GAP ask (catalog labels, header \"SUP-ADJ-GAP\", cant_ask adjudication_required_non_interactive) — never a pick"
 else no "A5: $LEG_MSG"; fi
 if grep "^execute-adjudication-non-interactive$TAB" "$INSTR" | cut -f2- | jq -e 'select(.do == "ask")' >/dev/null 2>&1; then
   no "A5: --non-interactive printed an adjudication ask"
@@ -670,12 +670,12 @@ else ok "A5: under --non-interactive the adjudication prints the record + park, 
 a="$(grep "^finalize-children-unsettled$TAB" "$INSTR" | cut -f2- | jq -c 'select(.do == "ask")' 2>/dev/null)"
 printf '%s' "$a" | jq -e --arg l "$(catalog_labels SUP-CHILDREN)" '.gate == "SUP-CHILDREN" and .header == "SUP-CHILDREN"
     and .options == ($l | split("|")) and .cant_ask == "children_unsettled"' >/dev/null 2>&1 \
-  && ok "A5: the SUP-CHILDREN ask carries its catalog header (an allowed gate), the labels and cant_ask children_unsettled" \
+  && ok "A5: the SUP-CHILDREN ask carries its catalog header, the labels and cant_ask children_unsettled" \
   || no "A5: SUP-CHILDREN ask shape wrong: $(printf '%s' "$a" | head -c 200)"
 a="$(grep "^finalize-pr-base-gh-retry$TAB" "$INSTR" | cut -f2- | jq -c 'select(.do == "ask")' 2>/dev/null)"
 printf '%s' "$a" | jq -e --arg l "$(catalog_labels SUP-GH-RETRY)" '.gate == "SUP-GH-RETRY" and .header == "SUP-GH-RETRY"
     and .options == ($l | split("|")) and .cant_ask == "gh_unavailable_non_interactive"' >/dev/null 2>&1 \
-  && ok "A4: the SUP-GH-RETRY ask carries retry|skip-verify-once|abort, header \"\" and cant_ask gh_unavailable_non_interactive" \
+  && ok "A4: the SUP-GH-RETRY ask carries retry|skip-verify-once|abort, header \"SUP-GH-RETRY\" and cant_ask gh_unavailable_non_interactive" \
   || no "A4: SUP-GH-RETRY ask shape wrong: $(printf '%s' "$a" | head -c 200)"
 LEG_MSG=""
 if leg_retry_once "$DRIVER"; then ok "A4: a first gh failure is retried once; the retry's main ⇒ the verified hand-over, two gh calls, no flag, no ask"
