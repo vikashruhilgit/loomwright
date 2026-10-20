@@ -335,12 +335,12 @@ while IFS= read -r rel; do
   # tools: a key that is ABSENT means the agent inherits every tool (published as null, never []);
   # a key that is PRESENT but has no inline comma list (e.g. a YAML block list) is not parsed => fail closed.
   for k in tools disallowedTools; do
-    if frontmatter "$f" | grep -qE "^$k:"; then
+    if grep -qE "^$k:" < <(frontmatter "$f"); then
       [ -n "$(fmval "$f" "$k")" ] || { echo "build-capabilities: agents/$rel has a '$k:' key the generator cannot parse (write it as an inline comma-separated list)" >&2; exit 1; }
     fi
   done
   tools_v="$(fmval "$f" tools)"
-  frontmatter "$f" | grep -qE '^tools:' || tools_v="$(printf '\002')"   # sentinel: key absent
+  grep -qE '^tools:' < <(frontmatter "$f") || tools_v="$(printf '\002')"   # sentinel: key absent
   printf '%s%s%s%s%s%s%s%s%s%s%s\n' "$name" "$US" "$(fmval "$f" model)" "$US" "$tools_v" "$US" \
     "$(fmval "$f" disallowedTools)" "$US" "$blocks" "$US" "$rel" >> "$tmpd/agents.tsv"
 done < <(sorted_glob "$ROOT/agents" '*.md')
@@ -459,7 +459,7 @@ if [ "$n_hook_leaves" -gt 0 ]; then
     case "$word" in redirects|skips|unaffected) ;;
       *) echo "build-capabilities: docs/HOOKS.md §\"Host mode\" row '$cell' has class '$cls' — the first word must be redirects, skips or unaffected" >&2; exit 1 ;;
     esac
-    if cut -d "$US" -f1 "$tmpd/host-rows.tsv" | grep -qxF -- "$key"; then
+    if grep -qxF -- "$key" < <(cut -d "$US" -f1 "$tmpd/host-rows.tsv"); then
       echo "build-capabilities: docs/HOOKS.md §\"Host mode\" has two rows keyed '$key'" >&2; exit 1
     fi
     printf '%s%s%s\n' "$key" "$US" "$word" >> "$tmpd/host-rows.tsv"
