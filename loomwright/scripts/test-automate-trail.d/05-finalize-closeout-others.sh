@@ -705,7 +705,7 @@ grep -qF -- 'current-set "$RF" --pause-reason closeout_leftover' <<<"$(nt_fn "$n
 grep -qE 'git (checkout|pull)' <<<"$nt_st5" && no "(NT6) SYNC still runs its own git checkout main && git pull" || ok "(NT6) SYNC no longer runs its own git checkout main && git pull"
 nt_ck_ok() {  # <driver> — ok iff checkoff calls queue-checkoff only for a still-unchecked row and writes ONE line
   local b; b="$(nt_fn "$1" ns_checkoff)"
-  if grep -qE '^[[:space:]]+checkoff\) ns_checkoff ;;' "$1" && grep -qF -- 'grep -qxF -- "- [ ] $ITEM"; then' <<<"$b" \
+  if grep -qE '^[[:space:]]+checkoff\) ns_checkoff ;;' "$1" && grep -qF -- 'grep -qxF -- "- [ ] $ITEM" < <(ns_section' <<<"$b" \
      && [ "$(grep -c 'queue-checkoff' <<<"$b")" = 1 ] && [ "$(grep -cF 'checked off $ITEM' <<<"$b")" = 1 ]; then printf ok; else printf bad; fi
 }
 [ "$(nt_ck_ok "$nt_drv")" = ok ] && ok "(NT6) driver checkoff (step 6): an auto-merged item is already - [x], not checked off twice" || no "(NT6) step 6 double check-off not addressed"

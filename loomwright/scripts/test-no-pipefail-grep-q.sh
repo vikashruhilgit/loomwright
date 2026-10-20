@@ -183,11 +183,12 @@ pipefail_scope() {
     $1 == "P" { on[$2] = 1; next }
     $1 == "E" { ne++; es[ne] = $2; eg[ne] = glob2re($3); next }
     END {
-      do {
+      ch = 1   # a while, not do…while: test-no-fixed-sleep-race.sh counts a line-start `do` as a shell loop
+      while (ch) {
         ch = 0
         for (k = 1; k <= ne; k++) if (es[k] in on) for (i = 1; i <= n; i++) if (!(f[i] in on) && base[i] ~ eg[k]) { on[f[i]] = 1; ch = 1 }
         for (k = 1; k <= nd; k++) if ((ds[k] in on) && !(dt[k] in on)) { on[dt[k]] = 1; ch = 1 }
-      } while (ch)
+      }
       for (i = 1; i <= n; i++) if (f[i] in on) print f[i]
     }'
 }
@@ -347,7 +348,8 @@ done
 for c in nopf.sh lib-lone.sh lone.sh lone.d/mod.sh plusopf.sh; do
   in_scope "$c" && no "rule 3 scope wrongly includes $c (it never runs under pipefail)" || ok "rule 3 scope excludes $c"
 done
-r3out="$(ratchet "$PR3" '' count_prod $scope3)"
+scope3_a=(); while IFS= read -r rel; do scope3_a+=("$rel"); done <<<"$scope3"
+r3out="$(ratchet "$PR3" '' count_prod "${scope3_a[@]}")"
 want3='OVER loomwright/scripts/entry.d/launch.sh 1 0
 OVER loomwright/scripts/planted.sh 1 0
 OVER loomwright/scripts/lib-literal.sh 1 0

@@ -4,7 +4,7 @@ The pipefail `grep -q` gate now covers production scripts
 only in test files. Rule 2 banned only the builtin writers (`printf`, `echo`) piped into `grep -q`. A non-builtin
 producer in a production script fell between them, and that is how the wave-7 lane L22 false `.died` shipped:
 `lanes_run_wrapper` in `automate-lanes.d/launch.sh` decided `.died` from `tail | grep -q` under automate-lanes.sh's
-`set -uo pipefail` (fixed in PR #643). The new rule 3 covers every shell script outside rule 1's set that runs under
+`set -uo pipefail` (fixed by PR #643). The new rule 3 covers every shell script outside rule 1's set that runs under
 `pipefail`. A script is in scope when it sets pipefail with `set` at a command position, or when a script in scope
 sources it, followed transitively. It counts as sourced when it is an `X.d/<m>.sh` module of `X.sh`, when a
 `. <path>/<name>.sh` line names it, or when a `. "$VAR"` line sources a VAR assigned a `*.sh` path in the same file.
