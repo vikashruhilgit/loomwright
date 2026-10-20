@@ -95,7 +95,7 @@ SUPERVISOR_RESULT:
 | Branch | Rule | Scope | Reason prefix |
 |--------|------|-------|---------------|
 | (a) security / financial / migration | `*auth*`, `*authz*`, `*security*`, `*crypto*`, `*secret*`, `*token*`, `*payment*`, `migrations/`, `*migration*` | changed path OR changed line, case-insensitive substring | `path:` / `content:` |
-| (b) workflow / orchestration surfaces | `.github/workflows/`, `hooks/`, `agents/`, `commands/`, `skills/` | changed path under that directory (at the root or anywhere below) | `path:` |
+| (b) workflow / orchestration surfaces | `.github/workflows/`, `hooks/`, `agents/`, `commands/`, `command-parts/`, `skills/` | changed path under that directory (at the root or anywhere below) | `path:` |
 | (b) workflow / orchestration words | `workflow`, `automation`, `orchestration` | changed path OR changed line, case-insensitive substring | `path:` / `content:` |
 | (c) size | `changed_lines > 400` | added+removed lines of `git diff <base>...<head>` (`+++`/`---` headers excluded) | `size:` |
 | (c) size | `changed_files > 15` | line count of `git diff <base>...<head> --name-only` | `size:` |

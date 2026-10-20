@@ -355,32 +355,77 @@ fi
 # W20 the shipped .agent/companions.json "new" rules cover EVERY surface in scripts/check-doc-currency.sh's
 #     FILES array (the authority). Parse drops comments, strips quotes, resolves $PLUGIN_JSON from its own
 #     assignment line, FAILS on any other unresolved $ token, and must be non-empty and contain plugin.json.
+#     A glob entry (the agent-help parts, `.../agent-help/*.md`) is covered by an add[] entry equal to, or an
+#     ancestor of, its literal directory: companions add[] admits no glob characters, and a directory entry
+#     reserves everything under it. The FILES=( ) block must be the ONLY assignment to FILES: a `FILES+=`
+#     append (or a second `FILES=`) is a surface this parser cannot see, so it FAILS here.
 W_DC="$W_REPO/scripts/check-doc-currency.sh"; W_CJ="$W_REPO/.agent/companions.json"
-w_pj="$(sed -n 's/^PLUGIN_JSON="\([^"]*\)"$/\1/p' "$W_DC" | head -n1)"
-w_dc_entry() {  # one FILES entry ⇒ its path; $PLUGIN_JSON resolved; any other $ token marked UNRESOLVED
-  case "$1" in
-    '$PLUGIN_JSON') printf '%s\n' "$w_pj" ;;
-    *'$'*) printf 'UNRESOLVED:%s\n' "$1" ;;
-    *) printf '%s\n' "$1" ;;
+w_dc_entry() {  # <pj> <one FILES entry> ⇒ its path; $PLUGIN_JSON resolved; a glob ⇒ GLOB:<dir>; other $ / top-level glob ⇒ UNRESOLVED
+  local pfx
+  case "$2" in
+    '$PLUGIN_JSON') printf '%s\n' "$1" ;;
+    *'$'*) printf 'UNRESOLVED:%s\n' "$2" ;;
+    *[*?[]*)
+      pfx="${2%%[*?[]*}"
+      case "$pfx" in */*) printf 'GLOB:%s\n' "${pfx%/*}" ;; *) printf 'UNRESOLVED:%s\n' "$2" ;; esac ;;
+    *) printf '%s\n' "$2" ;;
   esac
 }
-w_files="$(awk '/^FILES=\(/ { p = 1; next } p && /^\)/ { exit } p' "$W_DC" \
-  | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^#' | grep -v '^$' | tr -d '"' \
-  | while IFS= read -r e; do w_dc_entry "$e"; done)"
-if [ -z "$w_files" ] || [ -z "$w_pj" ]; then no "W20 parsed FILES set (or PLUGIN_JSON) is empty"
-elif grep -q '^UNRESOLVED:' <<<"$w_files"; then no "W20 unresolved \$ token in FILES: $(printf '%s' "$w_files" | grep '^UNRESOLVED:' | tr '\n' ' ')"
-elif ! grep -qxF 'loomwright/.claude-plugin/plugin.json' <<<"$w_files"; then no "W20 parsed FILES lacks loomwright/.claude-plugin/plugin.json"
-else
-  w_miss=""
+# w20_check <check-doc-currency.sh> <companions.json> — sets W20_FILES (the parsed entries) and W20_MSG
+# (empty when every entry is covered by every `new` rule, else the one-line reason).
+w20_check() {
+  local dc="$1" cj="$2" pj e a pfx w_add w_miss="" cov
+  W20_MSG=""
+  pj="$(sed -n 's/^PLUGIN_JSON="\([^"]*\)"$/\1/p' "$dc" | head -n1)"
+  W20_FILES="$(awk '/^FILES=\(/ { p = 1; next } p && /^\)/ { exit } p' "$dc" \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^#' | grep -v '^$' | tr -d '"' \
+    | while IFS= read -r e; do w_dc_entry "$pj" "$e"; done)"
+  if [ -z "$W20_FILES" ] || [ -z "$pj" ]; then W20_MSG="parsed FILES set (or PLUGIN_JSON) is empty"; return 0; fi
+  if [ "$(grep -cE '^[[:space:]]*FILES\+?=' "$dc")" != 1 ]; then
+    W20_MSG="FILES is assigned outside its one FILES=( ) block: $(grep -nE '^[[:space:]]*FILES\+?=' "$dc" | tr '\n' ' ')"; return 0
+  fi
+  if grep -q '^UNRESOLVED:' <<<"$W20_FILES"; then
+    W20_MSG="unresolved \$ token or top-level glob in FILES: $(printf '%s' "$W20_FILES" | grep '^UNRESOLVED:' | tr '\n' ' ')"; return 0
+  fi
+  if ! grep -qxF 'loomwright/.claude-plugin/plugin.json' <<<"$W20_FILES"; then W20_MSG="parsed FILES lacks loomwright/.claude-plugin/plugin.json"; return 0; fi
   for pfx in 'loomwright/agents/*' 'loomwright/commands/*' 'loomwright/skills/*'; do
-    w_add="$(jq -r --arg w "$pfx" '.companions[] | select(.when == $w and .new == true) | .add[]' "$W_CJ" 2>/dev/null)"
+    w_add="$(jq -r --arg w "$pfx" '.companions[] | select(.when == $w and .new == true) | .add[]' "$cj" 2>/dev/null)"
     [ -n "$w_add" ] || w_miss="$w_miss [no new rule for $pfx]"
-    while IFS= read -r e; do grep -qxF -- "$e" <<<"$w_add" || w_miss="$w_miss [$pfx lacks $e]"; done <<EOF
-$w_files
-EOF
+    while IFS= read -r e; do
+      case "$e" in
+        GLOB:*)
+          cov=0
+          while IFS= read -r a; do
+            a="${a%/}"; [ -n "$a" ] || continue
+            case "${e#GLOB:}" in "$a"|"$a"/*) cov=1; break ;; esac
+          done <<<"$w_add"
+          [ "$cov" = 1 ] || w_miss="$w_miss [$pfx lacks ${e#GLOB:}/ (glob entry)]" ;;
+        *) grep -qxF -- "$e" <<<"$w_add" || w_miss="$w_miss [$pfx lacks $e]" ;;
+      esac
+    done <<<"$W20_FILES"
   done
-  [ -z "$w_miss" ] && ok "W20 shipped companions.json new rules cover all $(printf '%s\n' "$w_files" | wc -l | tr -d ' ') check-doc-currency.sh FILES entries" || no "W20 companions.json drifted from check-doc-currency.sh FILES:$w_miss"
-fi
+  [ -z "$w_miss" ] || W20_MSG="companions.json drifted from check-doc-currency.sh FILES:$w_miss"
+  return 0
+}
+w20_check "$W_DC" "$W_CJ"
+[ -z "$W20_MSG" ] && ok "W20 shipped companions.json new rules cover all $(printf '%s\n' "$W20_FILES" | wc -l | tr -d ' ') check-doc-currency.sh FILES entries" || no "W20 $W20_MSG"
+grep -qxF 'GLOB:loomwright/docs/command-parts/agent-help' <<<"$W20_FILES" \
+  && ok "W20 the block parser sees the agent-help parts glob" \
+  || no "W20 the parsed FILES set lacks the agent-help parts glob (got: $(printf '%s' "$W20_FILES" | tr '\n' ' '))"
+# W20b the guard demonstrably sees the parts: drop the parts entry from every rule ⇒ W20 FAILS naming it.
+jq '.companions |= map(.add |= map(select(startswith("loomwright/docs/command-parts/") | not)))' "$W_CJ" > "$W_T/w20-cj.json"
+w20_check "$W_DC" "$W_T/w20-cj.json"
+case "$W20_MSG" in
+  *"lacks loomwright/docs/command-parts/agent-help/ (glob entry)"*) ok "W20b companions.json without the parts entry FAILS W20, naming the parts dir" ;;
+  *) no "W20b companions.json without the parts entry should fail W20 naming the parts dir (got: '$W20_MSG')" ;;
+esac
+# W20c a surface appended with `FILES+=` (invisible to the block parser) FAILS W20.
+{ cat "$W_DC"; printf 'FILES+=(loomwright/docs/extra.md)\n'; } > "$W_T/w20-dc.sh"
+w20_check "$W_T/w20-dc.sh" "$W_CJ"
+case "$W20_MSG" in
+  *"assigned outside its one FILES=( ) block"*) ok "W20c a FILES+= append outside the block FAILS W20" ;;
+  *) no "W20c a FILES+= append should fail W20 (got: '$W20_MSG')" ;;
+esac
 
 # =============================================================================
 echo "== X. plan-waves --explain / --lint (parallel-automate/10: read-only; one grammar with the planner) =="
