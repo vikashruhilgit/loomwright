@@ -49,9 +49,9 @@ J="$(LOOMWRIGHT_LANES_HELPERS="$T/helpers-merged.sh" sj)"
 check "U11 parked lane reconciled against gh (reconcile-item)" "$(lf L3 '.state + "|" + .pr_state')" "merged|merged"
 out="$(LOOMWRIGHT_GH_BIN="$T/absent-gh" run lane-readiness "$L3")"
 has "U12 gh unreadable ⇒ every Validation step NOT-RUN" "$(cat "$RD")" "V1 Baseline: NOT-RUN — PR body unreadable"
-out="$(LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-status "$RF2" --refresh-readiness)"
+out="$(LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-status "$RF2" --refresh-readiness --verbose)"
 has "U13 lane-status --refresh-readiness re-writes it" "$(cat "$RD")" "V1 Baseline: PASS"
-has "U13b plain view shows the score" "$out" "readiness: ready (2/5:"
+has "U13b --verbose plain view shows the score" "$out" "readiness: ready (2/5:"
 # A numbered `Validation 1 (tests):` line, a blank, an intro paragraph ending in ':' and then the fence
 # still reads PASS (origin/main did; review iteration 2 — the paragraph boundary never drops it).
 cat > "$T/gh-ready-intro" <<'EOF'
