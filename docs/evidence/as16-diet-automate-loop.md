@@ -1,6 +1,16 @@
 # as16 — automate-loop carries rules, not stories, and loads by phase: evidence
 
-Requirement: `.supervisor/requirements/automate-speed/16-diet-automate-loop.md`. Base commit: `ee3d7ea3bb069c50a07c3b37222c52c88202263b`. Subtasks 1–4 append to this file as they land; Subtask 5 finishes it (final measurements, gate results). Every number below was measured from the repo root.
+Requirement: `.supervisor/requirements/automate-speed/16-diet-automate-loop.md`. Base commit: `ee3d7ea3bb069c50a07c3b37222c52c88202263b`. Every number below was measured from the repo root.
+
+How to read this record: **Baseline** holds the base-commit measurement and, under it, the running `wc -c` total each of Subtasks 1–4 recorded as it landed. **Read set (Step 0)** is the after-tree default read set (AC4). **Behaviour questions** and **Proposed hooks** are the AC8 lists. **Pin mutations** holds each subtask's repointed pin and mutation controls. **Results** holds each subtask's gate run and then **Final tree (Subtask 5)**: the AC2 / AC3 numbers re-measured on the finished branch, every AC11 gate and AC6 test, the "identical at base" proof for the two pre-existing failures, the AC11 mutation control and the full `ci-local.sh` run. **Not run — Validation 3** closes it.
+
+| After | Measured set (bytes) | vs 275,768 | Default read set | History refs | `helpers.md` |
+|---|---|---|---|---|---|
+| base `ee3d7ea` | 275,768 | — | 83,400 | 28 | 45,618 |
+| Subtask 1 | 250,060 | −9.3% | 47,094 | 24 | 45,618 |
+| Subtask 2 | 204,313 | −25.9% | 47,094 | 12 | 45,618 |
+| Subtask 3 | 165,925 | −39.8% | 47,094 | 4 | 45,618 |
+| Subtask 4 = final tree | **149,318** | **−45.9%** | **47,094** | **1** | **45,618** |
 
 ## Baseline
 
@@ -186,7 +196,7 @@ What moved where:
 
 ## Read set (Step 0)
 
-After Subtask 1, `commands/automate.md` Step 0 reads (one line per entry; `grep -nE '^Read |\*\*Always\*\*|\*\*Only when\*\*' loomwright/commands/automate.md`):
+On the final tree, `commands/automate.md` Step 0 reads (one line per entry; `grep -nE '^Read |\*\*Always\*\*|\*\*Only when\*\*' loomwright/commands/automate.md`, re-run by Subtask 5 — Subtasks 2–4 did not edit the command body, so the lines are the ones Subtask 1 left):
 
 ```
 66:Read ${CLAUDE_PLUGIN_ROOT}/skills/automate-loop/SKILL.md   # the AUTHORITY — the coordinator loop, the global rules, the split-file index
@@ -206,11 +216,35 @@ After Subtask 1, `commands/automate.md` Step 0 reads (one line per entry; `grep 
 
 The only unconditional reads are `SKILL.md` (line 66) and `invariants.md` (line 82); neither holds a driver-owned step. Every item-25 **Only when** line is byte-identical (only the new `run-file.md` line was inserted, between `intake.md` and `resume.md`, which is its documented order — check F green). The run-file writes (§3) now sit behind the `run-file.md` trigger.
 
+Proof, on the final tree (Subtask 5):
+
+```bash
+# 1. every Step 0 trigger line at base is still present, byte for byte; the only added line is run-file.md's
+git show ee3d7ea:loomwright/commands/automate.md | grep -E '\*\*Always\*\*|\*\*Only when\*\*' > s0.base
+grep -E '\*\*Always\*\*|\*\*Only when\*\*' loomwright/commands/automate.md > s0.after
+diff s0.base s0.after
+# 2. no unconditional Read of a driver-owned file in the command body or the skill
+grep -rnE '^Read ' loomwright/skills/automate-loop/*.md loomwright/commands/automate.md
+```
+
+```
+3a4
+> - `run-file.md`, **Only when** the start resolves to a NEW run (intake writes its first run file from the template), a …
+(base 10 lines, after 11)
+
+loomwright/commands/automate.md:66:Read ${CLAUDE_PLUGIN_ROOT}/skills/automate-loop/SKILL.md   # the AUTHORITY — …
+loomwright/commands/automate.md:67:Read ${CLAUDE_PLUGIN_ROOT}/commands/autonomous.md          # ONLY under --inline-phases: …
+loomwright/commands/automate.md:68:Read ${CLAUDE_PLUGIN_ROOT}/commands/review-pr.md           # ONLY under --inline-phases: …
+loomwright/commands/automate.md:87:Read each plugin file with the Read tool, one file per call — …
+```
+
+The skill's own text (`SKILL.md`, `invariants.md`) carries no `Read` of a split file: its only mentions of reading are the frontmatter tool list, the split-layout note (which defers to Step 0), and two Anti-Pattern lines about reading a value (`ENVIRON[...]`, `SUPERVISOR_RESULT.rubric_score`). Line 87 is the one-file-per-call rule, not a read.
+
 Why each after-tree `SKILL.md` section stays in the default read set:
 
 - `## §1 — Purpose & Layering` + `### Non-goals (v1)` — global scope rules (no adapter framework, no runner agent, single-open-PR invariant, no second tracking file); the story moved out.
 - `## Coordinator loop — run next-step; do the one instruction; report the result` — the main thread's whole job on every run (touched-file invariant: stays in the default read set).
-- `## §3` … `## §11`, `## §13`, `## §14` and their `###` entries — one `See [<file>](<file>).` line each (the split index; §N numbers kept for citations).
+- `## §1.5`, `## §2` … `## §11`, `## §13`, `## §14` and their `###` entries — one `See [<file>](<file>).` line each (the split index; §N numbers kept for citations).
 - `## §12` `### Flags` — one pointer line to the command's Usage block; `### \`/loop\` driver` — the headless-tick and stop rules, which the command no longer restates.
 - `## Anti-Patterns` — one line per global "never" rule (each points at its step).
 - `## Related Skills` — five pointers.
@@ -404,3 +438,212 @@ Run on the Subtask 4 tree (each script from the repo root, `bash <script>`; othe
 | `scripts/check-doc-currency.sh`, `scripts/check-token-budget.sh`, `scripts/check-vendor-coupling.sh`, `scripts/check-skills-index-sync.sh` | OK |
 | `loomwright/scripts/test-automate-helpers.sh` | 769 passed, 1 failed — the base failure (`W19 … ## Touches parses`); QG1d', QG4 and both intake prose mutants pass |
 | `loomwright/scripts/test-automate-lanes.sh` | Not run here — none of its legs reads `modes-and-merge-gate.md` or `intake.md` (`grep -rlF` of both names under `loomwright/scripts/` and `scripts/` does not list it) |
+
+### Final tree (Subtask 5)
+
+Measured on the finished branch: HEAD `fa1fd8a` (Subtasks 1–4 committed) plus Subtask 5's two uncommitted files (this file and `changelog.d/as16-diet-automate-loop.md`, neither in the measured set), from the repo root, on 2026-10-20. The per-subtask records above are left as written.
+
+#### AC2 — measured set (`wc -c`) — met
+
+One script measures both trees, so the before and after numbers come from the same command. `measure.sh ee3d7ea` reads every file from the git objects; `measure.sh WT` reads the working tree. The measured set is every `skills/automate-loop/*.md` except `helpers.md`, plus `commands/automate.md` — on the after tree that includes the one new runtime split file, `run-file.md` (`git diff --name-status ee3d7ea -- loomwright/skills loomwright/commands loomwright/agents` lists it as the only `A` file). The rationale doc, the inventory doc, the changelog fragment and this file are not counted.
+
+```bash
+#!/usr/bin/env bash
+# measure.sh <rev|WT>   (run from the repo root)
+set -u
+REV=$1
+RX='#[0-9]{2,4}\b|queue/[0-9]+|20[0-9]{2}-[0-9]{2}-[0-9]{2}|item [0-9]+'
+if [ "$REV" = WT ]; then
+  F="$(ls loomwright/skills/automate-loop/*.md | grep -v '/helpers.md$') loomwright/commands/automate.md"
+  cat_() { cat "$1"; }
+else
+  F="$(git ls-tree --name-only "$REV" loomwright/skills/automate-loop/ | grep '\.md$' | grep -v '/helpers.md$') loomwright/commands/automate.md"
+  cat_() { git show "$REV:$1"; }
+fi
+tot=0; htot=0
+for f in $F; do
+  b=$(cat_ "$f" | wc -c | tr -d ' '); h=$(cat_ "$f" | grep -ohE "$RX" | wc -l | tr -d ' ')
+  echo "$f bytes=$b hist=$h"; tot=$((tot+b)); htot=$((htot+h))
+done
+echo "TOTAL bytes=$tot hist=$htot"
+d=0; for f in loomwright/skills/automate-loop/SKILL.md loomwright/skills/automate-loop/invariants.md loomwright/commands/automate.md; do d=$((d+$(cat_ "$f" | wc -c))); done
+echo "DEFAULT_READ_SET bytes=$d"
+echo "helpers.md bytes=$(cat_ loomwright/skills/automate-loop/helpers.md | wc -c | tr -d ' ')"
+```
+
+`bash measure.sh ee3d7ea` (before) and `bash measure.sh WT` (after):
+
+```
+== before (ee3d7ea)                                            == after (final tree)
+SKILL.md               bytes=46413 hist=4                      SKILL.md               bytes=21154 hist=1
+branch-mode.md         bytes=7592  hist=0                      branch-mode.md         bytes=3931  hist=0
+command-lanes.md       bytes=4111  hist=0                      command-lanes.md       bytes=1093  hist=0
+intake.md              bytes=10379 hist=0                      intake.md              bytes=8057  hist=0
+invariants.md          bytes=6826  hist=0                      invariants.md          bytes=6090  hist=0
+lanes.md               bytes=57472 hist=8                      lanes.md               bytes=25763 hist=0
+modes-and-merge-gate.md bytes=27208 hist=3                     modes-and-merge-gate.md bytes=12923 hist=0
+per-item-loop.md       bytes=66665 hist=11                     per-item-loop.md       bytes=29940 hist=0
+resume.md              bytes=18941 hist=1                      resume.md              bytes=9919  hist=0
+(no run-file.md at base)                                       run-file.md            bytes=10598 hist=0
+commands/automate.md   bytes=30161 hist=1                      commands/automate.md   bytes=19850 hist=0
+TOTAL bytes=275768 hist=28                                     TOTAL bytes=149318 hist=1
+DEFAULT_READ_SET bytes=83400                                   DEFAULT_READ_SET bytes=47094
+helpers.md bytes=45618                                         helpers.md bytes=45618
+```
+
+(The two columns are the two runs set side by side, with the `loomwright/skills/automate-loop/` and `loomwright/` path prefixes dropped; the numbers are copied unchanged.)
+
+| Read set | Before | After | Change | Target |
+|---|---|---|---|---|
+| **Measured set** (AC2) | 275,768 | **149,318** | −126,450 (**−45.9%**) | ≤ 193,037 — **met**, 43,719 bytes under |
+| Default-path read set: `SKILL.md` + `invariants.md` (Step 0's only **Always** file) + `commands/automate.md` | 83,400 | **47,094** | −36,306 (−43.5%) | reported |
+| `helpers.md` (read at runtime, outside the measured set) | 45,618 | 45,618 | 0 — not edited, nothing moved into it | must not grow — **held** |
+
+The cut is honest against the "moved text counts" rule: the one new runtime file (`run-file.md`, 10,598 bytes) is inside the 149,318, `helpers.md` did not grow, and no other runtime-readable file under `skills/automate-loop/` or `commands/` was added. The text that left the measured set went to `loomwright/docs/rationale/automate-loop.md` (stories, read by no runtime step) or was deleted as a restatement of a script arm (Subtasks 1–4 above).
+
+#### AC3 — history references — met
+
+Same `measure.sh` runs, `hist=` column (`grep -ohE "$RX" | wc -l` per file, summed). Before **28** (SKILL.md 4, lanes.md 8, modes-and-merge-gate.md 3, per-item-loop.md 11, resume.md 1, commands/automate.md 1 — matches the requirement); after **1**. The one left, from `grep -noE "$RX"` over the after-tree measured set:
+
+```
+loomwright/skills/automate-loop/SKILL.md:6:2026-10-20      frontmatter lastUpdated (a date field, counted at base too)
+```
+
+#### AC1 — story and rule rows by home
+
+```bash
+AWKC='/^\| AL-[0-9]+ \|/ { n = split($0, c, " \\| "); k = c[6]; h = c[7]; sub(/#.*/, "", h); sub(/ .*/, "", h); if (k == "story" || k == "rule") print k "\t" h }'
+git show ee3d7ea:loomwright/docs/loop-inventory/automate-loop.md | awk "$AWKC" | sort | uniq -c   # before
+awk "$AWKC" loomwright/docs/loop-inventory/automate-loop.md | sort | uniq -c                     # after
+```
+
+```
+before                                                      after
+  77 rule   global                                            71 rule   global
+  11 rule   script:automate-helpers.sh                        16 rule   script:automate-helpers.sh
+  26 rule   script:automate-next-step.sh                      26 rule   script:automate-next-step.sh
+   1 rule   script:rules-gate-verdict.sh                       1 rule   script:rules-gate-verdict.sh
+  22 rule   step-scoped                                       25 rule   step-scoped
+   3 story  global                                            45 story  rationale:docs/rationale/automate-loop.md
+   1 story  rationale:skills/automate-loop/branch-mode.md
+   1 story  rationale:skills/automate-loop/command-lanes.md
+   2 story  rationale:skills/automate-loop/lanes.md
+   4 story  rationale:skills/automate-loop/modes-and-merge-gate.md
+  11 story  rationale:skills/automate-loop/per-item-loop.md
+   4 story  script:automate-next-step.sh
+```
+
+Every `story` row is homed in `docs/rationale/automate-loop.md`; no `rule` row is homed `prose` or `rationale:`. The totals match the inventory's `## Counts` (before: rows 584, rule 137, story 26, GAP 131; after: rows 605, rule 139, story 45, GAP 150 — rows were added for new headings and for story halves split out of rule rows).
+
+#### Validation 1 — every AC11 gate and every AC6 test
+
+The AC6 test list is the union of `grep -rlF <name> loomwright/scripts scripts` for each group file's name (`automate-loop/SKILL.md`, `branch-mode.md`, `command-lanes.md`, `intake.md`, `invariants.md`, `lanes.md`, `modes-and-merge-gate.md`, `per-item-loop.md`, `resume.md`, `run-file.md`, `commands/automate.md`) and of `automate-loop-split/assemble.sh` (the assembled-skill readers), each `test-*.d/` part and `fixtures/` hit mapped to the runner that sources or reads it. Each script ran once, one after another, `bash <script>` from the repo root, its output saved to its own log; the summary line is quoted from that log.
+
+| Gate / test | Exit | Result |
+|---|---|---|
+| `loomwright/scripts/test-loop-inventory.sh` | 0 | `RESULT: 43/43 passed` |
+| `scripts/check-doc-currency.sh` | 0 | `✓ doc-currency: all checked version/count claims match the authoritative source.` |
+| `loomwright/scripts/test-citation-drift.sh` | 0 | `citation-drift: 26 passed, 0 failed` |
+| `scripts/check-token-budget.sh` | 0 | `check-token-budget: OK` (`breaches: 0 \| errors: 0`; `automate-loop` 43,766 / 77,733 proxy tokens over 11 files, `automate` 4,962 / 7,565 — ceilings unchanged, `git diff ee3d7ea -- loomwright/docs/prompt-token-budgets.json` empty) |
+| `scripts/check-vendor-coupling.sh` | 0 | `check-vendor-coupling: OK` (`breaches: 0 \| errors: 0`; `commands/automate.md` 7/7, inventory 12/12, `SKILL.md` 3/3, `modes-and-merge-gate.md` 1/1, `intake.md` 1/1, `resume.md` 1/1, `helpers.md` 1/1) |
+| `scripts/check-skills-index-sync.sh` | 0 | `✓ skills-index-sync` for both skill trees |
+| `scripts/check-version-bump.sh` | 0 | `bump-version: check OK — not bumped (version 17.11.0, the merge base's); 1 fragment(s) pending — legal` (AC10: no bump, the fragment is pending) |
+| `loomwright/scripts/test-automate-loop-split.sh` | 0 | `RESULT: 40 passed, 0 failed` (check E prints SKIP for the edited files, as AC5 expects) |
+| `loomwright/scripts/test-automate-next-step.sh` | 0 | `PASS: 153 FAIL: 0` (incl. `S: the positive-grep file list equals the base commit's`) |
+| `loomwright/scripts/test-rules-gate-seams.sh` | 0 | `26 passed, 0 failed` |
+| `loomwright/scripts/test-automate-dismissed.sh` | 0 | `255 passed, 0 failed` |
+| `loomwright/scripts/test-non-interactive-gates-seam.sh` | 0 | `RESULT: 64 passed, 0 failed` |
+| `loomwright/scripts/test-automate-trail.sh` | 0 | `786 passed, 0 failed` |
+| `loomwright/scripts/test-run-lock.sh` | 0 | `RESULT: 88 passed, 0 failed` |
+| `loomwright/scripts/test-session-resume.sh` | 0 | `RESULT: 338 passed, 0 failed` |
+| `loomwright/scripts/test-build-handoff.sh` | 0 | `RESULT: 93 passed, 0 failed` |
+| `loomwright/scripts/test-build-loop-evidence.sh` | 0 | `RESULT: 30 passed, 0 failed` |
+| `loomwright/scripts/test-classify-risk.sh` | 0 | `RESULT: 46 passed, 0 failed` |
+| `loomwright/scripts/test-context-digest.sh` | 0 | `ALL TESTS PASSED (37/37)` |
+| `loomwright/scripts/test-harvest-conventions.sh` | 0 | `RESULT: 172 passed, 0 failed` |
+| `loomwright/scripts/test-automate-golden.sh` | 0 | `PASS: 65 FAIL: 0` |
+| `loomwright/scripts/test-setup-memory.sh` | 0 | `RESULT: 574 passed, 0 failed` |
+| `loomwright/scripts/test-command-parts.sh` | 0 | `RESULT: 37 passed, 0 failed` |
+| `loomwright/scripts/test-curation-status.sh` | 0 | `RESULT: 333 passed, 0 failed` |
+| `loomwright/scripts/test-rules-docs.sh` | 0 | `RESULT: 46 passed, 0 failed` |
+| `loomwright/scripts/test-automate-helpers.sh` | 1 | `RESULT: 769 passed, 1 failed` — identical at base (below) |
+| `loomwright/scripts/test-automate-lanes.sh` | 1 | `passed: 953  failed: 42` — identical at base (below) |
+
+26 of 28 scripts exit 0. The two that exit 1 fail the same legs at the base commit.
+
+The positive-form merge grep (`grep -rn "gh pr merge --squash" loomwright/ | grep -viE "no |never |not " | cut -d: -f1 | sort -u`) prints `commands/agent-help.md`, `docs/loop-inventory/automate-loop.md`, `scripts/automate-helpers.sh`, the `automate-golden` fixture requirement `drain-superseded-by-merge/…/11-post-park-lifecycle.md`, `scripts/result_block_parser.py`, `scripts/test-automate-helpers.sh`, `skills/automate-loop/modes-and-merge-gate.md` and `skills/automate-loop/per-item-loop.md` (all under `loomwright/`) — the rationale doc is not in it, and `test-automate-next-step.sh`'s surface leg confirms the list equals `SURFACE_BASE`.
+
+**Identical at base.** Both scripts were run on a copy of the base commit: `git archive ee3d7ea | tar -x -C <scratch>/arch-ee3d7ea`, with the gitignored `.supervisor/requirements/parallel-automate/` copied in (W19 reads it and SKIPs when it is absent), then `bash loomwright/scripts/<test>.sh` from that copy. The failing-leg lists were extracted the same way from both logs and diffed:
+
+```bash
+grep -E '^\s*FAIL - ' <log> | sed -E 's/^ *FAIL - //' | sort > lanes-fail.txt        # test-automate-lanes.sh
+grep -E '^\s*FAIL' <log> | sed -E 's/^ *FAIL:? *//' | awk '{print $1}' | sort > helpers-fail-ids.txt   # test-automate-helpers.sh
+diff base/lanes-fail.txt after/lanes-fail.txt;           echo "rc=$?"
+diff base/helpers-fail-ids.txt after/helpers-fail-ids.txt; echo "rc=$?"
+```
+
+```
+base test-automate-helpers.sh: RESULT: 769 passed, 1 failed     after: RESULT: 769 passed, 1 failed
+base test-automate-lanes.sh:   passed: 953  failed: 42          after: passed: 953  failed: 42
+lanes diff rc=0   (42 = 42 lines, full FAIL messages)
+helpers diff rc=0 (W19 = W19)
+```
+
+- `test-automate-helpers.sh`: `W19 real 22-split-automate-engine-surfaces.md ## Touches parses (known)` — `plan-waves: no <tmp>/.agent/companions.json — no companion expansion`; it reads a requirement file, no group file.
+- `test-automate-lanes.sh`: the 42 lane-policy / inbox legs `AD4 AD4b–f AD10 AD11 AD11b AD11c AD12 AD12d AD12e AD12g AD12h AM1–AM7 AM7b AM11 AM12 J3 J4 K1b K5 K7–K11 K15 K16 X2 X4–X7 X9`; none reads a group file (its two group-file legs, AJ4e5 on `per-item-loop.md` and AH12 on `run-file.md`, pass).
+
+Both are pre-existing on this machine and out of this item's scope; recorded, not fixed.
+
+#### Validation 2 — mutation control on a real `global` row
+
+The row is AL-156 (`skills/automate-loop/invariants.md`, `q: **\`review-heal\` / \`/review-pr\` / Supervisor Phase 4.5 still NEVER merge.**`, home `global`) — the never-merge invariant of §11. The control ran on a `mktemp -d` copy (`cp -R loomwright scripts "$M/"`, `HOME="$M/home"`; copying root `scripts/` too removes the RH-329 `--root` artifact the Subtask 2–4 controls carried). The anchored line was deleted with `grep -vF` from the copy of `invariants.md`, and the mutant was checked before the run:
+
+```bash
+A='**`review-heal` / `/review-pr` / Supervisor Phase 4.5 still NEVER merge.**'
+F="$M/loomwright/skills/automate-loop/invariants.md"
+HOME="$M/home" bash "$M/loomwright/scripts/test-loop-inventory.sh" --root "$M/loomwright"   # control
+cp "$F" "$M/orig.md"; grep -vF "$A" "$M/orig.md" > "$F"
+[ -s "$F" ] && ! cmp -s "$F" "$M/orig.md" && echo "mutant gated: non-empty, differs (…)"
+HOME="$M/home" bash "$M/loomwright/scripts/test-loop-inventory.sh" --root "$M/loomwright"   # mutant
+```
+
+```
+anchor hits in file: 1
+# unmutated scratch copy
+loop-inventory: OK — 2285 rows across 4 groups
+rc=0
+mutant gated: non-empty, differs (16 -> 15 lines)
+# mutant
+FAIL AL-156: anchor not found in skills/automate-loop/invariants.md
+loop-inventory: FAIL — 1 problem(s)
+rc=1
+```
+
+The mutant goes red naming exactly that row; the unmutated copy is green.
+
+#### Full suite — `bash scripts/ci-local.sh`
+
+Run in the background on the final tree (this file complete except this paragraph), then `bash scripts/ci-local.sh --wait` until it returned (exit 3 once, then exit 1):
+
+```
+ci-local: 23 ci.yml gates + 169 self-tests: 16 early, then 176 in one pool (key f730f3f43ad09ff07bdfe8ae6e8f32ab3abec8de)
+ci-local: early phase green after 18s — starting the pool
+run-self-tests: FAIL (exit 1, 168s): loomwright/scripts/test-automate-helpers.sh
+run-self-tests: FAIL (exit 1, 259s): loomwright/scripts/test-automate-lanes.sh
+2 of 176 self-tests FAILED (wall 976s):
+  loomwright/scripts/test-automate-helpers.sh
+  loomwright/scripts/test-automate-lanes.sh
+ci-local: not run locally — ci.yml's sdk-spike step (npm build + node suites); CI still runs it.
+ci-local: FAIL after 995s — see the FAIL banners above (nothing cached)
+```
+
+**Result: FAIL, from the two base-identical failures only.** Every ci.yml gate and 174 of 176 self-tests pass. The two failing scripts are the ones in the Validation 1 table, with the same legs: the run log's `test-automate-helpers.sh` banner shows only `W19 … ## Touches parses` (`RESULT: 769 passed, 1 failed`), and its `test-automate-lanes.sh` banner's 42 `FAIL - ` lines, extracted and sorted as above, `diff` empty against the base-copy list (`rc=0`). No failure comes from this item's changes, so nothing is handed to Phase 4.5 for them. The only change after the run is this paragraph; `check-vendor-coupling.sh`, `check-doc-currency.sh` and `test-citation-drift.sh` were re-run after it and stay green (OK, OK, 26 passed / 0 failed).
+
+## Not run — Validation 3
+
+Validation 3 is a running-system step: one real `/automate` item run on the changed prompts, with its result block pasted. It is a **pre-merge owner step outside this job**; this job did not run it and does not make up its result block. It is also the only place AC4's transcript assertion can be checked: on a sequential run (no `--parallel`, no `--inline-phases`, branch mode off), the coordinator Reads `commands/automate.md` Step 0's `SKILL.md` and `invariants.md` and no driver-owned split file (`per-item-loop.md`, `resume.md`, `modes-and-merge-gate.md`, `run-file.md`) unless a driver call exits non-zero, an instruction does not say what to do, or the owner asks. The greps under "Read set (Step 0)" show only that every such Read is conditional. Before merge, the owner does one of two things:
+
+- Run one live item: `/automate` on a one-item queue, paste that item's result block into the PR body, and confirm from the transcript which `skills/automate-loop/*.md` files were Read and at which step.
+- Or waive Validation 3 through the human-only `AUT-WAIVE` ask that `/automate`'s `validation-gate` raises.
+
+Until one of the two happens, the gap stays visible and the gate fails closed.
