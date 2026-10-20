@@ -11,7 +11,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload) | ~800 | 1.7.0 | 2026-10-09 |
 | Workflow Management | `workflow-management/` | — (removed outright, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") | ~1,200 | 1.2.2 | 2026-09-28 |
 | Async Orchestration | `async-orchestration/` | Supervisor (on-demand Read at Phase 2 PLAN entry; `finalize.md` Read at Phase 4 FINALIZE entry only — deliberately NOT preloaded); Execute Manager (preload, `SKILL.md` only) | ~1,600 | 1.7.0 | 2026-10-19 |
-| State Management | `state-management/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded) | ~1,500 | 1.6.0 | 2026-10-09 |
+| State Management | `state-management/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded); Execute Manager (on-demand Read at Step 1 when resuming from a checkpoint, or on a Context-Keeper state-file error — NOT preloaded) | ~1,500 | 1.6.0 | 2026-10-09 |
 | Context Summarization | `context-summarization/` | — (removed outright, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") | ~600 | 1.0.0 | 2026-03 |
 | Context Setup | `context-setup/` | Launch Pad (preload) | ~500 | 1.1.0 | 2026-08-17 |
 | Claude MD Validation | `claude-md-validation/` | Launch Pad (preload) | ~400 | 1.0.0 | 2026-03 |
@@ -40,11 +40,11 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Quality Checklist | `quality-checklist/` | Orchestrator (preload), Code Reviewer (preload), QA Strategist (preload), QA Executor (preload) | ~500 | 1.3.0 | 2026-10-09 |
 | Commit | `commit/` | Supervisor (on-demand Read at Phase 4 FINALIZE entry — deliberately NOT preloaded) | ~600 | 1.1.0 | 2026-06 |
 | Pattern Detector | `pattern-detector/` | Code Reviewer (reference) | ~500 | 1.0.0 | 2026-03 |
-| Context7 Lookup | `context7-lookup/` | Launch Pad (preload), Code Reviewer (preload), Red Team Reviewer (preload) | ~300 | 1.0.0 | 2026-03 |
-| Unit Testing | `unit-testing/` | Worker (reference), Code Reviewer (preload) | ~800 | 1.0.0 | 2026-03 |
-| Error Handling | `error-handling/` | Worker (reference), Code Reviewer (preload) | ~900 | 1.0.0 | 2026-03 |
+| Context7 Lookup | `context7-lookup/` | Launch Pad (preload), Code Reviewer (on-demand Read when CLAUDE.md lacks a library fact), Red Team Reviewer (preload) | ~300 | 1.0.0 | 2026-03 |
+| Unit Testing | `unit-testing/` | Worker (reference), Code Reviewer (on-demand Read when the diff touches tests) | ~800 | 1.0.0 | 2026-03 |
+| Error Handling | `error-handling/` | Worker (reference), Code Reviewer (on-demand Read when the diff touches error paths) | ~900 | 1.0.0 | 2026-03 |
 | CI/CD | `ci-cd/` | Orchestrator (reference), Worker (reference) | ~900 | 1.0.0 | 2026-03 |
-| Monitoring & Observability | `monitoring-observability/` | Red Team Reviewer (reference), Code Reviewer (preload) | ~900 | 1.0.0 | 2026-03 |
+| Monitoring & Observability | `monitoring-observability/` | Red Team Reviewer (reference), Code Reviewer (on-demand Read when the diff touches logging/metrics/tracing) | ~900 | 1.0.0 | 2026-03 |
 
 ## Product / Discovery
 
