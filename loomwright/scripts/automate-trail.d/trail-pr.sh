@@ -87,14 +87,35 @@ _trail_report_shape() {
   fi
   return 0
 }
+# _trail_sidecars <sc_dir> <run_id> — this run's phase result sidecars, one path per line: every regular
+# top-level `<sc_dir>/<run_id>.<phase>-result.md`. DERIVED from the naming rule the phase sessions write
+# by (automate-lanes.d/phase.sh, the PH_SIDECAR case: launch-pad · supervisor · drain → review-heal),
+# never a hand list: wave 7 (run automate-2026-10-15-163325, L21–L24) lost `<run_id>.launch-pad-result.md`
+# because the list here named only the two older sidecars, so lane-remove refused `local_ahead 1` until
+# a hand meta push. test-automate-lanes.sh AP pins phase.sh's names to this glob.
+_trail_sidecars() {
+  local p
+  for p in "$1/$2".*-result.md; do
+    case "${p#"$1/$2".}" in */*|*.*-result.md) continue ;; esac   # `<run_id>.<kind>-result.md` only
+    [ -f "$p" ] && [ ! -L "$p" ] && printf '%s\n' "$p"
+  done
+  return 0
+}
 _trail_candidates() {
   local rf_rel="$1" run_id="$2"
   local cands="" p q item
   TRAIL_EXCLUDED=""; TRAIL_SC_N=0; TRAIL_SC_CODES=""
   cands="$rf_rel"
   local sc_dir; sc_dir="$(dirname "$rf_rel")"
-  for p in "$sc_dir/$run_id.review-heal-result.md" "$sc_dir/$run_id.supervisor-result.md"; do
-    [ -f "$p" ] || continue
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    # sidecar-check types two blocks (REVIEW_HEAL_RESULT / SUPERVISOR_RESULT); any other phase sidecar
+    # (LAUNCH_PAD_RESULT) has no key table there, carries no done claim, and rides as written — its
+    # consumer (automate-next-step.sh's launch-pad report) validates it when it reads it.
+    case "$p" in
+      *.review-heal-result.md|*.supervisor-result.md) ;;
+      *) cands="$cands"$'\n'"$p"; continue ;;
+    esac
     TRAIL_SC_N=$((TRAIL_SC_N + 1))
     q="$(sidecar_check "$p")"
     case "$q" in
@@ -102,7 +123,9 @@ _trail_candidates() {
       *) TRAIL_EXCLUDED="$TRAIL_EXCLUDED; excluded $p — ${q#"fail $p: "}"
          TRAIL_SC_CODES="${TRAIL_SC_CODES:+$TRAIL_SC_CODES }$(_trail_sidecar_code "${q#"fail $p: "}")" ;;
     esac
-  done
+  done <<EOF
+$(_trail_sidecars "$sc_dir" "$run_id")
+EOF
   local queue
   queue="$(awk '/^## Queue/{q=1;next} /^## /{q=0} q && /^- \[[ xX]\] /{sub(/^- \[[ xX]\] /,""); sub(/[[:space:]]+#.*$/,""); sub(/[[:space:]]+$/,""); print}' "$rf_rel" 2>/dev/null)"
   while IFS= read -r item; do
@@ -270,7 +293,8 @@ GATEKEPT
 # _trail_owned <rf_rel> <run_id> — run from the checkout root. The ONE
 # "is this dirty/staged path this run's own trail?" set, shared by trail-unstage
 # and closeout step 4: today's candidates (_trail_candidates → TRAIL_KEPT) ∪ the
-# run's two sidecar paths ∪ every path in `<run_id>.trail-staged` (written only
+# run's phase result sidecars (the two sidecar-checked names, present or not, ∪
+# _trail_sidecars) ∪ every path in `<run_id>.trail-staged` (written only
 # by _stage_tip from this run's own pushed trail tip). The record matters because
 # _stage_tip stages every merge-base..tip path, including ones no longer among
 # today's candidates (a sidecar now failing its check, a Queue item edited out).
@@ -281,6 +305,7 @@ _trail_owned() {
   sc_dir="$(dirname "$rf_rel")"
   _trail_candidates "$rf_rel" "$run_id"
   TRAIL_OWNED="$TRAIL_KEPT"$'\n'"$sc_dir/$run_id.review-heal-result.md"$'\n'"$sc_dir/$run_id.supervisor-result.md"
+  TRAIL_OWNED="$TRAIL_OWNED"$'\n'"$(_trail_sidecars "$sc_dir" "$run_id")"
   [ -f "$sc_dir/$run_id.trail-staged" ] && TRAIL_OWNED="$TRAIL_OWNED"$'\n'"$(cut -f1 "$sc_dir/$run_id.trail-staged" 2>/dev/null)"
   return 0
 }

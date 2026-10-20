@@ -22,6 +22,9 @@
 #   (aw)   AUT-WAIVE (the validation-unrun waiver) is human-only and decide answers human under a policy
 #          naming it; MUTATION CONTROL — the row flipped to `allowed` ⇒ (aw1) FAILS
 #   (ro)   resolve's --stamp-state read executes no check (a marker-writing must-check leaves no marker)
+#   (op)   optional (`?`) labels — LP-SAVE's last-attempt core ask gets the policy answer, any other subset
+#          is human; MUTATION CONTROL — the core match removed ⇒ (op1) FAILS
+#   (gh)   check-gate-headers.sh — clean on the real tree; one mutation per rule G1–G5 fires; fail CLOSED
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -96,7 +99,7 @@ dups="$(printf '%s\n' "$cat_tsv" | cut -f1 | sort | uniq -d)"
 [ -z "$dups" ] && ok "(cat4) codes are unique" || no "(cat4) duplicate codes: $dups"
 allowed="$(printf '%s\n' "$cat_tsv" | awk -F'\t' '$2 == "allowed" { print $1 "=" $3 }' | env LC_ALL=C sort)"
 want_allowed="$(printf '%s\n' 'AUT-QUEUE=Process|Stop' 'AUT-RESUME=Continue|Start new|Archive' \
-  'AUT-SUMMARY=Keep summary|Drop summary' 'LP-SAVE=Save and exit|Refine further|Edit sections|Discard' \
+  'AUT-SUMMARY=Keep summary|Drop summary' 'LP-SAVE=Save and exit|Refine further?|Edit sections?|Discard' \
   'SUP-CHILDREN=proceed anyway|investigate|abort' | env LC_ALL=C sort)"
 [ "$allowed" = "$want_allowed" ] && ok "(cat5) the allowed gates are EXACTLY the five B1 names, with their exact labels" \
   || no "(cat5) allowed set drifted: [$allowed]"
@@ -434,6 +437,87 @@ if [ -s "$MUT_AW" ] && ! cmp -s "$LP" "$MUT_AW" && bash -n "$MUT_AW" 2>/dev/null
 else
   no "(aw2) the AUT-WAIVE mutation did not land cleanly (empty / identical / bash -n failed / hunk missing)"
 fi
+
+# ============================================================================
+echo "== (op) optional labels — the LP-SAVE last-attempt ask (wave 7) =="
+# Run automate-2026-10-15-163325 wave 7: the owner set LP-SAVE=Save and exit, but a PASS on the third and
+# last Plan Review attempt offers only `Save and exit` · `Discard` (no attempt left to Refine or Edit), so
+# decide's exact-set match sent it to the human. The catalog now marks Refine / Edit `?`: the ask offers
+# every label or exactly the non-`?` core, and decide matches either — never another subset.
+POL_SV='{"LP-SAVE":"Save and exit"}'
+jq -n --argjson a "$POL_SV" --arg s "$(_t_sha "$POL_SV")" '{policy_sha: $s, sources: [], answers: $a}' > "$ROOT/pol-sv.json"
+Q_SV_CORE="$(q1 LP-SAVE '["Save and exit (Recommended)","Discard"]')"
+[ "$(dec "$Q_SV_CORE" "$ROOT/pol-sv.json")" = '{"0":"Save and exit (Recommended)"}' ] \
+  && ok "(op1) the last-attempt LP-SAVE ask (core labels only) gets the policy answer" || no "(op1) $(dec "$Q_SV_CORE" "$ROOT/pol-sv.json")"
+[ "$(dec "$(q1 LP-SAVE '["Save and exit","Refine further","Edit sections","Discard"]')" "$ROOT/pol-sv.json")" = '{"0":"Save and exit"}' ] \
+  && ok "(op2) the full LP-SAVE ask still gets it" || no "(op2)"
+[ "$(dec "$(q1 LP-SAVE '["Save and exit","Refine further","Discard"]')" "$ROOT/pol-sv.json")" = "human" ] \
+  && ok "(op3) any other subset (one optional label dropped) ⇒ human" || no "(op3)"
+[ "$(dec "$(q1 LP-SAVE '["Save and exit"]')" "$ROOT/pol-sv.json")" = "human" ] && ok "(op4) a core label missing ⇒ human" || no "(op4)"
+[ "$(dec "$(q1 LP-SAVE-NOTE '["Save and exit","Discard"]')" "$ROOT/pol-sv.json")" = "human" ] \
+  && ok "(op5) the same core under LP-SAVE-NOTE (human-only) ⇒ human" || no "(op5)"
+POL_RF='{"LP-SAVE":"Refine further"}'
+jq -n --argjson a "$POL_RF" --arg s "$(_t_sha "$POL_RF")" '{policy_sha: $s, sources: [], answers: $a}' > "$ROOT/pol-rf.json"
+[ "$(dec "$Q_SV_CORE" "$ROOT/pol-rf.json")" = "human" ] \
+  && ok "(op6) a policy answer the core ask does not offer (Refine further) ⇒ human" || no "(op6)"
+RFOP="$ROOT/op-run.md"; printf '# Automate Run: op-run\n\n## Progress\n' > "$RFOP"
+bash "$LP" wave-set "$RFOP" 'LP-SAVE=Refine further?' >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && [ ! -e "$ROOT/op-run.wave-policy.json" ] && ok "(op7) wave-set refuses a label spelled with its ? marker (the marker is not part of the label)" || no "(op7) rc=$rc"
+# (op8) MUTATION CONTROL: decide's core branch removed ⇒ (op1) fails (the wave 7 incident).
+MUT_OP="$ROOT/lane-policy-op.sh"
+sed 's/| (\$ql != (\$row.labels | sort)) and (\$ql != (\$row.core | sort)) then null/| ($ql != ($row.labels | sort)) then null/' "$LP" > "$MUT_OP"
+if ! cmp -s "$LP" "$MUT_OP" && bash -n "$MUT_OP" \
+   && [ "$(bash "$MUT_OP" decide "$Q_SV_CORE" --policy-json "$ROOT/pol-sv.json" 2>/dev/null)" = "human" ]; then
+  ok "(op8) CONFIRMED: without the core match the last-attempt LP-SAVE ask goes to the human — (op1) is load-bearing"
+else
+  no "(op8) the core-match mutation did not land, or did not change the decision"
+fi
+
+# ============================================================================
+echo "== (gh) check-gate-headers.sh — every engine ask carries its catalog code and labels =="
+CGH="$SCRIPT_DIR/check-gate-headers.sh"
+out="$(bash "$CGH" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && ok "(gh1) the real tree is clean (exit 0, no drift lines)" || no "(gh1) rc=$rc: $(printf '%s\n' "$out" | head -5)"
+# gh_tree — a scratch plugin: the engine prose and the emitters, copied (the check reads nothing else).
+gh_tree() {
+  local t="$ROOT/gh-$1"; rm -rf "$t"; mkdir -p "$t/scripts"
+  cp -R "$SCRIPT_DIR/../agents" "$SCRIPT_DIR/../commands" "$SCRIPT_DIR/../skills" "$t/"
+  cp "$LP" "$CGH" "$SCRIPT_DIR"/*-next-step.sh "$t/scripts/"
+  printf '%s' "$t"
+}
+# gh_mut <name> <file under the tree> <python old> <python new> <rule> <expected line fragment>
+gh_mut() {
+  local t; t="$(gh_tree "$1")"
+  if ! python3 - "$t/$2" "$3" "$4" <<'PY'
+import sys
+p, a, b = sys.argv[1:4]
+s = open(p, encoding="utf-8").read()
+if s.count(a) != 1: sys.exit(1)
+open(p, "w", encoding="utf-8").write(s.replace(a, b))
+PY
+  then no "(gh-$1) mutation did not land in $2"; return; fi
+  out="$(bash "$t/scripts/check-gate-headers.sh" 2>&1)"; rc=$?
+  case "$out" in *"check-gate-headers: $5 "*"$6"*) [ "$rc" -eq 1 ] && ok "(gh-$1) $5 fires: $6" || no "(gh-$1) rc=$rc" ;;
+    *) no "(gh-$1) $5 did not fire (rc=$rc): $(printf '%s\n' "$out" | head -3)" ;; esac
+}
+t="$(gh_tree clean)"; out="$(bash "$t/scripts/check-gate-headers.sh" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "(gh2) control: the unmutated scratch copy is clean" || no "(gh2) scratch copy red (mutations would be meaningless): $out"
+# G1 — wave 7's AUT-WAIVE ask, as it was emitted
+gh_mut g1 scripts/automate-next-step.sh 'header: "AUT-WAIVE", options: ["Waive this step", "Keep parked"]' \
+  'header: "", options: ["Waive this step", "Keep parked"]' G1 'an empty header'
+# G2 — an invented code
+gh_mut g2 skills/automate-loop/intake.md 'Ask it with `header: "AUT-QUEUE"`' 'Ask it with `header: "AUT-QUEUED"`' G2 'header "AUT-QUEUED" is not a catalog code'
+# G3 — the code kept, a label paraphrased away
+gh_mut g3 skills/automate-loop/resume.md '`Continue` · `Start new` · `Archive`' '`Continue` · `Start over` · `Archive`' G3 'the AUT-RESUME ask does not offer its catalog label(s) "Start new"'
+# G4 — options spelled out with the code dropped (the pre-fix NO-GO line)
+gh_mut g4 agents/launch-pad.md 'with `header: "LP-NO-GO"` and 3 options:' 'with 3 options:' G4 'agents/launch-pad.md'
+# G5 — the pre-fix LP-SAVE contract (a noted PASS "gets no code") leaves LP-SAVE-NOTE with no ask site
+gh_mut g5 agents/launch-pad.md '`header: "LP-SAVE-NOTE"` (human-only, so it always reaches a human) when it carries any issue or note' \
+  'no code when it carries any issue or note' G5 'LP-SAVE-NOTE has no'
+bash "$CGH" --bogus >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ok "(gh3) an unknown argument is a usage error (exit 2)" || no "(gh3) rc=$rc"
+bash "$CGH" --root "$ROOT/gh-none" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ok "(gh4) a missing plugin dir fails CLOSED (exit 2, never a clean read)" || no "(gh4) rc=$rc"
 
 # ============================================================================
 echo "== (ro) resolve's stamp read executes no check =="

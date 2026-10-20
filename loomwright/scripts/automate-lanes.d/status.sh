@@ -128,9 +128,9 @@ _lanes_wait_unmark() {
 
 # _lanes_quick_state <path> <pid> <pid_start> <table_state> <answer-pending file> — a lane's state as
 # _lanes_lane_json classifies it, in its first-match order, but only as far as the live / attention
-# split needs and with NO gh, ci-slot or stream-log read (the coordinator's Stop hook runs it at every
-# turn end): answer_pending · blocked_launch · held_for_load · created · missing · running ·
-# awaiting_input · `other` (removed / abandoned and every state past awaiting_input: a park, died,
+# split needs and with NO gh or ci-slot read and no full stream-log read (the coordinator's Stop hook runs
+# it at every turn end): answer_pending · blocked_launch · held_for_load · created · missing · running ·
+# awaiting_input · running again in the answer-relaunch gap (_lanes_resume_in_flight, a log-tail read) · `other` (removed / abandoned and every state past awaiting_input: a park, died,
 # lost_to_reset, stalled — none of them live, none an unanswered question). Membership in
 # _LANES_WAIT_LIVE stays the caller's: this never restates that set.
 _lanes_quick_state() {
@@ -151,6 +151,8 @@ _lanes_quick_state() {
     *) if [ ! -d "$path" ]; then printf 'missing'
        elif [ "$alive" = 1 ]; then printf 'running'
        elif [ "$nq" = 1 ]; then printf 'awaiting_input'
+       elif [ ! -e "$path.died" ] && _lanes_resume_in_flight "$path.stream.log" "$path/.supervisor/inbox" "$(date -u +%s)" >/dev/null; then
+         printf 'running'   # the answer-relaunch gap, as _lanes_lane_json reads it (a stream-log tail only)
        else printf 'other'; fi ;;
   esac
 }

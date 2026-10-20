@@ -471,6 +471,35 @@ _lanes_last_dated() {
     END { if (t != "") print t }' "$1" 2>/dev/null
 }
 
+# _lanes_resume_in_flight <stream_log> <inbox> <now_epoch> [any] — the answer-relaunch gap (wave 7, run
+# automate-2026-10-15-163325: lane-wait reported L21 / L23 / L24 `stalled` seconds before each read running).
+# lane-answer writes the answer file FIRST — so the question stops being pending — and only then spawns
+# the resume, whose process lanes_proc_alive cannot see until its wrapper has exec'd (and `claude --help`
+# probes the regime in between): in that window a lane with no live process, no pending question and no
+# park read `stalled`, inviting the one allowed `--continue` to be spent on a lane already resuming.
+# 0 (prints `<id> (written <at>)`) when the lane's last result line is still the `tool_deferred` exit on
+# question <id>, answers/<id>.json exists — so no resumed session has written a result since — and that
+# answer was written within LOOMWRIGHT_LANES_RESUME_GRACE_S (default 120) of <now>. With `any`, the age
+# bound is dropped (the stalled reason names the answer). An unreadable time ⇒ 1: the lane reads stalled,
+# never a hidden stall. A resume that died leaves the .died marker, classified before this.
+_lanes_resume_in_flight() {
+  local last id af at e g="${LOOMWRIGHT_LANES_RESUME_GRACE_S:-120}"
+  case "$g" in ''|*[!0-9]*) g=120 ;; esac
+  # the log's TAIL only (cheap enough for the Stop hook's _lanes_quick_state): with no live process and no
+  # .died marker nothing has run since the deferred exit, so its result line is among the last lines
+  last="$(tail -n 50 "$1" 2>/dev/null | grep '^{' | jq -c -R 'fromjson? | select(.type == "result")' 2>/dev/null | tail -1)"
+  [ "$(jq -r '.stop_reason // empty' <<<"$last" 2>/dev/null)" = tool_deferred ] || return 1
+  id="$(jq -r '.deferred_tool_use.id // empty' <<<"$last" 2>/dev/null)"
+  case "$id" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
+  af="$2/answers/$id.json"; [ -f "$af" ] || return 1
+  at="$(jq -r '.at // empty' "$af" 2>/dev/null)"
+  if [ "${4:-}" != any ]; then
+    e="$(_lanes_epoch "$at")" || return 1
+    [ "$(($3 - e))" -le "$g" ] || return 1
+  fi
+  printf '%s (written %s)' "$id" "${at:-?}"
+}
+
 # _lanes_lane_json <10 lane-table columns> <now_epoch> <ci_json> [<answer-pending file>] [<closeout PR>] — one lane's
 # status object. A removed/abandoned lane's clone is gone, so its run file, Supervisor state and readiness are
 # read from the copy lane-remove salvaged (_lanes_salvaged_sup) — never its inbox: a salvaged question is not
@@ -483,11 +512,12 @@ _lanes_last_dated() {
 # coordinator-side for a question the lane still holds, the process not running — shown, never delivered here) · blocked_launch · held_for_load (a lane holding an unanswered question,
 # no process running, reads awaiting_input instead) · created · missing · running
 # (lanes_proc_alive) · awaiting_input · parked (merged / gone after reconcile) · lost_to_reset (boot
-# later than the last launch) · died (.died marker) · stalled.
+# later than the last launch) · died (.died marker) · running again (_lanes_resume_in_flight: an answered
+# deferred question whose resume is not yet visible) · stalled.
 _lanes_lane_json() {
   local lane="$1" path="$2" item="$3" run="$4" pid="$5" st="$6" sid="$7" ts="$8" llu="$9" why="${10}" now="${11}" ci="${12}" apf="${13:-}"
   local fcpr="${14:-}" sup sv="" oc="" ended="" tst
-  local root log died rf status pause pr lp pd state reason="" held="" qs nq pk prs="" le be rdf rds="" rdsum="" lm la cij
+  local root log died rf status pause pr lp pd state reason="" held="" qs nq pk prs="" le be rdf rds="" rdsum="" lm la cij rs
   root="$(dirname "$path")"; log="$root/$lane.stream.log"; died="$root/$lane.died"
   sup="$path/.supervisor"
   case "$ts" in
@@ -551,8 +581,12 @@ _lanes_lane_json() {
         state=lost_to_reset; reason="machine booted after the last launch ($llu); resume with lane-launch --resume-run $run"
       elif [ -e "$died" ]; then
         state=died; reason="process exited with no terminal result ($(awk -F'\t' '$1 == "died_at" { print $2 }' "$died" 2>/dev/null))"
+      elif rs="$(_lanes_resume_in_flight "$log" "$path/.supervisor/inbox" "$now")"; then
+        state=running; reason="resuming after answer $rs"
       else
         state=stalled; reason="process gone, run file not parked, no pending question — resume once with lane-launch --continue"
+        rs="$(_lanes_resume_in_flight "$log" "$path/.supervisor/inbox" "$now" any)" \
+          && reason="process gone after answer $rs, no resumed process — resume once with lane-launch --continue"
       fi ;;
   esac
   fi

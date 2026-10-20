@@ -249,14 +249,14 @@ sn_ck() {
     then: "--result \u007b\u0022confirmed\u0022: true\u007d once Context-Keeper applied every op, in order"}')"
 }
 # sn_ask <step> <gate> <cant_ask status> <question> <answer step> — options and header from the ONE
-# catalog (`lane-policy.sh catalog`): header = the code only for an `allowed` gate, "" for a human-only one
+# catalog (`lane-policy.sh catalog`): header = the gate's code, human-only gates included (decide never
+# answers a human-only code; an empty header hid which gate a relayed question was — wave 7)
 sn_ask() {
-  local row pol labels hdr opts
+  local row labels hdr opts
   row="$(bash "$HERE/lane-policy.sh" catalog 2>/dev/null | awk -F'\t' -v c="$2" '$1 == c { print; exit }')"
   [ -n "$row" ] || { sn_fail "lane-policy.sh catalog has no $2 row — cannot ask"; return 1; }
-  pol="$(printf '%s' "$row" | cut -f2)"; labels="$(printf '%s' "$row" | cut -f3)"
-  if [ "$pol" = allowed ]; then hdr="$2"; else hdr=""; fi
-  opts="$("$JQ" -cn --arg l "$labels" '$l | split("|")')"
+  labels="$(printf '%s' "$row" | cut -f3)"; hdr="$2"
+  opts="$("$JQ" -cn --arg l "$labels" '$l | split("|") | map(sub("\\?$"; ""))')"
   st_setj ask_options "$opts"; st_set answer_arm "$5"
   sn_emit ask "$1" "$("$JQ" -cn --arg g "$2" --arg h "$hdr" --arg q "$4" --arg c "$3" --argjson o "$opts" \
     '{gate: $g, question: $q, header: $h, options: $o, cant_ask: $c,

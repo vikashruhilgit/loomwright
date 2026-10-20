@@ -709,6 +709,55 @@ out="$(AC_S="$MUT/automate-lanes.sh" ac lane-remove "$L520")"; rc=$?
 check "AO5b mutation: lane-remove refuses on the excluded sidecar (the L16 incident)" \
   "$rc:$(printf '%s\n' "$out" | grep -cF "metadata not pushed (local_ahead 1) — paths: .supervisor/automate/$PARENT6-L10.supervisor-result.md" | tr -d ' ')" "1:1"
 
+# ---- AP: a lane with every phase result sidecar is removable with no hand push (wave 7) ----------------
+# Run automate-2026-10-15-163325 wave 7 (L21–L24, the first fresh-session-per-phase run): each lane's Launch
+# Pad phase wrote `<run_id>.launch-pad-result.md`, a managed path on neither wave-end push (trail-pr's
+# sidecar list named only supervisor-result / review-heal-result), so lane-remove refused `local_ahead 1`
+# until the owner approved a hand exact-list meta push. The sidecar NAMES are read from phase.sh's own
+# PH_SIDECAR case (the naming authority), so a phase added there that trail-pr's derived glob misses
+# turns this red. Same real scripts and fake remote as AC / AK / AN.
+AP_KINDS="$(sed -n 's|^ *[a-z-]*) PH_SIDECAR="\$d/\$PH_RUN\.\([a-z-]*-result\)\.md" ;;$|\1|p' "$SB" | tr '\n' ' ')"
+check "AP0 phase.sh names three phase sidecars, each <run_id>.<kind>-result.md" "$AP_KINDS" "launch-pad-result supervisor-result review-heal-result "
+ap_sidecars() { # <lane dir> <lane n> — one sidecar per phase.sh name; the typed two pass sidecar-check
+  local k f
+  for k in $AP_KINDS; do
+    f="$1/.supervisor/automate/$PARENT6-L$2.$k.md"
+    case "$k" in
+      supervisor-result) ao_sidecar "$1" "$2" '{checked: false, status: skipped}' ;;
+      review-heal-result) printf 'REVIEW_HEAL_RESULT:\n  schema_version: 2\n  decision: READY\n  iterations: 1\n  issues_fixed: 0\n  remaining_issues: 0\n  pr_url: "https://github.com/o/r/pull/8%s"\n  notified: true\n  rounds: 1\n' "$2" > "$f" ;;
+      *) printf 'LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: saved\n  saved_brief_path: .supervisor/jobs/pending/ap%s.md\n  summary: Plan Review PASS 1/3\n' "$2" > "$f" ;;
+    esac
+  done
+}
+# a fresh parent (lanes 1..10 of the AC parent are taken; a number above 10 needs --parallel)
+PARENT6=automate-2026-10-10-091000; RF6="$P/.supervisor/automate/$PARENT6.md"; LR6="$T/work/primary-lanes/$PARENT6"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT6" > "$RF6"
+ac_lane 1 "https://github.com/o/r/pull/81"; L521="$ABL"; ap_sidecars "$L521" 1
+for k in supervisor-result review-heal-result; do
+  check "AP1 precondition: the $k sidecar passes sidecar-check" \
+    "$(bash "$SC/automate-helpers.sh" sidecar-check "$L521/.supervisor/automate/$PARENT6-L1.$k.md" | cut -d' ' -f1)" ok
+done
+out="$(STUB_PR_STATE=OPEN ac lane-convert-ready "$L521")"; rc=$?
+for k in $AP_KINDS; do
+  f=".supervisor/automate/$PARENT6-L1.$k.md"
+  check "AP2 wave-end conversion (PR open) pushes $k" "$rc:$(cmp -s "$L521/$f" "$T/remote-ac/$f" && echo pushed)" "0:pushed"
+done
+out="$(STUB_PR_STATE=MERGED ac lane-convert-ready "$L521")"; rc=$?
+check "AP3 the merged re-run closes out (exit 0, closeout complete)" "$rc:$(printf '%s\n' "$out" | tail -n1 | grep -c '; closeout complete$' | tr -d ' ')" "0:1"
+out="$(ac lane-remove "$L521")"; rc=$?
+check "AP4 lane-remove removes the lane — no phase sidecar needed a hand push" "$rc:$([ -d "$L521" ] && echo kept || echo removed)" "0:removed"
+# AP5 mutation control: trail-pr's derived glob replaced by the pre-fix two-name hand list reproduces
+# wave 7 — closeout complete, then lane-remove refuses naming the one unpushed launch-pad sidecar.
+APT="$SC/automate-trail.d/trail-pr.sh"; cp "$APT" "$T/ap-trail-pr.orig"
+sed 's|for p in "\$1/\$2"\.\*-result\.md; do|for p in "$1/$2".review-heal-result.md "$1/$2".supervisor-result.md; do|' "$T/ap-trail-pr.orig" > "$APT"
+check "AP5a mutation replaced the derived sidecar glob" "$(grep -c '"\$1/\$2"\.\*-result\.md' "$APT" | tr -d ' ')" 0
+ac_lane 2 "https://github.com/o/r/pull/82"; L522="$ABL"; ap_sidecars "$L522" 2
+STUB_PR_STATE=OPEN ac lane-convert-ready "$L522" >/dev/null; STUB_PR_STATE=MERGED ac lane-convert-ready "$L522" >/dev/null
+out="$(ac lane-remove "$L522")"; rc=$?
+cp "$T/ap-trail-pr.orig" "$APT"
+check "AP5b mutation: lane-remove refuses on the unpushed launch-pad sidecar (the wave 7 incident)" \
+  "$rc:$(printf '%s\n' "$out" | grep -cF "metadata not pushed (local_ahead 1) — paths: .supervisor/automate/$PARENT6-L2.launch-pad-result.md" | tr -d ' ')" "1:1"
+
 # ---- AD: policy carry (B5), relay-hook policy apply (B6), no policy ⇒ unchanged (B10), digest + inbox (B7)
 # lane-policy.sh is the REAL script (Subtask 1); the policies are a wave-policy file and a project policy
 # file written in this suite's own temp primary. HELPERS is the logging stub (progress-append recorded).

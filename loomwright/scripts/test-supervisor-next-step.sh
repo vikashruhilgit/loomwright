@@ -44,7 +44,7 @@
 #   I   IDEMPOTENCY. After a case ends on a spawn / ask, two calls with no --result re-print the
 #       byte-identical instruction and leave `.supervisor/` byte-unchanged; the same --job entry re-prints.
 #   Q   QUESTION GATE (AC5, Phase 1.5). The SUP-OVERLAP ask carries the question, the catalog's exact
-#       labels (`lane-policy.sh catalog`), header "" (a human-only gate) and cant_ask
+#       labels (`lane-policy.sh catalog`), header = its code (a human-only gate too) and cant_ask
 #       `preflight_overlap_detected`; under --non-interactive no call prints an ask; a `cant_ask` answer
 #       takes the fail-closed park; a label outside the options exits 2 with nothing written.
 #   S   MERGE SURFACE (AC9). The positive-grep file list equals the base commit's — read from
@@ -408,13 +408,13 @@ b_fin() {
 jqo() { printf '%s' "$NC_OUT" | jq -e "$@" >/dev/null 2>&1; }   # the last call's instruction matches
 catalog_labels() { bash "$HERE/lane-policy.sh" catalog | awk -F'\t' -v c="$1" '$1 == c { print $3 }'; }
 # leg_adj_ask <driver> — AC5 / Validation 2d: an interactive adjudication prints the SUP-ADJ-GAP ask with
-# the catalog labels, header "" and the named can't-ask status — never a pick
+# the catalog labels, header = the code and the named can't-ask status — never a pick
 leg_adj_ask() {
   B_DRV="$1"
   b_exec execute-adjudication-ask || { B_DRV="$DRIVER"; LEG_MSG="scratch not built"; return 1; }
   sn_call "$1" --result "$(payload execute-adjudication-ask 3)"
   B_DRV="$DRIVER"
-  jqo --arg l "$(catalog_labels SUP-ADJ-GAP)" '.do == "ask" and .gate == "SUP-ADJ-GAP" and .header == ""
+  jqo --arg l "$(catalog_labels SUP-ADJ-GAP)" '.do == "ask" and .gate == "SUP-ADJ-GAP" and .header == "SUP-ADJ-GAP"
       and .options == ($l | split("|")) and .cant_ask == "adjudication_required_non_interactive"
       and (.question | test("api.md:ApiClient")) and (has("choice") | not)' \
     || { LEG_MSG="an interactive adjudication printed: $(printf '%s' "$NC_OUT" | head -c 200)"; return 1; }
@@ -553,7 +553,7 @@ labels="$(bash "$HERE/lane-policy.sh" catalog | awk -F'\t' '$1 == "SUP-OVERLAP" 
 pol="$(bash "$HERE/lane-policy.sh" catalog | awk -F'\t' '$1 == "SUP-OVERLAP" { print $2 }')"
 asks="$(grep "^preflight-overlap-ask$TAB" "$INSTR" | cut -f2- | jq -c 'select(.do == "ask")' 2>/dev/null)"
 if [ -n "$asks" ] && [ "$pol" = human-only ] && printf '%s\n' "$asks" | jq -e --arg l "$labels" \
-     '.gate == "SUP-OVERLAP" and (.question | type) == "string" and (.question | test("PR #")) and .header == ""
+     '.gate == "SUP-OVERLAP" and (.question | type) == "string" and (.question | test("PR #")) and .header == "SUP-OVERLAP"
       and .options == ($l | split("|")) and .cant_ask == "preflight_overlap_detected"
       and .questions[0].options == .options' >/dev/null 2>&1; then
   ok "Q: the SUP-OVERLAP ask carries the citing question, the catalog labels ($labels), header \"\" and cant_ask preflight_overlap_detected"
@@ -673,7 +673,7 @@ printf '%s' "$a" | jq -e --arg l "$(catalog_labels SUP-CHILDREN)" '.gate == "SUP
   && ok "A5: the SUP-CHILDREN ask carries its catalog header (an allowed gate), the labels and cant_ask children_unsettled" \
   || no "A5: SUP-CHILDREN ask shape wrong: $(printf '%s' "$a" | head -c 200)"
 a="$(grep "^finalize-pr-base-gh-retry$TAB" "$INSTR" | cut -f2- | jq -c 'select(.do == "ask")' 2>/dev/null)"
-printf '%s' "$a" | jq -e --arg l "$(catalog_labels SUP-GH-RETRY)" '.gate == "SUP-GH-RETRY" and .header == ""
+printf '%s' "$a" | jq -e --arg l "$(catalog_labels SUP-GH-RETRY)" '.gate == "SUP-GH-RETRY" and .header == "SUP-GH-RETRY"
     and .options == ($l | split("|")) and .cant_ask == "gh_unavailable_non_interactive"' >/dev/null 2>&1 \
   && ok "A4: the SUP-GH-RETRY ask carries retry|skip-verify-once|abort, header \"\" and cant_ask gh_unavailable_non_interactive" \
   || no "A4: SUP-GH-RETRY ask shape wrong: $(printf '%s' "$a" | head -c 200)"
@@ -699,7 +699,7 @@ if b_exec execute-adjudication-non-interactive; then
   sn_call "$DRIVER" --result "$(payload execute-adjudication-non-interactive 3)"; o_ask="$NC_OUT"
   sn_call "$DRIVER" --result '{"answers":["C: Exit to Launch Pad"]}'; o_rec="$NC_OUT"
   sn_call "$DRIVER" --result '{"confirmed":true}'
-  printf '%s' "$o_ask" | jq -e --arg l "$(catalog_labels SUP-ADJ-LANE)" '.do == "ask" and .gate == "SUP-ADJ-LANE" and .header == ""
+  printf '%s' "$o_ask" | jq -e --arg l "$(catalog_labels SUP-ADJ-LANE)" '.do == "ask" and .gate == "SUP-ADJ-LANE" and .header == "SUP-ADJ-LANE"
       and .options == ($l | split("|")) and .cant_ask == "adjudication_required_non_interactive"' >/dev/null 2>&1 \
     && printf '%s' "$o_rec" | jq -e '.ops[0] | test("decision: \"adjudication lane_collision: C: Exit to Launch Pad\"")' >/dev/null 2>&1 \
     && jqo '.do == "park" and .status == "failed" and .error == "lane_collision"' \

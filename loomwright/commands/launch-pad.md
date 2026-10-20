@@ -43,7 +43,7 @@ A **7-phase readiness workflow** (primary Phases 1–7; the FEASIBILITY 2.5 and 
 
 ## Interactive Refinement
 
-After the brief passes Plan Review (Phase 5.5), Launch Pad presents options:
+After the brief passes Plan Review (Phase 5.5), Launch Pad presents "Save and exit" · "Refine further" · "Edit sections" · "Discard" — `header: "LP-SAVE"` on a zero-issue PASS, `"LP-SAVE-NOTE"` on a PASS with any issue or note (gate catalog: `docs/LANE_GATES.md`):
 
 | Option | When Available |
 |--------|---------------|
@@ -53,7 +53,7 @@ After the brief passes Plan Review (Phase 5.5), Launch Pad presents options:
 | **Refine offline** | After FAIL × 3 — exit without saving (`status: blocked`), fix the issues, start a new Launch Pad session |
 | **Discard** | Always (cancels without saving) |
 
-**Note:** "Save and exit" is disabled when Plan Review returns FAIL — FAIL never enables save, and the 3-spawn cap is never reset within a session. After FAIL × 3 the only options are "Refine offline" or "Discard".
+**Note:** "Save and exit" is disabled when Plan Review returns FAIL — FAIL never enables save, and the 3-spawn cap is never reset within a session. After FAIL × 3 the only options (`LP-FAIL`) are "Refine offline" or "Discard".
 
 ## Prerequisites
 
@@ -212,8 +212,8 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
    - PASS with an issue at the fix floor (`--fix-floor` / `.fix_floor`, default MEDIUM; attempt < 3) → refine it like a FAIL issue, re-spawn reviewer (consumes an attempt)
    - PASS → proceed to Phase 6 (save enabled; an at-floor issue still open after attempt 3 is listed `deferred`, never blocks)
    - FAIL (attempt < 3) → fix issues (a Criterion 20 PR-body criterion is rewritten to the evidence-file form, never deleted), re-assemble, re-spawn reviewer
-   - FAIL (attempt = 3) → present issues, offer "Refine offline" (exit, `status: blocked`) or "Discard" (no save; the 3-spawn cap is never reset within a session)
-   - NEEDS_HUMAN → present issues, offer "Override and save" or "Refine further" or "Discard"; a Criterion 17c house-rule conflict (an AC contradicting an advisory rule with no owner `Rule override:` line) instead offers `record-override` (the owner's note becomes the line) / `honor-rule` / `discard`, and aborts `rule_conflict_non_interactive` when it cannot ask (agent Phase 6 action 2b)
+   - FAIL (attempt = 3) → present issues, offer (`LP-FAIL`) "Refine offline" (exit, `status: blocked`) or "Discard" (no save; the 3-spawn cap is never reset within a session)
+   - NEEDS_HUMAN → present issues, offer (`LP-NEEDHUMAN`) "Override and save" or "Refine further" or "Discard"; a Criterion 17c house-rule conflict (an AC contradicting an advisory rule with no owner `Rule override:` line) instead offers (`LP-RULE-OVR`) `record-override` (the owner's note becomes the line) / `honor-rule` / `discard`, and aborts `rule_conflict_non_interactive` when it cannot ask (agent Phase 6 action 2b)
 
 ### Phase 6: REFINE & SAVE (Interactive)
 

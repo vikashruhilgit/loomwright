@@ -9,8 +9,9 @@ Every question the engine (`/automate`, `/autonomous`, and the Launch Pad, Super
 
 ## How a gate says who it is
 
-- The engine asks an `allowed` gate with `header` = its code and exactly the labels listed here. A `(Recommended)` marker is allowed on any label and is stripped before comparison.
-- A `human-only` gate is asked with **no** code in its header. Its row exists so the catalog is complete and so a policy naming it can be recognised and dropped.
+- The engine asks **every** gate, `allowed` and `human-only` alike, with `header` = its code and exactly the labels listed here. A `(Recommended)` marker is allowed on any label and is stripped before comparison. A human-only code only names the gate: `decide` never answers it, whatever a policy says.
+- A label ending in `?` is optional, and the `?` is not part of it. The ask offers either every label or only the ones without `?`, never another subset. `LP-SAVE` uses it: a PASS on the last Plan Review attempt leaves no attempt to refine or edit, so that ask offers `Save and exit` · `Discard`, and a policy answer still applies to it.
+- `loomwright/scripts/check-gate-headers.sh` fails an engine ask that drifts from this table: prose under `agents/`, `commands/` or `skills/` that spells out a gate's options without naming its code, a `header:` that is not a catalog code or whose block lacks one of its labels, a gate with no `header: "<code>"` ask site at all, and an empty `header: ""` in a next-step emitter.
 - A question whose `header` is not a catalog code is **always** human. So is a question whose labels, with `(Recommended)` stripped, are not exactly this row's labels as a set, a multi-select question, and any call that batches a human question with routine ones. A policy answer is all or nothing per call.
 
 ## Where a policy answer comes from
@@ -44,19 +45,19 @@ Every question the engine (`/automate`, `/autonomous`, and the Launch Pad, Super
 | `AUT-RESUME` | allowed | `Continue` · `Start new` · `Archive` | /automate start finds an incomplete run (automate-loop SKILL §4 step 4) |
 | `AUT-QUEUE` | allowed | `Process` · `Stop` | /automate Queue confirm before processing (automate-loop SKILL §2 "--limit N") |
 | `AUT-SUMMARY` | allowed | `Keep summary` · `Drop summary` | /automate keep or drop a LOW/INFO summary draft — summary drafts only (§6 dismissed-findings decision step and the PICK-time ask) |
-| `LP-SAVE` | allowed | `Save and exit` · `Refine further` · `Edit sections` · `Discard` | Launch Pad Phase 6 save — carries this code ONLY on a Plan Review PASS with zero issues |
+| `LP-SAVE` | allowed | `Save and exit` · `Refine further?` · `Edit sections?` · `Discard` | Launch Pad Phase 6 save on a Plan Review PASS with zero issues (Refine / Edit only while a review attempt is left) |
 | `SUP-CHILDREN` | allowed | `proceed anyway` · `investigate` · `abort` | Supervisor FINALIZE Point 5 children unsettled (async-orchestration SKILL) |
 | `AUT-SOURCE` | human-only | `(free text)` | bare /automate: what do you want to automate? |
 | `AUT-PENDING` | human-only | `Follow-up (keep draft)` · `Drop` | /automate PICK-time decision on a per-finding dismissed draft |
-| `AUT-DISMISS` | human-only | `Follow-up (keep draft)` · `Fix now on this PR` · `Drop` | /automate per-finding dismissed draft at the park, including fix-now |
-| `AUT-LEFTOVER` | human-only | `Clean up now` · `Keep and continue` · `Stop` | /automate close-out leftover gate (cleans up or deletes) |
+| `AUT-DISMISS` | human-only | `Follow-up (keep draft)` · `Fix now on this PR?` · `Drop` | /automate per-finding dismissed draft at the park, including fix-now (offered only while a fix-now re-drain is available) |
+| `AUT-LEFTOVER` | human-only | `Clean up now?` · `Keep and continue` · `Stop` | /automate close-out leftover gate (cleans up or deletes; Clean up now is offered only when a cleanup is possible) |
 | `AUT-WAIVE` | human-only | `Waive this step` · `Keep parked` | /automate READY park: waive a running-system Validation step validation-gate reports unrun (owner words from the answer note; cannot ask ⇒ stays escalated, validation_unrun) |
 | `PO-ASSUME` | human-only | `Proceed anyway` · `Refine requirements` · `Abort` | Product Owner assumption-check soft gate and pre-persist house-rule check (/automate prompt intake) |
 | `PO-RULE-MUST` | human-only | `Refine requirements` · `Change the rule via /rules` · `Abort` | Product Owner pre-persist house-rule check on a must-rule conflict (no override option: a must rule is never overridden) |
 | `LP-CLARIFY` | human-only | `(free text)` | Launch Pad Phase 2 clarification |
 | `LP-NO-GO` | human-only | `Override and continue` · `Revise goal` · `Abort` | Launch Pad Phase 2.5 feasibility NO-GO |
-| `LP-SAVE-NOTE` | human-only | `Save and exit` · `Refine further` · `Edit sections` · `Discard` | Launch Pad Phase 6 save on a Plan Review PASS that carries any issue or note (asked with no code) |
-| `LP-NEEDHUMAN` | human-only | `Override and save` · `Refine further` · `Discard` | Plan Review NEEDS_HUMAN, or any MEDIUM-or-higher finding |
+| `LP-SAVE-NOTE` | human-only | `Save and exit` · `Refine further?` · `Edit sections?` · `Discard` | Launch Pad Phase 6 save on a Plan Review PASS that carries any issue or note (Refine / Edit only while a review attempt is left) |
+| `LP-NEEDHUMAN` | human-only | `Override and save` · `Refine further?` · `Discard` | Plan Review NEEDS_HUMAN, or any MEDIUM-or-higher finding (Refine only while a review attempt is left) |
 | `LP-EXEC-ACC` | human-only | `approve-and-stamp` · `strip-cmd-bullets` · `discard` | Launch Pad executable-acceptance stamp |
 | `LP-RULE-OVR` | human-only | `record-override` · `honor-rule` · `discard` | Launch Pad Plan Review 17c: an AC contradicts an advisory house rule with no owner override (owner words from the answer note; cannot ask ⇒ rule_conflict_non_interactive) |
 | `LP-FAIL` | human-only | `Refine offline` · `Discard` | Plan Review FAIL after the third attempt |

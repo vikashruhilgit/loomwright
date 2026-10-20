@@ -320,6 +320,7 @@ TABLE2="$P/.supervisor/automate/$PARENT2.lanes"; LR2="$T/work/primary-lanes/$PAR
 printf '# Automate Run: %s\n\n## Progress\n' "$PARENT2" > "$RF2"
 for n in 1 2 3 4 5 6 7; do run lane-create "$RF2" reqs/a.md "$n" --parallel 8 >/dev/null; done
 t2set() { awk -F'\t' -v OFS='\t' -v l="$1" -v c="$2" -v v="$3" '$1 == l { $c = v } { print }' "$TABLE2" > "$TABLE2.t" && mv "$TABLE2.t" "$TABLE2"; }
+tcol2() { awk -F'\t' -v l="$1" -v c="$2" '$1 == l { print $c }' "$TABLE2"; }
 cat > "$T/pgrep-stub" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
@@ -355,6 +356,33 @@ J="$(sj)"; rc=$?
 check "Q1 lane-status --json exits 0 and parses" "$rc:$(jq -r '.lanes | length' <<<"$J")" "0:7"
 check "Q2 launched lane is running" "$(lf L1 .state)" running
 check "Q3 process gone, not parked, no question ⇒ stalled" "$(lf L3 .state)" stalled
+# Q3c–Q3h: the answer-relaunch gap (wave 7, run automate-2026-10-15-163325 — lane-wait printed `state L21
+# stalled`, L23, L24, each running seconds later). lane-answer writes the answer file, then spawns the
+# resume: between the two the lane has no live process, no pending question and no park. L3's last result
+# is a deferred question; its answer file's `at` decides the gap (LOOMWRIGHT_LANES_RESUME_GRACE_S).
+QIB="$LR2/L3/.supervisor/inbox"; mkdir -p "$QIB/questions" "$QIB/answers"
+jq -n -c --argjson q "$Q2" '{type: "result", subtype: "success", stop_reason: "tool_deferred", session_id: "sess-q3", deferred_tool_use: {id: "toolu_s1", input: {questions: $q}}}' > "$LR2/L3.stream.log"
+jq -n -c --argjson q "$Q2" '{questions: $q, asked_at: "2026-10-15T00:00:00Z"}' > "$QIB/questions/toolu_s1.json"
+J="$(sj)"; check "Q3c deferred, unanswered ⇒ awaiting_input (unchanged)" "$(lf L3 .state)" awaiting_input
+jq -n -c --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{answers: {"Which color?": "Red"}, note: null, source: "human", via: "test", at: $at}' > "$QIB/answers/toolu_s1.json"
+J="$(sj)"
+check "Q3d answered seconds ago, resume not yet visible ⇒ running, not stalled" "$(lf L3 .state)" running
+has "Q3e … its reason names the answer it resumes after" "$(lf L3 .reason)" "resuming after answer toolu_s1 (written "
+out="$(run lane-wait "$RF2" --interval 1 --timeout 3)"   # L4's blocked_launch is an event: one poll, then exit
+has "Q3f lane-wait polled (reports the other lanes' events) …" "$out" "lane-wait: state L4 blocked_launch"
+hasnt "Q3f-b … and reports no stalled event for the resuming lane" "$out" "state L3 "
+check "Q3f-c the Stop hook's quick classifier reads it running too" \
+  "$( ( . "$S"; _lanes_quick_state "$LR2/L3" "$(tcol2 L3 5)" "$(tcol2 L3 6)" "$(tcol2 L3 8)" "" ) 2>/dev/null)" running
+rm -f "$P/.supervisor/automate/$PARENT2.lane-wait-seen"
+J="$(LOOMWRIGHT_LANES_RESUME_GRACE_S=0 sj)"
+check "Q3g past the grace with no resumed process ⇒ stalled, naming the answer" "$(lf L3 '.state + "|" + .reason')" \
+  "stalled|process gone after answer toolu_s1 (written $(jq -r .at "$QIB/answers/toolu_s1.json")), no resumed process — resume once with lane-launch --continue"
+# Q3h mutation control: the in-flight branch dropped reproduces wave 7's false stalled
+awk '/elif rs="\$\(_lanes_resume_in_flight / { skip = 2 } skip > 0 { skip--; next } { print }' "$SB" > "$MUT/lanes-q3h.sh"
+check "Q3h-a mutation removed the in-flight branch" "$(grep -c 'resuming after answer' "$MUT/lanes-q3h.sh" | tr -d ' ')" 0
+check "Q3h mutation: the answered lane reads stalled (the wave 7 incident)" \
+  "$(bash "$MUT/lanes-q3h.sh" lane-status "$RF2" --json 2>/dev/null | jq -r '.lanes[] | select(.lane == "L3") | .state')" stalled
+rm -rf "$QIB" "$LR2/L3.stream.log"
 check "Q4 host-denied spawn ⇒ blocked_launch with the reason" "$(lf L4 '.state + "|" + .reason')" "blocked_launch|auto-mode classifier denied the spawn"
 check "Q5 HELD launch ⇒ held_for_load" "$(lf L5 '.state + "|" + .held_for_load')" "held_for_load|load overloaded"
 check "Q6 never-launched lane ⇒ created" "$(lf L7 .state)" created
@@ -515,7 +543,7 @@ hasnt "AH1g running / held / created lanes are not events" "$out" "state L2"
 has "AH1h ends with the relay hint" "$(printf '%s\n' "$out" | tail -1)" "lane-wait: relay — show each question to the owner verbatim"
 has "AH1i a mixed batch also carries the state act hint" "$out" "lane-wait: act — handle each state line"
 check "AH2 the seen ledger records every printed key" "$(sort "$LWS" | tr '\n' ',')" "question L6 toolu_r1,state L1 died,state L3 stalled,state L4 blocked_launch,"
-# AH16 the Stop hook's classifier (_lanes_quick_state: no gh, no ci-slot, no stream log) names the same
+# AH16 the Stop hook's classifier (_lanes_quick_state: no gh, no ci-slot, a stream-log tail at most) names the same
 # state as lane-status for every live / attention state; the states past awaiting_input read `other`.
 ah16_full="$(bash "$S" lane-status "$RF2" --json 2>/dev/null | jq -r '.lanes[] | "\(.lane) \(.state)"' \
   | awk '{ s = $2; if (s !~ /^(answer_pending|blocked_launch|held_for_load|created|missing|running|awaiting_input)$/) s = "other"; print $1, s }')"

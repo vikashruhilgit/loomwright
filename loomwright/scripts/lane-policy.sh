@@ -11,9 +11,14 @@
 #             may answer it) or `human-only` (never answered by policy, whatever a policy file says).
 #             loomwright/docs/LANE_GATES.md mirrors it (regenerate the mirror with `catalog --markdown`);
 #             test-lane-policy.sh fails when the two differ. Every code is at most 12 characters (the
-#             ask tool's `header` limit, commands/dreaming.md). The engine asks an `allowed` gate with
-#             `header` = its code and the catalog's exact labels (a `(Recommended)` marker is allowed and
-#             stripped before comparison); a human-only gate is asked with NO code in its header.
+#             ask tool's `header` limit, commands/dreaming.md). The engine asks EVERY gate — `allowed`
+#             and human-only alike — with `header` = its code and the catalog's exact labels (a
+#             `(Recommended)` marker is allowed and stripped before comparison); `decide` never answers a
+#             human-only code, so the code only names the gate. A label ending in `?` is OPTIONAL: the
+#             ask offers either every label or only the non-`?` ones (LP-SAVE on a PASS that used the
+#             last Plan Review attempt: no attempt is left to Refine or Edit), never another subset; the
+#             `?` is not part of the label. check-gate-headers.sh fails an engine ask (prose or a
+#             next-step emitter) that names a gate without its code, or its code without its labels.
 #   wave-set  the per-wave owner answer set: writes <dir of parent_runfile>/<run_id>.wave-policy.json
 #             `{"schema_version":1,"run_id":…,"answers":{code:label},"set_at":…}` and one parent
 #             `## Progress` line `wave policy: <code>=<label>, …`. Refuses (exit 1, NOTHING written) a
@@ -36,7 +41,8 @@
 #             trailing newline.
 #   decide    prints `{"0":"<label>",…}` when EVERY question in the call has a catalog code (its
 #             `header`) whose policy is `allowed`, a single-select option list whose labels — with
-#             `(Recommended)` stripped — equal that code's catalog labels as a set, and a policy answer
+#             `(Recommended)` stripped — equal that code's catalog labels as a set (or, for a row with
+#             `?` labels, exactly its non-`?` labels), and a policy answer
 #             for that code. The printed label is the QUESTION'S OWN option label (marker included), so
 #             it passes automate-lanes.sh's `_lanes_validate_answers` unchanged. Otherwise — one
 #             uncoded / human-only / mismatched question, no policy, a malformed policy, a policy whose
@@ -94,7 +100,8 @@ _lp_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # THE GATE CATALOG — the ONE authority. One `_lp_row code policy labels purpose` per engine ask-tool
 # gate (the engine = /automate, /autonomous, and the Launch Pad, Supervisor and Product Owner flows
 # they inline). Labels are joined by `|`; no field may contain a tab, a newline or (outside labels) a
-# `|`. `(free text)` marks a gate whose answer is free-form — such a gate can never be `allowed`.
+# `|`. `(free text)` marks a gate whose answer is free-form — such a gate can never be `allowed`. A
+# trailing `?` marks an optional label (see `catalog` above); it is never part of the label itself.
 # Adding, removing or relabelling a row: regenerate loomwright/docs/LANE_GATES.md's table in the SAME
 # change (`lane-policy.sh catalog --markdown`), or test-lane-policy.sh fails.
 # ==================================================================================================
@@ -106,18 +113,18 @@ _lp_catalog_rows() {
     '/automate Queue confirm before processing (automate-loop SKILL §2 "--limit N")'
   _lp_row AUT-SUMMARY  allowed    'Keep summary|Drop summary' \
     '/automate keep or drop a LOW/INFO summary draft — summary drafts only (§6 dismissed-findings decision step and the PICK-time ask)'
-  _lp_row LP-SAVE      allowed    'Save and exit|Refine further|Edit sections|Discard' \
-    'Launch Pad Phase 6 save — carries this code ONLY on a Plan Review PASS with zero issues'
+  _lp_row LP-SAVE      allowed    'Save and exit|Refine further?|Edit sections?|Discard' \
+    'Launch Pad Phase 6 save on a Plan Review PASS with zero issues (Refine / Edit only while a review attempt is left)'
   _lp_row SUP-CHILDREN allowed    'proceed anyway|investigate|abort' \
     'Supervisor FINALIZE Point 5 children unsettled (async-orchestration SKILL)'
   _lp_row AUT-SOURCE   human-only '(free text)' \
     'bare /automate: what do you want to automate?'
   _lp_row AUT-PENDING  human-only 'Follow-up (keep draft)|Drop' \
     '/automate PICK-time decision on a per-finding dismissed draft'
-  _lp_row AUT-DISMISS  human-only 'Follow-up (keep draft)|Fix now on this PR|Drop' \
-    '/automate per-finding dismissed draft at the park, including fix-now'
-  _lp_row AUT-LEFTOVER human-only 'Clean up now|Keep and continue|Stop' \
-    '/automate close-out leftover gate (cleans up or deletes)'
+  _lp_row AUT-DISMISS  human-only 'Follow-up (keep draft)|Fix now on this PR?|Drop' \
+    '/automate per-finding dismissed draft at the park, including fix-now (offered only while a fix-now re-drain is available)'
+  _lp_row AUT-LEFTOVER human-only 'Clean up now?|Keep and continue|Stop' \
+    '/automate close-out leftover gate (cleans up or deletes; Clean up now is offered only when a cleanup is possible)'
   _lp_row AUT-WAIVE    human-only 'Waive this step|Keep parked' \
     '/automate READY park: waive a running-system Validation step validation-gate reports unrun (owner words from the answer note; cannot ask ⇒ stays escalated, validation_unrun)'
   _lp_row PO-ASSUME    human-only 'Proceed anyway|Refine requirements|Abort' \
@@ -128,10 +135,10 @@ _lp_catalog_rows() {
     'Launch Pad Phase 2 clarification'
   _lp_row LP-NO-GO     human-only 'Override and continue|Revise goal|Abort' \
     'Launch Pad Phase 2.5 feasibility NO-GO'
-  _lp_row LP-SAVE-NOTE human-only 'Save and exit|Refine further|Edit sections|Discard' \
-    'Launch Pad Phase 6 save on a Plan Review PASS that carries any issue or note (asked with no code)'
-  _lp_row LP-NEEDHUMAN human-only 'Override and save|Refine further|Discard' \
-    'Plan Review NEEDS_HUMAN, or any MEDIUM-or-higher finding'
+  _lp_row LP-SAVE-NOTE human-only 'Save and exit|Refine further?|Edit sections?|Discard' \
+    'Launch Pad Phase 6 save on a Plan Review PASS that carries any issue or note (Refine / Edit only while a review attempt is left)'
+  _lp_row LP-NEEDHUMAN human-only 'Override and save|Refine further?|Discard' \
+    'Plan Review NEEDS_HUMAN, or any MEDIUM-or-higher finding (Refine only while a review attempt is left)'
   _lp_row LP-EXEC-ACC  human-only 'approve-and-stamp|strip-cmd-bullets|discard' \
     'Launch Pad executable-acceptance stamp'
   _lp_row LP-RULE-OVR  human-only 'record-override|honor-rule|discard' \
@@ -178,10 +185,12 @@ lp_catalog() {
   esac
 }
 
-# _lp_catalog_json — {code: {policy, labels: [...], purpose}}.
+# _lp_catalog_json — {code: {policy, labels: [...], core: [...], purpose}}: `labels` every label with its
+# optional `?` marker removed, `core` only the labels that carry none (equal to `labels` on most rows).
 _lp_catalog_json() {
-  _lp_catalog_rows | jq -Rnc '[inputs | split("\t")
-    | {key: .[0], value: {policy: .[1], labels: (.[2] | split("|")), purpose: .[3]}}] | from_entries'
+  _lp_catalog_rows | jq -Rnc '[inputs | split("\t") | (.[2] | split("|")) as $l
+    | {key: .[0], value: {policy: .[1], labels: ($l | map(sub("\\?$"; ""))),
+        core: ($l | map(select(endswith("?") | not))), purpose: .[3]}}] | from_entries'
 }
 
 # _lp_sha256_str <text> — sha256 hex of <text> (no trailing newline added); empty when no hasher.
@@ -390,7 +399,8 @@ lp_decide() {
           elif $row.policy != "allowed" then null                     # THE POLICY CHECK (B9 mutation control)
           elif $q.multiSelect == true then null
           elif (($q.options | type) != "array") or any($q.options[]; (type != "object") or ((.label | type) != "string")) then null
-          elif ([$q.options[].label | strip] | sort) != ($row.labels | sort) then null
+          elif ([$q.options[].label | strip] | sort) as $ql
+            | ($ql != ($row.labels | sort)) and ($ql != ($row.core | sort)) then null   # the full set or its core
           else ($pol[$h] // null) as $ans
             | if (($ans | type) != "string") or (any($row.labels[]; . == $ans) | not) then null
               else [$q.options[].label | select(strip == $ans)] as $m

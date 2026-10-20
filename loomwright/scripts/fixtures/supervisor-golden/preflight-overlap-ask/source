@@ -1,2 +1,2 @@
 synthetic: no kept run classified OVERLAP interactively (the gate's own PR, 2026-06-02-preflight-sync-gate, recorded no outcome block).
-Built from skills/preflight-sync/SKILL.md action 6: an OVERLAP report citing an open PR and a recent commit ⇒ the SUP-OVERLAP ask (human-only: header "", the catalog labels, cant_ask preflight_overlap_detected).
+Built from skills/preflight-sync/SKILL.md action 6: an OVERLAP report citing an open PR and a recent commit ⇒ the SUP-OVERLAP ask (human-only: header "SUP-OVERLAP", the catalog labels, cant_ask preflight_overlap_detected).

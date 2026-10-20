@@ -253,7 +253,7 @@ bhas "$A6A" '**(iii)**' && bhas "$A6A" "$CONFLICTS_H" && bhas "$A6A" 'copy it in
 P6="$(block "$LP" '^### Phase 6: REFINE & SAVE' '^### Phase 7')"
 A2B="$(block "$LP" '^2b\. \*\*House-rule override NEEDS_HUMAN' '^3\. If Plan Review returned PASS')"
 [ -n "$A2B" ] && ok "Phase 6 action 2b present" || no "Phase 6 action 2b missing"
-for s in '`record-override`' '`honor-rule`' '`discard`' 'rule_conflict_non_interactive' '**Never author an override.**' '`LP-RULE-OVR`'; do
+for s in '`record-override`' '`honor-rule`' '`discard`' 'rule_conflict_non_interactive' '**Never author an override.**' '`header: "LP-RULE-OVR"`'; do
   bhas "$A2B" "$s" && ok "2b names $s" || no "2b lacks $s"
 done
 bhas "$P6" 'rule_conflict_non_interactive' && ok "Phase 6 names rule_conflict_non_interactive" || no "Phase 6 status"
