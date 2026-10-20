@@ -1196,7 +1196,10 @@ thread in its group is interest-skipped (exit 5) and posts nothing. A
 `warn` / `fail` opens or comments. A failure after the close opens a new
 thread. Pinned by `scripts/test-script-event-telemetry.sh` S3.
 
-**What the migration reports.** A failing step's code. When the A/B check
+**What the migration reports.** A failing step's code. A `protect --waive` that
+records the owner's waiver exits 0 but reports `warn` with code `protect_waived`
+(never a `pass`, which would close the step's threads as healed; the reason
+text is never sent); a later `protect --verify` PASS closes that thread. When the A/B check
 itself fails it adds the `a` / `u` / `b` / `extra_owner_decision` counts and
 the KIND counts of the paths each side holds alone and of the paths whose
 blobs differ (`kinds.b_only.dismissed-decisions = 3` is the 2026-10-13
