@@ -157,7 +157,9 @@ pipefail_edges() {
       rest = l
       while (match(rest, /(^|[ \t;&(])[A-Za-z_][A-Za-z0-9_]*=/)) {
         nm = substr(rest, RSTART, RLENGTH - 1); sub(/^[ \t;&(]/, "", nm)
-        rest = substr(rest, RSTART + RLENGTH); asg[nm] = asg[nm] " " rest
+        rest = substr(rest, RSTART + RLENGTH); r = rest
+        if (match(r, /;|&&|\|\|/)) r = substr(r, 1, RSTART - 1)   # this assignment only, not the next one
+        asg[nm] = asg[nm] " " r
       }
       rest = l
       while (match(rest, /(^|[;&|({!]|then[ \t]|do[ \t]|else[ \t])[ \t]*(\.|source)[ \t]+/)) {
@@ -323,11 +325,13 @@ PR3="$T/prod"; S3="$PR3/loomwright/scripts"; mkdir -p "$S3/entry.d" "$S3/lone.d"
 # a literal `. x.sh` source, a `. "$VAR"` source resolved through its assignment, a glob-named source
 # (provider-$NAME.sh), and a two-hop chain — all sourced, directly or not, by pipefail scripts
 { echo 'set -o pipefail'; echo '. "$HERE/lib-literal.sh"'; echo 'LIB="${OVERRIDE:-$HERE/lib-var.sh}"'
-  echo '[ -r "$LIB" ] && . "$LIB"'; echo 'PF="$HERE/provider-$NAME.sh"'; echo '. "$PF"'; } > "$S3/sourcer.sh"
+  echo '[ -r "$LIB" ] && . "$LIB"'; echo 'PF="$HERE/provider-$NAME.sh"'; echo '. "$PF"'
+  echo 'A="$HERE/lib-a.sh"; B="$HERE/lib-b.sh"'; echo '. "$A"'; } > "$S3/sourcer.sh"
 { echo '. "$(dirname "$0")/lib-hop2.sh"'; printf 'cat "$f" %s grep -q a\n' "$P"; } > "$S3/lib-literal.sh"
 printf 'jq -r .x "$f" %s grep -qx true\n' "$P" > "$S3/lib-var.sh"
 printf 'cut -f1 "$f" %s grep -qxF -- k\n' "$P" > "$S3/provider-claude.sh"
 printf 'sort "$f" %s grep -qF z\n' "$P" > "$S3/lib-hop2.sh"
+: > "$S3/lib-a.sh"; : > "$S3/lib-b.sh"   # only A is sourced; B, assigned on the same line, is not
 # NOT under pipefail: a script that never sets it (one that only names it in a comment or a string),
 # a lib only it sources, a module of an entry point without pipefail, and a `set +o pipefail` line
 { echo '# deliberately no pipefail here'; echo 'echo "set -uo pipefail" > "$gen"'; echo '. "$HERE/lib-lone.sh"'
@@ -338,14 +342,15 @@ echo ': no pipefail' > "$S3/lone.sh"; printf 'tail -n 5 "$f" %s grep -q a\n' "$P
 r3=(loomwright/scripts/entry.sh loomwright/scripts/entry.d/launch.sh loomwright/scripts/planted.sh
     loomwright/scripts/procsub.sh loomwright/scripts/sourcer.sh loomwright/scripts/lib-literal.sh
     loomwright/scripts/lib-var.sh loomwright/scripts/provider-claude.sh loomwright/scripts/lib-hop2.sh
+    loomwright/scripts/lib-a.sh loomwright/scripts/lib-b.sh
     loomwright/scripts/nopf.sh loomwright/scripts/lib-lone.sh loomwright/scripts/lone.sh
     loomwright/scripts/lone.d/mod.sh loomwright/scripts/plusopf.sh)
 scope3="$(pipefail_scope "$PR3" "${r3[@]}")"
 in_scope() { grep -qxF -- "loomwright/scripts/$1" <<<"$scope3"; }
-for c in entry.sh entry.d/launch.sh planted.sh procsub.sh sourcer.sh lib-literal.sh lib-var.sh provider-claude.sh lib-hop2.sh; do
+for c in entry.sh entry.d/launch.sh planted.sh procsub.sh sourcer.sh lib-literal.sh lib-var.sh provider-claude.sh lib-hop2.sh lib-a.sh; do
   in_scope "$c" && ok "rule 3 scope includes $c" || no "rule 3 scope MISSES $c — scope: $(tr '\n' ' ' <<<"$scope3")"
 done
-for c in nopf.sh lib-lone.sh lone.sh lone.d/mod.sh plusopf.sh; do
+for c in nopf.sh lib-lone.sh lone.sh lone.d/mod.sh plusopf.sh lib-b.sh; do
   in_scope "$c" && no "rule 3 scope wrongly includes $c (it never runs under pipefail)" || ok "rule 3 scope excludes $c"
 done
 scope3_a=(); while IFS= read -r rel; do scope3_a+=("$rel"); done <<<"$scope3"
