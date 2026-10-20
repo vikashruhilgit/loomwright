@@ -528,7 +528,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
           [ -f "$lg" ] || continue
           if grep -qF -- "$pr" "$lg" 2>/dev/null \
              && { grep -qF -- '--no-auto-review' "$lg" 2>/dev/null \
-                  || { grep -F -- 'auto_review' "$lg" 2>/dev/null | grep -qF -- 'false'; }; }; then
+                  || grep -qF -- 'false' < <(grep -F -- 'auto_review' "$lg" 2>/dev/null); }; then
             reason="opted_out"; break
           fi
         done < <(find "$LOGS_DIR" -maxdepth 1 -type f -name 'review-pr-dispatch-*.log' 2>/dev/null)

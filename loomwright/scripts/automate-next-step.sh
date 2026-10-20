@@ -2024,9 +2024,9 @@ ns_died_open_pr() {
 ns_429_hint() { # <payload session id> <row ts> — the closest-preceding STOP_FAILURE line of that session names a 429
   local f="$ROOT/.supervisor/logs/failures.log"
   [ -f "$f" ] || return 1
-  "$JQ" -Rn --arg s "$1" --arg t "$2" '[inputs | (capture("^\\[(?<ts>[0-9TZ:.-]+)\\] STOP_FAILURE (?<p>.*)$")? // empty)
+  grep -qx true < <("$JQ" -Rn --arg s "$1" --arg t "$2" '[inputs | (capture("^\\[(?<ts>[0-9TZ:.-]+)\\] STOP_FAILURE (?<p>.*)$")? // empty)
       | .p = (.p | fromjson? // null) | select(.p != null and (.p.session_id // "") == $s and .ts <= $t)]
-      | last | ((.p.last_assistant_message // "") | tostring | test("429"))' "$f" 2>/dev/null | grep -qx true
+      | last | ((.p.last_assistant_message // "") | tostring | test("429"))' "$f" 2>/dev/null)
 }
 ns_rate_limit() {
   local pts log rows cls="" hint="" reason rts csid skip=""
@@ -2381,7 +2381,7 @@ ns_validation() {
     esac
   fi
   # already passed in this tail segment (a crash after the append, or a golden case starting here)
-  if ns_tail_lines | grep -qE '^- (validation-gate: (none|ok|waived) — )'; then ns_after_validation; return 0; fi
+  if grep -qE '^- (validation-gate: (none|ok|waived) — )' < <(ns_tail_lines); then ns_after_validation; return 0; fi
   ns_validation_judge "$(bash "$H" validation-gate "$RF" "$ITEM" "$PR" 2>/dev/null | tail -n 1)"
 }
 
@@ -2821,7 +2821,7 @@ EOF
 # step: checkoff — CHECK OFF + PROGRESS (a closeout may already have checked the row)
 # ================================================================================================
 ns_checkoff() {
-  if ns_section '## Queue' | grep -qxF -- "- [ ] $ITEM"; then
+  if grep -qxF -- "- [ ] $ITEM" < <(ns_section '## Queue'); then
     ns_call_writer queue-checkoff "$RF" "$ITEM" || return 1
   fi
   local n; n="$(bash "$H" remaining "$RF" 2>/dev/null | tail -n 1)"
