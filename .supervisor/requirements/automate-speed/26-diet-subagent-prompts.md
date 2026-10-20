@@ -80,3 +80,9 @@ loomwright/agents/worker.md
 loomwright/docs/rationale/subagents.md
 loomwright/docs/prompt-token-budgets.json
 changelog.d/as26-diet-subagent-prompts.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-20T14:29:24Z
+- **Brief:** .supervisor/jobs/done/2026-10-20-as26-diet-subagent-prompts.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/634
