@@ -4,7 +4,7 @@
   "proxy_label": "proxy tokens (bytes/4 — offline proxy, not an exact Anthropic count)",
   "raise_rule": "Raise a ceiling in the SAME PR that breaches it: edit budget here and its mirror row in the same edit, and set note to a ONE-line reason (under 200 chars). History goes to CHANGELOG.md (agents: also the ARCHITECTURE_CONTRACTS.md raise log), never into note. A new skill dir or command doc starts at measured + ~10%.",
   "agents": {
-    "code-reviewer": {"budget": 27563, "measured": 17704, "note": "Live 27473->17704 (automate-speed/26): prompt diet, 4 preloads moved to on-demand Reads. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
+    "code-reviewer": {"budget": 27563, "measured": 17681, "note": "Live 27473->17681 (automate-speed/26): prompt diet, 4 preloads moved to on-demand Reads. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "context-keeper": {"budget": 3818, "measured": 3471, "note": "Raised 3483->3818 (Fix 7, v15.18.0): record_review marked retained-but-uncalled. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
     "execute-manager": {"budget": 42568, "measured": 19283, "note": "Live 31405->19283 (automate-speed/26): prompt diet, state-management moved to an on-demand Read. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "launch-pad": {"budget": 50965, "measured": 46331, "note": "Raised 45940->50965 (#432 plan half): plan-time rule conflicts. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
