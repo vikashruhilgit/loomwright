@@ -708,5 +708,23 @@ print(1 if sys.argv[2] in touches_of({"source": sys.argv[2], "finding": ""}) els
     fi
   done
 fi
+
+# W-AS24 (automate-speed/24): `--verbose` is a no-op in every mode — the default and `--verbose` stdout
+# both equal the exact-bytes goldens captured by running the PRE-change plan-waves on the committed
+# fixture (fixtures/terse-output/plan-waves/: root/ = the items + list, <mode>.golden = stdout); the
+# `--touches` bytes lane-readiness reads stay unchanged.
+W_G="$HERE/fixtures/terse-output/plan-waves"
+for w_v in "" --verbose; do
+  for w_m in "max|$W_G/root/list|--max 2" "lint|$W_G/root/list|--lint" "touches|$W_G/root/q/04-d.md|--touches" "explain|$W_G/root/list|--max 2 --explain"; do
+    w_mn="${w_m%%|*}"; w_in="${w_m#*|}"; w_args="${w_in#*|}"; w_in="${w_in%%|*}"
+    # shellcheck disable=SC2086  # w_args / w_v are word lists on purpose
+    w_run "$W_G/root" "$H" "$w_in" $w_args $w_v
+    if [ "$W_RC" -eq 0 ] && [ -s "$W_G/$w_mn.golden" ] && [ "$W_OUT" = "$(cat "$W_G/$w_mn.golden")" ]; then
+      ok "W-AS24 plan-waves --$w_mn ${w_v:-(default)} equals the pre-change golden"
+    else
+      no "W-AS24 plan-waves --$w_mn ${w_v:-(default)} differs from $w_mn.golden (rc=$W_RC): $(printf '%s' "$W_OUT" | tr '\n' '|') err: $W_ERR"
+    fi
+  done
+done
 rm -rf "$W_T"
 

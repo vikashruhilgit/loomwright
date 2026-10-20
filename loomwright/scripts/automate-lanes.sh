@@ -63,9 +63,10 @@
 #        `drain-guard: unknown — <reason>` (fail SAFE)
 #   pick-guard <automate_dir>                            PICK guard: `ok` | `refuse: live_lane <run_id> <lane>`
 #   branch-check <lane_dir> <branch>                     remote branch-name check: prints the name to use
-#   lane-status [<parent_runfile>] [--json] [--watch] [--refresh-readiness] [--keep-awake]
-#        one line per lane: state, item, PR, progress, last 3 actions, question, CI slot, readiness,
-#        and its policy-answer digest (`policy: none answered` when no lane has one)
+#   lane-status [<parent_runfile>] [--json] [--watch] [--refresh-readiness] [--keep-awake] [--verbose]
+#        default: the header line plus one line per lane (state, item, PR, path); --verbose (and --watch)
+#        adds wave PRs, the policy-answer digest, steps, progress, last 3 actions, questions, CI slot,
+#        readiness, machine and keep-awake lines
 #   lane-status [<parent_runfile>] --inbox               every lane's pending HUMAN questions, one list,
 #        oldest asked_at first (a policy-answered question has an answer file, so it is not listed)
 #   lane-status [<parent_runfile>] --leaks [--snapshot]  Validation 5 leak check vs the wave-start snapshot

@@ -1,0 +1,6 @@
+q/01-a.md: Touches ok; Depends on ok
+q/02-b.md: Touches ok; Depends on ok
+q/03-c.md: Touches ok (declared unknown); Depends on ok
+q/04-d.md: Touches ok; Depends on ok
+1 of 4 items will run alone: q/03-c.md
+0 of 4 items depend on every earlier item: none
