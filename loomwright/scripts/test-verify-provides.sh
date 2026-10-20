@@ -96,10 +96,12 @@ ROOT="$TMP/root"
 mkdir -p "$ROOT/src" "$ROOT/a" "$ROOT/c" "$TMP/elsewhere" "$TMP/nojq"
 cd "$TMP/elsewhere" || exit 1     # cwd is NOT the root — every hit below proves --root
 
-# run <brief> <id> [extra args...] — stdout to $OUT, stderr to $ERR, exit code in $RC
+# run <brief> <id> [extra args...] — stdout to $OUT, stderr to $ERR, exit code in $RC. Passes
+# --verbose FIRST (the JSON object every consumer reads; also proves the arm sits before `*)`); the
+# terse default line has its own section below.
 OUT=""; ERR=""; RC=0
 run() {
-  OUT="$(bash "$SCRIPT" "$@" 2>"$TMP/stderr")"; RC=$?
+  OUT="$(bash "$SCRIPT" --verbose "$@" 2>"$TMP/stderr")"; RC=$?
   ERR="$(cat "$TMP/stderr")"
 }
 jq_get() { printf '%s' "$OUT" | jq -r "$1"; }
@@ -414,7 +416,7 @@ sed -e '/subtask_\[\^0-9\]\/) return 0$/d' \
     -e 's#subtask\[\[:space:\]_-\]\*\[0-9\]/#subtask[[:space:]_-]*[[:alnum:]]/#' "$SCRIPT" > "$MUTA"
 if cmp -s "$MUTA" "$SCRIPT"; then no "old-anchor mutant identical to original — control invalid (anchor_kind shape changed?)"
 else
-  MOUT="$(bash "$MUTA" "$TMP/briefG.md" 1 --root "$ROOT" 2>/dev/null)"
+  MOUT="$(bash "$MUTA" --verbose "$TMP/briefG.md" 1 --root "$ROOT" 2>/dev/null)"
   if [ "$(printf '%s' "$MOUT" | jq -r '.outputs_verified | length')" = "2" ]; then
     no "MUTATION CONTROL: brief G still parses with the pre-fix anchor rule — the G/1 assertion is vacuous"
   else ok "MUTATION CONTROL: the pre-fix anchor rule makes brief G lose its provides (G/1 is load-bearing)"; fi
@@ -516,7 +518,7 @@ if [ ! -s "$MUTQ" ]; then no "no-escape mutant is empty — control invalid"
 elif cmp -s "$MUTQ" "$SCRIPT"; then no "no-escape mutant identical to original — control invalid (escape-pair anchor line changed?)"
 elif ! bash -n "$MUTQ" 2>/dev/null; then no "no-escape mutant is not valid bash — control invalid"
 else
-  MOUT="$(bash "$MUTQ" "$TMP/briefQ.md" 1 --root "$ROOT" 2>/dev/null)"
+  MOUT="$(bash "$MUTQ" --verbose "$TMP/briefQ.md" 1 --root "$ROOT" 2>/dev/null)"
   if [ "$(printf '%s' "$MOUT" | jq -r '.outputs_verified[0].status')" = "missing" ]; then
     ok "MUTATION CONTROL: dropping the escape handling turns the \\\" case missing (Q/1 is load-bearing)"
   else no "MUTATION CONTROL: the \\\" case still passes without escape handling — Q/1 is vacuous: $MOUT"; fi
@@ -563,15 +565,44 @@ elif parser_exits_ok "$MUTP"; then no "MUTATION CONTROL: parser guard still pass
 else ok "MUTATION CONTROL: restoring the bare 'exit 0' in the --root branch makes the parser guard fail"; fi
 
 echo "--- script: jq-less path (jq off PATH) ---"
-NOJQ_OUT="$(PATH="$TMP/nojq" "$BASH" "$SCRIPT" "$TMP/briefA.md" 'ok-1_x' --root 2>/dev/null)"
+NOJQ_OUT="$(PATH="$TMP/nojq" "$BASH" "$SCRIPT" --verbose "$TMP/briefA.md" 'ok-1_x' --root 2>/dev/null)"
 [ "$NOJQ_OUT" = '{"subtask_id":"ok-1_x","status":"unverifiable","reason":"bad_args","source":"verify-provides.sh"}' ] && ok "jq-less + dangling --root ⇒ templated bad_args object (same shape as jq_missing)" || no "jq-less bad_args: $NOJQ_OUT"
-NOJQ_OUT="$(PATH="$TMP/nojq" "$BASH" "$SCRIPT" "$TMP/briefA.md" 'a"b' --root "$ROOT" 2>"$TMP/stderr")"; NOJQ_RC=$?
+NOJQ_OUT="$(PATH="$TMP/nojq" "$BASH" "$SCRIPT" --verbose "$TMP/briefA.md" 'a"b' --root "$ROOT" 2>"$TMP/stderr")"; NOJQ_RC=$?
 [ "$NOJQ_RC" -eq 0 ] && ok "jq-less: exit 0" || no "jq-less exit $NOJQ_RC"
 [ "$NOJQ_OUT" = '{"status":"unverifiable","reason":"jq_missing","source":"verify-provides.sh"}' ] && ok "jq-less + id containing '\"' ⇒ literal object with NO subtask_id key" || no "jq-less object: $NOJQ_OUT"
 printf '%s' "$NOJQ_OUT" | jq -e . >/dev/null 2>&1 && ok "jq-less object is valid JSON" || no "jq-less object not JSON"
 case "$(cat "$TMP/stderr")" in *jq_missing*) ok "jq_missing reason on stderr" ;; *) no "jq-less stderr lacks reason" ;; esac
-NOJQ_OUT="$(PATH="$TMP/nojq" "$BASH" "$SCRIPT" "$TMP/briefA.md" 'ok-1_x' 2>/dev/null)"
+NOJQ_OUT="$(PATH="$TMP/nojq" "$BASH" "$SCRIPT" "$TMP/briefA.md" 'ok-1_x' --verbose 2>/dev/null)"
 [ "$NOJQ_OUT" = '{"subtask_id":"ok-1_x","status":"unverifiable","reason":"jq_missing","source":"verify-provides.sh"}' ] && ok "jq-less + allowlisted id ⇒ subtask_id carried" || no "jq-less allowlisted: $NOJQ_OUT"
+NOJQ_OUT="$(PATH="$TMP/nojq" "$BASH" "$SCRIPT" "$TMP/briefA.md" 'ok-1_x' 2>/dev/null)"; NOJQ_RC=$?
+[ "$NOJQ_RC" -eq 0 ] && [ "$NOJQ_OUT" = 'verify-provides: subtask ok-1_x unverifiable — present 0/0, reason jq_missing' ] && ok "jq-less default ⇒ ONE summary line naming jq_missing, exit 0" || no "jq-less default: rc=$NOJQ_RC $NOJQ_OUT"
+
+echo "--- script: terse default vs --verbose (as24) ---"
+# fixtures/terse-output/verify-provides/: a committed brief + root, and the --verbose / --parse-only /
+# --kind-table goldens captured by running the PRE-change script from that directory with `--root root`
+# (relative, so check_run is stable). --verbose must reproduce those bytes in either position.
+TOF="$HERE/fixtures/terse-output/verify-provides"
+tof() { ( cd "$TOF" && bash "$SCRIPT" "$@" 2>/dev/null ); }
+T_OUT="$(tof brief.md 1 --root root)"; T_RC=$?
+[ "$T_RC" -eq 0 ] && [ "$T_OUT" = 'verify-provides: subtask 1 gap — present 2/4, gap src/a.ts:Gone, src/absent.ts' ] && ok "default (gap) ⇒ ONE line: status gap, present 2/4, the outputs_gap verbatim, exit 0" || no "default gap line: rc=$T_RC '$T_OUT'"
+T_OUT="$(tof brief.md 2 --root root)"
+[ "$T_OUT" = 'verify-provides: subtask 2 verified — present 2/2' ] && ok "default (all present) ⇒ ONE line: status verified, present 2/2, no gap clause" || no "default verified line: '$T_OUT'"
+T_OUT="$(tof brief.md 9 --root root)"; T_RC=$?
+[ "$T_RC" -eq 0 ] && [ "$T_OUT" = 'verify-provides: subtask 9 unverifiable — present 0/0, reason subtask_not_found' ] && ok "default (unverifiable) ⇒ ONE line naming reason subtask_not_found, exit 0" || no "default unverifiable line: rc=$T_RC '$T_OUT'"
+T_OUT="$(tof brief.md 1 --root)"
+[ "$T_OUT" = 'verify-provides: subtask 1 unverifiable — present 0/0, reason bad_args' ] && ok "default (dangling --root) ⇒ ONE line naming reason bad_args" || no "default bad_args line: '$T_OUT'"
+for g in gap:1 verified:2 not-found:9; do
+  gn="${g%%:*}"; gi="${g#*:}"
+  tof --verbose brief.md "$gi" --root root | cmp -s - "$TOF/verbose-$gn.golden" && ok "--verbose FIRST (before the brief path) ⇒ byte-identical to the pre-change golden ($gn)" || no "--verbose first differs from verbose-$gn.golden: $(tof --verbose brief.md "$gi" --root root)"
+  tof brief.md "$gi" --root root --verbose | cmp -s - "$TOF/verbose-$gn.golden" && ok "--verbose LAST ⇒ byte-identical to the pre-change golden ($gn)" || no "--verbose last differs from verbose-$gn.golden"
+done
+tof --verbose brief.md 1 --root | cmp -s - "$TOF/verbose-bad-args.golden" && ok "--verbose + dangling --root ⇒ byte-identical to the pre-change bad_args golden" || no "--verbose bad_args differs from golden"
+T_ERR="$( cd "$TOF" && bash "$SCRIPT" --verbose brief.md 1 --root root 2>&1 >/dev/null )"
+case "$T_ERR" in *"unexpected argument"*) no "--verbose was read as a positional argument: $T_ERR" ;; *) ok "--verbose is never read as the brief path or the id (no 'unexpected argument' on stderr)" ;; esac
+for v in "" --verbose; do
+  tof $v brief.md 1 --parse-only | cmp -s - "$TOF/parse-only.golden" && ok "--parse-only ${v:+(with --verbose) }unchanged vs the pre-change golden" || no "--parse-only ${v} changed: $(tof $v brief.md 1 --parse-only)"
+  tof $v --kind-table | cmp -s - "$TOF/kind-table.golden" && ok "--kind-table ${v:+(with --verbose) }unchanged vs the pre-change golden" || no "--kind-table ${v} changed"
+done
 
 echo "--- script: --kind-table ---"
 KT="$(bash "$SCRIPT" --kind-table)"

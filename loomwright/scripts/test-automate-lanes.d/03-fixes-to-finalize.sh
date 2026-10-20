@@ -775,13 +775,13 @@ out="$(qhook "$L82" toolu_p8 "$QR" | bash "$S" relay-hook)"
 check "AD10 a second allowed gate is answered too" "$(hso '.updatedInput.answers["Resume the run?"]' "$out")" Continue
 jq -c '.at = "2026-10-10T01:00:00Z"' "$L82/.supervisor/inbox/answers/toolu_p1.json" > "$T/ad.a" && mv "$T/ad.a" "$L82/.supervisor/inbox/answers/toolu_p1.json"
 jq -c '.at = "2026-10-10T02:00:00Z"' "$L82/.supervisor/inbox/answers/toolu_p8.json" > "$T/ad.a" && mv "$T/ad.a" "$L82/.supervisor/inbox/answers/toolu_p8.json"
-out="$(run lane-status "$RF8")"
-has "AD11 lane-status: one policy digest line for the lane with policy answers (B7)" "$out" \
+out="$(run lane-status "$RF8" --verbose)"
+has "AD11 lane-status --verbose: one policy digest line for the lane with policy answers (B7)" "$out" \
   "    policy: 2 answered by policy since 2026-10-10T01:00:00Z — last AUT-RESUME → Continue 2026-10-10T02:00:00Z"
 hasnt "AD11b … and no 'none answered' header while a lane has one" "$out" "policy: none answered"
 check "AD11c --json carries the digest" "$(run lane-status "$RF8" --json | jq -c '.lanes[] | select(.lane == "L2") | .policy | [.answered, .first_at, .last_gate, .last_label]')" \
   '[2,"2026-10-10T01:00:00Z","AUT-RESUME","Continue"]'
-check "AD11d no lane with a policy answer ⇒ the header line 'policy: none answered'" "$(run lane-status "$RF" | sed -n 2p)" "policy: none answered"
+check "AD11d no lane with a policy answer ⇒ the header line 'policy: none answered'" "$(run lane-status "$RF" --verbose | sed -n 2p)" "policy: none answered"
 # A lane holds ONE pending call: L2 asked p2–p7 unanswered, then p8, and each newly recorded question
 # superseded the one before it (a policy-answered p8 is still a newer question). The multi-question call is L3's own.
 check "AD12g L2's unanswered p2–p7 were each superseded by the next question it asked (records kept)" \

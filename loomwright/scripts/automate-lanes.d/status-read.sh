@@ -652,12 +652,17 @@ _lanes_status_doc() {
       memory_pressure: ($mp == "true"), keep_awake_suggestion: (if $hint == "" then null else $hint end), lanes: .}'
 }
 
+# _LANES_RENDER_HEAD — jq defs for the header line (hdr) and each lane's first line (lane1), shared by
+# the full plain view (_lanes_render, `lane-status --verbose` / `--watch`) and the terse default
+# (_lanes_render_terse), so the two views cannot word those lines two ways.
+_LANES_RENDER_HEAD='def hdr: "lane-status: \(.parent_run_id) — \(.lanes | length) lane(s) — \(.generated_at)\(if .run_started_at != null then " — started \(.run_started_at)" else "" end)";
+  def lane1: "\(.lane)  \(.state)\(if .outcome != null and .outcome != .state then " — " + .outcome else "" end)\(if .reason != "" then " (" + .reason + ")" else "" end)  item=\(.item)  pr=\(.pr // "-")\(if .ended_at != null then "  ended=" + .ended_at else "" end)  path=\(.path)";'
 _lanes_render() { # <status JSON> — the plain view
-  jq -r '"lane-status: \(.parent_run_id) — \(.lanes | length) lane(s) — \(.generated_at)\(if .run_started_at != null then " — started \(.run_started_at)" else "" end)",
+  jq -r "$_LANES_RENDER_HEAD"' hdr,
     ((.waves // [])[] | "wave\(if .wave != null then " " + (.wave | tostring) else "" end) PR: \(.pr)  branch=\(.branch)\(if .built_at != null then "  built " + .built_at else "" end)\(if .state != null then "  " + .state else "" end)\(if (.lanes // []) != [] then "  lanes " + (.lanes | join(",")) else "" end)"),
     (if all(.lanes[]; .policy == null) then "policy: none answered" else empty end),
     (if .next_wave != null then "wave \(.next_wave.wave) (not built yet): lanes \(.next_wave.lanes | join(","))" else empty end),
-    (.lanes[] | "\(.lane)  \(.state)\(if .outcome != null and .outcome != .state then " — " + .outcome else "" end)\(if .reason != "" then " (" + .reason + ")" else "" end)  item=\(.item)  pr=\(.pr // "-")\(if .ended_at != null then "  ended=" + .ended_at else "" end)  path=\(.path)",
+    (.lanes[] | lane1,
       (if .policy != null then "    policy: \(.policy.answered) answered by policy\(if .policy.answered > 1 and .policy.first_at != null then " since " + .policy.first_at else "" end) — last \(.policy.last_gate // "?") → \(.policy.last_label) \(.policy.last_at // "unknown")" else empty end),
       (if .timeline != null then "    steps: \([.timeline as $t | .timeline.steps[] | if .state == "done" then .name + " ✓" elif .state == "pending" then .name
           else "[\($t.label // .name)\(if .duration_s != null then " " + ((.duration_s / 60 | floor | tostring) + "m") else "" end) \(.state)]" end] | join(" · "))\(if .started_at != null then "  (started \(.started_at))" else "" end)" else empty end),
@@ -676,6 +681,10 @@ _lanes_render() { # <status JSON> — the plain view
     (if .keep_awake_suggestion != null and (if .machine | has("keep_awake_lasting") then .machine.keep_awake_lasting else .machine.keep_awake == "held" end) != true
      then "keep-awake suggestion (run it yourself, or lane-status --keep-awake): \(.keep_awake_suggestion) — a closed lid still sleeps" else empty end)' <<<"$1"
 }
+# _lanes_render_terse <status JSON> — lane-status's default view: the header line, then each lane's first
+# line; every other _lanes_render line (wave PRs, policy, next wave, steps, questions, readiness,
+# machine, keep-awake status) needs `--verbose` (questions: `--inbox`).
+_lanes_render_terse() { jq -r "$_LANES_RENDER_HEAD"' hdr, (.lanes[] | lane1)' <<<"$1"; }
 
 # _lanes_resources <primary> <parent> — the latest fleet.log line per lane plus the wave's peak.
 _lanes_resources() {

@@ -366,9 +366,31 @@ kill -TERM "$L1C" 2>/dev/null; wait_gone "$LR2/L1"
 J="$(sj)"
 check "Q8 killed lane (no terminal result) ⇒ died" "$(lf L1 .state)" died
 check "Q9 the other lane is unchanged (running)" "$(lf L2 .state)" running
-out="$(run lane-status "$RF2")"
+out="$(run lane-status "$RF2")"; rc=$?
 has "Q10 plain view: one line per lane with state and item" "$out" "L4  blocked_launch (auto-mode classifier denied the spawn)  item=reqs/a.md"
-has "Q10b plain view shows held for load" "$out" "held for load: load overloaded"
+# Q10c–Q10f (automate-speed/24): the DEFAULT plain view is terse — the header line plus each lane's first
+# line, nothing else; `--verbose` is the full _lanes_render view, and its header + lane lines are exactly
+# the default's (one shared jq def each, _LANES_RENDER_HEAD).
+vout="$(run lane-status "$RF2" --verbose)"
+check "Q10c default plain view = header + one line per lane (7 lanes), exit 0" \
+  "$rc:$(printf '%s\n' "$out" | wc -l | tr -d ' '):$(printf '%s\n' "$out" | sed 1d | grep -vc '^L[0-9][0-9]*  ' | tr -d ' '):$(printf '%s\n' "$out" | head -1 | grep -c "^lane-status: $PARENT2 — 7 lane(s) — ")" "0:8:0:1"
+check "Q10d the default's lane lines are the --verbose view's lane lines" "$(printf '%s\n' "$out" | sed 1d)" "$(printf '%s\n' "$vout" | grep '^L[0-9][0-9]*  ')"
+has "Q10b --verbose shows held for load" "$vout" "held for load: load overloaded"
+hasnt "Q10e the default drops the indented detail lines (held for load)" "$out" "    held for load:"
+hasnt "Q10f the default drops the machine line" "$out" "machine: state="
+# Q10g / Q10h: exact bytes — the committed fixture status document (fixtures/terse-output/lane-status/
+# status.json) rendered by the module's _lanes_render equals verbose.golden, captured from the PRE-change
+# (base ee3d7ea) _lanes_render on the same document; _lanes_render_terse equals default.golden.
+TG="$HERE/fixtures/terse-output/lane-status"
+tg_v="$( . "$HERE/automate-lanes.d/status-read.sh" && _lanes_render "$(cat "$TG/status.json")"; echo x)"
+tg_d="$( . "$HERE/automate-lanes.d/status-read.sh" && _lanes_render_terse "$(cat "$TG/status.json")"; echo x)"
+check "Q10g --verbose renderer is byte-identical to the pre-change plain view (verbose.golden)" "$tg_v" "$(cat "$TG/verbose.golden"; echo x)"
+check "Q10h terse renderer = header + each lane's first line (default.golden)" "$tg_d" "$(cat "$TG/default.golden"; echo x)"
+check "Q10i default.golden is verbose.golden's header + lane lines" "$(cat "$TG/default.golden")" "$(sed -n '1p; /^L[0-9][0-9]*  /p' "$TG/verbose.golden")"
+# Q10j: unreadable status (every jq call fails ⇒ no status document) ⇒ the ONE fail-safe line, exit 0.
+mkdir -p "$T/nojq"; printf '#!/usr/bin/env bash\nexit 1\n' > "$T/nojq/jq"; chmod +x "$T/nojq/jq"
+out="$(PATH="$T/nojq:$PATH" run lane-status "$RF2")"; rc=$?
+check "Q10j unreadable status ⇒ one 'lane-status: unknown — status unreadable' line, exit 0" "$rc:$out" "0:lane-status: unknown — status unreadable"
 check "Q11 liveness is not redefined (one lanes_proc_alive)" "$(grep -c '^lanes_proc_alive()' "$SB")" 1
 out="$(run lane-status "$P/.supervisor/automate/none.md" --json)"; rc=$?
 check "Q12 no lane table ⇒ empty lanes, exit 0" "$rc:$(jq -r '.lanes | length' <<<"$out")" "0:0"
@@ -412,12 +434,12 @@ check "R15 question (first text) kept beside items" "$(lf L6 '.questions[0].ques
 check "R16 no ## Current branch ⇒ branch null" "$(lf L6 '.branch')" null
 
 # ---- S: keep-awake (suggest, never silently start) --------------------------------------------------
-out="$(run lane-status "$RF2")"
+out="$(run lane-status "$RF2" --verbose)"
 has "S1 macOS: one-line caffeinate suggestion with the coordinator pid" "$out" "caffeinate -i -w 4242"
 has "S2 keep-awake: not held" "$out" "keep-awake: not held"
 check "S3 no keep-awake process started without --keep-awake" "$(wc -l < "$CAFF_LOG" | tr -d ' ')" 0
-hasnt "S4 other OS: no suggestion" "$(LOOMWRIGHT_LANES_UNAME=Linux run lane-status "$RF2")" "caffeinate -i -w"
-out="$(STUB_CAFF_HELD=1 run lane-status "$RF2")"
+hasnt "S4 other OS: no suggestion" "$(LOOMWRIGHT_LANES_UNAME=Linux run lane-status "$RF2" --verbose)" "caffeinate -i -w"
+out="$(STUB_CAFF_HELD=1 run lane-status "$RF2" --verbose)"
 check "S5 holder seen ⇒ held, no suggestion" "$(printf '%s' "$out" | grep -c 'keep-awake: held'):$(printf '%s' "$out" | grep -c 'suggestion')" "1:0"
 out="$(run lane-status "$RF2" --keep-awake)"
 # The stub is started in the background: wait for its write, never a fixed sleep (the S6 flake, iq02 T07).
@@ -447,14 +469,14 @@ J="$(sj)"
 check "S7 Claude app assertion ⇒ held, not lasting, one claude-app holder (powerd's own hold ignored)" \
   "$(jq -r '.machine | "\(.keep_awake)|\(.keep_awake_lasting)|\([.keep_awake_holders[] | .process + ":" + .kind] | join(","))"' <<<"$J")" \
   "held|false|Claude:claude-app"
-out="$(run lane-status "$RF2")"
+out="$(run lane-status "$RF2" --verbose)"
 has "S8 plain view names the app hold and its limit" "$out" "keep-awake: held (Claude app — only while a Code session works)"
 has "S8b the app hold alone keeps the caffeinate suggestion" "$out" "keep-awake suggestion (run it yourself, or lane-status --keep-awake): caffeinate -i -w 4242"
 : > "$CAFF_LOG"; out="$(run lane-status "$RF2" --keep-awake)"
 wait_for_file_content "$CAFF_LOG" "caffeinate -i -w 4242" 15 || bad "S9 wait" "no caffeinate start with only the app hold"
 has "S9 --keep-awake still starts caffeinate when only the app holds" "$(cat "$CAFF_LOG")" "caffeinate -i -w 4242"
 pm_line 777 caffeinate PreventUserIdleSystemSleep 'caffeinate command-line tool' >> "$PMSET_OUT"
-J="$(sj)"; out="$(run lane-status "$RF2")"
+J="$(sj)"; out="$(run lane-status "$RF2" --verbose)"
 check "S10 a caffeinate assertion ⇒ lasting, no suggestion" \
   "$(jq -r .machine.keep_awake_lasting <<<"$J"):$(printf '%s' "$out" | grep -c 'suggestion')" "true:0"
 : > "$CAFF_LOG"; out="$(run lane-status "$RF2" --keep-awake)"
@@ -470,6 +492,11 @@ out="$(LOOMWRIGHT_LANES_WATCH_ITERATIONS=1 run lane-status "$RF2" --watch)"; rc=
 check "T1 --watch one iteration exits 0" "$rc" 0
 has "T1b frame header" "$out" "lane-status --watch"
 has "T1c frame carries the fleet" "$out" "L6  awaiting_input"
+# T1d / T1e (automate-speed/24): --watch keeps the FULL view (_lanes_watch passes --verbose on both
+# branches), with a runfile and without one (the newest lane table under the cwd's checkout).
+has "T1d --watch <runfile> shows the full view (machine line)" "$out" "machine: state="
+out="$(cd "$P" && LOOMWRIGHT_LANES_WATCH_ITERATIONS=1 bash "$S" lane-status --watch 2>&1)"; rc=$?
+check "T1e --watch with no runfile shows the full view (machine line), exit 0" "$rc:$(printf '%s\n' "$out" | grep -c '^machine: state=' | tr -d ' ')" "0:1"
 out="$(LOOMWRIGHT_LANES_WATCH_ITERATIONS=2 LOOMWRIGHT_LANES_WATCH_INTERVAL_S=0 run lane-status "$RF2" --watch)"
 check "T2 --watch refreshes" "$(printf '%s\n' "$out" | grep -c '^lane-status --watch')" 2
 
