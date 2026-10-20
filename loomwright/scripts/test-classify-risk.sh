@@ -9,7 +9,7 @@
 # Covers (AC3 / AC4 / AC5 / AC8 of brief 2026-09-13-high-risk-park-in-trusted-merge-gate):
 #   A. output contract — one JSON object, always exit 0, fixed key set, source field
 #   B. generic branches: (a) path match, (a) content-only match on an innocuous path, (b) workflow
-#      directory, (b) word, (c) size by lines (>400), (c) size by files (>15); a clean small diff ⇒
+#      directory (incl. a parts-only docs/command-parts/ edit), (b) word, (c) size by lines (>400), (c) size by files (>15); a clean small diff ⇒
 #      false with reasons []; reasons are prefixed + name the pattern; case-insensitive
 #   C. .agent/risk.json — `paths` glob (`**` across `/`) and `content` literal extend; malformed
 #      (string `paths`, non-object root, invalid JSON) ⇒ generic-only + `risk_json_malformed` on
@@ -71,6 +71,7 @@ mk_branch path-auth   'mkdir -p src/Auth && printf "x\n" > src/Auth/login.ts'
 mk_branch content-tok 'printf "const token = \"abc\";\n" >> src/utils/format.ts'
 mk_branch wf-dir      'mkdir -p .github/workflows && printf "on: push\n" > .github/workflows/ci.yml'
 mk_branch skills-dir  'mkdir -p loomwright/skills/x && printf "y\n" > loomwright/skills/x/SKILL.md'
+mk_branch parts-dir   'mkdir -p loomwright/docs/command-parts/setup && printf "y\n" > loomwright/docs/command-parts/setup/memory.md'
 mk_branch word-path   'mkdir -p docs; printf "z\n" > docs/Orchestration.md'
 mk_branch big-lines   'i=0; while [ $i -lt 401 ]; do printf "line %s\n" $i >> README.md; i=$((i+1)); done'
 mk_branch many-files  'mkdir -p docs; i=0; while [ $i -lt 16 ]; do printf "f\n" > "docs/f$i.md"; i=$((i+1)); done'
@@ -137,6 +138,13 @@ if [ "$(j '.high_risk')" = "true" ] && [ "$(jc '.reasons')" = "$(jq -nc '["path:
   ok "B5 (b) skills/ anywhere below the root (loomwright/skills/…) ⇒ true, one-line change is enough"
 else
   no "B5 skills-dir wrong ($OUT)"
+fi
+
+run main parts-dir
+if [ "$(j '.high_risk')" = "true" ] && [ "$(jc '.reasons')" = "$(jq -nc '["path: loomwright/docs/command-parts/setup/memory.md matched command-parts/"]')" ]; then
+  ok "B5b (b) a parts-only edit under docs/command-parts/ (split command text) ⇒ true, same as its router"
+else
+  no "B5b parts-dir wrong — a split command part must classify like commands/ ($OUT)"
 fi
 
 run main word-path

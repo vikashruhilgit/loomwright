@@ -13,7 +13,12 @@
 #                       recursively (a future references/ subfolder is measured,
 #                       never silently skipped). Loose files at the skills root
 #                       (SKILLS_INDEX.md, SKILL_TEMPLATE.md) are not skill dirs.
-#   .commands[<stem>] — a command doc's weight: <commands dir>/<stem>.md.
+#   .commands[<stem>] — a command doc's weight: <commands dir>/<stem>.md PLUS
+#                       every *.md under <command parts dir>/<stem>/, counted
+#                       recursively (a split command's on-demand parts — the
+#                       bytes a full read pays, automate-speed/22). No parts
+#                       dir = the router alone. A dir under the parts dir with
+#                       no <commands dir>/<name>.md is an orphan (ERROR).
 # Each table fails CLOSED on a breach, a missing entry, an orphaned entry, a
 # non-integer budget, and a missing or empty dir.
 #
@@ -63,6 +68,7 @@ cd "$repo_root"
 AGENTS_DIR="${TOKEN_BUDGET_AGENTS_DIR:-loomwright/agents}"
 SKILLS_DIR="${TOKEN_BUDGET_SKILLS_DIR:-loomwright/skills}"
 COMMANDS_DIR="${TOKEN_BUDGET_COMMANDS_DIR:-loomwright/commands}"
+COMMAND_PARTS_DIR="${TOKEN_BUDGET_COMMAND_PARTS_DIR:-loomwright/docs/command-parts}"
 BUDGET_JSON="${TOKEN_BUDGET_JSON:-loomwright/docs/prompt-token-budgets.json}"
 
 command -v jq >/dev/null 2>&1 || { echo "check-token-budget: jq required" >&2; exit 1; }
@@ -365,7 +371,33 @@ $(basename "$cmd_file" .md)"
   stem="$(basename "$cmd_file" .md)"
   seen_commands="$seen_commands
 $stem"
-  check_ceiling commands "$stem" "$(proxy_tokens "$cmd_file")" "$cmd_file"
+  total="$(proxy_tokens "$cmd_file")"
+  detail="$cmd_file"
+  # A split command's parts (automate-speed/22) are counted into its row through the
+  # same walker the skill dirs use (fail CLOSED on a symlink or an unreadable subtree).
+  parts="$COMMAND_PARTS_DIR/$stem"
+  if [ -L "$parts" ] || { [ -e "$parts" ] && [ ! -d "$parts" ]; }; then
+    printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "-" "-" "ERROR" "command parts path $parts is a symlink or not a directory — it cannot be measured"
+    errors=$((errors + 1))
+    exit_code=1
+    continue
+  elif [ -d "$parts" ]; then
+    weight="$(skill_weight "$parts")"; wrc=$?
+    if [ "$wrc" -eq 2 ]; then
+      printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "-" "-" "ERROR" "symlink under $parts cannot be measured (would be silently skipped): $(printf '%s' "$weight" | tr '\n' ' ')"
+      errors=$((errors + 1))
+      exit_code=1
+      continue
+    elif [ "$wrc" -ne 0 ]; then
+      printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "-" "-" "ERROR" "could not list the *.md files under $parts"
+      errors=$((errors + 1))
+      exit_code=1
+      continue
+    fi
+    total=$((total + ${weight% *}))
+    detail="$cmd_file + ${weight#* } part(s) under $parts/"
+  fi
+  check_ceiling commands "$stem" "$total" "$detail"
 done
 
 if [ "$command_count" -eq 0 ]; then
@@ -373,6 +405,19 @@ if [ "$command_count" -eq 0 ]; then
   exit 1
 fi
 check_orphans commands "$seen_commands" "command doc $COMMANDS_DIR/<stem>.md"
+
+# Orphaned parts dir: every dir under the parts dir must belong to a command doc, or its
+# bytes would be measured by no row at all (a silent under-count of the ratchet).
+for parts in "$COMMAND_PARTS_DIR"/*/; do
+  [ -d "$parts" ] || continue
+  parts="${parts%/}"
+  name="$(basename "$parts")"
+  if [ ! -f "$COMMANDS_DIR/$name.md" ]; then
+    printf "%-22s %8s %8s  %-6s  %s\n" "$name" "-" "-" "ERROR" "orphaned parts dir $parts/ — no $COMMANDS_DIR/$name.md, so no .commands row measures it"
+    errors=$((errors + 1))
+    exit_code=1
+  fi
+done
 
 # Mirror-table sync (mechanized — the ARCHITECTURE_CONTRACTS human mirror was
 # the one unguarded drift surface left; same move as check-skills-index-sync.sh

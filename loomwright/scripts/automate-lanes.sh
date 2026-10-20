@@ -83,6 +83,15 @@
 #        prints one `lane-wait: …` line per event and exits 0 — run it as a BACKGROUND
 #        command so its exit wakes the coordinator session to relay; read-only except its seen ledger
 #        and its liveness marker (the Stop hook guard-lane-wait-armed.sh reads the marker)
+#   phase-check                                          READ-ONLY, one line, exit 0: `phase-check: ok` |
+#        `phase-check: unavailable — <reason>` (fail CLOSED) — can this checkout run fresh phase sessions
+#   phase-launch <runfile> <launch-pad|supervisor|drain> --owner-command '<cmd>' --coordinator-session <sid>
+#        -- <phase prompt>                               one item phase as its own detached headless session;
+#        no owner command ⇒ BLOCKED (exit 3, no process)
+#   phase-wait <runfile> <phase> [--timeout S]           `phase-wait: done|running|question|died — …`
+#        (exit 0 / 3 / 5 / 6)
+#   phase-answer <runfile> <phase> <tool_use_id> --owner-command '<cmd>'   stdin: {"answers":{…},"note":"…"};
+#        validates like lane-answer, records, resumes the SAME session (phase.sh header: the whole contract)
 #
 # Files (all paths derived; nothing hard-coded):
 #   <lane>/.supervisor/lane.json        D2 marker — the ONE marker lane-create writes (plus the copied
@@ -189,7 +198,9 @@
 #
 # Failure posture: correctness gates (lane-remove refusals, pick-guard, init-check, launch authority,
 # origin-before-fetch, remote branch-name hit, validation-gate — anything unreadable reads `unrun`) fail
-# CLOSED; relay-hook outside a lane emits `{}`.
+# CLOSED; relay-hook outside a lane emits `{}`. With LOOMWRIGHT_PHASE_DIR set (a phase session's hook,
+# phase.sh) relay-hook records under that phase dir instead — never the lane inbox — and a value naming no
+# valid phase dir emits `{}`.
 # Every meta-sync call passes `--branch` explicitly (the mode line's branch).
 #
 # Observation (lane-status, lane-feed, lane-readiness) fails SAFE: an absent or unreadable source reads
@@ -241,6 +252,9 @@
 #    lanes_readiness (`lane-readiness`), lanes_validation_gate (`validation-gate`)
 # - wave.sh: _lanes_base_of … lanes_wave_plan — WAVE CLOSE: lanes_fleet_closeout (`fleet-closeout`),
 #    _lanes_wave_resolve (automate-wave.sh sources this file for it), lanes_wave_plan (`wave-plan`)
+# - phase.sh: _lanes_phase_ctx … lanes_phase_answer — fresh session per phase: lanes_phase_check
+#    (`phase-check`), lanes_phase_launch (`phase-launch`), lanes_phase_wait (`phase-wait`),
+#    lanes_phase_answer (`phase-answer`); the phase dir, the relay-hook settings, the spawn env
 # Every module is sourced by name at the position its code held when this was one file (the loader
 # below); the header, the config block, die, _lanes_usage, lanes_main and the direct-run guard stay
 # here. A "see the header in automate-lanes.sh" pointer to a function lands on its module above.
@@ -353,6 +367,9 @@ _lanes_source readiness || { return 1 2>/dev/null || exit 1; }
 # >>> automate-lanes.d/wave.sh
 _lanes_source wave || { return 1 2>/dev/null || exit 1; }
 # <<< automate-lanes.d/wave.sh
+# >>> automate-lanes.d/phase.sh
+_lanes_source phase || { return 1 2>/dev/null || exit 1; }
+# <<< automate-lanes.d/phase.sh
 _lanes_usage() { awk '/^# Usage \(standalone/ { on = 1 } on && /^#$/ { exit } on' "$SELF"; }
 
 lanes_main() {
@@ -378,6 +395,10 @@ lanes_main() {
     lane-wait) lanes_wait "$@" ;;
     fleet-closeout) lanes_fleet_closeout "$@" ;;
     wave-plan) lanes_wave_plan "$@" ;;
+    phase-check) lanes_phase_check "$@" ;;
+    phase-launch) lanes_phase_launch "$@" ;;
+    phase-wait) lanes_phase_wait "$@" ;;
+    phase-answer) lanes_phase_answer "$@" ;;
     _lane-run) lanes_run_wrapper "$@" ;;
     _merge-hooks) _lanes_merge_hooks "$@" ;;
     -h|--help|help) _lanes_usage ;;

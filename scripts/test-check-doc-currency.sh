@@ -16,6 +16,10 @@
 #   3. TWO vX.Y.Z TOKENS -> DRIFT [description-version-tokens], exit 1.
 #   4. Restoring the real <=400-char card on the copy -> PASS again (proves
 #      the drift above was the description, not fixture corruption).
+#   5. A stale `Loomwright vX.Y.Z` claim planted in a copied
+#      loomwright/docs/command-parts/agent-help/*.md part (the split /agent-help,
+#      automate-speed/22) -> DRIFT naming that part file, exit 1; removing it
+#      passes again.
 #
 # bash-3.2-safe: no mapfile, no associative arrays.
 
@@ -114,6 +118,29 @@ if [ "$RC4" -eq 0 ]; then
   ok "case 4: restoring the original description passes again"
 else
   no "case 4: restoring the original description should pass again (rc=$RC4): $(printf '%s' "$OUT4" | tail -5)"
+fi
+
+# ---- Case 5: a stale version claim inside an agent-help PART is reported ---
+# /agent-help's moved sections live in parts; the gate's FILES scan covers them.
+PART_REL=""
+for f in "$TMP"/loomwright/docs/command-parts/agent-help/*.md; do
+  [ -f "$f" ] && { PART_REL="${f#"$TMP"/}"; break; }
+done
+if [ -z "$PART_REL" ]; then
+  no "case 5: no loomwright/docs/command-parts/agent-help/*.md part in the copy — the leg cannot run (never read as clean)"
+else
+  cp "$TMP/$PART_REL" "$TMP/part.orig"
+  printf '\nLoomwright v0.0.1 is the current release.\n' >> "$TMP/$PART_REL"
+  OUT5="$(cd "$TMP" && bash scripts/check-doc-currency.sh 2>&1)"; RC5=$?
+  if [ "$RC5" -ne 0 ] && grep -qF "DRIFT [headline-version] $PART_REL:" < <(printf '%s' "$OUT5"); then
+    ok "case 5: a stale 'Loomwright v0.0.1' claim in $PART_REL FAILS with a DRIFT line naming that part"
+  else
+    no "case 5: a stale version claim in $PART_REL should fail with a DRIFT line naming it (rc=$RC5): $(printf '%s' "$OUT5" | grep DRIFT | head -3)"
+  fi
+  cp "$TMP/part.orig" "$TMP/$PART_REL"
+  OUT5B="$(cd "$TMP" && bash scripts/check-doc-currency.sh 2>&1)"; RC5B=$?
+  [ "$RC5B" -eq 0 ] && ok "case 5b: removing the planted claim passes again" \
+    || no "case 5b: removing the planted claim should pass again (rc=$RC5B): $(printf '%s' "$OUT5B" | tail -3)"
 fi
 
 echo

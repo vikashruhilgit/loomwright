@@ -64,7 +64,7 @@
     "workflow-management": {"budget": 4915, "measured": 4468, "note": "initial ceiling: measured + ~10% (as17)"}
   },
   "commands": {
-    "agent-help": {"budget": 23236, "measured": 21123, "note": "initial ceiling: measured + ~10% (as17)"},
+    "agent-help": {"budget": 25926, "measured": 23868, "note": "as22: router + parts = base + index/read-rule overhead (2690 proxy tokens)"},
     "automate": {"budget": 7565, "measured": 7302, "note": "re-measured for as08: the doc measures 7302, inside the 7565 ceiling set for as25 (#562) (6877 + ~10%); budget unchanged"},
     "autonomous": {"budget": 11846, "measured": 10769, "note": "initial ceiling: measured + ~10% (as17)"},
     "capability-check": {"budget": 6680, "measured": 6072, "note": "initial ceiling: measured + ~10% (as17)"},

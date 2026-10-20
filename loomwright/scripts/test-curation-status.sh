@@ -725,10 +725,11 @@ grep -qE '^exit 0$' "$PROBE" && ok "(j) the script ends on an explicit exit 0" |
 
 # ============================================================================
 echo "== (k) doc surfaces carry the wiring, the --force flag, and the 'unvalidated' label =="
-DREAM="$PLUGIN_ROOT/commands/dreaming.md"
+ASM="$SCRIPT_DIR/fixtures/automate-loop-split/assemble.sh"
+DREAM="$ROOT/dreaming-assembled.md"; bash "$ASM" "$PLUGIN_ROOT/commands/dreaming.md" "$DREAM" || no "(k) cannot assemble commands/dreaming.md (router + docs/command-parts/dreaming/)"
 INS="$PLUGIN_ROOT/commands/insights.md"
 PM="$PLUGIN_ROOT/commands/pr-postmortem.md"
-HELP="$PLUGIN_ROOT/commands/agent-help.md"
+HELP="$ROOT/agent-help-assembled.md"; bash "$ASM" "$PLUGIN_ROOT/commands/agent-help.md" "$HELP" || no "(k) cannot assemble commands/agent-help.md (router + docs/command-parts/agent-help/)"
 
 grep -qF 'curation-status.sh" record dreaming' "$DREAM" \
   && ok "(k) dreaming.md INVOKES curation-status.sh record dreaming" \
@@ -1067,7 +1068,7 @@ echo "== (o) the count names the WINDOW that will drain it, pinned to dreaming.m
 # GAP 1: v15.29.0 reported `pending=61 ready=yes` for a run whose --sessions
 # default consumes 5. The readiness gate and the consumption window lived in two
 # files with NOTHING asserting a relationship — this is that assertion.
-doc_window="$(grep -E '^\| `--sessions N` \|' "$PLUGIN_ROOT/commands/dreaming.md" 2>/dev/null \
+doc_window="$(grep -E '^\| `--sessions N` \|' "$DREAM" 2>/dev/null \
               | sed -E 's/^\|[^|]*\|[^|]*\| *`?([0-9]+)`? *\|.*/\1/' | head -1)"
 script_window="$(grep -E '^DREAMING_DEFAULT_WINDOW=[0-9]+' "$PROBE" 2>/dev/null \
                  | sed -E 's/^DREAMING_DEFAULT_WINDOW=([0-9]+).*/\1/' | head -1)"

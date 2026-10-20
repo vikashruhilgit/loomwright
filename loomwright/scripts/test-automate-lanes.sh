@@ -84,6 +84,13 @@
 #   AM superseded lane questions (L8, 2026-10-16): the lane abandons toolu_s1, re-asks toolu_s2 ⇒ s1 moves to
 #     questions/superseded/ naming s2 + one lane ## Progress line, lane-answer / --deliver-pending refuse s1 by
 #     name, the resume re-fire of s2 supersedes nothing, 0 pending and the lane reads its park + mutation control
+#   AN phase sessions (automate-speed/09, fresh session per phase): phase-check ok / unavailable + mutation;
+#     phase-launch BLOCKED without an owner command (no process) + mutation; the launch shape (lane flag list
+#     + --settings relay hook only, cwd = checkout, LOOMWRIGHT_PHASE_DIR / LOOMWRIGHT_RUN_LOCK_SESSION_ID set,
+#     holder pin unset); a phase question inside a LANE clone lands in the phase dir, never the lane inbox
+#     (+ mutation: phase branch deleted ⇒ `{}` and no file); phase-wait question (5) → phase-answer
+#     refusals + BLOCKED → resume of the SAME session → done (0); running (3) / died (6); a lane spawn
+#     strips both phase variables + one mutation each
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -133,7 +140,15 @@ fi
   printf 'ENV CEIL=%s CC=%s PID=%s OPTOUT=%s\n' "${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS-unset}" "${CLAUDECODE-unset}" "${CLAUDE_PID-unset}" "${LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS-unset}"
   printf 'HOLDERENV %s\n' "${LOOMWRIGHT_HOLDER_PID-unset}"
   printf 'STDIN %s\n' "$(cat)"; printf 'CWD %s\n' "$PWD"
-  printf 'RESUMEPATH %s\n' "${LOOMWRIGHT_LANE_RESUME_PATH-unset}"; } >> "$STUB_LOG"
+  printf 'RESUMEPATH %s\n' "${LOOMWRIGHT_LANE_RESUME_PATH-unset}"
+  printf 'PHASEENV dir=%s lock=%s\n' "${LOOMWRIGHT_PHASE_DIR-unset}" "${LOOMWRIGHT_RUN_LOCK_SESSION_ID-unset}"; } >> "$STUB_LOG"
+# STUB_HOOK_INPUT (AN group): stand in for the CLI firing the PreToolUse hook that `--settings` carries —
+# run its command with that hook JSON on stdin, in this process's environment, and log its reply.
+if [ -n "${STUB_HOOK_INPUT:-}" ]; then
+  prev=""; st=""; for a in "$@"; do [ "$prev" = --settings ] && st="$a"; prev="$a"; done
+  hc="$(printf '%s' "$st" | jq -r '.hooks.PreToolUse[0].hooks[0].command // empty' 2>/dev/null)"
+  printf 'HOOKOUT %s\n' "$( [ -n "$hc" ] && printf '%s' "$STUB_HOOK_INPUT" | bash -c "$hc" 2>&1)" >> "$STUB_LOG"
+fi
 if [ -n "${STUB_RESUME_FAIL:-}" ]; then
   for a in "$@"; do [ "$a" = --resume ] && { echo "No conversation found with session ID" >&2; exit 1; }; done
 fi
@@ -216,5 +231,6 @@ tal_part 02-readiness-to-convert && . "$HERE/test-automate-lanes.d/02-readiness-
 tal_part 03-fixes-to-finalize && . "$HERE/test-automate-lanes.d/03-fixes-to-finalize.sh"
 tal_part 04-fleet-closeout-to-optout && . "$HERE/test-automate-lanes.d/04-fleet-closeout-to-optout.sh"
 tal_part 05-timeline-and-gate && . "$HERE/test-automate-lanes.d/05-timeline-and-gate.sh"
+tal_part 06-phase-sessions && . "$HERE/test-automate-lanes.d/06-phase-sessions.sh"
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

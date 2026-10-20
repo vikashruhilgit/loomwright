@@ -227,12 +227,17 @@ region_verbs() {
 }
 
 REPO_ROOT="$(cd "$PLUGIN_ROOT/.." && pwd)"
+# agent-help.md is a router since automate-speed/22: its /rules entry lives in a part, so (h5)/(h6) read the
+# ASSEMBLED text (router + docs/command-parts/agent-help/), written once to a temp file.
+HELP_ASM="$(mktemp "${TMPDIR:-/tmp}/rules-docs-agent-help.XXXXXX")"; trap 'rm -f "$HELP_ASM"' EXIT
+bash "$HERE/fixtures/automate-loop-split/assemble.sh" "$PLUGIN_ROOT/commands/agent-help.md" "$HELP_ASM" \
+  || no "(h5) cannot assemble commands/agent-help.md (router + docs/command-parts/agent-help/)"
 region_verbs "$CMD"   '^description: Maintain the committed'        0 "(h1) commands/rules.md frontmatter description" 'substrate [^.]*project conventions' 
 region_verbs "$CMD"   '^> \*\*Reads code read-only on'              0 "(h2) commands/rules.md read-only/write callout"
 region_verbs "$CMD"   '^/rules list '                               8 "(h3) commands/rules.md Usage fence"
 region_verbs "$SKILL" 'Executing any .{0,3}/rules.{0,3} flow'       0 "(h4) skills/rules/SKILL.md When-to-Use verb list"
-region_verbs "$PLUGIN_ROOT/commands/agent-help.md" '^\*\*Purpose:\*\* Maintain the plugin.s first' 0 "(h5) agent-help.md /rules subcommand enumeration"
-region_verbs "$PLUGIN_ROOT/commands/agent-help.md" '^\*\*Usage:\*\* .?/rules list'                 0 "(h6) agent-help.md /rules usage line"
+region_verbs "$HELP_ASM"                          '^\*\*Purpose:\*\* Maintain the plugin.s first' 0 "(h5) agent-help.md /rules subcommand enumeration"
+region_verbs "$HELP_ASM"                          '^\*\*Usage:\*\* .?/rules list'                 0 "(h6) agent-help.md /rules usage line"
 region_verbs "$REPO_ROOT/README.md"                '\| \*\*Rules\*\* \(command\)'                  0 "(h7) README.md agent/command table row" '/rules \[[^]]*\]' 
 region_verbs "$REPO_ROOT/.claude-plugin/README.md" '^### /rules \['                                0 "(h8) .claude-plugin/README.md /rules heading"
 region_verbs "$REPO_ROOT/.claude-plugin/README.md" '^/rules list '                                 6 "(h9) .claude-plugin/README.md /rules usage fence"

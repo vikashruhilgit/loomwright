@@ -27,8 +27,21 @@
 #   automate-next-step.sh <runfile> [--start pick|run|drain] [--result <json> | --result-file <f>]
 #                         [--mode safe|auto-merge] [--non-interactive] [--trust-unprotected]
 #                         [--root <checkout>] [--session-id <sid>] [--notify] [--cheap]
-#                         [--max-tokens <N>]
+#                         [--max-tokens <N>] [--inline-phases] [--owner-command <cmd>]
 #   automate-next-step.sh --resume <automate_dir> [--run <run_id>|latest] --session-id <sid> [same flags]
+#   PHASES (automate-speed/09). By default each phase of an item — Launch Pad (`plan`), Supervisor (`run`)
+#   and the owned drain (`drain`) — is its own FRESH headless session: the spawn carries `"session":
+#   "fresh"`, its `phase`, the runnable `phase-launch` line (`launch`) and the sidecar the phase writes its
+#   result block to, and `then` names the phase-launch → phase-wait (→ ask + phase-answer) → `--result`
+#   loop. PICK first runs `phase-check` (`phase-guard`): anything but `ok` parks
+#   `phase_relay_unavailable`, nothing picked. `--inline-phases` (persisted for the item's tail, no off
+#   form) keeps today's inline `/autonomous` + inline drain: every instruction and run-file write is
+#   exactly the pre-09 one. `--owner-command <cmd>` (the /automate command the owner typed in this
+#   session; persisted for the item's tail, reused only by a call of the SAME --session-id) goes into each
+#   `launch` line as phase-launch's launch authority — without it the line has none and phase-launch
+#   refuses it (BLOCKED, exit 3). A re-printed pending fresh spawn's `launch` is rebuilt from the
+#   re-printing call's identity (its --session-id, else the stored one, and the owner command bound to
+#   that session id), never replayed from another session; the identity a re-print gives persists.
 #   Entry points: `--resume <automate_dir>` is every `/automate` start that may continue a run (a bare
 #   start: no `--run`; `/automate --resume`: `--run latest`; `/automate --resume <id>`: `--run <id>`):
 #   `closeout-others`, `resume-glob --finalize`, then the AUT-RESUME ask (or, without the ask, the
@@ -56,7 +69,8 @@
 #   "drain result reported" stays an entry too (back-compat): with nothing pending, a bare
 #   `--result '{"drain_result":"READY|ESCALATED",…}'` starts GATE. A call with no
 #   `--result` while an instruction is pending RE-PRINTS that instruction verbatim and writes nothing
-#   (idempotent); a `--result` answers the pending `ask` / `spawn`; a `--result` after a terminal
+#   (idempotent — a NEW --session-id / --owner-command it gives is persisted, and a fresh spawn's
+#   `launch` carries it; see PHASES); a `--result` answers the pending `ask` / `spawn`; a `--result` after a terminal
 #   `park` / `done` (or with nothing pending) starts the next item's tail — unless it is a REPLAY (the
 #   same drain report for the same item + PR), which re-prints the terminal instruction and writes
 #   nothing; a different report is accepted only while `## Current` reads `status: running` (the next
@@ -81,6 +95,8 @@
 #   pick        `--start pick`: the run-lock acquire FIRST (`run_lock_held` ⇒ park, nothing else touched;
 #               `run_lock_degraded` ⇒ one note), then `## Status: running`
 #   lane-guard  `pick-guard <automate_dir>`: anything but `ok` ⇒ the `live_lane` park
+#   phase-guard fresh phases only (no `--inline-phases`): `phase-check`: anything but `ok` (or a session
+#               id phase-launch cannot carry) ⇒ the `phase_relay_unavailable` park, lock released
 #   ceiling     `ceiling-check` when `--max-tokens` / `## Run Config` `max_tokens` is set: anything but
 #               `OK …` ⇒ the `token_ceiling` park
 #   meta-push   `meta-push-failed`: a non-empty answer is one `meta-push-failed:` line (a report, never a block)
@@ -94,11 +110,18 @@
 #   trail-gate  `trail-gate`: its line; `PARK — …` (or any unreadable answer) ⇒ the `trail_pr_open` park
 #   trail-unstage `trail-unstage`: its line
 #   picked      `current-set … --status running --pr null --branch null --pause-reason null` BEFORE the
-#               `<ts> picked <item>` line (no unchecked row ⇒ terminate), then RUN
+#               `<ts> picked <item>` line (no unchecked row ⇒ terminate), then RUN (fresh phases: `plan`)
+#   plan        fresh phases only: the Launch Pad phase spawn (`what: "launch pad phase"`); the pending
+#               briefs are snapshotted for the ls-diff fallback
+#   plan-result the Launch Pad report: `session_id <sid> (<item>) phase=launch-pad`, the LAUNCH_PAD_RESULT
+#               through validate-launch-pad-result.py --raw and /autonomous PLAN step 4's status mapping
+#               (+ the ls-diff fallback, the rubric-preservation check): saved ⇒ `launch-pad saved
+#               <brief>`, then RUN; anything else ⇒ the pinned no-PR line, then rate-limit (no RUN)
 #   run         `--start run`: `config-suppress` (malformed config ⇒ `config_malformed`, exit 2,
 #               nothing written), `auto_review_original` via `config-orig <config> <backup>` (into
 #               `## Run Config` when it differs), the `auto_review suppressed` line, the `/autonomous`
-#               spawn
+#               spawn (fresh phases: the Supervisor phase spawn on the saved brief; no brief recorded
+#               for this pass ⇒ `plan` first, nothing written)
 #   run-result  the RUN report: `config-restore` + the `auto_review restored` line — BEFORE any drain
 #               spawn (the suppress window wraps RUN only)
 #   run-record  the `session_id` line, `current-set … --pr --branch` BEFORE the `ran /autonomous → PR`
@@ -240,9 +263,14 @@ command -v "$JQ" >/dev/null 2>&1 || { ns_err "jq not on PATH"; exit 1; }
 # arguments
 # ------------------------------------------------------------------------------------------------
 RF=""; RESULT=""; MODE=""; NONINT=0; TRUST=""; ROOT=""; SID=""; have_result=0
-START=""; NOTIFY=0; CHEAP=0; MAXTOK=""; RESUME_DIR=""; RUN_SEL=""
+START=""; NOTIFY=0; CHEAP=0; MAXTOK=""; RESUME_DIR=""; RUN_SEL=""; INLINE=0; OWNER_CMD=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --inline-phases) INLINE=1; shift ;;
+    --owner-command)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || ns_die2 "--owner-command needs the /automate command the owner typed in this session"
+      case "$2" in *$'\n'*|*$'\r'*) ns_die2 "--owner-command must be one line" ;; esac
+      OWNER_CMD="$2"; shift 2 ;;
     --start)
       [ "$#" -ge 2 ] || ns_die2 "--start needs a value"
       case "$2" in pick|run|drain) START="$2" ;; *) ns_die2 "--start must be pick|run|drain: '$2'" ;; esac
@@ -390,6 +418,8 @@ ns_fixnow_reentered() {
 # on an unreadable one), so the driver and the park seam can never disagree on which park to write
 ns_lane() { [ -e "$ROOT/.supervisor/lane.json" ]; }
 ns_interactive() { [ "$NONINT" != 1 ]; }
+# fresh phase sessions (automate-speed/09) unless --inline-phases is in force for this item's tail
+ns_fresh() { [ "$INLINE" != 1 ]; }
 
 # the Progress lines of this item's tail segment: after the last drain marker line
 ns_tail_lines() {
@@ -556,7 +586,7 @@ ns_field_ok() {
 # …`) are that prefix by design, and /lanes files them under the drain step they belong to.
 # scripts/test-automate-next-step.sh R12 extracts every ^-anchored Progress prefix of those readers and
 # fails when one is not covered here. The PICK / RECONCILE / resume lines (automate-speed/08 — the run-lock
-# park and degraded note, the lane-guard and token-ceiling park lines, the meta-push report, the
+# park and degraded note, the lane-guard, phase-guard and token-ceiling park lines, the meta-push report, the
 # reconcile-status dry-run lines, current-rebuild's line, closeout-others' record lines, the drain_died park
 # line, the live merge-watcher note) are reserved too: a forged one would fake a park or a ground-truth record.
 NS_RESERVED_PREFIXES='picked
@@ -607,6 +637,7 @@ run_lock_degraded
 refuse: live_lane
 PARK: token_ceiling
 PARK: ledger_unreadable
+phase-check
 meta-push
 reconcile-status:
 current_rebuilt
@@ -865,7 +896,8 @@ ns_check_drain_report() {
   fi
   for k in head_sha ready_sha; do v="$(rj "$r" "$k")"; [ -z "$v" ] || ns_sha_ok "$v" || ns_die2 "--result: malformed $k '$v' — nothing written"; done
   v="$(rj "$r" started_at)"; [ -z "$v" ] || ns_iso_ok "$v" || ns_die2 "--result: malformed started_at '$v' — nothing written"
-  ns_check_one_line "$r" drain_note
+  ns_check_one_line "$r" drain_note session_id
+  v="$(rj "$r" session_id)"; [ -z "$v" ] || ns_sid_ok "$v" || ns_die2 "--result: malformed session_id '$v' — nothing written"
   printf '%s' "$r" | "$JQ" -e '(.progress_notes // []) | type == "array" and length <= 20 and all(.[]; type == "string" and (test("[\n\r]") | not))' >/dev/null 2>&1 \
     || ns_die2 "--result: progress_notes must be an array of at most 20 one-line strings — nothing written"
   for k in progress_note items_processed escalation_cause escalation_check escalation_run_id escalation_attempt escalation_sha; do
@@ -881,6 +913,29 @@ ns_take_drain_report() {
   ns_take_text "$1" review_heal_result drain_text
   st_setj drain_report "$(printf '%s' "$1" | "$JQ" -c 'del(.review_heal_result)')"
   st_set drain_report_hash "$(ns_report_hash "$1")"
+}
+# ns_check_plan_report <json> — the Launch Pad phase report (answer to the `launch pad phase` spawn): the
+# verbatim LAUNCH_PAD_RESULT (`launch_pad_result` | `launch_pad_result_file`, exclusive) and the phase's
+# `session_id`; or — a phase that died / wrote no result — `no_pr_why` (+ `status_reason`). Exactly one
+# of the two forms. The block itself is judged at plan-result (a malformed one is a mapped outcome, not a
+# refusal).
+ns_check_plan_report() {
+  local r="$1" v has=0
+  ns_check_text_pair "$r" launch_pad_result
+  ns_check_one_line "$r" session_id status_reason no_pr_why
+  v="$(rj "$r" session_id)"; [ -z "$v" ] || ns_sid_ok "$v" || ns_die2 "--result: malformed session_id '$v' — nothing written"
+  v="$(rj "$r" status_reason)"; [ -z "$v" ] || [[ "$v" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || ns_die2 "--result: malformed status_reason '$v' — nothing written"
+  [ -n "$(rj "$r" launch_pad_result)$(rj "$r" launch_pad_result_file)" ] && has=1
+  if [ "$has" = 1 ] && [ -n "$(rj "$r" no_pr_why)" ]; then
+    ns_die2 "--result: a Launch Pad report carries the LAUNCH_PAD_RESULT or (a failed phase) no_pr_why, not both — nothing written"
+  fi
+  [ "$has" = 1 ] || [ -n "$(rj "$r" no_pr_why)" ] \
+    || ns_die2 "--result: a Launch Pad report carries launch_pad_result / launch_pad_result_file, or for a failed phase no_pr_why — nothing written"
+  return 0
+}
+ns_take_plan_report() {
+  ns_take_text "$1" launch_pad_result plan_text
+  st_setj plan_report "$(printf '%s' "$1" | "$JQ" -c 'del(.launch_pad_result)')"
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -1148,9 +1203,27 @@ ns_lane_guard() {
   local out rc l
   out="$(bash "$H" pick-guard "$AD" 2>/dev/null)"; rc=$?
   l="$(printf '%s\n' "$out" | grep . | tail -n 1)"
-  if [ "$rc" -eq 0 ] && [ "$l" = ok ]; then NEXT=ceiling; return 0; fi
+  if [ "$rc" -eq 0 ] && [ "$l" = ok ]; then
+    if ns_fresh; then NEXT=phase-guard; else NEXT=ceiling; fi
+    return 0
+  fi
   case "$l" in "refuse: "*) ;; *) l="refuse: live_lane — pick-guard answered '${l:-nothing}' (exit $rc), fail CLOSED" ;; esac
   ns_run_park lane-guard live_lane "$(ns_ts) $l" 1 "a lane of an open --parallel wave is live ($l) — parked live_lane; --resume once the wave is over (lane-status)"
+}
+
+# step: phase-guard — fresh phases only (automate-speed/09): `phase-check` before anything is picked. A
+# fresh phase needs `claude` with a pinnable permission regime and the relay hook, and phase-launch needs a
+# coordinator session id of its own charset; anything else (an unreadable answer included) is a RUN-level
+# park, fail CLOSED — nothing picked, nothing spawned, the run lock released
+ns_phase_guard() {
+  local l
+  l="$(bash "$H" phase-check 2>/dev/null | grep . | tail -n 1)"
+  if [ "$l" = "phase-check: ok" ]; then
+    if [[ "$SID" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; then NEXT=ceiling; return 0; fi
+    l="phase-check: unavailable — the session id $SID is not one phase-launch accepts ([A-Za-z0-9_-]+)"
+  fi
+  case "$l" in "phase-check: unavailable — "*) ;; *) l="phase-check: unavailable — phase-check answered '${l:-nothing}', fail CLOSED" ;; esac
+  ns_run_park phase-guard phase_relay_unavailable "$(ns_ts) $l" 1 "fresh phase sessions cannot run here ($l) — parked phase_relay_unavailable, nothing picked; fix that and --resume, or run every phase inline with --inline-phases"
 }
 
 # step: ceiling — `ceiling-check` when a token ceiling is set (§6 step 1 "PICK-time token-ceiling check")
@@ -1440,7 +1513,149 @@ ns_picked() {
   ns_refresh
   ns_once once_pk_line ns_progress "$(ns_ts) picked $it" || return 1
   st_del in_pick
-  NEXT=run
+  if ns_fresh; then NEXT=plan; else NEXT=run; fi
+}
+
+# ================================================================================================
+# fresh phase sessions (automate-speed/09): the spawn fields every fresh phase shares
+# ================================================================================================
+ns_sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }   # one shell word, single-quoted
+ns_phase_sid_ok() { [[ "$SID" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; }   # phase-launch's --coordinator-session charset
+# ns_phase_launch <phase> <prompt> — the runnable phase-launch line (launch authority only when known)
+ns_phase_launch() {
+  local l="bash $(ns_sq "$H") phase-launch $(ns_sq "$RF") $1"
+  [ -n "$OWNER_CMD" ] && l="$l --owner-command $(ns_sq "$OWNER_CMD")"
+  printf '%s' "$l --coordinator-session $SID -- $(ns_sq "$2")"
+}
+# ns_phase_then <phase> <report> <failed-phase report> — the coordinator's loop over one phase session
+ns_phase_then() {
+  local w a
+  w="bash $(ns_sq "$H") phase-wait $(ns_sq "$RF") $1"
+  a="bash $(ns_sq "$H") phase-answer $(ns_sq "$RF") $1 <tool_use_id> --owner-command <launch's owner command>"
+  printf '%s' "run launch: it starts the $1 phase as its own headless session in this checkout (\`phase-launch: BLOCKED — … no owner command\` ⇒ add --owner-command '<the /automate command the owner typed in this session>' before \` -- \` and run it again; never invent one). Then run \`$w\` (Bash timeout 600000) until it exits 0 — exit 3 (running): run it again; exit 5 (\`phase-wait: question — <tool_use_id> <question file>\`): ask the owner with ONE structured ask-user question carrying that question file's header, question text and option labels verbatim (never answer it yourself; when the ask tool is unavailable, the gate's named can't-ask status), then \`$a\` with stdin {\"answers\":{\"0\":\"<label>\"},\"note\":\"<optional>\"}, and run phase-wait again; exit 6 (\`phase-wait: died — …\`): report the failure to the owner, then --result $3; exit 0 (\`phase-wait: done — session <sid> result <file>\`): --result $2"
+}
+# ns_segment_brief — the brief this item's pass saved: the last `launch-pad saved <brief>` line after its
+# last `picked` line (the durable record a `--start run` re-entry reads; the sidecar may be gone)
+ns_segment_brief() {
+  ns_section '## Progress' | awk '{ x = $0; sub(/^- /, "", x); if (x ~ /^[0-9][0-9][0-9][0-9]-/) sub(/^[^ ]+ /, "", x)
+      if (index(x, "picked ") == 1) b = ""; else if (index(x, "launch-pad saved ") == 1) b = substr(x, 18) } END { if (b != "") print b }'
+}
+ns_pending_briefs() { # the pending briefs, one relative path a line (the ls-diff fallback's snapshot)
+  local f
+  for f in .supervisor/jobs/pending/*.md; do [ -f "$f" ] && printf '%s\n' "$f"; done | env LC_ALL=C sort
+}
+# ns_has_rubric <file> — /autonomous PLAN's canonical rubric-presence test (skills/autonomous-loop/SKILL.md
+# PLAN §"Rubric-presence test"): a `^## Outcomes Rubric` header AND a bullet inside that section
+ns_has_rubric() {
+  awk '/^## Outcomes Rubric/ {f=1; next} f && /^## / {f=0} f && /^[[:space:]]*[-*][[:space:]]/ {found=1} END {exit (found ? 0 : 1)}' "$1" 2>/dev/null
+}
+# ns_run_precheck <step> — the item is running, has no PR yet and is the last picked one; this loop's
+# session id is known (exit 2 refusals, nothing written)
+ns_run_precheck() {
+  local lp pit
+  [ -n "$ITEM" ] && [ "$ITEM" != null ] || { ns_err "$1: ## Current names no item (PICK's current-set runs first) — nothing written"; NS_RC=2; return 1; }
+  case "$STATUS" in running) ;; *) ns_err "$1: ## Current status is '$STATUS', not running — nothing written"; NS_RC=2; return 1 ;; esac
+  [ -z "$PR" ] || [ "$PR" = null ] || { ns_err "$1: ## Current already records PR $PR for $ITEM — RUN already ran this pass; nothing written"; NS_RC=2; return 1; }
+  lp="$(ns_last_picked)"; pit="${lp#*"$TAB"}"
+  [ "${pit#./}" = "${ITEM#./}" ] || { ns_err "$1: the last picked line names '${pit:-no item}', not $ITEM — nothing written"; NS_RC=2; return 1; }
+  [ -n "$SID" ] || { ns_err "session_id_missing — --start run needs --session-id <this loop's session id> (the rate-limit park reads that session's log) — nothing written"; NS_RC=2; return 1; }
+  ns_sid_ok "$SID" || { ns_err "session_id_malformed — --session-id '$SID' is not a session id — nothing written"; NS_RC=2; return 1; }
+  return 0
+}
+
+# ================================================================================================
+# step: plan — the Launch Pad phase spawn (fresh phases; /autonomous PLAN steps 1–2, outside the item's
+# coordinator context)
+# ================================================================================================
+ns_plan() {
+  local inv p x
+  ns_run_precheck plan || return 1
+  ns_phase_sid_ok || { ns_err "session_id_malformed — phase-launch needs a coordinator session id of [A-Za-z0-9_-]+ (got '$SID') — nothing written"; NS_RC=2; return 1; }
+  st_set item "$ITEM"; st_set pr "$PR"
+  st_setj plan_briefs_before "$(ns_pending_briefs | "$JQ" -Rsc 'split("\n") | map(select(length > 0))')"
+  inv="/loomwright:launch-pad goal: $ITEM"
+  ns_interactive || inv="$inv --non-interactive"
+  p="$inv — If the requirement file at $ITEM has an ## Outcomes Rubric section, copy it verbatim into the saved brief during Phase 5 (PACKAGE — Brief Assembly). Do not paraphrase, do not drop items, do not reformat. When Launch Pad finishes, write its LAUNCH_PAD_RESULT block verbatim (the whole block, nothing else) to $AD/$RUN_ID.launch-pad-result.md."
+  x="$("$JQ" -cn --arg i "$inv" --arg p "$p" --arg l "$(ns_phase_launch launch-pad "$p")" --arg s "$RUN_ID.launch-pad-result.md" \
+      --arg t "$(ns_phase_then launch-pad '{"launch_pad_result_file": "<the result file phase-wait printed>", "session_id": "<the session id phase-wait printed>"}' '{"status_reason": "phase_died", "no_pr_why": "<the phase-wait died line>", "session_id": "<its session id, when known>"}'). The driver validates the LAUNCH_PAD_RESULT (validate-launch-pad-result.py --raw), maps its status as /autonomous PLAN step 4 does and checks the rubric was preserved: saved ⇒ the Supervisor phase spawn; anything else ⇒ the no-PR line and the loop stops" \
+      '{what: "launch pad phase", session: "fresh", phase: "launch-pad", invocation: $i, prompt: $p, launch: $l, sidecar: $s, then: $t}')"
+  ns_emit spawn plan "$x"
+  NEXT=plan-result
+}
+
+# ================================================================================================
+# step: plan-result — the Launch Pad report (/autonomous PLAN steps 4 and 6, the driver's own copy)
+# ================================================================================================
+ns_plan_result() {
+  local r sid t v sv path sum sr="" why="" brief="" fb="" before new n
+  r="$(st plan_report)"; [ -n "$r" ] || { ns_err "plan-result: no Launch Pad report is held"; NS_RC=2; return 1; }
+  sid="$(rj "$r" session_id)"
+  if [ -n "$sid" ]; then ns_once once_pl_sid ns_progress "$(ns_ts) session_id $sid ($ITEM) phase=launch-pad" || return 1; fi
+  if [ -n "$(rj "$r" no_pr_why)" ]; then
+    sr="$(rj "$r" status_reason)"; why="$(rj "$r" no_pr_why)"
+    # a phase that DIED (phase-wait's died line — e.g. it ended without writing its result sidecar) may still
+    # have saved its brief: the same ls-diff fallback a malformed block gets, so a saved brief is never stranded
+    # in .supervisor/jobs/pending/. Exactly one new brief ⇒ that brief; several ⇒ concurrent_session_detected;
+    # none (or no snapshot) ⇒ the died line as reported
+    if [ "$sr" = phase_died ] && printf '%s' "$NS_STATE" | "$JQ" -e '(.plan_briefs_before | type) == "array"' >/dev/null 2>&1; then
+      before="$(printf '%s' "$NS_STATE" | "$JQ" -r '.plan_briefs_before[]' 2>/dev/null)"
+      new="$(ns_pending_briefs | NS_B="$before" awk 'BEGIN { n = split(ENVIRON["NS_B"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") s[a[i]] = 1 } !($0 in s)')"
+      n="$(printf '%s\n' "$new" | grep -c . || true)"
+      case "$n" in
+        0) ;;
+        1) brief="$new"; sr=""; why="" ;;
+        *) sr=concurrent_session_detected; why="$why; $n new briefs in .supervisor/jobs/pending/" ;;
+      esac
+    fi
+  else
+    t="$(printf '%s' "$NS_STATE" | "$JQ" -r '.plan_text // empty')"
+    # the validator's verdict: `{}` = well-formed; a block, no python3 or no answer = malformed (fail CLOSED)
+    v="$(printf '%s' "$t" | python3 -I "$HERE/validate-launch-pad-result.py" --raw 2>/dev/null)"
+    if [ -n "$v" ] && printf '%s' "$v" | "$JQ" -e 'type == "object" and (has("decision") | not)' >/dev/null 2>&1; then
+      sv="$(printf '%s\n' "$t" | ns_block_field LAUNCH_PAD_RESULT status)"
+      path="$(printf '%s\n' "$t" | ns_block_field LAUNCH_PAD_RESULT saved_brief_path)"
+      sum="$(printf '%s\n' "$t" | ns_block_field LAUNCH_PAD_RESULT summary | tr -d '\r' | head -n 1)"
+      sum="${sum#\'}"; sum="${sum%\'}"
+      case "$sv" in
+        saved) if [ -n "$path" ] && [ -f "$path" ]; then brief="$path"; else fb="saved_brief_path ${path:-null} is not a file"; fi ;;
+        discarded) sr=user_discarded_at_phase_6 ;;
+        blocked|aborted)
+          if [[ "$sum" =~ ^[A-Za-z0-9_]*_non_interactive([^A-Za-z0-9_]|$) ]]; then sr=launch_pad_cant_ask_non_interactive
+          elif [ "$sv" = blocked ]; then sr=launch_pad_blocked
+          else sr=user_aborted_at_launch_pad; fi ;;
+        *) fb="status '$sv'" ;;
+      esac
+      [ -n "$sr" ] && why="LAUNCH_PAD_RESULT $sv: $sum"
+    else
+      fb="$(printf '%s' "$v" | "$JQ" -r '.reason // empty' 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"; fb="malformed LAUNCH_PAD_RESULT${fb:+ ($fb)}"
+    fi
+    if [ -n "$fb" ]; then # the ls-diff fallback: the briefs that appeared while the phase ran
+      if ! printf '%s' "$NS_STATE" | "$JQ" -e '(.plan_briefs_before | type) == "array"' >/dev/null 2>&1; then
+        sr=launch_pad_result_malformed; why="$fb; no pending-brief snapshot to diff"
+      else
+        before="$(printf '%s' "$NS_STATE" | "$JQ" -r '.plan_briefs_before[]' 2>/dev/null)"
+        new="$(ns_pending_briefs | NS_B="$before" awk 'BEGIN { n = split(ENVIRON["NS_B"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") s[a[i]] = 1 } !($0 in s)')"
+        n="$(printf '%s\n' "$new" | grep -c . || true)"
+        case "$n" in
+          0) sr=user_discarded_at_phase_6; why="$fb; no new brief in .supervisor/jobs/pending/" ;;
+          1) brief="$new" ;;
+          *) sr=concurrent_session_detected; why="$fb; $n new briefs in .supervisor/jobs/pending/" ;;
+        esac
+      fi
+    fi
+  fi
+  # PLAN step 6: a real rubric in the requirement must survive into the saved brief (a died phase's brief too)
+  if [ -n "$brief" ] && ns_has_rubric "$ITEM" && ! ns_has_rubric "$brief"; then
+    sr=rubric_dropped_from_brief; why="the requirement's ## Outcomes Rubric is missing from the saved brief $brief"; brief=""
+  fi
+  if [ -n "$brief" ]; then
+    st_set plan_brief "$brief"
+    ns_once once_pl_saved ns_progress "$(ns_ts) launch-pad saved $brief" || return 1
+    NEXT=run; return 0
+  fi
+  why="$(printf '%s' "${why:-the Launch Pad phase saved no brief}" | tr '\n\r' '  ')"
+  ns_once once_pl_nopr ns_progress "$(ns_ts) ran /autonomous — no PR: ${sr:-unknown} ($why)" || return 1
+  NEXT=rate-limit
 }
 
 # ================================================================================================
@@ -1463,16 +1678,16 @@ ns_record_orig() { # <true|false|absent> — ## Run Config's auto_review_origina
   ns_refresh
 }
 ns_run() {
-  local lp pit e rc orig inv mt x
-  [ -n "$ITEM" ] && [ "$ITEM" != null ] || { ns_err "run: ## Current names no item (PICK's current-set runs first) — nothing written"; NS_RC=2; return 1; }
-  case "$STATUS" in running) ;; *) ns_err "run: ## Current status is '$STATUS', not running — nothing written"; NS_RC=2; return 1 ;; esac
-  [ -z "$PR" ] || [ "$PR" = null ] || { ns_err "run: ## Current already records PR $PR for $ITEM — RUN already ran this pass; nothing written"; NS_RC=2; return 1; }
-  lp="$(ns_last_picked)"; pit="${lp#*"$TAB"}"
-  [ "${pit#./}" = "${ITEM#./}" ] || { ns_err "run: the last picked line names '${pit:-no item}', not $ITEM — nothing written"; NS_RC=2; return 1; }
+  local e rc orig inv mt x brief="" p
   # the rate-limit park (end of RUN) reads THIS loop's session log: without its id the check could only
   # read "clean", so RUN never starts without one (fail CLOSED)
-  [ -n "$SID" ] || { ns_err "session_id_missing — --start run needs --session-id <this loop's session id> (the rate-limit park reads that session's log) — nothing written"; NS_RC=2; return 1; }
-  ns_sid_ok "$SID" || { ns_err "session_id_malformed — --session-id '$SID' is not a session id — nothing written"; NS_RC=2; return 1; }
+  ns_run_precheck run || return 1
+  if ns_fresh; then
+    # the Supervisor phase runs on the brief this pass's Launch Pad phase saved; none recorded ⇒ plan first
+    brief="$(st plan_brief)"; [ -n "$brief" ] || brief="$(ns_segment_brief)"
+    [ -n "$brief" ] || { NEXT=plan; return 0; }
+    ns_phase_sid_ok || { ns_err "session_id_malformed — phase-launch needs a coordinator session id of [A-Za-z0-9_-]+ (got '$SID') — nothing written"; NS_RC=2; return 1; }
+  fi
   ns_cfg_paths
   if [ "$(st suppressed)" != true ]; then
     # a backup that already exists is a crash-stranded one (RECONCILE restores it): suppressing over it
@@ -1487,8 +1702,29 @@ ns_run() {
     st_set auto_review_original "$orig"
   fi
   ns_once once_run_cfg ns_record_orig "$(st auto_review_original)" || return 1
-  ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running /autonomous --single-iteration" || return 1
+  if [ -n "$brief" ]; then
+    ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running the supervisor phase (fresh session)" || return 1
+  else
+    ns_once once_run_line ns_progress "$(ns_ts) auto_review suppressed (backup $RUN_ID.config-backup.json) — running /autonomous --single-iteration" || return 1
+  fi
   st_set item "$ITEM"; st_set pr "$PR"
+  if [ -n "$brief" ]; then
+    # the Supervisor phase: /autonomous EXECUTE's /supervisor call with its forward set (--non-interactive,
+    # --cheap, --max-tokens), in its own session; the result block lands in the run's supervisor sidecar
+    inv="/loomwright:supervisor job: $brief"
+    ns_interactive || inv="$inv --non-interactive"
+    [ "$CHEAP" = 1 ] && inv="$inv --cheap"
+    mt="$MAXTOK"; [ -n "$mt" ] || mt="$(ns_section '## Run Config' | sed -n 's/^- max_tokens: \([0-9][0-9]*\)$/\1/p' | head -n 1)"
+    [ -n "$mt" ] && inv="$inv --max-tokens $mt"
+    p="$inv — When Supervisor finishes, write its SUPERVISOR_RESULT block verbatim (the whole block, nothing else) to $AD/$RUN_ID.supervisor-result.md."
+    st_set run_fresh true; st_set run_spawn_epoch "$(date +%s)"   # the freshness floor for .supervisor/state.md (run-record)
+    x="$("$JQ" -cn --arg i "$inv" --arg p "$p" --arg b "$RUN_ID.config-backup.json" --arg l "$(ns_phase_launch supervisor "$p")" --arg s "$RUN_ID.supervisor-result.md" \
+        --arg t "$(ns_phase_then supervisor '{"supervisor_result_file": "<the result file phase-wait printed>", "session_id": "<the session id phase-wait printed>", "run_note": <one line, the ran-line parenthetical>} — add "status_reason" (its SUPERVISOR_RESULT status_reason) and "no_pr_why" (one line) when the SUPERVISOR_RESULT names no PR' '{"status_reason": "phase_died", "no_pr_why": "<the phase-wait died line>", "session_id": "<its session id, when known>"}'). The driver restores .auto_review, records the Supervisor session id (.supervisor/state.md first), writes the session_id / ran /autonomous lines, the sidecar and its sidecar-check, and checks the rate-limit park" \
+        '{what: "/autonomous run", session: "fresh", phase: "supervisor", invocation: $i, prompt: $p, config_backup: $b, launch: $l, sidecar: $s, then: $t}')"
+    ns_emit spawn run "$x"
+    NEXT=run-result
+    return 0
+  fi
   inv="/autonomous --single-iteration --requirement $ITEM"
   ns_interactive || inv="$inv --non-interactive-fallback"
   [ "$NOTIFY" = 1 ] && inv="$inv --notify"
@@ -1521,12 +1757,41 @@ ns_run_result() {
 # ================================================================================================
 # step: run-record — the session-id line, the PR (current-set BEFORE the ran line), the sidecar
 # ================================================================================================
+# ns_state_md_fresh — 0 only when .supervisor/state.md was (re)written at or after this pass's Supervisor phase
+# spawn was printed (run_spawn_epoch). Fail CLOSED: no floor, no file or an unreadable mtime ⇒ 1 (stale).
+# GNU `stat -c %Y` first — BSD `stat -f %m` "succeeds" with garbage on Linux — each answer checked numeric.
+ns_state_md_fresh() {
+  local f="$ROOT/.supervisor/state.md" since m
+  since="$(st run_spawn_epoch)"
+  case "$since" in ''|*[!0-9]*) return 1 ;; esac
+  [ -f "$f" ] || return 1
+  # equal seconds count as fresh (`-ge`): a rewrite in the spawn's own second is this phase's
+  m="$(stat -c %Y "$f" 2>/dev/null)"
+  case "$m" in ''|*[!0-9]*) m="$(stat -f %m "$f" 2>/dev/null)" ;; esac
+  case "$m" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$m" -ge "$since" ]
+}
 ns_run_record() {
   local r sid note pr br sr why line sc
   r="$(st run_report)"; [ -n "$r" ] || r='{}'
-  sid="$(rj "$r" session_id)"
-  [ -n "$sid" ] || { sid="$(sed -n 's/^- session_id:[[:space:]]*//p' "$ROOT/.supervisor/state.md" 2>/dev/null | head -n 1)"; ns_sid_ok "$sid" || sid=""; }
-  if [ -n "$sid" ]; then ns_once once_rc_sid ns_progress "$(ns_ts) session_id $sid ($ITEM)" || return 1; fi
+  if [ "$(st run_fresh)" = true ]; then
+    # a Supervisor phase session files its token ledger under the plugin id in .supervisor/state.md
+    # (emit-token-ledger.sh's preference), so that id is the phase's; the reported one only fills a gap.
+    # state.md persists between runs and is rewritten only at the next Supervisor INIT, so it is trusted only
+    # when THIS pass's phase rewrote it (ns_state_md_fresh) — a phase that died before INIT leaves the
+    # PREVIOUS run's id there — and never when it names the coordinator's own session
+    sid=""
+    if ns_state_md_fresh; then
+      sid="$(sed -n 's/^- session_id:[[:space:]]*//p' "$ROOT/.supervisor/state.md" 2>/dev/null | head -n 1)"; ns_sid_ok "$sid" || sid=""
+      [ "$sid" != "$SID" ] || sid=""
+    fi
+    [ -n "$sid" ] || sid="$(rj "$r" session_id)"
+    if [ -n "$sid" ]; then ns_once once_rc_sid ns_progress "$(ns_ts) session_id $sid ($ITEM) phase=supervisor" || return 1; fi
+  else
+    sid="$(rj "$r" session_id)"
+    [ -n "$sid" ] || { sid="$(sed -n 's/^- session_id:[[:space:]]*//p' "$ROOT/.supervisor/state.md" 2>/dev/null | head -n 1)"; ns_sid_ok "$sid" || sid=""; }
+    if [ -n "$sid" ]; then ns_once once_rc_sid ns_progress "$(ns_ts) session_id $sid ($ITEM)" || return 1; fi
+  fi
   pr="$(st run_pr)"; br="$(st run_branch)"
   if [ -n "$pr" ]; then
     ns_once once_rc_current ns_call_writer current-set "$RF" --item "$ITEM" --status running --pr "$pr" --branch "$br" || return 1
@@ -1539,9 +1804,30 @@ ns_run_record() {
     ns_once once_rc_check ns_sidecar_check "$sc" || return 1
   else
     sr="$(rj "$r" status_reason)"; why="$(rj "$r" no_pr_why)"
+    if [ "$(st run_fresh)" = true ] && [ "$sr" = phase_died ]; then
+      local opr; opr="$(ns_died_open_pr)"
+      [ -n "$opr" ] && why="$why; the phase left PR ${opr%%"$TAB"*} open on ${opr#*"$TAB"} — not drained (it wrote no SUPERVISOR_RESULT), left for the owner"
+    fi
     ns_once once_rc_ran ns_progress "$(ns_ts) ran /autonomous — no PR: ${sr:-unknown} ($why)" || return 1
   fi
   NEXT=rate-limit
+}
+# ns_died_open_pr — "<url>\t<branch>" of an OPEN PR a Supervisor phase that died (no SUPERVISOR_RESULT) left on
+# its feature branch, else empty. The branch is read from .supervisor/state.md only when THIS pass's phase rewrote
+# it (ns_state_md_fresh — a stale file names a previous run's branch); a PR this run file already records (another
+# item's) is never this phase's. Read-only through the driver's gh seam (LOOMWRIGHT_GH_BIN); a gh failure or no
+# branch ⇒ empty — the no-PR line then reads as it always did (an annotation, never a gate).
+ns_died_open_pr() {
+  local br url
+  ns_state_md_fresh || return 0
+  br="$(sed -n 's/^- branch:[[:space:]]*//p' "$ROOT/.supervisor/state.md" 2>/dev/null | head -n 1)"
+  [[ "$br" =~ ^[^[:space:]|]{1,200}$ ]] || return 0
+  url="$(ns_gh pr list --head "$br" --state open --json url --limit 1 | "$JQ" -r '.[0].url // empty' 2>/dev/null)"
+  ns_pr_ok "$url" || return 0
+  # an exact-URL match: `PR <url>` NOT followed by a digit (…/pull/1 never matches a recorded …/pull/12)
+  NS_U="PR $url" awk 'BEGIN { u = ENVIRON["NS_U"] } { s = $0; while ((i = index(s, u)) > 0) { c = substr(s, i + length(u), 1)
+      if (c !~ /[0-9]/) { f = 1; exit } s = substr(s, i + 1) } } END { exit !f }' "$RF" 2>/dev/null && return 0
+  printf '%s\t%s' "$url" "$br"
 }
 
 # ================================================================================================
@@ -1613,7 +1899,7 @@ ns_drain_reset() { # a new drain: forget the previous drain's report and its onc
   # prev_drain_report_hash: that report re-sent as the new drain's is a replay, never the new drain's)
   local h; h="$(st drain_report_hash)"
   ns_clear_once once_dr_; ns_clear_once once_sp_
-  st_del drain_report; st_del drain_text; st_del drain_report_hash; st_del drain_head_sha; st_del drain_started_at
+  st_del drain_report; st_del drain_text; st_del drain_report_hash; st_del drain_head_sha; st_del drain_started_at; st_del drain_fresh
   [ -n "$h" ] && st_set prev_drain_report_hash "$h"
   return 0
 }
@@ -1625,11 +1911,27 @@ ns_drain() {
   fi
   [ -n "$ITEM" ] && [ "$ITEM" != null ] && [ -n "$PR" ] && [ "$PR" != null ] || { ns_err "drain: ## Current names no item with a PR — nothing written"; NS_RC=2; return 1; }
   case "$STATUS" in running) ;; *) ns_err "drain: ## Current status is '$STATUS', not running — nothing written"; NS_RC=2; return 1 ;; esac
+  if ns_fresh && ! ns_phase_sid_ok; then
+    ns_err "session_id_missing — the drain phase needs this loop's --session-id (phase-launch's coordinator session, [A-Za-z0-9_-]+; got '${SID}') — nothing written"; NS_RC=2; return 1
+  fi
   h="$(ns_pr_head "$PR")"
   ns_drain_reset
   st_set drain_pass "$(ns_pass_key)"; st_set drain_kind first; st_set drain_started_at "$(ns_ts)"
   [ -n "$h" ] && st_set drain_head_sha "$h"
   st_set item "$ITEM"; st_set pr "$PR"
+  if ns_fresh; then
+    # the owned drain as its own phase session (still the pass's ONE owned drain): today's invocation, its
+    # terminal block written to the run's review-heal sidecar
+    local inv="/review-pr $PR --until-mergeable --no-auto-postmortem" p
+    p="$inv — When the drain ends, write its terminal REVIEW_HEAL_RESULT block verbatim (the whole block, nothing else) to $AD/$RUN_ID.review-heal-result.md."
+    st_set drain_fresh true
+    x="$("$JQ" -cn --arg i "$inv" --arg p "$p" --arg h "$h" --arg l "$(ns_phase_launch drain "$p")" --arg s "$RUN_ID.review-heal-result.md" \
+        --arg t "$(ns_phase_then drain '{"review_heal_result_file": "<the result file phase-wait printed>", "session_id": "<the session id phase-wait printed>", "ready_sha": <the PR head the drain ended READY on>, "head_sha": <the head it started on, when known>, "progress_notes": [<one-line drain round notes>], "drain_note": <one line, the terminal drain line parenthetical>}' '{"no_terminal_block": true, "session_id": "<its session id, when known>"}'). ONE drain for this pass; never a second one. The driver writes the pinned drain lines, owned_drain_*, the session_id line, the sidecar and its sidecar-check, learning-emit, then runs GATE" \
+        '{what: "owned drain", session: "fresh", phase: "drain", invocation: $i, prompt: $p, head_sha: (if $h == "" then null else $h end), launch: $l, sidecar: $s, then: $t}')"
+    ns_emit spawn drain "$x"
+    NEXT=drain-result
+    return 0
+  fi
   x="$("$JQ" -cn --arg i "/review-pr $PR --until-mergeable --no-auto-postmortem" --arg h "$h" '{what: "owned drain", invocation: $i,
       head_sha: (if $h == "" then null else $h end),
       then: "run the invocation inline (ONE drain; never a second one for this pass); then --result with the DRAIN report: {\"review_heal_result\": <the verbatim terminal REVIEW_HEAL_RESULT text> (or \"review_heal_result_file\": <a path holding it>), \"ready_sha\": <the PR head the drain ended READY on>, \"head_sha\": <the head it started on, when known>, \"progress_notes\": [<one-line drain round notes>], \"drain_note\": <one line, the terminal drain line parenthetical>} — or {\"no_terminal_block\": true} when it ended without a terminal block. The driver writes the pinned drain lines, owned_drain_*, the sidecar and its sidecar-check, learning-emit, then runs GATE"}')"
@@ -1665,6 +1967,16 @@ EOF
   return 0
 }
 ns_drain_block() { printf '%s' "$NS_STATE" | "$JQ" -r '.drain_text // empty'; }
+# ns_drain_phase_sid — a fresh drain phase's `session_id <sid> (<item>) phase=drain` line (once; the id the
+# DRAIN report names — the Claude Code session phase-wait printed). Inline drains and the fix-now re-drain
+# write none.
+ns_drain_phase_sid() {
+  local sid
+  [ "$(st drain_fresh)" = true ] && [ "$(st drain_kind)" != fixnow ] || return 0
+  sid="$(rj "$(st drain_report)" session_id)"
+  [ -n "$sid" ] || return 0
+  ns_once once_dr_sid ns_progress "$(ns_ts) session_id $sid ($ITEM) phase=drain"
+}
 ns_drain_result() {
   local r kind pr v t dec tr rounds fc note line
   r="$(st drain_report)"; [ -n "$r" ] || { ns_err "drain-result: no DRAIN report is held"; NS_RC=2; return 1; }
@@ -1672,6 +1984,7 @@ ns_drain_result() {
   pr="$(ns_drain_pr)"
   [ -n "$pr" ] && [ "$pr" != null ] || { ns_err "drain-result: no PR for this drain — nothing written"; NS_RC=2; return 1; }
   if [ "$(rj "$r" no_terminal_block)" = true ]; then
+    ns_drain_phase_sid || return 1   # the phase's tokens were spent: its ledger stays countable
     v="$(bash "$H" reconcile-item "$pr" running 2>/dev/null | tail -n 1)"
     if [ "$v" = merged ]; then NEXT=superseded; return 0; fi
     # any other verdict records nothing for the drain: the item stays running, RECONCILE decides
@@ -1685,6 +1998,7 @@ ns_drain_result() {
   rounds="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT rounds)"
   fc="$(printf '%s\n' "$t" | ns_block_field REVIEW_HEAL_RESULT fix_cycles)"
   ns_once once_dr_start ns_drain_start_line "$kind" "$pr" || return 1
+  ns_drain_phase_sid || return 1
   ns_drain_notes || return 1
   if [ "$kind" = fixnow ]; then
     line="$(ns_ts) fix-now re-drain $dec (${tr:-unknown}, ${rounds:-0} rounds, ${fc:-0} fix cycles)"
@@ -2373,6 +2687,7 @@ ns_dispatch() {
     resume-continue) ns_resume_continue ;;
     pick) ns_pick ;;
     lane-guard) ns_lane_guard ;;
+    phase-guard) ns_phase_guard ;;
     ceiling) ns_ceiling ;;
     meta-push) ns_meta_push ;;
     pending) ns_pending ;;
@@ -2381,6 +2696,8 @@ ns_dispatch() {
     trail-gate) ns_trail_gate ;;
     trail-unstage) ns_trail_unstage ;;
     picked) ns_picked ;;
+    plan) ns_plan ;;
+    plan-result) ns_plan_result ;;
     run) ns_run ;;
     run-result) ns_run_result ;;
     run-record) ns_run_record ;;
@@ -2424,6 +2741,36 @@ if [ -z "${NEXT_STEP_FROM:-}" ] && ! ns_bound; then
   stale="$(st report_key)"; NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
 fi
 pending="$(st pending_text)"; PENDING_TEXT="$pending"
+# A pending fresh spawn's `launch` line carries the identity of the session it was printed in: its
+# --coordinator-session and (when known) its --owner-command, the launch authority of the session that typed
+# it. A re-print therefore never replays the stored line to whichever session asks: its `launch` is REBUILT
+# from THIS call's identity — the --session-id given now (else the stored one) and the owner command bound to
+# that session (given now, else the stored one only when it was given by that same session id). Within ONE
+# session the rebuilt line is the stored one, so the re-print stays byte for byte (the stored text is kept
+# when they match). PENDING_TEXT keeps the stored text: the replay checks compare against what was printed.
+# ns_reprint — print the pending instruction (its fresh-spawn `launch` rebuilt as above) and exit 0. The
+# session identity this call gave (--session-id, --owner-command) persists FIRST, so a later bare call (no
+# --session-id) inherits THIS session's identity — never the session that printed the instruction. A call
+# that gives neither (or gives the identity already stored) writes nothing.
+ns_reprint() {
+  local sid own l ch=0 out="$pending"
+  sid="${SID:-$(st flag_session_id)}"; own="$OWNER_CMD"
+  if [ -z "$own" ] && [ -n "$sid" ] && [ "$sid" = "$(st flag_owner_command_sid)" ]; then own="$(st flag_owner_command)"; fi
+  if printf '%s' "$out" | "$JQ" -e '.session == "fresh" and (.launch | type) == "string" and (.phase | type) == "string" and (.prompt | type) == "string"' >/dev/null 2>&1; then
+    [[ "$sid" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || ns_die2 "session_id_malformed — the pending fresh spawn's launch line needs a coordinator session id of [A-Za-z0-9_-]+ (got '$sid') — nothing written"
+    l="$(SID="$sid"; OWNER_CMD="$own"; ns_phase_launch "$(printf '%s' "$out" | "$JQ" -r .phase)" "$(printf '%s' "$out" | "$JQ" -r .prompt)")"
+    if [ "$l" != "$(printf '%s' "$out" | "$JQ" -r .launch)" ]; then
+      out="$(printf '%s' "$out" | "$JQ" -c --arg l "$l" '.launch = $l' 2>/dev/null)" || out=""
+      [ -n "$out" ] || ns_die2 "pending instruction unreadable — nothing written"
+    fi
+  fi
+  if [ -n "$SID" ] && ns_sid_ok "$SID" && [ "$SID" != "$(st flag_session_id)" ]; then st_set flag_session_id "$SID"; ch=1; fi
+  if [ -n "$OWNER_CMD" ] && { [ "$OWNER_CMD" != "$(st flag_owner_command)" ] || [ "$sid" != "$(st flag_owner_command_sid)" ]; }; then
+    st_set flag_owner_command "$OWNER_CMD"; st_set flag_owner_command_sid "$sid"; ch=1
+  fi
+  [ "$ch" = 0 ] || st_save || exit 1
+  printf '%s\n' "$out"; exit 0
+}
 pending_do="$(printf '%s' "$pending" | "$JQ" -r '.do // empty' 2>/dev/null)"
 pending_what="$(printf '%s' "$pending" | "$JQ" -r '.what // empty' 2>/dev/null)"
 if [ -n "${NEXT_STEP_FROM:-}" ]; then
@@ -2431,6 +2778,7 @@ if [ -n "${NEXT_STEP_FROM:-}" ]; then
   if [ "$have_result" = 1 ]; then # --result is the report the starting step reads
     case "$NEXT" in
       run-result|run-record|rate-limit) ns_check_run_report "$RESULT"; ns_take_run_report "$RESULT" ;;
+      plan-result) ns_check_plan_report "$RESULT"; ns_take_plan_report "$RESULT" ;;
       drain-result|superseded|learning-emit) ns_check_drain_report "$RESULT"; ns_take_drain_report "$RESULT" ;;
       *) ns_check_report "$RESULT"; ns_take_report "$RESULT" ;;
     esac
@@ -2458,16 +2806,16 @@ elif [ -n "$START" ]; then
       [ -n "$SID" ] || ns_die2 "session_id_missing — --start pick needs --session-id <this loop's session id> (the PICK lock is acquired with it) — nothing written"
       ns_sid_ok "$SID" || ns_die2 "session_id_malformed — --session-id '$SID' is not a session id — nothing written"
       # an ask of this PICK still pending re-prints (idempotent); a spawn of the pass it started is refused
-      [ "$pending_do" = ask ] && [ "$(st in_pick)" = true ] && { printf '%s\n' "$pending"; exit 0; }
+      [ "$pending_do" = ask ] && [ "$(st in_pick)" = true ] && ns_reprint
       [ "$pending_do" != spawn ] || ns_die2 "pick_already_started — a pending ${pending_what:-spawn} instruction belongs to ${ITEM:-the run}'s pass (a no-result call re-prints it) — nothing written"
       stale="$(st report_key)"; [ -n "$stale" ] || stale="$(st stale_report_key)"
       NS_STATE='{}'; [ -n "$stale" ] && st_set stale_report_key "$stale"
       st_set in_pick true; st_set item "$ITEM"; st_set pr "$PR"
       NEXT=pick ;;
     run)
-      # the same /autonomous spawn still pending is re-printed (idempotent); any other open instruction
-      # of this item's pass is refused — RUN already started
-      [ "$pending_do" = spawn ] && [ "$pending_what" = "/autonomous run" ] && { printf '%s\n' "$pending"; exit 0; }
+      # the same /autonomous (or, fresh phases, Launch Pad phase) spawn still pending is re-printed
+      # (idempotent); any other open instruction of this item's pass is refused — RUN already started
+      [ "$pending_do" = spawn ] && { [ "$pending_what" = "/autonomous run" ] || [ "$pending_what" = "launch pad phase" ]; } && ns_reprint
       case "$pending_do" in
         ask|spawn) ns_die2 "run_already_started — a pending ${pending_what:-$pending_do} instruction belongs to $ITEM's pass (a no-result call re-prints it) — nothing written" ;;
       esac
@@ -2484,26 +2832,29 @@ elif [ -n "$START" ]; then
       NEXT=drain ;;
   esac
 elif [ "$have_result" = 0 ]; then
-  if [ -n "$pending" ]; then printf '%s\n' "$pending"; exit 0; fi
+  if [ -n "$pending" ]; then ns_reprint; fi
   NEXT="$(st failed)"   # a step that failed (surfaced) is retried; otherwise there is nothing to do
   [ -n "$NEXT" ] || ns_die2 "nothing is pending — start RUN with --start run, or report the drain result with --result '{\"drain_result\":…}'"
 elif ns_run_replay "$RESULT"; then
   # the RUN report re-sent after the step it answered (same item + PR — the binding above discards the
   # sidecar otherwise — byte-identical) is a REPLAY: the instruction that step printed re-prints
   ns_err "--result is the RUN report this pass already took — re-printing the pending instruction; nothing written"
-  printf '%s\n' "$pending"; exit 0
+  ns_reprint
 elif [ "$pending_do" = ask ] && ns_is_drain_report "$RESULT" && [ "$(ns_report_hash "$RESULT")" = "$(st drain_report_hash)" ]; then
   # the DRAIN report re-sent while an ask its tail printed is open is a REPLAY, never an answer
   ns_err "--result is the DRAIN report this tail already took — re-printing the pending ask; nothing written"
-  printf '%s\n' "$pending"; exit 0
+  ns_reprint
 elif [ "$pending_do" = ask ]; then
   NEXT="$(st next)"; ANSWER="$RESULT"
+elif [ "$pending_do" = spawn ] && [ "$pending_what" = "launch pad phase" ]; then
+  # the Launch Pad phase's report (fresh phases): judged at plan-result
+  ns_check_plan_report "$RESULT"; ns_take_plan_report "$RESULT"; NEXT=plan-result
 elif [ "$pending_do" = spawn ] && [ "$pending_what" = "/autonomous run" ]; then
   ns_check_run_report "$RESULT"; ns_take_run_report "$RESULT"; NEXT=run-result
 elif [ "$pending_do" = spawn ] && ns_is_drain_report "$RESULT" && [ "$(ns_report_hash "$RESULT")" = "$(st prev_drain_report_hash)" ]; then
   # the previous drain's report re-sent at this drain's spawn is a REPLAY: the spawn re-prints, nothing written
   ns_err "--result is the previous drain's DRAIN report, not this drain's — re-printing the pending spawn; nothing written"
-  printf '%s\n' "$pending"; exit 0
+  ns_reprint
 elif [ "$pending_do" = spawn ] && [ "$pending_what" = "owned drain" ]; then
   ns_is_drain_report "$RESULT" || ns_die2 "--result does not answer the owned-drain spawn: send the DRAIN report (review_heal_result | review_heal_result_file | no_terminal_block) — nothing written"
   ns_check_drain_report "$RESULT"; ns_take_drain_report "$RESULT"; NEXT=drain-result
@@ -2516,7 +2867,7 @@ elif [ "$pending_do" = spawn ]; then
   # pending spawn re-prints and nothing is written (the fix and the re-drain have not run)
   if ns_same_report "$RESULT" "$(st report_key)"; then
     ns_err "--result is the drain report this spawn answered, not the re-drain's — re-printing the pending spawn; nothing written"
-    printf '%s\n' "$pending"; exit 0
+    ns_reprint
   fi
   ns_stale_report "$RESULT" && ns_die2 "--result is the drain report of a tail already left behind (another item / PR) — not this re-drain's; nothing written"
   NEXT=gate; ns_take_report "$RESULT"
@@ -2528,7 +2879,7 @@ else
   if ns_is_drain_report "$RESULT"; then
     if [ -n "$pending" ] && [ "$(st item)" = "$ITEM" ] && [ "$(st pr)" = "$PR" ] \
        && [ "$(ns_report_hash "$RESULT")" = "$(st drain_report_hash)" ]; then
-      printf '%s\n' "$pending"; exit 0
+      ns_reprint
     fi
     ns_die2 "--result is a DRAIN report, but no owned-drain / fix-now re-drain spawn is pending for $ITEM — nothing written"
   fi
@@ -2538,7 +2889,7 @@ else
   # that instruction and writes nothing (the tail already ran for it)
   if [ -n "$pending" ] && [ "$(st item)" = "$ITEM" ] && [ "$(st pr)" = "$PR" ] \
      && [ "$(ns_report_key "$RESULT")" = "$(st report_key)" ]; then
-    printf '%s\n' "$pending"; exit 0
+    ns_reprint
   fi
   ns_stale_report "$RESULT" && ns_die2 "--result is the drain report of a tail already left behind (another item / PR; ## Current names ${ITEM:-no item} ${PR:-}) — send this item's own report (\"pr\" binds it); nothing written"
   # a new item's tail: nothing pending, or the previous instruction was terminal (park / done); the
@@ -2558,6 +2909,14 @@ if [ -n "$TRUST" ]; then st_set flag_trust_unprotected true; elif [ "$(st flag_t
 if [ -n "$MODE" ]; then st_set flag_mode "$MODE"
 else case "$(st flag_mode)" in safe|auto-merge) MODE="$(st flag_mode)" ;; esac; fi
 if [ -n "$SID" ]; then st_set flag_session_id "$SID"; else SID="$(st flag_session_id)"; fi
+# --inline-phases has no off form either; --owner-command is the launch authority every fresh spawn's
+# `launch` line carries — the command the owner typed in THIS session, so it persists bound to the session id
+# it was given with and is reused only by a later call of that SAME session: a call from another session
+# (a different --session-id, e.g. a `--resume` from a new session) gets none until it gives its own, and its
+# launch lines are refused BLOCKED (fail CLOSED: no session id ⇒ no reuse)
+if [ "$INLINE" = 1 ]; then st_set flag_inline_phases true; elif [ "$(st flag_inline_phases)" = true ]; then INLINE=1; fi
+if [ -n "$OWNER_CMD" ]; then st_set flag_owner_command "$OWNER_CMD"; st_set flag_owner_command_sid "$SID"
+elif [ -n "$SID" ] && [ "$SID" = "$(st flag_owner_command_sid)" ]; then OWNER_CMD="$(st flag_owner_command)"; fi
 root_given="${ROOT:+1}"; [ -n "$ROOT" ] || ROOT="$(st flag_root)"
 ns_resolve_root
 [ -n "$root_given" ] && st_set flag_root "$ROOT"

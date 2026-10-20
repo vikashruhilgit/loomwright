@@ -98,16 +98,42 @@ _lanes_gate() {
 # carries LOOMWRIGHT_LANE_RESUME_PATH = LN_RESUME_PATH (set only by a `--resume-run` launch; empty
 # otherwise) — how the lane's own engine learns which resume path it is on (§14 INIT).
 LN_RESUME_PATH=""; LN_SPAWN_PID=""; LN_SPAWN_SID=""
-_lanes_spawn() {
-  local prompt="$1" sid="$2" label="$3" base disallow in pid st off i s=""
-  base="$(git -C "$LN_DIR" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"; base="${base#origin/}"; [ -n "$base" ] || base=main
+# _lanes_claude_flags <checkout> — sets the LN_FLAGS array: THE headless-session flag list (stream-json
+# in/out, the pinned permission regime, the allowlist, the deny list with the checkout's own base-branch
+# pushes added, the plugin root, LANE_SYS). One list for a lane (_lanes_spawn) and a phase session
+# (phase.sh _lanes_phase_spawn), so the merge / force-push tripwire can never differ between the two.
+_lanes_claude_flags() {
+  local base disallow
+  base="$(git -C "$1" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"; base="${base#origin/}"; [ -n "$base" ] || base=main
   disallow="$LANE_DISALLOWED_FIXED,Bash(git push origin $base:*),Bash(git push origin HEAD:$base:*),Bash(git push origin HEAD:refs/heads/$base:*),Bash(git push -u origin $base:*)"
-  local -a flags=(-p --input-format stream-json --output-format stream-json --verbose
+  LN_FLAGS=(-p --input-format stream-json --output-format stream-json --verbose
     --permission-prompt-tool stdio --permission-mode acceptEdits
     --allowedTools "$LANE_ALLOWED_TOOLS" --disallowedTools "$disallow"
     --plugin-dir "$PLUGIN_ROOT" --append-system-prompt "$LANE_SYS")
+}
+# _lanes_await_init <stream_log> <byte offset> <pid> — prints the `system/init` session id written to the
+# log after <offset>, waiting up to LOOMWRIGHT_LANES_INIT_WAIT_S (default 15) seconds while <pid> lives;
+# prints nothing when none appeared.
+_lanes_await_init() {
+  local log="$1" off="$2" pid="$3" w i=0 s=""
+  w="${LOOMWRIGHT_LANES_INIT_WAIT_S:-15}"; case "$w" in ''|*[!0-9]*) w=15 ;; esac
+  while [ "$i" -lt $((w * 5)) ]; do
+    s="$(tail -c +"$((off + 1))" "$log" 2>/dev/null | grep '^{' | jq -r -R 'fromjson? | select(.type == "system" and .subtype == "init") | .session_id // empty' 2>/dev/null | head -1)"
+    [ -n "$s" ] && break
+    kill -0 "$pid" 2>/dev/null || { sleep 0.2; s="$(tail -c +"$((off + 1))" "$log" 2>/dev/null | grep '^{' | jq -r -R 'fromjson? | select(.type == "system" and .subtype == "init") | .session_id // empty' 2>/dev/null | head -1)"; break; }
+    sleep 0.2; i=$((i + 1))
+  done
+  printf '%s' "$s"
+}
+_lanes_spawn() {
+  local prompt="$1" sid="$2" label="$3" in pid st off i s=""
+  _lanes_claude_flags "$LN_DIR"
+  local -a flags=("${LN_FLAGS[@]}")
   [ -n "$sid" ] && flags+=(--resume "$sid")
   local -a envu=(-u CLAUDECODE -u CLAUDE_PID -u LOOMWRIGHT_HOLDER_PID)   # a coordinator's holder pin never reaches a lane
+  # … nor a phase session's routing (phase.sh): a lane never inherits the coordinator's run-lock session
+  # (its own PICK must take its own lock) or a phase dir (its questions belong in the lane inbox).
+  envu+=(-u LOOMWRIGHT_RUN_LOCK_SESSION_ID -u LOOMWRIGHT_PHASE_DIR)
   [ "$LN_STRIP_OPTOUT" = 1 ] && envu+=(-u LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS)   # --without-gate-optout
   in=/dev/null
   if [ -n "$prompt" ]; then
@@ -129,14 +155,7 @@ _lanes_spawn() {
   i=0
   while [ "$i" -lt 25 ] && kill -0 "$pid" 2>/dev/null && ! lanes_proc_alive "$pid" "$st" "$LN_DIR"; do sleep 0.1; i=$((i + 1)); done
   _lanes_launch_unlock
-  local w="${LOOMWRIGHT_LANES_INIT_WAIT_S:-15}"; case "$w" in ''|*[!0-9]*) w=15 ;; esac
-  i=0
-  while [ "$i" -lt $((w * 5)) ]; do
-    s="$(tail -c +"$((off + 1))" "$LN_LOG" 2>/dev/null | grep '^{' | jq -r -R 'fromjson? | select(.type == "system" and .subtype == "init") | .session_id // empty' 2>/dev/null | head -1)"
-    [ -n "$s" ] && break
-    kill -0 "$pid" 2>/dev/null || { sleep 0.2; s="$(tail -c +"$((off + 1))" "$LN_LOG" 2>/dev/null | grep '^{' | jq -r -R 'fromjson? | select(.type == "system" and .subtype == "init") | .session_id // empty' 2>/dev/null | head -1)"; break; }
-    sleep 0.2; i=$((i + 1))
-  done
+  s="$(_lanes_await_init "$LN_LOG" "$off" "$pid")"
   [ -n "$s" ] && _lt_set "$LN_TABLE" "$LN_LANE" 7 "$s"
   LN_SPAWN_SID="$s"
   echo "lane-launch: launched $LN_LANE (pid $pid, session ${s:-unknown}) $label"

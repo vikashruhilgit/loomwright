@@ -1,0 +1,34 @@
+# move-only proof for the automate-speed/22 split of three command docs — read by loomwright/scripts/test-command-parts.sh (check E).
+# original    <router> <sha256> <bytes> <lines>  — the pre-split command doc at base 626f35fab85796da1c0a4da0b2e80480a8249a02
+# split-time  <path> <sha256>                    — every router and part as the split committed it (sha over its text with index-only blocks dropped)
+original	loomwright/commands/setup.md	5edfde0032df8c3ed74e974368c3f9414a919eb3d2e810ea1712596d4f02d961	93858	592
+original	loomwright/commands/dreaming.md	79602099ce219cc2d3ad25859e77a79469ce81b4ecd345a9f4dd278f47a07bfa	137515	835
+original	loomwright/commands/agent-help.md	5a787bf6624b26eaec59cf5e82db0f40dae696424c654594a4980cbb0b22671a	84712	1337
+split-time	loomwright/commands/setup.md	5388684c219085ab5bc1de2e68e9ecd2b0f070aa135cbc38e6d237f2f2dad2dd
+split-time	loomwright/docs/command-parts/setup/dashboard.md	d3a3427243f648331f9776c2ec7b1af62f497934c6abca371cbb93b08d1a194b
+split-time	loomwright/docs/command-parts/setup/obs.md	399a7bf239fd0cc2fb7e503f14a11149b3735900ad7f5da2ba498bb11afb4c2b
+split-time	loomwright/docs/command-parts/setup/memory.md	78a3157c258682849ae2348d8ddd63366fc57f211207ed7881ada443de5d62ec
+split-time	loomwright/docs/command-parts/setup/rules.md	842810e9609928118664150b8a939542333f91ebdf5248771184733c88704736
+split-time	loomwright/docs/command-parts/setup/statusline.md	a59d9150158b3b6053a2dcd087d87cc09f3410447da394b6db86f27cf67e6b97
+split-time	loomwright/docs/command-parts/setup/other.md	50b89eff80dbd7f2d67b2bbe52f84ffa7c8a73909647b039f5980e74dc3e82b2
+split-time	loomwright/docs/command-parts/setup/ex.md	0f224e11790a641d58e9f2fea3c4d790c10d3f0835b85a953b48713b9aad6a92
+split-time	loomwright/commands/dreaming.md	1de9bb2978f5b966212cca98a116293f8e7f586bae24bfef7a52923e09542b45
+split-time	loomwright/docs/command-parts/dreaming/overview.md	2f2dd92d2cdc354140ac5c9e7559686f54296545650ca75d0d9cf82008d001d8
+split-time	loomwright/docs/command-parts/dreaming/record.md	f23f629e027693bef1df13b083fac6d491c5d980cc0f199752e90e698b754d90
+split-time	loomwright/docs/command-parts/dreaming/workflow.md	02a21d588c2ab5a7b01a9bfb58d813a13814f94485dc463c4a754b7df381df42
+split-time	loomwright/docs/command-parts/dreaming/reflection-prompt.md	fdbabafcfbe46ee415f5915980ac50f9d3db6dcc911cf5b7057ab17283143247
+split-time	loomwright/docs/command-parts/dreaming/report.md	9919072171eb0cec318f9815374bd9af4e460da060f423acb31e1cffeed403a5
+split-time	loomwright/docs/command-parts/dreaming/rules-pr.md	f6208c3f4d2f5e80361100a430e1babf1d6cfb79c732b4c26c7e690cea313144
+split-time	loomwright/docs/command-parts/dreaming/memory-pr.md	013c7726f0e09accccf6d1eeb2edc4bf01db470d22f8f288796101df4e901482
+split-time	loomwright/docs/command-parts/dreaming/report-notes.md	05e5a87fc47c8a25f2f2745d1c01882985c95ce4283185fbf12886005eaf368b
+split-time	loomwright/docs/command-parts/dreaming/approval.md	9d797e27c72cc9db9e783e82e474dc739880099d1f392b770b62ae60fcb53ae2
+split-time	loomwright/docs/command-parts/dreaming/read-only.md	8227e317ff30fb732ca66e01d8851c96f16e042e7b8efc33b95f46dd26dfb3bd
+split-time	loomwright/docs/command-parts/dreaming/reference.md	27797c44d0c221c9f60672a95992569707e13280ea57aaedac379d29c8b13230
+split-time	loomwright/commands/agent-help.md	381ae224b974eb905a16b67d4d37df216a20863b1b4b1afa5c60e2b5dcafb53c
+split-time	loomwright/docs/command-parts/agent-help/readiness.md	15533f6fa4568a939874d16b733808333b6db7849c2510ad00bc9f2c14401c01
+split-time	loomwright/docs/command-parts/agent-help/build.md	f13a15eadbd44c0686703638c0c3c92b6fd76121f4517aa7b3ea874f57a1dcac
+split-time	loomwright/docs/command-parts/agent-help/qa.md	13272703980f79e741736930d0109ff3aba05e39aab366ac3f3f9e35a63b3550
+split-time	loomwright/docs/command-parts/agent-help/knowledge.md	c7bb5991def8a4c1d265892c76daa6214ff9e82bbdf31f9793b8a8889771ced6
+split-time	loomwright/docs/command-parts/agent-help/ops.md	368e46e5380343272b5b4bb5f66e1360ba10dc754861f7ee1cdcaa66950c033e
+split-time	loomwright/docs/command-parts/agent-help/more.md	2c1830cc8d2e022bac5d9e51504b5766c9d995d6e375b1c93e9149266db14bc4
+split-time	loomwright/docs/command-parts/agent-help/guide.md	38eea9238a07630b252c3ee178fc02a3696441ad13bd0437e965c1aee9f1a893

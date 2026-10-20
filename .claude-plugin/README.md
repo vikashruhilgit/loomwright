@@ -194,7 +194,7 @@ Stacked PRs are the v14 default — reviewers must merge **bottom-of-stack first
 
 ### /automate ["\<what\>"] [--folder \<dir\>] [--backlog \<doc\>] (automation engine, v14.41.0)
 
-Generic automation engine. Converts any source (a prompt via `/product-owner`, a requirements folder, or a backlog/plan doc) into a full Queue inside a single run file `.supervisor/automate/<run_id>.md`, then drives each item through the per-item loop (`/autonomous --single-iteration` → one owned inline `/review-pr --until-mergeable` drain → trusted-merge-or-park → sync `main` → check-off). Smart resume: globs `.supervisor/automate/*.md` for incomplete runs and reconciles against ground truth.
+Generic automation engine. Converts any source (a prompt via `/product-owner`, a requirements folder, or a backlog/plan doc) into a full Queue inside a single run file `.supervisor/automate/<run_id>.md`, then drives each item through the per-item loop (Launch Pad → Supervisor → one owned `/review-pr --until-mergeable` drain, each a fresh headless session by default — `--inline-phases`: `/autonomous --single-iteration` + an inline drain → trusted-merge-or-park → sync `main` → check-off). Smart resume: globs `.supervisor/automate/*.md` for incomplete runs and reconciles against ground truth.
 
 ```bash
 /automate "add a /version command"             # prompt source (via /product-owner) → Queue

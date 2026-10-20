@@ -21,7 +21,8 @@
 # WHAT IT READS (hook- and script-written rows only — no prompt-written event,
 # no `phase_transition`, no model-computed duration):
 #   * the run file's `## Progress` lines (`- <ts> <text>`): `run created (session
-#     <uuid>)`, `picked`, `session_id <id>`, `ran /autonomous`, `owned drain
+#     <uuid>)`, `picked`, `session_id <id>` (with fresh phases the `phase=supervisor`
+#     one), `ran /autonomous`, `owned drain
 #     started`, `… READY` / `… ESCALATED` / `… superseded_by_merge`, `parked`;
 #   * the plugin session log `<logs>/<session_id>.jsonl` AND the Claude Code
 #     session log `<logs>/<cc_session_id>.jsonl` — JOINED: the cc id comes from
@@ -186,10 +187,19 @@ if run_path:
         note("no picked line for item: %s" % want)
         progress = []
     # no `picked` line at all and no --item: nothing to scope by — the whole file (as before)
+    # A fresh-phase item (automate-speed/09) names one session per phase —
+    # `session_id <sid> (<item>) phase=<launch-pad|supervisor|drain>`: the Supervisor
+    # spans come from the phase=supervisor session (or an un-suffixed line, the inline
+    # form); the last line of any kind is kept only when neither exists.
+    sup = None
     for ts, t in progress:
         m = re.match(r"session_id ([A-Za-z0-9_-]+)", t)
         if m:
             session = m.group(1)
+            ph = re.search(r" phase=(\S+)$", t)
+            if not ph or ph.group(1) == "supervisor":
+                sup = m.group(1)
+    session = sup or session
     if not logs:
         logs = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(run_path))), "logs")
 elif not logs:
