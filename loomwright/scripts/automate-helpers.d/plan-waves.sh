@@ -1,8 +1,8 @@
 # --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/plan-waves.golden.
-#:  plan-waves       <runfile|dir|item-list> --max N [--explain] [--root <checkout>]  # parallel-automate/04: READ-ONLY wave planner — `## Depends on` / `## Touches` (strict grammar) + <root>/.agent/companions.json expansion ⇒ `wave <k>: …` + `blocked <item>: …` lines (`--explain`, parallel-automate/10: then one `explain <item> (wave <k>):` block per placed item not in wave 1); exit 1 + empty stdout on usage / item not found / unknown dependency / cycle / companions_malformed; called ONLY by `--parallel N>1` (item 05), never by the sequential loop
-#:  plan-waves       <item|dir|runfile|item-list> --lint [--root <checkout>]  # parallel-automate/10: READ-ONLY lint of both sections with the planner's OWN parser — one `<item>: Touches <verdict>; Depends on <verdict>` line per item + two count lines; exit 1 when any section is missing/unparsable (a sole `unknown` Touches is `ok (declared unknown)`); never needs --max
-#:  plan-waves       <item> --touches [--root <checkout>]  # READ-ONLY: ONE item's Touches set exactly as the planner reserves it (its OWN parser + <root>/.agent/companions.json expansion) ⇒ `known` then one normalized path per line, or the one line `unknown <why>`; exit 1 + empty stdout on usage (incl. an input that does not exist or is not *.md) / companions_malformed; lane-readiness's scope fence reads it
+#:  plan-waves       <runfile|dir|item-list> --max N [--explain] [--verbose] [--root <checkout>]  # parallel-automate/04: READ-ONLY wave planner — `## Depends on` / `## Touches` (strict grammar) + <root>/.agent/companions.json expansion ⇒ `wave <k>: …` + `blocked <item>: …` lines (`--explain`, parallel-automate/10: then one `explain <item> (wave <k>):` block per placed item not in wave 1); exit 1 + empty stdout on usage / item not found / unknown dependency / cycle / companions_malformed; called ONLY by `--parallel N>1` (item 05), never by the sequential loop; `--verbose` (any mode) is a no-op — every mode already prints one line per wave, item or path
+#:  plan-waves       <item|dir|runfile|item-list> --lint [--verbose] [--root <checkout>]  # parallel-automate/10: READ-ONLY lint of both sections with the planner's OWN parser — one `<item>: Touches <verdict>; Depends on <verdict>` line per item + two count lines; exit 1 when any section is missing/unparsable (a sole `unknown` Touches is `ok (declared unknown)`); never needs --max
+#:  plan-waves       <item> --touches [--verbose] [--root <checkout>]  # READ-ONLY: ONE item's Touches set exactly as the planner reserves it (its OWN parser + <root>/.agent/companions.json expansion) ⇒ `known` then one normalized path per line, or the one line `unknown <why>`; exit 1 + empty stdout on usage (incl. an input that does not exist or is not *.md) / companions_malformed; lane-readiness's scope fence reads it
 
 # --------------------------------------------------------------------------- #
 # plan-waves — read-only wave planner (parallel-automate/04). Its ONLY planning caller is the
@@ -80,6 +80,10 @@
 # exist, or is not a `*.md` file) or companions_malformed. `--max` is not needed (ignored when given). Its reader is lane-readiness's
 # scope fence (automate-lanes.d/readiness.sh), so the fence and the planner cannot read one Touches
 # section two ways.
+# --verbose (automate-speed/24) — accepted in every mode and changes nothing: `--max` / `--lint` /
+# `--touches` already print one line per wave, item or path (`--touches` stays byte-identical for
+# lane-readiness), and `--explain` stays the opt-in detail. The plugin's terse-default rule gives the
+# other scripts a `--verbose` for their full output; here the default already is the full output.
 
 _PW_TMP=""
 _PW_EXPLAIN=0
@@ -354,6 +358,7 @@ plan_waves() {
       --explain) case "$mode" in lint) _pw_usage "--explain and --lint are separate modes" ;; touches) _pw_usage "--touches is a separate mode" ;; esac; mode=explain; shift ;;
       --lint) case "$mode" in explain) _pw_usage "--explain and --lint are separate modes" ;; touches) _pw_usage "--touches is a separate mode" ;; esac; mode=lint; shift ;;
       --touches) case "$mode" in explain|lint) _pw_usage "--touches is a separate mode" ;; esac; mode=touches; shift ;;
+      --verbose) shift ;;   # automate-speed/24: accepted, a no-op — every mode's stdout is already one line per wave / item / path
       -*) _pw_usage "unknown option $1" ;;
       *) [ -z "$input" ] || _pw_usage "more than one input ($input, $1)"; input="$1"; shift ;;
     esac

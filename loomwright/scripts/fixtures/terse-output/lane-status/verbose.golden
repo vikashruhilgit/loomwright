@@ -1,0 +1,22 @@
+lane-status: automate-2026-10-07-120000 — 3 lane(s) — 2026-10-07T12:30:00Z — started 2026-10-07T12:00:05Z
+wave 1 PR: https://github.com/o/r/pull/501  branch=wave/p-w1  built 2026-10-07T12:20:00Z  merged  lanes L1
+wave PR: https://github.com/o/r/pull/502  branch=wave/hand
+wave 2 (not built yet): lanes L2,L3
+L1  merged — done (wave PR merged)  item=reqs/a.md  pr=https://github.com/o/r/pull/11  ended=2026-10-07T12:19:30Z  path=/work/primary-lanes/automate-2026-10-07-120000/L1
+    policy: 2 answered by policy since 2026-10-07T12:05:00Z — last plan-review → Save and exit 2026-10-07T12:10:00Z
+    steps: Pick ✓ · Plan ✓ · Merge ✓  (started 2026-10-07T12:01:00Z)
+    progress: - 2026-10-07T12:19:00Z owned_drain_result: READY
+    actions: Bash git push; Bash gh pr create
+    readiness: 5/5 PASS
+    last: Parked at READY.
+L2  awaiting_input  item=reqs/b.md  pr=-  path=/work/primary-lanes/automate-2026-10-07-120000/L2
+    steps: Pick ✓ · [Build 2m running] · Merge
+    question: toolu_q1 asked_at=2026-10-07T12:25:00Z waiting_s=300 — Which mode?
+    question: toolu_q2 asked_at=unknown waiting_s=unknown — 
+    ci-slot: waiting — position 2
+    held for load: load 9.1 > 8
+L3  running  item=-  pr=-  path=/work/primary-lanes/automate-2026-10-07-120000/L3
+    ci-slot: holding a slot
+machine: state=ok load1=1 cpus=8 mem_pressure=ok — memory_pressure: new launches held
+keep-awake: held (Claude app — only while a Code session works; caffeinate pid 4242)
+keep-awake suggestion (run it yourself, or lane-status --keep-awake): caffeinate -i -w 4242 — a closed lid still sleeps

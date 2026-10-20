@@ -147,7 +147,21 @@
 #       dropped / a died phase ⇒ /autonomous PLAN step 4's status_reason on the no-PR line, no RUN; saved
 #       (or ONE new brief behind a malformed block) ⇒ the Supervisor phase spawn.
 #   D   DOC MIRROR: the schema doc's step list equals the driver's `case` arms, its `do` table the
-#       emitter's closed set, and its spawn row the emitters' `what` values.
+#       emitter's closed set, and its spawn row the emitters' `what` values; its coordinator_model closed
+#       list equals the driver's NS_CM_VALUES and its Common fields name coordinator_model.
+#   CM  COORDINATOR MODEL (automate-speed/10): every instruction the legs above printed carries a listed
+#       coordinator_model; absent key ⇒ the shipped default (read from the driver's NS_CM_DEFAULT, so the
+#       pin follows the A/B), a listed value ⇒ itself, an invalid one ⇒ session + ONE named stderr line
+#       (never a refusal); the --resume start_new carries it from the automate dir's checkout. The valve: 2
+#       FAILs in the last 20 ⇒ no escalation, 3 ⇒ ONE escalated record then session, an escalated record +
+#       25 ok lines ⇒ still session, a malformed / capped ledger ⇒ session, the ledger deleted ⇒ the
+#       configured value again; a refusal appends exactly ONE ok:false line and changes nothing else under
+#       .supervisor/ (snapshot() excludes only that ledger), usage errors (a bad --root included) append
+#       nothing, a dead-pid / aged ledger lock is broken (the 3rd FAIL still escalates) while a live holder's
+#       is not, and a replayed report / a no-result re-print / a no-result --start pick append nothing.
+#   E   EVAL SUITE (automate-speed/10): loomwright/evals/coordinator-model/lib/selftest.sh — a model-free
+#       reference coordinator scores every A/B case PASS and the mutation control FAIL; the graders catch a
+#       wrong question, a skipped instruction and a hand-edited run file.
 #   M   MUTATION CONTROLS — each mutant gated non-empty + differs from the driver + `bash -n` (and
 #       its anchor occurring exactly once); each must turn its leg red:
 #         M2a gate-eval replaced by a direct awaiting_merge park   ⇒ G gate-eval-merge
@@ -195,6 +209,14 @@
 #         M9b --inline-phases parsed as off                             ⇒ R1
 #         M9c the Supervisor phase spawn marked "session":"inline"      ⇒ F1
 #         M9d a discarded LAUNCH_PAD_RESULT taken down the saved branch  ⇒ F3
+#         M10a–q the coordinator_model pins (the brief's Pin mutations) ⇒ their CM leg: the invalid-value
+#             fallback a pass-through / every configured value ⇒ session / the absent key ⇒ another listed
+#             value (setting); the threshold 3 ⇒ 4 / 3 ⇒ 2 (threshold); a malformed ledger ⇒ the configured
+#             model (badledger); the escalated record looked for only in the last-20 tail (persist); the
+#             replay check dropped / the valve armed on every call (replay); coordinator_model dropped from
+#             ns_base (every) / from the resume start_new (resume); a missing ledger ⇒ session (delete); the
+#             ledger append dropped from ns_die2 / from a first arm's exit-2 refusal / the bad --root
+#             refusal left armed (refusal); the stale-lock break dropped / a live holder read as stale (stalelock)
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -403,7 +425,9 @@ golden_case() {
   return 0
 }
 
-snapshot() { ( cd "$CASE_ROOT/.supervisor" && find . -type f | env LC_ALL=C sort | while IFS= read -r f; do cksum "$f"; done ); }
+# every file under .supervisor/ but the coordinator-model ledger — the ONE file an exit-2 refusal may append to
+# (automate-speed/10 AC4); leg CM asserts what that ledger gains on each path
+snapshot() { ( cd "$CASE_ROOT/.supervisor" && find . -type f ! -path ./automate/coordinator-model.jsonl | env LC_ALL=C sort | while IFS= read -r f; do cksum "$f"; done ); }
 
 # leg_idem <case> <driver> — 0 when two no-result calls re-print the case's last instruction and write nothing
 leg_idem() {
@@ -1825,6 +1849,209 @@ leg_surface() {
   return 0
 }
 
+# --------------------------------------------------------------------------------------
+# CM — the coordinator_model setting and its escalate-on-failure valve (automate-speed/10)
+# --------------------------------------------------------------------------------------
+CM_LEDGER_REL=".supervisor/automate/coordinator-model.jsonl"
+CM_VALUES="session claude-haiku-5-5 claude-sonnet-5-5"
+# the shipped default: the pin follows whatever the A/B set (docs/evidence/coordinator-model-ab.md)
+CM_DEFAULT="$(sed -n 's/^NS_CM_DEFAULT=//p' "$DRIVER" | head -n 1)"
+ESC_CALL="$(grep -m1 '^call: ' "$FIX/escalated-park/next-step.results")"
+DFD_CALL1="$(grep '^call: ' "$FIX/dismissed-findings-decision-step/next-step.results" | sed -n 1p)"
+DFD_CALL2="$(grep '^call: ' "$FIX/dismissed-findings-decision-step/next-step.results" | sed -n 2p)"
+cm_lines() { # <true|false> <n> — n report lines
+  local i=0
+  while [ "$i" -lt "$2" ]; do printf '{"ts":"2026-10-20T00:00:00Z","run_id":"r","item":null,"step":"gate","ok":%s}\n' "$1"; i=$((i + 1)); done
+}
+CM_ESC_REC='{"ts":"2026-10-20T00:00:00Z","escalated":true,"fails":3,"window":20,"from":"claude-haiku-5-5"}'
+# cm_run <driver> <case> <config json|-> <ledger text|-> <directives> — a fresh scratch, config / ledger seeded
+cm_run() {
+  new_scratch "$FIX/$2" || { DRIVE_ERR="scratch not built"; return 1; }
+  [ "$3" = - ] || printf '%s\n' "$3" > "$CASE_ROOT/.supervisor/config.json"
+  [ "$4" = - ] || printf '%s' "$4" > "$CASE_ROOT/$CM_LEDGER_REL"
+  printf '%s\n' "$5" > "$CASE_DIR/cm.results"
+  drive "$FIX/$2" "$1" "$CASE_DIR/cm.results"
+}
+cm_model() { printf '%s' "$LAST_OUT" | jq -r 'if has("coordinator_model") then .coordinator_model else "ABSENT" end' 2>/dev/null; }
+cm_last_err() { local n; n="$(grep -c '^call' "$CASE_DIR/cm.results")"; cat "$CASE_DIR/call$n.err" 2>/dev/null; }
+cm_ledger() { cat "$CASE_ROOT/$CM_LEDGER_REL" 2>/dev/null; }
+cm_n() { cm_ledger | grep -c . | tr -d ' '; }
+
+# leg_cm_setting <driver> — absent ⇒ the shipped default; each listed value ⇒ itself; an invalid value (an
+# unknown id, a non-string, a config that is not an object) ⇒ session, ONE named stderr line, never a refusal
+leg_cm_setting() {
+  local drv="$1" v m e
+  cm_run "$drv" escalated-park - - "$ESC_CALL"$'\nexpect: park'
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = "$CM_DEFAULT" ] || { LEG_MSG="absent key: '$(cm_model)', want the default '$CM_DEFAULT' ($DRIVE_ERR)"; return 1; }
+  for v in $CM_VALUES; do
+    cm_run "$drv" escalated-park "{\"coordinator_model\":\"$v\"}" - "$ESC_CALL"$'\nexpect: park'
+    [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = "$v" ] || { LEG_MSG="configured $v: '$(cm_model)' ($DRIVE_ERR)"; return 1; }
+  done
+  for v in '{"coordinator_model":"gpt-9"}' '{"coordinator_model":5}' '{"coordinator_model":"claude-haiku-5-5 session"}' '[1]'; do
+    cm_run "$drv" escalated-park "$v" - "$ESC_CALL"$'\nexpect: park'
+    m="$(cm_model)"; e="$(cm_last_err | grep -c '^next-step: coordinator_model_invalid' | tr -d ' ')"
+    [ -z "$DRIVE_ERR" ] && [ "$m" = session ] && [ "$e" = 1 ] || { LEG_MSG="invalid $v: model '$m', $e invalid line(s) ($DRIVE_ERR)"; return 1; }
+  done
+  return 0
+}
+# leg_cm_every <driver> — every instruction a spawn / ask / park / done case prints carries a listed coordinator_model
+leg_cm_every() {
+  local drv="$1" c n=0 bad="" f l
+  for c in run-config-suppress-restore dismissed-findings-decision-step resume-glob-finalize check-off-progress; do
+    golden_case "$c" "$drv" || { LEG_MSG="$c: $GC_MSG"; return 1; }
+    for f in "$CASE_DIR"/call*.out; do
+      [ -s "$f" ] || continue
+      l="$(head -n 1 "$f")"; n=$((n + 1))
+      case " $CM_VALUES " in *" $(printf '%s' "$l" | jq -r '.coordinator_model // "ABSENT"' 2>/dev/null) "*) ;; *) bad="$bad $c:$(basename "$f")" ;; esac
+    done
+  done
+  [ "$n" -ge 6 ] && [ -z "$bad" ] || { LEG_MSG="$n instruction(s); without a listed coordinator_model:${bad:- none}"; return 1; }
+  CM_EVERY_N="$n"; return 0
+}
+# leg_cm_resume <driver> — the inline --resume no-incomplete-run start_new carries the field, resolved from
+# the checkout that holds the automate dir (a --root elsewhere does not change it)
+leg_cm_resume() {
+  local drv="$1"
+  new_scratch "$FIX/escalated-park" || { LEG_MSG="scratch not built"; return 1; }
+  rm -f "$CASE_RF"; printf '{"coordinator_model":"claude-haiku-5-5"}\n' > "$CASE_ROOT/.supervisor/config.json"
+  mkdir -p "$CASE_DIR/elsewhere/.supervisor"; printf '{"coordinator_model":"claude-sonnet-5-5"}\n' > "$CASE_DIR/elsewhere/.supervisor/config.json"
+  # AD / RUN_ID unset in the driver's environment (in_case exports them): the resume entry must not lean on them
+  printf '%s\n' 'env: AD= RUN_ID=' 'call-bare: --resume "$AD" --session-id cm-resume' 'expect: done' > "$CASE_DIR/cm.results"
+  drive "$FIX/escalated-park" "$drv" "$CASE_DIR/cm.results"
+  [ -z "$DRIVE_ERR" ] && [ "$(printf '%s' "$LAST_OUT" | jq -r .choice)" = start_new ] && [ "$(cm_model)" = claude-haiku-5-5 ] \
+    || { LEG_MSG="start_new: '$LAST_OUT' ($DRIVE_ERR)"; return 1; }
+  printf '%s\n' 'env: AD= RUN_ID=' 'call-bare: --resume "$AD" --root "$CASE_DIR/elsewhere" --session-id cm-resume' 'expect: done' > "$CASE_DIR/cm.results"
+  drive "$FIX/escalated-park" "$drv" "$CASE_DIR/cm.results"
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = claude-haiku-5-5 ] || { LEG_MSG="start_new with --root elsewhere: '$(cm_model)' ($DRIVE_ERR)"; return 1; }
+  return 0
+}
+# leg_cm_threshold <driver> — 2 FAILs in the last 20 ⇒ no escalation; FAILs older than the window do not
+# count; the 3rd FAIL (a refused report) ⇒ ONE escalated record, then session
+leg_cm_threshold() {
+  local drv="$1" hk='{"coordinator_model":"claude-haiku-5-5"}' l3 l4
+  cm_run "$drv" escalated-park "$hk" "$(cm_lines false 2; cm_lines true 5)"$'\n' "$ESC_CALL"$'\nexpect: park'
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = claude-haiku-5-5 ] && ! grep -q '"escalated"' < <(cm_ledger) \
+    || { LEG_MSG="2 FAILs/20: '$(cm_model)' ($DRIVE_ERR)"; return 1; }
+  cm_run "$drv" escalated-park "$hk" "$(cm_lines false 3; cm_lines true 20)"$'\n' "$ESC_CALL"$'\nexpect: park'
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = claude-haiku-5-5 ] || { LEG_MSG="3 FAILs outside the window: '$(cm_model)' ($DRIVE_ERR)"; return 1; }
+  cm_run "$drv" escalated-park "$hk" "$(cm_lines false 2)"$'\n' "call: --result 'not json'"$'\nexpect-exit: 2\n'"$ESC_CALL"$'\nexpect: park'
+  l3="$(cm_ledger | sed -n 3p)"; l4="$(cm_ledger | sed -n 4p)"
+  printf '%s' "$l3" | jq -e '.ok == false and (.reason | test("not a JSON object"))' >/dev/null 2>&1 \
+    && printf '%s' "$l4" | jq -e '.escalated == true and .fails == 3 and .window == 20 and .from == "claude-haiku-5-5"' >/dev/null 2>&1 \
+    && [ "$(cm_ledger | grep -c '"escalated"' | tr -d ' ')" = 1 ] && [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = session ] \
+    || { LEG_MSG="3 FAILs/20: model '$(cm_model)', ledger: $(cm_ledger | tr '\n' ' ') ($DRIVE_ERR)"; return 1; }
+  return 0
+}
+# leg_cm_persist <driver> — an escalated record followed by 25 ok lines still resolves session
+leg_cm_persist() {
+  local drv="$1"
+  cm_run "$drv" escalated-park '{"coordinator_model":"claude-haiku-5-5"}' "$CM_ESC_REC"$'\n'"$(cm_lines true 25)"$'\n' "$ESC_CALL"$'\nexpect: park'
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = session ] || { LEG_MSG="escalated + 25 ok: '$(cm_model)' ($DRIVE_ERR)"; return 1; }
+  return 0
+}
+# leg_cm_badledger <driver> — a malformed ledger, and one at its byte cap, resolve session with a named
+# stderr line; nothing is appended to the capped one
+leg_cm_badledger() {
+  local drv="$1" e s0
+  cm_run "$drv" escalated-park '{"coordinator_model":"claude-haiku-5-5"}' $'not json\n' "$ESC_CALL"$'\nexpect: park'
+  e="$(cm_last_err | grep -c '^next-step: coordinator_model_ledger_malformed' | tr -d ' ')"
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = session ] && [ "$e" = 1 ] || { LEG_MSG="malformed ledger: '$(cm_model)', $e line(s) ($DRIVE_ERR)"; return 1; }
+  cm_run "$drv" escalated-park '{"coordinator_model":"claude-haiku-5-5"}' "$(cm_lines true 3500)"$'\n' "$ESC_CALL"$'\nexpect: park'
+  e="$(cm_last_err | grep -c '^next-step: coordinator_model_ledger_over_cap' | tr -d ' ')"
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = session ] && [ "$e" = 1 ] && [ "$(cm_n)" = 3500 ] \
+    || { LEG_MSG="capped ledger: '$(cm_model)', $e line(s), $(cm_n) ledger lines ($DRIVE_ERR)"; return 1; }
+  return 0
+}
+# leg_cm_delete <driver> — the owner deletes the ledger: the configured value resolves again. Read through the
+# no-result resume start_new (it appends nothing, so each call resolves the ledger exactly as it lies on disk;
+# an accepted --result report appends its ok line BEFORE the instruction resolves, re-creating the file)
+leg_cm_delete() {
+  local drv="$1"
+  new_scratch "$FIX/escalated-park" || { LEG_MSG="scratch not built"; return 1; }
+  rm -f "$CASE_RF"; printf '{"coordinator_model":"claude-haiku-5-5"}\n' > "$CASE_ROOT/.supervisor/config.json"
+  printf '%s\n' "$CM_ESC_REC" "$(cm_lines true 2)" > "$CASE_ROOT/$CM_LEDGER_REL"
+  printf '%s\n' 'env: AD= RUN_ID=' 'call-bare: --resume "$AD" --session-id cm-delete' 'expect: done' > "$CASE_DIR/cm.results"
+  drive "$FIX/escalated-park" "$drv" "$CASE_DIR/cm.results"
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = session ] || { LEG_MSG="escalated ledger: '$(cm_model)' ($DRIVE_ERR)"; return 1; }
+  rm -f "$CASE_ROOT/$CM_LEDGER_REL"
+  drive "$FIX/escalated-park" "$drv" "$CASE_DIR/cm.results"
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = claude-haiku-5-5 ] && [ ! -e "$CASE_ROOT/$CM_LEDGER_REL" ] \
+    || { LEG_MSG="ledger deleted: '$(cm_model)' ($DRIVE_ERR)"; return 1; }
+  return 0
+}
+# leg_cm_refusal <driver> — a refused report (not a JSON object; an ask answered with a label it does not
+# offer) appends exactly ONE ok:false line and changes nothing else under .supervisor/; usage errors append nothing
+leg_cm_refusal() {
+  local drv="$1" s0 n0 l
+  cm_run "$drv" escalated-park - - "call: --result 'not json'"$'\nexpect-exit: 2'
+  l="$(cm_ledger)"
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_n)" = 1 ] \
+    && printf '%s' "$l" | jq -e --arg r "$CASE_RUN" '.ok == false and .run_id == $r and (.reason | test("not a JSON object"))
+         and .item == ".supervisor/requirements/twin-loop/01-commit-the-distilled-twin.md" and (.ts | test("^[0-9]{4}-"))' >/dev/null 2>&1 \
+    || { LEG_MSG="not-JSON refusal: ledger '$l' ($DRIVE_ERR)"; return 1; }
+  s0="$(snapshot)"; n0="$(cm_n)"
+  # a well-formed report sent with a --root that is not a directory is a usage error too (it appends nothing)
+  printf '%s\n' 'call: --bogus-flag' 'expect-exit: 2' 'call: --start pick --result "{}"' 'expect-exit: 2' \
+    "$ESC_CALL --root /nonexistent/cm-bad-root" 'expect-exit: 2' > "$CASE_DIR/cm.results"
+  drive "$FIX/escalated-park" "$drv" "$CASE_DIR/cm.results"
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_n)" = "$n0" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="usage errors wrote: ledger $(cm_n) line(s) ($DRIVE_ERR)"; return 1; }
+  cm_run "$drv" dismissed-findings-decision-step - - "$DFD_CALL1"$'\nexpect: ask'
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_n)" = 1 ] && cm_ledger | jq -e '.ok == true and .step == "gate"' >/dev/null 2>&1 \
+    || { LEG_MSG="accepted drain report: ledger '$(cm_ledger)' ($DRIVE_ERR)"; return 1; }
+  s0="$(snapshot)"
+  printf '%s\n' "call: --result '{\"answers\":[\"Not an option\"]}'" 'expect-exit: 2' > "$CASE_DIR/cm.results"
+  drive "$FIX/dismissed-findings-decision-step" "$drv" "$CASE_DIR/cm.results"
+  l="$(cm_ledger | sed -n 2p)"
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_n)" = 2 ] && [ "$s0" = "$(snapshot)" ] && printf '%s' "$l" | jq -e '.ok == false and .step == "decide" and (.reason | length) > 0' >/dev/null 2>&1 \
+    || { LEG_MSG="refused answer: ledger line '$l', $(cm_n) line(s) ($DRIVE_ERR)"; return 1; }
+  return 0
+}
+# leg_cm_stalelock <driver> — the ledger lock cannot outlive its holder: a pre-created lock whose stamped pid is
+# not running, and an unstamped one over a minute old, are broken, so the 3rd FAIL still writes ONE escalated
+# record (then session) and no lock is left; a LIVE holder's fresh lock is never broken (the escalation waits,
+# the report line is still appended, the holder's lock survives)
+leg_cm_stalelock() {
+  local drv="$1" hk='{"coordinator_model":"claude-haiku-5-5"}' lk dead kind
+  bash -c 'exit 0' & dead=$!; wait "$dead" 2>/dev/null
+  for kind in deadpid aged live; do
+    new_scratch "$FIX/escalated-park" || { LEG_MSG="$kind: scratch not built"; return 1; }
+    printf '%s\n' "$hk" > "$CASE_ROOT/.supervisor/config.json"
+    cm_lines false 2 > "$CASE_ROOT/$CM_LEDGER_REL"
+    lk="$CASE_ROOT/$CM_LEDGER_REL.lock"; mkdir "$lk" || { LEG_MSG="$kind: lock not pre-created"; return 1; }
+    case "$kind" in
+      deadpid) printf '%s\n' "$dead-1" > "$lk/owner" ;;
+      aged) touch -t 202001010000 "$lk" ;;
+      live) printf '%s\n' "$$-1" > "$lk/owner" ;;
+    esac
+    printf '%s\n' "call: --result 'not json'" 'expect-exit: 2' "$ESC_CALL" 'expect: park' > "$CASE_DIR/cm.results"
+    drive "$FIX/escalated-park" "$drv" "$CASE_DIR/cm.results"
+    if [ "$kind" = live ]; then
+      [ -z "$DRIVE_ERR" ] && ! grep -q '"escalated"' < <(cm_ledger) && [ "$(cm_n)" = 4 ] && [ "$(cat "$lk/owner" 2>/dev/null)" = "$$-1" ] \
+        || { LEG_MSG="live holder: ledger $(cm_ledger | tr '\n' ' '), lock owner '$(cat "$lk/owner" 2>/dev/null)' ($DRIVE_ERR)"; return 1; }
+      rm -rf "$lk"
+    else
+      [ -z "$DRIVE_ERR" ] && [ "$(cm_ledger | grep -c '"escalated"' | tr -d ' ')" = 1 ] && [ "$(cm_model)" = session ] && [ ! -e "$lk" ] \
+        || { LEG_MSG="$kind stale lock: model '$(cm_model)', lock $( [ -e "$lk" ] && echo left || echo gone ), ledger $(cm_ledger | tr '\n' ' ') ($DRIVE_ERR)"; return 1; }
+    fi
+  done
+  return 0
+}
+# leg_cm_replay <driver> — a byte-identical replayed report, a no-result re-print and a no-result --start pick
+# append nothing
+leg_cm_replay() {
+  local drv="$1" l1
+  cm_run "$drv" escalated-park - - "$ESC_CALL"$'\nexpect: park'
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_n)" = 1 ] || { LEG_MSG="first report: $(cm_n) ledger line(s) ($DRIVE_ERR)"; return 1; }
+  l1="$(cm_ledger)"
+  printf '%s\n' "$ESC_CALL" 'expect: park' 'call:' 'expect: park' > "$CASE_DIR/cm.results"
+  drive "$FIX/escalated-park" "$drv" "$CASE_DIR/cm.results"
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_ledger)" = "$l1" ] || { LEG_MSG="replay / re-print appended: $(cm_ledger | tr '\n' ' ') ($DRIVE_ERR)"; return 1; }
+  : > "$CASE_DIR/seams.none"
+  in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" --start pick --session-id cm-replay >/dev/null 2>&1
+  [ "$(cm_ledger)" = "$l1" ] || { LEG_MSG="a no-result --start pick appended: $(cm_ledger | tr '\n' ' ')"; return 1; }
+  return 0
+}
+
 # build_mutant <name> <anchor> <replacement|-append:<line>> — a driver copy beside symlinks to every other
 # scripts/ entry; prints its path; gated: anchor once, non-empty, differs, bash -n
 build_mutant() {
@@ -2298,6 +2525,49 @@ docwhats="$(grep -E '^\| `spawn` \| ' "$DOC" | grep -oE '`"[^"`]+"`' | tr -d '`"
 [ "$whats" = "/autonomous run|fix-now re-drain|launch pad phase|owned drain|" ] && [ "$docwhats" = "$whats" ] \
   && ok "D: the spawn's what values (/autonomous run | fix-now re-drain | launch pad phase | owned drain) — emitter and doc agree" \
   || no "D: what values: driver '$whats' vs doc '$docwhats'"
+# the coordinator_model closed list: the driver's NS_CM_VALUES vs the schema doc's restatement beside the key
+cmv="$(awk "/^NS_CM_VALUES='/{f=1; sub(/^NS_CM_VALUES='/, \"\")} f{ l = \$0; e = sub(/'\$/, \"\", l); print l; if (e) exit }" "$DRIVER" | env LC_ALL=C sort | tr '\n' ' ')"
+doccmv="$(grep -F 'coordinator_model values (closed):' "$DOC" | grep -oE '`(session|claude-[a-z0-9-]+)`' | tr -d '`' | env LC_ALL=C sort -u | tr '\n' ' ')"
+[ "$cmv" = "claude-haiku-5-5 claude-sonnet-5-5 session " ] && [ "$doccmv" = "$cmv" ] \
+  && ok "D: the coordinator_model closed list (session | claude-haiku-5-5 | claude-sonnet-5-5) — driver and doc agree" \
+  || no "D: coordinator_model values: driver '$cmv' vs doc '$doccmv'"
+grep -qF 'coordinator_model' <<<"$(grep -F '**Common fields:**' "$DOC")" && ok "D: the doc's Common fields name coordinator_model" \
+  || no "D: the doc's Common fields do not name coordinator_model"
+
+echo "-- CM. coordinator_model setting + escalate-on-failure valve (automate-speed/10)"
+# every instruction leg G printed (spawn / ask / park / done, 41 cases) carries a listed coordinator_model
+cm_all="$(cat "$WORK"/case.*/call*.out 2>/dev/null | grep '^{' || true)"
+cm_all_n="$(printf '%s\n' "$cm_all" | grep -c '^{' | tr -d ' ')"
+cm_all_bad="$(printf '%s\n' "$cm_all" | grep '^{' | jq -r '.coordinator_model // "ABSENT"' 2>/dev/null | grep -vxE 'session|claude-haiku-5-5|claude-sonnet-5-5' | head -n 3 | tr '\n' ' ')"
+[ "$cm_all_n" -gt 0 ] && [ -z "$cm_all_bad" ] && ok "CM: all $cm_all_n instruction(s) the legs above printed carry a listed coordinator_model" \
+  || no "CM: instructions without a listed coordinator_model: ${cm_all_bad:-none of $cm_all_n}"
+for cm_leg in setting every resume threshold persist badledger delete refusal stalelock replay; do
+  LEG_MSG=""
+  case "$cm_leg" in
+    setting) d_="absent ⇒ the default ($CM_DEFAULT); each listed value ⇒ itself; invalid ⇒ session + ONE coordinator_model_invalid line, exit 0" ;;
+    every) d_="every spawn / ask / park / done instruction carries a listed coordinator_model" ;;
+    resume) d_="the --resume no-incomplete-run start_new carries it, from the automate dir's checkout (not --root)" ;;
+    threshold) d_="2 FAILs/20 ⇒ no escalation; FAILs outside the window do not count; 3/20 ⇒ ONE escalated record, then session" ;;
+    persist) d_="an escalated record + 25 later ok lines ⇒ still session" ;;
+    badledger) d_="a malformed / capped ledger ⇒ session + a named line; nothing appended over the cap" ;;
+    delete) d_="the owner deletes the ledger ⇒ the configured value resolves again" ;;
+    refusal) d_="a refusal appends exactly ONE ok:false line, nothing else under .supervisor/ changes; usage errors (a bad --root included) append nothing" ;;
+    stalelock) d_="a dead-pid / aged ledger lock is broken (the 3rd FAIL still escalates, no lock left); a live holder's lock is never broken" ;;
+    replay) d_="a byte-identical replayed report, a no-result re-print and a no-result --start pick append nothing" ;;
+  esac
+  if "leg_cm_$cm_leg" "$DRIVER"; then ok "CM $cm_leg: $d_"; else no "CM $cm_leg: $LEG_MSG"; fi
+done
+
+echo "-- E. the coordinator-model eval suite, model-free (automate-speed/10)"
+# its reference coordinator must score every A/B case PASS and the mutation control FAIL, and its graders
+# must notice a wrong question / a skipped instruction / a hand edit — so a red case under a model is the model
+ESELF="$REPO/loomwright/evals/coordinator-model/lib/selftest.sh"
+if [ -f "$ESELF" ]; then
+  eout="$(HOME="$WORK/eself-home" bash "$ESELF" 2>&1)"; erc=$?
+  etally="$(printf '%s\n' "$eout" | tail -n 1)"
+  if [ "$erc" -eq 0 ]; then ok "E: lib/selftest.sh — $etally"
+  else no "E: lib/selftest.sh — $etally"; printf '%s\n' "$eout" | grep '^FAIL' | sed 's/^/    /'; fi
+else no "E: $ESELF missing"; fi
 
 if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
   echo "-- M. mutation controls"
@@ -2572,6 +2842,50 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_fresh_plan_mapping "$m"; then no "M9d: F3 stayed green with discarded mapped to saved"
     else ok "M9d: discarded mapped to the saved branch ⇒ F3 red ($LEG_MSG)"; fi
   else no "M9d: mutant not built"; fi
+  # M10* — the coordinator_model pins (automate-speed/10, the brief's Pin mutations): each mutant must turn
+  # its CM leg red
+  cm_other="$(for v in $CM_VALUES; do [ "$v" = "$CM_DEFAULT" ] || { echo "$v"; break; }; done)"
+  cm_mut() { # <name> <leg> <what> <anchor> <replacement>
+    local m
+    if m="$(build_mutant "$1" "$4" "$5")"; then
+      LEG_MSG=""
+      if "leg_cm_$2" "$m"; then no "M$1: CM $2 stayed green with $3"
+      else ok "M$1: $3 ⇒ CM $2 red ($LEG_MSG)"; fi
+    else no "M$1: mutant not built"; fi
+  }
+  cm_mut 10a setting "the invalid-value fallback a pass-through" \
+    'ns_cm_listed "$v" && { NS_CM_CONF="$v"; return 0; }' '{ NS_CM_CONF="$v"; return 0; }'
+  cm_mut 10b threshold "the valve threshold 3 ⇒ 4" 'NS_CM_FAILS=3;' 'NS_CM_FAILS=4;'
+  cm_mut 10c badledger "a malformed ledger resolving the configured model" \
+    'coordinator_model_ledger_malformed — $f — coordinator_model resolves session (delete the ledger to clear)"; NS_CM=session' \
+    'coordinator_model_ledger_malformed — $f — coordinator_model resolves session (delete the ledger to clear)"; NS_CM="$NS_CM_CONF"'
+  cm_mut 10d persist "the escalated record looked for only in the last-20 tail" \
+    'elif any($l[]; .escalated == true) then "escalated"' 'elif any(($l | .[-$w:])[]; .escalated == true) then "escalated"'
+  cm_mut 10e replay "the replay check dropped before the ledger append" \
+    '     && [ "$(ns_report_key "$RESULT")" = "$(st report_key)" ]; then' '     && false; then'
+  cm_mut 10f every "coordinator_model deleted from ns_base()" \
+    'pr: (if $p == "" or $p == "null" then null else $p end), coordinator_model: $cm}' 'pr: (if $p == "" or $p == "null" then null else $p end)}'
+  cm_mut 10g resume "coordinator_model deleted from the resume start_new instruction" \
+    'pr: null, coordinator_model: $cm, status: "stopped"' 'pr: null, status: "stopped"'
+  cm_mut 10h setting "the absent key resolving $cm_other (not the shipped $CM_DEFAULT)" \
+    "NS_CM_DEFAULT=$CM_DEFAULT" "NS_CM_DEFAULT=$cm_other"
+  cm_mut 10i setting "every configured value resolving session" \
+    'ns_cm_listed "$v" && { NS_CM_CONF="$v"; return 0; }' 'ns_cm_listed "$v" && { NS_CM_CONF=session; return 0; }'
+  cm_mut 10j threshold "the valve threshold 3 ⇒ 2" 'NS_CM_FAILS=3;' 'NS_CM_FAILS=2;'
+  cm_mut 10k delete "a missing ledger resolving session" \
+    '[ -e "$1" ] || { echo 0; return 0; }' '[ -e "$1" ] || { echo escalated; return 0; }'
+  cm_mut 10l refusal "the ledger append dropped from ns_die2's refusal" \
+    'ns_die2() { ns_valve_report false "$*"; echo' 'ns_die2() { echo'
+  cm_mut 10m refusal "the ledger append dropped from a first arm's exit-2 refusal" \
+    '{ ns_valve_report false "$arm: the --result was refused (exit 2)"; exit 2; }' 'exit 2'
+  cm_mut 10n replay "the valve armed on every call, not only a --result report" \
+    '[ "$have_result" = 1 ] && [ -z "$START" ] && NS_VALVE_ARMED=1' 'NS_VALVE_ARMED=1'
+  cm_mut 10o stalelock "the stale-lock break dropped" \
+    '    ns_cm_stale "$lk" && ns_cm_break "$lk" && continue' '    :'
+  cm_mut 10p stalelock "a live holder's lock read as stale" \
+    'e="$(kill -0 "$p" 2>&1)" || case "$e" in *ermitted*) ;; *) return 0 ;; esac' 'return 0'
+  cm_mut 10q refusal "the bad---root refusal left armed" \
+    '{ NS_VALVE_ARMED=0; ns_die2 "--root is not a directory: $ROOT"; }' 'ns_die2 "--root is not a directory: $ROOT"'
 fi
 
 echo "PASS: $pass FAIL: $fail"

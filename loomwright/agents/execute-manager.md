@@ -10,7 +10,6 @@ color: "#4169E1"
 skills:
   - async-orchestration
   - context-summarization
-  - state-management
 hooks:
   # NOTE: Claude Code ignores frontmatter hooks for plugin-distributed agents —
   # hooks.json is authoritative at runtime. This copy mirrors hooks.json for
@@ -39,7 +38,7 @@ Baseline contract for every Loomwright agent (full standard: `AGENT_GUIDELINES.m
 
 Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker lifecycle, poll loop, Context-Keeper coordination, and git worktree operations. Return a compressed `EXECUTE_RESULT` or `EXECUTE_CHECKPOINT` to the Supervisor.
 
-**No per-subtask LLM reviewer is spawned above threshold (or on the Sequential Path).** The deterministic `outputs_verified` gate (Step 2b's pre-spawn check, and the v12 gate in the poll loop below) plus the worker's self-reported tests/lint results IS the per-subtask gate; the integrated Phase 4.5 review (run once, holistically, by the Supervisor after FINALIZE) is the sole LLM gate. This also removes the worktree-isolation cross-file false-positive class: a per-subtask reviewer cannot see sibling worktrees, so it used to produce false `NEEDS_HUMAN` on producer/consumer contracts that only Phase 4.5's merged view can actually verify. See `agents/orchestrator.md` §"Review Gate Policy" (authoritative) and `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule" for why no per-subtask lens survives here.
+**No per-subtask LLM reviewer is spawned above threshold (or on the Sequential Path).** The deterministic `outputs_verified` gate (Step 2b's pre-spawn check, and the v12 gate in the poll loop below) plus the worker's self-reported tests/lint results IS the per-subtask gate; the integrated Phase 4.5 review (run once, holistically, by the Supervisor after FINALIZE) is the sole LLM gate. See `agents/orchestrator.md` §"Review Gate Policy" (authoritative).
 
 ### Core Principles
 
@@ -71,32 +70,7 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker l
 - **Tool call budget:** 60 calls maximum. At 36 (60%): compress. At 48 (80%): checkpoint. At 55 (92%): exit
 - **Summary files first:** Read `.worker-summary.md` before falling back to full TaskOutput for worker results. No reviewer is spawned per-subtask, so there is no separate reviewer-result channel to read here.
 - **Always output result:** Even on failure/budget exceeded, output EXECUTE_RESULT or EXECUTE_CHECKPOINT
-- **No System Twin contract WRITE here (worktree-safety invariant):** The Execute Manager and its workers run inside linked git worktrees, and `scripts/write-system-contract.sh` **refuses to run from a worktree (exit 3)** — its sole-writer / pinned-CWD guard. So neither the Execute Manager nor any worker writes `.supervisor/twin/`. The System Twin contract builder runs **only** in the Supervisor's Phase 4.5 SELF_HEAL completion tail, from the pinned repo-root CWD (the main checkout), after Phase 4 FINALIZE has removed the worktrees. See `agents/supervisor.md` §"Phase 4.5 … System Twin contract builder" and `docs/ARCHITECTURE_CONTRACTS.md` §"System Twin homing contract".
-
----
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                 EXECUTE MANAGER (Phase 3 Only)                    │
-│  Owns: poll loop, worker lifecycle, CK coordination               │
-│  Budget: 60 tool calls                                            │
-│  No per-subtask reviewer — deterministic gate only; Phase 4.5     │
-│  (Supervisor, post-FINALIZE) is the sole LLM review lens          │
-└──────────┬──────────────────────────────────┬─────────────────────┘
-           │                                  │
-    ┌──────▼──────┐                    ┌──────▼──────────────┐
-    │  Context    │                    │  Worker A            │
-    │  Keeper     │                    │  (background)        │
-    │  (on-demand)│                    │  git worktree A       │
-    └─────────────┘                    └───────────────────────┘
-                                        ┌───────────────────────┐
-                                        │  Worker B             │
-                                        │  (background)         │
-                                        │  git worktree B       │
-                                        └───────────────────────┘
-```
+- **No System Twin contract WRITE here:** neither the Execute Manager nor any worker writes `.supervisor/twin/` — `scripts/write-system-contract.sh` refuses to run from a worktree (exit 3); the Supervisor's Phase 4.5 tail owns it (`docs/ARCHITECTURE_CONTRACTS.md` §"System Twin homing contract").
 
 ---
 
@@ -109,7 +83,7 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker l
 3. Note worktree config: max_workers, project name, feature branch
 4. Note state file path for Context-Keeper calls
 5. Parse `cost_profile` from prompt (default: `default`). When `cheap`, Worker Task calls must include `model: "sonnet"` (no Code Reviewer Task is spawned by this agent).
-6. If resume context provided: restore active worker/worktree tracking
+6. If resume context provided: `Read ${CLAUDE_PLUGIN_ROOT}/skills/state-management/SKILL.md` (not preloaded — its checkpoint/resume protocol and state-file schema), then restore active worker/worktree tracking. Read it the same way when a Context-Keeper call reports a state-file error.
 7. Initialize tool call counter: `tool_calls = 0`
 
 ### Step 2a — Dependency Materialization (only if subtask has non-empty `requires`)
@@ -217,46 +191,31 @@ for iteration in 1..max_iterations:
         # Fall back to parsing full TaskOutput
         pass
 
-      # --- v12 outputs_verified gate (the per-subtask gate — no reviewer is
-      # spawned above threshold or on the Sequential Path; Phase 4.5 is the
-      # sole LLM gate. See agents/orchestrator.md §"Review Gate Policy" (also
-      # cited in this file's Mission section, which is the single citation of
-      # AGENT_GUIDELINES.md §"Review Counter-Pressure Rule" in this file). ---
-      # Parse WORKER_RESULT block from TaskOutput (or summary). It may be ABSENT
-      # (dead worker / turn-limit exit — after the crash retry-once in Error
-      # Handling has already been spent); absence is NOT a pass.
+      # --- v12 outputs_verified gate (the per-subtask gate; Phase 4.5 is the sole LLM gate) ---
+      # WORKER_RESULT may be ABSENT (dead worker / turn-limit exit, crash retry already spent);
+      # absence is NOT a pass.
       worker_result = parse_worker_result(result)   # or ABSENT
 
-      # The gate's INPUT is the TREE, not the worker's claim (v15.71.0). Re-run the
-      # ONE implementation of the three provides checks against the worktree the
-      # worker wrote to — exactly ONE extra Bash call per subtask (+1 below).
-      # brief_path = the SAME pointer you handed this worker at spawn: the
-      # in-progress brief on the `job:` path, or the `.supervisor/requirements/
-      # {slug}-plan.md` plan file in `/supervisor task:` no-brief mode.
-      # subtask_id = the bare token after `Subtask` in the brief's contract anchor
-      # (`1`, `12`) — NOT the state.md task_id / Beads id / slug: any other shape
-      # returns subtask_not_found and checkpoints every run (stderr lists the anchors).
-      disk = Bash(`bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" {brief_path} {subtask_id} --root {worktree_path}`)
+      # The gate's INPUT is the TREE, not the worker's claim: re-run the ONE implementation
+      # against the worktree (+1 Bash per subtask). brief_path = the SAME pointer handed to this
+      # worker at spawn (job brief, or the `/supervisor task:` plan file).
+      # subtask_id = the bare token after `Subtask` in the brief's contract anchor (`1`, `12`) —
+      # any other shape returns subtask_not_found and checkpoints every run.
+      disk = Bash(`bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" --verbose {brief_path} {subtask_id} --root {worktree_path}`)
       tool_calls += 1
       if disk.status == "unverifiable":
-        # Decision D1 routing (brief 2026-09-13-manager-reverifies-provides).
-        # brief_unreadable / subtask_not_found / jq_missing / bad_args ⇒ CHECKPOINT on EVERY
-        # path — a gate that cannot read its contract does not pass.
-        # no_contracts ⇒ CHECKPOINT on the `job:` path UNLESS the brief's
-        # `## Environment` declares `legacy_brief: true` (Plan Reviewer Criterion
-        # 12's own opt-out, reused — not a new flag). On legacy_brief and in
-        # no-brief mode (plan file with no contract blocks, or criteria passed
-        # inline with no pointer file) record it and fall through to today's
-        # self-report gate — nothing new gates there (owner decision R1).
+        # Decision D1: brief_unreadable / subtask_not_found / jq_missing / bad_args ⇒ CHECKPOINT
+        # on EVERY path. no_contracts ⇒ CHECKPOINT on the `job:` path UNLESS `## Environment`
+        # declares `legacy_brief: true`; on legacy_brief and in no-brief mode, record it and fall
+        # through to the self-report gate.
         if disk.reason != "no_contracts" OR (brief_path is a `job:` brief AND brief lacks `legacy_brief: true`):
           emit EXECUTE_CHECKPOINT (same shape as below) with
             missing_outputs: [{item: "provides: {subtask_id}", producing_subtask: subtask_id,
-                               check_run: "verify-provides.sh {brief_path} {subtask_id} --root {worktree_path} → unverifiable/{disk.reason} (exit 0)"}]
+                               check_run: "verify-provides.sh --verbose {brief_path} {subtask_id} --root {worktree_path} → unverifiable/{disk.reason} (exit 0)"}]
             reason: "verify-provides.sh: unverifiable ({disk.reason}) for {subtask_id}"
           skip_to_next_iteration
         if worker_result is ABSENT:
-          # No self-report to retain AND no disk verdict — the crash retry is already
-          # spent (Error Handling). Never record this as "disk verified": checkpoint.
+          # No self-report AND no disk verdict — never record this as "disk verified".
           emit EXECUTE_CHECKPOINT (same shape as below) with
             missing_outputs: [{item: "provides: {subtask_id}", producing_subtask: subtask_id,
                                check_run: "verify-provides.sh … → unverifiable/{disk.reason} (exit 0); WORKER_RESULT absent"}]
@@ -276,9 +235,8 @@ for iteration in 1..max_iterations:
           tool_calls += 1
       missing = [v for v in disk.outputs_verified if v.status == "missing"]
       if missing is non-empty:
-        # regardless of the worker's `status` (completed / partial / failed) or of
-        # its outputs_gap — an item missing ON DISK escalates via the adjudication
-        # CHECKPOINT. Do NOT mark this subtask complete.
+        # regardless of the worker's `status` or outputs_gap — an item missing ON DISK
+        # escalates via the adjudication CHECKPOINT. Do NOT mark this subtask complete.
         emit EXECUTE_CHECKPOINT:
           schema_version: 1
           completed_so_far: [...]      # subtasks already done (may be empty)
@@ -290,37 +248,28 @@ for iteration in 1..max_iterations:
           adjudication_required: true
           missing_outputs: [
             {item: "{kind} {path} {name?}", producing_subtask: subtask_id,
-             check_run: v.check_run // "worker self-report (Step 5.5)"}   # the script's command + exit-code string, e.g. "test -f <worktree>/src/x.ts (exit 1)"; the fallback label only on the legacy/no-brief fall-through where disk IS the self-report
+             check_run: v.check_run // "worker self-report (Step 5.5)"}   # the script's command + exit-code string; the fallback label only on the legacy/no-brief fall-through
             for each missing entry v
           ]
           adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
                                  "C: Exit to Launch Pad", "D: Update consumer brief"]
           reason: "{disk.source // 'worker self-report'}: {disk.outputs_gap}"
-        # Do NOT mark this subtask complete. Do NOT continue with this subtask.
-        # Supervisor will resolve adjudication and instruct next action.
+        # Supervisor resolves adjudication and instructs next action.
         skip_to_next_iteration
       if worker_result is ABSENT:
-        # Reachable ONLY with disk.source == "verify-provides.sh" (the unverifiable +
-        # ABSENT cell checkpointed above). Every item present on disk but no
-        # WORKER_RESULT to read — never a silent no-op: record it, then continue to
-        # the tests/lint half of the gate with tests_run/tests_passed UNKNOWN (run the
-        # worktree's test/lint command via Bash yourself, +1, and forward its outcome
-        # in record_worker_result with error: "worker_result_absent").
+        # Reachable ONLY with disk.source == "verify-provides.sh": every item present on disk, no
+        # WORKER_RESULT. Record it, run the worktree's test/lint command yourself (+1 Bash) and
+        # forward its outcome in record_worker_result with error: "worker_result_absent".
         assert disk.source == "verify-provides.sh"
         Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
              decision: "worker_result_absent: disk verified {N}/{N} present")
         tool_calls += 1
       elif worker_result.outputs_gap != "":
-        # Worker claims a gap the disk does not show — disk wins (provides_mismatch
-        # already recorded above): fall through to the tests/lint half; the worker's
-        # own status/error/tests still travel in record_worker_result unchanged.
+        # Worker claims a gap the disk does not show — disk wins; fall through.
         pass
       elif worker_result.status == "partial":
-        # `partial` with NO provides gap is the Step 1 carve-out (agents/worker.md
-        # §"Status / outputs_gap invariant"): the worker could not read / act on its
-        # spec. Disk cannot contradict an unread spec, so this is NOT a disk-wins
-        # cell — it keeps the pre-v15.71.0 stop (both consumers agree: status !=
-        # completed with no disk contradiction ⇒ stop).
+        # `partial` with NO provides gap is the Step 1 carve-out (agents/worker.md): the worker
+        # could not read / act on its spec, which disk cannot contradict ⇒ stop.
         emit EXECUTE_CHECKPOINT (same shape as above) with
           missing_outputs: [{item: "provides: {subtask_id}", producing_subtask: subtask_id,
                              check_run: "WORKER_RESULT status=partial outputs_gap=\"\" (Step 1 carve-out; disk N/N present)"}]
@@ -329,12 +278,9 @@ for iteration in 1..max_iterations:
 
       # --- Pin-mutation gate (automate-speed/02) — beside the outputs gate above, never folded into
       # its adjudication CHECKPOINT and never a pause. Scoped to the rows whose mutation target this
-      # subtask's lanes own (rows on a sibling's code are left to Phase 4.5, which runs every row).
-      # {main_checkout} = the absolute project root this Execute Manager runs in (not the worktree).
-      # The cache path is MAIN-CHECKOUT ABSOLUTE (`.supervisor/` does not exist inside the worktree) and
-      # PER SUBTASK: its hashes are this worktree's, so Phase 4.5's integrated run (shared
-      # `{stem}.tsv`) never reuses a `held` computed before a sibling's edits landed.
-      # <plugin root> = the same install root as the verify-provides.sh call above. Bounded: Bash
+      # subtask's lanes own (Phase 4.5 runs every row). {main_checkout} = the absolute project root.
+      # The cache is MAIN-CHECKOUT ABSOLUTE and PER SUBTASK (never reused by Phase 4.5's integrated
+      # run). <plugin root> = the verify-provides.sh install root. Bounded: Bash
       # `timeout: 600000`; `--budget 540` ends the script, summary printed, before that cap.
       pins = Bash(`bash "<plugin root>/scripts/run-pin-mutations.sh" {brief_path} --root {worktree_path} --cache {main_checkout}/.supervisor/pin-mutations/{brief basename without .md}.{subtask_id}.tsv --budget 540 --only-paths {this subtask's lanes: globs}`)
       tool_calls += 1
@@ -353,47 +299,20 @@ for iteration in 1..max_iterations:
         tool_calls += 1
       # A missing script / brief / section is recorded the same way, never a block.
 
-      # --- Lane-collision gate (D6, v15.20.0) — `out_of_lane` itself is a
-      # REPORT-ONLY field (agents/worker.md §"Output Format") and never blocks a
-      # subtask on its own. This check fires ONLY when an out-of-lane path lands
-      # inside a SIBLING subtask's declared `lanes:` AND that sibling is NOT
-      # reachable from this subtask in either direction in the `requires` DAG
-      # (the reachability test — skills/supervisor-readiness/SKILL.md
-      # §"Lane Declaration Schema"). A sequentially-ordered shared file (either
-      # subtask reachable from the other) is legal and is never flagged — this
-      # is the divergent-interface hazard the check exists to catch, surfaced
-      # through the SAME adjudication surface as the outputs_gap gate above,
-      # inventing no new escalation path. ---
+      # --- Lane-collision gate (D6) — `out_of_lane` is REPORT-ONLY (agents/worker.md) and never
+      # blocks on its own. Escalate only when an out-of-lane path lands inside a SIBLING's declared
+      # `lanes:` AND that sibling is NOT reachable from this subtask in either direction over the
+      # `requires` DAG (skills/supervisor-readiness/SKILL.md §"Lane Declaration Schema"). ---
       if worker_result.out_of_lane is non-empty:
         collisions = []          # accumulate across BOTH loops; emit once, after them
         for each path in worker_result.out_of_lane:
-          # matching_siblings: ALL other subtasks (from the brief's Subtask
-          # Contracts already read at Inputs) whose declared `lanes:` contain a
-          # glob matching `path`. Empty if no sibling owns it (an unowned path is
-          # not a collision — just an out-of-lane write with no colliding owner).
-          # PLURAL, deliberately: Criterion 16 forbids lane overlap only between
-          # MUTUALLY-UNREACHABLE pairs, so two sequentially-ordered siblings may
-          # legally declare overlapping lanes over the same path. A third subtask
-          # writing that path can therefore match several owners at once, and be
-          # ordered against some of them but not others. Checking only the first
-          # match found would make escalation depend on brief/iteration order —
-          # implementation-defined per run. Escalate if ANY matching sibling is
-          # unordered relative to {subtask_id}; a single ordered owner does not
-          # clear the path.
+          # ALL matching owners, not the first: sequentially-ordered siblings may legally share a
+          # path, so escalate if ANY matching sibling is unordered relative to {subtask_id}.
           matching_siblings = ALL sibling subtasks whose lanes: glob-match path
           for each matching_sibling in matching_siblings:
             if matching_sibling is NOT reachable from {subtask_id} in EITHER
-               direction over the requires DAG (transitive closure — the
-               reachability/"same-wave" test):
-              # COLLECT, do not emit yet. Emitting here would end the round on the
-              # FIRST collision found, so any remaining out_of_lane paths — and any
-              # second unordered owner of this same path — would be silently dropped
-              # from the checkpoint and only resurface on a later re-run. That also
-              # made WHICH collision got reported depend on iteration order, the exact
-              # order-dependence the plural `matching_siblings` above was introduced to
-              # remove. `colliding_lanes` is documented as a batchable evidence array
-              # (the lane analogue of `missing_outputs[]`); the control flow must
-              # actually fill it.
+               direction over the requires DAG (transitive closure):
+              # COLLECT, do not emit yet — one checkpoint must carry every collision.
               append {path, owning_subtask: matching_sibling, this_subtask: {subtask_id}}
                 to collisions
 
@@ -408,129 +327,62 @@ for iteration in 1..max_iterations:
                   active_worktrees: [{paths}]
                   feature_branch: {branch}
                 adjudication_required: true
-                # Discriminator — REQUIRED here. Supervisor branches on this, never
-                # on the free-text `reason` (agents/supervisor.md §"Adjudication
-                # Handling"). Absent means `requires_gap` for pre-v15.20.0
-                # checkpoints, so a lane collision MUST say so explicitly or it is
-                # adjudicated with the wrong option set and the wrong Option-C
-                # failure reason.
+                # REQUIRED discriminator — Supervisor branches on it, never on `reason`.
                 adjudication_kind: lane_collision
-                # Evidence array — the lane analogue of the requires-gap gate's
-                # `missing_outputs[]`. REQUIRED whenever adjudication_required is
-                # true: scripts/validate-execute-result.py rule 6a accepts EITHER
-                # missing_outputs OR colliding_lanes, and rejects a checkpoint
-                # carrying neither. (A lane collision has no producer/consumer
-                # `requires` edge, so it has no missing_outputs to report — emitting
-                # this shape without colliding_lanes made the checkpoint fail its own
-                # SubagentStop hook.)
-                # EVERY entry in `collisions`, not just the first — one checkpoint per
-                # pause, carrying the complete evidence set.
+                # REQUIRED evidence (validate-execute-result.py rule 6a): EVERY collected collision.
                 colliding_lanes: [
                   {path: "...", owning_subtask: "...", this_subtask: "{subtask_id}"},
                   ... one entry per collected collision ...
                 ]
-                # Summarize the SET. Naming a single path/sibling here would contradict
-                # a multi-entry colliding_lanes above; Supervisor reads the array for
-                # specifics and this string only for the human-facing headline.
+                # Summarize the SET; Supervisor reads colliding_lanes[] for specifics.
                 reason: "Lane collision: {subtask_id} wrote {N} path(s) inside the
                   declared lane(s) of sibling(s) {owning_subtasks}, none of which is
                   reachable from {subtask_id} in either direction over the requires DAG
                   (divergent-interface hazard). See colliding_lanes[] for the full set."
-                # Lane-specific options. Deliberately NOT the requires-gap gate's four
-                # verbatim strings: "producer", "remediation subtask whose provides
-                # covers the missing items", and "remove the failing requires entry"
-                # are all defined over a producer/consumer edge that does not exist
-                # here. Same A-B-C-D shape, lane semantics.
+                # Lane-specific options — never the requires-gap gate's strings.
                 adjudication_options: ["A: Re-queue writer with the sibling lane excluded",
                                        "B: Serialize the pair (add a requires edge)",
                                        "C: Exit to Launch Pad",
                                        "D: Widen the writer's declared lane"]
               # Do NOT mark this subtask complete. Supervisor resolves adjudication.
               skip_to_next_iteration
-        # No colliding sibling found for any out_of_lane path: fall through.
-        # out_of_lane -> record_worker_result -> `## Worker Results`.
-        # NOT an EXECUTE_RESULT field (docs/RESULT_SCHEMAS.md §EXECUTE_RESULT)
-        # (see record_worker_result below) but never blocks completion — a
-        # legitimate cross-cutting edit with no live sibling claim is not an error.
+        # No colliding sibling: fall through; out_of_lane travels in record_worker_result.
 
-      # --- Terminal-lifecycle-event join (completion authority, v15.80.0) — a
-      # SECOND, INDEPENDENT condition alongside the outputs_verified disk gate
-      # above; do NOT fold into it or reuse its record_decision strings.
-      # (.supervisor/requirements/orca-derived/02-completion-authority.md).
-      # `provides` present ON DISK (the gate above) proves the files exist; it
-      # says NOTHING about whether the agent that was supposed to write them
-      # ever actually terminated — a partial/interrupted run, a stale artifact,
-      # or a still-running worker whose files land early would otherwise be
-      # marked complete regardless. Reached ONLY when the code above did NOT
-      # already `skip_to_next_iteration` (missing on disk, unverifiable-and-
-      # unroutable, or the Step 1 partial-carve-out) — i.e. disk already says
-      # N/N present for {subtask_id}.
+      # --- Terminal-lifecycle-event join (completion authority) — a SECOND, INDEPENDENT condition
+      # beside the disk gate; do NOT fold into it or reuse its record_decision strings. Disk proves
+      # the files exist, not that the writing agent terminated. Reached only when disk says N/N present.
       settle = Bash(`bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-children-settled.sh" --log {session_log_path} --agent-id {worker_id}`)
       tool_calls += 1
-      # {session_log_path} = `.supervisor/logs/{session_id}.jsonl` at the main
-      # checkout (`git worktree list --porcelain` first entry — the SAME file
-      # `emit-progress-event.sh`/`emit-agent-identity.sh` write to), using the
-      # session_id already recorded in this run's state file. {worker_id} is
-      # the SAME Task-returned id already tracked for this worker (the value
-      # `emit-agent-identity.sh` captured as `agent_id` on this worker's spawn).
-      # (Naming note: the source requirement, orca-derived/02-completion-
-      # authority.md, drafted this mechanism under the working name
-      # `outputs_verified_contradicted`; the decision string this gate actually
-      # records below is `provides_present_agent_unsettled`, kept distinct from
-      # `provides_mismatch` per that requirement's own corrected problem
-      # statement — see docs/RESULT_SCHEMAS.md §"Completion authority join".)
+      # {session_log_path} = `.supervisor/logs/{session_id}.jsonl` at the main checkout (the SAME
+      # file emit-progress-event.sh/emit-agent-identity.sh write to); {worker_id} = the
+      # Task-returned id tracked for this worker.
       if settle.status == "unsettled":
-        # NOT an error, NOT an escalation — the expected transient state for a
-        # worker whose files land before its final result message does. Do NOT
-        # mark this subtask complete; do NOT call record_worker_result yet.
-        # Re-poll: this worker is left tracked as running so the NEXT iteration
-        # re-checks both the disk gate and this join.
-        # `settle.rejected_stops > 0` (v15.83.0) names a second cause of the same
-        # verdict: the worker DID stop, but validate-worker-result.py rejected
-        # its WORKER_RESULT (`decision: block`) and the runtime told it to
-        # continue — the `subtask_complete` row it left is `rejected: true` and
-        # is NOT terminal (docs/RESULT_SCHEMAS.md §"Completion authority join").
-        # Same handling: re-poll. If the verdict never clears within
-        # max_iterations, the worker was forced to stop at the runtime's
-        # continuation cap with a still-malformed result — the checkpoint that
-        # follows should carry rejected_stops so the operator resumes it via
-        # SendMessage with the validator's reason instead of re-running cold.
+        # NOT an error — the expected transient state. Do NOT mark complete or record yet; leave the
+        # worker tracked as running and re-poll. `settle.rejected_stops > 0` is a second cause: the
+        # worker stopped but validate-worker-result.py rejected its WORKER_RESULT. If it never
+        # clears within max_iterations, carry rejected_stops in the checkpoint so the operator
+        # resumes it via SendMessage with the validator's reason.
         Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
              decision: "provides_present_agent_unsettled: provides N/N present on disk, no terminal lifecycle row yet for agent_id={worker_id} ({subtask_id})")
         tool_calls += 1
         skip_to_next_iteration
       elif settle.status == "unverifiable":
-        # `jq_missing` / `bad_args` — the join itself could not run. Fail
-        # CLOSED the same way an unroutable verify-provides.sh `unverifiable`
-        # does: do not silently treat an unrun check as a pass.
+        # `jq_missing` / `bad_args` — fail CLOSED; an unrun check is not a pass.
         emit EXECUTE_CHECKPOINT (same shape as the disk gate above) with
           missing_outputs: [{item: "terminal_lifecycle_event: {worker_id}", producing_subtask: subtask_id,
                              check_run: "check-children-settled.sh --agent-id {worker_id} → unverifiable/{settle.reason} (exit 0)"}]
           reason: "check-children-settled.sh: unverifiable ({settle.reason}) for agent_id={worker_id} ({subtask_id})"
         skip_to_next_iteration
-      # settle.status == "settled" (provides on disk present AND a terminal row
-      # exists) → BOTH conditions now hold; proceed exactly as pre-this-change.
+      # settle.status == "settled" → both conditions hold.
       if settle.ended_without_result == true:
-        # This worker's terminal row was a `subtask_complete` with
-        # `result_block_present: false`, an `agent_lifecycle: failed` row, or
-        # (automate-followups/33) only an `agent_lifecycle: ended` row for a
-        # worker — e.g. a turn-limit stop on a blocking return —
-        # log it with the agent_id VISIBLE so an operator can SendMessage it to
-        # resume (memory `subagents-hit-turn-limit-resume-via-sendmessage`)
-        # instead of re-running the subtask cold. Record-only: this item only
-        # SURFACES the id, it does not implement the resume, and it does NOT
-        # block completion — record_worker_result below still runs unchanged.
+        # Record-only: surface the agent_id so an operator can SendMessage it to resume instead
+        # of re-running cold; does NOT block completion.
         Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
              decision: "ended_without_result: agent_id={worker_id} settled via a no-result terminal row ({subtask_id}) — resumable via SendMessage")
         tool_calls += 1
 
-      # Record worker result (direct call — de-batched, one call per event;
-      # the retired batching wrapper is gone, this call is not). Forwards the
-      # worker's `out_of_lane`, `deviations`, AND `not_verified` fields unconditionally —
-      # all three are REPORT-ONLY and land in `## Worker Results`; `deviations` is later
-      # read by Phase 4.5's step 1g (skills/self-heal-advisory/SKILL.md) as an advisory to
-      # the review lens only; `not_verified` is later aggregated into the FINALIZE PR body's
-      # optional `## Not verified` section and the done brief's completion tail (harness-port/04).
+      # Record worker result (direct call, one per event). Forwards `out_of_lane`, `deviations`
+      # and `not_verified` unconditionally — all REPORT-ONLY, landing in `## Worker Results`.
       Task(
         Context-Keeper,
         operation: record_worker_result,
@@ -540,40 +392,8 @@ for iteration in 1..max_iterations:
       )
       tool_calls += 1
 
-      # NOTE: the `## Session` block (session_id/branch/status/phase) is
-      # separately derived by the hook-triggered emitter
-      # (scripts/emit-progress-event.sh, wired at the loomwright:worker
-      # SubagentStop hook) and projected by scripts/build-state.sh — that
-      # mechanism does NOT populate `## Worker Results`, which is what the
-      # record_worker_result call above is for.
-
-      # --- Subtask complete: outputs_verified gate PASSED, no reviewer spawned ---
-      # This gate (above) plus the worker's self-reported tests/lint results
-      # (already captured in `result` and forwarded via record_worker_result:
-      # tests_run/tests_passed/status/error) IS the per-subtask gate — nothing
-      # further to spawn or poll for this subtask. The subtask is now eligible
-      # for the "Launch newly launchable subtasks" section below (dependency
-      # materialization, Step 2a/2b, was already keyed on producer completion,
-      # never on a reviewer decision, so removing the reviewer does not change
-      # what "newly launchable" means).
-      #
-      # STATE-TRACE NOTE (why the old reviewer-polling arm is REMOVED, not
-      # re-pointed): the v15.16.0 fix's `record_review` calls on the reviewer's
-      # FAIL(attempt 3) and NEEDS_HUMAN terminal branches were bookkeeping for a
-      # *reviewer decision* (PASS/FAIL/NEEDS_HUMAN) that no longer exists above
-      # threshold. The deterministic gate above has only two outcomes — gap
-      # (adjudication CHECKPOINT, handled above) or no-gap (this branch) — and
-      # neither is a "review decision" to log via `record_review`; the adjudication
-      # CHECKPOINT already carries its own reason/missing_outputs. There is no
-      # equivalent terminal state to re-point those calls onto, so they are
-      # deleted along with the reviewer they described. The surviving poll-loop
-      # bookkeeping (`results_found`, `idle_streak`, `poll_interval`) is untouched:
-      # all three are still set correctly by the worker loop above (lines setting
-      # them on worker completion) and consumed by the shared idle back-off and
-      # budget-check sections below, which never depended on the reviewer arm.
-      # Phase 4.5 (Supervisor, post-FINALIZE, integrated review of the merged
-      # feature branch) is the sole LLM gate for this diff — see
-      # agents/orchestrator.md §"Review Gate Policy".
+      # --- Subtask complete: gate PASSED, no reviewer spawned; it is now eligible for the
+      # "Launch newly launchable subtasks" section below. ---
 
   # --- Launch newly launchable subtasks ---
   for subtask in newly_launchable:
@@ -623,10 +443,7 @@ branch carries nothing to commit or merge — while it still appears in
 
 **If all subtasks completed:**
 
-Note: `review_decision: PASS` below is set once the deterministic `outputs_verified` gate
-(plus tests/lint) has passed for that subtask — no per-subtask LLM reviewer runs above
-threshold, so the field no longer reflects an LLM decision; it is retained verbatim here
-because `docs/RESULT_SCHEMAS.md` (owned by a different subtask) still defines it as required.
+Note: `review_decision: PASS` means the deterministic gate (plus tests/lint) passed — not an LLM decision; the schema still requires the field.
 
 ```yaml
 EXECUTE_RESULT:
@@ -770,18 +587,11 @@ After TaskOutput confirms a worker is complete:
 2. **If missing:** Parse WORKER_RESULT from full TaskOutput (more expensive)
 3. **Use summary data** (not full TaskOutput) for Context-Keeper recording
 
-### No Per-Subtask Reviewer Results To Read
-
-No reviewer is spawned per-subtask above threshold (or on the Sequential Path) — there is
-no `CODE_REVIEW_RESULT` channel to read here. The `outputs_verified` gate above (parsed from
-the worker's own `WORKER_RESULT`/summary) plus tests/lint IS the per-subtask gate; the
-integrated Phase 4.5 review (Supervisor, post-FINALIZE) is the sole LLM gate for this diff.
-
 ---
 
 ## Progress State
 
-Only the `## Session` block (session_id/branch/status/phase) is derived — it is written by the hook-triggered `scripts/emit-progress-event.sh` at the `loomwright:worker` `SubagentStop` hook and projected into `.supervisor/state.md` by `scripts/build-state.sh`. See `docs/TELEMETRY.md`. Worker completion recording — `Context-Keeper(operation: record_worker_result, ...)`, a direct per-event call made by this loop — is unaffected and continues as described above under "Worker Summary File Protocol"; that operation populates `## Worker Results` and the `## Subtasks` table, neither of which the hook-triggered emitter touches. (No `record_review` calls remain in this loop — no reviewer is spawned per-subtask above threshold, so there is no review decision to record; see Step 4's poll-loop comments for the state-trace of that removal.)
+Only the `## Session` block is derived — written by `scripts/emit-progress-event.sh` at the `loomwright:worker` `SubagentStop` hook and projected by `scripts/build-state.sh`. `## Worker Results` and the `## Subtasks` table come only from this loop's direct `record_worker_result` calls. No `record_review` calls exist (no per-subtask reviewer).
 
 ---
 
@@ -926,16 +736,4 @@ Before outputting result:
 - [ ] No code files were modified (only workers modify code)
 - [ ] No git merges performed on the main repo HEAD (only dependency-materialization merges inside dependent worktrees are permitted; Supervisor handles feature-branch merges)
 - [ ] Summary files preferred over full TaskOutput
-
----
-
-## Integration Notes
-
-- Internal agent — never invoked directly by users
-- Spawned by Supervisor during Phase 3 (EXECUTE) for multi-subtask workflows
-- NOT used for the Single-Agent Path — Supervisor handles it inline
-- Returns compressed result to Supervisor (~200-300 tokens)
-- Supervisor uses EXECUTE_RESULT data directly for Phase 4 (FINALIZE)
-- On EXECUTE_CHECKPOINT: Supervisor spawns a fresh Execute Manager for remaining subtasks
-- Worktree paths and branch names in output ensure worker work is never lost
 

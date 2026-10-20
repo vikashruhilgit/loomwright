@@ -1,0 +1,3 @@
+# eval output never belongs in the repo: pass --output-dir / --report / --json under a scratch dir (README).
+# This is the backstop for a run that forgot them (the CLI's default results dir is <eval dir>/results/).
+results/

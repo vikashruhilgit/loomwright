@@ -1199,6 +1199,58 @@ grep -qF -- "the first fact in a fresh repo must land" "$CGV9/$VESTORE" 2>/dev/n
 
 rm -rf "$CGTMP" 2>/dev/null
 
+echo "== 17. terse default vs --verbose (as24): header carries the count, --verbose = pre-terse bytes =="
+# The goldens in fixtures/terse-output/read-project-memory/ were captured by running the PRE-change
+# reader on the committed store beside them (2 provenanced entries + 1 poisoned line), so --verbose is
+# pinned byte-for-byte against what the reader printed before the terse default existed.
+TFIX="$HERE/fixtures/terse-output/read-project-memory"
+TBAN="## Advisory project memory — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)"
+TDIR="$(mktemp -d)"
+( cd "$TDIR" && git init -q && mkdir -p .supervisor/memory \
+    && cp "$TFIX/store/PROJECT_MEMORY.md" .supervisor/memory/PROJECT_MEMORY.md \
+    && cp "$TFIX/store/provenance.jsonl" .supervisor/memory/.provenance.jsonl )
+tout="$( cd "$TDIR" && bash "$READ" 2>/dev/null )"; trc=$?
+tfirst="$(printf '%s\n' "$tout" | sed -n 1p)"
+[ "$tfirst" = "$TBAN — 2 verified" ] && ok "(t1) default header line carries the verified count" \
+  || no "(t1) default header is '$tfirst', want '$TBAN — 2 verified'"
+[ "$(printf '%s\n' "$tout" | wc -l | tr -d ' ')" = 3 ] && [ "$(printf '%s\n' "$tout" | grep -c '^- \[')" = 2 ] \
+  && [ "$trc" -eq 0 ] && ok "(t1) default is the header + one line per verified entry (3 lines), exit 0" \
+  || no "(t1) default is not header + 2 entry lines (rc $trc): $(printf '%s' "$tout" | tr '\n' '|')"
+grep -q POISONED <<<"$tout" && no "(t1) poisoned line reached the default output" || ok "(t1) poisoned line still dropped on the default path"
+( cd "$TDIR" && bash "$READ" --verbose 2>/dev/null ) | cmp -s - "$TFIX/verbose.golden" \
+  && ok "(t2) --verbose is byte-identical to the pre-change golden (verified entries)" \
+  || no "(t2) --verbose differs from fixtures/terse-output/read-project-memory/verbose.golden"
+
+rm -f "$TDIR/.supervisor/memory/.provenance.jsonl"
+tout="$( cd "$TDIR" && bash "$READ" 2>/dev/null )"; trc=$?
+[ "$tout" = "$TBAN — 0 verified (no_verified_entries)" ] && [ "$trc" -eq 0 ] \
+  && ok "(t3) no verified entries ⇒ ONE header line naming no_verified_entries, exit 0" \
+  || no "(t3) no-verified default is '$tout' (rc $trc)"
+( cd "$TDIR" && bash "$READ" --verbose 2>/dev/null ) | cmp -s - "$TFIX/verbose-no-verified.golden" \
+  && ok "(t3) --verbose with no verified entries is byte-identical to the pre-change golden" \
+  || no "(t3) --verbose differs from verbose-no-verified.golden"
+
+rm -rf "$TDIR/.supervisor/memory"
+tout="$( cd "$TDIR" && bash "$READ" 2>/dev/null )"; trc=$?
+[ "$tout" = "$TBAN — 0 verified (no_store)" ] && [ "$trc" -eq 0 ] \
+  && ok "(t4) no store ⇒ ONE header line ending '0 verified (no_store)', exit 0" \
+  || no "(t4) no-store default is '$tout' (rc $trc) — want one line naming no_store"
+( cd "$TDIR" && bash "$READ" --verbose 2>/dev/null ) | cmp -s - "$TFIX/verbose-no-store.golden" \
+  && ok "(t4) --verbose with no store is still EMPTY (pre-change golden, 0 bytes)" \
+  || no "(t4) --verbose with no store printed something"
+
+# no sha tool: a PATH holding only what the reader needs before its sha probe (sha256sum/shasum absent).
+mkdir -p "$TDIR/.supervisor/memory" "$TDIR/nosha"
+cp "$TFIX/store/PROJECT_MEMORY.md" "$TDIR/.supervisor/memory/PROJECT_MEMORY.md"
+for t in git mkdir dirname; do tp="$(command -v "$t")" && ln -s "$tp" "$TDIR/nosha/$t"; done
+tout="$( cd "$TDIR" && PATH="$TDIR/nosha" /bin/bash "$READ" 2>/dev/null )"; trc=$?
+[ "$tout" = "$TBAN — 0 verified (no_sha_tool)" ] && [ "$trc" -eq 0 ] \
+  && ok "(t5) no sha tool ⇒ ONE header line naming no_sha_tool, exit 0" \
+  || no "(t5) no-sha default is '$tout' (rc $trc)"
+tout="$( cd "$TDIR" && PATH="$TDIR/nosha" /bin/bash "$READ" --verbose 2>/dev/null )"
+[ -z "$tout" ] && ok "(t5) --verbose with no sha tool keeps the pre-change silence" || no "(t5) --verbose with no sha tool printed '$tout'"
+rm -rf "$TDIR" 2>/dev/null
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

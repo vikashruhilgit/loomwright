@@ -202,7 +202,7 @@ if [ -n "$AJL" ] && [ -d "$AJLP/.supervisor" ] && [ -n "$AJLS" ] && [ "$AJLS" !=
   check "AJ11c … and another session's state is not shown" "$(sj | jq -r --arg l "$AJL" '.lanes[] | select(.lane == $l) | .timeline.phase')" null
   rm -f "$AJLP/.supervisor/state.md" "$AJLP/.supervisor/state.md.bak"
 else bad "AJ11b no stopped fixture lane with a session id to test (lane=[$AJL] sid=[$AJLS])"; fi
-has "AJ12 the plain view draws the steps line" "$(run lane-status "$RF2")" "    steps: [Pick"
+has "AJ12 the --verbose plain view draws the steps line" "$(run lane-status "$RF2" --verbose)" "    steps: [Pick"
 check "AJ13 no wave built yet ⇒ waves is an empty list" "$(jq -c '.waves' <<<"$J")" "[]"
 cp "$RF2" "$RF2.aj13"
 printf '%s\n' '- wave built: wave/w3 — PR https://github.com/o/r/pull/474 (lanes: L1 PR #470; ci pass)' \
@@ -211,7 +211,7 @@ printf '%s\n' '- wave built: wave/w3 — PR https://github.com/o/r/pull/474 (lan
 check "AJ14 waves: every wave-build record, oldest first — an undated hand line and a parenthesised colon included" \
   "$(sj | jq -r '[.waves[] | "\(.wave)|\(.branch)|\(.pr)|\(.built_at)"] | join(" ")')" \
   "3|wave/w3|https://github.com/o/r/pull/474|null 4|wave/p-w4|https://github.com/o/r/pull/506|2026-10-13T00:15:43Z"
-has "AJ15 the plain view names the wave PR" "$(run lane-status "$RF2")" "wave 4 PR: https://github.com/o/r/pull/506  branch=wave/p-w4"
+has "AJ15 the --verbose plain view names the wave PR" "$(run lane-status "$RF2" --verbose)" "wave 4 PR: https://github.com/o/r/pull/506  branch=wave/p-w4"
 mv "$RF2.aj13" "$RF2"
 # AJ16–AJ22: removed lanes and waves, from a hand-written lane table (no lane process, no gh). A removed lane's
 # clone is gone; lane-status reads its run file from the salvage copy lane-remove kept, else the parent's
