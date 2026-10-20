@@ -236,7 +236,7 @@ for iteration in 1..max_iterations:
       # subtask_id = the bare token after `Subtask` in the brief's contract anchor
       # (`1`, `12`) — NOT the state.md task_id / Beads id / slug: any other shape
       # returns subtask_not_found and checkpoints every run (stderr lists the anchors).
-      disk = Bash(`bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" {brief_path} {subtask_id} --root {worktree_path}`)
+      disk = Bash(`bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" --verbose {brief_path} {subtask_id} --root {worktree_path}`)
       tool_calls += 1
       if disk.status == "unverifiable":
         # Decision D1 routing (brief 2026-09-13-manager-reverifies-provides).
@@ -251,7 +251,7 @@ for iteration in 1..max_iterations:
         if disk.reason != "no_contracts" OR (brief_path is a `job:` brief AND brief lacks `legacy_brief: true`):
           emit EXECUTE_CHECKPOINT (same shape as below) with
             missing_outputs: [{item: "provides: {subtask_id}", producing_subtask: subtask_id,
-                               check_run: "verify-provides.sh {brief_path} {subtask_id} --root {worktree_path} → unverifiable/{disk.reason} (exit 0)"}]
+                               check_run: "verify-provides.sh --verbose {brief_path} {subtask_id} --root {worktree_path} → unverifiable/{disk.reason} (exit 0)"}]
             reason: "verify-provides.sh: unverifiable ({disk.reason}) for {subtask_id}"
           skip_to_next_iteration
         if worker_result is ABSENT:

@@ -360,7 +360,7 @@ fi
 # own their advisory diagnostics to .supervisor/logs/{memory}.log — that is sanctioned (AC7).
 mem_out=""; les_out=""
 if [ -f "$HELPERS_DIR/read-project-memory.sh" ]; then
-  mem_out="$(bash "$HELPERS_DIR/read-project-memory.sh" 2>/dev/null || true)"
+  mem_out="$(bash "$HELPERS_DIR/read-project-memory.sh" --verbose 2>/dev/null || true)"
 fi
 if [ -f "$HELPERS_DIR/read-lessons.sh" ]; then
   les_out="$(bash "$HELPERS_DIR/read-lessons.sh" 2>/dev/null || true)"

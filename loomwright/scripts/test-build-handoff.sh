@@ -312,7 +312,9 @@ echo "== (i) reader resolution: CLAUDE_PLUGIN_ROOT=plugin-root resolves readers 
 RI="$(new_repo)"
 seed_job "$RI" done "reader-host" >/dev/null
 SHIMROOT="$(mktmp)"; mkdir -p "$SHIMROOT/scripts"
-printf '#!/usr/bin/env bash\necho "SHIM_MEMORY_SENTINEL_42"\n' > "$SHIMROOT/scripts/read-project-memory.sh"
+# The memory shim is mode-aware (as24): the reader's terse default is a count header, so build-handoff
+# must pass --verbose to keep the digest bytes unchanged — only the --verbose answer may reach it.
+printf '#!/usr/bin/env bash\nif [ "${1:-}" = "--verbose" ]; then echo "SHIM_MEMORY_SENTINEL_42"; else echo "SHIM_MEMORY_TERSE_42"; fi\n' > "$SHIMROOT/scripts/read-project-memory.sh"
 printf '#!/usr/bin/env bash\necho "SHIM_LESSONS_SENTINEL_42"\n' > "$SHIMROOT/scripts/read-lessons.sh"
 chmod +x "$SHIMROOT/scripts/read-project-memory.sh" "$SHIMROOT/scripts/read-lessons.sh"
 ( cd "$RI" && CLAUDE_PLUGIN_ROOT="$SHIMROOT" bash "$BUILD" ) >/dev/null; rcI=$?
@@ -324,6 +326,9 @@ grep -qF "SHIM_MEMORY_SENTINEL_42" "$DIGI" 2>/dev/null \
 grep -qF "SHIM_LESSONS_SENTINEL_42" "$DIGI" 2>/dev/null \
   && ok "read-lessons.sh resolved under \$CLAUDE_PLUGIN_ROOT/scripts and its output incorporated" \
   || no "lessons reader NOT resolved under \$CLAUDE_PLUGIN_ROOT/scripts (finding #1 regression)"
+grep -qF "SHIM_MEMORY_TERSE_42" "$DIGI" 2>/dev/null \
+  && no "memory section did not come from read-project-memory.sh --verbose (terse summary leaked into the digest)" \
+  || ok "memory section carries read-project-memory.sh --verbose output, never the terse default"
 
 # The vendor-neutral arm (twin-remediation/11): with the harness variable unset, a pre-set
 # LOOMWRIGHT_ROOT (what a non-Claude adapter sets) is the root the readers resolve under. Without it
@@ -384,7 +389,13 @@ if [ -n "$GITROOT" ] && git -C "$GITROOT" cat-file -e "$PRECHANGE_SHA:loomwright
   PRE_SCRIPT="$ROOT/pre-build-handoff.sh"
   git -C "$GITROOT" show "$PRECHANGE_SHA:loomwright/scripts/build-handoff.sh" > "$PRE_SCRIPT" 2>/dev/null
   # Run the PRE-CHANGE script against the fixture first (no flag — it predates --publish anyway).
-  ( cd "$RL" && CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$PRE_SCRIPT" ) >/dev/null 2>&1; rcPre=$?
+  # It calls read-project-memory.sh with no flag, which since as24 is the terse count header; the
+  # reader's pre-terse output is now `--verbose` (pinned byte-for-byte by test-project-memory.sh), so
+  # the pre-change run gets a reader root whose memory reader is the real one with --verbose.
+  PRE_READERS="$(mktmp)"; mkdir -p "$PRE_READERS/scripts"
+  printf '#!/usr/bin/env bash\nexec bash "%s/scripts/read-project-memory.sh" --verbose "$@"\n' "$PLUGIN_ROOT" > "$PRE_READERS/scripts/read-project-memory.sh"
+  printf '#!/usr/bin/env bash\nexec bash "%s/scripts/read-lessons.sh" "$@"\n' "$PLUGIN_ROOT" > "$PRE_READERS/scripts/read-lessons.sh"
+  ( cd "$RL" && CLAUDE_PLUGIN_ROOT="$PRE_READERS" bash "$PRE_SCRIPT" ) >/dev/null 2>&1; rcPre=$?
   DIGL="$RL/.supervisor/handoff/digest.md"
   [ "$rcPre" -eq 0 ] && [ -f "$DIGL" ] && ok "pre-change script ran and produced a digest" \
     || no "pre-change script failed to produce a digest (rc=$rcPre)"
