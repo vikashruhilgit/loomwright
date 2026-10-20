@@ -79,7 +79,7 @@ authored.
 
 - **The segment is bounded by the eval.** `done` (any status) ends a case. In a real loop `done`/`running`
   goes on to `--start pick`. The prompt states the boundary, so a model that runs past it fails parity.
-- **The headless eval child has no ask tool.** `AskUserQuestion` is not among its tools even when allowed, so
+- **The headless eval child has no ask tool.** The host's ask tool is not among its tools even when allowed, so
   `bin/ask-owner` is the only question channel and a wrong question is counted there. A question asked in prose
   (the model stops and asks) is caught as an unanswered instruction (`SKIPPED`) and a parity failure, not as a
   wrong question.
