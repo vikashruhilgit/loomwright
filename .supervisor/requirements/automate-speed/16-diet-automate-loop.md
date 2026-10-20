@@ -78,3 +78,9 @@ loomwright/commands/automate.md
 loomwright/docs/rationale/automate-loop.md
 loomwright/docs/loop-inventory/automate-loop.md
 changelog.d/as16-diet-automate-loop.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-20T14:28:23Z
+- **Brief:** .supervisor/jobs/done/2026-10-20-as16-diet-automate-loop.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/636
