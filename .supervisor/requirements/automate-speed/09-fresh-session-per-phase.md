@@ -82,3 +82,9 @@ loomwright/commands/autonomous.md
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
 loomwright/docs/loop-inventory/automate-loop.md
 changelog.d/as09-fresh-session-per-phase.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-20T04:42:01Z
+- **Brief:** .supervisor/jobs/done/2026-10-19-fresh-session-per-phase.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/628
