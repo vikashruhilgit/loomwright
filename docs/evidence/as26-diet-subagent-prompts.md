@@ -18,16 +18,16 @@ After: `bash scripts/check-token-budget.sh` on the branch, after the last prose 
 ```
 code-reviewer             17681    27563  OK      9882 headroom (1 preloaded skills)
 execute-manager           19283    42568  OK      23285 headroom (2 preloaded skills)
-plan-reviewer              8566    13614  OK      5048 headroom (0 preloaded skills)
-worker                     5810     9949  OK      4139 headroom (0 preloaded skills)
+plan-reviewer              8591    13614  OK      5023 headroom (0 preloaded skills)
+worker                     5836     9949  OK      4113 headroom (0 preloaded skills)
 ```
 
 | Agent | Before | After | Cut | ≥30% target (≤) | Met |
 |---|---|---|---|---|---|
 | `code-reviewer` | 27473 | 17681 | −35.6% | 19231 | yes |
 | `execute-manager` | 31405 | 19283 | −38.6% | 21983 | yes |
-| `plan-reviewer` | 12377 | 8566 | −30.8% | 8663 | yes (97 tokens of margin) |
-| `worker` | 9127 | 5810 | −36.3% | 6388 | yes |
+| `plan-reviewer` | 12377 | 8591 | −30.6% | 8663 | yes (72 tokens of margin) |
+| `worker` | 9127 | 5836 | −36.1% | 6388 | yes |
 
 The start figures matched the brief's Baseline table exactly. No `budget` changed.
 

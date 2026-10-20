@@ -280,8 +280,8 @@ Not evaluated here: the optional `## Feasibility` section (Criterion 11) and the
 | Only MEDIUM/LOW issues, design approach unambiguous, AND no Criterion 14 or 17c NEEDS_HUMAN escalation (see rows below) | **PASS** (issues recorded for visibility; the save is not blocked) |
 | Any BLOCKING or HIGH severity issue found | **FAIL** |
 | Only MEDIUM/LOW issues, but design approach is ambiguous | **NEEDS_HUMAN** |
-| Criterion 17c finds an advisory-rule contradiction with no well-formed `Rule override:` line, or a pending conflict line, and no BLOCKING/HIGH issue exists | **NEEDS_HUMAN** (the owner decides: override the rule, or change the brief to honor it) |
-| Criterion 14 finds ≥1 `cmd:`/bare Executable Acceptance bullet with NO well-formed `## Configuration` stamp, whatever the issue's LOW severity | **NEEDS_HUMAN** (dedicated escalation, independent of ambiguity; takes precedence over the MEDIUM/LOW→PASS row) |
+| Criterion 17c finds an advisory-rule contradiction with no well-formed `Rule override:` line, or a pending conflict line, and no BLOCKING/HIGH issue exists | **NEEDS_HUMAN** (the owner decides: override the rule, or change the brief to honor it; like the Criterion 14 row, independent of ambiguity) |
+| Criterion 14 finds ≥1 `cmd:`/bare Executable Acceptance bullet with NO well-formed `## Configuration` stamp, whatever the issue's LOW severity and regardless of any other criterion's outcome | **NEEDS_HUMAN** (dedicated escalation, independent of ambiguity; takes precedence over the MEDIUM/LOW→PASS row) |
 
 ---
 

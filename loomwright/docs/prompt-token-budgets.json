@@ -9,7 +9,7 @@
     "execute-manager": {"budget": 42568, "measured": 19283, "note": "Live 31405->19283 (automate-speed/26): prompt diet, state-management moved to an on-demand Read. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "launch-pad": {"budget": 50965, "measured": 46331, "note": "Raised 45940->50965 (#432 plan half): plan-time rule conflicts. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
     "orchestrator": {"budget": 9558, "measured": 8924, "note": "Raised 8665->9558 (Fix 7, v15.18.0): Review Gate Policy rewrite. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
-    "plan-reviewer": {"budget": 13614, "measured": 8566, "note": "Live 12377->8566 (automate-speed/26): prompt diet. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
+    "plan-reviewer": {"budget": 13614, "measured": 8591, "note": "Live 12377->8591 (automate-speed/26): prompt diet. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "product-owner": {"budget": 15801, "measured": 14364, "note": "Raised 14405->15801 (agnostic-phase1/04): non-interactive can't-ask branch. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
     "qa-executor": {"budget": 52914, "measured": 48103, "note": "Raised 48165->52914 (automate-followups/06): preloaded quality-checklist gained the rule: clause. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
     "qa-strategist": {"budget": 23488, "measured": 21352, "note": "Re-measured v15.33.0 (shared agent-memory permission block) + ~10%. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
@@ -17,7 +17,7 @@
     "review-pr": {"budget": 43235, "measured": 39304, "note": "Raised 39187->43235 (no-self-matching-wait): review-heal fix-worker WAITING sentence. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
     "rubric-grader": {"budget": 2330, "measured": 1896, "note": "Raised 2086->2330 (v15.13.0): shared-agent-prefix block. measured = frozen v15.10.0 baseline; history in the ARCHITECTURE_CONTRACTS.md raise log"},
     "supervisor": {"budget": 30378, "measured": 27725, "note": "Raised 27488->30378 (automate-speed/02): pin-mutation gate; 4f re-baseline 51814->21029 (v15.19.0). LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
-    "worker": {"budget": 9949, "measured": 5810, "note": "Live 9127->5810 (automate-speed/26): prompt diet. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"}
+    "worker": {"budget": 9949, "measured": 5836, "note": "Live 9127->5836 (automate-speed/26): prompt diet. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"}
   },
   "skills": {
     "agent-output": {"budget": 1495, "measured": 1359, "note": "initial ceiling: measured + ~10% (as17)"},
