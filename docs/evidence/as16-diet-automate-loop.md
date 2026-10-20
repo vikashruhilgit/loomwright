@@ -87,6 +87,38 @@ What moved where:
 - Inventory: 32 rows (AL-058 … AL-089) now name `run-file.md`; AL-075 is a story (below), the other 31 are re-homed `script:` where the row's `implemented by` names an existing arm, else `step-scoped` (AL-089 stays `judgment`/`prose`, anchor live in `run-file.md`); 3 `story` rows (AL-002, AL-075, AL-543) homed `rationale:docs/rationale/automate-loop.md#…`; one new row AL-587 for the `run-file.md` Step 0 line; `## Sources` gains `run-file.md`; `## Counts` recomputed (585 rows, 138 rule). The SKILL.md frontmatter takes the one minor bump (1.17.0 → 1.18.0, mirrored in `SKILLS_INDEX.md`).
 - `vendor-coupling-manifest.json`: `commands/automate.md` 8 → 7 (the dropped headless-CLI comment); SKILL.md stays at 3; no allowance added.
 
+### Subtask 2 — per-item-loop.md and resume.md
+
+The same loop as Subtask 1, on the Subtask 2 working tree:
+
+```
+loomwright/skills/automate-loop/SKILL.md bytes=21154 hist=1
+loomwright/skills/automate-loop/branch-mode.md bytes=7592 hist=0
+loomwright/skills/automate-loop/command-lanes.md bytes=4111 hist=0
+loomwright/skills/automate-loop/intake.md bytes=10379 hist=0
+loomwright/skills/automate-loop/invariants.md bytes=6090 hist=0
+loomwright/skills/automate-loop/lanes.md bytes=57472 hist=8
+loomwright/skills/automate-loop/modes-and-merge-gate.md bytes=27208 hist=3
+loomwright/skills/automate-loop/per-item-loop.md bytes=29940 hist=0
+loomwright/skills/automate-loop/resume.md bytes=9919 hist=0
+loomwright/skills/automate-loop/run-file.md bytes=10598 hist=0
+loomwright/commands/automate.md bytes=19850 hist=0
+TOTAL bytes=204313 hist=12
+helpers.md bytes=45618
+```
+
+- Measured set: 250,060 → **204,313** bytes (−45,747 this subtask; −71,455 / −25.9% from the 275,768 baseline). `per-item-loop.md` 66,665 → 29,940; `resume.md` 18,941 → 9,919. The AC2 target (≤ 193,037) still needs −11,276 from Subtasks 3–4.
+- Default-path read set: unchanged at 47,094 bytes (neither file is read by default).
+- History references: 24 → **12** (`per-item-loop.md` 11 → 0, `resume.md` 1 → 0; the run ids, PR numbers, the `(owner decision, 2026-10-07)` date and `red-team-hardening item 04` moved to the rationale doc or were cut).
+- `helpers.md`: 45,618 → 45,618 (not edited; nothing was moved into it).
+
+What moved where:
+- **Stories → rationale `## per-item-loop and resume`** (15 existing `story` rows re-homed `rationale:docs/rationale/automate-loop.md#…`): the trail-gate incident (AL-241), brief-repair's outside-the-engine limit (AL-311), why no park opens a trail PR and the `--no-trail` cost (AL-345), the checkout contract's re-examination and limits (AL-354, AL-356), the sync-line incident (AL-370), the detached watcher, the pinned lock holder and the `pgrep -f` counting artifact (AL-378), the trail_pr_open options (a)/(b)/(c) and their limit (AL-400 … AL-403), and three rows whose prose had already left the runtime with `legacy-tail.md` (AL-282 validation-gate limits, AL-333 / AL-336 post-release lock, AL-340 decision-step limits — text recovered from `git show 6d51a9a^:loomwright/skills/automate-loop/legacy-tail.md` and rewritten short). Two new `story` rows, AL-588 / AL-589, home the story halves split out of `resume.md` §4's deterministic rows (finalize-before-listing, the lane-clone skip).
+- **Script-owned prose deleted** (rows homed `script:automate-next-step.sh <arm>`, `script:automate-helpers.sh <sub>`, `script:automate-merge-watch.sh`, `script:session-resume.sh` — `test-loop-inventory.sh` checks each arm exists): the trail-pr path list, branch reuse, mechanics, dropped-draft retraction and the long checkout contract (now one bullet); `closeout`'s step-by-step detail (now one ordered line); the merge watcher's poll, backoff, settle re-check and single-instance mechanics (now one bullet and a pointer to the script header); the driver steps' restated detail in §6 steps 1–4 and §7; `resume.md` §4's title-line grammar, rebuild details and restated reconcile prose. One line stays wherever the model could otherwise act by hand: never redo a driver step, never `git add -A`, `--force-unlock` is human-only, a `run_lock_degraded` line is not a park, never re-pick a `gone` item, never NULL a superseded drain, `trail-pr` / `brief-repair` never gate and never merge, the can't-ask stops and their statuses.
+- **Kept byte-identical (pinned):** every heading and every numbered step (the `automate-golden` `MAP.tsv` maps each heading and `L1.n` unit of both files), the §8 `**Honest limits.**` bullet with the positive-form merge mention, the Dismissed-findings `**Honest limits.**` paragraph, the Rate-limit park paragraph, and every needle the readers take (`test-automate-trail.d/01`, `/04`, `/05`, `test-automate-helpers.d/09`, `/15`, `test-automate-dismissed.sh`, `test-automate-lanes.d/05` AJ4e5, `test-run-lock.sh`, `test-non-interactive-gates-seam.sh`); a needle-bearing paragraph was shortened around its needles, never reworded through them.
+- Inventory: AL-387 re-homed `script:automate-next-step.sh reconcile` (it pointed at a `rationale:` heading inside `resume.md`); AL-581 re-pointed to its default-read copy in `SKILL.md`'s Coordinator loop (`q: is never run inline: run its \`launch\` line`, home `global`), and `per-item-loop.md`'s restatement replaced by a pointer to it; `## Counts` recomputed (587 rows, 28 story, 133 GAP), AL-588 / AL-589 added to the gap list.
+- `vendor-coupling-manifest.json`: `per-item-loop.md` now carries no counted token (its `AskUserQuestion` and the launcher's two runtime-identity variables, twice each, left with the deleted prose), so its allowance (5) and note are removed; `resume.md` keeps its one (`AskUserQuestion` in the AL-213 anchor). The rationale doc carries no counted token.
+
 ## Read set (Step 0)
 
 After Subtask 1, `commands/automate.md` Step 0 reads (one line per entry; `grep -nE '^Read |\*\*Always\*\*|\*\*Only when\*\*' loomwright/commands/automate.md`):
@@ -127,9 +159,16 @@ Why each after-tree `SKILL.md` section stays in the default read set:
 - **(Subtask 1) The command's Short overview is a driver-owned map in the default read set.** AC4 asks that no section whose steps the driver owns is read unconditionally. The overview was cut to a one-line-per-step map and kept in place because five test legs pin its text in the raw command body (Read set above). Owner decision: accept the map as a non-instruction pointer, or approve a second new split file (`skills/automate-loop/command-overview.md`, its own Step 0 **Only when** line) with those test legs repointed (path only).
 - **(Subtask 1) `test-automate-dismissed.sh`'s "unqualified drain-ownership" scan fails a surface with zero matching lines** (an empty here-string yields one empty, unqualified line). It forced `commands/automate.md` to keep a qualified `exactly ONE inline` phrase. Recorded, not fixed (the test is outside this diet's behaviour scope).
 
+- **(Subtask 2) Inventory row AL-387 contradicted the driver.** It said RECONCILE's crash-restore of a stranded config backup is "prose there — never a driver step", while `automate-next-step.sh`'s header lists the stranded config-backup restore under its `reconcile` step and refuses `--start run` over a backup (`config_backup_stranded`). The row is re-homed to `script:automate-next-step.sh reconcile`; recorded so the owner can confirm the driver, not the coordinator, owns that restore.
+- **(Subtask 2) The golden map freezes the shape of `per-item-loop.md` and `resume.md`.** `fixtures/automate-golden/MAP.tsv` maps every heading and every numbered step of both files, so a section now reduced to a few lines (Brief-repair, Termination) keeps its heading. Merging or dropping such a heading needs a MAP.tsv edit outside this item's lanes.
+
+- **(Subtask 2) `automate-merge-watch.sh`'s header names `SKILL.md` §6 "Post-merge close-out" its PROTOCOL AUTHORITY,** while that section now keeps one bullet and defers the watcher's mechanics to the script header (its rows AL-372 … AL-379 are homed `script:automate-merge-watch.sh`). The header comment is outside this item's lanes and was not edited; the owner decides whether the script header becomes the stated authority.
+
 ## Proposed hooks
 
 - (Subtask 1) None — no rule in SKILL.md, invariants.md or the command body needed a new hook to leave the prompt.
+
+- (Subtask 2) None — every rule left in `per-item-loop.md` / `resume.md` is either executed by an existing driver or helper arm or stays as one prose line; no rule needed a new hook.
 
 ## Pin mutations
 
@@ -147,6 +186,19 @@ mutant gated: non-empty, differs (121 -> 120 lines)
 original: check F GREEN (helpers.md intake.md run-file.md resume.md per-item-loop.md modes-and-merge-gate.md invariants.md branch-mode.md lanes.md command-lanes.md )
 mutant: check F RED — have [helpers.md intake.md resume.md per-item-loop.md modes-and-merge-gate.md invariants.md branch-mode.md lanes.md command-lanes.md ]
 ```
+
+- **(Subtask 2) No test repointed** — every pinned needle stayed in `per-item-loop.md` / `resume.md`, which the readers already take (raw, or through `fixtures/automate-loop-split/assemble.sh`). Mutation control for the kept `prose` anchors: on a `mktemp -d` copy of `loomwright/` (with `HOME` relocated), the line holding AL-236's anchor (`ONE owner question batching ≤4 leftovers`) deleted from `per-item-loop.md`, then `test-loop-inventory.sh --root <copy>`:
+
+```
+mutant gated: non-empty, differs (104 -> 103 lines)
+FAIL AL-236: anchor not found in skills/automate-loop/per-item-loop.md
+FAIL RH-329: test cell names no existing test-*.sh under loomwright/scripts/ or scripts/: test-check-shared-prefix.sh
+loop-inventory: FAIL — 2 problem(s)
+# control (the unmutated file restored into the same copy):
+loop-inventory: FAIL — 1 problem(s)
+```
+
+The RH-329 line is a `--root` artifact on both runs (the copy has no sibling root `scripts/`, where `test-check-shared-prefix.sh` lives); the mutant adds exactly the AL-236 failure.
 
 ## Results
 
@@ -176,3 +228,27 @@ Run on the Subtask 1 tree (each script from the repo root, `bash <script>`):
 | `scripts/check-doc-currency.sh`, `scripts/check-token-budget.sh`, `scripts/check-vendor-coupling.sh`, `scripts/check-skills-index-sync.sh` | OK |
 | `loomwright/scripts/test-automate-helpers.sh` | 769 passed, 1 failed — the same failure as at base (`W19 real 22-split-automate-engine-surfaces.md ## Touches parses`, which reads a requirement file and a missing `.agent/companions.json`; no group file involved) |
 | `loomwright/scripts/test-automate-lanes.sh` | 953 passed, 42 failed — the identical failure set as at base (`diff` of the sorted `FAIL` lines is empty; lane-policy / inbox legs J*/K*/X*, none reads a group file). Before the AH12 repoint above it was 950/45: the 3 extra failures were AH12/AH12a/AH12c |
+
+### Subtask 2 — results
+
+Run on the Subtask 2 tree (each script from the repo root, `bash <script>`; the machine ran other lanes' suites at the same time, load average up to 133):
+
+| Gate / test | Result |
+|---|---|
+| `loomwright/scripts/test-loop-inventory.sh` | 43/43 passed |
+| `loomwright/scripts/test-automate-loop-split.sh` | 40 passed, 0 failed |
+| `loomwright/scripts/test-automate-next-step.sh` | 153 passed, 0 failed (incl. the merge-surface leg: the positive-form grep prints exactly `SURFACE_BASE`) |
+| `loomwright/scripts/test-automate-dismissed.sh` | 255 passed, 0 failed |
+| `loomwright/scripts/test-automate-trail.sh` | 786 passed, 0 failed |
+| `loomwright/scripts/test-automate-golden.sh` | 65 passed, 0 failed |
+| `loomwright/scripts/test-session-resume.sh` | 338 passed, 0 failed |
+| `loomwright/scripts/test-run-lock.sh` | 88 passed, 0 failed |
+| `loomwright/scripts/test-non-interactive-gates-seam.sh` | 64 passed, 0 failed |
+| `loomwright/scripts/test-rules-gate-seams.sh` | 26 passed, 0 failed |
+| `loomwright/scripts/test-classify-risk.sh` | 46 passed, 0 failed |
+| `loomwright/scripts/test-build-handoff.sh` / `test-build-loop-evidence.sh` / `test-context-digest.sh` / `test-harvest-conventions.sh` | 93 / 30 / 37 of 37 / 172 passed, 0 failed |
+| `loomwright/scripts/test-command-parts.sh` / `test-curation-status.sh` / `test-rules-docs.sh` / `test-setup-memory.sh` | 37 / 333 / 46 / 574 passed, 0 failed |
+| `loomwright/scripts/test-citation-drift.sh` | 26 passed, 0 failed |
+| `scripts/check-doc-currency.sh`, `scripts/check-token-budget.sh`, `scripts/check-vendor-coupling.sh`, `scripts/check-skills-index-sync.sh` | OK |
+| `loomwright/scripts/test-automate-helpers.sh` | 769 passed, 1 failed — the base failure (`W19 … ## Touches parses`) |
+| `loomwright/scripts/test-automate-lanes.sh` | 953 passed, 42 failed — the base counts. A first run under peak load read 949/46 (four extra AD/AM/AH inbox legs, none of which reads a group file); the re-run alone read 953/42. Its two group-file legs pass: AJ4e5 (the raw `per-item-loop.md` no-PR line) and AH12 (`run-file.md`). The failing-set diff against a base run was not re-made here. |
