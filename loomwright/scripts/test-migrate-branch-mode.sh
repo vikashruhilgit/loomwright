@@ -112,6 +112,18 @@
 #      stubbed to a no-op; the SUT unmodified) FAILs `A ⊄ B` and reports kinds.a_only.md=1 and no
 #      b_only; mutation control: the pre-fix `diff`-prefix extraction on the bare `comm` output MUST
 #      lose a_only
+#  30. protect --waive (the owner's recorded waiver where GitHub cannot apply a ruleset): refused
+#      before preflight, without a (non-blank) --reason, when GitHub serves rulesets (a readable
+#      list), on a non-403 error and on a rate-limit 403; usage errors for --reason alone and
+#      --waive with --verify; on GitHub's real Free-plan 403 it records protect=WAIVED with the
+#      one-line reason, the 403 message and a UTC timestamp, prints the UNPROTECTED warning and
+#      reports telemetry `warn protect_waived` (never a pass); a re-print of the ruleset and a
+#      failing --verify keep WAIVED; `state` warns and moves to mode-pr; mode-pr proceeds and its
+#      PR body carries the UNPROTECTED warning + reason; after-merge repeats the warning; a later
+#      --verify PASS supersedes it (waive keys deleted, no warning) and a waive after PASS is
+#      refused; history case: seed proceeds after WAIVED and the untrack PR body carries the
+#      warning + reason; a PASS run's bodies never do; mutation control: mode-pr gated on
+#      `need protect PASS` alone (the pre-waiver gate) MUST refuse after WAIVED
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -147,7 +159,16 @@ case "$1 $2" in
   "pr view") n=""; for a in "$@"; do case "$a" in [0-9]*) n="$a"; break ;; esac; done
     echo "OPEN $(cat "$D/head.$n" 2>/dev/null)"; exit 0 ;;
   "api repos/owner/repo/rulesets")
-    case "$(cat "$D/ruleset_mode" 2>/dev/null)" in none|'') echo '[]' ;; *) echo '[{"id":7,"name":"x","target":"branch","enforcement":"active"}]' ;; esac; exit 0 ;;
+    # forbidden / ratelimit: gh's real shape for an HTTP error — the JSON body on stdout, exit 1
+    # (forbidden is the Free-plan private-repo answer, verbatim); error: no body at all (network)
+    case "$(cat "$D/ruleset_mode" 2>/dev/null)" in
+      forbidden) echo '{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","documentation_url":"https://docs.github.com/rest/repos/rules#get-all-repository-rulesets","status":"403"}'
+        echo "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)" >&2; exit 1 ;;
+      ratelimit) echo '{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again.","status":"403"}'; exit 1 ;;
+      error) echo "error connecting to api.github.com" >&2; exit 1 ;;
+      none|'') echo '[]' ;;
+      *) echo '[{"id":7,"name":"x","target":"branch","enforcement":"active"}]' ;;
+    esac; exit 0 ;;
   "api repos/owner/repo/rulesets/7")
     b="$(cat "$D/ruleset_branch")"; by='[]'; [ "$(cat "$D/ruleset_mode")" = bypass ] && by='[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]'
     printf '{"id":7,"target":"branch","enforcement":"active","conditions":{"ref_name":{"include":["refs/heads/%s"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"}],"bypass_actors":%s}\n' "$b" "$by"; exit 0 ;;
@@ -1036,6 +1057,66 @@ if build_mutant "$MUT" 's/^    if \[ "\$AB_REL" = subset \]; then$/    if false;
     ok "mutation control: the diff-prefix extraction on the subset round's comm output loses kinds.a_only"
   else no "mutation control REFUTED: the pre-fix extraction still reported a_only (rc=$RC; $(cat "$EVTEE"))"; fi
 else no "mutation control (subset extraction) did not build — counts as FAIL"; fi
+
+echo "== 30. protect --waive: the owner's recorded waiver where GitHub cannot apply a ruleset =="
+mkworld
+mb A protect --waive --reason "free plan"; { [ "$RC" -eq 1 ] && has "refused" && [ -z "$(st A protect)" ]; }; check $? "waive before preflight is refused, nothing recorded (rc=$RC)"
+mb A preflight --repo owner/repo; mb A scrub; mb A init --branch "$BR"
+echo forbidden > "$STUBD/ruleset_mode"
+mb A protect --waive; { [ "$RC" -eq 1 ] && has "non-empty --reason" && [ "$(st A protect)" != WAIVED ]; }; check $? "waive without --reason is refused (rc=$RC)"
+mb A protect --waive --reason "   "; { [ "$RC" -eq 1 ] && has "non-empty --reason" && [ "$(st A protect)" != WAIVED ]; }; check $? "waive with a blank --reason is refused (rc=$RC)"
+mb A protect --reason "x"; [ "$RC" -eq 2 ]; check $? "--reason without --waive is a usage error (rc=$RC)"
+mb A protect --waive --verify --reason "x"; [ "$RC" -eq 2 ]; check $? "--waive with --verify is a usage error (rc=$RC)"
+echo none > "$STUBD/ruleset_mode"
+mb A protect --waive --reason "free plan"; { [ "$RC" -eq 1 ] && has "serves rulesets" && [ "$(st A protect)" != WAIVED ]; }; check $? "waive refused when GitHub serves rulesets (a readable list) (rc=$RC)"
+echo error > "$STUBD/ruleset_mode"
+mb A protect --waive --reason "free plan"; { [ "$RC" -eq 1 ] && has "no evidence" && [ "$(st A protect)" != WAIVED ]; }; check $? "waive refused on a non-403 gh failure (rc=$RC)"
+echo ratelimit > "$STUBD/ruleset_mode"
+mb A protect --waive --reason "free plan"; { [ "$RC" -eq 1 ] && has "rate-limited" && [ "$(st A protect)" != WAIVED ]; }; check $? "waive refused on a rate-limit 403 (rc=$RC)"
+echo forbidden > "$STUBD/ruleset_mode"; EVTEE="$TROOT/events.jsonl"; : > "$EVTEE"
+export LOOMWRIGHT_SCRIPT_EVENTS=1 LOOMWRIGHT_SCRIPT_EVENT_TEE="$EVTEE"
+mb A protect --waive --reason "$(printf 'private repo on the Free plan:\nrulesets unavailable')"
+export LOOMWRIGHT_SCRIPT_EVENTS=0; unset LOOMWRIGHT_SCRIPT_EVENT_TEE
+{ [ "$RC" -eq 0 ] && [ "$(st A protect)" = WAIVED ] && [ "$(st A protect_waive_reason)" = "private repo on the Free plan: rulesets unavailable" ] \
+  && case "$(st A protect_waive_evidence)" in "HTTP 403: Upgrade to GitHub Pro"*) true ;; *) false ;; esac \
+  && grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' < <(st A protect_waive_at); }
+check $? "403 evidence -> protect=WAIVED with the one-line reason, GitHub's message and a UTC stamp (rc=$RC)"
+{ has "UNPROTECTED" && has "never force-pushes" && has "delete it or force-push it"; }; check $? "the waiver prints the exposure: unprotected, deletable / force-pushable, meta-sync never force-pushes"
+{ grep -q '"outcome": "warn"' "$EVTEE" && grep -q '"code": "protect_waived"' "$EVTEE" && ! grep -q '"outcome": "pass"' "$EVTEE" && ! grep -q 'Free plan' "$EVTEE"; }; check $? "telemetry: warn protect_waived, never a pass, and no reason text ($(cat "$EVTEE"))"
+[ "$(grep -c '^protect=' "$W/A/.supervisor/migrate-branch-mode/state")" = 1 ]; check $? "no duplicate protect key in the state file"
+mb A protect; { [ "$RC" -eq 0 ] && [ "$(st A protect)" = WAIVED ]; }; check $? "re-printing the ruleset keeps WAIVED (never back to PRINTED)"
+mb A protect --verify; { [ "$RC" -eq 1 ] && has "waiver stands" && [ "$(st A protect)" = WAIVED ]; }; check $? "a failing --verify leaves the waiver standing (rc=$RC)"
+mb A state; { has "next: mode-pr" && has "protect is WAIVED" && has "UNPROTECTED"; }; check $? "state: WAIVED completes protect (next: mode-pr) and warns"
+mb A mode-pr; NB="$(st A mode_pr_branch)"; N30="$(pr_n pr_mode)"
+{ [ "$RC" -eq 0 ] && [ "$(st A mode_pr)" = PASS ] && remote_has "$NB"; }; check $? "mode-pr proceeds after WAIVED (rc=$RC)"
+{ grep -q 'is UNPROTECTED' "$STUBD/body.$N30" && grep -q "Owner's recorded reason: private repo on the Free plan: rulesets unavailable" "$STUBD/body.$N30" \
+  && grep -q 'Upgrade to GitHub Pro' "$STUBD/body.$N30" && grep -q 'never force-pushes' "$STUBD/body.$N30" && grep -q 'Switches `/setup memory`' "$STUBD/body.$N30"; }
+check $? "mode-pr body: UNPROTECTED warning, GitHub's evidence, the owner's reason, then the usual body"
+gh_never_writes; check $? "gh never merged nor wrote a ruleset during the waiver flow"
+owner_merge "$NB"; mb A after-merge; { [ "$RC" -eq 0 ] && has "UNPROTECTED"; }; check $? "after-merge PASS repeats the UNPROTECTED warning (rc=$RC)"
+echo good > "$STUBD/ruleset_mode"; mb A protect --verify
+{ [ "$RC" -eq 0 ] && [ "$(st A protect)" = PASS ] && [ -z "$(st A protect_waive_reason)" ] && [ -z "$(st A protect_waive_evidence)" ] && [ -z "$(st A protect_waive_at)" ]; }
+check $? "a later --verify PASS supersedes WAIVED and deletes the waive keys (rc=$RC)"
+mb A state; ! has "WAIVED"; check $? "state no longer warns once protect is PASS"
+mb A protect --waive --reason "x"; { [ "$RC" -eq 1 ] && has "protect is PASS" && [ "$(st A protect)" = PASS ]; }; check $? "a waive after PASS is refused (rc=$RC)"
+# history case: seed and the untrack PR body
+mkworld history
+mb A preflight --repo owner/repo; mb A scrub; mb A init --branch "$BR"
+echo forbidden > "$STUBD/ruleset_mode"; mb A protect --waive --reason "no rulesets on this plan"
+mb A seed; { [ "$RC" -eq 0 ] && [ "$(st A seed)" = PASS ]; }; check $? "history: seed proceeds after WAIVED (rc=$RC)"
+mb A untrack-pr; N30="$(pr_n pr_untrack)"
+{ [ "$RC" -eq 0 ] && grep -q 'is UNPROTECTED' "$STUBD/body.$N30" && grep -q "Owner's recorded reason: no rulesets on this plan" "$STUBD/body.$N30" && grep -q 'verify-pr' "$STUBD/body.$N30"; }
+check $? "untrack PR body carries the UNPROTECTED warning + reason (rc=$RC)"
+hist_to_untrack; N30="$(pr_n pr_untrack)"
+! grep -q 'UNPROTECTED' "$STUBD/body.$N30"; check $? "a protect PASS run's untrack PR body carries no UNPROTECTED warning"
+MUT="$TROOT/mut-protect-pass-only"
+if build_mutant "$MUT" 's/^  need_preflight; need protect PASS WAIVED$/  need_preflight; need protect PASS/' '  need_preflight; need protect PASS'; then
+  mkworld; SCRIPT="$MUT/migrate-branch-mode.sh"
+  mb A preflight --repo owner/repo; mb A scrub; mb A init --branch "$BR"
+  echo forbidden > "$STUBD/ruleset_mode"; mb A protect --waive --reason "free plan"; mb A mode-pr; SCRIPT="$SUT"
+  if [ "$RC" -eq 1 ] && has "needs PASS"; then ok "mutation control: the pre-waiver gate (need protect PASS) refuses mode-pr after WAIVED"
+  else no "mutation control REFUTED: the PASS-only gate let mode-pr through after WAIVED (rc=$RC)"; fi
+else no "mutation control (protect PASS-only gate) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"

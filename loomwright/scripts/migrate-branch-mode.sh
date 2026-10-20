@@ -40,6 +40,25 @@
 #                       non-fast-forward; no bypass) and the `gh api` command the OWNER runs.
 #                       --verify reads `gh api repos/<o>/<r>/rulesets` (+ each ruleset) and records
 #                       PASS only when an active ruleset covers the branch with both rules, no bypass.
+#                       A PASS supersedes a recorded waiver (its waive keys are deleted); a FAIL
+#                       leaves a recorded waiver standing (protect stays WAIVED, exit 1).
+#   protect --waive --reason <text>
+#                       the OWNER's recorded decision to run UNPROTECTED where GitHub cannot apply a
+#                       ruleset — never a silent skip, and never chosen by the script. EVIDENCE-GATED
+#                       (the decision): it reads `gh api repos/<o>/<r>/rulesets` and waives ONLY when
+#                       GitHub answers HTTP 403 (the JSON body's `"status": "403"` — e.g. "Upgrade to
+#                       GitHub Pro or make this repository public to enable this feature." on a
+#                       private Free-plan repo). A readable ruleset list means the feature exists, so
+#                       the owner can create the ruleset: refused. Any other failure (network, 401,
+#                       404, unparseable) proves nothing: refused. Matching the status, not the
+#                       message text, keeps the gate stable if GitHub rewords the message; a 403
+#                       for a missing permission is waivable too, because the reason is recorded
+#                       and shown to the merger — except a rate-limit 403 (the message names a rate
+#                       limit), which says nothing about rulesets: refused. Needs a non-empty --reason (whitespace collapsed to
+#                       one line). Records protect=WAIVED + protect_waive_reason / _evidence / _at,
+#                       and prints the exposure: the branch can be deleted or force-pushed by anyone
+#                       with push access; meta-sync.sh itself never force-pushes, and every synced
+#                       checkout keeps its files on disk. Refused once protect is PASS.
 #   mode-pr             (fresh) on a NEW branch: `setup-memory.sh apply --branch-mode <b>`, one commit
 #                       of `.gitignore` only, push, open a PR — never merged. Returns to the default.
 #   seed                (history) `meta-sync.sh push --branch <b>`, then the A/B check against the
@@ -98,13 +117,20 @@
 #   --branch  metadata branch; `init` / `rehearse` only (later steps use the RECORDED name, passed as --branch
 #             to EVERY meta-sync.sh call — never a fallback to loomwright-meta)
 #   --repo    owner/repo for `gh` (default: parsed from the origin URL); recorded once given
+#   --waive / --reason <text>   `protect` only (above); --reason without --waive is a usage error
+#
+# protect=WAIVED satisfies every gate protect=PASS does (mode-pr, seed) and counts as done for
+# `state`; the mode-pr / untrack-pr bodies then say the branch is UNPROTECTED and quote the reason,
+# `state` and after-merge repeat the warning, and rollback (which needs no protect result) is
+# unchanged — its push, like every meta-sync.sh push, is fast-forward only.
 #
 # STATE FILE — `<root>/.supervisor/migrate-branch-mode/state` (preflight refuses unless it is
 # gitignored). Plain `key=value` lines, one key per line, last write wins, values single-line:
 #   case=fresh|history   default=<default branch>   repo=<owner/repo>   branch=<metadata branch>
 #   pre_migration_sha=<HEAD at preflight>
 #   step results: preflight scrub rehearse init protect mode_pr seed untrack_pr verify_pr
-#                 after_merge rollback  =  PASS | FAIL (protect: PRINTED before --verify;
+#                 after_merge rollback  =  PASS | FAIL (protect: PRINTED before --verify,
+#                 WAIVED after `protect --waive`;
 #                 seed / untrack_pr / verify_pr: STALE once a later step invalidated them — a
 #                 re-run seed staled untrack_pr + verify_pr, a re-cut untrack-pr staled verify_pr,
 #                 an after-merge tracked-path FAIL staled all three)
@@ -116,6 +142,9 @@
 #               preflight unless after_merge is still FAIL (the fresh-case mid-round re-preflight)
 #   mode_pr_branch / untrack_branch / rollback_branch=<new branch>  pr_mode / pr_untrack /
 #   pr_rollback=<PR url>  backup_mode_pr / backup_untrack_pr=<moved .gitignore.backup.<ts> path>
+#   protect_waive_reason=<the owner's reason, one line>  protect_waive_evidence=<GitHub's 403
+#   message, one line>  protect_waive_at=<UTC ISO-8601>  (written by protect --waive; deleted by a
+#   protect --verify PASS)
 # Side files in the same folder: a.list (the A set), u.list (the U set), ab-names.diff,
 # ab-blobs.diff, extra.list, ruleset.json, *.body (PR bodies), backups. Nothing there is ever tracked.
 #
@@ -150,8 +179,10 @@ die() { # die <message> — the reason line, then exit 1. The step's telemetry c
 # file KIND counts. Opt-in like all telemetry (nothing is sent without user-scope consent), and
 # fire-and-forget: the trap keeps the step's exit code and prints nothing. plan / state are read-
 # only and never emit (plan writes nothing at all). A command substitution or `( )` subshell that
-# dies does not run the EXIT trap (bash), so only the step's own exit reports.
-EVT_CODE=""; EVT_ARGS=""
+# dies does not run the EXIT trap (bash), so only the step's own exit reports. A step that exits 0
+# on a recorded owner override (protect --waive) sets EVT_WARN: it reports `warn` with that code,
+# never a `pass` that would close the step's open threads as healed.
+EVT_CODE=""; EVT_ARGS=""; EVT_WARN=""
 evt() { # evt <code> [--count k=v | --kind g.k=n]... — set the code AND counts a following failure
   # reports. It REPLACES both (never accumulates), so a later, unrelated failure in the same step
   # never reports counts an earlier check left behind.
@@ -160,7 +191,7 @@ evt() { # evt <code> [--count k=v | --kind g.k=n]... — set the code AND counts
 }
 evt_emit() { # evt_emit <exit code> — the EXIT trap body
   local rc="$1" outcome code
-  case "$rc" in 0) outcome=pass; code=ok ;; 1) outcome=fail; code="${EVT_CODE:-error}" ;; *) return 0 ;; esac
+  case "$rc" in 0) outcome=pass; code=ok; [ -z "$EVT_WARN" ] || { outcome=warn; code="$EVT_WARN"; } ;; 1) outcome=fail; code="${EVT_CODE:-error}" ;; *) return 0 ;; esac
   local IFS=$'\n' a args=()
   for a in $EVT_ARGS; do [ -n "$a" ] && args+=("$a"); done
   bash "$HERE/emit-script-event.sh" --root "$ROOT" migrate-branch-mode "$STEP" "$outcome" "$code" ${args[@]+"${args[@]}"} >/dev/null 2>&1 || true
@@ -182,7 +213,7 @@ kind_counts() { # kind_counts <group> <file of paths> — `--kind <group>.<kind>
 usage() { sed -n '2,/^# Portability/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 STEP="${1:-}"; [ $# -gt 0 ] && shift
-ROOT=""; OPT_BRANCH=""; OPT_REPO=""; OPT_VERIFY=0; OPT_COMMIT=""; POS=""
+ROOT=""; OPT_BRANCH=""; OPT_REPO=""; OPT_VERIFY=0; OPT_COMMIT=""; POS=""; OPT_WAIVE=0; OPT_REASON=""; HAVE_REASON=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --root|--branch|--repo|--commit)
@@ -190,6 +221,10 @@ while [ $# -gt 0 ]; do
       case "$1" in --root) ROOT="$2" ;; --branch) OPT_BRANCH="$2" ;; --repo) OPT_REPO="$2" ;; --commit) OPT_COMMIT="$2" ;; esac
       shift 2 ;;
     --verify) OPT_VERIFY=1; shift ;;
+    --waive) OPT_WAIVE=1; shift ;;
+    --reason) # its own case: a reason may be empty or blank here, so protect --waive refuses it by name
+      [ $# -ge 2 ] && [ "${2#-}" = "$2" ] || { echo "migrate-branch-mode: --reason needs a value" >&2; exit 2; }
+      OPT_REASON="$2"; HAVE_REASON=1; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "migrate-branch-mode: unknown flag $1" >&2; exit 2 ;;
     *) [ -z "$POS" ] || { echo "migrate-branch-mode: unexpected argument $1" >&2; exit 2; }; POS="$1"; shift ;;
@@ -198,6 +233,11 @@ done
 case "$STEP" in
   -h|--help|'') usage; [ -n "$STEP" ]; exit $? ;;
 esac
+if [ "$OPT_WAIVE" -eq 1 ] || [ "$HAVE_REASON" -eq 1 ]; then
+  [ "$STEP" = protect ] || { echo "migrate-branch-mode: --waive / --reason belong to the protect step" >&2; exit 2; }
+  [ "$OPT_WAIVE" -eq 1 ] || { echo "migrate-branch-mode: --reason needs --waive" >&2; exit 2; }
+  [ "$OPT_VERIFY" -eq 0 ] || { echo "migrate-branch-mode: --waive and --verify are separate invocations" >&2; exit 2; }
+fi
 
 [ -n "$ROOT" ] || ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || true
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || die "not inside a git checkout (use --root)"
@@ -530,6 +570,7 @@ cmd_protect() {
   need_preflight; need init PASS
   local b r rid ok=0 j
   b="$(rec_branch)" || exit 1; r="$(repo_slug)"
+  [ "$OPT_WAIVE" -eq 0 ] || { protect_waive "$b" "$r"; return $?; }
   if [ "$OPT_VERIFY" -eq 0 ]; then
     cat > "$SD/ruleset.json" <<EOF
 {
@@ -545,12 +586,13 @@ EOF
     sed 's/^/  /' "$SD/ruleset.json"
     say "run:  gh api --method POST repos/${r:-<owner>/<repo>}/rulesets --input $SD/ruleset.json"
     say "then: migrate-branch-mode.sh protect --verify"
-    [ "$(state_get protect)" = PASS ] || state_set protect PRINTED
+    say "(only when GitHub refuses rulesets on this repo with HTTP 403: the OWNER may instead record migrate-branch-mode.sh protect --waive --reason <text>)"
+    case "$(state_get protect)" in PASS|WAIVED) ;; *) state_set protect PRINTED ;; esac
     return 0
   fi
-  command -v jq >/dev/null 2>&1 || { state_set protect FAIL; die "protect --verify: jq is required"; }
-  [ -n "$r" ] || { state_set protect FAIL; die "protect --verify: owner/repo unknown (--repo)"; }
-  j="$(ghr api "repos/$r/rulesets")" || { state_set protect FAIL; die "protect --verify: gh api repos/$r/rulesets failed"; }
+  command -v jq >/dev/null 2>&1 || verify_fail "jq is required"
+  [ -n "$r" ] || verify_fail "owner/repo unknown (--repo)"
+  j="$(ghr api "repos/$r/rulesets")" || verify_fail "gh api repos/$r/rulesets failed"
   for rid in $(printf '%s' "$j" | jq -r '.[] | select(.target == "branch") | .id' 2>/dev/null); do
     ghr api "repos/$r/rulesets/$rid" | jq -e --arg ref "refs/heads/$b" '
       .enforcement == "active" and .target == "branch"
@@ -558,12 +600,66 @@ EOF
       and ([.rules[]?.type] | index("deletion") != null and index("non_fast_forward") != null)
       and ((.bypass_actors // []) | length == 0)' >/dev/null 2>&1 && { ok=1; break; }
   done
-  if [ "$ok" -eq 1 ]; then state_set protect PASS; say "protect --verify: PASS (ruleset $rid covers refs/heads/$b)"
-  else state_set protect FAIL; die "protect --verify: FAIL — no active ruleset targets refs/heads/$b with deletion + non_fast_forward and no bypass"; fi
+  if [ "$ok" -eq 1 ]; then
+    # a verified ruleset supersedes a recorded waiver: no PR body or `state` may call $b unprotected now
+    state_set protect PASS; state_del protect_waive_reason; state_del protect_waive_evidence; state_del protect_waive_at
+    say "protect --verify: PASS (ruleset $rid covers refs/heads/$b)"
+  else verify_fail "no active ruleset targets refs/heads/$b with deletion + non_fast_forward and no bypass"; fi
+}
+verify_fail() { # verify_fail <why> — FAIL, except that a recorded owner waiver stands (exit 1 either way)
+  if [ "$(state_get protect)" = WAIVED ]; then
+    die "protect --verify: FAIL — $1; the recorded waiver stands (protect=WAIVED, origin/$(state_get branch) still UNPROTECTED)"
+  fi
+  state_set protect FAIL; die "protect --verify: FAIL — $1"
+}
+one_line() { printf '%s' "$1" | tr '\t\r\n' '   ' | sed -e 's/   */ /g' -e 's/^ //' -e 's/ $//'; }
+protect_waive() { # protect_waive <b> <owner/repo> — the evidence-gated owner waiver (header: protect --waive)
+  local b="$1" r="$2" reason j rc st msg
+  [ "$(state_get protect)" != PASS ] || die "refused: protect is PASS (a verified ruleset covers refs/heads/$b) — there is nothing to waive; nothing was changed"
+  reason="$(one_line "$OPT_REASON")"
+  [ -n "$reason" ] || { evt waive_no_reason; die "refused: protect --waive needs a non-empty --reason <text> (the owner's recorded decision) — nothing was changed"; }
+  command -v jq >/dev/null 2>&1 || die "refused: protect --waive: jq is required to read GitHub's answer — nothing was changed"
+  [ -n "$r" ] || die "refused: protect --waive: owner/repo unknown (--repo) — nothing was changed"
+  # the evidence: GitHub's own answer to the rulesets read. gh prints the error body on stdout and
+  # exits non-zero; a list (exit 0) means rulesets exist here, so the owner can create one
+  j="$(ghr api "repos/$r/rulesets" 2>/dev/null)"; rc=$?
+  if [ "$rc" -eq 0 ] && printf '%s' "$j" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    evt waive_rulesets_available
+    die "refused: GitHub serves rulesets for $r (gh api repos/$r/rulesets succeeded) — the owner can create the printed ruleset, then run protect --verify; a waiver is only for a repo where GitHub cannot apply one. Nothing was changed"
+  fi
+  st="$(printf '%s' "$j" | jq -r 'if type == "object" then (.status // "" | tostring) else "" end' 2>/dev/null)"
+  msg="$(printf '%s' "$j" | jq -r 'if type == "object" then (.message // "" | tostring) else "" end' 2>/dev/null)"
+  if [ "$st" != 403 ]; then
+    evt waive_no_evidence
+    die "refused: no evidence GitHub cannot apply a ruleset to $r (gh api repos/$r/rulesets: exit $rc, status '${st:-none}') — only an HTTP 403 is waivable; fix the gh error and retry. Nothing was changed"
+  fi
+  msg="$(one_line "${msg:-HTTP 403}")"
+  # GitHub's secondary rate limit also answers 403: a throttled read is no evidence about rulesets
+  case "$msg" in *[Rr]ate\ limit*) evt waive_no_evidence; die "refused: gh api repos/$r/rulesets was rate-limited (HTTP 403: $msg) — retry later. Nothing was changed" ;; esac
+  state_set protect WAIVED; state_set protect_waive_reason "$reason"
+  state_set protect_waive_evidence "HTTP 403: $msg"; state_set protect_waive_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  EVT_WARN=protect_waived
+  say "protect --waive: WAIVED — GitHub refused rulesets for $r (HTTP 403: $msg)"
+  say "reason recorded: $reason"
+  say "WARNING — origin/$b is UNPROTECTED: anyone with push access can delete it or force-push it, and"
+  say "  no ruleset will stop them. meta-sync.sh itself never force-pushes (every push is fast-forward"
+  say "  only), and every synced checkout keeps its files on disk, so the exposure is a human deleting"
+  say "  or force-pushing the branch by hand. The PRs this flow opens say so and quote the reason."
+  say "  Once rulesets become available (plan upgrade, public repo), create the printed ruleset and run"
+  say "  protect --verify: a PASS supersedes this waiver."
+  say "then: $(steps_next_after_protect)"
+}
+steps_next_after_protect() { case "$(state_get case)" in fresh) printf 'migrate-branch-mode.sh mode-pr' ;; *) printf 'migrate-branch-mode.sh seed' ;; esac; }
+unprotected_note() { # unprotected_note <b> — the PR-body block when protect is WAIVED (prints nothing otherwise)
+  [ "$(state_get protect)" = WAIVED ] || return 0
+  printf '%s\n' "> [!WARNING]" \
+    "> **The metadata branch \`$1\` is UNPROTECTED** — no ruleset guards it against deletion or force-push by anyone with push access. The owner waived \`protect\` on $(state_get protect_waive_at) because GitHub cannot apply a ruleset here ($(state_get protect_waive_evidence))." \
+    ">" "> Owner's recorded reason: $(state_get protect_waive_reason)" \
+    ">" "> \`meta-sync.sh\` never force-pushes, and every synced checkout keeps its files on disk; the exposure is a human deleting or force-pushing \`$1\` by hand." ""
 }
 
 cmd_mode_pr() {
-  need_preflight; need protect PASS
+  need_preflight; need protect PASS WAIVED
   [ "$(state_get case)" = fresh ] || die "refused: mode-pr is the fresh-case step; the history case writes the block in untrack-pr"
   local b d nb url
   b="$(rec_branch)" || exit 1; d="$(default_branch)"
@@ -583,7 +679,7 @@ cmd_mode_pr() {
   g push -q origin "refs/heads/$nb:refs/heads/$nb" || { state_set mode_pr FAIL; die "push of $nb failed"; }
   g checkout -q "$d" || die "could not return to $d"
   state_set mode_pr_branch "$nb"
-  cat > "$SD/mode-pr.body" <<EOF
+  { unprotected_note "$b"; cat <<EOF
 Switches \`/setup memory\` to branch mode: run history now lives on \`$b\` (meta-sync.sh).
 One commit, \`.gitignore\` only. No run history was tracked, so nothing is untracked.
 
@@ -591,6 +687,7 @@ Pre-migration SHA: $(state_get pre_migration_sha)
 
 The owner merges this PR; then run \`migrate-branch-mode.sh after-merge\`.
 EOF
+  } > "$SD/mode-pr.body"
   url="$(pr_create "$nb" "$d" "chore(memory): branch mode on $b" "$SD/mode-pr.body")" || { state_set mode_pr FAIL; die "gh pr create failed (branch $nb is pushed)"; }
   state_set pr_mode "$url"; state_set mode_pr PASS
   say "mode-pr: PASS — opened $url (NOT merged)"
@@ -598,7 +695,7 @@ EOF
 }
 
 cmd_seed() {
-  need_preflight; need protect PASS
+  need_preflight; need protect PASS WAIVED
   [ "$(state_get case)" = history ] || die "refused: seed is the history-case step"
   local b d; b="$(rec_branch)" || exit 1; d="$(default_branch)"
   on_default_clean "$d"
@@ -649,7 +746,7 @@ cmd_untrack_pr() {
   g push -q origin "refs/heads/$nb:refs/heads/$nb" || { state_set untrack_pr FAIL; die "push of $nb failed"; }
   g checkout -q "$d" || die "could not return to $d"
   state_set untrack_branch "$nb"
-  cat > "$SD/untrack-pr.body" <<EOF
+  { unprotected_note "$b"; cat <<EOF
 Moves run history to the metadata branch \`$b\`: writes the branch-mode \`.gitignore\` block and
 untracks the managed paths (\`git rm -r --cached\`; the files stay on disk and on \`$b\`).
 
@@ -662,6 +759,7 @@ $(ab_body_lines "$(state_get seed_check)" "$(state_get seed_a)" "$(state_get see
 re-checks against the then-current \`$d\` and pushes anything new to \`$b\` first.
 After the merge: \`migrate-branch-mode.sh after-merge\`.
 EOF
+  } > "$SD/untrack-pr.body"
   url="$(pr_create "$nb" "$d" "chore(memory): untrack run history (branch mode on $b)" "$SD/untrack-pr.body")" || { state_set untrack_pr FAIL; die "gh pr create failed (branch $nb is pushed)"; }
   n="${url##*/}"
   state_set pr_untrack "$url"; state_set untrack_pr PASS
@@ -756,6 +854,7 @@ cmd_after_merge() {
   say "every OTHER checkout must run:"
   echo "  git pull"
   echo "  bash <plugin>/scripts/meta-sync.sh pull --branch $b"
+  [ "$(state_get protect)" != WAIVED ] || say "WARNING — origin/$b is UNPROTECTED (protect WAIVED: $(state_get protect_waive_reason)); create the ruleset and run protect --verify once GitHub allows it"
 }
 
 cmd_rollback() {
@@ -814,8 +913,10 @@ cmd_state() {
   sed 's/^/  /' "$SF"
   local k nxt=done
   for k in $(seq_keys "$(state_get case)"); do
-    [ "$(state_get "$k")" = PASS ] || { nxt="$k"; break; }
+    # an owner waiver completes protect (header: protect=WAIVED satisfies every gate PASS does)
+    case "$k=$(state_get "$k")" in *=PASS|protect=WAIVED) ;; *) nxt="$k"; break ;; esac
   done
+  [ "$(state_get protect)" != WAIVED ] || say "WARNING — protect is WAIVED: origin/$(state_get branch) is UNPROTECTED (reason: $(state_get protect_waive_reason))"
   say "next: $(printf '%s' "$nxt" | tr '_' '-')"
 }
 
