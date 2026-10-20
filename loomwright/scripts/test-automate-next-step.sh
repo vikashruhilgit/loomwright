@@ -156,8 +156,9 @@
 #       FAILs in the last 20 ⇒ no escalation, 3 ⇒ ONE escalated record then session, an escalated record +
 #       25 ok lines ⇒ still session, a malformed / capped ledger ⇒ session, the ledger deleted ⇒ the
 #       configured value again; a refusal appends exactly ONE ok:false line and changes nothing else under
-#       .supervisor/ (snapshot() excludes only that ledger), usage errors append nothing, and a replayed
-#       report / a no-result re-print / a no-result --start pick append nothing.
+#       .supervisor/ (snapshot() excludes only that ledger), usage errors (a bad --root included) append
+#       nothing, a dead-pid / aged ledger lock is broken (the 3rd FAIL still escalates) while a live holder's
+#       is not, and a replayed report / a no-result re-print / a no-result --start pick append nothing.
 #   E   EVAL SUITE (automate-speed/10): loomwright/evals/coordinator-model/lib/selftest.sh — a model-free
 #       reference coordinator scores every A/B case PASS and the mutation control FAIL; the graders catch a
 #       wrong question, a skipped instruction and a hand-edited run file.
@@ -208,13 +209,14 @@
 #         M9b --inline-phases parsed as off                             ⇒ R1
 #         M9c the Supervisor phase spawn marked "session":"inline"      ⇒ F1
 #         M9d a discarded LAUNCH_PAD_RESULT taken down the saved branch  ⇒ F3
-#         M10a–n the coordinator_model pins (the brief's Pin mutations) ⇒ their CM leg: the invalid-value
+#         M10a–q the coordinator_model pins (the brief's Pin mutations) ⇒ their CM leg: the invalid-value
 #             fallback a pass-through / every configured value ⇒ session / the absent key ⇒ another listed
 #             value (setting); the threshold 3 ⇒ 4 / 3 ⇒ 2 (threshold); a malformed ledger ⇒ the configured
 #             model (badledger); the escalated record looked for only in the last-20 tail (persist); the
 #             replay check dropped / the valve armed on every call (replay); coordinator_model dropped from
 #             ns_base (every) / from the resume start_new (resume); a missing ledger ⇒ session (delete); the
-#             ledger append dropped from ns_die2 / from a first arm's exit-2 refusal (refusal)
+#             ledger append dropped from ns_die2 / from a first arm's exit-2 refusal / the bad --root
+#             refusal left armed (refusal); the stale-lock break dropped / a live holder read as stale (stalelock)
 #
 # ENV: NS_CASES="<a> <b>" runs only those golden cases (G only); NS_SKIP_MUTANTS=1 skips M.
 # Bash 3.2 / BSD-userland safe; everything lives under one work dir removed in a trap.
@@ -1988,7 +1990,9 @@ leg_cm_refusal() {
          and .item == ".supervisor/requirements/twin-loop/01-commit-the-distilled-twin.md" and (.ts | test("^[0-9]{4}-"))' >/dev/null 2>&1 \
     || { LEG_MSG="not-JSON refusal: ledger '$l' ($DRIVE_ERR)"; return 1; }
   s0="$(snapshot)"; n0="$(cm_n)"
-  printf '%s\n' 'call: --bogus-flag' 'expect-exit: 2' 'call: --start pick --result "{}"' 'expect-exit: 2' > "$CASE_DIR/cm.results"
+  # a well-formed report sent with a --root that is not a directory is a usage error too (it appends nothing)
+  printf '%s\n' 'call: --bogus-flag' 'expect-exit: 2' 'call: --start pick --result "{}"' 'expect-exit: 2' \
+    "$ESC_CALL --root /nonexistent/cm-bad-root" 'expect-exit: 2' > "$CASE_DIR/cm.results"
   drive "$FIX/escalated-park" "$drv" "$CASE_DIR/cm.results"
   [ -z "$DRIVE_ERR" ] && [ "$(cm_n)" = "$n0" ] && [ "$s0" = "$(snapshot)" ] || { LEG_MSG="usage errors wrote: ledger $(cm_n) line(s) ($DRIVE_ERR)"; return 1; }
   cm_run "$drv" dismissed-findings-decision-step - - "$DFD_CALL1"$'\nexpect: ask'
@@ -2000,6 +2004,36 @@ leg_cm_refusal() {
   l="$(cm_ledger | sed -n 2p)"
   [ -z "$DRIVE_ERR" ] && [ "$(cm_n)" = 2 ] && [ "$s0" = "$(snapshot)" ] && printf '%s' "$l" | jq -e '.ok == false and .step == "decide" and (.reason | length) > 0' >/dev/null 2>&1 \
     || { LEG_MSG="refused answer: ledger line '$l', $(cm_n) line(s) ($DRIVE_ERR)"; return 1; }
+  return 0
+}
+# leg_cm_stalelock <driver> — the ledger lock cannot outlive its holder: a pre-created lock whose stamped pid is
+# not running, and an unstamped one over a minute old, are broken, so the 3rd FAIL still writes ONE escalated
+# record (then session) and no lock is left; a LIVE holder's fresh lock is never broken (the escalation waits,
+# the report line is still appended, the holder's lock survives)
+leg_cm_stalelock() {
+  local drv="$1" hk='{"coordinator_model":"claude-haiku-5-5"}' lk dead kind
+  bash -c 'exit 0' & dead=$!; wait "$dead" 2>/dev/null
+  for kind in deadpid aged live; do
+    new_scratch "$FIX/escalated-park" || { LEG_MSG="$kind: scratch not built"; return 1; }
+    printf '%s\n' "$hk" > "$CASE_ROOT/.supervisor/config.json"
+    cm_lines false 2 > "$CASE_ROOT/$CM_LEDGER_REL"
+    lk="$CASE_ROOT/$CM_LEDGER_REL.lock"; mkdir "$lk" || { LEG_MSG="$kind: lock not pre-created"; return 1; }
+    case "$kind" in
+      deadpid) printf '%s\n' "$dead-1" > "$lk/owner" ;;
+      aged) touch -t 202001010000 "$lk" ;;
+      live) printf '%s\n' "$$-1" > "$lk/owner" ;;
+    esac
+    printf '%s\n' "call: --result 'not json'" 'expect-exit: 2' "$ESC_CALL" 'expect: park' > "$CASE_DIR/cm.results"
+    drive "$FIX/escalated-park" "$drv" "$CASE_DIR/cm.results"
+    if [ "$kind" = live ]; then
+      [ -z "$DRIVE_ERR" ] && ! grep -q '"escalated"' < <(cm_ledger) && [ "$(cm_n)" = 4 ] && [ "$(cat "$lk/owner" 2>/dev/null)" = "$$-1" ] \
+        || { LEG_MSG="live holder: ledger $(cm_ledger | tr '\n' ' '), lock owner '$(cat "$lk/owner" 2>/dev/null)' ($DRIVE_ERR)"; return 1; }
+      rm -rf "$lk"
+    else
+      [ -z "$DRIVE_ERR" ] && [ "$(cm_ledger | grep -c '"escalated"' | tr -d ' ')" = 1 ] && [ "$(cm_model)" = session ] && [ ! -e "$lk" ] \
+        || { LEG_MSG="$kind stale lock: model '$(cm_model)', lock $( [ -e "$lk" ] && echo left || echo gone ), ledger $(cm_ledger | tr '\n' ' ') ($DRIVE_ERR)"; return 1; }
+    fi
+  done
   return 0
 }
 # leg_cm_replay <driver> — a byte-identical replayed report, a no-result re-print and a no-result --start pick
@@ -2507,7 +2541,7 @@ cm_all_n="$(printf '%s\n' "$cm_all" | grep -c '^{' | tr -d ' ')"
 cm_all_bad="$(printf '%s\n' "$cm_all" | grep '^{' | jq -r '.coordinator_model // "ABSENT"' 2>/dev/null | grep -vxE 'session|claude-haiku-5-5|claude-sonnet-5-5' | head -n 3 | tr '\n' ' ')"
 [ "$cm_all_n" -gt 0 ] && [ -z "$cm_all_bad" ] && ok "CM: all $cm_all_n instruction(s) the legs above printed carry a listed coordinator_model" \
   || no "CM: instructions without a listed coordinator_model: ${cm_all_bad:-none of $cm_all_n}"
-for cm_leg in setting every resume threshold persist badledger delete refusal replay; do
+for cm_leg in setting every resume threshold persist badledger delete refusal stalelock replay; do
   LEG_MSG=""
   case "$cm_leg" in
     setting) d_="absent ⇒ the default ($CM_DEFAULT); each listed value ⇒ itself; invalid ⇒ session + ONE coordinator_model_invalid line, exit 0" ;;
@@ -2517,7 +2551,8 @@ for cm_leg in setting every resume threshold persist badledger delete refusal re
     persist) d_="an escalated record + 25 later ok lines ⇒ still session" ;;
     badledger) d_="a malformed / capped ledger ⇒ session + a named line; nothing appended over the cap" ;;
     delete) d_="the owner deletes the ledger ⇒ the configured value resolves again" ;;
-    refusal) d_="a refusal appends exactly ONE ok:false line, nothing else under .supervisor/ changes; usage errors append nothing" ;;
+    refusal) d_="a refusal appends exactly ONE ok:false line, nothing else under .supervisor/ changes; usage errors (a bad --root included) append nothing" ;;
+    stalelock) d_="a dead-pid / aged ledger lock is broken (the 3rd FAIL still escalates, no lock left); a live holder's lock is never broken" ;;
     replay) d_="a byte-identical replayed report, a no-result re-print and a no-result --start pick append nothing" ;;
   esac
   if "leg_cm_$cm_leg" "$DRIVER"; then ok "CM $cm_leg: $d_"; else no "CM $cm_leg: $LEG_MSG"; fi
@@ -2845,6 +2880,12 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     '{ ns_valve_report false "$arm: the --result was refused (exit 2)"; exit 2; }' 'exit 2'
   cm_mut 10n replay "the valve armed on every call, not only a --result report" \
     '[ "$have_result" = 1 ] && [ -z "$START" ] && NS_VALVE_ARMED=1' 'NS_VALVE_ARMED=1'
+  cm_mut 10o stalelock "the stale-lock break dropped" \
+    '    ns_cm_stale "$lk" && ns_cm_break "$lk" && continue' '    :'
+  cm_mut 10p stalelock "a live holder's lock read as stale" \
+    'e="$(kill -0 "$p" 2>&1)" || case "$e" in *ermitted*) ;; *) return 0 ;; esac' 'return 0'
+  cm_mut 10q refusal "the bad---root refusal left armed" \
+    '{ NS_VALVE_ARMED=0; ns_die2 "--root is not a directory: $ROOT"; }' 'ns_die2 "--root is not a directory: $ROOT"'
 fi
 
 echo "PASS: $pass FAIL: $fail"

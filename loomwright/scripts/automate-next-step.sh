@@ -274,7 +274,8 @@ ns_cfg_paths() { CFG_PATH="$ROOT/.supervisor/config.json"; BAK_PATH="$AD/$RUN_ID
 # file is resolved and no `--start` rides with it). That refusal line is the ONE exception to "exit 2 ⇒
 # nothing written". With >= NS_CM_FAILS ok:false lines among the last NS_CM_WINDOW report lines (escalated
 # records not counted) and a configured value other than `session`, the resolved value is `session` and ONE
-# `{ts, escalated: true, fails, window, from}` record is appended — only while none exists. The escalated
+# `{ts, escalated: true, fails, window, from}` record is appended — only while none exists. The lock that
+# keeps it ONE cannot outlive its holder (ns_valve_report: traps + the stale-lock break). The escalated
 # record is looked for in the WHOLE ledger, so it keeps `session` in force however many reports follow,
 # until the owner deletes the ledger file (the only clearing action — no auto-demotion). NS_CM_CAP is the
 # ledger's only bound (no truncation, no rotation): at or over it the ledger resolves `session` and nothing
@@ -358,13 +359,68 @@ ns_valve_report() {
     '{ts: $ts, run_id: $r, item: (if $i == "" or $i == "null" then null else $i end), step: (if $s == "" then null else $s end), ok: ($o == "true")}
      + (if $o == "true" then {} else {reason: $why} end)' 2>/dev/null)" || return 0
   # the report line and the escalation check run under one mkdir lock, so concurrent calls never write a second
-  # escalated record; without the lock (held past ~2s) the escalation is skipped — the next report retries it
-  local lk i=0 held=0; lk="$(ns_cm_ledger).lock"
-  while [ "$i" -lt 20 ]; do mkdir "$lk" 2>/dev/null && { held=1; break; }; i=$((i + 1)); sleep 0.1; done
+  # escalated record; without the lock (a LIVE holder past ~2s) the escalation is skipped — the next report
+  # retries it. The lock cannot outlive its holder: EXIT / INT / TERM / HUP traps release it for the critical
+  # section (the caller's own traps restored after), and a lock whose holder is gone — its owner pid no longer
+  # running, or older than a minute (pid reuse, a stamp never written) — is broken under single-winner
+  # arbitration (write-agent-memory.sh's index-lock pattern), so a `kill -9` cannot skip every later escalation
+  local lk i=0 held=0 t_exit t_int t_term t_hup; lk="$(ns_cm_ledger).lock"
+  t_exit="$(trap -p EXIT)"; t_int="$(trap -p INT)"; t_term="$(trap -p TERM)"; t_hup="$(trap -p HUP)"
+  trap 'ns_cm_unlock' EXIT; trap 'ns_cm_unlock; exit 130' INT; trap 'ns_cm_unlock; exit 143' TERM; trap 'ns_cm_unlock; exit 129' HUP
+  while [ "$i" -lt 20 ]; do
+    ns_cm_take "$lk" && { held=1; break; }
+    i=$((i + 1))
+    ns_cm_stale "$lk" && ns_cm_break "$lk" && continue
+    sleep 0.1
+  done
   ns_cm_append "$line"
-  [ "$held" = 1 ] || return 0
-  ns_valve_escalate
-  rmdir "$lk" 2>/dev/null
+  [ "$held" = 0 ] || ns_valve_escalate
+  ns_cm_unlock
+  trap - EXIT INT TERM HUP
+  eval "$t_exit"; eval "$t_int"; eval "$t_term"; eval "$t_hup"
+  return 0
+}
+# the ledger lock: NS_CM_LOCK / NS_CM_LOCK_TOKEN while held, NS_CM_BREAKER while arbitrating a stale break
+NS_CM_LOCK=""; NS_CM_LOCK_TOKEN=""; NS_CM_BREAKER=""
+ns_cm_take() { # <lock> — mkdir + an owner stamp `<pid>-<nonce>`; a lock whose stamp cannot be written is not held
+  mkdir "$1" 2>/dev/null || return 1
+  local t="$$-${RANDOM:-0}${RANDOM:-0}"
+  if printf '%s\n' "$t" > "$1/owner" 2>/dev/null; then NS_CM_LOCK="$1"; NS_CM_LOCK_TOKEN="$t"; return 0; fi
+  rm -f "$1/owner" 2>/dev/null; rmdir "$1" 2>/dev/null
+  return 1
+}
+ns_cm_unlock() { # ownership-verified: a lock broken as stale and re-taken by another call survives this release
+  if [ -n "$NS_CM_LOCK" ] && [ "$(cat "$NS_CM_LOCK/owner" 2>/dev/null)" = "$NS_CM_LOCK_TOKEN" ]; then
+    rm -f "$NS_CM_LOCK/owner" 2>/dev/null; rmdir "$NS_CM_LOCK" 2>/dev/null
+  fi
+  [ -z "$NS_CM_BREAKER" ] || rmdir "$NS_CM_BREAKER" 2>/dev/null
+  NS_CM_LOCK=""; NS_CM_LOCK_TOKEN=""; NS_CM_BREAKER=""
+  return 0
+}
+ns_cm_stale() { # <lock> — 0 when its holder is gone: the stamped pid is not running, or the lock is over a minute old
+  local p e
+  [ -d "$1" ] || return 1
+  p="$(cat "$1/owner" 2>/dev/null)"; p="${p%%-*}"
+  # an unstamped lock (mkdir done, the stamp not yet written) is a live holder until the age test says otherwise;
+  # `kill -0` is a builtin (no PATH dependency) and EPERM still means a running process
+  if [[ "$p" =~ ^[0-9]{1,10}$ ]]; then
+    e="$(kill -0 "$p" 2>&1)" || case "$e" in *ermitted*) ;; *) return 0 ;; esac
+  fi
+  [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]
+}
+ns_cm_break() { # <lock> — single winner: the breaker mkdir admits one caller, which re-tests staleness under it
+  local b="$1.breaker"
+  if ! mkdir "$b" 2>/dev/null; then
+    # a breaker stranded by a kill -9 inside its microsecond window: cleared once over a minute old
+    [ -z "$(find "$b" -maxdepth 0 -mmin +1 2>/dev/null)" ] || rmdir "$b" 2>/dev/null
+    return 1
+  fi
+  NS_CM_BREAKER="$b"
+  if ns_cm_stale "$1"; then
+    ns_err "coordinator_model_ledger_lock_stale — $1's holder is gone — the lock is broken"
+    rm -f "$1/owner" 2>/dev/null; rmdir "$1" 2>/dev/null
+  fi
+  rmdir "$b" 2>/dev/null; NS_CM_BREAKER=""
   return 0
 }
 ns_valve_escalate() { # under the ledger lock: ONE escalated record once the window holds NS_CM_FAILS FAILs
@@ -489,7 +545,9 @@ ns_resolve_root() {
       *) ROOT="$(git -C "$AD" rev-parse --show-toplevel 2>/dev/null || pwd)" ;;
     esac
   fi
-  cd "$ROOT" 2>/dev/null || ns_die2 "--root is not a directory: $ROOT"
+  # a bad --root (or a persisted one since removed) is a usage error, not a coordinator report: disarmed first,
+  # so it appends nothing to the coordinator-model ledger
+  cd "$ROOT" 2>/dev/null || { NS_VALVE_ARMED=0; ns_die2 "--root is not a directory: $ROOT"; }
   ROOT="$(pwd)"
 }
 

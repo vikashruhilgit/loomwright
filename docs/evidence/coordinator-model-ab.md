@@ -138,12 +138,37 @@ It runs as leg E of `test-automate-next-step.sh`.
 
 ## Test results (AC6)
 
-- `bash loomwright/scripts/test-automate-next-step.sh`: **PASS: 180 FAIL: 0**, against a baseline of 153/0 at
-  `ee3d7ea`. The suite adds the CM legs, the E leg, the D-leg mirror checks and the M10a–n mutants. Each mutant
-  turns its CM leg red.
-- The eval suite's single passing run on the chosen model: **not available**. The chosen default is `session`,
-  the session's own model, and the A/B measured only the two candidate ids. On both candidates, every run of the
-  three environment-clean cases passed: 9/9 each.
+- `bash loomwright/scripts/test-automate-next-step.sh`: **PASS: 184 FAIL: 0**, against a baseline of 153/0 at
+  `ee3d7ea`. The suite adds the CM legs (the stale ledger lock and the bad-`--root` usage error included), the E
+  leg, the D-leg mirror checks and the M10a–q mutants. Each mutant turns its CM leg red.
+- The eval suite's run on the chosen model: **3/4 — NOT fully passing.** The chosen default is `session`, and the
+  session that made this measurement ran on `claude-opus-5-5`, so the suite ran once on that id. Claude Code
+  2.1.300, started 2026-10-20T09:04:50Z from the feature branch (base commit `a26736a`; this review-fix pass was
+  editing the driver's valve lock and `--root` check in the working tree during the run — neither path is read by
+  any case's parity grader). Exact command, from the repository root, `$S` a fresh `mktemp -d` outside the repo:
+
+  ```bash
+  claude plugin eval ./loomwright --eval-dir evals/coordinator-model --tag ab --runs 1 --model claude-opus-5-5 \
+    --scaffold --allow-tools Bash --ablation none --no-publish --trust-plugin --keep-temp \
+    --output-dir "$S/opus" --report "$S/opus/report.html" --json "$S/opus-run1.json"
+  bash loomwright/evals/coordinator-model/lib/summarize.sh claude-opus-5-5 "$S/opus-run1.json"
+  ```
+
+  It exited 1 (a case scored below its 1.0 threshold), 142 s, `costUsd` 0.6283:
+
+  | claude-opus-5-5 — case | run | score | parity | no wrong question | no skipped | WRONG_QUESTIONS | SKIPPED | calls | last do | turns | cost USD | tokens in / cache-create / cache-read / out |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | spawn-run-report | 1 | 1 | PASS | PASS | PASS | 0 | 0 | 2 | none | 5 | 0.1981 | 10 / 21414 / 83025 / 505 |
+  | ask-interactive-decide-then-park | 1 | 1 | PASS | PASS | PASS | 0 | 0 | 2 | park | 5 | 0.1585 | 10 / 16390 / 89662 / 471 |
+  | non-interactive-escalated-park | 1 | 0.6667 | FAIL | PASS | PASS | 0 | 0 | 1 | park | 3 | 0.1362 | 6 / 15264 / 46486 / 236 |
+  | done-check-off | 1 | 1 | PASS | PASS | PASS | 0 | 0 | 1 | done | 3 | 0.1356 | 6 / 15052 / 46185 / 297 |
+  | **total** | 4 runs | passed 3/4 | parity 3/4 | | | | | | | turns 16 | 0.6283 | |
+
+  `non-interactive-escalated-park` failed for the same environment reason as all six A/B runs above: the kept run
+  file reads `check: no temp dir` / `validation-gate: unrun — no temp dir` where `expected.md` names
+  `V2 Running system`. The coordinator itself issued the entry command exactly, made 1 call, ended at the expected
+  `park` and asked nothing. **A fully passing run on the chosen model does not exist** until the sandbox
+  `mktemp -d` defect named in "The failing case" is fixed; this criterion is recorded as unmet, not as passed.
 
 ## Applying the setting (follow-up)
 
