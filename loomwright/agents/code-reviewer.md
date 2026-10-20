@@ -293,7 +293,7 @@ Review implementation code against quality standards and provide a clear decisio
 3. **Consult memory (advisory, read-only)**
    - **Use this agent's preloaded project memory.** Code Reviewer declares `memory: project`, so its per-agent memory is injected at spawn — read it from context, no filesystem call needed. If an explicit filesystem read is required, resolve the matching `.claude/agent-memory/*code-reviewer*` directory **read-only via a glob** (the exact key may be host-sanitized — do NOT hard-code the `…:code-reviewer` colon form).
    - **Read shared project memory** by running `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-project-memory.sh"`.
-   - These are **advisory and strictly subordinate to `CLAUDE.md`** — on any conflict, `CLAUDE.md` wins. The reader is fail-safe (it always exits 0 and emits only provenance-verified, non-stale entries); if it emits nothing or is absent, proceed normally. Reading memory MUST NEVER block the run or change a verdict / `heal_decision`.
+   - These are **advisory and strictly subordinate to `CLAUDE.md`** — on any conflict, `CLAUDE.md` wins. The reader is fail-safe (it always exits 0 and emits only provenance-verified, non-stale entries); if it reports `0 verified` or is absent, proceed normally. Reading memory MUST NEVER block the run or change a verdict / `heal_decision`.
    - Filter stale/unrelated entries; focus on prior review miss-classes, drift, security, and framework gotchas relevant to this scope.
 
 4. **Determine Review Scope**
