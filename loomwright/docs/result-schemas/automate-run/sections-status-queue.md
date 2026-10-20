@@ -15,7 +15,7 @@
 | Value | Meaning |
 |---|---|
 | `running` | The loop is actively processing (or this is the freshly-created run). |
-| `paused` | Stopped with **work remaining** — always paired with a `pause_reason` in `## Current` (`awaiting_merge` \| `ready_for_release` (an N>1 lane only) \| `awaiting_go` \| `escalated` \| `limit_reached` \| `resume_ambiguous` \| `rate_limit` \| `drain_died` \| `token_ceiling` \| `run_lock_held` \| `meta_unreachable` \| `trail_pr_open` \| `closeout_leftover` \| `live_lane`). |
+| `paused` | Stopped with **work remaining** — always paired with a `pause_reason` in `## Current` (`awaiting_merge` \| `ready_for_release` (an N>1 lane only) \| `awaiting_go` \| `escalated` \| `limit_reached` \| `resume_ambiguous` \| `rate_limit` \| `drain_died` \| `token_ceiling` \| `run_lock_held` \| `meta_unreachable` \| `trail_pr_open` \| `closeout_leftover` \| `live_lane` \| `phase_relay_unavailable`). |
 | `done` | Set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), i.e. `remaining: 0`. (`remaining` is **COMPUTED/REPORTED** — the count of `- [ ]` Queue items, derived by `automate-helpers.sh remaining` — **not a persisted run-file field**; there is no `remaining:` line stored in the template.) |
 
 ### `## Queue` checklist convention

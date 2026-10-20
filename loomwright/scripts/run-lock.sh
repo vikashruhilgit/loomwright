@@ -123,6 +123,15 @@
 #     acquire doubles as a liveness heartbeat). An empty `--session-id` never
 #     re-enters. Cooperative, like the rest of this lock: a caller that lies
 #     about its session id can re-enter, exactly as it could `--force-unlock`.
+#   Cross-session re-entrant (fresh session per phase): when the lock is held
+#     and LOOMWRIGHT_RUN_LOCK_SESSION_ID is non-empty and equals the recorded
+#     `session_id`, acquire SUCCEEDS with the same `run_lock_reentrant
+#     owner=<outer> session_id=<recorded id>` line and writes NOTHING (owner,
+#     session_id and holder pid stay the coordinator's). automate-lanes.sh
+#     `phase-launch` sets it to the coordinator's session id for a phase
+#     session; a lane spawn strips it. `release` never reads it, so a phase
+#     session's own release (its owner / its session id) is a no-op and only
+#     the coordinator frees the lock.
 #   Reclaim: fires ONLY when BOTH the recorded pid is dead (a `pid_start`
 #   mismatch counts as dead — see `pid_start` above) AND
 #   age >= LOCK_TTL_SECONDS (1800s) — a dead pid alone, or a young lock
@@ -381,6 +390,15 @@ cmd_acquire() {
     write_meta "$lk_owner"
     echo "run_lock_reentrant owner=${lk_owner} session_id=${SESSION_ID}"
     note_degraded "$WROTE_SRC"
+    exit 0
+  fi
+  # Held by the COORDINATOR session that spawned this one (a fresh phase session, automate-lanes.sh
+  # phase-launch) — re-entrant across sessions: same line, and the meta is left exactly as the outer
+  # holder wrote it (its owner, session_id and holder pid: a phase session is shorter-lived than its
+  # coordinator, so recording it would hand the lock to a pid that dies first). Acquire-only: release
+  # never reads LOOMWRIGHT_RUN_LOCK_SESSION_ID, so the phase's own release stays a no-op.
+  if [ -n "${LOOMWRIGHT_RUN_LOCK_SESSION_ID:-}" ] && [ "$lk_session" = "$LOOMWRIGHT_RUN_LOCK_SESSION_ID" ]; then
+    echo "run_lock_reentrant owner=$(meta_get owner) session_id=${lk_session}"
     exit 0
   fi
 

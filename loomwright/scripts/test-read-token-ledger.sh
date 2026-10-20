@@ -584,6 +584,63 @@ for res_case in \
     || no "$res_name after park: row=$(pi_row '| **q.md** |') err=$PI_ERR"
 done
 
+echo "== FP. fresh phases (automate-speed/09): the driver's three phase session_id lines — --run-id sums one ledger per phase, --per-item resolves all three ids =="
+# The run file is WRITTEN BY automate-next-step.sh (its plan-result / run-record / drain-result steps, each run
+# through the driver's FROM/UNTIL test seams), so a change to the driver's `session_id <sid> (<item>)
+# phase=<phase>` shape reaches this leg; the reader itself is unchanged by automate-speed/09.
+DRV="$HERE/automate-next-step.sh"
+fp_leg() { # <driver> — 0 when --run-id sums the three phase ledgers and --per-item tries all three ids
+  local drv="$1" d rf run=automate-2026-10-19-000000 out err lp
+  d="$(fresh_root)"; rf="$d/.supervisor/automate/$run.md"; mkdir -p "$d/.supervisor/jobs/pending" "$d/projects"
+  printf '%s\n' '# Automate Run: fp' '## Status: running' '## Run Config' '- mode: safe | limit: 5 | trust_unprotected: false' \
+    '## Queue' '- [ ] fp.md' '## Current' '- item: fp.md | status: running | pr: https://github.com/o/r/pull/9 | branch: feature/fp' \
+    '- pause_reason: null' '## Progress' '- 2026-10-19T10:00:00Z picked fp.md' > "$rf"
+  printf '# Brief\n' > "$d/.supervisor/jobs/pending/fp.md"
+  # the Supervisor phase spawn's freshness floor (the driver's run_spawn_epoch), taken BEFORE the phase
+  # "rewrites" state.md — the driver trusts state.md's session_id only when it is at/after that floor
+  local ep; ep="$(date +%s)"
+  printf -- '- session_id: fp-sup-2\n' > "$d/.supervisor/state.md"
+  lp="$(printf 'LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: saved\n  saved_brief_path: .supervisor/jobs/pending/fp.md\n  summary: PASS\n')"
+  fp_step() { # <step> <sidecar json> <report json>
+    printf '%s\n' "$2" > "$d/.supervisor/automate/$run.next-step.json"
+    ( cd "$d" && NEXT_STEP_FROM="$1" NEXT_STEP_UNTIL="$1" bash "$drv" "$rf" --result "$3" ) >/dev/null 2>&1
+  }
+  fp_step plan-result '{}' "$(jq -cn --arg t "$lp" '{launch_pad_result: $t, session_id: "fp-lp-1"}')" || { FP_MSG="plan-result step failed"; return 1; }
+  fp_step run-record "{\"run_fresh\":\"true\",\"run_spawn_epoch\":\"$ep\"}" '{"status_reason":"failed","no_pr_why":"fp","session_id":"cc-fp-9"}' || { FP_MSG="run-record step failed"; return 1; }
+  fp_step drain-result '{"drain_fresh":"true","drain_kind":"first","item":"fp.md","pr":"https://github.com/o/r/pull/9"}' \
+    "$(jq -cn '{review_heal_result: "REVIEW_HEAL_RESULT:\n  decision: READY\n  termination_reason: converged\n  rounds: 1\n  fix_cycles: 0\n", session_id: "fp-dr-3"}')" \
+    || { FP_MSG="drain-result step failed"; return 1; }
+  [ "$(grep -cE '^- [0-9TZ:-]+ session_id fp-(lp-1|sup-2|dr-3) \(fp\.md\) phase=(launch-pad|supervisor|drain)$' "$rf")" = 3 ] \
+    || FP_MSG="the driver wrote no three phase lines: $(grep 'session_id' "$rf" | tr '\n' '|')"
+  printf '{"event":"token_ledger","input_tokens":%s,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}\n' 100 > "$d/.supervisor/logs/fp-lp-1.jsonl"
+  printf '{"event":"token_ledger","input_tokens":%s,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}\n' 200 > "$d/.supervisor/logs/fp-sup-2.jsonl"
+  printf '{"event":"token_ledger","input_tokens":%s,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}\n' 400 > "$d/.supervisor/logs/fp-dr-3.jsonl"
+  out="$(bash "$SUT" --run-id "$run" --root "$d" 2>/dev/null)"
+  [ "$out" = "INPUT=700 OUTPUT=0 CACHE_READ=0 CACHE_CREATE=0 TOTAL=700 EVENTS=3" ] || { FP_MSG="${FP_MSG:+$FP_MSG; }--run-id: $out"; }
+  # the ids --per-item resolved for the item (its no_transcripts note names them), one exact word each
+  err="$(bash "$SUT" --per-item "$rf" --root "$d" --projects-dir "$d/projects" 2>&1 >/dev/null \
+    | sed -n 's/.*no_transcripts — fp\.md (session ids tried: \([^;]*\);.*/\1/p' | tr ' ' '\n')"
+  for lp in fp-lp-1 fp-sup-2 fp-dr-3; do
+    grep -qxF -- "$lp" <<<"$err" || FP_MSG="${FP_MSG:+$FP_MSG; }--per-item did not resolve $lp (tried: $(tr '\n' ' ' <<<"$err"))"
+  done
+  rm -rf "$d"
+  [ -z "${FP_MSG:-}" ]
+}
+FP_MSG=""
+if fp_leg "$DRV"; then ok "FP: the driver's three phase lines (launch-pad / supervisor / drain) — --run-id sums one fake ledger per phase (700), --per-item tries all three ids"
+else no "FP: $FP_MSG"; fi
+# mutation control: a driver copy writing the phase suffix BEFORE the item (`session_id <sid> phase=<p> (<item>)`)
+# ⇒ pi_cc_ids no longer finds `<item>)` after ` (` and --per-item misses the phase ids
+FPM="$(mktemp -d)"
+for e in "$HERE"/*; do [ "$e" = "$DRV" ] || ln -s "$e" "$FPM/$(basename "$e")"; done
+sed -E 's/session_id \$sid \(\$ITEM\) phase=([a-z-]+)"/session_id $sid phase=\1 ($ITEM)"/' "$DRV" > "$FPM/automate-next-step.sh"
+if [ "$(grep -c 'phase=[a-z-]* (\$ITEM)"' "$FPM/automate-next-step.sh")" = 3 ] && bash -n "$FPM/automate-next-step.sh"; then
+  FP_MSG=""
+  if fp_leg "$FPM/automate-next-step.sh"; then no "FP mutation control: the suffix-before-item mutant stayed green"
+  else ok "FP mutation control: session_id <sid> phase=<p> (<item>) ⇒ the leg goes red ($FP_MSG)"; fi
+else no "FP mutation control: mutant not built"; fi
+rm -rf "$FPM"
+
 echo "== PI20. read-token-ledger.sh parses under /bin/bash (stock macOS bash 3.2) =="
 if [ -x /bin/bash ]; then
   /bin/bash -n "$SUT" 2>/dev/null && ok "/bin/bash -n read-token-ledger.sh" || no "read-token-ledger.sh does not parse under /bin/bash: $(/bin/bash -n "$SUT" 2>&1 | head -2)"
