@@ -1928,7 +1928,7 @@ leg_cm_resume() {
 leg_cm_threshold() {
   local drv="$1" hk='{"coordinator_model":"claude-haiku-5-5"}' l3 l4
   cm_run "$drv" escalated-park "$hk" "$(cm_lines false 2; cm_lines true 5)"$'\n' "$ESC_CALL"$'\nexpect: park'
-  [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = claude-haiku-5-5 ] && ! cm_ledger | grep -q '"escalated"' \
+  [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = claude-haiku-5-5 ] && ! grep -q '"escalated"' < <(cm_ledger) \
     || { LEG_MSG="2 FAILs/20: '$(cm_model)' ($DRIVE_ERR)"; return 1; }
   cm_run "$drv" escalated-park "$hk" "$(cm_lines false 3; cm_lines true 20)"$'\n' "$ESC_CALL"$'\nexpect: park'
   [ -z "$DRIVE_ERR" ] && [ "$(cm_model)" = claude-haiku-5-5 ] || { LEG_MSG="3 FAILs outside the window: '$(cm_model)' ($DRIVE_ERR)"; return 1; }
