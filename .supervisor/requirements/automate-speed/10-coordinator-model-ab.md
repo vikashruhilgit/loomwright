@@ -59,3 +59,9 @@ loomwright/scripts/test-automate-next-step.sh
 loomwright/docs/result-schemas/automate-run.md
 docs/evidence/coordinator-model-ab.md
 changelog.d/as10-coordinator-model-ab.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-20T14:27:51Z
+- **Brief:** .supervisor/jobs/done/2026-10-20-coordinator-model-ab.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/632
