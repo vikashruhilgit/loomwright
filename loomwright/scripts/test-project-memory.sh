@@ -1216,7 +1216,7 @@ tfirst="$(printf '%s\n' "$tout" | sed -n 1p)"
 [ "$(printf '%s\n' "$tout" | wc -l | tr -d ' ')" = 3 ] && [ "$(printf '%s\n' "$tout" | grep -c '^- \[')" = 2 ] \
   && [ "$trc" -eq 0 ] && ok "(t1) default is the header + one line per verified entry (3 lines), exit 0" \
   || no "(t1) default is not header + 2 entry lines (rc $trc): $(printf '%s' "$tout" | tr '\n' '|')"
-printf '%s' "$tout" | grep -q POISONED && no "(t1) poisoned line reached the default output" || ok "(t1) poisoned line still dropped on the default path"
+grep -q POISONED <<<"$tout" && no "(t1) poisoned line reached the default output" || ok "(t1) poisoned line still dropped on the default path"
 ( cd "$TDIR" && bash "$READ" --verbose 2>/dev/null ) | cmp -s - "$TFIX/verbose.golden" \
   && ok "(t2) --verbose is byte-identical to the pre-change golden (verified entries)" \
   || no "(t2) --verbose differs from fixtures/terse-output/read-project-memory/verbose.golden"
