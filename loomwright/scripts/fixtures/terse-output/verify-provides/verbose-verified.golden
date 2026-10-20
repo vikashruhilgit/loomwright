@@ -1,0 +1,1 @@
+{"subtask_id":"2","outputs_verified":[{"kind":"file","path":"src/a.ts","status":"present","check_run":"test -f root/src/a.ts (exit 0)"},{"kind":"symbol","path":"src/a.ts","name":"Sym","status":"present","check_run":"grep -nE -- 'Sym' root/src/a.ts (exit 0)"}],"outputs_gap":"","source":"verify-provides.sh"}
