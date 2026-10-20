@@ -1765,6 +1765,7 @@ ns_state_md_fresh() {
   since="$(st run_spawn_epoch)"
   case "$since" in ''|*[!0-9]*) return 1 ;; esac
   [ -f "$f" ] || return 1
+  # equal seconds count as fresh (`-ge`): a rewrite in the spawn's own second is this phase's
   m="$(stat -c %Y "$f" 2>/dev/null)"
   case "$m" in ''|*[!0-9]*) m="$(stat -f %m "$f" 2>/dev/null)" ;; esac
   case "$m" in ''|*[!0-9]*) return 1 ;; esac
@@ -1823,7 +1824,9 @@ ns_died_open_pr() {
   [[ "$br" =~ ^[^[:space:]|]{1,200}$ ]] || return 0
   url="$(ns_gh pr list --head "$br" --state open --json url --limit 1 | "$JQ" -r '.[0].url // empty' 2>/dev/null)"
   ns_pr_ok "$url" || return 0
-  grep -qF -- "PR $url" "$RF" 2>/dev/null && return 0
+  # an exact-URL match: `PR <url>` NOT followed by a digit (…/pull/1 never matches a recorded …/pull/12)
+  NS_U="PR $url" awk 'BEGIN { u = ENVIRON["NS_U"] } { s = $0; while ((i = index(s, u)) > 0) { c = substr(s, i + length(u), 1)
+      if (c !~ /[0-9]/) { f = 1; exit } s = substr(s, i + 1) } } END { exit !f }' "$RF" 2>/dev/null && return 0
   printf '%s\t%s' "$url" "$br"
 }
 

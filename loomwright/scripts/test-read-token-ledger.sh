@@ -596,6 +596,9 @@ fp_leg() { # <driver> — 0 when --run-id sums the three phase ledgers and --per
     '## Queue' '- [ ] fp.md' '## Current' '- item: fp.md | status: running | pr: https://github.com/o/r/pull/9 | branch: feature/fp' \
     '- pause_reason: null' '## Progress' '- 2026-10-19T10:00:00Z picked fp.md' > "$rf"
   printf '# Brief\n' > "$d/.supervisor/jobs/pending/fp.md"
+  # the Supervisor phase spawn's freshness floor (the driver's run_spawn_epoch), taken BEFORE the phase
+  # "rewrites" state.md — the driver trusts state.md's session_id only when it is at/after that floor
+  local ep; ep="$(date +%s)"
   printf -- '- session_id: fp-sup-2\n' > "$d/.supervisor/state.md"
   lp="$(printf 'LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: saved\n  saved_brief_path: .supervisor/jobs/pending/fp.md\n  summary: PASS\n')"
   fp_step() { # <step> <sidecar json> <report json>
@@ -603,7 +606,7 @@ fp_leg() { # <driver> — 0 when --run-id sums the three phase ledgers and --per
     ( cd "$d" && NEXT_STEP_FROM="$1" NEXT_STEP_UNTIL="$1" bash "$drv" "$rf" --result "$3" ) >/dev/null 2>&1
   }
   fp_step plan-result '{}' "$(jq -cn --arg t "$lp" '{launch_pad_result: $t, session_id: "fp-lp-1"}')" || { FP_MSG="plan-result step failed"; return 1; }
-  fp_step run-record '{"run_fresh":"true"}' '{"status_reason":"failed","no_pr_why":"fp","session_id":"cc-fp-9"}' || { FP_MSG="run-record step failed"; return 1; }
+  fp_step run-record "{\"run_fresh\":\"true\",\"run_spawn_epoch\":\"$ep\"}" '{"status_reason":"failed","no_pr_why":"fp","session_id":"cc-fp-9"}' || { FP_MSG="run-record step failed"; return 1; }
   fp_step drain-result '{"drain_fresh":"true","drain_kind":"first","item":"fp.md","pr":"https://github.com/o/r/pull/9"}' \
     "$(jq -cn '{review_heal_result: "REVIEW_HEAL_RESULT:\n  decision: READY\n  termination_reason: converged\n  rounds: 1\n  fix_cycles: 0\n", session_id: "fp-dr-3"}')" \
     || { FP_MSG="drain-result step failed"; return 1; }

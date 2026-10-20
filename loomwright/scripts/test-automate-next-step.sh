@@ -1660,6 +1660,17 @@ EOF
   f_call "$drv" --result "$died"
   f_nopr_ok "ran /autonomous — no PR: concurrent_session_detected (phase-wait: died — the session ended without writing its result sidecar; 2 new briefs in .supervisor/jobs/pending/)" \
     || { LEG_MSG="died + two new briefs: $LEG_MSG"; return 1; }
+  # iteration 3: PLAN step 6's rubric check also covers the died phase's ls-diff brief — a requirement with a real
+  # rubric + ONE new brief that dropped it ⇒ rubric_dropped_from_brief, no Supervisor spawn
+  local ri
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+  f_claude 1; ri="$(sed -n 's/^- item: \([^ ]*\) .*/\1/p' "$CASE_RF" | head -n 1)"
+  mkdir -p "$CASE_ROOT/$(dirname "$ri")" && printf '%s' "$rq" > "$CASE_ROOT/$ri"
+  f_call "$drv" --start run --session-id coord-1
+  mkdir -p "$CASE_ROOT/.supervisor/jobs/pending" && printf '# Brief\n\n## Task\nx\n' > "$CASE_ROOT/.supervisor/jobs/pending/died.md"
+  f_call "$drv" --result "$died"
+  f_nopr_ok "ran /autonomous — no PR: rubric_dropped_from_brief (the requirement's ## Outcomes Rubric is missing from the saved brief .supervisor/jobs/pending/died.md)" \
+    || { LEG_MSG="died + one new brief without the rubric: $LEG_MSG"; return 1; }
   return 0
 }
 # leg_fresh_state_stale <driver> — review fix: .supervisor/state.md persists between runs (rewritten only at the next
@@ -1670,24 +1681,53 @@ EOF
 leg_fresh_state_stale() {
   local drv="$1" item rep want lp='LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: saved\n  saved_brief_path: %s\n  summary: PASS\n'
   local rq=$'# Item\n\n## Outcomes Rubric\n- the thing works\n\n## Task\nx\n' c state stamp opr=https://github.com/vikashruhilgit/loomwright/pull/777 left
-  for c in stale-reported stale-none fresh-coord; do
+  local ghrc recorded stub own
+  for c in stale-reported stale-none fresh-coord fresh-recorded fresh-prefix fresh-ghfail stat-gnu stat-bsd stat-garbage; do
     # shellcheck disable=SC2059
     f_plan_case "$drv" "$(printf "$lp" .supervisor/jobs/pending/r.md)" "$rq" .supervisor/jobs/pending/r.md "$rq"
     [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" run supervisor || { LEG_MSG="$c: no Supervisor phase spawn (exit $NC_RC) ${NC_ERR:0:160}"; return 1; }
     item="$(sed -n 's/^- item: \([^ ]*\) .*/\1/p' "$CASE_RF" | head -n 1)"
+    ghrc=0; recorded=''; stub=''; own=0
     case "$c" in
       stale-reported) state=old-sup-1; stamp=old; rep='"session_id":"sup-died-2",'; want="session_id sup-died-2 ($item) phase=supervisor" ;;
       stale-none) state=old-sup-1; stamp=old; rep=''; want='' ;;
       fresh-coord) state=coord-1; stamp=now; rep='"session_id":"sup-r-3",'; want="session_id sup-r-3 ($item) phase=supervisor" ;;
+      # iteration 3: the run file already records this PR (another item's) ⇒ not this phase's, no annotation
+      fresh-recorded) state=coord-1; stamp=now; rep='"session_id":"sup-r-3",'; want="session_id sup-r-3 ($item) phase=supervisor"; recorded="$opr" ;;
+      # …but a recorded PR whose URL merely STARTS with this one (…/pull/7777 vs …/pull/777) is a different PR
+      fresh-prefix) state=coord-1; stamp=now; rep='"session_id":"sup-r-3",'; want="session_id sup-r-3 ($item) phase=supervisor"; recorded="${opr}7" ;;
+      # gh failing (no PR list) ⇒ no annotation, the no-PR line as reported
+      fresh-ghfail) state=coord-1; stamp=now; rep='"session_id":"sup-r-3",'; want="session_id sup-r-3 ($item) phase=supervisor"; ghrc=1 ;;
+      # the portable mtime read: a GNU coreutils stat (-c works; -f is file-SYSTEM status — exits 0 with
+      # non-numeric text) and a BSD stat (-c is an illegal option) both read the fresh mtime ⇒ state.md's id
+      # wins; a stat answering garbage to both forms fails CLOSED (stale) ⇒ the reported id, no annotation
+      stat-gnu) state=sup-st-5; stamp=now; rep='"session_id":"sup-rep-6",'; want="session_id sup-st-5 ($item) phase=supervisor"; stub=gnu; own=1 ;;
+      stat-bsd) state=sup-st-5; stamp=now; rep='"session_id":"sup-rep-6",'; want="session_id sup-st-5 ($item) phase=supervisor"; stub=bsd; own=1 ;;
+      stat-garbage) state=sup-st-5; stamp=now; rep='"session_id":"sup-rep-6",'; want="session_id sup-rep-6 ($item) phase=supervisor"; stub=garbage ;;
     esac
     # review fix (iteration 2): the died phase left an OPEN PR on the feature branch state.md records — named on the
     # no-PR line only when state.md is THIS phase's (fresh); a stale state.md's branch is a previous run's
     printf -- '- session_id: %s\n- branch: feature/died-x\n' "$state" > "$CASE_ROOT/.supervisor/state.md"
-    printf '0\tpr list --head feature/died-x *\t[{"url":"%s"}]\n' "$opr" >> "$CASE_GH"
+    if [ "$ghrc" = 0 ]; then printf '0\tpr list --head feature/died-x *\t[{"url":"%s"}]\n' "$opr" >> "$CASE_GH"
+    else printf '1\tpr list --head feature/died-x *\t\n' >> "$CASE_GH"; fi
+    if [ -n "$recorded" ]; then
+      awk -v l="- 2026-10-01T00:00:00Z ran /autonomous → PR $recorded (another item)" '{ print } $0 == "## Progress" { print l }' "$CASE_RF" > "$CASE_RF.t" && mv "$CASE_RF.t" "$CASE_RF"
+    fi
+    case "$stub" in
+      gnu) printf '%s\n' '#!/usr/bin/env bash' \
+             'case "$1" in -c) [ "$2" = %Y ] && exec python3 -I -c "import os,sys; print(int(os.stat(sys.argv[1]).st_mtime))" "$3" ;;' \
+             '  -f) printf "  File: \"%s\"\n    ID: 0 Namelen: 255 Type: ext2/ext3\n" "$3"; exit 0 ;; esac; exit 1' > "$CASE_BIN/stat" ;;
+      bsd) printf '%s\n' '#!/usr/bin/env bash' \
+             'case "$1" in -c) echo "stat: illegal option -- c" >&2; exit 1 ;;' \
+             '  -f) [ "$2" = %m ] && exec python3 -I -c "import os,sys; print(int(os.stat(sys.argv[1]).st_mtime))" "$3" ;; esac; exit 1' > "$CASE_BIN/stat" ;;
+      garbage) printf '%s\n' '#!/usr/bin/env bash' 'echo "1700000000 garbage"; exit 0' > "$CASE_BIN/stat" ;;
+    esac
+    [ -n "$stub" ] && chmod +x "$CASE_BIN/stat"
     [ "$stamp" = old ] && touch -t 202001010000 "$CASE_ROOT/.supervisor/state.md"
-    if [ "$stamp" = old ]; then left=0; else left=1; fi
+    if [ "$stamp" = old ] || [ "$ghrc" != 0 ] || [ "$recorded" = "$opr" ] || [ "$stub" = garbage ]; then left=0; else left=1; fi
     f_call "$drv" --result "{${rep}\"status_reason\":\"phase_died\",\"no_pr_why\":\"phase-wait: died — no result line since the last launch\"}"
-    [ "$NC_RC" = 0 ] && grep -q 'ran /autonomous — no PR: phase_died' "$CASE_RF" && ! grep -q "session_id $state " "$CASE_RF" \
+    rm -f "$CASE_BIN/stat"
+    [ "$NC_RC" = 0 ] && grep -q 'ran /autonomous — no PR: phase_died' "$CASE_RF" && { [ "$own" = 1 ] || ! grep -q "session_id $state " "$CASE_RF"; } \
       && if [ "$left" = 1 ]; then grep -qF -- "no PR: phase_died (phase-wait: died — no result line since the last launch; the phase left PR $opr open on feature/died-x — not drained" "$CASE_RF"; else ! grep -q 'the phase left PR' "$CASE_RF"; fi \
       && if [ -n "$want" ]; then grep -qE -- "^- [0-9TZ:-]+ $(printf '%s' "$want" | sed 's/[().]/\\&/g')\$" "$CASE_RF"; else ! grep -q 'phase=supervisor' "$CASE_RF"; fi \
       || { LEG_MSG="$c: exit $NC_RC ${NC_ERR:0:160}; ## Progress: $(grep 'session_id\|no PR' "$CASE_RF" | tr '\n' '|' | head -c 400)"; return 1; }
@@ -2147,7 +2187,7 @@ else no "F2: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_fresh_plan_mapping "$DRIVER"; then ok "F3 (AC7): LAUNCH_PAD_RESULT discarded / blocked / aborted / *_non_interactive / malformed / rubric dropped / a died phase ⇒ the no-PR line with /autonomous PLAN step 4's status_reason, no Supervisor spawn, no suppress; saved (and a malformed block or a died phase + ONE new brief) ⇒ the Supervisor phase spawn; a died phase + two new briefs ⇒ concurrent_session_detected"
 else no "F3: $LEG_MSG"; fi
-if leg_fresh_state_stale "$DRIVER"; then ok "F3b (review fixes): a stale .supervisor/state.md (older than the Supervisor phase spawn) + phase_died ⇒ the REPORTED session id on the phase=supervisor line (none reported ⇒ no line); a state.md naming the coordinator is not the phase's; an open PR on a FRESH state.md's branch is named on the no-PR line, a stale one's never"
+if leg_fresh_state_stale "$DRIVER"; then ok "F3b (review fixes): a stale .supervisor/state.md (older than the Supervisor phase spawn) + phase_died ⇒ the REPORTED session id on the phase=supervisor line (none reported ⇒ no line); a state.md naming the coordinator is not the phase's; an open PR on a FRESH state.md's branch is named on the no-PR line, a stale one's never — nor one the run file already records (exact URL, never a prefix), nor on a gh failure; GNU and BSD stat both read the mtime, garbage fails closed"
 else no "F3b: $LEG_MSG"; fi
 if leg_fresh_owner_session "$DRIVER"; then ok "F3c (review fixes): a re-printed fresh launch line is rebuilt from the re-printing session's identity — coord-1's re-print byte for byte; coord-2's re-print, the bare re-print after it and the bare --result's Supervisor spawn carry --coordinator-session coord-2 and no owner command (or coord-2's own when it gave one)"
 else no "F3c: $LEG_MSG"; fi
