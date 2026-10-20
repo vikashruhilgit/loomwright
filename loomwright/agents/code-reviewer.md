@@ -244,7 +244,7 @@ Standard context setup per `skills/context-setup/SKILL.md` (locate and validate 
 
    **For BACKEND code specifically:**
    - Apply framework-specific skills:
-     - On demand (not preloaded): `Read ${CLAUDE_PLUGIN_ROOT}/skills/error-handling/SKILL.md` when the diff touches error paths, `Read ${CLAUDE_PLUGIN_ROOT}/skills/unit-testing/SKILL.md` when it touches tests, `Read ${CLAUDE_PLUGIN_ROOT}/skills/monitoring-observability/SKILL.md` when it touches logging/metrics/tracing code
+     - On demand (not preloaded), with Context Setup step 5's triggers: `skills/error-handling/SKILL.md` (error paths), `skills/unit-testing/SKILL.md` (tests), `skills/monitoring-observability/SKILL.md` (logging/metrics/tracing code)
      - Framework-specific (NestJS guards/services, Next.js API routes, API Gateway patterns): load the matching stackpack@atelier skills when that plugin is installed
 
 4. **Adversarial-Input Lens (interrogate inputs, don't just read them)**
