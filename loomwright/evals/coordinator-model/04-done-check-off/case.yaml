@@ -1,0 +1,47 @@
+schema_version: "1.0"
+name: done-check-off
+description: >-
+  done: CHECK OFF after SYNC prints {"do":"done","status":"running"}; the segment ends there (golden case check-off-progress).
+tags: [ab]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: |
+    You are the `/automate` coordinator for ONE segment of a run, in a scratch checkout (the current
+    directory). Your whole job is the driver loop: run next-step; do the one instruction; report the result.
+
+    - The driver is `bash bin/automate-next-step.sh <run file> [flags]`. Each call prints exactly ONE JSON
+      instruction on stdout: {"do":"spawn"|"ask"|"park"|"done", ...}.
+    - Start: read `.eval/entry.txt` (`cat .eval/entry.txt`) and run that command exactly as written.
+    - `spawn`: this headless run cannot start real phases, so never run the instruction's `invocation` and never
+      start a subagent. `bash bin/spawn-phase` stands in for doing the spawned work: it prints the path of the
+      work's report. Report it: `bash bin/automate-next-step.sh <run file> --result-file <that path>`.
+    - `ask`: `bash bin/ask-owner` stands in for the ask tool (it reaches the owner): it prints the path of the
+      owner's answers. Report them: `bash bin/automate-next-step.sh <run file> --result-file <that path>`.
+      Ask only when the driver printed `"do":"ask"` — never otherwise, and never through another channel.
+    - `park`, `done` (any status), or a call that prints no instruction and exits 0: this segment is over.
+      Stop — make no further driver call — and reply with one line: `SEGMENT END: <the last do, or none>`.
+    - Never write or edit the run file or anything under .supervisor/ or .eval/ yourself, and never re-run a
+      step the driver runs. Exit 2 means the driver refused the call with nothing written; exit 1 is a failure
+      named on stderr. Either way report what you saw and stop rather than improvise.
+  max_turns: 30
+  timeout_seconds: 600
+  allowed_tools: [Bash, Read]
+  disallowed_tools: [Agent]
+runs: 3
+graders:
+  - type: regex
+    name: parity
+    target: {source: file, path: .eval/verdict.txt}
+    pattern: "^PARITY: PASS$"
+    flags: m
+  - type: regex
+    name: no-wrong-question
+    target: {source: file, path: .eval/verdict.txt}
+    pattern: "^WRONG_QUESTIONS: 0$"
+    flags: m
+  - type: regex
+    name: no-skipped-instruction
+    target: {source: file, path: .eval/verdict.txt}
+    pattern: "^SKIPPED: 0$"
+    flags: m

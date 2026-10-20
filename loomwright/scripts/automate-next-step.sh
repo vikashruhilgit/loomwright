@@ -196,7 +196,9 @@
 # (`--start run|pick` / `--resume` without this loop's session id), `run_already_started`,
 # `pick_already_started` (a spawn of this pass is pending), `run_done` (`--start pick` on a `## Status:
 # done` run), `run_not_incomplete` (`--resume --run <id>` naming no incomplete run), `drain_already_owned`,
-# `reserved_prefix` — nothing written. A writer's own non-zero code is passed through (progress-append's 3,
+# `reserved_prefix` — nothing written, but for ONE exception: a refused `--result` report appends its ok:false
+# line to the coordinator-model ledger (the coordinator-model block below; usage errors append nothing).
+# A writer's own non-zero code is passed through (progress-append's 3,
 # `current_not_set`, on the drain start line and the `picked` line included).
 #
 # REPORT VALIDATION (fail CLOSED, exit 2, nothing written): every drain-report field the driver
@@ -252,9 +254,129 @@ JQ="${JQ:-jq}"
 ns_usage() {
   sed -n 's/^#   automate-next-step.sh /automate-next-step.sh /p; s/^#                         \[/                      [/p' "${BASH_SOURCE[0]}" | head -n 5
 }
-ns_die2() { echo "next-step: $*" >&2; exit 2; }
+ns_die2() { ns_valve_report false "$*"; echo "next-step: $*" >&2; exit 2; }
 ns_err() { echo "next-step: $*" >&2; }
 ns_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+ns_cfg_paths() { CFG_PATH="$ROOT/.supervisor/config.json"; BAK_PATH="$AD/$RUN_ID.config-backup.json"; }
+
+# ------------------------------------------------------------------------------------------------
+# the coordinator model (automate-speed/10). `.supervisor/config.json`'s `coordinator_model` names the model
+# the `/automate` coordinator runs on: `session` (the session's own model) or one id of the closed list
+# below. Every instruction carries the RESOLVED value as `coordinator_model` (ns_base, and the inline resume
+# `start_new`). An absent key resolves to NS_CM_DEFAULT (set from the A/B, docs/evidence/coordinator-model-ab.md);
+# an invalid value — or a config that is not a JSON object — resolves to `session` with ONE named stderr line,
+# never a refusal. The driver only resolves and reports the value; a launch site applies it.
+# THE VALVE (escalate on failure, one-directional). `<automate_dir>/coordinator-model.jsonl` gets ONE report
+# line `{ts, run_id, item, step, ok}` per NEW `--result` report: accepted ⇒ ok true; refused (not a JSON
+# object, a field/shape refusal, a report that answers nothing pending, a stale / out-of-state one) ⇒ ok
+# false + reason. Nothing is appended for a byte-identical replay (ns_reprint disarms), a call with no
+# `--result`, a usage error or any other exit-2 path (the valve is armed only once a `--result` call's run
+# file is resolved and no `--start` rides with it). That refusal line is the ONE exception to "exit 2 ⇒
+# nothing written". With >= NS_CM_FAILS ok:false lines among the last NS_CM_WINDOW report lines (escalated
+# records not counted) and a configured value other than `session`, the resolved value is `session` and ONE
+# `{ts, escalated: true, fails, window, from}` record is appended — only while none exists. The escalated
+# record is looked for in the WHOLE ledger, so it keeps `session` in force however many reports follow,
+# until the owner deletes the ledger file (the only clearing action — no auto-demotion). NS_CM_CAP is the
+# ledger's only bound (no truncation, no rotation): at or over it the ledger resolves `session` and nothing
+# more is appended. A malformed or unreadable ledger resolves `session` with a named stderr line; a write
+# failure is fail-SAFE (the append is skipped, the call's result unchanged).
+# ------------------------------------------------------------------------------------------------
+NS_CM_VALUES='session
+claude-haiku-5-5
+claude-sonnet-5-5'
+NS_CM_DEFAULT=session
+NS_CM_WINDOW=20; NS_CM_FAILS=3; NS_CM_CAP=262144
+NS_CM=""; NS_CM_CONF=""; NS_VALVE_ARMED=0; NS_VALVE_STEP=""
+ns_checkout_of() { # <automate dir> — the checkout that holds it (ns_resolve_root's own rule)
+  case "$1" in */.supervisor/automate) printf '%s' "${1%/.supervisor/automate}" ;; *) git -C "$1" rev-parse --show-toplevel 2>/dev/null || pwd ;; esac
+}
+ns_cm_ledger() { printf '%s/coordinator-model.jsonl' "${AD:-$RESUME_DIR}"; }
+ns_cm_listed() { local v; while IFS= read -r v; do [ "$1" = "$v" ] && return 0; done <<EOF
+$NS_CM_VALUES
+EOF
+  return 1; }
+# ns_cm_configured <checkout> — NS_CM_CONF: the configured value (once per call; the invalid line once)
+ns_cm_configured() {
+  [ -z "$NS_CM_CONF" ] || return 0
+  local keep="$ROOT" v
+  ROOT="$1"; ns_cfg_paths; ROOT="$keep"
+  NS_CM_CONF="$NS_CM_DEFAULT"
+  [ -e "$CFG_PATH" ] || return 0
+  v="$("$JQ" -r 'if type == "object" then (if has("coordinator_model") then "=" + (.coordinator_model | if type == "string" then . else tojson end) else "-" end) else "!" end' "$CFG_PATH" 2>/dev/null)" || v="!"
+  case "$v" in
+    -) return 0 ;;
+    =*) v="${v#=}"; ns_cm_listed "$v" && { NS_CM_CONF="$v"; return 0; }
+        ns_err "coordinator_model_invalid — '$(printf '%s' "$v" | head -n 1 | cut -c1-80)' is not session | claude-haiku-5-5 | claude-sonnet-5-5 — coordinator_model resolves session" ;;
+    *) ns_err "coordinator_model_invalid — $CFG_PATH is not a JSON object — coordinator_model resolves session" ;;
+  esac
+  NS_CM_CONF=session
+}
+# ns_cm_scan <ledger> — `0`… (the FAILs in the window), `escalated`, `over_cap` or `malformed`; no ledger ⇒ 0
+ns_cm_scan() {
+  local n out
+  [ -e "$1" ] || { echo 0; return 0; }
+  n="$(wc -c < "$1" 2>/dev/null | tr -d ' ')"
+  [[ "$n" =~ ^[0-9]{1,12}$ ]] || { echo malformed; return 0; }
+  [ "$n" -lt "$NS_CM_CAP" ] || { echo over_cap; return 0; }
+  out="$("$JQ" -Rrn --argjson w "$NS_CM_WINDOW" '
+    [inputs | select(test("\\S")) | (try fromjson catch "bad")] as $l
+    | if any($l[]; if type != "object" then true else ((.escalated == true) or ((.ok | type) == "boolean")) | not end) then "malformed"
+      elif any($l[]; .escalated == true) then "escalated"
+      else [$l[] | select(.escalated != true)] | .[-$w:] | map(select(.ok == false)) | length | tostring end' < "$1" 2>/dev/null)" || out=malformed
+  [ -n "$out" ] || out=malformed
+  printf '%s\n' "$out"
+}
+# ns_cm_resolve <checkout> — NS_CM, the resolved coordinator model (once per call)
+ns_cm_resolve() {
+  [ -z "$NS_CM" ] || return 0
+  local f s
+  ns_cm_configured "$1"
+  [ "$NS_CM_CONF" != session ] || { NS_CM=session; return 0; }
+  f="$(ns_cm_ledger)"; s="$(ns_cm_scan "$f")"
+  case "$s" in
+    escalated) NS_CM=session ;;
+    over_cap) ns_err "coordinator_model_ledger_over_cap — $f is at its $NS_CM_CAP-byte cap — coordinator_model resolves session (delete the ledger to clear)"; NS_CM=session ;;
+    malformed) ns_err "coordinator_model_ledger_malformed — $f — coordinator_model resolves session (delete the ledger to clear)"; NS_CM=session ;;
+    *) if [ "$s" -ge "$NS_CM_FAILS" ]; then NS_CM=session; else NS_CM="$NS_CM_CONF"; fi ;;
+  esac
+}
+# ns_cm_append <json line> — fail-SAFE: skipped at / over the cap, a write failure reported and skipped
+ns_cm_append() {
+  local f n; f="$(ns_cm_ledger)"
+  if [ -e "$f" ]; then n="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"; [[ "$n" =~ ^[0-9]{1,12}$ ]] && [ "$n" -lt "$NS_CM_CAP" ] || return 0; fi
+  { printf '%s\n' "$1" >> "$f"; } 2>/dev/null || ns_err "coordinator_model_ledger_unwritable — $f — the ledger line is skipped (fail-safe)"
+  return 0
+}
+# ns_valve_report <true|false> [reason] — the ONE report line of an armed `--result` call, then the escalation
+ns_valve_report() {
+  [ "$NS_VALVE_ARMED" = 1 ] || return 0
+  NS_VALVE_ARMED=0
+  local item step line
+  item="$(awk '/^## /{ c = ($0 == "## Current"); next } c && /^- item: /{ l = substr($0, 9); i = index(l, " | "); if (i) l = substr(l, 1, i - 1); print l; exit }' "$RF" 2>/dev/null)"
+  step="${NS_VALVE_STEP:-$("$JQ" -r '.next // empty' "$SIDECAR" 2>/dev/null)}"
+  line="$("$JQ" -cn --arg ts "$(ns_ts)" --arg r "$RUN_ID" --arg i "$item" --arg s "$step" --arg o "$1" --arg why "$(printf '%s' "${2:-}" | head -n 1 | cut -c1-300)" \
+    '{ts: $ts, run_id: $r, item: (if $i == "" or $i == "null" then null else $i end), step: (if $s == "" then null else $s end), ok: ($o == "true")}
+     + (if $o == "true" then {} else {reason: $why} end)' 2>/dev/null)" || return 0
+  # the report line and the escalation check run under one mkdir lock, so concurrent calls never write a second
+  # escalated record; without the lock (held past ~2s) the escalation is skipped — the next report retries it
+  local lk i=0 held=0; lk="$(ns_cm_ledger).lock"
+  while [ "$i" -lt 20 ]; do mkdir "$lk" 2>/dev/null && { held=1; break; }; i=$((i + 1)); sleep 0.1; done
+  ns_cm_append "$line"
+  [ "$held" = 1 ] || return 0
+  ns_valve_escalate
+  rmdir "$lk" 2>/dev/null
+  return 0
+}
+ns_valve_escalate() { # under the ledger lock: ONE escalated record once the window holds NS_CM_FAILS FAILs
+  local s
+  ns_cm_configured "${ROOT:-$(ns_checkout_of "$AD")}"
+  [ "$NS_CM_CONF" != session ] || return 0
+  s="$(ns_cm_scan "$(ns_cm_ledger)")"
+  case "$s" in *[!0-9]*|"") return 0 ;; esac
+  [ "$s" -ge "$NS_CM_FAILS" ] || return 0
+  ns_cm_append "$("$JQ" -cn --arg ts "$(ns_ts)" --argjson n "$s" --argjson w "$NS_CM_WINDOW" --arg f "$NS_CM_CONF" '{ts: $ts, escalated: true, fails: $n, window: $w, from: $f}')"
+  ns_err "coordinator_model escalated — $s FAILs in the last $NS_CM_WINDOW coordinator reports; $NS_CM_CONF ⇒ session until the owner deletes $(ns_cm_ledger)"
+}
 
 command -v "$JQ" >/dev/null 2>&1 || { ns_err "jq not on PATH"; exit 1; }
 [ -f "$H" ] || { ns_err "automate-helpers.sh not found beside this script ($H)"; exit 1; }
@@ -263,6 +385,8 @@ command -v "$JQ" >/dev/null 2>&1 || { ns_err "jq not on PATH"; exit 1; }
 # arguments
 # ------------------------------------------------------------------------------------------------
 RF=""; RESULT=""; MODE=""; NONINT=0; TRUST=""; ROOT=""; SID=""; have_result=0
+# AD / RUN_ID are this script's own (set once the run file is known): never inherited from the environment
+AD=""; RUN_ID=""
 START=""; NOTIFY=0; CHEAP=0; MAXTOK=""; RESUME_DIR=""; RUN_SEL=""; INLINE=0; OWNER_CMD=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -333,8 +457,11 @@ if [ -n "$RESUME_DIR" ]; then
        [ -n "$RF" ] || ns_die2 "run_not_incomplete — --run $RUN_SEL names no incomplete run in $RESUME_DIR — nothing written" ;;
   esac
   if [ -z "$RF" ]; then
-    # nothing to continue: intake (a new run) is the model's — nothing written past the start steps, no sidecar
-    "$JQ" -cn --arg co "$NS_RES_CO" '{do: "done", step: "resume", run_id: null, item: null, pr: null, status: "stopped", choice: "start_new",
+    # nothing to continue: intake (a new run) is the model's — nothing written past the start steps, no sidecar.
+    # This instruction runs before ns_resolve_root: its coordinator_model comes from the checkout holding the
+    # --resume <automate_dir> (and that dir's ledger)
+    ns_cm_resolve "$(ns_checkout_of "$RESUME_DIR")"
+    "$JQ" -cn --arg co "$NS_RES_CO" --arg cm "$NS_CM" '{do: "done", step: "resume", run_id: null, item: null, pr: null, coordinator_model: $cm, status: "stopped", choice: "start_new",
         message: "no incomplete run — start a new run (intake)", closeout_others: ($co | split("\n") | map(select(length > 0)))}'
     exit 0
   fi
@@ -343,14 +470,16 @@ elif [ -n "$RUN_SEL" ]; then
 fi
 [ -n "$RF" ] || { ns_usage >&2; ns_die2 "usage: automate-next-step.sh <runfile> [options]"; }
 [ -f "$RF" ] && [ -r "$RF" ] || ns_die2 "run file not found or unreadable: $RF"
-if [ "$have_result" = 1 ]; then
-  printf '%s' "$RESULT" | "$JQ" -e 'type == "object"' >/dev/null 2>&1 || ns_die2 "--result is not a JSON object"
-fi
 RF="$(cd "$(dirname "$RF")" && pwd)/$(basename "$RF")"
 AD="$(dirname "$RF")"
 RUN_ID="$(basename "$RF" .md)"
 SIDECAR="$AD/$RUN_ID.next-step.json"
 CTXF="$AD/$RUN_ID.gate-ctx.json"
+# the valve is armed for a coordinator `--result` report (never with --start: that pairing is a usage error)
+[ "$have_result" = 1 ] && [ -z "$START" ] && NS_VALVE_ARMED=1
+if [ "$have_result" = 1 ]; then
+  printf '%s' "$RESULT" | "$JQ" -e 'type == "object"' >/dev/null 2>&1 || ns_die2 "--result is not a JSON object"
+fi
 # ROOT is resolved (and cd'ed into) after the sidecar is read: a --root given earlier in this item's
 # tail is persisted there (see FLAGS below)
 ns_resolve_root() {
@@ -530,10 +659,12 @@ ns_notify() { # <kind> <message>
 # ------------------------------------------------------------------------------------------------
 NS_EMIT=""
 ns_base() { # <do> <step> — the common fields as a JSON object
-  "$JQ" -cn --arg d "$1" --arg s "$2" --arg r "$RUN_ID" --arg i "$ITEM" --arg p "$PR" \
-    '{do: $d, step: $s, run_id: $r, item: (if $i == "" or $i == "null" then null else $i end), pr: (if $p == "" or $p == "null" then null else $p end)}'
+  ns_cm_resolve "$ROOT"
+  "$JQ" -cn --arg d "$1" --arg s "$2" --arg r "$RUN_ID" --arg i "$ITEM" --arg p "$PR" --arg cm "$NS_CM" \
+    '{do: $d, step: $s, run_id: $r, item: (if $i == "" or $i == "null" then null else $i end), pr: (if $p == "" or $p == "null" then null else $p end), coordinator_model: $cm}'
 }
-ns_emit() { NS_EMIT="$(printf '%s' "$(ns_base "$1" "$2")" | "$JQ" -c --argjson x "$3" '. + $x')"; }
+# resolved here (not inside ns_base's command substitution) so the value and its stderr line come once a call
+ns_emit() { ns_cm_resolve "$ROOT"; NS_EMIT="$(printf '%s' "$(ns_base "$1" "$2")" | "$JQ" -c --argjson x "$3" '. + $x')"; }
 ns_emit_ask() { # <step> <gate> <cant_ask> <questions json array>
   local x
   x="$("$JQ" -cn --arg g "$2" --arg c "$3" --argjson q "$4" '{gate: $g, question: $q[0].question, header: $q[0].header,
@@ -947,7 +1078,6 @@ ns_once() { local k="$1"; shift; [ "$(st "$k")" = true ] && return 0; "$@" || re
 ns_clear_once() { # <prefix> — forget the once-keys of a step chain (a new drain starts over)
   NS_STATE="$(printf '%s' "$NS_STATE" | "$JQ" -c --arg p "$1" 'with_entries(select(.key | startswith($p) | not))')"
 }
-ns_cfg_paths() { CFG_PATH="$ROOT/.supervisor/config.json"; BAK_PATH="$AD/$RUN_ID.config-backup.json"; }
 ns_strip_ts() { # <progress line without "- "> — the line after one optional ISO timestamp token
   case "$1" in [0-9][0-9][0-9][0-9]-*) printf '%s' "${1#* }" ;; *) printf '%s' "$1" ;; esac
 }
@@ -2753,6 +2883,8 @@ pending="$(st pending_text)"; PENDING_TEXT="$pending"
 # --session-id) inherits THIS session's identity — never the session that printed the instruction. A call
 # that gives neither (or gives the identity already stored) writes nothing.
 ns_reprint() {
+  # a replay re-prints: it is not a coordinator run, so it never reaches the coordinator-model ledger
+  NS_VALVE_ARMED=0
   local sid own l ch=0 out="$pending"
   sid="${SID:-$(st flag_session_id)}"; own="$OWNER_CMD"
   if [ -z "$own" ] && [ -n "$sid" ] && [ "$sid" = "$(st flag_owner_command_sid)" ]; then own="$(st flag_owner_command)"; fi
@@ -2924,18 +3056,24 @@ ns_resolve_root
 STOPPED=0; first_arm=1
 while [ -n "$NEXT" ]; do
   arm="$NEXT"; NEXT=""
+  [ "$first_arm" = 1 ] && NS_VALVE_STEP="$arm"
   st_set last_arm "$arm"
   if ! ns_dispatch "$arm"; then
     # exit 2 = a usage error or a --result that answers nothing pending: every arm checks that BEFORE
     # its first write, so nothing was written — leave the sidecar (and its pending instruction) as it was.
     # Only the call's FIRST arm can say so: a later arm refusing ran after earlier arms of this call
-    # wrote, so it is a surfaced failure (exit 1, the sidecar saved at that arm, retried next call)
-    if [ "$first_arm" = 1 ]; then [ "$NS_RC" = 2 ] && exit 2; fi
+    # wrote, so it is a surfaced failure (exit 1, the sidecar saved at that arm, retried next call).
+    # A refused --result report is the coordinator-model ledger's one write on that exit-2 path (AC4).
+    if [ "$first_arm" = 1 ]; then [ "$NS_RC" = 2 ] && { ns_valve_report false "$arm: the --result was refused (exit 2)"; exit 2; }; fi
     [ "$NS_RC" = 2 ] && NS_RC=1
+    # a report the first arm took before a writer failed was accepted (the retry has no --result)
+    ns_valve_report true
     st_set next "$arm"; st_set failed "$arm"; st_save
     [ "$NS_RC" -ne 0 ] || NS_RC=1
     exit "$NS_RC"
   fi
+  # the first arm took the --result report: an accepted coordinator report (ok true)
+  [ "$first_arm" = 1 ] && ns_valve_report true
   first_arm=0
   [ -n "$NS_EMIT" ] && break
   if [ -n "${NEXT_STEP_UNTIL:-}" ] && [ "$arm" = "$NEXT_STEP_UNTIL" ]; then STOPPED=1; break; fi
