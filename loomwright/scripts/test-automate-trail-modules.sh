@@ -15,10 +15,13 @@
 #   3. a stray file in automate-trail.d/ is never sourced (modules are listed, never globbed).
 #   4. a copy with ONE module removed (each in turn), or unreadable, exits non-zero with the
 #      loader's own message `automate-trail: missing module file: automate-trail.d/<name>.sh`.
-#   5. verbatim move: _trail_bundle's output, with the header's Modules map, the module loader
-#      block and the source markers removed, equals the BASE blob byte-for-byte except the one
-#      --help line (which now greps the bundle) — skipped with 2. A copy with one moved line
-#      changed must fail that comparison (gated mutant).
+#   5. verbatim move: the SPLIT commit's _trail_bundle output, with the header's Modules map, the
+#      module loader block and the source markers removed, equals the BASE blob byte-for-byte
+#      except the one --help line (which now greps the bundle) — skipped with 2, or when SPLIT is
+#      not in the clone. A copy of the SPLIT tree with one moved line changed must fail that
+#      comparison (gated mutant). It reads SPLIT, never this checkout's modules: the move is a
+#      property of that one commit, and later fixes edit moved lines on purpose (#616–#618 did,
+#      which turned this check red on every full clone while CI's shallow clone skipped it).
 #   6. every module is <= 800 lines, passes `bash -n` (and a 3.x `bash -n` when the host has
 #      one); the sourced list and the automate-trail.d/ files are the same set; the header's
 #      Modules map names them in source order; neither the map nor the loader block carries a
@@ -33,6 +36,8 @@ MOD_DIR="$HERE/automate-trail.d"
 # The last single-file automate-trail.sh (the split's base commit).
 BASE=087b9e417e521217e3998381f3d8c2f79695e109
 BASE_PATH=loomwright/scripts/automate-trail.sh
+# The split commit itself (automate-speed/19): check 5 proves the move on its tree.
+SPLIT=0f190754daaea0cc15af76445ee0cdbae1126239
 MISSING_MSG="automate-trail: missing module file: automate-trail.d"
 
 pass=0; fail=0; skip=0
@@ -180,16 +185,30 @@ if [ "$rc" -ne 0 ] && grep -qxF "$MISSING_MSG/$m.sh" <<<"$err"; then ok "_trail_
 else no "_trail_bundle without $m.sh ⇒ rc=$rc err='$err'"; fi
 
 echo "== 5. verbatim move: the stripped bundle equals the base except the one --help line"
+# split_copy — the SPLIT commit's entry point + the modules it sources, from git; prints its path
+split_copy() {
+  local c m; c="$(mktemp -d "$T/split.XXXXXX")"; mkdir -p "$c/automate-trail.d"
+  git -C "$REPO" show "$SPLIT:loomwright/scripts/automate-trail.sh" > "$c/automate-trail.sh" 2>/dev/null \
+    && [ -s "$c/automate-trail.sh" ] || return 1
+  for m in $(mods_of "$c/automate-trail.sh"); do
+    git -C "$REPO" show "$SPLIT:loomwright/scripts/automate-trail.d/$m.sh" > "$c/automate-trail.d/$m.sh" 2>/dev/null \
+      && [ -s "$c/automate-trail.d/$m.sh" ] || return 1
+  done
+  echo "$c/automate-trail.sh"
+}
 if [ "$HAVE_BASE" = 0 ]; then
   skp "base blob not in this clone — the verbatim-move legs are not run"
+elif ! SE="$(split_copy)"; then
+  skp "split commit $SPLIT not in this clone (shallow checkout?) — the verbatim-move legs are not run"
 else
-  if verbatim_ok "$E"; then
-    ok "bundle minus the Modules map, loader block and markers == $BASE:$BASE_PATH (only the --help input differs)"
-  else no "bundle differs from the base beyond the --help line: $(diff "$T/base.sh" "$T/vb.restored" 2>/dev/null | head -4 | tr '\n' '|')"; fi
+  if verbatim_ok "$SE"; then
+    ok "split $SPLIT bundle minus the Modules map, loader block and markers == $BASE:$BASE_PATH (only the --help input differs)"
+  else no "split bundle differs from the base beyond the --help line: $(diff "$T/base.sh" "$T/vb.restored" 2>/dev/null | head -4 | tr '\n' '|')"; fi
   # Mutation control: one moved line changed (a trailing space on the first line of the last module).
-  m="$(tail -1 <<<"$MODS")"; C="$(mk_copy)"; M="$(dirname "$C")/automate-trail.d/$m.sh"
-  sed '1s/$/ /' "$MOD_DIR/$m.sh" > "$M"
-  if [ ! -s "$M" ] || cmp -s "$MOD_DIR/$m.sh" "$M" || ! bash -n "$M"; then
+  m="$(mods_of "$SE" | tail -1)"; C="$(split_copy)"; M="$(dirname "$C")/automate-trail.d/$m.sh"
+  S0="$(dirname "$SE")/automate-trail.d/$m.sh"
+  sed '1s/$/ /' "$S0" > "$M"
+  if [ ! -s "$M" ] || cmp -s "$S0" "$M" || ! bash -n "$M"; then
     no "verbatim mutant ($m.sh): not built (empty, sed matched nothing, or bash -n failed)"
   elif verbatim_ok "$C"; then
     no "verbatim mutant ($m.sh, one moved line changed) still compared equal — the comparison is vacuous"
