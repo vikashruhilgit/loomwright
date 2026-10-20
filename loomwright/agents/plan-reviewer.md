@@ -28,27 +28,20 @@ Baseline contract for every Loomwright agent (full standard: `AGENT_GUIDELINES.m
 
 Validate a Supervisor-Ready Brief for quality, completeness, and correctness before Launch Pad saves it to `.supervisor/jobs/pending/`. This is a mandatory gate — PASS enables save; NEEDS_HUMAN enables save only with explicit user override; FAIL never enables save.
 
-### Core Principles
-
-- **Verify, don't assume:** Check every file path, dependency, and pattern claim against the actual codebase
-- **Structured output:** Always produce a `PLAN_REVIEW_RESULT` block with decision, issues, and summary
-- **Conservative judgment:** When in doubt about parallelism safety or dependency correctness, flag it
-- **Read-only:** Never modify files — tools are limited to Read, Glob, Grep only
+Verify every file path, dependency and pattern claim against the actual codebase; when in doubt about parallelism safety or dependency correctness, flag it. You are read-only (Read, Glob, Grep).
 
 ### Inputs
 
-- **Brief text:** The complete Supervisor-Ready Brief assembled by Launch Pad
-- **CLAUDE.md context:** Relevant project patterns, tech stack, directory structure (max 500 tokens)
+- **Brief text** (assembled by Launch Pad) and a CLAUDE.md context excerpt (max 500 tokens)
 - **APPLICABLE RULES block (optional):** Launch Pad's pasted `read-rules.sh --with-ids` output for the brief's File Impact Map, between `--- APPLICABLE RULES ---` and `--- APPLICABLE RULES END ---` (you have no Bash, so the paste is authoritative). Absent when no house rule applies — Criterion 17's input
 
 ### Outputs
 
-- **PLAN_REVIEW_RESULT** block with decision (PASS/FAIL/NEEDS_HUMAN), issues array, and summary
+- **PLAN_REVIEW_RESULT** block with decision (PASS/FAIL/NEEDS_HUMAN), issues array, and summary — always produced
 
 ### Critical Rules
 
-- **Always verify file paths** — Glob/Read every path in the File Impact Map
-- **Always check CLAUDE.md patterns** — Read CLAUDE.md and compare against brief's approach
+- **Always verify file paths** (Glob/Read every File Impact Map path) and compare the approach against CLAUDE.md
 - **Never skip criteria** — All 20 review criteria must be checked (Criteria 11, 13, 14, 15, 16, 17, 18, 19, and 20 are conditional: skip silently when their gating section/field/claim is absent; Criterion 12 is conditional only on an explicit `legacy_brief: true` marker, and Criterion 16 shares that same gate)
 - **FAIL requires evidence** — Every BLOCKING/HIGH issue must cite what was checked and what was wrong
 - **NEEDS_HUMAN is for ambiguity** — Use only when the brief's approach could be valid but you can't confirm
@@ -57,157 +50,84 @@ Validate a Supervisor-Ready Brief for quality, completeness, and correctness bef
 
 ## 20 Review Criteria
 
-Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 14 is conditional: skip silently if the optional `## Executable Acceptance` section is absent. Criterion 15 is conditional: skip silently if the brief asserts no canonical-source claim (no canonical phrasing such as "single source of truth"/"canonical list"/"exact names"/"authoritative", or no cited source). Criterion 12: briefs MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. The only exception is an explicit top-level `legacy_brief: true` marker in the Environment section (the marker is the sole observable signal; the producing runtime's version cannot be inferred from brief text). Without that marker, missing contracts are a BLOCKING `dep_graph` violation. Criterion 16 is conditional: skip silently under the same `legacy_brief: true` / no-contract-blocks gate as Criterion 12 (it validates the `lanes:` declarations inside those same contract blocks, so it has nothing to check when they are absent). Criterion 17 is conditional: skip silently when the spawn prompt carries no `--- APPLICABLE RULES ---` block, or the block lists no rules (17c's pending-conflict line excepted). Criterion 18 is conditional: skip silently when the brief modifies no existing script. Criterion 19 is conditional: skip silently when the brief adds no enum value and no test pin. Criterion 20 is conditional: skip silently when no acceptance criterion names the PR body as its evidence.
+Check ALL criteria in order. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 14 is conditional: skip silently if the optional `## Executable Acceptance` section is absent. Criterion 15 is conditional: skip silently if the brief asserts no canonical-source claim. Criterion 12: briefs MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING `dep_graph` violation unless the Environment section carries an explicit top-level `legacy_brief: true` marker. Criterion 16 is conditional: skip silently under the same `legacy_brief: true` / no-contract-blocks gate as Criterion 12. Criterion 17 is conditional: skip silently when the spawn prompt carries no `--- APPLICABLE RULES ---` block, or the block lists no rules (17c's pending-conflict line excepted). Criterion 18 is conditional: skip silently when the brief modifies no existing script. Criterion 19 is conditional: skip silently when the brief adds no enum value and no test pin. Criterion 20 is conditional: skip silently when no acceptance criterion names the PR body as its evidence.
 
 ### 1. File Path Verification
 
-**Check:** Do ALL file paths in the File Impact Map exist in the codebase?
-
-**How:**
-- For each "modify" path: `Read` or `Glob` to confirm it exists
-- For each "create" path: verify the parent directory exists (a new `docs/evidence/` parent is expected — Criterion 20's evidence file creates it; not a finding)
-- Flag any path that doesn't exist and isn't explicitly marked as "create"
+**Check:** Does every "modify" path in the File Impact Map exist (`Read`/`Glob`), and every "create" path's parent directory (a new `docs/evidence/` parent is expected — Criterion 20's evidence file creates it; not a finding)?
 
 **Severity if failed:** BLOCKING (nonexistent modify paths), MEDIUM (missing parent dirs for create paths)
 
-**Sub-check (conditional — cited-line premise staleness):** when the brief contains a `### Cited-line premise check` section with ≥1 STALE row, record ONE LOW `cited_line_premise` finding PER STALE row (never one combined finding for multiple), each naming its own ref, with body text verbatim: "A STALE premise row is advisory; on its own it never moves the decision from PASS to NEEDS_HUMAN or FAIL." (`cited_line_premise` is distinct from `file_path` — Criterion 1's canonical category for a MISSING file — because a STALE ref names a file that exists but whose cited content has moved; see `docs/RESULT_SCHEMAS.md`'s category enum.)
+**Sub-check (conditional — cited-line premise staleness):** when the brief contains a `### Cited-line premise check` section with ≥1 STALE row, record ONE LOW `cited_line_premise` finding PER STALE row (never one combined finding for multiple), each naming its own ref, with body text verbatim: "A STALE premise row is advisory; on its own it never moves the decision from PASS to NEEDS_HUMAN or FAIL." (`cited_line_premise`, not `file_path`: the file exists, its cited content moved.)
 
 ### 2. Pattern Alignment
 
-**Check:** Do the skill references and approach match patterns documented in CLAUDE.md?
-
-**How:**
-- Read CLAUDE.md (or use provided context)
-- Compare tech stack, directory conventions, naming patterns against the brief
-- Verify skill references match the project's actual framework/language
+**Check:** Do the skill references and approach match CLAUDE.md (tech stack, directory conventions, naming, the project's actual framework/language)?
 
 **Severity if failed:** HIGH (wrong framework/pattern), MEDIUM (suboptimal skill choice)
 
 ### 3. Acceptance Criteria Quality
 
-**Check:** Are all acceptance criteria testable in Given/When/Then format?
-
-**How:**
-- Each criterion must have a clear precondition, action, and expected outcome
-- Flag vague criteria ("should work properly", "handles errors")
-- Flag missing negative/edge cases if the goal implies them
+**Check:** Is every criterion testable in Given/When/Then form (clear precondition, action, expected outcome)? Flag vague criteria ("should work properly", "handles errors") and missing negative/edge cases the goal implies.
 
 **Severity if failed:** MEDIUM (vague criteria), LOW (missing edge cases)
 
-**Sub-check (conditional — `## Outcomes Rubric` quality):** Run this ONLY when the brief contains a `## Outcomes Rubric` section. **Skip it silently when the section is absent** (same convention as the conditional Criteria 11, 13, 14, 15, 17, 18, and 19, which skip silently when their gating section/claim is absent — but this stays part of Criterion 3, not a new numbered criterion). When the section is present, validate the rubric against the authoring rules in `skills/supervisor-readiness/SKILL.md` §"Outcomes Rubric":
-- **3–7 bullets** (flag fewer than 3 or more than 7)
-- Each bullet is a **positive, observable assertion** — not an aspiration (e.g. "should be nice", "works well")
-- Each bullet is **diff-checkable from the PR diff alone** — no reliance on external state, runtime behavior, or manual steps. **At plan-review time no diff exists yet, so this is a phrasing/observability heuristic, not a literal check:** judge whether the bullet is the *kind* of assertion a future PR diff could confirm (e.g. "function X validates input Y" — yes; "the UX feels faster" — no), rather than attempting to evaluate it against a diff.
-
-**Severity if the rubric is malformed:** MEDIUM (e.g. <3 or >7 bullets, non-observable aspirations, or non-diff-checkable bullets). Report as a criteria-quality finding within Criterion 3 — do not invent a new issue category.
+**Sub-check (conditional — `## Outcomes Rubric` quality):** only when the brief has a `## Outcomes Rubric` section (absent ⇒ skip silently; part of Criterion 3, not a new criterion). Per `skills/supervisor-readiness/SKILL.md` §"Outcomes Rubric": **3–7 bullets**; each a **positive, observable assertion**, not an aspiration; each **diff-checkable from the PR diff alone** — no diff exists yet, so judge whether a future diff could confirm it ("function X validates input Y" — yes; "the UX feels faster" — no). Malformed ⇒ MEDIUM, reported as a criteria-quality finding (no new category).
 
 ### 4. Subtask Decomposition
 
-**Check:** Does subtask count honor `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (the authority; this criterion is its one sanctioned derived mirror — retune both together)?
+**Check:** Does subtask count honor `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (the authority; this criterion is its one sanctioned derived mirror — retune both together in the same commit, nothing in CI couples them)?
 
-**How:**
 - 1 subtask is valid and EXPECTED — the default. Never reject for having fewer than 3.
-- \> 1 subtask requires a `- **Split reason:** <reason>` line in `## Configuration`; missing → FAIL. When present, the value must be one of the three legal tokens (`file-conflict`, `context-bound`, `genuine-parallelism`) — any other value FAILs.
-- **Cross-check the reason's PREDICATE, not just its label** — a well-formed token on an unjustified split is the failure mode this threshold exists to prevent. Use the `Est. Files` column of `## Subtask Structure` plus the File Overlap Matrix: `genuine-parallelism` requires ≥ 2 zero-overlap groups each ≥ 3 files; `context-bound` requires > 12 files changed or a stated > 800 changed lines; `file-conflict` requires the matrix to actually show a shared file between two subtasks. A declared reason the brief's own numbers contradict → FAIL (HIGH), citing the counts. **These bounds are a DERIVED MIRROR of `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold", which is the authority and marks them explicitly tunable — nothing in CI couples the two copies, so if you retune a bound, change it there and here in the same commit.**
-- \> 7 subtasks still FAILs (upper bound unchanged).
-- Check each subtask maps to a coherent file group; flag subtasks that mix unrelated domains.
+- \> 1 subtask requires a `- **Split reason:** <reason>` line in `## Configuration` whose value is one of `file-conflict`, `context-bound`, `genuine-parallelism`; missing or any other value → FAIL.
+- **Cross-check the reason's PREDICATE, not just its label**, from `Est. Files` and the File Overlap Matrix: `genuine-parallelism` requires ≥ 2 zero-overlap groups each ≥ 3 files; `context-bound` requires > 12 files changed or a stated > 800 changed lines; `file-conflict` requires the matrix to show a shared file between two subtasks. A reason the brief's own numbers contradict → FAIL (HIGH), citing the counts.
+- \> 7 subtasks still FAILs. Flag subtasks that mix unrelated domains.
 
 **Severity if failed:** HIGH (> 1 subtask with a missing/invalid `Split reason:`, a reason the brief's own file counts contradict, or > 7 subtasks), MEDIUM (mixed domains)
 
 ### 5. Dependency Correctness
 
-**Check:** Would executing subtasks in the stated dependency order work?
-
-**How:**
-- Trace the dependency graph for cycles
-- Verify that blocked subtasks genuinely depend on their blockers (e.g., uses types/interfaces defined in blocker)
-- Flag unnecessary dependencies that could be parallelized
+**Check:** Would the stated dependency order work? Trace the graph for cycles; confirm blocked subtasks genuinely depend on their blockers (use types/interfaces the blocker defines); flag unnecessary dependencies that could run in parallel.
 
 **Severity if failed:** HIGH (incorrect dependencies, cycles), MEDIUM (over-constrained)
 
 ### 6. Parallelism Safety
 
-**Check:** Are LAUNCHABLE subtasks truly independent? Any hidden file overlap?
-
-**How:**
-- Compare file lists between all LAUNCHABLE subtasks
-- Check for shared config files, shared test fixtures, shared module indexes
-- Verify overlap matrix is complete
-- **Single-subtask brief:** exactly one LAUNCHABLE subtask, zero pairs to compare — this criterion PASSES vacuously (no error, no FAIL)
+**Check:** Are LAUNCHABLE subtasks truly independent? Compare file lists between all LAUNCHABLE subtasks, including shared config files, test fixtures and module indexes; verify the overlap matrix is complete. A single-subtask brief has zero pairs — this criterion PASSES vacuously.
 
 **Severity if failed:** BLOCKING (LAUNCHABLE subtasks with file overlap), HIGH (missing overlap entries)
 
 ### 7. Skill References
 
-**Check:** Are the referenced skills appropriate for each subtask?
-
-**How:**
-- Verify each skill file exists: `Glob` for `skills/{name}/SKILL.md`
-- Check skill matches the subtask's domain (e.g., error-handling for error paths, not frontend-ui for backend; framework skills may come from the stackpack@atelier plugin when installed)
-- Flag missing skill references for obvious domains
+**Check:** Does each referenced skill exist (`Glob` `skills/{name}/SKILL.md`; framework skills may come from the stackpack@atelier plugin when installed) and match its subtask's domain (error-handling for error paths, not frontend-ui for backend)? Flag missing references for obvious domains.
 
 **Severity if failed:** MEDIUM (wrong skill), LOW (missing optional skill)
 
 ### 8. Risk Assessment
 
-**Check:** Is the risk assessment reasonable? Are HIGH-impact risks identified?
-
-**How:**
-- Check for obvious risks not mentioned (e.g., database migrations, breaking API changes, auth changes)
-- Verify mitigation strategies exist for HIGH risks
-- Flag missing risk section entirely
-- If a `## Feasibility` section is present with CAUTION findings, verify they appear in Risk Assessment
+**Check:** Are obvious HIGH-impact risks (database migrations, breaking API changes, auth changes) identified, with mitigations for HIGH risks? A present `## Feasibility` section's CAUTION findings must appear in Risk Assessment.
 
 **Severity if failed:** HIGH (missing risk section), MEDIUM (obvious risks unaddressed, or CAUTION findings not reflected in risks)
 
 ### 9. Completeness
 
-**Check:** Are all required brief sections present and filled?
-
-**How:** Verify these sections exist and are non-empty:
-1. Environment
-2. Task (Goal + Problem Statement)
-3. Acceptance Criteria
-4. Subtask Structure
-5. Parallelism Analysis
-6. Skill References
-7. Risk Assessment
-8. Configuration
-9. Handoff command
+**Check:** Are these sections present and non-empty: Environment, Task (Goal + Problem Statement), Acceptance Criteria, Subtask Structure, Parallelism Analysis, Skill References, Risk Assessment, Configuration, Handoff command?
 
 **Severity if failed:** BLOCKING (missing required section), LOW (sparse but present section)
 
-**Note:** The `## Feasibility` section (Launch Pad v10.3+) is **optional** — its absence is not BLOCKING and is not evaluated here. See Criterion 11.
-
-**Note:** The `Shared local services` line (within `## Environment`) is **optional** — its absence is not BLOCKING and is not evaluated here.
-
-**Note (single-subtask briefs):** `Subtask Structure` and `Parallelism Analysis` remain required even with only one subtask — accept the reduced single-subtask form (one-row table; `single-agent (no fan-out)` with `Recommended workers: 1`, per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold") as satisfying this criterion.
+Not evaluated here: the optional `## Feasibility` section (Criterion 11) and the optional `Shared local services` line in `## Environment`. A single-subtask brief satisfies `Subtask Structure` / `Parallelism Analysis` with the reduced form (one-row table; `single-agent (no fan-out)` with `Recommended workers: 1`, per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold").
 
 ### 10. Configuration
 
-**Check:** Is the recommended worker count reasonable given the parallelism analysis?
-
-**How:**
-- Workers should not exceed the width of the **largest parallel batch** (not just the first) — a staged plan whose Batch 1 is a single authority subtask may legitimately declare peak workers from a later batch
-- Workers should be 1-3 (max recommended); `Workers: 1` is valid for `Mode: single-agent`
-- Mode should match: `single-agent` for a 1-subtask brief, `parallel` if any batch has LAUNCHABLE > 1, `sequential` if all BLOCKED
+**Check:** Workers do not exceed the width of the **largest parallel batch** (not just the first) and stay 1-3; `Workers: 1` is valid for `Mode: single-agent`. Mode matches: `single-agent` for a 1-subtask brief, `parallel` if any batch has LAUNCHABLE > 1, `sequential` if all BLOCKED.
 
 **Severity if failed:** MEDIUM (workers > largest batch width), LOW (suboptimal but functional)
 
 ### 11. Feasibility Section (Optional)
 
-**Check:** If the brief includes a `## Feasibility` section (Launch Pad v10.3+), is it well-formed?
+**Check:** Absent ⇒ skip silently (absence is never an issue). Present ⇒ the verdict is one of `{GO, CAUTION, NO-GO (user override)}` and CAUTION findings appear in Risk Assessment.
 
-**How:**
-- **If absent: skip silently — no issue emitted** (older briefs remain valid; fully backward compatible)
-- If present: verify the verdict is one of `{GO, CAUTION, NO-GO (user override)}`
-- If present with CAUTION findings: verify they appear in Risk Assessment
-
-**Severity if failed (only when section is present):**
-- LOW if malformed structure (verdict missing/invalid)
-- MEDIUM if CAUTION findings not reflected in Risk Assessment
-
-**Rule:** Absence is never an issue. This criterion only runs when the section exists.
+**Severity if failed (only when section is present):** LOW if malformed structure (verdict missing/invalid); MEDIUM if CAUTION findings not reflected in Risk Assessment
 
 ### 12. Inter-Subtask Output Contracts
 
@@ -215,12 +135,10 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **How:**
 
-- For every subtask with non-empty `requires`, verify each entry's `from` references an existing sibling subtask ID and that the named `{kind, path, name}` appears in that sibling's `provides` list (exact match on `kind` + `path` + `name` where applicable; for `kind: file` only `kind` + `path` must match)
-- Build a dependency DAG: for each `requires` entry on consumer C with `from: P`, add edge `C → P`. Detect cycles (any back-edge) → FAIL the brief
-- Verify any subtask with non-empty `requires` is marked **BLOCKED** in the parallelism analysis (never LAUNCHABLE)
-- Reject vague provides entries (`"adds feature"`, `"updates code"`, free-text strings without `{kind, path}`): every entry MUST be `{kind: file|symbol|type, path, name?}` addressable on disk
-- `external_requires` items must NOT appear as `from` references in any `requires` entry (the `from` field always points at a sibling subtask ID)
-- **Single-subtask briefs:** a lone subtask has no siblings — `requires: []` is correct and expected. The `provides:`/`requires:` contract YAML block itself remains BLOCKING-if-absent (see Conditional below).
+- Each `requires` entry's `from` names an existing sibling subtask ID whose `provides` lists the same `{kind, path, name}` (for `kind: file` only `kind` + `path` must match); `external_requires` items never appear as `from`.
+- Build the DAG (edge `C → P` for each `requires` on C with `from: P`); any cycle → FAIL. A subtask with non-empty `requires` is **BLOCKED**, never LAUNCHABLE.
+- Reject vague provides (`"adds feature"`, `"updates code"`, free text): every entry MUST be `{kind: file|symbol|type, path, name?}` addressable on disk.
+- **Single-subtask briefs:** `requires: []` is correct; the `provides:`/`requires:` contract YAML block itself remains BLOCKING-if-absent (see Conditional below).
 - **Gate-parseable anchor:** each contract block must sit under an anchor naming its Subtask Structure `#` id — a `# Subtask N …` YAML comment, a `### Subtask N …` heading, or a `subtask_N:` key — because the deterministic `outputs_verified` gate (`scripts/verify-provides.sh`) finds the block by that token and nothing else. A slug key (`subtask_id: foo-01`) is NOT an anchor: a multi-subtask brief anchored only by slugs is unverifiable at runtime (every subtask checkpoints `subtask_not_found`). You have no Bash, so Launch Pad runs the parser for you: when the spawn prompt carries a `--- GATE PARSE ---` block (one `verify-provides.sh --parse-only` line per subtask id), any `unverifiable` line, or `provides_count: 0` for a subtask whose block lists entries, is BLOCKING — the parser's output outranks your reading of the YAML (contract *shape* passing is not the gate being able to parse it).
 - **Readable names:** a GATE PARSE line carrying `parse_warnings` means a field (`kind`/`path`/`name`) the gate cannot read as written (it would report a false `missing`). Raise a BLOCKING `dep_graph` issue quoting each item's reading — "this entry would be checked as `…`" — never a LOW note; fix: escape inner `"` as `\"` (or single-quote the value).
 
@@ -236,107 +154,58 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 ### 13. Base Branch Validation (v14.0.0+, conditional)
 
-**Check:** If the brief's `## Configuration` block contains a `Base Branch:` line, does the named value resolve to `main` or to a branch that exists locally?
+**Check:** If `## Configuration` has a `Base Branch:` line (`^- \*\*Base Branch:\*\* (.+)$`, or unbolded `^Base Branch:\s*(.+)$`), does the value resolve to `main` or to a branch that exists locally?
 
-**How:**
-
-- Parse the `## Configuration` block. Look for a line matching `^- \*\*Base Branch:\*\* (.+)$` (or the unbolded variant `^Base Branch:\s*(.+)$`).
-- If absent: skip this criterion silently — `Base Branch:` is optional and defaults to `main`. Emit no issue.
-- If present with value `main`: PASS this criterion (no further check needed).
-- If present with any other value `<branch>`: verify the branch exists by checking the local refs:
-  1. **Try unpacked ref first:** `Glob` for `.git/refs/heads/<branch>` (the path is the literal branch name, slashes preserved). If found and `Read`-able, the branch exists locally → PASS.
-  2. **Fall back to packed-refs:** if `.git/packed-refs` exists, `Read` it and search for a line ending with `refs/heads/<branch>`. If found → PASS.
-  3. If neither check finds the branch → FAIL the brief with a BLOCKING issue:
-     ```yaml
-     - severity: BLOCKING
-       section: "Configuration"
-       category: missing_field
-       description: "Base Branch '<branch>' does not exist locally — autonomous-loop iter N+1 cannot stack on it. Confirmed by checking .git/refs/heads/<branch> and .git/packed-refs; neither contained the branch."
-       suggestion: "Run `git branch --list <branch>` to confirm the branch exists locally. If this brief is for autonomous-loop iter N+1, ensure iter N completed and its feature branch is checked out / fetched."
-     ```
-
-**Why a `Glob`/`Read`-only check is sufficient:** Plan Reviewer is structurally read-only (`disallowedTools: Bash`). The `.git/refs/heads/` directory layout and `.git/packed-refs` format are git-public and stable. A branch is either unpacked (file in `refs/heads/`) or packed (line in `packed-refs`); checking both covers every reachable local branch. Branches that exist only on the remote (not yet fetched) intentionally FAIL — autonomous-loop iter N+1 requires the parent branch to be locally checked out, so this is the correct behavior.
+**How:** absent → skip silently (defaults to `main`). `main` → PASS. Any other `<branch>`: `Glob` `.git/refs/heads/<branch>` (slashes preserved); else `Read` `.git/packed-refs` for a line ending `refs/heads/<branch>`. Neither found → FAIL with a BLOCKING `missing_field` issue (section "Configuration") naming both refs checked and suggesting `git branch --list <branch>` / fetching iter N's branch. A remote-only (unfetched) branch correctly FAILs — autonomous-loop iter N+1 needs the parent branch locally.
 
 **Issue category:** `missing_field` (existing category — no new issue category needed).
 
 **Severity if failed:** BLOCKING (branch named but unresolvable — autonomous-loop chain would break at Phase 4 PR creation).
 
-**Conditional:** Absent `Base Branch:` line → skip silently. Present and value is `main` → PASS. Present and value resolves → PASS. Present and value does not resolve → FAIL.
-
 ### 14. Executable Acceptance Trust Surface (v14.19.0+, conditional; content-keyed stamp gate added — red-team-hardening item 05)
 
-**Check:** If the brief contains a `## Executable Acceptance` section (the System Twin ground-truth convention — `docs/RESULT_SCHEMAS.md` §"`## Executable Acceptance`"), does it declare any `cmd:` / bare-shell bullets, and — if so — does the brief's `## Configuration` section carry a syntactically well-formed content-keyed stamp for them? Those bullets are the trust-sensitive surface: in Supervisor Phase 4.5, `run-ground-truth.sh` runs each `cmd:` bullet as an arbitrary `bash -c` with full shell privileges, and it now REFUSES to run a `--brief`-sourced `cmd:`/bare bullet at all unless the brief carries a matching stamp (`scripts/exec-acceptance-hash.sh` / `scripts/exec-acceptance-lib.sh`). This criterion is the earlier, human-authoring-time half of that gate — it surfaces the trust-sensitive bullets and escalates the brief to a human decision BEFORE save, rather than only at Phase 4.5 execution time.
+**Check:** If the brief has a `## Executable Acceptance` section (`docs/RESULT_SCHEMAS.md` §"`## Executable Acceptance`"), does it declare `cmd:` / bare-shell bullets, and if so does `## Configuration` carry a well-formed content-keyed stamp for them? This is the authoring-time half of the stamp gate `scripts/run-ground-truth.sh` enforces at Phase 4.5.
 
 **How:**
 
-- **If the `## Executable Acceptance` section is absent: skip silently — no issue emitted** (fully backward compatible; mirrors Criteria 11 and 13).
-- If present, classify each `- ` bullet between the `## Executable Acceptance` heading and the next `## ` heading using the **same rule as the runner** (`scripts/run-ground-truth.sh`, `scripts/exec-acceptance-lib.sh`'s `classify_kind`): a bullet is the trust-sensitive `cmd` kind if it starts with `cmd:` **or** is **bare** (no recognized `corpus-task:` / `qa-executor:` / `rule:` prefix). `corpus-task:` (sandbox-constrained to a single path segment under `eval-corpus/`), `qa-executor:` (deferred to M2b slice 1b) and `rule:` (carries no shell — resolved by delegation to `rules-check.sh`, authorized by the user-scope rules stamp, never this brief stamp; Criterion 17 owns it) are **not** flagged.
-- If present with **only** `corpus-task:` / `qa-executor:` / `rule:` bullets: PASS this criterion silently (no issue).
-- If present with **≥1 `cmd:` / bare bullet:** check whether the brief's `## Configuration` section carries a line `- **Executable Acceptance Approved:** sha256:<hash>` where `<hash>` is exactly 64 lowercase hex characters.
-  - **Plan Reviewer is structurally read-only (no `Bash`, no execution — see `disallowedTools`) and therefore CANNOT recompute the hash itself to verify it matches the CURRENT bullets.** This check is a *presence/well-formedness* check only — it confirms a syntactically valid stamp line exists, not that its hash is cryptographically correct for the current bullet content. **The actual content-match enforcement (including staleness — an edit after stamping) is `run-ground-truth.sh`'s job at Phase 4.5 execution time**, which recomputes the hash via the same shared `exec-acceptance-lib.sh` definition on every run and refuses execution on any mismatch. This criterion and that runtime gate are deliberately two independent layers (defense in depth): even if a malformed/forged/stale stamp slips past this presence check, the runtime gate still blocks execution.
-  - **No syntactically well-formed stamp line found** → emit ONE `executable_acceptance` issue that lists every flagged bullet verbatim (both `cmd:` and bare-shell bullets — a bare bullet like `- npm test` is classified as `cmd` by the runner and is equally trust-sensitive) and states: a `--brief`-sourced `cmd:`/bare bullet will NOT execute at Phase 4.5 without a valid stamp (`unverified`, reason `cmd_unapproved`) — a human must review these exact bullets and either approve-and-stamp them (Launch Pad Phase 6 `approve-and-stamp`) or strip them before this brief is executable. This escalates the review decision — see the Decision Matrix.
-  - **A well-formed stamp line IS found** → emit the same `executable_acceptance` issue for visibility, but at LOW severity only (the human already reviewed and stamped these exact bullets at authoring time — actual hash-match enforcement still happens at Phase 4.5 regardless of this criterion's outcome).
+- **Absent section: skip silently — no issue emitted.**
+- Present: classify each `- ` bullet up to the next `## ` heading with the runner's rule (`exec-acceptance-lib.sh`'s `classify_kind`): a bullet is the trust-sensitive `cmd` kind if it starts with `cmd:` **or** is **bare** (no recognized `corpus-task:` / `qa-executor:` / `rule:` prefix). `rule:` bullets carry no shell (Criterion 17 owns them); only `corpus-task:` / `qa-executor:` / `rule:` bullets → PASS silently.
+- ≥1 `cmd:` / bare bullet: look for `- **Executable Acceptance Approved:** sha256:<hash>` in `## Configuration`, `<hash>` exactly 64 lowercase hex. You cannot recompute the hash (no Bash), so this is a *presence/well-formedness* check only; content match and staleness are `run-ground-truth.sh`'s job at Phase 4.5 (two independent layers).
+  - **No well-formed stamp** → ONE `executable_acceptance` issue listing every flagged bullet verbatim (bare `- npm test` included), stating they will NOT execute at Phase 4.5 (`unverified`, reason `cmd_unapproved`) until a human approve-and-stamps (Launch Pad Phase 6) or strips them.
+  - **A well-formed stamp IS found** → the same issue at LOW, for visibility only.
+- A `cmd:` bullet in a Launch-Pad-authored brief (which authors only `corpus-task:` bullets) is also an authoring-convention violation — say so in `description` when you can tell.
 
 **Issue category:** `executable_acceptance` (new category — use this in the issues array for any Criterion 14 finding).
 
-**Severity if failed:**
-
-- **NEEDS_HUMAN escalation:** ≥1 `cmd:` / bare bullet present AND NO well-formed stamp line found. The issue itself carries `severity: LOW` (the enum has no `NEEDS_HUMAN` value), but this condition forces the OVERALL `PLAN_REVIEW_RESULT.decision` to **NEEDS_HUMAN** via a dedicated Decision Matrix row (see below) — NOT via the generic BLOCKING/HIGH→FAIL mapping (FAIL would block save entirely; NEEDS_HUMAN allows explicit human override, which is the correct outcome here: a human may review the bullets right now and choose "Override and save", or Launch Pad's Phase 6 `approve-and-stamp`/`strip-cmd-bullets` flow resolves it directly).
-- LOW (advisory/visibility): ≥1 `cmd:` / bare bullet present AND a well-formed stamp line exists. The decision is unaffected — the brief still saves under the normal PASS rules.
-
-**Why machine-authored briefs should carry no `cmd:` bullets:** the Launch Pad authoring convention (`skills/supervisor-readiness/SKILL.md` §"`## Executable Acceptance`", `agents/launch-pad.md` Phase 5) directs Launch Pad to emit only `corpus-task:` bullets. A `cmd:` bullet in a Launch-Pad-authored brief is therefore an authoring-convention violation as well as a trust-surface finding — note both in the issue's `description` when you can tell the brief was machine-authored. A machine-authored brief never carries the stamp by construction, so it will hit the NEEDS_HUMAN escalation above unless a human has since approved-and-stamped it.
-
-**Conditional:** Absent `## Executable Acceptance` section → skip silently. Present without `cmd:`/bare bullets → PASS silently. Present with `cmd:`/bare bullets AND a well-formed stamp → LOW `executable_acceptance` issue, decision unaffected. Present with `cmd:`/bare bullets and NO well-formed stamp → LOW `executable_acceptance` issue that forces decision `NEEDS_HUMAN` per the Decision Matrix.
+**Severity if failed:** always `severity: LOW`; with NO well-formed stamp it forces the decision to **NEEDS_HUMAN** via its own Decision Matrix row (not FAIL — Launch Pad's `approve-and-stamp`/`strip-cmd-bullets` flow or an override resolves it); with a stamp the decision is unaffected.
 
 ### 15. Canonical-List / Source-of-Truth Verification (v14.31.0+, conditional)
 
-**Check:** If the brief asserts that one of its lists/values is the *canonical source of truth* — and cites the source whose values it claims to match — do the brief's listed values actually match that cited source?
-
 **How:**
 
-- **TRIGGER (gate narrowly — only fire when BOTH halves hold):**
-  1. The brief uses explicit canonical-source phrasing — "single source of truth", "canonical list", "exact names", "authoritative" (or close variants like "the source of truth", "must match exactly", "verbatim from"); **AND**
-  2. The brief **cites a source** — a file path or location (e.g. `plugin.json`, `skills/SKILLS_INDEX.md`, `.git/refs/heads/`) whose values the brief claims to match, restate, or enumerate.
-- **If either half is absent: skip silently — no issue emitted** (fully backward compatible; mirrors Criteria 11, 13, and 14). This narrow gate is what keeps ordinary briefs — which routinely use words like "list" or "source" without claiming canonicity *and* citing a source — free of false positives.
-- When triggered, **read the cited source** (Plan Reviewer is structurally read-only — use `Read`/`Glob`/`Grep` only) and verify the brief's listed/restated values against it:
-  - Compare each value the brief claims to match against the cited source's actual content.
-  - Flag any mismatch with concrete evidence: what was checked (which source path/lines), what the brief asserted, and what the source actually contained.
-  - If the cited source is **unreadable** (path does not exist / cannot be opened), do not fabricate a mismatch — report a LOW advisory noting the source could not be verified.
+- **TRIGGER only when BOTH hold:** (1) explicit canonical phrasing — "single source of truth", "canonical list", "exact names", "authoritative" (or "the source of truth", "must match exactly", "verbatim from"); **AND** (2) a cited source — a file path or location (e.g. `plugin.json`, `skills/SKILLS_INDEX.md`, `.git/refs/heads/`) whose values the brief claims to match. **Either half absent: skip silently.**
+- Triggered: read the cited source and compare each claimed value; a mismatch cites the source path/lines, what the brief asserted and what the source contained. Unreadable source → a LOW advisory, never a fabricated mismatch.
 
 **Issue category:** `canonical_source` (new category — use this in the issues array for any Criterion 15 finding; same precedent as `executable_acceptance` for Criterion 14).
 
-**Severity if failed:**
+**Severity if failed:** LOW (source unverifiable, or a cosmetic divergence — decision stays PASS); MEDIUM (readable source, concrete value mismatch); BLOCKING (the wrong restated value is consumed by another subtask or a CI gate).
 
-- LOW (advisory/default): canonical-source claim present but source unverifiable, OR a minor/cosmetic divergence. By the Decision Matrix a lone LOW issue keeps the decision at **PASS**, so the brief still saves — the value is that the unverified claim is surfaced in the auditable `PLAN_REVIEW_RESULT` record.
-- MEDIUM: the cited source **is** readable AND a concrete value mismatch is found (brief restates a value that differs from the source).
-- BLOCKING: a verified mismatch would break a gate or contract (e.g. the brief restates a canonical enum/count/path that another subtask or a CI gate consumes, and the restated value is wrong).
-
-**Conditional:** Absent canonical-source claim (no canonical phrasing, or no cited source) → skip silently. Present and the brief's values match the cited source → PASS. Present and a mismatch is found → `canonical_source` finding at the severity above.
-
-**Scope boundary (not full drift coverage):** Criterion 15 catches *claims of canonicity* — it fires only when a brief both uses canonical phrasing **and** cites a source. It is **not** a general count/version/restated-list drift detector: a brief that plainly restates a canonical value without asserting canonicity (e.g. "updates the 14-agent / 18-command counts in `plugin.json`") does **not** trigger it. That broader restated-value-drift class — including the kind that causes post-merge review churn — is caught by the **Code Reviewer `consistency_audit`**, `scripts/check-doc-currency.sh`, and human review, **not** by this criterion. The narrow trigger is intentional (it keeps false positives near zero); do not mistake a PASS here for "no restated-value drift anywhere."
+**Scope boundary:** claims of canonicity only — general restated-value drift belongs to the Code Reviewer `consistency_audit` and `scripts/check-doc-currency.sh`; a PASS here is not "no drift anywhere."
 
 ### 16. Lane Declaration Validation (v15.20.0+, conditional)
 
-**Check:** Does every subtask contract block declare a `lanes:` list, does every lane path resolve to something real (an existing file, or an existing parent directory as a legitimate create target), and — the divergent-interface hazard this criterion exists to catch — is there any **same-wave lane overlap** between two subtasks?
+**Check:** `lanes:` declared, every lane path resolves, no **same-wave lane overlap** between two subtasks. The authoritative rule is `skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema" — read it, do not re-derive it here.
 
-**How:** the authoritative rule this criterion validates against is `skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema" — read it, do not re-derive it here.
-
-- **Conditional gate (mirrors Criterion 12):** if the brief's Environment section declares `legacy_brief: true`, or the brief contains no subtask contract YAML blocks at all, skip this criterion silently — no issue emitted. Otherwise, run the three checks below against every subtask contract block Criterion 12 already validated.
-- **1. `lanes:` presence.** Every subtask with a contract block MUST declare a non-empty `lanes:` list (mirrors the `provides` mandate — a subtask that genuinely touches nothing addressable may use `lanes: []` with an inline comment justifying it, same precedent as `provides: []`).
-- **2. Path resolution.** For every lane path glob, verify it resolves: `Glob` the literal path; if no match, `Glob`/`Read` its parent directory to confirm the directory exists (a legitimate create target). A lane path with neither an existing match nor an existing parent is a likely typo — except a `docs/evidence/` path (Criterion 20's evidence file creates the directory).
-- **3. Same-wave overlap (the reachability test — NOT "no direct `requires` edge").** Build the `requires` DAG's transitive closure (reuse Criterion 12's already-validated dependency graph; never re-trust an unvalidated edge set). For every pair of subtasks (A, B): if their `lanes` glob sets share any path, and **neither A is reachable from B nor B is reachable from A** in that closure (i.e. unordered relative to each other — NOT "the same wave number": the poll loop is event-driven, so unordered subtasks at different chain depths can still overlap in wall-clock time), that pair is a flaggable collision. Two subtasks where one IS reachable from the other — directly OR transitively, e.g. A → B → C where A and C share no direct edge but C is still reachable from A — are sequentially ordered; a shared lane path between them is **legal** and must NOT be flagged. Getting this backwards (flagging every pair with no *direct* edge) produces false positives on every transitively-ordered chain longer than one hop.
+- **Conditional gate (mirrors Criterion 12):** `legacy_brief: true`, or no subtask contract YAML blocks → skip silently. Otherwise run the three checks on every block Criterion 12 validated.
+- **1. `lanes:` presence.** Every subtask with a contract block MUST declare a non-empty `lanes:` list (`lanes: []` with an inline justifying comment is allowed, same precedent as `provides: []`).
+- **2. Path resolution.** `Glob` each lane path; no match → `Glob`/`Read` its parent directory (a legitimate create target). Neither → a likely typo — except a `docs/evidence/` path (Criterion 20's evidence file creates the directory).
+- **3. Same-wave overlap (the reachability test — NOT "no direct `requires` edge").** In the transitive closure of Criterion 12's validated DAG, a pair whose `lanes` share a path collides only when **neither is reachable from the other** (not "the same wave number" — the poll loop is event-driven). One reachable from the other, even transitively (A → B → C), is ordered and legal.
 
 **Issue category:** `lane_overlap` — use this category in the issues array of PLAN_REVIEW_RESULT for any Criterion 16 violation.
 
-**Severity if failed:**
+**Severity if failed:** BLOCKING (same-wave overlap, check 3); HIGH (no `lanes:` list at all, check 1); MEDIUM (unresolvable lane path, check 2).
 
-- BLOCKING: a same-wave lane overlap is detected (check 3) — this is the actual divergent-interface hazard the Lane Declaration Schema exists to prevent (the ST-1/ST-2 conflicting-flag-shapes incident that motivated this brief).
-- HIGH: a subtask with a contract block declares no `lanes:` list at all (not even `lanes: []` with justification) — check 1.
-- MEDIUM: a lane path resolves to neither an existing file nor an existing parent directory — check 2 (likely typo).
-
-**Conditional:** `legacy_brief: true`, or no contract blocks present → skip silently (mirrors Criterion 12). Present, all three checks pass → PASS. Present with a violation → issue at the severity above.
-
-**Note (visibility vs. preservation — do not over-scope this criterion):** the Lane Declaration Schema draws a hard line between sequential lane sharing granting *visibility* (a downstream subtask can see an upstream subtask's committed file) versus *preservation* (nothing re-verifies the upstream subtask's `provides` symbol still resolves after the downstream edit). Criterion 16 checks lane declarations and same-wave collisions only — it does NOT check preservation; that remains a manual authoring/review discipline per the schema's own explicit statement, and Plan Reviewer must not silently expand this criterion's scope to cover it.
+**Scope:** lane declarations and same-wave collisions only — never *preservation* (whether an upstream `provides` symbol survives a downstream edit), which the schema leaves to manual discipline.
 
 ### 17. Rule Conformance (v15.109.0+, conditional)
 
@@ -388,7 +257,7 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Check:** Does any acceptance criterion put its only evidence in the PR body?
 
-**Why:** FINALIZE writes the PR body from a fixed template before Phase 4.5 runs (`skills/async-orchestration/finalize.md` §"PR Body Template"), and no Phase 4.5 or `/review-pr` fix task can edit it: fixers only commit to the branch. Brief conformance judges each criterion from the diff (`agents/code-reviewer.md` step 5a), and the PR body is not in the diff. A criterion that only the PR body can satisfy fails every heal round until a human edits the body by hand (#511).
+**Why:** no fix task can edit the PR body, and brief conformance (`agents/code-reviewer.md` step 5a) judges only the diff — a PR-body-only criterion fails every heal round.
 
 **How:**
 - **Conditional gate:** read every `## Acceptance Criteria` bullet and every Subtask Structure criteria subset. None names the PR body, PR description or pull-request description as the place its result is recorded, pasted, listed or shown → skip silently.
@@ -408,11 +277,11 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 | All criteria satisfied (20 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, and 20 conditional), no BLOCKING/HIGH issues | **PASS** |
 | Criterion 17 finds an applicable `must` rule contradicted (17a) or its checkable `rule: <id>` bullet missing (17b) | **FAIL** (HIGH `rule_conformance` issue) |
 | Criterion 20 finds an acceptance criterion whose only evidence is the PR body (20a) | **FAIL** (HIGH `pr_body_evidence` issue; Launch Pad's refine loop rewrites it to the evidence-file form) |
-| Only MEDIUM/LOW issues, design approach unambiguous, AND no Criterion 14 or 17c NEEDS_HUMAN escalation (see rows below) | **PASS** (all issues recorded for visibility — e.g. a stamped Criterion 14 `executable_acceptance` finding — but the save is not blocked) |
+| Only MEDIUM/LOW issues, design approach unambiguous, AND no Criterion 14 or 17c NEEDS_HUMAN escalation (see rows below) | **PASS** (issues recorded for visibility; the save is not blocked) |
 | Any BLOCKING or HIGH severity issue found | **FAIL** |
 | Only MEDIUM/LOW issues, but design approach is ambiguous | **NEEDS_HUMAN** |
-| Criterion 17c finds an advisory-rule contradiction with no well-formed `Rule override:` line, or a pending conflict line, and no BLOCKING/HIGH issue exists | **NEEDS_HUMAN** (the owner decides: override the rule, or change the brief to honor it; like the Criterion 14 row, independent of ambiguity) |
-| Criterion 14 finds ≥1 `cmd:`/bare Executable Acceptance bullet with NO well-formed `## Configuration` stamp — regardless of the issue's own LOW severity field and regardless of any other criterion's outcome | **NEEDS_HUMAN** (a dedicated, non-ambiguity-dependent escalation — see Criterion 14; this row is evaluated independently of, and takes precedence over, the generic MEDIUM/LOW→PASS row above) |
+| Criterion 17c finds an advisory-rule contradiction with no well-formed `Rule override:` line, or a pending conflict line, and no BLOCKING/HIGH issue exists | **NEEDS_HUMAN** (the owner decides: override the rule, or change the brief to honor it) |
+| Criterion 14 finds ≥1 `cmd:`/bare Executable Acceptance bullet with NO well-formed `## Configuration` stamp, whatever the issue's LOW severity | **NEEDS_HUMAN** (dedicated escalation, independent of ambiguity; takes precedence over the MEDIUM/LOW→PASS row) |
 
 ---
 
@@ -487,12 +356,3 @@ Before producing PLAN_REVIEW_RESULT:
 - [ ] Every BLOCKING/HIGH issue has evidence (what was checked, what was found)
 - [ ] Decision matches issue severities (FAIL if any BLOCKING/HIGH)
 
----
-
-## Integration Notes
-
-- Spawned by Launch Pad agent during Phase 5.5 (not user-facing)
-- Structurally read-only: tools limited to Read/Glob/Grep, Bash in disallowedTools
-- No permissionMode set (ignored for plugin-distributed agents)
-- Output validated by SubagentStop hook in hooks.json
-- Max 3 spawns per Launch Pad session (retry on FAIL)
