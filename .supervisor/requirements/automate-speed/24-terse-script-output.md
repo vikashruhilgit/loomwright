@@ -58,3 +58,9 @@ loomwright/scripts/test-project-memory.sh
 loomwright/scripts/verify-provides.sh
 loomwright/scripts/test-verify-provides.sh
 changelog.d/as24-terse-script-output.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-20T14:28:53Z
+- **Brief:** .supervisor/jobs/done/2026-10-20-as24-terse-script-output.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/635
