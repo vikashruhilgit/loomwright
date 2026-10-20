@@ -6,7 +6,8 @@
 # thing that decides the gate.
 #
 # Usage:
-#   verify-provides.sh <brief> <subtask-id> [--root <dir>]     # default --root .
+#   verify-provides.sh <brief> <subtask-id> [--root <dir>]     # default --root .; ONE summary line
+#   verify-provides.sh --verbose <brief> <subtask-id> [--root <dir>]   # the JSON object (consumers)
 #   verify-provides.sh <brief> <subtask-id> --parse-only        # anchor/contract parse only, no disk checks
 #   verify-provides.sh --kind-table                            # print the 3-row markdown check table
 #
@@ -26,7 +27,10 @@
 # "<path>: <field> checked as `<reading>` (<why>)" — Plan Reviewer Criterion 12 blocks on it. With
 # no such field the key is absent and the object is unchanged.
 #
-# Output (ONE JSON object on stdout, always exit 0):
+# Default output (ONE line on stdout, always exit 0) — for a reader that needs only status, gap, reason:
+#   verify-provides: subtask <id> <verified|gap|unverifiable> — present <P>/<T>[, gap <outputs_gap>][, reason <reason>]
+# --verbose output (ONE JSON object on stdout, always exit 0) — what every consumer that reads the
+# records, `check_run`, `reason` or `source` passes (agents/execute-manager.md, supervisor.md, worker.md):
 #   {"subtask_id":"<id>",
 #    "outputs_verified":[{"kind":..,"path":..,"name"?:..,"status":"present"|"missing","check_run":"<command> (exit N)"}],
 #    "outputs_gap":"<path or path:name, comma-separated, or \"\">",
@@ -42,7 +46,8 @@
 #   uses `jq --arg` when jq is present); it carries `subtask_id` only when the id matches
 #   ^[[:alnum:]_-]+$, otherwise the key is omitted (argv is caller text and must never reach the
 #   JSON unescaped). Every other object is built with `jq --arg`. `--kind-table` and `--help` are
-#   the two documented non-JSON modes (a human asked for text; no consumer passes them).
+#   the two documented non-JSON modes besides the default line (a human asked for text; no consumer
+#   passes them). `--parse-only` / `--kind-table` print the same bytes with or without `--verbose`.
 #
 # Failure-mode split (CLAUDE.md §"Failure-Mode Invariants"): this script is a fail-SAFE EMITTER —
 # it always exits 0, never writes, never `cd`s into --root, never executes brief content (no eval /
@@ -107,6 +112,7 @@ root="."
 have_brief=0
 have_id=0
 parse_only=0
+verbose=0
 bad_args=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -116,8 +122,9 @@ while [ $# -gt 0 ]; do
       root="$2"; shift 2 ;;
     --root=*) root="${1#--root=}"; shift ;;
     --parse-only) parse_only=1; shift ;;
+    --verbose) verbose=1; shift ;;   # before `*)`, which would read it as the brief path
     -h|--help)
-      printf 'usage: %s <brief> <subtask-id> [--root <dir>] [--parse-only] | --kind-table\n' "$SELF" >&2
+      printf 'usage: %s [--verbose] <brief> <subtask-id> [--root <dir>] [--parse-only] | --kind-table\n' "$SELF" >&2
       exit 0 ;;
     *)
       if [ "$have_brief" -eq 0 ]; then brief="$1"; have_brief=1
@@ -134,11 +141,25 @@ root="${root%/}"
 [ -z "$root" ] && root="/"
 
 # ---------------------------------------------------------------------------
+# The terse default line (no --verbose, no --parse-only). Builtins only, so the jq-less path has it.
+# $1 = verified|gap|unverifiable, $2 = present, $3 = total, $4 = outputs_gap, $5 = reason.
+# ---------------------------------------------------------------------------
+emit_summary() {
+  sline="verify-provides: subtask ${id:-?} $1 — present $2/$3"
+  [ -n "$4" ] && sline="$sline, gap $4"
+  [ -n "$5" ] && sline="$sline, reason $5"
+  printf '%s\n' "${sline//[$'\n\r']/ }"   # argv-borne id: still ONE line
+  exit 0
+}
+json_out() { [ "$verbose" -eq 1 ] || [ "$parse_only" -eq 1 ]; }
+
+# ---------------------------------------------------------------------------
 # The ONE shell-templated object shape (used only when jq may be absent). Builtins only.
 # ---------------------------------------------------------------------------
 emit_templated() {
   # $1 = reason (a fixed literal from this file, never caller text). subtask_id is carried only when
   # the id matches the allowlist — argv is caller text and must never reach the JSON unescaped.
+  json_out || emit_summary unverifiable 0 0 "" "$1"
   case "$id" in
     ''|*[![:alnum:]_-]*)
       printf '{"status":"unverifiable","reason":"%s","source":"%s"}\n' "$1" "$SELF" ;;
@@ -153,6 +174,7 @@ emit_templated() {
 # ---------------------------------------------------------------------------
 if [ -n "$bad_args" ]; then
   printf '%s: unverifiable — bad_args (%s)\n' "$SELF" "$bad_args" >&2
+  json_out || emit_summary unverifiable 0 0 "" "bad_args"
   if command -v jq >/dev/null 2>&1; then
     jq -n -c --arg id "$id" --arg s "$SELF" \
       '{status: "unverifiable", reason: "bad_args", source: $s} + (if $id == "" then {} else {subtask_id: $id} end)'
@@ -172,6 +194,7 @@ fi
 emit_unverifiable() {
   # $1 = reason
   printf '%s: unverifiable — %s (brief=%s subtask=%s)\n' "$SELF" "$1" "$brief" "$id" >&2
+  json_out || emit_summary unverifiable 0 0 "" "$1"
   jq -n -c --arg id "$id" --arg r "$1" --arg s "$SELF" \
     '{subtask_id: $id, status: "unverifiable", reason: $r, source: $s}'
   exit 0
@@ -181,7 +204,7 @@ emit_unverifiable() {
 # Brief readable?
 # ---------------------------------------------------------------------------
 if [ "$have_brief" -eq 0 ] || [ "$have_id" -eq 0 ]; then
-  printf 'usage: %s <brief> <subtask-id> [--root <dir>] [--parse-only] | --kind-table\n' "$SELF" >&2
+  printf 'usage: %s [--verbose] <brief> <subtask-id> [--root <dir>] [--parse-only] | --kind-table\n' "$SELF" >&2
   emit_unverifiable "brief_unreadable"
 fi
 if [ ! -f "$brief" ] || [ ! -r "$brief" ]; then
@@ -359,6 +382,8 @@ warns='[]'
 gap=""
 line_no=0
 parse_ok=1
+total=0
+present=0
 
 parsed="$(parse_brief "$id" 0)"
 first="${parsed%%$'\n'*}"
@@ -436,7 +461,8 @@ while IFS= read -r line; do
       ;;
   esac
 
-  if [ "$rc" -eq 0 ]; then st="present"; else st="missing"; fi
+  if [ "$rc" -eq 0 ]; then st="present"; present=$((present + 1)); else st="missing"; fi
+  total=$((total + 1))
 
   entries="$(jq -c --arg k "$kind" --arg p "$path" --arg n "$name" --arg s "$st" --arg c "$check_run" \
     '. + [ ({kind: $k, path: $p} + (if $k == "file" then {} else {name: $n} end) + {status: $s, check_run: $c}) ]' \
@@ -487,6 +513,10 @@ if [ "$parse_ok" -ne 1 ]; then
   emit_unverifiable "brief_unreadable"
 fi
 
+if [ "$verbose" -ne 1 ]; then
+  if [ -z "$gap" ]; then emit_summary verified "$present" "$total" "" ""; fi
+  emit_summary gap "$present" "$total" "$gap" ""
+fi
 jq -n -c --arg id "$id" --argjson ov "$entries" --arg gap "$gap" --arg s "$SELF" \
   '{subtask_id: $id, outputs_verified: $ov, outputs_gap: $gap, source: $s}'
 exit 0

@@ -7,12 +7,31 @@
 # read-side enforcement the red-team (W1) required: write-side provenance alone is theater.
 #
 # Output is ADVISORY and prefixed with a subordinate-to-CLAUDE.md banner. Agents (Launch Pad
-# in v1) call this instead of `cat`-ing the file. Fail-safe: if no sha tool, emit nothing.
+# in v1) call this instead of `cat`-ing the file.
 #
-# Usage:  read-project-memory.sh           (prints verified memory to stdout)
+# Usage:  read-project-memory.sh            (terse default)
+#         read-project-memory.sh --verbose  (the full pre-terse output, byte for byte)
+# Default: ONE header line carrying the count — the banner + ` — <E> verified` — then one line per
+#   verified entry. With nothing to emit it prints ONLY the header, ending ` — 0 verified (<token>)`,
+#   where <token> is exactly one of: no_store | no_sha_tool | no_verified_entries.
+# --verbose: the banner, the verified entries, then `(no verified project-memory entries)` when there
+#   are none; NOTHING at all when there is no store or no sha tool (fail-safe). build-handoff.sh
+#   passes it, so the handoff digest bytes are unchanged.
 # Exit:   always 0 (a read must never break the caller); diagnostics go to stderr + memory.log.
 
 set -uo pipefail   # `set -e` intentionally omitted — a read must NEVER fail its caller.
+
+BANNER="## Advisory project memory — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)"
+verbose=0
+for a in "$@"; do
+  case "$a" in
+    --verbose) verbose=1 ;;
+    *) echo "read-project-memory: unexpected argument $a (ignored)" >&2 ;;
+  esac
+done
+# empty_exit <token> — nothing to emit: the default names why in its one header line; --verbose
+# keeps the pre-terse silence.
+empty_exit() { [ "$verbose" -eq 1 ] || printf '%s — 0 verified (%s)\n' "$BANNER" "$1"; exit 0; }
 
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$GITROOT" 2>/dev/null || true
@@ -23,11 +42,11 @@ PROV="$MEM_DIR/.provenance.jsonl"
 LOG=".supervisor/logs/memory.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 
-[ -f "$MEM" ] || exit 0   # no memory yet → emit nothing
+[ -f "$MEM" ] || empty_exit no_store   # no memory yet
 
 if command -v sha256sum >/dev/null 2>&1; then   sha() { sha256sum | cut -d' ' -f1; }
 elif command -v shasum  >/dev/null 2>&1; then   sha() { shasum -a 256 | cut -d' ' -f1; }
-else echo "read-project-memory: no sha256 tool — memory unverifiable, emitting nothing (fail-safe)" >&2; exit 0; fi
+else echo "read-project-memory: no sha256 tool — memory unverifiable, emitting no entries (fail-safe)" >&2; empty_exit no_sha_tool; fi
 
 field() { printf '%s' "$1" | sed -E "s/.*\"$2\":\"([^\"]*)\".*/\1/"; }
 
@@ -61,9 +80,9 @@ if [ -f "$PROV" ]; then
   done < "$PROV"
 fi
 
-# 2. Emit memory entries whose sha(fact) is in the trusted set; drop + log the rest.
-printf '%s\n' "## Advisory project memory — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)"
-emitted=0; dropped=0
+# 2. Emit memory entries whose sha(fact) is in the trusted set; drop + log the rest. Verified lines
+#    are buffered so the default header can carry the count before them.
+emitted=0; dropped=0; kept=""
 while IFS= read -r line; do
   case "$line" in
     "- ["*) ;;        # a memory entry
@@ -72,13 +91,23 @@ while IFS= read -r line; do
   fact="$(printf '%s' "$line" | sed -E 's/^- \[[^]]*\] //')"
   fh="$(printf '%s' "$fact" | sha)"
   if grep -qxF "$fh" "$trusted" 2>/dev/null; then
-    printf '%s\n' "$line"; emitted=$((emitted+1))
+    kept="$kept$line
+"; emitted=$((emitted+1))
   else
     printf '[%s] DROPPED unverified memory line: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$line" >> "$LOG"
     dropped=$((dropped+1))
   fi
 done < "$MEM"
 
-[ "$emitted" -eq 0 ] && printf '%s\n' "(no verified project-memory entries)"
 [ "$dropped" -gt 0 ] && echo "read-project-memory: dropped $dropped unverified line(s) — see $LOG" >&2
+if [ "$verbose" -eq 1 ]; then
+  printf '%s\n' "$BANNER"
+  printf '%s' "$kept"
+  [ "$emitted" -eq 0 ] && printf '%s\n' "(no verified project-memory entries)"
+elif [ "$emitted" -eq 0 ]; then
+  empty_exit no_verified_entries
+else
+  printf '%s — %s verified\n' "$BANNER" "$emitted"
+  printf '%s' "$kept"
+fi
 exit 0

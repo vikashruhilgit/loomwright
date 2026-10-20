@@ -17,7 +17,23 @@
 #                   NOT hard-code any workflow filename (e.g. claude-code-review.yml);
 #                   matching is generic via the two regexes below.
 #
-#   OUTPUT (stdout): a JSON ARRAY (compact, one line) containing ONLY the input
+#   OUTPUT (stdout), DEFAULT (automate-speed/24): ONE summary line for a human or
+#                   LLM reader, never parsed by a machine caller:
+#                     classify-bot-review: kept <K> of <N> (skipped_self <S>)
+#                   K = elements classified IN, N = input array length, S =
+#                   elements dropped by the --skip-marker self-skip filter. On
+#                   every FAIL-SAFE path (below) it is instead
+#                     classify-bot-review: kept 0 of 0 (reason <token>)
+#                   where <token> is exactly one of: empty_input, invalid_json,
+#                   not_array, jq_missing, stdin_timeout (stdin_timeout wins
+#                   whenever the bounded read timed out). This open set is owned
+#                   HERE and appears only in this summary line.
+#
+#   OUTPUT (stdout), --verbose: the machine contract, byte-identical to the
+#                   pre-automate-speed/24 default. Every caller that parses the
+#                   result (review-heal-next-step.sh, pr-postmortem-gather.sh)
+#                   passes --verbose immediately after the script path. It is
+#                   a JSON ARRAY (compact, one line) containing ONLY the input
 #                   elements classified as BOT-AUTHORED REVIEW FINDINGS — i.e.
 #                   `.user.login` matches bot_author_re AND `.body` matches
 #                   review_marker_re (both case-insensitive). Each retained
@@ -31,7 +47,8 @@
 #   FAIL-SAFE: empty input, missing/blank stdin, non-array input, invalid JSON,
 #              or a missing jq all degrade to `[]` on stdout and exit 0. This
 #              helper NEVER crashes a caller and NEVER exits non-zero on a data
-#              problem (it only ever emits a JSON array + exit 0).
+#              problem (it only ever emits a JSON array + exit 0). Without
+#              --verbose the `[]` is the `kept 0 of 0 (reason <token>)` line.
 #
 #   NEVER-HANGS: the stdin read is BOUNDED (`read -t`, default 10s, overridable via
 #              CLASSIFY_STDIN_TIMEOUT) and the blank-check is an early-exit `case`
@@ -130,8 +147,26 @@ TRUSTED_ACTORS_GIVEN=0
 # since an EXPLICIT empty string is itself the disable signal (see the header
 # doc above).
 SKIP_MARKER_PREFIX="<!-- loomwright:"
+VERBOSE=0
+TIMED_OUT=0
+# fail_safe <token> — the single exit for every fail-safe path: `[]` under
+# --verbose (the machine contract), the reason-carrying summary otherwise.
+# stdin_timeout overrides the caller's token whenever the bounded read timed out.
+fail_safe() {
+  if [ "$VERBOSE" -eq 1 ]; then
+    printf '[]\n'
+  else
+    if [ "$TIMED_OUT" -eq 1 ]; then set -- stdin_timeout; fi
+    printf 'classify-bot-review: kept 0 of 0 (reason %s)\n' "$1"
+  fi
+  exit 0
+}
 while [ $# -gt 0 ]; do
   case "$1" in
+    --verbose)
+      VERBOSE=1
+      shift
+      ;;
     --trusted-actors)
       TRUSTED_ACTORS_FILE="${2:-}"
       TRUSTED_ACTORS_GIVEN=1
@@ -160,8 +195,7 @@ done
 
 # jq absent → fail-safe empty array, exit 0 (never crash a caller).
 if ! command -v jq >/dev/null 2>&1; then
-  printf '[]\n'
-  exit 0
+  fail_safe jq_missing
 fi
 
 # Resolve the actor-allowlist mode. USE_TRUSTED_ACTORS=1 => exact-match mode
@@ -204,6 +238,7 @@ IFS= read -r -d '' -t "${CLASSIFY_STDIN_TIMEOUT:-10}" INPUT || _read_rc=$?
 # signal. Goes to STDERR only — stdout stays the JSON-array contract.
 if [ "$_read_rc" -gt 128 ] || [ "$(( SECONDS - _stdin_t0 ))" -ge "${CLASSIFY_STDIN_TIMEOUT:-10}" ]; then
   printf 'classify-bot-review: stdin read timed out after %ss; degrading to []\n' "${CLASSIFY_STDIN_TIMEOUT:-10}" >&2
+  TIMED_OUT=1
 fi
 
 # Blank / missing stdin → []. Use a `case` glob that EARLY-EXITS on the first
@@ -215,7 +250,7 @@ fi
 # array returns in microseconds and even an all-whitespace input stays bounded.
 case "$INPUT" in
   *[![:space:]]*) : ;;            # has a non-whitespace byte → proceed
-  *) printf '[]\n'; exit 0 ;;     # empty or whitespace-only → []
+  *) fail_safe empty_input ;;     # empty or whitespace-only → []
 esac
 
 # Resolve skip-marker mode: an EXPLICIT empty --skip-marker value disables the
@@ -269,6 +304,7 @@ RAW_RESULT="$(printf '%s' "$INPUT" | jq -c \
   if type=="array" then
     ([ .[]? | select(marker_skip((((.body)? | strings) // ""))) ] | length) as $dropped
     | { dropped: $dropped,
+        n: length,
         out: [ .[]?
           | select(
               (marker_skip((((.body)? | strings) // "")) | not)
@@ -277,14 +313,13 @@ RAW_RESULT="$(printf '%s' "$INPUT" | jq -c \
               and ((((.body)? | strings) // "") | test(review_marker_re; "i"))
             ) ] }
   else
-    { dropped: 0, out: [] }
+    { dropped: 0, not_array: true, out: [] }
   end
 ' 2>/dev/null || true)"
 
-# Defensive: empty / non-JSON jq output → [].
+# Defensive: empty / non-JSON jq output → [] (invalid JSON input lands here).
 if [ -z "$RAW_RESULT" ] || ! printf '%s' "$RAW_RESULT" | jq -e . >/dev/null 2>&1; then
-  printf '[]\n'
-  exit 0
+  fail_safe invalid_json
 fi
 
 OUTPUT="$(printf '%s' "$RAW_RESULT" | jq -c '.out' 2>/dev/null || echo '[]')"
@@ -292,8 +327,14 @@ DROPPED="$(printf '%s' "$RAW_RESULT" | jq -r '.dropped // 0' 2>/dev/null || echo
 
 # Defensive (belt-and-braces): OUTPUT must itself be a valid array.
 if [ -z "$OUTPUT" ] || ! printf '%s' "$OUTPUT" | jq -e '(type=="array")' >/dev/null 2>&1; then
-  printf '[]\n'
-  exit 0
+  fail_safe invalid_json
+fi
+
+# Default (non-verbose) path only: a non-array input is a fail-safe, named as
+# such. Under --verbose it stays today's `[]` from OUTPUT below, byte for byte.
+if [ "$VERBOSE" -eq 0 ] \
+   && printf '%s' "$RAW_RESULT" | jq -se 'any(.[]; .not_array == true)' >/dev/null 2>&1; then
+  fail_safe not_array
 fi
 
 # One-line stderr note ONLY when the skip-marker filter actually changed
@@ -305,5 +346,14 @@ case "$DROPPED" in
   *) printf 'classify-bot-review: skip_marker_filtered %s\n' "$DROPPED" >&2 ;;
 esac
 
-printf '%s\n' "$OUTPUT"
+if [ "$VERBOSE" -eq 1 ]; then
+  printf '%s\n' "$OUTPUT"
+  exit 0
+fi
+# One line even if the input held several JSON documents (-s sums across them).
+SUMMARY="$(printf '%s' "$RAW_RESULT" | jq -rs \
+  '"kept \(map(.out | length) | add // 0) of \(map(.n // 0) | add // 0) (skipped_self \(map(.dropped // 0) | add // 0))"' \
+  2>/dev/null || true)"
+[ -n "$SUMMARY" ] || fail_safe invalid_json
+printf 'classify-bot-review: %s\n' "$SUMMARY"
 exit 0

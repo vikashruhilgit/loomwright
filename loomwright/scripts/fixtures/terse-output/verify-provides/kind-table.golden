@@ -1,0 +1,5 @@
+| `kind` | Verification command | PRESENT condition |
+|--------|----------------------|-------------------|
+| `file` | `test -f <root>/<path>` | exit 0 |
+| `symbol` | `grep -nE -- '<escaped name>' <root>/<path>` | any match (exit 0) |
+| `type` | `grep -nE -- '(type\|interface\|class\|enum)[[:space:]]+<escaped name>([^[:alnum:]_]\|$)' <root>/<path>` | any match (exit 0) |

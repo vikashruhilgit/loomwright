@@ -1,0 +1,4 @@
+lane-status: automate-2026-10-07-120000 — 3 lane(s) — 2026-10-07T12:30:00Z — started 2026-10-07T12:00:05Z
+L1  merged — done (wave PR merged)  item=reqs/a.md  pr=https://github.com/o/r/pull/11  ended=2026-10-07T12:19:30Z  path=/work/primary-lanes/automate-2026-10-07-120000/L1
+L2  awaiting_input  item=reqs/b.md  pr=-  path=/work/primary-lanes/automate-2026-10-07-120000/L2
+L3  running  item=-  pr=-  path=/work/primary-lanes/automate-2026-10-07-120000/L3

@@ -1,13 +1,17 @@
 # ==================================================================================================
 # lane-status [<parent_runfile>] [--json] [--watch] [--leaks [--snapshot]] [--resources] [--tokens]
-#             [--refresh-readiness] [--keep-awake] [--inbox]
+#             [--refresh-readiness] [--keep-awake] [--inbox] [--verbose]
+# The plain view (no mode flag) is terse: the header line plus each lane's first line
+# (_lanes_render_terse); `--verbose` prints the full _lanes_render view, which `--watch` always shows.
+# Mode flags (--json, --inbox, --leaks, --resources, --tokens) ignore --verbose.
 lanes_status() {
-  local rf="" json=0 watch=0 leaks=0 snap=0 res=0 tok=0 ka=0 refresh=0 inbox=0
+  local rf="" json=0 watch=0 leaks=0 snap=0 res=0 tok=0 ka=0 refresh=0 inbox=0 verbose=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --inbox) inbox=1 ;;
       --json) json=1 ;; --watch) watch=1 ;; --leaks) leaks=1 ;; --snapshot) leaks=1; snap=1 ;;
       --resources) res=1 ;; --tokens) tok=1 ;; --keep-awake) ka=1 ;; --refresh-readiness) refresh=1 ;;
+      --verbose) verbose=1 ;;
       -*) echo "lane-status: unknown flag '$1'" >&2; return 2 ;;
       *) [ -z "$rf" ] || { echo "lane-status: unexpected argument '$1'" >&2; return 2; }; rf="$1" ;;
     esac
@@ -47,11 +51,11 @@ lanes_status() {
   fi
   doc="$(_lanes_status_doc "$table" "$parent" "$primary")"
   if [ -z "$doc" ]; then echo "lane-status: unknown — status unreadable"; return 0; fi
-  if [ "$json" = 1 ]; then printf '%s\n' "$doc"; else _lanes_render "$doc"; fi
+  if [ "$json" = 1 ]; then printf '%s\n' "$doc"; elif [ "$verbose" = 1 ]; then _lanes_render "$doc"; else _lanes_render_terse "$doc"; fi
   return 0
 }
 
-# _lanes_watch [<parent_runfile>] — the plain view every LOOMWRIGHT_LANES_WATCH_INTERVAL_S (default 15)
+# _lanes_watch [<parent_runfile>] — the full plain view (`--verbose`) every LOOMWRIGHT_LANES_WATCH_INTERVAL_S (default 15)
 # seconds; LOOMWRIGHT_LANES_WATCH_ITERATIONS (default 0 = until interrupted) is the test seam.
 _lanes_watch() {
   local n="${LOOMWRIGHT_LANES_WATCH_ITERATIONS:-0}" iv="${LOOMWRIGHT_LANES_WATCH_INTERVAL_S:-15}" i=0
@@ -60,7 +64,7 @@ _lanes_watch() {
   while :; do
     [ -t 1 ] && printf '\033[H\033[2J'
     echo "lane-status --watch — $(now_utc) — every ${iv}s (interrupt to stop)"
-    if [ -n "${1:-}" ]; then lanes_status "$1"; else lanes_status; fi
+    if [ -n "${1:-}" ]; then lanes_status "$1" --verbose; else lanes_status --verbose; fi
     i=$((i + 1)); [ "$n" -gt 0 ] && [ "$i" -ge "$n" ] && return 0
     sleep "$iv"
   done
