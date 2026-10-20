@@ -236,7 +236,7 @@ printf '%s' "$COMMENTS_JSON" | jq -e 'type=="array"' >/dev/null 2>&1 || COMMENTS
 # never an unavailable emit (a comments problem must NEVER fail the gather).
 CLASSIFY_BIN="$(dirname "${BASH_SOURCE[0]}")/classify-bot-review.sh"
 if [ -x "$CLASSIFY_BIN" ]; then
-  BOT_REVIEW_JSON="$(printf '%s' "$COMMENTS_JSON" | bash "$CLASSIFY_BIN" 2>/dev/null)" || BOT_REVIEW_JSON='[]'
+  BOT_REVIEW_JSON="$(printf '%s' "$COMMENTS_JSON" | bash "$CLASSIFY_BIN" --verbose 2>/dev/null)" || BOT_REVIEW_JSON='[]'
 else
   BOT_REVIEW_JSON='[]'
 fi

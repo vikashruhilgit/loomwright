@@ -457,7 +457,7 @@ EOF
 }
 
 rh_classify_one() { # <json array> — the classifier's findings (fail-safe: [] on anything odd)
-  printf '%s' "$1" | bash "$HERE/classify-bot-review.sh" --trusted-actors "$TRUSTED" 2>/dev/null || echo '[]'
+  printf '%s' "$1" | bash "$HERE/classify-bot-review.sh" --verbose --trusted-actors "$TRUSTED" 2>/dev/null || echo '[]'
 }
 rh_envelope() { # <channel> <item json>
   printf '[%s]' "$2" | bash "$HERE/wrap-external-text.sh" --channel "$1" --trusted-actors "$TRUSTED" 2>/dev/null
