@@ -171,14 +171,16 @@ check "AN21b no .died marker for a session that wrote its result line" "$([ -e "
 printf 'LAUNCH_PAD_RESULT:\n  status: saved\n' > "$PHDS"
 out="$(run phase-wait "$RFL" launch-pad --timeout 5)"; rc=$?
 check "AN21c … and phase-wait reads it done (exit 0)" "$rc:$out" "0:phase-wait: done — session sess-123 result $PHDS"
-awk -v q="'" '
-  index($0, "| grep -c " q "\"type\": *\"result\"" q) { print "  if ! tail -c +\"$((off + 1))\" \"$log\" 2>/dev/null | grep -q " q "\"type\": *\"result\"" q "; then printf " q "died_at\\t%s\\nexit\\t%s\\n" q " \"$(now_utc)\" \"$rc\" > \"$died\"; fi"; skip = 1; next }
+# the old line is assembled from pieces (the pipe character in p) so this file never holds a literal pipe into
+# grep -q itself — test-no-pipefail-grep-q.sh gates exactly that shape
+awk -v q="'" -v p='|' '
+  index($0, p " grep -c " q "\"type\": *\"result\"" q) { print "  if ! tail -c +\"$((off + 1))\" \"$log\" 2>/dev/null " p " grep -q " q "\"type\": *\"result\"" q "; then printf " q "died_at\\t%s\\nexit\\t%s\\n" q " \"$(now_utc)\" \"$rc\" > \"$died\"; fi"; skip = 1; next }
   skip && index($0, "case \"$n\" in") { skip = 0; next }
   { print }' "$SB" > "$MUT/automate-lanes.sh"
 if [ -s "$MUT/automate-lanes.sh" ] && ! cmp -s "$SB" "$MUT/automate-lanes.sh" && bash -n "$MUT/automate-lanes.sh" \
-   && grep -q '| grep -q .*"type": \*"result"' "$MUT/automate-lanes.sh"; then
+   && grep -qF 'if ! tail -c +"$((off + 1))" "$log"' "$MUT/automate-lanes.sh"; then
   STUB_MODE=flood bash "$MUT/automate-lanes.sh" phase-launch "$RFL" launch-pad --owner-command "$PHOWN" --coordinator-session sess-coord -- x >/dev/null 2>&1; wait_gone "$L91"
-  check "AN21d mutation (the old tail | grep -q under pipefail) ⇒ the same stream writes a false .died (exit 0)" \
+  check "AN21d mutation (the old tail-into-grep -q pipe under pipefail) ⇒ the same stream writes a false .died (exit 0)" \
     "$(sed -n 's/^exit\t//p' "$PHD/.died" 2>/dev/null)" 0
 else bad "AN21d mutant not built"; fi
 
