@@ -580,7 +580,7 @@ check "AH14 the question text is clipped by _lanes_clip 160" "$(printf '%s\n' "$
 ah_reportable="$( { grep -v '^_LANES_WAIT_' "$SB" | grep -oE '(^|[^_a-zA-Z])state=[a-z_]+' | sed 's/.*state=//'
   grep -A3 '^_lanes_parked() {' "$SB" | grep -F 'case "${1:-}" in' | sed -E 's/.* in ([a-z_|]+)\).*/\1/' | tr '|' '\n'
   grep -E '^[[:space:]]+[a-z_|]+\) state="\$ts"' "$SB" | sed -E 's/^[[:space:]]+([a-z_|]+)\).*/\1/' | tr '|' '\n'
-  grep -m1 '^- pause_reason: ' "$HERE/../skills/automate-loop/SKILL.md" | sed 's/^- pause_reason: //' | tr '|' '\n'; } | sort -u)"
+  grep -m1 '^- pause_reason: ' "$HERE/../skills/automate-loop/run-file.md" | sed 's/^- pause_reason: //' | tr '|' '\n'; } | sort -u)"
 ah_drift() { jq -r '.[]' <<<"$1" 2>/dev/null | while IFS= read -r tok; do grep -qxF -- "$tok" <<<"$ah_reportable" || printf '%s ' "$tok"; done; }
 ah_quiet="$(sed -n "s/^_LANES_WAIT_QUIET='\(.*\)'\$/\1/p" "$SB")"; ah_live="$(sed -n "s/^_LANES_WAIT_LIVE='\(.*\)'\$/\1/p" "$SB")"
 check "AH12 both arrays read, and the reportable set holds a parked, a derived, a table and an enum-only state" \
