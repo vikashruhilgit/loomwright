@@ -4,12 +4,12 @@
   "proxy_label": "proxy tokens (bytes/4 — offline proxy, not an exact Anthropic count)",
   "raise_rule": "Raise a ceiling in the SAME PR that breaches it: edit budget here and its mirror row in the same edit, and set note to a ONE-line reason (under 200 chars). History goes to CHANGELOG.md (agents: also the ARCHITECTURE_CONTRACTS.md raise log), never into note. A new skill dir or command doc starts at measured + ~10%.",
   "agents": {
-    "code-reviewer": {"budget": 27563, "measured": 25057, "note": "Raised 25131->27563 (automate-followups/06): preloaded quality-checklist gained the rule: clause. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
+    "code-reviewer": {"budget": 27563, "measured": 17681, "note": "Live 27473->17681 (automate-speed/26): prompt diet, 4 preloads moved to on-demand Reads. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "context-keeper": {"budget": 3818, "measured": 3471, "note": "Raised 3483->3818 (Fix 7, v15.18.0): record_review marked retained-but-uncalled. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
-    "execute-manager": {"budget": 42568, "measured": 38698, "note": "Raised 38646->42568 (#512): #511 and #512 together grew preloaded async-orchestration. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
+    "execute-manager": {"budget": 42568, "measured": 19283, "note": "Live 31405->19283 (automate-speed/26): prompt diet, state-management moved to an on-demand Read. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "launch-pad": {"budget": 50965, "measured": 46331, "note": "Raised 45940->50965 (#432 plan half): plan-time rule conflicts. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
     "orchestrator": {"budget": 9558, "measured": 8924, "note": "Raised 8665->9558 (Fix 7, v15.18.0): Review Gate Policy rewrite. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
-    "plan-reviewer": {"budget": 13614, "measured": 6392, "note": "Raised 12395->13614 (#511): conditional Criterion 20. measured = frozen v15.10.0 baseline; history in the ARCHITECTURE_CONTRACTS.md raise log"},
+    "plan-reviewer": {"budget": 13614, "measured": 8591, "note": "Live 12377->8591 (automate-speed/26): prompt diet. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "product-owner": {"budget": 15801, "measured": 14364, "note": "Raised 14405->15801 (agnostic-phase1/04): non-interactive can't-ask branch. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
     "qa-executor": {"budget": 52914, "measured": 48103, "note": "Raised 48165->52914 (automate-followups/06): preloaded quality-checklist gained the rule: clause. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
     "qa-strategist": {"budget": 23488, "measured": 21352, "note": "Re-measured v15.33.0 (shared agent-memory permission block) + ~10%. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
@@ -17,7 +17,7 @@
     "review-pr": {"budget": 43235, "measured": 39304, "note": "Raised 39187->43235 (no-self-matching-wait): review-heal fix-worker WAITING sentence. LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
     "rubric-grader": {"budget": 2330, "measured": 1896, "note": "Raised 2086->2330 (v15.13.0): shared-agent-prefix block. measured = frozen v15.10.0 baseline; history in the ARCHITECTURE_CONTRACTS.md raise log"},
     "supervisor": {"budget": 30378, "measured": 27725, "note": "Raised 27488->30378 (automate-speed/02): pin-mutation gate; 4f re-baseline 51814->21029 (v15.19.0). LIVE row; history in the ARCHITECTURE_CONTRACTS.md raise log"},
-    "worker": {"budget": 9949, "measured": 4158, "note": "Raised 9062->9949 (implementation-quality/02): self_review stage. measured = frozen v15.10.0 baseline; history in the ARCHITECTURE_CONTRACTS.md raise log"}
+    "worker": {"budget": 9949, "measured": 5836, "note": "Live 9127->5836 (automate-speed/26): prompt diet. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"}
   },
   "skills": {
     "agent-output": {"budget": 1495, "measured": 1359, "note": "initial ceiling: measured + ~10% (as17)"},
