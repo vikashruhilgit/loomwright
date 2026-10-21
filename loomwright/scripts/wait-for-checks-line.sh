@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # wait-for-checks-line.sh — the ONE reader of the line wait-for-checks.sh prints. Sourced, never
-# run (deliberately not named test-*.sh). Consumers: automate-helpers.d/escalation.sh
-# (escalation-cause) and drain-subfloor-decision.sh (decide). Self-test: the round-trip and
-# mutation-control legs in test-wait-for-checks.sh; each consumer's suite has spaced-name legs.
+# run (deliberately not named test-*.sh). Its consumers are every script that sources it — list them
+# with `git grep -l 'wait-for-checks-line.sh' -- 'loomwright/scripts/*.sh'`, never from a list kept
+# here (one kept here went stale). Self-test: the round-trip and mutation-control legs in
+# test-wait-for-checks.sh; the suite of each consumer that reads a name field (pending_names /
+# red_names) has spaced-name legs.
 #
 # WHY ONE READER: check names are free text — matrix contexts such as `test (18.x)` or
 # `build (ubuntu-latest)` carry spaces. Shell word-splitting the line cut a name at its first
