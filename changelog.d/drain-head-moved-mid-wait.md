@@ -9,10 +9,12 @@ reads the line through `wait-for-checks-line.sh`, and on `pending=sha_mismatch` 
 an unreadable live head also prints `sha_mismatch`. When the re-read is a different valid sha, the call exits 3 and
 the next call re-opens the same round at `round` on the new head, with a fresh wait (no `--continue`, since the new sha
 is a new deadline key). The ledger check there is read-only and the round is still open, so the round is bumped once,
-when it ends. The 4th re-open in one round ends ESCALATED `head_unstable`, so a head that keeps moving cannot hold the
+when it ends. After 3 re-opens in one round, a 4th move ends ESCALATED `head_unstable`, so a head that keeps moving cannot hold the
 drain open forever. The `confirm` step stays bound to the pushed sha and never re-binds. A head that moved past it,
 neither the pushed sha nor the round's pre-push head, now ends ESCALATED `pushed_sha_superseded` at once instead of
 after the bound. A re-read that still shows the pre-push head is a read lagging the push, and the wait goes on. Limit:
 `wait-for-checks.sh` reports only at its per-call ceiling, so detecting a move costs up to one `--call-max` (540 s).
-New W-leg cases in `test-review-heal-next-step.sh` cover the move, an unchanged re-read, the re-open cap, and both
-`confirm` branches. Against the pre-fix driver, the five cases that test the new behavior fail.
+New W-leg cases in `test-review-heal-next-step.sh` cover the move read off both a `CONTINUE` and an `ELAPSED` line
+(#646's terminal line), an unchanged re-read, the re-open cap, and both `confirm` branches (a superseded pushed sha on
+`CONTINUE` and on `ELAPSED`, and a lagging read). Against the pre-fix driver, the seven cases that test the new
+behavior fail, the `ELAPSED` wait case with #646's own `check_wait_elapsed`.

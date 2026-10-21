@@ -46,7 +46,7 @@
 #   wait        `wait-for-checks.sh` on the scoped set (`--call-max 540`; CONTINUE ⇒ exit 3, the next
 #               no-result call resumes with `--continue`); ELAPSED ⇒ ESCALATED (check-driven cause); a
 #               `pending=sha_mismatch` line whose re-read head differs ⇒ exit 3, the same round re-opens
-#               at `round` on the new head (no second bump; past 3 re-opens ⇒ ESCALATED `head_unstable`)
+#               at `round` on the new head (no second bump; after 3 re-opens a 4th move ⇒ ESCALATED `head_unstable`)
 #   read        the all-channel read — one `gh pr view` (rollup + formal reviews) and `drain-gh-read.sh`
 #               review-threads / issue-comments / check-annotations + check-run (output.{title,summary,text});
 #               an errored or truncated gated channel
@@ -386,7 +386,7 @@ rh_wait() {
   # `round` read a lagging head): the pinned sha can never settle, so re-open the SAME round on the new
   # head — `round` re-reads it (its ledger check is read-only and the round is still open, so nothing is
   # bumped twice), `required` and a fresh `wait` follow. Exit 3 first: this call may already have held
-  # one --call-max wait. Bounded: past RH_MAX_HEAD_MOVES re-opens in one round it ends ESCALATED.
+  # one --call-max wait. Bounded: after RH_MAX_HEAD_MOVES re-opens in one round, the next move ends ESCALATED.
   case "$line" in
     "CONTINUE sha=$h "*|"ELAPSED sha=$h "*)
       if live="$(rh_head_moved "$h" "$line")"; then

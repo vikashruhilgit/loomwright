@@ -39,8 +39,8 @@
 #   W   RESUMABLE WAIT. A CONTINUE line ⇒ exit 3, nothing printed; the next no-result call re-calls the
 #       wait with `--continue` and reaches the validate spawn. A head that moves mid-wait (`pending=sha_mismatch`
 #       and a different head re-read) ⇒ exit 3, the round re-opens with a fresh wait on the new sha and reaches
-#       its READY on one ledger round; an unchanged re-read stays a plain CONTINUE; the 4th re-open in a round
-#       ⇒ ESCALATED head_unstable; in `confirm` a head moved past the pushed sha ⇒ ESCALATED
+#       its READY on one ledger round; an unchanged re-read stays a plain CONTINUE; after 3 re-opens a 4th move
+#       ⇒ ESCALATED head_unstable; the same move read off an ELAPSED line (#646's terminal line) re-opens too; in `confirm` a head moved past the pushed sha ⇒ ESCALATED
 #       pushed_sha_superseded at once, while the round's pre-push head (a lagging read) keeps waiting.
 #   B   BRANCHES the goldens do not reach: confirmed-not-auto-fixable ⇒ ESCALATED findings; a rules gate
 #       `unresolved` ⇒ ESCALATED other with termination_reason unset; a fork PR ⇒ no fix spawn, ESCALATED;
@@ -454,6 +454,16 @@ if [ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] && grep -qx '  rounds
    && [ "$(jq -r '.rounds' "$C_ROOT"/.supervisor/drain-rounds/*.json)" = 1 ]; then
   ok "W: the moved head's verdict is READY on one round (the re-open bumped nothing)"
 else no "W: moved head ⇒ $(printf '%s' "$OUT" | jq -c '{do, decision, message}' 2>/dev/null)"; fi
+# #646's terminal line: the bound ran out while the head sat on a new sha, so the wait prints ELAPSED (not
+# CONTINUE) with pending=sha_mismatch — that re-opens the round too, never check_wait_elapsed
+setup_case "$FIX/converged-ready"
+w_heads head-a.json head-b.json
+printf '%s\n' "ELAPSED sha=$W_A required=pending review_producing=settled pending=sha_mismatch" "SETTLED sha=$W_B required=green review_producing=settled" > "$C/seq/wait.lines"
+drv "$DRIVER" --start drain; w_rcs="$RCV"; drv "$DRIVER"
+if [ "$w_rcs" = 3 ] && [ "$RCV" = 0 ] && [ "$(printf '%s' "$OUT" | jq -r '.what')" = "validate findings" ] \
+   && grep -q "^wait $PR --sha $W_B .*--call-max 540$" "$C/calls.log" && ! grep -q '^escalation ' "$C/calls.log"; then
+  ok "W: ELAPSED with a moved head ⇒ the round re-opens on the new head (not check_wait_elapsed)"
+else no "W: ELAPSED moved head ⇒ rcs $w_rcs/$RCV, $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"; fi
 # a sha_mismatch line whose head re-read is unchanged (an unreadable live head reads sha_mismatch too) is a
 # plain CONTINUE: the next call resumes the SAME sha with --continue
 setup_case "$FIX/converged-ready"
@@ -463,7 +473,7 @@ drv "$DRIVER"
 [ "$RCV" = 0 ] && [ "$(printf '%s' "$OUT" | jq -r '.what')" = "validate findings" ] && grep -q "^wait $PR --sha $W_A .* --continue$" "$C/calls.log" \
   && ok "W: sha_mismatch with an unchanged head re-read ⇒ the same sha resumes with --continue" \
   || no "W: unchanged head ⇒ rc $RCV, calls: $(grep '^wait' "$C/calls.log" | tr '\n' '|')"
-# a head that keeps moving is bounded: the 4th re-open in one round ends ESCALATED head_unstable
+# a head that keeps moving is bounded: after 3 re-opens in one round, the 4th move ends ESCALATED head_unstable
 setup_case "$FIX/converged-ready"
 w_heads head-a.json head-b.json head-b.json head-a.json head-a.json head-b.json head-b.json head-a.json
 printf '%s\n' "CONTINUE sha=$W_A remaining=660 pending=sha_mismatch" "CONTINUE sha=$W_B remaining=660 pending=sha_mismatch" \
@@ -485,6 +495,14 @@ if [ "$RCV" = 0 ] && [ "$(printf '%s' "$OUT" | jq -r '.message')" = pushed_sha_s
    && ! grep -q sub_floor_fixed < <(w_block) && [ "$(grep -c -- '--required-only' "$C/calls.log")" = 1 ]; then
   ok "W: a head moved past the pushed sha ⇒ ESCALATED pushed_sha_superseded at once, never READY"
 else no "W: superseded pushed sha ⇒ rc $RCV, $(printf '%s' "$OUT" | jq -c '{do, decision, message}' 2>/dev/null)"; fi
+setup_case "$FIX/sub-floor-converged-ready"
+awk -F'\t' -v OFS='\t' -v c="$gh_c" '$3 == "pr view * --json headRefOid" && $2 == "*" { $4 = c } { print }' "$C/gh.table" > "$C/gh.t" && mv "$C/gh.t" "$C/gh.table"
+{ head -n 1 "$FIX/sub-floor-converged-ready/wait.lines"; echo "ELAPSED sha=$W_B required=pending review_producing=settled pending=sha_mismatch pending_names=sha_mismatch red_names=none"; } > "$C/seq/wait.lines"
+drv "$DRIVER" --start drain; drv "$DRIVER" --result-file "$FIX/sub-floor-converged-ready/report-1.json"
+drv "$DRIVER" --result-file "$FIX/sub-floor-converged-ready/report-2.json"
+[ "$(printf '%s' "$OUT" | jq -r '.message')" = pushed_sha_superseded ] && grep -qx '  escalation_cause: other' < <(w_block) \
+  && ok "W: an ELAPSED confirm line with the head moved past the pushed sha ⇒ pushed_sha_superseded (not confirming_pass_failed)" \
+  || no "W: ELAPSED superseded ⇒ $(printf '%s' "$OUT" | jq -c '{do, decision, message}' 2>/dev/null)"
 setup_case "$FIX/sub-floor-converged-ready"
 { head -n 1 "$FIX/sub-floor-converged-ready/wait.lines"; echo "CONTINUE sha=$W_B remaining=660 pending=sha_mismatch pending_names=sha_mismatch red_names=none"
   tail -n 1 "$FIX/sub-floor-converged-ready/wait.lines"; } > "$C/seq/wait.lines"
