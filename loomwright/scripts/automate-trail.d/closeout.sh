@@ -228,8 +228,8 @@ closeout() {
         continue
       fi
       # --ignored (af/39a): gitignored runtime content (worktree-salvage.sh's salvage
-      # list: `.supervisor/logs/`, `.supervisor/postmortem/`, the host's local settings
-      # file) is copied and verified too; ANY last line but `ignored: ok <n>` — a
+      # list, ign_salvage_list — the drain's records among it) is copied and verified
+      # too; ANY last line but `ignored: ok <n>` — a
       # failed entry, or no verdict at all — keeps the worktree (fail closed on a
       # fail-safe emitter). `--allow-unsalvaged`: closeout keeps its prior, tested
       # contract for its OWN merged PR worktree (removed even when it holds gitignored
