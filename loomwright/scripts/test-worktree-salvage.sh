@@ -104,7 +104,16 @@
 #   AC-18 (af/39a review) the coverage listing fails (git ls-files refused, or mktemp
 #         under a missing TMPDIR) ⇒ `ignored-check: failed — cannot list …` and
 #         `ignored: failed - — …` with no directory; pin mutations on the caller's
-#         `|| fail` and on ign_first_unsalvaged's ls-files return ⇒ RED
+#         `|| fail` and on ign_unsalvaged's ls-files return ⇒ RED
+#   AC-19 a DRAINED PR worktree (the 2026-10-21 layout, under `.supervisor/*`): one
+#         drain-rounds ledger, two logs, two review-heal sidecars and an EMPTY
+#         check-wait/ ⇒ `ignored: ok 3`, every record cmp-identical, `ignored-check: ok`,
+#         and the same under `--allow-unsalvaged` (closeout) — on main the empty dir
+#         failed the verdict and the drain records were never copied; only empty dirs ⇒
+#         `ignored: ok 0`; three unsalvaged entries beside an empty dir ⇒ all three
+#         named; an unreadable dir ⇒ named (never read as empty); pin mutations (the
+#         empty skip, find's failure arm, the name-every-entry join, the drain records
+#         on the list) ⇒ each leg RED
 #
 # Bash-3.2/BSD-safe: no `timeout`, no `${var//…}` on large strings, `"$@"` under
 # `set -u`. The Bash tool's shell is zsh — run this as `bash test-worktree-salvage.sh`.
@@ -1162,8 +1171,8 @@ if check_ac18 "$SALVAGE"; then ok "AC-18a: git ls-files refused / mktemp failing
 else no "AC-18a (rc=$S_RC out='$S_OUT' err='$S_ERR')"; fi
 # AC-18b pin mutations: each failure arm neutralized ⇒ AC-18a RED.
 #   sink    — the caller's `|| fail` dropped (a listing failure reads as all-covered)
-#   lsfiles — ign_first_unsalvaged's ls-files failure no longer returns 1
-for m18 in 'sink:s/IGN_UNSALV="\$(ign_first_unsalvaged)" || fail "cannot list the gitignored entries of \$WT_TOP"/IGN_UNSALV="$(ign_first_unsalvaged)" || :/' \
+#   lsfiles — ign_unsalvaged's ls-files failure no longer returns 1
+for m18 in 'sink:s/IGN_UNSALV="\$(ign_unsalvaged)" || fail "cannot list the gitignored entries of \$WT_TOP"/IGN_UNSALV="$(ign_unsalvaged)" || :/' \
            'lsfiles:/--directory > "\$q" 2>\/dev\/null; then$/{n;s/rm -f "\$q" "\$nq"; return 1/: > "$q"/;}'; do
   MUT18="$SCRATCH/mut18-${m18%%:*}/worktree-salvage.sh"; mkdir -p "${MUT18%/*}"
   sed "${m18#*:}" "$SALVAGE" > "$MUT18"
@@ -1171,6 +1180,101 @@ for m18 in 'sink:s/IGN_UNSALV="\$(ign_first_unsalvaged)" || fail "cannot list th
     if check_ac18 "$MUT18"; then no "AC-18b: AC-18a survived the ${m18%%:*} mutant (vacuous)"; else ok "AC-18b: AC-18a RED against the ${m18%%:*} mutant ($S_OUT)"; fi
   else
     no "AC-18b gate: ${m18%%:*} mutant not usable (empty, identical, or syntax error)"
+  fi
+done
+
+echo "== AC-19. a drained PR worktree: drain records salvaged, an empty dir never fails, every unsalvaged entry named =="
+# drained_wt <tag> — the layout two drained PR worktrees held on 2026-10-21, under this repo's
+# own ignore shape (`.supervisor/*`, so --directory names each child, not a collapsed
+# `.supervisor/`): one drain-rounds ledger, two session logs, two review-heal sidecars and an
+# EMPTY check-wait/ (wait-for-checks.sh's deadline dir once its file is gone). Expected copies
+# kept in FX_D/exp-drain.
+DRAIN_FILES=".supervisor/drain-rounds/h1.json .supervisor/logs/.notify-debounce .supervisor/logs/notifications.log .supervisor/review-heal/h1.next-step.json .supervisor/review-heal/h1.review-heal-result.md"
+drained_wt() {
+  local f
+  fresh_wt "$1"
+  printf '.supervisor/*\n!.supervisor/memory/\n' > "$FX_WT/.gitignore"
+  ( cd "$FX_WT" && git commit -qam "ignore shape" ) >/dev/null 2>&1
+  mkdir -p "$FX_WT/.supervisor/check-wait"
+  for f in $DRAIN_FILES; do mkdir -p "$FX_WT/${f%/*}"; printf '%s\n' "record $f" > "$FX_WT/$f"; done
+  mkdir -p "$FX_D/exp-drain"; cp -pR "$FX_WT/.supervisor" "$FX_D/exp-drain/"
+}
+# check_ac19a <script> [extra flag] — `--ignored` on that tree ⇒ the salvage dir first,
+# `ignored: ok 3` last, every record cmp-identical under ignored/, the worktree untouched.
+check_ac19a() {
+  local dir f
+  drained_wt ac19a
+  run_salvage "$1" "$FX_WT" --dest "$FX_D/d19a" --ignored ${2:+"$2"}
+  dir="$(printf '%s\n' "$S_OUT" | head -n1)"
+  [ "$S_RC" -eq 0 ] && [ -d "$dir" ] && [ "$(printf '%s\n' "$S_OUT" | tail -n1)" = "ignored: ok 3" ] || return 1
+  for f in $DRAIN_FILES; do cmp -s "$FX_D/exp-drain/$f" "$dir/ignored/$f" || return 1; done
+  return 0
+}
+if check_ac19a "$SALVAGE"; then ok "AC-19a: drained PR worktree ⇒ 'ignored: ok 3', drain-rounds/, logs/ and review-heal/ each byte-identical under ignored/"
+else no "AC-19a (rc=$S_RC out='$S_OUT')"; fi
+run_salvage "$SALVAGE" "$FX_WT" --check-ignored
+[ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored-check: ok" ] \
+  && ok "AC-19a: --check-ignored on the same tree ⇒ 'ignored-check: ok' (the empty check-wait/ is not content)" || no "AC-19a check (out='$S_OUT')"
+if check_ac19a "$SALVAGE" --allow-unsalvaged; then ok "AC-19b: --allow-unsalvaged (closeout step 3a) ⇒ the drain records are still copied — 'ignored: ok 3', not 'ok 1' with them deleted"
+else no "AC-19b (out='$S_OUT')"; fi
+# check_ac19c <script> — a clean tree whose only gitignored content is empty directories
+# (one nested) ⇒ exactly `ignored: ok 0`, no directory; --check-ignored ⇒ ok.
+check_ac19c() {
+  fresh_wt ac19c; mkdir -p "$FX_WT/.supervisor/check-wait" "$FX_WT/.supervisor/scratch/a/b"
+  run_salvage "$1" "$FX_WT" --check-ignored
+  [ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored-check: ok" ] || return 1
+  run_salvage "$1" "$FX_WT" --dest "$FX_D/d19c" --ignored
+  [ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored: ok 0" ] && [ ! -e "$FX_D/d19c" ]
+}
+if check_ac19c "$SALVAGE"; then ok "AC-19c: only empty directories (check-wait/, scratch/a/b/) ⇒ 'ignored-check: ok' and exactly 'ignored: ok 0', no directory"
+else no "AC-19c (out='$S_OUT')"; fi
+# check_ac19d <script> — three unsalvaged entries beside an empty dir: the verdict names ALL
+# three, never only the first (and never the empty dir).
+AC19D_ALL=".env, .supervisor/jobs/, .supervisor/state.md"
+check_ac19d() {
+  ign_wt ac19d; ign_extra .env; printf 'SECRET=1\n' > "$FX_WT/.env"
+  printf 'state\n' > "$FX_WT/.supervisor/state.md"; mkdir -p "$FX_WT/.supervisor/jobs/pending" "$FX_WT/.supervisor/check-wait"
+  printf 'brief\n' > "$FX_WT/.supervisor/jobs/pending/b.md"
+  run_salvage "$1" "$FX_WT" --check-ignored
+  [ "$S_RC" -eq 0 ] && [ "$S_OUT" = "ignored-check: unsalvaged $AC19D_ALL" ] || return 1
+  run_salvage "$1" "$FX_WT" --dest "$FX_D/d19d" --ignored
+  [ "$S_RC" -eq 0 ] && [ "$(printf '%s\n' "$S_OUT" | tail -n1)" = "ignored: failed $AC19D_ALL — unsalvaged ignored content" ]
+}
+if check_ac19d "$SALVAGE"; then ok "AC-19d: .env + .supervisor/jobs/ + .supervisor/state.md + an empty check-wait/ ⇒ all three named, the empty dir not"
+else no "AC-19d (out='$S_OUT')"; fi
+# check_ac19e <script> — an UNREADABLE directory is not empty: find cannot prove it holds
+# nothing, so it is named (fail closed).
+check_ac19e() {
+  local out
+  fresh_wt ac19e; mkdir -p "$FX_WT/.supervisor/locked/in"; printf 'x\n' > "$FX_WT/.supervisor/locked/in/f"; chmod 000 "$FX_WT/.supervisor/locked"
+  run_salvage "$1" "$FX_WT" --check-ignored; out="$S_OUT"
+  chmod 755 "$FX_WT/.supervisor/locked"
+  [ "$S_RC" -eq 0 ] && [ "$out" = "ignored-check: unsalvaged .supervisor/locked/" ]
+}
+if [ "$(id -u)" -ne 0 ]; then
+  if check_ac19e "$SALVAGE"; then ok "AC-19e: an unreadable .supervisor/locked/ ⇒ named, never read as empty"
+  else no "AC-19e (out='$S_OUT')"; fi
+else
+  echo "  note: running as root — AC-19e (unreadable dir) skipped"
+fi
+# AC-19f pin mutations, each ⇒ its leg RED:
+#   emptyskip — the empty-directory skip deleted ⇒ AC-19c RED
+#   findfail  — ign_empty_dir's `|| return 1` on a failing find dropped ⇒ AC-19e RED
+#   firstonly — the coverage list stops at the first entry ⇒ AC-19d RED
+#   droplist  — the drain records taken off the salvage list ⇒ AC-19a RED
+for m19 in 'emptyskip:check_ac19c:s/^      ign_empty_dir "\$e" \&\& continue$/      :/' \
+           'findfail:check_ac19e:s/hit="\$(find "\$WT_TOP\/\$p" ! -type d -print -quit 2>\/dev\/null)" || return 1/hit="$(find "$WT_TOP\/$p" ! -type d -print -quit 2>\/dev\/null)"/' \
+           'firstonly:check_ac19d:s/^      out="\${out:+\$out, }\$e"$/      out="${out:-$e}"/' \
+           'droplist:check_ac19a:s/ \.supervisor\/drain-rounds \.supervisor\/review-heal / /'; do
+  n19="${m19%%:*}"; r19="${m19#*:}"; c19="${r19%%:*}"
+  MUT19="$SCRATCH/mut19-$n19/worktree-salvage.sh"; mkdir -p "${MUT19%/*}"
+  sed "${r19#*:}" "$SALVAGE" > "$MUT19"
+  if [ -s "$MUT19" ] && ! cmp -s "$MUT19" "$SALVAGE" && bash -n "$MUT19" 2>/dev/null; then
+    if [ "$n19" = findfail ] && [ "$(id -u)" -eq 0 ]; then echo "  note: running as root — AC-19f findfail skipped"
+    elif "$c19" "$MUT19"; then no "AC-19f: $c19 survived the $n19 mutant (vacuous)"
+    else ok "AC-19f: $c19 RED against the $n19 mutant ($(printf '%s\n' "$S_OUT" | tail -n1))"; fi
+  else
+    no "AC-19f gate: $n19 mutant not usable (empty, identical, or syntax error)"
   fi
 done
 

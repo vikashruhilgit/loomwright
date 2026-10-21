@@ -257,7 +257,7 @@ sweep_run() {
     if [ -z "$v" ]; then
       # Read-only coverage check (dry run too): gitignored content that is neither on
       # worktree-salvage.sh's salvage list nor regenerable would be deleted with no
-      # copy ⇒ kept, naming the first such entry. No verdict line ⇒ kept as well.
+      # copy ⇒ kept, naming every such entry. No verdict line ⇒ kept as well.
       ic="$(bash "$HERE/worktree-salvage.sh" "$p" --check-ignored 2>/dev/null | tail -n1)"
       case "$ic" in
         "ignored-check: ok") ;;
