@@ -66,6 +66,22 @@ jobs:
           bash scripts/test-check-vendor-coupling.sh
           bash scripts/check-vendor-coupling.sh
 
+      # History references in runtime prompts may only go down (automate-speed/18). Same shape as
+      # the vendor-coupling step above: the gate's raise_check compares the committed baseline
+      # with main's, so main is fetched into a DEDICATED ref (never refs/remotes/origin/main) and
+      # PROMPT_HISTORY_REFS_REQUIRE_BASE=1 makes an unresolvable base an ERROR. A base that
+      # resolves but has no baseline file yet is the bootstrap skip, which passes by design
+      # (scripts/check-prompt-history-refs.sh header). Root scripts/test-*.sh are not globbed by
+      # run-self-tests.sh, hence explicit. No `|| true`: fail-CLOSED correctness gate.
+      - name: Check prompt history references (runtime-prompt history ratchet)
+        env:
+          PROMPT_HISTORY_REFS_BASE: refs/prompt-history-refs/base
+          PROMPT_HISTORY_REFS_REQUIRE_BASE: "1"
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/prompt-history-refs/base
+          bash scripts/test-check-prompt-history-refs.sh
+          bash scripts/check-prompt-history-refs.sh
+
       - name: Check shared agent prefix (byte-identity gate)
         run: |
           bash scripts/test-check-shared-prefix.sh
