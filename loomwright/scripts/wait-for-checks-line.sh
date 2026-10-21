@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # wait-for-checks-line.sh — the ONE reader of the line wait-for-checks.sh prints. Sourced, never
 # run (deliberately not named test-*.sh). Consumers: automate-helpers.d/escalation.sh
-# (escalation-cause) and drain-subfloor-decision.sh (decide). Self-test: the round-trip and
+# (escalation-cause), drain-subfloor-decision.sh (decide) and review-heal-next-step.sh (`pending=`,
+# for a moved PR head). Self-test: the round-trip and
 # mutation-control legs in test-wait-for-checks.sh; each consumer's suite has spaced-name legs.
 #
 # WHY ONE READER: check names are free text — matrix contexts such as `test (18.x)` or

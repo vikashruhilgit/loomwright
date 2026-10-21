@@ -44,7 +44,9 @@
 #   required    required-check discovery (`drain-gh-read.sh required-checks`; unavailable ⇒ ESCALATED
 #               unless --required-checks all-non-neutral)
 #   wait        `wait-for-checks.sh` on the scoped set (`--call-max 540`; CONTINUE ⇒ exit 3, the next
-#               no-result call resumes with `--continue`); ELAPSED ⇒ ESCALATED (check-driven cause)
+#               no-result call resumes with `--continue`); ELAPSED ⇒ ESCALATED (check-driven cause); a
+#               `pending=sha_mismatch` line whose re-read head differs ⇒ exit 3, the same round re-opens
+#               at `round` on the new head (no second bump; past 3 re-opens ⇒ ESCALATED `head_unstable`)
 #   read        the all-channel read — one `gh pr view` (rollup + formal reviews) and `drain-gh-read.sh`
 #               review-threads / issue-comments / check-annotations + check-run (output.{title,summary,text});
 #               an errored or truncated gated channel
@@ -65,7 +67,8 @@
 #   subfloor    the earned-fallback gate (fallback owed ⇒ churn, never `confirm`), then
 #               `drain-subfloor-decision.sh eligible`
 #   confirm     the SHA-bound confirming pass (`wait-for-checks.sh --required-only --names`), the rules
-#               re-read, `drain-subfloor-decision.sh decide`
+#               re-read, `drain-subfloor-decision.sh decide`; a head moved past the pushed sha ⇒
+#               ESCALATED `pushed_sha_superseded` at once (never re-bound, never READY)
 #   churn       anti-churn fingerprints, then `drain-rounds.sh bump` and the next round (a round that ends
 #               terminally — READY or ESCALATED after its check — is bumped at that exit instead, once)
 #   escalate    `escalation_cause` (`automate-helpers.sh escalation-cause` at the check-driven sites)
@@ -100,7 +103,8 @@
 # the sidecar keeps the failing step — the next no-result call retries it); 2 usage error, a `--result`
 # that does not answer what is pending or is malformed, or a named refusal (`fallback_already_spawned`,
 # `fallback_not_earned`, `self_review_missing`) — nothing printed, nothing written; 3 the scoped wait
-# answered CONTINUE (total budget left): nothing printed, call again with no `--result`.
+# answered CONTINUE (total budget left), or the PR head moved and the round re-opens on it: nothing
+# printed, call again with no `--result`.
 #
 # Never merges, never approves, never force-pushes: the only PR write is `gh pr comment`, and the one
 # push it hands a fix worker is the regular explicit-refspec push.
@@ -123,6 +127,8 @@ rh_err() { echo "review-heal-next-step: $*" >&2; }
 rh_die2() { rh_err "$*"; exit 2; }
 
 command -v "$JQ" >/dev/null 2>&1 || { rh_err "jq not on PATH"; exit 1; }
+# the ONE reader of wait-for-checks.sh's line (its `pending=` field, read for a moved PR head)
+. "$HERE/wait-for-checks-line.sh" 2>/dev/null || { rh_err "wait-for-checks-line.sh not readable beside the driver"; exit 1; }
 
 # ------------------------------------------------------------------------------------------------
 # arguments
@@ -281,6 +287,7 @@ GREEN_STATES='["SUCCESS","NEUTRAL","SKIPPED"]'
 # instructions (exactly one per call, compact JSON on stdout)
 # ------------------------------------------------------------------------------------------------
 RH_EMIT=""; NEXT=""; ANSWER=""; RC=0; CONT=0
+RH_CONT_WHY="the scoped wait's per-call ceiling was reached with total budget left"
 rh_emit() { # <do> <step> <extra json>
   RH_EMIT="$("$JQ" -cn --arg d "$1" --arg s "$2" --arg p "$PR" --arg r "$(st round_number)" --argjson x "$3" \
     '{do: $d, step: $s, pr: $p, round: ($r | tonumber? // 0)} + $x')"
@@ -319,6 +326,7 @@ rh_start() {
 
 rh_round() {
   local h gate rc
+  st_del cont_arm   # a re-open after a moved head resumes here; the wait it leads to starts fresh
   h="$(rh_gh pr view "$PR" --json headRefOid | "$JQ" -r '.headRefOid // empty' 2>/dev/null)"
   rh_sha_ok "$h" || { rh_escalate_to pr_unreadable other 0 "pr_unreadable — gh pr view could not read the PR head"; return 0; }
   st_set head_sha "$h"
@@ -353,13 +361,45 @@ rh_required() {
   NEXT=wait
 }
 
+# rh_head_moved <pinned sha> <wait line> — prints the PR's live head and returns 0 when the wait line
+# reports `pending=sha_mismatch` AND a fresh `gh pr view` reads a valid head other than <pinned>.
+# wait-for-checks.sh prints sha_mismatch for an unreadable live head too, so the line alone never
+# decides: an unreadable or unchanged re-read returns 1 and the caller keeps its normal path.
+rh_head_moved() {
+  local live
+  wfc_line_parse "$2"
+  [ "$WFC_PENDING" = sha_mismatch ] || return 1
+  live="$(rh_gh pr view "$PR" --json headRefOid | "$JQ" -r '.headRefOid // empty' 2>/dev/null)"
+  rh_sha_ok "$live" && [ "$live" != "$1" ] || return 1
+  printf '%s' "$live"
+}
+RH_MAX_HEAD_MOVES=3   # re-opens of one round on a moved head before it ends ESCALATED head_unstable
+
 rh_wait() {
-  local args line h
+  local args line h live
   h="$(st head_sha)"
   args=("$PR" --sha "$h" --bound "$(st flag_check_wait_timeout)" --interval 15 --review-check-pattern "$(st flag_pattern)" --call-max 540)
   [ "$(st cont_arm)" = wait ] && args+=(--continue)
   st_del cont_arm
   line="$(rh_wait_call "${args[@]}" | tail -n 1)"
+  # the PR head moved off the round's pinned sha (an author push, or the fix worker's push landing after
+  # `round` read a lagging head): the pinned sha can never settle, so re-open the SAME round on the new
+  # head — `round` re-reads it (its ledger check is read-only and the round is still open, so nothing is
+  # bumped twice), `required` and a fresh `wait` follow. Exit 3 first: this call may already have held
+  # one --call-max wait. Bounded: past RH_MAX_HEAD_MOVES re-opens in one round it ends ESCALATED.
+  case "$line" in
+    "CONTINUE sha=$h "*|"ELAPSED sha=$h "*)
+      if live="$(rh_head_moved "$h" "$line")"; then
+        st_add head_moves 1
+        if [ "$(rh_n head_moves)" -gt "$RH_MAX_HEAD_MOVES" ]; then
+          rh_escalate_to head_unstable other 0 "head_unstable — the PR head moved $(rh_n head_moves) times during one round's scoped wait (last $h → $live); a head that keeps moving is never verified"
+          return 0
+        fi
+        st_set cont_arm round; CONT=1
+        RH_CONT_WHY="the PR head moved during the scoped wait ($h → $live); the round re-opens on the new head"
+        return 0
+      fi ;;
+  esac
   case "$line" in
     "CONTINUE sha=$h "*) st_set cont_arm wait; CONT=1; return 0 ;;
     "SETTLED sha=$h "*)
@@ -736,12 +776,22 @@ rh_subfloor() {
 rh_bump() { bash "$HERE/drain-rounds.sh" bump "$PR" >/dev/null 2>&1; }
 rh_close_round() { [ "$(st round_open)" = true ] || return 0; rh_bump || return 1; st_del round_open; }
 rh_confirm() {
-  local sha args line rules out rj_ seen fixed rc
+  local sha args line rules out rj_ seen fixed rc live
   sha="$(st pushed_sha)"
   args=("$PR" --sha "$sha" --bound "$(st flag_check_wait_timeout)" --interval 15 --required-only --names --call-max 540)
   [ "$(st cont_arm)" = confirm ] && args+=(--continue)
   st_del cont_arm
   line="$(rh_wait_call "${args[@]}" | tail -n 1)"
+  # the confirming pass stays bound to pushed_sha (R1) — it never re-binds to a newer head. A head that
+  # moved PAST it (neither pushed_sha nor the round's pre-push head, which a read lagging the push still
+  # shows) means pushed_sha can never settle as the head: ESCALATED now, not after the whole bound
+  case "$line" in
+    "CONTINUE sha=$sha "*|"ELAPSED sha=$sha "*)
+      if live="$(rh_head_moved "$sha" "$line")" && [ "$live" != "$(st head_sha)" ]; then
+        rh_escalate_to pushed_sha_superseded other "$(st last_fixable_count)" "pushed_sha_superseded — the PR head moved past the fix worker's pushed sha ($sha → $live) during the SHA-bound confirming pass; the pushed commit was never confirmed green as the head"
+        return 0
+      fi ;;
+  esac
   case "$line" in CONTINUE*) st_set cont_arm confirm; CONT=1; return 0 ;; esac
   rules="$(rh_rules_call | head -n 1)"
   rj_="$(printf '%s' "$rules" | "$JQ" -r 'if type == "object" and (.verdict | type == "string") then .verdict else "unreadable" end' 2>/dev/null)"
@@ -772,7 +822,7 @@ rh_churn() {
   shrink="$("$JQ" -rn --argjson a "$now" --argjson b "$prev" '($a - $b | length) == 0 and ($a | length) < ($b | length)')"
   if [ "$shrink" = true ]; then st_set churn_rounds 0; else st_add churn_rounds 1; fi
   if [ "$rep" = true ] || [ "$(st churn_rounds)" -ge 2 ]; then st_set deep_review_due true; fi
-  st_setj fingerprints_prev "$now"
+  st_setj fingerprints_prev "$now"; st_del head_moves
   rh_close_round || { rh_escalate_to unreadable_round_ledger other 0 "unreadable_round_ledger — drain-rounds.sh bump failed"; return 0; }
   NEXT=round
 }
@@ -1046,7 +1096,7 @@ if [ -n "$RH_EMIT" ]; then
 fi
 if [ "$CONT" = 1 ]; then
   st_save || exit 1
-  rh_err "CONTINUE — the scoped wait's per-call ceiling was reached with total budget left; call again with no --result (never end the turn on it)"
+  rh_err "CONTINUE — $RH_CONT_WHY; call again with no --result (never end the turn on it)"
   exit 3
 fi
 if [ "$STOPPED" = 1 ]; then
