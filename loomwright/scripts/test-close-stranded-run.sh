@@ -30,6 +30,11 @@
 #   6.  a --parallel lane that ended to ASK (lane.json + an unanswered inbox
 #       question) is not closed out (6a); a lane with every question answered
 #       (6b) and an unanswered question outside a lane (6c) still are
+#   7.  a fresh /automate phase session that ended to ASK (its phase dir — by
+#       recorded `session` (7a) or LOOMWRIGHT_PHASE_DIR (7b) — holds an
+#       unanswered question) is not closed out (#652); an all-answered phase (7c),
+#       another session's phase (7d) and a variable naming another checkout's
+#       phase (7e) still are
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-progress-state.sh / test-token-ledger.sh.
@@ -626,6 +631,77 @@ rm -f "$REPO6C/.supervisor/lane.json"
 OUT6C="$(run_sut "$REPO6C" "cc-primary-6c")"
 assert_eq "case6c exit 0" "0" "$(get_rc "$OUT6C")"
 assert_eq "case6c exactly one session_end appended" "2" "$(count_lines "$REPO6C/.supervisor/logs/sid-case6c.jsonl")"
+
+echo "== 7. a fresh /automate phase session that ended to ASK is not stranded (#652) =="
+# phase-launch runs Launch Pad / Supervisor / the drain as their own headless sessions in the
+# PRIMARY checkout (no lane.json). A phase question lands in the phase's own inbox and the session
+# exits; phase-answer resumes the SAME session. Closing the run at that exit flipped state.md to
+# `failed`, and the resumed Supervisor's FINALIZE write-marker refused `no_active_session`.
+seed_phase_question() {
+  # Usage: seed_phase_question <repo> <phase> <recorded session|-> <tool_use_id> [answered]
+  # Echoes the phase dir.
+  local repo="$1" ph="$2" rec="$3" id="$4"
+  local pd="$repo/.supervisor/automate/automate-2026-10-21-022926.phase/$ph"
+  mkdir -p "$pd/inbox/questions" "$pd/inbox/answers"
+  [ "$rec" = "-" ] || printf '%s\n' "$rec" > "$pd/session"
+  printf '{"id":"%s","questions":[]}\n' "$id" > "$pd/inbox/questions/$id.json"
+  [ "${5:-}" = "answered" ] && printf '{"answers":{}}\n' > "$pd/inbox/answers/$id.json"
+  printf '%s\n' "$pd"
+}
+
+echo "-- 7a. phase dir recording THIS session + an unanswered question -> writes nothing --"
+REPO7A="$(init_repo "feature/case7a")"
+seed_owned_log "$REPO7A" "sid-case7a" "cc-phase-7a"
+seed_state "$REPO7A" "sid-case7a" "running"
+seed_phase_question "$REPO7A" supervisor "cc-phase-7a" "toolu_pending7a" >/dev/null
+OUT7A="$(run_sut "$REPO7A" "cc-phase-7a")"
+assert_eq "case7a exit 0" "0" "$(get_rc "$OUT7A")"
+assert_eq "case7a no session_end appended" "1" "$(count_lines "$REPO7A/.supervisor/logs/sid-case7a.jsonl")"
+assert_eq "case7a state.md still running" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO7A/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 7b. LOOMWRIGHT_PHASE_DIR names the phase (no session file yet) + unanswered -> writes nothing --"
+# phase-launch writes `session` only once the stream's init event arrived; the variable it exports
+# to the session (and so to its hooks) identifies the phase without it.
+REPO7B="$(init_repo "feature/case7b")"
+seed_owned_log "$REPO7B" "sid-case7b" "cc-phase-7b"
+seed_state "$REPO7B" "sid-case7b" "running"
+PD7B="$(seed_phase_question "$REPO7B" launch-pad - "toolu_pending7b")"
+OUT7B="$(export LOOMWRIGHT_PHASE_DIR="$PD7B"; run_sut "$REPO7B" "cc-phase-7b")"
+assert_eq "case7b exit 0" "0" "$(get_rc "$OUT7B")"
+assert_eq "case7b no session_end appended" "1" "$(count_lines "$REPO7B/.supervisor/logs/sid-case7b.jsonl")"
+
+echo "-- 7c. control: this session's phase with every question answered -> still closed out --"
+REPO7C="$(init_repo "feature/case7c")"
+seed_owned_log "$REPO7C" "sid-case7c" "cc-phase-7c"
+seed_state "$REPO7C" "sid-case7c" "running"
+PD7C="$(seed_phase_question "$REPO7C" drain "cc-phase-7c" "toolu_done7c" answered)"
+OUT7C="$(export LOOMWRIGHT_PHASE_DIR="$PD7C"; run_sut "$REPO7C" "cc-phase-7c")"
+assert_eq "case7c exit 0" "0" "$(get_rc "$OUT7C")"
+assert_eq "case7c exactly one session_end appended" "2" "$(count_lines "$REPO7C/.supervisor/logs/sid-case7c.jsonl")"
+assert_eq "case7c state.md reaches a terminal status" "failed" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO7C/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 7d. control: another session's phase holds the unanswered question -> still closed out --"
+# Without this control 7a would also pass if any pending phase question disabled the close-out.
+REPO7D="$(init_repo "feature/case7d")"
+seed_owned_log "$REPO7D" "sid-case7d" "cc-owner-7d"
+seed_state "$REPO7D" "sid-case7d" "running"
+seed_phase_question "$REPO7D" supervisor "cc-some-other-phase" "toolu_foreign7d" >/dev/null
+OUT7D="$(run_sut "$REPO7D" "cc-owner-7d")"
+assert_eq "case7d exit 0" "0" "$(get_rc "$OUT7D")"
+assert_eq "case7d exactly one session_end appended" "2" "$(count_lines "$REPO7D/.supervisor/logs/sid-case7d.jsonl")"
+
+echo "-- 7e. control: LOOMWRIGHT_PHASE_DIR naming ANOTHER checkout's phase -> still closed out --"
+# A stray variable (a hook run from a different repo) must not keep this run alive.
+REPO7E="$(init_repo "feature/case7e")"
+seed_owned_log "$REPO7E" "sid-case7e" "cc-owner-7e"
+seed_state "$REPO7E" "sid-case7e" "running"
+OTHER7E="$(init_repo "feature/case7e-other")"
+PD7E="$(seed_phase_question "$OTHER7E" supervisor - "toolu_elsewhere7e")"
+OUT7E="$(export LOOMWRIGHT_PHASE_DIR="$PD7E"; run_sut "$REPO7E" "cc-owner-7e")"
+assert_eq "case7e exit 0" "0" "$(get_rc "$OUT7E")"
+assert_eq "case7e exactly one session_end appended" "2" "$(count_lines "$REPO7E/.supervisor/logs/sid-case7e.jsonl")"
 
 echo "== real repo .supervisor untouched =="
 assert_eq "real .supervisor snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

@@ -342,7 +342,9 @@ _lanes_abandon_meta() {
 # runs inside the lane (automate-followups/38) — the ONE writer of the requirement's done stamp, behind
 # its own evidence gate (PR not MERGED ⇒ it writes nothing), which also checks the item off and
 # reconciles `## Current` to `done` / `awaiting_go`; its lines are echoed indented, closeout-classify
-# reads them and the last line names any leftover (a leftover never changes the exit code); no
+# reads them and the last line names any leftover (a leftover never changes the exit code) — except
+# the gate's own `pr not merged` skip, the wait for the owner's merge, which the last line names as
+# `closeout waits for the merge` and which is never classified, so it sends no telemetry (#659); no
 # `pr:` in `## Current` ⇒ closeout is not run. Already closed out (`done` / `awaiting_go` — a re-run
 # after the merged re-run's push failed) ⇒ neither runs again; a lane finalize-empty already finalized
 # (`## Status: done`, ## Current `done` / `null`) is accepted the same way. Whenever ## Current then reads
@@ -380,7 +382,7 @@ lanes_convert_ready() {
   local dir="${1:-}"
   [ "$#" -le 1 ] || die "lane-convert-ready: unexpected argument '$2'"
   _lane_ctx "$dir" || die "lane-convert-ready: not a lane: ${dir:-<none>}"
-  local L="$LN_LANE" rf pid st status pause pr item mb out rc list phase co cv cs="" did fdid
+  local L="$LN_LANE" rf pid st status pause pr item mb out rc list phase co cv gw cs="" did fdid
   rf="$LN_DIR/.supervisor/automate/$LN_RUN.md"
   _cr_refuse() { _lanes_launch_unlock; echo "lane-convert-ready: refused — $L — $1"; return 1; }
   _lanes_launch_lock || { echo "lane-convert-ready: refused — $L — launch lock busy (a launch or resume of this lane is in flight)"; return 1; }
@@ -417,13 +419,22 @@ lanes_convert_ready() {
         # closeout process (_lanes_no_host_identity).
         co="$(cd "$LN_DIR" && _lanes_no_host_identity bash "$TRAIL" closeout "$rf" "$item" "$pr" --no-trail 2>/dev/null)"
         printf '%s\n' "$co" | sed '/^$/d; s/^/  /'
-        cv="$(printf '%s\n' "$co" | bash "$HELPERS" closeout-classify --run "$LN_RUN" --item "${item#./}" --pr "$pr" 2>/dev/null)"
-        if [ "$cv" = complete ]; then cs="; closeout complete"
-        elif [ -z "$cv" ]; then cs="; closeout leftover: classify — closeout-classify printed nothing"
-        elif ! grep -q '^leftover	' <<<"$cv" && grep -q '^run_lock_held	' <<<"$cv"; then
-          # automate-followups/36 A1: a LIVE process holds the run lock — not a leftover; nothing ran.
-          cs="; closeout deferred: $(printf '%s\n' "$cv" | awk -F'\t' '$1 == "run_lock_held" { printf "%s%s", (n++ ? ", " : ""), $6 }') — re-run lane-convert-ready once it is released"
-        else cs="; closeout leftover: $(printf '%s\n' "$cv" | awk -F'\t' '$1 == "leftover" { printf "%s%s — %s", (n++ ? ", " : ""), $5, $6 }')"
+        # #659: the evidence gate's `pr not merged` skip is this re-run's documented WAIT (the owner has
+        # not merged yet), not a close-out leftover. closeout-classify would report it as `leftover gate`
+        # and send an `automate-closeout` `leftover_gate` warn on every retry. Only the gate's own line
+        # counts: it stops closeout before any other step, so it is then the only `closeout:` line.
+        gw="$(printf '%s\n' "$co" | awk '/^closeout: / { n++; if (sub(/^closeout: skipped — pr not merged /, "")) g = $0 }
+          END { if (n == 1 && g != "") print g }')"
+        if [ -n "$gw" ]; then cs="; closeout waits for the merge — pr not merged $gw"
+        else
+          cv="$(printf '%s\n' "$co" | bash "$HELPERS" closeout-classify --run "$LN_RUN" --item "${item#./}" --pr "$pr" 2>/dev/null)"
+          if [ "$cv" = complete ]; then cs="; closeout complete"
+          elif [ -z "$cv" ]; then cs="; closeout leftover: classify — closeout-classify printed nothing"
+          elif ! grep -q '^leftover	' <<<"$cv" && grep -q '^run_lock_held	' <<<"$cv"; then
+            # automate-followups/36 A1: a LIVE process holds the run lock — not a leftover; nothing ran.
+            cs="; closeout deferred: $(printf '%s\n' "$cv" | awk -F'\t' '$1 == "run_lock_held" { printf "%s%s", (n++ ? ", " : ""), $6 }') — re-run lane-convert-ready once it is released"
+          else cs="; closeout leftover: $(printf '%s\n' "$cv" | awk -F'\t' '$1 == "leftover" { printf "%s%s — %s", (n++ ? ", " : ""), $5, $6 }')"
+          fi
         fi ;;
     esac
   fi
