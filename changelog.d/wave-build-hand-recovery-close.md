@@ -1,4 +1,4 @@
-A hand-recovered wave-build reports its completion; the ma10 allowlist leg no longer flakes under load
+A hand-recovered wave-build reports its completion, and the ma10 allowlist leg no longer flakes under load
 When `wave-build` stops on a conflict or red CI and the owner integrates by hand, the wave PR used to be
 opened by hand, so `wave-build` never ran again and never sent the `pass ok` that closes the step's
 telemetry threads. The `wave-build` failure threads stayed open after their waves merged. The lanes
