@@ -602,24 +602,26 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 
 | Agent (`loomwright/agents/<stem>.md`) | Budget (proxy tokens) | Measured (proxy tokens — see ¹) | Preloaded skills |
 |---|---|---|---|
-| `code-reviewer`     | 27563 | 17681¹ | 1 |
-| `context-keeper`    | 3818  | 3471¹ | 0 |
-| `execute-manager`   | 42568 | 19283¹ | 2 |
-| `launch-pad`        | 50965 | 46331¹ | 7 |
-| `orchestrator`      | 9558  | 8924¹ | 1 |
-| `plan-reviewer`     | 13614 | 8591¹ | 0 |
-| `product-owner`     | 15801 | 14364¹ | 3 |
-| `qa-executor`       | 52914 | 48103¹ | 5 |
-| `qa-strategist`     | 23488 | 21352¹ | 3 |
+| `code-reviewer`     | 19452 | 17683¹ | 1 |
+| `context-keeper`    | 3921  | 3564¹ | 0 |
+| `execute-manager`   | 21277 | 19342¹ | 2 |
+| `launch-pad`        | 47557 | 43233¹ | 7 |
+| `orchestrator`      | 10357 | 9415¹ | 1 |
+| `plan-reviewer`     | 9451  | 8591¹ | 0 |
+| `product-owner`     | 17356 | 15778¹ | 3 |
+| `qa-executor`       | 53332 | 48483¹ | 5 |
+| `qa-strategist`     | 24219 | 22017¹ | 3 |
 | `red-team-reviewer` | 6666  | 6060¹ | 1 |
-| `review-pr`         | 43235 | 39304¹ | 2 |
-| `rubric-grader`     | 2330  | 1896  | 0 |
-| `supervisor`        | 30378 | 27725¹ | 0 |
-| `worker`            | 9949  | 5836¹ | 0 |
+| `review-pr`         | 30226 | 27478¹ | 2 |
+| `rubric-grader`     | 2486  | 2260¹ | 0 |
+| `supervisor`        | 21950 | 19954¹ | 0 |
+| `worker`            | 6423  | 5839¹ | 0 |
 
-¹ **Marks a LIVE re-measure, not the frozen v15.10.0 baseline.** Every ¹-marked cell in the table above carries a figure re-measured at the event named for it below (the unmarked row — `rubric-grader` — is still the frozen v15.10.0 baseline; the authoritative enumeration of the marked set is the bold paragraph at the end of this section, and the column header deliberately no longer asserts a single version, because most cells are no longer that version's measurement). The marked set has grown several times since this footnote was first written, so it is described here rather than counted. **The first such event, the one-writer-derived-state change (v15.16.0 in progress)** — three cells (`context-keeper`, `execute-manager`, `supervisor`) were re-measured because Subtask 2 of that change deleted prompt-instructed progress-state prose from these agents' `.md`/preloaded skills. Deltas (pre-deletion → post-deletion, both live re-measures, git `36c39de` → `e644d9f`): `context-keeper` 2995 → 2780 (−215); `execute-manager` 25934 → 26357 (**+423, an increase** — a bundled bug fix in the same commit added more prose than the deletion removed); `supervisor` 50459 → 50040 (−419). Budgets for `context-keeper` and `supervisor` were tightened by the same delta (preserving each row's existing safety margin, not reset to a fresh measured+10%) — `context-keeper` 3052 → 2837, keeping its ~1.9% margin (its pre-deletion 2995 already reflected unrelated growth over the frozen v15.10.0 baseline 2774; the post-deletion 2780 lands near that baseline by coincidence); `execute-manager`'s budget was deliberately left unchanged at 28550 since its measured value increased. **`context-keeper` re-measured a second time** (PR #116 bot-review fixes, same v15.16.0 in-progress version): reconciling the `initialize`-vs-Session-derivation contradiction added explanatory prose, moving measured 2780 → 3166 (breaching the 2837 budget); raised to 3483 (measured + ~10%) per the raise rule. The `measured` cell/field above reflects this second live re-measure, not the −215 figure from the paragraph above. **`context-keeper` re-measured a third time** (Fix 7 heal iteration 3): marking `record_review` retained-but-uncalled (operations-table row, the `record_review` Details paragraph, and the Unknown-operation error string) added annotation prose, moving measured 3166 → 3471 (leaving only 12 proxy tokens of headroom against the 3483 budget); raised to 3818 (measured + ~10%) per the initial-budget convention, matching the `plan-reviewer` v15.15.0 precedent rather than the compressed-margin convention used for this row's first two re-measures. The `measured` cell/field above reflects this third live re-measure. **`supervisor` re-measured a second time** (PR #116 review-round follow-up, Finding 1): the Phase 1 ACQUIRE idempotent-branch-creation guard (existing-branch detection + safe-reuse-vs-stop decision) plus Finding 2's falsified-claim rewrites moved measured 50040 → 50959 (+919, a real fix, not bloat); budget raised 50802 → 51700 to restore the ~1.5% margin the pre-Finding-1 state held. **`orchestrator` and `review-pr` are now live re-measures too** (Fix 7, v15.18.0): `orchestrator` re-measured 7877 → 8688 and `review-pr` re-measured 22027 → 25413; `supervisor`'s third re-measure moved 50959 → 51814. **`supervisor` re-measured a fourth time (4f, v15.19.0)** — routing all 7 frontmatter-preloaded skills out of `loomwright:supervisor-runner`'s `skills:` list (see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") moved measured 51814 → 20591, a structural drop rather than an incremental change. **That 20591 was the mid-PR figure**; two later edits in the same PR (the Phase 4.5 heal commit, and a paragraph clarifying that this re-baseline is spawn-time frontmatter weight and NOT a session total) moved it again to **21029**, which is what the `measured` cell/field above now reflects — an end-of-PR live re-measure, deliberately taken after the last prose edit so it could not go stale within its own PR. The 22651 budget is **not** re-raised for that drift (realized margin ~7.7% rather than the ~10% used to derive it): the gate is not breached, 1622 proxy tokens of headroom remain, and re-raising to chase each in-PR edit is the treadmill this frozen-metadata convention exists to prevent.
+¹ **Marks a LIVE re-measure, not the frozen v15.10.0 baseline.** Every ¹-marked cell in the table above carries a figure re-measured at the event named for it below (since automate-speed/18 every row is ¹-marked, `rubric-grader` included: that item re-baselined every cell to the live measure, so no frozen v15.10.0 cell remains and the events below are history; the authoritative enumeration of the marked set is the bold paragraph at the end of this section, and the column header deliberately no longer asserts a single version, because most cells are no longer that version's measurement). The marked set has grown several times since this footnote was first written, so it is described here rather than counted. **The first such event, the one-writer-derived-state change (v15.16.0 in progress)** — three cells (`context-keeper`, `execute-manager`, `supervisor`) were re-measured because Subtask 2 of that change deleted prompt-instructed progress-state prose from these agents' `.md`/preloaded skills. Deltas (pre-deletion → post-deletion, both live re-measures, git `36c39de` → `e644d9f`): `context-keeper` 2995 → 2780 (−215); `execute-manager` 25934 → 26357 (**+423, an increase** — a bundled bug fix in the same commit added more prose than the deletion removed); `supervisor` 50459 → 50040 (−419). Budgets for `context-keeper` and `supervisor` were tightened by the same delta (preserving each row's existing safety margin, not reset to a fresh measured+10%) — `context-keeper` 3052 → 2837, keeping its ~1.9% margin (its pre-deletion 2995 already reflected unrelated growth over the frozen v15.10.0 baseline 2774; the post-deletion 2780 lands near that baseline by coincidence); `execute-manager`'s budget was deliberately left unchanged at 28550 since its measured value increased. **`context-keeper` re-measured a second time** (PR #116 bot-review fixes, same v15.16.0 in-progress version): reconciling the `initialize`-vs-Session-derivation contradiction added explanatory prose, moving measured 2780 → 3166 (breaching the 2837 budget); raised to 3483 (measured + ~10%) per the raise rule. The `measured` cell/field above reflects this second live re-measure, not the −215 figure from the paragraph above. **`context-keeper` re-measured a third time** (Fix 7 heal iteration 3): marking `record_review` retained-but-uncalled (operations-table row, the `record_review` Details paragraph, and the Unknown-operation error string) added annotation prose, moving measured 3166 → 3471 (leaving only 12 proxy tokens of headroom against the 3483 budget); raised to 3818 (measured + ~10%) per the initial-budget convention, matching the `plan-reviewer` v15.15.0 precedent rather than the compressed-margin convention used for this row's first two re-measures. The `measured` cell/field above reflects this third live re-measure. **`supervisor` re-measured a second time** (PR #116 review-round follow-up, Finding 1): the Phase 1 ACQUIRE idempotent-branch-creation guard (existing-branch detection + safe-reuse-vs-stop decision) plus Finding 2's falsified-claim rewrites moved measured 50040 → 50959 (+919, a real fix, not bloat); budget raised 50802 → 51700 to restore the ~1.5% margin the pre-Finding-1 state held. **`orchestrator` and `review-pr` are now live re-measures too** (Fix 7, v15.18.0): `orchestrator` re-measured 7877 → 8688 and `review-pr` re-measured 22027 → 25413; `supervisor`'s third re-measure moved 50959 → 51814. **`supervisor` re-measured a fourth time (4f, v15.19.0)** — routing all 7 frontmatter-preloaded skills out of `loomwright:supervisor-runner`'s `skills:` list (see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") moved measured 51814 → 20591, a structural drop rather than an incremental change. **That 20591 was the mid-PR figure**; two later edits in the same PR (the Phase 4.5 heal commit, and a paragraph clarifying that this re-baseline is spawn-time frontmatter weight and NOT a session total) moved it again to **21029**, which is what the `measured` cell/field above now reflects — an end-of-PR live re-measure, deliberately taken after the last prose edit so it could not go stale within its own PR. The 22651 budget is **not** re-raised for that drift (realized margin ~7.7% rather than the ~10% used to derive it): the gate is not breached, 1622 proxy tokens of headroom remain, and re-raising to chase each in-PR edit is the treadmill this frozen-metadata convention exists to prevent.
 
 **Known trade-off, not a benefit — de-batching costs Execute Manager tool-call budget.** The same Subtask 2 deletion retired `record_batch` (alongside `queue_ck_update`/`flush_ck_batch`), converting the Phase 3 poll loop's Context-Keeper updates from one batched call covering N events to a direct per-event `Task(Context-Keeper, …)` call each (`skills/async-orchestration/SKILL.md` §"Poll Loop" — "direct call — de-batched, one call per event"), consuming ≥2 calls per subtask instead of ~1 for the whole batch against Execute Manager's 60-call budget documented above. This is **orthogonal** to the progress-state fix: `record_batch` only ever batched `worker_result`/`review`/`decision`/`error` writes — none of which are `## Session` writes — so retiring it did nothing to address the prompt-instructed-bookkeeping miss rate this change exists to fix, and restoring it would not reopen that gap. Restoring a batch operation scoped to the non-`## Session` sections (`record_worker_result`/`record_review`/`record_decision`/`record_error`) is a reasonable follow-up, but is a larger change than this fix's scope and was not made unilaterally here.
+
+> **Re-measure log (automate-speed/18, ceilings lowered to measured + ~10%):** after the automate-speed diet, every row of the agent, skill and command tables was set to the live proxy `bash scripts/check-token-budget.sh` prints, with `budget` = ceil(measured × 1.10) — loose rows lowered, near-breach rows given their full margin back. Every agent row became a ¹-marked live row, `rubric-grader` included, and every `note` became a one-line re-baseline note. Per-row figures: `prompt-token-budgets.json` (the authority) and the tables here; the old values are in the PR diff.
 
 > **Re-measure log (no raise — automate-speed/26, subagent prompt diet):** live weight before → after, every `budget` unchanged: `code-reviewer` 27473 → 17681 (−35.6%; 4 of 5 preloads moved to on-demand Reads), `execute-manager` 31405 → 19283 (−38.6%; `state-management` moved to an on-demand Read), `plan-reviewer` 12377 → 8591 (−30.6%), `worker` 9127 → 5836 (−36.1%). `plan-reviewer` and `worker` become ¹-marked live rows. Moved prose and each preload decision: `docs/rationale/subagents.md`; evidence: `docs/evidence/as26-diet-subagent-prompts.md`.
 
@@ -687,19 +689,19 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 
 Self-test: `bash scripts/test-check-token-budget.sh` (offline; agent pass / breach / missing-preloaded-skill / no-budget / non-integer / frontmatter-bounded-parsing / empty-agents-dir / inline-flow-style-skills / orphaned-budget; skill-dir breach (incl. a nested `*.md` only a recursive walk sees) / missing `.skills` or `.commands` entry / skill and command orphans / non-integer skill and command budgets / missing or empty skills dir / empty commands dir / a leading-zero (`"08"`) agent, skill or command budget and divisor (octal `$((...))` abort, never a false green) / a symlinked skill dir, a symlink inside a skill dir and a dangling symlinked command doc (fail CLOSED; a live symlinked command doc is measured) / a command's parts counted into its row (router fits, router + part breaches), an orphaned parts dir and a symlink under a parts dir (fail CLOSED), no parts dir = the router alone; mirror drift / measured drift / missing row / ghost row for each of the three tables, a valid three-table mirror passing together, and live-repo cases). Wired into CI alongside the other repo-root validators. An agent row counts **frontmatter-preloaded skills only** — on-demand skills and command docs are not spawn-time weight, so they are gated by their own `.skills` / `.commands` ceilings instead. The gate also fails CLOSED on an unsupported inline/flow-style `skills:` list (would silently under-count) and on an orphaned budget entry in any table (a key with no matching agent `.md`, skill dir or command doc).
 
-**`measured` and the "Preloaded skills" column are frozen, decorative authoring-time metadata, not enforced values, EXCEPT the ¹-marked rows above** (`code-reviewer`, `context-keeper`, `execute-manager`, `launch-pad`, `orchestrator`, `plan-reviewer`, `product-owner`, `qa-executor`, `qa-strategist`, `red-team-reviewer`, `review-pr`, `supervisor`, `worker` — the unmarked row is `rubric-grader`) — the gate compares live weight only against `budget`; the `measured` column here and in the JSON are authoring snapshots (v15.10.0, or the noted live re-measure for the ¹-marked rows) that the gate never re-derives, and the preloaded-skill counts in this table are decorative (the gate computes the live count per run but does not assert it against them). The proxy also sizes the whole `.md`/`SKILL.md` **including frontmatter** — a deliberate, safe over-count for a fail-closed ratchet, not the literal injected system prompt. Do **not** chase or re-bump them each release (same spirit as CLAUDE.md's frozen-example-value convention) — the ¹-marked rows are exceptions tied to specific prompt-change events (v15.16.0's progress-state deletion, and Fix 7's v15.18.0 raises), not a new routine. **`supervisor`'s "Preloaded skills" cell is a second, independently-sanctioned carve-out (4f, v15.19.0): 7 → 0.** Unlike the routine drift this column is normally frozen against, this is a genuine change of the column's *subject matter* — `agents/supervisor.md`'s frontmatter `skills:` list itself was edited (all 7 entries removed; see §"Preloaded Skill Routing (4f)" in that file) — not incidental staleness, so the cell is updated rather than left frozen. **`code-reviewer` (5 → 1) and `execute-manager` (3 → 2) are the same kind of carve-out (automate-speed/26):** their frontmatter `skills:` lists were edited, moving preloads to on-demand Reads. **When you raise a budget in `prompt-token-budgets.json`, update its mirror row in the same edit** — this is machine-enforced: `check-token-budget.sh` asserts every budget cell in the agent table equals its `.agents[<stem>].budget` in the JSON, and every cell in the two tables below equals its `.skills[<dir>]` / `.commands[<stem>]` entry (drifted, missing, or ghost rows fail CI closed). Each table is parsed only within its own block — the agent table ends at the first `###` heading — so a skill or command row is never read as an agent row.
+**`measured` and the "Preloaded skills" column are snapshot metadata, not enforced values, EXCEPT the ¹-marked rows above** (`code-reviewer`, `context-keeper`, `execute-manager`, `launch-pad`, `orchestrator`, `plan-reviewer`, `product-owner`, `qa-executor`, `qa-strategist`, `red-team-reviewer`, `review-pr`, `rubric-grader`, `supervisor`, `worker`) — the gate compares live weight only against `budget`; the `measured` column here and in the JSON is the live measure at the last re-baseline, which the gate never re-derives, and the preloaded-skill counts in this table are decorative (the gate computes the live count per run but does not assert it against them). The proxy also sizes the whole `.md`/`SKILL.md` **including frontmatter** — a deliberate, safe over-count for a fail-closed ratchet, not the literal injected system prompt. **automate-speed/18 re-baselined every row of all three tables to its live measure** (`budget` = measured + ~10%), retiring the frozen v15.10.0 cells; a later raise still changes only the `budget` column, and the `measured` column is not chased or re-bumped each release (same spirit as CLAUDE.md's frozen-example-value convention) — it moves again only at a deliberate re-baseline like that one. **`supervisor`'s "Preloaded skills" cell is a second, independently-sanctioned carve-out (4f, v15.19.0): 7 → 0.** Unlike the routine drift this column is normally frozen against, this is a genuine change of the column's *subject matter* — `agents/supervisor.md`'s frontmatter `skills:` list itself was edited (all 7 entries removed; see §"Preloaded Skill Routing (4f)" in that file) — not incidental staleness, so the cell is updated rather than left frozen. **`code-reviewer` (5 → 1) and `execute-manager` (3 → 2) are the same kind of carve-out (automate-speed/26):** their frontmatter `skills:` lists were edited, moving preloads to on-demand Reads. **When you raise a budget in `prompt-token-budgets.json`, update its mirror row in the same edit** — this is machine-enforced: `check-token-budget.sh` asserts every budget cell in the agent table equals its `.agents[<stem>].budget` in the JSON, and every cell in the two tables below equals its `.skills[<dir>]` / `.commands[<stem>]` entry (drifted, missing, or ghost rows fail CI closed). Each table is parsed only within its own block — the agent table ends at the first `###` heading — so a skill or command row is never read as an agent row.
 
 ### Skill size ceilings
 
-Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as the agent table: budget cell, measured cell, missing row, ghost row). Weight = every `*.md` under the dir, recursive. Initial ceilings (automate-speed/17) = measured + ~10%.
+Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as the agent table: budget cell, measured cell, missing row, ghost row). Weight = every `*.md` under the dir, recursive. Initial ceilings (automate-speed/17) = measured + ~10%; re-baselined to live measured + ~10% at automate-speed/18.
 
 | Skill dir (`loomwright/skills/<dir>/`) | Budget (proxy tokens) | Measured (proxy tokens) |
 |---|---|---|
 | `agent-output` | 1495 | 1359 |
 | `agent-teams` | 3231 | 2937 |
-| `async-orchestration` | 15760 | 14327 |
-| `automate-loop` | 77733 | 70750 |
-| `autonomous-loop` | 28168 | 25607 |
+| `async-orchestration` | 8901 | 8091 |
+| `automate-loop` | 48362 | 43965 |
+| `autonomous-loop` | 20355 | 18504 |
 | `beads-workflow` | 1658 | 1507 |
 | `brain-context` | 1809 | 1644 |
 | `brainstorming` | 3187 | 2897 |
@@ -718,53 +720,53 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `pattern-detector` | 853 | 775 |
 | `playwright-e2e` | 9017 | 8197 |
 | `pr-postmortem` | 7015 | 6377 |
-| `preflight-sync` | 6334 | 5758 |
+| `preflight-sync` | 5790 | 5263 |
 | `product-discovery` | 2059 | 1871 |
 | `qa-gates` | 7238 | 6580 |
 | `qa-orchestration` | 2076 | 1887 |
 | `qa-strategy` | 5989 | 5444 |
 | `qa-test-patterns` | 12183 | 11075 |
 | `quality-checklist` | 4262 | 3874 |
-| `review-heal` | 36700 | 33363 |
-| `rules` | 18924 | 17203 |
-| `self-heal-advisory` | 48440 | 44036 |
+| `review-heal` | 24186 | 21987 |
+| `rules` | 18926 | 17205 |
+| `self-heal-advisory` | 37695 | 34268 |
 | `setup` | 10782 | 9801 |
-| `state-management` | 8830 | 8027 |
-| `supervisor-config` | 5850 | 5318 |
-| `supervisor-readiness` | 12605 | 11459 |
+| `state-management` | 9105 | 8277 |
+| `supervisor-config` | 5110 | 4645 |
+| `supervisor-readiness` | 12700 | 11545 |
 | `telemetry` | 3216 | 2923 |
 | `unit-testing` | 1691 | 1537 |
-| `user-story-writing` | 4731 | 4301 |
+| `user-story-writing` | 4732 | 4301 |
 | `verify-walkthrough` | 9454 | 8594 |
 | `workflow-management` | 4915 | 4468 |
 
 ### Command size ceilings
 
-Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way). Weight = `loomwright/commands/<stem>.md` + every `*.md` under `loomwright/docs/command-parts/<stem>/`. Initial ceilings (automate-speed/17) = measured + ~10%.
+Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way). Weight = `loomwright/commands/<stem>.md` + every `*.md` under `loomwright/docs/command-parts/<stem>/`. Initial ceilings (automate-speed/17) = measured + ~10%; re-baselined to live measured + ~10% at automate-speed/18.
 
 | Command doc (`loomwright/commands/<stem>.md`) | Budget (proxy tokens) | Measured (proxy tokens) |
 |---|---|---|
-| `agent-help` | 25926 | 23868 |
-| `automate` | 7565 | 7302 |
-| `autonomous` | 11846 | 10769 |
+| `agent-help` | 26402 | 24001 |
+| `automate` | 5465 | 4968 |
+| `autonomous` | 4361 | 3964 |
 | `capability-check` | 6680 | 6072 |
 | `code-reviewer` | 2837 | 2579 |
-| `dreaming` | 37813 | 34375 |
+| `dreaming` | 39945 | 36313 |
 | `handoff` | 1721 | 1564 |
-| `insights` | 5565 | 5059 |
-| `launch-pad` | 8310 | 7554 |
+| `insights` | 5675 | 5159 |
+| `launch-pad` | 5515 | 5013 |
 | `obsidian` | 1518 | 1380 |
 | `orchestrator` | 3859 | 3508 |
 | `pr-postmortem` | 2215 | 2013 |
-| `product-owner` | 10161 | 9237 |
+| `product-owner` | 10258 | 9325 |
 | `propose` | 5354 | 4867 |
 | `qa-executor` | 1337 | 1215 |
 | `qa-strategist` | 4411 | 4010 |
 | `red-team-reviewer` | 2046 | 1860 |
-| `review-pr` | 5779 | 5253 |
-| `rules` | 9079 | 8253 |
-| `setup` | 25811 | 23464 |
-| `supervisor` | 16002 | 14547 |
+| `review-pr` | 2574 | 2340 |
+| `rules` | 9081 | 8255 |
+| `setup` | 28124 | 25567 |
+| `supervisor` | 11348 | 10316 |
 | `telemetry` | 5328 | 4843 |
 | `verify` | 6276 | 5705 |
 
@@ -844,6 +846,8 @@ See `docs/FAILURE_ESCALATION.md` for full paths.
 ## Cost Profiles
 
 Single source of truth for cost-profile model overrides. Referenced by Supervisor and Execute Manager.
+
+The `/automate` coordinator's own model is not a cost profile: it is the `.supervisor/config.json` `coordinator_model` key, documented in `loomwright/docs/result-schemas/automate-run.md` §"next-step instruction (`automate-next-step.sh`)", in the bold paragraph that opens "`coordinator_model` — the coordinator's model (automate-speed/10)".
 
 ### `--cheap` Profile
 

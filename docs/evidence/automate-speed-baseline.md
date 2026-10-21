@@ -864,3 +864,70 @@ loomwright/skills/automate-loop/per-item-loop.md
   actually leads the model to read the right split file.
 - The AL-229 merge-watch note (written by the driver's RECONCILE since review iteration 1, leg P9) is pinned by
   that leg only: no golden case carries a live watcher, so no `expected.md` holds the line.
+
+## Item 18 — runtime read set after the diet
+
+- **Measured:** 2026-10-21, on branch `feature/as18-lock-the-gains` (base `e1f51ed6710fbfb917d34bf50ef24e01723d99f5`), after every prompt edit of the change.
+- **Baseline it compares with** (the 2026-10-15 measurement, quoted from `.supervisor/requirements/automate-speed/_BACKLOG.md` §"Why now", not re-derived): "One `/automate` item pulls ~1.04MB (proxy ~260K tokens) of prose inline: automate-loop 316KB, self-heal-advisory 176KB, review-heal 133KB, `agents/supervisor.md` 111KB, autonomous-loop 102KB, `agents/launch-pad.md` 94KB, `commands/supervisor.md` 58KB, async-orchestration 57KB, `commands/autonomous.md` 43KB."
+
+### Runtime read set — the same nine groups
+
+Bytes of every `*.md` in each group (a skill dir counts recursively; neither command has a `loomwright/docs/command-parts/<stem>/` dir, so the router is the whole command):
+
+```
+cd loomwright && for g in skills/automate-loop skills/self-heal-advisory skills/review-heal agents/supervisor.md skills/autonomous-loop agents/launch-pad.md commands/supervisor.md skills/async-orchestration commands/autonomous.md; do printf '%s %s\n' "$(find "$g" -type f -name '*.md' -exec cat {} + | wc -c | tr -d ' ')" "$g"; done | awk '{print; t+=$1} END {print t, "total"}'
+```
+
+```
+175881 skills/automate-loop
+137078 skills/self-heal-advisory
+87952 skills/review-heal
+79819 agents/supervisor.md
+74018 skills/autonomous-loop
+79240 agents/launch-pad.md
+41264 commands/supervisor.md
+32368 skills/async-orchestration
+15859 commands/autonomous.md
+723479 total
+```
+
+| | Baseline (2026-10-15, quoted) | After the diet (item 18) |
+|---|---|---|
+| Bytes, nine groups | ~1.04MB | 723479 (~707KB, about −30%) |
+| Proxy tokens (bytes / 4) | ~260K | 180869 (about −30%) |
+
+### History references and ceilings
+
+- `bash scripts/check-prompt-history-refs.sh` on the committed tree: exit 0, `scanned files: 125 | references: 422 | violations: 0 | errors: 0`, no `lower the baseline` line, `raise_check: skipped (no baseline at base — bootstrap)` (this change creates the baseline, so `main` has none). The same with `PROMPT_HISTORY_REFS_BASE=origin/main PROMPT_HISTORY_REFS_REQUIRE_BASE=1`, the CI environment, also exits 0.
+- `bash scripts/check-token-budget.sh`: exit 0, `breaches: 0 | errors: 0`. Every `.agents` / `.skills` / `.commands` row's `measured` equals the live proxy the gate prints and its `budget` equals ceil(measured × 1.10) — checked row by row against the gate's printed output, all rows equal.
+- `bash scripts/ci-local.sh --list` lists `gate: scripts/test-check-prompt-history-refs.sh` and `gate: scripts/check-prompt-history-refs.sh` (and `early: scripts/check-prompt-history-refs.sh`), derived from `ci.yml`.
+
+### Validation — the suites this item reports (`<passed>/<total>`)
+
+| Command | Result |
+|---|---|
+| `bash scripts/test-check-prompt-history-refs.sh` | 112/112 |
+| `bash scripts/test-check-token-budget.sh` | 111/111 |
+| `bash scripts/test-ci-local.sh` | 93/93 |
+| `bash scripts/check-doc-currency.sh` | exit 0 — 16 surfaces scanned, every checked claim matches (its self-test `test-check-doc-currency.sh`: 8/8) |
+| `bash loomwright/scripts/test-citation-drift.sh` | 26/26 |
+| `bash scripts/check-version-bump.sh` | exit 0 (not bumped; the fragment is pending) |
+
+**Pin mutations, applied once each and restored:** every `## Pin mutations` row of the brief turns its leg red — the `#NNN` alternative removed, `loomwright/docs` added to the scanned dirs, the per-entry raise comparison deleted, the require-base test flipped to `= 0`, the bootstrap branch deleted, the total comparison deleted, the base copy's `jq -e` validation deleted, the `lower the baseline` echo removed, the head baseline's `jq -e` validation deleted, the orphan check deleted and the frozen-example skip deleted. The legs the brief left without a row were mutated the same way and each went red too: each of the other four pattern alternatives, the `#NNN` guard narrowed, the base-copy filter dropped, and the missing-entry, non-integer, empty-dir and missing-dir checks each removed.
+
+### Full pre-push run (`bash scripts/ci-local.sh`)
+
+Every ci.yml gate passed, both new ones included (`check-prompt-history-refs.sh` in the early phase, `test-check-prompt-history-refs.sh` in the pool). 172 of 177 self-tests passed. None of the five failures reads a file this change touches, and each passes run alone with the lane variables of the session that ran it unset (`env -u LOOMWRIGHT_LANES_COORDINATOR_PID -u LOOMWRIGHT_PHASE_DIR -u LOOMWRIGHT_LANE_RESUME_PATH -u LOOMWRIGHT_RUN_LOCK_SESSION_ID bash <test>`): this checkout is a live `/automate --parallel` lane, and those variables reach the suites.
+
+| Failed in the pool | Cause | Run alone, lane env unset |
+|---|---|---|
+| `loomwright/scripts/test-automate-lanes.sh` | the session's lane env reached the lane-inbox legs (J, K, X, AD) | 1028/1028 |
+| `loomwright/scripts/test-wait-for-checks.sh` | case 25 (a deadline-timing leg) under a 6-way pool | 51/51 |
+| `loomwright/scripts/test-automate-next-step.sh` | 900 s watchdog under the pool | 191/191 |
+| `loomwright/scripts/test-automate-trail.sh` | 900 s watchdog under the pool | 786/786 |
+| `loomwright/scripts/test-automate-helpers.sh` | W19, the pre-existing local-only leg (needs the checkout's `.agent/companions.json`; see item 08 above) | 777/778, W19 only |
+
+### Not verified
+
+- The new GitHub CI step has not run: nothing was pushed. Its bootstrap path was run locally with the CI environment (`PROMPT_HISTORY_REFS_BASE=origin/main PROMPT_HISTORY_REFS_REQUIRE_BASE=1`), not against the dedicated `refs/prompt-history-refs/base` ref CI fetches.
+- The raise check against a `main` that already carries a baseline is covered by fixture repos only; the first real run is the PR after this one merges.
