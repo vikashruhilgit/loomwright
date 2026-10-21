@@ -206,8 +206,11 @@ hasnt "W1w … and a wave with no shared file adds no PR-body section" "$BODY" "
 
 # ---- W2: idempotent re-run (through the helpers dispatcher) -----------------------------------------
 R0="$(refs_state)"; SP="$(cksum < "$RFA")"
-out="$(bash "$HERE/automate-helpers.sh" wave-build "$RFA" 2>&1)"; rc=$?
+ev_on; out="$(bash "$HERE/automate-helpers.sh" wave-build "$RFA" 2>&1)"; rc=$?; ev_off
 check "W2 re-run with the wave PR open ⇒ done, exit 0 (via automate-helpers.sh)" "$rc:$out" "0:wave-build: done — wave PR https://github.com/o/r/pull/901 already open"
+# W2x: the re-run after a hand-opened wave PR is the step's completion report (lanes.md step 9) — it
+# must send `pass ok`, the event that closes the step's open telemetry threads (#630, #640, #658).
+check "W2x … and sends the step's pass ok event" "$(ev_got)" "automate-wave/wave-build/pass/ok"
 check "W2b … no new commit, ref, worktree or PR; the parent run file byte-unchanged" "$(refs_state):$(ncreate):$(cksum < "$RFA")" "$R0:1:$SP"
 
 # ---- W3: refusals — exit 1, nothing created ---------------------------------------------------------
