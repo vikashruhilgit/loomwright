@@ -396,7 +396,7 @@ PIM="$(mktemp -d)"
 cp "$SUT" "$PIM/read-token-ledger.sh"; cp "$HERE/phase-timing.sh" "$PIM/phase-timing.sh"
 pi_run "$PIM/read-token-ledger.sh" --per-item "$PIF/run.md" --root "$PI/p" --projects-dir "$PIP"
 { [ "$PI_RC" -eq 0 ] && grep -qF 'per-item: progress_matcher_unreadable — ' <<<"$PI_ERR" \
-    && pi_row '| ↳ Launch Pad | not recorded |' | grep -q .; } \
+    && [ -n "$(pi_row '| ↳ Launch Pad | not recorded |')" ]; } \
   && ok "no matcher beside the script ⇒ exit 0, a progress_matcher_unreadable note, Launch Pad 'not recorded' (never a wrong span)" \
   || no "unreadable matcher: rc=$PI_RC err='$(grep -F progress_matcher <<<"$PI_ERR")' row='$(pi_row '| ↳ Launch Pad |')'"
 rm -rf "$PIM"

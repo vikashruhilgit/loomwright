@@ -322,7 +322,7 @@ _lanes_resolve() {
 # a `ran /autonomous` line carrying the heal verdict reaches Heal too. The pinned no-PR line (`ran /autonomous — no PR: <status_reason> (…)`,
 # per-item-loop.md step 2) reaches only Plan when its status_reason token (snake_case, a backtick/quote/paren around it tolerated) is one of
 # `planstop` (the Supervisor never started), else Build; `unknown` or any other free-text line with no PR URL that names Launch Pad and
-# neither the Supervisor nor a saved brief reaches only Plan too.
+# neither the Supervisor nor a saved brief reaches only Plan too (its own free-text test, not the `plan_end` boundary).
 # A `parked …` line is the Merge gate's only once the lane reached Drain; a park before that (Launch Pad
 # blocked, an escalated build) reaches no step of its own — it joins the furthest step reached, which the
 # lane state then colors, and every later step stays `pending`. Fail-SAFE: anything unreadable ⇒ `null`.
