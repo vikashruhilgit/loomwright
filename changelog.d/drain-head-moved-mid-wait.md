@@ -17,4 +17,4 @@ after the bound. A re-read that still shows the pre-push head is a read lagging 
 New W-leg cases in `test-review-heal-next-step.sh` cover the move read off both a `CONTINUE` and an `ELAPSED` line
 (#646's terminal line), an unchanged re-read, the re-open cap, and both `confirm` branches (a superseded pushed sha on
 `CONTINUE` and on `ELAPSED`, and a lagging read). Against the pre-fix driver, the seven cases that test the new
-behavior fail, the `ELAPSED` wait case with #646's own `check_wait_elapsed`.
+behavior fail. The `ELAPSED` wait case fails with `check_wait_elapsed`, the same escalation #646 hit.
