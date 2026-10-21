@@ -48,6 +48,19 @@ else
 fi
 rm -rf "$WD"
 
+# A3b. valid JSON that is NOT an object is malformed too: abort before the backup, nothing left behind
+#      (it used to pass the parse check, write the backup, then die in jq with exit 5 and a stray temp file).
+WD="$(mktemp -d)"; CFG="$WD/config.json"; BAK="$WD/run.config-backup.json"
+printf '[1,2]\n' > "$CFG"
+run_h bash "$H" config-suppress "$CFG" "$BAK"
+A3B_LEFT="$(cd "$WD" && ls | tr '\n' ' ')"
+if [ "$RUN_RC" -eq 2 ] && [ "$(cat "$CFG")" = "[1,2]" ] && [ "$A3B_LEFT" = "config.json " ]; then
+  ok "non-object config: suppress aborts (exit 2) before the backup, no stray file"
+else
+  no "non-object config wrong (rc=$RUN_RC files: $A3B_LEFT)"
+fi
+rm -rf "$WD"
+
 # A4. crash-stranded backup restored at reconcile time (the backup persisted across a crash).
 WD="$(mktemp -d)"; CFG="$WD/config.json"; BAK="$WD/run.config-backup.json"
 printf '{"auto_review": true}\n' > "$CFG"

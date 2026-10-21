@@ -1876,8 +1876,11 @@ READONLY_VALIDATOR_CALLERS=" audit-rules.sh "
 
 WRITERS_FOUND=""
 RO_FOUND=""
-for f in "$HERE"/*.sh; do
-  b="${f##*/}"
+# Split scripts keep their code in <script>.d/ modules, so those are scanned too. A module is named by
+# its path under $HERE (`<script>.d/<module>.sh`); a test part (test-*.d/) is excluded like a test-*.sh.
+for f in "$HERE"/*.sh "$HERE"/*.d/*.sh; do
+  [ -f "$f" ] || continue
+  b="${f#"$HERE"/}"
   case "$b" in test-*|validate-entry.sh) continue ;; esac
   if grep -q 'validate_entry_all' "$f" 2>/dev/null; then
     case "$READONLY_VALIDATOR_CALLERS" in

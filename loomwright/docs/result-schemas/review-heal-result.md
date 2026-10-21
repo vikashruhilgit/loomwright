@@ -122,7 +122,7 @@ REVIEW_HEAL_RESULT:
 
 **Postmortem dispatch is read-only / append-only (v2, AC12):** the churn-gated postmortem tail runs **only after** the loop's `decision` is computed and `REVIEW_HEAL_RESULT` is emitted — it reads the decision as an input and can **NEVER** change it. `/pr-postmortem` is read-only on the analyzed repo and only **appends** one JSONL line to `.supervisor/postmortem/results.jsonl` (it mutates no repo file). The dispatcher (`scripts/dispatch-pr-postmortem.sh`) is fire-and-forget and `exit 0` on every path, so a dispatcher/gather/append failure leaves `REVIEW_HEAL_RESULT.decision` unchanged and the merge-ready result identical to a successful-postmortem run. `postmortem_dispatched` is **informational, never a gate input**.
 
-**No re-coining:** the v1 seven fields, the v2 drain/postmortem fields, and the `decision` enum (including `READY`) match `skills/review-heal/SKILL.md` exactly (§"Pinned Canonical Names", §"Until-Mergeable Mode", §"Anti-Churn Guardrail", §"Postmortem Dispatch Tail"). Do NOT rename or add fields here without updating that skill first (it is authoritative).
+**No re-coining:** the v1 seven fields, the v2 drain/postmortem fields, and the `decision` enum (including `READY`) match `skills/review-heal/SKILL.md` exactly (§"Pinned Canonical Names", §"Until-Mergeable Mode", §"Anti-Churn Guardrail", §"Churn gate"). Do NOT rename or add fields here without updating that skill first (it is authoritative).
 
 ---
 

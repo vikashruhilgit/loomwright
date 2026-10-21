@@ -610,11 +610,14 @@ echo "== (S) AC5 SOLE WRITER — exactly one move onto the literal verify.json i
 # (this suite mentions the string itself).
 # (A function rather than an inline `$( for … case … )`: bash 3.2's command-substitution parser
 # trips on the unbalanced `)` of a case pattern inside `$(...)`.)
+# Split scripts keep their code in <script>.d/ modules, so those are scanned too, named by their path
+# under $HERE; a test part (test-*.d/) is excluded like a test-*.sh.
 sole_writer_hits() {
   local f b
-  for f in "$HERE"/*.sh; do
-    b="$(basename "$f")"
-    case "$b" in test-*.sh) continue ;; esac
+  for f in "$HERE"/*.sh "$HERE"/*.d/*.sh; do
+    [ -f "$f" ] || continue
+    b="${f#"$HERE"/}"
+    case "$b" in test-*) continue ;; esac
     grep -nE '(^|[^[:alnum:]_-])mv[[:space:]].*verify\.json' "$f" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' | sed "s|^|$b:|"
   done
   return 0

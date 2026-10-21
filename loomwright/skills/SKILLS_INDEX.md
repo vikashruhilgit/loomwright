@@ -12,7 +12,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Workflow Management | `workflow-management/` | — (removed outright, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") | ~1,200 | 1.2.2 | 2026-09-28 |
 | Async Orchestration | `async-orchestration/` | Supervisor (on-demand Read at Phase 2 PLAN entry; `finalize.md` Read at Phase 4 FINALIZE entry only — deliberately NOT preloaded); Execute Manager (preload, `SKILL.md` only) | ~1,600 | 1.7.0 | 2026-10-19 |
 | State Management | `state-management/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded); Execute Manager (on-demand Read at Step 1 when resuming from a checkpoint, or on a Context-Keeper state-file error — NOT preloaded) | ~1,500 | 1.6.0 | 2026-10-09 |
-| Context Summarization | `context-summarization/` | — (removed outright, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") | ~600 | 1.0.0 | 2026-03 |
+| Context Summarization | `context-summarization/` | Execute Manager (preload); removed from Supervisor, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)" | ~600 | 1.0.0 | 2026-03 |
 | Context Setup | `context-setup/` | Launch Pad (preload) | ~500 | 1.1.0 | 2026-08-17 |
 | Claude MD Validation | `claude-md-validation/` | Launch Pad (preload) | ~400 | 1.0.0 | 2026-03 |
 | Agent Teams | `agent-teams/` | — (reference) | ~800 | 1.1.0 | 2026-05-10 |

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # dispatch-pr-postmortem.sh — CHURN-GATED AUTO-POSTMORTEM DISPATCHER (review-heal)
 #
-# Fired from the review-heal loop's "Postmortem Dispatch Tail" (skills/review-heal/
-# SKILL.md) AFTER the loop's decision is already computed + emitted. It conditionally
+# Fired from the review-heal loop's postmortem tail (skills/review-heal/dispatch.md
+# §"Churn gate") AFTER the loop's decision is already computed + emitted. It conditionally
 # launches the EXISTING read-only `/pr-postmortem <pr-url>` as a fresh detached
 # `claude` process so a meaningful-churn PR captures a learning signal — but it can
 # NEVER alter REVIEW_HEAL_RESULT.decision (the decision is finalized before this runs)
@@ -64,7 +64,7 @@
 #   default. The detached form also keeps the postmortem off the loop's path, and
 #   it is retained pending owner review (see agnostic-phase1/06 and
 #   docs/ARCHITECTURE_CONTRACTS.md "Subagent nesting").
-#   See skills/review-heal/SKILL.md "Postmortem Dispatch Tail".
+#   See skills/review-heal/dispatch.md §"Churn gate".
 #
 # USAGE
 #   dispatch-pr-postmortem.sh <pr-url> [gating flags...]

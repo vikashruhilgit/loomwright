@@ -842,7 +842,7 @@ RH-185	skills/review-heal/SKILL.md	**PINNED SEMANTICS — reading B (fix-then-st
 RH-187	skills/review-heal/SKILL.md	**WHERE the check sits (mandatory shape — split the skipped work, never skip the whole round).**
 RH-190	skills/review-heal/SKILL.md	Same discipline as §U2.5's call above: foreground, blocking `wait-for-checks.sh` calls
 RH-195	skills/review-heal/fallback-review.md	`bot_findings` (the §U1 UNION across reviews/latestReviews/reviewThreads/issue-comments/check-outputs) holds no firm
-RH-196	skills/review-heal/fallback-review.md	every **review-producing** check (§U2.5's classification) is **green-with-empty-output, absent, or skipped**
+RH-196	skills/review-heal/fallback-review.md	every **review-producing** check (§U2.5's classification) is **empty-output (green or red), absent, or skipped**
 RH-197	skills/review-heal/fallback-review.md	**The issue-comment channel is authoritative for "posted"; never gate on `--json reviews` alone.**
 RH-198	skills/review-heal/fallback-review.md	**Effect — exactly one fallback review per drain run.**
 RH-199	skills/review-heal/fallback-review.md	**Fail-CLOSED direction is TO RUNNING the review

@@ -85,9 +85,21 @@ case "$DIVISOR" in ''|*[!0-9]*|0[0-9]*) DIVISOR=4 ;; esac
 [ "$DIVISOR" -ge 1 ] 2>/dev/null || DIVISOR=4
 
 # proxy_tokens FILE -> echoes floor(bytes / DIVISOR). `wc -c` is portable.
+# An unreadable FILE used to measure 0 — an empty `wc` output is 0 inside $((...)) — so its row
+# compared a silent under-count against its ceiling: a false green. Every call runs in a command
+# substitution, so it cannot bump `errors` itself; it records the path in UNREADABLE_LOG, which the
+# summary turns into one ERROR row per path (fail CLOSED), and still echoes 0 to keep the arithmetic valid.
+UNREADABLE_LOG="$(mktemp "${TMPDIR:-/tmp}/check-token-budget.XXXXXX")" \
+  || { echo "check-token-budget: mktemp failed" >&2; exit 1; }
+trap 'rm -f "$UNREADABLE_LOG"' EXIT
 proxy_tokens() {
   local b
-  b="$(wc -c < "$1" | tr -d ' ')"
+  if [ ! -r "$1" ] || ! b="$(wc -c < "$1" 2>/dev/null)"; then
+    printf '%s\n' "$1" >> "$UNREADABLE_LOG"
+    echo 0
+    return 0
+  fi
+  b="$(printf '%s' "$b" | tr -d ' ')"
   echo "$(( b / DIVISOR ))"
 }
 
@@ -518,6 +530,14 @@ if [ -n "$CONTRACTS_MD" ]; then
     check_mirror skills "a skill dir" "$SKILLS_MIRROR_HEADING"
     check_mirror commands "a command doc" "$COMMANDS_MIRROR_HEADING"
   fi
+fi
+
+if [ -s "$UNREADABLE_LOG" ]; then
+  while IFS= read -r f; do
+    printf "%-22s %8s %8s  %-6s  %s\n" "(unreadable)" "-" "-" "ERROR" "cannot read $f — its row would have measured 0"
+    errors=$((errors + 1))
+    exit_code=1
+  done < "$UNREADABLE_LOG"
 fi
 
 echo "------------------------------------------------------------------------------"

@@ -77,7 +77,7 @@ Bc="$(newgit)"; printf 'node_modules/\n<<<<<<< HEAD\na/\n=======\nb/\n>>>>>>> ot
 [ "$(bmr_mode "$Bc")" = "off" ] && ok "(bm-r) no mode line + conflict markers ⇒ 'off'" || no "(bm-r) conflict-marked, never opted in ⇒ '$(bmr_mode "$Bc")'"
 Bn="$(newgit)"; printf 'node_modules/\nx\000y\n' > "$Bn/.gitignore"
 [ "$(bmr_mode "$Bn")" = "off" ] && ok "(bm-r) no mode line + NUL bytes ⇒ 'off'" || no "(bm-r) NUL bytes, never opted in ⇒ '$(bmr_mode "$Bn")'"
-Bk="$(newgit)"; mkdir "$Bk/.gitignore"
+Bk="$(newgit)"; mkdir "$Bk/.gitignore" || setup_fail "(bm-r) mkdir failed — $Bk/.gitignore could not be made a directory"
 [ "$(bmr_mode "$Bk")" = "off" ] && ok "(bm-r) .gitignore is a directory (no content) ⇒ 'off'" || no "(bm-r) directory .gitignore ⇒ '$(bmr_mode "$Bk")'"
 # Opted in + read-only: writability is irrelevant to a reader — the mode is still readable.
 Bro="$(newgit)"; printf '.supervisor/\n' > "$Bro/.gitignore"; mem "$Bro" apply --branch-mode loomwright-meta >/dev/null 2>&1; chmod 444 "$Bro/.gitignore"
@@ -93,7 +93,8 @@ case "$(bmr_mode "$Bco")" in "unknown unparseable: .gitignore contains unresolve
 if [ "$(id -u)" = 0 ]; then
   ok "(bm-r) running as root — the chmod-000 unreadable fixture is skipped (root bypasses mode bits)"
 else
-  Bur="$(newgit)"; printf 'node_modules/\n' > "$Bur/.gitignore"; chmod 000 "$Bur/.gitignore"
+  Bur="$(newgit)"; printf 'node_modules/\n' > "$Bur/.gitignore"; chmod 000 "$Bur/.gitignore" \
+    || setup_fail "(bm-r) chmod 000 failed on $Bur/.gitignore"
   case "$(bmr_mode "$Bur")" in "unknown .gitignore is not readable"*) ok "(bm-r) unreadable .gitignore ⇒ 'unknown …' (cannot rule a mode line out)" ;; *) no "(bm-r) unreadable ⇒ '$(bmr_mode "$Bur")'" ;; esac
   chmod 644 "$Bur/.gitignore"
 fi

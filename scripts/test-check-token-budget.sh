@@ -610,6 +610,25 @@ if [ -s "$M9b" ] && ! cmp -s "$M9b" "$GATE" && bash -n "$M9b" 2>/dev/null; then
 else fail=$((fail+1)); echo "FAIL - case9m could not build the orphan-check mutant — control inconclusive"; fi
 
 # ---------------------------------------------------------------------------
+# Case 10 — UNREADABLE: a preloaded skill the gate cannot read fails CLOSED. It used to
+# measure 0, so the agent's row compared an under-count against its ceiling and passed.
+# Skipped under root (root reads a mode-000 file).
+# ---------------------------------------------------------------------------
+A10="$TMP/c10/agents"; S10="$TMP/c10/skills"; mkdir -p "$A10" "$S10"
+mk_agent "$A10" "alpha" "$(printf 'skills:\n  - shared')" 400
+mk_skill "$S10" "shared" 400
+cp "$TMP/c1/budgets.json" "$TMP/c10/budgets.json"
+chmod 000 "$S10/shared/SKILL.md"
+if [ -r "$S10/shared/SKILL.md" ]; then
+  echo "ok   - case10 skipped: running as root (mode 000 is still readable)"
+else
+  run_gate "$A10" "$S10" "$TMP/c10/budgets.json"
+  check "case10 unreadable preloaded skill exits 1" 1 "$RC"
+  contains_line "case10 names the unreadable file on an ERROR row" "$OUT" "ERROR" "cannot read $S10/shared/SKILL.md"
+fi
+chmod 644 "$S10/shared/SKILL.md"
+
+# ---------------------------------------------------------------------------
 # Case 6 — LIVE REPO: the real gate passes against the checked-in budgets
 # ---------------------------------------------------------------------------
 OUT="$(bash "$GATE" 2>&1)"; RC=$?
