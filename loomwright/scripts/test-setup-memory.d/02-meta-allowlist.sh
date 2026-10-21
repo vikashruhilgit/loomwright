@@ -242,6 +242,9 @@ ma10_leg && ok "(ma10) a hung gh is killed at the 1s bound (${MA10_ELAPSED}s tot
   || no "(ma10) the bounded runner leaked a process or a temp file (procs: $(pgrep -f "$MA10_PAT" | tr '\n' ' '); tmp: $(ls -A "$MA10_TMP" 2>/dev/null | tr '\n' ' '))"
 pkill -f "$MA10_PAT" 2>/dev/null || true
 # A hang on an ENTRY lookup (origin answers) is bounded too, and stops further lookups.
+# The bound covers EVERY gh call, so the answering origin stub must finish inside it too: at 1s a
+# loaded host (load ~12, wave 8 of automate-2026-10-15-163325) killed the ORIGIN lookup first and the
+# leg read red. 3s keeps the answering call well inside the bound and the hang (7.<pid>s) well past it.
 cat > "$MA_D/bin-entryhang-gh" <<'GH'
 #!/bin/sh
 printf '%s\n' "$*" >> "$GH_STUB_LOG"
@@ -252,12 +255,12 @@ esac
 GH
 mkdir -p "$MA_D/bin-entryhang"; mv "$MA_D/bin-entryhang-gh" "$MA_D/bin-entryhang/gh"; chmod +x "$MA_D/bin-entryhang/gh"
 : > "$MA_LOG"
-env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST GH_STUB_LOG="$MA_LOG" GH_STUB_HANG="$MA10_HANG" LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT=1 \
+env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST GH_STUB_LOG="$MA_LOG" GH_STUB_HANG="$MA10_HANG" LOOMWRIGHT_ALLOWLIST_GH_TIMEOUT=3 \
   TMPDIR="$MA10_TMP" PATH="$MA_D/bin-entryhang:$PATH" bash "$MEM" --root "$MA10" allowlist > "$MA_D/out" 2> "$MA_D/err"
 MA_OUT="$(cat "$MA_D/out")"; MA_ERR="$(cat "$MA_D/err")"; MA_CALLS="$(cat "$MA_LOG")"
 { [ "$MA_OUT" = "acme/widget" ] && [ "$(ma_ncalls)" = "2" ] \
-  && hasF 'allowlist: ignored acme/old-name — gh timed out after 1s' "$MA_ERR" \
-  && hasF 'allowlist: ignored stranger/elsewhere — gh timed out after 1s' "$MA_ERR" \
+  && hasF 'allowlist: ignored acme/old-name — gh timed out after 3s' "$MA_ERR" \
+  && hasF 'allowlist: ignored stranger/elsewhere — gh timed out after 3s' "$MA_ERR" \
   && ! pgrep -f "$MA10_PAT" >/dev/null 2>&1 && [ -z "$(ls -A "$MA10_TMP" 2>/dev/null)" ]; } \
   && ok "(ma10) a hung ENTRY lookup is bounded, grants nothing, and stops further gh calls (2 calls: origin + one entry)" \
   || no "(ma10) a hung entry lookup was not bounded cleanly (out: $MA_OUT; gh: $(printf '%s' "$MA_CALLS" | tr '\n' '|'); err: $MA_ERR)"
