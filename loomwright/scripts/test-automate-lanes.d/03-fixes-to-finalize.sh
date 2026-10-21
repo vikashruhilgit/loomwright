@@ -453,11 +453,18 @@ check "AB2 awaiting_merge re-run, PR still OPEN: exit 0, closeout called once wi
 has "AB2b … its evidence gate line echoed indented" "$out" "  closeout: skipped — pr not merged (awaiting_merge)"
 check "AB2c … nothing written (requirement + run file byte-unchanged)" "$(cksum < "$L57/$RAB"):$(cksum < "$RFAB")" "$QAB:$SAB"
 has "AB2d … the push still names the unmerged exclusion" "$out" "/2026-10-10-L7.md — pr not merged"
-has "AB2e … and the last line names the gate leftover" "$(printf '%s\n' "$out" | tail -n1)" "; closeout leftover: gate — skipped — pr not merged (awaiting_merge)"
+has "AB2e … and the last line says the closeout waits for the merge (not a leftover)" "$(printf '%s\n' "$out" | tail -n1)" "; closeout waits for the merge — pr not merged (awaiting_merge)"
 # AB2f the lane closeout is a FRESH run-lock acquire (no --session-id), so it runs with the host identity
 # unset, as the merge watcher does — else a crashed closeout's lock would name the coordinator as holder.
 check "AB2f … and that closeout ran with the host identity vars unset (coordinator had them set)" "$(cat "$T_ABENV")" "CC=unset PID=unset"
 check "AB2g … and its LOOMWRIGHT_HOLDER_PID is the closeout process's own pid (the run-lock holder pin)" "$(holder_pinned closeout)" pinned
+# AB2h (#659) the unmerged re-run is the documented wait, not a close-out leftover: run from a git
+# checkout (the coordinator's primary) with script events on, it reports no automate-closeout event —
+# the old code classified the gate skip and sent a `leftover_gate` warn every time it was retried.
+T_ABEV="$T/ab-events.jsonl"; : > "$T_ABEV"
+out="$(cd "$L57" && LOOMWRIGHT_SCRIPT_EVENTS=1 LOOMWRIGHT_SCRIPT_EVENT_TEE="$T_ABEV" STUB_PR_STATE=OPEN ab lane-convert-ready "$L57")"; rc=$?
+check "AB2h … exit 0, last line says the closeout waits for the merge, and no automate-closeout event was sent" \
+  "$rc:$(printf '%s\n' "$out" | tail -n1 | grep -c '; closeout waits for the merge — pr not merged (awaiting_merge)$' | tr -d ' '):$(grep -c '"automate-closeout"' "$T_ABEV" | tr -d ' ')" "0:1:0"
 : > "$T_ABHOLD"
 out="$(AB_HELPERS="$T/abh/automate-helpers.sh" STUB_PR_STATE=MERGED ab lane-convert-ready "$L57")"; rc=$?
 printf '%s\n' "$out" | sed 's/^/       | /'

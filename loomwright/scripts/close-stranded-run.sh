@@ -38,11 +38,12 @@
 #   1. `.supervisor/state.md` exists at the MAIN worktree, and
 #   2. its `- status:` is NON-TERMINAL (running | checkpoint | paused), and
 #   3. THIS session is the recorded owner of that run's log, and
-#   4. the checkout is NOT a `--parallel` lane holding an unanswered question
-#      (a lane exits to ask and is resumed in the same session — see the scope
-#      guard below).
+#   4. the checkout is NOT a `--parallel` lane holding an unanswered question,
+#      and THIS session is NOT a fresh `/automate` phase session whose phase inbox
+#      holds one (both exit to ask and are resumed in the same session — see the
+#      two scope guards below).
 # Anything else — a `clear`, a terminal status, no state.md, a non-owner
-# session, a lane waiting on its owner — writes NOTHING and exits 0.
+# session, a lane or phase waiting on its owner — writes NOTHING and exits 0.
 #
 # `failed` is the ONLY status this emits. `paused` is deliberately never used:
 # it is classified LIVE by hook-dispatch-on-pr-create.sh and DEAD by both
@@ -160,12 +161,48 @@ top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/d
 # holding a question with no answer file — the same predicate as
 # automate-lanes.sh's `_lanes_pending_question`. A lane with every question
 # answered, and any non-lane checkout, still closes out below.
-if [ -f "$main_root/.supervisor/lane.json" ]; then
-  for _q in "$main_root"/.supervisor/inbox/questions/*.json; do
+# _inbox_pending <inbox> — 0 when <inbox>/questions/ holds a question with no answer
+# file. The ONE predicate both scopes (lane above, phase below) read, so they cannot drift.
+_inbox_pending() {
+  local _q
+  for _q in "$1"/questions/*.json; do
     [ -f "$_q" ] || continue
-    [ -e "$main_root/.supervisor/inbox/answers/$(basename "$_q")" ] || exit 0
+    [ -e "$1/answers/$(basename "$_q")" ] || return 0
   done
+  return 1
+}
+if [ -f "$main_root/.supervisor/lane.json" ] && _inbox_pending "$main_root/.supervisor/inbox"; then
+  exit 0
 fi
+
+# ---- Scope: a fresh /automate PHASE session that ended to ASK is not stranded (#652)
+# `phase-launch` runs Launch Pad / Supervisor / the drain each as its own headless
+# session in the run's checkout — usually the primary, with no lane.json. It defers
+# an owner question exactly as a lane does, but into the PHASE's inbox
+# (`.supervisor/automate/<run_id>.phase/<phase>/inbox/`), and `phase-answer` resumes
+# the SAME session. Without this scope the exit read as stranded: state.md flipped to
+# `failed` and the resumed Supervisor's FINALIZE write-marker refused
+# `no_active_session` (automate-2026-10-21-022926). A phase dir is THIS session's when
+# LOOMWRIGHT_PHASE_DIR (phase-launch exports it to the session, so to its hooks) names
+# it, or its `session` file (phase-launch writes it from the stream's init event)
+# records this payload's session_id. Only phase dirs under THIS checkout's
+# `.supervisor/automate/` count, so a stray variable or another session's pending
+# phase question keeps nothing alive. Honest limit, as for a lane: a phase that dies
+# with its question unanswered stays `running` until the staleness backstop.
+_end_sid=""
+if printf '{}' | jq -e . >/dev/null 2>&1 && [ -n "$INPUT" ]; then
+  _end_sid="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-' || true)"
+fi
+_env_pd=""
+[ -n "${LOOMWRIGHT_PHASE_DIR:-}" ] && _env_pd="$(cd "$LOOMWRIGHT_PHASE_DIR" 2>/dev/null && pwd -P || true)"
+for _pd in "$main_root"/.supervisor/automate/*.phase/*; do
+  [ -d "$_pd" ] || continue
+  case "${_pd##*/}" in launch-pad|supervisor|drain) ;; *) continue ;; esac
+  _mine=0
+  [ -n "$_env_pd" ] && [ "$(cd "$_pd" 2>/dev/null && pwd -P)" = "$_env_pd" ] && _mine=1
+  [ -n "$_end_sid" ] && [ "$(sed -n 1p "$_pd/session" 2>/dev/null)" = "$_end_sid" ] && _mine=1
+  [ "$_mine" = 1 ] && _inbox_pending "$_pd/inbox" && exit 0
+done
 
 # Host mode (host-mode.sh — the one resolver): off keeps `$main_root/.supervisor`
 # byte-identical; on, the log and seed live in lw_gate_state_dir_existing (the host's
