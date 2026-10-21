@@ -376,7 +376,7 @@ grep -qF "| ↳ Launch Pad | 10-13 15:33:58 → 15:46:53 | 12m 55s | 1110 (main 
 
 echo "== PI3. MUTATION CONTROL: dropping the message-id de-duplication turns PI2 red (Validation 2) =="
 PIM="$(mktemp -d)"
-cp "$SUT" "$PIM/read-token-ledger.sh"; cp "$HERE/phase-timing.sh" "$PIM/phase-timing.sh"
+cp "$SUT" "$PIM/read-token-ledger.sh"; cp "$HERE/phase-timing.sh" "$HERE/progress-line-match.sh" "$PIM/"
 sed -i.bak 's/^def dedup_by_msg_id: .*$/def dedup_by_msg_id: .;/' "$PIM/read-token-ledger.sh"
 if [ -s "$PIM/read-token-ledger.sh" ] && bash -n "$PIM/read-token-ledger.sh" 2>/dev/null && ! diff -q "$PIM/read-token-ledger.sh" "$SUT" >/dev/null 2>&1; then
   pi_run "$PIM/read-token-ledger.sh" --per-item "$PIF/run.md" --root "$PI/p" --projects-dir "$PIP"
@@ -389,6 +389,16 @@ if [ -s "$PIM/read-token-ledger.sh" ] && bash -n "$PIM/read-token-ledger.sh" 2>/
 else
   no "mutation control: could not build a valid mutant (empty, identical, or bash -n failed)"
 fi
+rm -rf "$PIM"
+
+echo "== PI3b. the plan-end matcher (progress-line-match.sh) unreadable ⇒ named note, Launch Pad not recorded =="
+PIM="$(mktemp -d)"
+cp "$SUT" "$PIM/read-token-ledger.sh"; cp "$HERE/phase-timing.sh" "$PIM/phase-timing.sh"
+pi_run "$PIM/read-token-ledger.sh" --per-item "$PIF/run.md" --root "$PI/p" --projects-dir "$PIP"
+{ [ "$PI_RC" -eq 0 ] && grep -qF 'per-item: progress_matcher_unreadable — ' <<<"$PI_ERR" \
+    && [ -n "$(pi_row '| ↳ Launch Pad | not recorded |')" ]; } \
+  && ok "no matcher beside the script ⇒ exit 0, a progress_matcher_unreadable note, Launch Pad 'not recorded' (never a wrong span)" \
+  || no "unreadable matcher: rc=$PI_RC err='$(grep -F progress_matcher <<<"$PI_ERR")' row='$(pi_row '| ↳ Launch Pad |')'"
 rm -rf "$PIM"
 
 echo "== PI4. --per-item: item wall time IS phase-timing.sh's .item.pick_to_park.seconds =="

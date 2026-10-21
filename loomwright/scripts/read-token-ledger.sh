@@ -411,7 +411,7 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
   | ($prog | map(select(.ts >= $pick))) as $after
   | ([$after[] | select(.text | test("^picked ")) | select((.text | capture("^picked (?<p>\\S+)").p | sub("^\\./"; "")) != $item)] | first | .ts // "9999") as $bound
   | ($after | map(select(.ts < $bound))) as $seg
-  | ([$seg[] | select(.text | ascii_downcase | test("^launch[- ]?pad:?( brief)? saved"))] | first | .ts) as $lp
+  | ([$seg[] | select(.text | plan_end)] | first | .ts) as $lp
   | ([$seg[] | select(.text | ascii_downcase | test("^finalize:")) | select(.ts >= ($lp // $pick)) | select($ra == null or .ts <= $ra)] | first | .ts) as $fin
   | [$seg[] | select(.text | ascii_downcase | test("^phase 4\\.5 iter [0-9]+")) | select(.ts >= ($fin // $pick)) | select($ra == null or .ts <= $ra)
      | {ts, n: (.text | ascii_downcase | capture("^phase 4\\.5 iter (?<n>[0-9]+)").n)}] as $iters
@@ -429,7 +429,7 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
            elif ($t | test("^session_id ")) then "session_id line"
            elif ($t | test("^ran /autonomous")) then "ran /autonomous"
            elif ($t | test("^owned drain started")) then "drain start"
-           elif ($t | test("^launch[- ]?pad:?( brief)? saved")) then "launch-pad saved"
+           elif ($t | plan_end) then "launch-pad saved"
            elif ($t | test("^finalize:")) then "FINALIZE"
            elif ($t | test("^phase 4\\.5 iter [0-9]+")) then "Phase 4.5 iter"
            else null end) as $k
@@ -473,6 +473,10 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
 per_item_report() {
   local rf="$ID" run_id pt projects tmp pairs="" first_plain="" r lrf lane lane_items="" line
   pt="$(dirname "$0")/phase-timing.sh"
+  # the one plan-end matcher (progress-line-match.sh); unreadable ⇒ no Launch Pad boundary, named
+  PROGRESS_PLAN_END_JQ=""; . "$(dirname "$0")/progress-line-match.sh" 2>/dev/null
+  [ -n "$PROGRESS_PLAN_END_JQ" ] || { PROGRESS_PLAN_END_JQ='def plan_end: false;'
+    pi_note "progress_matcher_unreadable — $(dirname "$0")/progress-line-match.sh (Launch Pad and Build spans not recorded)"; }
   projects="${PROJECTS_DIR:-${LOOMWRIGHT_CC_PROJECTS_DIR:-$PROJECTS_DEFAULT}}"
   if [ ! -f "$rf" ]; then
     r="$(printf '%s\n' "$ROOTS" | head -1)"
@@ -551,7 +555,7 @@ per_item_report() {
         echo "| **$disp** | no transcripts | no transcripts | no transcripts | no transcripts | no transcripts | no transcripts | no transcripts |"
       else
         rendered="$("$JQ" -r -n --argjson pt "$ptj" --slurpfile prog "$prog" --slurpfile recs "$recs" \
-          --arg item "$item" --arg label "$disp" "$PI_JQ" 2>/dev/null)" \
+          --arg item "$item" --arg label "$disp" "$PROGRESS_PLAN_END_JQ$PI_JQ" 2>/dev/null)" \
           || rendered="| **$disp** | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded | not recorded |"
         case "$rendered" in
           NO_USAGE_IN_WINDOW*)

@@ -71,6 +71,26 @@ if ! cmp -s "$SB" "$MUT/lanes-aj4e.sh" && bash -n "$MUT/lanes-aj4e.sh"; then
   check "AJ4f mutation (a Plan-stage token dropped from planstop) reads Build — the case AJ4e2 catches" "$out" build
 else bad "AJ4f mutation did not apply (planstop moved)"; fi
 rm -f "$MUT/lanes-aj4e.sh"
+# AJ2b: the driver's PINNED plan-end line `launch-pad saved <brief>` (per-item-loop.md step 2) starts Build. Run
+# automate-2026-10-15-163325 L21–L25 (2026-10-21): the timeline matched only "brief saved", so every fresh-phase
+# lane's Build read "no time recorded". progress-line-match.sh is the one matcher it shares with read-token-ledger.sh.
+ajt0() { ( unset LOOMWRIGHT_LANES_PROGRESS_MATCH; . "$S"; _lanes_timeline "$AJRF" "$AJ/lane/.supervisor" "$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')" "$1" - ); }
+aj2b() { ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md' "- 2026-10-11T08:20:00Z $1" \
+    '- 2026-10-11T08:20:01Z auto_review suppressed (backup x.config-backup.json) — running the supervisor phase (fresh session)'
+  "${2:-ajt}" running | jq -r '"\(.current)@\(.steps[2].started_at | .[11:19] // "null")"'; }
+check "AJ2b every real plan-end spelling starts Build at its own time; other Launch Pad lines stay on Plan" \
+  "$(aj2b 'launch-pad saved .supervisor/jobs/pending/x.md'),$(aj2b 'launch-pad: brief saved .supervisor/jobs/pending/x.md'),$(aj2b 'launch pad: brief saved x.md'),$(aj2b 'Launch Pad saved brief x.md'),$(aj2b 'launch-pad: Plan Review attempt 1/3 FAIL'),$(aj2b 'launch pad: Plan Review PASS 3/3; no brief saved yet')" \
+  "build@08:20:00,build@08:20:00,build@08:20:00,build@08:20:00,plan@null,plan@null"
+check "AJ2b2 the default matcher path (no override) resolves beside the entry point" "$(aj2b 'launch-pad saved x.md' ajt0)" "build@08:20:00"
+check "AJ2b3 an unreadable matcher fails SAFE: the timeline still reads, the line is no Build start" \
+  "$(LOOMWRIGHT_LANES_PROGRESS_MATCH="$T/no-such-matcher.sh" aj2b 'launch-pad saved x.md')" "plan@null"
+sed 's/elif plan_end then \["plan", "build"\] elif/elif test("launch[ -]?pad"; "i") and test("brief saved"; "i") then ["plan", "build"] elif/' "$SB" > "$MUT/lanes-aj2b.sh"
+if ! cmp -s "$SB" "$MUT/lanes-aj2b.sh" && bash -n "$MUT/lanes-aj2b.sh"; then
+  aj2bm() { ( . "$MUT/lanes-aj2b.sh"; _lanes_timeline "$AJRF" "$AJ/lane/.supervisor" "$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')" "$1" - ); }
+  check "AJ2b4 mutation (the old \"brief saved\" rule back) loses the pinned line's Build start — the case AJ2b catches" \
+    "$(aj2b 'launch-pad saved x.md' aj2bm)" "plan@null"
+else bad "AJ2b4 mutation did not apply (the plan-end classification moved)"; fi
+rm -f "$MUT/lanes-aj2b.sh"
 ajp '- 2026-10-11T08:00:00Z run started' '- 2026-10-11T08:01:00Z picked a.md' \
   '- 2026-10-11T08:30:00Z ran /autonomous → PR https://x/pull/2 (SUPERVISOR_RESULT completed; heal PASS iter 1)' \
   '- 2026-10-11T08:31:00Z owned drain started' '- 2026-10-11T08:40:00Z drain round 3: fixed'

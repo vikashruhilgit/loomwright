@@ -195,6 +195,8 @@ export META_LOG="$T/meta.log" HELPERS_LOG="$T/helpers.log"; : > "$META_LOG"; : >
 export LOOMWRIGHT_LANES_META_SYNC="$T/meta-sync.sh" LOOMWRIGHT_LANES_SETUP_MEMORY="$T/setup-memory.sh"
 export LOOMWRIGHT_LANES_HELPERS="$T/helpers.sh" LOOMWRIGHT_MACHINE_LOAD_CMD="$T/load.sh"
 export LOOMWRIGHT_LANES_INIT_WAIT_S=5 LOOMWRIGHT_LANES_STOP_GRACE_S=2
+# the real plan-end matcher for every self-contained $MUT copy (no sibling beside it); AJ2b also runs the default path
+export LOOMWRIGHT_LANES_PROGRESS_MATCH="$HERE/progress-line-match.sh"
 # the wave-end evidence-gated trail (F11) runs through this seam; a no-op stub everywhere but Z-F11
 cat > "$T/trail-stub.sh" <<'EOF'
 #!/usr/bin/env bash
