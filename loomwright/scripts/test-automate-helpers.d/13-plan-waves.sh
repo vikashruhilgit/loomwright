@@ -352,6 +352,19 @@ else
   echo "  SKIP: W19 $W_PA absent (gitignored) — real-queue Touches parse not checked here"
 fi
 
+# W19b the close-out sentinel ends a section. closeout appends `<!-- loomwright:requirement-closeout -->`
+#      + `## Status: done` to a done item; when `## Touches` / `## Depends on` is the file's LAST section
+#      the sentinel is the next line, and read as a path it made the whole section unknown (W19 failed on
+#      the real parallel-automate/22). Hermetic, so CI runs it without the gitignored queue.
+mkdir -p "$W_T/w19b"
+printf '# a\n## Depends on\nnone\n## Touches\nsrc/a.sh\n\n<!-- loomwright:requirement-closeout -->\n## Status: done\n- **PR:** https://example.invalid/pull/1\n' > "$W_T/w19b/01-a.md"
+printf '# b\n## Touches\nsrc/b.sh\n## Depends on\nnone\n<!-- loomwright:requirement-closeout -->\n## Status: done\n' > "$W_T/w19b/02-b.md"
+printf 'w19b/01-a.md\nw19b/02-b.md\n' > "$W_T/list"
+w_run "$W_T" "$H" "$W_T/list" --max 2
+w_expect "W19b a close-out block after the last ## Touches / ## Depends on ends the section (both known, one wave)" 'wave 1: w19b/01-a.md w19b/02-b.md'
+w_run "$W_T" "$H" "$W_T/w19b/01-a.md" --touches
+w_expect "W19b --touches reads the set the sentinel closes" 'known\nsrc/a.sh'
+
 # W20 the shipped .agent/companions.json "new" rules cover EVERY surface in scripts/check-doc-currency.sh's
 #     FILES array (the authority). Parse drops comments, strips quotes, resolves $PLUGIN_JSON from its own
 #     assignment line, FAILS on any other unresolved $ token, and must be non-empty and contain plugin.json.

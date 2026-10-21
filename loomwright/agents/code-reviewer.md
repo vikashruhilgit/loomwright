@@ -313,7 +313,7 @@ Standard context setup per `skills/context-setup/SKILL.md` (locate and validate 
    - **new**: Introduced by the current change (the developer wrote this)
    - **pre_existing**: Already present before this change (existed in the codebase)
    - **nit**: Stylistic or trivial — not blocking regardless of severity
-   - **drift**: Doc/metadata inconsistency found in consistency-audit mode (carries `drift_kind`; see "Drift Severity Caps")
+   - **drift**: Doc/metadata inconsistency found in consistency-audit mode (carries `drift_kind`; see "Severity Rules for Drift")
 
    FAIL is triggered by HIGH/BLOCKING issues with category `new` — or, in
    consistency-audit mode, category `drift` with an uncapped drift kind

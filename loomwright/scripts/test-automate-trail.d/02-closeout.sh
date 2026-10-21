@@ -10,7 +10,7 @@ RF_REL=".supervisor/automate/$RUN_ID.md"
 # Every scripts-dir copy here also takes automate-helpers.d/ — the dispatcher
 # sources its helper families from beside itself (parallel-automate/11).
 SPYD="$TOP/spyd"; mkdir -p "$SPYD"
-cp "$HERE"/*.sh "$HERE"/*.py "$SPYD/"; cp -R "$HERE/automate-helpers.d" "$SPYD/"; cp -R "$HERE/automate-trail.d" "$SPYD/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$SPYD/"
+cp "$HERE"/*.sh "$HERE"/*.py "$SPYD/"; cp -R "$HERE/automate-helpers.d" "$SPYD/"; cp -R "$HERE/automate-trail.d" "$SPYD/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$HERE/automate-lanes.d" "$SPYD/"
 mv "$SPYD/automate-helpers.sh" "$SPYD/automate-helpers.real.sh"
 cat > "$SPYD/automate-helpers.sh" <<'SHIM'
 #!/usr/bin/env bash

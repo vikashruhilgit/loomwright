@@ -395,7 +395,8 @@ MA15_DETAIL=""
 ma15_leg() {
   local d
   MA15_DETAIL=""
-  d="$(newgit https://github.com/acme/widget.git)"; ma_req "$d" 'acme/old-name'; chmod 000 "$d/.agent/meta-allowlist.txt"
+  d="$(newgit https://github.com/acme/widget.git)"; ma_req "$d" 'acme/old-name'; chmod 000 "$d/.agent/meta-allowlist.txt" \
+    || setup_fail "(ma15) chmod 000 failed on $d/.agent/meta-allowlist.txt"
   if [ -r "$d/.agent/meta-allowlist.txt" ]; then
     MA15_ROOT=1   # running as root: mode 000 is still readable, so only the directory case is meaningful
   else

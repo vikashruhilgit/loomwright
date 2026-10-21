@@ -195,7 +195,14 @@ closeout_others() {
   cd "$root" || { echo "$S cannot enter checkout"; return 0; }
   # parallel-automate/05 (Scope 3 amendment): a lane clone never closes out other
   # runs — the coordinator does that ONCE, in the primary, before the wave launches.
-  if _in_lane_clone "$root"; then echo "$S lane clone"; return 0; fi
+  # A marker `lane-info` rejects (wrong schema_version, no string run_id) still skips —
+  # closing other runs out from inside a broken lane clone is the unsafe side — but the
+  # line says so, instead of claiming a lane that `lane-info` reports is not one.
+  if _in_lane_clone "$root"; then
+    if bash "$HERE/automate-lanes.sh" lane-info --root "$root" >/dev/null 2>&1; then echo "$S lane clone"
+    else echo "$S lane clone marker .supervisor/lane.json is not valid (lane-info: not a lane) — fix or remove it"; fi
+    return 0
+  fi
   local bm; bm="$(_branch_mode "$root")"
   local cands f cl item pr st run_id out verdict first held summ rl l tab=$'\t'
   cands="$(bash "$HLP" resume-glob "$d_abs" 2>/dev/null)"

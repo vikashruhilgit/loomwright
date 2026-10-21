@@ -36,7 +36,7 @@ __pycache__/
 .worker-summary*.md
 
 # `setup-memory.sh apply` ALWAYS writes a timestamped `.gitignore.backup.<ts>` sibling here
-# (backup-first contract, setup-memory.sh:411-424) and a matching `.supervisor/config.json.backup.<ts>`.
+# (backup-first contract, `write_gitignore` in scripts/setup-memory.d/gitignore.sh) and a matching `.supervisor/config.json.backup.<ts>`.
 # No pre-existing pattern matched them, so a routine `git add -A` would have staged them. The
 # `.supervisor/` one is already covered by the managed block below; this line covers the root one.
 .gitignore.backup.*

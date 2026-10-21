@@ -495,6 +495,12 @@ done
 { [ "$a0" = "$(cksum < "$P/$RF_REL")" ] && [ "$q0" = "$(cksum < "$P/$REQ")" ] && [ -d "$FX/wt-pr" ] && [ -z "$(grep -v '^closeout-others ' "$SPYLOG" 2>/dev/null)" ]; } \
   && ok "(LN1) neither lane touched A, its requirement or its PR worktree, and made no dispatcher call beyond closeout-others itself" || no "(LN1) a lane mutated A / called out: $(tr '\n' '|' < "$SPYLOG" 2>/dev/null)"
 [ "$(grep -c '^closeout-others: '"$RUN_ID " <<<"$ln_lane_out")" = 0 ] && ok "(LN1) zero closeout lines in either lane" || no "(LN1) lane closeout lines: $ln_lane_out"
+# (LN1b) a marker lane-info rejects (wrong schema_version) still skips — the safe side — but says the
+# marker is not valid instead of claiming a lane; A stays untouched.
+printf '{"schema_version":2,"lane":"L9","run_id":"par-9-L9"}\n' > "$P/.supervisor/lane.json"
+ln_o="$(co_others --record "$RBF")"
+[ "$ln_o" = "closeout-others: skipped — lane clone marker .supervisor/lane.json is not valid (lane-info: not a lane) — fix or remove it" ] \
+  && [ "$a0" = "$(cksum < "$P/$RF_REL")" ] && ok "(LN1b) invalid lane.json: skips, names the invalid marker, A untouched" || no "(LN1b) invalid lane.json: '$ln_o'"
 rm -f "$P/.supervisor/lane.json"
 ln_o="$(co_others --record "$RBF")"
 [ "$(grep -c "^closeout-others: $RUN_ID $REQ $PRURL\$" <<<"$ln_o")" = 1 ] && grep -qxF -- "- [x] $REQ" "$P/$RF_REL" \
@@ -505,7 +511,7 @@ ln_o="$(co_others --record "$RBF")"
 # both lets the lane close A out, so the LN1 assertion is load-bearing (LN2b).
 closeout_fixture 341; mk_rb; spy_reset
 MUTLN="$TOP/mutln"; mkdir -p "$MUTLN"; cp -R "$SPYD"/* "$MUTLN/"
-sed '/^  if _in_lane_clone "\$root"; then echo "\$S lane clone"; return 0; fi$/d' "$TB" > "$MUTLN/automate-trail.sh"
+awk '/^  if _in_lane_clone "\$root"; then$/ { skip = 1 } skip && /^  fi$/ { skip = 0; next } !skip' "$TB" > "$MUTLN/automate-trail.sh"
 printf '{"schema_version":1,"lane":"L1","run_id":"par-9-L1","parent_run_id":"par-9"}\n' > "$P/.supervisor/lane.json"
 if ! cmp -s "$TB" "$MUTLN/automate-trail.sh" && bash -n "$MUTLN/automate-trail.sh"; then
   ln_o="$(CO_H="$MUTLN/automate-helpers.sh" co_others --record "$RBF")"

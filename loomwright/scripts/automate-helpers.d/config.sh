@@ -13,13 +13,19 @@
 # with .auto_review=false. If the config is ABSENT, no backup is made (absence is
 # recorded by config-restore's marker semantics) and a minimal {"auto_review":false}
 # is written. A MALFORMED pre-existing config ⇒ ABORT (exit 2) — never clobber a
-# hand-edited config (SKILL §7 "malformed-abort"; Anti-Pattern).
+# hand-edited config (SKILL §7 "malformed-abort"; Anti-Pattern). Valid JSON that is
+# not an object (`[]`, a string, a number) is malformed too: the merge below cannot
+# index it, and checking only parseability let it through to a jq exit 5 AFTER the
+# backup was written, leaving the backup and a stray temp file behind.
 config_suppress() {
   local cfg="$1" bak="$2"
   if [ -f "$cfg" ]; then
-    # Validate JSON before touching anything.
+    # Validate before touching anything: valid JSON AND an object.
     if ! "$JQ" -e . "$cfg" >/dev/null 2>&1; then
       abort "pre-existing config is not valid JSON: $cfg"
+    fi
+    if ! "$JQ" -e 'type == "object"' "$cfg" >/dev/null 2>&1; then
+      abort "pre-existing config is valid JSON but not an object: $cfg"
     fi
     # Byte-for-byte backup (cp preserves exact bytes).
     cp "$cfg" "$bak"

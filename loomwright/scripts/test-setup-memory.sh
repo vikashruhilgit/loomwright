@@ -40,9 +40,11 @@
 # confirm every CALL SITE it lists is followed by a `|| setup_fail …` — on the same line, or on
 # the next one where the call is line-continued. The legs live in the test-setup-memory.d/ parts
 # (automate-speed/20), so a grep of "$0" alone finds only this comment.
-# It resolves to exactly four call sites (f5, f6, f7, l9). Its other hits are PROSE, not calls:
-# this comment's own self-match, the (f7)/(l9) group headers explaining chmod-000, and assertion
-# and setup_fail message strings that mention it. Read the hits, do not just count the lines.
+# Its hits are the call sites plus PROSE that is not a call: this comment's own self-match, group
+# headers explaining chmod-000, and assertion and setup_fail message strings that mention it. The
+# call sites are deliberately not listed or counted here — a restated list went stale once already
+# (it said four while three more unguarded calls sat in other parts). Read the hits, do not count.
+# The (sg) leg at the end of this file runs this audit on every run and fails on an unguarded call.
 #
 # Two further setup guards exist that this grep deliberately does NOT match, because they are not
 # in that class and finding only four hits should not read as a gap: `newgit` asserts a fresh
@@ -327,6 +329,27 @@ tsm_part 02-meta-allowlist;            . "$TSM_D/02-meta-allowlist.sh"
 tsm_part 03-apply-safety-ledger-gate;  . "$TSM_D/03-apply-safety-ledger-gate.sh"
 tsm_part 04-verdicts-trail;            . "$TSM_D/04-verdicts-trail.sh"
 tsm_part 05-branch-mode-consent;       . "$TSM_D/05-branch-mode-consent.sh"
+
+echo "== (sg) the header's setup-guard audit, run: every fail-on-exist setup call carries || setup_fail =="
+# The header's grep, mechanized. A hit is a CALL when the match sits outside a "…" string (an even
+# number of `"` before it on the line) on a non-comment line; a call must carry `|| setup_fail` on
+# its own line, or on the next line when it ends in a `\` continuation.
+SG_RC=0
+SG_UNGUARDED="$(awk '
+  FNR == 1 { pend = "" }
+  pend != "" { if ($0 !~ /\|\| setup_fail/) print pend; pend = "" }
+  /^[[:space:]]*#/ { next }
+  match($0, /mkdir ["]|ln -[s] |chmod [0]00/) {   # bracketed so this line cannot match itself
+    pre = substr($0, 1, RSTART - 1); q = gsub(/"/, "", pre)
+    if (q % 2) next
+    if ($0 ~ /\|\| setup_fail/) next
+    if ($0 ~ /\\$/) { pend = FILENAME ":" FNR; next }
+    print FILENAME ":" FNR
+  }' "$0" "$TSM_D"/*.sh)" || SG_RC=$?
+# An unreadable input makes awk exit non-zero with empty output — that must not read as "all guarded".
+if [ "$SG_RC" -ne 0 ]; then no "(sg) the audit could not read its inputs (awk exit $SG_RC)"
+elif [ -z "$SG_UNGUARDED" ]; then ok "(sg) every bare mkdir / ln -s / chmod 000 setup call is guarded by || setup_fail"
+else no "(sg) unguarded setup call(s): $(printf '%s' "$SG_UNGUARDED" | tr '\n' ' ')"; fi
 
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"

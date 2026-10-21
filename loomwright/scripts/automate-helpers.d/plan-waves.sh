@@ -104,6 +104,10 @@ _pw_abs() {
 # that is not `known`/`none`/ids and not missing/declared carries at least one `bad` row, so the
 # lint verdict and the planner's verdict cannot disagree (there is no second grammar to drift).
 # Shared awk helpers: _pw_diag records a row; _pw_flush sorts rows by line and writes them.
+# A section ends at the next `# `/`## ` heading OR at the close-out sentinel line that
+# automate-trail.d/closeout.sh writes right above its appended `## Status: done` block. When
+# `## Touches` (or `## Depends on`) is a file's last section, that sentinel is the first line after
+# it; read as a path it made the whole section unknown, so a done item ran alone.
 _PW_AWK_DIAG='
   function _pw_diag(ln, r, s) { if (DG == "") return; gsub(/\t/, " ", s); nd++; DL[nd] = ln; DR[nd] = r; DT[nd] = s }
   function _pw_flush(   a, b, t) {
@@ -138,6 +142,7 @@ _pw_touches() {
     BEGIN { DG = ENVIRON["PW_DG"]; fence = 0; insec = 0; count = 0; n = 0; bad = 0; unk = 0; nd = 0 }
     /^```/ { fence = !fence; if (insec) { bad = 1; _pw_diag(NR, "fenced block inside the section", $0) }; next }
     !fence && (/^# / || /^## /) { insec = 0; if ($0 == "## Touches") { count++; insec = 1; if (count == 1) hl = NR; else _pw_diag(NR, "duplicated section", $0) }; next }
+    !fence && $0 == "<!-- loomwright:requirement-closeout -->" { insec = 0; next }
     !insec { next }
     /^[ \t]*$/ { next }
     $0 == "unknown" { unk = 1; if (!ul) ul = NR; next }
@@ -167,6 +172,7 @@ _pw_depends() {
     BEGIN { DG = ENVIRON["PW_DG"]; fence = 0; insec = 0; count = 0; n = 0; nn = 0; bad = 0; nd = 0 }
     /^```/ { fence = !fence; if (insec) { bad = 1; _pw_diag(NR, "fenced block inside the section", $0) }; next }
     !fence && (/^# / || /^## /) { insec = 0; if ($0 == "## Depends on") { count++; insec = 1; if (count == 1) hl = NR; else _pw_diag(NR, "duplicated section", $0) }; next }
+    !fence && $0 == "<!-- loomwright:requirement-closeout -->" { insec = 0; next }
     !insec { next }
     /^[ \t]*$/ { next }
     $0 == "none" { nn++; if (nn == 1) n1 = NR; if (nn == 2) n2 = NR; next }
