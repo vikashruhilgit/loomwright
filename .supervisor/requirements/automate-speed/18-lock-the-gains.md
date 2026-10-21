@@ -68,3 +68,9 @@ scripts/ci-local.sh
 CLAUDE.md
 docs/evidence/automate-speed-baseline.md
 changelog.d/as18-lock-the-gains.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-21T06:08:20Z
+- **Brief:** .supervisor/jobs/done/2026-10-21-as18-lock-the-gains.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/651
