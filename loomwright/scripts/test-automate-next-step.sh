@@ -1039,7 +1039,7 @@ EOF
 # named exception below; the extraction is sanity-anchored (a broken extractor fails, never passes empty)
 # and each reserved prefix is named in the schema doc. A new reader prefix cannot drift past the list.
 READER_PREFIX_EXCEPTIONS='drain |the drain-round notes (`drain round N: …`) are this prefix by design
-launch|read-token-ledger.sh `launch[- ]?pad`: covered by its spellings launch-pad / launch pad / launchpad'
+launch|progress-line-match.sh `launch[- ]?pad` (the one plan-end matcher): covered by its spellings launch-pad / launch pad / launchpad'
 rp_literal() { # <regex> — the literal prefix(es) a ^-anchored regex starts with, one per line (a leading
   # group's alternatives each); `\x` is a literal x; stops at the first metachar (a char a ? / * makes optional dropped)
   RP_RE="$1" awk 'function lit(r,    o, i, c, n) {
@@ -1063,7 +1063,7 @@ rp_literal() { # <regex> — the literal prefix(es) a ^-anchored regex starts wi
 rp_extract() { # the reader regexes (one per line) → their literal prefixes, lower-cased, de-duplicated
   {
     # jq: a ^-anchored test(), or the ^-anchored alternatives of an unanchored one (`a|^drain |b`)
-    { grep -oE 'test\("[^"]*"' "$HERE/read-token-ledger.sh"
+    { grep -ohE 'test\("[^"]*"' "$HERE/read-token-ledger.sh" "$HERE/progress-line-match.sh"
       awk '/def cls:/,/else \[\] end;/' "$HERE/automate-lanes.d/status-read.sh" | grep -oE 'test\("[^"]*"'
     } | sed 's/^test("//; s/"$//' | while IFS= read -r re; do
       case "$re" in "^"*) printf '%s\n' "$re" ;; *) printf '%s\n' "$re" | tr '|' '\n' | grep '^\^' ;; esac

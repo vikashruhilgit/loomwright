@@ -317,18 +317,18 @@ _lanes_resolve() {
 # own session (the lane table's, from its stream `system/init`) is this item's. Such a state is trusted like
 # a running one — phase, status, Decisions Log table rows, the Build label — whether or not the lane still
 # runs, and still without a time: a lane that stopped mid-EXECUTE keeps its phase.
-# Boundaries: the `picked` line ends Pick and starts Plan; a Launch Pad "brief saved" line ends Plan and starts Build (/autonomous hands the brief to
-# the Supervisor at once); a `ran /autonomous` line carrying the heal verdict reaches Heal too. The pinned no-PR
-# line (`ran /autonomous — no PR: <status_reason> (…)`, per-item-loop.md step 2) reaches only Plan when its
-# status_reason token (snake_case, a backtick/quote/paren around it tolerated) is one of `planstop` (the Supervisor
-# never started), else Build; `unknown` or any other free-text line with no
-# PR URL that names Launch Pad and neither the Supervisor nor a saved brief reaches only Plan too.
+# Boundaries: the `picked` line ends Pick and starts Plan; the plan-end line (`plan_end`, progress-line-match.sh — `launch-pad saved
+# <brief>` and its older spellings; unreadable ⇒ none) ends Plan and starts Build (/autonomous hands the brief to the Supervisor at once);
+# a `ran /autonomous` line carrying the heal verdict reaches Heal too. The pinned no-PR line (`ran /autonomous — no PR: <status_reason> (…)`,
+# per-item-loop.md step 2) reaches only Plan when its status_reason token (snake_case, a backtick/quote/paren around it tolerated) is one of
+# `planstop` (the Supervisor never started), else Build; `unknown` or any other free-text line with no PR URL that names Launch Pad and
+# neither the Supervisor nor a saved brief reaches only Plan too.
 # A `parked …` line is the Merge gate's only once the lane reached Drain; a park before that (Launch Pad
 # blocked, an escalated build) reaches no step of its own — it joins the furthest step reached, which the
-# lane state then colors, and every later step stays `pending`.
-# Fail-SAFE: anything unreadable ⇒ `null`.
+# lane state then colors, and every later step stays `pending`. Fail-SAFE: anything unreadable ⇒ `null`.
 _lanes_timeline() {
   local rf="$1" sm="$2/state.md" now="$3" state="$4" llu="$5" lsid="${6:-}" out sid
+  PROGRESS_PLAN_END_JQ=""; . "${LOOMWRIGHT_LANES_PROGRESS_MATCH:-$HERE/progress-line-match.sh}" 2>/dev/null   # the one plan-end matcher
   # Validated, never trusted by exit code: under `pipefail` an absent state.md fails the pipeline even
   # when jq printed a good object, and an `|| printf null` there would emit two JSON texts.
   out="$({
@@ -351,7 +351,7 @@ _lanes_timeline() {
     [ -n "$sid" ] && [ -f "$2/logs/$sid.jsonl" ] && jq -R -r 'fromjson? | select(.event? == "pr_created")
       | "E\tpr_created\t\(.ts // "")\t\(.url // "" | gsub("[\t\n]"; " "))"' "$2/logs/$sid.jsonl" 2>/dev/null
     true
-  } | jq -R -s -c --arg state "$state" --arg llu "$(_lanes_dash "$llu")" --arg lsid "$(_lanes_dash "$lsid")" --argjson now "$now" '
+  } | jq -R -s -c --arg state "$state" --arg llu "$(_lanes_dash "$llu")" --arg lsid "$(_lanes_dash "$lsid")" --argjson now "$now" "${PROGRESS_PLAN_END_JQ:-def plan_end: false;}"'
     def ep: (try fromdateiso8601 catch null);
     def clip(n): if length > n then .[0:n - 1] + "…" else . end;
     def ids: ["pick", "plan", "build", "heal", "drain", "decide", "merge"];
@@ -375,7 +375,7 @@ _lanes_timeline() {
                                          elif (test("PR https?://") | not) and test("launch[ _-]?pad"; "i")
                                               and (test("supervisor|brief saved"; "i") | not) then ["plan"] else ["build"] end)
       elif test("^supervisor:"; "i") then ["build"]
-      elif test("launch[ -]?pad"; "i") then (if test("brief saved"; "i") then ["plan", "build"] else ["plan"] end)
+      elif plan_end then ["plan", "build"] elif test("launch[ -]?pad"; "i") then ["plan"]
       elif test("^picked ") then ["pick", "plan"]
       elif test("^(run started|run created|run-lock acquired|meta-entry|skipped AUT-QUEUE|trail-gate|trail-unstage)") then ["pick"]
       else [] end;
