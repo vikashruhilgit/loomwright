@@ -898,7 +898,7 @@ cd loomwright && for g in skills/automate-loop skills/self-heal-advisory skills/
 
 ### History references and ceilings
 
-- `bash scripts/check-prompt-history-refs.sh` on the committed tree: exit 0, `scanned files: 125 | references: 430 | violations: 0 | errors: 0`, no `lower the baseline` line, `raise_check: skipped (no baseline at base — bootstrap)` (this change creates the baseline, so `main` has none). The same with `PROMPT_HISTORY_REFS_BASE=origin/main PROMPT_HISTORY_REFS_REQUIRE_BASE=1`, the CI environment, also exits 0.
+- `bash scripts/check-prompt-history-refs.sh` on the committed tree: exit 0, `scanned files: 125 | references: 422 | violations: 0 | errors: 0`, no `lower the baseline` line, `raise_check: skipped (no baseline at base — bootstrap)` (this change creates the baseline, so `main` has none). The same with `PROMPT_HISTORY_REFS_BASE=origin/main PROMPT_HISTORY_REFS_REQUIRE_BASE=1`, the CI environment, also exits 0.
 - `bash scripts/check-token-budget.sh`: exit 0, `breaches: 0 | errors: 0`. Every `.agents` / `.skills` / `.commands` row's `measured` equals the live proxy the gate prints and its `budget` equals ceil(measured × 1.10) — checked row by row against the gate's printed output, all rows equal.
 - `bash scripts/ci-local.sh --list` lists `gate: scripts/test-check-prompt-history-refs.sh` and `gate: scripts/check-prompt-history-refs.sh` (and `early: scripts/check-prompt-history-refs.sh`), derived from `ci.yml`.
 
@@ -906,7 +906,7 @@ cd loomwright && for g in skills/automate-loop skills/self-heal-advisory skills/
 
 | Command | Result |
 |---|---|
-| `bash scripts/test-check-prompt-history-refs.sh` | 103/103 |
+| `bash scripts/test-check-prompt-history-refs.sh` | 112/112 |
 | `bash scripts/test-check-token-budget.sh` | 111/111 |
 | `bash scripts/test-ci-local.sh` | 93/93 |
 | `bash scripts/check-doc-currency.sh` | exit 0 — 16 surfaces scanned, every checked claim matches (its self-test `test-check-doc-currency.sh`: 8/8) |

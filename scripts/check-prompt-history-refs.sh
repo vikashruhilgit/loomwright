@@ -18,7 +18,9 @@
 # scanned (not docs/rationale/, not docs/evidence/), and neither is CHANGELOG.md or changelog.d/.
 #
 # REFERENCE PATTERNS — HISTORY_REF_PATTERNS below is the ONE definition (the self-test drives
-# the gate and never restates it). Each match counts once. FROZEN_EXAMPLE_ERE lines count 0:
+# the gate and never restates it). Each match counts once, and only when the character after it
+# is not in the alternative's trailing-guard class (so `#20B2AA` and `pending/2026` are not
+# references). FROZEN_EXAMPLE_ERE lines count 0:
 # a sample `session_end` record, a `"plugin_version"` key and a sample POSTMORTEM_RESULT record
 # illustrate a FORMAT only (the convention check-doc-currency.sh documents under "FROZEN,
 # VERSION-AGNOSTIC EXAMPLE VALUES ARE INTENTIONALLY LEFT ALONE").
@@ -87,25 +89,32 @@ loomwright/commands
 loomwright/skills
 loomwright/docs/command-parts"
 
-# One alternative per line. A leading guard char (`[^…]`) is part of the match because ERE has
-# no look-behind; every scanned line is prefixed with a space so the guard always has a char to
-# match at line start. The token printed is the match with that guard char stripped.
-#   #NNN          `#` + 2–5 digits, not after `&`, a letter, a digit or `_` (no entity, no anchor)
-#   <queue>/<NN>  lowercase slug, `/`, two digits, optional letter suffix
-#   YYYY-MM-DD    a date
-#   item NN       case-insensitive `item`, two digits, optional letter suffix
-#   vX.Y.Z        a version, not after a letter or a digit
-HISTORY_REF_PATTERNS='[^&A-Za-z0-9_]#[0-9]{2,5}
-[a-z][a-z0-9-]*/[0-9]{2}[a-z]?
-20[0-9]{2}-[0-9]{2}-[0-9]{2}
-[Ii][Tt][Ee][Mm] [0-9]{2}[A-Za-z]?
-[^A-Za-z0-9]v[0-9]+\.[0-9]+\.[0-9]+'
+# One alternative per line: `<trailing-guard class><TAB><ERE>`. ERE has no look-around, so
+# both guards are emulated. LEADING: a guard char (`[^…]`) is part of the match, and every
+# scanned line is prefixed with a space so it always has a char to match at line start; the
+# token printed is the match with that guard char stripped. TRAILING: each alternative is
+# searched on its own pass as `<ERE><class>*`, so a match runs on through any guard-class chars
+# after it, and it counts only when that run is empty, i.e. the whole match still equals `<ERE>`
+# anchored. The run consumes only guard-class chars, never the separator a following
+# reference's leading guard needs, and a rejected run never hides another alternative's match
+# (each alternative is its own pass).
+#   #NNN          `#` + 2–5 digits, not after `&`, a letter, a digit or `_` (no entity, no
+#                 anchor), not before a letter, a digit or `_` (no hex colour `#20B2AA`)
+#   <queue>/<NN>  lowercase slug, `/`, two digits, optional letter suffix, not before a letter
+#                 or a digit (no `pending/2026-…` date path)
+#   YYYY-MM-DD    a date, not before a digit (an ISO timestamp `…-15T12:00` still counts)
+#   item NN       case-insensitive `item`, two digits, optional letter suffix, not before a
+#                 letter or a digit
+#   vX.Y.Z        a version, not after a letter or a digit, not before a letter, a digit or `_`
+HISTORY_REF_PATTERNS='[A-Za-z0-9_]	[^&A-Za-z0-9_]#[0-9]{2,5}
+[A-Za-z0-9]	[a-z][a-z0-9-]*/[0-9]{2}[a-z]?
+[0-9]	20[0-9]{2}-[0-9]{2}-[0-9]{2}
+[A-Za-z0-9]	[Ii][Tt][Ee][Mm] [0-9]{2}[A-Za-z]?
+[A-Za-z0-9_]	[^A-Za-z0-9]v[0-9]+\.[0-9]+\.[0-9]+'
 
 # Frozen example values (count 0): a sample session_end record, a "plugin_version" key, a
 # sample POSTMORTEM_RESULT record (its "review_rounds" key).
 FROZEN_EXAMPLE_ERE='"event"[[:space:]]*:[[:space:]]*"session_end"|"plugin_version"[[:space:]]*:|"review_rounds"[[:space:]]*:'
-
-HISTORY_REF_ERE="$(printf '%s\n' "$HISTORY_REF_PATTERNS" | sed '/^$/d; s/.*/(&)/' | paste -sd'|' -)"
 
 ROOT="$repo_root"
 BASELINE=""
@@ -135,17 +144,25 @@ errors=0
 violations=0
 err() { echo "ERROR: $*"; errors=$((errors + 1)); }
 
-# tokens_of <file> -> "<line>:<token>" per reference, frozen example lines excluded.
-# Returns 1 when the file cannot be read or grep fails (exit 2) — never a silent 0.
+# tokens_of <file> -> "<line>:<token>" per reference, frozen example lines excluded, in line
+# order. Returns 1 when the file cannot be read or grep fails (exit 2) — never a silent 0.
 tokens_of() {
-  local pre="$TMPD/pre.txt" out="$TMPD/tok.out" rc
+  local pre="$TMPD/pre.txt" out="$TMPD/tok.out" raw="$TMPD/tok.raw" rc tail ere
   awk -v fz="$FROZEN_EXAMPLE_ERE" '
     $0 ~ fz { print ""; next }
     { print " " $0 }
   ' "$1" > "$pre" 2>/dev/null || return 1
-  grep -noE "$HISTORY_REF_ERE" "$pre" > "$out"; rc=$?
-  [ "$rc" -le 1 ] || return 1
-  sed -E 's/^([0-9]+):[^A-Za-z0-9](#|v)/\1:\2/' "$out"
+  : > "$out"
+  while IFS="$(printf '\t')" read -r tail ere; do
+    [ -n "$ere" ] || continue
+    grep -noE "$ere$tail*" "$pre" > "$raw"; rc=$?
+    [ "$rc" -le 1 ] || return 1
+    grep -E "^[0-9]+:($ere)\$" "$raw" >> "$out"; rc=$?
+    [ "$rc" -le 1 ] || return 1
+  done <<EOF
+$HISTORY_REF_PATTERNS
+EOF
+  sort -t: -k1,1n "$out" | sed -E 's/^([0-9]+):[^A-Za-z0-9](#|v)/\1:\2/'
 }
 
 # valid_baseline <file> -> exit 0 when it is JSON {files: {…}} (jq -e, before any value is read).

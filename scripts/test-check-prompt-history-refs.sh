@@ -10,7 +10,8 @@
 #
 # Cases (by category — assertion counts are intentionally not restated in docs):
 #   P.  PATTERNS — one true positive per pattern, the `#NNN` negative guards (entity, anchor,
-#       one digit) and the version guard, each counted through --write-baseline
+#       one digit), the version guard and each alternative's trailing guard (hex colour,
+#       longer digit run, date-named path), each counted through --write-baseline
 #   A1. a new `#123` in a runtime prompt ⇒ exit 1, file + `path:line: #123` printed
 #   A1b BASE-COPY FILTER — only references the base copy lacks are printed; without a base,
 #       every reference is printed and labelled
@@ -26,7 +27,8 @@
 #       under a scanned dir, --write-baseline refusing to write on an error, an unknown flag
 #   A6. FROZEN EXAMPLE LINES — a sample session_end record, a "plugin_version" key and a
 #       sample POSTMORTEM_RESULT line count 0; the same date on a plain line counts 1
-#   A7. LIVE REPO — the committed baseline equals the live counts (exit 0, no lower line)
+#   A7. LIVE REPO — the live repo passes (exit 0); a `lower the baseline` line is a note only,
+#       since a count below its entry passes by the gate's own verdict
 #   A9. CI WIRING — ci.yml fetches a dedicated base ref, sets require-base, runs both scripts
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../loomwright/scripts/hermetic-test-env.sh"
@@ -109,6 +111,17 @@ equals "P7 vX.Y.Z guard: after a letter is not counted" 0 "$(cnt 'the xv1.2.3 to
 equals "P7 vX.Y.Z guard: two parts are not counted" 0 "$(cnt 'version v1.2 only')"
 equals "P8 several references on one line each count" 3 "$(cnt 'from #12 via #13 to v1.2.3')"
 equals "P9 plain prose counts 0"                  0 "$(cnt 'plain prose with no history')"
+# trailing guards: a match followed by a guard-class char is not a reference
+equals "P10 #NNN trailing guard: a hex colour counts 0" 0 "$(cnt 'color: "#20B2AA"')"
+equals "P10 #NNN trailing guard: an all-digit hex colour counts 0" 0 "$(cnt 'color: "#708090"')"
+equals "P10 #NNN trailing guard: punctuation after it still counts" 2 "$(cnt 'see (#12), and #13.')"
+equals "P10 adjacent references sharing one separator each count" 2 "$(cnt '#12 #13')"
+equals "P11 <queue>/<NN> trailing guard: a longer digit run counts 0" 0 "$(cnt 'at 10x/100x load')"
+equals "P11 a date-named path counts once (the date), not twice" 1 "$(cnt 'see pending/2026-10-21-x.md')"
+equals "P12 YYYY-MM-DD trailing guard: a further digit counts 0" 0 "$(cnt 'id 2026-10-151 here')"
+equals "P12 an ISO timestamp still counts as a date" 1 "$(cnt 'at 2026-10-15T12:00:00Z')"
+equals "P13 item NN trailing guard: three digits count 0" 0 "$(cnt 'item 180 here')"
+equals "P14 vX.Y.Z trailing guard: a letter after it counts 0" 0 "$(cnt 'the v1.2.3rc build')"
 
 # ---------------------------------------------------------------------------------------------
 # A1 — a new #123 in a runtime prompt
@@ -322,9 +335,16 @@ equals "A6 control: the same date on a plain line counts 1" 1 "$(count_of "$K" l
 
 # ---------------------------------------------------------------------------------------------
 # A7 — live repo: the committed baseline equals the live counts
+# A `lower the baseline` line is NOT a failure here: the gate's verdict for a count below its
+# entry is exit 0, and this leg runs in the gate's own CI step, so asserting its absence would
+# fail every later PR that removes a reference without regenerating the baseline. It is
+# reported as a note; a fresh --write-baseline clears it.
 OUT="$(env -u PROMPT_HISTORY_REFS_BASE -u PROMPT_HISTORY_REFS_REQUIRE_BASE bash "$GATE" 2>&1)"; RC=$?
 check "A7 the live repo passes" 0 "$RC"
-lacks "A7 the live repo prints no lower-the-baseline line" "$OUT" "lower the baseline"
+case "$OUT" in *"lower the baseline"*)
+  echo "note - A7 the live repo prints lower-the-baseline line(s); regenerate with --write-baseline:"
+  printf '%s\n' "$OUT" | grep '^lower the baseline' | sed 's/^/       /' ;;
+esac
 
 # ---------------------------------------------------------------------------------------------
 # A9 — ci.yml wiring (ci-local.sh derives its gates from these lines)
