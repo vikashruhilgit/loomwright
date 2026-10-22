@@ -21,6 +21,19 @@
 #   AC4  MUTATION CONTROL: with the guard's marked block sed-deleted out of a COPY of
 #        propose-common.sh, the SAME traversal name from AC3 escapes the output directory - the
 #        guard being deleted is observable, not merely assumed.
+#   AC5  SIZE LINE (parallel-automate/18b): a `*.md` written under a tree holding `.supervisor/`
+#        prints exactly one `automate-helpers.sh right-size` line on STDERR; rc 0, stdout empty,
+#        the written bytes unchanged.
+#   AC6  no size line for `README.md`, a `_*` name, a non-`*.md` name, or an output dir with no
+#        `.supervisor/` above it - each still written, rc 0.
+#   AC7  a FAILING right-size (stub dispatcher, exit 1 with output on both streams) prints
+#        nothing and the write still returns 0; a stub that exits 0 shows its line (the control
+#        that keeps the failing leg live).
+#   AC8  an ABSENT right-size (a copy of propose-common.sh with no sibling dispatcher) prints
+#        nothing and the write still returns 0.
+#   AC9  MUTATION CONTROLS on the ONE call line after the `mv -f`, each in a copy beside symlinks
+#        to the real dispatcher: deleting it loses the stderr line (AC5 turns red); dropping its
+#        `>&2` puts the line on stdout (AC5's stdout-empty assertion turns red).
 #
 # Exit 0 = all pass, 1 = any failure. Registered automatically by ci.yml's test-*.sh glob.
 
@@ -122,6 +135,109 @@ if [ -s "$MUT" ] && ! cmp -s "$MUT" "$SUT" && bash -n "$MUT" 2>/dev/null; then
 else
   no "AC4: could not build a valid write-guard mutant - the mutation control is uncontrolled"
 fi
+
+# ---------------------------------------------------------------------------
+# Size-line fixtures. sz_tree builds a checkout-shaped tree (`.supervisor/requirements/proposed/`
+# plus one real file the draft's Touches names), so right-size reads `small (1 files, …)`.
+# sz_dir <label> [<sed-expr>] copies propose-common.sh (optionally mutated) into its own dir beside
+# symlinks to the REAL dispatcher and its families, so the copy's sibling lookup finds right-size.
+SZ_DRAFT="$(printf '# Size fixture\n\n## Status: proposed\n\n## Depends on\nnone\n\n## Touches\nsrc/a.sh\n\n## Scope\n- one thing\n')"
+sz_tree() {
+  st_t="$(mktmp)"; mkdir -p "$st_t/.supervisor/requirements/proposed" "$st_t/src"; : > "$st_t/src/a.sh"
+  (cd "$st_t/.supervisor/requirements/proposed" && pwd)
+}
+sz_dir() {
+  sd_d="$(mktmp)/$1"; mkdir -p "$sd_d"
+  if [ -n "${2:-}" ]; then sed "$2" "$SUT" > "$sd_d/propose-common.sh"; else cp "$SUT" "$sd_d/propose-common.sh"; fi
+  ln -s "$HERE/automate-helpers.sh" "$sd_d/automate-helpers.sh"
+  ln -s "$HERE/automate-helpers.d" "$sd_d/automate-helpers.d"
+  printf '%s' "$sd_d"
+}
+SZ_WANT="proposed/cand: small (1 files, 1 scope items, 0 criteria) — merge candidates: none"
+# sz_check <label> <out_dir_abs> <name> - rc 0, stdout empty, bytes unchanged (shared by every leg).
+sz_check() {
+  [ "$(cat "$ROOT/rc")" -eq 0 ] && ok "$1: rc 0" || no "$1: rc=$(cat "$ROOT/rc") err=$(cat "$ROOT/err.log")"
+  [ ! -s "$ROOT/out.log" ] && ok "$1: stdout empty" || no "$1: stdout not empty: $(cat "$ROOT/out.log")"
+  [ "$(cat "$2/$3" 2>/dev/null)" = "$SZ_DRAFT" ] && ok "$1: the written bytes are unchanged" || no "$1: content of $3 differs"
+}
+
+echo "== AC5: a *.md draft under a .supervisor/ tree gets ONE right-size line on stderr =="
+A5="$(sz_tree)"
+call_guard "$SUT" "$A5" "cand.md" "$SZ_DRAFT"
+sz_check "AC5" "$A5" "cand.md"
+[ "$(cat "$ROOT/err.log")" = "$SZ_WANT" ] && ok "AC5: stderr is exactly the one right-size line ($SZ_WANT)" \
+  || no "AC5: stderr: $(cat "$ROOT/err.log")"
+
+echo "== AC6: README.md, _* names, non-*.md names and a tree with no .supervisor/ print no size line =="
+A6="$(sz_tree)"
+for n in README.md _notes.md cand.txt; do
+  call_guard "$SUT" "$A6" "$n" "$SZ_DRAFT"
+  sz_check "AC6 $n" "$A6" "$n"
+  [ ! -s "$ROOT/err.log" ] && ok "AC6 $n: no size line" || no "AC6 $n: stderr: $(cat "$ROOT/err.log")"
+done
+A6N="$(mktmp)/out"; mkdir -p "$A6N"; A6N="$(cd "$A6N" && pwd)"
+call_guard "$SUT" "$A6N" "cand.md" "$SZ_DRAFT"
+sz_check "AC6 no .supervisor/" "$A6N" "cand.md"
+# The walk is unbounded by design, so a `.supervisor/` some other process left in an ANCESTOR of
+# the temp dir (e.g. $TMPDIR itself) is a legitimate root; the no-root leg is then inconclusive here.
+a6_anc="$A6N"; a6_hit=""
+while [ "$a6_anc" != / ]; do [ -d "$a6_anc/.supervisor" ] && { a6_hit="$a6_anc"; break; }; a6_anc="$(dirname "$a6_anc")"; done
+if [ -n "$a6_hit" ]; then
+  ok "AC6 no-root leg inconclusive on this host: ancestor $a6_hit holds .supervisor/ (the walk correctly found it)"
+else
+  [ ! -s "$ROOT/err.log" ] && ok "AC6 no .supervisor/ above the output dir: the line is skipped silently" || no "AC6 no-root stderr: $(cat "$ROOT/err.log")"
+fi
+
+echo "== AC7: a FAILING right-size prints nothing; the write still returns 0 =="
+A7D="$(mktmp)/stub"; mkdir -p "$A7D"; cp "$SUT" "$A7D/propose-common.sh"
+printf '#!/usr/bin/env bash\necho "STUB-OUT $*"\necho "STUB-ERR" >&2\nexit 1\n' > "$A7D/automate-helpers.sh"
+A7="$(sz_tree)"
+call_guard "$A7D/propose-common.sh" "$A7" "cand.md" "$SZ_DRAFT"
+sz_check "AC7 failing" "$A7" "cand.md"
+[ ! -s "$ROOT/err.log" ] && ok "AC7: right-size exit 1 (output on both streams) prints nothing" || no "AC7 failing stderr: $(cat "$ROOT/err.log")"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$A7D/automate-helpers.sh"
+call_guard "$A7D/propose-common.sh" "$A7" "cand.md" "$SZ_DRAFT"
+sz_check "AC7 empty" "$A7" "cand.md"
+[ ! -s "$ROOT/err.log" ] && ok "AC7: right-size exit 0 with no output prints nothing (no blank line)" || no "AC7 empty-output stderr: $(od -c < "$ROOT/err.log" | head -2)"
+printf '#!/usr/bin/env bash\necho "STUB-OUT $1"\n' > "$A7D/automate-helpers.sh"
+call_guard "$A7D/propose-common.sh" "$A7" "cand.md" "$SZ_DRAFT"
+sz_check "AC7 control" "$A7" "cand.md"
+[ "$(cat "$ROOT/err.log")" = "STUB-OUT right-size" ] && ok "AC7 control: the same stub exiting 0 IS shown, so the failing leg is live" \
+  || no "AC7 control: stderr: $(cat "$ROOT/err.log")"
+
+echo "== AC8: an ABSENT right-size prints nothing; the write still returns 0 =="
+A8D="$(mktmp)/alone"; mkdir -p "$A8D"; cp "$SUT" "$A8D/propose-common.sh"
+A8="$(sz_tree)"
+call_guard "$A8D/propose-common.sh" "$A8" "cand.md" "$SZ_DRAFT"
+sz_check "AC8" "$A8" "cand.md"
+[ ! -s "$ROOT/err.log" ] && ok "AC8: no sibling dispatcher ⇒ no line" || no "AC8 stderr: $(cat "$ROOT/err.log")"
+
+echo "-- MUTATION CONTROLS (AC9): the one right-size call line after the mv -f --"
+CALL_RE='^  pc_size_line "\$pc_out_dir_abs" "\$pc_name" >&2$'
+[ "$(grep -c "$CALL_RE" "$SUT")" = 1 ] && ok "AC9: exactly one size-line call line in propose-common.sh" || no "AC9: call line count $(grep -c "$CALL_RE" "$SUT")"
+A9I="$(sz_dir intact)"; A9="$(sz_tree)"
+call_guard "$A9I/propose-common.sh" "$A9" "cand.md" "$SZ_DRAFT"
+[ "$(cat "$ROOT/err.log")" = "$SZ_WANT" ] && ok "AC9 control: an intact copy beside the symlinked dispatcher prints the line" \
+  || no "AC9 control: intact copy stderr: $(cat "$ROOT/err.log")"
+for m in nocall stdout; do
+  case "$m" in
+    nocall) A9M="$(sz_dir nocall "/$CALL_RE/d")" ;;
+    stdout) A9M="$(sz_dir stdout 's/^\(  pc_size_line "\$pc_out_dir_abs" "\$pc_name"\) >&2$/\1/')" ;;
+  esac
+  if cmp -s "$A9M/propose-common.sh" "$SUT" || ! bash -n "$A9M/propose-common.sh" 2>/dev/null; then
+    no "AC9 $m: could not build a valid mutant - control uncontrolled"; continue
+  fi
+  A9T="$(sz_tree)"
+  call_guard "$A9M/propose-common.sh" "$A9T" "cand.md" "$SZ_DRAFT"
+  case "$m" in
+    nocall) [ "$(cat "$ROOT/rc")" -eq 0 ] && [ ! -s "$ROOT/err.log" ] \
+              && ok "AC9 MUTATION CONTROL: the call line deleted ⇒ no stderr line (AC5 turns red)" \
+              || no "AC9 nocall mutant still printed: $(cat "$ROOT/err.log")" ;;
+    stdout) [ "$(cat "$ROOT/out.log")" = "$SZ_WANT" ] && [ ! -s "$ROOT/err.log" ] \
+              && ok "AC9 MUTATION CONTROL: the call's >&2 dropped ⇒ the line lands on stdout (AC5's stdout-empty turns red)" \
+              || no "AC9 stdout mutant: out=$(cat "$ROOT/out.log") err=$(cat "$ROOT/err.log")" ;;
+  esac
+done
 
 # ---------------------------------------------------------------------------
 echo

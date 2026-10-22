@@ -50,6 +50,10 @@
 #       file, no repo); `gh` never invoked, no `git commit` / `git push`;
 #       pc_guarded_write is load-bearing (mutation control: PROPOSE_COMMON_SH at a
 #       copy with the marked guard block deleted turns the refusal legs red).
+#   A13. the right-size size line pc_guarded_write prints on stderr (18b) leaves
+#       dismissed-drafts' TSV rows / summary line, dismissed-decide's output and
+#       the drafts byte-identical; a stub dispatcher proves both call sites run it;
+#       mutation control: the call's `>&2` dropped ⇒ decide's stdout changes.
 #   B. (Part B) SKILL-text legs — the prose the inline loop executes: the decision
 #       subsection exists; at an `escalated` park (and under --non-interactive-fallback)
 #       it precedes the park write + the watcher arm, while a sequential interactive
@@ -1005,6 +1009,60 @@ t12_has src/app.ts && ok "A12 containment (e): a normal existing path is still a
 ! t12_has inlink.ts && t12_has indir/app.ts && ok "A12 containment (c): in-repo symlinked file rejected, in-repo symlinked dir accepted as written" || no "A12 containment (c): in-repo symlink handling: '$T12'"
 ! t12_has .git/config && ! t12_has .GIT/config && ! t12_has .git/HEAD && ok "A12 containment (d): .git/ paths are rejected (any case)" || no "A12 containment (d): .git path leaked into Touches: '$T12'"
 [ "$T12" = "$(printf 'indir/app.ts\nsrc/app.ts')" ] && ok "A12 Touches is exactly the two contained paths" || no "A12 Touches set: '$(tr '\n' '|' <<<"$T12")'"
+
+echo "== A13. size line (parallel-automate/18b): both call sites' stdout byte-identical with it present =="
+# pc_guarded_write prints a right-size line on stderr after each write. dismissed-drafts captures
+# the guard's stdout AND stderr (`2>&1`) and discards them on success; dismissed-decide pipes the
+# guard with `2>/dev/null` — so neither command's stdout, stderr or drafts may change. Four runs of
+# one fixture, each in its own repo: the real propose-common.sh; a copy with the right-size call
+# line deleted (the no-size-line baseline); a copy beside a recording STUB dispatcher (proves both
+# call sites really run right-size); and a copy whose call drops its `>&2` beside the real
+# dispatcher — that mutant's line reaches dismissed-decide's stdout (drafts' capture still hides
+# it), which is what keeps the decide stdout assertion live. Repo paths are normalised to <R>.
+A13_CALL_RE='^  pc_size_line "\$pc_out_dir_abs" "\$pc_name" >&2$'
+a13_copy() { # <label> <sed-expr> [stub] — a (mutated) propose-common.sh beside the real or a stub dispatcher
+  local d="$TOP/a13-$1"; mkdir -p "$d"; sed "$2" "$HERE/propose-common.sh" > "$d/propose-common.sh"
+  if [ "${3:-}" = stub ]; then
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/a13-stub.calls"\necho "STUB size line"\n' "$TOP" > "$d/automate-helpers.sh"
+  else
+    ln -s "$H" "$d/automate-helpers.sh"; ln -s "$HERE/automate-helpers.d" "$d/automate-helpers.d"
+  fi
+  printf '%s' "$d/propose-common.sh"
+}
+a13_run() { # <label> [<common>] — drafts, then decide follow-up on the per-finding draft; files in $TOP/a13-<label>.*
+  local c="${2:-}" f
+  fx "13$1"; mkdir -p "$R/src"; : > "$R/src/real.sh"
+  sup 1 '[{finding: "bug in src/real.sh", reason: below_severity_floor, source: code_reviewer, severity: HIGH}, {finding: "a nit", reason: nit, source: red_team, severity: LOW}]'
+  ( [ -n "$c" ] && export PROPOSE_COMMON_SH="$c"; bash "$H" dismissed-drafts "$RF" "$ITEM" "$PRURL" ) > "$TOP/a13-$1.dd" 2> "$TOP/a13-$1.dderr"; A13_RC=$?
+  f="$(awk -F'\t' '$1 == "draft" && $2 != "summary" { print $4; exit }' "$TOP/a13-$1.dd")"
+  ( [ -n "$c" ] && export PROPOSE_COMMON_SH="$c"; bash "$H" dismissed-decide "$RF" "${f:-/nonexistent}" follow-up ) > "$TOP/a13-$1.dec" 2> "$TOP/a13-$1.decerr"; A13_RC=$((A13_RC + $?))
+  for x in dd dderr dec decerr; do sed "s#$R#<R>#g" "$TOP/a13-$1.$x" > "$TOP/a13-$1.$x.n"; done
+  tree_sum > "$TOP/a13-$1.sum"
+}
+A13_NOCALL="$(a13_copy nocall "/$A13_CALL_RE/d")"
+A13_STUB="$(a13_copy stub 's/^$//' stub)"
+A13_STDOUT="$(a13_copy stdout 's/^\(  pc_size_line "\$pc_out_dir_abs" "\$pc_name"\) >&2$/\1/')"
+if cmp -s "$A13_NOCALL" "$HERE/propose-common.sh" || cmp -s "$A13_STDOUT" "$HERE/propose-common.sh"; then
+  no "A13: could not build the size-line mutants — the leg is uncontrolled"
+else
+  rm -f "$TOP/a13-stub.calls"
+  a13_run real; rc_real=$A13_RC
+  a13_run nocall "$A13_NOCALL"; rc_nocall=$A13_RC
+  a13_run stub "$A13_STUB"
+  a13_run stdout "$A13_STDOUT"
+  [ "$rc_real" = 0 ] && [ "$rc_nocall" = 0 ] && ok "A13 exit 0 with and without the size line" || no "A13 rc real=$rc_real nocall=$rc_nocall"
+  [ "$(grep -c '^draft	' "$TOP/a13-real.dd")" = 2 ] && [ "$(cat "$TOP/a13-real.dec.n")" = "dismissed-decide: follow-up $(basename "$(awk -F'\t' '$1 == "draft" && $2 != "summary" { print $4; exit }' "$TOP/a13-real.dd")")" ] \
+    && ok "A13 fixture: 2 draft rows (per-finding + summary) and a one-line follow-up decide" || no "A13 fixture: $(cat "$TOP/a13-real.dd" "$TOP/a13-real.dec")"
+  bad=""
+  for x in dd dderr dec decerr; do cmp -s "$TOP/a13-real.$x.n" "$TOP/a13-nocall.$x.n" || bad="$bad [$x: $(diff "$TOP/a13-real.$x.n" "$TOP/a13-nocall.$x.n" | tr '\n' '|')]"; done
+  cmp -s "$TOP/a13-real.sum" "$TOP/a13-nocall.sum" || bad="$bad [drafts differ]"
+  [ -z "$bad" ] && ok "A13 dismissed-drafts TSV rows + summary line, dismissed-decide output, both stderrs and the drafts are byte-identical with and without the size line" || no "A13 differs:$bad"
+  [ "$(grep -c '^right-size ' "$TOP/a13-stub.calls" 2>/dev/null)" = 3 ] && grep -q '^right-size .*/proposed/[^ ]*--dismissed-summary\.md --root ' "$TOP/a13-stub.calls" \
+    && ok "A13 both call sites run right-size (stub saw 3 calls: 2 drafts writes + 1 decide rewrite, each with --root)" || no "A13 stub calls: $(cat "$TOP/a13-stub.calls" 2>/dev/null | tr '\n' '|')"
+  cmp -s "$TOP/a13-real.dd.n" "$TOP/a13-stub.dd.n" && cmp -s "$TOP/a13-real.dec.n" "$TOP/a13-stub.dec.n" && ok "A13 with right-size printing (stub), both stdouts still byte-identical" || no "A13 stub run changed stdout"
+  grep -q '^proposed/[^ ]*: ' "$TOP/a13-stdout.dec" && ! cmp -s "$TOP/a13-real.dec.n" "$TOP/a13-stdout.dec.n" \
+    && ok "A13 MUTATION CONTROL: the call's >&2 dropped ⇒ the size line reaches dismissed-decide's stdout (the byte-identical assertion turns red)" || no "A13 stdout mutant decide: $(cat "$TOP/a13-stdout.dec")"
+fi
 
 echo "== LN. parallel-automate/05 Scope 7: the PARENT run file sees and decides its lanes' drafts =="
 fx 90 par-5; mkdir -p "$PROP"
