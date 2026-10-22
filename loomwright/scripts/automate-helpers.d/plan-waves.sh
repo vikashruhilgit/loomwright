@@ -1,6 +1,6 @@
 # --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/plan-waves.golden.
-#:  plan-waves       <runfile|dir|item-list> --max N [--explain] [--verbose] [--root <checkout>]  # parallel-automate/04: READ-ONLY wave planner — `## Depends on` / `## Touches` (strict grammar) + <root>/.agent/companions.json expansion ⇒ `wave <k>: …` + `blocked <item>: …` lines (`--explain`, parallel-automate/10: then one `explain <item> (wave <k>):` block per placed item not in wave 1); exit 1 + empty stdout on usage / item not found / unknown dependency / cycle / companions_malformed; called ONLY by `--parallel N>1` (item 05), never by the sequential loop; `--verbose` (any mode) is a no-op — every mode already prints one line per wave, item or path
+#:  plan-waves       <runfile|dir|item-list> --max N [--explain] [--verbose] [--root <checkout>]  # parallel-automate/04: READ-ONLY wave planner — `## Depends on` / `## Touches` (strict grammar) + <root>/.agent/companions.json expansion ⇒ `wave <k>: …` + `blocked <item>: …` lines (`--explain`, parallel-automate/10: then one `explain <item> (wave <k>):` block per placed item not in wave 1 or small — parallel-automate/18b: every placed item, wave 1 included, whose companion-expanded Touches count is <= right_size_small gets a `small (<N> files): run right-size <item> for merge candidates` line); exit 1 + empty stdout on usage / item not found / unknown dependency / cycle / companions_malformed; the planner is called ONLY by `--parallel N>1` (item 05), never by the sequential loop (right-size reuses the read-only `--touches` read in every mode); `--verbose` (any mode) is a no-op — every mode already prints one line per wave, item or path
 #:  plan-waves       <item|dir|runfile|item-list> --lint [--verbose] [--root <checkout>]  # parallel-automate/10: READ-ONLY lint of both sections with the planner's OWN parser — one `<item>: Touches <verdict>; Depends on <verdict>` line per item + two count lines; exit 1 when any section is missing/unparsable (a sole `unknown` Touches is `ok (declared unknown)`); never needs --max
 #:  plan-waves       <item> --touches [--verbose] [--root <checkout>]  # READ-ONLY: ONE item's Touches set exactly as the planner reserves it (its OWN parser + <root>/.agent/companions.json expansion) ⇒ `known` then one normalized path per line, or the one line `unknown <why>`; exit 1 + empty stdout on usage (incl. an input that does not exist or is not *.md) / companions_malformed; lane-readiness's scope fence reads it
 
@@ -10,7 +10,9 @@
 # never called when N = 1 (`--max 1` is NOT queue order once an item depends on a
 # later-numbered one, so the guarantee is by not calling it). Product Owner also runs a
 # planning pass on the stories it just wrote, to shape them for a wave (its output is only
-# read, never acted on by the engine); `--lint` / `--touches` plan nothing.
+# read, never acted on by the engine); `--lint` / `--touches` plan nothing. right-size
+# (automate-helpers.d/right-size.sh) reuses the `--touches` read (_pw_touches + _pw_expand),
+# read-only, in every mode — that is a Touches read, not a plan.
 # --------------------------------------------------------------------------- #
 #
 # plan-waves <runfile|dir|item-list> --max N [--root <checkout>]
@@ -52,9 +54,12 @@
 # `rev-parse --show-toplevel`; never `gh`.
 #
 # --explain (parallel-automate/10) — same inputs, same `wave`/`blocked` lines and exit codes; then,
-# for every PLACED item not in wave 1 (wave order, then input order), `explain <item> (wave <k>):`
-# and one indented line per distinct reason it stayed out of an earlier wave, recorded where the
-# wave loop made the decision: `conflicts with <item> on <path> (declared)` /
+# for every PLACED item (wave order, then input order) that is not in wave 1 or is small,
+# `explain <item> (wave <k>):`, then one indented line per distinct reason it stayed out of an
+# earlier wave, then — when it is small — `  small (<N> files): run right-size <item> for merge
+# candidates` (<N> = right-size's _rsz_count on the planner's own expanded set; small = <N> <=
+# right_size_small, config.sh's reader; a Touches-unknown item is never small; a wave-1 item's
+# block holds just that line). The reasons are recorded where the wave loop made the decision: `conflicts with <item> on <path> (declared)` /
 # `conflicts with <item> on <path> (companion: <when>)` (the contained path of the intersecting
 # pair; companion when either side's entry came from a companion rule), `depends on <item>`,
 # `runs alone: Touches unknown (missing)` / `(unparsable line <N>: "<text>")` / `(declared unknown)`,
@@ -351,7 +356,7 @@ _pw_intersect() {
 
 plan_waves() {
   local input="" max="" root="" mode="plan" line p f a i j k n=0 st id ds placed total cnt alone ready changed left msg
-  local waitj alonei members m w tv dv rc ka kd la ld tab
+  local waitj alonei members m w tv dv rc ka kd la ld tab rs sz
   local DISP=() ABS=() TS=() DEPJ=() BLK=() W=() OK=()
   tab="$(printf '\t')"
   _PW_EXPLAIN=0   # reset per call: a prior --explain in the same shell must not leak into a default run
@@ -616,17 +621,29 @@ plan_waves() {
     [ -z "${BLK[i]}" ] || printf 'blocked %s: %s\n' "${DISP[i]}" "${BLK[i]}" >> "$_PW_TMP/out"
     i=$((i+1))
   done
-  # 8. --explain: one block per placed item not in wave 1 (wave order, then input order), each
-  #    distinct reason once, in the order first recorded.
+  # 8. --explain: one block per placed item (wave order, then input order) — each distinct reason
+  #    once, in the order first recorded, then the small note when the item is small: right-size's
+  #    OWN count rule (_rsz_count) on the planner's OWN expanded set s.<i> (never a second
+  #    `## Touches` parse) is <= right_size_small (config.sh's reader). A wave-1 item has no reason,
+  #    so it gets a block only when it is small; a Touches-unknown item is never small.
   if [ "$_PW_EXPLAIN" = 1 ]; then
-    w=2
+    rs="$(right_size_small "$root")"
+    w=1
     while [ "$w" -le "$k" ]; do
       i=0
       while [ "$i" -lt "$n" ]; do
         if [ -z "${BLK[i]}" ] && [ "${W[i]}" -eq "$w" ]; then
-          printf 'explain %s (wave %s):\n' "${DISP[i]}" "$w" >> "$_PW_TMP/out"
-          if [ -f "$_PW_TMP/why.$i" ]; then
-            awk '!seen[$0]++ { print "  " $0 }' "$_PW_TMP/why.$i" >> "$_PW_TMP/out"
+          : > "$_PW_TMP/note.$i"
+          if [ "${TS[i]}" = known ]; then
+            sz="$(_rsz_count "$_PW_TMP/s.$i" "$root")"
+            if [ "$sz" -le "$rs" ]; then printf 'small (%s files): run right-size %s for merge candidates\n' "$sz" "${DISP[i]}" > "$_PW_TMP/note.$i"; fi   # PW_SMALL_NOTE
+          fi
+          if [ "$w" -gt 1 ] || [ -s "$_PW_TMP/note.$i" ]; then
+            printf 'explain %s (wave %s):\n' "${DISP[i]}" "$w" >> "$_PW_TMP/out"
+            if [ -f "$_PW_TMP/why.$i" ]; then
+              awk '!seen[$0]++ { print "  " $0 }' "$_PW_TMP/why.$i" >> "$_PW_TMP/out"
+            fi
+            awk '{ print "  " $0 }' "$_PW_TMP/note.$i" >> "$_PW_TMP/out"
           fi
         fi
         i=$((i+1))

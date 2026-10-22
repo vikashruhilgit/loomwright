@@ -451,36 +451,65 @@ x_rc() {
 x_has() { if grep -qxF -- "$2" <<<"$W_OUT"; then ok "$1"; else no "$1 — missing line '$2' in: $(printf '%s' "$W_OUT" | tr '\n' '|')"; fi; }
 
 # X1 every --explain reason shape, each on a fixture that produces it (AC-2), stdout byte-for-byte.
+#    Every placed known-Touches item here has 1-2 files, so each is `small` (parallel-automate/18b,
+#    default right_size_small 3): its block ends with the small note, and a small wave-1 item gets an
+#    `explain <item> (wave 1):` block holding just that line. A Touches-unknown item gets no note.
 rm -rf "$W_T/q"
 w_item q/01-a.md none 'a/'; w_item q/02-b.md none 'a/b.sh'
 w_list q/01-a.md q/02-b.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
-x_rc "X1 explain: declared conflict names the item and the contained path" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md\nexplain q/02-b.md (wave 2):\n  conflicts with q/01-a.md on a/b.sh (declared)'
+x_rc "X1 explain: declared conflict names the item and the contained path" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md\nexplain q/01-a.md (wave 1):\n  small (1 files): run right-size q/01-a.md for merge candidates\nexplain q/02-b.md (wave 2):\n  conflicts with q/01-a.md on a/b.sh (declared)\n  small (1 files): run right-size q/02-b.md for merge candidates'
 printf 'q/01-s1.md\nq/02-s2.md\n' > "$W_T/list"
 w_run "$W_C" "$H" "$W_T/list" --max 3 --explain
-x_rc "X1 explain: companion conflict names the rule's when" 0 'wave 1: q/01-s1.md\nwave 2: q/02-s2.md\nexplain q/02-s2.md (wave 2):\n  conflicts with q/01-s1.md on x/skills/SKILLS_INDEX.md (companion: x/skills/*/SKILL.md)'
+x_rc "X1 explain: companion conflict names the rule's when" 0 'wave 1: q/01-s1.md\nwave 2: q/02-s2.md\nexplain q/01-s1.md (wave 1):\n  small (2 files): run right-size q/01-s1.md for merge candidates\nexplain q/02-s2.md (wave 2):\n  conflicts with q/01-s1.md on x/skills/SKILLS_INDEX.md (companion: x/skills/*/SKILL.md)\n  small (2 files): run right-size q/02-s2.md for merge candidates'
 rm -rf "$W_T/q" "$W_T/other"
 w_item q/01-a.md '../other/05-y.md' 'a'; w_item q/02-b.md '1' 'b'; w_item other/05-y.md none 'y'
 w_list q/01-a.md q/02-b.md other/05-y.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
-x_rc "X1 explain: depends on <item> (display path of the in-set dependency)" 0 'wave 1: other/05-y.md\nwave 2: q/01-a.md\nwave 3: q/02-b.md\nexplain q/01-a.md (wave 2):\n  depends on other/05-y.md\nexplain q/02-b.md (wave 3):\n  depends on q/01-a.md'
+x_rc "X1 explain: depends on <item> (display path of the in-set dependency)" 0 'wave 1: other/05-y.md\nwave 2: q/01-a.md\nwave 3: q/02-b.md\nexplain other/05-y.md (wave 1):\n  small (1 files): run right-size other/05-y.md for merge candidates\nexplain q/01-a.md (wave 2):\n  depends on other/05-y.md\n  small (1 files): run right-size q/01-a.md for merge candidates\nexplain q/02-b.md (wave 3):\n  depends on q/01-a.md\n  small (1 files): run right-size q/02-b.md for merge candidates'
 w_alone missing -; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
-x_rc "X1 explain: runs alone: Touches unknown (missing)" 0 'wave 1: q/01-a.md q/03-c.md\nwave 2: q/02-b.md\nexplain q/02-b.md (wave 2):\n  runs alone: Touches unknown (missing)'
+x_rc "X1 explain: runs alone: Touches unknown (missing)" 0 'wave 1: q/01-a.md q/03-c.md\nwave 2: q/02-b.md\nexplain q/01-a.md (wave 1):\n  small (1 files): run right-size q/01-a.md for merge candidates\nexplain q/03-c.md (wave 1):\n  small (1 files): run right-size q/03-c.md for merge candidates\nexplain q/02-b.md (wave 2):\n  runs alone: Touches unknown (missing)'
 w_alone bullet '- b/x.sh'; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
-x_rc "X1 explain: runs alone: Touches unknown (unparsable line <N>: \"<text>\"), N 1-based in the item file" 0 'wave 1: q/01-a.md q/03-c.md\nwave 2: q/02-b.md\nexplain q/02-b.md (wave 2):\n  runs alone: Touches unknown (unparsable line 7: "- b/x.sh")'
+x_rc "X1 explain: runs alone: Touches unknown (unparsable line <N>: \"<text>\"), N 1-based in the item file" 0 'wave 1: q/01-a.md q/03-c.md\nwave 2: q/02-b.md\nexplain q/01-a.md (wave 1):\n  small (1 files): run right-size q/01-a.md for merge candidates\nexplain q/03-c.md (wave 1):\n  small (1 files): run right-size q/03-c.md for merge candidates\nexplain q/02-b.md (wave 2):\n  runs alone: Touches unknown (unparsable line 7: "- b/x.sh")'
 w_alone unknown 'unknown'; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
-x_rc "X1 explain: runs alone: Touches unknown (declared unknown)" 0 'wave 1: q/01-a.md q/03-c.md\nwave 2: q/02-b.md\nexplain q/02-b.md (wave 2):\n  runs alone: Touches unknown (declared unknown)'
+x_rc "X1 explain: runs alone: Touches unknown (declared unknown)" 0 'wave 1: q/01-a.md q/03-c.md\nwave 2: q/02-b.md\nexplain q/01-a.md (wave 1):\n  small (1 files): run right-size q/01-a.md for merge candidates\nexplain q/03-c.md (wave 1):\n  small (1 files): run right-size q/03-c.md for merge candidates\nexplain q/02-b.md (wave 2):\n  runs alone: Touches unknown (declared unknown)'
 rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md - 'b'
 w_list q/01-a.md q/02-b.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
-x_rc "X1 explain: runs alone: Depends on missing ⇒ depends on every earlier item" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md\nexplain q/02-b.md (wave 2):\n  runs alone: Depends on missing ⇒ depends on every earlier item'
+x_rc "X1 explain: runs alone: Depends on missing ⇒ depends on every earlier item" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md\nexplain q/01-a.md (wave 1):\n  small (1 files): run right-size q/01-a.md for merge candidates\nexplain q/02-b.md (wave 2):\n  runs alone: Depends on missing ⇒ depends on every earlier item\n  small (1 files): run right-size q/02-b.md for merge candidates'
 rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md none 'b'; w_item q/03-c.md none 'c'
 w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 2 --explain
-x_rc "X1 explain: wave <w> full (--max <N>)" 0 'wave 1: q/01-a.md q/02-b.md\nwave 2: q/03-c.md\nexplain q/03-c.md (wave 2):\n  wave 1 full (--max 2)'
+x_rc "X1 explain: wave <w> full (--max <N>)" 0 'wave 1: q/01-a.md q/02-b.md\nwave 2: q/03-c.md\nexplain q/01-a.md (wave 1):\n  small (1 files): run right-size q/01-a.md for merge candidates\nexplain q/02-b.md (wave 1):\n  small (1 files): run right-size q/02-b.md for merge candidates\nexplain q/03-c.md (wave 2):\n  wave 1 full (--max 2)\n  small (1 files): run right-size q/03-c.md for merge candidates'
 rm -rf "$W_T/q"; w_item q/01-a.md none -; w_item q/02-b.md none 'b'; w_item q/03-c.md none 'c'
 w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
-x_rc "X1 explain: wave <w> runs <item> alone (Touches unknown)" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md q/03-c.md\nexplain q/02-b.md (wave 2):\n  wave 1 runs q/01-a.md alone (Touches unknown)\nexplain q/03-c.md (wave 2):\n  wave 1 runs q/01-a.md alone (Touches unknown)'
+x_rc "X1 explain: wave <w> runs <item> alone (Touches unknown)" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md q/03-c.md\nexplain q/02-b.md (wave 2):\n  wave 1 runs q/01-a.md alone (Touches unknown)\n  small (1 files): run right-size q/02-b.md for merge candidates\nexplain q/03-c.md (wave 2):\n  wave 1 runs q/01-a.md alone (Touches unknown)\n  small (1 files): run right-size q/03-c.md for merge candidates'
 # Every reason of a multi-wave item, each distinct reason once (a conflict in wave 1, a dependency in wave 2).
 rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md none 'b'; w_item q/03-c.md '02' 'a/x'
 w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 1 --explain
-x_rc "X1 explain: every reason across earlier waves, each once" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md\nwave 3: q/03-c.md\nexplain q/02-b.md (wave 2):\n  wave 1 full (--max 1)\nexplain q/03-c.md (wave 3):\n  depends on q/02-b.md'
+x_rc "X1 explain: every reason across earlier waves, each once" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md\nwave 3: q/03-c.md\nexplain q/01-a.md (wave 1):\n  small (1 files): run right-size q/01-a.md for merge candidates\nexplain q/02-b.md (wave 2):\n  wave 1 full (--max 1)\n  small (1 files): run right-size q/02-b.md for merge candidates\nexplain q/03-c.md (wave 3):\n  depends on q/02-b.md\n  small (1 files): run right-size q/03-c.md for merge candidates'
+
+# X1s the small note (parallel-automate/18b): only a small item carries it, counted by right-size's own
+#     _rsz_count on the planner's own expanded set, with right-size's threshold reader.
+#     Pin mutation: delete the PW_SMALL_NOTE printf line in plan-waves.sh ⇒ X1 and X1s-a/b/c go red.
+rm -rf "$W_T/q" "$W_T/.supervisor"
+w_item q/01-a.md none 'a1\na2\na3\na4'; w_item q/02-b.md none 'b1'; w_item q/03-c.md none 'a1\nc1\nc2\nc3'
+w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1s-a a non-small item (4 files) gets no note: no wave-1 block, its later block keeps only its reason" 0 'wave 1: q/01-a.md q/02-b.md\nwave 2: q/03-c.md\nexplain q/02-b.md (wave 1):\n  small (1 files): run right-size q/02-b.md for merge candidates\nexplain q/03-c.md (wave 2):\n  conflicts with q/01-a.md on a1 (declared)'
+mkdir -p "$W_T/.supervisor"; printf '{"right_size_small": 4}\n' > "$W_T/.supervisor/config.json"
+w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1s-b right_size_small from <root>/.supervisor/config.json (4) makes the 4-file items small" 0 'wave 1: q/01-a.md q/02-b.md\nwave 2: q/03-c.md\nexplain q/01-a.md (wave 1):\n  small (4 files): run right-size q/01-a.md for merge candidates\nexplain q/02-b.md (wave 1):\n  small (1 files): run right-size q/02-b.md for merge candidates\nexplain q/03-c.md (wave 2):\n  conflicts with q/01-a.md on a1 (declared)\n  small (4 files): run right-size q/03-c.md for merge candidates'
+rm -rf "$W_T/.supervisor"
+# X1s-c a directory entry counts the regular files under it (right-size's rule): `d/` holding 4 files
+#     is not small, an empty `e/` and a not-yet-existing `n/x.sh` count 1 each; right-size agrees.
+rm -rf "$W_T/q"; mkdir -p "$W_T/d/s" "$W_T/e"; : > "$W_T/d/1"; : > "$W_T/d/2"; : > "$W_T/d/s/3"; : > "$W_T/d/s/4"
+w_item q/01-a.md none 'd/'; w_item q/02-b.md none 'e/\nn/x.sh'
+w_list q/01-a.md q/02-b.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1s-c a 4-file directory entry is not small; an empty dir + a new file are small (2 files)" 0 'wave 1: q/01-a.md q/02-b.md\nexplain q/02-b.md (wave 1):\n  small (2 files): run right-size q/02-b.md for merge candidates'
+X1S_RS="$(bash "$H" right-size "$W_T/q/01-a.md" "$W_T/q/02-b.md" --root "$W_T" 2>/dev/null | sed 's/^.*: \([a-z]*\) (\([0-9]*\) files.*$/\1 \2/' | tr '\n' '|')"
+[ "$X1S_RS" = "ok 4|small 2|" ] && ok "X1s-c right-size counts the same two sets the same way (ok 4, small 2)" || no "X1s-c right-size disagrees with the --explain count: '$X1S_RS'"
+# X1s-d the default --max and --touches outputs carry no note (lane-readiness reads --touches).
+w_run "$W_T" "$H" "$W_T/list" --max 3
+x_rc "X1s-d default --max output is unchanged by small items" 0 'wave 1: q/01-a.md q/02-b.md'
+w_run "$W_T" "$H" "$W_T/q/02-b.md" --touches
+x_rc "X1s-d --touches on a small item is exactly known + its entries" 0 'known\ne\nn/x.sh'
+rm -rf "$W_T/d" "$W_T/e"
 
 # X2 --explain leaves the wave/blocked lines and the exit codes alone (AC-1/AC-2): its stdout up to
 #    the first `explain ` line equals the default run on the same input; errors stay exit 1 + empty stdout.
@@ -725,7 +754,8 @@ fi
 # W-AS24 (automate-speed/24): `--verbose` is a no-op in every mode — the default and `--verbose` stdout
 # both equal the exact-bytes goldens captured by running the PRE-change plan-waves on the committed
 # fixture (fixtures/terse-output/plan-waves/: root/ = the items + list, <mode>.golden = stdout); the
-# `--touches` bytes lane-readiness reads stay unchanged.
+# `--touches` bytes lane-readiness reads stay unchanged. explain.golden alone was re-captured when
+# --explain gained the small note (parallel-automate/18b); max/lint/touches.golden are untouched.
 W_G="$HERE/fixtures/terse-output/plan-waves"
 for w_v in "" --verbose; do
   for w_m in "max|$W_G/root/list|--max 2" "lint|$W_G/root/list|--lint" "touches|$W_G/root/q/04-d.md|--touches" "explain|$W_G/root/list|--max 2 --explain"; do
