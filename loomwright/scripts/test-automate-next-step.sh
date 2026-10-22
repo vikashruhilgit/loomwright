@@ -131,7 +131,11 @@
 #       no incomplete run (run_not_incomplete) ⇒ exit 2, the exact stderr line, nothing printed, .supervisor/
 #       byte-unchanged, no run-lock acquire. P11: a non-empty `meta-push-failed` answer ⇒ ONE `meta-push-failed:`
 #       ## Progress line + the stderr report and the PICK proceeds (next: pending) — a report, never a block
-#       (branch-mode.md); not repeated on a second pass; no marker ⇒ nothing written.
+#       (branch-mode.md); not repeated on a second pass; no marker ⇒ nothing written. P12 (af/39e): the DEFAULT
+#       ns_watch launch (no NEXT_STEP_WATCH_CMD; gh stubbed OPEN via LOOMWRIGHT_GH_BIN) starts the real watcher,
+#       which registers ONE merge-watch entry for its own (marker) pid with its cap, run file and stop hint
+#       (proc-registry.sh, this suite's own LOOMWRIGHT_PROC_REGISTRY_DIR); an unwritable registry changes neither
+#       the driver's exit/output nor the watcher log. Every watcher started is TERMed (marker removed).
 #   V8  RUNNING SYSTEM (Validation 3 of automate-speed/08): a scratch repo (gh stubbed, the real run-lock.sh),
 #       a run parked awaiting_merge whose PR the stub reads MERGED, driven through `--resume`: the closeout
 #       lines through the next `picked` line are printed between `V3-08>` markers.
@@ -213,6 +217,7 @@
 #         M8h the live merge-watcher note dropped                       ⇒ P9
 #         M8i the run_done refusal dropped                              ⇒ P10
 #         M8j the meta-push-failed ## Progress report line dropped      ⇒ P11
+#         M8k automate-merge-watch.sh's registration call line deleted ⇒ P12
 #         M9a the phase-check answer test flipped (unavailable proceeds) ⇒ F2
 #         M9b --inline-phases parsed as off                             ⇒ R1
 #         M9c the Supervisor phase spawn marked "session":"inline"      ⇒ F1
@@ -243,9 +248,13 @@ pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass + 1)); }
 no() { echo "FAIL: $1"; fail=$((fail + 1)); }
 
+. "$HERE/wait-lib.sh"
+
 WORK="$(mktemp -d)" || { echo "FAIL: mktemp -d"; exit 1; }
 WORK_P="$(cd "$WORK" && pwd -P)"
 trap 'rm -rf "$WORK"' EXIT
+# af/39e: this suite's own process registry — a standalone run never registers into the real home
+export LOOMWRIGHT_PROC_REGISTRY_DIR="$WORK/procs"
 ASKS="$WORK/asks.log"; : > "$ASKS"
 
 REQUIRED_CASES="escalated-park park-first-ready-park park-first-decisions-recorded
@@ -1432,6 +1441,90 @@ leg_watch_note() {
   [ "$NC_RC" = 0 ] && [ "$c" = 1 ] || { LEG_MSG="dead watcher: exit $NC_RC, $c note line(s) (want still 1)"; return 1; }
   return 0
 }
+# af/39e AC10/AC11/AC16 — the DEFAULT ns_watch launch (no NEXT_STEP_WATCH_CMD) at the escalated park starts the
+# real automate-merge-watch.sh beside <driver>, with gh stubbed (LOOMWRIGHT_GH_BIN) to read the PR OPEN. The
+# watcher registers itself: ONE merge-watch entry whose pid is the marker's pid, with this run's resolved cap,
+# the run file and a stop hint. Its `started` log line is printed only after that (synchronous) registration
+# call, so the registry is read once that line is there — the mutant side costs no timeout. Every watcher this
+# leg starts is TERMed before it asserts (its EXIT trap removes the marker).
+MW_GH_BODY='#!/usr/bin/env bash
+case "$*" in
+  "pr view "*" --json state,headRefOid,statusCheckRollup") printf "%s\n" "{\"state\":\"OPEN\",\"headRefOid\":\"247e203aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"statusCheckRollup\":[]}"; exit 0 ;;
+esac
+exec gh "$@"
+'
+# mw_launch <driver> <registry dir> — one escalated park through <driver> with the default watcher launch; sets
+# MW_PID (the marker pid, '' when no watcher started), MW_LOG (the watcher log), MW_OUT (the driver's normalised
+# instruction) and MW_RC; leaves the watcher RUNNING (the caller stops it with mw_stop)
+mw_launch() {
+  local drv="$1" reg="$2" rs w
+  MW_PID=""; MW_OUT=""; MW_RC=""
+  new_scratch "$FIX/escalated-park" || { LEG_MSG="scratch"; return 1; }
+  printf '%s' "$MW_GH_BODY" > "$CASE_BIN/gh-open"; chmod +x "$CASE_BIN/gh-open"
+  rs="$CASE_DIR/mw.results"
+  { printf 'env: NEXT_STEP_WATCH_CMD= LOOMWRIGHT_GH_BIN=%s LOOMWRIGHT_PROC_REGISTRY_DIR=%s LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=7777\n' "$CASE_BIN/gh-open" "$reg"
+    grep -v '^#' "$FIX/escalated-park/next-step.results"; } > "$rs"
+  drive "$FIX/escalated-park" "$drv" "$rs"
+  MW_RC="$LAST_RC"; printf '%s' "$LAST_OUT" > "$CASE_DIR/mw.out"; MW_OUT="$(norm "$CASE_DIR/mw.out")"
+  MW_LOG="$CASE_ROOT/.supervisor/automate/$CASE_RUN.merge-watch.log"; MW_MARKER="$CASE_ROOT/.supervisor/automate/$CASE_RUN.merge-watch"
+  wait_for_file_content "$MW_LOG" "merge-watch: started pid=" 20; w=$?
+  # the marker pid is read whatever happened, so the caller's mw_stop never leaks a started watcher
+  MW_PID="$(awk -F'\t' '$1 == "pid" { print $2; exit }' "$MW_MARKER" 2>/dev/null)"
+  case "$MW_PID" in ''|*[!0-9]*) MW_PID="" ;; esac
+  [ -z "$DRIVE_ERR" ] || { LEG_MSG="drive: $DRIVE_ERR"; return 1; }
+  [ "$w" = 0 ] || { LEG_MSG="the default launch started no watcher: $(head -c 300 "$MW_LOG" 2>/dev/null)"; return 1; }
+  [ -n "$MW_PID" ] || { LEG_MSG="no marker pid"; return 1; }
+  return 0
+}
+mw_stop() { # TERM the leg's watcher; 0 once it is gone and its trap removed the marker
+  [ -n "${MW_PID:-}" ] || return 0
+  kill -TERM "$MW_PID" 2>/dev/null
+  wait_for_pid_gone "$MW_PID" 10 && WAIT_LIB_WHAT="the marker removed by the watcher's trap" wait_for_cmd 5 test ! -e "$MW_MARKER"
+}
+leg_watch_registry() {
+  local drv="$1" reg lrc n="" e="" base_out rf_abs bad
+  reg="$WORK/mw-procs.$$.$RANDOM"
+  mw_launch "$drv" "$reg"; lrc=$?
+  if [ "$lrc" -eq 0 ]; then
+    n="$(cat "$reg"/*.json 2>/dev/null | jq -s '[.[] | select(.kind == "merge-watch")] | length' 2>/dev/null)"
+    e="$(cat "$reg"/*.json 2>/dev/null | jq -c -s '[.[] | select(.kind == "merge-watch")][0] // {}' 2>/dev/null)"
+  fi
+  mw_stop || { LEG_MSG="${LEG_MSG:+$LEG_MSG; }the watcher pid=$MW_PID did not stop on TERM / left its marker"; return 1; }
+  [ "$lrc" -eq 0 ] || return 1
+  rf_abs="$(cd "$(dirname "$CASE_RF")" && pwd -P)/$(basename "$CASE_RF")"
+  [ "$n" = 1 ] || { LEG_MSG="$n merge-watch entr(ies) in the registry (want 1) after the watcher started: $(ls "$reg" 2>/dev/null | tr '\n' ' ')"; return 1; }
+  bad="$(jq -r --argjson p "$MW_PID" --arg rf "$rf_abs" '[
+      (if .pid != $p then "pid \(.pid) is not the marker pid \($p)" else empty end),
+      (if .max_lifetime_s != 7777 then "max_lifetime_s \(.max_lifetime_s) is not the watcher cap 7777" else empty end),
+      (if .runfile != $rf then "runfile \(.runfile)" else empty end),
+      (if ((.stop_hint // "") | contains("kill -TERM \($p)")) | not then "stop_hint \(.stop_hint)" else empty end)
+    ] | join("; ")' <<<"$e" 2>/dev/null)" || bad="unreadable entry: $e"
+  [ -z "$bad" ] || { LEG_MSG="entry: $bad"; return 1; }
+  base_out="$MW_OUT"
+  # AC16: a registry that cannot be written (the dir is a regular file) changes neither the launch nor its output
+  : > "$WORK/mw-procs-file.$$"
+  mw_launch "$drv" "$WORK/mw-procs-file.$$"; lrc=$?
+  mw_stop || { LEG_MSG="unwritable registry: the watcher pid=$MW_PID did not stop on TERM"; return 1; }
+  [ "$lrc" -eq 0 ] || { LEG_MSG="unwritable registry: $LEG_MSG"; return 1; }
+  [ "$MW_RC" = 0 ] && [ "$MW_OUT" = "$base_out" ] \
+    || { LEG_MSG="unwritable registry changed the driver call: exit $MW_RC, '${MW_OUT:0:160}' vs '${base_out:0:160}'"; return 1; }
+  ! grep -q 'proc-registry' "$MW_LOG" \
+    || { LEG_MSG="unwritable registry: a registry line reached the watcher log: $(grep 'proc-registry' "$MW_LOG" | head -1)"; return 1; }
+  return 0
+}
+# mw_mutant <name> — a scripts/ dir whose automate-merge-watch.sh lacks its ONE registration call line (gated:
+# the line occurs once, the copy non-empty, differing, bash -n); prints the dir's driver path
+mw_mutant() {
+  local d="$WORK/mut-mw-$1" e c
+  rm -rf "$d"; mkdir -p "$d"
+  for e in "$HERE"/*; do [ "$(basename "$e")" = automate-merge-watch.sh ] || ln -s "$e" "$d/$(basename "$e")"; done
+  c="$(grep -c 'proc-registry.sh" register --pid' "$HERE/automate-merge-watch.sh")"
+  [ "$c" = 1 ] || { echo "registration line occurs $c time(s)" >&2; return 1; }
+  grep -v 'proc-registry.sh" register --pid' "$HERE/automate-merge-watch.sh" > "$d/automate-merge-watch.sh"
+  [ -s "$d/automate-merge-watch.sh" ] && ! cmp -s "$HERE/automate-merge-watch.sh" "$d/automate-merge-watch.sh" \
+    && bash -n "$d/automate-merge-watch.sh" 2>/dev/null || { echo "mutant gates failed" >&2; return 1; }
+  echo "$d/automate-next-step.sh"
+}
 # leg_stops <driver> — the three named refusals of the PICK / resume entry, each exit 2 with its exact
 # stderr line, nothing on stdout, .supervisor/ byte-unchanged and no run-lock acquire:
 #   run_done             `--start pick` on a `## Status: done` run
@@ -2520,6 +2613,9 @@ else no "P10: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_meta_push "$DRIVER"; then ok "P11: a non-empty meta-push-failed answer ⇒ ONE meta-push-failed: ## Progress line + the stderr report, the PICK proceeds (next: pending); no marker ⇒ nothing written"
 else no "P11: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_watch_registry "$DRIVER"; then ok "P12 (af/39e AC10/AC11/AC16): the default ns_watch launch ⇒ the watcher registers ONE merge-watch entry for its own (marker) pid with its cap, run file and stop hint; an unwritable registry changes neither the driver's exit/output nor the watcher log"
+else no "P12: $LEG_MSG"; fi
 
 echo "-- F. fresh phase sessions (automate-speed/09): the default, without --inline-phases"
 LEG_MSG=""
@@ -2939,6 +3035,12 @@ if [ "${NS_SKIP_MUTANTS:-}" != 1 ]; then
     if leg_meta_push "$m"; then no "M8j: the meta-push leg stayed green with the report line dropped"
     else ok "M8j: meta-push-failed report line dropped ⇒ P11 red ($LEG_MSG)"; fi
   else no "M8j: mutant not built"; fi
+  # M8k — automate-merge-watch.sh's one registration call line deleted ⇒ P12 red (af/39e AC16)
+  if m="$(mw_mutant 8k)"; then
+    LEG_MSG=""
+    if leg_watch_registry "$m"; then no "M8k: the watcher-registry leg stayed green with the registration line deleted"
+    else ok "M8k: merge-watch registration line deleted ⇒ P12 red ($LEG_MSG)"; fi
+  else no "M8k: mutant not built"; fi
   # M9a — the phase-check answer test flipped (an `unavailable` answer proceeds to PICK) ⇒ F2 red
   if m="$(build_mutant 9a '  if [ "$l" = "phase-check: ok" ]; then' '  if [ "$l" != "phase-check: ok" ]; then')"; then
     LEG_MSG=""

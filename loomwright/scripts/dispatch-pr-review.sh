@@ -909,9 +909,16 @@ esac
 # ${12}/${13}/${14} — death detection (red-team-hardening item 04): the
 # ABSOLUTE durable marker path, and the notify-desktop.sh / send-webhook.sh
 # sibling scripts. See "DEATH DETECTION" inside the trap below.
+# ${15} is the guard session id (the runner's --session-id); ${16} is
+# proc-registry.sh — the wrapper registers itself before the runner starts.
 ALLOWED_TOOLS_REAL="$(build_allowed_tools "${HEAD_REF:-HEAD_REF}")"
+# Process registry (af/39e): proc-registry.sh, resolved ABSOLUTE like SALVAGE_BIN and
+# handed to the wrapper as its trailing positional ${16}; the wrapper registers ITSELF
+# (`$$`, kind drain — the cap is proc-registry.sh's, never a number here).
+# proc-registry.sh's header is the contract.
+PROC_REGISTRY_BIN="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/proc-registry.sh"
 WRAPPER='
-_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"; _pmode="$9"; _atools="${10}"; _dtools="${11}"; _marker="${12}"; _notify="${13}"; _webhook="${14}"; _sid="${15}"
+_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"; _pmode="$9"; _atools="${10}"; _dtools="${11}"; _marker="${12}"; _notify="${13}"; _webhook="${14}"; _sid="${15}"; _reg="${16}"
 trap_cleanup() {
   _rc="$_exit_code"
   cd "$_mg" 2>/dev/null || cd / 2>/dev/null || true
@@ -972,6 +979,9 @@ trap_cleanup() {
   fi
 }
 trap trap_cleanup EXIT
+# Process registry (af/39e): this wrapper registers its own pid, fail-safe and fully redirected, BEFORE the
+# runner launches and never inside trap_cleanup; a registry failure changes nothing about the drain.
+[ -n "$_reg" ] && bash "$_reg" register --pid "$$" --kind drain --purpose "review drain for $_pr" --repo "$_mg" --session-id "$_sid" --stop-hint "kill -TERM $$ (the review-drain wrapper of $_pr; worktree $_wt, lock $_lock)" </dev/null >/dev/null 2>&1 || true
 cd "$_wt" || exit 0
 "$_bin" -p --permission-mode "$_pmode" --allowedTools "$_atools" --disallowedTools "$_dtools" --agent "$_runner" --session-id "$_sid" "$_pr" >>"$_log" 2>&1 </dev/null
 _exit_code=$?
@@ -986,7 +996,7 @@ exit "$_exit_code"
 # still launches (the runner logs `guard_armed: failed` itself at loop
 # entry) — this dispatcher never blocks a review drain on the guard.
 CLAUDE_PROJECT_DIR="$WT_PATH" bash "$GUARD_ARM_BIN" arm dispatcher --session-id "$GUARD_SESSION_ID" >/dev/null 2>&1 || true
-( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" "$SALVAGE_BIN" "$PERMISSION_MODE" "$ALLOWED_TOOLS_REAL" "$DISALLOWED_TOOLS" "$MARKER_ABS" "$NOTIFY_BIN" "$WEBHOOK_BIN" "$GUARD_SESSION_ID" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
+( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" "$SALVAGE_BIN" "$PERMISSION_MODE" "$ALLOWED_TOOLS_REAL" "$DISALLOWED_TOOLS" "$MARKER_ABS" "$NOTIFY_BIN" "$WEBHOOK_BIN" "$GUARD_SESSION_ID" "$PROC_REGISTRY_BIN" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
 
 log "dispatched review-pr-runner for $PR_URL (worktree: $WT_PATH, log: $RUN_LOG)"
 exit 0

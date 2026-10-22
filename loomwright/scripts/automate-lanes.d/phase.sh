@@ -117,6 +117,9 @@ _lanes_phase_spawn() {
   # the launch lock is released only once a second caller's liveness check would see this process
   i=0
   while [ "$i" -lt 25 ] && kill -0 "$pid" 2>/dev/null && ! _lanes_phase_alive; do sleep 0.1; i=$((i + 1)); done
+  # process registry (af/39e): fail-safe, fully redirected, never invokes claude (the 6h phase cap is proc-registry.sh's)
+  _lanes_past_nohup "$pid"
+  bash "$HERE/proc-registry.sh" register --pid "$pid" --kind phase --purpose "phase session $PH_PHASE of run $PH_RUN ($verb)" --runfile "$PH_AUTO/$PH_RUN.md" --run-id "$PH_RUN" --repo "$PH_CO" --expect "_lane-run $PH_CO $PH_LOG " --stop-hint "kill -TERM $pid (the _lane-run wrapper TERMs the phase's headless session)" </dev/null >/dev/null 2>&1 || true
   s="$(_lanes_await_init "$PH_LOG" "$off" "$pid")"
   [ -n "$s" ] && printf '%s\n' "$s" > "$PH_DIR/session"
   [ -n "$s" ] || s="$(_lanes_phase_sid)"
