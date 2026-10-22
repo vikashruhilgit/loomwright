@@ -402,6 +402,47 @@ else
   no "could not build a valid '## Evidence' mutant - AC12 is uncontrolled"
 fi
 
+echo "== AC14 (parallel-automate/18b): the size line is stderr-only; stdout and drafts byte-identical =="
+# Three runs over ONE run dir, each into its own checkout-shaped tree (.supervisor/requirements/
+# proposed/): the real propose-common.sh, a copy with the right-size call line deleted (the
+# no-size-line baseline), and a copy whose call drops its `>&2` (the control proving the stdout
+# assertion is live). Both copies sit beside symlinks to the real dispatcher, so only the one
+# mutated line differs. Paths printed on stderr are normalised to <T> before comparing.
+SZ_RD="$(make_run)"
+sz_mut_dir() { # <label> <sed-expr> — a mutated propose-common.sh beside the real dispatcher
+  smd="$(mktmp)/$1"; mkdir -p "$smd"; sed "$2" "$COMMON" > "$smd/propose-common.sh"
+  ln -s "$HERE/automate-helpers.sh" "$smd/automate-helpers.sh"; ln -s "$HERE/automate-helpers.d" "$smd/automate-helpers.d"
+  printf '%s' "$smd"
+}
+sz_run() { # <label> [<common>] — sets SZ_T (tree), copies stdout/stderr to $ROOT/sz-<label>.{out,err}
+  SZ_T="$(cd "$(mktmp)" && pwd)"; mkdir -p "$SZ_T/.supervisor/requirements/proposed"
+  ( [ -n "${2:-}" ] && export PROPOSE_COMMON_SH="$2"
+    run_sut "$SZ_RD" "$SZ_T/.supervisor/requirements/proposed" ); sz_rc=$?
+  cp "$ROOT/last.out" "$ROOT/sz-$1.out"; sed "s#$SZ_T#<T>#g" "$ROOT/last.err" > "$ROOT/sz-$1.err"
+  (cd "$SZ_T/.supervisor/requirements/proposed" && for f in *.md; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done) > "$ROOT/sz-$1.sum"
+  return "$sz_rc"
+}
+SZ_LINE_RE="^proposed/verify-${RUN_ID}-[A-Za-z0-9-]*: unknown \\(Touches declared unknown\\)\$"
+SZ_CALL_RE='^  pc_size_line "\$pc_out_dir_abs" "\$pc_name" >&2$'
+SZ_NOCALL="$(sz_mut_dir nocall "/$SZ_CALL_RE/d")"
+SZ_STDOUT="$(sz_mut_dir stdout 's/^\(  pc_size_line "\$pc_out_dir_abs" "\$pc_name"\) >&2$/\1/')"
+if cmp -s "$SZ_NOCALL/propose-common.sh" "$COMMON" || cmp -s "$SZ_STDOUT/propose-common.sh" "$COMMON"; then
+  no "AC14: could not build the two size-line mutants - the leg is uncontrolled"
+else
+  sz_run real; rc_real=$?
+  sz_run nocall "$SZ_NOCALL/propose-common.sh"; rc_nocall=$?
+  sz_run stdout "$SZ_STDOUT/propose-common.sh"; rc_stdout=$?
+  [ "$rc_real" -eq 0 ] && [ "$rc_nocall" -eq 0 ] && [ "$rc_stdout" -eq 0 ] && ok "AC14: exit 0 with and without the size line" || no "AC14: rc real=$rc_real nocall=$rc_nocall stdout=$rc_stdout"
+  n_real="$(grep -cE "$SZ_LINE_RE" "$ROOT/sz-real.err")"
+  [ "$n_real" = 3 ] && ok "AC14: one right-size line per written draft on stderr (3)" || no "AC14: $n_real size lines on stderr: $(cat "$ROOT/sz-real.err")"
+  [ ! -s "$ROOT/sz-real.out" ] && cmp -s "$ROOT/sz-real.out" "$ROOT/sz-nocall.out" && ok "AC14: stdout byte-identical (empty) with and without the size line" || no "AC14: stdout differs: $(cat "$ROOT/sz-real.out")"
+  [ -s "$ROOT/sz-real.sum" ] && cmp -s "$ROOT/sz-real.sum" "$ROOT/sz-nocall.sum" && ok "AC14: the drafts are byte-identical with and without the size line" || no "AC14: drafts differ: $(diff "$ROOT/sz-real.sum" "$ROOT/sz-nocall.sum")"
+  grep -vE "$SZ_LINE_RE" "$ROOT/sz-real.err" > "$ROOT/sz-real.rest"
+  cmp -s "$ROOT/sz-real.rest" "$ROOT/sz-nocall.err" && ok "AC14: stderr gains ONLY the size lines (every other stderr line unchanged)" || no "AC14: other stderr changed: $(diff "$ROOT/sz-real.rest" "$ROOT/sz-nocall.err")"
+  [ "$(grep -cE "$SZ_LINE_RE" "$ROOT/sz-nocall.err")" = 0 ] && ok "AC14 MUTATION CONTROL: the call line deleted ⇒ no size line (the per-draft count turns red)" || no "AC14 nocall mutant still printed a size line"
+  [ "$(grep -cE "$SZ_LINE_RE" "$ROOT/sz-stdout.out")" = 3 ] && ok "AC14 MUTATION CONTROL: the call's >&2 dropped ⇒ the lines land on stdout (the stdout-identical assertion turns red)" || no "AC14 stdout mutant stdout: $(cat "$ROOT/sz-stdout.out")"
+fi
+
 echo "== usage / fail-safe: missing run_dir, nonexistent run_dir, missing evidence.jsonl all exit 0 =="
 run_sut "" "$(mktmp)/o1"; [ $? -eq 0 ] && ok "empty run_dir arg: exit 0" || no "empty run_dir arg: nonzero exit"
 run_sut "$(mktmp)/does-not-exist" "$(mktmp)/o2"; [ $? -eq 0 ] && ok "nonexistent run_dir: exit 0" || no "nonexistent run_dir: nonzero exit"
