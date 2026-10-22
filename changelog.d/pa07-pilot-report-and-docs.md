@@ -6,8 +6,9 @@ and overall, the PRs opened, every lane park and its cause, the hand steps, the 
 and the weekly-cap stop. Tokens per lane and a sequential baseline are listed as not measurable from the record,
 with what a future run would need to log for each. The record shows no invariant broken during the run; one
 invariant is not held in the shipped tree (`wave-build` runs `scripts/ci-local.sh` and `scripts/bump-version.sh` by
-fixed path), and the report names it for the owner. `CLAUDE.md`'s single-drain invariant now states that it holds
+fixed path when the wave worktree has them); the report names it and the gitignored draft
+`.supervisor/requirements/proposed/wave-build-release-command-stamp-valve.md` it was filed as, and it is not fixed here. `CLAUDE.md`'s single-drain invariant now states that it holds
 per lane, that a parallel run never uses the merge executor, and that lane PRs carry fragments while one wave PR
-carries the bump. `README.md`'s `/automate` block gains `--parallel N` and a lanes and waves bullet, and its "will
+carries the bump when the project has a release script. `README.md`'s `/automate` block gains `--parallel N` and a lanes and waves bullet, and its "will
 not pick a new item" sentence is scoped to sequential mode. `PITFALLS.md` gains "A lane parked at a human gate?"
 and a meta-push failed entry. Docs only, no behaviour change.
