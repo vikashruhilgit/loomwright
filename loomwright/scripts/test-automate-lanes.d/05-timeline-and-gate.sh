@@ -1,3 +1,4 @@
+declare -F tal_pgrep >/dev/null && [ -n "${T:-}" ] && [ -d "$T" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-lanes.sh, never standalone (its kills need the suite's \$T)" >&2; exit 2; }
 # ---- AJ: lane timeline (the step rail the /lanes pane draws) ----------------------------------------------
 # _lanes_timeline over fixture run files / Supervisor state: 7 steps from `## Progress` lines, the
 # Supervisor phase only when its state was created at/after the pick, the current step colored by state.
@@ -615,7 +616,7 @@ fi
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 # AA-F12z (final leg): nothing this suite started may outlive it — no process whose command line names
 # the suite dir $T (pgrep -f on the ERE-escaped path), after the same stop the EXIT trap performs.
-for p in $BG_PIDS $(pgrep -f "_lane-run $T" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
-i=0; while pgrep -f "$(ere "$T")" >/dev/null 2>&1 && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
-AA_LEFT="$(for p in $(pgrep -f "$(ere "$T")" 2>/dev/null); do ps -o pid= -o command= -p "$p" 2>/dev/null; done)"
+for p in $BG_PIDS $(tal_pgrep "$T" "_lane-run "); do kill -TERM "$p" 2>/dev/null; done
+i=0; while tal_pgrep "$T" "" >/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+AA_LEFT="$(for p in $(tal_pgrep "$T" ""); do ps -o pid= -o command= -p "$p" 2>/dev/null; done)"
 check "AA-F12z no process naming the suite dir survives the suite" "${AA_LEFT:-none}" none

@@ -20,7 +20,9 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 H="$HERE/guard-lane-wait-armed.sh"
 S="$HERE/automate-lanes.sh"
-T="$(cd "$(mktemp -d)" && pwd -P)"
+# A failed mktemp must stop the suite: `cd ""` succeeds, so T would be the CWD and the cleanup's
+# `_lane-run $T` pattern would match lanes outside this suite.
+T="$(mktemp -d)" && T="$(cd "$T" && pwd -P)" && [ -n "$T" ] && [ -d "$T" ] || { echo "FAIL - mktemp -d failed"; exit 1; }
 BG_PIDS=""
 cleanup() {
   local p

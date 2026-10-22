@@ -1,3 +1,4 @@
+declare -F tal_pgrep >/dev/null && [ -n "${T:-}" ] && [ -d "$T" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-lanes.sh, never standalone (its kills need the suite's \$T)" >&2; exit 2; }
 # ---- A: create (AC1) --------------------------------------------------------------------------------
 out="$(run lane-create "$RF" reqs/a.md 1 --parallel 2 --max-tokens 1000)"; rc=$?
 check "A1 lane-create L1 exits 0" "$rc" 0
