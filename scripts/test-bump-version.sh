@@ -636,7 +636,7 @@ check $? "scan reminder: the --refold no-op on a current bump prints none"
 frag "$D" b.md 'Late\n'; g "$D" add -A && g "$D" commit -q -m late
 run_bump "$D"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(rem_count)" = "1" ] && [ "$(sed -n 's/^bump-version: refold-touched: //p' "$TMP/last.out" | wc -l | tr -d ' ')" = "1" ] \
-  && grep '^bump-version: ' "$TMP/last.out" | tail -n 1 | grep -q '^bump-version: refold-touched: '
+  && grep -q '^bump-version: refold-touched: ' < <(grep '^bump-version: ' "$TMP/last.out" | tail -n 1)
 check $? "scan reminder: a minor re-fold prints it once (the child bump) and refold-touched: stays the last line"
 
 # Mutation controls: each guard is what its case above catches (the pinned literals in the brief).
