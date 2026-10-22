@@ -12,8 +12,14 @@
 #   (S4) Product Owner: the agent and its command mirror name the same plan-doc file pattern;
 #        PO's own prior-stories glob matches a story and NOT a `_BACKLOG-*.md` plan doc; a PO
 #        plan doc beside the stories is skipped by `resolve-folder`
+#   (S5) size check (parallel-automate/18b): the skill's §"Shape decision" no longer says "count by
+#        hand" and names `automate-helpers.sh right-size <item>`; the PO agent and its command
+#        mirror both run `right-size` on each persisted file AFTER the `plan-waves --lint` call,
+#        with identical Persist-step text; all three carry the same "small enough to review in one
+#        PR, large enough to pay the run's fixed cost" sentence
 #   MUTATION CONTROLS (each must turn its check red): (M1) the template's status stamp deleted
-#   ⇒ S2 fails (the plan doc is enqueued); (M2) one required section deleted ⇒ S1 fails.
+#   ⇒ S2 fails (the plan doc is enqueued); (M2) one required section deleted ⇒ S1 fails;
+#   (M3) the "count by hand" sentence restored in the skill ⇒ S5 fails.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -124,6 +130,29 @@ $matched"; fi
 $out"; fi
 fi
 
+# (S5) size check. skill_size_ok <skill.md> — 0 when "count by hand" is absent and the skill names
+# the right-size call and the aim sentence; prints the reason otherwise.
+RS_SKILL='`automate-helpers.sh right-size <item>`'
+RS_PO='automate-helpers.sh" right-size <each persisted file>`'
+RS_AIM="small enough to review in one PR, large enough to pay the run's fixed cost; when two stories touch the same files, prefer one story with parts"
+LINT_PO='plan-waves <each persisted file> --lint`'
+skill_size_ok() {
+  if grep -qi 'count by hand' "$1"; then echo "the skill still says 'count by hand'"; return 1; fi
+  grep -qF "$RS_SKILL" "$1" || { echo "the skill does not name $RS_SKILL"; return 1; }
+  grep -qF "$RS_AIM" "$1" || { echo "the skill lacks the aim sentence"; return 1; }
+  return 0
+}
+if r="$(skill_size_ok "$SKILL")"; then ok "(S5) skill: no 'count by hand'; names $RS_SKILL and the aim sentence"
+else no "(S5) skill size check: $r"; fi
+pa="$(grep -F '**Persist**' "$PO_AGENT")"; pc="$(grep -F '**Persist**' "$PO_CMD")"
+if [ -n "$pa" ] && [ "$pa" = "$pc" ]; then ok "(S5) PO agent and command mirror: identical Persist-step text"
+else no "(S5) PO agent and command mirror Persist steps differ (or are missing)"; fi
+# right-size must come after the --lint call on the same Persist line, with the aim sentence.
+if printf '%s\n' "$pa" | awk -v l="$LINT_PO" -v r="$RS_PO" -v a="$RS_AIM" '
+     { i = index($0, l); j = index($0, r); k = index($0, a) } END { exit !(i > 0 && j > i && k > j) }'; then
+  ok "(S5) PO Persist step runs right-size on each persisted file after plan-waves --lint, then the aim sentence"
+else no "(S5) PO Persist step: right-size missing, before the --lint call, or without the aim sentence"; fi
+
 # (M1) status stamp deleted ⇒ S2 must fail.
 sed '/^## Status: done (index document/d' "$SKILL" > "$T/m1-skill.md"
 if cmp -s "$SKILL" "$T/m1-skill.md"; then no "(M1) mutant not built (no status stamp line in the template)"
@@ -141,6 +170,12 @@ else
   if sections_ok "$T/m2.md" >/dev/null; then no "(M2) control did not discriminate: a template missing a section passed"
   else ok "(M2) control: a template missing '## Revisit when' fails the section check — the list is load-bearing"; fi
 fi
+
+# (M3) "count by hand" restored ⇒ S5 must fail.
+sed 's/^Check it with `automate-helpers.sh right-size <item>`/No mechanical size check ships yet: count by hand. &/' "$SKILL" > "$T/m3-skill.md"
+if cmp -s "$SKILL" "$T/m3-skill.md"; then no "(M3) mutant not built (no 'Check it with' right-size line in the skill)"
+elif skill_size_ok "$T/m3-skill.md" >/dev/null; then no "(M3) control did not discriminate: a skill saying 'count by hand' passed"
+else ok "(M3) control: restoring 'count by hand' fails the size check — the check is load-bearing"; fi
 
 echo "test-requirement-shape: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
