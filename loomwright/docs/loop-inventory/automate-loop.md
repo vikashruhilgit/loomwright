@@ -72,11 +72,11 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-050 | skills/automate-loop/helpers.md | q: holds the ONE authoritative gate catalog (`catalog`) | a lane question needs a policy answer | `decide` is the exact lookup over catalog + stamped/wave policy | deterministic | script:lane-policy.sh decide | script:lane-policy.sh decide | test-lane-policy.sh |
 | AL-051 | skills/automate-loop/helpers.md | q: **Read-only wave planner (parallel-automate/04).** | `--parallel N>1` planning | greedy waves of ≤ N items with disjoint companion-expanded Touches; unknown Touches runs alone; missing Depends on depends on every earlier item; blocked deps; exit 1 on cycle/unknown dep/malformed companions | deterministic | script:automate-helpers.sh plan-waves | script:automate-helpers.sh plan-waves | test-automate-helpers.sh |
 | AL-052 | skills/automate-loop/helpers.md | q: **`plan-waves --lint`** (parallel-automate/10 | a section of any item is missing or unparsable | print one verdict line per item; exit 1 | deterministic | script:automate-helpers.sh plan-waves | script:automate-helpers.sh plan-waves | test-automate-helpers.sh |
-| AL-053 | skills/automate-loop/helpers.md | q: never called when N = 1 | N = 1 or a sequential run | `plan-waves` is never called | rule | script:automate-helpers.sh plan-waves | - | GAP |
+| AL-053 | skills/automate-loop/helpers.md | q: never called when N = 1 | N = 1 or a sequential run | the `plan-waves` planner is never called; `right-size`'s read-only `--touches` read (a Touches read, not a plan) runs in every mode | rule | script:automate-helpers.sh plan-waves | - | GAP |
 | AL-054 | skills/automate-loop/helpers.md | q: is the fail-SAFE reader `ceiling-check` shells out to | token ceiling read | sum the run's session ledgers; `LEDGER_UNREADABLE=1` when nothing readable | deterministic | script:read-token-ledger.sh | script:read-token-ledger.sh | test-read-token-ledger.sh |
 | AL-055 | skills/automate-loop/helpers.md | q: is the single-run-per-repo lock (§11) acquired at PICK below | PICK / item completion or park | acquire the run lock at PICK, release at completion/park | deterministic | script:run-lock.sh acquire | script:run-lock.sh acquire | test-run-lock.sh |
 | AL-056 | skills/automate-loop/helpers.md | q: is this engine's detached merge watcher | an item parks `awaiting_merge` | a standalone watcher outside any session calls `closeout` on merge | deterministic | script:automate-merge-watch.sh | script:automate-merge-watch.sh | test-automate-trail.sh |
-| AL-057 | skills/automate-loop/helpers.md | q: is READ-ONLY toward the work it drives | any helper call | no source-repo edits or git mutations except `gate-eval`'s merge, `brief-repair`'s jobs move, and the bounded trail/dismissed carve-outs | rule | script:automate-helpers.sh | - | GAP |
+| AL-057 | skills/automate-loop/helpers.md | q: is READ-ONLY toward the work it drives | any helper call | no source-repo edits or git mutations except `gate-eval`'s merge, `brief-repair`'s jobs move, the bounded trail/dismissed carve-outs, and `merge-items`' owner-invoked, all-or-nothing writes of requirement files only | rule | script:automate-helpers.sh | - | GAP |
 | AL-058 | skills/automate-loop/run-file.md | q: **The single-file principle (this design's core):** | finding prior runs | glob run files carrying `# Automate Run:` not done; sidecars are never runs | rule | script:automate-helpers.sh resume-glob | script:automate-helpers.sh resume-glob | test-automate-helpers.sh |
 | AL-059 | skills/automate-loop/run-file.md | h: ### Run-file template (reproduce exactly) | a run file is created | reproduce the template exactly: title, Status, Source, Run Config, Queue, Current, append-only Progress | deterministic | script:automate-helpers.sh runfile-write | script:automate-helpers.sh runfile-write | test-automate-helpers.sh |
 | AL-060 | skills/automate-loop/run-file.md | q: ONLY present when --max-tokens was passed; opt-in, PERSISTED | `--max-tokens` was passed | write `max_tokens:` into `## Run Config` so a bare `--resume` still enforces it | deterministic | step-scoped | - | GAP |
@@ -202,7 +202,8 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-180 | skills/automate-loop/intake.md | q: **The engine never ticks the backlog doc.** | an item closes out | stamp the requirement and check the run Queue; never tick `_BACKLOG.md` | rule | step-scoped | - | GAP |
 | AL-181 | skills/automate-loop/intake.md | q: **`_BACKLOG.md`-absent fallback:** | backlog path missing or unordered | fall back to stamp ordering over its directory; nothing stampable ⇒ empty Queue | deterministic | step-scoped | script:automate-helpers.sh resolve-backlog | test-automate-helpers.sh |
 | AL-182 | skills/automate-loop/intake.md | h: ### `--parallel N>1` intake lint (§14) | folder/backlog intake under `--parallel N>1` | run `plan-waves --lint` before confirming and print its run-alone lines; information, not a gate | deterministic | step-scoped | script:automate-helpers.sh plan-waves | test-automate-helpers.sh |
-| AL-183 | skills/automate-loop/intake.md | q: **Sequential runs (no `--parallel`, or N = 1) are unchanged | sequential run or N = 1 | no lint, no prompt, no gate | rule | step-scoped | - | GAP |
+| AL-183 | skills/automate-loop/intake.md | q: **Sequential runs (no `--parallel`, or N = 1) are unchanged | sequential run or N = 1 | no lint, no prompt, no gate; the advisory `right-size` size line still prints (AL-608) | rule | step-scoped | - | GAP |
+| AL-608 | skills/automate-loop/intake.md | h: ### Size line at intake (every mode) | folder/backlog intake resolves the Queue, in every mode | run `right-size` on the resolved Queue (an item list) before confirming and print its lines beside the Queue; advisory only — no prompt, no gate, never called by `automate-next-step.sh` | deterministic | step-scoped | script:automate-helpers.sh right-size | test-automate-helpers.sh |
 | AL-184 | skills/automate-loop/intake.md | h: ### `--limit N` — caps PROCESSED items, NOT Queue size | `--limit N` | Queue holds the full list; limit caps completed items (default 5) | rule | step-scoped | - | GAP |
 | AL-185 | skills/automate-loop/intake.md | q: After **N items are processed** with items still unchecked | N processed and items remain | `paused` + `limit_reached`, report remaining | deterministic | step-scoped | script:automate-helpers.sh remaining | test-automate-helpers.sh |
 | AL-186 | skills/automate-loop/intake.md | q: Under `--non-interactive-fallback` the cap is enforced without the prompt | `--non-interactive-fallback` | enforce the cap without prompt, no `queue-confirm` call, no Progress line | deterministic | step-scoped | - | GAP |
@@ -674,7 +675,7 @@ This file lists every branch and rule the `/automate` engine prose states — th
 44. AL-526 — untested deterministic branch — bare /automate ⇒ RESUME first, else ask; can't ask ⇒ no_source_non_interactive / resume_requires_flag_n...
 45. AL-535 — untested deterministic branch — --notify ⇒ passthrough to inner /autonomous
 46. AL-010 — untested safety rule — a contract changes ⇒ prose is the spec; the helper conforms, never the reverse
-47. AL-053 — untested safety rule — N = 1 or a sequential run ⇒ plan-waves is never called
+47. AL-053 — untested safety rule — N = 1 or a sequential run ⇒ the plan-waves planner is never called (right-size's read-only --touches read excepted)
 48. AL-057 — untested safety rule — any helper call ⇒ no source-repo edits or git mutations except gate-eval's merge, brief-repair's jobs mov...
 49. AL-072 — untested safety rule — a rewrite ⇒ only Queue checkboxes and the Current block; Status/Source/Run Config change rarely and atomi...
 50. AL-073 — untested safety rule — run end ⇒ optionally append ONE terminal line to the session log; never the source of truth
@@ -780,8 +781,8 @@ This file lists every branch and rule the `/automate` engine prose states — th
 150. AL-607 — story/rationale, no test; why the parallel intake lint is information only
 
 ## Counts
-- rows: 605
-- deterministic: 408
+- rows: 606
+- deterministic: 409
 - judgment: 13
 - rule: 139
 - story: 45

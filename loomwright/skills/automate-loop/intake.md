@@ -27,7 +27,11 @@ Exactly **one** source is resolved per run. Resolution produces the **FULL** ord
 
 ### `--parallel N>1` intake lint (§14)
 
-When folder or backlog intake runs under `--parallel N>1`, it runs `plan-waves <resolved Queue> --lint` (a run file or item list holding exactly the resolved Queue) **before the Queue is confirmed** and prints its `<k> of <n> items will run alone: …` line (plus the `depend on every earlier item` line when non-zero) beside the Queue. It is information, not a gate: a non-zero lint exit does not block the run. **Sequential runs (no `--parallel`, or N = 1) are unchanged — no lint, no new prompt, no new gate.**
+When folder or backlog intake runs under `--parallel N>1`, it runs `plan-waves <resolved Queue> --lint` (a run file or item list holding exactly the resolved Queue) **before the Queue is confirmed** and prints its `<k> of <n> items will run alone: …` line (plus the `depend on every earlier item` line when non-zero) beside the Queue. It is information, not a gate: a non-zero lint exit does not block the run. **Sequential runs (no `--parallel`, or N = 1) are unchanged — no lint, no new prompt, no new gate.** The advisory size line below is the one exception: it is printed in every mode, sequential included.
+
+### Size line at intake (every mode)
+
+When folder or backlog intake resolves the Queue, in every mode, it runs `automate-helpers.sh right-size <resolved Queue>` **before the Queue is confirmed** and prints its lines beside the Queue (beside the `plan-waves --lint` line under `--parallel N>1`). Pass an item list — one Queue path per line in a file not named `*.md`, because `right-size` reads a `*.md` file as one item. Each line is `<item>: small|ok|large|unknown (…)`; `small` names merge candidates and `large` says `split by Part` (§1.5 `right-size`). It is information for the owner, never a gate: it adds no prompt, a non-zero exit or a `small`/`large` verdict blocks nothing, and `automate-next-step.sh` never calls it.
 
 ### `--limit N` — caps PROCESSED items, NOT Queue size
 
