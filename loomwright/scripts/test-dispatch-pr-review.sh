@@ -53,11 +53,21 @@
 #  36. regime probe: defaultMode 'acceptEdits' also classifies as permissive
 #      (PR #248 review finding #1 — acceptEdits auto-approves file edits without
 #      prompting and was missing from the permissive case, a fail-open gap).
+#  45. (af/39e) process registry: a real launch registers ONE `drain` entry for the
+#      detached wrapper's own pid (repo, runner session id, stop hint, 4h default cap);
+#      an unwritable registry still launches with exit/stdout unchanged; a mutant with
+#      the wrapper's registration line deleted registers nothing. The suite exports its
+#      own LOOMWRIGHT_PROC_REGISTRY_DIR, so a standalone run never touches the real home.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DISPATCH="$HERE/dispatch-pr-review.sh"
+. "$HERE/wait-lib.sh"
+# af/39e: the suite's own process registry (every real launch registers its wrapper); removed on exit
+PROC_REG_TMP="$(mktemp -d)"
+export LOOMWRIGHT_PROC_REGISTRY_DIR="$PROC_REG_TMP/procs"
+trap 'rm -rf "$PROC_REG_TMP"' EXIT
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
@@ -979,6 +989,9 @@ echo "== 29. (BLOCKING — Real-path binding) real stubbed launch args= carries 
 fresh_git_repo >/dev/null
 run_real "$FX_REPO" "$PR"
 RC29=$RUN_RC
+# the launch is detached: wait for the stub's own log line before reading it (the wrapper's synchronous
+# process-registry call runs before claude, so the line is never there the instant the dispatcher returns)
+wait_for_file_content "$FX_CLAUDE_LOG" "cwd=$(expected_wt_path "$FX_REPO")" 15 || true
 ARGS_LINE="$(grep -F "cwd=$(expected_wt_path "$FX_REPO")" "$FX_CLAUDE_LOG" 2>/dev/null || true)"
 if [ "$RC29" -eq 0 ] \
    && grep -q -- '--permission-mode dontAsk' < <(printf '%s' "$ARGS_LINE") \
@@ -1069,6 +1082,7 @@ RUN_HOME="$(permissive_home)"
 run_real "$FX_REPO" "$PR"
 RC33=$RUN_RC
 WT="$(expected_wt_path "$FX_REPO")"
+wait_for_file_content "$FX_CLAUDE_LOG" "cwd=$WT" 15 || true   # detached launch (see case 29)
 ARGS_LINE="$(grep -F "cwd=$WT" "$FX_CLAUDE_LOG" 2>/dev/null || true)"
 H="$(pr_hash)"
 MARKER_CONTENT="$(cat "$FX_REPO/.supervisor/review-dispatch/$H" 2>/dev/null || true)"
@@ -1317,6 +1331,7 @@ for _i in $(seq 1 20); do
   fi
   sleep 0.1
 done
+wait_for_file_content "$FX_CLAUDE_LOG" "--session-id" 15 || true   # detached launch (see case 29)
 CAPTURED_ARGS="$(cat "$FX_CLAUDE_LOG" 2>/dev/null || true)"
 ARG_SID="$(printf '%s' "$CAPTURED_ARGS" | grep -o -- '--session-id [^ ]*' | head -1 | awk '{print $2}')"
 H="$(pr_hash)"
@@ -1328,6 +1343,86 @@ else
   no "real launch guard pre-arm wrong (guard_sid='$GUARD_SID' found=$GUARD_FILE_FOUND arg_sid='$ARG_SID' args='$CAPTURED_ARGS')"
 fi
 rm -rf "$(dirname "$FX_REPO")"
+
+echo "== 45. (af/39e AC12/AC16) real launch => ONE drain entry for the detached wrapper's pid; an unwritable registry still launches; mutation control =="
+# drain_reg_run <dispatcher> <registry dir> — a fresh G2 fixture, a real launch through <dispatcher> with a stub
+# claude that also records its parent pid (the wrapper runs claude as a child, so that IS the wrapper's `$$`),
+# then waits for teardown. Sets DR_RC DR_OUT DR_PPID DR_SID DR_TOP.
+drain_reg_run() {
+  local disp="$1" reg="$2" wt lock h
+  fresh_git_repo >/dev/null
+  cat > "$FX_BIN/stub-claude" <<CLEOF
+#!/usr/bin/env bash
+if [ "\$1" = "--help" ]; then
+  printf -- '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
+  printf -- '--allowedTools, --allowed-tools <tools...>\n'
+  printf -- '--disallowedTools, --disallowed-tools <tools...>\n'
+  exit 0
+fi
+printf 'ppid=%s args=%s\n' "\$PPID" "\$*" >> "$FX_CLAUDE_LOG"
+printf '## REVIEW_HEAL_RESULT\n- schema_version: 1\n- decision: PASS\n'
+exit 0
+CLEOF
+  chmod +x "$FX_BIN/stub-claude"
+  DR_OUT="$( cd "$FX_REPO" && unset LOOMWRIGHT_PROC_MAX_S_DRAIN && PATH="$FX_BIN:$PATH" HOME="$FX_REPO/.fakehome" \
+      LOOMWRIGHT_CLAUDE_BIN="$FX_BIN/stub-claude" LOOMWRIGHT_PROC_REGISTRY_DIR="$reg" bash "$disp" "$PR" 2>/dev/null )"
+  DR_RC=$?
+  wt="$(expected_wt_path "$FX_REPO")"; h="$(pr_hash)"; lock="$FX_REPO/.supervisor/review-dispatch/$h.lock"
+  wait_for_teardown "$FX_REPO" "$wt" "$lock" || true
+  DR_PPID="$(sed -n 's/^ppid=\([0-9]*\) .*/\1/p' "$FX_CLAUDE_LOG" 2>/dev/null | head -1)"
+  DR_SID="$(grep -o -- '--session-id [^ ]*' "$FX_CLAUDE_LOG" 2>/dev/null | head -1 | awk '{print $2}')"
+  DR_TOP="$( cd "$FX_REPO" && git rev-parse --show-toplevel 2>/dev/null )"
+}
+drain_entries() { { cat "$1"/*.json 2>/dev/null || true; } | jq -c -s '[.[] | select(.kind == "drain")]' 2>/dev/null || echo '[]'; }
+REG45="$(mktemp -d)/procs"
+drain_reg_run "$DISPATCH" "$REG45"
+E45="$(drain_entries "$REG45")"
+BAD45="$(jq -r --arg p "${DR_PPID:-0}" --arg top "$DR_TOP" --arg sid "$DR_SID" --arg pr "$PR" '
+  if length != 1 then "\(length) drain entries (want 1)" else .[0] | [
+    (if (.pid | tostring) != $p then "pid \(.pid) is not the wrapper pid \($p)" else empty end),
+    (if .repo != $top then "repo \(.repo) (want \($top))" else empty end),
+    (if .max_lifetime_s != 14400 then "max_lifetime_s \(.max_lifetime_s) (want the 4h default 14400)" else empty end),
+    (if ((.stop_hint // "") | contains("kill -TERM \($p)")) | not then "stop_hint \(.stop_hint)" else empty end),
+    (if .session_id != $sid then "session_id \(.session_id) (want the runner session \($sid))" else empty end),
+    (if ((.purpose // "") | contains($pr)) | not then "purpose \(.purpose)" else empty end)
+  ] | join("; ") end' <<<"$E45" 2>/dev/null)" || BAD45="unreadable entries: $E45"
+if [ "$DR_RC" -eq 0 ] && [ -n "$DR_PPID" ] && [ -z "$BAD45" ]; then
+  ok "real launch registered ONE drain entry: pid = the wrapper ($DR_PPID), repo, runner session id, stop hint, 4h default cap"
+else
+  no "drain registration wrong (rc=$DR_RC ppid='$DR_PPID': $BAD45)"
+fi
+OUT45_OK="$DR_OUT"
+rm -rf "$(dirname "$FX_REPO")"
+# AC16: the registry dir is a regular file (unwritable) — the drain still launches, exit and stdout unchanged
+: > "$(dirname "$REG45")/not-a-dir"
+drain_reg_run "$DISPATCH" "$(dirname "$REG45")/not-a-dir"
+M45=0; [ -f "$FX_REPO/.supervisor/review-dispatch/$(pr_hash)" ] && M45=1
+if [ "$DR_RC" -eq 0 ] && [ "$DR_OUT" = "$OUT45_OK" ] && [ -n "$DR_PPID" ] && [ "$M45" -eq 1 ]; then
+  ok "unwritable registry: the drain still launched (claude ran, marker written), exit 0, stdout unchanged"
+else
+  no "unwritable registry changed the launch (rc=$DR_RC ran_ppid='$DR_PPID' marker=$M45 out='$DR_OUT' vs '$OUT45_OK')"
+fi
+rm -rf "$(dirname "$FX_REPO")"
+# mutation control: a scripts/ dir whose dispatch-pr-review.sh lacks its ONE registration call line (gated: the
+# line occurs once in WRAPPER, the copy non-empty, differing, bash -n) ⇒ the registration assertion goes red
+MUTD45="$(mktemp -d)"
+for e in "$HERE"/*; do [ "$(basename "$e")" = dispatch-pr-review.sh ] || ln -s "$e" "$MUTD45/$(basename "$e")"; done
+C45="$(grep -c 'register --pid' "$DISPATCH")"
+grep -v 'register --pid' "$DISPATCH" > "$MUTD45/dispatch-pr-review.sh"
+if [ "$C45" != 1 ] || [ ! -s "$MUTD45/dispatch-pr-review.sh" ] || cmp -s "$DISPATCH" "$MUTD45/dispatch-pr-review.sh" \
+   || ! bash -n "$MUTD45/dispatch-pr-review.sh" 2>/dev/null; then
+  no "drain-registration mutant not built (registration lines=$C45)"
+else
+  REGM45="$(dirname "$REG45")/procs-mut"
+  drain_reg_run "$MUTD45/dispatch-pr-review.sh" "$REGM45"
+  if [ -n "$DR_PPID" ] && [ "$(drain_entries "$REGM45" | jq 'length' 2>/dev/null)" = 0 ]; then
+    ok "MUTATION: the registration line deleted from WRAPPER ⇒ the launch ran but no drain entry (the registration assertion goes red)"
+  else
+    no "MUTATION did not discriminate (ran_ppid='$DR_PPID' entries=$(drain_entries "$REGM45"))"
+  fi
+  rm -rf "$(dirname "$FX_REPO")"
+fi
+rm -rf "$MUTD45" "$(dirname "$REG45")"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

@@ -1,3 +1,7 @@
+# af/39e: every lane / phase launch registers in proc-registry.sh — the suite's own registry under $T (sourced at
+# top level, so it holds for every later part), never the real home
+export LOOMWRIGHT_PROC_REGISTRY_DIR="$T/procs"
+
 # ---- A: create (AC1) --------------------------------------------------------------------------------
 out="$(run lane-create "$RF" reqs/a.md 1 --parallel 2 --max-tokens 1000)"; rc=$?
 check "A1 lane-create L1 exits 0" "$rc" 0
@@ -162,6 +166,44 @@ LOOMWRIGHT_LANE_RECHECK_S=0 bash "$MUT/automate-lanes.sh" lane-launch "$L1" --ow
 wait_gone "$L1"
 if [ "$(lane_sum "$L1")" != "$SUM_L1_BEFORE" ]; then ok "I2 mutation (coordinator write after launch) fails the checksum"; else bad "I2 mutation control did not trip"; fi
 rm -f "$L1/.coordinator-write"
+
+# ---- I3–I8 (af/39e AC14/AC16): lane-launch registers ONE `lane` entry for the _lane-run wrapper ---------------
+# A sleeping stub keeps the wrapper alive past the registration; each launch is TERMed afterwards (the wrapper
+# then records a .died for the session it lost — removed below, it is this leg's artifact, not L1's history).
+# Every registry here is the leg's own dir under $T; the suite-wide one (above) is never read.
+lane_entries() { { cat "$1"/*.json 2>/dev/null || true; } | jq -c -s '[.[] | select(.kind == "lane")]' 2>/dev/null; }
+lane_reg_stop() { kill -TERM "$(tcol L1 5)" 2>/dev/null; wait_gone "$L1"; rm -f "$LR/L1.died"; }
+PRG="$T/procs-lane"
+out="$(STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 LOOMWRIGHT_PROC_REGISTRY_DIR="$PRG" run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
+LPID="$(tcol L1 5)"
+LCLS="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$PRG" bash "$HERE/proc-registry.sh" list | awk -F'\t' '$2 == "lane" { print $5 }')"
+lane_reg_stop
+check "I3 lane-launch registers ONE lane entry: pid = the _lane-run wrapper, lane = the lane dir, run id, the 24h default cap" \
+  "$rc|$(lane_entries "$PRG" | jq -r '[length, (.[0].pid | tostring), .[0].lane, .[0].run_id, (.[0].max_lifetime_s | tostring), ((.[0].stop_hint // "") | test("^kill -TERM [0-9]+ ")) | tostring] | join("|")')" \
+  "0|1|$LPID|$L1|$PARENT-L1|86400|true"
+check "I4 … hashed after the exec: the live wrapper classified running" "$LCLS" running
+LOUT_OK="$(printf '%s\n' "$out" | sed 's/pid [0-9][0-9]*/pid N/')"
+: > "$T/procs-not-a-dir"
+out="$(STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 LOOMWRIGHT_PROC_REGISTRY_DIR="$T/procs-not-a-dir" run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
+lane_reg_stop
+check "I5 an unwritable registry still launches: exit and output unchanged" "$rc|$(printf '%s\n' "$out" | sed 's/pid [0-9][0-9]*/pid N/')" "0|$LOUT_OK"
+# I6/I7 mutation control (AC16): a bundle copy WITH proc-registry.sh beside it registers (the positive control from
+# that location); the same copy minus launch.sh's ONE registration line registers nothing
+lm_count="$(grep -c 'proc-registry.sh" register --pid "$pid" --kind lane' "$SB" | tr -d ' ')"
+mkdir -p "$T/lreg-ok" "$T/lreg-mut"; ln -sf "$HERE/proc-registry.sh" "$T/lreg-ok/proc-registry.sh"; ln -sf "$HERE/proc-registry.sh" "$T/lreg-mut/proc-registry.sh"
+cp "$SB" "$T/lreg-ok/automate-lanes.sh"
+grep -v 'proc-registry.sh" register --pid "$pid" --kind lane' "$SB" > "$T/lreg-mut/automate-lanes.sh"
+if [ "$lm_count" = 1 ] && [ -s "$T/lreg-mut/automate-lanes.sh" ] && ! cmp -s "$SB" "$T/lreg-mut/automate-lanes.sh" && bash -n "$T/lreg-mut/automate-lanes.sh"; then
+  STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 LOOMWRIGHT_PROC_REGISTRY_DIR="$T/procs-lane-ok" bash "$T/lreg-ok/automate-lanes.sh" lane-launch "$L1" --owner-command "$OWN" >/dev/null 2>&1
+  lane_reg_stop
+  STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 LOOMWRIGHT_PROC_REGISTRY_DIR="$T/procs-lane-mut" bash "$T/lreg-mut/automate-lanes.sh" lane-launch "$L1" --owner-command "$OWN" >/dev/null 2>&1
+  lane_reg_stop
+  check "I6 mutation control: the unmutated bundle copy registers one lane entry, the copy minus the registration line none" \
+    "$(lane_entries "$T/procs-lane-ok" | jq length):$(lane_entries "$T/procs-lane-mut" | jq length)" "1:0"
+else
+  bad "I6 lane-registration mutant not built (registration lines in the bundle: $lm_count)"
+fi
+check "I7 I1 still holds: the registry writes nothing into the lane (checksum unchanged)" "$(lane_sum "$L1")" "$SUM_L1_BEFORE"
 
 # ---- J: relay hook (AC6) ----------------------------------------------------------------------------
 Q2='[{"question":"Which color?","header":"Color","multiSelect":false,"options":[{"label":"Red","description":"r"},{"label":"Blue","description":"b"}]},{"question":"Which extras?","header":"Extras","multiSelect":true,"options":[{"label":"A","description":"a"},{"label":"B","description":"b"},{"label":"C","description":"c"}]}]'
