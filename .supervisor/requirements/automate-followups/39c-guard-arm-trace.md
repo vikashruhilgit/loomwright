@@ -24,18 +24,46 @@ A second constraint found the same day: in an armed session the Bash matcher DEN
 subcommand — it must be a separate script (or a plain marker/JSONL read) that the guard does not single out.
 Changing `guard-test-integrity.sh`'s deny logic stays a non-goal.
 
+## Re-verified 2026-10-22 (read-only against main 7b7cb08 / v17.14.1 — read before starting; wins over the Source text)
+- **Still open:** Scope 3 (`cmd_arm_from_payload` in `guard-arm.sh` still does a bare `exit 0` on every skip branch —
+  jq missing, wrong role, invalid session id — and `write_marker … || true`; nothing emits `guard_arm_skipped`),
+  Scope 4 (no `test_guard:` line anywhere), Scopes 5–6. The `|| true` on the `arm-from-payload` /
+  `disarm-session` leaves in `hooks.json` still holds.
+- **Guard dir moved (c10ac78, host mode):** it resolves through `host-mode.sh` to `<gate dir>/guard` and can be
+  empty. Read decision 3's `.supervisor/guard/arm-skipped.jsonl` as `$GUARD_DIR/arm-skipped.jsonl`; an empty
+  `GUARD_DIR` is a fourth skip reason (`no_guard_dir`) — record it in the session log when the id is valid, else
+  print one stderr line; never write outside a resolved dir.
+- **The `## Outcome` block moved** to `loomwright/skills/self-heal-advisory/completion-tail.md` (step 2), not
+  `SKILL.md` Part 2.
+- **Supervisor INIT is a script now:** the arm runs in `loomwright/scripts/supervisor-next-step.sh`'s `init` step
+  (step-7 block, `guard_armed: ok|failed`), which calls `guard-arm.sh` as a subprocess the guard's Bash matcher
+  never sees. The `test_guard:` reader lives in that driver as a plain JSONL/marker read — no new `guard-arm.sh`
+  subcommand (still denied in an armed session). A standalone reader script is acceptable only if the driver's
+  token budget forbids the addition; then add it and its test to Touches in the brief.
+- **Unchanged premises:** `guard-arm.sh` is still in the last arm of `is_protected_basename`; the Bash matcher still
+  denies any `guard-arm.sh` subcommand other than a bare `arm`.
+
+## Owner decisions (from _BACKLOG.md)
+- 2026-10-22: run this item ALONE, in its own sequential `/automate --requirement` run launched by the owner from a
+  shell that exports the human-only opt-out — never inside a `--parallel` wave, so no other lane inherits
+  gate-edit rights.
+
 ## Depends on
-automate-followups/39b-run-lock-and-guard-arm.md
+none
 
 ## Touches
 loomwright/scripts/guard-arm.sh
 loomwright/scripts/test-guard-test-integrity.sh
+loomwright/scripts/supervisor-next-step.sh
+loomwright/scripts/test-supervisor-next-step.sh
+loomwright/skills/self-heal-advisory/completion-tail.md
+loomwright/skills/supervisor-config/SKILL.md
+loomwright/docs/supervisor-legacy-phases.md
 loomwright/agents/supervisor.md
 loomwright/commands/supervisor.md
-loomwright/skills/supervisor-config/SKILL.md
-loomwright/skills/self-heal-advisory/SKILL.md
 loomwright/docs/HOOKS.md
 loomwright/docs/prompt-token-budgets.json
+loomwright/docs/ARCHITECTURE_CONTRACTS.md
 changelog.d/af39c-guard-arm-trace.md
 
 ## Owner decision (2026-10-13 — decided, do not re-open in the PR)

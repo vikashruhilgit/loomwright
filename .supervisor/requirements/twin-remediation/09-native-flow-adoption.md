@@ -1,6 +1,6 @@
 # 09 — Native-flow adoption: stop reimplementing what Claude Code now provides
 
-## Status: parked (2026-10-13: item 1 shipped in #489 (v15.133.0); items 2–5 need refining first — see the Re-scope notes below)
+## Status: parked (2026-10-22: item 1 shipped in #489; item 4's named follow-up `onFailure: "block"` shipped in #494; the owner-scoped remainder — overlap entries 2b and 2d, KEEP verdicts for 2c and 2e, scan cadence — is `09b-overlap-map-and-scan-cadence.md`; do not run this file)
 
 ## Problem
 The plugin was built when the platform lacked most of what it hand-rolls. Claude Code has since shipped first-class primitives that overlap Loomwright's core machinery — built-in code review (`/code-review`, incl. the multi-agent `ultra` cloud review) and `/security-review`; the Agent tool with typed subagents and background execution + completion notification; the Workflow tool for deterministic multi-agent orchestration (fan-out, pipelines, judge panels, worktree isolation per agent); agent teams; native worktree isolation frontmatter. Loomwright still ships its own reviewer agent + review-heal drain, its own poll loop with backoff constants, its own spawn contracts, and its own phase machines.

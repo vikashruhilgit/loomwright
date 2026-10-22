@@ -1,6 +1,6 @@
 # 18 — One backlog board with a right-size column, and one shape for writing requirements: every item's real state, its size verdict, merge candidates, and the plan doc a requirement set is written in
 
-## Status: pending
+## Status: parked (split 2026-10-22 by the owner into `18b-right-size-check.md` (Part B), `18a-backlog-board.md` (Part A core) and `25-backlog-board-feeds.md` (Part A feeds) — do not run this file; Part C shipped in #488)
 
 ## Merged from (2026-10-06, owner decision: both scan every requirement item and report on it — one run and one wave fewer)
 - Part A: `15-backlog-board.md` — 15 — One backlog board: every requirement item's real state, derived, never hand-kept

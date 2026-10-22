@@ -1,6 +1,6 @@
 # 08 — Session segmentation: fresh contexts per unit of work instead of one endless session
 
-## Status: parked (2026-10-13: items 2–3 shipped in #487 (v15.133.0); items 1 and 4 wait on an owner design decision — loop segmentation into fresh sessions)
+## Status: done (closed 2026-10-22 after a read-only re-verification against main 7b7cb08: items 2–3 shipped in #487; items 1 and 4 shipped as `08b-single-lane-sequential.md` in PR #548 (`--parallel 1` = one fresh lane per item); automate-speed/09 (#628) made a fresh headless session per phase the default, `--inline-phases` the rollback; the `/autonomous` multi-iteration half of item 1 was dropped by the owner, recorded in 08b)
 
 ## Problem
 2026-07-23 outcome-data audit: ~89% of token spend traces to long-running sessions whose context never resets (autonomous/automate loops and interactive sessions pushed toward 1M tokens; token_ledger proxies show single agent transcripts at 0.9–1.5MB). The loop designs treat "never stops" as a virtue; the additive cost curve is invisible because nothing fails — it just costs more. The resume machinery (state.md, session-resume hook, `--continue`, single-iteration-safe re-runs) already makes segmentation nearly free; nothing exploits it.
