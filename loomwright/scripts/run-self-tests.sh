@@ -32,7 +32,8 @@
 #          SELF_TEST_TIMEOUT  per-test wall-clock limit in seconds (default 900). A test still
 #          running at the limit is a FAILURE (exit 124 in its banner): its process tree and log
 #          tail are printed to stderr THE MOMENT it times out (so a CI log names the hung test
-#          even if the job is later killed), then the whole tree is killed. Before this, one test
+#          even if the job is later killed), then the whole tree is killed, plus the test's own
+#          process group (a double-forked child included; see the worker below). Before this, one test
 #          that never exited held the step until GitHub's 6-hour default (15 CI runs, 2026-09-27
 #          → 2026-10-01, each cancelled at ~361 min with no test named in the log).
 #          SELF_TEST_SLOT_WAIT  seconds to wait for machine admission (a ci-slot.sh slot; see below)
@@ -252,24 +253,56 @@ esac
 # descendants from `ps -A -o pid= -o ppid=` (same flags on BSD and procps), prints them with their
 # command lines plus the log tail to stderr immediately, appends the same to the test's log, then
 # TERMs and (2 s later) KILLs the tree. rc 124 = timed out, matching timeout(1).
+# Process group: the test is forked under `set -m` (bash 3.2 honours it in a non-interactive script;
+# macOS has no setsid), so it leads its OWN process group, and the TERM/KILL also go to that whole
+# group. The ppid walk alone misses a double-forked child (`( nohup srv & )`) re-parented to pid 1 —
+# that is how fixture servers outlived their test for days (39d). The group signal is guarded: it is
+# sent ONLY when `ps -o pgid=` says the test leads its own group; otherwise (set -m did not take) no
+# group is signalled and the descendant walk runs alone, so the group of xargs or of this runner is
+# never hit. A test in its own group no longer receives a terminal Ctrl-C or a CI cancel, so the
+# worker forwards a TERM/INT/HUP it receives to the test's group, under the same guard.
 cat > "$out/worker.sh" <<'WORKER'
 idx="$1"; t="$2"; limit="$SELF_TEST_TIMEOUT"
 log="$SELF_TEST_OUT/$idx.log"
+pid=""
 descendants() {
   local c
   for c in $(ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$1" '$2 == p { print $1 }'); do
     echo "$c"; descendants "$c"
   done
 }
+# own_group PID — 0 iff PID leads its own process group (its whitespace-trimmed pgid equals PID).
+# The ONE guard in front of every `kill -<sig> -- -PID` below.
+own_group() {
+  local g
+  g="$(ps -o pgid= -p "$1" 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$g" ] && [ "$g" = "$1" ]
+}
+# forward SIG — relay a signal this worker received to the running test: its whole group when it
+# leads one, else the test pid alone. The worker then carries on: it sees the test end and writes
+# its verdict as usual. Received before the fork (no test yet): die of SIG as before. Received after
+# the test was reaped: nothing to relay, and the verdict is microseconds from being written.
+forward() {
+  if [ -z "$pid" ]; then trap - "$1"; kill -"$1" "$$"; return; fi
+  if [ "$pid" = reaped ]; then return; fi
+  if own_group "$pid"; then kill -"$1" -- "-$pid" 2>/dev/null; else kill -"$1" "$pid" 2>/dev/null; fi
+}
+trap 'forward TERM' TERM
+trap 'forward INT' INT
+trap 'forward HUP' HUP
 start=$(date +%s)
+set -m
 bash "$t" > "$log" 2>&1 < /dev/null &
 pid=$!
+set +m
 timed_out=0
 while kill -0 "$pid" 2>/dev/null; do
   if [ $(( $(date +%s) - start )) -ge "$limit" ]; then timed_out=1; break; fi
   sleep 0.5
 done
 if [ "$timed_out" -eq 1 ]; then
+  # Decided once, while the test is still alive and unreaped (its pid cannot be recycled yet).
+  grp=0; if own_group "$pid"; then grp=1; fi
   # One pid per line, then joined with commas by paste: no reliance on unquoted word-splitting
   # to trim a trailing separator (GNU `ps -p 1,` errors "improper list").
   tree_lines="$( { echo "$pid"; descendants "$pid"; } | grep -E '^[0-9]+$')"
@@ -282,14 +315,17 @@ if [ "$timed_out" -eq 1 ]; then
   } > "$SELF_TEST_OUT/$idx.hang" 2>&1
   cat "$SELF_TEST_OUT/$idx.hang" >&2
   { echo; echo "================ killed by run-self-tests watchdog ================"; cat "$SELF_TEST_OUT/$idx.hang"; } >> "$log"
+  if [ "$grp" -eq 1 ]; then kill -TERM -- "-$pid" 2>/dev/null; fi
   for k in $tree_lines; do kill -TERM "$k" 2>/dev/null; done
   sleep 2
+  if [ "$grp" -eq 1 ]; then kill -KILL -- "-$pid" 2>/dev/null; fi
   for k in $tree_lines; do kill -KILL "$k" 2>/dev/null; done
   wait "$pid" 2>/dev/null
   rc=124
 else
   rc=0; wait "$pid" || rc=$?
 fi
+pid=reaped   # a signal arriving from here on has no test to relay to (see forward)
 secs=$(( $(date +%s) - start ))
 printf "%s %s\n" "$rc" "$secs" > "$SELF_TEST_OUT/$idx.rc.tmp"
 mv "$SELF_TEST_OUT/$idx.rc.tmp" "$SELF_TEST_OUT/$idx.rc"

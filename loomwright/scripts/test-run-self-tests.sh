@@ -29,6 +29,16 @@
 #                                                    and prints its process tree, the child is
 #                                                    killed, and a passing fixture still passes;
 #        MUTATION CONTROL: a slow fixture that FINISHES inside the limit → exit 0 (no false timeout)
+#   (TG) a timed-out fixture that leaves a DOUBLE-FORKED child (`( nohup sleep 300 & … )`, re-parented
+#        outside the test's ppid tree, so the descendant walk cannot see it) under SELF_TEST_TIMEOUT=2
+#                                                  → exit 1, TIMEOUT banner, and the child is dead (the
+#                                                    watchdog signalled the test's own process group);
+#        MUTATION CONTROL: a runner copy with its `set -m` line deleted → the child SURVIVES, while the
+#        mutant runner still exits 1 normally with the TIMEOUT banner (not killed by a signal: the
+#        group guard never signalled the runner's own group); the survivor is killed afterwards
+#   (TF) a TERM delivered to a running worker is relayed to its test's process group: the test and its
+#        double-forked child are gone, and the worker still records a verdict (FAIL exit 143);
+#        MUTATION CONTROL: a runner copy without the worker's forwarding traps → the group survives
 #   (TJ) SELF_TEST_TIMEOUT not a positive integer  → exit 1
 #   (W)  wiring: ci.yml's self-test step invokes run-self-tests.sh, and the ci job is capped
 #        with timeout-minutes
@@ -63,6 +73,7 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$HERE/wait-lib.sh"   # bounded condition waits (iq02 T07)
 RUNNER="$HERE/run-self-tests.sh"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 CI_YML="$REPO_ROOT/.github/workflows/ci.yml"
@@ -271,6 +282,105 @@ SELF_TEST_TIMEOUT=5 run "$T/t2.out" "$T/slow-ok.sh"; rc=$?
 [ "$rc" -eq 0 ] && ! grep -q TIMEOUT "$T/t2.out" \
   && ok "(T) MUTATION CONTROL: a 1s test under a 5s limit passes — the watchdog fires only on a real overrun" \
   || no "(T) MUTATION CONTROL: slow-but-finishing test rc=$rc: $(cat "$T/t2.out")"
+
+# proc_alive PID — a live, non-zombie process (a killed orphan stays a zombie until its new parent
+# reaps it, and `kill -0` still succeeds on a zombie). group_live PGID — any live member of the group.
+proc_alive() {
+  local s; s="$(ps -o stat= -p "$1" 2>/dev/null | tr -d '[:space:]')"
+  case "$s" in ''|Z*) return 1 ;; esac
+}
+proc_dead() { ! proc_alive "$1"; }
+group_live() { ps -A -o pgid= -o stat= 2>/dev/null | awk -v g="$1" '$1 == g && $2 !~ /^Z/ { f = 1 } END { exit !f }'; }
+group_gone() { ! group_live "$1"; }
+# mutant_dir DIR — a flat git dir holding the helpers a runner copy needs beside it (as (FS) does).
+mutant_dir() { rm -rf "$1"; mkdir -p "$1"; git init -q "$1"; cp "$HERE/hermetic-test-env.sh" "$HERE/ci-slot.sh" "$HERE/machine-load.sh" "$1/" 2>/dev/null; }
+
+echo "== (TG) the watchdog stops a timed-out test's whole process group: a double-forked child dies =="
+# The subshell exits at once, so the nohup'd sleep is re-parented (pid 1 or a subreaper) — outside
+# the test's ppid tree, where the descendant walk cannot reach it. The fixture records its own pid
+# and the child's new ppid, so the leg can prove the child really left the tree.
+cat > "$T/dfork.sh" <<'EOF'
+d="$(dirname "$0")"
+( nohup sleep 300 > /dev/null 2>&1 < /dev/null & echo $! > "$d/dfork-child.pid" )
+printf '%s %s\n' "$$" "$(ps -o ppid= -p "$(cat "$d/dfork-child.pid")" | tr -d '[:space:]')" > "$d/dfork-lineage"
+echo "dfork-marker-before-wait"
+sleep 300
+EOF
+# dfork_run RUNNER OUT — dfork.sh under SELF_TEST_TIMEOUT=2; sets DF_RC, DF_CPID (the double-forked
+# child) and DF_TPID / DF_PPID (the test's pid, the child's parent after the double fork).
+dfork_run() {
+  rm -f "$T/dfork-child.pid" "$T/dfork-lineage"
+  SELF_TEST_TIMEOUT=2 GITHUB_ACTIONS= bash "$1" "$T/dfork.sh" > "$2" 2>&1; DF_RC=$?
+  DF_CPID="$(cat "$T/dfork-child.pid" 2>/dev/null)"
+  read -r DF_TPID DF_PPID < "$T/dfork-lineage" 2>/dev/null || { DF_TPID=""; DF_PPID=""; }
+}
+dfork_run "$RUNNER" "$T/tg.out"
+if [ -n "$DF_CPID" ] && [ -n "$DF_TPID" ] && [ -n "$DF_PPID" ] && [ "$DF_PPID" != "$DF_TPID" ]; then
+  ok "(TG) precondition: the child $DF_CPID was re-parented to $DF_PPID, outside the test's ($DF_TPID) ppid tree"
+else no "(TG) precondition: child=${DF_CPID:-?} test=${DF_TPID:-?} child's ppid=${DF_PPID:-?} — not a double-forked child"; fi
+[ "$DF_RC" -eq 1 ] && grep -q "FAIL (exit 124 — TIMEOUT after 2s): $T/dfork.sh" "$T/tg.out" \
+  && ok "(TG) the timed-out test fails the run (exit 1) with the TIMEOUT banner" \
+  || no "(TG) rc=$DF_RC: $(cat "$T/tg.out")"
+if [ -n "$DF_CPID" ] && wait_for_cmd 10 proc_dead "$DF_CPID"; then
+  ok "(TG) the double-forked child is dead once the runner finishes (the test's process group was signalled)"
+else no "(TG) double-forked child ${DF_CPID:-<no pid>} survived the watchdog"; [ -n "$DF_CPID" ] && kill -KILL "$DF_CPID" 2>/dev/null; fi
+# MUTATION CONTROL: the same leg against a runner copy with its `set -m` line deleted.
+MG="$T/tg-mutant"; mutant_dir "$MG"
+grep -v '^set -m$' "$RUNNER" > "$MG/run-self-tests.sh"
+if [ -s "$MG/run-self-tests.sh" ] && bash -n "$MG/run-self-tests.sh" \
+   && [ "$(diff "$RUNNER" "$MG/run-self-tests.sh" | grep -c '^<')" = 1 ] && ! grep -q '^set -m$' "$MG/run-self-tests.sh"; then
+  dfork_run "$MG/run-self-tests.sh" "$T/tg-mut.out"
+  if [ -n "$DF_CPID" ] && proc_alive "$DF_CPID"; then
+    ok "(TG) MUTATION CONTROL: without \`set -m\` the double-forked child survives — (TG) can fail"
+  else no "(TG) MUTATION CONTROL: without \`set -m\` the child ${DF_CPID:-<no pid>} still died — (TG) proves nothing"; fi
+  [ "$DF_RC" -eq 1 ] && grep -q "FAIL (exit 124 — TIMEOUT after 2s): $T/dfork.sh" "$T/tg-mut.out" \
+    && ok "(TG) MUTATION CONTROL: the mutant runner itself exited 1 normally with the TIMEOUT banner — the group guard left its own group alone" \
+    || no "(TG) MUTATION CONTROL: mutant runner rc=$DF_RC (not a normal exit 1 + TIMEOUT banner): $(cat "$T/tg-mut.out")"
+  [ -n "$DF_CPID" ] && kill -KILL "$DF_CPID" 2>/dev/null
+else no "(TG) MUTATION CONTROL: mutant not built (empty, invalid, or not exactly the one \`set -m\` line removed)"; fi
+
+echo "== (TF) a TERM delivered to a worker is relayed to its test's process group =="
+# The fixture records its pid and $PPID (= the worker that forked it) once its double-forked child
+# exists. The limit is far above the leg's waits, so a dead group here is the relay, not the watchdog.
+cat > "$T/fwd.sh" <<'EOF'
+d="$(dirname "$0")"
+( nohup sleep 300 > /dev/null 2>&1 < /dev/null & echo $! > "$d/fwd-child.pid" )
+echo "$$ $PPID" > "$d/fwd-ids.tmp"; mv "$d/fwd-ids.tmp" "$d/fwd-ids"
+sleep 300
+EOF
+# fwd_run RUNNER OUT SECS — starts RUNNER on fwd.sh, TERMs the worker once the child exists, then waits
+# (up to SECS) for the test's group to be gone; sets FW_WHY ("" = the group died), FW_TPID, FW_RC.
+fwd_run() {
+  local rp cpid wpid
+  FW_WHY=""; FW_TPID=""; FW_RC=""; rm -f "$T/fwd-ids" "$T/fwd-child.pid" "$T/fwd.rc"
+  ( SELF_TEST_TIMEOUT=120 GITHUB_ACTIONS= bash "$1" "$T/fwd.sh" > "$2" 2>&1; echo "$?" > "$T/fwd.rc" ) &
+  rp=$!
+  if ! wait_for_cmd 30 test -s "$T/fwd-ids"; then FW_WHY="the fixture never started: $(cat "$2")"; kill "$rp" 2>/dev/null; wait "$rp" 2>/dev/null; return; fi
+  read -r FW_TPID wpid < "$T/fwd-ids"; cpid="$(cat "$T/fwd-child.pid" 2>/dev/null)"
+  if [ "$(ps -o pgid= -p "$FW_TPID" 2>/dev/null | tr -d '[:space:]')" != "$FW_TPID" ] || ! proc_alive "$cpid"; then
+    FW_WHY="precondition: test $FW_TPID does not lead its own group, or child ${cpid:-?} is not alive"
+  fi
+  kill -TERM "$wpid" 2>/dev/null
+  if [ -z "$FW_WHY" ] && ! wait_for_cmd "$3" group_gone "$FW_TPID"; then FW_WHY="the test's group $FW_TPID is still alive after TERM to worker $wpid"; fi
+  wait_for_cmd 30 test -s "$T/fwd.rc"; FW_RC="$(cat "$T/fwd.rc" 2>/dev/null)"
+  wait "$rp" 2>/dev/null
+}
+fwd_run "$RUNNER" "$T/tf.out" 15
+if [ -z "$FW_WHY" ]; then ok "(TF) TERM to the worker: the test's whole group (double-forked child included) is gone"
+else no "(TF) $FW_WHY"; [ -n "$FW_TPID" ] && kill -KILL -- "-$FW_TPID" 2>/dev/null; fi
+[ "$FW_RC" = 1 ] && grep -q "FAIL (exit 143): $T/fwd.sh" "$T/tf.out" && ! grep -q TIMEOUT "$T/tf.out" \
+  && ok "(TF) the worker carried on and recorded the relayed TERM as the test's verdict (FAIL exit 143, no TIMEOUT)" \
+  || no "(TF) runner rc=${FW_RC:-?}: $(cat "$T/tf.out")"
+# MUTATION CONTROL: a runner copy without the worker's three forwarding traps.
+MF="$T/tf-mutant"; mutant_dir "$MF"
+grep -v "^trap 'forward [A-Z]*' [A-Z]*\$" "$RUNNER" > "$MF/run-self-tests.sh"
+if [ -s "$MF/run-self-tests.sh" ] && bash -n "$MF/run-self-tests.sh" && [ "$(diff "$RUNNER" "$MF/run-self-tests.sh" | grep -c '^<')" = 3 ]; then
+  fwd_run "$MF/run-self-tests.sh" "$T/tf-mut.out" 3 2>/dev/null
+  if [ -n "$FW_TPID" ] && group_live "$FW_TPID"; then
+    ok "(TF) MUTATION CONTROL: without the forwarding traps the test's group survives a TERM to its worker — (TF) can fail"
+  else no "(TF) MUTATION CONTROL: without the traps the group still died (${FW_WHY:-gone}) — (TF) proves nothing"; fi
+  [ -n "$FW_TPID" ] && kill -KILL -- "-$FW_TPID" 2>/dev/null
+else no "(TF) MUTATION CONTROL: mutant not built (empty, invalid, or not exactly the three trap lines removed)"; fi
 
 echo "== (TJ) SELF_TEST_TIMEOUT validation =="
 for bad in abc 0 -5; do
