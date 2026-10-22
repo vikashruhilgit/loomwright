@@ -274,7 +274,7 @@ Before using Agent Teams:
 
 ## Graduation Criteria (Experimental → Stable)
 
-Agent Teams maturity is tracked against six criteria. As of 2026-05-10, **3 of 6** are met.
+Agent Teams maturity is tracked against six criteria. Verdict: **KEEP OURS** — Agent Teams stays a complementary research tool and Supervisor's worktrees stay the default; the evidence and the reason are in `docs/NATIVE_OVERLAP.md` §2e.
 
 ### Met (3)
 
