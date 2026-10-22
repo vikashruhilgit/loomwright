@@ -199,6 +199,13 @@
 #      park-first order leg (QG3) over automate-next-step.sh's park / decide steps and the intake.md leg (QG4).
 #      Every leg has a gated mutant (anchor unique, non-empty, differs, `bash -n`; prose mutants:
 #      non-empty, differs, no line lost) that turns it red.
+#   RZ / MI. parallel-automate/18b (right-size verdict + merge-items; hermetic trees, fixtures/right-size/):
+#      small ⇒ ranked, capped merge candidates (shared files, same chain, same folder); never a parked /
+#      proposed / done / operator-run / cycle-forming one; large by files / parts / both; the
+#      right_size_small config key; unknown Touches never small; plan-doc sections + Measurements lines;
+#      --json shape; exit 1 + empty stdout on errors; the ms/09+10 and iq/02-shaped checks; merge-items'
+#      af/17 + af/25 golden and its difference from the hand merge, dependents re-pointed, the lost-line
+#      post-check (body / Touches / Depends on) and refusals writing nothing; gated mutants (AC17 i-iii + pins).
 # >>> runner-only
 #
 # Layout (automate-speed/21): this file is the runner (header, shared setup, summary). The legs moved
@@ -317,7 +324,7 @@ bash "$HERE/fixtures/automate-loop-split/assemble.sh" "$HERE/../docs/result-sche
 # no argument = every part, as before. "$@" is cleared before any part is sourced, so legs see the empty
 # "$@" of base.
 TAH_D="$HERE/test-automate-helpers.d"
-TAH_PARTS="01-config 02-runfile 03-intake 04-resume 05-gate-eval-harness 05-gate-eval 06-gate-eval-tail 07-rules-gate 08-learning-emit 09-brief-repair 10-reconcile-status 11-ceiling 12-meta 13-plan-waves 14-escalation 15-lane-seams 16-queue-gates"
+TAH_PARTS="01-config 02-runfile 03-intake 04-resume 05-gate-eval-harness 05-gate-eval 06-gate-eval-tail 07-rules-gate 08-learning-emit 09-brief-repair 10-reconcile-status 11-ceiling 12-meta 13-plan-waves 14-escalation 15-lane-seams 16-queue-gates 17-right-size"
 TAH_PREREQ="05-gate-eval:05-gate-eval-harness 06-gate-eval-tail:05-gate-eval-harness 07-rules-gate:05-gate-eval-harness"
 tah_prereq() { local e; for e in $TAH_PREREQ; do [ "${e%%:*}" = "$1" ] && echo "${e#*:}"; done; }
 # A part that does not parse would make `.` fail, skip every leg in it and leave the suite green, which
@@ -405,6 +412,7 @@ tah_run 13-plan-waves && . "$TAH_D/13-plan-waves.sh"
 tah_run 14-escalation && . "$TAH_D/14-escalation.sh"
 tah_run 15-lane-seams && . "$TAH_D/15-lane-seams.sh"
 tah_run 16-queue-gates && . "$TAH_D/16-queue-gates.sh"
+tah_run 17-right-size && . "$TAH_D/17-right-size.sh"
 # >>> runner-only
 if [ -n "$TAH_ONLY" ]; then rm -rf "$SPLIT_D"; fi
 [ "$tah_done" = "$tah_list" ] || { echo "  FAIL: parts sourced ($tah_done ) differ from parts selected ($tah_list ): a TAH_PARTS entry has no source line, or source lines are out of TAH_PARTS order"; exit 1; }

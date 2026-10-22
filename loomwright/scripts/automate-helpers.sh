@@ -55,6 +55,11 @@
 # off fresh origin/<base>, `--no-ff` merges of the lane PR heads, local CI, the
 # release commit, a regular push of the wave branch only and `gh pr create`; never
 # a PR merge, never a lane-branch push, never a force-push (its header is the authority).
+# A fifth carve-out, in THIS process: `merge-items` (automate-helpers.d/right-size.sh), run only on
+# the owner's explicit invocation, writes requirement files under <root>/.supervisor/requirements/
+# and nothing else — the merged item, its originals' parked stamps and its dependents' re-pointed
+# `## Depends on` lines, all staged and copied into place only after its lost-line post-check
+# passes; never git, never `gh`. (`right-size` beside it is read-only.)
 # UNCOUNTED by the
 # doc-currency gate (it is a plain script, not an agent/command/skill/hook).
 #
@@ -167,7 +172,7 @@ _ah_bundle() {
 }
 # _AH_HELP_SEGMENTS — the --help usage order: an explicit list, never a glob. A family name is that
 # family's `#:  ` block; an hdr-* name is the dispatcher header group its `#:@ <name>` line opens.
-_AH_HELP_SEGMENTS="config runfile intake resume hdr-gate learning escalation reconcile-status hdr-trail meta plan-waves hdr-lanes"
+_AH_HELP_SEGMENTS="config runfile intake resume hdr-gate learning escalation reconcile-status hdr-trail meta plan-waves right-size hdr-lanes"
 # _ah_usage [<dispatcher>] — print the `#:  ` usage lines of _ah_bundle's output as `  <line>`, one
 # segment at a time in _AH_HELP_SEGMENTS order. A line's segment is the family whose
 # `# >>> automate-helpers.d/<name>.sh` markers enclose it, else the dispatcher's open `#:@` group.
@@ -1064,6 +1069,9 @@ _ah_source meta
 # >>> automate-helpers.d/plan-waves.sh
 _ah_source plan-waves
 # <<< automate-helpers.d/plan-waves.sh
+# >>> automate-helpers.d/right-size.sh
+_ah_source right-size
+# <<< automate-helpers.d/right-size.sh
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
@@ -1094,6 +1102,8 @@ main() {
     meta-entry)      meta_entry "$@" ;;
     meta-push-failed) meta_push_failed "$@" ;;
     plan-waves)      plan_waves "$@" ;;
+    right-size)      right_size "$@" ;;
+    merge-items)     merge_items "$@" ;;
     # Post-park lifecycle MUTATORS live in the sibling automate-trail.sh (the
     # read-only carve-out named in the header) — one mover per concern.
     sidecar-check|trail-pr|closeout|trail-unstage|trail-gate) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
