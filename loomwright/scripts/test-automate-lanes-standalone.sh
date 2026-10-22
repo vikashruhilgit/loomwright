@@ -101,9 +101,13 @@ if declare -F tal_pgrep >/dev/null; then
   check "S2a an empty \$T and path ⇒ nothing, exit 2 (was: every lane on the machine)" "$rc:$r" "2:"
   r="$(T="decoy" tal_pgrep "decoy" "_lane-run ")"; rc=$?
   check "S2b a relative \$T ⇒ nothing, exit 2" "$rc:$r" "2:"
+  mkdir -p "$D/other"   # $T must EXIST here, or the [ -d "$T" ] guard answers before the containment case
   r="$(T="$D/other" tal_pgrep "$D/decoy/lane" "_lane-run ")"; rc=$?
-  check "S2c a path outside \$T ⇒ nothing, exit 2" "$rc:$r" "2:"
-  mkdir -p "$D/other"
+  check "S2c an existing \$T and a path outside it ⇒ nothing, exit 2" "$rc:$r" "2:"
+  # MUTATION CONTROL: without the containment case the same call finds the decoy, so S2c tests that case
+  eval "$(awk '/^tal_pgrep\(\) \{$/,/^}$/' "$E" | sed -e 's/^tal_pgrep()/tal_pgrep_mut()/' -e '/case "\${1:-}" in/d')"
+  r="$(T="$D/other" tal_pgrep_mut "$D/decoy/lane" "_lane-run ")"
+  check "S2c' MUTATION CONTROL: the containment case removed ⇒ the outside decoy is found" "$r" "$DECOY"
   r="$(T="$D/other" tal_pgrep "$D/other" "_lane-run ")"; rc=$?
   check "S2d an existing \$T with no process under it ⇒ nothing (the decoy is outside)" "$r" ""
   r="$(T="$D/decoy" tal_pgrep "$D/decoy/lane" "_lane-run ")"
