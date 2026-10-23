@@ -1,3 +1,4 @@
+declare -F tal_pgrep >/dev/null && [ -n "${T:-}" ] && [ -d "$T" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-lanes.sh, never standalone (its kills need the suite's \$T)" >&2; exit 2; }
 # ---- AN: phase sessions (automate-speed/09 — fresh session per phase) -----------------------------------
 # A coordinator running INSIDE a lane clone (the hardest case for D2: the clone's own settings carry the
 # lane relay hook, and a phase question must still never reach the lane inbox). The phase run file is the
@@ -185,6 +186,6 @@ if [ -s "$MUT/automate-lanes.sh" ] && ! cmp -s "$SB" "$MUT/automate-lanes.sh" &&
 else bad "AN21d mutant not built"; fi
 
 # AN-z: nothing this part started outlives it (AA-F12z closed part 05, before these launches)
-for p in $(pgrep -f "_lane-run $T" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
-i=0; while pgrep -f "_lane-run $T" >/dev/null 2>&1 && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
-check "AN-z no phase or lane wrapper of the suite survives" "$(pgrep -f "_lane-run $T" 2>/dev/null | wc -l | tr -d ' ')" 0
+for p in $(tal_pgrep "$T" "_lane-run "); do kill -TERM "$p" 2>/dev/null; done
+i=0; while tal_pgrep "$T" "_lane-run " >/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+check "AN-z no phase or lane wrapper of the suite survives" "$(tal_pgrep "$T" "_lane-run " | wc -l | tr -d ' ')" 0

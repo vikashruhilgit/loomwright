@@ -1,3 +1,4 @@
+declare -F tal_pgrep >/dev/null && [ -n "${T:-}" ] && [ -d "$T" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-lanes.sh, never standalone (its kills need the suite's \$T)" >&2; exit 2; }
 # ---- AF: fleet-closeout — the stepwise, idempotent wave close (A2) -----------------------------------
 # Two lanes; the owner merges L1's PR, then L2's. Real helpers / closeout / finalize / run-lock; gh is a
 # stub keyed per PR (AF_MERGED / AF_CLOSED / AF_NOHEAD) that also answers the `ci` check-runs read.

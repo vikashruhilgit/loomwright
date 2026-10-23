@@ -1,3 +1,4 @@
+declare -F tal_pgrep >/dev/null && [ -n "${T:-}" ] && [ -d "$T" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-lanes.sh, never standalone (its kills need the suite's \$T)" >&2; exit 2; }
 # ---- U: merge-readiness report (AC9) -------------------------------------------------------------------
 L3="$LR2/L3"
 cat > "$L3/reqs/a.md" <<'EOF'
@@ -193,7 +194,7 @@ check "V21 the snapshot's claude-p section carries the v2 format tag (and no v1 
 # the v1 mutation: the section body back to the machine-wide match; its own run + snapshot, before the decoys
 PARENTCV=automate-2026-10-16-091000; RFCV="$P/.supervisor/automate/$PARENTCV.md"
 printf '# Automate Run: %s\n\n## Progress\n' "$PARENTCV" > "$RFCV"
-awk -v hl="$HL" '/# >>> claude-p body$/ { print "  pgrep -lf '"'"'" hl "'"'"' 2>/dev/null"; next } { print }' "$SB" > "$MUT/lanes-cp.sh"
+awk -v hl="$HL" '/# >>> claude-p body$/ { print "  pgrep -lf '"'"'" hl "'"'"' 2>/dev/null"; next } { print }' "$SB" > "$MUT/lanes-cp.sh"   # raw-pgrep-ok: the mutant only lists (-l)
 if ! cmp -s "$SB" "$MUT/lanes-cp.sh" && bash -n "$MUT/lanes-cp.sh"; then CP_S="$MUT/lanes-cp.sh" cpl "$RFCV" --snapshot >/dev/null; CPMUT=1; else CPMUT=0; fi
 # V22 another repo's healthy wave: two wrappers + their children, and a headless session whose cwd is its lane
 cp_pair "$CPF/L1"; FW1="$CPW"; FC1="$CPC"; cp_pair "$CPF/L2"; FW2="$CPW"; FC2="$CPC"
@@ -276,7 +277,7 @@ has "V12 parent tokens" "$out" "parent INPUT=1"
 check "V13 total sums parent + lanes" "$(printf '%s\n' "$out" | sed -n 's/.* TOTAL=\([0-9]*\).*/\1/p' | tail -1)" 24
 out="$(LOOMWRIGHT_LANES_TOKEN_LEDGER="$T/absent.sh" run lane-status "$RF2" --tokens)"; rc=$?
 check "V14 ledger absent ⇒ unknown, exit 0" "$rc:$out" "0:tokens: unknown — read-token-ledger.sh absent"
-for p in $(pgrep -f "_lane-run $LR2" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
+for p in $(tal_pgrep "$LR2" "_lane-run "); do kill -TERM "$p" 2>/dev/null; done
 
 # ---- W: drain round 1 hardening -------------------------------------------------------------------------
 # W1 (D8) the total is ONE read-token-ledger.sh call over every root: a parent that ran no session of its
@@ -387,7 +388,7 @@ check "W5 two concurrent launches ⇒ exactly one spawn" "$(( $(claude_calls) - 
 check "W5b one launched, one refused" "$(printf '%s\n%s\n' "$ra" "$rb" | env LC_ALL=C sort | tr '\n' ' ')" "0 1 "
 has "W5c the second sees the lane running" "$(cat "$T/w5a.out" "$T/w5b.out")" "already running"
 check "W5d no launch lock left behind" "$(ls -d "$TABLE".L8.launch.lock 2>/dev/null | wc -l | tr -d ' ')" 0
-for p in $(pgrep -f "_lane-run $L8" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done; wait_gone "$L8"
+for p in $(tal_pgrep "$L8" "_lane-run "); do kill -TERM "$p" 2>/dev/null; done; wait_gone "$L8"
 
 # W6 multiSelect labels that contain commas
 run lane-create "$RF" reqs/b.md 9 >/dev/null; L9="$LR/L9"
