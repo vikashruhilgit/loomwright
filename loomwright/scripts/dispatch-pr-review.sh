@@ -914,8 +914,8 @@ esac
 ALLOWED_TOOLS_REAL="$(build_allowed_tools "${HEAD_REF:-HEAD_REF}")"
 # Process registry (af/39e): proc-registry.sh, resolved ABSOLUTE like SALVAGE_BIN and
 # handed to the wrapper as its trailing positional ${16}; the wrapper registers ITSELF
-# (`$$`, kind drain — the cap is proc-registry.sh's, never a number here).
-# proc-registry.sh's header is the contract.
+# (`$$`) and then its runner session (owner = the wrapper), both kind drain — the cap is
+# proc-registry.sh's, never a number here. proc-registry.sh's header is the contract.
 PROC_REGISTRY_BIN="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/proc-registry.sh"
 WRAPPER='
 _mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"; _pmode="$9"; _atools="${10}"; _dtools="${11}"; _marker="${12}"; _notify="${13}"; _webhook="${14}"; _sid="${15}"; _reg="${16}"
@@ -990,11 +990,14 @@ _fwd() { _term=1; [ -z "$_cp" ] || kill -TERM "$_cp" 2>/dev/null; }
 trap _fwd TERM INT HUP
 # Process registry (af/39e): this wrapper registers its own pid, fail-safe and fully redirected, BEFORE the
 # runner launches and never inside trap_cleanup; a registry failure changes nothing about the drain.
-[ -n "$_reg" ] && bash "$_reg" register --pid "$$" --kind drain --purpose "review drain for $_pr" --repo "$_mg" --session-id "$_sid" --stop-hint "kill -TERM $$ (the review-drain wrapper of $_pr; worktree $_wt, lock $_lock)" </dev/null >/dev/null 2>&1 || true
+[ -n "$_reg" ] && bash "$_reg" register --pid "$$" --kind drain --purpose "review-drain wrapper for $_pr" --repo "$_mg" --session-id "$_sid" --stop-hint "kill -TERM $$ (the review-drain wrapper of $_pr; worktree $_wt, lock $_lock)" </dev/null >/dev/null 2>&1 || true
 cd "$_wt" || exit 0
 [ -z "$_term" ] || { _exit_code=143; exit 143; }
 "$_bin" -p --permission-mode "$_pmode" --allowedTools "$_atools" --disallowedTools "$_dtools" --agent "$_runner" --session-id "$_sid" "$_pr" >>"$_log" 2>&1 </dev/null &
 _cp=$!
+# ... and the runner session as its OWN entry (owner = this wrapper, so a reap reaches it only through
+# that entry); backgrounded, so its bounded --expect wait never delays the wait below.
+[ -n "$_reg" ] && { bash "$_reg" register --pid "$_cp" --kind drain --owner-pid "$$" --purpose "review-drain session (runner) of wrapper $$ for $_pr" --repo "$_mg" --session-id "$_sid" --expect "--agent $_runner" --stop-hint "kill -TERM $$ (its wrapper passes the TERM on)" </dev/null >/dev/null 2>&1 & }
 [ -z "$_term" ] || kill -TERM "$_cp" 2>/dev/null
 wait "$_cp"; _exit_code=$?
 while kill -0 "$_cp" 2>/dev/null; do wait "$_cp"; _exit_code=$?; done

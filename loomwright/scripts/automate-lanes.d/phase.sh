@@ -107,7 +107,7 @@ _lanes_phase_spawn() {
   off="$(wc -c < "$PH_LOG" | tr -d ' ')"
   printf '%s\n' "$off" > "$PH_DIR/offset" || return 1
   # >>> phase spawn (the only process start of this module)
-  nohup bash "$SELF" _lane-run "$PH_CO" "$PH_LOG" "$PH_DIED" "$in" -- \
+  LOOMWRIGHT_LANE_RUN_KIND=phase nohup bash "$SELF" _lane-run "$PH_CO" "$PH_LOG" "$PH_DIED" "$in" -- \
     env "${envu[@]}" CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 \
     LOOMWRIGHT_PHASE_DIR="$PH_DIR" LOOMWRIGHT_RUN_LOCK_SESSION_ID="$csid" claude "${flags[@]}" >> "$PH_LOG" 2>&1 &
   pid=$!
@@ -117,9 +117,10 @@ _lanes_phase_spawn() {
   # the launch lock is released only once a second caller's liveness check would see this process
   i=0
   while [ "$i" -lt 25 ] && kill -0 "$pid" 2>/dev/null && ! _lanes_phase_alive; do sleep 0.1; i=$((i + 1)); done
-  # process registry (af/39e): fail-safe, fully redirected, never invokes claude (the 6h phase cap is proc-registry.sh's);
-  # its --expect waits past nohup's exec itself, and the _lane-run wrapper is a WRAPPER KIND (proc-registry.sh header)
-  bash "$HERE/proc-registry.sh" register --pid "$pid" --kind phase --purpose "phase session $PH_PHASE of run $PH_RUN ($verb)" --runfile "$PH_AUTO/$PH_RUN.md" --run-id "$PH_RUN" --repo "$PH_CO" --expect "_lane-run $PH_CO $PH_LOG " --stop-hint "kill -TERM $pid (the _lane-run wrapper TERMs the phase's headless session)" </dev/null >/dev/null 2>&1 || true
+  # process registry (af/39e): fail-safe, fully redirected, never invokes claude (the phase cap is proc-registry.sh's);
+  # its --expect waits past nohup's exec itself, and the _lane-run wrapper is a WRAPPER KIND (proc-registry.sh header):
+  # this entry is the wrapper's, the wrapper registers the session itself (LOOMWRIGHT_LANE_RUN_KIND above)
+  bash "$HERE/proc-registry.sh" register --pid "$pid" --kind phase --purpose "_lane-run wrapper of phase session $PH_PHASE of run $PH_RUN ($verb)" --runfile "$PH_AUTO/$PH_RUN.md" --run-id "$PH_RUN" --repo "$PH_CO" --expect "_lane-run $PH_CO $PH_LOG " --stop-hint "kill -TERM $pid (the _lane-run wrapper TERMs the phase's headless session)" </dev/null >/dev/null 2>&1 || true
   s="$(_lanes_await_init "$PH_LOG" "$off" "$pid")"
   [ -n "$s" ] && printf '%s\n' "$s" > "$PH_DIR/session"
   [ -n "$s" ] || s="$(_lanes_phase_sid)"

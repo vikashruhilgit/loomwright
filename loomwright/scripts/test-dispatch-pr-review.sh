@@ -53,15 +53,22 @@
 #  36. regime probe: defaultMode 'acceptEdits' also classifies as permissive
 #      (PR #248 review finding #1 — acceptEdits auto-approves file edits without
 #      prompting and was missing from the permissive case, a fail-open gap).
-#  45. (af/39e) process registry: a real launch registers ONE `drain` entry for the
-#      detached wrapper's own pid (repo, runner session id, stop hint, 4h default cap);
+#  45. (af/39e) process registry: a real launch registers ONE wrapper `drain` entry for
+#      the detached wrapper's own pid (repo, runner session id, stop hint, default cap);
 #      an unwritable registry still launches with exit/stdout unchanged; a mutant with
-#      the wrapper's registration line deleted registers nothing. The suite exports its
-#      own LOOMWRIGHT_PROC_REGISTRY_DIR, so a standalone run never touches the real home.
+#      the wrapper's registration line deleted registers no wrapper entry. The suite exports
+#      its own LOOMWRIGHT_PROC_REGISTRY_DIR, so a standalone run never touches the real home.
 #  46. (af/39e review) `proc-registry.sh reap --apply` of an overdue drain entry: the
 #      wrapper passes the TERM on to its background runner and tears down only after
 #      it exits (the stub sees its worktree + lock still present at exit; .died then
-#      recorded, entry removed); a mutant without the wrapper's TERM pass-on orphans it.
+#      recorded, entries removed); a mutant without the wrapper's TERM pass-on tears
+#      down under the live runner.
+#  47. (af/39e review 2) the wrapper registers its runner session as a SECOND drain
+#      entry (pid = the runner, owner_pid = the wrapper, hashed after the exec: running);
+#      a mutant with that one line deleted registers no session entry.
+#  48. (af/39e review 2) a TERM that lands before the runner starts (during the wrapper's
+#      own registration): the runner never runs, the exit is 143, teardown completes and
+#      .died records it; a mutant without the pre-launch `_term` check starts the runner.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1378,9 +1385,11 @@ CLEOF
   DR_TOP="$( cd "$FX_REPO" && git rev-parse --show-toplevel 2>/dev/null )"
 }
 drain_entries() { { cat "$1"/*.json 2>/dev/null || true; } | jq -c -s '[.[] | select(.kind == "drain")]' 2>/dev/null || echo '[]'; }
+# the wrapper's own entries (no owner_pid); its runner session's entry carries owner_pid = the wrapper (case 47)
+wrapper_entries() { drain_entries "$1" | jq -c '[.[] | select(.owner_pid == null)]' 2>/dev/null || echo '[]'; }
 REG45="$(mktemp -d)/procs"
 drain_reg_run "$DISPATCH" "$REG45"
-E45="$(drain_entries "$REG45")"
+E45="$(wrapper_entries "$REG45")"
 BAD45="$(jq -r --arg p "${DR_PPID:-0}" --arg top "$DR_TOP" --arg sid "$DR_SID" --arg pr "$PR" '
   if length != 1 then "\(length) drain entries (want 1)" else .[0] | [
     (if (.pid | tostring) != $p then "pid \(.pid) is not the wrapper pid \($p)" else empty end),
@@ -1411,18 +1420,18 @@ rm -rf "$(dirname "$FX_REPO")"
 # line occurs once in WRAPPER, the copy non-empty, differing, bash -n) ⇒ the registration assertion goes red
 MUTD45="$(mktemp -d)"
 for e in "$HERE"/*; do [ "$(basename "$e")" = dispatch-pr-review.sh ] || ln -s "$e" "$MUTD45/$(basename "$e")"; done
-C45="$(grep -c 'register --pid' "$DISPATCH")"
-grep -v 'register --pid' "$DISPATCH" > "$MUTD45/dispatch-pr-review.sh"
+C45="$(grep -c 'register --pid "$$"' "$DISPATCH")"
+grep -v 'register --pid "$$"' "$DISPATCH" > "$MUTD45/dispatch-pr-review.sh"
 if [ "$C45" != 1 ] || [ ! -s "$MUTD45/dispatch-pr-review.sh" ] || cmp -s "$DISPATCH" "$MUTD45/dispatch-pr-review.sh" \
    || ! bash -n "$MUTD45/dispatch-pr-review.sh" 2>/dev/null; then
   no "drain-registration mutant not built (registration lines=$C45)"
 else
   REGM45="$(dirname "$REG45")/procs-mut"
   drain_reg_run "$MUTD45/dispatch-pr-review.sh" "$REGM45"
-  if [ -n "$DR_PPID" ] && [ "$(drain_entries "$REGM45" | jq 'length' 2>/dev/null)" = 0 ]; then
-    ok "MUTATION: the registration line deleted from WRAPPER ⇒ the launch ran but no drain entry (the registration assertion goes red)"
+  if [ -n "$DR_PPID" ] && [ "$(wrapper_entries "$REGM45" | jq 'length' 2>/dev/null)" = 0 ]; then
+    ok "MUTATION: the registration line deleted from WRAPPER ⇒ the launch ran but no wrapper drain entry (the registration assertion goes red)"
   else
-    no "MUTATION did not discriminate (ran_ppid='$DR_PPID' entries=$(drain_entries "$REGM45"))"
+    no "MUTATION did not discriminate (ran_ppid='$DR_PPID' entries=$(wrapper_entries "$REGM45"))"
   fi
   rm -rf "$(dirname "$FX_REPO")"
 fi
@@ -1435,7 +1444,7 @@ echo "== 46. (af/39e review) reaping the drain entry stops the runner BEFORE tea
 # worktree and the lock still existed — `present` proves teardown waited for it.
 # drain_reap_run <dispatcher> — sets DQ_PID (stub runner pid) DQ_OUT (reap output) DQ_EXIT (stub's exit line)
 # DQ_WT DQ_LOCK DQ_MARKER DQ_REG
-drain_overdue() { [ "$(LOOMWRIGHT_PROC_REGISTRY_DIR="$1" bash "$HERE/proc-registry.sh" list | awk -F'\t' '$2 == "drain" { print $5 }')" = overdue ]; }
+drain_overdue() { [ "$(LOOMWRIGHT_PROC_REGISTRY_DIR="$1" bash "$HERE/proc-registry.sh" list | awk -F'\t' '$2 == "drain" && $5 != "overdue" { n++ } $2 == "drain" { m++ } END { print (m > 0 && n == 0) ? "overdue" : "no" }')" = overdue ]; }
 # dq_kill — stop a leftover stub runner (and its sleep) after an assertion; a no-op when it is gone
 dq_kill() { [ -n "$DQ_PID" ] || return 0; pkill -KILL -P "$DQ_PID" 2>/dev/null; kill -KILL "$DQ_PID" 2>/dev/null; return 0; }
 drain_reap_run() {
@@ -1498,7 +1507,7 @@ else
   drain_reap_run "$MUTD46/dispatch-pr-review.sh"
   DQ_ALIVE=0; [ -n "$DQ_PID" ] && kill -0 "$DQ_PID" 2>/dev/null && DQ_ALIVE=1
   if [ -n "$DQ_PID" ] && { [ "$DQ_ALIVE" -eq 1 ] || [ "$DQ_EXIT" != "exit wt=present lock=present" ]; }; then
-    ok "MUTATION: the TERM pass-on deleted ⇒ the reaped wrapper's runner is orphaned (the leg goes red)"
+    ok "MUTATION: the TERM pass-on deleted ⇒ the reaped wrapper tears down under its live runner (the leg goes red)"
   else
     no "MUTATION did not discriminate (pid='$DQ_PID' alive=$DQ_ALIVE exit_line='$DQ_EXIT')"
   fi
@@ -1506,6 +1515,144 @@ else
   rm -rf "$(dirname "$FX_REPO")"
 fi
 rm -rf "$MUTD46"
+
+echo "== 47. (af/39e review 2) the wrapper registers its runner session as its own drain entry; mutation control =="
+# drain_session_run <dispatcher> — a real launch whose stub runner stays up (records its pid, sleeps until TERMed),
+# then the registry read once the session entry is settled. Sets DS_PID DS_WRAP DS_E DS_CLS DS_REG.
+drain_session_run() {
+  local disp="$1" wt lock
+  fresh_git_repo >/dev/null
+  wt="$(expected_wt_path "$FX_REPO")"; lock="$FX_REPO/.supervisor/review-dispatch/$(pr_hash).lock"
+  DS_REG="$(dirname "$FX_REPO")/procs"; DS_PID=""; DS_WRAP=""; DS_E="[]"; DS_CLS=""
+  cat > "$FX_BIN/stub-claude" <<CLEOF
+#!/usr/bin/env bash
+if [ "\$1" = "--help" ]; then
+  printf -- '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
+  printf -- '--allowedTools, --allowed-tools <tools...>\n'
+  printf -- '--disallowedTools, --disallowed-tools <tools...>\n'
+  exit 0
+fi
+printf '%s %s\n' "\$\$" "\$PPID" > "$FX_REPO.stub.pid"
+trap 'kill "\$c" 2>/dev/null; exit 0' TERM
+sleep 30 & c=\$!   # fixed-sleep-ok: the runner's long-lived body, ended by its TERM handler
+wait "\$c"
+CLEOF
+  chmod +x "$FX_BIN/stub-claude"
+  ( cd "$FX_REPO" && PATH="$FX_BIN:$PATH" HOME="$FX_REPO/.fakehome" \
+      LOOMWRIGHT_CLAUDE_BIN="$FX_BIN/stub-claude" LOOMWRIGHT_PROC_REGISTRY_DIR="$DS_REG" bash "$disp" "$PR" >/dev/null 2>&1 )
+  wait_for_cmd 15 test -s "$FX_REPO.stub.pid" || return 0
+  read -r DS_PID DS_WRAP < "$FX_REPO.stub.pid"
+  # the session registration is backgrounded with a bounded (~2.5 s) --expect wait: settle on its entry, or time out
+  WAIT_LIB_WHAT="the session entry" wait_for_cmd 8 eval '[ "$(drain_entries "$DS_REG" | jq --arg p "$DS_PID" "[.[] | select((.pid | tostring) == \$p)] | length" 2>/dev/null)" = 1 ]' || true
+  DS_E="$(drain_entries "$DS_REG")"
+  DS_CLS="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$DS_REG" bash "$HERE/proc-registry.sh" list | awk -F'\t' -v p="$DS_PID" '$3 == p { print $5 }')"
+  kill -TERM "$DS_WRAP" 2>/dev/null
+  wait_for_pid_gone "$DS_PID" 10 || true
+  wait_for_teardown "$FX_REPO" "$wt" "$lock" || true
+}
+drain_session_run "$DISPATCH"
+BAD47="$(jq -r --arg p "${DS_PID:-0}" --arg w "${DS_WRAP:-0}" --arg pr "$PR" '
+  [.[] | select((.pid | tostring) == $p)] | if length != 1 then "\(length) session entries (want 1)" else .[0] | [
+    (if (.owner_pid | tostring) != $w then "owner_pid \(.owner_pid) is not the wrapper \($w)" else empty end),
+    (if ((.purpose // "") | test("session")) and ((.purpose // "") | contains($pr)) | not then "purpose \(.purpose)" else empty end),
+    (if .max_lifetime_s != 14400 then "max_lifetime_s \(.max_lifetime_s) (want the drain default)" else empty end)
+  ] | join("; ") end' <<<"$DS_E" 2>/dev/null)" || BAD47="unreadable entries: $DS_E"
+if [ -n "$DS_PID" ] && [ -z "$BAD47" ] && [ "$DS_CLS" = running ]; then
+  ok "the wrapper registered its runner session: pid = the runner ($DS_PID), owner_pid = the wrapper ($DS_WRAP), hashed after the exec (running)"
+else
+  no "runner session registration wrong (pid='$DS_PID' wrapper='$DS_WRAP' class='$DS_CLS': $BAD47)"
+fi
+rm -rf "$(dirname "$FX_REPO")"
+# mutation control: the session's ONE registration line deleted (gated: one such line, the copy non-empty, differing,
+# bash -n) ⇒ the runner runs but no session entry
+MUTD47="$(mktemp -d)"
+for e in "$HERE"/*; do [ "$(basename "$e")" = dispatch-pr-review.sh ] || ln -s "$e" "$MUTD47/$(basename "$e")"; done
+C47="$(grep -c 'register --pid "$_cp"' "$DISPATCH")"
+grep -v 'register --pid "$_cp"' "$DISPATCH" > "$MUTD47/dispatch-pr-review.sh"
+if [ "$C47" != 1 ] || [ ! -s "$MUTD47/dispatch-pr-review.sh" ] || cmp -s "$DISPATCH" "$MUTD47/dispatch-pr-review.sh" \
+   || ! bash -n "$MUTD47/dispatch-pr-review.sh" 2>/dev/null; then
+  no "session-registration mutant not built (lines=$C47)"
+else
+  drain_session_run "$MUTD47/dispatch-pr-review.sh"
+  if [ -n "$DS_PID" ] && [ "$(jq --arg p "$DS_PID" '[.[] | select((.pid | tostring) == $p)] | length' <<<"$DS_E" 2>/dev/null)" = 0 ]; then
+    ok "MUTATION: the session registration line deleted ⇒ the runner ran but no session entry (the leg goes red)"
+  else
+    no "MUTATION did not discriminate (pid='$DS_PID' entries=$DS_E)"
+  fi
+  rm -rf "$(dirname "$FX_REPO")"
+fi
+rm -rf "$MUTD47"
+
+echo "== 48. (af/39e review 2) a TERM before the runner starts: the runner never runs, exit 143, teardown + .died; mutation control =="
+# A scripts/ dir whose proc-registry.sh is a STUB that logs each call (with its parent — the wrapper) and sleeps
+# through the wrapper's own registration; the TERM lands then, so bash runs the wrapper's trap only once that
+# foreground call returns — before the launch line. The stub runner logs `ran` if it is ever started.
+# drain_preterm_run <scripts dir> — sets DP_WRAP DP_CALLS DP_RAN DP_DIED_RC DP_WT DP_LOCK DP_MARKER
+drain_preterm_run() {
+  local dir="$1" calls
+  fresh_git_repo >/dev/null
+  DP_WT="$(expected_wt_path "$FX_REPO")"; DP_LOCK="$FX_REPO/.supervisor/review-dispatch/$(pr_hash).lock"
+  DP_MARKER="$FX_REPO/.supervisor/review-dispatch/$(pr_hash)"; DP_WRAP=""; DP_CALLS=0; DP_RAN=0; DP_DIED_RC=""
+  calls="$FX_REPO.reg.calls"
+  cat > "$dir/proc-registry.sh" <<REGEOF
+#!/usr/bin/env bash
+printf '%s %s\n' "\$PPID" "\$*" >> "$calls"
+case " \$* " in *" --owner-pid "*) ;; *) sleep 2 ;; esac   # fixed-sleep-ok: holds the wrapper inside its own registration
+exit 0
+REGEOF
+  chmod +x "$dir/proc-registry.sh"
+  cat > "$FX_BIN/stub-claude" <<CLEOF
+#!/usr/bin/env bash
+if [ "\$1" = "--help" ]; then
+  printf -- '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
+  printf -- '--allowedTools, --allowed-tools <tools...>\n'
+  printf -- '--disallowedTools, --disallowed-tools <tools...>\n'
+  exit 0
+fi
+echo ran >> "$FX_CLAUDE_LOG"
+exit 0
+CLEOF
+  chmod +x "$FX_BIN/stub-claude"
+  ( cd "$FX_REPO" && PATH="$FX_BIN:$PATH" HOME="$FX_REPO/.fakehome" \
+      LOOMWRIGHT_CLAUDE_BIN="$FX_BIN/stub-claude" bash "$dir/dispatch-pr-review.sh" "$PR" >/dev/null 2>&1 )
+  wait_for_cmd 15 test -s "$calls" || return 0
+  DP_WRAP="$(head -1 "$calls" | cut -d' ' -f1)"
+  kill -TERM "$DP_WRAP" 2>/dev/null
+  wait_for_pid_gone "$DP_WRAP" 15 || true
+  wait_for_teardown "$FX_REPO" "$DP_WT" "$DP_LOCK" || true
+  sleep 0.5   # fixed-sleep-ok: lets a (mutant) runner and its backgrounded session registration log, if they ever started
+  DP_CALLS="$(awk 'END { print NR }' "$calls")"
+  grep -qx ran "$FX_CLAUDE_LOG" 2>/dev/null && DP_RAN=1
+  DP_DIED_RC="$(awk -F'\t' '$1 == "exit_code" { print $2 }' "$DP_MARKER.died" 2>/dev/null)"
+}
+MUTD48="$(mktemp -d)"
+for e in "$HERE"/*; do case "$(basename "$e")" in proc-registry.sh) ;; *) ln -s "$e" "$MUTD48/$(basename "$e")" ;; esac; done
+drain_preterm_run "$MUTD48"
+if [ -n "$DP_WRAP" ] && [ "$DP_RAN" = 0 ] && [ "$DP_CALLS" = 1 ] && [ "$DP_DIED_RC" = 143 ] \
+   && [ ! -d "$DP_LOCK" ] && [ ! -d "$DP_WT" ]; then
+  ok "TERM during the wrapper's own registration: the runner never ran, exit 143 in .died, worktree + lock torn down"
+else
+  no "pre-launch TERM wrong (wrapper='$DP_WRAP' ran=$DP_RAN registry_calls=$DP_CALLS died_exit='$DP_DIED_RC' lock_left=$([ -d "$DP_LOCK" ] && echo y || echo n) wt_left=$([ -d "$DP_WT" ] && echo y || echo n))"
+fi
+rm -rf "$(dirname "$FX_REPO")"
+# mutation control: the pre-launch `_term` check deleted (gated: one such line, the copy non-empty, differing,
+# bash -n) ⇒ the runner is started (it runs, or at least its session registration is called) despite the TERM
+rm -f "$MUTD48/dispatch-pr-review.sh"
+C48="$(grep -c '^\[ -z "\$_term" \] || { _exit_code=143; exit 143; }$' "$DISPATCH")"
+grep -v '^\[ -z "\$_term" \] || { _exit_code=143; exit 143; }$' "$DISPATCH" > "$MUTD48/dispatch-pr-review.sh"
+if [ "$C48" != 1 ] || [ ! -s "$MUTD48/dispatch-pr-review.sh" ] || cmp -s "$DISPATCH" "$MUTD48/dispatch-pr-review.sh" \
+   || ! bash -n "$MUTD48/dispatch-pr-review.sh" 2>/dev/null; then
+  no "pre-launch TERM mutant not built (lines=$C48)"
+else
+  drain_preterm_run "$MUTD48"
+  if [ -n "$DP_WRAP" ] && { [ "$DP_RAN" = 1 ] || [ "$DP_CALLS" != 1 ]; }; then
+    ok "MUTATION: the pre-launch _term check deleted ⇒ the runner is started after the TERM (the leg goes red)"
+  else
+    no "MUTATION did not discriminate (wrapper='$DP_WRAP' ran=$DP_RAN registry_calls=$DP_CALLS)"
+  fi
+  rm -rf "$(dirname "$FX_REPO")"
+fi
+rm -rf "$MUTD48"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

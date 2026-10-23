@@ -187,12 +187,17 @@ else bad "AN21d mutant not built"; fi
 # AN22 (af/39e AC15/AC16): phase-launch registers ONE `phase` entry for the phase wrapper, after the alive loop; the
 # registration never invokes the stub claude; an unwritable registry changes neither the exit nor the output; a
 # bundle copy minus phase.sh's ONE registration line registers nothing (beside an unmutated copy that does)
-phase_entries() { { cat "$1"/*.json 2>/dev/null || true; } | jq -c -s '[.[] | select(.kind == "phase")]' 2>/dev/null; }
+# phase_entries: the wrapper's entries (no owner_pid); phase_sessions: the session entry the wrapper writes (AN22e/f)
+phase_entries() { { cat "$1"/*.json 2>/dev/null || true; } | jq -c -s '[.[] | select(.kind == "phase" and .owner_pid == null)]' 2>/dev/null; }
+phase_sessions() { { cat "$1"/*.json 2>/dev/null || true; } | jq -c -s '[.[] | select(.kind == "phase" and .owner_pid != null)]' 2>/dev/null; }
 PHDR="$L91/.supervisor/automate/$PARENT9-L1.phase/drain"
-phase_reg_launch() { # <script> <registry dir> — a sleeping drain phase through <script>, then TERMed; sets PRL_OUT PRL_RC PRL_PID PRL_CLS
+phase_reg_launch() { # <script> <registry dir> — a sleeping drain phase through <script>, then TERMed; sets PRL_OUT PRL_RC PRL_PID PRL_CLS PRL_SCLS
   PRL_OUT="$(STUB_MODE=sleep LOOMWRIGHT_PROC_REGISTRY_DIR="$2" bash "$1" phase-launch "$RFL" drain --owner-command "$PHOWN" --coordinator-session sess-coord -- '/loomwright:review-pr x' 2>&1)"; PRL_RC=$?
   PRL_PID="$(cut -f1 "$PHDR/pid" 2>/dev/null)"
-  PRL_CLS="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$2" bash "$HERE/proc-registry.sh" list | awk -F'\t' '$2 == "phase" { print $5 }')"
+  # the session registration is backgrounded with a bounded --expect wait: settle on it (bounded) before reading
+  i=0; while [ "$(phase_sessions "$2" | jq length)" = 0 ] && [ "$i" -lt 40 ]; do sleep 0.1; i=$((i + 1)); done
+  PRL_CLS="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$2" bash "$HERE/proc-registry.sh" list | awk -F'\t' -v p="$PRL_PID" '$3 == p { print $5 }')"
+  PRL_SCLS="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$2" bash "$HERE/proc-registry.sh" list | awk -F'\t' -v p="$(phase_sessions "$2" | jq -r '.[0].pid // empty')" '$3 == p { print $5 }')"
   kill -TERM "$PRL_PID" 2>/dev/null; wait_gone "$L91"
 }
 n3="$(claude_calls)"
@@ -215,6 +220,21 @@ if [ "$pm_count" = 1 ] && [ -s "$T/preg-mut/automate-lanes.sh" ] && ! cmp -s "$S
   check "AN22d mutation control: the unmutated bundle copy registers one phase entry, the copy minus the registration line none" \
     "$(phase_entries "$T/procs-phase-ok" | jq length):$(phase_entries "$T/procs-phase-mut" | jq length)" "1:0"
 else bad "AN22d phase-registration mutant not built (registration lines in the bundle: $pm_count)"; fi
+# AN22e/f (af/39e review 2): the _lane-run wrapper registers the phase's headless session as a SECOND phase entry —
+# owner = the wrapper, repo = the checkout, hashed after env's exec (running); a bundle copy minus that ONE wrapper
+# line registers no session entry
+phase_reg_launch "$S" "$T/procs-psess"
+check "AN22e the wrapper registers its phase session: ONE phase entry, owner_pid = the wrapper, repo = the checkout, running" \
+  "$(phase_sessions "$T/procs-psess" | jq -r '[length, (.[0].owner_pid | tostring), .[0].repo] | map(tostring) | join("|")')|$PRL_SCLS" \
+  "1|$PRL_PID|$(phase_entries "$T/procs-psess" | jq -r '.[0].repo')|running"
+ps_count="$(grep -c 'proc-registry.sh" register --pid "$cp" --kind phase' "$SB" | tr -d ' ')"
+mkdir -p "$T/psreg-mut"; ln -sf "$HERE/proc-registry.sh" "$T/psreg-mut/proc-registry.sh"
+grep -v 'proc-registry.sh" register --pid "$cp" --kind phase' "$SB" > "$T/psreg-mut/automate-lanes.sh"
+if [ "$ps_count" = 1 ] && [ -s "$T/psreg-mut/automate-lanes.sh" ] && ! cmp -s "$SB" "$T/psreg-mut/automate-lanes.sh" && bash -n "$T/psreg-mut/automate-lanes.sh"; then
+  phase_reg_launch "$T/psreg-mut/automate-lanes.sh" "$T/procs-psess-mut"
+  check "AN22f mutation control: the copy minus the wrapper's session registration line writes the wrapper entry but no session entry" \
+    "$(phase_entries "$T/procs-psess-mut" | jq length):$(phase_sessions "$T/procs-psess-mut" | jq length)" "1:0"
+else bad "AN22f session-registration mutant not built (session registration lines in the bundle: $ps_count)"; fi
 
 # AN-z: nothing this part started outlives it (AA-F12z closed part 05, before these launches)
 for p in $(pgrep -f "_lane-run $T" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done

@@ -167,16 +167,24 @@ wait_gone "$L1"
 if [ "$(lane_sum "$L1")" != "$SUM_L1_BEFORE" ]; then ok "I2 mutation (coordinator write after launch) fails the checksum"; else bad "I2 mutation control did not trip"; fi
 rm -f "$L1/.coordinator-write"
 
-# ---- I3–I8 (af/39e AC14/AC16): lane-launch registers ONE `lane` entry for the _lane-run wrapper ---------------
+# ---- I3–I9 (af/39e AC14/AC16): lane-launch registers ONE `lane` entry for the _lane-run wrapper ---------------
 # A sleeping stub keeps the wrapper alive past the registration; each launch is TERMed afterwards (the wrapper
 # then records a .died for the session it lost — removed below, it is this leg's artifact, not L1's history).
 # Every registry here is the leg's own dir under $T; the suite-wide one (above) is never read.
-lane_entries() { { cat "$1"/*.json 2>/dev/null || true; } | jq -c -s '[.[] | select(.kind == "lane")]' 2>/dev/null; }
+# lane_entries: the wrapper's entries (no owner_pid); lane_sessions: the session entries the wrapper writes (I8/I9)
+lane_entries() { { cat "$1"/*.json 2>/dev/null || true; } | jq -c -s '[.[] | select(.kind == "lane" and .owner_pid == null)]' 2>/dev/null; }
+lane_sessions() { { cat "$1"/*.json 2>/dev/null || true; } | jq -c -s '[.[] | select(.kind == "lane" and .owner_pid != null)]' 2>/dev/null; }
+# lane_session_settle <registry dir> — the session registration is backgrounded with a bounded --expect wait
+lane_session_settle() { i=0; while [ "$(lane_sessions "$1" | jq length)" = 0 ] && [ "$i" -lt 40 ]; do sleep 0.1; i=$((i + 1)); done; }
 lane_reg_stop() { kill -TERM "$(tcol L1 5)" 2>/dev/null; wait_gone "$L1"; rm -f "$LR/L1.died"; }
 PRG="$T/procs-lane"
 out="$(STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 LOOMWRIGHT_PROC_REGISTRY_DIR="$PRG" run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
 LPID="$(tcol L1 5)"
-LCLS="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$PRG" bash "$HERE/proc-registry.sh" list | awk -F'\t' '$2 == "lane" { print $5 }')"
+lane_session_settle "$PRG"
+LCLS="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$PRG" bash "$HERE/proc-registry.sh" list | awk -F'\t' -v p="$LPID" '$3 == p { print $5 }')"
+LSPID="$(lane_sessions "$PRG" | jq -r '.[0].pid // empty')"
+LSCLS="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$PRG" bash "$HERE/proc-registry.sh" list | awk -F'\t' -v p="$LSPID" '$3 == p { print $5 }')"
+LSCMD="$(ps -ww -o command= -p "$LSPID" 2>/dev/null)"
 lane_reg_stop
 check "I3 lane-launch registers ONE lane entry: pid = the _lane-run wrapper, lane = the lane dir, run id, the 24h default cap" \
   "$rc|$(lane_entries "$PRG" | jq -r '[length, (.[0].pid | tostring), .[0].lane, .[0].run_id, (.[0].max_lifetime_s | tostring), ((.[0].stop_hint // "") | test("^kill -TERM [0-9]+ ")) | tostring] | join("|")')" \
@@ -204,6 +212,24 @@ else
   bad "I6 lane-registration mutant not built (registration lines in the bundle: $lm_count)"
 fi
 check "I7 I1 still holds: the registry writes nothing into the lane (checksum unchanged)" "$(lane_sum "$L1")" "$SUM_L1_BEFORE"
+# I8/I9 (af/39e review 2): the _lane-run wrapper registers its headless session as a SECOND lane entry — owner = the
+# wrapper, the lane dir, hashed after env's exec (running, the stub claude's own line); a bundle copy minus that ONE
+# wrapper line registers no session entry (the launcher's wrapper entry is untouched by that mutant)
+check "I8 the wrapper registers its session: ONE lane entry, owner_pid = the wrapper, lane = the lane dir, running as the exec'd stub" \
+  "$(lane_sessions "$PRG" | jq -r '[length, (.[0].owner_pid | tostring), .[0].lane] | map(tostring) | join("|")')|$LSCLS|$(case "$LSCMD" in *"$BIN/"*) case "$LSCMD" in env\ *|*/env\ *|*_lane-run*) echo pre-exec ;; *) echo exec ;; esac ;; *) echo none ;; esac)" \
+  "1|$LPID|$L1|running|exec"
+sm_count="$(grep -c 'proc-registry.sh" register --pid "$cp" --kind lane' "$SB" | tr -d ' ')"
+mkdir -p "$T/lsreg-mut"; ln -sf "$HERE/proc-registry.sh" "$T/lsreg-mut/proc-registry.sh"
+grep -v 'proc-registry.sh" register --pid "$cp" --kind lane' "$SB" > "$T/lsreg-mut/automate-lanes.sh"
+if [ "$sm_count" = 1 ] && [ -s "$T/lsreg-mut/automate-lanes.sh" ] && ! cmp -s "$SB" "$T/lsreg-mut/automate-lanes.sh" && bash -n "$T/lsreg-mut/automate-lanes.sh"; then
+  STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 LOOMWRIGHT_PROC_REGISTRY_DIR="$T/procs-lsess-mut" bash "$T/lsreg-mut/automate-lanes.sh" lane-launch "$L1" --owner-command "$OWN" >/dev/null 2>&1
+  lane_session_settle "$T/procs-lsess-mut"
+  lane_reg_stop
+  check "I9 mutation control: the copy minus the wrapper's session registration line writes the wrapper entry but no session entry" \
+    "$(lane_entries "$T/procs-lsess-mut" | jq length):$(lane_sessions "$T/procs-lsess-mut" | jq length)" "1:0"
+else
+  bad "I9 session-registration mutant not built (session registration lines in the bundle: $sm_count)"
+fi
 
 # ---- J: relay hook (AC6) ----------------------------------------------------------------------------
 Q2='[{"question":"Which color?","header":"Color","multiSelect":false,"options":[{"label":"Red","description":"r"},{"label":"Blue","description":"b"}]},{"question":"Which extras?","header":"Extras","multiSelect":true,"options":[{"label":"A","description":"a"},{"label":"B","description":"b"},{"label":"C","description":"c"}]}]'
