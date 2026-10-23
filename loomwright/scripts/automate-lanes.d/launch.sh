@@ -125,6 +125,15 @@ _lanes_await_init() {
   done
   printf '%s' "$s"
 }
+# _lanes_register <register args...> — the ONE proc-registry.sh call line of this file, shared by the lane wrapper
+# (_lanes_spawn) and the session registration of the _lane-run wrapper (lane and phase): the user-scope registry
+# only, never a write into the lane directory; fail-safe and fully redirected, so it can never change a launch. No
+# cap and no grace here: both are the tables of proc-registry.sh, keyed by --kind (a wrapper entry, registered
+# without --owner-pid, takes its WRAPPER grace).
+_lanes_register() {
+  bash "$HERE/proc-registry.sh" register "$@" </dev/null >/dev/null 2>&1
+  return 0
+}
 _lanes_spawn() {
   local prompt="$1" sid="$2" label="$3" in pid st off i s=""
   _lanes_claude_flags "$LN_DIR"
@@ -143,7 +152,7 @@ _lanes_spawn() {
   touch "$LN_LOG"; rm -f "$LN_DIED"
   off="$(wc -c < "$LN_LOG" | tr -d ' ')"
   # >>> spawn (the only process start; it writes nothing into the lane directory)
-  nohup bash "$SELF" _lane-run "$LN_DIR" "$LN_LOG" "$LN_DIED" "$in" -- \
+  LOOMWRIGHT_LANE_RUN_KIND=lane nohup bash "$SELF" _lane-run "$LN_DIR" "$LN_LOG" "$LN_DIED" "$in" -- \
     env "${envu[@]}" CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 \
     LOOMWRIGHT_LANE_RESUME_PATH="${LN_RESUME_PATH:-}" claude "${flags[@]}" >> "$LN_LOG" 2>&1 &
   pid=$!; LN_SPAWN_PID="$pid"; LN_SPAWN_SID=""
@@ -155,20 +164,46 @@ _lanes_spawn() {
   i=0
   while [ "$i" -lt 25 ] && kill -0 "$pid" 2>/dev/null && ! lanes_proc_alive "$pid" "$st" "$LN_DIR"; do sleep 0.1; i=$((i + 1)); done
   _lanes_launch_unlock
+  # process registry (af/39e), through _lanes_register; its --expect waits past nohup's exec itself. The _lane-run
+  # wrapper is a WRAPPER KIND (proc-registry.sh header): this entry is the wrapper's, the wrapper registers its
+  # session itself (LOOMWRIGHT_LANE_RUN_KIND above)
+  _lanes_register --pid "$pid" --kind lane --purpose "_lane-run wrapper of lane $LN_LANE of $LN_PARENT $label" --lane "$LN_DIR" --run-id "$LN_RUN" --expect "_lane-run $LN_DIR " --stop-hint "kill -TERM $pid (the _lane-run wrapper TERMs its headless session)"
   s="$(_lanes_await_init "$LN_LOG" "$off" "$pid")"
   [ -n "$s" ] && _lt_set "$LN_TABLE" "$LN_LANE" 7 "$s"
   LN_SPAWN_SID="$s"
   echo "lane-launch: launched $LN_LANE (pid $pid, session ${s:-unknown}) $label"
 }
 
+# _lanes_run_prog <cmd...> — the basename of the program <cmd> finally execs, past a leading
+# `env [-u NAME]... [NAME=VALUE]...` (the session registration's --expect substring).
+_lanes_run_prog() {
+  [ "${1:-}" = env ] || { printf '%s' "${1##*/}"; return 0; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in -u) shift; [ "$#" -gt 0 ] && shift ;; -*|*=*) shift ;; *) printf '%s' "${1##*/}"; return 0 ;; esac
+  done
+}
 # _lane-run <lane_dir> <log> <died> <stdin> -- <cmd...> — the nohup wrapper (its argv carries the lane dir).
+# LOOMWRIGHT_LANE_RUN_KIND (lane | phase, set by the launcher, never passed on to the session): the wrapper
+# registers its background session in proc-registry.sh under that kind, owner = this wrapper (WRAPPER KINDS).
 lanes_run_wrapper() {
-  local dir="$1" log="$2" died="$3" in="$4" off cp n rc=0; shift 4; [ "${1:-}" = "--" ] && shift
+  local dir="$1" log="$2" died="$3" in="$4" off cp n rc=0 kind="${LOOMWRIGHT_LANE_RUN_KIND:-}"; shift 4; [ "${1:-}" = "--" ] && shift
+  unset LOOMWRIGHT_LANE_RUN_KIND
   off="$(wc -c < "$log" 2>/dev/null | tr -d ' ')"; off="${off:-0}"
   cd "$dir" || exit 1
   "$@" < "$in" &
   cp=$!
   trap 'kill -TERM "$cp" 2>/dev/null' TERM INT HUP
+  # the session's own registry entry (_lanes_register), backgrounded so its bounded --expect wait never delays the
+  # wait below; a lane's session is tied to the lane dir, a phase's to its checkout
+  local -a ra=()
+  case "$kind" in
+    lane)  ra=(--lane "$dir" --purpose "headless session of the _lane-run wrapper $$ (lane $dir)") ;;
+    phase) ra=(--repo "$dir" --purpose "headless phase session of the _lane-run wrapper $$ ($log)") ;;
+  esac
+  if [ "${#ra[@]}" -gt 0 ]; then
+    _lanes_register --pid "$cp" --kind "$kind" --owner-pid "$$" "${ra[@]}" --expect "$(_lanes_run_prog "$@")" --stop-hint "kill -TERM $$ (its _lane-run wrapper passes the TERM on)" &
+  fi
   wait "$cp"; rc=$?
   while kill -0 "$cp" 2>/dev/null; do wait "$cp"; rc=$?; done
   # a COUNT, never a pipeline's exit status: under this script's `pipefail`, `tail | grep -q` exits 141 whenever

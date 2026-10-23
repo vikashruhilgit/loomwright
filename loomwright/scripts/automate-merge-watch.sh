@@ -74,7 +74,10 @@
 #   - `ps` unavailable ⇒ cannot verify ⇒ `already running … (cannot verify)`.
 # A dead pid ⇒ reclaimed. The marker is removed on every exit of the owning
 # watcher (EXIT trap; TERM/INT/HUP exit through it), and a launch only ever
-# removes the marker it inspected.
+# removes the marker it inspected. Only the launch that wins the marker
+# registers itself (`proc-registry.sh register --kind merge-watch`, its own pid,
+# --max-lifetime = the cap below), fail-safe: a registry failure never changes
+# the watcher.
 # Count watchers by the marker pid (or `ps -o ppid` lineage), NEVER by `pgrep -f`:
 # every `$(…)` command substitution here forks a subshell carrying the same argv,
 # so `pgrep -f automate-merge-watch` mid-poll shows two processes for ONE
@@ -193,6 +196,10 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 0' TERM INT HUP
+# Process registry (proc-registry.sh — its header is the contract): only the launch that WON the marker
+# registers, as its own pid, with THIS watcher's resolved lifetime cap. Fail-safe and fully redirected:
+# `register` always exits 0 and nothing it prints reaches this watcher's log.
+bash "$HERE/proc-registry.sh" register --pid "$$" --kind merge-watch --purpose "merge watcher for $pr_url (item $item)" --runfile "$rf_abs" --run-id "$run_id" --max-lifetime "$max" --stop-hint "kill -TERM $$ (its EXIT trap removes $MARKER)" </dev/null >/dev/null 2>&1 || true
 # nap <s> — an interruptible sleep: `wait` returns at once on a trapped TERM, so
 # a replacing launch never waits out a 60s/900s foreground `sleep`.
 nap() { sleep "$1" & SLEEP_PID=$!; wait "$SLEEP_PID" 2>/dev/null; SLEEP_PID=""; return 0; }
