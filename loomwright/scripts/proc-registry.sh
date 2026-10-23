@@ -37,9 +37,14 @@
 #   on, reaches the session only through the session's OWN entry. `reap --apply` processes entries
 #   that carry an owner_pid after the rest, so a session whose wrapper the same pass stopped already
 #   reads orphaned and takes the ordinary TERM / KILL path.
+#   A wrapper's own teardown (the drain's salvage, worktree removal, lock release and death marker;
+#   a lane / phase wrapper's death marker) runs only AFTER its session exits, so the wrapper entry
+#   defaults to the longer WRAPPER grace (see GRACE): a KILL inside that teardown would leave no
+#   death marker (and a drain's lock and worktree behind), so a dead session would read as completed.
 #   Honest limits: a session that ignores TERM keeps its wrapper waiting, so the wrapper is KILLed
-#   after grace_s and its teardown never runs; a session whose own registration failed is reachable
-#   only through its wrapper's TERM.
+#   after grace_s and its teardown never runs; a teardown slower than the WRAPPER grace (the
+#   drain's salvage has no time bound of its own) is KILLed the same way; a session whose own
+#   registration failed is reachable only through its wrapper's TERM.
 #   list
 #       One row per entry (TSV after a `# id kind pid age class evidence` header): id, kind, pid,
 #       age (the live process's elapsed time, `-` when it is gone), class, and the evidence for that
@@ -77,7 +82,7 @@
 #   stop_hint, session_id (--session-id, else the harness session-id env var)
 #                   null when absent
 #   max_lifetime_s  the lifetime cap in seconds (see CAPS)
-#   grace_s         seconds reap waits between TERM and KILL (default 10)
+#   grace_s         seconds reap waits between TERM and KILL (--grace, else the GRACE table)
 #   registered_at   UTC ISO-8601
 #   The id is `<pid>-<hash of pid + pid_start>`: registering the same live process twice rewrites ONE
 #   entry; a different process that later reuses the pid (a different start time) gets a NEW entry
@@ -104,6 +109,18 @@
 #                resolved value); without it register takes the fail-safe path.
 #   Precedence: --max-lifetime, then the env override (a positive integer; anything else is
 #   ignored), then the table.
+#
+# GRACE (grace_s when --grace is not passed; like CAPS, this table lives here and nowhere else —
+# launchers never pass --grace):
+#   WRAPPER      120   a phase / lane / drain entry registered WITHOUT --owner-pid (the wrapper of a
+#                      WRAPPER KIND): covers its session's TERM exit plus its own teardown (bounded
+#                      parts: the webhook's 5 s curl cap, the desktop notifier's 3 s cap; the salvage
+#                      and `git worktree remove` are not time-bounded — see WRAPPER KINDS' limits)
+#   every other   10   sessions (--owner-pid set), postmortem, merge-watch (its EXIT trap only
+#                      removes its marker)
+#   reap waits only until the process stops matching, so the grace is a ceiling, not a delay: a
+#   wrapper that tears down in 2 s costs reap 2 s. reap is sequential, so each wrapper whose session
+#   ignores TERM (or whose teardown hangs) costs up to the WRAPPER grace before its KILL.
 #
 # REGISTRY LOCATION (resolved per call, in this order):
 #   1. $LOOMWRIGHT_PROC_REGISTRY_DIR when non-empty (the test seam);
@@ -217,6 +234,15 @@ _pr_default_cap() {
   esac
 }
 
+# _pr_default_grace <kind> <owner_pid> — the GRACE table (the header mirrors it; test-proc-registry.sh
+# pins both): a wrapper-kind entry without an owner is a wrapper, everything else the short default.
+_pr_default_grace() {
+  case "$1:${2:-}" in
+    phase:|lane:|drain:) printf '120' ;;
+    *) printf '10' ;;
+  esac
+}
+
 # _pr_matches <pid> <pid_start> <cmd_hash> — 0 only when the live process is STILL the registered
 # one; otherwise 1 with PR_WHY naming the first difference.
 _pr_matches() {
@@ -278,7 +304,7 @@ cmd_register() {
   if [ -n "$grace" ]; then
     _pr_is_uint "$grace" || { _pr_reg_fail "--grace must be a whole number of seconds"; return 0; }
   else
-    grace=10
+    grace="$(_pr_default_grace "$kind" "$owner_pid")"
   fi
   if [ -n "$max" ]; then
     _pr_is_pos_int "$max" || { _pr_reg_fail "--max-lifetime must be a positive whole number of seconds"; return 0; }

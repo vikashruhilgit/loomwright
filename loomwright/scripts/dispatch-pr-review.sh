@@ -988,16 +988,22 @@ trap trap_cleanup EXIT
 _cp=""; _term=""
 _fwd() { _term=1; [ -z "$_cp" ] || kill -TERM "$_cp" 2>/dev/null; }
 trap _fwd TERM INT HUP
-# Process registry (af/39e): this wrapper registers its own pid, fail-safe and fully redirected, BEFORE the
-# runner launches and never inside trap_cleanup; a registry failure changes nothing about the drain.
-[ -n "$_reg" ] && bash "$_reg" register --pid "$$" --kind drain --purpose "review-drain wrapper for $_pr" --repo "$_mg" --session-id "$_sid" --stop-hint "kill -TERM $$ (the review-drain wrapper of $_pr; worktree $_wt, lock $_lock)" </dev/null >/dev/null 2>&1 || true
+# Process registry (af/39e): _dreg holds the ONE proc-registry.sh call line of this launcher, fail-safe and fully
+# redirected (a registry failure changes nothing about the drain). The wrapper registers its own pid through it
+# BEFORE the runner launches and never inside trap_cleanup. No --grace: the teardown grace of the wrapper entry is
+# the GRACE table of proc-registry.sh, never a number here.
+_dreg() {
+  [ -z "$_reg" ] || bash "$_reg" register --kind drain --repo "$_mg" --session-id "$_sid" "$@" </dev/null >/dev/null 2>&1
+  return 0
+}
+_dreg --pid "$$" --purpose "review-drain wrapper for $_pr" --stop-hint "kill -TERM $$ (the review-drain wrapper of $_pr; worktree $_wt, lock $_lock)"
 cd "$_wt" || exit 0
 [ -z "$_term" ] || { _exit_code=143; exit 143; }
 "$_bin" -p --permission-mode "$_pmode" --allowedTools "$_atools" --disallowedTools "$_dtools" --agent "$_runner" --session-id "$_sid" "$_pr" >>"$_log" 2>&1 </dev/null &
 _cp=$!
 # ... and the runner session as its OWN entry (owner = this wrapper, so a reap reaches it only through
 # that entry); backgrounded, so its bounded --expect wait never delays the wait below.
-[ -n "$_reg" ] && { bash "$_reg" register --pid "$_cp" --kind drain --owner-pid "$$" --purpose "review-drain session (runner) of wrapper $$ for $_pr" --repo "$_mg" --session-id "$_sid" --expect "--agent $_runner" --stop-hint "kill -TERM $$ (its wrapper passes the TERM on)" </dev/null >/dev/null 2>&1 & }
+{ _dreg --pid "$_cp" --owner-pid "$$" --purpose "review-drain session (runner) of wrapper $$ for $_pr" --expect "--agent $_runner" --stop-hint "kill -TERM $$ (its wrapper passes the TERM on)" & }
 [ -z "$_term" ] || kill -TERM "$_cp" 2>/dev/null
 wait "$_cp"; _exit_code=$?
 while kill -0 "$_cp" 2>/dev/null; do wait "$_cp"; _exit_code=$?; done

@@ -221,18 +221,19 @@ if [ "$pm_count" = 1 ] && [ -s "$T/preg-mut/automate-lanes.sh" ] && ! cmp -s "$S
     "$(phase_entries "$T/procs-phase-ok" | jq length):$(phase_entries "$T/procs-phase-mut" | jq length)" "1:0"
 else bad "AN22d phase-registration mutant not built (registration lines in the bundle: $pm_count)"; fi
 # AN22e/f (af/39e review 2): the _lane-run wrapper registers the phase's headless session as a SECOND phase entry —
-# owner = the wrapper, repo = the checkout, hashed after env's exec (running); a bundle copy minus that ONE wrapper
-# line registers no session entry
+# owner = the wrapper, repo = the checkout, hashed after env's exec (running); a bundle copy minus launch.sh's ONE
+# registration call line (the _lanes_register helper's, which the session registration goes through) registers no
+# session entry, while phase.sh's own line still writes the wrapper entry
 phase_reg_launch "$S" "$T/procs-psess"
 check "AN22e the wrapper registers its phase session: ONE phase entry, owner_pid = the wrapper, repo = the checkout, running" \
   "$(phase_sessions "$T/procs-psess" | jq -r '[length, (.[0].owner_pid | tostring), .[0].repo] | map(tostring) | join("|")')|$PRL_SCLS" \
   "1|$PRL_PID|$(phase_entries "$T/procs-psess" | jq -r '.[0].repo')|running"
-ps_count="$(grep -c 'proc-registry.sh" register --pid "$cp" --kind phase' "$SB" | tr -d ' ')"
+ps_count="$(grep -c 'proc-registry.sh" register "$@"' "$SB" | tr -d ' ')"
 mkdir -p "$T/psreg-mut"; ln -sf "$HERE/proc-registry.sh" "$T/psreg-mut/proc-registry.sh"
-grep -v 'proc-registry.sh" register --pid "$cp" --kind phase' "$SB" > "$T/psreg-mut/automate-lanes.sh"
+grep -v 'proc-registry.sh" register "$@"' "$SB" > "$T/psreg-mut/automate-lanes.sh"
 if [ "$ps_count" = 1 ] && [ -s "$T/psreg-mut/automate-lanes.sh" ] && ! cmp -s "$SB" "$T/psreg-mut/automate-lanes.sh" && bash -n "$T/psreg-mut/automate-lanes.sh"; then
   phase_reg_launch "$T/psreg-mut/automate-lanes.sh" "$T/procs-psess-mut"
-  check "AN22f mutation control: the copy minus the wrapper's session registration line writes the wrapper entry but no session entry" \
+  check "AN22f mutation control: the copy minus launch.sh's registration call line writes the phase wrapper entry but no session entry" \
     "$(phase_entries "$T/procs-psess-mut" | jq length):$(phase_sessions "$T/procs-psess-mut" | jq length)" "1:0"
 else bad "AN22f session-registration mutant not built (session registration lines in the bundle: $ps_count)"; fi
 

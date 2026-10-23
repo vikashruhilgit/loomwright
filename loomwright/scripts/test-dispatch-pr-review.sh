@@ -56,16 +56,19 @@
 #  45. (af/39e) process registry: a real launch registers ONE wrapper `drain` entry for
 #      the detached wrapper's own pid (repo, runner session id, stop hint, default cap);
 #      an unwritable registry still launches with exit/stdout unchanged; a mutant with
-#      the wrapper's registration line deleted registers no wrapper entry. The suite exports
+#      the launcher's one registration line deleted registers no drain entry at all. The suite exports
 #      its own LOOMWRIGHT_PROC_REGISTRY_DIR, so a standalone run never touches the real home.
 #  46. (af/39e review) `proc-registry.sh reap --apply` of an overdue drain entry: the
 #      wrapper passes the TERM on to its background runner and tears down only after
 #      it exits (the stub sees its worktree + lock still present at exit; .died then
 #      recorded, entries removed); a mutant without the wrapper's TERM pass-on tears
 #      down under the live runner.
+#      46b (review 3): a salvage slower than the short grace is waited out (the wrapper
+#      entry's WRAPPER grace): lock released, .died recorded; a proc-registry.sh without
+#      that GRACE row KILLs the wrapper mid-teardown.
 #  47. (af/39e review 2) the wrapper registers its runner session as a SECOND drain
 #      entry (pid = the runner, owner_pid = the wrapper, hashed after the exec: running);
-#      a mutant with that one line deleted registers no session entry.
+#      a mutant with the launcher's one registration line deleted registers no session entry.
 #  48. (af/39e review 2) a TERM that lands before the runner starts (during the wrapper's
 #      own registration): the runner never runs, the exit is 143, teardown completes and
 #      .died records it; a mutant without the pre-launch `_term` check starts the runner.
@@ -1416,22 +1419,23 @@ else
   no "unwritable registry changed the launch (rc=$DR_RC ran_ppid='$DR_PPID' marker=$M45 out='$DR_OUT' vs '$OUT45_OK')"
 fi
 rm -rf "$(dirname "$FX_REPO")"
-# mutation control: a scripts/ dir whose dispatch-pr-review.sh lacks its ONE registration call line (gated: the
-# line occurs once in WRAPPER, the copy non-empty, differing, bash -n) ⇒ the registration assertion goes red
+# mutation control (AC16): a scripts/ dir whose dispatch-pr-review.sh lacks its ONE registration call line (the
+# `_dreg` helper's; gated: the line occurs once in the file, the copy non-empty, differing, bash -n) ⇒ the launch
+# still runs but registers nothing — neither the wrapper entry nor its runner session's
 MUTD45="$(mktemp -d)"
 for e in "$HERE"/*; do [ "$(basename "$e")" = dispatch-pr-review.sh ] || ln -s "$e" "$MUTD45/$(basename "$e")"; done
-C45="$(grep -c 'register --pid "$$"' "$DISPATCH")"
-grep -v 'register --pid "$$"' "$DISPATCH" > "$MUTD45/dispatch-pr-review.sh"
+C45="$(grep -c '"$_reg" register' "$DISPATCH")"
+grep -v '"$_reg" register' "$DISPATCH" > "$MUTD45/dispatch-pr-review.sh"
 if [ "$C45" != 1 ] || [ ! -s "$MUTD45/dispatch-pr-review.sh" ] || cmp -s "$DISPATCH" "$MUTD45/dispatch-pr-review.sh" \
    || ! bash -n "$MUTD45/dispatch-pr-review.sh" 2>/dev/null; then
   no "drain-registration mutant not built (registration lines=$C45)"
 else
   REGM45="$(dirname "$REG45")/procs-mut"
   drain_reg_run "$MUTD45/dispatch-pr-review.sh" "$REGM45"
-  if [ -n "$DR_PPID" ] && [ "$(wrapper_entries "$REGM45" | jq 'length' 2>/dev/null)" = 0 ]; then
-    ok "MUTATION: the registration line deleted from WRAPPER ⇒ the launch ran but no wrapper drain entry (the registration assertion goes red)"
+  if [ -n "$DR_PPID" ] && [ "$(drain_entries "$REGM45" | jq 'length' 2>/dev/null)" = 0 ]; then
+    ok "MUTATION: the one registration line deleted ⇒ the launch ran but no drain entry at all, wrapper or session (the registration assertion goes red)"
   else
-    no "MUTATION did not discriminate (ran_ppid='$DR_PPID' entries=$(wrapper_entries "$REGM45"))"
+    no "MUTATION did not discriminate (ran_ppid='$DR_PPID' entries=$(drain_entries "$REGM45"))"
   fi
   rm -rf "$(dirname "$FX_REPO")"
 fi
@@ -1515,6 +1519,45 @@ else
   rm -rf "$(dirname "$FX_REPO")"
 fi
 rm -rf "$MUTD46"
+# 46b (af/39e review 3): a SLOW teardown. The wrapper entry takes the WRAPPER grace of the proc-registry.sh GRACE
+# table, so a reap waits out a salvage slower than the short default grace instead of KILLing the wrapper inside
+# trap_cleanup: the lock is released and .died recorded. A scripts/ dir whose worktree-salvage.sh is a stub that
+# sleeps past the short grace; its mutation control is the same dir with a proc-registry.sh lacking the GRACE
+# WRAPPER row (gated: one line removed, non-empty, differing, bash -n) — the reproduced bug: KILLed mid-teardown,
+# the lock left behind and no .died.
+MUTD46B="$(mktemp -d)"
+for e in "$HERE"/*; do case "$(basename "$e")" in worktree-salvage.sh|dispatch-pr-review.sh|proc-registry.sh) ;; *) ln -s "$e" "$MUTD46B/$(basename "$e")" ;; esac; done
+cp "$DISPATCH" "$MUTD46B/dispatch-pr-review.sh"
+cp "$HERE/proc-registry.sh" "$MUTD46B/proc-registry.sh"
+cat > "$MUTD46B/worktree-salvage.sh" <<'SALEOF'
+#!/usr/bin/env bash
+sleep 13   # fixed-sleep-ok: a teardown slower than the short reap grace (the condition under test, not a wait)
+exit 0
+SALEOF
+drain_reap_run "$MUTD46B/dispatch-pr-review.sh"
+if [ -n "$DQ_PID" ] && [ ! -d "$DQ_LOCK" ] && [ -f "$DQ_MARKER.died" ] && grep -q 'DRAIN_DIED' "$FX_REPO/.supervisor/logs/"* 2>/dev/null \
+   && grep -q 'stopped (TERM)$' <<<"$DQ_OUT" && ! grep -q KILL <<<"$DQ_OUT"; then
+  ok "slow teardown: reap --apply waited out the wrapper's 13 s salvage (stopped by TERM alone), the lock was released and .died recorded"
+else
+  no "slow teardown cut short (pid='$DQ_PID' lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
+fi
+dq_kill
+rm -rf "$(dirname "$FX_REPO")"
+awk 'index($0, "phase:|lane:|drain:) printf '"'"'120'"'"' ;;") == 0' "$HERE/proc-registry.sh" > "$MUTD46B/proc-registry.sh"
+if [ "$(( $(wc -l < "$HERE/proc-registry.sh") - $(wc -l < "$MUTD46B/proc-registry.sh") ))" != 1 ] || [ ! -s "$MUTD46B/proc-registry.sh" ] \
+   || cmp -s "$HERE/proc-registry.sh" "$MUTD46B/proc-registry.sh" || ! bash -n "$MUTD46B/proc-registry.sh" 2>/dev/null; then
+  no "WRAPPER-grace mutant not built"
+else
+  drain_reap_run "$MUTD46B/dispatch-pr-review.sh"
+  if [ -n "$DQ_PID" ] && { [ -d "$DQ_LOCK" ] || [ ! -f "$DQ_MARKER.died" ]; } && grep -q KILL <<<"$DQ_OUT"; then
+    ok "MUTATION: without the WRAPPER grace the reap KILLs the wrapper mid-teardown (lock left or no .died — the leg goes red)"
+  else
+    no "MUTATION did not discriminate (pid='$DQ_PID' lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
+  fi
+  dq_kill
+  rm -rf "$(dirname "$FX_REPO")"
+fi
+rm -rf "$MUTD46B"
 
 echo "== 47. (af/39e review 2) the wrapper registers its runner session as its own drain entry; mutation control =="
 # drain_session_run <dispatcher> — a real launch whose stub runner stays up (records its pid, sleeps until TERMed),
@@ -1563,19 +1606,20 @@ else
   no "runner session registration wrong (pid='$DS_PID' wrapper='$DS_WRAP' class='$DS_CLS': $BAD47)"
 fi
 rm -rf "$(dirname "$FX_REPO")"
-# mutation control: the session's ONE registration line deleted (gated: one such line, the copy non-empty, differing,
-# bash -n) ⇒ the runner runs but no session entry
+# mutation control: the launcher's ONE registration call line deleted (the `_dreg` helper's, which the session
+# registration shares with the wrapper's; gated: one such line, the copy non-empty, differing, bash -n) ⇒ the runner
+# runs but no session entry
 MUTD47="$(mktemp -d)"
 for e in "$HERE"/*; do [ "$(basename "$e")" = dispatch-pr-review.sh ] || ln -s "$e" "$MUTD47/$(basename "$e")"; done
-C47="$(grep -c 'register --pid "$_cp"' "$DISPATCH")"
-grep -v 'register --pid "$_cp"' "$DISPATCH" > "$MUTD47/dispatch-pr-review.sh"
+C47="$(grep -c '"$_reg" register' "$DISPATCH")"
+grep -v '"$_reg" register' "$DISPATCH" > "$MUTD47/dispatch-pr-review.sh"
 if [ "$C47" != 1 ] || [ ! -s "$MUTD47/dispatch-pr-review.sh" ] || cmp -s "$DISPATCH" "$MUTD47/dispatch-pr-review.sh" \
    || ! bash -n "$MUTD47/dispatch-pr-review.sh" 2>/dev/null; then
   no "session-registration mutant not built (lines=$C47)"
 else
   drain_session_run "$MUTD47/dispatch-pr-review.sh"
   if [ -n "$DS_PID" ] && [ "$(jq --arg p "$DS_PID" '[.[] | select((.pid | tostring) == $p)] | length' <<<"$DS_E" 2>/dev/null)" = 0 ]; then
-    ok "MUTATION: the session registration line deleted ⇒ the runner ran but no session entry (the leg goes red)"
+    ok "MUTATION: the one registration line deleted ⇒ the runner ran but no session entry (the leg goes red)"
   else
     no "MUTATION did not discriminate (pid='$DS_PID' entries=$DS_E)"
   fi

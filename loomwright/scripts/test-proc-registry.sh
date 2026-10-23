@@ -30,7 +30,8 @@
 #        or missing HERMETIC_SHIM_DIR is unavailable (register fails safe, list/reap empty, no write
 #        anywhere); outside hermetic mode the default is $HOME's user-scope registry.
 #   AC9  the header names the contract; its caps table equals the code's (per-kind registration), the
-#        LOOMWRIGHT_PROC_MAX_S_<KIND> overrides and --max-lifetime precedence work; exit codes.
+#        LOOMWRIGHT_PROC_MAX_S_<KIND> overrides and --max-lifetime precedence work; its GRACE table equals
+#        the code's (an owner-less wrapper-kind entry vs every other entry; --grace wins); exit codes.
 #   MUTATION CONTROLS (each mutant gated per lesson fa32a308: non-empty, byte-differs, parses, and a
 #   line-delete removes exactly one line), each must turn its leg red: the cmd-hash comparison
 #   deleted (AC7), the --apply gate deleted (AC5), the ## Status read deleted (AC4), the age compare
@@ -38,7 +39,8 @@
 #   from the pid alone (AC1), register's failure path exiting 1 (AC3), the re-check before KILL
 #   deleted (AC6), the reap filter widened to running (AC6), a ppid KILL of the wrapper's children
 #   re-added (AC6), the owned-entries-last ordering deleted (AC6), the --expect launcher-stage check
-#   deleted (AC2), the --expect owner-line check deleted (AC2).
+#   deleted (AC2), the --expect owner-line check deleted (AC2), the GRACE table's WRAPPER row deleted
+#   (AC9).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -156,7 +158,7 @@ leg_keys() {
   check "AC1 absent optionals are JSON null" eq "$(jq -c '[.repo, .run_id, .runfile, .lane, .owner_pid, .owner_start, .session_id, .stop_hint]' "$f")" "[null,null,null,null,null,null,null,null]"
   check "AC1 pid_start is the C-locale UTC lstart" eq "$(jq -r .pid_start "$f")" "$(env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$p" | sed -e 's/^ *//' -e 's/ *$//')"
   check "AC1 cmd_hash is <algo>:<hash>" has "$(jq -r .cmd_hash "$f" | sed -E 's/^(sha1|cksum):[0-9a-f]+$/SHAPE_OK/')" SHAPE_OK
-  check "AC1 kind / table cap / default grace" eq "$(jq -c '[.kind, .max_lifetime_s, .grace_s]' "$f")" '["lane",86400,10]'
+  check "AC1 kind / table cap / table grace (an owner-less lane entry is a wrapper: the WRAPPER grace)" eq "$(jq -c '[.kind, .max_lifetime_s, .grace_s]' "$f")" '["lane",86400,120]'
   check "AC1 purpose is stored verbatim (jq --arg, never templated)" eq "$(jq -r .purpose "$f")" 'say "hi" $(touch '"$WORK"'/pwned) `x` \ end'
   check "AC1 the purpose ran nothing" eq "$([ -e "$WORK/pwned" ] && echo ran || echo clean)" clean
   check "AC1 the id is <pid>-<hash>" has "$(basename "$f" .json | sed -E "s/^$p-[A-Za-z0-9]+\$/ID_OK/")" ID_OK
@@ -554,7 +556,7 @@ leg_header() {
            owner_start max_lifetime_s grace_s registered_at session_id stop_hint run_id runfile \
            running overdue orphaned finished LOOMWRIGHT_PROC_REGISTRY_DIR HERMETIC_TEST_ENV HERMETIC_SHIM_DIR \
            LOOMWRIGHT_PROC_MAX_S_PHASE LOOMWRIGHT_PROC_MAX_S_LANE LOOMWRIGHT_PROC_MAX_S_DRAIN \
-           LOOMWRIGHT_PROC_MAX_S_POSTMORTEM "NEVER SIGNAL BY PID ALONE" "EXIT CODES" "CLASSES" "CAPS" "precedence"; do
+           LOOMWRIGHT_PROC_MAX_S_POSTMORTEM "NEVER SIGNAL BY PID ALONE" "EXIT CODES" "CLASSES" "CAPS" "GRACE" "precedence"; do
     has "$hdr" "$k" || { check "AC9 header names '$k'" false; }
   done
   check "AC9 header names every subcommand, key, class, cap override, location and exit code" true
@@ -565,6 +567,29 @@ leg_header() {
     n="$(efield "$p" max_lifetime_s)"
     check "AC9 the header's caps row for $k equals the code's default ($n)" eval 'grep -Eq "^#   $k +$n " <<<"$hdr"'
   done
+  # the GRACE table: an owner-less wrapper-kind entry gets the header's WRAPPER row, every other entry (a session,
+  # postmortem, merge-watch) the "every other" row; --grace always wins
+  local gw go owner
+  gw="$(sed -n 's/^#   WRAPPER  *\([0-9][0-9]*\) .*/\1/p' <<<"$hdr")"
+  go="$(sed -n 's/^#   every other  *\([0-9][0-9]*\) .*/\1/p' <<<"$hdr")"
+  sleeper; owner=$SP
+  for k in phase lane drain; do
+    sleeper; p=$SP
+    reg --pid "$p" --kind "$k" --purpose grace 2>/dev/null
+    check "AC9 the header's WRAPPER grace row ($gw) is the code's default for an owner-less $k entry" eq "$gw|$(efield "$p" grace_s)" "120|120"
+    sleeper; p=$SP
+    reg --pid "$p" --kind "$k" --purpose grace --owner-pid "$owner" 2>/dev/null
+    check "AC9 the header's every-other grace row ($go) is the code's default for a $k session (owner set)" eq "$go|$(efield "$p" grace_s)" "10|10"
+  done
+  sleeper; p=$SP
+  reg --pid "$p" --kind postmortem --purpose grace 2>/dev/null
+  check "AC9 a postmortem entry takes the every-other grace" eq "$(efield "$p" grace_s)" "$go"
+  sleeper; p=$SP
+  reg --pid "$p" --kind merge-watch --purpose grace --max-lifetime 60 2>/dev/null
+  check "AC9 a merge-watch entry takes the every-other grace" eq "$(efield "$p" grace_s)" "$go"
+  sleeper; p=$SP
+  reg --pid "$p" --kind drain --purpose grace --grace 4 2>/dev/null
+  check "AC9 --grace beats the GRACE table" eq "$(efield "$p" grace_s)" 4
   sleeper; p=$SP
   LOOMWRIGHT_PROC_MAX_S_DRAIN=77 bash "$S" register --pid "$p" --kind drain --purpose ov 2>/dev/null
   check "AC9 LOOMWRIGHT_PROC_MAX_S_DRAIN overrides the drain cap" eq "$(efield "$p" max_lifetime_s)" 77
@@ -650,6 +675,8 @@ mk_mutant preexec sub '_pr_pre_exec "$cmd" || [ "$cmd" = "$ocmd" ] || { matched=
 run_mutant "AC2 --expect exec-past-launcher check deleted" leg_expect
 mk_mutant widen sub 'overdue|orphaned) _pr_stop "$f" ;;' 'overdue|orphaned|running) _pr_stop "$f" ;;'
 run_mutant "AC6 reap filter widened to running" leg_apply_classes
+mk_mutant wrapgrace del "phase:|lane:|drain:) printf '120' ;;"
+run_mutant "AC9 the GRACE table's WRAPPER row deleted (a wrapper falls back to the short grace)" leg_header
 
 echo
 echo "test-proc-registry.sh: $pass passed, $fail failed"
