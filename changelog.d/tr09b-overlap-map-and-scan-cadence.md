@@ -8,5 +8,6 @@ parent session's HEAD; an owner-run re-probe in a reinstalled-plugin session is 
 Workflow tool and nested spawning (2c) and Agent Teams (2e) are KEEP OURS. The agent-teams skill's dated
 graduation snapshot is replaced by the 2e verdict and a pointer. `bash scripts/bump-version.sh` now prints
 `bump-version: capability baseline last scanned at <X.Y.Z>; run /capability-check` on every minor or major bump
-and its `--dry-run`, reading `plugin_version_at_last_scan` live from the baseline. A patch bump, `--check`, a
-`--refold` no-op and a missing or invalid baseline print nothing, and the line never changes the exit status.
+and its first-bump `--dry-run`, reading `plugin_version_at_last_scan` live from the baseline. A patch bump,
+`--check`, a `--refold` no-op, a re-fold `--dry-run` and a missing or invalid baseline print nothing, and the
+line never changes the exit status.

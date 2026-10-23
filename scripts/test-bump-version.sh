@@ -638,6 +638,13 @@ run_bump "$D"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(rem_count)" = "1" ] && [ "$(sed -n 's/^bump-version: refold-touched: //p' "$TMP/last.out" | wc -l | tr -d ' ')" = "1" ] \
   && grep -q '^bump-version: refold-touched: ' < <(grep '^bump-version: ' "$TMP/last.out" | tail -n 1)
 check $? "scan reminder: a minor re-fold prints it once (the child bump) and refold-touched: stays the last line"
+# A re-fold --dry-run never runs the child bump that resolves the final level, so it prints none.
+D="$TMP/s9"; make_branch "$D"; with_baseline "$D" "$GOOD_CB"; bump_commit "$D" minor
+frag "$D" b.md '<!-- bump: minor -->\nLate\n'; g "$D" add -A && g "$D" commit -q -m late; before="$(tree_sum "$D")"
+run_bump "$D" --dry-run; rc=$?
+[ "$rc" -eq 0 ] && grep -qF 're-fold:' "$TMP/last.out" && [ "$(tree_sum "$D")" = "$before" ] \
+  && [ "$(rem_count 'capability baseline last scanned')" = "0" ]
+check $? "scan reminder: a re-fold --dry-run (minor bump + late minor fragment) exits 0, writes nothing, and prints none"
 
 # Mutation controls: each guard is what its case above catches (the pinned literals in the brief).
 scan_mutant() { # scan_mutant <dir> <awk program> — the fixture's script becomes a mutated copy; 1 if it is unchanged

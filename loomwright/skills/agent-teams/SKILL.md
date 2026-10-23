@@ -288,7 +288,7 @@ Agent Teams maturity is tracked against six criteria. Verdict: **KEEP OURS** —
 5. **Session resumption** ❌ — there is no checkpoint/resume equivalent to `/supervisor --continue`. If a team session is interrupted, work is lost; teammate state is not durable across Claude Code restarts.
 6. **One team at a time** ❌ — only one Agent Teams session can run per Claude Code instance. Concurrent teams across different feature branches or projects are not supported, which caps real-world parallelism vs. git worktrees.
 
-**Current status:** 3 of 6 criteria met. Agent Teams is suitable for **research, competing-hypothesis exploration, and bounded cross-layer changes** today, but the unmet criteria (especially session resumption and one-team-at-a-time) mean **Supervisor v4 with git worktrees remains the default for production implementation workflows**.
+**What this means today** (per the `docs/NATIVE_OVERLAP.md` §2e verdict above): Agent Teams is suitable for **research, competing-hypothesis exploration, and bounded cross-layer changes**, but the unmet criteria (especially session resumption and one-team-at-a-time) mean **Supervisor v4 with git worktrees remains the default for production implementation workflows**.
 
 ## See Also
 

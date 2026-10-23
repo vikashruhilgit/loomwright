@@ -83,12 +83,13 @@
 # exist or both be absent (absent only in a fixture tree that predates the contract); one without the
 # other is refused, so the generated copy can never silently fall out of the bump.
 #
-# SCAN REMINDER: a minor or major bump (and its --dry-run) prints one advisory line,
+# SCAN REMINDER: a minor or major bump (and its first-bump --dry-run) prints one advisory line,
 # `bump-version: capability baseline last scanned at <X.Y.Z>; run /capability-check`, reading
 # plugin_version_at_last_scan live from loomwright/docs/CAPABILITY_BASELINE.json (never a second
 # copy). It is fail-SAFE: a missing or invalid baseline prints nothing and never changes the exit
 # status. It is printed only after a successful bump's last line or the dry run's entry, never on
-# --check or a --refold no-op; in a re-fold the child bump prints it. docs/NATIVE_OVERLAP.md
+# --check or a --refold no-op; in a re-fold the child bump prints it, so a re-fold --dry-run (which
+# never runs the child bump that resolves the final level) prints none. loomwright/docs/NATIVE_OVERLAP.md
 # records the cadence.
 #
 # HONEST LIMITS of --check: it verifies the bump-owned bytes only — capabilities.json's other keys
