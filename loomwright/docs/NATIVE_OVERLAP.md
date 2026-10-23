@@ -20,10 +20,11 @@ The source requirement mapped 2b to §3.3. §3.3 is *isolate-a-workspace*, and t
 **Verdict: KEEP OURS.**
 
 **What ours does.** `loomwright/agents/execute-manager.md` §"Step 4: Poll Loop" starts every worker in the
-background and then polls them. It starts at `poll_interval = 2000` and stops at `max_iterations = 30`. On each
-pass it checks every running worker with the host's background-output poll call, without blocking. After three
-idle passes it backs off with `poll_interval = min(poll_interval * 2, 30000)` and blocks on the earliest pending
-worker. When a worker finishes, it reads that worker's `.worker-summary.md` and runs the per-subtask gate on the
+background and then polls them for a bounded number of passes. On each pass it checks every running worker with
+the host's background-output poll call, without blocking. Every idle pass then blocks on the earliest pending
+worker; after three idle passes in a row the interval doubles, up to a cap, and any completion resets it. The
+starting interval, the cap and the pass budget are that section's constants and are not copied here. When a
+worker finishes, it reads that worker's `.worker-summary.md` and runs the per-subtask gate on the
 worktree itself (`verify-provides.sh` against the tree, not the worker's claim). A missing result block fails that
 gate, because `absence is NOT a pass`. The inline Supervisor's step driver leaves this loop alone. The header of
 `loomwright/scripts/supervisor-next-step.sh` says `The Execute Manager's own poll loop is its own`.
@@ -97,10 +98,9 @@ byte-unchanged in the baseline.
 ## Scan cadence
 
 `/capability-check` refreshes the baseline. Nothing else prompts a re-scan, so `bash scripts/bump-version.sh` now
-prints a one-line reminder on every minor or major bump, and on a minor or major `--dry-run`:
-`bump-version: capability baseline last scanned at <X.Y.Z>; run /capability-check`. It reads
-`plugin_version_at_last_scan` from the baseline when it runs, so it never carries a second copy of that version. A
-patch bump, `--check`, a `--refold` no-op and a missing or invalid baseline print nothing.
+prints a one-line `/capability-check` reminder on a minor or major bump. It reads `plugin_version_at_last_scan`
+from the baseline when it runs, so it never carries a second copy of that version. The exact line, and which
+modes and failure cases print nothing, are owned by the script's header comment §"SCAN REMINDER".
 
 **Honest limit:** the reminder reaches whoever runs the script directly. A `--parallel` wave's release step
 (`loomwright/scripts/automate-wave.sh`) captures the bump output to a log that is shown only on failure, so on that
