@@ -12,12 +12,27 @@
 #       exactly one `proc-registry: register failed — <reason>` line on stderr (bad or missing
 #       argument, unknown kind, jq missing, registry dir unavailable or unwritable, dead pid). A
 #       launcher calls it fully redirected and never lets it change the launch.
-#       --expect: when the command line does not yet contain <substring> (a `nohup` that has not
-#       exec'd yet), wait for it, bounded at about 2.5 s, before hashing. If it never appears the
-#       entry is still written and one `proc-registry: register — command line never matched
-#       --expect` line is printed on stderr. Pick a substring only the FINAL command line has: a
-#       `nohup <bin> …` line already contains `<bin> …`, so its own args would match before the exec.
+#       --expect: wait, bounded at about 2.5 s, until the command line BOTH contains <substring> AND
+#       has exec'd past its launcher — its first word is not `nohup` or `env` (bare or a path such
+#       as /usr/bin/env, the `#!/usr/bin/env bash` stage) — before hashing. Those launchers' lines
+#       already carry the final arguments, so the substring alone would match (and hash) a line the
+#       process is about to replace; this exec wait lives HERE and nowhere else — a launcher never
+#       hand-rolls its own. If the condition never holds the entry is still written and one
+#       `proc-registry: register — command line never matched --expect` line is printed on stderr.
 #       Relative --repo / --runfile / --lane paths are made absolute against the caller's cwd.
+#
+# WRAPPER KINDS (lane, phase, drain): the registered pid is a wrapper, not the session it runs. The
+# contract has two halves, and a reap never orphans the child only when both hold:
+#   the wrapper  runs its child in the BACKGROUND, traps TERM/INT/HUP to pass a TERM on to it, and
+#                waits while the child is alive before its own teardown (so its EXIT cleanup never
+#                runs under a live child);
+#   reap         for these kinds only, the KILL leg (the wrapper still matches after grace_s) KILLs
+#                the wrapper's live direct children first — read from one `ps` pass made right after
+#                the wrapper's own identity re-check, so a child pid is never taken from the entry —
+#                then waits up to another grace_s for the wrapper to finish its teardown by itself,
+#                and KILLs the wrapper only if it STILL matches after that. A wrapper cannot pass a
+#                KILL on, which is why reap delivers that one itself.
+#   Honest limit: only DIRECT children; a grandchild the session itself started is the session's.
 #   list
 #       One row per entry (TSV after a `# id kind pid age class evidence` header): id, kind, pid,
 #       age (the live process's elapsed time, `-` when it is gone), class, and the evidence for that
@@ -28,8 +43,9 @@
 #       no signal, writes nothing. With --apply, per entry (all entries, or only the named ids):
 #         overdue / orphaned  re-read the live lstart + command-line hash IMMEDIATELY before the
 #                             signal; TERM; wait up to the entry's grace_s while it still matches;
-#                             re-check again and send KILL only if it STILL matches; remove the
-#                             entry (kept only when the process survives a KILL, or a signal fails).
+#                             re-check again and send KILL only if it STILL matches (a wrapper
+#                             kind's children first — see WRAPPER KINDS); remove the entry (kept
+#                             only when the process survives a KILL, or a signal fails).
 #         finished            pruned: the file is removed, no signal.
 #         running             never touched.
 #       Every processed (non-running) entry appends one line to <registry dir>/reap.log; each append
@@ -208,6 +224,10 @@ _pr_matches() {
 
 _pr_now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+# _pr_pre_exec <cmdline> — 0 while the line is still a launcher stage (`nohup …` / `env …`, bare or by
+# path) that has not exec'd its target yet; the --expect wait below is the ONE place this is checked.
+_pr_pre_exec() { case "${1%% *}" in nohup|*/nohup|env|*/env) return 0 ;; esac; return 1; }
+
 # ---- register ---------------------------------------------------------------------------------------
 
 _pr_reg_fail() { printf '%s: register failed — %s\n' "$PR_ME" "$1" >&2; }
@@ -278,7 +298,7 @@ cmd_register() {
     end=$(( $(date +%s) + 3 ))
     while :; do
       cmd="$(_pr_cmdline "$pid")"
-      case "$cmd" in *"$expect"*) matched=1; break ;; esac
+      case "$cmd" in *"$expect"*) _pr_pre_exec "$cmd" || { matched=1; break; } ;; esac
       [ -n "$(_pr_lstart "$pid")" ] || break
       i=$((i + 1))
       [ "$i" -lt 25 ] || break
@@ -434,9 +454,20 @@ _pr_wait_unmatched() {
   return 0
 }
 
+# _pr_is_wrapper_kind <kind> — the kinds whose registered pid is a wrapper (header: WRAPPER KINDS).
+_pr_is_wrapper_kind() { case "$1" in lane|phase|drain) return 0 ;; esac; return 1; }
+
+# _pr_children <pid> — the live direct children of <pid>, one per line, from ONE `ps` pass (same flags on
+# BSD and procps); a zombie child is skipped.
+_pr_children() {
+  _pr_is_uint "${1:-}" || return 0
+  env LC_ALL=C ps -A -o pid= -o ppid= -o stat= 2>/dev/null | awk -v p="$1" '$2 == p && $3 !~ /^Z/ { print $1 }'
+}
+
 # _pr_stop <file> — the overdue/orphaned path of `reap --apply`. Prints the outcome; logs one line.
 _pr_stop() {
   local f="$1" what="$E_ID${PR_T}$E_KIND${PR_T}pid=$E_PID${PR_T}class=$E_CLASS" outcome="" keep=0 nokill=""
+  local kids k nkids=0 kidnote=""
   if ! _pr_matches "$E_PID" "$E_START" "$E_HASH"; then
     outcome="not signalled: no longer matches ($PR_WHY); pruned"
   elif ! kill -TERM "$E_PID" 2>/dev/null; then
@@ -445,16 +476,28 @@ _pr_stop() {
     _pr_wait_unmatched "$E_GRACE"
     if [ -n "$(_pr_lstart "$E_PID")" ]; then
       _pr_matches "$E_PID" "$E_START" "$E_HASH" || nokill="$PR_WHY"
+      if [ -z "$nokill" ] && _pr_is_wrapper_kind "$E_KIND"; then
+        # WRAPPER KINDS (header): the wrapper still matches (re-checked just above), so its live
+        # direct children are its session — KILL them, then give the wrapper its own teardown time
+        kids="$(_pr_children "$E_PID")"
+        for k in $kids; do kill -KILL "$k" 2>/dev/null && nkids=$((nkids + 1)); done
+        if [ "$nkids" -gt 0 ]; then
+          kidnote=" (KILLed $nkids child process(es) of the wrapper)"
+          _pr_wait_unmatched "$E_GRACE"
+        fi
+      fi
       if [ -n "$nokill" ]; then
         outcome="stopped (TERM); no KILL: no longer matches ($nokill)"
+      elif [ "$nkids" -gt 0 ] && ! _pr_matches "$E_PID" "$E_START" "$E_HASH"; then
+        outcome="stopped (TERM+KILL)$kidnote; the wrapper then exited by itself"
       elif ! kill -KILL "$E_PID" 2>/dev/null; then
-        outcome="TERM ignored; KILL failed; entry kept"; keep=1
+        outcome="TERM ignored; KILL failed$kidnote; entry kept"; keep=1
       else
         _pr_wait_unmatched 2
         if _pr_matches "$E_PID" "$E_START" "$E_HASH"; then
-          outcome="survived KILL; entry kept"; keep=1
+          outcome="survived KILL$kidnote; entry kept"; keep=1
         else
-          outcome="stopped (TERM+KILL)"
+          outcome="stopped (TERM+KILL)$kidnote"
         fi
       fi
     else
@@ -470,7 +513,12 @@ _pr_stop() {
 # _pr_dry_row — what `reap` WOULD do with the classified entry (E_*); prints only.
 _pr_dry_row() {
   case "$E_CLASS" in
-    overdue|orphaned) printf 'would stop %s (%s, pid %s, %s): TERM, KILL after %ss if it still matches — %s\n' "$E_ID" "$E_KIND" "$E_PID" "$E_CLASS" "$E_GRACE" "$E_EVID" ;;
+    overdue|orphaned)
+      if _pr_is_wrapper_kind "$E_KIND"; then
+        printf 'would stop %s (%s, pid %s, %s): TERM, KILL after %ss if it still matches (its children first) — %s\n' "$E_ID" "$E_KIND" "$E_PID" "$E_CLASS" "$E_GRACE" "$E_EVID"
+      else
+        printf 'would stop %s (%s, pid %s, %s): TERM, KILL after %ss if it still matches — %s\n' "$E_ID" "$E_KIND" "$E_PID" "$E_CLASS" "$E_GRACE" "$E_EVID"
+      fi ;;
     finished) printf 'would prune %s (%s, pid %s, finished): no signal — %s\n' "$E_ID" "$E_KIND" "$E_PID" "$E_EVID" ;;
     *) printf 'keep %s (%s, pid %s, running)\n' "$E_ID" "$E_KIND" "$E_PID" ;;
   esac

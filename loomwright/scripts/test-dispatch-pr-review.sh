@@ -58,6 +58,10 @@
 #      an unwritable registry still launches with exit/stdout unchanged; a mutant with
 #      the wrapper's registration line deleted registers nothing. The suite exports its
 #      own LOOMWRIGHT_PROC_REGISTRY_DIR, so a standalone run never touches the real home.
+#  46. (af/39e review) `proc-registry.sh reap --apply` of an overdue drain entry: the
+#      wrapper passes the TERM on to its background runner and tears down only after
+#      it exits (the stub sees its worktree + lock still present at exit; .died then
+#      recorded, entry removed); a mutant without the wrapper's TERM pass-on orphans it.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1423,6 +1427,85 @@ else
   rm -rf "$(dirname "$FX_REPO")"
 fi
 rm -rf "$MUTD45" "$(dirname "$REG45")"
+
+echo "== 46. (af/39e review) reaping the drain entry stops the runner BEFORE teardown; mutation control =="
+# The registered pid is the WRAPPER (a WRAPPER KIND, proc-registry.sh header): `reap --apply` TERMs it, the
+# wrapper must pass the TERM on to its background runner and wait for it, so trap_cleanup (salvage, worktree
+# removal, lock release) runs only once the runner is gone. The stub runner records, when it exits, whether its
+# worktree and the lock still existed — `present` proves teardown waited for it.
+# drain_reap_run <dispatcher> — sets DQ_PID (stub runner pid) DQ_OUT (reap output) DQ_EXIT (stub's exit line)
+# DQ_WT DQ_LOCK DQ_MARKER DQ_REG
+drain_overdue() { [ "$(LOOMWRIGHT_PROC_REGISTRY_DIR="$1" bash "$HERE/proc-registry.sh" list | awk -F'\t' '$2 == "drain" { print $5 }')" = overdue ]; }
+# dq_kill — stop a leftover stub runner (and its sleep) after an assertion; a no-op when it is gone
+dq_kill() { [ -n "$DQ_PID" ] || return 0; pkill -KILL -P "$DQ_PID" 2>/dev/null; kill -KILL "$DQ_PID" 2>/dev/null; return 0; }
+drain_reap_run() {
+  local disp="$1" wt lock
+  fresh_git_repo >/dev/null
+  wt="$(expected_wt_path "$FX_REPO")"; lock="$FX_REPO/.supervisor/review-dispatch/$(pr_hash).lock"
+  DQ_WT="$wt"; DQ_LOCK="$lock"; DQ_MARKER="$FX_REPO/.supervisor/review-dispatch/$(pr_hash)"
+  DQ_REG="$(dirname "$FX_REPO")/procs"; DQ_PID=""; DQ_OUT=""; DQ_EXIT=""
+  cat > "$FX_BIN/stub-claude" <<CLEOF
+#!/usr/bin/env bash
+if [ "\$1" = "--help" ]; then
+  printf -- '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
+  printf -- '--allowedTools, --allowed-tools <tools...>\n'
+  printf -- '--disallowedTools, --disallowed-tools <tools...>\n'
+  exit 0
+fi
+printf '%s\n' "\$\$" > "$FX_REPO.stub.pid"
+on_term() {
+  kill "\$c" 2>/dev/null
+  sleep 0.5   # fixed-sleep-ok: a simulated graceful shutdown, not a wait — teardown must not start under it
+  printf 'exit wt=%s lock=%s\n' "\$([ -d "$wt" ] && echo present || echo gone)" "\$([ -d "$lock" ] && echo present || echo gone)" >> "$FX_CLAUDE_LOG"
+  exit 0
+}
+trap on_term TERM
+sleep 30 & c=\$!   # fixed-sleep-ok: the runner's long-lived body, ended by its TERM handler
+wait "\$c"
+CLEOF
+  chmod +x "$FX_BIN/stub-claude"
+  ( cd "$FX_REPO" && PATH="$FX_BIN:$PATH" HOME="$FX_REPO/.fakehome" LOOMWRIGHT_PROC_MAX_S_DRAIN=1 \
+      LOOMWRIGHT_CLAUDE_BIN="$FX_BIN/stub-claude" LOOMWRIGHT_PROC_REGISTRY_DIR="$DQ_REG" bash "$disp" "$PR" >/dev/null 2>&1 )
+  wait_for_cmd 15 test -s "$FX_REPO.stub.pid" && DQ_PID="$(cat "$FX_REPO.stub.pid")"
+  [ -n "$DQ_PID" ] || return 0
+  WAIT_LIB_WHAT="the drain entry to read overdue" wait_for_cmd 15 drain_overdue "$DQ_REG"
+  DQ_OUT="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$DQ_REG" bash "$HERE/proc-registry.sh" reap --apply 2>/dev/null)"
+  wait_for_pid_gone "$DQ_PID" 10 || true
+  wait_for_teardown "$FX_REPO" "$wt" "$lock" || true
+  DQ_EXIT="$(grep '^exit wt=' "$FX_CLAUDE_LOG" 2>/dev/null | head -1)"
+}
+drain_reap_run "$DISPATCH"
+DQ_ALIVE=0; [ -n "$DQ_PID" ] && kill -0 "$DQ_PID" 2>/dev/null && DQ_ALIVE=1
+if [ -n "$DQ_PID" ] && [ "$DQ_ALIVE" -eq 0 ] && [ "$DQ_EXIT" = "exit wt=present lock=present" ] \
+   && [ ! -d "$DQ_LOCK" ] && [ ! -d "$DQ_WT" ] && [ -f "$DQ_MARKER.died" ] \
+   && [ "$(drain_entries "$DQ_REG" | jq 'length' 2>/dev/null)" = 0 ] && grep -q 'stopped (TERM' <<<"$DQ_OUT"; then
+  ok "reap --apply of the drain entry: the runner got the TERM and exited while worktree + lock still existed; teardown then completed (.died recorded, entry removed)"
+else
+  no "drain reap orphaned or raced the runner (pid='$DQ_PID' alive=$DQ_ALIVE exit_line='$DQ_EXIT' lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) wt_left=$([ -d "$DQ_WT" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
+fi
+dq_kill
+rm -rf "$(dirname "$FX_REPO")"
+# mutation control: WRAPPER without its TERM pass-on (`trap _fwd TERM INT HUP` deleted; gated: exactly one such
+# line, the copy non-empty, differing, bash -n) ⇒ the reap kills the wrapper alone and the runner is orphaned
+MUTD46="$(mktemp -d)"
+for e in "$HERE"/*; do [ "$(basename "$e")" = dispatch-pr-review.sh ] || ln -s "$e" "$MUTD46/$(basename "$e")"; done
+C46="$(grep -c '^trap _fwd TERM INT HUP$' "$DISPATCH")"
+grep -v '^trap _fwd TERM INT HUP$' "$DISPATCH" > "$MUTD46/dispatch-pr-review.sh"
+if [ "$C46" != 1 ] || [ ! -s "$MUTD46/dispatch-pr-review.sh" ] || cmp -s "$DISPATCH" "$MUTD46/dispatch-pr-review.sh" \
+   || ! bash -n "$MUTD46/dispatch-pr-review.sh" 2>/dev/null; then
+  no "drain TERM-forward mutant not built (trap lines=$C46)"
+else
+  drain_reap_run "$MUTD46/dispatch-pr-review.sh"
+  DQ_ALIVE=0; [ -n "$DQ_PID" ] && kill -0 "$DQ_PID" 2>/dev/null && DQ_ALIVE=1
+  if [ -n "$DQ_PID" ] && { [ "$DQ_ALIVE" -eq 1 ] || [ "$DQ_EXIT" != "exit wt=present lock=present" ]; }; then
+    ok "MUTATION: the TERM pass-on deleted ⇒ the reaped wrapper's runner is orphaned (the leg goes red)"
+  else
+    no "MUTATION did not discriminate (pid='$DQ_PID' alive=$DQ_ALIVE exit_line='$DQ_EXIT')"
+  fi
+  dq_kill
+  rm -rf "$(dirname "$FX_REPO")"
+fi
+rm -rf "$MUTD46"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

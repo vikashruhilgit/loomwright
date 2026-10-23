@@ -8,7 +8,8 @@
 #        (a purpose full of quotes / `$( )` survives verbatim and runs nothing); relative paths made
 #        absolute; registering the same process twice keeps one entry; the same pid with a different
 #        start time (a PATH-stub `ps`) is a NEW entry and the old file is byte-identical.
-#   AC2  --expect waits for a not-yet-exec'd command line (the entry then classifies running); a
+#   AC2  --expect waits for a not-yet-exec'd command line (the entry then classifies running), also past
+#        a `nohup` / `env` launcher stage whose line already carries the substring; a
 #        never-matching --expect still writes, prints one stderr line, and is bounded (< 6 s).
 #   AC3  fail-safe: unwritable dir, jq missing, dead pid, merge-watch without --max-lifetime, bad
 #        arguments — exit 0, exactly one `register failed — <reason>` stderr line, nothing written.
@@ -17,7 +18,8 @@
 #        over orphaned; exit 0; the registry is unchanged by list.
 #   AC5  reap without --apply: every class present, no signal, registry checksum unchanged.
 #   AC6  reap --apply: overdue + orphaned stopped and removed, finished pruned, running untouched, one
-#        reap.log line per processed entry; a TERM-ignoring process is KILLed; a process that execs a
+#        reap.log line per processed entry; a TERM-ignoring process is KILLed; for a wrapper kind the
+#        wrapper's TERM-ignoring child is KILLed too (a non-wrapper kind's child is not); a process that execs a
 #        different command during the grace is NOT KILLed (the re-check); named ids only; an unknown id
 #        is skipped; a malformed id is a usage error; reap.log keeps its last 1000 lines.
 #   AC7  a recycled pid (alive, different command line) is finished and survives reap --apply.
@@ -31,7 +33,8 @@
 #   deleted (AC7), the --apply gate deleted (AC5), the ## Status read deleted (AC4), the age compare
 #   flipped (AC4), the hermetic branch deleted (AC8), the HERMETIC_SHIM_DIR check deleted (AC8), the id
 #   from the pid alone (AC1), register's failure path exiting 1 (AC3), the re-check before KILL
-#   deleted (AC6), the reap filter widened to running (AC6).
+#   deleted (AC6), the reap filter widened to running (AC6), the wrapper-kind child KILL deleted (AC6),
+#   the --expect launcher-stage check deleted (AC2).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -190,7 +193,7 @@ leg_id() {
 
 # ==== AC2 — --expect ===================================================================================
 leg_expect() {
-  local p t0 el
+  local p t0 el a
   new_reg
   # the pre-exec command line (`bash -c … exec "$0" 3002 sleep`) does NOT contain `sleep 3002`; the
   # exec'd one is exactly `sleep 3002` — a real not-yet-exec'd window, like a nohup before its exec
@@ -203,6 +206,16 @@ leg_expect() {
   reg --pid "$p" --kind postmortem --purpose no-expect 2>/dev/null
   WAIT_LIB_WHAT="pid $p to exec sleep 3005" wait_for_cmd 10 cmd_is "$p" 'sleep 3005'
   check "AC2 (control) without --expect the pre-exec hash reads finished" is_class "$p" finished
+  # a launcher stage whose line ALREADY contains the substring (`nohup …` / `/usr/bin/env …`, argv[0] set by
+  # `exec -a`): --expect alone would match it at once; register waits until the line has exec'd past it
+  for a in nohup /usr/bin/env; do
+    spawn bash -c 'exec -a "$0" bash -c "sleep 1.5; exec sleep 3004"' "$a"; p=$SP
+    WAIT_LIB_WHAT="pid $p to show its $a stage" wait_for_cmd 5 eval 'has "$(ps -ww -o command= -p "$p" 2>/dev/null)" "$a -c"'
+    reg --pid "$p" --kind postmortem --purpose "launcher $a" --expect 'sleep 3004' 2>"$ERR"
+    WAIT_LIB_WHAT="pid $p to exec sleep 3004" wait_for_cmd 10 cmd_is "$p" 'sleep 3004'
+    check "AC2 --expect waits past a '$a' launcher stage that already carries the substring" eval '[ -z "$(cat "$ERR")" ] && is_class "$p" running'
+    fix_kill "$p"; rm -f "$(efile "$p")"
+  done
   sleeper; p=$SP
   t0="$(date +%s)"
   reg --pid "$p" --kind postmortem --purpose never --expect 'no-such-substring-xyz' 2>"$ERR"
@@ -381,6 +394,35 @@ leg_recheck_kill() {
   leg_end
 }
 
+# child_of <pid> — the first live direct child of <pid> (empty when none)
+child_of() { ps -A -o pid= -o ppid= -o stat= 2>/dev/null | awk -v p="$1" '$2 == p && $3 !~ /^Z/ { print $1; exit }'; }
+# WRAPPER KINDS: a wrapper of the contract's shape (TERM passed on to a background child, waits while it
+# lives) whose child IGNORES TERM — so only reap's KILL leg can end it, and a wrapper cannot pass a KILL on
+WRAP_FIXTURE='bash -c "trap \"\" TERM; while :; do sleep 0.1; done" & c=$!; trap "kill -TERM $c 2>/dev/null" TERM; : > "$1"; while kill -0 "$c" 2>/dev/null; do wait "$c"; done'
+leg_wrapper_kill() {
+  local p c out
+  new_reg
+  ready_fixture "$WRAP_FIXTURE"; p=$SP
+  WAIT_LIB_WHAT="wrapper $p to start its child" wait_for_cmd 5 eval '[ -n "$(child_of "$p")" ]'
+  c="$(child_of "$p")"; [ -n "$c" ] && { env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$c" > "$FIXDIR/$c" 2>/dev/null; LEG_PIDS="$LEG_PIDS $c"; }
+  reg --pid "$p" --kind lane --purpose wrapper --max-lifetime 1 --grace 1 2>/dev/null
+  wait_overdue "$p"
+  out="$(bash "$S" reap --apply 2>/dev/null)"
+  WAIT_LIB_WHAT="wrapper $p and child $c to be gone" wait_for_cmd 10 eval 'gone "$p" && gone "$c"'
+  check "AC6 wrapper kind: reap KILLs the wrapper's TERM-ignoring child (never orphaned)" eval '[ -n "$c" ] && gone "$c"'
+  check "AC6 ... the wrapper then exits by itself and the entry is removed" eval 'gone "$p" && [ "$(njson)" = 0 ] && has "$out" "KILLed 1 child process(es) of the wrapper"'
+  # control: the same shape registered as a NON-wrapper kind — reap KILLs the pid alone, the child survives
+  ready_fixture "$WRAP_FIXTURE"; p=$SP
+  WAIT_LIB_WHAT="wrapper $p to start its child" wait_for_cmd 5 eval '[ -n "$(child_of "$p")" ]'
+  c="$(child_of "$p")"; [ -n "$c" ] && { env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$c" > "$FIXDIR/$c" 2>/dev/null; LEG_PIDS="$LEG_PIDS $c"; }
+  reg --pid "$p" --kind postmortem --purpose plain --max-lifetime 1 --grace 1 2>/dev/null
+  wait_overdue "$p"
+  bash "$S" reap --apply >/dev/null 2>&1
+  WAIT_LIB_WHAT="pid $p to be gone" wait_for_cmd 10 gone "$p"
+  check "AC6 (control) a non-wrapper kind's child is not signalled by reap" eval '[ -n "$c" ] && alive "$c"'
+  leg_end
+}
+
 leg_apply_more() {
   local p a b ida idb repo="$WORK/repo-am-$RANDOM" rc out i
   new_reg
@@ -508,7 +550,7 @@ leg_header() {
 # ==== run the legs against the real script =============================================================
 echo "== proc-registry.sh =="
 for leg in leg_keys leg_id leg_expect leg_failsafe leg_status_done leg_overdue_vs_running leg_classes \
-           leg_dryrun leg_apply_classes leg_recheck_kill leg_apply_more leg_recycled leg_hermetic \
+           leg_dryrun leg_apply_classes leg_recheck_kill leg_wrapper_kill leg_apply_more leg_recycled leg_hermetic \
            leg_hermetic_empty leg_default_location leg_header; do
   LEG_FAIL=0; S="$SUT_REAL"; "$leg"
 done
@@ -562,6 +604,10 @@ mk_mutant exit1 sub '"$PR_ME" "$1" >&2; }' '"$PR_ME" "$1" >&2; exit 1; }'
 run_mutant "AC3 register failure path exits 1" leg_failsafe
 mk_mutant recheck del '|| nokill="$PR_WHY"'
 run_mutant "AC6 re-check before KILL deleted" leg_recheck_kill
+mk_mutant kidkill del 'for k in $kids; do kill -KILL "$k"'
+run_mutant "AC6 wrapper kind's child KILL deleted" leg_wrapper_kill
+mk_mutant preexec sub '_pr_pre_exec "$cmd" || { matched=1; break; }' '{ matched=1; break; }'
+run_mutant "AC2 --expect exec-past-launcher check deleted" leg_expect
 mk_mutant widen sub 'overdue|orphaned) _pr_stop "$f" ;;' 'overdue|orphaned|running) _pr_stop "$f" ;;'
 run_mutant "AC6 reap filter widened to running" leg_apply_classes
 

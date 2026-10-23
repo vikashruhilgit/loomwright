@@ -125,19 +125,6 @@ _lanes_await_init() {
   done
   printf '%s' "$s"
 }
-# _lanes_past_nohup <pid> — the process registry's exec wait (af/39e): returns once <pid>'s command line no longer
-# starts with `nohup` (its line already carries the wrapper's own arguments, so lanes_proc_alive — and an --expect
-# substring — can match it a moment before the exec), bounded at about 2.5 s. Not a liveness check: the
-# registration that follows it is fail-safe either way (proc-registry.sh's header is the contract).
-_lanes_past_nohup() {
-  local i=0 w
-  while [ "$i" -lt 25 ]; do
-    w="$(ps -ww -o command= -p "$1" 2>/dev/null)"; w="${w%% *}"
-    case "$w" in nohup|*/nohup) ;; *) return 0 ;; esac
-    sleep 0.1; i=$((i + 1))
-  done
-  return 0
-}
 _lanes_spawn() {
   local prompt="$1" sid="$2" label="$3" in pid st off i s=""
   _lanes_claude_flags "$LN_DIR"
@@ -169,8 +156,8 @@ _lanes_spawn() {
   while [ "$i" -lt 25 ] && kill -0 "$pid" 2>/dev/null && ! lanes_proc_alive "$pid" "$st" "$LN_DIR"; do sleep 0.1; i=$((i + 1)); done
   _lanes_launch_unlock
   # process registry (af/39e): the user-scope registry only — never a write into the lane directory; fail-safe and
-  # fully redirected, so it can never change the launch (the 24h lane cap is proc-registry.sh's, never a number here)
-  _lanes_past_nohup "$pid"
+  # fully redirected, so it can never change the launch (the 24h lane cap is proc-registry.sh's, never a number here);
+  # its --expect waits past nohup's exec itself. The _lane-run wrapper is a WRAPPER KIND (proc-registry.sh header)
   bash "$HERE/proc-registry.sh" register --pid "$pid" --kind lane --purpose "lane $LN_LANE of $LN_PARENT $label" --lane "$LN_DIR" --run-id "$LN_RUN" --expect "_lane-run $LN_DIR " --stop-hint "kill -TERM $pid (the _lane-run wrapper TERMs its headless session)" </dev/null >/dev/null 2>&1 || true
   s="$(_lanes_await_init "$LN_LOG" "$off" "$pid")"
   [ -n "$s" ] && _lt_set "$LN_TABLE" "$LN_LANE" 7 "$s"

@@ -979,12 +979,25 @@ trap_cleanup() {
   fi
 }
 trap trap_cleanup EXIT
+# WRAPPER KIND (proc-registry.sh header): the runner runs in the BACKGROUND and a TERM/INT/HUP to
+# this wrapper (a reap, or the stop hint below) is passed on to it; the wrapper then keeps waiting
+# while the runner lives, so trap_cleanup (salvage, worktree removal, lock release LAST) never runs
+# under a live runner. A signal that lands before the runner exists is remembered (_term) and the
+# runner is then never started, or is TERMed the moment its pid is known. A normal run is
+# unchanged: wait returns the runner exit status, exactly what the foreground call returned.
+_cp=""; _term=""
+_fwd() { _term=1; [ -z "$_cp" ] || kill -TERM "$_cp" 2>/dev/null; }
+trap _fwd TERM INT HUP
 # Process registry (af/39e): this wrapper registers its own pid, fail-safe and fully redirected, BEFORE the
 # runner launches and never inside trap_cleanup; a registry failure changes nothing about the drain.
 [ -n "$_reg" ] && bash "$_reg" register --pid "$$" --kind drain --purpose "review drain for $_pr" --repo "$_mg" --session-id "$_sid" --stop-hint "kill -TERM $$ (the review-drain wrapper of $_pr; worktree $_wt, lock $_lock)" </dev/null >/dev/null 2>&1 || true
 cd "$_wt" || exit 0
-"$_bin" -p --permission-mode "$_pmode" --allowedTools "$_atools" --disallowedTools "$_dtools" --agent "$_runner" --session-id "$_sid" "$_pr" >>"$_log" 2>&1 </dev/null
-_exit_code=$?
+[ -z "$_term" ] || { _exit_code=143; exit 143; }
+"$_bin" -p --permission-mode "$_pmode" --allowedTools "$_atools" --disallowedTools "$_dtools" --agent "$_runner" --session-id "$_sid" "$_pr" >>"$_log" 2>&1 </dev/null &
+_cp=$!
+[ -z "$_term" ] || kill -TERM "$_cp" 2>/dev/null
+wait "$_cp"; _exit_code=$?
+while kill -0 "$_cp" 2>/dev/null; do wait "$_cp"; _exit_code=$?; done
 exit "$_exit_code"
 '
 # Guard pre-arm (six-phase-loop-gaps/02): write the marker in the SIBLING
