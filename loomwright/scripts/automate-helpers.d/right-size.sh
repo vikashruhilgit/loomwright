@@ -358,6 +358,9 @@ _rsz_dirname() {
 
 # _rsz_pool_init — once per run (first small item): the candidate pool ($_RSZ_TMP/pool:
 # `<abs>\t<display>`, set files pool.<k>) and the dependency edges ($_RSZ_TMP/edges).
+# ORDERING CONTRACT: pool.<k> belongs to the k-th row of pool only by position — _rsz_pool_build
+# and _rsz_candidates both walk pool in file order with one shared counter k. Nothing may sort,
+# filter or rewrite pool between the build and the candidate pass, or pool.<k> desyncs from its row.
 _RSZ_POOL=0
 _rsz_pool_init() {
   [ "$_RSZ_POOL" = 0 ] || return 0
@@ -385,7 +388,8 @@ _rsz_pool_build() {
 }
 
 # _rsz_candidates <item abs> <item set> — prints the ranked, capped candidate rows
-# `<shared>\t<chain 0|1>\t<folder 0|1>\t<display>`.
+# `<shared>\t<chain 0|1>\t<folder 0|1>\t<display>`. It reads pool.<k> by row position (the
+# ordering contract at _rsz_pool_init): k advances on EVERY row, skipped rows included.
 _rsz_candidates() {
   local abs="$1" set="$2" f d k=0 sh fo ch cy qx tab
   tab="$(printf '\t')"

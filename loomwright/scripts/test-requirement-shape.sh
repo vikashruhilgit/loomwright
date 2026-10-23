@@ -133,7 +133,7 @@ fi
 # (S5) size check. skill_size_ok <skill.md> — 0 when "count by hand" is absent and the skill names
 # the right-size call and the aim sentence; prints the reason otherwise.
 RS_SKILL='`automate-helpers.sh right-size <item>`'
-RS_PO='automate-helpers.sh" right-size <each persisted file>`'
+RS_PO="the same script's \`right-size <each persisted file>\`"
 RS_AIM="small enough to review in one PR, large enough to pay the run's fixed cost; when two stories touch the same files, prefer one story with parts"
 LINT_PO='plan-waves <each persisted file> --lint`'
 skill_size_ok() {

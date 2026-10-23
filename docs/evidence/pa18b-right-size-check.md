@@ -69,5 +69,7 @@ Each test ran once on the finished branch. The counts are taken from each test's
 | `bash scripts/check-prompt-history-refs.sh` | pass (no runtime prompt above its baseline) |
 | `bash scripts/check-version-bump.sh` | pass (`bumped 17.14.1 -> 17.15.0 (minor); the entry is the fold of: pa18b-right-size-check.md salvage-drain-records.md`) |
 
+Note: the in-lane `17.15.0` bump recorded in the `check-version-bump.sh` row above was later reverted (commit 5fa0da4); the PR now carries fragments only (`check-version-bump.sh`: not bumped, 2 fragments pending — legal).
+
 The four pass/fail gates print no per-check count, so they are recorded as pass. The full
 `scripts/ci-local.sh` runs on GitHub CI.
