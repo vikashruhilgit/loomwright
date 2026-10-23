@@ -95,15 +95,26 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 S="$HERE/automate-lanes.sh"
-T="$(cd "$(mktemp -d)" && pwd -P)"
+# A failed mktemp must stop the suite: `cd ""` succeeds, so the old one-liner set T to the CWD.
+T="$(mktemp -d)" && T="$(cd "$T" && pwd -P)" && [ -n "$T" ] && [ -d "$T" ] || { echo "FAIL - mktemp -d failed"; exit 1; }
 BG_PIDS=""
 # ere <text> — <text> as a literal extended regex (pgrep / pkill -f take an ERE: an unescaped `+` in
 # `tail -n +1` means "one or more spaces", so the literal never matched — parallel-automate/24 F12).
 ere() { printf '%s' "$1" | sed 's/[][\.*^$+?(){}|]/\\&/g'; }
+# tal_pgrep <path> <ere-before> [<ere-after>] — `pgrep -f` on <ere-before><path, literal><ere-after>: the ONE
+# way this suite and its test-automate-lanes.d/ parts find a process by name, so every kill it feeds stays
+# inside the suite. <path> must be $T or under it, and $T an existing absolute dir; anything else prints
+# nothing and returns 2. An empty $T once made `pgrep -f "_lane-run $T"` read `_lane-run ` and SIGTERM
+# every live /automate lane on the machine (test-automate-lanes-standalone.sh pins this).
+tal_pgrep() {
+  case "${T:-}" in /?*) [ -d "$T" ] || return 2 ;; *) return 2 ;; esac
+  case "${1:-}" in "$T"|"$T"/*) ;; *) return 2 ;; esac
+  pgrep -f "${2-}$(ere "$1")${3-}" 2>/dev/null
+}
 cleanup() {
   local p
-  for p in $BG_PIDS $(pgrep -f "_lane-run $T" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
-  pkill -TERM -f "$(ere "$T")" 2>/dev/null   # safety net only — the AA-F12z leg is the assertion
+  for p in $BG_PIDS $(tal_pgrep "$T" "_lane-run "); do kill -TERM "$p" 2>/dev/null; done
+  for p in $(tal_pgrep "$T" ""); do kill -TERM "$p" 2>/dev/null; done   # safety net only — the AA-F12z leg is the assertion
   rm -rf "$T"
 }
 trap cleanup EXIT
@@ -224,13 +235,15 @@ run() { bash "$S" "$@" 2>&1; }
 claude_calls() { grep -c '^ARGS' "$STUB_LOG" | tr -d ' '; }
 tcol() { awk -F'\t' -v l="$1" -v c="$2" '$1 == l { print $c }' "$TABLE"; }
 lane_sum() { (cd "$1" && find . -path ./.git -prune -o -type f -print | env LC_ALL=C sort | while IFS= read -r f; do cksum "$f"; done) | cksum; }
-wait_gone() { local i=0; while pgrep -f "_lane-run $1 " >/dev/null 2>&1 && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
+wait_gone() { local i=0; while tal_pgrep "$1" "_lane-run " " " >/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; }
 
 # ---- test parts (automate-speed/19) --------------------------------------------------------------------
 # Every test leg (groups A … AL, then the closing Z1 / AA-F12z legs) lives in test-automate-lanes.d/<part>.sh,
 # moved verbatim and in order. Each part is sourced here at TOP LEVEL (never inside a function: every
 # variable, helper and `$?` flows from one part into the next exactly as in one file), by name — never a
 # glob. A missing or unreadable part is a FAIL, never a silently shorter run.
+# Each part's first line refuses to run unless tal_pgrep is defined and $T is an existing dir, i.e.
+# unless it was sourced from here: run on its own, $T is empty and its kills would match outside the suite.
 tal_part() { [ -r "$HERE/test-automate-lanes.d/$1.sh" ] || { bad "test part missing or unreadable: test-automate-lanes.d/$1.sh"; return 1; }; }
 tal_part 01-create-to-wait && . "$HERE/test-automate-lanes.d/01-create-to-wait.sh"
 tal_part 02-readiness-to-convert && . "$HERE/test-automate-lanes.d/02-readiness-to-convert.sh"

@@ -1,3 +1,4 @@
+declare -F tal_pgrep >/dev/null && [ -n "${T:-}" ] && [ -d "$T" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-lanes.sh, never standalone (its kills need the suite's \$T)" >&2; exit 2; }
 # af/39e: every lane / phase launch registers in proc-registry.sh — the suite's own registry under $T (sourced at
 # top level, so it holds for every later part), never the real home
 export LOOMWRIGHT_PROC_REGISTRY_DIR="$T/procs"

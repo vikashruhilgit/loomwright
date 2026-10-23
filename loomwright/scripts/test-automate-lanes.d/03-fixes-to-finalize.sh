@@ -1,3 +1,4 @@
+declare -F tal_pgrep >/dev/null && [ -n "${T:-}" ] && [ -d "$T" ] || { echo "${BASH_SOURCE[0]##*/}: run via test-automate-lanes.sh, never standalone (its kills need the suite's \$T)" >&2; exit 2; }
 # ---- Z: Validation 4/5 fixes (parallel-automate/23) ---------------------------------------------------
 # Each leg fails against the pre-fix lane code at 91adff5 (identical to #426's head 8226dfe) and passes here.
 # Z-F5 lane-readiness writes its report when the Validation names no repro (empty erows / vrows)
@@ -234,7 +235,8 @@ has "Z-F11j the parent run file records the abandon with the real state" "$(cat 
 # ---- AA: Validation 4/5 fixes B (parallel-automate/24) ------------------------------------------------
 # Each leg fails against the pre-fix code at 9a65ecb and passes here.
 # AA-F12 lane-feed --follow: signalling the lane-feed process ALONE leaves no tail | grep | jq behind.
-AA_TAIL="tail -n \\+1 -f $(ere "$LR2/L6.stream.log")"
+# aa_tail — pids of the lane-feed tail on L6's stream log, by the ERE-escaped pattern (`\+`, never a bare `+`)
+aa_tail() { tal_pgrep "$LR2/L6.stream.log" 'tail -n \+1 -f '; }
 aa_feed() { # <signal> — prints "<seen|unseen> <none|survivor>"; kills any survivor afterwards
   local sig="$1" fp i=0 seen=unseen
   # An async child starts with SIGINT ignored, and a suite launched under `nohup` (a detached
@@ -244,13 +246,13 @@ aa_feed() { # <signal> — prints "<seen|unseen> <none|survivor>"; kills any sur
   python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); signal.signal(signal.SIGHUP, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
     bash "$S" lane-feed "$L6" --follow > "$T/aa-follow.$sig" 2>&1 & fp=$!
   # Clock-bounded (wait-lib), not count-bounded: AA-F12b went red under a loaded pool (iq02 T07).
-  wait_for_cmd 15 pgrep -f "$AA_TAIL" 2>/dev/null && seen=seen
+  wait_for_cmd 15 aa_tail 2>/dev/null && seen=seen
   sleep 0.3; kill -"$sig" "$fp" 2>/dev/null   # fixed-sleep-ok: settle — the pipeline's traps installed before the signal (too short ⇒ a different, earlier-kill path is tested)
   wait_for_pid_gone "$fp" 10 2>/dev/null
   kill -KILL "$fp" 2>/dev/null; wait "$fp" 2>/dev/null   # bounded: a lane-feed that ignores the signal never hangs the suite
-  _aa_no_tail() { ! pgrep -f "$AA_TAIL" >/dev/null 2>&1; }
+  _aa_no_tail() { ! aa_tail >/dev/null; }
   wait_for_cmd 10 _aa_no_tail 2>/dev/null
-  if pgrep -f "$AA_TAIL" >/dev/null 2>&1; then echo "$seen survivor"; pkill -TERM -f "$AA_TAIL" 2>/dev/null; else echo "$seen none"; fi
+  if aa_tail >/dev/null; then echo "$seen survivor"; for i in $(aa_tail); do kill -TERM "$i" 2>/dev/null; done; else echo "$seen none"; fi
 }
 check "AA-F12a TERM to lane-feed --follow alone ⇒ its tail pipeline is gone (and the escaped pattern did see it)" "$(aa_feed TERM)" "seen none"
 check "AA-F12b HUP ⇒ the same" "$(aa_feed HUP)" "seen none"
@@ -259,10 +261,10 @@ has "AA-F12d the follow still narrates" "$(cat "$T/aa-follow.TERM")" "[spawn] lo
 check "AA-F12e the unescaped pattern T8 used never matched a live tail (the root cause, not the path)" \
   "$(bash "$S" lane-feed "$L6" --follow >/dev/null 2>&1 & fp=$!
      # first prove the tail IS up (the escaped pattern sees it), so `unmatched` cannot pass on a slow start
-     if wait_for_cmd 15 pgrep -f "$AA_TAIL" 2>/dev/null; then
-       pgrep -f "tail -n +1 -f $LR2/L6.stream.log" >/dev/null 2>&1 && echo matched || echo unmatched
+     if wait_for_cmd 15 aa_tail 2>/dev/null; then
+       pgrep -f "tail -n +1 -f $LR2/L6.stream.log" >/dev/null 2>&1 && echo matched || echo unmatched   # raw-pgrep-ok: read-only, the unescaped form is the subject
      else echo "tail-never-up"; fi
-     kill "$fp" 2>/dev/null; wait "$fp" 2>/dev/null; pkill -TERM -f "$AA_TAIL" 2>/dev/null)" unmatched
+     kill "$fp" 2>/dev/null; wait "$fp" 2>/dev/null; for p in $(aa_tail); do kill -TERM "$p" 2>/dev/null; done)" unmatched
 
 # AA fixture: one lane (L1) of a fresh parent run, its run file at the ready_for_release park.
 PARENT6=automate-2026-10-08-110000; RF6="$P/.supervisor/automate/$PARENT6.md"; LR6="$T/work/primary-lanes/$PARENT6"
