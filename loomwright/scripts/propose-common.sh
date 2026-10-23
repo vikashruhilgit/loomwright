@@ -58,7 +58,9 @@ set -uo pipefail
 
 # pc_guarded_write <out_dir_abs> <self_name> <plain-file-name> - the SINGLE enforcement point for
 # every basis that sources this file. Content arrives on stdin. Returns 0 on a successful write,
-# 1 (with the reason named on stderr) on any refusal.
+# 1 (with the reason named on stderr) on any refusal. After a successful write it prints the
+# advisory right-size line on stderr (pc_size_line, below) - never on stdout, never changing the
+# return code.
 #
 # Deliberately the ONLY sanitisation a caller needs: a second, redundant check at the call site
 # would make THIS guard's own mutation control (in whichever self-test exercises it) vacuous - a
@@ -117,6 +119,36 @@ pc_guarded_write() {
     echo "$pc_self: cannot move the staged candidate into place at $pc_out_dir_abs/$pc_name - skipping this candidate" >&2
     return 1
   }
+  pc_size_line "$pc_out_dir_abs" "$pc_name" >&2
+  return 0
+}
+
+# Resolved once, at source time, so a caller that `cd`s after sourcing still finds the dispatcher.
+_PC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || _PC_DIR=""
+
+# pc_size_line <out_dir_abs> <plain-file-name> - the advisory size line for a draft that
+# pc_guarded_write has JUST written (parallel-automate/18b). Prints the
+# `automate-helpers.sh right-size` verdict line(s) for `<out_dir_abs>/<name>` on its STDOUT, which
+# the ONE call site above sends to stderr - so no caller's stdout (the /propose counts, the
+# dismissed-drafts TSV rows) ever changes. A FAIL-SAFE emitter: always returns 0 and prints nothing
+# when the name is `README.md`, starts with `_` or is not `*.md`; when no directory from
+# <out_dir_abs> upward holds `.supervisor/` (that directory is the `--root`); when the dispatcher
+# is not a sibling of this file (a test's mutant copy elsewhere); or when right-size exits non-zero
+# or prints nothing. right-size's own stderr is dropped and its stdin is /dev/null (a caller
+# looping over a file on stdin keeps its stream). Where a caller captures or drops stderr, the line
+# goes with it: automate-dismissed.sh's dismissed-drafts captures it (`2>&1`) and discards it on
+# success, and dismissed-decide writes with `2>/dev/null`, so neither shows the line.
+pc_size_line() {
+  pc_sz_dir="$1"; pc_sz_name="$2"
+  case "$pc_sz_name" in README.md|_*) return 0 ;; *.md) ;; *) return 0 ;; esac
+  [ -n "$_PC_DIR" ] && [ -f "$_PC_DIR/automate-helpers.sh" ] || return 0
+  pc_sz_root="$pc_sz_dir"
+  while [ ! -d "$pc_sz_root/.supervisor" ]; do
+    case "$pc_sz_root" in /|.|'') return 0 ;; esac
+    pc_sz_root="$(dirname "$pc_sz_root")"
+  done
+  pc_sz_out="$(bash "$_PC_DIR/automate-helpers.sh" right-size "$pc_sz_dir/$pc_sz_name" --root "$pc_sz_root" </dev/null 2>/dev/null)" || return 0
+  [ -n "$pc_sz_out" ] && printf '%s\n' "$pc_sz_out"
   return 0
 }
 

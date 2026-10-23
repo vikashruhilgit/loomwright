@@ -1,7 +1,12 @@
 wave 1: q/01-a.md q/04-d.md
 wave 2: q/02-b.md
 wave 3: q/03-c.md
+explain q/01-a.md (wave 1):
+  small (1 files): run right-size q/01-a.md for merge candidates
+explain q/04-d.md (wave 1):
+  small (2 files): run right-size q/04-d.md for merge candidates
 explain q/02-b.md (wave 2):
   depends on q/01-a.md
+  small (1 files): run right-size q/02-b.md for merge candidates
 explain q/03-c.md (wave 3):
   runs alone: Touches unknown (declared unknown)

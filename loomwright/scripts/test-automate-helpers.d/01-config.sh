@@ -231,3 +231,42 @@ else
 fi
 rm -rf "$WD"
 
+
+# =============================================================================
+echo "== K. right-size threshold readers (parallel-automate/18b: config.sh right_size_small / right_size_large_files / right_size_max_parts) =="
+# k_read <helper> <reader> <root> — the reader's output, called in a shell that sourced the bundle (no
+# positional args, so the bundle's own main only prints --help, which is discarded).
+k_read() { K_R="$2" K_ROOT="$3" bash -c '. "$0" >/dev/null 2>&1; "$K_R" "$K_ROOT"' "$1" 2>/dev/null; }
+k_all() { printf '%s %s %s' "$(k_read "$1" right_size_small "$2")" "$(k_read "$1" right_size_large_files "$2")" "$(k_read "$1" right_size_max_parts "$2")"; }
+KD="$(mktemp -d)"; mkdir -p "$KD/.supervisor"
+# K1 absent file ⇒ the three defaults
+if [ "$(k_all "$H" "$KD")" = "3 30 7" ]; then ok "K1 no config.json ⇒ defaults 3 / 30 / 7"; else no "K1 defaults wrong: '$(k_all "$H" "$KD")'"; fi
+# K2 valid values are read; 0 is a valid non-negative integer
+printf '{"right_size_small": 5, "right_size_large_files": 40, "right_size_max_parts": 0}\n' > "$KD/.supervisor/config.json"
+if [ "$(k_all "$H" "$KD")" = "5 40 0" ]; then ok "K2 valid keys read (5 / 40 / 0)"; else no "K2 valid keys wrong: '$(k_all "$H" "$KD")'"; fi
+# K3 malformed file / non-object / absent key / null ⇒ defaults, exit 0
+K3_BAD=""
+for v in '{ not json' '[5]' '"5"' '{"other": 1}' '{"right_size_small": null, "right_size_large_files": null, "right_size_max_parts": null}'; do
+  printf '%s\n' "$v" > "$KD/.supervisor/config.json"
+  [ "$(k_all "$H" "$KD")" = "3 30 7" ] || K3_BAD="$K3_BAD [$v]"
+done
+if [ -z "$K3_BAD" ]; then ok "K3 malformed / non-object / absent key / null ⇒ defaults, never an abort"; else no "K3 not defaulted:$K3_BAD"; fi
+# K4 non-integer, negative, string, boolean, oversized ⇒ that key's default
+K4_BAD=""
+for v in '4.5' '-1' '"5"' 'true' '1e30' '12345678901'; do
+  printf '{"right_size_small": %s, "right_size_large_files": %s, "right_size_max_parts": %s}\n' "$v" "$v" "$v" > "$KD/.supervisor/config.json"
+  [ "$(k_all "$H" "$KD")" = "3 30 7" ] || K4_BAD="$K4_BAD [$v ⇒ $(k_all "$H" "$KD")]"
+done
+if [ -z "$K4_BAD" ]; then ok "K4 non-integer / negative / string / boolean / oversized values ⇒ the default"; else no "K4 not defaulted:$K4_BAD"; fi
+# K5 a falsy-but-valid 0 is not collapsed to the default (the has()/null idiom, never `// default`)
+printf '{"right_size_small": 0}\n' > "$KD/.supervisor/config.json"
+if [ "$(k_read "$H" right_size_small "$KD")" = 0 ]; then ok "K5 right_size_small 0 reads 0 (falsy value kept)"; else no "K5 0 collapsed: '$(k_read "$H" right_size_small "$KD")'"; fi
+# K6 mutation control: the right_size_small reader flipped to always return its default ⇒ K2 turns red
+K_MUT="$(dirname "$H")/k-mutant.sh"
+awk '!d && index($0, "right_size_small()       { _cfg_nonneg_int") { d = 1; print "right_size_small()       { echo 3; }"; next } { print }' "$H" > "$K_MUT"
+printf '{"right_size_small": 5}\n' > "$KD/.supervisor/config.json"
+if [ "$(grep -cF 'right_size_small()       { _cfg_nonneg_int' "$H")" = 1 ] && [ -s "$K_MUT" ] && ! cmp -s "$H" "$K_MUT" && bash -n "$K_MUT" 2>/dev/null; then
+  if [ "$(k_read "$K_MUT" right_size_small "$KD")" != 5 ] && [ "$(k_read "$H" right_size_small "$KD")" = 5 ]; then ok "K6 mutant (reader always returns the default) turns K2's read red"
+  else no "K6 mutant did not discriminate"; fi
+else no "K6 mutant not gated (anchor not unique, empty, identical, or bash -n failed)"; fi
+rm -f "$K_MUT"; rm -rf "$KD"

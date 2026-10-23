@@ -100,3 +100,30 @@ config_orig() {
   echo "$v"
 }
 
+# --------------------------------------------------------------------------- #
+# right-size thresholds (parallel-automate/18b) — reader functions only, no subcommand.
+# THE one place the three defaults live (owner decision 2026-10-22; the evidence behind them is in
+# automate-helpers.d/right-size.sh's header). Every other surface names the key and points here.
+# - right_size_small        an item is `small` when its companion-expanded Touches count is <= this (3)
+# - right_size_large_files  an item is `large` when that count is > this (30) ...
+# - right_size_max_parts    ... or when it has more `## Part ` headings than this (7)
+# Read from <root>/.supervisor/config.json. An absent file, a malformed one (not JSON, not an object,
+# several documents), an absent or null key, a non-number, a non-integer, a negative value, or more
+# than 9 digits all read the DEFAULT — never an abort (an advisory verdict must not stop a writer).
+# jq missing reads the default too. The read uses the falsy-safe has()/null idiom of config_orig,
+# never `.key // default`.
+# --------------------------------------------------------------------------- #
+# _cfg_nonneg_int <root> <key> <default> — prints the key's value as a plain non-negative integer.
+_cfg_nonneg_int() {
+  local cfg="$1/.supervisor/config.json" v=""
+  if [ -f "$cfg" ] && command -v "$JQ" >/dev/null 2>&1; then
+    v="$("$JQ" -r --arg k "$2" 'if type == "object" and has($k) and (.[$k] != null) then (.[$k] | if type == "number" then tostring else "not-a-number" end) else "" end' "$cfg" 2>/dev/null)" || v=""
+  fi
+  case "$v" in ""|*[!0-9]*) v="$3" ;; esac
+  [ "${#v}" -le 9 ] || v="$3"
+  printf '%s\n' "$((10#$v))"
+}
+right_size_small()       { _cfg_nonneg_int "${1:-.}" right_size_small 3; }
+right_size_large_files() { _cfg_nonneg_int "${1:-.}" right_size_large_files 30; }
+right_size_max_parts()   { _cfg_nonneg_int "${1:-.}" right_size_max_parts 7; }
+

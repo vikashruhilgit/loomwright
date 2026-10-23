@@ -76,6 +76,10 @@ See [intake.md](intake.md).
 
 See [intake.md](intake.md).
 
+### Size line at intake (every mode)
+
+See [intake.md](intake.md).
+
 ### `--limit N` — caps PROCESSED items, NOT Queue size
 
 See [intake.md](intake.md).
