@@ -83,6 +83,15 @@
 # exist or both be absent (absent only in a fixture tree that predates the contract); one without the
 # other is refused, so the generated copy can never silently fall out of the bump.
 #
+# SCAN REMINDER: a minor or major bump (and its first-bump --dry-run) prints one advisory line,
+# `bump-version: capability baseline last scanned at <X.Y.Z>; run /capability-check`, reading
+# plugin_version_at_last_scan live from loomwright/docs/CAPABILITY_BASELINE.json (never a second
+# copy). It is fail-SAFE: a missing or invalid baseline prints nothing and never changes the exit
+# status. It is printed only after a successful bump's last line or the dry run's entry, never on
+# --check or a --refold no-op; in a re-fold the child bump prints it, so a re-fold --dry-run (which
+# never runs the child bump that resolves the final level) prints none. loomwright/docs/NATIVE_OVERLAP.md
+# records the cadence.
+#
 # HONEST LIMITS of --check: it verifies the bump-owned bytes only — capabilities.json's other keys
 # are build-capabilities.sh --check's job; a fragment folded before it was ever committed has no
 # blob to read back (commit the fragment, then bump); B is origin/main as last fetched.
@@ -101,6 +110,7 @@ MARKETPLACE_JSON=".claude-plugin/marketplace.json"
 CHANGELOG="CHANGELOG.md"
 CAPS_JSON="loomwright/capabilities.json"
 CAPS_GEN="loomwright/scripts/build-capabilities.sh"
+CAP_BASELINE="loomwright/docs/CAPABILITY_BASELINE.json"   # read-only: the scan reminder's source
 FRAG_DIR="changelog.d"
 VALIDATORS="${BUMP_VERSION_VALIDATORS:-scripts/validate-version.sh:scripts/check-doc-currency.sh}"
 # The CHANGELOG entry shape: `**vX.Y.Z — <headline>:** <body>` (the dash is U+2014).
@@ -300,6 +310,16 @@ step_level() { # <from> <to> — the level that turns <from> into <to>; exit 1 w
 }
 
 semver_ok() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+
+# scan_reminder <level> — SCAN REMINDER in the header. Prints nothing below minor, and nothing when
+# the baseline is missing, is not JSON, or has no X.Y.Z plugin_version_at_last_scan; never fails.
+scan_reminder() {
+  local v
+  [ "$(level_rank "$1")" -ge 2 ] || return 0
+  v="$(jq -r '.plugin_version_at_last_scan // empty' "$CAP_BASELINE" 2>/dev/null)" || return 0
+  semver_ok "$v" || return 0
+  echo "bump-version: capability baseline last scanned at $v; run /capability-check"
+}
 
 # ---- the base and the branch's fragment history (--check and the re-fold) -----------------------
 # resolve_base — BASE_SHA = merge-base(HEAD, $base_ref), BASE_VER = its plugin.json version.
@@ -658,6 +678,7 @@ if [ "$dry_run" -eq 1 ]; then
   [ "$caps" -eq 1 ] && echo "  also regenerates: $CAPS_JSON (plugin_version only)"
   echo "  CHANGELOG entry:"
   printf '%s\n' "$entry"
+  scan_reminder "$level"
   exit 0
 fi
 
@@ -745,4 +766,5 @@ phase="done"
 echo "bump-version: bumped $old_ver -> $new_ver ($level, from $level_src); folded ${#frags[@]} fragment(s): ${frags[*]}"
 caps_note=""; [ "$caps" -eq 1 ] && caps_note=", capabilities.json"
 echo "bump-version: next: review 'git diff', then commit (plugin.json, marketplace.json, CHANGELOG.md${caps_note}, removed fragments); later commits may follow it — bash scripts/bump-version.sh --check verifies the content, and a fragment added later is folded by re-running this script"
+scan_reminder "$level"
 exit 0

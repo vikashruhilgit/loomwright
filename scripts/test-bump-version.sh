@@ -573,6 +573,104 @@ mutant "$TMP/m4" '{ sub(/if \[ "\$old_ver" != "\$BASE_VER" \]; then/, "if false;
 run_bump "$TMP/m4"; [ "$(entries "$TMP/m4")" = "4" ] && [ "$(ver_of "$TMP/m4")" = "1.2.5 1.2.5 1.2.5" ]
 check $? "mutation control: without the re-fold dispatch, a re-run double-bumps (1.2.5, two new entries) — the old behaviour"
 
+# ---- 9f. the capability-scan reminder on a minor / major bump --------------------------------------
+# The reminder reads plugin_version_at_last_scan live from the baseline. make_fixture carries NO
+# baseline, so every case above is also the missing-baseline shape; with_baseline adds one.
+echo "# bump-version.sh capability-scan reminder"
+CB="loomwright/docs/CAPABILITY_BASELINE.json"
+REM='capability baseline last scanned at 1.0.0; run /capability-check'
+with_baseline() { # with_baseline <dir> <file content> — write the fixture baseline and commit it
+  mkdir -p "$1/loomwright/docs" && printf '%s\n' "$2" > "$1/$CB" && g "$1" add -A && g "$1" commit -q -m "capability baseline"
+}
+GOOD_CB='{"schema_version": 1, "baseline_date": "2026-01-01", "plugin_version_at_last_scan": "1.0.0"}'
+rem_count() { grep -cF -- "${1:-$REM}" "$TMP/last.out"; }
+# scan_case <dir> <baseline content | ""> <bump args...> — fixture (+ baseline) + one fragment, then the bump.
+scan_case() {
+  local d="$1" cb="$2"; shift 2
+  make_fixture "$d"; [ -z "$cb" ] || with_baseline "$d" "$cb"; frag "$d" x.md 'X\n'
+  run_bump "$d" "$@"
+}
+
+scan_case "$TMP/s1" "$GOOD_CB" minor; rc=$?
+[ "$rc" -eq 0 ] && [ "$(ver_of "$TMP/s1")" = "1.3.0 1.3.0 1.3.0" ] && [ "$(rem_count)" = "1" ]
+check $? "scan reminder: a minor bump exits 0, bumps, and prints exactly one '$REM' line"
+[ "$(grep -c '^bump-version: capability baseline' "$TMP/last.out")" = "1" ] \
+  && [ "$(sed -n 's/^bump-version: bumped [^ ]* -> \([^ ]*\) .*/\1/p' "$TMP/last.out" | tail -1)" = "1.3.0" ]
+check $? "scan reminder: the line carries the bump-version: prefix, and the wave release step's version parse still reads 1.3.0"
+scan_case "$TMP/s2" "$GOOD_CB" major; rc=$?
+[ "$rc" -eq 0 ] && [ "$(ver_of "$TMP/s2")" = "2.0.0 2.0.0 2.0.0" ] && [ "$(rem_count)" = "1" ]
+check $? "scan reminder: a major bump exits 0, bumps, and prints exactly one reminder line"
+scan_case "$TMP/s3" "$GOOD_CB"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(ver_of "$TMP/s3")" = "1.2.4 1.2.4 1.2.4" ] && [ "$(rem_count 'capability baseline last scanned')" = "0" ]
+check $? "scan reminder: a patch bump (no level, no directive) prints no reminder"
+D="$TMP/s4"; make_fixture "$D"; with_baseline "$D" "$GOOD_CB"; frag "$D" x.md 'X\n'; before="$(tree_sum "$D")"
+run_bump "$D" minor --dry-run; rc=$?
+[ "$rc" -eq 0 ] && [ "$(tree_sum "$D")" = "$before" ] && [ "$(rem_count)" = "1" ]
+check $? "scan reminder: 'minor --dry-run' exits 0, writes nothing, and prints the reminder"
+
+# Fail-SAFE: each unreadable shape exits 0, bumps, and prints neither the line nor jq's stderr.
+scan_safe() { # scan_safe <dir> <baseline content | ""> <label>
+  scan_case "$1" "$2" minor; local rc=$?
+  [ "$rc" -eq 0 ] && [ "$(ver_of "$1")" = "1.3.0 1.3.0 1.3.0" ] && [ "$(rem_count 'capability baseline')" = "0" ] && ! grep -q 'jq:' "$TMP/last.out"
+  check $? "scan reminder fail-SAFE: $3 — minor bump exits 0 and bumps, no reminder, no jq: error text"
+}
+scan_safe "$TMP/s5" "" "(i) no baseline file"
+[ ! -e "$TMP/s5/$CB" ]; check $? "scan reminder fail-SAFE (i) precondition: the fixture has no baseline"
+scan_safe "$TMP/s6" '{"plugin_version_at_last_scan": "1.0.0",' "(ii) invalid JSON"
+scan_safe "$TMP/s7" '{"schema_version": 1}' "(iii) valid JSON, plugin_version_at_last_scan absent"
+scan_safe "$TMP/s7b" '{"plugin_version_at_last_scan": "1.0"}' "(iii) valid JSON, plugin_version_at_last_scan not X.Y.Z"
+
+# --check and the --refold no-op paths never print it; a real re-fold prints it once, before the machine line.
+D="$TMP/s8"; make_branch "$D"; with_baseline "$D" "$GOOD_CB"
+run_check "$D"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(rem_count 'capability baseline')" = "0" ]; check $? "scan reminder: --check (not bumped) prints none"
+run_bump "$D" --refold; rc=$?
+[ "$rc" -eq 0 ] && grep -qF 'this branch carries no bump' "$TMP/last.out" && [ "$(rem_count 'capability baseline')" = "0" ]
+check $? "scan reminder: the --refold no-op on a fragments-only branch prints none"
+bump_commit "$D" minor
+run_check "$D"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(rem_count 'capability baseline')" = "0" ]; check $? "scan reminder: --check (bumped) prints none"
+run_bump "$D" --refold; rc=$?
+[ "$rc" -eq 0 ] && grep -qF 'already folds every fragment' "$TMP/last.out" && [ "$(rem_count 'capability baseline')" = "0" ]
+check $? "scan reminder: the --refold no-op on a current bump prints none"
+frag "$D" b.md 'Late\n'; g "$D" add -A && g "$D" commit -q -m late
+run_bump "$D"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(rem_count)" = "1" ] && [ "$(sed -n 's/^bump-version: refold-touched: //p' "$TMP/last.out" | wc -l | tr -d ' ')" = "1" ] \
+  && grep -q '^bump-version: refold-touched: ' < <(grep '^bump-version: ' "$TMP/last.out" | tail -n 1)
+check $? "scan reminder: a minor re-fold prints it once (the child bump) and refold-touched: stays the last line"
+# A re-fold --dry-run never runs the child bump that resolves the final level, so it prints none.
+D="$TMP/s9"; make_branch "$D"; with_baseline "$D" "$GOOD_CB"; bump_commit "$D" minor
+frag "$D" b.md '<!-- bump: minor -->\nLate\n'; g "$D" add -A && g "$D" commit -q -m late; before="$(tree_sum "$D")"
+run_bump "$D" --dry-run; rc=$?
+[ "$rc" -eq 0 ] && grep -qF 're-fold:' "$TMP/last.out" && [ "$(tree_sum "$D")" = "$before" ] \
+  && [ "$(rem_count 'capability baseline last scanned')" = "0" ]
+check $? "scan reminder: a re-fold --dry-run (minor bump + late minor fragment) exits 0, writes nothing, and prints none"
+
+# Mutation controls: each guard is what its case above catches (the pinned literals in the brief).
+scan_mutant() { # scan_mutant <dir> <awk program> — the fixture's script becomes a mutated copy; 1 if it is unchanged
+  awk "$2" "$BUMP" > "$1/scripts/bump-version.sh"; ! cmp -s "$BUMP" "$1/scripts/bump-version.sh"
+}
+D="$TMP/sm1"; make_fixture "$D"; with_baseline "$D" "$GOOD_CB"; frag "$D" x.md 'X\n'
+scan_mutant "$D" '{ sub(/-ge 2 \] \|\| return 0/, "-ge 4 ] || return 0"); print }' && run_bump "$D" minor && [ "$(rem_count)" = "0" ]
+check $? "mutation control: with the level guard at -ge 4, a minor bump prints no reminder (the minor case would be red)"
+D="$TMP/sm2"; make_fixture "$D"; with_baseline "$D" "$GOOD_CB"; frag "$D" x.md 'X\n'
+scan_mutant "$D" '{ sub(/-ge 2 \] \|\| return 0/, "-ge 1 ] || return 0"); print }' && run_bump "$D" && [ "$(rem_count)" = "1" ]
+check $? "mutation control: with the level guard at -ge 1, a patch bump prints the reminder (the patch case would be red)"
+D="$TMP/sm3"; make_fixture "$D"; with_baseline "$D" '{"schema_version": 1}'; frag "$D" x.md 'X\n'
+scan_mutant "$D" '{ sub(/semver_ok "\$v" \|\| return 0/, ": || return 0"); print }' && run_bump "$D" minor && grep -q 'capability baseline' "$TMP/last.out"
+check $? "mutation control: without the X.Y.Z guard, a baseline lacking the key prints a reminder (case iii would be red)"
+for shape in missing invalid; do
+  D="$TMP/sm4-$shape"; make_fixture "$D"; [ "$shape" = invalid ] && with_baseline "$D" '{"plugin_version_at_last_scan":'; frag "$D" x.md 'X\n'
+  scan_mutant "$D" '{ sub(/"\$CAP_BASELINE" 2>\/dev\/null\)/, "\"$CAP_BASELINE\")"); print }' && run_bump "$D" minor && grep -q 'jq:' "$TMP/last.out"
+  check $? "mutation control: without the stderr guard, the $shape-baseline shape leaks jq: error text (case i / ii would be red)"
+done
+D="$TMP/sm5"; make_fixture "$D"; frag "$D" x.md 'X\n'
+scan_mutant "$D" '{ sub(/2>\/dev\/null\)" \|\| return 0/, "2>/dev/null)\" || exit 1"); print }' && { run_bump "$D" minor; [ "$?" -ne 0 ]; }
+check $? "mutation control: with the jq-line guard exiting 1, a missing baseline fails the bump (case i would be red)"
+D="$TMP/sm6"; make_fixture "$D"; with_baseline "$D" "$GOOD_CB"; frag "$D" x.md 'X\n'
+scan_mutant "$D" 'prev ~ /^  printf .%s\\n. "\$entry"$/ && /^  scan_reminder "\$level"$/ { prev = $0; next } { prev = $0; print }' && run_bump "$D" minor --dry-run && [ "$(rem_count)" = "0" ]
+check $? "mutation control: without the dry-run call, 'minor --dry-run' prints no reminder (the dry-run case would be red)"
+
 # ---- 10. check-doc-currency.sh bump-without-script guard (AC5) ----------------------------------
 echo "# check-doc-currency.sh bump-fragment-guard"
 G="$TMP/guard"; mkdir -p "$G"
