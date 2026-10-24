@@ -3,5 +3,8 @@
 # segment's driver does not own), then the done exit (NEXT_STEP_FROM=terminate).
 pre: queue-checkoff "$RF" .supervisor/requirements/parallel-automate/18-backlog-board-and-right-size.md
 env: NEXT_STEP_FROM=terminate
+# the process registry pinned to an absent dir under the scratch root (both runners), so the done exit's
+# `process registry:` line is the deterministic 0-entry summary whatever registry the suite inherits
+env: LOOMWRIGHT_PROC_REGISTRY_DIR=$ROOT/.procs
 call:
 expect: done
