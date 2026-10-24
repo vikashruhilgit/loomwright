@@ -199,3 +199,9 @@ S2 lane logs (costs above); S3 record `operator-run/S3-stabilization-wave-spike.
 2026-10-05; owner request 2026-10-06: "I don't want to run automate for small requirements — not worth it … do we have
 any check while writing a requirement whether it's good to run the full process?" Answer: no.
 
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-24T03:29:23Z
+- **Brief:** .supervisor/jobs/done/2026-10-22-pa18b-right-size-check.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/675
