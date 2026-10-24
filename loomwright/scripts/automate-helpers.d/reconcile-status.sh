@@ -430,10 +430,13 @@ RS_EV
 # shared predicate _bl_is_conflict only chooses between the `info …\tconflict` row and a silent
 # skip. Every other not-done, in-scope item named by such a row (status-less, `brief-shipped`, an
 # off-enum value) is stamped exactly as before.
+# ONE row per item: under --apply the first stamp makes is_done true for every later row naming the
+# same item; a dry run writes nothing, so it remembers the items it planned (`planned`) and skips a
+# later row for one of them — the plan lists exactly what --apply would stamp.
 _rs_process_abandoned() {
   local root_abs="$1" proj_root="$2" automate_dir="$3" apply="$4"
   [ -d "$automate_dir" ] || return 0
-  local af af_rel line
+  local af af_rel line planned=$'\n'
   for af in "$automate_dir"/*.md; do
     [ -f "$af" ] || continue
     af_rel="${af#"$proj_root"/}"   # repo-relative in every printed row (no home path)
@@ -460,6 +463,8 @@ _rs_process_abandoned() {
             mv -f "$tmp" "$fabs"
             printf 'stamped\t%s\tdone_with_escalation \xe2\x80\x94 ABANDONED\t%s\n' "$reqpath" "$af_rel"
           else
+            case "$planned" in *$'\n'"$reqpath"$'\n'*) continue ;; esac
+            planned="$planned$reqpath"$'\n'
             printf 'plan\t%s\tdone_with_escalation \xe2\x80\x94 ABANDONED\t%s\n' "$reqpath" "$af_rel"
           fi
           ;;

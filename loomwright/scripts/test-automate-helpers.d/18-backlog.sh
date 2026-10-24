@@ -371,4 +371,13 @@ BL_B10="$(bl_sum "$T0")"
 bl_run "$H" backlog --root "$T0"; bl_run "$H" backlog --json --root "$T0"; bl_run "$H" item-state bl/03-parked --root "$T0"
 bl_is "BL10 item-state and backlog wrote nothing under the tree" "$(bl_sum "$T0")" "$BL_B10"
 bl_is "BL10 no printed row carries an absolute path" "$(grep -c "$BL" <<<"$BL_DOC")" "0"
+
+# ---- BL11 lanes.tsv gets the same separator scrub as merged.tsv / open.tsv: a lane-status field
+# carrying a raw \037 (the prep awk's own field separator) reads as a space, never a field split.
+mkdir -p "$BL/fixus/gh"; cp "$BL_FIX/gh/merged.json" "$BL_FIX/gh/open.json" "$BL/fixus/gh/"
+jq '(.lanes[] | select(.item | test("bl/10-lane")) | .state) |= "run\u001fning"' "$BL_FIX/lane-status.json" > "$BL/fixus/lane-status.json"
+bl_us() { BL_FIXDIR_OVR="$BL/fixus" bl_run "$1" item-state bl/10-lane --root "$T0"; printf '%s' "$BL_OUT"; }
+bl_is "BL11 a \\037 in a lane-status field is scrubbed to a space (the lane claim still reads whole)" \
+  "$(bl_us "$H")" "in_flight	bl/10-lane	lane L2 (run ning) from lane-status"
+bl_mut_check "lanes.tsv scrub removed" '  "$JQ" -r '"'"'def scrub: tostring | gsub(' '  "$JQ" -r '"'"'def scrub: tostring;' bl_us "in_flight	bl/10-lane	lane L2 (run ning) from lane-status"
 rm -rf "$BL"
