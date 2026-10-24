@@ -35,7 +35,7 @@ For each `- [ ]` Queue item (top-down, single-open-PR invariant permitting — �
 
 Both exits are written by the driver's `terminate` step (§6 step 6).
 
-On the **`## Status: done`** exit ONLY, the loop runs `trail-pr --reason done`, then appends ONE `<ts> sweep (dry run): <summary line>` line (the last line of `automate-helpers.sh sweep` — a DRY run, never `--apply` unattended; none ⇒ `sweep: summary — skipped: no output`), and only then `run-lock.sh release`; the `limit_reached` exit is a park and releases the lock without a trail.
+On the **`## Status: done`** exit ONLY, the loop runs `trail-pr --reason done`, then appends ONE `<ts> process registry: <summary line>` line (the line `proc-registry.sh summary` prints; none ⇒ `proc-registry: summary — skipped: no output`), then ONE `<ts> sweep (dry run): <summary line>` line (the last line of `automate-helpers.sh sweep` — a DRY run, never `--apply` unattended; none ⇒ `sweep: summary — skipped: no output`), and only then `run-lock.sh release`; the `limit_reached` exit is a park and releases the lock without a trail.
 
 Every park (`awaiting_merge`, `ready_for_release`, `escalated`, `rate_limit`, `drain_died`, `trail_pr_open`, …) also stops the loop with its `pause_reason`. All `/autonomous` correctness gates still bubble up (NO-GO, Plan Review FAIL×3, adjudication, rubric gate); `--notify`, `--non-interactive-fallback` and `--cheap` pass through to the inner `/autonomous` (§11).
 
