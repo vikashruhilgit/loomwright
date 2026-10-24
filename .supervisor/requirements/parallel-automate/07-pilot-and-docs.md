@@ -169,3 +169,9 @@ Parked until item 06 has merged.
 - **Amended 2026-10-07 (owner, relayed by S3 session 2216aefd): pa/07 really runs last.** Milestone B is "pa/07 last, so the
   pilot exercises pa/12–14 and the docs cover them", but `## Depends on` named only 21, so the planner could have
   placed it before 14 / af/34 / af/36 / 18. All four added; the status line re-pointed (06 is parked inside 21).
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-24T03:30:14Z
+- **Brief:** .supervisor/jobs/done/2026-10-22-pa07-pilot-report-and-docs.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/673
