@@ -597,13 +597,10 @@ def score_code_review(parsed):
         return sum(1 for i in parsed if i["severity"] == sev and i["category"] == cat)
 
     new_blocking, new_high = n("BLOCKING", "new"), n("HIGH", "new")
-    new_medium, new_low = n("MEDIUM", "new"), n("LOW", "new")
     drift_total = sum(1 for i in parsed if i["category"] == "drift")
 
     if decision == "PASS" and new_blocking == 0 and new_high == 0:
         base = 9.0
-    elif decision == "PASS" and (new_medium > 0 or new_low > 0) and new_blocking == 0 and new_high == 0:
-        base = 7.0
     elif decision == "NEEDS_HUMAN":
         base = 4.0
     elif decision == "FAIL":

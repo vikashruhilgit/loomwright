@@ -8,8 +8,9 @@
 #   T1  a stop the sibling validator rejects is skipped; its accepted retry posts
 #       once (dry-run AND live with a recording gh stub)
 #   T2  counts come from the PARSED result: a drift-only FAIL counts its drift
-#       finding; with the validator unavailable, a FAIL with no parsed finding is
-#       recorded with zero counts and an explicit line (no fake count)
+#       finding; a mixed FAIL counts HIGH/MEDIUM/LOW and new/nit separately; with
+#       the validator unavailable, a FAIL with no parsed finding is recorded
+#       with zero counts and an explicit line (no fake count)
 #   T3  round 1 opens, round 2 comments, the PASS comments + labels + closes; the
 #       next PASS is interest-skipped; the next FAIL opens a NEW thread
 #   T4  a detached drain (LOOMWRIGHT_PR_HEAD_REF) shares the branch's thread; two
@@ -19,7 +20,8 @@
 #   T7  privacy: no repo slug, branch, PR, path, task id or thread key in any
 #       posted title / body / comment
 #   T8  mutation controls: removing the validator gate, the parsed counts, the
-#       map lock, or the unreadable-map refusal each turns a case above RED
+#       map lock or the unreadable-map refusal, or counting severities only at
+#       BLOCKING/HIGH (the mixed fixture), each turns a case above RED
 #   T9  /telemetry test (commands/telemetry.md) parses the fields the core's
 #       dry-run prints and branches open -> comment -> close -> skip, in order
 #
@@ -144,6 +146,13 @@ write("rejected", review("FAIL", FOLDED), aid="agent-r1")
 write("rejected-rule", review("FAIL", MED), aid="agent-r1")
 write("retry", review("FAIL", NEW_HIGH), aid="agent-r1")
 write("drift", review("FAIL", DRIFT), aid="agent-d1")
+# Mixed severities and categories, neutral placeholder text only: pins the
+# MEDIUM/LOW severity split and the non-drift category counts (af/15).
+def finding(sev, cat):
+    return ["    - severity: %s" % sev, "      category: %s" % cat,
+            "      file: placeholder", "      description: placeholder finding"]
+write("mixed", review("FAIL", finding("HIGH", "new") + finding("MEDIUM", "new") +
+                      finding("LOW", "new") + finding("LOW", "nit")), aid="agent-mx")
 write("empty-fail", review("FAIL", ["    []"]), aid="agent-e1")
 write("round1", review("FAIL", NEW_HIGH), aid="agent-1")
 write("round2", review("FAIL", NEW_HIGH + MED), aid="agent-2")
@@ -210,6 +219,14 @@ assert_match "T2_drift_high_counted" '"high": 1' "$out"
 assert_match "T2_drift_category_counted" '"drift": 1' "$out"
 assert_match "T2_drift_line_rendered" "[HIGH] drift finding (mirrored_prompt)" "$out"
 assert_not_match "T2_drift_no_description" "watcher is armed" "$out"
+# Mixed severities: every severity and category is counted, not just BLOCKING/HIGH.
+out="$(run_core "$REPO" "$FIX/mixed.json" --dry-run)"
+assert_eq "T2_mixed_would_send" "0" "$(would_exit "$out")"
+assert_match "T2_mixed_high_counted" '"high": 1' "$out"
+assert_match "T2_mixed_medium_counted" '"medium": 1' "$out"
+assert_match "T2_mixed_low_counted" '"low": 2' "$out"
+assert_match "T2_mixed_new_category_counted" '"new": 3' "$out"
+assert_match "T2_mixed_nit_category_counted" '"nit": 1' "$out"
 # Validator unavailable (a copy of the core with no sibling validator): a FAIL
 # with zero parsed findings is still recorded — truthfully, zero counts.
 NOVAL="$SANDBOX/core-noval"
@@ -391,6 +408,25 @@ REPL
 M="$(mutant counts count-from-parsed-findings "$SANDBOX/repl-b" | tail -1)"
 out="$(CORE_UNDER_TEST="$M" run_core "$REPO" "$FIX/drift.json" --dry-run)"
 assert_match "T8_counts_mutant_drift_reads_zero" '"high": 0' "$out"
+# (e) severities counted only at BLOCKING/HIGH (the shape that counted rendered
+# lines only) -> the mixed fixture's MEDIUM/LOW counts vanish
+cat > "$SANDBOX/repl-e" <<'REPL'
+if schema == "CODE_REVIEW_RESULT":
+    issues_by_category = {"new": 0, "pre_existing": 0, "nit": 0, "drift": 0, "other": 0}
+    for issue in review_issues:
+        if issue["severity"] in ("BLOCKING", "HIGH"):
+            issues_by_severity[issue["severity"].lower()] += 1
+        cat = issue["category"] if issue["category"] in CATEGORIES else "other"
+        issues_by_category[cat] += 1
+else:
+    issues_by_severity["unspecified"] = len(issues)
+REPL
+M="$(mutant severities count-from-parsed-findings "$SANDBOX/repl-e" | tail -1)"
+out="$(CORE_UNDER_TEST="$M" run_core "$REPO" "$FIX/mixed.json" --dry-run)"
+assert_eq "T8_severities_mutant_still_sends" "0" "$(would_exit "$out")"
+assert_match "T8_severities_mutant_high_kept" '"high": 1' "$out"
+assert_not_match "T8_severities_mutant_drops_medium" '"medium": 1' "$out"
+assert_not_match "T8_severities_mutant_drops_low" '"low": 2' "$out"
 # (c) no map lock -> two concurrent posters open two issues
 printf 'pass\n' > "$SANDBOX/repl-c"
 M="$(mutant lock thread-map-lock "$SANDBOX/repl-c" | tail -1)"
