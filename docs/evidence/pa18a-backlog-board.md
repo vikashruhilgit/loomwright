@@ -1,11 +1,11 @@
 # Evidence: `/backlog` on this repo's live requirements (parallel-automate/18a, AC14)
 
-A read-only run of the board engine over this checkout's real `.supervisor/requirements/`. It reads GitHub (`gh pr list`, merged and open) and writes no stamp. Paths are repo-relative. The checkout is `/Users/<name>/…/L6` on branch `feature/pa18a-backlog-board`, at the subtask 1 commits (`c49629e`, `6839cd3`) on base `237adab`.
+A read-only run of the board engine over this checkout's real `.supervisor/requirements/`. It reads GitHub (`gh pr list`, merged and open) and writes no stamp. Paths are repo-relative. The checkout is `/Users/<name>/…/L6` on branch `feature/pa18a-backlog-board`, at the review-fix commit that follows `7a2e0c9` (subtasks 1 and 2 plus the first review iteration's engine fixes) on base `237adab`.
 
 ## Command
 
 ```bash
-bash loomwright/scripts/automate-helpers.sh backlog --json > live.json   # exit 0, 43 s wall
+bash loomwright/scripts/automate-helpers.sh backlog --json > live.json   # exit 0, 41 s wall
 jq -c . live.json | jq -e . >/dev/null                                   # round-trips: ok
 ```
 
@@ -15,8 +15,8 @@ jq -c . live.json | jq -e . >/dev/null                                   # round
 
 ```json
 {"schema_version":1,"github":"verified","right_size":"ok","item_count":447,
- "totals":{"done":218,"abandoned":15,"parked":21,"proposed":174,"brief_shipped":3,"merged_unstamped":2,
-           "pr_open":0,"in_flight":1,"conflict":0,"open":5,"unknown":8}}
+ "totals":{"done":218,"abandoned":15,"parked":21,"proposed":174,"brief_shipped":3,"merged_unstamped":0,
+           "pr_open":0,"in_flight":1,"conflict":0,"open":5,"unknown":10}}
 ```
 
 The totals sum to 447, which equals `item_count`, so each item is counted once. `.supervisor/requirements/` holds 491 `*.md` files, and the 44 not counted are the ones `_rs_skip_path` skips (`00-*`, `_*`, `README*`, `operator-run/`, top-level task plans). Four runs are listed `stale_run`. Each is an unfinished run file whose `## Current` names an item its own stamp says is done (for example `.supervisor/automate/automate-2026-10-15-163325-L5.md` naming `automate-speed/06-next-step-driver-tail`).
@@ -40,7 +40,7 @@ The totals sum to 447, which equals `item_count`, so each item is counted once. 
 
 ## Honest limits seen on this run
 
-- **False `merged_unstamped` from a generic basename.** Both `merged_unstamped` rows are wrong: `twin-remediation/salvage/parity-emit-block/spec` and `twin-remediation/salvage/review-churn-canary/spec` read `merged PR #269 names slug spec`. PR #269 is `feat(verify): spec replay — …` (head `feature/token-economy-07-verify-spec-replay`), so it is unrelated. The cause: precedence step 2 matches a merged PR whose title *contains* the item's basename, and `spec` is a common word. The row does name the PR, so an owner can check it before stamping. `commands/backlog.md` states this limit. A fix would be to match the folder-qualified slug, or require a word boundary plus the item's id prefix. It belongs to the engine, so it is reported here and not changed in this subtask.
+- **No false `merged_unstamped` from a generic basename (fixed in review iteration 1).** The first run read two items `merged_unstamped` on a bare substring match: `twin-remediation/salvage/parity-emit-block/spec` and `twin-remediation/salvage/review-churn-canary/spec` both matched PR #269 (`feat(verify): spec replay — …`, head `feature/token-economy-07-verify-spec-replay`), which is unrelated. Precedence step 2 now counts a merged PR only when its head or title names a distinctive key as a whole token: the `NN-` id-prefixed basename, or the folder-qualified one (a `…/spec` item has no id, and no PR names its folder key, such as `parity-emit-block/spec`). Both items now read `unknown` (`no status line`, their real state), and PR #269 is listed only as a `--verify-list` candidate. This run has no `merged_unstamped` row, so no real merge evidence came from a PR match alone.
 - **Parked targets that do not resolve read `parked`.** `automate-followups/36-s3-engine-fixes` reads `parked … (target af36-remainder/01 not found)`. Its stamp says ``split … into `af36-remainder/01`–`04` ``, which names an id range, not a file. The fallback is `parked`, the conservative answer.
-- **Timing.** 43 s wall on 447 items, most of it the single `right-size --json` call.
-- **`github: verified` on this run.** The `unverified` path (gh failing) is covered by the hermetic fixture test (`test-automate-helpers.sh 18-backlog`), not by this live run.
+- **Timing.** 41 s wall on 447 items, most of it the single `right-size --json` call.
+- **`github: verified` on this run.** The `unverified` path (gh failing) is covered by the hermetic fixture test (`test-automate-helpers.sh 18-backlog`), not by this live run. Under it, every item that would read `open` reads `unknown` (`merged-PR lookup unverified`), so no item reads `open` or `pr_open` because of the failure.

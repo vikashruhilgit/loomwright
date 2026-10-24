@@ -39,7 +39,7 @@ bl_tree() { mkdir -p "$BL/$1" && cp -R "$BL_FIX/tree/dot-supervisor" "$BL/$1/.su
 bl_run() {
   local h="$1"; shift
   BL_RC=0
-  BL_OUT="$(BL_FIXDIR="$BL_FIX" BL_GH_LOG="$BL/gh.log" BL_RS_LOG="$BL/rs.log" LOOMWRIGHT_GH_BIN="$BL/bin/gh" \
+  BL_OUT="$(BL_FIXDIR="${BL_FIXDIR_OVR:-$BL_FIX}" BL_GH_LOG="$BL/gh.log" BL_RS_LOG="$BL/rs.log" LOOMWRIGHT_GH_BIN="$BL/bin/gh" \
     LOOMWRIGHT_LANE_STATUS_BIN="$BL/bin/lanes" bash "$h" "$@" 2>"$BL/err")" || BL_RC=$?
   BL_ERR="$(cat "$BL/err")"
 }
@@ -88,13 +88,13 @@ bl_run "$H" backlog --state nonsense --root "$T0"
 bl_is "BL4 an unknown --state exits 1 with nothing on stdout" "$BL_RC|$BL_OUT" "1|"
 bl_run "$H" backlog --root "$T0"
 bl_is "BL4 the table's totals line adds up and the header says github: verified" \
-  "$(grep -c '^totals: .* = 22 of 22 items$' <<<"$BL_OUT") $(head -n1 <<<"$BL_OUT")" "1 backlog: 22 items — github: verified — right-size: ok"
+  "$(grep -c '^totals: .* = 23 of 23 items$' <<<"$BL_OUT") $(head -n1 <<<"$BL_OUT")" "1 backlog: 23 items — github: verified — right-size: ok"
 bl_use() { bl_run "$H" "$@" --root "$T0"; printf '%s|%s' "$BL_RC" "$BL_OUT"; }
 bl_is "BL4 usage errors exit 1 with nothing on stdout: --unknown with --verify-list, a stray argument, an unknown flag, a missing named item, two items to item-state" \
   "$(bl_use backlog --unknown --verify-list) $(bl_use backlog bl/14-open) $(bl_use backlog --bogus) $(bl_use backlog --verify-list bl/nope) $(bl_use item-state bl/14-open bl/15-unknown)" "1| 1| 1| 1| 1|"
 bl_s4() { bl_run "$1" backlog --json --root "$T0"; jq -r '"\(.totals | add)/\(.item_count)"' <<<"$BL_OUT"; }
 bl_mut_check "pin AC4: one state dropped from the totals reduction" '    | ($states | split(" ")) as $S' \
-  '    | ($states | split(" ") | .[1:]) as $S' bl_s4 "22/22"
+  '    | ($states | split(" ") | .[1:]) as $S' bl_s4 "23/23"
 
 # ---- BL1 (AC1) item-state's named cases: the appended stamp, no status line, a lane claim, a parked
 # item named by an unfinished run (that run stale_run), a pending item with an older abandoned row.
@@ -142,6 +142,26 @@ bl_is "BL2 a fleet closeout line and a slug-named merged PR are merge evidence t
   "$(jq -r '.items[] | select(.item == "bl/08-fleet" or .item == "bl/07-merged-pr") | "\(.state) \(.pr)"' <<<"$BL_DOC")" \
   "merged_unstamped https://github.com/acme/widgets/pull/107
 merged_unstamped https://github.com/acme/widgets/pull/108"
+bl_is "BL2 the slug-named PR's evidence names the key and where it matched" \
+  "$(jq -r '.items[] | select(.item == "bl/07-merged-pr") | .evidence' <<<"$BL_DOC")" "merged PR #107 names 07-merged-pr (head feature/bl-07-merged-pr)"
+# A false PR match would hide steps 3-5, so a merged PR is evidence only on a whole-token,
+# distinctive key: decoy #901's title contains the id-less basename `spec`, decoy #902's head
+# `feature/x11-conflict` and title `fix: x11-conflict cleanup` hold `11-conflict` with no boundary.
+bl_s2b() { bl_run "$1" backlog --json --root "$T0"; jq -r '[.items[] | select(.item == "bl/spec" or .item == "bl/11-conflict") | "\(.item)=\(.state)"] | join(" ")' <<<"$BL_OUT"; }
+bl_is "BL2 a title merely containing an id-less basename, and a head ending with the slug at no boundary, are no merge evidence (the conflict stays visible)" \
+  "$(bl_s2b "$H")" "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: the head match loses its / or - boundary (x11-conflict masks the conflict)" '    return (c == "/" || c == "-")' '    return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: an id-less slug counts as a distinctive key (spec matches the decoy title)" '      k1 = (slug ~ /^[0-9]+[a-z]?-./) ? slug : ""' '      k1 = slug' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: the title match loses its token boundary" '      if (b !~ /[A-Za-z0-9]/ && a !~ /[A-Za-z0-9]/) return 1' '      return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_run "$H" backlog --verify-list bl/spec --root "$T0"
+bl_is "BL2 the decoy is still offered as a --verify-list candidate (a candidate, never evidence)" \
+  "$(grep -c '^  candidate: #901 https://github.com/acme/widgets/pull/901 — feat(verify): spec replay$' <<<"$BL_OUT")" "1"
+# the folder-qualified key IS evidence for an id-less item: a PR whose title names `bl/spec`
+mkdir -p "$BL/fixq/gh"; cp "$BL_FIX/lane-status.json" "$BL/fixq/"; cp "$BL_FIX/gh/open.json" "$BL/fixq/gh/"
+printf '[{"number":903,"url":"https://github.com/acme/widgets/pull/903","title":"feat: ship bl/spec","headRefName":"feature/ship"}]' > "$BL/fixq/gh/merged.json"
+BL_FIXDIR_OVR="$BL/fixq" bl_run "$H" item-state bl/spec --json --root "$T0"
+bl_is "BL2 the folder-qualified key (bl/spec as a whole token in a title) is merge evidence for an id-less item" \
+  "$(jq -r '"\(.state) \(.pr) \(.evidence)"' <<<"$BL_OUT")" "merged_unstamped https://github.com/acme/widgets/pull/903 merged PR #903 names bl/spec (title)"
 
 # ---- BL3 (AC3) parked (merged … into `X` as Part B — …) with X done ⇒ done, naming X; a cycle ⇒ unknown.
 bl_s3() { bl_run "$1" item-state pk/01-merged-into --json --root "$T0"; jq -r '"\(.state) \(.via)"' <<<"$BL_OUT"; }
@@ -158,11 +178,22 @@ bl_s5() {
 }
 bl_is "BL5 gh failing ⇒ github unverified, 0 items with a verified PR field, 0 pr_open, the claimed item in_flight" "$(bl_s5 "$H")" "unverified 0 0 in_flight"
 BL_GH_FAIL=1 bl_run "$H" backlog --root "$T0"
-bl_is "BL5 the table header says github: unverified" "$(head -n1 <<<"$BL_OUT")" "backlog: 22 items — github: unverified — right-size: ok"
+bl_is "BL5 the table header says github: unverified" "$(head -n1 <<<"$BL_OUT")" "backlog: 23 items — github: unverified — right-size: ok"
 BL_UNV="$BL_OUT"
 BL_GH_FAIL=1 bl_run "$H" backlog --json --root "$T0"
-bl_is "BL5 no item reads open because of the failure except the one whose only evidence is a PR (07, documented limit)" \
-  "$(jq -r --argjson v "$BL_DOC" '[.items[] | . as $i | select(.state == "open" and ($v.items[] | select(.item == $i.item) | .state) != "open") | .item] | join(",")' <<<"$BL_OUT")" "bl/07-merged-pr"
+bl_s5b() {
+  BL_GH_FAIL=1 bl_run "$1" backlog --json --root "$T0"
+  jq -r '"\(.totals.open) \([.items[] | select(.state == "unknown" and (.evidence | endswith("(merged-PR lookup unverified)")) and (.evidence | startswith("## Status: pending") or startswith("## Status: ready"))) | .item] | sort | join(","))"' <<<"$BL_OUT"
+}
+bl_is "BL5 no item reads open under the failure: every pending/ready item with no other evidence (07's only evidence is a PR) reads unknown, naming the unverified lookup" \
+  "$(bl_s5b "$H")" "0 bl/07-merged-pr,bl/12-kept-open,bl/14-open,bl/spec"
+bl_mut_check "pin AC5: a pending item reads open although the merged-PR lookup failed" '    if [ "$_BL_GH" = verified ]; then BL_S=open; else BL_S=unknown; fi' '    BL_S=open' bl_s5b "0 bl/07-merged-pr,bl/12-kept-open,bl/14-open,bl/spec"
+BL_GH_FAIL=1 bl_run "$H" backlog --verify-list bl/14-open --root "$T0"
+bl_is "BL5 --verify-list under the failure says its candidates are unverified, never 'none'" \
+  "$(grep -c '^  candidate: none' <<<"$BL_OUT") $([ "$(grep -c '^  candidate: unverified ' <<<"$BL_OUT")" = "$(grep -c '^verify	' <<<"$BL_OUT")" ] && echo all-unverified)" "0 all-unverified"
+BL_GH_FAIL=1 bl_run "$H" backlog --unknown --root "$T0"
+bl_is "BL5 --unknown under the failure tells a pending item to re-run with gh, not to add a status line" \
+  "$(grep -F 'bl/14-open' <<<"$BL_OUT" | grep -c 'fix: re-run when gh can read the merged-PR list')" "1"
 bl_mut_check "pin AC5: a failed gh pr list read as a verified empty list" '  _BL_GH=unverified' '  _BL_GH=verified' bl_s5 "unverified 0 0 in_flight"
 bl_is "BL5 exactly two gh reads per pass (merged + open), both pr list" \
   "$(: > "$BL/gh.log"; bl_run "$H" backlog --root "$T0"; grep -c '^pr list --state merged ' "$BL/gh.log") $(grep -c '^pr list --state open ' "$BL/gh.log") $(grep -c . "$BL/gh.log")" "1 1 2"
@@ -186,8 +217,8 @@ bl_is "BL6 a later run's # abandoned: row for the kept-open item ⇒ conflict ag
 # ---- BL7 (AC8) the right-size column: ONE call over the whole item list; a failure ⇒ unknown there only.
 : > "$BL/rs.log"
 LOOMWRIGHT_RIGHT_SIZE_BIN="$BL/bin/rsize" bl_run "$H" backlog --json --root "$T0"
-bl_is "BL7 right-size is called once, over all 22 items, and its verdict fills the column" \
-  "$(grep -c '^call ' "$BL/rs.log") $(awk '/^call /{ print $2, $3 }' "$BL/rs.log") $(jq -r '[.items[] | select(.right_size == "ok")] | length' <<<"$BL_OUT")" "1 22 --json 22"
+bl_is "BL7 right-size is called once, over all 23 items, and its verdict fills the column" \
+  "$(grep -c '^call ' "$BL/rs.log") $(awk '/^call /{ print $2, $3 }' "$BL/rs.log") $(jq -r '[.items[] | select(.right_size == "ok")] | length' <<<"$BL_OUT")" "1 23 --json 23"
 bl_is "BL7 the states are the same with the right-size column on" \
   "$(jq -r '.items[] | "\(.item)\t\(.state)"' <<<"$BL_OUT" | env LC_ALL=C sort)" "$BL_WANT"
 BL_RS_FAIL=1 LOOMWRIGHT_RIGHT_SIZE_BIN="$BL/bin/rsize" bl_run "$H" backlog --json --root "$T0"
@@ -238,6 +269,18 @@ bl_refuse "a flag another stamp owns (done with --reason)" bl/14-open done --pr 
 bl_refuse "a --pr that is not an https url" bl/14-open done --pr widgets#1
 bl_refuse "a --date that is not YYYY-MM-DD" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2026/09/01
 bl_refuse "a --supersedes that is not a run_id" bl/11-conflict kept-open --supersedes 'a b'
+bl_refuse "a --pr carrying an embedded newline and a heading" bl/14-open done --pr "https://github.com/acme/widgets/pull/1
+## Status: done"
+bl_refuse "a --pr with a space" bl/14-open done --pr "https://github.com/acme/widgets/pull/1 extra"
+bl_refuse "a --pr that is not a /pull/<n> url" bl/14-open done --pr https://github.com/acme/widgets
+bl_refuse "a kept-open --date later than today (it would settle future runs' rows)" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2099-01-01
+bl_refuse "a --date with an impossible month" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2026-13-01
+bl_refuse "a --date with no value" bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date
+bl_refuse "a control character in --reason" bl/14-open abandoned --reason "$(printf 'gone\033[2J')"
+bl_refuse "a multi-line --owed" bl/14-open done_with_escalation --pr https://github.com/acme/widgets/pull/1 --owed "$(printf 'a\n## Status: done')"
+bl_s9d() { bl_run "$1" backlog-stamp bl/11-conflict kept-open --supersedes automate-2026-09-01-100000 --date 2099-01-01 --root "$T9" --confirm; printf '%s %s' "$BL_RC" "$([ "$(bl_sum "$T9")" = "$BL_B9" ] && echo unchanged || echo written)"; }
+bl_mut_check "pin: the future --date refusal deleted" '      [ "$((10#${date//-/}))" -le "$((10#${today//-/}))" ]' '      : ;;' bl_s9d "1 unchanged"
+rm -rf "$T9"; T9="$(bl_tree t9)"; BL_B9="$(bl_sum "$T9")"
 ln -s "$T9/.supervisor/requirements/bl/14-open.md" "$T9/.supervisor/requirements/bl/18-link.md"; BL_B9="$(bl_sum "$T9")"
 bl_refuse "a symlinked item" bl/18-link abandoned --reason gone
 rm -f "$T9/.supervisor/requirements/bl/18-link.md"; BL_B9="$(bl_sum "$T9")"

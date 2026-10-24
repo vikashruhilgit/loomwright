@@ -30,20 +30,26 @@
 #     `proposed`. An unfinished run whose ## Current names such an item is listed `stale_run`.
 #  2. Merge evidence with no done stamp ⇒ `merged_unstamped`: a run file's plain `- [x] <path>` row
 #     (no `  # ` suffix), a `fleet closeout: <lane> <path> done` line, or a merged PR from the
-#     cached list whose headRefName ends with the item's slug (its basename without `.md` — the
-#     suffix rule reconcile-status's branch-slug path uses) or whose title contains it.
+#     cached list that names a DISTINCTIVE key of the item as a whole token. The keys: the slug
+#     (basename without `.md`) only when it carries an `NN-`/`NNa-` id prefix, and the
+#     folder-qualified slug `<folder>/<slug>` / `<folder>-<slug>`. A PR names a key when its
+#     headRefName equals it or ends with `/<key>` or `-<key>`, or its title holds it bounded by
+#     non-[A-Za-z0-9] characters. A bare id-less slug (`spec`) or a substring hit (`x01-fix` for
+#     `01-fix`) is never evidence — only a `--verify-list` candidate. A false match here would hide
+#     steps 3–4, so the rule errs toward no match.
 #  3. `conflict` — _bl_is_conflict below (owner decision D-conflict-1).
 #  4. A live claim: an unfinished run's (is_run_file, not is_done) `## Current` item, else a lane's
 #     item from `lane-status --json` (`.lanes[]`, a removed / abandoned lane excluded; absent or
 #     failing output ⇒ no lane claims) ⇒ `in_flight` naming the run or lane; `pr_open` when the
 #     claim's PR is in the cached OPEN list.
 #  5. A first status line `brief-shipped` ⇒ `brief_shipped`; explicit `pending` / `ready`
-#     (_rs_first_status_open) ⇒ `open`; anything else ⇒ `unknown`, with the offending line or
-#     `no status line`.
+#     (_rs_first_status_open) ⇒ `open` (`unknown` when github is unverified, below); anything
+#     else ⇒ `unknown`, with the offending line or `no status line`.
 # GITHUB: exactly two reads per pass, `gh pr list --state merged|open --limit $_BL_PR_LIMIT`. Either
 # failing (or not JSON) ⇒ `github: unverified`: every item's pr_state reads `unverified`, step 2's PR
-# lookup is skipped, and a claim stays `in_flight` (never `pr_open`). Honest limit: an unclaimed
-# item whose only merge evidence is a PR then reads `open`, with pr_state `unverified`.
+# lookup is skipped, a claim stays `in_flight` (never `pr_open`), and an item that would read `open`
+# reads `unknown` with `(merged-PR lookup unverified)` in its evidence — no item reads `open` or
+# `pr_open` because of the failure, and `--verify-list` says its candidates are unverified.
 # RIGHT-SIZE (board only): ONE `right-size <item list> --json --root <root>` call over the whole item
 # list, joined on its `item` display name; any failure ⇒ the column reads `unknown`, nothing else.
 #
@@ -180,12 +186,33 @@ _BL_RUNS_AWK='
 # \037-separated row per item, in list order:
 #    abs rel disp first_status last_done_line last_dated x_rf f_rf f_pr c_rf c_pr c_all(\036) a_n
 #    lane lane_state lane_pr m_num m_url cand(\036 rows of num\035url\035title) c_pr_open lane_pr_open
+#    m_key
 # last_done_line only DISPLAYS which terminal line is_done matched; whether the item is done is
-# always is_done's answer. The PR match is the precedence-2 rule (headRefName ends with the slug, or
-# the title contains it); candidates are the looser `--verify-list` match (the slug without its
-# leading `NN-`/`NNa-` id, case-insensitive, head or title), at most 3.
+# always is_done's answer. The PR match is the precedence-2 rule (whole-token, on a distinctive key
+# only — see the header); m_key names the key and where it matched. Candidates are the looser
+# `--verify-list` match (the slug without its leading `NN-`/`NNa-` id, case-insensitive, head or
+# title), at most 3 — a candidate is never merge evidence.
 _BL_PREP_AWK='
   function g(f, k, v) { return (k in v) ? v[k] : "" }
+  # tok(s, t) — t occurs in s as a whole token: the characters either side are not [A-Za-z0-9]
+  function tok(s, t,   off, i, b, a) {
+    if (t == "") return 0
+    off = 0
+    while ((i = index(substr(s, off + 1), t)) > 0) {
+      i += off; b = (i == 1) ? "" : substr(s, i - 1, 1); a = substr(s, i + length(t), 1)
+      if (b !~ /[A-Za-z0-9]/ && a !~ /[A-Za-z0-9]/) return 1
+      off = i
+    }
+    return 0
+  }
+  # headm(h, t) — the branch h is t, or ends with `/t` or `-t`
+  function headm(h, t,   c) {
+    if (t == "") return 0
+    if (h == t) return 1
+    if (length(h) <= length(t) || substr(h, length(h) - length(t) + 1) != t) return 0
+    c = substr(h, length(h) - length(t), 1)
+    return (c == "/" || c == "-")
+  }
   BEGIN {
     FS = "\t"; US = "\037"; RS1 = "\036"; GS = "\035"
     while ((getline l < runs) > 0) {
@@ -211,12 +238,25 @@ _BL_PREP_AWK='
             && match(l, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) sd = substr(l, RSTART, RLENGTH)
       }
       close(f)
-      slug = f; sub(/.*\//, "", slug); sub(/\.md$/, "", slug); sl = length(slug)
+      slug = f; sub(/.*\//, "", slug); sub(/\.md$/, "", slug)
       key = slug; sub(/^[0-9]+[a-z]?-/, "", key); lk = tolower(key)
-      mn = ""; mu = ""; cand = ""; nc = 0
+      # the distinctive keys: the id-prefixed slug (`NN-…`), and the folder-qualified slug
+      # (`<folder>/<slug>`, `<folder>-<slug>`); a bare id-less slug (`spec`) is never evidence
+      k1 = (slug ~ /^[0-9]+[a-z]?-./) ? slug : ""
+      fd = disp; k2 = ""; k3 = ""
+      if (sub(/\/[^\/]*$/, "", fd)) { sub(/.*\//, "", fd); k2 = fd "/" slug; k3 = fd "-" slug }
+      mn = ""; mu = ""; mk = ""; cand = ""; nc = 0
       for (i = 1; i <= nm; i++) {
         h = MH[i]
-        if (mn == "" && ((length(h) >= sl && substr(h, length(h) - sl + 1) == slug) || index(MT[i], slug))) { mn = MN[i]; mu = MU[i] }
+        if (mn == "") {
+          if (headm(h, k1)) mk = k1 " (head " h ")"
+          else if (headm(h, k2)) mk = k2 " (head " h ")"
+          else if (headm(h, k3)) mk = k3 " (head " h ")"
+          else if (tok(MT[i], k1)) mk = k1 " (title)"
+          else if (tok(MT[i], k2)) mk = k2 " (title)"
+          else if (tok(MT[i], k3)) mk = k3 " (title)"
+          if (mk != "") { mn = MN[i]; mu = MU[i] }
+        }
         if (nc < 3 && lk != "" && index(ML[i], lk)) { cand = cand (nc ? RS1 : "") MN[i] GS MU[i] GS MT[i]; nc++ }
       }
       lk2 = (rel in LL) ? rel : ((disp in LL) ? disp : "")
@@ -224,7 +264,7 @@ _BL_PREP_AWK='
       if (lk2 != "") { lane = LL[lk2]; lst = LS[lk2]; lpr = LP[lk2] }
       cp = g(f, rel, CP)
       printf "%s", f US rel US disp US fs US ld US (sd == "" ? "undated" : sd) US g(f, rel, X) US g(f, rel, F) US g(f, rel, FP) US g(f, rel, C) US cp US g(f, rel, CA) US ((rel in AN) ? AN[rel] : 0)
-      printf "%s\n", US lane US lst US lpr US mn US mu US cand US ((cp != "" && (cp in O)) ? 1 : 0) US ((lpr != "" && (lpr in O)) ? 1 : 0)
+      printf "%s\n", US lane US lst US lpr US mn US mu US cand US ((cp != "" && (cp in O)) ? 1 : 0) US ((lpr != "" && (lpr in O)) ? 1 : 0) US mk
     }
   }'
 
@@ -270,7 +310,7 @@ _bl_prep() {
 # is_done, _bl_is_conflict and _rs_first_status_open).
 _bl_load() {
   IFS="$_BL_US" read -r P_ABS P_REL P_DISP P_FS P_LD P_SD P_X P_F P_FP P_C P_CP P_CA P_AN \
-    P_LANE P_LST P_LPR P_MN P_MU P_K P_COPEN P_LOPEN <<<"$1"
+    P_LANE P_LST P_LPR P_MN P_MU P_K P_COPEN P_LOPEN P_MK <<<"$1"
 }
 
 # _bl_target_abs <X> <item abs> — X (from `parked (merged|split … into X …)`) resolved: under the
@@ -347,7 +387,7 @@ _bl_classify() {
     BL_E="run file $P_F: fleet closeout $rel done (PR ${P_FP:-none recorded})"; return 0
   fi
   if [ "$_BL_GH" = verified ] && [ -n "$P_MN" ]; then
-    BL_S=merged_unstamped; BL_PR="$P_MU"; BL_PRS=merged; x="${f##*/}"; BL_E="merged PR #$P_MN names slug ${x%.md}"; return 0
+    BL_S=merged_unstamped; BL_PR="$P_MU"; BL_PRS=merged; BL_E="merged PR #$P_MN names $P_MK"; return 0
   fi
 
   # 3. conflict (D-conflict-1) — only an item some run's abandoned/skipped row names can be one
@@ -372,9 +412,12 @@ _bl_classify() {
     return 0
   fi
 
-  # 5. the item's own non-terminal status
+  # 5. the item's own non-terminal status. `open` asserts "no merge evidence", which needs the
+  # merged-PR list: with github unverified the item reads `unknown`, never `open` (AC5).
   if [[ "$fs" =~ $_BL_RE_SHIPPED ]]; then BL_S=brief_shipped; BL_E="$fs"
-  elif _rs_first_status_open "$f"; then BL_S=open; BL_E="$fs"
+  elif _rs_first_status_open "$f"; then
+    if [ "$_BL_GH" = verified ]; then BL_S=open; else BL_S=unknown; fi
+    BL_E="$fs"
   elif [ -z "$fs" ]; then BL_S=unknown; BL_E="no status line"
   else BL_S=unknown; BL_E="off-enum status line: $fs"
   fi
@@ -524,6 +567,7 @@ backlog_board() {
       doc="$("$JQ" '.items |= map(select(.state == "unknown" or .state == "brief_shipped")
         | (if (.candidates | length) > 0 then " (candidate #\(.candidates[0].number) \(.candidates[0].url))" else "" end) as $c
         | . + {fix: (if .state == "brief_shipped" then "verify its acceptance criteria, then stamp done with the PR that shipped it\($c); or mark abandoned"
+                     elif (.evidence | test("^## Status:[[:space:]]*(pending|ready)([^A-Za-z0-9_-]|$)")) then "re-run when gh can read the merged-PR list (it reads open only once that lookup is verified)"
                      else "add ## Status: pending, stamp done with the PR that shipped it\($c), or mark abandoned" end)})' <<<"$doc")"
       if [ "$json" = 1 ]; then printf '%s\n' "$doc"
       else "$JQ" -r '.items[] | "\(.item)\t\(.state)\t\(.evidence)\tfix: \(.fix)"' <<<"$doc"; fi
@@ -532,8 +576,9 @@ backlog_board() {
       doc="$("$JQ" --arg names "$names" '($names | split("\n") | map(select(length > 0))) as $N
         | .items |= map(select(.state == "brief_shipped" or .state == "unknown" or .state == "conflict" or (.path as $p | $N | index($p))))' <<<"$doc")"
       if [ "$json" = 1 ]; then printf '%s\n' "$doc"
-      else "$JQ" -r '.items[] | "verify\t\(.item)\t\(.state)\t\(.evidence)",
-          (if (.candidates | length) == 0 then "  candidate: none in the cached merged list" else (.candidates[] | "  candidate: #\(.number) \(.url) — \(.title)") end)' <<<"$doc"; fi
+      else "$JQ" -r '.github as $gh | .items[] | "verify\t\(.item)\t\(.state)\t\(.evidence)",
+          (if $gh != "verified" then "  candidate: unverified (the merged-PR list could not be read)"
+           elif (.candidates | length) == 0 then "  candidate: none in the cached merged list" else (.candidates[] | "  candidate: #\(.number) \(.url) — \(.title)") end)' <<<"$doc"; fi
       return 0 ;;
   esac
   if [ "$json" = 1 ]; then printf '%s\n' "$doc"; return 0; fi
@@ -550,7 +595,7 @@ backlog_board() {
 # backlog-stamp <item> <mode> … --confirm (usage above). Validation first, then the --confirm guard,
 # then ONE append through a temp copy + mv.
 backlog_stamp() {
-  local root="" given="" mode="" owed="" reason="" sup="" date="" confirm=0 a f rel prs="" block brief="" tmp em lk n
+  local root="" given="" mode="" owed="" reason="" sup="" date="" today confirm=0 a f rel prs="" block brief="" tmp em lk n
   em="$(printf '\342\200\224')"
   for a in "$@"; do
     if grep -qE '(^|[^A-Za-z0-9._-])/(Users|home)/[^/]' <<<"$a"; then
@@ -560,19 +605,21 @@ backlog_stamp() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --confirm) confirm=1; shift ;;
-      --pr) case "${2:-}" in https://*) prs="$prs$2"$'\n' ;; *) _bl_fail backlog-stamp "refused — --pr needs an https:// PR url (nothing written)" ;; esac; shift 2 ;;
+      --pr) [[ "${2:-}" =~ ^https://[^[:space:][:cntrl:]]+/pull/[0-9]+$ ]] || _bl_fail backlog-stamp "refused — --pr needs one https://…/pull/<n> PR url (nothing written)"
+            prs="$prs$2"$'\n'; shift 2 ;;
       --owed) [ -n "${2:-}" ] || _bl_fail backlog-stamp "refused — --owed needs text (nothing written)"; owed="$2"; shift 2 ;;
       --reason) [ -n "${2:-}" ] || _bl_fail backlog-stamp "refused — --reason needs text (nothing written)"; reason="$2"; shift 2 ;;
       --supersedes) [ -n "${2:-}" ] || _bl_fail backlog-stamp "refused — --supersedes needs a run_id (nothing written)"; sup="$2"; shift 2 ;;
-      --date) date="${2:-}"; shift 2 2>/dev/null || shift ;;
+      --date) case "${2:-}" in ""|-*) _bl_fail backlog-stamp "refused — --date needs YYYY-MM-DD (nothing written)" ;; esac; date="$2"; shift 2 ;;
       --root) case "${2:-}" in ""|-*) _bl_fail backlog-stamp "--root requires a checkout path" ;; esac; root="$2"; shift 2 ;;
       -*) _bl_fail backlog-stamp "refused — unknown option $1 (nothing written)" ;;
       *) if [ -z "$given" ]; then given="$1"; elif [ -z "$mode" ]; then mode="$1"; else _bl_fail backlog-stamp "refused — unexpected argument '$1' (nothing written)"; fi; shift ;;
     esac
   done
   [ -n "$given" ] && [ -n "$mode" ] || { echo "usage: automate-helpers.sh backlog-stamp <item> <done|done_with_escalation|abandoned|kept-open> [--pr <url>]... [--owed <text>] [--reason <text>] [--supersedes <run_id>] [--date YYYY-MM-DD] [--root <checkout>] --confirm" >&2; exit 1; }
-  case "$owed$reason$sup$prs" in *$'\r'*) _bl_fail backlog-stamp "refused — a control character in an argument (nothing written)" ;; esac
-  case "$owed$reason$sup" in *$'\n'*) _bl_fail backlog-stamp "refused — a multi-line argument (nothing written)" ;; esac
+  # every value written into the file is ONE line of printable text (a --pr was checked whole above)
+  case "$owed$reason$sup$date" in *$'\n'*) _bl_fail backlog-stamp "refused — a multi-line argument (nothing written)" ;; esac
+  case "$owed$reason$sup$date" in *[[:cntrl:]]*) _bl_fail backlog-stamp "refused — a control character in an argument (nothing written)" ;; esac
   case "$mode" in
     done)
       [ -n "$prs" ] || _bl_fail backlog-stamp "refused — done needs at least one --pr (nothing written)"
@@ -587,8 +634,12 @@ backlog_stamp() {
       [ -n "$sup" ] || _bl_fail backlog-stamp "refused — kept-open needs --supersedes <run_id> (nothing written)"
       [ -z "$prs$owed$reason" ] || _bl_fail backlog-stamp "refused — kept-open takes only --supersedes and --date (nothing written)"
       case "$sup" in *[!A-Za-z0-9._-]*) _bl_fail backlog-stamp "refused — --supersedes is not a run_id (nothing written)" ;; esac
-      [ -n "$date" ] || date="$(date -u +%Y-%m-%d)"
-      grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' <<<"$date" || _bl_fail backlog-stamp "refused — --date is not YYYY-MM-DD (nothing written)" ;;
+      today="$(date -u +%Y-%m-%d)"
+      [ -n "$date" ] || date="$today"
+      grep -qE '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$' <<<"$date" || _bl_fail backlog-stamp "refused — --date is not YYYY-MM-DD (nothing written)"
+      # a marker settles every row dated on or before it, so a future date would settle rows from
+      # runs that have not happened yet (D-conflict-1: a later run's row must raise the conflict again)
+      [ "$((10#${date//-/}))" -le "$((10#${today//-/}))" ] || _bl_fail backlog-stamp "refused — --date $date is later than today ($today UTC; nothing written)" ;;
     *) _bl_fail backlog-stamp "refused — unknown stamp '$mode' (done|done_with_escalation|abandoned|kept-open; nothing written)" ;;
   esac
   root="$(_rsz_root "$root")" || _bl_fail backlog-stamp "--root is not a directory"
