@@ -247,6 +247,10 @@
       "name": "autonomous"
     },
     {
+      "description": "One read-only board of every requirement item's real state — done, in flight, parked, open, unknown — derived each run from run files, live lanes, merged PRs and the item's own stamp, never from a hand-kept label; --verify stamps only what the owner approves per item",
+      "name": "backlog"
+    },
+    {
       "description": "On-demand scan for Claude Code adoptions (default) or differentiated product directions (--strategy) — propose-only, bounded, human-gated, never self-applies",
       "name": "capability-check"
     },
@@ -1107,7 +1111,7 @@
     "state_dir_env": "LOOMWRIGHT_HOST_STATE_DIR"
   },
   "plugin_name": "loomwright",
-  "plugin_version": "17.15.0",
+  "plugin_version": "17.16.0",
   "result_schemas": [
     {
       "name": "AUTOMATE_RUN",

@@ -4,3 +4,5 @@ with only pa/18 left, ## Current for 39a as its closeout left it; steps check of
 and run the `## Status: done` exit.
 gap: the real run is still paused (pa/18 not run); the done exit, `trail-pr --reason done` against a
 scratch bare origin and the dry `sweep` line are what the prose orders, run for real hermetically (gh stubbed).
+The `process registry:` line reads a registry pinned to an absent dir under the scratch root
+(LOOMWRIGHT_PROC_REGISTRY_DIR, the test seam), so it is the 0-entry summary on every machine.

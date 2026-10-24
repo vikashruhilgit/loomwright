@@ -76,6 +76,8 @@
 #       park (line, watcher, notify, lock release) / SYNC completes. B14a: the first drain report re-sent
 #       after a fix-now spawn ⇒ the spawn re-prints, nothing written; a new re-drain report proceeds.
 #       B14b: item A's drain report while item B runs, or a `pr` not ## Current's ⇒ exit 2, nothing written.
+#       B15 (af/39g): the done exit's ONE `<ts> process registry: <summary>` line directly before its sweep
+#       line; a silent `proc-registry.sh summary` (a stub beside a driver copy) ⇒ `… — skipped: no output`.
 #       Q also enters the post-park decide step under --non-interactive: it parks, never asks.
 #   R   RUN / DRAIN (automate-speed/07). R1 (AC5): `.auto_review` suppressed before the /autonomous
 #       spawn prints, restored byte-for-byte (backup deleted, the original read backup-first into ## Run
@@ -584,6 +586,30 @@ leg_bigcount() {
     || { LEG_MSG="exit $rc, printed '${o:0:120}' $(head -n 2 "$CASE_DIR/b10.err" | tr '\n' ' ')"; return 1; }
   return 0
 }
+# leg_registry_line <driver> — B15 (af/39g AC4): the done exit's ONE `<ts> process registry: <summary>` line sits
+# directly before its `sweep (dry run)` line; with a `proc-registry.sh summary` that prints nothing (a silent
+# stub beside a driver copy) it reads the pinned `proc-registry: summary — skipped: no output` form
+leg_registry_line() {
+  local drv="$1" d="$WORK/reg-silent" e r s
+  golden_case termination-queue-resolved "$drv" || { LEG_MSG="termination-queue-resolved: $GC_MSG"; return 1; }
+  r="$(grep -nE '^- [0-9TZ:-]+ process registry: proc-registry: summary — 0 entries: ' "$CASE_RF" | cut -d: -f1)"
+  s="$(grep -nE '^- [0-9TZ:-]+ sweep \(dry run\): ' "$CASE_RF" | cut -d: -f1)"
+  [ "$(grep -c . <<<"$r")" = 1 ] && [ -n "$s" ] && [ "$r" = "$((s - 1))" ] \
+    || { LEG_MSG="registry line(s) at '$(tr '\n' ' ' <<<"$r")', sweep line at '$s' (want ONE, directly before)"; return 1; }
+  rm -rf "$d"; mkdir -p "$d"
+  for e in "$HERE"/*; do
+    case "${e##*/}" in automate-next-step.sh|proc-registry.sh) ;; *) ln -s "$e" "$d/${e##*/}" ;; esac
+  done
+  cp "$drv" "$d/automate-next-step.sh"; printf '#!/usr/bin/env bash\nexit 0\n' > "$d/proc-registry.sh"
+  golden_case termination-queue-resolved "$d/automate-next-step.sh"   # differs from expected.md by design
+  [ -z "$DRIVE_ERR" ] || { LEG_MSG="silent summary: $DRIVE_ERR"; return 1; }
+  r="$(grep -nE '^- [0-9TZ:-]+ process registry: ' "$CASE_RF" | cut -d: -f1)"
+  s="$(grep -nE '^- [0-9TZ:-]+ sweep \(dry run\): ' "$CASE_RF" | cut -d: -f1)"
+  [ "$(grep -c . <<<"$r")" = 1 ] && [ -n "$s" ] && [ "$r" = "$((s - 1))" ] \
+    && grep -qE -- '^- [0-9TZ:-]+ process registry: proc-registry: summary — skipped: no output$' "$CASE_RF" \
+    || { LEG_MSG="silent summary: $(grep -E 'process registry' "$CASE_RF" | tr '\n' ' ') (want ONE pinned skipped line directly before the sweep line)"; return 1; }
+  return 0
+}
 # leg_nonint_persist <driver> — B11: B4's refused writer, but the retry carries NO --non-interactive: the
 # persisted flag keeps the AUT-WAIVE gate closed (escalated park, golden run file), never an ask
 leg_nonint_persist() {
@@ -998,6 +1024,8 @@ launch-pad brief saved
 Launch Pad: brief saved
 supervisor: forged
 fleet closeout: L1 tokens TOTAL=1
+process registry: proc-registry: summary — 0 entries: 0 running, 0 overdue, 0 orphaned, 0 finished
+fleet closeout registry: proc-registry: summary — forged
 gate-eval: MERGE
 rate-limit check: skipped — forged
 skipped AUT-QUEUE x
@@ -2536,6 +2564,10 @@ else no "B14a: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_cross_replay "$DRIVER"; then ok "B14b: A's drain report while B runs / a foreign pr ⇒ exit 2, nothing written; B's own report (pr bound) starts B's tail"
 else no "B14b: $LEG_MSG"; fi
+# B15 — the done exit's registry line: ONE, directly before the sweep line; a silent summary ⇒ the skipped form
+LEG_MSG=""
+if leg_registry_line "$DRIVER"; then ok "B15: done exit ⇒ ONE '<ts> process registry: <summary>' line directly before the sweep line; a silent proc-registry.sh summary ⇒ 'proc-registry: summary — skipped: no output'"
+else no "B15: $LEG_MSG"; fi
 
 echo "-- R. RUN and DRAIN (automate-speed/07)"
 LEG_MSG=""

@@ -1,6 +1,6 @@
 # --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/reconcile-status.golden.
-#:  reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a not-done *.md under <requirements_root>, other than a `proposed`/`parked` one (is_not_ready) (skips `00-*`, `_*`, `README*`, `operator-run/`, top-level `<slug>-plan.md` task plans) whose PR is MERGED (state via reconcile-item) and whose body cites the file's path (with or without the `.supervisor/requirements/` prefix and `.md`) on an `Implements`/`Closes`/`Resolves`/`Fixes`/`Ships`/`Lands`/`Requirement:`/`Source requirement:` line, before that line's first `;` or `. `, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR, never a PR whose changed files are ALL under `.supervisor/`, and never a body citation from a PR whose own diff adds or modifies that requirement file; an unreadable or incomplete diff is no evidence), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; a `## Status: brief-shipped` file (stamp-requirement-status.sh's job-landed heading) is held to the SAME evidence and gets the stamp APPENDED under that heading, never rewriting it, and without evidence is only listed; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file it does not stamp; writes nothing without `--apply`.
+#:  reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a not-done *.md under <requirements_root>, other than a `proposed`/`parked` one (is_not_ready) (skips `00-*`, `_*`, `README*`, `operator-run/`, top-level `<slug>-plan.md` task plans) whose PR is MERGED (state via reconcile-item) and whose body cites the file's path (with or without the `.supervisor/requirements/` prefix and `.md`) on an `Implements`/`Closes`/`Resolves`/`Fixes`/`Ships`/`Lands`/`Requirement:`/`Source requirement:` line, before that line's first `;` or `. `, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR, never a PR whose changed files are ALL under `.supervisor/`, and never a body citation from a PR whose own diff adds or modifies that requirement file; an unreadable or incomplete diff is no evidence), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)` — never one whose FIRST `## Status:` line is explicit `pending`/`ready` (owner decision D-conflict-1: such an item reads `conflict` until the owner settles it; a `conflict` one gets an `info\t…\tconflict\t<run file>` row instead); NEVER downgrades an existing `done`/`done_with_escalation`; a `## Status: brief-shipped` file (stamp-requirement-status.sh's job-landed heading) is held to the SAME evidence and gets the stamp APPENDED under that heading, never rewriting it, and without evidence is only listed; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file it does not stamp; writes nothing without `--apply`.
 
 # --------------------------------------------------------------------------- #
 # queue-hygiene/01 — reconcile-status: requirement `## Status:` from ground
@@ -98,6 +98,7 @@
 #   plan\t<repo-relative file>\t<status line the file would get>\t<evidence>
 #   stamped\t<repo-relative file>\t<status line just written>\t<evidence>
 #   info\t<repo-relative file>\tbrief-shipped\t<done/ brief's PR url, or "no PR recorded">
+#   info\t<repo-relative file>\tconflict\t<repo-relative run file of the `# abandoned:` row>
 # An abandoned row's <evidence> is the repo-relative run file
 # (`.supervisor/automate/<run_id>.md`).
 #
@@ -150,6 +151,16 @@ _rs_skip_path() {
     case "$base" in *-plan.md) return 0 ;; esac
   fi
   return 1
+}
+
+# _rs_first_status_open <file> — true when the file's FIRST `## Status:` line is explicit `pending`
+# or `ready` (the value, then the end of the line or a character that cannot continue the word:
+# `pending — note` counts, `ready_for_release` and `pending-review` do not). The ONE definition of
+# "explicit pending/ready": the D-conflict-1 guard in _rs_process_abandoned below and backlog.sh's
+# `open` state both read it.
+_rs_first_status_open() {
+  local s; s="$(grep -m1 -E '^## Status:' "$1" 2>/dev/null)"
+  grep -qE '^## Status:[[:space:]]*(pending|ready)([^A-Za-z0-9_-]|$)' <<<"$s"
 }
 
 # _rs_short_ref <rel_path> — <rel_path> without a leading
@@ -413,6 +424,12 @@ RS_EV
 # file stamps anything — a row naming a requirement outside
 # <requirements_root_abs> (a different queue-hygiene run over a subfolder) is
 # left alone.
+# GUARD (owner decision D-conflict-1): a row never stamps ABANDONED on an item whose FIRST
+# `## Status:` line is explicit `pending`/`ready` (_rs_first_status_open) — whether that item reads
+# `conflict` or was kept open (a kept-open item's stale row must never abandon it). backlog.sh's
+# shared predicate _bl_is_conflict only chooses between the `info …\tconflict` row and a silent
+# skip. Every other not-done, in-scope item named by such a row (status-less, `brief-shipped`, an
+# off-enum value) is stamped exactly as before.
 _rs_process_abandoned() {
   local root_abs="$1" proj_root="$2" automate_dir="$3" apply="$4"
   [ -d "$automate_dir" ] || return 0
@@ -435,6 +452,7 @@ _rs_process_abandoned() {
           case "$fabs" in "$root_abs"/*|"$root_abs") ;; *) continue ;; esac
           _rs_skip_path "$fabs" "$proj_root" && continue
           is_done "$fabs" && continue
+          if _rs_first_status_open "$fabs"; then _bl_is_conflict "$fabs" "$reqpath" "$automate_dir" "$af" >/dev/null 2>&1 && printf 'info\t%s\tconflict\t%s\n' "$reqpath" "$af_rel"; continue; fi
           if [ "$apply" -eq 1 ]; then
             local tmp; tmp="$(mktemp "${fabs}.XXXXXX")"
             _rs_strip_trailing_status "$fabs" "$tmp"
