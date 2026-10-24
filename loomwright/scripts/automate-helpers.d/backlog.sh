@@ -33,9 +33,11 @@
 #     cached list that names a DISTINCTIVE key of the item as a whole token. The keys: the slug
 #     (basename without `.md`) only when it carries an `NN-`/`NNa-` id prefix, and the
 #     folder-qualified slug `<folder>/<slug>` / `<folder>-<slug>`. A PR names a key when its
-#     headRefName equals it or ends with `/<key>` or `-<key>`, or its title holds it bounded by
-#     non-[A-Za-z0-9] characters. A bare id-less slug (`spec`) or a substring hit (`x01-fix` for
-#     `01-fix`) is never evidence — only a `--verify-list` candidate. A false match here would hide
+#     headRefName equals it or ends with `/<key>` (or `-<key>`, id-prefixed slug only), or its
+#     title holds it with no [A-Za-z0-9_-] after and no [A-Za-z0-9] before (nor `_`/`-` before a
+#     folder-qualified key). A bare id-less slug (`spec`), a substring hit (`x01-fix` for `01-fix`)
+#     or a longer sibling (`01-fix-guard` for `01-fix`, `sub-bl/spec` for `bl/spec`) is never
+#     evidence — only a `--verify-list` candidate. A false match here would hide
 #     steps 3–4, so the rule errs toward no match.
 #  3. `conflict` — _bl_is_conflict below (owner decision D-conflict-1).
 #  4. A live claim: an unfinished run's (is_run_file, not is_done) `## Current` item, else a lane's
@@ -194,24 +196,26 @@ _BL_RUNS_AWK='
 # title), at most 3 — a candidate is never merge evidence.
 _BL_PREP_AWK='
   function g(f, k, v) { return (k in v) ? v[k] : "" }
-  # tok(s, t) — t occurs in s as a whole token: the characters either side are not [A-Za-z0-9]
-  function tok(s, t,   off, i, b, a) {
+  # tok(s, t, fq) — t occurs in s as a whole token: the character after is not [A-Za-z0-9_-] (a
+  # longer sibling slug `11-conflict-guard` never names `11-conflict`), the character before is not
+  # [A-Za-z0-9] — nor `_`/`-` when t is folder-qualified (fq: `sub-bl/spec` never names `bl/spec`)
+  function tok(s, t, fq,   off, i, b, a) {
     if (t == "") return 0
     off = 0
     while ((i = index(substr(s, off + 1), t)) > 0) {
       i += off; b = (i == 1) ? "" : substr(s, i - 1, 1); a = substr(s, i + length(t), 1)
-      if (b !~ /[A-Za-z0-9]/ && a !~ /[A-Za-z0-9]/) return 1
+      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_-]/) return 1
       off = i
     }
     return 0
   }
-  # headm(h, t) — the branch h is t, or ends with `/t` or `-t`
-  function headm(h, t,   c) {
+  # headm(h, t, fq) — the branch h is t, or ends with `/t` or (t not folder-qualified) `-t`
+  function headm(h, t, fq,   c) {
     if (t == "") return 0
     if (h == t) return 1
     if (length(h) <= length(t) || substr(h, length(h) - length(t) + 1) != t) return 0
     c = substr(h, length(h) - length(t), 1)
-    return (c == "/" || c == "-")
+    return (c == "/" || (c == "-" && !fq))
   }
   BEGIN {
     FS = "\t"; US = "\037"; RS1 = "\036"; GS = "\035"
@@ -249,12 +253,12 @@ _BL_PREP_AWK='
       for (i = 1; i <= nm; i++) {
         h = MH[i]
         if (mn == "") {
-          if (headm(h, k1)) mk = k1 " (head " h ")"
-          else if (headm(h, k2)) mk = k2 " (head " h ")"
-          else if (headm(h, k3)) mk = k3 " (head " h ")"
-          else if (tok(MT[i], k1)) mk = k1 " (title)"
-          else if (tok(MT[i], k2)) mk = k2 " (title)"
-          else if (tok(MT[i], k3)) mk = k3 " (title)"
+          if (headm(h, k1, 0)) mk = k1 " (head " h ")"
+          else if (headm(h, k2, 1)) mk = k2 " (head " h ")"
+          else if (headm(h, k3, 1)) mk = k3 " (head " h ")"
+          else if (tok(MT[i], k1, 0)) mk = k1 " (title)"
+          else if (tok(MT[i], k2, 1)) mk = k2 " (title)"
+          else if (tok(MT[i], k3, 1)) mk = k3 " (title)"
           if (mk != "") { mn = MN[i]; mu = MU[i] }
         }
         if (nc < 3 && lk != "" && index(ML[i], lk)) { cand = cand (nc ? RS1 : "") MN[i] GS MU[i] GS MT[i]; nc++ }

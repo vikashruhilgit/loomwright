@@ -146,13 +146,18 @@ bl_is "BL2 the slug-named PR's evidence names the key and where it matched" \
   "$(jq -r '.items[] | select(.item == "bl/07-merged-pr") | .evidence' <<<"$BL_DOC")" "merged PR #107 names 07-merged-pr (head feature/bl-07-merged-pr)"
 # A false PR match would hide steps 3-5, so a merged PR is evidence only on a whole-token,
 # distinctive key: decoy #901's title contains the id-less basename `spec`, decoy #902's head
-# `feature/x11-conflict` and title `fix: x11-conflict cleanup` hold `11-conflict` with no boundary.
+# `feature/x11-conflict` and title `fix: x11-conflict cleanup` hold `11-conflict` with no boundary,
+# decoy #950's title names the longer sibling slug `11-conflict-guard`, and decoys #951 (title) /
+# #952 (head) name the longer sibling folder's `sub-bl/spec`.
 bl_s2b() { bl_run "$1" backlog --json --root "$T0"; jq -r '[.items[] | select(.item == "bl/spec" or .item == "bl/11-conflict") | "\(.item)=\(.state)"] | join(" ")' <<<"$BL_OUT"; }
-bl_is "BL2 a title merely containing an id-less basename, and a head ending with the slug at no boundary, are no merge evidence (the conflict stays visible)" \
+bl_is "BL2 a title merely containing an id-less basename, a head ending with the slug at no boundary, and a longer sibling slug or folder in a title or head, are no merge evidence (the conflict stays visible)" \
   "$(bl_s2b "$H")" "bl/11-conflict=conflict bl/spec=open"
-bl_mut_check "pin: the head match loses its / or - boundary (x11-conflict masks the conflict)" '    return (c == "/" || c == "-")' '    return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: the head match loses its / or - boundary (x11-conflict masks the conflict)" '    return (c == "/" || (c == "-" && !fq))' '    return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: a folder-qualified head key admits a - before it (feature/sub-bl/spec names bl/spec)" '    return (c == "/" || (c == "-" && !fq))' '    return (c == "/" || c == "-")' bl_s2b "bl/11-conflict=conflict bl/spec=open"
 bl_mut_check "pin: an id-less slug counts as a distinctive key (spec matches the decoy title)" '      k1 = (slug ~ /^[0-9]+[a-z]?-./) ? slug : ""' '      k1 = slug' bl_s2b "bl/11-conflict=conflict bl/spec=open"
-bl_mut_check "pin: the title match loses its token boundary" '      if (b !~ /[A-Za-z0-9]/ && a !~ /[A-Za-z0-9]/) return 1' '      return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: the title match loses its token boundary" '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_-]/) return 1' '      return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: the title match admits _/- after the key (11-conflict-guard masks the conflict)" '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_-]/) return 1' '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9]/) return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: a folder-qualified title key admits _/- before it (sub-bl/spec names bl/spec)" '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_-]/) return 1' '      if (b !~ /[A-Za-z0-9]/ && a !~ /[A-Za-z0-9_-]/) return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
 bl_run "$H" backlog --verify-list bl/spec --root "$T0"
 bl_is "BL2 the decoy is still offered as a --verify-list candidate (a candidate, never evidence)" \
   "$(grep -c '^  candidate: #901 https://github.com/acme/widgets/pull/901 — feat(verify): spec replay$' <<<"$BL_OUT")" "1"
