@@ -1,9 +1,9 @@
 # Lane gate catalog
 
-Every question the engine (`/automate`, `/autonomous`, and the Launch Pad, Supervisor and Product Owner flows they run inline) asks the owner through the host's ask tool is one **gate**. Each gate has a short stable **code**, its canonical option **labels**, and a **policy**:
+Every question the engine (`/automate`, `/autonomous`, and the Launch Pad, Supervisor and Product Owner flows they run inline) asks the owner through the host's ask tool is one **gate**, and so is each per-item stamp question of `/backlog --verify`. Each gate has a short stable **code**, its canonical option **labels**, and a **policy**:
 
 - `allowed` — a routine formality. A human-stamped project policy or an owner-set wave policy may answer it in a lane, by exact lookup.
-- `human-only` — a real decision. No policy ever answers it, whatever a policy file says. A Plan Review FAIL or NEEDS_HUMAN, any MEDIUM-or-higher finding, an output gap or adjudication, a pre-flight OVERLAP or SUPERSEDED, per-finding dismissed drafts and fix-now, close-out leftovers, waiving an unrun running-system Validation step, Launch Pad clarification, NO-GO, the executable-acceptance stamp, a house-rule override and memory facts, Supervisor INIT config, and anything that merges, deletes or pushes are all `human-only`.
+- `human-only` — a real decision. No policy ever answers it, whatever a policy file says. A Plan Review FAIL or NEEDS_HUMAN, any MEDIUM-or-higher finding, an output gap or adjudication, a pre-flight OVERLAP or SUPERSEDED, per-finding dismissed drafts and fix-now, close-out leftovers, waiving an unrun running-system Validation step, Launch Pad clarification, NO-GO, the executable-acceptance stamp, a house-rule override and memory facts, Supervisor INIT config, a requirement status stamp (`/backlog --verify`), and anything that merges, deletes or pushes are all `human-only`.
 
 **Authority.** The table below is a MIRROR. The one authoritative table is `loomwright/scripts/lane-policy.sh catalog` (TSV: `code<TAB>policy<TAB>labels-joined-by-|<TAB>purpose`). Change a gate there, then regenerate this table in the same change with `bash loomwright/scripts/lane-policy.sh catalog --markdown`. `loomwright/scripts/test-lane-policy.sh` parses this table back into TSV and fails when the two differ. It also fails on any code longer than 12 characters, the ask tool's `header` limit (`commands/dreaming.md`).
 
@@ -72,4 +72,6 @@ Every question the engine (`/automate`, `/autonomous`, and the Launch Pad, Super
 | `AN-MERGE-VFY` | human-only | `merge-and-continue` · `stop-here` · `force-continue-anyway` | /autonomous merge-verify re-prompt |
 | `AN-PR-BASE` | human-only | `retry` · `skip-verify-once` · `abort` | /autonomous PR-base verification after gh failed twice |
 | `AN-ESCALATED` | human-only | `(free text)` | /autonomous review-heal ESCALATED |
+| `BL-VERIFY` | human-only | `Stamp done?` · `Stamp done with escalation?` · `Abandon` · `Skip` | /backlog --verify per-item stamp of an item with no merge evidence (the stamp options only when a merged PR is named; cannot ask ⇒ verify_requires_owner, nothing stamped) |
+| `BL-CONFLICT` | human-only | `Abandon` · `Keep open` · `Skip` | /backlog --verify per-item settle of a conflict item (an abandoned/skipped Queue row vs its own pending/ready; cannot ask ⇒ verify_requires_owner, nothing stamped) |
 <!-- lane-policy catalog: END -->
