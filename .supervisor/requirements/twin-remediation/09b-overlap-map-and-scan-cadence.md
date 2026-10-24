@@ -74,3 +74,9 @@ loomwright/skills/agent-teams/SKILL.md
 scripts/bump-version.sh
 scripts/test-bump-version.sh
 changelog.d/tr09b-overlap-map-and-scan-cadence.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-24T03:30:46Z
+- **Brief:** .supervisor/jobs/done/2026-10-22-tr09b-overlap-map-and-scan-cadence.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/683
