@@ -774,3 +774,48 @@ rs_conflict_mutant "guard line deleted" "" c-unchanged
 rs_conflict_mutant "pending/ready skip dropped, conflict check kept" \
   '          _bl_is_conflict "$fabs" "$reqpath" "$automate_dir" "$af" >/dev/null 2>&1 && { printf '"'"'info\t%s\tconflict\t%s\n'"'"' "$reqpath" "$af_rel"; continue; }' k-unchanged
 rs_conflict_mutant "skip widened to any ## Status: line" "${RS_GUARD/_rs_first_status_open \"\$fabs\"/grep -q '^## Status:' \"\$fabs\"}" s-stamped
+
+# H11. ONE row per abandoned item across run files: two run files abandon the same status-less item.
+#      --apply stamps it once (the first stamp makes is_done true for the second row), and the dry run
+#      must plan exactly what --apply stamps — one `plan` row, not one per run file.
+rs_dup_abandon_repo() {
+  local r; r="$(mktemp -d)"
+  mkdir -p "$r/.supervisor/requirements/qh" "$r/.supervisor/automate" "$r/.supervisor/jobs/done" "$r/bin" "$r/ghstub"
+  rs_stub_bin "$r/bin"
+  printf '# d\n' > "$r/.supervisor/requirements/qh/15-dup.md"
+  for n in 1 2; do
+    printf '# Automate Run: dup %s\n## Status: done\n## Queue\n- [x] .supervisor/requirements/qh/15-dup.md  # abandoned: owner dropped it (run %s)\n## Progress\n' "$n" "$n" \
+      > "$r/.supervisor/automate/dup$n.md"
+  done
+  printf '%s' "$r"
+}
+rs_dup_abandon_check() { # <repo> — prints `plan=<n> stamped=<n> lines=<n>`
+  local r="$1" q=".supervisor/requirements/qh"
+  rs_run "$r" "$r/$q"
+  printf 'plan=%s ' "$(grep -c "^plan	$q/15-dup.md	done_with_escalation — ABANDONED	" <<<"$RUN_OUT")"
+  rs_run "$r" "$r/$q" --apply
+  printf 'stamped=%s ' "$(grep -c "^stamped	$q/15-dup.md	done_with_escalation — ABANDONED	" <<<"$RUN_OUT")"
+  printf 'lines=%s' "$(grep -c '^## Status: done_with_escalation — ABANDONED' "$r/$q/15-dup.md")"
+}
+R="$(rs_dup_abandon_repo)"
+RS_DGOT="$(rs_dup_abandon_check "$R")"
+if [ "$RS_DGOT" = "plan=1 stamped=1 lines=1" ]; then
+  ok "H11: an item abandoned in two run files is planned once in a dry run and stamped once by --apply ($RS_DGOT)"
+else
+  no "H11 wrong: got '$RS_DGOT', want 'plan=1 stamped=1 lines=1'"
+fi
+rm -rf "$R"
+# Mutation control: the dry-run dedupe line deleted ⇒ two plan rows for one item.
+RS_DEDUP='            case "$planned" in *$'"'"'\n'"'"'"$reqpath"$'"'"'\n'"'"'*) continue ;; esac'
+if [ "$(grep -cxF "$RS_DEDUP" "$H")" = 1 ] && rs_mutant "$RS_DEDUP" "" && bash -n "$RSM/automate-helpers.sh"; then
+  R="$(rs_dup_abandon_repo)"
+  RS_DGOT="$(RS_H="$RSM/automate-helpers.sh" rs_dup_abandon_check "$R")"
+  case "$RS_DGOT" in
+    "plan=2 "*) ok "H11 mutation control: without the dedupe the dry run plans the item twice ($RS_DGOT) — the line is load-bearing" ;;
+    *) no "H11 mutation control REFUTED: the dedupe-less dry run still reads '$RS_DGOT'" ;;
+  esac
+  rm -rf "$R"
+else
+  no "H11 mutation control not built (dedupe line found $(grep -cxF "$RS_DEDUP" "$H") times, or the mutant is unchanged / does not parse)"
+fi
+rm -rf "$RSM"

@@ -318,8 +318,10 @@ _bl_context() {
   else
     lj="$(cd "$root" && bash "$_BL_HERE/automate-lanes.sh" lane-status --json 2>/dev/null)" || lj=""
   fi
-  "$JQ" -r '.lanes[]? | select(.state != "removed" and .state != "abandoned")
-    | [((.item // "") | sub("^\\./"; "")), (.lane // ""), (.state // ""), (.pr // "")] | @tsv' <<<"$lj" > "$_BL_TMP/lanes.tsv" 2>/dev/null \
+  # The same separator scrub as merged.tsv / open.tsv: _BL_PREP_AWK joins these fields with \037.
+  "$JQ" -r 'def scrub: tostring | gsub("[\t\r\n\u001d-\u001f]"; " ");
+    .lanes[]? | select(.state != "removed" and .state != "abandoned")
+    | [((.item // "") | scrub | sub("^\\./"; "")), ((.lane // "") | scrub), ((.state // "") | scrub), ((.pr // "") | scrub)] | @tsv' <<<"$lj" > "$_BL_TMP/lanes.tsv" 2>/dev/null \
     || : > "$_BL_TMP/lanes.tsv"
 }
 
