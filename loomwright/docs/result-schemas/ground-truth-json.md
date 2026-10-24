@@ -254,8 +254,12 @@ heading line**, opened by the namespaced HTML-comment sentinel the idempotency g
   automate-followups/38); the requirement file is stamped **in place** and never moved.
 - **Other writers of a `## Status:` heading (not this block):** `reconcile-status --apply` (human-run,
   evidence-gated on a merged PR) writes `## Status: done (PR #<n>, merge <sha>)` without the sentinel,
-  and an owner's `# abandoned:` decision becomes `## Status: done_with_escalation — ABANDONED (…)`;
+  and an owner's `# abandoned:` decision becomes `## Status: done_with_escalation — ABANDONED (…)`
+  (never over an item whose first `## Status:` line is explicit `pending`/`ready` — owner decision
+  D-conflict-1, `automate-helpers.d/reconcile-status.sh`);
   `stamp-requirement-status.sh` writes `## Status: brief-shipped`, deliberately not a done value.
+  One owner-invoked writer appends THIS block's line set: `automate-helpers.sh backlog-stamp <item>
+  done|done_with_escalation … --confirm` (`/backlog --verify`, one item per owner answer).
 - **Honest limit — one path gets no automatic done stamp:** a plain `/supervisor` / `/autonomous` run
   outside `/automate`. `closeout` needs an `/automate` run file and a caller: its callers are
   `/automate --resume`'s RECONCILE (`skills/automate-loop/SKILL.md` §6 step 1, this run's `## Current`
