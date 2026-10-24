@@ -345,6 +345,26 @@ wait
 bl_is "BL9 four concurrent stamps on one item keep all four lines and leave no lock behind (one writer at a time)" \
   "$(grep -c '^- \*\*Kept open:\*\* ' "$T9/.supervisor/requirements/bl/12-kept-open.md") $(find "$T9/.supervisor" -name '*.lock' | wc -l | tr -d ' ')" "5 0"
 bl_is "BL9 no stamp wrote an absolute home path" "$(grep -rlE '/(Users|home)/' "$T9/.supervisor/requirements" | wc -l | tr -d ' ')" "0"
+# The home-path scan covers every written / item-naming value but NOT the --root locator: an absolute
+# checkout under /Users or /home is the normal case. `hr+/home/alice/proj` is home-shaped (the `+`
+# before /home is a non-word char, so the scan's regex matches it), unlike a mktemp root.
+TH="$(bl_tree 'hr+/home/alice/proj')"
+bl_is "BL9 the home-shaped fixture root really matches the scan's regex" \
+  "$(printf '%s\n' "$TH" | grep -cE '(^|[^A-Za-z0-9._-])/(Users|home)/[^/]')" "1"
+bl_run "$H" backlog-stamp bl/14-open done --pr https://github.com/acme/widgets/pull/114 --root "$TH" --confirm
+bl_is "BL9 an explicit --root under a home-shaped path stamps (exit 0, the item reads done, no home path written)" \
+  "$BL_RC|$(bl_run "$H" item-state bl/14-open --root "$TH"; cut -f1 <<<"$BL_OUT")|$(grep -rlE '/(Users|home)/' "$TH/.supervisor/requirements" | wc -l | tr -d ' ')" "0|done|0"
+BL_BH="$(bl_sum "$TH")"
+bl_run "$H" backlog-stamp bl/16-off-enum abandoned --reason "see /Users/alice/notes" --root "$TH" --confirm
+bl_is "BL9 refused: a home path in --reason even when --root is home-shaped (exit 1, nothing written)" \
+  "$BL_RC $([ "$(bl_sum "$TH")" = "$BL_BH" ] && echo unchanged)|$BL_ERR" "1 unchanged|backlog-stamp: refused — an absolute home path in an argument (nothing written)"
+bl_sh1() { bl_run "$1" backlog-stamp bl/16-off-enum abandoned --reason gone --root "$TH"; head -n 1 <<<"$BL_OUT"; }
+bl_mut_check "pin: the home-path scan also reads --root (an absolute home checkout is refused)" \
+  "  a=\"\$(printf '%s\n' \"\$given\" \"\$mode\" \"\$prs\"" "  a=\"\$(printf '%s\n' \"\$root\" \"\$given\" \"\$mode\" \"\$prs\" \"\$owed\" \"\$reason\" \"\$sup\" \"\$date\")\"" \
+  bl_sh1 "backlog-stamp: would append to .supervisor/requirements/bl/16-off-enum.md:"
+bl_sh2() { bl_run "$1" backlog-stamp bl/16-off-enum abandoned --reason "see /Users/alice/notes" --root "$TH"; printf '%s|%s' "$BL_RC" "$BL_OUT"; }
+bl_mut_check "pin: the home-path scan disabled (a home path in --reason is written)" \
+  "  a=\"\$(printf '%s\n' \"\$given\" \"\$mode\" \"\$prs\"" "  a=''" bl_sh2 "1|"
 
 # ---- BL10 the readers never write: a full board + every item-state over the tree leaves it byte-unchanged.
 BL_B10="$(bl_sum "$T0")"
