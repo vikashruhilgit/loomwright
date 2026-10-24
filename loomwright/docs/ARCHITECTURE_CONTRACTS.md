@@ -749,6 +749,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `agent-help` | 26402 | 24001 |
 | `automate` | 5465 | 4968 |
 | `autonomous` | 4361 | 3964 |
+| `backlog` | 2413 | 2194 |
 | `capability-check` | 6680 | 6072 |
 | `code-reviewer` | 2837 | 2579 |
 | `dreaming` | 39945 | 36313 |
@@ -821,6 +822,7 @@ Every question gate in `agents/`, `commands/` and `skills/` and what it does whe
 | `/setup` offers and confirms (the memory module's learning-store consent ask and its `migrate` protect-waiver ask included) | `commands/setup.md`; `skills/setup/SKILL.md`; `docs/command-parts/setup/memory.md` | MI only (main-thread command) | writes nothing without an Accept (the consent ask records nothing, so nothing is published; with no answer to the waiver ask nothing is waived and the migration stops at `protect`) | unchanged |
 | `/telemetry` enable / import offer | `commands/telemetry.md` | MI only | writes nothing without an Accept (never auto-imports) | unchanged |
 | `/dreaming` per-item gate | `commands/dreaming.md` | MI only | writes nothing without an Accept; pushes nothing without a Pre-push confirmation (per item for the rules PR, one per-run question for the memory PR) | unchanged |
+| `/backlog --verify` per-item stamp (`BL-VERIFY`, `BL-CONFLICT`, human-only) | `commands/backlog.md` §"`--verify` — owner-gated verify and stamp" steps 1 and 4 | MI; HP (a headless print-mode session); SA (the prose run inside a subagent) | new gate (parallel-automate/18a) | not asked: lists every proposal, stamps and publishes nothing, first line `verify_requires_owner: <n> item(s) need the owner's answer — nothing stamped` |
 
 **Grouped description hits (no gate of their own):** the `--non-interactive` parameter rows in `agents/supervisor.md` and `commands/supervisor.md` belong to the Supervisor rows. The "what runs inline" lists, the flow diagram and the PLAN / EXECUTE forwarding notes in `commands/autonomous.md` and `skills/autonomous-loop/SKILL.md` belong to the Launch Pad and Supervisor rows. The note that `/verify` never asks (`commands/verify.md`) belongs to the qa-executor sign-in row. The notification hook that fires on any ask (`commands/setup.md` notifications section, `commands/agent-help.md` hooks table) is not a gate; it fires only when a gate actually asks.
 

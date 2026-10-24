@@ -1,0 +1,3 @@
+{"schema_version":1,"parent_run_id":"automate-2026-10-20-100000","machine":{},"lanes":[
+ {"lane":"L2","item":".supervisor/requirements/bl/10-lane.md","state":"running","pr":null},
+ {"lane":"L3","item":".supervisor/requirements/bl/14-open.md","state":"removed","pr":null}]}

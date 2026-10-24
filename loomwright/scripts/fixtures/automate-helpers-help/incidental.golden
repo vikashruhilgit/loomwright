@@ -12,6 +12,7 @@
   plan\t<repo-relative file>\t<status line the file would get>\t<evidence>
   stamped\t<repo-relative file>\t<status line just written>\t<evidence>
   info\t<repo-relative file>\tbrief-shipped\t<done/ brief's PR url, or "no PR recorded">
+  info\t<repo-relative file>\tconflict\t<repo-relative run file of the `# abandoned:` row>
   escalation_cause: <cause> check=<name|null> run_id=<id|null> attempt=<n|null> sha=<sha>
   check_pending        NO scoped check is red and a scoped (required ∪ review-producing)
   check_red_unrelated  every red scoped check's every failed step ran ONLY

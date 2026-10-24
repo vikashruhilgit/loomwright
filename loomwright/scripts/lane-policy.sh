@@ -99,7 +99,7 @@ _lp_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # ==================================================================================================
 # THE GATE CATALOG — the ONE authority. One `_lp_row code policy labels purpose` per engine ask-tool
 # gate (the engine = /automate, /autonomous, and the Launch Pad, Supervisor and Product Owner flows
-# they inline). Labels are joined by `|`; no field may contain a tab, a newline or (outside labels) a
+# they inline), plus /backlog --verify's per-item stamp asks. Labels are joined by `|`; no field may contain a tab, a newline or (outside labels) a
 # `|`. `(free text)` marks a gate whose answer is free-form — such a gate can never be `allowed`. A
 # trailing `?` marks an optional label (see `catalog` above); it is never part of the label itself.
 # Adding, removing or relabelling a row: regenerate loomwright/docs/LANE_GATES.md's table in the SAME
@@ -167,6 +167,10 @@ _lp_catalog_rows() {
     '/autonomous PR-base verification after gh failed twice'
   _lp_row AN-ESCALATED human-only '(free text)' \
     '/autonomous review-heal ESCALATED'
+  _lp_row BL-VERIFY    human-only 'Stamp done?|Stamp done with escalation?|Abandon|Skip' \
+    '/backlog --verify per-item stamp of an item with no merge evidence (the stamp options only when a merged PR is named; cannot ask ⇒ verify_requires_owner, nothing stamped)'
+  _lp_row BL-CONFLICT  human-only 'Abandon|Keep open|Skip' \
+    '/backlog --verify per-item settle of a conflict item (an abandoned/skipped Queue row vs its own pending/ready; cannot ask ⇒ verify_requires_owner, nothing stamped)'
 }
 
 # catalog [--markdown] — the TSV table, or the markdown table LANE_GATES.md embeds between its

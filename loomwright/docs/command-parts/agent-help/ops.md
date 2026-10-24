@@ -72,3 +72,22 @@
 
 ---
 
+### 📋 /backlog — Requirement Backlog Board (Read-Only, Owner-Gated Stamps)
+
+**Purpose:** Answer "what is pending, done, in flight" from evidence, never from a hand-kept label. Every `*.md` under `.supervisor/requirements/` gets exactly one state, derived from run files, live lanes (`lane-status --json`), merged and open PRs (two cached `gh pr list` reads) and the item's own `## Status:` stamps. A done stamp appended under a first-line `pending` reads `done`. The board groups rows by folder, names the evidence behind each state, adds a right-size column, and prints totals that add up to the item count. `gh` failing ⇒ `github: unverified`, never a silent `open`.
+
+**Usage:**
+```bash
+/backlog                       # the board
+/backlog --json                # ONE JSON object (totals, items, stale runs)
+/backlog --state <s>           # filter rows; totals stay whole-tree
+/backlog --unknown             # unknown / brief_shipped items with a suggested fix
+/backlog --verify [<item>...]  # owner-gated: propose, ask per item (BL-VERIFY / BL-CONFLICT), stamp only approved items
+```
+
+**Writes:** nothing, except `--verify`'s per-item owner-approved stamps through `automate-helpers.sh backlog-stamp --confirm`. In branch mode those are then published with `meta-sync.sh push --branch <branch> --paths-from <list>`. When it cannot ask (a subagent, or a non-interactive session), `--verify` lists its proposals and stamps nothing (`verify_requires_owner`).
+
+**Learn More:** see `loomwright/commands/backlog.md`; the states and their precedence are defined once in the header of `loomwright/scripts/automate-helpers.d/backlog.sh`.
+
+---
+

@@ -635,8 +635,14 @@ if [ -z "$NCL" ]; then
   echo "  SKIP: no en_US UTF-8 locale in 'locale -a' — leg 19 and its mutation control are INCONCLUSIVE on this host"
 else
   locale_leg; check $? "under $NCL: owner list, exact missing path and re-cut PASS all hold ($LOC_DETAIL)"
+  # The mutant below can only be told apart where comm itself collates by locale: on C-sorted
+  # input (Zz before a) a locale-aware comm under $NCL misreads the common line a as unique.
+  # A comm that compares bytes whatever the locale makes the mutant identical to the SUT here.
+  CL_PROBE="$(env LC_ALL="$NCL" comm -13 <(printf 'Zz\na\n') <(printf 'a\n') 2>/dev/null)"
   MUT="$TROOT/mut-comm-locale"
-  if build_mutant "$MUT" 's/env LC_ALL=C sort | env LC_ALL=C comm -13 - /env LC_ALL=C sort | comm -13 - /' 'env LC_ALL=C sort | comm -13 - '; then
+  if [ -z "$CL_PROBE" ]; then
+    echo "  SKIP: comm ignores $NCL collation on this host ($(comm --version 2>/dev/null | head -n 1 || echo 'comm: no --version')) — the verify-pr comm mutation control is INCONCLUSIVE here"
+  elif build_mutant "$MUT" 's/env LC_ALL=C sort | env LC_ALL=C comm -13 - /env LC_ALL=C sort | comm -13 - /' 'env LC_ALL=C sort | comm -13 - '; then
     SCRIPT="$MUT/migrate-branch-mode.sh"
     if locale_leg; then no "mutation control REFUTED: the unguarded verify-pr comm still passed under $NCL"; else ok "mutation control: the verify-pr comm without env LC_ALL=C turns the leg red ($LOC_DETAIL)"; fi
     SCRIPT="$SUT"

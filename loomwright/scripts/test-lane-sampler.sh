@@ -23,6 +23,8 @@
 #   (B2) Linux: a /proc cwd link reading "<lane path> (deleted)" (the lane root removed under a
 #        live process) still attributes to that lane, not to non-lane
 #   (L)  every fleet.log line is a sample line (no comment lines), at the default path
+#   (R)  the loop registers itself in the process registry (kind lane, owner = the parent pid);
+#        --once does not
 #   (U)  usage: missing --parent-run-id / --parent-pid, a run id with "/", bad --interval ⇒ exit 2;
 #        --help prints the header
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -35,6 +37,8 @@ command -v jq >/dev/null 2>&1 || { echo "test-lane-sampler: FATAL: jq required" 
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/lane-sampler-test.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
+# every loop run registers itself (proc-registry.sh); keep those entries inside $tmp, removed on exit
+export LOOMWRIGHT_PROC_REGISTRY_DIR="$tmp/procs-all"
 unset LOOMWRIGHT_LANE_MEM_FREE_MB LOOMWRIGHT_LANE_MEM_SAMPLES LOOMWRIGHT_LANE_SAMPLER_INTERVAL \
       LOOMWRIGHT_LANE_KEEPAWAKE_PROC
 
@@ -290,6 +294,16 @@ check "(L) default path gets one line per sample" "$(wc -l < "$AD/$RID.fleet.log
 check "(L) no comment lines in fleet.log" "$(grep -c '^#' "$AD/$RID.fleet.log")" 0
 loop --max-samples 1 --fleet-log "$tmp/custom.fleet.log"
 check "(L) --fleet-log overrides the path" "$(wc -l < "$tmp/custom.fleet.log" | tr -d ' ')" 1
+
+# ---- (R) the loop registers itself (proc-registry.sh), --once never does --------------------------
+reset_fx; : > "$FX/ps"
+REG="$tmp/procs"; mkdir -p "$REG"
+LOOMWRIGHT_PROC_REGISTRY_DIR="$REG" once >/dev/null 2>&1
+check "(R) --once writes no registry entry" "$(find "$REG" -name '*.json' | wc -l | tr -d ' ')" 0
+LOOMWRIGHT_PROC_REGISTRY_DIR="$REG" loop --max-samples 1
+check "(R) the loop writes ONE registry entry" "$(find "$REG" -name '*.json' | wc -l | tr -d ' ')" 1
+check "(R) ... kind lane, owned by the coordinator pid, purpose names the sampler" \
+  "$(jq -r '[.kind, (.owner_pid | tostring), (.purpose | test("^lane-sampler[.]sh of wave '"$RID"' ") | tostring)] | join(" ")' "$REG"/*.json 2>/dev/null)" "lane $$ true"
 
 # ---- (U) usage ----------------------------------------------------------------------------------
 bash "$SUT" --parent-pid 1 >/dev/null 2>&1; check "(U) missing --parent-run-id ⇒ 2" "$?" 2
