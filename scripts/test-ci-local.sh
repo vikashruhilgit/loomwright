@@ -86,6 +86,23 @@
 #        owner pid, no verdict) → STILL-RUNNING exit 3 at CI_LOCAL_WAIT_MAX; the verdict lands while
 #        it waits → that PASS, exit 0; the owner dies with no verdict → INCOMPLETE exit 1, no hang;
 #        a bad CI_LOCAL_WAIT_MAX → exit 2; ci-local.sh never waits by process name (no pgrep/pkill)
+# Leak gate (af/39g AC6) — a fixture test that can leave a process behind:
+#   (LK1) no leak → "leak gate — clean (0 new processes survived)", PASS, stamped, armed with the
+#        environment marker visible and the inherited-fd marker on
+#   (LK2) leg (i), the real leaker's shape (detached `python3 <repo script> --port 0` listener) → FAIL,
+#        survivor line, leak-gate verdict last, old stamp removed, survivor still alive (never signalled)
+#   (LK3) leg (ii), a nohup'd grandchild whose command line is only `sleep 271` → FAIL, exactly that
+#        survivor, and the verdict reaches the capturing caller within seconds (fds 3/4 closed)
+#   (LK4) an unrelated listener started by the harness mid-run → "not attributable … (not failed)", PASS
+#   (LK5) lsof absent → "listeners unchecked (lsof absent)", the environment marker still FAILs leg (i);
+#        MUTATION CONTROL: the LOOMWRIGHT_CI_LOCAL_RUN export deleted ⇒ the leak passes
+#   (LK6) every leak-gate `ps` snapshot fails (PATH stub) → FAIL closed before the suite, stamp removed
+#   (LK7) env-blind `ps` (stub) + no lsof → "leak gate — unverifiable (ps cannot show the environment)",
+#        not failed (the one documented fail-open)
+#   (LK8) env-blind `ps` + lsof → the inherited-fd marker alone FAILs leg (ii) (macOS hides a platform
+#        binary's environment); MUTATION CONTROL: the fd-9 open deleted ⇒ the leak passes
+#   (LK9) a bad CI_LOCAL_LEAK_SETTLE → exit 2
+#   Every leaked pid is recorded and stopped by kill_leaks (also on EXIT).
 # Slot state lives under a sandboxed XDG_STATE_HOME: an inner fixture run must never queue on the
 # real shared pool that an outer ci-local.sh run is holding (that would deadlock it). The machine
 # gate is sandboxed the same way (LOOMWRIGHT_MACHINE_STATE_DIR) and its reader pinned to a fixture
@@ -104,7 +121,24 @@ SUT="$HERE/ci-local.sh"
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/ci-local-test.XXXXXX")"
 sleeper=""
-trap '[ -n "$sleeper" ] && kill "$sleeper" 2>/dev/null; rm -rf "$tmp"' EXIT
+# The leak-gate legs record every process they leave behind in $LK/pids; kill_leaks stops them all
+# (TERM, a bounded wait, then KILL), so no leg leaves a stray process on the machine.
+LK="$tmp/leak"
+kill_leaks() {
+  local p i alive
+  [ -s "$LK/pids" ] || return 0
+  while IFS= read -r p; do if [ -n "$p" ]; then kill "$p" 2>/dev/null; fi; done < "$LK/pids"
+  i=0
+  while [ "$i" -lt 50 ]; do
+    alive=0
+    while IFS= read -r p; do if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then alive=1; fi; done < "$LK/pids"
+    if [ "$alive" -eq 0 ]; then break; fi
+    sleep 0.1; i=$((i + 1))
+  done
+  while IFS= read -r p; do if [ -n "$p" ]; then kill -KILL "$p" 2>/dev/null; fi; done < "$LK/pids"
+  : > "$LK/pids"
+}
+trap '[ -n "$sleeper" ] && kill "$sleeper" 2>/dev/null; kill_leaks; rm -rf "$tmp"' EXIT
 export XDG_STATE_HOME="$tmp/state"
 # The outer run exports its own job share / slot knobs; every arm here starts from a clean slate.
 unset SELF_TEST_JOBS LOOMWRIGHT_CI_SLOTS LOOMWRIGHT_CI_CPUS LOOMWRIGHT_CI_SLOT_PRINT_EVERY CI_LOCAL_LOCK_WAIT \
@@ -807,6 +841,183 @@ if [ "$mut_rc" -eq 0 ] && ! cmp -s "$R/scripts/ci-local.sh" "$R/scripts/ci-local
   else no "(SD) MUTATION CONTROL: the drift check missed the mutant: rc=$rc gaps=[$(drift_gaps | tr '\n' ' ')]"; fi
 else no "(SD) MUTATION CONTROL: mutant not built (anchor_found=$((1 - mut_rc)))"; fi
 rm -f "$R/scripts/ci-local-mutant.sh"
+
+# --- leak gate (af/39g AC6) ------------------------------------------------------------------------------
+# A fresh fixture whose test-one.sh can leave a process behind (FIXTURE_LEAK): `python` is the real
+# leaker's shape (start_app() in test-verify-walkthrough.sh: a detached `python3 <repo script> --port
+# <N>` listener, the test exits 0 once it answers), `nohup` a detached grandchild whose command line is
+# only `sleep 271`, `wait` a suite that holds still until the harness has started an UNRELATED listener.
+# Every leaked pid lands in $LK/pids and kill_leaks stops it at the end of its leg.
+build_fixture
+mkdir -p "$LK"; : > "$LK/pids"
+export FIXTURE_LEAK_DIR="$LK"
+REAL_PS="$(command -v ps)"
+cat > "$R/loomwright/scripts/fixture-app.py" <<'PY'
+import argparse, os, socket, time
+ap = argparse.ArgumentParser()
+ap.add_argument("--port", type=int, default=0)
+ap.add_argument("--portfile")
+ap.add_argument("--ttl", type=float, default=120.0)
+a = ap.parse_args()
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", a.port))
+s.listen(5)
+s.settimeout(0.5)
+if a.portfile:
+    with open(a.portfile + ".tmp", "w") as f:
+        f.write("%d\n" % s.getsockname()[1])
+    os.rename(a.portfile + ".tmp", a.portfile)
+end = time.time() + a.ttl
+while time.time() < end:
+    try:
+        c, _ = s.accept()
+        c.close()
+    except socket.timeout:
+        pass
+PY
+cat > "$R/loomwright/scripts/leak-nohup.sh" <<'SH'
+nohup sleep 271 >/dev/null 2>&1 &
+echo "$!" >> "$FIXTURE_LEAK_DIR/pids"
+exit 0
+SH
+cat > "$R/loomwright/scripts/test-one.sh" <<'SH'
+echo "one" >> "$FIXTURE_LOG"
+case "${FIXTURE_LEAK:-}" in
+  python)
+    rm -f "$FIXTURE_LEAK_DIR/app.port"
+    python3 "$(dirname "$0")/fixture-app.py" --port 0 --portfile "$FIXTURE_LEAK_DIR/app.port" >/dev/null 2>&1 &
+    echo "$!" >> "$FIXTURE_LEAK_DIR/pids"
+    i=0; while [ ! -s "$FIXTURE_LEAK_DIR/app.port" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done ;;
+  nohup) bash "$(dirname "$0")/leak-nohup.sh" ;;
+  wait)
+    : > "$FIXTURE_LEAK_DIR/suite.started"
+    i=0; while [ ! -f "$FIXTURE_LEAK_DIR/listener.up" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i + 1)); done ;;
+esac
+exit 0
+SH
+( cd "$R" && git add -A && git commit -qm leak-fixture && git update-ref refs/remotes/origin/main HEAD )
+# PATH stubs: `ps` that fails every leak-gate snapshot, and `ps` that cannot show the environment
+# (drops -E / e); any other call (the runner's own `ps -A -o pid= -o ppid=` …) goes to the real ps.
+mkdir -p "$LK/psfail" "$LK/envblind"
+printf '%s\n' '#!/bin/sh' 'case "$*" in *uid=,lstart=,command=*) exit 1 ;; esac' "exec \"$REAL_PS\" \"\$@\"" > "$LK/psfail/ps"
+printf '%s\n' '#!/bin/sh' "case \"\$1\" in -axE) shift; exec \"$REAL_PS\" -ax \"\$@\" ;; axeww) shift; exec \"$REAL_PS\" axww \"\$@\" ;; esac" \
+  "exec \"$REAL_PS\" \"\$@\"" > "$LK/envblind/ps"
+chmod +x "$LK/psfail/ps" "$LK/envblind/ps"
+NO_LSOF="lsof-absent-$$"   # CI_LOCAL_LSOF naming no command = lsof absent
+lk_verdict() { grep -q "^ci-local: FAIL after [0-9]*s — leak gate: $1 process(es) survived the suite (nothing cached)\$" <<<"$out" \
+  && grep -q "^ci-local: FAIL after [0-9]*s — leak gate: $1 process(es) survived" <<<"$(log_verdict "$(logpath)")"; }
+lk_key() { (cd "$R" && bash scripts/ci-local.sh --list 2>/dev/null | sed -n 's/^key: //p'); }
+lk_leaked() { sed -n '1p' "$LK/pids"; }
+# lk_mutant AWK-PROGRAM — writes scripts/ci-local-mutant.sh; 0 only when the anchor matched once and the
+# mutant is non-empty, differs from the original and parses (a mutant that silently no-ops proves nothing).
+lk_mutant() {
+  awk "$1" "$R/scripts/ci-local.sh" > "$R/scripts/ci-local-mutant.sh" && [ -s "$R/scripts/ci-local-mutant.sh" ] \
+    && ! cmp -s "$R/scripts/ci-local.sh" "$R/scripts/ci-local-mutant.sh" && bash -n "$R/scripts/ci-local-mutant.sh"
+}
+
+# (LK1) clean: the same fixture without a leak passes, says so, stamps.
+CI_LOCAL_LEAK_SETTLE=1 run --force
+if [ "$rc" -eq 0 ] && hasf "ci-local: leak gate — clean (0 new processes survived)" && has "stamped" \
+   && has "^ci-local: leak gate — armed (run ci-local\.[A-Za-z0-9]*-[0-9]*; environment marker visible; inherited-fd marker on)"; then
+  ok "(LK1) clean fixture: 'leak gate — clean (0 new processes survived)', PASS, stamped"
+else no "(LK1) rc=$rc out=$out"; fi
+
+# (LK2) leg (i), the real leaker's shape: FAIL, a survivor line naming the listener, the leak-gate
+# verdict last, the old stamp removed — and the survivor still alive (the gate never signals it).
+lkey="$(lk_key)"; [ -n "$lkey" ] && echo seeded > "$state/pass/$lkey"
+FIXTURE_LEAK=python CI_LOCAL_LEAK_SETTLE=1 run --force
+lp="$(lk_leaked)"
+if [ "$rc" -eq 1 ] && [ -n "$lp" ] && [ -n "$lkey" ] && has "^ci-local: leak gate — survivor pid=$lp .*fixture-app\.py --port 0" \
+   && lk_verdict 1 && [ ! -e "$state/pass/$lkey" ] && kill -0 "$lp" 2>/dev/null && names_log; then
+  ok "(LK2) leg (i) detached python3 <repo script> --port listener: FAIL, survivor named, verdict last, stamp removed, survivor not signalled"
+else no "(LK2) rc=$rc leaked=[$lp] key=$lkey stamp=$([ -e "$state/pass/$lkey" ] && echo kept || echo gone) out=$out"; fi
+kill_leaks
+
+# (LK3) leg (ii), a detached grandchild whose command line is only `sleep 271`: FAIL. The capture
+# returns within seconds: the suite runs with fds 3/4 (the caller's stdout/stderr) closed, so the
+# survivor cannot hold `$(…)` open for its 271 s.
+t0=$(date +%s); FIXTURE_LEAK=nohup CI_LOCAL_LEAK_SETTLE=1 run --force; el=$(( $(date +%s) - t0 ))
+np="$(lk_leaked)"
+if [ "$rc" -eq 1 ] && [ -n "$np" ] && [ "$(grep '^ci-local: leak gate — survivor ' <<<"$out")" = "ci-local: leak gate — survivor pid=$np sleep 271" ] \
+   && lk_verdict 1 && kill -0 "$np" 2>/dev/null && [ "$el" -le 60 ]; then
+  ok "(LK3) leg (ii) nohup'd grandchild 'sleep 271' (re-parented): FAIL, exactly that survivor, verdict in ${el}s"
+else no "(LK3) rc=$rc ${el}s leaked=[$np] out=$out"; fi
+kill_leaks
+
+# (LK4) an UNRELATED listener started by the harness while the suite runs: a note, never a FAIL.
+if command -v lsof >/dev/null 2>&1; then
+  rm -f "$LK/suite.started" "$LK/listener.up" "$LK/listener.port"
+  ( cd "$R" && FIXTURE_LEAK=wait CI_LOCAL_LEAK_SETTLE=1 bash scripts/ci-local.sh --force > "$LK/w.out" 2>&1; echo "$?" > "$LK/w.rc" ) &
+  wpid=$!
+  i=0; while [ ! -f "$LK/suite.started" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+  python3 "$R/loomwright/scripts/fixture-app.py" --port 0 --portfile "$LK/listener.port" >/dev/null 2>&1 &
+  lsn=$!; echo "$lsn" >> "$LK/pids"
+  i=0; while [ ! -s "$LK/listener.port" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+  : > "$LK/listener.up"
+  wait "$wpid"
+  out="$(cat "$LK/w.out")"
+  if [ "$(cat "$LK/w.rc")" = 0 ] && [ -s "$LK/listener.port" ] && ! has "survivor pid=" && has "^ci-local: PASS after" \
+     && hasf "ci-local: leak gate — note: new listener pid=$lsn not attributable to this run (not failed)"; then
+    ok "(LK4) a concurrent unrelated listener: 'not attributable to this run (not failed)' note, PASS"
+  else no "(LK4) rc=$(cat "$LK/w.rc") listener=$lsn out=$out"; fi
+  kill_leaks
+else no "(LK4) lsof is not installed — the listener half cannot be exercised here"; fi
+
+# (LK5) lsof absent: the listener half says so, the process half (environment marker) still FAILs leg (i).
+FIXTURE_LEAK=python CI_LOCAL_LSOF="$NO_LSOF" CI_LOCAL_LEAK_SETTLE=1 run --force
+lp="$(lk_leaked)"
+if [ "$rc" -eq 1 ] && [ -n "$lp" ] && hasf "ci-local: leak gate — listeners unchecked (lsof absent)" \
+   && hasf "inherited-fd marker off (lsof absent)" && has "^ci-local: leak gate — survivor pid=$lp " && lk_verdict 1; then
+  ok "(LK5) lsof absent: 'listeners unchecked (lsof absent)', the environment marker still FAILs the leak"
+else no "(LK5) rc=$rc leaked=[$lp] out=$out"; fi
+kill_leaks
+# MUTATION CONTROL — the export deleted: no process carries the variable, so (LK5) can no longer FAIL.
+if lk_mutant '/^  export LOOMWRIGHT_CI_LOCAL_RUN="\$leak_id"$/ { n++; next } { print } END { exit n != 1 }'; then
+  : > "$FIXTURE_LOG"; out="$(cd "$R" && FIXTURE_LEAK=python CI_LOCAL_LSOF="$NO_LSOF" CI_LOCAL_LEAK_SETTLE=1 bash scripts/ci-local-mutant.sh --force 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ] && ! has "survivor pid="; then ok "(LK5) MUTATION CONTROL: without the LOOMWRIGHT_CI_LOCAL_RUN export the leak passes — (LK5) pins the marker"
+  else no "(LK5) MUTATION CONTROL: the export-less mutant still failed — (LK5) proves nothing: rc=$rc out=$out"; fi
+else no "(LK5) MUTATION CONTROL: mutant not built"; fi
+kill_leaks; rm -f "$R/scripts/ci-local-mutant.sh"
+
+# (LK6) the snapshot fails: FAIL CLOSED before the suite runs, the old stamp removed.
+lkey="$(lk_key)"; [ -n "$lkey" ] && echo seeded > "$state/pass/$lkey"
+PATH="$LK/psfail:$PATH" run --force
+if [ "$rc" -eq 1 ] && [ -n "$lkey" ] && [ ! -e "$state/pass/$lkey" ] && [ ! -s "$FIXTURE_LOG" ] \
+   && [ "$(log_verdict "$(logpath)")" = "ci-local: FAIL after 0s — leak gate: ps snapshot failed (nothing cached)" ]; then
+  ok "(LK6) ps snapshot fails: 'leak gate: ps snapshot failed (nothing cached)', exit 1, nothing ran, stamp removed"
+else no "(LK6) rc=$rc stamp=$([ -e "$state/pass/$lkey" ] && echo kept || echo gone) ran=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+
+# (LK7) the documented fail-open: a ps that cannot show the environment AND no lsof — 'unverifiable', no
+# FAIL, even with leg (i) leaking (the wording is pinned; the leak is stopped below).
+FIXTURE_LEAK=python PATH="$LK/envblind:$PATH" CI_LOCAL_LSOF="$NO_LSOF" CI_LOCAL_LEAK_SETTLE=1 run --force
+if [ "$rc" -eq 0 ] && hasf "ci-local: leak gate — unverifiable (ps cannot show the environment)" \
+   && hasf "environment marker unverifiable" && ! has "survivor pid=" && has "^ci-local: PASS after"; then
+  ok "(LK7) env-blind ps + no lsof: 'leak gate — unverifiable (ps cannot show the environment)', not failed"
+else no "(LK7) rc=$rc out=$out"; fi
+kill_leaks
+
+# (LK8) env-blind ps WITH lsof: the inherited-fd marker alone still FAILs leg (ii) — the case macOS
+# presents for every Apple platform binary such as /bin/sleep, whose environment ps -E never shows.
+FIXTURE_LEAK=nohup PATH="$LK/envblind:$PATH" CI_LOCAL_LEAK_SETTLE=1 run --force
+np="$(lk_leaked)"
+if [ "$rc" -eq 1 ] && [ -n "$np" ] && hasf "attributing by the inherited fd marker only" \
+   && hasf "ci-local: leak gate — survivor pid=$np sleep 271" && lk_verdict 1; then
+  ok "(LK8) env-blind ps + lsof: the inherited fd marker FAILs the nohup'd 'sleep 271'"
+else no "(LK8) rc=$rc leaked=[$np] out=$out"; fi
+kill_leaks
+# MUTATION CONTROL — the marker fd never opened: (LK8) can no longer FAIL.
+if lk_mutant '/^  exec 9< "\$tmpd\/leak\.fd"$/ { n++; next } { print } END { exit n != 1 }'; then
+  : > "$FIXTURE_LOG"; out="$(cd "$R" && FIXTURE_LEAK=nohup PATH="$LK/envblind:$PATH" CI_LOCAL_LEAK_SETTLE=1 bash scripts/ci-local-mutant.sh --force 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ] && ! has "survivor pid="; then ok "(LK8) MUTATION CONTROL: without the fd-9 marker the env-blind leak passes — (LK8) pins the fd half"
+  else no "(LK8) MUTATION CONTROL: the fd-less mutant still failed — (LK8) proves nothing: rc=$rc out=$out"; fi
+else no "(LK8) MUTATION CONTROL: mutant not built"; fi
+kill_leaks; rm -f "$R/scripts/ci-local-mutant.sh"
+
+# (LK9) a bad CI_LOCAL_LEAK_SETTLE is a usage error.
+CI_LOCAL_LEAK_SETTLE=soon run --force
+if [ "$rc" -eq 2 ] && has "CI_LOCAL_LEAK_SETTLE must be" && [ ! -s "$FIXTURE_LOG" ]; then ok "(LK9) a non-integer CI_LOCAL_LEAK_SETTLE: exit 2, nothing ran"
+else no "(LK9) rc=$rc out=$out"; fi
 
 # (A)
 run --bogus

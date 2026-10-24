@@ -101,6 +101,48 @@
 #                      Bash tool runs the whole command line as one `zsh -c "<command>"`), so it never
 #                      exits. Honest limit: a run that has not yet printed its `ci-local: log` line has
 #                      no log to wait on — --wait then reports the previous state at once.
+#   LEAK GATE          a run that starts the suite (plain, --force, --affected) FAILS when a process
+#                      the suite started is still alive after it. Before the early phase (--affected:
+#                      before its runner call) it exports LOOMWRIGHT_CI_LOCAL_RUN=<unique run id>,
+#                      opens a per-run marker file on fd 9 (both inherited by the runner and every
+#                      descendant, nohup'd and re-parented ones included) and takes ONE env-showing
+#                      `ps` snapshot (pid + lstart; the form is picked by a feature probe — the
+#                      snapshot's own `ps` line must show the marker — never by `uname`: BSD
+#                      `ps -axE -ww`, then procps `ps axeww`). After the suite it takes the same
+#                      snapshot again. A SURVIVOR is a process that is absent from the before-snapshot
+#                      (pid + lstart), owned by this user, carries this run's marker — the variable
+#                      in its environment OR the marker file open on an inherited fd (`lsof`) — and
+#                      is still alive after a settle poll of at most CI_LOCAL_LEAK_SETTLE s that ends
+#                      as soon as no candidate is left. Each survivor prints `ci-local: leak gate —
+#                      survivor pid=<p> <command>`; the verdict is `ci-local: FAIL after <N>s — leak
+#                      gate: <K> process(es) survived the suite (nothing cached)`, the stamp is
+#                      removed, exit 1. No survivor prints `ci-local: leak gate — clean (0 new
+#                      processes survived)`. Attribution is by the inherited marker, never by a path,
+#                      so a concurrent ci-local (its own run id) or another session's process never
+#                      fails this run. New TCP listeners (`lsof -iTCP -sTCP:LISTEN`, before vs after)
+#                      that are not survivors print `ci-local: leak gate — note: new listener pid=<p>
+#                      not attributable to this run (not failed)`. A failing snapshot fails CLOSED
+#                      (`… — leak gate: ps snapshot failed (nothing cached)`). The gate only reports:
+#                      it never signals a survivor. A cached PASS, --list, --last and --wait never
+#                      run it. The suite runs with this script's saved copies of the caller's
+#                      stdout/stderr (fds 3/4, see RUN LOGS) closed, so a process it leaves behind
+#                      cannot hold the caller's output open: a caller that captures this script's
+#                      output (`out="$(ci-local.sh)"`) gets the verdict at once, not when the leaked
+#                      process finally exits.
+#                      Honest limits: (1) a process that scrubs its environment (`env -i`, a daemon
+#                      that clears it) AND closes its inherited fds is invisible; (2) another user's
+#                      process is never counted; (3) macOS hides the environment of Apple platform
+#                      binaries (/bin/sleep, /bin/bash, /usr/bin/nc …) from `ps -E` — probed
+#                      2026-10-24, a `nohup sleep` grandchild showed no environment — so there only
+#                      the inherited fd attributes them; (4) without `lsof` the fd half and the
+#                      listener half are off (`ci-local: leak gate — listeners unchecked (lsof
+#                      absent)`) and only the environment half runs; (5) a platform whose `ps` cannot
+#                      show the environment prints `ci-local: leak gate — environment unverifiable
+#                      (ps cannot show the environment); attributing by the inherited fd marker only`,
+#                      and with `lsof` absent too it prints `ci-local: leak gate — unverifiable (ps
+#                      cannot show the environment)` and does not FAIL — the one documented fail-open
+#                      case; (6) a nested ci-local run re-exports its own id and re-opens fd 9, so a
+#                      process it leaves behind is attributed to the nested run only.
 #
 # usage: ci-local.sh [--force] [--list] | --affected [--list] | --last | --wait
 #   --force     ignore the pass cache and run everything
@@ -116,6 +158,10 @@
 #        CI_LOCAL_WAIT_MAX / CI_LOCAL_WAIT_POLL   --wait's deadline (default 540) and poll interval
 #                             in seconds (default 5)
 #        LOOMWRIGHT_CI_SLOTS  number of shared slots (see SHARED CI SLOTS; never raise it to "go faster")
+#        CI_LOCAL_LEAK_SETTLE  seconds a leak candidate may take to exit before it counts (default 5)
+#        CI_LOCAL_LSOF        the lsof command the leak gate runs (default `lsof`; a name that does
+#                             not resolve is treated as lsof absent)
+#        LOOMWRIGHT_CI_LOCAL_RUN  SET by this script (the leak gate's run id), never read from the caller
 # exit:  0 = every gate passed (fresh or cached) · 1 = a gate failed / fail-closed condition · 2 = usage
 #        --last: 0 = PASS · 1 = FAIL / UNVERIFIED / INCOMPLETE / stale-key / no log
 #        --wait: as --last, plus 3 = still running at the deadline (call --wait again)
@@ -152,6 +198,9 @@ fi
 wait_max="${CI_LOCAL_WAIT_MAX:-540}"; wait_poll="${CI_LOCAL_WAIT_POLL:-5}"
 case "$wait_max" in ''|*[!0-9]*) echo "ci-local: CI_LOCAL_WAIT_MAX must be a non-negative integer, got '$wait_max'" >&2; exit 2 ;; esac
 case "$wait_poll" in ''|.|*[!0-9.]*|*.*.*) echo "ci-local: CI_LOCAL_WAIT_POLL must be a positive number of seconds, got '$wait_poll'" >&2; exit 2 ;; esac
+leak_settle="${CI_LOCAL_LEAK_SETTLE:-5}"
+case "$leak_settle" in ''|*[!0-9]*) echo "ci-local: CI_LOCAL_LEAK_SETTLE must be a non-negative integer, got '$leak_settle'" >&2; exit 2 ;; esac
+leak_lsof="${CI_LOCAL_LSOF:-lsof}"
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
@@ -328,6 +377,151 @@ content_key() {
   tree="$(GIT_INDEX_FILE="$tmpd/index" git write-tree)" || return 1
   base="$(git rev-parse -q --verify origin/main 2>/dev/null || echo no-origin-main)"
   printf '%s-%s-%s\n' "$tree" "$base" "$(uname -s)"
+}
+
+# --- leak gate (see LEAK GATE in the header) ----------------------------------------------------------
+# Every helper the gate itself runs closes fd 9 (`9<&-`), so it never holds the marker file. A snapshot
+# runs in the background and is awaited, so its pid is known ($leak_ps_pid) and excluded.
+leak_id=""; leak_form=""; leak_env=0; leak_have_lsof=0; leak_k=0; leak_status=""; leak_ps_pid=""
+# leak_ps FORM OUT — one snapshot (pid, uid, lstart, command + environment) in FORM (bsd | procps) to
+# OUT, with the lstart TZ/locale pinned so two snapshots compare; returns ps's exit code.
+leak_ps() {
+  local rc=0
+  if [ "$1" = bsd ]; then
+    env TZ=UTC0 LC_ALL=C ps -axE -ww -o pid=,uid=,lstart=,command= > "$2" 2>/dev/null 9<&- &
+  else
+    env TZ=UTC0 LC_ALL=C ps axeww -o pid=,uid=,lstart=,command= > "$2" 2>/dev/null 9<&- &
+  fi
+  leak_ps_pid=$!
+  wait "$leak_ps_pid" || rc=$?
+  return "$rc"
+}
+# leak_records FILE — one line per process: an environment value holding a newline continues on
+# the next output line, so a line that does not start "<pid> <uid> <lstart>" is joined to the one
+# before it.
+leak_records() {
+  awk '/^ *[0-9]+ +[0-9]+ +[A-Z][a-z][a-z] +[A-Z][a-z][a-z] +[0-9]+ +[0-9][0-9]:[0-9][0-9]:[0-9][0-9] +[0-9][0-9][0-9][0-9]/ {
+         if (r != "") print r; r = $0; next }
+       { if (r != "") r = r " " $0 }
+       END { if (r != "") print r }' "$1"
+}
+# leak_marked FILE PID — true when PID's record in FILE carries this run's marker variable.
+leak_marked() {
+  leak_records "$1" | awk -v p="$2" -v m=" LOOMWRIGHT_CI_LOCAL_RUN=$leak_id " \
+    '$1 == p && index($0 " ", m) { f = 1 } END { exit !f }'
+}
+# leak_listeners OUT — the sorted pids holding a listening TCP socket (lsof exits 1 when none).
+leak_listeners() {
+  { "$leak_lsof" -nP -iTCP -sTCP:LISTEN -Fp 2>/dev/null 9<&- || true; } | sed -n 's/^p//p' | env LC_ALL=C sort -u > "$1"
+}
+
+# leak_gate_start — exports the run id, opens the marker fd, probes the snapshot form and takes the
+# before-snapshot. Returns 1 when no form of `ps` produced a snapshot (the caller fails closed).
+leak_gate_start() {
+  local f ok=""
+  leak_id="$(basename "$tmpd")-$$"
+  export LOOMWRIGHT_CI_LOCAL_RUN="$leak_id"
+  : > "$tmpd/leak.fd"
+  exec 9< "$tmpd/leak.fd"
+  if command -v "$leak_lsof" >/dev/null 2>&1; then leak_have_lsof=1; leak_listeners "$tmpd/leak.lsn.before"; fi
+  # The probe: the snapshot's own `ps` inherited the marker, so a form that shows the environment
+  # shows it on that ps's own line. A form that ran but shows no environment is kept as the fallback.
+  for f in bsd procps; do
+    if leak_ps "$f" "$tmpd/leak.before.$f"; then
+      [ -n "$ok" ] || ok="$f"
+      if leak_marked "$tmpd/leak.before.$f" "$leak_ps_pid"; then leak_form="$f"; leak_env=1; break; fi
+    fi
+  done
+  [ -n "$ok" ] || return 1
+  [ -n "$leak_form" ] || leak_form="$ok"
+  echo "ci-local: leak gate — armed (run $leak_id; environment marker $([ "$leak_env" -eq 1 ] && echo visible || echo unverifiable); inherited-fd marker $([ "$leak_have_lsof" -eq 1 ] && echo on || echo 'off (lsof absent)'))"
+  return 0
+}
+
+# leak_gate_end — the after-snapshot, the settle poll, the survivor / listener lines. Sets leak_k (the
+# survivor count) and leak_status (clean | survivors | unverifiable | snapfail). Prints only; the
+# caller turns the result into a verdict.
+leak_gate_end() {
+  local before="$tmpd/leak.before.$leak_form" after="$tmpd/leak.after" cand="$tmpd/leak.cand" \
+        surv="$tmpd/leak.surv" tab pid lst cmd polls alive csv line
+  tab="$(printf '\t')"
+  leak_k=0; leak_status=clean
+  : > "$surv"
+  if [ "$leak_have_lsof" -eq 1 ]; then leak_listeners "$tmpd/leak.lsn.after"; fi
+  if ! leak_ps "$leak_form" "$after"; then
+    leak_status=snapfail
+    echo "ci-local: leak gate — the ps snapshot after the suite failed"
+    return 0
+  fi
+  if [ "$leak_env" -eq 0 ] && [ "$leak_have_lsof" -eq 0 ]; then
+    leak_status=unverifiable
+    echo "ci-local: leak gate — unverifiable (ps cannot show the environment)"
+    echo "ci-local: leak gate — listeners unchecked (lsof absent)"
+    return 0
+  fi
+  [ "$leak_env" -eq 1 ] || echo "ci-local: leak gate — environment unverifiable (ps cannot show the environment); attributing by the inherited fd marker only"
+  : > "$tmpd/leak.fdholders"
+  if [ "$leak_have_lsof" -eq 1 ]; then
+    { "$leak_lsof" -nP -t -- "$tmpd/leak.fd" 2>/dev/null 9<&- || true; } > "$tmpd/leak.fdholders"
+  fi
+  leak_records "$before" > "$before.rec"
+  # Candidates: new (pid + lstart not in the before-snapshot), mine, not this gate's own ps, and
+  # carrying the marker (variable in the environment, or the marker file on an inherited fd).
+  leak_records "$after" | awk -v me="$(id -u)" -v self="$leak_ps_pid" -v m=" LOOMWRIGHT_CI_LOCAL_RUN=$leak_id " \
+      -v FD="$tmpd/leak.fdholders" -v BF="$before.rec" '
+    BEGIN {
+      while ((getline l < FD) > 0) fd[l + 0] = 1
+      while ((getline l < BF) > 0) { split(l, a, " "); seen[a[1] " " a[3] " " a[4] " " a[5] " " a[6] " " a[7]] = 1 }
+    }
+    $2 != me || $1 == self { next }
+    ($1 " " $3 " " $4 " " $5 " " $6 " " $7) in seen { next }
+    index($0 " ", m) || (($1 + 0) in fd) { print $1 "\t" $3 " " $4 " " $5 " " $6 " " $7 }' > "$cand"
+  # Settle: a condition poll, bounded by CI_LOCAL_LEAK_SETTLE, that ends once no candidate is alive.
+  polls=0
+  while [ -s "$cand" ]; do
+    alive=0
+    while IFS="$tab" read -r pid lst; do
+      if kill -0 "$pid" 2>/dev/null; then alive=$((alive + 1)); fi
+    done < "$cand"
+    if [ "$alive" -eq 0 ] || [ "$polls" -ge $((leak_settle * 5)) ]; then break; fi
+    sleep 0.2
+    polls=$((polls + 1))
+  done
+  # Survivors: candidates still alive whose lstart still matches (a recycled pid is not one). The
+  # command shown comes from a plain `ps` of those pids only (no environment in it).
+  csv=""
+  while IFS="$tab" read -r pid lst; do
+    if kill -0 "$pid" 2>/dev/null; then csv="$csv${csv:+,}$pid"; fi
+  done < "$cand"
+  if [ -n "$csv" ]; then
+    { env TZ=UTC0 LC_ALL=C ps -ww -o pid=,lstart=,command= -p "$csv" 2>/dev/null 9<&- || true; } > "$tmpd/leak.final"
+    while IFS="$tab" read -r pid lst; do
+      kill -0 "$pid" 2>/dev/null || continue
+      line="$(awk -v p="$pid" -v l="$lst" '$1 == p {
+          if ($2 " " $3 " " $4 " " $5 " " $6 != l) { print "recycled"; exit }
+          $1 = $2 = $3 = $4 = $5 = $6 = ""; sub(/^ +/, ""); print "same " $0; exit }' "$tmpd/leak.final")"
+      case "$line" in
+        recycled) continue ;;
+        "same "*) cmd="${line#same }" ;;
+        *) cmd="(command unavailable)" ;;
+      esac
+      leak_k=$((leak_k + 1))
+      printf '%s\n' "$pid" >> "$surv"
+      echo "ci-local: leak gate — survivor pid=$pid $cmd"
+    done < "$cand"
+  fi
+  if [ "$leak_k" -gt 0 ]; then leak_status=survivors
+  else echo "ci-local: leak gate — clean (0 new processes survived)"; fi
+  if [ "$leak_have_lsof" -eq 1 ]; then
+    env LC_ALL=C comm -13 "$tmpd/leak.lsn.before" "$tmpd/leak.lsn.after" | while IFS= read -r pid; do
+      grep -qx "$pid" "$surv" && continue
+      kill -0 "$pid" 2>/dev/null || continue
+      echo "ci-local: leak gate — note: new listener pid=$pid not attributable to this run (not failed)"
+    done
+  else
+    echo "ci-local: leak gate — listeners unchecked (lsof absent)"
+  fi
+  return 0
 }
 
 if [ "$last" -eq 1 ]; then
@@ -588,12 +782,25 @@ fi
 if [ "$affected" -eq 1 ]; then
   echo "ci-local --affected: $n_early early-set entries + $n_mapped mapped suites, one pool (key ${key%%-*})"
   start=$(date +%s)
+  if ! leak_gate_start; then
+    verdict="ci-local --affected: FAIL after 0s — leak gate: ps snapshot failed"; verdict_fd=2
+    exit 1
+  fi
   rc=0
-  bash "$runner" "${aplan[@]}" || rc=$?
+  bash "$runner" "${aplan[@]}" 3>&- 4>&- || rc=$?
+  leak_gate_end
   wall=$(( $(date +%s) - start ))
   echo
   if [ "$rc" -ne 0 ]; then
     verdict="ci-local --affected: FAIL after ${wall}s — see the FAIL banners above"; verdict_fd=2
+    exit 1
+  fi
+  if [ "$leak_status" = snapfail ]; then
+    verdict="ci-local --affected: FAIL after ${wall}s — leak gate: ps snapshot failed"; verdict_fd=2
+    exit 1
+  fi
+  if [ "$leak_k" -gt 0 ]; then
+    verdict="ci-local --affected: FAIL after ${wall}s — leak gate: ${leak_k} process(es) survived the suite"; verdict_fd=2
     exit 1
   fi
   verdict="ci-local --affected: PASS after ${wall}s — ${#aplan[@]} of the full run's ${#plan[@]} entries"; verdict_fd=1
@@ -611,13 +818,20 @@ while [ "$i" -lt "${#plan[@]}" ]; do
 done
 echo "ci-local: ${#gates[@]} ci.yml gates + $(( ${#plan[@]} - ${#gates[@]} )) self-tests: ${#eplan[@]} early, then ${#pplan[@]} in one pool (key ${key%%-*})"
 start=$(date +%s)
+# The leak gate is armed before the early phase (see LEAK GATE in the header); no snapshot ⇒ fail closed.
+if ! leak_gate_start; then
+  rm -f "$stamp"
+  verdict="ci-local: FAIL after 0s — leak gate: ps snapshot failed (nothing cached)"; verdict_fd=2
+  exit 1
+fi
 # A runner called with NO arguments runs its whole default suite — so an empty phase is skipped, never
 # passed to it.
 if [ "${#eplan[@]}" -gt 0 ]; then
   echo "ci-local: early phase — ${#eplan[@]} entries; the pool starts only if every one passes"
   erc=0
-  bash "$runner" "${eplan[@]}" || erc=$?
+  bash "$runner" "${eplan[@]}" 3>&- 4>&- || erc=$?
   if [ "$erc" -ne 0 ]; then
+    leak_gate_end   # report-only here: the early-red verdict below stands
     wall=$(( $(date +%s) - start ))
     echo
     # Same rule as a pool failure: the cache never keeps vouching for a tree that just failed.
@@ -629,7 +843,9 @@ if [ "${#eplan[@]}" -gt 0 ]; then
   echo "ci-local: early phase green after $(( $(date +%s) - start ))s — starting the pool"
 fi
 rc=0
-if [ "${#pplan[@]}" -gt 0 ]; then bash "$runner" "${pplan[@]}" || rc=$?; fi
+if [ "${#pplan[@]}" -gt 0 ]; then bash "$runner" "${pplan[@]}" 3>&- 4>&- || rc=$?; fi
+# Leak-gate lines print here, BEFORE any verdict, so a finished log still ends with its verdict line.
+leak_gate_end
 wall=$(( $(date +%s) - start ))
 
 echo
@@ -639,6 +855,16 @@ if [ "$rc" -ne 0 ]; then
   # flaky or environment-dependent gate): the cache only ever vouches for the latest verdict.
   rm -f "$stamp"
   verdict="ci-local: FAIL after ${wall}s — see the FAIL banners above (nothing cached)"; verdict_fd=2
+  exit 1
+fi
+if [ "$leak_status" = snapfail ]; then
+  rm -f "$stamp"
+  verdict="ci-local: FAIL after ${wall}s — leak gate: ps snapshot failed (nothing cached)"; verdict_fd=2
+  exit 1
+fi
+if [ "$leak_k" -gt 0 ]; then
+  rm -f "$stamp"
+  verdict="ci-local: FAIL after ${wall}s — leak gate: ${leak_k} process(es) survived the suite (nothing cached)"; verdict_fd=2
   exit 1
 fi
 after="$(content_key)"
