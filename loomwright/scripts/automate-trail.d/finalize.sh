@@ -14,7 +14,9 @@
 # line authored by `current-set --pause-reason null` on the staged copy; every
 # other byte unchanged); `progress-append "<ts> auto-finalized: queue empty after
 # closeout"`; `trail-pr <runfile> --reason done` (the SAME call the Queue-resolved
-# termination makes) and its line appended; ONE `<ts> sweep (dry run): <summary>`
+# termination makes) and its line appended; ONE `<ts> process registry: <summary>`
+# Progress line (`proc-registry.sh summary`, read-only; none ⇒ `proc-registry:
+# summary — skipped: no output` — af/39g), then ONE `<ts> sweep (dry run): <summary>`
 # Progress line (sweep_run, dry — af/39a); branch mode OFF only, `trail-unstage
 # <runfile>` (this is usually a FOREIGN run finalized from the current run's RESUME:
 # its staged trail blobs would ride into the current run's next commit and make
@@ -133,6 +135,13 @@ finalize_empty() {
   [ -n "$l" ] || l="trail-pr: skipped — no output"
   echo "$l"
   bash "$HLP" progress-append "$rf_rel" "$ts $l" >/dev/null 2>&1
+  # af/39g: ONE `<ts> process registry: <summary>` line (proc-registry.sh summary —
+  # read-only, one ps call) directly before the sweep line, in the same fail-safe
+  # form: no summary line ⇒ the pinned skipped form.
+  local rg
+  rg="$(bash "$HERE/proc-registry.sh" summary 2>/dev/null </dev/null | grep '^proc-registry: summary — ' | tail -n1)"
+  [ -n "$rg" ] || rg="proc-registry: summary — skipped: no output"
+  bash "$HLP" progress-append "$rf_rel" "$ts process registry: $rg" >/dev/null 2>&1
   # af/39a: ONE dry-run sweep summary per run end, appended AFTER the trail line —
   # never inside the staged runfile rewrite above, never `--apply`. A subshell, so
   # the sweep can neither move this function's cwd nor touch its EXIT trap.
