@@ -60,6 +60,10 @@
 # and nothing else — the merged item, its originals' parked stamps and its dependents' re-pointed
 # `## Depends on` lines, all staged and copied into place only after its lost-line post-check
 # passes; never git, never `gh`. (`right-size` beside it is read-only.)
+# A sixth carve-out, in THIS process: `backlog-stamp` (automate-helpers.d/backlog.sh), run only on
+# the owner's per-item approval, writes ONLY one requirement file under <root>/.supervisor/requirements/,
+# only under `--confirm` (without it: prints the block, writes nothing, exit 1) — appended through a
+# temp copy + mv; never git, never `gh`. (`item-state` / `backlog` beside it are read-only.)
 # UNCOUNTED by the
 # doc-currency gate (it is a plain script, not an agent/command/skill/hook).
 #
@@ -172,7 +176,7 @@ _ah_bundle() {
 }
 # _AH_HELP_SEGMENTS — the --help usage order: an explicit list, never a glob. A family name is that
 # family's `#:  ` block; an hdr-* name is the dispatcher header group its `#:@ <name>` line opens.
-_AH_HELP_SEGMENTS="config runfile intake resume hdr-gate learning escalation reconcile-status hdr-trail meta plan-waves right-size hdr-lanes"
+_AH_HELP_SEGMENTS="config runfile intake resume hdr-gate learning escalation reconcile-status hdr-trail meta plan-waves right-size backlog hdr-lanes"
 # _ah_usage [<dispatcher>] — print the `#:  ` usage lines of _ah_bundle's output as `  <line>`, one
 # segment at a time in _AH_HELP_SEGMENTS order. A line's segment is the family whose
 # `# >>> automate-helpers.d/<name>.sh` markers enclose it, else the dispatcher's open `#:@` group.
@@ -1072,6 +1076,9 @@ _ah_source plan-waves
 # >>> automate-helpers.d/right-size.sh
 _ah_source right-size
 # <<< automate-helpers.d/right-size.sh
+# >>> automate-helpers.d/backlog.sh
+_ah_source backlog
+# <<< automate-helpers.d/backlog.sh
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
@@ -1104,6 +1111,9 @@ main() {
     plan-waves)      plan_waves "$@" ;;
     right-size)      right_size "$@" ;;
     merge-items)     merge_items "$@" ;;
+    item-state)      item_state "$@" ;;
+    backlog)         backlog_board "$@" ;;
+    backlog-stamp)   backlog_stamp "$@" ;;
     # Post-park lifecycle MUTATORS live in the sibling automate-trail.sh (the
     # read-only carve-out named in the header) — one mover per concern.
     sidecar-check|trail-pr|closeout|trail-unstage|trail-gate) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;

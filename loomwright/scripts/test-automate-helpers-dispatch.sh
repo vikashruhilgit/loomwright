@@ -41,7 +41,7 @@ FAM_DIR="$HERE/automate-helpers.d"
 # from the last single-file automate-helpers.sh, a14db34). SEGMENTS is the EXPECTED order — the
 # test's own copy, so a reordered _AH_HELP_SEGMENTS in the dispatcher fails check 5.
 GOLDEN_DIR="$HERE/fixtures/automate-helpers-help"
-SEGMENTS="config runfile intake resume hdr-gate learning escalation reconcile-status hdr-trail meta plan-waves right-size hdr-lanes incidental"
+SEGMENTS="config runfile intake resume hdr-gate learning escalation reconcile-status hdr-trail meta plan-waves right-size backlog hdr-lanes incidental"
 
 pass=0; fail=0; skip=0
 ok()   { echo "  ok: $1"; pass=$((pass+1)); }
