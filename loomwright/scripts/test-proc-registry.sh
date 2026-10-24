@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-proc-registry.sh — self-tests for loomwright/scripts/proc-registry.sh (register / list / reap).
+# test-proc-registry.sh — self-tests for loomwright/scripts/proc-registry.sh (register / list / summary / reap).
 # Isolated: every leg uses its own LOOMWRIGHT_PROC_REGISTRY_DIR under one mktemp -d, the SUT runs as a
 # subprocess, and every fixture process is a background child of this shell, killed by the leg (and
 # by the EXIT trap). The hermetic legs fake HOME and assert nothing lands under it.
@@ -32,6 +32,19 @@
 #   AC9  the header names the contract; its caps table equals the code's (per-kind registration), the
 #        LOOMWRIGHT_PROC_MAX_S_<KIND> overrides and --max-lifetime precedence work; its GRACE table equals
 #        the code's (an owner-less wrapper-kind entry vs every other entry; --grace wins); exit codes.
+#   AC10 summary prints exactly ONE `proc-registry: summary — <E> entries: …` line, exit 0, classifying
+#        like list (one entry per class; a recycled pid — different command line or lstart — is
+#        finished; the snapshot's lstart is read under the TZ pin, proven with a non-UTC TZ), with ONE
+#        `ps` call (a PATH-stub counter: 3 or 4 entries ⇒ 1 call, 0 entries ⇒ 0 calls); empty / missing
+#        registry ⇒ the zero line; unavailable (hermetic with no shim dir, an unreadable dir, a non-dir
+#        path, a failing snapshot) ⇒ `proc-registry: summary — unavailable`, exit 0; a bad argument
+#        exits 2; LOOMWRIGHT_PROC_PS_SNAPSHOT is read in place of ps.
+#   AC11 summary --scan appends `; <u> unregistered` from the same snapshot fixture: checkout and
+#        versioned-plugin-root look-alikes and a temp-dir python whose script is gone count; a
+#        registered pid, a young one (LOOMWRIGHT_PROC_UNREG_MIN_S, default 3600), an existing or
+#        non-temp script, `-m`, and non-plugin paths do not; the caller's ancestors are excluded but
+#        their other children are not; the registry checksum is unchanged; under HERMETIC_TEST_ENV=1
+#        without the snapshot seam the scan is skipped (0, no ps call) even with a live look-alike.
 #   MUTATION CONTROLS (each mutant gated per lesson fa32a308: non-empty, byte-differs, parses, and a
 #   line-delete removes exactly one line), each must turn its leg red: the cmd-hash comparison
 #   deleted (AC7), the --apply gate deleted (AC5), the ## Status read deleted (AC4), the age compare
@@ -40,7 +53,11 @@
 #   deleted (AC6), the reap filter widened to running (AC6), a ppid KILL of the wrapper's children
 #   re-added (AC6), the owned-entries-last ordering deleted (AC6), the --expect launcher-stage check
 #   deleted (AC2), the --expect owner-line check deleted (AC2), the GRACE table's WRAPPER row deleted
-#   (AC9).
+#   (AC9); summary's snapshot lstart lookup replaced by a live ps per entry (AC10), the cmd-hash
+#   comparison deleted against summary (AC10), the snapshot's TZ pin dropped (AC10), the unavailable
+#   line silenced (AC10), the --scan age comparison made never-true (AC11), the registered-pid
+#   exclusion deleted (AC11), summary touching a registry file (AC11), the ancestor walk deleted
+#   (AC11), the gone-script check deleted (AC11), the hermetic scan skip deleted (AC11).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -556,10 +573,14 @@ leg_header() {
            owner_start max_lifetime_s grace_s registered_at session_id stop_hint run_id runfile \
            running overdue orphaned finished LOOMWRIGHT_PROC_REGISTRY_DIR HERMETIC_TEST_ENV HERMETIC_SHIM_DIR \
            LOOMWRIGHT_PROC_MAX_S_PHASE LOOMWRIGHT_PROC_MAX_S_LANE LOOMWRIGHT_PROC_MAX_S_DRAIN \
-           LOOMWRIGHT_PROC_MAX_S_POSTMORTEM "NEVER SIGNAL BY PID ALONE" "EXIT CODES" "CLASSES" "CAPS" "GRACE" "precedence"; do
+           LOOMWRIGHT_PROC_MAX_S_POSTMORTEM "NEVER SIGNAL BY PID ALONE" "EXIT CODES" "CLASSES" "CAPS" "GRACE" "precedence" \
+           "summary [--scan]" "proc-registry: summary — <E> entries: <r> running, <o> overdue, <a> orphaned, <f> finished" \
+           "$U" "; <u> unregistered" LOOMWRIGHT_PROC_PS_SNAPSHOT LOOMWRIGHT_PROC_UNREG_MIN_S "HERMETIC SCAN SKIP" \
+           "summary 0 (usage error 2)"; do
     has "$hdr" "$k" || { check "AC9 header names '$k'" false; }
   done
   check "AC9 header names every subcommand, key, class, cap override, location and exit code" true
+  check "AC10 the usage text lists summary" has "$(bash "$S" help)" "proc-registry.sh summary [--scan]"
   new_reg
   for k in phase lane drain postmortem; do
     sleeper; p=$SP
@@ -608,11 +629,189 @@ leg_header() {
   leg_end
 }
 
+# ==== AC10 / AC11 — summary [--scan] ===================================================================
+# CNTBIN: a PATH-stub `ps` that appends one line to $PS_COUNT per call, then runs the real ps
+CNTBIN="$WORK/cntbin"; mkdir -p "$CNTBIN"
+printf '#!/bin/sh\necho call >> "${PS_COUNT:?}"\nexec %s "$@"\n' "$(command -v ps)" > "$CNTBIN/ps"
+chmod +x "$CNTBIN/ps"
+PS_COUNT="$WORK/ps-count"
+Z="proc-registry: summary — 0 entries: 0 running, 0 overdue, 0 orphaned, 0 finished"
+U="proc-registry: summary — unavailable"
+# summ [args] — summary through the counting stub, under a non-UTC TZ (XST5: no tzdata needed), with the
+# optional seams SUM_SNAP (LOOMWRIGHT_PROC_PS_SNAPSHOT) and SUM_MIN (LOOMWRIGHT_PROC_UNREG_MIN_S); sets
+# SUM (stdout), SUM_RC, SUM_PS (ps calls)
+summ() {
+  : > "$PS_COUNT"
+  SUM="$(PATH="$CNTBIN:$PATH" PS_COUNT="$PS_COUNT" TZ=XST5 LOOMWRIGHT_PROC_PS_SNAPSHOT="${SUM_SNAP:-}" \
+         LOOMWRIGHT_PROC_UNREG_MIN_S="${SUM_MIN:-}" bash "$S" summary "$@" 2>"$ERR")"; SUM_RC=$?
+  SUM_PS="$(lines "$PS_COUNT")"
+}
+sline() { printf 'proc-registry: summary — %s entries: %s running, %s overdue, %s orphaned, %s finished' "$@"; }
+list_counts() { bash "$S" list 2>/dev/null | awk -F'\t' '!/^#/ && NF == 6 { c[$5]++ } END { printf "%d %d %d %d", c["running"], c["overdue"], c["orphaned"], c["finished"] }'; }
+trimmed() { sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+etime_pos() { [ -n "$(ps -o etime= -p "$1" 2>/dev/null | tr -d ' :0-')" ]; }
+
+leg_summary_classes() {
+  local before
+  SUM_SNAP=""; SUM_MIN=""
+  classes_fixture
+  before="$(dirsum)"
+  summ
+  check "AC10 summary: one line, one entry per class, exit 0" eq "$SUM_RC|$SUM" "0|$(sline 4 1 1 1 1)"
+  check "AC10 ... from ONE ps call for 4 entries" eq "$SUM_PS" 1
+  check "AC10 ... the same classes list prints" eq "$(list_counts)" "1 1 1 1"
+  check "AC10 ... read-only: registry unchanged, nothing signalled" eval '[ "$(dirsum)" = "$before" ] && alive "$C_RUN" && alive "$C_OVER" && alive "$C_ORPH"'
+  summ --scan
+  check "AC11 --scan under HERMETIC_TEST_ENV=1 without the seam: classification runs, the scan is skipped" eq "$SUM_RC|$SUM|$SUM_PS" "0|$(sline 4 1 1 1 1); 0 unregistered|1"
+  leg_end
+}
+
+leg_summary_recycled() {
+  local p1 p2 p3
+  SUM_SNAP=""; SUM_MIN=""
+  new_reg
+  sleeper; p1=$SP; reg --pid "$p1" --kind lane --purpose live --max-lifetime 3600 2>/dev/null
+  ready_fixture 'trap "exec sleep 3009" USR1; : > "$1"; while :; do sleep 0.1; done'; p2=$SP
+  reg --pid "$p2" --kind lane --purpose recycled-cmd --max-lifetime 3600 2>/dev/null
+  kill -USR1 "$p2"
+  WAIT_LIB_WHAT="pid $p2 to run a different command line" wait_for_cmd 5 cmd_is "$p2" 'sleep 3009'
+  sleeper; p3=$SP; reg --pid "$p3" --kind lane --purpose recycled-lstart --max-lifetime 3600 2>/dev/null
+  forge "$p3" pid_start "Mon Jan  1 00:00:00 2001"
+  summ
+  check "AC10 a recycled pid (command line or lstart differs) is finished; the live one running (non-UTC TZ)" eq "$SUM_RC|$SUM" "0|$(sline 3 1 0 0 2)"
+  check "AC10 ... 3 entries cost ONE ps call" eq "$SUM_PS" 1
+  check "AC10 ... and summary never signalled the recycled pid" alive "$p2"
+  leg_end
+}
+
+leg_summary_zero() {
+  local out rc p
+  SUM_SNAP=""; SUM_MIN=""
+  new_reg
+  summ
+  check "AC10 an empty registry prints the zero line, exit 0, with NO ps call" eq "$SUM_RC|$SUM|$SUM_PS" "0|$Z|0"
+  export LOOMWRIGHT_PROC_REGISTRY_DIR="$WORK/missing-reg-$RANDOM"
+  summ
+  check "AC10 a missing registry prints the zero line, NO ps call, and creates nothing" eval '[ "$SUM_RC|$SUM|$SUM_PS" = "0|$Z|0" ] && [ ! -e "$LOOMWRIGHT_PROC_REGISTRY_DIR" ]'
+  out="$(unset LOOMWRIGHT_PROC_REGISTRY_DIR; export HERMETIC_TEST_ENV=1 HERMETIC_SHIM_DIR=""; bash "$S" summary; echo "rc=$?"; bash "$S" summary --scan; echo "rc=$?")"
+  check "AC10 hermetic with no shim dir: '$U', exit 0 (with and without --scan)" eq "$out" "$U
+rc=0
+$U
+rc=0"
+  : > "$WORK/reg-is-a-file"
+  export LOOMWRIGHT_PROC_REGISTRY_DIR="$WORK/reg-is-a-file"
+  summ
+  check "AC10 a registry path that is not a directory is unavailable" eq "$SUM_RC|$SUM" "0|$U"
+  new_reg
+  sleeper; p=$SP; reg --pid "$p" --kind lane --purpose x 2>/dev/null
+  if [ "$(id -u)" != 0 ]; then
+    chmod 000 "$R"; summ; chmod 755 "$R"
+    check "AC10 an unreadable registry dir is unavailable, exit 0" eq "$SUM_RC|$SUM" "0|$U"
+  else
+    [ "$QUIET" = 1 ] || echo "  skip: AC10 unreadable dir (running as root)"
+  fi
+  SUM_SNAP="$WORK/no-such-snapshot"; summ; SUM_SNAP=""
+  check "AC10 a snapshot that cannot be read is unavailable (never a guess)" eq "$SUM_RC|$SUM" "0|$U"
+  : > "$WORK/empty-snapshot"; SUM_SNAP="$WORK/empty-snapshot"; summ; SUM_SNAP=""
+  check "AC10 an empty snapshot is unavailable" eq "$SUM_RC|$SUM" "0|$U"
+  out="$(bash "$S" summary --bogus 2>/dev/null)"; rc=$?
+  check "AC10 an unknown summary argument is a usage error (exit 2, no line)" eq "$rc|$out" "2|"
+  leg_end
+}
+
+leg_summary_seam() {
+  local p snap
+  SUM_SNAP=""; SUM_MIN=""
+  new_reg
+  sleeper; p=$SP; reg --pid "$p" --kind lane --purpose seam --max-lifetime 3600 2>/dev/null
+  snap="$WORK/seam-snap.$RANDOM"
+  env TZ=UTC0 LC_ALL=C ps -A -ww -o pid=,ppid=,lstart=,etime=,command= > "$snap"
+  kill_gone "$p"
+  SUM_SNAP="$snap"; summ; SUM_SNAP=""
+  check "AC10 LOOMWRIGHT_PROC_PS_SNAPSHOT replaces ps: the snapshot's (now dead) process reads running, 0 ps calls" eq "$SUM|$SUM_PS" "$(sline 1 1 0 0 0)|0"
+  summ
+  check "AC10 (control) without the seam the dead process reads finished (1 ps call)" eq "$SUM|$SUM_PS" "$(sline 1 0 0 0 1)|1"
+  leg_end
+}
+
+leg_summary_scan() {
+  local la lst lcmd fx gone exists before L="Mon Jan  1 00:00:00 2001" one
+  SUM_SNAP=""; SUM_MIN=""
+  new_reg
+  # a live look-alike, registered (its snapshot row is a registered pid); argv[0] carries the plugin path
+  spawn bash -c 'exec -a "$0" sleep 3010' /opt/lw-fixture/loomwright/scripts/registered.sh; la=$SP
+  WAIT_LIB_WHAT="pid $la to exec its look-alike line" wait_for_cmd 5 cmd_is "$la" '/opt/lw-fixture/loomwright/scripts/registered.sh 3010'
+  reg --pid "$la" --kind lane --purpose lookalike --max-lifetime 999999 2>/dev/null
+  lst="$(env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$la" | trimmed)"
+  lcmd="$(env LC_ALL=C ps -ww -o command= -p "$la" | trimmed)"
+  gone="$WORK/gone-$RANDOM/verify-fixture-app.py"
+  exists="$WORK/exists-$RANDOM.py"; : > "$exists"
+  fx="$WORK/scan-snap.$RANDOM"
+  {
+    printf '%s 1 %s 3-00:00:00 %s\n' "$la" "$lst" "$lcmd"                                   # registered: no
+    printf '900001 1 %s 3-00:00:00 %s\n' "$lst" "$lcmd"                                       # same line, unregistered pid: YES
+    printf '900002 1 %s 2-00:00:00 bash /opt/lw/loomwright/scripts/merge-watch.sh --pr 7\n' "$L"  # checkout path: YES
+    printf '900003 1 %s 1-02:03:04 bash /opt/cache/atelier/loomwright/17.13.0/scripts/lane-sampler.sh\n' "$L"  # versioned root: YES
+    printf '900004 1 %s 05:00 bash /opt/lw/loomwright/scripts/young.sh\n' "$L"               # 300 s: no (default 3600)
+    printf '900005 1 %s 1-00:00:00 python3 -u %s --port 5555\n' "$L" "$gone"                 # temp dir, script gone: YES
+    printf '900006 1 %s 1-00:00:00 python3 %s --port 5556\n' "$L" "$exists"                  # script exists: no
+    printf '900007 1 %s 1-00:00:00 python3 /opt/no-such-dir/app.py\n' "$L"                    # not a temp dir: no
+    printf '900008 1 %s 1-00:00:00 python3 -m http.server 8000\n' "$L"                        # -m, no script: no
+    printf '900009 1 %s 1-00:00:00 bash /opt/notloomwright/scripts/x.sh\n' "$L"               # not the plugin: no
+    printf '900010 1 %s 1-00:00:00 bash /opt/loomwright/a/b/scripts/x.sh\n' "$L"              # two segments: no
+  } > "$fx"
+  one="$(sline 1 1 0 0 0)"
+  before="$(dirsum)"
+  SUM_SNAP="$fx"; summ --scan
+  check "AC11 --scan counts the 4 unregistered look-alikes (registered, young, existing, non-temp, -m, non-plugin excluded)" eq "$SUM_RC|$SUM" "0|$one; 4 unregistered"
+  check "AC11 ... reads only the snapshot (0 ps calls), writes nothing in the registry, signals nothing" eval '[ "$SUM_PS" = 0 ] && [ "$(dirsum)" = "$before" ] && alive "$la"'
+  summ
+  check "AC11 without --scan the line has no unregistered part" eq "$SUM" "$one"
+  SUM_MIN=100; summ --scan
+  check "AC11 LOOMWRIGHT_PROC_UNREG_MIN_S=100 also counts the 300 s look-alike" eq "$SUM" "$one; 5 unregistered"
+  SUM_MIN=abc; summ --scan
+  check "AC11 a non-numeric LOOMWRIGHT_PROC_UNREG_MIN_S falls back to the 3600 s default" eq "$SUM" "$one; 4 unregistered"
+  SUM_MIN=""; SUM_SNAP=""
+  # the caller and its parent (an ancestor chain in the snapshot) are excluded; the caller's OTHER child is not
+  cat > "$WORK/anc.sh" <<'ANC'
+p=$$
+cp "$1" "$2"
+printf '%s 900100 Mon Jan  1 00:00:00 2001 3-00:00:00 bash /opt/lw/loomwright/scripts/caller.sh\n' "$p" >> "$2"
+printf '900100 900101 Mon Jan  1 00:00:00 2001 3-00:00:00 bash /opt/lw/loomwright/scripts/grandcaller.sh\n' >> "$2"
+printf '900102 %s Mon Jan  1 00:00:00 2001 3-00:00:00 bash /opt/lw/loomwright/scripts/sibling.sh\n' "$p" >> "$2"
+LOOMWRIGHT_PROC_PS_SNAPSHOT="$2" TZ=XST5 bash "$3" summary --scan
+rc=$?
+exit "$rc"
+ANC
+  check "AC11 the caller's ancestors are excluded, their other children are not (4 + the sibling)" eq "$(bash "$WORK/anc.sh" "$fx" "$fx.anc" "$S" 2>/dev/null)" "$one; 5 unregistered"
+  check "AC11 ... and the registry is still unchanged" eq "$(dirsum)" "$before"
+  leg_end
+}
+
+leg_summary_hermetic() {
+  local sh la out
+  sh="$(mktemp -d "$WORK/shim.XXXXXX")"
+  # a LIVE look-alike older than the threshold (0 here): a live scan would count it
+  spawn bash -c 'exec -a "$0" sleep 3011' /opt/lw-fixture/loomwright/scripts/live-lookalike.sh; la=$SP
+  WAIT_LIB_WHAT="pid $la to age past 0 s" wait_for_cmd 10 etime_pos "$la"
+  : > "$PS_COUNT"
+  out="$(unset LOOMWRIGHT_PROC_REGISTRY_DIR LOOMWRIGHT_PROC_PS_SNAPSHOT; export HERMETIC_TEST_ENV=1 HERMETIC_SHIM_DIR="$sh" LOOMWRIGHT_PROC_UNREG_MIN_S=0 PS_COUNT
+         PATH="$CNTBIN:$PATH" bash "$S" summary --scan 2>/dev/null)"
+  check "AC11 HERMETIC_TEST_ENV=1 without LOOMWRIGHT_PROC_PS_SNAPSHOT: the scan is skipped (0 unregistered, no ps call)" eq "$out|$(lines "$PS_COUNT")" "$Z; 0 unregistered|0"
+  printf '900200 1 Mon Jan  1 00:00:00 2001 3-00:00:00 bash /opt/lw/loomwright/scripts/x.sh\n' > "$WORK/herm-snap"
+  out="$(unset LOOMWRIGHT_PROC_REGISTRY_DIR; export HERMETIC_TEST_ENV=1 HERMETIC_SHIM_DIR="$sh" LOOMWRIGHT_PROC_PS_SNAPSHOT="$WORK/herm-snap"
+         bash "$S" summary --scan 2>/dev/null)"
+  check "AC11 (control) hermetic WITH the snapshot seam: the scan runs" eq "$out" "$Z; 1 unregistered"
+  check "AC11 ... and the hermetic summary created nothing in the shim dir" eq "$(find "$sh" -mindepth 1 | wc -l | tr -d ' ')" 0
+  leg_end
+}
+
 # ==== run the legs against the real script =============================================================
 echo "== proc-registry.sh =="
 for leg in leg_keys leg_id leg_expect leg_failsafe leg_status_done leg_overdue_vs_running leg_classes \
            leg_dryrun leg_apply_classes leg_recheck_kill leg_session_entry leg_no_ppid_signal leg_owned_last leg_apply_more leg_recycled leg_hermetic \
-           leg_hermetic_empty leg_default_location leg_header; do
+           leg_hermetic_empty leg_default_location leg_header leg_summary_classes leg_summary_recycled leg_summary_zero \
+           leg_summary_seam leg_summary_scan leg_summary_hermetic; do
   LEG_FAIL=0; S="$SUT_REAL"; "$leg"
 done
 
@@ -677,6 +876,26 @@ mk_mutant widen sub 'overdue|orphaned) _pr_stop "$f" ;;' 'overdue|orphaned|runni
 run_mutant "AC6 reap filter widened to running" leg_apply_classes
 mk_mutant wrapgrace del "phase:|lane:|drain:) printf '120' ;;"
 run_mutant "AC9 the GRACE table's WRAPPER row deleted (a wrapper falls back to the short grace)" leg_header
+mk_mutant snaplstart del "summary: the snapshot's lstart"
+run_mutant "AC10 summary's snapshot lstart lookup replaced by a live ps per entry (>1 ps call)" leg_summary_recycled
+mk_mutant sumhash del 'command line differs (pid recycled)'
+run_mutant "AC10 cmd-hash comparison deleted (summary reads the recycled pid running)" leg_summary_recycled
+mk_mutant snaptz sub 'env TZ=UTC0 LC_ALL=C ps -A -ww' 'env LC_ALL=C ps -A -ww'
+run_mutant "AC10 the snapshot's TZ pin dropped (every entry would read finished)" leg_summary_recycled
+mk_mutant unavail sub "printf 'proc-registry: summary — unavailable" ": '"
+run_mutant "AC10 the unavailable line silenced" leg_summary_zero
+mk_mutant unregmin sub '[ "$age" -gt "$min" ] || continue' '[ "$age" -lt 0 ] || continue'
+run_mutant "AC11 the --scan age comparison made never-true" leg_summary_scan
+mk_mutant unregreg del '[ "$E_CLASS" = finished ] || live="$live$E_PID "'
+run_mutant "AC11 the registered-pid exclusion deleted" leg_summary_scan
+mk_mutant sumtouch sub 'local files f n=0 nr=0' ': > "$PR_DIR/.touched"; local files f n=0 nr=0'
+run_mutant "AC11 summary touches a file in the registry dir (checksum)" leg_summary_scan
+mk_mutant ancestors del 'ex="$ex$p "'
+run_mutant "AC11 the ancestor walk deleted" leg_summary_scan
+mk_mutant gonescript sub '_pr_in_tmp "$path" && [ ! -e "$path" ]' '_pr_in_tmp "$path"'
+run_mutant "AC11 the gone-script check deleted (an existing temp script counts)" leg_summary_scan
+mk_mutant hermscan range 'hermetic scan skip'
+run_mutant "AC11 the hermetic scan skip deleted (a live look-alike is counted)" leg_summary_hermetic
 
 echo
 echo "test-proc-registry.sh: $pass passed, $fail failed"

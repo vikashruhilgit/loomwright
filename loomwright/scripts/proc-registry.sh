@@ -50,6 +50,40 @@
 #       age (the live process's elapsed time, `-` when it is gone), class, and the evidence for that
 #       class. Read-only: creates nothing, changes nothing. ALWAYS exits 0; an empty, missing or
 #       unavailable registry prints `(no entries)`.
+#   summary [--scan]
+#       Exactly ONE line on stdout. Read-only: never signals, creates nothing, changes nothing. Exits
+#       0; any other argument is a usage error (exit 2). The line is
+#         proc-registry: summary — <E> entries: <r> running, <o> overdue, <a> orphaned, <f> finished
+#       E counts every entry file, and each is classified by the SAME code `list` uses (CLASSES), fed
+#       from ONE process snapshot per call, however many entries exist:
+#         env TZ=UTC0 LC_ALL=C ps -A -ww -o pid=,ppid=,lstart=,etime=,command=
+#       (the lstart column under the same TZ/locale pin as pid_start; `-A` is the POSIX spelling both
+#       BSD and procps accept, equal to BSD `-ax`). No snapshot is taken when there
+#       is nothing to classify or scan. An empty or missing registry prints the line with every count
+#       0. The line is instead
+#         proc-registry: summary — unavailable
+#       when the registry is unavailable (REGISTRY LOCATION), its path is unreadable or not a
+#       directory, jq is missing, or the snapshot fails or comes back empty — never a guess.
+#       --scan  also counts UNREGISTERED processes that look like the plugin's and appends
+#               `; <u> unregistered` (u is 0 when the scan is skipped). A process in the same snapshot
+#               counts when ALL of these hold:
+#                 - its command line contains `/loomwright/scripts/` (a checkout) or
+#                   `/loomwright/<one segment>/scripts/` (an installed, versioned plugin root), OR it
+#                   is a `python*` command whose script path lies in a temp dir (/tmp, /var/tmp,
+#                   /var/folders, their /private forms, or $TMPDIR) and no longer exists;
+#                 - it is older than LOOMWRIGHT_PROC_UNREG_MIN_S seconds (a whole number, else the
+#                   default 3600);
+#                 - it is not the live process of an entry (an entry whose class is not finished: a
+#                   recycled pid's new process IS unregistered);
+#                 - it is not this call's own process, a direct child of it, or an ancestor ($PPID,
+#                   then the snapshot's ppid chain).
+#               HERMETIC SCAN SKIP: under HERMETIC_TEST_ENV=1 with LOOMWRIGHT_PROC_PS_SNAPSHOT unset
+#               the scan is skipped, so no suite reads the live machine through it (the HERMETIC
+#               REDIRECT's counterpart; classification of the hermetic registry still runs).
+#               Honest limits: the python rule reads the first non-option argument as the script, so a
+#               relative path or one containing a space is not checked; a process that rewrites its
+#               argv is invisible to the scan.
+#       Test seam: LOOMWRIGHT_PROC_PS_SNAPSHOT=<file> is read IN PLACE of running ps (same columns).
 #   reap [--apply] [<id>...]
 #       Without --apply (the DEFAULT): a dry run — prints the action it would take per entry, sends
 #       no signal, writes nothing. With --apply, per entry (all entries, or only the named ids):
@@ -126,14 +160,16 @@
 #   1. $LOOMWRIGHT_PROC_REGISTRY_DIR when non-empty (the test seam);
 #   2. HERMETIC REDIRECT — when HERMETIC_TEST_ENV=1 (hermetic-test-env.sh): $HERMETIC_SHIM_DIR/procs.
 #      If HERMETIC_SHIM_DIR is empty or not a directory the registry is UNAVAILABLE: register fails
-#      safe (`register failed — hermetic registry dir unavailable`), list / reap see no entries. It
+#      safe (`register failed — hermetic registry dir unavailable`), list / reap see no entries,
+#      summary prints `unavailable`. It
 #      never falls back to $HOME and never to `/procs`;
 #   3. ${HOME}/.claude/loomwright/procs (user scope, whatever the host mode). An empty HOME is
 #      unavailable, the same way.
 #   Known limit: a test that neither sources hermetic-test-env.sh nor sets the override, run
 #   standalone, still registers into the real home registry.
 #
-# EXIT CODES: register 0 always; list 0 always; reap 0 (usage error 2); missing/unknown subcommand 2.
+# EXIT CODES: register 0 always; list 0 always; summary 0 (usage error 2); reap 0 (usage error 2);
+# missing/unknown subcommand 2.
 # bash 3.2 / BSD userland and Linux procps; needs jq and ps.
 
 set -uo pipefail
@@ -145,6 +181,7 @@ pr_usage() {
   cat <<'USAGE'
 usage: proc-registry.sh register --pid <p> --kind <phase|lane|drain|postmortem|merge-watch> --purpose <text> [options]
        proc-registry.sh list
+       proc-registry.sh summary [--scan]
        proc-registry.sh reap [--apply] [<id>...]
 See the header comment of proc-registry.sh for the full contract.
 USAGE
@@ -157,15 +194,33 @@ _pr_trim() { sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
 _pr_is_uint() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
 _pr_is_pos_int() { _pr_is_uint "${1:-}" && [ "$1" -gt 0 ] 2>/dev/null; }
 
+# summary's ONE process snapshot: PR_SNAP holds a TSV row per process (pid, ppid, lstart, etime,
+# command); while PR_SNAP_ON=1 the three lookups below read it instead of running ps, so `summary`
+# classifies with the very code `list` runs. Only cmd_summary sets it; register / reap never do.
+PR_SNAP_ON=0
+PR_SNAP=""
+
+# _pr_snap_get <pid> <col> — one field of <pid>'s snapshot row (2 ppid, 3 lstart, 4 etime, 5 the
+# command, everything after the fourth tab); empty when the pid is not in the snapshot. Never runs ps.
+_pr_snap_get() {
+  printf '%s\n' "$PR_SNAP" | awk -F'\t' -v p="$1" -v c="$2" '
+    $1 == p {
+      if (c < 5) { print $c } else { s = $0; for (k = 1; k < 5; k++) s = substr(s, index(s, "\t") + 1); print s }
+      exit
+    }'
+}
+
 # _pr_lstart <pid> — the process start time, TZ- and locale-pinned; empty when the pid is gone.
 _pr_lstart() {
   _pr_is_uint "${1:-}" || return 0
+  [ "$PR_SNAP_ON" != 1 ] || { _pr_snap_get "$1" 3; return 0; }   # summary: the snapshot's lstart
   env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | _pr_trim
 }
 
 # _pr_cmdline <pid> — the full live command line; empty when the pid is gone.
 _pr_cmdline() {
   _pr_is_uint "${1:-}" || return 0
+  [ "$PR_SNAP_ON" != 1 ] || { _pr_snap_get "$1" 5; return 0; }   # summary: the snapshot's command line
   env LC_ALL=C ps -ww -o command= -p "$1" 2>/dev/null | _pr_trim
 }
 
@@ -190,7 +245,18 @@ _pr_hash() {
 # _pr_etime_s <pid> — the live process's elapsed seconds (from `ps -o etime=`, [[dd-]hh:]mm:ss).
 _pr_etime_s() {
   local e
-  e="$(env LC_ALL=C ps -o etime= -p "$1" 2>/dev/null | tr -d '[:space:]')"
+  if [ "$PR_SNAP_ON" = 1 ]; then
+    e="$(_pr_snap_get "$1" 4)"   # summary: the snapshot's etime
+  else
+    e="$(env LC_ALL=C ps -o etime= -p "$1" 2>/dev/null)"
+  fi
+  _pr_etime_to_s "$e"
+}
+
+# _pr_etime_to_s <etime> — seconds from an etime value ([[dd-]hh:]mm:ss); empty when malformed.
+_pr_etime_to_s() {
+  local e
+  e="$(printf '%s' "${1:-}" | tr -d '[:space:]')"
   case "$e" in ''|*[!0-9:-]*) return 0 ;; esac
   awk -v e="$e" 'BEGIN {
     d = 0; i = index(e, "-")
@@ -387,7 +453,7 @@ cmd_register() {
   return 0
 }
 
-# ---- classification (list + reap) -------------------------------------------------------------------
+# ---- classification (list + summary + reap) ---------------------------------------------------------
 
 # _pr_entry_files — every entry file, sorted (none when the registry is missing or unavailable).
 _pr_entry_files() {
@@ -465,6 +531,131 @@ cmd_list() {
     done <<<"$files"
   fi
   [ "$n" -gt 0 ] || printf '(no entries)\n'
+  return 0
+}
+
+# ---- summary ----------------------------------------------------------------------------------------
+
+_pr_sum_unavail() { printf 'proc-registry: summary — unavailable\n'; }
+
+# _pr_snapshot — take the ONE snapshot (or read LOOMWRIGHT_PROC_PS_SNAPSHOT in its place) into PR_SNAP
+# and turn the lookups over to it; 1 when it fails or holds no row. The lstart field keeps its exact
+# text (the day of month is space-padded), so it compares byte-for-byte with a stored pid_start.
+_pr_snapshot() {
+  local raw=""
+  if [ -n "${LOOMWRIGHT_PROC_PS_SNAPSHOT:-}" ]; then
+    { [ -f "$LOOMWRIGHT_PROC_PS_SNAPSHOT" ] && [ -r "$LOOMWRIGHT_PROC_PS_SNAPSHOT" ]; } || return 1
+    raw="$(cat "$LOOMWRIGHT_PROC_PS_SNAPSHOT" 2>/dev/null)" || return 1
+  else
+    raw="$(env TZ=UTC0 LC_ALL=C ps -A -ww -o pid=,ppid=,lstart=,etime=,command= 2>/dev/null)" || return 1
+  fi
+  PR_SNAP="$(printf '%s\n' "$raw" | awk '
+    function tok() { if (!match(line, /^[^ \t]+/)) return ""; t = substr(line, 1, RLENGTH); line = substr(line, RLENGTH + 1); sub(/^[ \t]+/, "", line); return t }
+    {
+      line = $0; sub(/^[ \t]+/, "", line)
+      pid = tok(); ppid = tok()
+      if (pid !~ /^[0-9]+$/ || ppid !~ /^[0-9]+$/) next
+      if (!match(line, /^[^ \t]+[ \t]+[^ \t]+[ \t]+[^ \t]+[ \t]+[^ \t]+[ \t]+[^ \t]+/)) next
+      ls = substr(line, 1, RLENGTH); line = substr(line, RLENGTH + 1); sub(/^[ \t]+/, "", line)
+      et = tok()
+      if (et == "") next
+      sub(/[ \t]+$/, "", line)
+      printf "%s\t%s\t%s\t%s\t%s\n", pid, ppid, ls, et, line
+    }')"
+  [ -n "$PR_SNAP" ] || return 1
+  PR_SNAP_ON=1
+  return 0
+}
+
+# _pr_in_tmp <path> — 0 when <path> lies in a temp dir.
+_pr_in_tmp() {
+  local t="${TMPDIR:-}"
+  case "$1" in /tmp/*|/var/tmp/*|/var/folders/*|/private/tmp/*|/private/var/tmp/*|/private/var/folders/*) return 0 ;; esac
+  t="${t%/}"
+  [ -n "$t" ] || return 1
+  case "$1" in "$t"/*) return 0 ;; esac
+  return 1
+}
+
+# _pr_unreg_count <" live entry pids "> — the --scan count over PR_SNAP (header: summary --scan).
+_pr_unreg_count() {
+  local ex="$1" min p k=0 cands pid et path age u=0
+  min="${LOOMWRIGHT_PROC_UNREG_MIN_S:-}"
+  _pr_is_uint "$min" || min=3600
+  ex="$ex$$ "
+  p="${PPID:-}"
+  while _pr_is_uint "$p" && [ "$p" -gt 1 ] && [ "$k" -lt 64 ]; do   # the caller's ancestors
+    ex="$ex$p "
+    p="$(_pr_snap_get "$p" 2)"; k=$((k + 1))
+  done
+  # one row per look-alike that is not excluded: pid, etime, and the python script path (`-` otherwise)
+  cands="$(printf '%s\n' "$PR_SNAP" | awk -F'\t' -v ex="$ex" -v self="$$" '
+    index(ex, " " $1 " ") || $2 == self { next }
+    { cmd = $0; for (k = 1; k < 5; k++) cmd = substr(cmd, index(cmd, "\t") + 1) }
+    cmd ~ /\/loomwright\/([^\/ \t]+\/)?scripts\// { print $1 "\t" $4 "\t-"; next }
+    {
+      n = split(cmd, w, /[ \t]+/); b = w[1]; sub(/.*\//, "", b)
+      if (b !~ /^[Pp]ython/) next
+      for (k = 2; k <= n; k++) {
+        if (w[k] == "-m" || w[k] == "-c") next
+        if (w[k] ~ /^-/) continue
+        print $1 "\t" $4 "\t" w[k]
+        next
+      }
+    }')"
+  while IFS="$PR_T" read -r pid et path; do
+    [ -n "$pid" ] || continue
+    age="$(_pr_etime_to_s "$et")"
+    _pr_is_uint "$age" || continue
+    [ "$age" -gt "$min" ] || continue
+    if [ "$path" != "-" ]; then
+      { _pr_in_tmp "$path" && [ ! -e "$path" ]; } || continue
+    fi
+    u=$((u + 1))
+  done <<<"$cands"
+  printf '%s' "$u"
+}
+
+cmd_summary() {
+  local scan=0 arg
+  while [ "$#" -gt 0 ]; do
+    arg="$1"; shift
+    case "$arg" in
+      --scan) scan=1 ;;
+      -h|--help) pr_usage; return 0 ;;
+      *) printf '%s: summary — unknown argument %s\n' "$PR_ME" "$arg" >&2; pr_usage >&2; return 2 ;;
+    esac
+  done
+  if ! _pr_resolve_dir || ! command -v jq >/dev/null 2>&1; then _pr_sum_unavail; return 0; fi
+  if [ -e "$PR_DIR" ] && { [ ! -d "$PR_DIR" ] || [ ! -r "$PR_DIR" ] || [ ! -x "$PR_DIR" ]; }; then
+    _pr_sum_unavail; return 0
+  fi
+  local files f n=0 nr=0 no=0 na=0 nf=0 live=" " do_scan="$scan" u=0 line
+  files="$(_pr_entry_files)"
+  if [ "$scan" = 1 ] && [ "${HERMETIC_TEST_ENV:-}" = 1 ] && [ -z "${LOOMWRIGHT_PROC_PS_SNAPSHOT:-}" ]; then   # >>> hermetic scan skip
+    do_scan=0
+  fi   # <<< hermetic scan skip
+  if [ -n "$files" ] || [ "$do_scan" = 1 ]; then
+    _pr_snapshot || { _pr_sum_unavail; return 0; }
+  fi
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    _pr_classify "$f"
+    n=$((n + 1))
+    case "$E_CLASS" in
+      running) nr=$((nr + 1)) ;;
+      overdue) no=$((no + 1)) ;;
+      orphaned) na=$((na + 1)) ;;
+      *) nf=$((nf + 1)) ;;
+    esac
+    [ "$E_CLASS" = finished ] || live="$live$E_PID "   # a registered pid is never counted unregistered
+  done <<<"$files"
+  line="proc-registry: summary — $n entries: $nr running, $no overdue, $na orphaned, $nf finished"
+  if [ "$scan" = 1 ]; then
+    [ "$do_scan" != 1 ] || u="$(_pr_unreg_count "$live")"
+    line="$line; $u unregistered"
+  fi
+  printf '%s\n' "$line"
   return 0
 }
 
@@ -599,6 +790,7 @@ sub="${1:-}"
 case "$sub" in
   register) cmd_register "$@"; exit 0 ;;
   list) cmd_list "$@"; exit 0 ;;
+  summary) cmd_summary "$@"; exit $? ;;
   reap) cmd_reap "$@"; exit $? ;;
   help|-h|--help) pr_usage; exit 0 ;;
   '') printf '%s: missing subcommand\n' "$PR_ME" >&2; pr_usage >&2; exit 2 ;;
