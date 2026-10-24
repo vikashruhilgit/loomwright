@@ -4,4 +4,6 @@
  {"number":902,"url":"https://github.com/acme/widgets/pull/902","title":"fix: x11-conflict cleanup","headRefName":"feature/x11-conflict"},
  {"number":950,"url":"https://github.com/acme/widgets/pull/950","title":"fix: 11-conflict-guard hardening","headRefName":"feature/guard"},
  {"number":951,"url":"https://github.com/acme/widgets/pull/951","title":"feat: sub-bl/spec rollout","headRefName":"feature/rollout"},
- {"number":952,"url":"https://github.com/acme/widgets/pull/952","title":"chore: tidy","headRefName":"feature/sub-bl/spec"}]
+ {"number":952,"url":"https://github.com/acme/widgets/pull/952","title":"chore: tidy","headRefName":"feature/sub-bl/spec"},
+ {"number":953,"url":"https://github.com/acme/widgets/pull/953","title":"docs: bl/spec/notes","headRefName":"feature/notes"},
+ {"number":954,"url":"https://github.com/acme/widgets/pull/954","title":"fix: 11-conflict/notes follow-up","headRefName":"feature/follow-up"}]

@@ -32,13 +32,15 @@
 #     (no `  # ` suffix), a `fleet closeout: <lane> <path> done` line, or a merged PR from the
 #     cached list that names a DISTINCTIVE key of the item as a whole token. The keys: the slug
 #     (basename without `.md`) only when it carries an `NN-`/`NNa-` id prefix, and the
-#     folder-qualified slug `<folder>/<slug>` / `<folder>-<slug>`. A PR names a key when its
+#     folder-qualified slug `<folder>/<slug>` / `<folder>-<slug>` — each only when no other item
+#     of the whole item set yields the same key (`pk/01-fix` and `qq/01-fix` share `01-fix`, so
+#     only their folder-qualified keys count). A PR names a key when its
 #     headRefName equals it or ends with `/<key>` (or `-<key>`, id-prefixed slug only), or its
-#     title holds it with no [A-Za-z0-9_-] after and no [A-Za-z0-9] before (nor `_`/`-` before a
-#     folder-qualified key). A bare id-less slug (`spec`), a substring hit (`x01-fix` for `01-fix`)
-#     or a longer sibling (`01-fix-guard` for `01-fix`, `sub-bl/spec` for `bl/spec`) is never
-#     evidence — only a `--verify-list` candidate. A false match here would hide
-#     steps 3–4, so the rule errs toward no match.
+#     title holds it with no [A-Za-z0-9_/-] after and no [A-Za-z0-9] before (nor `_`/`-` before a
+#     folder-qualified key). A bare id-less slug (`spec`), a substring hit (`x01-fix` for `01-fix`),
+#     a longer sibling (`01-fix-guard` for `01-fix`, `sub-bl/spec` for `bl/spec`) or a longer path
+#     (`bl/spec/notes` for `bl/spec`) is never evidence — only a `--verify-list` candidate. A
+#     false match here would hide steps 3–4, so the rule errs toward no match.
 #  3. `conflict` — _bl_is_conflict below (owner decision D-conflict-1).
 #  4. A live claim: an unfinished run's (is_run_file, not is_done) `## Current` item, else a lane's
 #     item from `lane-status --json` (`.lanes[]`, a removed / abandoned lane excluded; absent or
@@ -197,14 +199,15 @@ _BL_RUNS_AWK='
 _BL_PREP_AWK='
   function g(f, k, v) { return (k in v) ? v[k] : "" }
   # tok(s, t, fq) — t occurs in s as a whole token: the character after is not [A-Za-z0-9_-] (a
-  # longer sibling slug `11-conflict-guard` never names `11-conflict`), the character before is not
-  # [A-Za-z0-9] — nor `_`/`-` when t is folder-qualified (fq: `sub-bl/spec` never names `bl/spec`)
+  # longer sibling slug `11-conflict-guard` never names `11-conflict`) nor `/` (a longer path:
+  # `bl/spec/notes` never names `bl/spec`), the character before is not [A-Za-z0-9] — nor `_`/`-`
+  # when t is folder-qualified (fq: `sub-bl/spec` never names `bl/spec`)
   function tok(s, t, fq,   off, i, b, a) {
     if (t == "") return 0
     off = 0
     while ((i = index(substr(s, off + 1), t)) > 0) {
       i += off; b = (i == 1) ? "" : substr(s, i - 1, 1); a = substr(s, i + length(t), 1)
-      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_-]/) return 1
+      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_\/-]/) return 1
       off = i
     }
     return 0
@@ -217,6 +220,19 @@ _BL_PREP_AWK='
     c = substr(h, length(h) - length(t), 1)
     return (c == "/" || (c == "-" && !fq))
   }
+  # keys(f) — the distinctive keys of item f into K1 K2 K3: the id-prefixed slug (`NN-…`), and the
+  # folder-qualified slug (`<folder>/<slug>`, `<folder>-<slug>`); a bare id-less slug (`spec`) is
+  # never one
+  function keys(f,   slug, fd) {
+    slug = f; sub(/.*\//, "", slug); sub(/\.md$/, "", slug)
+    K1 = (slug ~ /^[0-9]+[a-z]?-./) ? slug : ""
+    fd = substr(f, length(root) + 2); sub(/^\.supervisor\/requirements\//, "", fd); K2 = ""; K3 = ""
+    if (sub(/\/[^\/]*$/, "", fd)) { sub(/.*\//, "", fd); K2 = fd "/" slug; K3 = fd "-" slug }
+  }
+  # own(k, f) — k, unless another item of the whole item set also owns it (`pk/01-foo` and
+  # `qq/01-foo` share `01-foo`; `bl/spec` and `x/bl/spec` share `bl/spec`): a shared key cannot
+  # say which item a PR shipped, so it is no key at all (the item keeps its candidates)
+  function own(k, f) { return (k == "" || (k in KS) || ((k in KO) && KO[k] != f)) ? "" : k }
   BEGIN {
     FS = "\t"; US = "\037"; RS1 = "\036"; GS = "\035"
     while ((getline l < runs) > 0) {
@@ -230,6 +246,13 @@ _BL_PREP_AWK='
     nm = 0
     while ((getline l < merged) > 0) { nm++; split(l, a, "\t"); MN[nm] = a[1]; MU[nm] = a[2]; MH[nm] = a[3]; MT[nm] = a[4]; ML[nm] = tolower(a[3] " " a[4]) }
     while ((getline l < open) > 0) { split(l, a, "\t"); if (a[2] != "") O[a[2]] = 1 }
+    # every key of the WHOLE item set (not just <list>, which item-state narrows to one item) and its
+    # owner; a key a second item also yields is marked shared (KS)
+    while ((getline f < items) > 0) {
+      keys(f); kk[1] = K1; kk[2] = K2; kk[3] = K3
+      for (j = 1; j <= 3; j++) if (kk[j] != "") { if ((kk[j] in KO) && KO[kk[j]] != f) KS[kk[j]] = 1; else KO[kk[j]] = f }
+    }
+    close(items)   # the board passes the same file as <list>: reopen it from the start
     while ((getline f < list) > 0) {
       rel = substr(f, length(root) + 2); disp = rel
       sub(/^\.supervisor\/requirements\//, "", disp); sub(/\.md$/, "", disp)
@@ -244,11 +267,7 @@ _BL_PREP_AWK='
       close(f)
       slug = f; sub(/.*\//, "", slug); sub(/\.md$/, "", slug)
       key = slug; sub(/^[0-9]+[a-z]?-/, "", key); lk = tolower(key)
-      # the distinctive keys: the id-prefixed slug (`NN-…`), and the folder-qualified slug
-      # (`<folder>/<slug>`, `<folder>-<slug>`); a bare id-less slug (`spec`) is never evidence
-      k1 = (slug ~ /^[0-9]+[a-z]?-./) ? slug : ""
-      fd = disp; k2 = ""; k3 = ""
-      if (sub(/\/[^\/]*$/, "", fd)) { sub(/.*\//, "", fd); k2 = fd "/" slug; k3 = fd "-" slug }
+      keys(f); k1 = own(K1, f); k2 = own(K2, f); k3 = own(K3, f)
       mn = ""; mu = ""; mk = ""; cand = ""; nc = 0
       for (i = 1; i <= nm; i++) {
         h = MH[i]
@@ -304,9 +323,10 @@ _bl_context() {
     || : > "$_BL_TMP/lanes.tsv"
 }
 
-# _bl_prep <list file> <out> — _BL_PREP_AWK over the physical paths in <list file>.
+# _bl_prep <list file> <out> — _BL_PREP_AWK over the physical paths in <list file>; the key owners
+# come from the whole item set, $_BL_TMP/list.abs (every caller writes it first).
 _bl_prep() {
-  env LC_ALL=C awk -v list="$1" -v root="$_BL_ROOT" -v runs="$_BL_TMP/runs" -v lanes="$_BL_TMP/lanes.tsv" \
+  env LC_ALL=C awk -v list="$1" -v items="$_BL_TMP/list.abs" -v root="$_BL_ROOT" -v runs="$_BL_TMP/runs" -v lanes="$_BL_TMP/lanes.tsv" \
     -v merged="$_BL_TMP/merged.tsv" -v open="$_BL_TMP/open.tsv" "$_BL_PREP_AWK" > "$2"
 }
 

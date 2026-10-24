@@ -17,12 +17,18 @@ and no harness-specific wording.
   (paused), `bl/09-pr-open` (an open PR) and `bl/17-in-flight` (no PR).
 - `tree/dot-supervisor/jobs/done/` — one done brief pointing at `bl/14-open` (the `- **Brief:**` line
   `backlog-stamp done` writes).
-- `gh/merged.json`, `gh/open.json` — what the stubbed `gh pr list --state merged|open` prints. Five
+- `gh/merged.json`, `gh/open.json` — what the stubbed `gh pr list --state merged|open` prints. Seven
   merged PRs are decoys that a loose match would wrongly take as merge evidence: #901 (title
   `feat(verify): spec replay`, which contains the id-less basename `spec`), #902 (head
   `feature/x11-conflict`, title `fix: x11-conflict cleanup`: both hold `11-conflict`, but not at a
-  token boundary), #950 (title `fix: 11-conflict-guard hardening`: a longer sibling slug), and #951
-  / #952 (title `feat: sub-bl/spec rollout`, head `feature/sub-bl/spec`: a longer sibling folder).
+  token boundary), #950 (title `fix: 11-conflict-guard hardening`: a longer sibling slug), #951
+  / #952 (title `feat: sub-bl/spec rollout`, head `feature/sub-bl/spec`: a longer sibling folder),
+  and #953 (title `docs: bl/spec/notes`) / #954 (title `fix: 11-conflict/notes follow-up`): a longer path.
+- `collision/` — three more items the test copies into one tree beside `tree/`'s (never in the table
+  below): `pk/05-shared` and `qq/05-shared` share the id-prefixed slug `05-shared`, and `x/bl/spec`
+  shares the folder-qualified key `bl/spec` with `bl/spec`. A key two items share names neither, so a
+  merged PR naming `pk/05-shared` (head or title) is evidence for `pk/05-shared` only, and a bare
+  `05-shared` or `bl/spec` title is evidence for no item.
 - `lane-status.json` — what the stubbed `lane-status --json` prints: a running lane L2 on `bl/10-lane`
   and a removed lane L3 on `bl/14-open` (a removed lane is no claim).
 

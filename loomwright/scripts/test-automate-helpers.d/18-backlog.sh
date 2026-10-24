@@ -154,10 +154,11 @@ bl_is "BL2 a title merely containing an id-less basename, a head ending with the
   "$(bl_s2b "$H")" "bl/11-conflict=conflict bl/spec=open"
 bl_mut_check "pin: the head match loses its / or - boundary (x11-conflict masks the conflict)" '    return (c == "/" || (c == "-" && !fq))' '    return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
 bl_mut_check "pin: a folder-qualified head key admits a - before it (feature/sub-bl/spec names bl/spec)" '    return (c == "/" || (c == "-" && !fq))' '    return (c == "/" || c == "-")' bl_s2b "bl/11-conflict=conflict bl/spec=open"
-bl_mut_check "pin: an id-less slug counts as a distinctive key (spec matches the decoy title)" '      k1 = (slug ~ /^[0-9]+[a-z]?-./) ? slug : ""' '      k1 = slug' bl_s2b "bl/11-conflict=conflict bl/spec=open"
-bl_mut_check "pin: the title match loses its token boundary" '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_-]/) return 1' '      return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
-bl_mut_check "pin: the title match admits _/- after the key (11-conflict-guard masks the conflict)" '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_-]/) return 1' '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9]/) return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
-bl_mut_check "pin: a folder-qualified title key admits _/- before it (sub-bl/spec names bl/spec)" '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_-]/) return 1' '      if (b !~ /[A-Za-z0-9]/ && a !~ /[A-Za-z0-9_-]/) return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: an id-less slug counts as a distinctive key (spec matches the decoy title)" '    K1 = (slug ~ /^[0-9]+[a-z]?-./) ? slug : ""' '    K1 = slug' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: the title match loses its token boundary" '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_\/-]/) return 1' '      return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: the title match admits _/- after the key (11-conflict-guard masks the conflict)" '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_\/-]/) return 1' '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9\/]/) return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: a folder-qualified title key admits _/- before it (sub-bl/spec names bl/spec)" '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_\/-]/) return 1' '      if (b !~ /[A-Za-z0-9]/ && a !~ /[A-Za-z0-9_\/-]/) return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
+bl_mut_check "pin: a title key admits / after it (bl/spec/notes names bl/spec, 11-conflict/notes masks the conflict)" '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_\/-]/) return 1' '      if (b !~ /[A-Za-z0-9]/ && !(fq && b ~ /[_-]/) && a !~ /[A-Za-z0-9_-]/) return 1' bl_s2b "bl/11-conflict=conflict bl/spec=open"
 bl_run "$H" backlog --verify-list bl/spec --root "$T0"
 bl_is "BL2 the decoy is still offered as a --verify-list candidate (a candidate, never evidence)" \
   "$(grep -c '^  candidate: #901 https://github.com/acme/widgets/pull/901 — feat(verify): spec replay$' <<<"$BL_OUT")" "1"
@@ -167,6 +168,25 @@ printf '[{"number":903,"url":"https://github.com/acme/widgets/pull/903","title":
 BL_FIXDIR_OVR="$BL/fixq" bl_run "$H" item-state bl/spec --json --root "$T0"
 bl_is "BL2 the folder-qualified key (bl/spec as a whole token in a title) is merge evidence for an id-less item" \
   "$(jq -r '"\(.state) \(.pr) \(.evidence)"' <<<"$BL_OUT")" "merged_unstamped https://github.com/acme/widgets/pull/903 merged PR #903 names bl/spec (title)"
+# A key two items share names neither: fixtures/backlog-state/collision/ adds pk/05-shared + qq/05-shared
+# (one id-prefixed slug, two folders) and x/bl/spec (folder-qualified key bl/spec, like bl/spec). One
+# merged PR per case: a pk-qualified head or title is pk's evidence and never qq's, a bare 05-shared
+# title is neither's, and with x/bl/spec present a title naming bl/spec is no item's.
+TC="$(bl_tree tc)"; cp -R "$BL_FIX/collision/." "$TC/.supervisor/requirements/"
+bl_coll() { # <helper> — `<case>:<bl/spec>/<pk>/<qq>` (board order) per merged-PR case
+  local c t h
+  for c in 'head|feature/pk-05-shared|chore' 'slash|feature/pk/05-shared|chore' 'title|feature/x|feat: pk/05-shared done' 'bare|feature/x|fix: 05-shared' 'spec|feature/x|feat: ship bl/spec'; do
+    h="${c#*|}"; t="${h#*|}"; h="${h%%|*}"
+    jq -n -c --arg h "$h" --arg t "$t" '[{number: 960, url: "https://github.com/acme/widgets/pull/960", title: $t, headRefName: $h}]' > "$BL/fixq/gh/merged.json"
+    BL_FIXDIR_OVR="$BL/fixq" bl_run "$1" backlog --json --root "$TC"
+    printf '%s:%s ' "${c%%|*}" "$(jq -r '[.items[] | select(.item == "pk/05-shared" or .item == "qq/05-shared" or .item == "bl/spec") | .state] | join("/")' <<<"$BL_OUT")"
+  done
+}
+BL_COLL_WANT="head:open/merged_unstamped/open slash:open/merged_unstamped/open title:open/merged_unstamped/open bare:open/open/open spec:open/open/open "
+bl_is "BL2 a key two items share is no evidence: a pk/05-shared head or title is pk's alone, a bare 05-shared or (with x/bl/spec) bl/spec title names no item" \
+  "$(bl_coll "$H")" "$BL_COLL_WANT"
+bl_mut_check "pin: a key another item shares stays a key (the pk/05-shared PR is qq/05-shared's evidence too)" \
+  '  function own(k, f) { return (k == "" || (k in KS) || ((k in KO) && KO[k] != f)) ? "" : k }' '  function own(k, f) { return k }' bl_coll "$BL_COLL_WANT"
 
 # ---- BL3 (AC3) parked (merged … into `X` as Part B — …) with X done ⇒ done, naming X; a cycle ⇒ unknown.
 bl_s3() { bl_run "$1" item-state pk/01-merged-into --json --root "$T0"; jq -r '"\(.state) \(.via)"' <<<"$BL_OUT"; }
