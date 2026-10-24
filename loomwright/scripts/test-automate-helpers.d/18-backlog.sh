@@ -1,4 +1,8 @@
 # =============================================================================
+# Run directly (`bash <this file>`, as run-pin-mutations.sh runs a pin), this fragment re-executes the
+# suite for this one part, so its assertions run against the helpers beside it; sourced by the
+# runner, BASH_SOURCE[0] is this file and $0 the runner, and the guard never fires.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 18-backlog; fi
 echo "== BL. item-state / backlog / backlog-stamp (parallel-automate/18a; hermetic trees copied from fixtures/backlog-state/) =="
 # Every tree is a fresh copy of fixtures/backlog-state/tree/ (README there: one row per item and the
 # state it must read); no leg reads the live .supervisor/requirements/. `gh`, `lane-status --json`

@@ -1,4 +1,8 @@
 # =============================================================================
+# Run directly (`bash <this file>`, as run-pin-mutations.sh runs a pin), this fragment re-executes the
+# suite for this one part, so its assertions run against the helpers beside it; sourced by the
+# runner, BASH_SOURCE[0] is this file and $0 the runner, and the guard never fires.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 10-reconcile-status; fi
 echo "== H. reconcile-status (queue-hygiene/01: dry-run-default requirement Status reconciler) =="
 
 # rs_key <s> — the stub's filename-safe key (mirrors the stub script's own key()).
