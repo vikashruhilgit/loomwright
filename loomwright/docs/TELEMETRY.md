@@ -1320,7 +1320,6 @@ every parsed issue.
 | Condition                                                                  | Base score |
 |----------------------------------------------------------------------------|------------|
 | `decision == "PASS"` AND no `new` issues at BLOCKING or HIGH severity       | **9** |
-| `decision == "PASS"` AND only `new` issues at MEDIUM or LOW severity        | **7** |
 | `decision == "NEEDS_HUMAN"`                                                | **4** |
 | `decision == "FAIL"`                                                       | **2** |
 | Anything else                                                              | **3** (defensive default) |
@@ -1336,7 +1335,7 @@ every parsed issue.
 Floor at `0`, ceiling at `10`.
 
 **Worked example.** `decision: "PASS"`, two `new` MEDIUM issues, zero
-BLOCKING/HIGH/drift -> base `7`, no deltas -> **`7`**. Bucket: `medium`.
+BLOCKING/HIGH/drift -> base `9`, no deltas -> **`9`**. Bucket: `high`.
 
 ---
 
