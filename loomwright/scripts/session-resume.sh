@@ -12,9 +12,9 @@
 # Stays under SessionStart's documented 10,000-char additionalContext cap.
 #
 # When `source` is `startup` (fresh session) the hook runs ONLY its dedicated
-# `startup)` arm, which composes at most FIVE advisory blocks into ONE envelope
-# (items 4 and 5 are described further down — meta_branch_hint_line and
-# automate_watch_lines):
+# `startup)` arm, which composes at most SIX advisory blocks into ONE envelope
+# (items 4–6 are described further down — meta_branch_hint_line,
+# automate_watch_lines and proc_attention_line):
 #   1. the curation-cadence nudge (curation_nudge_line, below),
 #   2. the stranded-brief line (stranded_briefs_startup_line, below): the
 #      offline sibling reconcile-jobs.sh --porcelain classifies every brief in
@@ -27,9 +27,13 @@
 #      resume/clear/compact): the sibling worktree-audit.sh `report` lists Bash-
 #      tool worktree adds in a plugin-run repo that were recorded, never seen
 #      removed, and git still lists. Empty report ⇒ no section.
-#   4. the branch-mode run-history hint (meta_branch_hint_line, below), and
+#   4. the branch-mode run-history hint (meta_branch_hint_line, below),
 #   5. the live /automate merge-watcher lines (automate_watch_lines, below —
-#      also on resume/clear/compact): LOCAL ONLY (a marker file, `kill -0`, `ps`).
+#      also on resume/clear/compact): LOCAL ONLY (a marker file, `kill -0`, `ps`), and
+#   6. the background-process attention line (proc_attention_line, below — also on
+#      resume/clear/compact): ONE `**Background processes:** <n> item(s) need
+#      attention (…)` line when the sibling `proc-registry.sh summary --scan` counts
+#      anything overdue / orphaned / unregistered. LOCAL ONLY (one `ps` snapshot).
 # When no block has anything to say, startup emits NOTHING — byte-for-byte
 # the pre-existing behaviour — so a fresh launch with no plugin work in flight
 # stays noise-free. Sections 1–5, the observability probe, the prior-session
@@ -442,6 +446,39 @@ automate_watch_lines() {
   return 0
 }
 
+# proc_attention_line — startup-arm block 6, and the resume/clear/compact sibling of
+# automate_watch_lines (af/39g): ONE `**Background processes:** <n> item(s) need attention
+# (<o> overdue, <a> orphaned, <u> unregistered) — …` line when the sibling proc-registry.sh's
+# `summary --scan` counts anything overdue, orphaned or unregistered; otherwise NOTHING. The
+# registry is reached ONLY through that one call — classification lives in proc-registry.sh
+# (its header is the contract; one `ps` snapshot, no network), never re-derived here. Fail-safe:
+# an absent sibling, `proc-registry: summary — unavailable`, no output, or a line this parser does
+# not recognise ⇒ no line (an unreadable registry is never reported as "items"). Gated like
+# orphaned_worktrees_block on a plugin-active repo (or host mode), so a repo the plugin never ran
+# in stays silent. Under HERMETIC_TEST_ENV=1 the registry redirects and the scan is skipped (the
+# registry header's HERMETIC SCAN SKIP), which keeps the suites that run this hook off the live
+# machine. HONEST LIMIT: `proc-registry.sh list` / `reap` show and stop REGISTERED entries only —
+# an unregistered process is counted here but has to be found and stopped by hand.
+# DEFINED ABOVE THE CASE (startup_arm_emit calls it).
+proc_attention_line() {
+  [ -d ".supervisor" ] || [ "$SR_HOST" = 1 ] || return 0
+  local here line o a u n
+  here="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || return 0
+  [ -r "$here/proc-registry.sh" ] || return 0
+  line="$(bash "$here/proc-registry.sh" summary --scan </dev/null 2>/dev/null | grep '^proc-registry: summary — ' | tail -n 1)"
+  case "$line" in *" entries: "*" running, "*" overdue, "*" orphaned, "*" finished"*) ;; *) return 0 ;; esac
+  o="$(printf '%s\n' "$line" | sed -n 's/.*, \([0-9][0-9]*\) overdue, .*/\1/p')"
+  a="$(printf '%s\n' "$line" | sed -n 's/.*, \([0-9][0-9]*\) orphaned, .*/\1/p')"
+  u="$(printf '%s\n' "$line" | sed -n 's/.*; \([0-9][0-9]*\) unregistered$/\1/p')"
+  [ -n "$u" ] || u=0
+  case "$o$a" in ''|*[!0-9]*) return 0 ;; esac
+  [ -n "$o" ] && [ -n "$a" ] || return 0
+  n=$((o + a + u))
+  [ "$n" -gt 0 ] || return 0
+  printf '**Background processes:** %s item(s) need attention (%s overdue, %s orphaned, %s unregistered) — inspect with `proc-registry.sh list`; stop registered ones with `proc-registry.sh reap` (dry run first)' "$n" "$o" "$a" "$u"
+  return 0
+}
+
 # sr_pr_state <url> [<max_ticks>] — prints `<state> <ticks>`: the state (MERGED |
 # OPEN | CLOSED | unverified) from ONE time-bounded `gh pr view`, and the 0.1 s poll
 # ticks it spent (bash 3.2 has no `timeout`: background it, poll every 0.1s, kill it
@@ -519,18 +556,20 @@ automate_inflight_lines() {
 }
 
 startup_arm_emit() {
-  local curation="" stranded="" orphans="" metahint="" watchers="" body="" nl
+  local curation="" stranded="" orphans="" metahint="" watchers="" procs="" body="" nl
   nl=$'\n'
   curation="$(curation_nudge_line)"
   stranded="$(stranded_briefs_startup_line)"
   orphans="$(orphaned_worktrees_block)"
   load_meta_hint; metahint="$META_HINT"
   watchers="$(automate_watch_lines 2>/dev/null)"
+  procs="$(proc_attention_line 2>/dev/null)"
   body="$curation"
   [ -n "$stranded" ] && body="${body:+$body$nl}$stranded"
   [ -n "$orphans" ] && body="${body:+$body$nl}$orphans"
   [ -n "$metahint" ] && body="${body:+$body$nl}$metahint"
   [ -n "$watchers" ] && body="${body:+$body$nl}$watchers"
+  [ -n "$procs" ] && body="${body:+$body$nl}$procs"
   [ -n "$body" ] || return 0
   printf '%s' "$body" \
     | { iconv -c -f UTF-8 -t UTF-8 2>/dev/null || cat; } \
@@ -840,6 +879,10 @@ if [ -n "$AUTOMATE_SR$WATCH_SR" ]; then
   [ -n "$WATCH_SR" ] && append "$WATCH_SR"$'\n'
   append $'\n'
 fi
+# Section 1.7: background processes (af/39g) — the startup arm's block 6 on this arm too:
+# one line from `proc-registry.sh summary --scan`, own line, no heading; nothing to report ⇒ nothing.
+PROCS_SR="$(proc_attention_line 2>/dev/null)"
+[ -n "$PROCS_SR" ] && append "$PROCS_SR"$'\n\n'
 
 # Section 2: recent failed jobs (last 5 by mtime) ----
 if compgen -G ".supervisor/jobs/failed/*.md" > /dev/null 2>&1; then
