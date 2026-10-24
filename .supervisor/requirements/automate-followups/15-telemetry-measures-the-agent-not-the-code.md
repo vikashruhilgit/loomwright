@@ -101,3 +101,9 @@ changelog.d/af15-telemetry-count-pins.md
 2. `Failed` semantics (owner decision first): e.g. code-reviewer success = "returned a valid verdict" with the
    verdict as a label, or drop `Failed` from the CODE_REVIEW_RESULT title. Touches `score_code_review()`, the
    interest-filter success set, `docs/TELEMETRY.md` §Success / §Title / §Interest filter.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-24T20:24:28Z
+- **Brief:** .supervisor/jobs/done/2026-10-24-af15-telemetry-count-pins.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/689
