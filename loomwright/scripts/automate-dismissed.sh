@@ -667,6 +667,8 @@ PY
         fi ;;
       write)
         [ -n "$out_abs" ] || continue
+        # On success $err holds only pc_guarded_write's right-size size line (propose-common.sh
+        # pc_size_line) and is discarded, so the TSV rows below stay byte-identical.
         if err="$(pc_guarded_write "$out_abs" "$SELF" "$name" < "$src" 2>&1)"; then
           printf 'draft\t%s\t%s\t%s\n' "$kname" "$sev" "$out_abs/$name"
           written="$written$name$nl"
@@ -791,6 +793,7 @@ print(t[:80])' "$f" 2>/dev/null)" || snippet=""
       local common="${PROPOSE_COMMON_SH:-$SCRIPT_DIR/propose-common.sh}"
       # shellcheck disable=SC1090
       if [ -f "$common" ] && . "$common"; then
+        # `2>/dev/null` also drops pc_guarded_write's right-size size line here (by design).
         awk 'd==0 && /^- \*\*Decision:\*\* / { print "- **Decision:** follow-up"; d=1; next } { print }' "$f" 2>/dev/null \
           | pc_guarded_write "$prop_abs" "$SELF" "$name" 2>/dev/null \
           || echo "dismissed-decide: warning — decision recorded, draft line not rewritten"

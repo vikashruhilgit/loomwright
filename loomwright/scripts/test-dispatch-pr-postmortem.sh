@@ -31,11 +31,23 @@
 #           detached (F2 review fix).
 #   14. claude binary absent -> fail-safe no-op (non-dry-run; exit 0, no marker, no launch)
 #       — exercises the binary-absent fallback the dry-run cases never reach.
+#   15. (af/39e) process registry: a real (non-dry-run) launch with a sleeping stub claude registers ONE
+#       `postmortem` entry for the stub's own pid (registered asynchronously from inside the detached
+#       subshell, --expect waited past nohup's exec) with the 1h default cap; DRY_RUN registers nothing; an
+#       unwritable registry still launches with exit/stdout unchanged; a mutant with the registration line
+#       deleted registers nothing. The suite exports its own LOOMWRIGHT_PROC_REGISTRY_DIR.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DISPATCH="$HERE/dispatch-pr-postmortem.sh"
+. "$HERE/wait-lib.sh"
+# af/39e: the suite's own process registry (a real launch registers its claude); removed on exit, and any
+# stub claude still running is stopped
+PROC_REG_TMP="$(mktemp -d)"
+export LOOMWRIGHT_PROC_REGISTRY_DIR="$PROC_REG_TMP/procs"
+PM_STUB_PIDS=""
+trap 'for _p in $PM_STUB_PIDS; do kill -TERM "$_p" 2>/dev/null; done; rm -rf "$PROC_REG_TMP"' EXIT
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
@@ -265,6 +277,87 @@ else
   no "claude-absent fallback wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
 fi
 rm -rf "$WD"
+
+echo "== 15. (af/39e AC13/AC16) real launch => ONE postmortem entry for the claude pid; DRY_RUN none; unwritable registry still launches; mutation control =="
+# A stub claude that records its own pid and sleeps (TERM ends it). `#!/usr/bin/env bash` on purpose: the launch
+# then passes nohup AND env before its final command line, the two look-alike stages the registration waits past.
+PM_BIN="$PROC_REG_TMP/bin"; mkdir -p "$PM_BIN"
+cat > "$PM_BIN/stub-claude" <<'CLEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$$" > "$PM_STUB_PIDFILE"
+trap 'kill "$c" 2>/dev/null; exit 0' TERM
+sleep 30 & c=$!
+wait "$c"
+CLEOF
+chmod +x "$PM_BIN/stub-claude"
+# pm_real <dispatcher> <registry dir> — one real launch from a fresh repo; sets PM_RC PM_OUT PM_PID (the stub's
+# own pid, '' when it never started) and PM_WD
+pm_real() {
+  PM_WD="$(fresh_repo)"; PM_PID=""
+  PM_OUT="$( cd "$PM_WD" && unset LOOMWRIGHT_PROC_MAX_S_POSTMORTEM && PM_STUB_PIDFILE="$PM_WD/stub.pid" \
+      LOOMWRIGHT_CLAUDE_BIN="$PM_BIN/stub-claude" LOOMWRIGHT_PROC_REGISTRY_DIR="$2" bash "$1" "$PR" --fix-cycles 9 --decision ESCALATED 2>/dev/null )"
+  PM_RC=$?
+  if wait_for_cmd 10 test -s "$PM_WD/stub.pid"; then PM_PID="$(cat "$PM_WD/stub.pid")"; PM_STUB_PIDS="$PM_STUB_PIDS $PM_PID"; fi
+}
+pm_entries() { { cat "$1"/*.json 2>/dev/null || true; } | jq -c -s '[.[] | select(.kind == "postmortem")]' 2>/dev/null || echo '[]'; }
+pm_has_entry() { [ "$(pm_entries "$1" | jq 'length' 2>/dev/null)" = 1 ]; }
+pm_stop() { [ -n "$PM_PID" ] && kill -TERM "$PM_PID" 2>/dev/null; [ -z "$PM_PID" ] || wait_for_pid_gone "$PM_PID" 10; }
+REG15="$PROC_REG_TMP/procs15"
+pm_real "$DISPATCH" "$REG15"
+WAIT_LIB_WHAT="a postmortem entry in $REG15" wait_for_cmd 15 pm_has_entry "$REG15"
+E15="$(pm_entries "$REG15")"
+BAD15="$(jq -r --arg p "${PM_PID:-0}" --arg pr "$PR" '
+  if length != 1 then "\(length) postmortem entries (want 1)" else .[0] | [
+    (if (.pid | tostring) != $p then "pid \(.pid) is not the stub claude pid \($p)" else empty end),
+    (if .max_lifetime_s != 3600 then "max_lifetime_s \(.max_lifetime_s) (want the 1h default 3600)" else empty end),
+    (if ((.purpose // "") | contains($pr)) | not then "purpose \(.purpose)" else empty end),
+    (if ((.stop_hint // "") | contains("kill -TERM \($p)")) | not then "stop_hint \(.stop_hint)" else empty end)
+  ] | join("; ") end' <<<"$E15" 2>/dev/null)" || BAD15="unreadable entries: $E15"
+# the entry's identity must still match the live stub (it was hashed after the exec, not on nohup's line)
+LIVE15="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$REG15" bash "$HERE/proc-registry.sh" list | awk -F'\t' '$2 == "postmortem" { print $5 }')"
+OUT15_OK="$PM_OUT"
+pm_stop
+if [ "$PM_RC" -eq 0 ] && [ -n "$PM_PID" ] && [ -z "$BAD15" ] && [ "$LIVE15" = running ] && [ "$(marker_count "$PM_WD")" -eq 1 ]; then
+  ok "real launch registered ONE postmortem entry: pid = the claude ($PM_PID), 1h default cap, classified running (hashed after the exec)"
+else
+  no "postmortem registration wrong (rc=$PM_RC pid='$PM_PID' class='$LIVE15' markers=$(marker_count "$PM_WD"): $BAD15)"
+fi
+rm -rf "$PM_WD"
+WD="$(fresh_repo)"
+( cd "$WD" && LOOMWRIGHT_PROC_REGISTRY_DIR="$PROC_REG_TMP/procs15dry" LOOMWRIGHT_POSTMORTEM_DISPATCH_DRY_RUN=1 bash "$DISPATCH" "$PR" --fix-cycles 9 --decision ESCALATED >/dev/null 2>&1 )
+if [ "$(pm_entries "$PROC_REG_TMP/procs15dry" | jq 'length' 2>/dev/null)" = 0 ]; then ok "DRY_RUN registers nothing (nothing launched)"
+else no "DRY_RUN wrote a registry entry: $(pm_entries "$PROC_REG_TMP/procs15dry")"; fi
+rm -rf "$WD"
+# AC16: the registry dir is a regular file (unwritable) — the launch, its exit code and stdout are unchanged
+: > "$PROC_REG_TMP/not-a-dir"
+pm_real "$DISPATCH" "$PROC_REG_TMP/not-a-dir"
+R16="$PM_RC:$([ -n "$PM_PID" ] && echo launched || echo none):$(marker_count "$PM_WD")"
+pm_stop
+if [ "$R16" = "0:launched:1" ] && [ "$PM_OUT" = "$OUT15_OK" ]; then
+  ok "unwritable registry: still launched, exit 0, stdout unchanged"
+else
+  no "unwritable registry changed the launch ($R16, out='$PM_OUT' vs '$OUT15_OK')"
+fi
+rm -rf "$PM_WD"
+# mutation control: a scripts/ dir whose dispatch-pr-postmortem.sh lacks its ONE registration call line (gated:
+# the line occurs once, the copy non-empty, differing, bash -n) ⇒ no entry appears within the same bounded wait
+MUTD15="$PROC_REG_TMP/mut"; mkdir -p "$MUTD15"
+for e in "$HERE"/*; do [ "$(basename "$e")" = dispatch-pr-postmortem.sh ] || ln -s "$e" "$MUTD15/$(basename "$e")"; done
+C15="$(grep -c 'register --pid' "$DISPATCH")"
+grep -v 'register --pid' "$DISPATCH" > "$MUTD15/dispatch-pr-postmortem.sh"
+if [ "$C15" != 1 ] || [ ! -s "$MUTD15/dispatch-pr-postmortem.sh" ] || cmp -s "$DISPATCH" "$MUTD15/dispatch-pr-postmortem.sh" \
+   || ! bash -n "$MUTD15/dispatch-pr-postmortem.sh" 2>/dev/null; then
+  no "postmortem-registration mutant not built (registration lines=$C15)"
+else
+  pm_real "$MUTD15/dispatch-pr-postmortem.sh" "$PROC_REG_TMP/procs15mut"
+  if [ -n "$PM_PID" ] && ! WAIT_LIB_WHAT="no entry (mutant)" wait_for_cmd 8 pm_has_entry "$PROC_REG_TMP/procs15mut" 2>/dev/null; then
+    ok "MUTATION: the registration line deleted ⇒ the claude launched but no postmortem entry (the registration assertion goes red)"
+  else
+    no "MUTATION did not discriminate (pid='$PM_PID' entries=$(pm_entries "$PROC_REG_TMP/procs15mut"))"
+  fi
+  pm_stop
+  rm -rf "$PM_WD"
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

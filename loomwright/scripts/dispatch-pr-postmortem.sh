@@ -307,7 +307,18 @@ printf '%s\t%s\n' "$TIMESTAMP" "$PR_URL" > "$MARKER" 2>/dev/null || true
 # /pr-postmortem is read-only (gh reads + a single append to results.jsonl); the detached run
 # relies on the project's existing permission settings (best-effort). This differs from
 # dispatch-pr-review.sh, which pins its own regime (see its header's PERMISSIONS section).
-( nohup "$CLAUDE_BIN" -p "/loomwright:pr-postmortem $PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
+#
+# Process registry (af/39e): the launched process registers from INSIDE the detached subshell (`$!`), itself
+# backgrounded and fully redirected, so neither its exec wait nor proc-registry.sh's bounded --expect wait ever
+# delays this dispatcher, and a registry failure never changes the launch (proc-registry.sh's header is the
+# contract; the 1h cap is its kind table's, never a number here). register's --expect waits past the `nohup` /
+# `env` exec stages itself (their lines already carry the final arguments) — never a launcher-side copy.
+PM_REGISTRY="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/proc-registry.sh"
+pm_register() {
+  local p="$1"
+  bash "$PM_REGISTRY" register --pid "$p" --kind postmortem --purpose "/pr-postmortem for $PR_URL" --repo "$PWD" --expect "/loomwright:pr-postmortem $PR_URL" --stop-hint "kill -TERM $p (the detached /pr-postmortem session for $PR_URL)"
+}
+( nohup "$CLAUDE_BIN" -p "/loomwright:pr-postmortem $PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & pm_register "$!" </dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
 
 log "dispatched /pr-postmortem for $PR_URL ($TRIGGER_REASON; log: $RUN_LOG)"
 exit 0

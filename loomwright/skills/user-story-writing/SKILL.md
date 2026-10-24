@@ -2,8 +2,8 @@
 name: user-story-writing
 description: Write clear user stories with testable acceptance criteria. Use for requirements definition and feature scoping.
 allowed-tools: [Read]
-version: "1.3.0"
-lastUpdated: "2026-10-12"
+version: "1.4.0"
+lastUpdated: "2026-10-22"
 ---
 
 # User Story Writing Skill
@@ -38,7 +38,7 @@ Decide the shape **before writing any file**. Items written one finding at a tim
 | **One item with Parts** (`## Part A — …`, `## Part B — …`) | Same theme and shared files, and it still fits one PR |
 | **A set of items plus a plan doc** | Anything bigger. Each item in the set fits one PR; the set gets one plan doc (template below) |
 
-No mechanical size check ships yet: count by hand. Too small to pay a run ⇒ merge it into a sibling that touches the same files; too big for one PR ⇒ split it into a set.
+Check it with `automate-helpers.sh right-size <item>` (advisory, never a gate): one `small` / `ok` / `large` / `unknown` line per item, counted from its companion-expanded `## Touches`, the set the planner reserves (a directory counts its files). `small` ⇒ merge it into a named candidate, or run `automate-helpers.sh merge-items`, which copies each original verbatim as a Part and writes nothing if a line would be lost; `large` ⇒ split by Part into a set; `unknown` ⇒ name its files in `## Touches` if you can. Thresholds are the `right_size_*` keys of `.supervisor/config.json` (defaults: the helper's config reader). Aim: small enough to review in one PR, large enough to pay the run's fixed cost; when two stories touch the same files, prefer one story with parts.
 
 ### Item rules
 
