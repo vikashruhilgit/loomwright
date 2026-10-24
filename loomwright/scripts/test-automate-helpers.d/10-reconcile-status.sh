@@ -130,11 +130,12 @@ fi
 rm -rf "$R"
 
 # H4. AC-4: a run-file `# abandoned:` Queue row stamps done_with_escalation;
-#     a row without the marker stamps nothing.
+#     a row without the marker stamps nothing. The abandoned item is STATUS-LESS: a first-line
+#     `pending`/`ready` item is never stamped from a Queue row (owner decision D-conflict-1, H10).
 R="$(mktemp -d)"
 mkdir -p "$R/.supervisor/requirements/qh" "$R/.supervisor/automate" "$R/.supervisor/jobs/done" "$R/bin" "$R/ghstub"
 rs_stub_bin "$R/bin"
-printf '# ab\n\n## Status: pending\n' > "$R/.supervisor/requirements/qh/05-abandoned.md"
+printf '# ab\n' > "$R/.supervisor/requirements/qh/05-abandoned.md"
 printf '# nope\n\n## Status: pending\n' > "$R/.supervisor/requirements/qh/06-not-abandoned.md"
 ABROW='- [x] .supervisor/requirements/qh/05-abandoned.md  # abandoned: owner dropped track 2026-09-01'
 {
@@ -177,7 +178,7 @@ rs_home_repo() { # prints the repo root: (b) merged+cited WITH a done/ brief, pl
   relb=".supervisor/requirements/qh/02-b-merged.md"
   printf '# b\n\n## Status: pending\n' > "$r/$relb"
   printf '# Brief\n## Environment\n- **Source requirement:** %s\n' "$relb" > "$r/.supervisor/jobs/done/2026-10-01-b-merged.md"
-  printf '# ab\n\n## Status: pending\n' > "$r/.supervisor/requirements/qh/05-abandoned.md"
+  printf '# ab\n' > "$r/.supervisor/requirements/qh/05-abandoned.md"   # status-less: D-conflict-1 (H10) never abandons a pending item
   printf '# run\n## Status: running\n## Queue\n- [x] .supervisor/requirements/qh/05-abandoned.md  # abandoned: owner dropped it\n## Progress\n' > "$r/.supervisor/automate/run1.md"
   rs_stub_bin "$r/bin"
   jq -n --arg url "$RS_URL" '[{url:$url}]' > "$r/ghstub/list-$(rs_skey "$relb").json"
@@ -698,3 +699,74 @@ rs_run "$R" "$R/.supervisor/requirements"
 rs_plans_77 "$RS_NP" && ok "H9g a nested *-plan.md requirement is still reconciled" || no "H9g nested *-plan.md skipped (out='$RUN_OUT')"
 rm -rf "$R"
 
+# H10. Owner decision D-conflict-1 (parallel-automate/18a AC7): `--apply` never stamps ABANDONED from a
+#      Queue row on an item whose FIRST `## Status:` line is explicit pending/ready. A `conflict` one
+#      (no Kept-open marker settling the row) is byte-unchanged with ONE `info\t<rel>\tconflict\t<run
+#      file>` row; a kept-open one (marker dated on the row's run date) is byte-unchanged with no row
+#      at all; a `brief-shipped` and a status-less item named by such a row are still stamped.
+RS_ABRUN=".supervisor/automate/automate-2026-09-01-100000.md"
+rs_conflict_repo() {
+  local r; r="$(mktemp -d)"
+  mkdir -p "$r/.supervisor/requirements/qh" "$r/.supervisor/automate" "$r/.supervisor/jobs/done" "$r/bin" "$r/ghstub"
+  rs_stub_bin "$r/bin"
+  printf '# c\n\n## Status: pending\n' > "$r/.supervisor/requirements/qh/11-conflict.md"
+  printf '# k\n\n## Status: ready\n\n- **Kept open:** 2026-09-01 — supersedes automate-2026-09-01-100000\n' > "$r/.supervisor/requirements/qh/12-kept.md"
+  printf '# s\n\n## Status: brief-shipped\n' > "$r/.supervisor/requirements/qh/13-shipped.md"
+  printf '# n\n' > "$r/.supervisor/requirements/qh/14-none.md"
+  {
+    printf '# Automate Run: conflict fixture\n## Status: done\n## Queue\n'
+    for i in 11-conflict 12-kept 13-shipped 14-none; do printf -- '- [x] .supervisor/requirements/qh/%s.md  # abandoned: owner dropped it\n' "$i"; done
+    printf '## Progress\n'
+  } > "$r/$RS_ABRUN"
+  printf '%s' "$r"
+}
+# rs_conflict_check <repo> — dry run + --apply; prints one verdict word per expectation
+rs_conflict_check() {
+  local r="$1" q=".supervisor/requirements/qh" b11 b12 dry
+  b11="$(cksum < "$r/$q/11-conflict.md")"; b12="$(cksum < "$r/$q/12-kept.md")"
+  rs_run "$r" "$r/$q"; dry="$RUN_OUT"
+  rs_run "$r" "$r/$q" --apply
+  [ "$(cksum < "$r/$q/11-conflict.md")" = "$b11" ] && printf 'c-unchanged ' || printf 'c-WRITTEN '
+  [ "$(grep -cxF "info	$q/11-conflict.md	conflict	$RS_ABRUN" <<<"$dry"$'\n'"$RUN_OUT")" = 2 ] && printf 'c-info ' || printf 'c-NOINFO '
+  grep -qE "^(plan|stamped)	$q/11-conflict.md	" <<<"$dry"$'\n'"$RUN_OUT" && printf 'c-PLANNED ' || printf 'c-noplan '
+  [ "$(cksum < "$r/$q/12-kept.md")" = "$b12" ] && printf 'k-unchanged ' || printf 'k-WRITTEN '
+  grep -qF "$q/12-kept.md" <<<"$dry"$'\n'"$RUN_OUT" && printf 'k-NAMED ' || printf 'k-silent '
+  grep -qxF -- "## Status: done_with_escalation — ABANDONED (- [x] $q/13-shipped.md  # abandoned: owner dropped it)" "$r/$q/13-shipped.md" \
+    && grep -qxF '## Status: brief-shipped' "$r/$q/13-shipped.md" && printf 's-stamped ' || printf 's-UNSTAMPED '
+  grep -qxF -- "## Status: done_with_escalation — ABANDONED (- [x] $q/14-none.md  # abandoned: owner dropped it)" "$r/$q/14-none.md" \
+    && printf 'n-stamped' || printf 'n-UNSTAMPED'
+}
+RS_CWANT="c-unchanged c-info c-noplan k-unchanged k-silent s-stamped n-stamped"
+R="$(rs_conflict_repo)"
+RS_CGOT="$(rs_conflict_check "$R")"
+if [ "$RS_CGOT" = "$RS_CWANT" ]; then
+  ok "H10 D-conflict-1: conflict item byte-unchanged + one info conflict row (dry run and --apply); kept-open item byte-unchanged and unnamed; brief-shipped and status-less items still stamped ABANDONED"
+else
+  no "H10 D-conflict-1 wrong: got '$RS_CGOT', want '$RS_CWANT'"
+fi
+rm -rf "$R"
+# Mutation controls — each pin of the guard line, on a copy of the helper: (a) the guard line deleted
+# ⇒ the conflict item is stamped; (b) the explicit pending/ready skip dropped, keeping only the
+# _bl_is_conflict check ⇒ the kept-open item is stamped; (c) the skip widened to any `## Status:`
+# line ⇒ the brief-shipped item is left unstamped.
+RS_GUARD="$(grep -F 'if _rs_first_status_open "$fabs"; then _bl_is_conflict' "$H")"
+RS_GUARD_N="$(grep -cF 'if _rs_first_status_open "$fabs"; then _bl_is_conflict' "$H")"
+rs_conflict_mutant() { # <label> <replacement line> <a word the mutant must lose from RS_CWANT>
+  local got
+  if [ "$RS_GUARD_N" = 1 ] && rs_mutant "$RS_GUARD" "$2" && bash -n "$RSM/automate-helpers.sh"; then
+    R="$(rs_conflict_repo)"
+    got="$(RS_H="$RSM/automate-helpers.sh" rs_conflict_check "$R")"
+    case " $got " in
+      *" $3 "*) no "H10 mutation control ($1) REFUTED: '$3' still holds ($got)" ;;
+      *) ok "H10 mutation control ($1): '$3' no longer holds — the pin is load-bearing" ;;
+    esac
+    rm -rf "$R"
+  else
+    no "H10 mutation control ($1) not built (guard line found $RS_GUARD_N times, or the mutant is unchanged / does not parse)"
+  fi
+  rm -rf "$RSM"
+}
+rs_conflict_mutant "guard line deleted" "" c-unchanged
+rs_conflict_mutant "pending/ready skip dropped, conflict check kept" \
+  '          _bl_is_conflict "$fabs" "$reqpath" "$automate_dir" "$af" >/dev/null 2>&1 && { printf '"'"'info\t%s\tconflict\t%s\n'"'"' "$reqpath" "$af_rel"; continue; }' k-unchanged
+rs_conflict_mutant "skip widened to any ## Status: line" "${RS_GUARD/_rs_first_status_open \"\$fabs\"/grep -q '^## Status:' \"\$fabs\"}" s-stamped
