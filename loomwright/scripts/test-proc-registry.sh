@@ -751,7 +751,7 @@ leg_summary_scan() {
     printf '%s 1 %s 3-00:00:00 %s\n' "$la" "$lst" "$lcmd"                                   # registered: no
     printf '900001 1 %s 3-00:00:00 %s\n' "$lst" "$lcmd"                                       # same line, unregistered pid: YES
     printf '900002 1 %s 2-00:00:00 bash /opt/lw/loomwright/scripts/merge-watch.sh --pr 7\n' "$L"  # checkout path: YES
-    printf '900003 1 %s 1-02:03:04 bash /opt/cache/atelier/loomwright/17.13.0/scripts/lane-sampler.sh\n' "$L"  # versioned root: YES
+    printf '900003 1 %s 1-02:03:04 bash /opt/cache/atelier/loomwright/17.13.0/scripts/stray-watch.sh\n' "$L"  # versioned root: YES
     printf '900004 1 %s 05:00 bash /opt/lw/loomwright/scripts/young.sh\n' "$L"               # 300 s: no (default 3600)
     printf '900005 1 %s 1-00:00:00 python3 -u %s --port 5555\n' "$L" "$gone"                 # temp dir, script gone: YES
     printf '900006 1 %s 1-00:00:00 python3 %s --port 5556\n' "$L" "$exists"                  # script exists: no
@@ -759,18 +759,21 @@ leg_summary_scan() {
     printf '900008 1 %s 1-00:00:00 python3 -m http.server 8000\n' "$L"                        # -m, no script: no
     printf '900009 1 %s 1-00:00:00 bash /opt/notloomwright/scripts/x.sh\n' "$L"               # not the plugin: no
     printf '900010 1 %s 1-00:00:00 bash /opt/loomwright/a/b/scripts/x.sh\n' "$L"              # two segments: no
+    printf '900011 %s %s 1-00:00:00 bash /opt/lw/loomwright/scripts/registered-child.sh\n' "$la" "$L"   # child of a registered pid: no
+    printf '900012 900011 %s 1-00:00:00 bash /opt/lw/loomwright/scripts/registered-grandchild.sh\n' "$L"  # its grandchild: no
+    printf '900013 900001 %s 1-00:00:00 bash /opt/lw/loomwright/scripts/unregistered-child.sh\n' "$L"     # child of an UNregistered pid: YES
   } > "$fx"
   one="$(sline 1 1 0 0 0)"
   before="$(dirsum)"
   SUM_SNAP="$fx"; summ --scan
-  check "AC11 --scan counts the 4 unregistered look-alikes (registered, young, existing, non-temp, -m, non-plugin excluded)" eq "$SUM_RC|$SUM" "0|$one; 4 unregistered"
+  check "AC11 --scan counts the 5 unregistered look-alikes (registered, its descendants, young, existing, non-temp, -m, non-plugin excluded)" eq "$SUM_RC|$SUM" "0|$one; 5 unregistered"
   check "AC11 ... reads only the snapshot (0 ps calls), writes nothing in the registry, signals nothing" eval '[ "$SUM_PS" = 0 ] && [ "$(dirsum)" = "$before" ] && alive "$la"'
   summ
   check "AC11 without --scan the line has no unregistered part" eq "$SUM" "$one"
   SUM_MIN=100; summ --scan
-  check "AC11 LOOMWRIGHT_PROC_UNREG_MIN_S=100 also counts the 300 s look-alike" eq "$SUM" "$one; 5 unregistered"
+  check "AC11 LOOMWRIGHT_PROC_UNREG_MIN_S=100 also counts the 300 s look-alike" eq "$SUM" "$one; 6 unregistered"
   SUM_MIN=abc; summ --scan
-  check "AC11 a non-numeric LOOMWRIGHT_PROC_UNREG_MIN_S falls back to the 3600 s default" eq "$SUM" "$one; 4 unregistered"
+  check "AC11 a non-numeric LOOMWRIGHT_PROC_UNREG_MIN_S falls back to the 3600 s default" eq "$SUM" "$one; 5 unregistered"
   SUM_MIN=""; SUM_SNAP=""
   # the caller and its parent (an ancestor chain in the snapshot) are excluded; the caller's OTHER child is not
   cat > "$WORK/anc.sh" <<'ANC'
@@ -783,7 +786,7 @@ LOOMWRIGHT_PROC_PS_SNAPSHOT="$2" TZ=XST5 bash "$3" summary --scan
 rc=$?
 exit "$rc"
 ANC
-  check "AC11 the caller's ancestors are excluded, their other children are not (4 + the sibling)" eq "$(bash "$WORK/anc.sh" "$fx" "$fx.anc" "$S" 2>/dev/null)" "$one; 5 unregistered"
+  check "AC11 the caller's ancestors are excluded, their other children are not (5 + the sibling)" eq "$(bash "$WORK/anc.sh" "$fx" "$fx.anc" "$S" 2>/dev/null)" "$one; 6 unregistered"
   check "AC11 ... and the registry is still unchanged" eq "$(dirsum)" "$before"
   leg_end
 }
@@ -892,6 +895,8 @@ mk_mutant sumtouch sub 'local files f n=0 nr=0' ': > "$PR_DIR/.touched"; local f
 run_mutant "AC11 summary touches a file in the registry dir (checksum)" leg_summary_scan
 mk_mutant ancestors del 'ex="$ex$p "'
 run_mutant "AC11 the ancestor walk deleted" leg_summary_scan
+mk_mutant descendant del '! _pr_live_ancestor "$pid" "$live" || continue'
+run_mutant "AC11 the registered-descendant exclusion deleted" leg_summary_scan
 mk_mutant gonescript sub '_pr_in_tmp "$path" && [ ! -e "$path" ]' '_pr_in_tmp "$path"'
 run_mutant "AC11 the gone-script check deleted (an existing temp script counts)" leg_summary_scan
 mk_mutant hermscan range 'hermetic scan skip'

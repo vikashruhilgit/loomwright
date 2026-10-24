@@ -102,6 +102,11 @@
 #   (LK8) env-blind `ps` + lsof → the inherited-fd marker alone FAILs leg (ii) (macOS hides a platform
 #        binary's environment); MUTATION CONTROL: the fd-9 open deleted ⇒ the leak passes
 #   (LK9) a bad CI_LOCAL_LEAK_SETTLE → exit 2
+#   (LK10) the early phase red → the gate still reports, the early-red verdict stands
+#   (LK11) only the AFTER-suite snapshot fails (PATH stub armed by the suite) → FAIL, stamp removed
+#   (LK12) --affected with leg (ii) leaking → the --affected leak verdict, no stamp
+#   (LK13) --affected, every leak-gate snapshot fails → FAIL closed before the suite, nothing ran
+#   (LK14) --affected, only the after-suite snapshot fails → the --affected snapshot-failed verdict
 #   Every leaked pid is recorded and stopped by kill_leaks (also on EXIT).
 # Slot state lives under a sandboxed XDG_STATE_HOME: an inner fixture run must never queue on the
 # real shared pool that an outer ci-local.sh run is holding (that would deadlock it). The machine
@@ -890,20 +895,26 @@ case "${FIXTURE_LEAK:-}" in
     echo "$!" >> "$FIXTURE_LEAK_DIR/pids"
     i=0; while [ ! -s "$FIXTURE_LEAK_DIR/app.port" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done ;;
   nohup) bash "$(dirname "$0")/leak-nohup.sh" ;;
+  psfail) : > "$FIXTURE_LEAK_DIR/ps.fail" ;;   # every leak-gate snapshot from now on fails (psfailafter stub)
   wait)
     : > "$FIXTURE_LEAK_DIR/suite.started"
     i=0; while [ ! -f "$FIXTURE_LEAK_DIR/listener.up" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i + 1)); done ;;
 esac
 exit 0
 SH
+echo ': library' > "$R/loomwright/scripts/one.sh"   # (LK10-LK12) edit it so --affected maps test-one.sh
 ( cd "$R" && git add -A && git commit -qm leak-fixture && git update-ref refs/remotes/origin/main HEAD )
 # PATH stubs: `ps` that fails every leak-gate snapshot, and `ps` that cannot show the environment
 # (drops -E / e); any other call (the runner's own `ps -A -o pid= -o ppid=` …) goes to the real ps.
-mkdir -p "$LK/psfail" "$LK/envblind"
+mkdir -p "$LK/psfail" "$LK/envblind" "$LK/psfailafter"
 printf '%s\n' '#!/bin/sh' 'case "$*" in *uid=,lstart=,command=*) exit 1 ;; esac' "exec \"$REAL_PS\" \"\$@\"" > "$LK/psfail/ps"
+# psfailafter: leak-gate snapshots succeed until the suite (FIXTURE_LEAK=psfail) creates $LK/ps.fail, so
+# only the AFTER-suite snapshot fails.
+printf '%s\n' '#!/bin/sh' "case \"\$*\" in *uid=,lstart=,command=*) [ ! -e \"$LK/ps.fail\" ] || exit 1 ;; esac" \
+  "exec \"$REAL_PS\" \"\$@\"" > "$LK/psfailafter/ps"
 printf '%s\n' '#!/bin/sh' "case \"\$1\" in -axE) shift; exec \"$REAL_PS\" -ax \"\$@\" ;; axeww) shift; exec \"$REAL_PS\" axww \"\$@\" ;; esac" \
   "exec \"$REAL_PS\" \"\$@\"" > "$LK/envblind/ps"
-chmod +x "$LK/psfail/ps" "$LK/envblind/ps"
+chmod +x "$LK/psfail/ps" "$LK/envblind/ps" "$LK/psfailafter/ps"
 NO_LSOF="lsof-absent-$$"   # CI_LOCAL_LSOF naming no command = lsof absent
 lk_verdict() { grep -q "^ci-local: FAIL after [0-9]*s — leak gate: $1 process(es) survived the suite (nothing cached)\$" <<<"$out" \
   && grep -q "^ci-local: FAIL after [0-9]*s — leak gate: $1 process(es) survived" <<<"$(log_verdict "$(logpath)")"; }
@@ -1018,6 +1029,55 @@ kill_leaks; rm -f "$R/scripts/ci-local-mutant.sh"
 CI_LOCAL_LEAK_SETTLE=soon run --force
 if [ "$rc" -eq 2 ] && has "CI_LOCAL_LEAK_SETTLE must be" && [ ! -s "$FIXTURE_LOG" ]; then ok "(LK9) a non-integer CI_LOCAL_LEAK_SETTLE: exit 2, nothing ran"
 else no "(LK9) rc=$rc out=$out"; fi
+
+# (LK10) the early phase red: the gate still reports (report-only), the early-red verdict stands.
+FIXTURE_FAIL_A=1 CI_LOCAL_LEAK_SETTLE=1 run --force
+if [ "$rc" -eq 1 ] && hasf "ci-local: leak gate — clean (0 new processes survived)" \
+   && grep -q "^ci-local: FAIL after [0-9]*s — early gates failed; pool skipped (nothing cached)\$" <<<"$(log_verdict "$(logpath)")" \
+   && ! ran one && ! has "leak gate: "; then
+  ok "(LK10) early phase red: the leak gate reports, the early-red verdict stands"
+else no "(LK10) rc=$rc out=$out"; fi
+
+# (LK11) the after-suite snapshot fails (full run): FAIL, the old stamp removed.
+lkey="$(lk_key)"; [ -n "$lkey" ] && echo seeded > "$state/pass/$lkey"
+rm -f "$LK/ps.fail"
+FIXTURE_LEAK=psfail PATH="$LK/psfailafter:$PATH" CI_LOCAL_LEAK_SETTLE=1 run --force
+if [ "$rc" -eq 1 ] && [ -n "$lkey" ] && [ ! -e "$state/pass/$lkey" ] && ran one \
+   && hasf "ci-local: leak gate — the ps snapshot after the suite failed" \
+   && has "^ci-local: FAIL after [0-9]*s — leak gate: ps snapshot failed (nothing cached)\$"; then
+  ok "(LK11) the after-suite snapshot fails: 'leak gate: ps snapshot failed (nothing cached)', stamp removed"
+else no "(LK11) rc=$rc stamp=$([ -e "$state/pass/$lkey" ] && echo kept || echo gone) out=$out"; fi
+rm -f "$LK/ps.fail"
+
+# --affected runs the same gate (LK12-LK14): one.sh edited, so test-one.sh is in the plan. --affected
+# never reads, writes or removes a pass stamp, so the pass dir stays exactly as it was.
+echo ': edited' >> "$R/loomwright/scripts/one.sh"
+rm -f "$state/pass/"*
+# (LK12) --affected, leg (ii) leaking: FAIL with the --affected leak verdict.
+FIXTURE_LEAK=nohup CI_LOCAL_LEAK_SETTLE=1 run --affected
+np="$(lk_leaked)"
+if [ "$rc" -eq 1 ] && [ -n "$np" ] && ran one && hasf "ci-local: leak gate — survivor pid=$np sleep 271" \
+   && has "^ci-local --affected: FAIL after [0-9]*s — leak gate: 1 process(es) survived the suite\$" \
+   && [ -z "$(ls "$state/pass")" ]; then
+  ok "(LK12) --affected with a leak: 'ci-local --affected: FAIL … leak gate: 1 process(es) survived the suite', no stamp"
+else no "(LK12) rc=$rc leaked=[$np] pass=[$(ls "$state/pass")] out=$out"; fi
+kill_leaks
+# (LK13) --affected, every leak-gate snapshot fails: FAIL closed before the suite runs.
+PATH="$LK/psfail:$PATH" run --affected
+if [ "$rc" -eq 1 ] && [ ! -s "$FIXTURE_LOG" ] && [ -z "$(ls "$state/pass")" ] \
+   && has "^ci-local --affected: FAIL after 0s — leak gate: ps snapshot failed\$"; then
+  ok "(LK13) --affected, ps snapshot fails: 'ci-local --affected: FAIL after 0s — leak gate: ps snapshot failed', nothing ran"
+else no "(LK13) rc=$rc ran=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+# (LK14) --affected, the after-suite snapshot fails: FAIL.
+rm -f "$LK/ps.fail"
+FIXTURE_LEAK=psfail PATH="$LK/psfailafter:$PATH" CI_LOCAL_LEAK_SETTLE=1 run --affected
+if [ "$rc" -eq 1 ] && ran one && [ -z "$(ls "$state/pass")" ] \
+   && hasf "ci-local: leak gate — the ps snapshot after the suite failed" \
+   && has "^ci-local --affected: FAIL after [0-9]*s — leak gate: ps snapshot failed\$"; then
+  ok "(LK14) --affected, the after-suite snapshot fails: 'ci-local --affected: FAIL … leak gate: ps snapshot failed'"
+else no "(LK14) rc=$rc out=$out"; fi
+rm -f "$LK/ps.fail"
+( cd "$R" && git checkout -q -- loomwright/scripts/one.sh )
 
 # (A)
 run --bogus

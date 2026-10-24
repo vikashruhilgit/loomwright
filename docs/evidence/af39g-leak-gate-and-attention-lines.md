@@ -46,6 +46,22 @@ it started. The gate is report-only. It named them and signalled none. All nine 
 (`ps -p` found none of them). Because the run had already failed on the suite banners, the verdict line is the
 generic FAIL, not the leak-gate wording. Section 4 shows the leak-gate verdict on a fixture.
 
+**The gate's own FAIL verdicts appear only in fixture runs.** Neither real run in this section reached a leak-gate
+verdict, because both failed on suite banners first. Every leak-gate verdict wording is exercised by a
+`scripts/test-ci-local.sh` fixture leg instead:
+
+- the survivor verdict on a full run: (LK2), (LK3), (LK5) and (LK8);
+- the start-snapshot failure: (LK6);
+- the after-suite snapshot failure: (LK11);
+- the `--affected` survivor verdict: (LK12);
+- the `--affected` start- and after-snapshot failures: (LK13) and (LK14);
+- the early-red verdict that stands over a report-only gate: (LK10).
+
+No real green full run is captured here. The machine was loaded by parallel lanes, so none was attempted. The
+PR's GitHub Actions run on ubuntu is green on this branch at `f7861e4` (`ci`, `static`, `suite (1)` to
+`suite (3)`): https://github.com/vikashruhilgit/loomwright/actions/runs/40074670280. Those suites, including
+`test-ci-local.sh` and `test-proc-registry.sh`, are the first exercise of the Linux `ps` / `lsof` forms.
+
 **A second, fresh run: `bash scripts/ci-local.sh --affected`** at 07:07 UTC (load about 6; 24 changed files against
 `237adab`, 17 early-set entries + 6 mapped suites in one pool). It ran while the standalone re-runs of section 3
 were also running. This run shows the clean and not-attributable lines a real pool produces:
@@ -104,11 +120,25 @@ plugin command lines older than 3600 s that are not this shell's ancestors:
 
 **Honest reading:** these are live, wanted processes of the running `/automate --parallel` wave, not leaks. They
 match the scan's rule as written (a plugin `scripts/` path, older than `LOOMWRIGHT_PROC_UNREG_MIN_S`, not
-registered, not an ancestor). So during any lane run longer than an hour, every new session started in another
-checkout prints this line. Nobody can act on it by "stopping" these processes, and the line's own `reap` pointer
-does not apply to unregistered entries. This is a false-positive class of the `--scan` heuristic (Subtask 1's
-`proc-registry.sh`), recorded here, not fixed in this change. One possible fix: count the lane runner, the lane
-sampler and their `claude -p` children as known processes, or have them register.
+registered, not an ancestor). The wave was started from the installed plugin 17.14.1, which predates the process
+registry (it shipped in 17.15.0), so none of its processes registered and the real registry was empty. On this
+branch the picture differs per process:
+
+- The `_lane-run` wrappers and their `claude -p` sessions (pids 5492, 79011, 79073) DO register on this branch:
+  `automate-lanes.d/launch.sh` registers each wrapper, and the wrapper registers its session, through its one
+  `_lanes_register` call line. A wave started from this branch would not show them as unregistered.
+- `lane-sampler.sh` (pid 33570) did NOT register on this branch as first written. The coordinator starts it once
+  per wave and it runs for the whole wave, so during any wave longer than an hour every new session would get
+  this line about a wanted process. That was a real false positive of the scan, and it is now fixed in two
+  ways. First, `lane-sampler.sh` registers itself when its loop starts (kind `lane`, owned by the coordinator
+  pid it was given, fail-safe), so it reads `running` while its coordinator lives and `orphaned`, then
+  `finished`, once the coordinator is gone and it has exited. Second, `summary --scan` no longer counts a process
+  whose snapshot ppid chain reaches a live registered process, so a child of a registered process is never
+  counted. Both are pinned by tests: `test-lane-sampler.sh` (R) checks the self-registration, and
+  `test-proc-registry.sh`'s `leg_summary_scan` checks the descendant exclusion, with a mutation control.
+
+A wanted long-lived plugin process that neither registers nor descends from a registered one is still counted.
+The `proc-registry.sh` header lists that as an honest limit of the scan.
 
 ## 3. Triage of the full run's failing suites, re-run standalone
 
@@ -223,13 +253,16 @@ The suite also carries both controls in-suite as (bp6) M1 and M2, and both are `
 
 ## 6. Honest limits
 
-- **Linux is unverified.** Only macOS `ps` and `lsof` were exercised. Untested here: the procps `ps -A -ww` columns
-  `summary` reads, the environment-showing snapshot form ci-local picks by feature probe (`ps e` /
-  `/proc/<pid>/environ`), and Linux `lsof`.
+- **Linux is exercised only by CI fixtures.** Every capture here is macOS `ps` and `lsof`. The procps
+  `ps -A -ww` columns `summary` reads, the environment-showing snapshot form ci-local picks by feature probe, and
+  Linux `lsof` are exercised only by the self-tests in the green ubuntu Actions run cited in section 1, never by
+  a real Linux `ci-local.sh` pool.
 - **The full run in section 1 is a FAILED run** on an overloaded machine. It proves the gate arms, attributes and
   reports in a real pool. It does not prove a green full run on this branch. The fresh `--affected` run also FAILED, so neither run
   proves the leak-gate PASS path. Only the fixture leg (LK1) shows the gate passing a run end to end.
-- **The live attention line in section 2 is a false positive** of the `--scan` heuristic (live lane runners). The
-  line is wired correctly; the counts it reports need the follow-up named there.
+- **The live attention line in section 2 is a false positive** of the `--scan` heuristic, from a wave of the
+  pre-registry 17.14.1 plugin. On this branch the lane wrappers and sessions register, and the lane sampler now
+  registers too. Any child of a registered process is excluded (section 2). A wanted plugin process that does
+  neither is still counted.
 - **Controls applied by hand:** only the brief's non-reviewer pin mutations (Control A, M1) and M2. The other
   reviewer-applied rows are covered only by the in-suite controls quoted above, or by none.

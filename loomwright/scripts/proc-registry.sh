@@ -74,7 +74,8 @@
 #                 - it is older than LOOMWRIGHT_PROC_UNREG_MIN_S seconds (a whole number, else the
 #                   default 3600);
 #                 - it is not the live process of an entry (an entry whose class is not finished: a
-#                   recycled pid's new process IS unregistered);
+#                   recycled pid's new process IS unregistered), nor a descendant of one (its
+#                   snapshot ppid chain, at most 64 hops, reaches such a process);
 #                 - it is not this call's own process, a direct child of it, or an ancestor ($PPID,
 #                   then the snapshot's ppid chain).
 #               HERMETIC SCAN SKIP: under HERMETIC_TEST_ENV=1 with LOOMWRIGHT_PROC_PS_SNAPSHOT unset
@@ -82,7 +83,10 @@
 #               REDIRECT's counterpart; classification of the hermetic registry still runs).
 #               Honest limits: the python rule reads the first non-option argument as the script, so a
 #               relative path or one containing a space is not checked; a process that rewrites its
-#               argv is invisible to the scan.
+#               argv is invisible to the scan; a WANTED long-lived plugin process that neither
+#               registers nor descends from a registered one is counted, so each such process
+#               registers itself (the wave's lane-sampler.sh does, as kind lane owned by its
+#               coordinator).
 #       Test seam: LOOMWRIGHT_PROC_PS_SNAPSHOT=<file> is read IN PLACE of running ps (same columns).
 #   reap [--apply] [<id>...]
 #       Without --apply (the DEFAULT): a dry run — prints the action it would take per entry, sends
@@ -577,9 +581,21 @@ _pr_in_tmp() {
   return 1
 }
 
+# _pr_live_ancestor <pid> <" live entry pids "> — 0 when <pid>'s snapshot ppid chain (bounded at 64 hops,
+# stopping at pid 1) reaches a live entry's pid.
+_pr_live_ancestor() {
+  local p k=0
+  p="$(_pr_snap_get "$1" 2)"
+  while _pr_is_uint "$p" && [ "$p" -gt 1 ] && [ "$k" -lt 64 ]; do
+    case "$2" in *" $p "*) return 0 ;; esac
+    p="$(_pr_snap_get "$p" 2)"; k=$((k + 1))
+  done
+  return 1
+}
+
 # _pr_unreg_count <" live entry pids "> — the --scan count over PR_SNAP (header: summary --scan).
 _pr_unreg_count() {
-  local ex="$1" min p k=0 cands pid et path age u=0
+  local ex="$1" live="$1" min p k=0 cands pid et path age u=0
   min="${LOOMWRIGHT_PROC_UNREG_MIN_S:-}"
   _pr_is_uint "$min" || min=3600
   ex="$ex$$ "
@@ -611,6 +627,7 @@ _pr_unreg_count() {
     if [ "$path" != "-" ]; then
       { _pr_in_tmp "$path" && [ ! -e "$path" ]; } || continue
     fi
+    ! _pr_live_ancestor "$pid" "$live" || continue   # a descendant of a live entry's process
     u=$((u + 1))
   done <<<"$cands"
   printf '%s' "$u"
