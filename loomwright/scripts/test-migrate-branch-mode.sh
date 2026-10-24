@@ -638,7 +638,7 @@ else
   # The mutant below can only be told apart where comm itself collates by locale: on C-sorted
   # input (Zz before a) a locale-aware comm under $NCL misreads the common line a as unique.
   # A comm that compares bytes whatever the locale makes the mutant identical to the SUT here.
-  CL_PROBE="$(LC_ALL="$NCL" comm -13 <(printf 'Zz\na\n') <(printf 'a\n') 2>/dev/null)"
+  CL_PROBE="$(env LC_ALL="$NCL" comm -13 <(printf 'Zz\na\n') <(printf 'a\n') 2>/dev/null)"
   MUT="$TROOT/mut-comm-locale"
   if [ -z "$CL_PROBE" ]; then
     echo "  SKIP: comm ignores $NCL collation on this host ($(comm --version 2>/dev/null | head -n 1 || echo 'comm: no --version')) — the verify-pr comm mutation control is INCONCLUSIVE here"
