@@ -54,9 +54,17 @@
 #       overall deadline across them, mutant-controlled (zh, automate-followups/36 A2); the
 #       live-watcher line on both arms, never for a stale/recycled pid (ze); nothing
 #       to report ⇒ nothing printed, with a mutation control (zf).
+#   (bp1)-(bp6) the Background processes attention line (af/39g AC3, startup-arm block 6): one
+#       orphaned registry entry ⇒ exactly ONE line on startup and resume (bp1), derived from the
+#       sibling's own `summary --scan` line (bp2); a clean registry ⇒ no line and an empty startup
+#       (bp3); an unavailable registry ⇒ no line, exit 0 (bp4); an unregistered look-alike counts,
+#       a repo with no .supervisor/ stays silent (bp5); two gated mutation controls (bp6).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
+# The process-registry seams are set per leg in (bp1)-(bp6) only; a caller's export must not point every
+# other leg's hook run at a real registry or a stale snapshot.
+unset LOOMWRIGHT_PROC_REGISTRY_DIR LOOMWRIGHT_PROC_PS_SNAPSHOT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$SCRIPT_DIR/session-resume.sh"
 
@@ -1721,6 +1729,92 @@ if cmp -s "$HOOK" "$md/session-resume.sh"; then no "(zf) header mutant changed n
 else
   c="$(ctx_of "$( cd "$R4" && printf '{"source":"resume"}' | bash "$md/session-resume.sh" 2>/dev/null )")"
   grep -q '/automate in-flight items' <<<"$c" && ok "(zf) control: an unconditional header is caught" || no "(zf) control did not discriminate"
+fi
+
+# ============================================================================
+echo "== (bp1)-(bp6) Background processes attention line (af/39g AC3): startup-arm block 6 + resume =="
+# The hook reaches the registry ONLY through `proc-registry.sh summary --scan`, so every fixture here
+# is a registry dir (LOOMWRIGHT_PROC_REGISTRY_DIR) plus, where a snapshot matters, a one-row ps
+# snapshot (LOOMWRIGHT_PROC_PS_SNAPSHOT) — never the live machine. The orphaned entry is registered
+# against a real sleeper (register needs a live pid), its row is captured into the snapshot, then the
+# sleeper is killed and its repo dir removed: the snapshot keeps it "running", the missing repo makes
+# it orphaned, and nothing is left alive for the ci-local leak gate.
+BP="$(mktmp)"; BPREG="$BP/reg"; mkdir -p "$BPREG"; BPSNAP="$BP/snap"
+BPLINE='**Background processes:** 1 item(s) need attention (0 overdue, 1 orphaned, 0 unregistered) — inspect with `proc-registry.sh list`; stop registered ones with `proc-registry.sh reap` (dry run first)'
+mkdir -p "$BP/gone-repo"
+sleep 300 & BPPID=$!
+LOOMWRIGHT_PROC_REGISTRY_DIR="$BPREG" bash "$SCRIPT_DIR/proc-registry.sh" register --pid "$BPPID" --kind lane \
+  --purpose "test-session-resume orphan fixture" --repo "$BP/gone-repo" >/dev/null 2>&1
+env TZ=UTC0 LC_ALL=C ps -A -ww -o pid=,ppid=,lstart=,etime=,command= 2>/dev/null | awk -v p="$BPPID" '$1 == p' > "$BPSNAP"
+kill "$BPPID" 2>/dev/null; wait "$BPPID" 2>/dev/null
+rm -rf "$BP/gone-repo"
+bp_hook() { # <hook> <repo> <source> [env…] — raw stdout; rc to RCFILE
+  local hk="$1" r="$2" src="$3" out; shift 3
+  out="$( cd "$r" && printf '{"source":"%s"}' "$src" | env LOOMWRIGHT_PROC_REGISTRY_DIR="$BPREG" LOOMWRIGHT_PROC_PS_SNAPSHOT="$BPSNAP" "$@" bash "$hk" 2>/dev/null )"
+  printf '%s' "$?" > "$RCFILE"
+  printf '%s' "$out"
+}
+if [ "$(ls "$BPREG"/*.json 2>/dev/null | wc -l | tr -d ' ')" = 1 ] && [ -s "$BPSNAP" ]; then
+  BPR="$(new_repo)"; make_plugin_active "$BPR"
+  # (bp1) one orphaned entry ⇒ exactly ONE line, on startup and on resume.
+  for src in startup resume; do
+    c="$(ctx_of "$(bp_hook "$HOOK" "$BPR" "$src")")"
+    [ "$(lastrc)" = 0 ] && [ "$(grep -cxF -- "$BPLINE" <<<"$c")" = 1 ] && [ "$(grep -c 'Background processes' <<<"$c")" = 1 ] \
+      && ok "(bp1) $src: one orphaned entry ⇒ exactly one Background processes line" || no "(bp1) $src: $(grep -F 'Background' <<<"$c" | tr '\n' '|') rc=$(lastrc)"
+  done
+  # ... and on startup with nothing else to say, that line IS the whole additionalContext.
+  c="$(ctx_of "$(bp_hook "$HOOK" "$BPR" startup)")"
+  [ "$c" = "$BPLINE" ] && ok "(bp1) startup: the line is the whole envelope (one block, no separator)" || no "(bp1) startup body: $c"
+  # (bp2) the sibling's own line is what the hook parses — the same summary, read independently.
+  s="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$BPREG" LOOMWRIGHT_PROC_PS_SNAPSHOT="$BPSNAP" bash "$SCRIPT_DIR/proc-registry.sh" summary --scan 2>/dev/null)"
+  [ "$s" = "proc-registry: summary — 1 entries: 0 running, 0 overdue, 1 orphaned, 0 finished; 0 unregistered" ] \
+    && ok "(bp2) the derived-from summary line: 1 orphaned, 0 unregistered" || no "(bp2) summary: $s"
+  # (bp3) nothing overdue / orphaned / unregistered ⇒ no line; a startup with nothing else to say is EMPTY.
+  BPEMPTY="$BP/empty-reg"; mkdir -p "$BPEMPTY"
+  for src in startup resume; do
+    raw="$(bp_hook "$HOOK" "$BPR" "$src" LOOMWRIGHT_PROC_REGISTRY_DIR="$BPEMPTY")"
+    [ "$(lastrc)" = 0 ] && ! grep -q 'Background processes' <<<"$(ctx_of "$raw")" && ok "(bp3) $src: a clean registry ⇒ no line" || no "(bp3) $src printed: $(ctx_of "$raw")"
+    [ "$src" = startup ] && { [ -z "$raw" ] && ok "(bp3) startup: nothing else to say ⇒ byte-identical empty output" || no "(bp3) startup not empty: $raw"; }
+  done
+  # (bp4) unavailable registry (a path that is not a directory; an unreadable dir when not root) ⇒ no line, exit 0.
+  : > "$BP/reg-is-a-file"
+  raw="$(bp_hook "$HOOK" "$BPR" startup LOOMWRIGHT_PROC_REGISTRY_DIR="$BP/reg-is-a-file")"
+  [ "$(lastrc)" = 0 ] && [ -z "$raw" ] && ok "(bp4) a registry path that is not a directory (summary: unavailable) ⇒ no line, exit 0" || no "(bp4) not-a-dir: rc=$(lastrc) $raw"
+  if [ "$(id -u)" != 0 ]; then
+    chmod 000 "$BPREG"
+    for src in startup resume; do
+      c="$(ctx_of "$(bp_hook "$HOOK" "$BPR" "$src")")"
+      [ "$(lastrc)" = 0 ] && ! grep -q 'Background processes' <<<"$c" && ok "(bp4) $src: an unreadable registry ⇒ no line, exit 0" || no "(bp4) $src unreadable: rc=$(lastrc) $(grep -F Background <<<"$c")"
+    done
+    chmod 755 "$BPREG"
+  fi
+  # (bp5) an unregistered look-alike in the snapshot (no entries) ⇒ the line counts it; a plain repo stays silent.
+  BPU="$BP/unreg-snap"
+  printf '900201 1 Mon Jan  1 00:00:00 2001 2-00:00:00 bash /opt/lw/loomwright/scripts/leaked.sh\n' > "$BPU"
+  c="$(ctx_of "$(bp_hook "$HOOK" "$BPR" startup LOOMWRIGHT_PROC_REGISTRY_DIR="$BPEMPTY" LOOMWRIGHT_PROC_PS_SNAPSHOT="$BPU")")"
+  grep -qxF -- '**Background processes:** 1 item(s) need attention (0 overdue, 0 orphaned, 1 unregistered) — inspect with `proc-registry.sh list`; stop registered ones with `proc-registry.sh reap` (dry run first)' <<<"$c" \
+    && ok "(bp5) an unregistered look-alike alone ⇒ the line, counted as unregistered" || no "(bp5) ctx: $c"
+  BPPLAIN="$(new_repo)"
+  raw="$(bp_hook "$HOOK" "$BPPLAIN" startup)"
+  [ "$(lastrc)" = 0 ] && [ -z "$raw" ] && ok "(bp5) a repo with no .supervisor/ stays silent even with an orphaned entry" || no "(bp5) plain repo printed: $raw"
+  # (bp6) mutation controls (every mutant gated first). M1: delete `need attention` ⇒ (bp1) red.
+  # M2: treat an unavailable summary as one item ⇒ (bp4) red.
+  BPM="$(mktmp)"; cp "$SCRIPT_DIR"/*.sh "$BPM/" 2>/dev/null
+  sed 's/need attention//' "$HOOK" > "$BPM/session-resume.sh"
+  if gate_mutant "$HOOK" "$BPM/session-resume.sh" "(bp6) M1 'need attention' deleted"; then
+    c="$(ctx_of "$(bp_hook "$BPM/session-resume.sh" "$BPR" startup)")"
+    ! grep -qxF -- "$BPLINE" <<<"$c" && ok "(bp6) M1: without 'need attention' the (bp1) exact-line assertion turns red" || no "(bp6) M1 did not discriminate"
+  fi
+  sed 's/^  case "\$line" in \*" entries: "\*.*$/  case "$line" in *"summary — unavailable"*) line="proc-registry: summary — 1 entries: 0 running, 1 overdue, 0 orphaned, 0 finished" ;; esac  # mutant: unavailable = 1 item/' \
+    "$HOOK" > "$BPM/session-resume.sh"
+  if gate_mutant "$HOOK" "$BPM/session-resume.sh" "(bp6) M2 unavailable-as-one-item" && grep -q 'mutant: unavailable = 1 item' "$BPM/session-resume.sh"; then
+    raw="$(bp_hook "$BPM/session-resume.sh" "$BPR" startup LOOMWRIGHT_PROC_REGISTRY_DIR="$BP/reg-is-a-file")"
+    grep -q 'Background processes' <<<"$(ctx_of "$raw")" && ok "(bp6) M2: an unavailable registry reported as an item turns the (bp4) no-line assertion red" || no "(bp6) M2 did not discriminate: $raw"
+  else
+    no "(bp6) M2 mutant not built"
+  fi
+else
+  no "(bp) fixture: the orphan entry or its snapshot row was not written (entries=$(ls "$BPREG" 2>/dev/null | wc -l | tr -d ' '))"
 fi
 
 echo "RESULT: $pass passed, $fail failed"

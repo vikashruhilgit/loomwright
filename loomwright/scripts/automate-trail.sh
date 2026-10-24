@@ -40,8 +40,10 @@
 #     `## Current` `pause_reason` → `null` (`current-set` on a staged copy, then
 #     one validated runfile-write), appends
 #     two Progress lines, calls trail-pr `--reason done`, appends ONE
-#     `<ts> sweep (dry run): <summary>` Progress line (a DRY sweep — never
-#     `--apply`) and — branch mode off — trail-unstage for that run. Nothing else.
+#     `<ts> process registry: <summary>` Progress line (`proc-registry.sh
+#     summary`, read-only) then ONE `<ts> sweep (dry run): <summary>` Progress
+#     line (a DRY sweep — never `--apply`) and — branch mode off — trail-unstage
+#     for that run. Nothing else.
 #   * `closeout-others` runs `closeout` (and, branch mode off, `trail-unstage`)
 #     for OTHER runs' merged in-flight items and appends ONE record line to the
 #     --record run file. Nothing else.

@@ -151,8 +151,9 @@
 #   leftover    the close-out leftover gate (AUT-LEFTOVER ask, or the closeout_leftover park); after a
 #               superseded close-out it goes on to awaiting-go, else to checkoff
 #   checkoff    CHECK OFF + its Progress line
-#   terminate   the two exits: `## Status: done` (trail-pr --reason done + dry sweep line) or the
-#               limit_reached park; otherwise `{"do":"done","status":"running"}` (next PICK)
+#   terminate   the two exits: `## Status: done` (trail-pr --reason done + the `process registry:` line
+#               + the dry sweep line) or the limit_reached park; otherwise `{"do":"done","status":"running"}`
+#               (next PICK)
 #
 # WRITERS. The run file is written ONLY through automate-helpers.sh `runfile-write`, `progress-append`,
 # `current-set`, `current-escalation` and `queue-checkoff` (plus the writes the called helpers make
@@ -801,6 +802,8 @@ gate-eval:
 checked off
 limit_reached
 sweep (dry run)
+process registry
+fleet closeout registry
 closeout
 fleet closeout:
 auto-finalized
@@ -2898,13 +2901,17 @@ ns_checkoff() {
 # step: terminate — the two exits (§6 "Termination (two exits)")
 # ================================================================================================
 ns_terminate() {
-  local n p lim tl sw
+  local n p lim tl sw rg
   n="$(bash "$H" remaining "$RF" 2>/dev/null | tail -n 1)"
   ns_count_ok "$n" || { ns_err "terminate: remaining printed '$n', not a count"; NS_RC=1; return 1; }
   if [ "$n" = 0 ]; then
     ns_status done || return 1
     tl="$(bash "$H" trail-pr "$RF" --reason done 2>/dev/null | tail -n 1)"
     [ -n "$tl" ] && { ns_progress "$(ns_ts) $tl" || return 1; }
+    # ONE `process registry:` line (proc-registry.sh summary: read-only, one ps call) directly before the
+    # sweep line (af/39g); a summary that printed nothing ⇒ the pinned skipped form
+    rg="$(bash "$HERE/proc-registry.sh" summary 2>/dev/null </dev/null | grep '^proc-registry: summary — ' | tail -n 1)"
+    ns_progress "$(ns_ts) process registry: ${rg:-proc-registry: summary — skipped: no output}" || return 1
     sw="$(bash "$H" sweep --root "$ROOT" 2>/dev/null | grep '^sweep: summary — ' | tail -n 1)"
     ns_progress "$(ns_ts) sweep (dry run): ${sw:-sweep: summary — skipped: no output}" || return 1
     ns_release

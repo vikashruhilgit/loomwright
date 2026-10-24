@@ -63,6 +63,24 @@ fe_tr="$(grep -nE '^- [^ ]+ trail-pr: (opened|pushed|skipped)' "$P/$RF_REL" | ta
   && ok "(F1) AC7 finalize-empty appends exactly ONE '<ts> sweep (dry run): sweep: summary — dry run: …' Progress line, after its trail line" \
   || no "(F1) sweep line(s) at '$(printf '%s' "$fe_sw" | tr '\n' ' ')' vs trail line $fe_tr"
 grep -q '^sweep' "$FX/fe.err" && no "(F1) the sweep line leaked into finalize-empty's printed output" || ok "(F1) the sweep summary is appended to ## Progress only (finalize-empty's printed lines unchanged)"
+# af/39g AC4: ONE `<ts> process registry: <proc-registry.sh summary line>` line, directly BEFORE the sweep line
+# (and the no-op second finalize above added none); printed nowhere.
+fe_rg="$(grep -nE '^- [^ ]+ process registry: proc-registry: summary — ' "$P/$RF_REL" | cut -d: -f1)"
+[ "$(printf '%s\n' "$fe_rg" | grep -c .)" = 1 ] && [ -n "$fe_sw" ] && [ "$fe_rg" = "$((fe_sw - 1))" ] \
+  && ! grep -q 'proc-registry' "$FX/fe.err" \
+  && ok "(F1) af/39g finalize-empty appends exactly ONE '<ts> process registry: proc-registry: summary — …' line, directly before its sweep line" \
+  || no "(F1) registry line(s) at '$(printf '%s' "$fe_rg" | tr '\n' ' ')' vs sweep line $fe_sw"
+# … and a summary that prints nothing (a silent proc-registry.sh in a copied scripts dir) ⇒ the pinned skipped form
+FERG="$TOP/fe-regsilent"; mkdir -p "$FERG"; cp "$HERE"/*.sh "$HERE"/*.py "$FERG/"; cp -R "$HERE/automate-helpers.d" "$FERG/"; cp -R "$HERE/automate-trail.d" "$FERG/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$FERG/"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FERG/proc-registry.sh"
+closeout_fixture 207; run_closeout >/dev/null
+FE_H="$FERG/automate-helpers.sh" fe_glob >/dev/null
+fe_rg="$(grep -nE '^- [^ ]+ process registry: ' "$P/$RF_REL" | cut -d: -f1)"
+fe_sw="$(grep -nE '^- [^ ]+ sweep \(dry run\): ' "$P/$RF_REL" | cut -d: -f1)"
+[ "$(printf '%s\n' "$fe_rg" | grep -c .)" = 1 ] && [ -n "$fe_sw" ] && [ "$fe_rg" = "$((fe_sw - 1))" ] \
+  && grep -qE '^- [^ ]+ process registry: proc-registry: summary — skipped: no output$' "$P/$RF_REL" \
+  && ok "(F1) af/39g a silent proc-registry.sh summary ⇒ ONE 'process registry: proc-registry: summary — skipped: no output' line before the sweep line" \
+  || no "(F1) silent summary: $(grep 'process registry' "$P/$RF_REL" | tr '\n' '|') (sweep line $fe_sw)"
 # Control: without the mode-off trail-unstage the finalized run's trail blobs stay staged.
 MUTU="$TOP/mutd-unstage"; mkdir -p "$MUTU"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTU/"; cp -R "$HERE/automate-helpers.d" "$MUTU/"; cp -R "$HERE/automate-trail.d" "$MUTU/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$MUTU/"
 grep -v 'l="$(bash "$HLP" trail-unstage "$rf_abs"' "$TB" > "$MUTU/automate-trail.sh"

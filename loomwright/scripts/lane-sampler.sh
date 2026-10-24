@@ -11,6 +11,8 @@
 #          the loop (sampler_loop). ALWAYS exits 0 once running (observation emitter, fail-SAFE);
 #          exit 2 only on a usage error. Stops when --parent-pid is gone (pid dead, or its start
 #          time no longer matches the one read at startup — a recycled pid is not the parent).
+#          Registers itself once at start (proc-registry.sh register, kind lane, --owner-pid the
+#          coordinator; fail-safe) so the registry's unregistered-process scan does not count it.
 #        lane-sampler.sh --once --parent-run-id <id> [--root <primary>]
 #          print one sample line (sampler_line) on stdout; no append, no guard, no notification.
 #        lane-sampler.sh --help   this header
@@ -345,5 +347,14 @@ trap 'exit 0' TERM INT HUP
 
 if [ "$ONCE" -eq 1 ]; then sampler_line; exit 0; fi
 PARENT_START="$("$PS" -o lstart= -p "$PARENT_PID" 2>/dev/null)"
+# Register this long-lived process (proc-registry.sh header) so `summary --scan` never counts the wanted
+# sampler as an unregistered look-alike. Owned by the coordinator: orphaned the moment it dies (the
+# loop then exits by itself), finished once this process exits. Fail-safe, fully redirected, never
+# changes the run; no --expect, since this process has already exec'd its final command line.
+if [ -n "$PARENT_START" ]; then
+  bash "$HERE/proc-registry.sh" register --pid "$$" --kind lane --owner-pid "$PARENT_PID" --repo "$ROOT" \
+    --run-id "$RUN_ID" --purpose "lane-sampler.sh of wave $RUN_ID (exits by itself when its coordinator dies)" \
+    --stop-hint "kill -TERM $$" </dev/null >/dev/null 2>&1 || :
+fi
 sampler_loop
 exit 0
