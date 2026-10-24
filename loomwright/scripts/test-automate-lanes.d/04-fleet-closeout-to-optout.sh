@@ -193,11 +193,11 @@ EOF
 chmod +x "$T/sw-stub.sh"
 fc_parent automate-2026-10-11-140000; RF17="$FCRF"
 printf '%s\n' "- [ ] reqs/b.md" > "$T/af.q"; awk -v f="$T/af.q" '{ print } /^## Queue$/ { while ((getline l < f) > 0) print l }' "$RF17" > "$T/af.rf" && mv "$T/af.rf" "$RF17"
-out="$(SW_STUB_N=1 LOOMWRIGHT_LANES_SWEEP="$T/sw-stub.sh" fc fleet-closeout "$RF17")"
-check "AF14 wave 1 (a Queue item remains): its sweep is printed, NOT recorded, and the lock is kept" \
-  "$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: sweep — sweep: summary — dry run: 1 would-remove, 0 kept (0 worktree(s), 1 branch(es) examined)' | tr -d ' '):$(grep -c '^- fleet closeout sweep (dry run): ' "$RF17" | tr -d ' '):$(lockst)" "1:0:LOCKED"
+out="$(SW_STUB_N=1 LOOMWRIGHT_PROC_REGISTRY_DIR="$T/af14-procs" LOOMWRIGHT_LANES_SWEEP="$T/sw-stub.sh" fc fleet-closeout "$RF17")"
+check "AF14 wave 1 (a Queue item remains): its sweep is printed, NOT recorded (nor a registry line), and the lock is kept" \
+  "$(printf '%s\n' "$out" | grep -cxF 'fleet-closeout: sweep — sweep: summary — dry run: 1 would-remove, 0 kept (0 worktree(s), 1 branch(es) examined)' | tr -d ' '):$(grep -c '^- fleet closeout sweep (dry run): ' "$RF17" | tr -d ' '):$(grep -c '^- fleet closeout registry: ' "$RF17" | tr -d ' '):$(lockst)" "1:0:0:LOCKED"
 sed 's/^- \[ \] reqs\/b.md$/- [x] reqs\/b.md/' "$RF17" > "$T/af.rf" && mv "$T/af.rf" "$RF17"
-out="$(SW_STUB_N=2 LOOMWRIGHT_LANES_SWEEP="$T/sw-stub.sh" fc fleet-closeout "$RF17")"
+out="$(SW_STUB_N=2 LOOMWRIGHT_PROC_REGISTRY_DIR="$T/af14-procs" LOOMWRIGHT_LANES_SWEEP="$T/sw-stub.sh" fc fleet-closeout "$RF17")"
 check "AF14b wave 2 finalizes: exactly ONE recorded sweep line, and it is the final wave's summary" \
   "$(grep -c '^## Status: done$' "$RF17" | tr -d ' '):$(grep -c '^- fleet closeout sweep (dry run): ' "$RF17" | tr -d ' '):$(grep -cxF -- '- fleet closeout sweep (dry run): sweep: summary — dry run: 2 would-remove, 0 kept (0 worktree(s), 2 branch(es) examined)' "$RF17" | tr -d ' ')" "1:1:1"
 af14_fin="$(grep -n 'wave closed — Queue empty, run finalized$' "$RF17" | head -n1 | cut -d: -f1)"
@@ -205,8 +205,27 @@ af14_sw="$(grep -n '^- fleet closeout sweep (dry run): ' "$RF17" | head -n1 | cu
 check "AF14c … recorded by the finalize, after its finalized line, as the run file's last line" \
   "$([ -n "$af14_fin" ] && [ -n "$af14_sw" ] && [ "$af14_sw" -gt "$af14_fin" ] && echo after):$(tail -n1 "$RF17" | cut -c1-34)" \
   "after:- fleet closeout sweep (dry run): "
-out="$(SW_STUB_N=3 LOOMWRIGHT_LANES_SWEEP="$T/sw-stub.sh" fc fleet-closeout "$RF17")"
+out="$(SW_STUB_N=3 LOOMWRIGHT_PROC_REGISTRY_DIR="$T/af14-procs" LOOMWRIGHT_LANES_SWEEP="$T/sw-stub.sh" fc fleet-closeout "$RF17")"
+# af/39g AC5: ONE `fleet closeout registry: <proc-registry.sh summary line>` line (the registry pinned to an absent
+# dir ⇒ the 0-entry summary), directly BEFORE the sweep line — which AF14c keeps last
+af14_rg="$(grep -n '^- fleet closeout registry: ' "$RF17" | cut -d: -f1)"
+check "AF14e … the finalize records exactly ONE registry summary line, directly before the sweep line" \
+  "$(printf '%s\n' "$af14_rg" | grep -c . | tr -d ' '):$([ -n "$af14_rg" ] && [ -n "$af14_sw" ] && [ "$af14_rg" = "$((af14_sw - 1))" ] && echo before):$(grep -cxF -- '- fleet closeout registry: proc-registry: summary — 0 entries: 0 running, 0 overdue, 0 orphaned, 0 finished' "$RF17" | tr -d ' ')" \
+  "1:before:1"
 check "AF14d a re-run on the done parent records no second sweep line" "$(grep -c '^- fleet closeout sweep (dry run): ' "$RF17" | tr -d ' ')" "1"
+check "AF14f … and no second registry line" "$(grep -c '^- fleet closeout registry: ' "$RF17" | tr -d ' ')" "1"
+# AF14g a silent proc-registry.sh summary (a stub beside a bundle copy; every other entry symlinked) ⇒ the pinned
+# skipped form, still ONE line directly before the sweep line
+RGD="$T/fc-regsilent"; rm -rf "$RGD"; mkdir -p "$RGD"
+for e in "$HERE"/*; do case "${e##*/}" in automate-lanes.sh|proc-registry.sh) ;; *) ln -s "$e" "$RGD/${e##*/}" ;; esac; done
+cp "$SB" "$RGD/automate-lanes.sh"; printf '#!/usr/bin/env bash\nexit 0\n' > "$RGD/proc-registry.sh"
+fc_parent automate-2026-10-11-160000; RF18="$FCRF"
+out="$(FC_S="$RGD/automate-lanes.sh" LOOMWRIGHT_LANES_SWEEP="$T/sw-stub.sh" fc fleet-closeout "$RF18")"
+af14_rg="$(grep -n '^- fleet closeout registry: ' "$RF18" | cut -d: -f1)"
+af14_sw="$(grep -n '^- fleet closeout sweep (dry run): ' "$RF18" | cut -d: -f1)"
+check "AF14g a silent proc-registry.sh summary ⇒ ONE 'fleet closeout registry: proc-registry: summary — skipped: no output' line, directly before the sweep line" \
+  "$(grep -c '^## Status: done$' "$RF18" | tr -d ' '):$([ -n "$af14_rg" ] && [ -n "$af14_sw" ] && [ "$af14_rg" = "$((af14_sw - 1))" ] && echo before):$(grep -cxF -- '- fleet closeout registry: proc-registry: summary — skipped: no output' "$RF18" | tr -d ' '):$(lockst)" \
+  "1:before:1:UNLOCK"
 # AF13 the run lock held by ANOTHER owner ⇒ nothing written under it, and it is never stolen
 fc_parent automate-2026-10-11-130000; RF16="$FCRF"
 bash "$HERE/run-lock.sh" release --owner "automate-lanes:automate-2026-10-11-130000" --root "$P" >/dev/null 2>&1

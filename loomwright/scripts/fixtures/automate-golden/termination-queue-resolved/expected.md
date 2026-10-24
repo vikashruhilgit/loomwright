@@ -17,4 +17,5 @@
 ## Progress
 - 2026-10-15T10:50:07Z closeout https://github.com/vikashruhilgit/loomwright/pull/555: closeout: reconciled — ## Current .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md status done, pause_reason awaiting_go
 - 2026-10-15T11:00:00Z trail-pr: opened https://github.com/vikashruhilgit/loomwright/pull/560
-- 2026-10-15T11:00:01Z sweep (dry run): sweep: summary — dry run: 0 would-remove, 1 kept (0 worktree(s), 1 branch(es) examined)
+- 2026-10-15T11:00:01Z process registry: proc-registry: summary — 0 entries: 0 running, 0 overdue, 0 orphaned, 0 finished
+- 2026-10-15T11:00:02Z sweep (dry run): sweep: summary — dry run: 0 would-remove, 1 kept (0 worktree(s), 1 branch(es) examined)

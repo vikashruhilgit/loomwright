@@ -52,15 +52,17 @@ _lanes_append_once() {
 # null` authored `pause_reason: null` (finalize-empty's staging — a failure at any step leaves the run
 # file byte-unchanged); then `<ts> wave closed — Queue empty, run finalized`; then `trail-pr <rf>
 # --reason done` (through the TRAIL seam, with this script's meta-sync, in the primary) printed and
-# appended like finalize-empty's; then ONE `fleet closeout sweep (dry run): <sweep summary>` line (the
-# caller's wave-end DRY sweep, af/39a — recorded here and nowhere else, so exactly one lands at done and
-# it is this final wave's); then, branch mode OFF only, `trail-unstage <rf>`. Lines:
+# appended like finalize-empty's; then ONE `fleet closeout registry: <proc-registry.sh summary line>` line
+# (read-only; none ⇒ `proc-registry: summary — skipped: no output` — af/39g); then ONE `fleet closeout
+# sweep (dry run): <sweep summary>` line, the run file's last (the caller's wave-end DRY sweep, af/39a —
+# recorded here and nowhere else, so exactly one lands at done and it is this final wave's); then, branch
+# mode OFF only, `trail-unstage <rf>`. Lines:
 # `fleet-closeout: finalize — <outcome>` (one per step) | `fleet-closeout: finalize — skipped (already
 # done)` (nothing written: a re-run never repeats the trail) | `fleet-closeout: finalize FAILED —
 # <reason>` (nothing written — a refused write, or the run lock held by an owner other than
 # `automate-lanes:<run_id>`; a FREE lock is taken first, so the write is always under it). Returns 0.
 _lanes_fc_finalize() {
-  local rf="$1" primary="$2" mb="$3" sw="${4:-}" tmp out ts l F="fleet-closeout: finalize FAILED —"
+  local rf="$1" primary="$2" mb="$3" sw="${4:-}" tmp out ts l rg F="fleet-closeout: finalize FAILED —"
   if _lanes_rf_done "$rf"; then echo "fleet-closeout: finalize — skipped (already done)"; return 0; fi
   if grep -q '^- \[ \] ' "$rf" 2>/dev/null; then echo "fleet-closeout: finalize — skipped (Queue items remain)"; return 0; fi
   grep -q '^## Status:' "$rf" 2>/dev/null || { echo "$F the parent run file has no ## Status: line"; return 0; }
@@ -95,6 +97,12 @@ _lanes_fc_finalize() {
   l="${l:-trail-pr: skipped — no output}"
   echo "fleet-closeout: finalize — $l"
   bash "$HELPERS" progress-append "$rf" "$ts $l" >/dev/null 2>&1
+  # af/39g: ONE `fleet closeout registry: <summary>` line (proc-registry.sh summary — read-only, one ps
+  # call) directly before the sweep line, which stays last; no summary line ⇒ the skipped form
+  rg="$(bash "$HERE/proc-registry.sh" summary 2>/dev/null </dev/null | grep '^proc-registry: summary — ' | tail -n1)"
+  [ -n "$rg" ] || rg="proc-registry: summary — skipped: no output"
+  bash "$HELPERS" progress-append "$rf" "fleet closeout registry: $rg" >/dev/null 2>&1 \
+    || echo "fleet-closeout: WARNING — the registry line could not be appended" >&2
   [ -n "$sw" ] || sw="sweep: summary — skipped: no summary line (sweep failed or printed nothing)"
   bash "$HELPERS" progress-append "$rf" "fleet closeout sweep (dry run): $sw" >/dev/null 2>&1 \
     || echo "fleet-closeout: WARNING — the sweep line could not be appended" >&2
@@ -137,8 +145,9 @@ _lanes_fc_finalize() {
 #                  printed (no revert, no block); then, when the parent Queue has no `- [ ]` left,
 #                  the parent FINALIZE under the still-held wave lock (_lanes_fc_finalize: `current-wave
 #                  --wave null` + `## Status: done` + `pause_reason: null` in ONE validated runfile-write,
-#                  `<ts> wave closed — Queue empty, run finalized`, `trail-pr --reason done`, branch mode
-#                  off `trail-unstage`; `finalize — skipped (already done)` on a re-run, nothing written;
+#                  `<ts> wave closed — Queue empty, run finalized`, `trail-pr --reason done`, `fleet
+#                  closeout registry: <proc-registry.sh summary line>` just before the sweep line, branch
+#                  mode off `trail-unstage`; `finalize — skipped (already done)` on a re-run, nothing written;
 #                  `finalize FAILED — <reason>`, nothing written, exit unchanged), then — on every finalize
 #                  outcome — `run-lock.sh release --owner "automate-lanes:<run_id>"` ⇒ `wave closed — lock
 #                  released`. A Queue item left (the next wave) ⇒ no finalize, `lock kept — …`.
