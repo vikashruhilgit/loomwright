@@ -194,3 +194,9 @@ abandoned/superseded, 1 parked and only 5 still open (+1 partial); the owner app
 #### Evidence
 The 2026-10-05 one-off board (this session); the 39-vs-26 miscount (S1/S2 records, `parallel-automate/10` Verified premises).
 
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-24T20:58:27Z
+- **Brief:** .supervisor/jobs/done/2026-10-24-pa18a-backlog-board.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/690
