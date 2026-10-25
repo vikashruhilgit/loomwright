@@ -59,6 +59,13 @@
 #       sibling's own `summary --scan` line (bp2); a clean registry ⇒ no line and an empty startup
 #       (bp3); an unavailable registry ⇒ no line, exit 0 (bp4); an unregistered look-alike counts,
 #       a repo with no .supervisor/ stays silent (bp5); two gated mutation controls (bp6).
+#   (bn1)-(bn5) the backlog stamp nudge (parallel-automate/25, startup-arm block 7): one
+#       merged_unstamped item ⇒ exactly the one line, marker = today (bn1); nothing to stamp ⇒
+#       no line, byte-identical to origin/main's arm, while the reader DID run (bn2); today's
+#       marker ⇒ no reader call, yesterday's ⇒ the line + today's marker (bn3); a failing,
+#       non-JSON or hung reader ⇒ no line, no marker, exit 0, plus the opt-out, an absent sibling
+#       and no requirements tree (bn4); the four pin mutations, each gated (bn5). (zb) above
+#       also carries a requirements tree (AC6).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1651,9 +1658,17 @@ for v in _RUN_TITLE_BOM RUN_TITLE_ERE; do
   a="$(grep -E "^${v}=" "$SCRIPT_DIR/automate-helpers.sh")"; b="$(grep -E "^${v}=" "$HOOK")"
   [ -n "$a" ] && [ "$a" = "$b" ] && ok "(zg) $v is byte-identical in automate-helpers.sh and session-resume.sh" || no "(zg) $v drifted: helpers='$a' hook='$b'"
 done
-# (zb) startup: OFFLINE — zero gh calls even with a merged in-flight PR present.
-: > "$AGHLOG"; c="$(au_hook "$R" startup)"
+# (zb) startup: OFFLINE — zero gh calls even with a merged in-flight PR present. pa25 AC6: the
+# fixture also carries a requirements tree with one merged_unstamped item, and the gh stub is ALSO
+# first on PATH, so the backlog nudge's reader runs (its line is asserted, so the leg is not
+# vacuous) and still makes no gh call by either name.
+mkdir -p "$R/.supervisor/requirements"
+printf '# req\n\n## Status: pending\n' > "$R/.supervisor/requirements/01-zb.md"
+printf '# Automate Run: t\n## Status: done\n## Queue\n- [x] .supervisor/requirements/01-zb.md\n## Current\n- item: null\n## Progress\n' \
+  > "$R/.supervisor/automate/automate-2026-09-01-100000.md"
+: > "$AGHLOG"; c="$(au_hook "$R" startup PATH="$AGH:$PATH")"
 [ "$(lastrc)" = 0 ] && [ ! -s "$AGHLOG" ] && ! grep -q 'merged but not closed out' <<<"$c" && ok "(zb) startup: zero gh calls, no merge check (the startup arm stays offline)" || no "(zb) startup gh calls: $(wc -l < "$AGHLOG")"
+grep -qxF -- '1 backlog items need a stamp — run /backlog --verify' <<<"$c" && ok "(zb) the backlog nudge ran in that same startup (its line printed) with gh still called zero times" || no "(zb) backlog nudge did not run: $c"
 # (zc) gh absent / failing / hanging ⇒ `merge state unverified`, exit 0.
 ULINE='automate: automate-a item q/7.md PR https://github.com/acme/w/pull/7 merge state unverified'
 c="$(au_hook "$R" resume LOOMWRIGHT_GH_BIN="$AGH/no-such-gh")"
@@ -1815,6 +1830,148 @@ if [ "$(ls "$BPREG"/*.json 2>/dev/null | wc -l | tr -d ' ')" = 1 ] && [ -s "$BPS
   fi
 else
   no "(bp) fixture: the orphan entry or its snapshot row was not written (entries=$(ls "$BPREG" 2>/dev/null | wc -l | tr -d ' '))"
+fi
+
+# ============================================================================
+echo "== (bn1)-(bn5) backlog stamp nudge (parallel-automate/25): startup-arm block 7 =="
+# The reader is the sibling `automate-helpers.sh backlog --json --offline`; the hook only sums
+# totals.merged_unstamped + totals.conflict. Real-reader legs run $HOOK in place (real siblings);
+# reader-stub legs copy the hook beside a stub automate-helpers.sh (bn_dir) that logs every call
+# and then execs the real reader, fails, prints non-JSON or hangs, per BN_MODE.
+BNLINE='1 backlog items need a stamp — run /backlog --verify'
+BNMARK='.supervisor/.backlog-nudge-shown'
+BNTODAY="$(date +%Y-%m-%d)"
+BNYDAY="$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d yesterday +%Y-%m-%d 2>/dev/null || echo 2000-01-01)"
+# bn_tree <repo> [merged|clean] — one requirement item, first status line `pending`; `merged` (the
+# default) adds a done run file's plain `- [x]` row for it ⇒ merged_unstamped. `clean` leaves it with
+# no merge evidence ⇒ `unknown` offline (the gh-failure path), so nothing needs a stamp.
+bn_tree() {
+  mkdir -p "$1/.supervisor/requirements" "$1/.supervisor/automate"
+  printf '# req\n\n## Status: pending\n' > "$1/.supervisor/requirements/01-bn.md"
+  if [ "${2:-merged}" = merged ]; then
+    printf '# Automate Run: t\n## Status: done\n## Queue\n- [x] .supervisor/requirements/01-bn.md\n## Current\n- item: null\n## Progress\n' \
+      > "$1/.supervisor/automate/automate-2026-09-01-100000.md"
+  fi
+}
+# bn_dir <hook> — prints a fresh dir holding a copy of <hook> and the stub reader.
+bn_dir() {
+  local d; d="$(mktmp)"; cp "$1" "$d/session-resume.sh"; : > "$d/calls.log"
+  cat > "$d/automate-helpers.sh" <<STUB
+#!/usr/bin/env bash
+echo "\$*" >> "$d/calls.log"
+case "\${BN_MODE:-real}" in
+  fail) exit 3 ;;
+  nonjson) echo 'not json {'; exit 0 ;;
+  hang) sleep 4; : > "$d/finished"; exit 0 ;;
+  *) exec bash "$SCRIPT_DIR/automate-helpers.sh" "\$@" ;;
+esac
+STUB
+  printf '%s' "$d"
+}
+bn_calls() { grep -c . "$1/calls.log" 2>/dev/null | tr -d ' '; }
+
+# (bn1) AC3: one merged_unstamped item ⇒ exactly the one line, ONE envelope; the marker holds today.
+BR="$(new_repo)"; bn_tree "$BR"
+raw="$(run_hook_raw "$BR" startup)"; c="$(ctx_of "$raw")"
+[ "$(lastrc)" = 0 ] && [ "$c" = "$BNLINE" ] && [ "$(json_docs "$raw")" = 1 ] \
+  && ok "(bn1) one merged_unstamped item ⇒ the additionalContext is exactly '$BNLINE' (one envelope)" || no "(bn1) rc=$(lastrc) ctx: $c"
+[ "$(grep -cxF -- "$BNLINE" <<<"$c")" = 1 ] && ok "(bn1) the line appears exactly once" || no "(bn1) line count: $(grep -cxF -- "$BNLINE" <<<"$c")"
+[ "$(head -n 1 "$BR/$BNMARK" 2>/dev/null)" = "$BNTODAY" ] && ok "(bn1) a successful read stamps today's date in $BNMARK" || no "(bn1) marker: $(cat "$BR/$BNMARK" 2>/dev/null)"
+# Same day, second session: the marker silences it (and the startup is otherwise empty ⇒ zero bytes).
+raw="$(run_hook_raw "$BR" startup)"
+[ "$(lastrc)" = 0 ] && [ -z "$raw" ] && ok "(bn1) a second startup the same day prints nothing (once a calendar day)" || no "(bn1) second run: $raw"
+
+# (bn2) AC3: nothing needs a stamp ⇒ no line; the startup output is byte-identical to the pre-change arm.
+BC="$(new_repo)"; bn_tree "$BC" clean
+raw="$(run_hook_raw "$BC" startup)"
+[ "$(lastrc)" = 0 ] && [ -z "$raw" ] && ok "(bn2) no merged_unstamped / conflict item ⇒ zero bytes, rc 0" || no "(bn2) rc=$(lastrc) out: $raw"
+[ "$(head -n 1 "$BC/$BNMARK" 2>/dev/null)" = "$BNTODAY" ] && ok "(bn2) the reader DID run and succeed (marker = today), so the silence is not vacuous" || no "(bn2) marker: $(cat "$BC/$BNMARK" 2>/dev/null)"
+bnold="$ROOT/bn-baseline"; mkdir -p "$bnold"
+if git -C "$SCRIPT_DIR/../.." show origin/main:loomwright/scripts/session-resume.sh > "$bnold/session-resume.sh" 2>/dev/null \
+   && [ -s "$bnold/session-resume.sh" ] && ! grep -q 'backlog_nudge_line' "$bnold/session-resume.sh"; then
+  cp "$SCRIPT_DIR/curation-status.sh" "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$bnold/"
+  bo="$(new_repo)"; make_curation_pending "$bo"; bn_tree "$bo" clean
+  bnw="$(new_repo)"; make_curation_pending "$bnw"; bn_tree "$bnw" clean
+  oldout="$(run_alt_hook_raw "$bnold/session-resume.sh" "$bo" startup)"
+  newout="$(run_hook_raw "$bnw" startup)"
+  if [ -n "$oldout" ] && [ "$oldout" = "$newout" ] && [ "$(head -n 1 "$bnw/$BNMARK" 2>/dev/null)" = "$BNTODAY" ]; then
+    ok "(bn2) a curation-pending, nothing-to-stamp startup is byte-identical to origin/main's pre-change arm (reader ran)"
+  else
+    no "(bn2) differs from origin/main's arm: old=${#oldout} new=${#newout} bytes, marker=$(cat "$bnw/$BNMARK" 2>/dev/null)"
+  fi
+else
+  echo "  skipped: origin/main's pre-change hook unavailable (or already carries the nudge — the zero-byte leg above still holds)"
+fi
+
+# (bn3) AC4: today's marker ⇒ no line and the reader is NOT run; yesterday's ⇒ the line, marker = today.
+BD="$(bn_dir "$HOOK")"; BT="$(new_repo)"; bn_tree "$BT"
+printf '%s\n' "$BNTODAY" > "$BT/$BNMARK"
+c="$(ctx_of "$(run_alt_hook_raw "$BD/session-resume.sh" "$BT" startup)")"
+[ "$(lastrc)" = 0 ] && [ -z "$c" ] && [ "$(bn_calls "$BD")" = 0 ] \
+  && ok "(bn3) marker = today ⇒ no line and zero reader calls" || no "(bn3) today: rc=$(lastrc) calls=$(bn_calls "$BD") ctx: $c"
+printf '%s\n' "$BNYDAY" > "$BT/$BNMARK"
+c="$(ctx_of "$(run_alt_hook_raw "$BD/session-resume.sh" "$BT" startup)")"
+[ "$(lastrc)" = 0 ] && [ "$c" = "$BNLINE" ] && [ "$(bn_calls "$BD")" = 1 ] \
+  && ok "(bn3) marker = yesterday ($BNYDAY) ⇒ one reader call and the line" || no "(bn3) yesterday: rc=$(lastrc) calls=$(bn_calls "$BD") ctx: $c"
+[ "$(head -n 1 "$BT/$BNMARK" 2>/dev/null)" = "$BNTODAY" ] && ok "(bn3) the marker then holds today's date" || no "(bn3) marker: $(cat "$BT/$BNMARK" 2>/dev/null)"
+grep -qxF -- "backlog --json --offline --root $(cd "$BT" && pwd)" "$BD/calls.log" \
+  && ok "(bn3) the reader was called as 'backlog --json --offline --root <cwd>'" || no "(bn3) reader args: $(cat "$BD/calls.log")"
+
+# (bn4) AC5: fail-SAFE — one case per failure mode; no line, no marker, exit 0.
+for mode in fail nonjson; do
+  BD="$(bn_dir "$HOOK")"; BF="$(new_repo)"; bn_tree "$BF"
+  raw="$(run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup BN_MODE="$mode")"
+  [ "$(lastrc)" = 0 ] && [ -z "$raw" ] && [ ! -e "$BF/$BNMARK" ] && [ "$(bn_calls "$BD")" = 1 ] && [ -z "$(lasterr)" ] \
+    && ok "(bn4) reader $mode ⇒ no line, no marker, exit 0, nothing on stderr" || no "(bn4) $mode: rc=$(lastrc) marker=$([ -e "$BF/$BNMARK" ] && echo yes || echo no) calls=$(bn_calls "$BD") out=$raw err=$(lasterr)"
+done
+BD="$(bn_dir "$HOOK")"; BF="$(new_repo)"; bn_tree "$BF"
+t0="$(date +%s)"; raw="$(run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup BN_MODE=hang LOOMWRIGHT_SR_BACKLOG_TIMEOUT=1)"; t1="$(date +%s)"
+[ "$(lastrc)" = 0 ] && [ -z "$raw" ] && [ ! -e "$BF/$BNMARK" ] && [ "$(bn_calls "$BD")" = 1 ] && [ ! -e "$BD/finished" ] \
+  && ok "(bn4) reader outlives LOOMWRIGHT_SR_BACKLOG_TIMEOUT=1 ⇒ killed at the deadline (it never finished), no line, no marker, exit 0 ($((t1 - t0))s)" \
+  || no "(bn4) hang: rc=$(lastrc) finished=$([ -e "$BD/finished" ] && echo yes || echo no) marker=$([ -e "$BF/$BNMARK" ] && echo yes || echo no) $((t1 - t0))s out=$raw"
+for v in 0 off; do
+  BD="$(bn_dir "$HOOK")"; BF="$(new_repo)"; bn_tree "$BF"
+  raw="$(run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup LOOMWRIGHT_BACKLOG_NUDGE="$v")"
+  [ "$(lastrc)" = 0 ] && [ -z "$raw" ] && [ "$(bn_calls "$BD")" = 0 ] && [ ! -e "$BF/$BNMARK" ] \
+    && ok "(bn4) LOOMWRIGHT_BACKLOG_NUDGE=$v silences the one-item fixture (no reader call, no marker)" || no "(bn4) opt-out $v: calls=$(bn_calls "$BD") out=$raw"
+done
+BS="$(mktmp)"; copy_hook_sparse "$BS"; BF="$(new_repo)"; bn_tree "$BF"
+raw="$(run_alt_hook_raw "$BS/session-resume.sh" "$BF" startup)"
+[ "$(lastrc)" = 0 ] && [ -z "$raw" ] && [ ! -e "$BF/$BNMARK" ] && ok "(bn4) an absent sibling reader ⇒ no line, no marker" || no "(bn4) absent sibling: $raw"
+BD="$(bn_dir "$HOOK")"; BF="$(new_repo)"; make_plugin_active "$BF"
+raw="$(run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup)"
+[ "$(lastrc)" = 0 ] && [ -z "$raw" ] && [ "$(bn_calls "$BD")" = 0 ] && ok "(bn4) no .supervisor/requirements/ ⇒ the reader is never run" || no "(bn4) no tree: calls=$(bn_calls "$BD") out=$raw"
+
+# (bn5) the four pin mutations from the brief, each gated before its red is trusted.
+BM="$(mktmp)"
+# M1 (AC3): the line that appends the nudge to body deleted ⇒ the (bn1) line disappears.
+sed '/\[ -n "\$backlog" \] && body=/d' "$HOOK" > "$BM/m1.sh"
+if gate_mutant "$HOOK" "$BM/m1.sh" "(bn5) M1 append-line deleted"; then
+  BD="$(bn_dir "$BM/m1.sh")"; BF="$(new_repo)"; bn_tree "$BF"
+  c="$(ctx_of "$(run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup)")"
+  [ "$c" != "$BNLINE" ] && ok "(bn5) M1: without the append the (bn1) exact-line assertion turns red" || no "(bn5) M1 did not discriminate"
+fi
+# M2 (AC4): the `return 0` taken on today's marker removed ⇒ the reader runs and the line prints.
+sed 's/^\( *\)return 0   # backlog-nudge: today.s check already ran$/\1:/' "$HOOK" > "$BM/m2.sh"
+if gate_mutant "$HOOK" "$BM/m2.sh" "(bn5) M2 today-return removed"; then
+  BD="$(bn_dir "$BM/m2.sh")"; BF="$(new_repo)"; bn_tree "$BF"; printf '%s\n' "$BNTODAY" > "$BF/$BNMARK"
+  c="$(ctx_of "$(run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup)")"
+  [ "$(bn_calls "$BD")" = 1 ] && [ "$c" = "$BNLINE" ] && ok "(bn5) M2: the reader runs and the line prints on today's marker — the (bn3) assertion turns red" || no "(bn5) M2 did not discriminate: calls=$(bn_calls "$BD") ctx=$c"
+fi
+# M3 (AC5): the marker written BEFORE the reader runs ⇒ a failed read leaves a marker.
+sed 's/^\( *\)board="\$here\/automate-helpers.sh"$/&\
+\1{ printf "%s\\n" "$today" > "$marker"; } 2>\/dev\/null/' "$HOOK" > "$BM/m3.sh"
+if gate_mutant "$HOOK" "$BM/m3.sh" "(bn5) M3 marker-before-reader"; then
+  BD="$(bn_dir "$BM/m3.sh")"; BF="$(new_repo)"; bn_tree "$BF"
+  run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup BN_MODE=fail >/dev/null
+  [ -e "$BF/$BNMARK" ] && ok "(bn5) M3: a marker exists after a failed read — the (bn4) no-marker assertion turns red" || no "(bn5) M3 did not discriminate"
+fi
+# M4 (AC5): the deadline kill deleted ⇒ the hung reader runs to completion.
+sed 's/^\( *\)kill "\$pid" 2>\/dev\/null; \(wait "\$pid" 2>\/dev\/null; rm -f "\$tmp"; return 0   # backlog-nudge: deadline\)$/\1\2/' "$HOOK" > "$BM/m4.sh"
+if gate_mutant "$HOOK" "$BM/m4.sh" "(bn5) M4 deadline kill deleted"; then
+  BD="$(bn_dir "$BM/m4.sh")"; BF="$(new_repo)"; bn_tree "$BF"
+  run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup BN_MODE=hang LOOMWRIGHT_SR_BACKLOG_TIMEOUT=1 >/dev/null
+  [ -e "$BD/finished" ] && ok "(bn5) M4: the hung reader ran to completion — the (bn4) killed-at-deadline assertion turns red" || no "(bn5) M4 did not discriminate"
 fi
 
 echo "RESULT: $pass passed, $fail failed"

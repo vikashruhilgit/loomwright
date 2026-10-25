@@ -12,9 +12,9 @@
 # Stays under SessionStart's documented 10,000-char additionalContext cap.
 #
 # When `source` is `startup` (fresh session) the hook runs ONLY its dedicated
-# `startup)` arm, which composes at most SIX advisory blocks into ONE envelope
-# (items 4–6 are described further down — meta_branch_hint_line,
-# automate_watch_lines and proc_attention_line):
+# `startup)` arm, which composes at most SEVEN advisory blocks into ONE envelope
+# (items 4–7 are described further down — meta_branch_hint_line,
+# automate_watch_lines, proc_attention_line and backlog_nudge_line):
 #   1. the curation-cadence nudge (curation_nudge_line, below),
 #   2. the stranded-brief line (stranded_briefs_startup_line, below): the
 #      offline sibling reconcile-jobs.sh --porcelain classifies every brief in
@@ -34,6 +34,15 @@
 #      resume/clear/compact): ONE `**Background processes:** <n> item(s) need
 #      attention (…)` line when the sibling `proc-registry.sh summary --scan` counts
 #      anything overdue / orphaned / unregistered. LOCAL ONLY (one `ps` snapshot).
+#   7. the backlog stamp nudge (backlog_nudge_line, below — startup ONLY): ONE
+#      `<N> backlog items need a stamp — run /backlog --verify` line when the
+#      sibling `automate-helpers.sh backlog --json --offline` counts N > 0 items
+#      `merged_unstamped` or `conflict`. OFFLINE (no gh, no right-size call),
+#      run at most once per calendar day (.supervisor/.backlog-nudge-shown),
+#      time-bounded (LOOMWRIGHT_SR_BACKLOG_TIMEOUT, default 10 s), fail-safe, and
+#      silenced by LOOMWRIGHT_BACKLOG_NUDGE=0|off|false|no. HONEST LIMIT: an item
+#      merged only on GitHub (no run-file `- [x]` row, no `fleet closeout` line)
+#      is not counted — `/backlog` (live) stays the authoritative check.
 # When no block has anything to say, startup emits NOTHING — byte-for-byte
 # the pre-existing behaviour — so a fresh launch with no plugin work in flight
 # stays noise-free. Sections 1–5, the observability probe, the prior-session
@@ -165,9 +174,9 @@ elif [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
 fi
 
 # ---- Startup-arm helpers (DEFINED ABOVE THE CASE ON PURPOSE) ----------------
-# These three functions must be defined here, above the `case "$SOURCE"` below,
+# These functions must be defined here, above the `case "$SOURCE"` below,
 # because the `startup)` arm calls `startup_arm_emit` (which calls the other
-# two) and then exits from inside the case. Every other helper in this file is
+# block helpers) and then exits from inside the case. Every other helper in this file is
 # defined *after* the case; a helper defined there would be `command not found`
 # (rc 127) at startup — swallowed by the following `exit 0` and hidden by the
 # `|| true` on the hook command.
@@ -479,6 +488,70 @@ proc_attention_line() {
   return 0
 }
 
+# backlog_nudge_line — startup-arm block 7 (parallel-automate/25): ONE line, `<N> backlog items need a
+# stamp — run /backlog --verify`, when the backlog board counts N > 0 items in state `merged_unstamped`
+# or `conflict`; otherwise NOTHING. Every number is the board's own (`totals` of the sibling
+# `automate-helpers.sh backlog --json --offline`), never re-derived here. Gate ORDER mirrors
+# curation_nudge_line: (a) permanent opt-out LOOMWRIGHT_BACKLOG_NUDGE=0|off|false|no; (b) the OWN
+# cwd-relative `.supervisor/requirements` check (the shared bail below the case is never reached from
+# the startup arm); (c) the CALENDAR-DAY marker $SR_STATE/.backlog-nudge-shown — when its first line is
+# today's `date +%Y-%m-%d` the reader is NOT run, and an empty SR_STATE (host mode, no valid state dir)
+# also skips the reader, so it can never run on every session; (d) the reader, backgrounded and bounded
+# by LOOMWRIGHT_SR_BACKLOG_TIMEOUT seconds (default 10) with sr_pr_state's background + 0.1 s poll + kill
+# idiom (bash 3.2 has no `timeout`), plus a wall-clock check on the same deadline. An absent sibling, a timeout, a non-zero exit or output that is not
+# a JSON object with object `totals` ⇒ no line AND no marker (the next session retries). (e) A
+# successful read stamps today's date whether or not a line prints: the check runs at most once per
+# calendar day (one offline read a day), so an item that turns `merged_unstamped` later the same day
+# waits for the next day's first session — `/backlog` shows it any time.
+# OFFLINE by construction: `--offline` makes no gh call and no right-size call. HONEST LIMIT: an item
+# whose only merge evidence is a merged PR on GitHub (no run-file `- [x]` row, no `fleet closeout` line)
+# is NOT counted `merged_unstamped` here — it reads what the board reads when gh fails (`unknown` or its
+# open-path state); the live `/backlog` and `/backlog --verify` stay the authoritative check. A killed
+# reader's own short-lived children are not chased (its stdio is a temp file, never this hook's pipe).
+# DEFINED ABOVE THE CASE (startup_arm_emit calls it).
+backlog_nudge_line() {
+  case "${LOOMWRIGHT_BACKLOG_NUDGE:-}" in 0|off|false|no) return 0 ;; esac
+  [ -d ".supervisor/requirements" ] || return 0
+  local marker="" today here board tmo lim tmp pid i=0 rc n t0
+  [ -n "$SR_STATE" ] && marker="$SR_STATE/.backlog-nudge-shown"
+  [ -n "$marker" ] || return 0
+  today="$(date +%Y-%m-%d 2>/dev/null)"
+  [ -n "$today" ] || return 0
+  if [ -f "$marker" ] && [ "$(head -n 1 "$marker" 2>/dev/null)" = "$today" ]; then
+    return 0   # backlog-nudge: today's check already ran
+  fi
+  here="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+  board="$here/automate-helpers.sh"
+  [ -r "$board" ] || return 0
+  tmo="${LOOMWRIGHT_SR_BACKLOG_TIMEOUT:-10}"
+  case "$tmo" in ''|*[!0-9]*) tmo=10 ;; esac
+  lim=$((tmo * 10))
+  tmp="$(mktemp "${TMPDIR:-/tmp}/sr-backlog.XXXXXX" 2>/dev/null)" || return 0
+  bash "$board" backlog --json --offline --root "$PWD" > "$tmp" 2>/dev/null < /dev/null &
+  pid=$!
+  t0=$SECONDS
+  # Two bounds, whichever trips first: the tick count (sr_pr_state's idiom) and the wall clock via the
+  # SECONDS builtin (no fork). Ticks alone stretch under load — each `sleep 0.1` is a fork+exec — so a
+  # saturated machine could hold session start far past the configured seconds. `-gt` because SECONDS
+  # has 1 s granularity: `-ge` could fire up to 1 s early.
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$i" -ge "$lim" ] || [ $((SECONDS - t0)) -gt "$tmo" ]; then
+      kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; rm -f "$tmp"; return 0   # backlog-nudge: deadline
+    fi
+    sleep 0.1; i=$((i + 1))
+  done
+  wait "$pid"; rc=$?
+  if [ "$rc" -ne 0 ]; then rm -f "$tmp"; return 0; fi
+  n="$(jq -r 'if type == "object" and (.totals | type) == "object" then ((.totals.merged_unstamped // 0) + (.totals.conflict // 0)) else empty end' "$tmp" 2>/dev/null)"
+  rm -f "$tmp"
+  case "$n" in ''|*[!0-9]*) return 0 ;; esac
+  # Braced redirection: same load-bearing shape as the curation marker above.
+  { printf '%s\n' "$today" > "$marker"; } 2>/dev/null || true
+  [ "$n" -gt 0 ] || return 0
+  printf '%s backlog items need a stamp — run /backlog --verify' "$n"
+  return 0
+}
+
 # sr_pr_state <url> [<max_ticks>] — prints `<state> <ticks>`: the state (MERGED |
 # OPEN | CLOSED | unverified) from ONE time-bounded `gh pr view`, and the 0.1 s poll
 # ticks it spent (bash 3.2 has no `timeout`: background it, poll every 0.1s, kill it
@@ -556,7 +629,7 @@ automate_inflight_lines() {
 }
 
 startup_arm_emit() {
-  local curation="" stranded="" orphans="" metahint="" watchers="" procs="" body="" nl
+  local curation="" stranded="" orphans="" metahint="" watchers="" procs="" backlog="" body="" nl
   nl=$'\n'
   curation="$(curation_nudge_line)"
   stranded="$(stranded_briefs_startup_line)"
@@ -564,12 +637,14 @@ startup_arm_emit() {
   load_meta_hint; metahint="$META_HINT"
   watchers="$(automate_watch_lines 2>/dev/null)"
   procs="$(proc_attention_line 2>/dev/null)"
+  backlog="$(backlog_nudge_line 2>/dev/null)"
   body="$curation"
   [ -n "$stranded" ] && body="${body:+$body$nl}$stranded"
   [ -n "$orphans" ] && body="${body:+$body$nl}$orphans"
   [ -n "$metahint" ] && body="${body:+$body$nl}$metahint"
   [ -n "$watchers" ] && body="${body:+$body$nl}$watchers"
   [ -n "$procs" ] && body="${body:+$body$nl}$procs"
+  [ -n "$backlog" ] && body="${body:+$body$nl}$backlog"
   [ -n "$body" ] || return 0
   printf '%s' "$body" \
     | { iconv -c -f UTF-8 -t UTF-8 2>/dev/null || cat; } \
@@ -579,7 +654,7 @@ startup_arm_emit() {
 }
 
 # Only fire the prior-state summary on resume / clear / compact. Startup is a
-# fresh session — it gets the curation nudge + the stranded-brief line in ONE
+# fresh session — it gets the startup-arm blocks listed in the header in ONE
 # envelope and NOTHING else (see the SEAM NOTE in the header): no observability
 # probe, no prior-session header, no sections, no recovery hints, no house-rules
 # nudge.
