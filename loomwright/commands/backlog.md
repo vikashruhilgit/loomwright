@@ -28,13 +28,14 @@ A requirement's first `## Status:` line is not updated when its work merges: clo
 | `--state <s>` | all | Filter rows to one state from the closed set. An unknown state is a usage error that lists the valid ones. |
 | `--unknown` | off | List every `unknown` and `brief_shipped` item with its reason and a suggested fix: add `## Status: pending`, stamp done with the PR that shipped it, or mark it abandoned. It only suggests. |
 | `--verify [<item>...]` | off | The owner flow below. With no items it covers every `brief_shipped`, `unknown` and `conflict` item. Named items are added to that set. |
+| `--offline` | off | Engine flag (`automate-helpers.sh backlog … --offline`), accepted with every mode above. It makes no `gh` call and no `right-size` call and reads exactly as if both had failed: `github: unverified`, the right-size column `unknown`, no new key or state. The feeds that cannot wait on GitHub read the board this way. Honest limit: an item whose only merge evidence is a merged PR (no run-file `- [x]` row, no `fleet closeout` line) is not counted `merged_unstamped`; it reads what the gh-failure path reads (`unknown`, or its open-path state). |
 
 ## What it does
 
 Every script named on this page lives in the plugin's `scripts/` directory and runs as `bash "${CLAUDE_PLUGIN_ROOT}/scripts/<script>" …`. Run the engine and print its output as is:
 
 ```bash
-automate-helpers.sh backlog [--json] [--state <s>] [--unknown]
+automate-helpers.sh backlog [--json] [--state <s>] [--unknown] [--offline]
 ```
 
 - **The item set** is every `*.md` under `.supervisor/requirements/`, minus the files `reconcile-status` skips (its `_rs_skip_path`). `proposed/` files are items.
