@@ -1,3 +1,0 @@
-<!-- bump: patch -->
-The same timeout rule covers cases 46, 46b and 48
-`drain_reap_run` and `drain_preterm_run` record the wait's exit code (`DQ_TD`, `DP_TD`, initialised to 1 so an early return never reads as success). The case-46 reap, the case-46b slow teardown and case 48's `exit_code=143` check now fail on a teardown timeout. The 46b WRAPPER-grace mutant KILLs the wrapper mid-teardown, so its wait times out by design; its absent-`.died` branch now counts only once the wrapper is gone. That mutant, like the case-46 TERM-forward one, now takes the 30 s budget, about 40 s more per run in all.
