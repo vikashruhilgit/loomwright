@@ -459,11 +459,25 @@ out="$(run lane-status "$RF2")"; rc=$?
 has "Q10 plain view: one line per lane with state and item" "$out" "L4  blocked_launch (auto-mode classifier denied the spawn)  item=reqs/a.md"
 # Q10c–Q10f (automate-speed/24): the DEFAULT plain view is terse — the header line plus each lane's first
 # line, nothing else; `--verbose` is the full _lanes_render view, and its header + lane lines are exactly
-# the default's (one shared jq def each, _LANES_RENDER_HEAD).
+# the default's (one shared jq def each, _LANES_RENDER_HEAD). Both plain views then end with ONE backlog
+# pointer line, printed by status.sh after the renderer (so the Q10g / Q10h renderer goldens stay as-is).
 vout="$(run lane-status "$RF2" --verbose)"
-check "Q10c default plain view = header + one line per lane (7 lanes), exit 0" \
-  "$rc:$(printf '%s\n' "$out" | wc -l | tr -d ' '):$(printf '%s\n' "$out" | sed 1d | grep -vc '^L[0-9][0-9]*  ' | tr -d ' '):$(printf '%s\n' "$out" | head -1 | grep -c "^lane-status: $PARENT2 — 7 lane(s) — ")" "0:8:0:1"
-check "Q10d the default's lane lines are the --verbose view's lane lines" "$(printf '%s\n' "$out" | sed 1d)" "$(printf '%s\n' "$vout" | grep '^L[0-9][0-9]*  ')"
+BL_PTR="backlog: every requirement item's state — run /backlog"
+check "Q10c default plain view = header + one line per lane (7 lanes) + the pointer line, exit 0" \
+  "$rc:$(printf '%s\n' "$out" | wc -l | tr -d ' '):$(printf '%s\n' "$out" | sed '1d;$d' | grep -vc '^L[0-9][0-9]*  ' | tr -d ' '):$(printf '%s\n' "$out" | head -1 | grep -c "^lane-status: $PARENT2 — 7 lane(s) — ")" "0:9:0:1"
+check "Q10d the default's lane lines are the --verbose view's lane lines" "$(printf '%s\n' "$out" | sed '1d;$d')" "$(printf '%s\n' "$vout" | grep '^L[0-9][0-9]*  ')"
+# Q10k–Q10n (pa25 AC7): the pointer is the LAST line of each plain view, exactly once; `--json` stays one
+# JSON document with no pointer; the no-lane-table line is unchanged (no pointer after it).
+check "Q10k default plain view: last line is exactly the backlog pointer, printed once" \
+  "$(printf '%s\n' "$out" | tail -n 1):$(printf '%s\n' "$out" | grep -cxF "$BL_PTR" | tr -d ' ')" "$BL_PTR:1"
+check "Q10l --verbose plain view: last line is exactly the backlog pointer, printed once" \
+  "$(printf '%s\n' "$vout" | tail -n 1):$(printf '%s\n' "$vout" | grep -cxF "$BL_PTR" | tr -d ' ')" "$BL_PTR:1"
+jout="$(run lane-status "$RF2" --json)"; rc=$?
+check "Q10m --json is unchanged: one line, one JSON object, no pointer, exit 0" \
+  "$rc:$(printf '%s\n' "$jout" | wc -l | tr -d ' '):$(jq -r 'type' <<<"$jout" 2>/dev/null):$(printf '%s\n' "$jout" | grep -cF 'run /backlog' | tr -d ' ')" "0:1:object:0"
+out_nt="$(run lane-status "$P/.supervisor/automate/none.md")"; rc=$?
+check "Q10n no lane table ⇒ the one 'no lane table' line, no pointer, exit 0" \
+  "$rc:$out_nt" "0:lane-status: no lane table ($P/.supervisor/automate/none.md) — no lanes"
 has "Q10b --verbose shows held for load" "$vout" "held for load: load overloaded"
 hasnt "Q10e the default drops the indented detail lines (held for load)" "$out" "    held for load:"
 hasnt "Q10f the default drops the machine line" "$out" "machine: state="
@@ -584,6 +598,8 @@ has "T1c frame carries the fleet" "$out" "L6  awaiting_input"
 # T1d / T1e (automate-speed/24): --watch keeps the FULL view (_lanes_watch passes --verbose on both
 # branches), with a runfile and without one (the newest lane table under the cwd's checkout).
 has "T1d --watch <runfile> shows the full view (machine line)" "$out" "machine: state="
+check "T1f one --watch frame carries the backlog pointer exactly once, as its last line (pa25 AC7)" \
+  "$(printf '%s\n' "$out" | grep -cxF "$BL_PTR" | tr -d ' '):$(printf '%s\n' "$out" | tail -n 1)" "1:$BL_PTR"
 out="$(cd "$P" && LOOMWRIGHT_LANES_WATCH_ITERATIONS=1 bash "$S" lane-status --watch 2>&1)"; rc=$?
 check "T1e --watch with no runfile shows the full view (machine line), exit 0" "$rc:$(printf '%s\n' "$out" | grep -c '^machine: state=' | tr -d ' ')" "0:1"
 out="$(LOOMWRIGHT_LANES_WATCH_ITERATIONS=2 LOOMWRIGHT_LANES_WATCH_INTERVAL_S=0 run lane-status "$RF2" --watch)"

@@ -3,7 +3,9 @@
 #             [--refresh-readiness] [--keep-awake] [--inbox] [--verbose]
 # The plain view (no mode flag) is terse: the header line plus each lane's first line
 # (_lanes_render_terse); `--verbose` prints the full _lanes_render view, which `--watch` always shows.
-# Mode flags (--json, --inbox, --leaks, --resources, --tokens) ignore --verbose.
+# Both plain views (so every `--watch` frame) end with ONE pointer line to the backlog board:
+# `backlog: every requirement item's state — run /backlog`.
+# Mode flags (--json, --inbox, --leaks, --resources, --tokens) ignore --verbose and print no pointer.
 lanes_status() {
   local rf="" json=0 watch=0 leaks=0 snap=0 res=0 tok=0 ka=0 refresh=0 inbox=0 verbose=0
   while [ "$#" -gt 0 ]; do
@@ -52,6 +54,10 @@ lanes_status() {
   doc="$(_lanes_status_doc "$table" "$parent" "$primary")"
   if [ -z "$doc" ]; then echo "lane-status: unknown — status unreadable"; return 0; fi
   if [ "$json" = 1 ]; then printf '%s\n' "$doc"; elif [ "$verbose" = 1 ]; then _lanes_render "$doc"; else _lanes_render_terse "$doc"; fi
+  # The backlog pointer: printed HERE, after the renderer (never inside _lanes_render / _lanes_render_terse,
+  # whose byte goldens stay untouched), on the two plain views only — `--json` stays byte-identical for its
+  # machine readers. A pointer, not a read: it makes no backlog call.
+  [ "$json" = 1 ] || printf '%s\n' "backlog: every requirement item's state — run /backlog"
   return 0
 }
 
