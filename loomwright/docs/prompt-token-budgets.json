@@ -68,6 +68,7 @@
     "automate": {"budget": 5465, "measured": 4968, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "autonomous": {"budget": 4361, "measured": 3964, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "backlog": {"budget": 2413, "measured": 2194, "note": "new command (parallel-automate/18a): measured + ~10%"},
+    "janitor": {"budget": 1470, "measured": 1336, "note": "new command (af/39f): measured + ~10%"},
     "capability-check": {"budget": 6680, "measured": 6072, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "code-reviewer": {"budget": 2837, "measured": 2579, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "dreaming": {"budget": 39945, "measured": 36313, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},

@@ -74,4 +74,5 @@ Every question the engine (`/automate`, `/autonomous`, and the Launch Pad, Super
 | `AN-ESCALATED` | human-only | `(free text)` | /autonomous review-heal ESCALATED |
 | `BL-VERIFY` | human-only | `Stamp done?` · `Stamp done with escalation?` · `Abandon` · `Skip` | /backlog --verify per-item stamp of an item with no merge evidence (the stamp options only when a merged PR is named; cannot ask ⇒ verify_requires_owner, nothing stamped) |
 | `BL-CONFLICT` | human-only | `Abandon` · `Keep open` · `Skip` | /backlog --verify per-item settle of a conflict item (an abandoned/skipped Queue row vs its own pending/ready; cannot ask ⇒ verify_requires_owner, nothing stamped) |
+| `JAN-ACT` | human-only | `(free text)` | /janitor: which actionable report rows to act on (multi-select, nothing pre-selected), and the second confirmation before a force-unlock; cannot ask ⇒ report only, nothing acted on |
 <!-- lane-policy catalog: END -->

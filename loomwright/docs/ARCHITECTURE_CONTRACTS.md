@@ -750,6 +750,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `automate` | 5465 | 4968 |
 | `autonomous` | 4361 | 3964 |
 | `backlog` | 2413 | 2194 |
+| `janitor` | 1470 | 1336 |
 | `capability-check` | 6680 | 6072 |
 | `code-reviewer` | 2837 | 2579 |
 | `dreaming` | 39945 | 36313 |
@@ -823,6 +824,7 @@ Every question gate in `agents/`, `commands/` and `skills/` and what it does whe
 | `/telemetry` enable / import offer | `commands/telemetry.md` | MI only | writes nothing without an Accept (never auto-imports) | unchanged |
 | `/dreaming` per-item gate | `commands/dreaming.md` | MI only | writes nothing without an Accept; pushes nothing without a Pre-push confirmation (per item for the rules PR, one per-run question for the memory PR) | unchanged |
 | `/backlog --verify` per-item stamp (`BL-VERIFY`, `BL-CONFLICT`, human-only) | `commands/backlog.md` §"`--verify` — owner-gated verify and stamp" steps 1 and 4 | MI; HP (a headless print-mode session); SA (the prose run inside a subagent) | new gate (parallel-automate/18a) | not asked: lists every proposal, stamps and publishes nothing, first line `verify_requires_owner: <n> item(s) need the owner's answer — nothing stamped` |
+| `/janitor` act pick (`JAN-ACT`, human-only; also the second confirmation before a force-unlock) | `commands/janitor.md` §"What it does" steps 2–4 | MI; HP (a headless print-mode session); SA (the prose run inside a subagent) | new gate | not asked: report only, nothing acted on (`janitor: report only — nothing acted on`), exit 0; `janitor-report.sh act` itself refuses without `--confirm`, under `--report` or with `CI` set |
 
 **Grouped description hits (no gate of their own):** the `--non-interactive` parameter rows in `agents/supervisor.md` and `commands/supervisor.md` belong to the Supervisor rows. The "what runs inline" lists, the flow diagram and the PLAN / EXECUTE forwarding notes in `commands/autonomous.md` and `skills/autonomous-loop/SKILL.md` belong to the Launch Pad and Supervisor rows. The note that `/verify` never asks (`commands/verify.md`) belongs to the qa-executor sign-in row. The notification hook that fires on any ask (`commands/setup.md` notifications section, `commands/agent-help.md` hooks table) is not a gate; it fires only when a gate actually asks.
 

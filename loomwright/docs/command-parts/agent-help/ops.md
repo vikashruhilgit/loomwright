@@ -91,3 +91,19 @@
 
 ---
 
+### 🧹 /janitor — Leftover Processes, Locks, Lanes and Worktrees (Read-Only, Owner-Picked Actions)
+
+**Purpose:** One grouped report of everything the plugin left running or lying around: registered processes and unregistered look-alikes, run locks, lanes, worktrees and branches, and stale run state. Plugin-adjacent rows (CI-slot holders, a keep-awake) and not-the-plugin's rows (the host's own sessions, other python processes) are listed too, report-only. Each row shows its owner, age, state, evidence and a suggested action with the reason. A reader that fails shows as an `unknown` row, never as a clean group.
+
+**Usage:**
+```bash
+/janitor                 # the report, then ONE owner question (JAN-ACT) in an interactive session
+/janitor --report        # the report only; never asks, never acts
+/janitor --json          # ONE JSON object (schema_version 1, groups[], rows)
+```
+
+**Writes:** nothing, except the rows the owner picks. Those run through `janitor-report.sh act --confirm`, which re-checks each row first and then calls its one guarded helper: `proc-registry.sh reap` or `stop-unregistered`, `automate-helpers.sh sweep --apply`, `lane-remove` or `config-restore`, and a `run-lock.sh` reclaim. A force-unlock needs a second `JAN-ACT` confirmation. When it cannot ask (a subagent, or a non-interactive session), it prints the report and acts on nothing.
+
+**Learn More:** see `loomwright/commands/janitor.md`; the groups, row ids, actions and executors are defined once in the header of `loomwright/scripts/janitor-report.sh`.
+
+---
