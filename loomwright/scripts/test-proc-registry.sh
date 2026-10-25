@@ -955,7 +955,7 @@ leg_stop_unreg() {
   WAIT_LIB_WHAT="pid $a to be reaped" wait_for_cmd 5 no_lstart "$a"
   check "leg_stop_unreg --apply stops the matching unregistered look-alike (TERM), exit 0" \
     eval '[ "$SU_RC" = 0 ] && one_line "$SU" && has "$SU" "unregistered unreg-$a (pid $a): stopped (TERM" && gone "$a"'
-  check "leg_stop_unreg ... one reap.log line naming it" eval '[ "$(lines "$R/reap.log")" = "$((n0 + 1))" ] && tail -n 1 "$R/reap.log" | grep -qF "unreg-$a"'
+  check "leg_stop_unreg ... one reap.log line naming it" eval '[ "$(lines "$R/reap.log")" = "$((n0 + 1))" ] && grep -qF "unreg-$a" < <(tail -n 1 "$R/reap.log")'
   su_run --apply --pid "$a" --start "$ls" --hash "$h"
   check "leg_stop_unreg a gone pid is refused: 'not signalled: pid gone'" eq "$SU_RC|$SU" "0|not signalled: pid gone"
   check "leg_stop_unreg ... the other fixtures were never signalled" eval 'alive "$b" && alive "$c" && alive "$w"'
