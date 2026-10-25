@@ -268,13 +268,25 @@ wait_for_no_worktree() {
   return 1
 }
 
-# wait_for_teardown <repo> <wt_path> <lock_dir> — poll until the trap's TERMINAL
-# action has happened: lock dir gone (released LAST by design — it covers the
-# worktree's whole lifetime) AND worktree gone. Returns 0 if both within 10s.
+# wrapper_gone <wt_path> — true when no live process carries <wt_path> in its argv. The
+# detached wrapper (`nohup bash -c "$WRAPPER" _ <gitdir> <wt_path> …`) exits only after
+# trap_cleanup's LAST write, so this is the one signal that the whole trap has run. awk reads
+# the path from ENVIRON, never argv, so the probe cannot match itself.
+wrapper_gone() {
+  ! ps -A -ww -o args= 2>/dev/null | W="$1" awk 'index($0, ENVIRON["W"]) { f = 1 } END { exit !f }'
+}
+
+# wait_for_teardown <repo> <wt_path> <lock_dir> — poll until the trap has FINISHED: lock dir
+# gone and worktree gone (released before death detection) AND the wrapper exited, which
+# happens only after death detection has written, or not written, the `.died` marker. The lock
+# is the last of the teardown removals, not the trap's last action: a case that reads `.died`
+# off the lock alone reads it before it exists. Returns 0 within 30s, 1 on timeout. A death-
+# detection case must fail on 1, never `|| true` it: an absent-marker assertion would pass
+# vacuously off an unfinished trap.
 wait_for_teardown() {
   local repo="$1" wt="$2" lock="$3" i
-  for i in $(seq 1 50); do
-    if [ ! -d "$lock" ] && worktree_gone "$repo" "$wt"; then return 0; fi
+  for i in $(seq 1 150); do
+    if [ ! -d "$lock" ] && worktree_gone "$repo" "$wt" && wrapper_gone "$wt"; then return 0; fi
     sleep 0.2
   done
   return 1
@@ -1198,7 +1210,7 @@ RC37=$RUN_RC
 WT="$(expected_wt_path "$FX_REPO")"
 H="$(pr_hash)"
 LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
-wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK"; TD37=$?
 DIED="$FX_REPO/.supervisor/review-dispatch/$H.died"
 D_TS="$(awk -F'\t' '$1=="ts"{print $2; exit}' "$DIED" 2>/dev/null || true)"
 D_PR="$(awk -F'\t' '$1=="pr_url"{print $2; exit}' "$DIED" 2>/dev/null || true)"
@@ -1208,12 +1220,12 @@ D_ATT="$(awk -F'\t' '$1=="attempt"{print $2; exit}' "$DIED" 2>/dev/null || true)
 HDR="$(cat "$FX_REPO"/.supervisor/logs/review-pr-dispatch-*.log 2>/dev/null || true)"
 DRAIN_DIED_OK=0; grep -q '^DRAIN_DIED' < <(printf '%s' "$HDR") && DRAIN_DIED_OK=1
 MARKER_STILL_THERE=0; [ -f "$FX_REPO/.supervisor/review-dispatch/$H" ] && MARKER_STILL_THERE=1
-if [ "$RC37" -eq 0 ] && [ -f "$DIED" ] && [ -n "$D_TS" ] && [ "$D_PR" = "$PR" ] \
+if [ "$RC37" -eq 0 ] && [ "$TD37" -eq 0 ] && [ -f "$DIED" ] && [ -n "$D_TS" ] && [ "$D_PR" = "$PR" ] \
    && [ -n "$D_EC" ] && [ -n "$D_LAST" ] && [ "$D_ATT" = "1" ] \
    && [ "$DRAIN_DIED_OK" -eq 1 ] && [ "$MARKER_STILL_THERE" -eq 1 ]; then
   ok "death detection: .died written with all 4 fields + attempt=1, DRAIN_DIED in log, durable marker untouched"
 else
-  no "death detection wrong (rc=$RC37 died_exists=$([ -f "$DIED" ] && echo 1 || echo 0) ts='$D_TS' pr='$D_PR' ec='$D_EC' last='$D_LAST' attempt='$D_ATT' drain_died=$DRAIN_DIED_OK marker=$MARKER_STILL_THERE)"
+  no "death detection wrong (rc=$RC37 teardown=$TD37 died_exists=$([ -f "$DIED" ] && echo 1 || echo 0) ts='$D_TS' pr='$D_PR' ec='$D_EC' last='$D_LAST' attempt='$D_ATT' drain_died=$DRAIN_DIED_OK marker=$MARKER_STILL_THERE)"
 fi
 rm -rf "$(dirname "$FX_REPO")"
 
@@ -1224,12 +1236,12 @@ RC38=$RUN_RC
 WT="$(expected_wt_path "$FX_REPO")"
 H="$(pr_hash)"
 LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
-wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK"; TD38=$?
 DIED="$FX_REPO/.supervisor/review-dispatch/$H.died"
-if [ "$RC38" -eq 0 ] && [ ! -e "$DIED" ]; then
+if [ "$RC38" -eq 0 ] && [ "$TD38" -eq 0 ] && [ ! -e "$DIED" ]; then
   ok "no .died marker written when the runner produced a real REVIEW_HEAL_RESULT"
 else
-  no "unexpected .died marker for a completed drain (rc=$RC38 died_exists=$([ -e "$DIED" ] && echo 1 || echo 0))"
+  no "unexpected .died marker for a completed drain, or the trap never finished (rc=$RC38 teardown=$TD38 died_exists=$([ -e "$DIED" ] && echo 1 || echo 0))"
 fi
 rm -rf "$(dirname "$FX_REPO")"
 
@@ -1243,14 +1255,14 @@ LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
 
 # Attempt 1: dispatch dies -> .died written with attempt=1 (first death, default).
 run_real "$FX_REPO" "$PR"; RC_A1=$RUN_RC
-wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK"; TD_A1=$?
 ATTEMPT1="$(awk -F'\t' '$1=="attempt"{print $2; exit}' "$DIED" 2>/dev/null || true)"
 CALLS_AFTER_1="$(wc -l < "$FX_CLAUDE_LOG" 2>/dev/null | tr -d ' ' || echo 0)"
 
 # Attempt 2 (the ONE automatic re-dispatch, since marker+died-attempt=1 count as
 # "not dispatched"): dies again -> .died OVERWRITTEN with attempt=2.
 run_real "$FX_REPO" "$PR"; RC_A2=$RUN_RC
-wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK"; TD_A2=$?
 ATTEMPT2="$(awk -F'\t' '$1=="attempt"{print $2; exit}' "$DIED" 2>/dev/null || true)"
 CALLS_AFTER_2="$(wc -l < "$FX_CLAUDE_LOG" 2>/dev/null | tr -d ' ' || echo 0)"
 
@@ -1259,13 +1271,13 @@ CALLS_AFTER_2="$(wc -l < "$FX_CLAUDE_LOG" 2>/dev/null | tr -d ' ' || echo 0)"
 run_real "$FX_REPO" "$PR"; RC_A3=$RUN_RC
 CALLS_AFTER_3="$(wc -l < "$FX_CLAUDE_LOG" 2>/dev/null | tr -d ' ' || echo 0)"
 
-if [ "$RC_A1" -eq 0 ] && [ "$RC_A2" -eq 0 ] && [ "$RC_A3" -eq 0 ] \
+if [ "$RC_A1" -eq 0 ] && [ "$RC_A2" -eq 0 ] && [ "$RC_A3" -eq 0 ] && [ "$TD_A1" -eq 0 ] && [ "$TD_A2" -eq 0 ] \
    && [ "$ATTEMPT1" = "1" ] && [ "$ATTEMPT2" = "2" ] \
    && [ "$CALLS_AFTER_2" -gt "$CALLS_AFTER_1" ] \
    && [ "$CALLS_AFTER_3" -eq "$CALLS_AFTER_2" ]; then
   ok "bounded re-dispatch: 1st death attempt=1, exactly ONE automatic re-dispatch ran (2nd death attempt=2), 3rd dispatch refused (no 3rd launch) — bounded, never unbounded"
 else
-  no "bounded re-dispatch wrong (rc1=$RC_A1 rc2=$RC_A2 rc3=$RC_A3 attempt1='$ATTEMPT1' attempt2='$ATTEMPT2' calls1=$CALLS_AFTER_1 calls2=$CALLS_AFTER_2 calls3=$CALLS_AFTER_3)"
+  no "bounded re-dispatch wrong (rc1=$RC_A1 rc2=$RC_A2 rc3=$RC_A3 teardown1=$TD_A1 teardown2=$TD_A2 attempt1='$ATTEMPT1' attempt2='$ATTEMPT2' calls1=$CALLS_AFTER_1 calls2=$CALLS_AFTER_2 calls3=$CALLS_AFTER_3)"
 fi
 rm -rf "$(dirname "$FX_REPO")"
 
@@ -1292,8 +1304,10 @@ else
   LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
   ( cd "$FX_REPO" && PATH="$FX_BIN:$PATH" HOME="$FX_REPO/.fakehome" \
       LOOMWRIGHT_CLAUDE_BIN="$FX_BIN/stub-claude" bash "$MUT42" "$PR" >/dev/null 2>&1 )
-  wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
-  if [ ! -e "$DIED" ]; then
+  wait_for_teardown "$FX_REPO" "$WT" "$LOCK"; TD42=$?
+  if [ "$TD42" -ne 0 ]; then
+    no "MUTATION CONTROL (BLOCKING): the mutant's trap never finished within the teardown budget — an absent .died proves nothing, control inconclusive"
+  elif [ ! -e "$DIED" ]; then
     ok "MUTATION CONTROL (BLOCKING) CONFIRMED: with the trap grep neutralized, the no-result case no longer writes .died (assertion 37 flips to FAIL against the mutant) — death detection IS driven by that grep, not merely asserted"
   else
     no "MUTATION CONTROL (BLOCKING) REFUTED: the mutant STILL wrote a .died marker for the no-result case — death detection may not actually be driven by the grep (or the mutation did not take effect at runtime)"
@@ -1455,7 +1469,7 @@ drain_reap_run() {
   local disp="$1" wt lock
   fresh_git_repo >/dev/null
   wt="$(expected_wt_path "$FX_REPO")"; lock="$FX_REPO/.supervisor/review-dispatch/$(pr_hash).lock"
-  DQ_WT="$wt"; DQ_LOCK="$lock"; DQ_MARKER="$FX_REPO/.supervisor/review-dispatch/$(pr_hash)"
+  DQ_WT="$wt"; DQ_LOCK="$lock"; DQ_MARKER="$FX_REPO/.supervisor/review-dispatch/$(pr_hash)"; DQ_TD=1
   DQ_REG="$(dirname "$FX_REPO")/procs"; DQ_PID=""; DQ_OUT=""; DQ_EXIT=""
   cat > "$FX_BIN/stub-claude" <<CLEOF
 #!/usr/bin/env bash
@@ -1484,17 +1498,17 @@ CLEOF
   WAIT_LIB_WHAT="the drain entry to read overdue" wait_for_cmd 15 drain_overdue "$DQ_REG"
   DQ_OUT="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$DQ_REG" bash "$HERE/proc-registry.sh" reap --apply 2>/dev/null)"
   wait_for_pid_gone "$DQ_PID" 10 || true
-  wait_for_teardown "$FX_REPO" "$wt" "$lock" || true
+  wait_for_teardown "$FX_REPO" "$wt" "$lock"; DQ_TD=$?   # 1 on timeout: a .died read below must fail on it
   DQ_EXIT="$(grep '^exit wt=' "$FX_CLAUDE_LOG" 2>/dev/null | head -1)"
 }
 drain_reap_run "$DISPATCH"
 DQ_ALIVE=0; [ -n "$DQ_PID" ] && kill -0 "$DQ_PID" 2>/dev/null && DQ_ALIVE=1
-if [ -n "$DQ_PID" ] && [ "$DQ_ALIVE" -eq 0 ] && [ "$DQ_EXIT" = "exit wt=present lock=present" ] \
+if [ -n "$DQ_PID" ] && [ "$DQ_TD" -eq 0 ] && [ "$DQ_ALIVE" -eq 0 ] && [ "$DQ_EXIT" = "exit wt=present lock=present" ] \
    && [ ! -d "$DQ_LOCK" ] && [ ! -d "$DQ_WT" ] && [ -f "$DQ_MARKER.died" ] \
    && [ "$(drain_entries "$DQ_REG" | jq 'length' 2>/dev/null)" = 0 ] && grep -q 'stopped (TERM' <<<"$DQ_OUT"; then
   ok "reap --apply of the drain entry: the runner got the TERM and exited while worktree + lock still existed; teardown then completed (.died recorded, entry removed)"
 else
-  no "drain reap orphaned or raced the runner (pid='$DQ_PID' alive=$DQ_ALIVE exit_line='$DQ_EXIT' lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) wt_left=$([ -d "$DQ_WT" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
+  no "drain reap orphaned or raced the runner (pid='$DQ_PID' teardown=$DQ_TD alive=$DQ_ALIVE exit_line='$DQ_EXIT' lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) wt_left=$([ -d "$DQ_WT" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
 fi
 dq_kill
 rm -rf "$(dirname "$FX_REPO")"
@@ -1535,11 +1549,11 @@ sleep 13   # fixed-sleep-ok: a teardown slower than the short reap grace (the co
 exit 0
 SALEOF
 drain_reap_run "$MUTD46B/dispatch-pr-review.sh"
-if [ -n "$DQ_PID" ] && [ ! -d "$DQ_LOCK" ] && [ -f "$DQ_MARKER.died" ] && grep -q 'DRAIN_DIED' "$FX_REPO/.supervisor/logs/"* 2>/dev/null \
+if [ -n "$DQ_PID" ] && [ "$DQ_TD" -eq 0 ] && [ ! -d "$DQ_LOCK" ] && [ -f "$DQ_MARKER.died" ] && grep -q 'DRAIN_DIED' "$FX_REPO/.supervisor/logs/"* 2>/dev/null \
    && grep -q 'stopped (TERM)$' <<<"$DQ_OUT" && ! grep -q KILL <<<"$DQ_OUT"; then
   ok "slow teardown: reap --apply waited out the wrapper's 13 s salvage (stopped by TERM alone), the lock was released and .died recorded"
 else
-  no "slow teardown cut short (pid='$DQ_PID' lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
+  no "slow teardown cut short (pid='$DQ_PID' teardown=$DQ_TD lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
 fi
 dq_kill
 rm -rf "$(dirname "$FX_REPO")"
@@ -1549,7 +1563,8 @@ if [ "$(( $(wc -l < "$HERE/proc-registry.sh") - $(wc -l < "$MUTD46B/proc-registr
   no "WRAPPER-grace mutant not built"
 else
   drain_reap_run "$MUTD46B/dispatch-pr-review.sh"
-  if [ -n "$DQ_PID" ] && { [ -d "$DQ_LOCK" ] || [ ! -f "$DQ_MARKER.died" ]; } && grep -q KILL <<<"$DQ_OUT"; then
+  # the wait times out by design here (KILLed mid-teardown): an absent .died counts only once the wrapper is gone
+  if [ -n "$DQ_PID" ] && wrapper_gone "$DQ_WT" && { [ -d "$DQ_LOCK" ] || [ ! -f "$DQ_MARKER.died" ]; } && grep -q KILL <<<"$DQ_OUT"; then
     ok "MUTATION: without the WRAPPER grace the reap KILLs the wrapper mid-teardown (lock left or no .died — the leg goes red)"
   else
     no "MUTATION did not discriminate (pid='$DQ_PID' lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
@@ -1636,7 +1651,7 @@ drain_preterm_run() {
   local dir="$1" calls
   fresh_git_repo >/dev/null
   DP_WT="$(expected_wt_path "$FX_REPO")"; DP_LOCK="$FX_REPO/.supervisor/review-dispatch/$(pr_hash).lock"
-  DP_MARKER="$FX_REPO/.supervisor/review-dispatch/$(pr_hash)"; DP_WRAP=""; DP_CALLS=0; DP_RAN=0; DP_DIED_RC=""
+  DP_MARKER="$FX_REPO/.supervisor/review-dispatch/$(pr_hash)"; DP_WRAP=""; DP_CALLS=0; DP_RAN=0; DP_DIED_RC=""; DP_TD=1
   calls="$FX_REPO.reg.calls"
   cat > "$dir/proc-registry.sh" <<REGEOF
 #!/usr/bin/env bash
@@ -1663,7 +1678,7 @@ CLEOF
   DP_WRAP="$(head -1 "$calls" | cut -d' ' -f1)"
   kill -TERM "$DP_WRAP" 2>/dev/null
   wait_for_pid_gone "$DP_WRAP" 15 || true
-  wait_for_teardown "$FX_REPO" "$DP_WT" "$DP_LOCK" || true
+  wait_for_teardown "$FX_REPO" "$DP_WT" "$DP_LOCK"; DP_TD=$?   # 1 on timeout: the .died exit_code read below must fail on it
   sleep 0.5   # fixed-sleep-ok: lets a (mutant) runner and its backgrounded session registration log, if they ever started
   DP_CALLS="$(awk 'END { print NR }' "$calls")"
   grep -qx ran "$FX_CLAUDE_LOG" 2>/dev/null && DP_RAN=1
@@ -1672,11 +1687,11 @@ CLEOF
 MUTD48="$(mktemp -d)"
 for e in "$HERE"/*; do case "$(basename "$e")" in proc-registry.sh) ;; *) ln -s "$e" "$MUTD48/$(basename "$e")" ;; esac; done
 drain_preterm_run "$MUTD48"
-if [ -n "$DP_WRAP" ] && [ "$DP_RAN" = 0 ] && [ "$DP_CALLS" = 1 ] && [ "$DP_DIED_RC" = 143 ] \
+if [ -n "$DP_WRAP" ] && [ "$DP_TD" -eq 0 ] && [ "$DP_RAN" = 0 ] && [ "$DP_CALLS" = 1 ] && [ "$DP_DIED_RC" = 143 ] \
    && [ ! -d "$DP_LOCK" ] && [ ! -d "$DP_WT" ]; then
   ok "TERM during the wrapper's own registration: the runner never ran, exit 143 in .died, worktree + lock torn down"
 else
-  no "pre-launch TERM wrong (wrapper='$DP_WRAP' ran=$DP_RAN registry_calls=$DP_CALLS died_exit='$DP_DIED_RC' lock_left=$([ -d "$DP_LOCK" ] && echo y || echo n) wt_left=$([ -d "$DP_WT" ] && echo y || echo n))"
+  no "pre-launch TERM wrong (wrapper='$DP_WRAP' teardown=$DP_TD ran=$DP_RAN registry_calls=$DP_CALLS died_exit='$DP_DIED_RC' lock_left=$([ -d "$DP_LOCK" ] && echo y || echo n) wt_left=$([ -d "$DP_WT" ] && echo y || echo n))"
 fi
 rm -rf "$(dirname "$FX_REPO")"
 # mutation control: the pre-launch `_term` check deleted (gated: one such line, the copy non-empty, differing,
