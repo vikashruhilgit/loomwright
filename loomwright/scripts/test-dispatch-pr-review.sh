@@ -1469,7 +1469,7 @@ drain_reap_run() {
   local disp="$1" wt lock
   fresh_git_repo >/dev/null
   wt="$(expected_wt_path "$FX_REPO")"; lock="$FX_REPO/.supervisor/review-dispatch/$(pr_hash).lock"
-  DQ_WT="$wt"; DQ_LOCK="$lock"; DQ_MARKER="$FX_REPO/.supervisor/review-dispatch/$(pr_hash)"
+  DQ_WT="$wt"; DQ_LOCK="$lock"; DQ_MARKER="$FX_REPO/.supervisor/review-dispatch/$(pr_hash)"; DQ_TD=1
   DQ_REG="$(dirname "$FX_REPO")/procs"; DQ_PID=""; DQ_OUT=""; DQ_EXIT=""
   cat > "$FX_BIN/stub-claude" <<CLEOF
 #!/usr/bin/env bash
@@ -1498,17 +1498,17 @@ CLEOF
   WAIT_LIB_WHAT="the drain entry to read overdue" wait_for_cmd 15 drain_overdue "$DQ_REG"
   DQ_OUT="$(LOOMWRIGHT_PROC_REGISTRY_DIR="$DQ_REG" bash "$HERE/proc-registry.sh" reap --apply 2>/dev/null)"
   wait_for_pid_gone "$DQ_PID" 10 || true
-  wait_for_teardown "$FX_REPO" "$wt" "$lock" || true
+  wait_for_teardown "$FX_REPO" "$wt" "$lock"; DQ_TD=$?   # 1 on timeout: a .died read below must fail on it
   DQ_EXIT="$(grep '^exit wt=' "$FX_CLAUDE_LOG" 2>/dev/null | head -1)"
 }
 drain_reap_run "$DISPATCH"
 DQ_ALIVE=0; [ -n "$DQ_PID" ] && kill -0 "$DQ_PID" 2>/dev/null && DQ_ALIVE=1
-if [ -n "$DQ_PID" ] && [ "$DQ_ALIVE" -eq 0 ] && [ "$DQ_EXIT" = "exit wt=present lock=present" ] \
+if [ -n "$DQ_PID" ] && [ "$DQ_TD" -eq 0 ] && [ "$DQ_ALIVE" -eq 0 ] && [ "$DQ_EXIT" = "exit wt=present lock=present" ] \
    && [ ! -d "$DQ_LOCK" ] && [ ! -d "$DQ_WT" ] && [ -f "$DQ_MARKER.died" ] \
    && [ "$(drain_entries "$DQ_REG" | jq 'length' 2>/dev/null)" = 0 ] && grep -q 'stopped (TERM' <<<"$DQ_OUT"; then
   ok "reap --apply of the drain entry: the runner got the TERM and exited while worktree + lock still existed; teardown then completed (.died recorded, entry removed)"
 else
-  no "drain reap orphaned or raced the runner (pid='$DQ_PID' alive=$DQ_ALIVE exit_line='$DQ_EXIT' lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) wt_left=$([ -d "$DQ_WT" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
+  no "drain reap orphaned or raced the runner (pid='$DQ_PID' teardown=$DQ_TD alive=$DQ_ALIVE exit_line='$DQ_EXIT' lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) wt_left=$([ -d "$DQ_WT" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
 fi
 dq_kill
 rm -rf "$(dirname "$FX_REPO")"
@@ -1549,11 +1549,11 @@ sleep 13   # fixed-sleep-ok: a teardown slower than the short reap grace (the co
 exit 0
 SALEOF
 drain_reap_run "$MUTD46B/dispatch-pr-review.sh"
-if [ -n "$DQ_PID" ] && [ ! -d "$DQ_LOCK" ] && [ -f "$DQ_MARKER.died" ] && grep -q 'DRAIN_DIED' "$FX_REPO/.supervisor/logs/"* 2>/dev/null \
+if [ -n "$DQ_PID" ] && [ "$DQ_TD" -eq 0 ] && [ ! -d "$DQ_LOCK" ] && [ -f "$DQ_MARKER.died" ] && grep -q 'DRAIN_DIED' "$FX_REPO/.supervisor/logs/"* 2>/dev/null \
    && grep -q 'stopped (TERM)$' <<<"$DQ_OUT" && ! grep -q KILL <<<"$DQ_OUT"; then
   ok "slow teardown: reap --apply waited out the wrapper's 13 s salvage (stopped by TERM alone), the lock was released and .died recorded"
 else
-  no "slow teardown cut short (pid='$DQ_PID' lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
+  no "slow teardown cut short (pid='$DQ_PID' teardown=$DQ_TD lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
 fi
 dq_kill
 rm -rf "$(dirname "$FX_REPO")"
@@ -1563,7 +1563,8 @@ if [ "$(( $(wc -l < "$HERE/proc-registry.sh") - $(wc -l < "$MUTD46B/proc-registr
   no "WRAPPER-grace mutant not built"
 else
   drain_reap_run "$MUTD46B/dispatch-pr-review.sh"
-  if [ -n "$DQ_PID" ] && { [ -d "$DQ_LOCK" ] || [ ! -f "$DQ_MARKER.died" ]; } && grep -q KILL <<<"$DQ_OUT"; then
+  # the wait times out by design here (KILLed mid-teardown): an absent .died counts only once the wrapper is gone
+  if [ -n "$DQ_PID" ] && wrapper_gone "$DQ_WT" && { [ -d "$DQ_LOCK" ] || [ ! -f "$DQ_MARKER.died" ]; } && grep -q KILL <<<"$DQ_OUT"; then
     ok "MUTATION: without the WRAPPER grace the reap KILLs the wrapper mid-teardown (lock left or no .died — the leg goes red)"
   else
     no "MUTATION did not discriminate (pid='$DQ_PID' lock_left=$([ -d "$DQ_LOCK" ] && echo y || echo n) died=$([ -f "$DQ_MARKER.died" ] && echo y || echo n) reap='$DQ_OUT')"
@@ -1650,7 +1651,7 @@ drain_preterm_run() {
   local dir="$1" calls
   fresh_git_repo >/dev/null
   DP_WT="$(expected_wt_path "$FX_REPO")"; DP_LOCK="$FX_REPO/.supervisor/review-dispatch/$(pr_hash).lock"
-  DP_MARKER="$FX_REPO/.supervisor/review-dispatch/$(pr_hash)"; DP_WRAP=""; DP_CALLS=0; DP_RAN=0; DP_DIED_RC=""
+  DP_MARKER="$FX_REPO/.supervisor/review-dispatch/$(pr_hash)"; DP_WRAP=""; DP_CALLS=0; DP_RAN=0; DP_DIED_RC=""; DP_TD=1
   calls="$FX_REPO.reg.calls"
   cat > "$dir/proc-registry.sh" <<REGEOF
 #!/usr/bin/env bash
@@ -1677,7 +1678,7 @@ CLEOF
   DP_WRAP="$(head -1 "$calls" | cut -d' ' -f1)"
   kill -TERM "$DP_WRAP" 2>/dev/null
   wait_for_pid_gone "$DP_WRAP" 15 || true
-  wait_for_teardown "$FX_REPO" "$DP_WT" "$DP_LOCK" || true
+  wait_for_teardown "$FX_REPO" "$DP_WT" "$DP_LOCK"; DP_TD=$?   # 1 on timeout: the .died exit_code read below must fail on it
   sleep 0.5   # fixed-sleep-ok: lets a (mutant) runner and its backgrounded session registration log, if they ever started
   DP_CALLS="$(awk 'END { print NR }' "$calls")"
   grep -qx ran "$FX_CLAUDE_LOG" 2>/dev/null && DP_RAN=1
@@ -1686,11 +1687,11 @@ CLEOF
 MUTD48="$(mktemp -d)"
 for e in "$HERE"/*; do case "$(basename "$e")" in proc-registry.sh) ;; *) ln -s "$e" "$MUTD48/$(basename "$e")" ;; esac; done
 drain_preterm_run "$MUTD48"
-if [ -n "$DP_WRAP" ] && [ "$DP_RAN" = 0 ] && [ "$DP_CALLS" = 1 ] && [ "$DP_DIED_RC" = 143 ] \
+if [ -n "$DP_WRAP" ] && [ "$DP_TD" -eq 0 ] && [ "$DP_RAN" = 0 ] && [ "$DP_CALLS" = 1 ] && [ "$DP_DIED_RC" = 143 ] \
    && [ ! -d "$DP_LOCK" ] && [ ! -d "$DP_WT" ]; then
   ok "TERM during the wrapper's own registration: the runner never ran, exit 143 in .died, worktree + lock torn down"
 else
-  no "pre-launch TERM wrong (wrapper='$DP_WRAP' ran=$DP_RAN registry_calls=$DP_CALLS died_exit='$DP_DIED_RC' lock_left=$([ -d "$DP_LOCK" ] && echo y || echo n) wt_left=$([ -d "$DP_WT" ] && echo y || echo n))"
+  no "pre-launch TERM wrong (wrapper='$DP_WRAP' teardown=$DP_TD ran=$DP_RAN registry_calls=$DP_CALLS died_exit='$DP_DIED_RC' lock_left=$([ -d "$DP_LOCK" ] && echo y || echo n) wt_left=$([ -d "$DP_WT" ] && echo y || echo n))"
 fi
 rm -rf "$(dirname "$FX_REPO")"
 # mutation control: the pre-launch `_term` check deleted (gated: one such line, the copy non-empty, differing,
