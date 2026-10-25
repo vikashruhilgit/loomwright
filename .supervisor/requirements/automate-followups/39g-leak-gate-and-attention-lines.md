@@ -193,3 +193,9 @@ start without an explicit per-item owner choice. Remote resources (GitHub branch
 Owner, 2026-10-04, during S1 (session 0d556d54): "we need a way to track background tasks, I don't want any
 orphaned or stray task/session running" and "add a command which shows all with all the details and the user can
 take action based on your suggestions". Evidence from the same session's `ps` inventory, recorded above.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-24T21:16:02Z
+- **Brief:** .supervisor/jobs/done/2026-10-24-af39g-leak-gate-and-attention-lines.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/692
