@@ -45,11 +45,23 @@
 #   after grace_s and its teardown never runs; a teardown slower than the WRAPPER grace (the
 #   drain's salvage has no time bound of its own) is KILLed the same way; a session whose own
 #   registration failed is reachable only through its wrapper's TERM.
-#   list
+#   list [--scan]
 #       One row per entry (TSV after a `# id kind pid age class evidence` header): id, kind, pid,
 #       age (the live process's elapsed time, `-` when it is gone), class, and the evidence for that
 #       class. Read-only: creates nothing, changes nothing. ALWAYS exits 0; an empty, missing or
-#       unavailable registry prints `(no entries)`.
+#       unavailable registry prints `(no entries)`. `--scan` is the one accepted argument; any other
+#       is warned about on stderr and ignored.
+#       --scan  after the registry rows, ONE row per process `summary --scan` counts (the very same
+#               predicate and exclusions, run once over ONE snapshot that also classifies the registry
+#               rows), in the same columns:
+#                 unreg-<pid>  unregistered  <pid>  <age>s  unregistered  <rule>; lstart=<lstart>; cmd_hash=<algo>:<hash>
+#               <rule> is `plugin script path <the matching command-line word>` or `gone temp python
+#               script <path>`; lstart and cmd_hash are the snapshot's, in the form `stop-unregistered`
+#               takes. Then ONE comment line: `# scan: <u> unregistered` (u = the row count, equal to
+#               summary's <u> on the same snapshot), `# scan: skipped — <why>` (HERMETIC SCAN SKIP) or
+#               `# scan: unavailable — <why>` (registry unavailable / unreadable, jq missing, the
+#               snapshot failed) — never a guess. `(no entries)` then prints only when no row of
+#               either kind printed.
 #   summary [--scan]
 #       Exactly ONE line on stdout. Read-only: never signals, creates nothing, changes nothing. Exits
 #       0; any other argument is a usage error (exit 2). The line is
@@ -80,7 +92,8 @@
 #                   then the snapshot's ppid chain).
 #               HERMETIC SCAN SKIP: under HERMETIC_TEST_ENV=1 with LOOMWRIGHT_PROC_PS_SNAPSHOT unset
 #               the scan is skipped, so no suite reads the live machine through it (the HERMETIC
-#               REDIRECT's counterpart; classification of the hermetic registry still runs).
+#               REDIRECT's counterpart; classification of the hermetic registry still runs). The same
+#               skip gates `list --scan` and `stop-unregistered`.
 #               Honest limits: the python rule reads the first non-option argument as the script, so a
 #               relative path or one containing a space is not checked; a process that rewrites its
 #               argv is invisible to the scan; a WANTED long-lived plugin process that neither
@@ -102,12 +115,29 @@
 #       registry is reported and skipped. Entries with an owner_pid are processed last (WRAPPER
 #       KINDS). Exits 0; a usage error (unknown option, malformed id)
 #       exits 2.
+#   stop-unregistered --pid <p> --start <lstart> --hash <cmd_hash> [--apply]
+#       The guarded stop for ONE owner-picked unregistered process (a `list --scan` row: --start and
+#       --hash are its lstart= / cmd_hash= values). It signals only a pid that, at call time, (1) is
+#       not the live process of an entry, (2) is still counted by the --scan predicate (over ONE
+#       snapshot — so never a descendant of a live entry, nor this call's own family), and (3) still
+#       has that live lstart AND command-line hash, re-read IMMEDIATELY before TERM. Otherwise it
+#       prints exactly one `not signalled: <reason>` line (a live registry entry, the predicate fails,
+#       pid gone, recycled — lstart or command line differs —, the registry unavailable, the scan
+#       skipped or the snapshot failed) and sends no signal. Without --apply (the DEFAULT) it then
+#       only prints what it would do. With --apply it takes reap's TERM → wait (the "every other"
+#       grace) → re-check → KILL path, the very same code, and appends ONE line to reap.log (a
+#       refusal too; creating the registry dir when it is missing; nothing when the registry is
+#       unavailable or unreadable). Exits 0; a bad argument (unknown,
+#       missing --pid / --start / --hash, a pid that is not a positive integer or is 1, a value with
+#       a newline) is a usage error: exit 2.
 #   A missing or unknown subcommand is a usage error: exit 2. `help` / `-h` / `--help` exit 0.
 #
 # NEVER SIGNAL BY PID ALONE. Every TERM and every KILL is preceded, in the same pass, by a check that
 # the pid's live `lstart` AND the hash of its live command line still equal the entry's; reap takes
 # ids, never pids, so a pid that is not in the registry is never touched. A recycled pid (alive, but
-# a different start time or command line) is `finished`, and finished entries are only pruned.
+# a different start time or command line) is `finished`, and finished entries are only pruned. The
+# one pid-taking path, stop-unregistered, requires the caller's recorded lstart + hash and applies
+# the same check against them.
 # Honest limit: a tiny window remains between the last check and the kill(2) call itself.
 #
 # ENTRY: <registry dir>/<id>.json, built with `jq --arg` (never shell-templated). Keys:
@@ -155,7 +185,7 @@
 #                      parts: the webhook's 5 s curl cap, the desktop notifier's 3 s cap; the salvage
 #                      and `git worktree remove` are not time-bounded — see WRAPPER KINDS' limits)
 #   every other   10   sessions (--owner-pid set), postmortem, merge-watch (its EXIT trap only
-#                      removes its marker)
+#                      removes its marker), and a stop-unregistered target
 #   reap waits only until the process stops matching, so the grace is a ceiling, not a delay: a
 #   wrapper that tears down in 2 s costs reap 2 s. reap is sequential, so each wrapper whose session
 #   ignores TERM (or whose teardown hangs) costs up to the WRAPPER grace before its KILL.
@@ -173,7 +203,7 @@
 #   standalone, still registers into the real home registry.
 #
 # EXIT CODES: register 0 always; list 0 always; summary 0 (usage error 2); reap 0 (usage error 2);
-# missing/unknown subcommand 2.
+# stop-unregistered 0, a refusal too (usage error 2); missing/unknown subcommand 2.
 # bash 3.2 / BSD userland and Linux procps; needs jq and ps.
 
 set -uo pipefail
@@ -184,9 +214,10 @@ PR_T="$(printf '\t')"
 pr_usage() {
   cat <<'USAGE'
 usage: proc-registry.sh register --pid <p> --kind <phase|lane|drain|postmortem|merge-watch> --purpose <text> [options]
-       proc-registry.sh list
+       proc-registry.sh list [--scan]
        proc-registry.sh summary [--scan]
        proc-registry.sh reap [--apply] [<id>...]
+       proc-registry.sh stop-unregistered --pid <p> --start <lstart> --hash <cmd_hash> [--apply]
 See the header comment of proc-registry.sh for the full contract.
 USAGE
 }
@@ -200,7 +231,8 @@ _pr_is_pos_int() { _pr_is_uint "${1:-}" && [ "$1" -gt 0 ] 2>/dev/null; }
 
 # summary's ONE process snapshot: PR_SNAP holds a TSV row per process (pid, ppid, lstart, etime,
 # command); while PR_SNAP_ON=1 the three lookups below read it instead of running ps, so `summary`
-# classifies with the very code `list` runs. Only cmd_summary sets it; register / reap never do.
+# classifies with the very code `list` runs. Only summary, `list --scan` and stop-unregistered set it
+# (stop-unregistered turns it off again before its live re-checks); register / reap never do.
 PR_SNAP_ON=0
 PR_SNAP=""
 
@@ -522,19 +554,40 @@ _pr_classify() {
 _pr_age_col() { case "$1" in -|'') printf '%s' "-" ;; *) printf '%ss' "$1" ;; esac; }
 
 cmd_list() {
-  [ "$#" -eq 0 ] || printf '%s: list takes no arguments (ignored: %s)\n' "$PR_ME" "$*" >&2
-  local files f n=0
+  local scan=0 a rest=""
+  for a in "$@"; do
+    case "$a" in --scan) scan=1 ;; *) rest="${rest:+$rest }$a" ;; esac
+  done
+  [ -z "$rest" ] || printf '%s: list takes no arguments (ignored: %s)\n' "$PR_ME" "$rest" >&2
+  local files f n=0 nu=0 avail=0 note="" pid age rule
   printf '# id\tkind\tpid\tage\tclass\tevidence\n'
-  if _pr_resolve_dir && command -v jq >/dev/null 2>&1; then
+  if _pr_resolve_dir && command -v jq >/dev/null 2>&1; then avail=1; fi
+  if [ "$scan" = 1 ]; then
+    # the snapshot is taken BEFORE the registry rows, so they and the scan rows are one moment
+    _pr_scan_prep "$avail" || note="$PR_SCAN_NOTE"
+  fi
+  if [ "$avail" = 1 ]; then
     files="$(_pr_entry_files)"
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       _pr_classify "$f"
+      _pr_note_live
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$E_ID" "$E_KIND" "$E_PID" "$(_pr_age_col "$E_AGE")" "$E_CLASS" "$E_EVID"
       n=$((n + 1))
     done <<<"$files"
   fi
-  [ "$n" -gt 0 ] || printf '(no entries)\n'
+  if [ "$scan" = 1 ]; then
+    if [ -z "$note" ]; then
+      while IFS="$PR_T" read -r pid age rule; do
+        [ -n "$pid" ] || continue
+        printf 'unreg-%s\tunregistered\t%s\t%ss\tunregistered\t%s; lstart=%s; cmd_hash=%s\n' "$pid" "$pid" "$age" "$rule" "$(_pr_snap_get "$pid" 3)" "$(_pr_hash "$(_pr_snap_get "$pid" 5)")"
+        nu=$((nu + 1))
+      done <<<"$(_pr_unreg_rows "$PR_LIVE")"
+      note="$nu unregistered"
+    fi
+    printf '# scan: %s\n' "$note"
+  fi
+  [ "$((n + nu))" -gt 0 ] || printf '(no entries)\n'
   return 0
 }
 
@@ -593,9 +646,11 @@ _pr_live_ancestor() {
   return 1
 }
 
-# _pr_unreg_count <" live entry pids "> — the --scan count over PR_SNAP (header: summary --scan).
-_pr_unreg_count() {
-  local ex="$1" live="$1" min p k=0 cands pid et path age u=0
+# _pr_unreg_rows <" live entry pids "> — the --scan predicate over PR_SNAP (header: summary --scan), the
+# ONE implementation: one `<pid> TAB <age s> TAB <rule>` row per look-alike it counts. summary --scan
+# counts the rows, `list --scan` prints them, stop-unregistered looks its pid up in them.
+_pr_unreg_rows() {
+  local ex="$1" live="$1" min p k=0 cands pid et path tok age
   min="${LOOMWRIGHT_PROC_UNREG_MIN_S:-}"
   _pr_is_uint "$min" || min=3600
   ex="$ex$$ "
@@ -604,22 +659,23 @@ _pr_unreg_count() {
     ex="$ex$p "
     p="$(_pr_snap_get "$p" 2)"; k=$((k + 1))
   done
-  # one row per look-alike that is not excluded: pid, etime, and the python script path (`-` otherwise)
+  # one row per look-alike that is not excluded: pid, etime, the python script path (`-` otherwise),
+  # and the command-line word the rule matched
   cands="$(printf '%s\n' "$PR_SNAP" | awk -F'\t' -v ex="$ex" -v self="$$" '
     index(ex, " " $1 " ") || $2 == self { next }
     { cmd = $0; for (k = 1; k < 5; k++) cmd = substr(cmd, index(cmd, "\t") + 1) }
-    cmd ~ /\/loomwright\/([^\/ \t]+\/)?scripts\// { print $1 "\t" $4 "\t-"; next }
+    match(cmd, /[^ \t]*\/loomwright\/([^\/ \t]+\/)?scripts\/[^ \t]*/) { print $1 "\t" $4 "\t-\t" substr(cmd, RSTART, RLENGTH); next }
     {
       n = split(cmd, w, /[ \t]+/); b = w[1]; sub(/.*\//, "", b)
       if (b !~ /^[Pp]ython/) next
       for (k = 2; k <= n; k++) {
         if (w[k] == "-m" || w[k] == "-c") next
         if (w[k] ~ /^-/) continue
-        print $1 "\t" $4 "\t" w[k]
+        print $1 "\t" $4 "\t" w[k] "\t" w[k]
         next
       }
     }')"
-  while IFS="$PR_T" read -r pid et path; do
+  while IFS="$PR_T" read -r pid et path tok; do
     [ -n "$pid" ] || continue
     age="$(_pr_etime_to_s "$et")"
     _pr_is_uint "$age" || continue
@@ -628,9 +684,47 @@ _pr_unreg_count() {
       { _pr_in_tmp "$path" && [ ! -e "$path" ]; } || continue
     fi
     ! _pr_live_ancestor "$pid" "$live" || continue   # a descendant of a live entry's process
-    u=$((u + 1))
+    if [ "$path" = "-" ]; then
+      printf '%s\t%s\tplugin script path %s\n' "$pid" "$age" "$tok"
+    else
+      printf '%s\t%s\tgone temp python script %s\n' "$pid" "$age" "$path"
+    fi
   done <<<"$cands"
-  printf '%s' "$u"
+  return 0
+}
+
+# _pr_note_live — add the entry just classified (E_*) to PR_LIVE unless it is finished: the ONE place
+# the live-entry set is built (summary --scan, list --scan, stop-unregistered). A recycled pid's entry is
+# finished, so its new process is NOT excluded.
+PR_LIVE=" "
+_pr_note_live() { [ "$E_CLASS" = finished ] || PR_LIVE="$PR_LIVE$E_PID "; }   # a registered pid is never counted unregistered
+
+# _pr_scan_ok — 1 under the HERMETIC SCAN SKIP (header: summary --scan), which gates every scan.
+_pr_scan_ok() {
+  if [ "${HERMETIC_TEST_ENV:-}" = 1 ] && [ -z "${LOOMWRIGHT_PROC_PS_SNAPSHOT:-}" ]; then   # >>> hermetic scan skip
+    return 1
+  fi   # <<< hermetic scan skip
+  return 0
+}
+
+# _pr_dir_unusable — 0 when PR_DIR exists but cannot be listed (not a directory, unreadable, unsearchable):
+# its live entries would be invisible, so a scan over it would call them unregistered.
+_pr_dir_unusable() {
+  [ -e "$PR_DIR" ] && { [ ! -d "$PR_DIR" ] || [ ! -r "$PR_DIR" ] || [ ! -x "$PR_DIR" ]; }
+}
+
+# _pr_scan_prep — the scan's preconditions for `list --scan` and stop-unregistered, in order: the registry
+# resolvable, jq present, the registry usable, the HERMETIC SCAN SKIP, then the ONE snapshot (which turns
+# the lookups over to it). 1 with PR_SCAN_NOTE = `skipped — <why>` / `unavailable — <why>` otherwise.
+_pr_scan_prep() {
+  PR_SCAN_NOTE=""
+  if ! _pr_resolve_dir; then PR_SCAN_NOTE="unavailable — registry unavailable ($PR_DIR_WHY)"
+  elif ! command -v jq >/dev/null 2>&1; then PR_SCAN_NOTE="unavailable — jq not found"
+  elif _pr_dir_unusable; then PR_SCAN_NOTE="unavailable — registry $PR_DIR is unreadable or not a directory"
+  elif ! _pr_scan_ok; then PR_SCAN_NOTE="skipped — HERMETIC_TEST_ENV=1 without LOOMWRIGHT_PROC_PS_SNAPSHOT"
+  elif ! _pr_snapshot; then PR_SCAN_NOTE="unavailable — the process snapshot failed or is empty"
+  fi
+  [ -z "$PR_SCAN_NOTE" ]
 }
 
 cmd_summary() {
@@ -644,14 +738,10 @@ cmd_summary() {
     esac
   done
   if ! _pr_resolve_dir || ! command -v jq >/dev/null 2>&1; then _pr_sum_unavail; return 0; fi
-  if [ -e "$PR_DIR" ] && { [ ! -d "$PR_DIR" ] || [ ! -r "$PR_DIR" ] || [ ! -x "$PR_DIR" ]; }; then
-    _pr_sum_unavail; return 0
-  fi
-  local files f n=0 nr=0 no=0 na=0 nf=0 live=" " do_scan="$scan" u=0 line
+  if _pr_dir_unusable; then _pr_sum_unavail; return 0; fi
+  local files f n=0 nr=0 no=0 na=0 nf=0 do_scan="$scan" u=0 line
   files="$(_pr_entry_files)"
-  if [ "$scan" = 1 ] && [ "${HERMETIC_TEST_ENV:-}" = 1 ] && [ -z "${LOOMWRIGHT_PROC_PS_SNAPSHOT:-}" ]; then   # >>> hermetic scan skip
-    do_scan=0
-  fi   # <<< hermetic scan skip
+  [ "$scan" != 1 ] || _pr_scan_ok || do_scan=0
   if [ -n "$files" ] || [ "$do_scan" = 1 ]; then
     _pr_snapshot || { _pr_sum_unavail; return 0; }
   fi
@@ -665,11 +755,11 @@ cmd_summary() {
       orphaned) na=$((na + 1)) ;;
       *) nf=$((nf + 1)) ;;
     esac
-    [ "$E_CLASS" = finished ] || live="$live$E_PID "   # a registered pid is never counted unregistered
+    _pr_note_live
   done <<<"$files"
   line="proc-registry: summary — $n entries: $nr running, $no overdue, $na orphaned, $nf finished"
   if [ "$scan" = 1 ]; then
-    [ "$do_scan" != 1 ] || u="$(_pr_unreg_count "$live")"
+    [ "$do_scan" != 1 ] || u="$(_pr_unreg_rows "$PR_LIVE" | awk 'NF { u++ } END { print u + 0 }')"
     line="$line; $u unregistered"
   fi
   printf '%s\n' "$line"
@@ -687,42 +777,57 @@ _pr_log() {
   return 0
 }
 
-# _pr_wait_unmatched <seconds> — poll (0.1 s) while the entry's process still matches, up to <seconds>.
+# _pr_wait_unmatched <pid> <pid_start> <cmd_hash> <seconds> — poll (0.1 s) while the process still
+# matches, up to <seconds>.
 _pr_wait_unmatched() {
-  local end=$(( $(date +%s) + $1 ))
-  while _pr_matches "$E_PID" "$E_START" "$E_HASH"; do
+  local end=$(( $(date +%s) + $4 ))
+  while _pr_matches "$1" "$2" "$3"; do
     [ "$(date +%s)" -lt "$end" ] || return 0
     sleep 0.1
   done
   return 0
 }
 
+# _pr_term_kill <pid> <pid_start> <cmd_hash> <grace_s> — the ONE TERM → wait → re-check → KILL sequence
+# (reap's overdue/orphaned path and stop-unregistered; each caller has re-checked identity immediately
+# before calling). Sets PR_OUTCOME, and PR_KEEP=1 when the process may still run (a signal failed, or it
+# survived the KILL).
+_pr_term_kill() {
+  local nokill=""
+  PR_OUTCOME=""; PR_KEEP=0
+  if ! kill -TERM "$1" 2>/dev/null; then
+    PR_OUTCOME="TERM failed"; PR_KEEP=1; return 0
+  fi
+  _pr_wait_unmatched "$1" "$2" "$3" "$4"
+  if [ -n "$(_pr_lstart "$1")" ]; then
+    _pr_matches "$1" "$2" "$3" || nokill="$PR_WHY"
+    if [ -n "$nokill" ]; then
+      PR_OUTCOME="stopped (TERM); no KILL: no longer matches ($nokill)"
+    elif ! kill -KILL "$1" 2>/dev/null; then
+      PR_OUTCOME="TERM ignored; KILL failed"; PR_KEEP=1
+    else
+      _pr_wait_unmatched "$1" "$2" "$3" 2
+      if _pr_matches "$1" "$2" "$3"; then
+        PR_OUTCOME="survived KILL"; PR_KEEP=1
+      else
+        PR_OUTCOME="stopped (TERM+KILL)"
+      fi
+    fi
+  else
+    PR_OUTCOME="stopped (TERM)"
+  fi
+  return 0
+}
+
 # _pr_stop <file> — the overdue/orphaned path of `reap --apply`. Prints the outcome; logs one line.
 _pr_stop() {
-  local f="$1" what="$E_ID${PR_T}$E_KIND${PR_T}pid=$E_PID${PR_T}class=$E_CLASS" outcome="" keep=0 nokill=""
+  local f="$1" what="$E_ID${PR_T}$E_KIND${PR_T}pid=$E_PID${PR_T}class=$E_CLASS" outcome="" keep=0
   if ! _pr_matches "$E_PID" "$E_START" "$E_HASH"; then
     outcome="not signalled: no longer matches ($PR_WHY); pruned"
-  elif ! kill -TERM "$E_PID" 2>/dev/null; then
-    outcome="TERM failed; entry kept"; keep=1
   else
-    _pr_wait_unmatched "$E_GRACE"
-    if [ -n "$(_pr_lstart "$E_PID")" ]; then
-      _pr_matches "$E_PID" "$E_START" "$E_HASH" || nokill="$PR_WHY"
-      if [ -n "$nokill" ]; then
-        outcome="stopped (TERM); no KILL: no longer matches ($nokill)"
-      elif ! kill -KILL "$E_PID" 2>/dev/null; then
-        outcome="TERM ignored; KILL failed; entry kept"; keep=1
-      else
-        _pr_wait_unmatched 2
-        if _pr_matches "$E_PID" "$E_START" "$E_HASH"; then
-          outcome="survived KILL; entry kept"; keep=1
-        else
-          outcome="stopped (TERM+KILL)"
-        fi
-      fi
-    else
-      outcome="stopped (TERM)"
-    fi
+    _pr_term_kill "$E_PID" "$E_START" "$E_HASH" "$E_GRACE"
+    outcome="$PR_OUTCOME"; keep="$PR_KEEP"
+    [ "$keep" -ne 1 ] || outcome="$outcome; entry kept"
   fi
   [ "$keep" -eq 1 ] || rm -f "$f" 2>/dev/null
   _pr_log "$what${PR_T}$outcome${PR_T}$E_EVID"
@@ -800,6 +905,72 @@ cmd_reap() {
   return 0
 }
 
+# ---- stop-unregistered ------------------------------------------------------------------------------
+
+_pr_su_usage() { printf '%s: stop-unregistered — %s\n' "$PR_ME" "$1" >&2; pr_usage >&2; }
+
+# _pr_su_counted <pid> — 0 when the --scan predicate (over PR_SNAP, live set PR_LIVE) counts <pid>.
+_pr_su_counted() { _pr_unreg_rows "$PR_LIVE" | awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }'; }
+
+cmd_stop_unreg() {
+  local apply=0 pid="" start="" hash="" a files f why="" id grace out
+  while [ "$#" -gt 0 ]; do
+    a="$1"; shift
+    case "$a" in
+      --apply) apply=1 ;;
+      --pid|--start|--hash)
+        [ "$#" -ge 1 ] || { _pr_su_usage "missing value for $a"; return 2; }
+        case "$a" in --pid) pid="$1" ;; --start) start="$1" ;; *) hash="$1" ;; esac
+        shift ;;
+      -h|--help) pr_usage; return 0 ;;
+      *) _pr_su_usage "unknown argument $a"; return 2 ;;
+    esac
+  done
+  case "$pid" in
+    '') _pr_su_usage "missing --pid"; return 2 ;;
+    *[!0-9]*|0*|1) _pr_su_usage "--pid must be a positive integer other than 1, without a leading zero"; return 2 ;;
+  esac
+  [ -n "$start" ] || { _pr_su_usage "missing --start"; return 2; }
+  [ -n "$hash" ] || { _pr_su_usage "missing --hash"; return 2; }
+  case "$start$hash" in *"
+"*) _pr_su_usage "a value contains a newline"; return 2 ;; esac
+  id="unreg-$pid"
+  grace="$(_pr_default_grace unregistered "")"
+
+  # 1. the preconditions and the ONE snapshot; 2. the live-entry set from it
+  _pr_scan_prep || why="$PR_SCAN_NOTE"
+  if [ -z "$why" ]; then
+    files="$(_pr_entry_files)"
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      _pr_classify "$f"; _pr_note_live
+    done <<<"$files"
+  fi
+  # 3. the refusals, in order (each on its own line: a pid that is a live entry, gone, or not counted)
+  [ -n "$why" ] || case "$PR_LIVE" in *" $pid "*) why="pid $pid is the live process of a registry entry" ;; esac
+  [ -n "$why" ] || [ -n "$(_pr_snap_get "$pid" 3)" ] || why="pid gone"
+  [ -n "$why" ] || _pr_su_counted "$pid" || why="pid $pid fails the scan predicate (not a plugin look-alike, too young, a descendant of a live entry, or this call's own family)"
+  # 4. from here on every read is LIVE, never the snapshot: the identity re-check immediately before TERM
+  PR_SNAP_ON=0
+  [ -n "$why" ] || _pr_matches "$pid" "$start" "$hash" || why="no longer matches ($PR_WHY)"
+
+  if [ -n "$why" ]; then
+    out="not signalled: $why"
+  elif [ "$apply" -ne 1 ]; then
+    printf 'would stop %s (pid %s, unregistered): TERM, KILL after %ss if it still matches\n' "$id" "$pid" "$grace"
+    printf '(dry run — nothing signalled or changed; re-run with --apply)\n'
+    return 0
+  else
+    _pr_term_kill "$pid" "$start" "$hash" "$grace"
+    out="unregistered $id (pid $pid): $PR_OUTCOME"
+  fi
+  printf '%s\n' "$out"
+  if [ "$apply" -eq 1 ] && [ -n "${PR_DIR:-}" ] && ! _pr_dir_unusable && ( umask 077; mkdir -p "$PR_DIR" ) 2>/dev/null; then
+    _pr_log "$id${PR_T}unregistered${PR_T}pid=$pid${PR_T}class=unregistered${PR_T}$out${PR_T}lstart=$start; cmd_hash=$hash"
+  fi
+  return 0
+}
+
 # ---- dispatch ---------------------------------------------------------------------------------------
 
 sub="${1:-}"
@@ -809,6 +980,7 @@ case "$sub" in
   list) cmd_list "$@"; exit 0 ;;
   summary) cmd_summary "$@"; exit $? ;;
   reap) cmd_reap "$@"; exit $? ;;
+  stop-unregistered) cmd_stop_unreg "$@"; exit $? ;;
   help|-h|--help) pr_usage; exit 0 ;;
   '') printf '%s: missing subcommand\n' "$PR_ME" >&2; pr_usage >&2; exit 2 ;;
   *) printf '%s: unknown subcommand %s\n' "$PR_ME" "$sub" >&2; pr_usage >&2; exit 2 ;;

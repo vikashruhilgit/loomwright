@@ -45,6 +45,23 @@
 #        non-temp script, `-m`, and non-plugin paths do not; the caller's ancestors are excluded but
 #        their other children are not; the registry checksum is unchanged; under HERMETIC_TEST_ENV=1
 #        without the snapshot seam the scan is skipped (0, no ps call) even with a live look-alike.
+#   leg_list_scan  list --scan prints, after the registry rows (classified from the SAME snapshot), one
+#        `unreg-<pid> unregistered <pid> <age>s unregistered <rule>; lstart=…; cmd_hash=…` row per
+#        look-alike — exactly the fixture's 3 (checkout, versioned root, gone temp python; registered,
+#        its descendant, young and non-plugin excluded), equal to summary --scan's <u> — and one
+#        `# scan: 3 unregistered` line; registry unchanged; `list` without --scan prints no scan row or
+#        line and never reads the snapshot; the hermetic skip and an unreadable snapshot print
+#        `# scan: skipped|unavailable — …`; an extra argument is warned about and ignored.
+#   leg_stop_unreg  stop-unregistered with a live list --scan row's lstart + hash: the dry run signals
+#        and writes nothing; a live registry entry's pid (lstart + hash match) and a look-alike child of
+#        a live entry are refused with ONE `not signalled: <reason>` line and stay alive; the hermetic
+#        skip refuses; --apply stops the look-alike and appends one reap.log line per --apply call; a
+#        gone pid is refused; bad arguments exit 2.
+#   leg_stop_unreg_recycled  a look-alike that execs into a DIFFERENT command line that still
+#        satisfies the predicate (list --scan still lists it) is not signalled — only the lstart/hash
+#        re-check can refuse it.
+#   leg_stop_unreg_nonlookalike  an unregistered pid whose lstart + hash match but that fails the scan
+#        predicate (a plain sleep) is not signalled.
 #   MUTATION CONTROLS (each mutant gated per lesson fa32a308: non-empty, byte-differs, parses, and a
 #   line-delete removes exactly one line), each must turn its leg red: the cmd-hash comparison
 #   deleted (AC7), the --apply gate deleted (AC5), the ## Status read deleted (AC4), the age compare
@@ -57,7 +74,10 @@
 #   comparison deleted against summary (AC10), the snapshot's TZ pin dropped (AC10), the unavailable
 #   line silenced (AC10), the --scan age comparison made never-true (AC11), the registered-pid
 #   exclusion deleted (AC11), summary touching a registry file (AC11), the ancestor walk deleted
-#   (AC11), the gone-script check deleted (AC11), the hermetic scan skip deleted (AC11).
+#   (AC11), the gone-script check deleted (AC11), the hermetic scan skip deleted (AC11); list --scan's
+#   own row print deleted (leg_list_scan), stop-unregistered's pre-TERM identity re-check deleted
+#   (leg_stop_unreg_recycled), its live-entry refusal deleted (leg_stop_unreg), its scan-predicate
+#   refusal deleted (leg_stop_unreg_nonlookalike).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -576,11 +596,14 @@ leg_header() {
            LOOMWRIGHT_PROC_MAX_S_POSTMORTEM "NEVER SIGNAL BY PID ALONE" "EXIT CODES" "CLASSES" "CAPS" "GRACE" "precedence" \
            "summary [--scan]" "proc-registry: summary — <E> entries: <r> running, <o> overdue, <a> orphaned, <f> finished" \
            "$U" "; <u> unregistered" LOOMWRIGHT_PROC_PS_SNAPSHOT LOOMWRIGHT_PROC_UNREG_MIN_S "HERMETIC SCAN SKIP" \
-           "summary 0 (usage error 2)"; do
+           "summary 0 (usage error 2)" "list [--scan]" "# scan: <u> unregistered" \
+           "stop-unregistered --pid <p> --start <lstart> --hash <cmd_hash> [--apply]" "not signalled: <reason>" \
+           "stop-unregistered 0, a refusal too (usage error 2)"; do
     has "$hdr" "$k" || { check "AC9 header names '$k'" false; }
   done
   check "AC9 header names every subcommand, key, class, cap override, location and exit code" true
   check "AC10 the usage text lists summary" has "$(bash "$S" help)" "proc-registry.sh summary [--scan]"
+  check "leg_header the usage text lists list --scan and stop-unregistered" eval 'has "$(bash "$S" help)" "proc-registry.sh list [--scan]" && has "$(bash "$S" help)" "proc-registry.sh stop-unregistered --pid <p> --start <lstart> --hash <cmd_hash> [--apply]"'
   new_reg
   for k in phase lane drain postmortem; do
     sleeper; p=$SP
@@ -809,12 +832,185 @@ leg_summary_hermetic() {
   leg_end
 }
 
+# ==== list --scan / stop-unregistered ==================================================================
+# thash <string> — the SUT's `<algo>:<hash>` of a command line (shasum → sha1sum → cksum)
+thash() {
+  if command -v shasum >/dev/null 2>&1; then printf 'sha1:%s' "$(printf '%s' "$1" | shasum | cut -d' ' -f1)"
+  elif command -v sha1sum >/dev/null 2>&1; then printf 'sha1:%s' "$(printf '%s' "$1" | sha1sum | cut -d' ' -f1)"
+  else printf 'cksum:%s' "$(printf '%s' "$1" | cksum | cut -d' ' -f1)"; fi
+}
+lstart_of() { env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | trimmed; }
+cmd_of() { env LC_ALL=C ps -ww -o command= -p "$1" 2>/dev/null | trimmed; }
+LIVE_SNAP="$WORK/live-snap"
+live_snap() { env TZ=UTC0 LC_ALL=C ps -A -ww -o pid=,ppid=,lstart=,etime=,command= > "$LIVE_SNAP"; }
+# scan_row <pid> — <pid>'s `list --scan` row over a fresh live snapshot (threshold 0 s); empty when not listed
+scan_row() {
+  live_snap
+  LOOMWRIGHT_PROC_PS_SNAPSHOT="$LIVE_SNAP" LOOMWRIGHT_PROC_UNREG_MIN_S=0 bash "$S" list --scan 2>/dev/null \
+    | awk -F'\t' -v p="$1" '$2 == "unregistered" && $3 == p'
+}
+row_lstart() { sed -n 's/.*; lstart=\(.*\); cmd_hash=.*/\1/p' <<<"$1"; }
+row_hash() { sed -n 's/.*; cmd_hash=//p' <<<"$1"; }
+# su_run [args] — stop-unregistered over a fresh live snapshot (threshold 0 s); sets SU (stdout) and SU_RC
+su_run() {
+  live_snap
+  SU="$(LOOMWRIGHT_PROC_PS_SNAPSHOT="$LIVE_SNAP" LOOMWRIGHT_PROC_UNREG_MIN_S=0 bash "$S" stop-unregistered "$@" 2>"$ERR")"; SU_RC=$?
+}
+one_line() { [ "$(printf '%s\n' "$1" | awk 'END { print NR }')" = 1 ]; }
+# lookalike <name> <n> — spawn `sleep <n>` whose argv[0] is a plugin script path, aged past 0 s (sets SP)
+LW="$WORK/lw/loomwright/scripts"
+lookalike() {
+  spawn bash -c 'exec -a "$0" sleep "$1"' "$LW/$1" "$2"
+  WAIT_LIB_WHAT="pid $SP to exec its look-alike line" wait_for_cmd 5 cmd_is "$SP" "$LW/$1 $2"
+  WAIT_LIB_WHAT="pid $SP to age past 0 s" wait_for_cmd 10 etime_pos "$SP"
+}
+
+leg_list_scan() {
+  local la lst lcmd fx gone out rc before nrows u L="Mon Jan  1 00:00:00 2001" c1 c3
+  new_reg
+  spawn bash -c 'exec -a "$0" sleep 3020' /opt/lw-fixture/loomwright/scripts/registered.sh; la=$SP
+  WAIT_LIB_WHAT="pid $la to exec its look-alike line" wait_for_cmd 5 cmd_is "$la" '/opt/lw-fixture/loomwright/scripts/registered.sh 3020'
+  reg --pid "$la" --kind lane --purpose lookalike --max-lifetime 999999 2>/dev/null
+  lst="$(lstart_of "$la")"; lcmd="$(cmd_of "$la")"
+  gone="$WORK/gone-$RANDOM/fixture-app.py"
+  c1="bash /opt/lw/loomwright/scripts/merge-watch.sh --pr 7"
+  c3="python3 -u $gone --port 5555"
+  fx="$WORK/list-snap.$RANDOM"
+  {
+    printf '%s 1 %s 3-00:00:00 %s\n' "$la" "$lst" "$lcmd"                                     # registered: no
+    printf '900301 1 %s 3-00:00:00 %s\n' "$L" "$c1"                                            # checkout path: YES
+    printf '900302 1 %s 1-02:03:04 bash /opt/cache/atelier/loomwright/17.13.0/scripts/stray-watch.sh\n' "$L"  # versioned root: YES
+    printf '900303 1 %s 1-00:00:00 %s\n' "$L" "$c3"                                            # temp python, script gone: YES
+    printf '900304 1 %s 05:00 bash /opt/lw/loomwright/scripts/young.sh\n' "$L"                 # 300 s: no
+    printf '900305 %s %s 1-00:00:00 bash /opt/lw/loomwright/scripts/child.sh\n' "$la" "$L"     # child of a registered pid: no
+    printf '900306 1 %s 1-00:00:00 bash /opt/notloomwright/scripts/x.sh\n' "$L"                # not the plugin: no
+  } > "$fx"
+  before="$(dirsum)"
+  out="$(LOOMWRIGHT_PROC_PS_SNAPSHOT="$fx" bash "$S" list --scan 2>"$ERR")"; rc=$?
+  nrows="$(awk -F'\t' '$2 == "unregistered" { n++ } END { print n + 0 }' <<<"$out")"
+  check "leg_list_scan list --scan exits 0 with exactly the fixture's 3 unregistered rows" eq "$rc|$nrows" "0|3"
+  u="$(LOOMWRIGHT_PROC_PS_SNAPSHOT="$fx" bash "$S" summary --scan 2>/dev/null | sed -n 's/.*; \([0-9][0-9]*\) unregistered$/\1/p')"
+  check "leg_list_scan ... the row count equals summary --scan's <u> on the same snapshot" eq "$nrows" "$u"
+  check "leg_list_scan ... every unregistered row is unreg-<pid>/unregistered/<pid>/<age>/unregistered/<evidence>" \
+    eq "$(awk -F'\t' '$2 == "unregistered" && !(NF == 6 && $1 == "unreg-" $3 && $5 == "unregistered" && $4 ~ /^[0-9]+s$/) { bad++ } END { print bad + 0 }' <<<"$out")" 0
+  check "leg_list_scan ... the checkout row names its rule, the snapshot's lstart and the command-line hash" \
+    has "$out" "$(printf 'unreg-900301\tunregistered\t900301\t259200s\tunregistered\tplugin script path /opt/lw/loomwright/scripts/merge-watch.sh; lstart=%s; cmd_hash=%s' "$L" "$(thash "$c1")")"
+  check "leg_list_scan ... the versioned-root row names its script" \
+    has "$out" "$(printf 'unreg-900302\tunregistered\t900302\t93784s\tunregistered\tplugin script path /opt/cache/atelier/loomwright/17.13.0/scripts/stray-watch.sh; lstart=')"
+  check "leg_list_scan ... the python row names the gone temp script" \
+    has "$out" "$(printf '\tunregistered\tgone temp python script %s; lstart=%s; cmd_hash=%s' "$gone" "$L" "$(thash "$c3")")"
+  check "leg_list_scan ... the registry rows come first, classified from the SAME snapshot (the registered look-alike reads 259200s, not unregistered)" \
+    eq "$(awk -F'\t' -v p="$la" '!/^#/ { k++ } $3 == p { print k ":" $2 ":" $4 ":" $5 }' <<<"$out")" "1:lane:259200s:running"
+  check "leg_list_scan ... then ONE '# scan: 3 unregistered' line, last" eq "$(grep -c '^# scan:' <<<"$out")|$(tail -n 1 <<<"$out")" "1|# scan: 3 unregistered"
+  check "leg_list_scan ... read-only: registry unchanged, nothing signalled" eval '[ "$(dirsum)" = "$before" ] && alive "$la"'
+  out="$(LOOMWRIGHT_PROC_PS_SNAPSHOT="$fx" bash "$S" list 2>/dev/null)"
+  check "leg_list_scan list without --scan: no scan row or line, one row per entry, the snapshot never read (live age)" \
+    eval '! has "$out" unregistered && ! has "$out" "# scan:" && [ "$(grep -vc "^#" <<<"$out")" = 1 ] && ! has "$out" 259200s'
+  out="$(LOOMWRIGHT_PROC_UNREG_MIN_S=0 bash "$S" list --scan 2>/dev/null)"
+  check "leg_list_scan HERMETIC_TEST_ENV=1 without the seam: '# scan: skipped — …', no unregistered row, the registry row still prints" \
+    eval 'has "$out" "# scan: skipped — " && ! has "$out" "$(printf "\tunregistered\t")" && has "$out" "$(printf "\t%s\t" "$la")"'
+  out="$(LOOMWRIGHT_PROC_PS_SNAPSHOT="$WORK/no-such-snap" bash "$S" list --scan 2>/dev/null)"; rc=$?
+  check "leg_list_scan an unreadable snapshot: '# scan: unavailable — …', exit 0" eval '[ "$rc" = 0 ] && has "$out" "# scan: unavailable — "'
+  out="$(LOOMWRIGHT_PROC_PS_SNAPSHOT="$fx" bash "$S" list --scan bogus 2>"$ERR")"; rc=$?
+  check "leg_list_scan an extra argument is warned about and ignored (the scan still runs)" \
+    eval '[ "$rc" = 0 ] && [ "$(cat "$ERR")" = "proc-registry: list takes no arguments (ignored: bogus)" ] && has "$out" "# scan: 3 unregistered"'
+  leg_end
+}
+
+leg_stop_unreg() {
+  local a b w c row ls h before n0 rc out
+  new_reg
+  lookalike stray.sh 3021; a=$SP
+  row="$(scan_row "$a")"; ls="$(row_lstart "$row")"; h="$(row_hash "$row")"
+  check "leg_stop_unreg list --scan lists the live look-alike with its live lstart and command-line hash" \
+    eq "$ls|$h" "$(lstart_of "$a")|$(thash "$LW/stray.sh 3021")"
+  before="$(dirsum)"
+  su_run --pid "$a" --start "$ls" --hash "$h"
+  check "leg_stop_unreg without --apply: exit 0, says what it would do, no signal, nothing written" \
+    eval '[ "$SU_RC" = 0 ] && has "$SU" "would stop unreg-$a (pid $a, unregistered)" && alive "$a" && [ "$(dirsum)" = "$before" ]'
+  out="$(bash "$S" stop-unregistered --apply --pid "$a" --start "$ls" --hash "$h" 2>/dev/null)"; rc=$?
+  check "leg_stop_unreg HERMETIC_TEST_ENV=1 without the seam: refused (one 'not signalled: skipped — …' line), alive" \
+    eval '[ "$rc" = 0 ] && one_line "$out" && has "$out" "not signalled: skipped — " && alive "$a"'
+  # a live registry entry (itself a look-alike) whose lstart + hash match
+  lookalike registered.sh 3022; b=$SP
+  reg --pid "$b" --kind lane --purpose live --max-lifetime 999999 2>/dev/null
+  n0="$(lines "$R/reap.log" 2>/dev/null)"
+  su_run --apply --pid "$b" --start "$(efield "$b" pid_start)" --hash "$(efield "$b" cmd_hash)"
+  check "leg_stop_unreg a live registry entry's pid (lstart + hash match) is refused: ONE line naming the entry, exit 0, alive" \
+    eq "$SU_RC|$SU|$(alive "$b" && echo alive)" "0|not signalled: pid $b is the live process of a registry entry|alive"
+  check "leg_stop_unreg ... the --apply refusal appends one reap.log line" eq "$(lines "$R/reap.log")" "$(( ${n0:-0} + 1 ))"
+  # a look-alike CHILD of a live entry (the wrapper W is registered; its child is not)
+  ready_fixture "( exec -a '$LW/child.sh' sleep 3023 ) & echo \"\$!\" > \"\$1.c\"; : > \"\$1\"; wait"; w=$SP
+  c="$(cat "$WORK"/ready.*.c 2>/dev/null | head -1)"; rm -f "$WORK"/ready.*.c
+  [ -n "$c" ] && { env TZ=UTC0 LC_ALL=C ps -o lstart= -p "$c" > "$FIXDIR/$c" 2>/dev/null; LEG_PIDS="$LEG_PIDS $c"; }
+  reg --pid "$w" --kind lane --purpose wrapper --max-lifetime 999999 2>/dev/null
+  WAIT_LIB_WHAT="pid $c to exec its look-alike line" wait_for_cmd 5 cmd_is "$c" "$LW/child.sh 3023"
+  WAIT_LIB_WHAT="pid $c to age past 0 s" wait_for_cmd 10 etime_pos "$c"
+  su_run --apply --pid "$c" --start "$(lstart_of "$c")" --hash "$(thash "$LW/child.sh 3023")"
+  check "leg_stop_unreg a look-alike descendant of a live entry is refused (fails the scan predicate), alive" \
+    eval '[ -n "$c" ] && [ "$SU_RC" = 0 ] && one_line "$SU" && has "$SU" "not signalled: pid $c fails the scan predicate" && alive "$c"'
+  # the matching unregistered look-alike, --apply
+  n0="$(lines "$R/reap.log")"
+  su_run --apply --pid "$a" --start "$ls" --hash "$h"
+  WAIT_LIB_WHAT="pid $a to be reaped" wait_for_cmd 5 no_lstart "$a"
+  check "leg_stop_unreg --apply stops the matching unregistered look-alike (TERM), exit 0" \
+    eval '[ "$SU_RC" = 0 ] && one_line "$SU" && has "$SU" "unregistered unreg-$a (pid $a): stopped (TERM" && gone "$a"'
+  check "leg_stop_unreg ... one reap.log line naming it" eval '[ "$(lines "$R/reap.log")" = "$((n0 + 1))" ] && tail -n 1 "$R/reap.log" | grep -qF "unreg-$a"'
+  su_run --apply --pid "$a" --start "$ls" --hash "$h"
+  check "leg_stop_unreg a gone pid is refused: 'not signalled: pid gone'" eq "$SU_RC|$SU" "0|not signalled: pid gone"
+  check "leg_stop_unreg ... the other fixtures were never signalled" eval 'alive "$b" && alive "$c" && alive "$w"'
+  # usage errors: exit 2, nothing signalled
+  local bad=0 args
+  for args in "--pid $b --start x" "--pid $b --hash y" "--start x --hash y" "--pid abc --start x --hash y" \
+              "--pid 1 --start x --hash y" "--pid 0$b --start x --hash y" "--pid $b --start x --hash y --bogus" "--pid"; do
+    # shellcheck disable=SC2086
+    bash "$S" stop-unregistered --apply $args >/dev/null 2>&1; rc=$?
+    [ "$rc" = 2 ] || { bad=1; [ "$QUIET" = 1 ] || echo "    usage case '$args' exited $rc"; }
+  done
+  bash "$S" stop-unregistered --apply --pid "$b" --start "$(printf 'x\ny')" --hash y >/dev/null 2>&1; rc=$?
+  [ "$rc" = 2 ] || bad=1
+  check "leg_stop_unreg a bad argument is a usage error (exit 2) and signals nothing" eval '[ "$bad" = 0 ] && alive "$b"'
+  leg_end
+}
+
+leg_stop_unreg_recycled() {
+  local p rf row ls h
+  new_reg
+  mkdir -p "$LW"
+  # a look-alike that, on USR1, execs into a SECOND plugin-path command line: same pid + lstart, still a look-alike
+  printf '%s\n' 'trap '"'"'exec -a "$2" sleep 3024'"'"' USR1' ': > "$1"' 'while :; do sleep 0.1; done' > "$LW/first.sh"
+  rf="$WORK/ready.recycle.$RANDOM"
+  spawn bash "$LW/first.sh" "$rf" "$LW/second.sh"; p=$SP
+  WAIT_LIB_WHAT="fixture $p to install its trap" wait_for_cmd 5 test -f "$rf"
+  WAIT_LIB_WHAT="pid $p to age past 0 s" wait_for_cmd 10 etime_pos "$p"
+  row="$(scan_row "$p")"; ls="$(row_lstart "$row")"; h="$(row_hash "$row")"
+  kill -USR1 "$p"
+  WAIT_LIB_WHAT="pid $p to exec its second look-alike line" wait_for_cmd 5 cmd_is "$p" "$LW/second.sh 3024"
+  check "leg_stop_unreg_recycled (control) before AND after the exec the pid is a listed look-alike" \
+    eval '[ -n "$ls" ] && [ -n "$h" ] && [ -n "$(scan_row "$p")" ]'
+  su_run --apply --pid "$p" --start "$ls" --hash "$h"
+  check "leg_stop_unreg_recycled a pid recycled into another look-alike command line is not signalled (the hash re-check)" \
+    eq "$SU_RC|$SU|$(alive "$p" && echo alive)" "0|not signalled: no longer matches (command line differs (pid recycled))|alive"
+  leg_end
+}
+
+leg_stop_unreg_nonlookalike() {
+  local p
+  new_reg
+  sleeper; p=$SP
+  su_run --apply --pid "$p" --start "$(lstart_of "$p")" --hash "$(thash "$(cmd_of "$p")")"
+  check "leg_stop_unreg_nonlookalike an unregistered pid with a matching lstart + hash that fails the scan predicate is refused, alive" \
+    eval '[ "$SU_RC" = 0 ] && one_line "$SU" && has "$SU" "not signalled: pid $p fails the scan predicate" && alive "$p"'
+  leg_end
+}
+
 # ==== run the legs against the real script =============================================================
 echo "== proc-registry.sh =="
 for leg in leg_keys leg_id leg_expect leg_failsafe leg_status_done leg_overdue_vs_running leg_classes \
            leg_dryrun leg_apply_classes leg_recheck_kill leg_session_entry leg_no_ppid_signal leg_owned_last leg_apply_more leg_recycled leg_hermetic \
            leg_hermetic_empty leg_default_location leg_header leg_summary_classes leg_summary_recycled leg_summary_zero \
-           leg_summary_seam leg_summary_scan leg_summary_hermetic; do
+           leg_summary_seam leg_summary_scan leg_summary_hermetic leg_list_scan leg_stop_unreg leg_stop_unreg_recycled \
+           leg_stop_unreg_nonlookalike; do
   LEG_FAIL=0; S="$SUT_REAL"; "$leg"
 done
 
@@ -867,7 +1063,7 @@ mk_mutant exit1 sub '"$PR_ME" "$1" >&2; }' '"$PR_ME" "$1" >&2; exit 1; }'
 run_mutant "AC3 register failure path exits 1" leg_failsafe
 mk_mutant recheck del '|| nokill="$PR_WHY"'
 run_mutant "AC6 re-check before KILL deleted" leg_recheck_kill
-mk_mutant ppidkill sub 'elif ! kill -KILL "$E_PID" 2>/dev/null; then' 'elif ! { pkill -KILL -P "$E_PID"; kill -KILL "$E_PID"; } 2>/dev/null; then'
+mk_mutant ppidkill sub 'elif ! kill -KILL "$1" 2>/dev/null; then' 'elif ! { pkill -KILL -P "$1"; kill -KILL "$1"; } 2>/dev/null; then'
 run_mutant "AC6 a ppid KILL of the wrapper's children re-added" leg_no_ppid_signal
 mk_mutant ownedlast del '| _pr_owned_last)"'
 run_mutant "AC6 owned-entries-last ordering deleted" leg_owned_last
@@ -889,7 +1085,7 @@ mk_mutant unavail sub "printf 'proc-registry: summary — unavailable" ": '"
 run_mutant "AC10 the unavailable line silenced" leg_summary_zero
 mk_mutant unregmin sub '[ "$age" -gt "$min" ] || continue' '[ "$age" -lt 0 ] || continue'
 run_mutant "AC11 the --scan age comparison made never-true" leg_summary_scan
-mk_mutant unregreg del '[ "$E_CLASS" = finished ] || live="$live$E_PID "'
+mk_mutant unregreg del '[ "$E_CLASS" = finished ] || PR_LIVE="$PR_LIVE$E_PID "'
 run_mutant "AC11 the registered-pid exclusion deleted" leg_summary_scan
 mk_mutant sumtouch sub 'local files f n=0 nr=0' ': > "$PR_DIR/.touched"; local files f n=0 nr=0'
 run_mutant "AC11 summary touches a file in the registry dir (checksum)" leg_summary_scan
@@ -901,6 +1097,14 @@ mk_mutant gonescript sub '_pr_in_tmp "$path" && [ ! -e "$path" ]' '_pr_in_tmp "$
 run_mutant "AC11 the gone-script check deleted (an existing temp script counts)" leg_summary_scan
 mk_mutant hermscan range 'hermetic scan skip'
 run_mutant "AC11 the hermetic scan skip deleted (a live look-alike is counted)" leg_summary_hermetic
+mk_mutant listrow del "printf 'unreg-%s"
+run_mutant "leg_list_scan list --scan's own unregistered row print deleted (0 rows, not 3)" leg_list_scan
+mk_mutant suhash del '_pr_matches "$pid" "$start" "$hash" ||'
+run_mutant "leg_stop_unreg_recycled stop-unregistered's identity re-check before TERM deleted (a recycled look-alike is TERMed)" leg_stop_unreg_recycled
+mk_mutant sulive del 'case "$PR_LIVE" in *" $pid "*)'
+run_mutant "leg_stop_unreg stop-unregistered's live-entry refusal deleted" leg_stop_unreg
+mk_mutant supred del '_pr_su_counted "$pid" ||'
+run_mutant "leg_stop_unreg_nonlookalike stop-unregistered's scan-predicate refusal deleted (a plain sleep is TERMed)" leg_stop_unreg_nonlookalike
 
 echo
 echo "test-proc-registry.sh: $pass passed, $fail failed"
