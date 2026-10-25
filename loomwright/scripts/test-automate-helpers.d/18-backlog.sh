@@ -380,4 +380,39 @@ bl_us() { BL_FIXDIR_OVR="$BL/fixus" bl_run "$1" item-state bl/10-lane --root "$T
 bl_is "BL11 a \\037 in a lane-status field is scrubbed to a space (the lane claim still reads whole)" \
   "$(bl_us "$H")" "in_flight	bl/10-lane	lane L2 (run ning) from lane-status"
 bl_mut_check "lanes.tsv scrub removed" '  "$JQ" -r '"'"'def scrub: tostring | gsub(' '  "$JQ" -r '"'"'def scrub: tostring;' bl_us "in_flight	bl/10-lane	lane L2 (run ning) from lane-status"
+
+# ---- BL12 (pa25 AC1) backlog --offline: no gh call and no right-size call in any mode; the document
+# is the gh-failure read (github unverified, right-size unknown) with every item in the same state.
+# The comparison projection drops only right_size (the failing-gh leg still runs the real right-size).
+bl_proj() { jq -c '[.items[] | del(.right_size)], .stale_runs, .totals, .item_count' <<<"$1"; }
+BL_GH_FAIL=1 bl_run "$H" backlog --json --root "$T0"; BL_FAILDOC="$BL_OUT"
+bl_s12() {
+  : > "$BL/gh.log"; : > "$BL/rs.log"
+  LOOMWRIGHT_RIGHT_SIZE_BIN="$BL/bin/rsize" bl_run "$1" backlog --json --offline --root "$T0"
+  printf '%s %s %s %s %s' "$BL_RC" "$(grep -c . "$BL/gh.log")" "$(grep -c . "$BL/rs.log")" \
+    "$(jq -r '"\(.github) \(.right_size) \([.items[] | select(.right_size != "unknown")] | length)"' <<<"$BL_OUT")" \
+    "$([ "$(bl_proj "$BL_OUT")" = "$(bl_proj "$BL_FAILDOC")" ] && echo same-as-gh-failure)"
+}
+bl_is "BL12 --offline: exit 0, zero gh calls, zero right-size calls, github unverified, right_size unknown on the doc and every item, and every item's state/evidence equal the failing-gh read" \
+  "$(bl_s12 "$H")" "0 0 0 unverified unknown 0 same-as-gh-failure"
+bl_is "BL12 the failing-gh baseline really is the failure path (the comparison is not vacuous)" \
+  "$(jq -r '"\(.github) \(.item_count)"' <<<"$BL_FAILDOC")" "unverified 23"
+bl_mut_check "pin pa25 AC1: the --offline guard removed from _bl_context (both gh reads run)" \
+  '  if [ "$offline" = 1 ]; then rc1=1; rc2=1' '  if false; then :' bl_s12 "0 0 0 unverified unknown 0 same-as-gh-failure"
+bl_mut_check "pin pa25 AC1: the --offline guard removed from the right-size job" \
+  '  if [ "$offline" = 1 ]; then rsz=unknown' '  if false; then :' bl_s12 "0 0 0 unverified unknown 0 same-as-gh-failure"
+# every mode accepts it, with zero gh calls; the table header and --verify-list say unverified
+bl_off() { : > "$BL/gh.log"; bl_run "$H" backlog "$@" --offline --root "$T0"; printf '%s:%s' "$BL_RC" "$(grep -c . "$BL/gh.log")"; }
+bl_is "BL12 --offline is accepted with --state, --unknown, --verify-list [<item>] and the plain table (exit 0, zero gh calls each)" \
+  "$(bl_off --json --state conflict) $(bl_off --unknown) $(bl_off --verify-list) $(bl_off --verify-list bl/14-open) $(bl_off)" "0:0 0:0 0:0 0:0 0:0"
+bl_off --state conflict --json >/dev/null
+bl_is "BL12 --offline --state keeps whole-tree totals and filters rows" \
+  "$(jq -r '"\(.state_filter) \(.totals | add) \([.items[].state] | unique | join(",")) \(.items | length)"' <<<"$BL_OUT")" "conflict 23 conflict $(jq -r '.totals.conflict' <<<"$BL_FAILDOC")"
+bl_run "$H" backlog --offline --root "$T0"
+bl_is "BL12 the --offline table header reads github: unverified, right-size: unknown" "$(head -n1 <<<"$BL_OUT")" "backlog: 23 items — github: unverified — right-size: unknown"
+bl_run "$H" backlog --verify-list bl/14-open --offline --root "$T0"
+bl_is "BL12 --verify-list --offline says every candidate is unverified" \
+  "$([ "$(grep -c '^  candidate: unverified ' <<<"$BL_OUT")" = "$(grep -c '^verify	' <<<"$BL_OUT")" ] && [ "$(grep -c '^verify	' <<<"$BL_OUT")" -gt 0 ] && echo all-unverified)" "all-unverified"
+bl_run "$H" item-state bl/14-open --offline --root "$T0"
+bl_is "BL12 item-state takes no --offline flag (usage error, exit 1, nothing on stdout)" "$BL_RC|$BL_OUT" "1|"
 rm -rf "$BL"
