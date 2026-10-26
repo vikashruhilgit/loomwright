@@ -30,6 +30,7 @@
 # deletion turns at least one leg here red. This file's own ok()/no()/has()/lacks() are the
 # conventional per-file harness helpers (the live negative case for AC4b).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 S="$HERE/module-shape-facts.sh"

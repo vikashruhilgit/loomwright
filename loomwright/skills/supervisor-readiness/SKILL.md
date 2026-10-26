@@ -545,7 +545,7 @@ Before saving a brief:
 - [ ] Brief follows the complete template (all 9 required sections present; Feasibility optional)
 - [ ] If Phase 2.5 ran, Feasibility verdict recorded in the optional `## Feasibility` section
 - [ ] If the brief modifies an existing script, `## Touched-file invariants` covers every modified script with grounded (file + quoted anchor) entries
-- [ ] The File Impact Map carries the `## Module layout` facts (a line count per MODIFY path; one home per new responsibility)
+- [ ] The File Impact Map carries the module-layout facts (§"Module layout" above: a line count per MODIFY path; one home per new responsibility)
 
 ## See Also
 
