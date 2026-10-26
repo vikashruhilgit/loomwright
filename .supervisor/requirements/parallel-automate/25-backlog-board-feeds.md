@@ -62,3 +62,9 @@ loomwright/scripts/session-resume.sh
 loomwright/scripts/test-session-resume.sh
 loomwright/docs/HOOKS.md
 changelog.d/pa25-backlog-board-feeds.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-26T13:38:51Z
+- **Brief:** .supervisor/jobs/done/2026-10-25-pa25-backlog-board-feeds.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/709
