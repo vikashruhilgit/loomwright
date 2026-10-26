@@ -29,7 +29,8 @@
 #
 # ROW IDS: `<kind>-<h8>`, h8 = the first 8 hex of the SHA-1 (shasum, else sha1sum; else cksum's CRC)
 #   of the row's IDENTITY — what it is plus the state it was judged in, never its age. A row whose
-#   identity changes (a pid recycled, a lock re-taken, a sweep verdict changed) gets a NEW id, so
+#   identity changes (a pid recycled, a lock re-taken, a sweep verdict or would-remove set changed, a
+#   look-alike's session ended) gets a NEW id, so
 #   `act` with the old id refuses it. Kinds: reg fin unreg scan lock lane leaks wt br brkept cfgbak
 #   mw mpf ret slot caf ext unk.
 #
@@ -37,8 +38,14 @@
 #   processes        `proc-registry.sh list --scan`: a running entry ⇒ none; overdue / orphaned ⇒
 #                    reap; every finished entry together ⇒ ONE `fin` row ⇒ reap (prunes the files, no
 #                    signal); each `unreg-<pid>` look-alike ⇒ stop-unregistered (lstart + cmd_hash from
-#                    its evidence); a `# scan: skipped|unavailable — …` line ⇒ ONE unknown row. The
-#                    owner column says only `plugin — <kind> entry`: `list` prints no repo / run.
+#                    its evidence), EXCEPT one whose snapshot ppid chain (at most 64 hops, stopping at
+#                    pid 1) reaches a live host session (the not-the-plugins host rule: an executable
+#                    whose basename is `claude`, its path rebuilt across spaces, or `bg-pty-host`) ⇒ none, "its session is still alive — the
+#                    session owns it" (a leak from an ENDED session was reparented and keeps
+#                    stop-unregistered); its evidence adds `; command: <its command line, cut at 200
+#                    chars>` (and `; session: pid <p> <its command>`); a `# scan: skipped|unavailable
+#                    — …` line ⇒ ONE unknown row. The owner column of a registry row says only
+#                    `plugin — <kind> entry`: `list` prints no repo / run.
 #   locks            `run-lock.sh status --root <c>` and `liveness --root <c>` for the primary and each
 #                    lane checkout: holder alive ⇒ none; holder `dead` while the run its owner label
 #                    names (`<entry point>:<run_id>`) still says `## Status: running` ⇒ none (that run
@@ -57,7 +64,10 @@
 #                    removed is skipped (a note counts them).
 #   worktrees        `automate-helpers.sh sweep --root <primary>` (dry run; it already runs
 #                    `worktree-salvage.sh --check-ignored` per worktree, so a worktree is removable only
-#                    when sweep says `would-remove`): would-remove ⇒ sweep-apply; kept worktree / app /
+#                    when sweep says `would-remove`): would-remove ⇒ sweep-apply, its identity carrying
+#                    the count and hash of the sorted would-remove set (sweep-apply removes the whole
+#                    set, so a set that changed after the report gives every such row a new id and
+#                    act refuses the old one); kept worktree / app /
 #                    lane / other ⇒ none; every kept branch together ⇒ ONE `brkept` row; age = the tip
 #                    commit's age.
 #   stale-state      `retention-sweep.sh --project-root <primary>` (report mode): one row per directory
@@ -75,8 +85,9 @@
 #   not-the-plugins  per snapshot process that is (1) older than the scan threshold
 #                    (LOOMWRIGHT_PROC_UNREG_MIN_S, else 3600), (2) not a registry row's live pid, not a
 #                    listed look-alike, not a descendant of a live entry (snapshot ppid chain, at most 64
-#                    hops) and not this call's own family, and (3) the host's own session (first word's
-#                    basename `claude`, or a command line containing `bg-pty-host`) or a `python*`
+#                    hops) and not this call's own family, and (3) the host's own session (an executable
+#                    whose basename is `claude` — an absolute path containing a space is rebuilt word by
+#                    word —, or a command line containing `bg-pty-host`) or a `python*`
 #                    process ⇒ none, naming the native way to close it. This rule is janitor's; it never
 #                    widens what the plugin may stop.
 #
@@ -91,7 +102,8 @@
 #   reap               proc-registry.sh reap --apply <entry id>...
 #   stop-unregistered  proc-registry.sh stop-unregistered --pid <p> --start <lstart> --hash <hash> --apply
 #                      with the row's recorded lstart + hash (proc-registry re-checks them before TERM and
-#                      before KILL, and refuses a live entry or a pid the scan no longer counts)
+#                      before KILL, and refuses a live entry or a pid the scan no longer counts); a
+#                      look-alike under a live host session is a `none` row, so act refuses it
 #   sweep-apply        automate-helpers.sh sweep --apply --root <primary>. Honest limit: sweep has no
 #                      per-path filter, so picking ANY sweep row applies the WHOLE sweep (every
 #                      would-remove row); it runs once per act call
@@ -263,6 +275,35 @@ _jr_snapshot() {
   return 0
 }
 _jr_snap_get() { printf '%s\n' "$JR_SNAP" | awk -F'\t' -v p="$1" -v c="$2" '$1 == p { print $c; exit }'; }
+# _jr_is_host_cmd <command line> — 0 for the host's own session: an executable whose basename is `claude`,
+# or a command line containing `bg-pty-host` (the one host rule; not-the-plugins and the session check
+# share it). `ps` prints argv joined by spaces, so an absolute executable path that contains a space (the
+# desktop app's `/Users/<n>/Library/Application Support/Claude/…/MacOS/claude`) is rebuilt word by word:
+# a continuation word never starts with `/` or `-`, so `python3 /x/claude` is not a host.
+_jr_is_host_cmd() {
+  local rest="$1" exe w
+  case "$1" in *bg-pty-host*) return 0 ;; esac
+  exe="${rest%% *}"; rest="${rest#"$exe"}"
+  while :; do
+    [ "${exe##*/}" = claude ] && return 0
+    case "$exe" in /*) ;; *) return 1 ;; esac
+    rest="${rest# }"; w="${rest%% *}"
+    case "$w" in ''|/*|-*) return 1 ;; esac
+    exe="$exe $w"; rest="${rest#"$w"}"
+  done
+}
+# _jr_live_session <pid> — prints the pid of the nearest live host session in <pid>'s snapshot ppid chain
+# (at most 64 hops, stopping at pid 1); nothing when none. A process whose session ended was reparented
+# (to pid 1, or a subreaper) and has none.
+_jr_live_session() {
+  local p k=0
+  p="$(_jr_snap_get "$1" 2)"
+  while _jr_is_uint "$p" && [ "$p" -gt 1 ] && [ "$k" -lt 64 ]; do
+    if _jr_is_host_cmd "$(_jr_snap_get "$p" 5)"; then printf '%s' "$p"; return 0; fi
+    p="$(_jr_snap_get "$p" 2)"; k=$((k + 1))
+  done
+  return 0
+}
 # _jr_pr <args> — proc-registry.sh with the shared snapshot (when this call owns or adopted one)
 _jr_pr() {
   if [ -z "$JR_SNAP_WHY" ] && [ -n "$JR_SNAP_FILE" ]; then
@@ -285,7 +326,7 @@ _jr_prlist() {
 
 # ---- group: processes ---------------------------------------------------------------------------------
 _jr_c_processes() {
-  local g=processes id kind pid age class evid a fin="" nfin=0 rule lst hash seen=0 note
+  local g=processes id kind pid age class evid a fin="" nfin=0 rule lst hash seen=0 note cmd sess
   [ -f "$JR_PR" ] || { _jr_unknown "$g" proc-registry.sh "missing ($JR_PR)"; return 0; }
   _jr_prlist
   [ -n "$JR_PRLIST" ] || { _jr_unknown "$g" "proc-registry.sh list --scan" "printed nothing"; return 0; }
@@ -297,9 +338,18 @@ _jr_c_processes() {
     a="${age%s}"; _jr_is_uint "$a" || a=""
     if [ "$kind" = unregistered ]; then
       rule="${evid%%; lstart=*}"; lst="${evid#*; lstart=}"; lst="${lst%%; cmd_hash=*}"; hash="${evid##*; cmd_hash=}"
+      cmd="$(_jr_snap_get "$pid" 5)"
+      [ "${#cmd}" -le 200 ] || cmd="${cmd:0:200}..."
+      sess="$(_jr_live_session "$pid")"
+      if [ -n "$sess" ]; then
+        _jr_row unreg "$g" "unreg|$pid|$lst|$hash|session:$sess" "unregistered process pid $pid" "unregistered — a descendant of live host session pid $sess" \
+          "$a" "running, unregistered, its session alive" "$evid; command: ${cmd:-unknown}; session: pid $sess $(_jr_snap_get "$sess" 5)" none \
+          "its session is still alive — the session owns it (pid $sess); it ends with that session, or stop it from there"
+        continue
+      fi
       _jr_row unreg "$g" "unreg|$pid|$lst|$hash" "unregistered process pid $pid" "unregistered (looks like the plugin's)" \
-        "$a" "running, unregistered" "$evid" stop-unregistered \
-        "it looks like the plugin's ($rule) but no registry entry owns it — stopped only on your pick, after proc-registry re-checks its lstart and command-line hash" \
+        "$a" "running, unregistered" "$evid; command: ${cmd:-unknown}" stop-unregistered \
+        "it looks like the plugin's ($rule), no registry entry owns it and no live host session is its ancestor — stopped only on your pick, after proc-registry re-checks its lstart and command-line hash" \
         "" "$pid$US$lst$US$hash"
       continue
     fi
@@ -432,13 +482,17 @@ _jr_tip_age() {   # _jr_tip_age <git dir or worktree> <rev>
   return 0
 }
 _jr_c_worktrees() {
-  local g=worktrees out line head verb kind subj reason nact kept="" nkept=0 sum act owner age
+  local g=worktrees out line head verb kind subj reason nact kept="" nkept=0 sum act owner age wset
   [ -f "$JR_AH" ] || { _jr_unknown "$g" automate-helpers.sh "missing ($JR_AH)"; return 0; }
   out="$(bash "$JR_AH" sweep --root "$JR_PRIMARY" 2>/dev/null)"
   sum="$(printf '%s\n' "$out" | grep '^sweep: summary — ' | tail -1)"
   [ -n "$sum" ] || { _jr_unknown "$g" "automate-helpers.sh sweep" "printed no summary line"; return 0; }
   case "$sum" in *"skipped:"*) _jr_unknown "$g" "automate-helpers.sh sweep" "${sum#sweep: summary — }"; return 0 ;; esac
   nact="$(printf '%s\n' "$out" | grep -c '^sweep: would-remove ')"
+  # the would-remove SET (sorted `<kind> <subject>` heads): folded into every sweep-apply row's identity,
+  # because sweep-apply removes the whole set — a set that changed after the report gives every row a new id
+  wset="$(printf '%s\n' "$out" | awk '/^sweep: would-remove / { sub(/ — .*$/, ""); sub(/^sweep: would-remove /, ""); print }' | env LC_ALL=C sort)"
+  wset="$nact:$(_jr_hash "$wset")"
   while IFS= read -r line; do
     case "$line" in "sweep: would-remove "*|"sweep: kept "*) ;; *) continue ;; esac
     head="${line%% — *}"; reason="${line#* — }"
@@ -451,7 +505,7 @@ _jr_c_worktrees() {
     if [ "$kind" = branch ]; then age="$(_jr_tip_age "$JR_PRIMARY" "refs/heads/$subj")"; else age="$(_jr_tip_age "$subj" HEAD)"; fi
     if [ "$verb" = would-remove ]; then
       act=sweep-apply
-      _jr_row "$( [ "$kind" = branch ] && echo br || echo wt)" "$g" "sweep|$verb|$kind|$subj|$reason" "$kind $subj" "$owner" "$age" "removable" "$reason" "$act" \
+      _jr_row "$( [ "$kind" = branch ] && echo br || echo wt)" "$g" "sweep|$verb|$kind|$subj|$reason|set:$wset" "$kind $subj" "$owner" "$age" "removable" "$reason" "$act" \
         "the sweep's squash-safe rule holds; sweep-apply runs the WHOLE sweep ($nact would-remove row(s)) — sweep has no per-path filter" "" "$JR_PRIMARY"
     else
       _jr_row wt "$g" "sweep|$verb|$kind|$subj|$reason" "$kind $subj" "$owner" "$age" "kept" "$reason" none \
@@ -606,8 +660,7 @@ _jr_c_external() {
     [ "$pp" = "$$" ] && continue
     b="${cmd%% *}"; b="${b##*/}"
     why=""
-    case "$cmd" in *bg-pty-host*) why=host ;; esac
-    [ -n "$why" ] || [ "$b" != claude ] || why=host
+    ! _jr_is_host_cmd "$cmd" || why=host
     [ -n "$why" ] || case "$b" in [Pp]ython*) why=python ;; esac
     [ -n "$why" ] || continue
     age="$(_jr_etime_s "$et")"; _jr_is_uint "$age" || continue

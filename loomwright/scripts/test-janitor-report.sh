@@ -25,6 +25,11 @@
 #   leg_act_recycled  (brief AC8) a look-alike that execs into ANOTHER look-alike command line after the
 #        report is not signalled: refused by act's fresh re-read (its id changed), and — fed the stale
 #        snapshot so the row still matches — refused by proc-registry's lstart/hash re-check.
+#   leg_live_session  a look-alike whose snapshot ppid chain reaches a live host session (a fake desktop-app
+#        `claude` row whose path has a space, through a shell) is action none ("its session is still alive"), its evidence naming its
+#        command line, and `act --confirm` refuses it; a pid-1-reparented look-alike keeps stop-unregistered.
+#   leg_sweep_set  a would-remove set that grows after the report gives every sweep-apply row a new id, so
+#        `act --confirm <the old id>` refuses it and removes nothing.
 #   leg_lock_reclaim  (brief AC8b) a run lock whose recorded holder is dead and whose age is >= 1800s is
 #        gone after `act --confirm <its id>` (`run-lock.sh status` prints UNLOCKED, janitor holds no lock);
 #        a lock with a live holder and a dead-holder lock younger than 1800s are refused, unchanged;
@@ -33,7 +38,8 @@
 #   MUTATION CONTROLS (gated per lesson fa32a308: non-empty, byte-differs, parses, a line-delete removes
 #   exactly one line), each must turn its leg red: act's report-only guard line deleted (leg_noninteractive),
 #   the not-the-plugin's `none` action flipped to stop-unregistered (leg_report_only), the report path
-#   writing into the registry dir (leg_report_fixture).
+#   writing into the registry dir (leg_report_fixture), the live-session demotion dropped (leg_live_session),
+#   the would-remove set dropped from the sweep row identity (leg_sweep_set), the host rule reading only the first word (leg_live_session).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -55,6 +61,9 @@ export LOOMWRIGHT_PROC_UNREG_MIN_S=0
 unset LOOMWRIGHT_PROC_PS_SNAPSHOT LOOMWRIGHT_RUN_LOCK_SESSION_ID LOOMWRIGHT_HOLDER_PID
 # fixture git never prompts, never opens an editor, never signs
 export GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true GIT_CONFIG_NOSYSTEM=1
+# ... and never depends on an ambient identity: a CI runner has no user.name / user.email and a hostname
+# git cannot derive an address from, so `commit-tree` (which takes no -c identity) fails there
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 # Fixture processes: tracked in $FIXDIR as <pid> -> its lstart at spawn; cleanup kills one only while that
 # lstart still matches, so it never signals a pid the OS has since reused.
@@ -151,9 +160,19 @@ mk_lock() {
 # backup of a done run, a ci-slot holder, the leaked fixture server and a second look-alike, the synthetic
 # host session / python server / caffeinate rows; --watcher adds the overdue merge-watch registry entry and
 # --lanes the lane table (lane-status is the slowest reader, so only the legs that read lanes pay for it).
+# mk_merged_wt <name> <path> <pr number> — branch feat/<name> one commit past main, checked out at <path>,
+# its newest PR (gh stub) MERGED at that tip: a worktree the sweep says would-remove. Fails loudly.
+mk_merged_wt() {
+  local c
+  c="$(git -C "$P" -c commit.gpgsign=false commit-tree "$(git -C "$P" rev-parse 'main^{tree}')" -p main -m "$1")"
+  [ -n "$c" ] || { echo "mk_merged_wt: commit-tree printed no commit" >&2; return 1; }
+  git -C "$P" update-ref "refs/heads/feat/$1" "$c"
+  git -C "$P" worktree add -q "$2" "feat/$1" >/dev/null 2>&1 || echo "mk_merged_wt: worktree add $2 failed" >&2
+  printf '[{"number":%s,"state":"MERGED","headRefOid":"%s","mergedAt":"2026-10-01T00:00:00Z"}]\n' "$3" "$c" > "$GHDIR/feat_$1.json"
+}
 FXN=0
 mk_fixture() {
-  local d c a watcher=0 lanes=0
+  local d a watcher=0 lanes=0
   for a in "$@"; do case "$a" in --watcher) watcher=1 ;; --lanes) lanes=1 ;; esac; done
   FXN=$((FXN + 1))
   local fx="$WORK/fx$FXN"
@@ -162,10 +181,7 @@ mk_fixture() {
   mkdir -p "$P" "$GHDIR" "$R"
   ( cd "$P" && git init -q && git symbolic-ref HEAD refs/heads/main && printf '.supervisor/\n' > .gitignore \
     && echo base > README && git add .gitignore README && git -c commit.gpgsign=false -c user.email=t@t -c user.name=t commit -qm init ) >/dev/null 2>&1
-  c="$(git -C "$P" -c commit.gpgsign=false commit-tree "$(git -C "$P" rev-parse 'main^{tree}')" -p main -m merged 2>/dev/null)"
-  git -C "$P" update-ref refs/heads/feat/merged "$c"
-  git -C "$P" worktree add -q "$WT" feat/merged >/dev/null 2>&1
-  printf '[{"number":11,"state":"MERGED","headRefOid":"%s","mergedAt":"2026-10-01T00:00:00Z"}]\n' "$c" > "$GHDIR/feat_merged.json"
+  mk_merged_wt merged "$WT" 11
   mkdir -p "$P/.supervisor/automate"
   mk_lock "$P" "$(dead_pid)" 4000 "automate:fx-crashed" "$FAKE_LSTART"
   # lanes: L1 (in the lane table, young dead lock), L2 (live-holder lock)
@@ -363,6 +379,49 @@ leg_act_recycled() {
   leg_end
 }
 
+leg_live_session() {
+  local js id oid out r
+  mk_fixture
+  # the snapshot re-parents the leaked server under a shell of a live host session (900311 -bash, whose
+  # parent 900312 is the desktop app's `…/Application Support/…/MacOS/claude`, a path with a space) and the second look-alike to pid 1 (its session ended)
+  SNAP_EXTRA="$SNAP_EXTRA
+900311 900312 $FAKE_LSTART 02:00:00 -bash
+900312 1 $FAKE_LSTART 02:00:00 /Users/x/Library/Application Support/Claude/claude-code/9.9.9/claude.app/Contents/MacOS/claude --output-format stream-json"
+  snap
+  sed -E -e "s/^( *$LEAK +)[0-9]+ /\\1900311 /" -e "s/^( *$OTHER +)[0-9]+ /\\11 /" "$SNAP" > "$SNAP.r" && mv "$SNAP.r" "$SNAP"
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  r="$(rows_where "$js" ".what == \"unregistered process pid $LEAK\"")"
+  id="$(jq -r .id <<<"$r" 2>/dev/null)"
+  check "leg_live_session a look-alike under a live host session: action none, 'its session is still alive', every field filled" \
+    eval 'full_row "$r" && [ "$(jq -r .action <<<"$r")" = none ] && has "$(jq -r .reason <<<"$r")" "its session is still alive — the session owns it"'
+  check "leg_live_session ... its evidence names its command line and the session" \
+    eval 'has "$(jq -r .evidence <<<"$r")" "command: $LW/fixture-server.sh 3053" && has "$(jq -r .evidence <<<"$r")" "session: pid 900312 /Users/x/Library/Application Support/Claude/"'
+  r="$(rows_where "$js" ".what == \"unregistered process pid $OTHER\"")"
+  oid="$(jq -r .id <<<"$r" 2>/dev/null)"
+  check "leg_live_session (control) a pid-1-reparented look-alike keeps stop-unregistered, its command in the evidence" \
+    eval '[ -n "$oid" ] && [ "$(jq -r .action <<<"$r")" = stop-unregistered ] && has "$(jq -r .evidence <<<"$r")" "command: $LW/fixture-other.sh 3054"'
+  out="$(jr act --confirm --root "$P" "$id" 2>/dev/null)"
+  check "leg_live_session act --confirm refuses the live-session row, not signalled" \
+    eval '[ -n "$id" ] && has "$out" "janitor: refused $id — a report-only row" && alive "$LEAK" && alive "$OTHER"'
+  leg_end
+}
+
+leg_sweep_set() {
+  local js id out js2
+  mk_fixture
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  id="$(row_id "$js" ".group == \"worktrees\" and .action == \"sweep-apply\"")"
+  # after the report, a second merged worktree joins the would-remove set
+  mk_merged_wt merged2 "$P-merged2" 12
+  js2="$(jr --root "$P" --json 2>/dev/null)"
+  check "leg_sweep_set (control) the grown set gives every sweep-apply row a new id" \
+    eval '[ -n "$id" ] && [ "$(nrows "$js2" ".action == \"sweep-apply\" and (.what | startswith(\"worktree \"))")" = 2 ] && [ "$(nrows "$js2" ".id == \"$id\"")" = 0 ]'
+  out="$(jr act --confirm --root "$P" "$id" 2>/dev/null)"
+  check "leg_sweep_set act with the old sweep id refuses it (not in the fresh report); neither worktree removed" \
+    eval 'has "$out" "janitor: refused $id — not in the fresh report" && [ -d "$WT" ] && [ -d "$P-merged2" ]'
+  leg_end
+}
+
 leg_lock_reclaim() {
   local js id young live out l1 l2 m1 m2
   mk_fixture
@@ -406,7 +465,7 @@ leg_usage() {
 
 # ==== run the legs against the real script ===============================================================
 echo "== janitor-report.sh =="
-for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_lock_reclaim leg_usage; do
+for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_sweep_set leg_lock_reclaim leg_usage; do
   LEG_FAIL=0; S="$SUT_REAL"; t0="$(date +%s)"; "$leg"; echo "  ($leg: $(( $(date +%s) - t0 ))s)"
 done
 
@@ -452,6 +511,12 @@ mk_mutant extnone sub '"running" "$cmd" none' '"running" "$cmd" stop-unregistere
 run_mutant "brief AC6 the not-the-plugin's none action flipped to stop-unregistered" leg_report_only
 mk_mutant regwrite sub 'local json=0 root="" a' ': > "$LOOMWRIGHT_PROC_REGISTRY_DIR/.touched"; local json=0 root="" a'
 run_mutant "brief AC4 the report path writes into the registry dir (checksum)" leg_report_fixture
+mk_mutant nosession sub 'sess="$(_jr_live_session "$pid")"' 'sess=""'
+run_mutant "the live-session demotion dropped (a live session's look-alike offered for stopping)" leg_live_session
+mk_mutant firstword sub 'exe="$exe $w"; rest="${rest#"$w"}"' 'return 1'
+run_mutant "the host rule reads only the first word (a desktop-app session path with a space is missed)" leg_live_session
+mk_mutant noset sub '|$reason|set:$wset"' '|$reason"'
+run_mutant "the would-remove set dropped from the sweep row identity (act sweeps rows never shown)" leg_sweep_set
 
 echo
 echo "test-janitor-report.sh: $pass passed, $fail failed"
