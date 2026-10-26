@@ -46,7 +46,7 @@
 #                    signal); each `unreg-<pid>` look-alike ⇒ stop-unregistered (lstart + cmd_hash from
 #                    its evidence), EXCEPT, in this order, ⇒ none: the pid ITSELF is a live host session
 #                    (the not-the-plugins host rule: an executable whose basename is `claude`, its path
-#                    rebuilt across spaces, or `bg-pty-host` — a lane `claude -p` carries a plugin
+#                    rebuilt across spaces, or `bg-pty-host` — a lane's headless session carries a plugin
 #                    scripts path in its --settings) ⇒ "it is a live host session"; its snapshot ppid
 #                    chain (at most 64 hops, stopping at pid 1) reaches a live host session ⇒ "its
 #                    session is still alive — the session owns it" (a leak from an ENDED session was
@@ -390,7 +390,7 @@ _jr_c_processes() {
           "the live-session check could not run ($why) — report only until the snapshot is readable"
         continue
       fi
-      # the pid itself a host session (a lane `claude -p` whose --settings carry a plugin scripts path)
+      # the pid itself a host session (a lane's headless session whose --settings carry a plugin scripts path)
       if _jr_is_host_cmd "$full"; then
         _jr_row unreg "$g" "unreg|$pid|$lst|$hash|host:self" "unregistered process pid $pid" "unregistered — it is a live host session" \
           "$a" "running, unregistered, a live host session" "$evid; command: $cmd" none \

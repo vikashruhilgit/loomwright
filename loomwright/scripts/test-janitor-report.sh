@@ -28,7 +28,7 @@
 #   leg_live_session  a look-alike whose snapshot ppid chain reaches a live host session (a fake desktop-app
 #        `claude` row whose path has a space, through a shell) is action none ("its session is still alive"), its evidence naming its
 #        command line, and `act --confirm` refuses it; a pid-1-reparented look-alike keeps stop-unregistered.
-#   leg_host_session  a look-alike that IS a live host session (a `claude -p` whose --settings carry a plugin
+#   leg_host_session  a look-alike that IS a live host session (a lane's headless session whose --settings carry a plugin
 #        scripts path) is none, "it is a live host session", and so is its look-alike child; a wrapper look-alike
 #        with a live host session under it is none, "a live host session runs under it"; act refuses both.
 #   leg_snapshot_fail  janitor's own snapshot cannot be taken (TMPDIR missing) while proc-registry takes its
@@ -419,24 +419,24 @@ leg_live_session() {
 leg_host_session() {
   local js r id oid out
   mk_fixture
-  # synthetic rows: 900321 is a lane-like `claude -p` whose --settings carry a plugin scripts path (a
+  # synthetic rows: 900321 is a lane-like headless session whose --settings carry a plugin scripts path (a
   # look-alike that IS a host session, reparented to pid 1) with a look-alike child 900322; 900331 is an
-  # unregistered wrapper look-alike with a live `claude -p` (900332) running under it
+  # unregistered wrapper look-alike with a live headless session (900332) running under it
   SNAP_EXTRA="$SNAP_EXTRA
-900321 1 $FAKE_LSTART 03:00:00 /usr/local/bin/claude -p --settings $WORK/lw/loomwright/9.9.9/scripts/automate-lanes.sh
+900321 1 $FAKE_LSTART 03:00:00 /usr/local/bin/claude --print --settings $WORK/lw/loomwright/9.9.9/scripts/automate-lanes.sh
 900322 900321 $FAKE_LSTART 03:00:00 $LW/fixture-child.sh 1
 900331 1 $FAKE_LSTART 03:00:00 bash $LW/automate-lanes.sh _lane-run L1
-900332 900331 $FAKE_LSTART 03:00:00 /usr/local/bin/claude -p hello"
+900332 900331 $FAKE_LSTART 03:00:00 /usr/local/bin/claude --print hello"
   snap
   js="$(jr --root "$P" --json 2>/dev/null)"
   r="$(rows_where "$js" '.what == "unregistered process pid 900321"')"; id="$(jq -r .id <<<"$r" 2>/dev/null)"
   check "leg_host_session a look-alike that IS a live host session: action none, 'it is a live host session', its command cut in the evidence" \
-    eval 'full_row "$r" && [ "$(jq -r .action <<<"$r")" = none ] && has "$(jq -r .reason <<<"$r")" "it is a live host session" && has "$(jq -r .evidence <<<"$r")" "command: /usr/local/bin/claude -p --settings"'
+    eval 'full_row "$r" && [ "$(jq -r .action <<<"$r")" = none ] && has "$(jq -r .reason <<<"$r")" "it is a live host session" && has "$(jq -r .evidence <<<"$r")" "command: /usr/local/bin/claude --print --settings"'
   check "leg_host_session ... its look-alike child is none too (its session is alive)" \
     eq "$(nrows "$js" '.what == "unregistered process pid 900322" and .action == "none" and (.reason | test("its session is still alive"))')" 1
   r="$(rows_where "$js" '.what == "unregistered process pid 900331"')"; oid="$(jq -r .id <<<"$r" 2>/dev/null)"
   check "leg_host_session a wrapper look-alike with a live host session under it: action none, 'runs under it', the session named" \
-    eval 'full_row "$r" && [ "$(jq -r .action <<<"$r")" = none ] && has "$(jq -r .reason <<<"$r")" "a live host session runs under it (pid 900332)" && has "$(jq -r .evidence <<<"$r")" "session: pid 900332 /usr/local/bin/claude -p hello"'
+    eval 'full_row "$r" && [ "$(jq -r .action <<<"$r")" = none ] && has "$(jq -r .reason <<<"$r")" "a live host session runs under it (pid 900332)" && has "$(jq -r .evidence <<<"$r")" "session: pid 900332 /usr/local/bin/claude --print hello"'
   check "leg_host_session (control) the plain look-alike keeps stop-unregistered" \
     eq "$(nrows "$js" ".what == \"unregistered process pid $OTHER\" and .action == \"stop-unregistered\"")" 1
   out="$(jr act --confirm --root "$P" "$id" "$oid" 2>/dev/null)"
@@ -478,9 +478,9 @@ leg_reap_host() {
   r="$(rows_where "$js" ".what | test(\"merge-watch process pid $WATCH \")")"
   check "leg_reap_host (control) the plain overdue watcher: reap, no host warning, its command in the evidence" \
     eval '[ "$(jq -r .action <<<"$r")" = reap ] && ! has "$(jq -r .reason <<<"$r")" "live host session" && has "$(jq -r .evidence <<<"$r")" "; command: sleep 3055"'
-  # a live host session under the overdue watcher (a lane wrapper's `claude -p` child)
+  # a live host session under the overdue watcher (a lane wrapper's headless-session child)
   SNAP_EXTRA="$SNAP_EXTRA
-900341 $WATCH $FAKE_LSTART 01:00:00 /usr/local/bin/claude -p x"
+900341 $WATCH $FAKE_LSTART 01:00:00 /usr/local/bin/claude --print x"
   snap
   r="$(rows_where "$(jr --root "$P" --json 2>/dev/null)" ".what | test(\"merge-watch process pid $WATCH \")")"
   check "leg_reap_host an overdue entry with a live host session under it keeps reap, its reason naming that session" \
