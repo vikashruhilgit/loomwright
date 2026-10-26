@@ -271,6 +271,10 @@
       "name": "insights"
     },
     {
+      "description": "One read-only report of everything the plugin left running or lying around — processes, run locks, lanes, worktrees and branches, stale run state, plus report-only plugin-adjacent and not-the-plugin's rows — each with a suggested action; acts only on the rows the owner picks, each through its guarded helper after a re-check",
+      "name": "janitor"
+    },
+    {
       "description": "Prepare a raw goal for autonomous Supervisor execution with codebase analysis, environment validation, file impact estimation, and save to jobs folder",
       "name": "launch-pad"
     },

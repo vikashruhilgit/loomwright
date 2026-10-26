@@ -1740,7 +1740,7 @@ echo "== (bp1)-(bp6) Background processes attention line (af/39g AC3): startup-a
 # sleeper is killed and its repo dir removed: the snapshot keeps it "running", the missing repo makes
 # it orphaned, and nothing is left alive for the ci-local leak gate.
 BP="$(mktmp)"; BPREG="$BP/reg"; mkdir -p "$BPREG"; BPSNAP="$BP/snap"
-BPLINE='**Background processes:** 1 item(s) need attention (0 overdue, 1 orphaned, 0 unregistered) — inspect with `proc-registry.sh list`; stop registered ones with `proc-registry.sh reap` (dry run first)'
+BPLINE='**Background processes:** 1 item(s) need attention (0 overdue, 1 orphaned, 0 unregistered) — inspect with `proc-registry.sh list --scan`; stop registered ones with `proc-registry.sh reap` (dry run first), unregistered ones with `/janitor`'
 mkdir -p "$BP/gone-repo"
 sleep 300 & BPPID=$!
 LOOMWRIGHT_PROC_REGISTRY_DIR="$BPREG" bash "$SCRIPT_DIR/proc-registry.sh" register --pid "$BPPID" --kind lane \
@@ -1792,7 +1792,7 @@ if [ "$(ls "$BPREG"/*.json 2>/dev/null | wc -l | tr -d ' ')" = 1 ] && [ -s "$BPS
   BPU="$BP/unreg-snap"
   printf '900201 1 Mon Jan  1 00:00:00 2001 2-00:00:00 bash /opt/lw/loomwright/scripts/leaked.sh\n' > "$BPU"
   c="$(ctx_of "$(bp_hook "$HOOK" "$BPR" startup LOOMWRIGHT_PROC_REGISTRY_DIR="$BPEMPTY" LOOMWRIGHT_PROC_PS_SNAPSHOT="$BPU")")"
-  grep -qxF -- '**Background processes:** 1 item(s) need attention (0 overdue, 0 orphaned, 1 unregistered) — inspect with `proc-registry.sh list`; stop registered ones with `proc-registry.sh reap` (dry run first)' <<<"$c" \
+  grep -qxF -- '**Background processes:** 1 item(s) need attention (0 overdue, 0 orphaned, 1 unregistered) — inspect with `proc-registry.sh list --scan`; stop registered ones with `proc-registry.sh reap` (dry run first), unregistered ones with `/janitor`' <<<"$c" \
     && ok "(bp5) an unregistered look-alike alone ⇒ the line, counted as unregistered" || no "(bp5) ctx: $c"
   BPPLAIN="$(new_repo)"
   raw="$(bp_hook "$HOOK" "$BPPLAIN" startup)"

@@ -457,8 +457,9 @@ automate_watch_lines() {
 # orphaned_worktrees_block on a plugin-active repo (or host mode), so a repo the plugin never ran
 # in stays silent. Under HERMETIC_TEST_ENV=1 the registry redirects and the scan is skipped (the
 # registry header's HERMETIC SCAN SKIP), which keeps the suites that run this hook off the live
-# machine. HONEST LIMIT: `proc-registry.sh list` / `reap` show and stop REGISTERED entries only —
-# an unregistered process is counted here but has to be found and stopped by hand.
+# machine. `proc-registry.sh list --scan` lists registered entries AND the unregistered look-alikes;
+# `reap` stops REGISTERED entries only, and an unregistered one is stopped through the guarded
+# `proc-registry.sh stop-unregistered` (lstart + command-line hash re-checked) — `/janitor` offers both.
 # DEFINED ABOVE THE CASE (startup_arm_emit calls it).
 proc_attention_line() {
   [ -d ".supervisor" ] || [ "$SR_HOST" = 1 ] || return 0
@@ -475,7 +476,7 @@ proc_attention_line() {
   [ -n "$o" ] && [ -n "$a" ] || return 0
   n=$((o + a + u))
   [ "$n" -gt 0 ] || return 0
-  printf '**Background processes:** %s item(s) need attention (%s overdue, %s orphaned, %s unregistered) — inspect with `proc-registry.sh list`; stop registered ones with `proc-registry.sh reap` (dry run first)' "$n" "$o" "$a" "$u"
+  printf '**Background processes:** %s item(s) need attention (%s overdue, %s orphaned, %s unregistered) — inspect with `proc-registry.sh list --scan`; stop registered ones with `proc-registry.sh reap` (dry run first), unregistered ones with `/janitor`' "$n" "$o" "$a" "$u"
   return 0
 }
 
