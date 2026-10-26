@@ -584,7 +584,7 @@ leg_act_sweep() {
   check "leg_act_sweep the first picked row runs the whole sweep once; the second is 'already applied in this call'" \
     eval '[ "$(text_count "$out" "sweep-apply (the whole sweep): ")" = 1 ] && has "$out" "janitor: act $id1 — sweep-apply (the whole sweep): " && has "$out" "janitor: act $id2 — sweep-apply: already applied in this call"'
   check "leg_act_sweep ... both merged worktrees are removed (gone from disk and from git worktree list)" \
-    eval '[ ! -d "$WT" ] && [ ! -d "$P-merged2" ] && ! git -C "$P" worktree list --porcelain | grep -q "proj-merged"'
+    eval '[ ! -d "$WT" ] && [ ! -d "$P-merged2" ] && ! grep -q "proj-merged" < <(git -C "$P" worktree list --porcelain)'
   leg_end
 }
 
