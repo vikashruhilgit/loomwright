@@ -236,7 +236,7 @@ fi
 # characters (gawk/mawk/newer awk count characters under a UTF-8 locale and would under-consume).
 R="$TMP/h5"; mkrepo "$R"; printf 'a\n' > "$R/b.txt"; commit "$R" base; BO="$(g "$R" rev-parse HEAD)"
 printf '\303\251\303\251\303\251\n\342\202\254\342\202\254\n' > "$R/a.txt"; printf 'q\n' >> "$R/b.txt"; commit "$R" feature
-( cd "$ELSEWHERE" && LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 bash "$S" "$BO" --root "$R" ) > "$TMP/out" 2> "$TMP/err"; RC=$?; OUT="$(cat "$TMP/out")"
+( cd "$ELSEWHERE" && env LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 bash "$S" "$BO" --root "$R" ) > "$TMP/out" 2> "$TMP/err"; RC=$?; OUT="$(cat "$TMP/out")"
 if [ "$RC" -eq 0 ] && has "$OUT" 'lines: a.txt new -> 2' && has "$OUT" 'lines: b.txt 1 -> 2'; then
   ok "H5 multibyte content under a UTF-8 locale keeps its own and later files' counts exact"
 else

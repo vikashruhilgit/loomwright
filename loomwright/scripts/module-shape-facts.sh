@@ -158,12 +158,13 @@ MB="$mb" awk '{ print ENVIRON["MB"] ":" $0 }' "$tmp/text" \
 # awk's length($0) is the record's BYTE length: a NUL ends a record early in some awks (macOS awk;
 # numstat reads only the first 8000 bytes for binary content, so a later NUL reaches here as text),
 # so NULs become spaces (same byte count) first; and length() counts characters under a UTF-8
-# locale (gawk, mawk, newer one-true-awk), so the counter runs under LC_ALL=C on its own line too.
+# locale (gawk, mawk, newer one-true-awk), so the counter relies on the script-scope `export LC_ALL=C` above (never a
+# command-position prefix: scripts/check-locale-prefix.sh).
 MB="$mb" HD="$hrev" awk 'FILENAME == ARGV[1] { ty[FNR] = $0; next }
      { if (ty[FNR] == "blob") print ENVIRON["MB"] ":" $0; print ENVIRON["HD"] ":" $0 }' "$tmp/mbtypes" "$tmp/text" \
   | G cat-file --batch='%(objecttype) %(objectsize)' 2>/dev/null \
   | tr '\000' ' ' \
-  | LC_ALL=C awk '
+  | awk '
       want > 0 { got += length($0) + 1; n++; if (got >= want) { print n - 1; want = 0 }; next }
       NF == 2 && $1 == "blob" { want = $2 + 1; got = 0; n = 0; next }
       { print "?" }
