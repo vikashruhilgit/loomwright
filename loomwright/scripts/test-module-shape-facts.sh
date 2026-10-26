@@ -22,6 +22,8 @@
 #   G. wording pins: AC6 single home of the line threshold (exact AC6 pattern), AC4b
 #      `deliberate per-file convention`, AC12 "facts unavailable", AC5 severities, step 1h's base
 #      rule, and that the script itself holds no threshold
+#   H. non-blob entries (a directory or gitlink at the merge base, a gitlink at head) never desync
+#      the batched line counts of the files after them
 #
 # The brief's `## Pin mutations` rows delete each `pin:` marker line of module-shape-facts.sh; each
 # deletion turns at least one leg here red. This file's own ok()/no()/has()/lacks() are the
@@ -179,6 +181,41 @@ if [ "$RC" -eq 0 ] && has "$OUT" 'lines: a 1 -> 2' && lacks "$OUT" 'shared-name'
   ok "F11 failed name scan ⇒ exit 0, line facts kept, stderr 'names_unavailable'"
 else
   no "F11 names_unavailable (rc=$RC out='$OUT' err='$ERR')"
+fi
+
+# ---- H. non-blob entries never desync the batched line counts ---------------------------------
+echo "== H. non-blob entries at the merge base or head keep later files' counts exact =="
+# H1 — a directory at the base that is a file at head, sorted BEFORE two modified files.
+R="$TMP/h1"; mkrepo "$R"; mkdir -p "$R/thing"; printf 'i\n' > "$R/thing/inner.txt"
+printf 'a\nb\n' > "$R/uni.txt"; printf 'z\n' > "$R/zz.txt"; commit "$R" base; BK="$(g "$R" rev-parse HEAD)"
+rm -rf "$R/thing"; printf 'f\n' > "$R/thing"; printf 'c\n' >> "$R/uni.txt"; printf 'y\n' >> "$R/zz.txt"; commit "$R" feature
+run "$BK" --root "$R"
+if [ "$RC" -eq 0 ] && has "$OUT" 'lines: thing new -> 1' && has "$OUT" 'lines: uni.txt 2 -> 3' && has "$OUT" 'lines: zz.txt 1 -> 2'; then
+  ok "H1 directory -> file reads new and later files keep exact counts"
+else
+  no "H1 directory -> file desynced the counts (rc=$RC out='$OUT')"
+fi
+# H2 — a gitlink at the base whose commit object IS in the repo (cat-file would print the commit).
+R="$TMP/h2"; mkrepo "$R"; printf 'a\nb\n' > "$R/uni.txt"; printf 'z\n' > "$R/zz.txt"; commit "$R" b0
+c0="$(g "$R" rev-parse HEAD)"; g "$R" update-index --add --cacheinfo "160000,$c0,mod"; g "$R" commit -qm base; BL="$(g "$R" rev-parse HEAD)"
+[ "$(g "$R" cat-file -t "$BL:mod" 2>/dev/null)" = "commit" ] || no "H2 fixture: base has no gitlink with a present commit"
+g "$R" rm -q --cached mod; printf 'f\n' > "$R/mod"; printf 'c\n' >> "$R/uni.txt"; printf 'y\n' >> "$R/zz.txt"; commit "$R" feature
+run "$BL" --root "$R"
+if [ "$RC" -eq 0 ] && has "$OUT" 'lines: mod new -> 1' && has "$OUT" 'lines: uni.txt 2 -> 3' && has "$OUT" 'lines: zz.txt 1 -> 2'; then
+  ok "H2 gitlink -> file reads new and later files keep exact counts"
+else
+  no "H2 gitlink -> file desynced the counts (rc=$RC out='$OUT')"
+fi
+# H3 — a file at the base that is a gitlink at head (its commit present) is skipped, not counted.
+R="$TMP/h3"; mkrepo "$R"; printf 'f\n' > "$R/mod"; printf 'a\nb\n' > "$R/uni.txt"; printf 'z\n' > "$R/zz.txt"; commit "$R" base
+BM="$(g "$R" rev-parse HEAD)"; g "$R" rm -q --cached mod; rm -f "$R/mod"
+g "$R" update-index --add --cacheinfo "160000,$BM,mod"; printf 'c\n' >> "$R/uni.txt"; printf 'y\n' >> "$R/zz.txt"
+g "$R" add uni.txt zz.txt; g "$R" commit -qm feature
+run "$BM" --root "$R"
+if [ "$RC" -eq 0 ] && lacks "$OUT" 'lines: mod' && has "$OUT" 'lines: uni.txt 2 -> 3' && has "$OUT" 'lines: zz.txt 1 -> 2'; then
+  ok "H3 file -> gitlink is skipped and later files keep exact counts"
+else
+  no "H3 file -> gitlink (rc=$RC out='$OUT')"
 fi
 
 # ---- G. wording pins ---------------------------------------------------------------------------

@@ -43,7 +43,8 @@
 # HONEST LIMITS: regex, not a parser — a definition inside a string or a heredoc counts, a
 # multi-line `const x =\n (` does not, methods/classes are not read, and two unrelated functions that
 # share a name read as one. Line counts use `wc -l` (a last line with no newline is not counted).
-# Renames read as delete + add (`--no-renames`). Submodules and other non-blob entries are skipped.
+# Renames read as delete + add (`--no-renames`). Submodules and other non-blob entries at <head> are
+# skipped; a non-blob entry at the merge base (a directory, a submodule) reads `new`.
 #
 # Load-bearing lines carry a trailing `pin:` comment naming the behaviour, each on ONE
 # self-contained line so deleting it keeps `bash -n` valid; test-module-shape-facts.sh turns red on
@@ -133,27 +134,40 @@ while IFS= read -r -d '' -u 3 st && IFS= read -r -d '' -u 3 p; do
   printf '%s\n' "$p" >> "$tmp/kept"
 done 3< "$tmp/status"
 
-# Object type at <head>; anything but a blob (a submodule, a path gone at head) is skipped.
-REV="$head" awk '{ print ENVIRON["REV"] ":" $0 }' "$tmp/kept" \
+# Every cat-file spec below names <head> by its commit id, resolved once, so a branch that moves
+# mid-run cannot hand the type check and the content stream two different trees.
+hrev="$(G rev-parse --verify --quiet "$head^{commit}" 2>/dev/null)" || no_facts "git_failed" "cannot resolve head $head"
+
+# Object type at <head>; anything but a blob (a submodule, a tree, a path gone at head) is skipped.
+REV="$hrev" awk '{ print ENVIRON["REV"] ":" $0 }' "$tmp/kept" \
   | G cat-file --batch-check='%(objecttype)' 2>/dev/null > "$tmp/types"
 OUT="$tmp" awk 'FILENAME == ARGV[1] { ty[FNR] = $0; next }
      { f = (ty[FNR] == "blob") ? "/text" : "/other"; print > (ENVIRON["OUT"] f) }' "$tmp/types" "$tmp/kept"
 touch "$tmp/text" "$tmp/other"
 n_other="$(grep -c . "$tmp/other" || true)"; n_other="${n_other:-0}"
 
-# `wc -l` of each text path at the merge base and at head, from ONE `cat-file --batch` stream: a
-# blob's content is S bytes plus git's trailing LF, so lines are read until S+1 bytes are consumed
-# and the line count is the lines read minus one (a missing object ⇒ `new`).
-MB="$mb" HD="$head" awk '{ print ENVIRON["MB"] ":" $0; print ENVIRON["HD"] ":" $0 }' "$tmp/text" \
+# Object type at the merge base, so only blobs reach the content stream below: a tree (a directory
+# at the base that is a file at head) or a gitlink's commit would print a payload the line counter
+# reads as more records, shifting every later file's counts. A non-blob base entry reads `new`.
+MB="$mb" awk '{ print ENVIRON["MB"] ":" $0 }' "$tmp/text" \
+  | G cat-file --batch-check='%(objecttype)' 2>/dev/null > "$tmp/mbtypes"
+
+# `wc -l` of each text path at the merge base and at head, from ONE `cat-file --batch` stream fed
+# blob specs only: a blob's content is S bytes plus git's trailing LF, so lines are read until S+1
+# bytes are consumed and the line count is the lines read minus one.
+MB="$mb" HD="$hrev" awk 'FILENAME == ARGV[1] { ty[FNR] = $0; next }
+     { if (ty[FNR] == "blob") print ENVIRON["MB"] ":" $0; print ENVIRON["HD"] ":" $0 }' "$tmp/mbtypes" "$tmp/text" \
   | G cat-file --batch='%(objecttype) %(objectsize)' 2>/dev/null \
   | awk '
       want > 0 { got += length($0) + 1; n++; if (got >= want) { print n - 1; want = 0 }; next }
       NF == 2 && $1 == "blob" { want = $2 + 1; got = 0; n = 0; next }
-      { print "new" }
+      { print "?" }
     ' > "$tmp/counts"
-awk 'FILENAME == ARGV[1] { c[FNR] = $0; next }
-     { b = c[2 * FNR - 1]; a = c[2 * FNR]; if (b == "") b = "?"; if (a == "") a = "?"; print "lines: " $0 " " b " -> " a }' \
-  "$tmp/counts" "$tmp/text" > "$tmp/lines"
+awk 'FILENAME == ARGV[1] { ty[FNR] = $0; next }
+     FILENAME == ARGV[2] { c[FNR] = $0; next }
+     { b = "new"; if (ty[FNR] == "blob") b = c[++k]; a = c[++k]; if (ty[FNR] == "") b = "?"
+       if (b == "") b = "?"; if (a == "") a = "?"; print "lines: " $0 " " b " -> " a }' \
+  "$tmp/mbtypes" "$tmp/counts" "$tmp/text" > "$tmp/lines"
 
 if [ ! -s "$tmp/lines" ]; then
   if [ "$n_files" -eq 0 ]; then no_facts "no_changes" "diff $base...$head touches no file"
