@@ -17,7 +17,8 @@
 #   E. the per-name file list is capped with a visible `(+N more)` marker
 #   F. AC11 — every no-facts case exits 0 with EMPTY stdout and its OWN stderr reason: bad args,
 #      missing base ref (named), missing head ref, not a git repo, binary-only diff, deleted-only
-#      diff, empty diff
+#      diff, empty diff, mixed deleted+binary diff (no_text_files), no merge base (git_failed); and
+#      a failed repo-wide name scan keeps the line facts with `names_unavailable` on stderr
 #   G. wording pins: AC6 single home of the line threshold (exact AC6 pattern), AC4b
 #      `deliberate per-file convention`, AC12 "facts unavailable", AC5 severities, step 1h's base
 #      rule, and that the script itself holds no threshold
@@ -161,6 +162,24 @@ g "$R" rm -q gone.sh; commit "$R" feature
 nofacts "F6 deleted-only diff" "deleted_only" "" "$BG" --root "$R"
 nofacts "F7 empty diff" "no_changes" "" HEAD HEAD --root "$TMP/a"
 nofacts "F8 unknown option" "bad_args" "" HEAD --bogus --root "$TMP/a"
+R="$TMP/f9"; mkrepo "$R"; printf 'gone() { :; }\n' > "$R/gone.sh"; printf 'x\n' > "$R/keep"; commit "$R" base; BH="$(g "$R" rev-parse HEAD)"
+g "$R" rm -q gone.sh; printf 'GIF\000\001\002\003\000binary\n' > "$R/blob.bin"; commit "$R" feature
+nofacts "F9 deleted text + added binary (mixed, no text left)" "no_text_files" "" "$BH" --root "$R"
+R="$TMP/f10"; mkrepo "$R"; printf 'x\n' > "$R/a"; commit "$R" base; BI="$(g "$R" rev-parse HEAD)"
+g "$R" checkout -q --orphan unrelated; g "$R" rm -rqf .; printf 'y\n' > "$R/b"; commit "$R" orphan
+nofacts "F10 unrelated histories (no merge base)" "git_failed" "no merge base" "$BI" unrelated --root "$R"
+# F11 — the repo-wide name scan fails (an unchanged subtree's object is missing, so `git grep` exits
+# 128 while the diff, which never opens an unchanged tree, still works): line facts stay, stderr says
+# names_unavailable, exit 0.
+R="$TMP/f11"; mkrepo "$R"; mkdir -p "$R/lib"; printf 'other() { :; }\n' > "$R/lib/other.sh"; printf 'x\n' > "$R/a"
+commit "$R" base; BJ="$(g "$R" rev-parse HEAD)"; printf 'y\n' >> "$R/a"; commit "$R" feature
+oid="$(g "$R" rev-parse HEAD:lib)"; rm -f "$R/.git/objects/${oid%"${oid#??}"}/${oid#??}"
+run "$BJ" --root "$R"
+if [ "$RC" -eq 0 ] && has "$OUT" 'lines: a 1 -> 2' && lacks "$OUT" 'shared-name' && has "$ERR" 'names_unavailable'; then
+  ok "F11 failed name scan ⇒ exit 0, line facts kept, stderr 'names_unavailable'"
+else
+  no "F11 names_unavailable (rc=$RC out='$OUT' err='$ERR')"
+fi
 
 # ---- G. wording pins ---------------------------------------------------------------------------
 echo "== G. wording pins =="
@@ -200,6 +219,18 @@ has "$sh_line" 'include this line ONLY when `module_shape` is non-empty' && has 
 step1h="$(grep -E '^1h\. ' "$SH" | head -1)"
 has "$step1h" 'module-shape-facts.sh' && has "$step1h" '`origin/main` when `BASE_BRANCH` is `main`' && has "$step1h" 'EVERY iteration' \
   && ok "G7 step 1h runs the script every iteration against on-entry's base rule" || no "G7 step 1h"
+# AC7 — the house-rule size override is stated only in §"Module layout"; every other surface points.
+ov="$(cd "$REPO_ROOT" && grep -rnE '(different|another) size' loomwright/agents loomwright/commands loomwright/skills | grep -v '^loomwright/skills/supervisor-readiness/SKILL.md:')"
+[ -z "$ov" ] && ok "G8 the house-rule size override is stated only in §\"Module layout\"" || no "G8 override restated outside its single home: $ov"
+# AC12 — no surface reads an absent MODULE-SHAPE ADVISORY line as "the class does not apply".
+qc_line="$(grep -F '**Module shape (`module_shape`' "$PLUGIN/skills/quality-checklist/SKILL.md" | head -1)"
+dl_line="$(grep -F '`module_shape` — a helper copied' "$SH" | head -1)"
+if [ -n "$qc_line" ] && lacks "$qc_line" 'does not apply' && has "$qc_line" 'never read absence as clean' \
+   && [ -n "$dl_line" ] && lacks "$dl_line" 'checkable only when the MODULE-SHAPE'; then
+  ok "G9 checklist and DIFFERENT-LENS item never treat an absent line as 'not applicable'"
+else
+  no "G9 an absent MODULE-SHAPE line is read as 'not applicable' somewhere"
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

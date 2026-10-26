@@ -272,7 +272,7 @@ Not evaluated here: the optional `## Feasibility` section (Criterion 11) and the
 
 **Check:** Does the File Impact Map give each new responsibility its own home, rather than piling it into a large file?
 
-**How:** the threshold, the required facts and the house-rule override are `skills/supervisor-readiness/SKILL.md` §"Module layout" — read it, do not re-derive it here. Judge size from the line count the map records beside each MODIFY path (`Read` the file when none is recorded). A rule in the `--- APPLICABLE RULES ---` block that states a different size for some paths replaces the threshold for those paths only. Test files count exactly like source files.
+**How:** the threshold, the required facts and the house-rule override are `skills/supervisor-readiness/SKILL.md` §"Module layout" — read it, do not re-derive it here. Judge size from the line count the map records beside each MODIFY path (`Read` the file when none is recorded). Apply that section's house-rule override to the `--- APPLICABLE RULES ---` block. Test files count exactly like source files.
 
 - **Conditional gate:** no MODIFY path is at or past the threshold → skip silently.
 - **21a — append with no plan.** A new responsibility lands in a MODIFY path at or past the threshold, and the map gives it no CREATE module, no shared module to reuse and no one-line reason for appending. One issue per responsibility.
