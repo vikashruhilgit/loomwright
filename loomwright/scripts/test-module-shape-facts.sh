@@ -23,7 +23,8 @@
 #      `deliberate per-file convention`, AC12 "facts unavailable", AC5 severities, step 1h's base
 #      rule, and that the script itself holds no threshold
 #   H. non-blob entries (a directory or gitlink at the merge base, a gitlink at head) never desync
-#      the batched line counts of the files after them
+#      the batched line counts of the files after them; nor does a text file whose awk record
+#      length differs from its byte length (a NUL past numstat's 8 KB probe, multibyte UTF-8)
 #
 # The brief's `## Pin mutations` rows delete each `pin:` marker line of module-shape-facts.sh; each
 # deletion turns at least one leg here red. This file's own ok()/no()/has()/lacks() are the
@@ -216,6 +217,29 @@ if [ "$RC" -eq 0 ] && lacks "$OUT" 'lines: mod' && has "$OUT" 'lines: uni.txt 2 
   ok "H3 file -> gitlink is skipped and later files keep exact counts"
 else
   no "H3 file -> gitlink (rc=$RC out='$OUT')"
+fi
+# H4 — a NUL past numstat's 8000-byte binary probe keeps the file text; awk must not end the record
+# at the NUL (macOS awk does), or the byte-framed counter reads into the files after it.
+R="$TMP/h4"; mkrepo "$R"; printf 'a\n' > "$R/b.txt"; printf 'a\nb\n' > "$R/c.txt"; printf '1\n2\n3\n' > "$R/d.txt"
+commit "$R" base; BN="$(g "$R" rev-parse HEAD)"
+i=0; : > "$R/a.txt"; while [ "$i" -lt 1400 ]; do printf 'blob 2\n' >> "$R/a.txt"; i=$((i + 1)); done
+printf '\000end\n' >> "$R/a.txt"; printf 'q\n' >> "$R/b.txt"; printf 'q\n' >> "$R/c.txt"; printf '4\n5\n6\n7\n' >> "$R/d.txt"; commit "$R" feature
+[ "$(g "$R" diff --numstat "$BN" HEAD -- a.txt | cut -f1)" = "1401" ] || no "H4 fixture: a.txt is not read as text by numstat"
+run "$BN" --root "$R"
+if [ "$RC" -eq 0 ] && has "$OUT" 'lines: a.txt new -> 1401' && has "$OUT" 'lines: b.txt 1 -> 2' && has "$OUT" 'lines: c.txt 2 -> 3' && has "$OUT" 'lines: d.txt 3 -> 7'; then
+  ok "H4 a NUL past 8 KB in a text file keeps its own and later files' counts exact"
+else
+  no "H4 a late NUL desynced the counts (rc=$RC out='$OUT')"
+fi
+# H5 — multibyte UTF-8 content under a UTF-8 caller locale: the counter must count bytes, not
+# characters (gawk/mawk/newer awk count characters under a UTF-8 locale and would under-consume).
+R="$TMP/h5"; mkrepo "$R"; printf 'a\n' > "$R/b.txt"; commit "$R" base; BO="$(g "$R" rev-parse HEAD)"
+printf '\303\251\303\251\303\251\n\342\202\254\342\202\254\n' > "$R/a.txt"; printf 'q\n' >> "$R/b.txt"; commit "$R" feature
+( cd "$ELSEWHERE" && LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 bash "$S" "$BO" --root "$R" ) > "$TMP/out" 2> "$TMP/err"; RC=$?; OUT="$(cat "$TMP/out")"
+if [ "$RC" -eq 0 ] && has "$OUT" 'lines: a.txt new -> 2' && has "$OUT" 'lines: b.txt 1 -> 2'; then
+  ok "H5 multibyte content under a UTF-8 locale keeps its own and later files' counts exact"
+else
+  no "H5 multibyte content desynced the counts (rc=$RC out='$OUT')"
 fi
 
 # ---- G. wording pins ---------------------------------------------------------------------------
