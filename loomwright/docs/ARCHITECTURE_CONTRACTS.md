@@ -750,12 +750,12 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `automate` | 5465 | 4968 |
 | `autonomous` | 4361 | 3964 |
 | `backlog` | 2413 | 2194 |
-| `janitor` | 1470 | 1336 |
 | `capability-check` | 6680 | 6072 |
 | `code-reviewer` | 2837 | 2579 |
 | `dreaming` | 39945 | 36313 |
 | `handoff` | 1721 | 1564 |
 | `insights` | 5675 | 5159 |
+| `janitor` | 1470 | 1336 |
 | `launch-pad` | 5515 | 5013 |
 | `obsidian` | 1518 | 1380 |
 | `orchestrator` | 3859 | 3508 |

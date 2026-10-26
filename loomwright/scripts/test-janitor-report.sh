@@ -42,6 +42,18 @@
 #        gone after `act --confirm <its id>` (`run-lock.sh status` prints UNLOCKED, janitor holds no lock);
 #        a lock with a live holder and a dead-holder lock younger than 1800s are refused, unchanged;
 #        --force-unlock is refused on the live one and breaks only the young dead one.
+#   leg_act_reap  `act --confirm` on the ONE `fin` row of two finished entries prunes both entry files (its
+#        multi-id data word-splits into `reap --apply`), and on the overdue watcher's row stops that process.
+#   leg_act_sweep  two picked sweep-apply rows run the whole sweep ONCE (the second reads "already applied in
+#        this call"), and both merged worktrees are gone.
+#   leg_act_lane_remove  a lane whose run says done is a lane-remove row; `act --confirm` removes its clone
+#        (salvage kept, the lane table says removed) and leaves the other lanes.
+#   leg_act_config_restore  the stranded backup of a done run under a dead-holder lock is config-restore;
+#        `act --confirm` puts config.json back byte-for-byte and removes the backup.
+#   leg_nostatus  a dead-holder lock >= 1800s whose run file states no `## Status:`, and a config backup whose
+#        run file states none, are none ("cannot be judged"), and act refuses both, unchanged.
+#   leg_cfg_unjudged  a done run's config backup under a pid-less held primary lock is none ("run lock
+#        cannot be judged (held with no recorded pid)"), and act refuses it.
 #   leg_usage  bad arguments exit 2; an unknown row id is refused, exit 0.
 #   MUTATION CONTROLS (gated per lesson fa32a308: non-empty, byte-differs, parses, a line-delete removes
 #   exactly one line), each must turn its leg red: act's report-only guard line deleted (leg_noninteractive),
@@ -49,7 +61,10 @@
 #   writing into the registry dir (leg_report_fixture), the live-session demotion dropped (leg_live_session),
 #   the would-remove set dropped from the sweep row identity (leg_sweep_set), the host rule reading only the first word (leg_live_session),
 #   the host-session-itself and host-session-below checks dropped (leg_host_session), each snapshot fail-closed
-#   dropped (leg_snapshot_fail), the live-host-session and session-below reap warnings dropped (leg_reap_host).
+#   dropped (leg_snapshot_fail), the live-host-session and session-below reap warnings dropped (leg_reap_host),
+#   act's once-per-call sweep guard dropped (leg_act_sweep), the fin row's ids quoted into one word
+#   (leg_act_reap), the lock and config-backup no-status fail-closeds dropped (leg_nostatus), the
+#   config-backup unjudgeable-lock fail-closed dropped (leg_cfg_unjudged).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -529,6 +544,125 @@ leg_lock_reclaim() {
   leg_end
 }
 
+leg_act_reap() {
+  local js fid wid out f1 f2 e1 e2
+  mk_fixture --watcher
+  # two finished entries (registered processes that have since exited): ONE `fin` row carrying both ids
+  spawn sleep 3061; f1=$SP; spawn sleep 3062; f2=$SP   # fixed-sleep-ok: background FIXTURE processes, not waits
+  bash "$PRS" register --pid "$f1" --kind phase --purpose "a finished phase" --repo "$P" 2>/dev/null
+  bash "$PRS" register --pid "$f2" --kind phase --purpose "another finished phase" --repo "$P" 2>/dev/null
+  # register prints nothing; an entry's id is its file name, `<pid>-<hash>.json`
+  e1="$(cd "$R" && ls "$f1"-*.json 2>/dev/null | head -1)"; e1="${e1%.json}"
+  e2="$(cd "$R" && ls "$f2"-*.json 2>/dev/null | head -1)"; e2="${e2%.json}"
+  fix_kill "$f1"; fix_kill "$f2"
+  WAIT_LIB_WHAT="pids $f1 $f2 to exit" wait_for_cmd 5 eval 'gone "$f1" && gone "$f2"'
+  snap
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  fid="$(row_id "$js" '.group == "processes" and .action == "reap" and (.id | startswith("fin-"))')"
+  wid="$(row_id "$js" ".what | test(\"merge-watch process pid $WATCH \")")"
+  check "leg_act_reap (control) the two finished entries are ONE fin row (reap), the old watcher an overdue reap row" \
+    eval '[ -n "$e1" ] && [ -n "$e2" ] && [ -f "$R/$e1.json" ] && [ -f "$R/$e2.json" ] && [ -n "$fid" ] && [ -n "$wid" ] && [ "$(rows_where "$js" ".id == \"$fid\"" | jq -r .what)" = "2 finished registry entries" ]'
+  out="$(jr act --confirm --root "$P" "$fid" "$wid" 2>/dev/null)"
+  check "leg_act_reap act --confirm on the fin row prunes BOTH entry files (its multi-id data word-splits into reap --apply)" \
+    eval 'has "$out" "janitor: act $fid — reap: " && has "$out" "finished $e1 " && has "$out" "finished $e2 " && [ ! -e "$R/$e1.json" ] && [ ! -e "$R/$e2.json" ]'
+  WAIT_LIB_WHAT="watcher $WATCH to be reaped" wait_for_cmd 10 no_lstart "$WATCH"
+  check "leg_act_reap act --confirm on the overdue row stops the old watcher through proc-registry reap" \
+    eval 'has "$out" "janitor: act $wid — reap: " && gone "$WATCH" && alive "$LEAK" && alive "$HOLDER"'
+  leg_end
+}
+
+leg_act_sweep() {
+  local js id1 id2 out
+  mk_fixture
+  mk_merged_wt merged2 "$P-merged2" 12
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  id1="$(row_id "$js" ".group == \"worktrees\" and .action == \"sweep-apply\" and (.what | test(\"proj-merged$\"))")"
+  id2="$(row_id "$js" ".group == \"worktrees\" and .action == \"sweep-apply\" and (.what | test(\"proj-merged2$\"))")"
+  check "leg_act_sweep (control) two sweep-apply rows, both worktrees present" \
+    eval '[ -n "$id1" ] && [ -n "$id2" ] && [ "$id1" != "$id2" ] && [ -d "$WT" ] && [ -d "$P-merged2" ]'
+  out="$(jr act --confirm --root "$P" "$id1" "$id2" 2>/dev/null)"
+  check "leg_act_sweep the first picked row runs the whole sweep once; the second is 'already applied in this call'" \
+    eval '[ "$(text_count "$out" "sweep-apply (the whole sweep): ")" = 1 ] && has "$out" "janitor: act $id1 — sweep-apply (the whole sweep): " && has "$out" "janitor: act $id2 — sweep-apply: already applied in this call"'
+  check "leg_act_sweep ... both merged worktrees are removed (gone from disk and from git worktree list)" \
+    eval '[ ! -d "$WT" ] && [ ! -d "$P-merged2" ] && ! git -C "$P" worktree list --porcelain | grep -q "proj-merged"'
+  leg_end
+}
+
+leg_act_lane_remove() {
+  local js id out l3
+  mk_fixture --lanes
+  # lane L3: a clean clone (its own git dir, .supervisor/ excluded, no branches to push) whose run says done
+  l3="$P-lanes/fx-wave/L3"; mkdir -p "$l3/.supervisor/automate"
+  git init -q "$l3" && printf '.supervisor/\n' >> "$l3/.git/info/exclude"
+  printf '{"lane":"L3","run_id":"fx-wave-L3","parent_run_id":"fx-wave","primary":"%s"}\n' "$P" > "$l3/.supervisor/lane.json"
+  printf '# Automate Run: fx-wave-L3\n\n## Current\n- item: .supervisor/requirements/y.md | status: done\n' > "$l3/.supervisor/automate/fx-wave-L3.md"
+  printf 'L3\t%s\t.supervisor/requirements/y.md\tfx-wave-L3\t\t\t\t\t\t\n' "$l3" >> "$P/.supervisor/automate/fx-wave.lanes"
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  id="$(row_id "$js" '.group == "lanes" and .what == "lane L3 of fx-wave" and .action == "lane-remove"')"
+  check "leg_act_lane_remove (control) the done lane is one lanes row, action lane-remove" eval '[ -n "$id" ] && [ "$(rows_where "$js" ".id == \"$id\"" | jq -r .state)" = done ]'
+  out="$(jr act --confirm --root "$P" "$id" 2>/dev/null)"
+  check "leg_act_lane_remove act --confirm runs lane-remove: the lane dir is gone, the table says removed, a salvage is kept" \
+    eval 'has "$out" "janitor: act $id — lane-remove: lane-remove: removed L3 ($l3)" && [ ! -d "$l3" ] && [ "$(awk -F"\t" "\$1 == \"L3\" { print \$8 }" "$P/.supervisor/automate/fx-wave.lanes")" = removed ] && [ -n "$(ls -d "$P-lanes/fx-wave/salvage/L3-removed-"* 2>/dev/null)" ]'
+  check "leg_act_lane_remove ... the other lanes stay on disk" eval '[ -d "$P-lanes/fx-wave/L1" ] && [ -d "$P-lanes/fx-wave/L2" ]'
+  leg_end
+}
+
+leg_act_config_restore() {
+  local js id out cfg bak
+  mk_fixture
+  cfg="$P/.supervisor/config.json"; bak="$P/.supervisor/automate/fx-old.config-backup.json"
+  printf '{"auto_review": false}\n' > "$cfg"   # the suppressed config a crashed run left behind
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  id="$(row_id "$js" '.group == "stale-state" and .what == "config backup of run fx-old"')"
+  check "leg_act_config_restore (control) the stranded backup of a done run under a dead lock: action config-restore, every field filled" \
+    eval '[ -n "$id" ] && full_row "$(rows_where "$js" ".id == \"$id\"")" && [ "$(rows_where "$js" ".id == \"$id\"" | jq -r .action)" = config-restore ]'
+  out="$(jr act --confirm --root "$P" "$id" 2>/dev/null)"
+  check "leg_act_config_restore act --confirm restores config.json byte-for-byte from the backup and removes the backup" \
+    eval 'has "$out" "janitor: act $id — config-restore: restored $cfg from $bak (backup removed)" && [ "$(cat "$cfg")" = "{\"auto_review\": true}" ] && [ ! -e "$bak" ]'
+  leg_end
+}
+
+leg_nostatus() {
+  local js r id cid out l4 m4
+  mk_fixture
+  # lane L4: a dead-holder lock old enough to reclaim, but the run its owner names states no ## Status:
+  l4="$P-lanes/fx-wave/L4"; mkdir -p "$l4/.supervisor/automate"
+  mk_lock "$l4" "$(dead_pid)" 4000 "automate:fx-wave-L4" "$FAKE_LSTART"
+  printf '# Automate Run: fx-wave-L4\n\n## Current\n- item: x\n' > "$l4/.supervisor/automate/fx-wave-L4.md"
+  # a config backup whose run file states no ## Status: (the primary's lock holder is dead)
+  printf '{"auto_review": true}\n' > "$P/.supervisor/automate/fx-nost.config-backup.json"
+  printf '# Automate Run: fx-nost\n\n## Progress\n' > "$P/.supervisor/automate/fx-nost.md"
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  r="$(rows_where "$js" ".group == \"locks\" and (.what | endswith(\"$l4\"))")"; id="$(jq -r .id <<<"$r" 2>/dev/null)"
+  check "leg_nostatus a dead-holder >= 1800s lock whose run states no status: action none, never reclaimed, no alt" \
+    eval 'full_row "$r" && [ "$(jq -r ".action + \"|\" + (.alt_action // \"-\")" <<<"$r")" = "none|-" ] && has "$(jq -r .reason <<<"$r")" "run fx-wave-L4'"'"'s file states no \`## Status:\` — whether that run goes on cannot be judged; never reclaimed from here"'
+  r="$(rows_where "$js" '.group == "stale-state" and .what == "config backup of run fx-nost"')"; cid="$(jq -r .id <<<"$r" 2>/dev/null)"
+  check "leg_nostatus a config backup whose run file states no status: action none, 'cannot be judged'" \
+    eval 'full_row "$r" && [ "$(jq -r .action <<<"$r")" = none ] && has "$(jq -r .reason <<<"$r")" "run fx-nost'"'"'s file states no \`## Status:\` — whether that run goes on cannot be judged; report only"'
+  check "leg_nostatus (control) the done run's backup under the same dead lock is still config-restore" \
+    eq "$(nrows "$js" '.what == "config backup of run fx-old" and .action == "config-restore"')" 1
+  m4="$(cksum < "$l4/.supervisor/run.lock/meta")"
+  out="$(jr act --confirm --root "$P" "$id" "$cid" 2>/dev/null)"
+  check "leg_nostatus act --confirm refuses both, lock and backup unchanged" \
+    eval '[ -n "$id" ] && [ -n "$cid" ] && has "$out" "janitor: refused $id — a report-only row" && has "$out" "janitor: refused $cid — a report-only row" && [ "$(cksum < "$l4/.supervisor/run.lock/meta")" = "$m4" ] && [ -f "$P/.supervisor/automate/fx-nost.config-backup.json" ]'
+  leg_end
+}
+
+leg_cfg_unjudged() {
+  local js r id out
+  mk_fixture
+  # the primary's lock now records no holder pid: liveness reads `unknown` while status is LOCKED
+  mk_lock "$P" "" 4000 "automate:fx-crashed"
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  r="$(rows_where "$js" '.group == "stale-state" and .what == "config backup of run fx-old"')"; id="$(jq -r .id <<<"$r" 2>/dev/null)"
+  check "leg_cfg_unjudged a done run's backup under a pid-less held lock: action none, 'run lock cannot be judged'" \
+    eval 'full_row "$r" && [ "$(jq -r ".state + \"|\" + .action" <<<"$r")" = "run lock: held with no recorded pid|none" ] && has "$(jq -r .reason <<<"$r")" "this checkout'"'"'s run lock cannot be judged (held with no recorded pid)"'
+  out="$(jr act --confirm --root "$P" "$id" 2>/dev/null)"
+  check "leg_cfg_unjudged act --confirm refuses it, the backup kept" \
+    eval '[ -n "$id" ] && has "$out" "janitor: refused $id — a report-only row" && [ -f "$P/.supervisor/automate/fx-old.config-backup.json" ]'
+  leg_end
+}
+
 leg_usage() {
   local rc out
   mk_fixture
@@ -547,7 +681,7 @@ leg_usage() {
 
 # ==== run the legs against the real script ===============================================================
 echo "== janitor-report.sh =="
-for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_host_session leg_snapshot_fail leg_reap_host leg_sweep_set leg_lock_reclaim leg_usage; do
+for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_host_session leg_snapshot_fail leg_reap_host leg_sweep_set leg_lock_reclaim leg_act_reap leg_act_sweep leg_act_lane_remove leg_act_config_restore leg_nostatus leg_cfg_unjudged leg_usage; do
   LEG_FAIL=0; S="$SUT_REAL"; t0="$(date +%s)"; "$leg"; echo "  ($leg: $(( $(date +%s) - t0 ))s)"
 done
 
@@ -611,6 +745,16 @@ mk_mutant reapbelow sub 'hb="$(_jr_host_below "$pid")"' 'hb=""'
 run_mutant "the live-session-below warning on an overdue entry dropped" leg_reap_host
 mk_mutant noset sub '|$reason|set:$wset"' '|$reason"'
 run_mutant "the would-remove set dropped from the sweep row identity (act sweeps rows never shown)" leg_sweep_set
+mk_mutant sweeponce del 'if [ "$swept" = 1 ]; then echo'
+run_mutant "act's once-per-call sweep-apply guard dropped (a second picked sweep row re-runs the whole sweep)" leg_act_sweep
+mk_mutant reapquoted sub '_jr_pr reap --apply $data' '_jr_pr reap --apply "$data"'
+run_mutant "the fin row's ids passed to reap as ONE word (a multi-entry fin row prunes nothing)" leg_act_reap
+mk_mutant locknostatus sub 'if [ "$run" != "$owner" ] && [ -f "$c/.supervisor/automate/$run.md" ] && [ -z "$rst" ]; then' 'if false; then'
+run_mutant "the dead-holder lock fail-closed on a run file with no status dropped (lock-reclaim offered)" leg_nostatus
+mk_mutant cfgnostatus sub 'elif [ -f "$ad/$run.md" ] && [ -z "$rst" ]; then' 'elif false; then'
+run_mutant "the config-backup fail-closed on a run file with no status dropped (config-restore offered)" leg_nostatus
+mk_mutant cfgunjudged sub 'elif [ "$lv" != dead ] && [ "$lv" != unknown ]; then' 'elif false; then'
+run_mutant "the config-backup fail-closed on an unjudgeable run lock dropped (config-restore offered)" leg_cfg_unjudged
 
 echo
 echo "test-janitor-report.sh: $pass passed, $fail failed"

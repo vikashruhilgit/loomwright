@@ -564,7 +564,7 @@ cmd_list() {
   if _pr_resolve_dir && command -v jq >/dev/null 2>&1; then avail=1; fi
   if [ "$scan" = 1 ]; then
     # the snapshot is taken BEFORE the registry rows, so they and the scan rows are one moment
-    _pr_scan_prep "$avail" || note="$PR_SCAN_NOTE"
+    _pr_scan_prep || note="$PR_SCAN_NOTE"
   fi
   if [ "$avail" = 1 ]; then
     files="$(_pr_entry_files)"
