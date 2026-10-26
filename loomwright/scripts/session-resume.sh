@@ -503,6 +503,10 @@ proc_attention_line() {
 # successful read stamps today's date whether or not a line prints: the check runs at most once per
 # calendar day (one offline read a day), so an item that turns `merged_unstamped` later the same day
 # waits for the next day's first session — `/backlog` shows it any time.
+# OPERATOR COST (owner decision, deliberate): a timeout writes no marker, so on a tree whose offline read
+# outlasts the deadline (a large requirements tree, or a loaded host) EVERY startup pays up to
+# LOOMWRIGHT_SR_BACKLOG_TIMEOUT seconds and the nudge never prints. The operator's levers: raise
+# LOOMWRIGHT_SR_BACKLOG_TIMEOUT above the read's real duration, or silence it with LOOMWRIGHT_BACKLOG_NUDGE=0.
 # OFFLINE by construction: `--offline` makes no gh call and no right-size call. HONEST LIMIT: an item
 # whose only merge evidence is a merged PR on GitHub (no run-file `- [x]` row, no `fleet closeout` line)
 # is NOT counted `merged_unstamped` here — it reads what the board reads when gh fails (`unknown` or its
