@@ -1,7 +1,7 @@
 # --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/backlog.golden.
 #:  item-state       <item> [--json] [--root <checkout>]  # parallel-automate/18a: READ-ONLY — the ONE status reader: prints `<state>\t<item>\t<evidence>` (state from the closed set done|abandoned|parked|proposed|brief_shipped|merged_unstamped|pr_open|in_flight|conflict|open|unknown, first match of the precedence in the backlog.sh header) plus one `stale_run\t<run file>\t<reason>` row per unfinished run whose ## Current the item's own stamp beats; --json prints ONE object; exit 1 on usage / item not found
-#:  backlog          [--json] [--state <s>] [--unknown | --verify-list [<item>...]] [--root <checkout>]  # parallel-automate/18a: READ-ONLY board — every requirement item (the _rs_skip_path set) once, grouped by folder, with item-state's state + evidence, run / lane, PR and a right-size column (ONE `right-size --json` call; failure ⇒ `unknown`), totals summing to the item count and `stale_run` runs; ONE cached `gh pr list` read per state (merged, open), gh failing ⇒ every PR field `unverified` + header `github: unverified`; --state filters rows (totals stay whole-tree); --unknown lists unknown + brief_shipped items with a suggested fix; --verify-list lists items with no merge evidence (brief_shipped, unknown, conflict, or the named items) with candidate merged PRs; writes nothing; exit 1 on usage
+#:  backlog          [--json] [--state <s>] [--unknown | --verify-list [<item>...]] [--offline] [--root <checkout>]  # parallel-automate/18a: READ-ONLY board — every requirement item (the _rs_skip_path set) once, grouped by folder, with item-state's state + evidence, run / lane, PR and a right-size column (ONE `right-size --json` call; failure ⇒ `unknown`), totals summing to the item count and `stale_run` runs; ONE cached `gh pr list` read per state (merged, open), gh failing ⇒ every PR field `unverified` + header `github: unverified`; --offline makes no gh call and no right-size call and reads exactly as both failing (`github: unverified`, right-size `unknown`; an item whose only merge evidence is a merged PR is not `merged_unstamped`); --state filters rows (totals stay whole-tree); --unknown lists unknown + brief_shipped items with a suggested fix; --verify-list lists items with no merge evidence (brief_shipped, unknown, conflict, or the named items) with candidate merged PRs; writes nothing; exit 1 on usage
 #:  backlog-stamp    <item> <done|done_with_escalation|abandoned|kept-open> [--pr <url>]... [--owed <text>] [--reason <text>] [--supersedes <run_id>] [--date YYYY-MM-DD] [--root <checkout>] --confirm  # parallel-automate/18a: the owner-approved stamp writer — appends exactly the engine shape (done / done_with_escalation: closeout's sentinel + `## Status:` + Completed + Brief + one PR line per --pr [+ Owed]; abandoned: `## Status: done_with_escalation — ABANDONED (<reason>)`; kept-open: `- **Kept open:** <date> — supersedes <run_id>`) to ONE file under <root>/.supervisor/requirements/; without --confirm prints the block and writes nothing; refuses (exit 1, nothing written) an already-done item, a path outside the requirements tree, and an absolute home path in any argument but the --root locator
 
 # --------------------------------------------------------------------------- #
@@ -56,9 +56,14 @@
 # `pr_open` because of the failure, and `--verify-list` says its candidates are unverified.
 # RIGHT-SIZE (board only): ONE `right-size <item list> --json --root <root>` call over the whole item
 # list, joined on its `item` display name; any failure ⇒ the column reads `unknown`, nothing else.
+# OFFLINE (board only, `backlog --offline`, any mode): neither gh read runs and no right-size job
+# starts; the board takes the two failure paths above exactly (`github: unverified`, the right-size
+# column `unknown`) with no new key or state. HONEST LIMIT: an item whose only merge evidence is a
+# merged PR (no run-file `- [x]` row, no `fleet closeout` line) is not `merged_unstamped` offline; it
+# reads what the gh-failure path reads. item-state takes no such flag.
 #
 # READ-ONLY (item-state, backlog): writes only its own mktemp dir (trap-removed); never git; `gh`
-# only for the two list reads. NO ABSOLUTE PATHS in any printed row: paths are repo-relative.
+# only for the two list reads (none under --offline). NO ABSOLUTE PATHS in any printed row: paths are repo-relative.
 #
 # backlog-stamp is the one writer here (the dispatcher header's carve-out): one requirement file,
 # only under --confirm, appended through a temp copy + mv; never git, never `gh`.
@@ -293,9 +298,10 @@ _BL_PREP_AWK='
 
 # _bl_context <root> — load the per-pass sources into $_BL_TMP: runs (the index above), merged.tsv /
 # open.tsv (`<number>\t<url>\t<headRefName>\t<title>`, _BL_GH verified or unverified) and lanes.tsv
-# (`<item>\t<lane>\t<state>\t<pr>`).
+# (`<item>\t<lane>\t<state>\t<pr>`). <offline> 1 (backlog --offline) skips both gh reads: no "$GH"
+# call, and _BL_GH stays unverified through the same both-reads-failed path.
 _bl_context() {
-  local root="$1" rf live j1 j2 rc1=0 rc2=0 lj
+  local root="$1" offline="${2:-0}" rf live j1="" j2="" rc1=0 rc2=0 lj
   _BL_ROOT="$root"; _BL_ADIR="$root/.supervisor/automate"
   : > "$_BL_TMP/runs"; : > "$_BL_TMP/merged.tsv"; : > "$_BL_TMP/open.tsv"; : > "$_BL_TMP/lanes.tsv"; : > "$_BL_TMP/stale"
   for rf in "$_BL_ADIR"/*.md; do
@@ -304,8 +310,11 @@ _bl_context() {
     if is_run_file "$rf" && ! is_done "$rf"; then live=1; fi
     env LC_ALL=C awk -v rf="${rf#"$root"/}" -v live="$live" "$_BL_RUNS_AWK" "$rf" >> "$_BL_TMP/runs" 2>/dev/null
   done
-  j1="$(cd "$root" && "$GH" pr list --state merged --limit "$_BL_PR_LIMIT" --json number,url,title,headRefName 2>/dev/null)" || rc1=$?
-  j2="$(cd "$root" && "$GH" pr list --state open --limit "$_BL_PR_LIMIT" --json number,url,title,headRefName 2>/dev/null)" || rc2=$?
+  if [ "$offline" = 1 ]; then rc1=1; rc2=1   # --offline: neither read runs; read as both failing
+  else
+    j1="$(cd "$root" && "$GH" pr list --state merged --limit "$_BL_PR_LIMIT" --json number,url,title,headRefName 2>/dev/null)" || rc1=$?
+    j2="$(cd "$root" && "$GH" pr list --state open --limit "$_BL_PR_LIMIT" --json number,url,title,headRefName 2>/dev/null)" || rc2=$?
+  fi
   _BL_GH=unverified
   if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] \
      && "$JQ" -e 'type == "array"' >/dev/null 2>&1 <<<"$j1" && "$JQ" -e 'type == "array"' >/dev/null 2>&1 <<<"$j2"; then
@@ -537,12 +546,13 @@ item_state() {
   return 0
 }
 
-# backlog [--json] [--state <s>] [--unknown | --verify-list [<item>...]] [--root <checkout>]
+# backlog [--json] [--state <s>] [--unknown | --verify-list [<item>...]] [--offline] [--root <checkout>]
 backlog_board() {
-  local json=0 root="" state="" mode=board named="" f g rsz=ok rc=0 rspid="" doc names
+  local json=0 root="" state="" mode=board named="" f g rsz=ok rc=0 rspid="" doc names offline=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --json) json=1; shift ;;
+      --offline) offline=1; shift ;;
       --state) case "${2:-}" in ""|-*) _bl_fail backlog "--state requires a state" ;; esac; state="$2"; shift 2 ;;
       --unknown) [ "$mode" = board ] || _bl_fail backlog "--unknown and --verify-list are exclusive"; mode=unknown; shift ;;
       --verify-list) [ "$mode" = board ] || _bl_fail backlog "--unknown and --verify-list are exclusive"; mode=verify; shift ;;
@@ -565,13 +575,14 @@ backlog_board() {
   done <<<"$named"
   _bl_setup backlog
   set +e   # FAIL-SAFE reads from here: a source that cannot be read degrades, never aborts
-  _bl_context "$root"
+  _bl_context "$root" "$offline"
   _bl_items "$root" > "$_BL_TMP/list.abs"
   while IFS= read -r f; do printf '%s\n' "${f#"$root"/}"; done < "$_BL_TMP/list.abs" > "$_BL_TMP/list.txt"
   # the right-size column: ONE call over the whole item list, run beside the classification (it is
   # the slow source) and joined by _bl_doc; any failure ⇒ `unknown` in that column only
   printf '{}' > "$_BL_TMP/rs.map"
-  if [ -s "$_BL_TMP/list.txt" ]; then
+  if [ "$offline" = 1 ]; then rsz=unknown   # --offline: no right-size job; read as a failed call
+  elif [ -s "$_BL_TMP/list.txt" ]; then
     (
       if [ -n "${LOOMWRIGHT_RIGHT_SIZE_BIN:-}" ]; then exec "$LOOMWRIGHT_RIGHT_SIZE_BIN" "$_BL_TMP/list.txt" --json --root "$root"; fi
       set -euo pipefail; right_size "$_BL_TMP/list.txt" --json --root "$root"

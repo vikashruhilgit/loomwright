@@ -2,21 +2,24 @@
 # build-floor.sh - deterministic, READ-ONLY projector of the scattered .supervisor/ and
 # .agent/ surfaces into ONE versioned artefact: .supervisor/floor/floor.json.
 #
-# WHY: the state a view needs is already on disk, but spread across FOURTEEN projected
-# surfaces in five formats (markdown tables, YAML frontmatter, folder membership, JSONL,
-# JSON). Counting basis for the fourteen: one key under `surfaces` in floor.json, which is
-# not the same as the number of directories read - the four jobs/ lifecycle folders are four
-# surfaces, while logs/*.jsonl yields two (`logs` counts files, `sessions` reads their
-# contents). If every view parses those inputs itself, every view re-implements the same
-# parsers and drifts independently. Exactly one thing should read them. That is this script;
-# floor.json is the contract.
+# WHY: the state a view needs is already on disk, but spread across many projected surfaces
+# in five formats (markdown tables, YAML frontmatter, folder membership, JSONL, JSON).
+# Counting basis for the surfaces: one key under `surfaces` in floor.json; the key list is the
+# `surfaces:` line of the annotated block in docs/result-schemas/floor-projection.md (the one
+# authority - no count is restated here). That is not the same as the number of directories
+# read - the four jobs/ lifecycle folders are four surfaces, while logs/*.jsonl yields two
+# (`logs` counts files, `sessions` reads their contents). If every view parses those inputs
+# itself, every view re-implements the same parsers and drifts independently. Exactly one thing
+# should read them. That is this script; floor.json is the contract.
 #
 # DISCIPLINE (mirrors build-insights.sh / build-handoff.sh, the two sibling projectors):
 #   * set -uo pipefail with NO set -e.
 #   * a `command -v jq` guard that SKIPS rather than fails.
 #   * exit 0 ALWAYS - a projector must never break its caller.
 #   * READ-ONLY on every input. The only path written is .supervisor/floor/floor.json.
-#     No temp files, no lock files, no redirects outside that one directory.
+#     This script makes no temp files, no lock files and no redirects outside that one
+#     directory. Its one child reader (`automate-helpers.sh backlog --json --offline`, the
+#     `backlog` surface) keeps its own trap-removed mktemp dir and reads `lane-status --json`.
 #
 # EVIDENCE-ONLY DERIVATION: a projector that guesses is the same lie in a new place. Every
 # number carries the glob or predicate that produced it (`basis`), and evidence we do not
@@ -1260,6 +1263,83 @@ else
     esac
     add_surface "agents" "$AGENTS_DIR" "$agents_basis" "counted" "${#agentfiles[@]}" "" \
       "$(mtime_epoch "$AGENTS_DIR")" "$agents_detail"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 11) backlog - every requirement item's state, read through the board's OWN classifier.
+#
+# The one surface this script does not parse itself. `automate-helpers.sh backlog` is the ONE
+# status reader for requirement items (its header owns the closed state set and the precedence);
+# re-deriving a state here would be a second classifier that drifts from the first. So the
+# number is the reader's `item_count` and the detail is its `totals` plus the items that need an
+# owner decision - copied, never recomputed.
+#
+# `--offline` is load-bearing: this is a deterministic projector, so it makes no forge call. The
+# reader then takes its own gh-failure path exactly (`github: unverified`). HONEST LIMIT, stated
+# in the basis as well: an item whose only merge evidence is a merged PR on GitHub (no run-file
+# `- [x]` row, no `fleet closeout` line) is NOT counted merged_unstamped here; it reads what the
+# board reads when gh fails. `/backlog` (live) stays the authoritative check.
+#
+# The reader is the sibling script, resolved from SELF_DIR (before the `cd`), and it is run
+# against the project root. An absent requirements tree is `absent` and the reader is never
+# started; an unreadable one is `unverified` (the reader would list zero items, and a zero this
+# script did not measure is exactly the fabricated number it refuses to publish). A missing
+# reader, a non-zero exit, or output that is not the board document is `unverified` too.
+# ---------------------------------------------------------------------------
+REQ_DIR=".supervisor/requirements"
+BACKLOG_READER=""
+[ -n "$SELF_DIR" ] && BACKLOG_READER="$SELF_DIR/automate-helpers.sh"
+backlog_basis="one item per requirement *.md under $REQ_DIR, each item's state read by automate-helpers.sh backlog --json --offline (the board's own classifier, never re-derived here); github lookups skipped (offline), so an item whose only merge evidence is a merged PR reads unknown, not merged_unstamped"
+if [ ! -d "$REQ_DIR" ]; then
+  add_note "backlog omitted: input directory $REQ_DIR is not present"
+  add_surface "backlog" "$REQ_DIR" "$backlog_basis" "absent" "" "input directory $REQ_DIR is not present"
+elif [ ! -r "$REQ_DIR" ]; then
+  add_note "backlog unverified: input directory $REQ_DIR is not readable"
+  add_surface "backlog" "$REQ_DIR" "$backlog_basis" "unverified" "" "input directory $REQ_DIR is not readable"
+elif [ -z "$BACKLOG_READER" ] || [ ! -f "$BACKLOG_READER" ]; then
+  add_note "backlog unverified: the reader automate-helpers.sh is not present beside build-floor.sh"
+  add_surface "backlog" "$REQ_DIR" "$backlog_basis" "unverified" "" \
+    "the reader automate-helpers.sh is not present beside build-floor.sh"
+else
+  bl_doc="$(bash "$BACKLOG_READER" backlog --json --offline --root "$GITROOT" 2>/dev/null)"
+  bl_rc=$?
+  bl_count=""; bl_detail=""
+  if [ "$bl_rc" -eq 0 ]; then
+    # ONE jq pass both validates the shape and builds the detail, so the count and the detail can
+    # never come from two different readings. `needs_decision` is the reader's own rows for the
+    # four states an owner has to act on, LC_ALL=C ordered by repo-relative path.
+    bl_pair="$(printf '%s' "$bl_doc" | env LC_ALL=C jq -c '
+      if type == "object"
+         and (.item_count | type) == "number" and .item_count >= 0 and (.item_count | floor) == .item_count
+         and (.totals | type) == "object"
+      then {count: .item_count,
+            detail: {github: .github, totals: .totals,
+                     needs_decision: ([(.items // [])[]
+                                       | select(.state == "merged_unstamped" or .state == "conflict"
+                                                or .state == "brief_shipped" or .state == "unknown")]
+                                      | sort_by(.path)
+                                      | map({item, state, evidence}))}}
+      else empty end
+    ' 2>/dev/null)"
+    if [ -n "$bl_pair" ]; then
+      bl_count="$(printf '%s' "$bl_pair" | jq -r '.count' 2>/dev/null)"
+      bl_detail="$(printf '%s' "$bl_pair" | jq -c '.detail' 2>/dev/null)"
+    fi
+  fi
+  case "$bl_count" in ''|*[!0-9]*) bl_count="" ;; esac
+  # ONE failure branch (bl_count is empty whenever the reader exited non-zero), so a failed read
+  # can only ever reach the single unverified call below - never the counted one.
+  if [ -z "$bl_count" ]; then
+    if [ "$bl_rc" -ne 0 ]; then
+      bl_why="the reader automate-helpers.sh backlog --json --offline exited $bl_rc"
+    else
+      bl_why="the reader's output is not a JSON object with a whole-number item_count and an object totals"
+    fi
+    add_note "backlog unverified: $bl_why"
+    add_surface "backlog" "$REQ_DIR" "$backlog_basis" "unverified" "" "$bl_why"
+  else
+    add_surface "backlog" "$REQ_DIR" "$backlog_basis" "counted" "$bl_count" "" "" "$bl_detail"
   fi
 fi
 
