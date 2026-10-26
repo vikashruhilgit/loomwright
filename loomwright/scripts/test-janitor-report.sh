@@ -54,6 +54,9 @@
 #        run file states none, are none ("cannot be judged"), and act refuses both, unchanged.
 #   leg_cfg_unjudged  a done run's config backup under a pid-less held primary lock is none ("run lock
 #        cannot be judged (held with no recorded pid)"), and act refuses it.
+#   leg_meta_push_failed  a `<run>.meta-push-failed` marker is ONE stale-state `mpf` row, action none, its
+#        evidence the line `automate-helpers.sh meta-push-failed` prints (the marker's first line) and its
+#        reason the report-only retry pointer; act refuses it, the marker unchanged.
 #   leg_usage  bad arguments exit 2; an unknown row id is refused, exit 0.
 #   MUTATION CONTROLS (gated per lesson fa32a308: non-empty, byte-differs, parses, a line-delete removes
 #   exactly one line), each must turn its leg red: act's report-only guard line deleted (leg_noninteractive),
@@ -64,7 +67,8 @@
 #   dropped (leg_snapshot_fail), the live-host-session and session-below reap warnings dropped (leg_reap_host),
 #   act's once-per-call sweep guard dropped (leg_act_sweep), the fin row's ids quoted into one word
 #   (leg_act_reap), the lock and config-backup no-status fail-closeds dropped (leg_nostatus), the
-#   config-backup unjudgeable-lock fail-closed dropped (leg_cfg_unjudged).
+#   config-backup unjudgeable-lock fail-closed dropped (leg_cfg_unjudged), the mpf row's helper read dropped
+#   and its none action flipped to stop-unregistered (leg_meta_push_failed).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -663,6 +667,33 @@ leg_cfg_unjudged() {
   leg_end
 }
 
+leg_meta_push_failed() {
+  local js r id out mk first why before m0
+  mk_fixture
+  # a failed mode-on trail push left its marker (trail-pr's `_trail_meta_fail` shape: `<ts> <why>`, then
+  # meta-sync's full output) beside its run file
+  mk="$P/.supervisor/automate/fx-mpf.meta-push-failed"
+  printf '2026-10-01T00:00:00Z meta-sync.sh push exited 1\nmeta_sync: fetch_failed\n' > "$mk"
+  printf '# Automate Run: fx-mpf\n\n## Status: paused\n' > "$P/.supervisor/automate/fx-mpf.md"
+  first="$(bash "$HERE/automate-helpers.sh" meta-push-failed "$P/.supervisor/automate/fx-mpf.md" 2>/dev/null)"
+  check "leg_meta_push_failed (control) the real helper prints only the marker's first line" \
+    eq "$first" "2026-10-01T00:00:00Z meta-sync.sh push exited 1"
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  check "leg_meta_push_failed the marker is exactly one mpf row" eq "$(nrows "$js" '.id | startswith("mpf-")')" 1
+  r="$(rows_where "$js" '.id | startswith("mpf-")')"; id="$(jq -r .id <<<"$r" 2>/dev/null)"
+  check "leg_meta_push_failed ... stale-state, run fx-mpf, 'push failed', action none, every field filled" \
+    eval 'full_row "$r" && [ "$(jq -r "[.group, .what, .owner, .state, .action] | join(\"|\")" <<<"$r")" = "stale-state|metadata push failure of run fx-mpf|run fx-mpf|push failed|none" ]'
+  check "leg_meta_push_failed ... its evidence is the helper's line (the marker's first line, not its path)" \
+    eq "$(jq -r .evidence <<<"$r" 2>/dev/null)" "$first"
+  why="report only — the run's next trail push retries it (\`/automate --resume fx-mpf\`), or publish by hand with meta-sync.sh push"
+  check "leg_meta_push_failed ... its reason is the report-only retry pointer" eq "$(jq -r .reason <<<"$r" 2>/dev/null)" "$why"
+  before="$(fxsum)"; m0="$(cksum < "$mk")"
+  out="$(jr act --confirm --root "$P" "$id" 2>/dev/null)"
+  check "leg_meta_push_failed act --confirm refuses it as report-only; the marker and every fixture tree unchanged" \
+    eval '[ -n "$id" ] && has "$out" "janitor: refused $id — a report-only row" && ! has "$out" "janitor: act $id" && [ "$(cksum < "$mk")" = "$m0" ] && [ "$(fxsum)" = "$before" ]'
+  leg_end
+}
+
 leg_usage() {
   local rc out
   mk_fixture
@@ -681,7 +712,7 @@ leg_usage() {
 
 # ==== run the legs against the real script ===============================================================
 echo "== janitor-report.sh =="
-for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_host_session leg_snapshot_fail leg_reap_host leg_sweep_set leg_lock_reclaim leg_act_reap leg_act_sweep leg_act_lane_remove leg_act_config_restore leg_nostatus leg_cfg_unjudged leg_usage; do
+for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_host_session leg_snapshot_fail leg_reap_host leg_sweep_set leg_lock_reclaim leg_act_reap leg_act_sweep leg_act_lane_remove leg_act_config_restore leg_nostatus leg_cfg_unjudged leg_meta_push_failed leg_usage; do
   LEG_FAIL=0; S="$SUT_REAL"; t0="$(date +%s)"; "$leg"; echo "  ($leg: $(( $(date +%s) - t0 ))s)"
 done
 
@@ -755,6 +786,10 @@ mk_mutant cfgnostatus sub 'elif [ -f "$ad/$run.md" ] && [ -z "$rst" ]; then' 'el
 run_mutant "the config-backup fail-closed on a run file with no status dropped (config-restore offered)" leg_nostatus
 mk_mutant cfgunjudged sub 'elif [ "$lv" != dead ] && [ "$lv" != unknown ]; then' 'elif false; then'
 run_mutant "the config-backup fail-closed on an unjudgeable run lock dropped (config-restore offered)" leg_cfg_unjudged
+mk_mutant mpfread sub 'l="$(bash "$JR_AH" meta-push-failed "$ad/$run.md" 2>/dev/null | head -1)"' 'l=""'
+run_mutant "the mpf row's automate-helpers.sh meta-push-failed read dropped (evidence falls back to the marker path)" leg_meta_push_failed
+mk_mutant mpfaction sub '"${l:-$m}" none' '"${l:-$m}" stop-unregistered'
+run_mutant "the mpf row's none action flipped to stop-unregistered (act would act on a report-only marker)" leg_meta_push_failed
 
 echo
 echo "test-janitor-report.sh: $pass passed, $fail failed"
