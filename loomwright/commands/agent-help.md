@@ -22,7 +22,7 @@ Shows all available agent commands and quick usage examples.
 - `build.md` — `/product-owner`, `/orchestrator`, `/code-reviewer`, `/commit`, `/red-team-reviewer`.
 - `qa.md` — `/qa-strategist`, `/qa-executor`, `/verify`.
 - `knowledge.md` — `/dreaming`, `/capability-check`, `/insights`, `/obsidian`, `/handoff`, `/propose`.
-- `ops.md` — `/telemetry`, `/rules`, `/pr-postmortem`, `/autonomous`, `/backlog`.
+- `ops.md` — `/telemetry`, `/rules`, `/pr-postmortem`, `/autonomous`, `/backlog`, `/janitor`.
 - `more.md` — `/setup`, `/review-pr`, the QA Workflow Diagram.
 - `guide.md` — Daily Workflow Example, Common Scenarios, Key Concepts, Tips & Tricks, Files & Directories, Getting Help, Keyboard Shortcuts, Summary.
 
@@ -196,6 +196,10 @@ See [../docs/command-parts/agent-help/ops.md](../docs/command-parts/agent-help/o
 See [../docs/command-parts/agent-help/ops.md](../docs/command-parts/agent-help/ops.md).
 
 ### 📋 /backlog — Requirement Backlog Board (Read-Only, Owner-Gated Stamps)
+
+See [../docs/command-parts/agent-help/ops.md](../docs/command-parts/agent-help/ops.md).
+
+### 🧹 /janitor — Leftover Processes, Locks, Lanes and Worktrees (Read-Only, Owner-Picked Actions)
 
 See [../docs/command-parts/agent-help/ops.md](../docs/command-parts/agent-help/ops.md).
 <!-- split:end ../docs/command-parts/agent-help/ops.md -->

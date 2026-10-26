@@ -18,6 +18,12 @@
 #       section may be absent or zero; a deliberately wrong expectation must turn red
 #   (b) counting basis - every surface carries the glob/predicate that produced its number,
 #       and `logs` counts 3 `*.jsonl` out of 8 directory entries
+#   (bl) backlog - the surface is the board reader's own document (`automate-helpers.sh backlog
+#       --json --offline`), copied never re-derived: counted with `merged_unstamped == 1` and
+#       that item in `needs_decision`, zero gh calls (a logging gh stub on PATH), absent with no
+#       requirements tree, and `unverified` + no count + one note for an absent / failing /
+#       non-JSON / wrong-shape reader; two mutation controls (the counted call deleted, the
+#       failure branch turned into a counted 0)
 #   (c) session segmentation by cc_session_id, never by filename (committed fixture:
 #       3 ids / 7 lines + 1 field-less line), with the field-less line accounted explicitly
 #   (c2) blank / whitespace-only log lines - a SEPARATE seeded fixture carrying both shapes, so
@@ -118,6 +124,21 @@ ROOT="$(mktemp -d)"
 # in-block, but a mid-case abort must not strand a 000 directory that `rm -rf` cannot enter.
 trap 'chmod -R u+rwX "$ROOT" >/dev/null 2>&1; rm -rf "$ROOT" 2>/dev/null' EXIT
 mktmp() { mktemp -d "$ROOT/d.XXXXXX"; }
+
+# The `backlog` surface's reader (automate-helpers.sh backlog --json --offline) reads lane state
+# and is the one child that could reach gh. Both are stubbed for EVERY build in this file, so no
+# case depends on this machine's lanes or forge: LOOMWRIGHT_LANE_STATUS_BIN (the reader's own
+# tests-only seam) reports no lanes, and a FAILING `gh` first on PATH appends every call to
+# $BL_GH_LOG. (bl) asserts that log is still empty after every build before it - the proof that
+# `--offline` made no forge call - and probes the stub once so an empty log cannot be vacuous.
+BLBIN="$ROOT/backlog-bin"; mkdir -p "$BLBIN"
+BL_GH_LOG="$ROOT/backlog-gh.log"; : > "$BL_GH_LOG"; export BL_GH_LOG
+printf '#!/bin/sh\necho "gh $*" >> "$BL_GH_LOG"\nexit 1\n' > "$BLBIN/gh"
+printf '#!/bin/sh\necho %s\n' "'{\"lanes\":[]}'" > "$BLBIN/lanes"
+chmod +x "$BLBIN/gh" "$BLBIN/lanes"
+export LOOMWRIGHT_LANE_STATUS_BIN="$BLBIN/lanes"
+unset LOOMWRIGHT_GH_BIN LOOMWRIGHT_RIGHT_SIZE_BIN
+PATH="$BLBIN:$PATH"; export PATH
 SCHEMA_MD="$ROOT/RESULT_SCHEMAS.assembled.md"
 if [ -f "$SCHEMA_INDEX" ]; then
   {
@@ -168,6 +189,11 @@ EXP_RULES_DETAIL=16        # rule OBJECTS across those two files; a separate, di
 EXP_PM_CATEGORIES=4        # category objects across the 4 ledger lines (2 + 1 + 0 + 1)
 EXP_PM_DISAGREE=1          # ledger lines whose .flow_stages counter disagrees with .categories[].flow_stage
 EXP_AGENTS=3              # the three committed fixture agent files, copied into <fixture>/agents/
+EXP_BACKLOG=3             # requirement items under .supervisor/requirements/floor/ (seed_tree)
+EXP_BL_MERGED_UNSTAMPED=1 # 01-shipped: checked off by run-1.md's plain `- [x]` row, no done stamp
+# needs_decision, `<item>:<state>` in path order: the merged_unstamped item, then the `ready`
+# item, which reads unknown offline (the merged-PR lookup is skipped). 03-done is not listed.
+EXP_BL_NEEDS="floor/01-shipped:merged_unstamped floor/02-ready:unknown"
 
 # The roster expectations are LITERALS, and the premise block in (n) re-greps each one out of
 # the committed fixture file it came from. Deriving them here with a second frontmatter parser
@@ -206,6 +232,20 @@ seed_tree() {
   # Two sibling transients a `*.md` glob must NOT count.
   echo '{}' > "$r/.supervisor/automate/run-1.config-backup.json"
   echo '{}' > "$r/.supervisor/automate/run-2.config-backup.json"
+
+  # backlog: three requirement items, one per outcome the surface distinguishes. run-1.md stays
+  # ONE of the EXP_AUTOMATE `*.md` files (automate_runs is unchanged) but becomes a real run file
+  # whose plain `- [x]` row checks off 01-shipped, which carries no done stamp - so 01 reads
+  # merged_unstamped. 02 is `ready` (unknown offline), 03 is stamped done.
+  mkdir -p "$r/.supervisor/requirements/floor"
+  printf '# Shipped, never stamped\n\n## Status: pending\n' > "$r/.supervisor/requirements/floor/01-shipped.md"
+  printf '# Ready\n\n## Status: ready\n'                   > "$r/.supervisor/requirements/floor/02-ready.md"
+  printf '# Done\n\n## Status: done\n'                     > "$r/.supervisor/requirements/floor/03-done.md"
+  {
+    printf '# Automate Run: floor fixture\n## Status: done\n## Queue\n'
+    printf -- '- [x] .supervisor/requirements/floor/01-shipped.md\n'
+    printf '## Current\n- item: null\n'
+  } > "$r/.supervisor/automate/run-1.md"
 
   # logs/: 3 *.jsonl among 8 directory entries. `second.jsonl` REUSES sess-aaaa-0001 from the
   # committed fixture, so grouping by filename would give 3 and grouping by field gives 4.
@@ -260,7 +300,10 @@ sreason() { jq -r --arg k "$2" '.surfaces[$k].reason // ""'       "$1" 2>/dev/nu
 count_is() { [ "$(scount "$1" "$2")" = "$3" ]; }
 
 ALL_KEYS="state jobs_pending jobs_in_progress jobs_done jobs_failed automate_runs logs \
-sessions insights_runs postmortem drain_rounds worker_summaries rules agents"
+sessions insights_runs postmortem drain_rounds worker_summaries rules agents backlog"
+# Every surface-count assertion below derives its number from ALL_KEYS; no count is restated.
+# shellcheck disable=SC2086
+N_KEYS="$(set -- $ALL_KEYS; echo $#)"
 
 command -v jq >/dev/null 2>&1 || { echo "test-build-floor: jq required to run these tests" >&2; exit 1; }
 [ -f "$BUILD" ]        || { echo "test-build-floor: $BUILD missing" >&2; exit 1; }
@@ -303,6 +346,7 @@ check_pair drain_rounds       "$EXP_DRAIN"
 check_pair worker_summaries   "$EXP_WORKER_SUMMARIES"
 check_pair rules              "$EXP_RULES"
 check_pair agents             "$EXP_AGENTS"
+check_pair backlog            "$EXP_BACKLOG"
 
 # An empty tree must never satisfy this suite: every section must be counted AND non-zero.
 # Echoes the offending sections; empty output means every section is counted and non-zero.
@@ -318,7 +362,7 @@ zero_offenders() {
 }
 zo="$(zero_offenders "$JA")"
 [ -z "$zo" ] \
-  && ok "all 14 sections counted and non-zero" \
+  && ok "all $N_KEYS sections counted and non-zero" \
   || no "sections absent or zero:$zo"
 
 # ANTI-VACUITY CONTROL: the same guard, pointed at an EMPTY fixture (a bare git repo with no
@@ -334,8 +378,8 @@ JEMPTY="$REMPTY/.supervisor/floor/floor.json"
   || no "empty fixture: rc=$rcEmpty, artefact $( [ -f "$JEMPTY" ] && echo present || echo absent )"
 zoe="$(zero_offenders "$JEMPTY")"
 n_zoe="$(printf '%s' "$zoe" | tr ' ' '\n' | awk 'NF{n++} END{print n+0}')"
-[ -n "$zoe" ] && [ "$n_zoe" -eq 14 ] \
-  && ok "ANTI-VACUITY: an EMPTY fixture fails the zero/absent guard on all 14 sections" \
+[ -n "$zoe" ] && [ "$n_zoe" -eq "$N_KEYS" ] \
+  && ok "ANTI-VACUITY: an EMPTY fixture fails the zero/absent guard on all $N_KEYS sections" \
   || no "an empty fixture was NOT caught by the zero/absent guard (offenders: '$zoe', n=$n_zoe)"
 # ...and it fails on the guard, not merely on a count mismatch: no section is even `counted`.
 [ "$(jq -r '[.surfaces[] | select(.status == "counted")] | length' "$JEMPTY" 2>/dev/null)" = "0" ] \
@@ -386,7 +430,7 @@ for k in $ALL_KEYS; do
   b="$(jq -r --arg k "$k" '.surfaces[$k].basis // ""' "$JA" 2>/dev/null)"
   [ -n "$b" ] || missing_basis="$missing_basis $k"
 done
-[ -z "$missing_basis" ] && ok "all 14 surfaces carry a non-empty basis" \
+[ -z "$missing_basis" ] && ok "all $N_KEYS surfaces carry a non-empty basis" \
   || no "surfaces with no basis:$missing_basis"
 
 dir_entries="$(ls -1 "$RA/.supervisor/logs" | awk 'NF{n++} END{print n+0}')"
@@ -399,6 +443,139 @@ dir_entries="$(ls -1 "$RA/.supervisor/logs" | awk 'NF{n++} END{print n+0}')"
 grep -qF '*.jsonl' < <(jq -r '.surfaces.logs.basis' "$JA" 2>/dev/null) \
   && ok "logs basis names the *.jsonl glob that produced the number" \
   || no "logs basis does not name its glob"
+
+# ============================================================================
+echo "== (bl) backlog: the board reader's own document, offline, copied never re-derived =="
+# bl_sig <floor.json> -> status|count|totals.merged_unstamped|needs_decision as item:state|github.
+# The ONE comparator for the counted assertion and its mutation control.
+bl_sig() {
+  jq -r '.surfaces.backlog as $b
+    | [($b.status // "ABSENT"), (($b.count // "ABSENT") | tostring),
+       (($b.detail.totals.merged_unstamped // "ABSENT") | tostring),
+       ([($b.detail.needs_decision // [])[] | "\(.item):\(.state)"] | join(" ")),
+       ($b.detail.github // "ABSENT")] | join("|")' "$1" 2>/dev/null
+}
+# bl_unv_sig <floor.json> -> status|count|number of `backlog ` notes|has detail. The ONE comparator
+# for every failing-reader case and the failure-branch mutation control.
+bl_unv_sig() {
+  jq -r '[(.surfaces.backlog.status // "ABSENT"), ((.surfaces.backlog.count // "ABSENT") | tostring),
+          ([.notes[] | select(startswith("backlog "))] | length | tostring),
+          (.surfaces.backlog | has("detail") | tostring)] | join("|")' "$1" 2>/dev/null
+}
+EXP_BL_SIG="counted|$EXP_BACKLOG|$EXP_BL_MERGED_UNSTAMPED|$EXP_BL_NEEDS|unverified"
+EXP_BL_UNV="unverified|ABSENT|1|false"
+
+[ "$(bl_sig "$JA")" = "$EXP_BL_SIG" ] \
+  && ok "backlog is counted ($EXP_BACKLOG items), totals.merged_unstamped == $EXP_BL_MERGED_UNSTAMPED, needs_decision == '$EXP_BL_NEEDS', github unverified" \
+  || no "backlog: got '$(bl_sig "$JA")', want '$EXP_BL_SIG'"
+grep -qF 'run-1.md' < <(jq -r '.surfaces.backlog.detail.needs_decision[0].evidence // ""' "$JA" 2>/dev/null) \
+  && ok "the merged_unstamped row carries the reader's evidence (the run file that checked it off)" \
+  || no "needs_decision[0].evidence does not name run-1.md: $(jq -c '.surfaces.backlog.detail.needs_decision[0]' "$JA" 2>/dev/null)"
+[ "$(jq -c '[.surfaces.backlog.detail.needs_decision[] | keys] | unique' "$JA" 2>/dev/null)" = '[["evidence","item","state"]]' ] \
+  && ok "every needs_decision row is exactly {item, state, evidence}" \
+  || no "needs_decision row keys: $(jq -c '[.surfaces.backlog.detail.needs_decision[] | keys] | unique' "$JA" 2>/dev/null)"
+[ "$(jq -r '[.surfaces.backlog.detail.totals[]] | add' "$JA" 2>/dev/null)" = "$EXP_BACKLOG" ] \
+  && ok "the reader's totals sum to the item count" \
+  || no "totals sum $(jq -r '[.surfaces.backlog.detail.totals[]] | add' "$JA" 2>/dev/null) != $EXP_BACKLOG"
+grep -qF 'offline' < <(jq -r '.surfaces.backlog.basis' "$JA" 2>/dev/null) \
+  && ok "the basis names the reader and that github lookups were skipped (offline)" \
+  || no "the backlog basis does not say it is offline"
+
+# Zero forge calls, measured: every build so far ran with the logging gh stub first on PATH.
+[ ! -s "$BL_GH_LOG" ] \
+  && ok "zero gh calls across every build so far (--offline reaches no forge)" \
+  || no "the backlog reader called gh: $(head -3 "$BL_GH_LOG")"
+( BL_GH_LOG="$ROOT/gh-probe.log"; export BL_GH_LOG; gh pr list >/dev/null 2>&1 )
+[ "$(command -v gh)" = "$BLBIN/gh" ] && [ "$(grep -c . "$ROOT/gh-probe.log" 2>/dev/null)" = 1 ] \
+  && ok "CONTROL: the gh on PATH is the logging stub (a probe call is logged), so the empty log is a measurement" \
+  || no "the gh stub is not in effect - the zero-call assertion would be vacuous"
+
+[ "$(sstatus "$JEMPTY" backlog)" = "absent" ] && [ "$(scount "$JEMPTY" backlog)" = "ABSENT" ] \
+  && [ "$(jq -r '[.notes[] | select(startswith("backlog omitted:"))] | length' "$JEMPTY" 2>/dev/null)" = 1 ] \
+  && ok "no .supervisor/requirements/: backlog is absent, no count key, one note" \
+  || no "empty fixture backlog: status=$(sstatus "$JEMPTY" backlog) count=$(scount "$JEMPTY" backlog)"
+
+# The failure arms need a reader that misbehaves. The projector resolves its reader beside itself
+# (SELF_DIR), so each case runs a COPY of build-floor.sh in a temp scripts dir beside a stub - no
+# env seam is added. BL_PASS is the pass-through stub: it execs the REAL reader, so the copied
+# harness itself is proven able to reach `counted` before any failure is asserted through it.
+BL_PASS="exec bash \"$HERE/automate-helpers.sh\" \"\$@\""
+# bl_copy_run <reader body|__NONE__> [<projector to copy>] -> the floor.json path of a seed_tree run
+bl_copy_run() {
+  local body="$1" src="${2:-$BUILD}" d r
+  d="$(mktmp)"; mkdir -p "$d/scripts"; cp "$src" "$d/scripts/build-floor.sh"
+  [ "$body" = "__NONE__" ] || printf '#!/usr/bin/env bash\n%s\n' "$body" > "$d/scripts/automate-helpers.sh"
+  r="$(new_repo)"; seed_tree "$r"
+  ( cd "$r" && FLOOR_AGENTS_DIR="$r/agents" bash "$d/scripts/build-floor.sh" ) >/dev/null 2>&1
+  printf '%s' "$r/.supervisor/floor/floor.json"
+}
+JBP="$(bl_copy_run "$BL_PASS")"
+[ "$(bl_sig "$JBP")" = "$EXP_BL_SIG" ] \
+  && ok "CONTROL: a copied projector beside a pass-through to the real reader reads the same counted surface" \
+  || no "the copied harness cannot reach counted ('$(bl_sig "$JBP")') - every failure case below would be vacuous"
+JB7="$(bl_copy_run "echo '{\"github\":\"unverified\",\"item_count\":7,\"totals\":{\"done\":7},\"items\":[]}'")"
+[ "$(bl_sig "$JB7")" = "counted|7|ABSENT||unverified" ] \
+  && ok "the count is the reader's item_count (7 on a $EXP_BACKLOG-item tree) - copied, never a recount" \
+  || no "a reader reporting 7 items gave '$(bl_sig "$JB7")'"
+
+bl_unverified_case() { # <label> <reader body|__NONE__> <substring the reason must name>
+  local j; j="$(bl_copy_run "$2")"
+  [ "$(bl_unv_sig "$j")" = "$EXP_BL_UNV" ] \
+    && ok "$1: unverified, no count key, one notes[] line, no detail" \
+    || no "$1: got '$(bl_unv_sig "$j")', want '$EXP_BL_UNV'"
+  grep -qF "$3" < <(sreason "$j" backlog) \
+    && ok "$1: the reason names '$3'" \
+    || no "$1: reason '$(sreason "$j" backlog)' does not name '$3'"
+}
+bl_unverified_case "reader absent"        "__NONE__"                                         "not present beside build-floor.sh"
+bl_unverified_case "reader exits 3"       "echo '{\"item_count\":3,\"totals\":{}}'; exit 3"   "exited 3"
+bl_unverified_case "reader prints non-JSON" "echo not-json"                                  "not a JSON object"
+bl_unverified_case "reader prints an array" "echo '[]'"                                      "not a JSON object"
+bl_unverified_case "string item_count"    "echo '{\"item_count\":\"3\",\"totals\":{}}'"      "not a JSON object"
+bl_unverified_case "totals not an object"  "echo '{\"item_count\":3,\"totals\":[]}'"          "not a JSON object"
+# A count is a whole number of items: a negative or fractional item_count is not one.
+bl_unverified_case "negative item_count"   "echo '{\"item_count\":-1,\"totals\":{}}'"         "not a JSON object"
+bl_unverified_case "fractional item_count" "echo '{\"item_count\":2.5,\"totals\":{}}'"        "not a JSON object"
+
+# bl_mutant <anchor> <replacement> -> a mutant path, empty unless the anchor is unique, the mutant
+# non-empty, different and `bash -n` clean (an ungated mutant proves nothing either way).
+bl_mutant() {
+  local m; m="$(mktmp)/build-floor-mutant.sh"
+  BL_A="$1" BL_R="$2" awk 'BEGIN { a = ENVIRON["BL_A"]; r = ENVIRON["BL_R"] }
+    !d && index($0, a) { d = 1; print r; next } { print }' "$BUILD" > "$m"
+  if [ "$(grep -cF -- "$1" "$BUILD")" = 1 ] && [ -s "$m" ] && ! cmp -s "$m" "$BUILD" && bash -n "$m" 2>/dev/null; then
+    printf '%s' "$m"
+  fi
+}
+BLM1="$(bl_mutant 'add_surface "backlog" "$REQ_DIR" "$backlog_basis" "counted" "$bl_count"' '    :')"
+if [ -n "$BLM1" ]; then
+  [ "$(bl_sig "$(bl_copy_run "$BL_PASS" "$BLM1")")" != "$EXP_BL_SIG" ] \
+    && ok "MUTATION CONTROL: deleting the counted add_surface turns the counted assertion RED" \
+    || no "the counted assertion stayed green with the counted add_surface deleted"
+else
+  no "could not build the counted-call mutant - control inconclusive"
+fi
+BLM2="$(bl_mutant 'add_surface "backlog" "$REQ_DIR" "$backlog_basis" "unverified" "" "$bl_why"' \
+  '    add_surface "backlog" "$REQ_DIR" "$backlog_basis" "counted" "0"')"
+if [ -n "$BLM2" ]; then
+  [ "$(bl_unv_sig "$(bl_copy_run "exit 3" "$BLM2")")" != "$EXP_BL_UNV" ] \
+    && ok "MUTATION CONTROL: a failure branch that publishes counted 0 turns the unverified assertion RED" \
+    || no "the unverified assertion stayed green against a counted-0 failure branch"
+else
+  no "could not build the failure-branch mutant - control inconclusive"
+fi
+BLM3="$(bl_mutant 'bl_doc="$(bash "$BACKLOG_READER" backlog --json --offline --root "$GITROOT" 2>/dev/null)"' \
+  '  bl_doc="$(bash "$BACKLOG_READER" backlog --json --root "$GITROOT" 2>/dev/null)"')"
+if [ -n "$BLM3" ]; then
+  : > "$BL_GH_LOG"
+  LOOMWRIGHT_RIGHT_SIZE_BIN=false bl_copy_run "$BL_PASS" "$BLM3" >/dev/null
+  [ -s "$BL_GH_LOG" ] \
+    && ok "MUTATION CONTROL: without --offline the reader DOES call gh ($(grep -c . "$BL_GH_LOG") logged), so zero calls is the flag's doing" \
+    || no "dropping --offline still logged no gh call - the zero-call assertion is vacuous"
+  : > "$BL_GH_LOG"
+else
+  no "could not build the no---offline mutant - control inconclusive"
+fi
 
 # ============================================================================
 echo "== (c) sessions are segmented by cc_session_id, never by filename =="
@@ -699,6 +876,9 @@ else
     postmortem   ".supervisor/postmortem/results.jsonl"   ".supervisor/postmortem/results.jsonl"
   unreadable_case "unreadable logs/*.jsonl member" \
     sessions     ".supervisor/logs/second.jsonl"          ".supervisor/logs/second.jsonl"
+  # The backlog reader would list ZERO items from an unreadable tree - the same fabricated zero.
+  unreadable_case "unreadable requirements dir (backlog)" \
+    backlog      ".supervisor/requirements"               ".supervisor/requirements"
 
   # The unreadable-member case again, this time asserting the two properties a bulk
   # `cat ... 2>/dev/null` gets WRONG in the same breath: it drops the file's lines silently, so
@@ -949,7 +1129,8 @@ grep -qF "no_such_surface" <<< "$skeys_line" \
 DETAIL_SUBKEYS="roster current subtasks \
 rules rules_parsed files_parsed files_unparseable files_not_an_array read_completeness supersedes correlations \
 class_distribution class_basis flow_stage_distribution flow_stage_basis categories_total \
-lines_without_categories flow_stage_counter_disagreements entries lines_malformed malformed_lines"
+lines_without_categories flow_stage_counter_disagreements entries lines_malformed malformed_lines \
+github totals needs_decision"
 undocumented_detail() {  # <block-text> -> the sub-keys it fails to document, space-separated
   local blk="$1" k out=""
   for k in $DETAIL_SUBKEYS; do
