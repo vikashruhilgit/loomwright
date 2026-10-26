@@ -68,6 +68,8 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 
 Read the files related to the subtask and their conventions before changing anything; plan the minimal change per criterion (and per previous issue on retry); implement it in the worktree following existing patterns and the referenced skills, with type safety and proper error handling.
 
+**Module layout:** follow the File Impact Map's module plan (`skills/supervisor-readiness/SKILL.md` §"Module layout"), reuse a shared helper it names, and never copy a function a sibling file already defines. A split or append the map did not plan is a `plan:` deviation (Step 5.7), never a `status` change.
+
 5. **Optional advisory checkpoints:** when you confirm or refute a hypothesis, hit a blocker, move from investigating to fixing, or finish a slice, you MAY run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/checkpoint.sh" <session_log_path> <hypothesis_confirmed|hypothesis_refuted|blocker|transition|slice_done> "<short action, first line ≤200 chars>" [paths...]`. Never required, never gates anything.
 
 ### Step 5: Verify

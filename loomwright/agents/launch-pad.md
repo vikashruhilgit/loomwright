@@ -292,6 +292,7 @@ Goal → Discovery → Feasibility → Analysis → Decomposition → Brief → 
 11. **Touched-file invariants (conditional — whenever the File Impact Map modifies ≥1 existing script):** for each modified file, `Read` it and record what the change must keep or reuse: its guards and fail-safe rules (exit codes, `|| true`, closed key sets, locks), its own conventions and helpers (the idiom the change must reuse rather than reinvent), every producer/consumer contract the change must mirror exactly (read the other side too), which matchers/callers fire it when it is a hook or emitter, and the tests that pin its text (`grep -rlF` the file's name under the test directories). Quote each as a literal you just read — the anchor must be `grep -F`-findable. Format and authoring rules: `skills/supervisor-readiness/SKILL.md` §"Touched-file invariants" (reference it, do not restate it); Phase 5 emits the section; Plan Reviewer Criterion 18 fails a brief that needs it and lacks it. Only creates, or only non-script edits → skip silently and emit no section.
 
 12. **Closed enumerations and pin mutations (conditional):** when the change adds an enum, status, reason, category or decision value, `grep -rnF` an existing sibling value of the same kind repo-wide and keep the command and every hit; each closed list among the hits (one that must name every value) joins the File Impact Map. When it adds or changes test pins, write per pin the one-line mutation of the code it protects (delete line X / flip value Y) that must turn it red. Format: `skills/supervisor-readiness/SKILL.md` §"Closed enumerations touched" and §"Pin mutations"; Phase 5 emits them; Plan Reviewer Criterion 19 flags a brief that needs them and lacks them. Neither applies → skip silently and emit neither section.
+13. **Module layout (every File Impact Map):** record each MODIFY path's line count at the base commit (`wc -l`), and give every new responsibility the goal adds one home — a CREATE module, the existing shared module to reuse, or a one-line reason for appending — plus an extract row for a helper 2+ sibling files already copy. Test files count like source. The threshold, the row forms and the house-rule override (read from action 0c's `applicable_rules`) are `skills/supervisor-readiness/SKILL.md` §"Module layout" (reference it, do not restate it); Plan Reviewer Criterion 21 checks it.
 
 **Output:**
 ```markdown
@@ -302,10 +303,10 @@ Goal → Discovery → Feasibility → Analysis → Decomposition → Brief → 
 
 ### File Impact Map
 
-| Group | Files to Modify | Files to Create | Confidence |
+| Group | Files to Modify (lines at base) | Files to Create | Confidence |
 |-------|----------------|-----------------|------------|
-| {domain-a} | `src/auth/guard.ts` | `src/auth/jwt.guard.ts` | HIGH |
-| {domain-b} | `src/api/routes.ts` | `src/api/auth.route.ts` | MEDIUM |
+| {domain-a} | `src/auth/guard.ts` (212) | `src/auth/jwt.guard.ts` | HIGH |
+| {domain-b} | `src/api/routes.ts` (612) | `src/api/auth.route.ts` | MEDIUM |
 | {domain-c} | — | `src/tests/auth.spec.ts` | HIGH |
 
 > **Validator-owned surfaces (only when a task's acceptance depends on a generated/mechanical validation script — see Phase 3 action 9):** {list the validator-scanned files folded into the map above, or the note "files scanned by the validator may need updates"; omit this line entirely otherwise}.
@@ -617,7 +618,7 @@ Task(
 Project CLAUDE.md context:
 {relevant patterns, tech stack, directory structure — max 500 tokens}
 
-Check all 20 review criteria. Output a PLAN_REVIEW_RESULT block.",
+Check every review criterion. Output a PLAN_REVIEW_RESULT block.",
   subagent_type: "loomwright:plan-reviewer"
 )
 ```

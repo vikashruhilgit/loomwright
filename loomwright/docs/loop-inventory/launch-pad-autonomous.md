@@ -94,6 +94,7 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-079 | agents/launch-pad.md | q: **Emission:** when ≥1 ref is found, emit `### Cited-line premise check` | ≥1 ref / 0 refs | one table row per ref and one MEDIUM risk row per STALE ref / emit nothing at all | deterministic | prose | - | GAP |
 | LP-080 | agents/launch-pad.md | q: **Touched-file invariants (conditional — whenever the File Impact Map modifies ≥1 existing script):** | the map modifies ≥1 existing script / only creates or non-script edits | read each and record keep/reuse/mirror/fired-by/pinned-by literals / skip silently | judgment | prose | - | test-rule-conformance-seam.sh |
 | LP-081 | agents/launch-pad.md | q: **Closed enumerations and pin mutations (conditional):** | the change adds an enum/status/reason value, or adds/changes test pins | grep a sibling value repo-wide and add closed lists to the map; write one mutation per pin; neither ⇒ skip | judgment | prose | - | test-closed-enum-pins-seam.sh |
+| LP-534 | agents/launch-pad.md | q: **Module layout (every File Impact Map):** | every File Impact Map / a new responsibility lands in a large file or needs a helper 2+ siblings copy | record each MODIFY path's line count; give each new responsibility one home (CREATE / shared module / one-line reason); add an extract row | judgment | prose | - | GAP |
 | LP-082 | agents/launch-pad.md | h: ### Phase 4: DECOMPOSE (Subtask Structure) | after ANALYZE | default to one subtask; split only on a named threshold reason | judgment | prose | - | GAP |
 | LP-083 | agents/launch-pad.md | q: **Subtask id scheme (RULE):** number subtasks **plain numeric, 1-based, sequential** | numbering subtasks | plain numeric 1-based sequential ids in the table and every from: reference; never alpha-suffixed | rule | step-scoped | - | GAP |
 | LP-084 | agents/launch-pad.md | q: Default to a single subtask whose acceptance criteria are the **checklist for one worker** | a threshold reason fires / none fires | split that group off and record the Split reason in Configuration / keep one subtask, no Split reason line | judgment | prose | - | GAP |
@@ -276,6 +277,7 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-261 | commands/launch-pad.md | q: Mark confidence: HIGH / MEDIUM / LOW | each prediction | mark confidence | judgment | prose | - | GAP |
 | LP-262 | commands/launch-pad.md | q: Touched-file invariants (conditional — the File Impact Map modifies ≥1 existing script) | the map modifies an existing script | record grounded invariants per modified file | judgment | prose | - | test-rule-conformance-seam.sh |
 | LP-263 | commands/launch-pad.md | q: Closed enumerations and pin mutations (conditional | adds an enum/status value or test pins | closed lists via sibling grep; one mutation per pin | judgment | prose | - | test-closed-enum-pins-seam.sh |
+| LP-535 | commands/launch-pad.md | q: Module layout (every File Impact Map): each MODIFY path's line count at base | every File Impact Map (command mirror) | line counts, one home per new responsibility, extract row for a copied helper | judgment | prose | - | GAP |
 | LP-264 | commands/launch-pad.md | h: ### Phase 4: DECOMPOSE (Subtask Structure) | after ANALYZE (command mirror) | decomposition | judgment | prose | - | GAP |
 | LP-265 | commands/launch-pad.md | q: **Subtask id scheme (RULE):** plain numeric, 1-based, sequential | numbering subtasks | plain numeric 1-based sequential, never alpha-suffixed | rule | step-scoped | - | GAP |
 | LP-266 | commands/launch-pad.md | q: Default to a single subtask whose acceptance criteria are the checklist for one worker | a threshold reason fires / none | split and record Split reason / one subtask | judgment | prose | - | GAP |
@@ -286,7 +288,7 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-271 | commands/launch-pad.md | q: When Phase 3 step 9 ran, emit | step 9 ran / not | emit Closed enumerations / Pin mutations / neither | deterministic | prose | - | test-closed-enum-pins-seam.sh |
 | LP-272 | commands/launch-pad.md | q: When the source requirement carries a `## Rule conflicts (open decisions)` section | the source requirement carries Rule conflicts | copy verbatim after House Rules; never author a Rule override line | deterministic | prose | - | GAP |
 | LP-273 | commands/launch-pad.md | h: ### Phase 5.5: PLAN REVIEW (Mandatory Gate) | brief assembled (command mirror) | spawn the Plan Reviewer | deterministic | prose | - | GAP |
-| LP-274 | commands/launch-pad.md | q: Plan Reviewer checks all 20 criteria | each conditional criterion's gating section/field/claim absent / present | skip it silently / run it (17 on pasted rules, 18 on script edits, 19 on enum/pin, 20 on PR-body evidence) | deterministic | prose | - | test-closed-enum-pins-seam.sh |
+| LP-274 | commands/launch-pad.md | q: Plan Reviewer checks every review criterion | each conditional criterion's gating section/field/claim absent / present | skip it silently / run it (17 on pasted rules, 18 on script edits, 19 on enum/pin, 20 on PR-body evidence, 21 on a MODIFY path at or past the module-layout threshold) | deterministic | prose | - | test-closed-enum-pins-seam.sh |
 | LP-275 | commands/launch-pad.md | q: PASS with an issue at the fix floor | PASS with an at-floor issue and attempt < 3 | refine like a FAIL issue, re-spawn (consumes an attempt) | deterministic | prose | - | GAP |
 | LP-276 | commands/launch-pad.md | q: PASS → proceed to Phase 6 (save enabled | PASS | proceed with save enabled; open at-floor issue deferred | deterministic | prose | - | GAP |
 | LP-277 | commands/launch-pad.md | q: FAIL (attempt < 3) → fix issues (a Criterion 20 PR-body criterion is rewritten | FAIL and attempt < 3 | fix (rewrite Criterion 20 criteria, never delete), re-assemble, re-spawn | deterministic | prose | - | test-pr-body-evidence-seam.sh |
@@ -948,44 +950,46 @@ This file lists every branch (condition → action) and every standing rule stat
 397. LP-516 — model judgment with no check in commands/autonomous.md: force-continue without merging
 398. LP-517 — model judgment with no check in commands/autonomous.md: Option C picked, no re-plan
 399. LP-518 — model judgment with no check in commands/autonomous.md: checkpoint abort
-400. LP-008 — narrative / rationale only, low risk (agents/launch-pad.md): a run starts
-401. LP-010 — narrative / rationale only, low risk (agents/launch-pad.md): a run completes
-402. LP-208 — narrative / rationale only, low risk (commands/launch-pad.md): choosing Launch Pad
-403. LP-210 — narrative / rationale only, low risk (commands/launch-pad.md): user starts
-404. LP-211 — narrative / rationale only, low risk (commands/launch-pad.md): brief presented
-405. LP-212 — narrative / rationale only, low risk (commands/launch-pad.md): brief reviewed
-406. LP-213 — narrative / rationale only, low risk (commands/launch-pad.md): brief saved
-407. LP-231 — narrative / rationale only, low risk (commands/launch-pad.md): run starts (command mirror)
-408. LP-233 — narrative / rationale only, low risk (commands/launch-pad.md): run completes (command mirror)
-409. LP-322 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): a crashed run leaves its brief in in-progress/ and no ended_at, and a later PR's branch collides
-410. LP-406 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): looking up iteration branches
-411. LP-440 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): stacked run's own parent commits / PR
-412. LP-451 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): process killed / terminal closed
-413. LP-453 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): the grep-stable string changes
-414. LP-467 — narrative / rationale only, low risk (commands/autonomous.md): naming units
-415. LP-482 — narrative / rationale only, low risk (commands/autonomous.md): deferred flags
-416. LP-484 — narrative / rationale only, low risk (commands/autonomous.md): resume or auto-merge wanted
-417. LP-504 — narrative / rationale only, low risk (commands/autonomous.md): example
-418. LP-506 — narrative / rationale only, low risk (commands/autonomous.md): example
-419. LP-509 — narrative / rationale only, low risk (commands/autonomous.md): refining a requirement
-420. LP-510 — narrative / rationale only, low risk (commands/autonomous.md): re-run after a crash
-421. LP-511 — narrative / rationale only, low risk (commands/autonomous.md): quality in the loop
-422. LP-521 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: stacked multi-iteration run, iteration > 1
-423. LP-522 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: EVALUATE ran (or skipped) the chained review-heal step
-424. LP-523 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: multi-iteration EVALUATE, before signals
-425. LP-524 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: successful iteration with a PR, after PR-base verification
-426. LP-525 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed with rubric_score N<M
-427. LP-526 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: failed and this iteration's brief is in failed/ with inter_subtask_gap
-428. LP-527 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed with no rubric in multi-iteration mode
-429. LP-528 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: no signal or gate fired
-430. LP-529 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: Supervisor returned preflight_overlap_detected
-431. LP-530 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: a signal would re-plan AND iteration + 1 > max_iterations
+400. LP-534 — model judgment with no check in agents/launch-pad.md: every File Impact Map / a new responsibility lands in a large file
+401. LP-535 — model judgment with no check in commands/launch-pad.md: every File Impact Map (command mirror)
+402. LP-008 — narrative / rationale only, low risk (agents/launch-pad.md): a run starts
+403. LP-010 — narrative / rationale only, low risk (agents/launch-pad.md): a run completes
+404. LP-208 — narrative / rationale only, low risk (commands/launch-pad.md): choosing Launch Pad
+405. LP-210 — narrative / rationale only, low risk (commands/launch-pad.md): user starts
+406. LP-211 — narrative / rationale only, low risk (commands/launch-pad.md): brief presented
+407. LP-212 — narrative / rationale only, low risk (commands/launch-pad.md): brief reviewed
+408. LP-213 — narrative / rationale only, low risk (commands/launch-pad.md): brief saved
+409. LP-231 — narrative / rationale only, low risk (commands/launch-pad.md): run starts (command mirror)
+410. LP-233 — narrative / rationale only, low risk (commands/launch-pad.md): run completes (command mirror)
+411. LP-322 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): a crashed run leaves its brief in in-progress/ and no ended_at, and a later PR's branch collides
+412. LP-406 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): looking up iteration branches
+413. LP-440 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): stacked run's own parent commits / PR
+414. LP-451 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): process killed / terminal closed
+415. LP-453 — narrative / rationale only, low risk (skills/autonomous-loop/SKILL.md): the grep-stable string changes
+416. LP-467 — narrative / rationale only, low risk (commands/autonomous.md): naming units
+417. LP-482 — narrative / rationale only, low risk (commands/autonomous.md): deferred flags
+418. LP-484 — narrative / rationale only, low risk (commands/autonomous.md): resume or auto-merge wanted
+419. LP-504 — narrative / rationale only, low risk (commands/autonomous.md): example
+420. LP-506 — narrative / rationale only, low risk (commands/autonomous.md): example
+421. LP-509 — narrative / rationale only, low risk (commands/autonomous.md): refining a requirement
+422. LP-510 — narrative / rationale only, low risk (commands/autonomous.md): re-run after a crash
+423. LP-511 — narrative / rationale only, low risk (commands/autonomous.md): quality in the loop
+424. LP-521 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: stacked multi-iteration run, iteration > 1
+425. LP-522 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: EVALUATE ran (or skipped) the chained review-heal step
+426. LP-523 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: multi-iteration EVALUATE, before signals
+427. LP-524 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: successful iteration with a PR, after PR-base verification
+428. LP-525 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed with rubric_score N<M
+429. LP-526 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: failed and this iteration's brief is in failed/ with inter_subtask_gap
+430. LP-527 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: completed with no rubric in multi-iteration mode
+431. LP-528 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: no signal or gate fired
+432. LP-529 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: Supervisor returned preflight_overlap_detected
+433. LP-530 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: a signal would re-plan AND iteration + 1 > max_iterations
 
 ## Counts
 
-- rows: 533
+- rows: 535
 - deterministic: 340
-- judgment: 46
+- judgment: 48
 - rule: 122
 - story: 25
-- GAP: 431
+- GAP: 433
