@@ -36,21 +36,35 @@
 #
 # GROUPS (this order; the closed list):
 #   processes        `proc-registry.sh list --scan`: a running entry ⇒ none; overdue / orphaned ⇒
-#                    reap; every finished entry together ⇒ ONE `fin` row ⇒ reap (prunes the files, no
+#                    reap, its evidence adding `; command: <its snapshot command line, cut at 200 chars>`;
+#                    when that command line is a live host session (the host rule below) the reason says
+#                    "<class>, but it is a live host session — reaping ends that session" (or, when a live
+#                    host session's ppid chain passes through it, "<class>, but a live host session runs
+#                    under it (pid <p>)") and the row's identity carries it (a row picked without the
+#                    warning is refused once it applies);
+#                    every finished entry together ⇒ ONE `fin` row ⇒ reap (prunes the files, no
 #                    signal); each `unreg-<pid>` look-alike ⇒ stop-unregistered (lstart + cmd_hash from
-#                    its evidence), EXCEPT one whose snapshot ppid chain (at most 64 hops, stopping at
-#                    pid 1) reaches a live host session (the not-the-plugins host rule: an executable
-#                    whose basename is `claude`, its path rebuilt across spaces, or `bg-pty-host`) ⇒ none, "its session is still alive — the
-#                    session owns it" (a leak from an ENDED session was reparented and keeps
-#                    stop-unregistered); its evidence adds `; command: <its command line, cut at 200
-#                    chars>` (and `; session: pid <p> <its command>`); a `# scan: skipped|unavailable
-#                    — …` line ⇒ ONE unknown row. The owner column of a registry row says only
-#                    `plugin — <kind> entry`: `list` prints no repo / run.
+#                    its evidence), EXCEPT, in this order, ⇒ none: the pid ITSELF is a live host session
+#                    (the not-the-plugins host rule: an executable whose basename is `claude`, its path
+#                    rebuilt across spaces, or `bg-pty-host` — a lane `claude -p` carries a plugin
+#                    scripts path in its --settings) ⇒ "it is a live host session"; its snapshot ppid
+#                    chain (at most 64 hops, stopping at pid 1) reaches a live host session ⇒ "its
+#                    session is still alive — the session owns it" (a leak from an ENDED session was
+#                    reparented and keeps stop-unregistered); a live host session's chain passes
+#                    through it (an unregistered wrapper) ⇒ "a live host session runs under it". Its
+#                    evidence adds `; command: <its command line, cut at 200 chars>` (and `; session:
+#                    pid <p> <its command, cut at 200>`). FAIL-CLOSED: when janitor's own snapshot is
+#                    unavailable (JR_SNAP_WHY) or the pid is not in it, every look-alike and every
+#                    overdue / orphaned entry is none, "the live-session check could not run (<why>)"
+#                    — never stop-unregistered or reap. A `# scan: skipped|unavailable — …` line ⇒
+#                    ONE unknown row. The owner column of a registry row says only `plugin — <kind>
+#                    entry`: `list` prints no repo / run.
 #   locks            `run-lock.sh status --root <c>` and `liveness --root <c>` for the primary and each
 #                    lane checkout: holder alive ⇒ none; holder `dead` while the run its owner label
 #                    names (`<entry point>:<run_id>`) still says `## Status: running` ⇒ none (that run
-#                    may go on in a fresh session; its `--resume` re-takes the lock); holder `dead` and
-#                    age ≥ 1800 s ⇒ lock-reclaim; `dead` and younger ⇒ none, alt force-unlock;
+#                    may go on in a fresh session; its `--resume` re-takes the lock); holder `dead` while
+#                    that run's file exists but states no `## Status:` ⇒ none (cannot be judged); holder
+#                    `dead` and age ≥ 1800 s ⇒ lock-reclaim; `dead` and younger ⇒ none, alt force-unlock;
 #                    `unknown` (no recorded pid) ⇒ none. An UNLOCKED checkout makes no row (a note
 #                    counts them).
 #   lanes            per `<primary>/.supervisor/automate/<parent>.lanes`: `automate-helpers.sh
@@ -73,9 +87,10 @@
 #   stale-state      `retention-sweep.sh --project-root <primary>` (report mode): one row per directory
 #                    with candidates ⇒ none (`--delete` is irreversible and its own call); per
 #                    `<primary>/.supervisor/automate/*.config-backup.json` ⇒ config-restore only when the
-#                    primary's `run-lock.sh liveness` is not `alive` AND its run's file is gone or says
-#                    `## Status: done`; otherwise none (a live tick, or that run's own RECONCILE on
-#                    `--resume`, restores it);
+#                    primary's `run-lock.sh liveness` is `dead`, or `unknown` with `status` UNLOCKED, AND
+#                    its run's file is gone or says `## Status: done`; otherwise none (a live tick, or that
+#                    run's own RECONCILE on `--resume`, restores it; an unreadable liveness, a pid-less
+#                    held lock or a run file with no `## Status:` cannot be judged);
 #                    per `<run_id>.merge-watch` marker whose watcher is gone (no live merge-watch
 #                    registry entry has its pid, and the snapshot shows no automate-merge-watch.sh at
 #                    it) ⇒ none; per `*.meta-push-failed` marker (`automate-helpers.sh
@@ -250,7 +265,7 @@ trap _jr_cleanup EXIT
 # _jr_snapshot — take (or adopt) the snapshot; JR_SNAP_WHY = `skipped — …` / `unavailable — …` otherwise
 _jr_snapshot() {
   local raw
-  JR_SNAP_WHY=""; JR_SNAP=""
+  JR_SNAP_WHY=""; JR_SNAP=""; JR_HOSTS=""; JR_HOSTS_DONE=0
   if [ -n "${LOOMWRIGHT_PROC_PS_SNAPSHOT:-}" ]; then
     JR_SNAP_FILE="$LOOMWRIGHT_PROC_PS_SNAPSHOT"; JR_SNAP_OWN=0
     [ -r "$JR_SNAP_FILE" ] || { JR_SNAP_WHY="unavailable — LOOMWRIGHT_PROC_PS_SNAPSHOT is unreadable"; return 1; }
@@ -304,6 +319,33 @@ _jr_live_session() {
   done
   return 0
 }
+# _jr_host_below <pid> — prints the pid of a live host session whose snapshot ppid chain (at most 64 hops)
+# passes through <pid> (a wrapper whose descendant is a session); nothing when none. One awk pass.
+# The snapshot's host-session pids are listed once per snapshot (JR_HOSTS, reset by _jr_snapshot).
+JR_HOSTS=""
+JR_HOSTS_DONE=0
+# (call _jr_hosts_init in the calling shell first: _jr_host_below runs inside $(...), so its own fill is lost)
+_jr_hosts_init() {
+  local p c
+  [ "$JR_HOSTS_DONE" != 1 ] || return 0
+  JR_HOSTS_DONE=1; JR_HOSTS=" "
+  while IFS="$T" read -r p _ _ _ c; do
+    [ -n "$p" ] && _jr_is_host_cmd "$c" && JR_HOSTS="$JR_HOSTS$p "
+  done <<<"$JR_SNAP"
+  return 0
+}
+_jr_host_below() {
+  _jr_hosts_init
+  [ "$JR_HOSTS" != " " ] || return 0
+  printf '%s\n' "$JR_SNAP" | awk -F'\t' -v t="$1" -v hs="$JR_HOSTS" '
+    { pp[$1] = $2 }
+    END { n = split(hs, h, " ")
+      for (i = 1; i <= n; i++) { if (h[i] == t) continue
+        q = pp[h[i]]; for (k = 0; k < 64 && q != "" && q > 1; k++) {
+        if (q == t) { print h[i]; exit }; q = pp[q] } } }'
+}
+# _jr_cut <text> — at most 200 chars, `...` marking a cut
+_jr_cut() { if [ "${#1}" -le 200 ]; then printf '%s' "$1"; else printf '%s...' "${1:0:200}"; fi; }
 # _jr_pr <args> — proc-registry.sh with the shared snapshot (when this call owns or adopted one)
 _jr_pr() {
   if [ -z "$JR_SNAP_WHY" ] && [ -n "$JR_SNAP_FILE" ]; then
@@ -326,10 +368,11 @@ _jr_prlist() {
 
 # ---- group: processes ---------------------------------------------------------------------------------
 _jr_c_processes() {
-  local g=processes id kind pid age class evid a fin="" nfin=0 rule lst hash seen=0 note cmd sess
+  local g=processes id kind pid age class evid a fin="" nfin=0 rule lst hash seen=0 note cmd sess full why host hb
   [ -f "$JR_PR" ] || { _jr_unknown "$g" proc-registry.sh "missing ($JR_PR)"; return 0; }
   _jr_prlist
   [ -n "$JR_PRLIST" ] || { _jr_unknown "$g" "proc-registry.sh list --scan" "printed nothing"; return 0; }
+  _jr_hosts_init
   while IFS="$T" read -r id kind pid age class evid; do
     case "$id" in
       '#'*|'(no entries)'|'') continue ;;
@@ -338,26 +381,66 @@ _jr_c_processes() {
     a="${age%s}"; _jr_is_uint "$a" || a=""
     if [ "$kind" = unregistered ]; then
       rule="${evid%%; lstart=*}"; lst="${evid#*; lstart=}"; lst="${lst%%; cmd_hash=*}"; hash="${evid##*; cmd_hash=}"
-      cmd="$(_jr_snap_get "$pid" 5)"
-      [ "${#cmd}" -le 200 ] || cmd="${cmd:0:200}..."
+      full="$(_jr_snap_get "$pid" 5)"; cmd="$(_jr_cut "$full")"
+      # fail CLOSED: without janitor's own snapshot (or with the pid missing from it) no session check ran
+      if [ -n "$JR_SNAP_WHY" ] || [ -z "$full" ]; then
+        why="${JR_SNAP_WHY:-pid $pid is not in the process snapshot}"
+        _jr_row unreg "$g" "unreg|$pid|$lst|$hash|nocheck:$why" "unregistered process pid $pid" "unregistered (looks like the plugin's)" \
+          "$a" "running, unregistered, not judged" "$evid; command: ${cmd:-unknown}" none \
+          "the live-session check could not run ($why) — report only until the snapshot is readable"
+        continue
+      fi
+      # the pid itself a host session (a lane `claude -p` whose --settings carry a plugin scripts path)
+      if _jr_is_host_cmd "$full"; then
+        _jr_row unreg "$g" "unreg|$pid|$lst|$hash|host:self" "unregistered process pid $pid" "unregistered — it is a live host session" \
+          "$a" "running, unregistered, a live host session" "$evid; command: $cmd" none \
+          "it is a live host session — it owns itself; end that session from the host"
+        continue
+      fi
       sess="$(_jr_live_session "$pid")"
       if [ -n "$sess" ]; then
         _jr_row unreg "$g" "unreg|$pid|$lst|$hash|session:$sess" "unregistered process pid $pid" "unregistered — a descendant of live host session pid $sess" \
-          "$a" "running, unregistered, its session alive" "$evid; command: ${cmd:-unknown}; session: pid $sess $(_jr_snap_get "$sess" 5)" none \
+          "$a" "running, unregistered, its session alive" "$evid; command: $cmd; session: pid $sess $(_jr_cut "$(_jr_snap_get "$sess" 5)")" none \
           "its session is still alive — the session owns it (pid $sess); it ends with that session, or stop it from there"
         continue
       fi
+      sess="$(_jr_host_below "$pid")"
+      if [ -n "$sess" ]; then
+        _jr_row unreg "$g" "unreg|$pid|$lst|$hash|below:$sess" "unregistered process pid $pid" "unregistered — live host session pid $sess runs under it" \
+          "$a" "running, unregistered, a live session below it" "$evid; command: $cmd; session: pid $sess $(_jr_cut "$(_jr_snap_get "$sess" 5)")" none \
+          "a live host session runs under it (pid $sess) — stopping it would orphan that session; it ends when the session does"
+        continue
+      fi
       _jr_row unreg "$g" "unreg|$pid|$lst|$hash" "unregistered process pid $pid" "unregistered (looks like the plugin's)" \
-        "$a" "running, unregistered" "$evid; command: ${cmd:-unknown}" stop-unregistered \
-        "it looks like the plugin's ($rule), no registry entry owns it and no live host session is its ancestor — stopped only on your pick, after proc-registry re-checks its lstart and command-line hash" \
+        "$a" "running, unregistered" "$evid; command: $cmd" stop-unregistered \
+        "it looks like the plugin's ($rule), no registry entry owns it, and it is not a live host session, none is its ancestor and none runs under it — stopped only on your pick, after proc-registry re-checks its lstart and command-line hash" \
         "" "$pid$US$lst$US$hash"
       continue
     fi
     case "$class" in
       finished) fin="$fin $id"; nfin=$((nfin + 1)) ;;
       overdue|orphaned)
-        _jr_row reg "$g" "reg|$id|$class" "$kind process pid $pid (registry entry $id)" "plugin — $kind entry" "$a" "$class" "$evid" reap \
-          "$class: reap re-checks its lstart and command-line hash, sends TERM, then KILL after its grace only if it still matches" "" "$id" ;;
+        # its command line in the evidence; a live host session at its pid is named in the reason and folded
+        # into the identity, so a row picked without that warning is refused once it applies
+        if [ -n "$JR_SNAP_WHY" ]; then   # fail CLOSED: the live-host-session check cannot run
+          _jr_row reg "$g" "reg|$id|$class|nocheck" "$kind process pid $pid (registry entry $id)" "plugin — $kind entry" "$a" "$class" \
+            "$evid; command: unknown (process snapshot $JR_SNAP_WHY)" none \
+            "$class, but the live-host-session check could not run ($JR_SNAP_WHY) — report only until the snapshot is readable" "" ""
+          continue
+        fi
+        full="$(_jr_snap_get "$pid" 5)"
+        hb="$(_jr_host_below "$pid")"
+        if [ -n "$full" ] && _jr_is_host_cmd "$full"; then
+          host="|host"; why="$class, but it is a live host session — reaping ends that session; "
+        elif [ -n "$hb" ]; then
+          host="|below:$hb"; why="$class, but a live host session runs under it (pid $hb) — reaping it can end or orphan that session; "
+        else
+          host=""; why="$class: "
+        fi
+        cmd="$(_jr_cut "$full")"
+        _jr_row reg "$g" "reg|$id|$class$host" "$kind process pid $pid (registry entry $id)" "plugin — $kind entry" "$a" "$class" \
+          "$evid; command: ${cmd:-unknown}" reap \
+          "${why}reap re-checks its lstart and command-line hash, sends TERM, then KILL after its grace only if it still matches" "" "$id" ;;
       *)
         _jr_row reg "$g" "reg|$id|$class" "$kind process pid $pid (registry entry $id)" "plugin — $kind entry" "$a" "${class:-unknown}" "$evid" none \
           "running within its cap — the run that started it owns it" "" "" ;;
@@ -401,7 +484,11 @@ _jr_lock_one() {   # _jr_lock_one <checkout> <label>
     alive) _jr_row lock locks "lock|$c|$owner|$pid|alive" "$what" "$owner" "$age" "held, holder alive" "$ev" none \
              "its holder is alive — the run owns the lock (it releases it when it ends)" ;;
     dead)
-      if [ "$rst" = running ]; then
+      if [ "$run" != "$owner" ] && [ -f "$c/.supervisor/automate/$run.md" ] && [ -z "$rst" ]; then
+        # fail CLOSED: the run file is there but states no ## Status (unreadable or malformed)
+        _jr_row lock locks "lock|$c|$owner|$pid|dead|nostatus" "$what" "$owner" "$age" "held, holder dead, run $run states no status" "$ev" none \
+          "its holder pid is dead but run $run's file states no \`## Status:\` — whether that run goes on cannot be judged; never reclaimed from here"
+      elif [ "$rst" = running ]; then
         _jr_row lock locks "lock|$c|$owner|$pid|dead|running" "$what" "$owner" "$age" "held, holder dead, run still says running" "$ev" none \
           "its holder pid is dead but run $run still says running (it may continue in a fresh session) — \`/automate --resume $run\` re-takes it; never reclaimed from here"
       elif [ -n "$age" ] && [ "$age" -ge "$JR_TTL" ]; then
@@ -558,9 +645,17 @@ _jr_c_state() {
     [ -n "$lv" ] || lv="$(bash "$JR_RL" liveness --root "$JR_PRIMARY" 2>/dev/null | head -1)"
     run="$(basename "$f" .config-backup.json)"; mt="$(_jr_mtime "$f")"; age=""; [ -n "$mt" ] && age=$((now - mt))
     rst=""; [ -f "$ad/$run.md" ] && rst="$(_jr_run_status "$ad/$run.md")"
+    # `unknown` is UNLOCKED or a pid-less lock: only the former counts as no live run
+    [ "$lv" != unknown ] || [ "$(bash "$JR_RL" status --root "$JR_PRIMARY" 2>/dev/null | head -1)" = UNLOCKED ] || lv="held with no recorded pid"
     if [ "$lv" = alive ]; then
       _jr_row cfgbak "$g" "cfgbak|$f|$(cksum < "$f" 2>/dev/null)|alive" "config backup of run $run" "run $run" "$age" "in use — a live run holds this checkout's lock" "$f" none \
         "a live run's tick owns it and restores it itself"
+    elif [ "$lv" != dead ] && [ "$lv" != unknown ]; then   # fail CLOSED: the lock holder cannot be judged
+      _jr_row cfgbak "$g" "cfgbak|$f|$(cksum < "$f" 2>/dev/null)|lock:${lv:-unreadable}" "config backup of run $run" "run $run" "$age" "run lock: ${lv:-unreadable}" "$f" none \
+        "this checkout's run lock cannot be judged (${lv:-liveness unreadable}) — a live run may still own the backup; report only"
+    elif [ -f "$ad/$run.md" ] && [ -z "$rst" ]; then   # fail CLOSED: its run file states no status
+      _jr_row cfgbak "$g" "cfgbak|$f|$(cksum < "$f" 2>/dev/null)|nostatus" "config backup of run $run" "run $run" "$age" "run $run states no status" "$f" none \
+        "run $run's file states no \`## Status:\` — whether that run goes on cannot be judged; report only"
     elif [ -n "$rst" ] && [ "$rst" != done ]; then
       _jr_row cfgbak "$g" "cfgbak|$f|$(cksum < "$f" 2>/dev/null)|$rst" "config backup of run $run" "run $run" "$age" "run $run says $rst" "$f" none \
         "its run is not done — that run's own RECONCILE restores a crash-stranded backup on \`/automate --resume $run\`"

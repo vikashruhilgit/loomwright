@@ -28,6 +28,14 @@
 #   leg_live_session  a look-alike whose snapshot ppid chain reaches a live host session (a fake desktop-app
 #        `claude` row whose path has a space, through a shell) is action none ("its session is still alive"), its evidence naming its
 #        command line, and `act --confirm` refuses it; a pid-1-reparented look-alike keeps stop-unregistered.
+#   leg_host_session  a look-alike that IS a live host session (a `claude -p` whose --settings carry a plugin
+#        scripts path) is none, "it is a live host session", and so is its look-alike child; a wrapper look-alike
+#        with a live host session under it is none, "a live host session runs under it"; act refuses both.
+#   leg_snapshot_fail  janitor's own snapshot cannot be taken (TMPDIR missing) while proc-registry takes its
+#        own ps: every look-alike and the overdue entry are none, "the live-session check could not run".
+#   leg_reap_host  an overdue entry whose pid is a live host session keeps reap, its reason warning that
+#        reaping ends that session and its evidence naming the command line; a plain overdue entry has no warning
+#        until a live host session runs under it, when its reason names that session.
 #   leg_sweep_set  a would-remove set that grows after the report gives every sweep-apply row a new id, so
 #        `act --confirm <the old id>` refuses it and removes nothing.
 #   leg_lock_reclaim  (brief AC8b) a run lock whose recorded holder is dead and whose age is >= 1800s is
@@ -39,7 +47,9 @@
 #   exactly one line), each must turn its leg red: act's report-only guard line deleted (leg_noninteractive),
 #   the not-the-plugin's `none` action flipped to stop-unregistered (leg_report_only), the report path
 #   writing into the registry dir (leg_report_fixture), the live-session demotion dropped (leg_live_session),
-#   the would-remove set dropped from the sweep row identity (leg_sweep_set), the host rule reading only the first word (leg_live_session).
+#   the would-remove set dropped from the sweep row identity (leg_sweep_set), the host rule reading only the first word (leg_live_session),
+#   the host-session-itself and host-session-below checks dropped (leg_host_session), each snapshot fail-closed
+#   dropped (leg_snapshot_fail), the live-host-session and session-below reap warnings dropped (leg_reap_host).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -406,6 +416,78 @@ leg_live_session() {
   leg_end
 }
 
+leg_host_session() {
+  local js r id oid out
+  mk_fixture
+  # synthetic rows: 900321 is a lane-like `claude -p` whose --settings carry a plugin scripts path (a
+  # look-alike that IS a host session, reparented to pid 1) with a look-alike child 900322; 900331 is an
+  # unregistered wrapper look-alike with a live `claude -p` (900332) running under it
+  SNAP_EXTRA="$SNAP_EXTRA
+900321 1 $FAKE_LSTART 03:00:00 /usr/local/bin/claude -p --settings $WORK/lw/loomwright/9.9.9/scripts/automate-lanes.sh
+900322 900321 $FAKE_LSTART 03:00:00 $LW/fixture-child.sh 1
+900331 1 $FAKE_LSTART 03:00:00 bash $LW/automate-lanes.sh _lane-run L1
+900332 900331 $FAKE_LSTART 03:00:00 /usr/local/bin/claude -p hello"
+  snap
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  r="$(rows_where "$js" '.what == "unregistered process pid 900321"')"; id="$(jq -r .id <<<"$r" 2>/dev/null)"
+  check "leg_host_session a look-alike that IS a live host session: action none, 'it is a live host session', its command cut in the evidence" \
+    eval 'full_row "$r" && [ "$(jq -r .action <<<"$r")" = none ] && has "$(jq -r .reason <<<"$r")" "it is a live host session" && has "$(jq -r .evidence <<<"$r")" "command: /usr/local/bin/claude -p --settings"'
+  check "leg_host_session ... its look-alike child is none too (its session is alive)" \
+    eq "$(nrows "$js" '.what == "unregistered process pid 900322" and .action == "none" and (.reason | test("its session is still alive"))')" 1
+  r="$(rows_where "$js" '.what == "unregistered process pid 900331"')"; oid="$(jq -r .id <<<"$r" 2>/dev/null)"
+  check "leg_host_session a wrapper look-alike with a live host session under it: action none, 'runs under it', the session named" \
+    eval 'full_row "$r" && [ "$(jq -r .action <<<"$r")" = none ] && has "$(jq -r .reason <<<"$r")" "a live host session runs under it (pid 900332)" && has "$(jq -r .evidence <<<"$r")" "session: pid 900332 /usr/local/bin/claude -p hello"'
+  check "leg_host_session (control) the plain look-alike keeps stop-unregistered" \
+    eq "$(nrows "$js" ".what == \"unregistered process pid $OTHER\" and .action == \"stop-unregistered\"")" 1
+  out="$(jr act --confirm --root "$P" "$id" "$oid" 2>/dev/null)"
+  check "leg_host_session act --confirm refuses both rows as report-only" \
+    eval '[ -n "$id" ] && [ -n "$oid" ] && has "$out" "janitor: refused $id — a report-only row" && has "$out" "janitor: refused $oid — a report-only row"'
+  leg_end
+}
+
+leg_snapshot_fail() {
+  local js r
+  mk_fixture --watcher
+  # janitor's own snapshot cannot be taken (no temp dir); proc-registry still takes its own ps
+  js="$(env -u CI -u HERMETIC_TEST_ENV -u LOOMWRIGHT_PROC_PS_SNAPSHOT TMPDIR="$WORK/no-such-tmp" bash "$S" --root "$P" --json 2>/dev/null)"
+  r="$(rows_where "$js" ".what == \"unregistered process pid $LEAK\"")"
+  check "leg_snapshot_fail a look-alike is none, 'the live-session check could not run' (never stop-unregistered)" \
+    eval '[ -n "$r" ] && [ "$(jq -r .action <<<"$r")" = none ] && has "$(jq -r .reason <<<"$r")" "the live-session check could not run (unavailable — no temp file)"'
+  r="$(rows_where "$js" ".what | test(\"merge-watch process pid $WATCH \")")"
+  check "leg_snapshot_fail ... the overdue entry is none too (never reap without the host check)" \
+    eval '[ -n "$r" ] && [ "$(jq -r ".state + \"|\" + .action" <<<"$r")" = "overdue|none" ] && has "$(jq -r .reason <<<"$r")" "check could not run"'
+  check "leg_snapshot_fail ... no processes row is actionable except the finished-entry prune" \
+    eq "$(nrows "$js" '.group == "processes" and .action != "none" and (.id | startswith("fin-") | not)')" 0
+  leg_end
+}
+
+leg_reap_host() {
+  local js r hp
+  mk_fixture --watcher
+  mkdir -p "$WORK/hostbin"
+  spawn bash -c 'exec -a "$0" sleep "$1"' "$WORK/hostbin/claude" 3058; hp=$SP
+  WAIT_LIB_WHAT="pid $hp to exec its host line" wait_for_cmd 5 cmd_is "$hp" "$WORK/hostbin/claude 3058"
+  bash "$PRS" register --pid "$hp" --kind phase --purpose "a lane session" --max-lifetime 1 --repo "$P" 2>/dev/null
+  WAIT_LIB_WHAT="pid $hp to pass its 1 s cap" wait_for_cmd 10 etime_ge "$hp" 2
+  snap
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  r="$(rows_where "$js" ".what | test(\"phase process pid $hp \")")"
+  check "leg_reap_host an overdue entry that is a live host session keeps reap, its reason warning it ends that session" \
+    eval 'full_row "$r" && [ "$(jq -r ".state + \"|\" + .action" <<<"$r")" = "overdue|reap" ] && has "$(jq -r .reason <<<"$r")" "overdue, but it is a live host session — reaping ends that session"'
+  check "leg_reap_host ... its evidence names its command line" has "$(jq -r .evidence <<<"$r" 2>/dev/null)" "; command: $WORK/hostbin/claude 3058"
+  r="$(rows_where "$js" ".what | test(\"merge-watch process pid $WATCH \")")"
+  check "leg_reap_host (control) the plain overdue watcher: reap, no host warning, its command in the evidence" \
+    eval '[ "$(jq -r .action <<<"$r")" = reap ] && ! has "$(jq -r .reason <<<"$r")" "live host session" && has "$(jq -r .evidence <<<"$r")" "; command: sleep 3055"'
+  # a live host session under the overdue watcher (a lane wrapper's `claude -p` child)
+  SNAP_EXTRA="$SNAP_EXTRA
+900341 $WATCH $FAKE_LSTART 01:00:00 /usr/local/bin/claude -p x"
+  snap
+  r="$(rows_where "$(jr --root "$P" --json 2>/dev/null)" ".what | test(\"merge-watch process pid $WATCH \")")"
+  check "leg_reap_host an overdue entry with a live host session under it keeps reap, its reason naming that session" \
+    eval '[ "$(jq -r .action <<<"$r")" = reap ] && has "$(jq -r .reason <<<"$r")" "overdue, but a live host session runs under it (pid 900341)"'
+  leg_end
+}
+
 leg_sweep_set() {
   local js id out js2
   mk_fixture
@@ -465,7 +547,7 @@ leg_usage() {
 
 # ==== run the legs against the real script ===============================================================
 echo "== janitor-report.sh =="
-for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_sweep_set leg_lock_reclaim leg_usage; do
+for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_host_session leg_snapshot_fail leg_reap_host leg_sweep_set leg_lock_reclaim leg_usage; do
   LEG_FAIL=0; S="$SUT_REAL"; t0="$(date +%s)"; "$leg"; echo "  ($leg: $(( $(date +%s) - t0 ))s)"
 done
 
@@ -515,6 +597,18 @@ mk_mutant nosession sub 'sess="$(_jr_live_session "$pid")"' 'sess=""'
 run_mutant "the live-session demotion dropped (a live session's look-alike offered for stopping)" leg_live_session
 mk_mutant firstword sub 'exe="$exe $w"; rest="${rest#"$w"}"' 'return 1'
 run_mutant "the host rule reads only the first word (a desktop-app session path with a space is missed)" leg_live_session
+mk_mutant hostself sub 'if _jr_is_host_cmd "$full"; then' 'if false; then'
+run_mutant "the look-alike-is-itself-a-host-session check dropped (a live lane session offered for stopping)" leg_host_session
+mk_mutant hostbelow sub 'sess="$(_jr_host_below "$pid")"' 'sess=""'
+run_mutant "the live-session-below check dropped (a wrapper of a live session offered for stopping)" leg_host_session
+mk_mutant snapopen sub 'if [ -n "$JR_SNAP_WHY" ] || [ -z "$full" ]; then' 'if false; then'
+run_mutant "the look-alike fail-closed on a missing snapshot dropped (stop-unregistered offered unchecked)" leg_snapshot_fail
+mk_mutant regsnapopen sub 'if [ -n "$JR_SNAP_WHY" ]; then   # fail CLOSED: the live-host' 'if false; then   # fail CLOSED: the live-host'
+run_mutant "the overdue-entry fail-closed on a missing snapshot dropped (reap offered unchecked)" leg_snapshot_fail
+mk_mutant reapwarn sub 'host="|host"; why="$class, but it is a live host session — reaping ends that session; "' 'host=""; why="$class: "'
+run_mutant "the live-host-session warning on an overdue entry dropped" leg_reap_host
+mk_mutant reapbelow sub 'hb="$(_jr_host_below "$pid")"' 'hb=""'
+run_mutant "the live-session-below warning on an overdue entry dropped" leg_reap_host
 mk_mutant noset sub '|$reason|set:$wset"' '|$reason"'
 run_mutant "the would-remove set dropped from the sweep row identity (act sweeps rows never shown)" leg_sweep_set
 
