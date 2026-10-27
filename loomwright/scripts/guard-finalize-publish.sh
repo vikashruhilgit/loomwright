@@ -289,7 +289,7 @@ read_worker_result_ids() {
 # dropped as a label only when BOTH hold:
 #   - the session log has agent_identity rows, so the run's spawns ARE recorded deterministically
 #     and `--all` already checks every one of them — the label adds no evidence; and
-#   - the token is in no log row's `agent_id` AND has no run of 8+ lowercase hex characters (the
+#   - the token is in no log row's `agent_id` AND has no run of 8+ hex characters, either case (the
 #     shape of every agent id observed in this repo's logs: `a` + 16 hex).
 # Anything else is kept (fail CLOSED): with no identity rows the recorded ids are the only evidence
 # (agnostic-phase1/02, unchanged), and an id-shaped token with no row may be a worker whose hooks
@@ -297,7 +297,8 @@ read_worker_result_ids() {
 # names nothing either way — no reader of a label can recover the id it should have been.
 # LIMIT: the hex test is an UNANCHORED substring scan, deliberately — a label carrying an 8-hex
 # run (`subtask-deadbeef-worker`) is kept and refuses, the safe direction; anchoring it to one id
-# shape would drop a real id of any other shape unchecked.
+# shape would drop a real id of any other shape unchecked. Case-insensitive for the same reason:
+# an id transcribed in upper case (`### A1B2C3D4…`) matches no log row and must still be kept.
 resolve_worker_result_ids() {
   local log="$1" known has_ident tok
   known="$(jq -R -r '(fromjson? // empty) | (.agent_id? // empty) | strings' "$log" 2>/dev/null | sort -u)"
@@ -305,7 +306,7 @@ resolve_worker_result_ids() {
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
     if [ "$has_ident" = y ] && ! grep -Fxq -- "$tok" <<<"$known" \
-       && ! grep -Eq '[0-9a-f]{8}' <<<"$tok"; then
+       && ! grep -Eiq '[0-9a-f]{8}' <<<"$tok"; then
       printf 'label %s\n' "$tok"
       continue
     fi

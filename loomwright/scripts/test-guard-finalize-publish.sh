@@ -37,7 +37,7 @@
 # `skipped`; a mutation control drops the refusal and watches the table-only case pass again.
 # #717: label headings (`### worker-1`, `### subtask-1-worker`) beside settled real ids in a log WITH
 # identity rows -> marker settled, labels listed under ignored_worker_result_labels; an unsettled
-# identity row, an id-shaped heading with no row, and a label with NO identity rows still refuse;
+# identity row, an id-shaped heading with no row (either case), and a label with NO identity rows still refuse;
 # a mutation control expects the labels again and watches the settled run refuse.
 #
 # HARNESS RULE: never pipe a producer into the guard — the inert paths exit 0 without reading stdin,
@@ -327,6 +327,12 @@ write_marker "$R717I"
 [ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q '"a0123456789abcdef"' <<<"$WOUT" \
   && ok "#717: an id-shaped heading with no log row stays expected (refused children_unsettled)" \
   || no "#717: id-shaped unknown heading: rc=$WRC out=$WOUT"
+R717C="$(new_repo running)"; settle_real "$R717C" "$REAL1"
+record_section "$R717C" "### A1B2C3D4E5F6A7B8C (subtask-2)"   # an id transcribed in upper case
+write_marker "$R717C"
+[ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q '"A1B2C3D4E5F6A7B8C"' <<<"$WOUT" \
+  && ok "#717: an upper-case id-shaped heading with no log row stays expected (case-insensitive hex test)" \
+  || no "#717: upper-case id-shaped heading: rc=$WRC out=$WOUT"
 R717N="$(new_repo running)"; record_section "$R717N" "### worker-1 (subtask-1)"   # no identity rows at all
 write_marker "$R717N"
 [ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q '"worker-1"' <<<"$WOUT" \
