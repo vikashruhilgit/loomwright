@@ -65,12 +65,15 @@
 #   `.agent` or `.agent/risk.json` that is a SYMLINK (tree mode 120000) ⇒
 #   `unclassifiable: risk_json_symlink` (null): git reads never follow an in-tree link, and
 #   following it could resolve into the PR's own working tree, so the owner's entries are
-#   unreadable — fail CLOSED rather than silently absent.
+#   unreadable — fail CLOSED rather than silently absent. A base `.agent` that is a SUBMODULE
+#   (gitlink, mode 160000) ⇒ `unclassifiable: risk_json_gitlink` (null) for the same reason. Only
+#   the exact paths `.agent` and `.agent/risk.json` are judged; another symlink under `.agent/` is
+#   not.
 #
 # Failure-mode split (CLAUDE.md §"Failure-Mode Invariants"): this script is a fail-SAFE EMITTER —
 # it always exits 0. `high_risk: null` + `reasons: ["unclassifiable: <reason>"]` + the reason on
 # stderr is emitted when the diff cannot be classified (bad_args, jq_missing, not_a_git_repo,
-# bad_ref, git_failed, risk_json_symlink). Its CONSUMERS fail CLOSED: `gate-eval` parks on
+# bad_ref, git_failed, risk_json_symlink, risk_json_gitlink). Its CONSUMERS fail CLOSED: `gate-eval` parks on
 # anything but an explicit `false` (`PARK: high_risk_diff`) with no override of any kind, and the
 # Phase 4.5 lens treats `null` as "spawn the advisory pass" (the safe direction for an advisory lens is to run it).
 # The jq-less `jq_missing` object (and a `bad_args` seen before jq is known) is the ONE
@@ -88,6 +91,8 @@
 # target, a skill file outside the listed paths) is caught only if a generic branch catches it.
 # A project that deliberately commits `.agent` (or `.agent/risk.json`) as a symlink gets
 # `unclassifiable: risk_json_symlink` on EVERY diff — the gate parks until the file is a regular blob.
+# Likewise a project whose `.agent` is a submodule gets `unclassifiable: risk_json_gitlink` on EVERY
+# diff — the gate parks until `.agent` is a regular directory in the repository itself.
 #
 # Co-located static suite: test-classify-risk.sh.
 #
@@ -314,23 +319,37 @@ done < "$tmp/ltrpaths"
 # Read from the BASE ref only — the working tree and <head_ref> are the PR's own and never read.
 # ---------------------------------------------------------------------------
 # Presence probe: `ls-tree` reads trees only, so it separates "absent" (exit 0, empty output) from
-# "git failed" (non-zero ⇒ unclassifiable) — a failed probe is never read as absence. It also lists
-# `.agent` itself (not recursive): `ls-tree` and `git show <base>:<path>` never follow an in-tree
-# symlink, so a base `.agent` or `.agent/risk.json` of mode 120000 would otherwise read as absent
-# (or as the link-target text) and silently drop the owner's committed entries. Following the link
-# is not an option either (it could resolve into the PR's working tree), so a symlink on either
-# path ⇒ `unclassifiable: risk_json_symlink` (null) — fail CLOSED, like an unreadable base blob.
+# "git failed" (non-zero ⇒ unclassifiable) — a failed probe is never read as absence. When `.agent`
+# is a directory the probe lists its direct children (not `.agent` itself); when it is a single
+# entry (link, gitlink, file) it lists `.agent` alone. Only the records whose path is EXACTLY
+# `.agent` or `.agent/risk.json` are judged — any other child (an unrelated `.agent/notes-link`
+# symlink) is ignored. Per mode on those two paths:
+#   120000 symlink on either path ⇒ `unclassifiable: risk_json_symlink` (null): `ls-tree` and
+#          `git show <base>:<path>` never follow an in-tree link, and following it could resolve
+#          into the PR's working tree, so the owner's entries are unreadable — fail CLOSED.
+#   160000 gitlink on `.agent` ⇒ `unclassifiable: risk_json_gitlink` (null): a submodule's contents
+#          are not in this repository's base tree, so the entries are unreadable — fail CLOSED.
+#          A gitlink at `.agent/risk.json` is "present" and its `git show` read fails ⇒ git_failed.
+#   040000 tree on `.agent` ⇒ the normal directory case; at `.agent/risk.json` ⇒ present, and the
+#          read tree listing is not JSON ⇒ risk_json_malformed (generic-only, stderr).
+#   100644/100755 on `.agent` (a regular file) ⇒ no risk.json can exist ⇒ silent generic-only.
 rj_label="$base:.agent/risk.json"
 if ! git -C "$root" ls-tree -z --full-tree "$base" -- .agent .agent/risk.json > "$tmp/rjls" 2>"$tmp/err"; then
   emit_unclassifiable "git_failed" "base risk.json probe failed: $(head -c 200 "$tmp/err" | tr '\n' ' ')"
 fi
 rj_present=""
 while IFS= read -r -d '' rec; do   # one record per entry: "<mode> <type> <oid>\t<path>"
+  rp="${rec#*$'\t'}"
+  case "$rp" in .agent|.agent/risk.json) ;; *) continue ;; esac
   case "$rec" in
     120000\ *)
-      emit_unclassifiable "risk_json_symlink" "base ${rec#*$'\t'} is a symlink (mode 120000); the committed project entries cannot be read without following it" ;;
+      emit_unclassifiable "risk_json_symlink" "base $rp is a symlink (mode 120000); the committed project entries cannot be read without following it" ;;
   esac
-  [ "${rec#*$'\t'}" = ".agent/risk.json" ] && rj_present=1
+  case "$rp:$rec" in
+    .agent:160000\ *)
+      emit_unclassifiable "risk_json_gitlink" "base $rp is a submodule (mode 160000); the committed project entries are not in this repository's base tree" ;;
+  esac
+  [ "$rp" = ".agent/risk.json" ] && rj_present=1
 done < "$tmp/rjls"
 if [ -n "$rj_present" ]; then
   rj="$tmp/base-risk.json"

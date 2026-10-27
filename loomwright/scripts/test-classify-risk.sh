@@ -41,11 +41,14 @@
 #      invalid base file is generic-only and trusted-root still applies; a present base blob whose
 #      `git show` fails (PATH-stub git), a failed `ls-tree` presence probe, or a base blob missing
 #      from the object store ⇒ null + `unclassifiable: git_failed`, never read as absent; a base
-#      whose `.agent` (or `.agent/risk.json`) is a symlink ⇒ null + `unclassifiable: risk_json_symlink`
+#      whose `.agent` (or `.agent/risk.json`) is a symlink ⇒ null + `unclassifiable: risk_json_symlink`;
+#      an unrelated symlink under a real `.agent/` is not judged (true + project:); a base whose
+#      `.agent` is a submodule (gitlink) ⇒ null + `unclassifiable: risk_json_gitlink`
 #   L. mutation controls for J/K, one per pinned rule (reason line deleted, working-tree read,
 #      `--no-renames` dropped, root-only arm made any-depth, exact arm made a substring, failed
 #      `git show` falls through, exact arm deleted, ancestor arm deleted, failed `ls-tree` presence
-#      probe falls through, symlink probe deleted), each gated on non-empty + differs + `bash -n`
+#      probe falls through, symlink probe deleted, exact-path filter dropped, gitlink arm deleted),
+#      each gated on non-empty + differs + `bash -n`
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -106,6 +109,13 @@ mk_branch base-rj-exclude-only 'mkdir -p .agent && printf "{\"schema_version\":1
 # Symlinked bases (review iteration 2): git reads never follow an in-tree link (mode 120000).
 mk_branch base-rj-agentlink 'mkdir -p agentcfg && printf "{\"schema_version\":1,\"paths\":[\"billing/**\"]}\n" > agentcfg/risk.json && ln -s agentcfg .agent'
 mk_branch base-rj-filelink  'mkdir -p .agent rjcfg && printf "{\"schema_version\":1,\"paths\":[\"billing/**\"]}\n" > rjcfg/risk.json && ln -s ../rjcfg/risk.json .agent/risk.json'
+# Review iteration 3: an UNRELATED symlink under a real `.agent/` dir must not be judged; a base whose
+# `.agent` is a submodule (gitlink, mode 160000) — built with update-index, since `git add -A` would
+# stage the missing work-tree dir as a deletion.
+mk_branch base-rj-notelink 'mkdir -p .agent && printf "{\"schema_version\":1,\"paths\":[\"billing/**\"]}\n" > .agent/risk.json && ln -s ../x.txt .agent/notes-link'
+( cd "$R" && git checkout -q main && git checkout -qb base-rj-gitlink \
+  && git update-index --add --cacheinfo "160000,$(git rev-parse main),.agent" && git commit -qm base-rj-gitlink \
+  && git checkout -q main ) >/dev/null 2>&1
 # Heads cut FROM base-rj-ok (a PR against a base that has the project extension).
 mk_from base-rj-ok rj-drop 'printf "{\"schema_version\":1,\"paths\":[],\"content\":[\"stripe\"]}\n" > .agent/risk.json && printf "y\n" > billing/x.txt'
 mk_from base-rj-ok rj-keep 'printf "y\n" > billing/x.txt'
@@ -609,6 +619,16 @@ run main clean
 [ "$(j '.high_risk')" = "false" ] && [ -z "$ERR" ] \
   && ok "K12 control: base without .agent at all ⇒ silent false (the symlink probe does not fire on absence)" \
   || no "K12 absent-.agent control wrong ($OUT err='$ERR')"
+run base-rj-notelink billing
+if [ "$(j '.high_risk')" = "true" ] && has_reason "project: billing/x.ts matched billing/**" \
+   && ! printf '%s' "$OUT" | grep -q 'unclassifiable'; then
+  ok "K13 base .agent/ holds an unrelated symlink (notes-link) next to a regular risk.json ⇒ true with the project: reason, never unclassifiable"
+else
+  no "K13 unrelated .agent child symlink was judged ($OUT err='$ERR')"
+fi
+[ "$(git -C "$R" ls-tree base-rj-gitlink -- .agent | cut -c1-6)" = "160000" ] \
+  && ok "K14a fixture: base-rj-gitlink's .agent is a gitlink (mode 160000)" || no "K14a gitlink fixture not built"
+unc "K14 base .agent is a submodule (gitlink)" risk_json_gitlink base-rj-gitlink billing --root "$R"
 
 # =============================================================================
 echo "== L. mutation controls for J / K (each gated on non-empty + differs + bash -n) =="
@@ -705,6 +725,24 @@ if mutant symlink-silent sed 's/^      emit_unclassifiable "risk_json_symlink" .
     || no "L10 mutant not discriminated ($OUT err='$ERR')"
 else
   no "L10 mutant not gated"
+fi
+# L11 — restore the any-record mode check (drop the exact-path filter) ⇒ K13's unrelated child symlink reads null.
+if mutant any-record grep -v '^  case "\$rp" in .agent|.agent/risk.json) ;; \*) continue ;; esac$' && ! grep -q 'continue ;; esac' "$MS"; then
+  mrun base-rj-notelink billing
+  [ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: risk_json_symlink" \
+    && ok "L11 (mutant) mode check on every record ⇒ K13 reads null risk_json_symlink — K13 is live" \
+    || no "L11 mutant not discriminated ($OUT)"
+else
+  no "L11 mutant not gated"
+fi
+# L12 — delete the gitlink arm's emit ⇒ the K14 submodule base reads a silent false.
+if mutant gitlink-silent sed 's/^      emit_unclassifiable "risk_json_gitlink" .*$/      : ;;/' && ! grep -q 'emit_unclassifiable "risk_json_gitlink"' "$MS"; then
+  OUT="$(cd "$ELSEWHERE" && bash "$MS" base-rj-gitlink billing --root "$R" 2>"$TMP/err")"; ERR="$(cat "$TMP/err")"
+  [ "$(j '.high_risk')" = "false" ] && [ -z "$ERR" ] \
+    && ok "L12 (mutant) gitlink arm deleted ⇒ K14 reads a silent false with nothing on stderr — K14 is live" \
+    || no "L12 mutant not discriminated ($OUT err='$ERR')"
+else
+  no "L12 mutant not gated"
 fi
 
 echo
