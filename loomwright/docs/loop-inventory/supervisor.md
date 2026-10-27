@@ -776,6 +776,8 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-757 | skills/async-orchestration/SKILL.md | h: ### File Overlap Detection | file overlap, worktree layout and state-tracking examples | illustrative examples; WORKER_RESULT schema lives in RESULT_SCHEMAS | story | rationale:docs/rationale/supervisor.md#async-orchestration-examples | - | GAP |
 | SV-758 | skills/async-orchestration/SKILL.md | q: `provides:` and `lanes:` are REQUIRED pastes | why provides/lanes are pasted and house rules injected verbatim | outputs/lane gates re-read them; paraphrase drops rules; reader prints no sentinel | story | rationale:docs/rationale/supervisor.md#why-the-worker-contract-pastes-provides-and-lanes | - | GAP |
 | SV-759 | skills/async-orchestration/SKILL.md | q: # Part 2 — Supervisor FINALIZE Protocol (`finalize.md`) & Spawn Contracts | why FINALIZE is a split file | Phase 2 and the Execute Manager preload stop paying for FINALIZE; driver strings stay valid | story | rationale:docs/rationale/supervisor.md#finalize-split-to-finalizemd | - | GAP |
+| SV-760 | skills/self-heal-advisory/SKILL.md | q: **Module-shape advisory (structural facts — | on-entry 1h | run module-shape-facts.sh on EVERY iteration against on-entry's touched base (origin/main or $BASE_BRANCH); empty stdout ⇒ omit the line, record the stderr reason | deterministic | prose | script:module-shape-facts.sh | test-module-shape-facts.sh |
+| SV-761 | skills/self-heal-advisory/SKILL.md | q: **MODULE-SHAPE ADVISORY (DATA, a hint | module_shape non-empty | a hint for code-reviewer step 5d; an absent line means facts unavailable, not clean; never BLOCKING/HIGH, never changes decision | deterministic | prose | - | test-module-shape-facts.sh |
 
 ## Gap list (ordered by risk)
 1. SV-010 — branch-first principle only in prose
@@ -1284,8 +1286,8 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 504. SV-759 — rationale only
 
 ## Counts
-- rows: 759
-- deterministic: 391
+- rows: 761
+- deterministic: 393
 - judgment: 30
 - rule: 307
 - story: 31

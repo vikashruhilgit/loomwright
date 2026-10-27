@@ -491,6 +491,23 @@ single-agent (no fan-out)
 
 These are the ONLY sanctioned **live** restatements — every other surface cites this section by path. **Release notes are exempt:** the `v15.15.0` entry in `CHANGELOG.md` is a historical snapshot of what shipped in that release and is deliberately NOT retuned (`CLAUDE.md` and `README.md` no longer carry release banners of their own — they point at the changelog) (same convention as CHANGELOG entries and frozen example values). Verify after a retune with `grep -rnE "800 changed|12 files|[≥>]=? ?3 files|[≥>]=? ?2 .*group" loomwright/ README.md CLAUDE.md` — the pattern must cover **both** predicates, since `genuine-parallelism`'s bounds (≥ 2 groups, ≥ 3 files) are restated in the sanctioned mirror and in `docs/rationale/launch-pad-autonomous.md` §"Complete worked example brief", not just `context-bound`'s. Update only the live mirror in the table above (worked examples are illustrative and re-checked by Criterion 4, but keep them internally consistent).
 
+## Module layout
+
+The File Impact Map plans where new code lives, not only which files change. Launch Pad Phase 3 action 13 applies this section, Plan Reviewer Criterion 21 checks it, the worker follows it (`agents/worker.md`), and the Phase 4.5 review judges the diff against it.
+
+**Threshold:** a file is *large* at 500 lines or more (`wc -l` at the brief's base commit). This is the plugin default.
+
+**Required File Impact Map facts:**
+- **Line count per MODIFY path**, beside the path: `` `src/api/routes.ts` (612) ``.
+- **One home per new responsibility.** Each responsibility the goal adds gets exactly one of: a CREATE module, when it would land in a MODIFY path at or past the threshold or is a separate concern at any size; the existing shared module it extends; or a one-line reason for appending to the large file (e.g. `(612 — the single authority for this rule)`).
+- **Extract row for a copied helper.** When the change needs a helper that 2+ sibling files already define, the map carries an `` extract `<helper>` into `<module>` `` row (the module is a CREATE, the siblings MODIFY rows), or names the existing shared module to reuse. Never a third copy.
+
+**Tests count like source:** test files (`*.test.*`, `*_test.*`, `test-*.sh`, …) take the same threshold, the same one-home rule and the same extract row.
+
+**House-rule override:** a committed `.agent/rules/` house rule that states a different size for some paths overrides the default for those paths only; every other path keeps the default. Read it from the rules each stage already receives — Launch Pad's `applicable_rules` (Phase 3 action 0c) and the Phase 4.5 reviewer's HOUSE-RULES ADVISORY — never from a new reader.
+
+**Single home:** this section is the sole **authority** for the threshold, the required facts and the override. Every other surface cites `skills/supervisor-readiness/SKILL.md` §"Module layout" by path and never restates the number.
+
 ## Common Failure Modes
 
 | Failure | Cause | Prevention |
@@ -528,6 +545,7 @@ Before saving a brief:
 - [ ] Brief follows the complete template (all 9 required sections present; Feasibility optional)
 - [ ] If Phase 2.5 ran, Feasibility verdict recorded in the optional `## Feasibility` section
 - [ ] If the brief modifies an existing script, `## Touched-file invariants` covers every modified script with grounded (file + quoted anchor) entries
+- [ ] The File Impact Map carries the module-layout facts (§"Module layout" above: a line count per MODIFY path; one home per new responsibility)
 
 ## See Also
 

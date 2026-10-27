@@ -14,10 +14,11 @@
 # fixtures/closed-enum-pins/ (answer key: that directory's README.md). This test pins:
 #   PART 1  the template: both sections, their "required only when they apply" rule, the sibling-grep
 #           and the mutate-the-code-not-the-needle rules, and the Section Requirements line.
-#   PART 2  Launch Pad Phase 3 action 12 + Phase 5 action 4d + the spawn's criteria count, and the
-#           command mirror (step 9, Phase 5 emission, count, Criterion 19 gate).
+#   PART 2  Launch Pad Phase 3 action 12 + Phase 5 action 4d + the spawn's count-free criteria line, and
+#           the command mirror (step 9, Phase 5 emission, count-free line, Criterion 19 and 21 gates).
 #   PART 3  Plan Reviewer Criterion 19: gate, 19a/19b/19c, both categories, MEDIUM, the count at every
-#           count surface, the output-format enum, and the schema doc.
+#           count surface, the output-format enum, and the schema doc; Criterion 21's skip clause,
+#           MEDIUM severity and `module_layout` category.
 #   PART 4  the code reviewer's pin-mutation step: EXECUTION DIRECTIVE gate, scratch copy, unmutated
 #           run first, green-on-mutant => BLOCKING; since automate-speed/02 it reads the
 #           run-pin-mutations.sh verdicts (PIN-MUTATION VERDICTS, DATA) and mutates by itself only for an
@@ -99,12 +100,15 @@ bhas "$A12" 'Neither applies → skip silently and emit neither section.' && ok 
 has "$LP" '4d. **Closed enumerations / pin mutations (conditional, from Phase 3 action 12):**' \
   && ok "launch-pad: Phase 5 action 4d emits the sections" || no "launch-pad: Phase 5 emission"
 SPAWN="$(block "$LP" '^\*\*Spawn contract:\*\*' '^\*\*Output:\*\*')"
-bhas "$SPAWN" 'Check all 20 review criteria.' && ok "spawn: Check all 20" || no "spawn criteria count"
-lacks "$LP" 'Check all 19 review criteria' && ok "launch-pad: no stale 'Check all 19'" || no "stale 'Check all 19' in launch-pad"
+bhas "$SPAWN" 'Check every review criterion.' && ok "spawn: count-free criteria line" || no "spawn criteria line"
+lacks "$LP" 'Check all 19 review criteria' && lacks "$LP" 'Check all 20' && ok "launch-pad: no stale 'Check all 19/20'" \
+  || no "stale 'Check all 19/20' in launch-pad"
 has "$LPC" '9. Closed enumerations and pin mutations (conditional' && ok "command mirror: Phase 3 step 9" || no "command mirror step 9"
 has "$LPC" 'When Phase 3 step 9 ran, emit' && ok "command mirror: Phase 5 emission" || no "command mirror Phase 5 emission"
-has "$LPC" 'checks all 20 criteria' && lacks "$LPC" 'checks all 19 criteria' && ok "command mirror: all 20 criteria" \
-  || no "command mirror criteria count"
+has "$LPC" 'checks every review criterion' && lacks "$LPC" 'checks all 19 criteria' && lacks "$LPC" 'all 20 criteria' \
+  && ok "command mirror: count-free criteria line" || no "command mirror criteria count"
+has "$LPC" 'Criterion 21 runs only when a MODIFY path is at or past the §"Module layout" threshold' \
+  && ok "command mirror: Criterion 21 gate" || no "command mirror Criterion 21 gate"
 has "$LPC" 'Criterion 19 runs only when the brief adds an enum value or a test pin' && ok "command mirror: Criterion 19 gate" \
   || no "command mirror Criterion 19 gate"
 
@@ -122,9 +126,14 @@ bhas "$C19" '**19c — coverage.**' && bhas "$C19" 'in neither the File Impact M
 bhas "$C19" '**Issue category:** `closed_enumerations` for 19a and 19c; `pin_mutations` for 19b.' && ok "19: categories" \
   || no "19 categories"
 bhas "$C19" '**Severity if failed:** MEDIUM for 19a, 19b and 19c' && ok "19: MEDIUM" || no "19 severity"
-has "$PR" '## 20 Review Criteria' && lacks "$PR" '## 19 Review Criteria' && has "$PR" 'All 20 review criteria must be checked' \
-  && has "$PR" '(20 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, and 20 conditional)' && has "$PR" 'All 20 criteria checked' \
-  && ok "criteria count 20 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
+has "$PR" '## 21 Review Criteria' && lacks "$PR" '## 20 Review Criteria' && has "$PR" 'All 21 review criteria must be checked' \
+  && has "$PR" '(21 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, and 21 conditional)' && has "$PR" 'All 21 criteria checked' \
+  && ok "criteria count 21 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
+C21="$(block "$PR" '^### 21\. Module Layout \(conditional\)$' '^(---|## Decision Matrix)')"
+[ -n "$C21" ] && ok "### 21. Module Layout (conditional) present" || no "Criterion 21 block not found"
+bhas "$C21" 'no MODIFY path is at or past the threshold → skip silently.' && ok "21: skip clause" || no "21 skip clause"
+bhas "$C21" '**Severity if failed:** MEDIUM (the decision stays PASS' && ok "21: MEDIUM, decision stays PASS" || no "21 severity"
+bhas "$C21" '**Issue category:** `module_layout`.' && ok "21: category" || no "21 category"
 has "$PR" 'Criterion 19 is conditional: skip silently when the brief adds no enum value and no test pin.' \
   && ok "intro paragraph names Criterion 19's gate" || no "intro paragraph gate"
 has "$PR" '| touched_file_invariants | closed_enumerations | pin_mutations |' && ok "output-format enum lists both categories" \

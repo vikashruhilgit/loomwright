@@ -18,12 +18,13 @@
 # Plan Reviewer and the code reviewer are LLM prompts, so CI pins their TEXT, ORDER and OUTCOME words;
 # the behavioural proof is a live Plan Reviewer probe on fixtures/pr-body-evidence/ (answer key: its
 # README.md). This test pins:
-#   PART 1  Plan Reviewer Criterion 20: it is the LAST criterion (after 19, before the Decision Matrix),
+#   PART 1  Plan Reviewer Criterion 20: it sits after 19 and before 21 (the last criterion, before the
+#           Decision Matrix),
 #           its gate, 20a, the not-a-finding clause, category, HIGH, the rewrite in its suggestion; the
 #           Decision Matrix row (inside the matrix, decision FAIL); the count at every count surface;
 #           the output-format enum; the schema doc; the Criterion 1 / 16 docs/evidence exemptions.
 #   PART 2  Launch Pad: Phase 2 action 3 (inside Phase 2's actions), the FAIL (attempt < 3) bullet's
-#           rewrite-never-delete clause, the spawn's count; the command mirror of all three.
+#           rewrite-never-delete clause, the spawn's count-free line; the command mirror of all three.
 #   PART 3  authoring surfaces: the template's Evidence rule sits under `## Acceptance Criteria`, the
 #           rubric example grades the diff, the quality checklist line, user-story-writing's item rule
 #           (with the `## Validation` distinction), and no authoring surface asks for PR-body evidence.
@@ -83,13 +84,14 @@ for f in "$LP" "$PR" "$CR" "$LPC" "$SKILL" "$USW" "$QC" "$SHA" "$AO" "$SCHEMA"; 
 done
 
 echo "PART 1 — Plan Reviewer Criterion 20"
-C20="$(block "$PR" '^### 20\. Acceptance Evidence Location' '^## Decision Matrix')"
+C20="$(block "$PR" '^### 20\. Acceptance Evidence Location' '^(### 21\. |## Decision Matrix)')"
 [ -n "$C20" ] && ok "### 20. Acceptance Evidence Location present" || no "Criterion 20 block not found"
-L19="$(lineno "$PR" '^### 19\. ')"; L20="$(lineno "$PR" '^### 20\. ')"; LDM="$(lineno "$PR" '^## Decision Matrix')"
-[ -n "$L19" ] && [ -n "$L20" ] && [ -n "$LDM" ] && [ "$L19" -lt "$L20" ] && [ "$L20" -lt "$LDM" ] \
-  && ok "Criterion 20 sits after Criterion 19 and before the Decision Matrix" \
-  || no "Criterion 20 position (19=$L19 20=$L20 matrix=$LDM)"
-[ -z "$(lineno "$PR" '^### 21\. ')" ] && ok "Criterion 20 is the last criterion" || no "a Criterion 21 exists"
+L19="$(lineno "$PR" '^### 19\. ')"; L20="$(lineno "$PR" '^### 20\. ')"; L21="$(lineno "$PR" '^### 21\. ')"
+LDM="$(lineno "$PR" '^## Decision Matrix')"
+[ -n "$L19" ] && [ -n "$L20" ] && [ -n "$L21" ] && [ -n "$LDM" ] && [ "$L19" -lt "$L20" ] && [ "$L20" -lt "$L21" ] \
+  && [ "$L21" -lt "$LDM" ] && ok "Criterion 20 sits after 19 and before 21; Criterion 21 sits before the Decision Matrix" \
+  || no "Criterion 20/21 position (19=$L19 20=$L20 21=$L21 matrix=$LDM)"
+[ -z "$(lineno "$PR" '^### 22\. ')" ] && ok "Criterion 21 is the last criterion" || no "a Criterion 22 exists"
 bhas "$C20" 'None names the PR body, PR description or pull-request description as the place its result is recorded, pasted, listed or shown → skip silently.' \
   && ok "20: conditional gate + skip clause" || no "20 gate/skip clause"
 bhas "$C20" '**20a — PR-body-only evidence.** A criterion whose only stated evidence location is the PR body' \
@@ -110,17 +112,17 @@ ROW="$(printf '%s\n' "$DM" | grep -F -- '| Criterion 20 finds' | head -n1)"
 DEC="$(printf '%s\n' "$ROW" | awk -F'|' '{print $3}')"
 bhas "$DEC" '**FAIL**' && bhas "$DEC" '`pr_body_evidence`' && ! bhas "$DEC" 'NEEDS_HUMAN' \
   && ok "matrix row decides FAIL (pr_body_evidence)" || no "matrix row decision: '$DEC'"
-has "$PR" '## 20 Review Criteria' && lacks "$PR" '## 19 Review Criteria' && has "$PR" 'All 20 review criteria must be checked' \
-  && has "$PR" '(20 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, and 20 conditional)' && has "$PR" '- [ ] All 20 criteria checked' \
-  && ok "criteria count 20 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
-has "$PR" 'Criteria 11, 13, 14, 15, 16, 17, 18, 19, and 20 are conditional' && ok "never-skip rule lists 20 as conditional" \
+has "$PR" '## 21 Review Criteria' && lacks "$PR" '## 20 Review Criteria' && has "$PR" 'All 21 review criteria must be checked' \
+  && has "$PR" '(21 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, and 21 conditional)' && has "$PR" '- [ ] All 21 criteria checked' \
+  && ok "criteria count 21 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
+has "$PR" 'Criteria 11, 13, 14, 15, 16, 17, 18, 19, 20, and 21 are conditional' && ok "never-skip rule lists 20 and 21 as conditional" \
   || no "never-skip conditional list"
 has "$PR" 'Criterion 20 is conditional: skip silently when no acceptance criterion names the PR body as its evidence.' \
   && ok "intro paragraph names Criterion 20's gate" || no "intro paragraph gate"
-CHK="$(grep -F -- '- [ ] All 20 criteria checked' "$PR")"
+CHK="$(grep -F -- '- [ ] All 21 criteria checked' "$PR")"
 bhas "$CHK" 'Criterion 20 skipped silently when no acceptance criterion names the PR body as its evidence' \
   && bhas "$CHK" 'HIGH `pr_body_evidence` finding (20a)' && ok "quality checklist names Criterion 20" || no "checklist Criterion 20"
-has "$PR" '| pin_mutations | pr_body_evidence | ...}"  # optional — emit when a criterion mandates it (12–20)' \
+has "$PR" '| pin_mutations | pr_body_evidence | module_layout | ...}"  # optional — emit when a criterion mandates it (12–21)' \
   && ok "output-format enum lists pr_body_evidence" || no "output-format category enum"
 has "$SCHEMA" '"pr_body_evidence" for Criterion 20 findings' && has "$SCHEMA" '`pr_body_evidence` for Criterion 20 (' \
   && ok "schema doc: category in both lists" || no "schema doc category"
@@ -143,12 +145,14 @@ FB="$(printf '%s\n' "$P55" | grep -F -- '- **FAIL (attempt < 3):**' | head -n1)"
 bhas "$FB" 'A Criterion 20 `pr_body_evidence` issue is fixed by rewriting that criterion in the evidence-file form its suggestion gives' \
   && bhas "$FB" 'never by deleting the criterion' && ok "FAIL (attempt < 3): rewrite, never delete" || no "FAIL bullet Criterion 20 clause"
 SPAWN="$(block "$LP" '^\*\*Spawn contract:\*\*' '^\*\*Output:\*\*')"
-bhas "$SPAWN" 'Check all 20 review criteria.' && ok "spawn: Check all 20" || no "spawn criteria count"
-lacks "$LP" 'Check all 19 review criteria' && ok "launch-pad: no stale 'Check all 19'" || no "stale 'Check all 19' in launch-pad"
+bhas "$SPAWN" 'Check every review criterion.' && ok "spawn: count-free criteria line" || no "spawn criteria line"
+lacks "$LP" 'Check all 19 review criteria' && lacks "$LP" 'Check all 20' && ok "launch-pad: no stale 'Check all 19/20'" \
+  || no "stale 'Check all 19/20' in launch-pad"
 LPC2="$(block "$LPC" '^### Phase 2: DISCOVER' '^### Phase 2\.5')"
 bhas "$LPC2" 'a criterion whose evidence would live in the PR body (a carried-forward one included) is written in the evidence-file form instead' \
   && ok "command mirror: Phase 2 step 3" || no "command mirror Phase 2 step 3"
-has "$LPC" 'checks all 20 criteria' && lacks "$LPC" 'checks all 19 criteria' && ok "command mirror: all 20 criteria" || no "command mirror count"
+has "$LPC" 'checks every review criterion' && lacks "$LPC" 'checks all 19 criteria' && lacks "$LPC" 'all 20 criteria' \
+  && ok "command mirror: count-free criteria line" || no "command mirror count"
 has "$LPC" 'Criterion 20 runs only when an acceptance criterion names the PR body as its evidence, and FAILs it' \
   && ok "command mirror: Criterion 20 gate" || no "command mirror Criterion 20 gate"
 has "$LPC" 'FAIL (attempt < 3) → fix issues (a Criterion 20 PR-body criterion is rewritten to the evidence-file form, never deleted)' \
@@ -175,7 +179,7 @@ for f in agents/launch-pad.md agents/product-owner.md agents/orchestrator.md com
          skills/user-story-writing/SKILL.md skills/product-discovery/SKILL.md skills/mvp-scoping/SKILL.md; do
   [ -f "$PLUGIN/$f" ] || { no "authoring surface missing: $f"; continue; }
   bad="$(grep -niE 'PR body|PR description|pull[- ]request (body|description)' "$PLUGIN/$f" \
-    | grep -viE 'docs/evidence|evidence-file form|Criterion 20|Evidence rule|all 20 criteria' || true)"
+    | grep -viE 'docs/evidence|evidence-file form|Criterion 20|Evidence rule|every review criterion' || true)"
   [ -z "$bad" ] && ok "authoring surface asks for no PR-body evidence: $f" || no "$f names the PR body outside the rule: $bad"
 done
 
