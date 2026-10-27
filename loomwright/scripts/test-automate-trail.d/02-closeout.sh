@@ -360,3 +360,29 @@ grep -qxF -- '- [ ] src/app.py' "$P/$RF_REL0" && ok "setup: a Queue item names a
 names="$(git -C "$FX/origin.git" show --name-only --format= "refs/heads/chore/$RUN_ID-trail-1" 2>/dev/null)"
 case "$names" in *src/app.py*) no "L5: source file's local WIP committed into the trail: $names" ;; *"$REQ"*) ok "L5: source-file Queue item not committed; requirement still is" ;; *) no "L5: trail names: $names" ;; esac
 
+
+echo "== U. closeout / trail-gate with an unresolved base (resolve-base-branch.sh — AC9) =="
+# No config, origin/HEAD unset and unsettable (the remote HEAD dangles), a failing `gh` first
+# on PATH (the resolver's gh step) ⇒ base_branch_unresolved. closeout skips ONLY the
+# base-dependent steps (3a/3b cleanup, 4 sync) with the diagnostic on stderr; every other step
+# runs and it still exits 0. trail-gate reports `sync skipped — base_branch_unresolved`, never a PARK.
+CUNOGH="$TOP/cu-nogh"; mkdir -p "$CUNOGH"; printf '#!/usr/bin/env bash\nexit 1\n' > "$CUNOGH/gh"; chmod +x "$CUNOGH/gh"
+cu_unresolve() { git -C "$FX/origin.git" symbolic-ref HEAD refs/heads/nope; git -C "$P" symbolic-ref -d refs/remotes/origin/HEAD 2>/dev/null; }
+closeout_fixture 909; cu_unresolve
+head0="$(git -C "$P" rev-parse HEAD)"
+out="$(PATH="$CUNOGH:$PATH" run_closeout 2>"$FX/cu.err")"; rc=$?
+printf '%s\n' "$out" | sed 's/^/    | /'
+[ "$rc" -eq 0 ] && ok "(U1) closeout with an unresolved base exits 0" || no "(U1) closeout rc=$rc"
+case "$out" in *"closeout: skipped — base_branch_unresolved (base branch unknown; worktree cleanup not attempted)"*) ok "(U1) 3a names the status and attempts no cleanup" ;; *) no "(U1) 3a line missing" ;; esac
+case "$out" in *"closeout: skipped — base_branch_unresolved (base branch unknown; sync not attempted)"*) ok "(U1) step 4 names the status and does not sync" ;; *) no "(U1) sync line missing" ;; esac
+[ -d "$FX/wt-pr" ] && git -C "$P" rev-parse -q --verify refs/heads/feature/x >/dev/null && ok "(U1) the PR worktree and branch are kept (never cleaned against an unknown base)" || no "(U1) cleanup ran with an unknown base"
+[ "$head0" = "$(git -C "$P" rev-parse HEAD)" ] && ok "(U1) the primary did not move" || no "(U1) primary moved"
+grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && ok "(U1) the base-independent steps still ran (item checked off)" || no "(U1) item not checked off"
+grep -qx base_branch_unresolved < <(head -n1 "$FX/cu.err") && ok "(U1) the resolver's status token is the first stderr line" || no "(U1) stderr: $(tr '\n' '|' < "$FX/cu.err")"
+cls_out="$(printf '%s\n' "$out" | bash "$H" closeout-classify --run r --item i --pr p)"
+case "$cls_out" in *"leftover	r	i	p	worktree	"*"base_branch_unresolved"*) case "$cls_out" in *"leftover	r	i	p	sync	"*"base_branch_unresolved"*) ok "(U1) closeout-classify reads both skipped steps as leftovers" ;; *) no "(U1) classify sync: $cls_out" ;; esac ;; *) no "(U1) classify worktree: $cls_out" ;; esac
+closeout_fixture 910; cu_unresolve
+echo '[]' > "$GH_STUB_DIR/prs.json"
+out="$(cd "$P" && PATH="$CUNOGH:$PATH" bash "$H" trail-gate "$RF_REL" 2>"$FX/tg.err")"; rc=$?
+[ "$out" = "trail-gate: clear — no open trail PR; sync skipped — base_branch_unresolved" ] && [ "$rc" -eq 0 ] && ok "(U2) trail-gate ⇒ '$out', exit 0 (no PARK, no sync)" || no "(U2) trail-gate ⇒ '$out' rc=$rc"
+grep -qx base_branch_unresolved < <(head -n1 "$FX/tg.err") && ok "(U2) the status token is on stderr" || no "(U2) stderr: $(tr '\n' '|' < "$FX/tg.err")"
