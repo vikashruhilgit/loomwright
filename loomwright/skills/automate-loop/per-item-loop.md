@@ -82,7 +82,7 @@ Run by `automate-next-step.sh` steps `dismissed` → `decide` → `park` / `fix-
 
 **A clean review is not a finding.** A bot review that raises no issue is validated `clean` (`findings_clean`), never `dismissed`, so it is never drafted or asked; `dismissed-drafts` also skips a whole-text no-finding verdict.
 
-**Honest limits.** `drain-rounds.sh init` resets the per-PR round ledger, so the real bound on one item is 2 × `--max-rounds` drain rounds. `learning-emit` writes at most one complete line per run/item/PR/source, so the engine-native learning line reflects the FIRST drain only. The re-dismissed fix-now check is drain-origin ONLY: `<run_id>.supervisor-result.md` is written once per item, so a Phase 4.5-origin fix-now name stays suppressed.
+**Honest limits.** `drain-rounds.sh init` resets the per-PR round ledger, so the real bound on one item is 2 × `--max-rounds` drain rounds. `learning-emit` writes at most one complete line per run/item/PR/source, so the engine-native learning line reflects the FIRST drain only. The re-dismissed fix-now check is drain-origin ONLY: `<run_id>.supervisor-result.md` is written once per item, so a Phase 4.5-origin fix-now name stays suppressed. A `follow-up` answer enqueues nothing: the draft stays in `proposed/` and `dismissed-pending` stops counting it, so it leaves every ask; promotion is a human moving it out (`proposed/README.md`).
 
 ## §7 — Single drain (no double-dispatch) + the config-toggle contract
 
