@@ -35,6 +35,10 @@
 # (and a table row carrying the key) refuses worker_results_unparsed, removing a stale marker and
 # writing none; an empty / `(empty)` section is unchanged; `--skip-children-check` still writes
 # `skipped`; a mutation control drops the refusal and watches the table-only case pass again.
+# #717: label headings (`### worker-1`, `### subtask-1-worker`) beside settled real ids in a log WITH
+# identity rows -> marker settled, labels listed under ignored_worker_result_labels; an unsettled
+# identity row, an id-shaped heading with no row, and a label with NO identity rows still refuse;
+# a mutation control expects the labels again and watches the settled run refuse.
 #
 # HARNESS RULE: never pipe a producer into the guard — the inert paths exit 0 without reading stdin,
 # so a piped `jq` can hit EPIPE and pipefail turns that race into a spurious rc 2/141; build the
@@ -291,6 +295,44 @@ for eb in "(empty)" "_(empty)_" "" "   "; do
     || no "empty section '$eb': rc=$WRC out=$WOUT"
 done
 
+echo "== #717: a label heading is not an expected id when identity rows record the spawns =="
+# settle_real <repo> <id>... — an identity row plus a terminal row for each real agent id
+settle_real() { local r="$1" i; shift; for i in "$@"; do printf '{"event":"agent_identity","agent_id":"%s"}\n{"event":"subtask_complete","agent_id":"%s","result_block_present":true}\n' "$i" "$i" >> "$r/.supervisor/logs/$PSID.jsonl"; done; }
+REAL1=a4058c536893f25cd; REAL2=aab4fa0cd08c63928; REAL3=af2afe61c9c94cb32
+for lbls in "subtask-1-worker subtask-2-worker subtask-3-worker" "worker-1 worker-2 worker-3"; do
+  R717="$(new_repo running)"; settle_real "$R717" "$REAL1" "$REAL2" "$REAL3"
+  body=""; n=0; for l in $lbls; do n=$((n+1)); body="$body### $l (subtask-$n)
+- status: completed
+"; done
+  record_section "$R717" "$body"
+  write_marker "$R717"
+  MK717="$R717/.supervisor/logs/$PSID.finalize-gate"
+  [ "$WRC" = 0 ] && ! grep -q children_unsettled <<<"$WOUT" \
+    && [ "$(jq -r .children_check "$MK717" 2>/dev/null)" = settled ] \
+    && [ "$(jq -r '.ignored_worker_result_labels | join(" ")' "$MK717" 2>/dev/null)" = "$lbls" ] \
+    && ok "#717: '$lbls' headings + settled real ids -> marker settled, labels recorded as ignored" \
+    || no "#717: '$lbls': rc=$WRC out=$WOUT"
+done
+# fail-CLOSED controls: the label rule must not hide a real unsettled child
+R717U="$(new_repo running)"; settle_real "$R717U" "$REAL1"; hang_child "$R717U"
+record_section "$R717U" "### worker-1 (subtask-1)"
+write_marker "$R717U"
+[ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q '"c2"' <<<"$WOUT" \
+  && [ "$(jq -r '.ignored_worker_result_labels[0]' <<<"$WOUT" 2>/dev/null)" = worker-1 ] \
+  && ok "#717: a dropped label never hides an unsettled identity row (refused naming c2, label listed)" \
+  || no "#717: unsettled identity row with a label: rc=$WRC out=$WOUT"
+R717I="$(new_repo running)"; settle_real "$R717I" "$REAL1"
+record_section "$R717I" "### a0123456789abcdef (subtask-2)"
+write_marker "$R717I"
+[ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q '"a0123456789abcdef"' <<<"$WOUT" \
+  && ok "#717: an id-shaped heading with no log row stays expected (refused children_unsettled)" \
+  || no "#717: id-shaped unknown heading: rc=$WRC out=$WOUT"
+R717N="$(new_repo running)"; record_section "$R717N" "### worker-1 (subtask-1)"   # no identity rows at all
+write_marker "$R717N"
+[ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q '"worker-1"' <<<"$WOUT" \
+  && ok "#717: with no identity rows a label heading stays expected (agnostic-phase1/02 unchanged)" \
+  || no "#717: label with no identity rows: rc=$WRC out=$WOUT"
+
 echo "== F3: .supervisor/ is found from a linked worktree; detached sibling + bold state.md =="
 RW="$(new_repo running)"; WT="$TMP/wt-linked.$$"; SIB="$TMP/wt-sibling.$$"
 ( cd "$RW" && git checkout -qb other && git worktree add -q "$WT" "$BR" && git worktree add -q --detach "$SIB" HEAD ) >/dev/null 2>&1
@@ -419,6 +461,13 @@ WRC="$(cd "$RMU" && CLAUDE_PROJECT_DIR="$RMU" "$REALBASH" "$MUTF" write-marker >
   && [ "$(jq -r .children_check "$RMU/.supervisor/logs/$PSID.finalize-gate" 2>/dev/null)" = "no_identity_rows" ] \
   && ok "mutation (unparsed): without the refusal a table-only Worker Results section passes as no_identity_rows — the refusal is load-bearing" \
   || no "mutation (unparsed): inconclusive (changed=$MUTOK rc=$WRC)"
+# #717: stop resolving the recorded tokens -> a label heading refuses a settled run again
+mutant m-717 's/| resolve_worker_result_ids "\$SESSION_LOG")"/| sed "s|^|id |")"/'
+RM7="$(new_repo running)"; settle_real "$RM7" "$REAL1"; record_section "$RM7" "### worker-1 (subtask-1)"
+WOUT="$(cd "$RM7" && CLAUDE_PROJECT_DIR="$RM7" "$REALBASH" "$MUTF" write-marker 2>/dev/null)"; WRC=$?
+[ "$MUTOK" = 1 ] && bash -n "$MUTF" 2>/dev/null && [ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" \
+  && ok "mutation (#717): expecting the labels again refuses a settled run — the resolver is load-bearing" \
+  || no "mutation (#717): inconclusive (changed=$MUTOK rc=$WRC out=$WOUT)"
 # F3a: resolve .supervisor/ from the project dir only -> the linked worktree reads inert
 mutant m-f3a 's/ROOT="\$(loom_main_root "\$PROJ" 2>\/dev\/null)"/ROOT=""/'
 RML2="$(new_repo running)"; WT2="$TMP/wt-linked2.$$"
