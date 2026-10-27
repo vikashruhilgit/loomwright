@@ -1121,7 +1121,8 @@ spans `ts`, `agent_id` and the transcript byte count together. That is
 **vanishingly unlikely to collide, not impossible**: `ts` is only
 second-granularity, `agent_id` is OMITTED for exactly the untyped population
 this guard targets, and parallel worker completion is a designed feature — so
-a collision requires two distinct completions in the same second, with an
+a collision requires two distinct completions whose stamps fall within two
+seconds of each other (the `ts` window below, not only the same second), with an
 identical transcript byte count, and no `agent_id` on either. The failure
 direction is benign and one-way: the loser is one **advisory** ledger line,
 silently dropped. No state, decision, or gate reads it. Reading only the last
