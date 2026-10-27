@@ -68,6 +68,13 @@ same hard-signal data in two shapes**. ST3 writes both; the field correspondence
 - `ground_truth_checks_passed` ⇔ `ground_truth.checks_passed`
 - `ground_truth_pass_rate` (string `"M/N"`) ⇔ the runner's `pass_rate`
 - `knowledge_sources_used` (flat array, added v14.28.0) ⇔ `SUPERVISOR_RESULT.knowledge_sources_used` — the advisory, non-gating memory-usage telemetry array; absent ⇒ "none used"; the flat `session_end` array is the surface `build-insights.sh` reads — as of v14.33.0 it aggregates and surfaces the field in the `## Knowledge sources (memory APPLY)` dashboard section (runs-reporting-a-source count, top source tags, per-version usage). The nested SUPERVISOR_RESULT object is the same data in the other shape. Additive — no `schema_version` change.
+- `heal_first_decision` (`PASS` | `FAIL` | `NEEDS_HUMAN` | `null`) ⇔ `SUPERVISOR_RESULT.heal_first_decision`, and `heal_new_findings` (integer | `null`) ⇔ `SUPERVISOR_RESULT.heal_new_findings` — the findings-per-item metric (iq02 IQ01): the Phase 4.5 loop's first iteration decision and the `category: new` findings summed over every iteration; both `null` when the loop did not run. Absent ⇒ not reported (older events). `build-insights.sh` turns them into the Summary's first-pass PASS rate and findings per item. Additive — no `schema_version` change.
+
+`build-insights.sh` (ST4 / measure-path) reads the FLAT `session_end` fields — these field names
+are a contract with ST3 (writer) and ST4 (aggregator); do not rename them. The flat fields are
+additive to the `session_end` event; events without them remain valid (a reader treats absent
+fields as "not reported this session"; the `ground_truth_*` fields, when absent, are treated as
+`"skipped"`).
 
 ### Knowledge-source tag vocabulary
 
@@ -94,14 +101,6 @@ within one run after normalizing counts once), so logs written before this list 
 into one row per source instead of one per spelling. Read-time normalization fixes spelling only: a
 synonym such as `postmortem` or `system_twin` keeps its own row, because folding it into
 `postmortem_ledger` / `twin:<path>` would claim a source the record does not name.
-- `heal_first_decision` (`PASS` | `FAIL` | `NEEDS_HUMAN` | `null`) ⇔ `SUPERVISOR_RESULT.heal_first_decision`, and `heal_new_findings` (integer | `null`) ⇔ `SUPERVISOR_RESULT.heal_new_findings` — the findings-per-item metric (iq02 IQ01): the Phase 4.5 loop's first iteration decision and the `category: new` findings summed over every iteration; both `null` when the loop did not run. Absent ⇒ not reported (older events). `build-insights.sh` turns them into the Summary's first-pass PASS rate and findings per item. Additive — no `schema_version` change.
-
-`build-insights.sh` (ST4 / measure-path) reads the FLAT `session_end` fields — these field names
-are a contract with ST3 (writer) and ST4 (aggregator); do not rename them. The flat fields are
-additive to the `session_end` event; events without them remain valid (a reader treats absent
-fields as "not reported this session"; the `ground_truth_*` fields, when absent, are treated as
-`"skipped"`).
-
 **`plugin_version` (additive, optional):** the `session_end` event also carries a `plugin_version`
 string (e.g. `"14.24.0"`), read at emission time from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq with an `"unknown"` fallback when the
