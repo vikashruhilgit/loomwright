@@ -67,7 +67,7 @@ check_registry() {
   [ "$n" -gt 0 ] || { echo "    no registry rows under ### Pattern 2"; return 1; }
   registry_rows "$1" | awk -F '|' '{c = $3; gsub(/^ +| +$/, "", c); if (c == "") print "    row " $2 " has an empty Subcommands cell"}' > "$TMP/r.$$"
   [ -s "$TMP/r.$$" ] && { cat "$TMP/r.$$"; probs=1; }
-  awk '/^### Pattern 2/ {s = 1; next} s && /^\| Module \|/ {print; exit}' "$1" | grep -q '| Subcommands |' \
+  grep -q '| Subcommands |' < <(awk '/^### Pattern 2/ {s = 1; next} s && /^\| Module \|/ {print; exit}' "$1") \
     || { echo "    the registry header has no Subcommands column"; probs=1; }
   [ "$probs" -eq 0 ]
 }
@@ -99,14 +99,14 @@ check_help() {
   for a in '`--help`' '`-h`' '`help`'; do
     case "$line" in *"$a"*) ;; *) echo "    the help dispatch does not name $a"; probs=1 ;; esac
   done
-  grep -E '^- \*\*Help = the registry' "$1" | grep -q 'Subcommands cell' \
-    && grep -E '^- \*\*Help = the registry' "$1" | grep -q 'Pattern 2' \
+  grep -q 'Subcommands cell' < <(grep -E '^- \*\*Help = the registry' "$1") \
+    && grep -q 'Pattern 2' < <(grep -E '^- \*\*Help = the registry' "$1") \
     || { echo "    no line generating the help from the registry's Subcommands cell (Pattern 2)"; probs=1; }
   [ "$probs" -eq 0 ]
 }
 
 check_unknown() {
-  grep -F "prints \`Setup: unknown module '<arg>'\`, then the help" "$1" | grep -q 'STOPS' && return 0
+  grep -q 'STOPS' < <(grep -F "prints \`Setup: unknown module '<arg>'\`, then the help" "$1") && return 0
   echo "    no line printing \`Setup: unknown module '<arg>'\` followed by the help (and stopping)"
   return 1
 }

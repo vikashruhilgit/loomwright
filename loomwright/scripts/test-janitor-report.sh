@@ -214,6 +214,8 @@ mk_fixture() {
     && echo base > README && git add .gitignore README && git -c commit.gpgsign=false -c user.email=t@t -c user.name=t commit -qm init ) >/dev/null 2>&1
   mk_merged_wt merged "$WT" 11
   mkdir -p "$P/.supervisor/automate"
+  # the fixture has no origin, so its base comes from the config step of resolve-base-branch.sh
+  printf '{"base_branch": "main"}\n' > "$P/.supervisor/config.json"
   mk_lock "$P" "$(dead_pid)" 4000 "automate:fx-crashed" "$FAKE_LSTART"
   # lanes: L1 (in the lane table, young dead lock), L2 (live-holder lock)
   for d in L1 L2; do mkdir -p "$P-lanes/fx-wave/$d/.supervisor/automate"; done
