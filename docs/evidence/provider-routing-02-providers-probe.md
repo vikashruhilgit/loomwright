@@ -85,3 +85,13 @@ The run took about 28 seconds; nearly all of it is the two real smokes.
   non-interactive auth-status command that this item could find. A passing smoke proves auth. A failing smoke is
   reported `not_logged_in` only when its output matches the table entry's not-logged-in pattern, and that pattern
   is a guess at the vendor's wording until a real logged-out run confirms it.
+- **AC6's "the headless smoke is NOT run" for a logged-out CLI holds only for providers with an auth-check
+  command** (`claude`, `cursor-agent`). For `grok`, `copilot`, `codex` and `gemini` the smoke is the only auth
+  signal, so a logged-out CLI of that kind does have its smoke run, and that smoke is what reports it
+  `not_logged_in`. AC2 (real auth and headless values for `grok`) and AC6 cannot both hold without a vendor
+  auth-status command; this item chose AC2. This is an open scope decision for the owner, not a settled reading of
+  AC6.
+- **A smoke that fails for a non-auth reason leaves auth unproven, and the report says so.** Such a row reads
+  `auth: unknown (smoke failed: <reason>)` and still ends `not usable: auth` (the first failing column). Its login
+  hint is printed as `login (only if not logged in): …`, never as a plain instruction to log in, because the CLI
+  may well be logged in.

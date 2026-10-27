@@ -18,14 +18,17 @@
 #   P. installed + auth ok + headless pass + pinnable + browser yes ->
 #      `usable for write seats`
 #   R. pin token missing from --help -> `permissions: unpinnable`, browser no,
-#      `usable for read-only seats`
+#      `usable for read-only seats`; pin tokens present only as prefixes of
+#      longer flags (`--allow-all`, `--deny-x` for `--allow --deny`) ->
+#      `permissions: unpinnable` (whole-token match, never substring)
 #   X. declared `none` (lone auto-approve flag in --help) -> unpinnable, never
 #      write seats
 #   U. no pin flags declared -> `permissions: unknown`, browser unknown
 #   N. auth not_logged_in -> login hint, `headless: not run`, smoke NOT run,
 #      `not usable: auth`
 #   K. auth output unrecognised + garbage smoke -> `auth: unknown`,
-#      `headless: fail:unparseable`, `not usable: auth`
+#      `headless: fail:unparseable`, `not usable: auth`, login hint QUALIFIED
+#      (`login (only if not logged in):`)
 #   G. auth ok + garbage smoke, or a well-formed envelope carrying the wrong
 #      reply -> `headless: fail:unparseable`, `not usable: headless`; the
 #      fixed reply inside a markdown code fence still passes
@@ -34,7 +37,10 @@
 #      version command -> `installed (version unknown)`; empty help output ->
 #      `permissions: unknown`
 #   L. no auth command + smoke failing with the not-logged-in wording ->
-#      `auth: not_logged_in (via smoke)`, `headless: fail:exit1`
+#      `auth: not_logged_in (via smoke)`, `headless: fail:exit1`; the smoke DID
+#      run (AC6's "smoke not run" covers only auth-command providers, case N)
+#   F. no auth command + smoke failing another way -> `auth: unknown (smoke
+#      failed: unparseable)`, `not usable: auth`, login hint qualified
 #   C. smoke context (AC10): cwd a throwaway dir under the engine's TMPDIR
 #      (never the repo) and removed after, HOME = the HOME the engine got (not
 #      scrubbed), prompt = the fixed probe string
@@ -43,7 +49,8 @@
 #   H. hung smoke (TERM ignored) + timeout 2 -> `headless: fail:timeout`, the
 #      stub's recorded pid/pgid/child are gone, the run ends well before the
 #      stub's own 30s sleep (so the KILL step fired), exit 0
-#   J. jq unavailable -> `headless: not run (jq not found)`, exit 0; invalid
+#   J. jq unavailable -> `headless: not run (jq not found)`, exit 0; a provider
+#      with no auth command -> `auth: unknown (smoke not run)`; invalid
 #      timeout values fall back to the defaults
 #   E. usage errors (no subcommand / extra arg) -> exit 64
 #   T. table contract (AC13): every real provider-<name>.sh (test-only
@@ -216,6 +223,8 @@ make_stub wrongreply  'LOGGED-IN-OK'            "$PIN_HELP"                 wron
 make_stub fenced      'LOGGED-IN-OK'            "$PIN_HELP"                 fenced
 make_stub viasmoke    'unused'                  "$PIN_HELP"                 pass
 make_stub viasmokenl  'unused'                  "$PIN_HELP"                 notlogged
+make_stub viasmokefail 'unused'                 "$PIN_HELP"                 garbage
+make_stub prefixonly  'LOGGED-IN-OK'            'usage: stub [--allow-all] [--deny-x] [--allowed=TOOLS]' pass
 make_stub rcauth      'any text at all'         "$PIN_HELP"                 pass
 make_stub silent      'LOGGED-IN-OK'            '__silent__'                pass
 make_stub lensonly    'LOGGED-IN-OK'            "$PIN_HELP"                 pass
@@ -236,6 +245,8 @@ write_provider "$PDIR" viasmoke    none "--pin-a"         unknown
 write_provider "$PDIR" rcauth      cmd  "--pin-a"         unknown ""
 write_provider "$PDIR" silent      cmd  "--pin-a"         unknown
 write_provider "$PDIR" viasmokenl  none "--pin-a"         unknown
+write_provider "$PDIR" viasmokefail none "--pin-a"        unknown
+write_provider "$PDIR" prefixonly  cmd  "--allow --deny"  unknown
 # Z: a lens-only file (no probe entries — the shape of test-lens-run.sh's
 # transient teststub) and a probe-bearing file whose name fails the allowlist.
 {
@@ -247,7 +258,7 @@ write_provider "$PDIR" viasmokenl  none "--pin-a"         unknown
 write_provider "$PDIR" badname cmd "--pin-a" unknown
 mv "$PDIR/provider-badname.sh" "$PDIR/provider-bad.name.sh"
 
-echo "== W/A/P/R/X/U/N/K/G/S/L/C/Z: main run =="
+echo "== W/A/P/R/X/U/N/K/G/S/L/F/C/Z: main run =="
 GIT_BEFORE="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)"
 HOME_BEFORE="$(tree_sig "$THOME")"
 OUT="$TMP/main.out"
@@ -287,6 +298,10 @@ has "R: permissions: unpinnable (token missing from --help)" "$r" "permissions: 
 has "R: browser: no" "$r" "browser: no"
 has "R: verdict usable for read-only seats" "$r" "=> usable for read-only seats"
 
+r="$(row_args "$OUT" prefixonly)"
+has "R: pin tokens only as prefixes of longer flags -> permissions: unpinnable" "$r" "permissions: unpinnable"
+lacks "R: prefix-only pin tokens never give write seats" "$r" "write seats"
+
 r="$(row_args "$OUT" autoapprove)"
 has "X: permissions: unpinnable (declared none)" "$r" "permissions: unpinnable"
 lacks "X: never usable for write seats" "$r" "write seats"
@@ -308,7 +323,8 @@ r="$(row_args "$OUT" authunknown)"
 has "K: auth: unknown" "$r" "auth: unknown"
 has "K: headless: fail:unparseable" "$r" "headless: fail:unparseable"
 has "K: verdict not usable: auth" "$r" "=> not usable: auth"
-assert_eq "K: login hint printed" "    login: login-hint-authunknown" "$(hint_of "$OUT" authunknown)"
+assert_eq "K: login hint qualified (auth unknown, not seen logged out)" \
+  "    login (only if not logged in): login-hint-authunknown" "$(hint_of "$OUT" authunknown)"
 
 r="$(row_args "$OUT" garbage)"
 has "G: auth ok" "$r" "auth ok ·"
@@ -338,6 +354,17 @@ r="$(row_args "$OUT" viasmokenl)"
 has "L: auth: not_logged_in (via smoke)" "$r" "auth: not_logged_in (via smoke)"
 has "L: headless: fail:exit1" "$r" "headless: fail:exit1"
 has "L: verdict not usable: auth" "$r" "=> not usable: auth"
+assert_eq "L: no auth command -> the smoke DID run (it is the only auth signal)" "present" \
+  "$([ -e "$MARK/viasmokenl.smoke-ran" ] && echo present || echo absent)"
+assert_eq "L: login hint printed unqualified (not_logged_in was seen)" \
+  "    login: login-hint-viasmokenl" "$(hint_of "$OUT" viasmokenl)"
+
+r="$(row_args "$OUT" viasmokefail)"
+has "F: auth: unknown (smoke failed: unparseable)" "$r" "auth: unknown (smoke failed: unparseable)"
+has "F: headless: fail:unparseable" "$r" "headless: fail:unparseable"
+has "F: verdict not usable: auth (first failing column)" "$r" "=> not usable: auth"
+assert_eq "F: login hint qualified, never an unconditional 'log in'" \
+  "    login (only if not logged in): login-hint-viasmokefail" "$(hint_of "$OUT" viasmokefail)"
 
 SMOKE_CWD="$(cat "$MARK/writer.smoke-cwd" 2>/dev/null)"
 ETMP_REAL="$(cd "$ETMP" && pwd -P)"
@@ -393,6 +420,8 @@ echo "== J: jq unavailable =="
 JDIR="$TMP/providers-j"; mkdir -p "$JDIR"
 make_stub jqless 'LOGGED-IN-OK' "$PIN_HELP" pass
 write_provider "$JDIR" jqless cmd "--pin-a" unknown
+make_stub jqlessnoauth 'unused' "$PIN_HELP" pass
+write_provider "$JDIR" jqlessnoauth none "--pin-a" unknown
 OUT_J="$TMP/jq.out"
 rc="$(run_check "$OUT_J" LOOMWRIGHT_PROVIDERS_DIR="$JDIR" LOOMWRIGHT_JQ_BIN="$TMP/no-such-jq" \
   LOOMWRIGHT_PROVIDER_SMOKE_TIMEOUT=abc LOOMWRIGHT_PROVIDER_QUICK_TIMEOUT=0)"
@@ -401,6 +430,7 @@ has "J: headless: not run (jq not found)" "$(row_args "$OUT_J" jqless)" "headles
 has "J: header names the missing jq" "$(cat "$OUT_J")" "jq not found on PATH"
 has "J: invalid timeout values fall back to the defaults" "$(cat "$OUT_J")" "timeout 120s (other calls 20s)"
 assert_eq "J: smoke not run" "absent" "$([ -e "$MARK/jqless.smoke-ran" ] && echo present || echo absent)"
+has "J: no auth command + jq missing -> auth: unknown (smoke not run)" "$(row_args "$OUT_J" jqlessnoauth)" "auth: unknown (smoke not run)"
 
 echo "== E: usage errors =="
 bash "$ENGINE" >/dev/null 2>&1; assert_eq "E: no subcommand -> 64" "64" "$?"
@@ -409,13 +439,12 @@ bash "$ENGINE" nope >/dev/null 2>&1; assert_eq "E: unknown subcommand -> 64" "64
 
 echo "== T: real provider-table files keep the lens contract and declare probe entries =="
 EXPECTED_PROMPT='Reply with exactly this JSON and nothing else: {"probe":"loomwright-ok"}'
-nreal=0
-for f in "$REAL_PDIR"/provider-*.sh; do
-  [ -f "$f" ] || continue
-  base="${f##*/}"
-  case "$base" in provider-teststub*) continue ;; esac   # transient test-only files
-  nreal=$((nreal + 1))
-  verdict="$(
+# table_verdict <provider-file> — "ok" or the missing items. A function called
+# inside $( ) rather than an inline body: bash 3.2 (macOS /bin/bash) closes a
+# $( ) early at the bare ')' of a case pattern written inside it.
+table_verdict() {
+  local f="$1"
+  (
     set +u
     PROMPT_CONTENT="LENS-PROMPT-SENTINEL"; MODEL="m"; WORKSPACE_DIR="/nonexistent"
     PROBE_PROMPT="$EXPECTED_PROMPT"; PROBE_CWD="/nonexistent"; JQ=jq
@@ -444,7 +473,15 @@ for f in "$REAL_PDIR"/provider-*.sh; do
       [ "${PROBE_ARGV[${#PROBE_ARGV[@]}-1]}" = "$EXPECTED_PROMPT" ] || miss="$miss smoke-prompt-not-last"
     fi
     printf '%s' "${miss:-ok}"
-  )"
+  )
+}
+nreal=0
+for f in "$REAL_PDIR"/provider-*.sh; do
+  [ -f "$f" ] || continue
+  base="${f##*/}"
+  case "$base" in provider-teststub*) continue ;; esac   # transient test-only files
+  nreal=$((nreal + 1))
+  verdict="$(table_verdict "$f")"
   assert_eq "T: $base keeps the lens contract + declares probe entries" "ok" "$verdict"
 done
 if [ "$nreal" -gt 0 ]; then ok "T: found $nreal real provider-table file(s)"; else no "T: no real provider-table files found under $REAL_PDIR"; fi

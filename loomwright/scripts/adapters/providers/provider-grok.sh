@@ -73,7 +73,9 @@ provider_extract_text() {
 #   - permissions: [E] documents a headless `--permission-mode dontAsk`
 #     ("Silently deny anything without an explicit allow rule") with
 #     `--allow` / `--deny` rules ([R], [P]). The column is `pinnable` only
-#     when `grok --help` advertises all of those tokens; `--always-approve` /
+#     when `grok --help` advertises all of those tokens, each as a whole token
+#     (so `--allow-all` / `--deny-<x>` do not count as `--allow` / `--deny`);
+#     `--always-approve` /
 #     `--yolo` alone ([R]: "Auto-approve all tool executions") is not pinning,
 #     so a build without them reports `unpinnable`. [E] files `dontAsk` under
 #     enterprise policy, so a consumer build may well report `unpinnable`.

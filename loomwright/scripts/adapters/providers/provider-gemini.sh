@@ -60,10 +60,17 @@ provider_extract_text() {
 #     PROBE_AUTH_NOT_LOGGED_IN_RE marks it not_logged_in).
 #   - permissions: no pin flag set is verified, so PROBE_PERM_PIN_FLAGS is
 #     empty and the column reports `unknown` (never a write seat).
-#   - smoke: the lens invocation above with the fixed probe prompt. The
-#     README (below) documents `-p` and `--output-format json`; the lens shape
-#     above does not pass the latter, so the smoke reports what the CLI's
-#     default output really is.
+#   - smoke: `--output-format json -p <prompt>`. The README (below) documents
+#     both `-p` and `--output-format json`, and the headless doc
+#     https://raw.githubusercontent.com/google-gemini/gemini-cli/main/docs/cli/headless.md
+#     (read 2026-10-27) says that output is "a single JSON object" whose
+#     `response` string is the model's final answer, the key
+#     provider_extract_text above tries first. The lens shape above does NOT pass
+#     `--output-format json`, and its extractor needs a JSON object, so reusing
+#     provider_build_argv here would make the smoke unparseable on every run,
+#     logged in or not. The lens contract itself is left unchanged (its own
+#     shape is a separate DOCUMENTED ASSUMPTION); this smoke argv is a
+#     DOCUMENTED ASSUMPTION too, never run here.
 # Install hint and login step: https://raw.githubusercontent.com/google-gemini/gemini-cli/main/README.md
 # (read 2026-10-27: "npm install -g @google/gemini-cli"; login is "Sign in
 # with Google" in an interactive run).
@@ -77,11 +84,8 @@ PROBE_BROWSER="unknown"
 PROBE_INSTALL_HINT="npm install -g @google/gemini-cli"
 PROBE_LOGIN_HINT="run gemini interactively and choose Sign in with Google"
 
-# probe_smoke_argv — reads PROBE_PROMPT, sets PROBE_ARGV; prompt LAST. Reuses
-# provider_build_argv so the smoke and the lens share one assumed shape.
+# probe_smoke_argv — reads PROBE_PROMPT, sets PROBE_ARGV; prompt LAST (it is
+# -p's own value). Asks for the JSON envelope provider_extract_text parses.
 probe_smoke_argv() {
-  MODEL=""
-  PROMPT_CONTENT="$PROBE_PROMPT"
-  provider_build_argv
-  PROBE_ARGV=("${PROVIDER_ARGV[@]}")
+  PROBE_ARGV=("--output-format" "json" "-p" "$PROBE_PROMPT")
 }

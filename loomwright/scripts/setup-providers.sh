@@ -35,7 +35,20 @@
 #                `unknown` and the smoke decides: a passing smoke proves auth
 #                (`auth ok (via smoke)`); a failing smoke whose output matches
 #                the not-logged-in pattern gives `auth: not_logged_in (via
-#                smoke)`. A failing auth column prints the provider's login hint.
+#                smoke)`; a smoke failing any other way leaves
+#                `auth: unknown (smoke failed: <reason>)` (and
+#                `auth: unknown (smoke not run)` when jq is missing).
+#                `not_logged_in` prints the provider's login hint as
+#                `login: <hint>`; `unknown` prints it qualified, as
+#                `login (only if not logged in): <hint>`, because an unknown
+#                auth state may well be a logged-in CLI.
+#   AC6 SCOPE    "logged out => the smoke is NOT run" holds only for a provider
+#                that declares an auth-check command (PROBE_AUTH_ARGV). A
+#                provider with none (no vendor auth-status command exists to
+#                call) has the smoke as its ONLY auth signal, so a logged-out
+#                CLI of that kind does get its smoke run; that smoke is what
+#                reports it not_logged_in. This is a deliberate trade-off in
+#                favour of real auth/headless values for such providers.
 #   headless     `headless pass` | `headless: fail:timeout` |
 #                `headless: fail:unparseable` | `headless: fail:exit<rc>` |
 #                `headless: not run`. The smoke sends a FIXED prompt (no repo
@@ -51,7 +64,9 @@
 #                `permissions: unknown`. A provider declaring `none` (its only
 #                non-interactive mode auto-approves every tool) is unpinnable;
 #                one declaring nothing is unknown; otherwise its `--help`-style
-#                output must contain every declared token or it is unpinnable.
+#                output must contain every declared token as a WHOLE token
+#                (`--allow` is not satisfied by `--allow-all`) or it is
+#                unpinnable.
 #   browser      `browser yes` | `browser: no` | `browser: unknown`, as declared
 #                (`unknown` until a probe has shown it).
 #   A ':' after a column name marks a column that did not pass.
@@ -71,8 +86,9 @@
 #   PROBE_AUTH_NOT_LOGGED_IN_RE  string — ERE meaning not logged in (checked first;
 #                                         also applied to a failing smoke's output).
 #   PROBE_HELP_ARGV              array  — argv printing the help text the pin tokens are read from.
-#   PROBE_PERM_PIN_FLAGS         string — space-separated tokens that must ALL appear
-#                                         in that help text, or `none`, or empty (unknown).
+#   PROBE_PERM_PIN_FLAGS         string — space-separated tokens that must ALL appear, each
+#                                         as a whole token, in that help text, or
+#                                         `none`, or empty (unknown).
 #   PROBE_BROWSER                yes | no | unknown
 #   PROBE_INSTALL_HINT           string — the exact install command to show.
 #   PROBE_LOGIN_HINT             string — the exact login command to show.
@@ -219,6 +235,18 @@ run_bounded() {
   RB_PID=""
 }
 
+# help_has_token <token> <file> — 0 when <file> contains <token> as a WHOLE
+# token: the characters on either side must not be a letter, digit, `_` or `-`.
+# So a pin token `--allow` is not satisfied by `--allow-all`, nor `--deny` by
+# `--no-deny` or `--deny-network`. The token is matched literally (every ERE
+# metacharacter in it is escaped first).
+help_has_token() {
+  local tok_re
+  tok_re="$(printf '%s' "$1" | sed -e 's/[][\.*^$+?(){}|/]/\\&/g')"
+  [ -n "$tok_re" ] || return 1
+  grep -qE -- "(^|[^[:alnum:]_-])${tok_re}([^[:alnum:]_-]|\$)" "$2" 2>/dev/null
+}
+
 # one_line <file> — first non-blank line, printable characters only, max 60.
 one_line() {
   awk 'NF { print; exit }' "$1" 2>/dev/null | tr -cd '[:print:]' | cut -c1-60
@@ -300,8 +328,14 @@ probe_provider() {
       elif [ -n "${PROBE_AUTH_NOT_LOGGED_IN_RE:-}" ] && [ "$headless" != "fail:timeout" ] \
            && grep -qE -- "$PROBE_AUTH_NOT_LOGGED_IN_RE" "$work/smoke.out" "$work/smoke.err" 2>/dev/null; then
         auth="not_logged_in"; auth_via=" (via smoke)"
+      elif [ "${#PROBE_AUTH_ARGV[@]}" -eq 0 ]; then
+        # The smoke was this provider's only auth signal and it failed for a
+        # reason that is not the not-logged-in wording: say so, not "log in".
+        auth_via=" (smoke failed: ${headless#fail:})"
       fi
     fi
+  elif [ "$auth" = "unknown" ] && [ "${#PROBE_AUTH_ARGV[@]}" -eq 0 ]; then
+    auth_via=" (smoke not run)"
   fi
 
   # -- permissions --
@@ -319,7 +353,7 @@ probe_provider() {
         perm="pinnable"
         local tok
         for tok in $PROBE_PERM_PIN_FLAGS; do
-          grep -qF -e "$tok" "$work/help.all" 2>/dev/null || perm="unpinnable"
+          help_has_token "$tok" "$work/help.all" || perm="unpinnable"
         done
       fi
       ;;
@@ -354,9 +388,14 @@ probe_provider() {
   if [ "$browser" = "yes" ]; then c_browser="browser yes"; else c_browser="browser: $browser"; fi
 
   printf '%s: %s · %s · %s · %s · %s => %s\n' "$label" "$installed" "$c_auth" "$c_head" "$c_perm" "$c_browser" "$verdict"
-  if [ "$auth" != "ok" ]; then
-    printf '    login: %s\n' "${PROBE_LOGIN_HINT:-(no login hint declared)}"
-  fi
+  # The login hint is an instruction only when not_logged_in was actually seen.
+  # `unknown` (unrecognised auth output, a timed-out auth call, or a smoke that
+  # failed for another reason) may well be a logged-in CLI, so the hint is
+  # qualified there rather than telling the user to log in.
+  case "$auth" in
+    not_logged_in) printf '    login: %s\n' "${PROBE_LOGIN_HINT:-(no login hint declared)}" ;;
+    unknown)       printf '    login (only if not logged in): %s\n' "${PROBE_LOGIN_HINT:-(no login hint declared)}" ;;
+  esac
   return 0
 }
 
