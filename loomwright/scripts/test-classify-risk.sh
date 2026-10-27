@@ -34,14 +34,17 @@
 #   J. trusted-root branch: one case per surface (reason form `trusted-root: <lowercased path>`);
 #      add / edit / delete / rename (both sides, incl. a root-only `.mcp.json` rename under forced
 #      rename detection); any-depth names vs repo-root-only entries; look-alike names never match
-#      (no substring); a cwd seeded with trusted-root names changes nothing
+#      (no substring); a cwd seeded with trusted-root names changes nothing; symlink shapes — the
+#      bare root config dir, an `.agent` ancestor, `.agent/rules` — are caught (exact / ancestor)
 #   K. `.agent/risk.json` is read from `<base_ref>` only: a head that drops an entry is still judged
 #      by the base's entry; an uncommitted working-tree file and a head-only file are unread; an
 #      invalid base file is generic-only and trusted-root still applies; a present base blob whose
-#      `git show` fails (PATH-stub git) ⇒ null + `unclassifiable: git_failed`
+#      `git show` fails (PATH-stub git), a failed `ls-tree` presence probe, or a base blob missing
+#      from the object store ⇒ null + `unclassifiable: git_failed`, never read as absent
 #   L. mutation controls for J/K, one per pinned rule (reason line deleted, working-tree read,
 #      `--no-renames` dropped, root-only arm made any-depth, exact arm made a substring, failed
-#      `git show` falls through), each gated on non-empty + differs + `bash -n`
+#      `git show` falls through, exact arm deleted, ancestor arm deleted, failed `ls-tree` presence
+#      probe falls through), each gated on non-empty + differs + `bash -n`
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -124,6 +127,10 @@ mk_branch tr-nested-claude 'mkdir -p sub/dir && printf "rules\n" > sub/dir/CLAUD
 mk_branch tr-nested-agents 'mkdir -p sub && printf "rules\n" > sub/AGENTS.md'
 mk_branch tr-nested-mcp    'mkdir -p sub && printf "{}\n" > sub/.mcp.json'
 mk_branch tr-nested-verify 'mkdir -p sub/.agent && printf "{}\n" > sub/.agent/verify.json'
+# Symlink shapes: the diff names only the link itself (mode 120000), never a path under it.
+mk_branch tr-cdir-symlink  'mkdir -p cfg && printf "{}\n" > cfg/settings.json && ln -s cfg "$(dirname '"$TR_CDIR_FILE"')"'
+mk_branch tr-agent-symlink 'mkdir -p agentcfg/rules && printf "{}\n" > agentcfg/rules/p.json && printf "{}\n" > agentcfg/verify.json && ln -s agentcfg .agent'
+mk_branch tr-rules-symlink 'mkdir -p .agent rulescfg && printf "{}\n" > rulescfg/p.json && ln -s ../rulescfg .agent/rules'
 # Names that merely CONTAIN a trusted-root name (as a substring, or at the wrong depth / boundary).
 mk_branch tr-lookalike     'mkdir -p docs src .agent && for f in docs/claude-md-notes.md src/mcp.json.ts docs/verify.json.md src/.mcp.json.ts docs/old-claude.md .agent/verify.json.md .claude-notes.md .agent/rules-old.json; do printf "x\n" > "$f"; done'
 
@@ -506,6 +513,11 @@ if [ "$(tr_count)" = "0" ] && [ "$(j '.high_risk')" = "false" ]; then
 else
   no "J7 substring look-alike matched ($OUT)"
 fi
+# Exact / ancestor path shapes (review iteration 1): a symlink in place of a root-only directory.
+TR_CDIR="$(dirname "$TR_CDIR_FILE")"
+tr_case "J10a symlink config dir -> cfg/ (bare path, mode 120000)" main tr-cdir-symlink  "trusted-root: $TR_CDIR"
+tr_case "J10b symlink .agent -> agentcfg/ (ancestor of the .agent entries)" main tr-agent-symlink "trusted-root: .agent"
+tr_case "J10c symlink .agent/rules -> ../rulescfg (bare path of .agent/rules/)" main tr-rules-symlink "trusted-root: .agent/rules"
 # AC12: a cwd holding untracked files named like the trusted-root entries leaves the result unchanged.
 TRSEED="$TMP/trseed"; mkdir -p "$TRSEED/.claude" "$TRSEED/.agent/rules"
 : > "$TRSEED/CLAUDE.md"; : > "$TRSEED/.mcp.json"; : > "$TRSEED/AGENTS.md"
@@ -567,6 +579,25 @@ PATH="$SAVED_PATH"
 [ "$(j '.high_risk')" = "false" ] && [ -z "$ERR" ] \
   && ok "K7 control: same git stub, base WITHOUT risk.json ⇒ normal false result (the stub delegates; only show fails)" \
   || no "K7 stub control wrong ($OUT err='$ERR')"
+# The presence probe itself failing must never read as "absent": a stub whose `ls-tree` fails.
+GSTUB_LT="$TMP/gitstub-lstree"; mkdir -p "$GSTUB_LT"
+printf '#!/usr/bin/env bash\nfor a in "$@"; do [ "$a" = ls-tree ] && { echo "stub: git ls-tree refused" >&2; exit 1; }; done\nexec %q "$@"\n' "$REAL_GIT" > "$GSTUB_LT/git"
+chmod +x "$GSTUB_LT/git"
+PATH="$GSTUB_LT:$SAVED_PATH"
+unc "K8 risk.json presence probe (ls-tree) fails ⇒ never read as absent" git_failed base-rj-ok billing --root "$R"
+PATH="$SAVED_PATH"
+# The reviewer's real-repo shape: the base risk.json blob is missing from the object store.
+RC_R="$TMP/repo-corrupt"; mkdir -p "$RC_R"
+( cd "$RC_R" && git init -q . && git config user.email t@example.com && git config user.name t \
+  && git checkout -qb main && mkdir -p .agent billing \
+  && printf '{"schema_version":1,"paths":["billing/**"],"note":"corrupt-fixture"}\n' > .agent/risk.json \
+  && printf 'x\n' > billing/base.ts && git add -A && git commit -qm base \
+  && git checkout -qb head && printf 'y\n' > billing/x.txt && git add -A && git commit -qm head \
+  && blob="$(git rev-parse main:.agent/risk.json)" && rm -f ".git/objects/${blob:0:2}/${blob:2}" ) >/dev/null 2>&1
+OUT="$(cd "$ELSEWHERE" && bash "$S" main head --root "$RC_R" 2>"$TMP/err")"; ERR="$(cat "$TMP/err")"
+[ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: git_failed" \
+  && ok "K9 base risk.json blob missing from the object store ⇒ null + unclassifiable: git_failed, never a silent false" \
+  || no "K9 missing base blob read as absent ($OUT err='$ERR')"
 
 # =============================================================================
 echo "== L. mutation controls for J / K (each gated on non-empty + differs + bash -n) =="
@@ -610,14 +641,14 @@ else
   no "L3 mutant not gated"
 fi
 # L4 — root-only exact arm flipped to the any-depth form ⇒ the AC4 negative goes red.
-if mutant rootonly-anydepth sed 's/^      \*)  case "\$1" in "\$n") return 0 ;; esac ;;$/      *)  case "$1" in "$n"|*\/"$n") return 0 ;; esac ;;/'; then
+if mutant rootonly-anydepth sed 's/^    case "\$1" in "\$m") return 0 ;; esac$/    case "$1" in "$m"|*\/"$m") return 0 ;; esac/'; then
   mrun main tr-nested-mcp
   [ "$(tr_count)" != "0" ] && ok "L4 (mutant) root-only arm made any-depth ⇒ sub/.mcp.json matches — J4c is live" || no "L4 mutant not discriminated ($OUT)"
 else
   no "L4 mutant not gated"
 fi
 # L5 — exact arm flipped to a substring match ⇒ the AC11 look-alike case goes red.
-if mutant substring sed 's/^      \*)  case "\$1" in "\$n") return 0 ;; esac ;;$/      *)  case "$1" in *"$n"*) return 0 ;; esac ;;/'; then
+if mutant substring sed 's/^    case "\$1" in "\$m") return 0 ;; esac$/    case "$1" in *"$m"*) return 0 ;; esac/'; then
   mrun main tr-lookalike
   [ "$(tr_count)" != "0" ] && ok "L5 (mutant) exact arm made a substring ⇒ src/.mcp.json.ts matches — J7 is live" || no "L5 mutant not discriminated ($OUT)"
 else
@@ -631,6 +662,29 @@ if mutant show-silent sed 's/^    emit_unclassifiable "git_failed" "base risk.js
   [ "$(j '.high_risk')" = "false" ] && ok "L6 (mutant) failed base read falls through ⇒ K6 reads a silent false — K6 is live" || no "L6 mutant not discriminated ($OUT)"
 else
   no "L6 mutant not gated"
+fi
+# L7 — delete the exact-path arm ⇒ the bare symlinked config dir (J10a) escapes.
+if mutant no-exact grep -v '^    case "\$1" in "\$m") return 0 ;; esac$'; then
+  mrun main tr-cdir-symlink
+  [ "$(j '.high_risk')" = "false" ] && ok "L7 (mutant) exact-path arm deleted ⇒ the config-dir symlink reads false — J10a is live" || no "L7 mutant not discriminated ($OUT)"
+else
+  no "L7 mutant not gated"
+fi
+# L8 — delete the ancestor arm ⇒ the `.agent -> agentcfg` symlink (J10b) escapes.
+if mutant no-ancestor grep -v '^    case "\$m" in "\$1"/\*) return 0 ;; esac$'; then
+  mrun main tr-agent-symlink
+  [ "$(j '.high_risk')" = "false" ] && ok "L8 (mutant) ancestor arm deleted ⇒ the .agent symlink reads false — J10b is live" || no "L8 mutant not discriminated ($OUT)"
+else
+  no "L8 mutant not gated"
+fi
+# L9 — a failed presence probe falls through as "absent" ⇒ the K8 case goes red.
+if mutant probe-silent sed 's/^  emit_unclassifiable "git_failed" "base risk.json probe failed: .*$/  :/'; then
+  PATH="$GSTUB_LT:$SAVED_PATH"
+  mrun base-rj-ok billing
+  PATH="$SAVED_PATH"
+  [ "$(j '.high_risk')" = "false" ] && ok "L9 (mutant) failed ls-tree probe falls through ⇒ K8 reads a silent false — K8 is live" || no "L9 mutant not discriminated ($OUT)"
+else
+  no "L9 mutant not gated"
 fi
 
 echo

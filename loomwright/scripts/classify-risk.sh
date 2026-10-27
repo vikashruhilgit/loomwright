@@ -37,7 +37,10 @@
 #   headers — otherwise every path match would double as a content match).
 #   trusted-root — the instruction / config files a PR is judged by. The names live ONLY in the two
 #       data lists below: TRUSTED_ROOT_ANYDEPTH (exact basename at any depth) and
-#       TRUSTED_ROOT_ROOTONLY (repo root only: exact path, or under a `/`-terminated directory).
+#       TRUSTED_ROOT_ROOTONLY (repo root only: exact path — a `/`-terminated directory also as its
+#       bare `/`-less path — under a `/`-terminated directory, or an ANCESTOR of an entry, so a
+#       symlink replacing the root config directory, or `.agent -> agentcfg`, cannot install
+#       new config unseen).
 #       Matched case-insensitively against BOTH sides of a rename (`git diff --name-only
 #       --no-renames -z <base>...<head>`), never as a substring. One `trusted-root: <lowercased
 #       path>` reason per matching path.
@@ -51,10 +54,12 @@
 #   an `exclude` key present is ignored with `risk_json_exclude_ignored` on stderr, never honoured.
 #   Malformed file (invalid JSON, non-object root, `paths`/`content` not an array of strings,
 #   `schema_version` present but not 1) ⇒ generic-only result + `risk_json_malformed` on stderr —
-#   never a failure and never `null`. Absent at `<base_ref>` (`git cat-file -e` fails) ⇒ silent
-#   generic-only. The file is read ONLY from `<base_ref>` (`git -C <root> show`), never from the
-#   working tree or `<head_ref>`, so a PR cannot drop an entry and change the guarded path in one
-#   diff; `--root` picks the repository only. A present blob that `git show` cannot read ⇒
+#   never a failure and never `null`. Absent at `<base_ref>` (`git ls-tree --full-tree <base>
+#   -- .agent/risk.json` succeeds and lists nothing) ⇒ silent generic-only; a FAILED probe
+#   (non-zero exit) ⇒ `unclassifiable: git_failed` (null), never read as absence. The file is
+#   read ONLY from `<base_ref>` (`git -C <root> show`), never from the working tree
+#   or `<head_ref>`, so a PR cannot drop an entry and change the guarded path in one diff; `--root`
+#   picks the repository only. A present blob that `git show` cannot read ⇒
 #   `unclassifiable: git_failed` (null), never a silent drop of the project's entries.
 #
 # Failure-mode split (CLAUDE.md §"Failure-Mode Invariants"): this script is a fail-SAFE EMITTER —
@@ -124,7 +129,7 @@ print_kind_table() {
     "| (b) workflow / orchestration words | $(list_as_code "$GENERIC_WORDS") | changed path OR changed line, case-insensitive substring | \`path:\` / \`content:\` |" \
     "| (c) size | \`changed_lines > $SIZE_LINES\` | added+removed lines of \`git diff <base>...<head>\` (\`+++\`/\`---\` headers excluded) | \`size:\` |" \
     "| (c) size | \`changed_files > $SIZE_FILES\` | line count of \`git diff <base>...<head> --name-only\` | \`size:\` |" \
-    "| trusted-root (instruction / config) | any depth: $(list_as_code "$TRUSTED_ROOT_ANYDEPTH"); repo root only: $(list_as_code "$TRUSTED_ROOT_ROOTONLY") | changed path on either side of a rename (\`--no-renames\`), case-insensitive: exact path, under a \`/\`-terminated directory, or exact basename for the any-depth names — never a substring | \`trusted-root:\` |" \
+    "| trusted-root (instruction / config) | any depth: $(list_as_code "$TRUSTED_ROOT_ANYDEPTH"); repo root only: $(list_as_code "$TRUSTED_ROOT_ROOTONLY") | changed path on either side of a rename (\`--no-renames\`), case-insensitive: exact path (a \`/\`-terminated entry also without its \`/\`), under a \`/\`-terminated directory, an ancestor of a root-only entry, or exact basename for the any-depth names — never a substring | \`trusted-root:\` |" \
     '| project (add-only) | `.agent/risk.json` at `<base_ref>` `paths[]` (`case` globs — `*`/`**` match across `/`) and `content[]` (literal words, case-insensitive) | changed path / changed line; read from `<base_ref>` only, never the working tree; NO `exclude` key (R5) | `project:` |'
 }
 
@@ -272,17 +277,23 @@ TR_ANY_L="$(printf '%s' "$TRUSTED_ROOT_ANYDEPTH" | tr '[:upper:]' '[:lower:]')"
 TR_ROOT_L="$(printf '%s' "$TRUSTED_ROOT_ROOTONLY" | tr '[:upper:]' '[:lower:]')"
 
 # trusted_root_hit <lowercased path> — 0 when it is a trusted-root surface. Exact / prefix / basename
-# `case` arms only, never a substring.
+# / ancestor `case` arms only, never a substring. The exact and ancestor arms close the symlink
+# shape: a PR adding `cfg/settings.json` plus a symlink from the root config directory to `cfg`
+# diffs as the bare, `/`-less directory path (mode 120000), never as a path under it.
 trusted_root_hit() {
   local n
   for n in $TR_ANY_L; do
     case "$1" in "$n"|*/"$n") return 0 ;; esac
   done
+  local m
   for n in $TR_ROOT_L; do
-    case "$n" in
-      */) case "$1" in "$n"*) return 0 ;; esac ;;
-      *)  case "$1" in "$n") return 0 ;; esac ;;
-    esac
+    m="${n%/}"
+    # exact path — also the bare `/`-less form of a directory entry (a symlink or file)
+    case "$1" in "$m") return 0 ;; esac
+    # an ANCESTOR of an entry (a `.agent` symlink replaces `.agent/rules/`, `.agent/verify.json`, ...)
+    case "$m" in "$1"/*) return 0 ;; esac
+    # under a `/`-terminated directory entry
+    case "$n" in */) case "$1" in "$n"*) return 0 ;; esac ;; esac
   done
   return 1
 }
@@ -295,8 +306,13 @@ done < "$tmp/ltrpaths"
 # Project extension — .agent/risk.json at <base_ref> (add-only; strict shape; never trusted as code).
 # Read from the BASE ref only — the working tree and <head_ref> are the PR's own and never read.
 # ---------------------------------------------------------------------------
+# Presence probe: `ls-tree` reads trees only, so it separates "absent" (exit 0, empty output) from
+# "git failed" (non-zero ⇒ unclassifiable) — a failed probe is never read as absence.
 rj_label="$base:.agent/risk.json"
-if git -C "$root" cat-file -e "$base:.agent/risk.json" 2>/dev/null; then
+if ! git -C "$root" ls-tree -z --full-tree --name-only "$base" -- .agent/risk.json > "$tmp/rjls" 2>"$tmp/err"; then
+  emit_unclassifiable "git_failed" "base risk.json probe failed: $(head -c 200 "$tmp/err" | tr '\n' ' ')"
+fi
+if [ -s "$tmp/rjls" ]; then
   rj="$tmp/base-risk.json"
   if ! git -C "$root" show "$base:.agent/risk.json" > "$rj" 2>"$tmp/err"; then
     emit_unclassifiable "git_failed" "base risk.json unreadable: $(head -c 200 "$tmp/err" | tr '\n' ' ')"
