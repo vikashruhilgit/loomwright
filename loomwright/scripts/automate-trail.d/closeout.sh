@@ -200,14 +200,21 @@ closeout() {
   head_ref="$(printf '%s' "$view" | "$JQ" -r '.headRefName // empty' 2>/dev/null)"
   head_oid="$(printf '%s' "$view" | "$JQ" -r '.headRefOid // empty' 2>/dev/null)"
 
-  local base_branch
-  base_branch="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"
-  base_branch="${base_branch#origin/}"
-  [ -n "$base_branch" ] || base_branch="main"
+  # The base comes from the ONE resolver (resolve-base-branch.sh). Unresolved/invalid (base_tok set)
+  # skips only the base-dependent steps — 3a/3b (they must never touch the base branch, and cannot
+  # tell which it is) and the step-4 sync — with the resolver's diagnostic on stderr; every other
+  # step runs and the exit contract is unchanged.
+  local base_branch base_tok=""
+  if ! base_branch="$(bash "$HERE/resolve-base-branch.sh" --repo "$root" 2>&1 </dev/null)"; then
+    printf '%s\n' "$base_branch" >&2
+    base_tok="${base_branch%%$'\n'*}"; base_branch=""
+  fi
 
   # ---- 3a. worktrees on the PR's head branch (never the primary; runs 1st) --
   local wt_line="" wt_list wt salv dirty wrem="" wkeep="" co_verdict co_ign
-  if [ -z "$head_ref" ] || [ -z "$head_oid" ]; then
+  if [ -n "$base_tok" ]; then
+    wt_line="$S $base_tok (base branch unknown; worktree cleanup not attempted)"; head_ref=""
+  elif [ -z "$head_ref" ] || [ -z "$head_oid" ]; then
     wt_line="$S head branch unresolved (gh pr view headRefName/headRefOid failed)"; head_ref=""
   elif [ "$head_ref" = "$base_branch" ]; then
     wt_line="$S head branch is the base branch"; head_ref=""
@@ -267,7 +274,9 @@ WTLIST
   # _sync_primary (shared with trail-gate's PICK-time sync) holds the guards,
   # the .trail-staged re-stage and the ff-only pull.
   local sy
-  if _sync_primary "$rf_rel" "$run_id" "$base_branch" "$head_ref" "$CO_BRANCH_MODE"; then
+  if [ -n "$base_tok" ]; then
+    sy="$S $base_tok (base branch unknown; sync not attempted)"
+  elif _sync_primary "$rf_rel" "$run_id" "$base_branch" "$head_ref" "$CO_BRANCH_MODE"; then
     # Deliberately NOT `did=1`: a sync is checkout housekeeping, not close-out
     # progress for THIS item. `main` moves for reasons unrelated to the item —
     # most often this run's own merged trail PR — so counting it made a re-run

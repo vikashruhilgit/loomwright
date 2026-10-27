@@ -32,6 +32,16 @@ lanes_create() {
   [ -f "$primary/$item" ] || die "lane-create: item not found in the primary: $item"
   local url; url="$(git -C "$primary" remote get-url origin 2>/dev/null)"
   [ -n "$url" ] || die "lane-create: refused — the primary has no origin remote"
+  # The base comes from the ONE resolver (wave.sh _lanes_base_of) run in the PRIMARY: its
+  # .supervisor/config.json `.base_branch` is the project's choice (the lane gets a copy below), and the
+  # resolver owns the `remote set-head origin -a` attempt. Unresolved/invalid ⇒ the lane is refused with
+  # the status token on stderr, before anything is created.
+  local base
+  if ! base="$(_lanes_base_of "$primary" 2>&1)"; then
+    printf '%s\n' "$base" >&2
+    echo "lane-create: refused — ${base%%$'\n'*} (the base branch of $primary)" >&2
+    return 1
+  fi
   local lane="L$n" lroot="$primary-lanes/$parent" C run_id="$parent-L$n" table="$rdir/$parent.lanes"
   C="$lroot/$lane"
   local spent=""
@@ -67,9 +77,10 @@ lanes_create() {
   git -C "$C" for-each-ref --format='%(refname)' refs/remotes/origin | while IFS= read -r a; do
     git -C "$C" rev-parse -q --verify "$a" >/dev/null 2>&1 || git -C "$C" update-ref -d "$a" 2>/dev/null
   done
+  # Not a base resolution (the base was resolved in the primary above): a --local clone inherits
+  # refs/remotes/origin/HEAD pointing at the PRIMARY's current branch, so re-point it at the real
+  # origin's HEAD — an in-lane resolve-base-branch.sh with no config would otherwise read that branch.
   git -C "$C" remote set-head origin -a >/dev/null 2>&1
-  local base; base="$(git -C "$C" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"; base="${base#origin/}"
-  [ -n "$base" ] || base=main
   git -C "$C" checkout -q -B "$base" "origin/$base" 2>/dev/null || { _abort "base branch origin/$base not found"; return 1; }
   # metadata pull (always --branch); non-zero ⇒ abort the lane.
   local mb

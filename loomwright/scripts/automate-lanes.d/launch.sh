@@ -102,9 +102,16 @@ LN_RESUME_PATH=""; LN_SPAWN_PID=""; LN_SPAWN_SID=""
 # in/out, the pinned permission regime, the allowlist, the deny list with the checkout's own base-branch
 # pushes added, the plugin root, LANE_SYS). One list for a lane (_lanes_spawn) and a phase session
 # (phase.sh _lanes_phase_spawn), so the merge / force-push tripwire can never differ between the two.
+# The base comes from the ONE resolver, resolve-base-branch.sh (via wave.sh _lanes_base_of), run in
+# <checkout>. Unresolved/invalid ⇒
+# fail CLOSED: LN_FLAGS emptied, the status token on stderr, return 1 — a session is never started
+# without its base-branch push tripwire (both callers return 1 before spawning anything).
 _lanes_claude_flags() {
   local base disallow
-  base="$(git -C "$1" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"; base="${base#origin/}"; [ -n "$base" ] || base=main
+  LN_FLAGS=()
+  if ! base="$(_lanes_base_of "$1" 2>&1)"; then
+    printf '%s\n' "$base" >&2; return 1
+  fi
   disallow="$LANE_DISALLOWED_FIXED,Bash(git push origin $base:*),Bash(git push origin HEAD:$base:*),Bash(git push origin HEAD:refs/heads/$base:*),Bash(git push -u origin $base:*)"
   LN_FLAGS=(-p --input-format stream-json --output-format stream-json --verbose
     --permission-prompt-tool stdio --permission-mode acceptEdits
@@ -136,7 +143,7 @@ _lanes_register() {
 }
 _lanes_spawn() {
   local prompt="$1" sid="$2" label="$3" in pid st off i s=""
-  _lanes_claude_flags "$LN_DIR"
+  _lanes_claude_flags "$LN_DIR" || { echo "lane-launch: refused — $LN_LANE — base branch unresolved (status on stderr)"; return 1; }
   local -a flags=("${LN_FLAGS[@]}")
   [ -n "$sid" ] && flags+=(--resume "$sid")
   local -a envu=(-u CLAUDECODE -u CLAUDE_PID -u LOOMWRIGHT_HOLDER_PID)   # a coordinator's holder pin never reaches a lane

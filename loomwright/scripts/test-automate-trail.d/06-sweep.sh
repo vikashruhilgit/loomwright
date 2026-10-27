@@ -27,11 +27,14 @@ printf 'p1\nfcwd\nn/\n'
 exit 0
 STUB
 chmod +x "$SWBIN/gh" "$SWBIN/lsof"
-sw_repo() { # <n> — SWFX, SWP (primary `proj`, base branch main, no origin), SWGH
+sw_repo() { # <n> [nobase] — SWFX, SWP (primary `proj`, base branch main, no origin), SWGH
+  # No origin, so the base comes from the gitignored `.supervisor/config.json .base_branch`
+  # (resolve-base-branch.sh's config step); `nobase` leaves it out (the unresolved leg).
   SWFX="$TOP/sw$1"; SWP="$SWFX/proj"; SWGH="$SWFX/gh"; mkdir -p "$SWP" "$SWGH"; : > "$SWGH/argv.log"
   ( cd "$SWP" && git init -q && git symbolic-ref HEAD refs/heads/main \
     && printf '.supervisor/\n%s/\n' "${SW_HS%/*}" > .gitignore && echo base > README \
     && git add .gitignore README && git commit -qm init ) >/dev/null 2>&1
+  [ "${2:-}" = nobase ] || { mkdir -p "$SWP/.supervisor" && printf '{"base_branch":"main"}\n' > "$SWP/.supervisor/config.json"; }
 }
 sw_branch() { # <name> [<parent>] — a branch carrying its own commit (no checkout)
   local c
@@ -361,6 +364,19 @@ sw_calls="$(grep -n 'sweep_run --' "$TB" | grep -v '^[0-9]*:[[:space:]]*#')"
 [ -n "$sw_calls" ] && ! grep -q -- '--apply' <<<"$sw_calls" \
   && ok "(SW5) every in-script sweep_run call is a dry run (no --apply): $(printf '%s\n' "$sw_calls" | wc -l | tr -d ' ') call(s)" || no "(SW5) sweep_run calls: $sw_calls"
 
+# ---- unresolved base: nothing examined, ONE summary line naming the status, exit 0 ----
+# No origin, no config and a failing `gh` first on PATH (the resolver's gh step) ⇒
+# resolve-base-branch.sh says base_branch_unresolved; the sweep must neither guess a base
+# nor examine a branch (the base branch is never a candidate, and it is unknown).
+SWNOGH="$TOP/swnogh"; mkdir -p "$SWNOGH"; printf '#!/usr/bin/env bash\nexit 1\n' > "$SWNOGH/gh"; chmod +x "$SWNOGH/gh"
+sw_unresolved_fixture() { sw_repo "$1" nobase; sw_branch main-like; sw_merged main-like 60; }
+sw_unresolved_fixture 30
+s0="$(sw_sum)"
+out="$(PATH="$SWNOGH:$PATH" sw_run --apply)"; rc=$?
+sw_shape "(SWU) unresolved base" "$out" "$rc"
+[ "$out" = "sweep: summary — skipped: base_branch_unresolved" ] && ok "(SWU) the ONE line is \`sweep: summary — skipped: base_branch_unresolved\`" || no "(SWU) unresolved output: $(printf '%s' "$out" | tr '\n' '|')"
+[ "$(sw_sum)" = "$s0" ] && sw_has main-like && [ ! -s "$SWGH/argv.log" ] && ok "(SWU) --apply with an unresolved base removes nothing and reads no PR" || no "(SWU) unresolved base changed the repo or called gh: $(cat "$SWGH/argv.log")"
+
 # ---- pin mutations (scratch copies; each must turn its leg red) ---------------
 sw_mutant() { # <name> <sed program> → SW_MD=$TOP/swm-<name> (every script copied, automate-trail.sh mutated)
   SW_MD="$TOP/swm-$1"; mkdir -p "$SW_MD"; cp "$HERE"/*.sh "$HERE"/*.py "$SW_MD/"; cp -R "$HERE/automate-helpers.d" "$SW_MD/"; cp -R "$HERE/automate-trail.d" "$SW_MD/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$SW_MD/"
@@ -419,4 +435,9 @@ fi
 if [ "$SW_ROOT_UID" = 0 ] && sw_mutant coverdict 's/case "\$co_verdict" in "ignored: ok "\*) co_ign=ok ;; esac/co_ign=ok/'; then
   sw_co_unread 242 "$SW_MD"
   [ ! -d "$FX/wt-pr" ] && ok "(SWM) control: a closeout 3a that ignores the salvage verdict removes the copy-failure worktree (that leg is red)" || no "(SWM) closeout verdict mutant did not discriminate: $(printf '%s' "$out" | grep -F worktree)"
+fi
+if sw_mutant unresolved 's/^    echo "\$S \${base%%.*"; return 0$/    return 1/'; then
+  sw_unresolved_fixture 31
+  out="$(PATH="$SWNOGH:$PATH" SW_T="$SW_MD/automate-trail.sh" sw_run)"
+  [ "$out" != "sweep: summary — skipped: base_branch_unresolved" ] && ok "(SWM) control: an unresolved branch that returns 1 without its summary line turns the SWU leg red" || no "(SWM) unresolved mutant did not discriminate: $out"
 fi

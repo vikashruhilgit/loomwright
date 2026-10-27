@@ -7,11 +7,13 @@
 # exactly the plan `wave-plan` prints, pushes only the wave branch and opens the wave PR; merging that
 # PR stays the owner's.
 
-# _lanes_base_of <checkout> — the base branch (origin/HEAD's name; `main` when unset).
-_lanes_base_of() {
-  local b; b="$(git -C "$1" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"; b="${b#origin/}"
-  printf '%s' "${b:-main}"
-}
+# _lanes_base_of <checkout> — the base branch, from the ONE resolver (resolve-base-branch.sh) run in
+# <checkout>; every base read of automate-lanes.sh (wave, launch, create) goes through here. Its output
+# contract passes through: success ⇒ the bare branch on stdout, exit 0; failure ⇒ stdout EMPTY, the
+# status token (`base_branch_unresolved`, `base_branch_invalid:<source>`) as the first stderr line,
+# non-zero — so a caller's `$(_lanes_base_of … 2>&1)` is the branch or the token. Test seam:
+# LOOMWRIGHT_LANES_RESOLVE_BASE (a bundle copy run from a scratch dir has no sibling resolver).
+_lanes_base_of() { bash "${LOOMWRIGHT_LANES_RESOLVE_BASE:-$HERE/resolve-base-branch.sh}" --repo "$1" </dev/null; }
 
 # _lanes_rf_done <runfile> — 0 when the run file's `## Status:` line reads done.
 _lanes_rf_done() { grep -qE '^## Status:[[:space:]]*done([^A-Za-z0-9_]|$)' "${1:-/dev/null}" 2>/dev/null; }
@@ -22,7 +24,7 @@ _lanes_rf_done() { grep -qE '^## Status:[[:space:]]*done([^A-Za-z0-9_]|$)' "${1:
 # already synced, a refused pull — never a reset, a stash, a checkout or a commit.
 _lanes_sync_primary() {
   local p="$1" base cur st
-  base="$(_lanes_base_of "$p")"
+  if ! base="$(_lanes_base_of "$p" 2>&1)"; then echo "skipped — ${base%%$'\n'*}"; return 0; fi
   cur="$(git -C "$p" symbolic-ref -q --short HEAD 2>/dev/null)"
   if [ -z "$cur" ]; then echo "skipped — primary checkout is on a detached HEAD"; return 0; fi
   if [ "$cur" != "$base" ]; then echo "skipped — primary checkout is on $cur, not $base"; return 0; fi
@@ -269,9 +271,10 @@ EOF
   case "$sw" in "sweep: summary — "*) ;; *) sw="sweep: summary — skipped: no summary line (sweep failed or printed nothing)" ;; esac
   case "$sw" in *"$primary"*) sw="$(printf '%s' "$sw" | awk -v p="$primary" '{ while ((i = index($0, p)) > 0) $0 = substr($0, 1, i - 1) "<primary>" substr($0, i + length(p)); print }')" ;; esac
   _fc "sweep — $sw"
-  base="$(_lanes_base_of "$primary")"
-  sha="$(git -C "$primary" rev-parse -q --verify "refs/remotes/origin/$base" 2>/dev/null)"
-  if [ -z "$sha" ]; then _fc "main health — unknown (origin/$base unreadable)"
+  sha=""
+  if ! base="$(_lanes_base_of "$primary" 2>&1)"; then base="${base%%$'\n'*}"; _fc "main health — unknown ($base)"
+  elif ! sha="$(git -C "$primary" rev-parse -q --verify "refs/remotes/origin/$base" 2>/dev/null)" || [ -z "$sha" ]; then
+    _fc "main health — unknown (origin/$base unreadable)"
   else
     cj="$(cd "$primary" && "$LANES_GH" api "repos/{owner}/{repo}/commits/$sha/check-runs?check_name=ci" 2>/dev/null </dev/null)" || cj=""
     concl="$(jq -r '[.check_runs[]? | select(.name == "ci")] | sort_by(.started_at // "") | last
@@ -324,7 +327,8 @@ _lanes_wave_resolve() {
   WV_RF="$WV_PRIMARY/.supervisor/automate/$WV_PARENT.md"; WV_TABLE="$WV_PRIMARY/.supervisor/automate/$WV_PARENT.lanes"
   tab="$(printf '\t')"
   [ -f "$WV_TABLE" ] || { WV_WHY="no lane table ($WV_PARENT.lanes)"; return 1; }
-  WV_BASE="$(_lanes_base_of "$WV_PRIMARY")"
+  # Unresolved/invalid base ⇒ refused before anything is read or created (WV_WHY = the status token).
+  if ! WV_BASE="$(_lanes_base_of "$WV_PRIMARY" 2>&1)"; then WV_WHY="${WV_BASE%%$'\n'*}"; WV_BASE=""; return 1; fi
   wl="$(awk '/^## / { sec = $0; next } sec == "## Current" && /^- wave: / { print; exit }' "$WV_RF" 2>/dev/null)"
   WV_K="$(printf '%s' "$wl" | sed -n 's/^- wave: *\([0-9][0-9]*\) *|.*/\1/p; s/^- wave: *\([0-9][0-9]*\) *$/\1/p' | head -1)"
   items="$(printf '%s' "$wl" | sed -n 's/^- wave: [^|]*| *items: *//p' \

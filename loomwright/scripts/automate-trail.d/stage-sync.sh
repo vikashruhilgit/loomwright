@@ -106,10 +106,13 @@ trail_gate() {
     echo "$K trail PR open $open (merge or close it, then --resume)"; return 0
   fi
 
+  # The base comes from the ONE resolver (resolve-base-branch.sh). Unresolved/invalid skips ONLY the
+  # sync: the status token rides the `sync skipped` line, the resolver's diagnostic goes to stderr.
   local base_branch bm=off
-  base_branch="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"
-  base_branch="${base_branch#origin/}"
-  [ -n "$base_branch" ] || base_branch="main"
+  if ! base_branch="$(bash "$HERE/resolve-base-branch.sh" --repo "$root" 2>&1 </dev/null)"; then
+    printf '%s\n' "$base_branch" >&2
+    echo "$C sync skipped — ${base_branch%%$'\n'*}"; return 0
+  fi
   case "$(_branch_mode "$root")" in "on "*) bm=on ;; esac
   if _sync_primary "$rf_rel" "$run_id" "$base_branch" "" "$bm"; then
     echo "$C synced — $base_branch at $(git rev-parse --short HEAD 2>/dev/null)"
