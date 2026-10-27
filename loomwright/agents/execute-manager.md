@@ -383,6 +383,7 @@ for iteration in 1..max_iterations:
 
       # Record worker result (direct call, one per event). Forwards `out_of_lane`, `deviations`
       # and `not_verified` unconditionally — all REPORT-ONLY, landing in `## Worker Results`.
+      # worker_id is the Task-returned agent id verbatim (`a…`), never a label like `worker-1`.
       Task(
         Context-Keeper,
         operation: record_worker_result,
