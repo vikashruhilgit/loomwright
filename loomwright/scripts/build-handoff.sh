@@ -340,6 +340,14 @@ if [ -f ".supervisor/state.md" ]; then
   sess_phase="$(sed -nE 's/^- phase:[[:space:]]*//p' .supervisor/state.md 2>/dev/null | head -1)"
   sess_branch="$(sed -nE 's/^- branch:[[:space:]]*//p' .supervisor/state.md 2>/dev/null | head -1)"
   e="$(mtime_epoch .supervisor/state.md)"; iso="$(epoch_iso "$e")"
+  # state.md's closed status enum has no "stranded": close-stranded-run.sh projects a session that
+  # stopped without its own session_end as `failed`. Read the log's last session_end reason so the
+  # digest does not report that as a run that failed.
+  if [ "$sess_status" = "failed" ] && [ -n "$sess_id" ] && [ -f ".supervisor/logs/$sess_id.jsonl" ]; then
+    sess_reason="$(jq -R -r 'fromjson? | select(type=="object" and .event == "session_end") | (.reason // "")' ".supervisor/logs/$sess_id.jsonl" 2>/dev/null | tail -1)"
+    [ "$sess_reason" = "session_ended_without_completion" ] \
+      && sess_status="failed (stranded close-out — the session ended without writing its own session_end; not a failed run)"
+  fi
   {
     echo "## Active session (\`.supervisor/state.md\`)"
     echo

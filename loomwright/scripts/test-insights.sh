@@ -1032,6 +1032,47 @@ grep -qF "| https://x/12 | 10m 0s | not recorded | not recorded | not recorded |
 [ "$rc" -eq 0 ] && ok "build-insights exits 0 over malformed lines" || no "rc=$rc"
 rm -rf "$ML"
 
+echo "== SC. stranded close-outs are their own bucket, not Failed, and out of the completion rate =="
+# close-stranded-run.sh writes status failed + reason session_ended_without_completion for a session
+# that ended without its own session_end. On 2026-10-02 every "failed" session was one of these and
+# the completion rate read 48%. A failed record with any OTHER reason is still a failure.
+SC="$(mktemp -d)"; ( cd "$SC" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$SC/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-10-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1,"plugin_version":"17.0.0"}' > "$SC/.supervisor/logs/sc-done.jsonl"
+printf '%s\n' '{"ts":"2026-10-01T11:00:00Z","event":"session_end","status":"failed","reason":"heal_exhausted","heal_decision":"FAIL","heal_iterations":3,"plugin_version":"17.0.0"}' > "$SC/.supervisor/logs/sc-real-fail.jsonl"
+printf '%s\n' '{"ts":"2026-10-01T12:00:00Z","event":"session_end","type":"session_end","session_id":"sc-str-a","status":"failed","reason":"session_ended_without_completion","plugin_version":"17.0.0"}' > "$SC/.supervisor/logs/sc-str-a.jsonl"
+printf '%s\n' '{"ts":"2026-10-01T13:00:00Z","event":"session_end","type":"session_end","session_id":"sc-str-b","status":"failed","reason":"session_ended_without_completion"}' > "$SC/.supervisor/logs/sc-str-b.jsonl"
+( cd "$SC" && bash "$BUILD" >/dev/null 2>&1 )
+scd="$SC/.supervisor/insights/dashboard.md"
+grep -qF "| Sessions | 4 |" "$scd" 2>/dev/null && ok "SC: all four sessions are counted" || no "SC: session count wrong"
+grep -qF "| Failed | 1 |" "$scd" 2>/dev/null && ok "SC: only the genuine failure is Failed (stranded excluded)" || no "SC: Failed still counts stranded close-outs: $(grep -F '| Failed |' "$scd")"
+grep -qE "^\| Stranded close-outs .*\| 2 \|$" "$scd" 2>/dev/null && ok "SC: the two stranded close-outs are reported on their own line" || no "SC: stranded line missing or wrong"
+grep -qF "| **Completion rate** | **50%** |" "$scd" 2>/dev/null && ok "SC: completion rate = 1 completed / 2 non-stranded = 50%" || no "SC: completion rate wrong: $(grep -F 'Completion rate' "$scd")"
+grep -qF "| 17.0.0 | 2 | 50% |" "$scd" 2>/dev/null && ok "SC: the per-version row excludes the stamped stranded close-out" || no "SC: per-version 17.0.0 row wrong: $(grep -F '| 17.0.0 |' "$scd")"
+if grep -qF "| unknown |" "$scd" 2>/dev/null; then no "SC: an unstamped stranded close-out still lands in the per-version unknown row"; else ok "SC: no unknown per-version row from the unstamped stranded close-out"; fi
+grep -qF "reason: session_ended_without_completion" "$SC/.supervisor/insights/runs/sc-str-a.md" 2>/dev/null && ok "SC: the stranded run note carries its reason" || no "SC: stranded run note lacks its reason"
+grep -qF "stranded close-out" "$SC/.supervisor/insights/runs/sc-str-a.md" 2>/dev/null && ok "SC: the stranded run note says it is a stranded close-out" || no "SC: stranded run note unlabeled"
+rm -rf "$SC"
+
+echo "== KS. knowledge-source tags are normalized at read time (old logs aggregate) =="
+# The same source arrived as project_memory and project-memory and split its count. The base tag
+# is lower-cased with '-' → '_'; the ':<qualifier>' is kept verbatim (paths are case-sensitive).
+KS="$(mktemp -d)"; ( cd "$KS" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$KS/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-10-02T10:00:00Z","event":"session_end","status":"completed","knowledge_sources_used":["project_memory","house_rules","prior-churn"]}' > "$KS/.supervisor/logs/ks-n1.jsonl"
+printf '%s\n' '{"ts":"2026-10-02T11:00:00Z","event":"session_end","status":"completed","knowledge_sources_used":["project-memory","House-Rules","prior_churn","twin:scripts/Build-Insights.sh"]}' > "$KS/.supervisor/logs/ks-n2.jsonl"
+printf '%s\n' '{"ts":"2026-10-02T12:00:00Z","event":"session_end","status":"completed","knowledge_sources_used":[" Project_Memory ","project-memory","house-rules:Process"]}' > "$KS/.supervisor/logs/ks-n3.jsonl"
+( cd "$KS" && bash "$BUILD" >/dev/null 2>&1 )
+ksd="$KS/.supervisor/insights/dashboard.md"
+grep -qF "| project_memory | 3 |" "$ksd" 2>/dev/null && ok "KS: project_memory / project-memory / Project_Memory aggregate to ONE row of 3" || no "KS: project_memory row wrong: $(grep -iF 'project' "$ksd" | head -3)"
+grep -qF "| house_rules | 2 |" "$ksd" 2>/dev/null && ok "KS: house_rules / House-Rules aggregate to one row" || no "KS: house_rules row wrong"
+grep -qF "| prior_churn | 2 |" "$ksd" 2>/dev/null && ok "KS: prior_churn / prior-churn aggregate to one row" || no "KS: prior_churn row wrong"
+grep -qF "| house_rules:Process | 1 |" "$ksd" 2>/dev/null && ok "KS: the qualifier is kept verbatim (house_rules:Process)" || no "KS: qualifier not kept verbatim"
+grep -qF "| twin:scripts/Build-Insights.sh | 1 |" "$ksd" 2>/dev/null && ok "KS: a twin:<path> qualifier keeps its case and hyphens" || no "KS: twin path qualifier was rewritten"
+if grep -qE "^\| (project-memory|prior-churn|house-rules) \|" "$ksd" 2>/dev/null; then no "KS: a hyphenated spelling still has its own row"; else ok "KS: no hyphenated spelling keeps a row of its own"; fi
+grep -qF -- "- **Knowledge sources:** project_memory, house_rules:Process" "$KS/.supervisor/insights/runs/ks-n3.md" 2>/dev/null && ok "KS: a tag repeated within one run (after normalizing) is listed once" || no "KS: per-run dedupe wrong: $(grep -F 'Knowledge sources' "$KS/.supervisor/insights/runs/ks-n3.md")"
+rm -rf "$KS"
+
 echo "== build-insights.sh parses under /bin/bash (stock macOS bash 3.2 ends a <( ) at a bare case-pattern ')') =="
 if [ -x /bin/bash ]; then
   /bin/bash -n "$BUILD" 2>/dev/null && ok "/bin/bash -n build-insights.sh" || no "build-insights.sh does not parse under /bin/bash: $(/bin/bash -n "$BUILD" 2>&1 | head -2)"

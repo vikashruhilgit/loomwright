@@ -227,6 +227,29 @@ OUT1B="$(run_sut "$REPO1" "cc-owner-1")"
 assert_eq "case1b exit 0" "0" "$(get_rc "$OUT1B")"
 assert_eq "case1b no second session_end appended" "2" "$(count_lines "$LOG1")"
 
+echo "== 1c. plugin_version: stamped from the manifest, OMITTED when unreadable or not version-shaped =="
+# Without the stamp every close-out landed in /insights' per-version "unknown" row. The root comes
+# from the vendor-neutral LOOMWRIGHT_ROOT (the harness variable is unset so it cannot win).
+PV_ROOT="$(mktemp -d)"; CLEANUP_DIRS+=("$PV_ROOT")
+mkdir -p "$PV_ROOT/ok/.claude-plugin" "$PV_ROOT/bad/.claude-plugin"
+printf '{\n  "name": "loomwright",\n  "version": "9.8.7",\n  "description": "x"\n}\n' > "$PV_ROOT/ok/.claude-plugin/plugin.json"
+printf '{\n  "version": "1.0 \\" injected",\n  "name": "loomwright"\n}\n' > "$PV_ROOT/bad/.claude-plugin/plugin.json"
+for pv_case in "ok|9.8.7" "bad|" "absent|"; do
+  pv_dir="${pv_case%%|*}"; pv_want="${pv_case#*|}"
+  REPOPV="$(init_repo "feature/case1c-$pv_dir")"
+  seed_owned_log "$REPOPV" "sid-case1c" "cc-owner-1c"
+  seed_state "$REPOPV" "sid-case1c" "running"
+  OUTPV="$(unset CLAUDE_PLUGIN_ROOT; export LOOMWRIGHT_ROOT="$PV_ROOT/$pv_dir"; run_sut "$REPOPV" "cc-owner-1c")"
+  assert_eq "case1c[$pv_dir] exit 0" "0" "$(get_rc "$OUTPV")"
+  LINEPV="$(tail -1 "$REPOPV/.supervisor/logs/sid-case1c.jsonl")"
+  assert_eq "case1c[$pv_dir] the close-out line is valid JSON" "session_end" "$(printf '%s' "$LINEPV" | jq -r '.event // empty')"
+  if [ -n "$pv_want" ]; then
+    assert_eq "case1c[$pv_dir] plugin_version is the manifest's" "$pv_want" "$(printf '%s' "$LINEPV" | jq -r '.plugin_version // empty')"
+  else
+    assert_eq "case1c[$pv_dir] plugin_version is OMITTED, never invented" "false" "$(printf '%s' "$LINEPV" | jq -r 'has("plugin_version")')"
+  fi
+done
+
 echo "== 2. non-owner session -> writes nothing, exits 0 =="
 REPO2="$(init_repo "feature/case2")"
 seed_owned_log "$REPO2" "sid-case2" "cc-owner-2"
