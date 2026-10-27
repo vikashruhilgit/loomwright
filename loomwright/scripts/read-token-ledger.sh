@@ -117,8 +117,9 @@
 #     boundary to the next reviewer's start, the last one to its reviewer's end,
 #     then `after iter <n> review (last fix + wrap-up)` to `ran /autonomous`. A
 #     fresh Supervisor phase runs in its own session and never writes the
-#     `FINALIZE:` / `Phase 4.5 iter <n>` Progress lines, so those are read only
-#     when the session log has no such rows (older inline runs).
+#     `FINALIZE:` / `Phase 4.5 iter <n>` Progress lines, so each is read only
+#     when its own hook row is missing (older inline runs): Build's end falls
+#     back without `pr_created`, the iterations without a finished reviewer span.
 #     A span with a missing boundary prints `not recorded`, never 0; no
 #     `parked` line ⇒ the item's wall time and Decide print `not recorded` and
 #     the item total runs to the last recorded boundary (named in the Window
@@ -425,6 +426,8 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
   # the item Supervisor session log first (`pr_created`; one code-reviewer span per
   # iteration, ending where the next one starts), the prompt-written Progress lines
   # only when that log has none — a fresh Supervisor phase never writes those lines
+  # (pr_created and each span .start/.end are bare ts strings, by construction of the
+  # first()/span() helpers in phase-timing.sh; a row object there would read as absent)
   | (def inwin($lo): select(type == "string") | select(. >= $lo) | select($ra == null or . <= $ra);
      ($pt.supervisor // {}) as $S
      | {fin: ([$S.pr_created | inwin($lp // $pick)] | first),
