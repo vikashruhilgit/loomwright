@@ -63,14 +63,10 @@ Subtasks 1, 4 and 5 handed these over because no subtask owned them. Each now po
 
 ## Known residuals, deliberately not changed here
 
-- `loomwright/scripts/automate-helpers.sh` `gate-eval` condition 6 runs `classify-risk.sh main <live head_sha>`,
-  and `skills/automate-loop/modes-and-merge-gate.md` condition 6 documents the same call. This is a hardcoded
-  base inside the sanctioned `--auto-merge` executor. AC9 does not list it as a consumer, and the brief does not
-  assign it to any lane. It fails CLOSED: a missing local `main` makes the diff unclassifiable, so the gate
-  parks with `high_risk_diff` and never merges. On a repo with a non-`main` base it can still classify against
-  the wrong range. The guard does not flag it, because the literal is a positional argument, not an assignment
-  or fallback. Recommended follow-up: pass the PR's own `baseRefName`, which the gate already reads live, as
-  `origin/<baseRefName>`.
+- `loomwright/scripts/automate-helpers.sh` `gate-eval` conditions 2 and 4 still require the PR's live
+  `baseRefName` to be `main` (`PARK: base_not_main`) and read `branches/main/protection`. Both predate this change
+  and fail CLOSED: on a repo with a non-`main` base, `--auto-merge` parks and never merges. Condition 6 no longer
+  hardcodes the base (see "Review iteration 1" below).
 - `loomwright/skills/autonomous-loop/multi-iteration.md` still says that iteration 1 and `--no-stacked-branches`
   iterations branch from `main` (the `--no-stacked-branches` bullet, the two PR-base-verification skip
   conditions and the merge-and-continue prompt). The LP-378, LP-379 and LP-496 `q:` anchors quote this wording.
@@ -81,11 +77,28 @@ Subtasks 1, 4 and 5 handed these over because no subtask owned them. Each now po
 - `loomwright/docs/result-schemas/schema-versioning.md` keeps `classify-risk.sh "$BASE_BRANCH" HEAD` in its
   v15.72.0 history entry. That entry records what that release shipped.
 
+## Review iteration 1
+
+- `gate-eval` condition 6 used to run `classify-risk.sh main <live head_sha>`, which diffs against a local `main`
+  ref. It now resolves the base itself through the sibling `resolve-base-branch.sh --repo <checkout>` and runs
+  `classify-risk.sh origin/<base> <live head_sha>`. An unresolved or invalid base, or a missing resolver, parks
+  `PARK: base_branch_unresolved`. A resolved base that differs from the PR's live `baseRefName` parks
+  `PARK: base_branch_mismatch`. Both park before `classify-risk.sh` runs. Neither has an override, and the gate
+  gained no merge path. Covered in `test-automate-helpers.d/05-gate-eval.sh`.
+- `reconcile-jobs.sh` resolves the base once, in the parent shell, before its per-brief loop. Before this fix the
+  first resolution ran inside each brief's `$(classify …)` subshell, so with origin/HEAD unset the resolver's
+  `set-head` / `gh` probe ran once per brief (4 briefs meant 4 `gh` calls). `test-reconcile-jobs.sh` 30r now
+  asserts exactly one `gh` call across four briefs, and its mutant shows that removing the prime brings back one
+  call per brief.
+- The regrowth guard gained a `main-arg` rule for a literal `main` passed positionally to a script, the form the
+  condition 6 call had. `logical_lines` moved into the sourced `loomwright/scripts/logical-lines-lib.sh`, which
+  this guard and `test-no-pipefail-grep-q.sh` share.
+
 ## AC11 — regrowth guard
 
 `bash loomwright/scripts/test-base-branch-single-resolver.sh` scans every non-test `*.sh` under
-`loomwright/scripts/`. Its rules are `origin-head`, `set-head`, `main-assign`, `main-default`, `main-echo` and
-`origin-main`. It applies a per-rule allowlist, and each allowlist entry carries a reason:
+`loomwright/scripts/`. Its rules are `origin-head`, `set-head`, `main-assign`, `main-default`, `main-echo`,
+`origin-main` and `main-arg`. It applies a per-rule allowlist, and each allowlist entry carries a reason:
 
 - `resolve-base-branch.sh` (all rules): the resolver itself.
 - `send-telemetry-core.sh` (`origin-head`): the telemetry target-ref comparison. It is a fail-SAFE emitter that

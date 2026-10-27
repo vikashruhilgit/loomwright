@@ -25,6 +25,9 @@
 #   main-default   a `${var:-main}` / `${var-main}` / `${var:=main}` default expansion
 #   main-echo      `|| echo main` / `|| printf … main` — a fallback printed by a command
 #   origin-main    a literal `origin/main` ref in code (a hardcoded base probe)
+#   main-arg       a literal `main` passed as the first positional argument to a script — `bash
+#                  "$risk_bin" main "$head"`, `classify-risk.sh main HEAD` — the base handed to a
+#                  base-taking script (classify-risk.sh, module-shape-facts.sh) by name
 #
 # ALLOWLIST (below) names each genuine exception as `<path> <rule|*> <reason>`. An entry that no
 # longer matches anything is STALE and red, so the list only shrinks.
@@ -57,19 +60,14 @@ rule_re() {
     main-default) printf '%s' '\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=]["'"'"']?main["'"'"']?\}' ;;
     main-echo)    printf '%s' '\|\|[[:space:]]*(echo|printf)([[:space:]][^|;&]*)?[[:space:]]["'"'"']?main["'"'"']?([^A-Za-z0-9_./-]|$)' ;;
     origin-main)  printf '%s' '(^|[^A-Za-z0-9_./-])origin/main([^A-Za-z0-9_./-]|$)' ;;
+    main-arg)     printf '%s' '(bash[[:space:]]+("[^"]*"|[^[:space:]"]+)|[A-Za-z0-9_.-]+\.sh["'"'"']?)[[:space:]]+["'"'"']?main["'"'"']?([[:space:]]|$|[;&|)])' ;;
   esac
 }
-RULES='origin-head set-head main-assign main-default main-echo origin-main'
+RULES='origin-head set-head main-assign main-default main-echo origin-main main-arg'
 
-# logical_lines <file> — `startline:text`, continuations joined, comments dropped/stripped
-logical_lines() {
-  awk '{ if (buf == "") start = NR
-         if ($0 ~ /\\$/) { buf = buf substr($0, 1, length($0) - 1) " "; next }
-         print start ":" buf $0; buf = "" }
-       END { if (buf != "") print start ":" buf }' "$1" \
-    | grep -vE '^[0-9]+:[[:space:]]*#' | sed -E 's/[[:space:]]#[[:space:]].*$//'
-  return 0
-}
+# logical_lines <file> — `startline:text`, continuations joined, comments dropped/stripped; shared
+# with test-no-pipefail-grep-q.sh through the sourced logical-lines-lib.sh
+. "$HERE/logical-lines-lib.sh"
 
 # scope <root> — every non-test *.sh under <root>, relative, sorted
 scope() {
@@ -179,6 +177,10 @@ mutant assign-default-expansion main-default ': "${base_ref:=main}"'
 mutant default-branch-eq-main main-assign 'default_branch=main'
 mutant origin-main-probe origin-main 'for ref in origin/main origin/development; do :; done'
 mutant set-head-copy set-head 'git remote set-head origin -a >/dev/null 2>&1'
+mutant positional-main-var-script main-arg 'risk_json="$(bash "$risk_bin" main "$live_head" --root "$root" 2>/dev/null)"'
+mutant positional-main-named-script main-arg 'bash "$HERE/module-shape-facts.sh" main HEAD >/dev/null'
+mutant positional-main-bare-script main-arg 'classify-risk.sh "main" HEAD >/dev/null'
+mutant positional-resolved-base - 'risk_json="$(bash "$risk_bin" "origin/$base_b" "$live_head" --root "$root" 2>/dev/null)"'
 mutant commented-form - '# a comment naming base="main" and refs/remotes/origin/HEAD is prose, not code'
 mutant unrelated-main - 'kind="main"; AGENT_ID_KEY="main"; x="origin/maintenance"'
 

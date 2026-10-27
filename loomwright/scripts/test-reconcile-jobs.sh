@@ -837,6 +837,45 @@ r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
 printf '{"base_branch":"bad..name"}\n' > "$r/.supervisor/config.json"
 pbr="$(cd "$r" && bash "$RECON" --print-base-ref 2>/dev/null)"; prc=$?
 [ "$prc" -eq 1 ] && [ -z "$pbr" ] && ok "30q4 an invalid config .base_branch ⇒ no base ref (never origin/main)" || no "30q4 invalid config: rc=$prc '$pbr'"
+
+# --- 30r. the resolver runs ONCE per invocation, not once per brief. With
+# origin/HEAD unset and no config, resolve-base-branch.sh falls to set-head and
+# then gh (network). classify() runs in a `$(…)` subshell per brief, so only a
+# parent-shell prime keeps the cache — assert exactly ONE gh call across four
+# briefs, and (mutant) that removing the prime brings back one call per brief.
+# origin points at a missing LOCAL path, so set-head fails fast with no network.
+cnt_dir="$(mktmp)"
+printf '#!/usr/bin/env bash\necho x >> "%s/gh-calls"\necho main\n' "$cnt_dir" > "$cnt_dir/gh"; chmod +x "$cnt_dir/gh"
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+( cd "$r" && git symbolic-ref --delete refs/remotes/origin/HEAD && git remote set-url origin "$r/no-such-remote.git" ) >/dev/null 2>&1
+for s in alpha bravo charlie delta; do dated_brief "$r" "2026-09-03-feature-$s"; done
+merge_pr "$r" 42 "feature/feature-alpha" "2026-09-04T10:22:06Z"
+out="$(cd "$r" && PATH="$cnt_dir:$PATH" bash "$RECON" --porcelain 2>/dev/null)"
+calls="$(wc -l < "$cnt_dir/gh-calls" 2>/dev/null | tr -d ' ')"
+n_rows="$(printf '%s\n' "$out" | grep -c 'feature-')"
+if [ "${calls:-0}" -eq 1 ] && [ "$n_rows" -eq 4 ] && case "$out" in *stranded_merged*"PR #42"*) true ;; *) false ;; esac; then
+  ok "30r 4 briefs, origin/HEAD unset ⇒ the resolver's gh probe runs exactly once (and its base is used)"
+else
+  no "30r gh calls=${calls:-0} rows=$n_rows out=$out"
+fi
+md="$(mktmp)"; cp "$SCRIPT_DIR/brief-pointer.sh" "$SCRIPT_DIR/resolve-base-branch.sh" "$md/" 2>/dev/null || true
+sed 's/then vcs_base_ref || true; break; fi$/then break; fi/' "$RECON" > "$md/reconcile-jobs.sh"
+if ! cmp -s "$RECON" "$md/reconcile-jobs.sh"; then
+  rm -f "$cnt_dir/gh-calls"
+  ( cd "$r" && PATH="$cnt_dir:$PATH" bash "$md/reconcile-jobs.sh" --porcelain >/dev/null 2>&1 )
+  calls="$(wc -l < "$cnt_dir/gh-calls" 2>/dev/null | tr -d ' ')"
+  [ "${calls:-0}" -gt 1 ] && ok "30r2 (mutant) without the parent-shell prime the resolver re-runs per brief ($calls gh calls) — the prime is load-bearing" \
+    || no "30r2 mutant not discriminated: gh calls=${calls:-0}"
+else
+  no "30r2 mutant sed did not remove the prime call"
+fi
+# 30r3: a run whose briefs the vcs arm cannot key on (no date prefix) resolves NOTHING — the prime
+# is lazy, so the SessionStart path stays as offline as before for such briefs.
+rm -f "$cnt_dir/gh-calls" "$r"/.supervisor/jobs/in-progress/*.md
+printf '# Supervisor Job: x\n' > "$r/.supervisor/jobs/in-progress/undated-brief.md"
+( cd "$r" && PATH="$cnt_dir:$PATH" bash "$RECON" --porcelain >/dev/null 2>&1 )
+[ ! -e "$cnt_dir/gh-calls" ] && ok "30r3 only undated briefs ⇒ the resolver is never run (zero gh calls)" \
+  || no "30r3 undated-only run called gh $(wc -l < "$cnt_dir/gh-calls" | tr -d ' ') time(s)"
 export PATH="$VCS_SAVED_PATH"
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 

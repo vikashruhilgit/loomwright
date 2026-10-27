@@ -9,3 +9,4 @@ The rubric grader, resume's landed-check and every self-heal diff-scope surface 
 `/setup base-branch status|set <branch>|remove` views and writes `.base_branch`. It uses a jq merge, writes a backup first, writes atomically, and refuses a branch with no `origin/<branch>`.
 `/setup --help`, `-h` and `help` print every module and its subcommands from the skill's registry. An unknown module prints `Setup: unknown module '<arg>'` followed by that help.
 `test-base-branch-single-resolver.sh` fails CI on a new inline origin/HEAD read or `main` fallback outside the resolver. It has built-in mutation controls and a reasoned per-rule allowlist.
+The `--auto-merge` gate's condition 6 now diffs against `origin/<resolved base>` instead of a local `main`. It parks with `base_branch_unresolved` when no base resolves and with `base_branch_mismatch` when the resolved base is not the PR's own base. `reconcile-jobs.sh` resolves the base once per run instead of once per brief.

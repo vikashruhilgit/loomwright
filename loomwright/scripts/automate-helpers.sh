@@ -746,10 +746,30 @@ GEPARTS
   # in cond 2 — no ctx input feeds this condition any more. Read in EXACTLY the
   # cond-3 `unresolved_human_thread` shape: an explicit has() + `type == "boolean"`
   # check, PARK unless the value is the JSON boolean `false`.
+  # The diff's BASE is self-resolved too: the sibling resolve-base-branch.sh (the
+  # ONE resolver, never a hardcoded `main`) run in <checkout>, then compared
+  # against the remote-tracking ref `origin/<base>` (a local branch of that name
+  # may be stale or absent). Fail CLOSED: a missing resolver, an unresolved or
+  # invalid base ⇒ `base_branch_unresolved`; a resolved base that is not the
+  # PR's own live baseRefName ⇒ `base_branch_mismatch` (the range would not be
+  # the PR's diff). Neither has an override.
+  local rbb_bin base_b="" rbb_rc=0
+  rbb_bin="$(dirname "$0")/resolve-base-branch.sh"
+  if [ -r "$rbb_bin" ]; then
+    base_b="$(bash "$rbb_bin" --repo "$root" </dev/null 2>/dev/null)" || rbb_rc=$?
+  else
+    rbb_rc=127
+  fi
+  if [ "$rbb_rc" -ne 0 ] || [ -z "$base_b" ]; then
+    echo "PARK: base_branch_unresolved"; return 0
+  fi
+  if [ "$base_b" != "$live_base" ]; then
+    echo "PARK: base_branch_mismatch"; return 0
+  fi
   local risk_bin; risk_bin="$(dirname "$0")/classify-risk.sh"
   local risk_json=""
   if [ -r "$risk_bin" ]; then
-    risk_json="$(bash "$risk_bin" main "$live_head" --root "$root" 2>/dev/null)"
+    risk_json="$(bash "$risk_bin" "origin/$base_b" "$live_head" --root "$root" 2>/dev/null)"
   fi
   local hr rr
   if [ -n "$risk_json" ] && printf '%s' "$risk_json" | "$JQ" -e . >/dev/null 2>&1; then

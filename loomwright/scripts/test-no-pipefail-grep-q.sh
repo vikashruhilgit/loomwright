@@ -77,16 +77,9 @@ scan() {
 # `[^|]*` cannot cross a `|`, so `printf x || grep -q` (an OR, not a pipe) never matches.
 WRE='(^|[^[:alnum:]_-])(printf|echo)([[:space:]][^|]*)?[|][[:space:]]*grep([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*q'
 
-# logical_lines <file> — prints `startline:text`, backslash-continued lines joined, whole-line
-# comments dropped, a trailing ` # comment` stripped
-logical_lines() {
-  awk '{ if (buf == "") start = NR
-         if ($0 ~ /\\$/) { buf = buf substr($0, 1, length($0) - 1) " "; next }
-         print start ":" buf $0; buf = "" }
-       END { if (buf != "") print start ":" buf }' "$1" \
-    | grep -vE '^[0-9]+:[[:space:]]*#' | sed -E 's/[[:space:]]#[[:space:]].*$//'
-  return 0
-}
+# logical_lines <file> — `startline:text` per logical line; shared with
+# test-base-branch-single-resolver.sh through the sourced logical-lines-lib.sh
+. "$HERE/logical-lines-lib.sh"
 
 # scan_writer <file...> — prints file:line:text for each logical line holding a rule-2 violation
 scan_writer() {
