@@ -421,7 +421,10 @@ _ge_pr_parts() {
 #           `supervisor_result_path` is parsed for a `rubric_score: N/M` line by THIS gate (never
 #           asserted by a caller) — N==M ⇒ satisfied, absent line ⇒ "na" (not a blocker), unreadable
 #           file ⇒ PARK.
-#   cond 6  the gate ITSELF invokes `"$(dirname "$0")/classify-risk.sh" main <live head_sha>
+#   cond 6  the gate ITSELF resolves `<base>` with the sibling
+#           `"$(dirname "$0")/resolve-base-branch.sh" --repo <root>` (unresolved / invalid / resolver
+#           absent ⇒ `base_branch_unresolved`; not the live `baseRefName` ⇒ `base_branch_mismatch`),
+#           then invokes `"$(dirname "$0")/classify-risk.sh" origin/<base> <live head_sha>
 #           --root <root>` and reads `.high_risk`/`.reasons` from its own output — no ctx input of
 #           any kind feeds this condition any more. NO override of any kind (owner decision R5):
 #           not `--trust-unprotected` (cond 4 only), not a config key, not an exclude list.
@@ -496,7 +499,8 @@ _ge_pr_parts() {
 # rules_check_failed, rules_check_unresolved, rules_unstamped, rules_cmd_disabled,
 # rules_gate_unreadable. New reasons added by condition 7's checkout pin
 # (automate-followups/16, evaluated before the helper call): rules_gate_head_mismatch,
-# rules_gate_dirty_tree.
+# rules_gate_dirty_tree. New reasons added by base-branch-configurable (cond 6,
+# evaluated before classify-risk.sh): base_branch_unresolved, base_branch_mismatch.
 gate_eval() {
   local url="$1" ctx="$2"
   shift 2 2>/dev/null || true

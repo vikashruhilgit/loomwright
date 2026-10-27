@@ -79,7 +79,8 @@
 #      REAL rules-gate-verdict.sh / rules-check.sh / rules-replay-lib.sh siblings.
 #      R11 (automate-followups/16): cond 7's checkout pin, on the harness's REAL git
 #      checkout ($E_ROOT, whose HEAD the gh stub reports) — stale HEAD / non-checkout /
-#      no-commit / missing root ⇒ rules_gate_head_mismatch; tracked edit, deletion,
+#      no-commit root ⇒ rules_gate_head_mismatch (a missing root names no base, so cond 6
+#      parks it first ⇒ base_branch_unresolved); tracked edit, deletion,
 #      staged file, untracked file (also under status.showUntrackedFiles=no), dirt in
 #      the harness dir outside agent-memory, a nested x/.supervisor/, dirt seen from a
 #      subdirectory --root, and a failing `git status` ⇒ rules_gate_dirty_tree — each
