@@ -902,6 +902,8 @@ sr_fixture() {  # committed fixtures every host-mode branch of session-resume.sh
     g checkout -q -b feat-x && printf 'x\n' > x.txt && g add x.txt && g commit -q -m x || exit 1
     g checkout -q main && g merge -q --no-ff -m "Merge pull request #5 from o/feat-x" feat-x || exit 1
     git update-ref refs/remotes/origin/main HEAD
+    # origin/HEAD as a clone records it: reconcile's base comes from resolve-base-branch.sh (no `main` fallback)
+    git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
   ) >/dev/null 2>&1 || { no "(l) fixture setup failed in $C_DIR"; return 1; }
   C_SNAP0="$(snap)"
 }
