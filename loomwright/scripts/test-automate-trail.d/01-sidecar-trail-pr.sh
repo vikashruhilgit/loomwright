@@ -274,6 +274,34 @@ if [ "$tip1" != "$tip2" ] && git -C "$FX/origin.git" merge-base --is-ancestor "$
 if grep -q 'pr merge' "$GH_STUB_DIR/argv.log" || [ -f "$GH_STUB_DIR/merge.log" ]; then no "gh pr merge was called"; else ok "gh pr merge never called"; fi
 
 # =============================================================================
+echo "== TB. trail-pr base = resolve-base-branch.sh (AC2: config wins over origin/HEAD; unresolved ⇒ skipped) =="
+# origin/HEAD → main, but the gitignored .supervisor/config.json says `release`: the trail
+# branch is cut off origin/release and the PR targets --base release.
+new_fixture 906
+( cd "$P" && git push -q origin main:release 2>/dev/null && git fetch -q origin 2>/dev/null )
+printf '{"base_branch":"release"}\n' > "$P/.supervisor/config.json"
+grep -qx origin/main < <(git -C "$P" symbolic-ref -q --short refs/remotes/origin/HEAD) && ok "(TB) fixture: origin/HEAD → main, config → release" || no "(TB) fixture origin/HEAD"
+out="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/$RUN_ID.md" --reason closeout)"; rc=$?
+case "$out" in "trail-pr: opened "*) ok "(TB) trail-pr opened a PR with the configured base ($out)" ;; *) no "(TB) config base run: $out" ;; esac
+grep -q -- '--base release ' < <(grep '^pr create' "$GH_STUB_DIR/argv.log") && ok "(TB) AC2: gh pr create --base release (the config value, not origin/HEAD's main)" || no "(TB) AC2 pr create: $(grep '^pr create' "$GH_STUB_DIR/argv.log" | cut -c1-120)"
+[ "$(git -C "$FX/origin.git" rev-parse "refs/heads/chore/$RUN_ID-trail-1^")" = "$(git -C "$FX/origin.git" rev-parse refs/heads/release)" ] && ok "(TB) the trail branch is cut off origin/release" || no "(TB) trail branch parent is not origin/release"
+# An invalid configured base is refused, never replaced by origin/HEAD (one skipped line, exit 0).
+new_fixture 907
+printf '{"base_branch":"bad..name"}\n' > "$P/.supervisor/config.json"
+out="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/$RUN_ID.md" --reason closeout)"; rc=$?
+case "$out" in "trail-pr: skipped — base_branch_invalid:config"*) [ "$rc" -eq 0 ] && [ "$(count_creates)" = 0 ] && ok "(TB) invalid config ⇒ skipped — base_branch_invalid:config, exit 0, no PR" || no "(TB) invalid config rc=$rc creates=$(count_creates)" ;; *) no "(TB) invalid config: $out" ;; esac
+# Unresolved: no config, origin/HEAD unset and unsettable (the remote HEAD dangles), gh fails ⇒
+# `skipped — base_branch_unresolved`, exit 0 — never a `main` guess.
+new_fixture 908
+git -C "$FX/origin.git" symbolic-ref HEAD refs/heads/nope
+git -C "$P" symbolic-ref -d refs/remotes/origin/HEAD 2>/dev/null
+TBNOGH="$TOP/tb-nogh"; mkdir -p "$TBNOGH"; printf '#!/usr/bin/env bash\nexit 1\n' > "$TBNOGH/gh"; chmod +x "$TBNOGH/gh"
+out="$(cd "$P" && PATH="$TBNOGH:$PATH" bash "$H" trail-pr ".supervisor/automate/$RUN_ID.md" --reason closeout)"; rc=$?
+lines="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+case "$out" in "trail-pr: skipped — base_branch_unresolved"*) [ "$rc" -eq 0 ] && [ "$lines" = 1 ] && [ "$(count_creates)" = 0 ] && ok "(TB) unresolved ⇒ ONE skipped — base_branch_unresolved line, exit 0, no PR" || no "(TB) unresolved rc=$rc lines=$lines creates=$(count_creates)" ;; *) no "(TB) unresolved: $out" ;; esac
+git -C "$FX/origin.git" rev-parse -q --verify "refs/heads/chore/$RUN_ID-trail-1" >/dev/null && no "(TB) unresolved base still pushed a trail branch" || ok "(TB) unresolved ⇒ nothing pushed"
+
+# =============================================================================
 echo "== M. post-merge pull (decision 4) =="
 MC="$FX/merger"; git clone -q "$FX/origin.git" "$MC" 2>/dev/null
 ( cd "$MC" && git checkout -q main && git merge -q --squash "origin/$BR" >/dev/null && git commit -qm "squash trail" && git push -q origin main 2>/dev/null )
@@ -469,7 +497,7 @@ out="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/nope.md")"; rc=$?
 
 # run-lock spy: a copy of the script beside a spy run-lock.sh
 SPY="$TOP/spy"; mkdir -p "$SPY"
-cp "$T" "$HERE/result_block_parser.py" "$HERE/result_nested_keys.py" "$HERE/brief-pointer.sh" "$HERE/worktree-salvage.sh" "$SPY/"; cp -R "$HERE/automate-trail.d" "$SPY/"
+cp "$T" "$HERE/result_block_parser.py" "$HERE/result_nested_keys.py" "$HERE/brief-pointer.sh" "$HERE/worktree-salvage.sh" "$HERE/resolve-base-branch.sh" "$SPY/"; cp -R "$HERE/automate-trail.d" "$SPY/"
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/runlock.log"\n' "$SPY" > "$SPY/run-lock.sh"
 out="$(cd "$P" && bash "$SPY/automate-trail.sh" trail-pr ".supervisor/automate/$RUN_ID.md" --reason done)"
 case "$out" in "trail-pr: opened "*) ok "spy copy ran trail-pr ($out)" ;; *) no "spy run: $out" ;; esac
@@ -483,7 +511,7 @@ bash -n "$TB" && ok "bash -n automate-trail.sh" || no "bash -n failed"
 
 # gated mutant: explicit `git add -- <path>` → `git add -A` must make the stray file leak
 new_fixture 3
-MUT="$TOP/mut"; mkdir -p "$MUT"; cp "$SPY"/*.py "$SPY"/brief-pointer.sh "$SPY"/worktree-salvage.sh "$MUT/"
+MUT="$TOP/mut"; mkdir -p "$MUT"; cp "$SPY"/*.py "$SPY"/brief-pointer.sh "$SPY"/worktree-salvage.sh "$SPY"/resolve-base-branch.sh "$MUT/"
 # (the mutant also copies stray.txt into its worktree so an -A add can see it)
 sed -e 's|git -C "\$TRAIL_WT" add -- "\$p"|git -C "$TRAIL_WT" add -A|' \
     -e 's|mkdir -p "\$TRAIL_WT/\$(dirname "\$p")"|mkdir -p "$TRAIL_WT/$(dirname "$p")"; cp stray.txt "$TRAIL_WT/" 2>/dev/null|' \

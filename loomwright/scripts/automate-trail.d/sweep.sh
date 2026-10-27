@@ -34,8 +34,9 @@
 # `ignored: ok <n>` as its last line (anything else, or no line ⇒ kept naming it).
 #
 # Branches (refs/heads/*): the primary's current branch, the base branch
-# (origin/HEAD, else main) and a branch checked out in any worktree NOT removed
-# this run are never candidates (each a `kept branch` line, no gh call). The rest:
+# (resolve-base-branch.sh — unresolved ⇒ nothing is examined and the ONE line is
+# `sweep: summary — skipped: base_branch_unresolved`) and a branch checked out
+# in any worktree NOT removed this run are never candidates (each a `kept branch` line, no gh call). The rest:
 # no PR / newest OPEN / CLOSED unmerged / tip moved after the merge / gh read
 # failed ⇒ `kept branch <B> — <that case>`; the rule ⇒ `would-remove` (dry) or
 # `git branch -D` ⇒ `removed`.
@@ -190,9 +191,13 @@ sweep_run() {
   SW_PRI="$(cd "$root" 2>/dev/null && cd "$common/.." 2>/dev/null && pwd -P)"
   if [ -z "$SW_PRI" ] || [ ! -d "$SW_PRI" ]; then echo "$S cannot resolve the primary checkout"; return 0; fi
 
+  # The base comes from the ONE resolver (resolve-base-branch.sh), resolved in the primary. Unresolved
+  # or invalid ⇒ nothing is examined (the base branch must never be a candidate, and it is unknown):
+  # the summary line names the status token, exit 0.
   local base cur
-  base="$(git -C "$SW_PRI" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"
-  base="${base#origin/}"; [ -n "$base" ] || base="main"
+  if ! base="$(bash "$HERE/resolve-base-branch.sh" --repo "$SW_PRI" 2>&1 </dev/null)"; then
+    echo "$S ${base%%$'\n'*}"; return 0
+  fi
   cur="$(git -C "$SW_PRI" symbolic-ref -q --short HEAD 2>/dev/null)"
 
   # ---- worktrees (judged first) -----------------------------------------------
