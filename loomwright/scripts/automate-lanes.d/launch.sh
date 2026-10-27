@@ -102,7 +102,8 @@ LN_RESUME_PATH=""; LN_SPAWN_PID=""; LN_SPAWN_SID=""
 # in/out, the pinned permission regime, the allowlist, the deny list with the checkout's own base-branch
 # pushes added, the plugin root, LANE_SYS). One list for a lane (_lanes_spawn) and a phase session
 # (phase.sh _lanes_phase_spawn), so the merge / force-push tripwire can never differ between the two.
-# The base comes from the ONE resolver (wave.sh _lanes_base_of) run in <checkout>. Unresolved/invalid ⇒
+# The base comes from the ONE resolver, resolve-base-branch.sh (via wave.sh _lanes_base_of), run in
+# <checkout>. Unresolved/invalid ⇒
 # fail CLOSED: LN_FLAGS emptied, the status token on stderr, return 1 — a session is never started
 # without its base-branch push tripwire (both callers return 1 before spawning anything).
 _lanes_claude_flags() {
