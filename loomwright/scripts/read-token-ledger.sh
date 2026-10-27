@@ -110,6 +110,16 @@
 #     of iteration n) -> one Drain row per `.item.owned_drains[]` entry (a
 #     fix-now re-drain is marked) -> `parked` (Decide, from the last drain's
 #     end). The model-written lines are matched case-insensitively as a prefix.
+#     Build's end and the iterations come from hook-written rows first:
+#     phase-timing's `.supervisor.pr_created` (the `gh pr create` PostToolUse
+#     hook) ends Build, and its `.supervisor.phase45_iterations[]` (one
+#     code-reviewer lifecycle span each) give iteration n = from the previous
+#     boundary to the next reviewer's start, the last one to its reviewer's end,
+#     then `after iter <n> review (last fix + wrap-up)` to `ran /autonomous`. A
+#     fresh Supervisor phase runs in its own session and never writes the
+#     `FINALIZE:` / `Phase 4.5 iter <n>` Progress lines, so each is read only
+#     when its own hook row is missing (older inline runs): Build's end falls
+#     back without `pr_created`, the iterations without a finished reviewer span.
 #     A span with a missing boundary prints `not recorded`, never 0; no
 #     `parked` line ⇒ the item's wall time and Decide print `not recorded` and
 #     the item total runs to the last recorded boundary (named in the Window
@@ -412,9 +422,23 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
   | ([$after[] | select(.text | test("^picked ")) | select((.text | capture("^picked (?<p>\\S+)").p | sub("^\\./"; "")) != $item)] | first | .ts // "9999") as $bound
   | ($after | map(select(.ts < $bound))) as $seg
   | ([$seg[] | select(.text | plan_end)] | first | .ts) as $lp
-  | ([$seg[] | select(.text | ascii_downcase | test("^finalize:")) | select(.ts >= ($lp // $pick)) | select($ra == null or .ts <= $ra)] | first | .ts) as $fin
-  | [$seg[] | select(.text | ascii_downcase | test("^phase 4\\.5 iter [0-9]+")) | select(.ts >= ($fin // $pick)) | select($ra == null or .ts <= $ra)
-     | {ts, n: (.text | ascii_downcase | capture("^phase 4\\.5 iter (?<n>[0-9]+)").n)}] as $iters
+  # Build end / Phase 4.5 iterations: the hook-written rows phase-timing.sh joins from
+  # the item Supervisor session log first (`pr_created`; one code-reviewer span per
+  # iteration, ending where the next one starts), the prompt-written Progress lines
+  # only when that log has none — a fresh Supervisor phase never writes those lines
+  # (pr_created and each span .start/.end are bare ts strings, by construction of the
+  # first()/span() helpers in phase-timing.sh; a row object there would read as absent)
+  | (def inwin($lo): select(type == "string") | select(. >= $lo) | select($ra == null or . <= $ra);
+     ($pt.supervisor // {}) as $S
+     | {fin: ([$S.pr_created | inwin($lp // $pick)] | first),
+        rev: [($S.phase45_iterations // [])[] | select(.end != null) | select([.start | inwin($lp // $pick)] | length > 0)]}) as $H
+  | ($H.fin // ([$seg[] | select(.text | ascii_downcase | test("^finalize:")) | select(.ts >= ($lp // $pick)) | select($ra == null or .ts <= $ra)] | first | .ts)) as $fin
+  | (if $H.fin != null and ($H.rev | length) > 0 then
+       [$H.rev | range(0; length) as $k | {ts: (if $k + 1 < length then .[$k + 1].start else .[$k].end end), n: "\($k + 1)", hook: true}]
+     else
+       [$seg[] | select(.text | ascii_downcase | test("^phase 4\\.5 iter [0-9]+")) | select(.ts >= ($fin // $pick)) | select($ra == null or .ts <= $ra)
+        | {ts, n: (.text | ascii_downcase | capture("^phase 4\\.5 iter (?<n>[0-9]+)").n)}]
+     end) as $iters
   | ($I.owned_drains // []) as $drains
   | (if ($drains | length) > 0 then ($drains | last | .end) else null end) as $decide_s
   # the latest work boundary the item recorded (every phase row ends at or before it).
@@ -462,7 +486,7 @@ def dedup_by_msg_id: group_by(.id) | map((map(select(.final)) | last) as $f | (m
       | row("↳ ↳ iter \($iters[$k].n)"; $s; $iters[$k].ts; secs($s; $iters[$k].ts); win($s; $iters[$k].ts))),
     (if ($iters | length) > 0 and $ra != null and ($ra > ($iters | last | .ts)) then
        ($iters | last | .ts) as $s
-       | row("↳ ↳ after iter \($iters | last | .n) (no iter line)"; $s; $ra; secs($s; $ra); win($s; $ra))
+       | row("↳ ↳ after iter \($iters | last | .n) \(if ($iters | last | .hook) then "review (last fix + wrap-up)" else "(no iter line)" end)"; $s; $ra; secs($s; $ra); win($s; $ra))
      else empty end),
     (range(0; $drains | length) as $k | $drains[$k] as $d
       | row("↳ Drain \($k + 1)\(if $d.fix_now then " (fix-now re-drain)" else "" end)\(if $d.result then " — \($d.result)" else "" end)"; $d.start; $d.end; $d.seconds; win($d.start; $d.end))),
