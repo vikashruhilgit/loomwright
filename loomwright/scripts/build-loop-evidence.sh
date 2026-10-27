@@ -9,7 +9,10 @@
 # Absent or malformed inputs degrade to labeled `insufficient_data` cells; numbers are
 # NEVER invented (proxy token counts are always labeled as proxy).
 #
-# FUNNEL STAGES (per run = one session_end event in $STATE_DIR/logs/*.jsonl):
+# FUNNEL STAGES (per run = one session_end event in $STATE_DIR/logs/*.jsonl, EXCEPT a stranded
+# close-out — the synthetic `reason: session_ended_without_completion` record close-stranded-run.sh
+# writes when a session stops without its own session_end. That records a stopped session, not a
+# run, so it is excluded from every denominator and counted under Data quality instead):
 #   landed  — the PR's landing commit is found in git history (squash "(#N)" subject or
 #             "Merge pull request #N" merge commit).
 #   clean   — no substantive human correction. FALSE-ZERO RULE (mandatory): a PR with
@@ -162,6 +165,7 @@ is_num "$NOW_EPOCH" || NOW_EPOCH=0
 RUNS_RAW="$WORK/runs-raw.jsonl"; : > "$RUNS_RAW"
 DRAIN_RAW="$WORK/drain-raw.jsonl"; : > "$DRAIN_RAW"
 LOGS_SEEN=0
+STRANDED=0
 if [ -d "$STATE_DIR/logs" ]; then
   for f in "$STATE_DIR"/logs/*.jsonl; do
     [ -e "$f" ] || continue
@@ -175,7 +179,8 @@ if [ -d "$STATE_DIR/logs" ]; then
     # (0 on the rest) so era aggregation counts each file's tokens exactly once.
     jq -R 'fromjson? // empty' "$f" 2>/dev/null | jq -s -c --arg file "$base" '
       ([ .[] | select(type=="object")
-             | select(((.event // .type // "") | tostring) | test("^session_end")) ]) as $ends
+             | select(((.event // .type // "") | tostring) | test("^session_end"))
+             | select((.reason // "") != "session_ended_without_completion") ]) as $ends
       | ([ .[] | select(type=="object") | select((.event // "") == "token_ledger") ]) as $led
       | ($led | map(select(.proxy == true) | (.token_proxy_transcript_bytes // 0)
                     | if type=="number" then . else 0 end) | add // 0) as $proxy_bytes
@@ -194,6 +199,11 @@ if [ -d "$STATE_DIR/logs" ]; then
               ledger_real_tokens_attr: (if $i == ($n - 1) then $real_tokens else 0 end) }
     ' >> "$RUNS_RAW" 2>/dev/null \
       || dq "log file $base unparseable by the runs-extraction jq — its session_end runs omitted"
+    _str="$(jq -R 'fromjson? // empty' "$f" 2>/dev/null | jq -s '[ .[] | select(type=="object")
+             | select(((.event // .type // "") | tostring) | test("^session_end"))
+             | select((.reason // "") == "session_ended_without_completion") ] | length' 2>/dev/null)"
+    case "$_str" in ''|*[!0-9]*) _str=0 ;; esac
+    STRANDED=$((STRANDED + _str))
     # drain-internal fix_cycles signals (review_heal_done events)
     jq -R 'fromjson? // empty' "$f" 2>/dev/null | jq -c '
       select(type=="object") | select((.event // "") == "review_heal_done")
@@ -204,6 +214,7 @@ if [ -d "$STATE_DIR/logs" ]; then
   done
 fi
 [ "$LOGS_SEEN" -eq 1 ] || dq "no session logs at $STATE_DIR/logs/*.jsonl — no runs observable (funnel empty)"
+[ "$STRANDED" -eq 0 ] || dq "$STRANDED stranded close-out record(s) (reason session_ended_without_completion, written by close-stranded-run.sh) excluded — a session that stopped without its own session_end, not a run; a log holding only one contributes no run and no token sum"
 
 # Postmortem corpus (review rounds, root-cause classes). Curation records skipped.
 PM="$STATE_DIR/postmortem/results.jsonl"

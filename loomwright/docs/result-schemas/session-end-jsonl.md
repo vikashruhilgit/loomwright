@@ -43,6 +43,17 @@ NOT an error. Purely additive: no `schema_version` change, no reader is required
 records with or without it remain valid. See `docs/TELEMETRY.md` §"Run ownership" for the ownership
 rule that decides whether the close-out writes at all.
 
+**A `session_ended_without_completion` record is a STRANDED close-out, not a failed run.** It
+records that a session stopped without writing its own `session_end`; most are interactive or
+driver sessions whose result was recorded under another id. `failed` is still its `status`
+(state.md's status enum is closed), so every reader that counts outcomes must key on the `reason`:
+`build-insights.sh` reports these as their own Stranded bucket, outside Failed, the completion-rate
+denominator and the per-version table; `build-loop-evidence.sh` excludes them from the funnel and
+counts them under Data quality; `/handoff` labels the active session as a stranded close-out;
+`phase-timing.sh` already treats the record's timestamp as no completion endpoint. The close-out
+also carries `plugin_version`, read from the plugin manifest like every other `session_end`, and
+OMITTED (never `"unknown"`) when the manifest cannot be read.
+
 **Hard-signal field contract (the same data in two shapes):** the FLAT `session_end` fields above
 and the nested `SUPERVISOR_RESULT.contract_conformance` / `.benchmark_result` objects carry **the
 same hard-signal data in two shapes**. ST3 writes both; the field correspondence is:
@@ -57,6 +68,32 @@ same hard-signal data in two shapes**. ST3 writes both; the field correspondence
 - `ground_truth_checks_passed` ⇔ `ground_truth.checks_passed`
 - `ground_truth_pass_rate` (string `"M/N"`) ⇔ the runner's `pass_rate`
 - `knowledge_sources_used` (flat array, added v14.28.0) ⇔ `SUPERVISOR_RESULT.knowledge_sources_used` — the advisory, non-gating memory-usage telemetry array; absent ⇒ "none used"; the flat `session_end` array is the surface `build-insights.sh` reads — as of v14.33.0 it aggregates and surfaces the field in the `## Knowledge sources (memory APPLY)` dashboard section (runs-reporting-a-source count, top source tags, per-version usage). The nested SUPERVISOR_RESULT object is the same data in the other shape. Additive — no `schema_version` change.
+
+### Knowledge-source tag vocabulary
+
+The one list of `knowledge_sources_used` tags. The emitting prompts point here; nothing else
+restates it. **Canonical form:** the base tag (before the first `:`) is lowercase with `_`, never
+`-`; a `:<qualifier>` is kept verbatim (a `twin:<path>` path is case-sensitive). The set is open,
+so a genuinely new source may add a tag, but it adds it here first.
+
+| Tag | Source consulted |
+|---|---|
+| `project_memory` | `.supervisor/memory/PROJECT_MEMORY.md` |
+| `lessons` / `lessons:<category>` | `.supervisor/memory/LESSONS.md` (whole store / one category) |
+| `agent_memory:<agent>` | an agent's `.claude/agent-memory/` store |
+| `twin:<path>` | a System Twin contract, by subsystem id |
+| `house_rules` / `house_rules:<scope>` | the committed `.agent/rules/` house rules |
+| `prior_churn` | prior review churn on the touched paths, through `read-postmortem.sh` |
+| `postmortem_ledger` | the `/pr-postmortem` ledger `.supervisor/postmortem/results.jsonl`, read whole |
+| `brief_conformance` | Phase 4.5's brief-conformance check of the diff against the brief |
+| `brain_context` | legacy (no live emitter since the graphify-tier retirement); past records stay valid |
+
+**Normalized twice.** The emitter writes the canonical form. `build-insights.sh` also normalizes
+every tag at READ time (base tag trimmed, lower-cased, `-` → `_`; qualifier verbatim; a tag repeated
+within one run after normalizing counts once), so logs written before this list existed aggregate
+into one row per source instead of one per spelling. Read-time normalization fixes spelling only: a
+synonym such as `postmortem` or `system_twin` keeps its own row, because folding it into
+`postmortem_ledger` / `twin:<path>` would claim a source the record does not name.
 - `heal_first_decision` (`PASS` | `FAIL` | `NEEDS_HUMAN` | `null`) ⇔ `SUPERVISOR_RESULT.heal_first_decision`, and `heal_new_findings` (integer | `null`) ⇔ `SUPERVISOR_RESULT.heal_new_findings` — the findings-per-item metric (iq02 IQ01): the Phase 4.5 loop's first iteration decision and the `category: new` findings summed over every iteration; both `null` when the loop did not run. Absent ⇒ not reported (older events). `build-insights.sh` turns them into the Summary's first-pass PASS rate and findings per item. Additive — no `schema_version` change.
 
 `build-insights.sh` (ST4 / measure-path) reads the FLAT `session_end` fields — these field names
