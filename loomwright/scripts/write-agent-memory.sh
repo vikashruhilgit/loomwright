@@ -91,15 +91,20 @@
 #   write-agent-memory.sh <agent-slug> <entry-slug> <summary-line> <body-file-or-'-'>
 #                         [--confirm] [--store <dir>] [--repo <dir>]
 #                         [--title <text>] [--type <t>] [--source <id>]
-#   write-agent-memory.sh --proposal <proposal-file> [--confirm] [--store <dir>] [--repo <dir>]
+#   write-agent-memory.sh --proposal <proposal-file> [--confirm] [--new-store] [--store <dir>] [--repo <dir>]
 #
 #   defaults: repo = cwd git root (or pwd); store = <repo>/.claude/agent-memory
-#             the per-agent store dir is <store>/<agent-slug>, its index <store>/<agent-slug>/MEMORY.md
+#             the per-agent store dir is <store>/<resolved-agent-slug>, its index …/MEMORY.md
+#             (see "Store resolution" below: `code-reviewer`, `loomwright:code-reviewer` and the
+#             runtime type `loomwright:loomwright:code-reviewer` all resolve to the one store the
+#             runtime reads, `loomwright-loomwright-code-reviewer`)
+#   --new-store  a proposal whose agent resolves to no known store is REFUSED unless this is passed
 #   env overrides (for tests): AGENT_MEMORY_STORE_DIR / AGENT_MEMORY_REPO_DIR
 #                              WRITE_AGENT_MEMORY_VALIDATOR (path to validate-entry.sh)
 #   precedence: flags > env > defaults. Body '-' reads stdin.
 #
-#   A proposal file is an entry file with its routing in the frontmatter:
+#   A proposal file is an entry file with its routing in a `---`-FENCED frontmatter block (the
+#   first line must be `---`; an unfenced file is refused as REFUSE_PROPOSAL_UNFENCED):
 #       ---
 #       agent: loomwright-loomwright-code-reviewer
 #       name: some-entry-slug
@@ -158,6 +163,7 @@ type_arg=""
 source_arg=""
 proposal_file=""
 confirm=0
+new_store=0
 pos=0
 
 while [ "$#" -gt 0 ]; do
@@ -169,6 +175,7 @@ while [ "$#" -gt 0 ]; do
     --source)   [ "$#" -ge 2 ] || die "--source requires a value" 2;   source_arg="$2";   shift 2 ;;
     --proposal) [ "$#" -ge 2 ] || die "--proposal requires a value" 2; proposal_file="$2"; shift 2 ;;
     --confirm)  confirm=1; shift ;;
+    --new-store) new_store=1; shift ;;
     -h|--help)
       grep -E '^# ' "$0" | sed -E 's/^# ?//'
       exit 0 ;;
@@ -384,6 +391,10 @@ if [ -n "$proposal_file" ]; then
   [ "$pos" -eq 0 ] || die "--proposal takes no positional arguments (the entry is described by the proposal's frontmatter)" 2
   [ -e "$proposal_file" ] || refuse "REFUSE_PROPOSAL_ABSENT" "no proposal file at '$proposal_file' — nothing was written" 2
   [ -r "$proposal_file" ] || refuse "REFUSE_PROPOSAL_UNREADABLE" "the proposal at '$proposal_file' exists but could not be read, so it could not be examined — nothing was written" 2
+  # Every field below is read from inside the leading `---` block, so a file without one reads as
+  # having NO fields at all. Name that here: the per-field refusals below would otherwise report
+  # "names no 'agent:'" for a proposal whose `agent:` line is plainly there, just unfenced.
+  [ "$(head -n 1 "$proposal_file" 2>/dev/null)" = "---" ] || refuse "REFUSE_PROPOSAL_UNFENCED" "the proposal at '$proposal_file' has no '---' frontmatter fence (its first line must be exactly '---', and the block closes with another '---'), so its agent:/name:/description: fields could not be read — nothing was written" 2
   agent_slug="$(one_line "$(fm_field "$proposal_file" agent)")"
   entry_slug="$(one_line "$(fm_field "$proposal_file" name)")"
   summary="$(one_line "$(fm_field "$proposal_file" description)")"
@@ -440,6 +451,55 @@ if [ -f "$REPO_DIR/.git" ]; then
   # message names both, because naming only 'git worktree remove' sends a submodule caller hunting a
   # worktree that does not exist. (Same wording as add-rule.sh / add-orientation.sh.)
   refuse "REFUSE_WORKTREE" "refusing to write from a non-primary checkout ($REPO_DIR) — its top-level '.git' is a FILE, which means either a linked git worktree or a git submodule. Agent memory is written only from the primary repo root (red-team F1): from a worktree the write would diverge and be lost on 'git worktree remove'; from a submodule it would land in the wrong repository. Nothing was written." 3
+fi
+
+# ---------------------------------------------------------------------------
+# Store resolution. The runtime reads a `memory: project` agent's store from exactly one directory,
+# `loomwright-loomwright-<agent>` (its runtime type with each `:` made `-`), but agents name
+# themselves in several shapes: `code-reviewer`, `loomwright:code-reviewer`, the runtime type
+# itself. Taking the slug verbatim as the directory name therefore CREATED A NEW STORE NO AGENT
+# READS whenever an agent wrote its short name, and exited 0 — validate_slug only proves the slug
+# is contained, never that it names a store. So the slug resolves, in order, to:
+#   1. a store directory that already exists under that exact name (a project's own agents);
+#   2. `loomwright-loomwright-<agent>`, where <agent> is the slug's last `:` segment (or the slug
+#      minus an existing `loomwright-loomwright-` prefix) and the plugin's agents/<agent>.md
+#      declares `memory: project` — so a store not yet written still resolves to the name the
+#      runtime will read.
+# Anything else is UNKNOWN. A proposal into an unknown store is refused unless --new-store says the
+# caller means to create one: an agent-written file never creates a store directory implicitly.
+# The positional path keeps creating it, because a human naming a store explicitly is the one
+# caller who can mean a new one.
+# ---------------------------------------------------------------------------
+AGENTS_DIR="${WRITE_AGENT_MEMORY_AGENTS_DIR:-}"
+if [ -z "$AGENTS_DIR" ]; then
+  if [ -d "$HERE/../agents" ]; then
+    AGENTS_DIR="$HERE/../agents"
+  else
+    _am_lw_root="$( . "$HERE/resolve-loomwright-root.sh" 2>/dev/null && printf '%s' "$LOOMWRIGHT_ROOT" )" || _am_lw_root=""
+    [ -n "$_am_lw_root" ] && AGENTS_DIR="$_am_lw_root/agents"
+  fi
+fi
+
+resolve_agent_store() {   # <slug> — prints the store slug, or returns 1 when the slug is unknown
+  local s="$1" base
+  if [ -d "$STORE_ROOT/$s" ]; then printf '%s' "$s"; return 0; fi
+  case "$s" in
+    loomwright-loomwright-*) base="${s#loomwright-loomwright-}" ;;
+    *)                       base="${s##*:}" ;;
+  esac
+  [ -n "$base" ] && [ -n "$AGENTS_DIR" ] || return 1
+  case "$base" in *[!a-z0-9._-]*|.*) return 1 ;; esac
+  [ "$(fm_field "$AGENTS_DIR/$base.md" memory)" = "project" ] || return 1
+  printf '%s' "loomwright-loomwright-$base"
+}
+
+if resolved_slug="$(resolve_agent_store "$agent_slug")"; then
+  if [ "$resolved_slug" != "$agent_slug" ]; then
+    printf '%s: note — agent %s resolved to its store %s\n' "$PROG" "'$agent_slug'" "'$resolved_slug'" >&2
+    agent_slug="$resolved_slug"
+  fi
+elif [ -n "$proposal_file" ] && [ "$new_store" -eq 0 ]; then
+  refuse "REFUSE_UNKNOWN_AGENT_STORE" "the proposal at '$proposal_file' names agent '$agent_slug', which matches no existing store under '$STORE_ROOT' and no plugin agent that declares 'memory: project' — writing it would create a store no agent reads. Use the store slug (e.g. loomwright-loomwright-code-reviewer), or pass --new-store to create '$agent_slug' deliberately. Nothing was written." 1
 fi
 
 AGENT_DIR="$STORE_ROOT/$agent_slug"

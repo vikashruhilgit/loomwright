@@ -57,10 +57,24 @@ for f in "${files[@]}"; do
   # num: every field the Summary SUMS is coerced here, once — a number stays, a numeric string
   # becomes its number, anything else is null (excluded, "not recorded"). One non-numeric value
   # in one session once made `add` throw and blanked the WHOLE Summary table.
+  # ks_tag: knowledge_sources_used tags are model-written, so one source arrived as project_memory
+  # AND project-memory and split its count across two table rows. Read-time normalization is the
+  # canonical form in docs/result-schemas/session-end-jsonl.md §"Knowledge-source tag vocabulary":
+  # the base tag (before the first ':') trimmed, lower-cased, '-' → '_'; the ':<qualifier>' kept
+  # verbatim (a twin:<path> path is case-sensitive). Applied here so old logs aggregate correctly
+  # without being rewritten; a tag repeated within one run after normalizing counts once.
   jq -Rc --arg sid "$sid" '
     def num: if type == "number" then . elif type == "string" then (tonumber? // null) else null end;
+    def ks_tag: tostring | sub("^\\s+"; "") | sub("\\s+$"; "")
+      | (index(":")) as $i
+      | if $i == null then (ascii_downcase | gsub("-"; "_"))
+        else ((.[0:$i] | ascii_downcase | gsub("-"; "_")) + .[$i:]) end;
+    def ks_tags: if type == "array"
+      then map(select(. != null) | ks_tag | select(. != ""))
+           | reduce .[] as $t ([]; if index([$t]) == null then . + [$t] else . end)
+      else [] end;
     fromjson? | select(type=="object" and .event=="session_end")
-    | {sid:$sid, ts:(.ts//""), status:(.status//"unknown"), branch:(.branch//""),
+    | {sid:$sid, ts:(.ts//""), status:(.status//"unknown"), reason:(.reason//""), branch:(.branch//""),
        pr_url:(.pr_url//""), heal_decision:(.heal_decision//""),
        heal_iterations:(.heal_iterations|num), rubric_score:(.rubric_score//null),
        subtasks_completed:(.subtasks_completed|num), files_changed:(.files_changed|num),
@@ -71,7 +85,7 @@ for f in "${files[@]}"; do
        benchmark_metric:(.benchmark_metric//null),
        benchmark_value:(.benchmark_value//null),
        benchmark_delta:(.benchmark_delta//null),
-       knowledge_sources_used:(.knowledge_sources_used//[]),
+       knowledge_sources_used:((.knowledge_sources_used//[]) | ks_tags),
        heal_first_decision:(.heal_first_decision//null),
        heal_new_findings:(.heal_new_findings|num)}
   ' "$f" 2>/dev/null | tail -1 >> "$records"
@@ -93,6 +107,7 @@ while IFS= read -r r; do
       "session_id: \(.sid)",
       (if .ts!="" then "created: \(.ts|split("T")[0])" else empty end),
       "status: \(.status)",
+      (if .reason!=""        then "reason: \(.reason)"                   else empty end),
       (if .branch!=""        then "branch: \(.branch)"                   else empty end),
       (if .pr_url!=""         then "pr_url: \(.pr_url)"                   else empty end),
       (if .heal_decision!=""  then "heal_decision: \(.heal_decision)"    else empty end),
@@ -117,7 +132,7 @@ while IFS= read -r r; do
     echo "# Session $sid"
     echo
     printf '%s\n' "$r" | jq -r '
-      "- **Status:** \(.status)",
+      "- **Status:** \(.status)\(if .reason=="session_ended_without_completion" then " (stranded close-out — the session ended without writing its own session_end)" else "" end)",
       "- **Self-heal:** \(.heal_decision // "—") (\(.heal_iterations // "—") iterations)",
       "- **Rubric:** \(.rubric_score // "—")",
       "- **Subtasks completed:** \(.subtasks_completed // "—")",
@@ -135,10 +150,19 @@ while IFS= read -r r; do
 done < "$records"
 
 # 3) Aggregate (computed, not guessed) + write the dashboard.
-agg="$(jq -s '{
+# A STRANDED close-out is the synthetic record close-stranded-run.sh writes when a session ends
+# without its own session_end (status failed + reason session_ended_without_completion). It records
+# that the session stopped, not that a run failed: most are interactive or driver sessions whose
+# result was recorded under another id. Counting them as Failed once made all 36 "failed" sessions
+# synthetic and the completion rate 48%. So they are their own bucket, shown but excluded from
+# Failed, from the completion-rate denominator and from the per-version table.
+agg="$(jq -s '
+  def stranded: .status=="failed" and .reason=="session_ended_without_completion";
+  {
   total:     length,
+  stranded:  (map(select(stranded)) | length),
   completed: (map(select(.status=="completed")) | length),
-  failed:    (map(select(.status=="failed"))    | length),
+  failed:    (map(select(.status=="failed" and (stranded|not))) | length),
   heal_pass: (map(select(.heal_decision=="PASS"))| length),
   healed:    (map(select(.heal_iterations != null)) | length),
   avg_heal:  ((map(select(.heal_iterations != null) | .heal_iterations) | add // 0)
@@ -161,7 +185,7 @@ agg="$(jq -s '{
   bench_latest_value:   ((map(select(.benchmark_status != null)) | sort_by(.ts) | last | .benchmark_value) // null),
   bench_latest_delta:   ((map(select(.benchmark_status != null)) | sort_by(.ts) | last | .benchmark_delta) // null)
 }' "$records")"
-pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.total)|floor) else 0 end')"
+pass_rate="$(printf '%s' "$agg" | jq -r '(.total - .stranded) as $d | if $d>0 then ((.completed*100/$d)|floor) else 0 end')"
 
 {
   echo "---"
@@ -180,6 +204,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     "| Sessions | \(.total) |",
     "| Completed | \(.completed) |",
     "| Failed | \(.failed) |",
+    "| Stranded close-outs (ended without a session_end; not failures, excluded from the completion rate) | \(.stranded) |",
     "| Self-heal PASS | \(.heal_pass) |",
     "| Self-heal runs (with heal data) | \(.healed) |",
     "| Avg heal iterations (per healed run) | \(if .healed>0 then ((.avg_heal*100|floor)/100) else "—" end) |",
@@ -265,12 +290,13 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   # without it (older logs) group under "unknown". Columns: runs, heal-PASS
   # rate, avg heal_iterations, avg rubric_score ("M/N" parsed to a percentage).
   echo "## Per-version insights"
-  echo "_Sessions grouped by the additive \`plugin_version\` field on \`session_end\` (absent in older logs → \"unknown\"). Computed with jq, never guessed. To curate: \`curate-postmortem.sh retract|supersede --target <key> --reason <text> --confirm\` (churn ledger) / \`write-lessons.sh retract <category> <lesson-text>\` (lessons)._"
+  echo "_Sessions grouped by the additive \`plugin_version\` field on \`session_end\` (absent in older logs → \"unknown\"); stranded close-outs are excluded. Computed with jq, never guessed. To curate: \`curate-postmortem.sh retract|supersede --target <key> --reason <text> --confirm\` (churn ledger) / \`write-lessons.sh retract <category> <lesson-text>\` (lessons)._"
   echo
   echo "| Version | Runs | Heal-PASS rate | Avg heal iterations | Avg rubric score |"
   echo "|---|---|---|---|---|"
   jq -s -r '
-    group_by(.plugin_version // "unknown")
+    map(select((.status=="failed" and .reason=="session_ended_without_completion") | not))
+    | group_by(.plugin_version // "unknown")
     | map({
         version:   (.[0].plugin_version // "unknown"),
         runs:      length,
@@ -291,8 +317,8 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
 
   # --- Knowledge sources (memory APPLY) — additive; suppressed when no run reports one ---
   # knowledge_sources_used is the additive, flat, lowercase-tag array on the session_end event
-  # (v14.28.0+; see docs/RESULT_SCHEMAS.md). Open set: project_memory, lessons:<category>,
-  # agent_memory:<agent>, twin:<path>, brain_context. Older logs lack it → defaults to [] in the
+  # (v14.28.0+; see docs/RESULT_SCHEMAS.md). Tags arrive already normalized by ks_tag in step 1
+  # (vocabulary: session-end-jsonl.md §"Knowledge-source tag vocabulary"). Older logs lack it → [] in the
   # projection. Mirror the System Twin hard-signal precedent: render ONLY when ≥1 run reports a
   # source (no fabricated zeros). Computed with jq, never guessed.
   ks_runs="$(jq -s '[.[]|select((.knowledge_sources_used|length)>0)]|length' "$records")"

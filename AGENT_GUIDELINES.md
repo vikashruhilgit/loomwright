@@ -211,7 +211,19 @@ Which side each of the eight sole writers falls on:
 
 **Stated in prose because the tool surface gives the wrong answer:** `disallowedTools` blocks `Write`/`Edit` for some of these agents, but **Bash is not restricted by the harness**, so a store write stays reachable regardless. This is a prompt-level contract.
 
-**To propose:** write one file to `.supervisor/agent-memory-proposals/` (gitignored) carrying `agent:`, `name:`, `description:` and a `source:`, then stop.
+**To propose:** write one file to `.supervisor/agent-memory-proposals/` (gitignored), then stop. The writer reads only a `---`-fenced frontmatter block, and `agent:` names the store directory the runtime reads, `loomwright-loomwright-<agent>` (your runtime type with each `:` made `-`):
+
+```
+---
+agent: loomwright-loomwright-code-reviewer
+name: short_entry_slug
+description: the one-line summary the store index will carry
+source: PR #123
+---
+The body: what surprised you, and what it would have changed.
+```
+
+The writer also maps the short forms (`code-reviewer`, `loomwright:code-reviewer`) onto that store, and refuses an `agent:` that matches no store rather than creating a directory no agent reads (`REFUSE_UNKNOWN_AGENT_STORE`). An unfenced file is refused as `REFUSE_PROPOSAL_UNFENCED`.
 
 ---
 

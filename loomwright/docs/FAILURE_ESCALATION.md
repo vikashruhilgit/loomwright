@@ -179,7 +179,7 @@ other pre-merge safety-gate failure above).
 
 **Escape hatch:** `--skip-children-check` short-circuits this ONE checklist point as a deliberate choice — `Context-Keeper(operation: record_decision, phase: FINALIZE, decision: "user_skipped_children_check")`, and the run summary carries `children_check: skipped`. Per CLAUDE.md §"Failure-Mode Invariants", a fail-closed gate needs an explicit escape; there is no silent-proceed path.
 
-**A session that spawned nothing** — no recorded worker id (so no `--expect-id`) and zero `agent_identity` rows (pre-2026-09-07 logs, or a session that never spawned a Task) — reports `children_check: no_identity_rows` and PASSES — nothing to check, never a false `settled`. A recorded worker id with no terminal row is `unsettled`, never `no_identity_rows`, whether or not its identity row landed.
+**A session that spawned nothing** — no recorded worker id (so no `--expect-id`) and zero `agent_identity` rows (pre-2026-09-07 logs, or a session that never spawned a Task) — reports `children_check: no_identity_rows` and PASSES — nothing to check, never a false `settled`. A recorded worker id with no terminal row is `unsettled`, never `no_identity_rows`, whether or not its identity row landed. A recorded token that is a label rather than an id (`### worker-1`) is not expected when the log's identity rows already record the spawns — `write-marker` drops it and lists it under `ignored_worker_result_labels` (`guard-finalize-publish.sh`'s `resolve_worker_result_ids`).
 
 **Rules:**
 - Same fail-closed shape as `preflight_overlap_detected` (above, Phase 1.5) — interactive soft-gate, non-interactive hard-fail, one named escape-hatch flag.

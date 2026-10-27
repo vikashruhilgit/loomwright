@@ -31,7 +31,8 @@
 # BEHAVIOR
 # --------
 # Writes exactly ONE `session_end` event (`status: failed`,
-# `reason: session_ended_without_completion`) and re-projects via build-state.sh
+# `reason: session_ended_without_completion`, plus `plugin_version` when the
+# manifest is readable) and re-projects via build-state.sh
 # when ALL of the following hold:
 #   0. the SessionEnd `reason` is NOT `clear` (see the deny-list guard below —
 #      absent/empty/unparseable reason satisfies this), and
@@ -359,6 +360,23 @@ case "$UTC_TS" in
   *) UTC_TS="" ;;
 esac
 
+# ---- Plugin version (omit entirely when unreadable — never "unknown") -------
+# The same stamp every agent-written session_end carries, read from the same
+# manifest. Without it these records all landed in /insights' per-version
+# "unknown" row. The install root comes from the vendor-neutral resolver,
+# sourced in a SUBSHELL so nothing leaks; its dev-checkout fallback is this
+# script's parent dir. sed, not jq, so the stamp survives a jq-less host, and
+# the value is held to a version-shaped charset before it is interpolated into
+# the printf-built line below — anything else is omitted, never escaped.
+PLUGIN_VERSION=""
+_csr_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+_csr_root="$( . "$_csr_dir/resolve-loomwright-root.sh" 2>/dev/null && printf '%s' "$LOOMWRIGHT_ROOT" )" || _csr_root=""
+[ -n "$_csr_root" ] || _csr_root="${_csr_dir%/*}"
+PLUGIN_VERSION="$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "$_csr_root/.claude-plugin/plugin.json" 2>/dev/null | head -1)"
+case "$PLUGIN_VERSION" in
+  ""|*[!0-9A-Za-z.+-]*) PLUGIN_VERSION="" ;;
+esac
+
 # ---- Append exactly ONE session_end event -----------------------------------
 # BOTH keys are mandatory and both are valued "session_end": build-state.sh
 # filters on the canonical `.event`, and build-insights.sh's hard-signal reader
@@ -374,6 +392,9 @@ if [ -n "$CC_SESSION_ID" ]; then
   LINE="${LINE},\"cc_session_id\":\"${CC_SESSION_ID}\""
 fi
 LINE="${LINE},\"status\":\"failed\",\"reason\":\"session_ended_without_completion\""
+if [ -n "$PLUGIN_VERSION" ]; then
+  LINE="${LINE},\"plugin_version\":\"${PLUGIN_VERSION}\""
+fi
 if [ -n "$UTC_TS" ]; then
   LINE="${LINE},\"ts\":\"${UTC_TS}\""
 fi
