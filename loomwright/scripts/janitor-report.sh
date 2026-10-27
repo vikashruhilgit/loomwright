@@ -68,8 +68,9 @@
 #                    `unknown` (no recorded pid) ⇒ none. An UNLOCKED checkout makes no row (a note
 #                    counts them).
 #   lanes            per `<primary>/.supervisor/automate/<parent>.lanes`: `automate-helpers.sh
-#                    lane-status <parent>.md --json` — one row per lane not `removed` (or removed with
-#                    its dir still on disk): `done` / `abandoned` ⇒ lane-remove; `gone` ⇒ none
+#                    lane-status <parent>.md --json` — one row per lane not `removed` / `abandoned` (or
+#                    either with its dir still on disk — `lane-remove --abandon` leaves `abandoned`, not
+#                    `removed`): `done` / `abandoned` ⇒ lane-remove; `gone` ⇒ none
 #                    (`lane-remove --abandon` is a human's); any other state ⇒ none (its coordinator
 #                    owns it). Then
 #                    `lane-status <parent>.md --leaks` — the COMPARE mode only, NEVER `--snapshot`
@@ -537,7 +538,8 @@ _jr_c_lanes() {
     n=0
     while IFS="$US" read -r lane state path item pr prs started why; do
       [ -n "$lane" ] || continue
-      [ "$state" = removed ] && [ ! -d "$path" ] && continue
+      # lane-remove writes `removed`, or `abandoned` under --abandon, only after its rm -rf: both are gone
+      case "$state" in removed|abandoned) [ -d "$path" ] || continue ;; esac
       n=$((n + 1))
       age=""
       [ -n "$started" ] && age="$("$JQ" -rn --arg s "$started" --argjson n "$now" '$n - ($s | fromdateiso8601)' 2>/dev/null)"
