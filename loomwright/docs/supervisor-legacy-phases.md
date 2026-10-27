@@ -12,7 +12,7 @@ Run each phase from its usual stanza (`commands/supervisor.md`, the phase skill 
 
 ### `commands/supervisor.md` §"What This Does" — the Phase 0 paragraph
 
-**Phase 0 (INIT):** Session configuration resolution before any work begins — environment auto-detection, resume-state loading behind the fail-closed resume validation gate, config prompts, cost-profile resolution (`--cheap`), base-branch handling (`--base-branch`, default `main`), `--non-interactive` recording as a Phase Flag, `.supervisor/` bootstrap, and job-brief loading. Protocol authority: `skills/supervisor-config/SKILL.md` (Read at phase entry — deliberately not preloaded); `agents/supervisor.md` "Phase 0: INIT" keeps the short phase stanza with entry/exit conditions. The user-facing flag table above remains this command surface's own authority for flag syntax.
+**Phase 0 (INIT):** Session configuration resolution before any work begins — environment auto-detection, resume-state loading behind the fail-closed resume validation gate, config prompts, cost-profile resolution (`--cheap`), base-branch handling (`--base-branch`, else `scripts/resolve-base-branch.sh`), `--non-interactive` recording as a Phase Flag, `.supervisor/` bootstrap, and job-brief loading. Protocol authority: `skills/supervisor-config/SKILL.md` (Read at phase entry — deliberately not preloaded); `agents/supervisor.md` "Phase 0: INIT" keeps the short phase stanza with entry/exit conditions. The user-facing flag table above remains this command surface's own authority for flag syntax.
 
 ### `agents/supervisor.md` §"Phase 0: INIT" — the Entry paragraph
 
