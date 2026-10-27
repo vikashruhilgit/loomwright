@@ -107,3 +107,19 @@ Brief pin-mutation check: I re-added `[ -n "$base_branch" ] || base_branch="main
 
 Out of scope by design: the root `scripts/check-*.sh` gates diff against `origin/main` for this plugin repo's
 own release checks. They are not base-branch consumers of a user project.
+
+## AC24 — full `bash scripts/ci-local.sh` (local, macOS)
+
+On the integrated tree, 184 of 185 self-tests and every ci.yml gate pass. One suite is red:
+`loomwright/scripts/test-automate-lanes.sh` (passed 1017, failed 42). The 42 failing case ids are the relay-hook
+and inbox cases J3 J4 K1b K5 K7–K11 K15 K16 X2 X4–X7 X9 AD4 AD4b–AD4f AD10 AD11 AD11b AD11c AD12 AD12d AD12e AD12g
+AD12h AM1–AM7 AM7b AM11 AM12. They are byte-identical to the failing ids of the same suite run on a detached
+worktree of the base commit `84d9023` (passed 1012, failed 42). They are therefore pre-existing on this machine
+and not caused by this change. A typical failure is a lane inbox question file under `/private/var/folders/…` that
+was never written. The cause was not investigated, because it is out of scope. CI is the arbiter for this suite.
+
+Repaired backstop pins (by fixture or test change, never by a script fallback):
+
+- `test-janitor-report.sh`: the fixture has no origin, so `sweep.sh` now reports `base_branch_unresolved`. The
+  fixture now gets a `.supervisor/config.json` `base_branch`.
+- `test-setup-module-registry.sh`: four pipes into `grep -q` were rewritten for `test-no-pipefail-grep-q.sh`.
