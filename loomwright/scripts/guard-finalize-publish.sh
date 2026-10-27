@@ -21,6 +21,8 @@
 # MARKER: `.supervisor/logs/<plugin_session_id>.finalize-gate` — keyed by the PLUGIN session id (the
 # `## Session` block's `- session_id:` in `.supervisor/state.md`), never the Claude Code UUID:
 #   {"children_check":"settled"|"no_identity_rows"|"skipped","children_status":"<join status>","head_sha":"<sha>","ts":"<utc>"}
+#   plus `"ignored_worker_result_labels":[...]` only when a `## Worker Results` heading carried a
+#   label instead of an agent id (resolve_worker_result_ids, #717) — a refusal carries it too.
 # write-marker removes any stale marker FIRST, then writes one ONLY when check-children-settled.sh
 # --all reads `settled` or `no_identity_rows` (recorded VERBATIM — nothing to check is a pass, never
 # evidence of settlement), or when `--skip-children-check` is given (recorded as `skipped`). It
@@ -30,7 +32,9 @@
 # recorded — the `### {worker-id} ({subtask-id})` headings and `agent_id:` / `worker_id:` keys under
 # state.md's `## Worker Results` (read_worker_result_ids) plus any explicit `--expect-id <id>`
 # argument — so a recorded worker with no terminal row refuses `children_unsettled` even when its
-# agent_identity row never landed, instead of recording `no_identity_rows`. A `## Worker Results`
+# agent_identity row never landed, instead of recording `no_identity_rows`. A recorded token that is
+# a LABEL, not an id (`### worker-1`), is dropped when the log's identity rows already record the
+# spawns (resolve_worker_result_ids) — never expected, so it cannot refuse a settled run. A `## Worker Results`
 # section with content but no readable id (a table, prose) refuses `worker_results_unparsed` (fail
 # CLOSED; `--skip-children-check` is the escape). No section / an empty one and no argument ⇒ the
 # check runs exactly as before.
@@ -277,6 +281,40 @@ read_worker_result_ids() {
   return 0
 }
 
+# resolve_worker_result_ids <session_log> — sort read_worker_result_ids' tokens (stdin) into the ids
+# to EXPECT and the labels to drop: one `id <tok>` or `label <tok>` line each (stdout).
+# WHY (#717): the heading is model-written, and runs have filled it with a LABEL (`### worker-1`,
+# `### subtask-3-worker`) instead of the Task-returned agent id — an id no log row can ever carry,
+# so a run whose every worker settled refused `children_unsettled` on every retry. A token is
+# dropped as a label only when BOTH hold:
+#   - the session log has agent_identity rows, so the run's spawns ARE recorded deterministically
+#     and `--all` already checks every one of them — the label adds no evidence; and
+#   - the token is in no log row's `agent_id` AND has no run of 8+ hex characters, either case (the
+#     shape of every agent id observed in this repo's logs: `a` + 16 hex).
+# Anything else is kept (fail CLOSED): with no identity rows the recorded ids are the only evidence
+# (agnostic-phase1/02, unchanged), and an id-shaped token with no row may be a worker whose hooks
+# never fired. LIMIT: a label written in place of a worker whose identity row ALSO never landed
+# names nothing either way — no reader of a label can recover the id it should have been.
+# LIMIT: the hex test is an UNANCHORED substring scan, deliberately — a label carrying an 8-hex
+# run (`subtask-deadbeef-worker`) is kept and refuses, the safe direction; anchoring it to one id
+# shape would drop a real id of any other shape unchecked. Case-insensitive for the same reason:
+# an id transcribed in upper case (`### A1B2C3D4…`) matches no log row and must still be kept.
+resolve_worker_result_ids() {
+  local log="$1" known has_ident tok
+  known="$(jq -R -r '(fromjson? // empty) | (.agent_id? // empty) | strings' "$log" 2>/dev/null | sort -u)"
+  has_ident="$(jq -R -r '(fromjson? // empty) | select(.event? == "agent_identity" and (.agent_id? // "") != "") | "y"' "$log" 2>/dev/null | head -n 1)"
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    if [ "$has_ident" = y ] && ! grep -Fxq -- "$tok" <<<"$known" \
+       && ! grep -Eiq '[0-9a-f]{8}' <<<"$tok"; then
+      printf 'label %s\n' "$tok"
+      continue
+    fi
+    printf 'id %s\n' "$tok"
+  done
+  return 0
+}
+
 # worker_results_has_content — exit 0 when state.md has a `## Worker Results` section carrying any
 # line other than blanks and an `(empty)` / `(none)` placeholder (`*` / `_` / backticks stripped, case
 # ignored); exit 1 otherwise (no file, no section, or an empty one). write-marker pairs it with a zero
@@ -360,6 +398,7 @@ if [ "${1:-}" = "write-marker" ]; then
   # HEAD of the session's OWN checkout (the one the publish runs from), not the main worktree's.
   head_sha="$(git -C "$PROJ" rev-parse HEAD 2>/dev/null)"
   [ -n "$head_sha" ] || refuse "no_head"
+  ignored_labels=""
   if [ "$skip" = 1 ]; then
     check="skipped"; children_status="skipped"
   else
@@ -373,6 +412,10 @@ if [ "${1:-}" = "write-marker" ]; then
     # run that spawned workers pass as no_identity_rows. Escape: --skip-children-check, after checking.
     worker_ids="$(read_worker_result_ids)"
     [ -n "$worker_ids" ] || ! worker_results_has_content || refuse "worker_results_unparsed"
+    # Labels in place of agent ids are dropped here, not expected (resolve_worker_result_ids, #717).
+    resolved="$(printf '%s\n' "$worker_ids" | resolve_worker_result_ids "$SESSION_LOG")"
+    worker_ids="$(printf '%s\n' "$resolved" | sed -n 's/^id //p')"
+    ignored_labels="$(printf '%s\n' "$resolved" | sed -n 's/^label //p')"
     while IFS= read -r wid; do
       [ -n "$wid" ] || continue
       EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="$wid"
@@ -394,8 +437,10 @@ EOF
       # recorded verbatim — `no_identity_rows` is a pass, never `settled` (async-orchestration point 5)
       settled|no_identity_rows) check="$children_status" ;;
       *)
-        printf '{"status":"refused","reason":"children_%s","children":%s}\n' \
-          "${children_status:-unverifiable}" "$(printf '%s' "${res:-null}" | jq -c . 2>/dev/null || echo null)"
+        jq -n -c --arg r "children_${children_status:-unverifiable}" --arg l "$ignored_labels" \
+          --argjson c "$(printf '%s' "${res:-null}" | jq -c . 2>/dev/null || echo null)" \
+          '{status: "refused", reason: $r, children: $c}
+           + (if $l == "" then {} else {ignored_worker_result_labels: ($l | split("\n"))} end)'
         exit 1 ;;
     esac
   fi
@@ -403,7 +448,9 @@ EOF
   [ "$HOST_ON" = 1 ] && umask 077
   mkdir -p "$LOG_DIR" 2>/dev/null || refuse "log_dir_unwritable"
   body="$(jq -n -c --arg c "$check" --arg cs "$children_status" --arg h "$head_sha" --arg t "$ts" \
-    '{children_check: $c, children_status: $cs, head_sha: $h, ts: $t}')"
+    --arg l "$ignored_labels" \
+    '{children_check: $c, children_status: $cs, head_sha: $h, ts: $t}
+     + (if $l == "" then {} else {ignored_worker_result_labels: ($l | split("\n"))} end)')"
   tmp="$MARKER.tmp.$$"
   { printf '%s\n' "$body" > "$tmp"; } 2>/dev/null && mv -f "$tmp" "$MARKER" 2>/dev/null \
     || { rm -f "$tmp" 2>/dev/null; refuse "marker_write_failed"; }
