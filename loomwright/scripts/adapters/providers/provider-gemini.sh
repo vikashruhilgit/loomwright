@@ -47,3 +47,41 @@ provider_extract_text() {
   [ -n "$PROVIDER_EXTRACTED" ] || return 1
   return 0
 }
+
+# ---- PROBE ENTRIES (read by loomwright/scripts/setup-providers.sh `check`;
+# lens-run.sh ignores them). Contract: setup-providers.sh's header,
+# §"PROBE-ENTRY CONTRACT". STILL NOT INSTALLED ON THIS MACHINE (re-checked
+# 2026-10-27), so every field below except the install hint is a DOCUMENTED
+# ASSUMPTION, never run here:
+#   - version: `--version` (the near-universal CLI convention; unverified).
+#   - auth: no auth-status command is documented in the README this entry
+#     consulted, so none is declared — the auth column starts `unknown` and is
+#     decided by the smoke (a passing smoke proves auth; output matching
+#     PROBE_AUTH_NOT_LOGGED_IN_RE marks it not_logged_in).
+#   - permissions: no pin flag set is verified, so PROBE_PERM_PIN_FLAGS is
+#     empty and the column reports `unknown` (never a write seat).
+#   - smoke: the lens invocation above with the fixed probe prompt. The
+#     README (below) documents `-p` and `--output-format json`; the lens shape
+#     above does not pass the latter, so the smoke reports what the CLI's
+#     default output really is.
+# Install hint and login step: https://raw.githubusercontent.com/google-gemini/gemini-cli/main/README.md
+# (read 2026-10-27: "npm install -g @google/gemini-cli"; login is "Sign in
+# with Google" in an interactive run).
+PROBE_VERSION_ARGV=("--version")
+PROBE_AUTH_ARGV=()
+PROBE_AUTH_OK_RE=''
+PROBE_AUTH_NOT_LOGGED_IN_RE='[Nn]ot (logged|signed) in|[Ll]og ?in required|[Uu]nauthori[sz]ed|authentication method'
+PROBE_HELP_ARGV=("--help")
+PROBE_PERM_PIN_FLAGS=""
+PROBE_BROWSER="unknown"
+PROBE_INSTALL_HINT="npm install -g @google/gemini-cli"
+PROBE_LOGIN_HINT="run gemini interactively and choose Sign in with Google"
+
+# probe_smoke_argv — reads PROBE_PROMPT, sets PROBE_ARGV; prompt LAST. Reuses
+# provider_build_argv so the smoke and the lens share one assumed shape.
+probe_smoke_argv() {
+  MODEL=""
+  PROMPT_CONTENT="$PROBE_PROMPT"
+  provider_build_argv
+  PROBE_ARGV=("${PROVIDER_ARGV[@]}")
+}

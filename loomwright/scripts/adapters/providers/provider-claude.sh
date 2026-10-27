@@ -22,7 +22,7 @@
 # lens-run.sh's composed prompt instructs the model to answer with ONLY the
 # canonical `{"issues":[...]}` JSON object, provider_extract_text only needs to
 # unwrap `.result` — validating THAT text against the canonical issues[] shape
-# is centralized in lens-run.sh itself (shared across all four providers), not
+# is centralized in lens-run.sh itself (shared across every provider), not
 # duplicated here.
 #
 # HOME SCRUB — PROVIDER_HOME_SCRUB=1 (lens-run.sh redirects HOME to a
@@ -65,4 +65,48 @@ provider_extract_text() {
   PROVIDER_EXTRACTED="$("$JQ" -r '.result // empty' "$raw_file" 2>/dev/null)"
   [ -n "$PROVIDER_EXTRACTED" ] || return 1
   return 0
+}
+
+# ---- PROBE ENTRIES (read by loomwright/scripts/setup-providers.sh `check`;
+# lens-run.sh ignores them). Contract: setup-providers.sh's header,
+# §"PROBE-ENTRY CONTRACT". Every field below was verified against a real
+# `claude --help` / `claude auth status --help` run on this dev machine
+# (2026-10-27, CLI 2.1.309), and the smoke was run once by hand there and
+# returned the fixed reply inside the `.result` envelope provider_extract_text
+# unwraps.
+#
+# PERMISSIONS — the SAME probe dispatch-pr-review.sh runs before it dispatches
+# a headless drain (its PERMISSION_REGIME_UNPINNABLE refusal): `--help` must
+# advertise `--permission-mode` with the `dontAsk` choice plus `--allowedTools`
+# and `--disallowedTools`. Mirrored here as data so the two cannot disagree on
+# what "pinnable" means for this CLI.
+#
+# SMOKE — print mode with the JSON envelope, plus flags (all present in this
+# build's --help) that keep the smoke from touching anything:
+# `--no-session-persistence` (no transcript saved), `--safe-mode` (no user
+# hooks, plugins, CLAUDE.md or MCP servers load; auth still works — `--bare`
+# was rejected because it never reads OAuth/keychain auth), `--tools ""` (no
+# built-in tools at all) and `--permission-mode dontAsk` (anything not
+# pre-approved is denied rather than prompted).
+#
+# BROWSER — `--help` lists a `--chrome` integration flag, but no probe has shown
+# it driving a browser headless, so the value stays `unknown`.
+#
+# HINTS — install command from https://code.claude.com/docs/en/setup (read
+# 2026-10-27); login is the CLI's own `auth login` subcommand (in its --help).
+PROBE_VERSION_ARGV=("--version")
+PROBE_AUTH_ARGV=("auth" "status" "--json")
+PROBE_AUTH_OK_RE='"loggedIn": *true'
+PROBE_AUTH_NOT_LOGGED_IN_RE='"loggedIn": *false'
+PROBE_HELP_ARGV=("--help")
+PROBE_PERM_PIN_FLAGS="--permission-mode dontAsk --allowedTools --disallowedTools"
+PROBE_BROWSER="unknown"
+PROBE_INSTALL_HINT="curl -fsSL https://claude.ai/install.sh | bash"
+PROBE_LOGIN_HINT="claude auth login"
+
+# probe_smoke_argv — reads PROBE_PROMPT (the fixed probe prompt) and sets
+# PROBE_ARGV (argv after the binary name); the prompt is the LAST element.
+probe_smoke_argv() {
+  PROBE_ARGV=("-p" "--output-format" "json" "--no-session-persistence" "--safe-mode" \
+    "--tools" "" "--permission-mode" "dontAsk" "$PROBE_PROMPT")
 }

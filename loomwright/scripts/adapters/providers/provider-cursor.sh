@@ -58,3 +58,50 @@ provider_extract_text() {
   [ -n "$PROVIDER_EXTRACTED" ] || return 1
   return 0
 }
+
+# ---- PROBE ENTRIES (read by loomwright/scripts/setup-providers.sh `check`;
+# lens-run.sh ignores them). Contract: setup-providers.sh's header,
+# §"PROBE-ENTRY CONTRACT". Verified against a real `cursor-agent --help` and
+# `cursor-agent status` on this dev machine (2026-10-27, CLI
+# 2026.09.18-9a7762b; the CLI updated itself to 2026.10.22-27dcf5f during the
+# same session and its --help still matched every flag named here).
+# `cursor-agent` was LOGGED IN that day, and the smoke
+# below was run once by hand: it returned the fixed reply inside a top-level
+# `.result` string, so the `.result` guess in provider_extract_text above held
+# for this build.
+#
+# AUTH — `status` prints a "Logged in as <account>" line or "Not logged in".
+# setup-providers.sh only pattern-matches that output; it never prints it
+# (the account name is not echoed into the report).
+#
+# PERMISSIONS — `none`, i.e. reported `unpinnable`. `--help` (2026-10-27) says
+# print mode "Has access to all tools, including write and shell", and offers
+# no per-invocation allowlist flag; its only overrides are `-f`/`--force`/
+# `--yolo` (allow everything) and the read-only `--mode plan|ask`. This entry
+# follows the reasoning of the DELIBERATELY NOT PASSING -f/--force note above:
+# `-f` is never adopted, and a read-only mode is not an allowlist, so this
+# provider cannot pin tool permissions for a write seat.
+#
+# SMOKE — print mode with the JSON envelope, `--mode ask` (read-only Q&A, so
+# the smoke can run no edit or shell tool), and `--trust`: without it print
+# mode exits 1 with "Workspace Trust Required" for any directory it has not
+# seen (observed 2026-10-27), and the smoke's cwd is always a fresh throwaway
+# directory. `--trust` trusts only that empty directory; the CLI may record it
+# in its own state under the real HOME (a vendor-side write).
+#
+# HINTS — install command from https://cursor.com/docs/cli/installation (read
+# 2026-10-27); login is the CLI's own `login` subcommand (in its --help).
+PROBE_VERSION_ARGV=("--version")
+PROBE_AUTH_ARGV=("status")
+PROBE_AUTH_OK_RE='Logged in as'
+PROBE_AUTH_NOT_LOGGED_IN_RE='Not logged in'
+PROBE_HELP_ARGV=("--help")
+PROBE_PERM_PIN_FLAGS="none"
+PROBE_BROWSER="unknown"
+PROBE_INSTALL_HINT="curl https://cursor.com/install -fsS | bash"
+PROBE_LOGIN_HINT="cursor-agent login"
+
+# probe_smoke_argv — reads PROBE_PROMPT, sets PROBE_ARGV; prompt LAST.
+probe_smoke_argv() {
+  PROBE_ARGV=("-p" "--output-format" "json" "--mode" "ask" "--trust" "$PROBE_PROMPT")
+}

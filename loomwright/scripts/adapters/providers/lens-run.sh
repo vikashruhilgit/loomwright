@@ -13,10 +13,11 @@
 #       --diff <diff-file> --prompt <prompt-file> --out <output-json-file> \
 #       [--commit <sha>]
 #
-#   --provider   REQUIRED. One of the provider-table entries below
-#                (`claude`, `cursor`, `codex`, `gemini` as of this writing —
-#                adding a fifth provider means adding one new
-#                `provider-<name>.sh` file, never editing this one), optionally
+#   --provider   REQUIRED. One of the provider-table entries — every
+#                `provider-<name>.sh` file in this script's own directory is
+#                one (list them there; this header does not restate the set).
+#                Adding a provider means adding one new `provider-<name>.sh`
+#                file, never editing this one. Optionally
 #                suffixed `:<model>` (e.g. `cursor:gpt-5`). NAME is allowlisted
 #                to `[A-Za-z0-9_-]` before it is spliced into a sourced path.
 #   --role       REQUIRED. Free-form string folded into the composed prompt
