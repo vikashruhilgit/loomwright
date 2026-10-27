@@ -295,6 +295,9 @@ read_worker_result_ids() {
 # (agnostic-phase1/02, unchanged), and an id-shaped token with no row may be a worker whose hooks
 # never fired. LIMIT: a label written in place of a worker whose identity row ALSO never landed
 # names nothing either way — no reader of a label can recover the id it should have been.
+# LIMIT: the hex test is an UNANCHORED substring scan, deliberately — a label carrying an 8-hex
+# run (`subtask-deadbeef-worker`) is kept and refuses, the safe direction; anchoring it to one id
+# shape would drop a real id of any other shape unchecked.
 resolve_worker_result_ids() {
   local log="$1" known has_ident tok
   known="$(jq -R -r '(fromjson? // empty) | (.agent_id? // empty) | strings' "$log" 2>/dev/null | sort -u)"
