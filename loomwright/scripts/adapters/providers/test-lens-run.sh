@@ -376,8 +376,9 @@ assert_eq "D model is null (no :model suffix given)" "null" "$(jq -c '.model' "$
 
 echo ""
 echo "==== D2: a CLI that ends before the bound leaves no watchdog sleep behind ===="
-# A per-run bound no other process uses, so the check is exact for this run.
-D2_BOUND=$(( 4000 + RUN_TAG % 1000 ))
+# A per-run bound no other process uses (the full RUN_TAG, like the stub names), so the
+# check is exact for this run even with two suites running at once.
+D2_BOUND=$(( 100000 + RUN_TAG ))
 OUT_D2="$TMP/out-d2.json"
 RC_D2=0
 LOOMWRIGHT_LENS_CLI_TIMEOUT="$D2_BOUND" run_lens "$STUB_D_DIR" "$OUT_D2" || RC_D2=$?
