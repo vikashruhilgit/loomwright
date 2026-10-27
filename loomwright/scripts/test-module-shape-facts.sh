@@ -279,8 +279,9 @@ sh_line="$(grep -F '**MODULE-SHAPE ADVISORY (' "$SH" | head -1)"
 has "$sh_line" 'include this line ONLY when `module_shape` is non-empty' && has "$sh_line" 'facts unavailable' \
   && ok "G6 the prompt line is gated on non-empty output and says absent means facts unavailable" || no "G6 prompt line gate / facts unavailable"
 step1h="$(grep -E '^1h\. ' "$SH" | head -1)"
-has "$step1h" 'module-shape-facts.sh' && has "$step1h" '`origin/main` when `BASE_BRANCH` is `main`' && has "$step1h" 'EVERY iteration' \
-  && ok "G7 step 1h runs the script every iteration against on-entry's base rule" || no "G7 step 1h"
+has "$step1h" 'module-shape-facts.sh' && has "$step1h" '`origin/$BASE_BRANCH` for every base' && has "$step1h" 'EVERY iteration' \
+  && lacks "$step1h" 'origin/main' \
+  && ok "G7 step 1h runs the script every iteration against on-entry's origin/\$BASE_BRANCH base rule" || no "G7 step 1h"
 # AC7 — the house-rule size override is stated only in §"Module layout"; every other surface points.
 ov="$(cd "$REPO_ROOT" && grep -rnE '(different|another) size' loomwright/agents loomwright/commands loomwright/skills | grep -v '^loomwright/skills/supervisor-readiness/SKILL.md:')"
 [ -z "$ov" ] && ok "G8 the house-rule size override is stated only in §\"Module layout\"" || no "G8 override restated outside its single home: $ov"
