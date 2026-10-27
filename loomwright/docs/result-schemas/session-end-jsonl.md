@@ -80,7 +80,7 @@ so a genuinely new source may add a tag, but it adds it here first.
 |---|---|
 | `project_memory` | `.supervisor/memory/PROJECT_MEMORY.md` |
 | `lessons` / `lessons:<category>` | `.supervisor/memory/LESSONS.md` (whole store / one category) |
-| `agent_memory:<agent>` | an agent's `.claude/agent-memory/` store |
+| `agent_memory:<agent>` | one agent's persistent memory store |
 | `twin:<path>` | a System Twin contract, by subsystem id |
 | `house_rules` / `house_rules:<scope>` | the committed `.agent/rules/` house rules |
 | `prior_churn` | prior review churn on the touched paths, through `read-postmortem.sh` |

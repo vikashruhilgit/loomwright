@@ -297,7 +297,7 @@ grep -qF 'REFUSE_PROPOSAL_ABSENT' <<< "$OUT" && ok "(c2) the absent-proposal ref
 # agent: line was there.
 # ---------------------------------------------------------------------------
 echo "== (c3) short agent names resolve to the real store; unknown names and unfenced files are refused =="
-RC3="$(new_repo)"; SC3="$RC3/.claude/agent-memory"; PD3="$RC3/.supervisor/agent-memory-proposals"
+RC3="$(new_repo)"; SC3="$RC3/memory-store"; PD3="$RC3/.supervisor/agent-memory-proposals"
 mkdir -p "$PD3" "$SC3/$AGENT" || setup_fail "could not create the (c3) proposal dir / existing store"
 # mkprop <file> <agent> <name> <description> — a fenced proposal. Each case passes a description
 # sharing almost no words with the others, or the duplicate check would refuse one case because of
