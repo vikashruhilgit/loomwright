@@ -621,7 +621,7 @@ run main clean
   || no "K12 absent-.agent control wrong ($OUT err='$ERR')"
 run base-rj-notelink billing
 if [ "$(j '.high_risk')" = "true" ] && has_reason "project: billing/x.ts matched billing/**" \
-   && ! printf '%s' "$OUT" | grep -q 'unclassifiable'; then
+   && ! grep -q 'unclassifiable' <<<"$OUT"; then
   ok "K13 base .agent/ holds an unrelated symlink (notes-link) next to a regular risk.json ⇒ true with the project: reason, never unclassifiable"
 else
   no "K13 unrelated .agent child symlink was judged ($OUT err='$ERR')"
