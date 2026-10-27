@@ -301,8 +301,8 @@ resolve_worker_result_ids() {
   has_ident="$(jq -R -r '(fromjson? // empty) | select(.event? == "agent_identity" and (.agent_id? // "") != "") | "y"' "$log" 2>/dev/null | head -n 1)"
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
-    if [ "$has_ident" = y ] && ! printf '%s\n' "$known" | grep -Fxq -- "$tok" \
-       && ! printf '%s' "$tok" | grep -Eq '[0-9a-f]{8}'; then
+    if [ "$has_ident" = y ] && ! grep -Fxq -- "$tok" <<<"$known" \
+       && ! grep -Eq '[0-9a-f]{8}' <<<"$tok"; then
       printf 'label %s\n' "$tok"
       continue
     fi
