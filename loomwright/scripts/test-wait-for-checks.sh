@@ -39,6 +39,11 @@
 #      spaced check names (`test (18.x)`, `build (ubuntu-latest)`) survive in
 #      pending= / pending_names= / red_names=; first-occurrence scalars; the
 #      shared word-split mutant (fixtures/wait-for-checks-line/wsplit.sed).
+#  30-32. (configurable base) the PR's baseRefName stays FIRST (a repo config
+#      naming another base is not consulted); with no baseRefName the base comes
+#      from resolve-base-branch.sh (the cwd repo's .supervisor/config.json);
+#      with neither, protection is never read and required=unknown — never a
+#      `main` guess, never a vacuous green.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -696,6 +701,69 @@ if [ -s "$M29" ] && ! cmp -s "$LIB29" "$M29" && bash -n "$M29"; then
   fi
 else no "case 29 mutant invalid (empty / identical / bash -n)"; fi
 rm -rf "$D29"
+
+# ----------------------------------------------------------------------------
+# Cases 30-32 (configurable base): baseRefName first, the resolver the fallback.
+# The stub logs every `gh api` path; each case runs in its own scratch repo
+# (no origin, so the resolver's origin-head step finds nothing) with a PATH
+# whose `gh` fails, so the resolver's gh step cannot reach the network.
+# ----------------------------------------------------------------------------
+write_base_stub() { # <dir> <baseRefName json or "">
+  local dir="$1" base="$2"
+  cat > "$dir/gh" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *baseRefName*) [ -n '$base' ] && printf '%s\n' '$base'; exit 0 ;;
+  *headRefOid*) printf '{"headRefOid":"$SHA","statusCheckRollup":[]}\n'; exit 0 ;;
+esac
+if [ "\$1" = "api" ]; then printf '%s\n' "\$2" >> "$dir/api.log"; echo "gh: Branch not protected (HTTP 404)" >&2; exit 1; fi
+exit 0
+EOF
+  chmod +x "$dir/gh"
+  mkdir -p "$dir/bin" "$dir/repo"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$dir/bin/gh"; chmod +x "$dir/bin/gh"
+  git -C "$dir/repo" init -q >/dev/null 2>&1
+}
+run_base_case() { # <dir> — the SUT in the scratch repo; sets OUTB RCB
+  OUTB="$(cd "$1/repo" && PATH="$1/bin:$PATH" GH="$1/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only 2>/dev/null)"
+  RCB=$?
+}
+
+echo "== 30. the PR's baseRefName wins over the repo's configured base =="
+D30="$(fresh_stub_dir)"
+write_base_stub "$D30" '{"baseRefName":"development"}'
+mkdir -p "$D30/repo/.supervisor"; printf '{"base_branch":"release"}\n' > "$D30/repo/.supervisor/config.json"
+run_base_case "$D30"
+if [ "$RCB" -eq 0 ] && [ "$(cat "$D30/api.log" 2>/dev/null)" = "repos/acme/widgets/branches/development/protection" ]; then
+  ok "baseRefName first: protection read for development, not the configured release ($OUTB)"
+else
+  no "baseRefName precedence wrong (rc=$RCB api='$(cat "$D30/api.log" 2>/dev/null)' out='$OUTB')"
+fi
+rm -rf "$D30"
+
+echo "== 31. no baseRefName => the base from resolve-base-branch.sh (repo config) =="
+D31="$(fresh_stub_dir)"
+write_base_stub "$D31" ''
+mkdir -p "$D31/repo/.supervisor"; printf '{"base_branch":"release"}\n' > "$D31/repo/.supervisor/config.json"
+run_base_case "$D31"
+if [ "$RCB" -eq 0 ] && [ "$(cat "$D31/api.log" 2>/dev/null)" = "repos/acme/widgets/branches/release/protection" ] \
+   && grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUTB"); then
+  ok "fallback: protection read for the resolved base release ($OUTB)"
+else
+  no "resolver fallback wrong (rc=$RCB api='$(cat "$D31/api.log" 2>/dev/null)' out='$OUTB')"
+fi
+rm -rf "$D31"
+
+echo "== 32. no baseRefName and an unresolvable base => required=unknown, protection never read, no main guess =="
+D32="$(fresh_stub_dir)"
+write_base_stub "$D32" ''
+run_base_case "$D32"
+if [ "$RCB" -eq 0 ] && [ ! -s "$D32/api.log" ] && grep -qE '^SETTLED sha=deadbeef00 required=unknown' < <(printf '%s' "$OUTB"); then
+  ok "unresolved base: required=unknown, no protection read ($OUTB)"
+else
+  no "unresolved base wrong (rc=$RCB api='$(cat "$D32/api.log" 2>/dev/null)' out='$OUTB') -- must not read main's protection or claim green"
+fi
+rm -rf "$D32"
 
 echo "== 24. no state leaked into this test's cwd =="
 if [ "$LEAK_BEFORE" -eq 1 ] || [ ! -d .supervisor/check-wait ]; then ok "cwd has no new .supervisor/check-wait"; else no "state LEAKED into $(pwd)/.supervisor/check-wait"; fi

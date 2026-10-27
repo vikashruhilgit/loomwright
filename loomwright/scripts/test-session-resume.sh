@@ -658,7 +658,8 @@ make_unknown_only_fixture() { make_stranded_fixture "$1" pending; }
 copy_hook_sparse() { cp "$HOOK" "$1/session-resume.sh"; }
 copy_hook_full() {
   copy_hook_sparse "$1"
-  cp "$SCRIPT_DIR/curation-status.sh" "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$1/"
+  cp "$SCRIPT_DIR/curation-status.sh" "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" \
+    "$SCRIPT_DIR/resolve-base-branch.sh" "$1/"   # reconcile-jobs.sh's base comes from its sibling resolver
 }
 # run_alt_hook_raw <hook> <repo> <src> [env assignments...] — like run_hook_raw
 # but for a copied hook; stderr is captured to ERRFILE, rc to RCFILE.
@@ -1267,7 +1268,10 @@ make_merged_fixture() {
   ( cd "$r" && git commit -q --allow-empty -m w && git checkout -q - \
     && GIT_AUTHOR_DATE=2026-09-04T10:00:00Z GIT_COMMITTER_DATE=2026-09-04T10:00:00Z \
        git merge -q --no-ff -m "Merge pull request #42 from o/feature/example-feature" feature/example-feature \
-    && git update-ref refs/remotes/origin/main HEAD ) >/dev/null 2>&1
+    && git update-ref refs/remotes/origin/main HEAD \
+    && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main ) >/dev/null 2>&1
+  # origin/HEAD recorded as a clone records it: reconcile's base comes from resolve-base-branch.sh,
+  # which has no `main` fallback (and would otherwise try set-head -a / gh against the fake remote)
 }
 test_repaired_on_startup() {
   local r ctx
@@ -1332,7 +1336,8 @@ echo "== (z4) mutation: --repair-merged dropped from the hook ⇒ (z1) red, (o) 
 test_repair_mutation() {
   local md r ctx
   md="$(mktmp)"; copy_hook_full "$md" 2>/dev/null || cp "$HOOK" "$md/session-resume.sh"
-  cp "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$md/" 2>/dev/null || true
+  # resolve-base-branch.sh: reconcile-jobs.sh's base comes from this sibling resolver
+  cp "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$SCRIPT_DIR/resolve-base-branch.sh" "$md/" 2>/dev/null || true
   sed 's/ --repair-merged --porcelain/ --porcelain/g' "$HOOK" > "$md/session-resume.sh"
   if cmp -s "$HOOK" "$md/session-resume.sh"; then no "(z4) mutant sed changed nothing"; return; fi
   r="$(new_repo)"; make_plugin_active "$r"; make_merged_fixture "$r"

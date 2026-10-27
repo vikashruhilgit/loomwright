@@ -144,8 +144,8 @@
 #                                     default); repair ONLY the matching brief(s)
 #   reconcile-jobs.sh --print-base-ref
 #                                     print `vcs_base_ref`'s resolved remote-tracking
-#                                     base ref (origin/HEAD, else origin/main, else
-#                                     origin/development) and exit — nothing else in
+#                                     base ref (`origin/<branch>`, the branch from
+#                                     resolve-base-branch.sh) and exit — nothing else in
 #                                     this script runs. The sanctioned REUSE seam for
 #                                     a sibling that needs the same base-ref
 #                                     resolution (worktree-audit.sh's merged column,
@@ -456,11 +456,18 @@ automate_pr_for_requirement() {
 # runs in a subshell, so an assignment made there never reaches the caller and
 # the probes re-run for every brief (PR #243 review, finding 5).
 #
-# RECALL LIMIT, stated: the ref is origin/HEAD when the clone recorded it, else
-# origin/main, else origin/development. A repo whose PRs merge into a branch
-# other than the remote's default (e.g. default `main`, PRs into
-# `development`) is not seen by this arm — those briefs stay `unknown`.
-# Squash merges are seen only if the squash subject keeps the
+# The branch comes from resolve-base-branch.sh (the one resolver: the repo's
+# .supervisor/config.json `.base_branch`, else origin/HEAD, else gh — see its
+# header); this function only prefixes `origin/` and checks the ref exists.
+# Fail-SAFE: an unresolved base (`base_branch_unresolved`), an invalid config,
+# or a missing helper ⇒ no ref ⇒ briefs stay `unknown` — never an abort and
+# never a guessed `main`.
+#
+# RECALL LIMIT, stated: only merges into the RESOLVED base are seen. A repo
+# whose PRs merge into a branch other than the remote's default (e.g. default
+# `main`, PRs into `development`) is seen once that base is configured
+# (`/setup base-branch set development`); unconfigured, those briefs stay
+# `unknown`. Squash merges are seen only if the squash subject keeps the
 # `Merge pull request #N from …` shape (GitHub's default squash subject does
 # NOT), which is the same limit.
 VCS_BASE_REF=""
@@ -470,27 +477,12 @@ vcs_base_ref() {
   VCS_BASE_REF_PROBED=1
   command -v git >/dev/null 2>&1 || return 1
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
-  local ref
-  # origin/HEAD names the remote's default branch when the clone recorded it;
-  # otherwise fall back through the two bases this plugin's projects use.
-  # NOTE: on an unset origin/HEAD, `rev-parse --abbrev-ref` exits 128 AND
-  # echoes the literal `origin/HEAD` to stdout — so the name it returns is
-  # verified before it is trusted, or the fallback below would never run.
-  ref="$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || true)"
-  case "$ref" in
-    origin/HEAD|"") ref="" ;;
-    origin/?*) git rev-parse -q --verify "$ref" >/dev/null 2>&1 || ref="" ;;
-    *) ref="" ;;
-  esac
-  if [ -z "$ref" ]; then
-    for ref in origin/main origin/development; do
-      git rev-parse -q --verify "$ref" >/dev/null 2>&1 && break
-      ref=""
-    done
-  fi
-  [ -n "$ref" ] || return 1
-  git rev-parse -q --verify "$ref" >/dev/null 2>&1 || return 1
-  VCS_BASE_REF="$ref"
+  local b
+  # $_bp_dir is this script's own directory (set above for brief-pointer.sh)
+  b="$(bash "$_bp_dir/resolve-base-branch.sh" </dev/null 2>/dev/null)" || return 1
+  [ -n "$b" ] || return 1
+  git rev-parse -q --verify "refs/remotes/origin/$b" >/dev/null 2>&1 || return 1
+  VCS_BASE_REF="origin/$b"
   return 0
 }
 

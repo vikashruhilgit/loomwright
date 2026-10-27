@@ -58,8 +58,10 @@
 #       lane / gap adjudications both ways, Option C's reason per kind, a budget checkpoint), FINALIZE
 #       (B12–B15: pre-merge points 2–4 and a missing worktree, point 5's answers / --non-interactive /
 #       --skip-children-check, a conflict, a refused re-fold, write-marker refusals), the inline paths
-#       (B16), every step-6.5 branch (B17) and the step-4 .gitignore bootstrap under `/setup memory`'s
-#       managed block (B18).
+#       (B16), every step-6.5 branch (B17), the step-4 .gitignore bootstrap under `/setup memory`'s
+#       managed block (B18), and the base through resolve-base-branch.sh (B20: origin/HEAD →
+#       development publishes `--base development`; an invalid brief `Base Branch:` / an unresolvable
+#       base stops init with the resolver's status token, the brief unmoved).
 #   P   PUBLISH ORDER (AC3). Every publish spawn a golden case prints is printed with the finalize-gate
 #       marker on disk naming HEAD; guard-finalize-publish.sh and check-children-settled.sh are
 #       byte-unchanged since the merge-base with origin/main (skipped, uncounted, without that ref).
@@ -85,6 +87,8 @@
 #         M2d an interactive adjudication auto-picks option A      ⇒ A5
 #         MB  brace expansion left on (`set -B`)                    ⇒ K
 #         MG  step 4 back on the exact-line .gitignore test          ⇒ B18
+#         MBA init's resolver call replaced by the literal `main`    ⇒ B20 (development publish)
+#         MBB the resolver call drops `--brief`                     ⇒ B20 (invalid brief stop)
 #
 # ENV: SN_CASES="<a> <b>" runs only those golden cases (G only); SN_SKIP_MUTANTS=1 skips M.
 #   SN_WRITE_EXPECTED=1 (authoring only, honoured only together with SN_CASES): each selected case's
@@ -932,6 +936,9 @@ b18_append() { # <driver> <.gitignore before: printf format, or - for none> <wan
   if [ "${4:-}" = norepo ]; then
     rm -rf "$CASE_ROOT/.git"
     ! in_case /dev/null git rev-parse --git-dir >/dev/null 2>&1 || { LEG_MSG="the scratch still sits inside a git repo"; return 1; }
+    # no repo ⇒ no origin/HEAD: the base comes from the config key (resolve-base-branch.sh has no
+    # `main` fallback — an unconfigured non-repo init stops with base_branch_unresolved)
+    printf '{"base_branch":"main"}\n' > "$CASE_ROOT/.supervisor/config.json"
   fi
   printf "$3" > "$CASE_DIR/gitignore.want"
   b18_init_twice "$1"
@@ -972,6 +979,88 @@ if b_fin finalize-pr-base-verified; then
     && ok "B19: the hand-over ⇒ one script event pass ok (closes the run's open threads)" \
     || no "B19: hand-over ⇒ '$(printf '%s' "$NC_OUT" | head -c 120)' events '$(sn_ev)'"
 else no "B19: finalize scratch not built"; fi
+
+# B20 — the base through resolve-base-branch.sh (configurable-base AC1 / AC9). b20_dev: origin/HEAD →
+# `development`, no .supervisor/config.json and no `Base Branch:` line ⇒ the run acquires, finalizes and
+# publishes against development (`gh pr create --base development`). b20_stop: an invalid brief
+# `Base Branch:` / an unresolvable base (no origin, a gh that fails, no config) ⇒ init stops with the
+# resolver's status token — exit 1, nothing printed, the brief left in pending/ (never a `main` guess).
+b20_dev() { # <driver> — sets LEG_MSG on failure
+  local d="$1" j=".supervisor/jobs/pending/2026-10-17-golden-finalize.md"
+  new_scratch "$FIX/finalize-pr-base-verified" || { LEG_MSG="scratch not built"; return 1; }
+  in_case /dev/null bash -c 'git push -q origin main:development && git -C "$1" symbolic-ref HEAD refs/heads/development \
+      && git fetch -q origin && git remote set-head origin -a' _ "$CASE_DIR/origin.git" >/dev/null 2>&1 \
+    || { LEG_MSG="origin/HEAD → development not set up"; return 1; }
+  [ "$(in_case /dev/null git symbolic-ref -q --short refs/remotes/origin/HEAD)" = origin/development ] \
+    || { LEG_MSG="origin/HEAD does not name origin/development"; return 1; }
+  ! grep -q 'Base Branch' "$CASE_ROOT/$j" && [ ! -e "$CASE_ROOT/.supervisor/config.json" ] \
+    || { LEG_MSG="the brief or a config names the base — the leg must rest on origin/HEAD alone"; return 1; }
+  sn_call "$d" --job "$j" --skip-preflight-sync
+  sn_call "$d" --result '{"confirmed":true}'
+  sn_call "$d" --result '{"confirmed":true}'
+  jqo '.step == "execute" and .do == "spawn"' || { LEG_MSG="no execute spawn: $(printf '%s' "$NC_OUT" | head -c 160) $(head -c 160 "$CASE_DIR/nc.err")"; return 1; }
+  [ "$(jq -r '.base_branch // empty' "$CASE_ROOT/.supervisor/logs/$CASE_SID.supervisor-next-step.json" 2>/dev/null)" = development ] \
+    && in_case /dev/null git rev-parse -q --verify refs/heads/development >/dev/null 2>&1 \
+    || { LEG_MSG="init did not record development as the base (or acquire did not check it out)"; return 1; }
+  in_case /dev/null bash -c 'printf "driver\n" > driver.sh' || { LEG_MSG="driver.sh not written"; return 1; }
+  sn_call "$d" --result '{"subtask":"1","agent_id":"ac394bd015ea3ff94","status":"completed","gates":"passed"}'
+  in_case /dev/null bash -c 'git add -A && git commit -qm "feat: golden"' >/dev/null 2>&1 || { LEG_MSG="commit failed"; return 1; }
+  sn_call "$d" --result '{"merged":[],"conflict":null,"refold":"ok"}'
+  jqo '.what == "finalize-publish" and .base_branch == "development"
+      and ([.commands[] | select(startswith("gh pr create --base development "))] | length) == 1' \
+    || { LEG_MSG="publish spawn: $(printf '%s' "$NC_OUT" | head -c 240)"; return 1; }
+}
+b20_stop() { # <driver> <invalid|unresolved> — sets LEG_MSG on failure
+  local d="$1" j=".supervisor/jobs/pending/2026-10-17-golden-tokens.md" want
+  new_scratch "$FIX/init-flags-max-tokens" || { LEG_MSG="scratch not built"; return 1; }
+  case "$2" in
+    invalid) want='base_branch_invalid:brief'
+      awk '{ print } $0 == "## Configuration" { print "- **Base Branch:** bad..name" }' "$CASE_ROOT/$j" > "$CASE_DIR/brief" \
+        && mv "$CASE_DIR/brief" "$CASE_ROOT/$j" && grep -qF 'Base Branch:** bad..name' "$CASE_ROOT/$j" \
+        || { LEG_MSG="invalid Base Branch: not written"; return 1; } ;;
+    unresolved) want='base_branch_unresolved'
+      in_case /dev/null git remote remove origin >/dev/null 2>&1 || { LEG_MSG="origin not removed"; return 1; } ;;
+  esac
+  sn_call "$d" --job "$j"
+  [ "$NC_RC" = 1 ] && [ -z "$NC_OUT" ] || { LEG_MSG="$2: exit $NC_RC, printed '$(printf '%s' "$NC_OUT" | head -c 120)'"; return 1; }
+  grep -qF -- "$want" "$CASE_DIR/nc.err" || { LEG_MSG="$2: stderr lacks $want: $(head -c 200 "$CASE_DIR/nc.err")"; return 1; }
+  [ -f "$CASE_ROOT/$j" ] && [ ! -e "$CASE_ROOT/.supervisor/jobs/in-progress/${j##*/}" ] || { LEG_MSG="$2: the brief was moved"; return 1; }
+}
+LEG_MSG=""
+if b20_dev "$DRIVER"; then ok "B20: origin/HEAD → development, no config, no Base Branch: ⇒ the publish spawn runs gh pr create --base development"
+else no "B20: origin/HEAD development: $LEG_MSG"; fi
+for b20c in invalid unresolved; do
+  LEG_MSG=""
+  if b20_stop "$DRIVER" "$b20c"; then ok "B20: $b20c base ⇒ init stops with the resolver's status token (exit 1, nothing printed, the brief unmoved)"
+  else no "B20: $b20c: $LEG_MSG"; fi
+done
+# b20_acquire <driver> <resolves|unresolved> — acquire reads the base init recorded and resolves only when
+# that state value is empty: with it deleted from the sidecar, acquire re-resolves (origin/HEAD → main) and
+# records it; with origin gone too, acquire stops with base_branch_unresolved (exit 1, nothing printed)
+b20_acquire() {
+  local d="$1" j=".supervisor/jobs/pending/2026-10-17-golden-tokens.md" sc
+  new_scratch "$FIX/init-flags-max-tokens" || { LEG_MSG="scratch not built"; return 1; }
+  sn_call "$d" --job "$j"
+  jqo '.do == "spawn" and .step == "init"' || { LEG_MSG="no init spawn: $(head -c 160 "$CASE_DIR/nc.err")"; return 1; }
+  sc="$CASE_ROOT/.supervisor/logs/$CASE_SID.supervisor-next-step.json"
+  jq -e '.base_branch == "main"' "$sc" >/dev/null 2>&1 || { LEG_MSG="init did not record main"; return 1; }
+  jq 'del(.base_branch)' "$sc" > "$sc.t" && mv "$sc.t" "$sc" || { LEG_MSG="sidecar not edited"; return 1; }
+  if [ "$2" = unresolved ]; then
+    in_case /dev/null git remote remove origin >/dev/null 2>&1 || { LEG_MSG="origin not removed"; return 1; }
+  fi
+  sn_call "$d" --result '{"confirmed":true}'
+  case "$2" in
+    resolves) [ "$NC_RC" = 0 ] && jq -e '.base_branch == "main"' "$sc" >/dev/null 2>&1 \
+      || { LEG_MSG="acquire rc $NC_RC, base_branch '$(jq -r '.base_branch // empty' "$sc" 2>/dev/null)': $(head -c 160 "$CASE_DIR/nc.err")"; return 1; } ;;
+    unresolved) [ "$NC_RC" = 1 ] && [ -z "$NC_OUT" ] && grep -qF base_branch_unresolved "$CASE_DIR/nc.err" \
+      || { LEG_MSG="acquire rc $NC_RC, printed '$(printf '%s' "$NC_OUT" | head -c 80)': $(head -c 160 "$CASE_DIR/nc.err")"; return 1; } ;;
+  esac
+}
+for b20c in resolves unresolved; do
+  LEG_MSG=""
+  if b20_acquire "$DRIVER" "$b20c"; then ok "B20: acquire with no recorded base ⇒ $b20c (the resolver, called only when the state value is empty)"
+  else no "B20: acquire $b20c: $LEG_MSG"; fi
+done
 
 echo "-- V. Validation 3: one item from Phase 0 to the Phase 4.5 hand-over (hermetic)"
 if golden_case validation-3-drive "$DRIVER"; then
@@ -1037,6 +1126,14 @@ if [ "${SN_SKIP_MUTANTS:-}" != 1 ]; then
   if m="$(build_mutant G '    git check-ignore -q --no-index "$gp" >/dev/null 2>&1' '    (exit 128)')"; then
     LEG_MSG=""; if b18_managed "$m"; then no "MG: B18 stayed green on the exact-line test"; else ok "MG: the exact-line test restored ⇒ B18 red ($LEG_MSG)"; fi
   else no "MG: mutant not built"; fi
+  # MBA — init's resolver call replaced by the literal `main` ⇒ B20's development publish red
+  if m="$(build_mutant BA '  sn_resolve_base "$jp" || return 1' '  SN_BASE=main')"; then
+    LEG_MSG=""; if b20_dev "$m"; then no "MBA: B20 stayed green with init's base hardcoded to main"; else ok "MBA: init's base hardcoded to main ⇒ B20 red ($LEG_MSG)"; fi
+  else no "MBA: mutant not built"; fi
+  # MBB — the resolver call drops the brief (`--brief`) ⇒ B20's invalid-brief stop red
+  if m="$(build_mutant BB '--brief "$1" ' '')"; then
+    LEG_MSG=""; if b20_stop "$m" invalid; then no "MBB: B20 stayed green with the brief not passed to the resolver"; else ok "MBB: the brief not passed ⇒ B20 invalid-brief red ($LEG_MSG)"; fi
+  else no "MBB: mutant not built"; fi
   # MR — the plan step spawns code-reviewer instead of orchestrator ⇒ R red
   if m="$(build_mutant R 'sn_spawn plan orchestrator plan-result' 'sn_spawn plan code-reviewer plan-result')"; then
     LEG_MSG=""; if leg_reviewer "$m" "$INSTR"; then no "MR: R stayed green with a code-reviewer spawn"; else ok "MR: a code-reviewer spawn ⇒ R red ($LEG_MSG)"; fi
