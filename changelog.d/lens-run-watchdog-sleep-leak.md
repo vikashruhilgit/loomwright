@@ -1,3 +1,0 @@
-<!-- bump: patch -->
-lens-run.sh no longer leaves its timeout watchdog's sleep running after every lens run
-The CLI watchdog slept in the foreground, and killing the watchdog subshell does not kill that running child, so every lens run left one `sleep $LOOMWRIGHT_LENS_CLI_TIMEOUT` (300 s by default) re-parented to pid 1. `test-lens-run.sh` and `test-lens-compare.sh` left nine of them per suite run, which failed `scripts/ci-local.sh`'s leak gate on every full local run since 2026-10-26 and blocked `wave-build`. The watchdog now sleeps in the background and its TERM trap kills the sleep; test-lens-run case D2 asserts that a CLI ending before the bound leaves no `sleep <bound>` behind, and fails against the old watchdog.
