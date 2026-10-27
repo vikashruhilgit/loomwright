@@ -12,9 +12,11 @@
 # Output (ONE JSON object on stdout, always exit 0):
 #   {"high_risk": true|false|null,
 #    "reasons": ["path: <file> matched <pattern>", "content: N changed line(s) matched <pattern>",
-#                "size: changed_lines N > 400", "project: <file> matched <glob>", ...],
+#                "size: changed_lines N > 400", "trusted-root: <file>",
+#                "project: <file> matched <glob>", ...],
 #    "changed_files": N, "changed_lines": N, "source": "classify-risk.sh"}
-#   Reasons are prefixed `path:` / `content:` / `size:` / `project:`, name the matched pattern, are
+#   Reasons are prefixed `path:` / `content:` / `size:` / `trusted-root:` / `project:`, name the
+#   matched pattern (a `trusted-root:` reason names the lowercased changed path itself), are
 #   deduplicated, and are capped at 20 followed by one `+N more` entry.
 #
 # The heuristic (verbatim from the lens; `--kind-table` prints it from the SAME data lists below):
@@ -33,8 +35,14 @@
 #       lens always diffed.
 #   "content" means the ADDED and REMOVED lines of that diff (not context lines and not the diff
 #   headers — otherwise every path match would double as a content match).
+#   trusted-root — the instruction / config files a PR is judged by. The names live ONLY in the two
+#       data lists below: TRUSTED_ROOT_ANYDEPTH (exact basename at any depth) and
+#       TRUSTED_ROOT_ROOTONLY (repo root only: exact path, or under a `/`-terminated directory).
+#       Matched case-insensitively against BOTH sides of a rename (`git diff --name-only
+#       --no-renames -z <base>...<head>`), never as a substring. One `trusted-root: <lowercased
+#       path>` reason per matching path.
 #
-# Project extension — `<root>/.agent/risk.json` (committed, ADD-ONLY; owner decision R5):
+# Project extension — `.agent/risk.json` at `<base_ref>` (committed, ADD-ONLY; owner decision R5):
 #   {"schema_version": 1, "paths": ["billing/**"], "content": ["stripe"]}
 #   `paths[]` are shell `case` patterns matched against each changed path lowercased (so `*` and
 #   `**` BOTH match across `/`, `?` matches one character, `[..]` is a class); `content[]` are
@@ -43,8 +51,11 @@
 #   an `exclude` key present is ignored with `risk_json_exclude_ignored` on stderr, never honoured.
 #   Malformed file (invalid JSON, non-object root, `paths`/`content` not an array of strings,
 #   `schema_version` present but not 1) ⇒ generic-only result + `risk_json_malformed` on stderr —
-#   never a failure and never `null`. Absent file ⇒ silent generic-only. `--root` decides where the
-#   file is read from.
+#   never a failure and never `null`. Absent at `<base_ref>` (`git cat-file -e` fails) ⇒ silent
+#   generic-only. The file is read ONLY from `<base_ref>` (`git -C <root> show`), never from the
+#   working tree or `<head_ref>`, so a PR cannot drop an entry and change the guarded path in one
+#   diff; `--root` picks the repository only. A present blob that `git show` cannot read ⇒
+#   `unclassifiable: git_failed` (null), never a silent drop of the project's entries.
 #
 # Failure-mode split (CLAUDE.md §"Failure-Mode Invariants"): this script is a fail-SAFE EMITTER —
 # it always exits 0. `high_risk: null` + `reasons: ["unclassifiable: <reason>"]` + the reason on
@@ -61,7 +72,10 @@
 # own content begins with `++` (or a REMOVED one beginning `--`) diffs as `+++…`/`---…`, is
 # indistinguishable from a file header, and is not counted (nor content-matched). In an
 # agent-orchestration repo (this one) nearly every PR touches agents/, commands/ or skills/, so
-# nearly every PR is high-risk by construction — that is the owner's intent (R5), not a bug.
+# nearly every PR is high-risk by construction — that is the owner's intent (R5), not a bug. The
+# same holds for trusted-root: any PR touching a CLAUDE.md (at any depth) parks the merge gate.
+# Trusted-root matching is by name only — an instruction file under any other name (an `@`-import
+# target, a skill file outside the listed paths) is caught only if a generic branch catches it.
 #
 # Co-located static suite: test-classify-risk.sh.
 #
@@ -83,6 +97,10 @@ SELF="classify-risk.sh"
 GENERIC_GLOBS='*auth* *authz* *security* *crypto* *secret* *token* *payment* migrations/ *migration*'
 GENERIC_DIRS='.github/workflows/ hooks/ agents/ commands/ command-parts/ skills/'
 GENERIC_WORDS='workflow automation orchestration'
+# Trusted-root surfaces — the files that carry the rules a PR is judged by. PLAIN words (no `*`, `?`
+# or `[`), so noglob never touches them: the any-depth rule is a `case` on `*/<name>` built in code.
+TRUSTED_ROOT_ANYDEPTH='CLAUDE.md AGENTS.md REVIEW.md CLAUDE.local.md'
+TRUSTED_ROOT_ROOTONLY='.claude/ .mcp.json .agent/rules/ .agent/risk.json .agent/verify.json'
 SIZE_LINES=400
 SIZE_FILES=15
 REASON_CAP=20
@@ -106,7 +124,8 @@ print_kind_table() {
     "| (b) workflow / orchestration words | $(list_as_code "$GENERIC_WORDS") | changed path OR changed line, case-insensitive substring | \`path:\` / \`content:\` |" \
     "| (c) size | \`changed_lines > $SIZE_LINES\` | added+removed lines of \`git diff <base>...<head>\` (\`+++\`/\`---\` headers excluded) | \`size:\` |" \
     "| (c) size | \`changed_files > $SIZE_FILES\` | line count of \`git diff <base>...<head> --name-only\` | \`size:\` |" \
-    '| project (add-only) | `.agent/risk.json` `paths[]` (`case` globs — `*`/`**` match across `/`) and `content[]` (literal words, case-insensitive) | changed path / changed line; NO `exclude` key (R5) | `project:` |'
+    "| trusted-root (instruction / config) | any depth: $(list_as_code "$TRUSTED_ROOT_ANYDEPTH"); repo root only: $(list_as_code "$TRUSTED_ROOT_ROOTONLY") | changed path on either side of a rename (\`--no-renames\`), case-insensitive: exact path, under a \`/\`-terminated directory, or exact basename for the any-depth names — never a substring | \`trusted-root:\` |" \
+    '| project (add-only) | `.agent/risk.json` at `<base_ref>` `paths[]` (`case` globs — `*`/`**` match across `/`) and `content[]` (literal words, case-insensitive) | changed path / changed line; read from `<base_ref>` only, never the working tree; NO `exclude` key (R5) | `project:` |'
 }
 
 # ---------------------------------------------------------------------------
@@ -241,10 +260,47 @@ done
 [ "$changed_files" -gt "$SIZE_FILES" ] && reason "size: changed_files $changed_files > $SIZE_FILES"
 
 # ---------------------------------------------------------------------------
-# Project extension — .agent/risk.json (add-only; strict shape; never trusted as code)
+# trusted-root — instruction / config surfaces. Its own path list: `--no-renames` reports BOTH
+# sides of a rename (a root-only `.mcp.json` moved to `config/mcp.json` must still be seen), and
+# `-z` keeps paths verbatim (no core.quotePath quoting that would hide a basename).
 # ---------------------------------------------------------------------------
-rj="$root/.agent/risk.json"
-if [ -f "$rj" ]; then
+if ! git -C "$root" diff --name-only --no-renames -z "$base...$head" > "$tmp/trpaths" 2>"$tmp/err"; then
+  emit_unclassifiable "git_failed" "$(head -c 200 "$tmp/err" | tr '\n' ' ')"
+fi
+tr '[:upper:]' '[:lower:]' < "$tmp/trpaths" > "$tmp/ltrpaths"
+TR_ANY_L="$(printf '%s' "$TRUSTED_ROOT_ANYDEPTH" | tr '[:upper:]' '[:lower:]')"
+TR_ROOT_L="$(printf '%s' "$TRUSTED_ROOT_ROOTONLY" | tr '[:upper:]' '[:lower:]')"
+
+# trusted_root_hit <lowercased path> — 0 when it is a trusted-root surface. Exact / prefix / basename
+# `case` arms only, never a substring.
+trusted_root_hit() {
+  local n
+  for n in $TR_ANY_L; do
+    case "$1" in "$n"|*/"$n") return 0 ;; esac
+  done
+  for n in $TR_ROOT_L; do
+    case "$n" in
+      */) case "$1" in "$n"*) return 0 ;; esac ;;
+      *)  case "$1" in "$n") return 0 ;; esac ;;
+    esac
+  done
+  return 1
+}
+while IFS= read -r -d '' p; do
+  [ -z "$p" ] && continue
+  trusted_root_hit "$p" && reason "trusted-root: $p"
+done < "$tmp/ltrpaths"
+
+# ---------------------------------------------------------------------------
+# Project extension — .agent/risk.json at <base_ref> (add-only; strict shape; never trusted as code).
+# Read from the BASE ref only — the working tree and <head_ref> are the PR's own and never read.
+# ---------------------------------------------------------------------------
+rj_label="$base:.agent/risk.json"
+if git -C "$root" cat-file -e "$base:.agent/risk.json" 2>/dev/null; then
+  rj="$tmp/base-risk.json"
+  if ! git -C "$root" show "$base:.agent/risk.json" > "$rj" 2>"$tmp/err"; then
+    emit_unclassifiable "git_failed" "base risk.json unreadable: $(head -c 200 "$tmp/err" | tr '\n' ' ')"
+  fi
   shape="$(jq -r '
     if type != "object" then "malformed"
     elif (has("schema_version") and .schema_version != 1) then "malformed"
@@ -252,10 +308,10 @@ if [ -f "$rj" ]; then
     elif (has("content") and ((.content|type) != "array" or any(.content[]; type != "string"))) then "malformed"
     else "ok" end' "$rj" 2>/dev/null || echo malformed)"
   if [ "$shape" != "ok" ]; then
-    printf '%s: risk_json_malformed — %s ignored (expected {"schema_version":1,"paths":[..],"content":[..]}); generic heuristic only\n' "$SELF" "$rj" >&2
+    printf '%s: risk_json_malformed — %s ignored (expected {"schema_version":1,"paths":[..],"content":[..]}); generic heuristic only\n' "$SELF" "$rj_label" >&2
   else
     if jq -e 'has("exclude")' "$rj" >/dev/null 2>&1; then
-      printf '%s: risk_json_exclude_ignored — %s carries an "exclude" key; projects may only ADD surfaces (R5), the key is ignored\n' "$SELF" "$rj" >&2
+      printf '%s: risk_json_exclude_ignored — %s carries an "exclude" key; projects may only ADD surfaces (R5), the key is ignored\n' "$SELF" "$rj_label" >&2
     fi
     # paths[]: case patterns against the lowercased changed path — matched with `case`, never eval.
     while IFS= read -r g; do
