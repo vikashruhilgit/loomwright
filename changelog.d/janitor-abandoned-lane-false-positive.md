@@ -1,0 +1,3 @@
+<!-- bump: patch -->
+Janitor no longer offers lane-remove for a lane already removed with --abandon
+`lane-remove --abandon` writes `abandoned` to the lane table after its `rm -rf`, but `janitor-report.sh` skipped only `removed` lanes with no directory, so every abandoned lane stayed an actionable lane-remove row reading "its clone still on disk" and `act` could only fail with `not a lane`. The lanes group now skips `removed` and `abandoned` alike once the directory is gone, and keeps an abandoned lane still on disk as a lane-remove row. `test-janitor-report.sh` pins both cases with a new leg and a mutation control.

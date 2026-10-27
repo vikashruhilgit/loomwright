@@ -48,6 +48,8 @@
 #        this call"), and both merged worktrees are gone.
 #   leg_act_lane_remove  a lane whose run says done is a lane-remove row; `act --confirm` removes its clone
 #        (salvage kept, the lane table says removed) and leaves the other lanes.
+#   leg_abandoned_removed  a lane the table says `abandoned` (what `lane-remove --abandon` writes after its
+#        rm -rf) makes no row once its dir is gone, and stays a lane-remove row while its dir is on disk.
 #   leg_act_config_restore  the stranded backup of a done run under a dead-holder lock is config-restore;
 #        `act --confirm` puts config.json back byte-for-byte and removes the backup.
 #   leg_nostatus  a dead-holder lock >= 1800s whose run file states no `## Status:`, and a config backup whose
@@ -611,6 +613,22 @@ leg_act_lane_remove() {
   leg_end
 }
 
+leg_abandoned_removed() {
+  local js l5 l6
+  mk_fixture --lanes
+  # L5: abandoned and its dir gone (lane-remove --abandon ran); L6: abandoned but its dir still on disk
+  l5="$P-lanes/fx-wave/L5"; l6="$P-lanes/fx-wave/L6"; mkdir -p "$l6/.supervisor/automate"
+  # pid / pid_start / session_id filled as lane-remove leaves them: an empty column collapses in lane-status's read
+  printf 'L5\t%s\t.supervisor/requirements/a.md\tfx-wave-L5\t%s\t%s\tsess-L5\tabandoned\t2001-01-01T00:00:00Z\t-\n' "$l5" "$(dead_pid)" "$FAKE_LSTART" >> "$P/.supervisor/automate/fx-wave.lanes"
+  printf 'L6\t%s\t.supervisor/requirements/b.md\tfx-wave-L6\t%s\t%s\tsess-L6\tabandoned\t2001-01-01T00:00:00Z\t-\n' "$l6" "$(dead_pid)" "$FAKE_LSTART" >> "$P/.supervisor/automate/fx-wave.lanes"
+  js="$(jr --root "$P" --json 2>/dev/null)"
+  check "leg_abandoned_removed an abandoned lane whose dir is gone makes no lanes row" \
+    eq "$(nrows "$js" '.group == "lanes" and .what == "lane L5 of fx-wave"')" 0
+  check "leg_abandoned_removed ... an abandoned lane still on disk stays a lane-remove row" \
+    eq "$(nrows "$js" '.group == "lanes" and .what == "lane L6 of fx-wave" and .action == "lane-remove"')" 1
+  leg_end
+}
+
 leg_act_config_restore() {
   local js id out cfg bak
   mk_fixture
@@ -712,7 +730,7 @@ leg_usage() {
 
 # ==== run the legs against the real script ===============================================================
 echo "== janitor-report.sh =="
-for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_host_session leg_snapshot_fail leg_reap_host leg_sweep_set leg_lock_reclaim leg_act_reap leg_act_sweep leg_act_lane_remove leg_act_config_restore leg_nostatus leg_cfg_unjudged leg_meta_push_failed leg_usage; do
+for leg in leg_report_fixture leg_report_only leg_noninteractive leg_act_stop leg_act_recycled leg_live_session leg_host_session leg_snapshot_fail leg_reap_host leg_sweep_set leg_lock_reclaim leg_act_reap leg_act_sweep leg_act_lane_remove leg_abandoned_removed leg_act_config_restore leg_nostatus leg_cfg_unjudged leg_meta_push_failed leg_usage; do
   LEG_FAIL=0; S="$SUT_REAL"; t0="$(date +%s)"; "$leg"; echo "  ($leg: $(( $(date +%s) - t0 ))s)"
 done
 
@@ -790,6 +808,9 @@ mk_mutant mpfread sub 'l="$(bash "$JR_AH" meta-push-failed "$ad/$run.md" 2>/dev/
 run_mutant "the mpf row's automate-helpers.sh meta-push-failed read dropped (evidence falls back to the marker path)" leg_meta_push_failed
 mk_mutant mpfaction sub '"${l:-$m}" none' '"${l:-$m}" stop-unregistered'
 run_mutant "the mpf row's none action flipped to stop-unregistered (act would act on a report-only marker)" leg_meta_push_failed
+
+mk_mutant abandongone sub 'removed|abandoned) [ -d "$path" ] || continue' 'removed) [ -d "$path" ] || continue'
+run_mutant "an abandoned lane with its dir gone no longer skipped (a removed lane offered for lane-remove)" leg_abandoned_removed
 
 echo
 echo "test-janitor-report.sh: $pass passed, $fail failed"
