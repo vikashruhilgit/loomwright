@@ -1,3 +1,0 @@
-<!-- bump: patch -->
-The dismissed-finding follow-up option no longer promises a queue item
-The `/automate` decision step's `Follow-up (keep draft)` note read "0 min now (+ a future queue item)", but nothing creates that item: a follow-up decision only rewrites the draft's Decision line, `dismissed-pending` stops counting it and intake skips `proposed/`, so 177 follow-up drafts piled up unread by 2026-10-27. The note now says the draft is kept in `proposed/` and nothing is enqueued, and the decision step's honest limits say the same. Tracking follow-ups as work (a `/backlog` state and a promotion verb) is a separate requirement.
