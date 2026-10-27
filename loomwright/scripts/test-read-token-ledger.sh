@@ -697,6 +697,18 @@ grep -qxF "| ↳ Build | 10-20 10:10:00 → 10:30:00 | 20m 0s | 200 (main 200) |
   && ok "no session-log rows ⇒ falls back to the FINALIZE: Progress line (older inline runs keep working)" \
   || no "fallback Build row: $(pi_rows_after '| **.supervisor/requirements/f.md** |' | grep -F '↳ Build')"
 rm -rf "$PIN"
+# mixed: pr_created present but no FINISHED reviewer span (interrupted right after the PR)
+# ⇒ Build still ends at the hook row; Phase 4.5 is one row with no iteration sub-rows
+PIN="$(mktemp -d)"; mkdir -p "$PIN/.supervisor/logs"; cp "$PIF/session-logs/sf.owner" "$PIN/.supervisor/logs/"
+grep -v '"agent_id":"r[12]"' "$PIF/session-logs/sf.jsonl" > "$PIN/.supervisor/logs/sf.jsonl"
+pi_run "$SUT" --per-item "$PIF/run-fresh.md" --root "$PIN" --projects-dir "$PIP"
+pi_m="$(pi_rows_after '| **.supervisor/requirements/f.md** |')"
+grep -qxF "| ↳ Build | 10-20 10:10:00 → 10:40:00 | 30m 0s | 200 (main 200) | 2 (main 2) | 1 | 200 | — |" <<<"$pi_m" \
+  && grep -qxF "| ↳ Phase 4.5 | 10-20 10:40:00 → 11:00:00 | 20m 0s | 1200 (main 1200) | 12 (main 12) | 3 | 500 | — |" <<<"$pi_m" \
+  && ! grep -qF '| ↳ ↳ ' <<<"$pi_m" \
+  && ok "pr_created without a finished reviewer span ⇒ Build from the hook row, one Phase 4.5 row, no iteration sub-rows" \
+  || no "mixed hook case: $(printf '%s\n' "$pi_m" | grep -E 'Build|Phase 4.5|iter')"
+rm -rf "$PIN"
 
 echo "== PI11. existing modes unchanged by the per-item flags (AC5) =="
 mr_out="$(bash "$SUT" --session sa --root "$PI/p" --projects-dir "$PIP")"
