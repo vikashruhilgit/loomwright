@@ -271,7 +271,9 @@ rec_branch() { local b; b="$(state_get branch)"; [ -n "$b" ] || die "refused: no
 # ---- repo facts ----------------------------------------------------------------------------------
 default_branch() {
   local d; d="$(state_get default)"
-  [ -n "$d" ] || { d="$(g symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"; d="${d#origin/}"; }
+  # the middle step is the one resolver (config .base_branch > origin/HEAD > gh); empty on its
+  # base_branch_unresolved / _invalid, so the ls-remote step below still runs (no `main` guess)
+  [ -n "$d" ] || d="$(bash "$HERE/resolve-base-branch.sh" --repo "$ROOT" </dev/null 2>/dev/null)"
   [ -n "$d" ] || d="$(g ls-remote --symref origin HEAD 2>/dev/null | sed -n 's|^ref: refs/heads/\([^	]*\)	HEAD$|\1|p' | head -n 1)"
   printf '%s' "$d"
 }

@@ -1124,6 +1124,14 @@ if build_mutant "$MUT" 's/^  need_preflight; need protect PASS WAIVED$/  need_pr
   else no "mutation control REFUTED: the PASS-only gate let mode-pr through after WAIVED (rc=$RC)"; fi
 else no "mutation control (protect PASS-only gate) did not build — counts as FAIL"; fi
 
+echo "== 31. default_branch: its origin/HEAD step is resolve-base-branch.sh (a configured base wins) =="
+# The middle step of default_branch() asks the one resolver, so a `.supervisor/config.json` `.base_branch`
+# names the default; with no config the resolver reads origin/HEAD (the clone's `main`) as before.
+mkworld; mb A plan
+{ [ "$RC" -eq 0 ] && has "default branch: main"; }; check $? "no config: plan reads the default branch main through the resolver (origin/HEAD) (rc=$RC)"
+mkworld; mkdir -p "$W/A/.supervisor"; printf '{"base_branch":"development"}\n' > "$W/A/.supervisor/config.json"; mb A plan
+{ [ "$RC" -eq 0 ] && has "default branch: development"; }; check $? "config .base_branch development: plan's default branch is the resolved development, not origin/HEAD's main (rc=$RC)"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

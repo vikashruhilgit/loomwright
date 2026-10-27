@@ -533,9 +533,9 @@ note() {
 }
 
 # _wta_base_ref — the sibling reconcile-jobs.sh's `vcs_base_ref` resolution
-# (origin/HEAD, else origin/main, else origin/development), REUSED via its
+# (`origin/<branch>`, the branch from resolve-base-branch.sh), REUSED via its
 # `--print-base-ref` seam rather than re-derived here (queue-hygiene/01: one
-# fallback ladder, one home). Empty on any failure (sibling missing, no git,
+# base resolution, one home). Empty on any failure (sibling missing, no git,
 # no resolvable base) — the `merged`/`salvage` columns then simply never
 # appear, which is the same fail-toward-under-report posture as the rest of
 # this file.

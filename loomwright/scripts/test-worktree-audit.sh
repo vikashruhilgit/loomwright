@@ -674,8 +674,12 @@ col() { printf '%s' "$1" | awk -F'\t' -v n="$2" '{print $n}'; }
 
 qh_repo() {
   local r; r="$(new_repo)"
+  # origin/HEAD recorded as a clone records it: the base comes from
+  # resolve-base-branch.sh, which would otherwise try `git remote set-head
+  # origin -a` / `gh repo view` against the (fake) GitHub remote — a network call
   ( cd "$r" && git remote add origin https://github.com/acme/widgets.git 2>/dev/null
-    git -C "$r" update-ref refs/remotes/origin/main HEAD ) >/dev/null 2>&1
+    git -C "$r" update-ref refs/remotes/origin/main HEAD
+    git -C "$r" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main ) >/dev/null 2>&1
   printf '%s' "$r"
 }
 

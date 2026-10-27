@@ -323,16 +323,23 @@ preflight_cmd() {
   fi
   head_sha="$(git -C "$repo" rev-parse --verify -q "$branch^{commit}" 2>/dev/null)" \
     || head_sha="$(git -C "$repo" rev-parse --verify -q HEAD 2>/dev/null)" || head_sha=""
-  base="$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
-  [ -n "$base" ] || base="main"
-  base_sha="$(git -C "$repo" rev-parse --verify -q "origin/$base^{commit}" 2>/dev/null)" \
-    || base_sha="$(git -C "$repo" rev-parse --verify -q "$base^{commit}" 2>/dev/null)" || base_sha=""
+  # the base from the one resolver (resolve-base-branch.sh); empty when it is unresolved / invalid
+  base="$(bash "$HERE/resolve-base-branch.sh" --repo "$repo" </dev/null 2>/dev/null)"
+  base_sha=""
+  if [ -n "$base" ]; then
+    base_sha="$(git -C "$repo" rev-parse --verify -q "origin/$base^{commit}" 2>/dev/null)" \
+      || base_sha="$(git -C "$repo" rev-parse --verify -q "$base^{commit}" 2>/dev/null)" || base_sha=""
+  fi
   hash=""
   [ -f "$repo/.agent/verify.json" ] && hash="$(sha256_of "$repo/.agent/verify.json")"
   printf '%s\n' "$acs" > "$run_dir/acs.json" || die "cannot write $run_dir/acs.json"
   # Advisory diff summary — an empty file when the base is unresolvable, never a failure.
-  git -C "$repo" diff --stat "origin/$base...$branch" > "$run_dir/diff.stat" 2>/dev/null \
-    || : > "$run_dir/diff.stat"
+  if [ -n "$base" ]; then
+    git -C "$repo" diff --stat "origin/$base...$branch" > "$run_dir/diff.stat" 2>/dev/null \
+      || : > "$run_dir/diff.stat"
+  else
+    : > "$run_dir/diff.stat"
+  fi
   ts="$(now_ts)"
   jq -cn --arg ts "$ts" --arg run_id "$run_id" --arg ticket "$ticket" --arg kind "$kind" \
      --arg branch "$branch" --arg head "$head_sha" --arg base "$base_sha" --arg hash "$hash" '
