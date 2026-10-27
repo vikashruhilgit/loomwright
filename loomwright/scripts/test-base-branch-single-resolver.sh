@@ -28,8 +28,11 @@
 #   main-arg       a literal `main` passed as the first positional argument to a script — `bash
 #                  "$risk_bin" main "$head"`, `classify-risk.sh main HEAD` — the base handed to a
 #                  base-taking script (classify-risk.sh, module-shape-facts.sh) by name; also
-#                  `bash -- "$x" main` and a quoted variable in command position (`"$risk_bin" main`,
-#                  after `$(`, `;`, `&&`, `|`, `(`, line start, or then/do/else/exec/command)
+#                  `bash -- "$x" main` and a variable (quoted or not) in shell command position:
+#                  `"$risk_bin" main`, `$risk_bin main`, `if "$x" main; then`, `! "$x" main`,
+#                  `x=1 "$x" main`. Command position is defined ONCE, in CMD_POS below (a command
+#                  boundary, then any reserved-word / prefix-builtin / NAME=value prefixes); a
+#                  variable that is an argument (`echo $x main`, `printf … "$x" main`) is not caught
 #
 # ALLOWLIST (below) names each genuine exception as `<path> <rule|*> <reason>`. An entry that no
 # longer matches anything is STALE and red, so the list only shrinks.
@@ -53,6 +56,13 @@ send-telemetry-core.sh origin-head telemetry target ref, not a base: it compares
 eval-corpus/review-churn-canary/check.sh main-assign not a resolution: `-c init.defaultBranch=main` names the first branch of the throwaway fixture repo this corpus check creates
 automate-lanes.d/create.sh set-head not a resolution: the base was resolved in the primary; a fresh --local clone inherits origin/HEAD pointing at the primary current branch, so it is re-pointed at the real origin HEAD'
 
+# CMD_POS — the ONE definition of "the next word is in shell command position" (POSIX ERE, BSD-grep
+# safe): a command boundary — logical-line start (`N:`), `;` `&` `|` `(` or `$(` — then any run of
+# words that keep the next word in command position: a reserved word or prefix builtin
+# (if elif while until then do else ! { time exec command) or a `NAME=value` assignment prefix.
+# A rule that needs "word X is the command" appends X to this; it never lists contexts of its own.
+CMD_POS='(^[0-9]+:|[;&|(]|\$\()([[:space:]]*((if|elif|while|until|then|do|else|time|exec|command|!|[{])[[:space:]]|[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|()"'"'"']*)[[:space:]]))*[[:space:]]*'
+
 # rule_re <id> — the ERE for one rule id
 rule_re() {
   case "$1" in
@@ -62,7 +72,7 @@ rule_re() {
     main-default) printf '%s' '\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=]["'"'"']?main["'"'"']?\}' ;;
     main-echo)    printf '%s' '\|\|[[:space:]]*(echo|printf)([[:space:]][^|;&]*)?[[:space:]]["'"'"']?main["'"'"']?([^A-Za-z0-9_./-]|$)' ;;
     origin-main)  printf '%s' '(^|[^A-Za-z0-9_./-])origin/main([^A-Za-z0-9_./-]|$)' ;;
-    main-arg)     printf '%s' '(bash[[:space:]]+(--[[:space:]]+)?("[^"]*"|[^[:space:]"]+)|[A-Za-z0-9_.-]+\.sh["'"'"']?|(^[0-9]+:|[;&|(]|\$\(|[:[:space:];&|(](then|do|else|exec|command)[[:space:]])[[:space:]]*"\$[{]?[A-Za-z_][A-Za-z0-9_]*[}]?")[[:space:]]+["'"'"']?main["'"'"']?([[:space:]]|$|[;&|)])' ;;
+    main-arg)     printf '%s' '(bash[[:space:]]+(--[[:space:]]+)?("[^"]*"|[^[:space:]"]+)|[A-Za-z0-9_.-]+\.sh["'"'"']?|'"$CMD_POS"'("\$[{]?[A-Za-z_][A-Za-z0-9_]*[}]?"|\$[{]?[A-Za-z_][A-Za-z0-9_]*[}]?))[[:space:]]+["'"'"']?main["'"'"']?([[:space:]]|$|[;&|)])' ;;
   esac
 }
 RULES='origin-head set-head main-assign main-default main-echo origin-main main-arg'
@@ -186,8 +196,22 @@ mutant positional-main-var-cmd main-arg 'risk_json="$("$risk_bin" main "$live_he
 mutant positional-main-var-cmd-chain main-arg 'true && "${risk_bin}" main HEAD >/dev/null'
 mutant positional-main-var-cmd-line main-arg '"$risk_bin" main HEAD >/dev/null'
 mutant positional-main-bash-dashdash main-arg 'bash -- "$risk_bin" main "$live_head" >/dev/null'
+mutant positional-main-if-cond main-arg 'if "$risk_bin" main HEAD; then :; fi'
+mutant positional-main-elif-cond main-arg 'if false; then :; elif "$risk_bin" main HEAD; then :; fi'
+mutant positional-main-while-cond main-arg 'while "$x" main; do :; done'
+mutant positional-main-until-cond main-arg 'until "$x" main; do :; done'
+mutant positional-main-negated main-arg '! "$x" main'
+mutant positional-main-timed main-arg 'time "$x" main'
+mutant positional-main-assign-prefix main-arg 'x=1 "$x" main'
+mutant positional-main-quoted-assign-prefix main-arg 'A="a b" B='"'"'c'"'"' "$x" main'
+mutant positional-main-unquoted-var main-arg '$risk_bin main HEAD'
+mutant positional-main-unquoted-brace-var main-arg 'true && ${risk_bin} main HEAD'
+mutant positional-main-group main-arg '{ "$x" main; }'
 mutant positional-var-mainline - '"$x" mainline >/dev/null; "$x" "$main_ref" >/dev/null'
 mutant positional-var-arg-not-cmd - 'printf "%s %s\\n" "$x" main >/dev/null'
+mutant positional-unquoted-var-arg-not-cmd - 'echo $x main >/dev/null; if echo "$x" main; then :; fi'
+mutant positional-keyword-word-not-cmd - 'echo then "$x" main >/dev/null; x=1 echo "$x" main'
+mutant positional-var-cmd-not-main - 'if "$x" mainline; then :; fi; $x maintenance; ! "$x" "$main"'
 mutant positional-resolved-base - 'risk_json="$(bash "$risk_bin" "origin/$base_b" "$live_head" --root "$root" 2>/dev/null)"'
 mutant commented-form - '# a comment naming base="main" and refs/remotes/origin/HEAD is prose, not code'
 mutant unrelated-main - 'kind="main"; AGENT_ID_KEY="main"; x="origin/maintenance"'
