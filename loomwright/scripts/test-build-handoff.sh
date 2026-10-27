@@ -561,6 +561,26 @@ outQ3="$(run_build "$RQ3")"; rcQ3=$?
 [ -f "$RQ3/.supervisor/handoff/digest.md" ] && ok "(q) digest still produced with no session to join" || no "(q) digest missing"
 
 # ============================================================================
+echo "== (q2) a stranded close-out is labeled, not reported as a failed run =="
+# close-stranded-run.sh projects a session that stopped without its own session_end as state.md
+# `failed`; the reason on the log's session_end is what tells the two apart.
+for q2 in "stranded|session_ended_without_completion" "real|heal_exhausted"; do
+  q2n="${q2%%|*}"; q2r="${q2#*|}"
+  RQ4="$(new_repo)"; mkdir -p "$RQ4/.supervisor/logs"
+  printf -- '- session_id: sess-%s\n- status: failed\n- phase: LOOP\n' "$q2n" > "$RQ4/.supervisor/state.md"
+  printf '{"event":"session_end","type":"session_end","status":"failed","reason":"%s"}\n' "$q2r" > "$RQ4/.supervisor/logs/sess-$q2n.jsonl"
+  run_build "$RQ4" >/dev/null
+  DIGQ4="$RQ4/.supervisor/handoff/digest.md"
+  if [ "$q2n" = "stranded" ]; then
+    grep -qF -- "- **Status:** failed (stranded close-out" "$DIGQ4" 2>/dev/null \
+      && ok "(q2) a stranded close-out's status is labeled as stranded" || no "(q2) stranded close-out shown as a plain failure: $(grep -F 'Status' "$DIGQ4")"
+  else
+    grep -qxF -- "- **Status:** failed" "$DIGQ4" 2>/dev/null \
+      && ok "(q2) a failure with any other reason stays a plain failed" || no "(q2) a real failure was relabeled: $(grep -F 'Status' "$DIGQ4")"
+  fi
+done
+
+# ============================================================================
 echo "== (r) automate title reader mirrors is_run_file: tolerant forms read, H2 / 4-space indent not listed =="
 # automate-followups/19 (D5): build-handoff.sh's AUTOMATE title reader accepts exactly the title
 # forms automate-helpers.sh's is_run_file accepts (RUN_TITLE_ERE). The fixtures are built with

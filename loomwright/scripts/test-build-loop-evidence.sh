@@ -453,6 +453,38 @@ else
 fi
 
 # ============================================================================
+# Fixture S: stranded close-outs. close-stranded-run.sh writes status failed + reason
+# session_ended_without_completion for a session that stopped without its own session_end. That
+# is not a run, so it must not enter the funnel's denominators; it is counted under Data quality.
+SD_S="$ROOT/stranded/.supervisor"
+mkdir -p "$SD_S/logs"
+cat > "$SD_S/logs/real.jsonl" <<'EOF'
+{"ts":"2026-07-20T10:00:00Z","event":"session_end","task_id":"real-run","status":"completed","plugin_version":"15.12.0"}
+EOF
+cat > "$SD_S/logs/stranded-only.jsonl" <<'EOF'
+{"ts":"2026-07-20T11:00:00Z","event":"session_end","type":"session_end","session_id":"stranded-only","status":"failed","reason":"session_ended_without_completion","plugin_version":"15.12.0"}
+EOF
+cat > "$SD_S/logs/stranded-two.jsonl" <<'EOF'
+{"ts":"2026-07-20T12:00:00Z","event":"session_end","type":"session_end","session_id":"stranded-two","status":"failed","reason":"session_ended_without_completion"}
+EOF
+
+echo "== (14) stranded close-outs are excluded from the funnel and counted under Data quality =="
+run_builder --state-dir "$SD_S" --jsonl
+S_RUNS="$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run") | .run' 2>/dev/null | grep -c . | tr -d '[:space:]')"
+S_ERA="$(printf '%s\n' "$OUT" | jq -r 'select(.type=="era_bucket") | .runs' 2>/dev/null | paste -sd, -)"
+if [ "$RC" -eq 0 ] && [ "$S_RUNS" = "1" ] && [ "$S_ERA" = "1" ]; then
+  ok "only the real run is a funnel row and an era-bucket member (stranded close-outs excluded)"
+else
+  no "stranded close-outs still counted as runs (rc=$RC runs=$S_RUNS era_runs=$S_ERA)"
+fi
+run_builder --state-dir "$SD_S"
+if grep -Fq "2 stranded close-out record(s)" < <(printf '%s\n' "$OUT"); then
+  ok "the excluded stranded close-outs are counted under Data quality, not dropped silently"
+else
+  no "no Data quality note for the stranded close-outs"
+fi
+
+# ============================================================================
 echo ""
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
