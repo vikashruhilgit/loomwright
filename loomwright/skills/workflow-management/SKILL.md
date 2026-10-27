@@ -179,7 +179,7 @@ Group related actions for single approval:
 ```markdown
 ## Supervisor: Phase 1 — ACQUIRE
 **Actions to perform:**
-1. git checkout main && git pull
+1. git checkout "$BASE_BRANCH" && git pull
 2. git checkout -b feature/BD-15-user-auth
 3. bd update BD-15 --status in_progress
 
@@ -296,7 +296,7 @@ See `skills/async-orchestration/SKILL.md` for full details.
 
 **Options:**
 1. Fix manually and run `/supervisor --continue task: {task_id}`
-2. Cancel: `git checkout main`
+2. Cancel: `git checkout "$BASE_BRANCH"`
 ```
 
 ## Subagent Orchestration (v3)

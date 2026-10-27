@@ -56,12 +56,12 @@ Read by the Supervisor at Phase 4 FINALIZE entry only. A citation of `skills/asy
    ```
    A no-op (exit 0) unless the project has a fold-capable `scripts/bump-version.sh` and this branch already carries a bump with a `changelog.d/` fragment still pending; then it re-folds every fragment into that ONE bump and commits it (HEAD moves, so it runs before `write-marker`). It then runs `bump-version.sh --check`, so a hand-edited version file or CHANGELOG.md also exits non-zero. Non-zero ⇒ abort FINALIZE before the push, like a failed pre-merge gate: no push, no PR, log its printed reason, `SUPERVISOR_RESULT.status: failed` with `error: "release_refold_refused"`, run lock released on this abort exit.
 
-6. **Push and create PR (against `BASE_BRANCH` — defaults to `main`):**
+6. **Push and create PR (against `BASE_BRANCH` — the base Phase 0 resolved):**
    ```bash
    git push -u origin feature/{task_id}-{desc}
    gh pr create --base "$BASE_BRANCH" --title "{task_id}: {title}" --body "{PR body}"
    ```
-   `BASE_BRANCH` is the value resolved at Phase 0 (`skills/supervisor-config/SKILL.md`) from the `--base-branch` flag, defaulting to `main`.
+   `BASE_BRANCH` is the value resolved at Phase 0 by `scripts/resolve-base-branch.sh` (precedence: `skills/supervisor-config/SKILL.md` step 2.9b; there is no hardcoded default).
 
 6.5. **Phase 4 FINALIZE self-verify — PR base branch** — run by the driver's `pr-verify` / `pr-verify-answer` steps from the PR URL you report: `baseRefName` == `BASE_BRANCH` ⇒ hand-over; different ⇒ the `base_mismatch_detected` flag (`reason: phase4_self_verify`); a `gh` failure ⇒ ONE retry after 5 s, then the SUP-GH-RETRY ask (retry / skip-verify-once ⇒ `user_skipped_base_verify` / abort ⇒ the flag, `reason: user_aborted_gh_retry`), or under `--non-interactive` the flag with `reason: gh_unavailable_non_interactive`. Phase 4 sets the flag at most once and never emits `SUPERVISOR_RESULT` here — Phase 4.5's base-mismatch cleanup (`skills/self-heal-advisory/escalation.md` §"Phase 4.5 base-mismatch cleanup (step 5)") is the single emission point.
 

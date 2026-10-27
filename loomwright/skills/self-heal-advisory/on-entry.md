@@ -15,6 +15,7 @@ Read by the Supervisor at Phase 4.5 entry, before the first Code Reviewer spawn;
 1h. **Module-shape advisory** — runs here AND on every later iteration: `SKILL.md` Part 1, step 1h.
 2. **Initialize invariant tracking:**
    - `skip_self_heal_requested` — set from INIT-parsed flags (true iff `--skip-self-heal` was passed on the command line). Set once here, never mutated.
+   - `STACKED` — `true` iff `BASE_BRANCH` differs from the repo's own base, the stdout of the plugin's `scripts/resolve-base-branch.sh --repo .` run with no `--flag` and no `--brief` (a `/autonomous` iteration N+1 based on iteration N's branch reads `true`; a run on a repo whose base is `development` reads `false`). A non-zero exit there ⇒ `false` (the holistic review). Set once here and threaded beside `BASE_BRANCH` into the review and grading prompts; base names are never compared against a literal `main`.
    - `phase45_review_invoked` — initialize to `false`. Flip to `true` only when the `code-reviewer` Task call below actually executes (first iteration of the review-and-fix loop).
    - `red_team_advisory` — initialize to `"disabled"` HERE, BEFORE the resume-thrash / `--skip-self-heal` early-jump checks below, so the completion-tail Outcome line always has a value even when this phase is bypassed and the Advisory red-team lens (further down) never runs. The lens overrides this to `ran` / `skipped_low_risk` / `error` (or re-affirms `disabled`) when it executes; on a bypass path it remains `"disabled"` (lens never ran).
 3. **Resume-thrash guard (if this is a `--continue` run landing in SELF_HEAL):**
@@ -38,12 +39,11 @@ Runs **at Phase 4.5 entry, BEFORE the first Code Reviewer spawn**, to bias the r
 
 > **HARD ADVISORY CONTRACT — `prior_churn` is advisory input to the REVIEW lens ONLY:** it NEVER changes `heal_decision`, NEVER drives the fix task (the corpus never reaches workers/fixers), never triggers a fix iteration, never blocks the PR. Fail-safe: `read-postmortem.sh` ALWAYS exits 0 and emits EMPTY output on a NO-HIT (no sentinel line), so empty `prior_churn` means "no prior churn" and the line is omitted.
 ```
-# touched files = the same integrated-diff scope the Code Reviewer reviews. When
-# BASE_BRANCH==main this is `git diff origin/main...HEAD`; for a stacked iteration
-# (BASE_BRANCH != main) it is `git diff $BASE_BRANCH...HEAD` — the SAME DIFF-SCOPE OVERRIDE.
+# touched files = the same integrated-diff scope the Code Reviewer reviews: the remote-tracking
+# ref of the resolved BASE_BRANCH for EVERY base (a stacked iteration's parent branch included) —
+# the SAME DIFF-SCOPE OVERRIDE. Never the local BASE_BRANCH ref, which can lag its remote.
 touched = paths from the integrated diff (read-only):
-          BASE_BRANCH==main  -> git diff --name-only origin/main...HEAD
-          BASE_BRANCH!=main  -> git diff --name-only $BASE_BRANCH...HEAD
+          git diff --name-only "origin/$BASE_BRANCH...HEAD"
 
 prior_churn = ""   # advisory summary; empty string when no prior churn (proceed with no enrichment)
 
@@ -71,8 +71,7 @@ A **sibling** of the prior-churn advisory — same point, same touched-file scop
 ```
 # touched files = the same integrated-diff scope as the prior-churn advisory above (the SAME DIFF-SCOPE OVERRIDE).
 touched = paths from the integrated diff (read-only):
-          BASE_BRANCH==main  -> git diff --name-only origin/main...HEAD
-          BASE_BRANCH!=main  -> git diff --name-only $BASE_BRANCH...HEAD
+          git diff --name-only "origin/$BASE_BRANCH...HEAD"
 
 house_rules = ""   # advisory summary; empty string when no valid house rules (proceed with no enrichment)
 
