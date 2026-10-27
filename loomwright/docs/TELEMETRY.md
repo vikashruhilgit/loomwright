@@ -1060,6 +1060,17 @@ two firings of one completion.
 interleaving window injected rather than raced for, and its control neuters the lock
 alone and requires the duplicate back — case 19, which fires sequentially, passes
 against the broken guard and is why this was invisible for a release.
+**The lock fixed the order of the compare, not its meaning.** `ts` is stamped per
+*firing*, before the lock, so two firings of one completion that straddle a second
+boundary differ in `ts` alone, and byte-identity appended both with the lock working
+perfectly — case 21a kept flaking on loaded CI runners for exactly this reason
+(a 15-way fan-out stress loop under CPU load: every duplicate carried two distinct
+seconds, no firing had timed out on the lock). The guard now treats a last line
+identical to this one except for a `ts` within two seconds as the same completion;
+the python step computes those neighbouring stamps, because BSD and GNU `date`
+disagree on parsing. Case 21c injects a day-crossing straddle through a `date` shim,
+21d neuters only the window and requires the duplicate back, and 21e shows a repeat
+ten seconds later is still appended.
 
 **Adjacent-duplicate guard (confirmed, not assumed).**
 `emit-token-ledger.sh` is registered under three `SubagentStop` matchers
