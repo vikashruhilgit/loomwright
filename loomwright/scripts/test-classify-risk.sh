@@ -40,11 +40,12 @@
 #      by the base's entry; an uncommitted working-tree file and a head-only file are unread; an
 #      invalid base file is generic-only and trusted-root still applies; a present base blob whose
 #      `git show` fails (PATH-stub git), a failed `ls-tree` presence probe, or a base blob missing
-#      from the object store ⇒ null + `unclassifiable: git_failed`, never read as absent
+#      from the object store ⇒ null + `unclassifiable: git_failed`, never read as absent; a base
+#      whose `.agent` (or `.agent/risk.json`) is a symlink ⇒ null + `unclassifiable: risk_json_symlink`
 #   L. mutation controls for J/K, one per pinned rule (reason line deleted, working-tree read,
 #      `--no-renames` dropped, root-only arm made any-depth, exact arm made a substring, failed
 #      `git show` falls through, exact arm deleted, ancestor arm deleted, failed `ls-tree` presence
-#      probe falls through), each gated on non-empty + differs + `bash -n`
+#      probe falls through, symlink probe deleted), each gated on non-empty + differs + `bash -n`
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -102,6 +103,9 @@ mk_branch base-rj-nonobj       'mkdir -p .agent && printf "[1,2]\n" > .agent/ris
 mk_branch base-rj-invalid      'mkdir -p .agent && printf "{not json\n" > .agent/risk.json'
 mk_branch base-rj-exclude      'mkdir -p .agent && printf "{\"schema_version\":1,\"paths\":[\"billing/**\"],\"exclude\":[\"billing/**\"]}\n" > .agent/risk.json'
 mk_branch base-rj-exclude-only 'mkdir -p .agent && printf "{\"schema_version\":1,\"exclude\":[\"*\"]}\n" > .agent/risk.json'
+# Symlinked bases (review iteration 2): git reads never follow an in-tree link (mode 120000).
+mk_branch base-rj-agentlink 'mkdir -p agentcfg && printf "{\"schema_version\":1,\"paths\":[\"billing/**\"]}\n" > agentcfg/risk.json && ln -s agentcfg .agent'
+mk_branch base-rj-filelink  'mkdir -p .agent rjcfg && printf "{\"schema_version\":1,\"paths\":[\"billing/**\"]}\n" > rjcfg/risk.json && ln -s ../rjcfg/risk.json .agent/risk.json'
 # Heads cut FROM base-rj-ok (a PR against a base that has the project extension).
 mk_from base-rj-ok rj-drop 'printf "{\"schema_version\":1,\"paths\":[],\"content\":[\"stripe\"]}\n" > .agent/risk.json && printf "y\n" > billing/x.txt'
 mk_from base-rj-ok rj-keep 'printf "y\n" > billing/x.txt'
@@ -598,6 +602,13 @@ OUT="$(cd "$ELSEWHERE" && bash "$S" main head --root "$RC_R" 2>"$TMP/err")"; ERR
 [ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: git_failed" \
   && ok "K9 base risk.json blob missing from the object store ⇒ null + unclassifiable: git_failed, never a silent false" \
   || no "K9 missing base blob read as absent ($OUT err='$ERR')"
+# Symlinked base config: the owner's entries cannot be read without following a link ⇒ fail CLOSED.
+unc "K10 base .agent is a symlink to a dir holding risk.json" risk_json_symlink base-rj-agentlink billing --root "$R"
+unc "K11 base .agent/risk.json is itself a symlink" risk_json_symlink base-rj-filelink billing --root "$R"
+run main clean
+[ "$(j '.high_risk')" = "false" ] && [ -z "$ERR" ] \
+  && ok "K12 control: base without .agent at all ⇒ silent false (the symlink probe does not fire on absence)" \
+  || no "K12 absent-.agent control wrong ($OUT err='$ERR')"
 
 # =============================================================================
 echo "== L. mutation controls for J / K (each gated on non-empty + differs + bash -n) =="
@@ -685,6 +696,15 @@ if mutant probe-silent sed 's/^  emit_unclassifiable "git_failed" "base risk.jso
   [ "$(j '.high_risk')" = "false" ] && ok "L9 (mutant) failed ls-tree probe falls through ⇒ K8 reads a silent false — K8 is live" || no "L9 mutant not discriminated ($OUT)"
 else
   no "L9 mutant not gated"
+fi
+# L10 — delete the symlink probe's emit ⇒ the K10 `.agent -> agentcfg` base reads a silent false.
+if mutant symlink-silent sed 's/^      emit_unclassifiable "risk_json_symlink" .*$/      : ;;/' && ! grep -q 'emit_unclassifiable "risk_json_symlink"' "$MS"; then
+  OUT="$(cd "$ELSEWHERE" && bash "$MS" base-rj-agentlink billing --root "$R" 2>"$TMP/err")"; ERR="$(cat "$TMP/err")"
+  [ "$(j '.high_risk')" = "false" ] && [ -z "$ERR" ] \
+    && ok "L10 (mutant) symlink probe deleted ⇒ K10 reads a silent false with nothing on stderr — K10 is live" \
+    || no "L10 mutant not discriminated ($OUT err='$ERR')"
+else
+  no "L10 mutant not gated"
 fi
 
 echo
