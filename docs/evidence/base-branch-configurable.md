@@ -94,6 +94,14 @@ Subtasks 1, 4 and 5 handed these over because no subtask owned them. Each now po
   condition 6 call had. `logical_lines` moved into the sourced `loomwright/scripts/logical-lines-lib.sh`, which
   this guard and `test-no-pipefail-grep-q.sh` share.
 
+## Review iterations 2 and 3
+
+- Iteration 2: `main-arg` also catches `bash -- "$x" main` and a quoted variable in command position, with
+  positive and negative mutants.
+- Iteration 3: command position is defined once, in `CMD_POS`. `main-arg` now accepts quoted or unquoted
+  variable command words, so `if`, `elif`, `while`, `until`, `!`, `time`, `{` and assignment-prefixed forms are
+  caught. Negative controls keep a variable that is an argument uncaught. The full lists are under AC11 below.
+
 ## AC11 — regrowth guard
 
 `bash loomwright/scripts/test-base-branch-single-resolver.sh` scans every non-test `*.sh` under
@@ -111,8 +119,22 @@ Subtasks 1, 4 and 5 handed these over because no subtask owned them. Each now po
 An entry that stops matching is reported as STALE and fails the guard. Built-in mutation controls append each
 of the following to a scratch copy of `automate-trail.d/trail-pr.sh`, and the guard must catch each one: the
 inline `symbolic-ref … || echo main` line, `base=main`, `base="main"`, `base_branch="main"`, `BASE_REF="main"`,
-`default_branch=main`, `${b:-main}`, `${base_ref:=main}`, an `origin/main` probe and `remote set-head`. A commented form and unrelated `main` words must not
-be caught. Every mutant must be non-empty, differ from the original and pass `bash -n`.
+`default_branch=main`, `${b:-main}`, `${base_ref:=main}`, an `origin/main` probe and `remote set-head`.
+
+The `main-arg` mutants cover a literal `main` handed to a base-taking script as its first argument:
+`bash "$risk_bin" main …`, `bash "$HERE/module-shape-facts.sh" main HEAD`, `classify-risk.sh "main" HEAD` and
+`bash -- "$risk_bin" main …`. They also cover a variable in shell command position, quoted or not:
+`"$risk_bin" main`, `$("$risk_bin" main …)`, `true && "${risk_bin}" main`, `$risk_bin main`, `${risk_bin} main`,
+`if` / `elif` / `while` / `until` conditions, `! "$x" main`, `time "$x" main`, `{ "$x" main; }`, and the
+assignment prefixes `x=1 "$x" main` and `A="a b" B='c' "$x" main`. Command position is defined once, in the
+guard's `CMD_POS`. That is a command boundary (logical-line start, `;`, `&`, `|`, `(` or `$(`), then any run of
+reserved-word, prefix-builtin or `NAME=value` prefixes.
+
+Negative controls must not be caught: a commented form, unrelated `main` words (`kind="main"`,
+`origin/maintenance`), a resolved base (`bash "$risk_bin" "origin/$base_b" …`), `"$x" mainline`,
+`"$x" "$main_ref"`, a variable that is an argument (`printf … "$x" main`, `echo $x main`, `echo then "$x" main`,
+`x=1 echo "$x" main`), and a command variable without a literal `main` (`if "$x" mainline`, `$x maintenance`,
+`! "$x" "$main"`). Every mutant must be non-empty, differ from the original and pass `bash -n`.
 
 Brief pin-mutation check: I re-added `[ -n "$base_branch" ] || base_branch="main"` to the real
 `automate-trail.d/trail-pr.sh`, then restored it with `git checkout`. The guard exited 1 with
