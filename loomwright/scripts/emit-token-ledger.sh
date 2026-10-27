@@ -806,8 +806,10 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
 # includes ts, agent_id, and transcript byte count together — vanishingly
 # unlikely to collide, NOT impossible: ts is second-granularity, agent_id is
 # omitted for exactly the untyped population this targets, and parallel worker
-# completion is a designed feature. A collision therefore needs the same second,
-# an identical transcript byte count, and an absent agent_id on both. The failure
+# completion is a designed feature. A collision therefore needs stamps within the
+# ts window (TS_WINDOW_S either side, not only the same second — the window at the
+# append below explains why), an identical transcript byte count, and an absent
+# agent_id on both. The failure
 # direction is one-way and benign: one ADVISORY ledger line is silently lost;
 # nothing reads it for state or gating. Reading only the last line keeps this
 # O(1) on a large log, and every failure absorbs to the normal append path.
