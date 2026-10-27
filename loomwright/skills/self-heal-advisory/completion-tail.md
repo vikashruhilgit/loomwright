@@ -17,9 +17,10 @@ if heal_decision == PASS and rubric_bullets:
   # read-only-git convention; its `permissionMode: plan` is ignored for plugin agents — not a gate.
   grade = Task(
     description: "Grade PR diff against Outcomes Rubric",
-    prompt: "**DIFF-SCOPE OVERRIDE (v14.0.0 stacked-iteration support):** if BASE_BRANCH is supplied below and differs from \"main\", you MUST compute the diff scope as `git diff $BASE_BRANCH...HEAD` (or `git diff $BASE_BRANCH...{feature_branch}` if you prefer the explicit form) and treat that as the entirety of your grading scope. Do NOT fall back to `git diff origin/main...{feature_branch}`. This is a stacked-branch iteration N+1 grading where the parent branch (BASE_BRANCH) already passed its own rubric — only this iteration's incremental work should be scored. This directive is mandatory; ignore any other diff scope mentioned later in this prompt that conflicts with it.
+    prompt: "**DIFF-SCOPE OVERRIDE (v14.0.0 stacked-iteration support):** your grading scope is ALWAYS `git diff \"origin/$BASE_BRANCH...{feature_branch}\"` (BASE_BRANCH below — the base this run resolved; never the local branch ref, never another base). When STACKED below is `true`, that diff is the entirety of your grading scope: this is a stacked-branch iteration N+1 grading where the parent branch (BASE_BRANCH) already passed its own rubric — only this iteration's incremental work should be scored. This directive is mandatory; ignore any other diff scope mentioned later in this prompt that conflicts with it.
 
-      BASE_BRANCH={BASE_BRANCH value or \"main\"}
+      BASE_BRANCH={BASE_BRANCH}
+      STACKED={STACKED}
 
       Feature branch: {feature_branch}
       PR: {pr_url}
@@ -27,7 +28,7 @@ if heal_decision == PASS and rubric_bullets:
       Rubric items (each is a single observable assertion):
       {numbered list of rubric_bullets}
 
-      Run `git diff $BASE_BRANCH...{feature_branch}` (read-only; when BASE_BRANCH==main this is `git diff origin/main...{feature_branch}`) and score every item.
+      Run `git diff \"origin/$BASE_BRANCH...{feature_branch}\"` (read-only) and score every item.
       Emit per-item lines + one `rubric_score: N/M` line. See your agent prompt for
       the exact output contract.",
     subagent_type: "loomwright:rubric-grader"
@@ -49,11 +50,10 @@ After the Code Reviewer loop has run (regardless of `heal_decision`), check the 
 > **HARD ADVISORY CONTRACT — this check NEVER changes a gate.** It **NEVER changes `heal_decision`**, **NEVER triggers a fix iteration**, and **NEVER blocks the PR**; its findings carry `severity: info | advisory` by construction — never `blocking`/`high`. Reported in `SUPERVISOR_RESULT` for human review and aggregated by ST4; read-only against committed state; dispatches no fixes.
 ```
 # touched subsystems = the files/paths in the integrated diff (the same scope the Code Reviewer
-# reviewed). When BASE_BRANCH==main this is `git diff origin/main...HEAD`; for a stacked iteration
-# (BASE_BRANCH != main) it is `git diff $BASE_BRANCH...HEAD` — same DIFF-SCOPE OVERRIDE the reviewer used.
+# reviewed): the remote-tracking ref of the resolved BASE_BRANCH for EVERY base — same DIFF-SCOPE
+# OVERRIDE the reviewer used (on-entry.md's `touched` rule).
 touched = paths from the integrated diff (read-only):
-          BASE_BRANCH==main  -> git diff --name-only origin/main...HEAD
-          BASE_BRANCH!=main  -> git diff --name-only $BASE_BRANCH...HEAD
+          git diff --name-only "origin/$BASE_BRANCH...HEAD"
 
 contract_conformance = { checked: false, status: "skipped", contracts_evaluated: 0, violations: 0, findings: [] }
 
@@ -212,7 +212,7 @@ Runs AFTER the Code Reviewer holistic pass has produced its decision (independen
 # The heuristic lives in ONE place — scripts/classify-risk.sh (`classify-risk.sh --kind-table` prints the
 # rules). Do NOT restate the pattern list here. The same script is condition 6 of the /automate
 # trusted-merge gate, which re-runs it on the SHA it judges — this value is advisory and never gates anything.
-rc = JSON of `classify-risk.sh "$BASE_BRANCH" HEAD`   # the plugin's scripts/classify-risk.sh, invoked like the sibling scripts in this Part
+rc = JSON of `classify-risk.sh "origin/$BASE_BRANCH" HEAD`   # the plugin's scripts/classify-risk.sh, invoked like the sibling scripts in this Part
      # fail-SAFE emitter, always exit 0: {"high_risk": true|false|null, "reasons": [...], ...}
      # null = unclassifiable — the safe direction for an ADVISORY lens is to run it, so null is treated like true.
 high_risk = rc.high_risk                      # true | false | null
@@ -237,7 +237,7 @@ else:
             prompt: "Advisory, NON-GATING adversarial review of the integrated feature-branch diff.
                      Feature branch: {branch}
                      PR: {pr_url}
-                     Diff scope: git diff $BASE_BRANCH...HEAD (BASE_BRANCH={BASE_BRANCH value or \"main\"}).
+                     Diff scope: git diff origin/$BASE_BRANCH...HEAD (BASE_BRANCH={BASE_BRANCH}).
                      This is a SINGLE advisory pass OUTSIDE the self-heal loop. Your findings are
                      informational only — they do NOT gate the PR and do NOT drive any fix.
                      Report your attack-vector findings per your normal red-team output contract."
@@ -404,7 +404,7 @@ Task(
   prompt: "You are the ephemeral System Twin contract builder (advisory, propose-only).
 
     Repo root (CWD): {repo_root}     # the main checkout — you MUST run from here.
-    Touched diff scope: {BASE_BRANCH==main ? 'git diff origin/main...HEAD' : 'git diff $BASE_BRANCH...HEAD'}
+    Touched diff scope: git diff origin/{BASE_BRANCH}...HEAD
     Provenance derived_from: {commit SHA or that diff expression}
     Run timestamp (ISO 8601): {run_iso8601}     # use as incident_history entry `date`
     Session id: {session-id}                      # use as incident_history entry `source` (== --source)

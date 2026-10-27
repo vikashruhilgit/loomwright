@@ -52,6 +52,7 @@ The grader **never** changes `heal_decision`, **never** triggers a fix iteration
 ## Inputs (passed in the spawning prompt)
 
 - `feature_branch` — the integrated branch name (e.g., `feature/v12.2-new-capabilities`)
+- `BASE_BRANCH` — the base this run resolved (a bare branch name, e.g. `development`); `STACKED` says whether it is a stacked iteration's parent branch
 - `pr_url` — convenience reference for the human reading the report
 - `rubric_bullets` — a numbered list of observable assertions extracted by the Supervisor from the brief's `## Outcomes Rubric` section
 - `contract_conformance` *(optional, System Twin)* — the conformance hard signal for this run (status + violation count), if the Supervisor supplies it. **Advisory only.**
@@ -59,7 +60,7 @@ The grader **never** changes `heal_decision`, **never** triggers a fix iteration
 
 ## Procedure
 
-1. **Read the diff once.** Run `git diff origin/main...{feature_branch}` (read-only). If the branch or remote is missing, record the failure and emit `rubric_score: 0/{total}` with every item marked `FAIL — diff unavailable`.
+1. **Read the diff once.** Run `git diff "origin/$BASE_BRANCH...{feature_branch}"` (read-only). If the spawning prompt carries no `BASE_BRANCH`, resolve it once with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-base-branch.sh"` (one bare branch on stdout; a non-zero exit counts as a missing remote below) — never assume `main`. If the branch or remote is missing, record the failure and emit `rubric_score: 0/{total}` with every item marked `FAIL — diff unavailable`.
 2. **For each rubric bullet:** decide PASS or FAIL purely on the diff evidence. Each bullet is a single observable assertion ("a new file at X exists", "function Y now accepts param Z", "all references to old name are updated"); the answer must be derivable from the diff or from reading files at the post-merge state. Do **not** infer behavior that is not visible in the diff.
 3. **Emit the result block** exactly in this format:
 
