@@ -1,5 +1,5 @@
 ---
-description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP, opt-in status line
+description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP, opt-in status line, the project's base branch
 ---
 
 # Command: /setup
@@ -12,22 +12,21 @@ description: Umbrella setup command — status dashboard plus guided configurati
 /setup memory               # Put the Twin memory stores under version control IN PLACE (gitignore negation + repo allowlist): status | apply | remove | migrate
 /setup rules                # Seed .agent/rules/ with PORTABLE conventions on a cold-start repo (labelled seeded, not learned): status | (no-arg → seed)
 /setup statusline           # Wire the one-line run report into the user-scope settings file: status | apply | remove
+/setup base-branch          # View / pin the base (integration) branch in .supervisor/config.json: status | set <branch> | remove
 /setup telemetry            # DELEGATES to /telemetry (no consent logic duplicated here)
 /setup notifications        # Status + guidance (notification hooks are always-on)
 /setup webhook              # Status + guided write of the user-scope webhook URL (LOOMWRIGHT_WEBHOOK_URL still wins when set)
 /setup beads                # Status + guidance (bd CLI + .beads/)
 /setup mysql-mcp            # Status + guidance (DB_* env for the read-only MySQL MCP — separate mysql-mcp@atelier plugin)
+/setup --help               # Every module and its subcommands, from the skill's module registry (also -h, help)
 ```
 
 ## Parameters
 
-- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `memory`, `rules`, `statusline`.
+- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `memory`, `rules`, `statusline`, `base-branch` — the `skills/setup/SKILL.md` Pattern 2 registry is the authority (`test-setup-module-registry.sh` checks this list against it).
   - If omitted: run the full status dashboard, then offer configuration via `AskUserQuestion` (multi-select).
-  - If unrecognised: print this usage block and stop.
-- **observability subcommand** (optional, second positional arg): `init` | `status` | `remove`. If omitted, the module's check step decides — unconfigured → offer `init`; configured → offer `status` / `remove` / reconfigure.
-- **rules subcommand** (optional, second positional arg): `status` = read-only report of which portable seeds are present (no writes). If omitted, the module's check step decides — unseeded → offer to seed; already seeded → report and offer status only. **`remove` is N/A** — the store is committed and human-curated, so removing a rule is `/rules` territory (`add-rule.sh --retract`), never a module teardown; and re-seeding a still-seeded repo is a no-op by design rather than a reconfigure — including one whose seeds you have EDITED, since presence is keyed on the seeded stamp rather than the statement text. A seed you RETRACTED is the exception and is re-offered (see the module's honest limits — retract is not a permanent opt-out).
-- **memory subcommand** (optional, second positional arg): `status` = read-only report (no writes) | `apply` | `remove` | `migrate` (guided, owner-gated move of run history to a metadata branch — see the module's `migrate` subflow). If omitted, the module's check step decides — not configured → offer to apply (behind the consent gate); configured → offer `status` / `remove`. **`remove` is REQUIRED here** — un-committing is a real operation a user will want, most likely on realising something proprietary was published, so it is implemented rather than documented N/A.
-- **statusline subcommand** (optional, second positional arg): `status` = read-only report (no writes) | `apply` | `remove`. If omitted, the module's check step decides — not configured → offer to apply; configured → offer `status` / `remove`. **`remove` is REQUIRED here** — the module changes a visible, always-on surface, so backing it out (and restoring whatever status line was there before) is a real user need, not a documented N/A. **A pre-existing status line this plugin did not write is never replaced without an explicit choice** — see the module's Offer step.
+  - If `--help`, `-h` or `help`, or unrecognised: see Help and unknown module below — never the dashboard.
+- **subcommand** (optional, second positional arg): one from the module's registry Subcommands cell (the help prints them; every `status` is a read-only report). If omitted, the module's check step decides — e.g. observability: unconfigured → offer `init`; configured → offer `status` / `remove` / reconfigure. Why `memory` and `statusline` REQUIRE `remove`, why `rules` has none (a RETRACTED seed is re-offered), and why a foreign status line is never replaced without an explicit choice: the module's registry row and part.
 - Note: the twin module was retired with the graphify tier (graph + bridge cold-start bootstrap — a deliberate omission, not an oversight; see `CHANGELOG.md`).
 - Note: the ui module (The Floor, a local web page over `.supervisor/floor/floor.json`) was retired too; `build-floor.sh` and its projection stay, because `/propose` reads them (see `CHANGELOG.md`).
 
@@ -49,7 +48,7 @@ Settled design facts (do not re-litigate at runtime):
 
 # Agent Prompt
 
-You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND as the subcommand — `observability` takes `init` | `status` | `remove`; `memory` takes `status` (read-only) | `apply` | `remove` | `migrate`; `rules` takes `status` (read-only). For `memory status` and `rules status`, run the Check + Report steps ONLY and STOP — they are read-only, so never fall through to that module's Offer/Apply flow.
+You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND as the subcommand — one from that module's Subcommands cell in the skill's Pattern 2 registry. For `memory status`, `rules status` and `base-branch status`, run the Check + Report steps ONLY and STOP — they are read-only, so never fall through to that module's Offer/Apply flow.
 
 ## Step 0 — Load the protocol authority (every invocation)
 
@@ -70,12 +69,19 @@ You are handling the `/setup` slash command inline on the main thread. Parse the
    - `memory` → `${CLAUDE_PLUGIN_ROOT}/docs/command-parts/setup/memory.md`
    - `rules` → `${CLAUDE_PLUGIN_ROOT}/docs/command-parts/setup/rules.md`
    - `statusline` → `${CLAUDE_PLUGIN_ROOT}/docs/command-parts/setup/statusline.md`
+   - `base-branch` → `base-branch.md` (same directory)
    - `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp` → `${CLAUDE_PLUGIN_ROOT}/docs/command-parts/setup/other.md`
-   - an unrecognised module → no part (`## Parameters`)
+   - `--help` / `-h` / `help`, or an unrecognised module → no part (Help and unknown module, below)
    - examples, only if the user asks → `${CLAUDE_PLUGIN_ROOT}/docs/command-parts/setup/ex.md`
 
    In a part, "below"/"above" means the original single-file order.
 <!-- index-only:end -->
+### Help and unknown module (before any module flow)
+
+- **Help dispatch:** `--help`, `-h` or `help` as the first argument prints the help and STOPS — no check, no part, no question, no write.
+- **Unknown module:** any other first argument that is not a registry module prints `Setup: unknown module '<arg>'`, then the help, and STOPS.
+- **Help = the registry, never a copy:** `/setup  (no argument: status dashboard)`, then one `/setup <module>  <Subcommands cell>` line per Pattern 2 row in registry order (the skill read at item 1), then `/setup --help | -h | help`.
+
 <!-- split:begin ../docs/command-parts/setup/dashboard.md -->
 ## No-arg flow — status dashboard
 
@@ -233,6 +239,11 @@ See [../docs/command-parts/setup/statusline.md](../docs/command-parts/setup/stat
 
 See [../docs/command-parts/setup/statusline.md](../docs/command-parts/setup/statusline.md).
 <!-- split:end ../docs/command-parts/setup/statusline.md -->
+<!-- split:begin ../docs/command-parts/setup/base-branch.md -->
+## Module: base-branch
+
+See [../docs/command-parts/setup/base-branch.md](../docs/command-parts/setup/base-branch.md).
+<!-- split:end ../docs/command-parts/setup/base-branch.md -->
 <!-- split:begin ../docs/command-parts/setup/other.md -->
 ## Module: telemetry
 
@@ -280,6 +291,8 @@ See [../docs/command-parts/setup/other.md](../docs/command-parts/setup/other.md)
   - **memory** (`/setup memory`) — **a `.gitignore` write class no other module has, so it gets its own line:** (a) `<project>/.gitignore`, rewritten ONLY via `setup-memory.sh apply` / `remove`, and ONLY after an explicit consent-bearing confirm. The write is backup-first (a timestamped `<project>/.gitignore.backup.<ts>` sibling, pid-suffixed on a same-second collision so one backup can never overwrite another), atomic (tmp-file + `mv`), confined to a sentinel-delimited managed block plus the commenting-out of pre-existing directory-shaped `.claude/` / `.supervisor/` excludes — including the recursive `**` family (`.claude/**`, `**/.claude/`, `**/.claude/**`), but never the `X/*` working form — and **idempotent by byte-comparison** — apply computes the file it would write and does nothing when it already matches. It **ABORTS without any write and without a backup** on an absent, non-regular, symlinked, NUL-containing, conflict-marked, or sentinel-unbalanced `.gitignore` — never a partial write, never a blind repair; and (b) `<project>/.supervisor/config.json` key `.setup_memory.repo_allowlist` — a jq merge that is parse-gated (`jq empty`), backup-first, atomic, preserves every unrelated key, stores a JSON **array**, and never overwrites an existing non-empty one. The memory module touches NO `~/.claude/settings.json` and nothing under `~/.claude/` except ONE file — the user-scope learning-store consent record (named in the engine paragraph above), written only by `setup-memory.sh consent grant` / `decline` after an explicit Accept / Decline (other repos' entries preserved, atomic, never over a malformed file) — and it **NEVER runs `git add`, `git rm`, `git commit` or any other history-touching git command** — un-ignoring is not committing, and un-committing is the user's own `git rm --cached`.
 
   - **statusline** (`/setup statusline`) — **the only module whose write domain is the USER-SCOPE settings document, so it gets its own line:** the user-scope settings JSON ONLY (the same path Pattern 3 governs), written ONLY via `setup-statusline.sh apply` / `remove`, and ONLY after an explicit confirm. The write is backup-first (a timestamped `.backup.<ts>` sibling, pid- then counter-suffixed on a same-second collision so one backup can never overwrite another, and an apply that cannot obtain a free backup name ABORTS rather than write unbacked-up), parse-gated (`jq empty` — an unparseable document ABORTS with **no write and no backup**), atomic (tmp-file + `mv`), and **idempotent by byte-comparison** — apply computes the document it would write and does nothing when it already matches. It touches exactly TWO keys, `statusLine` and the namespaced restore record `loomwrightStatusLinePrior`; every other key at every level is preserved, which `test-setup-statusline.sh` asserts by DIFFING the two documents with those two keys removed rather than by spot-checking. **NOTHING ELSE under the user's `~/.claude/` directory** — no sidecar state file, no project write, no `.gitignore` write, and no history-touching git command. A pre-existing `statusLine` this plugin did not write is PRESERVED and reported; replacing it requires the explicit `--replace` flag, and the replaced value is recorded so `remove` restores it verbatim.
+
+  - **base-branch** (`/setup base-branch`): `<project>/.supervisor/config.json` key `.base_branch` ONLY, via `setup-base-branch.sh set` / `remove` (write rules: its part).
 
   - **rules** (`/setup rules`): `<project>/.agent/rules/<category>.json` ONLY, written ONLY via `seed-rules.sh seed --confirm` (which authors every rule through the sole writer `add-rule.sh`), and ONLY after an explicit confirm. `check` and a bare `seed` write NOTHING — every writer invocation is stdin-detached, so this module NEVER prompts and an unconfirmed run cannot write. No `~/.claude/` write of any kind, no `.gitignore` write, no `git add`/`rm`/`commit`, and no rule object built by hand.
 
