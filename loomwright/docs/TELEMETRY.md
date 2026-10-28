@@ -1060,6 +1060,18 @@ two firings of one completion.
 interleaving window injected rather than raced for, and its control neuters the lock
 alone and requires the duplicate back — case 19, which fires sequentially, passes
 against the broken guard and is why this was invisible for a release.
+**The lock fixed the order of the compare, not its meaning.** `ts` is stamped per
+*firing*, before the lock, so two firings of one completion that straddle a second
+boundary differ in `ts` alone, and byte-identity appended both with the lock working
+perfectly — case 21a kept flaking on loaded CI runners for exactly this reason
+(a 15-way fan-out stress loop under CPU load: every duplicate carried two distinct
+seconds, no firing had timed out on the lock). The guard now treats a last line
+identical to this one except for a `ts` within two seconds as the same completion;
+the python step computes those neighbouring stamps, because BSD and GNU `date`
+disagree on parsing. Case 21c injects a day-crossing straddle through a `date` shim,
+21d neuters only the window and requires the duplicate back, 21e shows a repeat
+ten seconds later is still appended, and 21f/21g pin the inclusive edge: stamps two
+seconds apart are one completion, three seconds apart are two.
 
 **Adjacent-duplicate guard (confirmed, not assumed).**
 `emit-token-ledger.sh` is registered under three `SubagentStop` matchers
@@ -1101,16 +1113,19 @@ each command its own copy — neither yields 2, and the datum above argues
 against the sharing variant. Deciding between them requires
 observing the harness's stdin delivery semantics, which this repo does not
 pin. Recorded as unresolved rather than guessed; the guard below is correct
-either way, since it keys on byte-identity and not on a duplicate count.
+either way, since it keys on line identity (byte-identity, plus the `ts` window)
+and not on a duplicate count.
 
 The guard is minimal and consecutive-only: skip the append when the line is
-byte-identical to the log's CURRENT last line. Duplicate blocks fire
+byte-identical to the log's CURRENT last line, or differs from it only in a `ts`
+within the window described above. Duplicate blocks fire
 back-to-back within one firing, so they are always adjacent. Byte-identity
 spans `ts`, `agent_id` and the transcript byte count together. That is
 **vanishingly unlikely to collide, not impossible**: `ts` is only
 second-granularity, `agent_id` is OMITTED for exactly the untyped population
 this guard targets, and parallel worker completion is a designed feature — so
-a collision requires two distinct completions in the same second, with an
+a collision requires two distinct completions whose stamps fall within two
+seconds of each other (the `ts` window described above, not only the same second), with an
 identical transcript byte count, and no `agent_id` on either. The failure
 direction is benign and one-way: the loser is one **advisory** ledger line,
 silently dropped. No state, decision, or gate reads it. Reading only the last

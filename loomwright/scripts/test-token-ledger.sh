@@ -985,12 +985,12 @@ echo "== 19. adjacent-duplicate guard: suppress a repeat of the LAST line only =
 DUP_TRANSCRIPT="$SANDBOX/dup-transcript.jsonl"
 printf 'DDDDDDDD' > "$DUP_TRANSCRIPT"   # 8 bytes
 
-# SAME-SECOND PRECONDITION (explicit, not accidental). The guard compares the
-# WHOLE emitted line and `ts` has one-second granularity, so two firings are
-# byte-identical ONLY when both land inside the same wall-clock second. A pair
-# that straddles a second boundary is a genuinely different line and MUST NOT
-# be suppressed — the production guard is right, so the requirement is stated
-# here instead of hoped for: each attempt starts immediately after a second
+# SAME-SECOND PRECONDITION (explicit, not accidental). `ts` has one-second
+# granularity, so two firings are byte-identical ONLY when both land inside the
+# same wall-clock second. The guard now also treats a pair differing in `ts`
+# alone, within a two-second window, as one completion (case 21c), so 19a no
+# longer depends on it — but 19c asserts BYTE-identity of lines 1 and 3, which
+# does. The requirement is stated here instead of hoped for: each attempt starts immediately after a second
 # ticks over (a full second of headroom) and any attempt that still straddled
 # is discarded and re-run from a clean log. The bound below keeps an
 # unachievable precondition LOUD (a counted FAIL naming it) rather than
@@ -1290,6 +1290,59 @@ else
   CONC_B="$(conc_run "$CONC_DIR/widened-unlocked.sh" "fixture-conc-unlocked-001")"
   assert_eq "case21a two CONCURRENT firings of one completion append exactly ONE line (seed + 1 = 2) — the read and the append are one critical section" "2" "$CONC_A"
   assert_eq "case21b MUTATION CONTROL: with the lock neutered and NOTHING else changed, the same two firings append TWO (seed + 2 = 3) — the check-then-act guard this replaced, failing the way it failed in the field" "3" "$CONC_B"
+fi
+
+# 21c-21e — THE STRADDLE, which is how case 21a still flaked on loaded CI runners with
+# the lock working. `ts` is stamped per FIRING, before the lock, so two firings of one
+# completion whose stamps land either side of a second boundary differ in `ts` alone,
+# and a byte-identity compare appends both however well the lock serialises it.
+# wait_for_second_tick above only makes that rare: on a busy runner the startup before
+# the stamp can still cross the tick. Measured in a 15-way fan-out stress loop under
+# CPU load: every duplicate carried two distinct seconds and no firing had timed out on
+# the lock. The straddle is INJECTED here (a `date` shim on PATH) rather than raced
+# for, and it crosses a DAY boundary so a compare of the trailing seconds alone could
+# not pass it. 21d is the control: only the `ts`-window compare is neutered, and the
+# duplicate must come back. 21e bounds the window: the same completion's content ten
+# seconds later is a later stop and is still appended.
+STR_DIR="$SANDBOX/straddle"
+mkdir -p "$STR_DIR/bin"
+printf '#!/bin/sh\nprintf "%%s\\n" "$FAKE_TS"\n' > "$STR_DIR/bin/date"
+chmod +x "$STR_DIR/bin/date"
+sed 's#^  if \[ -n "$_last_line" \] && \[ -n "$TS_WINDOW" \] && \[ -n "$UTC_TS" \]; then#  if false; then#' \
+  "$CONC_DIR/widened-locked.sh" > "$STR_DIR/no-window.sh" 2>/dev/null
+STR_STAGED=1
+[ -s "$CONC_DIR/widened-locked.sh" ] || STR_STAGED=0
+[ -s "$STR_DIR/no-window.sh" ] && ! cmp -s "$STR_DIR/no-window.sh" "$CONC_DIR/widened-locked.sh" || STR_STAGED=0
+bash -n "$STR_DIR/no-window.sh" 2>/dev/null || STR_STAGED=0
+if [ "$STR_STAGED" != "1" ]; then
+  no "case21c could not stage the straddle variants — the straddle case proves nothing"
+else
+  str_run() { # str_run <script> <session-id> <ts-1> <ts-2> -> line count INCLUDING the seed line
+    local script="$1" sid="$2" tp payload
+    tp="$SANDBOX/str-${sid}.jsonl"; printf 'SSSSSSSS' > "$tp"
+    payload="$SANDBOX/str-${sid}.json"
+    jq -n --arg tp "$tp" --arg sid "$sid" '{session_id: $sid, transcript_path: $tp}' > "$payload"
+    mkdir -p "$SANDBOX/.supervisor/logs"
+    printf '%s\n' '{"event":"seed-so-the-guard-block-is-reached"}' > "$SANDBOX/.supervisor/logs/${sid}.jsonl"
+    ( cd "$SANDBOX" && PATH="$STR_DIR/bin:$PATH" FAKE_TS="$3" bash "$script" < "$payload" >/dev/null 2>&1 ) &
+    ( cd "$SANDBOX" && PATH="$STR_DIR/bin:$PATH" FAKE_TS="$4" bash "$script" < "$payload" >/dev/null 2>&1 ) &
+    wait
+    wc -l < "$SANDBOX/.supervisor/logs/${sid}.jsonl" 2>/dev/null | tr -d ' '
+  }
+  STR_C="$(str_run "$CONC_DIR/widened-locked.sh" "fixture-straddle-001" "2026-10-27T23:59:59Z" "2026-10-28T00:00:00Z")"
+  STR_D="$(str_run "$STR_DIR/no-window.sh" "fixture-straddle-002" "2026-10-27T23:59:59Z" "2026-10-28T00:00:00Z")"
+  STR_E="$(str_run "$CONC_DIR/widened-locked.sh" "fixture-straddle-003" "2026-10-28T00:00:00Z" "2026-10-28T00:00:10Z")"
+  # The window's exact edges: TS_WINDOW_S is 2, inclusive, so 2s apart is one completion
+  # and 3s apart is a later stop. 1s and 10s alone would not catch an off-by-one.
+  STR_F="$(str_run "$CONC_DIR/widened-locked.sh" "fixture-straddle-004" "2026-10-28T00:00:00Z" "2026-10-28T00:00:02Z")"
+  STR_G="$(str_run "$CONC_DIR/widened-locked.sh" "fixture-straddle-005" "2026-10-28T00:00:00Z" "2026-10-28T00:00:03Z")"
+  assert_eq "case21c two CONCURRENT firings of one completion whose ts straddle a second (and a day) append exactly ONE line (seed + 1 = 2) — ts is per firing, not per completion" "2" "$STR_C"
+  assert_eq "case21d MUTATION CONTROL: with only the ts-window compare neutered, the straddling pair appends TWO (seed + 2 = 3) — the byte-identity guard that let case 21a flake" "3" "$STR_D"
+  assert_eq "case21e the window is bounded: the same content ten seconds later is a later stop and is still appended (seed + 2 = 3)" "3" "$STR_E"
+  assert_eq "case21f the window's inclusive edge: stamps exactly TS_WINDOW_S (2s) apart are one completion (seed + 1 = 2)" "2" "$STR_F"
+  assert_eq "case21g just past the edge: stamps 3s apart are a later stop and both append (seed + 2 = 3)" "3" "$STR_G"
+  assert_eq "case21c the surviving line carries one of the two stamps" "yes" \
+    "$(tail -1 "$SANDBOX/.supervisor/logs/fixture-straddle-001.jsonl" | jq -r 'if (.ts == "2026-10-27T23:59:59Z" or .ts == "2026-10-28T00:00:00Z") then "yes" else "no" end' 2>/dev/null)"
 fi
 
 
