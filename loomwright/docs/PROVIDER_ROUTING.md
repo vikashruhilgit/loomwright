@@ -68,7 +68,7 @@ A non-Claude provider runs **only** when the user has granted it for this repo, 
 - A missing grant is `PROVIDER=claude`, `REASON=provider_not_granted`, **regardless of `on_unavailable`**: a missing grant never sends. A missing, unreadable or malformed user-scope file means no grants.
 - `claude` never needs a grant.
 - `lens-run.sh` enforces the same grant itself and reports `lens_status: "provider_not_granted"` (no sandbox created, no provider CLI started) when called for an ungranted provider other than `claude`. It has no flag or environment bypass.
-- The grant is written only by `/setup providers apply`, after an explicit ask that names the provider and says what is sent to it (the reviewed diff and the seat's prompt).
+- The grant is written only by `/setup providers apply`, after an explicit ask that names the provider and says what is sent to it (the reviewed diff and the seat's prompt; the provider CLI also gets read access to every tracked file at the reviewed commit, including for seats with no diff, and the runner does not block network egress).
 
 ## Unavailable provider
 
@@ -122,6 +122,6 @@ A routed seat is advisory-equivalent to its Claude seat. It never decides a gate
 ## Cost and honesty
 
 - `lens-run.sh` reports `cost: "unknown"`, never `0`: a routed seat's spend is not measured by this plugin and must not be reported as free.
-- The lens runner is not a sandbox. It scrubs the child environment, runs in a throwaway clone, and detects tree mutation (`lens_mutated_tree`); the provider CLI's own tool permissions are not pinned by this plugin. The diff and prompt are sent to the vendor, which is why consent is per repo, per provider, in user scope.
+- The lens runner is not a sandbox. It scrubs the child environment, runs in a throwaway clone, and detects tree mutation (`lens_mutated_tree`); the provider CLI's own tool permissions are not pinned by this plugin. The diff and prompt are sent to the vendor, the CLI can read every tracked file at the reviewed commit in the throwaway clone, and network egress is not blocked, which is why consent is per repo, per provider, in user scope.
 - A routed answer can carry text shaped by the reviewed diff (prompt injection). That is why it goes through the Claude path's validator and why a routed seat has no write, merge or ask path.
 - `/setup providers status` shows the probe's verdict per provider and the resolved routing per seat; it writes nothing.

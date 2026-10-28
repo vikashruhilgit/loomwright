@@ -611,7 +611,7 @@ if ! provider_extract_text "$RAW_OUT"; then
 fi
 
 if [ "$LENS_ROLE_KIND" = "text" ]; then
-  RESULT_BYTES="$(printf '%s' "$PROVIDER_EXTRACTED" | LC_ALL=C wc -c | tr -d ' ')"
+  RESULT_BYTES="$(printf '%s' "$PROVIDER_EXTRACTED" | env LC_ALL=C wc -c | tr -d ' ')"
   case "$RESULT_BYTES" in
     ""|*[!0-9]*) emit_result "lens_unparseable" "[]" "could not measure the provider text" ;;
   esac
