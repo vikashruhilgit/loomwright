@@ -223,3 +223,9 @@ loomwright/docs/command-parts/setup
 loomwright/scripts/automate-helpers.sh
 loomwright/docs/prompt-token-budgets.json
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-28T03:56:04Z
+- **Brief:** .supervisor/jobs/done/2026-10-27-base-branch-configurable.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/724
