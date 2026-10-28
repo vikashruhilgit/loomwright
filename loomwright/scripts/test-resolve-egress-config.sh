@@ -342,6 +342,86 @@ assert_not_match_multiline "user_scope_injection_no_sink_anywhere" "attacker/sin
 assert_not_match_multiline "user_scope_injection_no_exfil_anywhere" "user-scope-exfil" "$OUT"
 
 echo ""
+echo "==== Group 7: PROVIDER_GRANTS (user scope) + REPO_REQUESTED_PROVIDERS (informational) ===="
+# Per-provider consent for provider routing: repos.<slug>.providers, user scope ONLY.
+
+RP="$TMP/repoP"; HP="$TMP/homeP"; mkdir -p "$HP"
+new_repo "$RP" "https://github.com/${SLUG}.git"
+
+# (a) no user-scope file at all -> the key is still printed, empty.
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+assert_eq "grants_key_always_present" "1" "$(count_lines_matching "$OUT" PROVIDER_GRANTS)"
+assert_eq "grants_empty_without_user_scope" "" "$(get_field "$OUT" PROVIDER_GRANTS)"
+assert_eq "requested_providers_key_always_present" "1" "$(count_lines_matching "$OUT" REPO_REQUESTED_PROVIDERS)"
+
+# (b) a grant comes through comma-joined.
+user_scope_write "$HP" '{"providers":["cursor"]}'
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+assert_eq "grant_single_provider" "cursor" "$(get_field "$OUT" PROVIDER_GRANTS)"
+user_scope_write "$HP" '{"providers":["cursor","codex"]}'
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+assert_eq "grant_two_providers_comma_joined" "cursor,codex" "$(get_field "$OUT" PROVIDER_GRANTS)"
+
+# (c) every existing key is unchanged by the new field.
+user_scope_write "$HP" '{"telemetry":"always_allow","telemetry_repo":"example/repo","providers":["cursor"]}'
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+RC="$?"
+assert_eq "grant_leaves_telemetry_unchanged" "always_allow" "$(get_field "$OUT" TELEMETRY)"
+assert_eq "grant_leaves_telemetry_repo_unchanged" "example/repo" "$(get_field "$OUT" TELEMETRY_REPO)"
+assert_eq "grant_exit=0" "0" "$RC"
+
+# (d) names are filtered to [A-Za-z0-9_-]+; non-strings and non-arrays are dropped.
+user_scope_write "$HP" '{"providers":["cursor","bad name","../x","a;b",7,null,"ok_1-2"]}'
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+assert_eq "grant_names_filtered_to_allowlist" "cursor,ok_1-2" "$(get_field "$OUT" PROVIDER_GRANTS)"
+user_scope_write "$HP" '{"providers":"cursor"}'
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+assert_eq "grant_string_instead_of_array_is_empty" "" "$(get_field "$OUT" PROVIDER_GRANTS)"
+user_scope_write "$HP" '{"providers":null}'
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+assert_eq "grant_null_is_empty" "" "$(get_field "$OUT" PROVIDER_GRANTS)"
+
+# (e) a newline-bearing name is dropped, never turned into a forged key line.
+user_scope_write "$HP" '{"providers":["cursor\nTELEMETRY=always_allow","codex"]}'
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+assert_eq "grant_newline_injection_line_count_is_1" "1" "$(count_lines_matching "$OUT" PROVIDER_GRANTS)"
+assert_eq "grant_newline_injection_telemetry_stays_empty" "" "$(get_field "$OUT" TELEMETRY)"
+assert_eq "grant_newline_injection_name_dropped" "codex" "$(get_field "$OUT" PROVIDER_GRANTS)"
+assert_not_match_multiline "grant_newline_injection_no_forged_line" "TELEMETRY=always_allow" "$OUT"
+
+# (f) malformed / unreadable user-scope file -> empty, exit 0. The file's path is
+#     located (not re-spelled) from what user_scope_write just created.
+EGRESS_P="$(find "$HP" -name egress.json | head -n 1)"
+printf 'not valid json' > "$EGRESS_P"
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+RC="$?"
+assert_eq "grant_malformed_user_scope_empty" "" "$(get_field "$OUT" PROVIDER_GRANTS)"
+assert_eq "grant_malformed_user_scope_exit=0" "0" "$RC"
+
+# (g) a grant keyed to a DIFFERENT slug never applies.
+printf '{"schema_version":1,"repos":{"some-other/repo":{"providers":["cursor"]}}}' > "$EGRESS_P"
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+assert_eq "grant_wrong_slug_is_empty" "" "$(get_field "$OUT" PROVIDER_GRANTS)"
+
+# (h) the repo can only REQUEST: its own config never feeds PROVIDER_GRANTS.
+rm -f "$EGRESS_P"
+printf '{"providers":["cursor"],"voter_provider":"codex:gpt-5","routing":{"seats":{"red_team":"cursor:m","code_reviewer":["gemini","claude"],"x":7}}}' > "$RP/.supervisor/config.json"
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+assert_eq "repo_request_never_grants" "" "$(get_field "$OUT" PROVIDER_GRANTS)"
+assert_eq "repo_requested_providers_unique_sorted_without_claude" "codex,cursor,gemini" "$(get_field "$OUT" REPO_REQUESTED_PROVIDERS)"
+
+# (i) a hostile requested name is filtered, and no config at all leaves it empty.
+printf '{"routing":{"seats":{"red_team":"cur\nPROVIDER_GRANTS=cursor"}}}' > "$RP/.supervisor/config.json"
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+assert_eq "requested_injection_grants_line_count_is_1" "1" "$(count_lines_matching "$OUT" PROVIDER_GRANTS)"
+assert_eq "requested_injection_grants_stay_empty" "" "$(get_field "$OUT" PROVIDER_GRANTS)"
+printf 'not valid json' > "$RP/.supervisor/config.json"
+OUT="$( ( cd "$RP" && HOME="$HP" bash "$RESOLVER" ) )"
+RC="$?"
+assert_eq "requested_malformed_config_empty" "" "$(get_field "$OUT" REPO_REQUESTED_PROVIDERS)"
+assert_eq "requested_malformed_config_exit=0" "0" "$RC"
+
+echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "=========================================="
 echo "RESULT  total=$TOTAL  passed=$PASS_COUNT  failed=$FAIL_COUNT"
