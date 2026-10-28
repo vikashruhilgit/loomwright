@@ -27,7 +27,7 @@
 - pending_decisions: <n> | fix_now_reentered: <true|false>     # present ONLY when this item produced dismissed-finding drafts (§6 "Dismissed-findings decision step (before the park)")
 ## Progress                 # APPEND-ONLY (never rewritten)
 - <ts> picked <item>
-- <ts> session_id <id> (<item>)     # one per session RUN used (fresh phases: `session_id <id> (<item>) phase=launch-pad|supervisor|drain`, plus `launch-pad saved <brief>`); read-token-ledger.sh --run-id sums them
+- <ts> session_id <id> (<item>)     # one per session RUN used (fresh phases: `session_id <id> (<item>) phase=launch-pad|supervisor|drain`, plus `launch-pad saved <brief>` and the coordinator's own `phase=driver` line); read-token-ledger.sh --run-id sums them
 - <ts> ran /autonomous → PR <url>
 - <ts> drain READY → awaiting_merge
 ```

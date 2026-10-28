@@ -88,8 +88,9 @@
 #     Progress line naming this item. Each <sid> contributes its
 #     `<logs>/<sid>.owner` `cc_session_id=` value, every distinct
 #     `"cc_session_id"` in `<logs>/<sid>.jsonl`, and <sid> itself (a lane run
-#     records the Claude Code id directly); a `run created (session <uuid>)`
-#     line adds <uuid>. Transcripts: `<projects>/*/<cc id>.jsonl` (main thread)
+#     records the Claude Code id directly — so does the fresh-phase driver's own
+#     `session_id <sid> (<item>) phase=driver` line, the /automate coordinator
+#     session); a `run created (session <uuid>)` line adds <uuid>. Transcripts: `<projects>/*/<cc id>.jsonl` (main thread)
 #     and `<projects>/*/<cc id>/subagents/agent-*.jsonl` (agent type from the
 #     sibling `agent-*.meta.json` `agentType`, last `:` segment).
 #     <projects> = --projects-dir, else $LOOMWRIGHT_CC_PROJECTS_DIR, else the
@@ -152,7 +153,9 @@
 #     `not_picked`, `picked_in_lane`, `tmpdir_unavailable`, `work_after_park`
 #     (informational — the row still prints).
 #   * Honest limits: the /automate engine's own main-thread tokens count only
-#     when its Claude Code session id is resolvable through the chain above; a
+#     when its Claude Code session id is resolvable through the chain above (a
+#     fresh-phase run's `phase=driver` line; run files written before that line
+#     existed name no driver, and those items under-count by its share); a
 #     Claude Code session that wrote into a plugin session log for unrelated
 #     work is counted too (the log names it); CI-side spend is never seen.
 #

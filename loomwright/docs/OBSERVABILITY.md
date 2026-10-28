@@ -126,7 +126,7 @@ read-token-ledger.sh --per-item .supervisor/automate/<run_id>.md [--root <checko
 
 1. Item scope and wall time come from `phase-timing.sh --run <run file> --item <item> --logs-dir <root>/.supervisor/logs`. The report reads its `pick`, `park`, `pick_to_park.seconds`, `ran /autonomous` and `owned_drains[]` as-is and does not re-derive the item segment. An item's wall time is therefore exactly phase-timing's.
 2. The item's plugin session ids are phase-timing's `session_id` plus every `session_id <sid> (<item>)` Progress line that names the item.
-3. Each `<sid>` resolves to Claude Code session ids: the `cc_session_id=` line of `<root>/.supervisor/logs/<sid>.owner`, every distinct `"cc_session_id"` in `<root>/.supervisor/logs/<sid>.jsonl` (one `/autonomous` session can span several Claude Code sessions), and `<sid>` itself (a lane run records the Claude Code id directly). A `run created (session <uuid>)` Progress line adds `<uuid>`.
+3. Each `<sid>` resolves to Claude Code session ids: the `cc_session_id=` line of `<root>/.supervisor/logs/<sid>.owner`, every distinct `"cc_session_id"` in `<root>/.supervisor/logs/<sid>.jsonl` (one `/autonomous` session can span several Claude Code sessions), and `<sid>` itself (a lane run records the Claude Code id directly, and so does a fresh-phase run's `session_id <sid> (<item>) phase=driver` line, which names the `/automate` coordinator session that drives the phases). A `run created (session <uuid>)` Progress line adds `<uuid>`.
 4. Each Claude Code id is looked up as `<projects>/*/<id>.jsonl` (the main thread) and `<projects>/*/<id>/subagents/agent-*.jsonl` (subagents; the agent type is the sibling `agent-*.meta.json` `agentType`, last `:` segment). `<projects>` is `--projects-dir`, else `LOOMWRIGHT_CC_PROJECTS_DIR`, else Claude Code's default projects directory under `$HOME`.
 
 The report prints the ids it tried for each item under the table, with the transcript-file count.
@@ -141,7 +141,7 @@ The report prints the ids it tried for each item under the table, with the trans
 
 **Honest limits.**
 
-- The `/automate` engine's own main-thread tokens are counted **only when its Claude Code session id is resolvable** through the chain above (a `run created (session <uuid>)` line, or a session log/owner file that names it).
+- The `/automate` engine's own main-thread tokens are counted **only when its Claude Code session id is resolvable** through the chain above (the fresh-phase `phase=driver` line, a `run created (session <uuid>)` line, or a session log/owner file that names it). A fresh-phase run file written before the driver line existed names no coordinator session, so its items under-count by that session's share (13% of one lane item, measured 2026-10-28).
 - A Claude Code session that wrote into a plugin session log for unrelated work is counted too, because the log names it.
 - Gaps between boundaries (for example `ran /autonomous` → `owned drain started`) belong to no phase, so phase rows need not add up to the item row.
 - A message whose final transcript line is missing is counted at its per-field maximum, which can under-count its output.

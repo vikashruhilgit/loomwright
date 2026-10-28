@@ -122,6 +122,14 @@ printf '%s\n' '## Progress' '- 2026-10-01T09:00:00Z picked a.md' '- 2026-10-01T0
   '- 2026-10-01T10:20:00Z session_id s-dr (a.md) phase=drain' > "$T/p/automate/r2.md"
 OUT="$(bash "$PT" --run "$T/p/automate/r2.md" 2>/dev/null)"
 [ "$(q '.session_id')" = "s-dr" ] && ok "no supervisor / un-suffixed line ⇒ the last session_id line (as before)" || no "no-supervisor fallback: $(q '.session_id')"
+# the /automate coordinator's own `phase=driver` line runs no phase: never the timed session, even when last
+printf '%s\n' '## Progress' '- 2026-10-01T09:00:00Z picked a.md' '- 2026-10-01T09:20:00Z session_id s-lp (a.md) phase=launch-pad' \
+  '- 2026-10-01T09:30:00Z session_id s-drv (a.md) phase=driver' > "$T/p/automate/r3.md"
+OUT="$(bash "$PT" --run "$T/p/automate/r3.md" 2>/dev/null)"
+[ "$(q '.session_id')" = "s-lp" ] && ok "a phase=driver line (even the last) is never the timed session" || no "driver line timed: $(q '.session_id')"
+printf '%s\n' '## Progress' '- 2026-10-01T09:00:00Z picked a.md' '- 2026-10-01T09:00:01Z session_id s-drv (a.md) phase=driver' > "$T/p/automate/r4.md"
+OUT="$(bash "$PT" --run "$T/p/automate/r4.md" 2>/dev/null)"
+[ "$(q '.session_id')" = "null" ] && ok "only a phase=driver line ⇒ no session (null), never the coordinator" || no "driver-only: $(q '.session_id')"
 echo "== N. missing endpoint ⇒ null, never 0; stranded close-out ⇒ null completion =="
 mkdir -p "$T/n/automate" "$T/n/logs"
 printf '## Progress\n- 2026-10-01T10:00:00Z picked x.md\n- 2026-10-01T10:05:00Z session_id s-n\n' > "$T/n/automate/r.md"
