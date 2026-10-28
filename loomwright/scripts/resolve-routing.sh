@@ -95,7 +95,6 @@ fallback_reviewer skills/review-heal/fallback-review.md CODE_REVIEW_RESULT valid
 evaluate_reviewer skills/autonomous-loop/multi-iteration.md CODE_REVIEW_RESULT validate-code-review-result.py
 postmortem_classifier skills/pr-postmortem/SKILL.md categories -
 dreaming_analysis commands/dreaming.md Recurring -
-propose commands/propose.md domain-gap -
 capability_check commands/capability-check.md CAPABILITY_REPORT -
 red_team commands/red-team-reviewer.md RED_TEAM_RESULT -
 code_reviewer commands/code-reviewer.md CODE_REVIEW_RESULT validate-code-review-result.py
