@@ -11,10 +11,10 @@
 #   B. generic branches: (a) path match, (a) content-only match on an innocuous path, (b) workflow
 #      directory (incl. a parts-only docs/command-parts/ edit), (b) word, (c) size by lines (>400), (c) size by files (>15); a clean small diff ⇒
 #      false with reasons []; reasons are prefixed + name the pattern; case-insensitive
-#   C. .agent/risk.json — `paths` glob (`**` across `/`) and `content` literal extend; malformed
-#      (string `paths`, non-object root, invalid JSON) ⇒ generic-only + `risk_json_malformed` on
-#      stderr, never null; `exclude` ⇒ ignored + `risk_json_exclude_ignored`, never honoured;
-#      absent ⇒ silent; --root decides where it is read
+#   C. .agent/risk.json committed on a per-variant base branch (`base-rj-*`) — `paths` glob (`**`
+#      across `/`) and `content` literal extend; malformed (string `paths`, non-object root, invalid
+#      JSON) ⇒ generic-only + `risk_json_malformed` on stderr, never null; `exclude` ⇒ ignored +
+#      `risk_json_exclude_ignored`, never honoured; absent at the base ⇒ silent; a cwd file is unread
 #   D. unclassifiable ⇒ null + `unclassifiable: <reason>` + stderr, exit 0: bad ref, not a git
 #      repo, bad args (missing refs, --root with no value, empty --root, unknown option); jq off
 #      PATH ⇒ the ONE shell-templated object is still valid JSON
@@ -31,6 +31,24 @@
 #      `migrations/`, `payments/` ⇒ still true with the `*auth*` reason, and `--kind-table` is
 #      byte-identical to the clean-cwd output; independent mutation control deletes the `-f` from a
 #      COPY (gated on non-empty + differs + `bash -n`) ⇒ the seeded-cwd case goes red
+#   J. trusted-root branch: one case per surface (reason form `trusted-root: <lowercased path>`);
+#      add / edit / delete / rename (both sides, incl. a root-only `.mcp.json` rename under forced
+#      rename detection); any-depth names vs repo-root-only entries; look-alike names never match
+#      (no substring); a cwd seeded with trusted-root names changes nothing; symlink shapes — the
+#      bare root config dir, an `.agent` ancestor, `.agent/rules` — are caught (exact / ancestor)
+#   K. `.agent/risk.json` is read from `<base_ref>` only: a head that drops an entry is still judged
+#      by the base's entry; an uncommitted working-tree file and a head-only file are unread; an
+#      invalid base file is generic-only and trusted-root still applies; a present base blob whose
+#      `git show` fails (PATH-stub git), a failed `ls-tree` presence probe, or a base blob missing
+#      from the object store ⇒ null + `unclassifiable: git_failed`, never read as absent; a base
+#      whose `.agent` (or `.agent/risk.json`) is a symlink ⇒ null + `unclassifiable: risk_json_symlink`;
+#      an unrelated symlink under a real `.agent/` is not judged (true + project:); a base whose
+#      `.agent` is a submodule (gitlink) ⇒ null + `unclassifiable: risk_json_gitlink`
+#   L. mutation controls for J/K, one per pinned rule (reason line deleted, working-tree read,
+#      `--no-renames` dropped, root-only arm made any-depth, exact arm made a substring, failed
+#      `git show` falls through, exact arm deleted, ancestor arm deleted, failed `ls-tree` presence
+#      probe falls through, symlink probe deleted, exact-path filter dropped, gitlink arm deleted),
+#      each gated on non-empty + differs + `bash -n`
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -63,9 +81,10 @@ R="$TMP/repo"; mkdir -p "$R"
   && printf 'hello\n' > README.md && printf 'export const a = 1;\n' > src/utils/format.ts \
   && printf 'x\n' > billing/base.ts && git add -A && git commit -qm base )
 
-mk_branch() {  # mk_branch <name> <shell snippet run inside the repo>  — commits everything
-  ( cd "$R" && git checkout -q main && git checkout -qb "$1" && eval "$2" && git add -A && git commit -qm "$1" ) >/dev/null 2>&1
+mk_from() {  # mk_from <base branch> <name> <shell snippet run inside the repo>  — commits everything
+  ( cd "$R" && git checkout -q "$1" && git checkout -qb "$2" && eval "$3" && git add -A && git commit -qm "$2" ) >/dev/null 2>&1
 }
+mk_branch() { mk_from main "$@"; }  # mk_branch <name> <snippet> — one commit off main
 mk_branch clean       'printf "one\ntwo\nthree\n" >> README.md'
 mk_branch path-auth   'mkdir -p src/Auth && printf "x\n" > src/Auth/login.ts'
 mk_branch content-tok 'printf "const token = \"abc\";\n" >> src/utils/format.ts'
@@ -78,6 +97,56 @@ mk_branch many-files  'mkdir -p docs; i=0; while [ $i -lt 16 ]; do printf "f\n" 
 mk_branch billing     'printf "charge()\n" > billing/x.ts'
 mk_branch stripe      'printf "call Stripe here\n" >> README.md'
 mk_branch stub-header 'printf "++x\n" >> README.md'
+# .agent/risk.json is read from the BASE ref's tip, so each risk.json variant is its own base branch
+# (main itself carries none). The generic heads above are cut from main, so `<base-rj-*>...<head>`
+# diffs from the merge base (main) and never includes the risk.json commit.
+mk_branch base-rj-ok           'mkdir -p .agent && printf "{\"schema_version\":1,\"paths\":[\"billing/**\"],\"content\":[\"stripe\"]}\n" > .agent/risk.json'
+mk_branch base-rj-str          'mkdir -p .agent && printf "{\"schema_version\":1,\"paths\":\"billing/**\"}\n" > .agent/risk.json'
+mk_branch base-rj-nonobj       'mkdir -p .agent && printf "[1,2]\n" > .agent/risk.json'
+mk_branch base-rj-invalid      'mkdir -p .agent && printf "{not json\n" > .agent/risk.json'
+mk_branch base-rj-exclude      'mkdir -p .agent && printf "{\"schema_version\":1,\"paths\":[\"billing/**\"],\"exclude\":[\"billing/**\"]}\n" > .agent/risk.json'
+mk_branch base-rj-exclude-only 'mkdir -p .agent && printf "{\"schema_version\":1,\"exclude\":[\"*\"]}\n" > .agent/risk.json'
+# Symlinked bases (review iteration 2): git reads never follow an in-tree link (mode 120000).
+mk_branch base-rj-agentlink 'mkdir -p agentcfg && printf "{\"schema_version\":1,\"paths\":[\"billing/**\"]}\n" > agentcfg/risk.json && ln -s agentcfg .agent'
+mk_branch base-rj-filelink  'mkdir -p .agent rjcfg && printf "{\"schema_version\":1,\"paths\":[\"billing/**\"]}\n" > rjcfg/risk.json && ln -s ../rjcfg/risk.json .agent/risk.json'
+# Review iteration 3: an UNRELATED symlink under a real `.agent/` dir must not be judged; a base whose
+# `.agent` is a submodule (gitlink, mode 160000) — built with update-index, since `git add -A` would
+# stage the missing work-tree dir as a deletion.
+mk_branch base-rj-notelink 'mkdir -p .agent && printf "{\"schema_version\":1,\"paths\":[\"billing/**\"]}\n" > .agent/risk.json && ln -s ../x.txt .agent/notes-link'
+( cd "$R" && git checkout -q main && git checkout -qb base-rj-gitlink \
+  && git update-index --add --cacheinfo "160000,$(git rev-parse main),.agent" && git commit -qm base-rj-gitlink \
+  && git checkout -q main ) >/dev/null 2>&1
+# Heads cut FROM base-rj-ok (a PR against a base that has the project extension).
+mk_from base-rj-ok rj-drop 'printf "{\"schema_version\":1,\"paths\":[],\"content\":[\"stripe\"]}\n" > .agent/risk.json && printf "y\n" > billing/x.txt'
+mk_from base-rj-ok rj-keep 'printf "y\n" > billing/x.txt'
+# Trusted-root fixtures: base-tr carries the root-only files so heads can edit / delete / rename them.
+mk_branch base-tr 'printf "rules v1\n" > CLAUDE.md && printf "{\"mcpServers\":{}}\n" > .mcp.json && mkdir -p .agent/rules && printf "{\"r\":1}\n" > .agent/rules/process.json && printf "{\"v\":1}\n" > .agent/verify.json'
+mk_from base-tr tr-claude-edit  'printf "rules v2\n" >> CLAUDE.md'
+mk_from base-tr tr-rules-del    'git rm -q .agent/rules/process.json'
+mk_from base-tr tr-claude-mv    'mkdir -p docs && git mv CLAUDE.md docs/CLAUDE.md'
+mk_from base-tr tr-mcp-mv       'mkdir -p config && git mv .mcp.json config/mcp.json'
+mk_from base-tr tr-verify-edit  'printf "{\"v\":2}\n" > .agent/verify.json'
+mk_from base-tr tr-verify-del   'git rm -q .agent/verify.json'
+mk_branch tr-claude-new    'printf "rules v1\n" > CLAUDE.md'
+mk_branch tr-agents        'printf "rules\n" > AGENTS.md'
+mk_branch tr-mcp           'printf "{\"mcpServers\":{}}\n" > .mcp.json'
+TR_CDIR_FILE='.claude/settings.json'   # the root-only config-dir fixture, named once (vendor-coupling: reuse)
+mk_branch tr-claude-dir    "mkdir -p \"\$(dirname $TR_CDIR_FILE)\" && printf '{}\n' > $TR_CDIR_FILE"
+mk_branch tr-rules         'mkdir -p .agent/rules && printf "{\"r\":1}\n" > .agent/rules/process.json'
+mk_branch tr-riskjson      'mkdir -p .agent && printf "{\"schema_version\":1,\"paths\":[\"*\"]}\n" > .agent/risk.json'
+mk_branch tr-verify        'mkdir -p .agent && printf "{\"v\":1}\n" > .agent/verify.json'
+mk_branch tr-review        'printf "rules\n" > REVIEW.md'
+mk_branch tr-claude-local  'printf "rules\n" > CLAUDE.local.md'
+mk_branch tr-nested-claude 'mkdir -p sub/dir && printf "rules\n" > sub/dir/CLAUDE.md'
+mk_branch tr-nested-agents 'mkdir -p sub && printf "rules\n" > sub/AGENTS.md'
+mk_branch tr-nested-mcp    'mkdir -p sub && printf "{}\n" > sub/.mcp.json'
+mk_branch tr-nested-verify 'mkdir -p sub/.agent && printf "{}\n" > sub/.agent/verify.json'
+# Symlink shapes: the diff names only the link itself (mode 120000), never a path under it.
+mk_branch tr-cdir-symlink  'mkdir -p cfg && printf "{}\n" > cfg/settings.json && ln -s cfg "$(dirname '"$TR_CDIR_FILE"')"'
+mk_branch tr-agent-symlink 'mkdir -p agentcfg/rules && printf "{}\n" > agentcfg/rules/p.json && printf "{}\n" > agentcfg/verify.json && ln -s agentcfg .agent'
+mk_branch tr-rules-symlink 'mkdir -p .agent rulescfg && printf "{}\n" > rulescfg/p.json && ln -s ../rulescfg .agent/rules'
+# Names that merely CONTAIN a trusted-root name (as a substring, or at the wrong depth / boundary).
+mk_branch tr-lookalike     'mkdir -p docs src .agent && for f in docs/claude-md-notes.md src/mcp.json.ts docs/verify.json.md src/.mcp.json.ts docs/old-claude.md .agent/verify.json.md .claude-notes.md .agent/rules-old.json; do printf "x\n" > "$f"; done'
 
 run() {  # run <base> <head> [extra args...] — from ELSEWHERE; sets OUT / ERR / RC
   OUT="$(cd "$ELSEWHERE" && bash "$S" "$@" --root "$R" 2>"$TMP/err")"; RC=$?
@@ -86,7 +155,9 @@ run() {  # run <base> <head> [extra args...] — from ELSEWHERE; sets OUT / ERR 
 j() { printf '%s' "$OUT" | jq -r "$1"; }
 jc() { printf '%s' "$OUT" | jq -c "$1"; }
 one_json() { [ "$(printf '%s\n' "$OUT" | grep -c .)" -eq 1 ] && printf '%s' "$OUT" | jq -e . >/dev/null 2>&1; }
-rm_rj() { rm -f "$R/.agent/risk.json"; }
+has_reason() { printf '%s' "$OUT" | jq -e --arg r "$1" '.reasons | index([$r]) != null' >/dev/null 2>&1; }
+tr_count() { printf '%s' "$OUT" | jq -r '[.reasons[] | select(startswith("trusted-root:"))] | length'; }
+at_head() { ( cd "$R" && git checkout -q "$1" ) >/dev/null 2>&1; }  # check the fixture repo out at a branch
 
 # =============================================================================
 echo "== A. output contract =="
@@ -176,56 +247,48 @@ else
 fi
 
 # =============================================================================
-echo "== C. .agent/risk.json project extension (add-only) =="
-mkdir -p "$R/.agent"
-printf '{"schema_version":1,"paths":["billing/**"],"content":["stripe"]}\n' > "$R/.agent/risk.json"
-run main billing
+echo "== C. .agent/risk.json project extension (add-only, committed on the base ref) =="
+run base-rj-ok billing
 if [ "$(j '.high_risk')" = "true" ] && [ "$(jc '.reasons')" = "$(jq -nc '["project: billing/x.ts matched billing/**"]')" ] && [ -z "$ERR" ]; then
-  ok "C1 paths glob billing/** + billing/x.ts diff ⇒ true with a project: reason, no stderr"
+  ok "C1 base risk.json paths glob billing/** + billing/x.ts diff ⇒ true with a project: reason, no stderr"
 else
   no "C1 billing wrong ($OUT err='$ERR')"
 fi
-run main stripe
+run base-rj-ok stripe
 if [ "$(j '.high_risk')" = "true" ] && [ "$(jc '.reasons')" = "$(jq -nc '["project: 1 changed line(s) matched stripe"]')" ]; then
   ok "C2 content literal 'stripe' matches 'Stripe' in a changed line (case-insensitive) ⇒ project: reason"
 else
   no "C2 stripe wrong ($OUT)"
 fi
-run main clean
+run base-rj-ok clean
 [ "$(j '.high_risk')" = "false" ] && ok "C3 the extension only ADDS: the clean diff stays false with risk.json present" || no "C3 clean diff flipped by risk.json ($OUT)"
 
-printf '{"schema_version":1,"paths":"billing/**"}\n' > "$R/.agent/risk.json"
-run main billing
+run base-rj-str billing
 if [ "$(j '.high_risk')" = "false" ] && grep -q 'risk_json_malformed' < <(printf '%s' "$ERR"); then
   ok "C4 paths as a string (not array) ⇒ generic-only (false) + risk_json_malformed on stderr, never null"
 else
   no "C4 malformed-string wrong ($OUT err='$ERR')"
 fi
-printf '[1,2]\n' > "$R/.agent/risk.json"
-run main billing
+run base-rj-nonobj billing
 [ "$(j '.high_risk')" = "false" ] && grep -q 'risk_json_malformed' < <(printf '%s' "$ERR") \
   && ok "C5 non-object root ⇒ generic-only + risk_json_malformed" || no "C5 non-object wrong ($OUT err='$ERR')"
-printf '{not json\n' > "$R/.agent/risk.json"
-run main billing
+run base-rj-invalid billing
 [ "$(j '.high_risk')" = "false" ] && grep -q 'risk_json_malformed' < <(printf '%s' "$ERR") \
   && ok "C6 invalid JSON ⇒ generic-only + risk_json_malformed" || no "C6 invalid-json wrong ($OUT err='$ERR')"
-printf '{"schema_version":1,"paths":["billing/**"],"exclude":["billing/**"]}\n' > "$R/.agent/risk.json"
-run main billing
+run base-rj-exclude billing
 if [ "$(j '.high_risk')" = "true" ] && grep -q 'risk_json_exclude_ignored' < <(printf '%s' "$ERR"); then
   ok "C7 exclude key is IGNORED (still true) + risk_json_exclude_ignored on stderr — never honoured (R5)"
 else
   no "C7 exclude wrong ($OUT err='$ERR')"
 fi
-printf '{"schema_version":1,"exclude":["*"]}\n' > "$R/.agent/risk.json"
-run main path-auth
+run base-rj-exclude-only path-auth
 [ "$(j '.high_risk')" = "true" ] && ok "C8 an exclude-only file cannot lower a generic classification" || no "C8 exclude lowered generic ($OUT)"
-rm_rj
 run main billing
-[ "$(j '.high_risk')" = "false" ] && [ -z "$ERR" ] && ok "C9 absent risk.json ⇒ silent generic-only (billing diff is false)" || no "C9 absent wrong ($OUT err='$ERR')"
-# --root decides where the file is read from: a risk.json in the CWD must not be picked up.
+[ "$(j '.high_risk')" = "false" ] && [ -z "$ERR" ] && ok "C9 absent risk.json at the base ⇒ silent generic-only (billing diff is false)" || no "C9 absent wrong ($OUT err='$ERR')"
+# --root picks the repository: a risk.json in the CWD must not be picked up.
 mkdir -p "$ELSEWHERE/.agent"; printf '{"schema_version":1,"paths":["billing/**"]}\n' > "$ELSEWHERE/.agent/risk.json"
 run main billing
-[ "$(j '.high_risk')" = "false" ] && ok "C10 a .agent/risk.json in the caller's cwd is NOT read — --root decides" || no "C10 cwd risk.json was read ($OUT)"
+[ "$(j '.high_risk')" = "false" ] && ok "C10 a .agent/risk.json in the caller's cwd is NOT read — only <base_ref> in --root's repo" || no "C10 cwd risk.json was read ($OUT)"
 rm -rf "$ELSEWHERE/.agent"
 
 # =============================================================================
@@ -272,7 +335,9 @@ fi
 [ "$(cat $SCHEMAS_ALL_DOC | grep -c '^<!-- risk-table:begin -->$')" -eq 1 ] && ok "E2 exactly ONE committed copy of the table" || no "E2 marker count != 1"
 grep -q '`\*token\*`' "$TMP/table" && grep -q 'changed_lines > 400' "$TMP/table" && grep -q 'changed_files > 15' "$TMP/table" \
   && grep -q '`skills/`' "$TMP/table" && grep -q 'NO `exclude` key' "$TMP/table" \
-  && ok "E3 the table names every branch's data (a/b/c + project, no exclude)" || no "E3 table content incomplete"
+  && grep -q '^| trusted-root .*`CLAUDE.md`.*`.agent/verify.json`.*| `trusted-root:` |$' "$TMP/table" \
+  && grep -q 'read from `<base_ref>` only' "$TMP/table" \
+  && ok "E3 the table names every branch's data (a/b/c + trusted-root + project from <base_ref>, no exclude)" || no "E3 table content incomplete"
 # The lens and the loop POINT at the table instead of restating the pattern list.
 # automate-loop is a split index (parallel-automate/22): read its documented-order assembly (index
 # segments + split files); a failed assembly leaves no file, so both greps below fail closed.
@@ -399,6 +464,285 @@ if [ -s "$MUTF/classify-risk.sh" ] && ! cmp -s "$S" "$MUTF/classify-risk.sh" && 
     || no "I5 clean-cwd case went red on the noglob mutant (out='$OUT')"
 else
   no "I3 mutant not gated (empty, identical, bash -n failed, or set -f survived)"
+fi
+
+# =============================================================================
+echo "== J. trusted-root — instruction / config surfaces are high risk =="
+# Reason form pinned: `trusted-root: <lowercased path>`.
+tr_case() {  # tr_case <label> <base> <head> <expected reason>
+  run "$2" "$3"
+  if [ "$(j '.high_risk')" = "true" ] && has_reason "$4"; then
+    ok "$1 ⇒ true with '$4'"
+  else
+    no "$1 wrong — expected '$4' ($OUT err='$ERR')"
+  fi
+}
+run base-tr tr-claude-edit
+if [ "$(j '.high_risk')" = "true" ] && [ "$(jc '.reasons')" = "$(jq -nc '["trusted-root: claude.md"]')" ]; then
+  ok "J1 one edited line in root CLAUDE.md ⇒ true with exactly ['trusted-root: claude.md'] (AC1)"
+else
+  no "J1 CLAUDE.md edit wrong ($OUT)"
+fi
+tr_case "J2a AGENTS.md (AC2)"                 main tr-agents        "trusted-root: agents.md"
+tr_case "J2b .mcp.json (AC2)"                 main tr-mcp           "trusted-root: .mcp.json"
+tr_case "J2c root config-dir settings (AC2)"  main tr-claude-dir    "trusted-root: $TR_CDIR_FILE"
+tr_case "J2d .agent/rules/process.json (AC2)" main tr-rules         "trusted-root: .agent/rules/process.json"
+tr_case "J2e .agent/risk.json (AC2)"          main tr-riskjson      "trusted-root: .agent/risk.json"
+tr_case "J2f .agent/verify.json (AC2)"        main tr-verify        "trusted-root: .agent/verify.json"
+tr_case "J2g REVIEW.md (AC2)"                 main tr-review        "trusted-root: review.md"
+tr_case "J2h CLAUDE.local.md (AC2)"           main tr-claude-local  "trusted-root: claude.local.md"
+tr_case "J3a .agent/verify.json added (AC3)"  main    tr-verify      "trusted-root: .agent/verify.json"
+tr_case "J3b .agent/verify.json edited (AC3)" base-tr tr-verify-edit "trusted-root: .agent/verify.json"
+tr_case "J3c .agent/verify.json deleted (AC3)" base-tr tr-verify-del "trusted-root: .agent/verify.json"
+tr_case "J4a sub/dir/CLAUDE.md, any depth (AC4)" main tr-nested-claude "trusted-root: sub/dir/claude.md"
+tr_case "J4b sub/AGENTS.md, any depth (AC4)"     main tr-nested-agents "trusted-root: sub/agents.md"
+run main tr-nested-mcp
+[ "$(tr_count)" = "0" ] && [ "$(j '.high_risk')" = "false" ] \
+  && ok "J4c sub/.mcp.json ⇒ no trusted-root: reason (.mcp.json is repo-root only) (AC4)" || no "J4c sub/.mcp.json matched ($OUT)"
+run main tr-nested-verify
+[ "$(tr_count)" = "0" ] && [ "$(j '.high_risk')" = "false" ] \
+  && ok "J4d sub/.agent/verify.json ⇒ no trusted-root: reason (repo-root only) (AC4)" || no "J4d sub/.agent/verify.json matched ($OUT)"
+tr_case "J5a .agent/rules/process.json deleted (AC5)" base-tr tr-rules-del "trusted-root: .agent/rules/process.json"
+run base-tr tr-claude-mv
+if [ "$(j '.high_risk')" = "true" ] && has_reason "trusted-root: claude.md" && has_reason "trusted-root: docs/claude.md"; then
+  ok "J5b CLAUDE.md renamed to docs/CLAUDE.md ⇒ true, both sides named (AC5)"
+else
+  no "J5b CLAUDE.md rename wrong ($OUT)"
+fi
+# AC5b: rename detection FORCED on (env-level git config, git >= 2.31), so the case proves the
+# trusted-root list uses --no-renames rather than relying on the caller's diff.renames setting.
+RENAMES_ON=(env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.renames GIT_CONFIG_VALUE_0=true)
+OUT="$(cd "$ELSEWHERE" && "${RENAMES_ON[@]}" bash "$S" base-tr tr-mcp-mv --root "$R" 2>/dev/null)"
+if [ "$(j '.high_risk')" = "true" ] && has_reason "trusted-root: .mcp.json"; then
+  ok "J5c root .mcp.json renamed to config/mcp.json (content unchanged) ⇒ true naming the OLD path (AC5b)"
+else
+  no "J5c root-only rename escaped ($OUT)"
+fi
+run main clean
+[ "$(j '.high_risk')" = "false" ] && [ "$(tr_count)" = "0" ] \
+  && ok "J6 a diff touching no trusted-root and no generic surface stays false (AC10)" || no "J6 clean diff flipped ($OUT)"
+run main tr-lookalike
+if [ "$(tr_count)" = "0" ] && [ "$(j '.high_risk')" = "false" ]; then
+  ok "J7 names that merely contain a trusted-root name (claude-md-notes, mcp.json.ts, .mcp.json.ts, old-claude.md, verify.json.md, .claude-notes.md, rules-old.json) ⇒ no match, never a substring (AC11)"
+else
+  no "J7 substring look-alike matched ($OUT)"
+fi
+# Exact / ancestor path shapes (review iteration 1): a symlink in place of a root-only directory.
+TR_CDIR="$(dirname "$TR_CDIR_FILE")"
+tr_case "J10a symlink config dir -> cfg/ (bare path, mode 120000)" main tr-cdir-symlink  "trusted-root: $TR_CDIR"
+tr_case "J10b symlink .agent -> agentcfg/ (ancestor of the .agent entries)" main tr-agent-symlink "trusted-root: .agent"
+tr_case "J10c symlink .agent/rules -> ../rulescfg (bare path of .agent/rules/)" main tr-rules-symlink "trusted-root: .agent/rules"
+# AC12: a cwd holding untracked files named like the trusted-root entries leaves the result unchanged.
+TRSEED="$TMP/trseed"; mkdir -p "$TRSEED/.claude" "$TRSEED/.agent/rules"
+: > "$TRSEED/CLAUDE.md"; : > "$TRSEED/.mcp.json"; : > "$TRSEED/AGENTS.md"
+run_from "$TRSEED" "$S" base-tr tr-claude-edit --root "$R"
+if [ "$(j '.high_risk')" = "true" ] && [ "$(jc '.reasons')" = "$(jq -nc '["trusted-root: claude.md"]')" ]; then
+  ok "J8 CLAUDE.md diff from a cwd holding untracked trusted-root names (files + the config dir) ⇒ unchanged (AC12)"
+else
+  no "J8 seeded cwd changed the trusted-root result ($OUT)"
+fi
+# The trusted-root data lists are plain words — nothing for noglob to protect (AC12's premise).
+if ! grep -q '[][*?]' < <(grep -E "^TRUSTED_ROOT_(ANYDEPTH|ROOTONLY)=" "$S"); then
+  ok "J9 TRUSTED_ROOT_* lists hold no glob character (*, ?, [) — the any-depth rule is built in code"
+else
+  no "J9 a TRUSTED_ROOT_* entry is glob-shaped — the seeded cwd in J8 must then hold a matching path"
+fi
+
+# =============================================================================
+echo "== K. .agent/risk.json is read from <base_ref> only =="
+at_head rj-drop
+run base-rj-ok rj-drop
+if [ "$(j '.high_risk')" = "true" ] && has_reason "project: billing/x.txt matched billing/**" && has_reason "trusted-root: .agent/risk.json"; then
+  ok "K1 head drops billing/** AND changes billing/x.txt, --root at the head checkout ⇒ project: (from the base) + trusted-root: (AC6)"
+else
+  no "K1 base-ref read wrong ($OUT)"
+fi
+at_head rj-keep
+printf '{}\n' > "$R/.agent/risk.json"   # uncommitted working-tree edit — must not be read
+run base-rj-ok rj-keep
+if [ "$(j '.high_risk')" = "true" ] && has_reason "project: billing/x.txt matched billing/**"; then
+  ok "K2 working tree's uncommitted risk.json is {} ⇒ the base's project: reason is still present (AC7)"
+else
+  no "K2 working tree was read ($OUT)"
+fi
+( cd "$R" && git checkout -q -- .agent/risk.json ) >/dev/null 2>&1
+at_head main
+run main tr-riskjson
+if [ "$(j '.high_risk')" = "true" ] && [ "$(jc '.reasons')" = "$(jq -nc '["trusted-root: .agent/risk.json"]')" ]; then
+  ok "K3 base has no risk.json, head ADDS one with paths [\"*\"] ⇒ trusted-root: only, no project: (AC9)"
+else
+  no "K3 head risk.json was read ($OUT)"
+fi
+run base-rj-invalid tr-claude-new
+if [ "$(j '.high_risk')" = "true" ] && [ "$(jc '.reasons')" = "$(jq -nc '["trusted-root: claude.md"]')" ] \
+   && grep -q 'risk_json_malformed' < <(printf '%s' "$ERR"); then
+  ok "K4 base risk.json invalid ⇒ risk_json_malformed on stderr, and trusted-root: claude.md still applies (AC14)"
+else
+  no "K4 malformed base + CLAUDE.md wrong ($OUT err='$ERR')"
+fi
+unc "K5 bad base ref (AC13)" bad_ref no-such-branch tr-claude-new --root "$R"
+# AC14b: a PATH stub `git` that delegates every call to the real git except `show`.
+REAL_GIT="$(command -v git)"
+GSTUB="$TMP/gitstub"; mkdir -p "$GSTUB"
+printf '#!/usr/bin/env bash\nfor a in "$@"; do [ "$a" = show ] && { echo "stub: git show refused" >&2; exit 1; }; done\nexec %q "$@"\n' "$REAL_GIT" > "$GSTUB/git"
+chmod +x "$GSTUB/git"
+SAVED_PATH="$PATH"; PATH="$GSTUB:$PATH"
+unc "K6 base risk.json present but git show fails (AC14b)" git_failed base-rj-ok billing --root "$R"
+run main billing
+PATH="$SAVED_PATH"
+[ "$(j '.high_risk')" = "false" ] && [ -z "$ERR" ] \
+  && ok "K7 control: same git stub, base WITHOUT risk.json ⇒ normal false result (the stub delegates; only show fails)" \
+  || no "K7 stub control wrong ($OUT err='$ERR')"
+# The presence probe itself failing must never read as "absent": a stub whose `ls-tree` fails.
+GSTUB_LT="$TMP/gitstub-lstree"; mkdir -p "$GSTUB_LT"
+printf '#!/usr/bin/env bash\nfor a in "$@"; do [ "$a" = ls-tree ] && { echo "stub: git ls-tree refused" >&2; exit 1; }; done\nexec %q "$@"\n' "$REAL_GIT" > "$GSTUB_LT/git"
+chmod +x "$GSTUB_LT/git"
+PATH="$GSTUB_LT:$SAVED_PATH"
+unc "K8 risk.json presence probe (ls-tree) fails ⇒ never read as absent" git_failed base-rj-ok billing --root "$R"
+PATH="$SAVED_PATH"
+# The reviewer's real-repo shape: the base risk.json blob is missing from the object store.
+RC_R="$TMP/repo-corrupt"; mkdir -p "$RC_R"
+( cd "$RC_R" && git init -q . && git config user.email t@example.com && git config user.name t \
+  && git checkout -qb main && mkdir -p .agent billing \
+  && printf '{"schema_version":1,"paths":["billing/**"],"note":"corrupt-fixture"}\n' > .agent/risk.json \
+  && printf 'x\n' > billing/base.ts && git add -A && git commit -qm base \
+  && git checkout -qb head && printf 'y\n' > billing/x.txt && git add -A && git commit -qm head \
+  && blob="$(git rev-parse main:.agent/risk.json)" && rm -f ".git/objects/${blob:0:2}/${blob:2}" ) >/dev/null 2>&1
+OUT="$(cd "$ELSEWHERE" && bash "$S" main head --root "$RC_R" 2>"$TMP/err")"; ERR="$(cat "$TMP/err")"
+[ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: git_failed" \
+  && ok "K9 base risk.json blob missing from the object store ⇒ null + unclassifiable: git_failed, never a silent false" \
+  || no "K9 missing base blob read as absent ($OUT err='$ERR')"
+# Symlinked base config: the owner's entries cannot be read without following a link ⇒ fail CLOSED.
+unc "K10 base .agent is a symlink to a dir holding risk.json" risk_json_symlink base-rj-agentlink billing --root "$R"
+unc "K11 base .agent/risk.json is itself a symlink" risk_json_symlink base-rj-filelink billing --root "$R"
+run main clean
+[ "$(j '.high_risk')" = "false" ] && [ -z "$ERR" ] \
+  && ok "K12 control: base without .agent at all ⇒ silent false (the symlink probe does not fire on absence)" \
+  || no "K12 absent-.agent control wrong ($OUT err='$ERR')"
+run base-rj-notelink billing
+if [ "$(j '.high_risk')" = "true" ] && has_reason "project: billing/x.ts matched billing/**" \
+   && ! grep -q 'unclassifiable' <<<"$OUT"; then
+  ok "K13 base .agent/ holds an unrelated symlink (notes-link) next to a regular risk.json ⇒ true with the project: reason, never unclassifiable"
+else
+  no "K13 unrelated .agent child symlink was judged ($OUT err='$ERR')"
+fi
+[ "$(git -C "$R" ls-tree base-rj-gitlink -- .agent | cut -c1-6)" = "160000" ] \
+  && ok "K14a fixture: base-rj-gitlink's .agent is a gitlink (mode 160000)" || no "K14a gitlink fixture not built"
+unc "K14 base .agent is a submodule (gitlink)" risk_json_gitlink base-rj-gitlink billing --root "$R"
+
+# =============================================================================
+echo "== L. mutation controls for J / K (each gated on non-empty + differs + bash -n) =="
+mutant() {  # mutant <name> <sed-or-grep program applied via the remaining args> — writes $TMP/m-<name>/classify-risk.sh
+  local name="$1"; shift
+  mkdir -p "$TMP/m-$name"
+  "$@" "$S" > "$TMP/m-$name/classify-risk.sh"
+  MS="$TMP/m-$name/classify-risk.sh"
+  [ -s "$MS" ] && ! cmp -s "$S" "$MS" && bash -n "$MS" 2>/dev/null
+}
+mrun() {  # mrun <args...> — run the current mutant $MS from ELSEWHERE; sets OUT
+  OUT="$(cd "$ELSEWHERE" && bash "$MS" "$@" --root "$R" 2>/dev/null)"
+}
+# L1 — delete the trusted-root reason line ⇒ the AC1 case goes red.
+if mutant no-tr grep -v '^  trusted_root_hit "\$p" && reason "trusted-root: \$p"$' && ! grep -q 'reason "trusted-root: ' "$MS"; then
+  mrun base-tr tr-claude-edit
+  [ "$(j '.high_risk')" = "false" ] && ok "L1 (mutant) trusted-root reason line deleted ⇒ J1 reads false — J1 is live" || no "L1 mutant not discriminated ($OUT)"
+else
+  no "L1 mutant not gated"
+fi
+# L2 — read risk.json from the working tree instead of the base ⇒ the AC6 case goes red.
+if mutant wt-read sed 's|git -C "$root" show "$base:.agent/risk.json"|cat "$root/.agent/risk.json"|' && ! grep -q 'show "\$base:.agent/risk.json"' "$MS"; then
+  at_head rj-drop
+  mrun base-rj-ok rj-drop
+  at_head main
+  if [ "$(j '.high_risk')" = "true" ] && ! has_reason "project: billing/x.txt matched billing/**"; then
+    ok "L2 (mutant) working-tree read ⇒ K1 loses the base's project: reason — K1 is live"
+  else
+    no "L2 mutant not discriminated ($OUT)"
+  fi
+else
+  no "L2 mutant not gated"
+fi
+# L3 — drop --no-renames from the trusted-root path list ⇒ the AC5b case goes red.
+if mutant renames sed 's/^\(if ! git -C "\$root" diff --name-only\) --no-renames -z /\1 -z /' && ! grep -q '^if ! git.*--no-renames' "$MS"; then
+  OUT="$(cd "$ELSEWHERE" && "${RENAMES_ON[@]}" bash "$MS" base-tr tr-mcp-mv --root "$R" 2>/dev/null)"
+  [ "$(j '.high_risk')" = "false" ] && ! has_reason "trusted-root: .mcp.json" \
+    && ok "L3 (mutant) without --no-renames the .mcp.json → config/mcp.json rename escapes (false) — J5c is live" \
+    || no "L3 mutant not discriminated ($OUT)"
+else
+  no "L3 mutant not gated"
+fi
+# L4 — root-only exact arm flipped to the any-depth form ⇒ the AC4 negative goes red.
+if mutant rootonly-anydepth sed 's/^    case "\$1" in "\$m") return 0 ;; esac$/    case "$1" in "$m"|*\/"$m") return 0 ;; esac/'; then
+  mrun main tr-nested-mcp
+  [ "$(tr_count)" != "0" ] && ok "L4 (mutant) root-only arm made any-depth ⇒ sub/.mcp.json matches — J4c is live" || no "L4 mutant not discriminated ($OUT)"
+else
+  no "L4 mutant not gated"
+fi
+# L5 — exact arm flipped to a substring match ⇒ the AC11 look-alike case goes red.
+if mutant substring sed 's/^    case "\$1" in "\$m") return 0 ;; esac$/    case "$1" in *"$m"*) return 0 ;; esac/'; then
+  mrun main tr-lookalike
+  [ "$(tr_count)" != "0" ] && ok "L5 (mutant) exact arm made a substring ⇒ src/.mcp.json.ts matches — J7 is live" || no "L5 mutant not discriminated ($OUT)"
+else
+  no "L5 mutant not gated"
+fi
+# L6 — silent fall-through after a failed `git show` of a present blob ⇒ the AC14b case goes red.
+if mutant show-silent sed 's/^    emit_unclassifiable "git_failed" "base risk.json unreadable: .*$/    :/'; then
+  PATH="$GSTUB:$SAVED_PATH"
+  mrun base-rj-ok billing
+  PATH="$SAVED_PATH"
+  [ "$(j '.high_risk')" = "false" ] && ok "L6 (mutant) failed base read falls through ⇒ K6 reads a silent false — K6 is live" || no "L6 mutant not discriminated ($OUT)"
+else
+  no "L6 mutant not gated"
+fi
+# L7 — delete the exact-path arm ⇒ the bare symlinked config dir (J10a) escapes.
+if mutant no-exact grep -v '^    case "\$1" in "\$m") return 0 ;; esac$'; then
+  mrun main tr-cdir-symlink
+  [ "$(j '.high_risk')" = "false" ] && ok "L7 (mutant) exact-path arm deleted ⇒ the config-dir symlink reads false — J10a is live" || no "L7 mutant not discriminated ($OUT)"
+else
+  no "L7 mutant not gated"
+fi
+# L8 — delete the ancestor arm ⇒ the `.agent -> agentcfg` symlink (J10b) escapes.
+if mutant no-ancestor grep -v '^    case "\$m" in "\$1"/\*) return 0 ;; esac$'; then
+  mrun main tr-agent-symlink
+  [ "$(j '.high_risk')" = "false" ] && ok "L8 (mutant) ancestor arm deleted ⇒ the .agent symlink reads false — J10b is live" || no "L8 mutant not discriminated ($OUT)"
+else
+  no "L8 mutant not gated"
+fi
+# L9 — a failed presence probe falls through as "absent" ⇒ the K8 case goes red.
+if mutant probe-silent sed 's/^  emit_unclassifiable "git_failed" "base risk.json probe failed: .*$/  :/'; then
+  PATH="$GSTUB_LT:$SAVED_PATH"
+  mrun base-rj-ok billing
+  PATH="$SAVED_PATH"
+  [ "$(j '.high_risk')" = "false" ] && ok "L9 (mutant) failed ls-tree probe falls through ⇒ K8 reads a silent false — K8 is live" || no "L9 mutant not discriminated ($OUT)"
+else
+  no "L9 mutant not gated"
+fi
+# L10 — delete the symlink probe's emit ⇒ the K10 `.agent -> agentcfg` base reads a silent false.
+if mutant symlink-silent sed 's/^      emit_unclassifiable "risk_json_symlink" .*$/      : ;;/' && ! grep -q 'emit_unclassifiable "risk_json_symlink"' "$MS"; then
+  OUT="$(cd "$ELSEWHERE" && bash "$MS" base-rj-agentlink billing --root "$R" 2>"$TMP/err")"; ERR="$(cat "$TMP/err")"
+  [ "$(j '.high_risk')" = "false" ] && [ -z "$ERR" ] \
+    && ok "L10 (mutant) symlink probe deleted ⇒ K10 reads a silent false with nothing on stderr — K10 is live" \
+    || no "L10 mutant not discriminated ($OUT err='$ERR')"
+else
+  no "L10 mutant not gated"
+fi
+# L11 — restore the any-record mode check (drop the exact-path filter) ⇒ K13's unrelated child symlink reads null.
+if mutant any-record grep -v '^  case "\$rp" in .agent|.agent/risk.json) ;; \*) continue ;; esac$' && ! grep -q 'continue ;; esac' "$MS"; then
+  mrun base-rj-notelink billing
+  [ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: risk_json_symlink" \
+    && ok "L11 (mutant) mode check on every record ⇒ K13 reads null risk_json_symlink — K13 is live" \
+    || no "L11 mutant not discriminated ($OUT)"
+else
+  no "L11 mutant not gated"
+fi
+# L12 — delete the gitlink arm's emit ⇒ the K14 submodule base reads a silent false.
+if mutant gitlink-silent sed 's/^      emit_unclassifiable "risk_json_gitlink" .*$/      : ;;/' && ! grep -q 'emit_unclassifiable "risk_json_gitlink"' "$MS"; then
+  OUT="$(cd "$ELSEWHERE" && bash "$MS" base-rj-gitlink billing --root "$R" 2>"$TMP/err")"; ERR="$(cat "$TMP/err")"
+  [ "$(j '.high_risk')" = "false" ] && [ -z "$ERR" ] \
+    && ok "L12 (mutant) gitlink arm deleted ⇒ K14 reads a silent false with nothing on stderr — K14 is live" \
+    || no "L12 mutant not discriminated ($OUT err='$ERR')"
+else
+  no "L12 mutant not gated"
 fi
 
 echo
