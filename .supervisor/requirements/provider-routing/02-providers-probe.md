@@ -108,3 +108,9 @@ loomwright/scripts/setup-providers.sh
 loomwright/scripts/test-setup-providers.sh
 loomwright/docs/evidence
 loomwright/docs/vendor-coupling-manifest.json
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-28T03:56:34Z
+- **Brief:** .supervisor/jobs/done/2026-10-27-providers-probe-setup-check.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/723
