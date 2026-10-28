@@ -441,4 +441,4 @@ Additionally produce a human-readable summary with these elements:
 
 **Stated in prose because the tool surface gives the wrong answer:** `disallowedTools` blocks `Write`/`Edit` for some of these agents, but **Bash is not restricted by the harness**, so a store write stays reachable regardless. This is a prompt-level contract.
 
-**To propose:** write one file to `.supervisor/agent-memory-proposals/` (gitignored) carrying `agent:`, `name:`, `description:` and a `source:`, then stop.
+**To propose:** write one file to `.supervisor/agent-memory-proposals/` (gitignored): a `---`-fenced frontmatter block (first line `---`, closed by `---`) carrying `agent: loomwright-loomwright-code-reviewer` (your store's directory), `name:`, `description:` and `source:`, then the body. Then stop.

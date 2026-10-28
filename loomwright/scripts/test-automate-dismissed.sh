@@ -1220,7 +1220,7 @@ C_R5="fix_now_cost: ≈ 2h21m (median of 1 recorded fix-now re-drain in this rep
 # options and their cost notes, ns_decide runs dismissed-cost, ns_decide_record writes the estimate line,
 # ns_drain_start_line / ns_drain_result write the pinned fix-now re-drain lines.
 SUB2="$(dfn "$DRV" ns_decide)$(dfn "$DRV" ns_decide_next_batch)$(dfn "$DRV" ns_decide_record)"; SUB3="$(dfn "$DRV" ns_drain_start_line)$(dfn "$DRV" ns_drain_result)"
-case "$SUB2" in *'dismissed-cost "$RF"'*'"0 min now (+ a future queue item)", "Drop": "0 min"'*'" wall-clock: ONE owner-requested fix pass + full re-drain + re-park ("'*) ok "C8 §6 step 2 runs dismissed-cost and puts the cost in every fix-now option; follow-up '0 min now', drop '0 min'" ;; *) no "C8 §6 step 2 cost prose missing" ;; esac
+case "$SUB2" in *'dismissed-cost "$RF"'*'"0 min now (draft kept in proposed/ — nothing is enqueued; promote it by hand)", "Drop": "0 min"'*'" wall-clock: ONE owner-requested fix pass + full re-drain + re-park ("'*) ok "C8 §6 step 2 runs dismissed-cost and puts the cost in every fix-now option; follow-up '0 min now', drop '0 min'" ;; *) no "C8 §6 step 2 cost prose missing" ;; esac
 before "$SUB2" "opts='[\"Follow-up (keep draft)\"" "\"Fix now on this PR\"" && ok "C8 §6 step 2 keeps Follow-up recommended and first" || no "C8 recommended order changed"
 case "$SUB2" in *"est. fix_now_cost ≈"*) ok "C8 §6 step 2 records the estimate as data on a Progress line" ;; *) no "C8 no recorded estimate" ;; esac
 case "$SUB3" in *'[ "$1" = fixnow ] && tag=" (fix-now re-drain)"'*'owned drain started$tag — '*'line="$(ns_ts) fix-now re-drain $dec ('*) ok "C8 §6 step 3 pins the re-drain start and terminal lines" ;; *) no "C8 §6 step 3 pinned lines missing" ;; esac

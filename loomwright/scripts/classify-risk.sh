@@ -12,9 +12,11 @@
 # Output (ONE JSON object on stdout, always exit 0):
 #   {"high_risk": true|false|null,
 #    "reasons": ["path: <file> matched <pattern>", "content: N changed line(s) matched <pattern>",
-#                "size: changed_lines N > 400", "project: <file> matched <glob>", ...],
+#                "size: changed_lines N > 400", "trusted-root: <file>",
+#                "project: <file> matched <glob>", ...],
 #    "changed_files": N, "changed_lines": N, "source": "classify-risk.sh"}
-#   Reasons are prefixed `path:` / `content:` / `size:` / `project:`, name the matched pattern, are
+#   Reasons are prefixed `path:` / `content:` / `size:` / `trusted-root:` / `project:`, name the
+#   matched pattern (a `trusted-root:` reason names the lowercased changed path itself), are
 #   deduplicated, and are capped at 20 followed by one `+N more` entry.
 #
 # The heuristic (verbatim from the lens; `--kind-table` prints it from the SAME data lists below):
@@ -33,8 +35,17 @@
 #       lens always diffed.
 #   "content" means the ADDED and REMOVED lines of that diff (not context lines and not the diff
 #   headers — otherwise every path match would double as a content match).
+#   trusted-root — the instruction / config files a PR is judged by. The names live ONLY in the two
+#       data lists below: TRUSTED_ROOT_ANYDEPTH (exact basename at any depth) and
+#       TRUSTED_ROOT_ROOTONLY (repo root only: exact path — a `/`-terminated directory also as its
+#       bare `/`-less path — under a `/`-terminated directory, or an ANCESTOR of an entry, so a
+#       symlink replacing the root config directory, or `.agent -> agentcfg`, cannot install
+#       new config unseen).
+#       Matched case-insensitively against BOTH sides of a rename (`git diff --name-only
+#       --no-renames -z <base>...<head>`), never as a substring. One `trusted-root: <lowercased
+#       path>` reason per matching path.
 #
-# Project extension — `<root>/.agent/risk.json` (committed, ADD-ONLY; owner decision R5):
+# Project extension — `.agent/risk.json` at `<base_ref>` (committed, ADD-ONLY; owner decision R5):
 #   {"schema_version": 1, "paths": ["billing/**"], "content": ["stripe"]}
 #   `paths[]` are shell `case` patterns matched against each changed path lowercased (so `*` and
 #   `**` BOTH match across `/`, `?` matches one character, `[..]` is a class); `content[]` are
@@ -43,15 +54,28 @@
 #   an `exclude` key present is ignored with `risk_json_exclude_ignored` on stderr, never honoured.
 #   Malformed file (invalid JSON, non-object root, `paths`/`content` not an array of strings,
 #   `schema_version` present but not 1) ⇒ generic-only result + `risk_json_malformed` on stderr —
-#   never a failure and never `null`. Absent file ⇒ silent generic-only. `--root` decides where the
-#   file is read from.
+#   never a failure and never `null`. Absent at `<base_ref>` (`git ls-tree --full-tree <base>
+#   -- .agent .agent/risk.json` succeeds and lists no `.agent/risk.json` entry) ⇒ silent
+#   generic-only; a FAILED probe (non-zero exit) ⇒ `unclassifiable: git_failed` (null), never
+#   read as absence. The file is
+#   read ONLY from `<base_ref>` (`git -C <root> show`), never from the working tree
+#   or `<head_ref>`, so a PR cannot drop an entry and change the guarded path in one diff; `--root`
+#   picks the repository only. A present blob that `git show` cannot read ⇒
+#   `unclassifiable: git_failed` (null), never a silent drop of the project's entries. A base
+#   `.agent` or `.agent/risk.json` that is a SYMLINK (tree mode 120000) ⇒
+#   `unclassifiable: risk_json_symlink` (null): git reads never follow an in-tree link, and
+#   following it could resolve into the PR's own working tree, so the owner's entries are
+#   unreadable — fail CLOSED rather than silently absent. A base `.agent` that is a SUBMODULE
+#   (gitlink, mode 160000) ⇒ `unclassifiable: risk_json_gitlink` (null) for the same reason. Only
+#   the exact paths `.agent` and `.agent/risk.json` are judged; another symlink under `.agent/` is
+#   not.
 #
 # Failure-mode split (CLAUDE.md §"Failure-Mode Invariants"): this script is a fail-SAFE EMITTER —
 # it always exits 0. `high_risk: null` + `reasons: ["unclassifiable: <reason>"]` + the reason on
 # stderr is emitted when the diff cannot be classified (bad_args, jq_missing, not_a_git_repo,
-# bad_ref, git_failed). Its CONSUMERS fail CLOSED: `gate-eval` parks on anything but an explicit
-# `false` (`PARK: high_risk_diff`) with no override of any kind, and the Phase 4.5 lens treats
-# `null` as "spawn the advisory pass" (the safe direction for an advisory lens is to run it).
+# bad_ref, git_failed, risk_json_symlink, risk_json_gitlink). Its CONSUMERS fail CLOSED: `gate-eval` parks on
+# anything but an explicit `false` (`PARK: high_risk_diff`) with no override of any kind, and the
+# Phase 4.5 lens treats `null` as "spawn the advisory pass" (the safe direction for an advisory lens is to run it).
 # The jq-less `jq_missing` object (and a `bad_args` seen before jq is known) is the ONE
 # shell-templated object in this file — fixed literals only, no caller text; every other object is
 # built with `jq --arg` / `--argjson`.
@@ -61,7 +85,14 @@
 # own content begins with `++` (or a REMOVED one beginning `--`) diffs as `+++…`/`---…`, is
 # indistinguishable from a file header, and is not counted (nor content-matched). In an
 # agent-orchestration repo (this one) nearly every PR touches agents/, commands/ or skills/, so
-# nearly every PR is high-risk by construction — that is the owner's intent (R5), not a bug.
+# nearly every PR is high-risk by construction — that is the owner's intent (R5), not a bug. The
+# same holds for trusted-root: any PR touching a CLAUDE.md (at any depth) parks the merge gate.
+# Trusted-root matching is by name only — an instruction file under any other name (an `@`-import
+# target, a skill file outside the listed paths) is caught only if a generic branch catches it.
+# A project that deliberately commits `.agent` (or `.agent/risk.json`) as a symlink gets
+# `unclassifiable: risk_json_symlink` on EVERY diff — the gate parks until the file is a regular blob.
+# Likewise a project whose `.agent` is a submodule gets `unclassifiable: risk_json_gitlink` on EVERY
+# diff — the gate parks until `.agent` is a regular directory in the repository itself.
 #
 # Co-located static suite: test-classify-risk.sh.
 #
@@ -83,6 +114,10 @@ SELF="classify-risk.sh"
 GENERIC_GLOBS='*auth* *authz* *security* *crypto* *secret* *token* *payment* migrations/ *migration*'
 GENERIC_DIRS='.github/workflows/ hooks/ agents/ commands/ command-parts/ skills/'
 GENERIC_WORDS='workflow automation orchestration'
+# Trusted-root surfaces — the files that carry the rules a PR is judged by. PLAIN words (no `*`, `?`
+# or `[`), so noglob never touches them: the any-depth rule is a `case` on `*/<name>` built in code.
+TRUSTED_ROOT_ANYDEPTH='CLAUDE.md AGENTS.md REVIEW.md CLAUDE.local.md'
+TRUSTED_ROOT_ROOTONLY='.claude/ .mcp.json .agent/rules/ .agent/risk.json .agent/verify.json'
 SIZE_LINES=400
 SIZE_FILES=15
 REASON_CAP=20
@@ -106,7 +141,8 @@ print_kind_table() {
     "| (b) workflow / orchestration words | $(list_as_code "$GENERIC_WORDS") | changed path OR changed line, case-insensitive substring | \`path:\` / \`content:\` |" \
     "| (c) size | \`changed_lines > $SIZE_LINES\` | added+removed lines of \`git diff <base>...<head>\` (\`+++\`/\`---\` headers excluded) | \`size:\` |" \
     "| (c) size | \`changed_files > $SIZE_FILES\` | line count of \`git diff <base>...<head> --name-only\` | \`size:\` |" \
-    '| project (add-only) | `.agent/risk.json` `paths[]` (`case` globs — `*`/`**` match across `/`) and `content[]` (literal words, case-insensitive) | changed path / changed line; NO `exclude` key (R5) | `project:` |'
+    "| trusted-root (instruction / config) | any depth: $(list_as_code "$TRUSTED_ROOT_ANYDEPTH"); repo root only: $(list_as_code "$TRUSTED_ROOT_ROOTONLY") | changed path on either side of a rename (\`--no-renames\`), case-insensitive: exact path (a \`/\`-terminated entry also without its \`/\`), under a \`/\`-terminated directory, an ancestor of a root-only entry, or exact basename for the any-depth names — never a substring | \`trusted-root:\` |" \
+    '| project (add-only) | `.agent/risk.json` at `<base_ref>` `paths[]` (`case` globs — `*`/`**` match across `/`) and `content[]` (literal words, case-insensitive) | changed path / changed line; read from `<base_ref>` only, never the working tree; NO `exclude` key (R5) | `project:` |'
 }
 
 # ---------------------------------------------------------------------------
@@ -241,10 +277,85 @@ done
 [ "$changed_files" -gt "$SIZE_FILES" ] && reason "size: changed_files $changed_files > $SIZE_FILES"
 
 # ---------------------------------------------------------------------------
-# Project extension — .agent/risk.json (add-only; strict shape; never trusted as code)
+# trusted-root — instruction / config surfaces. Its own path list: `--no-renames` reports BOTH
+# sides of a rename (a root-only `.mcp.json` moved to `config/mcp.json` must still be seen), and
+# `-z` keeps paths verbatim (no core.quotePath quoting that would hide a basename).
 # ---------------------------------------------------------------------------
-rj="$root/.agent/risk.json"
-if [ -f "$rj" ]; then
+if ! git -C "$root" diff --name-only --no-renames -z "$base...$head" > "$tmp/trpaths" 2>"$tmp/err"; then
+  emit_unclassifiable "git_failed" "$(head -c 200 "$tmp/err" | tr '\n' ' ')"
+fi
+tr '[:upper:]' '[:lower:]' < "$tmp/trpaths" > "$tmp/ltrpaths"
+TR_ANY_L="$(printf '%s' "$TRUSTED_ROOT_ANYDEPTH" | tr '[:upper:]' '[:lower:]')"
+TR_ROOT_L="$(printf '%s' "$TRUSTED_ROOT_ROOTONLY" | tr '[:upper:]' '[:lower:]')"
+
+# trusted_root_hit <lowercased path> — 0 when it is a trusted-root surface. Exact / prefix / basename
+# / ancestor `case` arms only, never a substring. The exact and ancestor arms close the symlink
+# shape: a PR adding `cfg/settings.json` plus a symlink from the root config directory to `cfg`
+# diffs as the bare, `/`-less directory path (mode 120000), never as a path under it.
+trusted_root_hit() {
+  local n
+  for n in $TR_ANY_L; do
+    case "$1" in "$n"|*/"$n") return 0 ;; esac
+  done
+  local m
+  for n in $TR_ROOT_L; do
+    m="${n%/}"
+    # exact path — also the bare `/`-less form of a directory entry (a symlink or file)
+    case "$1" in "$m") return 0 ;; esac
+    # an ANCESTOR of an entry (a `.agent` symlink replaces `.agent/rules/`, `.agent/verify.json`, ...)
+    case "$m" in "$1"/*) return 0 ;; esac
+    # under a `/`-terminated directory entry
+    case "$n" in */) case "$1" in "$n"*) return 0 ;; esac ;; esac
+  done
+  return 1
+}
+while IFS= read -r -d '' p; do
+  [ -z "$p" ] && continue
+  trusted_root_hit "$p" && reason "trusted-root: $p"
+done < "$tmp/ltrpaths"
+
+# ---------------------------------------------------------------------------
+# Project extension — .agent/risk.json at <base_ref> (add-only; strict shape; never trusted as code).
+# Read from the BASE ref only — the working tree and <head_ref> are the PR's own and never read.
+# ---------------------------------------------------------------------------
+# Presence probe: `ls-tree` reads trees only, so it separates "absent" (exit 0, empty output) from
+# "git failed" (non-zero ⇒ unclassifiable) — a failed probe is never read as absence. When `.agent`
+# is a directory the probe lists its direct children (not `.agent` itself); when it is a single
+# entry (link, gitlink, file) it lists `.agent` alone. Only the records whose path is EXACTLY
+# `.agent` or `.agent/risk.json` are judged — any other child (an unrelated `.agent/notes-link`
+# symlink) is ignored. Per mode on those two paths:
+#   120000 symlink on either path ⇒ `unclassifiable: risk_json_symlink` (null): `ls-tree` and
+#          `git show <base>:<path>` never follow an in-tree link, and following it could resolve
+#          into the PR's working tree, so the owner's entries are unreadable — fail CLOSED.
+#   160000 gitlink on `.agent` ⇒ `unclassifiable: risk_json_gitlink` (null): a submodule's contents
+#          are not in this repository's base tree, so the entries are unreadable — fail CLOSED.
+#          A gitlink at `.agent/risk.json` is "present" and its `git show` read fails ⇒ git_failed.
+#   040000 tree on `.agent` ⇒ the normal directory case; at `.agent/risk.json` ⇒ present, and the
+#          read tree listing is not JSON ⇒ risk_json_malformed (generic-only, stderr).
+#   100644/100755 on `.agent` (a regular file) ⇒ no risk.json can exist ⇒ silent generic-only.
+rj_label="$base:.agent/risk.json"
+if ! git -C "$root" ls-tree -z --full-tree "$base" -- .agent .agent/risk.json > "$tmp/rjls" 2>"$tmp/err"; then
+  emit_unclassifiable "git_failed" "base risk.json probe failed: $(head -c 200 "$tmp/err" | tr '\n' ' ')"
+fi
+rj_present=""
+while IFS= read -r -d '' rec; do   # one record per entry: "<mode> <type> <oid>\t<path>"
+  rp="${rec#*$'\t'}"
+  case "$rp" in .agent|.agent/risk.json) ;; *) continue ;; esac
+  case "$rec" in
+    120000\ *)
+      emit_unclassifiable "risk_json_symlink" "base $rp is a symlink (mode 120000); the committed project entries cannot be read without following it" ;;
+  esac
+  case "$rp:$rec" in
+    .agent:160000\ *)
+      emit_unclassifiable "risk_json_gitlink" "base $rp is a submodule (mode 160000); the committed project entries are not in this repository's base tree" ;;
+  esac
+  [ "$rp" = ".agent/risk.json" ] && rj_present=1
+done < "$tmp/rjls"
+if [ -n "$rj_present" ]; then
+  rj="$tmp/base-risk.json"
+  if ! git -C "$root" show "$base:.agent/risk.json" > "$rj" 2>"$tmp/err"; then
+    emit_unclassifiable "git_failed" "base risk.json unreadable: $(head -c 200 "$tmp/err" | tr '\n' ' ')"
+  fi
   shape="$(jq -r '
     if type != "object" then "malformed"
     elif (has("schema_version") and .schema_version != 1) then "malformed"
@@ -252,10 +363,10 @@ if [ -f "$rj" ]; then
     elif (has("content") and ((.content|type) != "array" or any(.content[]; type != "string"))) then "malformed"
     else "ok" end' "$rj" 2>/dev/null || echo malformed)"
   if [ "$shape" != "ok" ]; then
-    printf '%s: risk_json_malformed — %s ignored (expected {"schema_version":1,"paths":[..],"content":[..]}); generic heuristic only\n' "$SELF" "$rj" >&2
+    printf '%s: risk_json_malformed — %s ignored (expected {"schema_version":1,"paths":[..],"content":[..]}); generic heuristic only\n' "$SELF" "$rj_label" >&2
   else
     if jq -e 'has("exclude")' "$rj" >/dev/null 2>&1; then
-      printf '%s: risk_json_exclude_ignored — %s carries an "exclude" key; projects may only ADD surfaces (R5), the key is ignored\n' "$SELF" "$rj" >&2
+      printf '%s: risk_json_exclude_ignored — %s carries an "exclude" key; projects may only ADD surfaces (R5), the key is ignored\n' "$SELF" "$rj_label" >&2
     fi
     # paths[]: case patterns against the lowercased changed path — matched with `case`, never eval.
     while IFS= read -r g; do

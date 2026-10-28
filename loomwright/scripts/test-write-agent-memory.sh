@@ -291,6 +291,61 @@ OUT="$(bash "$WRITER" --proposal "$PROP_DIR/never-existed.md" --repo "$RC1" --st
 grep -qF 'REFUSE_PROPOSAL_ABSENT' <<< "$OUT" && ok "(c2) the absent-proposal refusal names itself (absent and unreadable are kept distinct)" || no "(c2) the absent-proposal refusal is unnamed: $OUT"
 
 # ---------------------------------------------------------------------------
+# (c3) Store resolution + the unfenced refusal. Agents wrote their SHORT name (`code-reviewer`,
+# `loomwright:code-reviewer`) and the writer used it verbatim as the directory, creating a store no
+# agent reads, with exit 0; and an unfenced proposal was refused as "names no 'agent:'" although its
+# agent: line was there.
+# ---------------------------------------------------------------------------
+echo "== (c3) short agent names resolve to the real store; unknown names and unfenced files are refused =="
+RC3="$(new_repo)"; SC3="$RC3/memory-store"; PD3="$RC3/.supervisor/agent-memory-proposals"
+mkdir -p "$PD3" "$SC3/$AGENT" || setup_fail "could not create the (c3) proposal dir / existing store"
+# mkprop <file> <agent> <name> <description> — a fenced proposal. Each case passes a description
+# sharing almost no words with the others, or the duplicate check would refuse one case because of
+# another and the routing assertion would fail for the wrong reason.
+mkprop() {
+  printf -- '---\nagent: %s\nname: %s\ndescription: %s\nsource: PR #900\n---\n%s\n' "$2" "$3" "$4" "$4" > "$1"
+}
+for case_c3 in "code-reviewer|short_form|jq optional chaining hides a missing key behind null" \
+               "loomwright:code-reviewer|prefixed_form|bash three point two lacks associative arrays entirely"; do
+  pa="${case_c3%%|*}"; rest="${case_c3#*|}"; pn="${rest%%|*}"; pd="${rest#*|}"
+  mkprop "$PD3/$pn.md" "$pa" "$pn" "$pd"
+  OUT="$(bash "$WRITER" --proposal "$PD3/$pn.md" --repo "$RC3" --store "$SC3" --confirm < /dev/null 2>&1)"; RC=$?
+  [ "$RC" -eq 0 ] && ok "(c3) agent '$pa' promotes (exit 0)" || no "(c3) agent '$pa' exited $RC — $OUT"
+  [ -f "$SC3/$AGENT/$pn.md" ] && ok "(c3) agent '$pa' lands in the EXISTING store $AGENT" || no "(c3) agent '$pa' did not land in $AGENT"
+  grep -qF "($pn.md)" "$SC3/$AGENT/MEMORY.md" 2>/dev/null && ok "(c3) the real store's index names the '$pa' entry" || no "(c3) the '$pa' entry is missing from $AGENT/MEMORY.md"
+done
+[ ! -e "$SC3/code-reviewer" ] && [ ! -e "$SC3/loomwright:code-reviewer" ] \
+  && ok "(c3) NO short-name store directory was created" \
+  || no "(c3) a short-name store directory was created: $(ls "$SC3")"
+# A plugin agent whose store has never been written: the runtime type still resolves to the name
+# the runtime will read, without that directory existing beforehand.
+mkprop "$PD3/runtime_type.md" "loomwright:loomwright:red-team-reviewer" runtime_type "a forged webhook signature passed because the compare was not constant time"
+OUT="$(bash "$WRITER" --proposal "$PD3/runtime_type.md" --repo "$RC3" --store "$SC3" --confirm < /dev/null 2>&1)"; RC=$?
+{ [ "$RC" -eq 0 ] && [ -f "$SC3/loomwright-loomwright-red-team-reviewer/runtime_type.md" ]; } \
+  && ok "(c3) the runtime type of a memory: project agent with no store yet resolves to loomwright-loomwright-red-team-reviewer" \
+  || no "(c3) the runtime type did not resolve (rc=$RC) — $OUT"
+# Unknown agent: refused, exit 1, nothing created.
+mkprop "$PD3/unknown.md" "not-an-agent" unknown_agent "stale lockfiles survive a killed shell unless the trap covers hangup"
+sum_c3="$(store_sum "$SC3")"
+OUT="$(bash "$WRITER" --proposal "$PD3/unknown.md" --repo "$RC3" --store "$SC3" --confirm < /dev/null 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && ok "(c3) an agent that matches no store exits 1" || no "(c3) an unknown agent exited $RC, expected 1 — $OUT"
+grep -qF 'REFUSE_UNKNOWN_AGENT_STORE' <<< "$OUT" && ok "(c3) the unknown-agent refusal names itself" || no "(c3) the unknown-agent refusal is unnamed: $OUT"
+[ ! -e "$SC3/not-an-agent" ] && ok "(c3) no directory was created for the unknown agent" || no "(c3) a store directory was created for an unknown agent"
+[ "$(store_sum "$SC3")" = "$sum_c3" ] && ok "(c3) the store root is BYTE-IDENTICAL after the refusal" || no "(c3) the store root changed on the unknown-agent refusal"
+OUT="$(bash "$WRITER" --proposal "$PD3/unknown.md" --repo "$RC3" --store "$SC3" --confirm --new-store < /dev/null 2>&1)"; RC=$?
+{ [ "$RC" -eq 0 ] && [ -f "$SC3/not-an-agent/unknown_agent.md" ]; } \
+  && ok "(c3) --new-store creates the named store deliberately" \
+  || no "(c3) --new-store did not create the store (rc=$RC) — $OUT"
+# Unfenced: the agent: line is present, so the refusal must name the missing fence, not the field.
+printf 'agent: %s\nname: unfenced\ndescription: an unfenced proposal\n\nbody\n' "$AGENT" > "$PD3/unfenced.md"
+sum_c3="$(store_sum "$SC3")"
+OUT="$(bash "$WRITER" --proposal "$PD3/unfenced.md" --repo "$RC3" --store "$SC3" --confirm < /dev/null 2>&1)"; RC=$?
+[ "$RC" -eq 2 ] && ok "(c3) an unfenced proposal exits 2" || no "(c3) an unfenced proposal exited $RC, expected 2 — $OUT"
+grep -qF 'REFUSE_PROPOSAL_UNFENCED' <<< "$OUT" && ok "(c3) the unfenced refusal names the missing fence" || no "(c3) the unfenced refusal is unnamed: $OUT"
+grep -qF "names no 'agent:'" <<< "$OUT" && no "(c3) the unfenced refusal still claims the proposal names no agent:" || ok "(c3) the unfenced refusal no longer claims a missing agent: field"
+[ "$(store_sum "$SC3")" = "$sum_c3" ] && ok "(c3) the store is BYTE-IDENTICAL after the unfenced refusal" || no "(c3) the store changed on the unfenced refusal"
+
+# ---------------------------------------------------------------------------
 # (d) AC1 — the five checks, on THIS writer.
 # ---------------------------------------------------------------------------
 echo "== (d) AC1: each of the five checks refuses, names its reason, store byte-unchanged =="

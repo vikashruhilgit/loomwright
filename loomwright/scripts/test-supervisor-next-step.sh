@@ -373,12 +373,17 @@ leg_doc() {
 }
 
 # leg_scripts_unchanged — AC3: the driver CALLS guard-finalize-publish.sh / check-children-settled.sh and
-# never edits them: no change on this branch since its merge-base with origin/main (skipped, uncounted,
-# when that ref is absent — a shallow or offline clone)
+# never edits them: a branch that changes the driver changes neither since its merge-base with
+# origin/main. Scoped to driver changes (#717): unscoped, the leg refused every later fix to the gate
+# itself, which the driver does not own. Skipped, uncounted, when origin/main is absent (a shallow or
+# offline clone) or the branch does not touch supervisor-next-step.sh.
 leg_scripts_unchanged() {
   local mb f
   mb="$(git -C "$REPO" merge-base HEAD origin/main 2>/dev/null)"
   if [ -z "$mb" ]; then echo "  skip: origin/main not resolvable — the scripts-unchanged leg did not run"; return 0; fi
+  if git -C "$REPO" diff --quiet "$mb" -- loomwright/scripts/supervisor-next-step.sh; then
+    echo "  skip: the driver is unchanged on this branch — the scripts-unchanged leg did not run"; return 0
+  fi
   for f in loomwright/scripts/guard-finalize-publish.sh loomwright/scripts/check-children-settled.sh; do
     if git -C "$REPO" diff --quiet "$mb" -- "$f"; then ok "AC3: $f byte-unchanged since the merge-base ($(printf '%s' "$mb" | cut -c1-7))"
     else no "AC3: $f changed on this branch — the driver must call it, never edit it"; fi
