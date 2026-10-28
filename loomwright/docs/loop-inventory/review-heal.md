@@ -402,13 +402,18 @@ This file lists every branch and rule that the standalone PR review-and-heal loo
 | RH-384 | skills/review-heal/SKILL.md | h: ### Opt-out (AC13) | a `§"Opt-out"` citation is followed | keep this heading as a pointer to the same heading in `skills/review-heal/dispatch.md` | rule | global | - | test-review-heal-next-step.sh |
 | RH-385 | skills/review-heal/SKILL.md | h: ### Launch form (R10 — fresh detached process, NEVER a nested Task) | a `§"Launch form"` citation is followed | keep this heading as a pointer to the same heading in `skills/review-heal/dispatch.md` | rule | global | - | test-review-heal-next-step.sh |
 | RH-386 | commands/review-pr.md | q: **Read rule.** A drain round reads `skills/review-heal/SKILL.md` | a `--until-mergeable` drain round reads its contract | read `SKILL.md`; read `fallback-review.md` only when the driver prints a `spawn` with `what: "fallback review"`, `escalation.md` only when the run ends `ESCALATED`; never read `dispatch.md` (the dispatching side's) | rule | global | - | test-review-heal-next-step.sh |
+| RH-389 | skills/review-heal/SKILL.md | q: **Seat routing (`drain_reviewer`).** | a default-loop `Task(loomwright:code-reviewer)` review is about to run | resolve the seat and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol": claude runs the Task unchanged, another provider runs the routed review, a non-ok `lens_status` or failed validation falls back to the Task and logs one `seat_routing` line, a `strict` empty provider takes the `NEEDS_HUMAN` branch; fix, push and PR writes stay on the main thread | rule | prose | - | GAP |
+| RH-390 | skills/review-heal/fallback-review.md | q: **Seat routing (`fallback_reviewer`).** | the driver prints a `fallback review` spawn | resolve the seat and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol": claude runs the Task unchanged, another provider's validated result becomes the same `fallback review` report, a non-ok `lens_status` or failed validation falls back to the Task and logs one `seat_routing` line, a `strict` empty provider ends the drain `ESCALATED` (`other`), never READY | rule | prose | - | GAP |
 
 ## Gap list (ordered by risk)
 
+1. RH-390 — a strict-empty fallback seat must end the drain ESCALATED and never READY; the driver has no report shape for an unrunnable fallback and no test exercises the branch
+2. RH-389 — the routed drain review must fall back to the Claude Task on any non-ok lens_status or failed validation; no test exercises the seat paragraph
+
 ## Counts
-- rows: 388
+- rows: 390
 - deterministic: 185
 - judgment: 17
-- rule: 175
+- rule: 177
 - story: 11
-- GAP: 0
+- GAP: 2

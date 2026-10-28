@@ -147,6 +147,8 @@ review_heal = Task(
 )
 ```
 
+**Seat routing (`evaluate_reviewer`).** Before spawning the Task, run `resolve-routing.sh seat evaluate_reviewer` (from the install root's `scripts/`; forward no `--route`, which only `/supervisor` carries) and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol", which owns the procedure. `PROVIDER=claude` spawns the Task above unchanged. Any other provider is appended to the Task prompt as `Reviewer seat evaluate_reviewer resolved to <PROVIDER>[:<MODEL>]`, and the Task body runs that protocol for its review step per `skills/review-heal/SKILL.md` Step 2 (`lens-run.sh --role evaluate_reviewer`, `validate-code-review-result.py --raw`, a non-`ok` `lens_status` or a failed validation runs the Claude review and logs `seat_routing evaluate_reviewer provider=<p> reason=<r>`). A `strict` seat with an empty `PROVIDER` skips the Task and takes the `ESCALATED` branch below. The `decision` branches and the `review_heal` record are unchanged.
+
 **Record the outcome** under this iteration's `review_heal` field (§"`review_heal` field" above).
 
 **Branch on `decision`:**
