@@ -1751,7 +1751,7 @@ ns_phase_sid_ok() { [[ "$SID" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; }   # phase-launch's
 # run-record `session_id` line already resolves to it.
 ns_driver_sid() {
   ns_fresh && ns_phase_sid_ok || return 0
-  ns_section '## Progress' | grep -qF " session_id $SID ($ITEM) phase=driver" && return 0
+  grep -qF " session_id $SID ($ITEM) phase=driver" < <(ns_section '## Progress') && return 0
   ns_progress "$(ns_ts) session_id $SID ($ITEM) phase=driver"
 }
 # ns_phase_launch <phase> <prompt> — the runnable phase-launch line (launch authority only when known)

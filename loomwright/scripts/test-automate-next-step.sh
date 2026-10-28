@@ -1881,7 +1881,7 @@ leg_fresh_state_stale() {
     if [ "$stamp" = old ] || [ "$ghrc" != 0 ] || [ "$recorded" = "$opr" ] || [ "$stub" = garbage ]; then left=0; else left=1; fi
     f_call "$drv" --result "{${rep}\"status_reason\":\"phase_died\",\"no_pr_why\":\"phase-wait: died — no result line since the last launch\"}"
     rm -f "$CASE_BIN/stat"
-    [ "$NC_RC" = 0 ] && grep -q 'ran /autonomous — no PR: phase_died' "$CASE_RF" && { [ "$own" = 1 ] || ! grep "session_id $state " "$CASE_RF" | grep -qv ' phase=driver$'; } \
+    [ "$NC_RC" = 0 ] && grep -q 'ran /autonomous — no PR: phase_died' "$CASE_RF" && { [ "$own" = 1 ] || ! grep -qv ' phase=driver$' < <(grep "session_id $state " "$CASE_RF"); } \
       && if [ "$left" = 1 ]; then grep -qF -- "no PR: phase_died (phase-wait: died — no result line since the last launch; the phase left PR $opr open on feature/died-x — not drained" "$CASE_RF"; else ! grep -q 'the phase left PR' "$CASE_RF"; fi \
       && if [ -n "$want" ]; then grep -qE -- "^- [0-9TZ:-]+ $(printf '%s' "$want" | sed 's/[().]/\\&/g')\$" "$CASE_RF"; else ! grep -q 'phase=supervisor' "$CASE_RF"; fi \
       || { LEG_MSG="$c: exit $NC_RC ${NC_ERR:0:160}; ## Progress: $(grep 'session_id\|no PR' "$CASE_RF" | tr '\n' '|' | head -c 400)"; return 1; }
