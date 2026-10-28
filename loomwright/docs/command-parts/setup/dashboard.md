@@ -25,6 +25,8 @@ Run ONE real check per module (never guess; every cell of the dashboard is deriv
 
 10. **base-branch** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-base-branch.sh" status` and read its `base-branch:` headline. It writes no config. Status cell: the headline's value verbatim — `<branch> (source: <step>)`, or `unresolved (<status>)` (report that as UNRESOLVED, never as a branch). Never guess — every cell comes from that one probe.
 
+11. **providers** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-routing.sh" status` and read its `config .routing:` and `grants (user scope, this repo):` cells. It writes nothing and does NOT run the provider probe (`setup-providers.sh check` launches each installed CLI, so the dashboard never starts it). Status cell: `.routing: absent …` → `not routed (Claude everywhere)`; a routing value → `routed (grants: <the grants cell, or none>)`; an `UNPARSEABLE` or `not probed` cell → surface it verbatim, never a routed/not-routed claim. Never guess — every cell comes from that one probe.
+
 
 Print the dashboard:
 
@@ -43,6 +45,7 @@ Print the dashboard:
 | rules         | <derived>                               | /setup rules          |
 | statusline    | <derived>                               | /setup statusline     |
 | base-branch   | <derived>                               | /setup base-branch    |
+| providers     | <derived>                               | /setup providers      |
 ```
 
 Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (the registry holds more modules than the 4-option limit → an invalid call). The set below is FIXED at four and must NOT be grown when a module is added — a new module folds into an existing bucket or gets its own nested question, exactly as `memory`, `rules`, `statusline` and `base-branch` do here:
@@ -52,10 +55,10 @@ Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so 
 - `options` (exactly these, in order; append each module's current status to its description):
   1. **Claude Code surfaces (observability · status line)** — the modules that write under your Claude Code config directory; selecting it asks ONE nested question (below) to pick which.
   2. **Repo stores & settings (memory in version control · portable rule seeds · base branch)** — the per-repo apply flows; selecting it asks ONE nested question (below) to pick which.
-  3. **Other integrations (telemetry · webhook · Beads · MySQL MCP)** — print status + setup guidance / delegation for these (telemetry delegates to `/telemetry`; webhook offers a guided write of the user-scope URL, see its own module below; Beads · MySQL MCP are guidance-only; `notifications` is always-on and needs no action).
+  3. **Other integrations (telemetry · webhook · Beads · MySQL MCP · providers)** — print status + setup guidance / delegation for these (telemetry delegates to `/telemetry`; webhook offers a guided write of the user-scope URL, see its own module below; Beads · MySQL MCP are guidance-only; providers prints its status and points at `/setup providers apply` — the consent ask for a provider grant NEVER runs from this bundle; `notifications` is always-on and needs no action).
   4. **Nothing — just checking** — stop with the summary line.
 
-**How to render the status on a BUNDLED option** (options 1, 2 and 3 each fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `observability: <status> · statusline: <status>` for option 1, `memory: <status> · rules: <status> · base-branch: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Option 4 is no-module and takes none. Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
+**How to render the status on a BUNDLED option** (options 1, 2 and 3 each fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `observability: <status> · statusline: <status>` for option 1, `memory: <status> · rules: <status> · base-branch: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status> · providers: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Option 4 is no-module and takes none. Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
 
 **Nested question — only when option 1 was selected** (also ≤4 options; never inline these into the set above):
 - `question`: "Which Claude Code surface?"
@@ -76,7 +79,7 @@ Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so 
   3. **base-branch** — view or pin the base (integration) branch every stage branches from, targets and diffs against, in `.supervisor/config.json` (`.base_branch`). Backup-first; nothing is written without a choice.
   4. **None — go back** — skip all three and continue with the remaining selections.
 
-Run the corresponding module flow (below) for each selection, in the order listed. For option 3, run the `telemetry` delegation block plus the `webhook`, `beads`, and `mysql-mcp` status/guidance blocks in turn. If "Nothing", stop with the summary line.
+Run the corresponding module flow (below) for each selection, in the order listed. For option 3, run the `telemetry` delegation block plus the `webhook`, `beads`, and `mysql-mcp` status/guidance blocks in turn, then print the `providers` status cell with the pointer `Configure with /setup providers apply` (status + pointer only: do NOT run the providers apply flow or its consent ask from here). If "Nothing", stop with the summary line.
 
 **Every module stays reachable as a direct jump regardless of this set** — `/setup memory` and `/setup rules` (and every other module name) go straight to that module's flow without touching the dashboard question. The ≤4-option set is a convenience for the no-arg dashboard, never the only route to a module.
 

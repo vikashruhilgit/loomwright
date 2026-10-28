@@ -22,7 +22,7 @@
 #      most four.
 #   M. MUTATION CONTROLS — gated on non-empty + differs: `statusline` dropped from the Parameters
 #      list (P), an extra registry row (P), `-h` dropped from the help dispatch (H), the unknown
-#      module line deleted (N), `base-branch` dropped from the dashboard table (S), a literal
+#      module line deleted (N), `base-branch` or `providers` dropped from the dashboard table (S), a literal
 #      module count added to the dashboard (C), a fifth top-level dashboard option (D).
 # Read-only; scratch files under mktemp -d. Exit 0 = all pass, 1 = any failure.
 
@@ -209,6 +209,7 @@ if run_all "$SKILL" "$CMD" "$DASH" "$MORE" "$README" >/dev/null 2>&1; then
   mutate help-drops-h cmd '/^- \*\*Help dispatch:\*\*/ {sub(/, `-h`/, "")} {print}'
   mutate unknown-line-deleted cmd 'index($0, "Setup: unknown module") {next} {print}'
   mutate dash-drops-base-branch dash '/^\| base-branch / {next} {print}'
+  mutate dash-drops-providers dash '/^\| providers / {next} {print}'
   mutate dash-literal-count dash '{print} /^Print the dashboard:/ {print "(10 modules)"}'
   mutate dash-fifth-option dash '{print} /^  4\. \*\*Nothing/ {print "  5. **More** — x."}'
 else

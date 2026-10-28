@@ -13,6 +13,7 @@ description: Umbrella setup command — status dashboard plus guided configurati
 /setup rules                # Seed .agent/rules/ with PORTABLE conventions on a cold-start repo (labelled seeded, not learned): status | (no-arg → seed)
 /setup statusline           # Wire the one-line run report into the user-scope settings file: status | apply | remove
 /setup base-branch          # View / pin the base (integration) branch in .supervisor/config.json: status | set <branch> | remove
+/setup providers            # Route read-only seats to another AI CLI: status | apply | remove
 /setup telemetry            # DELEGATES to /telemetry (no consent logic duplicated here)
 /setup notifications        # Status + guidance (notification hooks are always-on)
 /setup webhook              # Status + guided write of the user-scope webhook URL (LOOMWRIGHT_WEBHOOK_URL still wins when set)
@@ -23,12 +24,10 @@ description: Umbrella setup command — status dashboard plus guided configurati
 
 ## Parameters
 
-- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `memory`, `rules`, `statusline`, `base-branch` — the `skills/setup/SKILL.md` Pattern 2 registry is the authority (`test-setup-module-registry.sh` checks this list against it).
+- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `memory`, `rules`, `statusline`, `base-branch`, `providers` — the `skills/setup/SKILL.md` Pattern 2 registry is the authority (`test-setup-module-registry.sh` checks this list against it).
   - If omitted: run the full status dashboard, then offer configuration via `AskUserQuestion` (multi-select).
   - If `--help`, `-h` or `help`, or unrecognised: see Help and unknown module below — never the dashboard.
-- **subcommand** (optional, second positional arg): one from the module's registry Subcommands cell (the help prints them; every `status` is a read-only report). If omitted, the module's check step decides — e.g. observability: unconfigured → offer `init`; configured → offer `status` / `remove` / reconfigure. Why `memory` and `statusline` REQUIRE `remove`, why `rules` has none (a RETRACTED seed is re-offered), and why a foreign status line is never replaced without an explicit choice: the module's registry row and part.
-- Note: the twin module was retired with the graphify tier (graph + bridge cold-start bootstrap — a deliberate omission, not an oversight; see `CHANGELOG.md`).
-- Note: the ui module (The Floor, a local web page over `.supervisor/floor/floor.json`) was retired too; `build-floor.sh` and its projection stay, because `/propose` reads them (see `CHANGELOG.md`).
+- **subcommand** (optional, second positional arg): one from the module's registry Subcommands cell (the help prints them; every `status` is a read-only report). If omitted, the module's check step decides — e.g. observability: unconfigured → offer `init`; configured → offer `status` / `remove` / reconfigure. Why a module requires or lacks `remove`, or never replaces a foreign status line unasked: its registry row and part.
 
 ## What This Does
 
@@ -48,7 +47,7 @@ Settled design facts (do not re-litigate at runtime):
 
 # Agent Prompt
 
-You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND as the subcommand — one from that module's Subcommands cell in the skill's Pattern 2 registry. For `memory status`, `rules status` and `base-branch status`, run the Check + Report steps ONLY and STOP — they are read-only, so never fall through to that module's Offer/Apply flow.
+You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND as the subcommand — one from that module's Subcommands cell in the skill's Pattern 2 registry. For `memory status`, `rules status`, `base-branch status` and `providers status`, run the Check + Report steps ONLY and STOP — they are read-only, so never fall through to that module's Offer/Apply flow.
 
 ## Step 0 — Load the protocol authority (every invocation)
 
@@ -70,6 +69,7 @@ You are handling the `/setup` slash command inline on the main thread. Parse the
    - `rules` → `${CLAUDE_PLUGIN_ROOT}/docs/command-parts/setup/rules.md`
    - `statusline` → `${CLAUDE_PLUGIN_ROOT}/docs/command-parts/setup/statusline.md`
    - `base-branch` → `base-branch.md` (same directory)
+   - `providers` → `providers.md` (same directory)
    - `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp` → `${CLAUDE_PLUGIN_ROOT}/docs/command-parts/setup/other.md`
    - `--help` / `-h` / `help`, or an unrecognised module → no part (Help and unknown module, below)
    - examples, only if the user asks → `${CLAUDE_PLUGIN_ROOT}/docs/command-parts/setup/ex.md`
@@ -244,6 +244,11 @@ See [../docs/command-parts/setup/statusline.md](../docs/command-parts/setup/stat
 
 See [../docs/command-parts/setup/base-branch.md](../docs/command-parts/setup/base-branch.md).
 <!-- split:end ../docs/command-parts/setup/base-branch.md -->
+<!-- split:begin ../docs/command-parts/setup/providers.md -->
+## Module: providers
+
+See [../docs/command-parts/setup/providers.md](../docs/command-parts/setup/providers.md).
+<!-- split:end ../docs/command-parts/setup/providers.md -->
 <!-- split:begin ../docs/command-parts/setup/other.md -->
 ## Module: telemetry
 
@@ -293,6 +298,8 @@ See [../docs/command-parts/setup/other.md](../docs/command-parts/setup/other.md)
   - **statusline** (`/setup statusline`) — **the only module whose write domain is the USER-SCOPE settings document, so it gets its own line:** the user-scope settings JSON ONLY (the same path Pattern 3 governs), written ONLY via `setup-statusline.sh apply` / `remove`, and ONLY after an explicit confirm. The write is backup-first (a timestamped `.backup.<ts>` sibling, pid- then counter-suffixed on a same-second collision so one backup can never overwrite another, and an apply that cannot obtain a free backup name ABORTS rather than write unbacked-up), parse-gated (`jq empty` — an unparseable document ABORTS with **no write and no backup**), atomic (tmp-file + `mv`), and **idempotent by byte-comparison** — apply computes the document it would write and does nothing when it already matches. It touches exactly TWO keys, `statusLine` and the namespaced restore record `loomwrightStatusLinePrior`; every other key at every level is preserved, which `test-setup-statusline.sh` asserts by DIFFING the two documents with those two keys removed rather than by spot-checking. **NOTHING ELSE under the user's `~/.claude/` directory** — no sidecar state file, no project write, no `.gitignore` write, and no history-touching git command. A pre-existing `statusLine` this plugin did not write is PRESERVED and reported; replacing it requires the explicit `--replace` flag, and the replaced value is recorded so `remove` restores it verbatim.
 
   - **base-branch** (`/setup base-branch`): `<project>/.supervisor/config.json` key `.base_branch` ONLY, via `setup-base-branch.sh set` / `remove` (write rules: its part).
+
+  - **providers** (`/setup providers`): `.routing` in `<project>/.supervisor/config.json` and this repo's grant in the user-scope `egress.json`, ONLY, via `setup-routing.sh` (write rules: its part).
 
   - **rules** (`/setup rules`): `<project>/.agent/rules/<category>.json` ONLY, written ONLY via `seed-rules.sh seed --confirm` (which authors every rule through the sole writer `add-rule.sh`), and ONLY after an explicit confirm. `check` and a bare `seed` write NOTHING — every writer invocation is stdin-detached, so this module NEVER prompts and an unconfirmed run cannot write. No `~/.claude/` write of any kind, no `.gitignore` write, no `git add`/`rm`/`commit`, and no rule object built by hand.
 
