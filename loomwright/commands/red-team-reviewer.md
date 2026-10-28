@@ -161,6 +161,8 @@ Full report rendered above — save it as AUDIT-REPORT.md if you want a file cop
 
 See `agents/red-team-reviewer.md` for the full agent prompt.
 
+**Seat routing.** The audit is the `red_team` seat: run `resolve-routing.sh seat red_team` and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol". On `PROVIDER=claude` the audit runs as written, unchanged. On another provider only the audit analysis goes out (the audit prompt and target material in, the report back, checked for the `RED_TEAM_RESULT` role marker); rendering the report and any file copy stay on the Claude main thread. On a non-`ok` result or failed check, the audit runs as written and one `seat_routing red_team provider=<p> reason=<r>` line is logged.
+
 ## Core Principle
 
 **If something works only in ideal conditions, treat it as broken.**

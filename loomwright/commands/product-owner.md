@@ -381,6 +381,8 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
 
 ### Responsibilities
 
+**Seat routing.** Drafting the discovery, stories and scope (Responsibilities 1-3) is the `product_owner` seat: run `resolve-routing.sh seat product_owner` and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol". On `PROVIDER=claude` the drafting runs as written, unchanged. On another provider only the drafting goes out (the request and context in, the draft back, checked for the `HANDOFF` role marker); the Assumption Check and its question gate, the Pre-persist house-rule check (3a), and every `bd create` or requirements-file write stay on the Claude main thread, run on the validated draft. On a non-`ok` result or failed check, the drafting runs as written and one `seat_routing product_owner provider=<p> reason=<r>` line is logged.
+
 #### 0. Multi-Mind Brainstorm (when --brainstorm)
 
 When the `--brainstorm` flag is present, run the 5-lens ideation framework before discovery. Follow `skills/brainstorming/SKILL.md`:
