@@ -51,6 +51,19 @@
 #      never touch this suite's counters; plus a negative control (gone
 #      record passes) and a positive control (a live setpgrp'd process is
 #      flagged as a leftover, then killed)
+#   M. a provider with no user-scope grant -> provider_not_granted, issues [],
+#      no sandbox created, the stub CLI never started (its sentinel file is never
+#      written), rc 0; then the SAME stub granted runs (positive control: the
+#      grant is the only difference)
+#   N. --provider claude needs no grant: with no claude grant the run still
+#      reaches the CLI and ends ok
+#
+# HARNESS (consent): lens-run.sh refuses a non-claude provider unless the invoking
+# repo's user-scope grant names it, and has no bypass. So the whole suite runs under a
+# scratch HOME whose user-scope egress.json (EGRESS_FILE below) grants the stub providers for a
+# scratch repo's slug, and that slug is pinned (the scratch repo's origin is a fixed
+# URL, the mechanism test-resolve-egress-config.sh uses). The real operator's HOME and
+# egress.json are never read.
 #
 # Exit 0 = all pass, 1 = any failure.
 
@@ -93,6 +106,10 @@ PROVIDER_FILE="$HERE/provider-$PROVIDER_NAME.sh"
 KB_STUB_CLI_NAME="$STUB_CLI_NAME-kb"
 KB_PROVIDER_NAME="$PROVIDER_NAME-kb"
 KB_PROVIDER_FILE="$HERE/provider-$KB_PROVIDER_NAME.sh"
+# Case M's provider: it has no grant until the leg writes one.
+NG_STUB_CLI_NAME="$STUB_CLI_NAME-ng"
+NG_PROVIDER_NAME="$PROVIDER_NAME-ng"
+NG_PROVIDER_FILE="$HERE/provider-$NG_PROVIDER_NAME.sh"
 KB_DIR="$TMP/k-b"
 KB_RELEASE="$KB_DIR/release"
 KB_LENS_PID=""
@@ -114,11 +131,34 @@ cleanup() {
     wait "$L_LIVE_PID" 2>/dev/null
     L_LIVE_PID=""
   fi
-  rm -rf "$TMP"; rm -f "$PROVIDER_FILE" "$KB_PROVIDER_FILE"
+  rm -rf "$TMP"; rm -f "$PROVIDER_FILE" "$KB_PROVIDER_FILE" "$NG_PROVIDER_FILE"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# ---- scratch HOME + scratch repo (pinned slug) + grants ---------------------
+# Every run below goes through the grant check, so HOME is a scratch dir for the
+# whole suite and the repo lens-run.sh is invoked from (REPO_ROOT, reassigned here
+# from the plugin checkout) is a scratch repo whose origin URL fixes its slug.
+export HOME="$TMP/home"
+mkdir -p "$HOME"
+EGRESS_FILE="$HOME/.claude/loomwright/egress.json"
+SCRATCH_SLUG="lens-test-owner/lens-test-repo"
+REPO_ROOT="$TMP/repo"
+mkdir -p "$REPO_ROOT"
+git -C "$REPO_ROOT" init -q
+git -C "$REPO_ROOT" remote add origin "https://github.com/${SCRATCH_SLUG}.git"
+printf 'scratch\n' > "$REPO_ROOT/README.txt"
+git -C "$REPO_ROOT" add README.txt
+git -C "$REPO_ROOT" -c user.name=lens-test -c user.email=lens-test@example.invalid -c commit.gpgsign=false commit -q -m "scratch commit"
+# write_grants <provider-name>... — rewrites the scratch user-scope grant file.
+write_grants() {
+  mkdir -p "$(dirname "$EGRESS_FILE")"
+  printf '%s\n' "$@" | jq -R . | jq -s --arg slug "$SCRATCH_SLUG" \
+    '{schema_version: 1, repos: {($slug): {providers: .}}}' > "$EGRESS_FILE"
+}
+write_grants "$PROVIDER_NAME" "$KB_PROVIDER_NAME"
 
 # ---- test-only provider-table entries ---------------------------------------
 # write_provider <file> <cli-name> — the CLI name is the only per-run value; it
@@ -620,6 +660,67 @@ L_OUT_P="$(run_leftovers_probe "$L_DIR/p")"
 kill "$L_LIVE_PID" 2>/dev/null; wait "$L_LIVE_PID" 2>/dev/null; L_LIVE_PID=""
 l_expect_refusal "L positive control: live setpgrp'd leftover" "$L_OUT_P" "CLI leader is not still running"
 assert_true "L positive control: its own process group reads non-empty" "$( grep -qF "FAIL: L no process left in the CLI's own process group" <<<"$L_OUT_P" && echo 1 || echo 0 )"
+
+echo ""
+echo "==== M: no user-scope grant -> provider_not_granted, no sandbox, CLI never started; granted -> runs ===="
+write_provider "$NG_PROVIDER_FILE" "$NG_STUB_CLI_NAME"
+STUB_M_DIR="$TMP/stub-m"; mkdir -p "$STUB_M_DIR"
+CLI_RAN_M="$TMP/cli-ran-m.txt"
+cat > "$STUB_M_DIR/$NG_STUB_CLI_NAME" <<STUB
+#!/usr/bin/env bash
+printf 'ran\\n' > "$CLI_RAN_M"
+printf '{"issues":[]}\\n'
+STUB
+chmod +x "$STUB_M_DIR/$NG_STUB_CLI_NAME"
+OUT_M="$TMP/out-m.json"
+DEBUG_M="$TMP/debug-wt-m.txt"
+RC_M=0
+LOOMWRIGHT_LENS_DEBUG_WT_PATH_FILE="$DEBUG_M" run_lens_named "$NG_PROVIDER_NAME" "$STUB_M_DIR" "$OUT_M" || RC_M=$?
+assert_eq "M rc=0" "0" "$RC_M"
+assert_eq "M lens_status=provider_not_granted" "provider_not_granted" "$(jq -r '.lens_status' "$OUT_M" 2>/dev/null)"
+assert_eq "M issues empty" "[]" "$(jq -c '.issues' "$OUT_M" 2>/dev/null)"
+assert_eq "M provider field echoes the requested name" "$NG_PROVIDER_NAME" "$(jq -r '.provider' "$OUT_M" 2>/dev/null)"
+assert_eq "M cost is honestly 'unknown'" "unknown" "$(jq -r '.cost' "$OUT_M" 2>/dev/null)"
+assert_eq "M no sandbox created (the sandbox-debug hatch never fired)" "0" "$( [ -f "$DEBUG_M" ] && echo 1 || echo 0 )"
+assert_eq "M provider CLI never started (sentinel file absent)" "0" "$( [ -f "$CLI_RAN_M" ] && echo 1 || echo 0 )"
+# A grant for a DIFFERENT repo slug must not count.
+printf '%s\n' "$NG_PROVIDER_NAME" | jq -R . | jq -s '{schema_version: 1, repos: {"someone-else/other-repo": {providers: .}}}' > "$EGRESS_FILE"
+RC_M2=0
+run_lens_named "$NG_PROVIDER_NAME" "$STUB_M_DIR" "$TMP/out-m2.json" || RC_M2=$?
+assert_eq "M a grant keyed to another repo slug does not grant (status)" "provider_not_granted" "$(jq -r '.lens_status' "$TMP/out-m2.json" 2>/dev/null)"
+assert_eq "M a grant keyed to another repo slug does not start the CLI" "0" "$( [ -f "$CLI_RAN_M" ] && echo 1 || echo 0 )"
+# Positive control: grant the SAME provider for this repo and the same stub runs.
+write_grants "$PROVIDER_NAME" "$KB_PROVIDER_NAME" "$NG_PROVIDER_NAME"
+RC_M3=0
+run_lens_named "$NG_PROVIDER_NAME" "$STUB_M_DIR" "$TMP/out-m3.json" || RC_M3=$?
+assert_eq "M control: once granted the same provider ends ok" "ok" "$(jq -r '.lens_status' "$TMP/out-m3.json" 2>/dev/null)"
+assert_eq "M control: once granted the stub CLI did run (sentinel written)" "1" "$( [ -f "$CLI_RAN_M" ] && echo 1 || echo 0 )"
+# A missing grant file reads as no grant, still exit 0.
+rm -f "$EGRESS_FILE"
+rm -f "$CLI_RAN_M"
+RC_M4=0
+run_lens_named "$NG_PROVIDER_NAME" "$STUB_M_DIR" "$TMP/out-m4.json" || RC_M4=$?
+assert_eq "M missing egress.json -> provider_not_granted, rc 0" "0:provider_not_granted" "$RC_M4:$(jq -r '.lens_status' "$TMP/out-m4.json" 2>/dev/null)"
+assert_eq "M missing egress.json -> CLI never started" "0" "$( [ -f "$CLI_RAN_M" ] && echo 1 || echo 0 )"
+write_grants "$PROVIDER_NAME" "$KB_PROVIDER_NAME"
+
+echo ""
+echo "==== N: --provider claude needs no grant ===="
+STUB_N_DIR="$TMP/stub-n"; mkdir -p "$STUB_N_DIR"
+CLI_RAN_N="$TMP/cli-ran-n.txt"
+# provider-claude.sh reads the envelope's .result string; the stub is a PATH-stub `claude`.
+cat > "$STUB_N_DIR/claude" <<STUB
+#!/usr/bin/env bash
+printf 'ran\\n' > "$CLI_RAN_N"
+printf '%s\\n' '{"result":"{\\"issues\\":[]}"}'
+STUB
+chmod +x "$STUB_N_DIR/claude"
+OUT_N="$TMP/out-n.json"
+RC_N=0
+run_lens_named claude "$STUB_N_DIR" "$OUT_N" || RC_N=$?
+assert_eq "N rc=0" "0" "$RC_N"
+assert_eq "N the claude CLI was reached with no claude grant" "1" "$( [ -f "$CLI_RAN_N" ] && echo 1 || echo 0 )"
+assert_eq "N lens_status=ok (no provider_not_granted for claude)" "ok" "$(jq -r '.lens_status' "$OUT_N" 2>/dev/null)"
 
 echo ""
 echo "RESULT: $pass passed, $fail failed"
