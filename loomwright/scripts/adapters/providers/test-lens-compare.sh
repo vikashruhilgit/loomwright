@@ -23,7 +23,6 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPARE="$HERE/lens-compare.sh"
-REPO_ROOT="$(cd "$HERE/../../../.." && pwd)"
 BASH_BIN="$(command -v bash)"
 
 pass=0; fail=0
@@ -49,6 +48,26 @@ PROVIDER_X_FILE="$HERE/provider-$PROVIDER_X_NAME.sh"
 PROVIDER_Y_FILE="$HERE/provider-$PROVIDER_Y_NAME.sh"
 cleanup() { rm -rf "$TMP"; rm -f "$PROVIDER_X_FILE" "$PROVIDER_Y_FILE"; }
 trap cleanup EXIT
+
+# ---- scratch HOME + scratch repo (pinned slug) + grants ---------------------
+# lens-run.sh refuses a non-claude provider unless the invoking repo's user-scope grant
+# names it (no bypass), so this suite runs under a scratch HOME whose egress.json grants
+# both stub providers for a scratch repo's slug. REPO_ROOT is that scratch repo (its origin
+# is a fixed URL, so the slug is pinned). The real operator's HOME is never read.
+export HOME="$TMP/home"
+mkdir -p "$HOME"
+EGRESS_FILE="$HOME/.claude/loomwright/egress.json"
+SCRATCH_SLUG="lens-test-owner/lens-test-repo"
+REPO_ROOT="$TMP/repo"
+mkdir -p "$REPO_ROOT"
+git -C "$REPO_ROOT" init -q
+git -C "$REPO_ROOT" remote add origin "https://github.com/${SCRATCH_SLUG}.git"
+printf 'scratch\n' > "$REPO_ROOT/README.txt"
+git -C "$REPO_ROOT" add README.txt
+git -C "$REPO_ROOT" -c user.name=lens-test -c user.email=lens-test@example.invalid -c commit.gpgsign=false commit -q -m "scratch commit"
+mkdir -p "$(dirname "$EGRESS_FILE")"
+printf '%s\n' "$PROVIDER_X_NAME" "$PROVIDER_Y_NAME" | jq -R . | jq -s --arg slug "$SCRATCH_SLUG" \
+  '{schema_version: 1, repos: {($slug): {providers: .}}}' > "$EGRESS_FILE"
 
 DIFF_FILE="$TMP/diff.txt"
 PROMPT_FILE="$TMP/prompt.txt"
