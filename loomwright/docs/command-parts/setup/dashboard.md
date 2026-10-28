@@ -23,6 +23,8 @@ Run ONE real check per module (never guess; every cell of the dashboard is deriv
 
 9. **statusline** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-statusline.sh" check` and read its `statusLine:` cell plus the `Statusline readiness:` verdict. `check` is READ-ONLY — it writes nothing. Derive a compact status cell from that verdict alone: `configured` → `active (one-line run report)`; `not configured` → `not wired`; `foreign (...)` → `another status line is configured — preserved` (a **third** outcome: it is neither configured nor unconfigured, and must never be collapsed into either, because collapsing it to `not configured` is what would invite a silent overwrite); `unknown (...)` → surface the helper's own parenthetical verbatim (missing `jq`, or a settings document that does not parse — report UNVERIFIED, never a configured/not-configured claim). Never guess — every cell comes from that one probe.
 
+10. **base-branch** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-base-branch.sh" status` and read its `base-branch:` headline. It writes no config. Status cell: the headline's value verbatim — `<branch> (source: <step>)`, or `unresolved (<status>)` (report that as UNRESOLVED, never as a branch). Never guess — every cell comes from that one probe.
+
 
 Print the dashboard:
 
@@ -40,19 +42,20 @@ Print the dashboard:
 | memory        | <derived>                               | /setup memory         |
 | rules         | <derived>                               | /setup rules          |
 | statusline    | <derived>                               | /setup statusline     |
+| base-branch   | <derived>                               | /setup base-branch    |
 ```
 
-Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (9 modules > 4 → an invalid call). The set below is FIXED at four and must NOT be grown when a module is added — a tenth module folds into an existing bucket or gets its own nested question, exactly as `memory`, `rules` and `statusline` do here:
+Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (the registry holds more modules than the 4-option limit → an invalid call). The set below is FIXED at four and must NOT be grown when a module is added — a new module folds into an existing bucket or gets its own nested question, exactly as `memory`, `rules`, `statusline` and `base-branch` do here:
 - `question`: "Which would you like to configure now?"
 - `header`: "Configure"
 - `multiSelect`: true
 - `options` (exactly these, in order; append each module's current status to its description):
   1. **Claude Code surfaces (observability · status line)** — the modules that write under your Claude Code config directory; selecting it asks ONE nested question (below) to pick which.
-  2. **Repo knowledge stores (memory in version control · portable rule seeds)** — the two per-repo apply flows; selecting it asks ONE nested question (below) to pick which.
+  2. **Repo stores & settings (memory in version control · portable rule seeds · base branch)** — the per-repo apply flows; selecting it asks ONE nested question (below) to pick which.
   3. **Other integrations (telemetry · webhook · Beads · MySQL MCP)** — print status + setup guidance / delegation for these (telemetry delegates to `/telemetry`; webhook offers a guided write of the user-scope URL, see its own module below; Beads · MySQL MCP are guidance-only; `notifications` is always-on and needs no action).
   4. **Nothing — just checking** — stop with the summary line.
 
-**How to render the status on a BUNDLED option** (options 1, 2 and 3 each fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `observability: <status> · statusline: <status>` for option 1, `memory: <status> · rules: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Option 4 is no-module and takes none. Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
+**How to render the status on a BUNDLED option** (options 1, 2 and 3 each fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `observability: <status> · statusline: <status>` for option 1, `memory: <status> · rules: <status> · base-branch: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Option 4 is no-module and takes none. Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
 
 **Nested question — only when option 1 was selected** (also ≤4 options; never inline these into the set above):
 - `question`: "Which Claude Code surface?"
@@ -64,13 +67,14 @@ Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so 
   3. **None — go back** — skip both and continue with the remaining selections.
 
 **Nested question — only when option 2 was selected** (also ≤4 options; never inline these into the set above):
-- `question`: "Which repo knowledge store?"
-- `header`: "Stores"
+- `question`: "Which repo store or setting?"
+- `header`: "Repo"
 - `multiSelect`: true
 - `options` (exactly these, in order; append each module's current status to its description):
   1. **memory** — put `.claude/agent-memory/` + `.supervisor/memory/` + the judgement trail (`.supervisor/requirements/`, `.supervisor/jobs/done/` + `failed/`, `.supervisor/automate/*.md` — v15.84.0) + the findings ledger `.supervisor/postmortem/results.jsonl` under version control IN PLACE (gitignore negation + repo allowlist). The ledger is GATED: it is un-ignored only while every record's `.repo` is inside the repo allowlist. Consent-bearing — the memory module's own Offer step states what becomes version-controlled before anything is written.
   2. **rules** — seed `.agent/rules/` with a small set of PORTABLE conventions (true of any repo) so a cold-start repo is not empty. They are labelled SEEDED, not learned: every one carries `provenance.source=setup:rules-seed`. Advisory only, no gate.
-  3. **None — go back** — skip both and continue with the remaining selections.
+  3. **base-branch** — view or pin the base (integration) branch every stage branches from, targets and diffs against, in `.supervisor/config.json` (`.base_branch`). Backup-first; nothing is written without a choice.
+  4. **None — go back** — skip all three and continue with the remaining selections.
 
 Run the corresponding module flow (below) for each selection, in the order listed. For option 3, run the `telemetry` delegation block plus the `webhook`, `beads`, and `mysql-mcp` status/guidance blocks in turn. If "Nothing", stop with the summary line.
 

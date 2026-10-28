@@ -78,7 +78,7 @@
 #:  gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK fail-closed trusted-merge gate (conditions enumerated in skills/automate-loop/SKILL.md §10; cond 6 = classify-risk.sh high_risk, cond 7 = rules-gate-verdict.sh, NO override)
 #:@ hdr-trail
 #:  sidecar-check    <path>                             # §6 trail: delegated to automate-trail.sh — `ok <path>` / `fail <path>: <reason>` (RESULT_SCHEMAS key-table shape check of a result sidecar); always exits 0
-#:  trail-pr         <runfile> [--reason <reason>]      # §6 "Trail PR after merge and at run end": delegated to automate-trail.sh — called only by closeout, at ## Status: done, and on a skip/abandon check-off (never at a park — except §14's lane wave end, --reason wave-end, and lane-remove --abandon, --reason abandoned, run inside the lane through the same evidence gate); commits this run's explicit trail paths as ONE PR off fresh origin/main, a done-stamped requirement/done brief only when its PR reads merged; one line (opened|pushed|skipped); always exits 0
+#:  trail-pr         <runfile> [--reason <reason>]      # §6 "Trail PR after merge and at run end": delegated to automate-trail.sh — called only by closeout, at ## Status: done, and on a skip/abandon check-off (never at a park — except §14's lane wave end, --reason wave-end, and lane-remove --abandon, --reason abandoned, run inside the lane through the same evidence gate); commits this run's explicit trail paths as ONE PR off the resolved base (fresh origin/<base>, resolve-base-branch.sh), a done-stamped requirement/done brief only when its PR reads merged; one line (opened|pushed|skipped); always exits 0
 #:  closeout         <runfile> <item> <pr_url> [--session-id <sid>] [--no-trail]  # §6 post-merge close-out: delegated to automate-trail.sh; --no-trail skips only its trail-pr step (`--auto-merge` SYNC, a merged lane's re-run); always exits 0
 #:  closeout-classify [--run <id> --item <p> --pr <u>] [--record <rf>]  # §6 step 1 close-out leftover gate: reads ONE closeout invocation's output on stdin, classifies its `closeout: ` lines against CLOSEOUT_TABLE (only the partial-removal form `removed — worktree …; kept …` is forced to a leftover; an unknown line is a leftover) ⇒ `complete`, or one `leftover\t<run>\t<item>\t<pr>\t<step>\t<detail>` row per leftover plus one `run_lock_held\t…` row per `run lock held by <owner> (live pid <p>)` line (a live holder: not a leftover, not complete); --record appends `closeout: nothing to close out — <item>` (once per item per run) on a complete close-out that changed nothing; exit 0 (usage error 1)
 #:  closeout-others  <automate_dir> [--record <runfile>]  # §4 start order: delegated to automate-trail.sh — closeout of every OTHER run whose ## Current names a not-done item with a merged PR (own lock, own trail; mode-off trail-unstage), its classify answer, and one `cross-run closeout <run_id> <item>: …` record line (no PR URL) appended to --record's run file; always exits 0
@@ -421,7 +421,10 @@ _ge_pr_parts() {
 #           `supervisor_result_path` is parsed for a `rubric_score: N/M` line by THIS gate (never
 #           asserted by a caller) — N==M ⇒ satisfied, absent line ⇒ "na" (not a blocker), unreadable
 #           file ⇒ PARK.
-#   cond 6  the gate ITSELF invokes `"$(dirname "$0")/classify-risk.sh" main <live head_sha>
+#   cond 6  the gate ITSELF resolves `<base>` with the sibling
+#           `"$(dirname "$0")/resolve-base-branch.sh" --repo <root>` (unresolved / invalid / resolver
+#           absent ⇒ `base_branch_unresolved`; not the live `baseRefName` ⇒ `base_branch_mismatch`),
+#           then invokes `"$(dirname "$0")/classify-risk.sh" origin/<base> <live head_sha>
 #           --root <root>` and reads `.high_risk`/`.reasons` from its own output — no ctx input of
 #           any kind feeds this condition any more. NO override of any kind (owner decision R5):
 #           not `--trust-unprotected` (cond 4 only), not a config key, not an exclude list.
@@ -496,7 +499,8 @@ _ge_pr_parts() {
 # rules_check_failed, rules_check_unresolved, rules_unstamped, rules_cmd_disabled,
 # rules_gate_unreadable. New reasons added by condition 7's checkout pin
 # (automate-followups/16, evaluated before the helper call): rules_gate_head_mismatch,
-# rules_gate_dirty_tree.
+# rules_gate_dirty_tree. New reasons added by base-branch-configurable (cond 6,
+# evaluated before classify-risk.sh): base_branch_unresolved, base_branch_mismatch.
 gate_eval() {
   local url="$1" ctx="$2"
   shift 2 2>/dev/null || true
@@ -746,10 +750,30 @@ GEPARTS
   # in cond 2 — no ctx input feeds this condition any more. Read in EXACTLY the
   # cond-3 `unresolved_human_thread` shape: an explicit has() + `type == "boolean"`
   # check, PARK unless the value is the JSON boolean `false`.
+  # The diff's BASE is self-resolved too: the sibling resolve-base-branch.sh (the
+  # ONE resolver, never a hardcoded `main`) run in <checkout>, then compared
+  # against the remote-tracking ref `origin/<base>` (a local branch of that name
+  # may be stale or absent). Fail CLOSED: a missing resolver, an unresolved or
+  # invalid base ⇒ `base_branch_unresolved`; a resolved base that is not the
+  # PR's own live baseRefName ⇒ `base_branch_mismatch` (the range would not be
+  # the PR's diff). Neither has an override.
+  local rbb_bin base_b="" rbb_rc=0
+  rbb_bin="$(dirname "$0")/resolve-base-branch.sh"
+  if [ -r "$rbb_bin" ]; then
+    base_b="$(bash "$rbb_bin" --repo "$root" </dev/null 2>/dev/null)" || rbb_rc=$?
+  else
+    rbb_rc=127
+  fi
+  if [ "$rbb_rc" -ne 0 ] || [ -z "$base_b" ]; then
+    echo "PARK: base_branch_unresolved"; return 0
+  fi
+  if [ "$base_b" != "$live_base" ]; then
+    echo "PARK: base_branch_mismatch"; return 0
+  fi
   local risk_bin; risk_bin="$(dirname "$0")/classify-risk.sh"
   local risk_json=""
   if [ -r "$risk_bin" ]; then
-    risk_json="$(bash "$risk_bin" main "$live_head" --root "$root" 2>/dev/null)"
+    risk_json="$(bash "$risk_bin" "origin/$base_b" "$live_head" --root "$root" 2>/dev/null)"
   fi
   local hr rr
   if [ -n "$risk_json" ] && printf '%s' "$risk_json" | "$JQ" -e . >/dev/null 2>&1; then

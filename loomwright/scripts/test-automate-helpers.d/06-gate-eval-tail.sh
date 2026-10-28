@@ -37,7 +37,7 @@ sed 's/^\(  if \[ -r "\$risk_bin" \]; then\)$/  if false \&\& [ -r "$risk_bin" ]
 if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$GWD/automate-helpers.sh" "$MUT/automate-helpers.sh" && bash -n "$MUT/automate-helpers.sh" 2>/dev/null \
    && grep -q 'if false && \[ -r "\$risk_bin" \]; then' "$MUT/automate-helpers.sh"; then
   cp "$GWD/classify-risk.sh" "$MUT/classify-risk.sh"
-  cp "$GWD/rules-gate-verdict.sh" "$MUT/rules-gate-verdict.sh"
+  cp "$GWD/rules-gate-verdict.sh" "$GWD/resolve-base-branch.sh" "$MUT/"
   # Instrument the stub classify-risk.sh to prove (positively) whether it was called.
   printf '#!/usr/bin/env bash\necho called >> "%s/classify-risk-called.log"\necho '"'"'{"high_risk": false, "reasons": [], "source": "classify-risk.sh"}'"'"'\n' "$WD" > "$MUT/classify-risk.sh"
   chmod +x "$MUT/classify-risk.sh"
@@ -57,7 +57,7 @@ if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$GWD/automate-helpers.sh" "$MU
   CTRL="$(mktemp -d)"
   cp "$GWD/automate-helpers.sh" "$CTRL/automate-helpers.sh"
   cp "$MUT/classify-risk.sh" "$CTRL/classify-risk.sh"
-  cp "$GWD/rules-gate-verdict.sh" "$CTRL/rules-gate-verdict.sh"
+  cp "$GWD/rules-gate-verdict.sh" "$GWD/resolve-base-branch.sh" "$CTRL/"
   rm -f "$WD/classify-risk-called.log" "$GH_STUB_DIR/merge.log"
   printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
   CTRL_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$CTRL/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "${E_GATE_ROOT:-$E_ROOT}" 2>/dev/null )"

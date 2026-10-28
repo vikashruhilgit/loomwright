@@ -2,6 +2,9 @@ declare -F tal_pgrep >/dev/null && [ -n "${T:-}" ] && [ -d "$T" ] || { echo "${B
 # af/39e: every lane / phase launch registers in proc-registry.sh — the suite's own registry under $T (sourced at
 # top level, so it holds for every later part), never the real home
 export LOOMWRIGHT_PROC_REGISTRY_DIR="$T/procs"
+# Every base read of a bundle copy run from a scratch dir (the mutants below) needs the real resolver,
+# which is not beside it — the seam points at it (fail CLOSED otherwise: no launch, no lane).
+export LOOMWRIGHT_LANES_RESOLVE_BASE="$HERE/resolve-base-branch.sh"
 
 # ---- A: create (AC1) --------------------------------------------------------------------------------
 out="$(run lane-create "$RF" reqs/a.md 1 --parallel 2 --max-tokens 1000)"; rc=$?
@@ -42,6 +45,15 @@ check "C1 meta pull failure exits 1" "$rc" 1
 has "C2 names the abort" "$out" "aborted L8"
 check "C3 clone removed" "$([ -e "$LR/L8" ] && echo present || echo absent)" absent
 out="$(STUB_MODE_LINE='unknown no line' run lane-create "$RF" reqs/a.md 8)"; check "C4 unknown metadata mode fails closed" "$?" 1
+# C5: the base comes from resolve-base-branch.sh, resolved in the PRIMARY — an invalid configured base
+# refuses the lane before anything is created (never replaced by origin/HEAD, never a `main` guess).
+cp -p "$P/.supervisor/config.json" "$T/config.c5"
+printf '{"base_branch":"bad..name"}\n' > "$P/.supervisor/config.json"
+out="$(run lane-create "$RF" reqs/a.md 8)"; rc=$?
+check "C5 an invalid configured base refuses lane-create, exit 1" "$rc" 1
+has "C5b … the resolver's status token on stderr" "$out" "base_branch_invalid:config"
+check "C5c … nothing created (no clone, no lane-table row)" "$([ -e "$LR/L8" ] && echo present || echo absent):$(tcol L8 1)" "absent:"
+cp -p "$T/config.c5" "$P/.supervisor/config.json"
 
 # ---- D: hook merge never replaces an existing hooks key ---------------------------------------------
 SF="$T/settings.json"
@@ -158,6 +170,13 @@ rm -f "$L1/.supervisor/automate/$PARENT-L1.md"
 out="$(LOOMWRIGHT_ROOT="$T/neutral-root" LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L1" --owner-command "$OWN")"
 has "H15 pre-set LOOMWRIGHT_ROOT pins --plugin-dir" "$(grep '^ARGS' "$STUB_LOG" | tail -1)" "[--plugin-dir] [$T/neutral-root]"
 wait_gone "$L1"
+# H16: an unresolved base refuses the launch before any spawn — a session never starts without its
+# base-branch push tripwire (the resolver stubbed through the seam to answer base_branch_unresolved).
+printf '#!/usr/bin/env bash\necho base_branch_unresolved >&2\necho "resolve-base-branch: stub" >&2\nexit 1\n' > "$T/unres-base.sh"
+n16="$(claude_calls)"
+out="$(LOOMWRIGHT_LANES_RESOLVE_BASE="$T/unres-base.sh" LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L1" --owner-command "$OWN")"; rc=$?
+check "H16 unresolved base ⇒ lane-launch refused, exit 1, no claude spawn" "$rc:$(( $(claude_calls) - n16 ))" "1:0"
+has "H16b … the status token on stderr" "$out" "base_branch_unresolved"
 
 # ---- I: coordinator never writes into a launched lane (checksum) + mutation control ------------------
 check "I1 lane checksum unchanged across launches" "$(lane_sum "$L1")" "$SUM_L1_BEFORE"

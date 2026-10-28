@@ -84,7 +84,7 @@ The frontmatter `skills:` list is empty: no protocol skill is preloaded. Read ea
 
 **Exit conditions (summary — the skill is authoritative):**
 - **Run-lock acquired (red-team-hardening/06 — FIRST action of Phase 0, before any other step, including the resume gate below):** `run-lock.sh acquire --owner "supervisor:<session_id>" --session-id "<session_id>"`, where `<session_id>` is the Claude Code runtime session id for THIS `/supervisor` invocation (not the `state.md` `session_id` the resume gate derives later) — the same shape as `/automate` PICK's acquire (`skills/automate-loop/SKILL.md` §6 step 1). Never omit `--session-id`: `close-stranded-run.sh` reclaims a crashed session's lock by it. A lock already held by another `/automate`/`/autonomous`/`/supervisor` run in this checkout PARKS the entry immediately with `SUPERVISOR_RESULT.status: failed`, `error: "run_lock_held"` (quoting the printed `run_lock_held owner=<label> pid=<pid> age=<s>` line) — the run never proceeds past this point silently. A `run_lock_reentrant` line (exit 0; same-session nesting under `/automate`/`/autonomous`) is NOT a park — proceed; the outer run frees the lock. A `run_lock_degraded` stderr line (exit 0; the lock is TTL-only — `docs/ARCHITECTURE_CONTRACTS.md` §"Run lock") is NOT a park either — note it once and proceed. Released at the Phase 4.5 completion tail, or on any Phase 4 abort exit before reaching it. See `skills/supervisor-config/SKILL.md` step 0 and `docs/ARCHITECTURE_CONTRACTS.md` §"Run lock" for the shared lock contract.
-- Resolved config recorded in session memory and echoed for cross-phase recall (`### Session Configuration` block): `BASE_BRANCH` (from `--base-branch <name>`, default `main`), `NON_INTERACTIVE`, `RED_TEAM_ENABLED`, `MAX_TOKENS` (from `--max-tokens N`, default unset — red-team-hardening/06).
+- Resolved config recorded in session memory and echoed for cross-phase recall (`### Session Configuration` block): `BASE_BRANCH` (resolved by `scripts/resolve-base-branch.sh` — precedence: `skills/supervisor-config/SKILL.md` step 2.9b; no hardcoded default), `NON_INTERACTIVE`, `RED_TEAM_ENABLED`, `MAX_TOKENS` (from `--max-tokens N`, default unset — red-team-hardening/06).
 - Phase Flags and `cost_profile` — the driver's `init` step: its Context-Keeper instruction carries the two crash-recovery `clear_flag`s (`base_mismatch_detected`, `non_interactive`) and, when given, the `non_interactive` / `max_tokens` `set_flag`s, so later phases can re-read them after context loss; `--cheap` rides every later spawn instruction as `cost_profile: "cheap"` (else `default`). Loop-shaping flags (`--skip-self-heal`, `--heal-iterations`) stay INIT-parsed by the skill and are consumed by Phase 4.5.
 - Resume path (`--continue`): loaded state MUST pass the fail-closed Resume validation gate — any schema violation refuses with `status: failed`, `error: "resume_state_invalid"`, and the gate's ground-truth reconciliation check (state that parses but under-reports committed work) refuses with `error: "resume_state_stale"` (never silently fall back to a fresh start); on pass, hydrate config and jump to the saved phase.
 
@@ -369,7 +369,7 @@ Steps 1–3 — **run by the driver's `execute-result` step** (automate-speed/11
    ```
 3. Return to the base branch (the one Phase 1 ACQUIRE branched from):
    ```bash
-   git checkout "${BASE_BRANCH:-main}"
+   git checkout "$BASE_BRANCH"
    ```
 4. Check for more tasks:
    - Ask user if more tasks to work on
@@ -432,7 +432,7 @@ Priority order: scratchpad state file (freshest, same session) → `.supervisor/
 | `job: {path}` | auto | Load pre-computed plan from Launch Pad |
 | `--legacy` | false | Run Phases 0–4 from `docs/supervisor-legacy-phases.md` (the pre-driver prose, frozen) instead of `scripts/supervisor-next-step.sh` — also the path for `--continue`, a run with no `job:` brief and `--sdk-runner` (see the **Next-step driver** paragraph above Phase 0). |
 | `--cheap` | false | Cost-optimized profile: spawns orchestrator, execute-manager, workers, code-reviewer, Phase 4.5 fix tasks, and — when `--multi-voter-heal` is ON — the multi-voter verification voters/refute spawn with `model: "sonnet"` override. Default `inherit` unchanged when absent. Caution: on Haiku sessions, listed roles upgrade to Sonnet. |
-| `--base-branch <name>` | `main` | Override base branch for FINALIZE PR creation. Used by `/autonomous` multi-iteration mode to stack iteration N+1 on iteration N's feature branch. Phase 4 self-verifies the created PR's `baseRefName` matches this value; Phase 4.5 cleans up on mismatch. |
+| `--base-branch <name>` | resolved (`skills/supervisor-config/SKILL.md` step 2.9b) | Override base branch for FINALIZE PR creation. Used by `/autonomous` multi-iteration mode to stack iteration N+1 on iteration N's feature branch. Phase 4 self-verifies the created PR's `baseRefName` matches this value; Phase 4.5 cleans up on mismatch. |
 | `--non-interactive` | false | Suppress `AskUserQuestion` fallbacks. On `gh` failures and ambiguous gates, fail closed with diagnostic instead of prompting. Set automatically by the `/autonomous` loop; rarely passed by humans. Executing as a subagent has the same effect; named statuses per the Critical Rules' **Can't-ask rule**. Recorded as a Phase Flag at Phase 0 so later phases can re-read it after context loss. |
 | `--skip-preflight-sync` | false | Short-circuit the Phase 1.5 PRE-FLIGHT SYNC remote-state reconciliation gate. The skip is recorded as a deliberate choice (Context-Keeper `record_decision`) and `preflight_sync` is set to `skipped`. Escape hatch for when remote-overlap reconciliation is known-unnecessary or when intentionally re-doing landed work. |
 | `--skip-children-check` | false | Short-circuit Phase 4 FINALIZE's pre-merge safety-gate Point 5 (children settled — v15.80.0): normally, an `agent_identity` row — or a worker id recorded under `.supervisor/state.md`'s `## Worker Results` (passed as `--expect-id`) — with no matching terminal lifecycle row (`subtask_complete` / `token_ledger` / `agent_lifecycle: failed` / `agent_lifecycle: ended`) fails the gate CLOSED (`error: "children_unsettled: {ids}"` under `--non-interactive`; `AskUserQuestion` interactively); a `## Worker Results` section the finalize-gate `write-marker` cannot read an id from refuses `worker_results_unparsed` (this flag bypasses that refusal too). The skip is recorded as a deliberate choice (Context-Keeper `record_decision(phase: FINALIZE, decision: "user_skipped_children_check")`) and the run summary carries `children_check: skipped`. Escape hatch for when a known-benign unsettled child (already resolved out-of-band) is blocking a merge that should proceed. |
@@ -481,7 +481,7 @@ Priority order: scratchpad state file (freshest, same session) → `.supervisor/
 
 **Options:**
 1. Fix manually and run: `/supervisor --continue task: {task_id}`
-2. Cancel: `git checkout main`
+2. Cancel: `git checkout "$BASE_BRANCH"`
 ```
 
 ---
@@ -553,7 +553,7 @@ Before completing workflow:
 - [ ] PR created and linked to task
 - [ ] State file updated with completed status in `.supervisor/`
 - [ ] Session history saved
-- [ ] Returned to main branch
+- [ ] Returned to the base branch (`$BASE_BRANCH`)
 - [ ] Clean working tree
 - [ ] Tool call budget not exceeded
 
@@ -591,11 +591,11 @@ SUPERVISOR_RESULT:
   summary: string
   cost_profile: enum [default, cheap] | null  # optional — null when flag not passed (equivalent to default)
   rubric_score: string | null               # optional (v12.2.0+) — "N/M" where N is non-negative (>= 0; "0/M" is the legitimate all-fail case), M is positive (>= 1), M >= N; null when no Outcomes Rubric in brief, heal_decision != PASS, or grader parse failed
-  branch_base: string | null                # optional (v14.0.0+) — BASE_BRANCH the PR was targeting (defaults to "main" when --base-branch not passed). Always set when status=failed with error="base_branch_mismatch:...".
+  branch_base: string | null                # optional (v14.0.0+) — BASE_BRANCH the PR was targeting (the base Phase 0 resolved). Always set when status=failed with error="base_branch_mismatch:...".
   pr_state: string | null                   # optional (v14.0.0+) — "closed_by_loop" | "close_attempt_failed" | null. Populated only by Phase 4.5 base-mismatch cleanup; null on all other exit paths.
   until_mergeable_dispatched: boolean | null # optional — true when a per-PR dispatch marker exists for this PR, whether written by Phase 4.5 step 5.5 or the PostToolUse hook backstop; false when suppressed/no-PR/no marker; null on pre-feature/non-PR exits. ADVISORY/observability only — NEVER gated on, does NOT bump schema_version (branch_base/pr_state precedent).
   until_mergeable_log: string | null         # optional — path to the drain dispatch log under .supervisor/logs/ (the visible trail for AC8b R9 downstream ordering); set only when until_mergeable_dispatched=true, else null/absent.
-  risk_classification:                       # optional (v15.72.0+) — ADVISORY: `scripts/classify-risk.sh "$BASE_BRANCH" HEAD` run unconditionally at the Phase 4.5 red-team-lens entry (D1); absent on the bypass paths (--skip-self-heal / resume-thrash / base-mismatch) — absent ⇒ valid. NEVER gated on; the /automate gate re-classifies the SHA it judges (§10 cond 6) rather than reading this. Does NOT bump schema_version. Authoritative definition + the one committed heuristic table live in docs/RESULT_SCHEMAS.md.
+  risk_classification:                       # optional (v15.72.0+) — ADVISORY: `scripts/classify-risk.sh "origin/$BASE_BRANCH" HEAD` run unconditionally at the Phase 4.5 red-team-lens entry (D1); absent on the bypass paths (--skip-self-heal / resume-thrash / base-mismatch) — absent ⇒ valid. NEVER gated on; the /automate gate re-classifies the SHA it judges (§10 cond 6) rather than reading this. Does NOT bump schema_version. Authoritative definition + the one committed heuristic table live in docs/RESULT_SCHEMAS.md.
     high_risk: boolean | null                # null = unclassifiable (the lens still spawns on null)
     reasons: [string]                        # the script's prefixed reasons (path:/content:/size:/trusted-root:/project:), [] when false
   preflight_sync: enum [clear, overlap_proceed, superseded_proceed, skipped, unverified] | null  # optional (v14.8.0+) — outcome of the Phase 1.5 PRE-FLIGHT SYNC gate; null when the gate did not run (e.g., pre-v14.8.0 resume). On a fail-closed abort the run emits status=failed with `error: "preflight_overlap_detected"` (surfaced by /autonomous as `AUTONOMOUS_RUN.status_reason`). Authoritative field definition lives in docs/RESULT_SCHEMAS.md.

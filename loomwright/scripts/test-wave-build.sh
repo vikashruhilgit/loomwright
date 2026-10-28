@@ -417,5 +417,39 @@ check "W8k lane-status still reads the wave record (lanes + PR) with the overlap
 check "W8l no lane was held or reordered: both lane PR heads are merged parents" \
   "$(git --git-dir="$ORIGIN" log --merges --format=%P "main..wave/$C-w1" | awk '{ print $2 }' | sort | paste -sd ',' -)" "$(printf '%s\n%s\n' "$(cat "$T/gh/head.31")" "$(cat "$T/gh/head.32")" | sort | paste -sd ',' -)"
 
+# ---- W9: the base comes from resolve-base-branch.sh (AC2 / AC9) -------------------------------------
+# origin/HEAD stays → main, but the gitignored .supervisor/config.json names `release` (a branch one
+# commit ahead of main, so the two bases are distinguishable): lanes are cut off origin/release and
+# the wave is built off origin/release with `--base release`. Then an unresolved base (no config,
+# origin/HEAD unset and unsettable, gh failing) ⇒ refused, exit 1, nothing created.
+git -C "$P" checkout -q -b relprep main; echo rel > "$P/rel.txt"; git -C "$P" add rel.txt; git -C "$P" commit -qm "release-only commit"
+git -C "$P" push -q origin relprep:refs/heads/release 2>/dev/null; git -C "$P" checkout -q main; git -C "$P" branch -q -D relprep
+git -C "$P" fetch -q origin 2>/dev/null
+REL0="$(git --git-dir="$ORIGIN" rev-parse refs/heads/release)"
+printf '{"base_branch":"release"}\n' > "$P/.supervisor/config.json"
+check "W9 fixture: origin/HEAD → main while the config names release" "$(git -C "$P" symbolic-ref -q --short refs/remotes/origin/HEAD)" origin/main
+E=automate-2026-10-27-100000; RFE="$P/.supervisor/automate/$E.md"
+mk_parent "$E" "- wave: 1 | items: $IA, $IB"
+mk_lane "$E" 1 "$IA" 51 r1.txt "rel lane one"
+mk_lane "$E" 2 "$IB" 52 r2.txt "rel lane two"
+check "W9a lane-create cut the lane off origin/release (the configured base)" \
+  "$(git -C "$T/work/primary-lanes/$E/L1" rev-parse "feature/$E-1^")" "$REL0"
+out="$(wb "$RFE")"; rc=$?
+printf '%s\n' "$out" | sed 's/^/       | /'
+k9="$(ncreate)"
+check "W9b AC2: wave-build exits 0 and opens the wave PR with --base release" \
+  "$rc:$(awk 'p == "--base" { print p "=" $0 } { p = $0 }' "$T/gh/create.$k9")" "0:--base=release"
+check "W9c … the wave branch's first merge sits on origin/release" \
+  "$(git --git-dir="$ORIGIN" log --first-parent --reverse --format='%P' "release..wave/$E-w1" | head -1 | cut -d' ' -f1)" "$REL0"
+rm -f "$P/.supervisor/config.json"
+git --git-dir="$ORIGIN" symbolic-ref HEAD refs/heads/nope
+git -C "$P" symbolic-ref -d refs/remotes/origin/HEAD 2>/dev/null
+NOGH="$T/nogh"; mkdir -p "$NOGH"; printf '#!/usr/bin/env bash\nexit 1\n' > "$NOGH/gh"; chmod +x "$NOGH/gh"
+R0="$(refs_state)"; n0="$(ncreate)"
+out="$(PATH="$NOGH:$PATH" wb "$RFE" --wave-branch wave/unresolved)"; rc=$?
+check "W9d an unresolved base ⇒ refused naming base_branch_unresolved, exit 1 (never a main guess)" \
+  "$rc:$(printf '%s\n' "$out" | grep -cxF 'wave-build: refused — base_branch_unresolved' | tr -d ' ')" "1:1"
+check "W9e … nothing created (refs, worktrees, origin), no pr create" "$(refs_state):$(ncreate)" "$R0:$n0"
+
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

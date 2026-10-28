@@ -638,10 +638,20 @@ fi
 # a refs/remotes/origin/main ref and NO network — the arm may only read what a
 # pull already left on disk.
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-# git_repo <dir> — init, one base commit, remote origin (GitHub ssh shape).
+# The base comes from resolve-base-branch.sh (config > origin/HEAD > gh). Its gh
+# step is a network call, so the vcs section runs with a `gh` that always fails
+# first on PATH — every base below is read from refs / config on disk.
+VCS_SAVED_PATH="$PATH"
+VCS_GH_DIR="$(mktmp)"; printf '#!/usr/bin/env bash\nexit 1\n' > "$VCS_GH_DIR/gh"; chmod +x "$VCS_GH_DIR/gh"
+export PATH="$VCS_GH_DIR:$PATH"
+# git_repo <dir> — init, one base commit, remote origin (GitHub ssh shape), and
+# origin/HEAD → origin/main recorded as a clone records it (so the resolver
+# never needs `git remote set-head origin -a`, which would reach the network).
 git_repo() {
   ( cd "$1" && git init -q -b main . && git commit -q --allow-empty -m base \
-    && git remote add origin git@github.com:o/r.git ) >/dev/null 2>&1
+    && git remote add origin git@github.com:o/r.git \
+    && git update-ref refs/remotes/origin/main HEAD \
+    && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main ) >/dev/null 2>&1
 }
 # merge_pr <dir> <pr> <branch> <date> — a --no-ff merge commit with the exact
 # GitHub subject shape, committed at <date>, then origin/main := HEAD.
@@ -750,6 +760,7 @@ case "$out" in *"2026-09-03-example-feature.md"*) case "$(printf '%s\n' "$out" |
 # 30m: (mutant) with the arm's regex anchor removed, 30h's substring case turns
 # green — proving 30h is what holds the anchor, not a coincidence of fixtures.
 md="$(mktmp)"; cp "$SCRIPT_DIR/brief-pointer.sh" "$md/" 2>/dev/null || true
+cp "$SCRIPT_DIR/resolve-base-branch.sh" "$md/"   # the vcs arm's base comes from its sibling resolver
 sed 's|)?${slug}\\$"|)?${slug}"|' "$RECON" > "$md/reconcile-jobs.sh"
 if ! cmp -s "$RECON" "$md/reconcile-jobs.sh"; then
   r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
@@ -793,6 +804,79 @@ else
   ok "30p no \$(vcs_base_ref) subshell call — callers read the VCS_BASE_REF global"
 fi
 grep -q 'VCS_BASE_REF_PROBED=1' "$RECON" && ok "30p2 the probe is marked done after the first call (a failed probe is cached too)" || no "30p2 probe-once marker missing"
+
+# --- 30q. the base from resolve-base-branch.sh: a configured `development`
+# (.supervisor/config.json .base_branch) wins over origin/HEAD → main, so a merge
+# that landed ONLY on origin/development is seen; --print-base-ref prints that
+# ref. Control: without the config the same merge is not on the base ⇒ unknown.
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+dated_brief "$r" "2026-09-03-example-feature"
+( cd "$r" && git checkout -q -b development main && git checkout -q -b feature/example-feature \
+  && git commit -q --allow-empty -m w && git checkout -q development \
+  && GIT_AUTHOR_DATE="2026-09-04T10:22:06Z" GIT_COMMITTER_DATE="2026-09-04T10:22:06Z" \
+     git merge -q --no-ff -m "Merge pull request #42 from o/feature/example-feature" feature/example-feature \
+  && git update-ref refs/remotes/origin/development HEAD && git checkout -q main ) >/dev/null 2>&1
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in unknown*) ok "30q (control) unconfigured: a merge only on origin/development is not on the base (origin/HEAD → main)" ;; *) no "30q control: $out" ;; esac
+printf '{"base_branch":"development"}\n' > "$r/.supervisor/config.json"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in stranded_merged*"pull/42"*) ok "30q a configured base_branch development ⇒ the merge on origin/development is seen" ;; *) no "30q configured base not used: $out" ;; esac
+pbr="$(cd "$r" && bash "$RECON" --print-base-ref 2>/dev/null)"
+[ "$pbr" = origin/development ] && ok "30q2 --print-base-ref prints the resolved ref origin/development" || no "30q2 --print-base-ref printed '$pbr'"
+# 30q3: an unresolvable base (no origin, no config, gh failing) ⇒ exit 1, nothing printed; briefs stay unknown.
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"
+( cd "$r" && git init -q -b main . && git commit -q --allow-empty -m base ) >/dev/null 2>&1
+dated_brief "$r" "2026-09-03-example-feature"
+pbr="$(cd "$r" && bash "$RECON" --print-base-ref 2>/dev/null)"; prc=$?
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"; orc=$?
+[ "$prc" -eq 1 ] && [ -z "$pbr" ] && [ "$orc" -eq 0 ] && case "$out" in unknown*) true ;; *) false ;; esac \
+  && ok "30q3 unresolved base ⇒ --print-base-ref exit 1 + empty, the porcelain still exits 0 with unknown" \
+  || no "30q3 unresolved base: print-base-ref rc=$prc '$pbr', porcelain rc=$orc '$out'"
+# 30q4: an invalid configured base fails SAFE too (no ref, no abort, no fall-through to origin/HEAD).
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+printf '{"base_branch":"bad..name"}\n' > "$r/.supervisor/config.json"
+pbr="$(cd "$r" && bash "$RECON" --print-base-ref 2>/dev/null)"; prc=$?
+[ "$prc" -eq 1 ] && [ -z "$pbr" ] && ok "30q4 an invalid config .base_branch ⇒ no base ref (never origin/main)" || no "30q4 invalid config: rc=$prc '$pbr'"
+
+# --- 30r. the resolver runs ONCE per invocation, not once per brief. With
+# origin/HEAD unset and no config, resolve-base-branch.sh falls to set-head and
+# then gh (network). classify() runs in a `$(…)` subshell per brief, so only a
+# parent-shell prime keeps the cache — assert exactly ONE gh call across four
+# briefs, and (mutant) that removing the prime brings back one call per brief.
+# origin points at a missing LOCAL path, so set-head fails fast with no network.
+cnt_dir="$(mktmp)"
+printf '#!/usr/bin/env bash\necho x >> "%s/gh-calls"\necho main\n' "$cnt_dir" > "$cnt_dir/gh"; chmod +x "$cnt_dir/gh"
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+( cd "$r" && git symbolic-ref --delete refs/remotes/origin/HEAD && git remote set-url origin "$r/no-such-remote.git" ) >/dev/null 2>&1
+for s in alpha bravo charlie delta; do dated_brief "$r" "2026-09-03-feature-$s"; done
+merge_pr "$r" 42 "feature/feature-alpha" "2026-09-04T10:22:06Z"
+out="$(cd "$r" && PATH="$cnt_dir:$PATH" bash "$RECON" --porcelain 2>/dev/null)"
+calls="$(wc -l < "$cnt_dir/gh-calls" 2>/dev/null | tr -d ' ')"
+n_rows="$(printf '%s\n' "$out" | grep -c 'feature-')"
+if [ "${calls:-0}" -eq 1 ] && [ "$n_rows" -eq 4 ] && case "$out" in *stranded_merged*"PR #42"*) true ;; *) false ;; esac; then
+  ok "30r 4 briefs, origin/HEAD unset ⇒ the resolver's gh probe runs exactly once (and its base is used)"
+else
+  no "30r gh calls=${calls:-0} rows=$n_rows out=$out"
+fi
+md="$(mktmp)"; cp "$SCRIPT_DIR/brief-pointer.sh" "$SCRIPT_DIR/resolve-base-branch.sh" "$md/" 2>/dev/null || true
+sed 's/then vcs_base_ref || true; break; fi$/then break; fi/' "$RECON" > "$md/reconcile-jobs.sh"
+if ! cmp -s "$RECON" "$md/reconcile-jobs.sh"; then
+  rm -f "$cnt_dir/gh-calls"
+  ( cd "$r" && PATH="$cnt_dir:$PATH" bash "$md/reconcile-jobs.sh" --porcelain >/dev/null 2>&1 )
+  calls="$(wc -l < "$cnt_dir/gh-calls" 2>/dev/null | tr -d ' ')"
+  [ "${calls:-0}" -gt 1 ] && ok "30r2 (mutant) without the parent-shell prime the resolver re-runs per brief ($calls gh calls) — the prime is load-bearing" \
+    || no "30r2 mutant not discriminated: gh calls=${calls:-0}"
+else
+  no "30r2 mutant sed did not remove the prime call"
+fi
+# 30r3: a run whose briefs the vcs arm cannot key on (no date prefix) resolves NOTHING — the prime
+# is lazy, so the SessionStart path stays as offline as before for such briefs.
+rm -f "$cnt_dir/gh-calls" "$r"/.supervisor/jobs/in-progress/*.md
+printf '# Supervisor Job: x\n' > "$r/.supervisor/jobs/in-progress/undated-brief.md"
+( cd "$r" && PATH="$cnt_dir:$PATH" bash "$RECON" --porcelain >/dev/null 2>&1 )
+[ ! -e "$cnt_dir/gh-calls" ] && ok "30r3 only undated briefs ⇒ the resolver is never run (zero gh calls)" \
+  || no "30r3 undated-only run called gh $(wc -l < "$cnt_dir/gh-calls" | tr -d ' ') time(s)"
+export PATH="$VCS_SAVED_PATH"
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 
 # --- 31. --not-stranded-count (stranded-brief residual gaps, Gap 1b/1c) -------

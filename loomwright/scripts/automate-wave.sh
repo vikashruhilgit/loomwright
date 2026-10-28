@@ -19,7 +19,8 @@
 #                `wave-build: refused — single-lane mode (no wave PR)`, exit 1, nothing read or created.
 #   1. resolve   _lanes_wave_resolve (automate-lanes.sh): the wave's lanes in planner order (`## Current`
 #                `- wave: <k> | items: …`, else the lane-table order), each lane PR's head sha and state
-#                (`gh pr view <pr> --json headRefOid,state`), the base (origin/HEAD's name, default main)
+#                (`gh pr view <pr> --json headRefOid,state`), the base (resolve-base-branch.sh;
+#                unresolved ⇒ refused, nothing created)
 #                and the branch (default `wave/<run_id>-w<k>`).
 #   2. lock      `<primary>/.supervisor/automate/<run_id>.wave-build.lock` — the lane table's mkdir lock
 #                (holder = this process's pid + start time; a dead holder is reclaimed, a live one is
