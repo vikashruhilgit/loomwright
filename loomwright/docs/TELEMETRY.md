@@ -1112,7 +1112,8 @@ each command its own copy — neither yields 2, and the datum above argues
 against the sharing variant. Deciding between them requires
 observing the harness's stdin delivery semantics, which this repo does not
 pin. Recorded as unresolved rather than guessed; the guard below is correct
-either way, since it keys on byte-identity and not on a duplicate count.
+either way, since it keys on line identity (byte-identity, plus the `ts` window)
+and not on a duplicate count.
 
 The guard is minimal and consecutive-only: skip the append when the line is
 byte-identical to the log's CURRENT last line, or differs from it only in a `ts`

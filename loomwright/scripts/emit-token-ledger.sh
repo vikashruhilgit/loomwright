@@ -796,8 +796,8 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
 # NO LONGER EXISTS — it was keyed to a three-matcher topology and there are fourteen. It is
 # left recorded rather than deleted because the investigation it holds is still the best
 # account of how these blocks interact, and it is NOT re-answered here because nobody has
-# re-measured at fourteen. The guard never depended on the answer: it keys on byte-identity,
-# not on a duplicate count, which is why raising the fan-out needed no change to it —
+# re-measured at fourteen. The guard never depended on the answer: it keys on line identity
+# (byte-identity, plus the ts window at the append below), not on a duplicate count, which is why raising the fan-out needed no change to it —
 # asserted at the new fan-out by test-token-ledger.sh case 23 rather than assumed.
 #
 # The guard is minimal and consecutive-only: skip the append when the line is

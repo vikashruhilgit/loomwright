@@ -1332,9 +1332,15 @@ else
   STR_C="$(str_run "$CONC_DIR/widened-locked.sh" "fixture-straddle-001" "2026-10-27T23:59:59Z" "2026-10-28T00:00:00Z")"
   STR_D="$(str_run "$STR_DIR/no-window.sh" "fixture-straddle-002" "2026-10-27T23:59:59Z" "2026-10-28T00:00:00Z")"
   STR_E="$(str_run "$CONC_DIR/widened-locked.sh" "fixture-straddle-003" "2026-10-28T00:00:00Z" "2026-10-28T00:00:10Z")"
+  # The window's exact edges: TS_WINDOW_S is 2, inclusive, so 2s apart is one completion
+  # and 3s apart is a later stop. 1s and 10s alone would not catch an off-by-one.
+  STR_F="$(str_run "$CONC_DIR/widened-locked.sh" "fixture-straddle-004" "2026-10-28T00:00:00Z" "2026-10-28T00:00:02Z")"
+  STR_G="$(str_run "$CONC_DIR/widened-locked.sh" "fixture-straddle-005" "2026-10-28T00:00:00Z" "2026-10-28T00:00:03Z")"
   assert_eq "case21c two CONCURRENT firings of one completion whose ts straddle a second (and a day) append exactly ONE line (seed + 1 = 2) — ts is per firing, not per completion" "2" "$STR_C"
   assert_eq "case21d MUTATION CONTROL: with only the ts-window compare neutered, the straddling pair appends TWO (seed + 2 = 3) — the byte-identity guard that let case 21a flake" "3" "$STR_D"
   assert_eq "case21e the window is bounded: the same content ten seconds later is a later stop and is still appended (seed + 2 = 3)" "3" "$STR_E"
+  assert_eq "case21f the window's inclusive edge: stamps exactly TS_WINDOW_S (2s) apart are one completion (seed + 1 = 2)" "2" "$STR_F"
+  assert_eq "case21g just past the edge: stamps 3s apart are a later stop and both append (seed + 2 = 3)" "3" "$STR_G"
   assert_eq "case21c the surviving line carries one of the two stamps" "yes" \
     "$(tail -1 "$SANDBOX/.supervisor/logs/fixture-straddle-001.jsonl" | jq -r 'if (.ts == "2026-10-27T23:59:59Z" or .ts == "2026-10-28T00:00:00Z") then "yes" else "no" end' 2>/dev/null)"
 fi
