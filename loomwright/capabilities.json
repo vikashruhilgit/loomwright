@@ -319,7 +319,7 @@
       "name": "rules"
     },
     {
-      "description": "Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP, opt-in status line, the project's base branch",
+      "description": "Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP, opt-in status line",
       "name": "setup"
     },
     {
@@ -1115,7 +1115,7 @@
     "state_dir_env": "LOOMWRIGHT_HOST_STATE_DIR"
   },
   "plugin_name": "loomwright",
-  "plugin_version": "17.21.0",
+  "plugin_version": "17.20.2",
   "result_schemas": [
     {
       "name": "AUTOMATE_RUN",

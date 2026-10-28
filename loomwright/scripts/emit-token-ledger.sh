@@ -191,7 +191,7 @@ export PLUGIN_SESSION_ID
 # Single python3 invocation emits TWO lines: the resolved session id, then the
 # JSONL event — avoids a second interpreter spawn just to re-parse session_id.
 OUT="$(printf '%s' "$INPUT" | python3 -c '
-import atexit, json, os, sys, time
+import atexit, calendar, json, os, sys, time
 
 USAGE_TOP_KEYS = (
     "usage",
@@ -709,11 +709,29 @@ try:
     line = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
 except Exception:
     sys.exit(0)
+# THE SECONDS THAT STILL COUNT AS THIS FIRING, for the shell dedupe guard. `ts`
+# is stamped per FIRING, before the lock, so concurrent firings of ONE completion
+# that straddle a second boundary carry different `ts` and nothing else differs;
+# a byte-identity compare then calls them two events and appends both, however
+# well the lock serialises the compare. The neighbours within TS_WINDOW_S are
+# computed here because the shell has no portable date arithmetic (BSD and GNU
+# `date` disagree on parsing). Empty when there is no `ts`: the guard is then
+# plain byte-identity, as before.
+TS_WINDOW_S = 2
+ts_window = ""
+if utc:
+    try:
+        _t = calendar.timegm(time.strptime(utc, "%Y-%m-%dT%H:%M:%SZ"))
+        ts_window = " ".join(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(_t + d))
+                             for d in range(-TS_WINDOW_S, TS_WINDOW_S + 1))
+    except Exception:
+        ts_window = ""
 # Line 1: session id (shell log-file key). Line 2: the lock state (held: this
 # interpreter took the log lock and hands it to the shell; timeout: it waited
-# out the bound; none: it did not try). Line 3: the JSONL event. The lock is
+# out the bound; none: it did not try). Line 3: the `ts` window above (may be
+# empty). Line 4: the JSONL event. The lock is
 # handed over only once the output is flushed — a failed write releases it.
-sys.stdout.write(log_session_id + "\n" + LOCK_STATE + "\n" + line + "\n")
+sys.stdout.write(log_session_id + "\n" + LOCK_STATE + "\n" + ts_window + "\n" + line + "\n")
 sys.stdout.flush()
 _LOCK["handed_off"] = True
 ' 2>/dev/null || true)"
@@ -728,7 +746,11 @@ _rest="${OUT#*
 }"
 PY_LOCK="${_rest%%
 *}"
-LINE="${_rest#*
+_rest2="${_rest#*
+}"
+TS_WINDOW="${_rest2%%
+*}"
+LINE="${_rest2#*
 }"
 LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
 _lock="${LOG_FILE}.lock"
@@ -740,8 +762,9 @@ if [ "$PY_LOCK" = held ] && [ -n "$SESSION_ID" ]; then
   trap 'rmdir "$_lock" 2>/dev/null || true; exit 0' EXIT
 fi
 
-# Guard: need all three lines, and the event line must be a JSON object.
-if [ -z "$SESSION_ID" ] || [ "$_rest" = "$OUT" ] || [ "$LINE" = "$_rest" ]; then
+# Guard: need all four lines, and the event line must be a JSON object.
+if [ -z "$SESSION_ID" ] || [ "$_rest" = "$OUT" ] || [ "$_rest2" = "$_rest" ] \
+    || [ "$LINE" = "$_rest2" ]; then
   exit 0
 fi
 case "$LINE" in
@@ -773,19 +796,22 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
 # NO LONGER EXISTS — it was keyed to a three-matcher topology and there are fourteen. It is
 # left recorded rather than deleted because the investigation it holds is still the best
 # account of how these blocks interact, and it is NOT re-answered here because nobody has
-# re-measured at fourteen. The guard never depended on the answer: it keys on byte-identity,
-# not on a duplicate count, which is why raising the fan-out needed no change to it —
+# re-measured at fourteen. The guard never depended on the answer: it keys on line identity
+# (byte-identity, plus the ts window at the append below), not on a duplicate count, which is why raising the fan-out needed no change to it —
 # asserted at the new fan-out by test-token-ledger.sh case 23 rather than assumed.
 #
 # The guard is minimal and consecutive-only: skip the append when the line is
-# byte-identical to the CURRENT last line of the log. Duplicate blocks fire
+# byte-identical to the CURRENT last line of the log, or differs from it only in a
+# `ts` within TS_WINDOW_S (the window at the append below). Duplicate blocks fire
 # back-to-back within one firing, so they are always adjacent. Byte-identity
 # includes ts, agent_id, and transcript byte count together — vanishingly
 # unlikely to collide, NOT impossible: ts is second-granularity, agent_id is
 # omitted for exactly the untyped population this targets, and parallel worker
-# completion is a designed feature. A collision therefore needs the same second,
-# an identical transcript byte count, and an absent agent_id on both. The failure
-# direction is one-way and benign: one ADVISORY ledger line is silently lost;
+# completion is a designed feature. A collision therefore needs stamps within the
+# ts window (TS_WINDOW_S either side, not only the same second — the window at the
+# append below explains why), an identical transcript byte count, and an absent
+# agent_id on both. The failure direction is one-way and benign: one ADVISORY
+# ledger line is silently lost;
 # nothing reads it for state or gating. Reading only the last line keeps this
 # O(1) on a large log, and every failure absorbs to the normal append path.
 # THE GUARD ABOVE WAS CHECK-THEN-ACT, AND THAT IS WHY IT DID NOT WORK. Measured in
@@ -859,14 +885,37 @@ done
 # the fail-safe inversion CLAUDE.md's Failure-Mode Invariants section forbids.
 [ -n "$_have_lock" ] && trap 'rmdir "$_lock" 2>/dev/null || true; exit 0' EXIT
 
-# Adjacent byte-identity, unchanged in meaning — only now the read and the append
-# cannot be interleaved by a sibling firing. Byte-identity includes ts, agent_id
-# and the transcript byte count together; the collision case and its one-way,
-# benign failure direction are as described above.
+# Adjacent identity — only now the read and the append cannot be interleaved by a
+# sibling firing. Identity includes agent_id and the transcript byte count, and
+# `ts` only up to the window the python step computed: `ts` is stamped per FIRING,
+# before this lock, so two firings of one completion straddling a second boundary
+# differ in `ts` ALONE. Byte-identity called those two events and appended both,
+# with the lock working perfectly — the lock decides who compares first, not what
+# the compare means. That is why case 21 still flaked on loaded CI runners after
+# the lock landed: measured in a stress loop at a 15-way fan-out, every duplicate
+# carried two distinct `ts` seconds and no firing had timed out on the lock.
+# A line identical except for a `ts` within TS_WINDOW_S of this one is the same
+# completion; one further apart is a later stop and is still appended. The
+# collision case and its one-way, benign failure direction are as described above.
 if [ -f "$LOG_FILE" ]; then
   _last_line="$(tail -1 "$LOG_FILE" 2>/dev/null || true)"
   if [ -n "$_last_line" ] && [ "$_last_line" = "$LINE" ]; then
     exit 0
+  fi
+  if [ -n "$_last_line" ] && [ -n "$TS_WINDOW" ] && [ -n "$UTC_TS" ]; then
+    case "$_last_line" in
+      *'"ts":"'*)
+        _last_ts="${_last_line#*\"ts\":\"}"
+        _last_ts="${_last_ts%%\"*}"
+        case " $TS_WINDOW " in
+          *" $_last_ts "*)
+            if [ "${_last_line/\"ts\":\"$_last_ts\"/}" = "${LINE/\"ts\":\"$UTC_TS\"/}" ]; then
+              exit 0
+            fi
+            ;;
+        esac
+        ;;
+    esac
   fi
 fi
 
