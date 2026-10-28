@@ -190,13 +190,17 @@ if run_path:
     # A fresh-phase item (automate-speed/09) names one session per phase —
     # `session_id <sid> (<item>) phase=<launch-pad|supervisor|drain>`: the Supervisor
     # spans come from the phase=supervisor session (or an un-suffixed line, the inline
-    # form); the last line of any kind is kept only when neither exists.
+    # form); the last line of any kind is kept only when neither exists. The
+    # `phase=driver` line names the /automate coordinator session itself (it runs
+    # no phase), so it is never the item's session.
     sup = None
     for ts, t in progress:
         m = re.match(r"session_id ([A-Za-z0-9_-]+)", t)
         if m:
-            session = m.group(1)
             ph = re.search(r" phase=(\S+)$", t)
+            if ph and ph.group(1) == "driver":
+                continue
+            session = m.group(1)
             if not ph or ph.group(1) == "supervisor":
                 sup = m.group(1)
     session = sup or session

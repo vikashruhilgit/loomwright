@@ -112,7 +112,9 @@
 #   picked      `current-set … --status running --pr null --branch null --pause-reason null` BEFORE the
 #               `<ts> picked <item>` line (no unchecked row ⇒ terminate), then RUN (fresh phases: `plan`)
 #   plan        fresh phases only: the Launch Pad phase spawn (`what: "launch pad phase"`); the pending
-#               briefs are snapshotted for the ls-diff fallback
+#               briefs are snapshotted for the ls-diff fallback. Before each fresh spawn (plan, run, drain)
+#               the coordinator's own `session_id <--session-id> (<item>) phase=driver` line, once per
+#               session per item (`read-token-ledger.sh --per-item` counts that session's transcript)
 #   plan-result the Launch Pad report: `session_id <sid> (<item>) phase=launch-pad`, the LAUNCH_PAD_RESULT
 #               through validate-launch-pad-result.py --raw and /autonomous PLAN step 4's status mapping
 #               (+ the ls-diff fallback, the rubric-preservation check): saved ⇒ `launch-pad saved
@@ -1741,6 +1743,17 @@ ns_checkpoint_task() {
 # ================================================================================================
 ns_sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }   # one shell word, single-quoted
 ns_phase_sid_ok() { [[ "$SID" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; }   # phase-launch's --coordinator-session charset
+# ns_driver_sid — fresh phases: this loop's OWN `session_id <SID> (<item>) phase=driver` line, once per
+# driver session per item, written before each phase spawn. The coordinator session spends tokens of its own
+# between the phases (the phase-wait relay, the bookkeeping, the gates, a fix-now re-drain) and
+# read-token-ledger.sh --per-item resolves an item's transcripts from these lines, so without it that session
+# went uncounted. --inline-phases writes none: there this session runs /autonomous itself, and its
+# run-record `session_id` line already resolves to it.
+ns_driver_sid() {
+  ns_fresh && ns_phase_sid_ok || return 0
+  ns_section '## Progress' | grep -qF " session_id $SID ($ITEM) phase=driver" && return 0
+  ns_progress "$(ns_ts) session_id $SID ($ITEM) phase=driver"
+}
 # ns_phase_launch <phase> <prompt> — the runnable phase-launch line (launch authority only when known)
 ns_phase_launch() {
   local l="bash $(ns_sq "$H") phase-launch $(ns_sq "$RF") $1"
@@ -1791,6 +1804,7 @@ ns_plan() {
   local inv p x
   ns_run_precheck plan || return 1
   ns_phase_sid_ok || { ns_err "session_id_malformed — phase-launch needs a coordinator session id of [A-Za-z0-9_-]+ (got '$SID') — nothing written"; NS_RC=2; return 1; }
+  ns_driver_sid || return 1
   st_set item "$ITEM"; st_set pr "$PR"
   st_setj plan_briefs_before "$(ns_pending_briefs | "$JQ" -Rsc 'split("\n") | map(select(length > 0))')"
   inv="/loomwright:launch-pad goal: $ITEM"
@@ -1913,6 +1927,7 @@ ns_run() {
       [ -n "$brief" ] || { NEXT=plan; return 0; }
     fi
     ns_phase_sid_ok || { ns_err "session_id_malformed — phase-launch needs a coordinator session id of [A-Za-z0-9_-]+ (got '$SID') — nothing written"; NS_RC=2; return 1; }
+    ns_driver_sid || return 1
   fi
   ns_cfg_paths
   if [ "$(st suppressed)" != true ]; then
@@ -2170,6 +2185,7 @@ ns_drain() {
   if ns_fresh && ! ns_phase_sid_ok; then
     ns_err "session_id_missing — the drain phase needs this loop's --session-id (phase-launch's coordinator session, [A-Za-z0-9_-]+; got '${SID}') — nothing written"; NS_RC=2; return 1
   fi
+  ns_driver_sid || return 1
   h="$(ns_pr_head "$PR")"
   ns_drain_reset
   st_set drain_pass "$(ns_pass_key)"; st_set drain_kind first; st_set drain_started_at "$(ns_ts)"

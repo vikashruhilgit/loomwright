@@ -36,6 +36,8 @@
 #      parked then resumed (work_after_park), phase row <= item row, and a
 #      /bin/bash (3.2) parse check. PI21: a value-taking flag given last
 #      (no value) ⇒ usage + exit 1, never a parse-loop hang.
+#  PI23. the fresh-phase driver's `phase=driver` line makes its own transcript
+#      count (and never replaces the timed Supervisor session).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -708,6 +710,29 @@ grep -qxF "| ↳ Build | 10-20 10:10:00 → 10:40:00 | 30m 0s | 200 (main 200) |
   && ! grep -qF '| ↳ ↳ ' <<<"$pi_m" \
   && ok "pr_created without a finished reviewer span ⇒ Build from the hook row, one Phase 4.5 row, no iteration sub-rows" \
   || no "mixed hook case: $(printf '%s\n' "$pi_m" | grep -E 'Build|Phase 4.5|iter')"
+rm -rf "$PIN"
+
+echo "== PI23. --per-item: the /automate driver session's own transcript is counted via its phase=driver line =="
+# A fresh-phase item's coordinator is its own Claude Code session (dddddddd-…): it holds
+# usage at 10:02 and 11:05 (inside the item window) and 09:00 (before pick). Without the
+# driver's `session_id <sid> (<item>) phase=driver` line the report never reads it — the
+# 13% under-count of lane L2, automate-2026-10-27-125907.
+pi_run "$SUT" --per-item "$PIF/run-fresh.md" --root "$PI/p" --projects-dir "$PIP"
+grep -qF "| 1500 (main 1500) | 15 (main 15) |" < <(pi_row '| **.supervisor/requirements/f.md** |') \
+  && ! grep -qF 'dddddddd' <<<"$PI_OUT" \
+  && ok "no driver line ⇒ the driver transcript is not read (the control)" || no "no-driver baseline: $(pi_row 'f.md')"
+PIN="$(mktemp -d)"; mkdir -p "$PIN/.supervisor/logs"; cp "$PIF/session-logs/"* "$PIN/.supervisor/logs/"
+awk '{ print } /picked \.supervisor\/requirements\/f\.md$/ { print "- 2026-10-20T10:00:00Z session_id dddddddd-0000-4000-8000-000000000001 (.supervisor/requirements/f.md) phase=driver" }' \
+  "$PIF/run-fresh.md" > "$PIN/run-driver.md"
+pi_run "$SUT" --per-item "$PIN/run-driver.md" --root "$PIN" --projects-dir "$PIP"
+pi_d="$(pi_rows_after '| **.supervisor/requirements/f.md** |')"
+grep -qF "| 17500 (main 17500) | 175 (main 175) | 7 | 9000 |" <<<"$pi_d" \
+  && grep -qF 'session ids tried ffffffff-0000-4000-8000-000000000001, sf, dddddddd-0000-4000-8000-000000000001 — 2 transcript file(s)' <<<"$PI_OUT" \
+  && ok "driver line ⇒ its in-window usage (7000+9000 / 70+90) is added; the 09:00 message before pick is not" \
+  || no "driver counted: $(printf '%s\n' "$pi_d" | head -1) / $(grep -F 'tried' <<<"$PI_OUT")"
+grep -qxF "| ↳ Build | 10-20 10:10:00 → 10:40:00 | 30m 0s | 200 (main 200) | 2 (main 2) | 1 | 200 | — |" <<<"$pi_d" \
+  && ok "the driver line never stands in for the Supervisor session (Build still ends at sf's pr_created hook row)" \
+  || no "driver Build row: $(printf '%s\n' "$pi_d" | grep -F '↳ Build')"
 rm -rf "$PIN"
 
 echo "== PI11. existing modes unchanged by the per-item flags (AC5) =="

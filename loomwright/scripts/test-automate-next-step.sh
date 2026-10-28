@@ -1701,13 +1701,14 @@ leg_fresh_walk() {
   f_call "$drv" --result "$(jq -cn --arg f "$ad/$CASE_RUN.review-heal-result.md" --arg h "$F_SHA" '{review_heal_result_file: $f, session_id: "dr-sess-3", ready_sha: $h, drain_note: "converged, 1 round"}')"
   [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" or .do == "ask" or .do == "done"' >/dev/null 2>&1 \
     || { LEG_MSG="DRAIN report ⇒ exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:200}"; return 1; }
-  in_order "$CASE_RF" "picked $F_ITEM" "session_id lp-sess-1 ($F_ITEM) phase=launch-pad" "launch-pad saved $b" \
+  in_order "$CASE_RF" "picked $F_ITEM" "session_id coord-1 ($F_ITEM) phase=driver" "session_id lp-sess-1 ($F_ITEM) phase=launch-pad" "launch-pad saved $b" \
       "auto_review suppressed (backup $CASE_RUN.config-backup.json) — running the supervisor phase (fresh session)" \
       "session_id sup-sess-2 ($F_ITEM) phase=supervisor" "ran /autonomous → PR $F_PR (fresh supervisor phase)" \
       "owned drain started — /review-pr $F_PR --until-mergeable --no-auto-postmortem @ $F_SHA" \
       "session_id dr-sess-3 ($F_ITEM) phase=drain" "drain READY (converged, 1 round)" \
     && [ "$(grep -cE "^- [0-9TZ:-]+ session_id [A-Za-z0-9_-]+ \\($F_ITEM\\) phase=(launch-pad|supervisor|drain)\$" "$CASE_RF")" = 3 ] \
     && ! grep -q 'session_id cc-sup-9' "$CASE_RF" \
+    && [ "$(grep -cE "^- [0-9TZ:-]+ session_id [A-Za-z0-9_-]+ \\($F_ITEM\\) phase=driver\$" "$CASE_RF")" = 1 ] \
     || { LEG_MSG="## Progress: $(sed -n '/ picked .*18-backlog/,$p' "$CASE_RF" | tr '\n' '|' | head -c 900)"; return 1; }
   FRESH_RF="$CASE_RF"
   return 0
@@ -1880,7 +1881,7 @@ leg_fresh_state_stale() {
     if [ "$stamp" = old ] || [ "$ghrc" != 0 ] || [ "$recorded" = "$opr" ] || [ "$stub" = garbage ]; then left=0; else left=1; fi
     f_call "$drv" --result "{${rep}\"status_reason\":\"phase_died\",\"no_pr_why\":\"phase-wait: died — no result line since the last launch\"}"
     rm -f "$CASE_BIN/stat"
-    [ "$NC_RC" = 0 ] && grep -q 'ran /autonomous — no PR: phase_died' "$CASE_RF" && { [ "$own" = 1 ] || ! grep -q "session_id $state " "$CASE_RF"; } \
+    [ "$NC_RC" = 0 ] && grep -q 'ran /autonomous — no PR: phase_died' "$CASE_RF" && { [ "$own" = 1 ] || ! grep "session_id $state " "$CASE_RF" | grep -qv ' phase=driver$'; } \
       && if [ "$left" = 1 ]; then grep -qF -- "no PR: phase_died (phase-wait: died — no result line since the last launch; the phase left PR $opr open on feature/died-x — not drained" "$CASE_RF"; else ! grep -q 'the phase left PR' "$CASE_RF"; fi \
       && if [ -n "$want" ]; then grep -qE -- "^- [0-9TZ:-]+ $(printf '%s' "$want" | sed 's/[().]/\\&/g')\$" "$CASE_RF"; else ! grep -q 'phase=supervisor' "$CASE_RF"; fi \
       || { LEG_MSG="$c: exit $NC_RC ${NC_ERR:0:160}; ## Progress: $(grep 'session_id\|no PR' "$CASE_RF" | tr '\n' '|' | head -c 400)"; return 1; }
@@ -2019,6 +2020,9 @@ leg_fresh_owner_session() {
     f_call "$drv" --result "$(jq -cn --arg f "$ad/$CASE_RUN.launch-pad-result.md" '{launch_pad_result_file: $f, session_id: "lp-sess-1"}')"
     [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" run supervisor && f_argv_ok "$NC_OUT" supervisor "$own" coord-2 \
       || { LEG_MSG="$c: the bare --result's Supervisor spawn ⇒ exit $NC_RC '${NC_OUT:0:240}' (want owner '${own}', coord-2) ${NC_ERR:0:160}"; return 1; }
+    # each coordinator that printed a phase spawn names itself once (phase=driver); a re-print writes nothing
+    [ "$(grep -cE ' session_id coord-1 \(.*\) phase=driver$' "$CASE_RF")" = 1 ] && [ "$(grep -cE ' session_id coord-2 \(.*\) phase=driver$' "$CASE_RF")" = 1 ] \
+      || { LEG_MSG="$c: driver lines: $(grep 'phase=driver' "$CASE_RF" | tr '\n' '|' | head -c 300)"; return 1; }
   done
   return 0
 }
@@ -2651,7 +2655,7 @@ else no "P12: $LEG_MSG"; fi
 
 echo "-- F. fresh phase sessions (automate-speed/09): the default, without --inline-phases"
 LEG_MSG=""
-if leg_fresh_walk "$DRIVER"; then ok "F1 (AC1): PICK (phase-check ok) → three fresh spawns — launch-pad, supervisor, drain, in that order — each a runnable phase-launch line (BLOCKED, exit 3, without an owner command); ONE session_id <sid> (<item>) phase=<phase> line per phase, three distinct ids (the Supervisor one from state.md)"
+if leg_fresh_walk "$DRIVER"; then ok "F1 (AC1): PICK (phase-check ok) → three fresh spawns — launch-pad, supervisor, drain, in that order — each a runnable phase-launch line (BLOCKED, exit 3, without an owner command); ONE session_id <sid> (<item>) phase=<phase> line per phase, three distinct ids (the Supervisor one from state.md), plus ONE session_id coord-1 (<item>) phase=driver line for the coordinator itself (the --inline-phases goldens write none)"
 else no "F1: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_fresh_unavailable "$DRIVER"; then ok "F2 (AC3): phase-check unavailable (no --permission-prompt-tool) / a session id phase-launch cannot carry ⇒ the phase_relay_unavailable park at phase-guard: no picked line, no current-set, no spawn, no RECONCILE, the run lock released"
@@ -2661,7 +2665,7 @@ if leg_fresh_plan_mapping "$DRIVER"; then ok "F3 (AC7): LAUNCH_PAD_RESULT discar
 else no "F3: $LEG_MSG"; fi
 if leg_fresh_state_stale "$DRIVER"; then ok "F3b (review fixes): a stale .supervisor/state.md (older than the Supervisor phase spawn) + phase_died ⇒ the REPORTED session id on the phase=supervisor line (none reported ⇒ no line); a state.md naming the coordinator is not the phase's; an open PR on a FRESH state.md's branch is named on the no-PR line, a stale one's never — nor one the run file already records (exact URL, never a prefix), nor on a gh failure; GNU and BSD stat both read the mtime, garbage fails closed"
 else no "F3b: $LEG_MSG"; fi
-if leg_fresh_owner_session "$DRIVER"; then ok "F3c (review fixes): a re-printed fresh launch line is rebuilt from the re-printing session's identity — coord-1's re-print byte for byte; coord-2's re-print, the bare re-print after it and the bare --result's Supervisor spawn carry --coordinator-session coord-2 and no owner command (or coord-2's own when it gave one)"
+if leg_fresh_owner_session "$DRIVER"; then ok "F3c (review fixes): a re-printed fresh launch line is rebuilt from the re-printing session's identity — coord-1's re-print byte for byte; coord-2's re-print, the bare re-print after it and the bare --result's Supervisor spawn carry --coordinator-session coord-2 and no owner command (or coord-2's own when it gave one); coord-1 and coord-2 each get ONE phase=driver line, the re-prints none"
 else no "F3c: $LEG_MSG"; fi
 if leg_fresh_checkpoint "$DRIVER"; then ok "F4 (wave 7, L23): a re-pick (--start pick) / --start run of an item whose last RUN checkpointed, its brief still in .supervisor/jobs/in-progress/ ⇒ the Supervisor phase spawn /loomwright:supervisor --continue task: <id> (the line's id, else the brief saved before it), no Launch Pad spawn; no in-progress brief ⇒ the Launch Pad spawn; a newer saved brief after the checkpoint ⇒ that brief"
 else no "F4: $LEG_MSG"; fi
