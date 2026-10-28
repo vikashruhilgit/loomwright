@@ -249,9 +249,20 @@ lanes_launch() {
   return "$rc"
 }
 
+# _lanes_cheap_flag — ` --cheap` when the lane's lane.json carries `"cheap": true` (lane-create --cheap), else
+# nothing: the flag every `/loomwright:automate` command this file sends a lane (launch and both --resume-run
+# forms) carries, read from the lane's own record so a resume never depends on the coordinator re-passing it.
+# The continue and answer-resume spawns send no new command (the session's own carries it) — and the in-lane
+# driver reads the same record (automate-next-step.sh), whatever command its session received.
+_lanes_cheap_flag() {
+  jq -e '.cheap == true' "$LN_DIR/.supervisor/lane.json" >/dev/null 2>&1 && printf ' --cheap'
+  return 0
+}
+
 # _lanes_launch_go <resume_run|''> <continue 0|1> — the launch proper (caller holds the launch lock).
 _lanes_launch_go() {
-  local resume_run="$1" cont="$2"
+  local resume_run="$1" cont="$2" ch
+  ch="$(_lanes_cheap_flag)"
   if [ -n "$resume_run" ]; then
     [ "$resume_run" = "$LN_RUN" ] || { echo "lane-launch: refused — $LN_LANE resumes only its own run ($LN_RUN), not '$resume_run'"; return 1; }
     [ -f "$LN_DIR/.supervisor/automate/$LN_RUN.md" ] || { echo "lane-launch: refused — no run file $LN_RUN.md in $LN_LANE"; return 1; }
@@ -263,7 +274,7 @@ _lanes_launch_go() {
     local rsid; rsid="$(_lanes_session_id)"
     if [ -n "$rsid" ]; then
       LN_RESUME_PATH="session $rsid"
-      _lanes_spawn "/loomwright:automate --resume $LN_RUN" "$rsid" "(resume $LN_RUN in its last session $rsid)" || return 1
+      _lanes_spawn "/loomwright:automate --resume $LN_RUN$ch" "$rsid" "(resume $LN_RUN in its last session $rsid)" || return 1
       if [ -n "$LN_SPAWN_SID" ] || kill -0 "$LN_SPAWN_PID" 2>/dev/null; then return 0; fi
       echo "lane-launch: $LN_LANE — session $rsid could not be resumed (exited with no session); falling back to a fresh session"
       _lanes_launch_lock || { echo "lane-launch: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"; return 1; }
@@ -274,7 +285,7 @@ _lanes_launch_go() {
     else
       LN_RESUME_PATH="fresh session (no recorded session)"
     fi
-    _lanes_spawn "/loomwright:automate --resume $LN_RUN" "" "(resume $LN_RUN in a fresh session)"
+    _lanes_spawn "/loomwright:automate --resume $LN_RUN$ch" "" "(resume $LN_RUN in a fresh session)"
   elif [ "$cont" = 1 ]; then
     local sid; sid="$(_lanes_session_id)"
     [ -n "$sid" ] || { echo "lane-launch: refused — $LN_LANE has no recorded session to continue"; return 1; }
@@ -286,7 +297,7 @@ _lanes_launch_go() {
       || { echo "lane-launch: refused — $LN_LANE has no relay hook (a lane never runs without its question channel)"; return 1; }
     _lanes_optout_record \
       || { echo "lane-launch: refused — $LN_LANE — cannot record the gate opt-out fact ($(_lanes_optout_file)); a resume could not detect it"; return 1; }
-    _lanes_spawn "/loomwright:automate --backlog $LN_DIR/.supervisor/lane-backlog.md" "" "(launch)"
+    _lanes_spawn "/loomwright:automate --backlog $LN_DIR/.supervisor/lane-backlog.md$ch" "" "(launch)"
   fi
 }
 

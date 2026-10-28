@@ -63,7 +63,7 @@
 #   `picked` line naming the item) — the driver suppresses `.auto_review` and prints the `/autonomous`
 #   spawn (`--non-interactive` adds `--non-interactive-fallback`; `--notify`, `--cheap` and
 #   `--max-tokens N` — else `## Run Config`'s `max_tokens:` — pass through; none is written to the run
-#   file); the RUN report answers it, and the driver goes on to print the owned-drain spawn, whose
+#   file; inside a lane, `.supervisor/lane.json` `"cheap": true` also sets `--cheap`); the RUN report answers it, and the driver goes on to print the owned-drain spawn, whose
 #   DRAIN report starts GATE. `--start drain` prints the owned-drain spawn for a running item that
 #   already has its PR (refused — `drain_already_owned`, exit 2 — once this pass spawned its drain).
 #   "drain result reported" stays an entry too (back-compat): with nothing pending, a bare
@@ -3182,6 +3182,11 @@ elif [ -n "$SID" ] && [ "$SID" = "$(st flag_owner_command_sid)" ]; then OWNER_CM
 root_given="${ROOT:+1}"; [ -n "$ROOT" ] || ROOT="$(st flag_root)"
 ns_resolve_root
 [ -n "$root_given" ] && st_set flag_root "$ROOT"
+# inside a lane, `--cheap` also comes from the lane's own record (lane.json `"cheap": true`, written by
+# `lane-create --cheap` from the coordinator's flag): every session of the lane — launch, --resume-run,
+# continue, answer resume — keeps the cost profile whatever command it received. No off form; absent
+# outside a lane, so a sequential run's --cheap stays passthrough-only
+ns_lane && "$JQ" -e '.cheap == true' "$ROOT/.supervisor/lane.json" >/dev/null 2>&1 && CHEAP=1
 
 STOPPED=0; first_arm=1
 while [ -n "$NEXT" ]; do

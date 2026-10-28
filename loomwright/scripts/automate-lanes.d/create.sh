@@ -1,16 +1,17 @@
 # ==================================================================================================
-# lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]
+# lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T] [--cheap]
 lanes_create() {
-  local runfile="" item="" n="" par="" maxt="" a single=0
+  local runfile="" item="" n="" par="" maxt="" a single=0 cheap=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --parallel) _lanes_need "$#" lane-create "$1"; par="$2"; shift 2; if [ "$par" = 1 ]; then single=1; else single=0; fi ;;
       --max-tokens) _lanes_need "$#" lane-create "$1"; maxt="$2"; shift 2 ;;
+      --cheap) cheap=1; shift ;;
       *) if [ -z "$runfile" ]; then runfile="$1"; elif [ -z "$item" ]; then item="$1"; elif [ -z "$n" ]; then n="$1"
          else die "lane-create: unexpected argument '$1'"; fi; shift ;;
     esac
   done
-  [ -n "$runfile" ] && [ -n "$item" ] && [ -n "$n" ] || die "usage: lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]"
+  [ -n "$runfile" ] && [ -n "$item" ] && [ -n "$n" ] || die "usage: lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T] [--cheap]"
   # The lane NUMBER is an identity across the whole run (waves and re-run lanes included), not the
   # parallel count, so every caller takes 1..99 and a FRESH number (the table refusal below). Single-lane
   # mode is an EXPLICIT `--parallel 1` — never inferred from `par`, whose default is n.
@@ -109,12 +110,16 @@ lanes_create() {
       and (.answers | length) > 0' >/dev/null 2>&1 <<<"$pol"; then
     pj="$(jq -c . <<<"$pol")"; ps="$(jq -r '"\(.policy_sha[0:12]):\(.answers | length)"' <<<"$pol")"
   fi
+  # `cheap: true` (only under --cheap; absent otherwise) is the lane's own record of the coordinator's cost
+  # profile: every spawn of the lane (launch.sh) and its in-lane driver (automate-next-step.sh) read it, so
+  # a lane resume keeps the profile without the coordinator re-passing it
   jq -n --arg lane "$lane" --arg run "$run_id" --arg parent "$parent" --arg primary "$primary" \
     --argjson parallel "$par" --argjson mt "$mt" --arg created "$(now_utc)" --argjson policy "$pj" \
-    --argjson single "$single" \
+    --argjson single "$single" --argjson cheap "$cheap" \
     '{schema_version: 1, lane: $lane, run_id: $run, parent_run_id: $parent, primary: $primary,
       parallel: $parallel, max_tokens: $mt, created: $created, policy: $policy}
-      + (if $single == 1 then {single_lane: true} else {} end)' > "$C/.supervisor/lane.json" \
+      + (if $single == 1 then {single_lane: true} else {} end)
+      + (if $cheap == 1 then {cheap: true} else {} end)' > "$C/.supervisor/lane.json" \
     || { _abort "cannot write lane.json"; return 1; }
   printf -- '- [ ] %s\n' "$item" > "$C/.supervisor/lane-backlog.md" || { _abort "cannot write the backlog"; return 1; }
   _lanes_merge_hooks "$C/.claude/settings.local.json" "bash \"$PLUGIN_ROOT/scripts/automate-lanes.sh\" relay-hook" \
@@ -133,6 +138,6 @@ lanes_create() {
   fi
   printf '%s\t%s\t%s\t%s\t-\t-\t-\tcreated\t-\t-\n' "$lane" "$C" "$(_clean "$item")" "$run_id" >> "$table"
   _lt_unlock "$table"
-  echo "lane-create: $lane $C run_id=$run_id item=$item meta=${mb:-off} policy=$ps"
+  echo "lane-create: $lane $C run_id=$run_id item=$item meta=${mb:-off} policy=$ps$([ "$cheap" = 1 ] && printf ' cheap=on')"
 }
 
