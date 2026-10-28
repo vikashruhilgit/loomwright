@@ -88,3 +88,9 @@ the power to send my code to a vendor I did not approve.
 
 ## Touches
 unknown (beyond this, at least: loomwright/docs/ARCHITECTURE_CONTRACTS.md — the provider-list pointer handed over from item 02)
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-28T15:25:17Z
+- **Brief:** .supervisor/jobs/done/2026-10-28-provider-routing-readonly-seats.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/746
