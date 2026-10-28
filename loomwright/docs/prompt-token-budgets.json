@@ -55,7 +55,7 @@
     "self-heal-advisory": {"budget": 37695, "measured": 34268, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "setup": {"budget": 10782, "measured": 9801, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "state-management": {"budget": 9105, "measured": 8277, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "supervisor-config": {"budget": 5110, "measured": 4645, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
+    "supervisor-config": {"budget": 5768, "measured": 5243, "note": "raise (provider-routing-readonly-seats/07): step 2.9a parses --route and resolves the heal_voter seat; measured + ~10%"},
     "supervisor-readiness": {"budget": 12700, "measured": 11545, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "telemetry": {"budget": 3216, "measured": 2923, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "unit-testing": {"budget": 1691, "measured": 1537, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
@@ -85,7 +85,7 @@
     "red-team-reviewer": {"budget": 2046, "measured": 1860, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "review-pr": {"budget": 2574, "measured": 2340, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "rules": {"budget": 9081, "measured": 8255, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "setup": {"budget": 28124, "measured": 25567, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
+    "setup": {"budget": 31199, "measured": 28362, "note": "raise (provider-routing-readonly-seats/07): providers module part + dashboard/usage rows; measured + ~10%"},
     "supervisor": {"budget": 11348, "measured": 10316, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "telemetry": {"budget": 5328, "measured": 4843, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "verify": {"budget": 6276, "measured": 5705, "note": "re-baselined to live measured + ~10% (automate-speed/18)"}
