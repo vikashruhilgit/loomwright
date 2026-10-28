@@ -548,6 +548,8 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-531 | skills/autonomous-loop/multi-iteration.md | q: Implementations keep `current_brief_path` and the `iterations[].branch` values in memory | a multi-iteration step needs the current brief path or a branch name (split from LP-406) | read it from in-memory state; the jq reads of state.json are illustrative | rule | step-scoped | - | GAP |
 | LP-532 | skills/autonomous-loop/SKILL.md | q: A `--single-iteration` run (every `/automate` item) never reads `multi-iteration.md` | the run is --single-iteration | Step 0 does not read multi-iteration.md; it reads it otherwise | rule | global | - | GAP |
 | LP-533 | commands/autonomous.md | q: A `--single-iteration` run never reads `multi-iteration.md`. | the run is --single-iteration | Step 0 does not read multi-iteration.md (mirror of the skill's Step 0) | rule | global | - | GAP |
+| LP-536 | agents/launch-pad.md | q: **Seat routing (`plan_reviewer`).** | a Plan Reviewer spawn is about to run | resolve the seat and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol": claude runs the spawn unchanged, another provider runs the routed review and validates it with `validate-plan-review-result.py --raw`, a non-ok `lens_status` or failed validation falls back to the Task spawn and logs one `seat_routing` line, a `strict` empty provider takes the generic NEEDS_HUMAN branch, never a PASS | rule | prose | - | GAP |
+| LP-537 | skills/autonomous-loop/multi-iteration.md | q: **Seat routing (`evaluate_reviewer`).** | the EVALUATE review-heal Task is about to be spawned | resolve the seat and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol": claude spawns the Task unchanged, another provider is passed into the Task prompt so its review step runs routed with the Claude fallback, a `strict` empty provider skips the Task and takes the `ESCALATED` branch | rule | prose | - | GAP |
 
 ## Gap list (ordered by risk)
 
@@ -984,12 +986,14 @@ This file lists every branch (condition → action) and every standing rule stat
 431. LP-528 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: no signal or gate fired
 432. LP-529 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: Supervisor returned preflight_overlap_detected
 433. LP-530 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: a signal would re-plan AND iteration + 1 > max_iterations
+434. LP-536 — a strict-empty plan_reviewer seat must take NEEDS_HUMAN and never count as a PASS, and a routed answer must pass validate-plan-review-result.py --raw before it can gate a save; no test exercises the seat paragraph
+435. LP-537 — a strict-empty evaluate_reviewer seat must skip the Task and take the ESCALATED branch; no test exercises the seat paragraph
 
 ## Counts
 
-- rows: 535
+- rows: 537
 - deterministic: 340
 - judgment: 48
-- rule: 122
+- rule: 124
 - story: 25
-- GAP: 433
+- GAP: 435

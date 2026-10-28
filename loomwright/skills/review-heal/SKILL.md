@@ -121,6 +121,8 @@ Mirrors Supervisor Phase 4.5 semantics exactly. **Default bound is 3 iterations*
 
 **Arm the test-integrity guard before the loop begins:** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/guard-arm.sh" arm review-heal` (an idempotent no-op when the `/automate` owned drain's Supervisor marker is already armed). Exit 0 ⇒ `record_decision("guard_armed: ok")`; any non-zero exit ⇒ `record_decision("guard_armed: failed: <stderr>")`, proceed visibly unguarded and surface `guard: unarmed` in the completion tail's outcome line. Never block loop entry on this.
 
+**Seat routing (`drain_reviewer`).** Before each `Task(loomwright:code-reviewer)` review below, run `resolve-routing.sh seat drain_reviewer` (from the install root's `scripts/`) and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol", which owns the procedure: `PROVIDER=claude` runs the Task below unchanged; any other provider runs `lens-run.sh --role drain_reviewer` on the PR-branch diff (`git diff <base>...HEAD`) with the same prompt and validates `result_text` with `validate-code-review-result.py --raw`; a non-`ok` `lens_status` or a failed validation runs the Task instead and logs `seat_routing drain_reviewer provider=<p> reason=<r>`. When the caller passes a resolved reviewer (the `/autonomous` EVALUATE step does, for seat `evaluate_reviewer`), use that provider and seat id and do not resolve again. A `strict` seat with an empty `PROVIDER` takes the loop's `NEEDS_HUMAN` branch (ESCALATED, nothing auto-fixed, no merge), never a Claude review. The parsed result feeds the loop unchanged, and the fix worker, the push and every PR write stay on the Claude main thread.
+
 ```
 heal_iterations = 0
 issues_fixed = 0
