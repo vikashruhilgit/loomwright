@@ -39,7 +39,7 @@ expected_base = iterations[-2].branch   # parent iter's branch — same value EV
 /supervisor job: <current_brief_path> --base-branch "$expected_base"
 ```
 
-The brief also carries a `Base Branch:` field under `## Configuration` (the stacked-mode refined-requirement template writes it). The CLI flag is the **authoritative source** — Supervisor's Phase 0 reads `--base-branch` first; the brief field is the fallback, and Plan Reviewer Criterion 13 FAILs a brief whose field disagrees with it. In `--no-stacked-branches` mode and on iter 1, do NOT pass `--base-branch`: Supervisor's Phase 0 defaults to `main`.
+The brief also carries a `Base Branch:` field under `## Configuration` (the stacked-mode refined-requirement template writes it). The CLI flag is the **authoritative source** — Supervisor's Phase 0 reads `--base-branch` first; the brief field is the fallback, and Plan Reviewer Criterion 13 FAILs a brief whose field disagrees with it. In `--no-stacked-branches` mode and on iter 1, do NOT pass `--base-branch`: Supervisor's Phase 0 resolves the base through `scripts/resolve-base-branch.sh`.
 
 ### `review_heal` field
 

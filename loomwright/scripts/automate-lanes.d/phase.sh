@@ -94,7 +94,7 @@ _lanes_phase_spawn() {
   local prompt="$1" sid="$2" verb="$3" label="$4" csid="$5" settings in pid st off i s
   settings="$(jq -n -c --arg h "bash \"$SELF\" relay-hook" \
     '[{matcher: "AskUserQuestion", hooks: [{type: "command", command: $h}]}] as $r | {hooks: {PreToolUse: $r, PermissionRequest: $r}}')" || return 1
-  _lanes_claude_flags "$PH_CO"
+  _lanes_claude_flags "$PH_CO" || return 1
   local -a flags=("${LN_FLAGS[@]}" --settings "$settings")
   [ -n "$sid" ] && flags+=(--resume "$sid")
   local -a envu=(-u CLAUDECODE -u CLAUDE_PID -u LOOMWRIGHT_HOLDER_PID)   # a coordinator's holder pin never reaches a phase session

@@ -282,6 +282,8 @@ complete|current|skipped — ## Current is * not this item/PR
 leftover|worktree|skipped — kept worktree *
 leftover|worktree|skipped — head branch unresolved *
 leftover|worktree|skipped — head branch is the base branch
+leftover|worktree|skipped — * (base branch unknown; worktree cleanup not attempted)
+leftover|sync|skipped — * (base branch unknown; sync not attempted)
 leftover|sync|skipped — primary checkout is on *
 leftover|sync|skipped — uncommitted changes outside the trail paths *
 leftover|sync|skipped — git fetch failed

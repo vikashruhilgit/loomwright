@@ -132,6 +132,7 @@ log() { printf 'wait-for-checks: %s\n' "$1" >&2; }
 
 GH_BIN="${GH:-gh}"
 JQ_BIN="${JQ:-jq}"
+WFC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 
 # ---- Parse args --------------------------------------------------------------
 PR_URL=""
@@ -325,14 +326,26 @@ protection_unknown=0
 if [ -n "$OWNER" ] && [ -n "$REPO" ]; then
   _base="$("$GH_BIN" pr view "$PR_URL" --json baseRefName 2>/dev/null || true)"
   BASE_REF="$(printf '%s' "$_base" | "$JQ_BIN" -r '.baseRefName // empty' 2>/dev/null || true)"
-  [ -n "$BASE_REF" ] || BASE_REF="main"
+  # The PR's own baseRefName stays first; resolve-base-branch.sh (the current
+  # repo's configured / origin/HEAD base) is only the fallback. With neither
+  # the base is UNKNOWN: protection is not read at all (a 404 for an empty
+  # branch would pass for "verified unprotected"), so required= reads
+  # `unknown` below — never a guessed `main`.
+  [ -n "$BASE_REF" ] || BASE_REF="$(bash "$WFC_DIR/resolve-base-branch.sh" </dev/null 2>/dev/null || true)"
   # Single call, stdout+stderr merged: on success stdout is the JSON body; on
   # failure gh writes its error (including "HTTP 404"/"Branch not protected"
   # for a genuinely unprotected branch) to stderr and stdout is empty, so the
   # merged capture carries whichever one actually happened.
-  _prot="$("$GH_BIN" api "repos/$OWNER/$REPO/branches/$BASE_REF/protection" 2>&1)"
-  _prot_rc=$?
-  if [ "$_prot_rc" -eq 0 ] && printf '%s' "$_prot" | "$JQ_BIN" -e . >/dev/null 2>&1; then
+  _prot=""; _prot_rc=1
+  if [ -n "$BASE_REF" ]; then
+    _prot="$("$GH_BIN" api "repos/$OWNER/$REPO/branches/$BASE_REF/protection" 2>&1)"
+    _prot_rc=$?
+  fi
+  if [ -z "$BASE_REF" ]; then
+    log "base branch unresolved (no PR baseRefName, and resolve-base-branch.sh named none) — required checks unknown"
+    protection_unknown=1
+    required_contexts_json="[]"
+  elif [ "$_prot_rc" -eq 0 ] && printf '%s' "$_prot" | "$JQ_BIN" -e . >/dev/null 2>&1; then
     required_contexts_json="$(printf '%s' "$_prot" | "$JQ_BIN" -c '
       ((.required_status_checks.contexts // []) + ((.required_status_checks.checks // []) | map(.context))) | unique
     ' 2>/dev/null || echo '[]')"

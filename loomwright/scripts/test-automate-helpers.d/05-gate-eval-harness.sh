@@ -24,7 +24,13 @@ mkdir -p "$E_ROOT/sub" "$E_ROOT/.supervisor/automate" "$E_ROOT/$E_MEM/loomwright
 ( cd "$E_ROOT" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false \
     && echo a > sub/a && echo run > .supervisor/automate/run.md \
     && echo mem > "$E_MEM/loomwright:code-reviewer/MEMORY.md" \
-    && printf 'ignored.log\nignored-dir/\n' > .gitignore && git add -A && git commit -qm init ) >/dev/null 2>&1
+    && printf 'ignored.log\nignored-dir/\n' > .gitignore && git add -A && git commit -qm init \
+    && git update-ref refs/remotes/origin/main HEAD \
+    && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main ) >/dev/null 2>&1
+# ^ origin/HEAD → origin/main, recorded as a clone records it: condition 6 resolves
+# its diff base through the REAL sibling resolve-base-branch.sh in --root (copied
+# beside the gate below), so the checkout names its base on disk — never a
+# hardcoded `main` fallback, and no set-head / gh network step is reached.
 E_HEAD="$(git -C "$E_ROOT" rev-parse --verify -q HEAD 2>/dev/null)" || E_HEAD=""
 E_TIP="$(git -C "$E_ROOT" commit-tree "HEAD^{tree}" -p HEAD -m tip 2>/dev/null)" || E_TIP=""
 E_PR_HEAD="$E_HEAD"
@@ -41,9 +47,12 @@ fi
 # sibling-lookup precedent already used by Section G.
 GWD="$WD/gharness"; mkdir -p "$GWD"
 cp "$H" "$GWD/automate-helpers.sh"
+cp "$HERE/resolve-base-branch.sh" "$GWD/resolve-base-branch.sh"   # cond 6's base: the REAL one resolver
 cat > "$GWD/classify-risk.sh" <<'RISK'
 #!/usr/bin/env bash
 set -u
+# argv log: condition 6 must pass the RESOLVED remote-tracking base, never a bare `main`.
+[ -n "${GH_STUB_DIR:-}" ] && printf '%s\n' "$*" >> "$GH_STUB_DIR/risk-called.log"
 if [ -n "${GH_STUB_DIR:-}" ] && [ -f "$GH_STUB_DIR/risk.json" ]; then
   cat "$GH_STUB_DIR/risk.json"
 else
@@ -94,7 +103,7 @@ reset_live() {
   printf '{"required_pull_request_reviews":{"required_approving_review_count":1},"required_status_checks":{"contexts":["ci"]}}\n' > "$GH_STUB_DIR/protection.json"
   rm -f "$GH_STUB_DIR/protection-404" "$GH_STUB_DIR/protection-fail"
   printf '{"high_risk": false, "reasons": [], "changed_files": 0, "changed_lines": 0, "source": "classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
-  rm -f "$GH_STUB_DIR/merge-fail" "$GH_STUB_DIR/merge-time-head"
+  rm -f "$GH_STUB_DIR/merge-fail" "$GH_STUB_DIR/merge-time-head" "$GH_STUB_DIR/risk-called.log"
   printf '%s\n' "$RULES_NONE" > "$GH_STUB_DIR/rules.json"
   rm -f "$GH_STUB_DIR/rules-exit" "$GH_STUB_DIR/rules-called.log"
 }

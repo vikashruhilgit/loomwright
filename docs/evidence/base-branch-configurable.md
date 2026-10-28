@@ -1,0 +1,160 @@
+# Evidence — configurable base branch (one resolver)
+
+Branch: `feature/base-branch-configurable`. The one resolver is `loomwright/scripts/resolve-base-branch.sh`
+(precedence: `--flag` > brief `- **Base Branch:**` > `.supervisor/config.json .base_branch` > origin/HEAD after
+one `git remote set-head origin -a` > `gh` default branch > fail closed `base_branch_unresolved`).
+
+## AC15 — prompt-layer grep
+
+Command, run from the repo root on the integrated tree (Subtasks 1–6):
+
+```sh
+grep -rnE "origin/main|checkout main" loomwright/agents loomwright/skills loomwright/commands
+```
+
+Full output:
+
+```text
+```
+
+(no lines; grep exit status 1)
+
+Remaining hits and their justification: **none remain.** The last hit was the rejected-alternative sentence in
+`loomwright/skills/automate-loop/per-item-loop.md` (`trail_pr_open` bullet, option (a): refresh a READY-but-BEHIND
+PR "by merging `origin/main`"). It now reads `origin/<base>`, because the option it rejects applies to whatever
+base the run resolved.
+
+### Related wording outside the grep's patterns
+
+`default \`main\`` does not match the AC15 patterns, but it is the same claim. Command:
+
+```sh
+grep -rnE 'default `main`|base default `main`' loomwright/agents loomwright/skills loomwright/commands
+```
+
+Output and the justification for each line:
+
+```text
+loomwright/agents/review-pr.md:69:The single input is the **PR URL**. The review scope is the PR diff: `git diff <base>...HEAD` for the PR's base branch (default `main`).
+loomwright/skills/review-heal/SKILL.md:101:- The review scope is the PR diff: `git diff <base>...HEAD` for the PR's base branch (default `main`). The reviewer is told to scope to exactly this diff.
+loomwright/commands/review-pr.md:17:| `<pr-url>` | Yes | — | The full URL of an existing PR. The review scope is the PR diff (`git diff <base>...HEAD`, base default `main`). |
+```
+
+- `agents/review-pr.md:69`: kept on purpose. This is a review-heal surface. AC10 requires that no review-heal
+  file is modified, because `/review-pr` takes its base from the PR's own `baseRefName` and never calls the
+  resolver. The parenthetical is the prose default for a PR whose base cannot be read.
+- `skills/review-heal/SKILL.md:101`: same reason (AC10). This is the same sentence in the skill the agent loads.
+- `commands/review-pr.md:17`: same reason (AC10). This is the same sentence in the command's parameter table.
+
+The three files change together in a later review-heal change, or not at all.
+
+## Residual wording fixed by the integration subtask
+
+Subtasks 1, 4 and 5 handed these over because no subtask owned them. Each now points at the resolver:
+
+| File | Before | After |
+|------|--------|-------|
+| `loomwright/skills/automate-loop/per-item-loop.md` (option (a) of the `trail_pr_open` bullet) | by merging `origin/main` | by merging `origin/<base>` |
+| `loomwright/skills/autonomous-loop/multi-iteration.md` (`Base Branch:` paragraph) | Supervisor's Phase 0 defaults to `main` | resolves the base through `scripts/resolve-base-branch.sh` |
+| `loomwright/docs/loop-inventory/launch-pad-autonomous.md` LP-358 (action cell of the row above) | Supervisor defaults to main | Supervisor resolves the base via resolve-base-branch.sh |
+| `loomwright/docs/supervisor-legacy-phases.md` (Phase 0 summary) | `--base-branch`, default `main` | `--base-branch`, else `scripts/resolve-base-branch.sh` |
+| `loomwright/docs/rationale/supervisor.md` (flags line) | `--base-branch <name>` (default `main`) | (default: `scripts/resolve-base-branch.sh`) |
+| `loomwright/docs/result-schemas/supervisor-result.md` (`risk_classification` comment) | `classify-risk.sh "$BASE_BRANCH" HEAD` | `classify-risk.sh "origin/$BASE_BRANCH" HEAD` (matches `agents/supervisor.md` and `skills/self-heal-advisory/completion-tail.md`) |
+
+## Known residuals, deliberately not changed here
+
+- `loomwright/scripts/automate-helpers.sh` `gate-eval` conditions 2 and 4 still require the PR's live
+  `baseRefName` to be `main` (`PARK: base_not_main`) and read `branches/main/protection`. Both predate this change
+  and fail CLOSED: on a repo with a non-`main` base, `--auto-merge` parks and never merges. Condition 6 no longer
+  hardcodes the base (see "Review iteration 1" below).
+- `loomwright/skills/autonomous-loop/multi-iteration.md` still says that iteration 1 and `--no-stacked-branches`
+  iterations branch from `main` (the `--no-stacked-branches` bullet, the two PR-base-verification skip
+  conditions and the merge-and-continue prompt). The LP-378, LP-379 and LP-496 `q:` anchors quote this wording.
+  The AC15 grep does not match it, and it is outside every lane of this change. A follow-up should change it to
+  "the resolved base" and update those anchors in the same change.
+- `loomwright/docs/rationale/subagents.md` keeps the earlier Plan Reviewer Criterion 13 text ("defaults to
+  `main`") inside its quoted `~~~~text` block. It is a frozen quote in a rationale archive, not a runtime prompt.
+- `loomwright/docs/result-schemas/schema-versioning.md` keeps `classify-risk.sh "$BASE_BRANCH" HEAD` in its
+  v15.72.0 history entry. That entry records what that release shipped.
+
+## Review iteration 1
+
+- `gate-eval` condition 6 used to run `classify-risk.sh main <live head_sha>`, which diffs against a local `main`
+  ref. It now resolves the base itself through the sibling `resolve-base-branch.sh --repo <checkout>` and runs
+  `classify-risk.sh origin/<base> <live head_sha>`. An unresolved or invalid base, or a missing resolver, parks
+  `PARK: base_branch_unresolved`. A resolved base that differs from the PR's live `baseRefName` parks
+  `PARK: base_branch_mismatch`. Both park before `classify-risk.sh` runs. Neither has an override, and the gate
+  gained no merge path. Covered in `test-automate-helpers.d/05-gate-eval.sh`.
+- `reconcile-jobs.sh` resolves the base once, in the parent shell, before its per-brief loop. Before this fix the
+  first resolution ran inside each brief's `$(classify …)` subshell, so with origin/HEAD unset the resolver's
+  `set-head` / `gh` probe ran once per brief (4 briefs meant 4 `gh` calls). `test-reconcile-jobs.sh` 30r now
+  asserts exactly one `gh` call across four briefs, and its mutant shows that removing the prime brings back one
+  call per brief.
+- The regrowth guard gained a `main-arg` rule for a literal `main` passed positionally to a script, the form the
+  condition 6 call had. `logical_lines` moved into the sourced `loomwright/scripts/logical-lines-lib.sh`, which
+  this guard and `test-no-pipefail-grep-q.sh` share.
+
+## Review iterations 2 and 3
+
+- Iteration 2: `main-arg` also catches `bash -- "$x" main` and a quoted variable in command position, with
+  positive and negative mutants.
+- Iteration 3: command position is defined once, in `CMD_POS`. `main-arg` now accepts quoted or unquoted
+  variable command words, so `if`, `elif`, `while`, `until`, `!`, `time`, `{` and assignment-prefixed forms are
+  caught. Negative controls keep a variable that is an argument uncaught. The full lists are under AC11 below.
+
+## AC11 — regrowth guard
+
+`bash loomwright/scripts/test-base-branch-single-resolver.sh` scans every non-test `*.sh` under
+`loomwright/scripts/`. Its rules are `origin-head`, `set-head`, `main-assign`, `main-default`, `main-echo`,
+`origin-main` and `main-arg`. It applies a per-rule allowlist, and each allowlist entry carries a reason:
+
+- `resolve-base-branch.sh` (all rules): the resolver itself.
+- `send-telemetry-core.sh` (`origin-head`): the telemetry target-ref comparison. It is a fail-SAFE emitter that
+  keys a feedback thread, not a base consumer.
+- `eval-corpus/review-churn-canary/check.sh` (`main-assign`): `-c init.defaultBranch=main` names the first
+  branch of the throwaway fixture repo that the corpus check creates.
+- `automate-lanes.d/create.sh` (`set-head`): re-points a fresh `--local` clone's inherited origin/HEAD. The base
+  was already resolved in the primary.
+
+An entry that stops matching is reported as STALE and fails the guard. Built-in mutation controls append each
+of the following to a scratch copy of `automate-trail.d/trail-pr.sh`, and the guard must catch each one: the
+inline `symbolic-ref … || echo main` line, `base=main`, `base="main"`, `base_branch="main"`, `BASE_REF="main"`,
+`default_branch=main`, `${b:-main}`, `${base_ref:=main}`, an `origin/main` probe and `remote set-head`.
+
+The `main-arg` mutants cover a literal `main` handed to a base-taking script as its first argument:
+`bash "$risk_bin" main …`, `bash "$HERE/module-shape-facts.sh" main HEAD`, `classify-risk.sh "main" HEAD` and
+`bash -- "$risk_bin" main …`. They also cover a variable in shell command position, quoted or not:
+`"$risk_bin" main`, `$("$risk_bin" main …)`, `true && "${risk_bin}" main`, `$risk_bin main`, `${risk_bin} main`,
+`if` / `elif` / `while` / `until` conditions, `! "$x" main`, `time "$x" main`, `{ "$x" main; }`, and the
+assignment prefixes `x=1 "$x" main` and `A="a b" B='c' "$x" main`. Command position is defined once, in the
+guard's `CMD_POS`. That is a command boundary (logical-line start, `;`, `&`, `|`, `(` or `$(`), then any run of
+reserved-word, prefix-builtin or `NAME=value` prefixes.
+
+Negative controls must not be caught: a commented form, unrelated `main` words (`kind="main"`,
+`origin/maintenance`), a resolved base (`bash "$risk_bin" "origin/$base_b" …`), `"$x" mainline`,
+`"$x" "$main_ref"`, a variable that is an argument (`printf … "$x" main`, `echo $x main`, `echo then "$x" main`,
+`x=1 echo "$x" main`), and a command variable without a literal `main` (`if "$x" mainline`, `$x maintenance`,
+`! "$x" "$main"`). Every mutant must be non-empty, differ from the original and pass `bash -n`.
+
+Brief pin-mutation check: I re-added `[ -n "$base_branch" ] || base_branch="main"` to the real
+`automate-trail.d/trail-pr.sh`, then restored it with `git checkout`. The guard exited 1 with
+`automate-trail.d/trail-pr.sh:504:main-assign:  [ -n "$base_branch" ] || base_branch="main"`.
+
+Out of scope by design: the root `scripts/check-*.sh` gates diff against `origin/main` for this plugin repo's
+own release checks. They are not base-branch consumers of a user project.
+
+## AC24 — full `bash scripts/ci-local.sh` (local, macOS)
+
+On the integrated tree, 184 of 185 self-tests and every ci.yml gate pass. One suite is red:
+`loomwright/scripts/test-automate-lanes.sh` (passed 1017, failed 42). The 42 failing case ids are the relay-hook
+and inbox cases J3 J4 K1b K5 K7–K11 K15 K16 X2 X4–X7 X9 AD4 AD4b–AD4f AD10 AD11 AD11b AD11c AD12 AD12d AD12e AD12g
+AD12h AM1–AM7 AM7b AM11 AM12. They are byte-identical to the failing ids of the same suite run on a detached
+worktree of the base commit `84d9023` (passed 1012, failed 42). They are therefore pre-existing on this machine
+and not caused by this change. A typical failure is a lane inbox question file under `/private/var/folders/…` that
+was never written. The cause was not investigated, because it is out of scope. CI is the arbiter for this suite.
+
+Repaired backstop pins (by fixture or test change, never by a script fallback):
+
+- `test-janitor-report.sh`: the fixture has no origin, so `sweep.sh` now reports `base_branch_unresolved`. The
+  fixture now gets a `.supervisor/config.json` `base_branch`.
+- `test-setup-module-registry.sh`: four pipes into `grep -q` were rewritten for `test-no-pipefail-grep-q.sh`.

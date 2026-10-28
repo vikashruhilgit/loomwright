@@ -497,10 +497,12 @@ trail_pr() {
   maxn="$(printf '%s' "$list" | "$JQ" -r --arg p "$prefix" "$sel"' | map(.n) | max // 0' 2>/dev/null)"
   case "$maxn" in ''|*[!0-9]*) maxn=0 ;; esac
 
+  # The base comes from the ONE resolver (resolve-base-branch.sh); on failure its stdout is empty and
+  # its first stderr line is the status token, so the combined capture is that token.
   local base_branch
-  base_branch="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"
-  base_branch="${base_branch#origin/}"
-  [ -n "$base_branch" ] || base_branch="main"
+  if ! base_branch="$(bash "$HERE/resolve-base-branch.sh" --repo "$root" 2>&1 </dev/null)"; then
+    echo "$skip_prefix ${base_branch%%$'\n'*}$excluded"; return 0
+  fi
 
   if ! git fetch -q origin >/dev/null 2>&1; then echo "$skip_prefix git fetch failed$excluded"; return 0; fi
 

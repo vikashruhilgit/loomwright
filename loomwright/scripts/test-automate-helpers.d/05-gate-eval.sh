@@ -303,3 +303,50 @@ else
 fi
 reset_live
 
+# --- Condition 6's diff BASE is self-resolved through the sibling resolve-base-branch.sh
+# (never a hardcoded `main`): the all-green case hands classify-risk.sh the remote-tracking
+# `origin/<resolved base>`; an unresolved base, a missing resolver, or a resolved base that is
+# not the PR's live baseRefName each PARK before classify-risk.sh runs, with no merge. ---
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(head -n 1 "$GH_STUB_DIR/risk-called.log" 2>/dev/null)" = "origin/main $E_PR_HEAD --root $E_ROOT" ]; then
+  ok "gate cond 6: classify-risk.sh gets the RESOLVED remote-tracking base (origin/main from origin/HEAD), not a bare local 'main'"
+else
+  no "gate cond 6 base argv wrong (out='$RUN_OUT' argv='$(cat "$GH_STUB_DIR/risk-called.log" 2>/dev/null)')"
+fi
+reset_live
+git -C "$E_ROOT" symbolic-ref --delete refs/remotes/origin/HEAD >/dev/null 2>&1
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: base_branch_unresolved" ] && [ "$(merges)" -eq 0 ] && [ ! -f "$GH_STUB_DIR/risk-called.log" ]; then
+  ok "gate fail-closed: no config, no origin/HEAD, gh names nothing ⇒ PARK: base_branch_unresolved, classify-risk.sh never called, no merge (no 'main' guess)"
+else
+  no "gate base-unresolved wrong (out='$RUN_OUT' merges=$(merges) risk_called=$([ -f "$GH_STUB_DIR/risk-called.log" ] && echo yes || echo no))"
+fi
+git -C "$E_ROOT" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main >/dev/null 2>&1
+reset_live
+NORBB="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$NORBB/"
+printf '%s' "$(pass_ctx)" > "$WD/ctx.json"; rm -f "$GH_STUB_DIR/merge.log"
+RUN_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" GIT_CEILING_DIRECTORIES="$WD" bash "$NORBB/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$E_ROOT" 2>/dev/null )"
+if [ "$RUN_OUT" = "PARK: base_branch_unresolved" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: sibling resolve-base-branch.sh missing ⇒ PARK: base_branch_unresolved, no merge"
+else
+  no "gate missing-resolver wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+rm -rf "$NORBB"
+reset_live
+printf '{"base_branch":"development"}\n' > "$E_ROOT/.supervisor/config.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: base_branch_mismatch" ] && [ "$(merges)" -eq 0 ] && [ ! -f "$GH_STUB_DIR/risk-called.log" ]; then
+  ok "gate fail-closed: resolved base 'development' ≠ the PR's live baseRefName 'main' ⇒ PARK: base_branch_mismatch, no merge"
+else
+  no "gate base-mismatch wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+printf '{"base_branch":"bad..name"}\n' > "$E_ROOT/.supervisor/config.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: base_branch_unresolved" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: an invalid configured base never falls through to origin/HEAD ⇒ PARK: base_branch_unresolved, no merge"
+else
+  no "gate base-invalid wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+rm -f "$E_ROOT/.supervisor/config.json"
+reset_live
+

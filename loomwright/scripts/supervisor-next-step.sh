@@ -29,9 +29,11 @@
 #
 # STEPS — each is ONE `case` arm of sn_dispatch (the strings inventory homes cite as
 #   `script:supervisor-next-step.sh <step>`):
-#   init            Phase 0: the `.supervisor/` bootstrap, the job move `pending/` → `in-progress/`, the
-#                   run's config (a flag, else the brief's `## Configuration` `Mode:` / `Workers:` /
-#                   `Base Branch:`, else the default), the test-integrity guard arm, and ONE
+#   init            Phase 0: the base through resolve-base-branch.sh (`--flag` the --base-branch flag,
+#                   `--brief` the job; unresolved / invalid ⇒ its status token, the run does not start),
+#                   the `.supervisor/` bootstrap, the job move `pending/` → `in-progress/`, the
+#                   run's config (a flag, else the brief's `## Configuration` `Mode:` / `Workers:`,
+#                   else the default), the test-integrity guard arm, and ONE
 #                   Context-Keeper spawn carrying `initialize`, the two
 #                   crash-recovery `clear_flag`s (`base_mismatch_detected`, `non_interactive`), the
 #                   `non_interactive` / `max_tokens` `set_flag`s when given, and `guard_armed: …`
@@ -315,6 +317,19 @@ sn_brief_conf() {
     /^## / { s = ($0 == "## Configuration"); next }
     s && index($0, f) == 1 { v = substr($0, length(f) + 1); gsub(/`/, "", v); sub(/^[ \t]+/, "", v); sub(/[ \t].*/, "", v); print v; exit }' "$2" 2>/dev/null
 }
+# sn_resolve_base <brief or ""> — the run's base through resolve-base-branch.sh (the one resolver: the
+# --base-branch flag, then the brief's `Base Branch:`, then .supervisor/config.json `.base_branch`,
+# origin/HEAD, gh) into SN_BASE. Fails CLOSED through sn_fail with the resolver's status token
+# (`base_branch_unresolved`, `base_branch_invalid:<flag|brief|config>`) — never a guessed `main`. The
+# resolver's contract makes stdout empty on failure and stderr empty on success, so one capture of
+# both streams is the branch (exit 0) or the token on its first line.
+sn_resolve_base() {
+  local out rc
+  SN_BASE=""
+  out="$(bash "$HERE/resolve-base-branch.sh" --flag "$(fl base_branch)" --brief "$1" --repo "$ROOT" </dev/null 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ] && [ -n "$out" ]; then SN_BASE="$out"; return 0; fi
+  sn_fail "$(printf '%s\n' "$out" | head -n 1) — $(printf '%s\n' "$out" | sed -n '2s/^resolve-base-branch: //p')"
+}
 # sn_brief_subtasks <brief> — the ids of the brief's `## Subtask Structure` table, in order, as a JSON
 # array (the first cell of each data row; the header and separator rows skipped); empty when none parse
 sn_brief_subtasks() {
@@ -341,7 +356,7 @@ sn_job_fail() {
 
 # init — Phase 0 (skills/supervisor-config/SKILL.md steps 4–7 and the 5a preamble's flag records)
 sn_init() {
-  local jp b t title ops gc ge gd ni_src mode maxw cost bm bw bb base gi gp
+  local jp b t title ops gc ge gd ni_src mode maxw cost bm bw base gi gp
   jp="$JOB_ARG"
   case "$jp" in
     /*) t="$(cd "$(dirname "$jp")" 2>/dev/null && pwd -P)"; [ -z "$t" ] || jp="$t/${jp##*/}" ;;
@@ -354,6 +369,10 @@ sn_init() {
     if [ -f ".supervisor/jobs/in-progress/$b" ]; then jp=".supervisor/jobs/in-progress/$b"
     else sn_refuse "job_not_found — no brief at '$JOB_ARG' (nor in .supervisor/jobs/in-progress/)"; return 1; fi
   fi
+  # the run's base, resolved before anything is created or moved: unresolved / invalid ⇒ the run does
+  # not start (the brief stays where it is)
+  sn_resolve_base "$jp" || return 1
+  base="$SN_BASE"
   # step 4: the .supervisor/ bootstrap
   mkdir -p .supervisor/history .supervisor/jobs/pending .supervisor/jobs/in-progress .supervisor/jobs/done \
     .supervisor/jobs/failed .supervisor/logs || { sn_fail "cannot create the .supervisor/ directories"; return 1; }
@@ -396,17 +415,15 @@ sn_init() {
   if [ "$gc" -eq 0 ]; then gd="guard_armed: ok"; else gd="guard_armed: failed: ${ge:-exit $gc}"; fi
   # step 5 + the 5a preamble: initialize, the clear-on-start crash-recovery flags, the re-armed flags
   # the run's config: a flag wins, else the brief's `## Configuration` (Launch Pad pre-answers the INIT
-  # questions: `- **Mode:** sequential`, `- **Workers:** N`, `- **Base Branch:** B`), else the default
-  bm="$(sn_brief_conf Mode "$jp")"; bw="$(sn_brief_conf Workers "$jp")"; bb="$(sn_brief_conf 'Base Branch' "$jp")"
+  # questions: `- **Mode:** sequential`, `- **Workers:** N`, `- **Base Branch:** B`), else the default;
+  # the base (`$base`) was resolved above by sn_resolve_base with the same flag-then-brief precedence
+  bm="$(sn_brief_conf Mode "$jp")"; bw="$(sn_brief_conf Workers "$jp")"
   if [ "$(fl sequential)" = true ] || [ "$bm" = sequential ]; then mode=sequential; maxw=1
   else
     mode=parallel; maxw="$(fl max_workers)"
     [ -n "$maxw" ] || { [[ "$bw" =~ ^[1-9][0-9]?$ ]] && maxw="$bw"; } || maxw=2
   fi
   if [ "$(fl cheap)" = true ]; then cost=cheap; else cost=default; fi
-  base="$(fl base_branch)"
-  if [ -z "$base" ] && [ -n "$bb" ] && git check-ref-format --branch "$bb" >/dev/null 2>&1; then base="$bb"; fi
-  [ -n "$base" ] || base=main
   st_set mode "$mode"; st_setj max_workers "$maxw"; st_set cost_profile "$cost"; st_set base_branch "$base"
   set -- "$(printf 'Context-Keeper(operation: initialize, config: %s, session: %s)' \
       "$("$JQ" -cn --argjson w "$maxw" --arg m "$mode" --arg c "$cost" '{max_workers: $w, mode: $m, cost_profile: $c}')" \
@@ -428,7 +445,9 @@ sn_init() {
 # state.json ACQUIRE fields (commands/supervisor.md §"Inline-path canonical state writes")
 sn_acquire() {
   local base br btip tip e sync=ok
-  base="$(st base_branch)"; [ -n "$base" ] || base=main
+  # init recorded the resolved base; resolve again only when that state value is empty (fail CLOSED)
+  base="$(st base_branch)"
+  if [ -z "$base" ]; then sn_resolve_base "$(st job)" || return 1; base="$SN_BASE"; st_set base_branch "$base"; fi
   br="$(fl branch)"
   if [ -z "$br" ]; then br="$(st task_id)"; br="feature/$(printf '%s' "$br" | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}-//')"; fi
   git check-ref-format --branch "$br" >/dev/null 2>&1 || { sn_fail "the feature branch '$br' is not a valid branch name — pass --branch"; return 1; }

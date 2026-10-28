@@ -5,7 +5,7 @@
   cond 3  a SEPARATE `gh pr view <url> --json reviewDecision` call (kept apart from cond 2's read
   cond 4  `gh api repos/<owner>/<repo>/branches/main/protection` — a 404 ⇒ unprotected (false);
   cond 5  required-check greenness from the SAME protection payload's required-context list
-  cond 6  the gate ITSELF invokes `"$(dirname "$0")/classify-risk.sh" main <live head_sha>
+  cond 6  the gate ITSELF resolves `<base>` with the sibling
   cond 7  evaluated AFTER cond 6. PIN FIRST (automate-followups/16), before the helper runs:
   brief-repair: repaired <brief_path> → <done_path> (<pr_url>)
   brief-repair: skipped — <reason>

@@ -144,8 +144,8 @@
 #                                     default); repair ONLY the matching brief(s)
 #   reconcile-jobs.sh --print-base-ref
 #                                     print `vcs_base_ref`'s resolved remote-tracking
-#                                     base ref (origin/HEAD, else origin/main, else
-#                                     origin/development) and exit — nothing else in
+#                                     base ref (`origin/<branch>`, the branch from
+#                                     resolve-base-branch.sh) and exit — nothing else in
 #                                     this script runs. The sanctioned REUSE seam for
 #                                     a sibling that needs the same base-ref
 #                                     resolution (worktree-audit.sh's merged column,
@@ -449,18 +449,36 @@ automate_pr_for_requirement() {
 # Every failure mode is a silent `return 1`: not a git repo, no remote-tracking
 # base ref, filename without a date prefix, a slug with characters outside
 # [a-z0-9-] (it is interpolated into an ERE — refuse rather than escape), git
-# absent. Nothing here fetches; the ref is whatever the last pull left on disk.
+# absent. Nothing here fetches commits; the ref is whatever the last pull left
+# on disk. The base BRANCH NAME, though, may cost ONE network probe per run:
+# when no `.base_branch` is configured and origin/HEAD is unset,
+# resolve-base-branch.sh tries `git remote set-head origin -a` and then
+# `gh repo view` (see vcs_base_ref below).
 # vcs_base_ref — resolve the remote-tracking base ref ONCE into the global
 # VCS_BASE_REF and return 0; return 1 when there is none. Callers invoke it
 # directly and read the global — NOT `$(vcs_base_ref)`: a command substitution
 # runs in a subshell, so an assignment made there never reaches the caller and
-# the probes re-run for every brief (PR #243 review, finding 5).
+# the probes re-run for every brief (PR #243 review, finding 5). The per-brief
+# callers (vcs_merge_for_brief, vcs_evidence_line) themselves run inside
+# `$(classify …)` / `$(vcs_merge_for_brief …)` subshells, so the main loop
+# below PRIMES the cache in the parent shell before iterating; every subshell
+# then inherits VCS_BASE_REF_PROBED=1 and the resolver (and its possible
+# set-head / gh network probe) runs at most once per invocation. The cache is
+# process-local and the script never changes directory, so it cannot carry
+# one repo's base into another.
 #
-# RECALL LIMIT, stated: the ref is origin/HEAD when the clone recorded it, else
-# origin/main, else origin/development. A repo whose PRs merge into a branch
-# other than the remote's default (e.g. default `main`, PRs into
-# `development`) is not seen by this arm — those briefs stay `unknown`.
-# Squash merges are seen only if the squash subject keeps the
+# The branch comes from resolve-base-branch.sh (the one resolver: the repo's
+# .supervisor/config.json `.base_branch`, else origin/HEAD, else gh — see its
+# header); this function only prefixes `origin/` and checks the ref exists.
+# Fail-SAFE: an unresolved base (`base_branch_unresolved`), an invalid config,
+# or a missing helper ⇒ no ref ⇒ briefs stay `unknown` — never an abort and
+# never a guessed `main`.
+#
+# RECALL LIMIT, stated: only merges into the RESOLVED base are seen. A repo
+# whose PRs merge into a branch other than the remote's default (e.g. default
+# `main`, PRs into `development`) is seen once that base is configured
+# (`/setup base-branch set development`); unconfigured, those briefs stay
+# `unknown`. Squash merges are seen only if the squash subject keeps the
 # `Merge pull request #N from …` shape (GitHub's default squash subject does
 # NOT), which is the same limit.
 VCS_BASE_REF=""
@@ -470,27 +488,12 @@ vcs_base_ref() {
   VCS_BASE_REF_PROBED=1
   command -v git >/dev/null 2>&1 || return 1
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
-  local ref
-  # origin/HEAD names the remote's default branch when the clone recorded it;
-  # otherwise fall back through the two bases this plugin's projects use.
-  # NOTE: on an unset origin/HEAD, `rev-parse --abbrev-ref` exits 128 AND
-  # echoes the literal `origin/HEAD` to stdout — so the name it returns is
-  # verified before it is trusted, or the fallback below would never run.
-  ref="$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || true)"
-  case "$ref" in
-    origin/HEAD|"") ref="" ;;
-    origin/?*) git rev-parse -q --verify "$ref" >/dev/null 2>&1 || ref="" ;;
-    *) ref="" ;;
-  esac
-  if [ -z "$ref" ]; then
-    for ref in origin/main origin/development; do
-      git rev-parse -q --verify "$ref" >/dev/null 2>&1 && break
-      ref=""
-    done
-  fi
-  [ -n "$ref" ] || return 1
-  git rev-parse -q --verify "$ref" >/dev/null 2>&1 || return 1
-  VCS_BASE_REF="$ref"
+  local b
+  # $_bp_dir is this script's own directory (set above for brief-pointer.sh)
+  b="$(bash "$_bp_dir/resolve-base-branch.sh" </dev/null 2>/dev/null)" || return 1
+  [ -n "$b" ] || return 1
+  git rev-parse -q --verify "refs/remotes/origin/$b" >/dev/null 2>&1 || return 1
+  VCS_BASE_REF="origin/$b"
   return 0
 }
 
@@ -503,14 +506,25 @@ if [ "$PRINT_BASE_REF" -eq 1 ]; then
   exit 1
 fi
 
-vcs_merge_for_brief() {
-  local brief="$1" base slug since ref re line sha subj n=0 hit="" others=0 f
-  base="$(basename "$brief" .md)"
+# vcs_brief_eligible <brief> — 0 when the brief's filename is one the vcs arm can key on
+# (`YYYY-MM-DD-<slug>.md`, slug in [a-z0-9-]); sets VCS_SINCE / VCS_SLUG. The ONE place that
+# decides eligibility: vcs_merge_for_brief and the main loop's cache prime both ask it, so the
+# prime never probes for a run whose briefs the arm would ignore anyway.
+vcs_brief_eligible() {
+  local base
+  base="$(basename "$1" .md)"
   case "$base" in
-    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-?*) since="${base:0:10}"; slug="${base:11}" ;;
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-?*) VCS_SINCE="${base:0:10}"; VCS_SLUG="${base:11}" ;;
     *) return 1 ;;
   esac
-  case "$slug" in *[!a-z0-9-]*) return 1 ;; esac
+  case "$VCS_SLUG" in *[!a-z0-9-]*) return 1 ;; esac
+  return 0
+}
+
+vcs_merge_for_brief() {
+  local brief="$1" slug since ref re line sha subj n=0 hit="" others=0 f
+  vcs_brief_eligible "$brief" || return 1
+  since="$VCS_SINCE"; slug="$VCS_SLUG"
   vcs_base_ref || return 1
   ref="$VCS_BASE_REF"
 
@@ -772,6 +786,16 @@ if [ "${#EV_KEYS[@]}" -gt 0 ]; then
     fi
   done
 fi
+
+# Prime vcs_base_ref's cache HERE, in the parent shell: classify() runs in a
+# `$(…)` subshell per brief, so a first resolution made inside it would be
+# discarded and the resolver (possibly a set-head / gh network probe) would
+# re-run for every brief. Only when some brief is one the vcs arm keys on: a
+# run whose briefs it would ignore resolves nothing, exactly as before.
+# Fail-SAFE: no base ⇒ the cache holds "none" and the vcs arm stays silent.
+for brief in "${briefs[@]}"; do
+  if vcs_brief_eligible "$brief"; then vcs_base_ref || true; break; fi
+done
 
 n_repaired=0; n_repairable=0; n_unknown=0; n_not_stranded=0
 for brief in "${briefs[@]}"; do

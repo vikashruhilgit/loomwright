@@ -17,8 +17,11 @@
 # automate_watch_lines, proc_attention_line and backlog_nudge_line):
 #   1. the curation-cadence nudge (curation_nudge_line, below),
 #   2. the stranded-brief line (stranded_briefs_startup_line, below): the
-#      offline sibling reconcile-jobs.sh --porcelain classifies every brief in
-#      .supervisor/jobs/in-progress/, and ONLY `stranded_*` states are reported
+#      sibling reconcile-jobs.sh --porcelain (offline for merge evidence; at
+#      most ONE base-branch probe — `git remote set-head origin -a`, then
+#      `gh repo view` — may hit the network per run, and only when no
+#      `.base_branch` is configured and origin/HEAD is unset) classifies every
+#      brief in .supervisor/jobs/in-progress/, and ONLY `stranded_*` states are reported
 #      — one `**Stranded brief:**` line each plus a `--repair` trailer. A fresh
 #      session is the one with no prior context, so it is exactly where a brief
 #      whose work already shipped must be surfaced (2026-09-05: a merged brief
@@ -48,8 +51,9 @@
 # stays noise-free. Sections 1–5, the observability probe, the prior-session
 # header, the recovery hints and the house-rules nudge NEVER run on startup.
 #
-# HONEST LIMIT of the startup line: this path is offline (no forge call, ever),
-# so a brief whose only evidence of shipping lives on the forge classifies
+# HONEST LIMIT of the startup line: merge evidence is read offline (no forge
+# call for PR state; the only possible network touch is reconcile-jobs.sh's one
+# base-branch probe when origin/HEAD is unset and no `.base_branch` is set), so a brief whose only evidence of shipping lives on the forge classifies
 # `unknown` and is NOT surfaced on startup at all — it still appears as
 # UNVERIFIED on resume/clear/compact (Section 1). The startup line is debounced
 # by a 24h marker (.supervisor/.stranded-nudge-shown), so a NEW strand that
@@ -878,10 +882,14 @@ fi
 # session until a human moved the file by hand.
 #
 # We now classify via the sibling reconcile-jobs.sh and report only what the
-# disk can evidence. That script is OFFLINE BY CONSTRUCTION (it never calls the
-# forge CLI) precisely because this hook runs it on every resume/clear/compact
-# AND, stranded-only, on every fresh startup, where a network round-trip would
-# be a latency and offline-correctness problem.
+# disk can evidence. That script reads merge evidence OFFLINE (it never asks the
+# forge about PR state) precisely because this hook runs it on every
+# resume/clear/compact AND, stranded-only, on every fresh startup, where a
+# network round-trip would be a latency and offline-correctness problem. Its one
+# possible network touch is the base-branch name: when no `.base_branch` is
+# configured and origin/HEAD is unset, resolve-base-branch.sh tries ONE
+# `git remote set-head origin -a` and then `gh repo view` — resolved once per
+# run in the parent shell, never once per brief.
 #
 # Fail-safe: an absent, unreadable or silent reconciler falls back to a NEUTRAL
 # listing — never back to the old claim. Nothing here can fail the hook.

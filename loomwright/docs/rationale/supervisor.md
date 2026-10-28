@@ -15,7 +15,7 @@ Stories, history, examples and explanations moved out of the runtime prompts of 
 - **CLAUDE.md:** Project context and patterns
 - **Git state:** Current branch, working tree status
 - **Resume data:** (optional) State from previous session
-- **Flags:** `--max-workers N`, `--sequential`, `--continue`, `--dry-run`, `job: {path}`, `--skip-self-heal`, `--heal-iterations N` (default 3), `--cheap`, `--base-branch <name>` (default `main`), `--non-interactive`, `--skip-preflight-sync`, `--skip-children-check`, `--no-auto-review`, `--auto-review`, `--no-until-mergeable`, `--check-wait-timeout N`, `--review-check-pattern <glob>`, `--no-red-team`, `--red-team`
+- **Flags:** `--max-workers N`, `--sequential`, `--continue`, `--dry-run`, `job: {path}`, `--skip-self-heal`, `--heal-iterations N` (default 3), `--cheap`, `--base-branch <name>` (default: `scripts/resolve-base-branch.sh`), `--non-interactive`, `--skip-preflight-sync`, `--skip-children-check`, `--no-auto-review`, `--auto-review`, `--no-until-mergeable`, `--check-wait-timeout N`, `--review-check-pattern <glob>`, `--no-red-team`, `--red-team`
 
 The `job:` brief and the flags are the inputs the runtime prompt still names where they are consumed (Phase 0 INIT, the Flags and Options table).
 

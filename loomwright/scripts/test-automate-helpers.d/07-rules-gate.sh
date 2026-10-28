@@ -202,7 +202,7 @@ r9_dir() {  # r9_dir <sed-expr> <marker-regex> — prints a gated mutant dir, or
   sed "$1" "$GWD/automate-helpers.sh" > "$d/automate-helpers.sh"
   if [ -s "$d/automate-helpers.sh" ] && ! cmp -s "$GWD/automate-helpers.sh" "$d/automate-helpers.sh" \
      && bash -n "$d/automate-helpers.sh" 2>/dev/null && grep -q "$2" "$d/automate-helpers.sh"; then
-    cp "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$d/"
+    cp "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$d/"
     printf '%s' "$d"
   else
     rm -rf "$d"
@@ -226,7 +226,7 @@ if [ -n "$M_PARK" ] && [ -n "$M_CALL" ]; then
     no "R9 mutant (ii) wrong (out='$R9_OUT' merges=$(merges) called=$([ -f "$GH_STUB_DIR/rules-called.log" ] && echo yes || echo no))"
   fi
   # Positive control on the UN-mutated copy.
-  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
   r9_run "$CTRL"
   R9_FAIL_OUT="$R9_OUT"; R9_FAIL_MERGES="$(merges)"
   rules_fixture ok '["r-lint"]' '[]' '[]'
@@ -252,7 +252,7 @@ TAB_CHAR="$(printf '\t')"
 reset_live
 rm -f "$GH_STUB_DIR/rules.json"
 IWD="$(mktemp -d)"; IWD="$(cd "$IWD" && pwd -P)"
-cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$IWD/"
+cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$IWD/"
 cp "$HERE/rules-gate-verdict.sh" "$HERE/rules-check.sh" "$HERE/rules-replay-lib.sh" "$IWD/"
 r10_store() {  # r10_store <name> <check> — a committed temp repo + stamped store; prints "<repo>\t<home>"
   local r="$IWD/$1" h="$IWD/home-$1"
@@ -264,7 +264,9 @@ r10_store() {  # r10_store <name> <check> — a committed temp repo + stamped st
   # checkout dirty and park every leg rules_gate_dirty_tree before the real helper ever ran.
   # `--confirm` runs AFTER the commit, on the committed bytes (the stamp lives in HOME).
   ( cd "$r" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false \
-      && echo init > f && git add f .agent && git commit -qm init ) >/dev/null 2>&1
+      && echo init > f && git add f .agent && git commit -qm init \
+      && git update-ref refs/remotes/origin/main HEAD \
+      && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main ) >/dev/null 2>&1   # cond 6 resolves its base on disk
   ( cd "$r" && env -u RULES_CHECK_NO_CMD -u RULES_CHECK_STAMP_FILE HOME="$h" bash "$IWD/rules-check.sh" --confirm </dev/null >/dev/null 2>&1 )
   printf '%s\t%s' "$r" "$h"
 }
@@ -369,13 +371,21 @@ fi
 E_PR_HEAD="$E_HEAD"; reset_live
 
 # R11b (AC2) — an unreadable HEAD fails CLOSED, never a match: not a checkout, a repo with no
-# commit, a path that does not exist.
-mkdir -p "$WD/nogit"
-( cd "$WD" && git init -q emptyrepo ) >/dev/null 2>&1
+# commit, a path that does not exist. nogit/ and emptyrepo/ name their base in a
+# `.supervisor/config.json` (engine-owned, so it is not dirt) so condition 6's resolver answers and
+# the pin is what parks them. A path that does not exist cannot name a base at all, so condition 6
+# parks it first — `base_branch_unresolved`, still fail-CLOSED, still before the rules helper.
+mkdir -p "$WD/nogit/.supervisor"
+( cd "$WD" && git init -q emptyrepo ) >/dev/null 2>&1; mkdir -p "$WD/emptyrepo/.supervisor"
+printf '{"base_branch":"main"}\n' > "$WD/nogit/.supervisor/config.json"
+printf '{"base_branch":"main"}\n' > "$WD/emptyrepo/.supervisor/config.json"
 for R11_ROOT in "$WD/nogit" "$WD/emptyrepo" "$WD/does-not-exist"; do
   reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
   E_GATE_ROOT="$R11_ROOT"; gate "$(pass_ctx)"; E_GATE_ROOT=""
-  r11_park "unreadable HEAD (--root ${R11_ROOT#$WD/})" rules_gate_head_mismatch
+  case "$R11_ROOT" in
+    */does-not-exist) r11_park "unreadable HEAD (--root ${R11_ROOT#$WD/})" base_branch_unresolved ;;
+    *)                r11_park "unreadable HEAD (--root ${R11_ROOT#$WD/})" rules_gate_head_mismatch ;;
+  esac
 done
 
 # R11c (AC3) — dirt outside the engine-owned paths ⇒ rules_gate_dirty_tree. Each case: dirty, gate, undo.
@@ -553,7 +563,9 @@ r11_sm_git() { git -c user.email=t@t -c user.name=t -c commit.gpgsign=false -c p
     && echo l2 > l2 && git add l2 && r11_sm_git commit -qm l2 \
   && git init -q "$SM_TOP" && cd "$SM_TOP" && echo t > t && git add t && r11_sm_git commit -qm t \
     && r11_sm_git submodule add -q "$SM_LIB" lib && r11_sm_git commit -qm sub \
-    && git config -f .gitmodules submodule.lib.ignore all && git add .gitmodules && r11_sm_git commit -qm ign ) >/dev/null 2>&1
+    && git config -f .gitmodules submodule.lib.ignore all && git add .gitmodules && r11_sm_git commit -qm ign \
+    && git update-ref refs/remotes/origin/main HEAD \
+    && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main ) >/dev/null 2>&1   # cond 6 resolves its base on disk
 SM_HEAD="$(git -C "$SM_TOP" rev-parse --verify -q HEAD 2>/dev/null)" || SM_HEAD=""
 SM_GD="$(cd "$SM_TOP/lib" 2>/dev/null && git rev-parse --absolute-git-dir 2>/dev/null)" || SM_GD=""
 r11_sm_clean() {  # the fixture is back: lib at its recorded commit, nothing dirty anywhere
@@ -605,7 +617,7 @@ r11_sm_clean || no "R11l: the submodule fixture was NOT restored"
 M_HEAD="$(r9_dir 's/^  if \[ "\$root_head_rc" -ne 0 \] .*; then$/  if false; then # R11-MUTANT-HEAD/' 'R11-MUTANT-HEAD')"
 M_DIRTY="$(r9_dir 's/^  if \[ "\$root_dirt_rc" -ne 0 \] .*; then$/  if false; then # R11-MUTANT-DIRTY/' 'R11-MUTANT-DIRTY')"
 if [ -n "$M_HEAD" ] && [ -n "$M_DIRTY" ]; then
-  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
   # stale-HEAD leg: original parks, mutant merges.
   E_PR_HEAD="$E_TIP"; reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
   r9_run "$CTRL"; R11_CO="$R9_OUT"; R11_CM="$(merges)"
@@ -664,7 +676,7 @@ M_SUBS="$(r9_dir 's/^  if \[ "\$root_subs_rc" -ne 0 \]; then$/  if false; then #
 M_SUBFLAG="$(r9_dir 's/^\(    root_dirt=.* status --porcelain -uall\) --ignore-submodules=none \(.*\)$/\1 \2 # R11-MUTANT-SUBFLAG/' 'R11-MUTANT-SUBFLAG')"
 if [ -n "$M_FLAGS" ] && [ -n "$M_UNT" ] && [ -n "$M_IGN" ] && [ -n "$M_ENV" ] && [ -n "$M_TOP" ] && [ -n "$M_INREPO" ] \
    && [ -n "$M_LINK" ] && [ -n "$M_LEX" ] && [ -n "$M_SUBS" ] && [ -n "$M_SUBFLAG" ]; then
-  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
   r11g "$M_FLAGS" "assume-unchanged read deleted" \
     'git -C "$E_ROOT" update-index --assume-unchanged sub/a; echo more >> "$E_ROOT/sub/a"' \
     'git -C "$E_ROOT" update-index --no-assume-unchanged sub/a; git -C "$E_ROOT" checkout -q -- sub/a'
@@ -709,7 +721,7 @@ rm -rf "${M_FLAGS:-/nonexistent-r11}" "${M_UNT:-/nonexistent-r11}" "${M_IGN:-/no
 # R11h XDG leg PARKs again (the iteration-1 behaviour), while the un-mutated copy MERGEs it.
 M_XF="$(r9_dir 's/^    if \[ -n "\$ge_xf" \] && \[ -f "\$ge_xf" \] && \[ -r "\$ge_xf" \]; then ge_xargs=.*$/    : # R11-MUTANT-XF/' 'R11-MUTANT-XF')"
 if [ -n "$M_XF" ]; then
-  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
   reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
   printf 'notes.local\n' > "$R11_XDG/git/ignore"; export XDG_CONFIG_HOME="$R11_XDG"; echo n > "$E_ROOT/notes.local"
   r9_run "$CTRL"; R11_CO="$R9_OUT"; R11_CM="$(merges)"
@@ -731,7 +743,7 @@ rm -rf "${M_XF:-/nonexistent-r11}"
 # include), while the un-mutated copy MERGEs it.
 M_INC="$(r9_dir 's/ config --global --includes --path --get core\.excludesFile / config --global --path --get core.excludesFile /;s/^\(    ge_xf=.*core\.excludesFile .*\)$/\1 # R11-MUTANT-INC/' 'R11-MUTANT-INC')"
 if [ -n "$M_INC" ]; then
-  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
   reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
   printf '[include]\n\tpath = %s\n' "$WD/gx-inc" > "$WD/nohome/.gitconfig"; echo n > "$E_ROOT/notes.local"
   r9_run "$CTRL"; R11_CO="$R9_OUT"; R11_CM="$(merges)"
