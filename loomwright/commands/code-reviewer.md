@@ -249,3 +249,5 @@ If a project has custom patterns that conflict with skill guidelines:
 ## Agent Prompt
 
 The canonical prompt lives in `loomwright/agents/code-reviewer.md`. This command file is intentionally a thin wrapper — all review policy (review modes, scope expansion, repo consistency audit, severity rules, output schema, decision matrix) is defined there. Do not re-embed `## Role:` or `## Quality Checklist` sections here; the sync check (`scripts/check-command-sync.sh`) will fail.
+
+**Seat routing.** The review is the `code_reviewer` seat: run `resolve-routing.sh seat code_reviewer` and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol". On `PROVIDER=claude` the review runs as written, unchanged. On another provider only the review analysis goes out (the diff and review prompt in, a `CODE_REVIEW_RESULT` back, validated with `validate-code-review-result.py --raw`); the Beads claim/comment/close steps and reporting to the user stay on the Claude main thread. On a non-`ok` result or failed validation, the review runs as written and one `seat_routing code_reviewer provider=<p> reason=<r>` line is logged.

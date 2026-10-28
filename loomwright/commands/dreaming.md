@@ -84,6 +84,8 @@ See [../docs/command-parts/dreaming/workflow.md](../docs/command-parts/dreaming/
 
 See [../docs/command-parts/dreaming/reflection-prompt.md](../docs/command-parts/dreaming/reflection-prompt.md).
 <!-- split:end ../docs/command-parts/dreaming/reflection-prompt.md -->
+**Seat routing.** The Phase 2 reflection pass is the `dreaming_analysis` seat: run `resolve-routing.sh seat dreaming_analysis` and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol". On `PROVIDER=claude` the reflection spawn runs as written, unchanged. On another provider only the reflection analysis goes out (the reflection prompt in, the report back, checked for the role marker); GATHER, every question gate, the sole-writer calls and the PR deliveries stay on the Claude main thread. On a non-`ok` result or failed check, the reflection spawn runs as written and one `seat_routing dreaming_analysis provider=<p> reason=<r>` line is logged.
+
 <!-- split:begin ../docs/command-parts/dreaming/report.md -->
 ## Reflection Report Sections
 

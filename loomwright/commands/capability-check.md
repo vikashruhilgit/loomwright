@@ -65,6 +65,8 @@ From the fetched material, identify items **present upstream but absent from the
 
 For each, write one line of *why it matters for THIS plugin* — which agent/hook/command it would plausibly improve. Discard anything the plugin already uses or has explicitly deferred.
 
+**Seat routing.** The default-mode DIFF (this step and the REPORT it feeds) is the `capability_check` seat: run `resolve-routing.sh seat capability_check` and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol". On `PROVIDER=claude` the DIFF runs as written, unchanged. On another provider only the DIFF analysis goes out (the baseline and the fetched material in, a `CAPABILITY_REPORT` back, checked for the role marker); the fetches, the one-line suppression output, `--save` and `--update-baseline` writes stay on the Claude main thread, and `--strategy` is not routed. On a non-`ok` result or failed check, the DIFF runs as written and one `seat_routing capability_check provider=<p> reason=<r>` line is logged.
+
 ### 4. REPORT (rare + actionable)
 - **If there are no new candidates:** print exactly one line — `No new Claude Code capabilities since baseline {baseline_date} (checked {N} sources). Nothing to adopt.` — and stop. **Do not pad** the output. (Red-team W3: a report that fires every run with already-known facts trains the maintainer to ignore it.)
 - **If there are candidates:** print a `CAPABILITY_REPORT` with, per candidate:
