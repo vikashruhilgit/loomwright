@@ -491,8 +491,14 @@ if command -v perl >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
   CLI_OWN_PGROUP=1
 fi
 
+# The bound's sleep runs in the background and the TERM trap kills it: a foreground
+# sleep would outlive the `kill "$CLI_WATCHDOG_PID"` below (killing a subshell does
+# not kill its running child), leaving one `sleep $LENS_CLI_TIMEOUT` per run.
 (
-  sleep "$LENS_CLI_TIMEOUT"
+  WD_SLEEP_PID=""
+  trap '[ -n "$WD_SLEEP_PID" ] && kill "$WD_SLEEP_PID" 2>/dev/null; exit 0' TERM
+  sleep "$LENS_CLI_TIMEOUT" & WD_SLEEP_PID=$!
+  wait "$WD_SLEEP_PID"
   if kill -0 "$CLI_PID" 2>/dev/null; then
     printf '1\n' > "$TIMEOUT_FLAG"
     lens_kill_cli TERM

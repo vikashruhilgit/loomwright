@@ -375,6 +375,19 @@ assert_eq "D provider field" "$PROVIDER_NAME" "$(jq -r '.provider' "$OUT_D" 2>/d
 assert_eq "D model is null (no :model suffix given)" "null" "$(jq -c '.model' "$OUT_D" 2>/dev/null)"
 
 echo ""
+echo "==== D2: a CLI that ends before the bound leaves no watchdog sleep behind ===="
+# A per-run bound no other process uses (the full RUN_TAG, like the stub names), so the
+# check is exact for this run even with two suites running at once.
+D2_BOUND=$(( 100000 + RUN_TAG ))
+OUT_D2="$TMP/out-d2.json"
+RC_D2=0
+LOOMWRIGHT_LENS_CLI_TIMEOUT="$D2_BOUND" run_lens "$STUB_D_DIR" "$OUT_D2" || RC_D2=$?
+assert_eq "D2 rc=0" "0" "$RC_D2"
+d2_left() { ps -axo command= 2>/dev/null | awk -v w="sleep $D2_BOUND" '$0 == w' | wc -l | tr -d ' '; }
+i=0; while [ "$(d2_left)" != "0" ] && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i+1)); done
+assert_eq "D2 no 'sleep $D2_BOUND' left running after lens-run returned" "0" "$(d2_left)"
+
+echo ""
 echo "==== E: scrubbed-env -> GH_TOKEN set in the test's OWN env does NOT reach the provider CLI ===="
 OUT_E="$TMP/out-e.json"
 RC_E=0
