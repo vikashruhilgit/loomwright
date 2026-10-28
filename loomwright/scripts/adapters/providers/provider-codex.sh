@@ -46,3 +46,40 @@ provider_extract_text() {
   [ -n "$PROVIDER_EXTRACTED" ] || return 1
   return 0
 }
+
+# ---- PROBE ENTRIES (read by loomwright/scripts/setup-providers.sh `check`;
+# lens-run.sh ignores them). Contract: setup-providers.sh's header,
+# §"PROBE-ENTRY CONTRACT". STILL NOT INSTALLED ON THIS MACHINE (re-checked
+# 2026-10-27), so every field below except the install hint is a DOCUMENTED
+# ASSUMPTION, never run here:
+#   - version: `--version` (the near-universal CLI convention; unverified).
+#   - auth: no auth-status command is documented anywhere this entry could
+#     consult, so none is declared — the auth column starts `unknown` and is
+#     decided by the smoke itself (setup-providers.sh: a passing smoke proves
+#     auth; a smoke whose output matches PROBE_AUTH_NOT_LOGGED_IN_RE marks it
+#     not_logged_in).
+#   - permissions: no pin flag set is verified, so PROBE_PERM_PIN_FLAGS is
+#     empty and the column reports `unknown` (never a write seat).
+#   - smoke: the lens invocation above with the fixed probe prompt, so the
+#     first real run tests the assumed lens shape too.
+# Install hint: https://raw.githubusercontent.com/openai/codex/main/README.md
+# (read 2026-10-27: "npm install -g @openai/codex"; that README's login step
+# is "Run `codex` and select Sign in with ChatGPT").
+PROBE_VERSION_ARGV=("--version")
+PROBE_AUTH_ARGV=()
+PROBE_AUTH_OK_RE=''
+PROBE_AUTH_NOT_LOGGED_IN_RE='[Nn]ot (logged|signed) in|[Ll]og ?in required|[Uu]nauthori[sz]ed'
+PROBE_HELP_ARGV=("--help")
+PROBE_PERM_PIN_FLAGS=""
+PROBE_BROWSER="unknown"
+PROBE_INSTALL_HINT="npm install -g @openai/codex"
+PROBE_LOGIN_HINT="run codex interactively and choose Sign in with ChatGPT"
+
+# probe_smoke_argv — reads PROBE_PROMPT, sets PROBE_ARGV; prompt LAST. Reuses
+# provider_build_argv so the smoke and the lens share one assumed shape.
+probe_smoke_argv() {
+  MODEL=""
+  PROMPT_CONTENT="$PROBE_PROMPT"
+  provider_build_argv
+  PROBE_ARGV=("${PROVIDER_ARGV[@]}")
+}
