@@ -86,7 +86,6 @@ case "$SUBCMD" in
     cat <<'SEATS'
 plan_reviewer agents/launch-pad.md PLAN_REVIEW_RESULT validate-plan-review-result.py
 orchestrator skills/async-orchestration/SKILL.md Work/Results -
-phase45_reviewer skills/self-heal-advisory/SKILL.md CODE_REVIEW_RESULT validate-code-review-result.py
 rubric_grader skills/self-heal-advisory/completion-tail.md rubric_score -
 heal_voter skills/self-heal-advisory/multi-voter.md - -
 refute skills/self-heal-advisory/multi-voter.md - -

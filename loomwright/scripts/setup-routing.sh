@@ -175,13 +175,20 @@ backup_path() {
 # stage_and_replace <label> <file> <doc> — parse-gate the composed document, stage it beside the
 # target and atomically replace. Prints the ABORTED headline (returning 1) on any failure.
 stage_and_replace() {
-  local label="$1" file="$2" doc="$3" tmp
+  local label="$1" file="$2" doc="$3" tmp tmp_failed=""
   if ! printf '%s' "$doc" | jq -se 'length == 1 and (.[0] | type) == "object"' >/dev/null 2>&1; then
     echo "$label: ABORTED (write_failed) — the composed document is not a JSON object; $file is unchanged."
     return 1
   fi
   tmp="$file.tmp.$$"
-  if ! printf '%s\n' "$doc" > "$tmp" 2>/dev/null || ! mv "$tmp" "$file" 2>/dev/null; then
+  # Keep the target's mode across the replace: stage over a `cp -p` copy of it (truncating keeps the
+  # mode), so a 0600 egress.json never comes back 0644. A new egress.json is created owner-only.
+  if [ -e "$file" ]; then
+    cp -p "$file" "$tmp" 2>/dev/null || tmp_failed=1
+  elif [ "$file" = "$EGRESS" ]; then
+    ( umask 077 && : > "$tmp" ) 2>/dev/null || tmp_failed=1
+  fi
+  if [ -n "$tmp_failed" ] || ! printf '%s\n' "$doc" > "$tmp" 2>/dev/null || ! mv "$tmp" "$file" 2>/dev/null; then
     rm -f "$tmp" 2>/dev/null
     echo "$label: ABORTED (write_failed) — could not replace $file; it is unchanged."
     return 1

@@ -38,6 +38,8 @@
 #                       byte-identical, no backup
 #   c_symlink           a symlinked config.json or egress.json ⇒ ABORTED (symlink); link and target kept
 #   c_no_slug           a non-git directory ⇒ grant REFUSED (no_repo_slug); routing still works
+#   c_mode              a write keeps the target's mode (a 0600 egress.json stays 0600, a 0640 config
+#                       stays 0640) and a new egress.json is created 0600 under umask 022
 # Mutation controls (gated: non-empty + differs + bash -n, on a scratch copy beside copies of the
 # resolvers): `del(.routing)` → `del(.)` (c_remove must fail), the usable-verdict gate removed
 # (c_verdict_refused must fail), the already-configured early exit deleted (c_idempotent must fail).
@@ -401,6 +403,21 @@ c_symlink() {
   [ -L "$c" ] && [ -L "$EGRESS" ] && cmp -s "$T/sl.target" "$T/sl.snap" || { echo "a link or its target changed"; return 1; }
 }
 
+mode_of() { ls -ld "$1" 2>/dev/null | cut -c1-10; }  # portable: no stat flavour
+
+c_mode() {
+  local e="$1" r c; r="$(fresh md)"; c="$(cfg "$r")"
+  seed_egress "$(slug_of md)"; chmod 600 "$EGRESS"
+  run "$e" "$r" apply --grant "$P_RO"
+  has "$out" "apply grant: applied" && [ "$(mode_of "$EGRESS")" = "-rw-------" ] || { echo "merged egress: $(mode_of "$EGRESS") $out"; return 1; }
+  seed_cfg "$r"; chmod 640 "$c"
+  run "$e" "$r" apply --seat "refute=$P_RO"
+  has "$out" "apply routing: applied" && [ "$(mode_of "$c")" = "-rw-r-----" ] || { echo "merged config: $(mode_of "$c") $out"; return 1; }
+  r="$(fresh mn)"
+  out="$(umask 022; bash "$e" apply --grant "$P_RO" --repo "$r" 2>&1)"
+  has "$out" "apply grant: applied" && [ "$(mode_of "$EGRESS")" = "-rw-------" ] || { echo "new egress: $(mode_of "$EGRESS") $out"; return 1; }
+}
+
 c_no_slug() {
   local e="$1" r="$T/nogit"
   rm -rf "$r" "$HOME/.claude"; mkdir -p "$r"
@@ -412,7 +429,7 @@ c_no_slug() {
   has "$out" "remove grant: REFUSED (no_repo_slug)" && has "$out" "remove routing: removed" || { echo "remove: $out"; return 1; }
 }
 
-CASES="c_usage c_status_default c_status_routed c_verdict_readonly c_verdict_write c_verdict_refused c_refuse_names c_create c_merge c_idempotent c_array c_on_unavailable c_grant c_remove c_malformed c_symlink c_no_slug"
+CASES="c_usage c_status_default c_status_routed c_verdict_readonly c_verdict_write c_verdict_refused c_refuse_names c_create c_merge c_idempotent c_array c_on_unavailable c_grant c_remove c_malformed c_symlink c_mode c_no_slug"
 
 echo "== setup-routing.sh =="
 for c in $CASES; do

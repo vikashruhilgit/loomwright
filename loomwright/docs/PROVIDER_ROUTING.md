@@ -12,6 +12,8 @@ Only the seats `resolve-routing.sh seats` prints are routable, and a routed seat
 
 The conductor is not routable and is not a seat: the main session, the supervisor runner, execute-manager, context-keeper, worker, the `/autonomous` and `/automate` loops, the detached drain runner and the `TaskCompleted` prompt hook. `resolve-routing.sh seat worker` prints `REASON=unknown_seat` with `PROVIDER=claude`. Write seats are a separate, later decision.
 
+Supervisor Phase 4.5's integrated review is not a seat either. It is the executing lens of the review-lane contract (CLAUDE.md §"Failure-Mode Invariants"): it runs repros of load-bearing claims, and a routed seat never executes code, so routing it would leave no executing lens. It always runs as the Claude `code-reviewer` Task (`skills/self-heal-advisory/SKILL.md`). The other review seats are not executing lenses, so routing them changes who reads the diff, never whether anything is executed.
+
 ## Config shape
 
 In `.supervisor/config.json` (per checkout, gitignored):

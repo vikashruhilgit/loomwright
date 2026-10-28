@@ -52,7 +52,7 @@ lens_role_shape() {
       printf '%s\n' 'Reply with the PLAN_REVIEW_RESULT block exactly as your instructions above define it (decision PASS, FAIL or NEEDS_HUMAN, the issues list, and a summary).' ;;
     orchestrator)
       printf '%s\n' 'Reply with the decomposition in the Context Read, Plan, Work/Results, Risks layout your instructions above define.' ;;
-    phase45_reviewer|drain_reviewer|fallback_reviewer|evaluate_reviewer|code_reviewer)
+    drain_reviewer|fallback_reviewer|evaluate_reviewer|code_reviewer)
       printf '%s\n' 'Reply with your review, ending in the CODE_REVIEW_RESULT block exactly as your instructions above define it.' ;;
     rubric_grader)
       printf '%s\n' 'Reply with one "ITEM N: PASS" or "ITEM N: FAIL" line (with a one-line reason) per rubric bullet, then a final "rubric_score: <passed>/<total>" line.' ;;
