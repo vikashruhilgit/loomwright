@@ -28,7 +28,7 @@
   "max_workers": 1,
   "mode": "sequential",
   "path": "single-agent",
-  "pending_text": "{\"do\":\"done\",\"step\":\"handover\",\"session_id\":\"ae60dadd-8fcf-4650-976a-93bf87a87708\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-finalize.md\",\"branch\":\"feature/golden-finalize\",\"next\":\"phase-4.5\",\"pr_url\":\"https://github.com/golden/repo/pull/12\",\"base_verify\":\"verified\",\"base_mismatch_detected\":false,\"children_check\":\"settled\",\"preflight_sync\":\"skipped\",\"message\":\"FINALIZE complete: https://github.com/golden/repo/pull/12 against main (base verified). Run Phase 4.5 SELF_HEAL; its completion tail marks the task completed and moves the job\"}",
+  "pending_text": "{\"do\":\"done\",\"step\":\"handover\",\"session_id\":\"ae60dadd-8fcf-4650-976a-93bf87a87708\",\"job\":\".supervisor/jobs/in-progress/2026-10-17-golden-finalize.md\",\"branch\":\"feature/golden-finalize\",\"next\":\"phase-4.5\",\"pr_url\":\"https://github.com/golden/repo/pull/12\",\"base_verify\":\"verified\",\"base_mismatch_detected\":false,\"children_check\":\"settled\",\"preflight_sync\":\"skipped\",\"test_guard\":\"unarmed (marker_missing)\",\"message\":\"FINALIZE complete: https://github.com/golden/repo/pull/12 against main (base verified). Run Phase 4.5 SELF_HEAL; its completion tail marks the task completed and moves the job\"}",
   "plan_source": "brief",
   "pr_url": "https://github.com/golden/repo/pull/12",
   "preflight_sync": "skipped",

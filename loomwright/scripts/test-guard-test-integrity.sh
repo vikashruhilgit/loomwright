@@ -405,14 +405,128 @@ fi
 wait "$trailing_flag_pid" 2>/dev/null
 [ "$trailing_flag_hung" -eq 0 ] && ok "arm foo --session-id (no value) — fails fast, does not hang" || no "arm foo --session-id (no value) — hung (unbounded-shift regression)"
 
-afp_match="$(CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload <<<"$(jq -n '{session_id:"sess-afp-1", tool_input:{subagent_type:"loomwright:loomwright:worker"}}')" >/dev/null 2>&1; echo $?)"
+# afp_payload <session id or ""> <role> — a PreToolUse[Agent|Task] payload; the id is omitted when empty
+afp_payload() { jq -nc --arg sid "$1" --arg r "$2" '{tool_input:{subagent_type:$r}} + (if $sid == "" then {} else {session_id:$sid} end)'; }
+# row_role <jsonl file> — the role string a guard_arm_skipped row carries
+row_role() { jq -r 'select(.event == "guard_arm_skipped") | .subagent_type' "$1" 2>/dev/null; }
+afp_match="$(CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload <<<"$(afp_payload sess-afp-1 loomwright:loomwright:worker)" >/dev/null 2>&1; echo $?)"
 [ -e "$ARM_D/.supervisor/guard/sess-afp-1.json" ] && ok "arm-from-payload arms on namespaced :worker subagent_type" || no "arm-from-payload arms on namespaced :worker subagent_type"
 
-CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload <<<"$(jq -n '{session_id:"sess-afp-2", tool_input:{subagent_type:"general-purpose"}}')" >/dev/null 2>&1
+CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload <<<"$(afp_payload sess-afp-2 general-purpose)" >/dev/null 2>&1
 [ ! -e "$ARM_D/.supervisor/guard/sess-afp-2.json" ] && ok "arm-from-payload does not arm on general-purpose" || no "arm-from-payload does not arm on general-purpose"
 
-CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload <<<"$(jq -n '{session_id:"sess-afp-3", tool_input:{subagent_type:"my-worker"}}')" >/dev/null 2>&1
+CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload <<<"$(afp_payload sess-afp-3 my-worker)" >/dev/null 2>&1
 [ ! -e "$ARM_D/.supervisor/guard/sess-afp-3.json" ] && ok "arm-from-payload does not arm on unnamespaced my-worker" || no "arm-from-payload does not arm on unnamespaced my-worker"
+
+# ---------------------------------------------------------------------------
+# arm-from-payload skip trace (af/39c): one guard_arm_skipped row per skip of an
+# armed role, exit 0 kept, non-armed roles silent.
+# ---------------------------------------------------------------------------
+SKIP_ROLE="loomwright:loomwright:worker"
+skip_repo() { local d; d="$(mktemp -d)"; git -C "$d" init -q 2>/dev/null; printf '%s' "$d"; }
+# skip_rows <file> <reason> — count of guard_arm_skipped rows with that reason in <file>
+skip_rows() { [ -f "$1" ] || { echo 0; return; }; jq -s --arg r "$2" '[.[] | select(.event == "guard_arm_skipped" and .reason == $r)] | length' "$1" 2>/dev/null || echo "?"; }
+# no-jq tool dir: symlinks to the tools guard-arm.sh needs, minus jq
+NOJQ_BIN="$(mktemp -d)"
+for _t in cat git sed date tr mkdir rm; do ln -s "$(command -v "$_t")" "$NOJQ_BIN/$_t" 2>/dev/null || true; done
+BASH_BIN="$(command -v bash)"
+
+# no_session_id -> exactly one row in arm-skipped.jsonl, nothing under logs/
+SK1="$(skip_repo)"
+sk1_rc="$(afp_payload "" "$SKIP_ROLE" | CLAUDE_PROJECT_DIR="$SK1" bash "$ARM" arm-from-payload >/dev/null 2>&1; echo $?)"
+[ "$sk1_rc" = 0 ] && [ "$(skip_rows "$SK1/.supervisor/guard/arm-skipped.jsonl" no_session_id)" = 1 ] \
+  && [ "$(wc -l < "$SK1/.supervisor/guard/arm-skipped.jsonl" | tr -d ' ')" = 1 ] && [ ! -e "$SK1/.supervisor/logs" ] \
+  && [ "$(row_role "$SK1/.supervisor/guard/arm-skipped.jsonl")" = "$SKIP_ROLE" ] \
+  && jq -e '(has("session_id") | not) and (has("cc_session_id") | not) and (.ts | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))' "$SK1/.supervisor/guard/arm-skipped.jsonl" >/dev/null 2>&1 \
+  && ok "skip trace: no_session_id -> exit 0, one row in arm-skipped.jsonl, nothing under logs/" || no "skip trace: no_session_id (rc=$sk1_rc)"
+# an id containing a slash is no usable id either: reason no_session_id, no id fields, no marker
+SK1b="$(skip_repo)"
+afp_payload ../x "$SKIP_ROLE" | CLAUDE_PROJECT_DIR="$SK1b" bash "$ARM" arm-from-payload >/dev/null 2>&1
+[ "$(skip_rows "$SK1b/.supervisor/guard/arm-skipped.jsonl" no_session_id)" = 1 ] && [ ! -e "$SK1b/.supervisor/logs" ] \
+  && ok "skip trace: a slash-bearing session_id is no_session_id (arm-skipped.jsonl, not logs/)" || no "skip trace: slash-bearing session_id"
+
+# jq_missing -> one printf row (with ids) in the session log; none in arm-skipped.jsonl
+SK2="$(skip_repo)"
+sk2_rc="$(afp_payload sess-nojq "$SKIP_ROLE" | PATH="$NOJQ_BIN" CLAUDE_PROJECT_DIR="$SK2" "$BASH_BIN" "$ARM" arm-from-payload >/dev/null 2>&1; echo $?)"
+[ "$sk2_rc" = 0 ] && [ "$(skip_rows "$SK2/.supervisor/logs/sess-nojq.jsonl" jq_missing)" = 1 ] \
+  && [ ! -e "$SK2/.supervisor/guard/arm-skipped.jsonl" ] && [ ! -e "$SK2/.supervisor/guard/sess-nojq.json" ] \
+  && jq -e '.session_id == "sess-nojq" and .cc_session_id == "sess-nojq"' "$SK2/.supervisor/logs/sess-nojq.jsonl" >/dev/null 2>&1 \
+  && ok "skip trace: jq_missing -> exit 0, one row in the session log" || no "skip trace: jq_missing (rc=$sk2_rc)"
+# jq missing + non-armed role -> silent: no row, no file
+SK2b="$(skip_repo)"
+afp_payload sess-nojq-2 general-purpose | PATH="$NOJQ_BIN" CLAUDE_PROJECT_DIR="$SK2b" "$BASH_BIN" "$ARM" arm-from-payload >/dev/null 2>&1
+afp_payload sess-nojq-3 my-worker | PATH="$NOJQ_BIN" CLAUDE_PROJECT_DIR="$SK2b" "$BASH_BIN" "$ARM" arm-from-payload >/dev/null 2>&1
+[ ! -e "$SK2b/.supervisor" ] && ok "skip trace: jq missing + non-armed role -> silent (no row, no file)" || no "skip trace: jq missing + non-armed role wrote something"
+
+# marker_write_failed -> one row in the session log (guard dir is a regular file)
+SK3="$(skip_repo)"; mkdir -p "$SK3/.supervisor"; : > "$SK3/.supervisor/guard"
+sk3_rc="$(afp_payload sess-mwf "$SKIP_ROLE" | CLAUDE_PROJECT_DIR="$SK3" bash "$ARM" arm-from-payload >/dev/null 2>&1; echo $?)"
+[ "$sk3_rc" = 0 ] && [ "$(skip_rows "$SK3/.supervisor/logs/sess-mwf.jsonl" marker_write_failed)" = 1 ] \
+  && ok "skip trace: marker_write_failed -> exit 0, one row in the session log" || no "skip trace: marker_write_failed (rc=$sk3_rc)"
+# ...and the same with a chmod 500 guard dir (skipped when the mode is not enforced, e.g. root)
+SK3b="$(skip_repo)"; mkdir -p "$SK3b/.supervisor/guard"; chmod 500 "$SK3b/.supervisor/guard"
+if [ -w "$SK3b/.supervisor/guard" ]; then
+  ok "skip trace: marker_write_failed (chmod 500) not exercised — the mode is not enforced for this user"
+else
+  afp_payload sess-mwf2 "$SKIP_ROLE" | CLAUDE_PROJECT_DIR="$SK3b" bash "$ARM" arm-from-payload >/dev/null 2>&1
+  [ "$(skip_rows "$SK3b/.supervisor/logs/sess-mwf2.jsonl" marker_write_failed)" = 1 ] && [ ! -e "$SK3b/.supervisor/guard/arm-skipped.jsonl" ] \
+    && ok "skip trace: marker_write_failed with a chmod 500 guard dir -> one row in the session log" || no "skip trace: marker_write_failed (chmod 500)"
+fi
+chmod 700 "$SK3b/.supervisor/guard" 2>/dev/null || true
+
+# host-mode fixtures (scratch TMPDIR, scratch repo; no real per-user root is touched)
+HM_UID="$(id -u 2>/dev/null || echo 0)"
+HM_T="$(mktemp -d)"; HM_R="$(skip_repo)"
+# no_guard_dir: an unsafe (mode 777) D1 root stays unresolvable after write_marker's creating form -> stderr line only
+mkdir "$HM_T/loomwright-host-$HM_UID"; chmod 777 "$HM_T/loomwright-host-$HM_UID"
+hm_err="$(afp_payload sess-hm1 "$SKIP_ROLE" | env -u LOOMWRIGHT_HOST_STATE_DIR LOOMWRIGHT_HOST_MODE=1 TMPDIR="$HM_T" CLAUDE_PROJECT_DIR="$HM_R" bash "$ARM" arm-from-payload 2>&1 >/dev/null; echo "rc=$?")"
+case "$hm_err" in *"guard_arm_skipped: no_guard_dir"*"rc=0") hm_ok=1 ;; *) hm_ok=0 ;; esac
+[ "$hm_ok" = 1 ] && [ -z "$(find "$HM_T" -type f 2>/dev/null)" ] && [ ! -e "$HM_R/.supervisor" ] \
+  && ok "skip trace: no_guard_dir (unsafe host root) -> exit 0, one stderr line, nothing written" || no "skip trace: no_guard_dir stderr-only ($hm_err)"
+chmod 755 "$HM_T/loomwright-host-$HM_UID"; rm -rf "$HM_T/loomwright-host-$HM_UID"
+# host mode, resolvable gate dir with an existing logs/ and an uncreatable guard dir: the row lands in the gate session log
+HM_T2="$(mktemp -d)"; HM_R2="$(skip_repo)"; HM_SD="$(mktemp -d)"
+mkdir -p "$HM_SD/logs"; : > "$HM_SD/guard"
+afp_payload sess-hm2 "$SKIP_ROLE" | LOOMWRIGHT_HOST_MODE=1 LOOMWRIGHT_HOST_STATE_DIR="$HM_SD" TMPDIR="$HM_T2" CLAUDE_PROJECT_DIR="$HM_R2" bash "$ARM" arm-from-payload >/dev/null 2>&1
+[ "$(skip_rows "$HM_SD/logs/sess-hm2.jsonl" marker_write_failed)" = 1 ] && [ ! -e "$HM_R2/.supervisor" ] \
+  && ok "skip trace: host mode with an existing gate log dir -> row in the gate session log, none in the repo" || no "skip trace: host-mode session-log destination"
+# host mode, gate dir resolves but has no logs/: the trace never creates one (no row in the repo either)
+HM_T4="$(mktemp -d)"; HM_R4="$(skip_repo)"; HM_SD4="$(mktemp -d)"; : > "$HM_SD4/guard"
+afp_payload sess-hm4 "$SKIP_ROLE" | LOOMWRIGHT_HOST_MODE=1 LOOMWRIGHT_HOST_STATE_DIR="$HM_SD4" TMPDIR="$HM_T4" CLAUDE_PROJECT_DIR="$HM_R4" bash "$ARM" arm-from-payload >/dev/null 2>&1
+[ ! -e "$HM_SD4/logs" ] && [ ! -e "$HM_R4/.supervisor" ] && ok "skip trace: host mode never creates a log dir (stderr only)" || no "skip trace: host mode created a log dir"
+# AC4b: host mode, no D1 root yet (rc 2) -> the creating form arms, no row anywhere
+HM_T3="$(mktemp -d)"; HM_R3="$(skip_repo)"
+hm3_rc="$(afp_payload sess-hm3 "$SKIP_ROLE" | env -u LOOMWRIGHT_HOST_STATE_DIR LOOMWRIGHT_HOST_MODE=1 TMPDIR="$HM_T3" CLAUDE_PROJECT_DIR="$HM_R3" bash "$ARM" arm-from-payload >/dev/null 2>&1; echo $?)"
+[ "$hm3_rc" = 0 ] && [ -n "$(find "$HM_T3" -name sess-hm3.json 2>/dev/null)" ] && [ -z "$(find "$HM_T3" -name '*.jsonl' 2>/dev/null)" ] && [ ! -e "$HM_R3/.supervisor" ] \
+  && ok "skip trace: host-mode first arm (no D1 root yet) -> marker created, no row anywhere" || no "skip trace: host-mode first arm (rc=$hm3_rc)"
+
+# non-armed role -> exit 0, no row, no file
+SK4="$(skip_repo)"
+for _r in general-purpose my-worker; do
+  afp_payload sess-na "$_r" | CLAUDE_PROJECT_DIR="$SK4" bash "$ARM" arm-from-payload >/dev/null 2>&1
+done
+afp_payload "" general-purpose | CLAUDE_PROJECT_DIR="$SK4" bash "$ARM" arm-from-payload >/dev/null 2>&1
+[ ! -e "$SK4/.supervisor" ] && ok "skip trace: non-armed role -> silent (no row, no file, no .supervisor/)" || no "skip trace: non-armed role wrote something"
+
+# hostile role string (quote + backslash, :worker suffix) -> the row still parses
+SK5="$(skip_repo)"
+sk5_rc="$(afp_payload "" 'a"b\c:worker' | CLAUDE_PROJECT_DIR="$SK5" bash "$ARM" arm-from-payload >/dev/null 2>&1; echo $?)"
+[ "$sk5_rc" = 0 ] && [ "$(row_role "$SK5/.supervisor/guard/arm-skipped.jsonl")" = 'a"b\c:worker' ] && jq -e . "$SK5/.supervisor/guard/arm-skipped.jsonl" >/dev/null 2>&1 \
+  && ok "skip trace: hostile role string (quote + backslash) -> the row parses with jq -e" || no "skip trace: hostile role row does not parse"
+# arm-skipped.jsonl never matches the markers' *.json glob (prune / guard never see it)
+case "arm-skipped.jsonl" in *.json) no "skip trace: arm-skipped.jsonl matches the *.json marker glob" ;; *) ok "skip trace: arm-skipped.jsonl does not match the *.json marker glob" ;; esac
+# a successful arm leaves no skip trace
+[ ! -e "$ARM_D/.supervisor/guard/arm-skipped.jsonl" ] && ok "skip trace: a successful arm writes no skip row" || no "skip trace: a successful arm wrote a skip row"
+# hooks.json: the arm/disarm leaves keep || true, the two guard-test-integrity leaves carry none
+hj_arm="$(jq -r '.. | objects | select(has("command")) | .command | select(test("guard-arm\\.sh"))' "$HOOKS_JSON" 2>/dev/null)"
+hj_gti="$(jq -r '.. | objects | select(has("command")) | .command | select(test("guard-test-integrity\\.sh"))' "$HOOKS_JSON" 2>/dev/null)"
+if [ -n "$hj_arm" ] && [ "$(printf '%s\n' "$hj_arm" | grep -c '|| true')" = "$(printf '%s\n' "$hj_arm" | grep -c .)" ] \
+   && [ -n "$hj_gti" ] && [ "$(printf '%s\n' "$hj_gti" | grep -c '|| true')" = 0 ]; then
+  ok "hooks.json: every guard-arm.sh leaf keeps || true, no guard-test-integrity.sh leaf carries it"
+else
+  no "hooks.json: || true placement on the guard leaves changed"
+fi
+rm -rf "$SK1" "$SK1b" "$SK2" "$SK2b" "$SK3" "$SK3b" "$SK4" "$SK5" "$NOJQ_BIN" "$HM_T" "$HM_T2" "$HM_T3" "$HM_T4" "$HM_R" "$HM_R2" "$HM_R3" "$HM_R4" "$HM_SD" "$HM_SD4" 2>/dev/null || true
 
 CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" disarm-session <<<"$(jq -n '{session_id:"sess-arm-1"}')" >/dev/null 2>&1
 [ ! -e "$ARM_D/.supervisor/guard/sess-arm-1.json" ] && [ -e "$ARM_D/.supervisor/guard/sess-arm-2.json" ] && ok "disarm-session removes only the payload's own id" || no "disarm-session removes only the payload's own id"

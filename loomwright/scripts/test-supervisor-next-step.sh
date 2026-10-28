@@ -326,9 +326,10 @@ golden_case() {
 state_untouched() { cmp -s "$CASE_DIR/state.before" "$CASE_DIR/state.after"; }
 
 snapshot() { ( cd "$CASE_ROOT/.supervisor" && find . -type f | env LC_ALL=C sort | while IFS= read -r f; do cksum "$f"; done ); }
+SN_CALL_SEAMS=/dev/null   # the seam env file sn_call hands to in_case (a case may point it at its own)
 sn_call() { # <driver> <args…> — one call in the current case; sets NC_OUT NC_RC
   local drv="$1"; shift
-  NC_OUT="$(in_case /dev/null bash "$drv" --session-id "$CASE_SID" "$@" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
+  NC_OUT="$(in_case "$SN_CALL_SEAMS" bash "$drv" --session-id "$CASE_SID" "$@" 2>"$CASE_DIR/nc.err")"; NC_RC=$?
 }
 
 # --- the merge-surface list (AC9): the one committed copy is test-automate-next-step.sh's SURFACE_BASE
@@ -898,6 +899,50 @@ if b_fin finalize-pr-base-verified; then
   [ "$r1" = 2 ] && [ "$s0" = "$s1" ] && jqo '.do == "park" and .status == "checkpoint" and (.message | test("push denied"))' \
     && ok "B17: a non-PR URL exits 2, nothing written; a failed publish ⇒ the checkpoint park" || no "B17: publish answers wrong (rc $r1)"
 fi
+# B17b — the handover's test_guard (af/39c): armed (marker) · unarmed (<this session's skip row>) · unarmed
+# (INIT arm failure) · unarmed (marker_missing) · not_applicable (host mode, unsafe gate root). The stub guard
+# command never writes a marker, so the default hand-over reads marker_missing.
+tg_case() { # <label> <expected> [setup-fn] — a finalize scratch at the pr_url answer; sets TG_OUT
+  b_fin finalize-pr-base-verified || { no "B17b: $1 — scratch not built"; return 1; }
+  [ -z "${3:-}" ] || "$3"
+  sn_call "$DRIVER" --result '{"pr_url":"https://github.com/golden/repo/pull/12"}'
+  SN_CALL_SEAMS=/dev/null
+  if jqo --arg w "$2" '.do == "done" and .step == "handover" and .test_guard == $w'; then
+    ok "B17b: handover test_guard — $1 ⇒ $2"
+  else no "B17b: handover test_guard — $1: want '$2', got $(printf '%s' "$NC_OUT" | jq -r '.test_guard // "(none)"' 2>/dev/null)"; fi
+}
+tg_arm() { mkdir -p "$CASE_ROOT/.supervisor/guard" && printf '{"session_id":"%s","by":"test"}\n' "$CASE_SID" > "$CASE_ROOT/.supervisor/guard/$CASE_SID.json"; }
+tg_rows() {
+  # a skip row for ANOTHER session (later ts, must be ignored) and this session's older + newer rows
+  mkdir -p "$CASE_ROOT/.supervisor/logs"
+  {
+    printf '{"event":"guard_arm_skipped","reason":"no_guard_dir","session_id":"other-sid","cc_session_id":"other-sid","ts":"2099-01-01T00:00:00Z"}\n'
+    printf '{"event":"guard_arm_skipped","reason":"jq_missing","session_id":"%s","cc_session_id":"%s","ts":"2026-10-28T00:00:00Z"}\n' "$CASE_SID" "$CASE_SID"
+    printf 'not json at all\n'
+    printf '{"event":"guard_arm_skipped","reason":"marker_write_failed","session_id":"%s","cc_session_id":"%s","ts":"2026-10-28T00:00:05Z"}\n' "$CASE_SID" "$CASE_SID"
+  } >> "$CASE_ROOT/.supervisor/logs/$CASE_SID.jsonl"
+}
+tg_host_unsafe() {
+  local uid; uid="$(id -u 2>/dev/null || echo 0)"
+  mkdir -p "$CASE_DIR/tg-tmp/loomwright-host-$uid" && chmod 777 "$CASE_DIR/tg-tmp/loomwright-host-$uid"
+  printf '%s\n' 'LOOMWRIGHT_HOST_MODE=1' "TMPDIR=$CASE_DIR/tg-tmp" > "$CASE_DIR/tg-host.env"
+  SN_CALL_SEAMS="$CASE_DIR/tg-host.env"
+}
+tg_case "marker present" armed tg_arm
+tg_case "a skip row for this session (another session's row ignored; latest wins)" "unarmed (marker_write_failed)" tg_rows
+tg_case "no marker, no row" "unarmed (marker_missing)"
+printf '%s\n' 'SUPERVISOR_NEXT_STEP_GUARD_CMD=false' > "$WORK/tg-guard-fail.env"
+SN_CALL_SEAMS="$WORK/tg-guard-fail.env"
+if b_fin finalize-pr-base-verified; then
+  SN_CALL_SEAMS=/dev/null
+  sn_call "$DRIVER" --result '{"pr_url":"https://github.com/golden/repo/pull/12"}'
+  jqo '.do == "done" and .test_guard == "unarmed (exit 1)"' \
+    && ok "B17b: handover test_guard — INIT arm failed (no marker, no row) ⇒ unarmed (exit 1)" \
+    || no "B17b: INIT arm failure — got $(printf '%s' "$NC_OUT" | jq -r '.test_guard // "(none)"' 2>/dev/null)"
+else no "B17b: INIT-failure scratch not built"; fi
+SN_CALL_SEAMS=/dev/null
+tg_case "host mode, unsafe gate root" not_applicable tg_host_unsafe
+
 # B18 — step 4 asks git, not the .gitignore text (#615). Under `/setup memory`'s branch-mode managed block
 # (`.supervisor/*` + `!.supervisor/memory/`, no bare line) two real inits — the second a fresh session
 # re-entering through in-progress/ (a second --job in the same session only re-prints) — leave .gitignore
