@@ -1115,7 +1115,8 @@ pin. Recorded as unresolved rather than guessed; the guard below is correct
 either way, since it keys on byte-identity and not on a duplicate count.
 
 The guard is minimal and consecutive-only: skip the append when the line is
-byte-identical to the log's CURRENT last line. Duplicate blocks fire
+byte-identical to the log's CURRENT last line, or differs from it only in a `ts`
+within the window described above. Duplicate blocks fire
 back-to-back within one firing, so they are always adjacent. Byte-identity
 spans `ts`, `agent_id` and the transcript byte count together. That is
 **vanishingly unlikely to collide, not impossible**: `ts` is only

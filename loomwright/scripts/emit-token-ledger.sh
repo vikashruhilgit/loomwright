@@ -801,7 +801,8 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
 # asserted at the new fan-out by test-token-ledger.sh case 23 rather than assumed.
 #
 # The guard is minimal and consecutive-only: skip the append when the line is
-# byte-identical to the CURRENT last line of the log. Duplicate blocks fire
+# byte-identical to the CURRENT last line of the log, or differs from it only in a
+# `ts` within TS_WINDOW_S (the window at the append below). Duplicate blocks fire
 # back-to-back within one firing, so they are always adjacent. Byte-identity
 # includes ts, agent_id, and transcript byte count together — vanishingly
 # unlikely to collide, NOT impossible: ts is second-granularity, agent_id is
