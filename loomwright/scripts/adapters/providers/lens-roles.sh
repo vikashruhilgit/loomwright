@@ -60,8 +60,6 @@ lens_role_shape() {
       printf '%s\n' 'Reply with the classification as the JSON object your instructions above define, including its categories array.' ;;
     dreaming_analysis)
       printf '%s\n' 'Reply with the analysis in the numbered sections your instructions above define, including the Recurring Patterns section.' ;;
-    propose)
-      printf '%s\n' 'Reply with the candidate gaps your instructions above define, each carrying its domain-gap token line.' ;;
     capability_check)
       printf '%s\n' 'Reply with the CAPABILITY_REPORT your instructions above define (one entry per candidate, or the no-candidates statement).' ;;
     red_team)
