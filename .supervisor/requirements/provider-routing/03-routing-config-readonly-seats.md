@@ -26,6 +26,11 @@ the power to send my code to a vendor I did not approve.
   same result-block validation as the Claude path.
 - **Not routable:** the conductor (see 00-overview).
 - **Cost honesty (D11):** non-Claude usage is `cost: unknown`, never `0`; no "cheaper" claim without measured cost.
+- **Handed over from item 02 (owner override, Launch Pad Phase 6, 2026-10-27):** item 02 adds `provider-grok.sh` and
+  `provider-copilot.sh` but leaves `loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"Portability" ("Second example") listing
+  `` `claude`, `cursor`, `codex`, `gemini` as of this writing ``, to stay file-disjoint from item 01. This item replaces that
+  restated list with a pointer to the `provider-*.sh` files in `loomwright/scripts/adapters/providers/`. Acceptance
+  criterion: after this item, `git grep -nF 'gemini' -- loomwright/docs/ARCHITECTURE_CONTRACTS.md` finds no restated provider list.
 
 ## Open questions for the owner (answer before promoting)
 - Per-seat model suffixes (`grok:grok-4.7`) or provider only?
@@ -37,4 +42,4 @@ the power to send my code to a vendor I did not approve.
 02-providers-probe.md
 
 ## Touches
-unknown
+unknown (beyond this, at least: loomwright/docs/ARCHITECTURE_CONTRACTS.md — the provider-list pointer handed over from item 02)
