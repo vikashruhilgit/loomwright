@@ -53,6 +53,17 @@
 #                                     same precedence send-webhook.sh has always used)
 #                                     webhook_url field. NEVER fed into WEBHOOK_URL
 #                                     above.
+#   PROVIDER_GRANTS                - comma-joined provider names the USER granted this
+#                                     repo (repos.<slug>.providers), each filtered to
+#                                     [A-Za-z0-9_-]+. User-scope ONLY — the consent
+#                                     `lens-run.sh` and `resolve-routing.sh` check before
+#                                     a non-Claude provider CLI is started. `claude` never
+#                                     needs a grant. Empty on an unreadable / malformed file.
+#   REPO_REQUESTED_PROVIDERS       - informational only, from .supervisor/config.json
+#                                     (`routing.seats` values + `.voter_provider`): the
+#                                     non-Claude providers the repo ASKS to route to.
+#                                     NEVER fed into PROVIDER_GRANTS above; nothing grants
+#                                     from it.
 #
 # User-scope schema (~/.claude/loomwright/egress.json):
 #   {
@@ -62,7 +73,8 @@
 #         "telemetry": "always_allow" | "no",
 #         "telemetry_repo": "<owner>/<repo>",
 #         "webhook_url": "https://...",
-#         "webhook_url_sha256": "<hex>"
+#         "webhook_url_sha256": "<hex>",
+#         "providers": ["<provider>", ...]
 #       }
 #     }
 #   }
@@ -82,6 +94,8 @@ WEBHOOK_URL_SHA256=""
 INCLUDE_RESULT_BLOCK=""
 REPO_REQUESTED_TELEMETRY_REPO=""
 REPO_REQUESTED_WEBHOOK_URL=""
+PROVIDER_GRANTS=""
+REPO_REQUESTED_PROVIDERS=""
 
 sha256_hex() {
   local s="${1:-}"
@@ -143,6 +157,12 @@ if [ -n "$REPO_SLUG" ] && [ -n "${HOME:-}" ] && [ -r "$USER_SCOPE_FILE" ] && com
     INCLUDE_RESULT_BLOCK="$(jq -r --arg s "$REPO_SLUG" \
       '(.repos[$s].include_result_block // false) | if type == "boolean" and . then "true" else "" end' \
       "$USER_SCOPE_FILE" 2>/dev/null || true)"
+    # Provider grants: an array of names; a non-array, or a name failing the
+    # allowlist (\A..\z, not ^..$ — Oniguruma's $ also matches before an embedded
+    # newline), is dropped, never passed through.
+    PROVIDER_GRANTS="$(jq -r --arg s "$REPO_SLUG" \
+      '(.repos[$s].providers // []) | if type == "array" then [.[] | select(type == "string" and test("\\A[A-Za-z0-9_-]+\\z"))] | join(",") else "" end' \
+      "$USER_SCOPE_FILE" 2>/dev/null || true)"
   fi
 fi
 # Any jq failure above leaves the three vars at their initial "" default.
@@ -194,6 +214,7 @@ TELEMETRY="$(strip_if_newline "$TELEMETRY")"
 TELEMETRY_REPO="$(strip_if_newline "$TELEMETRY_REPO")"
 WEBHOOK_URL="$(strip_if_newline "$WEBHOOK_URL")"
 INCLUDE_RESULT_BLOCK="$(strip_if_newline "$INCLUDE_RESULT_BLOCK")"
+PROVIDER_GRANTS="$(strip_if_newline "$PROVIDER_GRANTS")"
 
 if [ -n "$WEBHOOK_URL" ]; then
   WEBHOOK_URL_SHA256="$(sha256_hex "$WEBHOOK_URL")"
@@ -223,12 +244,24 @@ for _cfg in "${PWD}/.supervisor/config.json" "${PWD}/.supervisor/notify-config.j
   fi
 done
 
+# Providers the repo asks to route to — informational only, never assigned to
+# PROVIDER_GRANTS. Names are filtered to the same allowlist and `claude` (which
+# needs no grant) is omitted.
+if [ -r "${PWD}/.supervisor/config.json" ] && command -v jq >/dev/null 2>&1; then
+  REPO_REQUESTED_PROVIDERS="$(jq -r \
+    '[ ((.routing.seats // {}) | to_entries[]? | .value | (if type == "array" then .[] else . end) | select(type == "string") | split(":")[0]),
+       ((.voter_provider // "") | select(type == "string" and . != "") | split(":")[0]) ]
+     | map(select(test("\\A[A-Za-z0-9_-]+\\z") and . != "claude")) | unique | join(",")' \
+    "${PWD}/.supervisor/config.json" 2>/dev/null || true)"
+fi
+
 # Same newline-injection defense as above, applied to the informational
 # REPO_REQUESTED_* fields — these are the attacker's actual entry point
 # (a repo-relative file this script's own header says is untrusted), so this
 # is the sanitization that closes the live-reproduced vulnerability.
 REPO_REQUESTED_TELEMETRY_REPO="$(strip_if_newline "$REPO_REQUESTED_TELEMETRY_REPO")"
 REPO_REQUESTED_WEBHOOK_URL="$(strip_if_newline "$REPO_REQUESTED_WEBHOOK_URL")"
+REPO_REQUESTED_PROVIDERS="$(strip_if_newline "$REPO_REQUESTED_PROVIDERS")"
 
 printf 'REPO_SLUG=%s\n' "$REPO_SLUG"
 printf 'TELEMETRY=%s\n' "$TELEMETRY"
@@ -238,5 +271,7 @@ printf 'WEBHOOK_URL_SHA256=%s\n' "$WEBHOOK_URL_SHA256"
 printf 'INCLUDE_RESULT_BLOCK=%s\n' "$INCLUDE_RESULT_BLOCK"
 printf 'REPO_REQUESTED_TELEMETRY_REPO=%s\n' "$REPO_REQUESTED_TELEMETRY_REPO"
 printf 'REPO_REQUESTED_WEBHOOK_URL=%s\n' "$REPO_REQUESTED_WEBHOOK_URL"
+printf 'PROVIDER_GRANTS=%s\n' "$PROVIDER_GRANTS"
+printf 'REPO_REQUESTED_PROVIDERS=%s\n' "$REPO_REQUESTED_PROVIDERS"
 
 exit 0

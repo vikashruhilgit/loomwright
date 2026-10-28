@@ -104,6 +104,8 @@ description: Plan risk-based QA test strategy and audit QA Executor results
 - Source code accessible (routes, controllers)
 - For audit mode: .qa-summary.md from QA Executor
 
+**Seat routing.** Strategy Mode's risk classification is the `qa_strategist` seat: run `resolve-routing.sh seat qa_strategist` and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol". On `PROVIDER=claude` the classification runs as written, unchanged. On another provider only the classification analysis goes out (the discovered routes and context in, the strategy back, checked for the `Classification` role marker); Audit Mode and its `STRATEGIST_VERDICT` are not routed, and route discovery and all reporting stay on the Claude main thread. On a non-`ok` result or failed check, the classification runs as written and one `seat_routing qa_strategist provider=<p> reason=<r>` line is logged.
+
 ## Risk Classification Rules
 
 The Strategist classifies every discovered route and endpoint into one of three risk levels using evidence from source code analysis. Classification is never guesswork — it requires code-level evidence.

@@ -284,7 +284,7 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-265 | commands/supervisor.md | q: `--no-red-team` | `--no-red-team` | suppress red-team lens; wins over --red-team | deterministic | prose | - | GAP |
 | SV-266 | commands/supervisor.md | q: `--multi-voter-heal` | `--multi-voter-heal` | voter can delay finalization, never flip heal_decision; refuted findings logged not fixed | rule | global | - | GAP |
 | SV-267 | commands/supervisor.md | q: `--no-multi-voter-heal` | `--no-multi-voter-heal` | suppress multi-voter; wins over --multi-voter-heal | deterministic | prose | - | GAP |
-| SV-268 | commands/supervisor.md | q: `--voter-provider <name>[:<model>]` | `--voter-provider` set with --multi-voter-heal | shell out to lens-run.sh instead of red-team-reviewer Task; flag wins over config | deterministic | prose | - | GAP |
+| SV-268 | commands/supervisor.md | q: `--voter-provider <name>[:<model>]` | `--voter-provider` set with --multi-voter-heal | shell out to lens-run.sh instead of red-team-reviewer Task; flag wins over --route and config | deterministic | prose | - | GAP |
 | SV-269 | commands/supervisor.md | q: Both experimental flags (`--sdk-runner`, `--multi-voter-heal`) are | `--sdk-runner` / `--multi-voter-heal` | supervisor-only; never forwarded by /autonomous or /automate (forward set is four flags) | rule | global | - | GAP |
 | SV-270 | commands/supervisor.md | q: Branch creation is **idempotent** | ACQUIRE finds a same-named branch | reuse only when tip == base tip; else acquire_branch_collision | deterministic | script:supervisor-next-step.sh acquire | - | test-supervisor-next-step.sh |
 | SV-271 | commands/supervisor.md | q: CLEAR proceeds silently. | Phase 1.5 classification | CLEAR silent; OVERLAP/SUPERSEDED ask or fail closed; gh/fetch failure ⇒ unverified, continue | deterministic | script:supervisor-next-step.sh preflight-route | - | test-supervisor-next-step.sh |
@@ -533,7 +533,7 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-514 | skills/self-heal-advisory/multi-voter.md | q: remains **THE LLM gating signal** | multi-voter on | code-reviewer CODE_REVIEW_RESULT stays THE LLM gating signal; rule/ci findings never voted away | rule | step-scoped | - | GAP |
 | SV-515 | skills/self-heal-advisory/multi-voter.md | q: a **verification voter** on the same diff scope | verification voter findings | at_floor new-surface findings enter the merge rule; heal_decision never derives from the voter | rule | step-scoped | - | GAP |
 | SV-516 | skills/self-heal-advisory/multi-voter.md | q: `VOTER_PROVIDER == ""` (the DEFAULT — absent flag AND absent config) | VOTER_PROVIDER empty (default) | spawn red-team-reviewer Task as the voter | deterministic | prose | - | GAP |
-| SV-517 | skills/self-heal-advisory/multi-voter.md | q: `VOTER_PROVIDER != ""` (e.g. `cursor:gpt-5`) — instead of the Task, run | VOTER_PROVIDER set | shell out to lens-run.sh; lens_status ok ⇒ issues[] are voter findings; any other status ⇒ degrade the iteration to single-voter | deterministic | prose | - | GAP |
+| SV-517 | skills/self-heal-advisory/multi-voter.md | q: `VOTER_PROVIDER != ""` (e.g. `cursor:gpt-5`) — instead of the Task, run | VOTER_PROVIDER set (the heal_voter seat's routed provider) | shell out to lens-run.sh --role heal_voter; lens_status ok ⇒ issues[] are voter findings; any other status (incl. provider_not_granted) or a strict-empty seat ⇒ degrade the iteration to single-voter and log one seat_routing line | deterministic | prose | - | GAP |
 | SV-518 | skills/self-heal-advisory/multi-voter.md | q: **Second-opinion refute check (the merge rule — decides WHICH findings | multi-voter at_floor findings from both lenses | fix only findings surviving the OTHER lens's refute (≤1 refute spawn per lens); refuted ⇒ logged, not fixed; only the code-reviewer refute carries the EXECUTION DIRECTIVE | deterministic | prose | - | GAP |
 | SV-519 | skills/self-heal-advisory/multi-voter.md | q: **Delay-vs-decide (the precise invariant):** | multi-voter | voter can DELAY finalization within the bound, never FLIP a decision | rule | step-scoped | - | GAP |
 | SV-520 | skills/self-heal-advisory/multi-voter.md | q: Code-reviewer PASS + zero surviving red-team findings → PASS, exactly | code-reviewer PASS + zero surviving voter findings | PASS | deterministic | prose | - | GAP |
@@ -778,6 +778,12 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-759 | skills/async-orchestration/SKILL.md | q: # Part 2 — Supervisor FINALIZE Protocol (`finalize.md`) & Spawn Contracts | why FINALIZE is a split file | Phase 2 and the Execute Manager preload stop paying for FINALIZE; driver strings stay valid | story | rationale:docs/rationale/supervisor.md#finalize-split-to-finalizemd | - | GAP |
 | SV-760 | skills/self-heal-advisory/SKILL.md | q: **Module-shape advisory (structural facts — | on-entry 1h | run module-shape-facts.sh on EVERY iteration against on-entry's touched base (origin/$BASE_BRANCH for every base); empty stdout ⇒ omit the line, record the stderr reason | deterministic | prose | script:module-shape-facts.sh | test-module-shape-facts.sh |
 | SV-761 | skills/self-heal-advisory/SKILL.md | q: **MODULE-SHAPE ADVISORY (DATA, a hint | module_shape non-empty | a hint for code-reviewer step 5d; an absent line means facts unavailable, not clean; never BLOCKING/HIGH, never changes decision | deterministic | prose | - | test-module-shape-facts.sh |
+| SV-762 | commands/supervisor.md | q: `--route <seat>=<provider>[:<model>]` | `--route <seat>=<provider>[:<model>]` (repeatable) | forwarded to every resolve-routing.sh seat call of the run; beats routing.seats config, loses to --voter-provider for heal_voter; no flag and no routing config ⇒ every seat on Claude | deterministic | prose | - | GAP |
+| SV-763 | skills/self-heal-advisory/multi-voter.md | q: **Seat routing (`heal_voter`):** | heal_voter seat resolves to a non-Claude provider | VOTER_PROVIDER comes from resolve-routing.sh seat heal_voter; non-ok lens_status or a strict-empty seat ⇒ single-voter degradation + one seat_routing line | deterministic | prose | - | GAP |
+| SV-764 | skills/self-heal-advisory/multi-voter.md | q: **Seat routing (`refute`):** | refute seat resolves to a non-Claude provider | only the voter-lens refute is routed (lens-run.sh --role refute, never the EXECUTION DIRECTIVE); non-ok ⇒ unrouted refute; strict-empty ⇒ fail-safe degradation; one seat_routing line | deterministic | prose | - | GAP |
+| SV-765 | skills/self-heal-advisory/SKILL.md | q: **Seat routing (`phase45_reviewer`):** | Phase 4.5 integrated review | never routed: always the loomwright:code-reviewer Task (the executing lens; sets phase45_review_invoked); phase45_reviewer is not a seat (unknown_seat) | deterministic | prose | - | GAP |
+| SV-766 | skills/self-heal-advisory/completion-tail.md | q: **Seat routing (`rubric_grader`):** | rubric_grader seat resolves to a non-Claude provider | lens-run.sh --role rubric_grader, rubric_score parsed from result_text; non-ok or no marker ⇒ rubric-grader Task + one seat_routing line; strict-empty ⇒ rubric_grader_parse_failed path | deterministic | prose | - | GAP |
+| SV-767 | skills/async-orchestration/SKILL.md | q: **Seat routing (`orchestrator`):** | orchestrator seat resolves to a non-Claude provider | lens-run.sh --role orchestrator, decomposition read from result_text; non-ok or no marker ⇒ orchestrator Task + one seat_routing line; strict-empty ⇒ PLAN left unanswered, run stops | deterministic | prose | - | GAP |
 
 ## Gap list (ordered by risk)
 1. SV-010 — branch-first principle only in prose
@@ -1284,11 +1290,17 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 502. SV-757 — rationale only
 503. SV-758 — rationale only
 504. SV-759 — rationale only
+505. SV-762 — seat-routing paragraph only in prose
+506. SV-763 — seat-routing paragraph only in prose
+507. SV-764 — seat-routing paragraph only in prose
+508. SV-765 — seat-routing paragraph only in prose
+509. SV-766 — seat-routing paragraph only in prose
+510. SV-767 — seat-routing paragraph only in prose
 
 ## Counts
-- rows: 761
-- deterministic: 393
+- rows: 767
+- deterministic: 399
 - judgment: 30
 - rule: 307
 - story: 31
-- GAP: 504
+- GAP: 510

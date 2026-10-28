@@ -368,6 +368,8 @@ Task(
 )
 ```
 
+**Seat routing (`orchestrator`):** before the orchestrator Task above, run `resolve-routing.sh seat orchestrator` (from the install root's `scripts/`, forwarding every `ROUTE_FLAGS` entry) and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol" (no restated procedure). `PROVIDER=claude` (the default) spawns the Task above, unchanged. Another provider runs `lens-run.sh --role orchestrator` with the same prompt and an empty diff file; its `result_text` (the role marker is the only check; no validator exists) is the decomposition, read into the same `{"subtasks": [{"id", "title"}, …]}` answer the Task output would give; the Supervisor — not the provider — writes every file and state entry that follows from it. A non-`ok` `lens_status` or a missing marker runs the Task above and logs one `seat_routing orchestrator provider=<p> reason=<r>` line (also via `record_decision`); an EMPTY `PROVIDER` (`strict`) leaves the PLAN step unanswered and stops the run with the reason shown to the user, never a silent Claude decomposition.
+
 **Execute Manager:**
 ```
 Task(

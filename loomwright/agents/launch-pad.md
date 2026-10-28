@@ -533,6 +533,8 @@ Subtask 2 (independent)
    - **FAIL (attempt = 3):** Present all unresolved issues to user. Offer (`LP-FAIL`): "Refine offline" (exit, `status: blocked` — fix and start a new session) or "Discard". Do NOT save; the 3-spawn cap is never reset within a session.
    - **NEEDS_HUMAN:** Proceed to Phase 6, which branches on WHY: a Criterion 14 `executable_acceptance` escalation goes through action 2a (`LP-EXEC-ACC`: `approve-and-stamp` / `strip-cmd-bullets` / `discard`, interactive; auto-strip, non-interactive); a Criterion 17c house-rule conflict goes through action 2b (`LP-RULE-OVR`: `record-override` / `honor-rule` / `discard`; `rule_conflict_non_interactive` when it cannot ask); any other reason uses the generic `LP-NEEDHUMAN` "Override and save" / "Refine further" / "Discard" prompt (or aborts `needs_human_non_interactive` when non-interactive)
 
+**Seat routing (`plan_reviewer`).** Before each Plan Reviewer spawn, run `resolve-routing.sh seat plan_reviewer` (from the install root's `scripts/`) and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol", which owns the procedure: `PROVIDER=claude` runs the spawn contract below unchanged; any other provider runs `lens-run.sh --role plan_reviewer` and validates `result_text` with `validate-plan-review-result.py --raw`; a non-`ok` `lens_status` or a failed validation runs the Task spawn instead and logs `seat_routing plan_reviewer provider=<p> reason=<r>`. The routed prompt is the spawn contract's prompt (the brief rides in it) and the diff file is empty. A `strict` seat with an empty `PROVIDER` runs no reviewer and takes the generic NEEDS_HUMAN branch below, never a PASS. Everything after the parsed `PLAN_REVIEW_RESULT` is unchanged.
+
 **Retry loop:**
 
 ```

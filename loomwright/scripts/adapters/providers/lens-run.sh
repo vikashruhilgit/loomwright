@@ -20,11 +20,16 @@
 #                file, never editing this one. Optionally
 #                suffixed `:<model>` (e.g. `cursor:gpt-5`). NAME is allowlisted
 #                to `[A-Za-z0-9_-]` before it is spliced into a sourced path.
-#   --role       REQUIRED. Free-form string folded into the composed prompt
-#                header (e.g. "review"). Not branched on here — a caller-owned
-#                convention, kept generic for future roles (e.g. a future
-#                "refute" role used by the multi-voter refute check — see
-#                skills/self-heal-advisory/multi-voter.md §"Multi-voter verification").
+#   --role       REQUIRED. A role registered in lens-roles.sh: `review` (the
+#                generic review lens) or a seat id printed by
+#                `scripts/resolve-routing.sh seats` (this header does not restate
+#                that list). A role selects the OUTPUT CONTRACT folded into the
+#                composed prompt and how the answer is read: an `issues` role
+#                (`review`, and the seats whose marker column is `-`) returns the
+#                normalized `issues[]`; a `text` role returns `result_text`, and
+#                is `ok` only when that text contains the role's registered marker.
+#                An unregistered role is `lens_unparseable` ("unknown role"),
+#                no CLI started. See lens-roles.sh.
 #   --diff       REQUIRED. Path to a file containing the diff text to review.
 #   --prompt     REQUIRED. Path to a file containing the review instructions
 #                (caller-authored; folded verbatim into the composed prompt).
@@ -45,16 +50,21 @@
 # OUTPUT SHAPE (written to --out; NOT the full CODE_REVIEW_RESULT envelope —
 # only the `issues[]` field shape is shared, per the AC's own scoping):
 #   {
-#     "lens_status": "ok" | "provider_unavailable" | "lens_mutated_tree" | "lens_unparseable",
+#     "lens_status": "ok" | "provider_unavailable" | "provider_not_granted" | "lens_mutated_tree" | "lens_unparseable",
 #     "provider": "<name>", "model": "<model>" | null,
 #     "issues": [ {severity, category, file, line, description, suggestion}, ... ],
+#                          # always [] for a `text` role
+#     "result_text": "<the provider's final text>",   # a `text` role, status ok
+#                          # only; byte-bounded (LENS_RESULT_TEXT_MAX in
+#                          # lens-roles.sh) — over the bound is lens_unparseable,
+#                          # never a truncated "ok"
 #     "cost": "unknown",   # D11 cost-honesty: provider usage is not in
 #                          # token_ledger and no CLI here reports usage in a
 #                          # confirmed shape — "unknown", NEVER "0".
 #     "notes": "<optional short string>"   # present only on non-"ok" statuses
 #   }
 #
-# DEGRADATION (four outcomes, ALL exit 0, ALL treated identically by the
+# DEGRADATION (five outcomes, ALL exit 0, ALL treated identically by the
 # calling multi-voter loop — "voter errored/timed out", the EXISTING fail-safe
 # degradation skills/self-heal-advisory/SKILL.md already specifies):
 #   provider_unavailable  — the provider's CLI is not on PATH, the --provider
@@ -62,6 +72,15 @@
 #                            exists. Checked BEFORE any other work (cheapest
 #                            gate first, mirrors orca-mirror.sh) — NO
 #                            subprocess is attempted.
+#   provider_not_granted  — the provider is not `claude` and the invoking repo's
+#                            user-scope grant (resolve-egress-config.sh
+#                            PROVIDER_GRANTS) does not name it. Checked after the
+#                            provider-table lookup, the CLI availability check
+#                            and the role lookup, BEFORE any sandbox work: no
+#                            sandbox is created, no provider CLI is started, and
+#                            nothing is sent. There is NO flag or environment
+#                            bypass — one would be a consent bypass. An
+#                            unreadable grant source reads as "no grant".
 #   lens_mutated_tree      — after the CLI ran, the sandbox working tree was
 #                            dirty (`git status --porcelain` non-empty) OR
 #                            security-relevant `.git` state changed (remotes,
@@ -219,14 +238,29 @@ json_escape() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
-# emit_result <lens_status> <issues_json_array> [notes] — writes --out and
-# exits 0. `issues_json` must already be a valid JSON array string when
+# emit_result <lens_status> <issues_json_array> [notes] [result_text] — writes
+# --out and exits 0. `issues_json` must already be a valid JSON array string when
 # HAVE_JQ=1; the HAVE_JQ=0 fallback never receives a non-"[]" issues array
 # (see the jq-unavailable short-circuit below), so no fallback parsing of it
-# is needed.
+# is needed. A non-empty `result_text` (a `text` role, status ok) is passed to jq
+# on stdin via --rawfile, never as an argv string: it can be far larger than one
+# argument is allowed to be.
 emit_result() {
-  local status="$1" issues_json="$2" notes="${3:-}"
-  if [ "$HAVE_JQ" = "1" ]; then
+  local status="$1" issues_json="$2" notes="${3:-}" result_text="${4:-}"
+  if [ "$HAVE_JQ" = "1" ] && [ -n "$result_text" ]; then
+    printf '%s' "$result_text" | "$JQ" -n \
+      --arg status "$status" \
+      --arg provider "$NAME" \
+      --arg model "$MODEL" \
+      --argjson issues "$issues_json" \
+      --arg notes "$notes" \
+      --rawfile result_text /dev/stdin \
+      '{lens_status: $status, provider: $provider,
+        model: (if $model == "" then null else $model end),
+        issues: $issues, result_text: $result_text, cost: "unknown"} +
+       (if $notes == "" then {} else {notes: $notes} end)' \
+      >"$OUT_FILE" 2>/dev/null
+  elif [ "$HAVE_JQ" = "1" ]; then
     "$JQ" -n \
       --arg status "$status" \
       --arg provider "$NAME" \
@@ -267,6 +301,34 @@ fi
 . "$PROVIDER_FILE"
 
 command -v "$PROVIDER_CLI_NAME" >/dev/null 2>&1 || emit_result "provider_unavailable" "[]" ""
+
+# ---- role registry (string checks only; no sandbox, no provider CLI) -----------
+# The note never echoes the role: it is a caller-supplied string and the jq-less
+# fallback writer only escapes quotes and backslashes.
+ROLES_FILE="$SCRIPT_DIR/lens-roles.sh"
+[ -r "$ROLES_FILE" ] || emit_result "lens_unparseable" "[]" "lens-roles.sh is missing - no role can be resolved"
+# shellcheck disable=SC1090
+. "$ROLES_FILE"
+lens_role_lookup "$ROLE" || emit_result "lens_unparseable" "[]" "unknown role (not registered in lens-roles.sh)"
+
+# ---- consent: a non-claude provider runs only with a user-scope grant ----------
+# Read from resolve-egress-config.sh, the one reader of the user-scope file, in the
+# invoking checkout (it keys the grant by that repo's slug). This sits BEFORE every
+# sandbox step on purpose: an ungranted provider gets no clone and no process, and
+# nothing of the diff or prompt leaves the machine. No flag or env var skips it.
+# A missing / unreadable resolver or a value outside the name allowlist is "no grant".
+if [ "$NAME" != "claude" ]; then
+  EGRESS_RESOLVER="$SCRIPT_DIR/../../resolve-egress-config.sh"
+  LENS_GRANTS=""
+  if [ -r "$EGRESS_RESOLVER" ]; then
+    LENS_GRANTS="$(bash "$EGRESS_RESOLVER" 2>/dev/null | sed -n 's/^PROVIDER_GRANTS=//p' | head -n 1)"
+  fi
+  case "$LENS_GRANTS" in *[!A-Za-z0-9_,-]*) LENS_GRANTS="" ;; esac
+  case ",$LENS_GRANTS," in
+    *",$NAME,"*) ;;
+    *) emit_result "provider_not_granted" "[]" "no user-scope grant for this provider in this repo; nothing was sent" ;;
+  esac
+fi
 
 [ -r "$DIFF_FILE" ] || emit_result "lens_unparseable" "[]" "--diff file not readable: $DIFF_FILE"
 [ -r "$PROMPT_FILE" ] || emit_result "lens_unparseable" "[]" "--prompt file not readable: $PROMPT_FILE"
@@ -431,8 +493,7 @@ PROMPT_CONTENT="$(
   printf '\n\n--- DIFF ---\n'
   cat "$DIFF_FILE"
   printf '\n\n--- OUTPUT CONTRACT ---\n'
-  printf 'Respond with ONLY a single JSON object, no prose outside it, matching exactly:\n'
-  printf '{"issues": [{"severity": "BLOCKING|HIGH|MEDIUM|LOW", "category": "new|pre_existing|nit", "file": "<path>", "line": <integer or null>, "description": "<string>", "suggestion": "<string or null>"}]}\n'
+  lens_role_contract "$ROLE"
 )"
 
 WORKSPACE_DIR="$WT_PATH"
@@ -547,6 +608,20 @@ fi
 
 if ! provider_extract_text "$RAW_OUT"; then
   emit_result "lens_unparseable" "[]" "provider output did not match the expected envelope shape"
+fi
+
+if [ "$LENS_ROLE_KIND" = "text" ]; then
+  RESULT_BYTES="$(printf '%s' "$PROVIDER_EXTRACTED" | env LC_ALL=C wc -c | tr -d ' ')"
+  case "$RESULT_BYTES" in
+    ""|*[!0-9]*) emit_result "lens_unparseable" "[]" "could not measure the provider text" ;;
+  esac
+  if [ "$RESULT_BYTES" -gt "$LENS_RESULT_TEXT_MAX" ]; then
+    emit_result "lens_unparseable" "[]" "provider text exceeds the ${LENS_RESULT_TEXT_MAX}-byte result_text bound; result discarded"
+  fi
+  case "$PROVIDER_EXTRACTED" in
+    *"$LENS_ROLE_MARKER"*) emit_result "ok" "[]" "" "$PROVIDER_EXTRACTED" ;;
+    *) emit_result "lens_unparseable" "[]" "provider text did not contain the role marker" ;;
+  esac
 fi
 
 NORMALIZED="$(printf '%s' "$PROVIDER_EXTRACTED" | "$JQ" -c '
