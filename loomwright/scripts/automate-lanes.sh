@@ -10,8 +10,11 @@
 # "Single-lane mode").
 #
 # Usage (standalone: `bash automate-lanes.sh <subcmd> ...`):
-#   lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]
+#   lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T] [--cheap]
 #        clone + origin-before-fetch + meta pull + carried configs + lane.json + one-line backlog + relay hooks.
+#        --cheap (the coordinator's own --cheap) writes `"cheap": true` into lane.json (absent otherwise):
+#        every `/loomwright:automate` command lane-launch sends the lane — launch and --resume-run — then
+#        carries --cheap, and the in-lane automate-next-step.sh reads it too, so a resume keeps the profile.
 #        n is the lane's identity across the WHOLE run (every wave, re-run lanes included), not the
 #        parallel count: every caller takes n in 1..99 and a number already in the lane table (live,
 #        removed or abandoned) is refused (`refused — lane L<n> already used in this run`), nothing

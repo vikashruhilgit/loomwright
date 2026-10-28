@@ -107,6 +107,35 @@ hasnt "Z-F4i … the fallback carries no --resume" "$(grep '^ARGS' "$STUB_LOG" |
 check "Z-F4j … and tells the lane it is on the fresh path" "$(grep '^RESUMEPATH' "$STUB_LOG" | tail -1)" "RESUMEPATH fresh session (last session sess-123 not resumable)"
 has "Z-F4k a normal launch carries an empty resume path" "$(grep '^RESUMEPATH' "$STUB_LOG" | head -1)" "RESUMEPATH "
 
+# Z-CH the coordinator's --cheap reaches the lane and survives every respawn: lane-create --cheap records
+# `"cheap": true` in lane.json (absent without it), and lane-launch adds --cheap to every /loomwright:automate
+# command it sends — launch, --resume-run in the last session, and the fresh-session fallback
+PARENTC=automate-2026-10-08-110000; RFC="$P/.supervisor/automate/$PARENTC.md"; LRC="$T/work/primary-lanes/$PARENTC"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENTC" > "$RFC"
+out="$(run lane-create "$RFC" reqs/a.md 1 --parallel 2 --cheap)"; LC1="$LRC/L1"
+check "Z-CHa lane-create --cheap records cheap in lane.json" "$(jq -c '.cheap' "$LC1/.supervisor/lane.json")" true
+has "Z-CHb … and says so" "$out" "cheap=on"
+run lane-create "$RFC" reqs/b.md 2 --parallel 2 >/dev/null; LC2="$LRC/L2"
+check "Z-CHc without --cheap lane.json has no cheap key" "$(jq -c 'has("cheap")' "$LC2/.supervisor/lane.json")" false
+STUB_MODE=die LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC1" --owner-command "$OWN" >/dev/null; wait_gone "$LC1"
+check "Z-CHd the launch command carries --cheap" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "STDIN {\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"/loomwright:automate --backlog $LC1/.supervisor/lane-backlog.md --cheap\"}}"
+STUB_MODE=die LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC2" --owner-command "$OWN" >/dev/null; wait_gone "$LC2"
+hasnt "Z-CHe a lane created without --cheap launches without it" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "--cheap"
+printf '# Automate Run: %s-L1\n\n## Progress\n- picked reqs/a.md\n' "$PARENTC" > "$LC1/.supervisor/automate/$PARENTC-L1.md"
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC1" --owner-command "/automate --resume $PARENTC" --resume-run "$PARENTC-L1" >/dev/null; wait_gone "$LC1"
+has "Z-CHf --resume-run resumes the last session …" "$(grep '^ARGS' "$STUB_LOG" | tail -1)" "[--resume] [sess-123]"
+has "Z-CHg … with --cheap on the resume command (no coordinator re-pass)" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "/loomwright:automate --resume $PARENTC-L1 --cheap"
+STUB_RESUME_FAIL=1 LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC1" --owner-command "/automate --resume $PARENTC" --resume-run "$PARENTC-L1" >/dev/null; wait_gone "$LC1"
+hasnt "Z-CHh the fresh-session fallback …" "$(grep '^ARGS' "$STUB_LOG" | tail -1)" "[--resume]"
+has "Z-CHi … keeps --cheap too" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "/loomwright:automate --resume $PARENTC-L1 --cheap"
+printf '# Automate Run: %s-L2\n\n## Progress\n- picked reqs/b.md\n' "$PARENTC" > "$LC2/.supervisor/automate/$PARENTC-L2.md"
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC2" --owner-command "/automate --resume $PARENTC" --resume-run "$PARENTC-L2" >/dev/null; wait_gone "$LC2"
+hasnt "Z-CHj a lane without cheap resumes without --cheap" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "--cheap"
+# --continue sends no new command: the lane's session already holds its launch command (Z-CHd), and the
+# in-lane driver reads lane.json itself (test-automate-next-step.sh)
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LC1" --owner-command "/automate --resume $PARENTC" --continue >/dev/null; wait_gone "$LC1"
+has "Z-CHk --continue sends only the fixed continue message" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "continue where you left off"
+
 # Z-F2 a HELD answer is kept coordinator-side (validated answers + note + via, never an owner command),
 # shown as answer_pending, and delivered ONLY by the delivery form under a current-session owner command
 zq() { # <lane_dir> <tool_use_id> <session> — a recorded question the lane parked on (deferred)

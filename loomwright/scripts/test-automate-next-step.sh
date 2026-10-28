@@ -1989,6 +1989,27 @@ leg_inline_checkpoint() {
   done
   return 0
 }
+# leg_lane_cheap <driver> — inside a lane, `.supervisor/lane.json` `"cheap": true` (lane-create --cheap) sets --cheap
+# though the call names none: the RUN spawn carries it. A lane.json without the key, and a checkout with no
+# lane.json at all (the sequential run), get none — there --cheap stays passthrough-only
+leg_lane_cheap() {
+  local drv="$1" c it want
+  for c in cheap nokey nolane; do
+    new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="scratch"; return 1; }
+    it="$(sed -n 's/^- item: \([^ ]*\) .*/\1/p' "$CASE_RF" | head -n 1)"
+    case "$c" in
+      cheap) printf '{"schema_version":1,"lane":"L1","cheap":true}\n' > "$CASE_ROOT/.supervisor/lane.json"
+        want="/autonomous --single-iteration --requirement $it --cheap" ;;
+      nokey) printf '{"schema_version":1,"lane":"L1"}\n' > "$CASE_ROOT/.supervisor/lane.json"
+        want="/autonomous --single-iteration --requirement $it" ;;
+      nolane) want="/autonomous --single-iteration --requirement $it" ;;
+    esac
+    f_call "$drv" --inline-phases --start run --session-id coord-1
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e --arg i "$want" '.do == "spawn" and .step == "run" and .invocation == $i' >/dev/null 2>&1 \
+      || { LEG_MSG="$c ⇒ exit $NC_RC '${NC_OUT:0:300}' ${NC_ERR:0:200}"; return 1; }
+  done
+  return 0
+}
 # leg_fresh_owner_session <driver> — review fixes (iterations 1 + 2): --owner-command is the launch authority of the
 # session that typed it, and a pending fresh spawn's `launch` line is REBUILT from the re-printing call's identity.
 # coord-1's own re-print stays byte for byte (its owner command, --coordinator-session coord-1). Re-printed with
@@ -2667,6 +2688,8 @@ if leg_fresh_checkpoint "$DRIVER"; then ok "F4 (wave 7, L23): a re-pick (--start
 else no "F4: $LEG_MSG"; fi
 if leg_inline_checkpoint "$DRIVER"; then ok "F4i (--inline-phases): an inline checkpoint RUN report (supervisor_checkpoint, its SUPERVISOR_RESULT's task_id) writes the no-PR line with --continue task: <id>; the re-pick / --start run with the brief in .supervisor/jobs/in-progress/ ⇒ the inline /loomwright:supervisor --continue task: <id> spawn (--non-interactive / --cheap / --max-tokens forwarded, --notify dropped), then asking for the SUPERVISOR_RESULT; no in-progress brief ⇒ the /autonomous spawn"
 else no "F4i: $LEG_MSG"; fi
+if leg_lane_cheap "$DRIVER"; then ok "F4j (lanes): inside a lane, lane.json \"cheap\": true puts --cheap on the RUN spawn with no --cheap given; a lane.json without it, or no lane.json (a sequential run), gets none"
+else no "F4j (lanes): lane.json cheap ⇒ --cheap on the RUN spawn — $LEG_MSG"; fi
 
 echo "-- V7. running system (Validation 3 of automate-speed/07): PICK → RUN → DRAIN → the tail, one item"
 V7="$WORK/v7"; mkdir -p "$V7/fx"
