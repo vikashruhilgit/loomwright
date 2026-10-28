@@ -86,7 +86,8 @@
 #                   set_flag base_mismatch_detected; a gh failure ⇒ ONE retry, then the SUP-GH-RETRY ask
 #                   or, under the Can't-ask rule, the flag (gh_unavailable_non_interactive)
 #   pr-verify-answer  retry / skip-verify-once (user_skipped_base_verify) / abort (the flag)
-#   handover        `done`: the hand-over to Phase 4.5 (its base-mismatch cleanup when the flag was set)
+#   handover        `done`: the hand-over to Phase 4.5 (its base-mismatch cleanup when the flag was set); carries
+#                   `test_guard` (armed | unarmed (<reason>) | not_applicable — `sn_test_guard`, a plain read)
 #
 # WRITES. The driver NEVER writes `.supervisor/state.md`: Context-Keeper is the sole writer of its
 # Decisions Log / Worker Results / Error Log / Checkpoint / Phase Flags, and `## Session` is
@@ -413,6 +414,7 @@ sn_init() {
   fi
   ge="$(printf '%s' "$ge" | head -n 1)"
   if [ "$gc" -eq 0 ]; then gd="guard_armed: ok"; else gd="guard_armed: failed: ${ge:-exit $gc}"; fi
+  [ "$gc" -eq 0 ] || st_set guard_armed "$gd"   # persisted only on failure: sn_test_guard's fallback reason
   # step 5 + the 5a preamble: initialize, the clear-on-start crash-recovery flags, the re-armed flags
   # the run's config: a flag wins, else the brief's `## Configuration` (Launch Pad pre-answers the INIT
   # questions: `- **Mode:** sequential`, `- **Workers:** N`, `- **Base Branch:** B`), else the default;
@@ -1180,6 +1182,53 @@ sn_pr_verify_answer() {
   esac
 }
 
+# test_guard — whether THIS run's session was guarded, for the job's `## Outcome` (completion tail). A
+# plain marker / JSONL read, never a guard-arm.sh subcommand (the Bash matcher denies those in an armed
+# session) and never a gate: it prints one of `armed`, `unarmed (<reason>)`, `not_applicable`.
+#   armed           $GUARD_DIR/<sid>.json exists (guard dir resolved the way guard-arm.sh resolves it)
+#   not_applicable  host mode with an unresolvable gate dir (lw_gate_state_dir_existing rc 1): the guard
+#                   denies on that same dir, so armed/unarmed does not describe the session
+#   unarmed (R)     R = the latest guard_arm_skipped row for this session id (session log, else
+#                   arm-skipped.jsonl), else the INIT arm's recorded failure (sidecar `guard_armed`),
+#                   else marker_missing
+sn_test_guard() {
+  local proj gdir="" sup="" main_root="" gate grc=0 f rows="" reason="" lf
+  local files=()
+  proj="${CLAUDE_PROJECT_DIR:-$ROOT}"
+  main_root="$(git -C "$proj" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+  [ -n "$main_root" ] || main_root="$proj"
+  if [ "${LOOMWRIGHT_HOST_MODE:-}" = "1" ]; then
+    # shellcheck source=host-mode.sh
+    if ! . "$HERE/host-mode.sh" 2>/dev/null; then printf 'not_applicable'; return 0; fi
+    gate="$(lw_gate_state_dir_existing "$proj")" || grc=$?
+    case "$grc" in
+      0) gdir="$gate/guard"; sup="$(lw_gate_state_dir_existing "$main_root")" || sup="" ;;
+      1) printf 'not_applicable'; return 0 ;;
+      *) : ;;   # rc 2: no root yet — nothing armed, nothing logged
+    esac
+  else
+    gdir="$proj/.supervisor/guard"
+    sup="$main_root/.supervisor"
+  fi
+  if [ -n "$gdir" ] && [ -e "$gdir/$SID.json" ]; then printf 'armed'; return 0; fi
+  case "$SID" in *[!A-Za-z0-9_-]*) ;; *) [ -z "$sup" ] || files+=("$sup/logs/$SID.jsonl") ;; esac
+  [ -z "$gdir" ] || files+=("$gdir/arm-skipped.jsonl")
+  for f in ${files[@]+"${files[@]}"}; do
+    [ -f "$f" ] || continue
+    lf="$("$JQ" -R -r --arg s "$SID" 'fromjson? | select(type == "object" and .event == "guard_arm_skipped" and .session_id == $s)
+      | "\(.ts // "")\t\(.reason // "")"' < "$f" 2>/dev/null)"
+    [ -z "$lf" ] || rows="$rows$lf"$'\n'
+  done
+  if [ -n "$rows" ]; then
+    reason="$(printf '%s' "$rows" | grep . | sort | tail -n 1 | cut -f2 | tr -cd 'a-z_')"
+  fi
+  if [ -z "$reason" ]; then
+    reason="$(st guard_armed)"
+    case "$reason" in "guard_armed: failed: "*) reason="${reason#guard_armed: failed: }" ;; *) reason="" ;; esac
+  fi
+  printf 'unarmed (%s)' "${reason:-marker_missing}"
+}
+
 # handover — FINALIZE is done: the hand-over to Phase 4.5 (the task is NOT yet completed and the job is
 # NOT yet moved — Phase 4.5's completion tail does both). A set base_mismatch_detected flag routes to
 # its base-mismatch cleanup, the single SUPERVISOR_RESULT emission point of that path
@@ -1189,8 +1238,8 @@ sn_handover() {
   case "$bv" in verified|skipped) mm=false ;; *) mm=true ;; esac
   sn_emit done handover "$("$JQ" -cn --arg u "$(st pr_url)" --arg bv "$bv" --argjson mm "$mm" --arg cc "$(st marker_children_check)" \
     --arg ps "$(st preflight_sync)" --arg pw "$(st preflight_warning)" --argjson esc "$(st escalation | grep . || echo null)" \
-    --arg base "$(st base_branch)" '{next: "phase-4.5", pr_url: $u, base_verify: $bv, base_mismatch_detected: $mm,
-      children_check: $cc, preflight_sync: (if $ps == "" then null else $ps end)}
+    --arg base "$(st base_branch)" --arg tg "$(sn_test_guard)" '{next: "phase-4.5", pr_url: $u, base_verify: $bv, base_mismatch_detected: $mm,
+      children_check: $cc, preflight_sync: (if $ps == "" then null else $ps end), test_guard: $tg}
     + (if $pw != "" then {preflight_warning: $pw} else {} end)
     + (if $esc != null then {escalation: {subtasks_failed: $esc}} else {} end)
     + {message: ((if $mm then "base_mismatch_detected is set (\($bv)): run Phase 4.5 base-mismatch cleanup (skills/self-heal-advisory/SKILL.md Part 2), the single SUPERVISOR_RESULT emission point of this path"

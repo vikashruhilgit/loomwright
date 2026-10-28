@@ -141,7 +141,7 @@ History:          {project}/.supervisor/history/{date}-{task}.md
 Jobs lifecycle:   {project}/.supervisor/jobs/
   ├── pending/      ← Launch Pad saves briefs here
   ├── in-progress/  ← Supervisor moves brief here on ACQUIRE
-  ├── done/         ← Phase 4.5 SELF_HEAL completion tail moves here (on PASS, loop-skipped, OR ESCALATED — in all cases, with an `## Outcome` block that records heal_loop_ran, heal_decision, heal_iterations, heal_remaining_issues)
+  ├── done/         ← Phase 4.5 SELF_HEAL completion tail moves here (on PASS, loop-skipped, OR ESCALATED — in all cases, with an `## Outcome` block that records heal_loop_ran, heal_decision, heal_iterations, heal_remaining_issues, test_guard)
   └── failed/       ← Supervisor moves here on hard failure (merge conflict, fix-task crash after retries) before 4.5 completion tail could run
 Logs:             {project}/.supervisor/logs/{session_id}.jsonl
 ```

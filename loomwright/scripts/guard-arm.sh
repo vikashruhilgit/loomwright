@@ -43,6 +43,7 @@
 #       `|| true` in hooks.json; a hook backstop that failed loudly would be
 #       worse than a silently-skipped arm — see
 #       skills/self-heal-advisory/completion-tail.md "Hook backstop" note).
+#       A skipped arm for an armed role is no longer silent: see SKIP TRACE.
 #   disarm-session
 #       Reads a SessionEnd hook payload from stdin, removes ONLY the file
 #       named by the payload's own `session_id`. The single disarm point in
@@ -63,6 +64,30 @@
 # leaves its marker behind. That marker matches no LIVE payload's
 # session_id (a dead session's id is never reused), so it is inert — and
 # gets pruned by any later `arm` call once it crosses the 7-day mark.
+#
+# SKIP TRACE (`guard_arm_skipped`): when `arm-from-payload` declines to arm for
+# an ARMED role it appends exactly one JSONL row via `trace_skip`:
+#   {"event":"guard_arm_skipped","reason":R,"<role field>":T,
+#    ["session_id":S,"cc_session_id":S,] "ts":ISO-8601-UTC}
+# T is the spawned role string, written under the same key the payload carries it in.
+# R is a closed set owned by this header:
+#   jq_missing           jq is not on PATH (role and id are read without jq)
+#   no_session_id        the payload carries no usable `session_id`
+#   marker_write_failed  the guard dir resolved but the marker could not be written
+#   no_guard_dir         write_marker's outcome left no resolvable guard dir (host
+#                        mode: unsafe/unwritable D1 root, or host-mode.sh not loaded)
+# Destinations, first that works: (1) the session log
+# `.supervisor/logs/<session_id>.jsonl` when the id is valid AND its charset is
+# `[A-Za-z0-9_-]` AND the log dir resolves the way emit-agent-identity.sh resolves
+# it (main checkout; host mode via lw_gate_state_dir_existing, which never
+# creates); (2) `$GUARD_DIR/arm-skipped.jsonl`, beside the markers (its `.jsonl`
+# suffix never matches the markers' `*.json` glob, so prune and the guard never
+# see it); (3) ONE stderr line. FAIL-SAFE LIMIT: no resolvable dir => stderr only,
+# nothing is written outside a resolved dir. Outside host mode trace_skip may
+# `mkdir -p` the log dir and the guard dir; under host mode it creates neither.
+# A non-armed role writes nothing (the role is checked before any file I/O). The
+# exit code stays 0 on every path. The reader is the Supervisor driver's
+# `sn_test_guard` (supervisor-next-step.sh), not a subcommand here.
 #
 # HOST MODE (`LOOMWRIGHT_HOST_MODE=1`): the guard dir resolves through
 # host-mode.sh's gate-dir resolver — the SAME one guard-test-integrity.sh reads
@@ -92,7 +117,9 @@ GUARD_HERE="${BASH_SOURCE[0]%/*}"
 [ "$GUARD_HERE" = "${BASH_SOURCE[0]}" ] && GUARD_HERE="."
 # shellcheck source=host-mode.sh
 GUARD_CREATE=0   # 1: host mode, gate dir absent so far — write_marker creates it (the writer form)
+GUARD_HOST_LOADED=0
 if . "$GUARD_HERE/host-mode.sh" 2>/dev/null; then
+  GUARD_HOST_LOADED=1
   # Host mode with an unresolvable gate dir (unsafe/unwritable D1 root): nothing is armed —
   # guard-test-integrity.sh denies on that same unresolvable dir, so the session is not unguarded.
   # Resolved WITHOUT creating (rc 2 = absent: nothing armed yet, nothing to disarm or prune).
@@ -192,6 +219,80 @@ write_marker() {
   return 0
 }
 
+# json_str <s> — a JSON string body for <s>, printf path (no jq): truncated to 200
+# bytes, reduced to printable ASCII, backslash and double quote escaped.
+json_str() {
+  local s="${1:0:200}"
+  s="$(printf '%s' "$s" | env LC_ALL=C tr -cd '\040-\176')"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+# trace_log_dir — print the session-log dir (emit-agent-identity.sh's resolution:
+# the main checkout; host mode through lw_gate_state_dir_existing), rc 1 when it
+# does not resolve. Never creates anything.
+trace_log_dir() {
+  local main_root top sup
+  main_root="$(git -C "$GUARD_PROJ" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+  [ -n "$main_root" ] && [ -d "$main_root" ] || return 1
+  top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
+  [ "$top" = "$main_root" ] || return 1
+  if [ "$GUARD_HOST_LOADED" = 1 ]; then
+    sup="$(lw_gate_state_dir_existing "$main_root")" || return 1
+  elif [ "$GUARD_HOST_ON" = 1 ]; then
+    return 1
+  else
+    sup="$main_root/.supervisor"
+  fi
+  printf '%s/logs' "$sup"
+}
+
+# trace_skip <reason> <role> <sid> — append one guard_arm_skipped row (see
+# SKIP TRACE in the header). <sid> is "" when the payload had no usable id. Never
+# fails: every write error falls through to the next destination, then to stderr.
+trace_skip() {
+  local reason="$1" st="$2" sid="${3:-}" ts line ids="" dir dest tried=0
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+  if valid_session_id "$sid"; then
+    ids="$(printf ',"session_id":"%s","cc_session_id":"%s"' "$(json_str "$sid")" "$(json_str "$sid")")"
+  fi
+  line="$(printf '{"event":"guard_arm_skipped","reason":"%s","subagent_type":"%s"%s,"ts":"%s"}' \
+    "$(json_str "$reason")" "$(json_str "$st")" "$ids" "$ts")"
+  [ "$GUARD_HOST_ON" = 1 ] && umask 077
+  # (1) the session log: valid id, strict charset, resolvable log dir.
+  if valid_session_id "$sid"; then
+    case "$sid" in
+      *[!A-Za-z0-9_-]*) ;;
+      *)
+        if dir="$(trace_log_dir)"; then
+          [ "$GUARD_HOST_ON" = 1 ] || mkdir -p "$dir" 2>/dev/null || true
+          if [ -d "$dir" ] && printf '%s\n' "$line" >> "$dir/$sid.jsonl" 2>/dev/null; then
+            return 0
+          fi
+        fi
+        ;;
+    esac
+  fi
+  # (2) beside the markers.
+  if [ -n "$GUARD_DIR" ]; then
+    [ "$GUARD_HOST_ON" = 1 ] || mkdir -p "$GUARD_DIR" 2>/dev/null || true
+    if [ -d "$GUARD_DIR" ] && printf '%s\n' "$line" >> "$GUARD_DIR/arm-skipped.jsonl" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  # (3) nowhere to write: one stderr line.
+  printf 'guard_arm_skipped: %s (no resolvable trace dir)\n' "$reason" >&2
+  return 0
+}
+
+# payload_str <payload> <key> — the first `"key":"value"` string in <payload>, read
+# without jq (only used when jq is missing).
+payload_str() {
+  local re="\"$2\"[[:space:]]*:[[:space:]]*\"([^\"]*)\""
+  if [[ $1 =~ $re ]]; then printf '%s' "${BASH_REMATCH[1]}"; fi
+}
+
 # ---- subcommands --------------------------------------------------------
 
 cmd_arm() {
@@ -236,17 +337,37 @@ cmd_arm() {
 }
 
 cmd_arm_from_payload() {
-  local payload subagent_type sid
+  local payload role sid have_jq=1
   payload="$(cat 2>/dev/null || true)"
-  command -v jq >/dev/null 2>&1 || exit 0
-  subagent_type="$(printf '%s' "$payload" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null || true)"
-  case "$subagent_type" in
+  if command -v jq >/dev/null 2>&1; then
+    role="$(printf '%s' "$payload" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null || true)"
+  else
+    have_jq=0
+    role="$(payload_str "$payload" subagent_type)"
+  fi
+  case "$role" in
     *:worker|*:execute-manager|*:supervisor-runner|*:review-pr-runner) ;;
     *) exit 0 ;;
   esac
+  if [ "$have_jq" = 0 ]; then
+    sid="$(payload_str "$payload" session_id)"
+    trace_skip jq_missing "$role" "$sid"
+    exit 0
+  fi
   sid="$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null || true)"
-  valid_session_id "$sid" || exit 0
-  write_marker "$sid" "hook-backstop" || true
+  if ! valid_session_id "$sid"; then
+    trace_skip no_session_id "$role" ""
+    exit 0
+  fi
+  if ! write_marker "$sid" "hook-backstop"; then
+    # write_marker may have resolved GUARD_DIR itself (the host-mode creating form), so
+    # the decision is taken from its outcome, never from a pre-check of GUARD_DIR.
+    if [ -z "$GUARD_DIR" ]; then
+      trace_skip no_guard_dir "$role" "$sid"
+    else
+      trace_skip marker_write_failed "$role" "$sid"
+    fi
+  fi
   exit 0
 }
 

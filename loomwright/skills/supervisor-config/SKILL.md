@@ -74,7 +74,7 @@ Supervisor prompt.
 
    > **Other INIT-parsed flags:** the loop-shaping flags `--skip-self-heal` and `--heal-iterations N` (default 3) are also parsed here at INIT and recorded in session memory — they are consumed by the Supervisor's Phase 4.5 SELF_HEAL (the `skip_self_heal_requested` invariant is "set once from INIT-parsed flags, never mutated").
 
-6.–7. *Run by the driver's `init` step* — the `job:` brief moves `pending/` → `in-progress/` (a brief outside `pending/` is used where it is); `guard-arm.sh arm supervisor` runs and its outcome is recorded as `guard_armed: ok` / `guard_armed: failed: <stderr>` (a failed arm is logged, never fatal — surface `guard: unarmed` in the completion tail's outcome line). A run with no `job:` brief is a legacy-path run. Pre-driver text: `docs/supervisor-legacy-phases.md`.
+6.–7. *Run by the driver's `init` step* — the `job:` brief moves `pending/` → `in-progress/` (a brief outside `pending/` is used where it is); `guard-arm.sh arm supervisor` runs and its outcome is recorded as `guard_armed: ok` / `guard_armed: failed: <stderr>` (a failed arm is logged, never fatal — the handover instruction's `test_guard` reaches the job's `## Outcome` as `**Test guard:**`, `skills/self-heal-advisory/completion-tail.md` step 2). A run with no `job:` brief is a legacy-path run. Pre-driver text: `docs/supervisor-legacy-phases.md`.
 
 **Output:**
 ```markdown
