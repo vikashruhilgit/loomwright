@@ -428,7 +428,7 @@ skip_repo() { local d; d="$(mktemp -d)"; git -C "$d" init -q 2>/dev/null; printf
 skip_rows() { [ -f "$1" ] || { echo 0; return; }; jq -s --arg r "$2" '[.[] | select(.event == "guard_arm_skipped" and .reason == $r)] | length' "$1" 2>/dev/null || echo "?"; }
 # no-jq tool dir: symlinks to the tools guard-arm.sh needs, minus jq
 NOJQ_BIN="$(mktemp -d)"
-for _t in cat git sed date tr mkdir rm; do ln -s "$(command -v "$_t")" "$NOJQ_BIN/$_t" 2>/dev/null || true; done
+for _t in cat git sed date tr env mkdir rm; do ln -s "$(command -v "$_t")" "$NOJQ_BIN/$_t" 2>/dev/null || true; done
 BASH_BIN="$(command -v bash)"
 
 # no_session_id -> exactly one row in arm-skipped.jsonl, nothing under logs/

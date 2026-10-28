@@ -57,4 +57,5 @@ picks up the new behaviour only after this PR merges and the plugin is updated.
 
 **Completion tail `**Test guard:**` line:** this run's own Supervisor completion tail ran on the
 installed v17.21.1 driver, which has no `test_guard` field, so its `## Outcome` cannot show the new
-line; recorded below by the main thread at Phase 4.5.
+line. The branch behaviour of that line is pinned by `test-supervisor-next-step.sh`'s `test_guard`
+cases and the regenerated handover goldens (`test_guard: "unarmed (marker_missing)"`).

@@ -223,7 +223,7 @@ write_marker() {
 # bytes, reduced to printable ASCII, backslash and double quote escaped.
 json_str() {
   local s="${1:0:200}"
-  s="$(printf '%s' "$s" | LC_ALL=C tr -cd '\040-\176')"
+  s="$(printf '%s' "$s" | env LC_ALL=C tr -cd '\040-\176')"
   s="${s//\\/\\\\}"
   s="${s//\"/\\\"}"
   printf '%s' "$s"
