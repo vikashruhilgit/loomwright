@@ -1069,8 +1069,9 @@ seconds, no firing had timed out on the lock). The guard now treats a last line
 identical to this one except for a `ts` within two seconds as the same completion;
 the python step computes those neighbouring stamps, because BSD and GNU `date`
 disagree on parsing. Case 21c injects a day-crossing straddle through a `date` shim,
-21d neuters only the window and requires the duplicate back, and 21e shows a repeat
-ten seconds later is still appended.
+21d neuters only the window and requires the duplicate back, 21e shows a repeat
+ten seconds later is still appended, and 21f/21g pin the inclusive edge: stamps two
+seconds apart are one completion, three seconds apart are two.
 
 **Adjacent-duplicate guard (confirmed, not assumed).**
 `emit-token-ledger.sh` is registered under three `SubagentStop` matchers
