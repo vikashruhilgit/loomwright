@@ -390,6 +390,7 @@ assert_ignored "$Tn" "$P_DONE" "(t-neg1) same for $P_DONE"
 # Negative control 2 (mutant): drop the nested-.supervisor exclude from the block ⇒ the junk
 # becomes committable — proving (t)'s nested assertion holds the line, not the seed layout.
 Tm="$(mkfix)"; sed '/^\*\/\*\*\/\.supervisor\/$/d' "$MEMB" > "$Tm/setup-memory.sh"
+cp "$HERE/contained-path-lib.sh" "$Tm/" || setup_fail "(t-mut) could not place contained-path-lib.sh beside the mutant (apply loads it from the entry's dir)"
 if cmp -s "$MEMB" "$Tm/setup-memory.sh"; then no "(t-mut) mutant sed changed nothing"; else
   Tx="$(newgit https://github.com/acme/widget.git)"; seed_stores "$Tx"; printf '.supervisor/\n' > "$Tx/.gitignore"
   bash "$Tm/setup-memory.sh" --root "$Tx" apply >/dev/null 2>&1
