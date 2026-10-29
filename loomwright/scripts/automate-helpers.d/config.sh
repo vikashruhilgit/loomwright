@@ -21,7 +21,11 @@
 # CONTAINMENT: before anything is read or written, the config's PHYSICAL location must lie inside the
 # repo (the parent of the config's directory: <root>/.supervisor/config.json ⇒ <root>). A repo that
 # commits `.supervisor -> <elsewhere>` would otherwise have this unattended toggle rewrite — and leave
-# a backup beside — a file outside it. A symlinked leaf is refused too (reason `symlink`). Refusal is
+# a backup beside — a file outside it. The BACKUP path is checked against the same root as well:
+# automate-next-step.sh puts it in a different directory (<root>/.supervisor/automate/), so a committed
+# `.supervisor/automate -> <elsewhere>` would otherwise land the backup — and config-restore's later
+# `rm` — outside the repo. Both checks run before the first write, so a refusal writes nothing. A
+# symlinked leaf (config or backup) is refused too (reason `symlink`). Refusal is
 # an ABORT (exit 2): automate-next-step.sh maps that to `config_malformed` before the /autonomous
 # spawn. The library is loaded lazily, from the entry script's directory, so --help and every copy that
 # never reaches a write behave as before; a library that cannot load refuses too (fail CLOSED).
@@ -30,6 +34,7 @@ config_suppress() {
   root="$(dirname "$(dirname "$cfg")")"
   . "$(dirname "$0")/contained-path-lib.sh" 2>/dev/null || abort "containment_unavailable: cannot load contained-path-lib.sh; nothing was written"
   cpl_check_write config-suppress "$cfg" "$root" >/dev/null || abort "$CPL_REASON: refusing to write $cfg — it is a symlink or resolves outside $root; nothing was written"
+  cpl_check_write config-suppress-backup "$bak" "$root" >/dev/null || abort "$CPL_REASON: refusing to write the backup $bak — it is a symlink or resolves outside $root; nothing was written"
   if [ -f "$cfg" ]; then
     # Validate before touching anything: valid JSON AND an object.
     if ! "$JQ" -e . "$cfg" >/dev/null 2>&1; then
@@ -58,11 +63,12 @@ config_suppress() {
 config_restore() {
   local cfg="$1" bak="$2" root
   [ -f "$bak" ] || die "no backup to restore: $bak"
-  # Same containment gate as config_suppress (exit 2, nothing deleted or written), after the
-  # missing-backup die and before the delete / mktemp.
+  # Same containment gates as config_suppress — the config AND the backup (exit 2, nothing deleted or
+  # written), after the missing-backup die and before the read, the delete / mktemp and the backup `rm`.
   root="$(dirname "$(dirname "$cfg")")"
   . "$(dirname "$0")/contained-path-lib.sh" 2>/dev/null || abort "containment_unavailable: cannot load contained-path-lib.sh; nothing was written"
   cpl_check_write config-restore "$cfg" "$root" >/dev/null || abort "$CPL_REASON: refusing to write $cfg — it is a symlink or resolves outside $root; nothing was written"
+  cpl_check_write config-restore-backup "$bak" "$root" >/dev/null || abort "$CPL_REASON: refusing to read or remove the backup $bak — it is a symlink or resolves outside $root; nothing was written or deleted"
   if [ "$(head -n1 "$bak")" = "__ABSENT__" ]; then
     rm -f "$cfg"
   else

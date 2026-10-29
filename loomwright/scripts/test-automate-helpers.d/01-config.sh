@@ -368,6 +368,58 @@ else
 fi
 rm -rf "$CW"
 
+# A8e. (e) the BACKUP path is contained too. automate-next-step.sh passes <root>/.supervisor/automate/<run_id>.config-backup.json
+#      — a different directory from config.json — so a real .supervisor with `automate -> <outside>` must be refused
+#      before anything is written: no backup outside, config.json unchanged (or still absent), and restore neither
+#      reads-then-applies nor removes a backup that lives outside.
+# cw_e_fixture <dir> — real <dir>/repo/.supervisor/config.json + .supervisor/automate -> <dir>/outside (absolute).
+cw_e_fixture() { mkdir -p "$1/repo/.supervisor" "$1/outside"; ln -s "$1/outside" "$1/repo/.supervisor/automate"; printf '{"auto_review": true}\n' > "$1/repo/.supervisor/config.json"; }
+CW="$(mktemp -d)"; cw_e_fixture "$CW"; CWR="$CW/repo"; CWO="$CW/outside"; CWB="$CWR/.supervisor/automate/run.config-backup.json"
+CW_S0="$(cw_snap "$CWR/.supervisor")"; CW_O0="$(cw_snap "$CWO")"
+cw_run bash "$H" config-suppress "$CWR/.supervisor/config.json" "$CWB"
+if [ "$CW_RC" -eq 2 ] && grep -q 'path_outside_repo' <<<"$CW_ERR" && [ "$CW_O0" = "$(cw_snap "$CWO")" ] && [ "$CW_S0" = "$(cw_snap "$CWR/.supervisor")" ] && [ ! -e "$CWO/run.config-backup.json" ]; then
+  ok "A8e suppress: .supervisor/automate -> outside ⇒ exit 2 naming path_outside_repo; no backup outside, config.json untouched, no temp"
+else
+  no "A8e suppress backup not refused (rc=$CW_RC err='${CW_ERR:0:160}' outside: $([ "$CW_O0" = "$(cw_snap "$CWO")" ] && echo unchanged || echo CHANGED))"
+fi
+# originally-absent config: the __ABSENT__ marker must not be written outside, and config.json must not be created.
+rm -f "$CWR/.supervisor/config.json"
+cw_run bash "$H" config-suppress "$CWR/.supervisor/config.json" "$CWB"
+if [ "$CW_RC" -eq 2 ] && grep -q 'path_outside_repo' <<<"$CW_ERR" && [ "$CW_O0" = "$(cw_snap "$CWO")" ] && [ ! -e "$CWR/.supervisor/config.json" ]; then
+  ok "A8e suppress (absent config): refused; no __ABSENT__ marker outside, config.json not created"
+else
+  no "A8e suppress absent-config backup not refused (rc=$CW_RC err='${CW_ERR:0:160}' cfg-created=$([ -e "$CWR/.supervisor/config.json" ] && echo y || echo n))"
+fi
+# restore: a backup that lives outside (reached through the link) is neither applied nor removed.
+printf '{"auto_review": true}\n' > "$CWR/.supervisor/config.json"
+for CW_BODY in '{"restored":1}' '__ABSENT__'; do
+  printf '%s\n' "$CW_BODY" > "$CWO/run.config-backup.json"; CW_O0="$(cw_snap "$CWO")"
+  cw_run bash "$H" config-restore "$CWR/.supervisor/config.json" "$CWB"
+  if [ "$CW_RC" -eq 2 ] && grep -q 'path_outside_repo' <<<"$CW_ERR" && [ "$CW_O0" = "$(cw_snap "$CWO")" ] && [ -f "$CWO/run.config-backup.json" ] && [ "$(cat "$CWR/.supervisor/config.json" 2>/dev/null)" = '{"auto_review": true}' ]; then
+    ok "A8e restore (backup '$CW_BODY' outside): exit 2 naming path_outside_repo; outside backup kept, config.json unchanged"
+  else
+    no "A8e restore backup '$CW_BODY' not refused (rc=$CW_RC err='${CW_ERR:0:160}' outside-backup=$([ -f "$CWO/run.config-backup.json" ] && echo kept || echo REMOVED))"
+  fi
+done
+rm -rf "$CW"
+
+# A8e-mut. MUTATION CONTROL (gated): with the backup containment call neutralised the same fixture leaks — suppress
+#          writes the backup outside, restore removes the outside backup — so A8e is not vacuous.
+CW_MUT="$(dirname "$H")/cw-mutant.sh"
+for CW_W in suppress restore; do
+  sed "s/cpl_check_write config-$CW_W-backup /true config-$CW_W-backup /" "$H" > "$CW_MUT"
+  if [ "$(grep -cF "cpl_check_write config-$CW_W-backup " "$H")" = 1 ] && [ -s "$CW_MUT" ] && ! cmp -s "$H" "$CW_MUT" && bash -n "$CW_MUT" 2>/dev/null; then
+    CWM="$(mktemp -d)"; cw_e_fixture "$CWM"
+    [ "$CW_W" = restore ] && printf '{"restored":1}\n' > "$CWM/outside/run.config-backup.json"
+    CW_M0="$(cw_snap "$CWM/outside")"
+    cw_run bash "$CW_MUT" "config-$CW_W" "$CWM/repo/.supervisor/config.json" "$CWM/repo/.supervisor/automate/run.config-backup.json"
+    if [ "$CW_RC" -eq 0 ] && [ "$CW_M0" != "$(cw_snap "$CWM/outside")" ]; then ok "A8e-mut: config-$CW_W backup containment neutralised ⇒ the outside folder IS modified (A8e goes red)"
+    else no "A8e-mut: config-$CW_W backup mutant did not discriminate (rc=$CW_RC)"; fi
+    rm -rf "$CWM"
+  else no "A8e-mut: config-$CW_W backup mutant not gated (anchor not unique, empty, identical, or bash -n failed)"; fi
+done
+rm -f "$CW_MUT"
+
 
 # =============================================================================
 echo "== K. right-size threshold readers (parallel-automate/18b: config.sh right_size_small / right_size_large_files / right_size_max_parts) =="
