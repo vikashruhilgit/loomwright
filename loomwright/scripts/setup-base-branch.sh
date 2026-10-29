@@ -32,10 +32,15 @@
 #   set: REFUSED (no_such_remote_branch) — …
 #   remove: removed  (+ `  backup: <path>`)   remove: no-op — …
 #   <set|remove>: ABORTED (<reason>) — …   reasons: jq_unavailable | config_unparseable |
-#                                           config_symlink | no_backup_name | backup_failed |
-#                                           write_failed
+#                                           config_symlink | path_outside_repo |
+#                                           containment_unavailable | no_backup_name |
+#                                           backup_failed | write_failed
 #   (config_symlink: `mv` would replace the link with a regular file, so a symlinked
-#   config.json is refused rather than silently detached from its target.)
+#   config.json is refused rather than silently detached from its target. path_outside_repo: the
+#   config's physical location is not under the repo — a committed `.supervisor -> /elsewhere`
+#   would otherwise make the rewrite and its backup land outside it; checked by
+#   contained-path-lib.sh, loaded from this script's directory — one that cannot load is
+#   containment_unavailable.)
 #
 # FAIL-SAFE CONTRACT (mirrors setup-statusline.sh / setup-memory.sh): every REFUSED / ABORTED
 # branch writes nothing, makes no backup, and exits 0 — "fails closed" means refuse-to-write plus a
@@ -159,10 +164,17 @@ write_backed_up() {
   return 0
 }
 
+# refuse_symlink <label> — return 1 (headline already printed) when $CFG must not be written: a
+# symlinked leaf (`config_symlink`) or a physical location outside $REPO (`path_outside_repo`, e.g.
+# a committed `.supervisor -> /elsewhere`). The library loads lazily, from the executed script's
+# directory, right before the check; one that cannot load refuses (fail CLOSED).
 refuse_symlink() {
-  [ -L "$CFG" ] || return 0
-  echo "$1: ABORTED (config_symlink) — $CFG is a symlink; edit its target by hand. Nothing was written."
-  return 1
+  # shellcheck source=contained-path-lib.sh
+  . "$script_dir/contained-path-lib.sh" 2>/dev/null || {
+    echo "$1: ABORTED (containment_unavailable) — contained-path-lib.sh could not be loaded, so $CFG cannot be checked. Nothing was written."
+    return 1
+  }
+  cpl_check_write "$1" "$CFG" "$REPO" config_symlink
 }
 
 do_status() {

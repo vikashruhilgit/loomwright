@@ -37,12 +37,20 @@
 #   c_malformed         unparseable / two-document / non-object-routing config or egress ⇒ ABORTED,
 #                       byte-identical, no backup
 #   c_symlink           a symlinked config.json or egress.json ⇒ ABORTED (symlink); link and target kept
+#   c_outside           (a) `.supervisor -> <outside>` (absolute link) ⇒ apply --seat and remove ABORT
+#                       (path_outside_repo); the outside folder is byte-identical (listing + cksum), holds
+#                       no backup and no temp file, with an existing outside config.json and with none;
+#                       the user-scope grant (leaf-only check) is still written in the same call
+#   c_inside_link       (b) `.supervisor -> ./real-supervisor` inside the repo ⇒ apply and remove still write
+#   c_ancestor_link     (c) a repo reached through a symlinked ancestor ⇒ apply and remove still write
 #   c_no_slug           a non-git directory ⇒ grant REFUSED (no_repo_slug); routing still works
 #   c_mode              a write keeps the target's mode (a 0600 egress.json stays 0600, a 0640 config
 #                       stays 0640) and a new egress.json is created 0600 under umask 022
 # Mutation controls (gated: non-empty + differs + bash -n, on a scratch copy beside copies of the
-# resolvers): `del(.routing)` → `del(.)` (c_remove must fail), the usable-verdict gate removed
-# (c_verdict_refused must fail), the already-configured early exit deleted (c_idempotent must fail).
+# resolvers and of contained-path-lib.sh, which the engine loads from its own directory):
+# `del(.routing)` → `del(.)` (c_remove must fail), the usable-verdict gate removed (c_verdict_refused
+# must fail), the already-configured early exit deleted (c_idempotent must fail), the containment call
+# neutralized (`cpl_check_write` → `true`; c_outside must fail).
 # Exit 0 = all pass, 1 = any failure, 2 = fixture setup broken.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -58,7 +66,7 @@ setup_fail() { printf '  SETUP BROKEN: %s\n' "$1" >&2; exit 2; }
 has() { case "$1" in *"$2"*) return 0 ;; esac; return 1; }
 
 [ -f "$ENGINE" ] || setup_fail "setup-routing.sh not found at $ENGINE"
-for f in resolve-routing.sh resolve-egress-config.sh setup-providers.sh; do
+for f in resolve-routing.sh resolve-egress-config.sh setup-providers.sh contained-path-lib.sh; do
   [ -f "$HERE/$f" ] || setup_fail "$f not found beside the engine"
 done
 command -v jq >/dev/null 2>&1 && printf '{}' | jq -e . >/dev/null 2>&1 || setup_fail "a working jq is required"
@@ -403,6 +411,62 @@ c_symlink() {
   [ -L "$c" ] && [ -L "$EGRESS" ] && cmp -s "$T/sl.target" "$T/sl.snap" || { echo "a link or its target changed"; return 1; }
 }
 
+# dsnap <dir> — a stable fingerprint of a directory: every path plus a cksum of every file.
+dsnap() { (cd "$1" && { find . | LC_ALL=C sort; find . -type f -exec cksum {} + 2>/dev/null | LC_ALL=C sort; }); }
+
+# c_outside — (a) a committed `.supervisor -> <outside>` must not let apply/remove write, back up or
+# stage anything in <outside>. The user-scope grant keeps its own leaf-only check and is unaffected.
+c_outside() {
+  local e="$1" r o sub before shape
+  for shape in with-config no-config; do
+    for sub in "apply --seat refute=$P_RO" remove; do
+      r="$(fresh ou)"; o="$T/outside-ou"; rm -rf "$o"; mkdir -p "$o"
+      if [ "$shape" = with-config ]; then printf '{"keep":1,"routing":{"seats":{"refute":"claude"}}}\n' > "$o/config.json"; fi
+      ln -s "$o" "$r/.supervisor"
+      before="$(dsnap "$o")"
+      # shellcheck disable=SC2086
+      run "$e" "$r" $sub
+      [ "$rc" -eq 0 ] && has "$out" "${sub%% *} routing: ABORTED (path_outside_repo)" || { echo "[$shape] $sub: rc=$rc out=$out"; return 1; }
+      [ "$(dsnap "$o")" = "$before" ] || { echo "[$shape] $sub changed the outside folder: $(ls -la "$o")"; return 1; }
+      [ "$(nbackups "$o/config.json")" = "0" ] || { echo "[$shape] $sub left a backup outside"; return 1; }
+      [ -L "$r/.supervisor" ] || { echo "[$shape] $sub replaced the link"; return 1; }
+    done
+  done
+  # the grant (user scope) is written in the same call; only the repo config is refused
+  r="$(fresh ou)"; o="$T/outside-ou"; rm -rf "$o"; mkdir -p "$o"; ln -s "$o" "$r/.supervisor"; before="$(dsnap "$o")"
+  run "$e" "$r" apply --seat "refute=$P_RO" --grant "$P_RO"
+  has "$out" "apply routing: ABORTED (path_outside_repo)" && has "$out" "apply grant: applied (created" \
+    && jq -e --arg s "$(slug_of ou)" --arg p "$P_RO" '.repos[$s].providers == [$p]' "$EGRESS" >/dev/null \
+    && [ "$(dsnap "$o")" = "$before" ] || { echo "grant call: out=$out"; return 1; }
+}
+
+# c_inside_link — (b) a symlinked parent that points INSIDE the repo is not a false refusal.
+c_inside_link() {
+  local e="$1" r c; r="$(fresh il)"; mkdir -p "$r/real-supervisor"; ln -s ./real-supervisor "$r/.supervisor"
+  c="$r/real-supervisor/config.json"; printf '{"keep":1}\n' > "$c"
+  run "$e" "$r" apply --seat "refute=$P_RO"
+  [ "$rc" -eq 0 ] && has "$out" "apply routing: applied" && [ "$(jq -r '.routing.seats.refute' "$c")" = "$P_RO" ] \
+    && [ "$(jq -r .keep "$c")" = "1" ] && [ "$(nbackups "$c")" = "1" ] || { echo "apply: rc=$rc out=$out"; return 1; }
+  run "$e" "$r" remove
+  has "$out" "remove routing: removed" && jq -e 'has("routing") | not' "$c" >/dev/null || { echo "remove: out=$out"; return 1; }
+  rm -f "$c".backup.* "$c"
+  run "$e" "$r" apply --seat "refute=$P_RO"
+  has "$out" "apply routing: applied (created" && [ "$(jq -r '.routing.seats.refute' "$c")" = "$P_RO" ] || { echo "create: out=$out"; return 1; }
+}
+
+# c_ancestor_link — (c) the repo path runs through a symlink ABOVE its root (macOS /tmp style).
+c_ancestor_link() {
+  local e="$1" r l c; r="$(fresh al)"; l="$T/al-link"
+  rm -rf "$T/al-real" "$l"; mkdir -p "$T/al-real"; mv "$r" "$T/al-real/repo"; ln -s "$T/al-real" "$l"
+  c="$l/repo/.supervisor/config.json"
+  run "$e" "$l/repo" apply --seat "refute=$P_RO"
+  [ "$rc" -eq 0 ] && has "$out" "apply routing: applied (created" && [ "$(jq -r '.routing.seats.refute' "$c")" = "$P_RO" ] || { echo "create: rc=$rc out=$out"; return 1; }
+  run "$e" "$l/repo" apply --seat "heal_voter=$P_RO"
+  has "$out" "apply routing: applied" && [ "$(nbackups "$c")" = "1" ] || { echo "merge: out=$out"; return 1; }
+  run "$e" "$l/repo" remove
+  has "$out" "remove routing: removed" && jq -e 'has("routing") | not' "$c" >/dev/null || { echo "remove: out=$out"; return 1; }
+}
+
 mode_of() { ls -ld "$1" 2>/dev/null | cut -c1-10; }  # portable: no stat flavour
 
 c_mode() {
@@ -429,7 +493,7 @@ c_no_slug() {
   has "$out" "remove grant: REFUSED (no_repo_slug)" && has "$out" "remove routing: removed" || { echo "remove: $out"; return 1; }
 }
 
-CASES="c_usage c_status_default c_status_routed c_verdict_readonly c_verdict_write c_verdict_refused c_refuse_names c_create c_merge c_idempotent c_array c_on_unavailable c_grant c_remove c_malformed c_symlink c_mode c_no_slug"
+CASES="c_usage c_status_default c_status_routed c_verdict_readonly c_verdict_write c_verdict_refused c_refuse_names c_create c_merge c_idempotent c_array c_on_unavailable c_grant c_remove c_malformed c_symlink c_outside c_inside_link c_ancestor_link c_mode c_no_slug"
 
 echo "== setup-routing.sh =="
 for c in $CASES; do
@@ -441,7 +505,7 @@ echo "== mutation controls (each must turn its case red) =="
 mutant() {
   local name="$1" prog="$2" case_fn="$3" d="$T/mut-$1" f
   mkdir -p "$d"
-  for f in resolve-routing.sh resolve-egress-config.sh setup-providers.sh; do cp "$HERE/$f" "$d/$f"; done
+  for f in resolve-routing.sh resolve-egress-config.sh setup-providers.sh contained-path-lib.sh; do cp "$HERE/$f" "$d/$f"; done
   ln -s "$HERE/adapters" "$d/adapters"
   awk "$prog" "$ENGINE" > "$d/setup-routing.sh"
   if [ ! -s "$d/setup-routing.sh" ] || cmp -s "$d/setup-routing.sh" "$ENGINE" || ! bash -n "$d/setup-routing.sh" 2>/dev/null; then
@@ -454,6 +518,7 @@ mutant() {
   fi
 }
 mutant remove-deletes-everything '{ if (index($0, "proposed=\"$(jq '\''del(.routing)'\''")) sub(/del\(\.routing\)/, "del(.)"); print }' c_remove
+mutant no-containment '{ if (index($0, "cpl_check_write \"$1\" \"$CFG\" \"$REPO\" symlink")) sub(/cpl_check_write/, "true"); print }' c_outside
 mutant no-verdict-gate '/^provider_usable\(\) \{/ { print; print "  return 0"; next } { print }' c_verdict_refused
 mutant no-idempotent-exit '/if \[ "\$proposed" = "\$current" \]; then/ { skip = 4 } skip > 0 { skip--; next } { print }' c_idempotent
 

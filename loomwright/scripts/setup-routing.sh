@@ -51,9 +51,14 @@
 #   REFUSED reasons: unknown_seat | invalid_provider_name | invalid_model | provider_not_probed |
 #                    provider_not_usable | claude_needs_no_grant | no_repo_slug
 #   ABORTED reasons: jq_unavailable | config_unparseable | routing_unexpected_shape |
-#                    egress_unparseable | egress_unexpected_shape | symlink | no_home |
-#                    seat_list_unavailable | no_backup_name | backup_failed | write_failed
-#   (symlink: `mv` would replace a link with a regular file, so a symlinked target is refused.)
+#                    egress_unparseable | egress_unexpected_shape | symlink | path_outside_repo |
+#                    containment_unavailable | no_home | seat_list_unavailable | no_backup_name |
+#                    backup_failed | write_failed
+#   (symlink: `mv` would replace a link with a regular file, so a symlinked target is refused.
+#   path_outside_repo: the REPO config's physical location is not under the repo — a committed
+#   `.supervisor -> /elsewhere` — refused by contained-path-lib.sh, which is loaded from this
+#   script's directory (containment_unavailable when it cannot be). The user-scope egress.json
+#   keeps its leaf-only `symlink` check: it lives outside any repo on purpose.)
 #
 # FAIL-SAFE CONTRACT (mirrors setup-base-branch.sh): every REFUSED / ABORTED branch writes
 # nothing, makes no backup, and exits 0. A malformed target (unparseable, or not exactly one JSON
@@ -231,6 +236,18 @@ refuse_symlink() { # refuse_symlink <label> <file>
   return 1
 }
 
+# refuse_cfg <label> — the repo-scope twin of refuse_symlink: return 1 (headline printed) when $CFG
+# is a symlink or its physical location is outside $REPO. The library loads lazily, from the
+# executed script's directory; one that cannot load refuses (fail CLOSED).
+refuse_cfg() {
+  # shellcheck source=contained-path-lib.sh
+  . "$script_dir/contained-path-lib.sh" 2>/dev/null || {
+    echo "$1: ABORTED (containment_unavailable) — contained-path-lib.sh could not be loaded, so $CFG cannot be checked. Nothing was written."
+    return 1
+  }
+  cpl_check_write "$1" "$CFG" "$REPO" symlink
+}
+
 # repo_slug — this repo's key in the user-scope file, exactly as resolve-egress-config.sh derives it.
 repo_slug() {
   ( cd "$REPO" 2>/dev/null && bash "$EGRESS_RESOLVER" 2>/dev/null ) | sed -n 's/^REPO_SLUG=//p' | head -n 1
@@ -375,7 +392,7 @@ apply_routing() {
     echo "$label: ABORTED (jq_unavailable) — jq is unavailable or non-functional; nothing was written."
     return 0
   fi
-  refuse_symlink "$label" "$CFG" || return 0
+  refuse_cfg "$label" || return 0
   seats_json="$(printf '%s' "$PAIRS" | jq -Rn '
     reduce (inputs | select(length > 0) | split("\t")) as $p ({};
       (.[$p[0]] // []) as $a
@@ -491,7 +508,7 @@ remove_routing() {
     echo "$label: ABORTED (jq_unavailable) — jq is unavailable or non-functional; nothing was written."
     return 0
   fi
-  refuse_symlink "$label" "$CFG" || return 0
+  refuse_cfg "$label" || return 0
   if [ ! -f "$CFG" ]; then
     echo "$label: no-op — $CFG does not exist; nothing was written."
     return 0
