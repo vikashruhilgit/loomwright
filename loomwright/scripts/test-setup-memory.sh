@@ -152,6 +152,11 @@
 #        never clobbered; a bad action writes nothing; status / check / mode write nothing; the
 #        branch-mode disclosure names the learning stores and the consent ask; mutation control: a
 #        writer aimed at the repo root instead of $HOME turns the containment assertion red
+#   (cc) physical-path containment of the allowlist writer (test-setup-memory.d/06-config-containment.sh):
+#        `.supervisor -> <outside>` ⇒ SKIPPED — path_outside_repo with the outside folder
+#        byte-identical (gated mutation control: neutralising cpl_check_write writes outside);
+#        an inside symlink, `--root <relative>` and a symlinked ancestor still seed; a symlinked
+#        leaf config.json is SKIPPED — symlink
 #
 # EVERY LEDGER ASSERTION IN THIS SUITE (this file and its test-setup-memory.d/ parts) USES jq, NEVER grep. A findings ledger mixes compact
 # (`"repo":"x"`) and spaced (`"repo": "x"`) JSON — this plugin's own ledger carries one spaced
@@ -314,6 +319,10 @@ mkdir -p "$FIXTURE_ROOT/bundle"; MEMB="$FIXTURE_ROOT/bundle/setup-memory.sh"
 if [ -f "$MEM" ]; then
   eval "$(awk '/^_sm_bundle\(\) \{$/,/^}$/' "$MEM")"
   _sm_bundle "$MEM" > "$MEMB" && [ -s "$MEMB" ] || { echo "  FAIL: could not build the setup-memory.sh bundle"; exit 1; }
+  # The containment library beside the bundle: the allowlist writer loads it lazily from the
+  # executed entry's directory, so every mutant/copy of MEMB that reaches a write needs it too.
+  cp "$HERE/contained-path-lib.sh" "$FIXTURE_ROOT/bundle/contained-path-lib.sh" 2>/dev/null \
+    || { echo "  FAIL: could not place contained-path-lib.sh beside the setup-memory.sh bundle"; exit 1; }
 fi
 
 # ---- legs: test-setup-memory.d/<part>.sh (automate-speed/20) ------------------
@@ -329,6 +338,7 @@ tsm_part 02-meta-allowlist;            . "$TSM_D/02-meta-allowlist.sh"
 tsm_part 03-apply-safety-ledger-gate;  . "$TSM_D/03-apply-safety-ledger-gate.sh"
 tsm_part 04-verdicts-trail;            . "$TSM_D/04-verdicts-trail.sh"
 tsm_part 05-branch-mode-consent;       . "$TSM_D/05-branch-mode-consent.sh"
+tsm_part 06-config-containment;        . "$TSM_D/06-config-containment.sh"
 
 echo "== (sg) the header's setup-guard audit, run: every fail-on-exist setup call carries || setup_fail =="
 # The header's grep, mechanized. A hit is a CALL when the match sits outside a "…" string (an even
