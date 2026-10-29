@@ -17,7 +17,7 @@
 echo "== (cc) physical-path containment of the allowlist writer =="
 
 # cc_sig <dir> — a byte-level fingerprint of a directory: sorted listing + a cksum per file.
-cc_sig() { { (cd "$1" && find . -print | LC_ALL=C sort && find . -type f -exec cksum {} + | LC_ALL=C sort); } 2>&1; }
+cc_sig() { { (cd "$1" && find . -print | env LC_ALL=C sort && find . -type f -exec cksum {} + | env LC_ALL=C sort); } 2>&1; }
 # cc_repo — a fresh git fixture with an origin (so apply has a slug to seed) and a .gitignore.
 cc_repo() {
   local d; d="$(newgit https://github.com/acme/widget.git)"

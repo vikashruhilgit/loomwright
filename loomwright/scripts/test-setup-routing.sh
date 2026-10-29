@@ -412,7 +412,7 @@ c_symlink() {
 }
 
 # dsnap <dir> — a stable fingerprint of a directory: every path plus a cksum of every file.
-dsnap() { (cd "$1" && { find . | LC_ALL=C sort; find . -type f -exec cksum {} + 2>/dev/null | LC_ALL=C sort; }); }
+dsnap() { (cd "$1" && { find . | env LC_ALL=C sort; find . -type f -exec cksum {} + 2>/dev/null | env LC_ALL=C sort; }); }
 
 # c_outside — (a) a committed `.supervisor -> <outside>` must not let apply/remove write, back up or
 # stage anything in <outside>. The user-scope grant keeps its own leaf-only check and is unaffected.
