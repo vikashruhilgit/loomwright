@@ -1,4 +1,9 @@
 # =============================================================================
+# Run directly (`bash <this file>`, as run-pin-mutations.sh runs a pin), this fragment re-executes the
+# suite for this one part, so its assertions run against the helpers beside it; sourced by the
+# runner, BASH_SOURCE[0] is this file and $0 the runner, and the guard never fires. Without it a bare
+# run finds no `ok`/`no`/`$H`, asserts nothing and exits 0 — so a neutralised guard in config.sh stayed green.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test-automate-helpers.sh" 01-config; fi
 echo "== A. config suppress / restore =="
 
 # A1. normal restore: backup byte-for-byte, suppress sets auto_review=false, restore brings the ORIGINAL back.
@@ -230,6 +235,190 @@ else
   no "config-orig lost-backup fallback changed behavior (out='$RUN_OUT' rc=$RUN_RC) — intentional? update SKILL.md §7 + this arm"
 fi
 rm -rf "$WD"
+
+
+# =============================================================================
+echo "== A8. config-suppress / config-restore refuse a target whose real location is outside the repo (path_outside_repo) =="
+# The repo root is the parent of the config's directory (<root>/.supervisor/config.json). Refusal is an ABORT:
+# exit 2 (automate-next-step.sh maps it to config_malformed before the /autonomous spawn), stderr names the reason,
+# and nothing is read-modified, backed up, deleted or left as a temp file — the outside folder is byte-identical.
+# cw_snap <dir> — listing + cksum of every file under <dir> (what "byte-identical, no backup, no temp" compares).
+cw_snap() { { find "$1" -mindepth 1 | sort; find "$1" -type f -exec cksum {} + | sort; } 2>/dev/null; }
+# cw_run <cmd…> — CW_RC / CW_ERR (stderr only; stdout dropped)
+cw_run() { CW_ERR="$( "$@" 2>&1 >/dev/null )"; CW_RC=$?; }
+
+# A8a. (a) symlinked parent: .supervisor -> <outside> (absolute). The backup path sits INSIDE the symlinked dir —
+#      where automate-next-step.sh puts it — so a leak would show up outside.
+CW="$(mktemp -d)"; CWR="$CW/repo"; CWO="$CW/outside"; mkdir -p "$CWR" "$CWO"; ln -s "$CWO" "$CWR/.supervisor"
+printf '{"keep":1}\n' > "$CWO/config.json"
+CWB="$CWR/.supervisor/run.config-backup.json"
+CW_S0="$(cw_snap "$CWO")"
+cw_run bash "$H" config-suppress "$CWR/.supervisor/config.json" "$CWB"
+if [ "$CW_RC" -eq 2 ] && grep -q 'path_outside_repo' <<<"$CW_ERR" && [ "$CW_S0" = "$(cw_snap "$CWO")" ] && [ "$(cat "$CWO/config.json")" = '{"keep":1}' ] && [ ! -e "$CWB" ]; then
+  ok "A8a suppress: .supervisor -> outside ⇒ exit 2 naming path_outside_repo; outside byte-identical, no backup, no temp, no toggle"
+else
+  no "A8a suppress not refused (rc=$CW_RC err='${CW_ERR:0:160}' outside: $([ "$CW_S0" = "$(cw_snap "$CWO")" ] && echo unchanged || echo CHANGED))"
+fi
+# restore: a backup that holds the original bytes, kept inside the repo; the outside config must stay and the backup must survive.
+printf '{"restored":1}\n' > "$CWR/run.config-backup.json"
+CW_S0="$(cw_snap "$CWO")"
+cw_run bash "$H" config-restore "$CWR/.supervisor/config.json" "$CWR/run.config-backup.json"
+if [ "$CW_RC" -eq 2 ] && grep -q 'path_outside_repo' <<<"$CW_ERR" && [ "$CW_S0" = "$(cw_snap "$CWO")" ] && [ "$(cat "$CWO/config.json")" = '{"keep":1}' ] && [ -f "$CWR/run.config-backup.json" ]; then
+  ok "A8a restore: .supervisor -> outside ⇒ exit 2 naming path_outside_repo; outside config neither written nor replaced, backup kept"
+else
+  no "A8a restore not refused (rc=$CW_RC err='${CW_ERR:0:160}' outside: $([ "$CW_S0" = "$(cw_snap "$CWO")" ] && echo unchanged || echo CHANGED))"
+fi
+# restore of an originally-ABSENT config would DELETE the outside file: it must be refused the same way.
+printf '__ABSENT__\n' > "$CWR/run.config-backup.json"
+cw_run bash "$H" config-restore "$CWR/.supervisor/config.json" "$CWR/run.config-backup.json"
+if [ "$CW_RC" -eq 2 ] && grep -q 'path_outside_repo' <<<"$CW_ERR" && [ "$(cat "$CWO/config.json")" = '{"keep":1}' ] && [ -f "$CWR/run.config-backup.json" ]; then
+  ok "A8a restore (__ABSENT__ marker): refused, the outside config is not deleted"
+else
+  no "A8a restore-absent not refused (rc=$CW_RC err='${CW_ERR:0:160}' outside-config-exists=$([ -f "$CWO/config.json" ] && echo y || echo n))"
+fi
+# a symlinked parent that DANGLES (target missing) is refused too — it must not fall through to "the repo exists, so inside".
+CWD="$CW/dangle"; mkdir -p "$CWD"; ln -s "$CW/no-such-dir" "$CWD/.supervisor"
+cw_run bash "$H" config-suppress "$CWD/.supervisor/config.json" "$CWD/run.config-backup.json"
+if [ "$CW_RC" -eq 2 ] && grep -q 'path_outside_repo' <<<"$CW_ERR" && [ ! -e "$CW/no-such-dir" ] && [ ! -e "$CWD/run.config-backup.json" ]; then
+  ok "A8a suppress: dangling symlinked parent ⇒ exit 2 naming path_outside_repo, nothing created"
+else
+  no "A8a dangling parent not refused (rc=$CW_RC err='${CW_ERR:0:160}' created=$([ -e "$CW/no-such-dir" ] && echo y || echo n))"
+fi
+
+# A8a-mut. MUTATION CONTROL (gated): with the suppress / restore containment call neutralised the same fixture is written
+#          through the link — so A8a is not vacuous. The mutant sits beside $H so the library and siblings resolve.
+CW_MUT="$(dirname "$H")/cw-mutant.sh"
+for CW_W in suppress restore; do
+  sed "s/cpl_check_write config-$CW_W /true config-$CW_W /" "$H" > "$CW_MUT"
+  if [ "$(grep -cF "cpl_check_write config-$CW_W " "$H")" = 1 ] && [ -s "$CW_MUT" ] && ! cmp -s "$H" "$CW_MUT" && bash -n "$CW_MUT" 2>/dev/null; then
+    CWM="$(mktemp -d)"; mkdir -p "$CWM/repo" "$CWM/outside"; ln -s "$CWM/outside" "$CWM/repo/.supervisor"
+    printf '{"keep":1}\n' > "$CWM/outside/config.json"; printf '{"restored":1}\n' > "$CWM/repo/run.config-backup.json"
+    CW_M0="$(cw_snap "$CWM/outside")"
+    if [ "$CW_W" = suppress ]; then cw_run bash "$CW_MUT" config-suppress "$CWM/repo/.supervisor/config.json" "$CWM/repo/run.config-backup.json"
+    else cw_run bash "$CW_MUT" config-restore "$CWM/repo/.supervisor/config.json" "$CWM/repo/run.config-backup.json"; fi
+    if [ "$CW_RC" -eq 0 ] && [ "$CW_M0" != "$(cw_snap "$CWM/outside")" ]; then ok "A8a-mut: config-$CW_W containment neutralised ⇒ the outside folder IS modified (A8a goes red)"
+    else no "A8a-mut: config-$CW_W mutant did not discriminate (rc=$CW_RC)"; fi
+    rm -rf "$CWM"
+  else no "A8a-mut: config-$CW_W mutant not gated (anchor not unique, empty, identical, or bash -n failed)"; fi
+done
+rm -f "$CW_MUT"; rm -rf "$CW"
+
+# A8b. (b) .supervisor -> ./real-supervisor INSIDE the repo: no false refusal, absolute and relative paths.
+CW="$(mktemp -d)"; CWR="$CW/repo"; mkdir -p "$CWR/real-supervisor"; ln -s ./real-supervisor "$CWR/.supervisor"
+printf '{"auto_review": true, "notify": "x"}\n' > "$CWR/real-supervisor/config.json"; CW_ORIG="$(cat "$CWR/real-supervisor/config.json")"
+cw_run bash "$H" config-suppress "$CWR/.supervisor/config.json" "$CWR/.supervisor/run.config-backup.json"
+CW_ABS_RC="$CW_RC"
+cw_run bash "$H" config-restore "$CWR/.supervisor/config.json" "$CWR/.supervisor/run.config-backup.json"
+if [ "$CW_ABS_RC" -eq 0 ] && [ "$CW_RC" -eq 0 ] && [ "$(cat "$CWR/real-supervisor/config.json")" = "$CW_ORIG" ] && [ ! -e "$CWR/real-supervisor/run.config-backup.json" ]; then
+  ok "A8b inside-pointing symlinked parent (absolute paths): suppress + restore succeed, original restored"
+else
+  no "A8b inside symlink falsely refused (suppress rc=$CW_ABS_RC restore rc=$CW_RC err='${CW_ERR:0:120}')"
+fi
+( cd "$CWR" && bash "$H" config-suppress .supervisor/config.json .supervisor/run.config-backup.json ) >/dev/null 2>&1; CW_RC=$?
+CW_SUP="$(jq -r '.auto_review' "$CWR/real-supervisor/config.json" 2>/dev/null)"
+( cd "$CWR" && bash "$H" config-restore .supervisor/config.json .supervisor/run.config-backup.json ) >/dev/null 2>&1; CW_RC2=$?
+if [ "$CW_RC" -eq 0 ] && [ "$CW_SUP" = false ] && [ "$CW_RC2" -eq 0 ] && [ "$(cat "$CWR/real-supervisor/config.json")" = "$CW_ORIG" ]; then
+  ok "A8b relative config + backup paths naming a location inside the repo: suppress + restore succeed"
+else
+  no "A8b relative paths falsely refused (suppress rc=$CW_RC auto_review=$CW_SUP restore rc=$CW_RC2)"
+fi
+rm -rf "$CW"
+
+# A8c. (c) a repo reached THROUGH a symlink above its root (the macOS /tmp -> /private/tmp shape): no false refusal.
+CW="$(mktemp -d)"; mkdir -p "$CW/real-parent/repo/.supervisor"; ln -s "$CW/real-parent" "$CW/link"
+printf '{"auto_review": true, "notify": "x"}\n' > "$CW/real-parent/repo/.supervisor/config.json"; CW_ORIG="$(cat "$CW/real-parent/repo/.supervisor/config.json")"
+cw_run bash "$H" config-suppress "$CW/link/repo/.supervisor/config.json" "$CW/link/repo/.supervisor/run.config-backup.json"
+CW_ABS_RC="$CW_RC"
+CW_SUP="$(jq -r '.auto_review' "$CW/real-parent/repo/.supervisor/config.json" 2>/dev/null)"
+cw_run bash "$H" config-restore "$CW/link/repo/.supervisor/config.json" "$CW/link/repo/.supervisor/run.config-backup.json"
+if [ "$CW_ABS_RC" -eq 0 ] && [ "$CW_SUP" = false ] && [ "$CW_RC" -eq 0 ] && [ "$(cat "$CW/real-parent/repo/.supervisor/config.json")" = "$CW_ORIG" ]; then
+  ok "A8c repo under a symlinked ancestor: suppress + restore succeed (no false refusal)"
+else
+  no "A8c symlinked-ancestor repo falsely refused (suppress rc=$CW_ABS_RC auto_review=$CW_SUP restore rc=$CW_RC err='${CW_ERR:0:120}')"
+fi
+# the same through an ORIGINALLY-ABSENT config (suppress writes a fresh file, restore deletes it)
+rm -f "$CW/real-parent/repo/.supervisor/config.json"
+cw_run bash "$H" config-suppress "$CW/link/repo/.supervisor/config.json" "$CW/link/repo/.supervisor/run.config-backup.json"
+CW_ABS_RC="$CW_RC"; CW_HAD=n; [ -f "$CW/real-parent/repo/.supervisor/config.json" ] && CW_HAD=y
+cw_run bash "$H" config-restore "$CW/link/repo/.supervisor/config.json" "$CW/link/repo/.supervisor/run.config-backup.json"
+if [ "$CW_ABS_RC" -eq 0 ] && [ "$CW_HAD" = y ] && [ "$CW_RC" -eq 0 ] && [ ! -e "$CW/real-parent/repo/.supervisor/config.json" ]; then
+  ok "A8c absent config under a symlinked ancestor: suppress writes it, restore deletes it"
+else
+  no "A8c absent config under a symlinked ancestor wrong (suppress rc=$CW_ABS_RC wrote=$CW_HAD restore rc=$CW_RC)"
+fi
+rm -rf "$CW"
+
+# A8d. (d) leaf symlink — even to an INSIDE target — is refused with reason `symlink` (a deliberate tightening: both
+#      writers used to `mv` over the link, replacing it). The link and its target stay exactly as they were.
+CW="$(mktemp -d)"; CWR="$CW/repo"; mkdir -p "$CWR/.supervisor"
+printf '{"auto_review": true}\n' > "$CWR/.supervisor/real.json"; ln -s real.json "$CWR/.supervisor/config.json"
+printf '{"restored":1}\n' > "$CWR/run.config-backup.json"
+CW_S0="$(cw_snap "$CWR/.supervisor")"
+cw_run bash "$H" config-suppress "$CWR/.supervisor/config.json" "$CWR/.supervisor/run.config-backup.json"
+if [ "$CW_RC" -eq 2 ] && grep -q 'symlink' <<<"$CW_ERR" && ! grep -q 'path_outside_repo' <<<"$CW_ERR" && [ -L "$CWR/.supervisor/config.json" ] && [ "$CW_S0" = "$(cw_snap "$CWR/.supervisor")" ]; then
+  ok "A8d suppress: symlinked config.json (inside target) ⇒ exit 2 naming symlink; link and target unchanged, no backup"
+else
+  no "A8d suppress leaf symlink wrong (rc=$CW_RC err='${CW_ERR:0:160}' dir: $([ "$CW_S0" = "$(cw_snap "$CWR/.supervisor")" ] && echo unchanged || echo CHANGED))"
+fi
+cw_run bash "$H" config-restore "$CWR/.supervisor/config.json" "$CWR/run.config-backup.json"
+if [ "$CW_RC" -eq 2 ] && grep -q 'symlink' <<<"$CW_ERR" && [ -L "$CWR/.supervisor/config.json" ] && [ "$CW_S0" = "$(cw_snap "$CWR/.supervisor")" ] && [ -f "$CWR/run.config-backup.json" ]; then
+  ok "A8d restore: symlinked config.json (inside target) ⇒ exit 2 naming symlink; link and target unchanged, backup kept"
+else
+  no "A8d restore leaf symlink wrong (rc=$CW_RC err='${CW_ERR:0:160}')"
+fi
+rm -rf "$CW"
+
+# A8e. (e) the BACKUP path is contained too. automate-next-step.sh passes <root>/.supervisor/automate/<run_id>.config-backup.json
+#      — a different directory from config.json — so a real .supervisor with `automate -> <outside>` must be refused
+#      before anything is written: no backup outside, config.json unchanged (or still absent), and restore neither
+#      reads-then-applies nor removes a backup that lives outside.
+# cw_e_fixture <dir> — real <dir>/repo/.supervisor/config.json + .supervisor/automate -> <dir>/outside (absolute).
+cw_e_fixture() { mkdir -p "$1/repo/.supervisor" "$1/outside"; ln -s "$1/outside" "$1/repo/.supervisor/automate"; printf '{"auto_review": true}\n' > "$1/repo/.supervisor/config.json"; }
+CW="$(mktemp -d)"; cw_e_fixture "$CW"; CWR="$CW/repo"; CWO="$CW/outside"; CWB="$CWR/.supervisor/automate/run.config-backup.json"
+CW_S0="$(cw_snap "$CWR/.supervisor")"; CW_O0="$(cw_snap "$CWO")"
+cw_run bash "$H" config-suppress "$CWR/.supervisor/config.json" "$CWB"
+if [ "$CW_RC" -eq 2 ] && grep -q 'path_outside_repo' <<<"$CW_ERR" && [ "$CW_O0" = "$(cw_snap "$CWO")" ] && [ "$CW_S0" = "$(cw_snap "$CWR/.supervisor")" ] && [ ! -e "$CWO/run.config-backup.json" ]; then
+  ok "A8e suppress: .supervisor/automate -> outside ⇒ exit 2 naming path_outside_repo; no backup outside, config.json untouched, no temp"
+else
+  no "A8e suppress backup not refused (rc=$CW_RC err='${CW_ERR:0:160}' outside: $([ "$CW_O0" = "$(cw_snap "$CWO")" ] && echo unchanged || echo CHANGED))"
+fi
+# originally-absent config: the __ABSENT__ marker must not be written outside, and config.json must not be created.
+rm -f "$CWR/.supervisor/config.json"
+cw_run bash "$H" config-suppress "$CWR/.supervisor/config.json" "$CWB"
+if [ "$CW_RC" -eq 2 ] && grep -q 'path_outside_repo' <<<"$CW_ERR" && [ "$CW_O0" = "$(cw_snap "$CWO")" ] && [ ! -e "$CWR/.supervisor/config.json" ]; then
+  ok "A8e suppress (absent config): refused; no __ABSENT__ marker outside, config.json not created"
+else
+  no "A8e suppress absent-config backup not refused (rc=$CW_RC err='${CW_ERR:0:160}' cfg-created=$([ -e "$CWR/.supervisor/config.json" ] && echo y || echo n))"
+fi
+# restore: a backup that lives outside (reached through the link) is neither applied nor removed.
+printf '{"auto_review": true}\n' > "$CWR/.supervisor/config.json"
+for CW_BODY in '{"restored":1}' '__ABSENT__'; do
+  printf '%s\n' "$CW_BODY" > "$CWO/run.config-backup.json"; CW_O0="$(cw_snap "$CWO")"
+  cw_run bash "$H" config-restore "$CWR/.supervisor/config.json" "$CWB"
+  if [ "$CW_RC" -eq 2 ] && grep -q 'path_outside_repo' <<<"$CW_ERR" && [ "$CW_O0" = "$(cw_snap "$CWO")" ] && [ -f "$CWO/run.config-backup.json" ] && [ "$(cat "$CWR/.supervisor/config.json" 2>/dev/null)" = '{"auto_review": true}' ]; then
+    ok "A8e restore (backup '$CW_BODY' outside): exit 2 naming path_outside_repo; outside backup kept, config.json unchanged"
+  else
+    no "A8e restore backup '$CW_BODY' not refused (rc=$CW_RC err='${CW_ERR:0:160}' outside-backup=$([ -f "$CWO/run.config-backup.json" ] && echo kept || echo REMOVED))"
+  fi
+done
+rm -rf "$CW"
+
+# A8e-mut. MUTATION CONTROL (gated): with the backup containment call neutralised the same fixture leaks — suppress
+#          writes the backup outside, restore removes the outside backup — so A8e is not vacuous.
+CW_MUT="$(dirname "$H")/cw-mutant.sh"
+for CW_W in suppress restore; do
+  sed "s/cpl_check_write config-$CW_W-backup /true config-$CW_W-backup /" "$H" > "$CW_MUT"
+  if [ "$(grep -cF "cpl_check_write config-$CW_W-backup " "$H")" = 1 ] && [ -s "$CW_MUT" ] && ! cmp -s "$H" "$CW_MUT" && bash -n "$CW_MUT" 2>/dev/null; then
+    CWM="$(mktemp -d)"; cw_e_fixture "$CWM"
+    [ "$CW_W" = restore ] && printf '{"restored":1}\n' > "$CWM/outside/run.config-backup.json"
+    CW_M0="$(cw_snap "$CWM/outside")"
+    cw_run bash "$CW_MUT" "config-$CW_W" "$CWM/repo/.supervisor/config.json" "$CWM/repo/.supervisor/automate/run.config-backup.json"
+    if [ "$CW_RC" -eq 0 ] && [ "$CW_M0" != "$(cw_snap "$CWM/outside")" ]; then ok "A8e-mut: config-$CW_W backup containment neutralised ⇒ the outside folder IS modified (A8e goes red)"
+    else no "A8e-mut: config-$CW_W backup mutant did not discriminate (rc=$CW_RC)"; fi
+    rm -rf "$CWM"
+  else no "A8e-mut: config-$CW_W backup mutant not gated (anchor not unique, empty, identical, or bash -n failed)"; fi
+done
+rm -f "$CW_MUT"
 
 
 # =============================================================================

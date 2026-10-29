@@ -399,6 +399,8 @@ seed_allowlist() {
     echo "  allowlist: SKIPPED — jq not available (config unchanged)."
     return 0
   fi
+  # Containment: lazy-load the library from the entry script's directory; fail CLOSED.  # cpl-guard
+  { . "$(dirname "$0")/contained-path-lib.sh" 2>/dev/null || { CPL_REASON=containment_unavailable; false; }; } && cpl_check_write allowlist "$CFG" "$repo" >/dev/null || { echo "  allowlist: SKIPPED — ${CPL_REASON:-containment_unavailable}: $CFG resolves outside $repo or cannot be checked; nothing was written (unchanged)."; return 0; }  # cpl-guard
   local existing_kind existing_len entries json
   if [ -f "$CFG" ]; then
     if ! jq empty "$CFG" >/dev/null 2>&1; then

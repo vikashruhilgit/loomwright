@@ -19,9 +19,11 @@
 #   4. a copy with ONE module removed (each in turn), unreadable, or emptied, exits non-zero with
 #      the loader's own message `setup-memory: missing module file: setup-memory.d/<name>.sh`,
 #      and so does _sm_bundle on a copy without a module.
-#   5. verbatim move: _sm_bundle's output, with the Modules map, the module loader block and the
-#      source markers removed, equals the BASE blob byte-for-byte — skipped with 2. A copy with
-#      one moved line changed must fail that comparison (gated mutant).
+#   5. verbatim move: _sm_bundle's output, with the Modules map, the module loader block, the
+#      source markers and every line ending `# cpl-guard` (the allowlist writer's physical-path
+#      containment guard, added after the split — it is the one sanctioned addition to the moved
+#      text) removed, equals the BASE blob byte-for-byte — skipped with 2. A copy with one moved
+#      line changed must fail that comparison (gated mutant).
 #   6. every module is <= 800 lines, passes `bash -n` (and a 3.x `bash -n` when the host has
 #      one); the sourced list and the setup-memory.d/ files are the same set; the Modules map
 #      names them in source order; `usage` and apply_readiness_event (both resolve a path through
@@ -91,12 +93,13 @@ bundle_of() {
   ( eval "$(awk '/^_sm_bundle\(\) \{$/,/^}$/' "$1")"; _sm_bundle "$1" )
 }
 # strip_split <bundle-file> — the bundle without the Modules map (and the blank line closing it),
-# the loader block and the source markers
+# the loader block, the source markers and the `# cpl-guard` lines (containment guard, see check 5)
 strip_split() {
   sed -e '/^# Modules (sourced in this order from setup-memory\.d\/):$/,/^$/d' \
       -e '/^# >>> module loader /,/^# <<< module loader$/d' \
       -e '/^# >>> setup-memory\.d\/[a-z][a-z-]*\.sh$/d' \
-      -e '/^# <<< setup-memory\.d\/[a-z][a-z-]*\.sh$/d' "$1"
+      -e '/^# <<< setup-memory\.d\/[a-z][a-z-]*\.sh$/d' \
+      -e '/# cpl-guard$/d' "$1"
 }
 # verbatim_ok <entry> — 0 iff <entry>'s stripped bundle equals $T/base.sh byte-for-byte
 verbatim_ok() {
@@ -245,7 +248,7 @@ if [ "$HAVE_BASE" = 0 ]; then
   skp "base blob not in this clone — the verbatim-move legs are not run"
 else
   if verbatim_ok "$E"; then
-    ok "bundle minus the Modules map, loader block and markers == $BASE:$BASE_PATH byte-for-byte"
+    ok "bundle minus the Modules map, loader block, markers and # cpl-guard lines == $BASE:$BASE_PATH byte-for-byte"
   else no "bundle differs from the base: $(diff "$T/base.sh" "$T/vb.stripped" 2>/dev/null | head -4 | tr '\n' '|')"; fi
   # Mutation control: one moved line changed (a trailing space on the first line of the last module).
   m="$(tail -1 <<<"$MODS")"; C="$(mk_copy)"; M="$(dirname "$C")/setup-memory.d/$m.sh"

@@ -211,6 +211,7 @@ sfo="$(sum "$Bfo/.gitignore")"; o="$(mem "$Bfo" apply 2>/dev/null)"
 if has '^apply: no-op' "$o" && [ "$(sum "$Bfo/.gitignore")" = "$sfo" ]; then ok "(bm-f) a plain re-apply there is still a byte-identical no-op"; else no "(bm-f) re-apply with outside-only mode text: $(grep '^apply' <<< "$o")"; fi
 # (4) a crashed / garbage reader: stub read_mode in a scratch copy (the review's repro).
 BMF_D="$(mktemp -d)"
+cp "$HERE/contained-path-lib.sh" "$BMF_D/" || setup_fail "(bm-f) could not place contained-path-lib.sh beside the stubs (apply loads it from the entry's dir)"
 bmf_stub() { awk -v s="$2" '/^resolve_effective_branch$/ { print s } { print }' "$MEMB" > "$BMF_D/$1.sh"; }
 bmf_stub empty 'read_mode() { return 0; }'
 bmf_stub garbage 'read_mode() { echo garbage; }'
@@ -304,6 +305,7 @@ Bfo2="$(newgit https://github.com/acme/widgets.git)"; printf '.supervisor/\n' > 
 if has '^What becomes VERSION-CONTROLLED if you apply this:$' "$o" && ! hasF 'branch mode' "$o"; then ok "(fn-1) mode off: default disclosure, no branch-mode wording anywhere in check"; else no "(fn-1) mode off check carries branch-mode wording"; fi
 # Mutation self-check: a copy that never records the disk branch makes the (fn-1) check assertion fail.
 FN_D="$(mktemp -d)"
+cp "$HERE/contained-path-lib.sh" "$FN_D/" || setup_fail "(fn-1) could not place contained-path-lib.sh beside the mutants (apply loads it from the entry's dir)"
 sed 's/^      r_branch="\${r_mode#on }"$/      :/' "$MEMB" > "$FN_D/mut1.sh"
 if cmp -s "$MEMB" "$FN_D/mut1.sh"; then no "(fn-1) mutation self-check: the patch changed nothing — inconclusive"
 elif fn_check_assert "$FN_D/mut1.sh"; then no "(fn-1) mutation self-check: the branch-mode check assertion is VACUOUS (passes without r_branch)"
