@@ -270,6 +270,85 @@ R="$(newrepo finalproj)"; H="$(newhome 1)"
 run "$R" "$H"
 [ "$RC" -eq 0 ] && ok "runtime script returned 0" || no "runtime script non-zero ($RC)"
 
+echo "== 13. Containment — the durable write never lands outside the repo (path_outside_repo), still exit 0, silent =="
+# The emitter is fail-SAFE (always exit 0, no output), so a refusal is SILENT: the proof is that the outside
+# folder is byte-identical. The case names are the per-writer set: (a) symlinked parent -> outside, (b) a
+# parent symlink that stays inside, (c) a repo reached through a symlink above its root, (d) a symlinked leaf.
+CLD=".claude"   # the project settings dir name, spelled once for this section
+# snap <dir> — listing + cksum of every entry under <dir> (what "byte-identical, no temp file" compares).
+snap() { { find "$1" -mindepth 1 | sort; find "$1" -type f -exec cksum {} + | sort; } 2>/dev/null; }
+
+# 13a. (a) $CLD -> <outside> with a pre-existing outside settings.local.json
+R="$(newrepo cwa)"; H="$(newhome 1)"; OUTD="$(mktemp -d)"; TMPS+=("$OUTD")
+printf '{"keep":1}\n' > "$OUTD/settings.local.json"; ln -s "$OUTD" "$R/$CLD"
+S0="$(snap "$OUTD")"
+run "$R" "$H"
+[ "$RC" -eq 0 ] && ok "13a exit 0 with $CLD -> outside (refusal is silent fail-safe)" || no "13a non-zero exit ($RC)"
+[ "$S0" = "$(snap "$OUTD")" ] && [ "$(cat "$OUTD/settings.local.json")" = '{"keep":1}' ] \
+  && ok "13a outside folder byte-identical: settings.local.json not rewritten, no temp file" \
+  || no "13a the outside folder was modified (path_outside_repo not enforced)"
+# 13a'. outside folder EMPTY: nothing is created there either (the create branch)
+R="$(newrepo cwa2)"; OUTD="$(mktemp -d)"; TMPS+=("$OUTD"); ln -s "$OUTD" "$R/$CLD"
+run "$R" "$H"
+[ "$RC" -eq 0 ] && [ -z "$(ls -A "$OUTD")" ] && ok "13a' empty outside folder stays empty (no settings.local.json created through the link)" || no "13a' a file was created outside (rc=$RC: $(ls -A "$OUTD"))"
+# 13a''. DANGLING parent link: mkdir -p must not create the target either
+R="$(newrepo cwa3)"; DANG="$(mktemp -d)"; TMPS+=("$DANG"); ln -s "$DANG/missing" "$R/$CLD"
+run "$R" "$H"
+[ "$RC" -eq 0 ] && [ ! -e "$DANG/missing" ] && ok "13a'' dangling $CLD link: target directory not created" || no "13a'' dangling link target created outside (rc=$RC)"
+
+# 13a-mut. MUTATION CONTROL (gated): with the containment call neutralised the SAME fixture is written through the link.
+MUTD="$(mktemp -d)"; TMPS+=("$MUTD")
+sed 's/cpl_check_write otel /true otel /' "$SCRIPT" > "$MUTD/set-otel-resource-attrs.sh"
+for sib in contained-path-lib.sh host-mode.sh; do [ -e "$HERE/$sib" ] && ln -s "$HERE/$sib" "$MUTD/$sib"; done
+if [ "$(grep -cF 'cpl_check_write otel ' "$SCRIPT")" = 1 ] && [ -s "$MUTD/set-otel-resource-attrs.sh" ] && ! cmp -s "$SCRIPT" "$MUTD/set-otel-resource-attrs.sh" && bash -n "$MUTD/set-otel-resource-attrs.sh" 2>/dev/null; then
+  R="$(newrepo cwm)"; OUTD="$(mktemp -d)"; TMPS+=("$OUTD")
+  printf '{"keep":1}\n' > "$OUTD/settings.local.json"; ln -s "$OUTD" "$R/$CLD"; S0="$(snap "$OUTD")"
+  REAL_SCRIPT="$SCRIPT"; SCRIPT="$MUTD/set-otel-resource-attrs.sh"; run "$R" "$H"; SCRIPT="$REAL_SCRIPT"
+  [ "$RC" -eq 0 ] && [ "$S0" != "$(snap "$OUTD")" ] \
+    && ok "13a-mut containment neutralised ⇒ the outside settings.local.json IS rewritten (13a goes red)" \
+    || no "13a-mut mutant did not discriminate (rc=$RC)"
+else
+  no "13a-mut mutant not gated (anchor not unique, empty, identical, or bash -n failed)"
+fi
+
+# 13b. (b) $CLD -> ./real-claude INSIDE the repo: the write succeeds (no false refusal)
+R="$(newrepo cwb)"; mkdir -p "$R/real-claude"; ln -s ./real-claude "$R/$CLD"
+run "$R" "$H"
+A="$(attrs_of "$R")"
+[ "$RC" -eq 0 ] && [ "$A" = "service.name=cwb,service.version=${FIXTURE_VERSION}" ] && [ -f "$R/real-claude/settings.local.json" ] \
+  && ok "13b inside-pointing $CLD symlink: labels written into the repo's real-claude/" \
+  || no "13b inside symlink falsely refused (rc=$RC attrs=[$A])"
+
+# 13c. (c) the repo reached THROUGH a symlink above its root. A non-git cwd keeps the LOGICAL path ($PWD), so
+#      ROOT itself runs through the link; a git repo resolves it physically — both must write.
+PARENT="$(mktemp -d)"; TMPS+=("$PARENT"); mkdir -p "$PARENT/real/cwcnog"; ln -s "$PARENT/real" "$PARENT/link"
+run "$PARENT/link/cwcnog" "$H"
+A="$(attrs_of "$PARENT/real/cwcnog")"
+[ "$RC" -eq 0 ] && [ "$A" = "service.name=cwcnog,service.version=${FIXTURE_VERSION}" ] \
+  && ok "13c non-git repo under a symlinked ancestor: labels written (no false refusal)" \
+  || no "13c symlinked-ancestor repo falsely refused (rc=$RC attrs=[$A])"
+GR="$(newrepo cwcgit)"; PARENT="$(mktemp -d)"; TMPS+=("$PARENT"); ln -s "$(dirname "$GR")" "$PARENT/link"
+run "$PARENT/link/$(basename "$GR")" "$H"
+A="$(attrs_of "$GR")"
+[ "$RC" -eq 0 ] && [ "$A" = "service.name=cwcgit,service.version=${FIXTURE_VERSION}" ] \
+  && ok "13c git repo under a symlinked ancestor: labels written" \
+  || no "13c git repo through a symlinked ancestor falsely refused (rc=$RC attrs=[$A])"
+
+# 13d. (d) a symlinked LEAF — even to an inside target — is not written through (the hook used to `mv` over the link)
+R="$(newrepo cwd)"; mkdir -p "$R/$CLD"
+printf '{"keep":1}\n' > "$R/$CLD/real.json"; ln -s real.json "$R/$CLD/settings.local.json"
+S0="$(snap "$R/$CLD")"
+run "$R" "$H"
+[ "$RC" -eq 0 ] && [ -L "$R/$CLD/settings.local.json" ] && [ "$S0" = "$(snap "$R/$CLD")" ] \
+  && ok "13d symlinked settings.local.json: link and target unchanged, no temp file, exit 0" \
+  || no "13d leaf symlink was written through or replaced (rc=$RC)"
+
+# 13e. a missing containment library ⇒ the emitter exits 0 silently and writes nothing (fail-SAFE, never non-zero)
+NOLIB="$(mktemp -d)"; TMPS+=("$NOLIB"); cp "$SCRIPT" "$NOLIB/set-otel-resource-attrs.sh"
+R="$(newrepo cwnolib)"
+REAL_SCRIPT="$SCRIPT"; SCRIPT="$NOLIB/set-otel-resource-attrs.sh"; run "$R" "$H"; SCRIPT="$REAL_SCRIPT"
+[ "$RC" -eq 0 ] && [ ! -e "$R/$CLD" ] && ok "13e containment library missing ⇒ exit 0, nothing written" || no "13e missing library broke fail-safe (rc=$RC, $CLD exists: $([ -e "$R/$CLD" ] && echo y || echo n))"
+
 # ---- summary ----------------------------------------------------------------
 echo
 echo "RESULT: $pass passed, $fail failed"

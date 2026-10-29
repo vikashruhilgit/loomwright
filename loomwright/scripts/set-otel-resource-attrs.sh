@@ -156,6 +156,12 @@ fi
 
 # ---- 8. Durable write -------------------------------------------------------
 [ "$SO_HOST" = 1 ] && exit 0   # host mode: never reaches settings.local.json
+# Containment (fail-SAFE, like everything here): a repo that commits `.claude -> <elsewhere>` must not
+# make this hook write — or mkdir — outside the repo, and a symlinked settings.local.json is not
+# written through. The library loads lazily, from this script's directory; a library that is missing,
+# or a refusal, ends the run silently with exit 0 and nothing written.
+. "$(dirname "$0")/contained-path-lib.sh" 2>/dev/null || exit 0
+cpl_check_write otel "$SL" "$ROOT" >/dev/null 2>&1 || exit 0
 mkdir -p "$ROOT/.claude" 2>/dev/null || exit 0
 
 if [ -f "$SL" ]; then
