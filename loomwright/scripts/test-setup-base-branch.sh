@@ -22,11 +22,18 @@
 #   c_malformed       unparseable / two-document config ⇒ set and remove ABORT (config_unparseable),
 #                     byte-identical, no backup; status reports base_branch_invalid:config (AC18)
 #   c_symlink         a symlinked config.json ⇒ set and remove ABORT (config_symlink); link and target kept
+#   c_outside         (a) `.supervisor -> <outside>` (absolute link) ⇒ set and remove ABORT
+#                     (path_outside_repo); the outside folder is byte-identical (listing + cksum), holds
+#                     no backup and no temp file, with an existing outside config.json and with none
+#   c_inside_link     (b) `.supervisor -> ./real-supervisor` inside the repo ⇒ set and remove still write
+#   c_ancestor_link   (c) a repo reached through a symlinked ancestor ⇒ set and remove still write
 #   c_unresolved      no origin, no config ⇒ status `unresolved (base_branch_unresolved)`
 #   c_usage           missing / unknown subcommand, set without a branch ⇒ exit 2
 # Mutation controls (gated: non-empty + differs + bash -n, on a scratch copy beside a copy of the
-# resolver): remove writes `{}` (c_remove must fail), the already-configured early exit deleted
-# (c_idempotent must fail), the origin/<branch> check deleted (c_refuse_missing must fail).
+# resolver and of contained-path-lib.sh, which the engine loads from its own directory): remove writes
+# `{}` (c_remove must fail), the already-configured early exit deleted (c_idempotent must fail), the
+# origin/<branch> check deleted (c_refuse_missing must fail), the containment call neutralized
+# (`cpl_check_write` → `true`; c_outside must fail).
 # Exit 0 = all pass, 1 = any failure, 2 = fixture setup broken.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -43,6 +50,7 @@ has() { case "$1" in *"$2"*) return 0 ;; esac; return 1; }
 
 [ -f "$ENGINE" ] || setup_fail "setup-base-branch.sh not found at $ENGINE"
 [ -f "$RESOLVER" ] || setup_fail "resolve-base-branch.sh not found at $RESOLVER"
+[ -f "$HERE/contained-path-lib.sh" ] || setup_fail "contained-path-lib.sh not found beside the engine"
 command -v jq >/dev/null 2>&1 && printf '{}' | jq -e . >/dev/null 2>&1 || setup_fail "a working jq is required"
 
 T="$(mktemp -d)" || setup_fail "mktemp -d failed"
@@ -188,6 +196,59 @@ c_symlink() {
   [ -L "$c" ] && cmp -s "$T/sl.target" "$T/sl.snap" || { echo "the link or its target changed"; return 1; }
 }
 
+# dsnap <dir> — a stable fingerprint of a directory: every path plus a cksum of every file.
+dsnap() { (cd "$1" && { find . | LC_ALL=C sort; find . -type f -exec cksum {} + 2>/dev/null | LC_ALL=C sort; }); }
+
+# c_outside — (a) a committed `.supervisor -> <outside>` must not let set/remove write, back up or
+# stage anything in <outside>.
+c_outside() {
+  local e="$1" r o sub before pass_i
+  for pass_i in with-config no-config; do
+    for sub in "set main" remove; do
+      r="$(fresh ou)"; o="$T/outside-ou"; rm -rf "$o"; mkdir -p "$o"
+      if [ "$pass_i" = with-config ]; then printf '{"keep":1,"base_branch":"development"}\n' > "$o/config.json"; fi
+      ln -s "$o" "$r/.supervisor"
+      before="$(dsnap "$o")"
+      # shellcheck disable=SC2086
+      run "$e" "$r" $sub
+      [ "$rc" -eq 0 ] && has "$out" "${sub%% *}: ABORTED (path_outside_repo)" || { echo "[$pass_i] $sub: rc=$rc out=$out"; return 1; }
+      [ "$(dsnap "$o")" = "$before" ] || { echo "[$pass_i] $sub changed the outside folder: $(ls -la "$o")"; return 1; }
+      [ "$(nbackups "$o/config.json")" = "0" ] || { echo "[$pass_i] $sub left a backup outside"; return 1; }
+      [ -L "$r/.supervisor" ] || { echo "[$pass_i] $sub replaced the link"; return 1; }
+    done
+  done
+}
+
+# c_inside_link — (b) a symlinked parent that points INSIDE the repo is not a false refusal.
+c_inside_link() {
+  local e="$1" r c; r="$(fresh il)"; mkdir -p "$r/real-supervisor"; ln -s ./real-supervisor "$r/.supervisor"
+  c="$r/real-supervisor/config.json"; printf '{"keep":1}\n' > "$c"
+  run "$e" "$r" set development
+  [ "$rc" -eq 0 ] && has "$out" "set: applied" || { echo "set: rc=$rc out=$out"; return 1; }
+  [ "$(jq -r .base_branch "$c")" = "development" ] && [ "$(jq -r .keep "$c")" = "1" ] || { echo "value not written: $(cat "$c")"; return 1; }
+  [ "$(nbackups "$c")" = "1" ] || { echo "want 1 backup inside the repo, have $(nbackups "$c")"; return 1; }
+  run "$e" "$r" remove
+  has "$out" "remove: removed" && jq -e 'has("base_branch") | not' "$c" >/dev/null || { echo "remove: rc=$rc out=$out"; return 1; }
+  # and a create through the inside link
+  rm -f "$c".backup.* "$c"
+  run "$e" "$r" set development
+  has "$out" "set: applied (created" && [ "$(jq -r .base_branch "$c")" = "development" ] || { echo "create: out=$out"; return 1; }
+}
+
+# c_ancestor_link — (c) the repo path runs through a symlink ABOVE its root (macOS /tmp style).
+c_ancestor_link() {
+  local e="$1" r l c; r="$(fresh al)"; l="$T/al-link"
+  rm -rf "$T/al-real" "$l"; mkdir -p "$T/al-real"; mv "$r" "$T/al-real/repo"; ln -s "$T/al-real" "$l"
+  c="$l/repo/.supervisor/config.json"
+  run "$e" "$l/repo" set development
+  [ "$rc" -eq 0 ] && has "$out" "set: applied (created" && [ "$(jq -r .base_branch "$c")" = "development" ] || { echo "create: rc=$rc out=$out"; return 1; }
+  printf '{"keep":1,"base_branch":"main"}\n' > "$c"
+  run "$e" "$l/repo" set development
+  has "$out" "set: applied" && [ "$(nbackups "$c")" = "1" ] && [ "$(jq -r .base_branch "$c")" = "development" ] || { echo "set: out=$out"; return 1; }
+  run "$e" "$l/repo" remove
+  has "$out" "remove: removed" && jq -e 'has("base_branch") | not' "$c" >/dev/null || { echo "remove: out=$out"; return 1; }
+}
+
 c_unresolved() {
   local e="$1" r="$T/noorigin"
   rm -rf "$r"; git init -q "$r" && git -C "$r" commit -q --allow-empty -m init || return 1
@@ -204,7 +265,7 @@ c_usage() {
   [ ! -e "$(cfg "$r")" ] || { echo "a usage error wrote config.json"; return 1; }
 }
 
-CASES="c_status_default c_create c_merge c_idempotent c_refuse_missing c_refuse_invalid c_remove c_malformed c_symlink c_unresolved c_usage"
+CASES="c_status_default c_create c_merge c_idempotent c_refuse_missing c_refuse_invalid c_remove c_malformed c_symlink c_outside c_inside_link c_ancestor_link c_unresolved c_usage"
 
 echo "== setup-base-branch.sh =="
 for c in $CASES; do
@@ -215,7 +276,7 @@ echo "== mutation controls (each must turn its case red) =="
 # mutant <name> <awk program> <case> — scratch copy beside a copy of the resolver; gated.
 mutant() {
   local name="$1" prog="$2" case_fn="$3" d="$T/mut-$1"
-  mkdir -p "$d"; cp "$RESOLVER" "$d/resolve-base-branch.sh"
+  mkdir -p "$d"; cp "$RESOLVER" "$d/resolve-base-branch.sh"; cp "$HERE/contained-path-lib.sh" "$d/contained-path-lib.sh"
   awk "$prog" "$ENGINE" > "$d/setup-base-branch.sh"
   if [ ! -s "$d/setup-base-branch.sh" ] || cmp -s "$d/setup-base-branch.sh" "$ENGINE" || ! bash -n "$d/setup-base-branch.sh" 2>/dev/null; then
     no "MUTATION CONTROL $name: mutant is empty, identical or does not parse — control inconclusive"; return 0
@@ -228,6 +289,7 @@ mutant() {
 }
 mutant remove-writes-empty '{ if (index($0, "proposed=\"$(jq '\''del(.base_branch)'\''")) sub(/del\(\.base_branch\)/, "{}"); print }' c_remove
 mutant no-idempotent-exit '/if \[ "\$proposed" = "\$current" \]; then/ { skip = 4 } skip > 0 { skip--; next } { print }' c_idempotent
+mutant no-containment '{ if (index($0, "cpl_check_write \"$1\" \"$CFG\" \"$REPO\" config_symlink")) sub(/cpl_check_write/, "true"); print }' c_outside
 mutant no-origin-check '/refs\/remotes\/origin\/\$BRANCH\^\{commit\}/ { skip = 4 } skip > 0 { skip--; next } { print }' c_refuse_missing
 
 echo

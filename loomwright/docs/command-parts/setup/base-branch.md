@@ -24,7 +24,7 @@ A different branch is set with `/setup base-branch set <branch>` (or the questio
 - `set: no-op — already configured …` — nothing written, no backup.
 - `set: REFUSED (invalid_branch_name)` — not a valid branch name; `set: REFUSED (no_such_remote_branch)` — `origin/<branch>` is not a remote-tracking ref (suggest `git fetch origin <branch>`). Nothing written.
 - `remove: removed` (+ `backup: <path>`) — only `.base_branch` deleted; `remove: no-op — …` — nothing to delete.
-- `<set|remove>: ABORTED (<reason>)` — `config_unparseable` (not exactly one JSON object), `config_symlink`, `jq_unavailable`, `no_backup_name`, `backup_failed`, `write_failed`. Nothing written; **never repair the config to get past it**.
+- `<set|remove>: ABORTED (<reason>)` — `config_unparseable` (not exactly one JSON object), `config_symlink`, `path_outside_repo` (the config's real location is outside the repo, e.g. a committed `.supervisor -> /elsewhere`), `containment_unavailable`, `jq_unavailable`, `no_backup_name`, `backup_failed`, `write_failed`. Nothing written; **never repair the config to get past it**.
 
 **Verify.** Success is claimed ONLY from the `verify:` block's headline: after `set <branch>` it must read `base-branch: <branch> (source: config)`; after `remove` it shows the next step's answer (`origin-head`, `gh`, or `unresolved`).
 

@@ -19,7 +19,7 @@ Can't ask (non-interactive, or inside a subagent): report and stop with `Setup: 
 - `applied` (+ `backup: <path>`) / `applied (created <file>)` — written; a `verify:` status follows.
 - `no-op — …` — nothing written, no backup.
 - `REFUSED (unknown_seat | invalid_provider_name | invalid_model | provider_not_probed | provider_not_usable | claude_needs_no_grant | no_repo_slug)` — nothing written, even for the other target of the same call.
-- `ABORTED (<reason>)` — `config_unparseable`, `routing_unexpected_shape`, `egress_unparseable`, `egress_unexpected_shape`, `symlink`, `no_home`, `jq_unavailable`, `no_backup_name`, `backup_failed`, `write_failed`. Nothing written; **never repair a file to get past it**.
+- `ABORTED (<reason>)` — `config_unparseable`, `routing_unexpected_shape`, `egress_unparseable`, `egress_unexpected_shape`, `symlink`, `path_outside_repo` (the repo config's real location is outside the repo; the user-scope grant file is exempt), `containment_unavailable`, `no_home`, `jq_unavailable`, `no_backup_name`, `backup_failed`, `write_failed`. Nothing written; **never repair a file to get past it**.
 
 **Verify.** Success is claimed ONLY from the `verify:` block: each seat just routed must show `provider=<provider>` with an empty `reason=`. A seat that still shows `reason=provider_not_granted` (no grant yet) or `provider_unavailable` (the CLI is not on PATH) is reported as such, never as routed.
 
