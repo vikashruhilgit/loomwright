@@ -211,3 +211,9 @@ loomwright/scripts/set-otel-resource-attrs.sh
 loomwright/scripts/test-set-otel-resource-attrs.sh
 loomwright/docs/PITFALLS.md
 changelog.d/config-writer-symlink-containment.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-29T11:08:15Z
+- **Brief:** .supervisor/jobs/done/2026-10-28-config-writer-symlink-containment.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/752
