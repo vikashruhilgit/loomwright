@@ -338,6 +338,7 @@ external_requires: []
 - Every contract block MUST be anchored by its Subtask Structure `#` id — `# Subtask N …` (as in the example above), `### Subtask N …`, or `subtask_N:` — the only tokens `scripts/verify-provides.sh` (the `outputs_verified` gate) recognises. A slug key such as `subtask_id: foo-01` is NOT an anchor (fine as an extra key *under* one); Launch Pad proves each anchor parses with `verify-provides.sh <brief> N --parse-only` before Plan Review, and Criterion 12 blocks an unparseable one. A single-subtask brief still anchors its block as `# Subtask 1`
 - Every subtask MUST declare a `provides` list (Criterion 12 BLOCKING when the contract block is absent), and it should be non-empty. Pure-deletion subtasks may use `provides: []` with a comment justifying it
 - Reject vague provides like `"adds feature"` / `"updates code"` — every entry MUST be `{kind, path, name?}` addressable on disk; inside double quotes escape an inner `"` as `\"` (or single-quote the value)
+- A provides entry must still exist when its subtask completes — never a file a later step deletes, such as a `changelog.d/` fragment in a subtask that also runs the version bump (name the folded `CHANGELOG.md` entry instead; a lane subtask that never bumps lists the fragment)
 - `external_requires` is for things outside the brief; do NOT use it as the `from` target of any `requires` entry
 - Non-empty `requires` → BLOCKED (status in Subtask Structure table MUST reflect this)
 
