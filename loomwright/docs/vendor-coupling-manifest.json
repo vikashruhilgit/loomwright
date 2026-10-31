@@ -222,7 +222,7 @@
     "loomwright/docs/result-schemas/verify-result.md": 1,
     "loomwright/docs/result-schemas/worker-result.md": 4,
     "loomwright/docs/vendor-coupling-manifest.json": 28,
-    "loomwright/scripts/adapters/providers/provider-claude.sh": 3,
+    "loomwright/scripts/adapters/providers/provider-claude.sh": 4,
     "loomwright/scripts/adapters/providers/provider-cursor.sh": 1,
     "loomwright/scripts/adapters/providers/test-lens-compare.sh": 1,
     "loomwright/scripts/adapters/providers/test-lens-roles.sh": 1,
@@ -795,6 +795,7 @@
     "loomwright/scripts/test-command-parts.sh": "new file, automate-speed/22 split test: check G asserts each router's read rule names its parts under the install root (one literal, read-only)",
     "loomwright/scripts/worktree-salvage.sh": "new allowance, af/39a --ignored salvage: the host local-settings file is per-worktree gitignored state that a worktree removal deletes, so it is on the fixed salvage list; named once in one variable (IGN_HOST_SETTINGS), comment and README mentions go through it (measured)",
     "loomwright/scripts/test-worktree-salvage.sh": "new allowance, af/39a --ignored salvage legs: the fixture writes and byte-compares the host local-settings file the salvage list names; named once in one variable (IGN_HS), its directory derived from it (measured)",
+    "loomwright/scripts/adapters/providers/provider-claude.sh": "provider-routing/05 login pass-through: the provider file declares the CLI's own long-lived OAuth-token env var (it begins with the harness env-var prefix) in PROVIDER_LOGIN_ENV, the only way this keychain-only login can cross the launcher's isolated HOME; the provider file is where vendor strings belong; measured",
     "loomwright/scripts/adapters/providers/test-lens-compare.sh": "test fixture (provider-routing-readonly-seats/02): one literal harness-config-dir path building the scratch-HOME egress file; hermetic, never the operator's real home; measured",
     "loomwright/scripts/adapters/providers/test-lens-roles.sh": "test fixture (provider-routing-readonly-seats/02): one literal harness-config-dir path building the scratch-HOME egress file; hermetic, never the operator's real home; measured",
     "loomwright/scripts/adapters/providers/test-lens-run.sh": "test fixture (provider-routing-readonly-seats/02): one literal harness-config-dir path building the scratch-HOME egress file for the stub provider; hermetic, never the operator's real home; measured"

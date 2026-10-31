@@ -36,9 +36,22 @@
 # well-formed-output test case below runs against a STUB, per this repo's
 # sanctioned stub-testing convention (see loomwright/scripts/adapters/orca/).
 
+# LOGIN PASS-THROUGH — probed 2026-10-31 on this dev machine (macOS, CLI
+# 2026.10.22-27dcf5f) by running `status` through launch-provider-cli.sh: under
+# the isolated HOME it says "Not logged in", even with its config file
+# `.cursor/cli-config.json` (whose keys are account metadata) copied in; under
+# the real HOME (env still scrubbed) it is logged in. Its installed bundle
+# keeps tokens in the macOS login keychain via /usr/bin/security unless
+# AGENT_CLI_CREDENTIAL_STORE selects `file` or `memory`. A keychain login
+# cannot be copied, so NO file is declared. CURSOR_API_KEY is the API-key login
+# its --help documents: when set in the caller's env it crosses, and that is
+# the fix for the keychain-only login.
+
 PROVIDER_CLI_NAME="cursor-agent"
 PROVIDER_WORKSPACE_FLAG=1
 PROVIDER_HOME_SCRUB=1
+PROVIDER_LOGIN_FILES=()
+PROVIDER_LOGIN_ENV=("CURSOR_API_KEY")
 
 provider_build_argv() {
   PROVIDER_ARGV=("-p" "--output-format" "json")

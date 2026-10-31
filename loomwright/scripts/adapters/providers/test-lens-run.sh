@@ -57,6 +57,14 @@
 #      grant is the only difference)
 #   N. --provider claude needs no grant: with no claude grant the run still
 #      reaches the CLI and ends ok
+#   O. login pass-through (AC1): a fake CLI that answers only when
+#      $HOME/.fake/auth.json exists, with a provider file that DECLARES that
+#      file in PROVIDER_LOGIN_FILES -> ok (the launcher copied it into the
+#      isolated HOME); a parsed answer that happens to contain the
+#      not-logged-in wording stays ok
+#   P. no login declaration (AC2): the same fake CLI, provider file declares
+#      nothing -> a non-ok lens_status whose notes BEGIN with
+#      `not_logged_in_isolated`
 #
 # HARNESS (consent): lens-run.sh refuses a non-claude provider unless the invoking
 # repo's user-scope grant names it, and has no bypass. So the whole suite runs under a
@@ -110,6 +118,12 @@ KB_PROVIDER_FILE="$HERE/provider-$KB_PROVIDER_NAME.sh"
 NG_STUB_CLI_NAME="$STUB_CLI_NAME-ng"
 NG_PROVIDER_NAME="$PROVIDER_NAME-ng"
 NG_PROVIDER_FILE="$HERE/provider-$NG_PROVIDER_NAME.sh"
+# Cases O / P: the same fake login CLI behind a declaring and a non-declaring entry.
+LG_STUB_CLI_NAME="$STUB_CLI_NAME-lg"
+LG_PROVIDER_NAME="$PROVIDER_NAME-lg"
+LG_PROVIDER_FILE="$HERE/provider-$LG_PROVIDER_NAME.sh"
+LU_PROVIDER_NAME="$PROVIDER_NAME-lu"
+LU_PROVIDER_FILE="$HERE/provider-$LU_PROVIDER_NAME.sh"
 KB_DIR="$TMP/k-b"
 KB_RELEASE="$KB_DIR/release"
 KB_LENS_PID=""
@@ -131,7 +145,7 @@ cleanup() {
     wait "$L_LIVE_PID" 2>/dev/null
     L_LIVE_PID=""
   fi
-  rm -rf "$TMP"; rm -f "$PROVIDER_FILE" "$KB_PROVIDER_FILE" "$NG_PROVIDER_FILE"
+  rm -rf "$TMP"; rm -f "$PROVIDER_FILE" "$KB_PROVIDER_FILE" "$NG_PROVIDER_FILE" "$LG_PROVIDER_FILE" "$LU_PROVIDER_FILE"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -721,6 +735,62 @@ run_lens_named claude "$STUB_N_DIR" "$OUT_N" || RC_N=$?
 assert_eq "N rc=0" "0" "$RC_N"
 assert_eq "N the claude CLI was reached with no claude grant" "1" "$( [ -f "$CLI_RAN_N" ] && echo 1 || echo 0 )"
 assert_eq "N lens_status=ok (no provider_not_granted for claude)" "ok" "$(jq -r '.lens_status' "$OUT_N" 2>/dev/null)"
+
+echo ""
+echo "==== O / P: declared login crosses the isolated HOME; an undeclared one is named not_logged_in_isolated ===="
+# write_login_provider <file> <declare 0|1> — the test provider body plus the
+# provider's own not-logged-in pattern and, when <declare> is 1, the login file.
+write_login_provider() {
+  local file="$1" declare="$2"
+  write_provider "$file" "$LG_STUB_CLI_NAME"
+  printf '%s\n' "PROBE_AUTH_NOT_LOGGED_IN_RE='Not signed in'" >> "$file"
+  if [ "$declare" = "1" ]; then
+    printf '%s\n' 'PROVIDER_LOGIN_FILES=(".fake/auth.json")' >> "$file"
+  fi
+}
+write_login_provider "$LG_PROVIDER_FILE" 1
+write_login_provider "$LU_PROVIDER_FILE" 0
+write_grants "$PROVIDER_NAME" "$KB_PROVIDER_NAME" "$LG_PROVIDER_NAME" "$LU_PROVIDER_NAME"
+# The fake login: present in the caller's HOME (the suite's scratch HOME).
+mkdir -p "$HOME/.fake"
+printf 'fake-session\n' > "$HOME/.fake/auth.json"
+# write_login_stub <dir> <answer-json> — answers only when its own HOME holds the login.
+write_login_stub() {
+  local dir="$1" answer="$2"
+  mkdir -p "$dir"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'if [ -f "$HOME/.fake/auth.json" ]; then'
+    printf '  printf %%s\\\\n %q\n' "$answer"
+    printf '%s\n' '  exit 0' 'fi' 'echo "Error: Not signed in. Run fake-login first." >&2' 'exit 1'
+  } > "$dir/$LG_STUB_CLI_NAME"
+  chmod +x "$dir/$LG_STUB_CLI_NAME"
+}
+STUB_O_DIR="$TMP/stub-o"
+write_login_stub "$STUB_O_DIR" '{"issues":[]}'
+OUT_O="$TMP/out-o.json"
+RC_O=0
+run_lens_named "$LG_PROVIDER_NAME" "$STUB_O_DIR" "$OUT_O" || RC_O=$?
+assert_eq "O rc=0" "0" "$RC_O"
+assert_eq "O declared login file -> lens_status=ok" "ok" "$(jq -r '.lens_status' "$OUT_O" 2>/dev/null)"
+assert_eq "O the caller's login file is untouched" "fake-session" "$(cat "$HOME/.fake/auth.json")"
+STUB_O2_DIR="$TMP/stub-o2"
+write_login_stub "$STUB_O2_DIR" '{"issues":[{"severity":"LOW","category":"nit","file":"a.sh","line":1,"description":"prints Not signed in","suggestion":null}]}'
+OUT_O2="$TMP/out-o2.json"
+run_lens_named "$LG_PROVIDER_NAME" "$STUB_O2_DIR" "$OUT_O2"
+assert_eq "O a parsed answer containing the not-logged-in wording stays ok" "ok" "$(jq -r '.lens_status' "$OUT_O2" 2>/dev/null)"
+OUT_P="$TMP/out-p.json"
+RC_P=0
+run_lens_named "$LU_PROVIDER_NAME" "$STUB_O_DIR" "$OUT_P" || RC_P=$?
+assert_eq "P rc=0" "0" "$RC_P"
+P_STATUS="$(jq -r '.lens_status' "$OUT_P" 2>/dev/null)"
+assert_eq "P no login declaration -> a non-ok lens_status" "1" "$( [ -n "$P_STATUS" ] && [ "$P_STATUS" != "ok" ] && echo 1 || echo 0 )"
+P_NOTES="$(jq -r '.notes // empty' "$OUT_P" 2>/dev/null)"
+case "$P_NOTES" in
+  not_logged_in_isolated*) ok "P notes begin with the named status not_logged_in_isolated" ;;
+  *) no "P notes begin with the named status not_logged_in_isolated (got [$P_NOTES])" ;;
+esac
+write_grants "$PROVIDER_NAME" "$KB_PROVIDER_NAME"
 
 echo ""
 echo "RESULT: $pass passed, $fail failed"

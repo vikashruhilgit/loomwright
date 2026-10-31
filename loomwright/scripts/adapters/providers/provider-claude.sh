@@ -25,16 +25,27 @@
 # is centralized in lens-run.sh itself (shared across every provider), not
 # duplicated here.
 #
-# HOME SCRUB — PROVIDER_HOME_SCRUB=1 (lens-run.sh redirects HOME to a
-# throwaway temp dir before exec). Whether `claude`'s own auth survives a
-# scrubbed HOME is UNVERIFIED here (no live authenticated invocation was
-# attempted by this adapter); scrubbing is the conservative default per the
-# source requirement's "verify per-provider, don't assume" note — a
-# documented assumption, not a confirmed fact.
+# HOME SCRUB — PROVIDER_HOME_SCRUB=1: every launch runs under
+# launch-provider-cli.sh's isolated HOME, and only the login declared below
+# crosses into it.
+#
+# LOGIN PASS-THROUGH — probed 2026-10-31 on this dev machine (macOS, CLI
+# 2.1.314) by running `auth status --json` through launch-provider-cli.sh:
+# under the isolated HOME it reports loggedIn false; under the real HOME (env
+# still scrubbed) it reports loggedIn true, and the CLI's own credentials file
+# (`.credentials.json` in its config dir, used where there is no keychain) is
+# absent here: its login lives in the macOS keychain, which no copy can carry
+# across, so NO file is declared and this CLI's subscription
+# login does not reach a lens run. The two env vars are the CLI's own
+# non-interactive logins (an API key, and the long-lived token `claude
+# setup-token` prints; both names occur in the 2.1.314 binary): when set in the
+# caller's env they cross, and that is the fix for a keychain-only login.
 
 PROVIDER_CLI_NAME="claude"
 PROVIDER_WORKSPACE_FLAG=0
 PROVIDER_HOME_SCRUB=1
+PROVIDER_LOGIN_FILES=()
+PROVIDER_LOGIN_ENV=("ANTHROPIC_API_KEY" "CLAUDE_CODE_OAUTH_TOKEN")
 
 # provider_build_argv — inputs (globals lens-run.sh sets before calling):
 #   MODEL           provider-qualified model string, or "" if none given
@@ -79,7 +90,8 @@ provider_extract_text() {
 # a headless drain (its PERMISSION_REGIME_UNPINNABLE refusal): `--help` must
 # advertise `--permission-mode` with the `dontAsk` choice plus `--allowedTools`
 # and `--disallowedTools`. Mirrored here as data so the two cannot disagree on
-# what "pinnable" means for this CLI.
+# which flags must exist. Advertised flags are necessary, not sufficient: the
+# `pinnable` grade also needs probe_perm_argv (below) to observe a denial.
 #
 # SMOKE — print mode with the JSON envelope, plus flags (all present in this
 # build's --help) that keep the smoke from touching anything:
@@ -109,4 +121,15 @@ PROBE_LOGIN_HINT="claude auth login"
 probe_smoke_argv() {
   PROBE_ARGV=("-p" "--output-format" "json" "--no-session-persistence" "--safe-mode" \
     "--tools" "" "--permission-mode" "dontAsk" "$PROBE_PROMPT")
+}
+
+# probe_perm_argv — the permission-ENFORCEMENT probe (setup-providers.sh
+# `check`): reads PROBE_PROMPT (which asks for a file to be written), sets
+# PROBE_ARGV, prompt LAST. The smoke's shape with the pin mode `--permission-mode
+# dontAsk` and NO allow or deny rule, and with the built-in tools LEFT ON (the
+# smoke's `--tools ""` removes them, which would make a refusal prove nothing):
+# a write must be denied by the mode itself.
+probe_perm_argv() {
+  PROBE_ARGV=("-p" "--output-format" "json" "--no-session-persistence" "--safe-mode" \
+    "--permission-mode" "dontAsk" "$PROBE_PROMPT")
 }

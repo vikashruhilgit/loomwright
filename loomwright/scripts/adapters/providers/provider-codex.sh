@@ -24,10 +24,17 @@
 # object-with-a-top-level-text-field convention the other providers use; if
 # `codex exec --json` actually streams JSONL events instead, this parser
 # degrades honestly to `lens_unparseable` rather than guessing further.
+#
+# LOGIN PASS-THROUGH — NOT PROBED: the CLI is not installed here, so where its
+# login lives was never observed, and nothing is declared. Nothing crosses
+# launch-provider-cli.sh's isolated HOME until someone probes a real install
+# and declares it.
 
 PROVIDER_CLI_NAME="codex"
 PROVIDER_WORKSPACE_FLAG=0
 PROVIDER_HOME_SCRUB=1
+PROVIDER_LOGIN_FILES=()
+PROVIDER_LOGIN_ENV=()
 
 provider_build_argv() {
   PROVIDER_ARGV=("exec" "--json")

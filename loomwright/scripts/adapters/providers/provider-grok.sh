@@ -31,13 +31,30 @@
 # `lens_unparseable` (lens) or `headless: fail:unparseable` (probe), which is
 # exactly the signal that tells the owner to correct this guess.
 #
-# HOME SCRUB — PROVIDER_HOME_SCRUB=1 like every other entry (lens-run.sh's
-# conservative default). [H]/[O] say headless sessions and config live under
-# the user's home tree, so a scrubbed HOME probably has no login; unverified.
+# HOME SCRUB — PROVIDER_HOME_SCRUB=1 like every other entry: every launch runs
+# under launch-provider-cli.sh's isolated HOME, and only the login declared
+# below crosses into it.
+#
+# LOGIN PASS-THROUGH — probed 2026-10-31 on this dev machine (Grok Build
+# 1.0.70, installed since the 2026-10-27 note above) by running
+# `grok --no-auto-update models` (lists models; no model call) through
+# launch-provider-cli.sh: with nothing copied, the isolated run's output
+# matches PROBE_AUTH_NOT_LOGGED_IN_RE; with `.grok/auth.json` copied in, it
+# lists models, as the real-HOME run does. The CLI's own user guide (shipped
+# at `.grok/docs/user-guide/02-authentication.md` under the home dir, read
+# 2026-10-31) names that file as its credential store and XAI_API_KEY as its
+# API-key login (used when no session token is active). Limits: a CLI started
+# with GROK_HOME pointing elsewhere keeps its file there, and that path is not
+# declared; and if the session token is near expiry, Grok may refresh it
+# inside the throwaway copy. That refresh is discarded with the copy, and if
+# the vendor rotates refresh tokens the real file may need a fresh
+# `grok login` (not observed, not tested).
 
 PROVIDER_CLI_NAME="grok"
 PROVIDER_WORKSPACE_FLAG=0
 PROVIDER_HOME_SCRUB=1
+PROVIDER_LOGIN_FILES=(".grok/auth.json")
+PROVIDER_LOGIN_ENV=("XAI_API_KEY")
 
 provider_build_argv() {
   PROVIDER_ARGV=("--no-auto-update" "--output-format" "json")
@@ -72,13 +89,14 @@ provider_extract_text() {
 #     timeout, so at worst it is killed.
 #   - permissions: [E] documents a headless `--permission-mode dontAsk`
 #     ("Silently deny anything without an explicit allow rule") with
-#     `--allow` / `--deny` rules ([R], [P]). The column is `pinnable` only
-#     when `grok --help` advertises all of those tokens, each as a whole token
-#     (so `--allow-all` / `--deny-<x>` do not count as `--allow` / `--deny`);
-#     `--always-approve` /
-#     `--yolo` alone ([R]: "Auto-approve all tool executions") is not pinning,
-#     so a build without them reports `unpinnable`. [E] files `dontAsk` under
-#     enterprise policy, so a consumer build may well report `unpinnable`.
+#     `--allow` / `--deny` rules ([R], [P]). `grok --help` advertising all of
+#     those tokens, each as a whole token (so `--allow-all` / `--deny-<x>` do
+#     not count as `--allow` / `--deny`), is NECESSARY, not sufficient: on
+#     1.0.70 all of them are advertised, yet `--permission-mode dontAsk` with
+#     no allow rule still wrote a file (source requirement,
+#     provider-routing/05). So `pinnable` also needs probe_perm_argv (below)
+#     to observe a denial. `--always-approve` / `--yolo` alone ([R]:
+#     "Auto-approve all tool executions") is not pinning.
 #   - browser: `unknown` until a probe shows it.
 #   - install hint: [O] ("curl -fsSL https://x.ai/cli/install.sh | bash").
 #   - login hint: [R] (`grok login`; `--device-auth` for headless hosts).
@@ -100,4 +118,14 @@ probe_smoke_argv() {
   PROMPT_CONTENT="$PROBE_PROMPT"
   provider_build_argv
   PROBE_ARGV=("${PROVIDER_ARGV[@]}")
+}
+
+# probe_perm_argv — the permission-ENFORCEMENT probe (setup-providers.sh
+# `check`): reads PROBE_PROMPT (which asks for a file to be written), sets
+# PROBE_ARGV, prompt LAST (-p's own value). The smoke's shape plus the pin mode
+# `--permission-mode dontAsk` and NO `--allow` / `--deny` rule, so a write must
+# be denied by the mode itself (all flags are in the 1.0.70 --help).
+probe_perm_argv() {
+  PROBE_ARGV=("--no-auto-update" "--output-format" "json" "--permission-mode" "dontAsk" \
+    "-p" "$PROBE_PROMPT")
 }
