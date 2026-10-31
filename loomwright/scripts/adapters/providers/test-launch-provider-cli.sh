@@ -26,6 +26,10 @@
 #   F. a CLI that ends before the bound leaves no watchdog sleep behind
 #   G. refused arguments (home mode, timeout, CLI name, cwd) return 1 with
 #      LPC_ERROR set and start nothing
+#   H. the timeout flag file: an entry planted at its TMPDIR path during the
+#      call (a symlink to a victim file) is never followed — the victim is
+#      untouched after a timeout — and never reads as a timeout on a normal
+#      run; the flag file is gone after a normal end, a timeout and an abort
 #
 # Exit 0 = all pass, 1 = any failure.
 
@@ -304,6 +308,78 @@ g_case "missing cwd" "cwd" isolated 5 "$TMP/no-such-dir" "$TMP/o" "$TMP/e" "$CLI
 g_case "too few arguments" "usage" isolated 5 "$CWD" "$TMP/o" "$TMP/e"
 assert_eq "G the stub never ran" "0" "$( [ -e "$RAN_G" ] && echo 1 || echo 0 )"
 assert_eq "G no refused call left an isolated HOME recorded" "" "$LPC_HOME"
+
+echo ""
+echo "==== H: the timeout flag file — a planted symlink is never followed, never a false timeout ===="
+# The caller's TMPDIR is private to this scenario, so the flag file the
+# launcher allocates is the only loomwright-provider-tmo-* entry in it. A
+# mktemp wrapper records that path; the stub (running mid-call, as the same
+# user) tries to plant a symlink to a victim file there with `ln -s` (no -f).
+H_TMPDIR="$TMP/h-tmpdir"; mkdir -p "$H_TMPDIR"
+H_FLAGREC="$TMP/h-flagpath"; H_VICTIM="$TMP/h-victim"
+mktemp() {
+  local p
+  p="$(command mktemp "$@")" || return $?
+  case "$p" in *loomwright-provider-tmo-*) printf '%s\n' "$p" > "$H_FLAGREC" ;; esac
+  printf '%s\n' "$p"
+}
+# write_planter_stub <dir> <hang:0|1> — plants the symlink, then exits 0 or hangs.
+write_planter_stub() {
+  local dir="$1" hang="$2"
+  mkdir -p "$dir"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'f="$(cat %q 2>/dev/null)"\n' "$H_FLAGREC"
+    printf 'if [ -n "$f" ] && ln -s %q "$f" 2>/dev/null; then echo planted > %q; else echo refused > %q; fi\n' \
+      "$H_VICTIM" "$TMP/h-plant" "$TMP/h-plant"
+    [ "$hang" = "1" ] && printf '%s\n' 'sleep 120'
+    printf '%s\n' 'exit 0'
+  } > "$dir/$CLI"
+  chmod +x "$dir/$CLI"
+}
+h_flag_left() { ( shopt -s nullglob; set -- "$H_TMPDIR"/loomwright-provider-tmo-*; echo $# ); }
+PROVIDER_LOGIN_FILES=(); PROVIDER_LOGIN_ENV=()
+
+printf 'victim-content-%s\n' "$RUN_TAG" > "$H_VICTIM"
+H_VICTIM_BEFORE="$(cat "$H_VICTIM")"
+STUB_H1="$TMP/stub-h1"; write_planter_stub "$STUB_H1" 1
+rm -f "$H_FLAGREC" "$TMP/h-plant"
+TMPDIR="$H_TMPDIR" PATH="$STUB_H1:$PATH" launch_provider_cli isolated 2 "$CWD" "$TMP/out-h1" "$TMP/err-h1" "$CLI"
+assert_eq "H1 the bound fired (LPC_TIMED_OUT=1)" "1" "$LPC_TIMED_OUT"
+assert_eq "H1 the flag path could not be replaced by a symlink mid-call" "refused" "$(cat "$TMP/h-plant" 2>/dev/null)"
+assert_eq "H1 the victim file is untouched after the timeout" "$H_VICTIM_BEFORE" "$(cat "$H_VICTIM" 2>/dev/null)"
+assert_eq "H1 the flag file is removed after a timeout" "0" "$(h_flag_left)"
+
+STUB_H2="$TMP/stub-h2"; write_planter_stub "$STUB_H2" 0
+rm -f "$H_FLAGREC" "$TMP/h-plant"
+TMPDIR="$H_TMPDIR" PATH="$STUB_H2:$PATH" launch_provider_cli isolated 30 "$CWD" "$TMP/out-h2" "$TMP/err-h2" "$CLI"
+assert_eq "H2 a normal run with a plant attempt is not a timeout" "0:0" "$LPC_RC:$LPC_TIMED_OUT"
+assert_eq "H2 the flag path could not be replaced by a symlink mid-call" "refused" "$(cat "$TMP/h-plant" 2>/dev/null)"
+assert_eq "H2 the flag file is removed after a normal end" "0" "$(h_flag_left)"
+assert_eq "H2 the victim file is untouched" "$H_VICTIM_BEFORE" "$(cat "$H_VICTIM" 2>/dev/null)"
+unset -f mktemp
+
+# Abort path: a caller TERMed mid-call leaves no flag file in its TMPDIR.
+STUB_H3="$TMP/stub-h3"; REC_H3="$TMP/rec-h3"
+write_hung_stub "$STUB_H3" "$REC_H3"
+CALLER_H3="$TMP/caller-h3.sh"
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '. %q\n' "$LAUNCHER"
+  printf '%s\n' 'trap launch_provider_cli_abort EXIT'
+  printf '%s\n' "trap 'exit 143' TERM"
+  printf 'launch_provider_cli isolated 60 %q %q %q %q\n' "$CWD" "$TMP/out-h3" "$TMP/err-h3" "$CLI"
+} > "$CALLER_H3"
+TMPDIR="$H_TMPDIR" PATH="$STUB_H3:$PATH" bash "$CALLER_H3" >/dev/null 2>&1 &
+ABORT_CALLER_PID=$!
+i=0
+while [ ! -s "$REC_H3.child" ] && [ "$i" -lt 150 ]; do sleep 0.2; i=$((i+1)); done
+assert_eq "H3 the flag file exists while the CLI runs" "1" "$(h_flag_left)"
+kill -TERM "$ABORT_CALLER_PID" 2>/dev/null
+wait "$ABORT_CALLER_PID" 2>/dev/null
+ABORT_CALLER_PID=""
+assert_eq "H3 the flag file is removed on the abort path" "0" "$(h_flag_left)"
+assert_gone "H3" "$REC_H3"
 
 echo ""
 echo "RESULT: $pass passed, $fail failed"

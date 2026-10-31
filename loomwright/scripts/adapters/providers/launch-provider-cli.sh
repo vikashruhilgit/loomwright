@@ -225,7 +225,11 @@ launch_provider_cli() {
     _lpc_finish
     return 1
   fi
-  rm -f "$LPC__FLAG" 2>/dev/null
+  # The flag file is KEPT (mktemp made it 0600, ours, O_EXCL): the watchdog
+  # writes into it and the bound reads as fired only when it is non-empty.
+  # Deleting it and re-creating it by name later would let an entry planted
+  # at that path in the gap be followed (a symlink would be written through)
+  # or read as a timeout. _lpc_finish removes it on every exit path.
 
   LPC__SELF_PGID="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
   LPC__OWN_PGROUP=0
@@ -246,7 +250,7 @@ launch_provider_cli() {
     sleep "$secs" & wd_sleep=$!
     wait "$wd_sleep"
     if kill -0 "$LPC__PID" 2>/dev/null; then
-      : > "$LPC__FLAG"
+      printf '1\n' > "$LPC__FLAG"
       _lpc_kill TERM
       sleep 2
       _lpc_kill KILL
@@ -256,7 +260,7 @@ launch_provider_cli() {
 
   wait "$LPC__PID" 2>/dev/null
   LPC_RC=$?
-  if [ -e "$LPC__FLAG" ]; then
+  if [ -s "$LPC__FLAG" ]; then
     # The bound fired: let the watchdog finish, so its KILL still reaches
     # group members that ignored TERM.
     LPC_TIMED_OUT=1
