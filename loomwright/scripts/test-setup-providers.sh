@@ -11,12 +11,29 @@
 # run's $TMP/marks — never a machine-wide name match.
 #
 # Covers:
-#   W. write-containment (AC3): repo `git status --porcelain` before = after,
+#   W. write-containment (AC3): repo `git status --porcelain` before = after
+#      (a concurrent test-lens-run.sh's transient teststub file excluded),
 #      the temp HOME tree (incl. its tool config tree) byte-identical, the
 #      engine's own scratch dir gone (its TMPDIR is empty again), exit 0
 #   A. absent binary -> `installed: no`, install hint, `not usable: installed`
-#   P. installed + auth ok + headless pass + pinnable + browser yes ->
-#      `usable for write seats`
+#   P. installed + auth ok + headless pass + pin tokens advertised + the
+#      permission probe REFUSED (no file in its cwd) -> `permissions pinnable`,
+#      browser yes, `usable for write seats`; the probe ran isolated, from an
+#      empty throwaway cwd under the engine's scratch dir (removed after), with
+#      the fixed write-request prompt LAST
+#   Q. permission probe (AC5): a CLI that IGNORES its pin flags and writes the
+#      file -> `permissions: unpinnable (pin flags not enforced)`, never write
+#      seats; tokens advertised but no probe_perm_argv, or a failing smoke (the
+#      probe is then NOT run), or a probe that exits non-zero with no file, or
+#      one that timed out (case H) ->
+#      `permissions: pin flags advertised (unverified)`, never write seats
+#   I. login isolation (AC1/AC2 check half): a CLI that works only when
+#      $HOME/.fake/auth.json exists -> declared as its login file: `auth ok`,
+#      `=> usable for …` (auth command and smoke-only providers alike); NOT
+#      declared: `auth: not_logged_in_isolated (ok in your shell)`, a `fix:`
+#      line naming the declared login env vars, `=> not usable: auth` (the
+#      auth-command provider's smoke is not run; the smoke-only provider's
+#      isolated smoke ran, then one diagnosis smoke under the real HOME)
 #   R. pin token missing from --help -> `permissions: unpinnable`, browser no,
 #      `usable for read-only seats`; pin tokens present only as prefixes of
 #      longer flags (`--allow-all`, `--deny-x` for `--allow --deny`) ->
@@ -24,8 +41,8 @@
 #   X. declared `none` (lone auto-approve flag in --help) -> unpinnable, never
 #      write seats
 #   U. no pin flags declared -> `permissions: unknown`, browser unknown
-#   N. auth not_logged_in -> login hint, `headless: not run`, smoke NOT run,
-#      `not usable: auth`
+#   N. auth not_logged_in (in the shell too) -> login hint, `headless: not
+#      run`, smoke NOT run, `not usable: auth`, never not_logged_in_isolated
 #   K. auth output unrecognised + garbage smoke -> `auth: unknown`,
 #      `headless: fail:unparseable`, `not usable: auth`, login hint QUALIFIED
 #      (`login (only if not logged in):`)
@@ -42,20 +59,23 @@
 #   F. no auth command + smoke failing another way -> `auth: unknown (smoke
 #      failed: unparseable)`, `not usable: auth`, login hint qualified
 #   C. smoke context (AC10): cwd a throwaway dir under the engine's TMPDIR
-#      (never the repo) and removed after, HOME = the HOME the engine got (not
-#      scrubbed), prompt = the fixed probe string
+#      (never the repo) and removed after, HOME = an isolated per-call HOME
+#      under the engine's TMPDIR (NOT the HOME the engine got) and removed
+#      after, prompt = the fixed probe string
 #   Z. provider files with no probe entries (a lens-only teststub) or a name
 #      outside the allowlist are skipped: never reported, their CLI never run
 #   H. hung smoke (TERM ignored) + timeout 2 -> `headless: fail:timeout`, the
 #      stub's recorded pid/pgid/child are gone, the run ends well before the
-#      stub's own 30s sleep (so the KILL step fired), exit 0
+#      stub's own 30s sleep (so the KILL step fired), exit 0; a hung permission
+#      probe -> `permissions: pin flags advertised (unverified)`
 #   J. jq unavailable -> `headless: not run (jq not found)`, exit 0; a provider
 #      with no auth command -> `auth: unknown (smoke not run)`; invalid
 #      timeout values fall back to the defaults
 #   E. usage errors (no subcommand / extra arg) -> exit 64
 #   T. table contract (AC13): every real provider-<name>.sh (test-only
 #      teststub files excluded) keeps the lens contract and declares the probe
-#      entries; both argv builders put the prompt LAST
+#      entries; both argv builders (and probe_perm_argv where defined) put the
+#      prompt LAST
 #   V. setup-providers.sh names no provider's CLI or table name (AC15), read
 #      from the real table files rather than a restated list
 #
@@ -116,24 +136,50 @@ CFG="$THOME/.claude"
 mkdir -p "$CFG"
 printf '{"fixture":true}\n' > "$CFG/settings.json"
 printf 'keep\n' > "$THOME/.profile-fixture"
+# The fake login the I-case CLIs need (they read only its existence).
+mkdir -p "$THOME/.fake"
+printf '{"fixture-login":true}\n' > "$THOME/.fake/auth.json"
+LOGIN_REL=".fake/auth.json"
+PERM_PROMPT='Create a file named probe.txt in the current directory containing the single word loomwright. Use your file-writing tool and do not ask for confirmation. Then reply with one short sentence saying whether the file was written.'
 
 cli_of() { printf 'lwprobe%s-%s' "$RUN_TAG" "$1"; }
 
-# make_stub <name> <auth-output> <help-text> <smoke-mode>
+# make_stub <name> <auth-output> <help-text> <smoke-mode> [<perm-mode>] [<login-rel>]
+# perm-mode (the `--perm-probe` call): refuse (answers, writes nothing) | write
+# (writes probe.txt into its cwd, then answers) | hang | fail (exit 3, no file). login-rel: when set, the
+# CLI is logged in only while $HOME/<login-rel> exists (else its auth-check and
+# smoke print the not-logged-in wording) — the per-run fake of a login file.
 make_stub() {
   local cli; cli="$(cli_of "$1")"
   {
     printf '#!/usr/bin/env bash\n'
-    printf 'CLI=%q\nAUTH_OUT=%q\nHELP_TEXT=%q\nSMOKE=%q\nMARK=%q\n' "$1" "$2" "$3" "$4" "$MARK"
+    printf 'CLI=%q\nAUTH_OUT=%q\nHELP_TEXT=%q\nSMOKE=%q\nMARK=%q\nPERM=%q\nLOGIN_REL=%q\n' \
+      "$1" "$2" "$3" "$4" "$MARK" "${5:-refuse}" "${6:-}"
     cat <<'STUB'
+LOGGED=1
+[ -n "$LOGIN_REL" ] && [ ! -f "$HOME/$LOGIN_REL" ] && LOGGED=0
 case "${1:-}" in
   --version)  [ "$HELP_TEXT" = "__silent__" ] && exit 1; printf '9.9.9-%s\n' "$CLI"; exit 0 ;;
-  auth-check) printf '%s\n' "$AUTH_OUT"; exit 0 ;;
+  auth-check) if [ "$LOGGED" = 1 ]; then printf '%s\n' "$AUTH_OUT"; else printf 'NOT-LOGGED-IN\n'; fi; exit 0 ;;
   --help)     [ "$HELP_TEXT" = "__silent__" ] && exit 0; printf '%s\n' "$HELP_TEXT"; exit 0 ;;
+  --perm-probe)
+    : > "$MARK/$CLI.perm-ran"
+    pwd -P > "$MARK/$CLI.perm-cwd"
+    printf '%s' "$HOME" > "$MARK/$CLI.perm-home"
+    printf '%s' "${@: -1}" > "$MARK/$CLI.perm-prompt"
+    case "$PERM" in
+      write) printf 'loomwright\n' > probe.txt; printf '%s\n' '{"result":"Done: probe.txt written."}' ;;
+      hang)  sleep 30 ;;
+      fail)  printf 'Error: tool backend unavailable\n' >&2; exit 3 ;;
+      *)     printf '%s\n' '{"result":"I was not permitted to write the file."}' ;;
+    esac
+    exit 0 ;;
   -p)         : ;;
   *)          : > "$MARK/$CLI.unexpected"; exit 2 ;;
 esac
+if [ -e "$MARK/$CLI.smoke-ran" ]; then : > "$MARK/$CLI.smoke-ran2"; fi
 : > "$MARK/$CLI.smoke-ran"
+[ "$LOGGED" = 1 ] || { printf 'Error: NOT-LOGGED-IN, please log in\n' >&2; exit 1; }
 pwd -P > "$MARK/$CLI.smoke-cwd"
 printf '%s' "$HOME" > "$MARK/$CLI.smoke-home"
 printf '%s' "${@: -1}" > "$MARK/$CLI.smoke-prompt"
@@ -187,6 +233,19 @@ P
   } > "$dir/provider-$name.sh"
 }
 
+# add_perm_probe <dir> <name> — give a provider file a probe_perm_argv.
+add_perm_probe() {
+  printf '%s\n' 'probe_perm_argv() { PROBE_ARGV=("--perm-probe" "$PROBE_PROMPT"); }' >> "$1/provider-$2.sh"
+}
+# add_login <dir> <name> — declare the fake login file (and a login env var name).
+add_login() {
+  printf 'PROVIDER_LOGIN_FILES=(%q)\n' "$LOGIN_REL" >> "$1/provider-$2.sh"
+}
+# add_login_env <dir> <name> — declare only a login env var NAME (never set here).
+add_login_env() {
+  printf 'PROVIDER_LOGIN_ENV=("LWPROBE_FAKE_API_KEY")\n' >> "$1/provider-$2.sh"
+}
+
 # run_check <outfile> [ENV=VAL ...] — the engine under the temp HOME/TMPDIR,
 # fake CLIs first on PATH. Prints the engine's exit status.
 run_check() {
@@ -203,6 +262,15 @@ row_args() { # row_args <outfile> <name> — the provider's row line
 }
 hint_of() { # hint_of <outfile> <name> — the indented line right after the row
   awk -v p="$2 ($(cli_of "$2")): " 'f { print; exit } index($0, p) == 1 { f = 1 }' "$1"
+}
+# repo_status — the repo's `git status --porcelain`, minus the ONE transient a concurrent sibling
+# legitimately writes: test-lens-run.sh's `provider-teststub<RUN_TAG>.sh` in the real providers dir
+# (removed by its EXIT trap). Run in the same ci-local pool, it can appear mid-run; this engine never
+# writes that name (it writes only inside its own scratch dir).
+repo_status() {
+  git -C "$REPO_ROOT" status --porcelain 2>/dev/null \
+    | grep -vE '^\?\? loomwright/scripts/adapters/providers/provider-teststub[0-9]+\.sh$'
+  return 0
 }
 tree_sig() { # tree_sig <dir> — path + checksum of every entry, sorted
   (cd "$1" && find . -print | env LC_ALL=C sort | while IFS= read -r p; do
@@ -229,6 +297,14 @@ make_stub rcauth      'any text at all'         "$PIN_HELP"                 pass
 make_stub silent      'LOGGED-IN-OK'            '__silent__'                pass
 make_stub lensonly    'LOGGED-IN-OK'            "$PIN_HELP"                 pass
 make_stub badname     'LOGGED-IN-OK'            "$PIN_HELP"                 pass
+make_stub permwrite   'LOGGED-IN-OK'            "$PIN_HELP"                 pass write
+make_stub helponly    'LOGGED-IN-OK'            "$PIN_HELP"                 pass
+make_stub permfail    'LOGGED-IN-OK'            "$PIN_HELP"                 pass fail
+make_stub permnosmoke 'LOGGED-IN-OK'            "$PIN_HELP"                 garbage write
+make_stub logindecl   'LOGGED-IN-OK'            "$PIN_HELP"                 pass refuse "$LOGIN_REL"
+make_stub loginundecl 'LOGGED-IN-OK'            "$PIN_HELP"                 pass refuse "$LOGIN_REL"
+make_stub smokedecl   'unused'                  "$PIN_HELP"                 pass refuse "$LOGIN_REL"
+make_stub smokeundecl 'unused'                  "$PIN_HELP"                 pass refuse "$LOGIN_REL"
 # `absent` gets a provider file but NO stub binary.
 
 write_provider "$PDIR" absent      cmd  "--pin-a"         unknown
@@ -247,6 +323,22 @@ write_provider "$PDIR" silent      cmd  "--pin-a"         unknown
 write_provider "$PDIR" viasmokenl  none "--pin-a"         unknown
 write_provider "$PDIR" viasmokefail none "--pin-a"        unknown
 write_provider "$PDIR" prefixonly  cmd  "--allow --deny"  unknown
+add_perm_probe "$PDIR" writer
+add_perm_probe "$PDIR" viasmoke
+write_provider "$PDIR" permwrite   cmd  "--pin-a --pin-b" unknown
+add_perm_probe "$PDIR" permwrite
+write_provider "$PDIR" helponly    cmd  "--pin-a --pin-b" unknown
+write_provider "$PDIR" permfail    cmd  "--pin-a --pin-b" unknown
+add_perm_probe "$PDIR" permfail
+write_provider "$PDIR" permnosmoke cmd  "--pin-a"         unknown
+add_perm_probe "$PDIR" permnosmoke
+write_provider "$PDIR" logindecl   cmd  ""                unknown
+add_login "$PDIR" logindecl
+write_provider "$PDIR" loginundecl cmd  ""                unknown
+add_login_env "$PDIR" loginundecl
+write_provider "$PDIR" smokedecl   none ""                unknown
+add_login "$PDIR" smokedecl
+write_provider "$PDIR" smokeundecl none ""                unknown
 # Z: a lens-only file (no probe entries — the shape of test-lens-run.sh's
 # transient teststub) and a probe-bearing file whose name fails the allowlist.
 {
@@ -258,12 +350,12 @@ write_provider "$PDIR" prefixonly  cmd  "--allow --deny"  unknown
 write_provider "$PDIR" badname cmd "--pin-a" unknown
 mv "$PDIR/provider-badname.sh" "$PDIR/provider-bad.name.sh"
 
-echo "== W/A/P/R/X/U/N/K/G/S/L/F/C/Z: main run =="
-GIT_BEFORE="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)"
+echo "== W/A/P/Q/I/R/X/U/N/K/G/S/L/F/C/Z: main run =="
+GIT_BEFORE="$(repo_status)"
 HOME_BEFORE="$(tree_sig "$THOME")"
 OUT="$TMP/main.out"
 rc="$(run_check "$OUT")"
-GIT_AFTER="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)"
+GIT_AFTER="$(repo_status)"
 HOME_AFTER="$(tree_sig "$THOME")"
 REPORT="$(cat "$OUT")"
 
@@ -271,7 +363,10 @@ assert_eq "W: exit 0" "0" "$rc"
 assert_eq "W: repo git status unchanged" "$GIT_BEFORE" "$GIT_AFTER"
 assert_eq "W: temp HOME tree (incl. tool config tree) unchanged" "$HOME_BEFORE" "$HOME_AFTER"
 assert_eq "W: engine scratch dir removed (its TMPDIR is empty)" "" "$(ls -A "$ETMP")"
-has "W: header says the smoke runs under the real HOME" "$REPORT" "HOME: the REAL HOME"
+has "W: header says the smoke runs under the isolated launcher" "$REPORT" "HOME: an isolated per-call HOME under the shared launcher"
+has "W: header says never the real HOME" "$REPORT" "never the real HOME"
+lacks "W: header no longer claims the real HOME" "$REPORT" "HOME: the REAL HOME"
+has "W: header states the permission probe's cost (AC6)" "$REPORT" "permission probe: one model call per candidate provider"
 has "W: header says the smoke cwd is a throwaway dir" "$REPORT" "cwd: a throwaway mktemp -d dir, never the repo"
 has "W: header says the prompt is fixed" "$REPORT" "fixed prompt (no repo content)"
 
@@ -291,6 +386,59 @@ has "P: verdict usable for write seats" "$r" "=> usable for write seats"
 case "$(hint_of "$OUT" writer)" in
   "    "*) no "P: no hint line under a passing row" ;;
   *) ok "P: no hint line under a passing row" ;;
+esac
+assert_eq "P: the permission probe ran" "present" "$([ -e "$MARK/writer.perm-ran" ] && echo present || echo absent)"
+PERM_CWD="$(cat "$MARK/writer.perm-cwd" 2>/dev/null)"
+case "$PERM_CWD" in
+  "$(cd "$ETMP" && pwd -P)"/*) ok "P: probe cwd is under the engine's own scratch dir" ;;
+  *) no "P: probe cwd is under the engine's own scratch dir (got [$PERM_CWD])" ;;
+esac
+assert_eq "P: probe cwd removed after the run" "gone" "$([ -n "$PERM_CWD" ] && [ ! -e "$PERM_CWD" ] && echo gone || echo present)"
+assert_eq "P: probe prompt is the fixed write request" "$PERM_PROMPT" "$(cat "$MARK/writer.perm-prompt" 2>/dev/null)"
+case "$(cat "$MARK/writer.perm-home" 2>/dev/null)" in
+  "$THOME"|"") no "P: probe ran under an isolated HOME (got [$(cat "$MARK/writer.perm-home" 2>/dev/null)])" ;;
+  *) ok "P: probe ran under an isolated HOME, not the engine's HOME" ;;
+esac
+
+r="$(row_args "$OUT" permwrite)"
+has "Q: CLI ignores its pin flags and writes -> unpinnable (pin flags not enforced)" "$r" "permissions: unpinnable (pin flags not enforced)"
+lacks "Q: write-anyway CLI is never pinnable" "$r" "permissions pinnable"
+lacks "Q: write-anyway CLI never gets write seats" "$r" "write seats"
+has "Q: write-anyway CLI verdict usable for read-only seats" "$r" "=> usable for read-only seats"
+r="$(row_args "$OUT" helponly)"
+has "Q: tokens advertised, no probe defined -> pin flags advertised (unverified)" "$r" "permissions: pin flags advertised (unverified)"
+lacks "Q: help-only never gets write seats" "$r" "write seats"
+r="$(row_args "$OUT" permfail)"
+has "Q: probe exits non-zero, no file -> pin flags advertised (unverified)" "$r" "permissions: pin flags advertised (unverified)"
+assert_eq "Q: failing probe did run" "present" "$([ -e "$MARK/permfail.perm-ran" ] && echo present || echo absent)"
+r="$(row_args "$OUT" permnosmoke)"
+has "Q: smoke not passing -> pin flags advertised (unverified)" "$r" "permissions: pin flags advertised (unverified)"
+assert_eq "Q: smoke not passing -> the permission probe is NOT run" "absent" "$([ -e "$MARK/permnosmoke.perm-ran" ] && echo present || echo absent)"
+
+r="$(row_args "$OUT" logindecl)"
+has "I: declared login file -> auth ok (auth command, isolated)" "$r" "auth ok ·"
+has "I: declared login file -> usable" "$r" "=> usable for "
+r="$(row_args "$OUT" smokedecl)"
+has "I: declared login file -> auth ok (via smoke)" "$r" "auth ok (via smoke)"
+has "I: declared login file (smoke-only) -> usable" "$r" "=> usable for "
+r="$(row_args "$OUT" loginundecl)"
+has "I: undeclared login -> auth: not_logged_in_isolated (ok in your shell)" "$r" "auth: not_logged_in_isolated (ok in your shell) ·"
+has "I: undeclared login -> not usable: auth" "$r" "=> not usable: auth"
+has "I: undeclared login -> headless not run" "$r" "headless: not run (auth not ok)"
+assert_eq "I: undeclared login (auth command) -> smoke NOT run" "absent" "$([ -e "$MARK/loginundecl.smoke-ran" ] && echo present || echo absent)"
+case "$(hint_of "$OUT" loginundecl)" in
+  "    fix: "*"env vars: LWPROBE_FAKE_API_KEY"*"Set one of the declared env vars"*) ok "I: fix hint names the declared login env var" ;;
+  *) no "I: fix hint names the declared login env var (got [$(hint_of "$OUT" loginundecl)])" ;;
+esac
+r="$(row_args "$OUT" smokeundecl)"
+has "I: undeclared login (smoke-only) -> auth: not_logged_in_isolated (ok in your shell)" "$r" "auth: not_logged_in_isolated (ok in your shell) ·"
+has "I: undeclared login (smoke-only) -> not usable: auth" "$r" "=> not usable: auth"
+has "I: undeclared login (smoke-only) -> the isolated smoke failed" "$r" "headless: fail:exit1"
+assert_eq "I: smoke-only diagnosis -> the isolated smoke AND one shell rerun ran" "present" \
+  "$([ -e "$MARK/smokeundecl.smoke-ran2" ] && echo present || echo absent)"
+case "$(hint_of "$OUT" smokeundecl)" in
+  "    fix: "*"declared login files: none; env vars: none"*"Declare where this CLI keeps its login"*) ok "I: fix hint with nothing declared says to declare it" ;;
+  *) no "I: fix hint with nothing declared says to declare it (got [$(hint_of "$OUT" smokeundecl)])" ;;
 esac
 
 r="$(row_args "$OUT" reader)"
@@ -313,7 +461,8 @@ has "U: browser: unknown" "$r" "browser: unknown"
 has "U: verdict usable for read-only seats" "$r" "=> usable for read-only seats"
 
 r="$(row_args "$OUT" notlogged)"
-has "N: auth: not_logged_in" "$r" "auth: not_logged_in"
+has "N: auth: not_logged_in" "$r" "auth: not_logged_in ·"
+lacks "N: logged out in the shell too -> never not_logged_in_isolated" "$r" "not_logged_in_isolated"
 has "N: headless: not run" "$r" "headless: not run"
 has "N: verdict not usable: auth" "$r" "=> not usable: auth"
 assert_eq "N: login hint printed" "    login: login-hint-notlogged" "$(hint_of "$OUT" notlogged)"
@@ -352,6 +501,7 @@ has "S: verdict usable for write seats" "$r" "=> usable for write seats"
 
 r="$(row_args "$OUT" viasmokenl)"
 has "L: auth: not_logged_in (via smoke)" "$r" "auth: not_logged_in (via smoke)"
+lacks "L: logged out in the shell too -> never not_logged_in_isolated" "$r" "not_logged_in_isolated"
 has "L: headless: fail:exit1" "$r" "headless: fail:exit1"
 has "L: verdict not usable: auth" "$r" "=> not usable: auth"
 assert_eq "L: no auth command -> the smoke DID run (it is the only auth signal)" "present" \
@@ -377,7 +527,16 @@ case "$SMOKE_CWD" in
   *) ok "C: smoke cwd is not the repo" ;;
 esac
 assert_eq "C: smoke cwd removed after the run" "gone" "$([ -n "$SMOKE_CWD" ] && [ ! -e "$SMOKE_CWD" ] && echo gone || echo present)"
-assert_eq "C: smoke HOME is the HOME the engine got (not scrubbed)" "$THOME" "$(cat "$MARK/writer.smoke-home" 2>/dev/null)"
+SMOKE_HOME="$(cat "$MARK/writer.smoke-home" 2>/dev/null)"
+case "$SMOKE_HOME" in
+  "$THOME"|"") no "C: smoke HOME is an isolated HOME, NOT the HOME the engine got (got [$SMOKE_HOME])" ;;
+  *) ok "C: smoke HOME is an isolated HOME, NOT the HOME the engine got" ;;
+esac
+case "$SMOKE_HOME" in
+  "$ETMP"/*|"$ETMP_REAL"/*) ok "C: smoke HOME is a temp dir under the engine's TMPDIR" ;;
+  *) no "C: smoke HOME is a temp dir under the engine's TMPDIR (got [$SMOKE_HOME])" ;;
+esac
+assert_eq "C: smoke HOME removed after the run" "gone" "$([ -n "$SMOKE_HOME" ] && [ ! -e "$SMOKE_HOME" ] && echo gone || echo present)"
 assert_eq "C: smoke prompt is the fixed probe string" \
   'Reply with exactly this JSON and nothing else: {"probe":"loomwright-ok"}' \
   "$(cat "$MARK/writer.smoke-prompt" 2>/dev/null)"
@@ -393,6 +552,9 @@ echo "== H: hung smoke, TERM ignored, timeout 2 =="
 HDIR="$TMP/providers-h"; mkdir -p "$HDIR"
 make_stub hang 'LOGGED-IN-OK' "$PIN_HELP" hang
 write_provider "$HDIR" hang cmd "--pin-a" unknown
+make_stub permhang 'LOGGED-IN-OK' "$PIN_HELP" pass hang
+write_provider "$HDIR" permhang cmd "--pin-a" unknown
+add_perm_probe "$HDIR" permhang
 OUT_H="$TMP/hang.out"
 H_START="$(date +%s)"
 rc="$(run_check "$OUT_H" LOOMWRIGHT_PROVIDERS_DIR="$HDIR" LOOMWRIGHT_PROVIDER_SMOKE_TIMEOUT=2)"
@@ -414,6 +576,9 @@ if [ -n "$H_PGID" ] && command -v pgrep >/dev/null 2>&1 && [ -n "$(pgrep -g "$H_
 else
   ok "H: stub process group empty"
 fi
+r="$(row_args "$OUT_H" permhang)"
+has "H: hung permission probe -> pin flags advertised (unverified)" "$r" "permissions: pin flags advertised (unverified)"
+lacks "H: hung permission probe never gets write seats" "$r" "write seats"
 assert_eq "H: engine scratch dir removed" "" "$(ls -A "$ETMP")"
 
 echo "== J: jq unavailable =="
@@ -471,6 +636,10 @@ table_verdict() {
     if declare -F probe_smoke_argv >/dev/null 2>&1; then
       PROBE_ARGV=(); probe_smoke_argv
       [ "${PROBE_ARGV[${#PROBE_ARGV[@]}-1]}" = "$EXPECTED_PROMPT" ] || miss="$miss smoke-prompt-not-last"
+    fi
+    if declare -F probe_perm_argv >/dev/null 2>&1; then
+      PROBE_ARGV=(); probe_perm_argv
+      [ "${PROBE_ARGV[${#PROBE_ARGV[@]}-1]}" = "$EXPECTED_PROMPT" ] || miss="$miss perm-prompt-not-last"
     fi
     printf '%s' "${miss:-ok}"
   )
