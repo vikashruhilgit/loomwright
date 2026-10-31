@@ -106,6 +106,7 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-090 | agents/launch-pad.md | q: **Anchor every contract block with `# Subtask N`** | writing a contract block | anchor with # Subtask N, ### Subtask N or subtask_N:; never a slug key (checked at Phase 5.5 action 1b) | deterministic | prose | script:verify-provides.sh | test-verify-provides.sh |
 | LP-091 | agents/launch-pad.md | q: Purely-deletion subtasks may use `provides: []` but MUST include a justification comment | a subtask is purely deletion | provides: [] with a justification comment on the line above | rule | step-scoped | - | GAP |
 | LP-092 | agents/launch-pad.md | q: Reject vague provides like `"adds feature"` or `"updates code"` | a provides entry is vague | reject; every entry is an addressable kind/path/name | rule | step-scoped | - | GAP |
+| LP-538 | agents/launch-pad.md | q: A provides entry must survive the rest of its subtask | a provides entry is a file a later step of the same subtask deletes (a changelog.d fragment in a subtask that runs the version bump) | name what remains instead (the folded CHANGELOG.md headline); a lane that never bumps lists the fragment | rule | step-scoped | - | GAP |
 | LP-093 | agents/launch-pad.md | q: `external_requires` is for things outside the brief's scope; do NOT cross-reference it from `requires` | an outside-scope dependency | list it in external_requires; requires.from always names a sibling subtask | rule | step-scoped | - | GAP |
 | LP-094 | agents/launch-pad.md | q: A subtask with non-empty `requires` is BLOCKED. | requires is non-empty | show it BLOCKED by its requires.from producers, never LAUNCHABLE | deterministic | prose | - | GAP |
 | LP-095 | agents/launch-pad.md | q: Every subtask MUST also declare `lanes:` (non-empty | every subtask | declare non-empty lanes (same []-with-justification exception) | rule | step-scoped | - | GAP |
@@ -988,12 +989,13 @@ This file lists every branch (condition → action) and every standing rule stat
 433. LP-530 — untested deterministic branch in skills/autonomous-loop/multi-iteration.md: a signal would re-plan AND iteration + 1 > max_iterations
 434. LP-536 — a strict-empty plan_reviewer seat must take NEEDS_HUMAN and never count as a PASS, and a routed answer must pass validate-plan-review-result.py --raw before it can gate a save; no test exercises the seat paragraph
 435. LP-537 — a strict-empty evaluate_reviewer seat must skip the Task and take the ESCALATED branch; no test exercises the seat paragraph
+436. LP-538 — untested standing rule in agents/launch-pad.md (silent deletion undetected): a provides entry a later step of its subtask deletes
 
 ## Counts
 
-- rows: 537
+- rows: 538
 - deterministic: 340
 - judgment: 48
-- rule: 124
+- rule: 125
 - story: 25
-- GAP: 435
+- GAP: 436
