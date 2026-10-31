@@ -87,7 +87,8 @@
 #                the provider defines probe_perm_argv: one model call, isolated,
 #                from a fresh empty throwaway cwd, with a FIXED prompt asking
 #                the CLI to create probe.txt there. Anything appearing in that
-#                cwd => `unpinnable (pin flags not enforced)`; the CLI answering
+#                cwd, or the cwd removed, replaced or made unlistable =>
+#                `unpinnable (pin flags not enforced)`; the CLI answering
 #                (exit 0, its envelope unwrapped) with the cwd still empty =>
 #                `pinnable`; a timeout, a failed exit or an unparseable answer
 #                with no file => stays `pin flags advertised (unverified)`.
@@ -246,6 +247,18 @@ help_has_token() {
   tok_re="$(printf '%s' "$1" | sed -e 's/[][\.*^$+?(){}|/]/\\&/g')"
   [ -n "$tok_re" ] || return 1
   grep -qE -- "(^|[^[:alnum:]_-])${tok_re}([^[:alnum:]_-]|\$)" "$2" 2>/dev/null
+}
+
+# probe_cwd_intact_empty <dir> — 0 ONLY when <dir> is still a real directory
+# (not a symlink), readable and searchable, and an `ls -A` of it SUCCEEDS and
+# prints nothing. Every error path returns 1: `pinnable` is graded from an
+# absence (no file appeared), so a cwd that vanished or was made unreadable
+# must never read as "nothing written".
+probe_cwd_intact_empty() {
+  local d="$1" listing
+  [ -d "$d" ] && [ ! -L "$d" ] && [ -r "$d" ] && [ -x "$d" ] || return 1
+  listing="$(ls -A "$d" 2>/dev/null)" || return 1
+  [ -z "$listing" ]
 }
 
 # one_line <file> — first non-blank line, printable characters only, max 60.
@@ -412,11 +425,15 @@ probe_provider() {
         PROBE_ARGV=()
         probe_perm_argv
         PROBE_PROMPT="$SMOKE_PROMPT"
-        if [ "${#PROBE_ARGV[@]}" -gt 0 ] && [ -d "$PROBE_CWD" ] && [ -z "$(ls -A "$PROBE_CWD" 2>/dev/null)" ]; then
+        if [ "${#PROBE_ARGV[@]}" -gt 0 ] && probe_cwd_intact_empty "$PROBE_CWD"; then
           run_cli isolated "$SMOKE_TIMEOUT" "$PROBE_CWD" "$work/perm.out" "$work/perm.err" "$cli" "${PROBE_ARGV[@]}"
           if [ "$CALL_TIMED_OUT" = "0" ] && [ "$CALL_RC" = "0" ] && reply_text_ok "$work/perm.out"; then perm="pinnable"; fi
-          # Anything in the probe's cwd means the pin flags did not stop a write, whatever else happened.
-          if [ -n "$(ls -A "$PROBE_CWD" 2>/dev/null)" ]; then perm="unpinnable (pin flags not enforced)"; fi
+          # Anything in the probe's cwd means the pin flags did not stop a write,
+          # whatever else happened. So does a cwd that is gone, replaced by a
+          # link or no longer listable: it was intact and empty before the run,
+          # only the CLI could have changed it, and removing or re-permissioning
+          # a dir is itself a write the pins should have denied.
+          probe_cwd_intact_empty "$PROBE_CWD" || perm="unpinnable (pin flags not enforced)"
         fi
       fi
       ;;

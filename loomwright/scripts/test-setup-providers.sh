@@ -23,7 +23,9 @@
 #      the fixed write-request prompt LAST
 #   Q. permission probe (AC5): a CLI that IGNORES its pin flags and writes the
 #      file -> `permissions: unpinnable (pin flags not enforced)`, never write
-#      seats; tokens advertised but no probe_perm_argv, or a failing smoke (the
+#      seats; so does one that writes and then makes its cwd unreadable
+#      (chmod 000) or removes it (the evidence dir must be intact to read
+#      "empty" as a denial; W still sees the chmod-000 dir cleaned up); tokens advertised but no probe_perm_argv, or a failing smoke (the
 #      probe is then NOT run), or a probe that exits non-zero with no file, or
 #      one that timed out (case H) ->
 #      `permissions: pin flags advertised (unverified)`, never write seats
@@ -146,7 +148,8 @@ cli_of() { printf 'lwprobe%s-%s' "$RUN_TAG" "$1"; }
 
 # make_stub <name> <auth-output> <help-text> <smoke-mode> [<perm-mode>] [<login-rel>]
 # perm-mode (the `--perm-probe` call): refuse (answers, writes nothing) | write
-# (writes probe.txt into its cwd, then answers) | hang | fail (exit 3, no file). login-rel: when set, the
+# (writes probe.txt into its cwd, then answers) | writechmod (writes, then
+# chmod 000 its cwd) | writerm (writes, then removes its cwd) | hang | fail (exit 3, no file). login-rel: when set, the
 # CLI is logged in only while $HOME/<login-rel> exists (else its auth-check and
 # smoke print the not-logged-in wording) — the per-run fake of a login file.
 make_stub() {
@@ -169,6 +172,8 @@ case "${1:-}" in
     printf '%s' "${@: -1}" > "$MARK/$CLI.perm-prompt"
     case "$PERM" in
       write) printf 'loomwright\n' > probe.txt; printf '%s\n' '{"result":"Done: probe.txt written."}' ;;
+      writechmod) printf 'loomwright\n' > probe.txt; chmod 000 .; printf '%s\n' '{"result":"Done: probe.txt written."}' ;;
+      writerm) printf 'loomwright\n' > probe.txt; d="$PWD"; cd /; rm -rf "$d"; printf '%s\n' '{"result":"Done: probe.txt written."}' ;;
       hang)  sleep 30 ;;
       fail)  printf 'Error: tool backend unavailable\n' >&2; exit 3 ;;
       *)     printf '%s\n' '{"result":"I was not permitted to write the file."}' ;;
@@ -298,6 +303,8 @@ make_stub silent      'LOGGED-IN-OK'            '__silent__'                pass
 make_stub lensonly    'LOGGED-IN-OK'            "$PIN_HELP"                 pass
 make_stub badname     'LOGGED-IN-OK'            "$PIN_HELP"                 pass
 make_stub permwrite   'LOGGED-IN-OK'            "$PIN_HELP"                 pass write
+make_stub permchmod   'LOGGED-IN-OK'            "$PIN_HELP"                 pass writechmod
+make_stub permrmcwd   'LOGGED-IN-OK'            "$PIN_HELP"                 pass writerm
 make_stub helponly    'LOGGED-IN-OK'            "$PIN_HELP"                 pass
 make_stub permfail    'LOGGED-IN-OK'            "$PIN_HELP"                 pass fail
 make_stub permnosmoke 'LOGGED-IN-OK'            "$PIN_HELP"                 garbage write
@@ -327,6 +334,10 @@ add_perm_probe "$PDIR" writer
 add_perm_probe "$PDIR" viasmoke
 write_provider "$PDIR" permwrite   cmd  "--pin-a --pin-b" unknown
 add_perm_probe "$PDIR" permwrite
+write_provider "$PDIR" permchmod   cmd  "--pin-a --pin-b" unknown
+add_perm_probe "$PDIR" permchmod
+write_provider "$PDIR" permrmcwd   cmd  "--pin-a --pin-b" unknown
+add_perm_probe "$PDIR" permrmcwd
 write_provider "$PDIR" helponly    cmd  "--pin-a --pin-b" unknown
 write_provider "$PDIR" permfail    cmd  "--pin-a --pin-b" unknown
 add_perm_probe "$PDIR" permfail
@@ -405,6 +416,13 @@ has "Q: CLI ignores its pin flags and writes -> unpinnable (pin flags not enforc
 lacks "Q: write-anyway CLI is never pinnable" "$r" "permissions pinnable"
 lacks "Q: write-anyway CLI never gets write seats" "$r" "write seats"
 has "Q: write-anyway CLI verdict usable for read-only seats" "$r" "=> usable for read-only seats"
+for pc in permchmod permrmcwd; do
+  r="$(row_args "$OUT" "$pc")"
+  assert_eq "Q: $pc: the permission probe ran" "present" "$([ -e "$MARK/$pc.perm-ran" ] && echo present || echo absent)"
+  has "Q: $pc: write then tamper with the cwd -> unpinnable (pin flags not enforced)" "$r" "permissions: unpinnable (pin flags not enforced)"
+  lacks "Q: $pc: tampered evidence dir is never pinnable" "$r" "permissions pinnable"
+  lacks "Q: $pc: tampered evidence dir never gets write seats" "$r" "write seats"
+done
 r="$(row_args "$OUT" helponly)"
 has "Q: tokens advertised, no probe defined -> pin flags advertised (unverified)" "$r" "permissions: pin flags advertised (unverified)"
 lacks "Q: help-only never gets write seats" "$r" "write seats"
