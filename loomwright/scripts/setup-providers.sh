@@ -208,7 +208,9 @@ if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
   printf 'setup-providers check: could not create a scratch dir; nothing probed.\n'
   exit 0
 fi
-cleanup() { rm -rf "$SCRATCH" 2>/dev/null; }
+# Probed CLIs run with their cwd inside SCRATCH and may re-permission dirs
+# there: the launcher's rmtree restores u+rwx (never through a symlink) first.
+cleanup() { launch_provider_cli_rmtree "$SCRATCH"; }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -404,7 +406,7 @@ probe_provider() {
         # The permission probe: one model call, isolated, from a fresh EMPTY
         # cwd, asking for a write the pin flags must deny.
         PROBE_CWD="$work/perm-cwd"
-        rm -rf "$PROBE_CWD" 2>/dev/null
+        launch_provider_cli_rmtree "$PROBE_CWD"
         mkdir -p "$PROBE_CWD" 2>/dev/null
         PROBE_PROMPT="$PERM_PROBE_PROMPT"
         PROBE_ARGV=()

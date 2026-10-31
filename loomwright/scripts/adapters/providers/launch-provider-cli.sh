@@ -158,11 +158,30 @@ _lpc_make_home() {
   return 0
 }
 
+# launch_provider_cli_rmtree <dir> — remove a per-launch temp tree a provider
+# CLI may have re-permissioned. rm -rf cannot list or enter a directory the CLI
+# made 000 (or u-rx), and `chmod -R u+w` does not restore the r/x it needs, so
+# that tree — and any login file copied into it — would outlive the launch.
+# Every DIRECTORY gets u+rwx first: the root explicitly (find reads its start
+# point before running -exec on it), then each subdirectory pre-order with
+# `-exec … \;`, so a dir is reopened before find lists it. `find` never follows
+# symlinks by default and `-type d` does not match one, so a link the CLI
+# planted inside the tree is never chmod-ed through to a target outside it.
+# Files need no mode change: unlinking needs only the parent dir's w+x.
+launch_provider_cli_rmtree() {
+  local d="$1"
+  [ -n "$d" ] || return 0
+  if [ -d "$d" ] && [ ! -L "$d" ]; then
+    chmod u+rwx "$d" 2>/dev/null
+    find "$d" -type d -exec chmod u+rwx {} \; 2>/dev/null
+  fi
+  rm -rf "$d" 2>/dev/null
+  return 0
+}
+
 _lpc_finish() {
   if [ -n "$LPC_HOME" ]; then
-    # u+w first: a CLI that left a read-only dir behind must not keep it alive.
-    chmod -R u+w "$LPC_HOME" 2>/dev/null
-    rm -rf "$LPC_HOME" 2>/dev/null
+    launch_provider_cli_rmtree "$LPC_HOME"
   fi
   [ -n "$LPC__FLAG" ] && rm -f "$LPC__FLAG" 2>/dev/null
   LPC_HOME=""

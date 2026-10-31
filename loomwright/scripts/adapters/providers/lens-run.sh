@@ -392,7 +392,10 @@ cleanup() {
   # group and remove its isolated HOME.
   SCRUB_HOME="${LPC_HOME:-}"
   launch_provider_cli_abort
-  rm -rf "$WT_PATH" "$SCRUB_HOME" 2>/dev/null
+  # The CLI ran with its cwd in WT_PATH, so it could have re-permissioned dirs
+  # there: the launcher's rmtree restores u+rwx (never through a symlink) first.
+  launch_provider_cli_rmtree "$WT_PATH"
+  launch_provider_cli_rmtree "$SCRUB_HOME"
   rm -f "$RAW_OUT" "$RAW_ERR" "$INTEGRITY_BEFORE" 2>/dev/null
 }
 trap cleanup EXIT

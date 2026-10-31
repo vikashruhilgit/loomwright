@@ -30,6 +30,9 @@
 #      call (a symlink to a victim file) is never followed — the victim is
 #      untouched after a timeout — and never reads as a timeout on a normal
 #      run; the flag file is gone after a normal end, a timeout and an abort
+#   I. a CLI that makes dirs in its HOME 000 (including the one holding the
+#      copied login): the HOME is still removed after a normal end and after a
+#      timeout, and a symlink it planted is never chmod-ed through
 #
 # Exit 0 = all pass, 1 = any failure.
 
@@ -59,8 +62,8 @@ cleanup() {
     kill "$ABORT_CALLER_PID" 2>/dev/null; wait "$ABORT_CALLER_PID" 2>/dev/null
   fi
   launch_provider_cli_abort
-  chmod -R u+w "$TMP" 2>/dev/null
-  rm -rf "$TMP"
+  chmod 0700 "$TMP/i-victim" "$TMP/i-target" 2>/dev/null
+  launch_provider_cli_rmtree "$TMP"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -380,6 +383,66 @@ wait "$ABORT_CALLER_PID" 2>/dev/null
 ABORT_CALLER_PID=""
 assert_eq "H3 the flag file is removed on the abort path" "0" "$(h_flag_left)"
 assert_gone "H3" "$REC_H3"
+
+echo ""
+echo "==== I: a CLI that strips owner r/x from dirs in its HOME — the HOME (and the copied login) still goes ===="
+# The stub makes the dir holding the copied login 000 (and a nested dir under
+# it), after planting a symlink there to a victim dir OUTSIDE the HOME. The
+# cleanup must restore u+rwx on the HOME's own dirs only: the victim's mode is
+# unchanged afterwards (a chmod through the link would have made it u+rwx).
+I_VICTIM="$TMP/i-victim"; mkdir -p "$I_VICTIM"; chmod 0500 "$I_VICTIM"
+I_VICTIM_MODE="$(ls -ld "$I_VICTIM" | cut -c1-10)"
+# write_chmod_stub <dir> <record-prefix> <hang:0|1>
+write_chmod_stub() {
+  local dir="$1" rec="$2" hang="$3"
+  mkdir -p "$dir"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'printf "%%s\\n" "$HOME" > %q\n' "$rec.home"
+    printf '%s\n' 'mkdir -p "$HOME/.fake/deep/er"'
+    printf 'ln -s %q "$HOME/.fake/outlink"\n' "$I_VICTIM"
+    printf '%s\n' 'chmod 000 "$HOME/.fake/deep/er" "$HOME/.fake/deep" "$HOME/.fake"'
+    [ "$hang" = "1" ] && printf '%s\n' 'sleep 120'
+    printf '%s\n' 'exit 0'
+  } > "$dir/$CLI"
+  chmod +x "$dir/$CLI"
+}
+PROVIDER_LOGIN_FILES=(".fake/auth.json"); PROVIDER_LOGIN_ENV=()
+for i_case in normal timeout; do
+  STUB_I="$TMP/stub-i-$i_case"; REC_I="$TMP/rec-i-$i_case"
+  if [ "$i_case" = "normal" ]; then
+    write_chmod_stub "$STUB_I" "$REC_I" 0; I_BOUND=30
+  else
+    write_chmod_stub "$STUB_I" "$REC_I" 1; I_BOUND=3
+  fi
+  RC_I=0
+  PATH="$STUB_I:$PATH" launch_provider_cli isolated "$I_BOUND" "$CWD" "$TMP/out-i" "$TMP/err-i" "$CLI" || RC_I=$?
+  if [ "$i_case" = "normal" ]; then
+    assert_eq "I($i_case) launch 0, CLI rc 0, not timed out" "0:0:0" "$RC_I:$LPC_RC:$LPC_TIMED_OUT"
+  else
+    assert_eq "I($i_case) launch 0, the bound fired" "0:1" "$RC_I:$LPC_TIMED_OUT"
+  fi
+  ISO_I="$(cat "$REC_I.home" 2>/dev/null)"
+  if [ -z "$ISO_I" ]; then
+    no "I($i_case) stub never recorded its HOME"
+  else
+    assert_eq "I($i_case) isolated HOME (with the copied login) removed despite a 000 dir" "0" \
+      "$( [ -e "$ISO_I" ] || [ -L "$ISO_I" ] && echo 1 || echo 0 )"
+  fi
+  assert_eq "I($i_case) the victim dir behind a planted symlink keeps its mode" "$I_VICTIM_MODE" "$(ls -ld "$I_VICTIM" | cut -c1-10)"
+done
+chmod 0700 "$I_VICTIM"
+
+# The helper on its own: a symlink as the root is removed as a link, its
+# target dir (and mode) untouched.
+I_TARGET="$TMP/i-target"; mkdir -p "$I_TARGET/keep"; chmod 0500 "$I_TARGET"
+I_TARGET_MODE="$(ls -ld "$I_TARGET" | cut -c1-10)"
+ln -s "$I_TARGET" "$TMP/i-rootlink"
+launch_provider_cli_rmtree "$TMP/i-rootlink"
+assert_eq "I rmtree on a symlink root removes only the link" "0:1" \
+  "$( [ -L "$TMP/i-rootlink" ] && echo 1 || echo 0 ):$( [ -d "$I_TARGET/keep" ] && echo 1 || echo 0 )"
+assert_eq "I rmtree on a symlink root leaves the target's mode alone" "$I_TARGET_MODE" "$(ls -ld "$I_TARGET" | cut -c1-10)"
+chmod 0700 "$I_TARGET"
 
 echo ""
 echo "RESULT: $pass passed, $fail failed"

@@ -145,9 +145,9 @@ echo "== real tree: loomwright/scripts =="
 n_scope="$(scope "$HERE" | wc -l | tr -d ' ')"
 if [ "$n_scope" -gt 50 ]; then ok "scope holds $n_scope non-test scripts"; else no "scope holds only $n_scope scripts — the scope walk is broken"; fi
 for caller in setup-providers.sh adapters/providers/lens-run.sh; do
-  if scope "$HERE" | grep -qxF "$caller"; then ok "scope holds the launcher caller $caller"; else no "scope is missing the launcher caller $caller"; fi
+  if grep -qxF "$caller" < <(scope "$HERE"); then ok "scope holds the launcher caller $caller"; else no "scope is missing the launcher caller $caller"; fi
 done
-if scope "$HERE" | grep -qxF "$LAUNCHER_REL"; then no "scope includes the launcher itself"; else ok "scope excludes the launcher itself"; fi
+if grep -qxF "$LAUNCHER_REL" < <(scope "$HERE"); then no "scope includes the launcher itself"; else ok "scope excludes the launcher itself"; fi
 case "$(scope "$HERE" | grep -cE '(^|/)(test-[^/]*\.sh$|test-[^/]*\.d/|fixtures/)')" in
   0) ok "scope excludes self-tests and fixtures" ;;
   *) no "scope leaked a self-test or fixture" ;;
