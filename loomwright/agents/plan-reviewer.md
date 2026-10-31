@@ -147,7 +147,7 @@ Not evaluated here: the optional `## Feasibility` section (Criterion 11) and the
 **Severity if failed:**
 
 - BLOCKING: cycle in dependency DAG; `requires` entry has no matching sibling provide; subtask with non-empty `requires` marked LAUNCHABLE; `from` references an `external_requires` item; a contract block with no gate-parseable `Subtask N` anchor, or a `--- GATE PARSE ---` line that is `unverifiable` / `provides_count: 0` against a non-empty block, or that carries `parse_warnings`
-- HIGH: vague provides entry without addressable `{kind, path}`; provides entry whose path/name does not match any plausible file in the impact map
+- HIGH: vague provides entry without addressable `{kind, path}`; provides entry whose path/name does not match any plausible file in the impact map; provides entry a later step of the same subtask deletes or folds away (e.g. a `changelog.d/` fragment in a subtask that also runs the version bump — the disk gate reports it missing once the subtask completes; fix: name the folded `CHANGELOG.md` entry instead)
 - MEDIUM: `requires` entry whose `name` is a near-miss against the producer's `provides` (likely typo)
 
 **Conditional:** If the brief contains no subtask contract YAML blocks AND the Environment section explicitly declares `legacy_brief: true`, skip this criterion silently and emit no issues. Otherwise (v12.0.0+ default), missing contract blocks on any subtask FAIL the brief with a BLOCKING `dep_graph` issue: "Subtask <ID> missing required `provides:` / `requires:` contract blocks (v12.0.0 mandate; add `legacy_brief: true` to Environment to opt out)."
