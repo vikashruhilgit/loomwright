@@ -25,10 +25,17 @@
 # `.result`-first guess used elsewhere, since this provider's real shape is
 # equally unconfirmed and there is no basis to prefer one guess over another);
 # a shape mismatch degrades honestly to `lens_unparseable`.
+#
+# LOGIN PASS-THROUGH — NOT PROBED: the CLI is not installed here, so where its
+# login lives was never observed, and nothing is declared. Nothing crosses
+# launch-provider-cli.sh's isolated HOME until someone probes a real install
+# and declares it.
 
 PROVIDER_CLI_NAME="gemini"
 PROVIDER_WORKSPACE_FLAG=0
 PROVIDER_HOME_SCRUB=1
+PROVIDER_LOGIN_FILES=()
+PROVIDER_LOGIN_ENV=()
 
 provider_build_argv() {
   PROVIDER_ARGV=("-p")

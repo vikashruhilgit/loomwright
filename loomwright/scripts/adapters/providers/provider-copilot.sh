@@ -30,11 +30,17 @@
 #
 # HOME SCRUB — PROVIDER_HOME_SCRUB=1 like every other entry. [C] says the login
 # token lives in the system credential store or a config file under the
-# user's home tree, so a scrubbed HOME probably has no login; unverified.
+# user's home tree, so the launcher's isolated HOME probably has no login.
+#
+# LOGIN PASS-THROUGH — NOT PROBED: the CLI is not installed here, so where its
+# login lives was never observed, and nothing is declared. Nothing crosses the
+# launcher's isolated HOME until someone probes a real install and declares it.
 
 PROVIDER_CLI_NAME="copilot"
 PROVIDER_WORKSPACE_FLAG=0
 PROVIDER_HOME_SCRUB=1
+PROVIDER_LOGIN_FILES=()
+PROVIDER_LOGIN_ENV=()
 
 provider_build_argv() {
   PROVIDER_ARGV=("-s" "--no-auto-update" "--no-color")
@@ -70,11 +76,10 @@ provider_extract_text() {
 #     the CLI does.
 #   - permissions: [C] documents per-invocation `--allow-tool`, `--deny-tool`
 #     and `--available-tools` (tools that "will not prompt" / are the only
-#     ones available). The column is `pinnable` only when `copilot --help`
-#     advertises all three; `--allow-all-tools` / `--yolo` alone is not
-#     pinning. What print mode does with a tool on neither list is not
-#     documented, so `pinnable` here means "the flags exist", not "denial was
-#     observed".
+#     ones available). `copilot --help` advertising all three is necessary,
+#     not sufficient; `--allow-all-tools` / `--yolo` alone is not pinning.
+#     What print mode does with a tool on neither list is not documented, so
+#     `pinnable` also needs probe_perm_argv (below) to observe a denial.
 #   - browser: `unknown` until a probe shows it.
 #   - install hint: [I] (`npm install -g @github/copilot`; Homebrew and an
 #     install script are listed there too).
@@ -93,6 +98,18 @@ PROBE_LOGIN_HINT="copilot login"
 # probe_smoke_argv — reads PROBE_PROMPT, sets PROBE_ARGV; prompt LAST. Reuses
 # provider_build_argv so the smoke and the lens share one documented shape.
 probe_smoke_argv() {
+  MODEL=""
+  PROMPT_CONTENT="$PROBE_PROMPT"
+  provider_build_argv
+  PROBE_ARGV=("${PROVIDER_ARGV[@]}")
+}
+
+# probe_perm_argv — the permission-ENFORCEMENT probe (setup-providers.sh
+# `check`): reads PROBE_PROMPT (which asks for a file to be written), sets
+# PROBE_ARGV, prompt LAST. The lens shape with NO `--allow-tool`, `--deny-tool`
+# or `--allow-all-tools`: whether print mode then refuses the write is exactly
+# what the probe observes (a DOCUMENTED ASSUMPTION, never run here).
+probe_perm_argv() {
   MODEL=""
   PROMPT_CONTENT="$PROBE_PROMPT"
   provider_build_argv

@@ -19,7 +19,8 @@
 #   c_status_routed     a routed seat shows provider_not_granted until a grant exists, then the
 #                       provider; status writes nothing (AC16)
 #   c_verdict_readonly  a `usable for read-only seats` provider is accepted (AC17)
-#   c_verdict_write     a `usable for write seats` provider is accepted (AC17)
+#   c_verdict_write     a `usable for write seats` provider (its permission probe refused the
+#                       write) is accepted (AC17)
 #   c_verdict_refused   a not-usable provider and an unprobed name are REFUSED for --seat and --grant,
 #                       nothing written; `claude` needs no probe for a seat and is refused as a grant
 #   c_refuse_names      unknown seat / bad provider / bad model ⇒ REFUSED, nothing written
@@ -105,6 +106,7 @@ make_stub() {
 case "${1:-}" in
   --version) printf '1.0.0\n'; exit 0 ;;
   --help)    printf '%s\n' "$HELP_TEXT"; exit 0 ;;
+  --perm-probe) printf '%s\n' '{"result":"I was not permitted to write the file."}'; exit 0 ;;
   -p)        : ;;
   *)         exit 2 ;;
 esac
@@ -138,6 +140,7 @@ PROBE_AUTH_ARGV=()
 PROBE_AUTH_NOT_LOGGED_IN_RE='NOT-LOGGED-IN'
 PROBE_HELP_ARGV=("--help")
 probe_smoke_argv() { PROBE_ARGV=("-p" "$PROBE_PROMPT"); }
+probe_perm_argv() { PROBE_ARGV=("--perm-probe" "$PROBE_PROMPT"); }
 PROBE_BROWSER=no
 P
     printf 'PROBE_PERM_PIN_FLAGS=%q\nPROBE_INSTALL_HINT=x\nPROBE_LOGIN_HINT=y\n' "$2"
@@ -240,7 +243,11 @@ c_verdict_readonly() {
 }
 
 c_verdict_write() {
-  local e="$1" r; r="$(fresh vw)"
+  local e="$1" r row; r="$(fresh vw)"
+  # The fixture really is a write-seat provider (its permission probe was refused), so this case
+  # is not satisfied by a read-only verdict.
+  row="$(bash "$(dirname "$e")/setup-providers.sh" check 2>/dev/null | grep -F "$P_WR (lwstub-$P_WR): ")"
+  case "$row" in *" => usable for write seats") ;; *) echo "check row for $P_WR is not write seats: $row"; return 1 ;; esac
   run "$e" "$r" apply --seat "refute=$P_WR" --grant "$P_WR"
   [ "$rc" -eq 0 ] && has "$out" "apply routing: applied (created" && has "$out" "apply grant: applied (created" \
     && [ "$(jq -r '.routing.seats.refute' "$(cfg "$r")")" = "$P_WR" ] \

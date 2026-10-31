@@ -91,7 +91,15 @@
 #                            on this machine, or sandbox isolation could not
 #                            be established (shallow fetch / origin-remove
 #                            failed), or the CLI hit LOOMWRIGHT_LENS_CLI_TIMEOUT.
-#                            Degrades rather than guessing.
+#                            Degrades rather than guessing. When the output
+#                            did not parse AND it matches the provider's own
+#                            PROBE_AUTH_NOT_LOGGED_IN_RE, `notes` BEGINS with
+#                            the named status `not_logged_in_isolated` (the
+#                            same token setup-providers.sh `check` prints):
+#                            the CLI has no login under the isolated HOME,
+#                            i.e. its login did not cross (see the provider
+#                            file's PROVIDER_LOGIN_FILES / PROVIDER_LOGIN_ENV).
+#                            A parsed answer is never re-read for that pattern.
 #   ok                     — well-formed, normalized `issues[]`.
 #
 # SAFETY POSTURE — READ THIS BEFORE RELYING ON IT (honesty required by the
@@ -120,9 +128,13 @@
 #       has not been probed, this is a distinct residual risk.
 #   Mitigations actually in scope (detection + blast-radius reduction, not
 #   a sandbox):
-#     (a) a scrubbed, allow-list child environment (`env -i` — starts EMPTY,
-#         so no ambient credential, including GH_TOKEN, survives unless this
-#         script explicitly re-adds it; it does not),
+#     (a) a scrubbed, allow-list child environment and an isolated HOME, both
+#         built by the shared launcher launch-provider-cli.sh (beside this
+#         file; its header is the authority): `env -i` starts EMPTY, so no
+#         ambient credential, including GH_TOKEN, survives; only PATH, HOME,
+#         TMPDIR and the provider file's declared PROVIDER_LOGIN_ENV vars that
+#         are set cross, and the isolated HOME holds only copies of its
+#         declared PROVIDER_LOGIN_FILES,
 #     (b) `--workspace <dir>` (or, for a provider with no such flag, running
 #         with cwd = the sandbox — see each provider-<name>.sh file's own
 #         PROVIDER_WORKSPACE_FLAG),
@@ -168,11 +180,20 @@
 #                                     sandbox regardless); 1 means the
 #                                     provider's own file ALSO appends an
 #                                     explicit workspace flag to PROVIDER_ARGV.
-#   PROVIDER_HOME_SCRUB     0 | 1   — always 1 today (every provider's real
-#                                     HOME-survival requirement is UNVERIFIED
-#                                     on this machine — see each file's own
-#                                     header); reserved for a future provider
-#                                     that proves it needs real HOME.
+#   PROVIDER_HOME_SCRUB     0 | 1   — documentation-only: every entry declares
+#                                     1, and no launch reads it — the launcher
+#                                     ALWAYS runs this script's CLI under its
+#                                     isolated HOME. A provider whose login
+#                                     needs the real HOME declares that login
+#                                     below instead.
+#   PROVIDER_LOGIN_FILES    array   — OPTIONAL. Paths relative to $HOME that the
+#                                     launcher COPIES (read-only, never a link)
+#                                     into the isolated HOME. Unset or empty =
+#                                     nothing crosses.
+#   PROVIDER_LOGIN_ENV      array   — OPTIONAL. Env var names passed to the CLI
+#                                     when set in the caller. Unset or empty =
+#                                     none. Validation rules for both:
+#                                     launch-provider-cli.sh's header.
 #   provider_build_argv()  — reads globals MODEL / PROMPT_CONTENT /
 #                            WORKSPACE_DIR; sets array PROVIDER_ARGV (the argv
 #                            AFTER the binary name). PROMPT_CONTENT MUST be
@@ -344,64 +365,42 @@ if [ "$LENS_CLI_TIMEOUT" -le 0 ]; then
   LENS_CLI_TIMEOUT=300
 fi
 
-# ---- throwaway isolated sandbox + scrubbed HOME, always cleaned up ----------
+# ---- the shared launcher (isolated HOME, scrubbed env, process group, bound) --
+LAUNCHER="$SCRIPT_DIR/launch-provider-cli.sh"
+[ -r "$LAUNCHER" ] || emit_result "lens_unparseable" "[]" "launch-provider-cli.sh is missing - the provider CLI cannot be started"
+# shellcheck disable=SC1090
+. "$LAUNCHER"
+
+# ---- throwaway isolated sandbox, always cleaned up ---------------------------
 # Atomic directory creation (not mktemp -u): git init / fetch into an empty
-# dir is allowed, and there is no symlink-race window on the path name.
+# dir is allowed, and there is no symlink-race window on the path name. The
+# CLI's scrubbed HOME is the launcher's own per-launch isolated HOME, which the
+# launcher removes on its normal and timeout paths; SCRUB_HOME below names it
+# for the abort path.
 WT_PATH="$(mktemp -d "${TMPDIR:-/tmp}/loomwright-lens-wt-XXXXXX" 2>/dev/null)"
-SCRUB_HOME="$(mktemp -d "${TMPDIR:-/tmp}/loomwright-lens-home-XXXXXX" 2>/dev/null)"
+SCRUB_HOME=""
 if [ -z "$WT_PATH" ] || [ ! -d "$WT_PATH" ]; then
   emit_result "lens_unparseable" "[]" "could not create a sandbox temp dir"
 fi
-if [ -z "$SCRUB_HOME" ] || [ ! -d "$SCRUB_HOME" ]; then
-  rm -rf "$WT_PATH" 2>/dev/null
-  emit_result "lens_unparseable" "[]" "could not create a scrubbed HOME temp dir"
-fi
 
-CLI_PID=""
-CLI_PGID=""
-CLI_WATCHDOG_PID=""
-CLI_OWN_PGROUP=0
-LENS_SELF_PGID="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
 RAW_OUT=""
 RAW_ERR=""
 INTEGRITY_BEFORE=""
-TIMEOUT_FLAG=""
-
-lens_kill_cli() {
-  local sig="${1:-TERM}"
-  if [ -n "${CLI_PGID:-}" ] && [ "$CLI_OWN_PGROUP" = "1" ] \
-     && [ "$CLI_PGID" != "1" ] && [ "$CLI_PGID" != "$LENS_SELF_PGID" ]; then
-    kill -s "$sig" -- -"$CLI_PGID" 2>/dev/null
-    return 0
-  fi
-  if [ -n "${CLI_PID:-}" ]; then
-    kill -s "$sig" "$CLI_PID" 2>/dev/null
-    if command -v pgrep >/dev/null 2>&1; then
-      local child
-      for child in $(pgrep -P "$CLI_PID" 2>/dev/null); do
-        kill -s "$sig" "$child" 2>/dev/null
-      done
-    fi
-  fi
-}
 
 cleanup() {
-  if [ -n "${CLI_WATCHDOG_PID:-}" ]; then
-    kill "$CLI_WATCHDOG_PID" 2>/dev/null
-    wait "$CLI_WATCHDOG_PID" 2>/dev/null
-    CLI_WATCHDOG_PID=""
-  fi
-  if [ -n "${CLI_PID:-}" ] || [ -n "${CLI_PGID:-}" ]; then
-    lens_kill_cli TERM
-    sleep 1
-    lens_kill_cli KILL
-    CLI_PID=""
-    CLI_PGID=""
-  fi
-  rm -rf "$WT_PATH" "$SCRUB_HOME" 2>/dev/null
-  rm -f "$RAW_OUT" "$RAW_ERR" "$INTEGRITY_BEFORE" "$TIMEOUT_FLAG" 2>/dev/null
+  # A still-running CLI (this script was signalled mid-launch): kill its process
+  # group and remove its isolated HOME.
+  SCRUB_HOME="${LPC_HOME:-}"
+  launch_provider_cli_abort
+  # The CLI ran with its cwd in WT_PATH, so it could have re-permissioned dirs
+  # there: the launcher's rmtree restores u+rwx (never through a symlink) first.
+  launch_provider_cli_rmtree "$WT_PATH"
+  launch_provider_cli_rmtree "$SCRUB_HOME"
+  rm -f "$RAW_OUT" "$RAW_ERR" "$INTEGRITY_BEFORE" 2>/dev/null
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Use an INDEPENDENT sandbox repo, never `git worktree add` — worktrees share
 # the parent repository's .git/config, so `git remote remove origin` inside a
@@ -501,93 +500,36 @@ provider_build_argv
 
 RAW_OUT="$(mktemp "${TMPDIR:-/tmp}/loomwright-lens-out-XXXXXX" 2>/dev/null)"
 RAW_ERR="$(mktemp "${TMPDIR:-/tmp}/loomwright-lens-err-XXXXXX" 2>/dev/null)"
-TIMEOUT_FLAG="$(mktemp "${TMPDIR:-/tmp}/loomwright-lens-tmo-XXXXXX" 2>/dev/null)"
-[ -n "$RAW_OUT" ] && [ -n "$RAW_ERR" ] && [ -n "$TIMEOUT_FLAG" ] \
+[ -n "$RAW_OUT" ] && [ -n "$RAW_ERR" ] \
   || emit_result "lens_unparseable" "[]" "could not allocate temp files for provider output"
 
-# ---- run the provider CLI inside the sandbox, scrubbed env, bounded --------
-# `env -i` starts with an EMPTY environment — no ambient var (GH_TOKEN
-# included) survives unless explicitly re-added below. PATH is re-added so the
-# CLI (and anything it shells out to) can still be found; HOME/TMPDIR point at
-# the throwaway scrub dir (see SAFETY POSTURE above for the honest limit of
-# this mitigation).
-#
-# The CLI is launched as its own process group (perl/python setpgrp) so a
-# timeout or cleanup can kill the whole tree — not just the leader — and so
-# `rm -rf` of the sandbox is not racing a hung child. GNU timeout is a
-# fallback, not the primary, because stock macOS has neither timeout nor
-# gtimeout.
+# ---- run the provider CLI inside the sandbox, through the shared launcher ----
+# `isolated` home mode, cwd = the sandbox, bounded by LENS_CLI_TIMEOUT: the
+# launcher owns the scrubbed env, the per-launch HOME with the provider's
+# declared login copies, the own-process-group launch and the TERM -> KILL
+# chain (see SAFETY POSTURE above for the honest limit of all of it).
+if ! launch_provider_cli isolated "$LENS_CLI_TIMEOUT" "$WT_PATH" "$RAW_OUT" "$RAW_ERR" \
+     "$PROVIDER_CLI_NAME" "${PROVIDER_ARGV[@]}"; then
+  emit_result "lens_unparseable" "[]" "could not launch the provider CLI: $LPC_ERROR"
+fi
+CLI_TIMED_OUT="$LPC_TIMED_OUT"
 
-lens_exec_cli() {
-  if command -v perl >/dev/null 2>&1; then
-    exec perl -e 'setpgrp; exec @ARGV' \
-      env -i PATH="$PATH" HOME="$SCRUB_HOME" TMPDIR="$SCRUB_HOME" \
-      "$PROVIDER_CLI_NAME" "${PROVIDER_ARGV[@]}"
+# The provider's own not-logged-in pattern, checked once over the raw output.
+# Used ONLY to name an otherwise-unparseable result (lens_parse_failure below).
+CLI_NOT_LOGGED_IN=0
+if [ -n "${PROBE_AUTH_NOT_LOGGED_IN_RE:-}" ] \
+   && grep -qE -- "$PROBE_AUTH_NOT_LOGGED_IN_RE" "$RAW_OUT" "$RAW_ERR" 2>/dev/null; then
+  CLI_NOT_LOGGED_IN=1
+fi
+
+# lens_parse_failure <note> — lens_unparseable; when the output matched the
+# not-logged-in pattern the note BEGINS with the named status.
+lens_parse_failure() {
+  if [ "$CLI_NOT_LOGGED_IN" = "1" ]; then
+    emit_result "lens_unparseable" "[]" "not_logged_in_isolated: the provider CLI reports no login under the isolated HOME; its login did not cross (declare it in provider-$NAME.sh: PROVIDER_LOGIN_FILES / PROVIDER_LOGIN_ENV${PROVIDER_LOGIN_ENV[0]:+; or set one of its declared login env vars: ${PROVIDER_LOGIN_ENV[*]}}) - $1"
   fi
-  if command -v python3 >/dev/null 2>&1; then
-    exec python3 -c 'import os, sys; os.setpgrp(); os.execvp(sys.argv[1], sys.argv[1:])' \
-      env -i PATH="$PATH" HOME="$SCRUB_HOME" TMPDIR="$SCRUB_HOME" \
-      "$PROVIDER_CLI_NAME" "${PROVIDER_ARGV[@]}"
-  fi
-  if command -v timeout >/dev/null 2>&1; then
-    exec timeout --kill-after=5 --signal=TERM "$LENS_CLI_TIMEOUT" \
-      env -i PATH="$PATH" HOME="$SCRUB_HOME" TMPDIR="$SCRUB_HOME" \
-      "$PROVIDER_CLI_NAME" "${PROVIDER_ARGV[@]}"
-  fi
-  if command -v gtimeout >/dev/null 2>&1; then
-    exec gtimeout --kill-after=5 --signal=TERM "$LENS_CLI_TIMEOUT" \
-      env -i PATH="$PATH" HOME="$SCRUB_HOME" TMPDIR="$SCRUB_HOME" \
-      "$PROVIDER_CLI_NAME" "${PROVIDER_ARGV[@]}"
-  fi
-  exec env -i PATH="$PATH" HOME="$SCRUB_HOME" TMPDIR="$SCRUB_HOME" \
-    "$PROVIDER_CLI_NAME" "${PROVIDER_ARGV[@]}"
+  emit_result "lens_unparseable" "[]" "$1"
 }
-
-(
-  cd "$WT_PATH" || exit 90
-  lens_exec_cli
-) >"$RAW_OUT" 2>"$RAW_ERR" &
-CLI_PID=$!
-CLI_PGID="$CLI_PID"
-if command -v perl >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
-  CLI_OWN_PGROUP=1
-fi
-
-# The bound's sleep runs in the background and the TERM trap kills it: a foreground
-# sleep would outlive the `kill "$CLI_WATCHDOG_PID"` below (killing a subshell does
-# not kill its running child), leaving one `sleep $LENS_CLI_TIMEOUT` per run.
-(
-  WD_SLEEP_PID=""
-  trap '[ -n "$WD_SLEEP_PID" ] && kill "$WD_SLEEP_PID" 2>/dev/null; exit 0' TERM
-  sleep "$LENS_CLI_TIMEOUT" & WD_SLEEP_PID=$!
-  wait "$WD_SLEEP_PID"
-  if kill -0 "$CLI_PID" 2>/dev/null; then
-    printf '1\n' > "$TIMEOUT_FLAG"
-    lens_kill_cli TERM
-    sleep 2
-    lens_kill_cli KILL
-  fi
-) &
-CLI_WATCHDOG_PID=$!
-
-wait "$CLI_PID"
-CLI_WAIT_RC=$?
-if [ -n "$CLI_WATCHDOG_PID" ]; then
-  kill "$CLI_WATCHDOG_PID" 2>/dev/null
-  wait "$CLI_WATCHDOG_PID" 2>/dev/null
-  CLI_WATCHDOG_PID=""
-fi
-CLI_PID=""
-CLI_PGID=""
-
-CLI_TIMED_OUT=0
-if [ -s "$TIMEOUT_FLAG" ]; then
-  CLI_TIMED_OUT=1
-fi
-# GNU timeout fallback path (no setpgrp helper): 124 means the bound fired.
-if [ "$CLI_OWN_PGROUP" != "1" ] && [ "$CLI_WAIT_RC" -eq 124 ]; then
-  CLI_TIMED_OUT=1
-fi
 
 # ---- mutation / .git-integrity check (fail-closed, discard result) ----------
 MUTATION="$(git -C "$WT_PATH" status --porcelain 2>/dev/null)"
@@ -607,7 +549,7 @@ if [ "$HAVE_JQ" != "1" ]; then
 fi
 
 if ! provider_extract_text "$RAW_OUT"; then
-  emit_result "lens_unparseable" "[]" "provider output did not match the expected envelope shape"
+  lens_parse_failure "provider output did not match the expected envelope shape"
 fi
 
 if [ "$LENS_ROLE_KIND" = "text" ]; then
@@ -620,7 +562,7 @@ if [ "$LENS_ROLE_KIND" = "text" ]; then
   fi
   case "$PROVIDER_EXTRACTED" in
     *"$LENS_ROLE_MARKER"*) emit_result "ok" "[]" "" "$PROVIDER_EXTRACTED" ;;
-    *) emit_result "lens_unparseable" "[]" "provider text did not contain the role marker" ;;
+    *) lens_parse_failure "provider text did not contain the role marker" ;;
   esac
 fi
 
@@ -647,7 +589,7 @@ NORMALIZED="$(printf '%s' "$PROVIDER_EXTRACTED" | "$JQ" -c '
 
 case "$NORMALIZED" in
   ""|null)
-    emit_result "lens_unparseable" "[]" "provider text did not contain a valid {\"issues\":[...]} object"
+    lens_parse_failure "provider text did not contain a valid {\"issues\":[...]} object"
     ;;
   *)
     emit_result "ok" "$NORMALIZED" ""
