@@ -24,11 +24,19 @@ headless (D2′), so the probe is the first C step; B is a small usability gap i
 - [ ] 02-providers-probe.md (wave 1)
 - [ ] 03-routing-config-readonly-seats.md (wave 2 — proposed, promote after 02's report)
 - [ ] 04-routing-write-seats.md (wave 3 — proposed, promote after 03 ships)
+- [ ] 05-provider-launch-parity.md (fix — check and lens-run launch providers differently; every non-Claude routed step fails at login)
+- [ ] 06-copilot-write-seat.md (parked — owner has no Copilot access yet)
+- [ ] 07-codex-write-seat.md (parked — owner has no Codex access yet; may close as read-only only)
+- [ ] 08-antigravity-provider.md (parked — owner has no Antigravity access yet; Gemini CLI's successor, no adapter exists)
 
 ## Owner decisions
 
 - 2026-10-27: three waves. Script and prompt base-branch work merged into one item (01); the `/setup providers` screen
   moved from the probe into the routing item (03) so the probe touches no `/setup` file and runs beside 01.
+- 2026-11-01: 04 merged (#770) with Grok as the only write provider. 06–08 written ahead of access and parked: the
+  owner has no Copilot, Codex or Antigravity access yet. Each item's FIRST STEP re-checks the plugin's current state
+  and the vendor's current docs before any design, because its premises are dated 2026-11-01.
+- 2026-10-31: Grok probe run (1.0.70, logged in). Routed steps fail at login under lens-run's scrubbed HOME; `dontAsk` is not default-deny. Queue 05 (fix); park 04 until 05 ships and a provider passes the real permission probe.
 
 ## Order — three waves
 
@@ -38,6 +46,7 @@ headless (D2′), so the probe is the first C step; B is a small usability gap i
 | 1 | 02 | Provider probe script (check + report only) + Grok/Copilot table entries | ready | D2′: the second-harness probe comes first; shares no file with 01 |
 | 2 | 03 | `/setup providers` + routing config + user-scoped egress grant + read-only seats | **proposed** | Premises come from 02's report; edits the `/setup` files 01 also edits |
 | 3 | 04 | Write seats (worker, heal fix, drain fix) | **proposed** | Builds on 03's config and consent code |
+| 3 | 05 | Launch parity: one launcher for check + lens-run, declared login pass-through, real permission probe | ready | 03 shipped routing that only works for Claude (2026-10-31 probe) |
 
 Run wave 1: `/automate --folder .supervisor/requirements/provider-routing --parallel 2` — enqueues 01 and 02 only; 03/04
 carry `## Status: proposed` (`is_not_ready`). Between waves: read 02's report, answer 03's open questions, rewrite 03's
