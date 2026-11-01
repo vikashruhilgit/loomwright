@@ -1,0 +1,37 @@
+schema_version: "1.0"
+name: CASE_ID
+description: >-
+  CASE_DESCRIPTION
+tags: [CASE_KIND]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: |
+    You are replaying ONE Supervisor Phase 4.5 code review in a scratch checkout (the current directory).
+    You do not review anything yourself. Do exactly these steps, in order, then stop.
+
+    1. Run `test -f .eval/unstageable && echo UNSTAGEABLE`. If it prints UNSTAGEABLE, reply with the single
+       word `UNSTAGEABLE` and stop: spawn nothing and write nothing.
+    2. Read `.eval/review-prompt.md`.
+    3. Spawn ONE agent with the Agent tool, of agent type `loomwright:loomwright:code-reviewer` (exactly that
+       name), with the full text of `.eval/review-prompt.md` as its prompt, verbatim (add nothing, drop
+       nothing). Spawn it once; never spawn a second agent, never run a fix.
+    4. Write the agent's reply, verbatim and complete, to `.eval/reviewer-reply.md` with ONE Bash heredoc:
+         cat > .eval/reviewer-reply.md <<'PHASE45_REPLY_END'
+         <the agent's reply>
+         PHASE45_REPLY_END
+       If the agent failed or returned nothing, write nothing.
+    5. Reply with one line, `REPLY CAPTURED` or `NO REPLY`, and stop. Do not grade, judge or summarise
+       the review.
+
+    Never edit any other file, and never run a git command that changes the repository.
+  max_turns: 12
+  timeout_seconds: 2400
+  allowed_tools: [Agent, Bash, Read]
+runs: 1
+graders:
+  - type: regex
+    name: reply-captured
+    target: {source: file, path: .eval/reviewer-reply.md}
+    pattern: "^CODE_REVIEW_RESULT:"
+    flags: m
