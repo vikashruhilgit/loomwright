@@ -9,9 +9,9 @@
 # occupant and staged the write through a temp file + `mv -f` (closing a hostile-hardlink and a
 # check-then-write TOCTOU window that `propose-work.sh`'s plain `cat >` copy did not).
 #
-# pc_guarded_write() BELOW IS THE RECONCILED, CANONICAL VERSION - the hardened one - and ALL
-# THREE bases (`propose-work.sh`, `propose-domain.sh`, `propose-from-verify.sh`) now SOURCE this
-# file and call it directly. There is exactly ONE copy of this guard in the whole repo; "never
+# pc_guarded_write() BELOW IS THE RECONCILED, CANONICAL VERSION - the hardened one - and EVERY
+# basis (`propose-work.sh`, `propose-domain.sh`, `propose-from-verify.sh`, `propose-scorecard.sh`)
+# now SOURCES this file and calls it directly. There is exactly ONE copy of this guard in the whole repo; "never
 # copied a third time" holds for every caller, including the two pre-existing ones, not only for
 # a new one.
 #
@@ -24,8 +24,8 @@
 # block's own opening and closing comment lines, just below, for the exact marker text a `sed`
 # range targets - not spelled out again here so this prose paragraph itself can never become a
 # second, false match for that same `sed` range) out of a copy of `propose-common.sh`, and points
-# the UNMODIFIED caller script's sourcing at that mutant copy through `PROPOSE_COMMON_SH` - each
-# of the three callers resolves its sibling as
+# the UNMODIFIED caller script's sourcing at that mutant copy through `PROPOSE_COMMON_SH` - every
+# caller resolves its sibling as
 # `"${PROPOSE_COMMON_SH:-$SCRIPT_DIR/propose-common.sh}"`, so the env var overrides the
 # `SCRIPT_DIR`-relative default without touching the caller's own file text at all. That override
 # is a TEST-ONLY knob, always unset in a real run, and is the "or an overridable source path"
