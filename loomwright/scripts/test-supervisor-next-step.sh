@@ -606,6 +606,48 @@ if new_scratch "$FIX/plan-path-parallel"; then
     ok "B1: no subtask table ⇒ the orchestrator spawn (--cheap ⇒ cost_profile cheap); a duplicate id exits 2, nothing written; its plan ⇒ the parallel spawn"
   else no "B1: orchestrator route wrong (plan: $(printf '%s' "$o_plan" | head -c 160); dup rc $r_dup; then: $(printf '%s' "$NC_OUT" | head -c 160))"; fi
 else no "B1: scratch not built"; fi
+# B1b — the subtask table followed by a `### File Impact Map` table inside the same section (the
+# provider-routing-write-seats brief's shape): the plan is the first table's ids only, never the
+# second table's `Group` header cell
+if new_scratch "$FIX/plan-path-parallel"; then
+  cat > "$CASE_ROOT/.supervisor/jobs/pending/2026-10-17-golden-impactmap.md" <<'EOF'
+# Supervisor Job: Impact map
+
+## Acceptance Criteria
+- [ ] one
+
+## Subtask Structure
+
+| # | Title | Acceptance Criteria Subset | Est. Files (modify/create) | Skills | Status |
+|---|-------|---------------------------|---------------------------|--------|--------|
+| 1 | Write-seat config | AC1 | 7 modify, 0 create | `skills/unit-testing/SKILL.md` | LAUNCHABLE |
+| 2 | Isolated write runner | AC5 | 4 modify, 3 create | `skills/unit-testing/SKILL.md` | BLOCKED (by #1) |
+| 3 | Wire the seats | AC9 | 16 modify, 1 create | `skills/review-heal/SKILL.md` | BLOCKED (by #2) |
+
+### File Impact Map
+
+| Group | Files to Modify (lines at base) | Files to Create | Confidence |
+|-------|----------------|-----------------|------------|
+| 1 config/consent | `loomwright/scripts/resolve-routing.sh` (345) | — | HIGH |
+| 2 runner | `loomwright/scripts/adapters/providers/launch-provider-cli.sh` (314) | `write-run.sh` | HIGH |
+| 3 wiring/docs | `loomwright/skills/async-orchestration/SKILL.md` (424) | — | MEDIUM |
+
+### Subtask Contracts
+
+```yaml
+# Subtask 1 — write-seat config (LAUNCHABLE)
+requires: []
+```
+
+## Parallelism Analysis
+EOF
+  sn_call "$DRIVER" --job .supervisor/jobs/pending/2026-10-17-golden-impactmap.md --skip-preflight-sync
+  sn_call "$DRIVER" --result '{"confirmed":true}'
+  sn_call "$DRIVER" --result '{"confirmed":true}'
+  if printf '%s' "$NC_OUT" | jq -e '.what == "execute-manager" and .plan_source == "brief" and .subtasks == ["1","2","3"]' >/dev/null 2>&1; then
+    ok "B1b: a ### File Impact Map table after the subtask table ⇒ the plan is [1,2,3], its Group header never an id"
+  else no "B1b: plan from a two-table section wrong: $(printf '%s' "$NC_OUT" | head -c 200)"; fi
+else no "B1b: scratch not built"; fi
 # B2 — a malformed confirmation / report exits 2, nothing written, and the instruction re-prints
 if new_scratch "$FIX/preflight-clear"; then
   sn_call "$DRIVER" --job .supervisor/jobs/pending/2026-10-17-next-step-supervisor.md --branch feature/as11-next-step-supervisor
