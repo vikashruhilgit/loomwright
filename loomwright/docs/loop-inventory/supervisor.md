@@ -784,6 +784,16 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-765 | skills/self-heal-advisory/SKILL.md | q: **Seat routing (`phase45_reviewer`):** | Phase 4.5 integrated review | never routed: always the loomwright:code-reviewer Task (the executing lens; sets phase45_review_invoked); phase45_reviewer is not a seat (unknown_seat) | deterministic | prose | - | GAP |
 | SV-766 | skills/self-heal-advisory/completion-tail.md | q: **Seat routing (`rubric_grader`):** | rubric_grader seat resolves to a non-Claude provider | lens-run.sh --role rubric_grader, rubric_score parsed from result_text; non-ok or no marker ⇒ rubric-grader Task + one seat_routing line; strict-empty ⇒ rubric_grader_parse_failed path | deterministic | prose | - | GAP |
 | SV-767 | skills/async-orchestration/SKILL.md | q: **Seat routing (`orchestrator`):** | orchestrator seat resolves to a non-Claude provider | lens-run.sh --role orchestrator, decomposition read from result_text; non-ok or no marker ⇒ orchestrator Task + one seat_routing line; strict-empty ⇒ PLAN left unanswered, run stops | deterministic | prose | - | GAP |
+| SV-768 | skills/async-orchestration/SKILL.md | q: **Seat routing (`worker`):** | worker write seat resolves to a non-Claude provider at Phase 3 entry | resolve ONCE, record seat_routing worker; add the one Write seat line to the Execute Manager spawn and every worker spawn (retries included); never re-resolved per subtask; claude ⇒ spawns unchanged | deterministic | prose | - | GAP |
+| SV-769 | agents/supervisor.md | h: #### Write-seat stops | routed worker write seat | the Phase 3 stops and retry for a routed worker edit step; PROVIDER=claude changes nothing | deterministic | prose | - | GAP |
+| SV-770 | agents/supervisor.md | q: **Empty `PROVIDER` (`strict`), or a non-Claude provider under `--sdk-runner` | strict-empty worker seat, or a routed worker seat under --sdk-runner | stop before any spawn: no --result, release the run lock, status failed write_seat_failed:provider_unavailable_strict (or :sdk_runner), brief stays in in-progress/ | deterministic | prose | - | GAP |
+| SV-771 | agents/supervisor.md | q: **`write_seat_tampered` stops the whole run.** | a worker reports write_seat_tampered | no retry, no further subtask, no fallback, no merge; no --result; completion tail emits the one SUPERVISOR_RESULT (failed, write_seat_tampered, heal_loop_ran false); Parallel: scan subtasks_failed[].error before the hand-back | deterministic | prose | - | GAP |
+| SV-772 | agents/supervisor.md | q: **Routed Sequential Path, one clean tree per subtask:** | routed worker seat on the Sequential Path, a subtask's gates passed | commit that subtask's changes locally before the next spawn so write-run.sh sees a clean tree; unrouted runs unchanged | deterministic | prose | - | GAP |
+| SV-773 | agents/supervisor.md | q: The same exception covers a run that reached the completion tail through a `write_seat_tampered` stop | completion tail reached through a write_seat_tampered stop | completion-tail guard does not abort (error non-empty); the abort stays for every other error | deterministic | prose | - | GAP |
+| SV-774 | skills/self-heal-advisory/completion-tail.md | q: `error == "write_seat_tampered"` — checked FIRST | error is write_seat_tampered | terminal failure ahead of the PASS/loop-skipped and ESCALATED branches; never their outcome for any later step | deterministic | prose | - | GAP |
+| SV-775 | skills/self-heal-advisory/completion-tail.md | q: On `write_seat_tampered` (step 1's first branch | job: brief and error write_seat_tampered | move the brief in-progress/ → failed/ with Status failed, Error write_seat_tampered and write-run notes; never done/, never resumable | deterministic | prose | - | GAP |
+| SV-776 | skills/self-heal-advisory/SKILL.md | q: **Seat routing (`heal_fix`):** | heal_fix write seat resolves to a non-Claude provider | resolve once per Phase 4.5 entry; fix Task gains one Write seat line; WRITE_SEAT_TAMPERED ⇒ exit loop ESCALATED, status failed, write_seat_tampered; WRITE_SEAT_FAILED or strict-empty ⇒ fix-task crash path | deterministic | prose | - | GAP |
+| SV-777 | skills/self-heal-advisory/escalation.md | q: When the `heal_fix` write seat is routed | routed heal_fix edit step returns a write_status | ok ⇒ steps 3–4 (restore on a failed check); refusal/timeout/failed ⇒ fallback Claude fix + one seat_routing line, or strict crash path; write_git_tampered ⇒ loop exit, never the crash path | deterministic | prose | - | GAP |
 
 ## Gap list (ordered by risk)
 1. SV-010 — branch-first principle only in prose
@@ -1296,11 +1306,21 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 508. SV-765 — seat-routing paragraph only in prose
 509. SV-766 — seat-routing paragraph only in prose
 510. SV-767 — seat-routing paragraph only in prose
+511. SV-768 — seat-routing paragraph only in prose
+512. SV-769 — write-seat stop section only in prose
+513. SV-770 — strict-empty worker-seat stop only in prose
+514. SV-771 — tamper stop on all three Phase 3 paths only in prose
+515. SV-772 — per-subtask commit on a routed Sequential run only in prose
+516. SV-773 — guard exemption for the tamper stop only in prose
+517. SV-774 — tamper outcome branch only in prose
+518. SV-775 — tamper job-lifecycle branch only in prose
+519. SV-776 — seat-routing paragraph only in prose
+520. SV-777 — write-status mapping only in prose
 
 ## Counts
-- rows: 767
-- deterministic: 399
+- rows: 777
+- deterministic: 409
 - judgment: 30
 - rule: 307
 - story: 31
-- GAP: 510
+- GAP: 520

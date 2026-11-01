@@ -13,7 +13,7 @@ description: Umbrella setup command — status dashboard plus guided configurati
 /setup rules                # Seed .agent/rules/ with PORTABLE conventions on a cold-start repo (labelled seeded, not learned): status | (no-arg → seed)
 /setup statusline           # Wire the one-line run report into the user-scope settings file: status | apply | remove
 /setup base-branch          # View / pin the base (integration) branch in .supervisor/config.json: status | set <branch> | remove
-/setup providers            # Route read-only seats to another AI CLI: status | apply | remove
+/setup providers            # Route read and write seats to another AI CLI: status | apply | remove
 /setup telemetry            # DELEGATES to /telemetry (no consent logic duplicated here)
 /setup notifications        # Status + guidance (notification hooks are always-on)
 /setup webhook              # Status + guided write of the user-scope webhook URL (LOOMWRIGHT_WEBHOOK_URL still wins when set)

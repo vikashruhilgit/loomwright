@@ -1,6 +1,6 @@
 # Self-Heal Protocol — escalation paths (base-mismatch cleanup, fix-task crash)
 
-Read by the Supervisor only when on-entry step 5 (`on-entry.md`) finds the `base_mismatch_detected` flag set, or when a fix Task() returns an error or no FIX_RESULT block. Part of `skills/self-heal-advisory/` (index: `SKILL.md`).
+Read by the Supervisor only when on-entry step 5 (`on-entry.md`) finds the `base_mismatch_detected` flag set, or when a fix Task() returns an error or no FIX_RESULT block (a routed `heal_fix` edit failure included). Part of `skills/self-heal-advisory/` (index: `SKILL.md`).
 
 ## Phase 4.5 base-mismatch cleanup (step 5)
 
@@ -53,3 +53,10 @@ Read by the Supervisor only when on-entry step 5 (`on-entry.md`) finds the `base
 
 ## Fix task crash handling
 - If the fix Task() returns an error or no FIX_RESULT block: pause the phase by emitting `SUPERVISOR_RESULT` with `status: checkpoint` (the schema has no `paused` status — `checkpoint` is the pause analogue) and exit with the resume command. Do NOT increment the resume counter now — the increment happens at Phase 4.5 entry of the next `--continue` run (on-entry step 3).
+
+## Routed fix edit failure
+
+When the `heal_fix` write seat is routed (`SKILL.md` §"Seat routing (`heal_fix`)"), the fix task reads `write_status` from `write-run.sh`'s `--out` JSON (the closed list is that script's header). The routed outcomes map like this:
+- `ok`: the fix task runs steps 3–4. If a post-edit check fails, it first runs `write-run.sh --restore <pre-launch sha>`, then applies the next bullet with reason `post_edit_gate`.
+- A pre-launch refusal, `write_timeout` or `write_failed` (the tree is already restored): under `fallback_to_default` the fix task makes the fix itself on the clean tree and logs one `seat_routing heal_fix provider=<p> reason=<write_status|post_edit_gate>` line. Under `strict` it prints `WRITE_SEAT_FAILED: <status> — <notes>` with no FIX_RESULT, and you take §"Fix task crash handling" above.
+- `write_git_tampered`, under either mode: the fix task prints `WRITE_SEAT_TAMPERED: <notes>`. This is never the crash path: the loop exits at once with `error: "write_seat_tampered"` and the brief moves to `failed/` (`SKILL.md`; `completion-tail.md` steps 1–2).

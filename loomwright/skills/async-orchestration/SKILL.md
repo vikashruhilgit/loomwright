@@ -421,4 +421,6 @@ Task(
 )
 ```
 
+**Seat routing (`worker`):** a WRITE seat; `docs/PROVIDER_ROUTING.md` §"Write seats" owns the edit-step procedure (not restated). At Phase 3 entry, before any worker spawn, the Supervisor runs `resolve-routing.sh seat worker` ONCE (from the install root's `scripts/`, forwarding every `ROUTE_FLAGS` entry) and records `seat_routing worker provider=<p> reason=<r>` via `record_decision`. `PROVIDER=claude` (the default) leaves every spawn above unchanged. Any other provider adds ONE line to the Execute Manager spawn (forwarded verbatim) and to every worker spawn of the run (Single-Agent, Sequential, Step 3 parallel, retries): `Write seat: <PROVIDER>[:<MODEL>] (seat worker). Do not edit files yourself: delegate your edit step per <plugin root>/docs/PROVIDER_ROUTING.md §"Write seats", then run your post-edit steps.` It is never re-resolved per subtask. An EMPTY `PROVIDER`, `write_seat_failed:<status>` and the run-stopping `write_seat_tampered` worker error are handled in `agents/supervisor.md` §"Write-seat stops".
+
 **No per-subtask Code Reviewer spawn contract (any threshold):** no `loomwright:code-reviewer` spawn follows a worker on any path; Phase 4.5's integrated review is the sole one in the default flow.

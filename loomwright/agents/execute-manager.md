@@ -164,6 +164,8 @@ Task(
 
 Track: worker_id, subtask_id, worktree_path, status: running
 
+**Write seat (`worker`):** when your own spawn prompt carries a `Write seat:` line (the Supervisor resolved the `worker` write seat ONCE at Phase 3 entry — `skills/async-orchestration/SKILL.md` §"Seat routing (`worker`)"), append that line VERBATIM to every worker spawn of this run, retries included. Each worker then delegates its edit step to `write-run.sh` in its own worktree (`docs/PROVIDER_ROUTING.md` §"Write seats"). No line ⇒ every spawn is unchanged. Never resolve the seat yourself, and never drop the line on a retry: a routed run never falls back to a Claude edit mid-run. The routed worker is gated exactly like any other (the disk gate below).
+
 ### Step 4: Poll Loop
 
 ```
@@ -195,6 +197,25 @@ for iteration in 1..max_iterations:
       # WORKER_RESULT may be ABSENT (dead worker / turn-limit exit, crash retry already spent);
       # absence is NOT a pass.
       worker_result = parse_worker_result(result)   # or ABSENT
+
+      # --- Write-seat outcomes (routed runs only; docs/FAILURE_ESCALATION.md §"Worker Failure") —
+      # checked BEFORE the disk gate, which would otherwise read the failed edit as an outputs gap.
+      if worker_result is present and worker_result.error starts with "write_seat_tampered":
+        # STOP: no retry, no further spawn (the launch section below spawns nothing once this is
+        # set), no Claude fallback. Already-running workers finish on their own bound; nothing kills
+        # them. Once none is running, emit EXECUTE_RESULT (Step 5) with this subtask in
+        # subtasks_failed and the error verbatim (no schema change: `error` is a free string).
+        write_seat_tampered_stop = true; add {task_id: subtask_id, status: failed, error: worker_result.error, retry_count: 0} to subtasks_failed
+        skip_to_next_iteration
+      if worker_result is present and worker_result.status == "failed" and worker_result.error starts with "write_seat_failed:":
+        if not write_retried[subtask_id]:
+          # The ONE same-worktree retry. write-run.sh (or the worker's --restore) already put the
+          # tree back, so it starts clean. Same spawn, same `Write seat:` line, Retry context = the error + gate output.
+          Task(... the Step 3 worker spawn, unchanged, in {worktree_path} ...); write_retried[subtask_id] = true
+          tool_calls += 1
+          track the worker as running again; skip_to_next_iteration
+        add {task_id: subtask_id, status: failed, error: worker_result.error, retry_count: 1} to subtasks_failed   # retry failed
+        skip_to_next_iteration
 
       # The gate's INPUT is the TREE, not the worker's claim: re-run the ONE implementation
       # against the worktree (+1 Bash per subtask). brief_path = the SAME pointer handed to this
@@ -397,7 +418,8 @@ for iteration in 1..max_iterations:
       # "Launch newly launchable subtasks" section below. ---
 
   # --- Launch newly launchable subtasks ---
-  for subtask in newly_launchable:
+  # write_seat_tampered_stop ⇒ launch NOTHING; return EXECUTE_RESULT once no worker is running.
+  for subtask in newly_launchable (none when write_seat_tampered_stop):
     if active_worktrees < max_workers:
       # Create worktree + spawn worker
       # When cost_profile=cheap: include model: "sonnet" in the worker Task call
@@ -602,6 +624,8 @@ Only the `## Session` block is derived — written by `scripts/emit-progress-eve
 |-------|--------|
 | `outputs_verified` gate gap (a `provides` item missing ON DISK per `verify-provides.sh` — regardless of the worker's `status` — an unverifiable contract routed to checkpoint by D1 or paired with an ABSENT WORKER_RESULT, or a `partial` worker with an empty `outputs_gap` — the Step 1 carve-out) | Emit EXECUTE_CHECKPOINT with `adjudication_required: true` (Step 2b / poll-loop gate); do not mark the subtask complete |
 | Worker crash/timeout | Record error, retry once in same worktree, then escalate |
+| Routed worker `write_seat_failed:<status>` | Retry once in the same (already restored) worktree with the same `Write seat:` line, then escalate in `subtasks_failed` |
+| Routed worker `write_seat_tampered` | No retry, spawn nothing further, let running workers finish, then EXECUTE_RESULT with it in `subtasks_failed` — the Supervisor stops the run |
 | Pin mutation not_held (`run-pin-mutations.sh`, poll-loop pin gate) | Re-spawn once in the same worktree with the `not_held` lines as `Retry context:`, re-run the script once, then record (`pin_mutations:` decision) and carry it to Phase 4.5 — never adjudication, never a pause |
 | Worktree creation fails | Report in EXECUTE_RESULT, skip that subtask |
 | Tool budget 55+ | Output EXECUTE_CHECKPOINT immediately |

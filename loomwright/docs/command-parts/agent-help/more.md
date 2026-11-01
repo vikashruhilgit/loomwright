@@ -10,7 +10,7 @@
 /setup memory               # memory stores in version control: status | apply | remove | migrate
 /setup telemetry            # delegates to /telemetry
 /setup base-branch          # base branch: status | set <branch> | remove
-/setup providers            # provider routing for read-only seats: status | apply | remove
+/setup providers            # provider routing for read and write seats: status | apply | remove
 /setup --help               # every module + subcommands (also -h, help)
 ```
 
