@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # resolve-routing.sh — the ONE resolver for per-seat provider routing.
 #
-# A "seat" is a read-only pipeline step (a reviewer, a grader, an analysis pass)
-# that may run on a non-Claude AI CLI through lens-run.sh instead of the
-# Claude Task / inline path. This script answers, for one seat, "which provider
-# runs it, and why". It never runs a provider itself. Procedure for the caller:
-# docs/PROVIDER_ROUTING.md §"Routed seat protocol".
+# A "seat" is a pipeline step that may run on a non-Claude AI CLI instead of the
+# Claude Task / inline path. There are two closed lists, each with one home below:
+# READ seats (`seats`: a reviewer, a grader, an analysis pass, run through
+# lens-run.sh) and WRITE seats (`write-seats`: the code-edit step of a Claude task,
+# delegated to adapters/providers/write-run.sh). This script answers, for one seat,
+# "which provider runs it, and why". It never runs a provider itself. Procedure for
+# the caller: docs/PROVIDER_ROUTING.md.
 #
 # SUBCOMMANDS
 #   seats
-#       The closed seat list — THE one home of the seat ids (the `seats)` case
-#       arm below). One line per seat: `<id> <home-file> <role-marker> <validator|->`
+#       The closed READ-seat list — THE one home of the read-seat ids (the
+#       `seats)` case arm below). One line per seat: `<id> <home-file> <role-marker> <validator|->`
 #       - <home-file>   plugin-root-relative path of the file that owns the seat's
 #                       "Seat routing" paragraph.
 #       - <role-marker> a whitespace-free token the routed provider's final text
@@ -18,11 +20,21 @@
 #                       the lens-run.sh `issues[]` envelope and needs no marker.
 #       - <validator>   the scripts/ validator run with `--raw` over the routed
 #                       text (the SAME one the Claude path uses), `-` = none.
-#       The conductor roles (main session, supervisor-runner, execute-manager,
-#       context-keeper, worker, the /autonomous and /automate loops, the detached
-#       drain runner, the TaskCompleted hook) are NOT seats and are not listed.
+#       Read seats only. The conductor roles (main session, supervisor-runner,
+#       execute-manager, context-keeper, the worker Task itself, the /autonomous and
+#       /automate loops, the detached drain runner, the TaskCompleted hook) are NOT
+#       seats and are not listed. The worker Task stays a conductor: only its edit
+#       step is routable, as the `worker` WRITE seat below.
+#   write-seats
+#       The closed WRITE-seat list — THE one home of the write-seat ids (the
+#       `write-seats)` case arm below). One line per seat: `<id> <home-file>`, where
+#       <home-file> is the plugin-root-relative file that owns the seat's
+#       "Seat routing" paragraph. A write seat resolves through `seat <id>` exactly
+#       like a read seat, plus the per-seat write grant (CONSENT below). A write
+#       seat never inherits another seat's provider: each reads only its own
+#       `routing.seats.<id>` / `--route <id>=…`.
 #   seat <id> [--route <seat>=<provider>[:<model>]]... [--voter-provider <p>[:<m>]] [--repo <dir>]
-#       KEY=VALUE lines, always all six, in this order:
+#       <id> is a read seat or a write seat. KEY=VALUE lines, always all six, in this order:
 #         SEAT            the id asked about
 #         PROVIDER        `claude` (run today's Task / inline path), a provider
 #                         name, or EMPTY (strict + granted provider unavailable —
@@ -46,19 +58,25 @@
 # PROVIDER_GRANTS (user scope, the egress file that script reads) names it for this
 # repo. The repo's own config can only REQUEST a provider; a missing grant is
 # `provider_not_granted` and never sends, whatever on_unavailable says. `claude`
-# never needs a grant.
+# never needs a grant. A WRITE seat additionally needs the per-seat write grant:
+# `resolve-egress-config.sh`'s PROVIDER_WRITE_GRANTS must hold `<seat>:<provider>`
+# (user scope, `repos.<slug>.write_grants.<seat>`). A read grant without it is
+# `write_not_granted`; a write grant without the read grant is still
+# `provider_not_granted`. Neither ever sends, whatever on_unavailable says.
 #
 # REASONS (PROVIDER=claude unless noted; a malformed input never yields a
 # non-Claude provider)
 #   config_unparseable            config is not exactly one JSON object, or a
 #                                 routing field has the wrong type / value
 #   unknown_seat                  `seat <id>`, a routing.seats key or a --route
-#                                 seat is not in `seats`
+#                                 seat is in neither `seats` nor `write-seats`
 #   invalid_provider              a provider name fails [A-Za-z0-9_-]+, has no
 #                                 provider-<name>.sh table file, or a model fails
 #                                 its character allowlist
 #   routing_default_not_claude    routing.default is present and not `claude`
 #   provider_not_granted          the provider has no user-scope grant for this repo
+#   write_not_granted             a write seat's provider has the read grant but no
+#                                 user-scope write grant for that seat
 #   provider_unavailable          granted, but its CLI is not on PATH
 #                                 (on_unavailable = fallback_to_default)
 #   provider_unavailable_strict   same, with on_unavailable = strict — PROVIDER is EMPTY
@@ -75,6 +93,7 @@ EGRESS_RESOLVER="$SCRIPT_DIR/resolve-egress-config.sh"
 usage() {
   printf 'resolve-routing.sh: %s\n' "${1:-usage error}" >&2
   printf 'usage: resolve-routing.sh seats\n' >&2
+  printf '       resolve-routing.sh write-seats\n' >&2
   printf '       resolve-routing.sh seat <id> [--route <seat>=<provider>[:<model>]]... [--voter-provider <p>[:<m>]] [--repo <dir>]\n' >&2
   exit 2
 }
@@ -102,6 +121,15 @@ qa_strategist commands/qa-strategist.md Classification -
 SEATS
     exit 0
     ;;
+  write-seats)
+    [ $# -eq 1 ] || usage "write-seats takes no arguments"
+    cat <<'WRITE_SEATS'
+worker skills/async-orchestration/SKILL.md
+heal_fix skills/self-heal-advisory/SKILL.md
+drain_fix skills/review-heal/SKILL.md
+WRITE_SEATS
+    exit 0
+    ;;
   seat) shift ;;
   *) usage "unknown or missing subcommand: ${SUBCMD}" ;;
 esac
@@ -121,9 +149,12 @@ ROUTE_FOR_ID=""
 ROUTE_UNKNOWN=0
 REPO="."
 
-# The seat ids come from the `seats` arm above — asked of this very script, so
-# the list has exactly one home. Space-padded so `case` can match a whole id.
-SEAT_IDS=" $(bash "${BASH_SOURCE[0]}" seats 2>/dev/null | awk '{printf "%s ", $1}')"
+# The seat ids come from the `seats` and `write-seats` arms above — asked of this
+# very script, so each list has exactly one home. Space-padded so `case` can match
+# a whole id. SEAT_IDS is every routable id (read + write); WRITE_SEAT_IDS the
+# write seats alone (they need the per-seat write grant).
+WRITE_SEAT_IDS=" $(bash "${BASH_SOURCE[0]}" write-seats 2>/dev/null | awk '{printf "%s ", $1}')"
+SEAT_IDS=" $(bash "${BASH_SOURCE[0]}" seats 2>/dev/null | awk '{printf "%s ", $1}')${WRITE_SEAT_IDS# }"
 
 is_seat_id() {
   case "$1" in
@@ -134,6 +165,11 @@ is_seat_id() {
   esac
   return 1
 }
+
+IS_WRITE_SEAT=0
+case "$WRITE_SEAT_IDS" in
+  *" $ID "*) IS_WRITE_SEAT=1 ;;
+esac
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -306,12 +342,36 @@ is_granted() {
   return 1
 }
 
+# The per-seat write grants, read from the same resolver run's sibling key. Every
+# pair is `<seat>:<provider>`; anything outside that charset empties the whole value
+# (fail CLOSED: no write grant).
+WRITE_GRANTS=""
+WRITE_GRANTS_LOADED=0
+load_write_grants() {
+  [ "$WRITE_GRANTS_LOADED" -eq 0 ] || return 0
+  WRITE_GRANTS_LOADED=1
+  WRITE_GRANTS=""
+  [ -r "$EGRESS_RESOLVER" ] || return 0
+  WRITE_GRANTS="$( cd "$REPO" 2>/dev/null && bash "$EGRESS_RESOLVER" 2>/dev/null | sed -n 's/^PROVIDER_WRITE_GRANTS=//p' | head -n 1 )"
+  case "$WRITE_GRANTS" in *[!A-Za-z0-9_,:-]*) WRITE_GRANTS="" ;; esac
+}
+
+# is_write_granted <provider> — the user granted <provider> the write seat $ID here.
+is_write_granted() {
+  load_write_grants
+  case ",$WRITE_GRANTS," in
+    *",$ID:$1,"*) return 0 ;;
+  esac
+  return 1
+}
+
 # provider_cli <name> prints the table file's PROVIDER_CLI_NAME (empty when absent).
 provider_cli() {
   ( . "$PROVIDERS_DIR/provider-$1.sh" >/dev/null 2>&1; printf '%s' "${PROVIDER_CLI_NAME:-}" )
 }
 
 NOT_GRANTED_SEEN=0
+WRITE_NOT_GRANTED_SEEN=0
 UNAVAILABLE_SEEN=0
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
@@ -321,6 +381,10 @@ while IFS= read -r entry; do
   fi
   if ! is_granted "$E_NAME"; then
     NOT_GRANTED_SEEN=1
+    continue
+  fi
+  if [ "$IS_WRITE_SEAT" -eq 1 ] && ! is_write_granted "$E_NAME"; then
+    WRITE_NOT_GRANTED_SEEN=1
     continue
   fi
   CLI="$(provider_cli "$E_NAME")"
@@ -334,12 +398,14 @@ $ENTRIES
 EOF
 
 # No entry won. A granted-but-uninstalled provider follows on_unavailable; if every
-# entry lacked a grant, the answer is provider_not_granted whatever on_unavailable
-# says — a missing grant never sends.
+# entry lacked a grant, the answer is write_not_granted (a write seat whose provider
+# had the read grant but not the write grant) or provider_not_granted, whatever
+# on_unavailable says — a missing grant never sends.
 if [ "$UNAVAILABLE_SEEN" -eq 1 ]; then
   if [ "$ON_UNAVAILABLE" = "strict" ]; then
     finish "" "" "$SOURCE" provider_unavailable_strict
   fi
   finish claude "" "$SOURCE" provider_unavailable
 fi
+[ "$WRITE_NOT_GRANTED_SEEN" -eq 0 ] || finish claude "" "$SOURCE" write_not_granted
 finish claude "" "$SOURCE" provider_not_granted
