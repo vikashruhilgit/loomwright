@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "about": "The ONE list of scored optional gates, lenses and advisories, read by scripts/build-feature-scorecard.sh. record: none, or {glob (relative to the state dir), format (result_block | text | json | tsv), field, header?, columns?, valid?}. ran / caught: {present: true} | {match: <jq regex>} | {ratio_below_one: true}; caught may be \"unknown\" when a catch is not attributable from the record alone. cost: none, {source: token_ledger, agent: <agent type suffix>} or {source: duration, field: <seconds field in the same record>}. not_features: optional SUPERVISOR_RESULT fields that are not features.",
+  "min_sample": 5,
+  "not_features": [
+    "branch_base",
+    "pr_state",
+    "cost_profile",
+    "preflight_sync",
+    "knowledge_sources_used",
+    "until_mergeable_dispatched",
+    "until_mergeable_log",
+    "heal_first_decision",
+    "heal_new_findings"
+  ],
+  "features": [
+    {
+      "id": "risk_classification",
+      "critical": true,
+      "what": "Phase 4.5 classify-risk.sh record that routes the advisory red-team lens",
+      "record": {"glob": "automate/*.supervisor-result.md", "format": "result_block", "header": "SUPERVISOR_RESULT", "field": "risk_classification", "valid": "high_risk\"?: ?(true|false|null)"},
+      "ran": {"present": true, "why": "the field is present (the classifier ran at Phase 4.5 entry)"},
+      "caught": {"match": "high_risk\"?: ?true", "why": "the diff was classified high-risk"},
+      "cost": "none"
+    },
+    {
+      "id": "red_team_advisory",
+      "critical": true,
+      "what": "advisory red-team lens on high-risk diffs (outcome carried in SUPERVISOR_RESULT.summary)",
+      "record": {"glob": "automate/*.supervisor-result.md", "format": "text", "header": "SUPERVISOR_RESULT", "field": "red_team_advisory"},
+      "ran": {"match": "^\"?ran\\b", "why": "the summary records red_team_advisory: ran"},
+      "caught": "unknown",
+      "cost": {"source": "token_ledger", "agent": "red-team-reviewer"}
+    },
+    {
+      "id": "rubric_score",
+      "critical": false,
+      "what": "Phase 4.5 rubric grader scoring the brief's Outcomes Rubric",
+      "record": {"glob": "automate/*.supervisor-result.md", "format": "result_block", "header": "SUPERVISOR_RESULT", "field": "rubric_score", "valid": "^[0-9]+/[0-9]+$"},
+      "ran": {"match": "^[0-9]+/[0-9]+$", "why": "a non-null N/M score"},
+      "caught": {"ratio_below_one": true, "why": "N < M — at least one rubric item failed"},
+      "cost": {"source": "token_ledger", "agent": "rubric-grader"}
+    },
+    {
+      "id": "contract_conformance",
+      "critical": false,
+      "what": "System Twin contract-conformance advisory",
+      "record": {"glob": "automate/*.supervisor-result.md", "format": "result_block", "header": "SUPERVISOR_RESULT", "field": "contract_conformance", "valid": "status\"?: ?\"?[a-z_]+"},
+      "ran": {"match": "status\"?: ?\"?(pass|advisory_violations)", "why": "contracts were evaluated to a result (status pass or advisory_violations)"},
+      "caught": {"match": "status\"?: ?\"?advisory_violations", "why": "at least one advisory violation"},
+      "cost": "none"
+    },
+    {
+      "id": "ground_truth",
+      "critical": false,
+      "what": "Executable Acceptance ground-truth runner (run-ground-truth.sh)",
+      "record": {"glob": "automate/*.supervisor-result.md", "format": "result_block", "header": "SUPERVISOR_RESULT", "field": "ground_truth", "valid": "status\"?: ?\"?[a-z_]+"},
+      "ran": {"match": "status\"?: ?\"?(pass|advisory_failures)", "why": "checks executed to a result (status pass or advisory_failures)"},
+      "caught": {"match": "status\"?: ?\"?advisory_failures", "why": "at least one ground-truth check failed"},
+      "cost": "none"
+    },
+    {
+      "id": "benchmark_result",
+      "critical": false,
+      "what": "System Twin benchmark run",
+      "record": {"glob": "automate/*.supervisor-result.md", "format": "result_block", "header": "SUPERVISOR_RESULT", "field": "benchmark_result", "valid": "status\"?: ?\"?[a-z_]+"},
+      "ran": {"match": "status\"?: ?\"?(pass|regressed|improved)", "why": "the benchmark measured a result (status pass, regressed or improved)"},
+      "caught": {"match": "status\"?: ?\"?regressed", "why": "the metric regressed against its baseline"},
+      "cost": "none"
+    },
+    {
+      "id": "heal_dismissed",
+      "critical": false,
+      "what": "Phase 4.5 dismissed-findings record feeding /automate's dismissed-findings decision step",
+      "record": {"glob": "automate/*.supervisor-result.md", "format": "result_block", "header": "SUPERVISOR_RESULT", "field": "heal_dismissed"},
+      "ran": {"present": true, "why": "the loop dismissed at least one finding and recorded it"},
+      "caught": {"match": "severity\"?: ?\"?(BLOCKING|HIGH)\\b", "why": "a HIGH or BLOCKING dismissed finding surfaced for the owner's decision"},
+      "cost": "none"
+    },
+    {
+      "id": "fallback_review_ran",
+      "critical": false,
+      "what": "the drain's Earned Fallback Review (one review when no review lens posted)",
+      "record": {"glob": "review-heal/*.next-step.json", "format": "json", "field": "fallback_review_ran"},
+      "ran": {"match": "^true$", "why": "the drain state records fallback_review_ran: true"},
+      "caught": "unknown",
+      "cost": "none"
+    },
+    {
+      "id": "pin-mutations",
+      "critical": false,
+      "what": "run-pin-mutations.sh gate (a brief's ## Pin mutations applied against its tests)",
+      "record": {"glob": "pin-mutations/*.tsv", "format": "tsv", "field": "2", "columns": 4, "valid": "^(held|not_held)$"},
+      "ran": {"present": true, "why": "the TSV holds at least one checked row"},
+      "caught": {"match": "^not_held$", "why": "a mutation the tests did not catch (a weak pin, re-spawned)"},
+      "cost": "none"
+    },
+    {
+      "id": "multi_voter_heal",
+      "critical": false,
+      "what": "multi-voter Phase 4.5 verification (counters carried in SUPERVISOR_RESULT.summary)",
+      "record": {"glob": "automate/*.supervisor-result.md", "format": "text", "header": "SUPERVISOR_RESULT", "field": "multi_voter:"},
+      "ran": {"present": true, "why": "the summary carries the multi_voter counters"},
+      "caught": {"match": "findings_refuted=[1-9]", "why": "a voter refuted at least one finding before it was fixed"},
+      "cost": "none"
+    },
+    {
+      "id": "read-orientation",
+      "critical": false,
+      "what": "orientation-memo advisory injected at spawn time — the reader is pure-read and leaves no per-run record",
+      "record": "none",
+      "ran": "unknown",
+      "caught": "unknown",
+      "cost": "none"
+    }
+  ]
+}
