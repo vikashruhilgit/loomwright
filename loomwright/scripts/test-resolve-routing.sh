@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # test-resolve-routing.sh — direct unit tests for resolve-routing.sh
 #
-# Covers the resolver's contract (docs/PROVIDER_ROUTING.md): the closed seat list,
-# the no-routing default for every seat, the string / array seat values, the
-# malformed-input reasons, the five-step precedence (each step its own leg), the
-# user-scope consent rule, and the unavailable-provider fallback / strict split.
+# Covers the resolver's contract (docs/PROVIDER_ROUTING.md): the closed read-seat
+# and write-seat lists, the no-routing default for every seat, the string / array
+# seat values, the malformed-input reasons, the five-step precedence (each step its
+# own leg), the user-scope consent rule, the unavailable-provider fallback / strict
+# split, and the write seats' per-seat write grant (write_not_granted) and
+# no-inheritance rule.
 #
 # ISOLATION: the resolver runs from a COPY of the scripts in a scratch plugin tree,
 # so the test can add stub provider-table entries without touching the repo; HOME
@@ -70,6 +72,9 @@ write_grants() { # $1 = JSON array for repos.<SLUG>.providers
   printf '{"schema_version":1,"repos":{"%s":{"providers":%s}}}' "$SLUG" "$1" > "$EGRESS_FILE"
 }
 write_grants '["teststub","teststubgone"]'
+write_egress() { # $1 = JSON array for .providers, $2 = JSON object for .write_grants
+  printf '{"schema_version":1,"repos":{"%s":{"providers":%s,"write_grants":%s}}}' "$SLUG" "$1" "$2" > "$EGRESS_FILE"
+}
 
 REPO="$TMP/repo"
 mkdir -p "$REPO/.supervisor"
@@ -121,8 +126,27 @@ for conductor in worker supervisor supervisor_runner execute_manager context_kee
     pass "conductor $conductor is not a seat"
   fi
 done
-expect "seat worker is unknown_seat" claude "" default unknown_seat seat worker
+expect "seat worker resolves (a write seat, no routing => default)" claude "" default "" seat worker
 rr seats extra >/dev/null 2>&1; assert_eq "seats with extra arg is a usage error" "2" "$?"
+
+echo ""
+echo "==== Group 1b: the closed write-seat list (write-seats) ===="
+WSEATS_OUT="$(rr write-seats)"
+assert_eq "write-seats rc=0" "0" "$?"
+WIDS="$(printf '%s\n' "$WSEATS_OUT" | awk '{print $1}' | sort | tr '\n' ' ')"
+assert_eq "write-seats are exactly worker, heal_fix, drain_fix" "drain_fix heal_fix worker " "$WIDS"
+assert_eq "write-seats every line has 2 fields" "" "$(printf '%s\n' "$WSEATS_OUT" | awk 'NF != 2 {print $0}')"
+BAD_WHOME=""
+while read -r wid whome; do
+  [ -f "$PLUGIN_ROOT/$whome" ] || BAD_WHOME="$BAD_WHOME $wid($whome)"
+done <<EOF
+$WSEATS_OUT
+EOF
+assert_eq "write-seats every home file exists" "" "$BAD_WHOME"
+# A write seat is never a read seat: `seats` stays the read-only list.
+OVERLAP="$( { printf '%s\n' "$SEATS_OUT" | awk '{print $1}'; printf '%s\n' "$WSEATS_OUT" | awk '{print $1}'; } | sort | uniq -d )"
+assert_eq "no write-seat id is listed by seats" "" "$OVERLAP"
+rr write-seats extra >/dev/null 2>&1; assert_eq "write-seats with extra arg is a usage error" "2" "$?"
 
 echo ""
 echo "==== Group 2: no routing block => every seat resolves to Claude (AC1) ===="
@@ -135,6 +159,7 @@ while read -r sid _rest; do
   assert_eq "default $sid ON_UNAVAILABLE" "fallback_to_default" "$(field "$out" ON_UNAVAILABLE)"
 done <<EOF
 $SEATS_OUT
+$WSEATS_OUT
 EOF
 cfg '{"unrelated":true}'
 expect "config without routing key" claude "" default "" seat heal_voter
@@ -295,6 +320,71 @@ printf '{"routing":{"seats":{"red_team":"teststub:other"}}}' > "$OTHER/.supervis
 nocfg
 out="$( cd "$TMP" && PATH="$TMP/bin:$PATH" bash "$RESOLVER" seat red_team --repo "$OTHER" )"
 assert_eq "--repo reads that repo's config" "teststub|other|config" "$(field "$out" PROVIDER)|$(field "$out" MODEL)|$(field "$out" SOURCE)"
+
+echo ""
+echo "==== Group 8b: write seats — precedence, no inheritance, per-seat write grant ===="
+# teststub is read-granted throughout; the write grant is what varies.
+write_egress '["teststub","teststubgone"]' '{"worker":["teststub","teststubgone"]}'
+nocfg
+expect "write seat: nothing set is the default" claude "" default "" seat worker
+cfg '{"routing":{"seats":{"worker":"teststub:c"}}}'
+expect "write seat: routing.seats.worker routes (read + write grant)" teststub c config "" seat worker
+expect "write seat: --route beats config" teststub r route_flag "" seat worker --route worker=teststub:r
+expect "write seat: --voter-provider does not apply" teststub c config "" seat worker --voter-provider teststub:f
+expect "a routing.seats.worker key is not unknown_seat for a read seat" claude "" default "" seat red_team
+nocfg
+expect "write seat: --route alone routes" teststub r route_flag "" seat worker --route worker=teststub:r
+# D2: an unset fix seat never inherits the worker's provider — even with its own write grant.
+write_egress '["teststub","teststubgone"]' '{"worker":["teststub"],"heal_fix":["teststub"],"drain_fix":["teststub"]}'
+cfg '{"routing":{"seats":{"worker":"teststub:c"}}}'
+expect "D2: unset heal_fix resolves claude/default while worker is routed" claude "" default "" seat heal_fix
+expect "D2: unset drain_fix resolves claude/default while worker is routed" claude "" default "" seat drain_fix
+expect "D2: worker itself still routes" teststub c config "" seat worker
+cfg '{"routing":{"seats":{"worker":"teststub:c","heal_fix":"teststub:h"}}}'
+expect "a fix seat with its own key routes on its own entry" teststub h config "" seat heal_fix
+# AC3: the write grant is per seat and separate from the read grant.
+write_egress '["teststub","teststubgone"]' '{}'
+cfg '{"routing":{"seats":{"worker":"teststub:c"}}}'
+expect "read grant without write grant => write_not_granted" claude "" config write_not_granted seat worker
+cfg '{"routing":{"on_unavailable":"strict","seats":{"worker":"teststub:c"}}}'
+expect "write_not_granted regardless of strict" claude "" config write_not_granted seat worker
+cfg '{"routing":{"on_unavailable":"fallback_to_default","seats":{"worker":"teststub:c"}}}'
+expect "write_not_granted under explicit fallback_to_default" claude "" config write_not_granted seat worker
+write_egress '["teststub","teststubgone"]' '{"heal_fix":["teststub"]}'
+expect "a write grant for ANOTHER seat does not carry over" claude "" config write_not_granted seat worker
+write_egress '["teststubgone"]' '{"worker":["teststub"]}'
+expect "write grant without read grant => provider_not_granted" claude "" config provider_not_granted seat worker
+write_egress '["teststub"]' '{"worker":"teststub"}'
+expect "a write_grants value that is not an array grants nothing" claude "" config write_not_granted seat worker
+mv "$EGRESS_FILE" "$H/egress.json.off"
+expect "no egress.json => provider_not_granted for a write seat" claude "" config provider_not_granted seat worker
+mv "$H/egress.json.off" "$EGRESS_FILE"
+# A write grant planted in the repo's own config grants nothing.
+write_egress '["teststub"]' '{}'
+cfg '{"write_grants":{"worker":["teststub"]},"repos":{"x":{"write_grants":{"worker":["teststub"]}}},"routing":{"seats":{"worker":"teststub"}}}'
+expect "a write grant written into the repo config grants nothing" claude "" config write_not_granted seat worker
+# Arrays: an ungranted entry and a read-only-granted entry => write_not_granted (the more specific).
+cfg '{"routing":{"seats":{"worker":["teststubnog","teststub"]}}}'
+expect "array: ungranted + write-ungranted => write_not_granted" claude "" config write_not_granted seat worker
+write_egress '["teststub","teststubgone"]' '{"worker":["teststub"]}'
+cfg '{"routing":{"seats":{"worker":["teststubgone","teststub:w"]}}}'
+expect "array: a write-ungranted entry is skipped, the next fully granted one wins" teststub w config "" seat worker
+# Fully granted but the CLI is missing => on_unavailable, as for a read seat.
+write_egress '["teststub","teststubgone"]' '{"worker":["teststubgone"]}'
+cfg '{"routing":{"seats":{"worker":"teststubgone"}}}'
+expect "write seat granted, CLI missing => provider_unavailable" claude "" config provider_unavailable seat worker
+cfg '{"routing":{"on_unavailable":"strict","seats":{"worker":"teststubgone"}}}'
+expect "write seat granted, CLI missing, strict => empty PROVIDER" "" "" config provider_unavailable_strict seat worker
+# claude needs no grant on a write seat either.
+write_egress '[]' '{}'
+cfg '{"routing":{"seats":{"worker":"claude:sonnet"}}}'
+expect "write seat: explicit claude needs no grant" claude sonnet config "" seat worker
+# A read seat never needs a write grant.
+write_egress '["teststub"]' '{}'
+cfg '{"routing":{"seats":{"red_team":"teststub"}}}'
+expect "read seat: routes with the read grant alone" teststub "" config "" seat red_team
+write_grants '["teststub","teststubgone"]'
+nocfg
 
 echo ""
 echo "==== Group 9: docs/PROVIDER_ROUTING.md keeps its contract ===="

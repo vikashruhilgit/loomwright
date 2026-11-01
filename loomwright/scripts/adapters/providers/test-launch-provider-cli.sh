@@ -33,6 +33,11 @@
 #   I. a CLI that makes dirs in its HOME 000 (including the one holding the
 #      copied login): the HOME is still removed after a normal end and after a
 #      timeout, and a symlink it planted is never chmod-ed through
+#   J. the harness config dir never crosses: a real `.claude/settings.json`
+#      holding {"permissions":{"defaultMode":"auto"}} in the caller's HOME,
+#      declared in PROVIDER_LOGIN_FILES (also as `.Claude/...` and as the bare
+#      dir), is absent from the child's HOME during the call, while a sibling
+#      declared login file still crosses
 #
 # Exit 0 = all pass, 1 = any failure.
 
@@ -443,6 +448,31 @@ assert_eq "I rmtree on a symlink root removes only the link" "0:1" \
   "$( [ -L "$TMP/i-rootlink" ] && echo 1 || echo 0 ):$( [ -d "$I_TARGET/keep" ] && echo 1 || echo 0 )"
 assert_eq "I rmtree on a symlink root leaves the target's mode alone" "$I_TARGET_MODE" "$(ls -ld "$I_TARGET" | cut -c1-10)"
 chmod 0700 "$I_TARGET"
+
+echo ""
+echo "==== J: the harness config dir never crosses; a sibling declared login still does ===="
+# Created only now: scenario B lists the caller's HOME and expects only its own files.
+mkdir -p "$HOME/.claude"
+printf '%s\n' '{"permissions":{"defaultMode":"auto"}}' > "$HOME/.claude/settings.json"
+STUB_J="$TMP/stub-j"; REC_J="$TMP/rec-j"; mkdir -p "$STUB_J"
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf 'if [ -e "$HOME/.claude/settings.json" ] || [ -e "$HOME/.claude" ]; then echo present; else echo absent; fi > %q\n' "$REC_J.settings"
+  printf '( cd "$HOME" && find . -type f -print | sort ) > %q\n' "$REC_J.files"
+  printf '%s\n' 'exit 0'
+} > "$STUB_J/$CLI"
+chmod +x "$STUB_J/$CLI"
+PROVIDER_LOGIN_FILES=(".claude/settings.json" ".Claude/settings.json" ".claude" ".fake/auth.json")
+PROVIDER_LOGIN_ENV=()
+RC_J=0
+PATH="$STUB_J:$PATH" launch_provider_cli isolated 30 "$CWD" "$TMP/out-j" "$TMP/err-j" "$CLI" || RC_J=$?
+assert_eq "J launch 0, CLI rc 0" "0:0" "$RC_J:$LPC_RC"
+assert_eq "J no harness settings file (nor its dir) under the child's HOME during the call" "absent" "$(cat "$REC_J.settings" 2>/dev/null)"
+assert_eq "J the sibling declared login file crossed (and nothing else)" "./.fake/auth.json" \
+  "$(tr '\n' ' ' < "$REC_J.files" 2>/dev/null | sed 's/ $//')"
+assert_eq "J the caller's own settings file is untouched" '{"permissions":{"defaultMode":"auto"}}' "$(cat "$HOME/.claude/settings.json")"
+assert_eq "J _lpc_valid_rel refuses the harness config dir in any case" "1:1:1:0" \
+  "$(_lpc_valid_rel ".claude/settings.json"; printf '%s' $?):$(_lpc_valid_rel ".CLAUDE/x"; printf '%s' $?):$(_lpc_valid_rel ".claude"; printf '%s' $?):$(_lpc_valid_rel ".claude-like/x"; printf '%s' $?)"
 
 echo ""
 echo "RESULT: $pass passed, $fail failed"

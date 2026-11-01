@@ -421,6 +421,55 @@ RC="$?"
 assert_eq "requested_malformed_config_empty" "" "$(get_field "$OUT" REPO_REQUESTED_PROVIDERS)"
 assert_eq "requested_malformed_config_exit=0" "0" "$RC"
 
+# (j) PROVIDER_WRITE_GRANTS: repos.<slug>.write_grants.<seat> arrays -> `<seat>:<provider>`
+#     pairs, user scope ONLY, every name allowlisted, blanked on an embedded newline.
+RW="$TMP/repoW"; HW="$TMP/homeW"; mkdir -p "$HW"
+new_repo "$RW" "https://github.com/${SLUG}.git"
+OUT="$( ( cd "$RW" && HOME="$HW" bash "$RESOLVER" ) )"
+assert_eq "write_grants_key_always_present" "1" "$(count_lines_matching "$OUT" PROVIDER_WRITE_GRANTS)"
+assert_eq "write_grants_empty_without_user_scope" "" "$(get_field "$OUT" PROVIDER_WRITE_GRANTS)"
+user_scope_write "$HW" '{"providers":["grok"],"write_grants":{"worker":["grok"]}}'
+OUT="$( ( cd "$RW" && HOME="$HW" bash "$RESOLVER" ) )"
+assert_eq "write_grant_single_pair" "worker:grok" "$(get_field "$OUT" PROVIDER_WRITE_GRANTS)"
+assert_eq "write_grant_leaves_read_grants_unchanged" "grok" "$(get_field "$OUT" PROVIDER_GRANTS)"
+user_scope_write "$HW" '{"write_grants":{"worker":["grok","cursor"],"heal_fix":["grok"]}}'
+OUT="$( ( cd "$RW" && HOME="$HW" bash "$RESOLVER" ) )"
+assert_eq "write_grant_pairs_comma_joined" "worker:grok,worker:cursor,heal_fix:grok" "$(get_field "$OUT" PROVIDER_WRITE_GRANTS)"
+assert_eq "write_grant_alone_is_not_a_read_grant" "" "$(get_field "$OUT" PROVIDER_GRANTS)"
+user_scope_write "$HW" '{"write_grants":{"worker":["grok","bad name","../x",7,null],"bad seat":["grok"],"drain_fix":"grok","heal_fix":null}}'
+OUT="$( ( cd "$RW" && HOME="$HW" bash "$RESOLVER" ) )"
+assert_eq "write_grant_names_filtered_to_allowlist" "worker:grok" "$(get_field "$OUT" PROVIDER_WRITE_GRANTS)"
+user_scope_write "$HW" '{"write_grants":["worker:grok"]}'
+OUT="$( ( cd "$RW" && HOME="$HW" bash "$RESOLVER" ) )"
+assert_eq "write_grants_array_instead_of_object_is_empty" "" "$(get_field "$OUT" PROVIDER_WRITE_GRANTS)"
+user_scope_write "$HW" '{"write_grants":{"worker\nTELEMETRY=always_allow":["grok"],"heal_fix":["grok\nWEBHOOK_URL=https://attacker.example/w"]}}'
+OUT="$( ( cd "$RW" && HOME="$HW" bash "$RESOLVER" ) )"
+assert_eq "write_grant_newline_names_dropped" "" "$(get_field "$OUT" PROVIDER_WRITE_GRANTS)"
+assert_not_match_multiline "write_grant_newline_no_forged_line" "TELEMETRY=always_allow" "$OUT"
+assert_not_match_multiline "write_grant_newline_no_forged_url" "attacker.example/w" "$OUT"
+# A two-document user-scope file passes `jq -e .` and makes `jq -r` print one line per
+# document, so the joined value itself carries a newline: it must be blanked, never printed
+# as an extra stdout line.
+EGRESS_W="$(find "$HW" -name egress.json | head -n 1)"
+printf '{"repos":{"%s":{"write_grants":{"worker":["grok"]}}}}\n{"repos":{"%s":{"write_grants":{"heal_fix":["cursor"]}}}}\n' "$SLUG" "$SLUG" > "$EGRESS_W"
+OUT="$( ( cd "$RW" && HOME="$HW" bash "$RESOLVER" ) )"
+assert_eq "write_grant_two_documents_line_count_is_1" "1" "$(count_lines_matching "$OUT" PROVIDER_WRITE_GRANTS)"
+assert_eq "write_grant_two_documents_value_blanked" "" "$(get_field "$OUT" PROVIDER_WRITE_GRANTS)"
+assert_eq "write_grant_two_documents_no_stray_line" "0" "$(printf '%s\n' "$OUT" | grep -c '^heal_fix:cursor$')"
+printf 'not valid json' > "$EGRESS_W"
+OUT="$( ( cd "$RW" && HOME="$HW" bash "$RESOLVER" ) )"
+RC="$?"
+assert_eq "write_grant_malformed_user_scope_empty" "" "$(get_field "$OUT" PROVIDER_WRITE_GRANTS)"
+assert_eq "write_grant_malformed_user_scope_exit=0" "0" "$RC"
+printf '{"schema_version":1,"repos":{"some-other/repo":{"write_grants":{"worker":["grok"]}}}}' > "$EGRESS_W"
+OUT="$( ( cd "$RW" && HOME="$HW" bash "$RESOLVER" ) )"
+assert_eq "write_grant_wrong_slug_is_empty" "" "$(get_field "$OUT" PROVIDER_WRITE_GRANTS)"
+# The repo can never supply a write grant: a planted one in its own config is ignored.
+rm -f "$EGRESS_W"
+printf '{"write_grants":{"worker":["grok"]},"repos":{"%s":{"write_grants":{"worker":["grok"]}}}}' "$SLUG" > "$RW/.supervisor/config.json"
+OUT="$( ( cd "$RW" && HOME="$HW" bash "$RESOLVER" ) )"
+assert_eq "repo_config_never_supplies_write_grants" "" "$(get_field "$OUT" PROVIDER_WRITE_GRANTS)"
+
 echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "=========================================="

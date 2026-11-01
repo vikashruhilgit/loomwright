@@ -270,10 +270,12 @@ else:
    proceed to the steps below.
 
 1. Determine outcome:
+   - `error == "write_seat_tampered"` — checked FIRST, ahead of the two branches below (a routed write seat's edit step tampered with git: `agents/supervisor.md` Phase 3 §"Write-seat stops", or a Phase 4.5 fix edit, `SKILL.md` §"Seat routing (`heal_fix`)"): a **terminal failure**, never "succeeds cleanly" or "succeeds with escalation". It is never the PASS / loop-skipped / ESCALATED outcome for any later step (steps 2.5, 2.6, 4.5 and 5.5 skip it as a `failed` path); step 4 records `write_seat_tampered`.
    - `heal_decision == PASS` OR `heal_loop_ran == false` (loop skipped): task succeeds cleanly
    - `heal_decision == ESCALATED`: task succeeds with escalation
 
 2. **Job lifecycle completion** (if `job:` parameter was used):
+   - On `write_seat_tampered` (step 1's first branch, ahead of the two below): move the brief from `in-progress/` → `failed/` — never `done/`, never resumable — and append an `## Outcome` section with `**Status:** failed`, `**Error:** write_seat_tampered`, `**Notes:** {write-run.sh's notes — the changed fingerprint sections and paths, and whether they were restored}`, `**Heal loop ran:** {true|false}` and `**Branch:** {feature branch name}`.
    - On PASS / loop-skipped: Move brief from `in-progress/` → `done/`, append outcome section:
      ```markdown
      ## Outcome

@@ -185,13 +185,24 @@ When `--sdk-runner` was passed (recorded at Phase 0 INIT — `skills/supervisor-
 
 Zero change to the default path when the flag is absent. Spike-grade (`docs/SPIKES/SDK_RUNNER_SPIKE.md`): `hooks.json` validators may not fire for SDK-spawned workers — the runner self-validates result schemas.
 
+#### Write-seat stops
+
+Applies only when this run's `worker` write seat resolved to a non-Claude provider at Phase 3 entry (the one resolution and the spawn line: `skills/async-orchestration/SKILL.md` §"Seat routing (`worker`)"; the edit-step procedure: `docs/PROVIDER_ROUTING.md` §"Write seats"). `PROVIDER=claude` changes nothing on any path.
+
+- **Empty `PROVIDER` (`strict`), or a non-Claude provider under `--sdk-runner` (its runner spawns its own workers and cannot carry the line):** stop before any spawn. Send no `--result`, release the run lock (`run-lock.sh release --owner "supervisor:<session_id>"`), and emit `SUPERVISOR_RESULT` with `status: failed`, `error: "write_seat_failed:provider_unavailable_strict"` (or `write_seat_failed:sdk_runner`) and the `heal_loop_ran: false` null/zero heal fields. The brief stays in `in-progress/`: the run is resumable once the CLI is on `PATH` or the seat is re-routed.
+- **`write_seat_failed:<status>`** (a refusal, timeout, CLI failure or protected-path edit, or `post_edit_gate`): `docs/FAILURE_ESCALATION.md` §"Worker Failure". On the Single-Agent and Sequential Paths you make the one same-worktree retry yourself: same spawn, same `Write seat:` line, the error and gate output in `Retry context:`. Never a Claude edit mid-run.
+- **`write_seat_tampered` stops the whole run.** The worker reports `status: failed`, `error: "write_seat_tampered: <write-run notes>"`. Then: no retry, no further subtask, no Claude fallback, no merge, no finalize. Record `record_decision(phase: EXECUTE, decision: "write_seat_tampered: {subtask_id}", rationale: "<notes>")` and show the notes to the owner. Send no `--result` to the driver, then proceed to Phase 4.5's completion tail so the run-lock is still released (the token-ceiling stop's shape, here on all three paths). The tail's step 5 emits the run's one `SUPERVISOR_RESULT`, never an earlier block: `status: failed`, `error: "write_seat_tampered"`, `heal_loop_ran: false`, `heal_iterations: null`, `heal_decision: null`, `heal_fixable_issues_fixed: 0`, `heal_remaining_issues: 0`, the notes in `summary`. The completion-tail guard's **Thrash-escalation exception** covers it, and completion-tail steps 1–2 move the brief to `failed/`. Per path:
+  - **Single-Agent / Sequential:** the stop fires as soon as that worker returns; on the Sequential Path no further subtask is spawned.
+  - **Parallel:** the Execute Manager spawns nothing further, lets running workers finish, and returns EXECUTE_RESULT with the subtask in `subtasks_failed` carrying that error. Before the Parallel-Path hand-back, scan `subtasks_failed[].error` for `write_seat_tampered`; on a hit, send no `--result` and take this stop, so nothing is merged or finalized (the subtask worktrees stay in place for the owner).
+- **Routed Sequential Path, one clean tree per subtask:** `write-run.sh` refuses a dirty tree and workers never commit. So after a subtask's gates pass and before the next spawn, commit its changes locally (`git add -A`, then `git commit -m "subtask: {id} — {title}"`, the commit FINALIZE step 2 makes per worktree on the Parallel Path). FINALIZE then commits only what remains. An unrouted run is unchanged.
+
 #### Single-Agent Path (exactly 1 subtask)
 
 The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold". One worker executes ALL acceptance criteria in a single context; **no per-subtask Code Reviewer is spawned** — the Phase 4.5 holistic Code Reviewer (below) is the single review of the integrated result.
 
 On the driver path, step 1's spawn is the driver's `execute` instruction (`what: worker`) and step 4's hand-off is your report after steps 2–3b: `--result {"subtask", "agent_id", "status", "gates": "passed" | "paused", "reason"}` — the driver's `execute-result` step then goes to FINALIZE (`passed`) or parks a checkpoint (`paused`).
 
-1. Spawn ONE implementation worker (blocking, in project root) — the prompt passes ALL acceptance criteria, not one subtask's row (spawn shape: `skills/async-orchestration/SKILL.md` §"Subagent Spawn Contracts" → Single-Agent Worker, the inherited Sequential-path template, which also carries the session-log pointer for `checkpoint.sh`)
+1. Spawn ONE implementation worker (blocking, in project root; on a routed `worker` seat its `write_seat_*` outcomes are §"Write-seat stops", checked before step 3) — the prompt passes ALL acceptance criteria, not one subtask's row (spawn shape: `skills/async-orchestration/SKILL.md` §"Subagent Spawn Contracts" → Single-Agent Worker, the inherited Sequential-path template, which also carries the session-log pointer for `checkpoint.sh`)
    - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
 2. Record result via Context-Keeper — **including the worker's `out_of_lane`, `deviations`,
    and `not_verified` fields**, so all three reach `state.md`'s `## Worker Results` (never
@@ -216,7 +227,7 @@ On the driver path, each subtask's worker spawn is the driver's `execute` instru
 
 1. For each subtask (in order):
    - **Per-iteration token-ceiling check (red-team-hardening/06 — when `MAX_TOKENS` was set at Phase 0 INIT), BEFORE spawning this subtask's worker:** sum this session's ledger via `scripts/read-token-ledger.sh --session {session_id}` and compare TOTAL against `MAX_TOKENS`. A breach OR a `LEDGER_UNREADABLE=1` reader answer ⇒ stop the loop here (do not spawn this or any further subtask), emit `SUPERVISOR_RESULT` with `status: failed`, `error: "token_ceiling_reached"`, and proceed to Phase 4.5's completion tail so the run-lock is still released. Skipped entirely when `MAX_TOKENS` is unset. **Scope note:** this check is implemented on the Sequential Path's own per-subtask loop only; the Parallel Path's poll loop does not re-check the ledger per worker-spawn.
-   - Spawn implementation worker (blocking, in project root)
+   - Spawn implementation worker (blocking, in project root); on a routed `worker` seat, apply §"Write-seat stops" as it returns, before its gates
      - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
    - Record result via Context-Keeper — **including the worker's `out_of_lane`, `deviations`,
      and `not_verified` fields**, so all three reach `state.md`'s `## Worker Results` (never
@@ -232,7 +243,7 @@ On the driver path, each subtask's worker spawn is the driver's `execute` instru
 
 #### Parallel Path (multi-subtask)
 
-**Delegate to Execute Manager — the driver's `execute` step** prints the `execute-manager` spawn (brief pointer, subtask ids, `max_workers`, base branch, `cost_profile`). Make the Task call per `skills/async-orchestration/SKILL.md` Part 2 §"Subagent Spawn Contracts" → Execute Manager — its Parallelism graph from Phase 2 action 2 — and hand the returned block back verbatim: `--result {"result": "<EXECUTE_RESULT or EXECUTE_CHECKPOINT>"}`, or `{"crashed": true, "error": "<one line>"}` when it returned neither.
+**Delegate to Execute Manager — the driver's `execute` step** prints the `execute-manager` spawn (brief pointer, subtask ids, `max_workers`, base branch, `cost_profile`). Make the Task call per `skills/async-orchestration/SKILL.md` Part 2 §"Subagent Spawn Contracts" → Execute Manager — its Parallelism graph from Phase 2 action 2 — and hand the returned block back verbatim: `--result {"result": "<EXECUTE_RESULT or EXECUTE_CHECKPOINT>"}`, or `{"crashed": true, "error": "<one line>"}` when it returned neither. On a routed `worker` seat, run §"Write-seat stops"'s `write_seat_tampered` scan before this hand-back.
 
 **Routing — the driver's `execute-result` step.** EXECUTE_RESULT has no top-level `status:` field — the discriminator is **`subtasks_failed`** (`docs/RESULT_SCHEMAS.md` §EXECUTE_RESULT): empty ⇒ FINALIZE; non-empty with `subtasks_completed` non-empty ⇒ FINALIZE the completed subset per `merge_order`, the failed subtasks reported as an escalation at the hand-over; `subtasks_completed` empty ⇒ checkpoint, nothing to merge. An EXECUTE_CHECKPOINT with `adjudication_required: true` ⇒ "Adjudication Handling" below; any other EXECUTE_CHECKPOINT, or an Execute Manager crash ⇒ a checkpoint park naming the resume command (on resume: merge the completed subset, or continue with a fresh Execute Manager). At a tool-budget limit, checkpoint and exit with the resume command (Critical Rules).
 
@@ -310,7 +321,7 @@ Steps 1–3 — **run by the driver's `execute-result` step** (automate-speed/11
 **Exit conditions:**
 - `heal_decision == PASS` (or loop skipped: `heal_loop_ran=false`, valid only with `--skip-self-heal`) → task `completed`; job → `done/`.
 - `heal_decision == ESCALATED` (reviewer NEEDS_HUMAN, max `--heal-iterations` reached, or resume-thrash) → task `completed_with_escalation`; findings posted to the PR as a comment; job → `done/` with escalation fields (heal reason, `heal_remaining_issues`).
-- Hard failure: base-branch mismatch cleanup → `status: failed`, job → `failed/`; fix-task crash / budget exhaustion → `status: checkpoint` pause with resume command; guard violation (below) → `status: failed`, job stays in `in-progress/`.
+- Hard failure: base-branch mismatch cleanup → `status: failed`, job → `failed/`; fix-task crash / budget exhaustion → `status: checkpoint` pause with resume command; guard violation (below) → `status: failed`, job stays in `in-progress/`; a `write_seat_tampered` stop (Phase 3 §"Write-seat stops", or a tampered Phase 4.5 fix edit) → `status: failed`, job → `failed/`.
 
 **Completion tail (always runs — both when the loop ran and when it was skipped; the numbered procedure steps live in the skill Part 2 completion tail — a range-free pointer, so an added step cannot make it stale. Step 0 — the guard — lives HERE, verbatim):**
 
@@ -318,7 +329,7 @@ Steps 1–3 — **run by the driver's `execute-result` step** (automate-speed/11
 
    Before any other completion-tail action, check both tracked booleans:
 
-   - **Thrash-escalation exception:** if this run reached the completion tail via the resume-thrash guard (self-heal-advisory Part 2 on-entry step 3, `error: "self_heal_resume_thrash"`), the guard below does NOT apply — the escalation is valid because `error` is non-empty, even though this run never invoked the reviewer. Proceed with the normal completion tail.
+   - **Thrash-escalation exception:** if this run reached the completion tail via the resume-thrash guard (self-heal-advisory Part 2 on-entry step 3, `error: "self_heal_resume_thrash"`), the guard below does NOT apply — the escalation is valid because `error` is non-empty, even though this run never invoked the reviewer. Proceed with the normal completion tail. The same exception covers a run that reached the completion tail through a `write_seat_tampered` stop (Phase 3 §"Write-seat stops", `error: "write_seat_tampered"`), for the same reason; the abort below still applies to every other error.
 
    - Otherwise, if `skip_self_heal_requested == false` AND `phase45_review_invoked == false` → **abort with internal workflow error**:
      - Emit a `SUPERVISOR_RESULT` block with `status: failed`, `error: "Phase 4.5 invariant violation: code-reviewer Task was not invoked and --skip-self-heal was not set"`, and `summary: "Aborted at Phase 4.5 completion-tail guard — the integration review is mandatory when --skip-self-heal is absent."`

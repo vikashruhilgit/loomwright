@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-setup-routing.sh — self-test for setup-routing.sh, the `/setup providers` writer
-# (status / apply --seat --grant --on-unavailable / remove over <repo>/.supervisor/config.json
-# `.routing` and the user-scope egress.json `repos.<slug>.providers`).
+# (status / apply --seat --grant --grant-write --on-unavailable / remove over
+# <repo>/.supervisor/config.json `.routing` and the user-scope egress.json `repos.<slug>.providers`
+# and `repos.<slug>.write_grants`).
 #
 # Runs against the REAL engine and the REAL resolvers it calls, in mktemp -d fixtures only, with HOME
 # relocated (the real operator's egress.json is never read or written). The provider probe it asks
@@ -45,13 +46,25 @@
 #   c_inside_link       (b) `.supervisor -> ./real-supervisor` inside the repo ⇒ apply and remove still write
 #   c_ancestor_link     (c) a repo reached through a symlinked ancestor ⇒ apply and remove still write
 #   c_no_slug           a non-git directory ⇒ grant REFUSED (no_repo_slug); routing still works
+#   c_write_refused     a write seat (--seat or --grant-write) with a read-only-usable provider ⇒
+#                       REFUSED (provider_not_write_usable), nothing written to either target; a
+#                       non-write-seat id, claude, a model suffix or an unprobed name is refused too
+#   c_write_seat        --seat <write-seat>=<write-usable> ⇒ written; NO write grant (or grant) written
+#   c_grant_write       --grant-write ⇒ only `repos.<slug>.write_grants.<seat>` written (created /
+#                       merged, other keys kept, backup equal to the pre-write file, idempotent,
+#                       appends without reordering); never a seat, never `.providers`
+#   c_remove_write      remove ⇒ this repo's `write_grants` deleted too, other repos' kept
+#   c_status_write      status shows the write grants and one line per write seat; a routed write seat
+#                       reads write_not_granted until its write grant exists; one call carrying
+#                       --seat, --grant and --grant-write writes all three targets
 #   c_mode              a write keeps the target's mode (a 0600 egress.json stays 0600, a 0640 config
 #                       stays 0640) and a new egress.json is created 0600 under umask 022
 # Mutation controls (gated: non-empty + differs + bash -n, on a scratch copy beside copies of the
 # resolvers and of contained-path-lib.sh, which the engine loads from its own directory):
 # `del(.routing)` → `del(.)` (c_remove must fail), the usable-verdict gate removed (c_verdict_refused
 # must fail), the already-configured early exit deleted (c_idempotent must fail), the containment call
-# neutralized (`cpl_check_write` → `true`; c_outside must fail).
+# neutralized (`cpl_check_write` → `true`; c_outside must fail), the write-seat gate widened to accept
+# `usable for read-only seats` (c_write_refused must fail).
 # Exit 0 = all pass, 1 = any failure, 2 = fixture setup broken.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -206,6 +219,8 @@ c_usage() {
   out="$(bash "$e" apply --seat nopair --repo "$r" 2>&1)"; [ $? -eq 2 ] || { echo "--seat without =: not exit 2"; return 1; }
   out="$(bash "$e" apply --on-unavailable maybe --repo "$r" 2>&1)"; [ $? -eq 2 ] || { echo "bad --on-unavailable: not exit 2"; return 1; }
   out="$(bash "$e" apply --grant --repo "$r" 2>&1)"; [ $? -eq 2 ] || { echo "--grant without value: not exit 2"; return 1; }
+  out="$(bash "$e" remove --grant-write worker=x --repo "$r" 2>&1)"; [ $? -eq 2 ] || { echo "--grant-write on remove: not exit 2"; return 1; }
+  out="$(bash "$e" apply --grant-write nopair --repo "$r" 2>&1)"; [ $? -eq 2 ] || { echo "--grant-write without =: not exit 2"; return 1; }
   out="$(bash "$e" status --repo "$T/does-not-exist" 2>&1)"; [ $? -eq 2 ] || { echo "bad --repo: not exit 2"; return 1; }
   [ ! -e "$(cfg "$r")" ] && [ ! -e "$EGRESS" ] || { echo "a usage error wrote something"; return 1; }
 }
@@ -282,8 +297,8 @@ c_verdict_refused() {
 
 c_refuse_names() {
   local e="$1" r; r="$(fresh rn)"; seed_cfg "$r"; cp "$(cfg "$r")" "$T/rn.cfg"
-  run "$e" "$r" apply --seat "worker=$P_RO"
-  has "$out" "REFUSED (unknown_seat)" || { echo "worker: $out"; return 1; }
+  run "$e" "$r" apply --seat "supervisor=$P_RO"
+  has "$out" "REFUSED (unknown_seat)" || { echo "supervisor: $out"; return 1; }
   run "$e" "$r" apply --seat "Bad-Seat=$P_RO"
   has "$out" "REFUSED (unknown_seat)" || { echo "Bad-Seat: $out"; return 1; }
   run "$e" "$r" apply --seat 'refute=bad name'
@@ -500,7 +515,128 @@ c_no_slug() {
   has "$out" "remove grant: REFUSED (no_repo_slug)" && has "$out" "remove routing: removed" || { echo "remove: $out"; return 1; }
 }
 
-CASES="c_usage c_status_default c_status_routed c_verdict_readonly c_verdict_write c_verdict_refused c_refuse_names c_create c_merge c_idempotent c_array c_on_unavailable c_grant c_remove c_malformed c_symlink c_outside c_inside_link c_ancestor_link c_mode c_no_slug"
+# c_write_refused — config-time eligibility: a write seat takes only `usable for write seats`.
+c_write_refused() {
+  local e="$1" r; r="$(fresh wf)"; seed_cfg "$r"; cp "$(cfg "$r")" "$T/wf.cfg"
+  seed_egress "$(slug_of wf)"; cp "$EGRESS" "$T/wf.egress"
+  run "$e" "$r" apply --seat "worker=$P_RO"
+  [ "$rc" -eq 0 ] && has "$out" "apply: REFUSED (provider_not_write_usable)" && has "$out" "usable for read-only seats" \
+    || { echo "--seat worker=read-only: rc=$rc out=$out"; return 1; }
+  run "$e" "$r" apply --grant-write "worker=$P_RO"
+  has "$out" "apply: REFUSED (provider_not_write_usable)" || { echo "--grant-write worker=read-only: $out"; return 1; }
+  run "$e" "$r" apply --seat "heal_fix=$P_NO"
+  has "$out" "apply: REFUSED (provider_not_write_usable)" || { echo "--seat heal_fix=not-usable: $out"; return 1; }
+  # one refused write seat refuses the WHOLE call, to either target
+  run "$e" "$r" apply --seat "refute=$P_RO" --grant "$P_RO" --grant-write "drain_fix=$P_RO"
+  has "$out" "apply: REFUSED (provider_not_write_usable)" || { echo "mixed: $out"; return 1; }
+  run "$e" "$r" apply --seat "worker=$P_WR" --grant-write "worker=$P_RO"
+  has "$out" "apply: REFUSED (provider_not_write_usable)" || { echo "seat ok + write grant refused: $out"; return 1; }
+  run "$e" "$r" apply --grant-write "worker=$P_UNPROBED"
+  has "$out" "apply: REFUSED (provider_not_probed)" || { echo "unprobed: $out"; return 1; }
+  run "$e" "$r" apply --grant-write "refute=$P_WR"
+  has "$out" "apply: REFUSED (unknown_seat)" || { echo "read seat as write grant: $out"; return 1; }
+  run "$e" "$r" apply --grant-write "worker=claude"
+  has "$out" "apply: REFUSED (claude_needs_no_grant)" || { echo "claude write grant: $out"; return 1; }
+  run "$e" "$r" apply --grant-write "worker=$P_WR:m"
+  has "$out" "apply: REFUSED (invalid_provider_name)" || { echo "model in write grant: $out"; return 1; }
+  untouched "$(cfg "$r")" "$T/wf.cfg" && untouched "$EGRESS" "$T/wf.egress" || { echo "a refusal wrote something"; return 1; }
+  # a read seat still accepts a read-only-usable provider; claude on a write seat needs no probe
+  run "$e" "$r" apply --seat "refute=$P_RO" --seat "worker=claude"
+  has "$out" "apply routing: applied" && [ "$(jq -r '.routing.seats.refute' "$(cfg "$r")")" = "$P_RO" ] \
+    && [ "$(jq -r '.routing.seats.worker' "$(cfg "$r")")" = "claude" ] || { echo "read seat / claude worker: $out"; return 1; }
+}
+
+# c_write_seat — a write-seat route is a REQUEST: it never writes a write grant (or a grant).
+c_write_seat() {
+  local e="$1" r; r="$(fresh ws)"
+  run "$e" "$r" apply --seat "worker=$P_WR:m1"
+  [ "$rc" -eq 0 ] && has "$out" "apply routing: applied (created" && [ "$(jq -r '.routing.seats.worker' "$(cfg "$r")")" = "$P_WR:m1" ] \
+    || { echo "rc=$rc out=$out"; return 1; }
+  [ ! -e "$EGRESS" ] || { echo "a write-seat route wrote the user-scope file: $(cat "$EGRESS")"; return 1; }
+  seed_egress "$(slug_of ws)"; cp "$EGRESS" "$T/ws.egress"
+  run "$e" "$r" apply --seat "heal_fix=$P_WR"
+  has "$out" "apply routing: applied" && untouched "$EGRESS" "$T/ws.egress" || { echo "seat write touched egress: $out"; return 1; }
+}
+
+# c_grant_write — writes `repos.<slug>.write_grants.<seat>` ONLY.
+c_grant_write() {
+  local e="$1" r s n c; r="$(fresh gw)"; s="$(slug_of gw)"
+  run "$e" "$r" apply --grant-write "worker=$P_WR"
+  [ "$rc" -eq 0 ] && has "$out" "apply write grant: applied (created" || { echo "create: rc=$rc out=$out"; return 1; }
+  jq -e --arg s "$s" --arg p "$P_WR" '.repos[$s].write_grants == {worker: [$p]} and (.repos[$s] | has("providers") | not)' "$EGRESS" >/dev/null \
+    || { echo "created egress wrong: $(cat "$EGRESS")"; return 1; }
+  [ ! -e "$(cfg "$r")" ] || { echo "a write grant wrote the repo config"; return 1; }
+  # merge over a seeded file: one backup equal to the pre-write file, only write_grants changes
+  rm -f "$EGRESS"; seed_egress "$s"
+  jq --arg s "$s" '.repos[$s].write_grants = {worker: ["zeta"]}' "$EGRESS" > "$EGRESS.t" && mv "$EGRESS.t" "$EGRESS"
+  cp "$EGRESS" "$T/gw.before"
+  run "$e" "$r" apply --grant-write "worker=$P_WR" --grant-write "heal_fix=$P_WR"
+  [ "$rc" -eq 0 ] && has "$out" "apply write grant: applied" && has "$out" "backup: " || { echo "merge: rc=$rc out=$out"; return 1; }
+  [ "$(nbackups "$EGRESS")" = "1" ] && cmp -s "$T/gw.before" "$(first_backup "$EGRESS")" || { echo "want exactly 1 backup equal to the pre-write file"; return 1; }
+  jq -e --arg s "$s" --arg p "$P_WR" '.repos[$s].write_grants == {worker: ["zeta", $p], heal_fix: [$p]}' "$EGRESS" >/dev/null \
+    || { echo "write_grants wrong: $(cat "$EGRESS")"; return 1; }
+  [ "$(jq -S --arg s "$s" 'del(.repos[$s].write_grants)' "$EGRESS")" = "$(jq -S --arg s "$s" 'del(.repos[$s].write_grants)' "$T/gw.before")" ] \
+    || { echo "another key changed (providers included): $(cat "$EGRESS")"; return 1; }
+  # the resolver every run uses agrees
+  c="$( cd "$r" && bash "$HERE/resolve-egress-config.sh" | sed -n 's/^PROVIDER_WRITE_GRANTS=//p' )"
+  has ",$c," ",worker:$P_WR," && has ",$c," ",heal_fix:$P_WR," || { echo "resolver PROVIDER_WRITE_GRANTS=$c"; return 1; }
+  # idempotent: a second identical call is a no-op with no new backup
+  cp "$EGRESS" "$T/gw.after"; n="$(nbackups "$EGRESS")"
+  run "$e" "$r" apply --grant-write "worker=$P_WR" --grant-write "heal_fix=$P_WR"
+  has "$out" "apply write grant: no-op — already write-granted" && cmp -s "$EGRESS" "$T/gw.after" && [ "$(nbackups "$EGRESS")" = "$n" ] \
+    || { echo "second apply: $out"; return 1; }
+  [ ! -e "$(cfg "$r")" ] || { echo "a write grant wrote the repo config"; return 1; }
+  # a wrong-shaped write_grants aborts, byte-identical
+  jq --arg s "$s" '.repos[$s].write_grants = {worker: "x"}' "$EGRESS" > "$EGRESS.t" && mv "$EGRESS.t" "$EGRESS"; rm -f "$EGRESS".backup.*
+  cp "$EGRESS" "$T/gw.bad"
+  run "$e" "$r" apply --grant-write "worker=$P_WR"
+  has "$out" "apply write grant: ABORTED (egress_unexpected_shape)" && untouched "$EGRESS" "$T/gw.bad" || { echo "bad shape: $out"; return 1; }
+}
+
+# c_remove_write — remove deletes this repo's write_grants (and providers), nothing else.
+c_remove_write() {
+  local e="$1" r s; r="$(fresh rw)"; s="$(slug_of rw)"
+  seed_egress "$s"
+  jq --arg s "$s" '.repos[$s].write_grants = {worker: ["zeta"]} | .repos["other/repo"].write_grants = {worker: ["keepme"]}' "$EGRESS" > "$EGRESS.t" && mv "$EGRESS.t" "$EGRESS"
+  cp "$EGRESS" "$T/rw.before"
+  run "$e" "$r" remove
+  [ "$rc" -eq 0 ] && has "$out" "remove grant: removed" || { echo "remove: rc=$rc out=$out"; return 1; }
+  jq -e --arg s "$s" '.repos[$s] | (has("write_grants") or has("providers")) | not' "$EGRESS" >/dev/null || { echo "write_grants still present: $(cat "$EGRESS")"; return 1; }
+  [ "$(jq -S . "$EGRESS")" = "$(jq -S --arg s "$s" 'del(.repos[$s].providers) | del(.repos[$s].write_grants)' "$T/rw.before")" ] \
+    || { echo "another key changed: $(cat "$EGRESS")"; return 1; }
+  # write grants alone are still removed (not a no-op)
+  r="$(fresh rw2)"; s="$(slug_of rw2)"; mkdir -p "$(dirname "$EGRESS")"
+  jq -n --arg s "$s" '{schema_version: 1, repos: {($s): {write_grants: {worker: ["zeta"]}}}}' > "$EGRESS"
+  run "$e" "$r" remove
+  has "$out" "remove grant: removed" && jq -e --arg s "$s" '.repos[$s] | has("write_grants") | not' "$EGRESS" >/dev/null \
+    || { echo "write-grant-only remove: $out"; return 1; }
+}
+
+# c_status_write — status shows write grants and resolves every write seat.
+c_status_write() {
+  local e="$1" r; r="$(fresh st)"
+  run "$e" "$r" status
+  has "$out" "write grants (user scope, this repo, <seat>:<provider>): (none)" \
+    && has "$out" "worker: provider=claude model= source=default reason=" \
+    && has "$out" "drain_fix: provider=claude model= source=default reason=" || { echo "default: $out"; return 1; }
+  bash "$e" apply --seat "worker=$P_WR" --grant "$P_WR" --repo "$r" >/dev/null 2>&1
+  run "$e" "$r" status
+  has "$out" "worker: provider=claude model= source=config reason=write_not_granted" || { echo "no write grant: $out"; return 1; }
+  run "$e" "$r" apply --grant-write "worker=$P_WR"
+  has "$out" "verify:" && has "$out" "write grants (user scope, this repo, <seat>:<provider>): worker:$P_WR" \
+    && has "$out" "worker: provider=$P_WR model= source=config reason=" || { echo "write-granted: $out"; return 1; }
+  # D2 in the verify block: the fix seats stay on Claude
+  has "$out" "heal_fix: provider=claude model= source=default reason=" || { echo "heal_fix inherited: $out"; return 1; }
+  # the command layer's one-call shape: seat + grant + write grant, each its own headline
+  r="$(fresh sc)"
+  run "$e" "$r" apply --seat "drain_fix=$P_WR" --grant "$P_WR" --grant-write "drain_fix=$P_WR"
+  has "$out" "apply routing: applied (created" && has "$out" "apply grant: applied (created" && has "$out" "apply write grant: applied" \
+    && has "$out" "drain_fix: provider=$P_WR model= source=config reason=" \
+    && jq -e --arg s "$(slug_of sc)" --arg p "$P_WR" '.repos[$s].providers == [$p] and .repos[$s].write_grants == {drain_fix: [$p]}' "$EGRESS" >/dev/null \
+    || { echo "combined call: $out"; return 1; }
+}
+
+CASES="c_usage c_status_default c_status_routed c_verdict_readonly c_verdict_write c_verdict_refused c_refuse_names c_create c_merge c_idempotent c_array c_on_unavailable c_grant c_remove c_malformed c_symlink c_outside c_inside_link c_ancestor_link c_mode c_no_slug c_write_refused c_write_seat c_grant_write c_remove_write c_status_write"
 
 echo "== setup-routing.sh =="
 for c in $CASES; do
@@ -528,6 +664,7 @@ mutant remove-deletes-everything '{ if (index($0, "proposed=\"$(jq '\''del(.rout
 mutant no-containment '{ if (index($0, "cpl_check_write \"$1\" \"$CFG\" \"$REPO\" symlink")) sub(/cpl_check_write/, "true"); print }' c_outside
 mutant no-verdict-gate '/^provider_usable\(\) \{/ { print; print "  return 0"; next } { print }' c_verdict_refused
 mutant no-idempotent-exit '/if \[ "\$proposed" = "\$current" \]; then/ { skip = 4 } skip > 0 { skip--; next } { print }' c_idempotent
+mutant write-gate-accepts-read-only '/^provider_write_usable\(\) \{/ { inw = 1 } inw && /"usable for write seats"\) return 0 ;;/ { sub(/"usable for write seats"\)/, "\"usable for read-only seats\"|\"usable for write seats\")"); inw = 0 } { print }' c_write_refused
 
 echo
 echo "test-setup-routing: $pass passed, $fail failed"

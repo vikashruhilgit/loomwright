@@ -25,6 +25,13 @@ Execute Manager retries ONCE in same worktree
 - If retry fails, worker must still produce WORKER_RESULT(status=failed) with error description
 - Execute Manager includes failed subtask in EXECUTE_RESULT.subtasks_failed array
 
+**Routed worker edit step (`docs/PROVIDER_ROUTING.md` §"Write seats").** When a run's worker write seat resolved to a non-Claude provider, the worker's `WORKER_RESULT.error` names the edit step's outcome. The retrier is the Execute Manager on the Parallel Path and the Supervisor on the Single-Agent and Sequential Paths.
+
+| Worker error | Retry | Then |
+|---|---|---|
+| `write_seat_failed:<write_status>` (a `write-run.sh` pre-launch refusal, `write_timeout`, `write_failed` or `write_protected_path`), or `write_seat_failed:post_edit_gate` (the launch returned `ok`, a post-edit gate then failed, and the worker ran `write-run.sh --restore`) | ONE retry in the same worktree, which `write-run.sh` (or `--restore`) already put back at the pre-launch commit. Same provider; the retry prompt carries the previous error and gate output. Never a Claude edit mid-run | the retry-fails path above |
+| `write_seat_tampered: <write-run notes>` (`write_git_tampered`: the provider committed or rewired git) | none | **stop the whole run**: no further worker spawn, no Claude fallback, no merge, no finalize. Already-running Parallel-Path workers finish on their own bound; the run ends through Phase 4.5's completion tail with `SUPERVISOR_RESULT` `status: failed`, `error: "write_seat_tampered"`, and the brief moves to `failed/` (never resumable). The notes go to the owner (`agents/supervisor.md` §"Write-seat stops") |
+
 ---
 
 ## Execute Manager Checkpoint
@@ -80,6 +87,7 @@ Code Reviewer returns NEEDS_HUMAN
 - `heal_decision` is derived ONLY from the Code Reviewer's `CODE_REVIEW_RESULT` plus the deterministic co-gates — a stamped countable `must`-rule failure and a red required check read by `phase45-ci-read.sh` (PASS only from a reviewer PASS with neither; ESCALATED on NEEDS_HUMAN, max iterations, or resume-thrash)
 - Supervisor never force-resolves review issues; ESCALATED always leaves the PR open for a human — the heal loop never merges
 - A fully-refuted FAIL (multi-voter mode) is still a human call, never a silent auto-PASS (`skills/self-heal-advisory/multi-voter.md` §"Delay-vs-decide")
+- A routed fix edit step (`docs/PROVIDER_ROUTING.md` §"Write seats") that tampers with git (`write_git_tampered`) exits the heal loop at once: `heal_decision: ESCALATED`, `SUPERVISOR_RESULT` `status: failed`, `error: "write_seat_tampered"`, brief → `failed/`. Any other routed failure falls back to a Claude fix (`fallback_to_default`) or takes the fix-task crash path (`strict`) — `skills/self-heal-advisory/escalation.md` §"Routed fix edit failure"
 
 ---
 
@@ -416,6 +424,8 @@ Plan Reviewer returns NEEDS_HUMAN
 | Execute Manager | Budget exceeded | 1 (fresh spawn) | Supervisor → Human |
 | Execute Manager | Inter-subtask gap / outputs_gap | 0 (immediate) | Supervisor → User AskUserQuestion (4 options) |
 | Worker | Pin mutation not_held | 1 (automatic re-spawn) | recorded, carried to Phase 4.5 as BLOCKING (never adjudication) |
+| Worker | Routed edit step failed (`write_seat_failed:<write_status>`) | 1 (same worktree, restored tree, same provider) | Execute Manager / Supervisor → the implementation-failure path |
+| Worker | Routed edit step tampered with git (`write_seat_tampered`) | 0 (never) | run stops → Human (brief → `failed/`) |
 | Execute Manager | Dependency merge conflict | 0 (never) | Supervisor → User manual resolution |
 | Code Reviewer | FAIL decision | 3 (fix + re-review) | Supervisor → Human |
 | Code Reviewer | NEEDS_HUMAN | 0 (immediate) | Supervisor → Human (3x = halt) |

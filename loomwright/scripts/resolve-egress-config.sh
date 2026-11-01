@@ -59,6 +59,15 @@
 #                                     `lens-run.sh` and `resolve-routing.sh` check before
 #                                     a non-Claude provider CLI is started. `claude` never
 #                                     needs a grant. Empty on an unreadable / malformed file.
+#   PROVIDER_WRITE_GRANTS          - comma-joined `<seat>:<provider>` pairs: the per-seat
+#                                     WRITE grants the USER gave this repo
+#                                     (repos.<slug>.write_grants.<seat> arrays), seat and
+#                                     provider name each filtered to [A-Za-z0-9_-]+.
+#                                     User-scope ONLY. A write seat routes to a non-Claude
+#                                     provider only when that provider is in
+#                                     PROVIDER_GRANTS AND its `<seat>:<provider>` pair is
+#                                     here (resolve-routing.sh). Empty on an unreadable /
+#                                     malformed file; nothing repo-relative ever feeds it.
 #   REPO_REQUESTED_PROVIDERS       - informational only, from .supervisor/config.json
 #                                     (`routing.seats` values + `.voter_provider`): the
 #                                     non-Claude providers the repo ASKS to route to.
@@ -74,7 +83,8 @@
 #         "telemetry_repo": "<owner>/<repo>",
 #         "webhook_url": "https://...",
 #         "webhook_url_sha256": "<hex>",
-#         "providers": ["<provider>", ...]
+#         "providers": ["<provider>", ...],
+#         "write_grants": { "<write-seat>": ["<provider>", ...] }
 #       }
 #     }
 #   }
@@ -95,6 +105,7 @@ INCLUDE_RESULT_BLOCK=""
 REPO_REQUESTED_TELEMETRY_REPO=""
 REPO_REQUESTED_WEBHOOK_URL=""
 PROVIDER_GRANTS=""
+PROVIDER_WRITE_GRANTS=""
 REPO_REQUESTED_PROVIDERS=""
 
 sha256_hex() {
@@ -163,6 +174,12 @@ if [ -n "$REPO_SLUG" ] && [ -n "${HOME:-}" ] && [ -r "$USER_SCOPE_FILE" ] && com
     PROVIDER_GRANTS="$(jq -r --arg s "$REPO_SLUG" \
       '(.repos[$s].providers // []) | if type == "array" then [.[] | select(type == "string" and test("\\A[A-Za-z0-9_-]+\\z"))] | join(",") else "" end' \
       "$USER_SCOPE_FILE" 2>/dev/null || true)"
+    # Per-seat write grants: an object of <seat> -> array of provider names. The
+    # same allowlist as PROVIDER_GRANTS applies to the seat key AND each provider
+    # name; a non-object, a non-array value or a failing name is dropped.
+    PROVIDER_WRITE_GRANTS="$(jq -r --arg s "$REPO_SLUG" \
+      '(.repos[$s].write_grants // {}) | if type == "object" then [to_entries[] | select(.key | test("\\A[A-Za-z0-9_-]+\\z")) | .key as $k | .value | select(type == "array") | .[] | select(type == "string" and test("\\A[A-Za-z0-9_-]+\\z")) | $k + ":" + .] | join(",") else "" end' \
+      "$USER_SCOPE_FILE" 2>/dev/null || true)"
   fi
 fi
 # Any jq failure above leaves the three vars at their initial "" default.
@@ -215,6 +232,7 @@ TELEMETRY_REPO="$(strip_if_newline "$TELEMETRY_REPO")"
 WEBHOOK_URL="$(strip_if_newline "$WEBHOOK_URL")"
 INCLUDE_RESULT_BLOCK="$(strip_if_newline "$INCLUDE_RESULT_BLOCK")"
 PROVIDER_GRANTS="$(strip_if_newline "$PROVIDER_GRANTS")"
+PROVIDER_WRITE_GRANTS="$(strip_if_newline "$PROVIDER_WRITE_GRANTS")"
 
 if [ -n "$WEBHOOK_URL" ]; then
   WEBHOOK_URL_SHA256="$(sha256_hex "$WEBHOOK_URL")"
@@ -272,6 +290,7 @@ printf 'INCLUDE_RESULT_BLOCK=%s\n' "$INCLUDE_RESULT_BLOCK"
 printf 'REPO_REQUESTED_TELEMETRY_REPO=%s\n' "$REPO_REQUESTED_TELEMETRY_REPO"
 printf 'REPO_REQUESTED_WEBHOOK_URL=%s\n' "$REPO_REQUESTED_WEBHOOK_URL"
 printf 'PROVIDER_GRANTS=%s\n' "$PROVIDER_GRANTS"
+printf 'PROVIDER_WRITE_GRANTS=%s\n' "$PROVIDER_WRITE_GRANTS"
 printf 'REPO_REQUESTED_PROVIDERS=%s\n' "$REPO_REQUESTED_PROVIDERS"
 
 exit 0
