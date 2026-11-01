@@ -30,9 +30,21 @@ cat .supervisor/heal-rounds/*.jsonl
 
 # the promotion evidence (read-only)
 bash <this branch's checkout>/loomwright/scripts/heal-review-scope.sh --shadow-report --dir .supervisor/heal-rounds
+
+# item 1: the plugin version the run loaded, and the run id / item / PR number
+grep -m1 '"subtype":"init"' <scratch>/automate-stream.jsonl
+ls .supervisor/automate/*.md        # the run file: its `## Progress` names the item and its PR
+# item 4 check: does any round record have iteration >= 2?
+grep -h '"kind":"round"' .supervisor/heal-rounds/*.jsonl | grep -v '"iteration":1,'
 ```
 
-Paste items 1–4 above into this file, delete the `Status: pending` section, and link this file from the PR body.
+Then edit this file:
+
+1. Replace the `## Status: pending …` section with `## The AC17 run`, holding item 1 (run id, item, PR number, plugin version from the `init` line).
+2. Under it, add a fenced block with the `cat .supervisor/heal-rounds/*.jsonl` output, verbatim, and a second fenced block with the `--shadow-report` output, verbatim. Do not edit, trim or reorder either.
+3. If the item-4 check printed nothing, say so in one sentence and repeat steps 1–2 for a second item (`--limit 1` with a different item, same scratch repo).
+4. Keep the synthetic section below, labelled as it is.
+5. Add one line to the body of PR #781 (https://github.com/vikashruhilgit/loomwright/pull/781) linking to `docs/evidence/phase45-converging-re-review.md`.
 
 ## Synthetic local demonstration (NOT the AC17 run)
 

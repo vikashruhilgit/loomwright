@@ -52,6 +52,13 @@ LOOK='look for everything'
 CONTEXT='the full diff remains read-only context'
 WHOLE='Read each listed file WHOLE'
 ONLY_LISTED='report findings ONLY in the listed files'
+# Out-of-list exemption: findings outside the fix's files by construction stay reportable, or an
+# unaddressed acceptance criterion / not_held pin could vanish in round 2 and let heal_decision PASS.
+EXEMPT='Always reportable, whatever the listed files:'
+EX_BRIEF='a brief-conformance `not_addressed` finding (`file: brief` or any other path)'
+EX_PIN='a BLOCKING pin-mutation finding'
+EX_ENV='a `file: environment` finding'
+EX_REPEAT='a re-report of a finding an earlier heal round raised that still stands'
 DNR_ONLY='dismissed fingerprints ONLY'
 DNR_NO_FIXED='Fixed fingerprints are never listed'
 CR_MARK='**HEAL RE-REVIEW SCOPE (Supervisor Phase 4.5'
@@ -145,6 +152,22 @@ check_with_mutant "(a) HEAL RE-REVIEW SCOPE line present in the reviewer prompt,
   chk_scope_line "$SKILL" del_lines "$SCOPE_MARK"
 check_with_mutant "(a) an UNGUARDED HEAL RE-REVIEW SCOPE line does not count" \
   chk_scope_line "$SKILL" strip_in_line "$SCOPE_MARK" "$GUARD"
+
+# ---- (a2) out-of-list exemption, on the SKILL.md scope line and the code-reviewer paragraph ----------
+# chk_exempt_on <file> <marker> — the line starting with <marker> carries the exemption and all four classes.
+chk_exempt_on() {
+  l="$(line_with "$1" "$2")"
+  [ -n "$l" ] && has "$l" "$EXEMPT" && has "$l" "$EX_BRIEF" && has "$l" "$EX_PIN" && has "$l" "$EX_ENV" \
+    && has "$l" "$EX_REPEAT"
+}
+chk_exempt_skill() { chk_exempt_on "$1" "$SCOPE_MARK"; }
+chk_exempt_cr()    { chk_exempt_on "$1" "$CR_MARK"; }
+for spec in "$EXEMPT" "$EX_BRIEF" "$EX_PIN" "$EX_ENV" "$EX_REPEAT"; do
+  check_with_mutant "(a2) scope line keeps out-of-list findings reportable: '$spec'" \
+    chk_exempt_skill "$SKILL" strip_in_line "$SCOPE_MARK" "$spec"
+  check_with_mutant "(a2) code-reviewer paragraph keeps out-of-list findings reportable: '$spec'" \
+    chk_exempt_cr "$REVIEWER" strip_in_line "$CR_MARK" "$spec"
+done
 
 # ---- (b) precedence sentence on the SKILL.md scope line ----------------------------------------------
 chk_prec_skill() {

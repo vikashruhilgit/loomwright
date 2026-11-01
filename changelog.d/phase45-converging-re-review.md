@@ -4,7 +4,8 @@ The Supervisor Phase 4.5 review-and-fix loop re-reviewed the whole PR on every h
 nits in code no fix had touched and a dismissed finding could come back each round. A new `.supervisor/config.json`
 key, `heal_review_scope`, resolved once at INIT (`skills/supervisor-config/SKILL.md` step 2.11), shapes rounds 2 and
 later. `files` reviews only the files the previous round's fix commit(s) changed, each read whole, with the full PR
-diff as read-only context, and drops a finding this run already dismissed when it comes back at the same or a lower
+diff as read-only context (acceptance-criterion, pin-mutation, environment and still-standing earlier-round findings stay
+reportable wherever they point), and drops a finding this run already dismissed when it comes back at the same or a lower
 severity. A re-reported fixed finding is never dropped: it means the fix did not hold, so it reaches the fix task and
 is counted as `repeat_of_fixed`. `shadow`, the default, reviews and fixes exactly as before and records what `files`
 would have covered and dropped. `full` is the kill switch. Round 1 is the full PR diff in every mode, and the
