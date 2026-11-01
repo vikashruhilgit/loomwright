@@ -320,7 +320,7 @@ fi
 # ---------------------------------------------------------------------------- table mode
 run "$BUILDER"
 check "(1) table: exit 0" "$RC" "0"
-if printf '%s\n' "$OUT" | grep -q '^| feature | critical | runs available | ran | caught | catch rate | cost total | cost per catch | last fired | verdict |$'; then
+if grep -q '^| feature | critical | runs available | ran | caught | catch rate | cost total | cost per catch | last fired | verdict |$' <<<"$OUT"; then
   ok "(1) table header row"
 else no "(1) table header row missing"; fi
 none_row="$(printf '%s\n' "$OUT" | grep '^| f_none |')"
@@ -332,13 +332,13 @@ case "$none_row" in
   *"| 0 |"*) no "(1) AC5 table: record-none row prints a 0" ;;
   *) ok "(1) AC5 table: record-none row prints no 0" ;;
 esac
-if printf '%s\n' "$OUT" | sed -n '/^## Needs an emitter/,/^$/p' | grep -qx -- '- f_none'; then
+if grep -qx -- '- f_none' < <(sed -n '/^## Needs an emitter/,/^$/p' <<<"$OUT"); then
   ok "(1) AC5 table: f_none listed under Needs an emitter"
 else no "(1) AC5 table: f_none not under Needs an emitter"; fi
-if printf '%s\n' "$OUT" | sed -n '/^## Unregistered/,$p' | grep -qx -- '- orphan_field'; then
+if grep -qx -- '- orphan_field' < <(sed -n '/^## Unregistered/,$p' <<<"$OUT"); then
   ok "(7) table: orphan_field listed under Unregistered"
 else no "(7) table: Unregistered list missing orphan_field"; fi
-if printf '%s\n' "$OUT" | grep -q '^| f_tsv_bad | no | - | - | - | - | - | - | - | unreadable: '; then
+if grep -q '^| f_tsv_bad | no | - | - | - | - | - | - | - | unreadable: ' <<<"$OUT"; then
   ok "(3) table: unreadable row renders dashes, not numbers"
 else no "(3) table: unreadable row shape"; fi
 
