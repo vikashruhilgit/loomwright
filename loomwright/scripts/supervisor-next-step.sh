@@ -332,10 +332,13 @@ sn_resolve_base() {
   sn_fail "$(printf '%s\n' "$out" | head -n 1) — $(printf '%s\n' "$out" | sed -n '2s/^resolve-base-branch: //p')"
 }
 # sn_brief_subtasks <brief> — the ids of the brief's `## Subtask Structure` table, in order, as a JSON
-# array (the first cell of each data row; the header and separator rows skipped); empty when none parse
+# array (the first cell of each data row; the header and separator rows skipped); empty when none parse.
+# Only the section's FIRST table is read: a later table in the same section (the `### File Impact Map`)
+# is not the plan, and its header cell (`Group`) would pass the id filter
 sn_brief_subtasks() {
-  awk '/^## / { s = ($0 == "## Subtask Structure"); next }
-    s && /^\|/ && !/^\|[ :|-]+$/ { c = $0; sub(/^\|[ \t]*/, "", c); sub(/[ \t]*\|.*/, "", c); print c }' "$1" 2>/dev/null \
+  awk '/^## / { s = ($0 == "## Subtask Structure"); t = 0; next }
+    s && /^\|/ { if (!t++ || /^\|[ :|-]+$/) next; c = $0; sub(/^\|[ \t]*/, "", c); sub(/[ \t]*\|.*/, "", c); print c; next }
+    s && t { s = 0 }' "$1" 2>/dev/null \
     | "$JQ" -R -s -c 'split("\n") | map(select(test("^[A-Za-z0-9._-]{1,64}$"))) | if length == 0 then empty else . end' 2>/dev/null
 }
 
