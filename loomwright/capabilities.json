@@ -1115,7 +1115,7 @@
     "state_dir_env": "LOOMWRIGHT_HOST_STATE_DIR"
   },
   "plugin_name": "loomwright",
-  "plugin_version": "17.24.0",
+  "plugin_version": "17.25.0",
   "result_schemas": [
     {
       "name": "AUTOMATE_RUN",
