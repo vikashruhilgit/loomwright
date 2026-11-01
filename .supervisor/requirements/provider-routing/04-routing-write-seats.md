@@ -5,6 +5,13 @@
 **As a** maintainer, **I want** to let a non-Claude CLI implement a subtask or apply a fix, **so that** I can use the
 model I prefer for code changes — while the plugin, not that CLI, decides whether the work counts and who pushes it.
 
+## Starting point for Launch Pad (2026-11-01)
+A prior Launch Pad pass failed Plan Review 3× (last HIGH: a worker-side `write_seat_tampered` stop reaches the Phase 4.5
+completion-tail guard, whose only exception is `self_heal_resume_thrash`). Its corrected, UNREVIEWED draft — fix for that
+finding and the attempt-3 MEDIUM/LOW findings folded in — is
+`.supervisor/requirements/provider-routing/04-routing-write-seats.launch-pad-draft-2026-11-01.txt`. Start from it, re-verify
+every claim against main, and let Plan Review judge it fresh.
+
 ## Owner decisions (2026-11-01)
 - **D1 — one provider per run.** The `worker` seat names one provider for every worker subtask of a run; no per-subtask
   or per-lane mixing. A provider failure therefore never leaves a branch with some subtasks by one CLI and some by another.
@@ -81,3 +88,9 @@ The sections below are the evidence the shape above was derived from; their prem
 - The probe shows one denial on one prompt, not that every tool is denied — keep the disk gate + Supervisor-only push.
 - Un-park condition (05 shipped AND a provider passes the real probe) is now MET; promotion still needs the two open
   questions answered and these premises folded into the shape.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-01T10:35:18Z
+- **Brief:** .supervisor/jobs/done/2026-11-01-provider-routing-write-seats.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/770
