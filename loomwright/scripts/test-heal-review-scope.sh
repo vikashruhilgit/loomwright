@@ -78,7 +78,7 @@ run_scope_table() {
   sc S2 "two-commit fix => exactly the changed files" "$s" "scope: files${NL}a.txt${NL}d/new.txt" \
     --round 2 --prev "$SHA_A" --head "$SHA_B"
   got="$(bash "$s" scope --root "$REPO" --round 2 --prev "$SHA_A" --head "$SHA_B" 2>/dev/null)"
-  if [ "$(printf '%s\n' "$got" | head -n 1)" = "scope: files" ] && ! printf '%s\n' "$got" | grep -qx 'gone.txt'; then
+  if [ "$(printf '%s\n' "$got" | head -n 1)" = "scope: files" ] && ! grep -qx 'gone.txt' <<<"$got"; then
     ok "S3 deleted file excluded from a files scope"
   else
     no "S3 deleted file excluded from a files scope — got [$got]"
@@ -142,7 +142,7 @@ if [ -n "$f1" ] && [ "$f1" = "$f2" ]; then ok "F3 case / whitespace differences 
 if [ -n "$f3" ] && [ "$f1" != "$f3" ]; then ok "F4 a different description fingerprints differently"; else no "F4 — [$f1] vs [$f3]"; fi
 fd="$(fpr '{"severity":"MEDIUM","category":"drift","drift_kind":"doc","file":"README.md","description":"d"}')"
 if [ "$(printf '%s' "$fd" | jq -r '.issue_category + " " + .file')" = "drift:doc README.md" ]; then ok "F5 drift => drift:<drift_kind>"; else no "F5 drift — got [$fd]"; fi
-if ! printf '%s' "$f1" | grep -qi 'foo\|fix it'; then ok "F6 no finding prose in the fingerprint"; else no "F6 prose leaked — [$f1]"; fi
+if ! grep -qi 'foo\|fix it' <<<"$f1"; then ok "F6 no finding prose in the fingerprint"; else no "F6 prose leaked — [$f1]"; fi
 out="$(printf '[1,2]' | bash "$SCRIPT" fingerprint 2>/dev/null)"; rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ]; then ok "F7 non-object stdin => usage error"; else no "F7 — rc=$rc out [$out]"; fi
 
@@ -161,14 +161,14 @@ rec "$ROUND$NL$FIND$NL"
 if [ "$RC" -eq 0 ] && [ -z "$ERR" ] && [ "$(lines "$RF")" = 2 ]; then ok "R1 valid round + finding appended (parent dir created)"; else no "R1 — rc=$RC err [$ERR] lines $(lines "$RF")"; fi
 before="$(cat "$RF")"
 rec '{"kind":"finding","run_id":"r1","iteration":2,"file":"a.txt","outcome":"dismissed","description":"SECRET PROSE"}'
-if [ "$RC" -eq 0 ] && [ "$(cat "$RF")" = "$before" ] && printf '%s' "$ERR" | grep -q '^heal_round_record_failed: '; then
+if [ "$RC" -eq 0 ] && [ "$(cat "$RF")" = "$before" ] && grep -q '^heal_round_record_failed: ' <<<"$ERR"; then
   ok "R2 a record carrying a prose key is refused (file unchanged, one failure line, exit 0)"
 else
   no "R2 prose key — rc=$RC err [$ERR] file now [$(cat "$RF")]"
 fi
 if ! grep -q 'SECRET PROSE' "$RF"; then ok "R3 refused prose never reaches the file"; else no "R3 prose reached the file"; fi
 rec '{"kind":"finding","iteration":2,"file":"a.txt","outcome":"fixed"}'
-if [ "$RC" -eq 0 ] && [ "$(cat "$RF")" = "$before" ] && printf '%s' "$ERR" | grep -q '^heal_round_record_failed: .*run_id'; then ok "R4 missing run_id refused"; else no "R4 — rc=$RC err [$ERR]"; fi
+if [ "$RC" -eq 0 ] && [ "$(cat "$RF")" = "$before" ] && grep -q '^heal_round_record_failed: .*run_id' <<<"$ERR"; then ok "R4 missing run_id refused"; else no "R4 — rc=$RC err [$ERR]"; fi
 rec '{"kind":"finding","run_id":"r1","outcome":"ignored"}'
 if [ "$(cat "$RF")" = "$before" ] && [ -n "$ERR" ]; then ok "R5 outcome outside its closed set refused"; else no "R5 — err [$ERR]"; fi
 rec '{"kind":"round","run_id":"r1","scope_fallback":"because"}'
@@ -177,14 +177,14 @@ rec '{"kind":"round","run_id":"r1","would_suppress":[{"file":"a","issue_category
 if [ "$(cat "$RF")" = "$before" ] && [ -n "$ERR" ]; then ok "R7 prose nested in a fingerprint array refused"; else no "R7 — err [$ERR]"; fi
 rec "$FIND${NL}not json${NL}{\"kind\":\"finding\",\"run_id\":\"r1\",\"finding\":\"x\"}$NL"
 nerr="$(printf '%s\n' "$ERR" | grep -c . || true)"
-if [ "$RC" -eq 0 ] && [ "$(lines "$RF")" = 3 ] && [ "$nerr" = 1 ] && printf '%s' "$ERR" | grep -q '2 record(s) refused'; then
+if [ "$RC" -eq 0 ] && [ "$(lines "$RF")" = 3 ] && [ "$nerr" = 1 ] && grep -q '2 record(s) refused' <<<"$ERR"; then
   ok "R8 mixed batch: the valid line appended, the rest refused on ONE stderr line"
 else
   no "R8 mixed batch — rc=$RC lines $(lines "$RF") err [$ERR]"
 fi
 : > "$TMP/afile"
 out="$(printf '%s\n' "$FIND" | bash "$SCRIPT" record --file "$TMP/afile/x.jsonl" 2>&1 >/dev/null)"; rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^heal_round_record_failed: '; then ok "R9 an unwritable path fails SAFE (exit 0, one line)"; else no "R9 — rc=$rc out [$out]"; fi
+if [ "$rc" -eq 0 ] && grep -q '^heal_round_record_failed: ' <<<"$out"; then ok "R9 an unwritable path fails SAFE (exit 0, one line)"; else no "R9 — rc=$rc out [$out]"; fi
 out="$(printf '%s\n' "$FIND" | JQ="$TMP/no-such-jq" bash "$SCRIPT" record --file "$TMP/nojq.jsonl" 2>&1 >/dev/null)"; rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "heal_round_record_failed: jq not found" ] && [ ! -e "$TMP/nojq.jsonl" ]; then ok "R10 jq absent fails SAFE"; else no "R10 — rc=$rc out [$out]"; fi
 
@@ -228,19 +228,19 @@ ISSUES='[
 ]'
 res="$(printf '%s' "$ISSUES" | bash "$SCRIPT" suppress --file "$SF" --run-id r1 2>"$TMP/sup.err")"; rc=$?
 kept="$(printf '%s' "$res" | jq -c '[.kept[] | "\(.severity // "none"):\(.file)"]' 2>/dev/null)"
-if [ "$rc" -eq 0 ] && printf '%s' "$kept" | grep -qv '"MEDIUM:x.sh"' && [ "$(printf '%s' "$res" | jq '.count' 2>/dev/null)" -ge 1 ] 2>/dev/null; then
+if [ "$rc" -eq 0 ] && grep -qv '"MEDIUM:x.sh"' <<<"$kept" && [ "$(printf '%s' "$res" | jq '.count' 2>/dev/null)" -ge 1 ] 2>/dev/null; then
   ok "U1 a same-run dismissed fingerprint at the same severity is dropped"
 else
   no "U1 dismissed repeat — rc=$rc res [$res]"
 fi
-if printf '%s' "$kept" | grep -q '"HIGH:y.sh"' \
+if grep -q '"HIGH:y.sh"' <<<"$kept" \
    && [ "$(printf '%s' "$res" | jq -c '.repeat_of_fixed' 2>/dev/null)" = "[$FPY]" ]; then
   ok "U2 a fixed fingerprint is NOT dropped; it is counted in repeat_of_fixed"
 else
   no "U2 fixed repeat — res [$res]"
 fi
-if printf '%s' "$kept" | grep -q '"LOW:z.sh"'; then ok "U3 another run's dismissed fingerprint is NOT dropped"; else no "U3 other run — kept [$kept]"; fi
-if printf '%s' "$kept" | grep -q '"HIGH:x.sh"'; then ok "U4 a dismissed fingerprint re-reported at a HIGHER severity is NOT dropped"; else no "U4 higher severity — kept [$kept]"; fi
+if grep -q '"LOW:z.sh"' <<<"$kept"; then ok "U3 another run's dismissed fingerprint is NOT dropped"; else no "U3 other run — kept [$kept]"; fi
+if grep -q '"HIGH:x.sh"' <<<"$kept"; then ok "U4 a dismissed fingerprint re-reported at a HIGHER severity is NOT dropped"; else no "U4 higher severity — kept [$kept]"; fi
 if [ "$kept" = '["HIGH:y.sh","LOW:z.sh","HIGH:x.sh","none:x.sh"]' ] \
    && [ "$(printf '%s' "$res" | jq -c '[.count, .suppressed]')" = "[2,[$FPX,$FPX]]" ] && [ ! -s "$TMP/sup.err" ]; then
   ok "U5 exact result: order kept, lower-case severity ranks, an unranked severity is never dropped"
@@ -344,7 +344,7 @@ if [ "$rc" -eq 0 ] && [ "$got" = "$WANT_SINCE" ]; then ok "H3 --since keeps desc
 snap2="$(snapshot)"
 if [ "$snap0" = "$snap2" ]; then ok "H4 --shadow-report --since writes nothing"; else no "H4 the --since report wrote something"; fi
 got="$(bash "$SCRIPT" --shadow-report --dir "$TMP/no-such-dir" 2>&1)"; rc=$?
-if [ "$rc" -eq 0 ] && printf '%s\n' "$got" | grep -qx 'rounds: 0' && [ ! -e "$TMP/no-such-dir" ]; then ok "H5 a missing records dir reports zero and creates nothing"; else no "H5 — rc=$rc got [$got]"; fi
+if [ "$rc" -eq 0 ] && grep -qx 'rounds: 0' <<<"$got" && [ ! -e "$TMP/no-such-dir" ]; then ok "H5 a missing records dir reports zero and creates nothing"; else no "H5 — rc=$rc got [$got]"; fi
 got="$(bash "$SCRIPT" --shadow-report --since nosuchref --dir "$HD" --root "$REPO" 2>/dev/null)"; rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$got" ]; then ok "H6 an unresolvable --since is a usage error"; else no "H6 — rc=$rc got [$got]"; fi
 
@@ -365,9 +365,9 @@ else
   ok "K0 mutant applied (non-empty, differs, bash -n clean)"
   mout="$(run_scope_table "$M")"
   for id in S2 S3 S4 S5 S6 S7 S8; do
-    if printf '%s\n' "$mout" | grep -q "^  FAIL: $id "; then ok "K-$id the scope-full mutant turns $id red"; else no "K-$id the scope-full mutant SURVIVED $id"; fi
+    if grep -q "^  FAIL: $id " <<<"$mout"; then ok "K-$id the scope-full mutant turns $id red"; else no "K-$id the scope-full mutant SURVIVED $id"; fi
   done
-  if printf '%s\n' "$mout" | grep -q '^  ok: S1 '; then ok "K-S1 round 1 stays green under the mutant (the control is targeted)"; else no "K-S1 round 1 went red under the mutant"; fi
+  if grep -q '^  ok: S1 ' <<<"$mout"; then ok "K-S1 round 1 stays green under the mutant (the control is targeted)"; else no "K-S1 round 1 went red under the mutant"; fi
 fi
 
 echo "RESULT: $pass passed, $fail failed"

@@ -62,7 +62,7 @@ b.md
 $ heal-review-scope.sh prev-sha --file <records> --run-id sess-demo
 b23622cfc20b
 $ printf <round-2 issues: both round-1 findings re-reported> | heal-review-scope.sh suppress --file <records> --run-id sess-demo --count-only
-{"kept":2,"suppressed":[{"file":"c.txt","issue_category":"nit","rule":"aa22f8a70b80"}],"count":1,"repeat_of_fixed":[{"file":"a.sh","issue_category":"new","rule":"3f89b2557002"}]}
+{"kept":[<both round-2 issues>],"suppressed":[{"file":"c.txt","issue_category":"nit","rule":"aa22f8a70b80"}],"count":1,"repeat_of_fixed":[{"file":"a.sh","issue_category":"new","rule":"3f89b2557002"}]}
 $ echo <a finding record carrying "description"> | heal-review-scope.sh record --file <records>
 heal_round_record_failed: 1 record(s) refused (first: finding: unknown key(s): description)
 $ cat .supervisor/heal-rounds/demo-brief.jsonl
