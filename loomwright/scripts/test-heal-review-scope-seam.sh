@@ -11,7 +11,7 @@
 # exit 1 on any failure, paths from $BASH_SOURCE (runs from any CWD and from run-pin-mutations.sh's
 # scratch copy — no git history is read). bash 3.2 / BSD userland safe.
 #
-# BYTE IDENTITY: the reviewer Task prompt (the lines between `review = Task(` and its `model:` line)
+# BYTE IDENTITY: the reviewer Task prompt (from its `prompt: "` line up to the Task's `model:` line)
 # with the two GUARDED lines removed (each with the blank line after it) must equal the frozen base
 # prompt in scripts/fixtures/phase45-reviewer-prompt-base.txt — so round 1 under every mode, and every
 # round under `shadow` and `full` (where both lines are omitted), is the prompt the loop sent before
@@ -65,11 +65,16 @@ CFG_CALL='`heal-review-scope.sh mode --root .`'
 CFG_FULL='record `HEAL_REVIEW_SCOPE = full`'
 
 # ---- extraction (shared by the checks and --print-base) ---------------------------------------------
-# prompt_of <skill> — the lines strictly between `review = Task(` and the first `model:` line after it.
+# prompt_of <skill> — inside the `review = Task(` call: from its `prompt: "` line up to (not including)
+# the first `model:` line after it. The Task's other arguments stay out of the fixture: only the prompt
+# text is frozen.
 prompt_of() {
   env LC_ALL=C awk '
-    !on && index($0, "review = Task(") { on = 1; next }
-    on { t = $0; sub(/^[[:space:]]+/, "", t); if (index(t, "model:") == 1) exit; print }
+    !task && index($0, "review = Task(") { task = 1; next }
+    task { t = $0; sub(/^[[:space:]]+/, "", t)
+           if (!on && index(t, "prompt: \"") == 1) on = 1
+           if (on && index(t, "model:") == 1) exit
+           if (on) print }
   ' "$1"
 }
 # strip_guarded — stdin prompt; drops each guarded marker line and the blank line right after it.
