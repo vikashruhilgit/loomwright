@@ -52,7 +52,7 @@
     "quality-checklist": {"budget": 4262, "measured": 3874, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "review-heal": {"budget": 24186, "measured": 21987, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "rules": {"budget": 18926, "measured": 17205, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
-    "self-heal-advisory": {"budget": 37695, "measured": 34268, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
+    "self-heal-advisory": {"budget": 42578, "measured": 38707, "note": "raise (heal_review_scope): Part 2 gains the converging re-review steps and two guarded reviewer-prompt lines; measured + ~10%"},
     "setup": {"budget": 10782, "measured": 9801, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "state-management": {"budget": 9105, "measured": 8277, "note": "re-baselined to live measured + ~10% (automate-speed/18)"},
     "supervisor-config": {"budget": 5768, "measured": 5243, "note": "raise (provider-routing-readonly-seats/07): step 2.9a parses --route and resolves the heal_voter seat; measured + ~10%"},

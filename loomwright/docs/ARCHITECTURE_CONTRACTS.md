@@ -731,7 +731,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `quality-checklist` | 4262 | 3874 |
 | `review-heal` | 24186 | 21987 |
 | `rules` | 18926 | 17205 |
-| `self-heal-advisory` | 37695 | 34268 |
+| `self-heal-advisory` | 42578 | 38707 |
 | `setup` | 10782 | 9801 |
 | `state-management` | 9105 | 8277 |
 | `supervisor-config` | 5768 | 5243 |
