@@ -42,6 +42,15 @@
 #   K. the timeout clamp: 9999 / 481 -> 480; abc / 0 / empty -> 420; 480 stays
 #   F. a CLI exiting non-zero -> write_failed, tree restored, reply ignored
 #   R. a restore that cannot complete -> write_git_tampered, tree_restored false
+#   G. a planted smudge/clean filter never runs during the restore or the
+#      owner's next git command: via a redirected commondir file (G1), via the
+#      real config plus an in-tree .gitattributes (G2) or info/attributes (G3);
+#      a redirect the restore cannot undo runs no index or tree command (G4)
+#   W. a provider edit to a guard-protected path (pytest.ini, .husky/) ->
+#      write_protected_path, tree restored, the guard's opt-out env ignored
+#   SB. two overlapping runs in sibling worktrees: the later run restores the
+#      shared files from the earlier run's baseline, so the hook the earlier
+#      run's restore removed is never re-planted; the registry is removed
 #
 # Exit 0 = all pass, 1 = any failure.
 
@@ -357,6 +366,123 @@ else
   reset_wt
 fi
 assert_eq "R the tree is clean after the suite's own reset" "" "$(tree_state)"
+
+echo ""
+echo "==== G: a redirected commondir or a planted filter driver never runs during the restore ===="
+# G1: the provider copies the common dir, gives the copy a smudge/clean filter
+# bound to every path, edits a tracked file and points this worktree's
+# commondir file at the copy. git would load the copy's config on the restore's
+# reset; the pinned, pointer-first restore must not.
+PWN_G1="$TMP/pwned-g1"
+EVIL_G1="$TMP/evil-common-g1"
+mkstub g1 'gd="$(git rev-parse --absolute-git-dir)"' 'cd_="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"' \
+  "cp -R \"\$cd_\" $(printf '%q' "$EVIL_G1")" \
+  "git config --file $(printf '%q' "$EVIL_G1/config") filter.pw.smudge $(printf '%q' "touch $PWN_G1; cat")" \
+  "git config --file $(printf '%q' "$EVIL_G1/config") filter.pw.clean $(printf '%q' "touch $PWN_G1; cat")" \
+  "mkdir -p $(printf '%q' "$EVIL_G1/info")" "printf '* filter=pw\\n' > $(printf '%q' "$EVIL_G1/info/attributes")" \
+  "printf 'evil\\n' > src.txt" "printf '%s\\n' $(printf '%q' "$EVIL_G1") > \"\$gd/commondir\"" 'exit 3'
+G1_COMMONDIR_BEFORE="$(cat "$(git -C "$WT" rev-parse --absolute-git-dir)/commondir")"
+run_write g1 "$P_MAIN" worker
+assert_eq "G1 write_git_tampered, tree_restored true" "write_git_tampered:true" "$(jf g1 .write_status):$(jf g1 .tree_restored)"
+assert_has "G1 notes name the redirected common dir" "$(jf g1 .notes)" "commondir"
+assert_eq "G1 the planted filter never ran during the restore" "absent" "$( [ -e "$PWN_G1" ] && echo present || echo absent)"
+assert_eq "G1 the commondir file is back" "$G1_COMMONDIR_BEFORE" "$(cat "$(git -C "$WT" rev-parse --absolute-git-dir)/commondir")"
+assert_eq "G1 git resolves the real common dir again" "$COMMON" "$(cd "$WT" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+assert_eq "G1 the edit is gone, tree clean" "original:" "$(cat "$WT/src.txt"):$(tree_state)"
+git -C "$WT" status --porcelain >/dev/null 2>&1
+assert_eq "G1 the owner's next git status runs no planted filter" "absent" "$( [ -e "$PWN_G1" ] && echo present || echo absent)"
+reset_wt
+
+# G2: no redirect — a filter driver in the real config plus an in-tree
+# .gitattributes binding every path to it. The config goes back before reset.
+PWN_G2="$TMP/pwned-g2"
+mkstub g2 "git config filter.pw.smudge $(printf '%q' "touch $PWN_G2; cat")" \
+  "git config filter.pw.clean $(printf '%q' "touch $PWN_G2; cat")" \
+  "printf '* filter=pw\\n' > .gitattributes" "printf 'evil\\n' > src.txt" 'exit 3'
+run_write g2 "$P_MAIN" worker
+assert_eq "G2 write_git_tampered, tree_restored true" "write_git_tampered:true" "$(jf g2 .write_status):$(jf g2 .tree_restored)"
+assert_has "G2 notes name the filter key" "$(jf g2 .notes)" "filter.pw.smudge"
+assert_eq "G2 the planted filter never ran" "absent" "$( [ -e "$PWN_G2" ] && echo present || echo absent)"
+assert_eq "G2 the filter config is gone" "" "$(git -C "$WT" config --get filter.pw.smudge)"
+assert_eq "G2 .gitattributes and the edit are gone, tree clean" "original:" "$(cat "$WT/src.txt"):$(tree_state)"
+reset_wt
+
+# G3: the same filter in config, info/attributes in the real common dir (no
+# tree file at all): the restore puts both back before the reset.
+PWN_G3="$TMP/pwned-g3"
+mkstub g3 'cd_="$(git rev-parse --git-common-dir)"' \
+  "git config filter.pw.smudge $(printf '%q' "touch $PWN_G3; cat")" \
+  "git config filter.pw.clean $(printf '%q' "touch $PWN_G3; cat")" \
+  'mkdir -p "$cd_/info"' "printf '* filter=pw\\n' > \"\$cd_/info/attributes\"" "printf 'evil\\n' > src.txt" 'exit 3'
+run_write g3 "$P_MAIN" worker
+assert_eq "G3 write_git_tampered, tree_restored true" "write_git_tampered:true" "$(jf g3 .write_status):$(jf g3 .tree_restored)"
+assert_has "G3 notes name info/attributes" "$(jf g3 .notes)" "info/attributes"
+assert_eq "G3 the planted filter never ran" "absent" "$( [ -e "$PWN_G3" ] && echo present || echo absent)"
+assert_eq "G3 info/attributes removed" "absent" "$( [ -e "$COMMON/info/attributes" ] && echo present || echo absent)"
+reset_wt
+
+# G4: a redirect the restore cannot undo (the commondir file and the git dir
+# made read-only after the write) runs NO index or tree command: changed_files [], tree left.
+if [ "$(id -u)" = "0" ]; then
+  ok "G4 skipped: running as root, a read-only dir cannot block the restore"
+else
+  PWN_G4="$TMP/pwned-g4"
+  EVIL_G4="$TMP/evil-common-g4"
+  G4_GD="$(git -C "$WT" rev-parse --absolute-git-dir)"
+  mkstub g4 'gd="$(git rev-parse --absolute-git-dir)"' 'cd_="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"' \
+    "cp -R \"\$cd_\" $(printf '%q' "$EVIL_G4")" \
+    "git config --file $(printf '%q' "$EVIL_G4/config") filter.pw.smudge $(printf '%q' "touch $PWN_G4; cat")" \
+    "git config --file $(printf '%q' "$EVIL_G4/config") filter.pw.clean $(printf '%q' "touch $PWN_G4; cat")" \
+    "mkdir -p $(printf '%q' "$EVIL_G4/info")" "printf '* filter=pw\\n' > $(printf '%q' "$EVIL_G4/info/attributes")" \
+    "printf 'evil\\n' > src.txt" "printf '%s\\n' $(printf '%q' "$EVIL_G4") > \"\$gd/commondir\"" 'chmod 444 "$gd/commondir"' 'chmod 555 "$gd"' 'exit 3'
+  run_write g4 "$P_MAIN" worker
+  assert_eq "G4 write_git_tampered, tree_restored false" "write_git_tampered:false" "$(jf g4 .write_status):$(jf g4 .tree_restored)"
+  assert_eq "G4 changed_files not measured" "[]" "$(jfc g4 .changed_files)"
+  assert_has "G4 notes say no index or tree command ran" "$(jf g4 .notes)" "no index or tree command was run"
+  assert_eq "G4 the planted filter never ran" "absent" "$( [ -e "$PWN_G4" ] && echo present || echo absent)"
+  chmod u+rwx "$G4_GD"; chmod u+rw "$G4_GD/commondir"
+  printf '%s\n' "$G1_COMMONDIR_BEFORE" > "$G4_GD/commondir"
+  reset_wt
+fi
+
+echo ""
+echo "==== W: a provider edit to a path the test-integrity guard protects ===="
+mkstub w1 "printf 'edit\\n' > src.txt" "printf '[pytest]\\n' > pytest.ini"
+run_write w1 "$P_MAIN" worker LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS=1
+assert_eq "W1 write_protected_path, tree_restored true (opt-out env not honoured)" "write_protected_path:true" \
+  "$(jf w1 .write_status):$(jf w1 .tree_restored)"
+assert_has "W1 notes name the protected path" "$(jf w1 .notes)" "pytest.ini"
+assert_eq "W1 changed_files lists both paths" '["pytest.ini","src.txt"]' "$(jfc w1 .changed_files)"
+assert_eq "W1 the edits are gone, tree clean" "original:" "$(cat "$WT/src.txt"):$(tree_state)"
+reset_wt
+mkstub w2 "mkdir -p .husky" "printf 'exit 0\\n' > .husky/pre-commit"
+run_write w2 "$P_MAIN" worker
+assert_eq "W2 a .husky/ file is protected too" "write_protected_path:true" "$(jf w2 .write_status):$(jf w2 .tree_restored)"
+reset_wt
+
+echo ""
+echo "==== SB: a sibling's launch snapshot never re-plants what the first run's restore removed ===="
+# A plants a hook and fails after a while; B launches in the sibling worktree
+# while A runs (so B's own snapshot would hold A's hook) and fails after A's
+# restore. B restores the shared files from the baseline A published.
+git -C "$SIB" reset -q --hard; git -C "$SIB" clean -q -ffd
+mkstub sba 'd="$(git rev-parse --git-common-dir)"' 'mkdir -p "$d/hooks"' \
+  "printf '#!/bin/sh\\necho pwned\\n' > \"\$d/hooks/pre-commit\"" 'chmod +x "$d/hooks/pre-commit"' 'sleep 6' 'exit 3'
+mkstub sbb 'sleep 10' 'exit 3'
+( env PATH="$TMP/stub-sba:$PATH" bash "$WRITE" --provider "$P_MAIN" --seat worker \
+    --worktree "$WT" --prompt "$PROMPT" --out "$TMP/out-sba.json" >/dev/null 2>&1 ) &
+SBA_PID=$!
+# B launches only once A's CLI has planted the hook (A registered before it
+# launched), so B is the overlapping run whatever the machine's speed.
+for _i in $(seq 1 150); do [ -x "$COMMON/hooks/pre-commit" ] && break; sleep 0.2; done
+env PATH="$TMP/stub-sbb:$PATH" bash "$WRITE" --provider "$P_MAIN" --seat worker \
+  --worktree "$SIB" --prompt "$PROMPT" --out "$TMP/out-sbb.json" >/dev/null 2>&1
+wait "$SBA_PID"
+assert_eq "SB A tampered and restored" "write_git_tampered:true" "$(jf sba .write_status):$(jf sba .tree_restored)"
+assert_eq "SB B saw the shared change, restored from the baseline" "write_git_tampered:true" "$(jf sbb .write_status):$(jf sbb .tree_restored)"
+assert_eq "SB the planted hook is not re-planted" "absent" "$( [ -e "$COMMON/hooks/pre-commit" ] && echo present || echo absent)"
+assert_eq "SB the registry is removed by the last run out" "absent" "$( [ -e "$COMMON/loomwright-write-runs" ] && echo present || echo absent)"
+reset_wt
 
 echo ""
 echo "RESULT: $pass passed, $fail failed"

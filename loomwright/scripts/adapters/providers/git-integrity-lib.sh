@@ -18,7 +18,8 @@
 #     `<sha> <ref>`, so there it is the second field), so a caller can name what
 #     changed without parsing anything else. Config VALUES are printed only in the
 #     `local-config:` section (as `key=value`, the shape `git config --list`
-#     prints); a caller naming a change must print the key, never the value.
+#     prints, included files followed); a caller naming a change must print the
+#     key, never the value.
 #
 #     <repo> is any work tree: a plain clone, or a linked worktree whose `.git` is
 #     a FILE. Paths are resolved through `git rev-parse --absolute-git-dir` and
@@ -36,6 +37,15 @@
 #              info-exclude-cksum:     the common dir's info/exclude (an entry
 #                                      there hides a file from `git status` and
 #                                      from `git clean`)
+#              info-attributes-cksum:  the common dir's info/attributes (it can
+#                                      bind a path to a filter driver)
+#              git-dirs:               where git resolves the git dir and the
+#                                      common dir (`gitdir <path>`,
+#                                      `commondir <path>`), the checkout's `.git`
+#                                      (a dir, or the gitfile's checksum) and the
+#                                      git dir's `commondir` file: a rewritten
+#                                      gitfile or commondir redirects every later
+#                                      git command to another config
 #              hooks-path:             the files of the directory core.hooksPath
 #                                      names, when it is set (a relative value is
 #                                      resolved from <repo>)
@@ -109,7 +119,7 @@ git_integrity_fingerprint() {
     printf 'remotes:\n'
     git -C "$repo" remote -v 2>/dev/null | env LC_ALL=C sort
     printf 'local-config:\n'
-    git -C "$repo" config --local --list 2>/dev/null | env LC_ALL=C sort
+    git -C "$repo" config --local --includes --list 2>/dev/null | env LC_ALL=C sort
     printf 'config-cksum:\n'
     [ -n "$commondir" ] && _gil_cksum_file "$commondir/config"
     printf 'refs:\n'
@@ -136,6 +146,17 @@ git_integrity_fingerprint() {
       [ -n "$gitdir" ] && _gil_cksum_file "$gitdir/config.worktree"
       printf 'info-exclude-cksum:\n'
       [ -n "$commondir" ] && _gil_cksum_file "$commondir/info/exclude"
+      printf 'info-attributes-cksum:\n'
+      [ -n "$commondir" ] && _gil_cksum_file "$commondir/info/attributes"
+      printf 'git-dirs:\n'
+      printf 'gitdir %s\n' "$gitdir"
+      printf 'commondir %s\n' "$commondir"
+      if [ -d "$repo/.git" ] && [ ! -L "$repo/.git" ]; then
+        printf '%s dir\n' "$repo/.git"
+      else
+        _gil_cksum_file "$repo/.git"
+      fi
+      [ -n "$gitdir" ] && _gil_cksum_file "$gitdir/commondir"
       printf 'hooks-path:\n'
       hp="$(git -C "$repo" config --get core.hooksPath 2>/dev/null)"
       if [ -n "$hp" ]; then

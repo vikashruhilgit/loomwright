@@ -44,8 +44,11 @@
 #     "provider": "<name>", "model": "<model>" | null,
 #     "changed_files": [ "<path>", ... ],   # always an array: the paths the
 #                       # provider changed (tracked edits + untracked
-#                       # non-ignored files), measured BEFORE any restore; [] on
-#                       # a pre-launch refusal
+#                       # non-ignored files), measured BEFORE the tree restore
+#                       # (and after the git dirs and config are verified back);
+#                       # [] on a pre-launch refusal, and when the git dirs or
+#                       # config could not be put back (then no index or tree
+#                       # command runs at all)
 #     "tree_restored": true | false,        # present only on a post-launch
 #                       # status: true when the tree is verified back at the
 #                       # pre-launch commit and git state (the restore below ran
@@ -86,30 +89,60 @@
 #     write_timeout       the bound fired (process group killed)
 #     write_failed        the CLI exited non-zero, could not be launched, or this
 #                         script was interrupted mid-launch
+#     write_protected_path
+#                         the CLI ended `ok` with an unchanged fingerprint, but
+#                         changed_files holds a path the test-integrity guard
+#                         protects, or the guard could not be run on them (fail
+#                         closed). The judge is guard-test-integrity.sh itself
+#                         (its Write|Edit matcher, fed one synthetic Write
+#                         payload per changed path: the ONE home of the
+#                         protected list, never a copy here). Checked whether or
+#                         not a session is armed (every write seat's caller arms
+#                         one), and the guard's opt-out env is NOT honoured (a
+#                         caller can set this script's env inline, never the
+#                         hook's). `notes` names the paths. The tree is restored.
 #     write_git_tampered  the worktree's own HEAD or branch ref moved, or the
-#                         remotes, local/common config, worktree config,
-#                         info/exclude, or non-sample hooks (common dir and a
-#                         core.hooksPath dir included) changed: the provider
-#                         committed or rewired git. `notes` names every changed
-#                         fingerprint section and path (config keys, never
-#                         values). ALSO the status of any restore that could not
-#                         be completed and verified (then tree_restored: false),
-#                         never a softer one.
+#                         remotes, local/common config (included files too),
+#                         worktree config, info/exclude, info/attributes, the
+#                         checkout's `.git` gitfile or `commondir` file (or where
+#                         git resolves the git dir / common dir), or non-sample
+#                         hooks (common dir and a core.hooksPath dir included)
+#                         changed: the provider committed or rewired git. `notes`
+#                         names every changed fingerprint section and path
+#                         (config keys, never values). ALSO the status of any
+#                         restore that could not be completed and verified (then
+#                         tree_restored: false), never a softer one.
 #   The provider's reply text is never read for the status.
 #
 # RESTORE — on every non-`ok` post-launch status: the tracked tree goes back to
 # the pre-launch HEAD (`git reset --hard`) and untracked non-ignored files are
 # removed (`git clean -ffd`). The tree was verified clean before launch, so
-# everything removed is the provider's. On write_git_tampered the pre-launch
-# BYTE snapshots of the common config, the worktree's config.worktree, the
-# common info/exclude and the common hooks dir are put back first (hook files
-# the provider added are removed), then HEAD and the worktree's own branch ref
-# are reset to the pre-launch commit — so a planted hook or core.hooksPath never
-# survives to run under the real HOME. Restore git commands run with
-# core.fsmonitor and core.hooksPath overridden, so nothing the provider planted
-# executes during the restore itself. Verified afterwards: HEAD is the
-# pre-launch commit, the tree is clean, and the fingerprint matches the
-# pre-launch one.
+# everything removed is the provider's. On write_git_tampered the git state goes
+# back FIRST, in this order: (1) the checkout's own pointers — the `.git`
+# gitfile and the git dir's `commondir` file — from their byte snapshots, then
+# git must resolve the pre-launch git dir and common dir again; (2) the
+# worktree's config.worktree; (3) the SHARED common-dir files (common config,
+# info/exclude, info/attributes, the hooks dir; hook files the provider added are
+# removed) from the shared baseline below; (4) HEAD and the worktree's own branch
+# ref. Before ANY index or tree command (changed_files, reset, clean, status)
+# the git dirs must resolve to the pre-launch paths and the config git loads
+# (included files too) must equal the baseline's; otherwise none runs, the tree
+# is left as it is, and the result is write_git_tampered with tree_restored
+# false — so neither a redirected commondir nor a planted filter/process driver
+# ever executes under the real HOME. Every restore and post-launch git command
+# pins GIT_DIR / GIT_COMMON_DIR / GIT_WORK_TREE to the pre-launch paths and
+# overrides core.fsmonitor and core.hooksPath. Verified afterwards: HEAD is the
+# pre-launch commit, the tree is clean, and the git state matches.
+#
+# SHARED BASELINE — parallel siblings share the common dir, so a launch snapshot
+# taken while another write-run was active may already hold that run's planted
+# hook or config, and writing it back would re-plant what the sibling's restore
+# removed. So each run registers in `<common dir>/loomwright-write-runs/` (a
+# mkdir lock; dead pids are pruned). A run that finds no other live run takes
+# the shared snapshot and publishes it as the baseline; a run that finds one
+# uses the published baseline instead of its own snapshot. The shared files are
+# only ever restored to (and verified against) that baseline, taken when no
+# provider was running. The registry is removed by the last run out.
 #
 # --restore MODE — `write-run.sh --restore <sha> --worktree <dir>`: the same
 # tree restore on its own, for a caller whose write-run returned `ok` but whose
@@ -126,7 +159,13 @@
 # can still write outside the worktree and reach the network. Gitignored paths
 # inside the worktree are neither checked by write_tree_dirty nor removed by the
 # restore. The `own` fingerprint scope (git-integrity-lib.sh) does not see a NEW
-# branch or tag. A SIGKILL of this script skips the restore (hence the clamp).
+# branch or tag. A SIGKILL of this script skips the restore (hence the clamp)
+# and leaves its registry entry, which the next run prunes as a dead pid. While
+# a provider runs, anything it plants in shared git state is live for every
+# sibling's own (unpinned) git commands until its restore returns. The snapshots
+# and the baseline are files the provider could also write. A legitimate change
+# to the shared files made while runs overlap (say, branch tracking config) is
+# reverted by a tampered run's restore to the baseline.
 #
 # PROVIDER FILE CONTRACT ADDITION (beyond lens-run.sh's header):
 #   provider_write_argv()  — OPTIONAL. Reads MODEL / PROMPT_CONTENT /
@@ -179,10 +218,24 @@ WT_TOP="$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$WT_TOP" ] && WT_TOP="$(cd "$WT_TOP" 2>/dev/null && pwd -P)"
 [ -n "$WT_TOP" ] && [ "$WT_TOP" = "$WT" ] || usage_error "--worktree must be the top level of a git work tree: $WORKTREE"
 
-# wgit <args...> — git in the worktree with nothing the provider could have
-# planted executing (no fsmonitor, no hooks).
+# wgit <args...> — git in the worktree with no fsmonitor and no hooks executing.
+# Filter / process drivers come from config, so a restore keeps them out by
+# putting the config back (and checking it) before any index or tree command.
 wgit() {
   git -c core.fsmonitor=false -c core.hooksPath=/dev/null -C "$WT" "$@"
+}
+
+# rgit <args...> — wgit with GIT_DIR / GIT_COMMON_DIR / GIT_WORK_TREE pinned to
+# the pre-launch paths once they are known (PIN_GITDIR set at launch setup), so
+# a rewritten `.git` gitfile or `commondir` file cannot point a restore or
+# post-launch command at a git dir and config the provider wrote.
+PIN_GITDIR=""; PIN_COMMONDIR=""
+rgit() {
+  if [ -n "$PIN_GITDIR" ]; then
+    GIT_DIR="$PIN_GITDIR" GIT_COMMON_DIR="$PIN_COMMONDIR" GIT_WORK_TREE="$WT" wgit "$@"
+  else
+    wgit "$@"
+  fi
 }
 
 # json_str <s> — <s> as a JSON string literal (control characters other than
@@ -202,10 +255,10 @@ json_str() {
 # non-ignored files. 0 when HEAD is <sha> and the tree is clean afterwards.
 tree_restore() {
   local sha="$1"
-  wgit reset -q --hard "$sha" >/dev/null 2>&1 || return 1
-  wgit clean -q -ffd >/dev/null 2>&1
-  [ "$(wgit rev-parse HEAD 2>/dev/null)" = "$sha" ] || return 1
-  [ -z "$(wgit status --porcelain --untracked-files=all 2>/dev/null)" ] || return 1
+  rgit reset -q --hard "$sha" >/dev/null 2>&1 || return 1
+  rgit clean -q -ffd >/dev/null 2>&1
+  [ "$(rgit rev-parse HEAD 2>/dev/null)" = "$sha" ] || return 1
+  [ -z "$(rgit status --porcelain --untracked-files=all 2>/dev/null)" ] || return 1
   return 0
 }
 
@@ -366,7 +419,63 @@ fi
 GITDIR="$(_gil_abs_dir "$WT" --absolute-git-dir)"
 COMMONDIR="$(_gil_abs_dir "$WT" --git-common-dir)"
 [ -n "$COMMONDIR" ] || COMMONDIR="$GITDIR"
-PRE_REF="$(wgit symbolic-ref -q HEAD 2>/dev/null)"
+if [ -z "$GITDIR" ]; then
+  write_json "write_failed" "[]" "true" "could not resolve the worktree's git dir; no CLI was started"
+  exit 0
+fi
+PIN_GITDIR="$GITDIR"; PIN_COMMONDIR="$COMMONDIR"
+PRE_REF="$(rgit symbolic-ref -q HEAD 2>/dev/null)"
+
+# ---- the run registry and shared baseline (header §"SHARED BASELINE") ---------
+REG_DIR="$COMMONDIR/loomwright-write-runs"
+REG_ENTRY=""
+SHARED_AT_LAUNCH=0
+
+# reg_lock / reg_unlock — a mkdir lock on the registry. A lock older than ~5 s
+# is a killed holder's and is broken once; 0 when held.
+reg_lock() {
+  local i=0
+  mkdir -p "$REG_DIR" 2>/dev/null || return 1
+  until mkdir "$REG_DIR/lock" 2>/dev/null; do
+    i=$((i + 1))
+    [ "$i" -eq 50 ] && rm -rf "$REG_DIR/lock" 2>/dev/null
+    [ "$i" -ge 100 ] && return 1
+    sleep 0.1
+  done
+  mkdir -p "$REG_DIR/active" 2>/dev/null || { rmdir "$REG_DIR/lock" 2>/dev/null; return 1; }
+  return 0
+}
+reg_unlock() { rmdir "$REG_DIR/lock" 2>/dev/null; }
+
+# reg_others_live — prune dead entries; 0 when another live run is registered.
+reg_others_live() {
+  local e pid live=1
+  for e in "$REG_DIR/active"/*; do
+    [ -e "$e" ] || continue
+    pid="${e##*/}"
+    case "$pid" in
+      ""|*[!0-9]*) rm -f "$e" 2>/dev/null; continue ;;
+    esac
+    [ "$pid" = "$$" ] && continue
+    if kill -0 "$pid" 2>/dev/null; then live=0; else rm -f "$e" 2>/dev/null; fi
+  done
+  return $live
+}
+
+# reg_leave — drop this run's entry; the last run out removes the registry.
+reg_leave() {
+  [ -n "$REG_ENTRY" ] || return 0
+  rm -f "$REG_ENTRY" 2>/dev/null
+  REG_ENTRY=""
+  if reg_lock; then
+    if ! reg_others_live; then
+      rm -rf "$REG_DIR/baseline" 2>/dev/null
+      rmdir "$REG_DIR/active" 2>/dev/null
+    fi
+    reg_unlock
+    rmdir "$REG_DIR" 2>/dev/null
+  fi
+}
 
 cleanup() {
   if [ "$LAUNCHED" = "1" ] && [ "$RESULT_WRITTEN" = "0" ]; then
@@ -375,6 +484,7 @@ cleanup() {
     finish_post_launch "write_failed" "write-run.sh was interrupted while the CLI ran"
   fi
   launch_provider_cli_abort
+  reg_leave
   [ -n "$SNAP" ] && launch_provider_cli_rmtree "$SNAP"
   rm -f "$RAW_OUT" "$RAW_ERR" 2>/dev/null
 }
@@ -391,45 +501,156 @@ if [ -z "$SNAP" ] || [ ! -d "$SNAP" ] || [ -z "$RAW_OUT" ] || [ -z "$RAW_ERR" ];
 fi
 
 # Byte snapshot of the git files a restore puts back (absence recorded too).
-# snap_file <src> <name>
+# snap_file <src> <dir>/<name> — under $SNAP.
 snap_file() {
   if [ -f "$1" ] && [ ! -L "$1" ]; then
     cp -p "$1" "$SNAP/$2" 2>/dev/null || return 1
+  elif [ -e "$1" ] || [ -L "$1" ]; then
+    return 1   # a link or a directory where a file belongs: cannot be put back
   else
     : > "$SNAP/$2.absent"
   fi
   return 0
 }
-SNAP_OK=1
-snap_file "$COMMONDIR/config" config || SNAP_OK=0
-snap_file "$GITDIR/config.worktree" config.worktree || SNAP_OK=0
-snap_file "$COMMONDIR/info/exclude" exclude || SNAP_OK=0
-if [ -d "$COMMONDIR/hooks" ] && [ ! -L "$COMMONDIR/hooks" ]; then
-  cp -pRP "$COMMONDIR/hooks" "$SNAP/hooks" 2>/dev/null || SNAP_OK=0
+
+# shared_dst <name> — where a shared-snapshot file lives in the common dir.
+shared_dst() {
+  case "$1" in
+    config) printf '%s' "$COMMONDIR/config" ;;
+    exclude) printf '%s' "$COMMONDIR/info/exclude" ;;
+    attributes) printf '%s' "$COMMONDIR/info/attributes" ;;
+  esac
+}
+
+# common_config_listing / worktree_config_listing — the config git loads from
+# the repo, included files followed. Reading config executes nothing.
+common_config_listing() {
+  rgit config --local --includes --list 2>/dev/null | env LC_ALL=C sort
+}
+worktree_config_listing() {
+  [ -f "$GITDIR/config.worktree" ] || return 0
+  git config --file "$GITDIR/config.worktree" --includes --list 2>/dev/null | env LC_ALL=C sort
+}
+
+# take_shared_snapshot <dir> — the shared common-dir files into <dir>.
+take_shared_snapshot() {
+  local d="$1" n
+  mkdir -p "$d" 2>/dev/null || return 1
+  for n in config exclude attributes; do
+    snap_file "$(shared_dst "$n")" "${d#"$SNAP"/}/$n" || return 1
+  done
+  if [ -d "$COMMONDIR/hooks" ] && [ ! -L "$COMMONDIR/hooks" ]; then
+    cp -pRP "$COMMONDIR/hooks" "$d/hooks" 2>/dev/null || return 1
+  elif [ -e "$COMMONDIR/hooks" ] || [ -L "$COMMONDIR/hooks" ]; then
+    return 1
+  else
+    : > "$d/hooks.absent"
+  fi
+  common_config_listing > "$d/common-config.list" 2>/dev/null || return 1
+  return 0
+}
+
+SNAP_OK=1; SNAP_WHY="could not snapshot the git config and hooks"
+mkdir -p "$SNAP/own" 2>/dev/null || SNAP_OK=0
+# The checkout's own pointers and worktree config.
+if [ -d "$WT/.git" ] && [ ! -L "$WT/.git" ]; then
+  : > "$SNAP/own/gitfile.dir"
+elif [ -f "$WT/.git" ] && [ ! -L "$WT/.git" ]; then
+  cp -p "$WT/.git" "$SNAP/own/gitfile" 2>/dev/null || SNAP_OK=0
 else
-  : > "$SNAP/hooks.absent"
+  SNAP_OK=0; SNAP_WHY="the checkout's .git is neither a directory nor a regular file"
+fi
+snap_file "$GITDIR/commondir" own/commondir || SNAP_OK=0
+snap_file "$GITDIR/config.worktree" own/config.worktree || SNAP_OK=0
+# Register, then the shared snapshot: our own when no other run is live (and
+# published as the baseline), else the published baseline.
+if [ "$SNAP_OK" = "1" ]; then
+  if reg_lock; then
+    if reg_others_live; then SHARED_AT_LAUNCH=1; fi
+    if : > "$REG_DIR/active/$$" 2>/dev/null; then
+      REG_ENTRY="$REG_DIR/active/$$"
+      if [ "$SHARED_AT_LAUNCH" = "0" ]; then
+        rm -rf "$REG_DIR/baseline" "$REG_DIR/baseline.tmp" 2>/dev/null
+        if take_shared_snapshot "$SNAP/shared" \
+           && cp -pRP "$SNAP/shared" "$REG_DIR/baseline.tmp" 2>/dev/null \
+           && mv "$REG_DIR/baseline.tmp" "$REG_DIR/baseline" 2>/dev/null; then
+          :
+        else
+          SNAP_OK=0
+        fi
+      elif [ -d "$REG_DIR/baseline" ]; then
+        cp -pRP "$REG_DIR/baseline" "$SNAP/shared" 2>/dev/null || SNAP_OK=0
+      else
+        SNAP_OK=0; SNAP_WHY="another write-run is active in this repository but published no shared baseline"
+      fi
+    else
+      SNAP_OK=0; SNAP_WHY="could not register in the write-run registry"
+    fi
+    reg_unlock
+  else
+    SNAP_OK=0; SNAP_WHY="could not take the write-run registry lock"
+  fi
 fi
 if [ "$SNAP_OK" != "1" ]; then
-  write_json "write_failed" "[]" "true" "could not snapshot the git config and hooks; no CLI was started"
+  write_json "write_failed" "[]" "true" "$SNAP_WHY; no CLI was started"
   exit 0
 fi
 FP_BEFORE="$SNAP/fingerprint"
 git_integrity_fingerprint "$WT" own > "$FP_BEFORE" 2>/dev/null
+worktree_config_listing > "$SNAP/own/worktree-config.list" 2>/dev/null
 
-# changed_files_json — the provider's changes as a JSON array of paths: tracked
+# changed_files_list — the provider's changes, one path per line: tracked
 # changes against the pre-launch commit plus untracked non-ignored files.
+changed_files_list() {
+  {
+    rgit diff --name-only -z "$PRE_SHA" -- 2>/dev/null
+    rgit ls-files -z --others --exclude-standard 2>/dev/null
+  } | tr '\0' '\n' | env LC_ALL=C sort -u
+}
+
+# changed_files_json — changed_files_list as a JSON array.
 changed_files_json() {
   local first=1 p
   printf '['
-  {
-    wgit diff --name-only -z "$PRE_SHA" -- 2>/dev/null
-    wgit ls-files -z --others --exclude-standard 2>/dev/null
-  } | tr '\0' '\n' | env LC_ALL=C sort -u | while IFS= read -r p; do
+  changed_files_list | while IFS= read -r p; do
     [ -n "$p" ] || continue
     if [ "$first" = "1" ]; then first=0; else printf ','; fi
     json_str "$p"
   done
   printf ']'
+}
+
+# protected_paths — stdin: changed paths (relative to the worktree); stdout: the
+# ones guard-test-integrity.sh's Write|Edit matcher denies. Each path is put to
+# the guard as one synthetic Write payload, under a throwaway project dir whose
+# marker arms that payload's session; LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS and
+# LOOMWRIGHT_HOST_MODE are removed from its env (the opt-out is not honoured;
+# the marker dir is the throwaway one). rc 1 = the guard could not judge a path.
+GUARD_SCRIPT="$SCRIPT_DIR/../../guard-test-integrity.sh"
+protected_paths() {
+  local proj sid p rc
+  if [ ! -r "$GUARD_SCRIPT" ] || ! command -v jq >/dev/null 2>&1; then
+    cat >/dev/null; return 1
+  fi
+  sid="write-run-$$"; proj="$SNAP/guard-proj"
+  if ! mkdir -p "$proj/.supervisor/guard" 2>/dev/null \
+     || ! printf '{}\n' > "$proj/.supervisor/guard/$sid.json" 2>/dev/null; then
+    cat >/dev/null; return 1
+  fi
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    printf '{"session_id":%s,"tool_name":"Write","tool_input":{"file_path":%s}}' \
+        "$(json_str "$sid")" "$(json_str "$WT/$p")" \
+      | ( cd "$WT" && env -u LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS -u LOOMWRIGHT_HOST_MODE \
+            CLAUDE_PROJECT_DIR="$proj" bash "$GUARD_SCRIPT" ) >/dev/null 2>&1
+    rc=$?
+    case "$rc" in
+      0) ;;
+      2) printf '%s\n' "$p" ;;
+      *) cat >/dev/null; return 1 ;;
+    esac
+  done
+  return 0
 }
 
 # tamper_notes <before> <after> — every changed fingerprint section, with the
@@ -468,59 +689,177 @@ tamper_notes() {
   ' "$1" "$2"
 }
 
-# restore_git_state — put the snapshotted git files back, then HEAD and the own
-# branch ref. 0 when every step succeeded.
+RESTORE_NOTES=""
+rnote() { RESTORE_NOTES="${RESTORE_NOTES:+$RESTORE_NOTES; }$1"; }
+
+# put_back <snap-file> <dst> — <dst> back to the snapshot's bytes, or removed
+# when the snapshot recorded it absent. A no-op when it already matches.
+put_back() {
+  local src="$1" dst="$2"
+  if [ -e "$src.absent" ]; then
+    if [ -e "$dst" ] || [ -L "$dst" ]; then rm -f "$dst" 2>/dev/null; fi
+    [ ! -e "$dst" ] && [ ! -L "$dst" ]
+    return
+  fi
+  if [ -f "$dst" ] && [ ! -L "$dst" ] && cmp -s "$src" "$dst"; then return 0; fi
+  rm -f "$dst" 2>/dev/null
+  mkdir -p "${dst%/*}" 2>/dev/null
+  cp -p "$src" "$dst" 2>/dev/null
+}
+
+# matches_snap <snap-file> <dst> — 0 when <dst> holds the snapshot's bytes (or
+# is absent where the snapshot recorded absence).
+matches_snap() {
+  if [ -e "$1.absent" ]; then
+    [ ! -e "$2" ] && [ ! -L "$2" ]
+  else
+    [ -f "$2" ] && [ ! -L "$2" ] && cmp -s "$1" "$2"
+  fi
+}
+
+# hooks_listing <dir> — _gil_list_hooks with the dir prefix stripped, so two
+# hooks dirs compare by relative path, mode bit and checksum.
+hooks_listing() {
+  _gil_list_hooks "$1" | awk -v p="$1/" 'index($0, p) == 1 { $0 = substr($0, length(p) + 1) } { print }'
+}
+
+# shared_matches — 0 when the shared common-dir files equal the shared
+# snapshot (this run's own, or the published baseline).
+shared_matches() {
+  local s="$SNAP/shared" n
+  for n in config exclude attributes; do
+    matches_snap "$s/$n" "$(shared_dst "$n")" || return 1
+  done
+  if [ -e "$s/hooks.absent" ]; then
+    [ ! -e "$COMMONDIR/hooks" ] && [ ! -L "$COMMONDIR/hooks" ] || return 1
+  else
+    [ "$(hooks_listing "$s/hooks")" = "$(hooks_listing "$COMMONDIR/hooks")" ] || return 1
+  fi
+  return 0
+}
+
+# git_dirs_back — 0 when git resolves this checkout to the pre-launch git dir
+# and common dir again (read unpinned: what the owner's next git command sees).
+git_dirs_back() {
+  local gd cd
+  gd="$(_gil_abs_dir "$WT" --absolute-git-dir)"
+  cd="$(_gil_abs_dir "$WT" --git-common-dir)"
+  [ -n "$cd" ] || cd="$gd"
+  [ -n "$gd" ] && [ "$gd" = "$GITDIR" ] && [ "$cd" = "$COMMONDIR" ]
+}
+
+# config_back — 0 when the git dirs resolve as before launch AND the config git
+# loads (common config and config.worktree, included files followed) equals the
+# shared snapshot / own snapshot. The precondition for ANY index or tree
+# command after a tamper: a filter, textconv or process driver can only come
+# from config, so with this config no driver the provider wrote can run.
+config_back() {
+  git_dirs_back || { rnote "the checkout's git dir or common dir still resolves elsewhere"; return 1; }
+  matches_snap "$SNAP/shared/config" "$COMMONDIR/config" \
+    && [ "$(common_config_listing)" = "$(cat "$SNAP/shared/common-config.list" 2>/dev/null)" ] \
+    || { rnote "the common config (or a file it includes) differs from the baseline"; return 1; }
+  matches_snap "$SNAP/own/config.worktree" "$GITDIR/config.worktree" \
+    && [ "$(worktree_config_listing)" = "$(cat "$SNAP/own/worktree-config.list" 2>/dev/null)" ] \
+    || { rnote "config.worktree (or a file it includes) differs from the snapshot"; return 1; }
+  return 0
+}
+
+# restore_git_state — the git state back, in the header's RESTORE order: the
+# checkout's pointers, config.worktree, the shared files (from SNAP/shared:
+# this run's own snapshot when no other run was live at launch, else the
+# published baseline — never a snapshot that may hold a sibling's plant), then
+# HEAD and the own branch ref. 0 = everything put back; 1 = something could not
+# be (index and tree commands are still safe); 2 = the git dirs or config did
+# not come back, so NO index or tree command may run.
 restore_git_state() {
-  local rc=0 name dst
-  for name in config config.worktree exclude; do
-    case "$name" in
-      config) dst="$COMMONDIR/config" ;;
-      config.worktree) dst="$GITDIR/config.worktree" ;;
-      exclude) dst="$COMMONDIR/info/exclude" ;;
-    esac
-    if [ -e "$SNAP/$name.absent" ]; then
-      if [ -e "$dst" ] || [ -L "$dst" ]; then rm -f "$dst" 2>/dev/null || rc=1; fi
-    else
-      rm -f "$dst" 2>/dev/null
-      mkdir -p "${dst%/*}" 2>/dev/null
-      cp -p "$SNAP/$name" "$dst" 2>/dev/null || rc=1
-    fi
+  local rc=0 n
+  if [ -e "$SNAP/own/gitfile" ]; then
+    if [ -d "$WT/.git" ] && [ ! -L "$WT/.git" ]; then launch_provider_cli_rmtree "$WT/.git"; fi
+    put_back "$SNAP/own/gitfile" "$WT/.git" || { rc=1; rnote "the .git gitfile could not be put back"; }
+  elif [ ! -d "$WT/.git" ] || [ -L "$WT/.git" ]; then
+    rc=1; rnote "the checkout's .git directory was replaced"
+  fi
+  put_back "$SNAP/own/commondir" "$GITDIR/commondir" || { rc=1; rnote "the commondir file could not be put back"; }
+  put_back "$SNAP/own/config.worktree" "$GITDIR/config.worktree" || { rc=1; rnote "config.worktree could not be put back"; }
+  for n in config exclude attributes; do
+    put_back "$SNAP/shared/$n" "$(shared_dst "$n")" || { rc=1; rnote "the common $n could not be put back"; }
   done
   launch_provider_cli_rmtree "$COMMONDIR/hooks"
-  if [ -e "$COMMONDIR/hooks" ] || [ -L "$COMMONDIR/hooks" ]; then rc=1; fi
-  if [ ! -e "$SNAP/hooks.absent" ]; then
-    cp -pRP "$SNAP/hooks" "$COMMONDIR/hooks" 2>/dev/null || rc=1
+  if [ -e "$COMMONDIR/hooks" ] || [ -L "$COMMONDIR/hooks" ]; then rc=1; rnote "the common hooks dir could not be removed"; fi
+  if [ ! -e "$SNAP/shared/hooks.absent" ]; then
+    cp -pRP "$SNAP/shared/hooks" "$COMMONDIR/hooks" 2>/dev/null || { rc=1; rnote "the common hooks dir could not be put back"; }
   fi
   if [ -n "$PRE_REF" ]; then
-    wgit update-ref "$PRE_REF" "$PRE_SHA" >/dev/null 2>&1 || rc=1
-    wgit symbolic-ref HEAD "$PRE_REF" >/dev/null 2>&1 || rc=1
+    rgit update-ref "$PRE_REF" "$PRE_SHA" >/dev/null 2>&1 || rc=1
+    rgit symbolic-ref HEAD "$PRE_REF" >/dev/null 2>&1 || rc=1
   else
-    wgit update-ref --no-deref HEAD "$PRE_SHA" >/dev/null 2>&1 || rc=1
+    rgit update-ref --no-deref HEAD "$PRE_SHA" >/dev/null 2>&1 || rc=1
   fi
+  config_back || return 2
   return $rc
+}
+
+# fp_select <fingerprint> <sections...> — only the named sections.
+fp_select() {
+  local f="$1"; shift
+  awk -v want=" $* " '
+    /^[a-z-]+:$/ { sec = substr($0, 1, length($0) - 1); keep = index(want, " " sec " ") > 0 }
+    keep { print }
+  ' "$f"
+}
+
+# verify_git_state <fp_after> <git_restored:0|1> — 0 when the git state is back.
+# After a restore from a published baseline (another run was live at launch) the
+# shared files are checked against that baseline and only this checkout's own
+# sections against the launch fingerprint, whose shared part may hold a
+# sibling's plant; otherwise the whole fingerprint must match.
+verify_git_state() {
+  if [ "$2" = "1" ] && [ "$SHARED_AT_LAUNCH" = "1" ]; then
+    local own="refs head worktree-config-cksum git-dirs hooks-path"
+    [ "$(fp_select "$FP_BEFORE" $own)" = "$(fp_select "$1" $own)" ] && shared_matches
+    return
+  fi
+  cmp -s "$FP_BEFORE" "$1"
 }
 
 # finish_post_launch <status> <notes> — evaluate the run, restore when not ok,
 # write the result. Never exits (the EXIT trap calls it too).
 finish_post_launch() {
-  local status="$1" notes="$2" fp_after changes restored="false" tnotes
+  local status="$1" notes="$2" fp_after changes restored="false" tnotes grc=0 git_restored=0 prc
   fp_after="$SNAP/fingerprint.after"
   git_integrity_fingerprint "$WT" own > "$fp_after" 2>/dev/null
   if ! cmp -s "$FP_BEFORE" "$fp_after"; then
     tnotes="$(tamper_notes "$FP_BEFORE" "$fp_after")"
     status="write_git_tampered"
     notes="git state changed during the launch: ${tnotes:-unnamed change}"
-    # Config and hooks go back BEFORE any command that reads the index or tree.
-    restore_git_state || notes="$notes; git state restore incomplete"
+    # The git state goes back BEFORE any command that reads the index or tree.
+    RESTORE_NOTES=""
+    restore_git_state; grc=$?; git_restored=1
+    [ "$grc" != "0" ] && notes="$notes; git state restore incomplete${RESTORE_NOTES:+: $RESTORE_NOTES}"
+    if [ "$grc" = "2" ]; then
+      notes="$notes; no index or tree command was run (git would not load the pre-launch git dir and config), so changed_files was not measured and the tree was not reset; restored: false"
+      write_json "write_git_tampered" "[]" "false" "$notes"
+      return 0
+    fi
   fi
   changes="$(changed_files_json)"
   if [ "$status" = "ok" ]; then
-    write_json "ok" "$changes" "false"
-    return 0
+    changed_files_list | protected_paths > "$SNAP/protected" 2>/dev/null
+    prc=$?
+    if [ "$prc" = "0" ] && [ ! -s "$SNAP/protected" ]; then
+      write_json "ok" "$changes" "false"
+      return 0
+    fi
+    status="write_protected_path"
+    if [ "$prc" != "0" ]; then
+      notes="the test-integrity guard could not judge the changed files (guard script or jq missing, or a guard error), so they count as protected"
+    else
+      notes="the provider changed paths the test-integrity guard protects: $(tr '\n' ' ' < "$SNAP/protected" | sed 's/ $//')"
+    fi
   fi
   if tree_restore "$PRE_SHA"; then
     git_integrity_fingerprint "$WT" own > "$fp_after" 2>/dev/null
-    if cmp -s "$FP_BEFORE" "$fp_after"; then
+    if verify_git_state "$fp_after" "$git_restored"; then
       restored="true"
     else
       notes="$notes; git state still differs from the pre-launch snapshot after the restore: $(tamper_notes "$FP_BEFORE" "$fp_after")"

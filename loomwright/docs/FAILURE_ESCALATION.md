@@ -29,7 +29,7 @@ Execute Manager retries ONCE in same worktree
 
 | Worker error | Retry | Then |
 |---|---|---|
-| `write_seat_failed:<write_status>` (a `write-run.sh` pre-launch refusal, `write_timeout` or `write_failed`), or `write_seat_failed:post_edit_gate` (the launch returned `ok`, a post-edit gate then failed, and the worker ran `write-run.sh --restore`) | ONE retry in the same worktree, which `write-run.sh` (or `--restore`) already put back at the pre-launch commit. Same provider; the retry prompt carries the previous error and gate output. Never a Claude edit mid-run | the retry-fails path above |
+| `write_seat_failed:<write_status>` (a `write-run.sh` pre-launch refusal, `write_timeout`, `write_failed` or `write_protected_path`), or `write_seat_failed:post_edit_gate` (the launch returned `ok`, a post-edit gate then failed, and the worker ran `write-run.sh --restore`) | ONE retry in the same worktree, which `write-run.sh` (or `--restore`) already put back at the pre-launch commit. Same provider; the retry prompt carries the previous error and gate output. Never a Claude edit mid-run | the retry-fails path above |
 | `write_seat_tampered: <write-run notes>` (`write_git_tampered`: the provider committed or rewired git) | none | **stop the whole run**: no further worker spawn, no Claude fallback, no merge, no finalize. Already-running Parallel-Path workers finish on their own bound; the run ends through Phase 4.5's completion tail with `SUPERVISOR_RESULT` `status: failed`, `error: "write_seat_tampered"`, and the brief moves to `failed/` (never resumable). The notes go to the owner (`agents/supervisor.md` §"Write-seat stops") |
 
 ---
