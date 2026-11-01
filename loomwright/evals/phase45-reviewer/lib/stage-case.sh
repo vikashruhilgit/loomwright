@@ -79,7 +79,9 @@ export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=phase45-replay GIT_AUTHOR_EMAIL=pha
 SRC_GIT() { git -C "$REPO" -c diff.noprefix=false -c diff.mnemonicPrefix=false -c color.ui=never "$@"; }
 G() { git -C "$W" -c core.autocrlf=false -c core.safecrlf=false -c commit.gpgSign=false "$@"; }
 { G init -q && G symbolic-ref HEAD refs/heads/replay; } >/dev/null 2>&1 || die "$CASE_ID: git init failed in $W"
-{ mkdir -p "$W/.git/info" && printf '.eval/\n' >> "$W/.git/info/exclude"; } || die "$CASE_ID: cannot write .git/info/exclude"
+X="$W/.git/info/exclude"   # a template exclude with an unterminated last line would glue `.eval/` onto it
+{ mkdir -p "$W/.git/info" && { [ ! -s "$X" ] || [ -z "$(tail -c 1 "$X")" ] || printf '\n' >> "$X"; } \
+  && printf '.eval/\n' >> "$X"; } || die "$CASE_ID: cannot write .git/info/exclude"
 KEEP_OUT=(':(exclude)loomwright/evals/phase45-reviewer' ':(exclude)docs/evidence/phase45-reviewer-*')
 SRC_GIT archive --format=tar "$BASE_SHA" -- . "${KEEP_OUT[@]}" | tar -xf - -C "$W" || die "$CASE_ID: git archive $BASE_SHA failed"
 { G add -A && G commit -q --allow-empty -m "replay base: $BASE_SHA (PR #$PR)"; } >/dev/null 2>&1 \

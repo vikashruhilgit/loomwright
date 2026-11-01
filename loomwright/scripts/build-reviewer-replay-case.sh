@@ -285,6 +285,8 @@ printf '%s\n' "$YAML" > "$CASE_DIR/case.yaml" || cleanup_case "cannot write case
 if [ ! -f "$CORPUS" ]; then printf '%s\n' "$HEADER" > "$CORPUS" || cleanup_case "cannot create $CORPUS"; fi
 if [ "$KIND" = control ]; then row="$CASE_ID${TAB}$PR${TAB}control${TAB}${TAB}"
 else row="$CASE_ID${TAB}$PR${TAB}miss${TAB}$EXPECTED${TAB}$FLOOR"; fi
+# an unterminated last line (a hand edit) would glue the new row onto it: terminate it first, never a blank line
+if [ -n "$(tail -c 1 "$CORPUS")" ]; then printf '\n' >> "$CORPUS" || cleanup_case "cannot append to $CORPUS"; fi
 printf '%s\n' "$row" >> "$CORPUS" || cleanup_case "cannot append to $CORPUS"
 echo "wrote: ${CASE_DIR#"$REPO"/}/ (case.env, case.yaml, scaffold.sh)"
 echo "appended: ${CORPUS#"$REPO"/} row $CASE_ID"

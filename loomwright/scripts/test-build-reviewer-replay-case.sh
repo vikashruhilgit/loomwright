@@ -234,6 +234,19 @@ printf 'not a header\n' > "$WORK/badcorp"; cp "$CORP" "$WORK/goodcorp"; cp "$WOR
 refuse "a corpus table with a foreign header" "not the corpus header" --pr 105 --file e.txt --confirm
 cp "$WORK/goodcorp" "$CORP"
 
+# an unterminated last line (a hand edit) — after rows, and header-only — gets its newline before the new row,
+# never a glued row and never a blank line; each leg is undone so later legs see the 01/02 state
+ROW105="03-miss-pr105${TAB}105${TAB}miss${TAB}e.txt${TAB}HIGH"
+for leg in rows header-only; do
+  if [ "$leg" = rows ]; then printf '%s' "$(cat "$WORK/goodcorp")" > "$CORP"; { cat "$WORK/goodcorp"; printf '%s\n' "$ROW105"; } > "$WORK/want"
+  else printf '%s' "$HDR" > "$CORP"; printf '%s\n%s\n' "$HDR" "$ROW105" > "$WORK/want"; fi
+  if [ -n "$(tail -c 1 "$CORP")" ] && run --pr 105 --file e.txt --confirm && cmp -s "$CORP" "$WORK/want"; then
+    ok "B --confirm onto an unterminated corpus table ($leg) terminates the last line first: one new row, no blank line"
+  else no "B unterminated corpus ($leg): $(tr '\t\n' '>|' < "$CORP") $(head -n 1 "$WORK/err")"; fi
+  rm -rf "$SS/03-miss-pr105"
+done
+cp "$WORK/goodcorp" "$CORP"
+
 # the written scaffold stages through the suite's stager
 SB="$WORK/sandbox"; mkdir -p "$SB"
 if ( cd "$SB" && bash "$SS/02-control-pr102/scaffold.sh" ) > "$WORK/stage.log" 2>&1; then

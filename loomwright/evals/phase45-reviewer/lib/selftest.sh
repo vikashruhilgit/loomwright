@@ -23,7 +23,8 @@
 #       no expectation (`.eval/` is exactly case-id/base_sha/head_sha/review-prompt.md, no corpus table, no
 #       suite dir, no expected-file token); the source repo is untouched; a nonexistent sha ⇒ `.eval/unstageable`
 #   M   lib/summarize.sh over the fixture corpus + kept sandboxes ⇒ caught: 1/4, unstageable: 1, no_reply: 1,
-#       noise: 1 BLOCKING/HIGH on 1 controls, and a `?` row for the case with no kept sandbox
+#       noise: 1 BLOCKING/HIGH on 1 controls, and a `?` row for the case with no kept sandbox; the same
+#       table with its last row unterminated ⇒ still caught: 1/4
 #   R   lib/run.sh with a PATH stub shadowing `claude` (exit 1): non-zero, the missing-tool line on stderr, no
 #       `caught:` line, and the stub's marker proves the stub was the binary invoked
 # bash 3.2 + BSD userland + git + jq + python3.
@@ -168,7 +169,7 @@ for e in "$SUITE"/[0-9]*/case.env; do
 done
 RC="$REPO/docs/evidence/phase45-reviewer-corpus.tsv"
 if [ -f "$RC" ]; then
-  while IFS="$TAB" read -r id _pr kind exp _floor; do
+  while IFS="$TAB" read -r id _pr kind exp _floor || [ -n "$id" ]; do   # an unterminated last row is still checked
     [ "$kind" = miss ] && [ -n "$exp" ] || continue
     hit="$(grep -rlF -- "$exp" "$SUITE"/[0-9]*/ 2>/dev/null | head -n 1)"
     [ -z "$hit" ] && ok "Y $id's expected file is in no case dir" || no "Y $id's expected file leaks into the plugin: $hit"
@@ -273,6 +274,17 @@ if sum="$(bash "$LIB/summarize.sh" "$WORK/eval.json" "$SUITE" "$SC" 2>"$WORK/sum
   done
 else
   no "M summarize.sh failed: $(head -n 3 "$WORK/sum.err" | tr '\n' ' ')"
+fi
+# a corpus table whose LAST row (a caught miss) has no trailing newline: the row is still read and still in Y
+SCU="$WORK/corpus-unterminated.tsv"
+{ grep -v '^90-' "$SC"; grep '^90-' "$SC" | tr -d '\n'; } > "$SCU"
+if [ -n "$(tail -c 1 "$SCU")" ] && sum="$(bash "$LIB/summarize.sh" "$WORK/eval.json" "$SUITE" "$SCU" 2>"$WORK/sum.err")"; then
+  grep -qxF "caught: 1/4" <<<"$sum" && grep -qF "| 90-miss-pr990 | miss | 990 | CAUGHT |" <<<"$sum" \
+    && ! grep -qF "90-miss-pr990 | ? | ? | NOT_IN_CORPUS" <<<"$sum" \
+    && ok "M an unterminated last corpus row is still a case (caught: 1/4, its CAUGHT row printed)" \
+    || no "M an unterminated last corpus row was dropped: $(printf '%s\n' "$sum" | grep -E '^caught|90-miss' | tr '\n' ' ')"
+else
+  no "M unterminated-corpus fixture: not unterminated, or summarize.sh failed: $(head -n 2 "$WORK/sum.err" | tr '\n' ' ')"
 fi
 # a grader that cannot grade: every graded row reads `?`, a miss stays in Y as not caught, nothing is guessed
 printf '#!/usr/bin/env bash\necho "grader broke" >&2\nexit 2\n' > "$WORK/broken-grade.sh"

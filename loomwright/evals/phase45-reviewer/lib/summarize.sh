@@ -59,7 +59,9 @@ done
 caught=0; denom=0; unstageable=0; no_reply=0; noise_sum=0; controls=0
 echo "| case | kind | pr | result | noise | turns | cost USD |"
 echo "|---|---|---|---|---|---|---|"
-while IFS="$TAB" read -r id pr kind _exp _floor; do
+# `|| [ -n "$id" ]`: a last row with no trailing newline makes read return 1 with the row already split — it
+# is still a case and still counts in Y (grade.sh and the NOT_IN_CORPUS check read the table with awk, which sees it)
+while IFS="$TAB" read -r id pr kind _exp _floor || [ -n "$id" ]; do
   [ -n "$id" ] && [ "$id" != case_id ] || continue
   awk -F "$TAB" -v id="$id" '$1 == id' "$T/map" > "$T/runs"
   if [ ! -s "$T/runs" ]; then
