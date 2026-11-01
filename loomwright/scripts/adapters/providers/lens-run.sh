@@ -150,7 +150,8 @@
 #         — if it fails, or any remote remains, the provider CLI is never
 #         started (`lens_unparseable`).
 #     (d) post-run integrity fingerprint (working tree + the `.git` state
-#         listed above). Any delta is `lens_mutated_tree`.
+#         listed above; git_integrity_fingerprint in git-integrity-lib.sh,
+#         refs scope `all`). Any delta is `lens_mutated_tree`.
 #     (e) a wall-clock bound on the provider CLI; the process group is
 #         signaled TERM then KILL on expiry so cleanup is not racing a
 #         hung child.
@@ -452,38 +453,17 @@ fi
 
 # Snapshot security-relevant .git state AFTER isolation is established and
 # BEFORE the CLI runs. Compared after the CLI; any delta is lens_mutated_tree
-# even when `git status --porcelain` is empty.
-git_integrity_fingerprint() {
-  local repo="$1"
-  {
-    printf 'remotes:\n'
-    git -C "$repo" remote -v 2>/dev/null | sort
-    printf 'local-config:\n'
-    git -C "$repo" config --local --list 2>/dev/null | sort
-    printf 'config-cksum:\n'
-    if [ -f "$repo/.git/config" ]; then
-      cksum < "$repo/.git/config" 2>/dev/null
-    fi
-    printf 'refs:\n'
-    git -C "$repo" show-ref 2>/dev/null | sort
-    printf 'head:\n'
-    git -C "$repo" rev-parse HEAD 2>/dev/null
-    printf 'hooks:\n'
-    if [ -d "$repo/.git/hooks" ]; then
-      find "$repo/.git/hooks" \( -type f -o -type l \) ! -name '*.sample' -print 2>/dev/null \
-        | sort \
-        | while IFS= read -r hookf; do
-            rel="${hookf#"$repo"/}"
-            if [ -x "$hookf" ]; then hx=1; else hx=0; fi
-            printf '%s x=%s %s\n' "$rel" "$hx" "$(cksum < "$hookf" 2>/dev/null)"
-          done
-    fi
-  }
-}
+# even when `git status --porcelain` is empty. git_integrity_fingerprint lives in
+# the shared git-integrity-lib.sh beside this file (write-run.sh sources it too);
+# refs scope `all`: this sandbox is throwaway, so every ref change is the CLI's.
+INTEGRITY_LIB="$SCRIPT_DIR/git-integrity-lib.sh"
+[ -r "$INTEGRITY_LIB" ] || emit_result "lens_unparseable" "[]" "git-integrity-lib.sh is missing - the sandbox integrity check cannot run"
+# shellcheck disable=SC1090
+. "$INTEGRITY_LIB"
 
 INTEGRITY_BEFORE="$(mktemp "${TMPDIR:-/tmp}/loomwright-lens-int-XXXXXX" 2>/dev/null)"
 [ -n "$INTEGRITY_BEFORE" ] || emit_result "lens_unparseable" "[]" "could not allocate integrity snapshot file"
-git_integrity_fingerprint "$WT_PATH" > "$INTEGRITY_BEFORE" 2>/dev/null
+git_integrity_fingerprint "$WT_PATH" all > "$INTEGRITY_BEFORE" 2>/dev/null
 
 # ---- compose the prompt (shared across all providers) -----------------------
 PROMPT_CONTENT="$(
@@ -533,7 +513,7 @@ lens_parse_failure() {
 
 # ---- mutation / .git-integrity check (fail-closed, discard result) ----------
 MUTATION="$(git -C "$WT_PATH" status --porcelain 2>/dev/null)"
-INTEGRITY_AFTER="$(git_integrity_fingerprint "$WT_PATH" 2>/dev/null)"
+INTEGRITY_AFTER="$(git_integrity_fingerprint "$WT_PATH" all 2>/dev/null)"
 INTEGRITY_PREV="$(cat "$INTEGRITY_BEFORE" 2>/dev/null)"
 if [ -n "$MUTATION" ] || [ "$INTEGRITY_AFTER" != "$INTEGRITY_PREV" ]; then
   emit_result "lens_mutated_tree" "[]" "throwaway sandbox working tree or .git internals changed after the provider CLI ran; result discarded"

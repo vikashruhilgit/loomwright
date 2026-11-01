@@ -2,9 +2,9 @@
 # launch-provider-cli.sh — SOURCED library (never executed, never named
 # `provider-*.sh`: setup-providers.sh globs that pattern and lens-run.sh would
 # accept it as a provider). It is the ONE place that starts a provider CLI.
-# Callers: lens-run.sh (beside this file) and setup-providers.sh `check` (which
-# resolves this file from its OWN script dir, never from
-# LOOMWRIGHT_PROVIDERS_DIR).
+# Callers: lens-run.sh and write-run.sh (beside this file; write-run.sh only
+# ever uses `isolated`) and setup-providers.sh `check` (which resolves this file
+# from its OWN script dir, never from LOOMWRIGHT_PROVIDERS_DIR).
 #
 # API
 #   launch_provider_cli <home-mode> <timeout-secs> <cwd> <stdout-file> <stderr-file> <cli> [argv...]
@@ -39,6 +39,15 @@
 #                         isolated HOME and made read-only (0400). An absolute
 #                         path, a `.` / `..` / empty segment, or a character
 #                         outside [A-Za-z0-9._/-] is refused and never crosses.
+#                         So is any path whose FIRST segment is the harness
+#                         config dir `.claude` (any letter case: a default
+#                         macOS volume is case-insensitive), e.g.
+#                         `.claude/settings.json`: a provider CLI that reads
+#                         that file (Grok Build does) takes its
+#                         `permissions.defaultMode` over its own
+#                         `--permission-mode` flag, so one copied in would undo
+#                         a write seat's permission pin. Nothing under it
+#                         crosses, whatever a provider file declares.
 #   PROVIDER_LOGIN_ENV    array of env var names ([A-Z_][A-Z0-9_]*). Each one
 #                         that is SET in the caller is passed to the child, in
 #                         both modes. PATH, HOME and TMPDIR are refused (they
@@ -83,6 +92,10 @@ _lpc_valid_rel() {
   esac
   case "/$1/" in
     */../*|*/./*) return 1 ;;
+  esac
+  # The harness config dir never crosses (see LOGIN PASS-THROUGH above).
+  case "$1" in
+    [.][Cc][Ll][Aa][Uu][Dd][Ee]|[.][Cc][Ll][Aa][Uu][Dd][Ee]/*) return 1 ;;
   esac
   return 0
 }

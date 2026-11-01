@@ -14,6 +14,30 @@
 #   [P] Permissions           https://docs.x.ai/build/features/permissions    (read 2026-10-27)
 #   [E] Enterprise            https://docs.x.ai/build/enterprise              (read 2026-10-27)
 #   [O] Get Started           https://docs.x.ai/build/overview                (read 2026-10-27)
+#   [G] the CLI's own shipped user guide, `.grok/docs/user-guide/22-permissions-and-safety.md`
+#       under the home dir (Grok Build 1.0.70; read 2026-11-01), §"Tool Names" and
+#       §"Operations That Never Prompt by Default"
+#
+# INVOCATION (write seat, write-run.sh; [H], [E], [G]):
+#   grok --no-auto-update --output-format json [-m <model>] --permission-mode dontAsk \
+#        --allow Read --allow Grep --allow Glob --allow Edit --allow Write -p "<prompt>"
+# The lens shape plus the pin mode and one `--allow` rule per file read/edit tool,
+# prompt still LAST. No shell (`Bash`), web, MCP or `*` rule is allowed, so the
+# provider cannot run tests: the Claude task that called write-run.sh runs them.
+# Where each tool name comes from:
+#   - `Edit`, `Write`: the 2026-10-31 hand probe on 1.0.70 (source requirement
+#     provider-routing/04, "Probe evidence") ENFORCED them as deny-rule names
+#     (`--deny Write --deny Edit --deny Bash` -> no file written).
+#   - `Read`, `Grep`, `Glob`: [G] §"Tool Names" ("Recognized tool names: `Bash`,
+#     `Read`, `Edit` (and `Write`), `Grep` (and `Glob`), ..."); not probed here.
+#     A wrong name is skipped by the CLI with a warning ([G]), so it can only
+#     narrow what the provider may do, never widen it.
+# Honest limit ([G] §"Operations That Never Prompt by Default"): under
+# `dontAsk` the CLI still runs its built-in read-only tools and read-only shell
+# commands (`ls`, `cat`, `git status`, `git log`, ..., plus bare `mkdir` and
+# `touch`) without any allow rule. That is the vendor's floor, not something
+# this argv grants; write-run.sh's git fingerprint and tree restore are the
+# checks on what the run left behind.
 #
 # INVOCATION (lens, [H]):
 #   grok --no-auto-update --output-format json [-m <model>] -p "<composed prompt>"
@@ -62,6 +86,20 @@ provider_build_argv() {
     PROVIDER_ARGV+=("-m" "$MODEL")
   fi
   PROVIDER_ARGV+=("-p" "$PROMPT_CONTENT")
+}
+
+# provider_write_argv — the WRITE-seat argv (write-run.sh): reads MODEL /
+# PROMPT_CONTENT, sets PROVIDER_ARGV, prompt LAST. Tool names and their sources:
+# INVOCATION (write seat) in the header above.
+provider_write_argv() {
+  PROVIDER_ARGV=("--no-auto-update" "--output-format" "json")
+  if [ -n "${MODEL:-}" ]; then
+    PROVIDER_ARGV+=("-m" "$MODEL")
+  fi
+  PROVIDER_ARGV+=("--permission-mode" "dontAsk" \
+    "--allow" "Read" "--allow" "Grep" "--allow" "Glob" \
+    "--allow" "Edit" "--allow" "Write" \
+    "-p" "$PROMPT_CONTENT")
 }
 
 provider_extract_text() {
