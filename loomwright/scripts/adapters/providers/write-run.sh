@@ -43,8 +43,11 @@
 #     "write_status": <one of the closed list below>,
 #     "provider": "<name>", "model": "<model>" | null,
 #     "changed_files": [ "<path>", ... ],   # always an array: the paths the
-#                       # provider changed (tracked edits + untracked
-#                       # non-ignored files), measured BEFORE the tree restore
+#                       # provider changed (tracked edits + every untracked
+#                       # file absent from the pre-launch untracked snapshot,
+#                       # IGNORED OR NOT — a .gitignore it wrote hides nothing
+#                       # here; a new file inside an already-ignored dir counts
+#                       # too), measured BEFORE the tree restore
 #                       # (and after the git dirs and config are verified back);
 #                       # [] on a pre-launch refusal, and when the git dirs or
 #                       # config could not be put back (then no index or tree
@@ -92,7 +95,10 @@
 #     write_protected_path
 #                         the CLI ended `ok` with an unchanged fingerprint, but
 #                         changed_files holds a path the test-integrity guard
-#                         protects, or the guard could not be run on them (fail
+#                         protects, or a `.gitignore` / `.gitattributes` at any
+#                         depth (provider-authored ignore or attribute rules are
+#                         never kept), or the guard could not be run on them, or
+#                         the untracked files could not be listed (fail
 #                         closed). The judge is guard-test-integrity.sh itself
 #                         (its Write|Edit matcher, fed one synthetic Write
 #                         payload per changed path: the ONE home of the
@@ -114,10 +120,25 @@
 #                         tree_restored: false), never a softer one.
 #   The provider's reply text is never read for the status.
 #
-# RESTORE — on every non-`ok` post-launch status: the tracked tree goes back to
-# the pre-launch HEAD (`git reset --hard`) and untracked non-ignored files are
-# removed (`git clean -ffd`). The tree was verified clean before launch, so
-# everything removed is the provider's. On write_git_tampered the git state goes
+# UNTRACKED SNAPSHOT — just before launch, every untracked file is listed with
+# `git ls-files --others` WITHOUT --exclude-standard (file granularity, no ignore
+# rules consulted). The tree is clean then, so that list is the ignored content
+# that already exists. After launch, an untracked path absent from it is the
+# provider's whatever the ignore rules then say: it is in changed_files, put to
+# the guard, and removed by the restore. A file another process creates in the
+# checkout while the CLI runs counts the same way (the checkout is the
+# provider's for the launch).
+#
+# RESTORE — on every non-`ok` post-launch status: first every new untracked
+# FILE (absent from the untracked snapshot, ignored or not) is removed — so a
+# planted .gitignore / .gitattributes is gone before git reads rules again —
+# then the tracked tree goes back to the pre-launch HEAD (`git reset --hard`)
+# and untracked non-ignored files are removed (`git clean -ffd`, no -x). Only
+# paths absent from the snapshot are ever removed: content that existed before
+# the launch, ignored or not, is never touched. A new nested repository (one
+# `dir/` entry) is never removed (it may be another process's worktree): it is
+# left, named in notes, and the restore reads incomplete. Verified afterwards
+# too: no new untracked path remains. On write_git_tampered the git state goes
 # back FIRST, in this order: (1) the checkout's own pointers — the `.git`
 # gitfile and the git dir's `commondir` file — from their byte snapshots, then
 # git must resolve the pre-launch git dir and common dir again; (2) the
@@ -144,8 +165,9 @@
 # only ever restored to (and verified against) that baseline, taken when no
 # provider was running. The registry is removed by the last run out.
 #
-# --restore MODE — `write-run.sh --restore <sha> --worktree <dir>`: the same
-# tree restore on its own, for a caller whose write-run returned `ok` but whose
+# --restore MODE — `write-run.sh --restore <sha> --worktree <dir>`: the tree
+# restore's reset and clean on their own (no untracked snapshot exists here, so
+# no new-file step — see HONEST LIMITS), for a caller whose write-run returned `ok` but whose
 # post-edit gate then failed. Starts no CLI. Refuses, changing nothing, when
 # HEAD is not <sha>. Prints ONE line of JSON to stdout and exits 0:
 #   {"restore_status": "ok" | "restore_head_moved" | "restore_failed",
@@ -156,9 +178,15 @@
 # lens-run.sh. There is no flag or environment bypass.
 #
 # HONEST LIMITS — the launcher is blast-radius reduction, not a sandbox: the CLI
-# can still write outside the worktree and reach the network. Gitignored paths
-# inside the worktree are neither checked by write_tree_dirty nor removed by the
-# restore. The `own` fingerprint scope (git-integrity-lib.sh) does not see a NEW
+# can still write outside the worktree and reach the network. PRE-EXISTING
+# gitignored content (e.g. `.supervisor/`) is not checked by write_tree_dirty,
+# and an edit to or deletion of it during the launch is neither detected nor
+# undone (only NEW untracked paths are, ignored or not). The untracked snapshot
+# lists every ignored file, so a huge ignored tree (node_modules) costs two
+# listings. --restore MODE has no snapshot: it removes untracked non-ignored
+# files only, so a new ignored file an `ok` launch left (named in that launch's
+# changed_files) stays. Ignore rules outside the checkout (the real HOME's
+# global excludes file) are trusted by the final `git clean`. The `own` fingerprint scope (git-integrity-lib.sh) does not see a NEW
 # branch or tag. A SIGKILL of this script skips the restore (hence the clamp)
 # and leaves its registry entry, which the next run prunes as a dead pid. While
 # a provider runs, anything it plants in shared git state is live for every
@@ -251,14 +279,56 @@ json_str() {
   printf '"%s"' "$s"
 }
 
-# tree_restore <sha> — reset the tracked tree to <sha> and remove untracked
-# non-ignored files. 0 when HEAD is <sha> and the tree is clean afterwards.
+# untracked_all <out> — every untracked file in the worktree, one path per line,
+# sorted, IGNORE RULES NOT CONSULTED (`ls-files --others` without
+# --exclude-standard: a .gitignore, info/exclude or core.excludesFile the
+# provider wrote cannot hide a path from it). File granularity: a file inside an
+# already-ignored dir is its own line. A nested repository is one `dir/` line.
+untracked_all() {
+  rgit ls-files -z --others > "$1.z" 2>/dev/null || return 1
+  tr '\0' '\n' < "$1.z" | env LC_ALL=C sort -u > "$1" 2>/dev/null || return 1
+  rm -f "$1.z" 2>/dev/null
+  return 0
+}
+
+# new_untracked — untracked paths absent from the pre-launch snapshot
+# ($SNAP/untracked.pre), ignored or not: the provider's new files.
+new_untracked() {
+  untracked_all "$SNAP/untracked.post" || return 1
+  env LC_ALL=C comm -13 "$SNAP/untracked.pre" "$SNAP/untracked.post"
+}
+
+# remove_new_untracked — remove every new untracked FILE (header §"RESTORE").
+# Only paths absent from the pre-launch snapshot are ever removed, so content
+# that was there before the launch (ignored or not) is never touched. A new
+# nested repository (`dir/`) is never removed: it may be another process's
+# worktree; it is left, and the restore then reads incomplete.
+remove_new_untracked() {
+  local p
+  new_untracked | while IFS= read -r p; do
+    case "$p" in ""|*/) continue ;; esac
+    case "/$p/" in */../*|*/./*) continue ;; esac
+    rm -f -- "$WT/$p" 2>/dev/null
+  done
+}
+
+# tree_restore <sha> [snapshot:1] — reset the tracked tree to <sha> and remove
+# untracked non-ignored files. With the snapshot flag (write mode), every new
+# untracked file — ignored or not — is removed FIRST (so a planted .gitignore or
+# .gitattributes is gone before reset and clean read the rules), and none may
+# remain afterwards. 0 when HEAD is <sha> and the tree is clean afterwards.
 tree_restore() {
-  local sha="$1"
+  local sha="$1" snap="${2:-0}"
+  [ "$snap" = "1" ] && remove_new_untracked
   rgit reset -q --hard "$sha" >/dev/null 2>&1 || return 1
   rgit clean -q -ffd >/dev/null 2>&1
   [ "$(rgit rev-parse HEAD 2>/dev/null)" = "$sha" ] || return 1
   [ -z "$(rgit status --porcelain --untracked-files=all 2>/dev/null)" ] || return 1
+  if [ "$snap" = "1" ]; then
+    local left
+    left="$(new_untracked)" || return 1
+    [ -z "$left" ] || return 1
+  fi
   return 0
 }
 
@@ -598,14 +668,22 @@ fi
 FP_BEFORE="$SNAP/fingerprint"
 git_integrity_fingerprint "$WT" own > "$FP_BEFORE" 2>/dev/null
 worktree_config_listing > "$SNAP/own/worktree-config.list" 2>/dev/null
+# The untracked set before launch (the tree is clean, so: the ignored files that
+# already exist). Everything untracked after launch that is not in it is the
+# provider's, whatever ignore rules say then.
+if ! untracked_all "$SNAP/untracked.pre"; then
+  write_json "write_failed" "[]" "true" "could not list the worktree's untracked files; no CLI was started"
+  exit 0
+fi
 
 # changed_files_list — the provider's changes, one path per line: tracked
-# changes against the pre-launch commit plus untracked non-ignored files.
+# changes against the pre-launch commit plus every untracked path absent from
+# the pre-launch snapshot (ignored or not — header §"OUTPUT").
 changed_files_list() {
   {
-    rgit diff --name-only -z "$PRE_SHA" -- 2>/dev/null
-    rgit ls-files -z --others --exclude-standard 2>/dev/null
-  } | tr '\0' '\n' | env LC_ALL=C sort -u
+    rgit diff --name-only -z "$PRE_SHA" -- 2>/dev/null | tr '\0' '\n'
+    new_untracked
+  } | env LC_ALL=C sort -u
 }
 
 # changed_files_json — changed_files_list as a JSON array.
@@ -846,18 +924,23 @@ finish_post_launch() {
   if [ "$status" = "ok" ]; then
     changed_files_list | protected_paths > "$SNAP/protected" 2>/dev/null
     prc=$?
+    # The untracked listing must have worked, or new files went unjudged.
+    new_untracked >/dev/null 2>&1 || prc=1
+    # A provider-authored ignore or attribute rules file, at any depth, is
+    # never kept: it would hide files from the caller's own status and commit.
+    changed_files_list | awk -F/ '$NF == ".gitignore" || $NF == ".gitattributes"' >> "$SNAP/protected" 2>/dev/null
     if [ "$prc" = "0" ] && [ ! -s "$SNAP/protected" ]; then
       write_json "ok" "$changes" "false"
       return 0
     fi
     status="write_protected_path"
     if [ "$prc" != "0" ]; then
-      notes="the test-integrity guard could not judge the changed files (guard script or jq missing, or a guard error), so they count as protected"
+      notes="the test-integrity guard could not judge the changed files (guard script or jq missing, a guard error, or the untracked files could not be listed), so they count as protected"
     else
-      notes="the provider changed paths the test-integrity guard protects: $(tr '\n' ' ' < "$SNAP/protected" | sed 's/ $//')"
+      notes="the provider changed paths the test-integrity guard protects, or a .gitignore / .gitattributes file: $(env LC_ALL=C sort -u "$SNAP/protected" | tr '\n' ' ' | sed 's/ $//')"
     fi
   fi
-  if tree_restore "$PRE_SHA"; then
+  if tree_restore "$PRE_SHA" 1; then
     git_integrity_fingerprint "$WT" own > "$fp_after" 2>/dev/null
     if verify_git_state "$fp_after" "$git_restored"; then
       restored="true"
@@ -866,6 +949,8 @@ finish_post_launch() {
     fi
   else
     notes="$notes; the tree could not be reset to $PRE_SHA and cleaned"
+    tnotes="$(new_untracked 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+    [ -n "$tnotes" ] && notes="$notes; new untracked paths left in place: $tnotes"
   fi
   if [ "$restored" != "true" ]; then
     # A restore that could not be completed is never a softer status.

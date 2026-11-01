@@ -48,6 +48,12 @@
 #      a redirect the restore cannot undo runs no index or tree command (G4)
 #   W. a provider edit to a guard-protected path (pytest.ini, .husky/) ->
 #      write_protected_path, tree restored, the guard's opt-out env ignored
+#   X. provider-authored ignore rules: an ok launch planting a self-ignoring
+#      sub/.gitignore beside a protected sub/pytest.ini -> write_protected_path,
+#      both gone (X1); a new .gitignore alone never stays (X1b); a non-ok launch
+#      planting the same -> both gone, tree_restored true (X2); a pre-existing
+#      ignored file survives every restore; a new nested repo under an ignored
+#      dir is left and the restore reads incomplete (X3)
 #   SB. two overlapping runs in sibling worktrees: the later run restores the
 #      shared files from the earlier run's baseline, so the hook the earlier
 #      run's restore removed is never re-planted; the registry is removed
@@ -122,6 +128,8 @@ git -C "$REPO" add -A
 git -C "$REPO" commit -q -m "scratch commit"
 # This repo ignores the harness settings dir, as the plugin's own repo does.
 mkdir -p "$REPO/.git/info"; printf '.claude/\n' >> "$REPO/.git/info/exclude"
+# An ignored dir the X cases use for pre-existing and new ignored content.
+printf 'ignored-cache/\n' >> "$REPO/.git/info/exclude"
 WT="$TMP/wt"; SIB="$TMP/wt-sib"
 git -C "$REPO" worktree add -q -b feat "$WT" 2>/dev/null
 git -C "$REPO" worktree add -q -b sib "$SIB" 2>/dev/null
@@ -458,6 +466,50 @@ reset_wt
 mkstub w2 "mkdir -p .husky" "printf 'exit 0\\n' > .husky/pre-commit"
 run_write w2 "$P_MAIN" worker
 assert_eq "W2 a .husky/ file is protected too" "write_protected_path:true" "$(jf w2 .write_status):$(jf w2 .tree_restored)"
+reset_wt
+
+echo ""
+echo "==== X: provider-authored ignore rules hide nothing from detection or restore ===="
+# A pre-existing ignored file (the repo's info/exclude ignores ignored-cache/) must
+# survive every restore below; only paths absent from the launch snapshot go.
+mkdir -p "$WT/ignored-cache"; printf 'keep\n' > "$WT/ignored-cache/pre-existing.txt"
+ut_all() { git -C "$WT" ls-files --others 2>/dev/null | tr '\n' ' ' | sed 's/ $//'; }
+# X1: an ok launch that plants sub/.gitignore ('*', which also ignores itself)
+# next to a guard-protected sub/pytest.ini.
+mkstub x1 "printf 'edit\\n' > src.txt" "printf '*\\n' > sub/.gitignore" "printf '[pytest]\\n' > sub/pytest.ini" \
+  "printf 'x\\n' > ignored-cache/new-in-ignored-dir.txt"
+run_write x1 "$P_MAIN" worker
+assert_eq "X1 write_protected_path, tree_restored true" "write_protected_path:true" "$(jf x1 .write_status):$(jf x1 .tree_restored)"
+assert_has "X1 notes name the guard-protected file" "$(jf x1 .notes)" "sub/pytest.ini"
+assert_has "X1 notes name the planted .gitignore" "$(jf x1 .notes)" "sub/.gitignore"
+assert_eq "X1 changed_files lists the ignored new files too" \
+  '["ignored-cache/new-in-ignored-dir.txt","src.txt","sub/.gitignore","sub/pytest.ini"]' "$(jfc x1 .changed_files)"
+assert_eq "X1 neither planted file is left" "absent:absent" \
+  "$( [ -e "$WT/sub/.gitignore" ] && echo present || echo absent):$( [ -e "$WT/sub/pytest.ini" ] && echo present || echo absent)"
+assert_eq "X1 only the pre-existing ignored file remains untracked" "ignored-cache/pre-existing.txt" "$(ut_all)"
+assert_eq "X1 the edit is gone, tree clean" "original:" "$(cat "$WT/src.txt"):$(tree_state)"
+# X1b: a .gitignore alone (no protected path) still never stays on ok.
+mkstub x1b "printf 'edit\\n' > src.txt" "printf 'hidden.txt\\n' > .gitignore" "printf 'h\\n' > hidden.txt"
+run_write x1b "$P_MAIN" worker
+assert_eq "X1b a new .gitignore reads write_protected_path, restored" "write_protected_path:true" "$(jf x1b .write_status):$(jf x1b .tree_restored)"
+assert_eq "X1b changed_files lists the hidden file" '[".gitignore","hidden.txt","src.txt"]' "$(jfc x1b .changed_files)"
+assert_eq "X1b only the pre-existing ignored file remains untracked" "ignored-cache/pre-existing.txt" "$(ut_all)"
+# X2: a non-ok launch (exit 3) that plants the same .gitignore plus a conftest.
+mkstub x2 "printf 'edit\\n' > src.txt" "printf '*\\n' > sub/.gitignore" "printf 'x = 1\\n' > sub/conftest.py" 'exit 3'
+run_write x2 "$P_MAIN" worker
+assert_eq "X2 write_failed, tree_restored true" "write_failed:true" "$(jf x2 .write_status):$(jf x2 .tree_restored)"
+assert_eq "X2 changed_files lists the ignored new files" '["src.txt","sub/.gitignore","sub/conftest.py"]' "$(jfc x2 .changed_files)"
+assert_eq "X2 neither planted file is left" "absent:absent" \
+  "$( [ -e "$WT/sub/.gitignore" ] && echo present || echo absent):$( [ -e "$WT/sub/conftest.py" ] && echo present || echo absent)"
+assert_eq "X2 the pre-existing ignored file is untouched" "keep:ignored-cache/pre-existing.txt" "$(cat "$WT/ignored-cache/pre-existing.txt" 2>/dev/null):$(ut_all)"
+# X3: a new nested repository under an ignored dir is never removed (it may be
+# another process's worktree); the restore then reads incomplete, never true.
+mkstub x3 "mkdir -p ignored-cache/nested" "git -C ignored-cache/nested init -q" "printf 'n\\n' > ignored-cache/nested/f.txt" 'exit 3'
+run_write x3 "$P_MAIN" worker
+assert_eq "X3 write_git_tampered, tree_restored false" "write_git_tampered:false" "$(jf x3 .write_status):$(jf x3 .tree_restored)"
+assert_has "X3 notes name the nested repository left in place" "$(jf x3 .notes)" "ignored-cache/nested/"
+assert_eq "X3 the nested repository is left" "present" "$( [ -e "$WT/ignored-cache/nested/f.txt" ] && echo present || echo absent)"
+rm -rf "$WT/ignored-cache"
 reset_wt
 
 echo ""
