@@ -90,19 +90,24 @@ _gil_cksum_file() {
 }
 
 # _gil_list_hooks <dir> — one `<path> x=<0|1> <cksum>` line per non-sample
-# regular file or symlink under <dir>, sorted.
+# regular file or symlink under <dir>, sorted. Paths are read NUL-delimited and
+# printed (below <dir>) with `\` as `\\` and a newline as `\n`, so a name holding a
+# newline stays one line and cannot forge another hook's line.
 _gil_list_hooks() {
-  local dir="$1" hookf hx
+  local dir="$1" hookf hx shown
   if [ -L "$dir" ]; then
     printf '%s link=%s\n' "$dir" "$(readlink "$dir" 2>/dev/null)"
     return 0
   fi
   [ -d "$dir" ] || return 0
-  find "$dir" \( -type f -o -type l \) ! -name '*.sample' -print 2>/dev/null \
-    | env LC_ALL=C sort \
-    | while IFS= read -r hookf; do
+  find "$dir" \( -type f -o -type l \) ! -name '*.sample' -print0 2>/dev/null \
+    | env LC_ALL=C sort -z \
+    | while IFS= read -r -d '' hookf; do
         if [ -x "$hookf" ]; then hx=1; else hx=0; fi
-        printf '%s x=%s %s\n' "$hookf" "$hx" "$(cksum < "$hookf" 2>/dev/null)"
+        shown="${hookf#"$dir"/}"
+        shown="${shown//\\/\\\\}"
+        shown="${shown//$'\n'/\\n}"
+        printf '%s/%s x=%s %s\n' "$dir" "$shown" "$hx" "$(cksum < "$hookf" 2>/dev/null)"
       done
 }
 

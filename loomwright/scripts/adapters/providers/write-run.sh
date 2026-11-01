@@ -98,8 +98,9 @@
 #                         protects, or a `.gitignore` / `.gitattributes` at any
 #                         depth (provider-authored ignore or attribute rules are
 #                         never kept), or the guard could not be run on them, or
-#                         the untracked files could not be listed (fail
-#                         closed). The judge is guard-test-integrity.sh itself
+#                         the changed or untracked files could not be listed —
+#                         a path holding a newline included, which is never
+#                         split into lines (fail closed). The judge is guard-test-integrity.sh itself
 #                         (its Write|Edit matcher, fed one synthetic Write
 #                         payload per changed path: the ONE home of the
 #                         protected list, never a copy here). Checked whether or
@@ -137,8 +138,11 @@
 # paths absent from the snapshot are ever removed: content that existed before
 # the launch, ignored or not, is never touched. A new nested repository (one
 # `dir/` entry) is never removed (it may be another process's worktree): it is
-# left, named in notes, and the restore reads incomplete. Verified afterwards
-# too: no new untracked path remains. On write_git_tampered the git state goes
+# left, named in notes, and the restore reads incomplete. Nothing is removed
+# when the untracked listing fails (a path holding a newline fails it rather
+# than forge lines), and only a regular file or symlink reached through real,
+# non-repository directories is ever removed (never through a symlink). Verified
+# afterwards too: the listing works and no new untracked path remains. On write_git_tampered the git state goes
 # back FIRST, in this order: (1) the checkout's own pointers — the `.git`
 # gitfile and the git dir's `commondir` file — from their byte snapshots, then
 # git must resolve the pre-launch git dir and common dir again; (2) the
@@ -284,11 +288,45 @@ json_str() {
 # --exclude-standard: a .gitignore, info/exclude or core.excludesFile the
 # provider wrote cannot hide a path from it). File granularity: a file inside an
 # already-ignored dir is its own line. A nested repository is one `dir/` line.
+# A path holding a newline cannot be one line: the listing FAILS (rc 1, empty
+# <out>) rather than split it into forged lines — every caller reads a failed
+# listing as "cannot judge", never as "nothing new".
 untracked_all() {
-  rgit ls-files -z --others > "$1.z" 2>/dev/null || return 1
+  : > "$1" 2>/dev/null || return 1
+  rgit ls-files -z --others > "$1.z" 2>/dev/null || { rm -f "$1.z" 2>/dev/null; return 1; }
+  z_has_newline "$1.z" && { rm -f "$1.z" 2>/dev/null; return 1; }
   tr '\0' '\n' < "$1.z" | env LC_ALL=C sort -u > "$1" 2>/dev/null || return 1
   rm -f "$1.z" 2>/dev/null
   return 0
+}
+
+# z_has_newline <file> — 0 when the NUL-delimited listing <file> holds a
+# newline byte (a path with an embedded newline), or cannot be read.
+z_has_newline() {
+  local n
+  [ -r "$1" ] || return 0
+  n="$(tr -cd '\n' < "$1" 2>/dev/null | wc -c | tr -d ' ')"
+  [ "$n" != "0" ]
+}
+
+# safe_rm_target <rel> — 0 when $WT/<rel> may be removed with `rm -f`: the leaf
+# is a regular file or a symlink (removing a link never follows it), and every
+# parent component between $WT and it is a real directory — not a symlink, and
+# not a nested repository (`ls-files --others` never lists a path inside one,
+# so such a path can only be forged).
+safe_rm_target() {
+  local rest="$1" cur="$WT" c
+  while :; do
+    case "$rest" in */*) ;; *) break ;; esac
+    c="${rest%%/*}"; rest="${rest#*/}"
+    [ -n "$c" ] || return 1
+    cur="$cur/$c"
+    [ -d "$cur" ] && [ ! -L "$cur" ] || return 1
+    [ -e "$cur/.git" ] || [ -L "$cur/.git" ] && return 1
+  done
+  [ -n "$rest" ] || return 1
+  cur="$cur/$rest"
+  [ -L "$cur" ] || { [ -f "$cur" ] && [ ! -d "$cur" ]; }
 }
 
 # new_untracked — untracked paths absent from the pre-launch snapshot
@@ -302,14 +340,21 @@ new_untracked() {
 # Only paths absent from the pre-launch snapshot are ever removed, so content
 # that was there before the launch (ignored or not) is never touched. A new
 # nested repository (`dir/`) is never removed: it may be another process's
-# worktree; it is left, and the restore then reads incomplete.
+# worktree; it is left, and the restore then reads incomplete. Nothing is
+# removed when the listing fails (a path with a newline included), and a path
+# safe_rm_target refuses (a directory, or reached through a symlink or a nested
+# repository) is left: the post-restore listing then still shows it, or fails,
+# and the restore reads incomplete.
 remove_new_untracked() {
   local p
-  new_untracked | while IFS= read -r p; do
+  new_untracked > "$SNAP/untracked.new" 2>/dev/null || return 1
+  while IFS= read -r p; do
     case "$p" in ""|*/) continue ;; esac
     case "/$p/" in */../*|*/./*) continue ;; esac
+    safe_rm_target "$p" || continue
     rm -f -- "$WT/$p" 2>/dev/null
-  done
+  done < "$SNAP/untracked.new"
+  return 0
 }
 
 # tree_restore <sha> [snapshot:1] — reset the tracked tree to <sha> and remove
@@ -678,12 +723,21 @@ fi
 
 # changed_files_list — the provider's changes, one path per line: tracked
 # changes against the pre-launch commit plus every untracked path absent from
-# the pre-launch snapshot (ignored or not — header §"OUTPUT").
+# the pre-launch snapshot (ignored or not — header §"OUTPUT"). rc 1 when either
+# listing failed — a path holding a newline included, which is never split into
+# lines: that listing's paths are then left out and the caller cannot judge.
 changed_files_list() {
-  {
-    rgit diff --name-only -z "$PRE_SHA" -- 2>/dev/null | tr '\0' '\n'
-    new_untracked
-  } | env LC_ALL=C sort -u
+  local rc=0
+  : > "$SNAP/changed.lines" 2>/dev/null || return 1
+  if rgit diff --name-only -z "$PRE_SHA" -- > "$SNAP/changed.z" 2>/dev/null \
+     && ! z_has_newline "$SNAP/changed.z"; then
+    tr '\0' '\n' < "$SNAP/changed.z" >> "$SNAP/changed.lines"
+  else
+    rc=1
+  fi
+  new_untracked >> "$SNAP/changed.lines" 2>/dev/null || rc=1
+  env LC_ALL=C sort -u "$SNAP/changed.lines"
+  return $rc
 }
 
 # changed_files_json — changed_files_list as a JSON array.
@@ -922,20 +976,21 @@ finish_post_launch() {
   fi
   changes="$(changed_files_json)"
   if [ "$status" = "ok" ]; then
-    changed_files_list | protected_paths > "$SNAP/protected" 2>/dev/null
-    prc=$?
-    # The untracked listing must have worked, or new files went unjudged.
-    new_untracked >/dev/null 2>&1 || prc=1
+    # Both listings must have worked (no path with a newline either), or
+    # changed files went unjudged.
+    prc=0
+    changed_files_list > "$SNAP/changed.final" 2>/dev/null || prc=1
+    protected_paths < "$SNAP/changed.final" > "$SNAP/protected" 2>/dev/null || prc=1
     # A provider-authored ignore or attribute rules file, at any depth, is
     # never kept: it would hide files from the caller's own status and commit.
-    changed_files_list | awk -F/ '$NF == ".gitignore" || $NF == ".gitattributes"' >> "$SNAP/protected" 2>/dev/null
+    awk -F/ '$NF == ".gitignore" || $NF == ".gitattributes"' "$SNAP/changed.final" >> "$SNAP/protected" 2>/dev/null
     if [ "$prc" = "0" ] && [ ! -s "$SNAP/protected" ]; then
       write_json "ok" "$changes" "false"
       return 0
     fi
     status="write_protected_path"
     if [ "$prc" != "0" ]; then
-      notes="the test-integrity guard could not judge the changed files (guard script or jq missing, a guard error, or the untracked files could not be listed), so they count as protected"
+      notes="the test-integrity guard could not judge the changed files (guard script or jq missing, a guard error, or the changed or untracked files could not be listed — a path holding a newline included), so they count as protected"
     else
       notes="the provider changed paths the test-integrity guard protects, or a .gitignore / .gitattributes file: $(env LC_ALL=C sort -u "$SNAP/protected" | tr '\n' ' ' | sed 's/ $//')"
     fi
@@ -949,8 +1004,12 @@ finish_post_launch() {
     fi
   else
     notes="$notes; the tree could not be reset to $PRE_SHA and cleaned"
-    tnotes="$(new_untracked 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
-    [ -n "$tnotes" ] && notes="$notes; new untracked paths left in place: $tnotes"
+    if new_untracked > "$SNAP/untracked.left" 2>/dev/null; then
+      tnotes="$(tr '\n' ' ' < "$SNAP/untracked.left" | sed 's/ $//')"
+      [ -n "$tnotes" ] && notes="$notes; new untracked paths left in place: $tnotes"
+    else
+      notes="$notes; the untracked files could not be listed (a path holding a newline makes the listing fail), so new paths may be left in place"
+    fi
   fi
   if [ "$restored" != "true" ]; then
     # A restore that could not be completed is never a softer status.

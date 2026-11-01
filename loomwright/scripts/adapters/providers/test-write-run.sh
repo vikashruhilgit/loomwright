@@ -513,6 +513,54 @@ rm -rf "$WT/ignored-cache"
 reset_wt
 
 echo ""
+echo "==== Y: a path holding a newline never forges a line of a listing ===="
+# Y1: a pre-existing nested repo under the ignored dir (the snapshot lists only
+# its `dir/` line). The provider makes a dir named "q<LF>ignored-cache/nestedpre"
+# holding keep.txt: split on the newline, the listing would carry the forged
+# line ignored-cache/nestedpre/keep.txt and the restore would delete it.
+mkdir -p "$WT/ignored-cache/nestedpre"; git -C "$WT/ignored-cache/nestedpre" init -q
+printf 'keep\n' > "$WT/ignored-cache/nestedpre/keep.txt"
+mkstub y1 "d=\$'q\\nignored-cache/nestedpre'" 'mkdir -p "$d"' "printf 'x\\n' > \"\$d/keep.txt\"" 'exit 3'
+run_write y1 "$P_MAIN" worker
+assert_eq "Y1 the pre-existing file inside the nested repo survives" "keep" "$(cat "$WT/ignored-cache/nestedpre/keep.txt" 2>/dev/null)"
+assert_eq "Y1 changed_files never names the forged path" "false" "$(jf y1 '.changed_files | index("ignored-cache/nestedpre/keep.txt") != null')"
+Y1_LEFT="$(cd "$WT" && ls -d q* 2>/dev/null | wc -l | tr -d ' ')"
+assert_eq "Y1 tree_restored true only when the newline dir is really gone" \
+  "$(jf y1 .tree_restored)" "$( [ "$Y1_LEFT" = "0" ] && echo true || echo false)"
+assert_eq "Y1 the run is not ok" "false" "$(jf y1 '.write_status == "ok"')"
+(cd "$WT" && rm -rf q*)
+rm -rf "$WT/ignored-cache"
+reset_wt
+# Y2: a pre-existing ignored symlink ignored-cache/ext pointing OUTSIDE the
+# tree; the dir "q<LF>ignored-cache/ext" holding victim.txt would forge the line
+# ignored-cache/ext/victim.txt, and `rm` would follow the link out of the tree.
+mkdir -p "$TMP/y2-outside" "$WT/ignored-cache"; printf 'outside\n' > "$TMP/y2-outside/victim.txt"
+ln -s "$TMP/y2-outside" "$WT/ignored-cache/ext"
+mkstub y2 "d=\$'q\\nignored-cache/ext'" 'mkdir -p "$d"' "printf 'x\\n' > \"\$d/victim.txt\"" 'exit 3'
+run_write y2 "$P_MAIN" worker
+assert_eq "Y2 the file outside the tree survives" "outside" "$(cat "$TMP/y2-outside/victim.txt" 2>/dev/null)"
+assert_eq "Y2 the pre-existing ignored symlink survives" "present" "$( [ -L "$WT/ignored-cache/ext" ] && echo present || echo absent)"
+Y2_LEFT="$(cd "$WT" && ls -d q* 2>/dev/null | wc -l | tr -d ' ')"
+assert_eq "Y2 tree_restored true only when the newline dir is really gone" \
+  "$(jf y2 .tree_restored)" "$( [ "$Y2_LEFT" = "0" ] && echo true || echo false)"
+(cd "$WT" && rm -rf q*)
+rm -rf "$WT/ignored-cache"
+reset_wt
+# Y3: the diff listing. An ok launch adds an intent-to-add file named
+# "z<LF>src.txt": split, it would read as the unprotected src.txt plus "z" and
+# stay; a newline in the listing reads as "cannot judge" instead.
+mkstub y3 "f=\$'z\\nsrc.txt'" "printf 'x\\n' > \"\$f\"" 'git add -N "$f"'
+run_write y3 "$P_MAIN" worker
+assert_eq "Y3 an unjudgeable diff listing is never ok" "false" "$(jf y3 '.write_status == "ok"')"
+assert_has "Y3 notes say the files could not be listed" "$(jf y3 .notes)" "could not be listed"
+Y3_LEFT="$(cd "$WT" && ls -d z* 2>/dev/null | wc -l | tr -d ' ')"
+assert_eq "Y3 the newline-named file is not kept" "0" "$Y3_LEFT"
+assert_eq "Y3 tree_restored true, tree clean" "true:" "$(jf y3 .tree_restored):$(tree_state)"
+(cd "$WT" && rm -rf z*)
+git -C "$WT" reset -q 2>/dev/null
+reset_wt
+
+echo ""
 echo "==== SB: a sibling's launch snapshot never re-plants what the first run's restore removed ===="
 # A plants a hook and fails after a while; B launches in the sibling worktree
 # while A runs (so B's own snapshot would hold A's hook) and fails after A's
