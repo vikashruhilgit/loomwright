@@ -127,7 +127,7 @@ A routed read seat is advisory-equivalent to its Claude seat. It never decides a
 
 `scripts/resolve-routing.sh write-seats` is the only home of the write-seat ids; each id's home file carries its **Seat routing** paragraph, which points here. Read seats keep every rule above; write seats are a separate list with the rules below.
 
-**Edit-step routing, not agent replacement.** A write seat routes the *edit step* of a Claude task, never the task. The Claude worker Task and the Claude fix tasks spawn exactly as they do today. On a routed seat the task hands its code edits to the provider through `scripts/adapters/providers/write-run.sh` and never edits files itself on that path. After the provider returns, the task runs the same post-edit steps as today: tests/lint, `outputs_verified`, its commit flow and its result block (`WORKER_RESULT` or the fix report). So the `WORKER_RESULT` contract, `out_of_lane`, the SubagentStop validators and the commit flow are unchanged.
+**Edit-step routing, not agent replacement.** A write seat routes the *edit step* of a Claude task, never the task. The Claude worker Task and the Claude fix tasks spawn exactly as they do today. On a routed seat the task hands its code edits to the provider through `scripts/adapters/providers/write-run.sh` and never edits files itself on that path. After the provider returns, the task runs the same post-edit steps as today: tests/lint, `outputs_verified`, its commit flow and its result block (`WORKER_RESULT` or the fix report). So the `WORKER_RESULT` contract, `out_of_lane`, the result-block validators and the commit flow are unchanged.
 
 ### Eligibility and consent
 
@@ -137,14 +137,14 @@ A routed read seat is advisory-equivalent to its Claude seat. It never decides a
 
 ### The isolated launch
 
-- **Isolated HOME only.** `write-run.sh` starts the CLI only through `launch_provider_cli isolated` and takes no home-mode argument. Why: Grok reads `~/.claude/settings.json`, and a `permissions.defaultMode: "auto"` there overrides `--permission-mode dontAsk`, so a write launch under the real HOME is fail-OPEN. The launcher also never copies a login file whose first path segment is `.claude` into the isolated HOME.
+- **Isolated HOME only.** `write-run.sh` starts the CLI only through `launch_provider_cli isolated` and takes no home-mode argument. Why: Grok reads the harness's user settings file (`settings.json` in the real HOME's `.claude` dir), and a `permissions.defaultMode: "auto"` there overrides `--permission-mode dontAsk`, so a write launch under the real HOME is fail-OPEN. The launcher also never copies a login file whose first path segment is `.claude` into the isolated HOME.
 - **Allow-list pin.** The argv is the provider's pin mode plus explicit allow rules for file read/edit tools only. There is no shell tool, so the provider cannot run tests; the Claude task runs them.
 - **Pre-launch refusals** start no CLI and leave the tree untouched (the closed `write_status` list, with each refusal's condition, is `write-run.sh`'s header; it is not restated here). Two matter for the operator:
   - `write_tree_dirty`: the checkout had uncommitted or untracked non-ignored changes, so a restore could not tell the provider's files from the caller's.
-  - `write_repo_settings_present`: the checkout root holds a `.claude/settings.local.json` (existence is the test, even gitignored), or a `.claude/settings.json` with a `permissions` key. Such a repo-side file could widen the pin, and the eligibility probe never tested it. A checkout whose root holds a local settings file refuses routed edits until the owner moves the file. A fresh linked worktree has none.
+  - `write_repo_settings_present`: the checkout root's `.claude` dir holds a `settings.local.json` (existence is the test, even gitignored), or a `settings.json` with a `permissions` key. Such a repo-side file could widen the pin, and the eligibility probe never tested it. A checkout whose root holds a local settings file refuses routed edits until the owner moves the file. A fresh linked worktree has none.
 - **The provider never commits or pushes, and its done claim is ignored.** `write_status` comes from the exit, the time bound and the git fingerprint, never from the reply text. Whether the work counts is decided by the Claude-side gates: the disk gate, tests/lint, `out_of_lane`, Phase 4.5 and the drain's checks.
 - **No merge or ask path.** A routed write seat edits files in its checkout and nothing else. Every question to the user, every commit, push and merge, and every sole-writer call stays with Claude, exactly as today.
-- **Hook contract.** The provider is not a Claude Code session. Under the isolated launch, no Loomwright plugin hook, hook-written state, telemetry or guard runs inside it. The Claude task's own hooks (its SubagentStop validator, the test-integrity and finalize-publish guards) and the Supervisor-side gates carry the checks.
+- **Hook contract.** The provider is not a Claude Code session. Under the isolated launch, no Loomwright plugin hook, hook-written state, telemetry or guard runs inside it. The Claude task's own hooks (its result-block validator, the test-integrity and finalize-publish guards) and the Supervisor-side gates carry the checks.
 
 ### Edit-step procedure (the routed task's side)
 
@@ -170,7 +170,7 @@ The `seat_routing <seat> provider=<p> reason=<write_status|post_edit_gate>` line
 ### Honest limits (write seats)
 
 - The launcher is blast-radius reduction, not a sandbox. The provider can still write outside the checkout and reach the network, and the prompt plus every tracked file it can read are sent to the vendor. That is why consent is per seat, per provider, in user scope.
-- Gitignored paths inside the checkout (for example `.supervisor/`, or an ignored `.claude/settings.local.json` the provider writes during the launch) are neither checked by the `write_tree_dirty` refusal nor removed by the restore.
+- Gitignored paths inside the checkout (for example `.supervisor/`, or an ignored `settings.local.json` the provider writes into the checkout's `.claude` dir during the launch) are neither checked by the `write_tree_dirty` refusal nor removed by the restore.
 - The fingerprint's `own` refs scope does not see a new branch or tag. On the Parallel Path, sibling workers that are already running may run git with a planted hook until the tampered run's restore returns.
 - A SIGKILL of `write-run.sh` skips the restore; the clamp keeps the launch inside the caller's 600-second cap so that a Bash-level kill does not happen first.
 - Grok's allow-rule names: `Edit` and `Write` were probed as enforced rule names; `Read`, `Grep` and `Glob` come from the vendor's permissions guide and were not probed. A wrong name makes the provider edit nothing, so `outputs_verified` fails closed; it cannot widen access.
