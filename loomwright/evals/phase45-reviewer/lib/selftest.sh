@@ -263,13 +263,13 @@ done
 jq -n --argjson c "$runs" '{cases: $c}' > "$WORK/eval.json"
 if sum="$(bash "$LIB/summarize.sh" "$WORK/eval.json" "$SUITE" "$SC" 2>"$WORK/sum.err")"; then
   for want in "caught: 1/4" "unstageable: 1" "no_reply: 1" "noise: 1 BLOCKING/HIGH on 1 controls" "model: fixture-model" "turns: 24"; do
-    printf '%s\n' "$sum" | grep -qxF "$want" && ok "M summarize prints '$want'" || no "M summarize lacks '$want'"
+    grep -qxF "$want" <<<"$sum" && ok "M summarize prints '$want'" || no "M summarize lacks '$want'"
   done
   for want in "| 90-miss-pr990 | miss | 990 | CAUGHT |" "| 91-miss-pr991 | miss | 991 | MISSED |" \
     "| 92-miss-pr992 | miss | 992 | UNSTAGEABLE |" "| 93-miss-pr993 | miss | 993 | MISSED (no reply) |" \
     "| 94-miss-pr994 | miss | 994 | ? |" "| 95-control-pr995 | control | 995 | NOISE | 1 |" \
     "| 96-not-in-corpus | ? | ? | NOT_IN_CORPUS (not counted) |" "| ? (case-97 run 1) | ? | ? | ? (kept sandbox has no .eval/case-id) |"; do
-    printf '%s\n' "$sum" | grep -qF "$want" && ok "M row $want" || no "M no row '$want'"
+    grep -qF "$want" <<<"$sum" && ok "M row $want" || no "M no row '$want'"
   done
 else
   no "M summarize.sh failed: $(head -n 3 "$WORK/sum.err" | tr '\n' ' ')"
@@ -277,8 +277,8 @@ fi
 # a grader that cannot grade: every graded row reads `?`, a miss stays in Y as not caught, nothing is guessed
 printf '#!/usr/bin/env bash\necho "grader broke" >&2\nexit 2\n' > "$WORK/broken-grade.sh"
 sum="$(PHASE45_GRADE="$WORK/broken-grade.sh" bash "$LIB/summarize.sh" "$WORK/eval.json" "$SUITE" "$SC" 2>/dev/null)"
-printf '%s\n' "$sum" | grep -qxF "caught: 0/4" && printf '%s\n' "$sum" | grep -qF "| 91-miss-pr991 | miss | 991 | ? (grade error: grader broke) |" \
-  && printf '%s\n' "$sum" | grep -qxF "noise: 0 BLOCKING/HIGH on 0 controls" \
+grep -qxF "caught: 0/4" <<<"$sum" && grep -qF "| 91-miss-pr991 | miss | 991 | ? (grade error: grader broke) |" <<<"$sum" \
+  && grep -qxF "noise: 0 BLOCKING/HIGH on 0 controls" <<<"$sum" \
   && ok "M a grader error ⇒ a '? (grade error …)' row, kept in Y as not caught (caught: 0/4), no control measured" \
   || no "M a grader error was not reported as '?' rows: $(printf '%s\n' "$sum" | grep -E '^caught|^noise|91-miss' | tr '\n' ' ')"
 chmod -R u+rwx "$WORK/kept" 2>/dev/null

@@ -8,7 +8,7 @@
 # Source of truth is LOCAL GIT; the postmortem ledger (.supervisor/postmortem/results.jsonl, gitignored) is
 # read only to annotate `--list` rows with that PR's recorded `self_heal_misses`, never to pick a case.
 #
-# WHAT A CANDIDATE IS. Only first-parent merges of this repo's main whose subject is
+# WHAT A CANDIDATE IS. Only first-parent merges of this repo's base branch (see below) whose subject is
 # `Merge pull request #<N> from …` are considered (a squash merge has no second-parent chain and is never a
 # candidate). The PR's commits are `<merge>^1..<merge>^2`. Its PRE-DRAIN HEAD is the newest of them whose
 # subject is Phase 4.5's own fix-commit subject, `fix: address review feedback (iteration <n>)`
@@ -19,7 +19,7 @@
 #   miss     some LATER non-merge commit changes a file the pre-drain diff also changes. The proposed
 #            expected file is the overlapping file the most later commits changed (ties: the first in
 #            byte order); `--file` overrides it with any file of the pre-drain diff.
-#   control  NO later commit at all (merges included), and no revert of the PR on main (a commit whose
+#   control  NO later commit at all (merges included), and no revert of the PR on the base branch (a commit whose
 #            message says `This reverts commit <merge sha>` or starts `Revert` and names `#<N>`).
 # Paths the stager keeps out of every sandbox (the suite dir and docs/evidence/phase45-reviewer-*) are
 # never proposed as an expected file. This is a heuristic: the builder only PROPOSES, and the owner confirms
@@ -38,14 +38,16 @@
 #                 scaffold.sh that runs lib/stage-case.sh), and appends exactly ONE row to the repo-root
 #                 docs/evidence/phase45-reviewer-corpus.tsv, creating it with its header line if absent.
 #                 The expected file and floor go ONLY into that table, never into the case dir.
-# REFUSES (exit 1, nothing written): no such merge on main; no pre-drain head; base or pre-drain head not a
+# REFUSES (exit 1, nothing written): the base branch does not resolve; no such merge on it; no pre-drain head; base or pre-drain head not a
 # commit; a miss with no overlapping later change (and no --file), or a --file outside the pre-drain diff; a
 # --control that has later commits or was reverted; an existing case dir or corpus row for the PR; a corpus
 # table whose header is not the expected one; a template whose three placeholder lines are not each present
 # exactly once. Exit 2 = usage error.
 #
-# The repo is found from BASH_SOURCE (this file is <repo>/loomwright/scripts/). Main is `origin/main` when
-# it resolves, else `main`. bash 3.2 + BSD userland + git; jq only for the optional ledger note.
+# The repo is found from BASH_SOURCE (this file is <repo>/loomwright/scripts/). The base branch comes from the
+# sibling resolve-base-branch.sh --repo <repo> (the ONE resolver; `main` for this repo) and is read as
+# origin/<base> when that ref exists, else the local <base>; an unresolved or invalid base fails closed with the
+# resolver's status token. bash 3.2 + BSD userland + git; jq only for the optional ledger note.
 # Self-test: loomwright/scripts/test-build-reviewer-replay-case.sh.
 set -uo pipefail
 
@@ -85,9 +87,16 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$MODE" ] || usage
 G rev-parse --git-dir >/dev/null 2>&1 || die "$REPO is not a git repository"
-if G rev-parse --verify -q 'refs/remotes/origin/main^{commit}' >/dev/null; then MAIN=origin/main
-elif G rev-parse --verify -q 'refs/heads/main^{commit}' >/dev/null; then MAIN=main
-else die "neither origin/main nor main resolves in $REPO"; fi
+# MAIN — the base-branch ref every candidate is read from. Resolver contract: success = one stdout line and an
+# empty stderr; failure = empty stdout and the status token as stderr's first line, so one 2>&1 capture is enough
+# (and a dry run stays write-free: no temp file).
+RBB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/resolve-base-branch.sh"
+[ -f "$RBB" ] || die "the base-branch resolver $RBB is missing"
+BASE_BRANCH="$(bash "$RBB" --repo "$REPO" 2>&1)" \
+  || die "cannot resolve the base branch: $(printf '%s\n' "$BASE_BRANCH" | head -n 1)"
+if G rev-parse --verify -q "refs/remotes/origin/$BASE_BRANCH^{commit}" >/dev/null; then MAIN="origin/$BASE_BRANCH"
+elif G rev-parse --verify -q "refs/heads/$BASE_BRANCH^{commit}" >/dev/null; then MAIN="$BASE_BRANCH"
+else die "the base branch '$BASE_BRANCH' resolves to no commit (neither origin/$BASE_BRANCH nor $BASE_BRANCH) in $REPO"; fi
 
 # ---- per-merge analysis -------------------------------------------------------------------------------------
 # analyse <merge sha> — sets PRE, BASE, LATER (count, merges included), PRE_FILES, OVERLAP ("<n> <path>" lines,
@@ -96,7 +105,7 @@ analyse() {
   local m="$1" c s f
   PRE=""; BASE=""; LATER=0; PRE_FILES=""; OVERLAP=""; EXPECTED=""
   while IFS="$TAB" read -r c s; do
-    if printf '%s\n' "$s" | grep -qE "$FIX_SUBJECT_ERE"; then PRE="$c"; break; fi
+    if grep -qE "$FIX_SUBJECT_ERE" <<<"$s"; then PRE="$c"; break; fi
   done <<EOF
 $(G log --topo-order --format="%H${TAB}%s" "$m^1..$m^2")
 EOF
@@ -107,7 +116,7 @@ EOF
   later_list="$(G log --format="%H${TAB}%P${TAB}%s" "$m^2" "^$PRE" "^$m^1")"
   while IFS="$TAB" read -r c p s; do
     [ -n "$c" ] || continue
-    printf '%s\n' "$s" | grep -qE "$RELEASE_ERE" && continue
+    grep -qE "$RELEASE_ERE" <<<"$s" && continue
     LATER=$((LATER + 1))
     case "$p" in *" "*) continue ;; esac            # a merge (base-merge) counts as later, never as a fix
     touched="$touched$(G diff-tree --no-commit-id --name-only -r --no-renames "$c")
@@ -123,9 +132,11 @@ EOF
   return 0
 }
 
-# reverted <merge sha> <pr> — 0 when main carries a revert of this PR after its merge
+# reverted <merge sha> <pr> — 0 when the base branch carries a revert of this PR after its merge. The log reaches
+# grep through a process substitution, never a pipe: grep -q exits on its first match, and under pipefail the
+# producer's SIGPIPE/EPIPE would otherwise decide the verdict (test-no-pipefail-grep-q.sh rule 3).
 reverted() {
-  G log --format='%B' "$1..$MAIN" | grep -qE "This reverts commit $1|^Revert .*#$2([^0-9]|$)"
+  grep -qE "This reverts commit $1|^Revert .*#$2([^0-9]|$)" < <(G log --format='%B' "$1..$MAIN")
 }
 
 # ledger_note <pr> — `shm=<self_heal_misses>` from the newest ledger row for this PR, `-` when none / no jq
@@ -181,7 +192,8 @@ EOF
 fi
 
 # ---- --pr <N> -----------------------------------------------------------------------------------------------
-printf '%s\n' "$PR" | grep -qE '^[0-9]+$' || die "--pr needs a PR number, got '$PR'"
+# a case pattern tests the WHOLE value; a line-oriented grep would pass '101<newline>x' on its first line
+case "$PR" in ''|*[!0-9]*) die "--pr needs a PR number, got '$PR'" ;; esac
 case "$FLOOR" in BLOCKING|HIGH|MEDIUM|LOW) ;; *) die "--floor must be BLOCKING, HIGH, MEDIUM or LOW, got '$FLOOR'" ;; esac
 [ "$KIND" = miss ] || [ -z "$FILE" ] || die "--file applies to a miss case, not a --control"
 [ -z "$SINCE" ] || die "--since applies to --list only"
@@ -190,7 +202,7 @@ case "$FILE" in *"$TAB"*|*"$NL"*) die "--file must not contain a tab or a newlin
 
 MERGE="$(G log --first-parent --merges --format="%H${TAB}%s" "$MAIN" \
   | awk -F '\t' -v want="Merge pull request #$PR from " 'index($2, want) == 1 { print $1; exit }')"
-[ -n "$MERGE" ] || die "PR #$PR: no merge commit 'Merge pull request #$PR from …' on $MAIN (only merges of this repo's own main are considered)"
+[ -n "$MERGE" ] || die "PR #$PR: no merge commit 'Merge pull request #$PR from …' on $MAIN (only first-parent merges of the base branch are considered)"
 G cat-file -e "$MERGE^2^{commit}" 2>/dev/null || die "PR #$PR: merge $MERGE has no reachable second parent"
 analyse "$MERGE" || die "PR #$PR: no pre-drain head (no 'fix: address review feedback (iteration N)' commit) — not a Phase 4.5 PR"
 for v in "$BASE" "$PRE"; do
@@ -202,7 +214,7 @@ if [ "$KIND" = control ]; then
   ! reverted "$MERGE" "$PR" || die "PR #$PR is not a clean control: $MAIN carries a revert of it"
 else
   if [ -n "$FILE" ]; then
-    printf '%s\n' "$PRE_FILES" | grep -qxF -- "$FILE" || die "PR #$PR: --file $FILE is not in the pre-drain diff ($(short "$BASE")..$(short "$PRE"))"
+    grep -qxF -- "$FILE" <<<"$PRE_FILES" || die "PR #$PR: --file $FILE is not in the pre-drain diff ($(short "$BASE")..$(short "$PRE"))"
     EXPECTED="$FILE"
   fi
   [ -n "$EXPECTED" ] || die "PR #$PR is not a miss candidate: no later commit changes a file of the pre-drain diff"

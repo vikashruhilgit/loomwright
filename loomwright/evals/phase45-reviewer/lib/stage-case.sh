@@ -51,9 +51,9 @@ case "$W/" in "$(cd "$REPO" && pwd -P)/"*) die "refusing to stage inside the sou
 [ -f "$CASE_DIR/case.env" ] || die "$CASE_DIR/case.env missing"
 env_val() { sed -n "s/^$1=//p" "$CASE_DIR/case.env" | tr -d '\r' | tail -n 1; }
 PR="$(env_val PR)"; BASE_SHA="$(env_val BASE_SHA)"; HEAD_SHA="$(env_val HEAD_SHA)"
-printf '%s\n' "$PR" | grep -qE '^[0-9]+$' || die "$CASE_ID: case.env PR= is not a number"
+grep -qE '^[0-9]+$' <<<"$PR" || die "$CASE_ID: case.env PR= is not a number"
 for v in "$BASE_SHA" "$HEAD_SHA"; do
-  printf '%s\n' "$v" | grep -qE '^[0-9a-f]{7,40}$' || die "$CASE_ID: case.env BASE_SHA= / HEAD_SHA= is not a hex sha ('$v')"
+  grep -qE '^[0-9a-f]{7,40}$' <<<"$v" || die "$CASE_ID: case.env BASE_SHA= / HEAD_SHA= is not a hex sha ('$v')"
 done
 
 mkdir -p "$E" || die "cannot create $E"

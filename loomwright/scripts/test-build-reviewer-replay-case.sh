@@ -42,7 +42,7 @@ export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@ex
 # ---- B: the scratch repo ------------------------------------------------------------------------------------
 S="$WORK/src"; SS="$S/loomwright/evals/phase45-reviewer"
 mkdir -p "$S/loomwright/scripts" "$SS/lib" "$S/loomwright/skills/self-heal-advisory"
-cp "$BUILDER" "$S/loomwright/scripts/" || no "B copy the builder"
+cp "$BUILDER" "$HERE/resolve-base-branch.sh" "$S/loomwright/scripts/" || no "B copy the builder and its base-branch resolver"
 cp "$SUITE/case-template.yaml" "$SS/" || no "B copy case-template.yaml"
 for f in stage-case.sh render-prompt.sh; do cp "$SUITE/lib/$f" "$SS/lib/" || no "B copy lib/$f"; done
 cp "$PLUGIN/skills/self-heal-advisory/SKILL.md" "$S/loomwright/skills/self-heal-advisory/" || no "B copy SKILL.md"
@@ -102,6 +102,7 @@ merge_pr() {   # merge_pr <n> <branch> — a GitHub-shaped merge commit onto mai
   G checkout -q pr106; T=$((T + 3600)); GIT_AUTHOR_DATE="@$T" GIT_COMMITTER_DATE="@$T" G merge -q --no-ff --no-edit main
   merge_pr 106 pr106
   G update-ref refs/remotes/origin/main refs/heads/main
+  G symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main   # what a clone has; the resolver reads it
 } >/dev/null 2>&1 || no "B build the scratch repo"
 PRE101="$(G log --format='%H %s' pr101 | awk '/iteration 1/ { print $1; exit }')"
 BASE101="$(G rev-list --max-parents=0 main)"   # the root commit `chore: base` — #101 branched from it
@@ -177,6 +178,22 @@ cp "$SS/case-template.yaml" "$WORK/template.good"; grep -vxF 'tags: [CASE_KIND]'
 refuse "a template without its tags placeholder" "not present exactly once" --pr 101 --confirm
 cp "$WORK/template.good" "$SS/case-template.yaml"; BEFORE="$(snap)"
 
+# the base branch comes from resolve-base-branch.sh, never a hardcoded `main`: a configured base is honoured
+# (`dev` = main as of the #102 merge, local only ⇒ read as the local branch), and an invalid or commit-less
+# configured base fails closed with nothing written
+M102="$(G log --first-parent --merges --format='%H %s' main | awk '/#102 from/ { print $1; exit }')"
+G branch -q dev "$M102" >/dev/null 2>&1 || no "B create the dev fixture branch"
+mkdir -p "$S/.supervisor"; CFG="$S/.supervisor/config.json"
+printf '{"base_branch":"dev"}\n' > "$CFG"
+if run --list && grep -qxF "candidates: miss=1 control=1 (of 2 PR merges scanned)" "$WORK/out" && grep -q '^candidates on dev ' "$WORK/out"; then
+  ok "B a configured base branch (.supervisor/config.json base_branch: dev) is the branch scanned"
+else no "B configured base not honoured: $(head -n 1 "$WORK/out") / $(tail -n 1 "$WORK/out") $(head -n 1 "$WORK/err")"; fi
+printf '{"base_branch":"-bad"}\n' > "$CFG"; BEFORE="$(snap)"
+refuse "an invalid configured base branch (the resolver's status token)" "base_branch_invalid:config" --pr 101 --confirm
+printf '{"base_branch":"nosuch"}\n' > "$CFG"; BEFORE="$(snap)"
+refuse "a base branch that resolves to no commit" "resolves to no commit" --pr 101 --confirm
+rm -rf "$S/.supervisor"; G branch -q -D dev >/dev/null 2>&1; BEFORE="$(snap)"
+
 # --confirm: exactly one case dir + one corpus row
 CORP="$S/docs/evidence/phase45-reviewer-corpus.tsv"
 HDR="case_id${TAB}pr${TAB}kind${TAB}expected_file${TAB}severity_floor"
@@ -245,7 +262,7 @@ if [ -f "$ESELF" ]; then
   if [ -s "$MG" ] && ! cmp -s "$MG" "$GRADE" && bash -n "$MG"; then
     ok "E: the always-CAUGHT grade.sh mutant is non-empty, differs from the original and parses"
     mout="$(HOME="$WORK/eself-mut-home" PHASE45_GRADE="$MG" bash "$ESELF" 2>&1)"; mrc=$?
-    if [ "$mrc" -ne 0 ] && printf '%s\n' "$mout" | grep -q '^FAIL: mutation-control'; then
+    if [ "$mrc" -ne 0 ] && grep -q '^FAIL: mutation-control' <<<"$mout"; then
       ok "E: the selftest through the always-CAUGHT grader exits $mrc with a 'FAIL: mutation-control' line"
     else no "E: the always-CAUGHT grader was not caught (rc $mrc; FAIL: mutation-control line $(printf '%s\n' "$mout" | grep -c '^FAIL: mutation-control'))"; fi
   else no "E: the grade.sh mutant is empty, identical to the original or does not parse"; fi
