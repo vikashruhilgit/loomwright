@@ -192,7 +192,10 @@ printf '{"base_branch":"-bad"}\n' > "$CFG"; BEFORE="$(snap)"
 refuse "an invalid configured base branch (the resolver's status token)" "base_branch_invalid:config" --pr 101 --confirm
 printf '{"base_branch":"nosuch"}\n' > "$CFG"; BEFORE="$(snap)"
 refuse "a base branch that resolves to no commit" "resolves to no commit" --pr 101 --confirm
-rm -rf "$S/.supervisor"; G branch -q -D dev >/dev/null 2>&1; BEFORE="$(snap)"
+rm -rf "$S/.supervisor"; G branch -q -D dev >/dev/null 2>&1
+RBBF="$S/loomwright/scripts/resolve-base-branch.sh"; mv "$RBBF" "$WORK/rbb.sh"; BEFORE="$(snap)"
+refuse "a missing base-branch resolver (no inline fallback)" "resolver" --pr 101 --confirm
+mv "$WORK/rbb.sh" "$RBBF"; BEFORE="$(snap)"
 
 # --confirm: exactly one case dir + one corpus row
 CORP="$S/docs/evidence/phase45-reviewer-corpus.tsv"
