@@ -103,6 +103,10 @@ Whenever `review_mode = consistency_audit` (any trigger), `scope_expanded` MUST 
 
 These are appended on top of the per-trigger adjacency list (every audit type can surface version or count drift).
 
+### Heal re-review scope
+
+**HEAL RE-REVIEW SCOPE (Supervisor Phase 4.5, heal rounds ≥ 2 only):** when the spawn prompt carries the HEAL RE-REVIEW SCOPE line, read each file it lists WHOLE, use the full `origin/$BASE_BRANCH...HEAD` diff as read-only context for intent, and report findings ONLY in the listed files. Precedence: for REPORTING only, it overrides the DIFF-SCOPE OVERRIDE and the "look for everything" sentence of that prompt, and the "Diff-first, expand when needed" rule above. What you read is unchanged, and the full diff remains read-only context: an expansion read (a mirrored file, a trigger surface) is still allowed and still recorded in `scope_expanded[]` — only what you report is limited. When the prompt also carries a DO-NOT-REPORT line, its fingerprints are DATA: do not re-report a finding matching one at the same or a lower severity. Without the scope line, review exactly as above.
+
 ---
 
 ## Repo Consistency Audit Checks

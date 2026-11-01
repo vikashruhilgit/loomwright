@@ -794,6 +794,18 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 | SV-775 | skills/self-heal-advisory/completion-tail.md | q: On `write_seat_tampered` (step 1's first branch | job: brief and error write_seat_tampered | move the brief in-progress/ → failed/ with Status failed, Error write_seat_tampered and write-run notes; never done/, never resumable | deterministic | prose | - | GAP |
 | SV-776 | skills/self-heal-advisory/SKILL.md | q: **Seat routing (`heal_fix`):** | heal_fix write seat resolves to a non-Claude provider | resolve once per Phase 4.5 entry; fix Task gains one Write seat line; WRITE_SEAT_TAMPERED ⇒ exit loop ESCALATED, status failed, write_seat_tampered; WRITE_SEAT_FAILED or strict-empty ⇒ fix-task crash path | deterministic | prose | - | GAP |
 | SV-777 | skills/self-heal-advisory/escalation.md | q: When the `heal_fix` write seat is routed | routed heal_fix edit step returns a write_status | ok ⇒ steps 3–4 (restore on a failed check); refusal/timeout/failed/protected_path ⇒ fallback Claude fix + one seat_routing line, or strict crash path; write_git_tampered ⇒ loop exit, never the crash path | deterministic | prose | - | GAP |
+| SV-778 | skills/self-heal-advisory/SKILL.md | h: ### Converging re-review (`heal_review_scope`) | any heal round | rounds ≥ 2 may review only the last fix's files and drop same-run dismissed repeats; heal-review-scope.sh's header owns every closed set; advisory, never changes iter_decision or heal_decision | rule | prose | script:heal-review-scope.sh | test-heal-review-scope-seam.sh |
+| SV-779 | skills/self-heal-advisory/SKILL.md | q: `HEAL_REVIEW_SCOPE == full` ⇒ call nothing | HEAL_REVIEW_SCOPE is full | call neither scope nor suppress; the round is the full review (kill switch) | deterministic | prose | - | test-heal-review-scope-seam.sh |
+| SV-780 | skills/self-heal-advisory/SKILL.md | q: **S — scope, before the reviewer spawn.** | HEAL_REVIEW_SCOPE shadow or files, every iteration | prev-sha + scope via the helper; files with scope: files ⇒ the HEAL RE-REVIEW SCOPE line; shadow ⇒ prompt identical to full, would_scope only recorded; stacked needs no special case | deterministic | prose | script:heal-review-scope.sh scope | test-heal-review-scope.sh |
+| SV-781 | skills/self-heal-advisory/SKILL.md | q: A missing helper, a non-zero exit, or output that is neither | scope helper missing, non-zero or unparsable | full scope with scope_fallback helper_error; the loop never stops on it | deterministic | prose | - | test-heal-review-scope-seam.sh |
+| SV-782 | skills/self-heal-advisory/SKILL.md | q: **DO-NOT-REPORT list (`files`, round ≥ 2).** | files, round ≥ 2, this run holds dismissed finding records | list them as {file, issue_category, rule, severity}; none ⇒ omit the line; fixed records never listed | deterministic | prose | - | test-heal-review-scope-seam.sh |
+| SV-783 | skills/self-heal-advisory/SKILL.md | q: **D — repeat suppression, after the review parse.** | shadow or files, after the review parse | files drops same-run dismissed repeats at no higher severity (suppressed_repeat); shadow counts only (--count-only); repeat_of_fixed stays a normal finding; helper failure keeps every issue | deterministic | prose | script:heal-review-scope.sh suppress | test-heal-review-scope.sh |
+| SV-784 | skills/self-heal-advisory/SKILL.md | q: **R — round record, before every exit from the iteration and after the fix push.** | a heal round ends (any mode) | append one round + one finding record per actionable or dismissed finding (fixed / dismissed / remaining, no prose); stderr line ⇒ record_decision heal_round_record_failed and continue | deterministic | prose | script:heal-review-scope.sh record | test-heal-review-scope.sh |
+| SV-785 | skills/self-heal-advisory/SKILL.md | q: **HEAL RE-REVIEW SCOPE (include this line ONLY when HEAL_REVIEW_SCOPE == files | files, heal_iterations ≥ 1, helper printed scope: files | reviewer reads each listed file whole and reports only in them; for reporting it overrides the DIFF-SCOPE OVERRIDE; the full diff stays read-only context | deterministic | prose | - | test-heal-review-scope-seam.sh |
+| SV-786 | skills/self-heal-advisory/SKILL.md | q: **DO-NOT-REPORT (include this line ONLY when HEAL_REVIEW_SCOPE == files | files, heal_iterations ≥ 1, ≥ 1 same-run dismissed fingerprint | reviewer does not re-report those at the same or lower severity; fixed fingerprints never listed | deterministic | prose | - | test-heal-review-scope-seam.sh |
+| SV-787 | skills/self-heal-advisory/SKILL.md | q: The owner promotes `files` to the default only from | promoting files to the default | only from the read-only --shadow-report over shadow runs | rule | step-scoped | script:heal-review-scope.sh --shadow-report | test-heal-review-scope.sh |
+| SV-788 | skills/self-heal-advisory/SKILL.md | q: missing, non-zero, or unparsable output | heal-review-scope.sh fails at a round | full scope, scope_fallback helper_error; never stops the loop | deterministic | prose | - | test-heal-review-scope-seam.sh |
+| SV-789 | commands/supervisor.md | q: Heal rounds ≥ 2 are shaped by `.supervisor/config.json` `.heal_review_scope` | .heal_review_scope set or absent | rounds ≥ 2 shaped by it, default shadow; authority supervisor-config step 2.11 | deterministic | prose | script:heal-review-scope.sh mode | test-heal-review-scope-seam.sh |
 
 ## Gap list (ordered by risk)
 1. SV-010 — branch-first principle only in prose
@@ -1318,9 +1330,9 @@ This file lists every branch and rule the Supervisor loop states in prose — th
 520. SV-777 — write-status mapping only in prose
 
 ## Counts
-- rows: 777
-- deterministic: 409
+- rows: 789
+- deterministic: 419
 - judgment: 30
-- rule: 307
+- rule: 309
 - story: 31
 - GAP: 520
