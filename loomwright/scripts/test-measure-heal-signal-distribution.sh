@@ -48,6 +48,19 @@ mkfix() { local d; d="$(mktemp -d)"; FIXTURES+=("$d"); printf '%s' "$d"; }
 cleanup() { local d; for d in "${FIXTURES[@]:-}"; do [ -n "$d" ] && rm -rf "$d" 2>/dev/null; done; }
 trap cleanup EXIT
 
+# CWD CONTAINMENT — every wrapper call below runs from a scratch git repo, never the caller's
+# checkout. The wrapper's self-repo is the CWD's git root and a full measurement's default --out is
+# <self-repo>/.supervisor/heal-signal/. A wrapper that ignores --distribution (exactly the broken
+# copy MHS_WRAPPER exists to inject) turns each `--repo <fixture> --distribution` call with no
+# --out into a full run whose rows name the fixture's tmp.* basename — run from the real checkout,
+# that appended six tmp.* / n:0 rows to its real heal-signal ledger (evidence:
+# docs/evidence/feature-scorecard.md). From here a broken wrapper can only write into this dir.
+# MHS_WRAPPER is made absolute first so a relative override survives the cd.
+case "$WRAP" in /*) ;; *) WRAP="$PWD/$WRAP" ;; esac
+SCRATCH_CWD="$(mkfix)"
+( cd "$SCRATCH_CWD" && git init -q ) >/dev/null 2>&1
+cd "$SCRATCH_CWD" || { echo "test-measure-heal-signal-distribution: cannot cd to a scratch cwd — refusing to run from the caller's checkout" >&2; exit 1; }
+
 if [ -z "$PY" ]; then
   echo "test-measure-heal-signal-distribution: python3 absent — SKIPPING (the wrapper's own"
   echo "  missing-python3 path is exercised by (c) below, which does not need an interpreter)."

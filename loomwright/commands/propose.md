@@ -1,5 +1,5 @@
 ---
-description: Turn the recorded churn ledger, a /verify run's FAIL/issue lines (--from-verify), or what competent apps in this project's domain do (--domain) into candidate work items; a propose-only pass that writes evidence-carrying requirement drafts to .supervisor/requirements/proposed/ for a human to promote or delete
+description: Turn the recorded churn ledger, a /verify run's FAIL/issue lines (--from-verify), the feature scorecard's review: verdicts (--from-scorecard), or what competent apps in this project's domain do (--domain) into candidate work items; a propose-only pass that writes evidence-carrying requirement drafts to .supervisor/requirements/proposed/ for a human to promote or delete
 ---
 
 > **Read-only on your work; writes only derived drafts.** `/propose` reads a basis the plugin already has (`.supervisor/floor/floor.json` by default, or the committed product store `.agent/product.json` with `--domain`) and writes candidate requirement files to `.supervisor/requirements/proposed/` (gitignored). It touches no code, no agent, no state, no existing surface. It **never queues, dispatches, ranks, scores, or merges** — `proposed/` is deliberately **not** an `/automate --folder` target. Bare `/propose` sends nothing anywhere and makes **zero** external calls; only `--domain` fetches, and only through the one named, overridable seam described below.
@@ -14,19 +14,20 @@ Measured on this repo when the proposer was written: **109 `convention_mismatch`
 
 `/propose` is the invocation seam for that missing half. It is the *intake* side of a mill that invents its own work — and it stops at intake by design. **It proposes; the human decides at dequeue.**
 
-## The three bases
+## The bases
 
-`/propose` has three bases, and **they never run in one invocation.**
+`/propose` has several bases, and **no two run in one invocation.**
 
 | Basis | Flag | Reads | Looks | Evidence class |
 |-------|------|-------|-------|----------------|
 | **Ledger** (default) | *(none)* | `.supervisor/floor/floor.json` | **inward** — our own recorded mistakes | derived, from counted ledger entries |
 | **Verify** | `--from-verify <run_id>` | `.supervisor/verify/<run_id>/evidence.jsonl` | **a single `/verify` run** — its recorded FAIL/issue lines | derived, from validated evidence lines the run itself recorded |
 | **Domain** | `--domain` | `.agent/product.json` via `read-product.sh`, plus fetched competitor sources | **outward** — what the domain expects that this app does not do | derived (the local inventory) **plus** external/judgment (the fetched half) |
+| **Scorecard** | `--from-scorecard` | `scripts/build-feature-scorecard.sh --json` | **the plugin's own optional features** — those flagged `review:` | derived, from the scorecard's counted records |
 
 **Why they are never mixed.** The default basis is local `jq` over a local file: it costs nothing, reaches nothing, and its output is derived from entries this system recorded itself. The domain basis spends **fetch budget** and emits **judgment-class** output built partly from competitor and vendor text. Someone running bare `/propose` must therefore never trigger a network call — so the outward basis is behind an explicit flag and is never implicit. The precedent is `/capability-check`, whose adoption and `--strategy` modes are likewise two never-mixed modes behind one command.
 
-All three bases emit the same kind of artifact into the same folder under the same propose-only contract. The domain basis names its files **`domain--<slug>.md`** and the verify basis names its files **`verify-<run_id>-<ac_id|issue-N>-<slug>.md`**, so no two bases can collide on a filename in `proposed/` — and only the default basis authors `proposed/README.md` (a second author of that one file would collide on exactly the file the namespacing exists to protect). `--from-verify` costs nothing external either — it reads one already-validated local file (`evidence.jsonl`) — so it is not subject to the never-mixed / fetch-budget rule that separates the ledger and domain bases; it simply cannot be combined with `--domain` in one invocation (one basis per invocation, no exceptions).
+Every basis emits the same kind of artifact into the same folder under the same propose-only contract. The domain basis names its files **`domain--<slug>.md`** the verify basis **`verify-<run_id>-<ac_id|issue-N>-<slug>.md`** and the scorecard basis **`scorecard--<feature-slug>.md`**, so no two bases can collide on a filename in `proposed/` — and only the default basis authors `proposed/README.md` (a second author of that one file would collide on exactly the file the namespacing exists to protect). `--from-verify` costs nothing external either — it reads one already-validated local file (`evidence.jsonl`) — so it is not subject to the never-mixed / fetch-budget rule that separates the ledger and domain bases, and neither is `--from-scorecard` (local reads only); still, neither is ever combined with another basis (one basis per invocation, no exceptions).
 
 ## Usage
 
@@ -34,6 +35,7 @@ All three bases emit the same kind of artifact into the same folder under the sa
 /propose                                    # ledger basis: read floor.json, write candidates to .supervisor/requirements/proposed/
 /propose --from-verify <run_id>             # verify basis: turn a /verify run's FAIL/issue lines into drafts
 /propose --domain                           # domain basis: what the domain expects that this project does not do
+/propose --from-scorecard                   # scorecard basis: enhance-or-retire drafts for review: features
 ```
 
 The command shells out to the tested implementations — **one basis per invocation**:
@@ -42,6 +44,7 @@ The command shells out to the tested implementations — **one basis per invocat
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/propose-work.sh"                              # default, no flag
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/propose-from-verify.sh" .supervisor/verify/<run_id>   # --from-verify <run_id>
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/propose-domain.sh"                            # --domain
+# --from-scorecard: scripts/propose-scorecard.sh, under the same plugin root
 ```
 
 ## Parameters
@@ -49,6 +52,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/propose-domain.sh"                          
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--from-verify <run_id>` | off | Run the **verify** basis *instead of* the ledger basis (never both, never implicit; mutually exclusive with `--domain`). Resolves `run_dir` from `run_id` the same way `verify-run.sh`/`read-verify.sh` do: `.supervisor/verify/<run_id>`. With no such run dir (or no `evidence.jsonl` under it) it names the absence, writes nothing, and exits 0. |
+| `--from-scorecard` | off | Run the **scorecard** basis instead (one basis per invocation). Passes `--state-dir`/`--registry`/`--since` to the scorecard builder; writes to `PROPOSE_SCORECARD_OUT_DIR` (default `.supervisor/requirements/proposed`). An `error` scorecard, or one with no `review:` feature, names why, writes nothing, exits 0. |
 | `--domain` | off | Run the **domain** basis *instead of* the ledger basis (never both, never implicit). Requires the committed product store `.agent/product.json`; with no store it prints the named "no product context" message plus the `propose-product.sh` bootstrap offer, writes nothing, fetches nothing, and exits 0. |
 
 Each basis is tuned by environment variables, all optional.
@@ -99,6 +103,12 @@ Each basis is tuned by environment variables, all optional.
 4. **Cites its evidence.** Every draft's `## Evidence` section names the `evidence.jsonl` line number, every artifact path, the ticket path, the branch + head sha, and the classification.
 5. **Never touches anything outside the output directory** — not even `<run_dir>/summary.md`. The run's own `## Proposals` section (added to `verify-helpers.sh summary_build`) already states how many drafts are expected, computed from `evidence.jsonl` alone.
 
+## What the scorecard basis does (`--from-scorecard`)
+
+1. **Reads one surface:** the scorecard builder's `--json`; it prefix-matches `review:` and never restates the verdict set.
+2. **One draft per non-critical `review:` feature**, named from its id — the scorecard's numbers, its record paths, an **Enhance** option (what the numbers suggest) and a **Retire** option (tracked files `git grep -lF <id>` finds). A `critical: true` feature is never drafted.
+3. **Changes nothing else** — no feature, no config, no registry; with nothing to draft it does not even create `proposed/`.
+
 ## What the domain basis does (`--domain`)
 
 1. **Three inputs, each carrying its own evidence class into the output.** (a) the **product store**, read through `read-product.sh`; (b) the **capability inventory** — direct grep reads over this project's own code and docs plus any `.agent/orientation/` memos, class **derived** (no code graph is built or read). Inside a git work tree the surface is what `git ls-files` sees (tracked + untracked-unignored — what CI sees is what is searched); a linked worktree nested in the project, any `<dot-dir>/worktrees/` path, and the searcher's own artefacts (`propose-domain.sh`, its self-test, any `fixtures/propose-domain/` tree) are excluded **by name wherever they sit**, so a second copy of the plugin inside the tree cannot "confirm" a real gap away; (c) the **domain expectation set**, fetched from the store's `competitors[]`, class **external/judgment** and stated in every emitted file as **the weakest input** — competitor marketing overstates, and no user has been observed asking for any of it.
@@ -111,12 +121,12 @@ Each basis is tuned by environment variables, all optional.
 ## Promoting or dismissing a candidate
 
 - **Promote:** every draft (and every `/automate` dismissed-finding draft) carries `## Depends on` (`none`) and `## Touches` (the repo files it names, else `unknown`) — replace `unknown` with the real change site before promoting, and check both with `automate-helpers.sh plan-waves <file> --lint` (`skills/automate-loop/SKILL.md` §1.5). Then move the file out of `proposed/` into a real queue folder and run it (`/automate --folder <dir>`, `/autonomous --requirement <path>`, or `/launch-pad`). Nothing is enqueued until you do. A domain candidate deliberately stops short of user stories and acceptance criteria for the work itself — hand the decided gap to `/product-owner`. A file may also be kept un-runnable **in place** (outside `proposed/`) by giving it a `## Status: proposed` stamp — `/automate`'s folder and backlog-dir intake skip a stamped file the same way they skip a `## Status: done` one, so moving the file out of `proposed/` **and** removing or changing the stamp are **both** needed before it will run.
-- **Dismiss durably — deleting a file here is not a durable dismissal.** Deleting a proposal only silences it **until the next run**, which recomputes the same token and writes the same file again. To dismiss permanently, paste the candidate's token line — `evidence-set:` for the ledger basis, `domain-gap:` for the domain basis, `evidence-set:` (verify-flavoured, e.g. `evidence-set: verify-20260915T143022Z-example/AC2@L3`) for the verify basis — into a requirement file stamped `## Status: done` anywhere under `.supervisor/requirements/`. The next run finds that token and suppresses the candidate, naming the file it found it in. **Unlike the other two bases, the verify basis does not itself check for this token** — its filename is already a pure function of `(run_id, ac_id | issue-N)`, so a re-verified AC is what changes the draft, not a `## Status: done` supersession scan; delete the file and it stays gone unless that exact `(run_id, ac_id)` is re-verified.
+- **Dismiss durably — deleting a file here is not a durable dismissal.** Deleting a proposal only silences it **until the next run**, which recomputes the same token and writes the same file again. To dismiss permanently, paste the candidate's token line — `evidence-set:` for the ledger basis, `domain-gap:` for the domain basis, `evidence-set:` (verify-flavoured, e.g. `evidence-set: verify-20260915T143022Z-example/AC2@L3`) for the verify basis — into a requirement file stamped `## Status: done` anywhere under `.supervisor/requirements/`. The next run finds that token and suppresses the candidate, naming the file it found it in. **Unlike the ledger and domain bases, the verify basis does not itself check for this token** — its filename is already a pure function of `(run_id, ac_id | issue-N)`, so a re-verified AC is what changes the draft, not a `## Status: done` supersession scan; delete the file and it stays gone unless that exact `(run_id, ac_id)` is re-verified. The scorecard basis redrafts while the feature stays `review:` — settle it in the registry instead.
 
 ## Notes
 
 - **Determinism.** Two runs of any basis against an unchanged basis produce byte-identical proposal content — no run timestamps, no `$RANDOM`, no hash-order iteration.
-- **Fail-safe.** `set -uo pipefail` with no `set -e`, a `jq` guard that skips rather than fails, and `exit 0` always, in all three scripts. An advisory reader must never break its caller.
+- **Fail-safe.** `set -uo pipefail` with no `set -e`, a `jq` guard that skips rather than fails, and `exit 0` always, in every basis script. An advisory reader must never break its caller.
 - **Refresh the basis first** if the ledger has gone stale: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-floor.sh"`. `/propose` deliberately does **not** regenerate the projection itself. The domain basis's equivalent is the store: create it once with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/propose-product.sh"`, which is itself propose-only and writes nothing without `--confirm`.
 
 ## See Also
@@ -124,7 +134,8 @@ Each basis is tuned by environment variables, all optional.
 - `loomwright/scripts/propose-work.sh` — the ledger basis, guarded by `loomwright/scripts/test-propose-work.sh`.
 - `loomwright/scripts/propose-from-verify.sh` — the verify basis, guarded by `loomwright/scripts/test-propose-from-verify.sh`.
 - `loomwright/scripts/propose-domain.sh` — the domain basis, guarded by `loomwright/scripts/test-propose-domain.sh`.
-- `loomwright/scripts/propose-common.sh` — the shared blast-radius guard (`pc_guarded_write`) all three bases source; never copied inline.
+- `loomwright/scripts/propose-scorecard.sh` — the scorecard basis, guarded by `loomwright/scripts/test-propose-scorecard.sh`.
+- `loomwright/scripts/propose-common.sh` — the shared blast-radius guard (`pc_guarded_write`) every basis sources; never copied inline.
 - `loomwright/scripts/read-product.sh` / `propose-product.sh` — the product store's reader and its propose-only bootstrap.
 - `/verify` — the run this basis reads from; auto-dispatches `--from-verify` at its own Report step on ≥1 FAIL or ≥1 issue line.
 - `/insights` — the run scoreboard over the same session logs.

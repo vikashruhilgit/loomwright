@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # test-propose-common.sh - self-tests for propose-common.sh's pc_guarded_write(), the ONE
-# blast-radius guard shared by all three `/propose` bases (propose-work.sh, propose-domain.sh,
-# propose-from-verify.sh). Each caller's own self-test (test-propose-work.sh AC8,
+# blast-radius guard shared by every `/propose` basis (propose-work.sh, propose-domain.sh,
+# propose-from-verify.sh, propose-scorecard.sh). Each caller's own self-test (test-propose-work.sh AC8,
 # test-propose-domain.sh AC10) already exercises the guard THROUGH that caller's business logic
 # (a hostile class/slug name), but neither one calls pc_guarded_write directly, so a defect
-# reachable only via an input shape none of the three callers happens to construct (a bare
+# reachable only via an input shape none of the callers happens to construct (a bare
 # symlink at a legal name, say) could ship uncaught. This file calls pc_guarded_write() itself,
 # directly, with no caller in between.
 #
