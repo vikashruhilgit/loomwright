@@ -1,7 +1,7 @@
 # Supervisor Job: The post-park lifecycle, owned by the engine — `trail-pr` at every park and at run end, and a merge watcher that runs a scripted `closeout` when the owner merges
 
 ## Environment
-- **Project:** ~/Documents/work/AI/ai-agent-manager
+- **Project:** ai-agent-manager
 - **CLAUDE.md:** ✓ Found (fresh)
 - **Git:** clean apart from the gitignored run file + this brief; branch `main` == origin/main
 - **GitHub CLI:** ✓ Authenticated (vikashruhilgit)
