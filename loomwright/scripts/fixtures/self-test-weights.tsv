@@ -4,6 +4,9 @@
 # Re-measure from a later CI run's PASS lines when the balance drifts. Format: <secs><TAB><path>.
 # One 3 s adapter test is deliberately absent (an adapter-boundary scan forbids its name in non-doc files outside adapters/); it takes the default weight.
 # iq02 reconcile (2026-10-09): five tests added after that CI run carry local wall-clock seconds (macOS, idle), not CI times.
+# Pool-group split (2026-11-02): test-automate-trail.sh's 235 s and test-automate-next-step.sh's estimated ~253 s (its local
+# time scaled by trail's CI/local ratio; it had no row and took the default) are divided over their three group entries
+# by each group's measured local share; test-part-groups-lib.sh carries local seconds. Re-measure from CI PASS lines.
 1	loomwright/scripts/adapters/providers/test-lens-compare.sh
 24	loomwright/scripts/adapters/providers/test-lens-run.sh
 37	loomwright/scripts/test-add-orientation.sh
@@ -15,7 +18,12 @@
 9	loomwright/scripts/test-automate-helpers-dispatch.sh
 86	loomwright/scripts/test-automate-helpers.sh
 52	loomwright/scripts/test-automate-lanes.sh
-235	loomwright/scripts/test-automate-trail.sh
+89	loomwright/scripts/test-automate-next-step.2.sh
+87	loomwright/scripts/test-automate-next-step.3.sh
+77	loomwright/scripts/test-automate-next-step.sh
+91	loomwright/scripts/test-automate-trail.2.sh
+69	loomwright/scripts/test-automate-trail.3.sh
+75	loomwright/scripts/test-automate-trail.sh
 0	loomwright/scripts/test-benchmark.sh
 1	loomwright/scripts/test-brain-baseline-eval.sh
 0	loomwright/scripts/test-brief-conformance-seam.sh
@@ -74,6 +82,7 @@
 1	loomwright/scripts/test-not-verified-transport-seam.sh
 0	loomwright/scripts/test-notify-click-target.sh
 2	loomwright/scripts/test-notify-desktop.sh
+1	loomwright/scripts/test-part-groups-lib.sh
 1	loomwright/scripts/test-phase-timing.sh
 2	loomwright/scripts/test-pr-postmortem-gather.sh
 1	loomwright/scripts/test-product-seam.sh

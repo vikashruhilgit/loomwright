@@ -514,19 +514,6 @@ echo "== BM. branch mode: trail-pr pushes to the metadata branch (no PR), eviden
 # GitHub; the gh stub records every call and these cases FAIL if `pr create` is ever invoked.
 # The committed sidecar fixtures cite vikashruhilgit/loomwright; the stub PRs cite acme/widgets.
 export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widgets,vikashruhilgit/loomwright"
-BM_MEM="$HERE/setup-memory.sh"; BM_MS="$HERE/meta-sync.sh"; BMB="loomwright-meta"
-# bm_switch: run history IGNORED (the post-migration shape, so a kept check-ignore drop would push
-# nothing), the branch-mode block, an allowlisted ledger, and an initialised metadata branch.
-bm_switch() {
-  ( cd "$P"
-    printf '.supervisor/\n' > .gitignore
-    bash "$BM_MEM" --root "$P" apply --branch-mode "$BMB" >/dev/null 2>&1; rm -f .gitignore.backup.*
-    printf '{"repo":"acme/widgets","automate_key":"%s\\u001fx","source":"automate_drain"}\n' "$RUN_ID" > .supervisor/postmortem/results.jsonl
-    bash "$BM_MS" init --root "$P" --branch "$BMB" >/dev/null 2>&1 )
-}
-bm_tree() { git --git-dir="$FX/origin.git" ls-tree -r --name-only "refs/heads/$BMB" 2>/dev/null; }
-bm_show() { git --git-dir="$FX/origin.git" show "refs/heads/$BMB:$1" 2>/dev/null; }
-bm_trail() { (cd "$P" && bash "${BM_HELPER:-$H}" trail-pr "$RF_REL0" --reason "${1:-done}"); }
 
 # (bm-a) merged item ⇒ meta-pushed, NO PR, no trail worktree; the branch holds the stamp + run file.
 new_fixture 80; bm_switch

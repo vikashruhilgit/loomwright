@@ -1,48 +1,6 @@
 # =============================================================================
 # Part B — closeout + merge watcher
 # =============================================================================
-PRURL="https://github.com/acme/widgets/pull/7"
-RF_REL=".supervisor/automate/$RUN_ID.md"
-
-# spy copy of the scripts dir: automate-helpers.sh is a logging shim that execs
-# the real helper (renamed), and captures the run-lock meta while trail-pr runs;
-# notify-desktop.sh / send-webhook.sh are counters. Everything else is real.
-# Every scripts-dir copy here also takes automate-helpers.d/ — the dispatcher
-# sources its helper families from beside itself (parallel-automate/11).
-SPYD="$TOP/spyd"; mkdir -p "$SPYD"
-cp "$HERE"/*.sh "$HERE"/*.py "$SPYD/"; cp -R "$HERE/automate-helpers.d" "$SPYD/"; cp -R "$HERE/automate-trail.d" "$SPYD/"; cp -R "$HERE/setup-memory.d" "$HERE/meta-sync.d" "$HERE/automate-lanes.d" "$SPYD/"
-mv "$SPYD/automate-helpers.sh" "$SPYD/automate-helpers.real.sh"
-cat > "$SPYD/automate-helpers.sh" <<'SHIM'
-#!/usr/bin/env bash
-echo "$*" >> "$SPYLOG"
-if [ "${1:-}" = trail-pr ]; then cat .supervisor/run.lock/meta >> "$SPYLOG.meta" 2>/dev/null; echo "--" >> "$SPYLOG.meta"; fi
-exec bash "$(dirname "$0")/automate-helpers.real.sh" "$@"
-SHIM
-printf '#!/usr/bin/env bash\ncat >/dev/null\necho notify >> "$SPYLOG.notify"\nexit 0\n' > "$SPYD/notify-desktop.sh"
-printf '#!/usr/bin/env bash\necho "$*" >> "$SPYLOG.webhook"\nexit 0\n' > "$SPYD/send-webhook.sh"
-export SPYLOG="$TOP/spy.log"
-spy_reset() { rm -f "$SPYLOG" "$SPYLOG.meta" "$SPYLOG.notify" "$SPYLOG.webhook"; }
-spy_count() { grep -c "$1" "$2" 2>/dev/null || true; }
-
-# closeout_fixture <n> [oid-override]: new_fixture, then a merged-PR world —
-# feature/x pushed and SQUASH-merged into origin/main (a new commit, not the
-# branch tip), the primary back on main with the PR's branch in its own
-# worktree, plus an unrelated branch+worktree, and the feature PR in the stub.
-closeout_fixture() {
-  new_fixture "$1"
-  ( cd "$P"
-    git checkout -q -- README; rm -f stray.txt
-    git push -q origin feature/x 2>/dev/null
-    git checkout -q main
-    git worktree add -q "$FX/wt-pr" feature/x 2>/dev/null
-    git worktree add -q -b other "$FX/wt-other" main 2>/dev/null
-  )
-  git clone -q "$FX/origin.git" "$FX/merger" 2>/dev/null
-  ( cd "$FX/merger" && git checkout -q main && git merge -q --squash origin/feature/x >/dev/null 2>&1 && git commit -qm "feat (#7)" && git push -q origin main 2>/dev/null )
-  OID="${2:-$(git -C "$P" rev-parse feature/x)}"
-  jq -n --arg u "$PRURL" --arg o "$OID" '[{number:7,url:$u,state:"MERGED",headRefName:"feature/x",headRefOid:$o}]' > "$GH_STUB_DIR/prs.json"
-}
-run_closeout() { (cd "$P" && bash "$SPYD/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" "$@"); }
 
 echo "== C. closeout =="
 closeout_fixture 4
@@ -88,7 +46,6 @@ badl="$(printf '%s\n' "$out2" | grep -v 'skipped — ' || true)"
 [ -z "$badl" ] && [ "$rc" -eq 0 ] && ok "AC11: second run is all skipped lines, exit 0" || no "AC11: non-skipped line(s): $badl"
 [ "$before_rf" = "$(cksum < "$P/$RF_REL")" ] && [ "$before_req" = "$(cksum < "$P/$REQ")" ] && ok "AC11: run file + requirement unchanged" || no "AC11: second run mutated files"
 [ "$before_trail" = "$(git -C "$FX/origin.git" for-each-ref --format='%(objectname)' 'refs/heads/chore/*')" ] && [ "$creates_before" = "$(count_creates)" ] && ok "AC11: no push, no PR create on the second run" || no "AC11: second run pushed/created"
-it_count() { jq -c 'select(.event=="item_timing")' "$1" 2>/dev/null | wc -l | tr -d ' '; }
 [ "$(it_count "$P/.supervisor/logs/sess-it.jsonl")" = 1 ] && ok "AC11: the session log holds exactly ONE item_timing after the second closeout (the append is idempotent)" || no "AC11: item_timing rows after the re-run: $(it_count "$P/.supervisor/logs/sess-it.jsonl")"
 grep -q '^pr merge' "$GH_STUB_DIR/argv.log" && no "gh pr merge called" || ok "closeout never calls gh pr merge"
 # Control: the same two closeouts through a gated copy WITHOUT the idempotence guard append a
@@ -153,7 +110,6 @@ echo "== C. closeout reconciles a MATCHING ## Current, never a different one =="
 # loomwright-studio run automate-2026-09-30-211858: after the watcher's closeout
 # the Queue read `- [x] …02…` while ## Current still said awaiting_merge — a
 # self-contradictory run file whose next resume re-ran reconcile + closeout.
-cur_block() { awk '/^## Current/{c=1} /^## Progress/{c=0} c' "$1"; }
 # (i) matching item + PR, ## Status: paused ⇒ status done, pause_reason awaiting_go.
 closeout_fixture 101
 out="$(run_closeout)"

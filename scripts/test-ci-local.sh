@@ -53,6 +53,9 @@
 #   (AF1) a changed loomwright/scripts/<x>.sh → --affected runs test-<x>.sh + the cheap gates
 #        (check-* and validate-version, with arguments) and NOT the other tests nor test-check-*
 #   (AF2) an unmapped change and a deleted test are listed under "not covered by --affected:"
+#   (AF9) a parted suite: a changed <x>.sh or test-<x>.d/ part maps to test-<x>.sh AND its
+#        test-<x>.<g>.sh pool entries; a changed pool entry maps to itself; MUTATION CONTROL: a copy
+#        without the sibling expansion skips test-<x>.2.sh
 #   (AF3) --affected never creates or removes a pass stamp (PASS and FAIL); MUTATION CONTROL: a copy
 #        that stamps on PASS is caught by the same check
 #   (AF4) a changed scripts/check-<x>.sh → its ci.yml-named test-check-<x>.sh runs
@@ -607,6 +610,45 @@ if [ "$rc" -eq 0 ] && has "^not covered by --affected:\$" && has "^  README.md\$
   ok "(AF2) unmapped + deleted files listed under 'not covered by --affected:'"
 else no "(AF2) rc=$rc out=$out"; fi
 rm -f "$R/README.md"; ( cd "$R" && git checkout -q -- loomwright/scripts/test-two.sh loomwright/scripts/one.sh )
+
+# (AF9) — a parted suite (part-groups-lib.sh): test-four.sh is group 1, test-four.2.sh group 2, and its
+# legs live in test-four.d/. A changed four.sh or part maps to BOTH pool entries; a changed group entry
+# maps to itself only. Committed (origin/main moved there), then removed again, so later legs are unchanged.
+mkdir -p "$R/loomwright/scripts/test-four.d"
+echo ': library' > "$R/loomwright/scripts/four.sh"
+echo 'echo "four" >> "$FIXTURE_LOG"' > "$R/loomwright/scripts/test-four.sh"
+echo 'echo "four2" >> "$FIXTURE_LOG"' > "$R/loomwright/scripts/test-four.2.sh"
+echo ': a leg' > "$R/loomwright/scripts/test-four.d/01-x.sh"
+( cd "$R" && git add -A && git commit -qm parted-fixture && git update-ref refs/remotes/origin/main HEAD )
+echo ': edited' >> "$R/loomwright/scripts/four.sh"
+run --affected
+if [ "$rc" -eq 0 ] && hasf "loomwright/scripts/four.sh ⇒ loomwright/scripts/test-four.sh" \
+   && hasf "loomwright/scripts/four.sh ⇒ loomwright/scripts/test-four.2.sh" && ran four && ran four2 && ! ran one; then
+  ok "(AF9) changed four.sh: test-four.sh AND its pool entry test-four.2.sh ran"
+else no "(AF9) four.sh: rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+# MUTATION CONTROL: a copy without the sibling expansion must miss test-four.2.sh.
+awk '/^      case "\$t" in \*\/test-\*\.\[0-9\]\*\.sh\) ts="\$t" ;;/ { print "      ts=\"$t\""; n++; next } { print } END { exit n != 1 }' \
+  "$R/scripts/ci-local.sh" > "$R/scripts/ci-local-mutant.sh"; mut_rc=$?
+: > "$FIXTURE_LOG"; out="$(cd "$R" && bash scripts/ci-local-mutant.sh --affected 2>&1)"; rc=$?
+if [ "$mut_rc" -eq 0 ] && ran four && ! ran four2; then ok "(AF9) MUTATION CONTROL: without the sibling expansion test-four.2.sh is skipped"
+else no "(AF9) MUTATION CONTROL: mut_rc=$mut_rc rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")]"; fi
+rm -f "$R/scripts/ci-local-mutant.sh"
+( cd "$R" && git checkout -q -- loomwright/scripts/four.sh )
+echo ': edited' >> "$R/loomwright/scripts/test-four.d/01-x.sh"
+run --affected
+if [ "$rc" -eq 0 ] && hasf "loomwright/scripts/test-four.d/01-x.sh ⇒ loomwright/scripts/test-four.sh" \
+   && hasf "loomwright/scripts/test-four.d/01-x.sh ⇒ loomwright/scripts/test-four.2.sh" && ran four && ran four2 \
+   && ! has "not covered by --affected:"; then
+  ok "(AF9) changed part test-four.d/01-x.sh: both pool entries ran"
+else no "(AF9) part: rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+( cd "$R" && git checkout -q -- loomwright/scripts/test-four.d/01-x.sh )
+echo '# edited' >> "$R/loomwright/scripts/test-four.2.sh"
+run --affected
+if [ "$rc" -eq 0 ] && hasf "loomwright/scripts/test-four.2.sh ⇒ loomwright/scripts/test-four.2.sh" && ran four2 && ! ran four; then
+  ok "(AF9) changed group entry test-four.2.sh: itself only"
+else no "(AF9) group entry: rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+( cd "$R" && git rm -rqf loomwright/scripts/four.sh loomwright/scripts/test-four.sh loomwright/scripts/test-four.2.sh loomwright/scripts/test-four.d \
+    && git commit -qm parted-fixture-gone && git update-ref refs/remotes/origin/main HEAD )
 
 # (AF4) — a changed root check-*.sh brings in its ci.yml-named test-check-*.sh.
 echo '# edited' >> "$R/scripts/check-a.sh"
