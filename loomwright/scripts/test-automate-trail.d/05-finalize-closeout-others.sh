@@ -614,6 +614,23 @@ if grep -q '^2\.5\. \*\*Requirement close-out' <<<"$ds25" && ! grep -qE '^[[:spa
 else
   no "(DS3) step 2.5 still stamps, or no longer names the deferral to closeout"
 fi
+# (DS4) dismissed-05 F095: a requirement whose first status heading is `## Status: brief-shipped` (Launch Pad's
+# stamp) + a MERGED PR ⇒ closeout APPENDS its done block below the kept brief-shipped heading — never replaces it.
+closeout_fixture 371
+printf '# req a\n\n## Status: brief-shipped\n' > "$P/$REQ"
+rm -f "$P/.supervisor/jobs/in-progress/brief-live.md"
+printf '# req a\n\n## Status: brief-shipped\n' > "$TOP/ds4-req-shipped"
+out="$(run_closeout)"
+case "$out" in *"closeout: stamped — $REQ (## Status: done, brief .supervisor/jobs/done/brief-a.md)"*) ok "(DS4) brief-shipped requirement + PR MERGED ⇒ closeout stamps it" ;; *) no "(DS4) MERGED closeout over brief-shipped: $(printf '%s' "$out" | tr '\n' '|')" ;; esac
+ds4_order="$(awk '/^## Status:/ { sub(/^## Status:[[:space:]]*/, ""); printf "%s%s", sep, $0; sep = "," }' "$P/$REQ")"
+[ "$ds4_order" = "brief-shipped,done" ] \
+  && ok "(DS4) the status headings read brief-shipped then done: the kept heading first, the done block appended below it" \
+  || no "(DS4) status headings in order: '$ds4_order'"
+{ cat "$TOP/ds4-req-shipped"
+  printf '\n<!-- loomwright:requirement-closeout -->\n## Status: done\n- **Completed:** <TS>\n- **Brief:** .supervisor/jobs/done/brief-a.md\n- **PR:** %s\n' "$PRURL"; } > "$TOP/ds4-req-want"
+sed -E 's/^(- \*\*Completed:\*\* ).*/\1<TS>/' "$P/$REQ" > "$TOP/ds4-req-got"
+cmp -s "$TOP/ds4-req-got" "$TOP/ds4-req-want" && ok "(DS4) the requirement is the brief-shipped bytes + the closeout printf block, byte for byte (Completed normalised)" \
+  || no "(DS4) stamped bytes differ: $(diff "$TOP/ds4-req-want" "$TOP/ds4-req-got" | tr '\n' '|')"
 
 echo "== NT. automate-followups/38: closeout --no-trail, the --auto-merge SYNC close-out, the strict sentinel guard =="
 # nt_norm <file> <fx dir> — a run file / requirement with the per-fixture bytes normalised: the fixture

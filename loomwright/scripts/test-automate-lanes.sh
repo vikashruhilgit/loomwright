@@ -84,7 +84,8 @@
 #   AM superseded lane questions (L8, 2026-10-16): the lane abandons toolu_s1, re-asks toolu_s2 ⇒ s1 moves to
 #     questions/superseded/ naming s2 + one lane ## Progress line, lane-answer / --deliver-pending refuse s1 by
 #     name, the resume re-fire of s2 supersedes nothing, 0 pending and the lane reads its park + mutation control
-#   AN phase sessions (automate-speed/09, fresh session per phase): phase-check ok / unavailable + mutation;
+#   AN phase sessions (automate-speed/09, fresh session per phase): the suite-top unset clears an ambient
+#     LOOMWRIGHT_PHASE_DIR / LOOMWRIGHT_RUN_LOCK_SESSION_ID (AN0b, AN0c); phase-check ok / unavailable + mutation;
 #     phase-launch BLOCKED without an owner command (no process) + mutation; the launch shape (lane flag list
 #     + --settings relay hook only, cwd = checkout, LOOMWRIGHT_PHASE_DIR / LOOMWRIGHT_RUN_LOCK_SESSION_ID set,
 #     holder pin unset); a phase question inside a LANE clone lands in the phase dir, never the lane inbox
@@ -137,7 +138,11 @@ _lanes_bundle "$S" > "$SB" && [ -s "$SB" ] || { echo "FAIL - could not build the
 export HOME="$T/home"; mkdir -p "$HOME"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1
-unset CLAUDE_PLUGIN_ROOT LOOMWRIGHT_ROOT LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS   # the AI group sets the opt-out per command; a pre-set neutral root would beat the location-derived one
+# The AI group sets the opt-out per command; a pre-set neutral root would beat the location-derived one. The two
+# phase variables: a run started from inside a live phase session inherits them, and relay-hook routes every
+# question to $LOOMWRIGHT_PHASE_DIR when it is set, so the relay legs would write into that session's REAL phase
+# inbox (dismissed-05 F331). Part 06 (AN) sets both per command, never ambiently; its AN0b leg pins this line.
+unset CLAUDE_PLUGIN_ROOT LOOMWRIGHT_ROOT LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS LOOMWRIGHT_PHASE_DIR LOOMWRIGHT_RUN_LOCK_SESSION_ID
 
 BIN="$T/bin"; mkdir -p "$BIN"
 export STUB_LOG="$T/claude.log"; : > "$STUB_LOG"
