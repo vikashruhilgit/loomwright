@@ -28,5 +28,8 @@ fixture, so the decision is listed as the one Criterion 22 implies on its own.
 | `extra-*` | `over` | MEDIUM `requirement_fit`: Subtask 2 (troubleshooting sections) is `extra` | PASS (Launch Pad refines it at its fix floor) |
 | `supporting-*` | `fulfils` | none: Subtask 2 (test) and Subtask 3 (budgets, changelog fragment) are `supporting` | PASS |
 
+Known limit of the `supporting` brief: its test subtask reads the tables Subtask 1 writes but runs beside it, so
+Criteria 4 and 5 may FAIL it. That is unrelated to Criterion 22, whose rating stays `fulfils`.
+
 Live run: `docs/evidence/plan-review-requirement-fit.md` records the exact command and each pair's verbatim
 `requirement_fit` line and decision.
