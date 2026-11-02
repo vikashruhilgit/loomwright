@@ -149,3 +149,9 @@ loomwright/commands/propose.md
 loomwright/docs/command-parts/insights
 loomwright/docs/command-parts/propose
 changelog.d/feature-scorecard.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-02T08:53:31Z
+- **Brief:** .supervisor/jobs/done/2026-11-01-feature-scorecard.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/785
