@@ -105,6 +105,29 @@ and the machine's real `/etc/gitconfig` is never edited. `05-gate-eval.sh` and `
 also run gate-eval with their own inline `env` (not through `gate()`). Those parts are outside this
 group's lanes and are unchanged.
 
+## Pin rows re-pointed at their runner (review iteration 1)
+
+`run-pin-mutations.sh` takes the first backticked token of a pin row as a test file and runs it standalone
+with `bash <pin>` from a scratch copy of the tree. It cannot pass a part-name argument. A
+`test-automate-helpers.d/*.sh` part is a sourced fragment: `ok`, `no`, `gate` and the fixtures come
+from the runner. Run alone, the part exits 0 with no `ok` lines, mutated or not. So a pin row that
+names a `.d` part cannot discriminate. The Phase 4.5 reviewer saw this as row 5 `not_held`. Driven
+through `test-automate-helpers.sh 07-rules-gate`, the R11n mutants of the same leg family went red,
+and the unmutated control passed 111/0.
+
+The brief's `## Pin mutations` rows 4, 5 and 6 now name `loomwright/scripts/test-automate-helpers.sh`
+(the whole suite) as their pin, with the part kept as a label after it. Each row's mutation text is
+unchanged, and so are the legs: R11n discriminates. The brief is gitignored, so this note is the
+committed record. Re-run without `--cache` after the re-point:
+
+- row 5: `held` (`--only-paths loomwright/scripts/automate-helpers.sh`; the full-table run at `--budget 540`
+  spent its budget on the slower suites and printed `unverified (budget_exhausted)` for it).
+- rows 4 and 6: still `unverified (not_machine_applicable)`. Row 4 is prose (`revert … to`), and row 6 has
+  two flips in one cell. Their red-on-pre-fix is the in-suite mutants in §F257 and §F032 above.
+
+deferred — needs production change: run-pin-mutations.sh runs a .d-part pin standalone (no runner, no
+part argument), so a row naming a sourced part reads `not_held` / `pin_red_unmutated` instead of a verdict.
+
 ## Suite runs (post-fix)
 
 | Run | `RESULT:` line | exit |

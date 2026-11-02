@@ -122,6 +122,28 @@ Trimmed runners: a scratch mutant tree's runner sometimes sourced only the parts
 part 06, and the meta-sync tree dropped parts 03 and 04. This only shortens the run. The legs are unchanged, and the
 committed runners still source every part.
 
+## Pin rows re-pointed at their runner (review iteration 1)
+
+`run-pin-mutations.sh` runs a pin row's first backticked token standalone with `bash <pin>` and cannot
+pass a part-name argument. A `.d` part is a sourced fragment that needs its runner's helpers and
+fixtures. Named as a pin, it cannot discriminate. Rows 7 and 8 (`test-meta-sync.d/02-guards-mode-base.sh`)
+were reported `unverified (pin_red_unmutated)`. The reviewer showed both held when driven through
+`test-meta-sync.sh`. `test-meta-sync.sh` takes no part argument, so the whole runner is the pin.
+
+The brief's rows 7 and 8 now name `loomwright/scripts/test-meta-sync.sh`. Row 9 (DS4) now names
+`loomwright/scripts/test-automate-trail.sh`. Each row keeps its part as a label, and each mutation text
+is unchanged. Row 9's mutation is prose (`reviewer-applied`), so it stays `not_machine_applicable`.
+Its red-on-pre-fix is the F095 scratch mutant above. Re-run without `--cache` after the re-point:
+
+- rows 7 and 8: both `held` (`--only-paths` on their two targets, `--timeout 500`). The whole meta-sync
+  suite outruns the runner's default 300s per-run timeout on a loaded machine, so the first pass printed
+  `unverified (timeout)` and the full-table `--budget 540` pass printed `unverified (budget_exhausted)`.
+  Neither is `pin_red_unmutated` any more.
+- row 9: `unverified (not_machine_applicable)`, as before.
+
+deferred — needs production change: run-pin-mutations.sh runs a .d-part pin standalone (no runner, no
+part argument), so a row naming a sourced part reads `not_held` / `pin_red_unmutated` instead of a verdict.
+
 ## Honest limits
 
 - AN0b pins the runner's unset LINE by running it, not the whole suite as a child. A suite that re-exports a phase
