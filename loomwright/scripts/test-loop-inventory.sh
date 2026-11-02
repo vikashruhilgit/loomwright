@@ -16,12 +16,14 @@
 # CHECKED (every FAIL line names the row id, or the group/file and heading):
 #   * SHAPE — the file's `## ` sections are exactly Sources, Inventory, Gap list (ordered by risk), Counts,
 #     in that order (so it ENDS with the gap list and the counts); the table header is the contract's nine
-#     columns; every row has nine cells (`\|` is a literal pipe, unescaped before matching); id is
+#     columns (a row or the header may sit 0-3 spaces in, as CommonMark allows); every row has nine cells
+#     (`\|` is a literal pipe, unescaped before matching); id is
 #     <prefix>-NNN (three or more digits) with the group's prefix (AL/SV/RH/LP); kind is one of
 #     deterministic/judgment/rule/story; home is prose, script:<file>[ <sub>], hook:<leaf>, step-scoped,
 #     global or rationale:<doc>#<anchor>; implemented by is `-` or script:<file>[ <sub>]; the anchor is
 #     `h: #…` or `q: <text of 12 or more characters>`; the file cell is one of the group's sources.
-#   * HEADING COVERAGE (AC2) — every `###`/`####` heading line of every source, outside fenced code blocks
+#   * HEADING COVERAGE (AC2) — every `###`/`####` heading line of every source (indented 0-3 spaces; at 4 or
+#     more it is an indented code line; the indentation is dropped before it is matched), outside fenced code blocks
 #     and outside `<!-- split:begin … -->`/`<!-- split:end … -->` index blocks, is the `h:` anchor of at
 #     least one row whose file cell names that file (fence reading: see DELIBERATE CHOICES). A fence
 #     (or split block) still open at end of file fails too: it would hide every heading after it.
@@ -46,7 +48,10 @@
 #     line naming the culprit; green legs assert exit 0 (fence- and split-block exemption, step-scoped home,
 #     a rationale: home resolving in a scratch rationale doc).
 #     Beyond the AC8 set, the fence-union reading and every remaining FAIL branch (row shape, header,
-#     sections, Sources, count/gap-line shape, unclosed split block) get one red leg each.
+#     sections, Sources missing and extraneous, count/gap-line shape, a gap-list id listed twice, a missing
+#     inventory or source file, unclosed split block) get one red leg each; the 0-3-space indentation of a
+#     heading and of a row has a red leg, the 4-space boundary a green one. The scratch base mirrors
+#     scripts/ including every scripts/<name>.d/ module directory (a leg resolves a script: cell naming one).
 #
 # NOT CHECKED: that a list item stating a branch or rule has its own row (AC3 — reviewer's judgment; the
 # test checks headings only); that a q: anchor is unique in its file or says what the row claims; that
@@ -76,6 +81,9 @@
 #     alone would leave the headings in that out-of-step stretch (the Phase 5 / Phase 5.5 step headings)
 #     unchecked, the toggle alone would skip the template headings CommonMark renders; the union checks
 #     both, and the real tree is green under it. A block that never closes under BOTH readings fails.
+#     No warning is printed on a fence line where the two readings disagree: they disagree by design on the
+#     real tree (the nested template above, and list-item fences), so such a warning would print on every
+#     green run and carry no signal.
 #   * Coverage asks only for ###/#### headings; rows anchored on `##` headings or table rows are fine.
 #   * This file names no vendor-coupling token (scripts/check-vendor-coupling.sh counts this directory).
 #
@@ -141,11 +149,14 @@ check_root() {
   } | awk -F'\t' -v root="$root" "$AWK_PIPES"'
     function rstrip(s) { sub(/[ \t\r]+$/, "", s); return s }
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+    # lead3: up to three leading spaces dropped (CommonMark: a heading or table row may be indented 0-3
+    # spaces; 4 or more is an indented code line, so it is left as it is).
+    function lead3(s) { sub(/^(   |  | )/, "", s); return s }
     function bad(m) { print "FAIL " m; nbad++ }
     function readable(p,   l, r) { r = (getline l < p); close(p); return (r >= 0) }
     function load(rel,   p, l, n, r, big) {
       p = root "/" rel; n = 0; big = "\n"
-      while ((r = (getline l < p)) > 0) { n++; SRC[rel, n] = l; big = big l "\n"; HL[rel, rstrip(l)] = 1 }
+      while ((r = (getline l < p)) > 0) { n++; SRC[rel, n] = l; big = big l "\n"; HL[rel, rstrip(l)] = 1; HL[rel, rstrip(lead3(l))] = 1 }
       close(p)
       if (r < 0 && n == 0) return 0
       NL[rel] = n; BIG[rel] = big; return 1
@@ -208,8 +219,8 @@ check_root() {
             continue
           }
           if (sec == "Inventory") {
-            if (l !~ /^\|/) continue
-            t = protect(rstrip(l))
+            if (lead3(l) !~ /^\|/) continue
+            t = protect(rstrip(lead3(l)))
             if (!sawhdr) {
               sawhdr = 1; h = t; gsub(/[ \t]+/, " ", h)
               if (h != header) bad(g ": the ## Inventory table header is not the contract header: " l)
@@ -313,7 +324,8 @@ check_root() {
             if (l ~ /^<!-- split:begin[ \t]/) { split_ = 1; continue }
             if (l ~ /^<!-- split:end[ \t]/) { split_ = 0; continue }
             if (split_) continue
-            if (l ~ /^####?([ \t]|$)/ && !((s, rstrip(l)) in COV)) bad(s ": heading has no h: row: " rstrip(l))
+            hl = rstrip(lead3(l))
+            if (hl ~ /^####?([ \t]|$)/ && !((s, hl) in COV)) bad(s ": heading has no h: row: " hl)
           }
           if (fence != "" && tog) bad(s ": a fenced block never closes, so headings after it were not checked")
           if (split_) bad(s ": a split:begin block never closes, so headings after it were not checked")
@@ -374,9 +386,14 @@ if [ -d "$PLUGIN/docs/rationale" ]; then
 fi
 for d in automate-loop self-heal-advisory async-orchestration review-heal autonomous-loop; do cp -R "$PLUGIN/skills/$d" "$BASE/loomwright/skills/"; done
 # Scripts: real bodies (the case-arm check reads them); test files as empty stand-ins (only existence is checked).
-for f in "$PLUGIN"/scripts/*; do
+# The top level and every scripts/<name>.d/ module directory are mirrored (a script: cell may name a module);
+# a test runner's parts (test-<x>.d/*) are stand-ins like the runner.
+for f in "$PLUGIN"/scripts/* "$PLUGIN"/scripts/*.d/*; do
   [ -f "$f" ] || continue
-  case "$(basename "$f")" in test-*.sh) : > "$BASE/loomwright/scripts/$(basename "$f")" ;; *) cp "$f" "$BASE/loomwright/scripts/" ;; esac
+  rel="${f#"$PLUGIN"/scripts/}"
+  mkdir -p "$BASE/loomwright/scripts/$(dirname "$rel")" \
+    || { no "fixture: could not create scripts/$(dirname "$rel") in $BASE"; echo "RESULT: $pass/$((pass+fail)) passed"; exit 1; }
+  case "$rel" in test-*.sh|test-*.d/*) : > "$BASE/loomwright/scripts/$rel" ;; *) cp "$f" "$BASE/loomwright/scripts/$rel" ;; esac
 done
 for f in "$REPO"/scripts/test-*.sh; do [ -f "$f" ] && : > "$BASE/scripts/$(basename "$f")"; done
 
@@ -434,6 +451,14 @@ NEWH="### Fixture heading with no inventory row"
 d="$(new_leg ac2)"
 if apply "$d/$PIL" '{print} END {print ""; print h}' -v h="$NEWH"; then run_leg "$d"; expect_red "AC2 (new heading)" "skills/automate-loop/per-item-loop.md: heading has no h: row: $NEWH"
 else no "AC2: mutant invalid"; fi
+# AC2 at 1-3 spaces of indentation (still a CommonMark heading): the same uncovered heading is red; at 4
+# spaces it is an indented code line, not a heading, and needs no row.
+d="$(new_leg ac2-indent)"
+if apply "$d/$PIL" '{print} END {print ""; print "  " h}' -v h="$NEWH"; then run_leg "$d"; expect_red "AC2 (new heading indented 2 spaces)" "skills/automate-loop/per-item-loop.md: heading has no h: row: $NEWH"
+else no "AC2 indented: mutant invalid"; fi
+d="$(new_leg ac2-indent4)"
+if apply "$d/$PIL" '{print} END {print ""; print "    " h}' -v h="$NEWH"; then run_leg "$d"; expect_green "exemption: a 4-space-indented ### line is code, not a heading"
+else no "AC2 4-space exemption: mutant invalid"; fi
 
 # AC2 exemptions — the same heading inside a fenced block, and inside a split-index block, needs no row.
 d="$(new_leg fence)"
@@ -483,6 +508,11 @@ else
     echo "  (deleted '$hhead' from a scratch copy of per-item-loop.md; its row is $hrow)"
     run_leg "$d"; expect_red "AC4 (anchored heading deleted)" "FAIL $hrow: anchor not found in skills/automate-loop/per-item-loop.md"
   else no "AC4: mutant invalid"; fi
+  # The same heading indented 3 spaces is the same heading: its row still covers it and its anchor is live.
+  d="$(new_leg ac4-indent)"
+  if apply "$d/$PIL" '{ s = $0; sub(/[ \t]+$/, "", s); if (s == h) $0 = "   " $0; print }' -v h="$hhead"; then
+    run_leg "$d"; expect_green "an anchored heading indented 3 spaces stays covered, its anchor live"
+  else no "AC4 indented heading: mutant invalid"; fi
   # AC4 exemption — the same deletion, with the row's home moved off prose, is not anchor-checked.
   d="$(new_leg nonprose)"
   if set_cell "$d/$INV/automate-loop.md" "$hrow" 7 step-scoped && apply "$d/$PIL" "$DEL_HEAD" -v h="$hhead"; then
@@ -608,6 +638,39 @@ file_leg shape-count-dup "$INV/review-heal.md" "FAIL review-heal: ## Counts has 
 file_leg shape-gap-line "$INV/review-heal.md" "FAIL review-heal: malformed ## Gap list line" '{print} /^## Gap list/ {print "1. RH-001 - reason"}'
 file_leg split-unclosed "loomwright/skills/automate-loop/SKILL.md" "SKILL.md: a split:begin block never closes" \
   '{print} END {print ""; print "<!-- split:begin x.md -->"}'
+file_leg shape-sources-extra "$ALF" "FAIL automate-loop: ## Sources lists commands/supervisor.md, which is not a source of the group" \
+  '{print} $0 == "- `commands/automate.md`" {print "- `commands/supervisor.md`"}'
+if [ -n "$gal" ]; then
+  file_leg gap-listed-twice "$ALF" "FAIL $gal: listed twice in the automate-loop ## Gap list" \
+    '{print} !d && s && /^[0-9]+\. AL-/ {print; d = 1} /^## Gap list/ {s = 1}'
+else no "gap-listed-twice: precondition — automate-loop has no gap-list line"; fi
+# gone_leg <name> <file> <needle> — the file deleted from a scratch copy (it existed, non-empty, and is gone).
+gone_leg() {
+  local d; d="$(new_leg "$1")"
+  if [ -s "$d/$2" ] && rm -f "$d/$2" && [ ! -e "$d/$2" ]; then run_leg "$d"; expect_red "$1" "$3"; else no "$1: mutant invalid"; fi
+}
+gone_leg inventory-missing "$INV/supervisor.md" "FAIL supervisor: inventory file missing or unreadable: docs/loop-inventory/supervisor.md"
+gone_leg source-missing "loomwright/commands/automate.md" "FAIL automate-loop: source file missing or unreadable: commands/automate.md"
+# A leading-space inventory row (up to 3 spaces) is still a table row: it is parsed, so its bad cell is red.
+d="$(new_leg row-indent)"
+if apply "$d/$ALF" '{ if (!d && index($0, "| " id " |") == 1) { $0 = "  " $0; d = 1 } print }' -v id="$id1" \
+   && set_cell "$d/$ALF" "$id1" 6 maybe; then run_leg "$d"; expect_red "inventory row indented 2 spaces is parsed" "FAIL $id1: unknown kind 'maybe'"
+else no "row-indent: mutant invalid"; fi
+# The base copy mirrors scripts/<name>.d/ modules, so a script: cell naming one resolves in every scratch copy.
+dmod=""
+for f in "$PLUGIN"/scripts/*.d/*; do
+  rel="${f#"$PLUGIN"/scripts/}"
+  case "$rel" in test-*) continue ;; esac
+  [ -f "$f" ] && { dmod="$rel"; break; }
+done
+if [ -z "$dmod" ]; then no "scripts/*.d: precondition — the real tree has no scripts/<name>.d/ module"
+else
+  if cmp -s "$PLUGIN/scripts/$dmod" "$BASE/loomwright/scripts/$dmod"; then ok "fixture base copies scripts/<name>.d/ modules ($dmod, body identical)"
+  else no "fixture base lacks scripts/$dmod (or its body differs)"; fi
+  d="$(new_leg dmod-cell)"
+  if set_cell "$d/$ALF" "$id1" 8 "script:$dmod"; then run_leg "$d"; expect_green "a script: cell naming scripts/$dmod resolves in a scratch copy"
+  else no "dmod-cell: mutant invalid"; fi
+fi
 
 echo "RESULT: $pass/$((pass+fail)) passed"
 [ "$fail" -eq 0 ]

@@ -21,7 +21,8 @@
 #       posted title / body / comment
 #   T8  mutation controls: removing the validator gate, the parsed counts, the
 #       map lock or the unreadable-map refusal, or counting severities only at
-#       BLOCKING/HIGH (the mixed fixture), each turns a case above RED
+#       BLOCKING/HIGH (the mixed fixture), each turns a case above RED; each
+#       mutant's sentinel is checked in the parent shell, so it prints and counts
 #   T9  /telemetry test (commands/telemetry.md) parses the fields the core's
 #       dry-run prints and branches open -> comment -> close -> skip, in order
 #
@@ -386,11 +387,20 @@ mutant() {
     index($0, b) { print; while ((getline line < r) > 0) print line; skip = 1; next }
     index($0, e) { skip = 0 }
     !skip { print }' "$CORE" > "$dir/send-telemetry-core.sh"
-  if grep -qF "# MUTATION_CONTROL_BEGIN: $mark" "$CORE"; then ok "T8_${name}_sentinel_present"; else bad "T8_${name}_sentinel_present"; fi
   printf '%s\n' "$dir/send-telemetry-core.sh"
+}
+# sentinel_present <name> <sentinel> — runs in the PARENT shell, before each
+# M="$(mutant … | tail -1)": inside that substitution an ok/bad line is cut by
+# `tail -1` and its counter bump dies with the subshell, so the check would never
+# show up or count. T8_SENTINELS tallies the calls for the check after (d).
+T8_SENTINELS=0
+sentinel_present() {
+  T8_SENTINELS=$((T8_SENTINELS + 1))
+  if grep -qF "# MUTATION_CONTROL_BEGIN: $2" "$CORE"; then ok "T8_${1}_sentinel_present"; else bad "T8_${1}_sentinel_present"; fi
 }
 # (a) no validator gate -> the rejected attempt posts again
 printf 'verdict = "accepted"\n' > "$SANDBOX/repl-a"
+sentinel_present gate sibling-validator-verdict
 M="$(mutant gate sibling-validator-verdict "$SANDBOX/repl-a" | tail -1)"
 rm -f "$MAP"
 out="$(CORE_UNDER_TEST="$M" run_core "$REPO" "$FIX/rejected-rule.json" --dry-run)"
@@ -405,6 +415,7 @@ if schema == "CODE_REVIEW_RESULT":
 else:
     issues_by_severity["unspecified"] = len(issues)
 REPL
+sentinel_present counts count-from-parsed-findings
 M="$(mutant counts count-from-parsed-findings "$SANDBOX/repl-b" | tail -1)"
 out="$(CORE_UNDER_TEST="$M" run_core "$REPO" "$FIX/drift.json" --dry-run)"
 assert_match "T8_counts_mutant_drift_reads_zero" '"high": 0' "$out"
@@ -421,6 +432,7 @@ if schema == "CODE_REVIEW_RESULT":
 else:
     issues_by_severity["unspecified"] = len(issues)
 REPL
+sentinel_present severities count-from-parsed-findings
 M="$(mutant severities count-from-parsed-findings "$SANDBOX/repl-e" | tail -1)"
 out="$(CORE_UNDER_TEST="$M" run_core "$REPO" "$FIX/mixed.json" --dry-run)"
 assert_eq "T8_severities_mutant_still_sends" "0" "$(would_exit "$out")"
@@ -429,6 +441,7 @@ assert_not_match "T8_severities_mutant_drops_medium" '"medium": 1' "$out"
 assert_not_match "T8_severities_mutant_drops_low" '"low": 2' "$out"
 # (c) no map lock -> two concurrent posters open two issues
 printf 'pass\n' > "$SANDBOX/repl-c"
+sentinel_present lock thread-map-lock
 M="$(mutant lock thread-map-lock "$SANDBOX/repl-c" | tail -1)"
 pair="$(run_pair "$M")"
 assert_eq "T8_lock_mutant_two_issues" "2 0" "$pair"
@@ -444,11 +457,17 @@ def load_map():
         pass
     return {"schema_version": 1, "threads": {}}
 REPL
+sentinel_present unreadable thread-map-unreadable-fails-safe
 M="$(mutant unreadable thread-map-unreadable-fails-safe "$SANDBOX/repl-d" | tail -1)"
 rm -rf "$MAP"; gh_reset; printf '{not json' > "$MAP"
 CORE_UNDER_TEST="$M" run_core "$REPO" "$FIX/round1.json" >/dev/null
 assert_eq "T8_unreadable_mutant_opens_issue" "1" "$(gh_count 'issue create')"
 rm -rf "$MAP"
+# Every mutant built above had its sentinel checked in THIS shell: the parent-shell
+# tally equals the number of mutant call sites in this file (non-zero, or vacuous).
+T8_CALLS="$(grep -c '^M="\$(mutant ' "${BASH_SOURCE[0]}")"
+if [ "$T8_CALLS" -gt 0 ] && [ "$T8_SENTINELS" = "$T8_CALLS" ]; then ok "T8_every_sentinel_checked_in_parent_shell ($T8_CALLS)"
+else bad "T8_every_sentinel_checked_in_parent_shell  mutant_calls=$T8_CALLS  parent_checks=$T8_SENTINELS"; fi
 
 # ---- T9 — /telemetry test reads the fields the core prints, in order ---------
 echo ""

@@ -371,7 +371,8 @@ w_expect "W19b --touches reads the set the sentinel closes" 'known\nsrc/a.sh'
 #     A glob entry (the agent-help parts, `.../agent-help/*.md`) is covered by an add[] entry equal to, or an
 #     ancestor of, its literal directory: companions add[] admits no glob characters, and a directory entry
 #     reserves everything under it. The FILES=( ) block must be the ONLY assignment to FILES: a `FILES+=`
-#     append (or a second `FILES=`) is a surface this parser cannot see, so it FAILS here.
+#     append, an indexed `FILES[<i>]=` / `FILES[<i>]+=` element (any subscript, `${#FILES[@]}` included),
+#     or a second `FILES=` is a surface this parser cannot see, so it FAILS here.
 W_DC="$W_REPO/scripts/check-doc-currency.sh"; W_CJ="$W_REPO/.agent/companions.json"
 w_dc_entry() {  # <pj> <one FILES entry> ⇒ its path; $PLUGIN_JSON resolved; a glob ⇒ GLOB:<dir>; other $ / top-level glob ⇒ UNRESOLVED
   local pfx
@@ -394,8 +395,8 @@ w20_check() {
     | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^#' | grep -v '^$' | tr -d '"' \
     | while IFS= read -r e; do w_dc_entry "$pj" "$e"; done)"
   if [ -z "$W20_FILES" ] || [ -z "$pj" ]; then W20_MSG="parsed FILES set (or PLUGIN_JSON) is empty"; return 0; fi
-  if [ "$(grep -cE '^[[:space:]]*FILES\+?=' "$dc")" != 1 ]; then
-    W20_MSG="FILES is assigned outside its one FILES=( ) block: $(grep -nE '^[[:space:]]*FILES\+?=' "$dc" | tr '\n' ' ')"; return 0
+  if [ "$(grep -cE '^[[:space:]]*FILES(\[.*\])?\+?=' "$dc")" != 1 ]; then
+    W20_MSG="FILES is assigned outside its one FILES=( ) block: $(grep -nE '^[[:space:]]*FILES(\[.*\])?\+?=' "$dc" | tr '\n' ' ')"; return 0
   fi
   if grep -q '^UNRESOLVED:' <<<"$W20_FILES"; then
     W20_MSG="unresolved \$ token or top-level glob in FILES: $(printf '%s' "$W20_FILES" | grep '^UNRESOLVED:' | tr '\n' ' ')"; return 0
@@ -439,6 +440,18 @@ case "$W20_MSG" in
   *"assigned outside its one FILES=( ) block"*) ok "W20c a FILES+= append outside the block FAILS W20" ;;
   *) no "W20c a FILES+= append should fail W20 (got: '$W20_MSG')" ;;
 esac
+# W20d an INDEXED element assignment outside the block — a literal subscript, the `${#FILES[@]}` append
+#      idiom (nested brackets) and an indexed `+=` — FAILS W20 and is listed by line (dismissed-followups/05
+#      F257: the guard used to count only `FILES=` / `FILES+=`, so each of these passed as one assignment).
+for w20_line in 'FILES[9]="loomwright/docs/extra.md"' 'FILES[${#FILES[@]}]=loomwright/docs/extra.md' '  FILES[0]+=x'; do
+  { cat "$W_DC"; printf '%s\n' "$w20_line"; } > "$W_T/w20-dc.sh"
+  w20_n="$(($(wc -l < "$W_T/w20-dc.sh")))"
+  w20_check "$W_T/w20-dc.sh" "$W_CJ"
+  case "$W20_MSG" in
+    *"assigned outside its one FILES=( ) block"*"$w20_n:$w20_line"*) ok "W20d an indexed '$w20_line' outside the block FAILS W20, naming its line" ;;
+    *) no "W20d an indexed '$w20_line' should fail W20 naming line $w20_n (got: '$W20_MSG')" ;;
+  esac
+done
 
 # =============================================================================
 echo "== X. plan-waves --explain / --lint (parallel-automate/10: read-only; one grammar with the planner) =="

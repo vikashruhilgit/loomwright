@@ -8,6 +8,19 @@ printf '# Automate Run: %s\n\n## Progress\n' "$PARENT9" > "$RF9"
 for n in 1 2; do run lane-create "$RF9" reqs/a.md "$n" --parallel 2 >/dev/null; done
 L91="$T/work/primary-lanes/$PARENT9/L1"; L92="$T/work/primary-lanes/$PARENT9/L2"
 check "AN0 fixture: two lanes of a fresh parent run" "$([ -s "$L91/.supervisor/lane.json" ] && [ -s "$L92/.supervisor/lane.json" ] && echo ok)" ok
+# AN0b/AN0c (dismissed-05 F331): a suite started from inside a live phase session inherits both phase variables,
+# and relay-hook then routes every relay leg's question into that session's real phase inbox. AN0b runs the
+# runner's own suite-top `unset` line in a child that HAS both set, so dropping either name from that line is red
+# in a plain CI run too (the variables are never ambient there). AN0c is the in-process half: it is only
+# non-vacuous in a run started with them set, and then it catches any earlier part exporting one.
+tal_unset="$(grep -m1 '^unset ' "$HERE/test-automate-lanes.sh")"
+if [ -n "$tal_unset" ]; then
+  check "AN0b the runner's suite-top unset clears an ambient LOOMWRIGHT_PHASE_DIR and LOOMWRIGHT_RUN_LOCK_SESSION_ID" \
+    "$(env LOOMWRIGHT_PHASE_DIR="$T/ambient-phase/supervisor" LOOMWRIGHT_RUN_LOCK_SESSION_ID=sess-ambient \
+        bash -c "$tal_unset"$'\n''printf "%s:%s" "${LOOMWRIGHT_PHASE_DIR-unset}" "${LOOMWRIGHT_RUN_LOCK_SESSION_ID-unset}"')" "unset:unset"
+else bad "AN0b the runner's suite-top unset line was not found"; fi
+check "AN0c neither phase variable is set in the suite's own shell when the AN group starts" \
+  "${LOOMWRIGHT_PHASE_DIR-unset}:${LOOMWRIGHT_RUN_LOCK_SESSION_ID-unset}" "unset:unset"
 RFL="$L91/.supervisor/automate/$PARENT9-L1.md"; mkdir -p "$(dirname "$RFL")"
 printf '# Automate Run: %s-L1 — reqs/a.md\n\n## Progress\n' "$PARENT9" > "$RFL"
 PHS="$L91/.supervisor/automate/$PARENT9-L1.phase/supervisor"

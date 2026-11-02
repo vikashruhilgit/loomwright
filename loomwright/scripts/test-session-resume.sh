@@ -59,13 +59,15 @@
 #       sibling's own `summary --scan` line (bp2); a clean registry ⇒ no line and an empty startup
 #       (bp3); an unavailable registry ⇒ no line, exit 0 (bp4); an unregistered look-alike counts,
 #       a repo with no .supervisor/ stays silent (bp5); two gated mutation controls (bp6).
-#   (bn1)-(bn5) the backlog stamp nudge (parallel-automate/25, startup-arm block 7): one
+#   (bn1)-(bn6) the backlog stamp nudge (parallel-automate/25, startup-arm block 7): one
 #       merged_unstamped item ⇒ exactly the one line, marker = today (bn1); nothing to stamp ⇒
-#       no line, byte-identical to origin/main's arm, while the reader DID run (bn2); today's
+#       no line, byte-identical to the pinned pre-change arm (the nudge commit's parent; a named
+#       SKIP in a clone without it, e.g. shallow), while the reader DID run (bn2); today's
 #       marker ⇒ no reader call, yesterday's ⇒ the line + today's marker (bn3); a failing,
 #       non-JSON or hung reader ⇒ no line, no marker, exit 0, plus the opt-out, an absent sibling
-#       and no requirements tree (bn4); the four pin mutations, each gated (bn5). (zb) above
-#       also carries a requirements tree (AC6).
+#       and no requirements tree (bn4); the four pin mutations, each gated (bn5); host mode with
+#       no valid state dir (empty SR_STATE) ⇒ no reader call, no line, with a valid-state-dir
+#       control and a gated mutant (bn6). (zb) above also carries a requirements tree (AC6).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1838,7 +1840,7 @@ else
 fi
 
 # ============================================================================
-echo "== (bn1)-(bn5) backlog stamp nudge (parallel-automate/25): startup-arm block 7 =="
+echo "== (bn1)-(bn6) backlog stamp nudge (parallel-automate/25): startup-arm block 7 =="
 # The reader is the sibling `automate-helpers.sh backlog --json --offline`; the hook only sums
 # totals.merged_unstamped + totals.conflict. Real-reader legs run $HOOK in place (real siblings);
 # reader-stub legs copy the hook beside a stub automate-helpers.sh (bn_dir) that logs every call
@@ -1891,21 +1893,29 @@ BC="$(new_repo)"; bn_tree "$BC" clean
 raw="$(run_hook_raw "$BC" startup)"
 [ "$(lastrc)" = 0 ] && [ -z "$raw" ] && ok "(bn2) no merged_unstamped / conflict item ⇒ zero bytes, rc 0" || no "(bn2) rc=$(lastrc) out: $raw"
 [ "$(head -n 1 "$BC/$BNMARK" 2>/dev/null)" = "$BNTODAY" ] && ok "(bn2) the reader DID run and succeed (marker = today), so the silence is not vacuous" || no "(bn2) marker: $(cat "$BC/$BNMARK" 2>/dev/null)"
+# The pre-change arm is a FIXED blob — the parent of the commit that added the nudge — never a moving
+# ref (origin/main carries the nudge since it merged, so a comparison against it could only skip).
+# A clone without that commit (a shallow checkout — CI's default) gets a named SKIP; a blob that
+# already carries the nudge is a wrong pin and FAILs.
+BN_BASE=93e1361b3b657646d3547f2aab36d3b578b6b36e
 bnold="$ROOT/bn-baseline"; mkdir -p "$bnold"
-if git -C "$SCRIPT_DIR/../.." show origin/main:loomwright/scripts/session-resume.sh > "$bnold/session-resume.sh" 2>/dev/null \
-   && [ -s "$bnold/session-resume.sh" ] && ! grep -q 'backlog_nudge_line' "$bnold/session-resume.sh"; then
+if ! { git -C "$SCRIPT_DIR/../.." cat-file -e "$BN_BASE:loomwright/scripts/session-resume.sh" 2>/dev/null \
+       && git -C "$SCRIPT_DIR/../.." show "$BN_BASE:loomwright/scripts/session-resume.sh" > "$bnold/session-resume.sh" 2>/dev/null \
+       && [ -s "$bnold/session-resume.sh" ]; }; then
+  echo "  SKIP: (bn2) pre-change baseline $BN_BASE not in this clone (shallow checkout?) — the byte-identical leg is not run; the zero-byte leg above still holds"
+elif grep -q 'backlog_nudge_line' "$bnold/session-resume.sh"; then
+  no "(bn2) the pinned baseline $BN_BASE already carries backlog_nudge_line — wrong pin, the comparison would be void"
+else
   cp "$SCRIPT_DIR/curation-status.sh" "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$bnold/"
   bo="$(new_repo)"; make_curation_pending "$bo"; bn_tree "$bo" clean
   bnw="$(new_repo)"; make_curation_pending "$bnw"; bn_tree "$bnw" clean
   oldout="$(run_alt_hook_raw "$bnold/session-resume.sh" "$bo" startup)"
   newout="$(run_hook_raw "$bnw" startup)"
   if [ -n "$oldout" ] && [ "$oldout" = "$newout" ] && [ "$(head -n 1 "$bnw/$BNMARK" 2>/dev/null)" = "$BNTODAY" ]; then
-    ok "(bn2) a curation-pending, nothing-to-stamp startup is byte-identical to origin/main's pre-change arm (reader ran)"
+    ok "(bn2) a curation-pending, nothing-to-stamp startup is byte-identical to the pinned pre-change arm $BN_BASE (reader ran)"
   else
-    no "(bn2) differs from origin/main's arm: old=${#oldout} new=${#newout} bytes, marker=$(cat "$bnw/$BNMARK" 2>/dev/null)"
+    no "(bn2) differs from the pinned pre-change arm $BN_BASE: old=${#oldout} new=${#newout} bytes, marker=$(cat "$bnw/$BNMARK" 2>/dev/null)"
   fi
-else
-  echo "  skipped: origin/main's pre-change hook unavailable (or already carries the nudge — the zero-byte leg above still holds)"
 fi
 
 # (bn3) AC4: today's marker ⇒ no line and the reader is NOT run; yesterday's ⇒ the line, marker = today.
@@ -1977,6 +1987,33 @@ if gate_mutant "$HOOK" "$BM/m4.sh" "(bn5) M4 deadline kill deleted"; then
   BD="$(bn_dir "$BM/m4.sh")"; BF="$(new_repo)"; bn_tree "$BF"
   run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup BN_MODE=hang LOOMWRIGHT_SR_BACKLOG_TIMEOUT=1 >/dev/null
   [ -e "$BD/finished" ] && ok "(bn5) M4: the hung reader ran to completion — the (bn4) killed-at-deadline assertion turns red" || no "(bn5) M4 did not discriminate"
+fi
+
+# (bn6) host mode with no valid state dir: LOOMWRIGHT_HOST_MODE=1 and no LOOMWRIGHT_HOST_STATE_DIR ⇒
+# lw_state_dir fails ⇒ SR_STATE is empty ⇒ no marker path ⇒ the reader is never run, no line prints
+# (an undebounced reader would run on every session). The real host-mode.sh sits beside the copy;
+# without it the hook exits at its load and the zero calls would be vacuous — the control proves it
+# loads: the same fixture with a valid state dir runs the reader once and prints the line.
+bn_host_dir() { local d; d="$(bn_dir "$1")"; cp "$SCRIPT_DIR/host-mode.sh" "$d/"; printf '%s' "$d"; }
+BD="$(bn_host_dir "$HOOK")"; BF="$(new_repo)"; bn_tree "$BF"
+raw="$(run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup -u LOOMWRIGHT_HOST_STATE_DIR LOOMWRIGHT_HOST_MODE=1)"
+[ "$(lastrc)" = 0 ] && [ -z "$raw" ] && [ "$(bn_calls "$BD")" = 0 ] && [ ! -e "$BF/$BNMARK" ] && [ -z "$(lasterr)" ] \
+  && ok "(bn6) host mode, no valid state dir (empty SR_STATE) ⇒ zero reader calls, zero bytes, no marker, rc 0" \
+  || no "(bn6) empty SR_STATE: rc=$(lastrc) calls=$(bn_calls "$BD") marker=$([ -e "$BF/$BNMARK" ] && echo yes || echo no) out=$raw err=$(lasterr)"
+BSD_="$(mktmp)"; BD="$(bn_host_dir "$HOOK")"; BF="$(new_repo)"; bn_tree "$BF"
+c="$(ctx_of "$(run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup LOOMWRIGHT_HOST_MODE=1 LOOMWRIGHT_HOST_STATE_DIR="$BSD_")")"
+[ "$(lastrc)" = 0 ] && [ "$c" = "$BNLINE" ] && [ "$(bn_calls "$BD")" = 1 ] && [ "$(head -n 1 "$BSD_/.backlog-nudge-shown" 2>/dev/null)" = "$BNTODAY" ] \
+  && [ ! -e "$BF/$BNMARK" ] \
+  && ok "(bn6) control: host mode WITH a valid state dir ⇒ one reader call, the line, marker = today in the state dir (not the repo)" \
+  || no "(bn6) control: rc=$(lastrc) calls=$(bn_calls "$BD") ctx=$c sd-marker=$(cat "$BSD_/.backlog-nudge-shown" 2>/dev/null)"
+# M5: the empty-marker return deleted ⇒ with no state dir the reader runs and the line prints.
+sed '/^ *\[ -n "\$marker" \] || return 0$/d' "$HOOK" > "$BM/m5.sh"
+if gate_mutant "$HOOK" "$BM/m5.sh" "(bn6) M5 empty-marker return deleted"; then
+  BD="$(bn_host_dir "$BM/m5.sh")"; BF="$(new_repo)"; bn_tree "$BF"
+  c="$(ctx_of "$(run_alt_hook_raw "$BD/session-resume.sh" "$BF" startup -u LOOMWRIGHT_HOST_STATE_DIR LOOMWRIGHT_HOST_MODE=1)")"
+  [ "$(bn_calls "$BD")" = 1 ] && [ "$c" = "$BNLINE" ] \
+    && ok "(bn6) M5: without the empty-marker return the reader runs and the line prints — the (bn6) assertion turns red" \
+    || no "(bn6) M5 did not discriminate: calls=$(bn_calls "$BD") ctx=$c"
 fi
 
 echo "RESULT: $pass passed, $fail failed"

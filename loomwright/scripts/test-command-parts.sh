@@ -46,8 +46,11 @@
 #      rule (G), a part gaining an un-negated `runs <the squash-merge command>` line (H); and M-I, a
 #      scratch copy of the suite over a tree with one part edited after the split, which must exit 0
 #      with exactly one SKIP line per edited command (E retired for it). The E-proof controls (M-D2 / M-E)
-#      are gated per command on the LIVE tree: once a command is edited since the split they print
-#      a `note:` (E's SKIP is that command's one retirement line), and M-F compares the padded
+#      mutate the first command in their own order that is unedited since the split — in the LIVE tree,
+#      else in the split commit (SPLIT below, read from git) — and print a `note:` only when neither has
+#      one (every command edited and SPLIT not in this clone, as in a depth-1 CI checkout; E's SKIP is
+#      each command's one retirement line); M-E2, a scratch copy of the suite over the split-commit tree
+#      with /setup edited, must run M-E on a /dreaming part from its live tree. M-F compares the padded
 #      mirror's retirement state with the live tree's.
 # Read-only; scratch files under mktemp -d. Exit 0 = all pass, 1 = any failure.
 
@@ -60,6 +63,9 @@ REPO="$(cd "$PLUGIN/.." && pwd)"
 ASM="$HERE/fixtures/automate-loop-split/assemble.sh"
 FIXTURE="$HERE/fixtures/command-parts/move-only.txt"
 BASE="626f35fab85796da1c0a4da0b2e80480a8249a02"
+# SPLIT — the commit whose routers and parts equal every split-time row of the fixture (the unedited
+# baseline the M-D2 / M-E controls fall back to once the live tree has edited every command).
+SPLIT="2d500ab024e0681b3b5b7c787d7c72e578573698"
 COMMANDS="setup dreaming agent-help"
 LIMIT=20480
 RT_DIR='${CLAUDE_PLUGIN_ROOT}/docs/command-parts/'
@@ -401,47 +407,83 @@ if [ -n "$vrel" ] && check_headings "$MD/loomwright/commands/dreaming.md" >/dev/
   else no "could not build the moved-heading mutant — D control inconclusive"; fi
 else no "the unmutated mirror fails D (or dreaming has no part) — the D control is inconclusive"; fi
 
-# M-D2 / M-E — the move-only proof, run on a mirror: a KEPT heading deleted from dreaming.md, and
-# one changed byte (a trailing space) on a moved line of setup/memory.md, each fail it.
+# M-D2 / M-E — the move-only proof, run on a mirror: a KEPT heading deleted from a router, and one
+# changed byte (a trailing space) on a moved line of a part, each fail it.
 # proof_on <mirror root> <command> — 0 iff the mirror's assembly matches the fixture's original row.
-# Each control is gated on ITS OWN command: once the live tree has edited that command since the
-# split, E has retired it to a SKIP and the mirror (built from the live tree) has no passing
-# baseline to mutate, so the control prints a `note:` (not a second SKIP — E's one SKIP line per
-# command is the retirement record) and the other command's control still runs. Same shape as the
-# precedent's M9 note (test-automate-loop-split.sh).
+# Each control needs a baseline that passes the proof, so it mutates the first command, in its own
+# order, that is still unedited since the split: in the LIVE tree (a mirror of it), else in the split
+# commit SPLIT (a mirror of every split-time file read from git). Only when neither exists (every
+# command edited, and SPLIT not in this clone — a depth-1 CI checkout) does the control print a
+# `note:` (not a second SKIP — E's one SKIP line per command is the retirement record). Same shape as
+# the precedent's M9 note (test-automate-loop-split.sh).
 proof_on() { bash "$ASM" "$1/loomwright/commands/$2.md" "$TMP/proof-on.$$" 2>/dev/null && proof_matches "loomwright/commands/$2.md" "$TMP/proof-on.$$"; }
-ME="$TMP/me"; mk_mirror "$ME"
+# mk_split_mirror <dir> — a mirror holding every split-time router and part as SPLIT has it; fails when
+# SPLIT is not in this clone or a file cannot be read.
+mk_split_mirror() {
+  local rel
+  git -C "$REPO" cat-file -e "$SPLIT^{commit}" 2>/dev/null || return 1
+  mkdir -p "$1/loomwright/.claude-plugin" && cp "$PLUGIN/.claude-plugin/plugin.json" "$1/loomwright/.claude-plugin/" || return 1
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    mkdir -p "$1/$(dirname "$rel")" && git -C "$REPO" show "$SPLIT:$rel" > "$1/$rel" 2>/dev/null || return 1
+  done <<EOF
+$(awk -F '\t' '$1 == "split-time" {print $2}' "$FIXTURE")
+EOF
+}
+# e_baseline <dir> <command…> — builds the mirror an E control mutates and sets EC (its command) and EB
+# (its source). Exit 1 = no baseline anywhere (the note case); exit 2 = SPLIT is in this clone but its
+# mirror is no unedited baseline for any listed command (a broken pin — the caller fails).
+e_baseline() {
+  local dir="$1" c; shift
+  EC=""; EB=""
+  for c in "$@"; do
+    if [ -z "$(edited_since_split "$REPO" "$c")" ]; then mk_mirror "$dir"; EC="$c"; EB="live tree"; return 0; fi
+  done
+  git -C "$REPO" cat-file -e "$SPLIT^{commit}" 2>/dev/null || return 1
+  mk_split_mirror "$dir" || return 2
+  for c in "$@"; do
+    if [ -z "$(edited_since_split "$dir" "$c")" ]; then EC="$c"; EB="split commit ${SPLIT:0:7}"; return 0; fi
+  done
+  return 2
+}
+NO_BASELINE="every command is edited since the split and the split commit ${SPLIT:0:7} is not in this clone (E retired)"
 if ! printf 'x' | sha256 >/dev/null 2>&1; then
   no "no sha256 tool — the E controls are inconclusive"
 else
-  if [ -n "$(edited_since_split "$REPO" dreaming)" ]; then
-    echo "  note: /dreaming is edited since the split (E retired) — the M-D2 kept-heading control has no unedited baseline to mutate"
-  elif ! proof_on "$ME" dreaming; then
-    no "the unmutated mirror fails the /dreaming move-only proof — the M-D2 control is inconclusive"
+  MD2="$TMP/md2"; e_baseline "$MD2" dreaming setup agent-help; erc=$?
+  if [ "$erc" -eq 1 ]; then
+    echo "  note: $NO_BASELINE — the M-D2 kept-heading control has no unedited baseline to mutate"
+  elif [ "$erc" -ne 0 ]; then
+    no "the split commit ${SPLIT:0:7} is in this clone but gives no unedited baseline — the M-D2 control is inconclusive"
+  elif ! proof_on "$MD2" "$EC"; then
+    no "the unmutated $EB mirror fails the /$EC move-only proof — the M-D2 control is inconclusive"
   else
-    f="$ME/loomwright/commands/dreaming.md"
-    kept="$(blocks "$PLUGIN/commands/dreaming.md" | awk -F '\t' '{print $2 "\t" $3}' > "$TMP/me.blk"; \
-            awk 'NR == FNR {b[++n] = $1; e[n] = $2; next} /^## / {for (i = 1; i <= n; i++) if (FNR >= b[i] && FNR <= e[i]) next; print; exit}' "$TMP/me.blk" "$PLUGIN/commands/dreaming.md")"
-    awk -v h="$kept" '!d && $0 == h {d = 1; next} {print}' "$PLUGIN/commands/dreaming.md" > "$f"
-    if [ -n "$kept" ] && mutated "$f" "$PLUGIN/commands/dreaming.md"; then
+    f="$MD2/loomwright/commands/$EC.md"; cp "$f" "$TMP/md2.orig"
+    kept="$(blocks "$TMP/md2.orig" | awk -F '\t' '{print $2 "\t" $3}' > "$TMP/me.blk"; \
+            awk 'NR == FNR {b[++n] = $1; e[n] = $2; next} /^## / {for (i = 1; i <= n; i++) if (FNR >= b[i] && FNR <= e[i]) next; print; exit}' "$TMP/me.blk" "$TMP/md2.orig")"
+    awk -v h="$kept" '!d && $0 == h {d = 1; next} {print}' "$TMP/md2.orig" > "$f"
+    if [ -n "$kept" ] && mutated "$f" "$TMP/md2.orig"; then
       check_headings "$f" >/dev/null && dh=1 || dh=0
-      proof_on "$ME" dreaming && no "MUTATION CONTROL: a deleted kept heading ('$kept') passed the move-only proof (E)" \
-        || ok "MUTATION CONTROL: a deleted kept heading fails the move-only proof (E; D alone $([ "$dh" = 1 ] && echo 'cannot see it — both sides lose it' || echo 'also rejects it'))"
+      proof_on "$MD2" "$EC" && no "MUTATION CONTROL: a deleted kept heading ('$kept') of /$EC passed the move-only proof (E)" \
+        || ok "MUTATION CONTROL: a deleted kept heading fails the move-only proof (E; /$EC, $EB baseline; D alone $([ "$dh" = 1 ] && echo 'cannot see it — both sides lose it' || echo 'also rejects it'))"
     else no "could not build the kept-heading mutant — E control inconclusive"; fi
-    cp "$PLUGIN/commands/dreaming.md" "$f"
   fi
-  if [ -n "$(edited_since_split "$REPO" setup)" ]; then
-    echo "  note: /setup is edited since the split (E retired) — the M-E changed-byte control has no unedited baseline to mutate"
-  elif ! proof_on "$ME" setup; then
-    no "the unmutated mirror fails the /setup move-only proof — the M-E control is inconclusive"
+  ME="$TMP/me"; e_baseline "$ME" setup dreaming agent-help; erc=$?
+  if [ "$erc" -eq 1 ]; then
+    echo "  note: $NO_BASELINE — the M-E changed-byte control has no unedited baseline to mutate"
+  elif [ "$erc" -ne 0 ]; then
+    no "the split commit ${SPLIT:0:7} is in this clone but gives no unedited baseline — the M-E control is inconclusive"
+  elif ! proof_on "$ME" "$EC"; then
+    no "the unmutated $EB mirror fails the /$EC move-only proof — the M-E control is inconclusive"
   else
-    f="$ME/loomwright/docs/command-parts/setup/memory.md"
-    awk 'NR == 3 {print $0 " "; next} {print}' "$PLUGIN/docs/command-parts/setup/memory.md" > "$f"
-    if mutated "$f" "$PLUGIN/docs/command-parts/setup/memory.md"; then
-      proof_on "$ME" setup && no "MUTATION CONTROL: a part with one changed byte passed the move-only proof (E)" \
-        || ok "MUTATION CONTROL: a part with one changed byte fails the move-only proof (E)"
-      case "$(edited_since_split "$ME" setup)" in *"docs/command-parts/setup/memory.md"*) ok "MUTATION CONTROL: the changed part retires /setup's proof to a SKIP naming it (E gating)" ;;
-        *) no "MUTATION CONTROL: the changed part did NOT retire /setup's proof (E gating)" ;; esac
+    part="$(bash "$ASM" --files "$ME/loomwright/commands/$EC.md" | head -1)"; part="${part##*/}"
+    f="$ME/loomwright/docs/command-parts/$EC/$part"; cp "$f" "$TMP/me-part.orig"
+    awk 'NR == 3 {print $0 " "; next} {print}' "$TMP/me-part.orig" > "$f"
+    if [ -n "$part" ] && mutated "$f" "$TMP/me-part.orig"; then
+      proof_on "$ME" "$EC" && no "MUTATION CONTROL: a part with one changed byte passed the move-only proof (E; /$EC $part)" \
+        || ok "MUTATION CONTROL: a part with one changed byte fails the move-only proof (E; /$EC $part, $EB baseline)"
+      case "$(edited_since_split "$ME" "$EC")" in *"docs/command-parts/$EC/$part"*) ok "MUTATION CONTROL: the changed part retires /$EC's proof to a SKIP naming it (E gating)" ;;
+        *) no "MUTATION CONTROL: the changed part did NOT retire /$EC's proof (E gating)" ;; esac
     else no "could not build the changed-byte mutant — E control inconclusive"; fi
   fi
 fi
@@ -488,14 +530,18 @@ else no "the unmutated mirror fails H — the H control is inconclusive"; fi
 # with ONE byte appended to a moved line of setup/memory.md, must exit 0 with exactly one SKIP line
 # for /setup (E's, naming memory.md) and one per command the live tree already edited — an edit after the split retires the proof, it never reds
 # the suite. The nested copy skips M-I itself (TEST_COMMAND_PARTS_NESTED) so it cannot recurse.
+# nested_tools <dir> — this suite, its env helper, the assembler and the fixture under <dir>/loomwright/scripts,
+# so a scratch copy of the suite runs with <dir> as its repo root.
+nested_tools() {
+  mkdir -p "$1/loomwright/scripts/fixtures/automate-loop-split" "$1/loomwright/scripts/fixtures/command-parts"
+  cp "$HERE/test-command-parts.sh" "$HERE/hermetic-test-env.sh" "$1/loomwright/scripts/"
+  cp "$ASM" "$1/loomwright/scripts/fixtures/automate-loop-split/"
+  cp "$FIXTURE" "$1/loomwright/scripts/fixtures/command-parts/"
+}
 if [ -n "${TEST_COMMAND_PARTS_NESTED:-}" ]; then
   echo "  note: M-I skipped inside the nested run (no recursion)"
 else
-  MI="$TMP/mi"; mk_mirror "$MI"
-  mkdir -p "$MI/loomwright/scripts/fixtures/automate-loop-split" "$MI/loomwright/scripts/fixtures/command-parts"
-  cp "$HERE/test-command-parts.sh" "$HERE/hermetic-test-env.sh" "$MI/loomwright/scripts/"
-  cp "$ASM" "$MI/loomwright/scripts/fixtures/automate-loop-split/"
-  cp "$FIXTURE" "$MI/loomwright/scripts/fixtures/command-parts/"
+  MI="$TMP/mi"; mk_mirror "$MI"; nested_tools "$MI"
   f="$MI/loomwright/docs/command-parts/setup/memory.md"
   awk 'NR == 3 {print $0 " "; next} {print}' "$PLUGIN/docs/command-parts/setup/memory.md" > "$f"
   if mutated "$f" "$PLUGIN/docs/command-parts/setup/memory.md" && [ -n "$(edited_since_split "$MI" setup)" ]; then
@@ -512,6 +558,35 @@ else
       grep -E '^  (FAIL|SKIP):' "$TMP/mi.out" | sed -n '1,8s/^/    /p'
     fi
   else no "could not build the edited-part tree — M-I control inconclusive"; fi
+fi
+
+# M-E2 — the fallback, end to end: a scratch copy of this suite over the split-commit tree with ONE byte
+# appended to a moved line of setup/memory.md (so /setup is edited, /dreaming is not) must run M-E on a
+# /dreaming part from its live tree — never the no-baseline note. Its own nested run has no git history,
+# so only the live-tree branch can serve it. Skipped when SPLIT is not in this clone.
+if [ -n "${TEST_COMMAND_PARTS_NESTED:-}" ]; then
+  echo "  note: M-E2 skipped inside the nested run (no recursion)"
+elif ! git -C "$REPO" cat-file -e "$SPLIT^{commit}" 2>/dev/null; then
+  echo "  note: split commit ${SPLIT:0:7} not in this clone — the M-E2 fallback control has no split-time tree to build"
+else
+  M2="$TMP/me2"
+  if mk_split_mirror "$M2"; then
+    nested_tools "$M2"
+    f="$M2/loomwright/docs/command-parts/setup/memory.md"; cp "$f" "$TMP/me2.orig"
+    awk 'NR == 3 {print $0 " "; next} {print}' "$TMP/me2.orig" > "$f"
+    if mutated "$f" "$TMP/me2.orig" && [ -n "$(edited_since_split "$M2" setup)" ] && [ -z "$(edited_since_split "$M2" dreaming)" ]; then
+      TEST_COMMAND_PARTS_NESTED=1 bash "$M2/loomwright/scripts/test-command-parts.sh" > "$TMP/me2.out" 2>&1
+      nran="$(grep -cF 'ok: MUTATION CONTROL: a part with one changed byte fails the move-only proof (E; /dreaming ' "$TMP/me2.out")"
+      nlive="$(grep -F 'ok: MUTATION CONTROL: a part with one changed byte fails the move-only proof (E; /dreaming ' "$TMP/me2.out" | grep -cF 'live tree baseline')"
+      nnote="$(grep -cF 'the M-E changed-byte control has no unedited baseline' "$TMP/me2.out")"
+      if [ "$nran" = 1 ] && [ "$nlive" = 1 ] && [ "$nnote" = 0 ]; then
+        ok "MUTATION CONTROL: /setup edited, /dreaming not ⇒ M-E falls back to a /dreaming part (live tree) and runs"
+      else
+        no "MUTATION CONTROL: /setup edited, /dreaming not ⇒ want M-E run once on a /dreaming part from the live tree and no note (ran $nran, live $nlive, note $nnote):"
+        grep -E '^  (FAIL|note):|changed byte' "$TMP/me2.out" | sed -n '1,8s/^/    /p'
+      fi
+    else no "could not build the /setup-edited split-time tree — M-E2 control inconclusive"; fi
+  else no "the split commit ${SPLIT:0:7} is in this clone but its split-time files could not be read — M-E2 control inconclusive"; fi
 fi
 
 echo

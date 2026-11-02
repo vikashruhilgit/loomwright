@@ -9,8 +9,10 @@
 # <number>` statement — the number may carry a unit (`1s`, `0.1m`), omit its leading digit (`.5`) or be
 # quoted (`"1"`, `'0.5'`), and the command may be an absolute path (`/bin/sleep`) — on a non-comment
 # line that is not a loop line (while/until/for) and not inside a `do … done` body, outside heredoc
-# bodies, and not a background holder (`sleep N &`, `sleep N >/dev/null &`; an `&>`/`2>&1`
-# redirection is NOT backgrounding, so `sleep 1 &>/dev/null` IS counted). Every test is
+# bodies, and not a background holder (`sleep N &`, `sleep N >/dev/null &`, or a sleep inside a
+# `( … ) &` / `{ …; } &` group opened and closed on the same line; an `&>`/`2>&1` redirection is NOT
+# backgrounding, so `sleep 1 &>/dev/null` IS counted, and so is a sleep in a foreground group or in
+# one followed by `&&`). Every test is
 # made on the line's UNQUOTED text: a quoted span closed on the same line ("…", '…', $'…') is blanked
 # first, so a `do`, `<<WORD` or `sleep N` inside a string (a stub body, a message, a JSON fixture) is
 # neither a keyword nor a site, and `do`/`done` count only in keyword position (line start or after
@@ -22,7 +24,7 @@
 # late writer).
 # THE RATCHET (BASELINE below, "<count> <file>"): a count above its baseline, or a counted file not in
 # the baseline, is red; a count BELOW its baseline is red too, until the baseline is lowered — so it
-# only shrinks. A baseline row whose file is gone is red (stale). Controls (F1)-(F11) prove it fires.
+# only shrinks. A baseline row whose file is gone is red (stale). Controls (F1)-(F12) prove it fires.
 # Scope: loomwright/scripts/test-*.sh, their sourced parts loomwright/scripts/test-*.d/*.sh,
 # loomwright/scripts/adapters/*/test-*.sh, scripts/test-*.sh.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -100,6 +102,25 @@ function unqnum(l,   out, m) {
   }
   return out l
 }
+# ungroup(s) — a `( … )` or `{ …; }` group closed on this line and then backgrounded (`&`, not `&&`;
+# a plain redirection may sit between) has its body blanked: a sleep inside it runs in the background
+# job, a holder like `sleep N &`. A foreground group, or one followed by `&&`, is left as it is.
+function ungroup(s,   out, i, n, c, op, cl, d, j, x, k) {
+  out = ""; n = length(s); i = 1
+  while (i <= n) {
+    c = substr(s, i, 1)
+    if ((c == "(" || c == "{") && (i == 1 || substr(s, i - 1, 1) ~ /[ \t;&|(]/)) {
+      op = c; cl = (c == "(" ? ")" : "}"); d = 0
+      for (j = i; j <= n; j++) { x = substr(s, j, 1); if (x == op) d++; else if (x == cl) { d--; if (d == 0) break } }
+      if (j <= n && substr(s, j + 1) ~ /^[^;&|(){}]*&([^&]|$)/) {
+        out = out op; for (k = i + 1; k < j; k++) out = out " "
+        out = out cl; i = j + 1; continue
+      }
+    }
+    out = out c; i++
+  }
+  return out
+}
 function endfile() { if (leaks && FN != "" && (depth != 0 || hd != "")) printf "%s\tdepth=%d\theredoc=%s\n", FN, depth, hd }
 FNR == 1 { endfile(); hd = ""; depth = 0; FN = FILENAME }
 END { endfile() }
@@ -113,7 +134,7 @@ END { endfile() }
   # SC: CODE with fd redirections that contain `&` (`2>&1`, `<&3`, `&>`, `&>>`) reduced to a plain
   # `>`, so the only `&` left after a sleep is a real background / `&&` — `sleep 1 &>/dev/null` is a
   # counted site, `sleep 1 >/dev/null &` a background holder.
-  SC = CODE; gsub(/[0-9]*[<>]&[0-9-]*/, " > ", SC); gsub(/&>>?/, " > ", SC)
+  SC = CODE; gsub(/[0-9]*[<>]&[0-9-]*/, " > ", SC); gsub(/&>>?/, " > ", SC); SC = ungroup(SC)
   if (!leaks && line !~ /# fixed-sleep-ok:/ && depth == 0 && !isloop \
       && SC ~ /(^|[ \t;&|({])(\/[A-Za-z0-9_.\/-]*\/)?sleep[ \t]+[0-9]*\.?[0-9]+[smhd]?([ \t;|)}<>&]|$)/ \
       && SC !~ /(^|[ \t;&|({])(\/[A-Za-z0-9_.\/-]*\/)?sleep[ \t]+[0-9]*\.?[0-9]+[smhd]?[^;&|]*&([^&]|$)/)
@@ -148,9 +169,7 @@ BASELINE='
 2 loomwright/scripts/test-automate-lanes.d/01-create-to-wait.sh
 1 loomwright/scripts/test-automate-lanes.d/02-readiness-to-convert.sh
 1 loomwright/scripts/test-ci-slot.sh
-1 loomwright/scripts/test-classify-bot-review.sh
 2 loomwright/scripts/test-lane-sampler.sh
-1 loomwright/scripts/test-pr-postmortem-gather.sh
 1 loomwright/scripts/test-run-self-tests.sh
 1 loomwright/scripts/test-session-resume.sh
 1 loomwright/scripts/test-set-otel-resource-attrs.sh
@@ -158,7 +177,6 @@ BASELINE='
 1 loomwright/scripts/test-verify-queue.sh
 15 loomwright/scripts/test-verify-walkthrough.sh
 1 loomwright/scripts/test-worktree-audit.sh
-2 scripts/test-ci-local.sh
 '
 
 T0="$(mktemp -d "${TMPDIR:-/tmp}/test-no-fixed-sleep-race.XXXXXX")" || exit 1
@@ -227,6 +245,12 @@ for f11 in 'sleep 1s' 'sleep .5' 'sleep "1"' "sleep '0.5'" '/bin/sleep 1' 'sleep
   [ "$(fx 'run &' "$f11" 'assert')" = 1 ] && ok "(F11) \`$f11\` is counted" || no "(F11) \`$f11\` not counted"
 done
 [ -z "$(fx 'sleep 1 >/dev/null &' 'sleep 1 &>/dev/null &' 'sleep 10s &' 'sleep "$n"')" ] && ok "(F11) a redirected background holder, a unit holder and a variable sleep are not counted" || no "(F11) background/variable counted"
+# (F12) a sleep inside a one-line group that is backgrounded is a holder; the same sleep in the
+# foreground, in a foreground group, before `&&`, or under an `&>` redirect is still counted.
+[ -z "$(fx '( sleep 2; kill $p ) &' '{ sleep 1; touch x; } &' '( sleep 1; echo x ) >/dev/null 2>&1 &')" ] \
+  && ok "(F12) a sleep inside a backgrounded ( … ) & / { …; } & group is a holder, not counted" || no "(F12) backgrounded group counted"
+[ "$(fx 'sleep 2; kill $p' '( sleep 1; touch x )' '{ sleep 1; touch x; } && y' '( sleep 1 ) &>/dev/null')" = 4 ] \
+  && ok "(F12) a plain sleep, a foreground group, a group before && and an &>-redirected group are still counted" || no "(F12) a non-background sleep not counted"
 v="$(ratchet '2 a.sh' '3 a.sh
 1 b.sh')"
 case "$v" in *"NEW b.sh"*"UP a.sh"*|*"UP a.sh"*"NEW b.sh"*) ok "(F7) ratchet: a rise and a new file are both red" ;; *) no "(F7) ratchet missed: [$v]" ;; esac
