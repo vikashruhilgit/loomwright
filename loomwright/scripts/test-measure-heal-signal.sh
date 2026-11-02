@@ -16,6 +16,8 @@
 #   8. fail-safe empty — a repo with no done briefs → n=0, exit 0, "No joined rows" report.
 #   9. wrapper repo resolution — default-self + $LOOMWRIGHT_HEAL_SIGNAL_REPOS override.
 #  10. PLAIN (non-bold) `- heal_decision:` Outcome bullets — the /automate brief format — harvest.
+#  11. the distribution suite run with a wrapper that drops --distribution writes NO ledger into
+#      the checkout it was started from (the tmp.* heal-signal rows' root cause).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -221,9 +223,32 @@ else
   no "plain-bullet brief NOT harvested (sig=$sig10 cell=$cell10) — bold-only regex regression"
 fi
 
+echo "== 11. the distribution suite's mutation control cannot write into the invoking checkout =="
+# Root cause of the tmp.* rows in a real heal-signal ledger: test-measure-heal-signal-distribution.sh
+# run with MHS_WRAPPER pointing at a wrapper that drops --distribution, from inside a checkout. Each
+# `--repo <fixture> --distribution` call (no --out) became a full measurement whose default --out is
+# the CWD repo's .supervisor/heal-signal/. Replays exactly that from a SENTINEL checkout: the broken
+# wrapper must find no route into it. Red against the uncontained suite, green once it pins its cwd.
+TMP11="$(mktemp -d)"; SENT11="$TMP11/sentinel"; MUT11="$TMP11/mut"; mkdir -p "$SENT11" "$MUT11"
+( cd "$SENT11" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i ) >/dev/null 2>&1
+cp "$PY_ENGINE" "$MUT11/"
+grep -v 'ARGS+=(--distribution)' "$SH_WRAP" > "$MUT11/measure-heal-signal.sh"
+# Gate the mutant before trusting it: non-empty, differs from the original, parses.
+if [ -s "$MUT11/measure-heal-signal.sh" ] && ! cmp -s "$SH_WRAP" "$MUT11/measure-heal-signal.sh" \
+   && bash -n "$MUT11/measure-heal-signal.sh" 2>/dev/null; then
+  ( cd "$SENT11" && MHS_WRAPPER="$MUT11/measure-heal-signal.sh" bash "$HERE/test-measure-heal-signal-distribution.sh" ) >"$TMP11/sub.log" 2>&1
+  rc11=$?
+  [ "$rc11" -ne 0 ] && ok "the broken wrapper still turns the distribution suite red (mutation control is live, rc=$rc11)" \
+                    || no "the distribution suite stayed green against a wrapper that drops --distribution"
+  [ ! -e "$SENT11/.supervisor/heal-signal" ] && ok "no heal-signal ledger was written into the invoking checkout" \
+    || no "the broken-wrapper run wrote into the invoking checkout: $(head -3 "$SENT11/.supervisor/heal-signal/results.jsonl" 2>/dev/null)"
+else
+  no "could not build the broken-wrapper mutant (grep removed nothing, or it does not parse)"
+fi
+
 # cleanup
 rm -rf "$TMP1" "$OUT1" "$OUT5" "$TMP6" "$OUT6" "$TMP7" "$OUT7" "$OUT7b" "$TMP8" "$OUT8" \
-       "$TMP9" "$TMPe" "$TMP9b" "$TMP10" "$OUT10" 2>/dev/null
+       "$TMP9" "$TMPe" "$TMP9b" "$TMP10" "$OUT10" "$TMP11" 2>/dev/null
 
 echo
 echo "RESULT: $pass passed, $fail failed"

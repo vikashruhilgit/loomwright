@@ -18,9 +18,9 @@
 set -uo pipefail
 
 # Resolve this script's own directory BEFORE cd'ing to the git root ($0 may be relative) —
-# used to invoke the sibling build-loop-evidence.sh for the Loop-evidence section. Fail-safe:
-# if resolution fails, SCRIPT_DIR is empty and the Loop-evidence section degrades to its
-# "no data" note (it never fails the dashboard build).
+# used to invoke the sibling build-loop-evidence.sh (Loop evidence) and build-feature-scorecard.sh
+# (Feature scorecard), and to print the heal-signal refresh path. Fail-safe: if resolution fails,
+# SCRIPT_DIR is empty and those sections degrade to their notes (never failing the build).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)" || SCRIPT_DIR=""
 
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -387,9 +387,57 @@ pass_rate="$(printf '%s' "$agg" | jq -r '(.total - .stranded) as $d | if $d>0 th
   # pre-formatted per-record ("X%" or "n/a"), oldest→newest, bounded ~10 points.
   hsf=".supervisor/heal-signal/results.jsonl"
   if [ -f "$hsf" ] && [ -s "$hsf" ]; then
+    # STALENESS (checked before any number is shown). The ledger's NEWEST row (by recorded_at,
+    # scored or not) is stale when it is older than hs_stale_days, has no parseable recorded_at,
+    # names no repo, or names a repo that is not this project: any `tmp.*` name (a test fixture
+    # basename), or a name matching none of this checkout's basename, its main checkout's basename
+    # (parent of the git common dir — so a worktree reading rows its main checkout wrote is not
+    # foreign) and the repo name in the `origin` URL (so a lane clone is not foreign). A stale
+    # ledger renders the age, the newest row's repos and the refresh command INSTEAD of numbers —
+    # old or fixture-written rows never pass as current. Age is computed in jq (no date(1) dialect).
+    hs_stale_days=14
+    hs_id_self="$(basename "$GITROOT" 2>/dev/null)"
+    hs_id_main="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+    [ -n "$hs_id_main" ] && hs_id_main="$(basename "$(dirname "$hs_id_main")" 2>/dev/null)"
+    hs_id_origin="$(git remote get-url origin 2>/dev/null)"
+    hs_id_origin="${hs_id_origin%/}"; hs_id_origin="${hs_id_origin%.git}"
+    hs_id_origin="${hs_id_origin##*/}"; hs_id_origin="${hs_id_origin##*:}"
+    # One TSV line: <age days | unknown> <repos csv> <stale 0|1>. -R + fromjson?: a malformed
+    # line is skipped, never aborts the read.
+    hs_fresh="$(jq -Rrs --argjson days "$hs_stale_days" --arg s "$hs_id_self" --arg m "$hs_id_main" --arg o "$hs_id_origin" '
+      [split("\n")[] | fromjson? | select(type=="object")] | sort_by(.recorded_at // "" | tostring) | last
+      | if . == null then empty else
+          ((.recorded_at // "" | tostring | fromdateiso8601?) // null) as $t
+          | ((.repos // []) | if type=="array" then map(tostring) else [tostring] end) as $r
+          | ([$s, $m, $o] | map(select(. != ""))) as $ids
+          | ([$r[] | select(startswith("tmp.") or (. as $x | $ids | index([$x]) | not))] | length) as $foreign
+          | (if $t == null then null else ((now - $t) / 86400) end) as $age
+          | [ (if $age == null then "unknown" else ($age | floor | tostring) end),
+              (if ($r | length) == 0 then "(none)" else ($r | join(", ")) end),
+              (if $age == null or $age > $days or $foreign > 0 or ($r | length) == 0 then "1" else "0" end) ]
+          | @tsv
+        end' "$hsf" 2>/dev/null)"
+    hs_age="$(printf '%s' "$hs_fresh" | cut -f1)"; hs_repos="$(printf '%s' "$hs_fresh" | cut -f2)"
+    hs_stale="$(printf '%s' "$hs_fresh" | cut -f3)"
+    # Unreadable newest row ⇒ stale (fail toward NOT showing numbers we cannot date).
+    case "${hs_stale:-}" in 0|1) ;; *) hs_stale=1; hs_age="${hs_age:-unknown}"; hs_repos="${hs_repos:-(unreadable)}" ;; esac
+    hs_refresh="bash \"${SCRIPT_DIR:-scripts}/measure-heal-signal.sh\""
+    # The identity names, deduplicated for display (a plain clone's main checkout is itself).
+    hs_ids="$hs_id_self"
+    for hs_x in "$hs_id_main" "$hs_id_origin"; do
+      [ -n "$hs_x" ] || continue
+      case ", $hs_ids, " in *", $hs_x, "*) ;; *) hs_ids="${hs_ids:+$hs_ids, }$hs_x" ;; esac
+    done
     # one pre-formatted recall token per SCORED (n>0) record, oldest→newest ("X%" | "n/a").
     hs_recalls="$(jq -rs 'map(select((.n // 0) > 0)) | sort_by(.recorded_at // "") | .[] | (if .recall_pct==null then "n/a" else "\(.recall_pct)%" end)' "$hsf" 2>/dev/null)"
-    if [ -n "$hs_recalls" ]; then
+    if [ "$hs_stale" = "1" ]; then
+      echo "## Heal-signal catch-rate (MEASURE)"
+      echo "_Sourced from \`$hsf\`. Numbers withheld: the ledger is **stale**, so they would not describe this project now._"
+      echo
+      echo "- **stale** — newest row is ${hs_age} day(s) old (limit ${hs_stale_days}) and names: ${hs_repos} (this project: ${hs_ids:-?})"
+      echo "- **Refresh:** \`${hs_refresh}\`"
+      echo
+    elif [ -n "$hs_recalls" ]; then
       hs_latest="$(jq -rs 'map(select((.n // 0) > 0)) | sort_by(.recorded_at // "") | last' "$hsf" 2>/dev/null)"
       hs_recall="$(printf '%s' "$hs_latest" | jq -r 'if .recall_pct==null then "n/a" else "\(.recall_pct)%" end')"
       hs_fn="$(printf '%s' "$hs_latest" | jq -r '.fn // "—"')"
@@ -405,6 +453,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r '(.total - .stranded) as $d | if $d>0 th
       echo "- **Latest catch-rate (recall):** ${hs_recall}  ·  **False-negatives (missed):** ${hs_fn} of N=${hs_n}"
       echo "- **Coverage:** ${hs_cov} of heal-signal PRs labeled  ·  **Self-heal-lane churn share:** ${hs_share}"
       echo "- **Catch-rate trend (oldest → newest):** ${hs_trend}"
+      echo "- **Ledger age:** ${hs_age} day(s)  ·  **Newest row repos:** ${hs_repos}"
       echo
     fi
   fi
@@ -464,6 +513,50 @@ pass_rate="$(printf '%s' "$agg" | jq -r '(.total - .stranded) as $d | if $d>0 th
   fi
   echo
   rm -f "$le_jsonl" 2>/dev/null
+
+  # --- Feature scorecard (ALWAYS rendered; one-line "unavailable" note on any degradation) ---
+  # Render-only view of the READ-ONLY builder scripts/build-feature-scorecard.sh --json (same
+  # state dir): one row per feature id with the builder's own numbers and suggested verdict. The
+  # feature list and the verdict vocabulary live in the registry + builder only — this section
+  # restates neither, it prints what --json returns. Guarded exactly like Loop evidence: a
+  # missing builder, unparseable output, status "error" (missing/invalid registry) or a registry
+  # with no features all render the unavailable line — NEVER an empty table that reads as an
+  # all-clear (a fail-safe reader's empty output must not look clean).
+  echo "## Feature scorecard"
+  fs_builder="${SCRIPT_DIR:-}/build-feature-scorecard.sh"
+  fs_json="$(mktemp)"
+  fs_why="builder not found"
+  if [ -n "${SCRIPT_DIR:-}" ] && [ -f "$fs_builder" ]; then
+    ( bash "$fs_builder" --json --state-dir "$GITROOT/.supervisor" 2>/dev/null || true ) > "$fs_json" 2>/dev/null || true
+    fs_why="builder output unreadable"
+  fi
+  fs_status="$(jq -r 'if type=="object" then (.status // "") else "" end' "$fs_json" 2>/dev/null)"
+  fs_total="$(jq -r 'if type=="object" and (.features | type)=="array" then (.features | length) else "" end' "$fs_json" 2>/dev/null)"
+  case "${fs_total:-}" in ''|*[!0-9]*) fs_total=0 ;; esac
+  if [ "$fs_status" = "error" ]; then
+    fs_why="$(jq -r '(.error // "builder reported an error") | tostring | gsub("[\r\n]"; " ")' "$fs_json" 2>/dev/null)"
+    fs_why="${fs_why:-builder reported an error}"
+  elif [ "$fs_status" = "ok" ] && [ "$fs_total" -eq 0 ]; then
+    fs_why="the registry lists no features"
+  fi
+  if [ "$fs_status" = "ok" ] && [ "$fs_total" -gt 0 ]; then
+    echo "_Advisory only — the verdict is a suggestion; nothing here changes a config. Rendered from \`scripts/build-feature-scorecard.sh --json\` over this checkout's \`.supervisor/\` (records outside the retained window are not counted). \`unknown\` cost = no cost record, never 0._"
+    echo
+    echo "| Feature | Critical | Runs available | Ran | Caught | Catch rate | Cost | Cost per catch | Last fired | Verdict |"
+    echo "|---|---|---|---|---|---|---|---|---|---|"
+    jq -r '
+      def cell: if . == null then "-" else tostring | gsub("[\r\n]"; " ") | gsub("\\|"; "\\|") end;
+      .features[] | select(type=="object")
+      | "| \(.id | cell) | \(.critical | cell) | \(.runs_available | cell) | \(.ran | cell) | \(.caught | cell) | \(.catch_rate | cell) | \(.cost_total | cell) | \(.cost_per_catch | cell) | \(.last_fired | cell) | \(.verdict | cell) |"
+    ' "$fs_json" 2>/dev/null
+    echo
+    echo "- **Needs an emitter:** $(jq -r '(.needs_emitter // []) | if length == 0 then "none" else map(tostring) | join(", ") end' "$fs_json" 2>/dev/null)"
+    echo "- **Unregistered:** $(jq -r '(.unregistered // []) | if length == 0 then "none" else map(tostring) | join(", ") end' "$fs_json" 2>/dev/null)"
+  else
+    echo "Feature scorecard unavailable — ${fs_why}. Run \`bash \"${SCRIPT_DIR:-scripts}/build-feature-scorecard.sh\"\` directly to see why."
+  fi
+  echo
+  rm -f "$fs_json" 2>/dev/null
 
   # --- Missing-drain reconciliation (advisory; AC5 — SUPPRESSED when no corpus) ---
   # Surfaces PRs that carried a heal outcome (a `## Outcome` block with a `**PR:**` URL in the
