@@ -205,13 +205,13 @@ for f in "$PO_AGENT" "$PO_CMD"; do
   blk="$(awk '/^## User Stories$/{s=1; next} /^## Scope Analysis$/{s=0} s' "$f")"
   miss=""
   for h in 'Non-goals' 'Owner decisions' 'Validation (must pass before merge)'; do
-    printf '%s\n' "$blk" | grep -qE "^#+ $(printf '%s' "$h" | sed 's/[()]/\\&/g')\$" || miss="$miss '$h'"
+    grep -qE "^#+ $(printf '%s' "$h" | sed 's/[()]/\\&/g')\$" <<<"$blk" || miss="$miss '$h'"
   done
   if [ -n "$blk" ] && [ -z "$miss" ]; then ok "(S6) $(basename "$(dirname "$f")")/product-owner.md story block names Non-goals, Owner decisions, Validation"
   else no "(S6) $(basename "$(dirname "$f")")/product-owner.md story block lacks:${miss:- the ## User Stories block}"; fi
 done
 VAL_PERSIST="the \`$VAL_H\` section, written at **H2** in the file"
-if printf '%s\n' "$pa" | grep -qF -- "$VAL_PERSIST"; then ok "(S6) PO Persist step writes the Validation section at H2 in the persisted file"
+if grep -qF -- "$VAL_PERSIST" <<<"$pa"; then ok "(S6) PO Persist step writes the Validation section at H2 in the persisted file"
 else no "(S6) PO Persist step does not say the Validation section is written at H2"; fi
 
 # (M1) status stamp deleted ⇒ S2 must fail.
