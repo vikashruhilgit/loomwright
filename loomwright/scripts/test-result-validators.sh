@@ -3403,7 +3403,7 @@ assert_fail "verify: [token-economy 07] spec_sources not a mapping [rule V8]" \
   "spec_sources must be a mapping"
 
 # ── F. plan-reviewer validator ───────────────────────────────────────────────
-echo "== F. validate-plan-review-result.py — 6 rules =="
+echo "== F. validate-plan-review-result.py — 8 rules =="
 
 run_v "$V_PLAN" "$FIXDIR/plan-review-valid.md"
 assert_pass "plan: valid FAIL block with a BLOCKING issue (committed fixture)"
@@ -3573,6 +3573,114 @@ PLAN_REVIEW_RESULT:
 EOF
 run_v "$V_PLAN" "$F"
 assert_fail "plan: PASS-with-issues still requires a section on each [rule 5]" "(rule 5)"
+
+# Rules 7-8 — the optional `requirement_fit` rating (Plan Reviewer Criterion 22).
+# An ABSENT field passes (plan-pass.md above carries none); each of the four
+# values passes on a decision it is consistent with; the `requirement_fit`
+# issue category is accepted; an out-of-enum value and an explicit null fail
+# rule 7; `under` on any decision but FAIL fails rule 8.
+for rf in fulfils over skipped; do
+  mk "plan-rf-$rf.md" <<EOF
+PLAN_REVIEW_RESULT:
+  schema_version: 1
+  decision: PASS
+  requirement_fit: $rf
+  issues: []
+  summary: "requirement fit rated $rf"
+EOF
+  run_v "$V_PLAN" "$F"
+  assert_pass "plan: requirement_fit: $rf on PASS [rule 7]"
+done
+
+mk plan-rf-under-fail.md <<'EOF'
+PLAN_REVIEW_RESULT:
+  schema_version: 1
+  decision: FAIL
+  requirement_fit: under
+  issues:
+    - severity: HIGH
+      section: "Acceptance Criteria"
+      category: "requirement_fit"
+      description: "Requirement AC3 is missing: no subtask or criterion covers it."
+      suggestion: "Add a criterion that covers AC3."
+  summary: "One requirement line is missing."
+EOF
+run_v "$V_PLAN" "$F"
+assert_pass "plan: requirement_fit: under with decision FAIL and a HIGH requirement_fit issue [rules 7-8]"
+
+mk plan-rf-over-medium.md <<'EOF'
+PLAN_REVIEW_RESULT:
+  schema_version: 1
+  decision: PASS
+  requirement_fit: over
+  issues:
+    - severity: MEDIUM
+      section: "Subtask Structure"
+      category: "requirement_fit"
+      description: "Subtask 2 is extra: it serves no requirement line."
+      suggestion: "Remove Subtask 2 or link it to the requirement line it serves."
+  summary: "One extra subtask; coverage complete."
+EOF
+run_v "$V_PLAN" "$F"
+assert_pass "plan: requirement_fit: over with a MEDIUM requirement_fit issue stays PASS [rule 7]"
+
+mk plan-rf-partial.md <<'EOF'
+PLAN_REVIEW_RESULT:
+  schema_version: 1
+  decision: PASS
+  requirement_fit: partial
+  issues: []
+  summary: "malformed rating"
+EOF
+run_v "$V_PLAN" "$F"
+assert_fail "plan: out-of-enum requirement_fit: partial [rule 7]" "(rule 7)"
+
+mk plan-rf-case.md <<'EOF'
+PLAN_REVIEW_RESULT:
+  schema_version: 1
+  decision: PASS
+  requirement_fit: Fulfils
+  issues: []
+  summary: "the enum is case-sensitive"
+EOF
+run_v "$V_PLAN" "$F"
+assert_fail "plan: requirement_fit is case-sensitive (Fulfils) [rule 7]" "(rule 7)"
+
+mk plan-rf-null.md <<'EOF'
+PLAN_REVIEW_RESULT:
+  schema_version: 1
+  decision: PASS
+  requirement_fit:
+  issues: []
+  summary: "explicit null is present, not absent"
+EOF
+run_v "$V_PLAN" "$F"
+assert_fail "plan: EXPLICIT-NULL requirement_fit (present, not absent) [rule 7]" "(rule 7)"
+
+mk plan-rf-under-pass.md <<'EOF'
+PLAN_REVIEW_RESULT:
+  schema_version: 1
+  decision: PASS
+  requirement_fit: under
+  issues: []
+  summary: "a missing line rated under but the brief passed"
+EOF
+run_v "$V_PLAN" "$F"
+assert_fail "plan: CROSS-FIELD requirement_fit: under with decision PASS [rule 8]" "(rule 8)"
+
+mk plan-rf-under-nh.md <<'EOF'
+PLAN_REVIEW_RESULT:
+  schema_version: 1
+  decision: NEEDS_HUMAN
+  requirement_fit: under
+  issues:
+    - severity: MEDIUM
+      section: "Subtask Structure"
+      description: "Scope is ambiguous."
+  summary: "under is a failure, never an owner question"
+EOF
+run_v "$V_PLAN" "$F"
+assert_fail "plan: CROSS-FIELD requirement_fit: under with decision NEEDS_HUMAN [rule 8]" "(rule 8)"
 
 # ── G. exit-0-by-contract on garbage, per file (R3) ──────────────────────────
 echo "== G. exit-0-by-contract — every Python file, per file, never masked =="

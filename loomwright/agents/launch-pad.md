@@ -120,7 +120,7 @@ Goal → Discovery → Feasibility → Analysis → Decomposition → Brief → 
 
 **Actions:**
 
-0. **Resolve requirement-file input (do FIRST):** Auto-resolution is **scoped to the handoff directory** to avoid hijacking a goal that merely names a repo file. If the `goal:`/`feature:`/`problem:` value is a path **under `.supervisor/requirements/`** ending in `.md` that resolves with `test -f` (the Beads-absent Product Owner handoff target), then `Read` that file and use its contents (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks) as the requirement source. Carry forward any acceptance criteria the file already defines rather than re-deriving them. If the file resolves but is empty or clearly not a requirement/story, stop and ask rather than planning from its contents. Resolve the path relative to the **project root** (the `--project` value when given, else the auto-detected root), not the current working directory. **Any other value — including a bare path to an existing repo file such as `README.md` or `docs/spec.md` — is treated as a literal goal string** (so "improve `README.md`" is never silently reinterpreted as a spec to plan from). Never invent a file — a `.supervisor/requirements/` path that fails `test -f` falls back to literal-string handling and is noted. **When (and only when) the input resolves to a `.supervisor/requirements/*.md` file, record its repo-root-relative path (e.g. `.supervisor/requirements/{slug}.md`) as `source_requirement` and hold it in session memory for Phase 5 PACKAGE.** A literal-string goal or a repo file outside `.supervisor/requirements/` leaves `source_requirement` unset.
+0. **Resolve requirement-file input (do FIRST):** Auto-resolution is **scoped to the handoff directory** to avoid hijacking a goal that merely names a repo file. If the `goal:`/`feature:`/`problem:` value is a path **under `.supervisor/requirements/`** ending in `.md` that resolves with `test -f` (the Beads-absent Product Owner handoff target), then `Read` that file and use its contents (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks) as the requirement source. Carry forward any acceptance criteria the file already defines rather than re-deriving them. If the file resolves but is empty or clearly not a requirement/story, stop and ask rather than planning from its contents. Resolve the path relative to the **project root** (the `--project` value when given, else the auto-detected root), not the current working directory. **Any other value — including a bare path to an existing repo file such as `README.md` or `docs/spec.md` — is treated as a literal goal string** (so "improve `README.md`" is never silently reinterpreted as a spec to plan from). Never invent a file — a `.supervisor/requirements/` path that fails `test -f` falls back to literal-string handling and is noted. **When (and only when) the input resolves to a `.supervisor/requirements/*.md` file, record its repo-root-relative path (e.g. `.supervisor/requirements/{slug}.md`) as `source_requirement` and hold it in session memory for Phase 5 PACKAGE and the Phase 5.5 `--- SOURCE REQUIREMENT ---` block.** A literal-string goal or a repo file outside `.supervisor/requirements/` leaves `source_requirement` unset.
 1. If goal is vague (no clear outcome or acceptance criteria) — and no requirement file supplied them:
    - Apply product discovery framework (`skills/product-discovery/SKILL.md`)
    - Ask clarifying questions (max 2 rounds via `AskUserQuestion`, `header: "LP-CLARIFY"`); cannot ask (Can't-ask rule) ⇒ `status: aborted, status_reason: "clarification_needed_non_interactive"`
@@ -525,16 +525,16 @@ Subtask 2 (independent)
 1. Reuse the scratch file **as last written by Phase 5 step 9 MATERIALIZE** (do NOT re-assemble the brief here, so the reviewer sees exactly what Phase 6 will save). **On a retry, MATERIALIZE has already been re-run by the FAIL branch below, so this file holds the REVISED brief.** If the scratch file is missing, serialize the assembled brief from Phase 5 into a text block here as a fallback
 1b. **Gate-parse check (mechanical, before every spawn):** for each id N in the Subtask Structure table, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" <scratch-file> N --parse-only` (the same parser the `outputs_verified` gate runs, no disk checks). Any `unverifiable` line, or `provides_count: 0` for a block that lists entries, is a contract anchor the gate cannot find — fix the anchor (Phase 4 authoring rules); a line carrying `parse_warnings` is a field the gate misreads — fix its quoting (escape an inner `"` as `\"`, or single-quote it). Then re-run MATERIALIZE, and re-check before spawning (a pre-spawn fix consumes no review attempt). Paste the final lines into the spawn prompt's `--- GATE PARSE ---` block — Plan Reviewer has no Bash and treats them as authoritative for Criterion 12
 1c. **Fix floor (once, before the first spawn):** `FIX_FLOOR=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/fix-floor.sh" resolve --flag "<--fix-floor value, empty when absent>" --root .)` — the ONE severity threshold Phase 4.5 and `/review-pr` also fix by (flag > `.supervisor/config.json` `.fix_floor` > `MEDIUM`). Exit 2 ⇒ stop, save nothing: `status: aborted`, `summary: "fix_floor_invalid: <the script's stderr line>"`.
-2. Spawn Plan Reviewer as a subagent with brief text + CLAUDE.md context + the GATE PARSE lines
+2. Spawn Plan Reviewer as a subagent with brief text + CLAUDE.md context + the GATE PARSE lines + (when `source_requirement` is set) that file `Read` verbatim at spawn time into the `--- SOURCE REQUIREMENT ---` block — Plan Reviewer Criterion 22 maps the brief against it, and without it rates a brief that names a `Source requirement:` `skipped`
 3. Parse PLAN_REVIEW_RESULT from reviewer output
 4. Decision handling:
    - **PASS carrying an issue at the fix floor (attempt < 3):** an issue whose `fix-floor.sh meets "<severity>" "$FIX_FLOOR"` prints `fix` — excluding a `category: executable_acceptance` visibility finding, which no refine resolves — is refined exactly like a FAIL issue: fix it in the brief, re-run MATERIALIZE, re-spawn (consumes an attempt). No human is needed (the same author-side fix the FAIL branch makes), so this runs on both paths.
    - **PASS** (no issue at the floor, or attempt = 3): Proceed to Phase 6 (save enabled). An at-floor issue still open after the third review never blocks — it is listed in the Phase 5.5 table with Resolution `deferred` and save stays enabled; only BLOCKING/HIGH (FAIL) ever blocks save.
-   - **FAIL (attempt < 3):** Fix issues identified in the review, re-assemble affected brief sections, re-spawn reviewer. A 17c issue is fixed only by revising the brief to honor the rule, never by writing a `Rule override:` line (Phase 6 action 2b). A Criterion 20 `pr_body_evidence` issue is fixed by rewriting that criterion in the evidence-file form its suggestion gives (the file added to the File Impact Map and the subtask's `lanes:`), never by deleting the criterion
+   - **FAIL (attempt < 3):** Fix issues identified in the review, re-assemble affected brief sections, re-spawn reviewer. A 17c issue is fixed only by revising the brief to honor the rule, never by writing a `Rule override:` line (Phase 6 action 2b). A Criterion 20 `pr_body_evidence` issue is fixed by rewriting that criterion in the evidence-file form its suggestion gives (the file added to the File Impact Map and the subtask's `lanes:`), never by deleting the criterion. A Criterion 22 `requirement_fit` issue is fixed by adding coverage for a `missing` requirement line, never by dropping the line; an `extra` unit (refined at the fix floor like this branch) is removed or linked to the requirement line it serves
    - **FAIL (attempt = 3):** Present all unresolved issues to user. Offer (`LP-FAIL`): "Refine offline" (exit, `status: blocked` — fix and start a new session) or "Discard". Do NOT save; the 3-spawn cap is never reset within a session.
    - **NEEDS_HUMAN:** Proceed to Phase 6, which branches on WHY: a Criterion 14 `executable_acceptance` escalation goes through action 2a (`LP-EXEC-ACC`: `approve-and-stamp` / `strip-cmd-bullets` / `discard`, interactive; auto-strip, non-interactive); a Criterion 17c house-rule conflict goes through action 2b (`LP-RULE-OVR`: `record-override` / `honor-rule` / `discard`; `rule_conflict_non_interactive` when it cannot ask); any other reason uses the generic `LP-NEEDHUMAN` "Override and save" / "Refine further" / "Discard" prompt (or aborts `needs_human_non_interactive` when non-interactive)
 
-**Seat routing (`plan_reviewer`).** Before each Plan Reviewer spawn, run `resolve-routing.sh seat plan_reviewer` (from the install root's `scripts/`) and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol", which owns the procedure: `PROVIDER=claude` runs the spawn contract below unchanged; any other provider runs `lens-run.sh --role plan_reviewer` and validates `result_text` with `validate-plan-review-result.py --raw`; a non-`ok` `lens_status` or a failed validation runs the Task spawn instead and logs `seat_routing plan_reviewer provider=<p> reason=<r>`. The routed prompt is the spawn contract's prompt (the brief rides in it) and the diff file is empty. A `strict` seat with an empty `PROVIDER` runs no reviewer and takes the generic NEEDS_HUMAN branch below, never a PASS. Everything after the parsed `PLAN_REVIEW_RESULT` is unchanged.
+**Seat routing (`plan_reviewer`).** Before each Plan Reviewer spawn, run `resolve-routing.sh seat plan_reviewer` (from the install root's `scripts/`) and follow `docs/PROVIDER_ROUTING.md` §"Routed seat protocol", which owns the procedure: `PROVIDER=claude` runs the spawn contract below unchanged; any other provider runs `lens-run.sh --role plan_reviewer` and validates `result_text` with `validate-plan-review-result.py --raw`; a non-`ok` `lens_status` or a failed validation runs the Task spawn instead and logs `seat_routing plan_reviewer provider=<p> reason=<r>`. The routed prompt is the spawn contract's prompt (the brief and any SOURCE REQUIREMENT block ride in it) and the diff file is empty. A `strict` seat with an empty `PROVIDER` runs no reviewer and takes the generic NEEDS_HUMAN branch below, never a PASS. Everything after the parsed `PLAN_REVIEW_RESULT` is unchanged.
 
 **Retry loop:**
 
@@ -544,7 +544,7 @@ max_attempts = 3
 
 loop:
   attempt += 1
-  result = spawn_plan_reviewer(brief, claude_md_context)
+  result = spawn_plan_reviewer(brief, claude_md_context, source_requirement)
 
   if result.decision == PASS:
     at_floor = [i for i in result.issues if i.category != "executable_acceptance"
@@ -620,6 +620,10 @@ Task(
 {applicable_rules verbatim, from Phase 3 action 0c — OMIT this whole block, both markers included, when applicable_rules is empty}
 --- APPLICABLE RULES END ---
 
+--- SOURCE REQUIREMENT ---
+{the source_requirement file verbatim, from Phase 2 step 0 — OMIT this whole block, both markers included, when source_requirement is unset}
+--- SOURCE REQUIREMENT END ---
+
 Project CLAUDE.md context:
 {relevant patterns, tech stack, directory structure — max 500 tokens}
 
@@ -633,6 +637,7 @@ Check every review criterion. Output a PLAN_REVIEW_RESULT block.",
 ## Phase 5.5: PLAN REVIEW
 
 **Reviewer decision:** {PASS | FAIL (attempt N/3) | NEEDS_HUMAN}
+**Requirement fit:** {the reviewer's `requirement_fit`: fulfils | under | over | skipped}
 **Issues found:** {count} ({blocking} blocking, {high} high, {medium} medium, {low} low)
 **Attempts:** {N}/3
 
@@ -640,6 +645,9 @@ Check every review criterion. Output a PLAN_REVIEW_RESULT block.",
 | # | Severity | Section | Description | Resolution |
 |---|----------|---------|-------------|------------|
 | 1 | {sev} | {section} | {description} | {fixed | deferred | warning} |
+
+### Requirement fit
+{the reviewer's `### Requirement fit` table, verbatim — one row per requirement line and per brief unit}
 
 **Result:** Proceeding to Phase 6 {save enabled | save disabled}
 ```

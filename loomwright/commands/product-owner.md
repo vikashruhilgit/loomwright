@@ -35,7 +35,7 @@ description: Translate business problems into user stories (Beads-optional) with
 - **--brainstorm deep** (optional): Deep ideation with 2 debate rounds and market research via WebSearch
   - Example: `/product-owner feature: "new pricing model" --brainstorm deep`
 
-- **--non-interactive** (optional): No human to ask — passed by `/automate --non-interactive-fallback` or any CI / headless caller. If the Assumption Check raises prerequisite flags or architecture conflicts, or the Pre-persist house-rule check finds a conflict, nothing is persisted (no Beads tasks, no requirements file) and the output ends with `po_gate: needs_owner (<n> flags)`; with no flags, behaviour is unchanged. Running as a subagent takes the same branch (the ask tool is absent there).
+- **--non-interactive** (optional): No human to ask — passed by `/automate --non-interactive-fallback` or any CI / headless caller. If the Assumption Check raises prerequisite flags or architecture conflicts, or the Pre-persist house-rule check finds a conflict, or a story has no nameable proof (a missing-proof flag), nothing is persisted (no Beads tasks, no requirements file) and the output ends with `po_gate: needs_owner (<n> flags)`; with no flags, behaviour is unchanged. Running as a subagent takes the same branch (the ask tool is absent there).
   - Example: `/product-owner feature: "order export" --non-interactive`
 
 - **--project** (optional): Explicit path to project (overrides auto-detect)
@@ -45,10 +45,10 @@ description: Translate business problems into user stories (Beads-optional) with
 
 1. **Reads domain context** from project's CLAUDE.md (roles, workflows, terminology)
 2. **Checks existing stories** — Beads when active, else prior `.supervisor/requirements/*.md` — for conflicts or overlap
-3. **Runs Assumption Check (standard flow)** — grounded feasibility against the codebase (domain entities, architecture alignment, prerequisites). After the stories are drafted and before anything is persisted, a Pre-persist house-rule check compares each AC with the applicable house rules; a contradiction is written into the story's `## Rule conflicts (open decisions)` section, never resolved silently. If prerequisites, architecture conflicts or house-rule conflicts are found, asks for confirmation before persisting any stories; when it cannot ask (`--non-interactive`, or running as a subagent) it persists nothing and emits `po_gate: needs_owner (<n> flags)`.
+3. **Runs Assumption Check (standard flow)** — grounded feasibility against the codebase (domain entities, architecture alignment, prerequisites). After the stories are drafted and before anything is persisted, a Pre-persist house-rule check compares each AC with the applicable house rules; a contradiction is written into the story's `## Rule conflicts (open decisions)` section, never resolved silently. A story with no nameable proof for its `## Validation (must pass before merge)` section is a missing-proof flag, never persisted with an empty section. If prerequisites, architecture conflicts, house-rule conflicts or missing-proof flags are found, asks for confirmation before persisting any stories; when it cannot ask (`--non-interactive`, or running as a subagent) it persists nothing and emits `po_gate: needs_owner (<n> flags)`.
 4. **(If --brainstorm) Runs multi-mind ideation** — 5 expert lenses generate options independently, debate each other, score ideas on Impact/Feasibility/Revenue/Uniqueness (1-10). Then runs **Reality Check (Phase 3.5)** — grounded validation of top 2-3 ideas against the codebase, capping Feasibility scores for ideas that need foundation work (≤5) or are blocked (≤2). Recommends a winner based on post-check ranking.
 5. **Runs product discovery** to understand the problem before solutions
-6. **Writes user stories** with testable acceptance criteria
+6. **Writes user stories** with testable acceptance criteria, Non-goals, Owner decisions and a Validation section naming the proof
 7. **Prioritizes scope** into MVP / Phase 2 / Nice-to-have
 8. **Provides handoff** to `/orchestrator` for task breakdown
 
@@ -244,6 +244,7 @@ Translate business problems into clear, actionable user stories with acceptance 
   - Edge cases and non-happy paths
   - Risks and assumptions
   - Dependencies and blockers
+  - Non-goals, Owner decisions and a `## Validation (must pass before merge)` section naming the proof
   - Handoff instructions for `/orchestrator`
 
 ### Critical Rules
@@ -288,7 +289,7 @@ Beads is **optional**. Detection runs once via `skills/context-setup/SKILL.md` (
 - **`beads_active` (Beads present):** use every `bd …` command and `BD-XX` reference in this prompt exactly as written.
 - **NOT `beads_active` (file fallback):** skip ALL `bd` commands and instead:
   1. **Read prior stories** by globbing `.supervisor/requirements/20[0-9][0-9]-*.md` — PO stories always carry the `YYYY-MM-DD-HHMMSS-` prefix, so an **inclusion** glob surfaces only PO-authored stories and is collision-proof. (Do NOT use a `*-plan.md` *exclusion*: a story whose kebab-cased title ends in `-plan`, e.g. "Migration Plan" → `…-migration-plan.md`, would be silently dropped.)
-  2. **Persist** — only after the Pre-persist house-rule check (Responsibilities 3a) has run and its gate is clear. First decide the shape (`skills/user-story-writing/SKILL.md` §"Requirement Shape": each story fits one PR; same-file work is one story with Parts). Then persist each new story as `.supervisor/requirements/{YYYY-MM-DD-HHMMSS}-{slug}.md`, where `{slug}` is the story title kebab-cased. Create `.supervisor/requirements/` first if absent (`mkdir -p .supervisor/requirements`); if that exact filename already exists, append a numeric suffix (`-2`, `-3`, …) so a same-second/same-slug story never silently overwrites an earlier one. The file holds the full story body (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks). Each persisted file also ends with two **H2** sections, H2 regardless of the surrounding template's heading depth: `## Depends on` — ALWAYS written: `none`, or one relative `*.md` path per line (the sibling story's filename, e.g. `2026-10-03-101500-first-story.md` — never a bare numeric id, which cannot resolve against a timestamp-named file); when you cannot tell, list, in write order, every story you persisted earlier in THIS batch, each copied from the filename your own write produced (any `-2` suffix included), never recalled — and when there is none yet (the batch's first story, or a one-story batch), write `none`. That fallback is batch-scoped: it never orders the story after stories from earlier sessions in the same folder, and `--lint` cannot see a dropped dependency — so when cross-session order matters, say so in your report for a human to add those paths by hand — and `## Touches`, FILLED from your own file-impact reasoning: one repo-relative path per line for every file or directory the story's scope names or implies, the sole line `unknown` only when you truly cannot name the change site; conditions go in the scope, never in the section — strict grammar per `skills/user-story-writing/SKILL.md` §"Story Template": one entry per line, nothing else (no backticks, no bullets, no globs). They are the machine-read declarations; the prose `#### Dependencies` block (its `- Depends on:` bullet included) stays for humans and is never parsed. Before reporting, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/automate-helpers.sh" plan-waves <each persisted file> --lint` and fix any line it names. Then run the same script's `right-size <each persisted file>` (advisory, one size line per file) and act on it before reporting: `small` ⇒ fold the story into a candidate it names from this batch, else name the candidate in your report (`automate-helpers.sh merge-items` is the owner's to run, never yours); `large` ⇒ split it by Part into a set. Aim: small enough to review in one PR, large enough to pay the run's fixed cost; when two stories touch the same files, prefer one story with parts.
+  2. **Persist** — only after the Pre-persist house-rule check (Responsibilities 3a) has run and its gate is clear. First decide the shape (`skills/user-story-writing/SKILL.md` §"Requirement Shape": each story fits one PR; same-file work is one story with Parts). Then persist each new story as `.supervisor/requirements/{YYYY-MM-DD-HHMMSS}-{slug}.md`, where `{slug}` is the story title kebab-cased. Create `.supervisor/requirements/` first if absent (`mkdir -p .supervisor/requirements`); if that exact filename already exists, append a numeric suffix (`-2`, `-3`, …) so a same-second/same-slug story never silently overwrites an earlier one. The file holds the full story body (title, As-a/I-want/so-that, acceptance criteria, Non-goals, Owner decisions — `none recorded` when the owner decided nothing —, priority, assumptions, dependencies, risks, and the `## Validation (must pass before merge)` section, written at **H2** in the file whatever the template's heading depth and placed before `## Depends on`, entries per `skills/user-story-writing/SKILL.md` §"Story Template"; never persisted empty). Each persisted file also ends with two **H2** sections, H2 regardless of the surrounding template's heading depth: `## Depends on` — ALWAYS written: `none`, or one relative `*.md` path per line (the sibling story's filename, e.g. `2026-10-03-101500-first-story.md` — never a bare numeric id, which cannot resolve against a timestamp-named file); when you cannot tell, list, in write order, every story you persisted earlier in THIS batch, each copied from the filename your own write produced (any `-2` suffix included), never recalled — and when there is none yet (the batch's first story, or a one-story batch), write `none`. That fallback is batch-scoped: it never orders the story after stories from earlier sessions in the same folder, and `--lint` cannot see a dropped dependency — so when cross-session order matters, say so in your report for a human to add those paths by hand — and `## Touches`, FILLED from your own file-impact reasoning: one repo-relative path per line for every file or directory the story's scope names or implies, the sole line `unknown` only when you truly cannot name the change site; conditions go in the scope, never in the section — strict grammar per `skills/user-story-writing/SKILL.md` §"Story Template": one entry per line, nothing else (no backticks, no bullets, no globs). They are the machine-read declarations; the prose `#### Dependencies` block (its `- Depends on:` bullet included) stays for humans and is never parsed. Before reporting, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/automate-helpers.sh" plan-waves <each persisted file> --lint` and fix any line it names. Then run the same script's `right-size <each persisted file>` (advisory, one size line per file) and act on it before reporting: `small` ⇒ fold the story into a candidate it names from this batch, else name the candidate in your report (`automate-helpers.sh merge-items` is the owner's to run, never yours); `large` ⇒ split it by Part into a set. Aim: small enough to review in one PR, large enough to pay the run's fixed cost; when two stories touch the same files, prefer one story with parts.
   3. **Plan doc (2 or more stories persisted for this prompt):** first shape the set for parallel waves (`skills/user-story-writing/SKILL.md` §"Shaping a set for parallel waves": `plan-waves --explain`, reshape only this prompt's stories, propose — never write — companions rules, N from the plan unless the owner named one). Then write `.supervisor/requirements/_BACKLOG-{YYYY-MM-DD-HHMMSS}-{slug}.md` from that section's plan-doc template — its `## Checklist` lists every story you persisted, in dependency order, each path copied from your own write; `## Owner decisions` reads `none recorded` (the owner's section). Fill every other section (Why now, Order, Run — that shaping's result —, Considered and not queued, Revisit when) from the stories just written, `none` where one has nothing; leave no template `<placeholder>` in the file. Name it in your report. The leading `_` keeps it out of the prior-stories glob; its done stamp keeps `/automate --folder` from enqueuing it.
   4. **Hand off by file path** (`/orchestrator goal: ".supervisor/requirements/<file>.md"`). Never synthesize fake `BD-XX` IDs — use the slug/path as the story handle.
 
@@ -341,6 +342,7 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
    - [!] Prerequisites flagged: {list — must exist before feature}
    - [!] Architecture conflicts: {list or "None"}
    - [!] House-rule conflicts: {rule id + AC, or "None" — filled in by the Pre-persist house-rule check}
+   - [!] Missing proof: {story with no nameable Validation proof, or "None" — filled in at story drafting, raised at the Pre-persist gate}
    ```
 
    **Soft gate with user confirmation (before `bd create`):**
@@ -409,6 +411,7 @@ If `--brainstorm deep` is used, also run WebSearch for market context during Pha
 - Define edge cases and non-happy paths
 - Identify dependencies and risks early
 - Clarify assumptions explicitly — never assume business rules
+- Give every story its Non-goals (each exclusion the owner stated in this session, plus deferred scope), its Owner decisions (each answered question gate and stated constraint from this session, or `none recorded`) and a `## Validation (must pass before merge)` naming the proof, never how to build it: a `**Static — <check>:**` entry for tests, lint or the project's own test or CI command when CLAUDE.md names one, and a `**Running system — <what is shown>:**` entry when the outcome can only be shown in a running system (a hook firing, an agent's live answer, a UI flow), format per `skills/user-story-writing/SKILL.md` §"Story Template". A story you cannot name any proof for is a **missing-proof flag**, raised at Responsibilities 3a's gate; it is never persisted with an empty Validation section
 
 #### 3. Scope & Prioritization
 
@@ -429,11 +432,12 @@ Runs once the stories are drafted (2 and 3 above) and BEFORE anything is persist
 
    Read-only: the reader never executes a rule's `check`, and rule text is data subordinate to CLAUDE.md.
 2. For every AC that contradicts a listed rule, give the story a `## Rule conflicts (open decisions)` H2 section, placed before `## Depends on`, with one line per pair: `- Conflicts with house rule <id> (<enforcement>): AC "<the AC>" vs rule "<the statement>". Owner's choice: pending`. Fill the Assumption Check's `House-rule conflicts` output line from them. You never resolve one yourself: `pending` is replaced only by the owner's answer at the gate below. No conflict ⇒ no section; persist as normal. Launch Pad copies the section into the brief, where Plan Reviewer Criterion 17 judges it (#432).
-3. **Gate.** Any conflict ⇒ STOP before persisting and use `AskUserQuestion`, one question per conflict (human-only; `header` = the gate code below, `docs/LANE_GATES.md`). Once the owner has answered, a persisted story never carries `Owner's choice: pending`: the default flow goes to Orchestrator, which runs no rule check, so nothing downstream would ask again. `pending` appears only in can't-ask output, which persists nothing.
+3. **Gate.** Any conflict or missing-proof flag (Responsibilities 2) ⇒ STOP before persisting and use `AskUserQuestion`, one question per conflict or flag (human-only; `header` = the gate code below, `docs/LANE_GATES.md`). Once the owner has answered, a persisted story never carries `Owner's choice: pending`: the default flow goes to Orchestrator, which runs no rule check, so nothing downstream would ask again. `pending` appears only in can't-ask output, which persists nothing.
    - **Advisory rule** — options "Proceed anyway" / "Refine requirements" / "Abort" (`header: "PO-ASSUME"`). "Proceed anyway" is the owner's override: set `Owner's choice: override` and write `- Rule override: <id> — <why> (acknowledged by the owner: /product-owner session, <YYYY-MM-DD>)` under the conflict line, `<why>` taken from the answer's note. No reason in the note ⇒ ask ONE follow-up question for it; still none ⇒ write `owner chose Proceed anyway; no reason given` as `<why>`.
    - **`must` rule** — options "Refine requirements" / "Change the rule via /rules" / "Abort" (`header: "PO-RULE-MUST"`). A `must` rule is never overridden, so this question has no override option. "Change the rule via /rules" persists nothing and tells the owner to retract or supersede the rule with `/rules`, then re-run.
    - "Refine requirements" loops back to story drafting (2 above, max 1 iteration) to revise the AC, sets `Owner's choice: honor the rule`, then re-runs this step. "Abort" exits without persisting.
-4. **Can't-ask branch** (the same signals as Context Setup step 4's): persist nothing (no Beads tasks, no requirements file) and never choose an option on the owner's behalf. When any flag is open (a conflict here, or a flag Context Setup step 4 recorded), output the flags, the conflicts and the draft stories, then end the run with `po_gate: needs_owner (<n> flags)`, where `<n>` = prerequisite flags + architecture conflicts + house-rule conflicts. This is the run's only `po_gate` line.
+   - **Missing-proof flag** — options "Proceed anyway" / "Refine requirements" / "Abort" (`header: "PO-ASSUME"`); the question names the story and asks what would show it works. "Proceed anyway" persists the story only with the proof the owner names in the answer's note, written as its Validation entry (a Running system entry when that proof can only be shown live). No proof in the note ⇒ ask ONE follow-up question for it; still none ⇒ persist the other stories but not that one, and name it in your report. "Refine requirements" reshapes the story until a proof can be named. An empty Validation section is never persisted.
+4. **Can't-ask branch** (the same signals as Context Setup step 4's): persist nothing (no Beads tasks, no requirements file) and never choose an option on the owner's behalf. When any flag is open (a conflict or missing-proof flag here, or a flag Context Setup step 4 recorded), output the flags, the conflicts and the draft stories, then end the run with `po_gate: needs_owner (<n> flags)`, where `<n>` = prerequisite flags + architecture conflicts + house-rule conflicts + missing-proof flags. This is the run's only `po_gate` line.
 
 #### 4. Collaboration with Engineering
 
@@ -484,6 +488,7 @@ Before outputting stories, verify:
 - [ ] Assumptions listed explicitly
 - [ ] Dependencies identified
 - [ ] Risks flagged
+- [ ] Non-goals and Owner decisions written (`none recorded` when none); Validation names at least one proof, with a Running system entry when the outcome can only be shown live (no nameable proof ⇒ missing-proof flag, never an empty section)
 - [ ] Existing stories checked for conflicts/overlap
 - [ ] Handoff to Orchestrator is clear
 - [ ] (If --brainstorm) Reality Check performed on top 2-3 ideas with VIABLE/NEEDS_FOUNDATION/BLOCKED verdicts
@@ -528,6 +533,7 @@ Before outputting stories, verify:
 - [!] Prerequisites flagged: [list or "None"]
 - [!] Architecture conflicts: [list or "None"]
 - [!] House-rule conflicts: [rule id + AC, or "None" — each also written to the story's `## Rule conflicts (open decisions)` section]
+- [!] Missing proof: [story with no nameable Validation proof, or "None" — raised at the Pre-persist gate, never persisted with an empty Validation]
 
 **If any flags:** User confirmation obtained via AskUserQuestion before proceeding to story writing. Cannot ask ⇒ flags + draft stories, nothing persisted, last line `po_gate: needs_owner (<n> flags)`.
 
@@ -593,6 +599,12 @@ Success looks like [measurable outcome].
 **Error Scenarios:**
 - [ ] Given [invalid state], when [action], then [clear error]
 
+#### Non-goals
+- [Each exclusion the owner stated, plus deferred scope — or `none`]
+
+#### Owner decisions
+- [Each decision the owner made in this session (an answered question, a stated constraint) — or `none recorded`]
+
 #### Priority: MVP / Phase 2 / Nice-to-have
 **Rationale:** [Why this priority]
 
@@ -607,6 +619,11 @@ Success looks like [measurable outcome].
 #### Risks
 - [Risk 1]
 - [Risk 2]
+
+#### Validation (must pass before merge)
+<!-- written as the H2 `## Validation (must pass before merge)` in the persisted file (Persist step) -->
+1. **Static — [check]:** [what must pass; the project's own test or CI command when CLAUDE.md names one]
+2. **Running system — [what is shown]:** [only when the outcome can only be shown in a running system]
 
 ---
 

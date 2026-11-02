@@ -605,10 +605,10 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `code-reviewer`     | 19452 | 17683¹ | 1 |
 | `context-keeper`    | 3921  | 3564¹ | 0 |
 | `execute-manager`   | 21277 | 19342¹ | 2 |
-| `launch-pad`        | 47557 | 43233¹ | 7 |
+| `launch-pad`        | 47557 | 45127¹ | 7 |
 | `orchestrator`      | 10357 | 9415¹ | 1 |
-| `plan-reviewer`     | 9451  | 8591¹ | 0 |
-| `product-owner`     | 17356 | 15778¹ | 3 |
+| `plan-reviewer`     | 11535 | 10528¹ | 0 |
+| `product-owner`     | 17356 | 16719¹ | 3 |
 | `qa-executor`       | 53332 | 48483¹ | 5 |
 | `qa-strategist`     | 24219 | 22017¹ | 3 |
 | `red-team-reviewer` | 6666  | 6060¹ | 1 |
@@ -626,6 +626,10 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 > **Re-measure log (no raise — automate-speed/26, subagent prompt diet):** live weight before → after, every `budget` unchanged: `code-reviewer` 27473 → 17681 (−35.6%; 4 of 5 preloads moved to on-demand Reads), `execute-manager` 31405 → 19283 (−38.6%; `state-management` moved to an on-demand Read), `plan-reviewer` 12377 → 8591 (−30.6%), `worker` 9127 → 5836 (−36.1%). `plan-reviewer` and `worker` become ¹-marked live rows. Moved prose and each preload decision: `docs/rationale/subagents.md`; evidence: `docs/evidence/as26-diet-subagent-prompts.md`.
 
 > **Re-measure log (no raise — module-layout-standard, 2026-10-26):** live weight at origin/main → this PR's head, every `budget` unchanged, per `bash scripts/check-token-budget.sh`: agents `code-reviewer` 17684 → 18256 (1196 headroom, 6.1%), `launch-pad` 43233 → 44090 (3467, 7.3%), `plan-reviewer` 8591 → 9044 (**407, 4.3%** — the tightest agent row), `worker` 5839 → 5916 (507, 7.9%); command `launch-pad` 5013 → 5143 (372, 6.7%); skills `supervisor-readiness` 11545 → 12067 (**633, 5.0%**), `self-heal-advisory` 34268 → 34856 (2839, 7.5%), `quality-checklist` 3874 → 4053 (**209, 4.9%**). The growth is the module-layout standard: its single home in `supervisor-readiness` §"Module layout" plus the citing lines in each consumer. No budget breached; none raised, per the anti-treadmill rule. The three bold rows sit at or under ~5% headroom, so the next PR that grows them is likely to breach. The `measured` cells and JSON fields are not chased: they stay at the automate-speed/26 and automate-speed/18 re-baselines, per the bold paragraph at the end of this section.
+
+> **Raise log (requirement-to-plan-checks, 2026-11-02):** `plan-reviewer` 9451 → 11535 (live 9273 at origin/main → 10486 at the raise, 10528¹ at the end of the PR) — the new partly-conditional Criterion 22 "Requirement Fit" (the two-way requirement ↔ brief mapping, the `### Requirement fit` table, the `requirement_fit: fulfils | under | over | skipped` field and issue category) plus its Decision Matrix row breached the 178-headroom row; restored to measured + ~10% per the raise rule. The same PR raised two non-agent ceilings, recorded here for completeness: skill `user-story-writing` 4732 → 5709 (live 4452 → 5190; the Story Template's `### Non-goals`, `### Owner decisions` and `## Validation (must pass before merge)`) and command `product-owner` 10258 → 11537 (live 9638 → 10488; the same three sections in its Output Format and Persist step, plus the missing-proof flag).
+
+> **Re-measure log (no raise — requirement-to-plan-checks, 2026-11-02):** live weight at origin/main → this PR's head, every `budget` unchanged, per `bash scripts/check-token-budget.sh`: agents `launch-pad` 44872 → 45127 (2430 headroom; the Phase 5.5 `--- SOURCE REQUIREMENT ---` spawn-contract paste and the refine branch's add-coverage rule), `product-owner` 15939 → 16719 (637 headroom; its Output Format and Persist step gained Non-goals, Owner decisions and Validation, plus the missing-proof flag); command `launch-pad` 5143 → 5326 (189 headroom; Criterion 22 in the Phase 5.5 conditional list). No budget breached; none raised, per the anti-treadmill rule. The two agent rows are ¹-marked LIVE rows; all three table cells and JSON `measured` fields carry these end-of-PR figures.
 
 > **Raise log (automate-speed/17, size ceilings for skills and commands — no agent budget or measured value changed):** every skill dir and command doc gained a `.skills` / `.commands` entry at measured + ~10% (the two tables at the end of this section), and every `note` in `prompt-token-budgets.json` was cut to one line. Agent history now lives in these raise logs and `CHANGELOG.md` only. Figures that had lived only in a `note`, carried here before the cut: `code-reviewer`'s live weight just before its automate-followups/06 raise was 25016 (→ 25057 after it); `supervisor`'s 1307 headroom recorded at dismissed-findings-01 had shrunk to 108 from other merged PRs before automate-speed/02 breached it; `context-keeper`'s v15.16.0 tightening (3052 → 2837, frozen baseline 2774) is in footnote 1.
 
@@ -738,7 +742,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `supervisor-readiness` | 12700 | 11545 |
 | `telemetry` | 3216 | 2923 |
 | `unit-testing` | 1691 | 1537 |
-| `user-story-writing` | 4732 | 4301 |
+| `user-story-writing` | 5709 | 5190 |
 | `verify-walkthrough` | 9454 | 8594 |
 | `workflow-management` | 4915 | 4468 |
 
@@ -758,11 +762,11 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `handoff` | 1721 | 1564 |
 | `insights` | 5675 | 5159 |
 | `janitor` | 1470 | 1336 |
-| `launch-pad` | 5515 | 5013 |
+| `launch-pad` | 5515 | 5326 |
 | `obsidian` | 1518 | 1380 |
 | `orchestrator` | 3859 | 3508 |
 | `pr-postmortem` | 2215 | 2013 |
-| `product-owner` | 10258 | 9325 |
+| `product-owner` | 11537 | 10488 |
 | `propose` | 5354 | 4867 |
 | `qa-executor` | 1337 | 1215 |
 | `qa-strategist` | 4411 | 4010 |
