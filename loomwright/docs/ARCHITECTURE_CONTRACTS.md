@@ -605,10 +605,10 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `code-reviewer`     | 19452 | 17683¹ | 1 |
 | `context-keeper`    | 3921  | 3564¹ | 0 |
 | `execute-manager`   | 21277 | 19342¹ | 2 |
-| `launch-pad`        | 47557 | 43233¹ | 7 |
+| `launch-pad`        | 47557 | 45127¹ | 7 |
 | `orchestrator`      | 10357 | 9415¹ | 1 |
-| `plan-reviewer`     | 9451  | 8591¹ | 0 |
-| `product-owner`     | 17356 | 15778¹ | 3 |
+| `plan-reviewer`     | 11535 | 10486¹ | 0 |
+| `product-owner`     | 17356 | 16719¹ | 3 |
 | `qa-executor`       | 53332 | 48483¹ | 5 |
 | `qa-strategist`     | 24219 | 22017¹ | 3 |
 | `red-team-reviewer` | 6666  | 6060¹ | 1 |
@@ -738,7 +738,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `supervisor-readiness` | 12700 | 11545 |
 | `telemetry` | 3216 | 2923 |
 | `unit-testing` | 1691 | 1537 |
-| `user-story-writing` | 4732 | 4301 |
+| `user-story-writing` | 5709 | 5190 |
 | `verify-walkthrough` | 9454 | 8594 |
 | `workflow-management` | 4915 | 4468 |
 
@@ -758,11 +758,11 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `handoff` | 1721 | 1564 |
 | `insights` | 5675 | 5159 |
 | `janitor` | 1470 | 1336 |
-| `launch-pad` | 5515 | 5013 |
+| `launch-pad` | 5515 | 5326 |
 | `obsidian` | 1518 | 1380 |
 | `orchestrator` | 3859 | 3508 |
 | `pr-postmortem` | 2215 | 2013 |
-| `product-owner` | 10258 | 9325 |
+| `product-owner` | 11537 | 10488 |
 | `propose` | 5354 | 4867 |
 | `qa-executor` | 1337 | 1215 |
 | `qa-strategist` | 4411 | 4010 |
