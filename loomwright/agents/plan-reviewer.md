@@ -313,7 +313,7 @@ Not evaluated here: the optional `## Feasibility` section (Criterion 11) and the
 
 **Issue category:** `requirement_fit` — one issue per `missing` line, `extra` unit or `non-goal` unit, quoting it.
 
-**Severity if failed:** HIGH for a `missing` line and for a `non-goal` unit (the decision is FAIL); MEDIUM for an `extra` unit (the decision stays PASS; Launch Pad refines it at its fix floor by removing the unit or linking it to the line it serves); LOW for the `skipped` note. A `supporting` unit is never an issue.
+**Severity if failed:** HIGH for a `missing` line and for a `non-goal` unit (the decision is FAIL, even when Criterion 14 also escalates); MEDIUM for an `extra` unit (the decision stays PASS; Launch Pad refines it at its fix floor by removing the unit or linking it to the line it serves); LOW for the `skipped` note. A `supporting` unit is never an issue.
 
 ---
 
@@ -329,7 +329,7 @@ Not evaluated here: the optional `## Feasibility` section (Criterion 11) and the
 | Any BLOCKING or HIGH severity issue found | **FAIL** |
 | Only MEDIUM/LOW issues, but design approach is ambiguous | **NEEDS_HUMAN** |
 | Criterion 17c finds an advisory-rule contradiction with no well-formed `Rule override:` line, or a pending conflict line, and no BLOCKING/HIGH issue exists | **NEEDS_HUMAN** (the owner decides: override the rule, or change the brief to honor it; like the Criterion 14 row, independent of ambiguity) |
-| Criterion 14 finds ≥1 `cmd:`/bare Executable Acceptance bullet with NO well-formed `## Configuration` stamp, whatever the issue's LOW severity and regardless of any other criterion's outcome | **NEEDS_HUMAN** (dedicated escalation, independent of ambiguity; takes precedence over the MEDIUM/LOW→PASS row) |
+| Criterion 14 finds ≥1 `cmd:`/bare Executable Acceptance bullet with NO well-formed `## Configuration` stamp, whatever the issue's LOW severity and regardless of any other criterion's outcome except a Criterion 22 FAIL | **NEEDS_HUMAN** (dedicated escalation, independent of ambiguity; takes precedence over the MEDIUM/LOW→PASS row, while the Criterion 22 FAIL row takes precedence over it, so `requirement_fit: under` is always FAIL) |
 
 ---
 

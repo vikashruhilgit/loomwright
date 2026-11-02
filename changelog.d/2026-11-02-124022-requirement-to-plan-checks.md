@@ -22,7 +22,7 @@ a running system carries a Running system entry. Product Owner's agent and comma
 the same three sections, and a story with no nameable proof is never persisted with an empty Validation section: it is
 a missing-proof flag at the existing confirmation gate, counted in `po_gate: needs_owner` when the gate cannot ask.
 `test-requirement-shape.sh` gains S6 and its mutation control M4. Budgets re-measured: `plan-reviewer` agent 9451 →
-11535 (measured 10486), `user-story-writing` skill 4732 → 5709 (measured 5190) and `product-owner` command 10258 →
+11535 (measured 10528), `user-story-writing` skill 4732 → 5709 (measured 5190) and `product-owner` command 10258 →
 11537 (measured 10488) raised to measured + ~10% after breaching; `launch-pad` agent (45127 / 47557), `product-owner`
 agent (16719 / 17356) and `launch-pad` command (5326 / 5515) re-measured with no raise. Deviation from the requirement:
 the live-run evidence files are `docs/evidence/plan-review-requirement-fit.md` and `docs/evidence/po-story-validation.md`
