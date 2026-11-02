@@ -75,7 +75,9 @@
 #                      tree, plus untracked non-ignored files (HEAD when origin/main is absent). Map:
 #                      loomwright/scripts/<x>.sh ⇒ loomwright/scripts/test-<x>.sh; scripts/<x>.sh ⇒
 #                      scripts/test-<x>.sh (each when it exists); a test-*.sh the full run would run
-#                      ⇒ itself. Plus, always, the EARLY SET (see EARLY PHASE: the non-test-*.sh
+#                      ⇒ itself; a part test-<x>.d/<p>.sh ⇒ test-<x>.sh. A mapped test-<x>.sh also
+#                      brings its test-<x>.<g>.sh pool entries (a parted suite, part-groups-lib.sh:
+#                      the runner alone is only group 1). Plus, always, the EARLY SET (see EARLY PHASE: the non-test-*.sh
 #                      ci.yml gates with their arguments, `--check` gates included, and the
 #                      `# run-self-tests: early` tests).
 #                      The plan is a subset of the full plan, run through the same pool under a CI
@@ -673,10 +675,16 @@ if [ "$affected" -eq 1 ]; then
           loomwright/scripts/adapters/*) if [ "${d%/*}" = loomwright/scripts/adapters ]; then t="$f"; fi ;;
         esac ;;
       *.sh)
-        case "$d" in scripts|loomwright/scripts) t="$d/test-$b" ;; esac ;;
+        case "$d" in
+          scripts|loomwright/scripts) t="$d/test-$b" ;;
+          scripts/test-*.d|loomwright/scripts/test-*.d) t="${d%.d}.sh" ;;
+        esac ;;
     esac
     if [ -n "$t" ] && [ -f "$t" ]; then
-      mapped="$mapped$t "; map_lines+=("  $f ⇒ $t")
+      # A parted suite's other pool entries (loomwright/scripts/part-groups-lib.sh): test-<x>.sh runs only
+      # group 1, so the test-<x>.<g>.sh siblings come with it, or most of the suite would be skipped.
+      case "$t" in */test-*.[0-9]*.sh) ts="$t" ;; *) ts="$t $(printf '%s ' "${t%.sh}".[0-9]*.sh)" ;; esac
+      for t in $ts; do mapped="$mapped$t "; map_lines+=("  $f ⇒ $t"); done
     else
       uncovered+=("$f")
     fi

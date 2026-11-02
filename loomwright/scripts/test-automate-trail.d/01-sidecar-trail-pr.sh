@@ -178,70 +178,9 @@ fi
 if grep -qE 'sidecar-check\|trail-pr\|closeout\|trail-unstage\|trail-gate\) exec bash "\$\(dirname "\$0"\)/automate-trail.sh"' "$H"; then ok "dispatcher exec row present"; else no "dispatcher row missing"; fi
 
 # =============================================================================
-# fixture builder: bare origin + primary clone on a feature branch with trail state
-RUN_ID="automate-2026-01-01-000000"
-REQ=".supervisor/requirements/f/01-a.md"
-new_fixture() {
-  FX="$TOP/fx$1"; mkdir -p "$FX"
-  git init -q --bare "$FX/origin.git"
-  git -C "$FX/origin.git" symbolic-ref HEAD refs/heads/main
-  git clone -q "$FX/origin.git" "$FX/primary" 2>/dev/null
-  P="$FX/primary"
-  ( cd "$P"
-    git checkout -q -b main 2>/dev/null || true
-    cat > .gitignore <<'GI'
-.supervisor/*
-!.supervisor/requirements/
-!.supervisor/jobs/
-.supervisor/jobs/*
-!.supervisor/jobs/done/
-!.supervisor/jobs/failed/
-!.supervisor/automate/
-.supervisor/automate/*
-!.supervisor/automate/*.md
-!.supervisor/postmortem/
-.supervisor/postmortem/*
-!.supervisor/postmortem/results.jsonl
-GI
-    mkdir -p .supervisor/requirements/f .supervisor/postmortem
-    echo "# req a" > "$REQ"; echo "# req b" > .supervisor/requirements/f/02-b.md
-    echo "base readme" > README
-    echo '{"automate_key":"old-run\u001fx","source":"automate_drain"}' > .supervisor/postmortem/results.jsonl
-    git add .gitignore README .supervisor/requirements .supervisor/postmortem/results.jsonl
-    git commit -qm init; git push -q origin main 2>/dev/null
-    git remote set-head origin main >/dev/null 2>&1
-    git checkout -q -b feature/x; echo feat > feat.txt; git add feat.txt; git commit -qm feat
-    mkdir -p .supervisor/automate .supervisor/jobs/done .supervisor/jobs/in-progress
-    cat > ".supervisor/automate/$RUN_ID.md" <<RF
-# Automate Run: fixture
-## Status: paused
-## Queue
-- [ ] $REQ
-- [x] .supervisor/requirements/f/02-b.md  # skipped: owner said so
-## Current
-- item: $REQ | status: awaiting_merge | pr: https://github.com/acme/widgets/pull/7 | branch: feature/x
-- pause_reason: awaiting_merge
-## Progress
-- t0 picked $REQ
-RF
-    printf '# req a\n\nlocal notes (no done heading: Phase 4.5 stamps are set per leg)\n' > "$REQ"
-    printf '# Brief\n## Environment\n- **Source requirement:** %s\n' "$REQ" > .supervisor/jobs/done/brief-a.md
-    printf '# Brief\n## Environment\n- **Source requirement:** .supervisor/requirements/zz.md\n' > .supervisor/jobs/done/brief-other.md
-    printf '# Brief\n- **Source requirement:** %s\n' "$REQ" > .supervisor/jobs/in-progress/brief-live.md
-    printf '%s\n' "$RH_GOOD" > ".supervisor/automate/$RUN_ID.review-heal-result.md"
-    printf '%s\n' "$SUP_GOOD" | sed 's/^  risk_classification: .*/  risk_classification: {high_risk: true}/' > ".supervisor/automate/$RUN_ID.supervisor-result.md"
-    printf '{"automate_key":"%s\\u001f%s\\u001fpr7\\u001fautomate_drain\\u001fcomplete","source":"automate_drain"}\n' "$RUN_ID" "$REQ" >> .supervisor/postmortem/results.jsonl
-    echo '{"automate_key":"other-run\u001fy","source":"automate_drain"}' >> .supervisor/postmortem/results.jsonl
-    echo stray > stray.txt
-    echo "edited readme" > README
-  )
-  export GH_STUB_DIR="$FX/gh"; mkdir -p "$GH_STUB_DIR"; echo '[]' > "$GH_STUB_DIR/prs.json"; : > "$GH_STUB_DIR/argv.log"
-}
-count_creates() { grep -c '^pr create' "$GH_STUB_DIR/argv.log" 2>/dev/null || true; }
 
 # =============================================================================
 echo "== T. trail-pr =="
-RF_REL0=".supervisor/automate/$RUN_ID.md"
 new_fixture 1
 out="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/$RUN_ID.md" --reason closeout)"; rc=$?
 lines="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
@@ -534,11 +473,6 @@ for s in sidecar-check trail-pr closeout trail-unstage trail-gate; do
   grep -qE "^\| \`$s\` \|" "$SKILL" && ok "§1.5 row $s" || no "§1.5 row $s missing"
 done
 # The three triggers: trail-pr precedes run-lock.sh release where the loop runs it.
-precedes() { # <regex identifying the line> <label>
-  local line; line="$(grep -m1 -E "$1" "$SKILL")"
-  local a="${line%%trail-pr*}" b="${line%%run-lock.sh release*}"
-  if [ -n "$line" ] && [ "$a" != "$line" ] && [ "$b" != "$line" ] && [ "${#a}" -lt "${#b}" ]; then ok "$2: trail-pr before run-lock.sh release"; else no "$2: ordering not stated"; fi
-}
 precedes '^6\. \*\*CHECK OFF' "§6 step 6 (skip/abandon check-off + done)"
 precedes '^On the \*\*`## Status: done`\*\* exit ONLY' "Termination (done)"
 # §6 step 6's scope (automate-speed/08 retired the --legacy prose that stated it on one line): the
@@ -569,12 +503,9 @@ no_trail_on '^\*\*`ESCALATED` never merges' "§9 escalated park"
 grep -qE '^On the \*\*`## Status: done`\*\* exit ONLY.*the `limit_reached` exit is a park and releases the lock without a trail' "$SKILL" && ok "Termination limit_reached: no trail-pr at this park" || no "Termination limit_reached still trails"
 hits="$(grep -nE 'trail-pr --reason (awaiting_merge|escalated|rate_limit|drain_died|token_ceiling|limit_reached)' "$SKILL" "$CMD_ALL" "$TB" "$H" "$HERE/automate-merge-watch.sh" || true)"
 [ -z "$hits" ] && ok "no trail-pr --reason <park_reason> anywhere (SKILL, command, scripts)" || no "park-reason trail calls: $hits"
-sect="$(awk '/^### Trail PR after merge and at run end/{s=1;next} s&&/^##/{exit} s' "$SKILL")"
-when="$(grep -m1 -F -- '- **When — this is the ONE authoritative trigger list' <<<"$sect")"
 for t in '`--reason closeout`' '`--reason done`' '`--reason skipped`' '`--reason abandoned`' 'MERGED'; do
   grep -qF -- "$t" <<<"$when" && ok "trigger list names $t" || no "trigger list missing $t"
 done
-nopark="${when#*No park calls it:\*\*}"
 [ "$nopark" != "$when" ] && ok "trigger list carries the one 'No park calls it' park-path list" || no "no-park list missing"
 for pr in awaiting_merge escalated rate_limit drain_died token_ceiling trail_pr_open limit_reached run_lock_held resume_ambiguous; do
   grep -qF -- "\`$pr\`" <<<"$nopark" && ok "no-park list names $pr" || no "no-park list missing $pr"

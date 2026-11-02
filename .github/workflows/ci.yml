@@ -237,7 +237,8 @@ jobs:
     runs-on: ubuntu-latest
     # Each shard is ~1/3 of the suite's weight (fixtures/self-test-weights.tsv: 1846 test-seconds on
     # run 37809076650 ⇒ ~615 per shard, ~160 s at 4-way) with a floor of the longest single test
-    # (test-automate-trail.sh, 235 s on the runner) — a green shard takes ~4-5 min. The cap is the
+    # (now test-verify-walkthrough.sh, 149 s in the weights file; test-automate-trail.sh's 235 s set it
+    # until the pool-group split cut each of its entries to ~70–90 s) — a green shard takes ~4-5 min. The cap is the
     # backstop for anything outside run-self-tests.sh's per-test watchdog (SELF_TEST_TIMEOUT 900 s).
     # No test is `serial` any more (iq02 T06), so hangs overlap inside the concurrent batch: one
     # 900 s watchdog window + the shard's own ~5 min + setup fits in 30.

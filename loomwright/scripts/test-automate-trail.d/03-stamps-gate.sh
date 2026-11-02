@@ -4,16 +4,7 @@ echo "== E. evidence-gated stamps: a done claim rides only when its PR merged (d
 # installed plugins and hand edits still can. trail-pr
 # must commit such a stamp only when the PR it names reads MERGED; everything else
 # is excluded, named in the one output line, and fails CLOSED.
-stamp_req() { # <path> <status> <pr-line or empty>
-  printf '# req\n\n<!-- loomwright:requirement-closeout -->\n## Status: %s\n- **Completed:** 2026-01-01T00:00:00Z\n- **Brief:** .supervisor/jobs/done/brief-a.md\n%s' "$2" "$3" > "$P/$1"
-}
-set_pr() { # <url> <state> [<url> <state>]
-  jq -n --arg u "$1" --arg s "$2" --arg u2 "${3:-}" --arg s2 "${4:-}" \
-    '[{number:7,url:$u,state:$s,headRefName:"feature/x"}] + (if $u2 == "" then [] else [{number:8,url:$u2,state:$s2,headRefName:"feature/y"}] end)' > "$GH_STUB_DIR/prs.json"
-}
 trail_names() { git -C "$FX/origin.git" show --name-only --format= "refs/heads/chore/$RUN_ID-trail-1" 2>/dev/null; }
-PRL="- **PR:** $PRURL
-"
 # (a) stamped + OPEN ⇒ excluded + named, not committed; the run file still rides
 new_fixture 50; stamp_req "$REQ" done "$PRL"; set_pr "$PRURL" OPEN
 out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"; rc=$?

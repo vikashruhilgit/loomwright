@@ -4,6 +4,9 @@
 # Fixtures: a bare repo as `origin`, a primary clone, and a STUBBED `gh`
 # (LOOMWRIGHT_GH_BIN) that answers `pr list` / `pr view` / `pr create` from files
 # and logs its argv. Nothing real is pushed or merged. Exit 0 = all pass.
+# Layout: the legs live in test-automate-trail.d/ and run in three pool groups (TAT_GROUPS below,
+# part-groups-lib.sh): group 1 here, groups 2 and 3 from test-automate-trail.2.sh / .3.sh. `--all` runs
+# every part in one process.
 #
 # Part A legs:
 #   S. sidecar-check — three negatives (v2 REVIEW_HEAL_RESULT missing `rounds`,
@@ -186,6 +189,20 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 H="$HERE/automate-helpers.sh"
 T="$HERE/automate-trail.sh"
 
+# ---- pool groups (part-groups-lib.sh) ---------------------------------------
+# One process ran every part in ~700 s quiet, 78 % of run-self-tests.sh's 900 s per-test cap, and hit it
+# under load (2026-11-02). The pool now runs the parts as groups, concurrently: group 1 from this file,
+# group <g> from test-automate-trail.<g>.sh (which only execs `--group <g>`). TAT_GROUPS is the ONE
+# map; a part in no group, a missing / extra pool entry or an unknown argument fails here, before any
+# setup. `bash test-automate-trail.sh --all` still runs every part in one process.
+# usage: test-automate-trail.sh [--group <g> | --all]
+TAT_PARTS="01-sidecar-trail-pr 02-closeout 03-stamps-gate 04-watcher-branch-mode 05-finalize-closeout-others 06-sweep"
+TAT_GROUPS="1=01-sidecar-trail-pr,03-stamps-gate,06-sweep 2=02-closeout,04-watcher-branch-mode 3=05-finalize-closeout-others"
+. "$HERE/part-groups-lib.sh"
+pg_select "$HERE/test-automate-trail.sh" "$TAT_PARTS" "$TAT_GROUPS" "$@" || exit 1
+set --
+echo "== test-automate-trail: $PG_LABEL =="
+
 pass=0; fail=0
 # A shadow tally the summary cross-checks: a leg that reuses `pass`/`fail` as a loop
 # variable clobbers the counter silently (CL5's `for pass in 1 2` once printed
@@ -314,23 +331,28 @@ SUP_GOOD='SUPERVISOR_RESULT:
   until_mergeable_dispatched: false'
 
 # ---- legs: test-automate-trail.d/<part>.sh (automate-speed/19) ---------------
-# The legs below moved verbatim, in base order, into test-automate-trail.d/. Each part is sourced
-# BY NAME (never a glob) at top level, so it shares this file's setup, stubs, helpers and counters;
-# a missing or unreadable part aborts the suite (exit 1, the part named) instead of silently
-# dropping its legs. Part A: 01. Part B: 02–06.
+# The legs moved verbatim, in base order, into test-automate-trail.d/. 00-shared.sh (the fixture builders
+# and constants more than one part uses, hoisted from the part that defined them) is sourced in every
+# group; each selected part is then sourced BY NAME (never a glob) at top level, so it shares this file's
+# setup, stubs, helpers and counters; a missing or unreadable part aborts the suite (exit 1, the part
+# named) instead of silently dropping its legs. Part A: 01. Part B: 02–06.
 TAT_D="$HERE/test-automate-trail.d"
-tat_part() { [ -f "$TAT_D/$1.sh" ] && [ -r "$TAT_D/$1.sh" ] || { echo "  FAIL: missing test part: test-automate-trail.d/$1.sh"; exit 1; }; }
-tat_part 01-sidecar-trail-pr;          . "$TAT_D/01-sidecar-trail-pr.sh"
-tat_part 02-closeout;                  . "$TAT_D/02-closeout.sh"
-tat_part 03-stamps-gate;               . "$TAT_D/03-stamps-gate.sh"
-tat_part 04-watcher-branch-mode;       . "$TAT_D/04-watcher-branch-mode.sh"
-tat_part 05-finalize-closeout-others;  . "$TAT_D/05-finalize-closeout-others.sh"
-tat_part 06-sweep;                     . "$TAT_D/06-sweep.sh"
+# tat_part also records the part, so the summary can check that exactly the selected parts were sourced.
+TAT_DONE=" "
+tat_part() { [ -f "$TAT_D/$1.sh" ] && [ -r "$TAT_D/$1.sh" ] || { echo "  FAIL: missing test part: test-automate-trail.d/$1.sh"; exit 1; }; [ "$1" = 00-shared ] || TAT_DONE="$TAT_DONE$1 "; }
+tat_part 00-shared;                                                       . "$TAT_D/00-shared.sh"
+pg_want 01-sidecar-trail-pr         && tat_part 01-sidecar-trail-pr         && . "$TAT_D/01-sidecar-trail-pr.sh"
+pg_want 02-closeout                 && tat_part 02-closeout                 && . "$TAT_D/02-closeout.sh"
+pg_want 03-stamps-gate              && tat_part 03-stamps-gate              && . "$TAT_D/03-stamps-gate.sh"
+pg_want 04-watcher-branch-mode      && tat_part 04-watcher-branch-mode      && . "$TAT_D/04-watcher-branch-mode.sh"
+pg_want 05-finalize-closeout-others && tat_part 05-finalize-closeout-others && . "$TAT_D/05-finalize-closeout-others.sh"
+pg_want 06-sweep                    && tat_part 06-sweep                    && . "$TAT_D/06-sweep.sh"
 
+[ "$TAT_DONE" = "$PG_SEL" ] || no "parts sourced ($TAT_DONE) differ from the parts selected ($PG_SEL): a TAT_PARTS entry has no source line"
 if [ "$pass" != "$_tally_ok" ] || [ "$fail" != "$_tally_no" ]; then
   echo "  FAIL: summary counter clobbered — pass=$pass vs $_tally_ok ok lines, fail=$fail vs $_tally_no FAIL lines (a leg reused pass/fail as a variable)"
   fail=$((_tally_no+1)); pass=$_tally_ok
 fi
 echo
-echo "test-automate-trail: $pass passed, $fail failed"
+echo "test-automate-trail ($PG_LABEL): $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
