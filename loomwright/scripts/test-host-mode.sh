@@ -150,7 +150,7 @@ G_ROOT="/tmp/loomwright-host-$(id -u)"
 G_ROOT_PRE=0; { [ -e "$G_ROOT" ] || [ -L "$G_ROOT" ]; } && G_ROOT_PRE=1
 hm_tmp_cleanup() {
   local p
-  while IFS= read -r p; do [ -n "$p" ] && rm -rf "$p"; done < "$1" 2>/dev/null
+  while IFS= read -r p; do [ -n "$p" ] && rm -rf "$p"; done 2>/dev/null < "$1"
   [ "$3" = 1 ] || rmdir "$2" 2>/dev/null
   return 0
 }
