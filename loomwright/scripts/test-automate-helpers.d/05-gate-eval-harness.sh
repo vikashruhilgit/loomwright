@@ -121,10 +121,44 @@ pass_ctx() {
 EOF
 }
 
+# e_git_env <cmd…> — run <cmd> with the git config the developer shell would otherwise leak in removed
+# (dismissed-followups/05 F036). HOME is relocated per call, but an inherited XDG_CONFIG_HOME (its
+# git/ignore is a user global ignore the gate honours) and the system git config would still reach the
+# gate, so a developer shell ignoring `.idea/` turned R11h's "no global ignore ⇒ dirt" precondition
+# green-for-the-wrong-reason. A var counts as SET BY THE LEG iff its set-ness or value differs from what
+# this harness inherited (recorded once, below): a leg-set XDG_CONFIG_HOME / GIT_CONFIG_NOSYSTEM passes
+# through unchanged; otherwise XDG_CONFIG_HOME is unset and GIT_CONFIG_NOSYSTEM=1 is set for the run.
+E_INH_XDG_SET="${XDG_CONFIG_HOME+1}"; E_INH_XDG="${XDG_CONFIG_HOME-}"
+E_INH_NOSYS_SET="${GIT_CONFIG_NOSYSTEM+1}"; E_INH_NOSYS="${GIT_CONFIG_NOSYSTEM-}"
+e_git_env() {
+  local keep_x="" keep_n=""
+  { [ "${XDG_CONFIG_HOME+1}" != "$E_INH_XDG_SET" ] || [ "${XDG_CONFIG_HOME-}" != "$E_INH_XDG" ]; } && keep_x=1
+  { [ "${GIT_CONFIG_NOSYSTEM+1}" != "$E_INH_NOSYS_SET" ] || [ "${GIT_CONFIG_NOSYSTEM-}" != "$E_INH_NOSYS" ]; } && keep_n=1
+  if [ -n "$keep_x" ] && [ -n "$keep_n" ]; then "$@"
+  elif [ -n "$keep_x" ]; then env GIT_CONFIG_NOSYSTEM=1 "$@"
+  elif [ -n "$keep_n" ]; then env -u XDG_CONFIG_HOME "$@"
+  else env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 "$@"; fi
+}
+# E-env: e_git_env's four cases, read back from a child shell against a stand-in inherited record
+# (XDG inherited as /inh, GIT_CONFIG_NOSYSTEM inherited unset); run in a subshell so nothing leaks.
+E_ENV_GOT="$(
+  E_INH_XDG_SET=1; E_INH_XDG=/inh; E_INH_NOSYS_SET=""; E_INH_NOSYS=""
+  e_env_probe() { e_git_env "${BASH:-bash}" -c 'printf "%s|%s\n" "${XDG_CONFIG_HOME-<unset>}" "${GIT_CONFIG_NOSYSTEM-<unset>}"'; }
+  export XDG_CONFIG_HOME=/inh; unset GIT_CONFIG_NOSYSTEM; e_env_probe
+  export XDG_CONFIG_HOME=/leg; e_env_probe
+  export XDG_CONFIG_HOME=/inh GIT_CONFIG_NOSYSTEM=0; e_env_probe
+  export XDG_CONFIG_HOME=/leg; e_env_probe
+)"
+if [ "$E_ENV_GOT" = "$(printf '<unset>|1\n/leg|1\n<unset>|0\n/leg|0')" ]; then
+  ok "E-env e_git_env: an inherited XDG_CONFIG_HOME is unset and GIT_CONFIG_NOSYSTEM=1 is set; a leg-set value of either passes through"
+else
+  no "E-env e_git_env wrong (got: $(printf '%s' "$E_ENV_GOT" | tr '\n' ' '))"
+fi
+
 gate() {  # gate <ctx-json-string> -> sets RUN_OUT/RUN_RC, isolates a fresh merge.log; --root = ${E_GATE_ROOT:-$E_ROOT}
   rm -f "$GH_STUB_DIR/merge.log"
   printf '%s' "$1" > "$WD/ctx.json"
-  RUN_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" GIT_CEILING_DIRECTORIES="$WD" bash "$GWD/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "${E_GATE_ROOT:-$E_ROOT}" 2>/dev/null )"; RUN_RC=$?
+  RUN_OUT="$( e_git_env env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" GIT_CEILING_DIRECTORIES="$WD" bash "$GWD/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "${E_GATE_ROOT:-$E_ROOT}" 2>/dev/null )"; RUN_RC=$?
 }
 merges() { [ -f "$GH_STUB_DIR/merge.log" ] && grep -c MERGE_CALLED "$GH_STUB_DIR/merge.log" || echo 0; }
 
