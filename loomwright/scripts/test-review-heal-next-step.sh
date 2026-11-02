@@ -424,7 +424,7 @@ for ev in 'src/widget.sh:42' "$EV_ROOT_DOC:7" 'see loomwright/x.sh:10-12' 'fixed
   setup_case "$FIX/converged-ready"; drv "$DRIVER" --start drain
   drv "$DRIVER" --result "$(r_dis ",\"evidence\":$(printf '%s' "$ev" | jq -Rs .)")"
   [ "$RCV" = 0 ] && [ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] \
-    && printf '%s' "$OUT" | jq -r '.review_heal_result' | grep -qF ", evidence: $(printf '%s' "$ev" | jq -Rs .)}" \
+    && grep -qF ", evidence: $(printf '%s' "$ev" | jq -Rs .)}" < <(printf '%s' "$OUT" | jq -r '.review_heal_result') \
     && ok "R: evidence '$ev' is taken and carried into the result block" \
     || no "R: evidence '$ev' ⇒ rc $RCV stderr '${ERR:0:100}'"
 done

@@ -164,7 +164,7 @@ grep -q 'reason: "stale: fixed in abc123"' "$AD/$RUN_ID.review-heal-result.md" &
 # evidence: a drain result written before it existed (A1's sidecar) ⇒ `none recorded` under the reason
 # line, and sidecar-check still passes it; Phase 4.5 items never carry it and read the same
 OLD_EV_NAME="$(basename "$(draft_with 'drain medium one')")"
-grep -A1 -xF -- "- **Reason dismissed:** stale: fixed in abc123" "$(draft_with 'drain medium one')" | tail -n1 | grep -qxF -- "- **Evidence:** none recorded" \
+grep -qxF -- "- **Evidence:** none recorded" < <(grep -A1 -xF -- "- **Reason dismissed:** stale: fixed in abc123" "$(draft_with 'drain medium one')" | tail -n1) \
   && grep -qxF -- "- **Evidence:** none recorded" "$(draft_with 'medium phase one')" \
   && ok "a dismissal with no evidence (older drain result, Phase 4.5) ⇒ '- **Evidence:** none recorded' under the reason" || no "no-evidence draft line"
 # rh_full <dismissed item> — a COMPLETE drain block (the `rh` sidecar above omits keys sidecar-check requires)
@@ -178,7 +178,7 @@ case "$(rh_full '{finding: "drain medium one", reason: "stale: fixed in abc123",
 # content-addressed name (evidence never feeds the identity), and sidecar-check passes the item
 rh 3 '[{finding: "drain medium one", reason: "stale: fixed in abc123", source: reviews, severity: MEDIUM, evidence: "src/widget.sh:42"}]'
 drafts
-grep -A1 -xF -- "- **Reason dismissed:** stale: fixed in abc123" "$(draft_with 'drain medium one')" | tail -n1 | grep -qxF -- "- **Evidence:** src/widget.sh:42" \
+grep -qxF -- "- **Evidence:** src/widget.sh:42" < <(grep -A1 -xF -- "- **Reason dismissed:** stale: fixed in abc123" "$(draft_with 'drain medium one')" | tail -n1) \
   && ok "a drain dismissal with evidence ⇒ '- **Evidence:** src/widget.sh:42' directly under the reason line" || no "evidence draft line: $(grep -F 'Evidence' "$(draft_with 'drain medium one')" 2>/dev/null)"
 [ "$(basename "$(draft_with 'drain medium one')")" = "$OLD_EV_NAME" ] && [ "$(nfiles)" = "4" ] \
   && ok "evidence never feeds the draft identity (same name, no new file)" || no "evidence changed the draft name ($OLD_EV_NAME ⇒ $(basename "$(draft_with 'drain medium one')"), files $(nfiles))"
