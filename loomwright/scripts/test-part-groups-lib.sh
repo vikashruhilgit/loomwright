@@ -64,6 +64,7 @@ case_fail "a group naming an unknown part ⇒ refused" "unknown part: 05-e" "$W/
 fixture "$W/gap" 3
 case_fail "group numbers with a gap ⇒ refused" "not 1..2" "$W/gap" "1=01-a,02-b,04-d 3=03-c"
 case_fail "a group declared twice ⇒ refused" "declared twice" "$W/ok" "1=01-a 1=04-d,02-b 3=03-c"
+case_fail "a group word without = ⇒ refused" "group word without '=': 2" "$W/ok" "1=01-a,02-b,04-d 2 03-c"
 case_fail "an empty group ⇒ refused" "has no parts" "$W/ok" "1=01-a,02-b,03-c,04-d 2= 3=01-a"
 case_fail "group 0 ⇒ refused" "positive integer" "$W/ok" "0=01-a 2=04-d,02-b 3=03-c"
 fixture "$W/miss" 2
