@@ -230,6 +230,11 @@ if run --pr 102 --control --confirm && grep -qxF "case: 02-control-pr102" "$WORK
 else no "B --pr 102 --control --confirm failed: $(tr '\n' '|' < "$WORK/out") $(head -n 2 "$WORK/err")"; fi
 BEFORE="$(snap)"
 refuse "a PR that already has a case dir" "already exists" --pr 101 --confirm
+refuse "--list with --floor (accepted and ignored before)" "--list takes only" --list --floor BOGUS
+# a corpus row whose case dir was hand-deleted: the row check, not the case-dir check, refuses
+mv "$SS/01-miss-pr101" "$WORK/held-case"; BEFORE="$(snap)"
+refuse "a PR whose corpus row outlived its case dir" "already has a row for PR #101" --pr 101 --confirm
+mv "$WORK/held-case" "$SS/01-miss-pr101"
 printf 'not a header\n' > "$WORK/badcorp"; cp "$CORP" "$WORK/goodcorp"; cp "$WORK/badcorp" "$CORP"; BEFORE="$(snap)"
 refuse "a corpus table with a foreign header" "not the corpus header" --pr 105 --file e.txt --confirm
 cp "$WORK/goodcorp" "$CORP"

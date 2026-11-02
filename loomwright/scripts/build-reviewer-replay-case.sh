@@ -70,12 +70,13 @@ G() { git -C "$REPO" -c color.ui=never -c diff.noprefix=false "$@"; }
 
 MODE=""; PR=""; FLOOR="HIGH"; FILE=""; KIND="miss"; SINCE=""
 CONFIRM=0
+FLOOR_SET=0
 LEDGER="$REPO/.supervisor/postmortem/results.jsonl"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --list) [ "$MODE" != pr ] || usage; MODE=list; shift ;;
     --pr) [ "$#" -ge 2 ] && [ "$MODE" != list ] || usage; MODE=pr; PR="$2"; shift 2 ;;
-    --floor) [ "$#" -ge 2 ] || usage; FLOOR="$2"; shift 2 ;;
+    --floor) [ "$#" -ge 2 ] || usage; FLOOR="$2"; FLOOR_SET=1; shift 2 ;;
     --file) [ "$#" -ge 2 ] || usage; FILE="$2"; shift 2 ;;
     --control) KIND=control; shift ;;
     --confirm) CONFIRM=1; shift ;;
@@ -159,7 +160,8 @@ short() { printf '%s' "$1" | cut -c1-12; }
 
 # ---- --list -------------------------------------------------------------------------------------------------
 if [ "$MODE" = list ]; then
-  [ -z "$PR" ] && [ "$KIND" = miss ] && [ "$CONFIRM" -eq 0 ] && [ -z "$FILE" ] || die "--list takes only --since and --ledger"
+  [ -z "$PR" ] && [ "$KIND" = miss ] && [ "$CONFIRM" -eq 0 ] && [ -z "$FILE" ] && [ "$FLOOR_SET" -eq 0 ] \
+    || die "--list takes only --since and --ledger"
   load_ledger
   echo "candidates on $MAIN ($(short "$(G rev-parse "$MAIN")"))${SINCE:+ since $SINCE} — proposals only; the owner confirms each case"
   echo

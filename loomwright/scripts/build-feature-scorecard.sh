@@ -518,7 +518,7 @@ while IFS= read -r ft; do
 $(jq -n -r --argjson c "$cparts" --argjson m "$m" '
   def total:
     if $c == null or $c.n == 0 then null
-    elif $c.secs != null then (if $c.secs > 0 then { s: $c.secs } else null end)
+    elif $c.secs != null then { s: $c.secs }
     else ({ r: $c.real, p: $c.proxy } | if .r == 0 and .p == 0 then null else . end) end;
   def fmt($d):
     if has("s") then ((.s / $d | floor | tostring) + "s")

@@ -107,7 +107,7 @@ for n in 1 2 3 4 5; do
       } > "$f" ;;
   esac
 done
-for n in 1 2; do printf 'SUPERVISOR_RESULT:\n  alpha: {hit: false}\n' > "$SD/small/automate-2026-10-0${n}-120000.supervisor-result.md"; done
+for n in 1 2; do printf 'SUPERVISOR_RESULT:\n  alpha: {hit: false}\n  zero_secs: 0\n' > "$SD/small/automate-2026-10-0${n}-120000.supervisor-result.md"; done
 
 # pm/: pin-mutation TSVs (4 columns), one not_held row, plus an empty TSV (zero rows — not malformed).
 H1=e8ac1d627f60710fa53f2fc7fd5f986ba4b00504; H2=d3d8da26c714cf8d6f06e79d6ff73eca49450557
@@ -169,6 +169,8 @@ cat > "$T_REG" <<EOF
      "ran": {"match": "^on"}, "caught": {"match": "x"}, "cost": "none"},
     {"id": "f_small", "critical": false, "record": {"glob": "small/*.supervisor-result.md", $SB, "field": "alpha"},
      "ran": {"present": true}, "caught": {"match": "hit: true"}, "cost": "none"},
+    {"id": "f_zero", "critical": false, "record": {"glob": "small/*.supervisor-result.md", $SB, "field": "alpha"},
+     "ran": {"present": true}, "caught": {"match": "hit: true"}, "cost": {"source": "duration", "field": "zero_secs"}},
     {"id": "f_unknown", "critical": false, "record": {"glob": "sr/*.supervisor-result.md", $SB, "field": "unk"},
      "ran": {"present": true}, "caught": "unknown", "cost": "none"},
     {"id": "f_partial", "critical": false, "record": {"glob": "sr/*.supervisor-result.md", $SB, "field": "part"},
@@ -280,6 +282,7 @@ check "(4) real usage summed (10 + 5)" "$(field f_crit .cost_total)" "real:15t"
 check "(4) duration cost summed over the window (5 × 10)" "$(field f_keep .cost_total)" "50s"
 check "(4) duration cost per catch" "$(field f_keep .cost_per_catch)" "50s"
 check "(4) no cost record ⇒ unknown, never 0" "$(field f_tsv .cost_total)" "unknown"
+check "(4) duration records that sum to 0 are a real 0, not unknown" "$(field f_zero .cost_total)" "0s"
 check "(4) record paths name the record glob and the ledger" \
   "$(field f_cost '.record_paths | join(" ")')" "$SD/sr/*.supervisor-result.md $SD/logs/*.jsonl"
 check "(5) contract keys" "$(printf '%s' "$OUT" | jq -r '[.schema_version, .status, .error, .since] | map(tostring) | join(",")')" "1,ok,null,null"
