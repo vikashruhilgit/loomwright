@@ -263,6 +263,18 @@ check_with_mutant "(g) a failed record write logs heal_round_record_failed and c
 chk_fixed_record() { grep -qF -- 'heal round record (step R below): fixable_issues ⇒ outcome `fixed`' "$1"; }
 check_with_mutant "(g) the fix push writes the round record with outcome fixed" \
   chk_fixed_record "$SKILL" del_lines 'heal round record (step R below)'
+# The --shadow-report minutes estimate reads only these two keys; the helper tests hand-feed them, so
+# only this check proves the producer writes them (a live run recorded neither before it existed).
+chk_review_times() {
+  s="$(line_with "$1" '**S — scope, before the reviewer spawn.**')"
+  r="$(line_with "$1" '**R — round record,')"
+  [ -n "$s" ] && has "$s" 'set `review_started_at = $(date -u +%Y-%m-%dT%H:%M:%SZ)`' && has "$s" '`review_ended_at`' \
+    && [ -n "$r" ] && has "$r" '`review_started_at` and `review_ended_at`'
+}
+check_with_mutant "(g) step S times the review and step R records review_started_at / review_ended_at" \
+  chk_review_times "$SKILL" strip_in_line '**R — round record,' '`review_started_at` and `review_ended_at`'
+check_with_mutant "(g) the round record's times come from step S" \
+  chk_review_times "$SKILL" strip_in_line '**S — scope, before the reviewer spawn.**' 'set `review_started_at = $(date -u +%Y-%m-%dT%H:%M:%SZ)`'
 
 # ---- (h) supervisor-config step 2.11 ------------------------------------------------------------------
 chk_config() {

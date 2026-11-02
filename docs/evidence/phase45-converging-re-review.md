@@ -2,49 +2,46 @@
 
 Brief: `.supervisor/jobs/in-progress/2026-11-01-phase45-re-review-converges-on-last-fix.md`, acceptance criterion AC17 (requirement Validation 2a). Base commit: `26eda742b616a339f971b34b5b7d8740c9654851`.
 
-## Status: pending — the pre-release shadow run has not been executed yet
+## The AC17 run
 
-AC17 asks for one real `/automate` item, run headless against this branch's plugin in `shadow` mode (the shipped default), with that item's heal-round record lines and the `heal-review-scope.sh --shadow-report` output committed here. **That run has not happened.** It takes hours, and the worker that wrote this file was told not to start it from inside its own session. This file therefore holds **no** real record lines and **no** real report output. The section below shows what the helper does on synthetic data, and it is not the AC17 run.
+- **Item:** `.supervisor/requirements/dismissed-followups/05-test-coverage-gaps.md`, built as PR #788 (https://github.com/vikashruhilgit/loomwright/pull/788).
+- **Run:** `automate-2026-11-02-071559-L1`, a single-lane `/loomwright:automate --parallel 1` run on 2026-11-02 in a fresh clone of `main` (`26eda742`), so its `.supervisor/` never mixed with this branch's checkout. The lane is a headless `claude -p` session whose `--plugin-dir` is the plugin root of the script that launched it; the launching scripts were this branch's copy at `1ee2e80`, run with `CLAUDE_PLUGIN_ROOT` unset (it takes precedence over the script's own location). Its questions were relayed to the owner instead of failing closed under `--non-interactive-fallback`, so Launch Pad, Supervisor and the drain ran exactly as in a normal run.
+- **Config:** `.supervisor/config.json` carried `fix_floor: HIGH` and no `heal_review_scope` key, so the shipped default `shadow` is what ran.
+- **Plugin loaded** (the lane stream's first `init` event): `{"session_id":"1d45e9f2-fa80-4e40-8314-f0a42c22278f","loomwright":[{"name":"loomwright","path":"<work>/ai-agent-manager-ac17-plugin/loomwright","source":"loomwright@inline","version":"17.24.0"}]}`. The Phase 4.5 records below are a second proof: the installed 17.23.1 has no `heal-review-scope.sh`, so only this branch's code could have written them.
+- **Round ≥ 2:** yes. Phase 4.5 ran two rounds: round 1 fixed one BLOCKING finding (`8564841`) and dismissed three; round 2 found nothing and passed. No second item was needed.
 
-AC17 is open until the owner (or a later lane) runs the procedure below and replaces this section with the real output.
-
-## What this file will hold once the run is done
-
-1. The `/automate` item that ran (run id, item, PR number) and the plugin version reported by the stream's `init` event, which proves the `--plugin-dir` copy was loaded.
-2. Every line of that item's record file, `.supervisor/heal-rounds/<brief basename>.jsonl`, verbatim. Each record holds a `{file, issue_category, rule}` fingerprint and no finding prose, so the lines can be committed as they are.
-3. The verbatim output of `heal-review-scope.sh --shadow-report` over that directory.
-4. If the item never reached a heal round ≥ 2 (Phase 4.5 passed in round 1, so no round record has `iteration ≥ 2`), a statement saying so, plus a second item's record lines and report.
-
-## Procedure (the AC17 run)
-
-Run from a scratch `git init` repo, or a disposable clone, **outside** this worktree so the run's `.supervisor/` never mixes with this checkout's. Leave `.supervisor/config.json` without a `heal_review_scope` key so the default (`shadow`) is what gets measured. `--non-interactive-fallback` makes every question gate take its fail-closed branch instead of waiting for an answer that cannot come in a headless run. Bound the run: start it in the background and wait on the `rc=` line it appends, never on `pgrep -f`.
+Record file `.supervisor/heal-rounds/2026-11-02-dismissed-05-test-coverage-gaps.jsonl`, verbatim (here and below, the only edit is the local path prefix shown as `<work>/`):
 
 ```
-cd <scratch-repo>
-claude -p "/loomwright:automate \"<one small, real item>\" --limit 1 --non-interactive-fallback" \
-  --plugin-dir <this branch's checkout>/loomwright \
-  --output-format stream-json --verbose > <scratch>/automate-stream.jsonl 2>&1; echo rc=$? >> <scratch>/automate-stream.jsonl
-
-# the item's records (one round record per round, one finding record per actionable or dismissed finding)
-cat .supervisor/heal-rounds/*.jsonl
-
-# the promotion evidence (read-only)
-bash <this branch's checkout>/loomwright/scripts/heal-review-scope.sh --shadow-report --dir .supervisor/heal-rounds
-
-# item 1: the plugin version the run loaded, and the run id / item / PR number
-grep -m1 '"subtype":"init"' <scratch>/automate-stream.jsonl
-ls .supervisor/automate/*.md        # the run file: its `## Progress` names the item and its PR
-# item 4 check: does any round record have iteration >= 2?
-grep -h '"kind":"round"' .supervisor/heal-rounds/*.jsonl | grep -v '"iteration":1,'
+{"kind":"round","run_id":"543cb78b-c11f-4f7b-bfa8-5b3a79616a39","iteration":1,"reviewed_sha":"a86ec11e30c4c32f8662181c437158fb1ceb1e32","pr":"https://github.com/vikashruhilgit/loomwright/pull/788","mode":"shadow","scope":"full","scope_files":27,"full_files":27,"scope_fallback":null,"would_suppress":[],"suppressed_repeat":0,"repeat_of_fixed":[]}
+{"kind":"finding","run_id":"543cb78b-c11f-4f7b-bfa8-5b3a79616a39","iteration":1,"reviewed_sha":"a86ec11e30c4c32f8662181c437158fb1ceb1e32","pr":"https://github.com/vikashruhilgit/loomwright/pull/788","severity":"BLOCKING","outcome":"fixed","file":"loomwright/scripts/test-automate-helpers.d/07-rules-gate.sh","issue_category":"new","rule":"ad2912f07bd1","fix_commit":"8564841290be161bfdaf25858f6155f7be6b5c0e"}
+{"kind":"finding","run_id":"543cb78b-c11f-4f7b-bfa8-5b3a79616a39","iteration":1,"reviewed_sha":"a86ec11e30c4c32f8662181c437158fb1ceb1e32","pr":"https://github.com/vikashruhilgit/loomwright/pull/788","severity":"MEDIUM","outcome":"dismissed","file":"loomwright/scripts/test-automate-helpers.sh","issue_category":"new","rule":"e2d9bffc71c8"}
+{"kind":"finding","run_id":"543cb78b-c11f-4f7b-bfa8-5b3a79616a39","iteration":1,"reviewed_sha":"a86ec11e30c4c32f8662181c437158fb1ceb1e32","pr":"https://github.com/vikashruhilgit/loomwright/pull/788","severity":"MEDIUM","outcome":"dismissed","file":"loomwright/scripts/run-pin-mutations.sh","issue_category":"pre_existing","rule":"f48e53977267"}
+{"kind":"finding","run_id":"543cb78b-c11f-4f7b-bfa8-5b3a79616a39","iteration":1,"reviewed_sha":"a86ec11e30c4c32f8662181c437158fb1ceb1e32","pr":"https://github.com/vikashruhilgit/loomwright/pull/788","severity":"LOW","outcome":"dismissed","file":"loomwright/scripts/test-host-mode.sh","issue_category":"new","rule":"f2711e64e580"}
+{"kind":"round","run_id":"543cb78b-c11f-4f7b-bfa8-5b3a79616a39","iteration":2,"reviewed_sha":"8564841290be161bfdaf25858f6155f7be6b5c0e","pr":"https://github.com/vikashruhilgit/loomwright/pull/788","mode":"shadow","scope":"full","scope_files":2,"full_files":27,"scope_fallback":null,"would_scope":["docs/evidence/dismissed-05-helpers.md","docs/evidence/dismissed-05-trail-meta.md"],"would_suppress":[],"suppressed_repeat":0,"repeat_of_fixed":[]}
 ```
 
-Then edit this file:
+`heal-review-scope.sh --shadow-report` over that directory, verbatim:
 
-1. Replace the `## Status: pending …` section with `## The AC17 run`, holding item 1 (run id, item, PR number, plugin version from the `init` line).
-2. Under it, add a fenced block with the `cat .supervisor/heal-rounds/*.jsonl` output, verbatim, and a second fenced block with the `--shadow-report` output, verbatim. Do not edit, trim or reorder either.
-3. If the item-4 check printed nothing, say so in one sentence and repeat steps 1–2 for a second item (`--limit 1` with a different item, same scratch repo).
-4. Keep the synthetic section below, labelled as it is.
-5. Add one line to the body of PR #781 (https://github.com/vikashruhilgit/loomwright/pull/781) linking to `docs/evidence/phase45-converging-re-review.md`.
+```
+heal-review-scope shadow report (read-only)
+dir: .supervisor/heal-rounds
+rounds: 1
+findings_total: 0
+outside_scope: 0
+would_suppress: 0
+repeat_of_fixed: 0
+skipped_review_minutes_est: 0 (estimate: sum of review minutes x (1 - scope_files / full_files) over non-fallback rounds)
+fallbacks: none
+```
+
+What it shows:
+
+- Round 2's `would_scope` is exactly the two files the round-1 fix commit `8564841` changed (`git diff --name-only a86ec11 8564841` lists the same two evidence docs): 2 of the PR's 27 files. A `files` round 2 would have reviewed 2 files instead of 27 and, here, missed nothing, since the full round 2 found nothing anywhere.
+- Shadow changed nothing: round 2's `scope` is `full`, `suppressed_repeat` is 0, and no fallback fired.
+- One round, one item: this is a shape check on real data, not a promotion decision. `outside_scope` measures catch-rate risk only when a round ≥ 2 actually finds something.
+
+**Defect found by this run, fixed on this branch:** both round records lack `review_started_at` / `review_ended_at`, so `skipped_review_minutes_est` read 0. The helper accepts both keys and its own tests feed them by hand, but step R of `skills/self-heal-advisory/SKILL.md` only said "the review's start and end times", never the key names, and no step took the start time. Step S now sets both around the reviewer spawn and step R names the keys; `test-heal-review-scope-seam.sh` (g) pins both, with mutation controls, and fails on the pre-fix file. The record lines above predate that fix and are kept verbatim.
 
 ## Synthetic local demonstration (NOT the AC17 run)
 
