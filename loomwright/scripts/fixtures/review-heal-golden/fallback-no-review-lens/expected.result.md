@@ -25,6 +25,6 @@ REVIEW_HEAL_RESULT:
   severity_floor: HIGH
   rejected_instruction_like: 0
   dismissed:
-    - {finding: "widget.sh prints the config path without quoting it", reason: below_fix_floor, source: code_reviewer, severity: LOW}
+    - {finding: "widget.sh prints the config path without quoting it", reason: below_fix_floor, source: code_reviewer, severity: LOW, evidence: "severity LOW is below the fix floor MEDIUM"}
   rules_gate: none
 ```

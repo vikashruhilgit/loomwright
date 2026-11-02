@@ -26,6 +26,10 @@ import result_block_parser as R
 GT_FINDING = (["check", "detail", "severity"], [])
 CC_FINDING = (["subsystem", "invariant", "severity", "detail"], [])
 DISMISSED_ITEM = (["finding", "reason", "source"], ["severity"])
+# The /review-pr drain's own item: it may also carry `evidence` (optional here so a block written
+# before evidence existed still passes; review-heal-next-step.sh enforces it on new reports).
+# Phase 4.5's heal_dismissed keeps DISMISSED_ITEM.
+DRAIN_DISMISSED_ITEM = (["finding", "reason", "source"], ["severity", "evidence"])
 NESTED = {
     "SUPERVISOR_RESULT": {
         "ground_truth": ("map", ["checked", "status", "checks_total", "checks_passed"],
@@ -38,7 +42,7 @@ NESTED = {
         "heal_dismissed": ("list",) + DISMISSED_ITEM + ({},),
     },
     "REVIEW_HEAL_RESULT": {
-        "dismissed": ("list",) + DISMISSED_ITEM + ({},),
+        "dismissed": ("list",) + DRAIN_DISMISSED_ITEM + ({},),
         "checks_untrusted": ("list", ["check", "reason", "run_id"], [], {}),
         "sub_floor_fixed": ("list", None, None, {}),
     },

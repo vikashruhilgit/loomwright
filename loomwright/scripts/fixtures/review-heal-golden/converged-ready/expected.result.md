@@ -25,6 +25,6 @@ REVIEW_HEAL_RESULT:
   severity_floor: HIGH
   rejected_instruction_like: 0
   dismissed:
-    - {finding: "load_config ignores the exit status of jq", reason: "already-addressed: src/widget.sh checks jq's status on the current branch", source: issue_comments}
+    - {finding: "load_config ignores the exit status of jq", reason: "already-addressed: src/widget.sh checks jq's status on the current branch", source: issue_comments, evidence: "src/widget.sh:42 checks jq's exit status"}
   rules_gate: none
 ```

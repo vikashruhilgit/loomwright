@@ -322,6 +322,9 @@ for origin, fname, block, key, round_key in (
         finding = str(finding)
         source = one_line(i.get("source")).strip() or "unspecified"
         reason = one_line(i.get("reason")).strip() or "unspecified"
+        # display only — never part of k / h8 or any ledger decision (a drain item written before
+        # evidence existed, and every Phase 4.5 item, has none)
+        evidence = one_line(i.get("evidence")).strip()
         sev = one_line(i.get("severity")).strip().upper()
         if sev not in SEVS:
             sev = ""  # absent OR unrecognized ⇒ unspecified (fail toward tracking)
@@ -337,7 +340,7 @@ for origin, fname, block, key, round_key in (
         seen.add(k)
         h8 = hashlib.sha1("\t".join(k).encode("utf-8")).hexdigest()[:8]
         own = sev in ("BLOCKING", "HIGH", "MEDIUM") or reason == "pre_existing" or (sev == "" and reason != "nit")
-        entries.append(dict(origin=origin, source=source, reason=reason, sev=sev,
+        entries.append(dict(origin=origin, source=source, reason=reason, sev=sev, evidence=evidence,
                             finding=finding, h8=h8, own=own, round=rnd or "unknown"))
 
 DECISIONS = ("follow-up", "drop", "fix-now", "fix-now-unconfirmed")
@@ -389,7 +392,9 @@ def meta(e):
             "- **Origin:** " + e["origin"],
             "- **Source:** " + e["source"],
             "- **Severity:** " + (e["sev"] or "unspecified"),
-            "- **Reason dismissed:** " + e["reason"]]
+            "- **Reason dismissed:** " + e["reason"],
+            "- **Evidence:** " + (e["evidence"] or "none recorded"),
+            ]
 
 # `## Depends on` / `## Touches` (parallel-automate/10) — the planner's machine-read sections, so a
 # promoted draft is lint-clean (`automate-helpers.sh plan-waves --lint`). Depends on is always
