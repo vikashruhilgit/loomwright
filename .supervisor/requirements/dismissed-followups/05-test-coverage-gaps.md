@@ -229,3 +229,9 @@ changelog.d/dismissed-followups-05-test-coverage-gaps.md
 - `automate-2026-10-22-123646-L4--09b-overlap-map-and-scan-cadence-55d711--dismissed-8565ea14.md`
 - `automate-2026-10-22-123646-L5--15-telemetry-measures-the-agent-not-the-code-b75ae5--dismissed-a25edb8e.md`
 - `automate-2026-10-22-123646-L9--25-backlog-board-feeds-b22457--dismissed-summary.md`
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-02T08:52:30Z
+- **Brief:** .supervisor/jobs/done/2026-11-02-dismissed-05-test-coverage-gaps.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/788
