@@ -13,12 +13,12 @@ check "AN0 fixture: two lanes of a fresh parent run" "$([ -s "$L91/.supervisor/l
 # runner's own suite-top `unset` line in a child that HAS both set, so dropping either name from that line is red
 # in a plain CI run too (the variables are never ambient there). AN0c is the in-process half: it is only
 # non-vacuous in a run started with them set, and then it catches any earlier part exporting one.
-tal_unset="$(grep -m1 '^unset CLAUDE_PLUGIN_ROOT ' "$HERE/test-automate-lanes.sh")"
+tal_unset="$(grep -m1 '^unset ' "$HERE/test-automate-lanes.sh")"
 if [ -n "$tal_unset" ]; then
   check "AN0b the runner's suite-top unset clears an ambient LOOMWRIGHT_PHASE_DIR and LOOMWRIGHT_RUN_LOCK_SESSION_ID" \
     "$(env LOOMWRIGHT_PHASE_DIR="$T/ambient-phase/supervisor" LOOMWRIGHT_RUN_LOCK_SESSION_ID=sess-ambient \
         bash -c "$tal_unset"$'\n''printf "%s:%s" "${LOOMWRIGHT_PHASE_DIR-unset}" "${LOOMWRIGHT_RUN_LOCK_SESSION_ID-unset}"')" "unset:unset"
-else bad "AN0b the runner's suite-top 'unset CLAUDE_PLUGIN_ROOT …' line was not found"; fi
+else bad "AN0b the runner's suite-top unset line was not found"; fi
 check "AN0c neither phase variable is set in the suite's own shell when the AN group starts" \
   "${LOOMWRIGHT_PHASE_DIR-unset}:${LOOMWRIGHT_RUN_LOCK_SESSION_ID-unset}" "unset:unset"
 RFL="$L91/.supervisor/automate/$PARENT9-L1.md"; mkdir -p "$(dirname "$RFL")"
