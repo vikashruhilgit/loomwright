@@ -68,7 +68,10 @@
 #        writes nothing through the bad dir (AC5).
 #   (g)  an unsafe TMPDIR (relative, a dir inside the repo, or a case-variant spelling of one) is
 #        not the D1 base: the repo stays
-#        clean and the gate root falls back to /tmp (removed again on exit).
+#        clean and the gate root falls back to /tmp (removed again on exit: each per-repo gate dir,
+#        then the /tmp/loomwright-host-<uid> root when this suite created it and it is empty — that
+#        cleanup function is also asserted on a scratch stand-in). A pre-existing root that fails
+#        _lw_private_dir prints a named SKIP for the fallback legs instead of failing them.
 #   (h)  a hostile pre-created D1 root ($TMPDIR/loomwright-host-<uid> a symlink to a foreign dir,
 #        mode 500, or mode 777): the gate dir is unresolvable, nothing lands in the foreign dir,
 #        arming writes no marker, and both guards DENY (guard_unavailable / gate_dir_unresolvable).
@@ -138,7 +141,20 @@ ENV_SESSION="CLAUDE_CODE_SESSION_ID"   # the session-id variable guard-arm.sh `a
 BASE="$(mktemp -d "${TMPDIR:-/tmp}/test-host-mode.XXXXXX")" || { echo "FATAL mktemp" >&2; exit 1; }
 BASE="$(cd "$BASE" && pwd -P)"
 # (g) falls back to the real /tmp; each per-repo gate dir it makes there is listed here and removed.
-trap 'while IFS= read -r p; do [ -n "$p" ] && rm -rf "$p"; done < "$BASE/cleanup.list" 2>/dev/null
+# G_ROOT is that per-user fallback root; G_ROOT_PRE records, before any leg runs, whether it already
+# existed. hm_tmp_cleanup <list> <root> <root-preexisted 0|1> removes each listed gate dir, then the
+# root itself only when this suite created it and only when empty (rmdir, never rm -rf — a concurrent
+# run's gate dir inside keeps it). The EXIT trap calls it on the real root; leg (g) calls it in a
+# subshell on a scratch stand-in, so the root removal is asserted (the trap runs after every check).
+G_ROOT="/tmp/loomwright-host-$(id -u)"
+G_ROOT_PRE=0; { [ -e "$G_ROOT" ] || [ -L "$G_ROOT" ]; } && G_ROOT_PRE=1
+hm_tmp_cleanup() {
+  local p
+  while IFS= read -r p; do [ -n "$p" ] && rm -rf "$p"; done < "$1" 2>/dev/null
+  [ "$3" = 1 ] || rmdir "$2" 2>/dev/null
+  return 0
+}
+trap 'hm_tmp_cleanup "$BASE/cleanup.list" "$G_ROOT" "$G_ROOT_PRE"
   chmod -R u+rwx "$BASE" 2>/dev/null; rm -rf "$BASE"' EXIT
 : > "$BASE/cleanup.list"
 
@@ -656,7 +672,19 @@ done
 
 # =================================================================================================
 echo "== (g) an unsafe TMPDIR is never the D1 base =="
-for kind in relative inside casevar; do
+# g_root_blocked <root> — 0 when <root> exists and fails the resolver's own _lw_private_dir (a
+# symlink, foreign-owned, or group/world-writable): the resolver then refuses every /tmp gate dir,
+# so the fallback legs could only fail on the environment — they are skipped by name instead.
+g_root_blocked() {
+  { [ -e "$1" ] || [ -L "$1" ]; } || return 1
+  ! bash -c '. "$1" && _lw_private_dir "$2"' _ "$PLUGIN_ROOT/scripts/host-mode.sh" "$1"
+}
+G_KINDS="relative inside casevar"
+if g_root_blocked "$G_ROOT"; then
+  G_KINDS=""
+  echo "  SKIP: (g) pre-existing $G_ROOT fails _lw_private_dir (symlink, foreign-owned, or group/world-writable) — the /tmp fallback legs are not run"
+fi
+for kind in $G_KINDS; do
   new_case "g-$kind" d1 bare
   if [ "$kind" = casevar ] && ! [ "$C_DIR/REPO" -ef "$C_REPO" ]; then
     echo "  skip: (g) $kind — the scratch filesystem is case-sensitive"; continue
@@ -679,6 +707,30 @@ for kind in relative inside casevar; do
   bad="$(grep -v ' rc=0 ' "$C_RC")"; [ -z "$bad" ]; rec "(g) $kind: every leaf exited 0" $? "$bad"
   replay
 done
+# The EXIT trap's root cleanup and the skip predicate, run on scratch stand-ins under $BASE (never the
+# real /tmp root): hm_tmp_cleanup in a subshell, each case one listed gate dir under a fresh root.
+GS="$BASE/g-standin"
+g_standin() {  # g_standin <root-preexisted 0|1> [unlisted entry]
+  chmod -R u+rwx "$GS" 2>/dev/null; rm -rf "$GS"; mkdir -p "$GS/root/hashA"
+  printf '%s\n' "$GS/root/hashA" > "$GS/list"
+  [ -z "${2:-}" ] || mkdir -p "$GS/root/$2"
+  ( hm_tmp_cleanup "$GS/list" "$GS/root" "$1" )
+}
+g_standin 0
+if [ ! -e "$GS/root" ]; then ok "(g) cleanup: a root this suite created is removed with its listed gate dir"
+else no "(g) cleanup: the created root was left behind: $(listing "$GS" | tr '\n' ' ')"; fi
+g_standin 1
+if [ -d "$GS/root" ] && [ ! -e "$GS/root/hashA" ]; then ok "(g) cleanup: a pre-existing root is left in place (its listed gate dir removed)"
+else no "(g) cleanup: pre-existing root: $(listing "$GS" | tr '\n' ' ')"; fi
+g_standin 0 other-run
+if [ -d "$GS/root/other-run" ] && [ ! -e "$GS/root/hashA" ]; then ok "(g) cleanup: a created root still holding an unlisted entry is left (rmdir, never rm -rf)"
+else no "(g) cleanup: non-empty created root: $(listing "$GS" | tr '\n' ' ')"; fi
+chmod -R u+rwx "$GS" 2>/dev/null; rm -rf "$GS"; mkdir -p "$GS/foreign"
+( umask 077; mkdir "$GS/r700" ); mkdir "$GS/r777" && chmod 777 "$GS/r777"; ln -s "$GS/foreign" "$GS/rlink"
+if ! g_root_blocked "$GS/absent" && ! g_root_blocked "$GS/r700" && g_root_blocked "$GS/r777" && g_root_blocked "$GS/rlink"; then
+  ok "(g) skip predicate: an absent or private root runs the legs; a mode-777 or symlinked root is skipped by name"
+else no "(g) skip predicate: absent=$(g_root_blocked "$GS/absent"; echo $?) 700=$(g_root_blocked "$GS/r700"; echo $?) 777=$(g_root_blocked "$GS/r777"; echo $?) link=$(g_root_blocked "$GS/rlink"; echo $?)"; fi
+chmod -R u+rwx "$GS" 2>/dev/null; rm -rf "$GS"
 
 # =================================================================================================
 echo "== (h) a hostile pre-created D1 root makes the gate dir unresolvable and the guards deny =="
