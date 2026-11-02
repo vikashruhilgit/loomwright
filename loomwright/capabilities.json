@@ -295,7 +295,7 @@
       "name": "product-owner"
     },
     {
-      "description": "Turn the recorded churn ledger, a /verify run's FAIL/issue lines (--from-verify), or what competent apps in this project's domain do (--domain) into candidate work items; a propose-only pass that writes evidence-carrying requirement drafts to .supervisor/requirements/proposed/ for a human to promote or delete",
+      "description": "Turn the recorded churn ledger, a /verify run's FAIL/issue lines (--from-verify), the feature scorecard's review: verdicts (--from-scorecard), or what competent apps in this project's domain do (--domain) into candidate work items; a propose-only pass that writes evidence-carrying requirement drafts to .supervisor/requirements/proposed/ for a human to promote or delete",
       "name": "propose"
     },
     {

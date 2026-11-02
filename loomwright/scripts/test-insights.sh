@@ -17,7 +17,11 @@
 # + era table + pointer line and NO inlined per-run table; no-usable-records,
 # builder-absent, and garbage-emitting-builder degradations — all rendering the one-line
 # "no data" note without ever failing the dashboard build), and per-line tolerance of a
-# truncated / non-object session-log line (session_end + item_timing readers).
+# truncated / non-object session-log line (session_end + item_timing readers), the heal-signal
+# staleness readout (an old, undatable, repo-less or foreign newest row ⇒ stale + age + repos +
+# refresh command instead of numbers; a worktree or lane clone of this project is not foreign),
+# and the Feature scorecard section (rows == build-feature-scorecard.sh --json; a missing /
+# invalid / empty registry, absent builder or garbage output ⇒ the unavailable line, no table).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -27,6 +31,17 @@ BUILD="$HERE/build-insights.sh"
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
+# days_ago <n> — an ISO-8601 UTC stamp n days before now (jq, so no date(1) dialect). Heal-signal
+# fixtures are dated relative to now: a fixed date ages past the dashboard's staleness limit.
+days_ago() { jq -nr --argjson d "$1" '(now - ($d * 86400)) | floor | todate'; }
+# mkrepo_named <name> — a committed git repo at <fresh tmp dir>/<name>, printed. The heal-signal
+# section compares a ledger row's repos with the checkout basename, and a bare mktemp dir is
+# itself named tmp.* (which the section always treats as a fixture name).
+mkrepo_named() {
+  local d; d="$(mktemp -d)/$1"; mkdir -p "$d"
+  ( cd "$d" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i ) >/dev/null 2>&1
+  printf '%s' "$d"
+}
 
 echo "== 1. no logs (friendly no-op) =="
 N="$(mktemp -d)"; ( cd "$N" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
@@ -192,13 +207,14 @@ rm -rf "$K"
 echo "== 8. Heal-signal catch-rate (MEASURE leg, Local Twin Step 2) =="
 # Rendered case: a session log (so a dashboard is written) + a heal-signal trend ledger carrying
 # two SCORED matrices (recall 0 → 33) plus one n=0 record that MUST be filtered out of "latest".
-H="$(mktemp -d)"; ( cd "$H" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+# The checkout is named `x` and the rows are days old, so the ledger is fresh and names this project.
+H="$(mkrepo_named x)"
 mkdir -p "$H/.supervisor/logs" "$H/.supervisor/heal-signal"
 printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1}' > "$H/.supervisor/logs/h-a.jsonl"
 {
-  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-18T00:00:00Z","repos":["x"],"n":8,"tp":0,"fp":0,"fn":6,"tn":2,"recall_pct":0,"false_positive_pct":0,"self_heal_share_pct":54,"coverage_pct":10}'
-  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-19T00:00:00Z","repos":["x"],"n":7,"tp":1,"fp":1,"fn":2,"tn":3,"recall_pct":33,"false_positive_pct":25,"self_heal_share_pct":40,"coverage_pct":50}'
-  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-20T00:00:00Z","repos":["x"],"n":0,"recall_pct":null}'
+  printf '{"schema_version":1,"recorded_at":"%s","repos":["x"],"n":8,"tp":0,"fp":0,"fn":6,"tn":2,"recall_pct":0,"false_positive_pct":0,"self_heal_share_pct":54,"coverage_pct":10}\n' "$(days_ago 3)"
+  printf '{"schema_version":1,"recorded_at":"%s","repos":["x"],"n":7,"tp":1,"fp":1,"fn":2,"tn":3,"recall_pct":33,"false_positive_pct":25,"self_heal_share_pct":40,"coverage_pct":50}\n' "$(days_ago 2)"
+  printf '{"schema_version":1,"recorded_at":"%s","repos":["x"],"n":0,"recall_pct":null}\n' "$(days_ago 1)"
 } > "$H/.supervisor/heal-signal/results.jsonl"
 ( cd "$H" && bash "$BUILD" >/dev/null 2>&1 )
 hd="$H/.supervisor/insights/dashboard.md"
@@ -208,17 +224,19 @@ grep -qF "**False-negatives (missed):** 2 of N=7" "$hd" 2>/dev/null && ok "lates
 grep -qF "**Coverage:** 50%" "$hd" 2>/dev/null && ok "latest coverage = 50%" || no "latest coverage wrong"
 grep -qF "0% → 33%" "$hd" 2>/dev/null && ok "catch-rate trend 0% → 33% (oldest → newest)" || no "trend wrong"
 grep -q "^## Summary" "$hd" 2>/dev/null && ok "dashboard still renders fully with the heal-signal section" || no "dashboard incomplete with heal-signal section"
-rm -rf "$H"
+grep -qF -- "- **Ledger age:** 1 day(s)  ·  **Newest row repos:** x" "$hd" 2>/dev/null && ok "fresh ledger prints its age and the newest row's repos" || no "fresh ledger age/repos line missing: $(grep -F 'Ledger age' "$hd")"
+if grep -qF -- "- **stale**" "$hd" 2>/dev/null; then no "a fresh, own-repo ledger was marked stale"; else ok "a fresh, own-repo ledger is not marked stale"; fi
+rm -rf "$(dirname "$H")"
 
 echo "== 9. Heal-signal section suppressed when no scored data =="
 # (a) ledger with ONLY an n=0 record → no scored matrix → section suppressed.
-H2="$(mktemp -d)"; ( cd "$H2" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+H2="$(mkrepo_named x)"   # fresh + own repo, so only the n=0 rule can suppress the section
 mkdir -p "$H2/.supervisor/logs" "$H2/.supervisor/heal-signal"
 printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$H2/.supervisor/logs/h-a.jsonl"
-printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-20T00:00:00Z","repos":["x"],"n":0,"recall_pct":null}' > "$H2/.supervisor/heal-signal/results.jsonl"
+printf '{"schema_version":1,"recorded_at":"%s","repos":["x"],"n":0,"recall_pct":null}\n' "$(days_ago 1)" > "$H2/.supervisor/heal-signal/results.jsonl"
 ( cd "$H2" && bash "$BUILD" >/dev/null 2>&1 )
 if grep -q "## Heal-signal catch-rate" "$H2/.supervisor/insights/dashboard.md" 2>/dev/null; then no "section appeared with only an n=0 record"; else ok "section suppressed when only unscored (n=0) records exist"; fi
-rm -rf "$H2"
+rm -rf "$(dirname "$H2")"
 # (b) no ledger file at all → section suppressed, dashboard still renders.
 H3="$(mktemp -d)"; ( cd "$H3" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
 mkdir -p "$H3/.supervisor/logs"
@@ -234,12 +252,12 @@ echo "== 10. Heal-signal renders a SCORED matrix with recall=n/a (tp+fn=0, not d
 # (coverage + self_heal_share are meaningful), so the section must render with recall "n/a" rather
 # than be silently dropped (the PR #73 review #2 finding). Mixed with a normal scored run to also
 # assert the trend shows the n/a point.
-H4="$(mktemp -d)"; ( cd "$H4" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+H4="$(mkrepo_named x)"
 mkdir -p "$H4/.supervisor/logs" "$H4/.supervisor/heal-signal"
 printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$H4/.supervisor/logs/h-a.jsonl"
 {
-  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-18T00:00:00Z","repos":["x"],"n":7,"tp":1,"fp":1,"fn":2,"tn":3,"recall_pct":33,"self_heal_share_pct":40,"coverage_pct":50}'
-  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-19T00:00:00Z","repos":["x"],"n":5,"tp":0,"fp":1,"fn":0,"tn":4,"recall_pct":null,"self_heal_share_pct":20,"coverage_pct":60}'
+  printf '{"schema_version":1,"recorded_at":"%s","repos":["x"],"n":7,"tp":1,"fp":1,"fn":2,"tn":3,"recall_pct":33,"self_heal_share_pct":40,"coverage_pct":50}\n' "$(days_ago 2)"
+  printf '{"schema_version":1,"recorded_at":"%s","repos":["x"],"n":5,"tp":0,"fp":1,"fn":0,"tn":4,"recall_pct":null,"self_heal_share_pct":20,"coverage_pct":60}\n' "$(days_ago 1)"
 } > "$H4/.supervisor/heal-signal/results.jsonl"
 ( cd "$H4" && bash "$BUILD" >/dev/null 2>&1 )
 h4d="$H4/.supervisor/insights/dashboard.md"
@@ -247,7 +265,113 @@ grep -q "## Heal-signal catch-rate (MEASURE)" "$h4d" 2>/dev/null && ok "section 
 grep -qF "**Latest catch-rate (recall):** n/a" "$h4d" 2>/dev/null && ok "latest recall shown as n/a (tp+fn=0)" || no "recall-null not rendered as n/a"
 grep -qF "**Coverage:** 60%" "$h4d" 2>/dev/null && ok "latest coverage 60% still surfaced despite null recall" || no "coverage lost on null-recall run"
 grep -qF "33% → n/a" "$h4d" 2>/dev/null && ok "trend shows the n/a point (33% → n/a)" || no "trend dropped/mangled the n/a point"
-rm -rf "$H4"
+rm -rf "$(dirname "$H4")"
+
+echo "== 10b. Heal-signal STALE readout (AC7): old or foreign newest row ⇒ stale + age + repos + refresh, no numbers =="
+# hs_build <repo> <newest-row-json> — one scored older row (own repo, fresh) + the given newest row,
+# then build. Every case below carries a scored matrix, so only the staleness rule can withhold it.
+hs_build() {
+  mkdir -p "$1/.supervisor/logs" "$1/.supervisor/heal-signal"
+  printf '%s\n' '{"ts":"2026-10-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$1/.supervisor/logs/h-a.jsonl"
+  { printf '{"schema_version":1,"recorded_at":"%s","repos":["%s"],"n":7,"tp":1,"fp":1,"fn":2,"tn":3,"recall_pct":33,"coverage_pct":50,"self_heal_share_pct":40}\n' "$(days_ago 20)" "$(basename "$1")"
+    printf '%s\n' "$2"; } > "$1/.supervisor/heal-signal/results.jsonl"
+  ( cd "$1" && bash "$BUILD" >/dev/null 2>&1 )
+}
+hs_sec() { awk '/^## Heal-signal catch-rate/{f=1;print;next} f&&/^## /{exit} f' "$1/.supervisor/insights/dashboard.md" 2>/dev/null; }
+# (a) a 15-day-old newest row naming this checkout ⇒ stale on age alone.
+SA="$(mkrepo_named x)"
+hs_build "$SA" "$(printf '{"schema_version":1,"recorded_at":"%s","repos":["x"],"n":9,"tp":2,"fn":1,"recall_pct":66,"coverage_pct":70}' "$(days_ago 15)")"
+sa="$(hs_sec "$SA")"
+grep -qF -- "- **stale** — newest row is 15 day(s) old (limit 14) and names: x (this project: x)" <<<"$sa" && ok "AC7: a 15-day-old ledger says stale with its age, repos and this project's (deduplicated) names" || no "AC7: 15-day-old ledger not marked stale: $sa"
+grep -qF -- "- **Refresh:** \`bash \"$HERE/measure-heal-signal.sh\"\`" <<<"$sa" && ok "AC7: stale readout prints the refresh command resolved from the script dir" || no "AC7: refresh command missing/unresolved: $(grep -F Refresh <<<"$sa")"
+if grep -qE "Latest catch-rate|66%|Coverage:" <<<"$sa"; then no "AC7: numbers rendered for a stale ledger"; else ok "AC7: no numbers rendered for a stale ledger"; fi
+rm -rf "$(dirname "$SA")"
+# (b) a fresh newest row naming a tmp.* fixture repo ⇒ stale (the real 2026-08-14 rows' shape).
+SB="$(mkrepo_named x)"
+hs_build "$SB" "$(printf '{"schema_version":1,"recorded_at":"%s","repos":["tmp.L5nsgKJnWb"],"n":3,"recall_pct":50}' "$(days_ago 1)")"
+sb="$(hs_sec "$SB")"
+grep -qF "names: tmp.L5nsgKJnWb" <<<"$sb" && grep -qF -- "- **stale**" <<<"$sb" && ok "AC7: a fresh row naming a tmp.* repo is stale" || no "AC7: tmp.* row not marked stale: $sb"
+if grep -qF "Latest catch-rate" <<<"$sb"; then no "AC7: numbers rendered for a tmp.* row"; else ok "AC7: no numbers for a tmp.* row"; fi
+rm -rf "$(dirname "$SB")"
+# (c) a fresh row that ALSO names a repo matching neither this checkout, its main checkout nor origin.
+SC2="$(mkrepo_named x)"
+hs_build "$SC2" "$(printf '{"schema_version":1,"recorded_at":"%s","repos":["x","someone-else"],"n":3,"recall_pct":50}' "$(days_ago 1)")"
+grep -qF -- "- **stale**" <<<"$(hs_sec "$SC2")" && ok "AC7: a row naming a foreign repo (someone-else) is stale" || no "AC7: foreign repo row not marked stale"
+rm -rf "$(dirname "$SC2")"
+# (d) an unparseable recorded_at cannot be dated ⇒ stale, age unknown (never shown as current).
+SD="$(mkrepo_named x)"
+hs_build "$SD" '{"schema_version":1,"recorded_at":"not-a-date","repos":["x"],"n":3,"recall_pct":50}'
+grep -qF "newest row is unknown day(s) old" <<<"$(hs_sec "$SD")" && ok "AC7: an undatable newest row is stale with age unknown" || no "AC7: undatable row not stale: $(hs_sec "$SD")"
+rm -rf "$(dirname "$SD")"
+# (d2) a fresh newest row naming NO repo cannot be attributed to this project ⇒ stale.
+SE="$(mkrepo_named x)"
+hs_build "$SE" "$(printf '{"schema_version":1,"recorded_at":"%s","repos":[],"n":3,"recall_pct":50}' "$(days_ago 1)")"
+grep -qF "and names: (none)" <<<"$(hs_sec "$SE")" && ok "AC7: a newest row with an empty repos list is stale (names: (none))" || no "AC7: empty-repos row not stale: $(hs_sec "$SE")"
+rm -rf "$(dirname "$SE")"
+# (e) a WORKTREE reading rows its main checkout wrote is NOT foreign (main checkout basename).
+WM="$(mkrepo_named proj-main)"; WW="$(dirname "$WM")/proj-wt"
+( cd "$WM" && git worktree add -q "$WW" -b wt-branch ) >/dev/null 2>&1
+hs_build "$WW" "$(printf '{"schema_version":1,"recorded_at":"%s","repos":["proj-main"],"n":5,"tp":1,"fn":1,"recall_pct":50,"coverage_pct":60}' "$(days_ago 1)")"
+we="$(hs_sec "$WW")"
+grep -qF "**Latest catch-rate (recall):** 50%" <<<"$we" && ok "AC7: a worktree's row naming its main checkout renders numbers (not foreign)" || no "AC7: worktree row wrongly stale: $we"
+if grep -qF -- "- **stale**" <<<"$we"; then no "AC7: worktree marked stale"; else ok "AC7: worktree not marked stale"; fi
+rm -rf "$(dirname "$WM")"
+# (f) a LANE CLONE (own basename L9) reading rows that name its origin repo is NOT foreign.
+LC="$(mkrepo_named L9)"; ( cd "$LC" && git remote add origin git@github.com:o/myrepo.git ) >/dev/null 2>&1
+hs_build "$LC" "$(printf '{"schema_version":1,"recorded_at":"%s","repos":["myrepo","L9"],"n":5,"tp":1,"fn":1,"recall_pct":50,"coverage_pct":60}' "$(days_ago 1)")"
+lc="$(hs_sec "$LC")"
+grep -qF "**Latest catch-rate (recall):** 50%" <<<"$lc" && ok "AC7: a lane clone's row naming its origin repo renders numbers (not foreign)" || no "AC7: lane-clone row wrongly stale: $lc"
+rm -rf "$(dirname "$LC")"
+
+echo "== 10c. Feature scorecard (AC3): every --json feature id + verdict on one row, nothing extra =="
+fs_sec() { awk '/^## Feature scorecard$/{f=1;next} f&&/^## /{exit} f' "$1/.supervisor/insights/dashboard.md" 2>/dev/null; }
+FS="$(mkrepo_named fsproj)"
+mkdir -p "$FS/.supervisor/logs" "$FS/.supervisor/automate"
+printf '%s\n' '{"ts":"2026-10-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$FS/.supervisor/logs/fs-a.jsonl"
+# The real sidecar shape (a `SUPERVISOR_RESULT:` block, 2-space keys; risk_classification nests high_risk).
+printf 'SUPERVISOR_RESULT:\n  schema_version: 1\n  risk_classification:\n    high_risk: true\n    reasons: ["size: changed_files 37 > 15"]\n' > "$FS/.supervisor/automate/2026-10-19-100000.supervisor-result.md"
+out="$( cd "$FS" && bash "$BUILD" 2>&1 )"; rc=$?
+[ "$rc" -eq 0 ] && ok "AC3: build exits 0 with the scorecard section" || no "AC3: build rc=$rc"
+grep -q "^## Feature scorecard$" "$FS/.supervisor/insights/dashboard.md" 2>/dev/null && ok "AC3: Feature scorecard section present" || no "AC3: Feature scorecard section missing"
+fsj="$(bash "$HERE/build-feature-scorecard.sh" --json --state-dir "$FS/.supervisor" 2>/dev/null)"
+want="$(printf '%s' "$fsj" | jq -r '.features[] | "\(.id)\t\(.verdict)"' 2>/dev/null | sort)"
+got="$(fs_sec "$FS" | awk -F' [|] ' '/^\| / && !/^\| Feature \|/ && !/^\|---/ { id=$1; sub(/^\| /,"",id); v=$NF; sub(/ \|$/,"",v); print id "\t" v }' | sort)"
+[ -n "$want" ] && ok "AC3: the builder's --json lists features (fixture is not vacuous)" || no "AC3: builder --json empty: $fsj"
+[ -n "$want" ] && [ "$want" = "$got" ] && ok "AC3: dashboard rows == --json (id, verdict) set — every feature once, none extra" || no "AC3: rows differ from --json — want: $(printf '%s' "$want" | tr '\t\n' ':;') got: $(printf '%s' "$got" | tr '\t\n' ':;')"
+grep -qE '^\| risk_classification \| true \| 1 \| 1 \|' <<<"$(fs_sec "$FS")" && ok "AC3: a fixture record's numbers reach its row (risk_classification ran 1)" || no "AC3: risk_classification row lacks the fixture's numbers: $(grep -F risk_classification <<<"$(fs_sec "$FS")")"
+nem="$(printf '%s' "$fsj" | jq -r '.needs_emitter | join(", ")' 2>/dev/null)"
+grep -qF -- "- **Needs an emitter:** ${nem:-none}" <<<"$(fs_sec "$FS")" && ok "AC3: needs-an-emitter list rendered from --json" || no "AC3: needs-an-emitter line wrong"
+if grep -q "unavailable" <<<"$(fs_sec "$FS")"; then no "AC3: a healthy scorecard rendered as unavailable"; else ok "AC3: a healthy scorecard is not rendered as unavailable"; fi
+rm -rf "$(dirname "$FS")"
+
+echo "== 10d. Feature scorecard unavailable (AC10): missing / invalid / empty registry, absent or garbage builder =="
+# fs_layout <dir> — a plugin-shaped copy (<dir>/scripts/{build-insights,build-feature-scorecard}.sh)
+# with NO docs/feature-scorecard.json, so the REAL builder's default registry is missing.
+fs_layout() { mkdir -p "$1/scripts"; cp "$BUILD" "$1/scripts/build-insights.sh"; cp "$HERE/build-feature-scorecard.sh" "$1/scripts/"; }
+fs_unavail() {  # fs_unavail <label> <plugin dir> <expected reason fragment>
+  local r rc sec; r="$(mkrepo_named fsu)"; mkdir -p "$r/.supervisor/logs"
+  printf '%s\n' '{"ts":"2026-10-19T10:00:00Z","event":"session_end","status":"completed"}' > "$r/.supervisor/logs/u.jsonl"
+  ( cd "$r" && bash "$2/scripts/build-insights.sh" >/dev/null 2>&1 ); rc=$?
+  sec="$(fs_sec "$r")"
+  [ "$rc" -eq 0 ] && ok "AC10/$1: build exits 0" || no "AC10/$1: build rc=$rc"
+  grep -q "^## Feature scorecard$" "$r/.supervisor/insights/dashboard.md" 2>/dev/null && ok "AC10/$1: heading still rendered" || no "AC10/$1: heading missing"
+  grep -q "^Feature scorecard unavailable — .*$3" <<<"$sec" && ok "AC10/$1: section says unavailable ($3)" || no "AC10/$1: no unavailable line naming '$3': $sec"
+  if grep -qE '^\| (Feature|---)' <<<"$sec"; then no "AC10/$1: an (empty) table rendered — reads as all clear"; else ok "AC10/$1: no table rendered"; fi
+  grep -q "^## View in Obsidian" "$r/.supervisor/insights/dashboard.md" 2>/dev/null && ok "AC10/$1: dashboard not truncated" || no "AC10/$1: dashboard truncated"
+  rm -rf "$(dirname "$r")"
+}
+P1="$(mktemp -d)"; fs_layout "$P1"
+fs_unavail "missing-registry" "$P1" "registry"
+P2="$(mktemp -d)"; fs_layout "$P2"; mkdir -p "$P2/docs"; printf '{ not json\n' > "$P2/docs/feature-scorecard.json"
+fs_unavail "invalid-registry" "$P2" "registry"
+P3="$(mktemp -d)"; fs_layout "$P3"; mkdir -p "$P3/docs"; printf '%s\n' '{"schema_version":1,"min_sample":5,"not_features":[],"features":[]}' > "$P3/docs/feature-scorecard.json"
+fs_unavail "empty-registry" "$P3" "no features"
+P4="$(mktemp -d)"; mkdir -p "$P4/scripts"; cp "$BUILD" "$P4/scripts/build-insights.sh"   # NO sibling builder
+fs_unavail "builder-absent" "$P4" "builder not found"
+P5="$(mktemp -d)"; mkdir -p "$P5/scripts"; cp "$BUILD" "$P5/scripts/build-insights.sh"
+printf '#!/usr/bin/env bash\necho "<<< not json >>>"\nexit 3\n' > "$P5/scripts/build-feature-scorecard.sh"
+fs_unavail "garbage-builder" "$P5" "unreadable"
+rm -rf "$P1" "$P2" "$P3" "$P4" "$P5"
 
 echo "== 11. Missing-drain reconciliation (AC5) — renders + classifies =="
 # A done-brief corpus with three heal-signal PRs:
@@ -1049,7 +1173,9 @@ grep -qF "| Failed | 1 |" "$scd" 2>/dev/null && ok "SC: only the genuine failure
 grep -qE "^\| Stranded close-outs .*\| 2 \|$" "$scd" 2>/dev/null && ok "SC: the two stranded close-outs are reported on their own line" || no "SC: stranded line missing or wrong"
 grep -qF "| **Completion rate** | **50%** |" "$scd" 2>/dev/null && ok "SC: completion rate = 1 completed / 2 non-stranded = 50%" || no "SC: completion rate wrong: $(grep -F 'Completion rate' "$scd")"
 grep -qF "| 17.0.0 | 2 | 50% |" "$scd" 2>/dev/null && ok "SC: the per-version row excludes the stamped stranded close-out" || no "SC: per-version 17.0.0 row wrong: $(grep -F '| 17.0.0 |' "$scd")"
-if grep -qF "| unknown |" "$scd" 2>/dev/null; then no "SC: an unstamped stranded close-out still lands in the per-version unknown row"; else ok "SC: no unknown per-version row from the unstamped stranded close-out"; fi
+# Anchored to a row START: other sections (e.g. the Feature scorecard's `unknown` cost cells) carry
+# "| unknown |" mid-row; only the per-version table has a row whose first cell is `unknown`.
+if grep -qE "^\| unknown \|" "$scd" 2>/dev/null; then no "SC: an unstamped stranded close-out still lands in the per-version unknown row"; else ok "SC: no unknown per-version row from the unstamped stranded close-out"; fi
 grep -qF "reason: session_ended_without_completion" "$SC/.supervisor/insights/runs/sc-str-a.md" 2>/dev/null && ok "SC: the stranded run note carries its reason" || no "SC: stranded run note lacks its reason"
 grep -qF "stranded close-out" "$SC/.supervisor/insights/runs/sc-str-a.md" 2>/dev/null && ok "SC: the stranded run note says it is a stranded close-out" || no "SC: stranded run note unlabeled"
 rm -rf "$SC"

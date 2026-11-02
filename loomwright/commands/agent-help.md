@@ -174,7 +174,7 @@ See [../docs/command-parts/agent-help/knowledge.md](../docs/command-parts/agent-
 
 See [../docs/command-parts/agent-help/knowledge.md](../docs/command-parts/agent-help/knowledge.md).
 
-### 🌱 /propose — Candidate Work Items from the Churn Ledger, a /verify Run, and the Domain (Read-Only, Propose-Only)
+### 🌱 /propose — Candidate Work Items from the Churn Ledger, a /verify Run, the Feature Scorecard, and the Domain (Read-Only, Propose-Only)
 
 See [../docs/command-parts/agent-help/knowledge.md](../docs/command-parts/agent-help/knowledge.md).
 <!-- split:end ../docs/command-parts/agent-help/knowledge.md -->
