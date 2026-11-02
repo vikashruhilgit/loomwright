@@ -161,6 +161,29 @@ S1="$(path_of summary)"
 if [ -n "$S1" ] && grep -qxF -- "> a nit" "$S1" && grep -qxF -- "- **Reason dismissed:** nit" "$S1" && [ "$(basename "$S1")" = "$NS--dismissed-summary.md" ]; then ok "summary draft lists the nit with its metadata"; else no "summary: $S1"; fi
 grep -qF 'propose-only — nothing enqueues this file' "$S1" 2>/dev/null && ok "closing line quotes the proposed/ contract" || no "closing contract line missing"
 grep -q 'reason: "stale: fixed in abc123"' "$AD/$RUN_ID.review-heal-result.md" && grep -qxF -- "- **Reason dismissed:** stale: fixed in abc123" "$(draft_with 'drain medium one')" && ok "free-text drain reason carried verbatim" || no "drain reason"
+# evidence: a drain result written before it existed (A1's sidecar) ⇒ `none recorded` under the reason
+# line, and sidecar-check still passes it; Phase 4.5 items never carry it and read the same
+OLD_EV_NAME="$(basename "$(draft_with 'drain medium one')")"
+grep -A1 -xF -- "- **Reason dismissed:** stale: fixed in abc123" "$(draft_with 'drain medium one')" | tail -n1 | grep -qxF -- "- **Evidence:** none recorded" \
+  && grep -qxF -- "- **Evidence:** none recorded" "$(draft_with 'medium phase one')" \
+  && ok "a dismissal with no evidence (older drain result, Phase 4.5) ⇒ '- **Evidence:** none recorded' under the reason" || no "no-evidence draft line"
+# rh_full <dismissed item> — a COMPLETE drain block (the `rh` sidecar above omits keys sidecar-check requires)
+rh_full() {
+  printf '## REVIEW_HEAL_RESULT\n\n```yaml\nREVIEW_HEAL_RESULT:\n  schema_version: 2\n  decision: READY\n  iterations: 1\n  issues_fixed: 0\n  remaining_issues: 0\n  pr_url: "%s"\n  notified: true\n  rounds: 1\n  max_rounds: 5\n  fix_cycles: 0\n  churn_rounds: 0\n  repeat_check_failure: false\n  unresolved_bot_feedback: false\n  postmortem_churn_threshold: 2\n  postmortem_dispatched: false\n  findings_validated: 0\n  findings_dismissed: 1\n  termination_reason: converged\n  severity_floor: HIGH\n  rejected_instruction_like: 0\n  dismissed:\n    - %s\n```\n' "$PRURL" "$1" > "$TOP/full.review-heal-result.md"
+  bash "$H" sidecar-check "$TOP/full.review-heal-result.md" 2>&1
+}
+case "$(rh_full '{finding: "drain medium one", reason: "stale: fixed in abc123", source: reviews, severity: MEDIUM}')" in
+  ok*) ok "sidecar-check passes a drain result whose dismissed items carry no evidence" ;; *) no "sidecar-check refused an evidence-less drain result: $(rh_full '{finding: "x", reason: "y", source: reviews}')" ;; esac
+# the same finding re-dismissed WITH evidence: the line under the reason shows it, the draft keeps its
+# content-addressed name (evidence never feeds the identity), and sidecar-check passes the item
+rh 3 '[{finding: "drain medium one", reason: "stale: fixed in abc123", source: reviews, severity: MEDIUM, evidence: "src/widget.sh:42"}]'
+drafts
+grep -A1 -xF -- "- **Reason dismissed:** stale: fixed in abc123" "$(draft_with 'drain medium one')" | tail -n1 | grep -qxF -- "- **Evidence:** src/widget.sh:42" \
+  && ok "a drain dismissal with evidence ⇒ '- **Evidence:** src/widget.sh:42' directly under the reason line" || no "evidence draft line: $(grep -F 'Evidence' "$(draft_with 'drain medium one')" 2>/dev/null)"
+[ "$(basename "$(draft_with 'drain medium one')")" = "$OLD_EV_NAME" ] && [ "$(nfiles)" = "4" ] \
+  && ok "evidence never feeds the draft identity (same name, no new file)" || no "evidence changed the draft name ($OLD_EV_NAME ⇒ $(basename "$(draft_with 'drain medium one')"), files $(nfiles))"
+case "$(rh_full '{finding: "drain medium one", reason: "stale: fixed in abc123", source: reviews, severity: MEDIUM, evidence: "src/widget.sh:42"}')" in
+  ok*) ok "sidecar-check passes a drain dismissed item carrying evidence" ;; *) no "sidecar-check refused a drain item with evidence" ;; esac
 
 # =============================================================================
 echo "== A2. threshold edges =="
@@ -922,8 +945,9 @@ EOF2
 done
 [ "$unq" -eq 0 ] && ok "B: no drain-ownership line on any restating surface lacks the qualifier" || no "B: $unq unqualified drain-ownership line(s)"
 # optional severity: schema + three producers
-n="$(cat "$RSD/supervisor-result.md" "$RSD/review-heal-result.md" 2>/dev/null | grep -cF 'severity?: string}]')"; [ "${n:-0}" -ge 2 ] && ok "B: RESULT_SCHEMAS field lines carry optional severity (heal_dismissed + dismissed)" || no "B: RESULT_SCHEMAS severity field lines: ${n:-0}"
-grep -qF '`[{finding, reason, source, severity?}]`' "$RSD/review-heal-result.md" && ok "B: REVIEW_HEAL_RESULT table row carries severity?" || no "B: dismissed table row lacks severity?"
+grep -qF 'severity?: string}]' "$RSD/supervisor-result.md" && grep -qF 'severity?: string, evidence?: string}]' "$RSD/review-heal-result.md" \
+  && ok "B: RESULT_SCHEMAS field lines carry optional severity (heal_dismissed + dismissed, the drain's also optional evidence)" || no "B: RESULT_SCHEMAS severity / evidence field lines"
+grep -qF '`[{finding, reason, source, severity?, evidence?}]`' "$RSD/review-heal-result.md" && ok "B: REVIEW_HEAL_RESULT table row carries severity? and evidence?" || no "B: dismissed table row lacks severity? / evidence?"
 grep -qF 'severity: i.severity' "$REPO/loomwright/skills/self-heal-advisory/SKILL.md" && ok "B: self-heal-advisory Part 2 producer carries severity" || no "B: self-heal-advisory producer lacks severity"
 # The drain's dismissed-list producer moved from review-heal §U4's pseudocode into the drain driver
 # (automate-speed/12): its validate step copies severity only when the report states one, and its report
