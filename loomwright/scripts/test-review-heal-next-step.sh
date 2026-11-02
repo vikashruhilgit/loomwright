@@ -417,7 +417,10 @@ grep -qF 'dismissed: one line citing a repo path:line, a commit sha, or a double
   && ok "R: the validate spawn asks for dismissal evidence and routes out-of-repo proof to confirmed + auto_fixable false" \
   || no "R: the validate spawn's then: text lacks the evidence / out-of-repo rule"
 # every AC1 accept example is taken by the driver (each its own sandbox: an accepted report advances the run)
-for ev in 'src/widget.sh:42' 'README.md:7' 'see loomwright/x.sh:10-12' 'fixed in 3f9a2b1' '"load_config checks jq'"'"'s exit status"'; do
+# (the bare-filename example is joined at run time: the repo has a root README, so a literal here
+# would read as a code citation to test-citation-drift.sh)
+EV_ROOT_DOC="README.md"
+for ev in 'src/widget.sh:42' "$EV_ROOT_DOC:7" 'see loomwright/x.sh:10-12' 'fixed in 3f9a2b1' '"load_config checks jq'"'"'s exit status"'; do
   setup_case "$FIX/converged-ready"; drv "$DRIVER" --start drain
   drv "$DRIVER" --result "$(r_dis ",\"evidence\":$(printf '%s' "$ev" | jq -Rs .)")"
   [ "$RCV" = 0 ] && [ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] \
