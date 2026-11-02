@@ -126,10 +126,10 @@ bhas "$C19" '**19c — coverage.**' && bhas "$C19" 'in neither the File Impact M
 bhas "$C19" '**Issue category:** `closed_enumerations` for 19a and 19c; `pin_mutations` for 19b.' && ok "19: categories" \
   || no "19 categories"
 bhas "$C19" '**Severity if failed:** MEDIUM for 19a, 19b and 19c' && ok "19: MEDIUM" || no "19 severity"
-has "$PR" '## 21 Review Criteria' && lacks "$PR" '## 20 Review Criteria' && has "$PR" 'All 21 review criteria must be checked' \
-  && has "$PR" '(21 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, and 21 conditional)' && has "$PR" 'All 21 criteria checked' \
-  && ok "criteria count 21 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
-C21="$(block "$PR" '^### 21\. Module Layout \(conditional\)$' '^(---|## Decision Matrix)')"
+has "$PR" '## 22 Review Criteria' && lacks "$PR" '## 21 Review Criteria' && has "$PR" 'All 22 review criteria must be checked' \
+  && has "$PR" '(22 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, and 22 conditional)' && has "$PR" 'All 22 criteria checked' \
+  && ok "criteria count 22 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
+C21="$(block "$PR" '^### 21\. Module Layout \(conditional\)$' '^(### 22\. |---|## Decision Matrix)')"
 [ -n "$C21" ] && ok "### 21. Module Layout (conditional) present" || no "Criterion 21 block not found"
 bhas "$C21" 'no MODIFY path is at or past the threshold → skip silently.' && ok "21: skip clause" || no "21 skip clause"
 bhas "$C21" '**Severity if failed:** MEDIUM (the decision stays PASS' && ok "21: MEDIUM, decision stays PASS" || no "21 severity"

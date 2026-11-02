@@ -18,8 +18,8 @@
 # Plan Reviewer and the code reviewer are LLM prompts, so CI pins their TEXT, ORDER and OUTCOME words;
 # the behavioural proof is a live Plan Reviewer probe on fixtures/pr-body-evidence/ (answer key: its
 # README.md). This test pins:
-#   PART 1  Plan Reviewer Criterion 20: it sits after 19 and before 21 (the last criterion, before the
-#           Decision Matrix),
+#   PART 1  Plan Reviewer Criterion 20: it sits after 19 and before 21 (21 and 22 then follow, 22 the
+#           last criterion, before the Decision Matrix),
 #           its gate, 20a, the not-a-finding clause, category, HIGH, the rewrite in its suggestion; the
 #           Decision Matrix row (inside the matrix, decision FAIL); the count at every count surface;
 #           the output-format enum; the schema doc; the Criterion 1 / 16 docs/evidence exemptions.
@@ -88,10 +88,11 @@ C20="$(block "$PR" '^### 20\. Acceptance Evidence Location' '^(### 21\. |## Deci
 [ -n "$C20" ] && ok "### 20. Acceptance Evidence Location present" || no "Criterion 20 block not found"
 L19="$(lineno "$PR" '^### 19\. ')"; L20="$(lineno "$PR" '^### 20\. ')"; L21="$(lineno "$PR" '^### 21\. ')"
 LDM="$(lineno "$PR" '^## Decision Matrix')"
-[ -n "$L19" ] && [ -n "$L20" ] && [ -n "$L21" ] && [ -n "$LDM" ] && [ "$L19" -lt "$L20" ] && [ "$L20" -lt "$L21" ] \
-  && [ "$L21" -lt "$LDM" ] && ok "Criterion 20 sits after 19 and before 21; Criterion 21 sits before the Decision Matrix" \
-  || no "Criterion 20/21 position (19=$L19 20=$L20 21=$L21 matrix=$LDM)"
-[ -z "$(lineno "$PR" '^### 22\. ')" ] && ok "Criterion 21 is the last criterion" || no "a Criterion 22 exists"
+L22="$(lineno "$PR" '^### 22\. ')"
+[ -n "$L19" ] && [ -n "$L20" ] && [ -n "$L21" ] && [ -n "$L22" ] && [ -n "$LDM" ] && [ "$L19" -lt "$L20" ] && [ "$L20" -lt "$L21" ] \
+  && [ "$L21" -lt "$L22" ] && [ "$L22" -lt "$LDM" ] && ok "Criterion 20 sits after 19 and before 21; 21 and 22 follow, before the Decision Matrix" \
+  || no "Criterion 20/21/22 position (19=$L19 20=$L20 21=$L21 22=$L22 matrix=$LDM)"
+[ -z "$(lineno "$PR" '^### 23\. ')" ] && ok "Criterion 22 is the last criterion" || no "a Criterion 23 exists"
 bhas "$C20" 'None names the PR body, PR description or pull-request description as the place its result is recorded, pasted, listed or shown → skip silently.' \
   && ok "20: conditional gate + skip clause" || no "20 gate/skip clause"
 bhas "$C20" '**20a — PR-body-only evidence.** A criterion whose only stated evidence location is the PR body' \
@@ -112,17 +113,17 @@ ROW="$(printf '%s\n' "$DM" | grep -F -- '| Criterion 20 finds' | head -n1)"
 DEC="$(printf '%s\n' "$ROW" | awk -F'|' '{print $3}')"
 bhas "$DEC" '**FAIL**' && bhas "$DEC" '`pr_body_evidence`' && ! bhas "$DEC" 'NEEDS_HUMAN' \
   && ok "matrix row decides FAIL (pr_body_evidence)" || no "matrix row decision: '$DEC'"
-has "$PR" '## 21 Review Criteria' && lacks "$PR" '## 20 Review Criteria' && has "$PR" 'All 21 review criteria must be checked' \
-  && has "$PR" '(21 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, and 21 conditional)' && has "$PR" '- [ ] All 21 criteria checked' \
-  && ok "criteria count 21 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
-has "$PR" 'Criteria 11, 13, 14, 15, 16, 17, 18, 19, 20, and 21 are conditional' && ok "never-skip rule lists 20 and 21 as conditional" \
+has "$PR" '## 22 Review Criteria' && lacks "$PR" '## 21 Review Criteria' && has "$PR" 'All 22 review criteria must be checked' \
+  && has "$PR" '(22 total, Criteria 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, and 22 conditional)' && has "$PR" '- [ ] All 22 criteria checked' \
+  && ok "criteria count 22 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
+has "$PR" 'Criteria 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, and 22 are conditional' && ok "never-skip rule lists 20, 21 and 22 as conditional" \
   || no "never-skip conditional list"
 has "$PR" 'Criterion 20 is conditional: skip silently when no acceptance criterion names the PR body as its evidence.' \
   && ok "intro paragraph names Criterion 20's gate" || no "intro paragraph gate"
-CHK="$(grep -F -- '- [ ] All 21 criteria checked' "$PR")"
+CHK="$(grep -F -- '- [ ] All 22 criteria checked' "$PR")"
 bhas "$CHK" 'Criterion 20 skipped silently when no acceptance criterion names the PR body as its evidence' \
   && bhas "$CHK" 'HIGH `pr_body_evidence` finding (20a)' && ok "quality checklist names Criterion 20" || no "checklist Criterion 20"
-has "$PR" '| pin_mutations | pr_body_evidence | module_layout | ...}"  # optional — emit when a criterion mandates it (12–21)' \
+has "$PR" '| pin_mutations | pr_body_evidence | module_layout | requirement_fit | ...}"  # optional — emit when a criterion mandates it (12–22)' \
   && ok "output-format enum lists pr_body_evidence" || no "output-format category enum"
 has "$SCHEMA" '"pr_body_evidence" for Criterion 20 findings' && has "$SCHEMA" '`pr_body_evidence` for Criterion 20 (' \
   && ok "schema doc: category in both lists" || no "schema doc category"
