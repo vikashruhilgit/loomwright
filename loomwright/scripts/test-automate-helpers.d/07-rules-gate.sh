@@ -192,10 +192,10 @@ fi
 #      and the instrumented call log proves the helper was never called.
 # Positive control: the UN-mutated gate copy, same stubs, calls the helper on the all-green
 # path (log proves it, MERGE) and PARKs the failing case on rules_check_failed.
-r9_run() {  # r9_run <dir> — gate-eval from <dir>'s copy; sets R9_OUT
+r9_run() {  # r9_run <dir> — gate-eval from <dir>'s copy; sets R9_OUT (git env hardened like gate(): e_git_env)
   rm -f "$GH_STUB_DIR/merge.log" "$GH_STUB_DIR/rules-called.log"
   printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
-  R9_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$1/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "${E_GATE_ROOT:-$E_ROOT}" 2>/dev/null )"
+  R9_OUT="$( e_git_env env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$1/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "${E_GATE_ROOT:-$E_ROOT}" 2>/dev/null )"
 }
 r9_dir() {  # r9_dir <sed-expr> <marker-regex> — prints a gated mutant dir, or nothing
   local d; d="$(mktemp -d)"
@@ -484,6 +484,84 @@ mkdir -p "$E_ROOT/ignored-dir/pkg"; echo '*' > "$E_ROOT/ignored-dir/pkg/.gitigno
 r11_decides "untracked .gitignore nested in a committed-ignored directory"
 rm -rf "$E_ROOT/ignored-dir"; r11_restored "ignored-dir"
 
+# R11n (dismissed-followups/05 F032) — the READ-FAILURE half of each ls-files read on its own. The
+# R11-MUTANT-FLAGS/UNT/IGN mutants above replace a WHOLE `if` (rc and content), so the content legs
+# kill them and the `rc -ne 0` arm alone was never run. A PATH `git` shim fails exactly ONE root
+# ls-files read (`-v`, `-o` without `-i`, or `-o -i`) with no stdout, on an otherwise CLEAN, at-head
+# checkout: the content of every read is empty, so only that read's rc can park. Every other git call
+# execs the real git. The shim also logs the XDG_CONFIG_HOME / GIT_CONFIG_NOSYSTEM each call sees (R11h0).
+R11N_REAL_GIT="$(command -v git)"; R11N_DIR="$WD/r11n-bin"; R11N_LOG="$WD/r11n.log"; mkdir -p "$R11N_DIR"
+cat > "$R11N_DIR/git" <<'R11N'
+#!/usr/bin/env bash
+printf 'xdg=%s nosys=%s\n' "${XDG_CONFIG_HOME-<unset>}" "${GIT_CONFIG_NOSYSTEM-<unset>}" >> "$R11N_LOG"
+lf=""; v=""; o=""; i=""
+for a in "$@"; do
+  if [ -z "$lf" ]; then [ "$a" = ls-files ] && lf=1; continue; fi
+  case "$a" in --) break ;; -v) v=1 ;; -o) o=1 ;; -i) i=1 ;; esac
+done
+if [ -n "$lf" ]; then
+  r=""
+  case "${R11N_FAIL:-}" in
+    v) [ -n "$v" ] && r=1 ;;
+    o) [ -n "$o" ] && [ -z "$i" ] && r=1 ;;
+    oi) [ -n "$o" ] && [ -n "$i" ] && r=1 ;;
+  esac
+  if [ -n "$r" ]; then echo "refused ls-files ($R11N_FAIL)" >> "$R11N_LOG"; echo "fatal: r11n shim" >&2; exit 128; fi
+fi
+exec "$R11N_REAL_GIT" "$@"
+R11N
+chmod +x "$R11N_DIR/git"
+r11n_gate() {  # r11n_gate <fail-mode: none|v|o|oi> [<copy-dir>] — gate (or r9_run <dir>) with the shim first on PATH
+  local op="$PATH"
+  rm -f "$R11N_LOG"; export R11N_REAL_GIT R11N_LOG R11N_FAIL="$1"
+  PATH="$R11N_DIR:$PATH"
+  if [ -n "${2:-}" ]; then r9_run "$2"; RUN_OUT="$R9_OUT"; else gate "$(pass_ctx)"; fi
+  PATH="$op"; unset R11N_FAIL
+}
+r11n_refused() { [ -f "$R11N_LOG" ] && grep -qxF "refused ls-files ($1)" "$R11N_LOG"; }
+r11_restored "R11n precondition"
+reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'; r11n_gate none
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] && [ -s "$R11N_LOG" ] && ! grep -q '^refused' "$R11N_LOG"; then
+  ok "R11n control: the git shim on PATH, failing nothing, is transparent (clean checkout ⇒ MERGE, shim was called)"
+else
+  no "R11n control wrong — the shim is not transparent or never ran (out='$RUN_OUT' merges=$(merges) log=$([ -s "$R11N_LOG" ] && echo non-empty || echo empty))"
+fi
+for R11N_M in v o oi; do
+  case "$R11N_M" in v) R11N_L="ls-files -v" ;; o) R11N_L="ls-files -o (untracked)" ;; *) R11N_L="ls-files -o -i (ignored)" ;; esac
+  reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'; r11n_gate "$R11N_M"
+  if r11n_refused "$R11N_M"; then
+    r11_park "clean checkout, ONLY the root '$R11N_L' read fails (rc-only arm)" rules_gate_dirty_tree
+  else
+    no "R11n $R11N_L: the shim never refused that read — the leg does not exercise the rc-only arm"
+  fi
+  r11_restored "R11n $R11N_L"
+done
+# Gated mutants: drop ONE read's `|| <rc>=$?` capture (rc stays 0) ⇒ that rc-only leg MERGEs, while
+# the un-mutated copy parks it. Each is a mutant of the rc capture alone — the content checks are intact.
+M_FLAGSRC="$(r9_dir 's/ || root_flags_rc=\$?$/ || : # R11N-MUTANT-FLAGSRC/' 'R11N-MUTANT-FLAGSRC')"
+M_UNTRC="$(r9_dir 's/ || root_unt_rc=\$?$/ || : # R11N-MUTANT-UNTRC/' 'R11N-MUTANT-UNTRC')"
+M_IGNRC="$(r9_dir 's/ || root_ign_rc=\$?$/ || : # R11N-MUTANT-IGNRC/' 'R11N-MUTANT-IGNRC')"
+if [ -n "$M_FLAGSRC" ] && [ -n "$M_UNTRC" ] && [ -n "$M_IGNRC" ]; then
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/resolve-base-branch.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  for R11N_M in v o oi; do
+    case "$R11N_M" in v) R11N_MD="$M_FLAGSRC"; R11N_L="root_flags_rc" ;; o) R11N_MD="$M_UNTRC"; R11N_L="root_unt_rc" ;; *) R11N_MD="$M_IGNRC"; R11N_L="root_ign_rc" ;; esac
+    reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
+    r11n_gate "$R11N_M" "$CTRL"; R11_CO="$RUN_OUT"; R11_CM="$(merges)"
+    r11n_gate "$R11N_M" "$R11N_MD"
+    if [ "$R11_CO" = "PARK: rules_gate_dirty_tree" ] && [ "$R11_CM" -eq 0 ] && [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] && r11n_refused "$R11N_M"; then
+      ok "R11n (mutant) '|| $R11N_L=\$?' dropped ⇒ the rc-only leg MERGEs (control: the un-mutated gate parks it rules_gate_dirty_tree) — the leg can fail"
+    else
+      no "R11n $R11N_L capture mutant did not discriminate (control='$R11_CO'/$R11_CM mutant='$RUN_OUT'/$(merges))"
+    fi
+    r11_restored "R11n mutant $R11N_L"
+  done
+  rm -rf "$CTRL"
+else
+  no "R11n rc-capture mutation controls not gated (a mutant was empty, identical to the original, failed bash -n, or lacked its marker)"
+fi
+rm -rf "${M_FLAGSRC:-/nonexistent-r11}" "${M_UNTRC:-/nonexistent-r11}" "${M_IGNRC:-/nonexistent-r11}"
+reset_live
+
 # R11h (review iteration 2) — LIVENESS: the USER's global excludes file is honoured, so an
 # at-head, otherwise-clean checkout holding a globally-only-ignored file (.DS_Store, .idea/,
 # settings.local.json) still lets the verdict decide. Precondition first: with no global
@@ -494,6 +572,21 @@ r11_gfix() { echo n > "$E_ROOT/notes.local"; mkdir -p "$E_ROOT/.idea"; echo i > 
 r11_gundo() { rm -rf "$E_ROOT/notes.local" "$E_ROOT/.idea"; }
 r11_gfix
 r11_dirty "globally-ignorable files with NO global ignore configured (precondition: they are dirt)"
+# R11h0 (dismissed-followups/05 F036) — the precondition must hold whatever the developer shell
+# exports: an INHERITED XDG_CONFIG_HOME whose git/ignore lists both files (recorded as inherited, as the
+# harness records it at load) is dropped by gate(), and GIT_CONFIG_NOSYSTEM=1 is set, for every git call
+# of the run (read from the R11n shim's env log). Before e_git_env this leg MERGEd.
+R11_XINH="$WD/xdg-inherited"; mkdir -p "$R11_XINH/git"; printf 'notes.local\n.idea/\n' > "$R11_XINH/git/ignore"
+R11_SV_SET="$E_INH_XDG_SET"; R11_SV_VAL="$E_INH_XDG"; R11_SV_NOW="${XDG_CONFIG_HOME+1}"; R11_SV_NOWV="${XDG_CONFIG_HOME-}"
+E_INH_XDG_SET=1; E_INH_XDG="$R11_XINH"; export XDG_CONFIG_HOME="$R11_XINH"
+reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'; r11n_gate none
+if [ -s "$R11N_LOG" ] && [ -z "$(grep -vxF 'xdg=<unset> nosys=1' "$R11N_LOG")" ]; then
+  r11_park "precondition under an INHERITED XDG_CONFIG_HOME ignoring both files (gate() unsets it, sets GIT_CONFIG_NOSYSTEM=1)" rules_gate_dirty_tree
+else
+  no "R11h0 gate() leaked the inherited git env into the run (env seen by git: $(sort -u "$R11N_LOG" 2>/dev/null | tr '\n' '|'))"
+fi
+E_INH_XDG_SET="$R11_SV_SET"; E_INH_XDG="$R11_SV_VAL"
+if [ -n "$R11_SV_NOW" ]; then export XDG_CONFIG_HOME="$R11_SV_NOWV"; else unset XDG_CONFIG_HOME; fi
 printf 'notes.local\n.idea/\n' > "$R11_XDG/git/ignore"; export XDG_CONFIG_HOME="$R11_XDG"
 r11_decides "untracked files ignored only by \$XDG_CONFIG_HOME/git/ignore (user global ignore)"
 unset XDG_CONFIG_HOME; rm -f "$R11_XDG/git/ignore"
@@ -761,6 +854,6 @@ fi
 rm -rf "${M_INC:-/nonexistent-r11}"
 reset_live
 
-unset GH_STUB_DIR
+unset GH_STUB_DIR R11N_LOG R11N_REAL_GIT
 rm -rf "$WD"
 
