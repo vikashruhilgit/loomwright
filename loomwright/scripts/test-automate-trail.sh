@@ -134,7 +134,9 @@
 #   DS. done stamp only post-merge (automate-followups/37) — a requirement at
 #      `## Status: pending` after Phase 4.5 (its step-2.5 stamp block, if any,
 #      applied) + closeout with the PR OPEN is byte-identical; MERGED ⇒ exactly
-#      one closeout-printf block; the self-heal skill instructs no stamp.
+#      one closeout-printf block; the self-heal skill instructs no stamp; DS4: a
+#      `## Status: brief-shipped` requirement + MERGED ⇒ the done block is appended
+#      below the kept brief-shipped heading (byte for byte).
 #   NT. closeout --no-trail (automate-followups/38) — the same steps, run file
 #      and requirement bytes as plain closeout, no trail-pr (spy), classified
 #      `complete`; OPEN ⇒ nothing; the --auto-merge SYNC close-out (pending
@@ -162,9 +164,20 @@
 #      removed; a non-ASCII worktree path (`proj-café`) whose live cwd lsof prints
 #      escaped (stubbed C-locale n-line; real lsof under `env -u LANG -u LC_ALL -u
 #      LC_CTYPE` when it can see a child) ⇒ kept, liveness unverifiable, the dir
-#      remains. Pin mutations, each observed RED: tip comparison deleted, the app
-#      worktree-root exclusion deleted, the sweep verdict ignored, the closeout 3a
-#      verdict ignored, the coverage check ignored, the escaped-byte check deleted.
+#      remains. SW7: gitignored content the coverage check cannot list, a failing
+#      `git status`, a refused `git worktree remove` ⇒ kept (never read as clean or
+#      removed). SWU: an unresolvable base branch ⇒ the ONE line `sweep: summary —
+#      skipped: base_branch_unresolved`, nothing removed, no PR read. Pin mutations
+#      (SWM), each observed RED — one per `sw_mutant <name>` call in
+#      test-automate-trail.d/06-sweep.sh, in its order (that file is the authority;
+#      regenerate this list from it): `tip` (tip comparison deleted), `app` (the app
+#      worktree-root exclusion deleted), `verdict` (the sweep salvage verdict
+#      ignored; non-root only), `coverage` (the coverage check ignored), `unverif`
+#      (the fail-closed unverifiable arm deleted), `gitstatus` (a failed git status
+#      read as clean), `rmrefused` (a refused remove reported as removed), `bytes`
+#      (the escaped-byte check deleted), `prcache` (the per-run gh memo deleted),
+#      `coverdict` (the closeout 3a salvage verdict ignored; non-root only),
+#      `unresolved` (the unresolved-base branch returns 1 without its summary line).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wait-lib.sh"   # bounded condition waits (iq02 T07)

@@ -457,6 +457,49 @@ ms B pull
 db_refused
 check $? "pull against a directory meta-base -> exit 1 the same, the pending take-R x.md NOT written, the directory left empty in place (rc=$RC: $OUT)"
 
+echo "== 42b. a FIFO, and a dangling symlink, at <gitdir>/meta-base: pull and push refuse up front, nothing changed =="
+# dismissed-05 F044: refuse_bad_base's non-directory shapes. Leg 42's world, with meta-base replaced by a FIFO or
+# by a symlink to a path that does not exist. "Nothing fetched" is observable: A's new tip commit is not in B's
+# object store before the run (fixture check), and a refusal that came after the fetch would have put it there.
+OB_MSG="is not a regular file; remove or replace it by hand. Nothing was changed (no fetch, no file written, nothing published)."
+oddbase_world() { # <fifo|dangling>
+  synced_pair
+  put A "$RQ/x.md" "x v2 from A"; ms A push
+  put B "$RQ/new42.md" "new from B"
+  rm -f "$W/B/.git/meta-base"
+  case "$1" in
+    fifo) mkfifo "$W/B/.git/meta-base" ;;
+    dangling) ln -s "$W/B/.git/meta-base-target-absent" "$W/B/.git/meta-base" ;;
+  esac
+  DB_TIP="$(br_tip)"
+}
+# ob_shape_kept <fifo|dangling> — 0 iff meta-base is still exactly the planted shape (nothing moved into it, the
+# dangling symlink's target never created)
+ob_shape_kept() {
+  case "$1" in
+    fifo) [ -p "$W/B/.git/meta-base" ] ;;
+    dangling) [ -L "$W/B/.git/meta-base" ] && [ ! -e "$W/B/.git/meta-base-target-absent" ] \
+                && [ "$(readlink "$W/B/.git/meta-base")" = "$W/B/.git/meta-base-target-absent" ] ;;
+    *) return 1 ;;
+  esac
+}
+ob_refused() { # <fifo|dangling>
+  [ "$RC" -eq 1 ] && grep -qF "meta_sync: refusing — meta-base " < <(printf '%s\n' "$OUT") && grep -qF "/meta-base $OB_MSG" < <(printf '%s\n' "$OUT") \
+    && ob_shape_kept "$1" && [ "$(br_tip)" = "$DB_TIP" ] && ! git -C "$W/B" cat-file -e "$DB_TIP^{commit}" 2>/dev/null \
+    && [ "$(get B "$RQ/x.md")" = "x v1" ] && [ "$(get B "$RQ/new42.md")" = "new from B" ] && ! br_has "$RQ/new42.md"
+}
+for ob in fifo dangling; do
+  oddbase_world "$ob"
+  { ob_shape_kept "$ob" && [ -n "$DB_TIP" ] && ! git -C "$W/B" cat-file -e "$DB_TIP^{commit}" 2>/dev/null; }
+  check $? "fixture ($ob): B's meta-base is the planted $ob and A's new tip is not yet in B's object store"
+  ms B push
+  ob_refused "$ob"
+  check $? "push against a $ob meta-base -> exit 1 'is not a regular file', nothing fetched or published, the $ob left in place, no local file touched (rc=$RC: $OUT)"
+  ms B pull
+  ob_refused "$ob"
+  check $? "pull against a $ob meta-base -> exit 1 the same, the pending take-R x.md NOT written, nothing fetched (rc=$RC: $OUT)"
+done
+
 echo "== 43. the default branch comes from the checkout's mode line =="
 TW="throwaway-meta"
 # tw_world — origin with BOTH metadata branches: loomwright-meta (initialised from clone Z, which
@@ -565,6 +608,12 @@ printf '#!/bin/sh\necho maybe\n' > "$NORD/setup-memory.sh"
 OUT="$(bash "$NORD/meta-sync.sh" status --root "$W/Z" 2>&1)"; RC=$?
 { [ "$RC" -eq 1 ] && grep -qF "meta_sync: mode_unknown — setup-memory.sh mode printed 'maybe'" < <(printf '%s\n' "$OUT"); }
 check $? "an unrecognised reader answer -> exit 1 mode_unknown (rc=$RC: $OUT)"
+# dismissed-05 F043: the empty-output arm (exit 0, nothing printed) — a mutant mapping it to off, or dropping its
+# reason, turns this red
+printf '#!/bin/sh\nexit 0\n' > "$NORD/setup-memory.sh"
+OUT="$(bash "$NORD/meta-sync.sh" status --root "$W/Z" 2>&1)"; RC=$?
+{ [ "$RC" -eq 1 ] && grep -qF 'meta_sync: mode_unknown — setup-memory.sh mode printed nothing; nothing was changed' < <(printf '%s\n' "$OUT"); }
+check $? "a reader that exits 0 printing nothing -> exit 1 mode_unknown 'printed nothing' (rc=$RC: $OUT)"
 
 echo "== 50. meta-base is bound to its branch: a branch switch never plans against the old base =="
 LZ="lane-z"

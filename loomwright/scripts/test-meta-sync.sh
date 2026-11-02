@@ -103,7 +103,8 @@
 #      push lands, never two holders (leg 27's holder log)
 #  42. a DIRECTORY at <gitdir>/meta-base: push (a local change) and pull (a remote change) refuse
 #      UP FRONT — exit 1 naming meta-base `not a regular file (it is a directory)`, nothing
-#      published, nothing written locally, the directory left empty in place
+#      published, nothing written locally, the directory left empty in place; 42b: a FIFO and a
+#      dangling symlink there refuse the same way (`is not a regular file`), nothing fetched
 #  43. default branch from the mode line (setup-memory.sh mode): a clone whose mode line names a
 #      throwaway branch inits / pushes / pulls it with no flag (the real loomwright-meta ref
 #      untouched) and `status` prints `synced <sha> on <branch>`; a mismatched --branch ->
@@ -112,7 +113,8 @@
 #      line -> loomwright-meta; a mode line naming loomwright-meta accepts --branch
 #      loomwright-meta; an `unknown` mode -> exit 1 `mode_unknown` with no flag and with a bare
 #      --branch (the override proceeds); a failed reader (no sibling setup-memory.sh, a non-zero
-#      exit, a multi-line or unrecognised answer) -> `mode_unknown`, never the default branch
+#      exit, a multi-line or unrecognised answer, exit 0 printing nothing) -> `mode_unknown`,
+#      never the default branch
 #  50. meta-base is bound to its branch (line 2 `branch <name>`): a clone synced on loomwright-meta
 #      switches its mode line to lane-z (setup-memory.sh apply) and inits it -> status prints
 #      `base_branch_mismatch`; a plain pull, a push and the forced --branch lane-z
