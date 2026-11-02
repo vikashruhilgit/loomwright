@@ -104,6 +104,13 @@ A fifth pass (or a third lens) has to name an information advantage neither row 
 - Avoid unnecessary re-evaluations; document tradeoffs
 - Identify and test critical paths
 
+### Reviewer-change evidence (Phase 4.5 replay)
+- A PR that edits `loomwright/agents/code-reviewer.md`, anything under `loomwright/skills/self-heal-advisory/`, or Phase 4.5 routing (`loomwright/scripts/resolve-routing.sh`, `loomwright/docs/PROVIDER_ROUTING.md`) must report the reviewer's before/after caught count in its PR body. Run `bash loomwright/evals/phase45-reviewer/lib/run.sh` from the repository root once on the base (for example in a `git worktree add <dir> origin/main` checkout) and once on the PR head, over the same cases, and paste both `caught: X/Y` lines and both `noise:` lines. The PR template has the line for it.
+- The command is model-backed and on-demand. It spends the author's Claude credential and never runs in CI; CI runs only the suite's model-free selftest, as a leg of `loomwright/scripts/test-build-reviewer-replay-case.sh`.
+- Read the result per case, not as a score: reviewer output varies from run to run, so a single-case swing is not a signal on its own, and the eval's own pass/fail means "a reply was captured", never "caught". Procedure, case layout and honest limits: `loomwright/evals/phase45-reviewer/README.md`; the corpus and its baseline: `docs/evidence/phase45-reviewer-replay.md`.
+- Cases are added only by `bash loomwright/scripts/build-reviewer-replay-case.sh --pr <N> … --confirm`, which the owner runs per case after a dry run (`--list` proposes candidates).
+- The replay is evidence about the Phase 4.5 lens, not a new review pass: `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule" is unchanged by it.
+
 ---
 
 ## Verification Checklist (Before Completion)

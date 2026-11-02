@@ -1,0 +1,3 @@
+case_id	pr	kind	expected_file	severity_floor
+01-control-pr651	651	control		
+02-control-pr770	770	control		
