@@ -28,3 +28,4 @@ agent (16719 / 17356) and `launch-pad` command (5326 / 5515) re-measured with no
 the live-run evidence files are `docs/evidence/plan-review-requirement-fit.md` and `docs/evidence/po-story-validation.md`
 at the repo root, not under `loomwright/docs/evidence/`, because FINALIZE's PR-body `## Evidence` section links only
 root `docs/evidence/` files, so a `loomwright/docs/evidence/` file would never be linked from the PR body.
+The `PO-ASSUME` gate catalog purpose in `lane-policy.sh` (and its `LANE_GATES.md` mirror) now names the missing-proof flag.

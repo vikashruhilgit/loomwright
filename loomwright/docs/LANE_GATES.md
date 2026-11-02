@@ -52,7 +52,7 @@ Every question the engine (`/automate`, `/autonomous`, and the Launch Pad, Super
 | `AUT-DISMISS` | human-only | `Follow-up (keep draft)` · `Fix now on this PR?` · `Drop` | /automate per-finding dismissed draft at the park, including fix-now (offered only while a fix-now re-drain is available) |
 | `AUT-LEFTOVER` | human-only | `Clean up now?` · `Keep and continue` · `Stop` | /automate close-out leftover gate (cleans up or deletes; Clean up now is offered only when a cleanup is possible) |
 | `AUT-WAIVE` | human-only | `Waive this step` · `Keep parked` | /automate READY park: waive a running-system Validation step validation-gate reports unrun (owner words from the answer note; cannot ask ⇒ stays escalated, validation_unrun) |
-| `PO-ASSUME` | human-only | `Proceed anyway` · `Refine requirements` · `Abort` | Product Owner assumption-check soft gate and pre-persist house-rule check (/automate prompt intake) |
+| `PO-ASSUME` | human-only | `Proceed anyway` · `Refine requirements` · `Abort` | Product Owner assumption-check soft gate, pre-persist house-rule check and missing-proof (no Validation) flag (/automate prompt intake) |
 | `PO-RULE-MUST` | human-only | `Refine requirements` · `Change the rule via /rules` · `Abort` | Product Owner pre-persist house-rule check on a must-rule conflict (no override option: a must rule is never overridden) |
 | `LP-CLARIFY` | human-only | `(free text)` | Launch Pad Phase 2 clarification |
 | `LP-NO-GO` | human-only | `Override and continue` · `Revise goal` · `Abort` | Launch Pad Phase 2.5 feasibility NO-GO |
