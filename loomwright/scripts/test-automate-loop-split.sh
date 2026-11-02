@@ -36,7 +36,8 @@
 #      e.g. invariants.md's own pointer to the post-split grep hit paths); once a later item edits one, the
 #      proof prints one SKIP line naming the files — the byte identity is a property of the move, not
 #      a freeze of the engine docs;
-#   F. STEP 0 (AC5) — commands/automate.md Step 0 names every skill split file, in documented order;
+#   F. STEP 0 (AC5) — commands/automate.md Step 0 names every skill split file, in documented order
+#      (names, not reads: Step 0 reads most split files only when their trigger fires);
 #   G. CITATIONS (AC3) — every citation of a split surface in the tracked tree (CHANGELOG.md excluded):
 #      the skill path (`automate-loop/SKILL.md`, `automate-loop SKILL`, `automate-loop`) followed by a
 #      section sign and a number and/or a quoted anchor, or by a space and a quoted anchor; the command
@@ -329,7 +330,7 @@ else
   fi
 fi
 
-echo "== F. commands/automate.md Step 0 reads every skill split file (AC5) =="
+echo "== F. commands/automate.md Step 0 names every skill split file, in order (AC5) =="
 # step0_names <command file> — the backticked *.md names (SKILL.md excepted) in Step 0's index-only block.
 step0_names() {
   awk '/^### Step 0/ {s = 1; next} s && /^### / {exit} s && $0 == "<!-- index-only:begin -->" {io = 1; next} s && $0 == "<!-- index-only:end -->" {io = 0} s && io' "$1" \
