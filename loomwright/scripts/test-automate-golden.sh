@@ -20,11 +20,13 @@
 #      `FAIL: unmapped unit <id>`, `FAIL: stale map row <id>` (its unit is gone),
 #      `FAIL: map names missing case <case>`, `FAIL: duplicate map row <id>`,
 #      `FAIL: duplicate unit <id>` (a repeated heading would silently share one map row).
-#   2. SCRUB. No file under the fixtures dir may contain `/Users/` or `/home/`
-#      (`FAIL: home path in <file>`). And when the fixtures dir in use sits in a git work
+#   2. SCRUB. No file under the fixtures dir may contain `/Users/`, `/home/` or a `~/`
+#      home-relative path (`FAIL: home path in <file>`). And when the fixtures dir in use sits in a git work
 #      tree, no file under it may be gitignored (`FAIL: ignored fixture <path>`): an
 #      ignored fixture exists on the author's disk but never in a clean checkout, so the
 #      suite would pass here and fail in CI (the as05 `*/**/.supervisor/` incident).
+#      Editor/OS junk (`.DS_Store`, `*.swp`, `*.swo`, `*~`) is skipped by that check: it is
+#      never a fixture, and a dev checkout's stray copy is ignored on purpose.
 #      And no `<case>/expected.out` may hold the stderr noise line of phase 3's rule
 #      (`FAIL: sigpipe noise pinned in <case>/expected.out`).
 #      And no step may read $PREV right after a `current-set` / `runfile-write` step, or on
@@ -55,7 +57,10 @@
 #                      Dot-paths are STORED as `dot-<name>` (e.g. `tree/dot-supervisor/`,
 #                      `tree/lanes/L1/dot-supervisor/`) because the repo ignores
 #                      `*/**/.supervisor/`; the copy maps every `dot-<name>` path
-#                      component back to `.<name>` in the scratch root.
+#                      component back to `.<name>` in the scratch root — FILES as well
+#                      as directories, by design: a case needing e.g. a `.gitignore`
+#                      stores it as `dot-gitignore`, because a real `.gitignore` under
+#                      tree/ would act on THIS repo's own ignore rules.
 #        setup         sourced in the scratch root before the steps (deterministic git
 #                      commits/remotes only); its output is not compared
 #      The case runs in its own `mktemp -d` checkout (`git init`, branch main, HOME and the
@@ -65,12 +70,20 @@
 #      the work dir → `<TMP>`
 #      — then compared byte for byte: `FAIL: <case>: run file differs` /
 #      `FAIL: <case>: step output differs`, each with a unified diff.
+#      HONEST LIMIT: the `<TS>` normalisation hides WHICH timestamp a helper wrote — a wrong
+#      but well-formed `YYYY-MM-DDTHH:MM:SSZ` (stale, future, another field's) still matches;
+#      only a malformed or missing one differs. No leg pins a timestamp's value or order.
 #      ONE STDERR NOISE RULE (step output only, applied identically to actual and expected,
 #      and to what GOLDEN_WRITE writes, so no expected.out ever holds it): a recorded stderr
-#      line matching `^! .*: line [0-9]+: printf: write error: Broken pipe$` is dropped.
+#      line matching SIGPIPE_NOISE_RE (below: `! <path>: line <n>: printf: write error:
+#      Broken pipe` whose <path> is `automate-lanes.sh` or an `automate-lanes.d/<part>.sh`)
+#      is dropped. The same Broken-pipe line from any other script is compared. The filter
+#      keeps every other byte, a NUL included (`grep -a`, C locale).
 #      Every other stderr line is compared. Why: automate-lanes.sh's validation-gate --waive
 #      pipes _lanes_validation_rows (a `printf` per row inside a `while read` loop) into an
-#      awk that `exit`s on the first matching row. When the process inherits SIGPIPE as
+#      awk that `exit`s on the first matching row. Bash names the file that DEFINES the
+#      printing function, so today the line names automate-lanes.d/readiness.sh, the part
+#      _lanes_validation_rows lives in. When the process inherits SIGPIPE as
 #      IGNORED (CI runners do; a default-disposition shell is killed silently instead), the
 #      next printf gets EPIPE and bash prints that line — whether it fires depends on the
 #      disposition and on whether awk has exited yet. Stdout, the exit code and the run file
@@ -82,7 +95,9 @@
 #      gated: the mutant is non-empty, differs from the original, the anchor occurs exactly
 #      once, and a mutated script passes `bash -n`; a leg whose mutant cannot be built
 #      FAILS. Each asserts the inner run exits non-zero AND names the expected case/unit.
-#        M1 bundle: `owned drain started)'` → `owned drain startex)'` (runfile.sh's
+#        M0 the UNMUTATED control for M1–M3: a freshly built bundle runs their three cases
+#           ⇒ exit 0, each case ok; while M0 is not green, M1–M3 are not judged (FAIL)
+#        M1 bundle:`owned drain started)'` → `owned drain startex)'` (runfile.sh's
 #           _progress_current_guard re_g)            ⇒ drain-pinned-start-line-current-not-set
 #        M2 bundle: `local msg="current_rebuilt:` → `…rebuilx:`  ⇒ resume-current-rebuild
 #        M3 automate-dismissed.sh copy beside the bundle (its symlink removed first, the
@@ -91,18 +106,31 @@
 #        M4 prose copy + `### Scratch heading`       ⇒ unmapped unit
 #        M5 prose copy minus `### Termination (two exits)` ⇒ stale map row
 #        M6 fixtures copy + a `/Users/x/` line        ⇒ home path
+#        M6b fixtures copy, a done brief + a `~/Documents/x` Project line ⇒ home path
 #        M7 prose copy + `~~~` / ``` / `~~~` then `### After mixed fence` ⇒ unmapped unit
+#        M7b prose copy + a ```` fence holding ``` and `### Inside long fence`, then
+#           `### After long fence` ⇒ unmapped unit After…, and Inside… NOT a unit (the
+#           shorter ``` line does not close the longer fence)
 #        M8 prose copy + a second `### Termination (two exits)` ⇒ duplicate unit
 #        M9 a scratch git repo ignoring `*/**/.supervisor/` holding a fixtures copy with a
 #           `tree/.supervisor/` file                 ⇒ ignored fixture
+#        M9b as M9, plus an ignored `.DS_Store` and `*.swp` in the copy ⇒ the real ignored
+#           fixture is named, the junk is NOT
 #        M10 the stderr noise rule, on fixtures copies of gate-validation-waive (one line
 #           inserted before the waive step's `= ` line of expected.out):
-#           a the Broken-pipe line                   ⇒ the case stays GREEN (`ok:
+#           a the Broken-pipe line naming automate-lanes.sh ⇒ the case stays GREEN (`ok:
 #             gate-validation-waive:`); the scrub names it (`sigpipe noise pinned`)
+#           a2 the same, naming automate-lanes.d/readiness.sh (today's real producer) ⇒ GREEN
 #           b the same line with `echo:` for `printf:` ⇒ step output differs (red)
 #           c an unrelated `! unexpected stderr` line ⇒ step output differs (red)
+#           e the Broken-pipe line naming automate-helpers.sh ⇒ step output differs (red)
 #           d the unmutated case run with SIGPIPE inherited as ignored (the CI condition
 #             that produces the line)             ⇒ stays GREEN
+#           f the filter itself, fed a NUL byte before the noise line and no final newline
+#             ⇒ output is the input minus that line, byte for byte (no line lost after
+#             the NUL, the missing final newline kept)
+#           g a suite copy whose filter exits 139 at once (a crash leaves BOTH sides empty,
+#             hence equal) ⇒ `FAIL: <case>: step-output filter failed` (red), never a match
 #        M11 fixtures copy of pick-time-lane-guard-park/steps restored to its pre-fix shape
 #           (cache step dropped, Progress step reads $PREV) ⇒ $PREV read after current-set
 #
@@ -224,13 +252,13 @@ EOF
 # --------------------------------------------------------------------------------------
 check_scrub() {
   local hits f
-  hits="$(grep -rlE '/Users/|/home/' "$FIX" 2>/dev/null | env LC_ALL=C sort)"
+  hits="$(grep -rlE '/Users/|/home/|~/' "$FIX" 2>/dev/null | env LC_ALL=C sort)"
   if [ -n "$hits" ]; then
     while IFS= read -r f; do no "home path in ${f#"$FIX"/}"; done <<EOF
 $hits
 EOF
   else
-    ok "no /Users/ or /home/ path under the fixtures"
+    ok "no /Users/, /home/ or ~/ path under the fixtures"
   fi
   # the noise rule's line is never pinned (GOLDEN_WRITE drops it; this catches a hand edit)
   hits="$(grep -lE "$SIGPIPE_NOISE_RE" "$FIX"/*/expected.out 2>/dev/null | env LC_ALL=C sort)"
@@ -284,8 +312,10 @@ check_ignored() { # every file under the fixtures dir IN USE must be committable
     echo "  note: $FIX is not in a git work tree — ignored-fixture check not applicable"
     return
   fi
-  # read-only: find lists, check-ignore only answers; nothing in the work tree is touched
-  hits="$(cd "$FIX" && find . -type f | sed 's|^\./||' | git check-ignore --stdin)"; rc=$?
+  # read-only: find lists, check-ignore only answers; nothing in the work tree is touched.
+  # Editor/OS junk is never a fixture, and a dev checkout's stray copy is ignored on purpose (M9b).
+  hits="$(cd "$FIX" && find . -type f ! -name .DS_Store ! -name '*.swp' ! -name '*.swo' ! -name '*~' \
+    | sed 's|^\./||' | git check-ignore --stdin)"; rc=$?
   if [ "$rc" -gt 1 ]; then no "git check-ignore failed (exit $rc) under $FIX"; return; fi
   if [ -n "$hits" ]; then
     while IFS= read -r f; do no "ignored fixture $f"; done <<EOF
@@ -322,19 +352,31 @@ norm() { # <file> — print it normalised (scratch root/work dir → <ROOT>/<TMP
   printf '%s' "$c" | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g'
 }
 
-SIGPIPE_NOISE_RE='^! .*: line [0-9]+: printf: write error: Broken pipe$'
-drop_sigpipe_noise() { # stdin → stdout minus the ONE stderr noise line (header); bytes else kept
-  local c f
-  c="$(cat; printf x)"; c="${c%x}"
-  f="$(printf '%s' "$c" | grep -vE "$SIGPIPE_NOISE_RE"; printf x)"; f="${f%x}"
+SIGPIPE_NOISE_RE='^! (.*/)?automate-lanes(\.d/[^/:]+)?\.sh: line [0-9]+: printf: write error: Broken pipe$'
+drop_sigpipe_noise() { # stdin → stdout minus the ONE stderr noise line (header); every other byte kept
+  local t n rc
+  # a file, never "$(cat)": command substitution drops NUL bytes (M10f)
+  t="$(mktemp "$WORK/noise.XXXXXX")" || return 1
+  cat > "$t"
+  # -a + C locale: a NUL (or, for GNU grep, an invalid multibyte byte) must not switch grep to
+  # binary mode, which prints `Binary file … matches` in place of every line after it. `env`, never
+  # a bare `LC_ALL=C grep` prefix: Homebrew bash 5.3 segfaults restoring its locale after one
+  # (docs/PITFALLS.md; scripts/check-locale-prefix.sh)
+  env LC_ALL=C grep -a -vE "$SIGPIPE_NOISE_RE" "$t" > "$t.f"; rc=$?
+  [ "$rc" -le 1 ] || { rm -f "$t" "$t.f"; return 1; }   # 1 = every line dropped; >1 = grep error
   # grep terminates its last line; keep a missing final newline missing, so the pin stays exact
-  case "$c" in *"
-"|"") ;; *) f="${f%"
-"}" ;; esac
-  printf '%s' "$f"
+  n="$(wc -c < "$t.f" | tr -d ' ')"
+  if [ -s "$t" ] && [ "$(tail -c 1 "$t" | od -An -tx1 | tr -d ' \n')" != 0a ] && [ "$n" -gt 0 ] \
+     && [ "$(tail -c 1 "$t.f" | od -An -tx1 | tr -d ' \n')" = 0a ]; then
+    head -c "$((n - 1))" "$t.f"
+  else
+    cat "$t.f"
+  fi
+  rm -f "$t" "$t.f"
 }
 
 stage_tree() { # <tree dir> <stage dir> — copy, then every `dot-<name>` component → `.<name>`
+  # (files too, deliberately — no `-type d`: see the header's tree/ entry)
   local p b t
   cp -R "$1/." "$2/" || return 1
   # deepest first, so a parent rename never invalidates a listed child path; every rename
@@ -428,7 +470,10 @@ run_case() { # <case dir>
   if ! cmp -s "$cw/a.md" "$cw/x.md"; then
     no "$name: run file differs"; diff -u "$cw/x.md" "$cw/a.md" | sed 's/^/    /'; bad=1
   fi
-  norm "$out" | drop_sigpipe_noise > "$cw/a.out"; norm "$cd_/expected.out" | drop_sigpipe_noise > "$cw/x.out"
+  # a failed (or crashed) filter leaves BOTH sides empty and equal — never compare that (M10g)
+  if ! norm "$out" | drop_sigpipe_noise > "$cw/a.out" || ! norm "$cd_/expected.out" | drop_sigpipe_noise > "$cw/x.out"; then
+    no "$name: step-output filter failed — output not compared"; return
+  fi
   if ! cmp -s "$cw/a.out" "$cw/x.out"; then
     no "$name: step output differs"; diff -u "$cw/x.out" "$cw/a.out" | sed 's/^/    /'; bad=1
   fi
@@ -489,12 +534,28 @@ leg_assert() { # <leg> <rc> <log> <must-contain>
 
 run_legs() {
   local d b rc anchor
+  # M0 — the unmutated control for M1–M3: the same freshly built bundle, NOT mutated, runs
+  # their three cases green. A red M1–M3 means something only while this is green.
+  local m0=0 c m13="drain-pinned-start-line-current-not-set resume-current-rebuild dismissed-findings-decision-step"
+  d="$WORK/m0"; b="$(build_bundle "$d")" || { no "M0: bundle not built"; b=""; }
+  if [ -n "$b" ]; then
+    rc="$(inner "$WORK/m0.log" GOLDEN_HELPERS="$b" GOLDEN_CASES="$m13")"
+    m0=1
+    for c in $m13; do grep -qF -- "ok: $c: run file + step output match" "$WORK/m0.log" || m0=0; done
+    if [ "$rc" -eq 0 ] && [ "$m0" = 1 ]; then
+      ok "M0: the unmutated bundle runs the M1–M3 cases green (exit 0)"
+    else
+      m0=0; no "M0: unmutated control exit $rc, wanted 0 with $m13 ok"; tail -n 15 "$WORK/m0.log" | sed 's/^/    /'
+    fi
+  fi
   # M1 — the drain-start guard's `owned drain started` alternative.
   d="$WORK/m1"; b="$(build_bundle "$d")" || { no "M1: bundle not built"; b=""; }
   if [ -n "$b" ]; then
     anchor="owned drain started)'"
     cp "$b" "$WORK/m1.orig"; mutate_file "$WORK/m1.orig" "$anchor" "owned drain startex)'" "$b"
-    if gate_mutant M1 "$WORK/m1.orig" "$b" "$anchor" 1; then
+    if [ "$m0" != 1 ]; then
+      no "M1: not judged — the M0 unmutated control is not green"
+    elif gate_mutant M1 "$WORK/m1.orig" "$b" "$anchor" 1; then
       rc="$(inner "$WORK/m1.log" GOLDEN_HELPERS="$b" GOLDEN_CASES=drain-pinned-start-line-current-not-set)"
       leg_assert M1 "$rc" "$WORK/m1.log" "FAIL: drain-pinned-start-line-current-not-set:"
     fi
@@ -504,7 +565,9 @@ run_legs() {
   if [ -n "$b" ]; then
     anchor='local msg="current_rebuilt:'
     cp "$b" "$WORK/m2.orig"; mutate_file "$WORK/m2.orig" "$anchor" 'local msg="current_rebuilx:' "$b"
-    if gate_mutant M2 "$WORK/m2.orig" "$b" "$anchor" 1; then
+    if [ "$m0" != 1 ]; then
+      no "M2: not judged — the M0 unmutated control is not green"
+    elif gate_mutant M2 "$WORK/m2.orig" "$b" "$anchor" 1; then
       rc="$(inner "$WORK/m2.log" GOLDEN_HELPERS="$b" GOLDEN_CASES=resume-current-rebuild)"
       leg_assert M2 "$rc" "$WORK/m2.log" "FAIL: resume-current-rebuild:"
     fi
@@ -521,6 +584,8 @@ run_legs() {
     mutate_file "$real" "$anchor" 'dismissex: $decision' "$d/automate-dismissed.sh"
     if [ -L "$d/automate-dismissed.sh" ]; then
       no "M3: mutant path is still a symlink"
+    elif [ "$m0" != 1 ]; then
+      no "M3: not judged — the M0 unmutated control is not green"
     elif gate_mutant M3 "$real" "$d/automate-dismissed.sh" "$anchor" 1; then
       rc="$(inner "$WORK/m3.log" GOLDEN_HELPERS="$b" GOLDEN_CASES=dismissed-findings-decision-step)"
       leg_assert M3 "$rc" "$WORK/m3.log" "FAIL: dismissed-findings-decision-step:"
@@ -559,6 +624,16 @@ run_legs() {
   else
     no "M6: fixture mutant not built"
   fi
+  # M6b — a `~/` home-relative path (the copied done briefs' old Project line) in a fixtures copy.
+  local db="reconcile-closeout-merged/tree/dot-supervisor/jobs/done/2026-10-15-af39a-sweep.md"
+  d="$WORK/m6b"; mkdir -p "$d"; cp -R "$FIX/." "$d/"
+  printf '%s\n' "- **Project:** ~/Documents/x" >> "$d/$db"
+  if [ -s "$d/$db" ] && [ -f "$FIX/$db" ] && ! cmp -s "$FIX/$db" "$d/$db"; then
+    rc="$(inner "$WORK/m6b.log" GOLDEN_FIXTURES="$d" GOLDEN_CASES=-)"
+    leg_assert M6b "$rc" "$WORK/m6b.log" "FAIL: home path in $db"
+  else
+    no "M6b: fixture mutant not built ($db)"
+  fi
   # M7 — a ``` line inside a ~~~ fence must not close it.
   d="$WORK/m7"; mkdir -p "$d"; cp "$PROSE_DIR"/*.md "$d/"
   printf '\n~~~\n```\n~~~\n\n### After mixed fence\n' >> "$d/per-item-loop.md"
@@ -567,6 +642,20 @@ run_legs() {
     leg_assert M7 "$rc" "$WORK/m7.log" "FAIL: unmapped unit per-item-loop.md|After mixed fence"
   else
     no "M7: prose mutant not built"
+  fi
+  # M7b — a ``` line inside a LONGER ```` fence must not close it (the fence-length branch):
+  # the heading inside stays content, and the fence still closes on its own ```` line.
+  d="$WORK/m7b"; mkdir -p "$d"; cp "$PROSE_DIR"/*.md "$d/"
+  printf '\n````\n```\n### Inside long fence\n````\n\n### After long fence\n' >> "$d/per-item-loop.md"
+  if [ -s "$d/per-item-loop.md" ] && ! cmp -s "$PROSE_DIR/per-item-loop.md" "$d/per-item-loop.md"; then
+    rc="$(inner "$WORK/m7b.log" GOLDEN_PROSE_DIR="$d" GOLDEN_CASES=-)"
+    if grep -qF -- "Inside long fence" "$WORK/m7b.log"; then
+      no "M7b: the heading inside the four-backtick fence was read as a unit"; grep -F -- "Inside long fence" "$WORK/m7b.log" | sed 's/^/    /'
+    else
+      leg_assert M7b "$rc" "$WORK/m7b.log" "FAIL: unmapped unit per-item-loop.md|After long fence"
+    fi
+  else
+    no "M7b: prose mutant not built"
   fi
   # M8 — a repeated heading.
   d="$WORK/m8"; mkdir -p "$d"; cp "$PROSE_DIR"/*.md "$d/"
@@ -588,13 +677,33 @@ run_legs() {
   else
     no "M9: scratch repo not built"
   fi
+  # M9b — as M9, plus ignored editor/OS junk in the copy: the real ignored fixture is still
+  # named, the junk is not (a dev checkout's stray .DS_Store / *.swp is no fixture).
+  d="$WORK/m9b"; mkdir -p "$d/fx"; cp -R "$FIX/." "$d/fx/"
+  mkdir -p "$d/fx/run-record-pr/tree/.supervisor"; printf 'x\n' > "$d/fx/run-record-pr/tree/.supervisor/leak"
+  printf 'x' > "$d/fx/.DS_Store"; printf 'x' > "$d/fx/run-record-pr/.steps.swp"
+  printf '%s\n' '*/**/.supervisor/' '.DS_Store' '*.swp' > "$d/.gitignore"
+  if git -C "$d" init -q . >/dev/null 2>&1 && git -C "$d" check-ignore -q fx/.DS_Store \
+     && git -C "$d" check-ignore -q fx/run-record-pr/.steps.swp \
+     && git -C "$d" check-ignore -q fx/run-record-pr/tree/.supervisor/leak; then
+    rc="$(inner "$WORK/m9b.log" GOLDEN_FIXTURES="$d/fx" GOLDEN_CASES=-)"
+    if grep -E -- '^FAIL: ignored fixture .*(\.DS_Store|\.swp)$' "$WORK/m9b.log" >/dev/null; then
+      no "M9b: ignored editor/OS junk was reported as a fixture"; grep -E -- '^FAIL: ignored fixture' "$WORK/m9b.log" | sed 's/^/    /'
+    else
+      leg_assert M9b "$rc" "$WORK/m9b.log" "FAIL: ignored fixture run-record-pr/tree/.supervisor/leak"
+    fi
+  else
+    no "M9b: scratch repo not built (want the junk and the leak all ignored)"
+  fi
   # M10 — the stderr noise rule is exactly one line wide.
   local wc_="gate-validation-waive" v ins
-  for v in a b c; do
+  for v in a a2 b c e; do
     case "$v" in
       a) ins='! <TMP>/bundle/automate-lanes.sh: line 3039: printf: write error: Broken pipe' ;;
+      a2) ins='! <TMP>/bundle/automate-lanes.d/readiness.sh: line 131: printf: write error: Broken pipe' ;;
       b) ins='! <TMP>/bundle/automate-lanes.sh: line 3039: echo: write error: Broken pipe' ;;
       c) ins='! unexpected stderr' ;;
+      e) ins='! <TMP>/bundle/automate-helpers.sh: line 3039: printf: write error: Broken pipe' ;;
     esac
     d="$WORK/m10$v"; mkdir -p "$d"; cp -R "$FIX/." "$d/"
     # insert before the SECOND `= ` line (the --waive step's exit code)
@@ -604,13 +713,13 @@ run_legs() {
        && [ "$(count_of "$ins" "$FIX/$wc_/expected.out")" = 0 ] && [ "$(count_of "$ins" "$d/$wc_/expected.out")" = 1 ] \
        && [ "$(wc -l < "$d/$wc_/expected.out")" -eq "$(( $(wc -l < "$FIX/$wc_/expected.out") + 1 ))" ]; then
       rc="$(inner "$WORK/m10$v.log" GOLDEN_FIXTURES="$d" GOLDEN_CASES="$wc_")"
-      if [ "$v" = a ]; then
+      if [ "$v" = a ] || [ "$v" = a2 ]; then
         if grep -qF -- "ok: $wc_: run file + step output match" "$WORK/m10$v.log" \
            && ! grep -qF -- "FAIL: $wc_:" "$WORK/m10$v.log" \
            && grep -qF -- "FAIL: sigpipe noise pinned in $wc_/expected.out" "$WORK/m10$v.log"; then
-          ok "M10a: Broken-pipe line dropped (case green), and the scrub names it as pinned"
+          ok "M10$v: Broken-pipe line dropped (case green), and the scrub names it as pinned"
         else
-          no "M10a: wanted case green + 'sigpipe noise pinned in $wc_/expected.out'"; tail -n 15 "$WORK/m10$v.log" | sed 's/^/    /'
+          no "M10$v: wanted case green + 'sigpipe noise pinned in $wc_/expected.out'"; tail -n 15 "$WORK/m10$v.log" | sed 's/^/    /'
         fi
       else
         leg_assert "M10$v" "$rc" "$WORK/m10$v.log" "FAIL: $wc_: step output differs"
@@ -627,6 +736,33 @@ run_legs() {
     ok "M10d: $wc_ green with SIGPIPE inherited as ignored"
   else
     no "M10d: inner run exit $rc under an ignored SIGPIPE, wanted 0 with $wc_ ok"; tail -n 15 "$WORK/m10d.log" | sed 's/^/    /'
+  fi
+  # M10f — the filter itself keeps every byte but the noise line: a NUL byte, the lines after
+  # it, and a missing final newline (`grep -a`; command substitution would drop the NUL).
+  printf 'keep1\000tail\n%s\nkeep2\nkeep3' '! <TMP>/bundle/automate-lanes.sh: line 1: printf: write error: Broken pipe' \
+    > "$WORK/m10f.in"
+  printf 'keep1\000tail\nkeep2\nkeep3' > "$WORK/m10f.want"
+  if [ "$(tr -d '\000' < "$WORK/m10f.in" | wc -c)" -lt "$(wc -c < "$WORK/m10f.in")" ] \
+     && ! cmp -s "$WORK/m10f.in" "$WORK/m10f.want"; then
+    drop_sigpipe_noise < "$WORK/m10f.in" > "$WORK/m10f.got" 2> "$WORK/m10f.err"
+    if cmp -s "$WORK/m10f.want" "$WORK/m10f.got" && [ ! -s "$WORK/m10f.err" ]; then
+      ok "M10f: noise filter keeps a NUL byte, every line after it and the missing final newline"
+    else
+      no "M10f: noise filter output differs from the input minus the noise line"
+      od -c "$WORK/m10f.got" | head -n 6 | sed 's/^/    /'; sed 's/^/    ! /' "$WORK/m10f.err"
+    fi
+  else
+    no "M10f: NUL-byte input not built"
+  fi
+  # M10g — a failing filter is a FAIL, never a match: a suite copy whose filter returns 139 at
+  # once (a crash's exit) leaves both sides empty; the case must still go red.
+  anchor='  t="$(mktemp "$WORK/noise.'"XXXXXX"'")" || return 1'   # split, so this line is not a 2nd copy
+  d="$WORK/m10g"; mkdir -p "$d"; ln -s "$HERE/hermetic-test-env.sh" "$d/hermetic-test-env.sh"
+  mutate_file "$SELF" "$anchor" '  return 139' "$d/$(basename "$SELF")"
+  if gate_mutant M10g "$SELF" "$d/$(basename "$SELF")" "$anchor" 1; then
+    env -u GOLDEN_WRITE GOLDEN_SKIP_LEGS=1 GOLDEN_HELPERS="$H" GOLDEN_PROSE_DIR="$PROSE_DIR" GOLDEN_FIXTURES="$FIX" \
+      GOLDEN_CASES="$wc_" bash "$d/$(basename "$SELF")" > "$WORK/m10g.log" 2>&1
+    leg_assert M10g "$?" "$WORK/m10g.log" "FAIL: $wc_: step-output filter failed"
   fi
   # M11 — the $PREV lint, on a fixtures copy of pick-time-lane-guard-park restored to its
   # pre-fix shape: the cache step dropped and the Progress step reading $PREV again.
