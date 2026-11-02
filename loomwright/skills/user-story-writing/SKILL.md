@@ -144,6 +144,12 @@ A requirement set has ONE plan doc, `<folder>/_BACKLOG.md` (the name `/automate 
 - [ ] Given [invalid state], when [action], then [clear error message]
 - [ ] Given [system unavailable], when [action], then [fallback behavior]
 
+### Non-goals
+- [What this story does not deliver: each exclusion the owner stated, plus scope deferred to a later phase — or `none`]
+
+### Owner decisions
+- [Each decision the owner made in this session (an answered question, a stated constraint) — or `none recorded`]
+
 ### Priority
 - [ ] MVP - Core functionality, must ship
 - [ ] Phase 2 - Important but not blocking launch
@@ -166,6 +172,10 @@ A requirement set has ONE plan doc, `<folder>/_BACKLOG.md` (the name `/automate 
 ### Handoff
 Ready for: `/orchestrator goal: "BD-XX"`
 
+## Validation (must pass before merge)
+1. **Static — [check]:** [what must pass; the project's own test or CI command when CLAUDE.md names one]
+2. **Running system — [what is shown]:** [the outcome observed live, e.g. a hook firing, an agent's live answer, a UI flow; only when nothing static can show it]
+
 ## Depends on
 none
 
@@ -187,6 +197,13 @@ src/notifications/shift-assigned.ts
 - **Check before handing off:** `automate-helpers.sh plan-waves <file|dir> --lint` (the `/automate` engine's helper script) prints `ok` / `ok (declared unknown)` or the exact bad line, its number and the reason for both sections, and exits 1 when either is missing or unparsable.
 
 Keep them as the story's last sections (or follow them with another `##` heading): an `###` heading does not end an H2 section, so its text would be read as a bad `Touches` line. The prose `### Dependencies` block stays for humans and is never parsed — `## Depends on` / `## Touches` are the machine-read declarations.
+
+**Non-goals, Owner decisions, Validation.** A run receives only the story file, so every story carries what the run must obey and the proof it must show:
+
+- `### Non-goals` — what the story does not deliver: each thing the owner excluded in the session, plus scope deferred to a later phase; `none` when nothing is excluded.
+- `### Owner decisions` — each decision the owner made in the session (an answered question, a stated constraint), in the owner's meaning; `none recorded` when no decision was made.
+- `## Validation (must pass before merge)` — **H2** in the persisted file, like `## Depends on` / `## Touches`, because the `/automate` validation gate reads only an H2 section; placed before `## Depends on`. A numbered list; each entry opens with a bold title: `N. **Static — <check>:** …` for tests, lint or a CI check (name the project's own test or CI command when CLAUDE.md names one), `N. **Running system — <what is shown>:** …` when the outcome can only be shown in a running system (a hook firing, an agent's live answer, a UI flow). The gate requires pasted evidence before READY for every entry whose title or text says "running system", so a static entry never uses those words, and a story with static entries only reads `none` there. Validation names the proof (what must be shown), never how to build it.
+- **Never an empty Validation.** A story with no nameable proof is not persisted with an empty section: it is a missing-proof flag, raised at the confirmation gate (Product Owner: Responsibilities 3a).
 
 ## Example: Staff Scheduling Story
 
@@ -212,6 +229,13 @@ Keep them as the story's last sections (or follow them with another `##` heading
 - [ ] Given an event in the past, when I try to assign, then I see "cannot modify past events" error
 - [ ] Given network failure during save, when assignment fails, then draft is preserved locally
 
+### Non-goals
+- Payroll export of assigned hours (BD-18)
+- Automatic shift suggestions (deferred to Phase 2)
+
+### Owner decisions
+- A double-booking is a warning the supervisor can dismiss, never a hard block
+
 ### Priority
 - [x] MVP - Core functionality, must ship
 
@@ -234,6 +258,10 @@ Keep them as the story's last sections (or follow them with another `##` heading
 
 ### Handoff
 Ready for: `/orchestrator goal: "BD-15"`
+
+## Validation (must pass before merge)
+1. **Static — test suite:** the project's test command passes, including a test that a double-booking shows the conflict warning
+2. **Running system — an assignment notifies the staff member:** in a running app, assign a staff member to an open shift; the shift shows as filled and the staff member receives the notification
 
 ## Depends on
 12-event-creation.md
@@ -292,6 +320,7 @@ Before finalizing a story:
 - [ ] Priority assigned (MVP/Phase 2/Nice-to-have)
 - [ ] Assumptions made explicit
 - [ ] Dependencies listed
+- [ ] `### Non-goals` and `### Owner decisions` written (`none recorded` when the owner decided nothing); `## Validation (must pass before merge)` has at least one entry, and an outcome only a running system can show has a Running system entry
 - [ ] `## Depends on` written (`none` when none) and `## Touches` filled from Scope — `plan-waves --lint` says `ok`
 - [ ] A set of 2+ items was planned with `plan-waves --explain`, reshaped where it serialised needlessly, and its waves and N are in the plan doc's `## Run` (§"Shaping a set for parallel waves")
 - [ ] Risks identified
