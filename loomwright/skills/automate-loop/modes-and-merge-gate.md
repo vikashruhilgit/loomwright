@@ -11,7 +11,7 @@
 
 - **resolve the PR** (fix + merge, or close), **OR**
 - **mark the item `skipped`/`abandoned`** in `## Queue` (§5), **OR**
-- **for `validation_unrun` only:** paste the step's fenced output into the PR body — `--resume`'s RECONCILE re-runs `validation-gate` and, on `ok`/`waived`, writes the READY park (§6 step 1),
+- **for `validation_unrun` only:** add the declared verdict line (`Verdict: PASS for Validation <n>`, column 0, outside any fence) and the step's fenced output to the step's `docs/evidence/<slug>.md` on the PR branch, a file the PR adds or changes — `--resume`'s RECONCILE re-runs `validation-gate` and, on `ok`/`waived`, writes the READY park (§6 step 1),
 
 then `--resume`.
 
