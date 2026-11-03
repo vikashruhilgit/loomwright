@@ -119,6 +119,9 @@ ev_set '' 'src/a.sh docs/evidence/sub/y.md' "x.md=$EVOK"
 check "EV6c the PR changes no docs/evidence/*.md file ⇒ unrun naming that, and no listing call" \
   "$(ev)|$(grep -c 'contents/docs/evidence' "$EV_CALLS" | tr -d ' ')" \
   "validation-gate: unrun — V2 Running system: no evidence in the PR body; the PR adds or changes no docs/evidence/*.md file$EVFIX|0"
+ev_set '' 'docs/evidence/gone.md' "x.md=$EVOK"
+check "EV6d a changed evidence path absent at the head (the PR deleted it) is no candidate ⇒ unrun naming the head" "$(ev)" \
+  "validation-gate: unrun — V2 Running system: no evidence in the PR body; the PR adds or changes no docs/evidence/*.md file at ${EV_SHA:0:7}$EVFIX"
 
 # EV7 AC7: a file declaring one step evidences only that step.
 ev_set '' 'docs/evidence/x.md' 'x.md=# E\n\nVerdict: PASS for Validation 3\n\n```\nmerged\n```\n'
@@ -168,6 +171,9 @@ check "EV10f a candidate name outside [A-Za-z0-9._-] is never read ⇒ NOT-RUN w
 ev_set '' 'docs/evidence/x.md' "x.md=$EVOK"
 check "EV10g lane-readiness: the changed-file list unreadable ⇒ the V2 row NOT-RUN with the same reason" \
   "$(EV_FAIL=view ev_rd)" "  - V2 Running system: NOT-RUN — no evidence in the PR body; evidence files unreadable: the PR's changed-file list ($EVPR)$EVFIX"
+check "EV10h an evidence cache dir that cannot be created ⇒ NOT-RUN with the reason (never a missing row)" \
+  "$( ( export LOOMWRIGHT_GH_BIN="$T/ev-gh"; . "$S"; _lanes_validation_rows "$EV/reqs/one.md" "$EV_BODY" 1 "$EVPR" /dev/null/ev ) 2>/dev/null | awk -F'\t' '$1 == 2 { print $4 "|" $5 }')" \
+  "NOT-RUN|no evidence in the PR body; evidence files unreadable: no scratch dir$EVFIX"
 
 # EV11 AC11: an unrun step's remedy points at the evidence file, never at the PR body.
 ev_voc=""
