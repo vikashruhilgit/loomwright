@@ -299,7 +299,12 @@ EOF
 chmod +x "$T/vg-gh402" "$T/vg-ghbody"
 vg() { LOOMWRIGHT_GH_BIN="${VG_GH:-$T/vg-gh402}" LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" bash "${VG_S:-$S}" validation-gate "$@" 2>&1; }
 vgb() { printf "$1" > "$T/vg.body"; VG_BODY="$T/vg.body" VG_GH="$T/vg-ghbody" vg "$VGRF" "${2:-reqs/pa16.md}" "$VGPR"; }
-AL1_WANT="validation-gate: unrun — V2 Running system: no evidence in the PR body"
+# vgx <n> [<reason>] — the evidence-file half an unrun step's text gains (evidence.sh): these stubs answer every
+# `pr view` with the body alone, so the PR's changed-file list reads unreadable (fail CLOSED) and the text names
+# it, then the remedy. Part 07 covers the evidence files themselves.
+vgx() { local why="the PR's changed-file list ($VGPR)"; [ -n "${2:-}" ] && why="$2"
+  printf '; evidence files unreadable: %s — add `Verdict: PASS for Validation %s` and the fenced output to the step'"'"'s docs/evidence/ file in this PR' "$why" "$1"; }
+AL1_WANT="validation-gate: unrun — V2 Running system: no evidence in the PR body$(vgx 2)"
 out="$(vg "$VGRF" reqs/pa16.md "$VGPR")"; rc=$?
 check "AL1 AC1 #402 replay (pa/16 Validation + PR #402 body) ⇒ unrun naming the Running system step, exit 0" "$rc|$out" "0|$AL1_WANT"
 check "AL1b the dispatcher delegates validation-gate (same verdict through automate-helpers.sh)" \
@@ -313,7 +318,7 @@ out="$(vgb '## Test Plan\nValidation 2 — Running system: three clones at once\
 check "AL2 AC2 every running-system step pasted with fenced output ⇒ ok" "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
 out="$(vgb '## Not verified\n- **Running system:** three clones at once\n```\nnot run: machine shared\n```\n')"
 check "AL3 a step whose evidence sits under a \"Not verified\" heading ⇒ NOT-RUN ⇒ unrun (fenced output there is no evidence)" \
-  "$out" "validation-gate: unrun — V2 Running system: listed under a \"Not verified\" / \"Not run\" heading in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: listed under a \"Not verified\" / \"Not run\" heading in the PR body$(vgx 2)"
 out="$(vgb '## Evidence\n### Not run in this lane\nValidation 2 — running system\n```\nx\n```\n')"
 has "AL3b … also under a nested \"Not run\" sub-heading" "$out" "unrun — V2 Running system: listed under"
 out="$(vgb '## Test Plan\nValidation 2 — running system\n```\nFAIL - load1 63.6\n```\n')"
@@ -322,11 +327,11 @@ check "AL4 pasted output showing FAIL counts as not evidenced ⇒ unrun" "$out" 
 # and evidence is attributed to the step (not to every fence in its section).
 out="$(vgb '## Not verified\n```\n# machine busy\n$ uptime\n```\n- **Running system:** three clones at once, skipped\n```\n$ date\n```\n')"
 check "AL11 a \`#\` comment inside a fence is not a heading: the \"Not verified\" heading still governs ⇒ unrun" \
-  "$out" "validation-gate: unrun — V2 Running system: listed under a \"Not verified\" / \"Not run\" heading in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: listed under a \"Not verified\" / \"Not run\" heading in the PR body$(vgx 2)"
 out="$(vgb '## Not verified\n```\n#!/usr/bin/env bash\n## step one\n```\nValidation 2 — running system\n```\npeak 31\n```\n')"
 has "AL11b … nor a \`#!\` shebang or a \`## \` line inside a fence" "$out" "unrun — V2 Running system: listed under a \"Not verified\""
 out="$(vgb '## Test Plan\n```\n# Validation 2 running system\n```\n')"
-check "AL11c a match inside a fence never starts the step's evidence window" "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body"
+check "AL11c a match inside a fence never starts the step's evidence window" "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body$(vgx 2)"
 printf '# r\n## Validation\n1. **Running system:** reproduce the freeze with three clones at once.\n2. **Repro:** must catch the mutation.\n' > "$VG/reqs/repro.md"
 check "AL12 a Running system step whose first line says \"reproduce\" is still gated (title outranks the repro rule)" \
   "$(VG_GH="$T/vg-no-gh" vg "$VGRF" reqs/repro.md "$VGPR")" "validation-gate: unrun — V1 Running system: PR body unreadable ($VGPR)"
@@ -337,26 +342,26 @@ check "AL12c item side: a fenced \`## \` / \`- \` line neither ends ## Validatio
   "$( ( . "$S"; _lanes_validation_rows "$VG/reqs/fence.md" /dev/null 0 ) | cut -f1,3 | tr '\t\n' ':,')" "1:other,2:running-system,"
 out="$(vgb '## Test Plan\n- Running system (three clones): not run, machine shared.\n- unrelated bullet\n  ```\n  x\n  ```\n')"
 check "AL13 (a) a matched line saying \"not run\" ⇒ NOT-RUN even with a fence later in the section" \
-  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body$(vgx 2)"
 out="$(vgb '## Test Plan\n- Running system (three clones): deferred.\n- unrelated bullet\n  ```\n  x\n  ```\n')"
 check "AL13b a bullet-started match ends at the next sibling bullet (its fence is not this step's evidence)" \
-  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output"
+  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output$(vgx 2)"
 out="$(vgb '## Test Plan\n**Not verified:**\n- Running system three clones\n```\nx\n```\n')"
 check "AL14 (b) a whole-line bold **Not verified:** is a heading ⇒ unrun" \
-  "$out" "validation-gate: unrun — V2 Running system: listed under a \"Not verified\" / \"Not run\" heading in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: listed under a \"Not verified\" / \"Not run\" heading in the PR body$(vgx 2)"
 out="$(vgb '## Summary\nFixes the running system freeze.\n\nExample:\n```\nx\n```\n')"
 check "AL15 (c) a generic \"running system\" mention in the Summary does not borrow the next paragraph's fence ⇒ unrun" \
-  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output"
+  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output$(vgx 2)"
 out="$(vgb '## Test Plan\n### Validation 2 — running system\n\nRan three clones:\n\n```\n# load\npeak load1 31.2\n```\n')"
 check "AL16 a heading-started step still owns its whole section (fence with a \`#\` line inside) ⇒ ok" "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
 # Review iteration 2: a not-run statement on ANY non-fenced line of the step's passage, an anchored step
 # keeping its own intro paragraph, and no title-keyed evidence for a title two entries share.
 out="$(vgb '## Test Plan\n- **Running system:** three clones\n  Not run: machine shared\n  ```\n  load1 82\n  ```\n')"
 check "AL17 bullet form: \"Not run\" on the line AFTER the match, a fence following ⇒ unrun" \
-  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body$(vgx 2)"
 out="$(vgb '## Test Plan\n### Validation 2 - running system\nNot run, machine shared.\n```\nload1 82\n```\n')"
 check "AL17b heading form: \"Not run\" in the section body, a fence following ⇒ unrun" \
-  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body$(vgx 2)"
 out="$(vgb '## Test Plan\nValidation 2 — running system: three clones\n```\n3 skipped, 0 not run, peak load1 31\n```\n')"
 check "AL17c … but \"skipped\" / \"not run\" inside the pasted output is output, not the PR's statement ⇒ ok" \
   "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
@@ -365,37 +370,37 @@ check "AL18 AC2 an anchored step keeps its intro paragraph (\"Output:\") and the
   "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
 out="$(vgb '## Test Plan\nValidation 1 — running system: no, the smoke run.\n```\nok\n```\n')"
 check "AL18b a title mention on another step's anchored line is never borrowed ⇒ unrun" \
-  "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body$(vgx 2)"
 printf '# t\n## Validation\n- **Running system:** three clones at once.\n- **Running system:** a rerun on a quiet machine.\n' > "$VG/reqs/twin.md"
 out="$(vgb '## Test Plan\n- **Running system:** three clones\n  ```\n  peak load1 31\n  ```\n## Not verified\n- the quiet-machine rerun: deferred\n' reqs/twin.md)"
 check "AL19 two entries titled \"Running system\": one generic passage evidences neither (no title match) ⇒ unrun" \
-  "$out" "validation-gate: unrun — V1 Running system: no evidence in the PR body"
+  "$out" "validation-gate: unrun — V1 Running system: no evidence in the PR body$(vgx 1)"
 out="$(vgb '## Test Plan\nValidation 1 — running system, three clones:\n```\npeak load1 31\n```\n## Not verified\n- the quiet-machine rerun: deferred\n' reqs/twin.md)"
 check "AL19b … each needs its own \"validation <n>\": only V1 anchored ⇒ unrun naming V2" \
-  "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body$(vgx 2)"
 out="$(vgb '## Test Plan\nValidation 1 — three clones:\n```\npeak load1 31\n```\nValidation 2 — quiet machine:\n```\npeak load1 4\n```\n' reqs/twin.md)"
 check "AL19c … both anchored with output ⇒ ok — 2 steps" "$out" "validation-gate: ok — 2 running-system step(s) evidenced"
 # Review iteration 3: an anchored passage crosses a paragraph break only after an intro line ending in
 # `:`, and the wider not-run vocabulary (outside fences only).
 out="$(vgb '## Test Plan\nValidation 2 - running system: could not get to this, machine shared.\n\nUnit test output:\n```\nok\n```\n')"
 check "AL20 repro A: \"could not get to this.\" + a later paragraph's fence ⇒ unrun (never ok)" \
-  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body$(vgx 2)"
 out="$(vgb '## Test Plan\nValidation 2 - running system: not yet run; needs a quiet machine.\n\nCI is green on the branch.\n\nShellcheck output:\n```\nok\n```\n')"
 check "AL20b repro B: \"not yet run\" + unrelated paragraphs + a fence ⇒ unrun" \
-  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body$(vgx 2)"
 out="$(vgb '## Test Plan\nValidation 2 - running system: deferred; needs a quiet machine.\n\nCI is green on the branch.\n\nShellcheck output:\n```\nok\n```\n')"
 check "AL20c the boundary alone (no not-run words): an unrelated paragraph after the step's sentence closes the passage ⇒ unrun" \
-  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output"
+  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output$(vgx 2)"
 out="$(vgb '## Test Plan\nValidation 2 (running system):\n\nRan three clones:\n\n```\npeak load1 31\n```\n')"
 check "AL20d an intro chain ending in \":\" keeps the fence (U13c shape, running-system step) ⇒ ok" \
   "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
 out="$(vgb '## Test Plan\nValidation 2 - running system: deferred.\n\nWe ran the unit tests\ninstead.\n\nOutput:\n```\nok\n```\n')"
 check "AL20g an intro paragraph is crossed into only at the passage's FIRST break ⇒ unrun" \
-  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output"
+  "$out" "validation-gate: unrun — V2 Running system: mentioned in the PR body without pasted output$(vgx 2)"
 vg_voc=""
 for ph in "not yet run" "wasn't run" "was not run" "couldn't run" "could not run" "could not get to it" "not tested" "untested"; do
   out="$(vgb "## Test Plan\nValidation 2 - running system: $ph.\n\`\`\`\npeak load1 31\n\`\`\`\n")"
-  [ "$out" = "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body" ] || vg_voc="$vg_voc [$ph: $out]"
+  [ "$out" = "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body$(vgx 2)" ] || vg_voc="$vg_voc [$ph: $out]"
 done
 check "AL20e the not-run vocabulary (not yet run / wasn't / was not / couldn't / could not run / could not get to / not tested / untested) ⇒ unrun even with a fence" "${vg_voc:-none}" none
 out="$(vgb '## Test Plan\nValidation 2 - running system: three clones\n```\nuntested: 0, not tested: 0, peak load1 31\n```\n')"
@@ -407,7 +412,7 @@ check "AL21 mixed numbered + bulleted section: entries numbered 1, 2 (never two 
   "$( ( . "$S"; _lanes_validation_rows "$VG/reqs/mixed.md" /dev/null 0 ) | cut -f1,3 | tr '\t\n' ':,')" "1:other,2:running-system,"
 out="$(vgb '## Test Plan\nValidation 1: baseline\n```\nok 12 passed\n```\n' reqs/mixed.md)"
 check "AL21b the drain repro: the Baseline's \"Validation 1\" never evidences the Running system bullet ⇒ unrun" \
-  "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body$(vgx 2)"
 out="$(vgb '## Test Plan\nValidation 1: baseline\n```\nok 12 passed\n```\nValidation 2: three clones\n```\npeak load1 31\n```\n' reqs/mixed.md)"
 check "AL21c … the Running system bullet evidenced by its own \"Validation 2\" ⇒ ok" "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
 printf '# m\n## Validation\n- **Smoke:** x\n3. **Baseline:** tests green.\n- **Running system:** three clones.\n' > "$VG/reqs/mixed2.md"
@@ -434,7 +439,7 @@ for st in star plus paren; do
   r="$( ( . "$S"; _lanes_validation_rows "$VG/reqs/$st.md" /dev/null 0 ) | cut -f1,3 | tr '\t\n' ':,')"
   [ "$r" = "1:other,2:running-system," ] || vg_ls="$vg_ls [$st rows: $r]"
   out="$(vgb '## Test Plan\nValidation 1: baseline\n```\nok 12 passed\n```\n' "reqs/$st.md")"
-  [ "$out" = "validation-gate: unrun — V2 Running system: no evidence in the PR body" ] || vg_ls="$vg_ls [$st unevidenced: $out]"
+  [ "$out" = "validation-gate: unrun — V2 Running system: no evidence in the PR body$(vgx 2)" ] || vg_ls="$vg_ls [$st unevidenced: $out]"
   out="$(vgb '## Test Plan\nValidation 2: three clones\n```\npeak load1 31\n```\n' "reqs/$st.md")"
   [ "$out" = "validation-gate: ok — 1 running-system step(s) evidenced" ] || vg_ls="$vg_ls [$st evidenced: $out]"
 done
@@ -465,7 +470,7 @@ out="$(vgb '## Test Plan\nValidation 2 - running system: three clones; the machi
 check "AL22g the not-run vocabulary is whole phrases: \"not running hot\" is not \"not run\" ⇒ ok" "$out" "validation-gate: ok — 1 running-system step(s) evidenced"
 out="$(vgb '## Test Plan\nValidation 2 - running system: not run (needs a quiet machine).\n```\npeak load1 31\n```\n')"
 check "AL22h … while \"not run\" as its own phrase still marks the step ⇒ unrun" \
-  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body"
+  "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body$(vgx 2)"
 out="$(VG_GH="$T/vg-no-gh" vg "$VGRF" reqs/pa16.md "$VGPR")"; rc=$?
 check "AL6 AC6 gh unreadable ⇒ unrun (fail CLOSED, exit 0)" "$rc|$out" "0|validation-gate: unrun — V2 Running system: PR body unreadable ($VGPR)"
 check "AL6b AC6 no PR url ⇒ unrun" "$(vg "$VGRF" reqs/pa16.md "")" "validation-gate: unrun — V2 Running system: PR body unreadable: no PR recorded"

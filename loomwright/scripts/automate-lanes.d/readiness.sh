@@ -2,7 +2,9 @@
 # lane-readiness <lane_dir|L<n>> — writes <lane>/.supervisor/automate/<run_id>.merge-readiness.md
 # (advisory, never a merge executor). Five checks, each PASS / FAIL / NOT-RUN with its evidence:
 #   validation     each `## Validation` entry of the item: PASS only with pasted output (a fenced block)
-#                  in the PR body's matching section; mentioned without output, or absent ⇒ NOT-RUN
+#                  in the PR body's matching section, or — for a step the body leaves NOT-RUN — a declared
+#                  `Verdict: PASS for Validation <n>` line + fenced output in a docs/evidence/*.md file the
+#                  PR adds or changes (evidence.sh); mentioned without output, or absent ⇒ NOT-RUN
 #   carried-notes  the brief's carried MEDIUM/LOW Plan Review notes, accounted for in the PR body
 #   scope-fence    `gh pr diff --name-only` ⊆ the item's Touches set as the planner reserved it (`plan-waves
 #                  --touches`: strict grammar + companions) / the brief's lanes + changelog.d/; advisory —
@@ -83,7 +85,7 @@ _lanes_rd_section() {
     END { if (mode == "nv") { if (nv) print "NV"; else if (nl) print "NL" } }' "$3"
 }
 
-# _lanes_validation_rows <item_file> <body_file> <gh_ok> [<pr>] — THE Validation reader, shared by
+# _lanes_validation_rows <item_file> <body_file> <gh_ok> [<pr>] [<evdir>] — THE Validation reader, shared by
 # lane-readiness and validation-gate (af36-remainder/01: no second parser). One TSV row per entry of
 # the item's `## Validation` section:  n<TAB>title<TAB>kind<TAB>status<TAB>evidence
 #   entries   a column-0 numbered line (`N. ` or `N) `) OR a column-0 `- ` / `* ` / `+ ` bullet; an indented line, or an unindented one right after it (no blank line between),
@@ -109,6 +111,15 @@ _lanes_rd_section() {
 #             non-fenced matched line saying "not run" / "skipped" / "not verified" (or another phrase of
 #             _lanes_rd_section's not-run set) ⇒ NOT-RUN; no fence
 #             line ⇒ NOT-RUN; a non-repro entry whose output shows the word FAIL ⇒ FAIL; else PASS
+#   evidence  files — only with <evdir> (a scratch dir the caller removes): a body PASS / FAIL is final;
+#             a body NOT-RUN row of a READABLE body (never an unreadable body — it might hold a final
+#             FAIL — and never a duplicate-number row) is looked
+#             up in the docs/evidence/*.md files the PR adds or changes (evidence.sh, _lanes_ev_step):
+#             a declared `Verdict: PASS for Validation <n>` + fenced output ⇒ PASS, evidence `declared
+#             PASS with fenced output in <path>`; anything else keeps the body's text and appends the
+#             file's (`; <path>: declared FAIL` ⇒ FAIL, or a NOT-RUN reason + the remedy: add the
+#             verdict line and the fenced output to the step's docs/evidence/ file). Without <evdir>
+#             no file is read and no gh call is made (the waiver lookup, the gate's no-PR pre-check)
 #   unique    an entry whose title (case-insensitive) equals or is contained in another entry's title
 #             gets NO title match — e.g. two `- **Running system:**` bullets — so one passage can never
 #             evidence two steps: each needs its own "validation <n>" in the PR body, else NOT-RUN
@@ -118,7 +129,8 @@ _lanes_rd_section() {
 # An unreadable item file, or one with no `## Validation` section, prints nothing (callers that must
 # fail CLOSED check readability themselves).
 _lanes_validation_rows() {
-  local itemf="$1" body="$2" gh_ok="$3" pr="${4:-}" n title kind tm st ev sec nvs ents titles
+  local itemf="$1" body="$2" gh_ok="$3" pr="${4:-}" evdir="${5:-}" n title kind tm st ev sec nvs ents titles evr tab
+  tab="$(printf '\t')"
   ents="$(awk '
     function flush() {
       if (!cur) return
@@ -174,6 +186,17 @@ _lanes_validation_rows() {
       elif ! grep -qE '^[[:space:]]*(```|~~~)' <<<"$sec"; then st=NOT-RUN; ev="mentioned in the PR body without pasted output"
       elif [ "$kind" != repro ] && grep -qw 'FAIL' <<<"$sec"; then st=FAIL; ev="pasted output shows FAIL"
       else st=PASS; ev="pasted output in the PR body"; fi
+    fi
+    # The evidence files: only a body NOT-RUN row of a READABLE body and a unique number, and only with an
+    # <evdir>. An unreadable body is never looked up: it might hold a FAIL (final), so no file can lift it.
+    if [ "$st" = NOT-RUN ] && [ "$gh_ok" != 0 ] && [ "$du" != 1 ] && [ -n "$evdir" ]; then
+      evr="$(_lanes_ev_step "$evdir" "$pr" "$n")"
+      case "$evr" in
+        PASS"$tab"*) st=PASS; ev="${evr#PASS"$tab"}" ;;
+        FAIL"$tab"*) st=FAIL; ev="$ev; ${evr#FAIL"$tab"}" ;;
+        NOT-RUN"$tab"?*) ev="$ev; ${evr#NOT-RUN"$tab"}" ;;
+        *) ev="$ev; evidence files unreadable: no result from the evidence reader" ;;
+      esac
     fi
     printf '%s\t%s\t%s\t%s\t%s\n' "$n" "$title" "$kind" "$st" "$ev"
   done
@@ -238,11 +261,14 @@ lanes_readiness() {
   tmp="$(mktemp -d 2>/dev/null)" || die "lane-readiness: no temp dir"
   : > "$tmp/body"; : > "$tmp/files"
   if [ -n "$pr" ] && view="$("$LANES_GH" pr view "$pr" --json body,headRefOid 2>/dev/null)" && jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view"; then
-    gh_ok=1; jq -r '.body // ""' <<<"$view" > "$tmp/body"; head="$(jq -r '.headRefOid // "unknown"' <<<"$view")"
+    head="$(jq -r '.headRefOid // "unknown"' <<<"$view")"
+    # The body must be a string AND written: a missing body or a failed write is unreadable (validation-gate's
+    # own test), never an empty body — an empty one would send every step to the evidence-file lookup.
+    jq -e '.body | type == "string"' >/dev/null 2>&1 <<<"$view" && jq -r '.body' <<<"$view" > "$tmp/body" && gh_ok=1
   fi
   # ---- a + e: Validation entries (the shared reader — validation-gate reads the same rows)
   local vrows="" erows="" n title kind st ev vworst=PASS eworst=PASS vlabel=""
-  _lanes_validation_rows "$itemf" "$tmp/body" "$gh_ok" "$pr" > "$tmp/val"
+  _lanes_validation_rows "$itemf" "$tmp/body" "$gh_ok" "$pr" "$tmp/ev" > "$tmp/val"
   while IFS="$(printf '\t')" read -r n title kind st ev; do
     [ -n "$n" ] || continue
     if [ "$kind" = repro ]; then
@@ -364,20 +390,27 @@ lanes_readiness() {
 # ==================================================================================================
 # validation-gate <runfile> <item> <pr_url> [--waive <n> --words <text>] (af36-remainder/01) — the
 # READY-park correctness gate: every "Running system" step of the item's `## Validation` section must
-# have pasted evidence in the PR body (the shared reader, _lanes_validation_rows). Takes the run file and
+# have pasted evidence in the PR body, or — for a step the body leaves NOT-RUN — a declared `Verdict: PASS
+# for Validation <n>` line + fenced output in a docs/evidence/*.md file the PR adds or changes (the
+# shared reader, _lanes_validation_rows, with evidence.sh's file lookup). Takes the run file and
 # the item explicitly (never _lane_ctx), so a lane and a sequential run call it the same way. A relative
 # <item> resolves against the checkout owning <runfile> (<root>/.supervisor/automate/<run>.md), else $PWD.
 # Read-only form — fails CLOSED, prints EXACTLY one line, always exits 0 (stdout IS the verdict):
 #   validation-gate: none — no running-system step in <item>
-#   validation-gate: ok — <k> running-system step(s) evidenced
+#   validation-gate: ok — <k> running-system step(s) evidenced[ (V<n> in <path>[, V<m> in <path>…])]
+#                                                               the parenthesis only when an evidence
+#                                                               file evidenced a step (else today's line)
 #   validation-gate: waived — V<n> <title>[; V<m> <title>…]   every non-PASS running-system step waived
 #   validation-gate: unrun — V<n> <title>: <evidence>          the first non-PASS, un-waived one (FAIL too)
 #   validation-gate: unrun — <reason>                           unreadable item file, usage error
 #   validation-gate: unrun — <item>: the ## Validation section has no parseable entry (…)   (step-less)
 # A readable item with no running-system step is `none` without reading the PR — but a `## Validation`
 # section the reader parses to zero entries is `unrun`, never `none`; an unreadable PR body
-# makes every step NOT-RUN, so any running-system step reads `unrun`. Callers treat anything but
-# none / ok / waived as unrun.
+# makes every step NOT-RUN with no evidence-file lookup (a file can never lift a step whose body might
+# say FAIL), so any running-system step reads `unrun`. Callers treat anything but
+# none / ok / waived as unrun. An unrun step's evidence text ends in the remedy (add the declared verdict
+# line and the fenced output to the step's docs/evidence/ file) — except `PR body unreadable`, which no
+# file can fix — never "paste into the PR body".
 # Waiver form (--waive <n> --words <text>) — called by the engine ONLY with an interactive owner's
 # answer, never on a can't-ask path — appends ONE `## Progress` line through progress-append:
 #   <utc> validation waived: <item> V<n> <title> — owner: "<text>"
@@ -477,19 +510,22 @@ lanes_validation_gate() {
   if ! awk -F'\t' '$3 == "running-system" { f = 1 } END { exit !f }' <<<"$rows"; then
     echo "$G none — no running-system step in $item"; return 0
   fi
-  local tmp view gh_ok=0 k=0 waived="" after=""
+  local tmp view gh_ok=0 k=0 waived="" after="" fe=""
   tmp="$(mktemp -d 2>/dev/null)" || { echo "$G unrun — no temp dir"; return 0; }
   : > "$tmp/body"
   if [ -n "$pr" ] && view="$("$LANES_GH" pr view "$pr" --json body 2>/dev/null)" && jq -e 'type == "object" and (.body | type == "string")' >/dev/null 2>&1 <<<"$view"; then
-    gh_ok=1; jq -r '.body' <<<"$view" > "$tmp/body"
+    jq -r '.body' <<<"$view" > "$tmp/body" && gh_ok=1   # a failed write is an unreadable body, never an empty one
   fi
-  rows="$(_lanes_validation_rows "$itemf" "$tmp/body" "$gh_ok" "$pr")"
+  rows="$(_lanes_validation_rows "$itemf" "$tmp/body" "$gh_ok" "$pr" "$tmp/ev")"
   after="$(_lanes_vg_after_pick "$rf" "$item")" || after=""
   rm -rf "$tmp"
   while IFS="$tab" read -r n title kind st ev; do
     [ "$kind" = running-system ] || continue
     k=$((k + 1))
-    [ "$st" = PASS ] && continue
+    if [ "$st" = PASS ]; then
+      case "$ev" in "$_LANES_EV_PASS"*) fe="$fe${fe:+, }V$n in ${ev#"$_LANES_EV_PASS"}" ;; esac
+      continue
+    fi
     if [ -n "$after" ] && _lanes_vg_has "$after" "validation waived: ${item#./} V$n $title — owner: \""; then
       waived="$waived${waived:+; }V$n $title"; continue
     fi
@@ -500,6 +536,7 @@ EOF
   # Fail CLOSED: the pre-check saw a running-system step, so zero rows here is a reader failure, never `ok`.
   if [ "$k" = 0 ]; then echo "$G unrun — the Validation reader returned no running-system row for $item"; return 0; fi
   if [ -n "$waived" ]; then echo "$G waived — $waived"; return 0; fi
+  if [ -n "$fe" ]; then echo "$G ok — $k running-system step(s) evidenced ($fe)"; return 0; fi
   echo "$G ok — $k running-system step(s) evidenced"
   return 0
 }
