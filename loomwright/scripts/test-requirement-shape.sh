@@ -25,11 +25,14 @@
 #        and the H2 before `## Depends on`; the validation gate (`automate-helpers.sh validation-gate`)
 #        reads its Running system entry, and reads `none` once that entry is removed. The PO agent's
 #        Output Format and its command mirror carry the same three heading texts (any level) in their
-#        story block; the Persist step says the Validation section is written at H2 in the file
+#        story block; the Persist step says the Validation section is written at H2 in the file.
+#        The template's Running system entry names where its output goes: `docs/evidence/<slug>.md`
+#        `with its declared verdict line` (that phrase on exactly one line of the skill)
 #   MUTATION CONTROLS (each must turn its check red): (M1) the template's status stamp deleted
 #   ⇒ S2 fails (the plan doc is enqueued); (M2) one required section deleted ⇒ S1 fails;
 #   (M3) the "count by hand" sentence restored in the skill ⇒ S5 fails; (M4) the Story Template's
-#   Validation heading deleted while the item shape's identical line survives ⇒ S6 fails.
+#   Validation heading deleted while the item shape's identical line survives ⇒ S6 fails; (M5) the
+#   Running system entry's `with its declared verdict line` deleted ⇒ S6's evidence-file check fails.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -200,6 +203,15 @@ case "$vg" in "validation-gate: unrun — V"*"Running system"*) vg_rs=1 ;; *) vg
 case "$vgs" in "validation-gate: none — "*) vg_none=1 ;; *) vg_none=0 ;; esac
 if [ "$vg_rs" = 1 ] && [ "$vg_none" = 1 ]; then ok "(S6) validation gate reads the template's Running system entry, and none without it"
 else no "(S6) validation gate on the template: '$vg' / static-only: '$vgs'"; fi
+# The template's Running system entry names its evidence file and the declared verdict line the gate
+# reads there. story_rs_ok <template> — 0 when one Running system entry line carries both.
+VERDICT_PH='with its declared verdict line'
+story_rs_ok() {
+  grep -E '^[0-9]+\. \*\*Running system' "$1" | grep -F -- 'docs/evidence/<slug>.md' | grep -qF -- "$VERDICT_PH"
+}
+if story_rs_ok "$STPL" && [ "$(grep -cF -- "$VERDICT_PH" "$SKILL")" = 1 ]; then
+  ok "(S6) Story Template: the Running system entry's output goes in docs/evidence/<slug>.md $VERDICT_PH (one line in the skill)"
+else no "(S6) Story Template: the Running system entry lacks 'docs/evidence/<slug>.md … $VERDICT_PH', or the phrase is not on exactly one skill line"; fi
 # Each copy (PO Output Format story block, command mirror): the same heading texts, any level.
 for f in "$PO_AGENT" "$PO_CMD"; do
   blk="$(awk '/^## User Stories$/{s=1; next} /^## Scope Analysis$/{s=0} s' "$f")"
@@ -249,6 +261,17 @@ else
   if [ -s "$T/m4.md" ] && ! story_template_ok "$T/m4.md" >/dev/null; then
     ok "(M4) control: without the Story Template's Validation heading S6 fails, though the item shape's line survives"
   else no "(M4) control did not discriminate: the item shape's (or another) Validation line satisfied S6"; fi
+fi
+
+# (M5) the Running system entry's declared-verdict phrase deleted ⇒ S6's evidence-file check must fail.
+VERDICT_PH="$VERDICT_PH" awk '{ i = index($0, ENVIRON["VERDICT_PH"]); if (i) $0 = substr($0, 1, i - 1) substr($0, i + length(ENVIRON["VERDICT_PH"])); print }' \
+  "$SKILL" > "$T/m5-skill.md"
+if [ ! -s "$T/m5-skill.md" ] || cmp -s "$SKILL" "$T/m5-skill.md"; then no "(M5) mutant not built (no '$VERDICT_PH' in the skill)"
+else
+  extract_story_template "$T/m5-skill.md" > "$T/m5.md"
+  if [ -s "$T/m5.md" ] && ! story_rs_ok "$T/m5.md"; then
+    ok "(M5) control: without '$VERDICT_PH' the Running system entry check fails"
+  else no "(M5) control did not discriminate: the entry check passed without '$VERDICT_PH'"; fi
 fi
 
 echo "test-requirement-shape: $pass passed, $fail failed"

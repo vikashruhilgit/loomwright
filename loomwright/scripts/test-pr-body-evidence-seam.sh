@@ -26,8 +26,10 @@
 #   PART 2  Launch Pad: Phase 2 action 3 (inside Phase 2's actions), the FAIL (attempt < 3) bullet's
 #           rewrite-never-delete clause, the spawn's count-free line; the command mirror of all three.
 #   PART 3  authoring surfaces: the template's Evidence rule sits under `## Acceptance Criteria`, the
-#           rubric example grades the diff, the quality checklist line, user-story-writing's item rule
-#           (with the `## Validation` distinction), and no authoring surface asks for PR-body evidence.
+#           rubric example grades the diff, the quality checklist line, user-story-writing's item rule;
+#           both rules teach a Running system `## Validation` step's evidence file and its declared line
+#           `Verdict: PASS for Validation <n>` (on exactly one line of each skill), user-story-writing no
+#           longer pastes that output into the PR body, and no authoring surface asks for PR-body evidence.
 #   PART 4  review side: code-reviewer 5a's evidence bullet (inside 5a, outcomes for both locations),
 #           the Phase 4.5 prompt line and the preloaded checklist say the same, and FINALIZE's template
 #           carries `## Evidence` between Test Plan and Not verified with its omit rule.
@@ -38,14 +40,17 @@
 #           matched against the README rows.
 #   PART 7  mutation control: delete Criterion 20, move it after the Decision Matrix, reword its HIGH to
 #           MEDIUM, delete the matrix row, delete Launch Pad's action-3 clause, delete code-reviewer's
-#           evidence bullet — each in a TEMP copy, each must make this test fail. Each mutant is gated on
+#           evidence bullet, delete the declared verdict line from the template's Evidence rule and from
+#           user-story-writing's item rule — each in a TEMP copy, each must make this test fail. Each mutant is gated on
 #           non-empty + differs-from-original, after a positive control (unmutated copies pass).
 #
 # EXPLICIT LIMIT: this pins wiring and fixture shape. It cannot prove that a reviewer flags a brief or
 # that a fix task writes the evidence file — model behaviour, proven only by a live probe.
 #
 # Env overrides (PART 7's re-invocation only): SEAM_LP (agents/launch-pad.md), SEAM_PR
-# (agents/plan-reviewer.md), SEAM_CR (agents/code-reviewer.md), SEAM_NO_MUTATION=1 (skip PART 7).
+# (agents/plan-reviewer.md), SEAM_CR (agents/code-reviewer.md), SEAM_SKILL
+# (skills/supervisor-readiness/SKILL.md), SEAM_USW (skills/user-story-writing/SKILL.md),
+# SEAM_NO_MUTATION=1 (skip PART 7). The PART 3 surface loop always reads the real files.
 # bash 3.2 / BSD userland safe; paths from $BASH_SOURCE so it runs from any CWD.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -57,8 +62,8 @@ LP="${SEAM_LP:-$PLUGIN/agents/launch-pad.md}"
 PR="${SEAM_PR:-$PLUGIN/agents/plan-reviewer.md}"
 CR="${SEAM_CR:-$PLUGIN/agents/code-reviewer.md}"
 LPC="$PLUGIN/commands/launch-pad.md"
-SKILL="$PLUGIN/skills/supervisor-readiness/SKILL.md"
-USW="$PLUGIN/skills/user-story-writing/SKILL.md"
+SKILL="${SEAM_SKILL:-$PLUGIN/skills/supervisor-readiness/SKILL.md}"
+USW="${SEAM_USW:-$PLUGIN/skills/user-story-writing/SKILL.md}"
 QC="$PLUGIN/skills/quality-checklist/SKILL.md"
 SHA="$PLUGIN/skills/self-heal-advisory/SKILL.md"
 AO="$PLUGIN/skills/async-orchestration/finalize.md"   # FINALIZE PR Body Template (split out of SKILL.md, automate-speed/15)
@@ -75,6 +80,9 @@ block() { BLK_A="$2" BLK_B="$3" awk 'f && $0 ~ ENVIRON["BLK_B"] {exit} $0 ~ ENVI
 bhas() { case "$1" in *"$2"*) return 0 ;; esac; return 1; }   # bhas <text> <literal>
 # lineno <file> <ERE> — first matching line number, empty when none.
 lineno() { LN_RE="$2" awk '$0 ~ ENVIRON["LN_RE"] {print NR; exit}' "$1"; }
+# nlines <file> <literal> — how many lines carry the literal.
+nlines() { grep -cF -- "$2" "$1" 2>/dev/null; }
+VERDICT='Verdict: PASS for Validation <n>'   # the declared verdict line the validation gate reads
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK" 2>/dev/null' EXIT
@@ -165,14 +173,26 @@ bhas "$ACT" '**Evidence rule (Launch Pad Phase 2 action 3; Plan Reviewer Criteri
   && bhas "$ACT" 'then a committed evidence file `docs/evidence/<slug>.md` contains' && bhas "$ACT" 'never `*.log`' \
   && ok "template: Evidence rule under ## Acceptance Criteria" || no "template Evidence rule"
 bhas "$ACT" "\`## Evidence\` section" && ok "template: points at FINALIZE's ## Evidence section" || no "template ## Evidence pointer"
+bhas "$ACT" "A Running system \`## Validation\` step follows the same rule" && bhas "$ACT" "with the declared line \`$VERDICT\`" \
+  && ok "template: the Evidence rule teaches a Running system step's evidence file and its verdict line" \
+  || no "template Evidence rule lacks the Running system step's declared verdict line"
+[ "$(nlines "$SKILL" "$VERDICT")" = 1 ] && ok "template: '$VERDICT' on exactly one line" \
+  || no "template: '$VERDICT' on $(nlines "$SKILL" "$VERDICT") lines (want 1)"
 lacks "$SKILL" 'The PR description does not mention' && has "$SKILL" '- No line the diff adds contains `TODO`, `FIXME`, or `deferred`.' \
   && ok "template: rubric example grades the diff, not the PR description" || no "rubric example still grades the PR description"
 has "$SKILL" "- [ ] No acceptance criterion's only evidence is the PR body" && ok "template quality checklist line" || no "template checklist"
 IR="$(block "$USW" '^### Item rules' '^### Plan-doc template')"
 bhas "$IR" '**Evidence lives in a committed file, never the PR body.**' && bhas "$IR" '`docs/evidence/<slug>.md` contains' \
   && ok "user-story-writing: item rule" || no "user-story-writing item rule"
-bhas "$IR" '`## Validation (must pass before merge)` running-system steps are different' \
-  && ok "user-story-writing: keeps the validation-gate distinction" || no "user-story-writing Validation distinction"
+bhas "$IR" 'A `## Validation (must pass before merge)` Running system step follows the same rule' \
+  && bhas "$IR" "in the step's committed \`docs/evidence/<slug>.md\` with the declared line \`$VERDICT\`" \
+  && ok "user-story-writing: item rule teaches a Running system step's evidence file and its verdict line" \
+  || no "user-story-writing item rule lacks the Running system step's declared verdict line"
+[ "$(nlines "$USW" "$VERDICT")" = 1 ] && ok "user-story-writing: '$VERDICT' on exactly one line" \
+  || no "user-story-writing: '$VERDICT' on $(nlines "$USW" "$VERDICT") lines (want 1)"
+lacks "$USW" 'pasted into the PR body' && lacks "$USW" 'requires pasted evidence' \
+  && ok "user-story-writing: Validation output is no longer pasted into the PR body" \
+  || no "user-story-writing still says Validation output is pasted into the PR body"
 # No authoring surface may ask for PR-body evidence: every line naming the PR body / description must be
 # one of the rule's own lines (it names docs/evidence/, the evidence-file form, or Criterion 20).
 for f in agents/launch-pad.md agents/product-owner.md agents/orchestrator.md commands/launch-pad.md \
@@ -264,8 +284,10 @@ done
 
 if [ "${SEAM_NO_MUTATION:-0}" != "1" ]; then
   echo "PART 7 — mutation control"
-  cp "$LP" "$WORK/lp.md"; cp "$PR" "$WORK/pr.md"; cp "$CR" "$WORK/cr.md"
-  child() { SEAM_NO_MUTATION=1 SEAM_LP="$1" SEAM_PR="$2" SEAM_CR="$3" bash "$HERE/test-pr-body-evidence-seam.sh" >/dev/null 2>&1; }
+  cp "$LP" "$WORK/lp.md"; cp "$PR" "$WORK/pr.md"; cp "$CR" "$WORK/cr.md"; cp "$SKILL" "$WORK/sr.md"; cp "$USW" "$WORK/usw.md"
+  # child <lp> <pr> <cr> [<skill>] [<usw>] — the two skills default to their unmutated temp copies.
+  child() { SEAM_NO_MUTATION=1 SEAM_LP="$1" SEAM_PR="$2" SEAM_CR="$3" SEAM_SKILL="${4:-$WORK/sr.md}" SEAM_USW="${5:-$WORK/usw.md}" \
+              bash "$HERE/test-pr-body-evidence-seam.sh" >/dev/null 2>&1; }
   if child "$WORK/lp.md" "$WORK/pr.md" "$WORK/cr.md"; then ok "positive control: unmutated temp copies pass"
   else no "positive control failed — mutation results would be meaningless"; fi
   # pr20-m: Criterion 20 deleted.  prmove-m: Criterion 20 moved after the Decision Matrix (position).
@@ -278,14 +300,21 @@ if [ "${SEAM_NO_MUTATION:-0}" != "1" ]; then
   sed 's/ A criterion whose evidence would live in the PR body — one carried forward at step 0 included — is written in the evidence-file form instead.*$//' \
     "$WORK/lp.md" > "$WORK/lp3-m.md"
   awk '!/^   - \*\*Where the evidence lives:\*\*/' "$WORK/cr.md" > "$WORK/cr5a-m.md"
-  for m in pr20-m prmove-m prmed-m prrow-m lp3-m cr5a-m; do
-    case "$m" in pr*) src=pr ;; lp*) src=lp ;; *) src=cr ;; esac
+  # srv-m / uswv-m: the declared verdict line deleted from the template's Evidence rule / the item rule.
+  VERDICT="$VERDICT" awk '{ i = index($0, ENVIRON["VERDICT"]); if (i) $0 = substr($0, 1, i - 1) substr($0, i + length(ENVIRON["VERDICT"])); print }' \
+    "$WORK/sr.md" > "$WORK/srv-m.md"
+  VERDICT="$VERDICT" awk '{ i = index($0, ENVIRON["VERDICT"]); if (i) $0 = substr($0, 1, i - 1) substr($0, i + length(ENVIRON["VERDICT"])); print }' \
+    "$WORK/usw.md" > "$WORK/uswv-m.md"
+  for m in pr20-m prmove-m prmed-m prrow-m lp3-m cr5a-m srv-m uswv-m; do
+    case "$m" in pr*) src=pr ;; lp*) src=lp ;; sr*) src=sr ;; usw*) src=usw ;; *) src=cr ;; esac
     if [ ! -s "$WORK/$m.md" ]; then no "mutant $m is empty"; continue; fi
     if cmp -s "$WORK/$m.md" "$WORK/$src.md"; then no "mutant $m is identical to its original"; continue; fi
     case "$src" in
       pr) child "$WORK/lp.md" "$WORK/$m.md" "$WORK/cr.md" ;;
       lp) child "$WORK/$m.md" "$WORK/pr.md" "$WORK/cr.md" ;;
       cr) child "$WORK/lp.md" "$WORK/pr.md" "$WORK/$m.md" ;;
+      sr) child "$WORK/lp.md" "$WORK/pr.md" "$WORK/cr.md" "$WORK/$m.md" ;;
+      usw) child "$WORK/lp.md" "$WORK/pr.md" "$WORK/cr.md" "$WORK/sr.md" "$WORK/$m.md" ;;
     esac
     [ $? -ne 0 ] && ok "mutant $m is killed" || no "mutant $m survived"
   done
