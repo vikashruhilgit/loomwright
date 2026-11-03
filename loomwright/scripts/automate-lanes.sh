@@ -77,7 +77,8 @@
 #   lane-feed <lane_dir|L<n>> [--follow]                 readable narration of the lane's stream log
 #   lane-readiness <lane_dir|L<n>>                       write <run_id>.merge-readiness.md (advisory, never merges)
 #   validation-gate <runfile> <item> <pr_url> [--waive <n> --words <text>]   READY-park gate (lane AND
-#        sequential): `none` | `ok` | `waived` | `unrun — V<n> <title>: <evidence>` (fail CLOSED, exit 0);
+#        sequential; PR-body evidence, else a declared `Verdict:` line in a docs/evidence/*.md file the PR
+#        changes): `none` | `ok` | `waived` | `unrun — V<n> <title>: <evidence>` (fail CLOSED, exit 0);
 #        --waive records an interactive owner's waiver as one ## Progress line (refusal exit 1)
 #   lane-park-notify <runfile>                           the ready_for_release park's ONE notify step: desktop +
 #        `automate_ready_for_release` webhook (fail-SAFE) + one ## Progress line naming each channel's real outcome
@@ -255,6 +256,8 @@
 #    (`lane-drain-check`), the `lane-status --leaks` sections
 # - status.sh: lanes_status … lanes_feed — lanes_status (`lane-status`, `--watch`), lanes_wait
 #    (`lane-wait`, _lanes_quick_state), lanes_feed (`lane-feed`)
+# - evidence.sh: _lanes_ev_set … _lanes_ev_step — the shared Validation reader's evidence-file lookup: the
+#    declared `Verdict:` lines of the docs/evidence/*.md files a PR adds or changes (fail CLOSED)
 # - readiness.sh: _lanes_rd_section … lanes_validation_gate — the shared Validation reader,
 #    lanes_readiness (`lane-readiness`), lanes_validation_gate (`validation-gate`)
 # - wave.sh: _lanes_base_of … lanes_wave_plan — WAVE CLOSE: lanes_fleet_closeout (`fleet-closeout`),
@@ -368,6 +371,9 @@ _lanes_source park-leaks || { return 1 2>/dev/null || exit 1; }
 # >>> automate-lanes.d/status.sh
 _lanes_source status || { return 1 2>/dev/null || exit 1; }
 # <<< automate-lanes.d/status.sh
+# >>> automate-lanes.d/evidence.sh
+_lanes_source evidence || { return 1 2>/dev/null || exit 1; }
+# <<< automate-lanes.d/evidence.sh
 # >>> automate-lanes.d/readiness.sh
 _lanes_source readiness || { return 1 2>/dev/null || exit 1; }
 # <<< automate-lanes.d/readiness.sh

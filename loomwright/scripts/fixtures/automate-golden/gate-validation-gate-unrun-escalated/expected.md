@@ -21,6 +21,6 @@
 - 2026-10-15T02:05:33Z ran /autonomous → PR https://github.com/vikashruhilgit/loomwright/pull/548 (SUPERVISOR_RESULT completed: heal PASS after 3 reviews / 2 fix rounds — 403f3ab, 06ce6f5; 3 fixable issues fixed, 0 remaining; 2 LOW dismissed)
 - 2026-10-15T02:05:39Z owned drain started — /review-pr https://github.com/vikashruhilgit/loomwright/pull/548 --until-mergeable --no-auto-postmortem @ 06ce6f59617b3b515a1950dbeb8b13630b54525c
 - 2026-10-15T02:25:56Z drain READY (converged, 1 round, 1 fix cycle; ci green on 6e496de; claude-review on 6e496de: no new findings; rules_gate none; 1 already-addressed dismissed)
-- validation-gate: unrun — V2 Running system: one real `--parallel 1` run of a trivial ite: listed under a "Not verified" / "Not run" heading in the PR body
+- validation-gate: unrun — V2 Running system: one real `--parallel 1` run of a trivial ite: listed under a "Not verified" / "Not run" heading in the PR body; evidence files unreadable: the PR's changed-file list (https://github.com/vikashruhilgit/loomwright/pull/548) — add `Verdict: PASS for Validation 2` and the fenced output to the step's docs/evidence/ file in this PR
 - dismissed-drafts: 0 per-finding + 0 summary (0 listed in summary)
 - 2026-10-15T02:39:08Z parked escalated https://github.com/vikashruhilgit/loomwright/pull/548 — validation_unrun

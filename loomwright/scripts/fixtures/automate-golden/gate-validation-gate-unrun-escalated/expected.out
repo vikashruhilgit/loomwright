@@ -1,5 +1,5 @@
 $ validation-gate "$RF" .supervisor/requirements/twin-remediation/08b-single-lane-sequential.md https://github.com/vikashruhilgit/loomwright/pull/548
-validation-gate: unrun — V2 Running system: one real `--parallel 1` run of a trivial ite: listed under a "Not verified" / "Not run" heading in the PR body
+validation-gate: unrun — V2 Running system: one real `--parallel 1` run of a trivial ite: listed under a "Not verified" / "Not run" heading in the PR body; evidence files unreadable: the PR's changed-file list (https://github.com/vikashruhilgit/loomwright/pull/548) — add `Verdict: PASS for Validation 2` and the fenced output to the step's docs/evidence/ file in this PR
 = 0
 $ loop: cp "$PREV" "$ROOT/.gate.line"; bash "$H" progress-append "$RF" "$(cat "$PREV")"
 = 0
