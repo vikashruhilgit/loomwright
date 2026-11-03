@@ -92,6 +92,12 @@
 #     (+ mutation: phase branch deleted ⇒ `{}` and no file); phase-wait question (5) → phase-answer
 #     refusals + BLOCKED → resume of the SAME session → done (0); running (3) / died (6); a lane spawn
 #     strips both phase variables + one mutation each
+#   EV the Validation reader's evidence files (automate-lanes.d/evidence.sh): a step the PR body leaves NOT-RUN
+#     reads PASS only from a declared `Verdict: PASS for Validation <n>` line + fenced output in a docs/evidence/*.md
+#     file the PR adds or changes (read at its head); FAIL words in output never decide a declared step; a body
+#     PASS / FAIL is final with no extra gh call; lane-readiness reads the same rows; unchanged / undeclared /
+#     not-a-pass / no-output files; every unreadable read fails CLOSED with the reason; the remedy names the
+#     evidence file, never the PR body; one mutation control per Pin mutations row of the brief
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -256,5 +262,6 @@ tal_part 03-fixes-to-finalize && . "$HERE/test-automate-lanes.d/03-fixes-to-fina
 tal_part 04-fleet-closeout-to-optout && . "$HERE/test-automate-lanes.d/04-fleet-closeout-to-optout.sh"
 tal_part 05-timeline-and-gate && . "$HERE/test-automate-lanes.d/05-timeline-and-gate.sh"
 tal_part 06-phase-sessions && . "$HERE/test-automate-lanes.d/06-phase-sessions.sh"
+tal_part 07-evidence-files && . "$HERE/test-automate-lanes.d/07-evidence-files.sh"
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

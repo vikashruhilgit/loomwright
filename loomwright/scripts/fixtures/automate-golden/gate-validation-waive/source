@@ -3,3 +3,4 @@ lines: the lane run file's header and Queue, its PICK line; the requirement file
 stamp; the owner's waiver words are the real 07:16:04Z `validation waived` line's words (the AUT-WAIVE answer,
 fixed input). The PR body shows V3 not run.
 gap: the real PR body is not on disk; it is reduced to a body with no V3 evidence.
+gap: the PR's changed-file list is not on disk either; gh.stub has no rule for `pr view --json headRefOid,files`, so the gate's evidence-file half reads it unreadable (fail CLOSED) and its unrun line names that.

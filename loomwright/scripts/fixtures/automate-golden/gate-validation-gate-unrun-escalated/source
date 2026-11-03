@@ -5,3 +5,4 @@ real one had for V2 (listed under a "Not verified" heading — the real 02:25:56
 gap: the owner merged #548 instead of answering AUT-WAIVE (real 02:39:08Z line), so no real escalated park
 was written; this pins the prose's can't-ask branch (non-interactive): decide-then-park escalated.
 neutralised: harness-runtime path/hook/CLI tokens in the tree/ requirement and job prose (no helper reads those lines) were rewritten (`.app-harness/`, `<harness> -p`, `Subagent-stop`) so the committed fixtures pass check-vendor-coupling.
+gap: the PR's changed-file list is not on disk either; gh.stub has no rule for `pr view --json headRefOid,files`, so the gate's evidence-file half reads it unreadable (fail CLOSED) and its unrun line names that.
