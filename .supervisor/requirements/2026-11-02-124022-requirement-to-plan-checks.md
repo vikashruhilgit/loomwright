@@ -227,3 +227,9 @@ loomwright/scripts/test-requirement-shape.sh
 loomwright/scripts/test-result-validators.sh
 loomwright/scripts/validate-plan-review-result.py
 loomwright/skills/user-story-writing/SKILL.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-03T01:19:57Z
+- **Brief:** .supervisor/jobs/done/2026-11-02-requirement-to-plan-checks.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/802
