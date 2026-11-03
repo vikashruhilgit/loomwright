@@ -723,19 +723,19 @@ bash "$GA" record "$GRF" AUT-QUEUE --escalated off >/dev/null 2>&1
 added="$(diff <(printf '%s\n' "$before") "$GRF" | sed -n 's/^> //p')"
 re_ts='^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z '
 if [ "$r1" -eq 0 ] && [ "$(printf '%s\n' "$added" | grep -c .)" -eq 3 ] \
-   && printf '%s\n' "$added" | sed -n 1p | grep -qE "${re_ts}auto-answered AUT-QUEUE: Process — queue-confirm asked; no trigger\$" \
-   && printf '%s\n' "$added" | sed -n 2p | grep -qE "${re_ts}auto-answered LP-SAVE-NOTE: Save and exit — PASS max LOW second line \(item a\.md\)\$" \
-   && printf '%s\n' "$added" | sed -n 3p | grep -qE "${re_ts}auto-escalated LP-SAVE: high_risk \(item b\.md\)\$"; then
+   && grep -qE "${re_ts}auto-answered AUT-QUEUE: Process — queue-confirm asked; no trigger\$" < <(sed -n 1p <<<"$added") \
+   && grep -qE "${re_ts}auto-answered LP-SAVE-NOTE: Save and exit — PASS max LOW second line \(item a\.md\)\$" < <(sed -n 2p <<<"$added") \
+   && grep -qE "${re_ts}auto-escalated LP-SAVE: high_risk \(item b\.md\)\$" < <(sed -n 3p <<<"$added"); then
   ok "(ga15) record appends one ## Progress line each (auto-answered / auto-escalated, newline flattened, item suffix); --escalated off writes nothing"
 else
   no "(ga15) added lines: [$added]"
 fi
 std="$(bash "$GA" record "" AUT-QUEUE Process standalone 2>/dev/null)"; r2=$?
-[ "$r2" -eq 0 ] && printf '%s' "$std" | grep -qE '^[0-9TZ:-]+ auto-answered AUT-QUEUE: Process — standalone$' \
+[ "$r2" -eq 0 ] && grep -qE '^[0-9TZ:-]+ auto-answered AUT-QUEUE: Process — standalone$' <<<"$std" \
   && ok "(ga15b) with no run file resolvable the record is printed on stdout (standalone /launch-pad)" || no "(ga15b) rc=$r2 out='$std'"
 printf 'not a run file\n' > "$ROOT/ga-notrun.md"
 std="$(bash "$GA" record "$ROOT/ga-notrun.md" AUT-QUEUE Process x 2>/dev/null)"; r3=$?
-[ "$r3" -eq 0 ] && [ "$(cat "$ROOT/ga-notrun.md")" = "not a run file" ] && printf '%s' "$std" | grep -q 'auto-answered AUT-QUEUE: Process — x$' \
+[ "$r3" -eq 0 ] && [ "$(cat "$ROOT/ga-notrun.md")" = "not a run file" ] && grep -q 'auto-answered AUT-QUEUE: Process — x$' <<<"$std" \
   && ok "(ga15c) a failed append is fail-SAFE: exit 0, target unchanged, the record printed instead" || no "(ga15c) rc=$r3 out='$std'"
 bash "$GA" record "$GRF" >/dev/null 2>&1; r4=$?
 [ "$r4" -eq 0 ] && ok "(ga15d) a record usage error still exits 0 (fail-SAFE)" || no "(ga15d) rc=$r4"

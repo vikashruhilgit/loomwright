@@ -220,7 +220,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 ### Phase 6: REFINE & SAVE (Interactive)
 
 1. Present brief with Plan Review status
-2. Options: Save (PASS or user override) / Refine / Edit / Discard. On a PASS a run that could ask first runs `gate-auto.sh decide` exactly as `${CLAUDE_PLUGIN_ROOT}/agents/launch-pad.md` Phase 6 action 3 says (read that action): `answer` saves with no question, `ask` asks as before
+2. Options: Save (PASS or user override) / Refine / Edit / Discard. On a PASS a run that could ask first runs `gate-auto.sh decide` exactly as `agents/launch-pad.md` Phase 6 action 3 says (read that action): `answer` saves with no question, `ask` asks as before
 3. On save: `mkdir -p .supervisor/jobs/pending`, write `{date}-{slug}.md`
 4. Output exact Supervisor command: `/supervisor job: .supervisor/jobs/pending/{file}.md`
 5. If blockers exist or Plan Review FAIL: don't offer save

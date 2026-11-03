@@ -15,8 +15,9 @@
 # (read at HEAD — the committed tree, never the working tree) run over the listed paths; content and
 # size cannot be judged from a path list and emit no reason (`changed_lines` is 0, `changed_files` the
 # number of distinct listed paths). Same object shape and `source`. An unreadable list ⇒
-# `unclassifiable: paths_unreadable`, an empty one ⇒ `unclassifiable: paths_empty` (null both: a list
-# that cannot be read is never low-risk). It adds no exclude, flag or config to lower risk. The refs
+# `unclassifiable: paths_unreadable`, an empty one ⇒ `unclassifiable: paths_empty`, a line holding a
+# backtick or inner whitespace (a decorated cell such as "`CLAUDE.md` (40)", not a bare path) ⇒
+# `unclassifiable: paths_malformed` (null all three: a list that cannot be read is never low-risk). It adds no exclude, flag or config to lower risk. The refs
 # mode above is untouched by it: same code path, same output, byte for byte.
 #
 # Output (ONE JSON object on stdout, always exit 0):
@@ -83,8 +84,8 @@
 # Failure-mode split (CLAUDE.md §"Failure-Mode Invariants"): this script is a fail-SAFE EMITTER —
 # it always exits 0. `high_risk: null` + `reasons: ["unclassifiable: <reason>"]` + the reason on
 # stderr is emitted when the diff cannot be classified (bad_args, jq_missing, not_a_git_repo,
-# bad_ref, git_failed, risk_json_symlink, risk_json_gitlink; --paths adds paths_unreadable and
-# paths_empty). Its CONSUMERS fail CLOSED: `gate-eval` parks on
+# bad_ref, git_failed, risk_json_symlink, risk_json_gitlink; --paths adds paths_unreadable,
+# paths_empty and paths_malformed). Its CONSUMERS fail CLOSED: `gate-eval` parks on
 # anything but an explicit `false` (`PARK: high_risk_diff`) with no override of any kind, and the
 # Phase 4.5 lens treats `null` as "spawn the advisory pass" (the safe direction for an advisory lens is to run it).
 # The jq-less `jq_missing` object (and a `bad_args` seen before jq is known) is the ONE
@@ -268,6 +269,11 @@ else
   sed -e 's/\r$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^\./||' "$paths_file" 2>/dev/null \
     | awk 'length($0) > 0 && !seen[$0]++' > "$tmp/paths"
   [ -s "$tmp/paths" ] || emit_unclassifiable "paths_empty" "paths=$paths_file lists no path"
+  # A decorated line (a backtick, or whitespace inside it: a copied map cell's ` (40)` line count or a
+  # `- ` bullet) is not a bare path and would hide a high-risk basename from every class ⇒ null.
+  if grep -q '[`[:space:]]' "$tmp/paths"; then
+    emit_unclassifiable "paths_malformed" "paths=$paths_file: $(grep -m1 '[`[:space:]]' "$tmp/paths" | head -c 120)"
+  fi
   : > "$tmp/lines"
 fi
 changed_files="$(grep -c . "$tmp/paths" || true)"; changed_files="${changed_files:-0}"

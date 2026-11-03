@@ -761,6 +761,9 @@ printf 'docs/guide.md\nloomwright/agents/worker.md\n' > "$PL/agents.txt"
 printf 'src/oauth/login.ts\n' > "$PL/auth.txt"
 printf 'README.md\n./src/utils/format.ts\n\nREADME.md\n  docs/notes.md  \n' > "$PL/low.txt"
 printf 'CLAUDE.md\n' > "$PL/claude.txt"
+printf 'docs/guide.md\nCLAUDE.md (40)\n' > "$PL/claude-count.txt"   # a File Impact Map cell copied with its line count
+printf '`CLAUDE.md`\n' > "$PL/claude-tick.txt"                        # ... or with its backticks
+printf -- '- CLAUDE.md\n' > "$PL/claude-bullet.txt"                    # ... or as a markdown bullet
 printf 'billing/x.ts\n' > "$PL/billing.txt"
 : > "$PL/empty.txt"
 i=0; : > "$PL/many.txt"; while [ $i -lt 16 ]; do printf 'docs/f%s.md\n' "$i" >> "$PL/many.txt"; i=$((i+1)); done
@@ -779,7 +782,7 @@ prun "$PL/many.txt"
 [ "$(j '.high_risk')" = "false" ] && [ "$(j '.changed_files')" = "16" ] \
   && ok "M4 16 low-risk paths ⇒ false: the size class does not apply to a path list" || no "M4 ($OUT)"
 prun "$PL/no-such.txt"
-[ "$RC" -eq 0 ] && [ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: paths_unreadable" && printf '%s' "$ERR" | grep -q 'paths_unreadable' \
+[ "$RC" -eq 0 ] && [ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: paths_unreadable" && grep -q 'paths_unreadable' <<<"$ERR" \
   && ok "M5 an unreadable list ⇒ null + unclassifiable: paths_unreadable (stderr too), exit 0" || no "M5 rc=$RC ($OUT)"
 prun "$PL"
 [ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: paths_unreadable" && ok "M5b a directory is not a readable list ⇒ null" || no "M5b ($OUT)"
@@ -788,6 +791,11 @@ prun "$PL/empty.txt"
 prun "$PL/claude.txt"
 [ "$(j '.high_risk')" = "true" ] && has_reason "trusted-root: claude.md" && ok "M7 a listed CLAUDE.md ⇒ true with a trusted-root: reason" || no "M7 ($OUT)"
 at_head main
+for pf in claude-count claude-tick claude-bullet; do
+  prun "$PL/$pf.txt"
+  [ "$RC" -eq 0 ] && [ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: paths_malformed" && grep -q 'paths_malformed' <<<"$ERR" \
+    && ok "M7-$pf a decorated line (not a bare path) ⇒ null + unclassifiable: paths_malformed, never a low-risk false" || no "M7-$pf rc=$RC ($OUT)"
+done
 prun "$PL/billing.txt"
 [ "$(j '.high_risk')" = "false" ] && ok "M8a premise: billing/x.ts is low-risk at main (no .agent/risk.json)" || no "M8a ($OUT)"
 at_head base-rj-ok
@@ -822,6 +830,13 @@ if mutant p-nodirs grep -v '^    case "\$p" in "\$ld"\*|\*"/\$ld"\*) reason "pat
   [ "$(j '.high_risk')" = "false" ] && ok "M13 (mutant) the class (b) directory match deleted ⇒ M1 reads false — M1 is live" || no "M13 mutant not discriminated ($OUT)"
 else
   no "M13 mutant not gated"
+fi
+if mutant p-nomalformed awk '/^  if grep -q .\[`\[:space:\]\]. "\$tmp\/paths"; then$/ { sub(/grep -q .*; then$/, "false; then") } { print }' \
+   && grep -q '^  if false; then$' "$MS"; then
+  PS="$MS" prun "$PL/claude-count.txt"
+  [ "$(j '.high_risk')" = "false" ] && ok "M14 (mutant) the decorated-line guard disarmed ⇒ 'CLAUDE.md (40)' reads false — M7-claude-count is live" || no "M14 mutant not discriminated ($OUT)"
+else
+  no "M14 mutant not gated"
 fi
 
 echo
