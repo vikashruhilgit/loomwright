@@ -98,3 +98,9 @@ loomwright/docs/result-schemas/review-heal-next-step.md
 loomwright/docs/result-schemas/review-heal-result.md
 loomwright/skills/review-heal/SKILL.md
 changelog.d/drain-dismissals-carry-evidence.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-03T01:19:14Z
+- **Brief:** .supervisor/jobs/done/2026-11-02-drain-dismissals-carry-evidence.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/801
