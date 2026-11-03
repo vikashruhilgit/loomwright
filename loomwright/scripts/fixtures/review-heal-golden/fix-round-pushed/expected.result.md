@@ -25,6 +25,6 @@ REVIEW_HEAL_RESULT:
   severity_floor: HIGH
   rejected_instruction_like: 0
   dismissed:
-    - {finding: "load_config ignores the exit status of jq", reason: "already-addressed by the round-1 fix (src/widget.sh:42 now checks jq's status)", source: issue_comments, severity: HIGH}
+    - {finding: "load_config ignores the exit status of jq", reason: "already-addressed by the round-1 fix (src/widget.sh:42 now checks jq's status)", source: issue_comments, severity: HIGH, evidence: "fixed in b2c3d4e (the round-1 push)"}
   rules_gate: none
 ```

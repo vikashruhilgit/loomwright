@@ -35,7 +35,10 @@
 #       confirmed without auto_fixable, a fix report without a self_review line ⇒ `self_review_missing`,
 #       a non-hex pushed_sha, a --result with nothing pending) exit 2, print nothing and write nothing; a
 #       report re-sent after it was taken re-prints the pending instruction and writes nothing. A validate
-#       report's `clean` with no finding line is taken (#617: READY, findings_clean 1).
+#       report's `clean` with no finding line is taken (#617: READY, findings_clean 1). A dismissal whose
+#       `evidence` is absent, empty, multi-line or in none of the three checkable forms (path:line, commit
+#       sha, quoted span — each accept/reject example pinned) exits 2 naming the evidence, in validate and
+#       fallback mode; both spawns' then: text carries the evidence and out-of-repo ⇒ confirmed rule.
 #   W   RESUMABLE WAIT. A CONTINUE line ⇒ exit 3, nothing printed; the next no-result call re-calls the
 #       wait with `--continue` and reaches the validate spawn. A head that moves mid-wait (`pending=sha_mismatch`
 #       and a different head re-read) ⇒ exit 3, the round re-opens with a fresh wait on the new sha and reaches
@@ -68,6 +71,7 @@
 #         MB  the bound-hit termination_reason flipped to converged     ⇒ G bound-hit-escalated
 #         MR  the review-lens read gated on check state (red ⇒ posted)  ⇒ G fallback-red-review-check
 #         MW  the webhook leg of the notification removed               ⇒ G converged-ready
+#         ME  the dismissal evidence check removed                     ⇒ R (an `intentional` dismissal taken)
 #         MS  one unguarded merge-command line appended (built here at run time from pieces, so this file
 #             never holds the positive literal on one line)            ⇒ S
 #
@@ -389,6 +393,42 @@ r_refuse "a multi-line finding" '{"findings":[{"id":"r1-1","verdict":"dismissed"
 r_refuse "confirmed without auto_fixable" '{"findings":[{"id":"r1-1","verdict":"confirmed","finding":"x"}]}' 'malformed'
 r_refuse "an unknown severity" '{"findings":[{"id":"r1-1","verdict":"confirmed","finding":"x","auto_fixable":true,"severity":"CRITICAL"}]}' 'malformed'
 r_refuse "a non-object --result" '[1]' 'not a JSON object'
+# a dismissal carries checkable evidence (path:line, commit sha, or a quoted span) — refused by its own
+# message, after the malformed and id checks; the pending spawn re-prints and the validator answers again
+EV_MSG='--result: a dismissed finding needs evidence'
+r_dis() { printf '{"findings":[{"id":"r1-1","verdict":"dismissed","finding":"x","reason":"stale"%s}]}' "$1"; }
+r_refuse "a dismissal with no evidence" "$(r_dis '')" "$EV_MSG"
+r_refuse "a dismissal with empty evidence" "$(r_dis ',"evidence":""')" "$EV_MSG"
+r_refuse "a dismissal with multi-line evidence" "$(r_dis ',"evidence":"src/widget.sh:42\nmore"')" "$EV_MSG"
+r_refuse "evidence in none of the three forms (intentional)" "$(r_dis ',"evidence":"intentional"')" "$EV_MSG"
+r_refuse "evidence that is a too-short quote (\"ok\")" "$(r_dis ',"evidence":"\"ok\""')" "$EV_MSG"
+r_refuse "a one-word quote (\"intentional\")" "$(r_dis ',"evidence":"\"intentional\""')" "$EV_MSG"
+r_refuse "host:port is no path:line (host:8080)" "$(r_dis ',"evidence":"host:8080"')" "$EV_MSG"
+r_refuse "a time is no path:line (12:15)" "$(r_dis ',"evidence":"12:15"')" "$EV_MSG"
+r_refuse "an all-digit run is no sha (1234567)" "$(r_dis ',"evidence":"1234567"')" "$EV_MSG"
+r_refuse "a digit-free hex word is no sha (deadbee)" "$(r_dis ',"evidence":"deadbee"')" "$EV_MSG"
+drv "$DRIVER"
+[ "$RCV" = 0 ] && [ "$OUT" = "$PEND" ] && ok "R: after an evidence refusal the no-result call re-prints the same validate spawn" \
+  || no "R: after an evidence refusal ⇒ rc $RCV, the pending spawn $( [ "$OUT" = "$PEND" ] && echo re-printed || echo changed)"
+# AC6: the validate spawn names dismissed evidence and the out-of-repo ⇒ confirmed, auto_fixable false rule
+PEND_THEN="$(printf '%s' "$PEND" | jq -r '.then')"
+grep -qF 'dismissed: one line citing a repo path:line, a commit sha, or a double-quoted span' <<<"$PEND_THEN" \
+  && grep -qF 'When the proof lives outside the repo (an owner decision, a convention), report the finding confirmed with auto_fixable: false' <<<"$PEND_THEN" \
+  && ok "R: the validate spawn asks for dismissal evidence and routes out-of-repo proof to confirmed + auto_fixable false" \
+  || no "R: the validate spawn's then: text lacks the evidence / out-of-repo rule"
+# every AC1 accept example is taken by the driver (each its own sandbox: an accepted report advances the run)
+# (the bare-filename example is joined at run time: the repo has a root README, so a literal here
+# would read as a code citation to test-citation-drift.sh)
+EV_ROOT_DOC="README.md"
+for ev in 'src/widget.sh:42' "$EV_ROOT_DOC:7" 'see loomwright/x.sh:10-12' 'fixed in 3f9a2b1' '"load_config checks jq'"'"'s exit status"'; do
+  setup_case "$FIX/converged-ready"; drv "$DRIVER" --start drain
+  drv "$DRIVER" --result "$(r_dis ",\"evidence\":$(printf '%s' "$ev" | jq -Rs .)")"
+  [ "$RCV" = 0 ] && [ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] \
+    && grep -qF ", evidence: $(printf '%s' "$ev" | jq -Rs .)}" < <(printf '%s' "$OUT" | jq -r '.review_heal_result') \
+    && ok "R: evidence '$ev' is taken and carried into the result block" \
+    || no "R: evidence '$ev' ⇒ rc $RCV stderr '${ERR:0:100}'"
+done
+setup_case "$FIX/converged-ready"; drv "$DRIVER" --start drain
 GOOD='{"findings":[{"id":"r1-1","verdict":"confirmed","finding":"load_config ignores the exit status of jq","auto_fixable":true}]}'
 drv "$DRIVER" --result "$GOOD"; FIXSPAWN="$OUT"
 [ "$(printf '%s' "$FIXSPAWN" | jq -r '.what')" = "fix worker" ] && ok "R: a well-formed report is taken (fix worker spawn)" || no "R: the good report did not reach the fix worker"
@@ -411,6 +451,13 @@ setup_case "$FIX/fallback-no-review-lens"
 drv "$DRIVER" --start drain
 [ "$(printf '%s' "$OUT" | jq -r '.what' 2>/dev/null)" = "fallback review" ] || no "R: the no-lens case did not reach the fallback spawn"
 r_refuse "clean in a fallback review report" '{"findings":[{"verdict":"clean","finding":"no new findings","severity":"LOW"}]}' 'malformed'
+r_refuse "a fallback dismissal with no evidence" '{"findings":[{"verdict":"dismissed","finding":"x","reason":"stale","severity":"LOW"}]}' "$EV_MSG"
+r_refuse "a fallback dismissal citing no checkable form" '{"findings":[{"verdict":"dismissed","finding":"x","reason":"stale","severity":"LOW","evidence":"by convention"}]}' "$EV_MSG"
+drv "$DRIVER"; FB_THEN="$(printf '%s' "$OUT" | jq -r '.then' 2>/dev/null)"
+grep -qF '"evidence": "<dismissed only: one line citing a repo path:line, a commit sha, or a double-quoted span' <<<"$FB_THEN" \
+  && grep -qF 'When its proof is outside the repo (an owner decision, a convention), report it confirmed with auto_fixable: false' <<<"$FB_THEN" \
+  && ok "R: the fallback spawn carries the same evidence and out-of-repo rule" \
+  || no "R: the fallback spawn's then: text lacks the out-of-repo rule"
 
 # --------------------------------------------------------------------------------------
 # W — resumable wait
@@ -619,7 +666,7 @@ drv "$DRIVER" --start drain
 # exit-code line and runner-images notice are dropped and read as no lens; a file-anchored annotation is firm.
 B_ALLOW_REL=".claude/loomwright/drain-allowlist.json"   # the driver's user-scope review_producing_checks[] list, under the sandbox HOME
 b_allow() { mkdir -p "$(dirname "$C_HOME/$B_ALLOW_REL")" && printf '%s\n' '{"review_producing_checks":["claude-review"]}' > "$C_HOME/$B_ALLOW_REL"; }
-B_DISMISS='{"findings":[{"id":"r1-1","verdict":"dismissed","finding":"widget.sh line 9 quotes nothing","reason":"invalid"}]}'
+B_DISMISS='{"findings":[{"id":"r1-1","verdict":"dismissed","finding":"widget.sh line 9 quotes nothing","reason":"invalid","evidence":"src/widget.sh:9 quotes $cfg"}]}'
 setup_case "$FIX/fallback-no-review-lens"; b_allow
 gh_row 'api --method GET repos/acme/widgets/check-runs/*/annotations' 0 '[{"path":".github","start_line":12,"end_line":12,"annotation_level":"failure","title":"","message":"MEDIUM: widget.sh line 9 quotes nothing"}]'
 drv "$DRIVER" --start drain
@@ -665,7 +712,7 @@ if [ "$(printf '%s' "$OUT" | jq -r '.what')" = "validate findings" ] && [ "$(pri
    && ! grep -q -- '--required-only' "$C/calls.log"; then
   ok "B: aux-only sub-floor round ⇒ no sub-floor stop (confirm never runs), round 2 re-reads"
 else no "B: aux-only sub-floor ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, round, decision, termination_reason}' 2>/dev/null)"; fi
-drv "$DRIVER" --result '{"findings":[{"id":"r2-1","verdict":"dismissed","finding":"load_config ignores the exit status of jq","reason":"already-addressed"}]}'
+drv "$DRIVER" --result '{"findings":[{"id":"r2-1","verdict":"dismissed","finding":"load_config ignores the exit status of jq","reason":"already-addressed","evidence":"src/widget.sh:42 checks it"}]}'
 [ "$(printf '%s' "$OUT" | jq -r '.what')" = "fallback review" ] \
   && ok "B: aux-only sub-floor ⇒ round 2's READY evaluation spawns the earned fallback" \
   || no "B: aux-only sub-floor round 2 ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, decision}' 2>/dev/null)"
@@ -1074,6 +1121,13 @@ if [ "${RH_SKIP_MUTANTS:-0}" != 1 ] && [ -z "${RH_CASES:-}" ]; then
   if m="$(build_mutant W '$RH_WEBHOOK_CMD --event-type gate' ': --event-type gate')"; then
     if run_golden converged-ready "$m" 0; then no "MW: dropping the webhook leg left G green"; else ok "MW: dropping the webhook leg turns G converged-ready red"; fi
   else no "MW: mutant not built"; fi
+  # ME — the dismissal evidence check removed: a dismissal citing nothing checkable is taken
+  if m="$(build_mutant E '(.evidence | evidence_ok)' 'true')"; then
+    setup_case "$FIX/converged-ready"; drv "$m" --start drain
+    drv "$m" --result "$(r_dis ',"evidence":"intentional"')"
+    [ "$RCV" != 2 ] && ok "ME: removing the evidence check lets 'intentional' through (the R evidence pins go red)" \
+      || no "ME: removing the evidence check still refused the report"
+  else no "ME: mutant not built"; fi
   # MS — one unguarded merge-command line appended
   if m="$(build_mutant S - "-append:$(printf '%s %s %s "$PR"' "$MP_A" "$MP_B" "$MP_C")")"; then
     if leg_s "$m" /dev/null; then no "MS: an appended merge line left S green"; else ok "MS: an appended merge line turns S red"; fi

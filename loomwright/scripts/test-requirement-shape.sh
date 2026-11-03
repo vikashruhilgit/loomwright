@@ -17,9 +17,19 @@
 #        mirror both run `right-size` on each persisted file AFTER the `plan-waves --lint` call,
 #        with identical Persist-step text; all three carry the same "small enough to review in one
 #        PR, large enough to pay the run's fixed cost" sentence
+#   (S6) Story Template: EXTRACTED from the skill (the fenced block under `## Story Template`, stopping
+#        before `## Example: Staff Scheduling Story`, so the item shape's `## Non-goals` /
+#        `## Validation (must pass before merge)` and the plan doc's `## Owner decisions` cannot
+#        satisfy it) it carries `### Non-goals`, `### Owner decisions` and the H2
+#        `## Validation (must pass before merge)` at exactly those levels, the two H3s before the H2
+#        and the H2 before `## Depends on`; the validation gate (`automate-helpers.sh validation-gate`)
+#        reads its Running system entry, and reads `none` once that entry is removed. The PO agent's
+#        Output Format and its command mirror carry the same three heading texts (any level) in their
+#        story block; the Persist step says the Validation section is written at H2 in the file
 #   MUTATION CONTROLS (each must turn its check red): (M1) the template's status stamp deleted
 #   ⇒ S2 fails (the plan doc is enqueued); (M2) one required section deleted ⇒ S1 fails;
-#   (M3) the "count by hand" sentence restored in the skill ⇒ S5 fails.
+#   (M3) the "count by hand" sentence restored in the skill ⇒ S5 fails; (M4) the Story Template's
+#   Validation heading deleted while the item shape's identical line survives ⇒ S6 fails.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -153,6 +163,57 @@ if printf '%s\n' "$pa" | awk -v l="$LINT_PO" -v r="$RS_PO" -v a="$RS_AIM" '
   ok "(S5) PO Persist step runs right-size on each persisted file after plan-waves --lint, then the aim sentence"
 else no "(S5) PO Persist step: right-size missing, before the --lint call, or without the aim sentence"; fi
 
+# (S6) Story Template sections. extract_story_template <skill.md> — the FIRST fenced block after
+# `## Story Template`, fences dropped; nothing past `## Example: Staff Scheduling Story`.
+VAL_H='## Validation (must pass before merge)'
+extract_story_template() {
+  awk '/^## Story Template$/{s=1; next} /^## Example: Staff Scheduling Story$/{exit}
+       s && /^```/{ if (f) exit; f=1; next } s && f' "$1"
+}
+# story_template_ok <template> — 0 when the three headings sit at exactly their levels, in order
+# (the H3s before the H2 Validation, which comes before `## Depends on`); prints the reason otherwise.
+story_template_ok() {
+  local h ln_ng ln_od ln_v ln_d
+  for h in '### Non-goals' '### Owner decisions' "$VAL_H"; do
+    grep -qxF -- "$h" "$1" || { echo "no '$h' line at that exact level"; return 1; }
+  done
+  ln_ng="$(grep -nxF '### Non-goals' "$1" | head -n1 | cut -d: -f1)"
+  ln_od="$(grep -nxF '### Owner decisions' "$1" | head -n1 | cut -d: -f1)"
+  ln_v="$(grep -nxF -- "$VAL_H" "$1" | head -n1 | cut -d: -f1)"
+  ln_d="$(grep -nxF '## Depends on' "$1" | head -n1 | cut -d: -f1)"
+  [ -n "$ln_d" ] || { echo "no '## Depends on' line"; return 1; }
+  [ "$ln_ng" -lt "$ln_v" ] && [ "$ln_od" -lt "$ln_v" ] || { echo "an H3 sits after the H2 Validation (it would be read inside it)"; return 1; }
+  [ "$ln_v" -lt "$ln_d" ] || { echo "Validation is not before '## Depends on'"; return 1; }
+  return 0
+}
+STPL="$T/story-template.md"
+extract_story_template "$SKILL" > "$STPL"
+if [ ! -s "$STPL" ]; then no "(S6) no fenced Story Template under '## Story Template' in $SKILL"
+elif r="$(story_template_ok "$STPL")"; then ok "(S6) Story Template: ### Non-goals, ### Owner decisions, then H2 $VAL_H before ## Depends on"
+else no "(S6) Story Template: $r"; fi
+# The validation gate parses the template's list: its Running system entry is read (unrun: no PR here),
+# and a static-only copy reads none.
+vg="$(bash "$H" validation-gate "$T/s6-run.md" "$STPL" "" 2>&1)"
+grep -vE '^[0-9]+\. \*\*Running system' "$STPL" > "$T/s6-static.md"
+vgs="$(bash "$H" validation-gate "$T/s6-run.md" "$T/s6-static.md" "" 2>&1)"
+case "$vg" in "validation-gate: unrun — V"*"Running system"*) vg_rs=1 ;; *) vg_rs=0 ;; esac
+case "$vgs" in "validation-gate: none — "*) vg_none=1 ;; *) vg_none=0 ;; esac
+if [ "$vg_rs" = 1 ] && [ "$vg_none" = 1 ]; then ok "(S6) validation gate reads the template's Running system entry, and none without it"
+else no "(S6) validation gate on the template: '$vg' / static-only: '$vgs'"; fi
+# Each copy (PO Output Format story block, command mirror): the same heading texts, any level.
+for f in "$PO_AGENT" "$PO_CMD"; do
+  blk="$(awk '/^## User Stories$/{s=1; next} /^## Scope Analysis$/{s=0} s' "$f")"
+  miss=""
+  for h in 'Non-goals' 'Owner decisions' 'Validation (must pass before merge)'; do
+    grep -qE "^#+ $(printf '%s' "$h" | sed 's/[()]/\\&/g')\$" <<<"$blk" || miss="$miss '$h'"
+  done
+  if [ -n "$blk" ] && [ -z "$miss" ]; then ok "(S6) $(basename "$(dirname "$f")")/product-owner.md story block names Non-goals, Owner decisions, Validation"
+  else no "(S6) $(basename "$(dirname "$f")")/product-owner.md story block lacks:${miss:- the ## User Stories block}"; fi
+done
+VAL_PERSIST="the \`$VAL_H\` section, written at **H2** in the file"
+if grep -qF -- "$VAL_PERSIST" <<<"$pa"; then ok "(S6) PO Persist step writes the Validation section at H2 in the persisted file"
+else no "(S6) PO Persist step does not say the Validation section is written at H2"; fi
+
 # (M1) status stamp deleted ⇒ S2 must fail.
 sed '/^## Status: done (index document/d' "$SKILL" > "$T/m1-skill.md"
 if cmp -s "$SKILL" "$T/m1-skill.md"; then no "(M1) mutant not built (no status stamp line in the template)"
@@ -176,6 +237,19 @@ sed 's/^Check it with `automate-helpers.sh right-size <item>`/No mechanical size
 if cmp -s "$SKILL" "$T/m3-skill.md"; then no "(M3) mutant not built (no 'Check it with' right-size line in the skill)"
 elif skill_size_ok "$T/m3-skill.md" >/dev/null; then no "(M3) control did not discriminate: a skill saying 'count by hand' passed"
 else ok "(M3) control: restoring 'count by hand' fails the size check — the check is load-bearing"; fi
+
+# (M4) the Story Template's Validation heading deleted (only inside `## Story Template`), while the
+# item shape's identical line above it survives ⇒ S6 must fail. Trust the mutant only when it is
+# non-empty, differs from the skill, and still carries the item shape's line.
+sed "/^## Story Template\$/,/^## Example: Staff Scheduling Story\$/{/^## Validation (must pass before merge)\$/d;}" "$SKILL" > "$T/m4-skill.md"
+if [ ! -s "$T/m4-skill.md" ] || cmp -s "$SKILL" "$T/m4-skill.md"; then no "(M4) mutant not built (no Validation heading inside the Story Template)"
+elif ! grep -qxF -- "  $VAL_H" "$T/m4-skill.md"; then no "(M4) mutant also lost the item shape's '$VAL_H' line — not the intended mutation"
+else
+  extract_story_template "$T/m4-skill.md" > "$T/m4.md"
+  if [ -s "$T/m4.md" ] && ! story_template_ok "$T/m4.md" >/dev/null; then
+    ok "(M4) control: without the Story Template's Validation heading S6 fails, though the item shape's line survives"
+  else no "(M4) control did not discriminate: the item shape's (or another) Validation line satisfied S6"; fi
+fi
 
 echo "test-requirement-shape: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

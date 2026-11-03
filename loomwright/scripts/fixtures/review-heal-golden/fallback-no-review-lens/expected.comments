@@ -1,3 +1,4 @@
 <!-- loomwright:dismissed round=1 -->
 - **widget.sh prints the config path without quoting it** — below_fix_floor (code_reviewer)
+  - evidence: severity LOW is below the fix floor MEDIUM
 ----

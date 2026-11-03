@@ -4,10 +4,12 @@
 Replaces the `type: prompt` (haiku, 30s timeout) SubagentStop hook on the
 `loomwright:plan-reviewer` matcher with a zero-token `type: command` script.
 
-RULE SOURCE: the SIX numbered rules below are transcribed from the prompt
-string in `loomwright/hooks/hooks.json` under SubagentStop matcher
-`loomwright:plan-reviewer`. The prompt specifies no verbatim reason strings, so
-each reason names its rule number and the offending issue index.
+RULE SOURCE: the SIX numbered rules (1)-(6) below are transcribed from the
+prompt string in `loomwright/hooks/hooks.json` under SubagentStop matcher
+`loomwright:plan-reviewer`; rules (7)-(8) come from the optional
+`requirement_fit` field in `docs/result-schemas/plan-review-result.md`
+(Plan Reviewer Criterion 22). The prompt specifies no verbatim reason strings,
+so each reason names its rule number and the offending issue index.
 
   (1) a PLAN_REVIEW_RESULT block with a schema_version field equal to 1
   (2) decision is one of PASS, FAIL, or NEEDS_HUMAN
@@ -16,6 +18,11 @@ each reason names its rule number and the offending issue index.
   (4) if decision is FAIL, at least one issue must have severity BLOCKING or HIGH
   (5) each issue includes section field
   (6) summary field is present
+  (7) requirement_fit, when present, is one of fulfils, under, over, skipped
+      (an ABSENT field passes: an older reviewer, or a routed seat's --raw
+      result; an explicit null is present and fails)
+  (8) requirement_fit: under requires decision FAIL (a requirement line is
+      missing from the brief, which Criterion 22 rates HIGH)
 
 Rule (5) applies to EVERY issue, on every decision — a PASS block whose issues
 array is empty vacuously satisfies it, but a PASS that lists issues must still
@@ -67,6 +74,7 @@ BLOCK = "PLAN_REVIEW_RESULT"
 VALID_DECISION = ("PASS", "FAIL", "NEEDS_HUMAN")
 ISSUES_REQUIRED_DECISIONS = ("FAIL", "NEEDS_HUMAN")
 BLOCKING_SEVERITIES = ("BLOCKING", "HIGH")
+VALID_REQUIREMENT_FIT = ("fulfils", "under", "over", "skipped")
 
 MISSING_BLOCK = (
     "missing PLAN_REVIEW_RESULT block — the Plan Reviewer must emit one; its "
@@ -158,6 +166,24 @@ def main():
             False,
             "PLAN_REVIEW_RESULT summary field must be present and non-empty (rule 6)",
         )
+
+    # ── (7) requirement_fit, when present, is in its enum ────────────────────
+    if present(fields, "requirement_fit"):
+        requirement_fit = as_text(fields.get("requirement_fit")).strip()
+        if requirement_fit not in VALID_REQUIREMENT_FIT:
+            emit(
+                False,
+                "requirement_fit must be one of fulfils, under, over, or skipped; "
+                "got %r (rule 7)" % requirement_fit,
+            )
+
+        # ── (8) requirement_fit: under ⇒ decision FAIL ──────────────────────
+        if requirement_fit == "under" and decision != "FAIL":
+            emit(
+                False,
+                "requirement_fit: under (a requirement line is missing) requires "
+                "decision FAIL; got decision=%s (rule 8)" % decision,
+            )
 
     emit(True)
 
