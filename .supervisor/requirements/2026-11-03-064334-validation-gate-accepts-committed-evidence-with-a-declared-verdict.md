@@ -145,3 +145,9 @@ loomwright/scripts/test-pr-body-evidence-seam.sh
 loomwright/scripts/test-requirement-shape.sh
 docs/evidence/validation-gate-declared-verdict.md
 changelog.d/validation-gate-declared-verdict.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-03T14:38:36Z
+- **Brief:** .supervisor/jobs/done/2026-11-03-validation-gate-declared-verdict.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/809
