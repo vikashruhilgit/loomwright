@@ -36,6 +36,7 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 | `--project` | No | Explicit project path (overrides auto-detect) |
 | `--fix-floor <HIGH\|MEDIUM\|LOW>` | No | Lowest plan-review issue severity Launch Pad refines before save (default `MEDIUM`; `.supervisor/config.json` `.fix_floor`) — the same threshold Supervisor Phase 4.5 and `/review-pr` fix by. A PASS carrying an issue at the floor is refined and re-reviewed (uses one of the 3 review attempts); once attempts run out it saves with the issue listed `deferred` — a below-HIGH issue never blocks save. An invalid value aborts (`fix_floor_invalid`). |
 | `--non-interactive` / `--non-interactive-fallback` | No | No human to ask — forwarded from `/autonomous`'s own `--non-interactive-fallback` flag (accepts either spelling). Every question gate takes its named branch per the **Can't-ask rule** (Critical Rules below); executing as a subagent has the same effect. Full contract: `agents/launch-pad.md` §"7-Phase Workflow" Phase 5.5/Phase 6. |
+| `--no-auto-gates` | No | Always ask the Phase 6 save gate: turns off its `gate-auto.sh` auto answer (`--off`; also `.supervisor/config.json` `{"auto_gates": false}`). |
 
 ## What This Does
 
@@ -43,7 +44,7 @@ A **7-phase readiness workflow** (primary Phases 1–7; the FEASIBILITY 2.5 and 
 
 ## Interactive Refinement
 
-After the brief passes Plan Review (Phase 5.5), Launch Pad presents "Save and exit" · "Refine further" · "Edit sections" · "Discard" — `header: "LP-SAVE"` on a zero-issue PASS, `"LP-SAVE-NOTE"` on a PASS with any issue or note (gate catalog: `docs/LANE_GATES.md`):
+After the brief passes Plan Review (Phase 5.5), Launch Pad presents "Save and exit" · "Refine further" · "Edit sections" · "Discard" — `header: "LP-SAVE"` on a zero-issue PASS, `"LP-SAVE-NOTE"` on a PASS with any issue or note (gate catalog: `docs/LANE_GATES.md`) — unless the `auto` tier saves first (Phase 6 below):
 
 | Option | When Available |
 |--------|---------------|
@@ -219,7 +220,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 ### Phase 6: REFINE & SAVE (Interactive)
 
 1. Present brief with Plan Review status
-2. Options: Save (PASS or user override) / Refine / Edit / Discard
+2. Options: Save (PASS or user override) / Refine / Edit / Discard. On a PASS a run that could ask first runs `gate-auto.sh decide` exactly as `${CLAUDE_PLUGIN_ROOT}/agents/launch-pad.md` Phase 6 action 3 says (read that action): `answer` saves with no question, `ask` asks as before
 3. On save: `mkdir -p .supervisor/jobs/pending`, write `{date}-{slug}.md`
 4. Output exact Supervisor command: `/supervisor job: .supervisor/jobs/pending/{file}.md`
 5. If blockers exist or Plan Review FAIL: don't offer save

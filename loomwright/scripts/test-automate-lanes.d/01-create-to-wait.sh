@@ -19,6 +19,22 @@ check "A6 notify-config.json byte-for-byte" "$(cmp -s "$P/.supervisor/notify-con
 check "A7 lane.json shape" "$(jq -c '[.schema_version, .lane, .run_id, .parent_run_id, .primary, .parallel, .max_tokens, (.created | test("Z$"))]' "$L1/.supervisor/lane.json")" \
   "[1,\"L1\",\"$PARENT-L1\",\"$PARENT\",\"$P\",2,500,true]"
 check "A8 L2 run id" "$(jq -r .run_id "$L2/.supervisor/lane.json")" "$PARENT-L2"
+# A8b: the run's `auto` gate off switch (`## Run Config` `- auto_gates: off`) is carried into lane.json as
+# `"auto_gates": false` — ONLY then: a parent without it (A7's L1), or with the words outside ## Run Config,
+# writes no key (every other lane.json byte-identical); the lane's gate-auto.sh decide reads it (`ask off`).
+# Its own parent runs, removed afterwards, so no later leg sees their lanes or tables.
+PAG=automate-2026-10-07-121500; RFAG="$P/.supervisor/automate/$PAG.md"
+printf '# Automate Run: %s\n## Run Config\n- mode: safe | limit: 5 | trust_unprotected: false\n- auto_gates: off\n## Progress\n' "$PAG" > "$RFAG"
+run lane-create "$RFAG" reqs/a.md 1 --parallel 2 >/dev/null
+PAG2=automate-2026-10-07-121600; RFAG2="$P/.supervisor/automate/$PAG2.md"
+printf '# Automate Run: %s\n## Run Config\n- mode: safe | limit: 5 | trust_unprotected: false\n## Progress\n- 2026-10-07T12:16:00Z note: auto_gates: off was discussed\n' "$PAG2" > "$RFAG2"
+run lane-create "$RFAG2" reqs/a.md 1 --parallel 2 >/dev/null
+LAG="$T/work/primary-lanes/$PAG/L1"; LAG2="$T/work/primary-lanes/$PAG2/L1"
+check "A8b lane.json auto_gates: false only under a parent ## Run Config auto_gates: off" \
+  "$(jq -c '.auto_gates' "$LAG/.supervisor/lane.json" 2>&1)|$(jq -c 'has("auto_gates")' "$LAG2/.supervisor/lane.json" 2>&1)|$(jq -c 'has("auto_gates")' "$L1/.supervisor/lane.json")" "false|false|false"
+check "A8c the lane's gate-auto.sh decide reads lane.json's switch" \
+  "$(bash "$HERE/gate-auto.sh" decide AUT-QUEUE --offered Process --offered Stop --root "$LAG" 2>/dev/null)|$(bash "$HERE/gate-auto.sh" decide AUT-QUEUE --offered Process --offered Stop --root "$LAG2" 2>/dev/null)" "ask off|answer Process"
+rm -rf "$T/work/primary-lanes/$PAG" "$T/work/primary-lanes/$PAG2" "$P/.supervisor/automate/$PAG".* "$P/.supervisor/automate/$PAG2".*
 check "A9 one-line backlog naming the canonical path" "$(cat "$L1/.supervisor/lane-backlog.md")" "- [ ] reqs/a.md"
 has "A10 meta pull passes --branch explicitly" "$(cat "$META_LOG")" "meta-sync pull --branch test-meta --root $L1"
 check "A11 relay hooks installed (PreToolUse + PermissionRequest)" \

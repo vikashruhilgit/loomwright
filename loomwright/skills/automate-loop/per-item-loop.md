@@ -39,6 +39,8 @@ On the **`## Status: done`** exit ONLY, the loop runs `trail-pr --reason done`, 
 
 Every park (`awaiting_merge`, `ready_for_release`, `escalated`, `rate_limit`, `drain_died`, `trail_pr_open`, …) also stops the loop with its `pause_reason`. All `/autonomous` correctness gates still bubble up (NO-GO, Plan Review FAIL×3, adjudication, rubric gate); `--notify`, `--non-interactive-fallback` and `--cheap` pass through to the inner `/autonomous` (§11).
 
+**Auto-answered gates at every stop.** At every park and at the run's end (a `park` instruction, or a `done` whose `status` is not `running`), the loop runs `gate-auto.sh list <runfile>` (read-only) and prints its output verbatim in the report the owner reads: one `Auto-answered gates (<n>):` block with a row per `auto-answered` `## Progress` line of the run (code, label, reason, item). A run with no auto-answer prints nothing, so no block appears. `auto-escalated` lines are not listed: each of those gates was asked.
+
 ### Brief-repair at RECONCILE and SYNC (merge-evidenced lifecycle repair)
 
 `automate-helpers.sh brief-repair <item> <pr_url>` (§1.5) runs as step 2 of `closeout` at both seams — RECONCILE's `closeout` and SYNC's `closeout … --no-trail` — and its one output line lands in `## Progress` verbatim. It repairs only on a forge `MERGED` read, through `reconcile-jobs.sh --repair --evidence <item>=<pr_url>` (the one mover; an ambiguous match repairs nothing).

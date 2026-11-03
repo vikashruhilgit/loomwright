@@ -49,6 +49,13 @@
 #      `git show` falls through, exact arm deleted, ancestor arm deleted, failed `ls-tree` presence
 #      probe falls through, symlink probe deleted, exact-path filter dropped, gitlink arm deleted),
 #      each gated on non-empty + differs + `bash -n`
+#   M. `--paths <file>` mode: a listed path under agents/ or matching *auth* ⇒ true with a `path:`
+#      reason; only low-risk paths ⇒ false (blank / `./` / duplicate lines normalised, no size class);
+#      an unreadable list or a directory ⇒ null `paths_unreadable`, an empty one ⇒ null `paths_empty`;
+#      trusted-root applies; the project `.agent/risk.json` `paths[]` is read at HEAD, never the working
+#      tree; refs given with --paths ⇒ bad_args; mutation controls (true unconditionally, the
+#      unreadable-list line deleted, the class (b) directory match deleted). The refs-mode legs A–L are
+#      the byte-identical half: A1 pins the exact key set, B–L the reasons
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -743,6 +750,78 @@ if mutant gitlink-silent sed 's/^      emit_unclassifiable "risk_json_gitlink" .
     || no "L12 mutant not discriminated ($OUT err='$ERR')"
 else
   no "L12 mutant not gated"
+fi
+
+# =============================================================================
+echo "== M. --paths mode — a path LIST, no diff (gate-auto.sh's brief risk read) =="
+# The refs-mode legs above are untouched; these read their own list files and only check the fixture
+# repo out (at_head) and back to main.
+PL="$TMP/plists"; mkdir -p "$PL"
+printf 'docs/guide.md\nloomwright/agents/worker.md\n' > "$PL/agents.txt"
+printf 'src/oauth/login.ts\n' > "$PL/auth.txt"
+printf 'README.md\n./src/utils/format.ts\n\nREADME.md\n  docs/notes.md  \n' > "$PL/low.txt"
+printf 'CLAUDE.md\n' > "$PL/claude.txt"
+printf 'billing/x.ts\n' > "$PL/billing.txt"
+: > "$PL/empty.txt"
+i=0; : > "$PL/many.txt"; while [ $i -lt 16 ]; do printf 'docs/f%s.md\n' "$i" >> "$PL/many.txt"; i=$((i+1)); done
+prun() { OUT="$(cd "$ELSEWHERE" && bash "${PS:-$S}" --paths "$@" --root "$R" 2>"$TMP/err")"; RC=$?; ERR="$(cat "$TMP/err")"; }
+prun "$PL/agents.txt"
+[ "$RC" -eq 0 ] && one_json && [ "$(j '.high_risk')" = "true" ] && has_reason "path: loomwright/agents/worker.md matched agents/" \
+  && [ "$(j 'keys|join(",")')" = "changed_files,changed_lines,high_risk,reasons,source" ] && [ "$(j '.source')" = "classify-risk.sh" ] \
+  && ok "M1 a listed path under agents/ ⇒ true with its path: reason, the same object shape and source" || no "M1 ($OUT)"
+prun "$PL/auth.txt"
+[ "$(j '.high_risk')" = "true" ] && has_reason "path: src/oauth/login.ts matched *auth*" \
+  && ok "M2 a listed path matching *auth* ⇒ true with a path: reason" || no "M2 ($OUT)"
+prun "$PL/low.txt"
+[ "$RC" -eq 0 ] && [ "$(jc '[.high_risk, .reasons, .changed_files, .changed_lines]')" = '[false,[],3,0]' ] \
+  && ok "M3 only low-risk paths ⇒ false, no reasons; blanks, ./ and duplicates dropped (3 distinct paths, 0 lines)" || no "M3 ($OUT)"
+prun "$PL/many.txt"
+[ "$(j '.high_risk')" = "false" ] && [ "$(j '.changed_files')" = "16" ] \
+  && ok "M4 16 low-risk paths ⇒ false: the size class does not apply to a path list" || no "M4 ($OUT)"
+prun "$PL/no-such.txt"
+[ "$RC" -eq 0 ] && [ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: paths_unreadable" && printf '%s' "$ERR" | grep -q 'paths_unreadable' \
+  && ok "M5 an unreadable list ⇒ null + unclassifiable: paths_unreadable (stderr too), exit 0" || no "M5 rc=$RC ($OUT)"
+prun "$PL"
+[ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: paths_unreadable" && ok "M5b a directory is not a readable list ⇒ null" || no "M5b ($OUT)"
+prun "$PL/empty.txt"
+[ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: paths_empty" && ok "M6 an empty list ⇒ null + unclassifiable: paths_empty" || no "M6 ($OUT)"
+prun "$PL/claude.txt"
+[ "$(j '.high_risk')" = "true" ] && has_reason "trusted-root: claude.md" && ok "M7 a listed CLAUDE.md ⇒ true with a trusted-root: reason" || no "M7 ($OUT)"
+at_head main
+prun "$PL/billing.txt"
+[ "$(j '.high_risk')" = "false" ] && ok "M8a premise: billing/x.ts is low-risk at main (no .agent/risk.json)" || no "M8a ($OUT)"
+at_head base-rj-ok
+prun "$PL/billing.txt"
+at_head main
+[ "$(j '.high_risk')" = "true" ] && has_reason "project: billing/x.ts matched billing/**" \
+  && ok "M8 the project .agent/risk.json paths[] at HEAD applies to the list (true + project: reason)" || no "M8 ($OUT)"
+mkdir -p "$R/.agent" && printf '{"schema_version":1,"paths":["billing/**"]}\n' > "$R/.agent/risk.json"
+prun "$PL/billing.txt"
+rm -rf "$R/.agent"
+[ "$(j '.high_risk')" = "false" ] && ok "M9 an uncommitted working-tree .agent/risk.json is never read (HEAD only)" || no "M9 ($OUT)"
+OUT="$(cd "$ELSEWHERE" && bash "$S" --paths "$PL/low.txt" main clean --root "$R" 2>/dev/null)"
+[ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: bad_args" && ok "M10 --paths with refs ⇒ null bad_args" || no "M10 ($OUT)"
+OUT="$(cd "$ELSEWHERE" && bash "$S" --root "$R" --paths 2>/dev/null)"
+[ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: bad_args" && ok "M10b --paths with no file ⇒ null bad_args" || no "M10b ($OUT)"
+# Mutation controls (the brief's pins), each gated on non-empty + differs + bash -n.
+if mutant p-always awk '{ print } /^if \[ "\$total" -gt 0 \]; then hr=true; else hr=false; fi$/ { print "[ -n \"$paths_mode\" ] && hr=true" }'; then
+  PS="$MS" prun "$PL/low.txt"
+  [ "$(j '.high_risk')" = "true" ] && ok "M11 (mutant) --paths emits true unconditionally ⇒ M3 reads true — M3 is live" || no "M11 mutant not discriminated ($OUT)"
+else
+  no "M11 mutant not gated"
+fi
+if mutant p-unread grep -v '^  \[ -f "\$paths_file" \] && \[ -r "\$paths_file" \] || emit_unclassifiable "paths_unreadable"' \
+   && ! grep -q 'emit_unclassifiable "paths_unreadable"' "$MS"; then
+  PS="$MS" prun "$PL/no-such.txt"
+  ! has_reason "unclassifiable: paths_unreadable" && ok "M12 (mutant) the unreadable-list line deleted ⇒ M5 loses paths_unreadable — M5 is live" || no "M12 mutant not discriminated ($OUT)"
+else
+  no "M12 mutant not gated"
+fi
+if mutant p-nodirs grep -v '^    case "\$p" in "\$ld"\*|\*"/\$ld"\*) reason "path: \$p matched \$d" ;; esac$'; then
+  PS="$MS" prun "$PL/agents.txt"
+  [ "$(j '.high_risk')" = "false" ] && ok "M13 (mutant) the class (b) directory match deleted ⇒ M1 reads false — M1 is live" || no "M13 mutant not discriminated ($OUT)"
+else
+  no "M13 mutant not gated"
 fi
 
 echo

@@ -17,7 +17,7 @@
 #   G1  no `header: ""` / `"header":""` anywhere in the surface (an ask always names its gate);
 #   G2  every `header: "<CODE-shaped>"` names a catalog code (no typo or invented code);
 #   G3  a block carrying `header: "<code>"` quotes, in its ask site, every one of that gate's catalog
-#       labels (`?` stripped; a free-text gate has none) — the catalog's options, not a paraphrase;
+#       labels (`?` and `!` stripped; a free-text gate has none) — the catalog's options, not a paraphrase;
 #   G4  a block that quotes every label of a gate names, in it or the block before it, one of the codes
 #       that carry that label set (prose spelling out a gate's options says which gate it is) — maximal
 #       sets only, so a block
@@ -48,7 +48,8 @@ root = sys.argv[1]
 rows = {}
 for line in os.environ["CAT"].splitlines():
     code, policy, labels, _purpose = line.split("\t")
-    labs = [] if labels == "(free text)" else [l[:-1] if l.endswith("?") else l for l in labels.split("|")]
+    # `?` (optional) and `!` (an auto row's auto label) are markers, never part of the label
+    labs = [] if labels == "(free text)" else [l[:-1] if l.endswith(("?", "!")) else l for l in labels.split("|")]
     rows[code] = labs
 by_set = {}
 for code, labs in rows.items():

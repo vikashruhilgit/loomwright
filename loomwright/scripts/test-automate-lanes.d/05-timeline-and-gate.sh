@@ -40,6 +40,23 @@ if ! cmp -s "$SB" "$MUT/lanes-aj4b.sh" && bash -n "$MUT/lanes-aj4b.sh"; then
     "$(jq -r "$AJ4B_GOT" <<<"$out")" "merge|Merge|done|done|done,trouble|ran /autonomous "
 else bad "AJ4c mutation did not apply (the park classification moved)"; fi
 rm -f "$MUT/lanes-aj4b.sh"
+# AJ4g: gate-auto.sh's records are filed by their code — an AUT-* gate (asked before the pick) on Pick, an LP-*
+# gate (Launch Pad Phase 6) on Plan — whatever words their free-text reason carries (`re-drain`, `launch pad`).
+ajp '- 2026-10-11T08:00:00Z run created (lane L1 of p)' \
+  '- 2026-10-11T08:00:10Z auto-answered AUT-QUEUE: Process — folder source; no re-drain pending' \
+  '- 2026-10-11T08:00:20Z auto-escalated AUT-RESUME: high_risk' '- 2026-10-11T08:01:00Z picked a.md' \
+  '- 2026-10-11T08:10:00Z auto-answered LP-SAVE-NOTE: Save and exit — PASS with notes, max severity LOW' \
+  '- 2026-10-11T08:11:00Z auto-escalated LP-SAVE: high_risk (item a.md)'
+AJ4G_GOT='[.steps[] | "\(.id):" + ([.lines[] | select(startswith("auto-")) | split(" ")[1] | rtrimstr(":")] | join(","))] | join(" ")'
+check "AJ4g auto-answered / auto-escalated AUT-* lines file under Pick, LP-* lines under Plan" \
+  "$(ajt running | jq -r "$AJ4G_GOT")" "pick:AUT-QUEUE,AUT-RESUME plan:LP-SAVE-NOTE,LP-SAVE build: heal: drain: decide: merge:"
+sed 's/test("^(auto-answered|auto-escalated) AUT-")/test("^(auto-escalated) AUT-")/' "$SB" > "$MUT/lanes-aj4g.sh"
+if ! cmp -s "$SB" "$MUT/lanes-aj4g.sh" && bash -n "$MUT/lanes-aj4g.sh"; then
+  out="$( ( . "$MUT/lanes-aj4g.sh"; _lanes_timeline "$AJRF" "$AJ/lane/.supervisor" "$(jq -n '"2026-10-11T10:00:00Z" | fromdateiso8601')" running - ) | jq -r "$AJ4G_GOT")"
+  check "AJ4h mutation (the auto-answered AUT-* alternation dropped) files AUT-QUEUE by its reason (Drain) — the case AJ4g catches" \
+    "$out" "pick:AUT-RESUME plan:LP-SAVE-NOTE,LP-SAVE build: heal: drain:AUT-QUEUE decide: merge:"
+else bad "AJ4h mutation did not apply (the auto-answered classification moved)"; fi
+rm -f "$MUT/lanes-aj4g.sh"
 # AJ4d: the no-PR RUN line's wording is not pinned — other Launch Pad phrasings reach Plan too; one that names
 # the Supervisor (it started) or carries a PR URL still reaches Build.
 aj4d() { ajp '- 2026-10-11T08:01:00Z picked a.md' "- 2026-10-11T08:20:00Z ran /autonomous $1" '- 2026-10-11T08:20:05Z parked escalated (no PR)'; ajt escalated | jq -r .current; }

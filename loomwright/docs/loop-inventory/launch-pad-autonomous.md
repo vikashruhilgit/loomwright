@@ -166,7 +166,8 @@ This file lists every branch (condition → action) and every standing rule stat
 | LP-149 | agents/launch-pad.md | q: After `record-override` or `honor-rule`, **re-run Phase 5 step 9 MATERIALIZE** | after record-override or honor-rule | re-run MATERIALIZE and Plan Review (consumes an attempt; exhausted cap ⇒ action 4) | deterministic | prose | - | GAP |
 | LP-150 | agents/launch-pad.md | q: **Cannot ask** (Can't-ask rule): write no override and revise nothing | 17c conflict and the run cannot ask | write and revise nothing, save nothing; aborted, summary leads rule_conflict_non_interactive | deterministic | prose | - | test-rule-conformance-seam.sh |
 | LP-151 | agents/launch-pad.md | q: **Never author an override.** A `Rule override:` line reaches the brief only | any refine loop | a Rule override line comes only from the source requirement or the owner's answer, never from FAIL/at-floor refine | rule | step-scoped | - | test-rule-conformance-seam.sh |
-| LP-152 | agents/launch-pad.md | q: If Plan Review returned PASS: use | PASS with zero issues / PASS with any issue or note | ask with header LP-SAVE / ask with header LP-SAVE-NOTE (human-only) so a human always answers | deterministic | prose | script:lane-policy.sh | test-lane-policy.sh |
+| LP-152 | agents/launch-pad.md | q: If Plan Review returned PASS: use | PASS with zero issues / PASS with any issue or note | ask with header LP-SAVE / ask with header LP-SAVE-NOTE; both are `auto` gates (LP-SAVE-NOTE by owner decision, never policy-answered), so each is asked only when its auto answer escalates (LP-539) | deterministic | prose | script:lane-policy.sh | test-lane-policy.sh |
+| LP-539 | agents/launch-pad.md | q: Auto answer first — only when this run could ask | a Plan Review PASS on a run that could ask (MI, HR) | `gate-auto.sh decide` over the offered labels, the PASS's highest issue severity and the File Impact Map paths (`--risk-paths`): `answer Save and exit` ⇒ `gate-auto.sh record` (`auto-answered`) and save with no question; `ask <trigger>` ⇒ record `auto-escalated` and ask; the Cannot-ask branches are unchanged | deterministic | prose | script:gate-auto.sh decide | test-lane-policy.sh |
 | LP-153 | agents/launch-pad.md | q: **"Save and exit"** — Write brief to `.supervisor/jobs/pending/{date}-{slug}.md` | user picks Save and exit | write the brief to pending/ and output the /supervisor job command | deterministic | prose | - | GAP |
 | LP-154 | agents/launch-pad.md | q: **"Refine further"** — Ask clarifying questions, update sections | user picks Refine further on PASS | update, re-run MATERIALIZE, re-run Plan Review before save (the PASS is void once mutated) | deterministic | prose | - | GAP |
 | LP-155 | agents/launch-pad.md | q: **"Edit sections"** — User specifies what to change | user picks Edit sections | edit in place, re-run MATERIALIZE, re-run Plan Review before save | deterministic | prose | - | GAP |
@@ -993,8 +994,8 @@ This file lists every branch (condition → action) and every standing rule stat
 
 ## Counts
 
-- rows: 538
-- deterministic: 340
+- rows: 539
+- deterministic: 341
 - judgment: 48
 - rule: 125
 - story: 25

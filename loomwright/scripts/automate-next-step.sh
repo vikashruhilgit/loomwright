@@ -84,7 +84,8 @@
 # STEPS — each is ONE `case` arm of ns_dispatch (the strings inventory homes cite as
 #   `script:automate-next-step.sh <step>`):
 #   resume      `--resume`: the target run (`--run <id>`, else the most recent incomplete one), the
-#               AUT-RESUME ask (Continue / Start new / Archive), or without it the
+#               AUT-RESUME ask (Continue / Start new / Archive; its `auto_answer` is gate-auto.sh decide's
+#               verdict, which only a caller that can ask applies — the driver never continues on it), or without it the
 #               `resume_requires_flag_non_interactive` stop (one run, no `--run`; nothing written past the
 #               start steps) / the
 #               `resume_ambiguous` park (more than one run, no `--run <id>`)
@@ -781,6 +782,8 @@ ns_field_ok() {
 # park and degraded note, the lane-guard, phase-guard and token-ceiling park lines, the meta-push report, the
 # reconcile-status dry-run lines, current-rebuild's line, closeout-others' record lines, the drain_died park
 # line, the live merge-watcher note) are reserved too: a forged one would fake a park or a ground-truth record.
+# So are gate-auto.sh's `auto-answered` / `auto-escalated` records: a forged one would fake an auto-answer in
+# the end-of-run list (`gate-auto.sh list`) or an escalation the owner never saw.
 NS_RESERVED_PREFIXES='picked
 parked
 ran /autonomous
@@ -826,6 +829,8 @@ run created
 run-lock acquired
 meta-entry
 skipped AUT-QUEUE
+auto-answered
+auto-escalated
 run_lock_held
 run_lock_degraded
 refuse: live_lane
@@ -1245,13 +1250,59 @@ ns_resume_q() { # <rebuilt line or ""> — the AUT-RESUME question list
   [ -n "$others" ] && q="$q; other incomplete runs: $others (continue one of them with --resume <run_id>)"
   "$JQ" -cn --arg q "$q. Continue it, start a new run, or archive it?" '[{question: $q, header: "AUT-RESUME", options: ["Continue","Start new","Archive"]}]'
 }
-ns_resume_ask() { # <step> <rebuilt line or ""> — AUT-RESUME (an `allowed` gate: header is its code)
-  local cant
+# ns_resume_auto <questions json> — the `auto` tier's decision for this AUT-RESUME ask, as the JSON object
+# {auto_answer, auto_reason}. Decided here, applied by the caller that can ask (the driver cannot tell whether
+# its caller can ask, so it never continues on its own and writes nothing for it): `gate-auto.sh decide
+# AUT-RESUME` with the ask's own offered labels, this run file (its `## Run Config` `auto_gates: off`) and
+# the checkout (lane.json, config.json). Risk: the refs diff of the run's open PR (`## Current`'s `pr:`,
+# read with `gh pr view --json state,baseRefName,headRefOid`); no PR, or a merged / closed one ⇒ no risk
+# read. Fails toward asking: a PR whose state, base or head cannot be read is `high_risk` (classify-risk.sh's
+# own null rule); a missing helper or an unreadable answer is `gate_auto_unreadable`. `auto_answer` is
+# "Continue" only on `answer Continue`; otherwise null and `auto_reason` the trigger `decide` printed.
+ns_resume_auto() {
+  local q="$1" ga="$HERE/gate-auto.sh" o pj="" pst="" base hsha why out="" tr
+  local args=(decide AUT-RESUME --runfile "$RF" --root "$ROOT")
+  while IFS= read -r o; do [ -n "$o" ] && args+=(--offered "$o"); done < <(printf '%s' "$q" | "$JQ" -r '.[0].options[]?' 2>/dev/null)
+  why="one incomplete run, ## Current not rebuilt"
+  if [ -z "$PR" ] || [ "$PR" = null ]; then why="$why, no PR (no risk read)"
+  else
+    ns_pr_ok "$PR" && pj="$(ns_gh pr view "$PR" --json state,baseRefName,headRefOid)"
+    pst="$(printf '%s' "$pj" | "$JQ" -r '.state // empty | strings' 2>/dev/null)"
+    case "$pst" in
+      MERGED|CLOSED) why="$why, PR $PR $pst (no risk read)" ;;
+      OPEN)
+        base="$(printf '%s' "$pj" | "$JQ" -r '.baseRefName // empty | strings' 2>/dev/null)"
+        hsha="$(printf '%s' "$pj" | "$JQ" -r '.headRefOid // empty | strings' 2>/dev/null)"
+        if [[ "$base" =~ ^[A-Za-z0-9._/-]+$ ]] && ns_sha_ok "$hsha"; then
+          args+=(--risk-diff "origin/$base" "$hsha"); why="$why, open PR $PR not high-risk"
+        else pst=""; fi ;;
+      *) pst="" ;;
+    esac
+  fi
+  [ -f "$ga" ] && out="$(bash "$ga" "${args[@]}" </dev/null 2>/dev/null | head -n 1)"
+  case "$out" in
+    "answer Continue")
+      # a PR whose state or diff could not be read never auto-continues (decide checks high_risk last, so
+      # an `off` / `label` answer still names its own trigger)
+      if [ -n "$PR" ] && [ "$PR" != null ] && [ -z "$pst" ]; then tr=high_risk
+      else "$JQ" -cn --arg r "$why" '{auto_answer: "Continue", auto_reason: $r}'; return 0; fi ;;
+    "answer "*) tr=label ;;
+    "ask "?*) tr="${out#ask }"; tr="${tr%% *}" ;;
+    *) tr=gate_auto_unreadable ;;
+  esac
+  "$JQ" -cn --arg t "$tr" '{auto_answer: null, auto_reason: $t}'
+}
+ns_resume_ask() { # <step> <rebuilt line or ""> — AUT-RESUME (an `auto` gate: header is its code)
+  local cant q aj='{"auto_answer":null,"auto_reason":null}'
   if [ -n "$2" ] || [ "$(st resume_n)" != 1 ]; then cant="resume_ambiguous park"
   else cant="automate: resume_requires_flag_non_interactive stop (nothing written past the start steps)"; fi
-  ns_emit_ask "$1" AUT-RESUME "$cant" "$(ns_resume_q "$2")"
-  NS_EMIT="$(printf '%s' "$NS_EMIT" | "$JQ" -c --arg f "$RF" '. + {run_file: $f,
-      answer_with: ("automate-next-step.sh " + $f + " --result {\"answers\": [\"Continue\" | \"Start new\" | \"Archive\"]}; when the ask tool is unavailable --result {\"cant_ask\": true}")}')"
+  q="$(ns_resume_q "$2")"
+  ns_emit_ask "$1" AUT-RESUME "$cant" "$q"
+  # the auto tier is consulted only here — the interactive path, exactly one incomplete run, no rebuilt
+  # ## Current; every other ask carries auto_answer null (and auto_reason null: the helper was not consulted)
+  if [ -z "$2" ] && [ "$(st resume_n)" = 1 ]; then aj="$(ns_resume_auto "$q")"; fi
+  NS_EMIT="$(printf '%s' "$NS_EMIT" | "$JQ" -c --arg f "$RF" --argjson a "$aj" '. + {run_file: $f,
+      answer_with: ("automate-next-step.sh " + $f + " --result {\"answers\": [\"Continue\" | \"Start new\" | \"Archive\"]}; when the ask tool is unavailable --result {\"cant_ask\": true}")} + $a')"
   st_set item "$ITEM"; st_set pr "$PR"
   NEXT=resume
 }

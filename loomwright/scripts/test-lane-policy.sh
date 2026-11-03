@@ -6,8 +6,10 @@
 # root; the real rules-check.sh and automate-helpers.sh run against them; no network, no gh.
 #
 # Groups:
-#   (cat)  catalog — row shape, codes <= 12 chars, the five `allowed` gates exactly, the LANE_GATES.md
-#          mirror parsed back to TSV equals `catalog` (with a drifted-copy control), --markdown block
+#   (cat)  catalog — row shape over the three tiers (allowed | auto | human-only), the `!` auto-label
+#          marker (exactly one per auto row, none elsewhere), codes <= 12 chars, the `allowed` and the
+#          `auto` gates as two exact closed sets, the LANE_GATES.md mirror parsed back to TSV equals
+#          `catalog` (with a drifted-copy control), --markdown block
 #   (ws)   wave-set — writes + Progress line; refuses a human-only code, an unknown label, a duplicate,
 #          a non-run file (exit 1, nothing written)
 #   (st)   resolve — a stamped project policy applies; a human-only code in it is dropped and reported;
@@ -25,9 +27,18 @@
 #   (op)   optional (`?`) labels — LP-SAVE's last-attempt core ask gets the policy answer, any other subset
 #          is human; MUTATION CONTROL — the core match removed ⇒ (op1) FAILS
 #   (gh)   check-gate-headers.sh — clean on the real tree; one mutation per rule G1–G5 fires; fail CLOSED
+#   (pa)   policy answerability (D1, _lp_policy_answerable) — the base-`allowed` auto codes (AUT-QUEUE,
+#          AUT-RESUME, LP-SAVE) stay answered by wave-set / resolve / decide; LP-SAVE-NOTE is refused by
+#          all three; MUTATION CONTROLS — _LP_POLICY_EXEMPT emptied, the helper narrowed to `allowed`
+#   (ga)   gate-auto.sh — the auto tier answers each auto code; each escalation trigger (off from every
+#          source, not_auto, label, destructive, severity, high_risk) asks; errors ask; record / list;
+#          MUTATION CONTROLS — one per trigger line, each gated on landed + bash -n
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
+# A phase session exports LOOMWRIGHT_PHASE_DIR; gate-auto.sh resolves a run file from it, so a test run
+# inside one would append records to the LIVE run file. Every run file here is a scratch one.
+unset LOOMWRIGHT_PHASE_DIR
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LP="$SCRIPT_DIR/lane-policy.sh"
 RULES_CHECK="$SCRIPT_DIR/rules-check.sh"
@@ -91,18 +102,26 @@ Q_QUEUE='{"questions":[{"header":"AUT-QUEUE","question":"Process the queue?","mu
 echo "== (cat) catalog — the ONE authority, its shape, and the LANE_GATES.md mirror =="
 cat_tsv="$(bash "$LP" catalog)"; rc=$?
 [ "$rc" -eq 0 ] && [ -n "$cat_tsv" ] && ok "(cat1) catalog exits 0 and prints rows" || no "(cat1) rc=$rc"
-bad_shape="$(printf '%s\n' "$cat_tsv" | awk -F'\t' 'NF != 4 || $1 == "" || ($2 != "allowed" && $2 != "human-only") || $3 == "" || $4 == ""')"
-[ -z "$bad_shape" ] && ok "(cat2) every row is code<TAB>allowed|human-only<TAB>labels<TAB>purpose" || no "(cat2) bad rows: $bad_shape"
+bad_shape="$(printf '%s\n' "$cat_tsv" | awk -F'\t' 'NF != 4 || $1 == "" || ($2 != "allowed" && $2 != "auto" && $2 != "human-only") || $3 == "" || $4 == ""')"
+[ -z "$bad_shape" ] && ok "(cat2) every row is code<TAB>allowed|auto|human-only<TAB>labels<TAB>purpose" || no "(cat2) bad rows: $bad_shape"
+# (cat2b) the `!` auto-label marker: exactly one per `auto` row, none on any other row.
+bad_bang="$(printf '%s\n' "$cat_tsv" | awk -F'\t' '{ n = 0; m = split($3, l, "|"); for (i = 1; i <= m; i++) if (l[i] ~ /!$/) n++
+  if (($2 == "auto" && n != 1) || ($2 != "auto" && n != 0)) print $1 }')"
+[ -z "$bad_bang" ] && ok "(cat2b) every auto row carries exactly one ! label and no other row carries any" || no "(cat2b) rows: $bad_bang"
 long="$(printf '%s\n' "$cat_tsv" | awk -F'\t' 'length($1) > 12 { print $1 }')"
 [ -z "$long" ] && ok "(cat3) no code is longer than 12 characters (the ask tool's header limit)" || no "(cat3) codes over 12 chars: $long"
 dups="$(printf '%s\n' "$cat_tsv" | cut -f1 | sort | uniq -d)"
 [ -z "$dups" ] && ok "(cat4) codes are unique" || no "(cat4) duplicate codes: $dups"
 allowed="$(printf '%s\n' "$cat_tsv" | awk -F'\t' '$2 == "allowed" { print $1 "=" $3 }' | env LC_ALL=C sort)"
-want_allowed="$(printf '%s\n' 'AUT-QUEUE=Process|Stop' 'AUT-RESUME=Continue|Start new|Archive' \
-  'AUT-SUMMARY=Keep summary|Drop summary' 'LP-SAVE=Save and exit|Refine further?|Edit sections?|Discard' \
+want_allowed="$(printf '%s\n' 'AUT-SUMMARY=Keep summary|Drop summary' \
   'SUP-CHILDREN=proceed anyway|investigate|abort' | env LC_ALL=C sort)"
-[ "$allowed" = "$want_allowed" ] && ok "(cat5) the allowed gates are EXACTLY the five B1 names, with their exact labels" \
-  || no "(cat5) allowed set drifted: [$allowed]"
+auto="$(printf '%s\n' "$cat_tsv" | awk -F'\t' '$2 == "auto" { print $1 "=" $3 }' | env LC_ALL=C sort)"
+want_auto="$(printf '%s\n' 'AUT-QUEUE=Process!|Stop' 'AUT-RESUME=Continue!|Start new|Archive' \
+  'LP-SAVE=Save and exit!|Refine further?|Edit sections?|Discard' \
+  'LP-SAVE-NOTE=Save and exit!|Refine further?|Edit sections?|Discard' | env LC_ALL=C sort)"
+[ "$allowed" = "$want_allowed" ] && [ "$auto" = "$want_auto" ] \
+  && ok "(cat5) the allowed gates and the auto gates are EXACTLY their two closed sets, with their exact labels and ! labels" \
+  || no "(cat5) tier sets drifted: allowed=[$allowed] auto=[$auto]"
 rec="$(printf '%s\n' "$cat_tsv" | cut -f3 | grep -c 'Recommended')"
 [ "$rec" -eq 0 ] && ok "(cat6) no catalog label carries a (Recommended) marker" || no "(cat6) $rec rows carry (Recommended)"
 
@@ -125,7 +144,7 @@ if [ -r "$MD" ]; then
     && ok "(cat7) LANE_GATES.md's table, parsed back to TSV, equals lane-policy.sh catalog (no drift)" \
     || no "(cat7) LANE_GATES.md drifted from the catalog — regenerate with 'lane-policy.sh catalog --markdown'. diff: $(diff <(printf '%s\n' "$cat_tsv") <(printf '%s\n' "$md_rows") | head -5)"
   # Control: the comparison is not vacuous — a one-label edit in a copy is detected.
-  sed 's/`Process` · `Stop`/`Process` · `Halt`/' "$MD" > "$ROOT/drift.md"
+  sed 's/`Process!` · `Stop`/`Process!` · `Halt`/' "$MD" > "$ROOT/drift.md"
   if ! cmp -s "$MD" "$ROOT/drift.md" && [ "$(md_tsv "$ROOT/drift.md")" != "$cat_tsv" ]; then
     ok "(cat8) control: a drifted copy of LANE_GATES.md (one label changed) is detected"
   else
@@ -394,7 +413,7 @@ fi
 # ============================================================================
 echo "== (mut) MUTATION CONTROL — decide honouring a human-only code must make (dc7) FAIL =="
 MUT="$ROOT/lane-policy.mut.sh"
-sed '/THE POLICY CHECK (B9 mutation control)/s/\$row\.policy != "allowed"/false/' "$LP" > "$MUT"
+sed '/THE POLICY CHECK (B9 mutation control)/s/(answerable(\$h; \$row) | not)/false/' "$LP" > "$MUT"
 if [ -s "$MUT" ] && ! cmp -s "$LP" "$MUT" && bash -n "$MUT" 2>/dev/null \
    && grep -qF 'elif false then null                     # THE POLICY CHECK' "$MUT"; then
   ok "(mut0) the mutant is valid: non-empty, differs from the original, passes bash -n, the hunk landed"
@@ -455,7 +474,7 @@ Q_SV_CORE="$(q1 LP-SAVE '["Save and exit (Recommended)","Discard"]')"
   && ok "(op3) any other subset (one optional label dropped) ⇒ human" || no "(op3)"
 [ "$(dec "$(q1 LP-SAVE '["Save and exit"]')" "$ROOT/pol-sv.json")" = "human" ] && ok "(op4) a core label missing ⇒ human" || no "(op4)"
 [ "$(dec "$(q1 LP-SAVE-NOTE '["Save and exit","Discard"]')" "$ROOT/pol-sv.json")" = "human" ] \
-  && ok "(op5) the same core under LP-SAVE-NOTE (human-only) ⇒ human" || no "(op5)"
+  && ok "(op5) the same core under LP-SAVE-NOTE (auto, policy-exempt; no policy answer) ⇒ human" || no "(op5)"
 POL_RF='{"LP-SAVE":"Refine further"}'
 jq -n --argjson a "$POL_RF" --arg s "$(_t_sha "$POL_RF")" '{policy_sha: $s, sources: [], answers: $a}' > "$ROOT/pol-rf.json"
 [ "$(dec "$Q_SV_CORE" "$ROOT/pol-rf.json")" = "human" ] \
@@ -512,7 +531,7 @@ gh_mut g3 skills/automate-loop/resume.md '`Continue` · `Start new` · `Archive`
 # G4 — options spelled out with the code dropped (the pre-fix NO-GO line)
 gh_mut g4 agents/launch-pad.md 'with `header: "LP-NO-GO"` and 3 options:' 'with 3 options:' G4 'agents/launch-pad.md'
 # G5 — the pre-fix LP-SAVE contract (a noted PASS "gets no code") leaves LP-SAVE-NOTE with no ask site
-gh_mut g5 agents/launch-pad.md '`header: "LP-SAVE-NOTE"` (human-only, so it always reaches a human) when it carries any issue or note' \
+gh_mut g5 agents/launch-pad.md '`header: "LP-SAVE-NOTE"` (an `auto` gate by owner decision, asked whenever its auto answer escalates) when it carries any issue or note' \
   'no code when it carries any issue or note' G5 'LP-SAVE-NOTE has no'
 bash "$CGH" --bogus >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ok "(gh3) an unknown argument is a usage error (exit 2)" || no "(gh3) rc=$rc"
@@ -531,6 +550,233 @@ rm -f "$MARK"
 outr="$(resolve "$RR" "$HR")"
 [ ! -e "$MARK" ] && [ "$(jq -c '.answers' <<<"$outr")" = '{"AUT-QUEUE":"Process"}' ] \
   && ok "(ro1) resolve read the stamp (match ⇒ policy applied) and executed NO check (no marker)" || no "(ro1) marker=$([ -e "$MARK" ] && echo PRESENT || echo absent) out=$outr"
+
+# ============================================================================
+echo "== (pa) policy answerability (D1) — base-allowed auto codes answered, LP-SAVE-NOTE refused =="
+# A policy naming every code that was `allowed` before the auto tier, with a valid sha.
+PA_ANS='{"AUT-QUEUE":"Process","AUT-RESUME":"Continue","LP-SAVE":"Save and exit"}'
+PA_CANON="$(jq -cS . <<<"$PA_ANS")"
+jq -n --argjson a "$PA_CANON" --arg s "$(_t_sha "$PA_CANON")" '{policy_sha: $s, sources: [], answers: $a}' > "$ROOT/pol-pa.json"
+SN_CANON='{"LP-SAVE-NOTE":"Save and exit"}'
+jq -n --argjson a "$SN_CANON" --arg s "$(_t_sha "$SN_CANON")" '{policy_sha: $s, sources: [], answers: $a}' > "$ROOT/pol-sn.json"
+Q_PA_Q="$(q1 AUT-QUEUE '["Process (Recommended)","Stop"]')"
+Q_PA_R="$(q1 AUT-RESUME '["Continue","Start new","Archive"]')"
+Q_PA_S="$(q1 LP-SAVE '["Save and exit","Discard"]')"
+Q_SN="$(q1 LP-SAVE-NOTE '["Save and exit","Refine further","Edit sections","Discard"]')"
+# pa_base_ok <lane-policy script> — 0 iff the three base-allowed auto codes are still policy-answered by
+# decide AND accepted by wave-set (a scratch run file).
+pa_base_ok() {
+  local rf="$ROOT/pa-$RANDOM.md"
+  printf '# Automate Run: pa\n\n## Progress\n' > "$rf"
+  [ "$(bash "$1" decide "$Q_PA_Q" --policy-json "$ROOT/pol-pa.json" 2>/dev/null)" = '{"0":"Process (Recommended)"}' ] \
+    && [ "$(bash "$1" decide "$Q_PA_R" --policy-json "$ROOT/pol-pa.json" 2>/dev/null)" = '{"0":"Continue"}' ] \
+    && [ "$(bash "$1" decide "$Q_PA_S" --policy-json "$ROOT/pol-pa.json" 2>/dev/null)" = '{"0":"Save and exit"}' ] \
+    && LOOMWRIGHT_LANE_POLICY_HELPERS="$SCRIPT_DIR/automate-helpers.sh" \
+       bash "$1" wave-set "$rf" 'AUT-QUEUE=Process' 'AUT-RESUME=Continue' 'LP-SAVE=Save and exit' >/dev/null 2>&1
+}
+# pa_sn_refused <lane-policy script> — 0 iff LP-SAVE-NOTE is refused by wave-set (exit 1, nothing written)
+# AND by decide (human) under a valid policy naming it.
+pa_sn_refused() {
+  local rf="$ROOT/pa-sn-$RANDOM.md" r
+  printf '# Automate Run: pasn\n\n## Progress\n' > "$rf"
+  LOOMWRIGHT_LANE_POLICY_HELPERS="$SCRIPT_DIR/automate-helpers.sh" bash "$1" wave-set "$rf" 'LP-SAVE-NOTE=Save and exit' >/dev/null 2>&1; r=$?
+  [ "$r" -eq 1 ] && [ ! -e "${rf%.md}.wave-policy.json" ] \
+    && [ "$(bash "$1" decide "$Q_SN" --policy-json "$ROOT/pol-sn.json" 2>/dev/null)" = "human" ]
+}
+pa_base_ok "$LP" && ok "(pa1) AUT-QUEUE / AUT-RESUME / LP-SAVE (auto, base-allowed) are still answered by decide and accepted by wave-set" \
+  || no "(pa1) a base-allowed auto code lost its policy answer (AC12)"
+pa_sn_refused "$LP" && ok "(pa2) LP-SAVE-NOTE is refused by wave-set (exit 1, nothing written) and decide answers human under a valid policy naming it" \
+  || no "(pa2) LP-SAVE-NOTE was policy-answered (D1 broken)"
+# (pa3) resolve drops LP-SAVE-NOTE from a STAMPED project policy and reports it; the base-allowed codes stay.
+RPA="$(new_repo)"; HPA="$ROOT/hpa"; mkdir -p "$HPA"
+seed_policy "$RPA" '{"AUT-RESUME":"Continue","LP-SAVE":"Save and exit","LP-SAVE-NOTE":"Save and exit"}' "[$RULE_OK]"; stamp "$RPA" "$HPA"
+opa="$(resolve "$RPA" "$HPA")"; epa="$(cat "$ROOT/resolve.err")"
+[ "$(jq -cS '.answers' <<<"$opa")" = '{"AUT-RESUME":"Continue","LP-SAVE":"Save and exit"}' ] \
+  && grep -qF 'lane-policy: dropped project LP-SAVE-NOTE — auto (never answered by policy)' <<<"$epa" \
+  && ok "(pa3) resolve keeps AUT-RESUME / LP-SAVE, drops LP-SAVE-NOTE and reports it" || no "(pa3) out=$opa err=$epa"
+# MUTATION CONTROLS (the brief's pins): an emptied exemption list ⇒ (pa2) fails; the helper narrowed to
+# `allowed` only ⇒ (pa1) fails.
+MUT_EX="$ROOT/lane-policy.mut-ex.sh"
+sed 's/^_LP_POLICY_EXEMPT="LP-SAVE-NOTE"/_LP_POLICY_EXEMPT=""/' "$LP" > "$MUT_EX"
+if ! cmp -s "$LP" "$MUT_EX" && bash -n "$MUT_EX" 2>/dev/null && grep -q '^_LP_POLICY_EXEMPT=""' "$MUT_EX"; then
+  pa_sn_refused "$MUT_EX" && no "(pa4) REFUTED: with _LP_POLICY_EXEMPT emptied LP-SAVE-NOTE is still refused — (pa2) is vacuous" \
+    || ok "(pa4) CONFIRMED: with _LP_POLICY_EXEMPT emptied a policy answers LP-SAVE-NOTE and (pa2) FAILS"
+else
+  no "(pa4) the exemption mutation did not land"
+fi
+MUT_AN="$ROOT/lane-policy.mut-an.sh"
+sed 's/ or (\$row\.policy == "auto" and (\[%s\] | any(\.\[\]; \. == \$code) | not))//' "$LP" > "$MUT_AN"
+# Gate: the mutant still answers an `allowed` code (a jq error would print human and confirm vacuously).
+if ! cmp -s "$LP" "$MUT_AN" && bash -n "$MUT_AN" 2>/dev/null \
+   && [ "$(bash "$MUT_AN" decide "$(q1 AUT-SUMMARY '["Keep summary","Drop summary"]')" --policy-json "$ROOT/pol.json" 2>/dev/null)" = '{"0":"Drop summary"}' ]; then
+  pa_base_ok "$MUT_AN" && no "(pa5) REFUTED: with the helper narrowed to allowed, the base-allowed auto codes are still answered — (pa1) is vacuous" \
+    || ok "(pa5) CONFIRMED: with _lp_policy_answerable narrowed to allowed, (pa1) FAILS"
+else
+  no "(pa5) the answerability mutation did not land"
+fi
+
+# ============================================================================
+echo "== (ga) gate-auto.sh — the deterministic auto tier =="
+GA="$SCRIPT_DIR/gate-auto.sh"
+GR="$(new_repo)"   # a scratch checkout: its own .supervisor/, never the real one
+GRF="$GR/$RID_FILE"
+printf 'README.md\n./docs/guide.md\n\n' > "$ROOT/ga-low.txt"
+printf 'docs/guide.md\nloomwright/agents/worker.md\n' > "$ROOT/ga-agents.txt"
+printf 'src/oauth/login.ts\n' > "$ROOT/ga-auth.txt"
+QO=(--offered 'Process (Recommended)' --offered Stop)
+RO=(--offered Continue --offered 'Start new' --offered Archive)
+SF=(--offered 'Save and exit' --offered 'Refine further' --offered 'Edit sections' --offered Discard)
+SC=(--offered 'Save and exit (Recommended)' --offered Discard)
+# ga <script> <decide args…> — runs decide in the scratch checkout; prints its one stdout line.
+ga() { local s="$1"; shift; ( cd "$GR" && bash "$s" decide "$@" --root "$GR" 2>/dev/null </dev/null ); }
+gaeq() {  # gaeq <label> <want> <decide args…> — one leg against the real script
+  local label="$1" want="$2" got; shift 2
+  got="$(ga "$GA" "$@")"
+  [ "$got" = "$want" ] && ok "$label ⇒ '$want'" || no "$label: got '$got', want '$want'"
+}
+gaeq "(ga1) AUT-QUEUE with its catalog labels" "answer Process" AUT-QUEUE "${QO[@]}"
+gaeq "(ga2) AUT-RESUME with its labels and --recommended Continue" "answer Continue" AUT-RESUME "${RO[@]}" --recommended Continue
+gaeq "(ga3) LP-SAVE, full labels, NONE, low-risk paths" "answer Save and exit" LP-SAVE "${SF[@]}" --max-severity NONE --risk-paths "$ROOT/ga-low.txt"
+gaeq "(ga4) LP-SAVE-NOTE, core labels, LOW, low-risk paths" "answer Save and exit" LP-SAVE-NOTE "${SC[@]}" --max-severity LOW --risk-paths "$ROOT/ga-low.txt"
+# off — each source alone.
+gaeq "(ga5) --off" "ask off" AUT-QUEUE "${QO[@]}" --off
+printf '# Automate Run: ga\n\n## Status: running\n\n## Run Config\n- mode: safe | limit: 5\n- auto_gates: off\n\n## Queue\n- [ ] a.md\n\n## Progress\n- 2026-11-03T00:00:00Z started\n' > "$ROOT/ga-off.md"
+printf '# Automate Run: ga\n\n## Status: running\n\n## Run Config\n- mode: safe | limit: 5\n\n## Queue\n- [ ] a.md\n\n## Progress\n- 2026-11-03T00:00:00Z started\n- 2026-11-03T00:00:01Z note: auto_gates: off\n' > "$ROOT/ga-on.md"
+gaeq "(ga6) ## Run Config '- auto_gates: off'" "ask off" AUT-QUEUE "${QO[@]}" --runfile "$ROOT/ga-off.md"
+gaeq "(ga6b) control: the same text outside ## Run Config is not the switch" "answer Process" AUT-QUEUE "${QO[@]}" --runfile "$ROOT/ga-on.md"
+mkdir -p "$ROOT/ga-off.phase/launch-pad"
+got="$( cd "$GR" && LOOMWRIGHT_PHASE_DIR="$ROOT/ga-off.phase/launch-pad" bash "$GA" decide AUT-QUEUE "${QO[@]}" --root "$GR" 2>/dev/null )"
+[ "$got" = "ask off" ] && ok "(ga6c) the run file resolved from LOOMWRIGHT_PHASE_DIR (<run>.phase/<phase> ⇒ <run>.md) carries the switch ⇒ 'ask off'" || no "(ga6c) got '$got'"
+gaeq "(ga6d) a --runfile that does not exist cannot be read ⇒ asks" "ask runfile_unreadable" AUT-QUEUE "${QO[@]}" --runfile "$ROOT/none.md"
+printf '{"schema_version":1,"lane":"L1","auto_gates":false}\n' > "$GR/.supervisor/lane.json"
+gaeq "(ga7) lane.json auto_gates: false" "ask off" AUT-QUEUE "${QO[@]}"
+printf '{"schema_version":1,"lane":"L1","policy":null}\n' > "$GR/.supervisor/lane.json"
+gaeq "(ga7b) control: a lane.json without auto_gates" "answer Process" AUT-QUEUE "${QO[@]}"
+printf '{"lane":' > "$GR/.supervisor/lane.json"
+gaeq "(ga7c) an unreadable lane.json fails toward asking" "ask lane_json_unreadable" AUT-QUEUE "${QO[@]}"
+rm -f "$GR/.supervisor/lane.json"
+printf '{"auto_review":false,"auto_gates":false}\n' > "$GR/.supervisor/config.json"
+gaeq "(ga8) config.json {\"auto_gates\": false} (has(), never // empty)" "ask off" AUT-QUEUE "${QO[@]}"
+printf '{"auto_gates":true}\n' > "$GR/.supervisor/config.json"
+gaeq "(ga8b) control: config.json auto_gates true" "answer Process" AUT-QUEUE "${QO[@]}"
+printf '{"auto_gates":"no"}\n' > "$GR/.supervisor/config.json"
+gaeq "(ga8c) a non-boolean auto_gates value fails toward asking" "ask off" AUT-QUEUE "${QO[@]}"
+printf 'not json\n' > "$GR/.supervisor/config.json"
+gaeq "(ga8d) an unreadable config.json fails toward asking" "ask config_unreadable" AUT-QUEUE "${QO[@]}"
+rm -f "$GR/.supervisor/config.json"
+# not_auto — human-only stays human; allowed is not auto either.
+gaeq "(ga9) a human-only code (LP-NO-GO) with its exact labels" "ask not_auto" LP-NO-GO --offered 'Override and continue' --offered 'Revise goal' --offered Abort
+gaeq "(ga9b) an allowed code (AUT-SUMMARY) is not auto-answered" "ask not_auto" AUT-SUMMARY --offered 'Keep summary' --offered 'Drop summary'
+gaeq "(ga9c) an unknown code" "ask unknown_code" AUT-QUEUED "${QO[@]}"
+# label
+gaeq "(ga10) a missing option" "ask label" AUT-QUEUE --offered Process
+gaeq "(ga10b) an extra option" "ask label" AUT-QUEUE "${QO[@]}" --offered Later
+gaeq "(ga10c) no --offered at all" "ask label" AUT-QUEUE
+gaeq "(ga10d) --recommended not the ! label" "ask label" AUT-QUEUE "${QO[@]}" --recommended Stop
+gaeq "(ga10e) LP-SAVE with a non-core subset" "ask label" LP-SAVE --offered 'Save and exit' --offered 'Refine further' --offered Discard --max-severity NONE
+MUT_NB="$ROOT/lane-policy.mut-nobang.sh"
+sed "/_lp_row AUT-QUEUE /s/'Process!|Stop'/'Process|Stop'/" "$LP" > "$MUT_NB"
+if ! cmp -s "$LP" "$MUT_NB" && bash -n "$MUT_NB" 2>/dev/null; then
+  got="$( cd "$GR" && LOOMWRIGHT_GATE_AUTO_LANE_POLICY="$MUT_NB" bash "$GA" decide AUT-QUEUE "${QO[@]}" --root "$GR" 2>/dev/null )"
+  [ "$got" = "ask label" ] && ok "(ga10f) a row with no ! label (AUT-QUEUE's ! removed in a copy) ⇒ 'ask label', so (ga1) depends on the marker" || no "(ga10f) got '$got'"
+else
+  no "(ga10f) the no-! mutation did not land"
+fi
+# destructive / severity / high_risk
+gaeq "(ga11) --destructive" "ask destructive" AUT-QUEUE "${QO[@]}" --destructive
+gaeq "(ga12) --max-severity MEDIUM" "ask severity" LP-SAVE-NOTE "${SC[@]}" --max-severity MEDIUM --risk-paths "$ROOT/ga-low.txt"
+gaeq "(ga12b) --max-severity high (any case)" "ask severity" LP-SAVE-NOTE "${SC[@]}" --max-severity high --risk-paths "$ROOT/ga-low.txt"
+gaeq "(ga12c) --max-severity BLOCKING" "ask severity" LP-SAVE "${SF[@]}" --max-severity BLOCKING
+gaeq "(ga12d) LP-SAVE-NOTE with no --max-severity" "ask severity" LP-SAVE-NOTE "${SC[@]}" --risk-paths "$ROOT/ga-low.txt"
+gaeq "(ga12e) an unparseable --max-severity" "ask severity" LP-SAVE-NOTE "${SC[@]}" --max-severity CRITICALISH --risk-paths "$ROOT/ga-low.txt"
+gaeq "(ga13) --risk-paths listing a path under agents/" "ask high_risk" LP-SAVE-NOTE "${SC[@]}" --max-severity LOW --risk-paths "$ROOT/ga-agents.txt"
+gaeq "(ga13b) --risk-paths matching *auth*" "ask high_risk" LP-SAVE "${SF[@]}" --risk-paths "$ROOT/ga-auth.txt"
+gaeq "(ga13c) an unreadable --risk-paths list (classify-risk null)" "ask high_risk" LP-SAVE "${SF[@]}" --risk-paths "$ROOT/no-such-list.txt"
+GB0="$(git -C "$GR" rev-parse --abbrev-ref HEAD)"
+( cd "$GR" && git checkout -qb ga-low && printf 'more\n' >> f && git commit -qam low \
+    && git checkout -qb ga-high && mkdir -p agents && printf 'x\n' > agents/a.md && git add agents && git commit -qm high \
+    && git checkout -q - ) >/dev/null 2>&1
+gaeq "(ga13d) --risk-diff over a diff touching agents/" "ask high_risk" AUT-RESUME "${RO[@]}" --risk-diff ga-low ga-high
+gaeq "(ga13e) --risk-diff over a low-risk diff" "answer Continue" AUT-RESUME "${RO[@]}" --risk-diff "$GB0" ga-low
+gaeq "(ga13f) --risk-diff with a bad ref (classify-risk null)" "ask high_risk" AUT-RESUME "${RO[@]}" --risk-diff nope-ref ga-low
+# usage / errors
+u="$( cd "$GR" && bash "$GA" decide 2>/dev/null )"; urc=$?
+[ "$u" = "ask usage" ] && [ "$urc" -eq 2 ] && ok "(ga14) a usage error prints 'ask usage' and exits 2" || no "(ga14) out='$u' rc=$urc"
+u="$( cd "$GR" && bash "$GA" decide AUT-QUEUE --bogus 2>/dev/null )"; urc=$?
+[ "$u" = "ask usage" ] && [ "$urc" -eq 2 ] && ok "(ga14b) an unknown flag is a usage error too" || no "(ga14b) out='$u' rc=$urc"
+NJG="$ROOT/nojq-ga"; mkdir -p "$NJG"; for t in dirname git cat awk; do ln -s "$(command -v "$t")" "$NJG/$t"; done
+u="$( cd "$GR" && PATH="$NJG" "$BASH_BIN" "$GA" decide AUT-QUEUE "${QO[@]}" --root "$GR" 2>/dev/null )"; urc=$?
+[ "$u" = "ask jq_missing" ] && [ "$urc" -eq 0 ] && ok "(ga14c) no jq ⇒ 'ask jq_missing', exit 0" || no "(ga14c) out='$u' rc=$urc"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$ROOT/empty-catalog.sh"
+u="$( cd "$GR" && LOOMWRIGHT_GATE_AUTO_LANE_POLICY="$ROOT/empty-catalog.sh" bash "$GA" decide AUT-QUEUE "${QO[@]}" --root "$GR" 2>/dev/null )"
+[ "$u" = "ask catalog_unreadable" ] && ok "(ga14d) a catalog that prints nothing ⇒ 'ask catalog_unreadable'" || no "(ga14d) out='$u'"
+u="$( cd "$GR" && bash "$GA" decide AUT-QUEUE "${QO[@]}" --root "$ROOT/no-such-dir" 2>/dev/null )"
+[ "$u" = "ask root_unreadable" ] && ok "(ga14e) a --root that is not a directory ⇒ 'ask root_unreadable' (its off switches cannot be read)" || no "(ga14e) out='$u'"
+
+# record / list
+before="$(cat "$GRF")"
+bash "$GA" record "$GRF" AUT-QUEUE Process "queue-confirm asked; no trigger" >/dev/null 2>&1; r1=$?
+bash "$GA" record "$GRF" LP-SAVE-NOTE 'Save and exit' "PASS max LOW
+second line" --item a.md >/dev/null 2>&1
+bash "$GA" record "$GRF" LP-SAVE --escalated high_risk --item b.md >/dev/null 2>&1
+bash "$GA" record "$GRF" AUT-QUEUE --escalated off >/dev/null 2>&1
+added="$(diff <(printf '%s\n' "$before") "$GRF" | sed -n 's/^> //p')"
+re_ts='^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z '
+if [ "$r1" -eq 0 ] && [ "$(printf '%s\n' "$added" | grep -c .)" -eq 3 ] \
+   && printf '%s\n' "$added" | sed -n 1p | grep -qE "${re_ts}auto-answered AUT-QUEUE: Process — queue-confirm asked; no trigger\$" \
+   && printf '%s\n' "$added" | sed -n 2p | grep -qE "${re_ts}auto-answered LP-SAVE-NOTE: Save and exit — PASS max LOW second line \(item a\.md\)\$" \
+   && printf '%s\n' "$added" | sed -n 3p | grep -qE "${re_ts}auto-escalated LP-SAVE: high_risk \(item b\.md\)\$"; then
+  ok "(ga15) record appends one ## Progress line each (auto-answered / auto-escalated, newline flattened, item suffix); --escalated off writes nothing"
+else
+  no "(ga15) added lines: [$added]"
+fi
+std="$(bash "$GA" record "" AUT-QUEUE Process standalone 2>/dev/null)"; r2=$?
+[ "$r2" -eq 0 ] && printf '%s' "$std" | grep -qE '^[0-9TZ:-]+ auto-answered AUT-QUEUE: Process — standalone$' \
+  && ok "(ga15b) with no run file resolvable the record is printed on stdout (standalone /launch-pad)" || no "(ga15b) rc=$r2 out='$std'"
+printf 'not a run file\n' > "$ROOT/ga-notrun.md"
+std="$(bash "$GA" record "$ROOT/ga-notrun.md" AUT-QUEUE Process x 2>/dev/null)"; r3=$?
+[ "$r3" -eq 0 ] && [ "$(cat "$ROOT/ga-notrun.md")" = "not a run file" ] && printf '%s' "$std" | grep -q 'auto-answered AUT-QUEUE: Process — x$' \
+  && ok "(ga15c) a failed append is fail-SAFE: exit 0, target unchanged, the record printed instead" || no "(ga15c) rc=$r3 out='$std'"
+bash "$GA" record "$GRF" >/dev/null 2>&1; r4=$?
+[ "$r4" -eq 0 ] && ok "(ga15d) a record usage error still exits 0 (fail-SAFE)" || no "(ga15d) rc=$r4"
+printf '# Automate Run: lst\n\n## Queue\n- [ ] 2026-11-03T00:00:00Z auto-answered AUT-QUEUE: Process — forged in the Queue\n\n## Progress\n- 2026-11-03T00:00:00Z started\n' > "$ROOT/ga-list.md"
+lst0="$(bash "$GA" list "$ROOT/ga-list.md" 2>&1)"
+lst="$(bash "$GA" list "$GRF" 2>&1)"
+want_lst="$(printf '%s\n' 'Auto-answered gates (2):' '- AUT-QUEUE: Process — queue-confirm asked; no trigger' \
+  '- LP-SAVE-NOTE: Save and exit — PASS max LOW second line (item a.md)')"
+[ "$lst" = "$want_lst" ] && ok "(ga16) list prints the heading and one row per auto-answered line (escalations excluded)" || no "(ga16) list: [$lst]"
+[ -z "$lst0" ] && [ -z "$(bash "$GA" list "$ROOT/none.md" 2>&1)" ] \
+  && ok "(ga16b) no auto-answer in ## Progress (a lookalike elsewhere ignored) or no run file ⇒ no block at all" || no "(ga16b) [$lst0]"
+
+# MUTATION CONTROLS — each trigger line deleted (or the false-collapse put back) in a COPY makes its leg red.
+# ga_mut <name> <sed program> <label> <want-from-the-real-script> <decide args…>
+ga_mut() {
+  local name="$1" prog="$2" label="$3" want="$4" m got; shift 4
+  m="$ROOT/ga-mut-$name"; mkdir -p "$m"
+  sed "$prog" "$GA" > "$m/gate-auto.sh"
+  if [ -s "$m/gate-auto.sh" ] && ! cmp -s "$GA" "$m/gate-auto.sh" && bash -n "$m/gate-auto.sh" 2>/dev/null; then
+    got="$( cd "$GR" && LOOMWRIGHT_GATE_AUTO_LANE_POLICY="$LP" LOOMWRIGHT_GATE_AUTO_CLASSIFY_RISK="$SCRIPT_DIR/classify-risk.sh" \
+      bash "$m/gate-auto.sh" decide "$@" --root "$GR" 2>/dev/null )"
+    [ "$got" != "$want" ] && ok "(ga-m-$name) CONFIRMED: $label removed ⇒ '$got', its leg FAILS" \
+      || no "(ga-m-$name) REFUTED: $label removed and the decision is still '$want' — the leg is vacuous"
+  else
+    no "(ga-m-$name) the mutation did not land"
+  fi
+}
+ga_mut off '/_ga_ask off "--off"/d' "the --off read" "ask off" AUT-QUEUE "${QO[@]}" --off
+ga_mut runcfg '/_ga_runconfig_off "\$rf" &&/d' "the ## Run Config read" "ask off" AUT-QUEUE "${QO[@]}" --runfile "$ROOT/ga-off.md"
+printf '{"lane":"L1","auto_gates":false}\n' > "$GR/.supervisor/lane.json"
+ga_mut lanejson '/_ga_ask off "lane.json/d' "the lane.json read" "ask off" AUT-QUEUE "${QO[@]}"
+rm -f "$GR/.supervisor/lane.json"
+printf '{"auto_gates":false}\n' > "$GR/.supervisor/config.json"
+ga_mut collapse 's/if has("auto_gates") then (\.auto_gates | tojson) else empty end/.auto_gates \/\/ empty/' \
+  "has(\"auto_gates\") (replaced by the // empty false-collapse)" "ask off" AUT-QUEUE "${QO[@]}"
+rm -f "$GR/.supervisor/config.json"
+ga_mut tier '/_ga_ask not_auto/d' "the policy == auto tier check" "ask not_auto" LP-NO-GO --offered 'Override and continue' --offered 'Revise goal' --offered Abort
+ga_mut label '/_ga_ask label "offered labels/s/|| {.*}/|| :/' "the offered-labels-vs-catalog comparison" "ask label" AUT-QUEUE --offered Process
+ga_mut destructive '/_ga_ask destructive/d' "the --destructive line" "ask destructive" AUT-QUEUE "${QO[@]}" --destructive
+ga_mut severity '/BLOCKING|HIGH|MEDIUM) _ga_ask severity/d' "the MEDIUM-or-higher line" "ask severity" LP-SAVE-NOTE "${SC[@]}" --max-severity MEDIUM --risk-paths "$ROOT/ga-low.txt"
+ga_mut highrisk '/_ga_ask high_risk/d' "the high_risk true/null line" "ask high_risk" LP-SAVE-NOTE "${SC[@]}" --max-severity LOW --risk-paths "$ROOT/ga-agents.txt"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
