@@ -1,6 +1,6 @@
 # Re-check lane overlap before coding starts
 
-## Status: pending
+## Status: parked (merged 2026-11-03 into 2026-11-03-174840-lane-scope-regate.md as Part B — do not run this file)
 
 **Story: Re-check lane overlap before coding starts** (type: story)
 

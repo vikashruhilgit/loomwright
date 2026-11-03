@@ -16,15 +16,19 @@ none recorded
 ## Order
 | Item | Delivers | Depends on | Can run in parallel with |
 |---|---|---|---|
-| 2026-11-03-174029-one-question-for-files-outside-touches | One catalog question for files outside Touches, never folded into a save question; improvised questions use `LP-CLARIFY` | none | none (shares the token-budget and contracts files with both others) |
-| 2026-11-03-174030-re-check-lane-overlap-before-coding-starts | Lanes held at the end of Launch Pad until the coordinator checks overlap; one owner question on overlap | 2026-11-03-174029-one-question-for-files-outside-touches | none |
+| 2026-11-03-174840-lane-scope-regate | Part A: one catalog question for files outside Touches, never folded into a save question; improvised questions use `LP-CLARIFY`. Part B: lanes held at the end of Launch Pad until the coordinator checks overlap; one owner question on overlap | none | none (shares the token-budget and contracts files) |
 | 2026-11-03-174031-touches-name-shared-files-at-intake | Product Owner lists the existing shared files and contract changes in Touches; points writers at `.agent/companions.json` | none | none (shares the token-budget and contracts files) |
+
+The first row merges the two original stories (owner decision 2026-11-03, via `merge-items`); the originals
+`2026-11-03-174029-one-question-for-files-outside-touches.md` and
+`2026-11-03-174030-re-check-lane-overlap-before-coding-starts.md` are parked as its Parts A and B.
 
 ## Run
 /automate --backlog .supervisor/requirements/_BACKLOG-2026-11-03-174031-lane-scope-regate.md
-Safe mode, sequential. `plan-waves --max 2` gives three single-item waves: the second depends on the first, and the
-third conflicts with both on `loomwright/docs/prompt-token-budgets.json` and `loomwright/docs/ARCHITECTURE_CONTRACTS.md`,
-so `--parallel` buys nothing. No new follow-up items beyond these three.
+Safe mode, sequential: two jobs, two PRs. The two items conflict on `loomwright/docs/prompt-token-budgets.json` and
+`loomwright/docs/ARCHITECTURE_CONTRACTS.md`, so `--parallel` buys nothing. The intake story stays separate so a
+problem in the lane re-gate does not hold it back, and so the merged item keeps headroom under the 30-file size
+limit. No new follow-up items beyond these two.
 
 ## Considered and not queued
 - `plan-waves --lint --deep`: nothing deterministic can know where a feature registers.
@@ -40,6 +44,5 @@ A wave-build reports `overlap` files after the re-gate story has shipped, or a l
 Touches under any header other than the new catalog code.
 
 ## Checklist
-- [ ] .supervisor/requirements/2026-11-03-174029-one-question-for-files-outside-touches.md
-- [ ] .supervisor/requirements/2026-11-03-174030-re-check-lane-overlap-before-coding-starts.md
+- [ ] .supervisor/requirements/2026-11-03-174840-lane-scope-regate.md
 - [ ] .supervisor/requirements/2026-11-03-174031-touches-name-shared-files-at-intake.md

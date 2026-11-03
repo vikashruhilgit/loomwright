@@ -1,6 +1,6 @@
 # One question for files outside Touches
 
-## Status: pending
+## Status: parked (merged 2026-11-03 into 2026-11-03-174840-lane-scope-regate.md as Part A — do not run this file)
 
 **Story: One question for files outside Touches** (type: story)
 
