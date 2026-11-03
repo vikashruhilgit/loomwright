@@ -92,11 +92,12 @@
 #     (+ mutation: phase branch deleted ⇒ `{}` and no file); phase-wait question (5) → phase-answer
 #     refusals + BLOCKED → resume of the SAME session → done (0); running (3) / died (6); a lane spawn
 #     strips both phase variables + one mutation each
-#   EV the Validation reader's evidence files (automate-lanes.d/evidence.sh): a step the PR body leaves NOT-RUN
+#   EV the Validation reader's evidence files (automate-lanes.d/evidence.sh): a step a READABLE PR body leaves NOT-RUN
 #     reads PASS only from a declared `Verdict: PASS for Validation <n>` line + fenced output in a docs/evidence/*.md
 #     file the PR adds or changes (read at its head); FAIL words in output never decide a declared step; a body
 #     PASS / FAIL is final with no extra gh call; lane-readiness reads the same rows; unchanged / undeclared /
-#     not-a-pass / no-output files; every unreadable read fails CLOSED with the reason; the remedy names the
+#     not-a-pass / no-output files; every unreadable read fails CLOSED with the reason (an unreadable body is never
+#     looked up: a file cannot lift a step the body might FAIL); the remedy names the
 #     evidence file, never the PR body; one mutation control per Pin mutations row of the brief
 set -uo pipefail
 

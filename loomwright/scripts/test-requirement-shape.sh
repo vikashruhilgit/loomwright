@@ -207,7 +207,7 @@ else no "(S6) validation gate on the template: '$vg' / static-only: '$vgs'"; fi
 # reads there. story_rs_ok <template> — 0 when one Running system entry line carries both.
 VERDICT_PH='with its declared verdict line'
 story_rs_ok() {
-  grep -E '^[0-9]+\. \*\*Running system' "$1" | grep -F -- 'docs/evidence/<slug>.md' | grep -qF -- "$VERDICT_PH"
+  grep -qF -- "$VERDICT_PH" < <(grep -E '^[0-9]+\. \*\*Running system' "$1" | grep -F -- 'docs/evidence/<slug>.md')
 }
 if story_rs_ok "$STPL" && [ "$(grep -cF -- "$VERDICT_PH" "$SKILL")" = 1 ]; then
   ok "(S6) Story Template: the Running system entry's output goes in docs/evidence/<slug>.md $VERDICT_PH (one line in the skill)"

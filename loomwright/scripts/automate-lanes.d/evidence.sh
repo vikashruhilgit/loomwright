@@ -1,8 +1,9 @@
 # ==================================================================================================
 # The evidence-file reader of the shared Validation reader (_lanes_validation_rows in readiness.sh): a
-# `## Validation` step the PR body leaves NOT-RUN (an unreadable body included) is looked up in the
-# committed `docs/evidence/*.md` files of the PR. The PR body is read first and its PASS / FAIL is
-# final; this module only ever adds to a NOT-RUN row's evidence text, or replaces that row's status.
+# `## Validation` step a READABLE PR body leaves NOT-RUN is looked up in the committed
+# `docs/evidence/*.md` files of the PR. The PR body is read first and its PASS / FAIL is final; an
+# unreadable body is never looked up (it might hold that final FAIL, so a file can never lift it — fail
+# CLOSED); this module only ever adds to a NOT-RUN row's evidence text, or replaces that row's status.
 # validation-gate and lane-readiness reach it only through that one reader (no second parser).
 #
 # The declared verdict line — the ONLY thing read from an evidence file:

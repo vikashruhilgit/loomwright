@@ -334,7 +334,7 @@ out="$(vgb '## Test Plan\n```\n# Validation 2 running system\n```\n')"
 check "AL11c a match inside a fence never starts the step's evidence window" "$out" "validation-gate: unrun — V2 Running system: no evidence in the PR body$(vgx 2)"
 printf '# r\n## Validation\n1. **Running system:** reproduce the freeze with three clones at once.\n2. **Repro:** must catch the mutation.\n' > "$VG/reqs/repro.md"
 check "AL12 a Running system step whose first line says \"reproduce\" is still gated (title outranks the repro rule)" \
-  "$(VG_GH="$T/vg-no-gh" vg "$VGRF" reqs/repro.md "$VGPR")" "validation-gate: unrun — V1 Running system: PR body unreadable ($VGPR)$(vgx 1)"
+  "$(VG_GH="$T/vg-no-gh" vg "$VGRF" reqs/repro.md "$VGPR")" "validation-gate: unrun — V1 Running system: PR body unreadable ($VGPR)"
 check "AL12b … and a repro-titled step keeps kind repro" \
   "$( ( . "$S"; _lanes_validation_rows "$VG/reqs/repro.md" /dev/null 0 ) | cut -f1,3 | tr '\t\n' ':,')" "1:running-system,2:repro,"
 printf '# f\n## Validation\n1. **Smoke:** run it\n```\n## not a section\n- not an entry\n```\n2. **Running system:** three clones\n' > "$VG/reqs/fence.md"
@@ -472,8 +472,8 @@ out="$(vgb '## Test Plan\nValidation 2 - running system: not run (needs a quiet 
 check "AL22h … while \"not run\" as its own phrase still marks the step ⇒ unrun" \
   "$out" "validation-gate: unrun — V2 Running system: marked not run / skipped / not verified in the PR body$(vgx 2)"
 out="$(VG_GH="$T/vg-no-gh" vg "$VGRF" reqs/pa16.md "$VGPR")"; rc=$?
-check "AL6 AC6 gh unreadable ⇒ unrun (fail CLOSED, exit 0)" "$rc|$out" "0|validation-gate: unrun — V2 Running system: PR body unreadable ($VGPR)$(vgx 2)"
-check "AL6b AC6 no PR url ⇒ unrun" "$(vg "$VGRF" reqs/pa16.md "")" "validation-gate: unrun — V2 Running system: PR body unreadable: no PR recorded$(vgx 2 "no PR recorded")"
+check "AL6 AC6 gh unreadable ⇒ unrun (fail CLOSED, exit 0)" "$rc|$out" "0|validation-gate: unrun — V2 Running system: PR body unreadable ($VGPR)"
+check "AL6b AC6 no PR url ⇒ unrun" "$(vg "$VGRF" reqs/pa16.md "")" "validation-gate: unrun — V2 Running system: PR body unreadable: no PR recorded"
 out="$(vg "$VGRF" reqs/missing.md "$VGPR")"; rc=$?
 check "AL6c AC6 unreadable item file ⇒ unrun (exit 0)" "$rc|$out" "0|validation-gate: unrun — item file unreadable: reqs/missing.md"
 check "AL6d no arguments ⇒ unrun (usage), exit 0" "$(vg; echo "rc=$?")" "validation-gate: unrun — usage: validation-gate <runfile> <item> <pr_url> [--waive <n> --words <text>]
@@ -526,7 +526,7 @@ check "AL7g every waiver refusal (empty / | / newline words, a non-running-syste
 # The title cleaner: a `|`-bearing fallback title becomes a legal `current-escalation --check` value.
 printf '# p\n## Validation\n1. Running system check a|b on the real host\n' > "$VG/reqs/pipe.md"
 out="$(VG_GH="$T/vg-no-gh" vg "$VGRF" reqs/pipe.md "$VGPR")"
-check "AL8 a |-bearing fallback title is cleaned (| → /)" "$out" "validation-gate: unrun — V1 Running system check a/b on the real host: PR body unreadable ($VGPR)$(vgx 1)"
+check "AL8 a |-bearing fallback title is cleaned (| → /)" "$out" "validation-gate: unrun — V1 Running system check a/b on the real host: PR body unreadable ($VGPR)"
 vchk="${out#validation-gate: unrun — }"; vchk="${vchk%%: *}"
 cp "$VGRF" "$T/vg-esc.md"; sed -i.bak 's/^- item: reqs\/pa16.md | status: running/- item: reqs\/pa16.md | status: escalated/' "$T/vg-esc.md"
 out="$(bash "$HERE/automate-helpers.sh" current-escalation "$T/vg-esc.md" --cause validation_unrun --check "$vchk" --sha 1e35336 2>&1)"; rc=$?

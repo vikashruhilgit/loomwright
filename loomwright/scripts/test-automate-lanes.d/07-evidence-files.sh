@@ -7,9 +7,9 @@ declare -F tal_pgrep >/dev/null && [ -n "${T:-}" ] && [ -d "$T" ] || { echo "${B
 #   pr view <pr> --json headRefOid,files         the changed paths in $EV_CHANGED, head $EV_SHA
 #   api repos/o/r/contents/docs/evidence?ref=$EV_SHA   the listing of $EV_TREE/docs/evidence/
 #   api -H 'Accept: application/vnd.github.raw' repos/o/r/contents/<path>?ref=$EV_SHA   the file's text
-# Any other call (another ref included) exits 1. EV_FAIL=view|list|read makes that call fail. Every call is
+# Any other call (another ref included) exits 1. EV_FAIL=view|list|read|body makes that call fail (body: both PR-body reads). Every call is
 # logged to $EV_CALLS. Groups: EV1 AC1 · EV2 AC2 · EV3 AC3 · EV4 AC4 · EV5 AC5 · EV6 AC6 · EV7 AC7 · EV8 AC8 ·
-# EV9 AC9 · EV10 AC10 · EV11 AC11 · EV12 no file lookup where none belongs · EV13 the brief's Pin mutations
+# EV9 AC9 · EV10 AC10 (EV10i–k: an unreadable body is never looked up) · EV11 AC11 · EV12 no file lookup where none belongs · EV13 the brief's Pin mutations
 # (each one-line mutant built from $SB, gated: anchor once, non-empty, differs, bash -n).
 EV="$T/ev7"; EVT="$T/ev7-tree"; mkdir -p "$EV/.supervisor/automate" "$EV/reqs" "$EVT/docs/evidence"
 EVRF="$EV/.supervisor/automate/ev.md"; EVPR=https://github.com/o/r/pull/7
@@ -26,8 +26,8 @@ if [ "$1 $2" = "pr view" ]; then
   case "$*" in
     *"--json headRefOid,files") [ "${EV_FAIL:-}" = view ] && exit 1
       jq -n --rawfile c "$EV_CHANGED" --arg s "$EV_SHA" '{headRefOid: $s, files: [$c | split("\n")[] | select(. != "") | {path: ., additions: 1, deletions: 0}]}' ;;
-    *"--json body,headRefOid") jq -n --rawfile b "$EV_BODY" --arg s "$EV_SHA" '{body: $b, headRefOid: $s}' ;;
-    *"--json body") jq -n --rawfile b "$EV_BODY" '{body: $b}' ;;
+    *"--json body,headRefOid") [ "${EV_FAIL:-}" = body ] && exit 1; jq -n --rawfile b "$EV_BODY" --arg s "$EV_SHA" '{body: $b, headRefOid: $s}' ;;
+    *"--json body") [ "${EV_FAIL:-}" = body ] && exit 1; jq -n --rawfile b "$EV_BODY" '{body: $b}' ;;
     *) exit 1 ;;
   esac
   exit 0
@@ -163,8 +163,8 @@ check "EV10d a PR value that is not a https://github.com/<o>/<r>/pull/<n> URL �
   "$out|$(grep -cE 'headRefOid,files|gh api' "$EV_CALLS" | tr -d ' ')" \
   "validation-gate: unrun — V2 Running system: no evidence in the PR body; evidence files unreadable: the PR value is not a https://github.com/<owner>/<repo>/pull/<n> URL$EVFIX|0"
 : > "$EV_CALLS"
-check "EV10e no PR ⇒ NOT-RUN on both halves, no gh call at all" "$(ev reqs/one.md "")|$(wc -l < "$EV_CALLS" | tr -d ' ')" \
-  "validation-gate: unrun — V2 Running system: PR body unreadable: no PR recorded; evidence files unreadable: no PR recorded$EVFIX|0"
+check "EV10e no PR ⇒ NOT-RUN (body unreadable, no file lookup), no gh call at all" "$(ev reqs/one.md "")|$(wc -l < "$EV_CALLS" | tr -d ' ')" \
+  "validation-gate: unrun — V2 Running system: PR body unreadable: no PR recorded|0"
 ev_set '' 'docs/evidence/x.md docs/evidence/a;b.md' "x.md=$EVOK" 'a;b.md=Verdict: FAIL for Validation 2\n'
 check "EV10f a candidate name outside [A-Za-z0-9._-] is never read ⇒ NOT-RUN with the reason" "$(ev)" \
   "validation-gate: unrun — V2 Running system: no evidence in the PR body; evidence files unreadable: a file name outside A-Z a-z 0-9 . _ - in docs/evidence/$EVFIX"
@@ -174,6 +174,22 @@ check "EV10g lane-readiness: the changed-file list unreadable ⇒ the V2 row NOT
 check "EV10h an evidence cache dir that cannot be created ⇒ NOT-RUN with the reason (never a missing row)" \
   "$( ( export LOOMWRIGHT_GH_BIN="$T/ev-gh"; . "$S"; _lanes_validation_rows "$EV/reqs/one.md" "$EV_BODY" 1 "$EVPR" /dev/null/ev ) 2>/dev/null | awk -F'\t' '$1 == 2 { print $4 "|" $5 }')" \
   "NOT-RUN|no evidence in the PR body; evidence files unreadable: no scratch dir$EVFIX"
+
+# EV10i: an unreadable PR body is never looked up in the files — it might hold a FAIL, which is final. The body
+# says FAIL under Validation 2 and a changed file declares PASS: readable ⇒ the body's FAIL; body read failing ⇒
+# still unrun (PR body unreadable), never ok, and no evidence-file gh call is made.
+EV10I_BODY='Validation 2\n```\nFAIL: boom\n```\n'
+ev_set "$EV10I_BODY" 'docs/evidence/x.md' "x.md=$EVOK"
+check "EV10i body readable + FAIL, a changed file declaring PASS ⇒ the body's FAIL is final" "$(ev)" \
+  "validation-gate: unrun — V2 Running system: pasted output shows FAIL"
+EV10I_WANT="validation-gate: unrun — V2 Running system: PR body unreadable ($EVPR)"
+ev_set "$EV10I_BODY" 'docs/evidence/x.md' "x.md=$EVOK"
+out="$(EV_FAIL=body ev)"; rc=$?
+check "EV10j the same PR with the body read failing ⇒ unrun naming the unreadable body (never ok), exit 0, no file lookup" \
+  "$rc|$out|$(grep -cE 'headRefOid,files|gh api' "$EV_CALLS" | tr -d ' ')" "0|$EV10I_WANT|0"
+ev_set "$EV10I_BODY" 'docs/evidence/x.md' "x.md=$EVOK"
+check "EV10k lane-readiness: the body read failing ⇒ the V2 row NOT-RUN naming the unreadable body (agrees with the gate)" \
+  "$(EV_FAIL=body ev_rd)" "  - V2 Running system: NOT-RUN — PR body unreadable ($EVPR)"
 
 # EV11 AC11: an unrun step's remedy points at the evidence file, never at the PR body.
 ev_voc=""
@@ -222,6 +238,9 @@ ev_red "EV13d the unreadable-list guard removed (# ev-closed: unreadable list) t
 ev_red "EV13e lane-readiness's reader call without its evdir turns EV4 red" \
   "$(ev_mut flip '"$pr" "$tmp/ev" > "$tmp/val"' 's#"$pr" "$tmp/ev" > "$tmp/val"#"$pr" "" > "$tmp/val"#')" \
   "  - V2 Running system: PASS — declared PASS with fenced output in docs/evidence/x.md" "ev_set '' 'docs/evidence/x.md' \"x.md=\$EVOK\"; ev_rd"
+ev_red "EV13g the readable-body guard removed (gh_ok) turns EV10j red (an unreadable body lifted by a file)" \
+  "$(ev_mut bodyguard '[ "$gh_ok" != 0 ] && [ "$du" != 1 ]' 's#\[ "\$gh_ok" != 0 \] && \[ "\$du" != 1 \]#[ "$du" != 1 ]#')" \
+  "$EV10I_WANT" "ev_set \"\$EV10I_BODY\" 'docs/evidence/x.md' \"x.md=\$EVOK\"; EV_FAIL=body ev"
 ev_red "EV13f the gate's unrun line removed turns AL1 red (05's pin of the changed unrun text)" \
   "$(ev_mut unrun 'echo "$G unrun — V$n $title: $ev"; return 0' '/^    echo "\$G unrun — V\$n \$title: \$ev"; return 0$/d')" \
   "$AL1_WANT" 'VG_S="$EV_S" vg "$VGRF" reqs/pa16.md "$VGPR"'

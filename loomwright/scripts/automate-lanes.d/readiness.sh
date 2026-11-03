@@ -112,7 +112,8 @@ _lanes_rd_section() {
 #             _lanes_rd_section's not-run set) ⇒ NOT-RUN; no fence
 #             line ⇒ NOT-RUN; a non-repro entry whose output shows the word FAIL ⇒ FAIL; else PASS
 #   evidence  files — only with <evdir> (a scratch dir the caller removes): a body PASS / FAIL is final;
-#             a body NOT-RUN row (an unreadable body included; never a duplicate-number row) is looked
+#             a body NOT-RUN row of a READABLE body (never an unreadable body — it might hold a final
+#             FAIL — and never a duplicate-number row) is looked
 #             up in the docs/evidence/*.md files the PR adds or changes (evidence.sh, _lanes_ev_step):
 #             a declared `Verdict: PASS for Validation <n>` + fenced output ⇒ PASS, evidence `declared
 #             PASS with fenced output in <path>`; anything else keeps the body's text and appends the
@@ -186,8 +187,9 @@ _lanes_validation_rows() {
       elif [ "$kind" != repro ] && grep -qw 'FAIL' <<<"$sec"; then st=FAIL; ev="pasted output shows FAIL"
       else st=PASS; ev="pasted output in the PR body"; fi
     fi
-    # The evidence files: only a body NOT-RUN row of a unique number, and only with an <evdir>.
-    if [ "$st" = NOT-RUN ] && [ "$du" != 1 ] && [ -n "$evdir" ]; then
+    # The evidence files: only a body NOT-RUN row of a READABLE body and a unique number, and only with an
+    # <evdir>. An unreadable body is never looked up: it might hold a FAIL (final), so no file can lift it.
+    if [ "$st" = NOT-RUN ] && [ "$gh_ok" != 0 ] && [ "$du" != 1 ] && [ -n "$evdir" ]; then
       evr="$(_lanes_ev_step "$evdir" "$pr" "$n")"
       case "$evr" in
         PASS"$tab"*) st=PASS; ev="${evr#PASS"$tab"}" ;;
@@ -259,7 +261,10 @@ lanes_readiness() {
   tmp="$(mktemp -d 2>/dev/null)" || die "lane-readiness: no temp dir"
   : > "$tmp/body"; : > "$tmp/files"
   if [ -n "$pr" ] && view="$("$LANES_GH" pr view "$pr" --json body,headRefOid 2>/dev/null)" && jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view"; then
-    gh_ok=1; jq -r '.body // ""' <<<"$view" > "$tmp/body"; head="$(jq -r '.headRefOid // "unknown"' <<<"$view")"
+    head="$(jq -r '.headRefOid // "unknown"' <<<"$view")"
+    # The body must be a string AND written: a missing body or a failed write is unreadable (validation-gate's
+    # own test), never an empty body — an empty one would send every step to the evidence-file lookup.
+    jq -e '.body | type == "string"' >/dev/null 2>&1 <<<"$view" && jq -r '.body' <<<"$view" > "$tmp/body" && gh_ok=1
   fi
   # ---- a + e: Validation entries (the shared reader — validation-gate reads the same rows)
   local vrows="" erows="" n title kind st ev vworst=PASS eworst=PASS vlabel=""
@@ -401,9 +406,11 @@ lanes_readiness() {
 #   validation-gate: unrun — <item>: the ## Validation section has no parseable entry (…)   (step-less)
 # A readable item with no running-system step is `none` without reading the PR — but a `## Validation`
 # section the reader parses to zero entries is `unrun`, never `none`; an unreadable PR body
-# makes every step NOT-RUN, so any running-system step reads `unrun`. Callers treat anything but
+# makes every step NOT-RUN with no evidence-file lookup (a file can never lift a step whose body might
+# say FAIL), so any running-system step reads `unrun`. Callers treat anything but
 # none / ok / waived as unrun. An unrun step's evidence text ends in the remedy (add the declared verdict
-# line and the fenced output to the step's docs/evidence/ file), never "paste into the PR body".
+# line and the fenced output to the step's docs/evidence/ file) — except `PR body unreadable`, which no
+# file can fix — never "paste into the PR body".
 # Waiver form (--waive <n> --words <text>) — called by the engine ONLY with an interactive owner's
 # answer, never on a can't-ask path — appends ONE `## Progress` line through progress-append:
 #   <utc> validation waived: <item> V<n> <title> — owner: "<text>"
@@ -507,7 +514,7 @@ lanes_validation_gate() {
   tmp="$(mktemp -d 2>/dev/null)" || { echo "$G unrun — no temp dir"; return 0; }
   : > "$tmp/body"
   if [ -n "$pr" ] && view="$("$LANES_GH" pr view "$pr" --json body 2>/dev/null)" && jq -e 'type == "object" and (.body | type == "string")' >/dev/null 2>&1 <<<"$view"; then
-    gh_ok=1; jq -r '.body' <<<"$view" > "$tmp/body"
+    jq -r '.body' <<<"$view" > "$tmp/body" && gh_ok=1   # a failed write is an unreadable body, never an empty one
   fi
   rows="$(_lanes_validation_rows "$itemf" "$tmp/body" "$gh_ok" "$pr" "$tmp/ev")"
   after="$(_lanes_vg_after_pick "$rf" "$item")" || after=""
