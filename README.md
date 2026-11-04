@@ -47,7 +47,7 @@ You should see `loomwright@atelier` with `Status: ✔ enabled`. In a session tha
 /autonomous "what you want to accomplish"
 ```
 
-Launch Pad asks a few discovery questions and saves a brief to `.supervisor/jobs/pending/`; Supervisor implements it in parallel git worktrees; the run ends with an `AUTONOMOUS_RUN` summary and a **pull request left open on your remote**. Loomwright never merges on its own.
+Launch Pad asks a few discovery questions and saves a brief to `.supervisor/jobs/pending/`; Supervisor implements it in parallel git worktrees; the run ends with an `AUTONOMOUS_RUN` summary and a **pull request left open on your remote**. Loomwright doesn't merge by default; only `/automate --auto-merge` (opt-in, default off) can merge, and only when its seven-condition, fail-closed trusted-merge gate passes.
 
 Everything below is detail: [Which command?](#which-command) · [Set up your project](#set-up-your-project) · [Troubleshooting](#troubleshooting) · [Developers (install from a local checkout)](#for-developers).
 
