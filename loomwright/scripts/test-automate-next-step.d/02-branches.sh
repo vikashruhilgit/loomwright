@@ -39,23 +39,26 @@ if [ "$b4rc" -ne 0 ] && [ "$b4rc" -ne 2 ] && [ ! -s "$CASE_DIR/b4.out" ] && grep
    && printf '%s' "$retry" | jq -e '.do == "park"' >/dev/null 2>&1 && cmp -s "$CASE_DIR/a.md" "$CASE_DIR/x.md"; then
   ok "B4: a refused progress-append ⇒ exit $b4rc, no instruction, stderr names it; the retry finishes the case byte-identically"
 else no "B4: writer failure: rc $b4rc, out '$(cat "$CASE_DIR/b4.out")', retry '$retry'"; diff "$CASE_DIR/x.md" "$CASE_DIR/a.md" | sed 's/^/    /' | head -n 12; fi
-# B5 — fix-now before the park (a lane: decide-then-park) ⇒ spawn ⇒ the re-drain report ⇒ re-park, fix-now never offered again
+# B5 — fix-now before the park (a lane: decide-then-park) ⇒ spawn ⇒ the re-drain report ⇒ re-park, fix-now never
+# offered again: no fix-now is left, so nothing is asked after the re-drain. The re-dismissed draft is rewritten
+# `undecided (fix-now unconfirmed)`; its `--auto` is refused (the ledger holds fix-now-unconfirmed), so it stays
+# undecided (pending_decisions: 1) for the next PICK's AUT-PENDING fallback
 inline_run dismissed-findings-decision-step "$(printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"0000000\"}'" \
-  "expect: ask" "call: --result '{\"answers\":[\"Fix now on this PR\"]}'" "expect: spawn")"
+  "expect: ask" "call: --result '{\"answers\":[\"Fix all listed on this PR\"]}'" "expect: spawn")"
 spawn="$LAST_OUT"; b5err1="$DRIVE_ERR"
-printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"1111111\"}'" "expect: ask" \
-  "call: --result '{\"answers\":[\"Follow-up (keep draft)\"]}'" "expect: park" > "$CASE_DIR/b5b.results"
+printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"1111111\"}'" "expect: park" > "$CASE_DIR/b5b.results"
 : > "$WORK/asks.b5"; ASKS_SAVE="$ASKS"; ASKS="$WORK/asks.b5"
 drive "$FIX/dismissed-findings-decision-step" "$DRIVER" "$CASE_DIR/b5b.results"; ASKS="$ASKS_SAVE"
 if [ -z "$b5err1$DRIVE_ERR" ] && printf '%s' "$spawn" | jq -e '.what == "fix-now re-drain" and (.findings | length) == 1' >/dev/null \
    && grep -qF -- 'owner decisions (dismissed): 1 fix-now, 0 follow-up, 0 drop' "$CASE_RF" \
-   && grep -qxF -- '- pending_decisions: 0 | fix_now_reentered: true' "$CASE_RF" \
-   && grep -q . "$WORK/asks.b5" && ! grep -qF 'Fix now on this PR' < <(cut -f2- "$WORK/asks.b5"); then
-  ok "B5: fix-now ⇒ {do: spawn} ⇒ re-drain report ⇒ re-asked Follow-up/Drop only ⇒ re-park with fix_now_reentered: true"
-else no "B5: fix-now re-pass wrong: $b5err1 $DRIVE_ERR"; tail -n 6 "$CASE_RF" | sed 's/^/    /'; fi
+   && grep -qxF -- '- pending_decisions: 1 | fix_now_reentered: true' "$CASE_RF" \
+   && grep -qxF -- '- **Decision:** undecided (fix-now unconfirmed)' "$CASE_ROOT"/.supervisor/requirements/proposed/*--dismissed-7de02129.md \
+   && [ ! -s "$WORK/asks.b5" ]; then
+  ok "B5: Fix all listed ⇒ {do: spawn} ⇒ re-drain report ⇒ nothing asked (no fix-now left; the fix-now-unconfirmed draft stays undecided) ⇒ re-park with fix_now_reentered: true"
+else no "B5: fix-now re-pass wrong: $b5err1 $DRIVE_ERR asks: $(cut -f2- "$WORK/asks.b5" | head -c 200)"; tail -n 6 "$CASE_RF" | sed 's/^/    /'; fi
 # B5b — a malformed re-drain report answering the spawn ⇒ exit 2, nothing written, the spawn re-prints
 inline_run dismissed-findings-decision-step "$(printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"0000000\"}'" \
-  "expect: ask" "call: --result '{\"answers\":[\"Fix now on this PR\"]}'" "expect: spawn")"
+  "expect: ask" "call: --result '{\"answers\":[\"Fix all listed on this PR\"]}'" "expect: spawn")"
 spawn="$LAST_OUT"; s0="$(snapshot)"; : > "$CASE_DIR/seams.none"
 b5o="$(in_case "$DRIVER" "$CASE_DIR/seams.none" bash "$DRIVER" "$CASE_RF" --result '{"drain_result":"died"}' 2>/dev/null)"; b5rc=$?
 again="$(in_case "$DRIVER" "$CASE_DIR/seams.none" bash "$DRIVER" "$CASE_RF" 2>/dev/null)"

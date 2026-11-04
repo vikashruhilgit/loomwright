@@ -4,7 +4,7 @@ dismissed-drafts "$RF" .supervisor/requirements/s3-validation/02-scratch-doc-b.m
 loop: bash "$H" progress-append "$RF" "2026-10-08T04:18:00Z $(tail -n 1 "$PREV")"
 dismissed-cost "$RF"
 loop: bash "$H" progress-append "$RF" "2026-10-08T04:40:15Z owner decisions (dismissed): 0 fix-now, 1 follow-up, 0 drop (est. fix_now_cost ≈ $(sed -n 's/^fix_now_cost: ≈ \([^ ]*\) .*/\1/p' "$PREV"), n=default)"
-dismissed-decide "$RF" "$ROOT/.supervisor/requirements/proposed/automate-2026-10-08-033739-L2--02-scratch-doc-b-b2ce94--dismissed-7de02129.md" follow-up
+dismissed-decide "$RF" "$ROOT/.supervisor/requirements/proposed/automate-2026-10-08-033739-L2--02-scratch-doc-b-b2ce94--dismissed-7de02129.md" follow-up --auto
 dismissed-pending "$RF"
 lane-park --root "$ROOT"
 loop: sed 's/^## Status: running$/## Status: paused/' "$RF" | bash "$H" runfile-write "$RF"

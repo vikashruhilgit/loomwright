@@ -24,5 +24,5 @@
 - validation-gate: none — no running-system step in .supervisor/requirements/s3-validation/02-scratch-doc-b.md
 - 2026-10-08T04:18:00Z dismissed-drafts: 1 per-finding + 0 summary (0 listed in summary)
 - 2026-10-08T04:40:15Z owner decisions (dismissed): 0 fix-now, 1 follow-up, 0 drop (est. fix_now_cost ≈ 1h06m, n=default)
-- 2026-10-15T11:52:21Z dismissed: follow-up automate-2026-10-08-033739-L2--02-scratch-doc-b-b2ce94--dismissed-7de02129.md — Gitignore docs-scratch/ so future validation scratch files cannot merge into mai
+- 2026-10-15T11:52:21Z dismissed: follow-up automate-2026-10-08-033739-L2--02-scratch-doc-b-b2ce94--dismissed-7de02129.md — followed up automatically (no question)
 - 2026-10-08T04:40:24Z parked ready_for_release — PR https://github.com/vikashruhilgit/loomwright/pull/428 READY; do not merge yet — wave open (no merge watcher armed in a lane)

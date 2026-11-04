@@ -1,11 +1,12 @@
 # next-step.results — park-first-decisions-recorded: how test-automate-next-step.sh drives this case through
 # automate-next-step.sh (grammar: the test's header). The case starts after the post-park gate line (NEXT_STEP_FROM=decide, the
 # line read back from the run file); the summary draft was kept automatically by dismissed-drafts, so only the
-# per-finding draft is asked (AUT-DISMISS, no AUT-SUMMARY ask); the owner's answer is the real 10:19:53Z
-# per-finding choice (follow-up).
+# per-finding draft is asked (its severity is unspecified, so MEDIUM+: ONE batched AUT-DISMISS ask, no AUT-SUMMARY ask); the
+# owner's answer is the real 10:19:53Z per-finding choice (follow-up) — `Fix none (follow-up all)`, recorded as the
+# automatic follow-up.
 env: NEXT_STEP_FROM=decide
 call:
 expect: ask
 env: NEXT_STEP_FROM=
-call: --result '{"answers":["Follow-up (keep draft)"]}'
+call: --result '{"answers":["Fix none (follow-up all)"]}'
 expect: park

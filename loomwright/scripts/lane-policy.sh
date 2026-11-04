@@ -133,9 +133,9 @@ _lp_catalog_rows() {
   _lp_row AUT-SOURCE   human-only '(free text)' \
     'bare /automate: what do you want to automate?'
   _lp_row AUT-PENDING  human-only 'Follow-up (keep draft)|Drop' \
-    '/automate PICK-time decision on a per-finding dismissed draft'
-  _lp_row AUT-DISMISS  human-only 'Follow-up (keep draft)|Fix now on this PR?|Drop' \
-    '/automate per-finding dismissed draft at the park, including fix-now (offered only while a fix-now re-drain is available)'
+    '/automate PICK-time decision on a per-finding dismissed draft — the fallback only: PICK records every undecided draft follow-up automatically, so this asks only about a draft whose automatic follow-up was refused (§6 dismissed-findings decision step)'
+  _lp_row AUT-DISMISS  human-only 'Fix none (follow-up all)|Fix all listed on this PR|Fix selected on this PR?' \
+    '/automate ONE batched ask at the park over the MEDIUM+ per-finding dismissed drafts while a fix-now re-drain is available (every other draft is followed up with no question); Fix selected names the draft numbers in the answer note and is offered only when two or more are listed (§6 dismissed-findings decision step)'
   _lp_row AUT-LEFTOVER human-only 'Clean up now?|Keep and continue|Stop' \
     '/automate close-out leftover gate (cleans up or deletes; Clean up now is offered only when a cleanup is possible)'
   _lp_row AUT-WAIVE    human-only 'Waive this step|Keep parked' \
