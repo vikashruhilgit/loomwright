@@ -115,6 +115,9 @@ if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: live_lane' "$LG_RF" && [
 # phase_relay_unavailable (automate-speed/09) is the PICK-time phase-guard's RUN-level park: the same run-level form
 run_h bash "$H" current-set "$LG_RF" --pause-reason phase_relay_unavailable
 if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: phase_relay_unavailable' "$LG_RF" && [ "$(grep '^- item: ' "$LG_RF")" = "$lg_item0" ]; then ok "PHASEGUARD current-set accepts --pause-reason phase_relay_unavailable (run-level form, item line unchanged)"; else no "PHASEGUARD current-set phase_relay_unavailable refused (rc=$RUN_RC): $(tr '\n' '|' < "$LG_RF")"; fi
+# scope_hold (lane-scope-regate Part B) is a --parallel N>1 lane's hold before its Supervisor phase: run-level form
+run_h bash "$H" current-set "$LG_RF" --pause-reason scope_hold
+if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: scope_hold' "$LG_RF" && [ "$(grep '^- item: ' "$LG_RF")" = "$lg_item0" ]; then ok "SCOPEHOLD current-set accepts --pause-reason scope_hold (run-level form, item line unchanged — the item stays running)"; else no "SCOPEHOLD current-set scope_hold refused (rc=$RUN_RC): $(tr '\n' '|' < "$LG_RF")"; fi
 # Every enum copy carries live_lane (runfile.sh validator, SKILL §3 template, automate-run.md template); the
 # two templates pin the tail exactly — live_lane, then phase_relay_unavailable (automate-speed/09), then null.
 lg_bad=""

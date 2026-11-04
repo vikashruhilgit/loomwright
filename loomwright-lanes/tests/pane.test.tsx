@@ -675,3 +675,17 @@ test('layout holds: a narrow pane stacks the lane title over its PR and times; a
     await ui.unmount()
   }
 })
+
+test('a lane held scope_hold reads as waiting for the owner: the ❓ glyph and one toast', async ($, on) => {
+  const calls: Call[] = []
+  const toasts: string[] = []
+  const held = { ...DOC.lanes[0], lane: 'L3', path: '/w/lanes/L3', item: 'reqs/c.md', run_id: 'r-L3', state: 'scope_hold', reason: '',
+    pr: null, pause_reason: 'scope_hold', run_status: 'paused', questions: [], ended_at: '2026-10-11T09:20:00Z' }
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify({ ...DOC, machine: { ...DOC.machine, state: 'ok' }, lanes: [DOC.lanes[0], held] }) }))
+  on('ui.toast', async (_$, e) => { toasts.push(JSON.stringify(e)); return { value: undefined } })
+  await $.command.run(RUN)
+  expect(toasts.filter(t => t.includes('L3 is held before its Supervisor phase')).length).toBe(1)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /❓/ })).toBeDefined()
+  await ui.unmount()
+})
