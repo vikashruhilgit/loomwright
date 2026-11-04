@@ -1244,8 +1244,13 @@ C_R5="fix_now_cost: ≈ 2h21m (median of 1 recorded fix-now re-drain in this rep
 # options and their cost notes, ns_decide runs dismissed-cost, ns_decide_record writes the estimate line,
 # ns_drain_start_line / ns_drain_result write the pinned fix-now re-drain lines.
 SUB2="$(dfn "$DRV" ns_decide)$(dfn "$DRV" ns_decide_next_batch)$(dfn "$DRV" ns_decide_record)"; SUB3="$(dfn "$DRV" ns_drain_start_line)$(dfn "$DRV" ns_drain_result)"
-case "$SUB2" in *'dismissed-cost "$RF"'*'"0 min now (draft kept in proposed/ — nothing is enqueued; promote it by hand)", "Drop": "0 min"'*'" wall-clock: ONE owner-requested fix pass + full re-drain + re-park ("'*) ok "C8 §6 step 2 runs dismissed-cost and puts the cost in every fix-now option; follow-up '0 min now', drop '0 min'" ;; *) no "C8 §6 step 2 cost prose missing" ;; esac
+case "$SUB2" in *'dismissed-cost "$RF"'*'"0 min now (draft kept in proposed/ as /backlog state follow_up — nothing is enqueued; bundle it into a queue item with followup-bundle)", "Drop": "0 min"'*'" wall-clock: ONE owner-requested fix pass + full re-drain + re-park ("'*) ok "C8 §6 step 2 runs dismissed-cost and puts the cost in every fix-now option; follow-up '0 min now', drop '0 min'" ;; *) no "C8 §6 step 2 cost prose missing" ;; esac
 before "$SUB2" "opts='[\"Follow-up (keep draft)\"" "\"Fix now on this PR\"" && ok "C8 §6 step 2 keeps Follow-up recommended and first" || no "C8 recommended order changed"
+# the AUT-PENDING copy (ns_pending_next_batch) of the Follow-up note is byte-equal to the park-time one:
+# ONE string at two sites, so a change to either alone turns this red
+fu_note() { printf '%s' "$1" | sed -n 's/.*"Follow-up (keep draft)": \("[^"]*"\).*/\1/p' | head -n 1; }
+C8P="$(fu_note "$(dfn "$DRV" ns_pending_next_batch)")"; C8D="$(fu_note "$(dfn "$DRV" ns_decide_next_batch)")"
+[ -n "$C8P" ] && [ "$C8P" = "$C8D" ] && ok "C8 the AUT-PENDING Follow-up (keep draft) note is byte-equal to the park-time note" || no "C8 AUT-PENDING note '$C8P' != park-time note '$C8D'"
 case "$SUB2" in *"est. fix_now_cost ≈"*) ok "C8 §6 step 2 records the estimate as data on a Progress line" ;; *) no "C8 no recorded estimate" ;; esac
 case "$SUB3" in *'[ "$1" = fixnow ] && tag=" (fix-now re-drain)"'*'owned drain started$tag — '*'line="$(ns_ts) fix-now re-drain $dec ('*) ok "C8 §6 step 3 pins the re-drain start and terminal lines" ;; *) no "C8 §6 step 3 pinned lines missing" ;; esac
 grep -qF 'owned drain started (fix-now re-drain) — ' "$RUN_ALL" && grep -qF 'fix-now re-drain <READY\|ESCALATED> (' "$RUN_ALL" && ok "C8 automate-run.md mirrors both pinned lines beside owned_drain_started" || no "C8 automate-run.md mirror missing"

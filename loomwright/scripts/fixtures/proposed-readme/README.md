@@ -12,6 +12,13 @@ propose-only, never enqueued. Their owner decisions live in the run's gitignored
 `.supervisor/requirements/proposed/` is deliberately NOT an `/automate --folder` target;
 promotion is a human moving a file out of it.
 
+A dismissed draft decided `follow-up` reads `follow_up` on the board:
+`/backlog --state follow_up` lists each one with its age. To promote them, run
+`automate-helpers.sh followup-bundle <draft>... --into <queue-dir>/<NN-slug>.md`:
+without `--confirm` it prints the one `## Status: pending` requirement file it would
+write; with `--confirm` it writes that file and removes exactly the named drafts.
+The owner then runs it with `/automate --folder`.
+
 Nothing in this directory is enqueued, dispatched, or started by anything.
 
 ## Deleting a file here is not a durable dismissal

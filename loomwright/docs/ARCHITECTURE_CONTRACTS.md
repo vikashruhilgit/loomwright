@@ -706,7 +706,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `agent-output` | 1495 | 1359 |
 | `agent-teams` | 3231 | 2937 |
 | `async-orchestration` | 8901 | 8091 |
-| `automate-loop` | 48362 | 43965 |
+| `automate-loop` | 53519 | 48654 |
 | `autonomous-loop` | 20355 | 18504 |
 | `beads-workflow` | 1658 | 1507 |
 | `brain-context` | 1809 | 1644 |
@@ -755,7 +755,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `agent-help` | 26402 | 24001 |
 | `automate` | 5465 | 4968 |
 | `autonomous` | 4361 | 3964 |
-| `backlog` | 2413 | 2194 |
+| `backlog` | 2704 | 2458 |
 | `capability-check` | 6680 | 6072 |
 | `code-reviewer` | 2837 | 2579 |
 | `dreaming` | 39945 | 36313 |
@@ -767,7 +767,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `orchestrator` | 3859 | 3508 |
 | `pr-postmortem` | 2215 | 2013 |
 | `product-owner` | 11537 | 10488 |
-| `propose` | 5354 | 4867 |
+| `propose` | 6018 | 5471 |
 | `qa-executor` | 1337 | 1215 |
 | `qa-strategist` | 4411 | 4010 |
 | `red-team-reviewer` | 2046 | 1860 |

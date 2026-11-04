@@ -12,9 +12,10 @@
 # Stays under SessionStart's documented 10,000-char additionalContext cap.
 #
 # When `source` is `startup` (fresh session) the hook runs ONLY its dedicated
-# `startup)` arm, which composes at most SEVEN advisory blocks into ONE envelope
-# (items 4–7 are described further down — meta_branch_hint_line,
-# automate_watch_lines, proc_attention_line and backlog_nudge_line):
+# `startup)` arm, which composes the advisory blocks listed below into ONE envelope
+# (items 4–8 are described further down — meta_branch_hint_line,
+# automate_watch_lines, proc_attention_line, backlog_nudge_line and
+# followup_nudge_line):
 #   1. the curation-cadence nudge (curation_nudge_line, below),
 #   2. the stranded-brief line (stranded_briefs_startup_line, below): the
 #      sibling reconcile-jobs.sh --porcelain (offline for merge evidence; at
@@ -46,6 +47,11 @@
 #      silenced by LOOMWRIGHT_BACKLOG_NUDGE=0|off|false|no. HONEST LIMIT: an item
 #      merged only on GitHub (no run-file `- [x]` row, no `fleet closeout` line)
 #      is not counted — `/backlog` (live) stays the authoritative check.
+#   8. the follow-up nudge (followup_nudge_line, below — startup ONLY): the ONE
+#      line the sibling `automate-helpers.sh followup-nudge` prints when the oldest
+#      follow-up draft in proposed/ is older than LOOMWRIGHT_FOLLOWUP_NUDGE_DAYS
+#      (default 14), relayed verbatim; time-bounded (LOOMWRIGHT_SR_FOLLOWUP_TIMEOUT,
+#      default 5 s), fail-safe, no marker (it repeats while the condition holds).
 # When no block has anything to say, startup emits NOTHING — byte-for-byte
 # the pre-existing behaviour — so a fresh launch with no plugin work in flight
 # stays noise-free. Sections 1–5, the observability probe, the prior-session
@@ -561,6 +567,42 @@ backlog_nudge_line() {
   return 0
 }
 
+# followup_nudge_line — startup-arm block 8 (dismissed-followups/01): relays the ONE line of the sibling
+# `automate-helpers.sh followup-nudge --root "$PWD"` (the line's only home — never rebuilt here), else
+# NOTHING. Gates: the OWN cwd-relative `.supervisor/requirements/proposed` check (no drafts dir ⇒ no
+# reader run at all); the reader backgrounded and bounded by LOOMWRIGHT_SR_FOLLOWUP_TIMEOUT seconds
+# (default 5) with backlog_nudge_line's background + 0.1 s poll + kill idiom and the same wall-clock
+# check (bash 3.2 has no `timeout`). An absent sibling, a timeout or empty output ⇒ no line. No marker:
+# the requirement asks for none, so the line repeats at every startup while the oldest follow-up draft
+# is past the threshold, and stops once it is bundled (followup-bundle) or dropped.
+# DEFINED ABOVE THE CASE (startup_arm_emit calls it).
+followup_nudge_line() {
+  [ -d ".supervisor/requirements/proposed" ] || return 0
+  local here helper tmo lim tmp pid i=0 t0 l
+  here="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+  helper="$here/automate-helpers.sh"
+  [ -r "$helper" ] || return 0
+  tmo="${LOOMWRIGHT_SR_FOLLOWUP_TIMEOUT:-5}"
+  case "$tmo" in ''|*[!0-9]*) tmo=5 ;; esac
+  lim=$((tmo * 10))
+  tmp="$(mktemp "${TMPDIR:-/tmp}/sr-followup.XXXXXX" 2>/dev/null)" || return 0
+  bash "$helper" followup-nudge --root "$PWD" > "$tmp" 2>/dev/null < /dev/null &
+  pid=$!
+  t0=$SECONDS
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$i" -ge "$lim" ] || [ $((SECONDS - t0)) -gt "$tmo" ]; then
+      kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; rm -f "$tmp"; return 0   # followup-nudge: deadline
+    fi
+    sleep 0.1; i=$((i + 1))
+  done
+  wait "$pid" 2>/dev/null
+  l="$(head -n 1 "$tmp" 2>/dev/null)"
+  rm -f "$tmp"
+  [ -n "$l" ] || return 0
+  printf '%s' "$l"
+  return 0
+}
+
 # sr_pr_state <url> [<max_ticks>] — prints `<state> <ticks>`: the state (MERGED |
 # OPEN | CLOSED | unverified) from ONE time-bounded `gh pr view`, and the 0.1 s poll
 # ticks it spent (bash 3.2 has no `timeout`: background it, poll every 0.1s, kill it
@@ -638,7 +680,7 @@ automate_inflight_lines() {
 }
 
 startup_arm_emit() {
-  local curation="" stranded="" orphans="" metahint="" watchers="" procs="" backlog="" body="" nl
+  local curation="" stranded="" orphans="" metahint="" watchers="" procs="" backlog="" followup="" body="" nl
   nl=$'\n'
   curation="$(curation_nudge_line)"
   stranded="$(stranded_briefs_startup_line)"
@@ -647,6 +689,7 @@ startup_arm_emit() {
   watchers="$(automate_watch_lines 2>/dev/null)"
   procs="$(proc_attention_line 2>/dev/null)"
   backlog="$(backlog_nudge_line 2>/dev/null)"
+  followup="$(followup_nudge_line 2>/dev/null)"
   body="$curation"
   [ -n "$stranded" ] && body="${body:+$body$nl}$stranded"
   [ -n "$orphans" ] && body="${body:+$body$nl}$orphans"
@@ -654,6 +697,7 @@ startup_arm_emit() {
   [ -n "$watchers" ] && body="${body:+$body$nl}$watchers"
   [ -n "$procs" ] && body="${body:+$body$nl}$procs"
   [ -n "$backlog" ] && body="${body:+$body$nl}$backlog"
+  [ -n "$followup" ] && body="${body:+$body$nl}$followup"
   [ -n "$body" ] || return 0
   printf '%s' "$body" \
     | { iconv -c -f UTF-8 -t UTF-8 2>/dev/null || cat; } \
