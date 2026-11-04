@@ -173,17 +173,6 @@ fu_refuse "an --into outside .supervisor/requirements/" "is outside .supervisor/
 fu_refuse "an --into with a .. segment" "a . or .. segment" "$FU_G" --into .supervisor/requirements/q/../../automate/01-x.md
 fu_refuse "an --into inside proposed/" "is inside proposed/" "$FU_G" --into .supervisor/requirements/proposed/01-x.md
 fu_refuse "an --into in a new dir under proposed/" "is inside proposed/" "$FU_G" --into .supervisor/requirements/proposed/q/01-x.md
-# a case-insensitive FS (macOS APFS default) resolves PROPOSED/ to proposed/ while `pwd -P` keeps the
-# typed case: the refusal must decide by identity, not by spelling. Same for a draft named twice.
-FU_CI=0; [ -d "$R/.supervisor/requirements/PROPOSED" ] && FU_CI=1
-FU_GV="$PROP/$(printf '%s' "${FU_G##*/}" | sed 's/^automate-/AUTOMATE-/')"
-if [ "$FU_CI" = 1 ]; then
-  fu_refuse "an --into in a case-variant PROPOSED/" "is inside proposed/" "$FU_G" --into .supervisor/requirements/PROPOSED/99-b.md
-  fu_refuse "an --into in a new dir under a case-variant Proposed/" "is inside proposed/" "$FU_G" --into .supervisor/requirements/Proposed/q/99-b.md
-  fu_refuse "the same draft named twice, once by a case-variant spelling" "named twice" "$FU_G" "$FU_GV" --into "$FU_INTO"
-else
-  echo "  SKIP: FU3 case-variant PROPOSED/ and draft legs — the scratch filesystem is case-sensitive"
-fi
 mkdir -p "$R/.supervisor/requirements/q"; printf '# taken\n' > "$R/.supervisor/requirements/q/01-taken.md"
 fu_refuse "an existing target file" "the target already exists" "$FU_G" --into .supervisor/requirements/q/01-taken.md
 fu_refuse "one bad draft among good ones (the bad one named last)" "its first Decision is not follow-up" "$FU_G" "$(fu_own | sed -n 2p)" "$FU_UD" --into "$FU_INTO"
@@ -202,13 +191,35 @@ fu_s3d() { fu_s3 "$1" "$FU_UD" "$FU_INTO"; }
 fu_mut_check "pin AC3: the decision-is-follow-up refusal deleted" '    [ "$dec" = follow-up ] || _fu_fail' __DELETE__ fu_s3d "1"
 fu_s3p() { fu_s3 "$1" "$FU_G" .supervisor/requirements/proposed/01-x.md; }
 fu_mut_check "pin AC3: the --into-inside-proposed/ refusal deleted" '  if _fu_in_proposed "$req" "$phys"; then' __DELETE__ fu_s3p "1"
-if [ "$FU_CI" = 1 ]; then
-  fu_s3pc() { fu_s3 "$1" "$FU_G" .supervisor/requirements/PROPOSED/99-b.md; }
-  fu_mut_check "pin AC3: the proposed/ inode test reduced to a string match (PROPOSED/ slips through)" \
-    '    if [ -e "$a" ] && [ "$a" -ef "$req/proposed" ]; then return 0; fi' '    if [ "$a" = "$req/proposed" ]; then return 0; fi' fu_s3pc "1"
-  fu_s3dv() { fu_run "$1" followup-bundle "$FU_G" "$FU_GV" --into "$FU_INTO" --root "$R"; printf '%s' "$FU_RC"; }
-  fu_mut_check "pin AC3: the by-identity named-twice refusal deleted (a case-variant twin is bundled twice)" \
-    '    for c in ${abs[@]+"${abs[@]}"}; do if [ "$c" -ef "$prop/$name" ]; then' __DELETE__ fu_s3dv "1"
+# Identity, not spelling: the proposed/ refusal and the named-twice refusal compare by inode (`-ef`),
+# so a path spelled differently from proposed/ (or from a named draft) that IS it must still be
+# refused. A case-insensitive FS (macOS APFS default) makes PROPOSED/ such a path, since `pwd -P` keeps
+# the typed case, but CI's ext4 is case-sensitive; so the legs and their pins build the situation on
+# every filesystem: proposed/ moved to proposed.real/ with proposed/ a symlink to it (`pwd -P` resolves
+# --into to proposed.real/, a different string with the same inode; a symlinked PROPOSED/ would not do,
+# `pwd -P` resolves it back to proposed/), and a hard-linked twin of a draft under another
+# *--dismissed-*.md name (fu_own's hex glob never matches it). Both are undone before the next leg.
+FU_PR_REAL="$R/.supervisor/requirements/proposed.real"
+mv "$PROP" "$FU_PR_REAL"; ln -s proposed.real "$PROP"
+fu_refuse "an --into in proposed/'s physical dir, spelled differently (proposed/ a symlink to it)" "is inside proposed/" "$FU_G" --into .supervisor/requirements/proposed.real/99-b.md
+fu_refuse "an --into in a new dir under proposed/'s physical dir, spelled differently" "is inside proposed/" "$FU_G" --into .supervisor/requirements/proposed.real/q/99-b.md
+fu_s3pc() { fu_s3 "$1" "$FU_G" .supervisor/requirements/proposed.real/99-b.md; }
+fu_mut_check "pin AC3: the proposed/ inode test reduced to a string match (a differently spelled proposed/ slips through)" \
+  '    if [ -e "$a" ] && [ "$a" -ef "$req/proposed" ]; then return 0; fi' '    if [ "$a" = "$req/proposed" ]; then return 0; fi' fu_s3pc "1"
+rm -f "$PROP"; mv "$FU_PR_REAL" "$PROP"
+FU_GV="$PROP/automate-2026-01-01-000000--v--dismissed-twin.md"
+ln "$FU_G" "$FU_GV"
+fu_refuse "the same draft named twice, once by another name for the same file (a hard link)" "named twice" "$FU_G" "$FU_GV" --into "$FU_INTO"
+fu_s3dv() { fu_run "$1" followup-bundle "$FU_G" "$FU_GV" --into "$FU_INTO" --root "$R"; printf '%s' "$FU_RC"; }
+fu_mut_check "pin AC3: the by-identity named-twice refusal deleted (a same-file twin is bundled twice)" \
+  '    for c in ${abs[@]+"${abs[@]}"}; do if [ "$c" -ef "$prop/$name" ]; then' __DELETE__ fu_s3dv "1"
+rm -f "$FU_GV"
+# ...and, where the scratch FS is case-insensitive, the case-variant spellings themselves (the extra
+# legs never SKIP the identity coverage above, which runs everywhere)
+if [ -d "$R/.supervisor/requirements/PROPOSED" ]; then
+  fu_refuse "an --into in a case-variant PROPOSED/" "is inside proposed/" "$FU_G" --into .supervisor/requirements/PROPOSED/99-b.md
+  fu_refuse "an --into in a new dir under a case-variant Proposed/" "is inside proposed/" "$FU_G" --into .supervisor/requirements/Proposed/q/99-b.md
+  fu_refuse "the same draft named twice, once by a case-variant spelling" "named twice" "$FU_G" "$PROP/$(printf '%s' "${FU_G##*/}" | sed 's/^automate-/AUTOMATE-/')" --into "$FU_INTO"
 fi
 fu_s3e() { fu_s3 "$1" "$FU_G" .supervisor/requirements/q/01-taken.md; }
 fu_mut_check "pin AC3: the existing-target refusal deleted" '  if [ -e "$phys" ] || [ -L "$phys" ]; then _fu_fail "the target already exists' __DELETE__ fu_s3e "1"
