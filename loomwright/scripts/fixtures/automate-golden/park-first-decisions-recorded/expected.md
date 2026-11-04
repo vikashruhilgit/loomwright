@@ -30,9 +30,9 @@
 - 2026-10-15T09:53:21Z drain READY (converged, 2 rounds, 1 fix cycle; ci green on 953c2d1; claude-review on 953c2d1: prior findings resolved, 1 new LOW dismissed below_fix_floor; rules_gate none)
 - 2026-10-15T09:53:21Z sidecar-check: ok .supervisor/automate/automate-2026-10-13-181331.review-heal-result.md
 - validation-gate: ok — 1 running-system step(s) evidenced
+- 2026-10-15T09:54:05Z dismissed: follow-up automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md — kept automatically (summary below the tracking threshold, no question)
 - dismissed-drafts: 1 per-finding + 1 summary (6 listed in summary)
-- 2026-10-15T09:54:06Z parked awaiting_merge https://github.com/vikashruhilgit/loomwright/pull/555 — 2 dismissed decision(s) pending
+- 2026-10-15T09:54:06Z parked awaiting_merge https://github.com/vikashruhilgit/loomwright/pull/555 — 1 dismissed decision(s) pending
 - 2026-10-15T09:56:17Z dismissed decisions asked after the park — ask — fix-now allowed: PR OPEN, parked awaiting_merge, merge watcher armed
-- 2026-10-15T10:19:53Z owner decisions (dismissed): 0 fix-now, 2 follow-up, 0 drop (est. fix_now_cost ≈ 1h06m, n=default)
+- 2026-10-15T10:19:53Z owner decisions (dismissed): 0 fix-now, 1 follow-up, 0 drop (est. fix_now_cost ≈ 1h06m, n=default)
 - 2026-10-15T11:52:32Z dismissed: follow-up automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md — _sw_plugin_made's sibling-naming fallback is the one place --apply's destructive
-- 2026-10-15T11:52:32Z dismissed: follow-up automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md — Dismissed findings below the tracking threshold: 39a-sweep-and-janitor (6)

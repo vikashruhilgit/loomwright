@@ -21,7 +21,11 @@
 #     wins; plus `summary-member<TAB><h8><TAB>summary_name` rows recording which
 #     entries a DECIDED summary listed; `moved` rows are placement records, never
 #     decisions), and ONE `## Progress` line per decision via
-#     `automate-helpers.sh progress-append`.
+#     `automate-helpers.sh progress-append`;
+#   * the summary AUTO-KEEP: `dismissed-drafts` records every undecided summary
+#     slot of THIS item `follow-up` itself, through `dismissed-decide`'s `--auto`
+#     path (no second copy) — its `summary-member` + `follow-up` ledger rows, the
+#     `- **Decision:**` rewrite and ONE `## Progress` line per auto-kept summary.
 # It never runs `gh`, `git commit`, `git push` or any other git mutation (only
 # `git rev-parse --show-toplevel`), and never merges anything. `dismissed-cost`
 # writes NOTHING (read-only advisory estimator).
@@ -94,7 +98,18 @@
 #       A follow-up draft is reported (`draft` row) and counted only while it is
 #       on disk: one `followup-bundle` removed is neither reported nor counted,
 #       per-finding or summary (its ledger row still keeps it from being recreated).
-#   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>
+#       SUMMARY AUTO-KEEP (nobody is asked about a summary): after every write and
+#       retire, every summary slot of THIS item still on disk with no ledger
+#       decision and an on-disk Decision starting with `undecided` (the slot written
+#       in this pass, or an older one the pass left) is recorded `follow-up` through
+#       `dismissed-decide … follow-up` with its `--auto` flag, stdout discarded. A
+#       slot whose Decision still reads `undecided` afterwards (the ledger could not
+#       be appended to, the rewrite failed) stays undecided — the `AUT-SUMMARY` ask
+#       is its fallback — and gets ONE `dismissed-drafts: auto-keep … refused`-style
+#       message line naming it, before the summary line, which stays LAST. The
+#       unreadable-ledger skip above runs first and auto-keeps nothing. The owner
+#       drops an auto-kept summary by deleting it from `proposed/` (never recreated).
+#   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop> [--auto]
 #       Refuses (`dismissed-decide: refused — <reason>`) a path that is not a
 #       regular file directly under `proposed/` named `<this run_id>--*--dismissed-*.md`
 #       (or, given a `--parallel` PARENT run file, `<run_id>-L<n>--*--dismissed-*.md` —
@@ -107,6 +122,15 @@
 #       rewrites the draft's `- **Decision:**` line (follow-up) or deletes the
 #       draft (drop / fix-now), then progress-appends ONE line
 #       `dismissed: <decision> <draft_name> — <first 80 chars of finding>`.
+#       `--auto` (the summary auto-keep): accepted ONLY with `follow-up` on a
+#       summary draft — any other decision, a per-finding draft or another trailing
+#       argument is refused, touching nothing, and so is a draft whose LAST ledger
+#       row already holds a decision (follow-up / drop / fix-now /
+#       fix-now-unconfirmed: `refused — already decided in the ledger`), so an
+#       auto-keep never overrides the owner's drop or appends a second follow-up
+#       when an earlier Decision rewrite failed. It does exactly what `follow-up`
+#       does; only the Progress line's text after the dash differs (it says the
+#       summary was kept automatically, below the tracking threshold, unasked).
 #   dismissed-pending <runfile>
 #       Prints the count of this run's drafts (and its lanes' `<run_id>-L<n>--…`
 #       drafts — parallel-automate/05) whose first `- **Decision:**` value
@@ -173,6 +197,13 @@ _ts() { date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown; }
 # _ledger_unreadable <path> — true (0) when the decision ledger EXISTS (or is a
 # dangling symlink) but cannot be read back as UTF-8 text (EACCES, a non-UTF-8
 # byte, a directory, no python3 to tell). A missing ledger is fine (false).
+# _ledger_decision <ledger> <draft_name> — the value of the LAST `<draft_name><TAB><value>…` row
+# (last row wins; `summary-member` rows never match a draft name), or nothing. Missing ledger ⇒ nothing.
+_ledger_decision() {
+  [ -f "$1" ] || return 0
+  awk -F'\t' -v n="$2" '$1 == n && NF >= 2 { d = $2 } END { if (d != "") print d }' "$1" 2>/dev/null
+}
+
 _ledger_unreadable() {
   { [ -e "$1" ] || [ -L "$1" ]; } || return 1
   command -v python3 >/dev/null 2>&1 || return 0
@@ -611,6 +642,19 @@ for h in not_finding:
     nm = prefix + h + ".md"
     if h not in cur_h8 and decided(nm) is None and on_disk(nm) and not foreign(nm):
         emit("retire", "notfinding", "-", nm, "-", "moved", "0")
+# The summary auto-keep (after every write and retire): every summary slot of THIS item with no ledger
+# decision — the one this pass writes, and any older one left on disk — is recorded follow-up by the
+# bash half through dismissed_decide, once its on-disk Decision is read back as `undecided`. A slot the
+# ledger already decided is never auto-kept (a dropped slot still on disk keeps the owner's drop), and
+# one belonging to another item is never touched.
+SLOT_RE = re.compile(r"^" + re.escape(prefix) + r"summary(?:-[0-9]+)?\.md$")
+try:
+    on_dir = sorted(x for x in os.listdir(prop_dir) if SLOT_RE.match(x))
+except Exception:
+    on_dir = []
+for nm in sorted(set(on_dir) | ({undecided_slot} if to_summary else set())):
+    if decided(nm) is None and not foreign(nm):
+        emit("autokeep", "summary", "-", nm, "-", "-", "0")
 print("\n".join(out))
 PY
   local prc=$?
@@ -631,7 +675,7 @@ PY
   fi
 
   local n=0 s=0 m=0 kind kname sev name src row cnt err tab=$'\t' nl=$'\n'
-  local written="$nl" rest dep dep_ok v
+  local written="$nl" rest dep dep_ok v autokeep=""
   while IFS="$tab" read -r kind kname sev name src row cnt; do
     case "$cnt" in ''|*[!0-9]*) cnt=0 ;; esac
     case "$kind" in
@@ -689,9 +733,35 @@ PY
         else
           printf 'dismissed-drafts: refused %s — %s\n' "$name" "$(printf '%s' "$err" | tr '\n' ' ')"
         fi ;;
+      autokeep) [ -n "$out_abs" ] && autokeep="$autokeep$name$nl" ;;
     esac
   done < "$manifest"
   rm -rf "$tmp" 2>/dev/null
+  # The summary auto-keep, after every write and retire: each listed slot still on disk whose Decision
+  # reads `undecided` is recorded follow-up through dismissed_decide's --auto path (its own ledger-first
+  # order, rewrite and ONE Progress line). Its stdout is discarded so the count line below stays LAST
+  # (ns_dismissed reads it with `tail -n 1`); a refusal is read back from the slot's Decision line.
+  rest="$autokeep"
+  while [ -n "$rest" ]; do
+    name="${rest%%"$nl"*}"; rest="${rest#*"$nl"}"
+    [ -n "$name" ] || continue
+    [ -f "$out_abs/$name" ] && [ ! -L "$out_abs/$name" ] || continue
+    v="$(awk '/^- \*\*Decision:\*\* /{ sub(/^- \*\*Decision:\*\* /, ""); print; exit }' "$out_abs/$name" 2>/dev/null)"
+    case "$v" in undecided*) ;; *) continue ;; esac
+    dismissed_decide "$runfile" "$out_abs/$name" follow-up --auto >/dev/null 2>&1
+    v="$(awk '/^- \*\*Decision:\*\* /{ sub(/^- \*\*Decision:\*\* /, ""); print; exit }' "$out_abs/$name" 2>/dev/null)"
+    case "$v" in
+      undecided*)
+        # Honest about which half failed: a ledger that now holds a decision for the slot recorded it
+        # (only the Decision line rewrite failed); otherwise nothing was recorded at all.
+        dep="$(_ledger_decision "$ledger" "$name")"
+        case "$dep" in
+          follow-up|drop|fix-now|fix-now-unconfirmed) dep="the ledger records $dep but its Decision line was not rewritten" ;;
+          *) dep="its Decision is still undecided" ;;
+        esac
+        printf 'dismissed-drafts: auto-keep refused %s — %s\n' "$name" "$dep" ;;
+    esac
+  done
   echo "dismissed-drafts: $n per-finding + $s summary ($m listed in summary)"
   return 0
 }
@@ -742,9 +812,18 @@ _dismissed_lane_ledger() {
 # dismissed-decide
 # --------------------------------------------------------------------------- #
 dismissed_decide() {
-  local runfile="${1:-}" draft="${2:-}" decision="${3:-}"
+  local runfile="${1:-}" draft="${2:-}" decision="${3:-}" auto=0
   local refuse="dismissed-decide: refused —"
   case "$decision" in fix-now|follow-up|drop) ;; *) echo "$refuse decision must be fix-now|follow-up|drop"; return 0 ;; esac
+  case "${4:-}" in
+    "") ;;
+    --auto) auto=1 ;;
+    *) echo "$refuse unknown argument '${4:-}' (only --auto)"; return 0 ;;
+  esac
+  # --auto (the summary auto-keep) records ONLY follow-up, and only on a summary draft (checked below).
+  if [ "$auto" -eq 1 ] && [ "$decision" != follow-up ]; then
+    echo "$refuse --auto records only follow-up on a summary draft"; return 0
+  fi
   if [ -z "$runfile" ] || [ ! -f "$runfile" ]; then echo "$refuse run file not found"; return 0; fi
   local rf_dir run_id root prop_abs d_dir name
   rf_dir="$(_abs_dir "$(dirname "$runfile")")"
@@ -769,6 +848,9 @@ dismissed_decide() {
   if [ "$is_summary" -eq 1 ] && [ "$decision" = fix-now ]; then
     echo "$refuse fix-now is not offered on a summary draft (follow-up|drop)"; return 0
   fi
+  if [ "$auto" -eq 1 ] && [ "$is_summary" -ne 1 ]; then
+    echo "$refuse --auto records only follow-up on a summary draft, not on a per-finding draft"; return 0
+  fi
 
   local ledger="$rf_dir/$run_id.dismissed-decisions" f="$prop_abs/$name" snippet rows="" ts
   # A lane draft (parallel-automate/05) is decided against ITS lane's ledger when
@@ -778,6 +860,13 @@ dismissed_decide() {
   # (dismissed-drafts skips the whole pass on it), yet drop / fix-now would
   # delete the draft on its strength — so refuse, touching nothing.
   if _ledger_unreadable "$ledger"; then echo "$refuse unreadable ledger $ledger"; return 0; fi
+  # --auto never overrides a decision the ledger already holds (the owner's drop of a slot still on
+  # disk, or a follow-up whose Decision rewrite failed): the same last-row-wins read as dismissed-drafts.
+  if [ "$auto" -eq 1 ]; then
+    case "$(_ledger_decision "$ledger" "$name")" in
+      follow-up|drop|fix-now|fix-now-unconfirmed) echo "$refuse already decided in the ledger"; return 0 ;;
+    esac
+  fi
   ts="$(_ts)"
   # A summary's decision covers exactly the entries it lists: one
   # `summary-member<TAB><h8><TAB><name>` row per `- **Key:**` line (script-written,
@@ -799,6 +888,8 @@ for p in ("# Dismissed finding: ", "# "):
         t = t[len(p):]; break
 print(t[:80])' "$f" 2>/dev/null)" || snippet=""
   [ -n "$snippet" ] || snippet="$(head -n1 "$f" 2>/dev/null | cut -c1-80)"
+  # The auto-keep's Progress line says no question was asked, in place of the finding snippet.
+  [ "$auto" -eq 1 ] && snippet="kept automatically (summary below the tracking threshold, no question)"
 
   case "$decision" in
     follow-up)

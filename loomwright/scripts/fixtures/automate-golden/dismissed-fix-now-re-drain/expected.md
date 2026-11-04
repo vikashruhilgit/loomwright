@@ -15,7 +15,7 @@
 - item: .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md | status: running | pr: https://github.com/vikashruhilgit/loomwright/pull/555 | branch: feature/af39a-sweep
 - pause_reason: null
 - owned_drain_started: 2026-10-15T10:21:00Z | owned_drain_result: READY | suppressed_default_dispatch: true
-- pending_decisions: 1 | fix_now_reentered: true
+- pending_decisions: 0 | fix_now_reentered: true
 ## Progress
 - 2026-10-15T04:06:20Z resumed (--resume automate-2026-10-13-181331) — meta-entry: pulled loomwright-meta; closeout-others: nothing; resume-glob --finalize: this run only; current-rebuild: skipped; reconcile-status: 0 plan rows; dismissed-pending: 0
 - trail-gate: clear — no open trail PR; sync skipped — already synced (main at origin/main)
@@ -30,8 +30,9 @@
 - 2026-10-15T09:53:21Z drain READY (converged, 2 rounds, 1 fix cycle; ci green on 953c2d1; claude-review on 953c2d1: prior findings resolved, 1 new LOW dismissed below_fix_floor; rules_gate none)
 - 2026-10-15T09:53:21Z sidecar-check: ok .supervisor/automate/automate-2026-10-13-181331.review-heal-result.md
 - validation-gate: ok — 1 running-system step(s) evidenced
+- 2026-10-15T09:54:05Z dismissed: follow-up automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md — kept automatically (summary below the tracking threshold, no question)
 - dismissed-drafts: 1 per-finding + 1 summary (6 listed in summary)
-- 2026-10-15T09:54:06Z parked awaiting_merge https://github.com/vikashruhilgit/loomwright/pull/555 — 2 dismissed decision(s) pending
+- 2026-10-15T09:54:06Z parked awaiting_merge https://github.com/vikashruhilgit/loomwright/pull/555 — 1 dismissed decision(s) pending
 - 2026-10-15T09:56:17Z dismissed decisions asked after the park — ask — fix-now allowed: PR OPEN, parked awaiting_merge, merge watcher armed
 - 2026-10-15T11:52:22Z dismissed: fix-now automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md — _sw_plugin_made's sibling-naming fallback is the one place --apply's destructive
 - 2026-10-15T10:21:00Z owned drain started (fix-now re-drain) — /review-pr https://github.com/vikashruhilgit/loomwright/pull/555 --until-mergeable --no-auto-postmortem @ 953c2d1bbf14

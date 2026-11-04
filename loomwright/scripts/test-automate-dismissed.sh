@@ -134,6 +134,19 @@ draft_with() { grep -lF -- "> $1" "$PROP"/*--dismissed-*.md 2>/dev/null | head -
 # 3b (iq02 T04): every dismissed: Progress line carries a leading UTC ts
 progress_n() { grep -cE '^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z dismissed: ' "$RF" 2>/dev/null || true; }
 tree_sum() { (cd "$PROP" 2>/dev/null && for f in *; do [ -f "$f" ] && printf '%s %s\n' "$f" "$(cksum < "$f")"; done); }
+# The summary auto-keep: dismissed-drafts records every undecided summary slot of the item follow-up
+# itself. autokept_n <slot name> — the count of `dismissed: follow-up <name> — kept automatically …`
+# Progress lines naming it.
+autokept_n() { grep -cE "^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z dismissed: follow-up $1 — kept automatically \(summary below the tracking threshold, no question\)\$" "$RF" 2>/dev/null || true; }
+# unkeep <slot path> — return an auto-kept summary slot to what a run started BEFORE the auto-keep left
+# on disk: its Decision line back to `undecided`, its ledger rows (decision + summary-member) removed.
+# The undecided-slot legs (rewrite in place, retire, reuse) run from that state.
+unkeep() {
+  local f="$1" n l; n="$(basename "$1")"; l="$(dirname "$RF")/$(basename "$RF" .md).dismissed-decisions"
+  awk 'd == 0 && /^- \*\*Decision:\*\* / { print "- **Decision:** undecided"; d = 1; next } { print }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  [ -f "$l" ] && { awk -F'\t' -v n="$n" '!($1 == n || ($1 == "summary-member" && $3 == n))' "$l" > "$l.tmp"; mv "$l.tmp" "$l"; }
+  return 0
+}
 
 # =============================================================================
 echo "== A1. counts, verbatim quote, PR URL, round =="
@@ -160,6 +173,18 @@ done
 S1="$(path_of summary)"
 if [ -n "$S1" ] && grep -qxF -- "> a nit" "$S1" && grep -qxF -- "- **Reason dismissed:** nit" "$S1" && [ "$(basename "$S1")" = "$NS--dismissed-summary.md" ]; then ok "summary draft lists the nit with its metadata"; else no "summary: $S1"; fi
 grep -qF 'propose-only — nothing enqueues this file' "$S1" 2>/dev/null && ok "closing line quotes the proposed/ contract" || no "closing contract line missing"
+# AC1: the summary is recorded follow-up AUTOMATICALLY — the Decision line rewritten, one summary-member
+# row per listed entry FOLLOWED by its follow-up row, exactly one `kept automatically` Progress line,
+# nothing of it on stdout (the count line above is still the last line).
+S1N="$(basename "${S1:-x}")"; LED1="$AD/$RUN_ID.dismissed-decisions"
+K1="$(sed -n 's/^- \*\*Key:\*\* \([0-9a-f]\{8\}\)$/\1/p' "$S1" 2>/dev/null)"
+ROWS1="$(awk -F'\t' -v n="$S1N" '($1 == "summary-member" && $3 == n) || $1 == n { print $1 "|" $2 }' "$LED1" 2>/dev/null)"
+[ -n "$K1" ] && grep -qxF -- "- **Decision:** follow-up" "$S1" && [ "$(grep -c '^- \*\*Decision:\*\*' "$S1")" = 1 ] \
+  && [ "$ROWS1" = "$(printf 'summary-member|%s\n%s|follow-up' "$K1" "$S1N")" ] \
+  && ok "AC1: the summary is kept automatically — Decision follow-up, one summary-member row per entry then its follow-up row" || no "AC1 summary decision: $(grep '^- \*\*Decision' "$S1" 2>/dev/null) / ledger: $(tr '\t\n' ' |' < "$LED1" 2>/dev/null)"
+[ "$(autokept_n "$S1N")" = 1 ] && [ "$(grep -c "dismissed: .*$S1N" "$RF")" = 1 ] && ! grep -q 'dismissed-decide' <<<"$dd_out" \
+  && ok "AC1: exactly ONE '## Progress' line names the summary, and it says kept automatically; no decide output leaks to stdout" || no "AC1 progress: $(grep 'dismissed:' "$RF" | tr '\n' '|') / out: $dd_out"
+[ "$(bash "$H" dismissed-pending "$RF")" = 3 ] && ok "AC1: dismissed-pending counts the 3 per-finding drafts only (the auto-kept summary is decided)" || no "AC1 pending: $(bash "$H" dismissed-pending "$RF")"
 grep -q 'reason: "stale: fixed in abc123"' "$AD/$RUN_ID.review-heal-result.md" && grep -qxF -- "- **Reason dismissed:** stale: fixed in abc123" "$(draft_with 'drain medium one')" && ok "free-text drain reason carried verbatim" || no "drain reason"
 # evidence: a drain result written before it existed (A1's sidecar) ⇒ `none recorded` under the reason
 # line, and sidecar-check still passes it; Phase 4.5 items never carry it and read the same
@@ -291,7 +316,7 @@ SUP_A='[{finding: "alpha medium", reason: below_severity_floor, source: code_rev
 sup 1 "$SUP_A"; rh 2 '[{finding: "drain epsilon", reason: stale, source: reviews}]'
 drafts
 FA="$(draft_with 'alpha medium')"; FB="$(draft_with 'beta high')"; FG="$(draft_with 'gamma pre')"; FE="$(draft_with 'drain epsilon')"
-[ "$(bash "$H" dismissed-pending "$RF")" = "5" ] && ok "dismissed-pending counts 5 undecided (4 per-finding + summary)" || no "pending: $(bash "$H" dismissed-pending "$RF")"
+[ "$(bash "$H" dismissed-pending "$RF")" = "4" ] && ok "dismissed-pending counts 4 undecided (the 4 per-finding drafts; the summary was kept automatically)" || no "pending: $(bash "$H" dismissed-pending "$RF")"
 p0="$(progress_n)"
 out="$(bash "$H" dismissed-decide "$RF" "$FA" follow-up)"; rc=$?
 [ "$rc" -eq 0 ] && [ "$out" = "dismissed-decide: follow-up $(basename "$FA")" ] && ok "decide follow-up: one line, exit 0" || no "decide follow-up: rc=$rc $out"
@@ -312,7 +337,7 @@ o4="$(bash "$H" dismissed-decide "$RF" "$PROP/../proposed/../../../README.md" dr
 case "$o1|$o2|$o3|$o4" in "dismissed-decide: refused — "*"|dismissed-decide: refused — "*"|dismissed-decide: refused — "*"|dismissed-decide: refused — "*) ok "refuses: path outside proposed/, another run's draft, a bad decision, a traversal path" ;; *) no "refusals: [$o1] [$o2] [$o3] [$o4]" ;; esac
 [ -f "$FG" ] && [ -f "$PROP/other-run--01-a--dismissed-0a1b2c3d.md" ] && [ "$(progress_n)" = "$p1" ] && [ "$(wc -l < "$LED" | tr -d ' ')" = "$l1" ] && ok "a refusal touches no file, no ledger row, no Progress line" || no "refusal side effects"
 rm -f "$PROP/other-run--01-a--dismissed-0a1b2c3d.md"
-[ "$(bash "$H" dismissed-pending "$RF")" = "3" ] && ok "dismissed-pending after follow-up + drop = 3" || no "pending: $(bash "$H" dismissed-pending "$RF")"
+[ "$(bash "$H" dismissed-pending "$RF")" = "2" ] && ok "dismissed-pending after follow-up + drop = 2" || no "pending: $(bash "$H" dismissed-pending "$RF")"
 # same sidecars ⇒ byte-identical tree
 before="$(tree_sum)"; drafts
 [ "$(tree_sum)" = "$before" ] && ok "re-run with the SAME sidecars: every draft byte-identical, dropped not recreated" || no "re-run changed the tree"
@@ -323,7 +348,7 @@ cks_a="$(cksum < "$FA")"; drafts
 [ "$(cksum < "$FA")" = "$cks_a" ] && ok "changed sidecar: the follow-up decision is not reset (file untouched)" || no "follow-up draft rewritten"
 [ ! -e "$FB" ] && ok "changed sidecar: the dropped draft is not resurrected" || no "dropped draft resurrected"
 [ -f "$FG" ] && [ -f "$FE" ] && [ -f "$(path_of summary)" ] && ok "changed sidecar: every other finding still has its draft (nothing lost)" || no "a draft vanished"
-[ "$(bash "$H" dismissed-pending "$RF")" = "4" ] && ok "dismissed-pending = 4 (3 + the new one)" || no "pending: $(bash "$H" dismissed-pending "$RF")"
+[ "$(bash "$H" dismissed-pending "$RF")" = "3" ] && ok "dismissed-pending = 3 (2 + the new one)" || no "pending: $(bash "$H" dismissed-pending "$RF")"
 # duplicates
 fx 6
 sup 2 '[{finding: "same  finding", reason: nit, source: code_reviewer, severity: HIGH}, {finding: "same finding ", reason: nit, source: code_reviewer, severity: HIGH}]'
@@ -345,42 +370,117 @@ SB="$NS--dismissed-summary"
 L1='{finding: "low one", reason: below_severity_floor, source: code_reviewer, severity: LOW}'
 L2='{finding: "low two", reason: nit, source: red_team, severity: LOW}'
 L3='{finding: "low three", reason: below_severity_floor, source: code_reviewer, severity: INFO}'
+smem() { awk -F'\t' -v n="$1" '$1 == "summary-member" && $3 == n' "$AD/$RUN_ID.dismissed-decisions" 2>/dev/null; }
 for how in follow-up drop; do
   fx "s-$how"; sup 1 "[$L1]"; drafts
   S0="$PROP/$SB.md"
   grep -qE '^- \*\*Key:\*\* [0-9a-f]{8}$' "$S0" && ok "$how: summary entries carry a column-0 Key line" || no "$how: no Key line in summary"
-  bash "$H" dismissed-decide "$RF" "$S0" "$how" >/dev/null
-  [ "$(awk -F'\t' -v n="$SB.md" '$1=="summary-member" && $3==n' "$AD/$RUN_ID.dismissed-decisions" | wc -l | tr -d ' ')" = "1" ] && ok "$how: decide records one summary-member row for the one listed entry" || no "$how: ledger $(cat "$AD/$RUN_ID.dismissed-decisions")"
-  c0="$( [ -f "$S0" ] && cksum < "$S0")"
+  # AC4: only below-threshold findings ⇒ nothing to ask: the summary is kept automatically, nothing pending
+  grep -qxF -- "- **Decision:** follow-up" "$S0" && [ "$(autokept_n "$SB.md")" = 1 ] && [ "$(bash "$H" dismissed-pending "$RF")" = 0 ] \
+    && ok "$how: only below-threshold findings ⇒ the summary is kept automatically, dismissed-pending 0 (AC4)" || no "$how: auto-keep: $(grep '^- \*\*Decision' "$S0") pending $(bash "$H" dismissed-pending "$RF")"
+  [ "$(smem "$SB.md" | wc -l | tr -d ' ')" = "1" ] && ok "$how: the auto-keep records one summary-member row for the one listed entry" || no "$how: ledger $(cat "$AD/$RUN_ID.dismissed-decisions")"
+  # the drop variant: the owner's later Drop (the fallback ask's `Drop summary`, or dismissed-decide by hand) still governs
+  [ "$how" = drop ] && bash "$H" dismissed-decide "$RF" "$S0" drop >/dev/null
+  c0="$( [ -f "$S0" ] && cksum < "$S0")"; m0="$(smem "$SB.md")"
   # the drain's fix-now re-pass (or any changed sidecar) adds a new LOW finding
   sup 1 "[$L1, $L2]"; drafts
   S2="$PROP/$SB-2.md"
-  if [ -f "$S2" ] && grep -qxF -- "> low two" "$S2" && ! grep -qxF -- "> low one" "$S2" && grep -qxF -- "- **Decision:** undecided" "$S2"; then ok "$how: the new LOW lands in a NEW undecided summary slot (summary-2), the decided entry is not repeated"; else no "$how: new LOW not tracked: $dd_out"; fi
+  if [ -f "$S2" ] && grep -qxF -- "> low two" "$S2" && ! grep -qxF -- "> low one" "$S2" && grep -qxF -- "- **Decision:** follow-up" "$S2" && [ "$(autokept_n "$SB-2.md")" = 1 ]; then ok "$how: the new LOW lands in a NEW summary slot (summary-2), kept automatically too; the decided entry is not repeated (AC5)"; else no "$how: new LOW not tracked: $dd_out"; fi
   if [ "$how" = follow-up ]; then
-    [ "$(cksum < "$S0")" = "$c0" ] && ok "follow-up: the decided summary is untouched" || no "follow-up: decided summary rewritten"
+    [ "$(cksum < "$S0")" = "$c0" ] && [ "$(smem "$SB.md")" = "$m0" ] && ok "follow-up: the earlier summary's bytes and summary-member rows are unchanged (AC5)" || no "follow-up: decided summary rewritten / rows changed"
     want="dismissed-drafts: 0 per-finding + 2 summary (2 listed in summary)"
   else
     [ ! -e "$S0" ] && ok "drop: the dropped summary is not resurrected" || no "drop: summary.md resurrected"
     want="dismissed-drafts: 0 per-finding + 1 summary (1 listed in summary)"
   fi
-  [ "$(printf '%s\n' "$dd_out" | tail -n1)" = "$want" ] && ok "$how: output counts only what is written/kept ($want)" || no "$how: counts: $(printf '%s\n' "$dd_out" | tail -n1)"
-  [ "$(bash "$H" dismissed-pending "$RF")" = "1" ] && ok "$how: dismissed-pending counts the new summary slot" || no "$how: pending $(bash "$H" dismissed-pending "$RF")"
-  before="$(tree_sum)"; l0="$(wc -l < "$AD/$RUN_ID.dismissed-decisions" | tr -d ' ')"; drafts
-  [ "$(tree_sum)" = "$before" ] && [ ! -e "$PROP/$SB-3.md" ] && [ "$(wc -l < "$AD/$RUN_ID.dismissed-decisions" | tr -d ' ')" = "$l0" ] && ok "$how: re-run is idempotent (no third summary, no ledger row)" || no "$how: re-run drift"
+  [ "$(printf '%s\n' "$dd_out" | tail -n1)" = "$want" ] && ok "$how: output counts only what is written/kept ($want), still the last line" || no "$how: counts: $(printf '%s\n' "$dd_out" | tail -n1)"
+  [ "$(bash "$H" dismissed-pending "$RF")" = "0" ] && ok "$how: dismissed-pending 0 — the new summary slot is decided too" || no "$how: pending $(bash "$H" dismissed-pending "$RF")"
+  before="$(tree_sum)"; l0="$(wc -l < "$AD/$RUN_ID.dismissed-decisions" | tr -d ' ')"; p0="$(progress_n)"; drafts
+  [ "$(tree_sum)" = "$before" ] && [ ! -e "$PROP/$SB-3.md" ] && [ "$(wc -l < "$AD/$RUN_ID.dismissed-decisions" | tr -d ' ')" = "$l0" ] && [ "$(progress_n)" = "$p0" ] \
+    && ok "$how: a third run with no new finding is idempotent (nothing written, no ledger row, no Progress line — AC5)" || no "$how: re-run drift"
+  c2="$(cksum < "$S2")"
   sup 1 "[$L1, $L2, $L3]"; drafts
-  grep -qxF -- "> low two" "$S2" && grep -qxF -- "> low three" "$S2" && [ ! -e "$PROP/$SB-3.md" ] && ok "$how: another new LOW joins the one UNDECIDED slot (never a second undecided summary)" || no "$how: undecided slot not reused"
-  bash "$H" dismissed-decide "$RF" "$S2" follow-up >/dev/null
-  sup 1 "[$L1, $L2, $L3, {finding: \"low four\", reason: nit, source: code_reviewer, severity: LOW}]"; drafts
-  [ -f "$PROP/$SB-3.md" ] && grep -qxF -- "> low four" "$PROP/$SB-3.md" && [ "$(grep -c '^### Entry' "$PROP/$SB-3.md")" = "1" ] && ok "$how: once summary-2 is decided too, the next new LOW opens summary-3 with only itself" || no "$how: summary-3: $dd_out"
+  [ -f "$PROP/$SB-3.md" ] && grep -qxF -- "> low three" "$PROP/$SB-3.md" && [ "$(grep -c '^### Entry' "$PROP/$SB-3.md")" = "1" ] && [ "$(cksum < "$S2")" = "$c2" ] && grep -qxF -- "- **Decision:** follow-up" "$PROP/$SB-3.md" \
+    && ok "$how: summary-2 decided too ⇒ the next new LOW opens summary-3 with only itself (kept automatically), summary-2 byte-identical" || no "$how: summary-3: $dd_out"
 done
+# the undecided slot (a run started before the auto-keep, or an auto-keep that failed): a new LOW joins
+# it, never a second undecided summary — and the pass then keeps it automatically
+fx s-old; sup 1 "[$L1]"; drafts; unkeep "$PROP/$SB.md"
+sup 1 "[$L1, $L2]"; drafts
+grep -qxF -- "> low one" "$PROP/$SB.md" && grep -qxF -- "> low two" "$PROP/$SB.md" && [ ! -e "$PROP/$SB-2.md" ] && grep -qxF -- "- **Decision:** follow-up" "$PROP/$SB.md" \
+  && [ "$(smem "$SB.md" | wc -l | tr -d ' ')" = 2 ] && ok "an older UNDECIDED summary slot is rewritten in place with the new LOW (no summary-2), then kept automatically with both entries" || no "undecided slot not reused: $dd_out"
+# AC7: the owner drops an auto-kept summary by deleting it from proposed/ — never recreated
+fx s-del; sup 1 "[$L1]"; drafts; rm -f "$PROP/$SB.md"
+l0="$(wc -l < "$AD/$RUN_ID.dismissed-decisions" | tr -d ' ')"; drafts
+[ ! -e "$PROP/$SB.md" ] && [ "$(nfiles)" = 0 ] && [ "$(printf '%s\n' "$dd_out" | tail -n1)" = "dismissed-drafts: 0 per-finding + 0 summary (0 listed in summary)" ] && [ "$(wc -l < "$AD/$RUN_ID.dismissed-decisions" | tr -d ' ')" = "$l0" ] && [ "$(bash "$H" dismissed-pending "$RF")" = 0 ] \
+  && ok "AC7: a kept summary deleted from proposed/ is not recreated (no file, no ledger row, nothing pending)" || no "AC7: $dd_out / $(ls "$PROP")"
 # fix-now is refused on a summary draft (Keep / Drop only)
-fx s-fix; sup 1 "[$L1]"; drafts
+fx s-fix; sup 1 "[$L1, {finding: \"own medium\", reason: below_severity_floor, source: code_reviewer, severity: MEDIUM}]"; drafts
+FO="$(draft_with 'own medium')"; LF="$AD/$RUN_ID.dismissed-decisions"
+l0="$(wc -l < "$LF" | tr -d ' ')"; p0="$(progress_n)"; cs="$(cksum < "$PROP/$SB.md")"; co="$(cksum < "$FO")"
 o="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" fix-now)"
 case "$o" in "dismissed-decide: refused — "*) ok "fix-now on a summary draft is refused" ;; *) no "fix-now on summary: $o" ;; esac
-[ -f "$PROP/$SB.md" ] && [ ! -e "$AD/$RUN_ID.dismissed-decisions" ] && ok "the refusal deletes nothing and writes no ledger row" || no "summary fix-now refusal side effects"
+[ -f "$PROP/$SB.md" ] && [ "$(wc -l < "$LF" | tr -d ' ')" = "$l0" ] && ok "the refusal deletes nothing and writes no ledger row" || no "summary fix-now refusal side effects"
+# AC9: --auto is accepted ONLY with follow-up on a summary draft — anything else is refused, touching nothing
+o1="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" drop --auto)"
+o2="$(bash "$H" dismissed-decide "$RF" "$FO" follow-up --auto)"
+o3="$(bash "$H" dismissed-decide "$RF" "$FO" drop --auto)"
+o4="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" follow-up --automatic)"
+case "$o1|$o2|$o3|$o4" in "dismissed-decide: refused — "*"|dismissed-decide: refused — "*"|dismissed-decide: refused — "*"|dismissed-decide: refused — "*) ok "AC9: --auto refused with drop, on a per-finding draft (follow-up and drop), and an unknown trailing argument" ;; *) no "AC9 refusals: [$o1] [$o2] [$o3] [$o4]" ;; esac
+[ -f "$PROP/$SB.md" ] && [ -f "$FO" ] && [ "$(cksum < "$PROP/$SB.md")" = "$cs" ] && [ "$(cksum < "$FO")" = "$co" ] && [ "$(wc -l < "$LF" | tr -d ' ')" = "$l0" ] && [ "$(progress_n)" = "$p0" ] \
+  && ok "AC9: an --auto refusal writes nothing (both drafts byte-identical, no ledger row, no Progress line)" || no "AC9 refusal side effects: $(ls "$PROP") / $(tr '\t\n' ' |' < "$LF")"
 # dismissed-pending: a this-run draft with no readable Decision line ⇒ unknown
 printf '# Dismissed finding: hand-edited\n\n## Status: proposed\n' > "$PROP/$NS--dismissed-deadbeef.md"
 [ "$(bash "$H" dismissed-pending "$RF")" = "unknown" ] && ok "dismissed-pending: a draft without a Decision line ⇒ unknown (fail closed)" || no "pending no-decision: $(bash "$H" dismissed-pending "$RF")"
+
+# =============================================================================
+echo "== A5a. the auto-keep cannot record ⇒ the summary stays undecided (the AUT-SUMMARY fallback) =="
+if [ "$(id -u)" != "0" ]; then
+  # AC8a: the ledger exists and is readable but cannot be appended to (mode 0444)
+  fx s-ro; sup 1 "[$L1]"; LA="$AD/$RUN_ID.dismissed-decisions"; : > "$LA"; chmod 444 "$LA"
+  drafts
+  [ "$dd_rc" -eq 0 ] && grep -qxF -- "- **Decision:** undecided" "$PROP/$SB.md" \
+    && [ "$(printf '%s\n' "$dd_out" | tail -n 2)" = "$(printf 'dismissed-drafts: auto-keep refused %s — its Decision is still undecided\ndismissed-drafts: 0 per-finding + 1 summary (1 listed in summary)' "$SB.md")" ] \
+    && ok "AC8a: read-only ledger ⇒ exit 0, the summary stays undecided, ONE auto-keep refused line directly before the count line" || no "AC8a 0444: rc=$dd_rc out=[$dd_out] $(grep '^- \*\*Decision' "$PROP/$SB.md" 2>/dev/null)"
+  [ ! -s "$LA" ] && [ "$(autokept_n "$SB.md")" = 0 ] && [ "$(bash "$H" dismissed-pending "$RF")" = 1 ] \
+    && ok "AC8a: no ledger row, no kept-automatically Progress line; dismissed-pending still counts it (the fallback ask fires)" || no "AC8a side effects: $(tr '\t\n' ' |' < "$LA") pending $(bash "$H" dismissed-pending "$RF")"
+  sup 1 "[$L1, $L2]"; drafts
+  grep -qxF -- "> low two" "$PROP/$SB.md" && grep -qxF -- "> low one" "$PROP/$SB.md" && [ ! -e "$PROP/$SB-2.md" ] && grep -qxF -- "- **Decision:** undecided" "$PROP/$SB.md" \
+    && ok "AC8a: while the auto-keep keeps failing, a new LOW joins the ONE undecided slot (never a second undecided summary)" || no "AC8a slot reuse: $dd_out"
+  chmod 644 "$LA"; drafts
+  grep -qxF -- "- **Decision:** follow-up" "$PROP/$SB.md" && [ "$(autokept_n "$SB.md")" = 1 ] && [ "$(bash "$H" dismissed-pending "$RF")" = 0 ] && ! grep -q 'auto-keep refused' <<<"$dd_out" \
+    && ok "AC8a: once the ledger is writable, the next pass keeps the older undecided slot it left on disk" || no "AC8a recovery: $dd_out"
+  # AC8a: a missing ledger in an unwritable directory
+  fx s-rd; sup 1 "[$L1]"; chmod 555 "$AD"; drafts; chmod 755 "$AD"
+  [ "$dd_rc" -eq 0 ] && grep -qxF -- "- **Decision:** undecided" "$PROP/$SB.md" && [ ! -e "$AD/$RUN_ID.dismissed-decisions" ] \
+    && [ "$(printf '%s\n' "$dd_out" | tail -n 2 | head -n 1)" = "dismissed-drafts: auto-keep refused $SB.md — its Decision is still undecided" ] \
+    && ok "AC8a: missing ledger in an unwritable directory ⇒ exit 0, undecided, the refused line before the count line" || no "AC8a dir: rc=$dd_rc out=[$dd_out]"
+  # --auto never overrides a decision the ledger already holds. (1) the owner's Drop recorded while
+  # proposed/ was read-only: the ledger `drop` row is written, the rm fails, the slot stays on disk undecided.
+  fx s-dr; sup 1 "[$L1]"; drafts; unkeep "$PROP/$SB.md"; LA="$AD/$RUN_ID.dismissed-decisions"
+  chmod 555 "$PROP"; bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" drop >/dev/null; chmod 755 "$PROP"
+  l0="$(wc -l < "$LA" | tr -d ' ')"; p0="$(progress_n)"
+  o="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" follow-up --auto)"
+  [ -f "$PROP/$SB.md" ] && [ "$o" = "dismissed-decide: refused — already decided in the ledger" ] && grep -qxF -- "- **Decision:** undecided" "$PROP/$SB.md" \
+    && [ "$(wc -l < "$LA" | tr -d ' ')" = "$l0" ] && [ "$(progress_n)" = "$p0" ] && [ "$(awk -F'\t' -v n="$SB.md" '$1 == n { d = $2 } END { print d }' "$LA")" = drop ] \
+    && ok "--auto on a slot the ledger records dropped (file still on disk) ⇒ refused, no ledger row, no Progress line; the drop stands" || no "auto over drop: [$o] $(tr '\t\n' ' |' < "$LA")"
+  a0="$(autokept_n "$SB.md")"; drafts
+  [ "$(autokept_n "$SB.md")" = "$a0" ] && [ "$(awk -F'\t' -v n="$SB.md" '$1 == n { d = $2 } END { print d }' "$LA")" = drop ] && ! grep -q 'auto-keep refused' <<<"$dd_out" \
+    && ok "dismissed-drafts does not auto-keep a dropped slot still on disk" || no "drafts over drop: $dd_out / $(tr '\t\n' ' |' < "$LA")"
+  # (2) the ledger is appendable but the Decision rewrite fails (proposed/ read-only): ONE follow-up row
+  # and ONE more kept-automatically line however often the auto-keep is retried, and the refusal says the ledger recorded it.
+  fx s-rw; sup 1 "[$L1]"; drafts; unkeep "$PROP/$SB.md"; LA="$AD/$RUN_ID.dismissed-decisions"
+  a0="$(autokept_n "$SB.md")"; chmod 555 "$PROP"; drafts; d1="$dd_out"; drafts
+  bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" follow-up --auto >/dev/null; o="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" follow-up --auto)"
+  chmod 755 "$PROP"
+  [ "$(awk -F'\t' -v n="$SB.md" '$1 == n && $2 == "follow-up"' "$LA" | wc -l | tr -d ' ')" = 1 ] && [ "$(autokept_n "$SB.md")" = "$((a0 + 1))" ] && [ "$(smem "$SB.md" | wc -l | tr -d ' ')" = 1 ] \
+    && [ "$o" = "dismissed-decide: refused — already decided in the ledger" ] && grep -qxF -- "- **Decision:** undecided" "$PROP/$SB.md" \
+    && ok "a failed Decision rewrite ⇒ exactly one follow-up row, one summary-member row and one kept-automatically line across repeated auto-keeps" || no "rewrite failure: [$o] $(tr '\t\n' ' |' < "$LA") kept $(autokept_n "$SB.md")"
+  grep -qxF -- "dismissed-drafts: auto-keep refused $SB.md — the ledger records follow-up but its Decision line was not rewritten" <<<"$d1" \
+    && ok "the refusal line says the ledger recorded the decision when only the rewrite failed" || no "honest refusal: $d1"
+else
+  ok "A5a unwritable-ledger legs skipped (running as root)"
+fi
 
 # =============================================================================
 echo "== A5f. fix-now: unconfirmed re-draft (drain only, --after-fix-now only) =="
@@ -430,9 +530,9 @@ fx x7; sup 1 "[$(mv_ LOW)]"; drafts
 bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" drop >/dev/null
 sup 1 "[$(mv_ MEDIUM)]"; drafts
 [ "$(nfiles)" = "0" ] && [ "$(last)" = "dismissed-drafts: 0 per-finding + 0 summary (0 listed in summary)" ] && ok "S7: dropped summary ⇒ re-dismissed MEDIUM gets NO new undecided own draft" || no "S7: $dd_out / $(ls "$PROP" 2>/dev/null)"
-# S7m — summary FOLLOW-UP, re-dismissed MEDIUM ⇒ summary kept, no own draft.
+# S7m — summary FOLLOW-UP (kept automatically), re-dismissed MEDIUM ⇒ summary kept, no own draft.
 fx x7m; sup 1 "[$(mv_ LOW)]"; drafts
-bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" follow-up >/dev/null; c0="$(cksum < "$PROP/$SB.md")"
+grep -qxF -- "- **Decision:** follow-up" "$PROP/$SB.md" || no "S7m: the summary was not kept automatically: $dd_out"; c0="$(cksum < "$PROP/$SB.md")"
 sup 1 "[$(mv_ MEDIUM)]"; drafts
 [ "$(nfiles)" = "1" ] && [ "$(cksum < "$PROP/$SB.md")" = "$c0" ] && [ "$(last)" = "dismissed-drafts: 0 per-finding + 1 summary (1 listed in summary)" ] && [ "$(bash "$H" dismissed-pending "$RF")" = "0" ] && ok "S7m: follow-up summary inherited — kept, no own draft, nothing pending" || no "S7m: $dd_out"
 # S9 — drain fix-now, re-drain dismisses it LOW ⇒ its OWN unconfirmed draft (never a summary line).
@@ -445,24 +545,26 @@ if [ -f "$OD" ] && grep -qxF -- "- **Decision:** undecided (fix-now unconfirmed)
 [ "$(led | awk -F'\t' -v n="$(basename "$OD")" '$1==n{d=$2} END{print d}')" = "fix-now-unconfirmed" ] && [ "$(bash "$H" dismissed-pending "$RF")" = "1" ] && ok "S9: fix-now-unconfirmed ledger row, counted pending" || no "S9 ledger: $(led)"
 l0="$(led | wc -l | tr -d ' ')"; drafts --after-fix-now
 [ "$(led | wc -l | tr -d ' ')" = "$l0" ] && [ ! -e "$PROP/$SB.md" ] && ok "S9: re-run appends no second ledger row" || no "S9 re-run: $(led)"
-# U — an UNDECIDED finding that moves is re-placed, never listed (or asked) twice.
-fx xu; sup 1 "[$(mv_ MEDIUM), $NEWL]"; drafts; OD="$(draft_with mover)"
+# U — an UNDECIDED finding that moves is re-placed, never listed (or asked) twice. Each step starts
+# from an undecided summary slot (unkeep: what a run started before the auto-keep left on disk).
+fx xu; sup 1 "[$(mv_ MEDIUM), $NEWL]"; drafts; OD="$(draft_with mover)"; unkeep "$PROP/$SB.md"
 sup 1 "[$(mv_ LOW), $NEWL]"; drafts
 case "$dd_out" in *"dismissed-drafts: retired $(basename "$OD") — "*) ok "U: undecided own draft retired when its finding drops below the threshold (named)" ;; *) no "U retire line: $dd_out" ;; esac
-[ ! -e "$OD" ] && grep -qxF -- "> mover" "$PROP/$SB.md" && [ "$(bash "$H" dismissed-pending "$RF")" = "1" ] && ok "U: the finding is listed once (summary), one pending draft — not double-counted" || no "U placement: $(ls "$PROP")"
+[ ! -e "$OD" ] && grep -qxF -- "> mover" "$PROP/$SB.md" && grep -qxF -- "- **Decision:** follow-up" "$PROP/$SB.md" && [ "$(bash "$H" dismissed-pending "$RF")" = "0" ] && ok "U: the finding is listed once (the summary, then kept automatically), nothing pending — not double-counted" || no "U placement: $(ls "$PROP")"
 [ "$(led | awk -F'\t' -v n="$(basename "$OD")" '$1==n{d=$2} END{print d}')" = "moved" ] && ok "U: a 'moved' ledger row records the retirement (the trail retracts by it)" || no "U ledger: $(led)"
 before="$(tree_sum)"; l0="$(led | wc -l | tr -d ' ')"; drafts
 [ "$(tree_sum)" = "$before" ] && [ "$(led | wc -l | tr -d ' ')" = "$l0" ] && ok "U: re-run idempotent (no second moved row, byte-identical tree)" || no "U re-run drift: $(led)"
-sup 1 "[$(mv_ MEDIUM), $NEWL]"; drafts
+unkeep "$PROP/$SB.md"; sup 1 "[$(mv_ MEDIUM), $NEWL]"; drafts
 [ -f "$OD" ] && grep -qxF -- "- **Decision:** undecided" "$OD" && grep -qxF -- "> brand new low" "$PROP/$SB.md" && ! grep -qxF -- "> mover" "$PROP/$SB.md" && ok "U: moved back up ⇒ own draft again (moved is not a decision), summary rewritten without it" || no "U back: $dd_out"
-fx xu3; sup 1 "[$(mv_ LOW)]"; drafts
+fx xu3; sup 1 "[$(mv_ LOW)]"; drafts; unkeep "$PROP/$SB.md"
 sup 1 "[$(mv_ MEDIUM)]"; drafts
 [ ! -e "$PROP/$SB.md" ] && [ -n "$(draft_with mover)" ] && [ "$(bash "$H" dismissed-pending "$RF")" = "1" ] && ok "U: an undecided summary whose entry moved up is retired — the own draft is the one pending" || no "U summary retire: $dd_out"
-# both sidecars gone (nothing current overlaps) ⇒ the undecided summary is left alone
-fx xu2; sup 1 "[$(mv_ LOW), $NEWL]"; drafts
+# both sidecars gone (nothing current overlaps) ⇒ the undecided summary is not retired — the pass
+# leaves it on disk and keeps it automatically (an older undecided slot)
+fx xu2; sup 1 "[$(mv_ LOW), $NEWL]"; drafts; unkeep "$PROP/$SB.md"
 rm -f "$AD/$RUN_ID.supervisor-result.md"; drafts
-[ -f "$PROP/$SB.md" ] && grep -qxF -- "> mover" "$PROP/$SB.md" && ok "U: no current findings (sidecars missing) ⇒ the undecided summary is left alone" || no "U2: $dd_out"
-sup 1 "[$(mv_ MEDIUM), $NEWL]"; drafts
+[ -f "$PROP/$SB.md" ] && grep -qxF -- "> mover" "$PROP/$SB.md" && grep -qxF -- "- **Decision:** follow-up" "$PROP/$SB.md" && [ "$(autokept_n "$SB.md")" = 2 ] && ok "U: no current findings (sidecars missing) ⇒ the undecided summary is left on disk and kept automatically" || no "U2: $dd_out"
+unkeep "$PROP/$SB.md"; sup 1 "[$(mv_ MEDIUM), $NEWL]"; drafts
 bash "$H" dismissed-decide "$RF" "$(draft_with mover)" drop >/dev/null
 sup 1 "[$(mv_ LOW), $NEWL]"; drafts
 ! grep -qxF -- "> mover" "$PROP/$SB.md" 2>/dev/null && grep -qxF -- "> brand new low" "$PROP/$SB.md" && [ ! -e "$PROP/$SB-2.md" ] && ok "U: a dropped own draft is not resurrected in the summary it once sat in" || no "U2 drop: $dd_out"
@@ -477,6 +579,7 @@ dd_item() { dd_out="$(bash "$H" dismissed-drafts "$RF" "$1" "$PRURL" 2>&1)"; dd_
 ns_n() { find "$PROP" -maxdepth 1 -type f -name "$1--dismissed-*.md" 2>/dev/null | wc -l | tr -d ' '; }
 sup 1 '[{finding: "shared medium", reason: below_severity_floor, source: code_reviewer, severity: MEDIUM}, {finding: "shared low", reason: nit, source: code_reviewer, severity: LOW}]'
 dd_item "$IT1"; s1="$(cd "$PROP" && for f in "$NS1"--dismissed-*.md; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done)"
+r1="$(awk -F'\t' -v p="$NS1" 'index($1, p) == 1 || index($3, p) == 1' "$AD/$RUN_ID.dismissed-decisions" 2>/dev/null)"   # item 1's own rows (its summary auto-keep)
 dd_item "$IT2"; o2="$dd_out"
 [ "$(ns_n "$NS1")" = "2" ] && [ "$(ns_n "$NS2")" = "2" ] && [ "$(nfiles)" = "4" ] && ok "each item has its own draft + its own summary (4 files)" || no "files: ns1=$(ns_n "$NS1") ns2=$(ns_n "$NS2") all=$(nfiles)"
 s1b="$(cd "$PROP" && for f in "$NS1"--dismissed-*.md; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done)"
@@ -491,11 +594,11 @@ dd_item "$IT2"
 case "$dd_out" in *"retired $NS2--dismissed-"*) ok "item 2 retires its own moved draft" ;; *) no "item 2 retire: $dd_out" ;; esac
 case "$dd_out" in *"$NS1"*) no "item 2 touched item 1's namespace: $dd_out" ;; *) ok "item 2's output never names an item-1 draft" ;; esac
 [ "$(ns_n "$NS1")" = "2" ] && [ -n "$(cd "$PROP" && grep -lxF -- '> shared medium' "$NS1"--dismissed-[0-9a-f]*.md 2>/dev/null)" ] && ok "item 1's undecided own draft survives item 2's move (not retired as moved)" || no "item 1 own draft lost"
-! grep -q . < <(awk -F'\t' -v p="$NS1" 'index($1, p) == 1' "$AD/$RUN_ID.dismissed-decisions" 2>/dev/null) && ok "no ledger row for item 1 was written by item 2" || no "ledger: $(cat "$AD/$RUN_ID.dismissed-decisions")"
-# decisions do not cross items: dropping item 1's summary leaves item 2's summary undecided
+[ "$(awk -F'\t' -v p="$NS1" 'index($1, p) == 1 || index($3, p) == 1' "$AD/$RUN_ID.dismissed-decisions" 2>/dev/null)" = "$r1" ] && ok "no ledger row for item 1 was written by item 2 (item 1's rows are its own auto-keep's, unchanged)" || no "ledger: $(cat "$AD/$RUN_ID.dismissed-decisions")"
+# decisions do not cross items: dropping item 1's summary leaves item 2's summary (kept automatically) in place
 bash "$H" dismissed-decide "$RF" "$PROP/$NS1--dismissed-summary.md" drop >/dev/null
 dd_item "$IT2"
-[ -f "$PROP/$NS2--dismissed-summary.md" ] && grep -qxF -- "- **Decision:** undecided" "$PROP/$NS2--dismissed-summary.md" && grep -qxF -- "> shared low" "$PROP/$NS2--dismissed-summary.md" && ok "item 1's drop does not govern item 2's identical finding" || no "item 2 summary: $dd_out"
+[ -f "$PROP/$NS2--dismissed-summary.md" ] && grep -qxF -- "- **Decision:** follow-up" "$PROP/$NS2--dismissed-summary.md" && grep -qxF -- "> shared low" "$PROP/$NS2--dismissed-summary.md" && [ ! -e "$PROP/$NS1--dismissed-summary.md" ] && ok "item 1's drop does not govern item 2's identical finding (item 2's summary stays, follow-up)" || no "item 2 summary: $dd_out"
 # defence in depth: a file at this item's draft name whose Item line names another item
 fx 11
 sup 1 '[{finding: "foreign one", reason: pre_existing, source: code_reviewer, severity: MEDIUM}]'
@@ -540,6 +643,15 @@ fi
 # control: the SAME fixture with a readable ledger does write (the legs above are not vacuous)
 ul_setup ul10; drafts
 case "$dd_out" in *"unreadable ledger"*) no "control: readable ledger skipped: $dd_out" ;; *"dismissed-drafts: 1 per-finding + 1 summary"*) ok "control: a readable ledger drafts normally (follow-up kept, new summary written)" ;; *) no "control: $dd_out" ;; esac
+# AC8b: an UNDECIDED summary already on disk (a run started before the auto-keep) + an unreadable ledger
+# ⇒ unchanged: the ONE skipped line, no auto-keep attempted, the summary stays undecided (asked under
+# AUT-SUMMARY), the ledger byte-identical, dismissed-pending unknown
+fx ul11; sup 1 "[$NEWL]"; drafts; unkeep "$PROP/$SB.md"; LED="$AD/$RUN_ID.dismissed-decisions"
+printf 'bad\t\377\n' >> "$LED"; LC="$(cksum < "$LED")"; cs="$(cksum < "$PROP/$SB.md")"; p0="$(progress_n)"
+drafts
+[ "$dd_rc" -eq 0 ] && [ "$dd_out" = "dismissed-drafts: skipped — unreadable ledger $LED" ] && [ "$(cksum < "$PROP/$SB.md")" = "$cs" ] \
+  && grep -qxF -- "- **Decision:** undecided" "$PROP/$SB.md" && [ "$(cksum < "$LED")" = "$LC" ] && [ "$(progress_n)" = "$p0" ] && [ "$(pu)" = unknown ] \
+  && ok "AC8b: unreadable ledger + an undecided summary on disk ⇒ ONE skipped line, no auto-keep, summary byte-identical and undecided, ledger untouched, pending unknown" || no "AC8b: out=[$dd_out] $(grep '^- \*\*Decision' "$PROP/$SB.md")"
 
 # =============================================================================
 echo "== A9. canary: a finding cannot forge a summary Key line (summary-member trust surface) =="
@@ -550,10 +662,11 @@ for how in follow-up drop; do
   drafts; FAo="$PROP/$NS--dismissed-$HA.md"
   [ -f "$FAo" ] && grep -qxF -- "> - **Key:** $HA" "$PROP/$SB.md" && [ "$(grep -c '^- \*\*Key:\*\*' "$PROP/$SB.md")" = "1" ] \
     && ok "$how: the forged Key line is '> '-quoted; the summary's only column-0 Key is its own entry's" || no "$how: summary keys: $(grep -n 'Key' "$PROP/$SB.md" 2>/dev/null)"
-  bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" "$how" >/dev/null
+  # the summary auto-keep wrote its summary-member rows (the follow-up decision); drop is the owner's later answer
   LED="$AD/$RUN_ID.dismissed-decisions"
   [ -z "$(awk -F'\t' -v h="$HA" '$1 == "summary-member" && $2 == h' "$LED")" ] && [ "$(awk -F'\t' '$1 == "summary-member"' "$LED" | wc -l | tr -d ' ')" = "1" ] \
     && ok "$how: NO summary-member row for A's h8 (one row, the real entry's)" || no "$how: ledger: $(tr '\t' ' ' < "$LED")"
+  [ "$how" = drop ] && bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" drop >/dev/null
   rm -f "$FAo"; drafts
   [ -f "$FAo" ] && [ "$(path_of 1)" = "$FAo" ] && grep -qxF -- "- **Decision:** undecided" "$FAo" && [ "$(pu)" = "1" ] \
     && ok "$how: A is still drafted on its own (recreated undecided, counted pending) — not governed by the summary decision" || no "$how: A not drafted: $dd_out"
@@ -570,8 +683,9 @@ case "$dd_out" in *"refused $SB.md"*"kept $(basename "$OD") — the new draft fo
 [ -z "$(led | awk -F'\t' '$2 == "moved"')" ] && [ "$(cat "$TOP/outside-rt1.md")" = "ORIGINAL" ] && ok "rt1: no moved row, the symlink target untouched" || no "rt1 ledger: $(led)"
 rm -f "$PROP/$SB.md"; drafts
 [ ! -e "$OD" ] && grep -qxF -- "> mover" "$PROP/$SB.md" && ok "rt1: once the slot is writable, the move completes (summary written, own draft retired)" || no "rt1 recovery: $dd_out"
-# summary → own, the own write refused (planted symlink at the own name)
-fx rt2; sup 1 "[$(mv_ LOW)]"; drafts
+# summary → own, the own write refused (planted symlink at the own name); the summary slot undecided
+# (unkeep — the pre-auto-keep state), so a retire is what the refusal must prevent
+fx rt2; sup 1 "[$(mv_ LOW)]"; drafts; unkeep "$PROP/$SB.md"
 ON="$PROP/$NS--dismissed-$(h8of phase_4_5 code_reviewer mover).md"
 printf 'ORIGINAL\n' > "$TOP/outside-rt2.md"; ln -s "$TOP/outside-rt2.md" "$ON"
 sup 1 "[$(mv_ MEDIUM)]"; drafts
@@ -585,7 +699,7 @@ sup 1 "[$(mv_ LOW)]"; drafts
 case "$dd_out" in *"kept $(basename "$OD") — its on-disk Decision is not undecided"*) ok "rt3: reported with a kept line" ;; *) no "rt3 out: $dd_out" ;; esac
 [ -z "$(led | awk -F'\t' '$2 == "moved"')" ] && ok "rt3: no moved row" || no "rt3 ledger: $(led)"
 # an undecided summary listing an entry that VANISHED from the sidecars is not retired
-fx rt4; sup 1 "[$(mv_ LOW), {finding: \"vanisher\", reason: nit, source: code_reviewer, severity: LOW}]"; drafts
+fx rt4; sup 1 "[$(mv_ LOW), {finding: \"vanisher\", reason: nit, source: code_reviewer, severity: LOW}]"; drafts; unkeep "$PROP/$SB.md"
 sup 1 "[$(mv_ MEDIUM)]"; drafts
 [ -f "$PROP/$SB.md" ] && grep -qxF -- "> vanisher" "$PROP/$SB.md" && [ -n "$(draft_with mover)" ] && ok "rt4: a summary listing a vanished entry stays (its only record) — asked about, never lost" || no "rt4: $dd_out"
 
@@ -974,7 +1088,7 @@ else no "B: proposed/README.md differs from the propose-work.sh template"; fi
 grep -qF -- '--dismissed-*.md` drafts for dismissed review findings' "$TOP/readme-gen.md" && ok "B: README template names the second writer" || no "B: README template lacks the second writer"
 
 echo "== A11. ## Depends on / ## Touches sections (parallel-automate/10): lint-clean, identity-stable =="
-fx 11
+fx a11
 mkdir -p "$R/src"; : > "$R/src/real.sh"; : > "$R/README.md"
 sup 1 '[{finding: "bug in src/real.sh and src/gone.sh; also /etc/passwd, ../x.sh and a//b.sh", reason: below_severity_floor, source: "src/real.sh:12", severity: HIGH}, {finding: "plain prose only, no file", reason: below_severity_floor, source: code_reviewer, severity: MEDIUM}, {finding: "low in README.md.", reason: nit, source: red_team, severity: LOW}, {finding: "another low", reason: nit, source: red_team, severity: LOW}]'
 drafts
@@ -996,17 +1110,20 @@ for f in "$F1" "$F2" "$FS"; do
   esac
 done
 [ -z "$bad" ] && ok "A11 plan-waves --lint reports every draft (per-finding and summary) ok / ok (declared unknown), exit 0" || no "A11 lint:$bad"
-# Identity: the sections never feed the name or a decision. Decide follow-up on F1, then remove the
-# files both drafts name and re-run: F1 is KEPT under the same name with the same decision; the
-# undecided summary is rewritten under the SAME name (Touches now unknown); no draft is added or lost.
+# Identity: the sections never feed the name or a decision. Decide follow-up on F1, return the
+# summary to undecided (unkeep — the pre-auto-keep state), then remove the files both drafts name and
+# re-run: F1 is KEPT under the same name with the same decision; the undecided summary is rewritten
+# under the SAME name (Touches now unknown) and then kept automatically; no draft is added or lost.
 LEDGER="$AD/$RUN_ID.dismissed-decisions"
 bash "$H" dismissed-decide "$RF" "$F1" follow-up >/dev/null 2>&1
+unkeep "$FS"
 n_before="$(nfiles)"; led_before="$(cat "$LEDGER" 2>/dev/null)"; f1_before="$(cksum < "$F1")"
 rm -f "$R/src/real.sh" "$R/README.md"
 drafts
 [ "$(nfiles)" = "$n_before" ] && [ -f "$F1" ] && [ -f "$FS" ] && ok "A11 named files removed ⇒ same draft names, none added or lost ($n_before)" || no "A11 names changed: $(ls "$PROP")"
-[ "$(cat "$LEDGER" 2>/dev/null)" = "$led_before" ] && [ "$(awk -F'\t' -v n="$(basename "$F1")" '$1 == n { d = $2 } END { print d }' "$LEDGER")" = follow-up ] \
-  && ok "A11 ledger untouched and F1's decision still follow-up after the re-render" || no "A11 ledger changed: $(tr '\n' '|' < "$LEDGER")"
+led_new="$(tail -n "+$(( $(printf '%s\n' "$led_before" | wc -l) + 1 ))" "$LEDGER" | awk -F'\t' -v s="$(basename "$FS")" '!($1 == s || ($1 == "summary-member" && $3 == s))')"
+[ "$(head -n "$(printf '%s\n' "$led_before" | wc -l)" "$LEDGER")" = "$led_before" ] && [ -z "$led_new" ] && [ "$(awk -F'\t' -v n="$(basename "$F1")" '$1 == n { d = $2 } END { print d }' "$LEDGER")" = follow-up ] \
+  && ok "A11 ledger: prior rows untouched, the only new rows are the summary's auto-keep; F1's decision still follow-up after the re-render" || no "A11 ledger changed: $(tr '\n' '|' < "$LEDGER")"
 [ "$(cksum < "$F1")" = "$f1_before" ] && ok "A11 a decided (follow-up) draft is kept byte-for-byte, never re-rendered" || no "A11 follow-up draft rewritten"
 grep -qxF 'unknown' "$FS" && ! grep -qxF 'README.md' "$FS" && ok "A11 the undecided summary re-renders Touches unknown under the same name" || no "A11 summary not re-rendered: $(between "$FS" | tr '\n' '|')"
 
@@ -1081,8 +1198,8 @@ else
   for x in dd dderr dec decerr; do cmp -s "$TOP/a13-real.$x.n" "$TOP/a13-nocall.$x.n" || bad="$bad [$x: $(diff "$TOP/a13-real.$x.n" "$TOP/a13-nocall.$x.n" | tr '\n' '|')]"; done
   cmp -s "$TOP/a13-real.sum" "$TOP/a13-nocall.sum" || bad="$bad [drafts differ]"
   [ -z "$bad" ] && ok "A13 dismissed-drafts TSV rows + summary line, dismissed-decide output, both stderrs and the drafts are byte-identical with and without the size line" || no "A13 differs:$bad"
-  [ "$(grep -c '^right-size ' "$TOP/a13-stub.calls" 2>/dev/null)" = 3 ] && grep -q '^right-size .*/proposed/[^ ]*--dismissed-summary\.md --root ' "$TOP/a13-stub.calls" \
-    && ok "A13 both call sites run right-size (stub saw 3 calls: 2 drafts writes + 1 decide rewrite, each with --root)" || no "A13 stub calls: $(cat "$TOP/a13-stub.calls" 2>/dev/null | tr '\n' '|')"
+  [ "$(grep -c '^right-size ' "$TOP/a13-stub.calls" 2>/dev/null)" = 4 ] && [ "$(grep -c '^right-size .*/proposed/[^ ]*--dismissed-summary\.md --root ' "$TOP/a13-stub.calls")" = 2 ] \
+    && ok "A13 both call sites run right-size (stub saw 4 calls: 2 drafts writes + the summary auto-keep's rewrite + 1 decide rewrite, each with --root)" || no "A13 stub calls: $(cat "$TOP/a13-stub.calls" 2>/dev/null | tr '\n' '|')"
   cmp -s "$TOP/a13-real.dd.n" "$TOP/a13-stub.dd.n" && cmp -s "$TOP/a13-real.dec.n" "$TOP/a13-stub.dec.n" && ok "A13 with right-size printing (stub), both stdouts still byte-identical" || no "A13 stub run changed stdout"
   grep -q '^proposed/[^ ]*: ' "$TOP/a13-stdout.dec" && ! cmp -s "$TOP/a13-real.dec.n" "$TOP/a13-stdout.dec.n" \
     && ok "A13 MUTATION CONTROL: the call's >&2 dropped ⇒ the size line reaches dismissed-decide's stdout (the byte-identical assertion turns red)" || no "A13 stdout mutant decide: $(cat "$TOP/a13-stdout.dec")"
