@@ -17,15 +17,17 @@
 #     of an UNDECIDED draft of THIS run retired because its finding moved to the
 #     other bucket (a `moved` ledger row first);
 #   * the gitignored decision ledger `<run_id>.dismissed-decisions` beside the
-#     run file (`draft_name<TAB>decision<TAB>ts`, keyed by draft NAME, last row
-#     wins; plus `summary-member<TAB><h8><TAB>summary_name` rows recording which
-#     entries a DECIDED summary listed; `moved` rows are placement records, never
-#     decisions), and ONE `## Progress` line per decision via
-#     `automate-helpers.sh progress-append`;
-#   * the summary AUTO-KEEP: `dismissed-drafts` records every undecided summary
-#     slot of THIS item `follow-up` itself, through `dismissed-decide`'s `--auto`
-#     path (no second copy) — its `summary-member` + `follow-up` ledger rows, the
-#     `- **Decision:**` rewrite and ONE `## Progress` line per auto-kept summary.
+#     run file (`draft_name<TAB>decision<TAB>ts`, plus a 4th column `auto` on a
+#     row `--auto` wrote; keyed by draft NAME, last row wins, column 2 is the
+#     decision whatever follows it; plus `summary-member<TAB><h8><TAB>summary_name`
+#     rows recording which entries a DECIDED summary listed; `moved` rows are
+#     placement records, never decisions), and ONE `## Progress` line per
+#     decision via `automate-helpers.sh progress-append`;
+#   * the AUTOMATIC follow-up: `dismissed-decide … follow-up --auto` on any draft
+#     of this run (per-finding or summary) — the same writes as an owner's
+#     follow-up, its ledger row carrying the `auto` column. Its callers:
+#     `dismissed-drafts`' summary auto-keep (every undecided summary slot of THIS
+#     item, no second copy) and the `/automate` driver's decision and PICK steps.
 # It never runs `gh`, `git commit`, `git push` or any other git mutation (only
 # `git rev-parse --show-toplevel`), and never merges anything. `dismissed-cost`
 # writes NOTHING (read-only advisory estimator).
@@ -122,15 +124,20 @@
 #       rewrites the draft's `- **Decision:**` line (follow-up) or deletes the
 #       draft (drop / fix-now), then progress-appends ONE line
 #       `dismissed: <decision> <draft_name> — <first 80 chars of finding>`.
-#       `--auto` (the summary auto-keep): accepted ONLY with `follow-up` on a
-#       summary draft — any other decision, a per-finding draft or another trailing
-#       argument is refused, touching nothing, and so is a draft whose LAST ledger
-#       row already holds a decision (follow-up / drop / fix-now /
-#       fix-now-unconfirmed: `refused — already decided in the ledger`), so an
-#       auto-keep never overrides the owner's drop or appends a second follow-up
-#       when an earlier Decision rewrite failed. It does exactly what `follow-up`
-#       does; only the Progress line's text after the dash differs (it says the
-#       summary was kept automatically, below the tracking threshold, unasked).
+#       `--auto` (the automatic follow-up — the summary auto-keep, and the driver's
+#       unasked follow-up of a per-finding draft): accepted ONLY with `follow-up`,
+#       on any draft of this run — any other decision or another trailing argument
+#       is refused, touching nothing, and so is a draft whose LAST ledger row
+#       already holds a decision (follow-up / drop / fix-now / fix-now-unconfirmed:
+#       `refused — already decided in the ledger`), so an automatic follow-up never
+#       overrides the owner's drop or appends a second follow-up when an earlier
+#       Decision rewrite failed. It does exactly what `follow-up` does, except that
+#       its ledger row ends with a 4th column `auto` (`<name>\tfollow-up\t<ts>\tauto`)
+#       and its Progress line's text after the dash says no question was asked:
+#       `followed up automatically (no question)` on a per-finding draft, `kept
+#       automatically (summary below the tracking threshold, no question)` on a
+#       summary. The owner's later `drop` appends a plain `drop` row, which wins
+#       (last row), deletes the draft, and `dismissed-drafts` never recreates it.
 #   dismissed-pending <runfile>
 #       Prints the count of this run's drafts (and its lanes' `<run_id>-L<n>--…`
 #       drafts — parallel-automate/05) whose first `- **Decision:**` value
@@ -820,9 +827,9 @@ dismissed_decide() {
     --auto) auto=1 ;;
     *) echo "$refuse unknown argument '${4:-}' (only --auto)"; return 0 ;;
   esac
-  # --auto (the summary auto-keep) records ONLY follow-up, and only on a summary draft (checked below).
+  # --auto (the automatic follow-up — summary or per-finding draft) records ONLY follow-up.
   if [ "$auto" -eq 1 ] && [ "$decision" != follow-up ]; then
-    echo "$refuse --auto records only follow-up on a summary draft"; return 0
+    echo "$refuse --auto records only follow-up"; return 0
   fi
   if [ -z "$runfile" ] || [ ! -f "$runfile" ]; then echo "$refuse run file not found"; return 0; fi
   local rf_dir run_id root prop_abs d_dir name
@@ -847,9 +854,6 @@ dismissed_decide() {
   case "$name" in *--dismissed-summary.md|*--dismissed-summary-[0-9]*.md) is_summary=1 ;; esac
   if [ "$is_summary" -eq 1 ] && [ "$decision" = fix-now ]; then
     echo "$refuse fix-now is not offered on a summary draft (follow-up|drop)"; return 0
-  fi
-  if [ "$auto" -eq 1 ] && [ "$is_summary" -ne 1 ]; then
-    echo "$refuse --auto records only follow-up on a summary draft, not on a per-finding draft"; return 0
   fi
 
   local ledger="$rf_dir/$run_id.dismissed-decisions" f="$prop_abs/$name" snippet rows="" ts
@@ -877,7 +881,11 @@ dismissed_decide() {
     rows="$(awk -v n="$name" '/^- \*\*Key:\*\* [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]$/ { printf "summary-member\t%s\t%s\n", $3, n }' "$f" 2>/dev/null)"
     [ -n "$rows" ] && rows="$rows"$'\n'
   fi
-  if ! printf '%s%s\t%s\t%s\n' "$rows" "$name" "$decision" "$ts" >> "$ledger" 2>/dev/null; then
+  # An --auto row carries a 4th column `auto` (told apart from an owner's answer); every ledger reader
+  # takes column 2 as the decision, so the extra column never changes what the row decides.
+  local acol=""
+  [ "$auto" -eq 1 ] && acol=$'\tauto'
+  if ! printf '%s%s\t%s\t%s%s\n' "$rows" "$name" "$decision" "$ts" "$acol" >> "$ledger" 2>/dev/null; then
     echo "$refuse ledger not writable ($ledger)"; return 0
   fi
   snippet="$(python3 -c '
@@ -888,8 +896,14 @@ for p in ("# Dismissed finding: ", "# "):
         t = t[len(p):]; break
 print(t[:80])' "$f" 2>/dev/null)" || snippet=""
   [ -n "$snippet" ] || snippet="$(head -n1 "$f" 2>/dev/null | cut -c1-80)"
-  # The auto-keep's Progress line says no question was asked, in place of the finding snippet.
-  [ "$auto" -eq 1 ] && snippet="kept automatically (summary below the tracking threshold, no question)"
+  # An automatic follow-up's Progress line says no question was asked, in place of the finding snippet.
+  if [ "$auto" -eq 1 ]; then
+    if [ "$is_summary" -eq 1 ]; then
+      snippet="kept automatically (summary below the tracking threshold, no question)"
+    else
+      snippet="followed up automatically (no question)"
+    fi
+  fi
 
   case "$decision" in
     follow-up)

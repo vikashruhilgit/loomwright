@@ -14,7 +14,7 @@ fix_now_cost: ≈ 1h06m (default: loomwright's own 2026-10 baseline; no fix-now 
 = 0
 $ loop: bash "$H" progress-append "$RF" "2026-10-08T04:40:15Z owner decisions (dismissed): 0 fix-now, 1 follow-up, 0 drop (est. fix_now_cost ≈ $(sed -n 's/^fix_now_cost: ≈ \([^ ]*\) .*/\1/p' "$PREV"), n=default)"
 = 0
-$ dismissed-decide "$RF" "$ROOT/.supervisor/requirements/proposed/automate-2026-10-08-033739-L2--02-scratch-doc-b-b2ce94--dismissed-7de02129.md" follow-up
+$ dismissed-decide "$RF" "$ROOT/.supervisor/requirements/proposed/automate-2026-10-08-033739-L2--02-scratch-doc-b-b2ce94--dismissed-7de02129.md" follow-up --auto
 dismissed-decide: follow-up automate-2026-10-08-033739-L2--02-scratch-doc-b-b2ce94--dismissed-7de02129.md
 = 0
 $ dismissed-pending "$RF"

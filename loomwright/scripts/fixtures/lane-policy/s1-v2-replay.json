@@ -42,12 +42,12 @@
        "options": [{"label": "A: Re-queue producer"}, {"label": "B: Insert remediation subtask"}, {"label": "C: Exit to Launch Pad"}, {"label": "D: Update consumer brief"}]}]},
     {"lane": "v2-b", "kind": "human", "questions": [
       {"header": "AUT-DISMISS", "question": "MEDIUM finding 1 was dismissed by the drain. Decide.", "multiSelect": false,
-       "options": [{"label": "Follow-up (keep draft) (Recommended)"}, {"label": "Fix now on this PR"}, {"label": "Drop"}]},
+       "options": [{"label": "Fix none (follow-up all) (Recommended)"}, {"label": "Fix all listed on this PR"}, {"label": "Fix selected on this PR"}]},
       {"header": "AUT-DISMISS", "question": "MEDIUM finding 2 was dismissed by the drain. Decide.", "multiSelect": false,
-       "options": [{"label": "Follow-up (keep draft) (Recommended)"}, {"label": "Fix now on this PR"}, {"label": "Drop"}]},
+       "options": [{"label": "Fix none (follow-up all) (Recommended)"}, {"label": "Fix all listed on this PR"}, {"label": "Fix selected on this PR"}]},
       {"header": "AUT-DISMISS", "question": "MEDIUM finding 3 was dismissed by the drain. Decide.", "multiSelect": false,
-       "options": [{"label": "Follow-up (keep draft) (Recommended)"}, {"label": "Fix now on this PR"}, {"label": "Drop"}]},
+       "options": [{"label": "Fix none (follow-up all) (Recommended)"}, {"label": "Fix all listed on this PR"}, {"label": "Fix selected on this PR"}]},
       {"header": "AUT-DISMISS", "question": "MEDIUM finding 4 was dismissed by the drain. Decide.", "multiSelect": false,
-       "options": [{"label": "Follow-up (keep draft) (Recommended)"}, {"label": "Fix now on this PR"}, {"label": "Drop"}]}]}
+       "options": [{"label": "Fix none (follow-up all) (Recommended)"}, {"label": "Fix all listed on this PR"}, {"label": "Fix selected on this PR"}]}]}
   ]
 }

@@ -259,11 +259,20 @@ TAB="$(printf '\t')"
 # this file, group <g> from test-automate-next-step.<g>.sh (which only execs `--group <g>`). TNS_GROUPS is
 # the ONE map; a part in no group, a missing / extra pool entry or an unknown argument fails here, before
 # any setup. `bash test-automate-next-step.sh --all` still runs every part in one process.
-# usage: test-automate-next-step.sh [--group <g> | --all]
-TNS_PARTS="01-golden-idem-gates 02-branches 03-run-drain 04-pick-resume 05-fresh-phases 06-running-system 07-doc-mirror 08-coordinator-model 09-mutants-tail 10-mutants-pick-fresh 11-mutants-cm"
-TNS_GROUPS="1=01-golden-idem-gates,02-branches,03-run-drain,06-running-system,07-doc-mirror 2=04-pick-resume,05-fresh-phases,08-coordinator-model,11-mutants-cm 3=09-mutants-tail,10-mutants-pick-fresh"
+# usage: test-automate-next-step.sh [--group <g> | --all | --part <part>]
+# --part <part> runs ONE part after the shared setup — what a part file run directly does (it re-enters this
+# runner for itself), so `bash test-automate-next-step.d/<part>.sh` (a pin-mutation run) is a real test run.
+TNS_PARTS="01-golden-idem-gates 02-branches 03-run-drain 04-pick-resume 05-fresh-phases 06-running-system 07-doc-mirror 08-coordinator-model 09-mutants-tail 10-mutants-pick-fresh 11-mutants-cm 12-dismissed-batch"
+TNS_GROUPS="1=01-golden-idem-gates,02-branches,03-run-drain,06-running-system,07-doc-mirror 2=04-pick-resume,05-fresh-phases,08-coordinator-model,11-mutants-cm,12-dismissed-batch 3=09-mutants-tail,10-mutants-pick-fresh"
 . "$HERE/part-groups-lib.sh"
-pg_select "$HERE/test-automate-next-step.sh" "$TNS_PARTS" "$TNS_GROUPS" "$@" || exit 1
+if [ "${1:-}" = --part ]; then
+  case " $TNS_PARTS " in *" ${2:-} "*) ;; *) echo "  FAIL: --part names no part of TNS_PARTS: '${2:-}'"; exit 1 ;; esac
+  [ "$#" = 2 ] || { echo "  FAIL: --part takes exactly one part name"; exit 1; }
+  pg_select "$HERE/test-automate-next-step.sh" "$TNS_PARTS" "$TNS_GROUPS" --all || exit 1   # the map is still checked
+  PG_SEL=" $2 "; PG_LABEL="part $2"
+else
+  pg_select "$HERE/test-automate-next-step.sh" "$TNS_PARTS" "$TNS_GROUPS" "$@" || exit 1
+fi
 set --
 
 pass=0; fail=0
@@ -690,12 +699,13 @@ leg_unknown_merge() {
   return 0
 }
 # leg_spawn_replay <driver> — B14a: after a fix-now spawn, the FIRST drain report re-sent (pre-fix ready_sha)
-# re-prints the spawn and writes nothing; the genuine re-drain report (a new ready_sha) then proceeds
+# re-prints the spawn and writes nothing; the genuine re-drain report (a new ready_sha) then proceeds to the
+# re-park (no fix-now is left, so nothing is asked)
 leg_spawn_replay() {
   local drv="$1" spawn s0 o rc o2
   new_scratch "$FIX/dismissed-findings-decision-step" || { LEG_MSG="scratch"; return 1; }
   printf '%s\n' "call: --result '{\"drain_result\":\"READY\",\"termination_reason\":\"converged\",\"ready_sha\":\"0000000\"}'" \
-    "expect: ask" "call: --result '{\"answers\":[\"Fix now on this PR\"]}'" "expect: spawn" > "$CASE_DIR/b14.results"
+    "expect: ask" "call: --result '{\"answers\":[\"Fix all listed on this PR\"]}'" "expect: spawn" > "$CASE_DIR/b14.results"
   drive "$FIX/dismissed-findings-decision-step" "$drv" "$CASE_DIR/b14.results"
   [ -z "$DRIVE_ERR" ] || { LEG_MSG="setup: $DRIVE_ERR"; return 1; }
   spawn="$LAST_OUT"; s0="$(snapshot)"; : > "$CASE_DIR/seams.none"
@@ -705,7 +715,7 @@ leg_spawn_replay() {
     || { LEG_MSG="replayed first report ⇒ exit $rc '${o:0:100}', .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
   o2="$(in_case "$drv" "$CASE_DIR/seams.none" bash "$drv" "$CASE_RF" \
     --result '{"drain_result":"READY","termination_reason":"converged","ready_sha":"1111111"}' 2>/dev/null)"; rc=$?
-  [ "$rc" = 0 ] && printf '%s' "$o2" | jq -e '.do == "ask"' >/dev/null 2>&1 \
+  [ "$rc" = 0 ] && printf '%s' "$o2" | jq -e '.do == "park"' >/dev/null 2>&1 \
     || { LEG_MSG="the genuine re-drain report ⇒ exit $rc '${o2:0:100}'"; return 1; }
   return 0
 }
@@ -999,8 +1009,8 @@ leg_drain_replay() {
   spawn="$NC_OUT"; s0="$(snapshot)"; ns_call "$drv" --result "$a"
   [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$spawn" ] && [ "$s0" = "$(snapshot)" ] \
     || { LEG_MSG="the DRAIN report re-sent at its tail's ask ⇒ exit $NC_RC '${NC_OUT:0:100}' ${NC_ERR:0:100}"; return 1; }
-  ns_call "$drv" --result '{"answers":["Fix now on this PR"]}'; spawn="$NC_OUT"
-  printf '%s' "$spawn" | jq -e '.what == "fix-now re-drain"' >/dev/null 2>&1 || { LEG_MSG="Fix now ⇒ '${spawn:0:100}'"; return 1; }
+  ns_call "$drv" --result '{"answers":["Fix all listed on this PR"]}'; spawn="$NC_OUT"
+  printf '%s' "$spawn" | jq -e '.what == "fix-now re-drain"' >/dev/null 2>&1 || { LEG_MSG="Fix all listed ⇒ '${spawn:0:100}'"; return 1; }
   s0="$(snapshot)"; ns_call "$drv" --result "$a"
   [ "$NC_RC" = 0 ] && [ "$NC_OUT" = "$spawn" ] && [ "$s0" = "$(snapshot)" ] \
     || { LEG_MSG="the first DRAIN report re-sent ⇒ exit $NC_RC '${NC_OUT:0:100}', .supervisor/ $([ "$s0" = "$(snapshot)" ] && echo unchanged || echo CHANGED)"; return 1; }
@@ -1713,10 +1723,10 @@ leg_meta_push() {
 # leg_pick_summary_autokeep <driver> — the summary auto-keep's resume half (AC6) and its fallback (AC8a). A run
 # started before dismissed-drafts kept summaries itself (pick-pending-decisions-ask: an undecided summary + an
 # undecided per-finding draft on disk): the PICK `pending` step records the summary follow-up with NO question —
-# its ledger row and ONE `kept automatically` Progress line — interactive (the ask that follows is the per-finding
-# AUT-PENDING one, and its answer ends the step: no AUT-SUMMARY ask) and under --non-interactive (no ask at all);
-# a replayed step writes no second line. With the ledger read-only the auto-keep is refused: the summary stays
-# undecided and the AUT-SUMMARY ask (Keep summary / Drop summary) is the fallback, at PICK and at the decision step.
+# its ledger row and ONE `kept automatically` Progress line — interactive (the per-finding draft is followed up
+# automatically too, so nothing is asked) and under --non-interactive (no ask at all); a replayed step writes no
+# second line. With the ledger read-only the auto-keep is refused: the summary stays undecided and the AUT-SUMMARY
+# ask (Keep summary / Drop summary) is the fallback, at PICK and at the decision step.
 leg_pick_summary_autokeep() {
   local drv="$1" sp led g
   ak_case() { # <case> — a fresh scratch; sp = its summary draft, led = its ledger
@@ -1732,13 +1742,12 @@ leg_pick_summary_autokeep() {
   # (a) interactive resume
   ak_case pick-pending-decisions-ask || { LEG_MSG="scratch (a)"; return 1; }
   p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID"
-  [ "$NC_RC" = 0 ] && [ "$(ak_gate)" = AUT-PENDING ] && grep -qxF -- '- **Decision:** follow-up' "$sp" && [ "$(ak_kept)" = 1 ] && [ "$(ak_led)" = follow-up ] \
+  [ "$NC_RC" = 0 ] && [ -z "$(ak_gate)" ] && grep -qxF -- '- **Decision:** follow-up' "$sp" && [ "$(ak_kept)" = 1 ] && [ "$(ak_led)" = follow-up ] \
+    && [ "$(grep -c ' dismissed: follow-up ' "$CASE_RF")" = 2 ] \
     || { LEG_MSG="interactive: exit $NC_RC, gate '$(ak_gate)', $(ak_kept) kept line(s), ledger '$(ak_led)', $(grep '^- \*\*Decision' "$sp")"; return 1; }
   p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID"
-  [ "$NC_RC" = 0 ] && [ "$(ak_gate)" = AUT-PENDING ] && [ "$(ak_kept)" = 1 ] || { LEG_MSG="replay: exit $NC_RC, gate '$(ak_gate)', $(ak_kept) kept line(s) (want still 1)"; return 1; }
-  p_seamed "$CASE_DIR/seams.ak2" "$drv" --result '{"answers":["Follow-up (keep draft)"]}'
-  [ "$NC_RC" = 0 ] && [ -z "$(ak_gate)" ] && [ "$(grep -c ' dismissed: follow-up ' "$CASE_RF")" = 2 ] \
-    || { LEG_MSG="after the AUT-PENDING answer: exit $NC_RC, gate '$(ak_gate)' (want no further ask — no AUT-SUMMARY)"; return 1; }
+  [ "$NC_RC" = 0 ] && [ -z "$(ak_gate)" ] && [ "$(ak_kept)" = 1 ] && [ "$(grep -c ' dismissed: follow-up ' "$CASE_RF")" = 2 ] \
+    || { LEG_MSG="replay: exit $NC_RC, gate '$(ak_gate)', $(ak_kept) kept line(s) (want still 1)"; return 1; }
   # (b) --non-interactive: recorded too, nothing asked
   ak_case pick-pending-decisions-ask || { LEG_MSG="scratch (b)"; return 1; }
   p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID" --non-interactive
@@ -1762,18 +1771,18 @@ leg_pick_summary_autokeep() {
   printf 'NEXT_STEP_FROM=decide\n' > "$CASE_DIR/seams.akd"; : > "$CASE_DIR/seams.akd2"
   p_seamed "$CASE_DIR/seams.akd" "$drv"
   g="$(ak_gate)"
-  p_seamed "$CASE_DIR/seams.akd2" "$drv" --result '{"answers":["Follow-up (keep draft)"]}'
+  p_seamed "$CASE_DIR/seams.akd2" "$drv" --result '{"answers":["Fix none (follow-up all)"]}'
   chmod 644 "$led"
   [ "$g" = AUT-DISMISS ] && [ "$(ak_gate)" = AUT-SUMMARY ] && [ "$(printf '%s' "$NC_OUT" | jq -c '.options')" = '["Keep summary","Drop summary"]' ] \
     || { LEG_MSG="decision step fallback: asks '$g' then '$(ak_gate)' (want AUT-DISMISS then AUT-SUMMARY)"; return 1; }
   # (e) the ledger already records the owner's drop of the summary, but the file is still on disk (the rm
-  # failed): the PICK auto-keep writes no row and no Progress line, and the draft is still asked (AUT-SUMMARY)
+  # failed): the PICK auto-keep writes no row and no Progress line, and the draft is still asked (AUT-SUMMARY —
+  # the per-finding draft was followed up automatically, so it is the first ask)
   ak_case pick-pending-decisions-ask || { LEG_MSG="scratch (e)"; return 1; }
   printf '%s\tdrop\t2026-01-01T00:00:00Z\n' "${sp##*/}" >> "$led"
   p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID"
   g="$(ak_gate)"
-  p_seamed "$CASE_DIR/seams.ak2" "$drv" --result '{"answers":["Follow-up (keep draft)"]}'
-  [ "$g" = AUT-PENDING ] && [ "$(ak_gate)" = AUT-SUMMARY ] && [ "$(ak_kept)" = 0 ] && [ "$(ak_led)" = drop ] \
+  [ "$g" = AUT-SUMMARY ] && [ "$(ak_kept)" = 0 ] && [ "$(ak_led)" = drop ] \
     && ! grep -qF "summary-member" "$led" && grep -qxF -- '- **Decision:** undecided' "$sp" \
     || { LEG_MSG="ledger drop + file on disk: asks '$g' then '$(ak_gate)', $(ak_kept) kept line(s), ledger '$(ak_led)'"; return 1; }
   # (f) the ledger is appendable but the Decision rewrite fails (proposed/ read-only): repeated PICKs append
@@ -2558,6 +2567,7 @@ pg_want 08-coordinator-model  && tns_part 08-coordinator-model  && . "$TNS_D/08-
 pg_want 09-mutants-tail       && tns_part 09-mutants-tail       && . "$TNS_D/09-mutants-tail.sh"
 pg_want 10-mutants-pick-fresh && tns_part 10-mutants-pick-fresh && . "$TNS_D/10-mutants-pick-fresh.sh"
 pg_want 11-mutants-cm         && tns_part 11-mutants-cm         && . "$TNS_D/11-mutants-cm.sh"
+pg_want 12-dismissed-batch    && tns_part 12-dismissed-batch    && . "$TNS_D/12-dismissed-batch.sh"
 if [ "$TNS_BEFORE_CM" = 1 ] && [ "$TNS_CM_CHECKED" = 0 ]; then TNS_CM_CHECKED=1; ns_cm_all_check; fi
 [ "$TNS_DONE" = "$PG_SEL" ] || no "parts sourced ($TNS_DONE) differ from the parts selected ($PG_SEL): a TNS_PARTS entry has no source line"
 echo "PASS: $pass FAIL: $fail ($PG_LABEL)"

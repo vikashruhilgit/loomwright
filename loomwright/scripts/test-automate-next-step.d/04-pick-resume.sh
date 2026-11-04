@@ -36,7 +36,7 @@ LEG_MSG=""
 if leg_watch_registry "$DRIVER"; then ok "P12 (af/39e AC10/AC11/AC16): the default ns_watch launch ⇒ the watcher registers ONE merge-watch entry for its own (marker) pid with its cap, run file and stop hint; an unwritable registry changes neither the driver's exit/output nor the watcher log"
 else no "P12: $LEG_MSG"; fi
 LEG_MSG=""
-if leg_pick_summary_autokeep "$DRIVER"; then ok "P15 (AC6/AC8a): a run's pre-auto-keep undecided summary draft ⇒ the PICK pending step records it follow-up with no question (one kept-automatically line, ledger row; not on a replay), interactive (only AUT-PENDING asked) and --non-interactive; a read-only ledger ⇒ it stays undecided and AUT-SUMMARY (Keep summary / Drop summary) is the fallback ask, at PICK and at the decision step"
+if leg_pick_summary_autokeep "$DRIVER"; then ok "P15 (AC6/AC8a): a run's pre-auto-keep undecided summary draft ⇒ the PICK pending step records it follow-up with no question (one kept-automatically line, ledger row; not on a replay), interactive (nothing asked: the per-finding draft is followed up automatically too) and --non-interactive; a read-only ledger ⇒ it stays undecided and AUT-SUMMARY (Keep summary / Drop summary) is the fallback ask, at PICK and at the decision step"
 else no "P15: $LEG_MSG"; fi
 LEG_MSG=""
 if m="$(build_mutant pk-autokeep 'ns_call_writer_helper dismissed-decide "$RF" "$apath" follow-up --auto' 'true')" && ! leg_pick_summary_autokeep "$m"; then ok "P15 pin: the PICK auto-keep call deleted ⇒ the P15 leg turns red"
