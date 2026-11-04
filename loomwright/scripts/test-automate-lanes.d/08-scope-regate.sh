@@ -220,7 +220,8 @@ sg_sha="$(git -C "$SGL/L1" rev-parse HEAD)"
 sed -i.bak 's#^- item: reqs/x.md | status: running | pr: null#- item: reqs/x.md | status: ready_for_release | pr: https://github.com/o/r/pull/7#; s/^- pause_reason: null/- pause_reason: ready_for_release/' "$SGL/L1/.supervisor/automate/$SGPAR-L1.md"
 sg_js="{\"headRefOid\":\"$sg_sha\",\"headRefName\":\"feature/x\",\"state\":\"OPEN\"}"
 out0="$(SG_GH_JSON="$sg_js" sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"
-case "$out0" in "lane-scope-decide: integrate — L2 stays held"*"git merge --no-ff $sg_sha"*) ok "SD6a L1 ready ⇒ its exact head fetched and the merge PRINTED (the script runs no merge), still held" ;; *) bad "SD6a integrate line" "$out0" ;; esac
+case "$out0" in "lane-scope-decide: integrate — L2 stays held"*"
+git merge --no-ff $sg_sha"*) ok "SD6a L1 ready ⇒ its exact head fetched and the merge PRINTED (the script runs no merge), still held" ;; *) bad "SD6a integrate line" "$out0" ;; esac
 git -C "$SGL/L2" merge -q --no-ff "$sg_sha" -m "serialize" >/dev/null 2>&1
 out="$(SG_GH_JSON="$sg_js" sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"; rc=$?
 if [ "$rc" = 0 ] && git -C "$SGL/L2" merge-base --is-ancestor "$sg_sha" HEAD && grep -qx -- '- pause_reason: null' "$sg_lrf" \

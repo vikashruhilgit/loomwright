@@ -311,7 +311,8 @@ lanes_scope_decide() {
         # head is PRINTED, run by hand in the held lane (a conflict is the owner's, never force-resolved), then this
         # same command re-run sees the head in HEAD and releases
         m="$(printf 'Merge lane %s (%s) PR #%s — serialized before %s (scope re-gate)' "$after" "$ai" "$num" "$LN_LANE")"
-        printf 'lane-scope-decide: integrate — %s stays held; in %s run: git merge --no-ff %s -m "%s" (fetched; a conflict stops: the owner resolves it, never forced), then re-run this command\n' "$LN_LANE" "$LN_DIR" "$sha" "$m"
+        echo "lane-scope-decide: integrate — $LN_LANE stays held; $after's PR #$num head is fetched: in $LN_DIR run the next line (a conflict stops: the owner resolves it, never forced), then re-run this command"
+        echo "git merge --no-ff $sha -m \"$m\""
         return 0
       fi
       tail="(serialized after $after — merged PR #$num head ${sha:0:12})"
