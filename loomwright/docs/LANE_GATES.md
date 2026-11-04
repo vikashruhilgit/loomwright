@@ -66,7 +66,7 @@ Every decision leaves a record. `gate-auto.sh record <runfile> <code> <label> <r
 |---|---|---|---|
 | `AUT-RESUME` | auto | `Continue!` · `Start new` · `Archive` | /automate start finds an incomplete run (automate-loop SKILL §4 step 4); auto only with one incomplete run and no rebuilt ## Current, risk read from its open PR diff |
 | `AUT-QUEUE` | auto | `Process!` · `Stop` | /automate Queue confirm before processing (automate-loop SKILL §2 "--limit N"); auto with no risk read (no item is picked yet) |
-| `AUT-SUMMARY` | allowed | `Keep summary` · `Drop summary` | /automate keep or drop a LOW/INFO summary draft — summary drafts only (§6 dismissed-findings decision step and the PICK-time ask) |
+| `AUT-SUMMARY` | allowed | `Keep summary` · `Drop summary` | /automate keep or drop a LOW/INFO summary draft — the fallback only: dismissed-drafts recorded follow-up automatically on every summary draft (drop one by deleting it from proposed/), so this asks only when that auto-keep was refused (§6 dismissed-findings decision step and the PICK-time ask) |
 | `LP-SAVE` | auto | `Save and exit!` · `Refine further?` · `Edit sections?` · `Discard` | Launch Pad Phase 6 save on a Plan Review PASS with zero issues (Refine / Edit only while a review attempt is left); auto unless the File Impact Map paths are high-risk |
 | `SUP-CHILDREN` | allowed | `proceed anyway` · `investigate` · `abort` | Supervisor FINALIZE Point 5 children unsettled (async-orchestration SKILL) |
 | `AUT-SOURCE` | human-only | `(free text)` | bare /automate: what do you want to automate? |
