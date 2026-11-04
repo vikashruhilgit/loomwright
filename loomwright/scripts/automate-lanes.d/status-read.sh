@@ -366,7 +366,7 @@ _lanes_timeline() {
     def noprtok: (capture("no PR: [`\"(]?(?<r>[a-z]+_[a-z0-9_]+)") | .r) // null;
     def cls: if test("^parked ") then ["park"] # gate-auto.sh records go by gate code first: a free-text reason never moves one.
       elif test("^(auto-answered|auto-escalated) AUT-") then ["pick"] elif test("^(auto-answered|auto-escalated) LP-") then ["plan"]
-      elif test("^(closeout|auto-finalized|trail-pr|lane park notify|converted |merged)") then ["merge"]
+      elif test("^(closeout |auto-finalized|trail-pr|lane park notify|converted |merged)") then ["merge"]
       elif test("^(dismissed|owner decisions)") then ["decide"]
       elif test("owned drain started|^drain |re-drain") then ["drain"]
       elif test("^/autonomous done") then ["heal"]

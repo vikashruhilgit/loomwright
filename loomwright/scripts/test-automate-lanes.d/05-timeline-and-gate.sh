@@ -57,6 +57,11 @@ if ! cmp -s "$SB" "$MUT/lanes-aj4g.sh" && bash -n "$MUT/lanes-aj4g.sh"; then
     "$out" "pick:AUT-RESUME plan:LP-SAVE-NOTE,LP-SAVE build: heal: drain:AUT-QUEUE decide: merge:"
 else bad "AJ4h mutation did not apply (the auto-answered classification moved)"; fi
 rm -f "$MUT/lanes-aj4g.sh"
+# AJ4i: the Merge arm matches `closeout ` with its space — a lane clone's start line `closeout-others: skipped`
+# is no Merge evidence and leaves the lane on Pick.
+ajp '- 2026-10-11T08:00:00Z run created (lane L1 of p)' '- 2026-10-11T08:00:05Z closeout-others: skipped — lane clone'
+check "AJ4i closeout-others (lane start) stays on Pick, never Merge" \
+  "$(ajt running | jq -r '"\(.current)|\([.steps[] | select(.lines | length > 0) | .id] | join(","))"')" "pick|pick"
 # AJ4d: the no-PR RUN line's wording is not pinned — other Launch Pad phrasings reach Plan too; one that names
 # the Supervisor (it started) or carries a PR URL still reaches Build.
 aj4d() { ajp '- 2026-10-11T08:01:00Z picked a.md' "- 2026-10-11T08:20:00Z ran /autonomous $1" '- 2026-10-11T08:20:05Z parked escalated (no PR)'; ajt escalated | jq -r .current; }
