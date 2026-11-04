@@ -264,12 +264,19 @@ async function readOnce($: EngineInterface, configured: string): Promise<void> {
       await update($, seen, s => ({ ...s, [q.id]: true }))
     }
   }
+  // A hold toasts on entry. Its key is dropped once the lane is no longer held (a revise releases it,
+  // or the lane is gone), so a lane re-parked by its re-planned brief toasts again.
+  const held = new Set<string>()
   for (const l of doc.lanes) {
-    const k = `scope_hold:${l.lane}:${l.ended_at ?? ''}`
-    if (l.state !== 'scope_hold' || known[k]) continue
+    if (l.state !== 'scope_hold') continue
+    const k = `scope_hold:${l.lane}`
+    held.add(k)
+    if (known[k]) continue
     $.ui.toast(`${l.lane} is held before its Supervisor phase: the coordinator's scope re-gate needs you — /lanes`)
     await update($, seen, s => ({ ...s, [k]: true }))
   }
+  const released = Object.keys(known).filter(k => k.startsWith('scope_hold:') && !held.has(k))
+  if (released.length > 0) await update($, seen, s => Object.fromEntries(Object.entries(s).filter(([k]) => !released.includes(k))))
 
   // Every open lane's feed in one write: each state write redraws the pane, so a poll writes as
   // few times as it can.
