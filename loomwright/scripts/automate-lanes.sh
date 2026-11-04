@@ -97,6 +97,9 @@
 #        (exit 0 / 3 / 5 / 6)
 #   phase-answer <runfile> <phase> <tool_use_id> --owner-command '<cmd>'   stdin: {"answers":{…},"note":"…"};
 #        validates like lane-answer, records, resumes the SAME session (phase.sh header: the whole contract)
+#   scope-outside <item> <brief> [--root <dir>]          READ-ONLY: the brief's paths outside the item's Touches
+#        (Launch Pad's LP-SCOPE list): `inside` | `unknown` | `outside <n>` / `unreadable <n>` then one path per
+#        line (exit 0); exit 1 on usage / an unreadable brief (scope.sh header: the whole contract)
 #
 # Files (all paths derived; nothing hard-coded):
 #   <lane>/.supervisor/lane.json        D2 marker — the ONE marker lane-create writes (plus the copied
@@ -265,6 +268,8 @@
 # - phase.sh: _lanes_phase_ctx … lanes_phase_answer — fresh session per phase: lanes_phase_check
 #    (`phase-check`), lanes_phase_launch (`phase-launch`), lanes_phase_wait (`phase-wait`),
 #    lanes_phase_answer (`phase-answer`); the phase dir, the relay-hook settings, the spawn env
+# - scope.sh: lanes_scope_outside — lanes_scope_outside (`scope-outside`): a brief's paths outside its item's
+#    Touches, read through readiness.sh's _lanes_declared / _lanes_brief_paths / _lanes_is_declared
 # Every module is sourced by name at the position its code held when this was one file (the loader
 # below); the header, the config block, die, _lanes_usage, lanes_main and the direct-run guard stay
 # here. A "see the header in automate-lanes.sh" pointer to a function lands on its module above.
@@ -383,6 +388,9 @@ _lanes_source wave || { return 1 2>/dev/null || exit 1; }
 # >>> automate-lanes.d/phase.sh
 _lanes_source phase || { return 1 2>/dev/null || exit 1; }
 # <<< automate-lanes.d/phase.sh
+# >>> automate-lanes.d/scope.sh
+_lanes_source scope || { return 1 2>/dev/null || exit 1; }
+# <<< automate-lanes.d/scope.sh
 _lanes_usage() { awk '/^# Usage \(standalone/ { on = 1 } on && /^#$/ { exit } on' "$SELF"; }
 
 lanes_main() {
@@ -412,6 +420,7 @@ lanes_main() {
     phase-launch) lanes_phase_launch "$@" ;;
     phase-wait) lanes_phase_wait "$@" ;;
     phase-answer) lanes_phase_answer "$@" ;;
+    scope-outside) lanes_scope_outside "$@" ;;
     _lane-run) lanes_run_wrapper "$@" ;;
     _merge-hooks) _lanes_merge_hooks "$@" ;;
     -h|--help|help) _lanes_usage ;;

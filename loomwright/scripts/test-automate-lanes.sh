@@ -99,6 +99,9 @@
 #     not-a-pass / no-output files; every unreadable read fails CLOSED with the reason (an unreadable body is never
 #     looked up: a file cannot lift a step the body might FAIL); the remedy names the
 #     evidence file, never the PR body; one mutation control per Pin mutations row of the brief
+#   SC scope-outside (lane-scope-regate Part A, automate-lanes.d/scope.sh): a brief's paths outside its item's
+#     Touches — outside / inside / unknown / unreadable (fail CLOSED: every brief path), companions included,
+#     changelog.d/ exempt, _lanes_declared's LD_TOUCHES contract kept; one mutation control per Pin mutations row
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -264,5 +267,6 @@ tal_part 04-fleet-closeout-to-optout && . "$HERE/test-automate-lanes.d/04-fleet-
 tal_part 05-timeline-and-gate && . "$HERE/test-automate-lanes.d/05-timeline-and-gate.sh"
 tal_part 06-phase-sessions && . "$HERE/test-automate-lanes.d/06-phase-sessions.sh"
 tal_part 07-evidence-files && . "$HERE/test-automate-lanes.d/07-evidence-files.sh"
+tal_part 08-scope-regate && . "$HERE/test-automate-lanes.d/08-scope-regate.sh"
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

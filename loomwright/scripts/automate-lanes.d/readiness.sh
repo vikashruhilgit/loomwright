@@ -217,21 +217,29 @@ _lanes_brief_of() {
 # exactly as the planner reserved it for the wave (`plan-waves --touches`: the planner's own parser +
 # companion expansion, so no reader parses a Touches section a second way) + the brief's `path:` lines.
 # The planner's helper is called directly, never through the $HELPERS seam: it is read-only and must be the
-# real grammar. Sets LD_TOUCHES (known | unknown) and LD_NOTE (empty, or the fence line's `; Touches …` note).
+# real grammar. Sets LD_TOUCHES (known | unknown) and LD_NOTE (empty, or the fence line's `; Touches …` note),
+# and LD_TOUCHES_READ (ok | failed): `failed` only when `plan-waves --touches` itself failed, so a caller can
+# tell a declared/missing `unknown…` Touches from an unreadable one (LD_TOUCHES is `unknown` for both).
 _lanes_declared() {
   local d="$1" item="$2" brief="$3" out="$4" tw
-  LD_TOUCHES=known; LD_NOTE=""
+  LD_TOUCHES=known; LD_NOTE=""; LD_TOUCHES_READ=ok
   tw="$(bash "$HERE/automate-helpers.sh" plan-waves "$d/$item" --touches --root "$d" 2>/dev/null)" || tw=""
   case "$tw" in
     known*) ;;
     unknown*) LD_TOUCHES=unknown; LD_NOTE="; Touches ${tw} — only the brief's paths are declared (the item ran alone in its wave)"; tw="" ;;
-    *) LD_TOUCHES=unknown; LD_NOTE="; Touches unreadable (plan-waves --touches failed) — only the brief's paths are declared"; tw="" ;;
+    *) LD_TOUCHES=unknown; LD_TOUCHES_READ=failed; LD_NOTE="; Touches unreadable (plan-waves --touches failed) — only the brief's paths are declared"; tw="" ;;
   esac
   {
     [ -n "$tw" ] && printf '%s\n' "$tw" | sed '1d'   # already normalized: a top-level dir reads `src`
-    [ -n "$brief" ] && sed -n 's/.*path: *"\([^"]*\)".*/\1/p; s/^ *- *"\([^"]*\)" *$/\1/p' "$brief" \
-      | sed 's#^\./##' | awk 'index($0, "/") || index($0, ".")'
+    [ -n "$brief" ] && _lanes_brief_paths "$brief"
   } 2>/dev/null | env LC_ALL=C sort -u > "$out"
+}
+# _lanes_brief_paths <brief> — the brief's `path:` lines (Subtask Contracts provides / requires) and its
+# `- "<path>"` lines (`lanes:`), `./` stripped, one per line (unsorted). The ONE brief-path grammar:
+# _lanes_declared above and scope.sh's scope-outside both read a brief through it.
+_lanes_brief_paths() {
+  sed -n 's/.*path: *"\([^"]*\)".*/\1/p; s/^ *- *"\([^"]*\)" *$/\1/p' "$1" \
+    | sed 's#^\./##' | awk 'index($0, "/") || index($0, ".")'
 }
 # _lanes_is_declared <file> <declared set file> — 0 when <file> is inside one entry: equal, a path ending in
 # `/<entry>`, under `<entry>/` (a normalized directory), under an entry written with a trailing `/`, or
