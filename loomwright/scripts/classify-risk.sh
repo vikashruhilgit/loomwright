@@ -15,9 +15,13 @@
 # (read at HEAD — the committed tree, never the working tree) run over the listed paths; content and
 # size cannot be judged from a path list and emit no reason (`changed_lines` is 0, `changed_files` the
 # number of distinct listed paths). Same object shape and `source`. An unreadable list ⇒
-# `unclassifiable: paths_unreadable`, an empty one ⇒ `unclassifiable: paths_empty`, a line holding a
-# backtick or inner whitespace (a decorated cell such as "`CLAUDE.md` (40)", not a bare path) ⇒
-# `unclassifiable: paths_malformed` (null all three: a list that cannot be read is never low-risk). It adds no exclude, flag or config to lower risk. The refs
+# `unclassifiable: paths_unreadable`, an empty one ⇒ `unclassifiable: paths_empty`, a line holding any
+# byte outside the allow-list [A-Za-z0-9._/+@-] (a decorated cell such as "`CLAUDE.md` (40)",
+# "**CLAUDE.md**", a `:<line>` suffix, a markdown link or a `|` cell — not a bare path), a leading `/`,
+# an empty `//` or `.`/`..` segment, or a line wrapped in `_…_` emphasis ⇒
+# `unclassifiable: paths_malformed` (null all three: a list that cannot be read is never low-risk).
+# A real path with another legal byte (`,` `=` `~` `%` space, non-ASCII) also reads null: the
+# consumer then asks, the safe direction (this repo's `git ls-files` has none). It adds no exclude, flag or config to lower risk. The refs
 # mode above is untouched by it: same code path, same output, byte for byte.
 #
 # Output (ONE JSON object on stdout, always exit 0):
@@ -266,13 +270,20 @@ else
   # lines and duplicates skipped). No diff, so no changed lines: the content and size classes are not
   # applicable and emit no reason. An unreadable or empty list cannot be classified ⇒ null.
   [ -f "$paths_file" ] && [ -r "$paths_file" ] || emit_unclassifiable "paths_unreadable" "paths=$paths_file"
+  PATHS_NOT_BARE_ERE='[^A-Za-z0-9._/+@-]|^/|//|(^|/)\.\.?(/|$)|^_.*_$'
   sed -e 's/\r$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^\./||' "$paths_file" 2>/dev/null \
     | awk 'length($0) > 0 && !seen[$0]++' > "$tmp/paths"
   [ -s "$tmp/paths" ] || emit_unclassifiable "paths_empty" "paths=$paths_file lists no path"
-  # A decorated line (a backtick, or whitespace inside it: a copied map cell's ` (40)` line count or a
-  # `- ` bullet) is not a bare path and would hide a high-risk basename from every class ⇒ null.
-  if grep -q '[`[:space:]]' "$tmp/paths"; then
-    emit_unclassifiable "paths_malformed" "paths=$paths_file: $(grep -m1 '[`[:space:]]' "$tmp/paths" | head -c 120)"
+  # ALLOW-LIST, not a denylist of decorations: a line holding any byte outside [A-Za-z0-9._/+@-] (a
+  # copied map cell's ` (40)`, backticks, `**bold**`, quotes, `:40`, a markdown link, a `|` cell, a
+  # `- ` bullet, non-ASCII) is not a bare path and could hide a high-risk basename from every class
+  # ⇒ null. Allowed bytes can still make a non-bare path, so those shapes are refused too: a leading
+  # `/` (not repo-relative), an empty `//`, a `.` or `..` segment (`docs/../.mcp.json` would dodge the
+  # root-only trusted-root match) and `_…_` emphasis wrapping the whole line. A real path using another legal byte
+  # (`,` `=` `~` `%` space) also reads null: the gate then asks, the safe direction. env LC_ALL=C keeps
+  # the ranges bytewise in every locale.
+  if env LC_ALL=C grep -qE "$PATHS_NOT_BARE_ERE" "$tmp/paths"; then
+    emit_unclassifiable "paths_malformed" "paths=$paths_file: $(env LC_ALL=C grep -m1 -E "$PATHS_NOT_BARE_ERE" "$tmp/paths" | head -c 120)"
   fi
   : > "$tmp/lines"
 fi

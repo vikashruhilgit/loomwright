@@ -116,10 +116,13 @@ lanes_create() {
   # `auto_gates: false` (only when the parent run's `## Run Config` carries `auto_gates: off`; absent
   # otherwise, so every other lane.json is byte-identical) carries the run's off switch for the `auto` gate
   # tier into the lane, where `gate-auto.sh decide` reads it. The line match is gate-auto.sh's own
-  # `_ga_runconfig_off` (`- auto_gates: off` on its own line or as a ` | `-separated field), kept in step.
+  # `_ga_runconfig_off` (`- auto_gates: <any value but on>` on its own line or as a ` | `-separated
+  # field), kept in step.
   local ag=0
   awk '/^## / { sec = $0; next }
-    sec == "## Run Config" && /(^-[ \t]+|\|[ \t]*)auto_gates:[ \t]*off[ \t]*(\||$)/ { f = 1 }
+    sec == "## Run Config" && /^-[ \t]/ { n = split($0, fs, "|")
+      for (i = 1; i <= n; i++) { x = fs[i]; if (i == 1) sub(/^-/, "", x); gsub(/^[ \t]+|[ \t]+$/, "", x)
+        if (x ~ /^auto_gates:/) { sub(/^auto_gates:[ \t]*/, "", x); if (x != "on") f = 1 } } }
     END { exit !f }' "$runfile" 2>/dev/null && ag=1
   jq -n --arg lane "$lane" --arg run "$run_id" --arg parent "$parent" --arg primary "$primary" \
     --argjson parallel "$par" --argjson mt "$mt" --arg created "$(now_utc)" --argjson policy "$pj" \

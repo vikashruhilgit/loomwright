@@ -644,6 +644,13 @@ printf '# Automate Run: ga\n\n## Status: running\n\n## Run Config\n- mode: safe 
 printf '# Automate Run: ga\n\n## Status: running\n\n## Run Config\n- mode: safe | limit: 5\n\n## Queue\n- [ ] a.md\n\n## Progress\n- 2026-11-03T00:00:00Z started\n- 2026-11-03T00:00:01Z note: auto_gates: off\n' > "$ROOT/ga-on.md"
 gaeq "(ga6) ## Run Config '- auto_gates: off'" "ask off" AUT-QUEUE "${QO[@]}" --runfile "$ROOT/ga-off.md"
 gaeq "(ga6b) control: the same text outside ## Run Config is not the switch" "answer Process" AUT-QUEUE "${QO[@]}" --runfile "$ROOT/ga-on.md"
+# The switch is an allow-list: any present auto_gates value but `on` reads off (fail toward asking).
+for v in false OFF no ''; do
+  printf '# Automate Run: ga\n\n## Status: running\n\n## Run Config\n- mode: safe | limit: 5 | auto_gates: %s\n\n## Progress\n' "$v" > "$ROOT/ga-v.md"
+  gaeq "(ga6e) ## Run Config 'auto_gates: $v' (not the writer's 'off') still reads off" "ask off" AUT-QUEUE "${QO[@]}" --runfile "$ROOT/ga-v.md"
+done
+printf '# Automate Run: ga\n\n## Status: running\n\n## Run Config\n- mode: safe | limit: 5\n- auto_gates: on\n\n## Progress\n' > "$ROOT/ga-v.md"
+gaeq "(ga6f) control: ## Run Config 'auto_gates: on' leaves the tier on" "answer Process" AUT-QUEUE "${QO[@]}" --runfile "$ROOT/ga-v.md"
 mkdir -p "$ROOT/ga-off.phase/launch-pad"
 got="$( cd "$GR" && LOOMWRIGHT_PHASE_DIR="$ROOT/ga-off.phase/launch-pad" bash "$GA" decide AUT-QUEUE "${QO[@]}" --root "$GR" 2>/dev/null )"
 [ "$got" = "ask off" ] && ok "(ga6c) the run file resolved from LOOMWRIGHT_PHASE_DIR (<run>.phase/<phase> ⇒ <run>.md) carries the switch ⇒ 'ask off'" || no "(ga6c) got '$got'"

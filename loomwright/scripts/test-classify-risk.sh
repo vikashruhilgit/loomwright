@@ -764,6 +764,21 @@ printf 'CLAUDE.md\n' > "$PL/claude.txt"
 printf 'docs/guide.md\nCLAUDE.md (40)\n' > "$PL/claude-count.txt"   # a File Impact Map cell copied with its line count
 printf '`CLAUDE.md`\n' > "$PL/claude-tick.txt"                        # ... or with its backticks
 printf -- '- CLAUDE.md\n' > "$PL/claude-bullet.txt"                    # ... or as a markdown bullet
+# Iteration-2 forms: the guard is an allow-list, so every other decoration reads null too.
+printf '**CLAUDE.md**\n' > "$PL/claude-bold.txt"
+printf '"CLAUDE.md"\n' > "$PL/claude-dquote.txt"
+printf "'.mcp.json'\n" > "$PL/mcp-squote.txt"
+printf 'CLAUDE.md%s\n' ':40' > "$PL/claude-colon.txt"
+printf 'CLAUDE.md(40)\n' > "$PL/claude-paren.txt"
+printf '[CLAUDE.md](CLAUDE.md)\n' > "$PL/claude-link.txt"
+printf '|CLAUDE.md|\n' > "$PL/claude-pipe.txt"
+printf '*hooks/x.sh*\n' > "$PL/hooks-star.txt"
+printf '_.mcp.json_\n' > "$PL/mcp-under.txt"
+printf '/.mcp.json\n' > "$PL/mcp-abs.txt"
+printf 'docs/../.mcp.json\n' > "$PL/mcp-dotdot.txt"
+printf 'a/./.mcp.json\n' > "$PL/mcp-dot.txt"
+printf 'docs//.mcp.json\n' > "$PL/mcp-dslash.txt"
+printf 'src/__init__.py\n_config.yml\n' > "$PL/underscore-ok.txt"           # underscores inside a bare path stay bare
 printf 'billing/x.ts\n' > "$PL/billing.txt"
 : > "$PL/empty.txt"
 i=0; : > "$PL/many.txt"; while [ $i -lt 16 ]; do printf 'docs/f%s.md\n' "$i" >> "$PL/many.txt"; i=$((i+1)); done
@@ -791,11 +806,14 @@ prun "$PL/empty.txt"
 prun "$PL/claude.txt"
 [ "$(j '.high_risk')" = "true" ] && has_reason "trusted-root: claude.md" && ok "M7 a listed CLAUDE.md ⇒ true with a trusted-root: reason" || no "M7 ($OUT)"
 at_head main
-for pf in claude-count claude-tick claude-bullet; do
+for pf in claude-count claude-tick claude-bullet claude-bold claude-dquote mcp-squote claude-colon claude-paren claude-link claude-pipe hooks-star mcp-under mcp-abs mcp-dotdot mcp-dot mcp-dslash; do
   prun "$PL/$pf.txt"
   [ "$RC" -eq 0 ] && [ "$(j '.high_risk')" = "null" ] && has_reason "unclassifiable: paths_malformed" && grep -q 'paths_malformed' <<<"$ERR" \
     && ok "M7-$pf a decorated line (not a bare path) ⇒ null + unclassifiable: paths_malformed, never a low-risk false" || no "M7-$pf rc=$RC ($OUT)"
 done
+prun "$PL/underscore-ok.txt"
+[ "$RC" -eq 0 ] && [ "$(j '.high_risk')" = "false" ] && ! has_reason "unclassifiable: paths_malformed" \
+  && ok "M7b bare paths holding underscores (src/__init__.py, _config.yml) stay classifiable (false), never paths_malformed" || no "M7b ($OUT)"
 prun "$PL/billing.txt"
 [ "$(j '.high_risk')" = "false" ] && ok "M8a premise: billing/x.ts is low-risk at main (no .agent/risk.json)" || no "M8a ($OUT)"
 at_head base-rj-ok
@@ -831,7 +849,7 @@ if mutant p-nodirs grep -v '^    case "\$p" in "\$ld"\*|\*"/\$ld"\*) reason "pat
 else
   no "M13 mutant not gated"
 fi
-if mutant p-nomalformed awk '/^  if grep -q .\[`\[:space:\]\]. "\$tmp\/paths"; then$/ { sub(/grep -q .*; then$/, "false; then") } { print }' \
+if mutant p-nomalformed awk '/^  if env LC_ALL=C grep -qE "\$PATHS_NOT_BARE_ERE" "\$tmp\/paths"; then$/ { sub(/env LC_ALL=C grep -qE .*; then$/, "false; then") } { print }' \
    && grep -q '^  if false; then$' "$MS"; then
   PS="$MS" prun "$PL/claude-count.txt"
   [ "$(j '.high_risk')" = "false" ] && ok "M14 (mutant) the decorated-line guard disarmed ⇒ 'CLAUDE.md (40)' reads false — M7-claude-count is live" || no "M14 mutant not discriminated ($OUT)"

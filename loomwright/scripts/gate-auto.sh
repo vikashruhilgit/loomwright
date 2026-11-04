@@ -14,8 +14,8 @@
 #          [--risk-diff <base> <head>] [--destructive] [--runfile <path>] [--off] [--root <dir>]
 #             prints exactly ONE line: `answer <label>` (the row's `!` label, marker removed) or
 #             `ask <trigger>`. Triggers, checked in this order (the first that fires is printed):
-#               off         the off switch: `--off`; a `auto_gates: off` field in the run file's
-#                           `## Run Config`; `auto_gates: false` in <root>/.supervisor/lane.json; or
+#               off         the off switch: `--off`; a `auto_gates:` field in the run file's
+#                           `## Run Config` (`off`, or any value but `on`); `auto_gates: false` in <root>/.supervisor/lane.json; or
 #                           `{"auto_gates": false}` in <root>/.supervisor/config.json (read with
 #                           `has("auto_gates")` — a `false` never collapses to "unset"; any present
 #                           non-`true` value turns it off, fail toward asking)
@@ -95,11 +95,15 @@ _ga_flag() {
   jq -r 'if has("auto_gates") then (.auto_gates | tojson) else empty end' "$1" 2>/dev/null
 }
 
-# _ga_runconfig_off <runfile> — 0 when the run file's `## Run Config` carries an `auto_gates: off` field
-# (its own `- auto_gates: off` line, or a `| auto_gates: off` field of a joined line).
+# _ga_runconfig_off <runfile> — 0 when the run file's `## Run Config` carries an `auto_gates:` field
+# (its own `- auto_gates: …` line, or a `| auto_gates: …` field of a joined line) whose value is not
+# exactly `on`. The writer only ever writes `off`; any other present value (`false`, `OFF`, `no`, empty)
+# is off too — fail toward asking, as the JSON sources read any present non-`true` value.
 _ga_runconfig_off() {
   awk '/^## / { sec = $0; next }
-    sec == "## Run Config" && /(^-[ \t]+|\|[ \t]*)auto_gates:[ \t]*off[ \t]*(\||$)/ { f = 1 }
+    sec == "## Run Config" && /^-[ \t]/ { n = split($0, fs, "|")
+      for (i = 1; i <= n; i++) { x = fs[i]; if (i == 1) sub(/^-/, "", x); gsub(/^[ \t]+|[ \t]+$/, "", x)
+        if (x ~ /^auto_gates:/) { sub(/^auto_gates:[ \t]*/, "", x); if (x != "on") f = 1 } } }
     END { exit !f }' "$1" 2>/dev/null
 }
 
