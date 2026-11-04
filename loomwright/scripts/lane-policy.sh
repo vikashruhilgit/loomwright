@@ -148,6 +148,8 @@ _lp_catalog_rows() {
     'Launch Pad Phase 2 clarification'
   _lp_row LP-NO-GO     human-only 'Override and continue|Revise goal|Abort' \
     'Launch Pad Phase 2.5 feasibility NO-GO'
+  _lp_row LP-SCOPE     human-only 'Extend Touches|Revise plan|Stop' \
+    'Launch Pad Phase 6, before the save question: ONE ask listing every brief path outside the item Touches (automate-lanes.sh scope-outside); Extend records them in the brief ## Scope widening section; human-only by owner decision; cannot ask ⇒ scope_widening_non_interactive, nothing saved'
   _lp_row LP-SAVE-NOTE auto       'Save and exit!|Refine further?|Edit sections?|Discard' \
     'Launch Pad Phase 6 save on a Plan Review PASS that carries any issue or note (Refine / Edit only while a review attempt is left); auto by owner decision unless an issue is MEDIUM or higher or the File Impact Map paths are high-risk, never answered by a policy'
   _lp_row LP-NEEDHUMAN human-only 'Override and save|Refine further?|Discard' \

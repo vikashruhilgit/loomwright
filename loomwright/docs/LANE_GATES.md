@@ -78,6 +78,7 @@ Every decision leaves a record. `gate-auto.sh record <runfile> <code> <label> <r
 | `PO-RULE-MUST` | human-only | `Refine requirements` · `Change the rule via /rules` · `Abort` | Product Owner pre-persist house-rule check on a must-rule conflict (no override option: a must rule is never overridden) |
 | `LP-CLARIFY` | human-only | `(free text)` | Launch Pad Phase 2 clarification |
 | `LP-NO-GO` | human-only | `Override and continue` · `Revise goal` · `Abort` | Launch Pad Phase 2.5 feasibility NO-GO |
+| `LP-SCOPE` | human-only | `Extend Touches` · `Revise plan` · `Stop` | Launch Pad Phase 6, before the save question: ONE ask listing every brief path outside the item Touches (automate-lanes.sh scope-outside); Extend records them in the brief ## Scope widening section; human-only by owner decision; cannot ask ⇒ scope_widening_non_interactive, nothing saved |
 | `LP-SAVE-NOTE` | auto | `Save and exit!` · `Refine further?` · `Edit sections?` · `Discard` | Launch Pad Phase 6 save on a Plan Review PASS that carries any issue or note (Refine / Edit only while a review attempt is left); auto by owner decision unless an issue is MEDIUM or higher or the File Impact Map paths are high-risk, never answered by a policy |
 | `LP-NEEDHUMAN` | human-only | `Override and save` · `Refine further?` · `Discard` | Plan Review NEEDS_HUMAN, or any MEDIUM-or-higher finding (Refine only while a review attempt is left) |
 | `LP-EXEC-ACC` | human-only | `approve-and-stamp` · `strip-cmd-bullets` · `discard` | Launch Pad executable-acceptance stamp |
