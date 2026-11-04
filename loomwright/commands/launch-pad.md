@@ -221,7 +221,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 
 ### Phase 6: REFINE & SAVE (Interactive)
 
-1. Present brief with Plan Review status. Then, before any save question, the outside-Touches check (agent Phase 6 action 1a): `automate-lanes.sh scope-outside` lists the brief paths outside the item's Touches; `outside`/`unreadable` ⇒ ONE `header: "LP-SCOPE"` ask, `Extend Touches` (recorded in the brief's `## Scope widening`) · `Revise plan` · `Stop`; `inside`/`unknown` ⇒ no question
+1. Present brief with Plan Review status. Then, before any save question, the outside-Touches check (agent Phase 6 action 1a): `automate-lanes.sh scope-outside` lists the brief paths outside the item's Touches; `outside`/`unreadable` ⇒ ONE `header: "LP-SCOPE"` ask, `Extend Touches` (recorded in the brief's `## Scope widening`) · `Revise plan` · `Stop`; `inside`/`unknown` ⇒ no question; in a `--parallel N > 1` lane no question either — the paths go in `## Scope widening` with `- decision: pending-coordinator` for the coordinator's re-gate
 2. Options: Save (PASS or user override) / Refine / Edit / Discard. On a PASS a run that could ask first runs `gate-auto.sh decide` exactly as `agents/launch-pad.md` Phase 6 action 3 says (read that action): `answer` saves with no question, `ask` asks as before
 3. On save: `mkdir -p .supervisor/jobs/pending`, write `{date}-{slug}.md`
 4. Output exact Supervisor command: `/supervisor job: .supervisor/jobs/pending/{file}.md`
