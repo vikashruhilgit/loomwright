@@ -64,6 +64,12 @@
 # the owner's per-item approval, writes ONLY one requirement file under <root>/.supervisor/requirements/,
 # only under `--confirm` (without it: prints the block, writes nothing, exit 1) — appended through a
 # temp copy + mv; never git, never `gh`. (`item-state` / `backlog` beside it are read-only.)
+# A seventh carve-out, in THIS process: `followup-bundle` (automate-helpers.d/followup.sh), run only on
+# the owner's explicit invocation, writes ONLY one requirement file under <root>/.supervisor/requirements/
+# (never inside proposed/; a temp copy beside it + mv), removes exactly the named follow-up drafts from
+# proposed/ and appends one `## Progress` line per draft whose run file exists (through progress-append),
+# all only under `--confirm` (without it: prints the file, writes nothing); never git, never `gh`.
+# (`followup-nudge` beside it is read-only.)
 # UNCOUNTED by the
 # doc-currency gate (it is a plain script, not an agent/command/skill/hook).
 #
@@ -176,7 +182,7 @@ _ah_bundle() {
 }
 # _AH_HELP_SEGMENTS — the --help usage order: an explicit list, never a glob. A family name is that
 # family's `#:  ` block; an hdr-* name is the dispatcher header group its `#:@ <name>` line opens.
-_AH_HELP_SEGMENTS="config runfile intake resume hdr-gate learning escalation reconcile-status hdr-trail meta plan-waves right-size backlog hdr-lanes"
+_AH_HELP_SEGMENTS="config runfile intake resume hdr-gate learning escalation reconcile-status hdr-trail meta plan-waves right-size backlog followup hdr-lanes"
 # _ah_usage [<dispatcher>] — print the `#:  ` usage lines of _ah_bundle's output as `  <line>`, one
 # segment at a time in _AH_HELP_SEGMENTS order. A line's segment is the family whose
 # `# >>> automate-helpers.d/<name>.sh` markers enclose it, else the dispatcher's open `#:@` group.
@@ -1103,6 +1109,9 @@ _ah_source right-size
 # >>> automate-helpers.d/backlog.sh
 _ah_source backlog
 # <<< automate-helpers.d/backlog.sh
+# >>> automate-helpers.d/followup.sh
+_ah_source followup
+# <<< automate-helpers.d/followup.sh
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
@@ -1138,6 +1147,8 @@ main() {
     item-state)      item_state "$@" ;;
     backlog)         backlog_board "$@" ;;
     backlog-stamp)   backlog_stamp "$@" ;;
+    followup-bundle) followup_bundle "$@" ;;
+    followup-nudge)  followup_nudge "$@" ;;
     # Post-park lifecycle MUTATORS live in the sibling automate-trail.sh (the
     # read-only carve-out named in the header) — one mover per concern.
     sidecar-check|trail-pr|closeout|trail-unstage|trail-gate) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;

@@ -68,6 +68,10 @@
 #       and no requirements tree (bn4); the four pin mutations, each gated (bn5); host mode with
 #       no valid state dir (empty SR_STATE) ⇒ no reader call, no line, with a valid-state-dir
 #       control and a gated mutant (bn6). (zb) above also carries a requirements tree (AC6).
+#   (fn1)-(fn4) the follow-up nudge (dismissed-followups/01, startup-arm block 8): one follow-up
+#       draft past the threshold ⇒ exactly followup-nudge's line (fn1); younger ⇒ zero bytes (fn2);
+#       a hung reader ⇒ killed at LOOMWRIGHT_SR_FOLLOWUP_TIMEOUT, no line, rc 0 (fn3); the pin
+#       mutation (the startup_arm_emit call deleted), gated (fn4).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -2014,6 +2018,46 @@ if gate_mutant "$HOOK" "$BM/m5.sh" "(bn6) M5 empty-marker return deleted"; then
   [ "$(bn_calls "$BD")" = 1 ] && [ "$c" = "$BNLINE" ] \
     && ok "(bn6) M5: without the empty-marker return the reader runs and the line prints — the (bn6) assertion turns red" \
     || no "(bn6) M5 did not discriminate: calls=$(bn_calls "$BD") ctx=$c"
+fi
+
+echo "== (fn1)-(fn4) follow-up nudge (dismissed-followups/01): startup-arm block 8 =="
+# The line's only home is the sibling `automate-helpers.sh followup-nudge`; the hook relays it verbatim.
+# fn_tree <repo> — ONE real-shape follow-up draft (`## Status: proposed` first, then the Decision line)
+# with a fixed mtime FN_MT (python's os.utime — no `touch -t`/`date -d`), no ledger, so its age is
+# (LOOMWRIGHT_FOLLOWUP_NOW - FN_MT) / 86400 whole days: the legs pin the age through the NOW seam.
+FN_MT=1767225600
+FNLINE='automate: 1 follow-up drafts, oldest 20d — /backlog --state follow_up, then followup-bundle'
+fn_tree() {
+  local p="$1/.supervisor/requirements/proposed"
+  mkdir -p "$p"
+  printf '# Dismissed finding\n\n## Status: proposed\n\n- **Decision:** follow-up\n- **Run:** automate-2026-01-01-000000\n- **PR:** https://example.invalid/pull/1\n' \
+    > "$p/automate-2026-01-01-000000--01-fn--dismissed-0123abcd.md"
+  python3 -c 'import os, sys; os.utime(sys.argv[1], (int(sys.argv[2]), int(sys.argv[2])))' \
+    "$p/automate-2026-01-01-000000--01-fn--dismissed-0123abcd.md" "$FN_MT"
+}
+# (fn1) the oldest follow-up past the threshold ⇒ startup's additionalContext is exactly the one line.
+FF="$(new_repo)"; fn_tree "$FF"
+c="$(ctx_of "$(run_alt_hook_raw "$HOOK" "$FF" startup LOOMWRIGHT_FOLLOWUP_NOW="$((FN_MT + 20 * 86400))" LOOMWRIGHT_FOLLOWUP_NUDGE_DAYS=14)")"
+[ "$(lastrc)" = 0 ] && [ "$c" = "$FNLINE" ] \
+  && ok "(fn1) one follow-up draft aged 20d ⇒ the additionalContext is exactly '$FNLINE' (one envelope)" || no "(fn1) rc=$(lastrc) ctx: $c err: $(lasterr)"
+# (fn2) younger than the threshold ⇒ zero bytes (the startup arm stays silent).
+FF="$(new_repo)"; fn_tree "$FF"
+raw="$(run_alt_hook_raw "$HOOK" "$FF" startup LOOMWRIGHT_FOLLOWUP_NOW="$((FN_MT + 10 * 86400))" LOOMWRIGHT_FOLLOWUP_NUDGE_DAYS=14)"
+[ "$(lastrc)" = 0 ] && [ -z "$raw" ] && ok "(fn2) a follow-up draft aged 10d (< 14) ⇒ zero bytes, rc 0" || no "(fn2) rc=$(lastrc) out: $raw"
+# (fn3) a reader that outlives LOOMWRIGHT_SR_FOLLOWUP_TIMEOUT is killed at the deadline: no line, rc 0.
+BD="$(bn_dir "$HOOK")"; FF="$(new_repo)"; fn_tree "$FF"
+t0="$(date +%s)"
+raw="$(run_alt_hook_raw "$BD/session-resume.sh" "$FF" startup BN_MODE=hang LOOMWRIGHT_SR_BACKLOG_TIMEOUT=1 LOOMWRIGHT_SR_FOLLOWUP_TIMEOUT=1)"
+t1="$(date +%s)"
+[ "$(lastrc)" = 0 ] && [ -z "$raw" ] && grep -qx 'followup-nudge --root .*' "$BD/calls.log" && [ ! -e "$BD/finished" ] \
+  && ok "(fn3) a hung followup-nudge outlives LOOMWRIGHT_SR_FOLLOWUP_TIMEOUT=1 ⇒ killed (it never finished), no line, rc 0 ($((t1 - t0))s)" \
+  || no "(fn3) hang: rc=$(lastrc) finished=$([ -e "$BD/finished" ] && echo yes || echo no) calls=$(cat "$BD/calls.log") out=$raw"
+# (fn4) pin: the followup_nudge_line call in startup_arm_emit deleted ⇒ the (fn1) line disappears.
+sed '/^ *followup="\$(followup_nudge_line 2>\/dev\/null)"$/d' "$HOOK" > "$BM/fn4.sh"
+if gate_mutant "$HOOK" "$BM/fn4.sh" "(fn4) followup_nudge_line call deleted"; then
+  BD="$(bn_dir "$BM/fn4.sh")"; FF="$(new_repo)"; fn_tree "$FF"
+  c="$(ctx_of "$(run_alt_hook_raw "$BD/session-resume.sh" "$FF" startup LOOMWRIGHT_FOLLOWUP_NOW="$((FN_MT + 20 * 86400))" LOOMWRIGHT_FOLLOWUP_NUDGE_DAYS=14)")"
+  [ "$c" != "$FNLINE" ] && ok "(fn4) without the call the (fn1) exact-line assertion turns red" || no "(fn4) did not discriminate: ctx=$c"
 fi
 
 echo "RESULT: $pass passed, $fail failed"

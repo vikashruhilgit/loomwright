@@ -80,7 +80,7 @@ bl_is "BL4 totals sum to the item count, which is the fixture's item files minus
 bl_is "BL4 --json is ONE JSON object that round-trips (jq -c . | jq -e equal)" \
   "$(jq -s 'length' <<<"$BL_DOC") $([ "$(jq -S -c . <<<"$BL_DOC")" = "$(jq -c . <<<"$BL_DOC" | jq -e -S -c .)" ] && echo equal)" "1 equal"
 bl_is "BL4 the totals object carries exactly the closed set, in order" \
-  "$(jq -r '.totals | keys_unsorted | join(" ")' <<<"$BL_DOC")" "done abandoned parked proposed brief_shipped merged_unstamped pr_open in_flight conflict open unknown"
+  "$(jq -r '.totals | keys_unsorted | join(" ")' <<<"$BL_DOC")" "done abandoned parked proposed follow_up brief_shipped merged_unstamped pr_open in_flight conflict open unknown"
 bl_run "$H" backlog --json --state conflict --root "$T0"
 bl_is "BL4 --state conflict filters the rows; totals stay whole-tree" \
   "$(jq -r '"\([.items[].state] | unique | join(",")) \(.items | length) \(.totals | add) \(.state_filter)"' <<<"$BL_OUT")" "conflict 2 $((BL_NFILES - 5)) conflict"
@@ -88,13 +88,13 @@ bl_run "$H" backlog --state nonsense --root "$T0"
 bl_is "BL4 an unknown --state exits 1 with nothing on stdout" "$BL_RC|$BL_OUT" "1|"
 bl_run "$H" backlog --root "$T0"
 bl_is "BL4 the table's totals line adds up and the header says github: verified" \
-  "$(grep -c '^totals: .* = 23 of 23 items$' <<<"$BL_OUT") $(head -n1 <<<"$BL_OUT")" "1 backlog: 23 items — github: verified — right-size: ok"
+  "$(grep -c '^totals: .* = 24 of 24 items$' <<<"$BL_OUT") $(head -n1 <<<"$BL_OUT")" "1 backlog: 24 items — github: verified — right-size: ok"
 bl_use() { bl_run "$H" "$@" --root "$T0"; printf '%s|%s' "$BL_RC" "$BL_OUT"; }
 bl_is "BL4 usage errors exit 1 with nothing on stdout: --unknown with --verify-list, a stray argument, an unknown flag, a missing named item, two items to item-state" \
   "$(bl_use backlog --unknown --verify-list) $(bl_use backlog bl/14-open) $(bl_use backlog --bogus) $(bl_use backlog --verify-list bl/nope) $(bl_use item-state bl/14-open bl/15-unknown)" "1| 1| 1| 1| 1|"
 bl_s4() { bl_run "$1" backlog --json --root "$T0"; jq -r '"\(.totals | add)/\(.item_count)"' <<<"$BL_OUT"; }
 bl_mut_check "pin AC4: one state dropped from the totals reduction" '    | ($states | split(" ")) as $S' \
-  '    | ($states | split(" ") | .[1:]) as $S' bl_s4 "23/23"
+  '    | ($states | split(" ") | .[1:]) as $S' bl_s4 "24/24"
 
 # ---- BL1 (AC1) item-state's named cases: the appended stamp, no status line, a lane claim, a parked
 # item named by an unfinished run (that run stale_run), a pending item with an older abandoned row.
@@ -203,7 +203,7 @@ bl_s5() {
 }
 bl_is "BL5 gh failing ⇒ github unverified, 0 items with a verified PR field, 0 pr_open, the claimed item in_flight" "$(bl_s5 "$H")" "unverified 0 0 in_flight"
 BL_GH_FAIL=1 bl_run "$H" backlog --root "$T0"
-bl_is "BL5 the table header says github: unverified" "$(head -n1 <<<"$BL_OUT")" "backlog: 23 items — github: unverified — right-size: ok"
+bl_is "BL5 the table header says github: unverified" "$(head -n1 <<<"$BL_OUT")" "backlog: 24 items — github: unverified — right-size: ok"
 BL_UNV="$BL_OUT"
 BL_GH_FAIL=1 bl_run "$H" backlog --json --root "$T0"
 bl_s5b() {
@@ -242,8 +242,8 @@ bl_is "BL6 a later run's # abandoned: row for the kept-open item ⇒ conflict ag
 # ---- BL7 (AC8) the right-size column: ONE call over the whole item list; a failure ⇒ unknown there only.
 : > "$BL/rs.log"
 LOOMWRIGHT_RIGHT_SIZE_BIN="$BL/bin/rsize" bl_run "$H" backlog --json --root "$T0"
-bl_is "BL7 right-size is called once, over all 23 items, and its verdict fills the column" \
-  "$(grep -c '^call ' "$BL/rs.log") $(awk '/^call /{ print $2, $3 }' "$BL/rs.log") $(jq -r '[.items[] | select(.right_size == "ok")] | length' <<<"$BL_OUT")" "1 23 --json 23"
+bl_is "BL7 right-size is called once, over all 24 items, and its verdict fills the column" \
+  "$(grep -c '^call ' "$BL/rs.log") $(awk '/^call /{ print $2, $3 }' "$BL/rs.log") $(jq -r '[.items[] | select(.right_size == "ok")] | length' <<<"$BL_OUT")" "1 24 --json 24"
 bl_is "BL7 the states are the same with the right-size column on" \
   "$(jq -r '.items[] | "\(.item)\t\(.state)"' <<<"$BL_OUT" | env LC_ALL=C sort)" "$BL_WANT"
 BL_RS_FAIL=1 LOOMWRIGHT_RIGHT_SIZE_BIN="$BL/bin/rsize" bl_run "$H" backlog --json --root "$T0"
@@ -396,7 +396,7 @@ bl_s12() {
 bl_is "BL12 --offline: exit 0, zero gh calls, zero right-size calls, github unverified, right_size unknown on the doc and every item, and every item's state/evidence equal the failing-gh read" \
   "$(bl_s12 "$H")" "0 0 0 unverified unknown 0 same-as-gh-failure"
 bl_is "BL12 the failing-gh baseline really is the failure path (the comparison is not vacuous)" \
-  "$(jq -r '"\(.github) \(.item_count)"' <<<"$BL_FAILDOC")" "unverified 23"
+  "$(jq -r '"\(.github) \(.item_count)"' <<<"$BL_FAILDOC")" "unverified 24"
 bl_mut_check "pin pa25 AC1: the --offline guard removed from _bl_context (both gh reads run)" \
   '  if [ "$offline" = 1 ]; then rc1=1; rc2=1' '  if false; then :' bl_s12 "0 0 0 unverified unknown 0 same-as-gh-failure"
 bl_mut_check "pin pa25 AC1: the --offline guard removed from the right-size job" \
@@ -407,12 +407,70 @@ bl_is "BL12 --offline is accepted with --state, --unknown, --verify-list [<item>
   "$(bl_off --json --state conflict) $(bl_off --unknown) $(bl_off --verify-list) $(bl_off --verify-list bl/14-open) $(bl_off)" "0:0 0:0 0:0 0:0 0:0"
 bl_off --state conflict --json >/dev/null
 bl_is "BL12 --offline --state keeps whole-tree totals and filters rows" \
-  "$(jq -r '"\(.state_filter) \(.totals | add) \([.items[].state] | unique | join(",")) \(.items | length)"' <<<"$BL_OUT")" "conflict 23 conflict $(jq -r '.totals.conflict' <<<"$BL_FAILDOC")"
+  "$(jq -r '"\(.state_filter) \(.totals | add) \([.items[].state] | unique | join(",")) \(.items | length)"' <<<"$BL_OUT")" "conflict 24 conflict $(jq -r '.totals.conflict' <<<"$BL_FAILDOC")"
 bl_run "$H" backlog --offline --root "$T0"
-bl_is "BL12 the --offline table header reads github: unverified, right-size: unknown" "$(head -n1 <<<"$BL_OUT")" "backlog: 23 items — github: unverified — right-size: unknown"
+bl_is "BL12 the --offline table header reads github: unverified, right-size: unknown" "$(head -n1 <<<"$BL_OUT")" "backlog: 24 items — github: unverified — right-size: unknown"
 bl_run "$H" backlog --verify-list bl/14-open --offline --root "$T0"
 bl_is "BL12 --verify-list --offline says every candidate is unverified" \
   "$([ "$(grep -c '^  candidate: unverified ' <<<"$BL_OUT")" = "$(grep -c '^verify	' <<<"$BL_OUT")" ] && [ "$(grep -c '^verify	' <<<"$BL_OUT")" -gt 0 ] && echo all-unverified)" "all-unverified"
 bl_run "$H" item-state bl/14-open --offline --root "$T0"
 bl_is "BL12 item-state takes no --offline flag (usage error, exit 1, nothing on stdout)" "$BL_RC|$BL_OUT" "1|"
+
+# ---- BL13 (dismissed-followups/01 AC1) a follow-up dismissed draft reads `follow_up` with an age. The
+# fixture draft has the REAL shape (`## Status: proposed` first, then `- **Decision:** follow-up`); its
+# run's ledger holds one follow-up row at 2026-10-20T10:00:00Z. LOOMWRIGHT_FOLLOWUP_NOW (followup.sh's
+# clock seam) pins the clock at 2026-10-25T12:00:00Z (epoch 1792929600) ⇒ 5 whole days.
+BL_FUN=1792929600
+BL_FU="proposed/automate-2026-10-12-100000--17-in-flight-0a1b2c--dismissed-5e6f7a8b"
+BL_FUEV="run automate-2026-10-12-100000, PR https://github.com/acme/widgets/pull/117"
+bl_fu() { LOOMWRIGHT_FOLLOWUP_NOW="$BL_FUN" bl_run "$1" item-state "$BL_FU" --root "$2"; printf '%s' "$BL_OUT"; }
+bl_is "BL13 a real-shape follow-up draft reads follow_up, aged from its ledger row's ts" \
+  "$(bl_fu "$H" "$T0")" "follow_up	$BL_FU	follow-up 5d — $BL_FUEV"
+bl_is "BL13 the fixture draft really has the real shape (## Status: proposed is its first status line)" \
+  "$(grep -m1 '^## Status:' "$T0/.supervisor/requirements/$BL_FU.md")" "## Status: proposed"
+bl_fu_state() { bl_fu "$1" "$T0" | cut -f1; }
+bl_mut_check "pin AC1: the BL_S=follow_up assignment deleted" '    BL_S=follow_up' __DELETE__ bl_fu_state "follow_up"
+# the follow_up test moved below the proposed test (one-line form of the move): a real draft reads proposed
+bl_mut_check "pin AC1: follow_up decided AFTER the proposed first-status test" '  elif [ -n "$P_FU" ]; then' \
+  '  elif [[ "$fs" =~ $_BL_RE_PROPOSED ]]; then BL_S=proposed; BL_E="$fs"; elif [ -n "$P_FU" ]; then' bl_fu_state "follow_up"
+bl_s13k() { bl_run "$1" backlog --json --offline --root "$T0"; jq -r '.totals | keys_unsorted | join(" ")' <<<"$BL_OUT"; }
+bl_mut_check "pin AC1: follow_up dropped from _BL_STATES (the totals key order)" \
+  '_BL_STATES="done abandoned parked proposed follow_up brief_shipped' \
+  '_BL_STATES="done abandoned parked proposed brief_shipped merged_unstamped pr_open in_flight conflict open unknown"' \
+  bl_s13k "done abandoned parked proposed follow_up brief_shipped merged_unstamped pr_open in_flight conflict open unknown"
+# no ledger ⇒ the draft's mtime, labelled. touch -t is POSIX (TZ=UTC pins its reading): 2026-10-15T00:00Z ⇒ 10d.
+T13="$(bl_tree t13)"; BL_FUF="$T13/.supervisor/requirements/$BL_FU.md"
+rm -f "$T13/.supervisor/automate/automate-2026-10-12-100000.dismissed-decisions"; TZ=UTC touch -t 202610150000 "$BL_FUF"
+bl_is "BL13 no ledger ⇒ aged from the draft's mtime, labelled (mtime)" "$(bl_fu "$H" "$T13")" "follow_up	$BL_FU	follow-up 10d (mtime) — $BL_FUEV"
+bl_s13m() { bl_fu "$1" "$T13" | cut -f3; }
+bl_mut_check "pin AC1: the (mtime) label dropped" '    t, label = None, " (mtime)"' '    t, label = None, " ()"' bl_s13m "follow-up 10d (mtime) — $BL_FUEV"
+# a readable ledger with no row for this draft ⇒ mtime too
+printf 'other--dismissed-00000000.md\tfollow-up\t2026-10-01T00:00:00Z\n' > "$T13/.supervisor/automate/automate-2026-10-12-100000.dismissed-decisions"
+bl_is "BL13 a readable ledger with no follow-up row for the draft ⇒ mtime" "$(bl_fu "$H" "$T13" | cut -f3)" "follow-up 10d (mtime) — $BL_FUEV"
+# an EXISTING but unreadable ledger (a directory: unreadable even to root) ⇒ mtime, and it says so
+rm -f "$T13/.supervisor/automate/automate-2026-10-12-100000.dismissed-decisions"; mkdir "$T13/.supervisor/automate/automate-2026-10-12-100000.dismissed-decisions"
+bl_is "BL13 an unreadable ledger ⇒ aged from mtime, and the evidence says the ledger was unreadable" \
+  "$(bl_fu "$H" "$T13")" "follow_up	$BL_FU	follow-up 10d (mtime — ledger unreadable) — $BL_FUEV"
+bl_s13u() { bl_fu "$1" "$T13" | cut -f3; }
+bl_mut_check "pin AC1: the unreadable-ledger label dropped" '        label = " (mtime — ledger unreadable)"' '        label = " (mtime — ledger)"' \
+  bl_s13u "follow-up 10d (mtime — ledger unreadable) — $BL_FUEV"
+# an undecided draft (same shape, Decision undecided) and the hand-written proposals still read proposed;
+# a follow-up draft below proposed/ (not directly under it) is no follow-up draft; a done stamp still wins
+BL_UND="proposed/automate-2026-10-12-100000--17-in-flight-0a1b2c--dismissed-9c9c9c9c"
+sed 's/^- \*\*Decision:\*\* follow-up$/- **Decision:** undecided/' "$T0/.supervisor/requirements/$BL_FU.md" > "$T13/.supervisor/requirements/$BL_UND.md"
+mkdir -p "$T13/.supervisor/requirements/proposed/sub"
+cp "$T0/.supervisor/requirements/$BL_FU.md" "$T13/.supervisor/requirements/proposed/sub/x--dismissed-1f1f1f1f.md"
+BL_DN="proposed/automate-2026-10-12-100000--17-in-flight-0a1b2c--dismissed-d0d0d0d0"
+{ cat "$T0/.supervisor/requirements/$BL_FU.md"; printf '\n## Status: done\n'; } > "$T13/.supervisor/requirements/$BL_DN.md"
+LOOMWRIGHT_FOLLOWUP_NOW="$BL_FUN" bl_run "$H" backlog --json --offline --root "$T13"
+bl_is "BL13 undecided draft, hand-written proposals, a nested draft and a done-stamped follow-up draft read proposed / proposed / proposed / proposed / done" \
+  "$(jq -r --arg u "$BL_UND" --arg d "$BL_DN" '[.items[] | select(.item == $u or .item == "proposed/bl-draft" or .item == "bl/04-proposed" or .item == "proposed/sub/x--dismissed-1f1f1f1f" or .item == $d)
+      | (if .item == $u then "undecided" elif .item == $d then "done-stamped" else .item end) + "=" + .state] | sort | join(" ")' <<<"$BL_OUT")" \
+  "bl/04-proposed=proposed done-stamped=done proposed/bl-draft=proposed proposed/sub/x--dismissed-1f1f1f1f=proposed undecided=proposed"
+bl_is "BL13 totals still sum to item_count with follow_up in the set (27 items: the fixture's 24 + 3 drafts)" \
+  "$(jq -r '"\(.totals | add) \(.item_count) \(.totals.follow_up) \(.totals.proposed)"' <<<"$BL_OUT")" "27 27 1 4"
+LOOMWRIGHT_FOLLOWUP_NOW="$BL_FUN" bl_run "$H" backlog --json --offline --state follow_up --root "$T13"
+bl_is "BL13 --state follow_up lists only the follow-up draft, totals whole-tree" \
+  "$(jq -r '"\([.items[].item] | join(",")) \(.totals | add) \(.state_filter)"' <<<"$BL_OUT")" "$BL_FU 27 follow_up"
+bl_is "BL13 the board never printed an absolute path for a follow-up row" "$(grep -c "$BL" <<<"$BL_OUT")" "0"
 rm -rf "$BL"

@@ -38,3 +38,46 @@ else no "P12: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_resume_auto_risk "$DRIVER"; then ok "P13 (D8): the AUT-RESUME auto_answer's risk read — an open PR's docs-only diff ⇒ \"Continue\" naming it; an agents/ diff, an unreadable PR or one without a head sha ⇒ null high_risk; no PR ⇒ \"Continue\", no risk read; the driver writes no auto-* record"
 else no "P13: $LEG_MSG"; fi
+# leg_followup_nudge <driver> — dismissed-followups/01 AC6: the interactive PICK `pending` step relays
+# followup-nudge's one line on stderr ONCE (a replayed step does not repeat it), never an ask or a park,
+# the run file untouched and NEXT unchanged (reconcile: nothing of this run is undecided); --non-interactive
+# and a draft younger than the threshold emit nothing. The draft is real-shape (`## Status: proposed` first)
+# with a fixed mtime (python's os.utime), so its age is pinned through LOOMWRIGHT_FOLLOWUP_NOW.
+leg_followup_nudge() {
+  local drv="$1" mt=1767225600 p d line want
+  line='automate: 1 follow-up drafts, oldest 20d — /backlog --state follow_up, then followup-bundle'
+  want="next-step: $line (reported — not a block)"
+  fn_case() { # <now days> — a fresh scratch with one follow-up draft and the pending-only seams
+    new_scratch "$FIX/pick-current-set-then-picked" || return 1
+    p="$CASE_ROOT/.supervisor/requirements/proposed"; d="$p/automate-2026-01-01-000000--01-fn--dismissed-0123abcd.md"
+    mkdir -p "$p" && printf '# Dismissed finding\n\n## Status: proposed\n\n- **Decision:** follow-up\n- **Run:** automate-2026-01-01-000000\n- **PR:** https://example.invalid/pull/1\n' > "$d" \
+      && python3 -c 'import os, sys; os.utime(sys.argv[1], (int(sys.argv[2]), int(sys.argv[2])))' "$d" "$mt" || return 1
+    printf 'NEXT_STEP_FROM=pending\nNEXT_STEP_UNTIL=pending\nLOOMWRIGHT_FOLLOWUP_NOW=%s\nLOOMWRIGHT_FOLLOWUP_NUDGE_DAYS=14\n' "$((mt + $1 * 86400))" > "$CASE_DIR/seams.fu"
+    cp "$CASE_RF" "$CASE_DIR/before.md"
+  }
+  fn_next() { jq -r '.next // empty' "$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json" 2>/dev/null; }
+  fn_case 20 || { LEG_MSG="scratch"; return 1; }
+  p_seamed "$CASE_DIR/seams.fu" "$drv" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && [ "$(grep -cxF -- "$want" <<<"$NC_ERR")" = 1 ] && [ -z "$NC_OUT" ] && [ "$(fn_next)" = reconcile ] \
+    && cmp -s "$CASE_DIR/before.md" "$CASE_RF" \
+    || { LEG_MSG="interactive: exit $NC_RC, stdout '${NC_OUT:0:80}', next=$(fn_next), stderr '${NC_ERR:0:240}'"; return 1; }
+  # a replay of the same PICK step (the sidecar keeps the once-key) does not repeat the line
+  printf 'NEXT_STEP_FROM=pending\nNEXT_STEP_UNTIL=pending\nLOOMWRIGHT_FOLLOWUP_NOW=%s\nLOOMWRIGHT_FOLLOWUP_NUDGE_DAYS=14\n' "$((mt + 20 * 86400))" > "$CASE_DIR/seams.fu"
+  p_seamed "$CASE_DIR/seams.fu" "$drv" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && ! grep -qF -- "$line" <<<"$NC_ERR" || { LEG_MSG="replay: exit $NC_RC, the line was repeated: '${NC_ERR:0:240}'"; return 1; }
+  fn_case 20 || { LEG_MSG="scratch (non-interactive)"; return 1; }
+  p_seamed "$CASE_DIR/seams.fu" "$drv" --session-id "$P_SID" --non-interactive
+  [ "$NC_RC" = 0 ] && ! grep -qF -- "follow-up drafts" <<<"$NC_ERR" && [ "$(fn_next)" = reconcile ] \
+    || { LEG_MSG="--non-interactive: exit $NC_RC, next=$(fn_next), stderr '${NC_ERR:0:240}'"; return 1; }
+  fn_case 10 || { LEG_MSG="scratch (younger)"; return 1; }
+  p_seamed "$CASE_DIR/seams.fu" "$drv" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && ! grep -qF -- "follow-up drafts" <<<"$NC_ERR" && [ "$(fn_next)" = reconcile ] \
+    || { LEG_MSG="younger than the threshold: exit $NC_RC, next=$(fn_next), stderr '${NC_ERR:0:240}'"; return 1; }
+  return 0
+}
+LEG_MSG=""
+if leg_followup_nudge "$DRIVER"; then ok "P14 (dismissed-followups/01 AC6): interactive PICK relays followup-nudge's line once on stderr (not on a replay), never an ask or a park, run file untouched, next: reconcile; --non-interactive / a draft younger than 14d ⇒ nothing"
+else no "P14: $LEG_MSG"; fi
+LEG_MSG=""
+if m="$(build_mutant fu-nudge 'local fl; fl="$(bash "$H" followup-nudge --root "$ROOT" 2>/dev/null | head -n 1)"' 'local fl=""')" && ! leg_followup_nudge "$m"; then ok "P14 pin: the followup-nudge call deleted from the pending step ⇒ the P14 leg turns red"
+else no "P14 pin: the mutant was not built or did not discriminate"; fi
