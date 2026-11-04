@@ -102,3 +102,9 @@ loomwright/scripts/fixtures/proposed-readme/README.md
 loomwright/commands/backlog.md
 loomwright/commands/propose.md
 loomwright/skills/automate-loop/per-item-loop.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-04T05:50:32Z
+- **Brief:** .supervisor/jobs/done/2026-11-04-follow-up-decision-becomes-tracked-work.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/816
