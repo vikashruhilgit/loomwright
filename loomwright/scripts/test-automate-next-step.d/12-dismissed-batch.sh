@@ -214,7 +214,7 @@ db_ac5() {
   db_call "$drv" "$CASE_DIR/seams.none" --result '{"answers":["Fix none (follow-up all)"]}'
   [ "$DB_RC" = 0 ] && [ "$(db_jq -r .do)" = park ] || { db_fail "Fix none: want the park"; return 1; }
   bad="$(db_jq -r '.auto_followed_up[]?' | grep -vxE "\.supervisor/requirements/proposed/$CASE_RUN--[A-Za-z0-9._-]+--dismissed-[0-9a-f]{8}\.md")"
-  [ "$(db_jq '.auto_followed_up | length')" = 2 ] && [ -z "$bad" ] && ! db_jq -r .message | grep -qF DBPWN \
+  [ "$(db_jq '.auto_followed_up | length')" = 2 ] && [ -z "$bad" ] && ! grep -qF DBPWN < <(db_jq -r .message) \
     || { LEG_MSG="auto_followed_up $(db_jq -c .auto_followed_up) / message '$(db_jq -r .message)': want 2 script-built draft paths, no finding text"; return 1; }
   [ -z "$(find "$CASE_DIR" -name 'DBPWN*' 2>/dev/null)" ] || { LEG_MSG="the canary EXECUTED: $(find "$CASE_DIR" -name 'DBPWN*')"; return 1; }
   h1="$(grep '^## ' "$CASE_RF")"

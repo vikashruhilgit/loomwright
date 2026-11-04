@@ -445,7 +445,7 @@ o="$(bash "$H" dismissed-decide "$RF" "$FO" follow-up --auto)"
 [ "$o" = "dismissed-decide: follow-up $FON" ] && [ -f "$FO" ] && grep -qxF -- "- **Decision:** follow-up" "$FO" && [ "$(grep -c '^- \*\*Decision:\*\*' "$FO")" = 1 ] \
   && ok "per-finding --auto follow-up is accepted: one decide line, the draft kept, its Decision rewritten follow-up" || no "per-finding --auto: [$o] $(grep '^- \*\*Decision' "$FO" 2>/dev/null)"
 [ "$(wc -l < "$LF" | tr -d ' ')" = "$((l0 + 1))" ] \
-  && tail -n 1 "$LF" | grep -qxE "$(printf '%s' "$FON" | sed 's/[.]/[.]/g')	follow-up	[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z	auto" \
+  && grep -qxE "$(printf '%s' "$FON" | sed 's/[.]/[.]/g')	follow-up	[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z	auto" < <(tail -n 1 "$LF") \
   && ok "per-finding --auto follow-up writes the \\tauto column: exactly one new ledger row '<name>\\tfollow-up\\t<ts>\\tauto'" || no "per-finding auto row: $(tail -n 1 "$LF" | tr '\t' '|')"
 [ "$(progress_n)" = "$((p0 + 1))" ] \
   && [ "$(grep -cE "^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z dismissed: follow-up $FON — followed up automatically \\(no question\\)\$" "$RF")" = 1 ] \
