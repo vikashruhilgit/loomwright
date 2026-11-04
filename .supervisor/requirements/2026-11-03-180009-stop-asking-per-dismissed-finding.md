@@ -132,3 +132,9 @@ loomwright/scripts/lane-policy.sh
 loomwright/docs/LANE_GATES.md
 loomwright/skills/automate-loop/per-item-loop.md
 changelog.d/
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-04T15:25:20Z
+- **Brief:** .supervisor/jobs/done/2026-11-04-stop-asking-per-dismissed-finding.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/820
