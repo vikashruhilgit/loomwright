@@ -6,7 +6,7 @@ LEG_MSG=""
 if leg_reconcile_leftover "$DRIVER"; then ok "P2 (AC3): RECONCILE's closeout leftovers ⇒ AUT-LEFTOVER (4 a call, catalog labels, header \"AUT-LEFTOVER\"); cant_ask / --non-interactive ⇒ closeout_leftover park, one line per leftover, no trail-pr, no PICK"
 else no "P2: $LEG_MSG"; fi
 LEG_MSG=""
-if leg_resume_entry "$DRIVER"; then ok "P3 (AC4): one run, no --run, can't ask ⇒ resume_requires_flag_non_interactive stop, nothing written; AUT-RESUME asked + re-printed; cant_ask / Start new write nothing; continue restores a stranded config backup"
+if leg_resume_entry "$DRIVER"; then ok "P3 (AC4): one run, no --run, can't ask ⇒ resume_requires_flag_non_interactive stop, nothing written; AUT-RESUME asked + re-printed (auto_answer \"Continue\"; null under auto_gates: off, two runs, a rebuilt ## Current); cant_ask / Start new write nothing; continue restores a stranded config backup"
 else no "P3: $LEG_MSG"; fi
 LEG_MSG=""
 if m="$(build_mutant co - '-append:# co-helpers')" && leg_start_closeout_others "$m"; then ok "P4 (AC3): closeout-others at start — a run_lock_held row is recorded, never a leftover; a leftover row ⇒ the closeout_leftover park before the PICK lock"
@@ -35,3 +35,6 @@ else no "P11: $LEG_MSG"; fi
 LEG_MSG=""
 if leg_watch_registry "$DRIVER"; then ok "P12 (af/39e AC10/AC11/AC16): the default ns_watch launch ⇒ the watcher registers ONE merge-watch entry for its own (marker) pid with its cap, run file and stop hint; an unwritable registry changes neither the driver's exit/output nor the watcher log"
 else no "P12: $LEG_MSG"; fi
+LEG_MSG=""
+if leg_resume_auto_risk "$DRIVER"; then ok "P13 (D8): the AUT-RESUME auto_answer's risk read — an open PR's docs-only diff ⇒ \"Continue\" naming it; an agents/ diff, an unreadable PR or one without a head sha ⇒ null high_risk; no PR ⇒ \"Continue\", no risk read; the driver writes no auto-* record"
+else no "P13: $LEG_MSG"; fi

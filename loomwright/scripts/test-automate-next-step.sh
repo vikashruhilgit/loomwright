@@ -116,7 +116,8 @@
 #       line per leftover, no trail-pr. P3 (AC4): one run, no --run, can't ask ⇒ the
 #       resume_requires_flag_non_interactive stop with .supervisor/ byte-unchanged; AUT-RESUME asked and
 #       re-printed; its cant_ask / Start new write nothing to the run; continue restores a stranded config
-#       backup. P4 (AC3): closeout-others at start — a `run_lock_held` row is a record, never a leftover; a
+#       backup. P3 also pins the ask's auto_answer (D8): "Continue" for one run, null under `## Run Config`
+#       `auto_gates: off`, two runs or a rebuilt ## Current, and a cant_ask on a "Continue" ask still stops. P4 (AC3): closeout-others at start — a `run_lock_held` row is a record, never a leftover; a
 #       `leftover` row parks closeout_leftover before the PICK lock (a wrapper automate-helpers.sh beside a
 #       driver copy prints the fixed closeout-others answer). P5: current-set BEFORE the `picked` line. P6:
 #       brief-repair-merged through RECONCILE's closeout (the case itself is a pure helper call). P7: a crashed /
@@ -137,7 +138,9 @@
 #       ns_watch launch (no NEXT_STEP_WATCH_CMD; gh stubbed OPEN via LOOMWRIGHT_GH_BIN) starts the real watcher,
 #       which registers ONE merge-watch entry for its own (marker) pid with its cap, run file and stop hint
 #       (proc-registry.sh, this suite's own LOOMWRIGHT_PROC_REGISTRY_DIR); an unwritable registry changes neither
-#       the driver's exit/output nor the watcher log. Every watcher started is TERMed (marker removed).
+#       the driver's exit/output nor the watcher log. Every watcher started is TERMed (marker removed). P13
+#       (D8): the AUT-RESUME auto_answer's risk read over ## Current's PR (a real docs-only / agents/ diff in
+#       the case repo, gh stubbed OPEN / unreadable / sha-less; no PR ⇒ no risk read).
 #   V8  RUNNING SYSTEM (Validation 3 of automate-speed/08): a scratch repo (gh stubbed, the real run-lock.sh),
 #       a run parked awaiting_merge whose PR the stub reads MERGED, driven through `--resume`: the closeout
 #       lines through the next `picked` line are printed between `V3-08>` markers.
@@ -368,7 +371,9 @@ in_case() {
   fi
   (
     cd "$CASE_ROOT" || exit 98
-    unset LOOMWRIGHT_GH_BIN LOOMWRIGHT_HOLDER_PID NEXT_STEP_FROM NEXT_STEP_UNTIL NEXT_STEP_CLOSEOUT_OUT
+    # LOOMWRIGHT_PHASE_DIR: a run started inside a live phase session inherits it, and gate-auto.sh resolves
+    # a run file from it when given none — a case never reaches that session's real run file
+    unset LOOMWRIGHT_GH_BIN LOOMWRIGHT_HOLDER_PID NEXT_STEP_FROM NEXT_STEP_UNTIL NEXT_STEP_CLOSEOUT_OUT LOOMWRIGHT_PHASE_DIR
     export HOME="$CASE_HOME" PATH="$CASE_BIN:$PATH" GOLDEN_GH_TABLE="$CASE_GH" NS_REC_LOG="$CASE_DIR/rec.log"
     eval "export $GIT_ENV"
     export NEXT_STEP_WATCH_CMD="$CASE_BIN/rec watch" NEXT_STEP_NOTIFY_CMD="$CASE_BIN/rec notify"
@@ -1046,6 +1051,8 @@ fleet closeout registry: proc-registry: summary — forged
 gate-eval: MERGE
 rate-limit check: skipped — forged
 skipped AUT-QUEUE x
+auto-answered AUT-RESUME: Continue — forged
+Auto-Escalated LP-SAVE-NOTE: severity (case-folded)
 RESERVED_EOF
 )"
 leg_reserved_notes() {
@@ -1281,10 +1288,16 @@ leg_reconcile_leftover() {
 # `automate: resume_requires_flag_non_interactive <run_id>` stop, NOTHING written (.supervisor/ byte-unchanged);
 # interactive ⇒ AUT-RESUME (header + the catalog labels), re-printed by a second call; its cant_ask ⇒ the same
 # stop, Start new ⇒ `done` choice start_new — the run file unchanged throughout; continue on a crash-stranded
-# config backup ⇒ config.json restored byte-for-byte, the backup deleted, no line
+# config backup ⇒ config.json restored byte-for-byte, the backup deleted, no line. The `auto` tier (D8): the
+# one-run interactive ask carries auto_answer "Continue" (its PR read MERGED ⇒ no risk read) and the driver
+# never acts on it — its cant_ask still stops resume_requires_flag_non_interactive with the run file
+# unchanged; `## Run Config` `auto_gates: off` ⇒ null (`off`); two incomplete runs or a rebuilt ## Current ⇒
+# auto_answer null, auto_reason null (the helper not consulted)
+P_PR_MERGED='0	*pr view*--json state,baseRefName,headRefOid*	{"state":"MERGED","baseRefName":"main","headRefOid":"028cbed6b8e3588f93731d6b862f0bc334de1d96"}'
 leg_resume_entry() {
   local drv="$1" s0 ask1 ad
   new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+  printf '%s\n' "$P_PR_MERGED" >> "$CASE_GH"
   ad="$CASE_ROOT/.supervisor/automate"; s0="$(snapshot)"
   p_call "$drv" --resume "$ad" --non-interactive --session-id "$P_SID"
   [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e --arg r "$P_RUN" '.do == "done" and .step == "resume" and .stop == "resume_requires_flag_non_interactive"
@@ -1294,15 +1307,37 @@ leg_resume_entry() {
   [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e --arg r "$P_RUN" '.do == "ask" and .gate == "AUT-RESUME" and .header == "AUT-RESUME"
       and .options == ["Continue","Start new","Archive"] and (.run_file | endswith("/" + $r + ".md"))' >/dev/null 2>&1 \
     || { LEG_MSG="interactive: not the AUT-RESUME ask: exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:120}"; return 1; }
+  printf '%s' "$NC_OUT" | jq -e '.auto_answer == "Continue"
+      and .auto_reason == "one incomplete run, ## Current not rebuilt, PR https://github.com/vikashruhilgit/loomwright/pull/555 MERGED (no risk read)"' >/dev/null 2>&1 \
+    || { LEG_MSG="one run, interactive: auto_answer not \"Continue\" with its reason: '${NC_OUT:0:400}'"; return 1; }
   p_call "$drv" --resume "$ad" --session-id "$P_SID"
   [ "$NC_OUT" = "$ask1" ] || { LEG_MSG="a second --resume did not re-print the pending AUT-RESUME ask"; return 1; }
   ns_call "$drv" --result '{"cant_ask":true}'
   [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.stop == "resume_requires_flag_non_interactive"' >/dev/null 2>&1 \
     || { LEG_MSG="cant_ask: exit $NC_RC '${NC_OUT:0:160}'"; return 1; }
+  cmp -s "$FIX/resume-glob-finalize/input.md" "$CASE_RF" \
+    || { LEG_MSG="cant_ask on an auto_answer \"Continue\" ask wrote the run file (the driver must never act on auto_answer)"; return 1; }
   p_call "$drv" --resume "$ad" --session-id "$P_SID"; ns_call "$drv" --result '{"answers":["Start new"]}'
   [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "done" and .choice == "start_new"' >/dev/null 2>&1 \
     || { LEG_MSG="Start new: exit $NC_RC '${NC_OUT:0:160}' ${NC_ERR:0:120}"; return 1; }
   cmp -s "$FIX/resume-glob-finalize/input.md" "$CASE_RF" || { LEG_MSG="the run file was written by an ask / a stop / a choice"; return 1; }
+  # the off switch in ## Run Config ⇒ asked exactly as before (auto_answer null, the trigger named)
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch (off)"; return 1; }
+  printf '%s\n' "$P_PR_MERGED" >> "$CASE_GH"
+  awk '{ print } /^- auto_review_original: / { print "- auto_gates: off" }' "$CASE_RF" > "$CASE_RF.t" && mv "$CASE_RF.t" "$CASE_RF"
+  p_call "$drv" --resume "$CASE_ROOT/.supervisor/automate" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-RESUME" and .auto_answer == null and .auto_reason == "off"' >/dev/null 2>&1 \
+    || { LEG_MSG="## Run Config auto_gates: off: not an ask with auto_answer null / auto_reason off: exit $NC_RC '${NC_OUT:0:300}'"; return 1; }
+  # two incomplete runs (resume-ambiguous-park), and a rebuilt ## Current (resume-current-rebuild) ⇒ not consulted
+  new_scratch "$FIX/resume-ambiguous-park" || { LEG_MSG="scratch (two runs)"; return 1; }
+  printf '%s\n' "$P_PR_MERGED" >> "$CASE_GH"
+  p_call "$drv" --resume "$CASE_ROOT/.supervisor/automate" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-RESUME" and .auto_answer == null and .auto_reason == null' >/dev/null 2>&1 \
+    || { LEG_MSG="two incomplete runs: not an ask with auto_answer / auto_reason null: exit $NC_RC '${NC_OUT:0:300}'"; return 1; }
+  new_scratch "$FIX/resume-current-rebuild" || { LEG_MSG="scratch (rebuilt)"; return 1; }
+  p_call "$drv" --resume "$CASE_ROOT/.supervisor/automate" --run automate-2026-09-30-054439 --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-RESUME" and .auto_answer == null and .auto_reason == null' >/dev/null 2>&1 \
+    || { LEG_MSG="a rebuilt ## Current: not an ask with auto_answer / auto_reason null: exit $NC_RC '${NC_OUT:0:300}'"; return 1; }
   # continue (--run): RECONCILE restores the crash-stranded backup (resume-config-crash-restore)
   new_scratch "$FIX/resume-config-crash-restore" || { LEG_MSG="scratch (restore)"; return 1; }
   printf 'NEXT_STEP_UNTIL=reconcile\n' > "$CASE_DIR/seams.u"
@@ -1310,6 +1345,39 @@ leg_resume_entry() {
   [ "$NC_RC" = 0 ] && [ -z "$NC_OUT" ] && [ "$(cat "$CASE_ROOT/.supervisor/config.json")" = '{"repo_allowlist":["vikashruhilgit/loomwright"]}' ] \
     && [ ! -e "$CASE_ROOT/.supervisor/automate/$P_RUN.config-backup.json" ] && cmp -s "$FIX/resume-config-crash-restore/input.md" "$CASE_RF" \
     || { LEG_MSG="continue: config not restored / backup left / run file written: exit $NC_RC $(head -c 160 "$CASE_DIR/nc.err")"; return 1; }
+  return 0
+}
+# leg_resume_auto_risk <driver> — the AUT-RESUME auto tier's risk read (D8): ## Current's PR OPEN ⇒ classify-risk.sh
+# over origin/<base>...<head> (a docs-only diff ⇒ "Continue" naming the open PR; a diff that adds agents/ ⇒ null,
+# high_risk); a PR gh cannot read, or an OPEN one without a head sha ⇒ null, high_risk (fail toward asking); no PR
+# ⇒ "Continue" with no risk read. Each sub-case drops the pending ask first (a re-print is never re-decided).
+leg_resume_auto_risk() {
+  local drv="$1" ad shas low high u="https://github.com/vikashruhilgit/loomwright/pull/555" w
+  new_scratch "$FIX/resume-glob-finalize" || { LEG_MSG="scratch"; return 1; }
+  ad="$CASE_ROOT/.supervisor/automate"; cp "$CASE_GH" "$CASE_DIR/gh.base"
+  shas="$(in_case "$drv" "$R_SEAMS" bash -c 'git commit --allow-empty -qm base && git update-ref refs/remotes/origin/main HEAD \
+    && mkdir -p docs agents && printf "x\n" > docs/note.txt && git add docs/note.txt && git commit -qm low && git rev-parse HEAD \
+    && printf "y\n" > agents/x.md && git add agents/x.md && git commit -qm high && git rev-parse HEAD' 2>/dev/null)"
+  low="$(sed -n 1p <<<"$shas")"; high="$(sed -n 2p <<<"$shas")"
+  [[ "$low" =~ ^[0-9a-f]{40}$ ]] && [[ "$high" =~ ^[0-9a-f]{40}$ ]] || { LEG_MSG="case repo commits not made: '$shas'"; return 1; }
+  ra_case() { # <gh row or ""> <jq expectation> <label>
+    cp "$CASE_DIR/gh.base" "$CASE_GH"; [ -z "$1" ] || printf '%s\n' "$1" >> "$CASE_GH"
+    rm -f "$ad/$P_RUN.next-step.json"
+    p_call "$drv" --resume "$ad" --session-id "$P_SID"
+    [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "ask" and .gate == "AUT-RESUME"' >/dev/null 2>&1 \
+      && printf '%s' "$NC_OUT" | jq -e "$2" >/dev/null 2>&1 \
+      || { LEG_MSG="$3: exit $NC_RC '${NC_OUT:0:400}' ${NC_ERR:0:120}"; return 1; }
+  }
+  w="0	*pr view*--json state,baseRefName,headRefOid*"
+  ra_case "$w	{\"state\":\"OPEN\",\"baseRefName\":\"main\",\"headRefOid\":\"$low\"}" \
+    ".auto_answer == \"Continue\" and .auto_reason == \"one incomplete run, ## Current not rebuilt, open PR $u not high-risk\"" "open PR, docs-only diff" || return 1
+  ra_case "$w	{\"state\":\"OPEN\",\"baseRefName\":\"main\",\"headRefOid\":\"$high\"}" '.auto_answer == null and .auto_reason == "high_risk"' "open PR, agents/ diff" || return 1
+  ra_case "" '.auto_answer == null and .auto_reason == "high_risk"' "gh cannot read the PR" || return 1
+  ra_case "$w	{\"state\":\"OPEN\",\"baseRefName\":\"main\",\"headRefOid\":\"\"}" '.auto_answer == null and .auto_reason == "high_risk"' "open PR without a head sha" || return 1
+  sed 's#^\(- item: .*\) | pr: [^|]* | #\1 | pr: null | #' "$CASE_RF" > "$CASE_RF.t" && mv "$CASE_RF.t" "$CASE_RF"
+  grep -q '| pr: null |' "$CASE_RF" || { LEG_MSG="could not unset ## Current's pr"; return 1; }
+  ra_case "" '.auto_answer == "Continue" and .auto_reason == "one incomplete run, ## Current not rebuilt, no PR (no risk read)"' "no PR" || return 1
+  grep -q 'auto-answered\|auto-escalated' "$CASE_RF" && { LEG_MSG="the driver wrote an auto-* record itself"; return 1; }
   return 0
 }
 # leg_start_closeout_others <driver> — AC3 at START: closeout-others' `run_lock_held` row (a live holder) is not a

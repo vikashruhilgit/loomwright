@@ -7,7 +7,22 @@
 #
 # Usage:
 #   classify-risk.sh <base_ref> <head_ref> [--root <dir>]   # default --root .
+#   classify-risk.sh --paths <file> [--root <dir>]          # classify a path LIST (no diff), see below
 #   classify-risk.sh --kind-table                           # print the heuristic as a markdown table
+#
+# --paths mode (gate-auto.sh's risk read for a Launch Pad brief, which has a File Impact Map but no
+# diff): <file> holds one repo-relative path per line. The path branches of (a) and (b), trusted-root and the project `.agent/risk.json` `paths[]`
+# (read at HEAD — the committed tree, never the working tree) run over the listed paths; content and
+# size cannot be judged from a path list and emit no reason (`changed_lines` is 0, `changed_files` the
+# number of distinct listed paths). Same object shape and `source`. An unreadable list ⇒
+# `unclassifiable: paths_unreadable`, an empty one ⇒ `unclassifiable: paths_empty`, a line holding any
+# byte outside the allow-list [A-Za-z0-9._/+@-] (a decorated cell such as "`CLAUDE.md` (40)",
+# "**CLAUDE.md**", a `:<line>` suffix, a markdown link or a `|` cell — not a bare path), a leading `/`,
+# an empty `//` or `.`/`..` segment, or a line wrapped in `_…_` emphasis ⇒
+# `unclassifiable: paths_malformed` (null all three: a list that cannot be read is never low-risk).
+# A real path with another legal byte (`,` `=` `~` `%` space, non-ASCII) also reads null: the
+# consumer then asks, the safe direction (this repo's `git ls-files` has none). It adds no exclude, flag or config to lower risk. The refs
+# mode above is untouched by it: same code path, same output, byte for byte.
 #
 # Output (ONE JSON object on stdout, always exit 0):
 #   {"high_risk": true|false|null,
@@ -73,7 +88,8 @@
 # Failure-mode split (CLAUDE.md §"Failure-Mode Invariants"): this script is a fail-SAFE EMITTER —
 # it always exits 0. `high_risk: null` + `reasons: ["unclassifiable: <reason>"]` + the reason on
 # stderr is emitted when the diff cannot be classified (bad_args, jq_missing, not_a_git_repo,
-# bad_ref, git_failed, risk_json_symlink, risk_json_gitlink). Its CONSUMERS fail CLOSED: `gate-eval` parks on
+# bad_ref, git_failed, risk_json_symlink, risk_json_gitlink; --paths adds paths_unreadable,
+# paths_empty and paths_malformed). Its CONSUMERS fail CLOSED: `gate-eval` parks on
 # anything but an explicit `false` (`PARK: high_risk_diff`) with no override of any kind, and the
 # Phase 4.5 lens treats `null` as "spawn the advisory pass" (the safe direction for an advisory lens is to run it).
 # The jq-less `jq_missing` object (and a `bad_args` seen before jq is known) is the ONE
@@ -153,6 +169,8 @@ head=""
 root="."
 npos=0
 bad_args=""
+paths_mode=""   # non-empty ⇒ --paths mode (D6): classify a path LIST, not a diff
+paths_file=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --kind-table) print_kind_table; exit 0 ;;
@@ -160,8 +178,12 @@ while [ $# -gt 0 ]; do
       if [ $# -lt 2 ]; then bad_args="--root needs a directory argument"; break; fi
       root="$2"; shift 2 ;;
     --root=*) root="${1#--root=}"; shift ;;
+    --paths)
+      if [ $# -lt 2 ]; then bad_args="--paths needs a file argument"; break; fi
+      paths_mode=1; paths_file="$2"; shift 2 ;;
+    --paths=*) paths_mode=1; paths_file="${1#--paths=}"; shift ;;
     -h|--help)
-      printf 'usage: %s <base_ref> <head_ref> [--root <dir>] | --kind-table\n' "$SELF" >&2
+      printf 'usage: %s <base_ref> <head_ref> [--root <dir>] | --paths <file> [--root <dir>] | --kind-table\n' "$SELF" >&2
       exit 0 ;;
     --*) bad_args="unknown option $1"; break ;;
     *)
@@ -172,9 +194,14 @@ while [ $# -gt 0 ]; do
       shift ;;
   esac
 done
-[ -z "$bad_args" ] && [ "$npos" -lt 2 ] && bad_args="need <base_ref> and <head_ref>"
+if [ -n "$paths_mode" ]; then
+  [ -z "$bad_args" ] && [ "$npos" -gt 0 ] && bad_args="--paths takes no <base_ref> <head_ref>"
+  [ -z "$bad_args" ] && [ -z "$paths_file" ] && bad_args="--paths must not be empty"
+else
+  [ -z "$bad_args" ] && [ "$npos" -lt 2 ] && bad_args="need <base_ref> and <head_ref>"
+fi
 [ -z "$bad_args" ] && [ -z "$root" ] && bad_args="--root must not be empty"
-[ -z "$bad_args" ] && { [ -z "$base" ] || [ -z "$head" ]; } && bad_args="refs must not be empty"
+[ -z "$bad_args" ] && [ -z "$paths_mode" ] && { [ -z "$base" ] || [ -z "$head" ]; } && bad_args="refs must not be empty"
 root="${root%/}"
 [ -z "$root" ] && root="/"
 
@@ -213,6 +240,9 @@ emit_unclassifiable() {
 # ---------------------------------------------------------------------------
 # The diff (read-only, git -C — never cd)
 # ---------------------------------------------------------------------------
+# --paths mode (D6) reads `.agent/risk.json` at HEAD: the project extension below reads it at "$base",
+# so the path list is judged against the committed HEAD tree, never the working tree.
+[ -n "$paths_mode" ] && { base="HEAD"; head="HEAD"; }
 if ! git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   emit_unclassifiable "not_a_git_repo" "root=$root"
 fi
@@ -224,6 +254,9 @@ done
 
 tmp="$(mktemp -d 2>/dev/null)" || emit_unclassifiable "git_failed" "mktemp failed"
 trap 'rm -rf "$tmp"' EXIT
+# The refs-mode lines inside the two `if [ -z "$paths_mode" ]` blocks keep their top-level indentation:
+# test-classify-risk.sh's mutation controls anchor on it.
+if [ -z "$paths_mode" ]; then
 if ! git -C "$root" diff --name-only "$base...$head" > "$tmp/paths" 2>"$tmp/err"; then
   emit_unclassifiable "git_failed" "$(head -c 200 "$tmp/err" | tr '\n' ' ')"
 fi
@@ -232,6 +265,28 @@ if ! git -C "$root" diff "$base...$head" > "$tmp/diff" 2>"$tmp/err"; then
 fi
 # Changed lines: `+`/`-` lines minus the `+++`/`---` file headers.
 grep -E '^[+-]' "$tmp/diff" | grep -vE '^(\+\+\+|---)' > "$tmp/lines" || true
+else
+  # --paths: one repo-relative path per line (CR, surrounding blanks and a leading `./` dropped, blank
+  # lines and duplicates skipped). No diff, so no changed lines: the content and size classes are not
+  # applicable and emit no reason. An unreadable or empty list cannot be classified ⇒ null.
+  [ -f "$paths_file" ] && [ -r "$paths_file" ] || emit_unclassifiable "paths_unreadable" "paths=$paths_file"
+  PATHS_NOT_BARE_ERE='[^A-Za-z0-9._/+@-]|^/|//|(^|/)\.\.?(/|$)|^_.*_$'
+  sed -e 's/\r$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^\./||' "$paths_file" 2>/dev/null \
+    | awk 'length($0) > 0 && !seen[$0]++' > "$tmp/paths"
+  [ -s "$tmp/paths" ] || emit_unclassifiable "paths_empty" "paths=$paths_file lists no path"
+  # ALLOW-LIST, not a denylist of decorations: a line holding any byte outside [A-Za-z0-9._/+@-] (a
+  # copied map cell's ` (40)`, backticks, `**bold**`, quotes, `:40`, a markdown link, a `|` cell, a
+  # `- ` bullet, non-ASCII) is not a bare path and could hide a high-risk basename from every class
+  # ⇒ null. Allowed bytes can still make a non-bare path, so those shapes are refused too: a leading
+  # `/` (not repo-relative), an empty `//`, a `.` or `..` segment (`docs/../.mcp.json` would dodge the
+  # root-only trusted-root match) and `_…_` emphasis wrapping the whole line. A real path using another legal byte
+  # (`,` `=` `~` `%` space) also reads null: the gate then asks, the safe direction. env LC_ALL=C keeps
+  # the ranges bytewise in every locale.
+  if env LC_ALL=C grep -qE "$PATHS_NOT_BARE_ERE" "$tmp/paths"; then
+    emit_unclassifiable "paths_malformed" "paths=$paths_file: $(env LC_ALL=C grep -m1 -E "$PATHS_NOT_BARE_ERE" "$tmp/paths" | head -c 120)"
+  fi
+  : > "$tmp/lines"
+fi
 changed_files="$(grep -c . "$tmp/paths" || true)"; changed_files="${changed_files:-0}"
 changed_lines="$(grep -c . "$tmp/lines" || true)"; changed_lines="${changed_lines:-0}"
 tr '[:upper:]' '[:lower:]' < "$tmp/paths" > "$tmp/lpaths"
@@ -272,17 +327,21 @@ for d in $GENERIC_DIRS; do
   done < "$tmp/lpaths"
 done
 
-# (c) size.
-[ "$changed_lines" -gt "$SIZE_LINES" ] && reason "size: changed_lines $changed_lines > $SIZE_LINES"
-[ "$changed_files" -gt "$SIZE_FILES" ] && reason "size: changed_files $changed_files > $SIZE_FILES"
+# (c) size — refs mode only (a path list has no diff to measure).
+[ -z "$paths_mode" ] && [ "$changed_lines" -gt "$SIZE_LINES" ] && reason "size: changed_lines $changed_lines > $SIZE_LINES"
+[ -z "$paths_mode" ] && [ "$changed_files" -gt "$SIZE_FILES" ] && reason "size: changed_files $changed_files > $SIZE_FILES"
 
 # ---------------------------------------------------------------------------
 # trusted-root — instruction / config surfaces. Its own path list: `--no-renames` reports BOTH
 # sides of a rename (a root-only `.mcp.json` moved to `config/mcp.json` must still be seen), and
 # `-z` keeps paths verbatim (no core.quotePath quoting that would hide a basename).
 # ---------------------------------------------------------------------------
+if [ -z "$paths_mode" ]; then
 if ! git -C "$root" diff --name-only --no-renames -z "$base...$head" > "$tmp/trpaths" 2>"$tmp/err"; then
   emit_unclassifiable "git_failed" "$(head -c 200 "$tmp/err" | tr '\n' ' ')"
+fi
+else
+  tr '\n' '\000' < "$tmp/paths" > "$tmp/trpaths"   # --paths: the listed paths, NUL-separated like -z
 fi
 tr '[:upper:]' '[:lower:]' < "$tmp/trpaths" > "$tmp/ltrpaths"
 TR_ANY_L="$(printf '%s' "$TRUSTED_ROOT_ANYDEPTH" | tr '[:upper:]' '[:lower:]')"

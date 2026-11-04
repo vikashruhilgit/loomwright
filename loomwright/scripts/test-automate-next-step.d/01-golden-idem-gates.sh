@@ -50,7 +50,7 @@ else no "Q: $n_ask ask(s); malformed: ${bad:-none}"; fi
 # Every ask — human-only gates included — names its gate in every header and offers exactly the catalog's
 # labels (all of them, or a row's non-`?` core): wave 7 relayed AUT-WAIVE / AUT-DISMISS asks with header "".
 CATJ="$(bash "$HERE/lane-policy.sh" catalog | jq -Rnc '[inputs | split("\t") | (.[2] | split("|")) as $l
-  | {key: .[0], value: {all: ($l | map(sub("\\?$"; "")) | sort), core: ($l | map(select(endswith("?") | not)) | sort)}}] | from_entries')"
+  | {key: .[0], value: {all: ($l | map(sub("[?!]$"; "")) | sort), core: ($l | map(select(endswith("?") | not) | sub("!$"; "")) | sort)}}] | from_entries')"
 drift="$(cut -f2- "$ASKS" | jq -c --argjson cat "$CATJ" '.gate as $g | select(.header != $g or any(.questions[]; .header != $g)
     or any(.questions[]; (.options | sort) as $o | ($cat[.header] // {}) as $r | $o != $r.all and $o != $r.core)) | .gate' 2>&1)"
 gates_seen="$(cut -f2- "$ASKS" | jq -r '.gate' | env LC_ALL=C sort -u | tr '\n' ' ')"

@@ -112,14 +112,26 @@ lanes_create() {
   fi
   # `cheap: true` (only under --cheap; absent otherwise) is the lane's own record of the coordinator's cost
   # profile: every spawn of the lane (launch.sh) and its in-lane driver (automate-next-step.sh) read it, so
-  # a lane resume keeps the profile without the coordinator re-passing it
+  # a lane resume keeps the profile without the coordinator re-passing it.
+  # `auto_gates: false` (only when the parent run's `## Run Config` carries `auto_gates: off`; absent
+  # otherwise, so every other lane.json is byte-identical) carries the run's off switch for the `auto` gate
+  # tier into the lane, where `gate-auto.sh decide` reads it. The line match is gate-auto.sh's own
+  # `_ga_runconfig_off` (`- auto_gates: <any value but on>` on its own line or as a ` | `-separated
+  # field), kept in step.
+  local ag=0
+  awk '/^## / { sec = $0; next }
+    sec == "## Run Config" && /^-[ \t]/ { n = split($0, fs, "|")
+      for (i = 1; i <= n; i++) { x = fs[i]; if (i == 1) sub(/^-/, "", x); gsub(/^[ \t]+|[ \t]+$/, "", x)
+        if (x ~ /^auto_gates:/) { sub(/^auto_gates:[ \t]*/, "", x); if (x != "on") f = 1 } } }
+    END { exit !f }' "$runfile" 2>/dev/null && ag=1
   jq -n --arg lane "$lane" --arg run "$run_id" --arg parent "$parent" --arg primary "$primary" \
     --argjson parallel "$par" --argjson mt "$mt" --arg created "$(now_utc)" --argjson policy "$pj" \
-    --argjson single "$single" --argjson cheap "$cheap" \
+    --argjson single "$single" --argjson cheap "$cheap" --argjson ag "$ag" \
     '{schema_version: 1, lane: $lane, run_id: $run, parent_run_id: $parent, primary: $primary,
       parallel: $parallel, max_tokens: $mt, created: $created, policy: $policy}
       + (if $single == 1 then {single_lane: true} else {} end)
-      + (if $cheap == 1 then {cheap: true} else {} end)' > "$C/.supervisor/lane.json" \
+      + (if $cheap == 1 then {cheap: true} else {} end)
+      + (if $ag == 1 then {auto_gates: false} else {} end)' > "$C/.supervisor/lane.json" \
     || { _abort "cannot write lane.json"; return 1; }
   printf -- '- [ ] %s\n' "$item" > "$C/.supervisor/lane-backlog.md" || { _abort "cannot write the backlog"; return 1; }
   _lanes_merge_hooks "$C/.claude/settings.local.json" "bash \"$PLUGIN_ROOT/scripts/automate-lanes.sh\" relay-hook" \

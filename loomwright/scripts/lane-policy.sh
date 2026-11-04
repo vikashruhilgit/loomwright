@@ -7,22 +7,28 @@
 # HUMAN pre-answer the formalities, and only those, by an EXACT LOOKUP — never a model judgement:
 #
 #   catalog   the ONE authoritative gate table: one TSV row per engine ask-tool gate,
-#             `code<TAB>policy<TAB>labels-joined-by-|<TAB>purpose`. `policy` is `allowed` (a policy
-#             may answer it) or `human-only` (never answered by policy, whatever a policy file says).
+#             `code<TAB>policy<TAB>labels-joined-by-|<TAB>purpose`. `policy` is one of three tiers:
+#             `allowed` (a policy may answer it), `auto` (gate-auto.sh applies the row's `!` label
+#             without asking unless one of its escalation triggers fires; a policy may answer it only
+#             when `_lp_policy_answerable` says so) or `human-only` (never answered by policy or by
+#             gate-auto.sh, whatever a policy file says).
 #             loomwright/docs/LANE_GATES.md mirrors it (regenerate the mirror with `catalog --markdown`);
 #             test-lane-policy.sh fails when the two differ. Every code is at most 12 characters (the
-#             ask tool's `header` limit, commands/dreaming.md). The engine asks EVERY gate — `allowed`
-#             and human-only alike — with `header` = its code and the catalog's exact labels (a
+#             ask tool's `header` limit, commands/dreaming.md). The engine asks EVERY gate — `allowed`,
+#             `auto` and human-only alike — with `header` = its code and the catalog's exact labels (a
 #             `(Recommended)` marker is allowed and stripped before comparison); `decide` never answers a
 #             human-only code, so the code only names the gate. A label ending in `?` is OPTIONAL: the
 #             ask offers either every label or only the non-`?` ones (LP-SAVE on a PASS that used the
 #             last Plan Review attempt: no attempt is left to Refine or Edit), never another subset; the
-#             `?` is not part of the label. check-gate-headers.sh fails an engine ask (prose or a
+#             `?` is not part of the label. A label ending in `!` is the AUTO label of an `auto` row (the
+#             one label gate-auto.sh applies): exactly one per `auto` row and none on any other row; the
+#             `!` is not part of the label either, and `catalog --markdown` keeps both markers raw.
+#             check-gate-headers.sh fails an engine ask (prose or a
 #             next-step emitter) that names a gate without its code, or its code without its labels.
 #   wave-set  the per-wave owner answer set: writes <dir of parent_runfile>/<run_id>.wave-policy.json
 #             `{"schema_version":1,"run_id":…,"answers":{code:label},"set_at":…}` and one parent
 #             `## Progress` line `wave policy: <code>=<label>, …`. Refuses (exit 1, NOTHING written) a
-#             code that is not `allowed`, a label that is not one of that code's catalog labels, a code
+#             code that is not policy-answerable (`_lp_policy_answerable`), a label that is not one of that code's catalog labels, a code
 #             given twice with different labels, or a parent file that is not a run file. Called by the
 #             coordinator ONLY with the owner's own answers at wave planning. HONEST LIMIT: the file is
 #             not owner-authenticated — the same trust level as automate-lanes.sh's answer-pending file.
@@ -31,7 +37,7 @@
 #             one Progress line (the record then disagrees with the installed file). The ONE caller is
 #             the coordinator, once, at wave planning — never run it concurrently.
 #   resolve   merges the STAMPED project policy (.agent/lane-policy.json) and the wave policy (the wave
-#             wins per code), keeps only `allowed` codes with valid labels, reports and drops anything
+#             wins per code), keeps only policy-answerable codes with valid labels, reports and drops anything
 #             else (`lane-policy: dropped <source> <code> — <reason>` on stderr), and prints ONE JSON
 #             object: {"policy_sha": <sha256 of the canonical answers, or null when empty>,
 #             "sources": [{"kind":"project"|"wave","path":…}], "answers": {code: label}}.
@@ -40,7 +46,7 @@
 #             compact, key-sorted JSON text of the answers object (`jq -cS .`), hashed without a
 #             trailing newline.
 #   decide    prints `{"0":"<label>",…}` when EVERY question in the call has a catalog code (its
-#             `header`) whose policy is `allowed`, a single-select option list whose labels — with
+#             `header`) that is policy-answerable (`_lp_policy_answerable`), a single-select option list whose labels — with
 #             `(Recommended)` stripped — equal that code's catalog labels as a set (or, for a row with
 #             `?` labels, exactly its non-`?` labels), and a policy answer
 #             for that code. The printed label is the QUESTION'S OWN option label (marker included), so
@@ -68,8 +74,14 @@
 # at `lane-create` in the primary and the lane only reads the carried result: removing the stamp takes
 # effect at the NEXT lane-create; a lane already created keeps the policy it was given.
 #
+# POLICY ANSWERABILITY (D1) is decided by ONE helper, `_lp_policy_answerable` (a jq definition every
+# check below uses): an `allowed` code, or an `auto` code not listed in `_LP_POLICY_EXEMPT`. The three
+# `auto` codes that were `allowed` before the tier existed (AUT-RESUME, AUT-QUEUE, LP-SAVE) therefore
+# stay policy-answerable exactly as before; LP-SAVE-NOTE (exempt) was never policy-answerable and stays
+# refused, so an escalated LP-SAVE-NOTE ask can never be answered by a policy. `human-only` is never.
+#
 # Codes are checked against the catalog THREE times: at wave-set, at resolve, and again at decide (the
-# `policy != "allowed"` line in lp_decide is the one test-lane-policy.sh's mutation control removes).
+# `answerable($h; $row) | not` line in lp_decide is the one test-lane-policy.sh's mutation control removes).
 #
 # Usage:
 #   lane-policy.sh catalog [--markdown]
@@ -100,21 +112,22 @@ _lp_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # THE GATE CATALOG — the ONE authority. One `_lp_row code policy labels purpose` per engine ask-tool
 # gate (the engine = /automate, /autonomous, and the Launch Pad, Supervisor and Product Owner flows
 # they inline), plus /backlog --verify's per-item stamp asks and /janitor's act ask. Labels are joined by `|`; no field may contain a tab, a newline or (outside labels) a
-# `|`. `(free text)` marks a gate whose answer is free-form — such a gate can never be `allowed`. A
-# trailing `?` marks an optional label (see `catalog` above); it is never part of the label itself.
+# `|`. `(free text)` marks a gate whose answer is free-form — such a gate can never be `allowed` or
+# `auto`. A trailing `?` marks an optional label and a trailing `!` the auto label of an `auto` row (see
+# `catalog` above); neither marker is ever part of the label itself.
 # Adding, removing or relabelling a row: regenerate loomwright/docs/LANE_GATES.md's table in the SAME
 # change (`lane-policy.sh catalog --markdown`), or test-lane-policy.sh fails.
 # ==================================================================================================
 _lp_row() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"; }
 _lp_catalog_rows() {
-  _lp_row AUT-RESUME   allowed    'Continue|Start new|Archive' \
-    '/automate start finds an incomplete run (automate-loop SKILL §4 step 4)'
-  _lp_row AUT-QUEUE    allowed    'Process|Stop' \
-    '/automate Queue confirm before processing (automate-loop SKILL §2 "--limit N")'
+  _lp_row AUT-RESUME   auto       'Continue!|Start new|Archive' \
+    '/automate start finds an incomplete run (automate-loop SKILL §4 step 4); auto only with one incomplete run and no rebuilt ## Current, risk read from its open PR diff'
+  _lp_row AUT-QUEUE    auto       'Process!|Stop' \
+    '/automate Queue confirm before processing (automate-loop SKILL §2 "--limit N"); auto with no risk read (no item is picked yet)'
   _lp_row AUT-SUMMARY  allowed    'Keep summary|Drop summary' \
     '/automate keep or drop a LOW/INFO summary draft — summary drafts only (§6 dismissed-findings decision step and the PICK-time ask)'
-  _lp_row LP-SAVE      allowed    'Save and exit|Refine further?|Edit sections?|Discard' \
-    'Launch Pad Phase 6 save on a Plan Review PASS with zero issues (Refine / Edit only while a review attempt is left)'
+  _lp_row LP-SAVE      auto       'Save and exit!|Refine further?|Edit sections?|Discard' \
+    'Launch Pad Phase 6 save on a Plan Review PASS with zero issues (Refine / Edit only while a review attempt is left); auto unless the File Impact Map paths are high-risk'
   _lp_row SUP-CHILDREN allowed    'proceed anyway|investigate|abort' \
     'Supervisor FINALIZE Point 5 children unsettled (async-orchestration SKILL)'
   _lp_row AUT-SOURCE   human-only '(free text)' \
@@ -135,8 +148,8 @@ _lp_catalog_rows() {
     'Launch Pad Phase 2 clarification'
   _lp_row LP-NO-GO     human-only 'Override and continue|Revise goal|Abort' \
     'Launch Pad Phase 2.5 feasibility NO-GO'
-  _lp_row LP-SAVE-NOTE human-only 'Save and exit|Refine further?|Edit sections?|Discard' \
-    'Launch Pad Phase 6 save on a Plan Review PASS that carries any issue or note (Refine / Edit only while a review attempt is left)'
+  _lp_row LP-SAVE-NOTE auto       'Save and exit!|Refine further?|Edit sections?|Discard' \
+    'Launch Pad Phase 6 save on a Plan Review PASS that carries any issue or note (Refine / Edit only while a review attempt is left); auto by owner decision unless an issue is MEDIUM or higher or the File Impact Map paths are high-risk, never answered by a policy'
   _lp_row LP-NEEDHUMAN human-only 'Override and save|Refine further?|Discard' \
     'Plan Review NEEDS_HUMAN, or any MEDIUM-or-higher finding (Refine only while a review attempt is left)'
   _lp_row LP-EXEC-ACC  human-only 'approve-and-stamp|strip-cmd-bullets|discard' \
@@ -192,11 +205,27 @@ lp_catalog() {
 }
 
 # _lp_catalog_json — {code: {policy, labels: [...], core: [...], purpose}}: `labels` every label with its
-# optional `?` marker removed, `core` only the labels that carry none (equal to `labels` on most rows).
+# optional `?` / auto `!` marker removed, `core` only the labels without `?` (also `!`-stripped; equal to
+# `labels` on most rows).
 _lp_catalog_json() {
   _lp_catalog_rows | jq -Rnc '[inputs | split("\t") | (.[2] | split("|")) as $l
-    | {key: .[0], value: {policy: .[1], labels: ($l | map(sub("\\?$"; ""))),
-        core: ($l | map(select(endswith("?") | not))), purpose: .[3]}}] | from_entries'
+    | {key: .[0], value: {policy: .[1], labels: ($l | map(sub("[?!]$"; ""))),
+        core: ($l | map(select(endswith("?") | not) | sub("!$"; ""))), purpose: .[3]}}] | from_entries'
+}
+
+# POLICY ANSWERABILITY (D1) — the ONE rule wave-set, resolve (_lp_filter) and decide apply. An `auto` code
+# listed here is never policy-answerable (space-separated; the owner moved LP-SAVE-NOTE to the `auto`
+# tier only, never to policy). No call site restates this list.
+_LP_POLICY_EXEMPT="LP-SAVE-NOTE"
+# _lp_policy_answerable — prints the jq definition `answerable($code; $row)`: true for an `allowed` row,
+# or an `auto` row whose code is not in _LP_POLICY_EXEMPT; false for anything else (human-only, null).
+_lp_policy_answerable() {
+  local ex="" c
+  for c in $_LP_POLICY_EXEMPT; do
+    case "$c" in *[!A-Z0-9-]*) printf 'def answerable($code; $row): false;\n'; return 0 ;; esac   # never fail open
+    ex="${ex:+$ex,}\"$c\""
+  done
+  printf 'def answerable($code; $row): ($row != null) and (($row.policy == "allowed") or ($row.policy == "auto" and ([%s] | any(.[]; . == $code) | not)));\n' "$ex"
 }
 
 # _lp_sha256_str <text> — sha256 hex of <text> (no trailing newline added); empty when no hasher.
@@ -209,14 +238,16 @@ _lp_sha256_str() {
 }
 
 # _lp_filter <catalog_json> <source> <answers_json> — {kept: {code: label}, dropped: ["<reason>", …]}.
-# The resolve-time catalog check: a code not in the catalog, a human-only code, or a label that is not
-# one of the code's catalog labels is dropped and reported.
+# The resolve-time catalog check: a code not in the catalog, a code that is not policy-answerable
+# (human-only, or a policy-exempt auto code), or a label that is not one of the code's catalog labels is
+# dropped and reported.
 _lp_filter() {
-  jq -cn --argjson cat "$1" --arg src "$2" --argjson a "$3" '
+  jq -cn --argjson cat "$1" --arg src "$2" --argjson a "$3" "$(_lp_policy_answerable)"'
     $a | to_entries | reduce .[] as $e ({kept: {}, dropped: []};
       ($cat[$e.key]) as $row
       | if $row == null then .dropped += ["\($src) \($e.key) — not a catalog code"]
-        elif $row.policy != "allowed" then .dropped += ["\($src) \($e.key) — human-only (never answered by policy)"]
+        elif (answerable($e.key; $row) | not)
+          then .dropped += ["\($src) \($e.key) — \($row.policy) (never answered by policy)"]
         elif (($e.value | type) != "string") or (any($row.labels[]; . == $e.value) | not)
           then .dropped += ["\($src) \($e.key)=\($e.value | tostring) — not one of its catalog labels"]
         else .kept[$e.key] = $e.value end)'
@@ -242,11 +273,11 @@ lp_wave_set() {
       || { _ws_refuse "cannot encode '$p'"; return 1; }
   done
   # The wave-set catalog check (one of three: wave-set, resolve, decide).
-  result="$(jq -cn --argjson cat "$(_lp_catalog_json)" --argjson p "$pairs" '
+  result="$(jq -cn --argjson cat "$(_lp_catalog_json)" --argjson p "$pairs" "$(_lp_policy_answerable)"'
     reduce $p[] as $x ({answers: {}, order: [], errors: []};
       ($x[0]) as $c | ($x[1]) as $l | ($cat[$c]) as $row
       | if $row == null then .errors += ["\($c): not a catalog code"]
-        elif $row.policy != "allowed" then .errors += ["\($c): human-only — never answered by policy"]
+        elif (answerable($c; $row) | not) then .errors += ["\($c): \($row.policy) — never answered by policy"]
         elif (any($row.labels[]; . == $l) | not)
           then .errors += ["\($c)=\($l): not one of its catalog labels (\($row.labels | join(" | ")))"]
         elif (.answers[$c] != null) and (.answers[$c] != $l) then .errors += ["\($c): given twice with different labels"]
@@ -395,14 +426,14 @@ lp_decide() {
   [ -n "$answers" ] || { _dh "policy is malformed (want {policy_sha, answers})"; return 0; }
   want="$(jq -r '.policy_sha' <<<"$pol")"; got="$(_lp_sha256_str "$answers")"
   [ -n "$got" ] && [ "$got" = "$want" ] || { _dh "policy_sha does not match its answers"; return 0; }
-  out="$(jq -rn --argjson cat "$(_lp_catalog_json)" --argjson pol "$answers" --argjson qs "$questions" '
+  out="$(jq -rn --argjson cat "$(_lp_catalog_json)" --argjson pol "$answers" --argjson qs "$questions" "$(_lp_policy_answerable)"'
     def strip: gsub("\\s*\\(Recommended\\)"; "") | gsub("^\\s+|\\s+$"; "");
     if ($qs | length) == 0 then "human" else
       [ $qs[] as $q
         | ($q.header // null) as $h
         | (if ($h | type) == "string" then $cat[$h] else null end) as $row
         | if $row == null then null                                   # no catalog code: always human
-          elif $row.policy != "allowed" then null                     # THE POLICY CHECK (B9 mutation control)
+          elif (answerable($h; $row) | not) then null                     # THE POLICY CHECK (B9 mutation control)
           elif $q.multiSelect == true then null
           elif (($q.options | type) != "array") or any($q.options[]; (type != "object") or ((.label | type) != "string")) then null
           elif ([$q.options[].label | strip] | sort) as $ql
