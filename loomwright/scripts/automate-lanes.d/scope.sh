@@ -7,9 +7,9 @@
 # scope-outside <item> <brief> [--root <dir>] — READ-ONLY. <item> is the requirement file (repo-relative, or
 # absolute under the root); <brief> any readable brief file (Launch Pad passes its scratch brief). The root
 # is --root, else `git rev-parse --show-toplevel`, else $PWD. The brief's paths are its Subtask Contracts
-# `path:` and `lanes:` lines; `changelog.d/` paths are exempt, as the scope fence exempts them, and an entry
-# holding whitespace (an `external_requires:` prose string) is not a path. Prints ONE
-# first line, exit 0:
+# `path:` values and `lanes:` entries (_lanes_brief_paths is key-aware: `external_requires:` entries are
+# package names and prose, never read); `changelog.d/` paths are exempt, as the scope fence exempts them. Prints
+# ONE first line, exit 0:
 #   inside           every brief path is inside Touches (a brief naming no path included)
 #   unknown          Touches reads `unknown …` (declared unknown, missing, unparsable): the item runs alone, so
 #                    no widening is asked about; no list follows
@@ -40,9 +40,8 @@ lanes_scope_outside() {
   esac
   tmp="$(mktemp -d 2>/dev/null)" || die "scope-outside: no temp dir"
   _lanes_declared "$root" "$item" "" "$tmp/touches"   # no brief: the Touches set alone
-  # changelog.d/ is exempt (the fence's rule); an entry holding whitespace is prose, never a path (an
-  # `external_requires:` string such as "a live session able to run /launch-pad" matches the `- "…"` form)
-  _lanes_brief_paths "$brief" 2>/dev/null | awk '!/^changelog\.d\// && !/[[:space:]]/' | env LC_ALL=C sort -u > "$tmp/brief"
+  # changelog.d/ is exempt (the fence's rule); external_requires never reaches here (the reader is key-aware)
+  _lanes_brief_paths "$brief" 2>/dev/null | awk '!/^changelog\.d\//' | env LC_ALL=C sort -u > "$tmp/brief"
   if [ "$LD_TOUCHES_READ" = failed ]; then
     n="$(grep -c . "$tmp/brief")"; echo "unreadable ${n:-0}"; cat "$tmp/brief"
   elif [ "$LD_TOUCHES" = unknown ]; then
@@ -67,8 +66,8 @@ lanes_scope_outside() {
 # construction: lane X compared against lane Y's reserved Touches (Y not saved yet) is compared again when Y saves.
 #
 # lane-scope-check <lane_dir|L<n>> — READ-ONLY, exit 0 (exit 1 only on usage / not a lane). The lane's set is
-# _lanes_declared (Touches as the planner reserved it + the saved brief's `path:` / `lanes:` lines, changelog.d/ and
-# prose entries dropped); each other live lane of the wave (a lane-table row not removed / abandoned whose item the
+# _lanes_declared (Touches as the planner reserved it + the saved brief's `path:` / `lanes:` entries, changelog.d/
+# dropped; never an `external_requires:` entry); each other live lane of the wave (a lane-table row not removed / abandoned whose item the
 # parent `## Current` `- wave:` line names — every row when there is none) is read the same way when it has a saved
 # brief this pass, else by its reserved Touches alone. Files are matched with _lanes_is_declared in BOTH directions
 # (the matcher wave-build's _lanes_wave_overlap uses). Prints, in this order:
@@ -124,11 +123,11 @@ _lanes_sg_brief() {
   [ -n "$b" ] || return 0
   case "$b" in /*) printf '%s' "$b" ;; *) printf '%s/%s' "$1" "${b#./}" ;; esac
 }
-# _lanes_sg_set <lane_dir> <item> <brief|""> <out> — _lanes_declared's set without changelog.d/ and prose entries (the
-# scope-outside rule); returns 1 when the Touches read failed
+# _lanes_sg_set <lane_dir> <item> <brief|""> <out> — _lanes_declared's set without changelog.d/ (the scope-outside
+# rule); returns 1 when the Touches read failed
 _lanes_sg_set() {
   _lanes_declared "$1" "$2" "$3" "$4.raw"
-  awk '!/^changelog\.d\// && !/[[:space:]]/' "$4.raw" > "$4" 2>/dev/null; rm -f "$4.raw"
+  awk '!/^changelog\.d\//' "$4.raw" > "$4" 2>/dev/null; rm -f "$4.raw"
   [ "$LD_TOUCHES_READ" = ok ]
 }
 # _lanes_sg_widening <brief> — the paths of a `## Scope widening` section marked `- decision: pending-coordinator`

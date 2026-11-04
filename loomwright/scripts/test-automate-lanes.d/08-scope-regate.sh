@@ -29,9 +29,13 @@ lanes:
   - "changelog.d/sc.md"
 external_requires:
   - "a live session able to run /launch-pad on a fixture"
+  - "@nestjs/passport"
+  - "lodash.merge"
 ```
 EOF
 printf '# Supervisor Job: in\nlanes:\n  - "src/a/deep/x.ts"\n  - "docs/x.md"\n  - "changelog.d/in.md"\n' > "$SCR/brief-in.md"
+# a brief wholly inside Touches whose external_requires are whitespace-free package names (the common path)
+printf '# Supervisor Job: pk\n```yaml\nprovides:\n  - {kind: "file", path: "src/a/one.ts"}\nlanes:\n  - "src/a/one.ts"\nexternal_requires:\n  - "@nestjs/passport"\n  - "lodash.merge"\n```\n' > "$SCR/brief-pkg.md"
 SC_OUT_WANT="$(printf 'outside 2\ndocs/y.md\nsrc/b/two.ts')"
 SC_UNR_WANT="$(printf 'unreadable 4\ndocs/x.md\ndocs/y.md\nsrc/a/one.ts\nsrc/b/two.ts')"
 # sc <entry> <item> <brief> [<root>] — stdout only (stderr dropped), from inside the scratch repo
@@ -47,6 +51,8 @@ check "SC2 a companion-added path is inside (companions included)" "$(sc "$S" re
 rm -f "$SCR/.agent/companions.json"
 check "SC2b control: the same brief with no companions.json lists it again" "$(sc "$S" reqs/known.md brief.md)" "$SC_OUT_WANT"
 check "SC3 every brief path inside Touches ⇒ the one line inside" "$(sc "$S" reqs/known.md brief-in.md)" "inside"
+check "SC3b external_requires package names (@nestjs/passport, lodash.merge) are never read as paths ⇒ inside" \
+  "$(sc "$S" reqs/known.md brief-pkg.md)" "inside"
 check "SC4 Touches unknown ⇒ the one line unknown (no list)" "$(sc "$S" reqs/unknown.md brief.md)" "unknown"
 check "SC5 plan-waves --touches fails (missing item) ⇒ unreadable 4 + EVERY brief path" "$(sc "$S" reqs/missing.md brief.md)" "$SC_UNR_WANT"
 check "SC5b an item whose every path is inside still reads unreadable when Touches cannot be read" \
@@ -68,9 +74,13 @@ sc_ld() { ( cd "$SCR" && bash -c '. "$1" >/dev/null 2>&1; _lanes_declared "$2" "
 check "SC8 known Touches ⇒ LD_TOUCHES known, read ok" "$(sc_ld reqs/known.md)" "known ok"
 check "SC8b declared unknown ⇒ LD_TOUCHES unknown, read ok" "$(sc_ld reqs/unknown.md)" "unknown ok"
 check "SC8c plan-waves fails ⇒ LD_TOUCHES unknown (never a third value), read failed" "$(sc_ld reqs/missing.md)" "unknown failed"
+# SC8d the shared reader the fence and wave-build's overlap read: no external_requires entry is ever declared
+check "SC8d _lanes_declared's brief half holds no external_requires entry" \
+  "$( cd "$SCR" && bash -c '. "$1" >/dev/null 2>&1; _lanes_declared "$2" reqs/unknown.md "$2/brief.md" "$3/sc-ld.out"; cat "$3/sc-ld.out"' _ "$S" "$SCR" "$T" | tr '\n' ' ')" \
+  "changelog.d/sc.md docs/x.md docs/y.md src/a/one.ts src/b/two.ts "
 
-# The brief's external_requires prose line holds a `/` and so matches the `- "…"` form; SC1 already pins
-# that it is never listed, and SC9d removes the whitespace filter (the false outside path it exists for).
+# The brief's external_requires entries (a prose line holding a `/`, two package names) match the `- "…"` form;
+# SC1/SC3b pin that none is listed, and SC9d removes the reader's lanes-only rule for those entries.
 # SC9: the brief's Pin mutations for scope-outside — each one-line edit turns its pin red.
 SCB="$T/scmut-base"; mkdir -p "$SCB"
 for e in "$HERE"/*; do case "${e##*/}" in automate-lanes.sh|automate-lanes.d) ;; *) ln -s "$e" "$SCB/${e##*/}" ;; esac; done
@@ -102,9 +112,9 @@ sc_red "SC9b the unknown arm falling through to the outside listing turns SC4 re
 sc_red "SC9c the unreadable arm printing inside turns SC5 red" \
   "$(sc_mut unreadable 'echo "unreadable ${n:-0}"; cat "$tmp/brief"' 's#echo "unreadable \${n:-0}"; cat "\$tmp/brief"#echo inside#')" \
   "$SC_UNR_WANT" reqs/missing.md brief.md
-sc_red "SC9d the whitespace filter removed lists the external_requires prose line, turning SC1 red" \
-  "$(sc_mut prose " && !/[[:space:]]/' | env LC_ALL=C sort -u" 's# \&\& !/\[\[:space:]]/##')" \
-  "$SC_OUT_WANT" reqs/known.md brief.md
+sc_red "SC9d the reader's lanes-only rule for - \"...\" entries removed lists the package names, turning SC3b red" \
+  "$(sc_mut lanesonly '{ if (k == "lanes") print; next }' 's#{ if (k == "lanes") print; next }#{ print; next }#')" \
+  "inside" reqs/known.md brief-pkg.md
 
 # ---- SG: the scope re-gate (lane-scope-regate Part B): lane-scope-check / lane-scope-decide, the held-lane readers ------
 # A synthetic wave of two lanes cloned from a scratch origin (lane.json, run files, the lane table written by hand; the
@@ -170,6 +180,13 @@ sg_fx3; check "SG3 a sibling with no saved brief is compared by its reserved Tou
 sg_wave; sg_lane 1 reqs/x.md "$SG_B1" null; sg_lane 2 reqs/y.md '  - "src/b/two.ts"
   - "changelog.d/y.md"'
 check "SG4 disjoint sets (changelog.d/ exempt) ⇒ clear" "$(sgc "$S")" "clear"
+sg_wave; sg_lane 1 reqs/x.md '  - "src/a/one.ts"
+external_requires:
+  - "@nestjs/passport"' null; sg_lane 2 reqs/y.md '  - "src/b/two.ts"
+external_requires:
+  - "@nestjs/passport"
+  - "lodash.merge"'
+check "SG4b two lanes requiring the same package (external_requires) ⇒ clear, never an overlap on it" "$(sgc "$S")" "clear"
 sg_fx5; check "SG5 no saved brief this pass ⇒ unreadable, never clear" "$(sgc "$S")" "unreadable — L2 has no saved brief this pass (no launch-pad saved line in its run file)"
 sg_fx1; rm -f "$SGL/L1/reqs/x.md"
 check "SG5b a sibling's Touches unreadable ⇒ unreadable — L1 Touches" "$(sgc "$S")" "unreadable — L1 Touches (plan-waves --touches failed)"

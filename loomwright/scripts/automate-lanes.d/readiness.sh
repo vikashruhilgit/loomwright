@@ -234,11 +234,18 @@ _lanes_declared() {
     [ -n "$brief" ] && _lanes_brief_paths "$brief"
   } 2>/dev/null | env LC_ALL=C sort -u > "$out"
 }
-# _lanes_brief_paths <brief> — the brief's `path:` lines (Subtask Contracts provides / requires) and its
-# `- "<path>"` lines (`lanes:`), `./` stripped, one per line (unsorted). The ONE brief-path grammar:
-# _lanes_declared above and scope.sh's scope-outside both read a brief through it.
+# _lanes_brief_paths <brief> — the brief's `path:` values (Subtask Contracts provides / requires) and the
+# `- "<path>"` entries of its `lanes:` lists, `./` stripped, one per line (unsorted). The ONE brief-path grammar:
+# _lanes_declared above and scope.sh's scope-outside both read a brief through it. KEY-AWARE: a `- "…"` entry
+# counts only under a `lanes:` key, and nothing under `external_requires:` is read — its entries are package
+# names and prose (`"@nestjs/passport"`, `"lodash.merge"`), never files. The key is the last `<key>:` line; any
+# other line starting at column 0 (a heading, a code fence, a `# Subtask` comment) ends it.
 _lanes_brief_paths() {
-  sed -n 's/.*path: *"\([^"]*\)".*/\1/p; s/^ *- *"\([^"]*\)" *$/\1/p' "$1" \
+  awk '/^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*:/ { k = $0; sub(/^[[:space:]]*/, "", k); sub(/:.*/, "", k) }
+    /^[^[:space:]-]/ && !/^[A-Za-z_][A-Za-z0-9_]*:/ { k = "" }
+    /^[[:space:]]*-[[:space:]]*"[^"]*"[[:space:]]*$/ { if (k == "lanes") print; next }
+    k != "external_requires" { print }' "$1" \
+    | sed -n 's/.*path: *"\([^"]*\)".*/\1/p; s/^ *- *"\([^"]*\)" *$/\1/p' \
     | sed 's#^\./##' | awk 'index($0, "/") || index($0, ".")'
 }
 # _lanes_is_declared <file> <declared set file> — 0 when <file> is inside one entry: equal, a path ending in
