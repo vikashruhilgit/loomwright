@@ -130,3 +130,9 @@ loomwright/skills/automate-loop/per-item-loop.md
 loomwright/docs/result-schemas/automate-run.md
 loomwright/docs/LANE_GATES.md
 changelog.d/
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-04T11:33:27Z
+- **Brief:** .supervisor/jobs/done/2026-11-04-auto-keep-summary-dismissed-drafts.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/818
