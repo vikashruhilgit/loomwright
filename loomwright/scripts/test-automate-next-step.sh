@@ -501,8 +501,9 @@ leg_cantask() {
   drive "$FIX/park-first-ready-park" "$drv" "$rs"
   ASKS="$ASKS_SAVE"
   [ -z "$DRIVE_ERR" ] || { LEG_MSG="decisions: $DRIVE_ERR"; return 1; }
-  grep -qxF -- '- pending_decisions: 2 | fix_now_reentered: false' "$CASE_RF" \
-    || { LEG_MSG="decisions: pending_decisions: 2 not recorded"; return 1; }
+  # one pending: dismissed-drafts kept the summary draft automatically, only the per-finding draft waits
+  grep -qxF -- '- pending_decisions: 1 | fix_now_reentered: false' "$CASE_RF" \
+    || { LEG_MSG="decisions: pending_decisions: 1 not recorded"; return 1; }
   grep -q 'dismissed decisions asked after the park' "$CASE_RF" && { LEG_MSG="decisions: a post-park ask line was written"; return 1; }
   [ ! -s "$WORK/asks.q" ] || { LEG_MSG="an ask was printed under --non-interactive: $(head -n 1 "$WORK/asks.q")"; return 1; }
   # (c) the post-park decide step entered under --non-interactive (an item already parked awaiting_merge
@@ -1707,6 +1708,64 @@ leg_meta_push() {
   [ "$NC_RC" = 0 ] && cmp -s "$FIX/pick-current-set-then-picked/input.md" "$CASE_RF" && ! grep -q 'meta-push-failed' <<<"$NC_ERR" \
     && [ "$(jq -r '.next // empty' "$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json" 2>/dev/null)" = pending ] \
     || { LEG_MSG="no marker: exit $NC_RC, run file $(cmp -s "$FIX/pick-current-set-then-picked/input.md" "$CASE_RF" && echo unchanged || echo WRITTEN), stderr '${NC_ERR:0:160}'"; return 1; }
+  return 0
+}
+# leg_pick_summary_autokeep <driver> — the summary auto-keep's resume half (AC6) and its fallback (AC8a). A run
+# started before dismissed-drafts kept summaries itself (pick-pending-decisions-ask: an undecided summary + an
+# undecided per-finding draft on disk): the PICK `pending` step records the summary follow-up with NO question —
+# its ledger row and ONE `kept automatically` Progress line — interactive (the ask that follows is the per-finding
+# AUT-PENDING one, and its answer ends the step: no AUT-SUMMARY ask) and under --non-interactive (no ask at all);
+# a replayed step writes no second line. With the ledger read-only the auto-keep is refused: the summary stays
+# undecided and the AUT-SUMMARY ask (Keep summary / Drop summary) is the fallback, at PICK and at the decision step.
+leg_pick_summary_autokeep() {
+  local drv="$1" sp led g
+  ak_case() { # <case> — a fresh scratch; sp = its summary draft, led = its ledger
+    new_scratch "$FIX/$1" || return 1
+    sp="$CASE_ROOT/.supervisor/requirements/proposed/$CASE_RUN--39a-sweep-and-janitor-1c7166--dismissed-summary.md"
+    led="$CASE_ROOT/.supervisor/automate/$CASE_RUN.dismissed-decisions"
+    printf 'NEXT_STEP_FROM=pending\nNEXT_STEP_UNTIL=pending\n' > "$CASE_DIR/seams.ak"
+    printf 'NEXT_STEP_UNTIL=pending\n' > "$CASE_DIR/seams.ak2"
+  }
+  ak_kept() { grep -cE "^- [0-9TZ:-]+ dismissed: follow-up ${sp##*/} — kept automatically \(summary below the tracking threshold, no question\)\$" "$CASE_RF"; }
+  ak_gate() { printf '%s' "$NC_OUT" | jq -r 'select(.do == "ask") | .gate' 2>/dev/null; }
+  ak_led() { awk -F'\t' -v n="${sp##*/}" '$1 == n { d = $2 } END { print d }' "$led" 2>/dev/null; }
+  # (a) interactive resume
+  ak_case pick-pending-decisions-ask || { LEG_MSG="scratch (a)"; return 1; }
+  p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && [ "$(ak_gate)" = AUT-PENDING ] && grep -qxF -- '- **Decision:** follow-up' "$sp" && [ "$(ak_kept)" = 1 ] && [ "$(ak_led)" = follow-up ] \
+    || { LEG_MSG="interactive: exit $NC_RC, gate '$(ak_gate)', $(ak_kept) kept line(s), ledger '$(ak_led)', $(grep '^- \*\*Decision' "$sp")"; return 1; }
+  p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID"
+  [ "$NC_RC" = 0 ] && [ "$(ak_gate)" = AUT-PENDING ] && [ "$(ak_kept)" = 1 ] || { LEG_MSG="replay: exit $NC_RC, gate '$(ak_gate)', $(ak_kept) kept line(s) (want still 1)"; return 1; }
+  p_seamed "$CASE_DIR/seams.ak2" "$drv" --result '{"answers":["Follow-up (keep draft)"]}'
+  [ "$NC_RC" = 0 ] && [ -z "$(ak_gate)" ] && [ "$(grep -c ' dismissed: follow-up ' "$CASE_RF")" = 2 ] \
+    || { LEG_MSG="after the AUT-PENDING answer: exit $NC_RC, gate '$(ak_gate)' (want no further ask — no AUT-SUMMARY)"; return 1; }
+  # (b) --non-interactive: recorded too, nothing asked
+  ak_case pick-pending-decisions-ask || { LEG_MSG="scratch (b)"; return 1; }
+  p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID" --non-interactive
+  [ "$NC_RC" = 0 ] && [ -z "$(ak_gate)" ] && grep -qxF -- '- **Decision:** follow-up' "$sp" && [ "$(ak_kept)" = 1 ] && [ "$(ak_led)" = follow-up ] \
+    && [ "$(jq -r '.next // empty' "$CASE_ROOT/.supervisor/automate/$CASE_RUN.next-step.json" 2>/dev/null)" = reconcile ] \
+    || { LEG_MSG="--non-interactive: exit $NC_RC, gate '$(ak_gate)', $(ak_kept) kept line(s), ledger '$(ak_led)'"; return 1; }
+  # (c) AC8a at PICK: a read-only ledger ⇒ refused, undecided, AUT-SUMMARY asked after the per-finding ask
+  ak_case pick-pending-decisions-ask || { LEG_MSG="scratch (c)"; return 1; }
+  : > "$led"; chmod 444 "$led"
+  p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID"
+  g="$(ak_gate)"
+  p_seamed "$CASE_DIR/seams.ak2" "$drv" --result '{"answers":["Follow-up (keep draft)"]}'
+  chmod 644 "$led"
+  [ "$g" = AUT-PENDING ] && [ "$(ak_gate)" = AUT-SUMMARY ] && grep -qxF -- '- **Decision:** undecided' "$sp" && [ "$(ak_kept)" = 0 ] \
+    && [ "$(printf '%s' "$NC_OUT" | jq -c '[.header, .options]')" = '["AUT-SUMMARY",["Keep summary","Drop summary"]]' ] \
+    || { LEG_MSG="read-only ledger at PICK: asks '$g' then '$(ak_gate)' (want AUT-PENDING then AUT-SUMMARY), $(ak_kept) kept line(s), $(grep '^- \*\*Decision' "$sp")"; return 1; }
+  # (d) AC8a at the decision step: a summary the auto-keep could not record is asked under AUT-SUMMARY
+  ak_case park-first-decisions-recorded || { LEG_MSG="scratch (d)"; return 1; }
+  awk 'd == 0 && /^- \*\*Decision:\*\* / { print "- **Decision:** undecided"; d = 1; next } { print }' "$sp" > "$sp.t" && mv "$sp.t" "$sp"
+  : > "$led"; chmod 444 "$led"
+  printf 'NEXT_STEP_FROM=decide\n' > "$CASE_DIR/seams.akd"; : > "$CASE_DIR/seams.akd2"
+  p_seamed "$CASE_DIR/seams.akd" "$drv"
+  g="$(ak_gate)"
+  p_seamed "$CASE_DIR/seams.akd2" "$drv" --result '{"answers":["Follow-up (keep draft)"]}'
+  chmod 644 "$led"
+  [ "$g" = AUT-DISMISS ] && [ "$(ak_gate)" = AUT-SUMMARY ] && [ "$(printf '%s' "$NC_OUT" | jq -c '.options')" = '["Keep summary","Drop summary"]' ] \
+    || { LEG_MSG="decision step fallback: asks '$g' then '$(ak_gate)' (want AUT-DISMISS then AUT-SUMMARY)"; return 1; }
   return 0
 }
 

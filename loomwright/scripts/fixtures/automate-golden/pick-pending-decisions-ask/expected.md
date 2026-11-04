@@ -33,5 +33,5 @@
 - dismissed-drafts: 1 per-finding + 1 summary (6 listed in summary)
 - 2026-10-15T09:54:06Z parked awaiting_merge https://github.com/vikashruhilgit/loomwright/pull/555 — 2 dismissed decision(s) pending
 - 2026-10-15T09:56:17Z dismissed decisions asked after the park — ask — fix-now allowed: PR OPEN, parked awaiting_merge, merge watcher armed
+- 2026-10-15T11:52:34Z dismissed: follow-up automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md — kept automatically (summary below the tracking threshold, no question)
 - 2026-10-15T11:52:34Z dismissed: follow-up automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-d90c587e.md — _sw_plugin_made's sibling-naming fallback is the one place --apply's destructive
-- 2026-10-15T11:52:34Z dismissed: follow-up automate-2026-10-13-181331--39a-sweep-and-janitor-1c7166--dismissed-summary.md — Dismissed findings below the tracking threshold: 39a-sweep-and-janitor (6)

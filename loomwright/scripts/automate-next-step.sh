@@ -101,9 +101,12 @@
 #   ceiling     `ceiling-check` when `--max-tokens` / `## Run Config` `max_tokens` is set: anything but
 #               `OK …` ⇒ the `token_ceiling` park
 #   meta-push   `meta-push-failed`: a non-empty answer is one `meta-push-failed:` line (a report, never a block)
-#   pending     interactive only: `followup-nudge`'s line, when non-empty, reported once on stderr (never
+#   pending     first, interactive or not: each undecided summary draft of this run is recorded follow-up
+#               automatically (`dismissed-decide <draft> … --auto`, once a draft, never asked); then
+#               interactive only: `followup-nudge`'s line, when non-empty, reported once on stderr (never
 #               an ask or a park); `dismissed-pending` non-zero / `unknown` ⇒ AUT-PENDING (per-finding,
-#               ≤ 4 a call) and AUT-SUMMARY (one summary draft a call) asks, each answer a `dismissed-decide`
+#               ≤ 4 a call) asks and — only for a summary whose auto-keep was refused, the fallback —
+#               AUT-SUMMARY (one summary draft a call) asks, each answer a `dismissed-decide`
 #   reconcile   the stranded config-backup restore; a skip/abandon check-off of ## Current ⇒ `trail-pr`;
 #               the `drain_died` marker park; `reconcile-item`: merged ⇒ (superseded drain lines) +
 #               `closeout --session-id` classified (leftover ⇒ the leftover gate); open ⇒ the validation
@@ -1493,6 +1496,7 @@ ns_meta_push() {
 
 # ------------------------------------------------------------------------------------------------
 # step: pending — the PICK-time pending-decisions ask (§6 step 1, automate-followups/12): interactive only
+# (its summary auto-keep runs either way)
 # ------------------------------------------------------------------------------------------------
 ns_run_undecided() { # "<finding|summary>\t<path>" per undecided draft of THIS RUN (every item's), per-finding first
   local f
@@ -1547,6 +1551,17 @@ ns_pending() {
     ns_pending_next_batch && return 0
     st_del pqueue; NEXT=reconcile; return 0
   fi
+  # The summary auto-keep's resume half, interactive or not (BEFORE the --non-interactive return): every
+  # undecided summary draft of this run — one written before dismissed-drafts kept summaries itself, or
+  # one whose auto-keep was refused — is recorded follow-up through dismissed-decide's --auto path, once
+  # a draft per step chain, never asked. A refused one stays undecided: the AUT-SUMMARY ask below is its fallback.
+  local akind apath
+  while IFS="$TAB" read -r akind apath; do
+    [ "$akind" = summary ] && [ -n "$apath" ] || continue
+    ns_once "once_ak_$(printf '%s' "$apath" | cksum | tr -d ' \t')" ns_call_writer_helper dismissed-decide "$RF" "$apath" follow-up --auto || return 1
+  done <<EOF
+$(ns_run_undecided)
+EOF
   # --non-interactive: never asked, never a block — the count stays in ## Current
   ns_interactive || { NEXT=reconcile; return 0; }
   # the follow-up nudge (dismissed-followups/01): followup-nudge's one line, relayed verbatim on stderr

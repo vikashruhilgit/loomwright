@@ -5,7 +5,7 @@
 - **Run:** automate-2026-10-13-181331
 - **Item:** .supervisor/requirements/automate-followups/39a-sweep-and-janitor.md
 - **PR:** https://github.com/vikashruhilgit/loomwright/pull/555
-- **Decision:** undecided
+- **Decision:** follow-up
 
 ## Depends on
 none
