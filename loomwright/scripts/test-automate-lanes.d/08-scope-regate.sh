@@ -27,6 +27,8 @@ lanes:
   - "docs/x.md"
   - "docs/y.md"
   - "changelog.d/sc.md"
+external_requires:
+  - "a live session able to run /launch-pad on a fixture"
 ```
 EOF
 printf '# Supervisor Job: in\nlanes:\n  - "src/a/deep/x.ts"\n  - "docs/x.md"\n  - "changelog.d/in.md"\n' > "$SCR/brief-in.md"
@@ -39,6 +41,8 @@ check "SC1 two brief paths outside Touches ⇒ outside 2 + both (changelog.d/ ex
   "$(sc "$S" reqs/known.md brief.md)" "$SC_OUT_WANT"
 mkdir -p "$SCR/.agent"
 printf '{"schema_version":1,"companions":[{"when":"src/a/*","add":["src/b/two.ts"]}]}\n' > "$SCR/.agent/companions.json"
+out="$(cd "$SCR" && bash "$S" scope-outside reqs/known.md brief.md --bogus 2>"$T/sc.err")"; rc=$?
+check "SC1b an unknown option ⇒ exit 1, empty stdout" "$rc|$out" "1|"
 check "SC2 a companion-added path is inside (companions included)" "$(sc "$S" reqs/known.md brief.md)" "$(printf 'outside 1\ndocs/y.md')"
 rm -f "$SCR/.agent/companions.json"
 check "SC2b control: the same brief with no companions.json lists it again" "$(sc "$S" reqs/known.md brief.md)" "$SC_OUT_WANT"
@@ -65,6 +69,8 @@ check "SC8 known Touches ⇒ LD_TOUCHES known, read ok" "$(sc_ld reqs/known.md)"
 check "SC8b declared unknown ⇒ LD_TOUCHES unknown, read ok" "$(sc_ld reqs/unknown.md)" "unknown ok"
 check "SC8c plan-waves fails ⇒ LD_TOUCHES unknown (never a third value), read failed" "$(sc_ld reqs/missing.md)" "unknown failed"
 
+# The brief's external_requires prose line holds a `/` and so matches the `- "…"` form; SC1 already pins
+# that it is never listed, and SC9d removes the whitespace filter (the false outside path it exists for).
 # SC9: the brief's Pin mutations for scope-outside — each one-line edit turns its pin red.
 SCB="$T/scmut-base"; mkdir -p "$SCB"
 for e in "$HERE"/*; do case "${e##*/}" in automate-lanes.sh|automate-lanes.d) ;; *) ln -s "$e" "$SCB/${e##*/}" ;; esac; done
@@ -96,3 +102,6 @@ sc_red "SC9b the unknown arm falling through to the outside listing turns SC4 re
 sc_red "SC9c the unreadable arm printing inside turns SC5 red" \
   "$(sc_mut unreadable 'echo "unreadable ${n:-0}"; cat "$tmp/brief"' 's#echo "unreadable \${n:-0}"; cat "\$tmp/brief"#echo inside#')" \
   "$SC_UNR_WANT" reqs/missing.md brief.md
+sc_red "SC9d the whitespace filter removed lists the external_requires prose line, turning SC1 red" \
+  "$(sc_mut prose " && !/[[:space:]]/' | env LC_ALL=C sort -u" 's# \&\& !/\[\[:space:]]/##')" \
+  "$SC_OUT_WANT" reqs/known.md brief.md

@@ -7,7 +7,8 @@
 # scope-outside <item> <brief> [--root <dir>] — READ-ONLY. <item> is the requirement file (repo-relative, or
 # absolute under the root); <brief> any readable brief file (Launch Pad passes its scratch brief). The root
 # is --root, else `git rev-parse --show-toplevel`, else $PWD. The brief's paths are its Subtask Contracts
-# `path:` and `lanes:` lines; `changelog.d/` paths are exempt, as the scope fence exempts them. Prints ONE
+# `path:` and `lanes:` lines; `changelog.d/` paths are exempt, as the scope fence exempts them, and an entry
+# holding whitespace (an `external_requires:` prose string) is not a path. Prints ONE
 # first line, exit 0:
 #   inside           every brief path is inside Touches (a brief naming no path included)
 #   unknown          Touches reads `unknown …` (declared unknown, missing, unparsable): the item runs alone, so
@@ -39,7 +40,9 @@ lanes_scope_outside() {
   esac
   tmp="$(mktemp -d 2>/dev/null)" || die "scope-outside: no temp dir"
   _lanes_declared "$root" "$item" "" "$tmp/touches"   # no brief: the Touches set alone
-  _lanes_brief_paths "$brief" 2>/dev/null | awk '!/^changelog\.d\//' | env LC_ALL=C sort -u > "$tmp/brief"
+  # changelog.d/ is exempt (the fence's rule); an entry holding whitespace is prose, never a path (an
+  # `external_requires:` string such as "a live session able to run /launch-pad" matches the `- "…"` form)
+  _lanes_brief_paths "$brief" 2>/dev/null | awk '!/^changelog\.d\// && !/[[:space:]]/' | env LC_ALL=C sort -u > "$tmp/brief"
   if [ "$LD_TOUCHES_READ" = failed ]; then
     n="$(grep -c . "$tmp/brief")"; echo "unreadable ${n:-0}"; cat "$tmp/brief"
   elif [ "$LD_TOUCHES" = unknown ]; then

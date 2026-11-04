@@ -7,7 +7,7 @@
     "code-reviewer": {"budget": 19452, "measured": 17683, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "context-keeper": {"budget": 3921, "measured": 3564, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "execute-manager": {"budget": 21277, "measured": 19342, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
-    "launch-pad": {"budget": 47557, "measured": 46367, "note": "Re-measured, no raise (lane-scope-regate: Phase 6 action 1a LP-SCOPE + its can't-ask branch). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
+    "launch-pad": {"budget": 47557, "measured": 46388, "note": "Re-measured, no raise (lane-scope-regate: Phase 6 action 1a LP-SCOPE + its can't-ask branch). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "orchestrator": {"budget": 10357, "measured": 9415, "note": "Re-baselined to live measured + ~10% (automate-speed/18). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "plan-reviewer": {"budget": 11535, "measured": 10528, "note": "Raised to measured + ~10%: Criterion 22 Requirement Fit and the requirement_fit field breached 9451. LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},
     "product-owner": {"budget": 17356, "measured": 16719, "note": "Re-measured, no raise (requirement-to-plan-checks: story Non-goals, Owner decisions, Validation). LIVE row; history in the ARCHITECTURE_CONTRACTS.md logs"},

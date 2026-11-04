@@ -582,6 +582,7 @@ loop:
       # Generic NEEDS_HUMAN (no executable_acceptance or 17c issue involved).
       if non_interactive:
         → abort: status: aborted, status_reason: "needs_human_non_interactive"
+      → first Phase 6 action 1a (the LP-SCOPE ask, when scope-outside lists paths)
       → present issues to user via AskUserQuestion (header "LP-NEEDHUMAN")
       → options: "Override and save" | "Refine further" | "Discard"
       → if override: proceed to Phase 6 with user-acknowledged warnings

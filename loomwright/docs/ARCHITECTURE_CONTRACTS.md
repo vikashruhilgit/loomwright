@@ -605,7 +605,7 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `code-reviewer`     | 19452 | 17683¹ | 1 |
 | `context-keeper`    | 3921  | 3564¹ | 0 |
 | `execute-manager`   | 21277 | 19342¹ | 2 |
-| `launch-pad`        | 47557 | 46367¹ | 7 |
+| `launch-pad`        | 47557 | 46388¹ | 7 |
 | `orchestrator`      | 10357 | 9415¹ | 1 |
 | `plan-reviewer`     | 11535 | 10528¹ | 0 |
 | `product-owner`     | 17356 | 16719¹ | 3 |
@@ -631,7 +631,7 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 
 > **Re-measure log (no raise — requirement-to-plan-checks, 2026-11-02):** live weight at origin/main → this PR's head, every `budget` unchanged, per `bash scripts/check-token-budget.sh`: agents `launch-pad` 44872 → 45127 (2430 headroom; the Phase 5.5 `--- SOURCE REQUIREMENT ---` spawn-contract paste and the refine branch's add-coverage rule), `product-owner` 15939 → 16719 (637 headroom; its Output Format and Persist step gained Non-goals, Owner decisions and Validation, plus the missing-proof flag); command `launch-pad` 5143 → 5326 (189 headroom; Criterion 22 in the Phase 5.5 conditional list). No budget breached; none raised, per the anti-treadmill rule. The two agent rows are ¹-marked LIVE rows; all three table cells and JSON `measured` fields carry these end-of-PR figures.
 
-> **Raise log (lane-scope-regate Part A, 2026-11-04):** command `launch-pad` 5515 → 6203 — the `LP-SCOPE` mirror (the Can't-ask rule's `scope_widening_non_interactive` branch, the no-improvised-header rule, Phase 2.5's "outside Touches is never a NO-GO" line and the Phase 6 step 1 ask) moved the live weight 5326 → 5639 (breach by 124); restored to measured + ~10% per the raise rule. **Re-measured, no raise:** agent `launch-pad` 45686 → 46367 (Phase 6 action 1a, its Save rule, the Critical Rules additions and the Phase 2.5 line; 1190 headroom). Both table cells and JSON `measured` fields carry these end-of-change figures.
+> **Raise log (lane-scope-regate Part A, 2026-11-04):** command `launch-pad` 5515 → 6203 — the `LP-SCOPE` mirror (the Can't-ask rule's `scope_widening_non_interactive` branch, the no-improvised-header rule, Phase 2.5's "outside Touches is never a NO-GO" line and the Phase 6 step 1 ask) moved the live weight 5326 → 5639 (breach by 124); restored to measured + ~10% per the raise rule. **Re-measured, no raise:** agent `launch-pad` 45686 → 46388 (Phase 6 action 1a, its Save rule and Phase 5.5 pseudocode line, the Critical Rules additions and the Phase 2.5 line; 1169 headroom). Both table cells and JSON `measured` fields carry these end-of-change figures.
 
 > **Raise log (automate-speed/17, size ceilings for skills and commands — no agent budget or measured value changed):** every skill dir and command doc gained a `.skills` / `.commands` entry at measured + ~10% (the two tables at the end of this section), and every `note` in `prompt-token-budgets.json` was cut to one line. Agent history now lives in these raise logs and `CHANGELOG.md` only. Figures that had lived only in a `note`, carried here before the cut: `code-reviewer`'s live weight just before its automate-followups/06 raise was 25016 (→ 25057 after it); `supervisor`'s 1307 headroom recorded at dismissed-findings-01 had shrunk to 108 from other merged PRs before automate-speed/02 breached it; `context-keeper`'s v15.16.0 tightening (3052 → 2837, frozen baseline 2774) is in footnote 1.
 
