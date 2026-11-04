@@ -616,6 +616,17 @@ ns_fixnow_reentered() {
 # a lane: `.supervisor/lane.json` exists — `lane-park`'s own criterion (it fails toward ready_for_release
 # on an unreadable one), so the driver and the park seam can never disagree on which park to write
 ns_lane() { [ -e "$ROOT/.supervisor/lane.json" ]; }
+# ns_scope_hold_due — the lane scope re-gate (lane-scope-regate Part B): a lane of a --parallel N > 1 wave
+# (lane.json `parallel`, written by lane-create) holds after every Launch Pad save. `parallel: 1` (single-lane
+# mode) and no lane.json (a sequential run) never hold; an unreadable `parallel` in a lane holds (fail CLOSED,
+# lane-park's direction: an unreadable lane.json is read as an N > 1 lane)
+ns_scope_hold_due() {
+  ns_lane || return 1
+  local n; n="$("$JQ" -r '.parallel // empty' "$ROOT/.supervisor/lane.json" 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$n" -gt 1 ]
+}
+ns_pause_reason() { ns_section '## Current' | sed -n 's/^- pause_reason: *//p' | head -n 1; }
 ns_interactive() { [ "$NONINT" != 1 ]; }
 # fresh phase sessions (automate-speed/09) unless --inline-phases is in force for this item's tail
 ns_fresh() { [ "$INLINE" != 1 ]; }
@@ -1861,7 +1872,14 @@ ns_phase_then() {
 # last `picked` line (the durable record a `--start run` re-entry reads; the sidecar may be gone)
 ns_segment_brief() {
   ns_section '## Progress' | awk '{ x = $0; sub(/^- /, "", x); if (x ~ /^[0-9][0-9][0-9][0-9]-/) sub(/^[^ ]+ /, "", x)
-      if (index(x, "picked ") == 1) b = ""; else if (index(x, "launch-pad saved ") == 1) b = substr(x, 18) } END { if (b != "") print b }'
+      if (index(x, "picked ") == 1 || index(x, "scope re-gate released (revise") == 1) b = ""; else if (index(x, "launch-pad saved ") == 1) b = substr(x, 18) } END { if (b != "") print b }'
+}
+# ns_revise_note — the files a `scope re-gate released (revise) — keep off: <files>` line (lane-scope-decide revise)
+# names, when it is the last scope re-gate line after this pass's last `picked` line; else empty
+ns_revise_note() {
+  ns_section '## Progress' | awk '{ x = $0; sub(/^- /, "", x); if (x ~ /^[0-9][0-9][0-9][0-9]-/) sub(/^[^ ]+ /, "", x)
+      if (index(x, "picked ") == 1) k = ""; else if (index(x, "launch-pad saved ") == 1) k = ""
+      else if (index(x, "scope re-gate released (revise) — keep off: ") == 1) k = substr(x, 46) } END { if (k != "") print k }'
 }
 ns_pending_briefs() { # the pending briefs, one relative path a line (the ls-diff fallback's snapshot)
   local f
@@ -1891,7 +1909,7 @@ ns_run_precheck() {
 # coordinator context)
 # ================================================================================================
 ns_plan() {
-  local inv p x
+  local inv p x rv
   ns_run_precheck plan || return 1
   ns_phase_sid_ok || { ns_err "session_id_malformed — phase-launch needs a coordinator session id of [A-Za-z0-9_-]+ (got '$SID') — nothing written"; NS_RC=2; return 1; }
   ns_driver_sid || return 1
@@ -1900,6 +1918,8 @@ ns_plan() {
   inv="/loomwright:launch-pad goal: $ITEM"
   ns_interactive || inv="$inv --non-interactive"
   p="$inv — If the requirement file at $ITEM has an ## Outcomes Rubric section, copy it verbatim into the saved brief during Phase 5 (PACKAGE — Brief Assembly). Do not paraphrase, do not drop items, do not reformat. When Launch Pad finishes, write its LAUNCH_PAD_RESULT block verbatim (the whole block, nothing else) to $AD/$RUN_ID.launch-pad-result.md."
+  rv="$(ns_revise_note)"
+  [ -z "$rv" ] || p="$p The owner chose Revise at the coordinator's scope re-gate (AUT-OVERLAP): revise the plan so it does not change these files, which another lane of this wave also plans to change: $rv."
   x="$("$JQ" -cn --arg i "$inv" --arg p "$p" --arg l "$(ns_phase_launch launch-pad "$p")" --arg s "$RUN_ID.launch-pad-result.md" \
       --arg t "$(ns_phase_then launch-pad '{"launch_pad_result_file": "<the result file phase-wait printed>", "session_id": "<the session id phase-wait printed>"}' '{"status_reason": "phase_died", "no_pr_why": "<the phase-wait died line>", "session_id": "<its session id, when known>"}'). The driver validates the LAUNCH_PAD_RESULT (validate-launch-pad-result.py --raw), maps its status as /autonomous PLAN step 4 does and checks the rubric was preserved: saved ⇒ the Supervisor phase spawn; anything else ⇒ the no-PR line and the loop stops" \
       '{what: "launch pad phase", session: "fresh", phase: "launch-pad", invocation: $i, prompt: $p, launch: $l, sidecar: $s, then: $t}')"
@@ -1975,6 +1995,15 @@ ns_plan_result() {
   if [ -n "$brief" ]; then
     st_set plan_brief "$brief"
     ns_once once_pl_saved ns_progress "$(ns_ts) launch-pad saved $brief" || return 1
+    # the scope re-gate: a lane of a --parallel N > 1 wave parks here, before its Supervisor phase writes any
+    # code, until the coordinator compares its final file set with the wave's other live lanes
+    # (automate-lanes.sh lane-scope-check) and releases it (lane-scope-decide). The pinned saved line above is
+    # written FIRST: the coordinator and the resumed driver read the brief from it (ns_segment_brief)
+    if ns_scope_hold_due; then
+      ns_run_park plan-result scope_hold "$(ns_ts) scope_hold — $brief saved; held before the Supervisor phase for the coordinator's scope re-gate (lane-scope-check)" 1 \
+        "parked scope_hold — this lane's brief $brief is saved; the coordinator re-checks its files against the other live lanes of the wave (automate-lanes.sh lane-scope-check) before any code is written. End your turn now. When this session is continued after the coordinator releases the hold, call this driver again with no --result (\`bash $(ns_sq "$HERE/automate-next-step.sh") $(ns_sq "$RF") --session-id <this session id>\`): it resumes at the Supervisor phase on $brief (or at a new Launch Pad phase when the owner chose Revise)"
+      return 0
+    fi
     NEXT=run; return 0
   fi
   why="$(printf '%s' "${why:-the Launch Pad phase saved no brief}" | tr '\n\r' '  ')"
@@ -2006,6 +2035,8 @@ ns_run() {
   # the rate-limit park (end of RUN) reads THIS loop's session log: without its id the check could only
   # read "clean", so RUN never starts without one (fail CLOSED)
   ns_run_precheck run || return 1
+  # a lane held for the scope re-gate starts nothing until the coordinator's lane-scope-decide releases it
+  [ "$(ns_pause_reason)" != scope_hold ] || { ns_err "scope_hold — this lane is held for the coordinator's scope re-gate (lane-scope-check / lane-scope-decide); RUN starts only after the release — nothing written"; NS_RC=2; return 1; }
   # a checkpointed Supervisor run this item left resumes (`--continue task: <id>`, re-derived from the run file on
   # every entry — the brief its pass saved was that run's, already consumed), fresh phases and --inline-phases alike
   cont="$(ns_checkpoint_task)"
@@ -3308,8 +3339,16 @@ elif [ -n "$START" ]; then
       NEXT=drain ;;
   esac
 elif [ "$have_result" = 0 ]; then
-  if [ -n "$pending" ]; then ns_reprint; fi
-  NEXT="$(st failed)"   # a step that failed (surfaced) is retried; otherwise there is nothing to do
+  # a scope_hold park the coordinator has released (## Current no longer reads scope_hold): the continued lane
+  # session resumes at RUN — the Supervisor phase on the brief the pass's `launch-pad saved` line names
+  # (ns_segment_brief), or a new Launch Pad phase after a Revise release. The once-keys and the held brief go
+  # (a re-plan holds again); the flags stay. Still held ⇒ the park re-prints, as any pending instruction does
+  if [ -n "$pending" ] && [ "$pending_do" = park ] && [ "$(printf '%s' "$pending" | "$JQ" -r '.pause_reason // empty' 2>/dev/null)" = scope_hold ] \
+     && [ "$(ns_pause_reason)" != scope_hold ]; then
+    NS_STATE="$(printf '%s' "$NS_STATE" | "$JQ" -c 'with_entries(select(.key | startswith("flag_") or . == "stale_report_key" or . == "item" or . == "pr"))')"
+    NEXT=run
+  elif [ -n "$pending" ]; then ns_reprint; fi
+  [ -n "$NEXT" ] || NEXT="$(st failed)"   # a step that failed (surfaced) is retried; otherwise there is nothing to do
   [ -n "$NEXT" ] || ns_die2 "nothing is pending — start RUN with --start run, or report the drain result with --result '{\"drain_result\":…}'"
 elif ns_run_replay "$RESULT"; then
   # the RUN report re-sent after the step it answered (same item + PR — the binding above discards the

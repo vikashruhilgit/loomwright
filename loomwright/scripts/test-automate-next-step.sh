@@ -2184,6 +2184,69 @@ leg_lane_cheap() {
   done
   return 0
 }
+# leg_lane_scope_hold <driver> — lane-scope-regate Part B (B1, B3, B5 Revise, B7): inside a lane whose lane.json
+# reads `parallel: 2`, a saved Launch Pad report writes the pinned `launch-pad saved <brief>` line FIRST, then parks
+# `scope_hold` (## Status: paused, current-set's run-level form — the item stays `status: running`, one `scope_hold —`
+# line), and spawns no Supervisor phase; while held `--start run` is refused (exit 2) and a bare call re-prints the
+# park; once released (what lane-scope-decide writes: ## Status: running, pause_reason null, the release line) a bare
+# call resumes at RUN — the Supervisor phase on that brief, no second Launch Pad spawn. A `revise` release resumes at
+# a new Launch Pad phase whose prompt names the files to keep off. `parallel: 1` and no lane.json go straight to the
+# Supervisor phase (no hold). A plan-review deferral (issue 1): the leg lives beside the runner's other legs.
+lsh_release() { # <revise files|""> — the release lane-scope-decide writes, applied to the case's run file
+  local l="scope re-gate released (continue)"
+  [ -z "$1" ] || l="scope re-gate released (revise) — keep off: $1"
+  awk '!d && /^## Status: / { print "## Status: running"; d = 1; next } { print }' "$CASE_RF" > "$CASE_RF.t" \
+    && sed 's/^- pause_reason: scope_hold$/- pause_reason: null/' "$CASE_RF.t" > "$CASE_RF" && rm -f "$CASE_RF.t" \
+    && printf -- '- 2026-11-04T10:00:00Z %s\n' "$l" >> "$CASE_RF"
+}
+lsh_saved() { # <driver> <lane.json text|""> — a fresh --start run, then a saved Launch Pad report naming .supervisor/jobs/pending/h.md
+  local ad lp
+  new_scratch "$FIX/run-config-suppress-restore" || { NC_RC=98; return 1; }
+  f_claude 1; ad="$CASE_ROOT/.supervisor/automate"
+  [ -z "$2" ] || printf '%s\n' "$2" > "$CASE_ROOT/.supervisor/lane.json"
+  f_call "$1" --start run --session-id coord-1
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad || { NC_RC=99; return 1; }
+  mkdir -p "$CASE_ROOT/.supervisor/jobs/pending" && printf '# Brief\n' > "$CASE_ROOT/.supervisor/jobs/pending/h.md"
+  lp="$(printf 'LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: saved\n  saved_brief_path: .supervisor/jobs/pending/h.md\n  summary: PASS\n')"
+  printf '%s' "$lp" > "$ad/$CASE_RUN.launch-pad-result.md"
+  f_call "$1" --result "$(jq -cn --arg f "$ad/$CASE_RUN.launch-pad-result.md" '{launch_pad_result_file: $f, session_id: "lp-sess-1"}')"
+}
+lsh_sup_ok() { # the Supervisor phase spawn on h.md
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" run supervisor \
+    && printf '%s' "$NC_OUT" | jq -e '.invocation == "/loomwright:supervisor job: .supervisor/jobs/pending/h.md"' >/dev/null 2>&1
+}
+leg_lane_scope_hold() {
+  local drv="$1" c
+  lsh_saved "$drv" '{"schema_version":1,"lane":"L2","parallel":2}'
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .pause_reason == "scope_hold"' >/dev/null 2>&1 \
+    && grep -qx '## Status: paused' "$CASE_RF" && grep -qx -- '- pause_reason: scope_hold' "$CASE_RF" \
+    && grep -q '^- item: .* | status: running' "$CASE_RF" \
+    && in_order "$CASE_RF" 'launch-pad saved .supervisor/jobs/pending/h.md' 'scope_hold — .supervisor/jobs/pending/h.md saved; held before the Supervisor phase' \
+    && ! grep -q 'auto_review suppressed' "$CASE_RF" && [ ! -e "$CASE_ROOT/.supervisor/config.json" ] \
+    || { LEG_MSG="parallel 2 ⇒ exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:200} $(tr '\n' '|' < "$CASE_RF" | tail -c 400)"; return 1; }
+  f_call "$drv" --start run --session-id coord-1
+  [ "$NC_RC" = 2 ] && case "$NC_ERR" in *scope_hold*) true ;; *) false ;; esac \
+    || { LEG_MSG="held --start run ⇒ exit $NC_RC ${NC_ERR:0:200}"; return 1; }
+  f_call "$drv" --session-id coord-1
+  [ "$NC_RC" = 0 ] && printf '%s' "$NC_OUT" | jq -e '.do == "park" and .pause_reason == "scope_hold"' >/dev/null 2>&1 \
+    || { LEG_MSG="held bare call ⇒ exit $NC_RC '${NC_OUT:0:200}'"; return 1; }
+  lsh_release "" && f_call "$drv" --session-id coord-1
+  lsh_sup_ok && [ "$(grep -c 'launch-pad saved' "$CASE_RF")" = 1 ] \
+    || { LEG_MSG="released bare call ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}"; return 1; }
+  # Revise: the bare call after a revise release is a NEW Launch Pad phase whose prompt names the files to keep off
+  lsh_saved "$drv" '{"schema_version":1,"lane":"L2","parallel":2}'
+  lsh_release "src/k.ts, src/p.ts" && f_call "$drv" --session-id coord-1
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad \
+    && printf '%s' "$NC_OUT" | jq -e '.prompt | contains("Revise at the coordinator'"'"'s scope re-gate") and contains("src/k.ts, src/p.ts")' >/dev/null 2>&1 \
+    || { LEG_MSG="revise release ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}"; return 1; }
+  # B7: a single lane and a sequential run never hold
+  for c in '{"schema_version":1,"lane":"L1","parallel":1,"single_lane":true}' ''; do
+    lsh_saved "$drv" "$c"
+    lsh_sup_ok && ! grep -q 'scope_hold' "$CASE_RF" \
+      || { LEG_MSG="no hold (${c:-no lane.json}) ⇒ exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:200}"; return 1; }
+  done
+  return 0
+}
 # leg_fresh_owner_session <driver> — review fixes (iterations 1 + 2): --owner-command is the launch authority of the
 # session that typed it, and a pending fresh spawn's `launch` line is REBUILT from the re-printing call's identity.
 # coord-1's own re-print stays byte for byte (its owner command, --coordinator-session coord-1). Re-printed with
