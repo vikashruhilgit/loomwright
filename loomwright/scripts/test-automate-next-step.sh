@@ -1766,6 +1766,26 @@ leg_pick_summary_autokeep() {
   chmod 644 "$led"
   [ "$g" = AUT-DISMISS ] && [ "$(ak_gate)" = AUT-SUMMARY ] && [ "$(printf '%s' "$NC_OUT" | jq -c '.options')" = '["Keep summary","Drop summary"]' ] \
     || { LEG_MSG="decision step fallback: asks '$g' then '$(ak_gate)' (want AUT-DISMISS then AUT-SUMMARY)"; return 1; }
+  # (e) the ledger already records the owner's drop of the summary, but the file is still on disk (the rm
+  # failed): the PICK auto-keep writes no row and no Progress line, and the draft is still asked (AUT-SUMMARY)
+  ak_case pick-pending-decisions-ask || { LEG_MSG="scratch (e)"; return 1; }
+  printf '%s\tdrop\t2026-01-01T00:00:00Z\n' "${sp##*/}" >> "$led"
+  p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID"
+  g="$(ak_gate)"
+  p_seamed "$CASE_DIR/seams.ak2" "$drv" --result '{"answers":["Follow-up (keep draft)"]}'
+  [ "$g" = AUT-PENDING ] && [ "$(ak_gate)" = AUT-SUMMARY ] && [ "$(ak_kept)" = 0 ] && [ "$(ak_led)" = drop ] \
+    && ! grep -qF "summary-member" "$led" && grep -qxF -- '- **Decision:** undecided' "$sp" \
+    || { LEG_MSG="ledger drop + file on disk: asks '$g' then '$(ak_gate)', $(ak_kept) kept line(s), ledger '$(ak_led)'"; return 1; }
+  # (f) the ledger is appendable but the Decision rewrite fails (proposed/ read-only): repeated PICKs append
+  # exactly ONE follow-up row and ONE kept-automatically line
+  ak_case pick-pending-decisions-ask || { LEG_MSG="scratch (f)"; return 1; }
+  chmod 555 "${sp%/*}"
+  p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID" --non-interactive
+  p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID" --non-interactive
+  p_seamed "$CASE_DIR/seams.ak" "$drv" --session-id "$P_SID" --non-interactive
+  chmod 755 "${sp%/*}"
+  [ "$NC_RC" = 0 ] && [ "$(awk -F'\t' -v n="${sp##*/}" '$1 == n && $2 == "follow-up"' "$led" | wc -l | tr -d ' ')" = 1 ] && [ "$(ak_kept)" = 1 ] \
+    || { LEG_MSG="rewrite failure: exit $NC_RC, $(awk -F'\t' -v n="${sp##*/}" '$1 == n && $2 == "follow-up"' "$led" | wc -l | tr -d ' ') follow-up row(s), $(ak_kept) kept line(s) (want 1 and 1)"; return 1; }
   return 0
 }
 

@@ -124,7 +124,11 @@
 #       `dismissed: <decision> <draft_name> — <first 80 chars of finding>`.
 #       `--auto` (the summary auto-keep): accepted ONLY with `follow-up` on a
 #       summary draft — any other decision, a per-finding draft or another trailing
-#       argument is refused, touching nothing. It does exactly what `follow-up`
+#       argument is refused, touching nothing, and so is a draft whose LAST ledger
+#       row already holds a decision (follow-up / drop / fix-now /
+#       fix-now-unconfirmed: `refused — already decided in the ledger`), so an
+#       auto-keep never overrides the owner's drop or appends a second follow-up
+#       when an earlier Decision rewrite failed. It does exactly what `follow-up`
 #       does; only the Progress line's text after the dash differs (it says the
 #       summary was kept automatically, below the tracking threshold, unasked).
 #   dismissed-pending <runfile>
@@ -193,6 +197,13 @@ _ts() { date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown; }
 # _ledger_unreadable <path> — true (0) when the decision ledger EXISTS (or is a
 # dangling symlink) but cannot be read back as UTF-8 text (EACCES, a non-UTF-8
 # byte, a directory, no python3 to tell). A missing ledger is fine (false).
+# _ledger_decision <ledger> <draft_name> — the value of the LAST `<draft_name><TAB><value>…` row
+# (last row wins; `summary-member` rows never match a draft name), or nothing. Missing ledger ⇒ nothing.
+_ledger_decision() {
+  [ -f "$1" ] || return 0
+  awk -F'\t' -v n="$2" '$1 == n && NF >= 2 { d = $2 } END { if (d != "") print d }' "$1" 2>/dev/null
+}
+
 _ledger_unreadable() {
   { [ -e "$1" ] || [ -L "$1" ]; } || return 1
   command -v python3 >/dev/null 2>&1 || return 0
@@ -741,7 +752,14 @@ PY
     v="$(awk '/^- \*\*Decision:\*\* /{ sub(/^- \*\*Decision:\*\* /, ""); print; exit }' "$out_abs/$name" 2>/dev/null)"
     case "$v" in
       undecided*)
-        printf 'dismissed-drafts: auto-keep refused %s — its Decision is still undecided\n' "$name" ;;
+        # Honest about which half failed: a ledger that now holds a decision for the slot recorded it
+        # (only the Decision line rewrite failed); otherwise nothing was recorded at all.
+        dep="$(_ledger_decision "$ledger" "$name")"
+        case "$dep" in
+          follow-up|drop|fix-now|fix-now-unconfirmed) dep="the ledger records $dep but its Decision line was not rewritten" ;;
+          *) dep="its Decision is still undecided" ;;
+        esac
+        printf 'dismissed-drafts: auto-keep refused %s — %s\n' "$name" "$dep" ;;
     esac
   done
   echo "dismissed-drafts: $n per-finding + $s summary ($m listed in summary)"
@@ -842,6 +860,13 @@ dismissed_decide() {
   # (dismissed-drafts skips the whole pass on it), yet drop / fix-now would
   # delete the draft on its strength — so refuse, touching nothing.
   if _ledger_unreadable "$ledger"; then echo "$refuse unreadable ledger $ledger"; return 0; fi
+  # --auto never overrides a decision the ledger already holds (the owner's drop of a slot still on
+  # disk, or a follow-up whose Decision rewrite failed): the same last-row-wins read as dismissed-drafts.
+  if [ "$auto" -eq 1 ]; then
+    case "$(_ledger_decision "$ledger" "$name")" in
+      follow-up|drop|fix-now|fix-now-unconfirmed) echo "$refuse already decided in the ledger"; return 0 ;;
+    esac
+  fi
   ts="$(_ts)"
   # A summary's decision covers exactly the entries it lists: one
   # `summary-member<TAB><h8><TAB><name>` row per `- **Key:**` line (script-written,

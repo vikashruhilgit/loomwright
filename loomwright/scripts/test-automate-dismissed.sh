@@ -455,6 +455,29 @@ if [ "$(id -u)" != "0" ]; then
   [ "$dd_rc" -eq 0 ] && grep -qxF -- "- **Decision:** undecided" "$PROP/$SB.md" && [ ! -e "$AD/$RUN_ID.dismissed-decisions" ] \
     && [ "$(printf '%s\n' "$dd_out" | tail -n 2 | head -n 1)" = "dismissed-drafts: auto-keep refused $SB.md — its Decision is still undecided" ] \
     && ok "AC8a: missing ledger in an unwritable directory ⇒ exit 0, undecided, the refused line before the count line" || no "AC8a dir: rc=$dd_rc out=[$dd_out]"
+  # --auto never overrides a decision the ledger already holds. (1) the owner's Drop recorded while
+  # proposed/ was read-only: the ledger `drop` row is written, the rm fails, the slot stays on disk undecided.
+  fx s-dr; sup 1 "[$L1]"; drafts; unkeep "$PROP/$SB.md"; LA="$AD/$RUN_ID.dismissed-decisions"
+  chmod 555 "$PROP"; bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" drop >/dev/null; chmod 755 "$PROP"
+  l0="$(wc -l < "$LA" | tr -d ' ')"; p0="$(progress_n)"
+  o="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" follow-up --auto)"
+  [ -f "$PROP/$SB.md" ] && [ "$o" = "dismissed-decide: refused — already decided in the ledger" ] && grep -qxF -- "- **Decision:** undecided" "$PROP/$SB.md" \
+    && [ "$(wc -l < "$LA" | tr -d ' ')" = "$l0" ] && [ "$(progress_n)" = "$p0" ] && [ "$(awk -F'\t' -v n="$SB.md" '$1 == n { d = $2 } END { print d }' "$LA")" = drop ] \
+    && ok "--auto on a slot the ledger records dropped (file still on disk) ⇒ refused, no ledger row, no Progress line; the drop stands" || no "auto over drop: [$o] $(tr '\t\n' ' |' < "$LA")"
+  a0="$(autokept_n "$SB.md")"; drafts
+  [ "$(autokept_n "$SB.md")" = "$a0" ] && [ "$(awk -F'\t' -v n="$SB.md" '$1 == n { d = $2 } END { print d }' "$LA")" = drop ] && ! grep -q 'auto-keep refused' <<<"$dd_out" \
+    && ok "dismissed-drafts does not auto-keep a dropped slot still on disk" || no "drafts over drop: $dd_out / $(tr '\t\n' ' |' < "$LA")"
+  # (2) the ledger is appendable but the Decision rewrite fails (proposed/ read-only): ONE follow-up row
+  # and ONE more kept-automatically line however often the auto-keep is retried, and the refusal says the ledger recorded it.
+  fx s-rw; sup 1 "[$L1]"; drafts; unkeep "$PROP/$SB.md"; LA="$AD/$RUN_ID.dismissed-decisions"
+  a0="$(autokept_n "$SB.md")"; chmod 555 "$PROP"; drafts; d1="$dd_out"; drafts
+  bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" follow-up --auto >/dev/null; o="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" follow-up --auto)"
+  chmod 755 "$PROP"
+  [ "$(awk -F'\t' -v n="$SB.md" '$1 == n && $2 == "follow-up"' "$LA" | wc -l | tr -d ' ')" = 1 ] && [ "$(autokept_n "$SB.md")" = "$((a0 + 1))" ] && [ "$(smem "$SB.md" | wc -l | tr -d ' ')" = 1 ] \
+    && [ "$o" = "dismissed-decide: refused — already decided in the ledger" ] && grep -qxF -- "- **Decision:** undecided" "$PROP/$SB.md" \
+    && ok "a failed Decision rewrite ⇒ exactly one follow-up row, one summary-member row and one kept-automatically line across repeated auto-keeps" || no "rewrite failure: [$o] $(tr '\t\n' ' |' < "$LA") kept $(autokept_n "$SB.md")"
+  grep -qxF -- "dismissed-drafts: auto-keep refused $SB.md — the ledger records follow-up but its Decision line was not rewritten" <<<"$d1" \
+    && ok "the refusal line says the ledger recorded the decision when only the rewrite failed" || no "honest refusal: $d1"
 else
   ok "A5a unwritable-ledger legs skipped (running as root)"
 fi

@@ -102,7 +102,9 @@
 #               `OK …` ⇒ the `token_ceiling` park
 #   meta-push   `meta-push-failed`: a non-empty answer is one `meta-push-failed:` line (a report, never a block)
 #   pending     first, interactive or not: each undecided summary draft of this run is recorded follow-up
-#               automatically (`dismissed-decide <draft> … --auto`, once a draft, never asked); then
+#               automatically (`dismissed-decide <draft> … --auto`, once a draft, never asked; refused
+#               when the ledger already holds a decision for it), and the owner drops one by deleting
+#               it from proposed/ (never recreated); then
 #               interactive only: `followup-nudge`'s line, when non-empty, reported once on stderr (never
 #               an ask or a park); `dismissed-pending` non-zero / `unknown` ⇒ AUT-PENDING (per-finding,
 #               ≤ 4 a call) asks and — only for a summary whose auto-keep was refused, the fallback —
@@ -1554,7 +1556,8 @@ ns_pending() {
   # The summary auto-keep's resume half, interactive or not (BEFORE the --non-interactive return): every
   # undecided summary draft of this run — one written before dismissed-drafts kept summaries itself, or
   # one whose auto-keep was refused — is recorded follow-up through dismissed-decide's --auto path, once
-  # a draft per step chain, never asked. A refused one stays undecided: the AUT-SUMMARY ask below is its fallback.
+  # a draft per step chain, never asked; --auto itself refuses a draft the ledger already decided (an owner's
+  # drop whose rm failed, a follow-up whose rewrite failed). A refused one stays undecided: the AUT-SUMMARY ask below is its fallback.
   local akind apath
   while IFS="$TAB" read -r akind apath; do
     [ "$akind" = summary ] && [ -n "$apath" ] || continue
