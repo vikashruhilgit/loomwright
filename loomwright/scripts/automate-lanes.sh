@@ -100,6 +100,12 @@
 #   scope-outside <item> <brief> [--root <dir>]          READ-ONLY: the brief's paths outside the item's Touches
 #        (Launch Pad's LP-SCOPE list): `inside` | `unknown` | `outside <n>` / `unreadable <n>` then one path per
 #        line (exit 0); exit 1 on usage / an unreadable brief (scope.sh header: the whole contract)
+#   lane-scope-check <lane_dir|L<n>>                    READ-ONLY scope re-gate of a lane held `scope_hold` (an N > 1
+#        lane parks it after its Launch Pad save): its declared set vs every other live lane of the wave — `unreadable
+#        — …` / `overlap — <file> shared with <lane> (…)` lines, else `clear`; then `widening — <path>` lines (exit 0)
+#   lane-scope-decide <lane_dir|L<n>> <continue|serialize|defer|revise> [--after L<m>] [--gate AUT-OVERLAP|LP-SCOPE]
+#        [--owner-command '<cmd>']                      the owner's re-gate answer: release + `lane-launch --continue`,
+#        serialize after L<m> (its exact PR head merged in first), defer to the next wave, or re-plan (scope.sh header)
 #
 # Files (all paths derived; nothing hard-coded):
 #   <lane>/.supervisor/lane.json        D2 marker — the ONE marker lane-create writes (plus the copied
@@ -114,7 +120,9 @@
 #                                       finalize-empty's `## Status: done` + its Progress lines — and
 #                                       (3) `lane-remove --abandon` on a `gone` lane: the ABANDONED stamp,
 #                                       the done/ → failed/ brief move and the same push, just before the
-#                                       lane is salvaged and deleted.
+#                                       lane is salvaged and deleted, and (4) `lane-scope-decide` on a lane held
+#                                       `scope_hold`: its release / serialize lines, its brief's widening line,
+#                                       serialize's merge of another lane's exact PR head, defer's removal.
 #                                       lane.json carries `policy`: lane-policy.sh `resolve`'s object, run in
 #                                       the PRIMARY at lane-create (the rules stamp is per clone), or null;
 #                                       and `"single_lane": true` (appended last) ONLY from an explicit
@@ -218,7 +226,7 @@
 # removed/abandoned, answer_pending, blocked_launch, held_for_load (awaiting_input instead while the
 # lane holds an unanswered question and no process runs), created, missing, running
 # (lanes_proc_alive), awaiting_input, the run
-# file's park (merged / gone after reconcile-item), lost_to_reset (boot later than the last launch),
+# file's park (merged / gone after reconcile-item; `scope_hold` — an N > 1 lane held before its Supervisor phase), lost_to_reset (boot later than the last launch),
 # died (.died marker), running again while an answered deferred question's resume is not yet visible
 # (answer written ≤ LOOMWRIGHT_LANES_RESUME_GRACE_S ago, default 120), stalled (process gone, not parked,
 # no question). Keep-awake is SUGGESTED on macOS
@@ -237,7 +245,8 @@
 # LOOMWRIGHT_LANES_RESUME_GRACE_S (default 120: the answer-relaunch gap read as running, not stalled),
 # LOOMWRIGHT_LANES_TRAIL (default: the helpers path — whose `trail-pr` runs the lane's gated push),
 # LOOMWRIGHT_LANES_NOTIFY_DESKTOP / LOOMWRIGHT_LANES_SEND_WEBHOOK (lane-park-notify's two notifiers),
-# LOOMWRIGHT_LANES_POLICY (lane-policy.sh path), LOOMWRIGHT_LANES_RUN_LOCK (run-lock.sh path, fleet-closeout).
+# LOOMWRIGHT_LANES_POLICY (lane-policy.sh path), LOOMWRIGHT_LANES_RUN_LOCK (run-lock.sh path, fleet-closeout),
+# LOOMWRIGHT_LANES_SCOPE_LAUNCH (the command lane-scope-decide relaunches through instead of `lane-launch`).
 #
 # Modules (sourced in this order from automate-lanes.d/):
 # - common.sh: now_utc … _lanes_merge_hooks — shared helpers, the D6 lane-table lock (_lt_*), _lane_ctx,
@@ -268,8 +277,10 @@
 # - phase.sh: _lanes_phase_ctx … lanes_phase_answer — fresh session per phase: lanes_phase_check
 #    (`phase-check`), lanes_phase_launch (`phase-launch`), lanes_phase_wait (`phase-wait`),
 #    lanes_phase_answer (`phase-answer`); the phase dir, the relay-hook settings, the spawn env
-# - scope.sh: lanes_scope_outside — lanes_scope_outside (`scope-outside`): a brief's paths outside its item's
-#    Touches, read through readiness.sh's _lanes_declared / _lanes_brief_paths / _lanes_is_declared
+# - scope.sh: lanes_scope_outside … _lanes_scope_inbox_rows — lanes_scope_outside (`scope-outside`): a brief's paths
+#    outside its item's Touches; the scope re-gate: lanes_scope_check (`lane-scope-check`), lanes_scope_decide
+#    (`lane-scope-decide`), _lanes_scope_held (read by `--inbox` and guard-lane-wait-armed.sh) — all through
+#    readiness.sh's _lanes_declared / _lanes_brief_paths / _lanes_is_declared
 # Every module is sourced by name at the position its code held when this was one file (the loader
 # below); the header, the config block, die, _lanes_usage, lanes_main and the direct-run guard stay
 # here. A "see the header in automate-lanes.sh" pointer to a function lands on its module above.
@@ -421,6 +432,8 @@ lanes_main() {
     phase-wait) lanes_phase_wait "$@" ;;
     phase-answer) lanes_phase_answer "$@" ;;
     scope-outside) lanes_scope_outside "$@" ;;
+    lane-scope-check) lanes_scope_check "$@" ;;
+    lane-scope-decide) lanes_scope_decide "$@" ;;
     _lane-run) lanes_run_wrapper "$@" ;;
     _merge-hooks) _lanes_merge_hooks "$@" ;;
     -h|--help|help) _lanes_usage ;;

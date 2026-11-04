@@ -1879,7 +1879,7 @@ ns_segment_brief() {
 ns_revise_note() {
   ns_section '## Progress' | awk '{ x = $0; sub(/^- /, "", x); if (x ~ /^[0-9][0-9][0-9][0-9]-/) sub(/^[^ ]+ /, "", x)
       if (index(x, "picked ") == 1) k = ""; else if (index(x, "launch-pad saved ") == 1) k = ""
-      else if (index(x, "scope re-gate released (revise) — keep off: ") == 1) k = substr(x, 46) } END { if (k != "") print k }'
+      else if (index(x, "scope re-gate released (revise) — keep off: ") == 1) { k = x; sub(/^scope re-gate released \(revise\) [^ ]+ keep off: /, "", k) } } END { if (k != "") print k }'
 }
 ns_pending_briefs() { # the pending briefs, one relative path a line (the ls-diff fallback's snapshot)
   local f

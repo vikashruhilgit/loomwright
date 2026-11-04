@@ -133,7 +133,7 @@ _lanes_inbox() {
     done <<EOF
 $(_lanes_pending_questions "$path/.supervisor/inbox")
 EOF
-  done < "$1"
+  done < "$1"; rows="$rows$(_lanes_scope_inbox_rows "$1" 2>/dev/null)"   # + every lane held scope_hold (scope.sh)
   printf '%s' "$rows" | jq -r -s 'sort_by(.at, .lane, .id)
     | "lane-status: inbox — \(length) pending human question call(s), oldest first",
       (.[] | . as $r
@@ -413,7 +413,7 @@ _lanes_timeline() {
     | ([($ev[] | .step), (if $ph then ($s.phase | sstep) else empty end) | ord] | max // 0) as $far
     | (if ($state | test("^(merged|done)$")) then 7 else $far end) as $cur
     | (if $state == "running" then "active"
-       elif ($state | test("^(awaiting_input|answer_pending|ready_for_release|awaiting_merge)$")) then "waiting"
+       elif ($state | test("^(awaiting_input|answer_pending|scope_hold|ready_for_release|awaiting_merge)$")) then "waiting"
        elif ($state | test("^(held_for_load|created|removed)$")) then "held"
        elif ($state | test("^(stalled|died|lost_to_reset|missing|blocked_launch|gone|escalated|failed|rate_limit|drain_died|abandoned)$")) then "trouble"
        else "active" end) as $cs
