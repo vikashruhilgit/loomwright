@@ -10,11 +10,13 @@ and no harness-specific wording.
 
 - `tree/dot-supervisor/requirements/` — the items below, plus five files the item set skips
   (`bl/00-index.md`, `bl/_notes.md`, `bl/README.md`, `operator-run/op-01.md`, the top-level task plan
-  `bl-plan.md`), so 28 files make 23 items.
+  `bl-plan.md`), so 29 files make 24 items.
 - `tree/dot-supervisor/automate/` — five run files: `automate-2026-09-01-100000` (done: a plain
   check-off and four `# abandoned:` rows), `automate-2026-10-01-100000` (done: a later `# skipped:` row
   and a `fleet closeout` line), and three unfinished runs whose `## Current` names `bl/03-parked`
-  (paused), `bl/09-pr-open` (an open PR) and `bl/17-in-flight` (no PR).
+  (paused), `bl/09-pr-open` (an open PR) and `bl/17-in-flight` (no PR). Beside the last, its
+  `<run_id>.dismissed-decisions` ledger: one `follow-up` row (ts 2026-10-20T10:00:00Z) for the
+  follow-up draft under `proposed/`.
 - `tree/dot-supervisor/jobs/done/` — one done brief pointing at `bl/14-open` (the `- **Brief:**` line
   `backlog-stamp done` writes).
 - `gh/merged.json`, `gh/open.json` — what the stubbed `gh pr list --state merged|open` prints. Seven
@@ -59,3 +61,4 @@ The state each item must read. The test parses this table, so it is the expected
 | `pk/03-cycle-a` | `unknown` | parked into `pk/04-cycle-b`, which is parked back into it |
 | `pk/04-cycle-b` | `unknown` | the other half of the cycle |
 | `proposed/bl-draft` | `proposed` | a file under `proposed/`, no status line |
+| `proposed/automate-2026-10-12-100000--17-in-flight-0a1b2c--dismissed-5e6f7a8b` | `follow_up` | a real-shape dismissed draft (`## Status: proposed` first) whose first Decision is `follow-up` |

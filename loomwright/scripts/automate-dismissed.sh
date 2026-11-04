@@ -91,6 +91,9 @@
 #       (s = summary files written or kept; m = current entries listed in one of
 #       them — an entry in a DROPPED summary is not counted; an above-threshold
 #       entry that inherits a kept summary's follow-up counts in m, not in n).
+#       A follow-up draft is reported (`draft` row) and counted only while it is
+#       on disk: one `followup-bundle` removed is neither reported nor counted,
+#       per-finding or summary (its ledger row still keeps it from being recreated).
 #   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>
 #       Refuses (`dismissed-decide: refused — <reason>`) a path that is not a
 #       regular file directly under `proposed/` named `<this run_id>--*--dismissed-*.md`
@@ -555,7 +558,8 @@ for e in [x for x in entries if x["own"]] + [x for x in entries if not x["own"]]
         elif d == "fix-now" and e["origin"] == "drain" and after_fix_now:
             home[e["h8"]] = name if plan(name, render_one(e, "undecided (fix-now unconfirmed)"), str(k), e["sev"], "fix-now-unconfirmed") else None
         elif d == "follow-up":
-            emit("keep", str(k), e["sev"] or "-", name, "-", "-", "0")
+            if on_disk(name):  # a kept follow-up is reported only while its draft is on disk (followup-bundle removes it)
+                emit("keep", str(k), e["sev"] or "-", name, "-", "-", "0")
         # drop / fix-now (phase_4_5, or no re-drain yet) ⇒ never recreated
         continue
     snm, sd = inherited(e["h8"])
@@ -572,7 +576,8 @@ for e in [x for x in entries if x["own"]] + [x for x in entries if not x["own"]]
             own_retires.append(name)
 for nm, d, mem in decided_slots:
     if nm in kept_slot:
-        emit("keep", "summary", "-", nm, "-", "-", str(kept_slot[nm]))
+        if on_disk(nm):  # the same rule for a kept summary: an absent (bundled) one is not counted in m
+            emit("keep", "summary", "-", nm, "-", "-", str(kept_slot[nm]))
 # Every retire is emitted AFTER every write and names the write(s) it waits on:
 # the bash half runs it only once each of them succeeded (pc_guarded_write can
 # still refuse one), so a finding is never left with no draft.
@@ -666,7 +671,9 @@ PY
           fi
         fi ;;
       keep)
-        if [ -n "$out_abs" ] && [ -f "$out_abs/$name" ]; then
+        # Whether a kept draft is on disk is decided ONCE, by the engine's on_disk(); this arm only
+        # needs a resolvable proposed/ dir to print its path.
+        if [ -n "$out_abs" ]; then
           printf 'draft\t%s\t%s\t%s\n' "$kname" "$sev" "$out_abs/$name"
           if [ "$kname" = summary ]; then s=$((s+1)); m=$((m+cnt)); else n=$((n+1)); fi
         fi ;;

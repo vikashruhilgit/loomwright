@@ -1,6 +1,6 @@
 # --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/backlog.golden.
-#:  item-state       <item> [--json] [--root <checkout>]  # parallel-automate/18a: READ-ONLY — the ONE status reader: prints `<state>\t<item>\t<evidence>` (state from the closed set done|abandoned|parked|proposed|brief_shipped|merged_unstamped|pr_open|in_flight|conflict|open|unknown, first match of the precedence in the backlog.sh header) plus one `stale_run\t<run file>\t<reason>` row per unfinished run whose ## Current the item's own stamp beats; --json prints ONE object; exit 1 on usage / item not found
+#:  item-state       <item> [--json] [--root <checkout>]  # parallel-automate/18a: READ-ONLY — the ONE status reader: prints `<state>\t<item>\t<evidence>` (state from the closed set done|abandoned|parked|proposed|follow_up|brief_shipped|merged_unstamped|pr_open|in_flight|conflict|open|unknown, first match of the precedence in the backlog.sh header) plus one `stale_run\t<run file>\t<reason>` row per unfinished run whose ## Current the item's own stamp beats; --json prints ONE object; exit 1 on usage / item not found
 #:  backlog          [--json] [--state <s>] [--unknown | --verify-list [<item>...]] [--offline] [--root <checkout>]  # parallel-automate/18a: READ-ONLY board — every requirement item (the _rs_skip_path set) once, grouped by folder, with item-state's state + evidence, run / lane, PR and a right-size column (ONE `right-size --json` call; failure ⇒ `unknown`), totals summing to the item count and `stale_run` runs; ONE cached `gh pr list` read per state (merged, open), gh failing ⇒ every PR field `unverified` + header `github: unverified`; --offline makes no gh call and no right-size call and reads exactly as both failing (`github: unverified`, right-size `unknown`; an item whose only merge evidence is a merged PR is not `merged_unstamped`); --state filters rows (totals stay whole-tree); --unknown lists unknown + brief_shipped items with a suggested fix; --verify-list lists items with no merge evidence (brief_shipped, unknown, conflict, or the named items) with candidate merged PRs; writes nothing; exit 1 on usage
 #:  backlog-stamp    <item> <done|done_with_escalation|abandoned|kept-open> [--pr <url>]... [--owed <text>] [--reason <text>] [--supersedes <run_id>] [--date YYYY-MM-DD] [--root <checkout>] --confirm  # parallel-automate/18a: the owner-approved stamp writer — appends exactly the engine shape (done / done_with_escalation: closeout's sentinel + `## Status:` + Completed + Brief + one PR line per --pr [+ Owed]; abandoned: `## Status: done_with_escalation — ABANDONED (<reason>)`; kept-open: `- **Kept open:** <date> — supersedes <run_id>`) to ONE file under <root>/.supervisor/requirements/; without --confirm prints the block and writes nothing; refuses (exit 1, nothing written) an already-done item, a path outside the requirements tree, and an absolute home path in any argument but the --root locator
 
@@ -17,7 +17,7 @@
 # `proposed/` files are items.
 #
 # STATES (the ONE closed set, _BL_STATES; each item reads exactly one, the board counts each once):
-# done abandoned parked proposed brief_shipped merged_unstamped pr_open in_flight conflict open unknown.
+# done abandoned parked proposed follow_up brief_shipped merged_unstamped pr_open in_flight conflict open unknown.
 # One RUN state, `stale_run`, is listed under "runs needing attention" and never counted as an item.
 #
 # PRECEDENCE (first match wins; the evidence names the line it rests on):
@@ -26,8 +26,14 @@
 #     `## Status: done_with_escalation — ABANDONED (…)`. A first status line `parked (merged … into X)`
 #     / `parked (split … into X)` reads X's state and names X (followed hop by hop; a cycle or more
 #     than 8 hops ⇒ `unknown (parked chain cycle)`; a target that does not resolve ⇒ `parked`). Any
-#     other `parked` ⇒ `parked`. A `proposed` first status line, or a file under `proposed/` ⇒
-#     `proposed`. An unfinished run whose ## Current names such an item is listed `stale_run`.
+#     other `parked` ⇒ `parked`. Then a follow-up dismissed draft — a file directly under
+#     `proposed/` named `*--dismissed-*.md` whose FIRST `- **Decision:**` value is `follow-up`, as
+#     followup.sh's age helper _fu_ages reads it (ONE call per pass, joined by the prep awk) ⇒
+#     `follow_up`, its evidence `follow-up <N>d — run <run>, PR <url>` with the age's source (that
+#     helper's header). It is decided BEFORE the `proposed` test, because every real draft's first
+#     status line is `## Status: proposed`. Then a `proposed` first status line, or a file under
+#     `proposed/` ⇒ `proposed` (an undecided draft, a hand-written proposal). An unfinished run whose
+#     ## Current names such an item is listed `stale_run`.
 #  2. Merge evidence with no done stamp ⇒ `merged_unstamped`: a run file's plain `- [x] <path>` row
 #     (no `  # ` suffix), a `fleet closeout: <lane> <path> done` line, or a merged PR from the
 #     cached list that names a DISTINCTIVE key of the item as a whole token. The keys: the slug
@@ -72,9 +78,10 @@
 # run as `<bin> --json` in <root> instead of the sibling `automate-lanes.sh lane-status --json`;
 # LOOMWRIGHT_RIGHT_SIZE_BIN names a command run as `<bin> <item list> --json --root <root>` instead of
 # this process's own right_size. Each only replaces where the data comes from, never how it is read.
+# The follow-up age's clock seam, LOOMWRIGHT_FOLLOWUP_NOW, is documented in followup.sh's header.
 
 
-_BL_STATES="done abandoned parked proposed brief_shipped merged_unstamped pr_open in_flight conflict open unknown"
+_BL_STATES="done abandoned parked proposed follow_up brief_shipped merged_unstamped pr_open in_flight conflict open unknown"
 _BL_PR_LIMIT=1000
 _BL_DATE_RE='([0-9]{4}-[0-9]{2}-[0-9]{2})'
 _BL_TMP=""
@@ -195,8 +202,9 @@ _BL_RUNS_AWK='
 # \037-separated row per item, in list order:
 #    abs rel disp first_status last_done_line last_dated x_rf f_rf f_pr c_rf c_pr c_all(\036) a_n
 #    lane lane_state lane_pr m_num m_url cand(\036 rows of num\035url\035title) c_pr_open lane_pr_open
-#    m_key
-# last_done_line only DISPLAYS which terminal line is_done matched; whether the item is done is
+#    m_key follow_up
+# follow_up is the item's _fu_ages evidence row from followup.tsv (empty when it is no follow-up
+# draft). last_done_line only DISPLAYS which terminal line is_done matched; whether the item is done is
 # always is_done's answer. The PR match is the precedence-2 rule (whole-token, on a distinctive key
 # only — see the header); m_key names the key and where it matched. Candidates are the looser
 # `--verify-list` match (the slug without its leading `NN-`/`NNa-` id, case-insensitive, head or
@@ -251,6 +259,7 @@ _BL_PREP_AWK='
     nm = 0
     while ((getline l < merged) > 0) { nm++; split(l, a, "\t"); MN[nm] = a[1]; MU[nm] = a[2]; MH[nm] = a[3]; MT[nm] = a[4]; ML[nm] = tolower(a[3] " " a[4]) }
     while ((getline l < open) > 0) { split(l, a, "\t"); if (a[2] != "") O[a[2]] = 1 }
+    while ((getline l < fu) > 0) { split(l, a, "\t"); if (a[1] != "") FU[a[1]] = a[3] }
     # every key of the WHOLE item set (not just <list>, which item-state narrows to one item) and its
     # owner; a key a second item also yields is marked shared (KS)
     while ((getline f < items) > 0) {
@@ -292,18 +301,19 @@ _BL_PREP_AWK='
       if (lk2 != "") { lane = LL[lk2]; lst = LS[lk2]; lpr = LP[lk2] }
       cp = g(f, rel, CP)
       printf "%s", f US rel US disp US fs US ld US (sd == "" ? "undated" : sd) US g(f, rel, X) US g(f, rel, F) US g(f, rel, FP) US g(f, rel, C) US cp US g(f, rel, CA) US ((rel in AN) ? AN[rel] : 0)
-      printf "%s\n", US lane US lst US lpr US mn US mu US cand US ((cp != "" && (cp in O)) ? 1 : 0) US ((lpr != "" && (lpr in O)) ? 1 : 0) US mk
+      printf "%s\n", US lane US lst US lpr US mn US mu US cand US ((cp != "" && (cp in O)) ? 1 : 0) US ((lpr != "" && (lpr in O)) ? 1 : 0) US mk US g(f, rel, FU)
     }
   }'
 
 # _bl_context <root> — load the per-pass sources into $_BL_TMP: runs (the index above), merged.tsv /
 # open.tsv (`<number>\t<url>\t<headRefName>\t<title>`, _BL_GH verified or unverified) and lanes.tsv
-# (`<item>\t<lane>\t<state>\t<pr>`). <offline> 1 (backlog --offline) skips both gh reads: no "$GH"
+# (`<item>\t<lane>\t<state>\t<pr>`) and followup.tsv (_fu_ages: `<path>\t<days>\t<evidence>`). <offline> 1 (backlog --offline) skips both gh reads: no "$GH"
 # call, and _BL_GH stays unverified through the same both-reads-failed path.
 _bl_context() {
   local root="$1" offline="${2:-0}" rf live j1="" j2="" rc1=0 rc2=0 lj
   _BL_ROOT="$root"; _BL_ADIR="$root/.supervisor/automate"
   : > "$_BL_TMP/runs"; : > "$_BL_TMP/merged.tsv"; : > "$_BL_TMP/open.tsv"; : > "$_BL_TMP/lanes.tsv"; : > "$_BL_TMP/stale"
+  _fu_ages "$root" > "$_BL_TMP/followup.tsv" 2>/dev/null || : > "$_BL_TMP/followup.tsv"
   for rf in "$_BL_ADIR"/*.md; do
     [ -f "$rf" ] || continue
     live=0
@@ -338,14 +348,14 @@ _bl_context() {
 # come from the whole item set, $_BL_TMP/list.abs (every caller writes it first).
 _bl_prep() {
   env LC_ALL=C awk -v list="$1" -v items="$_BL_TMP/list.abs" -v root="$_BL_ROOT" -v runs="$_BL_TMP/runs" -v lanes="$_BL_TMP/lanes.tsv" \
-    -v merged="$_BL_TMP/merged.tsv" -v open="$_BL_TMP/open.tsv" "$_BL_PREP_AWK" > "$2"
+    -v merged="$_BL_TMP/merged.tsv" -v open="$_BL_TMP/open.tsv" -v fu="$_BL_TMP/followup.tsv" "$_BL_PREP_AWK" > "$2"
 }
 
 # _bl_load <prep row> — the row's fields into P_* (the classifier's only per-item input besides
 # is_done, _bl_is_conflict and _rs_first_status_open).
 _bl_load() {
   IFS="$_BL_US" read -r P_ABS P_REL P_DISP P_FS P_LD P_SD P_X P_F P_FP P_C P_CP P_CA P_AN \
-    P_LANE P_LST P_LPR P_MN P_MU P_K P_COPEN P_LOPEN P_MK <<<"$1"
+    P_LANE P_LST P_LPR P_MN P_MU P_K P_COPEN P_LOPEN P_MK P_FU <<<"$1"
 }
 
 # _bl_target_abs <X> <item abs> — X (from `parked (merged|split … into X …)`) resolved: under the
@@ -401,6 +411,9 @@ _bl_classify() {
     else
       BL_S=parked; BL_E="$fs"; [ -z "$tgt" ] || BL_E="$fs (target $tgt not found)"
     fi
+  elif [ -n "$P_FU" ]; then   # a follow-up dismissed draft (header, step 1): before the proposed test
+    BL_E="$P_FU"
+    BL_S=follow_up
   elif [[ "$fs" =~ $_BL_RE_PROPOSED ]]; then
     BL_S=proposed; BL_E="$fs"
   else
