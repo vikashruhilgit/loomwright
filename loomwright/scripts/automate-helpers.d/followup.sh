@@ -47,6 +47,19 @@ _FU_LOCK=""
 _fu_fail() { echo "followup-bundle: refused — $1 (nothing written)" >&2; exit 1; }
 # _fu_cleanup — the EXIT trap: the render dir, and the bundle lock only when THIS process took it.
 _fu_cleanup() { [ -z "$_FU_TMP" ] || rm -rf "$_FU_TMP"; [ -z "$_FU_LOCK" ] || rmdir "$_FU_LOCK" 2>/dev/null; return 0; }
+# _fu_in_proposed <req> <phys> — exit 0 when <phys> (a path under <req>) lands in <req>/proposed/.
+# Decided by identity, never by spelling: on a case-insensitive filesystem (macOS APFS default)
+# PROPOSED/ IS proposed/, yet `pwd -P` keeps the typed case, so a string prefix match misses it. So
+# every EXISTING ancestor up to <req> is compared to <req>/proposed by inode (`-ef`). With no
+# proposed/ at all nothing matches here, and every draft is then refused (none can be under it).
+_fu_in_proposed() {
+  local req="$1" a="${2%/*}"
+  while :; do
+    case "$a" in "$req"/*) ;; *) return 1 ;; esac
+    if [ -e "$a" ] && [ "$a" -ef "$req/proposed" ]; then return 0; fi
+    a="${a%/*}"
+  done
+}
 
 # _fu_ages <root> — the follow-up rows (header). Fail-safe: a failure prints nothing more.
 _fu_ages() {
@@ -201,7 +214,7 @@ followup_bundle() {
   phys="$(cd "$anc" 2>/dev/null && pwd -P)" || _fu_fail "--into's parent cannot be resolved: $into"
   phys="${phys%/}/$rest"
   case "$phys" in "$req"/*) ;; *) _fu_fail "--into is outside .supervisor/requirements/: $into" ;; esac
-  case "$phys/" in "$req/proposed/"*|"${prop:-$req/proposed}/"*) _fu_fail "--into is inside proposed/ (a bundle is a runnable queue item, never a draft): $into" ;; esac
+  if _fu_in_proposed "$req" "$phys"; then _fu_fail "--into is inside proposed/ (a bundle is a runnable queue item, never a draft): $into"; fi
   trel=".supervisor/requirements/${phys#"$req"/}"
   if [ -e "$phys" ] || [ -L "$phys" ]; then _fu_fail "the target already exists: $trel"; fi
 
@@ -221,6 +234,8 @@ followup_bundle() {
     dec="$(awk '/^- \*\*Decision:\*\* / { sub(/^- \*\*Decision:\*\* /, ""); sub(/[ \t\r]+$/, ""); print; exit }' "$f" 2>/dev/null)" || dec=""
     [ "$dec" = follow-up ] || _fu_fail "its first Decision is not follow-up: $given"
     case "$seen" in *$'\n'"$name"$'\n'*) _fu_fail "named twice: $given" ;; esac
+    # ...and by identity: a case-variant spelling of an already-named draft is the same file there
+    for c in ${abs[@]+"${abs[@]}"}; do if [ "$c" -ef "$prop/$name" ]; then _fu_fail "named twice: $given"; fi; done
     seen="$seen$name"$'\n'
     abs[${#abs[@]}]="$prop/$name"; n=$((n + 1))
   done
