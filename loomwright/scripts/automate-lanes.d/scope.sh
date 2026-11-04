@@ -97,10 +97,11 @@ lanes_scope_outside() {
 #              `scope re-gate: <lane> serialize — scope_wait: L<m>` (parent) once, and stays held until L<m> reads
 #              ready_for_release / awaiting_merge / merged — re-run it then. It reads L<m>'s PR head (`gh pr view
 #              --json headRefOid,headRefName`), fetches that branch from origin into the held lane and checks the
-#              fetched head IS that sha, then `git merge --no-ff <sha>` into the held lane's checked-out branch — its
-#              base, since the Supervisor phase has not created a feature branch yet (ACQUIRE's `git pull --ff-only`
-#              of an ahead base is a no-op, so the feature branch starts from the merge). A conflict aborts the merge,
-#              keeps the hold and refuses (never force-resolved). Then the release and relaunch as `continue`.
+#              fetched head IS that sha, then PRINTS the `git merge --no-ff <sha>` to run in the held lane's checked-out
+#              branch — its base, since the Supervisor phase has not created a feature branch yet (ACQUIRE's `git pull
+#              --ff-only` of an ahead base is a no-op, so the feature branch starts from the merge). This script runs
+#              no merge (no lane subcommand merges); a conflict is the owner's, never force-resolved. Re-run once the
+#              head is in HEAD: then the release and relaunch as `continue`.
 #   defer      the item leaves this wave: refused on a dirty tree or a local commit not on origin; else one lane line,
 #              salvage (`<lane>-deferred-…` under salvage/), the parent `- wave:` line rewritten without the item
 #              (`current-wave`), the clone removed and its table state set `abandoned` — so no lane claims the item
@@ -110,7 +111,7 @@ lanes_scope_outside() {
 #              Pad phase whose prompt names those files) and the new save holds again.
 # A relaunch that is HELD or BLOCKED is printed after the release line; the release stands (`lane-status` reads it).
 # The coordinator's writes into a held lane: its run file (the release / serialize lines), its brief's widening line,
-# its checked-out branch (serialize's merge) and its removal (defer).
+# serialize's fetch of the other lane's head and its removal (defer).
 
 # _lanes_sg_brief <lane_dir> <runfile> — the brief the lane's current pass saved, as an absolute path: the last
 # `launch-pad saved <brief>` line after the last `picked` line (a `scope re-gate released (revise` line starts the
@@ -306,11 +307,12 @@ lanes_scope_decide() {
         git -C "$LN_DIR" fetch -q origin "$hr" </dev/null 2>/dev/null || { _sgr "git fetch origin $hr failed — nothing merged, still held"; return 1; }
         fh="$(git -C "$LN_DIR" rev-parse -q --verify FETCH_HEAD 2>/dev/null)"
         [ "$fh" = "$sha" ] || { _sgr "origin $hr is at ${fh:-nothing}, not PR #$num's exact head $sha — nothing merged, still held"; return 1; }
+        # automate-lanes.sh executes no merge (the AG6 static guard: no lane subcommand merges): the merge of the exact
+        # head is PRINTED, run by hand in the held lane (a conflict is the owner's, never force-resolved), then this
+        # same command re-run sees the head in HEAD and releases
         m="$(printf 'Merge lane %s (%s) PR #%s — serialized before %s (scope re-gate)' "$after" "$ai" "$num" "$LN_LANE")"
-        if ! git -C "$LN_DIR" merge -q --no-ff "$sha" -m "$m" </dev/null >/dev/null 2>&1; then
-          git -C "$LN_DIR" merge --abort >/dev/null 2>&1
-          _sgr "merging $after's PR #$num head ${sha:0:12} into $br stopped (conflict) — aborted, still held; never force-resolved: the owner integrates by hand, then answers again"; return 1
-        fi
+        printf 'lane-scope-decide: integrate — %s stays held; in %s run: git merge --no-ff %s -m "%s" (fetched; a conflict stops: the owner resolves it, never forced), then re-run this command\n' "$LN_LANE" "$LN_DIR" "$sha" "$m"
+        return 0
       fi
       tail="(serialized after $after — merged PR #$num head ${sha:0:12})"
       line="$LN_LANE serialized after $after — merged $after's PR #$num exact head ${sha:0:12} into $br" ;;

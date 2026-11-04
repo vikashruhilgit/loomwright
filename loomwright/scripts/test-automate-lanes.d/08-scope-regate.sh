@@ -218,10 +218,14 @@ else bad "SD6 serialize wait" "rc=$rc out=[$out] [$out2]"; fi
 git -C "$SGL/L1" checkout -q -b feature/x && echo x > "$SGL/L1/src/a/x.ts" && git -C "$SGL/L1" add -A && git -C "$SGL/L1" commit -qm x && git -C "$SGL/L1" push -q origin feature/x 2>/dev/null
 sg_sha="$(git -C "$SGL/L1" rev-parse HEAD)"
 sed -i.bak 's#^- item: reqs/x.md | status: running | pr: null#- item: reqs/x.md | status: ready_for_release | pr: https://github.com/o/r/pull/7#; s/^- pause_reason: null/- pause_reason: ready_for_release/' "$SGL/L1/.supervisor/automate/$SGPAR-L1.md"
-out="$(SG_GH_JSON="{\"headRefOid\":\"$sg_sha\",\"headRefName\":\"feature/x\",\"state\":\"OPEN\"}" sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"; rc=$?
+sg_js="{\"headRefOid\":\"$sg_sha\",\"headRefName\":\"feature/x\",\"state\":\"OPEN\"}"
+out0="$(SG_GH_JSON="$sg_js" sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"
+case "$out0" in "lane-scope-decide: integrate — L2 stays held"*"git merge --no-ff $sg_sha"*) ok "SD6a L1 ready ⇒ its exact head fetched and the merge PRINTED (the script runs no merge), still held" ;; *) bad "SD6a integrate line" "$out0" ;; esac
+git -C "$SGL/L2" merge -q --no-ff "$sg_sha" -m "serialize" >/dev/null 2>&1
+out="$(SG_GH_JSON="$sg_js" sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"; rc=$?
 if [ "$rc" = 0 ] && git -C "$SGL/L2" merge-base --is-ancestor "$sg_sha" HEAD && grep -qx -- '- pause_reason: null' "$sg_lrf" \
    && grep -q "scope re-gate released (serialized after L1 — merged PR #7 head ${sg_sha:0:12})" "$sg_lrf"; then
-  ok "SD6b L1 ready_for_release ⇒ its exact PR head merged into L2's checked-out base, then released"
+  ok "SD6b once the exact head is in L2's HEAD the re-run releases"
 else bad "SD6b serialize release" "rc=$rc out=[$out]"; fi
 sg_fx1; out="$(SG_GH_JSON='{"headRefOid":"0000000000000000000000000000000000000000","headRefName":"feature/x"}' sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"
 # defer: the item leaves the wave unchecked; the lane is gone and abandoned in the table
