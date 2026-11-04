@@ -31,6 +31,10 @@
 #       a NEW undecided summary slot listing only the uncovered entry; counts
 #       reflect what is written/kept; idempotent re-run; one undecided slot;
 #       fix-now refused on a summary; a draft with no Decision line ⇒ `unknown`.
+#       `--auto` records only follow-up, on any draft of this run: every --auto row
+#       ends with a 4th column `auto` (summary and per-finding; an owner's row stays
+#       3-column); AC6 an auto follow-up is neither rewritten nor recreated on re-run;
+#       AC7 the owner's later drop wins (`_ledger_decision` and a re-run).
 #   A5f. fix-now: suppressed without --after-fix-now (crash/resume edge);
 #       drain-origin + --after-fix-now ⇒ `undecided (fix-now unconfirmed)` (counted
 #       by dismissed-pending's prefix match); phase_4_5-origin NOT re-drafted.
@@ -421,14 +425,67 @@ l0="$(wc -l < "$LF" | tr -d ' ')"; p0="$(progress_n)"; cs="$(cksum < "$PROP/$SB.
 o="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" fix-now)"
 case "$o" in "dismissed-decide: refused — "*) ok "fix-now on a summary draft is refused" ;; *) no "fix-now on summary: $o" ;; esac
 [ -f "$PROP/$SB.md" ] && [ "$(wc -l < "$LF" | tr -d ' ')" = "$l0" ] && ok "the refusal deletes nothing and writes no ledger row" || no "summary fix-now refusal side effects"
-# AC9: --auto is accepted ONLY with follow-up on a summary draft — anything else is refused, touching nothing
+# AC9: --auto records ONLY follow-up (on any draft of this run) — drop, fix-now or an unknown trailing
+# argument is refused, touching nothing
 o1="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" drop --auto)"
-o2="$(bash "$H" dismissed-decide "$RF" "$FO" follow-up --auto)"
+o2="$(bash "$H" dismissed-decide "$RF" "$FO" fix-now --auto)"
 o3="$(bash "$H" dismissed-decide "$RF" "$FO" drop --auto)"
 o4="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" follow-up --automatic)"
-case "$o1|$o2|$o3|$o4" in "dismissed-decide: refused — "*"|dismissed-decide: refused — "*"|dismissed-decide: refused — "*"|dismissed-decide: refused — "*) ok "AC9: --auto refused with drop, on a per-finding draft (follow-up and drop), and an unknown trailing argument" ;; *) no "AC9 refusals: [$o1] [$o2] [$o3] [$o4]" ;; esac
+case "$o1|$o2|$o3|$o4" in "dismissed-decide: refused — --auto records only follow-up|dismissed-decide: refused — --auto records only follow-up|dismissed-decide: refused — --auto records only follow-up|dismissed-decide: refused — "*) ok "AC9: --auto refused with drop (summary and per-finding draft), with fix-now, and with an unknown trailing argument" ;; *) no "AC9 refusals: [$o1] [$o2] [$o3] [$o4]" ;; esac
 [ -f "$PROP/$SB.md" ] && [ -f "$FO" ] && [ "$(cksum < "$PROP/$SB.md")" = "$cs" ] && [ "$(cksum < "$FO")" = "$co" ] && [ "$(wc -l < "$LF" | tr -d ' ')" = "$l0" ] && [ "$(progress_n)" = "$p0" ] \
   && ok "AC9: an --auto refusal writes nothing (both drafts byte-identical, no ledger row, no Progress line)" || no "AC9 refusal side effects: $(ls "$PROP") / $(tr '\t\n' ' |' < "$LF")"
+# The summary auto-keep's follow-up row carries the 4th `auto` column too (summary-member rows stay 3-column).
+[ "$(awk -F'\t' -v n="$SB.md" '$1 == n { r = NF "|" $2 "|" $4 } END { print r }' "$LF")" = "4|follow-up|auto" ] \
+  && [ -z "$(awk -F'\t' -v n="$SB.md" '$1 == "summary-member" && $3 == n && NF != 3' "$LF")" ] \
+  && ok "auto column: the summary auto-keep's follow-up row ends with a 4th column 'auto'; its summary-member rows stay 3-column" || no "summary auto row: $(tr '\t\n' ' |' < "$LF")"
+# The per-finding automatic follow-up: --auto accepted on a per-finding draft — the same writes as the
+# owner's follow-up, its ledger row ending with the `auto` column, its Progress line saying no question.
+FON="$(basename "$FO")"
+o="$(bash "$H" dismissed-decide "$RF" "$FO" follow-up --auto)"
+[ "$o" = "dismissed-decide: follow-up $FON" ] && [ -f "$FO" ] && grep -qxF -- "- **Decision:** follow-up" "$FO" && [ "$(grep -c '^- \*\*Decision:\*\*' "$FO")" = 1 ] \
+  && ok "per-finding --auto follow-up is accepted: one decide line, the draft kept, its Decision rewritten follow-up" || no "per-finding --auto: [$o] $(grep '^- \*\*Decision' "$FO" 2>/dev/null)"
+[ "$(wc -l < "$LF" | tr -d ' ')" = "$((l0 + 1))" ] \
+  && tail -n 1 "$LF" | grep -qxE "$(printf '%s' "$FON" | sed 's/[.]/[.]/g')	follow-up	[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z	auto" \
+  && ok "per-finding --auto follow-up writes the \\tauto column: exactly one new ledger row '<name>\\tfollow-up\\t<ts>\\tauto'" || no "per-finding auto row: $(tail -n 1 "$LF" | tr '\t' '|')"
+[ "$(progress_n)" = "$((p0 + 1))" ] \
+  && [ "$(grep -cE "^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z dismissed: follow-up $FON — followed up automatically \\(no question\\)\$" "$RF")" = 1 ] \
+  && ok "per-finding --auto follow-up: exactly ONE Progress line, 'dismissed: follow-up <name> — followed up automatically (no question)'" || no "per-finding auto progress: $(grep 'dismissed:' "$RF" | tr '\n' '|')"
+o="$(bash "$H" dismissed-decide "$RF" "$FO" follow-up --auto)"
+[ "$o" = "dismissed-decide: refused — already decided in the ledger" ] && [ "$(wc -l < "$LF" | tr -d ' ')" = "$((l0 + 1))" ] && [ "$(progress_n)" = "$((p0 + 1))" ] \
+  && ok "a second per-finding --auto is refused (already decided in the ledger), no row, no Progress line" || no "second per-finding auto: [$o]"
+[ "$(bash "$H" dismissed-pending "$RF")" = 0 ] && ok "dismissed-pending 0 after the per-finding automatic follow-up" || no "pending after auto: $(bash "$H" dismissed-pending "$RF")"
+# AC6: an `auto` follow-up row is not recreated on re-run — dismissed-drafts reads column 2 as the decision,
+# so the kept draft is neither rewritten (byte-identical) nor re-asked, and once removed by hand it is never recreated.
+before="$(tree_sum)"; ca="$(cksum < "$FO")"; l1="$(wc -l < "$LF" | tr -d ' ')"; p1="$(progress_n)"; drafts
+[ "$(cksum < "$FO")" = "$ca" ] && [ "$(tree_sum)" = "$before" ] && [ "$(wc -l < "$LF" | tr -d ' ')" = "$l1" ] && [ "$(progress_n)" = "$p1" ] && [ "$(bash "$H" dismissed-pending "$RF")" = 0 ] \
+  && ok "AC6: an auto follow-up row is not recreated on re-run — the draft byte-identical, no ledger row, no Progress line, nothing pending (not re-asked)" || no "AC6 re-run: $dd_out / pending $(bash "$H" dismissed-pending "$RF")"
+rm -f "$FO"; drafts
+[ ! -e "$FO" ] && [ "$(wc -l < "$LF" | tr -d ' ')" = "$l1" ] && [ "$(bash "$H" dismissed-pending "$RF")" = 0 ] \
+  && ok "AC6: an auto-followed-up draft removed from proposed/ is not recreated on re-run" || no "AC6 recreated: $(ls "$PROP") / $dd_out"
+# AC7: the owner's later drop wins over an `auto` row — the drop row is appended (last row wins), the draft
+# deleted, and neither _ledger_decision nor a dismissed-drafts re-run reads the earlier auto follow-up.
+# ledger_decision <ledger> <name> — the SUT's own _ledger_decision, extracted from the script text (it
+# ends in `main "$@"`, so it cannot be sourced).
+ledger_decision() { ( eval "$(awk '/^_ledger_decision\(\) \{$/,/^\}$/' "$SUT")"; _ledger_decision "$1" "$2" ); }
+fx s-ad; sup 1 '[{finding: "auto then drop", reason: below_severity_floor, source: code_reviewer, severity: MEDIUM}]'; drafts
+FX="$(draft_with 'auto then drop')"; FXN="$(basename "${FX:-x}")"; LX="$AD/$RUN_ID.dismissed-decisions"
+bash "$H" dismissed-decide "$RF" "$FX" follow-up --auto >/dev/null
+[ "$(ledger_decision "$LX" "$FXN")" = follow-up ] && ok "ledger_decision reads column 2 of an auto row (follow-up, not 'auto')" || no "ledger_decision on an auto row: [$(ledger_decision "$LX" "$FXN")]"
+o="$(bash "$H" dismissed-decide "$RF" "$FX" drop)"
+[ "$o" = "dismissed-decide: drop $FXN" ] && [ ! -e "$FX" ] && [ "$(awk -F'\t' -v n="$FXN" '$1 == n { print NF "|" $2 "|" $4 }' "$LX" | tr '\n' ' ')" = "4|follow-up|auto 3|drop| " ] \
+  && ok "AC7: the owner's drop after an auto row appends a plain 3-column drop row and deletes the draft" || no "AC7 drop: [$o] $(tr '\t\n' ' |' < "$LX")"
+[ "$(ledger_decision "$LX" "$FXN")" = drop ] && ok "AC7 owner's drop wins over an auto row in _ledger_decision (last row wins)" || no "AC7 _ledger_decision: [$(ledger_decision "$LX" "$FXN")]"
+l2="$(wc -l < "$LX" | tr -d ' ')"; drafts
+[ ! -e "$FX" ] && [ "$(nfiles)" = 0 ] && [ "$(wc -l < "$LX" | tr -d ' ')" = "$l2" ] && [ "$(bash "$H" dismissed-pending "$RF")" = 0 ] \
+  && ok "AC7 owner's drop wins over an auto row on a dismissed-drafts re-run: the draft is never recreated" || no "AC7 re-run: $dd_out / $(ls "$PROP")"
+o="$(bash "$H" dismissed-decide "$RF" "$FX" follow-up --auto)"
+case "$o" in "dismissed-decide: refused — "*) [ "$(wc -l < "$LX" | tr -d ' ')" = "$l2" ] && ok "AC7: a later --auto after the owner's drop is refused, writing no row" || no "AC7 auto after drop wrote a row" ;; *) no "AC7 auto after drop: [$o]" ;; esac
+# An owner's (non-auto) follow-up row stays 3-column — the `auto` column marks only an --auto write.
+fx s-of; sup 1 '[{finding: "owner keeps", reason: below_severity_floor, source: code_reviewer, severity: MEDIUM}]'; drafts
+FW="$(draft_with 'owner keeps')"; bash "$H" dismissed-decide "$RF" "$FW" follow-up >/dev/null
+[ "$(awk -F'\t' -v n="$(basename "${FW:-x}")" '$1 == n { print NF "|" $2 }' "$AD/$RUN_ID.dismissed-decisions")" = "3|follow-up" ] \
+  && grep -qE "dismissed: follow-up $(basename "${FW:-x}") — owner keeps\$" "$RF" \
+  && ok "an owner's follow-up row stays 3-column (no auto) and its Progress line quotes the finding" || no "owner follow-up row: $(tr '\t\n' ' |' < "$AD/$RUN_ID.dismissed-decisions")"
 # dismissed-pending: a this-run draft with no readable Decision line ⇒ unknown
 printf '# Dismissed finding: hand-edited\n\n## Status: proposed\n' > "$PROP/$NS--dismissed-deadbeef.md"
 [ "$(bash "$H" dismissed-pending "$RF")" = "unknown" ] && ok "dismissed-pending: a draft without a Decision line ⇒ unknown (fail closed)" || no "pending no-decision: $(bash "$H" dismissed-pending "$RF")"
@@ -846,14 +903,16 @@ L="$(first_line "$PFL" 'ns_watch; ns_notify awaiting_merge')"
   && ok "B: park-first — park write → watcher → notify → lock release → park-ask-gate → ask" \
   || no "B: park-first order park=$pf_p watcher=$pf_w release=$pf_r handoff=$pf_d gate=$pf_g ask=$pf_a"
 L="$(first_line "$PFL" "park-ask-gate")"
-if grep -qF -- "--wait 75" <<<"$L" && grep -qF -- '*) ns_emit_park decide "park written; decisions not asked ($gl) — the next interactive PICK asks them"; return 0 ;;' "$PFL" \
+if grep -qF -- "--wait 75" <<<"$L" && grep -qF -- 'case "$gl" in "refuse — "*) ns_emit_park decide "park written; decisions not asked ($gl) — $NS_NEXT_PICK"; return 0 ;; esac' "$PFL" \
    && grep -qF -- 'if [ -n "$n" ]; then ns_pending_write "$n" "$fx" || return 1; fi' "$PARKF"; then
   ok "B: park-first gate step waits 75s and a refuse asks nothing, keeping pending_decisions"
 else no "B: park-first gate step wrong"; fi
 NBF="$TOP/next-batch.sh"; dfn "$DRV" ns_decide_next_batch > "$NBF"
-if grep -qF -- '"ask — fix-now allowed"*) [ "$(ns_fixnow_reentered)" = false ] && st_set fixnow_offer true || st_set fixnow_offer false ;; *) st_set fixnow_offer false ;; esac' "$PFL" \
-   && grep -qF -- "if [ \"\$fix\" = true ]; then opts='[\"Follow-up (keep draft)\",\"Fix now on this PR\",\"Drop\"]'; else opts='[\"Follow-up (keep draft)\",\"Drop\"]'; fi" "$NBF"; then
-  ok "B: park-first ask offers Fix now only on the gate's fix-now-allowed line"
+if grep -qF -- 'case "$gl" in "ask — fix-now allowed"*) ;; *) gate_ok=0 ;; esac' "$PFL" \
+   && grep -qF -- '[ "$gate_ok" = 1 ] && [ "$(ns_fixnow_reentered)" = false ] && st_set fixnow_offer true || st_set fixnow_offer false' "$PFL" \
+   && grep -qF -- 'if [ "$kind" = finding ] && { [ "$(st fixnow_offer)" != true ] || ns_below_medium "$path"; }; then continue; fi' "$PFL" \
+   && grep -qF -- 'options: (["Fix none (follow-up all)","Fix all listed on this PR"] + (if length >= 2 then ["Fix selected on this PR"] else [] end))' "$NBF"; then
+  ok "B: park-first ask is built only on the gate's fix-now-allowed line (no fix-now ⇒ no per-finding ask)"
 else no "B: park-first ask does not gate Fix now"; fi
 # Post-release writes take the run lock: the park step released it and the merge watcher's closeout
 # (which holds the same lock) may run, while progress-append / current-set / dismissed-decide each rename
@@ -896,7 +955,7 @@ pr_rel() {  # <park-first list> — `ok` when, before the ask, the last acquire 
     f && $0 ~ /^[[:space:]]+ns_release$/ { r = NR } f && index($0, "ns_decide_next_batch && return 0") { q = NR; exit }
     END { if (a > 0 && r > a && q > r) print "ok"; else print "bad acquire=" a " release=" r " ask=" q }' "$1"
 }
-if grep -qF -- '"run lock refused 4 times — the answers are not recorded; the next interactive PICK asks them"' "$DCOMP" \
+if grep -qF -- '"run lock refused 4 times — the answers are not recorded; $NS_NEXT_PICK"' "$DCOMP" \
    && grep -qF -- 'ns_err "run lock refused 4 times — the park-ask-gate line is not written"' "$PFL" && [ "$(pr_rel "$PFL")" = ok ]; then
   ok "B: post-release writes never happen without the lock (a refused acquire writes nothing) and the lock is never held across a question"
 else no "B: post-release-writes rule missing or wrong: $(pr_rel "$PFL")"; fi
@@ -978,12 +1037,12 @@ L="$(first_line "$SK" "otherwise fail **CLOSED** → park + notify")"
 case "$L" in *"park-first order"*"the merge watcher"*"park-ask-gate"*"Dismissed-findings decision step (before the park)"*) ok "B: §9 fail-closed --auto-merge park takes the park-first order" ;; *) no "B: §9 --auto-merge park order wrong" ;; esac
 L="$(first_line "$SK" "**\`ESCALATED\` never merges and PARKS the run**")"
 before "$L" "Dismissed-findings decision step (before the park)" "## Status: paused" && ok "B: §9 escalated park still runs the decision step before the park write" || no "B: §9 escalated bullet order"
-if grep -qF -- 'if ! ns_interactive; then ns_emit_park decide "park written; decisions not asked (--non-interactive) — the next interactive PICK asks them"; return 0; fi' "$PFL" \
+if grep -qF -- 'if ! ns_interactive; then ns_emit_park decide "park written; decisions not asked (--non-interactive) — $NS_NEXT_PICK"; return 0; fi' "$PFL" \
    && grep -qF -- 'ns_interactive || return 1   # --non-interactive: the rest stay undecided (pending_decisions), never asked' "$NBF"; then
   ok "B: --non-interactive-fallback (unchanged) asks nothing and records pending_decisions"
 else no "B: non-interactive branch missing"; fi
 L="$(first_line "$SK" "**PICK-time pending-decisions ask")"
-case "$L" in *"BEFORE RECONCILE's \`closeout\`"*"**Follow-up (keep draft)** / **Drop** ONLY"*"fix-now is offered only at the park"*"park-ask-gate"*) ok "B: PICK ask precedes RECONCILE's closeout, Follow-up / Drop only" ;; *) no "B: PICK-time ask paragraph wrong" ;; esac
+case "$L" in *"BEFORE RECONCILE's \`closeout\`"*"follow-up --auto"*"fix-now is never offered here"*'"Dismissed-findings decision step (before the park)"'*) ok "B: PICK records every undecided draft follow-up before RECONCILE's closeout, never fix-now, pointing at the decision step" ;; *) no "B: PICK-time ask paragraph wrong" ;; esac
 case "$L" in *"Fix now on this PR"*) no "B: PICK ask must never offer Fix now" ;; *) ok "B: PICK ask offers no Fix-now option" ;; esac
 # pick_ask_placed <file> — 0 when the PICK ask sits after step 1 (RECONCILE) and before the DEFAULT-path step-2
 # pointer (`2. **RUN — run next-step**`, per-item-loop.md) — the step a misplaced ask would follow
@@ -1361,13 +1420,15 @@ C_R5="fix_now_cost: ≈ 2h21m (median of 1 recorded fix-now re-drain in this rep
 # options and their cost notes, ns_decide runs dismissed-cost, ns_decide_record writes the estimate line,
 # ns_drain_start_line / ns_drain_result write the pinned fix-now re-drain lines.
 SUB2="$(dfn "$DRV" ns_decide)$(dfn "$DRV" ns_decide_next_batch)$(dfn "$DRV" ns_decide_record)"; SUB3="$(dfn "$DRV" ns_drain_start_line)$(dfn "$DRV" ns_drain_result)"
-case "$SUB2" in *'dismissed-cost "$RF"'*'"0 min now (draft kept in proposed/ as /backlog state follow_up — nothing is enqueued; bundle it into a queue item with followup-bundle)", "Drop": "0 min"'*'" wall-clock: ONE owner-requested fix pass + full re-drain + re-park ("'*) ok "C8 §6 step 2 runs dismissed-cost and puts the cost in every fix-now option; follow-up '0 min now', drop '0 min'" ;; *) no "C8 §6 step 2 cost prose missing" ;; esac
-before "$SUB2" "opts='[\"Follow-up (keep draft)\"" "\"Fix now on this PR\"" && ok "C8 §6 step 2 keeps Follow-up recommended and first" || no "C8 recommended order changed"
-# the AUT-PENDING copy (ns_pending_next_batch) of the Follow-up note is byte-equal to the park-time one:
-# ONE string at two sites, so a change to either alone turns this red
+# the park-time ask is ONE batched AUT-DISMISS question: Fix none costs nothing now, both fix-now options carry
+# the derived wall-clock cost (per-item-loop.md §"Dismissed-findings decision step (before the park)")
+case "$SUB2" in *'dismissed-cost "$RF"'*'"Fix none (follow-up all)": "0 min now ('*'" wall-clock: ONE owner-requested fix pass + full re-drain + re-park ("'*'" wall-clock: the same ONE fix pass + full re-drain + re-park for '*) ok "C8 §6 step 2 runs dismissed-cost and puts the cost in every fix-now option; Fix none '0 min now'" ;; *) no "C8 §6 step 2 cost prose missing" ;; esac
+before "$SUB2" '"Fix none (follow-up all)","Fix all listed on this PR"' '"Fix selected on this PR"' && ok "C8 §6 step 2 keeps Fix none first" || no "C8 option order changed"
+# the AUT-PENDING fallback (ns_pending_next_batch) keeps the follow-up note's exact text
 fu_note() { printf '%s' "$1" | sed -n 's/.*"Follow-up (keep draft)": \("[^"]*"\).*/\1/p' | head -n 1; }
-C8P="$(fu_note "$(dfn "$DRV" ns_pending_next_batch)")"; C8D="$(fu_note "$(dfn "$DRV" ns_decide_next_batch)")"
-[ -n "$C8P" ] && [ "$C8P" = "$C8D" ] && ok "C8 the AUT-PENDING Follow-up (keep draft) note is byte-equal to the park-time note" || no "C8 AUT-PENDING note '$C8P' != park-time note '$C8D'"
+C8P="$(fu_note "$(dfn "$DRV" ns_pending_next_batch)")"
+[ "$C8P" = '"0 min now (draft kept in proposed/ as /backlog state follow_up — nothing is enqueued; bundle it into a queue item with followup-bundle)"' ] \
+  && ok "C8 the AUT-PENDING fallback's Follow-up (keep draft) note keeps its text" || no "C8 AUT-PENDING note '$C8P'"
 case "$SUB2" in *"est. fix_now_cost ≈"*) ok "C8 §6 step 2 records the estimate as data on a Progress line" ;; *) no "C8 no recorded estimate" ;; esac
 case "$SUB3" in *'[ "$1" = fixnow ] && tag=" (fix-now re-drain)"'*'owned drain started$tag — '*'line="$(ns_ts) fix-now re-drain $dec ('*) ok "C8 §6 step 3 pins the re-drain start and terminal lines" ;; *) no "C8 §6 step 3 pinned lines missing" ;; esac
 grep -qF 'owned drain started (fix-now re-drain) — ' "$RUN_ALL" && grep -qF 'fix-now re-drain <READY\|ESCALATED> (' "$RUN_ALL" && ok "C8 automate-run.md mirrors both pinned lines beside owned_drain_started" || no "C8 automate-run.md mirror missing"
