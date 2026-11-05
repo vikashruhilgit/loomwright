@@ -28,7 +28,8 @@
 #   review-heal-next-step.sh <pr_url> [--result <json> | --result-file <f>] [--root <checkout>]
 #   review-heal-next-step.sh <pr_url> --start fallback [--root <checkout>]
 #   `--start drain` begins one drain run (the flags are taken here and persist in the sidecar for the
-#   run); while a run's instruction is pending it re-prints it. A call with no `--result` re-prints the
+#   run); while a run's instruction is pending it re-prints it. After a run's `done` it starts a new run
+#   on a fresh ledger, carrying the PR's totals into its block (`prior_runs`). A call with no `--result` re-prints the
 #   pending instruction byte for byte and writes nothing; with nothing pending it resumes a scoped wait
 #   that answered CONTINUE, or retries a step that failed. `--result` answers the pending `spawn`.
 #   `--start fallback` is the guard on the earned fallback: the driver alone decides when it is earned;
@@ -97,7 +98,8 @@
 #
 # TEST SEAMS (tests only — never set in a real run): RH_UNTIL=<step> stops after <step> (no
 # instruction printed, the sidecar keeps the next step); RH_FROM=<step> starts at <step> on the
-# existing sidecar (a `--result` given with it is the report that step consumes).
+# existing sidecar (a `--result` given with it is the report that step consumes);
+# RH_READ_RETRY_DELAYS="<s> …" replaces the PR reads' retry delays (one retry per word).
 #
 # Exit codes: 0 an instruction printed (or an RH_UNTIL stop); 1 a helper failure (surfaced on stderr,
 # the sidecar keeps the failing step — the next no-result call retries it); 2 usage error, a `--result`
@@ -230,8 +232,30 @@ jlen() { printf '%s' "$1" | "$JQ" 'length' 2>/dev/null || echo 0; }
 # ------------------------------------------------------------------------------------------------
 # helpers and side-effect seams
 # ------------------------------------------------------------------------------------------------
-rh_gh() { "${LOOMWRIGHT_GH_BIN:-gh}" "$@" </dev/null 2>/dev/null; }
-rh_ghread() { GH="${LOOMWRIGHT_GH_BIN:-gh}" bash "$HERE/drain-gh-read.sh" "$@" </dev/null 2>/dev/null; }
+# Every PR read goes through this: one failed `gh` call must not end a drain, because every read's failure
+# path is a terminal ESCALATED (a PR comment and a notification on a healthy PR). Retried on a non-zero exit
+# only, then the failure stands, so an unreadable PR still fails CLOSED. Delays in seconds, one retry per word.
+# The last attempt's stderr stays in RH_READ_ERR (the reads run in subshells, so a variable would not survive).
+RH_READ_ERR="$(mktemp "${TMPDIR:-/tmp}/rh-read.XXXXXX" 2>/dev/null)" && trap 'rm -f "$RH_READ_ERR"' EXIT || RH_READ_ERR=/dev/null
+rh_read_retry() {
+  local out rc d
+  out="$("$@" 2>"$RH_READ_ERR")"; rc=$?
+  for d in ${RH_READ_RETRY_DELAYS-2 5}; do
+    [ "$rc" = 0 ] && break
+    sleep "$d"
+    out="$("$@" 2>"$RH_READ_ERR")"; rc=$?
+  done
+  printf '%s' "$out"
+  return "$rc"
+}
+rh_read_why() { # the last read's error, as a clause for an escalation detail; empty when it printed none
+  local e
+  [ -s "$RH_READ_ERR" ] || return 0
+  e="$(head -n 1 "$RH_READ_ERR" | tr -d '\r' | cut -c1-200)"
+  [ -z "$e" ] || printf ' (last error: %s)' "$e"
+}
+rh_gh() { rh_read_retry "${LOOMWRIGHT_GH_BIN:-gh}" "$@" </dev/null; }
+rh_ghread() { ( GH="${LOOMWRIGHT_GH_BIN:-gh}"; export GH; rh_read_retry bash "$HERE/drain-gh-read.sh" "$@" </dev/null ); }
 rh_comment() { # <body> — best-effort; a failure is reported, never fatal
   "${LOOMWRIGHT_GH_BIN:-gh}" pr comment "$PR" --body "$1" </dev/null >/dev/null 2>&1 \
     || rh_err "gh pr comment failed (reported; the drain goes on)"
@@ -317,7 +341,7 @@ rh_start() {
   rm -f "$errf"; st_set fix_floor "$fl"
   meta="$(rh_gh pr view "$PR" --json baseRefName,headRefName,isCrossRepository)" \
     && printf '%s' "$meta" | "$JQ" -e '(.baseRefName | type == "string") and (.headRefName | type == "string")' >/dev/null 2>&1 \
-    || { rh_escalate_to pr_unreadable other 0 "pr_unreadable — gh pr view could not read the PR's base / head"; return 0; }
+    || { rh_escalate_to pr_unreadable other 0 "pr_unreadable — gh pr view could not read the PR's base / head$(rh_read_why)"; return 0; }
   st_set base "$(rj "$meta" baseRefName)"; st_set head_ref "$(rj "$meta" headRefName)"
   st_set fork "$(printf '%s' "$meta" | "$JQ" -r 'if .isCrossRepository == true then "true" else "false" end')"
   bash "$HERE/drain-rounds.sh" init "$PR" "$(st flag_max_rounds)" >/dev/null 2>&1 \
@@ -329,7 +353,7 @@ rh_round() {
   local h gate rc
   st_del cont_arm   # a re-open after a moved head resumes here; the wait it leads to starts fresh
   h="$(rh_gh pr view "$PR" --json headRefOid | "$JQ" -r '.headRefOid // empty' 2>/dev/null)"
-  rh_sha_ok "$h" || { rh_escalate_to pr_unreadable other 0 "pr_unreadable — gh pr view could not read the PR head"; return 0; }
+  rh_sha_ok "$h" || { rh_escalate_to pr_unreadable other 0 "pr_unreadable — gh pr view could not read the PR head$(rh_read_why)"; return 0; }
   st_set head_sha "$h"
   gate="$(bash "$HERE/drain-rounds.sh" check "$PR" 2>/dev/null)"; rc=$?
   case "$rc:$gate" in
@@ -417,7 +441,7 @@ rh_wait() {
   esac
 }
 
-rh_unknown() { rh_escalate_to "channel_unknown" other 0 "channel_unknown — $1: an unknown gated channel never claims READY"; }
+rh_unknown() { rh_escalate_to "channel_unknown" other 0 "channel_unknown — $1$(rh_read_why): an unknown gated channel never claims READY"; }
 
 rh_read() {
   local core threads comments rollup req rp scoped outputs id ann run_ text aux name c
@@ -894,6 +918,8 @@ rh_result() {
   d="$(st decision)"
   ledger="$(bash "$HERE/drain-rounds.sh" read "$PR" 2>/dev/null)"
   rounds="$(printf '%s' "$ledger" | "$JQ" -r '.rounds // 0' 2>/dev/null)"; [[ "$rounds" =~ ^[0-9]+$ ]] || rounds=0
+  # the ledger is this run's bound; the block reports every round this PR's drain runs ran
+  rounds=$((rounds + $(rh_n prior_rounds)))
   cfg="$ROOT/.supervisor/config.json"
   pmt="$(st flag_pm_threshold)"
   if [ -z "$pmt" ]; then
@@ -929,6 +955,7 @@ rh_result() {
     "  max_rounds: \(n("flag_max_rounds"))",
     "  fix_cycles: \(n("fix_cycles"))",
     "  churn_rounds: \(n("churn_rounds"))",
+    (if n("prior_runs") > 0 then "  prior_runs: \(n("prior_runs"))" else empty end),
     "  repeat_check_failure: " + b("repeat_check_failure"),
     "  unresolved_bot_feedback: " + b("unresolved_bot_feedback"),
     "  postmortem_churn_threshold: " + $pmt,
@@ -1083,10 +1110,21 @@ elif [ "$START" = drain ]; then
   if [ -z "$pending" ] && { [ -n "$(st failed)" ] || [ -n "$(st cont_arm)" ]; }; then
     rh_die2 "a drain run for $PR is in progress (a failed step or a CONTINUE wait) — call with no --result to resume it; nothing written"
   fi
-  RS="$("$JQ" -cn --arg mr "$F_MAXR" --arg mp "$F_PROBES" --arg ff "$F_FIXFLOOR" --arg sf "$F_SEV" --arg rq "$F_REQ" \
+  # A new run over a finished one on this PR: the sidecar is rebuilt and the ledger re-inits (the bound is per
+  # run), so the work already done is carried here or the block would report a pushed fix as zero fixes.
+  rh_carry='{}'
+  if [ "$pending_do" = done ]; then
+    rh_prev_rounds="$(bash "$HERE/drain-rounds.sh" read "$PR" 2>/dev/null | "$JQ" -r '.rounds // 0' 2>/dev/null)"
+    [[ "$rh_prev_rounds" =~ ^[0-9]+$ ]] || rh_prev_rounds=0
+    rh_carry="$(printf '%s' "$RS" | "$JQ" -c --argjson r "$rh_prev_rounds" 'def n($k): (.[$k] // "0" | tonumber? // 0);
+      {fix_cycles: (n("fix_cycles") | tostring), issues_fixed: (n("issues_fixed") | tostring),
+       findings_validated: (n("findings_validated") | tostring), prior_runs: (n("prior_runs") + 1 | tostring),
+       prior_rounds: (n("prior_rounds") + $r | tostring)}')" || rh_carry='{}'
+  fi
+  RS="$("$JQ" -cn --argjson carry "$rh_carry" --arg mr "$F_MAXR" --arg mp "$F_PROBES" --arg ff "$F_FIXFLOOR" --arg sf "$F_SEV" --arg rq "$F_REQ" \
     --arg cw "$F_CWT" --arg pt "$F_PAT" --arg np "$F_NOPM" --arg pm "$F_PMT" '{flag_max_rounds: $mr, flag_max_probes: $mp,
     flag_fix_floor: $ff, flag_severity_floor: $sf, flag_required_checks: $rq, flag_check_wait_timeout: $cw,
-    flag_pattern: $pt, flag_no_postmortem: $np, flag_pm_threshold: $pm}')"
+    flag_pattern: $pt, flag_no_postmortem: $np, flag_pm_threshold: $pm} + $carry')"
   NEXT=start
 elif [ "$have_result" = 0 ]; then
   if [ -n "$pending" ]; then printf '%s\n' "$pending"; exit 0; fi
