@@ -32,6 +32,12 @@
 #      `ps -ww -o command=` of that pid does not name both `lane-wait` and the run id (pid reuse), AND
 #      no running `background_tasks[]` entry mentions `lane-wait` (the watcher was just launched and has
 #      not written its marker yet). On that path the marker is re-read once after 0.1 s.
+# SCOPE HOLD (lane-scope-regate Part B) — an independent block, checked first and whatever the watcher's state
+# (conditions 1–4 still apply): a lane whose run file parks `pause_reason: scope_hold` with no `scope re-gate` line
+# after its last `scope_hold —` line (no recorded `lane-scope-decide` decision) holds before its Supervisor phase
+# until the coordinator decides, and lane-wait reports that state only once — so the turn end is blocked naming the
+# lane(s) and `lane-scope-check`. Read through automate-lanes.sh's _lanes_scope_held (scope.sh), only after a cheap
+# grep finds a scope_hold run file; a serialized lane (its scope_wait recorded) is decided and never blocks.
 # The lane states come from `_lanes_quick_state` (automate-lanes.sh, sourced): the lane table, lane
 # process liveness (`lanes_proc_alive`), the lane inbox and — for a dead lane whose question was just
 # answered — the last lines of its stream log only; no gh, no ci-slot, no full `lane-status` reconcile —
@@ -105,6 +111,23 @@ watcher_live() {
   case "$cmd" in *lane-wait*"$RUN"*|*"$RUN"*lane-wait*) return 0 ;; esac
   return 1
 }
+TAB="$(printf '\t')"
+SH_ANY=""
+while IFS="$TAB" read -r lane path _item run _rest; do
+  case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
+  grep -q '^- pause_reason: *scope_hold' "$path/.supervisor/automate/$run.md" 2>/dev/null && { SH_ANY=1; break; }
+done < "$TABLE"
+if [ -n "$SH_ANY" ] && [ -n "$HOOK_DIR" ] && [ -r "$LANES_SH" ] && . "$LANES_SH" >/dev/null 2>&1 && command -v _lanes_scope_held >/dev/null 2>&1; then
+  UNDEC="$(_lanes_scope_held "$TABLE" 2>/dev/null | awk -F'\t' '$4 == 0 { printf "%s%s", (n++ ? ", " : ""), $1 }')"
+  if [ -n "$UNDEC" ]; then
+    REASON="A --parallel lane is held before its Supervisor phase (scope_hold) with no scope re-gate decision: $UNDEC. Run bash $LANES_SH lane-scope-check <lane_dir> for each, then lane-scope-decide (clear ⇒ continue with no question; otherwise ONE AUT-OVERLAP question to the owner, or LP-SCOPE for a pending widening alone — skills/automate-loop/lanes.md \"Scope re-gate\"), then end the turn."
+    OUT="$(jq -n -c --arg r "$REASON" '{decision: "block", reason: $r}' 2>/dev/null)" || allow
+    [ -n "$OUT" ] || allow
+    printf '%s\n' "$OUT"
+    exit 0
+  fi
+fi
+
 watcher_live && allow
 [ "${BG_WAIT:-0}" = 1 ] && allow
 
@@ -117,7 +140,7 @@ command -v _lanes_quick_state >/dev/null 2>&1 && command -v _lanes_pending_quest
 LIVE_SET="$(jq -r '.[]' <<<"${_LANES_WAIT_LIVE:-[]}" 2>/dev/null)"
 [ -n "$LIVE_SET" ] || allow
 
-TAB="$(printf '\t')"; NL="$(printf '\nx')"; NL="${NL%x}"
+NL="$(printf '\nx')"; NL="${NL%x}"
 STATES=""; NEED=0; QNOTE=""
 while IFS="$TAB" read -r lane path _item _run pid st _sid ts _rest; do
   case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac

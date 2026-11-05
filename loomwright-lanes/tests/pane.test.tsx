@@ -675,3 +675,44 @@ test('layout holds: a narrow pane stacks the lane title over its PR and times; a
     await ui.unmount()
   }
 })
+
+test('a lane held scope_hold reads as waiting for the owner: the ❓ glyph and one toast', async ($, on) => {
+  const calls: Call[] = []
+  const toasts: string[] = []
+  const held = { ...DOC.lanes[0], lane: 'L3', path: '/w/lanes/L3', item: 'reqs/c.md', run_id: 'r-L3', state: 'scope_hold', reason: '',
+    pr: null, pause_reason: 'scope_hold', run_status: 'paused', questions: [], ended_at: null }
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify({ ...DOC, machine: { ...DOC.machine, state: 'ok' }, lanes: [DOC.lanes[0], held] }) }))
+  on('ui.toast', async (_$, e) => { toasts.push(JSON.stringify(e)); return { value: undefined } })
+  await $.command.run(RUN)
+  expect(toasts.filter(t => t.includes('L3 is held before its Supervisor phase')).length).toBe(1)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /❓/ })).toBeDefined()
+  await ui.press({ key: 'refresh' }) // still held: no second toast
+  expect(toasts.filter(t => t.includes('L3 is held before its Supervisor phase')).length).toBe(1)
+  await ui.unmount()
+})
+
+// A revise releases the hold, the lane re-plans, and its new brief re-parks it: ended_at stays null
+// throughout, so only the release between the two holds tells them apart.
+test('a lane held, released, then held again toasts twice', async ($, on) => {
+  const calls: Call[] = []
+  const toasts: string[] = []
+  const lane = { ...DOC.lanes[0], lane: 'L3', path: '/w/lanes/L3', item: 'reqs/c.md', run_id: 'r-L3', reason: '',
+    pr: null, questions: [], ended_at: null }
+  const held = { ...lane, state: 'scope_hold', pause_reason: 'scope_hold', run_status: 'paused' }
+  let doc: unknown = null
+  stub(on, calls, () => ({ exitCode: 0, stdout: JSON.stringify(doc) }))
+  on('ui.toast', async (_$, e) => { toasts.push(JSON.stringify(e)); return { value: undefined } })
+  const holds = () => toasts.filter(t => t.includes('L3 is held before its Supervisor phase')).length
+  doc = { ...DOC, machine: { ...DOC.machine, state: 'ok' }, lanes: [DOC.lanes[0], held] }
+  await $.command.run(RUN)
+  expect(holds()).toBe(1)
+  const ui = await $.ui.mount({ plugin: 'loomwright-lanes', surface: 'terminal', ...PANE })
+  doc = { ...DOC, machine: { ...DOC.machine, state: 'ok' }, lanes: [DOC.lanes[0], { ...lane, state: 'running' }] }
+  await ui.press({ key: 'refresh' })
+  expect(holds()).toBe(1)
+  doc = { ...DOC, machine: { ...DOC.machine, state: 'ok' }, lanes: [DOC.lanes[0], held] }
+  await ui.press({ key: 'refresh' })
+  expect(holds()).toBe(2)
+  await ui.unmount()
+})

@@ -140,6 +140,8 @@ _lp_catalog_rows() {
     '/automate close-out leftover gate (cleans up or deletes; Clean up now is offered only when a cleanup is possible)'
   _lp_row AUT-WAIVE    human-only 'Waive this step|Keep parked' \
     '/automate READY park: waive a running-system Validation step validation-gate reports unrun (owner words from the answer note; cannot ask ⇒ stays escalated, validation_unrun)'
+  _lp_row AUT-OVERLAP  human-only 'Serialize|Continue in parallel|Defer to next wave|Revise' \
+    '/automate --parallel N>1 coordinator scope re-gate: a lane held scope_hold after its Launch Pad save shares files with another live lane of the wave (or its set is unreadable); ONE ask naming the lane, the other lanes, the shared files and any pending widening; answered through lane-scope-decide; cannot ask ⇒ the lane stays held'
   _lp_row PO-ASSUME    human-only 'Proceed anyway|Refine requirements|Abort' \
     'Product Owner assumption-check soft gate, pre-persist house-rule check and missing-proof (no Validation) flag (/automate prompt intake)'
   _lp_row PO-RULE-MUST human-only 'Refine requirements|Change the rule via /rules|Abort' \
@@ -148,6 +150,8 @@ _lp_catalog_rows() {
     'Launch Pad Phase 2 clarification'
   _lp_row LP-NO-GO     human-only 'Override and continue|Revise goal|Abort' \
     'Launch Pad Phase 2.5 feasibility NO-GO'
+  _lp_row LP-SCOPE     human-only 'Extend Touches|Revise plan|Stop' \
+    'Launch Pad Phase 6, before the save question: ONE ask listing every brief path outside the item Touches (automate-lanes.sh scope-outside); Extend records them in the brief ## Scope widening section; human-only by owner decision; cannot ask ⇒ scope_widening_non_interactive, nothing saved'
   _lp_row LP-SAVE-NOTE auto       'Save and exit!|Refine further?|Edit sections?|Discard' \
     'Launch Pad Phase 6 save on a Plan Review PASS that carries any issue or note (Refine / Edit only while a review attempt is left); auto by owner decision unless an issue is MEDIUM or higher or the File Impact Map paths are high-risk, never answered by a policy'
   _lp_row LP-NEEDHUMAN human-only 'Override and save|Refine further?|Discard' \

@@ -18,3 +18,17 @@ if leg_inline_checkpoint "$DRIVER"; then ok "F4i (--inline-phases): an inline ch
 else no "F4i: $LEG_MSG"; fi
 if leg_lane_cheap "$DRIVER"; then ok "F4j (lanes): inside a lane, lane.json \"cheap\": true puts --cheap on the RUN spawn with no --cheap given; a lane.json without it, or no lane.json (a sequential run), gets none"
 else no "F4j (lanes): lane.json cheap ⇒ --cheap on the RUN spawn — $LEG_MSG"; fi
+if leg_lane_scope_hold "$DRIVER"; then ok "F4k (lane-scope-regate B1/B3/B7): lane.json parallel: 2 ⇒ the launch-pad saved line, then the scope_hold park (## Status: paused, item still running, no Supervisor spawn); held ⇒ --start run refused, a bare call re-prints the park; released ⇒ a bare call is the Supervisor phase on the saved brief (no second Launch Pad); a revise release ⇒ a new Launch Pad phase naming the files to keep off; parallel: 1 / no lane.json ⇒ straight to the Supervisor phase"
+else no "F4k (lane scope_hold): $LEG_MSG"; fi
+# The brief's Pin mutations for the hold: each one-line driver edit turns F4k red.
+lsh_mutant() { # <name> <anchor> <replacement>
+  local m
+  if m="$(build_mutant "scopehold-$1" "$2" "$3" 2>"$WORK/lsh.err")"; then
+    LEG_MSG=""
+    if leg_lane_scope_hold "$m"; then no "F4k-M ($1): the mutant still passes F4k — the pin is vacuous"
+    else ok "F4k-M ($1): the mutant turns F4k red (${LEG_MSG:0:120})"; fi
+  else no "F4k-M ($1): mutant not built: $(cat "$WORK/lsh.err")"; fi
+}
+lsh_mutant nohold 'if ns_scope_hold_due; then' 'if false; then'
+lsh_mutant ge1 '[ "$n" -gt 1 ]' '[ "$n" -ge 1 ]'
+lsh_mutant nosegbrief 'brief="$(st plan_brief)"; [ -n "$brief" ] || brief="$(ns_segment_brief)"' 'brief="$(st plan_brief)"'

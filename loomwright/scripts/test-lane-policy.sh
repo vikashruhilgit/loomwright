@@ -23,6 +23,10 @@
 #   (mut)  MUTATION CONTROL — decide with the policy check removed honours a human-only code ⇒ (dc7) FAILS
 #   (aw)   AUT-WAIVE (the validation-unrun waiver) is human-only and decide answers human under a policy
 #          naming it; MUTATION CONTROL — the row flipped to `allowed` ⇒ (aw1) FAILS
+#   (sc)   LP-SCOPE (the outside-Touches question) is human-only, in LANE_GATES.md, refused by wave-set and
+#          answered human by decide under a policy naming it; MUTATION CONTROL — flipped to `allowed` ⇒ (sc1) FAILS
+#   (ov)   AUT-OVERLAP (the coordinator's lane scope re-gate) is human-only with its four labels and in
+#          LANE_GATES.md; MUTATION CONTROL — flipped to `allowed` ⇒ (ov1) FAILS
 #   (ro)   resolve's --stamp-state read executes no check (a marker-writing must-check leaves no marker)
 #   (op)   optional (`?`) labels — LP-SAVE's last-attempt core ask gets the policy answer, any other subset
 #          is human; MUTATION CONTROL — the core match removed ⇒ (op1) FAILS
@@ -455,6 +459,68 @@ if [ -s "$MUT_AW" ] && ! cmp -s "$LP" "$MUT_AW" && bash -n "$MUT_AW" 2>/dev/null
   fi
 else
   no "(aw2) the AUT-WAIVE mutation did not land cleanly (empty / identical / bash -n failed / hunk missing)"
+fi
+
+# ============================================================================
+echo "== (sc) LP-SCOPE — the outside-Touches question is human-only and never auto-answered =="
+# lane-scope-regate Part A: Launch Pad's one question about brief paths outside the item's Touches. By owner
+# decision it is human-only (it moves to allowed only after the lane re-gate ships), so no stamped or wave
+# policy answers it in a lane, and gate-auto.sh's auto tier never answers it either.
+SC_CANON='{"LP-SCOPE":"Extend Touches"}'
+jq -n --argjson a "$SC_CANON" --arg s "$(_t_sha "$SC_CANON")" '{policy_sha: $s, sources: [], answers: $a}' > "$ROOT/pol-sc.json"
+Q_SC="$(q1 LP-SCOPE '["Extend Touches","Revise plan","Stop"]')"
+# sc_check <lane-policy script> — 0 iff LP-SCOPE's catalog row is human-only with its exact labels AND decide
+# answers `human` for the coded LP-SCOPE question under a policy naming it.
+sc_check() {
+  [ "$(bash "$1" catalog 2>/dev/null | awk -F'\t' '$1 == "LP-SCOPE" { print $1 "\t" $2 "\t" $3 }')" \
+      = "LP-SCOPE${TAB}human-only${TAB}Extend Touches|Revise plan|Stop" ] \
+    && [ "$(bash "$1" decide "$Q_SC" --policy-json "$ROOT/pol-sc.json" 2>/dev/null)" = "human" ]
+}
+sc_check "$LP" && ok "(sc1) LP-SCOPE is human-only ('Extend Touches|Revise plan|Stop') and decide answers human even when a valid policy names it" \
+  || no "(sc1) LP-SCOPE is not human-only, or decide auto-answered it: catalog=[$(bash "$LP" catalog | grep '^LP-SCOPE')] decide=[$(bash "$LP" decide "$Q_SC" --policy-json "$ROOT/pol-sc.json" 2>/dev/null)]"
+grep -qF '| `LP-SCOPE` | human-only | `Extend Touches` · `Revise plan` · `Stop` |' "$MD" \
+  && ok "(sc2) LANE_GATES.md's generated table carries the LP-SCOPE row" || no "(sc2) LP-SCOPE row missing from $MD"
+RFSC="$ROOT/sc-run.md"; printf '# Automate Run: sc-run\n\n## Progress\n' > "$RFSC"
+bash "$LP" wave-set "$RFSC" 'LP-SCOPE=Extend Touches' >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && [ ! -e "$ROOT/sc-run.wave-policy.json" ] && ok "(sc3) wave-set refuses LP-SCOPE (human-only), nothing written" || no "(sc3) rc=$rc"
+# Mutation control (the brief's pin): flip LP-SCOPE's policy to `allowed` ⇒ (sc1) must FAIL.
+MUT_SC="$ROOT/lane-policy.mut-sc.sh"
+sed '/_lp_row LP-SCOPE /s/human-only/allowed   /' "$LP" > "$MUT_SC"
+if [ -s "$MUT_SC" ] && ! cmp -s "$LP" "$MUT_SC" && bash -n "$MUT_SC" 2>/dev/null \
+   && grep -qF '_lp_row LP-SCOPE     allowed    ' "$MUT_SC"; then
+  ok "(sc4) the LP-SCOPE mutant is valid: non-empty, differs from the original, passes bash -n, the hunk landed"
+  if sc_check "$MUT_SC"; then
+    no "(sc5) REFUTED: with LP-SCOPE flipped to allowed, (sc1) still passes — the pin is vacuous"
+  else
+    ok "(sc5) CONFIRMED: with LP-SCOPE flipped to allowed, (sc1) FAILS (decide=$(bash "$MUT_SC" decide "$Q_SC" --policy-json "$ROOT/pol-sc.json" 2>/dev/null)) — the pin is load-bearing"
+  fi
+else
+  no "(sc4) the LP-SCOPE mutation did not land cleanly (empty / identical / bash -n failed / hunk missing)"
+fi
+
+# ============================================================================
+echo "== (ov) AUT-OVERLAP — the coordinator's scope re-gate question is human-only =="
+# lane-scope-regate Part B: the ONE question the coordinator asks when a held lane shares files with another
+# live lane of its wave (or its set is unreadable). Serialize / continue / defer / revise are real decisions.
+OV_CANON='{"AUT-OVERLAP":"Continue in parallel"}'
+jq -n --argjson a "$OV_CANON" --arg s "$(_t_sha "$OV_CANON")" '{policy_sha: $s, sources: [], answers: $a}' > "$ROOT/pol-ov.json"
+Q_OV="$(q1 AUT-OVERLAP '["Serialize","Continue in parallel","Defer to next wave","Revise"]')"
+ov_check() {
+  [ "$(bash "$1" catalog 2>/dev/null | awk -F'\t' '$1 == "AUT-OVERLAP" { print $1 "\t" $2 "\t" $3 }')" \
+      = "AUT-OVERLAP${TAB}human-only${TAB}Serialize|Continue in parallel|Defer to next wave|Revise" ] \
+    && [ "$(bash "$1" decide "$Q_OV" --policy-json "$ROOT/pol-ov.json" 2>/dev/null)" = "human" ]
+}
+ov_check "$LP" && ok "(ov1) AUT-OVERLAP is human-only with its four labels and decide answers human under a policy naming it" \
+  || no "(ov1) AUT-OVERLAP is not human-only, or decide auto-answered it: catalog=[$(bash "$LP" catalog | grep '^AUT-OVERLAP')]"
+grep -qF '| `AUT-OVERLAP` | human-only | `Serialize` · `Continue in parallel` · `Defer to next wave` · `Revise` |' "$MD" \
+  && ok "(ov2) LANE_GATES.md's generated table carries the AUT-OVERLAP row" || no "(ov2) AUT-OVERLAP row missing from $MD"
+MUT_OV="$ROOT/lane-policy.mut-ov.sh"
+sed '/_lp_row AUT-OVERLAP /s/human-only/allowed   /' "$LP" > "$MUT_OV"
+if [ -s "$MUT_OV" ] && ! cmp -s "$LP" "$MUT_OV" && bash -n "$MUT_OV" 2>/dev/null && grep -qF '_lp_row AUT-OVERLAP  allowed ' "$MUT_OV"; then
+  if ov_check "$MUT_OV"; then no "(ov3) REFUTED: AUT-OVERLAP flipped to allowed still passes (ov1) — the pin is vacuous"
+  else ok "(ov3) CONFIRMED: AUT-OVERLAP flipped to allowed fails (ov1) — the pin is load-bearing"; fi
+else
+  no "(ov3) the AUT-OVERLAP mutation did not land cleanly"
 fi
 
 # ============================================================================

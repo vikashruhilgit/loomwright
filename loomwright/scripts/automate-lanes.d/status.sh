@@ -220,7 +220,7 @@ lanes_wait() {
           && mv "$ledger.tmp.$$" "$ledger" 2>/dev/null || rm -f "$ledger.tmp.$$" 2>/dev/null
         printf '%s\n' "$new" | _lanes_wait_print
         grep -q '^state ' <<<"$new" \
-          && echo "lane-wait: act — handle each state line per the automate-loop skill §14 \"Lane states and what the coordinator does\" (report it to the owner; resume a stalled lane once; ready_for_release ⇒ wave-end handling; any other state — died / lost_to_reset / escalated / failed / gone or a run-file park such as token_ceiling — the owner decides), then re-arm lane-wait"
+          && echo "lane-wait: act — handle each state line per the automate-loop skill §14 \"Lane states and what the coordinator does\" (report it to the owner; resume a stalled lane once; ready_for_release ⇒ wave-end handling; scope_hold ⇒ the scope re-gate: lane-scope-check <lane>, then lane-scope-decide — AUT-OVERLAP asked when it is not clear; any other state — died / lost_to_reset / escalated / failed / gone or a run-file park such as token_ceiling — the owner decides), then re-arm lane-wait"
         grep -q '^question ' <<<"$new" \
           && echo "lane-wait: relay — show each question to the owner verbatim (lane-status $rf --inbox), deliver only the owner's answer with lane-answer, then re-arm lane-wait"
         return 0

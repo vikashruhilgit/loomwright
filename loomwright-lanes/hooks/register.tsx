@@ -76,7 +76,9 @@ async function lane($: EngineInterface, configured: string, sub: LaneCommand, ar
 
 // ---- reading -----------------------------------------------------------------------------------------
 
-const WAITING = new Set(['awaiting_input', 'answer_pending'])
+// scope_hold (lane-scope-regate): a --parallel lane held before its Supervisor phase until the coordinator's
+// scope re-gate decides (lane-scope-check / lane-scope-decide) — waiting on the owner, with no lane question.
+const WAITING = new Set(['awaiting_input', 'answer_pending', 'scope_hold'])
 /** Parked for the owner's merge: one name everywhere, "ready to merge", in the ready (success) tone — ◆ is kept for a question. */
 const PARKED = new Set(['ready_for_release', 'awaiting_merge'])
 const TROUBLE = new Set(['stalled', 'died', 'lost_to_reset', 'missing', 'blocked_launch', 'gone', 'escalated', 'failed', 'rate_limit', 'drain_died', 'abandoned'])
@@ -166,7 +168,7 @@ function tidy(lines: string[]): string[] {
 }
 
 function waitingCount(doc: LaneStatusDoc): number {
-  return doc.lanes.filter(l => l.questions.length > 0).length
+  return doc.lanes.filter(l => l.questions.length > 0 || l.state === 'scope_hold').length
 }
 
 async function feed($: EngineInterface, configured: string, l: LaneRow): Promise<string[]> {
@@ -262,6 +264,19 @@ async function readOnce($: EngineInterface, configured: string): Promise<void> {
       await update($, seen, s => ({ ...s, [q.id]: true }))
     }
   }
+  // A hold toasts on entry. Its key is dropped once the lane is no longer held (a revise releases it,
+  // or the lane is gone), so a lane re-parked by its re-planned brief toasts again.
+  const held = new Set<string>()
+  for (const l of doc.lanes) {
+    if (l.state !== 'scope_hold') continue
+    const k = `scope_hold:${l.lane}`
+    held.add(k)
+    if (known[k]) continue
+    $.ui.toast(`${l.lane} is held before its Supervisor phase: the coordinator's scope re-gate needs you — /lanes`)
+    await update($, seen, s => ({ ...s, [k]: true }))
+  }
+  const released = Object.keys(known).filter(k => k.startsWith('scope_hold:') && !held.has(k))
+  if (released.length > 0) await update($, seen, s => Object.fromEntries(Object.entries(s).filter(([k]) => !released.includes(k))))
 
   // Every open lane's feed in one write: each state write redraws the pane, so a poll writes as
   // few times as it can.
