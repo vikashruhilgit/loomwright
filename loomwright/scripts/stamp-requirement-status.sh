@@ -36,7 +36,7 @@
 #   - IDEMPOTENT: a requirement already carrying a `## Status` heading is left untouched, so
 #     re-running (or running after a `closeout` / `reconcile-status` stamp) never double-stamps.
 #     Because that guard is check-then-append, concurrent runs are additionally serialized by an
-#     `mkdir` lock (see MUTUAL EXCLUSION below) — the two seams above can genuinely overlap.
+#     O_EXCL lock file (see MUTUAL EXCLUSION below) — the two seams above can genuinely overlap.
 #   - FAIL-SAFE: ALWAYS exits 0. This is a runtime side-effect emitter, not a correctness gate —
 #     inverting that would violate the bimodal invariant (CLAUDE.md §"Failure-Mode Invariants").
 #   - bash-3.2 safe: no mapfile, no associative arrays, no GNU-only sed/stat/date flags.
@@ -102,7 +102,7 @@ while [ $# -gt 0 ]; do
 done
 
 # Host mode (host-mode.sh — the one resolver, a plain sibling like brief-pointer.sh): the
-# requirement append below is a repo CONTENT mutation, and the `mkdir` lock lives in the repo too,
+# requirement append below is a repo CONTENT mutation, and the lock file lives in the repo too,
 # so under LOOMWRIGHT_HOST_MODE=1 nothing is stamped — skipped, never redirected. Off mode does
 # not depend on the helper loading; a helper that fails to load with the switch on also skips.
 if . "$_bp_dir/host-mode.sh" 2>/dev/null; then
@@ -140,22 +140,23 @@ fi
 
 # MUTUAL EXCLUSION. The idempotency guard below is check-then-append, and with TWO invocation
 # seams the overlap is no longer theoretical: a SessionStart in one terminal can race a
-# supervisor-runner SubagentStop in another, both pass the `grep`, and both append. `mkdir` is the
-# portable atomic test-and-set (bash-3.2 / BSD safe — `flock` is Linux-only and absent on macOS).
+# supervisor-runner SubagentStop in another, both pass the `grep`, and both append. A noclobber
+# create is the portable test-and-set: O_EXCL in bash itself (bash-3.2 / BSD safe). `flock` is
+# absent on macOS, and the `mkdir` command is not exclusive: uutils exits 0 on an existing directory.
 # Losing the race is NOT an error: the winner does the identical work, so we exit 0 quietly, in
 # keeping with the fail-safe contract. The lock is released by the EXIT trap on every path.
 LOCK=".supervisor/.stamp-requirement-status.lock"
-if mkdir "$LOCK" 2>/dev/null; then
-  trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+if ( set -C; : > "$LOCK" ) 2>/dev/null; then
+  trap 'rm -f "$LOCK" 2>/dev/null' EXIT INT TERM
 else
-  # A stale lock (hard kill between mkdir and the trap) would otherwise wedge this forever. It is
+  # A stale lock (hard kill between the create and the trap, or a directory left by an older build) would otherwise wedge this forever. It is
   # only ever held for ~1s, so anything older than 5 minutes is definitionally abandoned; reclaim
   # it rather than skipping every run from here on.
-  if [ -d "$LOCK" ] && [ -z "$(find "$LOCK" -maxdepth 0 -mmin -5 2>/dev/null)" ]; then
+  if [ -e "$LOCK" ] && [ -z "$(find "$LOCK" -maxdepth 0 -mmin -5 2>/dev/null)" ]; then
     err "reclaiming stale lock '$LOCK' (older than 5 min)"
-    rmdir "$LOCK" 2>/dev/null
-    if mkdir "$LOCK" 2>/dev/null; then
-      trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+    rm -rf "$LOCK" 2>/dev/null
+    if ( set -C; : > "$LOCK" ) 2>/dev/null; then
+      trap 'rm -f "$LOCK" 2>/dev/null' EXIT INT TERM
     else
       say "another reconciler holds the lock — nothing to do"
       exit 0

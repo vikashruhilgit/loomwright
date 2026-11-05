@@ -45,10 +45,10 @@
 #
 #   COST / RUNAWAY GUARD + ISOLATION LIFECYCLE (AC4a, PINNED ORDER). Two distinct
 #   guards key the dispatch off .supervisor/review-dispatch/:
-#     - an ATOMIC per-PR LOCK (mkdir <pr_hash>.lock) = "someone is dispatching",
+#     - an ATOMIC per-PR LOCK (O_EXCL <pr_hash>.lock/meta) = "someone is dispatching",
 #       taken BEFORE the worktree so a concurrent dispatch (step 5.5 vs the
 #       PostToolUse hook) loses the race and exits 0. Stale-lock reclaim (pid-dead
-#       + no-marker + past-TTL) closes the crash-between-mkdir-and-marker wedge.
+#       + no-marker + past-TTL) closes the crash-between-lock-and-marker wedge.
 #     - a durable per-PR MARKER (<pr_hash>) = "a dispatch genuinely started",
 #       written ONLY AFTER the worktree + RUN_LOG header succeed (never before), so
 #       the marker NEVER lies: marker present <=> a dispatch genuinely started.
@@ -622,13 +622,27 @@ if ! printf '%s' "$HELP_OUT" | grep -q -- '--permission-mode' \
 fi
 
 # ---- ③ atomic per-PR lock BEFORE worktree creation (AC4a-i) -----------------
-# `mkdir` is atomic: it fails if a concurrent dispatch (step 5.5 vs the PostToolUse
-# hook) already holds the lock. The winner records metadata in the lock dir. The
+# The O_EXCL create of the lock dir's `meta` is the test, never the `mkdir` command (uutils
+# `mkdir` exits 0 on an existing directory): it fails if a concurrent dispatch (step 5.5 vs
+# the PostToolUse hook) already holds the lock. The winner fills in that file. The
 # loser exits 0. Stale-lock reclaim (pid-dead + no-marker + past-TTL) closes the
-# crash-between-mkdir-and-marker wedge.
+# crash-between-lock-and-marker wedge.
 # (DISPATCH_PID / NOW_EPOCH / TIMESTAMP were already resolved earlier — needed
 # by the DRY_RUN marker write above too.)
 RUN_LOG="$LOG_DIR/review-pr-dispatch-$TIMESTAMP-$PR_HASH.log"
+
+# take_lock — 0 when THIS call created the meta file exclusively. A release that removed the
+# directory between the mkdir and the create is not a holder: try again, a bounded number of times.
+take_lock() {
+  local i=0
+  while [ "$i" -lt 3 ]; do
+    mkdir "$LOCK_DIR" 2>/dev/null || :   # mkdir-ok: its exit status is ignored, the O_EXCL stamp below decides who holds the lock
+    ( set -C; : > "$LOCK_META" ) 2>/dev/null && return 0
+    [ -d "$LOCK_DIR" ] && return 1
+    i=$((i + 1))
+  done
+  return 1
+}
 
 write_lock_meta() {
   {
@@ -642,7 +656,7 @@ write_lock_meta() {
 
 acquire_lock() {
   # Returns 0 when the lock is held by us, 1 when lost to a live/fresh dispatch.
-  if mkdir "$LOCK_DIR" 2>/dev/null; then
+  if take_lock; then
     write_lock_meta
     return 0
   fi
@@ -671,10 +685,10 @@ acquire_lock() {
     log "lost to a fresh dispatch (lock age ${age}s < ${LOCK_TTL_SECONDS}s TTL) — skipping"
     return 1
   fi
-  # Reclaim: clear ONLY this hash-keyed lock dir, then retry the atomic mkdir.
+  # Reclaim: clear ONLY this hash-keyed lock dir, then retry the exclusive create.
   log "reclaiming stale lock (pid ${lk_pid:-?} dead, age ${age}s ≥ ${LOCK_TTL_SECONDS}s TTL)"
   rm -rf "$LOCK_DIR" 2>/dev/null || true
-  if mkdir "$LOCK_DIR" 2>/dev/null; then
+  if take_lock; then
     write_lock_meta
     return 0
   fi

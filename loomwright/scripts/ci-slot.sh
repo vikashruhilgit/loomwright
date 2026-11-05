@@ -53,8 +53,8 @@
 #                  first", so no run starves. A ticket with no recorded N blocks everyone behind it.
 #                  A queued pid that died has its ticket skipped and removed; a waiter that gives up
 #                  removes its own; a waiter whose ticket vanished takes a fresh one. The claim (count
-#                  + fairness check + slot `mkdir`) happens under the mutex, and a claimer re-counts
-#                  after its `mkdir` and backs off if it pushed the count past its N.
+#                  + fairness check + O_EXCL create of slots/<k>/info) happens under the mutex, and a
+#                  claimer re-counts after that create and backs off if it pushed the count past its N.
 # MUTEX            `ln -s <pid> mutex.lnk` — atomic and carries its holder pid from the instant it
 #                  exists, so a TERM can never leave a pid-less lock; a link whose pid is dead (or
 #                  not a number) is taken over at once. Lock waits honour the acquire --wait deadline.
@@ -104,7 +104,7 @@
 # recycled still counts as a holder, and still folds a caller that descends from the new owner; a
 # wall-clock step shortly after boot can also move boot time past a record written just before it.
 # (2) `kill -0` on another user's pid fails, so a slot held by another user looks stale. (3) two
-# processes taking over the same dead mutex in the same instant can both enter it; the post-`mkdir`
+# processes taking over the same dead mutex in the same instant can both enter it; the post-claim
 # re-count still keeps N, only ticket order can be off for that one claim. (4) mixed N trades strict order for liveness: a waiter with a SMALLER N
 # than the others is passed while the live count is at its cap, and waits until the load drops below
 # its N. Use one LOOMWRIGHT_CI_SLOTS value everywhere for strict first-come order. (5) a checkout on
@@ -439,9 +439,11 @@ try_claim() {
   machine_admit || return 1   # MACHINE
   k=1; while [ -e "$D/slots/$k" ]; do k=$((k + 1)); done   # LOWEST
   s="$D/slots/$k"
-  mkdir "$s" 2>/dev/null || { drop_machine_rec; return 1; }
+  # The O_EXCL create of `info` is the claim, not the `mkdir` command: uutils exits 0 on an existing dir.
+  # CLAIMING is set first: a TERM right after the create must not leave a slot stamped with a live --pid.
   CLAIMING="$s"
-  write_rec "$s/info"
+  mkdir "$s" 2>/dev/null || :   # mkdir-ok: its exit status is ignored, the O_EXCL stamp below decides who holds the lock
+  ( set -C; rec > "$s/info" ) 2>/dev/null || { CLAIMING=""; drop_machine_rec; return 1; }
   # Re-count with ours in: only a writer outside this mutex (see Honest limits) can push it past N.
   if [ "$(live_holders)" -gt "$SLOTS" ]; then rm -rf "$s"; CLAIMING=""; drop_machine_rec; return 1; fi
   rm -f "$D/tickets/$MY_TICKET"

@@ -6,14 +6,14 @@ _clean() { local v="${1:-}"; [ -n "$v" ] || v="-"; printf '%s' "$v" | tr '\t\n' 
 _lanes_need() { [ "$1" -ge 2 ] || die "$2: $3 needs a value"; }
 
 # ---- lane table (D6) ----------------------------------------------------------------------------
-# Locks are `mkdir <file>.lock` dirs whose `holder` file (written atomically right after the mkdir)
-# names the holder: this script's pid and its `ps -o lstart=` (read in the C locale, so a waiter
+# Locks are `<file>.lock` dirs held by creating their `holder` file with O_EXCL. The `mkdir` command is
+# not the test, because uutils `mkdir` exits 0 on an existing directory. The file names the holder: this script's pid and its `ps -o lstart=` (read in the C locale, so a waiter
 # with another LC_TIME never misreads a live holder as recycled). A lock is reclaimed ONLY when that
 # holder is dead (pid gone, or a recycled pid with another start time), or when it has carried no
-# holder for ~5 s (its creator died between the mkdir and the holder write, which takes
-# milliseconds). A live holder is waited on, bounded by LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30):
+# holder line for ~5 s (its creator died between the create and the write, which takes
+# milliseconds; a directory with no holder file at all has no holder and is simply taken). A live holder is waited on, bounded by LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30):
 # past it _lt_lock returns 1 and the caller fails rather than steal the lock. A reclaim happens under
-# a second `<file>.lock.reclaim` dir and re-reads the holder there, so two waiters never both remove
+# a second `<file>.lock.reclaim` O_EXCL file and re-reads the holder there, so two waiters never both remove
 # the same stale lock (the second one would otherwise remove the first one's fresh lock). _lt_unlock
 # removes a lock only when this process holds it. One process never takes the same lock twice.
 _LT_ME=""
@@ -34,18 +34,25 @@ _lt_holder_dead() { # <holder line> — 0 only for a holder that is VERIFIED gon
 }
 _lt_reclaim() { # <lockdir> <holder line seen ('' = holder-less)> — remove it iff still that stale state
   local d="$1" g="$1.reclaim" i=0
-  while ! mkdir "$g" 2>/dev/null; do
-    i=$((i + 1)); [ "$i" -gt 50 ] && { rmdir "$g" 2>/dev/null; i=0; }   # a reclaim takes milliseconds
+  while ! ( set -C; : > "$g" ) 2>/dev/null; do
+    i=$((i + 1)); [ "$i" -gt 50 ] && { rm -rf "$g" 2>/dev/null; i=0; }   # a reclaim takes milliseconds
     sleep 0.1
   done
   if [ -d "$d" ] && [ "$(_lt_holder "$d")" = "$2" ]; then rm -rf "$d"; fi
-  rmdir "$g" 2>/dev/null
+  rm -f "$g" 2>/dev/null
   return 0
+}
+# _lt_take <lockdir> — 0 when THIS call created the holder file. The -e test only spares a waiter the
+# `ps` in _lt_me on every retry; the O_EXCL create is what decides.
+_lt_take() {
+  [ ! -e "$1/holder" ] || return 1
+  mkdir "$1" 2>/dev/null || :   # mkdir-ok: its exit status is ignored, the O_EXCL stamp below decides who holds the lock
+  ( set -C; printf '%s\n' "$(_lt_me)" > "$1/holder" ) 2>/dev/null
 }
 _lt_lock() {
   local d="$1.lock" w="${LOOMWRIGHT_LANES_LOCK_WAIT_S:-30}" i=0 orphan=0 h
   case "$w" in ''|*[!0-9]*) w=30 ;; esac
-  while ! mkdir "$d" 2>/dev/null; do
+  while ! _lt_take "$d"; do
     h="$(_lt_holder "$d")"
     if [ -n "$h" ]; then
       orphan=0
@@ -57,7 +64,6 @@ _lt_lock() {
     i=$((i + 1)); [ "$i" -ge $((w * 10)) ] && return 1
     sleep 0.1
   done
-  printf '%s\n' "$(_lt_me)" > "$d/holder.tmp.$$" && mv "$d/holder.tmp.$$" "$d/holder"
   return 0
 }
 _lt_unlock() {

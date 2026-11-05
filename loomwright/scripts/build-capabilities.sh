@@ -57,8 +57,8 @@ US="$(printf '\037')"   # field separator for the per-file records (no source fi
 # writes[] AUDIT — script basename -> what it may create, modify or delete in the session's working
 # directory (the user project; for scripts that resolve the MAIN checkout via `git worktree list`,
 # that checkout). Out of scope: anything under ~/ or $TMPDIR, the harness's own env file, network
-# egress, and desktop notifications. Directories (mkdir / mkdir-as-lock) are not writes; a same-dir
-# temp file that is renamed onto a listed path or removed before exit is not listed separately.
+# egress, and desktop notifications. Directories (mkdir) are not writes; a same-dir temp file or
+# lock file that is renamed onto a listed path or removed before exit is not listed separately.
 # A path is repo-relative with <placeholders>; a settings key is `<file>#<json.path>`.
 #   w <script> <path>     — the script (or a script it runs) may write <path>
 #   w <script> -          — audited: writes nothing in scope
@@ -94,7 +94,7 @@ w emit-lifecycle.sh '.supervisor/logs/.lifecycle-heartbeat-debounce-<agent>'
 w emit-lifecycle.sh '.supervisor/logs/.lifecycle-asked-ids'
 w emit-lifecycle.sh '.supervisor/logs/.lifecycle-answered-ids'
 # emit-token-ledger.sh — `printf '%s\n' "$LINE" >> "$LOG_FILE"` ($LOG_DIR/${SESSION_ID}.jsonl under
-# the main checkout); one-time `: > "$_flag"` when python3 is missing. `mkdir "$_lock"` is a dir lock.
+# the main checkout); one-time `: > "$_flag"` when python3 is missing. `"$_lock"` is an O_EXCL lock file, removed before exit.
 w emit-token-ledger.sh '.supervisor/logs/<session>.jsonl'
 w emit-token-ledger.sh '.supervisor/logs/token-ledger-python3-missing.flag'
 # stamp-requirement-status.sh — `{ printf '\n## Status: brief-shipped\n' ...; } >> "$req"`, req = the

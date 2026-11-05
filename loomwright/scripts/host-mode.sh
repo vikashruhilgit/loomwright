@@ -136,9 +136,10 @@ _lw_private_dir() {
 
 # _lw_private_mkdir <dir> — create <dir> (one level, umask 077) when nothing is there, then verify it
 # with _lw_private_dir. Creating first and checking after closes the check-then-create window: a
-# racing or pre-planted entry makes `mkdir` fail and is then judged on what is actually there.
+# racing or pre-planted entry is judged on what is actually there, whatever `mkdir` exited with.
 _lw_private_mkdir() {
   if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+    # mkdir-ok: not a lock; the status is unused and _lw_private_dir below verifies the result
     ( umask 077; mkdir "$1" ) 2>/dev/null
   fi
   _lw_private_dir "$1"

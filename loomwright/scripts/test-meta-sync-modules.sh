@@ -32,9 +32,12 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 E="$HERE/meta-sync.sh"
 MOD_DIR="$HERE/meta-sync.d"
-# The last single-file meta-sync.sh (the split's base commit).
+# The last single-file meta-sync.sh (the split's base commit), plus every deliberate change made
+# since, as one patch. A change to meta-sync adds itself to the patch in the same PR, so anything
+# else that moves still fails the comparison.
 BASE=a8819a38100d77fbeddc2ff1a56963e91f172a5d
 BASE_PATH=loomwright/scripts/meta-sync.sh
+BASE_PATCH="$HERE/fixtures/meta-sync-since-split.patch"
 MISSING_MSG="meta-sync: missing module file: meta-sync.d"
 BR="as20-modules-probe"
 
@@ -186,6 +189,9 @@ fi
 if [ "$HAVE_BASE" = 0 ]; then
   skp "base blob $BASE:$BASE_PATH not in this clone (shallow checkout?) — the base-equality legs are not run"
 else
+  # A patch that no longer applies is a failure, never a skip: the comparison below would be vacuous.
+  if ( cd "$T" && patch -s base.sh < "$BASE_PATCH" ) >/dev/null 2>&1; then ok "the deliberate changes since the split apply to the base"
+  else no "$BASE_PATCH does not apply to $BASE:$BASE_PATH"; fi
   mkdir -p "$T/basedir"; cp "$T/base.sh" "$T/basedir/meta-sync.sh"
   cp "$HERE/setup-memory.sh" "$T/basedir/"
   [ -d "$HERE/setup-memory.d" ] && cp -R "$HERE/setup-memory.d" "$T/basedir/"

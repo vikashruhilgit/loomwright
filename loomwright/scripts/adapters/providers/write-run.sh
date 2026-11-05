@@ -163,7 +163,7 @@
 # taken while another write-run was active may already hold that run's planted
 # hook or config, and writing it back would re-plant what the sibling's restore
 # removed. So each run registers in `<common dir>/loomwright-write-runs/` (a
-# mkdir lock; dead pids are pruned). A run that finds no other live run takes
+# O_EXCL lock file; dead pids are pruned). A run that finds no other live run takes
 # the shared snapshot and publishes it as the baseline; a run that finds one
 # uses the published baseline instead of its own snapshot. The shared files are
 # only ever restored to (and verified against) that baseline, taken when no
@@ -546,21 +546,22 @@ REG_DIR="$COMMONDIR/loomwright-write-runs"
 REG_ENTRY=""
 SHARED_AT_LAUNCH=0
 
-# reg_lock / reg_unlock — a mkdir lock on the registry. A lock older than ~5 s
-# is a killed holder's and is broken once; 0 when held.
+# reg_lock / reg_unlock — an O_EXCL lock file on the registry (never the `mkdir`
+# command: uutils exits 0 on an existing directory). A lock older than ~5 s, or an
+# older build's lock directory, is a killed holder's and is broken once; 0 when held.
 reg_lock() {
   local i=0
   mkdir -p "$REG_DIR" 2>/dev/null || return 1
-  until mkdir "$REG_DIR/lock" 2>/dev/null; do
+  until ( set -C; : > "$REG_DIR/lock" ) 2>/dev/null; do
     i=$((i + 1))
     [ "$i" -eq 50 ] && rm -rf "$REG_DIR/lock" 2>/dev/null
     [ "$i" -ge 100 ] && return 1
     sleep 0.1
   done
-  mkdir -p "$REG_DIR/active" 2>/dev/null || { rmdir "$REG_DIR/lock" 2>/dev/null; return 1; }
+  mkdir -p "$REG_DIR/active" 2>/dev/null || { rm -f "$REG_DIR/lock" 2>/dev/null; return 1; }
   return 0
 }
-reg_unlock() { rmdir "$REG_DIR/lock" 2>/dev/null; }
+reg_unlock() { rm -f "$REG_DIR/lock" 2>/dev/null; }
 
 # reg_others_live — prune dead entries; 0 when another live run is registered.
 reg_others_live() {

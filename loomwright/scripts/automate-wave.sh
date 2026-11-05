@@ -22,7 +22,7 @@
 #                (`gh pr view <pr> --json headRefOid,state`), the base (resolve-base-branch.sh;
 #                unresolved ⇒ refused, nothing created)
 #                and the branch (default `wave/<run_id>-w<k>`).
-#   2. lock      `<primary>/.supervisor/automate/<run_id>.wave-build.lock` — the lane table's mkdir lock
+#   2. lock      `<primary>/.supervisor/automate/<run_id>.wave-build.lock` — the lane table's lock
 #                (holder = this process's pid + start time; a dead holder is reclaimed, a live one is
 #                waited on for LOOMWRIGHT_WAVE_LOCK_WAIT_S, default 6, then refused). Released on every
 #                exit path (EXIT trap). It deliberately does NOT take `run-lock.sh`: the primary's run
