@@ -158,9 +158,9 @@ PATH="$SHIM:$PATH" L="$L" bash -c '. "$0"; _lt_reclaim "$L" dead' "$T/lt.reclaim
 if [ "$rc" = 7 ] && [ -e "$L/holder" ]; then ok "lane-table: the reclaim guard keeps a second reclaimer out"; else no "lane-table: the reclaim guard did not hold, rc=$rc"; fi
 
 echo "== locks with no stamp: an O_EXCL file at the lock path"
-P='LOCK_DIR="$L"; STALE_LOCK_SECONDS=60'
+P='LOCK_FILE="$L"; STALE_LOCK_SECONDS=60'
 site build-state "$HERE/build-state.sh" acquire_lock \
-  's/( set -C; : > "$LOCK_DIR" ) 2>\/dev\/null/mkdir "$LOCK_DIR" 2>\/dev\/null/' "$P" "" lock_age_seconds acquire_lock
+  's/( set -C; : > "$LOCK_FILE" ) 2>\/dev\/null/mkdir "$LOCK_FILE" 2>\/dev\/null/' "$P" "" lock_age_seconds acquire_lock
 legacy build-state "$T/build-state.real.sh" acquire_lock "" nonzero
 L="$T/bs-aged"; mkdir "$L"; touch -t 200001010000 "$L"
 PATH="$SHIM:$PATH" L="$L" bash -c '. "$0"; acquire_lock' "$T/build-state.real.sh" >/dev/null 2>&1; rc=$?

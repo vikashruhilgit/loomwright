@@ -382,7 +382,6 @@ set_held() {
 rec_field() { sed -n "${2}p" "$1" 2>/dev/null; }   # rec_field FILE LINE (1 pid 2 checkout 3 name 4 start; machine records: 5 repo dir 6 jobs)
 
 rec() { printf '%s\n%s\n%s\n%s\n' "$PID" "$CHECKOUT" "$NAME" "$(now)"; }
-write_rec() { rec > "$1"; }
 
 # live_tickets — ticket numbers in queue order; tickets of dead pids are removed (call under mutex).
 live_tickets() {

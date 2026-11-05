@@ -441,7 +441,7 @@ fi
 # the very next event — an incorrectly-stolen lock from a genuinely slow
 # (not dead) holder costs, at worst, one skipped or doubled projection of
 # IDENTICAL derivable content, never data loss.
-LOCK_DIR="$SUP_DIR/.state.lock"
+LOCK_FILE="$SUP_DIR/.state.lock"
 STALE_LOCK_SECONDS=60
 
 lock_age_seconds() {
@@ -466,15 +466,15 @@ lock_age_seconds() {
 }
 
 acquire_lock() {
-  if ( set -C; : > "$LOCK_DIR" ) 2>/dev/null; then
+  if ( set -C; : > "$LOCK_FILE" ) 2>/dev/null; then
     return 0
   fi
   # Contention. Check whether the existing lock is stale enough to steal.
   local age
-  age="$(lock_age_seconds "$LOCK_DIR" 2>/dev/null || true)"
+  age="$(lock_age_seconds "$LOCK_FILE" 2>/dev/null || true)"
   if [ -n "${age:-}" ] && [ "$age" -ge "$STALE_LOCK_SECONDS" ] 2>/dev/null; then
-    rm -rf "$LOCK_DIR" 2>/dev/null || true
-    if ( set -C; : > "$LOCK_DIR" ) 2>/dev/null; then
+    rm -rf "$LOCK_FILE" 2>/dev/null || true
+    if ( set -C; : > "$LOCK_FILE" ) 2>/dev/null; then
       return 0
     fi
   fi
@@ -482,13 +482,13 @@ acquire_lock() {
 }
 
 # Ensure the lock's PARENT exists before attempting to acquire it — on a
-# genuinely first-ever projection (no `.supervisor/` yet) creating "$LOCK_DIR"
+# genuinely first-ever projection (no `.supervisor/` yet) creating "$LOCK_FILE"
 # would otherwise fail with ENOENT (missing parent), which `acquire_lock`
 # cannot distinguish from real contention, and this script would exit 0
 # without ever writing the very first state.md. This mkdir is best-effort and
 # unconditional (not itself lock-protected) — creating the directory is not
 # the racy part; the read-modify-write of state.md inside it is.
-mkdir -p "$(dirname "$LOCK_DIR")" 2>/dev/null || true
+mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || true
 
 if ! acquire_lock; then
   # Under contention (or a live holder), skip THIS projection rather than
@@ -498,11 +498,11 @@ if ! acquire_lock; then
 fi
 
 # ---- Targeted in-place edit of ## Session only, preserving other sections --
-mkdir -p "$(dirname "$STATE_MD")" 2>/dev/null || { rm -f "$LOCK_DIR" 2>/dev/null || true; exit 0; }
+mkdir -p "$(dirname "$STATE_MD")" 2>/dev/null || { rm -f "$LOCK_FILE" 2>/dev/null || true; exit 0; }
 
-TMP="$(mktemp "${STATE_MD}.XXXXXX" 2>/dev/null)" || { rm -f "$LOCK_DIR" 2>/dev/null || true; exit 0; }
-BLOCK="$(mktemp "${STATE_MD}.block.XXXXXX" 2>/dev/null)" || { rm -f "$TMP" "$LOCK_DIR" 2>/dev/null || true; exit 0; }
-cleanup_tmp() { rm -f "$TMP" "$BLOCK" "$LOCK_DIR" 2>/dev/null || true; }
+TMP="$(mktemp "${STATE_MD}.XXXXXX" 2>/dev/null)" || { rm -f "$LOCK_FILE" 2>/dev/null || true; exit 0; }
+BLOCK="$(mktemp "${STATE_MD}.block.XXXXXX" 2>/dev/null)" || { rm -f "$TMP" "$LOCK_FILE" 2>/dev/null || true; exit 0; }
+cleanup_tmp() { rm -f "$TMP" "$BLOCK" "$LOCK_FILE" 2>/dev/null || true; }
 # Lock is released on EVERY exit path from here on — normal
 # completion, any `exit 0` below, or an unexpected signal — via this single
 # trap (bash traps replace, not stack, so this supersedes the top-of-file
