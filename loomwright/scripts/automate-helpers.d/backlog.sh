@@ -714,19 +714,20 @@ backlog_stamp() {
   esac
   [ "$confirm" = 1 ] || { printf 'backlog-stamp: would append to %s:\n%s\n' "$rel" "$block"; echo "backlog-stamp: refused — --confirm not given (nothing written)" >&2; exit 1; }
   # One writer at a time per item: the copy + append + mv below is a read-modify-write, so two
-  # concurrent stamps would each report `stamped` while one append is lost. A `mkdir` lock beside the
-  # item (atomic on every filesystem) serializes them; the done check re-runs inside it. Waits at
-  # most ~10 s, then refuses with nothing written. (closeout and reconcile-status do not take it.)
+  # concurrent stamps would each report `stamped` while one append is lost. An O_EXCL lock file beside
+  # the item (never the `mkdir` command, which uutils lets two racers both pass) serializes them; the
+  # done check re-runs inside it. Waits at most ~10 s, then refuses with nothing written. (closeout
+  # and reconcile-status do not take it.)
   lk="$f.backlog-stamp.lock"; n=0
-  until mkdir "$lk" 2>/dev/null; do
+  until ( set -C; : > "$lk" ) 2>/dev/null; do
     n=$((n + 1))
     [ "$n" -le 100 ] || _bl_fail backlog-stamp "refused — $rel is locked by another backlog-stamp (${lk#"$root"/}; nothing written)"
     sleep 0.1
   done
-  if is_done "$f"; then rmdir "$lk"; _bl_fail backlog-stamp "refused — $rel is already done (nothing written)"; fi
-  tmp="$(mktemp "$f.XXXXXX")" || { rmdir "$lk"; _bl_fail backlog-stamp "refused — cannot create a temp file (nothing written)"; }
+  if is_done "$f"; then rm -f "$lk"; _bl_fail backlog-stamp "refused — $rel is already done (nothing written)"; fi
+  tmp="$(mktemp "$f.XXXXXX")" || { rm -f "$lk"; _bl_fail backlog-stamp "refused — cannot create a temp file (nothing written)"; }
   if cp -p "$f" "$tmp" && printf '%s\n' "$block" >> "$tmp" && mv -f "$tmp" "$f"; then
-    rmdir "$lk"
+    rm -f "$lk"
     case "$mode" in
       kept-open) printf 'backlog-stamp: stamped %s — Kept open %s, supersedes %s\n' "$rel" "$date" "$sup" ;;
       abandoned) printf 'backlog-stamp: stamped %s — done_with_escalation %s ABANDONED\n' "$rel" "$em" ;;
@@ -734,6 +735,6 @@ backlog_stamp() {
     esac
     return 0
   fi
-  rm -f "$tmp"; rmdir "$lk"
+  rm -f "$tmp" "$lk"
   _bl_fail backlog-stamp "write failed for $rel (the item is unchanged)"
 }
