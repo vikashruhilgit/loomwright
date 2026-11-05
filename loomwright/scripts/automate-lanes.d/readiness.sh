@@ -234,19 +234,49 @@ _lanes_declared() {
     [ -n "$brief" ] && _lanes_brief_paths "$brief"
   } 2>/dev/null | env LC_ALL=C sort -u > "$out"
 }
-# _lanes_brief_paths <brief> — the brief's `path:` values (Subtask Contracts provides / requires) and the
-# `- "<path>"` entries of its `lanes:` lists, `./` stripped, one per line (unsorted). The ONE brief-path grammar:
-# _lanes_declared above and scope.sh's scope-outside both read a brief through it. KEY-AWARE: a `- "…"` entry
-# counts only under a `lanes:` key, and nothing under `external_requires:` is read — its entries are package
-# names and prose (`"@nestjs/passport"`, `"lodash.merge"`), never files. The key is the last `<key>:` line; any
-# other line starting at column 0 (a heading, a code fence, a `# Subtask` comment) ends it.
+# _lanes_brief_paths <brief> — the brief's `path:` values (Subtask Contracts provides / requires) and the entries of
+# its `lanes:` lists, one per line (unsorted), each normalized (`./` and `a/../` collapsed, so a path is judged by
+# where it really is; a trailing `/` is kept). The ONE brief-path grammar: _lanes_declared above and scope.sh's
+# scope-outside both read a brief through it. An entry may be double-quoted, single-quoted or bare, with a trailing
+# `# comment`. A `path:` value that is bare counts only at the start of a YAML entry or in a flow mapping, so prose
+# ("the path: foo") is not read. KEY-AWARE: a `- <entry>` counts only under a `lanes:` key, and nothing under
+# `external_requires:` is read — its entries are package names and prose (`"@nestjs/passport"`, `"lodash.merge"`),
+# never files. The key is the last `<key>:` line; any other line starting at column 0 (a heading, a code fence, a
+# `# Subtask` comment) ends it.
 _lanes_brief_paths() {
-  awk '/^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*:/ { k = $0; sub(/^[[:space:]]*/, "", k); sub(/:.*/, "", k) }
+  awk -v q="'" '
+    function norm(v, n, i, a, o, m, r) {
+      n = split(v, a, "/"); m = 0
+      for (i = 1; i <= n; i++) {
+        if (a[i] == "" || a[i] == ".") continue
+        if (a[i] == ".." && m > 0 && o[m] != "..") { m--; continue }
+        o[++m] = a[i]
+      }
+      r = (substr(v, 1, 1) == "/") ? "/" : ""
+      for (i = 1; i <= m; i++) r = r (i > 1 ? "/" : "") o[i]
+      if (m > 0 && substr(v, length(v)) == "/") r = r "/"
+      return r
+    }
+    function emit(v) { v = norm(v); if (index(v, "/") || index(v, ".")) print v }
+    function value(s, c, i) {
+      c = substr(s, 1, 1)
+      if (c == "\"" || c == q) { s = substr(s, 2); i = index(s, c); return i ? substr(s, 1, i - 1) : s }
+      sub(/[[:space:],}#].*/, "", s); return s
+    }
+    /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*:/ { k = $0; sub(/^[[:space:]]*/, "", k); sub(/:.*/, "", k) }
     /^[^[:space:]-]/ && !/^[A-Za-z_][A-Za-z0-9_]*:/ { k = "" }
-    /^[[:space:]]*-[[:space:]]*"[^"]*"[[:space:]]*$/ { if (k == "lanes") print; next }
-    k != "external_requires" { print }' "$1" \
-    | sed -n 's/.*path: *"\([^"]*\)".*/\1/p; s/^ *- *"\([^"]*\)" *$/\1/p' \
-    | sed 's#^\./##' | awk 'index($0, "/") || index($0, ".")'
+    /^[[:space:]]*-[[:space:]]*[^-[:space:]]/ && !/path:/ && !/[{]/ {
+      if (k == "lanes") { v = $0; sub(/^[[:space:]]*-[[:space:]]*/, "", v); emit(value(v)) }
+      next
+    }
+    k != "external_requires" {
+      s = $0
+      while (match(s, /path:[[:space:]]*/)) {
+        before = substr(s, 1, RSTART - 1); s = substr(s, RSTART + RLENGTH); c = substr(s, 1, 1)
+        if (c == "\"" || c == q) emit(value(s))
+        else if (before ~ /^[[:space:]]*(-[[:space:]]*)?$/ || before ~ /[{,][[:space:]]*$/) emit(value(s))
+      }
+    }' "$1"
 }
 # _lanes_is_declared <file> <declared set file> — 0 when <file> is inside one entry: equal, a path ending in
 # `/<entry>`, under `<entry>/` (a normalized directory), under an entry written with a trailing `/`, or

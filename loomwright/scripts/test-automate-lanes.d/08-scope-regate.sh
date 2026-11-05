@@ -104,7 +104,7 @@ SCC="$(sc_mut control 'lanes_scope_outside() {' 's/^lanes_scope_outside() {$/lan
 if [ -n "$SCC" ] && [ "$(sc "$SCC" reqs/known.md brief.md)" = "$SC_OUT_WANT" ]; then ok "SC9 control: a no-op mutant beside the scripts/ symlinks passes SC1"
 else bad "SC9 control: the mutant layout cannot run scope-outside (got: $( [ -n "$SCC" ] && sc "$SCC" reqs/known.md brief.md | head -2 | tr '\n' ' '))"; fi
 sc_red "SC9a the _lanes_is_declared test removed (every path reads inside) turns SC1 red" \
-  "$(sc_mut inside '_lanes_is_declared "$f" "$tmp/touches" || printf' 's#_lanes_is_declared "$f" "$tmp/touches" || printf#true || printf#')" \
+  "$(sc_mut inside '_lanes_is_declared "$f" "$tmp/touches" || _lanes_is_declared "$f" "$tmp/recorded" || printf' 's#_lanes_is_declared "$f" "$tmp/touches" || _lanes_is_declared "$f" "$tmp/recorded" || printf#true || printf#')" \
   "$SC_OUT_WANT" reqs/known.md brief.md
 sc_red "SC9b the unknown arm falling through to the outside listing turns SC4 red" \
   "$(sc_mut unknown 'elif [ "$LD_TOUCHES" = unknown ]; then' 's#elif \[ "\$LD_TOUCHES" = unknown \]; then#elif false; then#')" \
@@ -113,8 +113,34 @@ sc_red "SC9c the unreadable arm printing inside turns SC5 red" \
   "$(sc_mut unreadable 'echo "unreadable ${n:-0}"; cat "$tmp/brief"' 's#echo "unreadable \${n:-0}"; cat "\$tmp/brief"#echo inside#')" \
   "$SC_UNR_WANT" reqs/missing.md brief.md
 sc_red "SC9d the reader's lanes-only rule for - \"...\" entries removed lists the package names, turning SC3b red" \
-  "$(sc_mut lanesonly '{ if (k == "lanes") print; next }' 's#{ if (k == "lanes") print; next }#{ print; next }#')" \
+  "$(sc_mut lanesonly 'if (k == "lanes") { v = $0;' 's#if (k == "lanes") { v = $0;#if (1) { v = $0;#')" \
   "inside" reqs/known.md brief-pkg.md
+
+# ---- SC10: the brief grammar's fail-open forms, and a widening the brief already records ---------------------------
+cat > "$SCR/brief-forms.md" <<'EOF'
+# Supervisor Job: forms
+```yaml
+provides:
+  - {kind: "file", path: src/c/flow.ts}
+  - {kind: "file", path: "src/a/../b/dotted.ts"}
+  - path: 'docs/single.md'
+lanes:
+  - "docs/commented.md"  # a trailing comment
+  - docs/unquoted.md
+  - 'docs/quoted.md'
+  - "./src/a/./inside.ts"
+external_requires:
+  - lodash.merge
+```
+EOF
+check "SC10 an unquoted, single-quoted, commented or ../ brief path is read and judged by where it really is" \
+  "$(bash "$S" scope-outside reqs/known.md "$SCR/brief-forms.md" --root "$SCR" 2>&1)" \
+  "$(printf 'outside 6\ndocs/commented.md\ndocs/quoted.md\ndocs/single.md\ndocs/unquoted.md\nsrc/b/dotted.ts\nsrc/c/flow.ts')"
+{ cat "$SCR/brief.md"; printf '\n## Scope widening\n- docs/y.md\n- accepted: LP-SCOPE 2026-11-05\n'; } > "$SCR/brief-acc.md"
+check "SC11 a path the brief's ## Scope widening already records is not listed again (a re-entry asks only about new paths)" \
+  "$(bash "$S" scope-outside reqs/known.md "$SCR/brief-acc.md" --root "$SCR" 2>&1)" "$(printf 'outside 1\nsrc/b/two.ts')"
+{ cat "$SCR/brief.md"; printf '\n## Scope widening\n- docs/y.md\n- src/b/two.ts\n- decision: pending-coordinator\n'; } > "$SCR/brief-pend.md"
+check "SC11b … nor one a lane recorded pending-coordinator" "$(bash "$S" scope-outside reqs/known.md "$SCR/brief-pend.md" --root "$SCR" 2>&1)" "inside"
 
 # ---- SG: the scope re-gate (lane-scope-regate Part B): lane-scope-check / lane-scope-decide, the held-lane readers ------
 # A synthetic wave of two lanes cloned from a scratch origin (lane.json, run files, the lane table written by hand; the
@@ -196,6 +222,13 @@ sg_fx1; awk -F'\t' -v OFS='\t' '$1 == "L1" { $8 = "removed" } { print }' "$SGT" 
 check "SG7 a removed lane is not compared" "$(sgc "$S")" "clear"
 sg_fx1; sed -i.bak 's/^- wave: 1 | items: .*/- wave: 1 | items: reqs\/y.md/' "$SGRF"
 check "SG7b a lane whose item the wave line does not name is not compared" "$(sgc "$S")" "clear"
+# a sibling already released: Supervisor INIT moved its brief out of pending/, and the comparison still reads it
+sg_fx1; mkdir -p "$SGL/L1/.supervisor/jobs/in-progress"; mv "$SGL/L1/.supervisor/jobs/pending/L1.md" "$SGL/L1/.supervisor/jobs/in-progress/L1.md"
+check "SG9 a sibling's brief moved to jobs/in-progress/ is still compared (its overlap is named, never unreadable)" "$(sgc "$S")" "$SG_OV_WANT"
+sg_fx1; mkdir -p "$SGL/L1/.supervisor/jobs/done"; mv "$SGL/L1/.supervisor/jobs/pending/L1.md" "$SGL/L1/.supervisor/jobs/done/L1.md"
+check "SG9b … and in jobs/done/" "$(sgc "$S")" "$SG_OV_WANT"
+sg_fx1; rm -f "$SGL/L1/.supervisor/jobs/pending/L1.md"
+check "SG9c a brief found nowhere ⇒ unreadable, never clear" "$(sgc "$S")" "unreadable — L1 brief .supervisor/jobs/pending/L1.md"
 out="$(bash "$S" lane-scope-check 2>&1)"; rc=$?; check "SG8 usage ⇒ exit 1" "$rc" "1"
 
 # SD — lane-scope-decide
@@ -255,6 +288,30 @@ if [ "$rc" = 0 ] && [ ! -d "$SGL/L2" ] && [ "$(awk -F'\t' '$1 == "L2" { s = $8 }
 else bad "SD7 defer" "rc=$rc dir=$([ -d "$SGL/L2" ] && echo kept) state=$(awk -F'\t' '$1 == "L2" { s = $8 } END { print s }' "$SGT") salv=$(ls "$SGL/salvage" 2>&1 | tr '\n' ' ') $(grep -E 'wave:|reqs/y' "$SGRF" | tr '\n' '|')"; fi
 sg_fx1; out="$(sgd "$S" defer)"; rc=$?; check "SD7b defer without --gate (no owner answer) ⇒ refused exit 1, the lane kept" "$rc|$([ -d "$SGL/L2" ] && echo kept)" "1|kept"
 
+# drop: the owner's LP-SCOPE Stop — removed like defer, but the Queue row is checked off so no later wave re-plans it
+sg_fx1; out="$(sgd "$S" drop --gate LP-SCOPE)"; rc=$?
+if [ "$rc" = 0 ] && [ ! -d "$SGL/L2" ] && [ "$(awk -F'\t' '$1 == "L2" { s = $8 } END { print s }' "$SGT")" = abandoned ] \
+   && grep -qx -- '- wave: 1 | items: reqs/x.md' "$SGRF" && grep -q '^- \[x\] reqs/y.md  *# skipped: ' "$SGRF" && ! grep -qxF -- '- [ ] reqs/y.md' "$SGRF" \
+   && grep -q 'scope re-gate: L2 drop — reqs/y.md checked off' "$SGRF"; then
+  ok "SD8 drop ⇒ salvaged, removed, the wave line drops it, its Queue row is checked off # skipped"
+else bad "SD8 drop" "rc=$rc out=[$out] dir=$([ -d "$SGL/L2" ] && echo kept) $(grep -E 'wave:|reqs/y' "$SGRF" | tr '\n' '|')"; fi
+sg_fx1; out="$(sgd "$S" drop --gate AUT-OVERLAP)"; rc=$?; check "SD8b drop answers only LP-SCOPE ⇒ refused exit 1, the lane kept" "$rc|$([ -d "$SGL/L2" ] && echo kept)" "1|kept"
+# defer's own guards: an unanswered question and a live merge watcher refuse, as lane-remove does
+sg_fx1; mkdir -p "$SGL/L2/.supervisor/inbox/questions"; printf '{"id":"q1","questions":[]}\n' > "$SGL/L2/.supervisor/inbox/questions/q1.json"
+out="$(sgd "$S" defer --gate AUT-OVERLAP)"; rc=$?
+check "SD9 defer on a lane with an unanswered question ⇒ refused exit 1, the lane kept" "$rc|$([ -d "$SGL/L2" ] && echo kept)" "1|kept"
+# serialize: a wait cycle is refused; an awaited lane that ended cannot be waited for
+sg_fx1; sg_lane 1 reqs/x.md "$SG_B1"; printf -- '- 2026-11-04T10:06:00Z scope re-gate: scope_wait L2 (serialize)\n' >> "$SGL/L1/.supervisor/automate/$SGPAR-L1.md"
+out="$(sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"; rc=$?
+if [ "$rc" = 1 ] && case "$out" in *"would deadlock"*) true ;; *) false ;; esac && ! grep -q 'scope_wait' "$sg_lrf"; then
+  ok "SD10 serialize closing a wait cycle (L1 already waits for L2) ⇒ refused exit 1, nothing written"
+else bad "SD10 serialize cycle" "rc=$rc out=[$out] $(grep scope_wait "$sg_lrf")"; fi
+sg_fx1; sed -i.bak 's/^- pause_reason: null/- pause_reason: escalated/' "$SGL/L1/.supervisor/automate/$SGPAR-L1.md"
+out="$(sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"; rc=$?
+if [ "$rc" = 1 ] && case "$out" in *"L1 ended"*) true ;; *) false ;; esac && ! grep -q 'scope_wait' "$sg_lrf"; then
+  ok "SD11 serialize after a lane that ended escalated ⇒ refused exit 1, nothing written"
+else bad "SD11 serialize terminal" "rc=$rc out=[$out] $(grep scope_wait "$sg_lrf")"; fi
+
 # SI — the held lane on lane-status --inbox and --json
 sg_fx1
 sg_inbox="$(LOOMWRIGHT_LANES_HELPERS="$SGH" bash "$S" lane-status "$SGRF" --inbox 2>&1)"
@@ -270,6 +327,10 @@ sg_fx1
 has "SGd1 an undecided scope_hold lane blocks the coordinator's turn end, naming it" "$(sg_guard "$HERE/guard-lane-wait-armed.sh")" '"decision":"block","reason":"A --parallel lane is held before its Supervisor phase (scope_hold) with no scope re-gate decision: L2.'
 printf -- '- 2026-11-04T10:06:00Z scope re-gate: scope_wait L1 (serialize)\n' >> "$sg_lrf"
 check "SGd2 a recorded decision (serialize's scope_wait) no longer blocks" "$(sg_guard "$HERE/guard-lane-wait-armed.sh")" "{}"
+# a serialized lane whose awaited lane ended is undecided again: the guard blocks and --inbox asks AUT-OVERLAP again
+sed -i.bak 's/^- pause_reason: null/- pause_reason: escalated/' "$SGL/L1/.supervisor/automate/$SGPAR-L1.md"
+has "SGd3 the awaited lane ended escalated ⇒ the serialized lane blocks the coordinator's turn end again" "$(sg_guard "$HERE/guard-lane-wait-armed.sh")" '"decision":"block"'
+has "SGd3b … and --inbox asks AUT-OVERLAP again" "$(LOOMWRIGHT_LANES_HELPERS="$SGH" bash "$S" lane-status "$SGRF" --inbox 2>&1)" "L2 scope_hold AUT-OVERLAP"
 rm -rf "$SGP/.supervisor/run.lock"
 
 # SM — the brief's Pin mutations for Part B: each one-line edit turns its pin red (built from $SB like SC9, gated)

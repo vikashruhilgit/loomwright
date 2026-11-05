@@ -103,9 +103,10 @@
 #   lane-scope-check <lane_dir|L<n>>                    READ-ONLY scope re-gate of a lane held `scope_hold` (an N > 1
 #        lane parks it after its Launch Pad save): its declared set vs every other live lane of the wave — `unreadable
 #        — …` / `overlap — <file> shared with <lane> (…)` lines, else `clear`; then `widening — <path>` lines (exit 0)
-#   lane-scope-decide <lane_dir|L<n>> <continue|serialize|defer|revise> [--after L<m>] [--gate AUT-OVERLAP|LP-SCOPE]
+#   lane-scope-decide <lane_dir|L<n>> <continue|serialize|defer|drop|revise> [--after L<m>] [--gate AUT-OVERLAP|LP-SCOPE]
 #        [--owner-command '<cmd>']                      the owner's re-gate answer: release + `lane-launch --continue`,
-#        serialize after L<m> (its exact PR head merged in first), defer to the next wave, or re-plan (scope.sh header)
+#        serialize after L<m> (fetches its exact PR head and prints the merge; refuses a wait cycle or an ended lane),
+#        defer to the next wave, drop (LP-SCOPE Stop: checked off # skipped), or re-plan (scope.sh header)
 #
 # Files (all paths derived; nothing hard-coded):
 #   <lane>/.supervisor/lane.json        D2 marker — the ONE marker lane-create writes (plus the copied
@@ -122,7 +123,8 @@
 #                                       the done/ → failed/ brief move and the same push, just before the
 #                                       lane is salvaged and deleted, and (4) `lane-scope-decide` on a lane held
 #                                       `scope_hold`: its release / serialize lines, its brief's widening line,
-#                                       serialize's merge of another lane's exact PR head, defer's removal.
+#                                       serialize's fetch of another lane's exact PR head (the merge is printed, never
+#                                       run), defer's and drop's removal, drop's parent Queue check-off.
 #                                       lane.json carries `policy`: lane-policy.sh `resolve`'s object, run in
 #                                       the PRIMARY at lane-create (the rules stamp is per clone), or null;
 #                                       and `"single_lane": true` (appended last) ONLY from an explicit

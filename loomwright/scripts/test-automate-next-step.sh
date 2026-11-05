@@ -2239,6 +2239,21 @@ leg_lane_scope_hold() {
   [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad \
     && printf '%s' "$NC_OUT" | jq -e '.prompt | contains("Revise at the coordinator'"'"'s scope re-gate") and contains("src/k.ts, src/p.ts")' >/dev/null 2>&1 \
     || { LEG_MSG="revise release ⇒ exit $NC_RC '${NC_OUT:0:240}' ${NC_ERR:0:200}"; return 1; }
+  # --inline-phases has no launch-pad saved line, so an N > 1 lane could never hold: refused, not silently unguarded,
+  # and the refused flag does not persist. A single lane may run it (not refused here)
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="no scratch"; return 1; }
+  f_claude 1; printf '%s\n' '{"schema_version":1,"lane":"L2","parallel":2}' > "$CASE_ROOT/.supervisor/lane.json"
+  f_call "$drv" --start run --session-id coord-1 --inline-phases
+  [ "$NC_RC" = 2 ] && case "$NC_ERR" in *inline_phases_in_parallel_lane*) true ;; *) false ;; esac \
+    || { LEG_MSG="--inline-phases in an N > 1 lane ⇒ exit $NC_RC ${NC_ERR:0:200}"; return 1; }
+  f_call "$drv" --start run --session-id coord-1
+  [ "$NC_RC" = 0 ] && f_spawn_ok "$NC_OUT" plan launch-pad \
+    || { LEG_MSG="the refused flag persisted ⇒ exit $NC_RC '${NC_OUT:0:200}' ${NC_ERR:0:200}"; return 1; }
+  new_scratch "$FIX/run-config-suppress-restore" || { LEG_MSG="no scratch"; return 1; }
+  f_claude 1; printf '%s\n' '{"schema_version":1,"lane":"L1","parallel":1,"single_lane":true}' > "$CASE_ROOT/.supervisor/lane.json"
+  f_call "$drv" --start run --session-id coord-1 --inline-phases
+  [ "$NC_RC" != 2 ] || ! case "$NC_ERR" in *inline_phases_in_parallel_lane*) true ;; *) false ;; esac \
+    || { LEG_MSG="--inline-phases in a single lane refused ⇒ ${NC_ERR:0:200}"; return 1; }
   # B7: a single lane and a sequential run never hold
   for c in '{"schema_version":1,"lane":"L1","parallel":1,"single_lane":true}' ''; do
     lsh_saved "$drv" "$c"

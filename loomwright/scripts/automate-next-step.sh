@@ -1919,7 +1919,7 @@ ns_plan() {
   ns_interactive || inv="$inv --non-interactive"
   p="$inv — If the requirement file at $ITEM has an ## Outcomes Rubric section, copy it verbatim into the saved brief during Phase 5 (PACKAGE — Brief Assembly). Do not paraphrase, do not drop items, do not reformat. When Launch Pad finishes, write its LAUNCH_PAD_RESULT block verbatim (the whole block, nothing else) to $AD/$RUN_ID.launch-pad-result.md."
   rv="$(ns_revise_note)"
-  [ -z "$rv" ] || p="$p The owner chose Revise at the coordinator's scope re-gate (AUT-OVERLAP): revise the plan so it does not change these files, which another lane of this wave also plans to change: $rv."
+  [ -z "$rv" ] || p="$p The owner chose Revise at the coordinator's scope re-gate: revise the plan so it does not change these files (each is outside this item's Touches, or another lane of this wave also plans to change it): $rv."
   x="$("$JQ" -cn --arg i "$inv" --arg p "$p" --arg l "$(ns_phase_launch launch-pad "$p")" --arg s "$RUN_ID.launch-pad-result.md" \
       --arg t "$(ns_phase_then launch-pad '{"launch_pad_result_file": "<the result file phase-wait printed>", "session_id": "<the session id phase-wait printed>"}' '{"status_reason": "phase_died", "no_pr_why": "<the phase-wait died line>", "session_id": "<its session id, when known>"}'). The driver validates the LAUNCH_PAD_RESULT (validate-launch-pad-result.py --raw), maps its status as /autonomous PLAN step 4 does and checks the rubric was preserved: saved ⇒ the Supervisor phase spawn; anything else ⇒ the no-PR line and the loop stops" \
       '{what: "launch pad phase", session: "fresh", phase: "launch-pad", invocation: $i, prompt: $p, launch: $l, sidecar: $s, then: $t}')"
@@ -3429,12 +3429,19 @@ if [ -n "$SID" ]; then st_set flag_session_id "$SID"; else SID="$(st flag_sessio
 # it was given with and is reused only by a later call of that SAME session: a call from another session
 # (a different --session-id, e.g. a `--resume` from a new session) gets none until it gives its own, and its
 # launch lines are refused BLOCKED (fail CLOSED: no session id ⇒ no reuse)
-if [ "$INLINE" = 1 ]; then st_set flag_inline_phases true; elif [ "$(st flag_inline_phases)" = true ]; then INLINE=1; fi
 if [ -n "$OWNER_CMD" ]; then st_set flag_owner_command "$OWNER_CMD"; st_set flag_owner_command_sid "$SID"
 elif [ -n "$SID" ] && [ "$SID" = "$(st flag_owner_command_sid)" ]; then OWNER_CMD="$(st flag_owner_command)"; fi
 root_given="${ROOT:+1}"; [ -n "$ROOT" ] || ROOT="$(st flag_root)"
 ns_resolve_root
 [ -n "$root_given" ] && st_set flag_root "$ROOT"
+# --inline-phases runs Launch Pad and Supervisor as one step, so an N > 1 lane could never hold for the scope re-gate
+# (no `launch-pad saved` line): refused rather than letting a widening reach code unasked. Checked before the flag
+# persists, so a refused call leaves nothing behind. lane-launch never passes it; a single lane and a sequential run may.
+if [ "$INLINE" = 1 ] && ns_lane && [ "$("$JQ" -r '.parallel // 0' "$ROOT/.supervisor/lane.json" 2>/dev/null | tr -cd '0-9')" -gt 1 ] 2>/dev/null; then
+  ns_err "inline_phases_in_parallel_lane — --inline-phases cannot run inside a --parallel N > 1 lane: it has no point to hold for the scope re-gate; re-run without it — nothing written"
+  exit 2
+fi
+if [ "$INLINE" = 1 ]; then st_set flag_inline_phases true; elif [ "$(st flag_inline_phases)" = true ]; then INLINE=1; fi
 # inside a lane, `--cheap` also comes from the lane's own record (lane.json `"cheap": true`, written by
 # `lane-create --cheap` from the coordinator's flag): every session of the lane — launch, --resume-run,
 # continue, answer resume — keeps the cost profile whatever command it received. No off form; absent
