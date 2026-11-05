@@ -30,7 +30,7 @@ RH_V1_REQUIRED = ["schema_version", "decision", "iterations", "issues_fixed",
                   "remaining_issues", "pr_url", "notified"]
 RH_V2_REQUIRED = RH_V1_REQUIRED + ["rounds"]
 RH_V2_ALLOWED = set(RH_V2_REQUIRED + [
-    "max_rounds", "fix_cycles", "churn_rounds", "repeat_check_failure",
+    "max_rounds", "fix_cycles", "churn_rounds", "prior_runs", "repeat_check_failure",
     "unresolved_bot_feedback", "postmortem_churn_threshold",
     "postmortem_dispatched", "channels_scanned", "findings_validated",
     "findings_dismissed", "checks_waited", "termination_reason",

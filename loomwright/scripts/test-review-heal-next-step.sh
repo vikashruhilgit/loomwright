@@ -58,6 +58,10 @@
 #       `--required-checks all-non-neutral`; a human-authored unresolved thread and a resolved bot thread are
 #       never candidates (and never block READY); a countable rule failing then reading `unstamped` ⇒
 #       ESCALATED `rules_fail_then_unstamped`.
+#   T   TRANSIENT READS AND RESTARTS. One failed PR read is retried and the run goes on (no pr_unreadable,
+#       no comment); a read that keeps failing still ends ESCALATED pr_unreadable and the comment names
+#       gh's error. A new run over a finished one carries fix_cycles / issues_fixed / findings_validated and
+#       the rounds run into its block with prior_runs, on a fresh ledger; a first run has no prior_runs.
 #   P   PROSE PINS (AC6). The rule text of every review-heal inventory row that stays prose and names this
 #       test, held literally in this file (not read from the inventory); the inventory cross-check (a prose
 #       row naming this test with no pin is red); one mutation control per pin family (never-merge,
@@ -72,6 +76,8 @@
 #         MR  the review-lens read gated on check state (red ⇒ posted)  ⇒ G fallback-red-review-check
 #         MW  the webhook leg of the notification removed               ⇒ G converged-ready
 #         ME  the dismissal evidence check removed                     ⇒ R (an `intentional` dismissal taken)
+#         MT  the PR-read retry dropped                                ⇒ T (one failed read ends the drain)
+#         MC  the restart carry dropped                                ⇒ T (a pushed fix reports as zero)
 #         MS  one unguarded merge-command line appended (built here at run time from pieces, so this file
 #             never holds the positive literal on one line)            ⇒ S
 #
@@ -123,6 +129,8 @@ while IFS="	" read -r rc times pat out || [ -n "$rc" ]; do
     echo $((used + 1)) > "$RH_GH_STATE/$n"
   fi
   case "$out" in @*) cat "$RH_CASE/${out#@}" ;; "") ;; *) printf "%s\n" "$out" ;; esac
+  errf="${RH_GH_TABLE%/*}/gh.stderr"
+  if [ "$rc" != 0 ] && [ -f "$errf" ]; then cat "$errf" >&2; fi
   exit "$rc"
 done < "$RH_GH_TABLE"
 echo "gh-stub: unmatched: $all" >&2
@@ -170,7 +178,7 @@ drv() {
     export RH_CALLS="$C/calls.log"
     export RH_WAIT_CMD="$C_BIN/seq wait" RH_PROBE_CMD="$C_BIN/seq probe" RH_RULES_CMD="$C_BIN/seq rules"
     export RH_ESCALATION_CMD="$C_BIN/seq escalation" RH_NOTIFY_CMD="$C_BIN/rec notify" RH_POSTMORTEM_CMD="$C_BIN/rec postmortem"
-    export RH_WEBHOOK_CMD="$C_BIN/rec webhook"
+    export RH_WEBHOOK_CMD="$C_BIN/rec webhook" RH_READ_RETRY_DELAYS="0 0"
     bash "$d" "$PR" "$@"
   ) > "$C/last.out" 2> "$C/last.err"
   RCV=$?
@@ -788,6 +796,65 @@ drv "$DRIVER" --result "{\"pushed\":true,\"pushed_sha\":\"$SHA_B\",\"self_review
 # (the inventory cannot claim a pin that does not exist). Rows homed on a driver step are pinned by the
 # legs above (G/A/S/R/W/B), not here.
 # --------------------------------------------------------------------------------------
+echo "T: transient reads and restarts"
+HEAD_GLOB='pr view * --json headRefOid'
+# t_insert_fail <times> — one failing head-read row, placed after the row that answers round 1's read
+t_insert_fail() {
+  awk -F'\t' -v OFS='\t' -v g="$HEAD_GLOB" -v t="$1" '
+    { print } $3 == g && $2 == "1" && !d { print 1, t, g, ""; d = 1 }' "$C/gh.table" > "$C/gh.t" && mv "$C/gh.t" "$C/gh.table"
+}
+t_r1() { drv "$1" --start drain; drv "$1" --result-file "$FIX/fix-round-pushed/report-1.json"; drv "$1" --result-file "$FIX/fix-round-pushed/report-2.json"; }
+leg_t_retry() { # <driver> — a head read that fails once right after the push does not end the drain
+  setup_case "$FIX/fix-round-pushed"; t_insert_fail 1
+  t_r1 "$1"
+  [ "$(printf '%s' "$OUT" | jq -r '.what' 2>/dev/null)" = "validate findings" ] && [ ! -s "$C/comments.log" ]
+}
+if leg_t_retry "$DRIVER"; then ok "T: one failed head read is retried; the drain reaches round 2 with no comment"
+else no "T: one failed head read ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null), comments: $(head -n 1 "$C/comments.log")"; fi
+# the same failure at the very first read, and on the base / head read at start
+setup_case "$FIX/fix-round-pushed"; gh_fail_once() { { sed -n 1p "$C/gh.table"; printf '1\t1\t%s\t\n' "$1"; sed '1d' "$C/gh.table"; } > "$C/gh.t" && mv "$C/gh.t" "$C/gh.table"; }
+gh_fail_once 'pr view * --json baseRefName,headRefName,isCrossRepository'; drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.what' 2>/dev/null)" = "validate findings" ] && ok "T: one failed base / head read at start is retried" \
+  || no "T: start read ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
+setup_case "$FIX/fix-round-pushed"; gh_fail_once 'api graphql *'; drv "$DRIVER" --start drain
+[ "$(printf '%s' "$OUT" | jq -r '.what' 2>/dev/null)" = "validate findings" ] && ok "T: one failed channel read through drain-gh-read.sh is retried" \
+  || no "T: channel read ⇒ $(printf '%s' "$OUT" | jq -c '{do, what, message}' 2>/dev/null)"
+# a read that keeps failing still fails CLOSED, and the comment says why
+setup_case "$FIX/fix-round-pushed"; t_insert_fail '*'
+printf 'HTTP 502: Bad Gateway (https://api.github.com/graphql)\nsecond line\n' > "$C/gh.stderr"
+t_r1 "$DRIVER"
+T_READS="$(grep -c -- '--json headRefOid' "$C/calls.log")"
+if [ "$(printf '%s' "$OUT" | jq -r '.decision')" = ESCALATED ] && [ "$(printf '%s' "$OUT" | jq -r '.message')" = pr_unreadable ] \
+   && [ "$T_READS" = 4 ] && grep -qF 'could not read the PR head (last error: HTTP 502: Bad Gateway (https://api.github.com/graphql))' "$C/comments.log" \
+   && ! grep -qF 'second line' "$C/comments.log"; then ok "T: a head read that keeps failing ends ESCALATED pr_unreadable after 3 tries, the comment naming gh's error"
+else no "T: persistent failure ⇒ $(printf '%s' "$OUT" | jq -c '{decision, message}' 2>/dev/null), reads $T_READS, comment $(head -n 3 "$C/comments.log")"; fi
+# #830: a run that pushed a fix then escalated, restarted over its own done: the block still reports the fix
+# (the restarted run's round ordinal starts over, so its candidate id is r1-1)
+T_BLOCK=""; T_DISMISS="$(sed 's/"r2-1"/"r1-1"/' "$FIX/fix-round-pushed/report-3.json")"
+leg_t_restart() { # <driver> — 0 when the second run's block carries the first run's work
+  setup_case "$FIX/fix-round-pushed"; t_insert_fail '*'
+  t_r1 "$1"
+  [ "$(printf '%s' "$OUT" | jq -r '.message')" = pr_unreadable ] || return 1
+  grep -qx '  fix_cycles: 1' < <(b_block) && ! grep -q 'prior_runs' < <(b_block) || return 1
+  awk -F'\t' -v g="$HEAD_GLOB" '!($1 == "1" && $3 == g)' "$C/gh.table" > "$C/gh.t" && mv "$C/gh.t" "$C/gh.table"
+  drv "$1" --start drain
+  [ "$(cat "$C_ROOT/.supervisor/drain-rounds/"*.json | jq -r .rounds)" = 0 ] || return 1
+  drv "$1" --result "$T_DISMISS"
+  [ "$(printf '%s' "$OUT" | jq -r '.decision')" = READY ] || return 1
+  T_BLOCK="$(b_block)"
+  grep -qx '  issues_fixed: 1' <<<"$T_BLOCK" && grep -qx '  fix_cycles: 1' <<<"$T_BLOCK" && grep -qx '  rounds: 2' <<<"$T_BLOCK" \
+    && grep -qx '  iterations: 2' <<<"$T_BLOCK" && grep -qx '  findings_validated: 1' <<<"$T_BLOCK" && grep -qx '  prior_runs: 1' <<<"$T_BLOCK" \
+    && [ "$(cat "$C_ROOT/.supervisor/drain-rounds/"*.json | jq -r .rounds)" = 1 ]
+}
+if leg_t_restart "$DRIVER"; then ok "T: a restart over a finished run carries its fix into the block, on a fresh ledger"
+else no "T: restart block: $(printf '%s' "${T_BLOCK:-$OUT}" | grep -E 'decision|issues_fixed|fix_cycles|rounds:|prior_runs' | tr -s ' ' | tr '\n' ';')"; fi
+printf '%s\n' "$T_BLOCK" > "$C/t.result.md"
+T_SC="$(bash "$HERE/automate-helpers.sh" sidecar-check "$C/t.result.md" 2>/dev/null)"; case "$T_SC" in ok*) ok "T: a block with prior_runs passes sidecar-check" ;; *) no "T: a block with prior_runs: $T_SC" ;; esac
+drv "$DRIVER" --start drain; drv "$DRIVER" --result "$T_DISMISS"
+T_BLOCK="$(b_block)"
+grep -qx '  prior_runs: 2' <<<"$T_BLOCK" && grep -qx '  fix_cycles: 1' <<<"$T_BLOCK" && grep -qx '  rounds: 3' <<<"$T_BLOCK" \
+  && ok "T: a third run keeps adding up" || no "T: third run: $(printf '%s' "$T_BLOCK" | grep -E 'fix_cycles|rounds:|prior_runs' | tr -s ' ' | tr '\n' ';')"
+
 echo "P: prose pins"
 PLUGIN="$REPO/loomwright"
 PROSE_PINS="$(cat <<'PROSE_PINS_EOF'
@@ -1121,6 +1188,14 @@ if [ "${RH_SKIP_MUTANTS:-0}" != 1 ] && [ -z "${RH_CASES:-}" ]; then
   if m="$(build_mutant W '$RH_WEBHOOK_CMD --event-type gate' ': --event-type gate')"; then
     if run_golden converged-ready "$m" 0; then no "MW: dropping the webhook leg left G green"; else ok "MW: dropping the webhook leg turns G converged-ready red"; fi
   else no "MW: mutant not built"; fi
+  # MT — the PR-read retry dropped: one failed read ends the drain again
+  if m="$(build_mutant T 'for d in ${RH_READ_RETRY_DELAYS-2 5}; do' 'for d in ; do')"; then
+    if leg_t_retry "$m"; then no "MT: dropping the read retry left T green"; else ok "MT: dropping the read retry turns T red"; fi
+  else no "MT: mutant not built"; fi
+  # MC — the restart carry dropped: a pushed fix reports as zero after a restart (#830)
+  if m="$(build_mutant C "flag_pm_threshold: \$pm} + \$carry')\"" "flag_pm_threshold: \$pm}')\"")"; then
+    if leg_t_restart "$m"; then no "MC: dropping the restart carry left T green"; else ok "MC: dropping the restart carry turns T red"; fi
+  else no "MC: mutant not built"; fi
   # ME — the dismissal evidence check removed: a dismissal citing nothing checkable is taken
   if m="$(build_mutant E '(.evidence | evidence_ok)' 'true')"; then
     setup_case "$FIX/converged-ready"; drv "$m" --start drain

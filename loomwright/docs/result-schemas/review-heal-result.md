@@ -45,6 +45,7 @@ REVIEW_HEAL_RESULT:
   max_rounds: int                      # the drain hard ceiling (default 5, the ONE authoritative home for this value is the `max_rounds` default in skills/review-heal/SKILL.md §"Step U4 — The bounded drain loop"; --max-rounds N overrides)
   fix_cycles: int                      # fix→push cycles run during the drain (postmortem-gate input)
   churn_rounds: int                    # consecutive rounds whose anti-churn fingerprint set did not shrink
+  prior_runs: int                      # OPTIONAL — earlier driver runs on this PR whose work the totals include; absent on a first run
   repeat_check_failure: bool           # a required check that was fixed re-failed in a later round (postmortem input)
   unresolved_bot_feedback: bool        # a bot-authored thread stayed unresolved after >=1 fix cycle (postmortem input)
   postmortem_churn_threshold: int      # the fix-cycle trigger bar in effect (default 2)
@@ -86,9 +87,10 @@ REVIEW_HEAL_RESULT:
 | `remaining_issues` | int | both | `new` findings at or above the fix floor still open at loop exit. `0` on `PASS`/`READY`; the escalated count on `ESCALATED`. |
 | `pr_url` | string | both | The PR URL the run operated on (the loop's single input; resolved to a head branch via `gh pr view <pr-url> --json headRefName`). |
 | `notified` | bool | both | `true` whenever a notification was *attempted* (the NEEDS_HUMAN/escalation banner+webhook, OR — under `--until-mergeable` — the "ready to merge" notification on `READY`). Best-effort, fire-and-forget, always exit 0 — records attempt, not delivery. |
-| `rounds` | int | v2 only | Drain rounds actually run in the `--until-mergeable` outer loop (Step U4 in the skill). |
+| `rounds` | int | v2 only | Drain rounds actually run in the `--until-mergeable` outer loop (Step U4 in the skill), across `prior_runs` when a run started over a finished one, so it can exceed `max_rounds`. |
+| `prior_runs` | int | v2 only, optional | Earlier driver runs on this PR whose work this block's `rounds`, `iterations`, `fix_cycles`, `issues_fixed` and `findings_validated` include. Absent on a first run. `--start drain` over a finished run (a fix-now re-drain, or a restart after an `ESCALATED`) raises it. |
 | `max_rounds` | int | v2 only | The drain hard ceiling — **default 5**, overridden by `--max-rounds N`. The loop never runs unbounded; it exits `ESCALATED` at `max_rounds` (AC4). |
-| `fix_cycles` | int | v2 only | How many fix→push cycles ran during the drain. Primary postmortem-churn-gate input: the tail fires when `fix_cycles > postmortem_churn_threshold` (AC10/AC11). |
+| `fix_cycles` | int | v2 only | How many fix→push cycles ran during the drain, across `prior_runs`. Primary postmortem-churn-gate input: the tail fires when `fix_cycles > postmortem_churn_threshold` (AC10/AC11). |
 | `churn_rounds` | int | v2 only | Consecutive drain rounds whose anti-churn fingerprint set (`{file, issue_category, rule}`) did not shrink. `churn_rounds >= 2` is one of the two anti-churn trip conditions (AC5). |
 | `repeat_check_failure` | bool | v2 only | `true` when a required check that was fixed re-fails in a later round. An OR-trigger for the postmortem tail (AC10). |
 | `unresolved_bot_feedback` | bool | v2 only | `true` when a bot-authored review thread remains unresolved after >=1 fix cycle. An OR-trigger for the postmortem tail (AC10). |
