@@ -322,7 +322,7 @@ Before finalizing a story:
 - [ ] Assumptions made explicit
 - [ ] Dependencies listed
 - [ ] `### Non-goals` and `### Owner decisions` written (`none recorded` when the owner decided nothing); `## Validation (must pass before merge)` has at least one entry, and an outcome only a running system can show has a Running system entry
-- [ ] `## Depends on` written (`none` when none) and `## Touches` filled from Scope — `plan-waves --lint` says `ok`
+- [ ] `## Depends on` written (`none` when none) and `## Touches` filled from Scope plus the shared-file sweep — `plan-waves --lint` says `ok`
 - [ ] A set of 2+ items was planned with `plan-waves --explain`, reshaped where it serialised needlessly, and its waves and N are in the plan doc's `## Run` (§"Shaping a set for parallel waves")
 - [ ] Risks identified
 - [ ] Story is estimable (not too vague, not too large) and its shape was decided first — it fits one PR (§"Requirement Shape")

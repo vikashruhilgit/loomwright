@@ -292,7 +292,7 @@ sweep_ok() {
   for f in "$1" "$2" "$3"; do grep -qF '**Shared-file sweep' "$f" || { echo "no '**Shared-file sweep' in $f"; return 1; }; done
   sa="$(grep -F -- "$SWEEP_PO" "$1")"; sc="$(grep -F -- "$SWEEP_PO" "$2")"
   [ -n "$sa" ] && [ "$sa" = "$sc" ] || { echo "the agent and command '$SWEEP_PO' lines differ (or are missing)"; return 1; }
-  grep -F -- "$SWEEP_SK" "$3" | grep -qF '.agent/companions.json' || { echo "the skill's sweep bullet does not name .agent/companions.json"; return 1; }
+  grep -qF '.agent/companions.json' < <(grep -F -- "$SWEEP_SK" "$3") || { echo "the skill's sweep bullet does not name .agent/companions.json"; return 1; }
   for f in "$1" "$2"; do
     n="$(grep -F -- "$N_LINE" "$f")"
     [ "$(printf '%s\n' "$n" | grep -c .)" = 1 ] || { echo "not exactly one <n> formula line in $f"; return 1; }
