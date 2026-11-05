@@ -905,7 +905,7 @@ rm -rf "$R"
 # H13. A failed GitHub read is never a clean-looking pass: an `unverified` row, exit 0, nothing stamped.
 #      (Measured before this rule: a throttled gh printed nothing and exited 0, which read exactly
 #      like a scan that found nothing stale.)
-rs_uv_row() { grep -F "unverified	$1	" <<<"$RUN_OUT" | grep -qF -- "$2"; }
+rs_uv_row() { grep -qF -- "$2" < <(grep -F "unverified	$1	" <<<"$RUN_OUT"); }
 for ans in fail garbage; do
   IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
   GH_STUB_LIST_ANSWER="$ans" rs_run "$R" "$R/.supervisor/requirements/qh" --apply
