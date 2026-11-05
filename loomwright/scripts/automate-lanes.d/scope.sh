@@ -99,7 +99,8 @@ lanes_scope_outside() {
 #              `scope re-gate: <lane> serialize — scope_wait: L<m>` (parent) once, and stays held until L<m> reads
 #              ready_for_release / awaiting_merge / merged — re-run it then. Refused, nothing written, when L<m> already
 #              waits (directly or through others) for this lane: the wait could never end. Refused too when L<m> has
-#              ended (escalated, failed, died, gone, removed …): it will never read ready, and a lane already waiting
+#              ended (escalated, failed, died, gone, removed …; a rate_limit park has not ended, it can be resumed): it
+#              will never read ready without the owner, and a lane already waiting
 #              on it reads undecided again (_lanes_scope_held), so the Stop guard and AUT-OVERLAP return. It reads L<m>'s PR head (`gh pr view
 #              --json headRefOid,headRefName`), fetches that branch from origin into the held lane and checks the
 #              fetched head IS that sha, then PRINTS the `git merge --no-ff <sha>` to run in the held lane's checked-out
@@ -308,7 +309,7 @@ lanes_scope_decide() {
         _sgr "serializing after $after would deadlock: $after already waits for $LN_LANE — nothing written; choose Continue in parallel, Defer to next wave or Revise"; return 1
       fi
       ast="$(_lanes_state_of "$after")"
-      case "$ast" in escalated|failed|died|lost_to_reset|gone|rate_limit|drain_died|abandoned|removed|missing)
+      case "$ast" in escalated|failed|died|lost_to_reset|gone|drain_died|abandoned|removed|missing)
         _sgr "$after ended $ast, so it will never read ready_for_release — nothing written; ask AUT-OVERLAP again"; return 1 ;;
       esac
       if ! awk -v a="$after" '/^- / { x = substr($0, 3); if (x ~ /^[0-9][0-9][0-9][0-9]-/) sub(/^[^ ]+ /, "", x)
@@ -424,7 +425,7 @@ _lanes_sg_wait_broken() {
   { [ -d "$path" ] && [ ! -e "$path.died" ]; } || return 0
   f="$path/.supervisor/automate/$run.md"
   [ -f "$f" ] || return 1
-  grep -qE '^- pause_reason: *(escalated|failed|rate_limit|drain_died|gone)[[:space:]]*$' "$f"
+  grep -qE '^- pause_reason: *(escalated|failed|drain_died|gone)[[:space:]]*$' "$f"
 }
 # _lanes_scope_held <table> — READ-ONLY, fail SAFE: one `lane<TAB>path<TAB>held_at<TAB>decided (0|1)<TAB>scope_wait lane|-`
 # row per lane-table lane whose run file parks `pause_reason: scope_hold`. `decided` = a `scope re-gate` line follows

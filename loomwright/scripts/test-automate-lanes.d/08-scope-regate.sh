@@ -312,6 +312,19 @@ if [ "$rc" = 1 ] && case "$out" in *"L1 ended"*) true ;; *) false ;; esac && ! g
   ok "SD11 serialize after a lane that ended escalated ⇒ refused exit 1, nothing written"
 else bad "SD11 serialize terminal" "rc=$rc out=[$out] $(grep scope_wait "$sg_lrf")"; fi
 
+# a rate-limited lane has not ended: it can be resumed, so it can still be waited for
+sg_fx1; sed -i.bak 's/^- pause_reason: null/- pause_reason: rate_limit/' "$SGL/L1/.supervisor/automate/$SGPAR-L1.md"
+out="$(sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"; rc=$?
+if [ "$rc" = 0 ] && case "$out" in "lane-scope-decide: held — L2 waits for L1"*) true ;; *) false ;; esac && grep -q 'scope re-gate: scope_wait L1 (serialize)$' "$sg_lrf"; then
+  ok "SD11b serialize after a lane parked rate_limit ⇒ held, scope_wait recorded (it has not ended)"
+else bad "SD11b serialize rate_limit" "rc=$rc out=[$out] $(grep scope_wait "$sg_lrf")"; fi
+sg_fx1; : > "$SGL/L1.died"
+out="$(sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"; rc=$?
+if [ "$rc" = 1 ] && case "$out" in *"L1 ended"*) true ;; *) false ;; esac && ! grep -q 'scope_wait' "$sg_lrf"; then
+  ok "SD11c serialize after a died lane ⇒ refused exit 1, nothing written (it needs the owner)"
+else bad "SD11c serialize died" "rc=$rc out=[$out] $(grep scope_wait "$sg_lrf")"; fi
+rm -f "$SGL/L1.died"
+
 # SI — the held lane on lane-status --inbox and --json
 sg_fx1
 sg_inbox="$(LOOMWRIGHT_LANES_HELPERS="$SGH" bash "$S" lane-status "$SGRF" --inbox 2>&1)"
@@ -331,6 +344,12 @@ check "SGd2 a recorded decision (serialize's scope_wait) no longer blocks" "$(sg
 sed -i.bak 's/^- pause_reason: null/- pause_reason: escalated/' "$SGL/L1/.supervisor/automate/$SGPAR-L1.md"
 has "SGd3 the awaited lane ended escalated ⇒ the serialized lane blocks the coordinator's turn end again" "$(sg_guard "$HERE/guard-lane-wait-armed.sh")" '"decision":"block"'
 has "SGd3b … and --inbox asks AUT-OVERLAP again" "$(LOOMWRIGHT_LANES_HELPERS="$SGH" bash "$S" lane-status "$SGRF" --inbox 2>&1)" "L2 scope_hold AUT-OVERLAP"
+sed -i.bak 's/^- pause_reason: escalated/- pause_reason: rate_limit/' "$SGL/L1/.supervisor/automate/$SGPAR-L1.md"
+check "SGd4 the awaited lane parked rate_limit has not ended ⇒ the serialized lane stays decided, no block" "$(sg_guard "$HERE/guard-lane-wait-armed.sh")" "{}"
+has "SGd4b … and --inbox still names its wait, no second AUT-OVERLAP" "$(LOOMWRIGHT_LANES_HELPERS="$SGH" bash "$S" lane-status "$SGRF" --inbox 2>&1)" "L2 waits for L1"
+: > "$SGL/L1.died"
+has "SGd5 the awaited lane's died marker ⇒ the serialized lane blocks again" "$(sg_guard "$HERE/guard-lane-wait-armed.sh")" '"decision":"block"'
+rm -f "$SGL/L1.died"
 rm -rf "$SGP/.supervisor/run.lock"
 
 # SM — the brief's Pin mutations for Part B: each one-line edit turns its pin red (built from $SB like SC9, gated)
