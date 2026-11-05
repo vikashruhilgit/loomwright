@@ -1768,16 +1768,23 @@ ns_reconcile() {
   esac
 }
 
-# step: reconcile-status — on a resume, the dry-run requirement reconcile (§4 step 7): one line per plan row
+# step: reconcile-status — on a resume, the dry-run requirement reconcile (§4 step 7): one line per plan row,
+# one per unverified row (a GitHub read failed, so an absence of plan rows proves nothing this pass)
 ns_reconcile_status() {
-  local out i=0 k f s ev
+  local out i=0 u=0 k f s ev
   out="$(bash "$H" reconcile-status "$ROOT/.supervisor/requirements" 2>/dev/null)"
   while IFS="$TAB" read -r k f s ev; do
+    if [ "$k" = unverified ]; then
+      u=$((u + 1)); ns_once "once_rs_uv_$u" ns_progress "reconcile-status: UNVERIFIED $f: $s" || return 1
+      continue
+    fi
     [ "$k" = plan ] || continue
     i=$((i + 1)); ns_once "once_rs_$i" ns_progress "reconcile-status: would stamp $f (${s%% (*})" || return 1
   done <<EOF
 $out
 EOF
+  # the keys guard a retry of this step only: the next resume's pass reports its own rows
+  ns_clear_once once_rs_
   st_del resume_status_due
   NEXT=trail-gate
 }

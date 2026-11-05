@@ -12,13 +12,17 @@ rs_key() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'; }
 # search does not find a full requirement path (PR #484).
 rs_skey() { local r="${1#.supervisor/requirements/}"; rs_key "${r%.md}"; }
 
-# rs_stub_bin <dir> — a gh stub keyed on `pr list --search <term>` and
-# `pr view <url>`, reading canned JSON from $GH_STUB_DIR/list-<key>.json /
-# view-<key>.json (absent list ⇒ "[]", absent view ⇒ exit 1), plus `api …
+# rs_stub_bin <dir> — a gh stub answering `--search <term>` from list-<key>.json
+# (absent ⇒ "[]") and `pr list --state merged` with every PR
+# named by a $GH_STUB_DIR/list-<key>.json file whose view-<key>.json reads MERGED,
+# newest first (the real read's order and shape: the view plus its url), and
+# `pr view <url>` from view-<key>.json (absent ⇒ exit 1), plus `api …
 # repos/<o>/<r>/pulls/<n>/files` (the >100-file diff fallback) from
-# api-<key>.txt, one path per line (absent ⇒ exit 1). Dedicated to
-# this section (not make_stub_bin) because reconcile-status's evidence-lookup
-# needs TWO gh verbs discriminated by argument, not one fixed response file.
+# api-<key>.txt, one path per line (absent ⇒ exit 1). Every call is logged to
+# $GH_STUB_DIR/argv.log. GH_STUB_LIST_ANSWER=fail|garbage|full,
+# GH_STUB_SEARCH_FAIL=1 and GH_STUB_VIEW_FAIL=1 model a failing GitHub. Dedicated to this section (not
+# make_stub_bin) because reconcile-status's evidence-lookup needs several gh
+# verbs discriminated by argument, not one fixed response file.
 rs_stub_bin() {
   local bin="$1"
   mkdir -p "$bin"
@@ -26,14 +30,33 @@ rs_stub_bin() {
 #!/usr/bin/env bash
 set -u
 key() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'; }
+[ -d "${GH_STUB_DIR:-}" ] && printf '%s\n' "$*" >> "$GH_STUB_DIR/argv.log"
+case " $* " in
+  *" --search "*)
+    [ "${GH_STUB_SEARCH_FAIL:-}" = 1 ] && exit 1
+    shift 2; term=""
+    while [ "$#" -gt 0 ]; do case "$1" in --search) term="${2:-}"; shift 2 ;; *) shift ;; esac; done
+    f="$GH_STUB_DIR/list-$(key "$term").json"
+    [ -f "$f" ] && cat "$f" || printf '[]'
+    exit 0 ;;
+esac
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
-  shift 2; term=""
-  while [ "$#" -gt 0 ]; do case "$1" in --search) term="${2:-}"; shift 2 ;; *) shift ;; esac; done
-  f="$GH_STUB_DIR/list-$(key "$term").json"
-  [ -f "$f" ] && cat "$f" || printf '[]'
+  case "${GH_STUB_LIST_ANSWER:-}" in
+    fail) echo 'HTTP 403: API rate limit exceeded' >&2; exit 1 ;;
+    garbage) echo '<html>502</html>'; exit 0 ;;
+    full) lim=""; while [ "$#" -gt 0 ]; do case "$1" in --limit) lim="${2:-}"; shift 2 ;; *) shift ;; esac; done
+          jq -n --argjson n "$lim" '[range($n) | {number:., url:"https://github.com/acme/widgets/pull/x\(.)", body:"", headRefName:"f"}]'; exit 0 ;;
+  esac
+  urls="$(cat "$GH_STUB_DIR"/list-*.json 2>/dev/null | jq -r '.[]?.url' | sort -u)"
+  while IFS= read -r u; do
+    [ -n "$u" ] || continue
+    f="$GH_STUB_DIR/view-$(key "$u").json"
+    [ -f "$f" ] && jq -c --arg u "$u" 'select(.state == "MERGED") | . + {url:$u}' "$f"
+  done <<<"$urls" | jq -s 'sort_by(-.number)'
   exit 0
 fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  [ "${GH_STUB_VIEW_FAIL:-}" = 1 ] && exit 1
   url="${3:-}"
   f="$GH_STUB_DIR/view-$(key "$url").json"
   [ -f "$f" ] && cat "$f" || exit 1
@@ -616,17 +639,17 @@ rs_plans_77 "$RS_CREL" && ok "H9b 'Implements <full path>' plans 'done (PR #77)'
 rm -rf "$R"
 
 # H9c. `Implements <short slug>` (the PR #484 shape: no prefix, no .md) ⇒ plan row —
-#      and only because the search uses the short form (stub answers that term alone).
+#      and only because the mention match uses the short form.
 R="$(rs_cite_repo "$RS_CREL" '## Status: pending' 'Implements `qh/09-board-and-right-size`.')"
 rs_run "$R" "$R/.supervisor/requirements/qh"
 rs_plans_77 "$RS_CREL" && ok "H9c 'Implements <short slug>' plans 'done (PR #77)'" || no "H9c short-slug Implements line not evidence (out='$RUN_OUT')"
-if rs_mutant '  search_json="$("$GH" pr list --state merged --search "$short" --json url --limit 5 2>/dev/null)"' \
-             '  search_json="$("$GH" pr list --state merged --search "$rel" --json url --limit 5 2>/dev/null)"'; then
+RS_MENTION='    local urls; urls="$(env LC_ALL=C grep -aF -- "$short" "$RS_PR_LINES" 2>/dev/null | cut -f1 | awk '"'"'!seen[$0]++'"'"')"'
+if rs_mutant "$RS_MENTION" "${RS_MENTION/\"\$short\"/\"\$rel\"}"; then
   RS_H="$RSM/automate-helpers.sh" rs_run "$R" "$R/.supervisor/requirements/qh"
-  [ -z "$RUN_OUT" ] && ok "H9c mutation control: searching the full path finds no candidate (the PR #484 miss) — the short-form search is load-bearing" \
-    || no "H9c mutation control: full-path search still planned (out='$RUN_OUT') — H9c would be vacuous"
+  [ -z "$RUN_OUT" ] && ok "H9c mutation control: matching the full path finds no candidate (the PR #484 miss) — the short form is load-bearing" \
+    || no "H9c mutation control: full-path match still planned (out='$RUN_OUT') — H9c would be vacuous"
 else
-  no "H9c mutation control: the search line was not found in the helper"
+  no "H9c mutation control: the mention line was not found in the helper"
 fi
 rm -rf "$R" "$RSM"
 
@@ -819,3 +842,148 @@ else
   no "H11 mutation control not built (dedupe line found $(grep -cxF "$RS_DEDUP" "$H") times, or the mutant is unchanged / does not parse)"
 fi
 rm -rf "$RSM"
+
+# H12. Cost: a pass reads merged PRs once and each done/ brief once, however many files it walks,
+#      and reads a diff only for a PR that already qualifies. (2026-11-05: 474 files × 252 briefs
+#      took 5:53 locally before any network call, inside a 7:19 resume step.)
+rs_cost_repo() { # 6 pending requirements, 5 done/ briefs, one citing PR and one that only mentions a requirement
+  local r i; r="$(mktemp -d)"
+  mkdir -p "$r/.supervisor/requirements/qh" "$r/.supervisor/jobs/done" "$r/.supervisor/automate" "$r/bin" "$r/ghstub"
+  rs_stub_bin "$r/bin"
+  for i in 1 2 3 4 5 6; do printf '# r\n\n## Status: pending\n' > "$r/.supervisor/requirements/qh/2$i-req.md"; done
+  for i in 1 2 3 4 5; do printf '# Brief\n## Environment\n- **Source requirement:** .supervisor/requirements/qh/2%s-req.md\n' "$i" > "$r/.supervisor/jobs/done/2026-10-0$i-b$i.md"; done
+  jq -n --arg u "https://github.com/acme/widgets/pull/50" '[{url:$u}]' > "$r/ghstub/list-a.json"
+  jq -n '{state:"MERGED",number:50,body:"Implements qh/21-req",mergeCommit:{oid:"aaaaaaa1111"},headRefName:"f/one",changedFiles:1,files:[{path:"src/a.sh"}]}' \
+    > "$r/ghstub/view-$(rs_key "https://github.com/acme/widgets/pull/50").json"
+  jq -n --arg u "https://github.com/acme/widgets/pull/51" '[{url:$u}]' > "$r/ghstub/list-b.json"
+  jq -n '{state:"MERGED",number:51,body:"See also qh/22-req",mergeCommit:{oid:"bbbbbbb1111"},headRefName:"f/two",changedFiles:1,files:[{path:"src/b.sh"}]}' \
+    > "$r/ghstub/view-$(rs_key "https://github.com/acme/widgets/pull/51").json"
+  printf '%s' "$r"
+}
+# rs_pointer_parses <helper> <repo> — how many times the pass parsed a brief's pointer (from an xtrace)
+rs_pointer_parses() {
+  GH_STUB_DIR="$2/ghstub" PATH="$2/bin:$PATH" LOOMWRIGHT_GH_BIN=gh bash -x "$1" reconcile-status "$2/.supervisor/requirements" 2>&1 >/dev/null | grep -c '^+* *brief_requirement_pointer '
+}
+R="$(rs_cost_repo)"
+rs_run "$R" "$R/.supervisor/requirements"
+RS_LISTS="$(grep -c '^pr list' "$R/ghstub/argv.log")"
+if [ "$RS_LISTS" = 1 ] && ! grep -q -- '--search' "$R/ghstub/argv.log" && grep -qF "plan	.supervisor/requirements/qh/21-req.md	done (PR #50, merge aaaaaaa)" <<<"$RUN_OUT"; then
+  ok "H12 six not-done files make ONE merged-PR read and no per-file search, and the citing PR still plans"
+else
+  no "H12 merged-PR reads wrong ($RS_LISTS lists; out='$RUN_OUT'; $(tr '\n' '|' < "$R/ghstub/argv.log"))"
+fi
+if grep -q '^pr view https://github.com/acme/widgets/pull/50 --json files,changedFiles' "$R/ghstub/argv.log" && ! grep -q '^pr view https://github.com/acme/widgets/pull/51' "$R/ghstub/argv.log"; then
+  ok "H12 a diff is read for the citing PR only, never for a PR that merely mentions a requirement"
+else
+  no "H12 diff reads wrong: $(tr '\n' '|' < "$R/ghstub/argv.log")"
+fi
+RS_PARSES="$(rs_pointer_parses "$H" "$R")"
+[ "$RS_PARSES" = 5 ] && ok "H12 six files over five briefs parse each brief once" || no "H12 brief pointer parsed $RS_PARSES times, want 5"
+RS_IDX_LINE='    RS_BRIEF_INDEX="$RS_TMP/briefs"'
+if rs_mutant "$RS_IDX_LINE" ""; then
+  RS_PARSES="$(rs_pointer_parses "$RSM/automate-helpers.sh" "$R")"
+  [ "$RS_PARSES" -gt 10 ] && ok "H12 mutation control: without the index the pass parses briefs per file ($RS_PARSES times) — the index is load-bearing" \
+    || no "H12 mutation control: mutant still parsed only $RS_PARSES times — H12 would be vacuous"
+else
+  no "H12 mutation control: the index line was not found in the helper"
+fi
+rm -rf "$R" "$RSM"
+
+# H12b. A citing PR older than five other PRs that mention the file is still found: the search it
+#       replaces capped candidates at five, newest first.
+R="$(rs_cost_repo)"
+for i in 61 62 63 64 65 66; do
+  jq -n --arg u "https://github.com/acme/widgets/pull/$i" '[{url:$u}]' > "$R/ghstub/list-m$i.json"
+  jq -n --argjson n "$i" '{state:"MERGED",number:$n,body:"Mentions qh/21-req in passing",mergeCommit:{oid:"ccccccc1111"},headRefName:"f/m",changedFiles:1,files:[{path:"src/m.sh"}]}' \
+    > "$R/ghstub/view-$(rs_key "https://github.com/acme/widgets/pull/$i").json"
+done
+rs_run "$R" "$R/.supervisor/requirements"
+grep -qF "plan	.supervisor/requirements/qh/21-req.md	done (PR #50, merge aaaaaaa)" <<<"$RUN_OUT" \
+  && ok "H12b the citing PR behind six newer mentions still plans" || no "H12b citing PR lost behind newer mentions (out='$RUN_OUT')"
+rm -rf "$R"
+
+# H13. A failed GitHub read is never a clean-looking pass: an `unverified` row, exit 0, nothing stamped.
+#      (Measured before this rule: a throttled gh printed nothing and exited 0, which read exactly
+#      like a scan that found nothing stale.)
+rs_uv_row() { grep -qF -- "$2" < <(grep -F "unverified	$1	" <<<"$RUN_OUT"); }
+for ans in fail garbage; do
+  IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
+  GH_STUB_LIST_ANSWER="$ans" rs_run "$R" "$R/.supervisor/requirements/qh" --apply
+  if [ "$RUN_RC" = 0 ] && rs_uv_row merged-pr-list "no merged PR was checked" && ! grep -q '^stamped' <<<"$RUN_OUT" && grep -qE '^## Status: pending$' "$R/$RELB"; then
+    ok "H13 merged-PR read answering '$ans' ⇒ one unverified row, exit 0, nothing stamped"
+  else
+    no "H13 '$ans' wrong (rc=$RUN_RC out='$RUN_OUT')"
+  fi
+  rm -rf "$R"
+done
+# Mutation control: without the closing rows the throttled pass is silent again.
+RS_UV_LINE="$(grep -F 'print "unverified' "$H")"
+IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
+if rs_mutant "$RS_UV_LINE" ""; then
+  RS_H="$RSM/automate-helpers.sh" GH_STUB_LIST_ANSWER=fail rs_run "$R" "$R/.supervisor/requirements/qh"
+  [ -z "$RUN_OUT" ] && [ "$RUN_RC" = 0 ] && ok "H13 mutation control: without the closing rows a throttled pass prints nothing and exits 0 — the row is load-bearing" \
+    || no "H13 mutation control: mutant still printed (out='$RUN_OUT' rc=$RUN_RC) — H13 would be vacuous"
+else
+  no "H13 mutation control: the closing-rows line was not found in the helper"
+fi
+rm -rf "$R" "$RSM"
+# A diff read failing after a good list names that PR, and only its candidate degrades.
+IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
+GH_STUB_VIEW_FAIL=1 rs_run "$R" "$R/.supervisor/requirements/qh"
+if [ "$RUN_RC" = 0 ] && rs_uv_row "$RS_URL" "this PR's diff was not read" && ! grep -q '^plan' <<<"$RUN_OUT"; then
+  ok "H13 a qualifying PR whose diff read fails ⇒ unverified row naming it, no plan"
+else
+  no "H13 failed diff read wrong (rc=$RUN_RC out='$RUN_OUT')"
+fi
+rm -rf "$R"
+# A read as long as the limit may have dropped older PRs: flagged, and what it did read still counts.
+IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
+GH_STUB_LIST_ANSWER=full rs_run "$R" "$R/.supervisor/requirements/qh"
+rs_uv_row merged-pr-list "limit; older PRs were not checked" && [ "$RUN_RC" = 0 ] \
+  && ok "H13 a read that fills its limit ⇒ unverified row" || no "H13 full read not flagged (rc=$RUN_RC out='$RUN_OUT')"
+rm -rf "$R"
+
+# H14. A merged PR on a slug-matching branch that is not the brief's recorded PR counts only as a search
+#      hit for the short ref: that search is the one read the merged list cannot replace (its index
+#      covers more than title and body). Without the gate 12 extra rows appeared on the real folder.
+rs_h14_repo() {
+  local r; r="$(rs_cost_repo)"
+  printf '# Brief\n## Environment\n- **Source requirement:** .supervisor/requirements/qh/23-req.md\n' > "$r/.supervisor/jobs/done/2026-10-03-b3.md"
+  jq -n --arg u "https://github.com/acme/widgets/pull/70" '[{url:$u}]' > "$r/ghstub/list-s.json"
+  jq -n '{state:"MERGED",number:70,body:"No path named here.",mergeCommit:{oid:"ddddddd1111"},headRefName:"feature/b3",changedFiles:1,files:[{path:"src/s.sh"}]}' \
+    > "$r/ghstub/view-$(rs_key "https://github.com/acme/widgets/pull/70").json"
+  printf '%s' "$r"
+}
+RS_H14_ROW="plan	.supervisor/requirements/qh/23-req.md	done (PR #70, merge ddddddd)	head branch 'feature/b3' matches brief slug 'b3'"
+R="$(rs_h14_repo)"
+rs_run "$R" "$R/.supervisor/requirements"
+if ! grep -qF "$RS_H14_ROW" <<<"$RUN_OUT" && [ "$(grep -c -- '--search' "$R/ghstub/argv.log")" = 1 ]; then
+  ok "H14 a slug-matching PR that search does not return is no evidence, and only that file searched"
+else
+  no "H14 no-hit leg wrong (out='$RUN_OUT'; $(grep -c -- '--search' "$R/ghstub/argv.log") searches)"
+fi
+jq -n '[{url:"https://github.com/acme/widgets/pull/70"}]' > "$R/ghstub/list-$(rs_key "qh/23-req").json"
+: > "$R/ghstub/argv.log"
+rs_run "$R" "$R/.supervisor/requirements"
+grep -qF "$RS_H14_ROW" <<<"$RUN_OUT" && ok "H14 the same PR returned by search plans via the branch slug" || no "H14 search-hit leg wrong (out='$RUN_OUT')"
+GH_STUB_SEARCH_FAIL=1 rs_run "$R" "$R/.supervisor/requirements"
+if rs_uv_row "qh/23-req" "gh search failed" && [ "$RUN_RC" = 0 ] && ! grep -qF "$RS_H14_ROW" <<<"$RUN_OUT"; then
+  ok "H14 a failed search ⇒ unverified row naming the item, no plan, exit 0"
+else
+  no "H14 failed-search leg wrong (rc=$RUN_RC out='$RUN_OUT')"
+fi
+rm -rf "$R"
+
+# H15. No scratch directory (mktemp failing) degrades like a failed read, and its unverified row
+#      closes the output like every other. The brief's own PR is still tried, so the row after a
+#      `plan` is what this pins: `plan` first, then `unverified`.
+R="$(rs_shipped_repo MERGED feature/qh-07-shipped "Ships the thing." '["src/x.sh"]')"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$R/bin/mktemp"; chmod +x "$R/bin/mktemp"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+if [ "$RUN_RC" = 0 ] && [ "$(printf '%s\n' "$RUN_OUT" | cut -f1 | tr '\n' ' ')" = "plan unverified " ] && rs_uv_row merged-pr-list "no scratch directory"; then
+  ok "H15 mktemp failing ⇒ exit 0, and the unverified row closes the output"
+else
+  no "H15 mktemp-failure order wrong (rc=$RUN_RC out='$RUN_OUT')"
+fi
+rm -rf "$R"
+

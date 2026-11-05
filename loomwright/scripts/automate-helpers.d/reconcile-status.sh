@@ -1,6 +1,6 @@
 # --help usage (the `#:  ` lines): this family's segment of automate-helpers.sh --help, assembled
 # by the dispatcher's _ah_usage in _AH_HELP_SEGMENTS order; fixture: fixtures/automate-helpers-help/reconcile-status.golden.
-#:  reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a not-done *.md under <requirements_root>, other than a `proposed`/`parked` one (is_not_ready) (skips `00-*`, `_*`, `README*`, `operator-run/`, top-level `<slug>-plan.md` task plans) whose PR is MERGED (state via reconcile-item) and whose body cites the file's path (with or without the `.supervisor/requirements/` prefix and `.md`) on an `Implements`/`Closes`/`Resolves`/`Fixes`/`Ships`/`Lands`/`Requirement:`/`Source requirement:` line, before that line's first `;` or `. `, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR, never a PR whose changed files are ALL under `.supervisor/`, and never a body citation from a PR whose own diff adds or modifies that requirement file; an unreadable or incomplete diff is no evidence), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)` — never one whose FIRST `## Status:` line is explicit `pending`/`ready` (owner decision D-conflict-1: such an item reads `conflict` until the owner settles it; a `conflict` one gets an `info\t…\tconflict\t<run file>` row instead); NEVER downgrades an existing `done`/`done_with_escalation`; a `## Status: brief-shipped` file (stamp-requirement-status.sh's job-landed heading) is held to the SAME evidence and gets the stamp APPENDED under that heading, never rewriting it, and without evidence is only listed; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file it does not stamp; writes nothing without `--apply`.
+#:  reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a not-done *.md under <requirements_root>, other than a `proposed`/`parked` one (is_not_ready) (skips `00-*`, `_*`, `README*`, `operator-run/`, top-level `<slug>-plan.md` task plans) whose PR is MERGED (state via reconcile-item) and whose body cites the file's path (with or without the `.supervisor/requirements/` prefix and `.md`) on an `Implements`/`Closes`/`Resolves`/`Fixes`/`Ships`/`Lands`/`Requirement:`/`Source requirement:` line, before that line's first `;` or `. `, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR, never a PR whose changed files are ALL under `.supervisor/`, and never a body citation from a PR whose own diff adds or modifies that requirement file; an unreadable or incomplete diff is no evidence), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)` — never one whose FIRST `## Status:` line is explicit `pending`/`ready` (owner decision D-conflict-1: such an item reads `conflict` until the owner settles it; a `conflict` one gets an `info\t…\tconflict\t<run file>` row instead); NEVER downgrades an existing `done`/`done_with_escalation`; a `## Status: brief-shipped` file (stamp-requirement-status.sh's job-landed heading) is held to the SAME evidence and gets the stamp APPENDED under that heading, never rewriting it, and without evidence is only listed; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file it does not stamp, plus one `unverified\t<subject>\t<reason>` row per GitHub read that failed (a pass with such a row is not a clean pass; exit stays 0); writes nothing without `--apply`.
 
 # --------------------------------------------------------------------------- #
 # queue-hygiene/01 — reconcile-status: requirement `## Status:` from ground
@@ -17,15 +17,14 @@
 # read ground truth back, never infer it.
 #
 # EVIDENCE, for a *.md this script does NOT already consider `is_done()`:
-#   (a) IMPLEMENTS-LINE CITATION — a `gh pr list --state merged --search
-#       <short ref>` hit whose body (fetched with ONE more `gh pr view`) cites
-#       the file on an IMPLEMENTS-shaped line (_rs_implements_cites) — and whose
-#       diff does NOT itself add or modify that file (see NEVER EVIDENCE below).
-#       The <short ref> is the repo-relative path with any
+#   (a) IMPLEMENTS-LINE CITATION — a merged PR (from the ONE per-pass read,
+#       COST below) whose title or body mentions the file's <short ref>, whose
+#       body cites it on an IMPLEMENTS-shaped line (_rs_implements_cites) — and
+#       whose diff does NOT itself add or modify that file (see NEVER EVIDENCE
+#       below). The <short ref> is the repo-relative path with any
 #       `.supervisor/requirements/` prefix and `.md` suffix dropped
-#       (`automate-followups/27-brief-closed-…`): GitHub search returns NOTHING
-#       for the full path of PR #484's requirement, while the short form finds
-#       it and every full-path citation too.
+#       (`automate-followups/27-brief-closed-…`): PR #484 cited only that short
+#       form, so matching the full path would miss it.
 #       WHY NOT ANY MENTION. A body names requirement paths for many reasons
 #       besides implementing them. On 2026-10-11 the any-mention rule planned
 #       five false `done` stamps: PR #470 (the pa/22 split) listed af/36, af/39
@@ -45,7 +44,10 @@
 #       runs, via the shared `brief-pointer.sh`), that brief's own `- **PR:**`
 #       Outcome line is tried as a candidate FIRST, and a merged candidate's
 #       `headRefName` ending in the brief's date-stripped filename slug is
-#       accepted as a match when the body citation is absent.
+#       accepted as a match when the body citation is absent. A merged PR not
+#       recorded on the brief must also be a GitHub search hit for the <short ref>
+#       (_rs_slug_confirmed): the index behind that search covers more than a PR's
+#       title and body, so it cannot be reproduced from the merged-PR read.
 # NEVER EVIDENCE: the engine's own trail PRs (`chore/<run_id>-trail-<n>`,
 # _rs_is_trail_branch). A trail PR's body lists every path it commits — the
 # run's Queue requirements and its dismissed-finding drafts under `proposed/` —
@@ -67,10 +69,24 @@
 #     absent, or fewer paths than `changedFiles` from both `pr view`'s 100-file
 #     page and the paginated REST fallback) is no evidence (fail closed: a
 #     missed stamp is recoverable, a false one silently drops queued work).
-# PR STATE is resolved EXCLUSIVELY through `reconcile_item` (merged|open|gone)
-# — this is not a second gh-state parser; the extra `gh pr view` call here
-# reads ADDITIONAL fields (body, mergeCommit, headRefName) on a candidate
-# `reconcile_item` has ALREADY confirmed merged.
+# PR STATE: a row of the `--state merged` read is merged by construction; the one
+# candidate that can sit outside it, a done/ brief's recorded PR, is resolved
+# through `reconcile_item` (merged|open|gone) — this is not a second gh-state
+# parser.
+#
+# COST. A pass must not grow with the folder through a per-file GitHub or
+# per-file-times-per-brief cost. On the owner's checkout (2026-11-05: 474 files,
+# 252 done/ briefs, 569 merged PRs) the pass took 7:19 and 5:53 of that was
+# local: _rs_find_done_brief re-parsed every brief for every not-done file. So:
+#   - the briefs are parsed ONCE per pass (RS_BRIEF_INDEX);
+#   - merged PRs are read ONCE per pass, on the first not-done file
+#     (_rs_load_merged_prs), replacing a `pr list --search` per file. That read
+#     also lifts the old five-hit cap, so a citing PR can no longer fall off it;
+#   - a search runs only for a file with an unrecorded merged PR on a
+#     slug-matching branch, the one answer the read cannot give;
+#   - a PR's diff is read only when its citation or branch already qualifies it.
+# What remains per file is a handful of local processes. The read itself grows
+# with the repo's merged PRs (about one GraphQL page per 100).
 #
 # BRIEF-SHIPPED (owner decision 2026-10-13, reversing queue-hygiene/01's "listed,
 # never promoted" non-goal). `stamp-requirement-status.sh` writes `## Status:
@@ -94,11 +110,12 @@
 # ever opened for writing — only `--apply` calls the two stamp-writers.
 #
 # OUTPUT (tab-separated, one row per line, mirrors reconcile-jobs.sh
-# --porcelain's convention):
+# --porcelain's convention; plan/stamped/info rows lead, unverified rows close):
 #   plan\t<repo-relative file>\t<status line the file would get>\t<evidence>
 #   stamped\t<repo-relative file>\t<status line just written>\t<evidence>
 #   info\t<repo-relative file>\tbrief-shipped\t<done/ brief's PR url, or "no PR recorded">
 #   info\t<repo-relative file>\tconflict\t<repo-relative run file of the `# abandoned:` row>
+#   unverified\t<merged-pr-list or PR url>\t<reason>
 # An abandoned row's <evidence> is the repo-relative run file
 # (`.supervisor/automate/<run_id>.md`).
 #
@@ -113,7 +130,11 @@
 # FAIL-SAFE (`set +e` below): a network hiccup, an unreadable brief, or a
 # malformed run-file row degrades that ONE candidate to "no evidence" — it
 # never aborts the whole pass. This is a read-mostly reconciliation pass, not
-# a correctness gate (CLAUDE.md bimodal invariant).
+# a correctness gate (CLAUDE.md bimodal invariant), so it still exits 0.
+# But a throttled `gh` used to read exactly like a clean scan: every search
+# failed, no rows, exit 0, and stale statuses stayed invisible. A failed GitHub
+# read now prints an `unverified` row, which ns_reconcile_status carries into
+# `## Progress`. A missed stamp stays recoverable; an unnoticed miss was not.
 
 # _rs_project_root <requirements_root_abs> — the directory holding
 # `.supervisor/` that <requirements_root_abs> sits under (normally its
@@ -263,15 +284,101 @@ _rs_strip_trailing_status() {
 # `.supervisor/jobs/done/*.md` brief whose `## Source requirement:` pointer is
 # EXACTLY <rel_path> (first match wins — mirrors stamp-requirement-status.sh's
 # own "only the FIRST matching line" rule at the field level, applied here at
-# the file level). Prints nothing when none matches.
+# the file level). Prints nothing when none matches. Inside a reconcile_status
+# pass it answers from RS_BRIEF_INDEX (_rs_index_briefs, same parser, same order).
 _rs_find_done_brief() {
   local rel="$1" dir="$2" b ptr
+  if [ -n "${RS_BRIEF_INDEX:-}" ]; then
+    RS_REL="$rel" awk -F'\t' '$1 == ENVIRON["RS_REL"] { printf "%s", $2; exit }' "$RS_BRIEF_INDEX"
+    return 0
+  fi
   [ -d "$dir" ] || return 0
   for b in "$dir"/*.md; do
     [ -f "$b" ] || continue
     ptr="$(brief_requirement_pointer "$b" 2>/dev/null)"
     if [ "$ptr" = "$rel" ]; then printf '%s' "$b"; return 0; fi
   done
+  return 0
+}
+
+# _rs_index_briefs <jobs_done_dir> — one `<pointer>\t<brief>` line per done/ brief
+# that has a pointer, in glob order: every brief parsed once per pass.
+_rs_index_briefs() {
+  local dir="$1" b ptr
+  [ -d "$dir" ] || return 0
+  for b in "$dir"/*.md; do
+    [ -f "$b" ] || continue
+    ptr="$(brief_requirement_pointer "$b" 2>/dev/null)"
+    [ -n "$ptr" ] && printf '%s\t%s\n' "$ptr" "$b"
+  done
+  return 0
+}
+
+# _rs_note_unverified <subject> <reason> — record a failed GitHub read for the
+# closing `unverified` rows. Appends to a file because _rs_evidence_for runs in a
+# command substitution, whose variables die with it.
+_rs_note_unverified() {
+  [ -n "${RS_TMP:-}" ] && printf '%s\t%s\n' "$1" "$2" >> "$RS_TMP/unverified"
+  return 0
+}
+
+# _rs_load_merged_prs — the ONE merged-PR read of a pass, called on the first
+# not-done file, even a `proposed` or `parked` one that will not consult it (from
+# the main shell, so the RS_PR_* paths survive). On
+# success: RS_PR_ROWS (one compact JSON row per PR, newest first), RS_PR_URLS (the
+# matching url per line), RS_PR_LINES (`<url>\t<one title or body line>`) and
+# RS_PR_HEADS (`<url>\t<head branch>`, same order). A
+# failed or malformed read leaves them unset: only a done/ brief's own PR can
+# still be tried, and the pass carries an `unverified` row. A read as long as the
+# limit may have cut older PRs off, so it is kept and flagged. gh takes the repo
+# from the cwd, as the per-file search it replaces did.
+_RS_PR_LIST_LIMIT=5000
+_rs_load_merged_prs() {
+  [ -z "${_RS_PRS_TRIED:-}" ] || return 0
+  _RS_PRS_TRIED=1
+  [ -n "${RS_TMP:-}" ] || return 0
+  local json="$RS_TMP/merged.json" n
+  if ! "$GH" pr list --state merged --limit "$_RS_PR_LIST_LIMIT" --json number,url,title,body,headRefName,mergeCommit > "$json" 2>/dev/null; then
+    _rs_note_unverified merged-pr-list "gh pr list failed; no merged PR was checked"
+    return 0
+  fi
+  n="$("$JQ" -r 'if type == "array" then length else "bad" end' "$json" 2>/dev/null)"
+  case "$n" in
+    ''|*[!0-9]*) _rs_note_unverified merged-pr-list "gh pr list answered unreadable JSON; no merged PR was checked"; return 0 ;;
+  esac
+  [ "$n" -lt "$_RS_PR_LIST_LIMIT" ] || _rs_note_unverified merged-pr-list "read stopped at the $_RS_PR_LIST_LIMIT-PR limit; older PRs were not checked"
+  "$JQ" -c '.[]' "$json" > "$RS_TMP/rows" 2>/dev/null
+  "$JQ" -r '.[].url' "$json" > "$RS_TMP/urls" 2>/dev/null
+  "$JQ" -r '.[] | .url as $u | ((.title // ""), ((.body // "") | split("\n")[])) | "\($u)\t\(.)"' "$json" > "$RS_TMP/lines" 2>/dev/null
+  "$JQ" -r '.[] | "\(.url)\t\(.headRefName // "")"' "$json" > "$RS_TMP/heads" 2>/dev/null
+  RS_PR_ROWS="$RS_TMP/rows"; RS_PR_URLS="$RS_TMP/urls"; RS_PR_LINES="$RS_TMP/lines"; RS_PR_HEADS="$RS_TMP/heads"
+}
+
+# _rs_merged_row <url> — the read's JSON row for <url>; prints nothing when the
+# read does not hold it.
+_rs_merged_row() {
+  [ -n "${RS_PR_URLS:-}" ] || return 0
+  local n; n="$(grep -m1 -nxF -- "$1" "$RS_PR_URLS" 2>/dev/null)"
+  [ -n "$n" ] && sed -n "${n%%:*}p" "$RS_PR_ROWS"
+  return 0
+}
+
+# _rs_slug_confirmed <short_ref> <slug> <seed> — the merged PRs other than <seed>
+# whose head ends in <slug> AND which GitHub search returns for <short_ref>, one
+# url per line. No such head means no search. A failed search is `unverified`.
+_rs_slug_confirmed() {
+  local short="$1" slug="$2" seed="$3" heads hits
+  [ -n "$slug" ] && [ -n "${RS_PR_HEADS:-}" ] || return 0
+  heads="$(RS_SLUG="$slug" RS_SEED="$seed" awk -F'\t' '
+    BEGIN { s = ENVIRON["RS_SLUG"]; sl = length(s) }
+    $1 != ENVIRON["RS_SEED"] && length($2) >= sl && substr($2, length($2) - sl + 1) == s { print $1 }' "$RS_PR_HEADS")"
+  [ -n "$heads" ] || return 0
+  if ! hits="$("$GH" pr list --state merged --search "$short" --json url --limit 5 2>/dev/null)"; then
+    _rs_note_unverified "$short" "gh search failed; a merged PR on a matching branch was not checked"
+    return 0
+  fi
+  hits="$(printf '%s' "$hits" | "$JQ" -r '.[]?.url // empty' 2>/dev/null)"
+  [ -n "$hits" ] && grep -xF -- "$hits" <<<"$heads"
   return 0
 }
 
@@ -305,48 +412,68 @@ _rs_pr_changed_paths() {
   printf '%s\n' "$paths"
 }
 
-# _rs_evidence_for <abs_file> <rel_path> <done_brief|""> — echo
+# _rs_evidence_for <rel_path> <done_brief|""> <seed_pr|""> — echo
 # "<pr_url>\t<pr_number>\t<sha7>\t<justification>" for the first candidate PR
-# that is MERGED (via reconcile_item) AND either cites <rel_path> in its body
-# or (when <done_brief> is non-empty) has a headRefName ending in that
-# brief's slug. Echoes nothing when no candidate matches.
+# that is MERGED AND either cites <rel_path> in its body or (when <done_brief> is
+# non-empty) has a headRefName ending in that brief's slug. Candidates: the seed,
+# then every merged PR that mentions the short ref or that _rs_slug_confirmed
+# returns, newest first. The slug path counts only for the seed and those. Echoes
+# nothing when no candidate matches.
 _rs_evidence_for() {
   local rel="$1" done_brief="$2" candidates="" c seen=$'\x1f'
   [ -n "${3:-}" ] && candidates="$3"$'\n'
-  local search_json
   local short; short="$(_rs_short_ref "$rel")"
-  search_json="$("$GH" pr list --state merged --search "$short" --json url --limit 5 2>/dev/null)"
-  if [ -n "$search_json" ]; then
-    local urls; urls="$(printf '%s' "$search_json" | "$JQ" -r '.[]?.url // empty' 2>/dev/null)"
+  local slug="" slug_ok=""
+  [ -n "$done_brief" ] && slug="$(_rs_brief_slug "$done_brief")"
+  if [ -n "${RS_PR_LINES:-}" ]; then
+    local urls; urls="$(env LC_ALL=C grep -aF -- "$short" "$RS_PR_LINES" 2>/dev/null | cut -f1 | awk '!seen[$0]++')"
+    slug_ok="$(_rs_slug_confirmed "$short" "$slug" "${3:-}")"
+    [ -n "$slug_ok" ] && urls="$(RS_U="$urls"$'\n'"$slug_ok" awk -F'\t' '
+      BEGIN { n = split(ENVIRON["RS_U"], U, "\n"); for (i = 1; i <= n; i++) m[U[i]] = 1 }
+      $1 in m { print $1 }' "$RS_PR_HEADS")"
     [ -n "$urls" ] && candidates="${candidates}${urls}"$'\n'
   fi
   [ -n "$candidates" ] || return 0
-
-  local slug=""
-  [ -n "$done_brief" ] && slug="$(_rs_brief_slug "$done_brief")"
 
   while IFS= read -r c; do
     [ -n "$c" ] || continue
     case "$seen" in *$'\x1f'"$c"$'\x1f'*) continue ;; esac
     seen="${seen}${c}"$'\x1f'
-    local state; state="$(reconcile_item "$c" "" 2>/dev/null)"
-    [ "$state" = "merged" ] || continue
-    local view num body oid headref paths
-    view="$("$GH" pr view "$c" --json number,body,mergeCommit,headRefName,files,changedFiles 2>/dev/null)"
-    [ -n "$view" ] || continue
+    local view num body oid headref paths cited=0 slug_match=0
+    view="$(_rs_merged_row "$c")"
+    local listed=1
+    if [ -z "$view" ]; then
+      listed=0
+      local state; state="$(reconcile_item "$c" "" 2>/dev/null)"
+      [ "$state" = "merged" ] || continue
+      view="$("$GH" pr view "$c" --json number,body,mergeCommit,headRefName,files,changedFiles 2>/dev/null)"
+      [ -n "$view" ] || { _rs_note_unverified "$c" "gh pr view failed; this PR was not checked"; continue; }
+    fi
     num="$(printf '%s' "$view" | "$JQ" -r '.number // empty' 2>/dev/null)"
     body="$(printf '%s' "$view" | "$JQ" -r '.body // empty' 2>/dev/null)"
     oid="$(printf '%s' "$view" | "$JQ" -r '.mergeCommit.oid // empty' 2>/dev/null)"
     headref="$(printf '%s' "$view" | "$JQ" -r '.headRefName // empty' 2>/dev/null)"
     _rs_is_trail_branch "$headref" && continue
+    if _rs_implements_cites "$body" "$short"; then
+      cited=1
+    fi
+    if [ -n "$slug" ] && { [ "$c" = "${3:-}" ] || grep -qxF -- "$c" <<<"$slug_ok"; }; then
+      case "$headref" in *"$slug") slug_match=1 ;; esac
+    fi
+    # Neither path can succeed, so no diff can change the answer: skip its read.
+    [ "$cited" -eq 1 ] || [ "$slug_match" -eq 1 ] || continue
+    if [ "$listed" -eq 1 ]; then
+      view="$("$GH" pr view "$c" --json files,changedFiles 2>/dev/null)"
+      [ -n "$view" ] || { _rs_note_unverified "$c" "gh pr view failed; this PR's diff was not read"; continue; }
+    fi
     paths="$(_rs_pr_changed_paths "$c" "$view")" || continue
     grep -qv '^\.supervisor/' <<<"$paths" || continue
     local justification=""
-    if _rs_implements_cites "$body" "$short"; then
+    if [ "$cited" -eq 1 ]; then
       grep -qxF -- "$rel" <<<"$paths" || justification="PR body cites $rel"
     fi
-    if [ -z "$justification" ] && [ -n "$slug" ]; then
-      case "$headref" in *"$slug") justification="head branch '$headref' matches brief slug '$slug'" ;; esac
+    if [ -z "$justification" ] && [ "$slug_match" -eq 1 ]; then
+      justification="head branch '$headref' matches brief slug '$slug'"
     fi
     [ -n "$justification" ] || continue
     [ -n "$oid" ] || oid="unknown"
@@ -383,6 +510,7 @@ _rs_process_file() {
   # heading (`pending`, `in-progress`, a free-text `in review — …`,
   # `brief-shipped`, none) stays promotable. A brief-shipped file the owner also
   # marked not-ready keeps its `info` row.
+  _rs_load_merged_prs
   local done_brief; done_brief="$(_rs_find_done_brief "$rel" "$jobs_done")"
   local seed=""
   [ -n "$done_brief" ] && seed="$(_rs_outcome_pr "$done_brief")"
@@ -494,6 +622,15 @@ reconcile_status() {
   jobs_done="$proj_root/.supervisor/jobs/done"
   automate_dir="$proj_root/.supervisor/automate"
 
+  # Per-pass scratch: the brief index and the merged-PR read. No scratch dir is
+  # the same degrade as no read, and it says so among the closing rows.
+  RS_TMP="$(mktemp -d 2>/dev/null)" || RS_TMP=""
+  if [ -n "$RS_TMP" ]; then
+    trap 'rm -rf "$RS_TMP"' EXIT
+    _rs_index_briefs "$jobs_done" > "$RS_TMP/briefs"
+    RS_BRIEF_INDEX="$RS_TMP/briefs"
+  fi
+
   local f
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -503,6 +640,8 @@ reconcile_status() {
   done < <(find "$root_abs" -type f -name '*.md' 2>/dev/null | env LC_ALL=C sort)
 
   _rs_process_abandoned "$root_abs" "$proj_root" "$automate_dir" "$apply"
+  [ -n "$RS_TMP" ] || printf 'unverified\tmerged-pr-list\tno scratch directory; no merged PR was checked\n'
+  [ -z "$RS_TMP" ] || [ ! -f "$RS_TMP/unverified" ] || awk -F'\t' '!seen[$0]++ { print "unverified\t" $1 "\t" $2 }' "$RS_TMP/unverified"
   return 0
 }
 
