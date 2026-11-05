@@ -239,12 +239,19 @@ fu_race() { # <helper> — the number of targets written per trial, 3 trials
   done
 }
 fu_is "FU3c two concurrent bundles of one draft write ONE queue item (3 trials) and release the lock" "$(fu_race "$H")" "1 1 1 "
-fu_mut_check "pin: the bundle lock removed (concurrent bundles both write)" '    until mkdir "$prop/.followup-bundle.lock" 2>/dev/null; do' '    until true; do' fu_race "1 1 1 "
-mkdir "$PROP/.followup-bundle.lock"
+fu_mut_check "pin: the bundle lock removed (concurrent bundles both write)" '    until ( set -C; : > "$prop/.followup-bundle.lock" ) 2>/dev/null; do' '    until true; do' fu_race "1 1 1 "
+# The lock must not rest on the `mkdir` command: uutils mkdir (ubuntu-latest's default) can exit 0 for
+# two racers, which is how this leg flaked with `1 1 2`. The shim exits 0 whenever the directory exists,
+# so that behaviour is present every time, on every platform.
+mkdir -p "$FU/false-win-bin"
+printf '#!/bin/sh\n"%s" "$@" 2>/dev/null && exit 0\nfor a in "$@"; do l="$a"; done\n[ -d "$l" ] && exit 0\nexit 1\n' "$(command -v mkdir)" > "$FU/false-win-bin/mkdir"
+chmod +x "$FU/false-win-bin/mkdir"
+fu_is "FU3c a mkdir that lets two racers win changes nothing: still ONE queue item (3 trials)" "$(PATH="$FU/false-win-bin:$PATH" fu_race "$H")" "1 1 1 "
+: > "$PROP/.followup-bundle.lock"
 fu_run "$H" followup-bundle "$(fu_summ)" --into .supervisor/requirements/q/c.md --root "$R" --confirm
 fu_is "FU3c a lock another bundler holds ⇒ refused after the wait, naming the lock, nothing written, the lock left in place" \
-  "$FU_RC|$(grep -c 'holds .supervisor/requirements/proposed/.followup-bundle.lock' <<<"$FU_ERR")|$([ -e "$R/.supervisor/requirements/q/c.md" ] || echo none)|$([ -d "$PROP/.followup-bundle.lock" ] && echo kept)" "1|1|none|kept"
-rmdir "$PROP/.followup-bundle.lock"
+  "$FU_RC|$(grep -c 'holds .supervisor/requirements/proposed/.followup-bundle.lock' <<<"$FU_ERR")|$([ -e "$R/.supervisor/requirements/q/c.md" ] || echo none)|$([ -f "$PROP/.followup-bundle.lock" ] && echo kept)" "1|1|none|kept"
+rm -f "$PROP/.followup-bundle.lock"
 
 # ---- FU4 (AC4) a bundled follow-up draft is not recreated or re-reported by dismissed-drafts over the
 # same sidecars: one leg per draft kind (per-finding, summary).

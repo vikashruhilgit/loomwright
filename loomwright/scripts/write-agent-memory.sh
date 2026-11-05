@@ -372,7 +372,7 @@ cleanup() {
   if [ -n "$index_lock" ]; then release_index_lock; fi
   # The stale-break arbitration directory is held for microseconds, but a signal inside that window
   # would strand it and make the break permanently unavailable — so it is released here as well.
-  if [ -n "$index_breaker" ]; then rmdir "$index_breaker" 2>/dev/null || true; index_breaker=""; fi
+  if [ -n "$index_breaker" ]; then rm -f "$index_breaker" 2>/dev/null || true; index_breaker=""; fi
   return 0
 }
 trap cleanup EXIT
@@ -684,8 +684,9 @@ compose="$work/compose"
 # file is still on disk, which is precisely the invariant this writer exists to make impossible
 # ("an entry can only be missing from the index if it is also missing from the directory").
 #
-# The primitive is a LOCK DIRECTORY, because `mkdir` is a single atomic create-or-fail syscall on
-# every POSIX filesystem and needs no tooling. `flock(1)` is deliberately NOT used: it does not
+# The primitive is a LOCK DIRECTORY held by the O_EXCL create of its `owner` stamp, which bash does
+# itself and which needs no tooling. The `mkdir` command is not the test: uutils exits 0 on an
+# existing directory. `flock(1)` is deliberately NOT used: it does not
 # exist on stock macOS, which is the dev platform (and neither does `timeout(1)`, so the bounded
 # wait is counted here rather than delegated). The lock lives INSIDE the store dir so it is on the
 # same filesystem as the thing it guards, and its name shares the `.write-agent-memory.` prefix the
@@ -702,6 +703,10 @@ case "$INDEX_LOCK_WAIT_SECS" in ''|*[!0-9]*) INDEX_LOCK_WAIT_SECS=30 ;; esac
 
 # _take_index_lock <lock-dir> -> 0 taken (and STAMPED with this process's ownership token), 1 not.
 #
+# THE O_EXCL CREATE OF THE STAMP IS THE TEST, NEVER THE `mkdir` COMMAND: uutils `mkdir` exits 0 on an
+# existing directory, so two writers can both pass it. A directory holding an older build's stamp
+# reads as held; one with no stamp has no holder to wait for and is taken.
+#
 # THE OWNERSHIP STAMP IS WHAT MAKES RELEASE SAFE. `rmdir`-by-path releases whatever currently sits
 # at the path, which after a stale break may be a lock some OTHER process legitimately holds. The
 # token is written INSIDE the lock dir at acquire time and re-read at release time, so a release
@@ -716,7 +721,8 @@ case "$INDEX_LOCK_WAIT_SECS" in ''|*[!0-9]*) INDEX_LOCK_WAIT_SECS=30 ;; esac
 # the take reports failure, rather than holding a lock whose ownership cannot later be proven.
 _take_index_lock() {
   local lock="$1" token
-  mkdir "$lock" 2>/dev/null || return 1
+  mkdir "$lock" 2>/dev/null || :   # mkdir-ok: its exit status is ignored, the O_EXCL stamp below decides who holds the lock
+  ( set -C; : > "$lock/owner" ) 2>/dev/null || return 1
   index_lock_seq=$(( index_lock_seq + 1 ))
   token="$$-$index_lock_seq-${RANDOM:-0}"
   if printf '%s\n' "$token" > "$lock/owner" 2>/dev/null; then
@@ -769,7 +775,7 @@ acquire_index_lock() {
   # the arbitration below is what keeps a losing wager from corrupting anything.
   if [ -n "$(find "$lock" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
     # SINGLE-WINNER ARBITRATION, and it needs BOTH halves below.
-    #   · `mkdir "$breaker"` is one atomic create-or-fail syscall, so of N racers that all observed
+    #   · The O_EXCL create of "$breaker" is one atomic create-or-fail, so of N racers that all observed
     #     the same stale lock exactly ONE enters this block; the losers never `rmdir` at all. That
     #     closes the SIMULTANEOUS interleaving (two racers acting on their observation at once).
     #   · Re-running the staleness test WHILE HOLDING the breaker closes the SEQUENTIAL one: a racer
@@ -777,8 +783,8 @@ acquire_index_lock() {
     #     re-acquired, now sees a FRESH lock and leaves it alone. Without this, the loser would
     #     delete the winner's LIVE lock and both would end up inside the critical section.
     # A breaker stranded by a `kill -9` makes the break unavailable and the run REFUSES (fail
-    # closed, named) — it never degrades into an unarbitrated break; clear it with `rmdir` by hand.
-    if mkdir "$breaker" 2>/dev/null; then
+    # closed, named) — it never degrades into an unarbitrated break; clear it with `rm -rf` by hand.
+    if ( set -C; : > "$breaker" ) 2>/dev/null; then
       index_breaker="$breaker"
       if [ -n "$(find "$lock" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
         printf '%s: breaking a STALE index lock (older than 10 minutes — assumed abandoned): %s\n' \
@@ -786,7 +792,7 @@ acquire_index_lock() {
         rm -f "$lock/owner" 2>/dev/null || true
         rmdir "$lock" 2>/dev/null || true
       fi
-      rmdir "$breaker" 2>/dev/null || true
+      rm -f "$breaker" 2>/dev/null || true
       index_breaker=""
     fi
   fi
@@ -795,9 +801,9 @@ acquire_index_lock() {
   # lock that is already free, and a refusal costs a legitimate write.
   if _take_index_lock "$lock"; then return 0; fi
   # WHY the lock is unavailable, read from the filesystem rather than assumed: present ⇒ someone
-  # holds it; absent ⇒ `mkdir` failed for some environmental reason (ENOSPC, EPERM, EROFS…). This
+  # holds it; absent ⇒ the create failed for some environmental reason (ENOSPC, EPERM, EROFS…). This
   # is a DIAGNOSTIC distinction, and it is sampled after the fact: a holder that released between
-  # the failed `mkdir` and this test reads as rc 4. Both codes refuse identically, so the narrow
+  # the failed create and this test reads as rc 4. Both codes refuse identically, so the narrow
   # mis-labelling costs a less apt message and never a different outcome.
   if [ -d "$lock" ]; then return 1; fi
   return 4
@@ -973,7 +979,7 @@ case "$rebuild_rc" in
   3) undo_write "the MEMORY.md index rebuild could not acquire the store lock within ${INDEX_LOCK_WAIT_SECS}s — another writer is holding $AGENT_DIR/.write-agent-memory.lock" ;;
   # rc 4 is NOT contention, and saying "another writer is holding it" for a full or read-only disk
   # sends the reader hunting a process that does not exist. The lock dir is absent after the last
-  # attempt, so `mkdir` failed for an environmental reason instead.
+  # attempt, so the create failed for an environmental reason instead.
   4) undo_write "the MEMORY.md index rebuild could not CREATE the store lock $AGENT_DIR/.write-agent-memory.lock — this is not contention (no lock is present): check permissions, free space, and that the store is not on a read-only filesystem" ;;
   *) undo_write "the MEMORY.md index could not be rebuilt" ;;
 esac

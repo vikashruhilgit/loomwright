@@ -88,6 +88,10 @@ A fifth pass (or a third lens) has to name an information advantage neither row 
 - CI enforces it: `scripts/check-test-hermetic.sh` fails on any covered test that does not source the helper first. `run-self-tests.sh` also applies it to its workers as a second layer.
 - A test that re-enables a notifier does so only inside its own subshell, for what it asserts on. A test whose subject is its own `127.0.0.1` server may restore the real `curl` (`hermetic_allow_real curl`, or `PATH="$(hermetic_path_without_shims)"` for one command) and says why in a comment.
 
+### Locks in shell scripts
+- A lock is an O_EXCL create in bash, `( set -C; : > "$lock" )`, never the `mkdir` command: uutils `mkdir`, the `ubuntu-latest` default, exits 0 on an existing directory, so a bare `mkdir` lock can have two holders. A lock that keeps a directory for its readers is held by the O_EXCL create of its stamp file inside it, as `run-lock.sh` does.
+- CI enforces it: `scripts/check-mkdir-lock.sh` fails a non-recursive `mkdir` in a shipped script unless that line or the one above carries `# mkdir-ok: <why exclusivity does not matter here>`.
+
 ### Documentation
 - Comments explain "why" not "what"; JSDoc for public APIs
 - Update README/architecture docs for features

@@ -344,6 +344,18 @@ done
 wait
 bl_is "BL9 four concurrent stamps on one item keep all four lines and leave no lock behind (one writer at a time)" \
   "$(grep -c '^- \*\*Kept open:\*\* ' "$T9/.supervisor/requirements/bl/12-kept-open.md") $(find "$T9/.supervisor" -name '*.lock' | wc -l | tr -d ' ')" "5 0"
+# The lock must not rest on the `mkdir` command: uutils mkdir (ubuntu-latest's default) can exit 0 for
+# two racers, and two holders lose a line, which is how the leg above flaked with `4 0`. The shim exits
+# 0 whenever the directory exists, so that behaviour is present every time, on every platform.
+mkdir -p "$T9/false-win-bin"
+printf '#!/bin/sh\n"%s" "$@" 2>/dev/null && exit 0\nfor a in "$@"; do l="$a"; done\n[ -d "$l" ] && exit 0\nexit 1\n' "$(command -v mkdir)" > "$T9/false-win-bin/mkdir"
+chmod +x "$T9/false-win-bin/mkdir"
+for bl_i in 5 6 7 8; do
+  PATH="$T9/false-win-bin:$PATH" BL_FIXDIR="$BL_FIX" bash "$H" backlog-stamp bl/12-kept-open kept-open --supersedes "automate-2026-10-2${bl_i}-100000" --root "$T9" --confirm >/dev/null 2>&1 &
+done
+wait
+bl_is "BL9 a mkdir that lets racers win changes nothing: four more concurrent stamps keep all four lines" \
+  "$(grep -c '^- \*\*Kept open:\*\* ' "$T9/.supervisor/requirements/bl/12-kept-open.md") $(find "$T9/.supervisor" -name '*.lock' | wc -l | tr -d ' ')" "9 0"
 bl_is "BL9 no stamp wrote an absolute home path" "$(grep -rlE '/(Users|home)/' "$T9/.supervisor/requirements" | wc -l | tr -d ' ')" "0"
 # The home-path scan covers every written / item-naming value but NOT the --root locator: an absolute
 # checkout under /Users or /home is the normal case. `hr+/home/alice/proj` is home-shaped (the `+`

@@ -1257,7 +1257,7 @@ mkdir -p "$CONC_DIR"
 # delimiter makes that a syntax error the surrounding `2>/dev/null` would hide.
 sed 's#^  _last_line="$(tail -1 "$LOG_FILE" 2>/dev/null || true)"#&; sleep 0.3#' \
   "$SUT" > "$CONC_DIR/widened-locked.sh" 2>/dev/null
-sed 's#^  if mkdir "$_lock" 2>/dev/null; then#  if false; then#' \
+sed 's#^  if ( set -C; : > "$_lock" ) 2>/dev/null; then#  if false; then#' \
   "$CONC_DIR/widened-locked.sh" > "$CONC_DIR/widened-unlocked.sh" 2>/dev/null
 
 # ANTI-VACUITY, and each variant is compared against ITS OWN INPUT rather than
@@ -1364,7 +1364,7 @@ echo "== 22. the lock's cleanup trap must not displace the always-exit-0 trap ==
 # is the shape of every real `set -u` slip this trap exists to absorb.
 TRAP_DIR="$SANDBOX/trap-invariant"
 mkdir -p "$TRAP_DIR"
-TRAP_ANCHOR='[ -n "$_have_lock" ] && trap '"'"'rmdir "$_lock" 2>/dev/null || true; exit 0'"'"' EXIT'
+TRAP_ANCHOR='[ -n "$_have_lock" ] && trap '"'"'rm -f "$_lock" 2>/dev/null || true; exit 0'"'"' EXIT'
 python3 - "$SUT" "$TRAP_DIR" "$TRAP_ANCHOR" <<'PYEOF' 2>/dev/null
 import io, sys
 src, out, anchor = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -1568,19 +1568,19 @@ echo "== 25. take_log_lock's two failure branches: a held lock times out, a stal
 LK_T="$SANDBOX/subagents/agent-lk001.jsonl"
 printf '%s\n' '{"type":"assistant","message":{"id":"k1","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}}' > "$LK_T"
 LK_SID="fixture-token-ledger-lock-timeout-001"; LK_LOG="$SANDBOX/.supervisor/logs/${LK_SID}.jsonl"
-mkdir -p "$SANDBOX/.supervisor/logs"; rm -rf "$LK_LOG.lock"; mkdir "$LK_LOG.lock"
+mkdir -p "$SANDBOX/.supervisor/logs"; rm -rf "$LK_LOG.lock"; : > "$LK_LOG.lock"
 tu_payload "$LK_T" "$LK_SID" lk001 > "$SANDBOX/lk.json"
 OUT25A="$(run_sut "$SANDBOX/lk.json")"
 assert_eq "case25a a held lock: exit 0" "0" "$(printf '%s\n' "$OUT25A" | grep '^RC=' | tail -1 | cut -d= -f2)"
 assert_eq "case25a … the wait times out and the line is appended UNGUARDED (one transcript line, not silence)" \
   "1 transcript" "$(wc -l < "$LK_LOG" 2>/dev/null | tr -d ' ') $(jq -r '.usage_source' "$LK_LOG" 2>/dev/null)"
-if [ -d "$LK_LOG.lock" ]; then ok "case25a … and the other holder's lock is left in place (a timed-out wait owns nothing)"
+if [ -f "$LK_LOG.lock" ]; then ok "case25a … and the other holder's lock is left in place (a timed-out wait owns nothing)"
 else no "case25a … the other holder's lock was removed — a timed-out wait adopted or broke a live lock"; fi
 rm -rf "$LK_LOG.lock"
 # 25b STALE: a lock older than LOCK_STALE_S (a holder that died). The python step breaks it, takes
 # the lock, hands it to the shell, and the shell releases it after its append — nothing left behind.
 LS_SID="fixture-token-ledger-lock-stale-001"; LS_LOG="$SANDBOX/.supervisor/logs/${LS_SID}.jsonl"
-rm -rf "$LS_LOG.lock"; mkdir "$LS_LOG.lock"; touch -t 202601010000 "$LS_LOG.lock"
+rm -rf "$LS_LOG.lock"; : > "$LS_LOG.lock"; touch -t 202601010000 "$LS_LOG.lock"
 # Its OWN transcript (agent-ls001.jsonl): the emitter sums a transcript only when the basename
 # names this payload's agent_id (case 28) — reusing 25a's agent-lk001.jsonl here would be foreign.
 LS_T="$SANDBOX/subagents/agent-ls001.jsonl"; cp "$LK_T" "$LS_T"
@@ -1590,6 +1590,85 @@ assert_eq "case25b a stale lock: exit 0, one transcript line" "0 1 transcript" \
   "$(printf '%s\n' "$OUT25B" | grep '^RC=' | tail -1 | cut -d= -f2) $(wc -l < "$LS_LOG" 2>/dev/null | tr -d ' ') $(jq -r '.usage_source' "$LS_LOG" 2>/dev/null)"
 if [ -e "$LS_LOG.lock" ]; then no "case25b the stale lock was not broken (or the taken lock not released) — $LS_LOG.lock remains"
 else ok "case25b … the stale lock is broken, taken, handed over and released — no .lock left behind"; fi
+# 25c A DIRECTORY is the lock an older build leaves. It reads as held and ages out the same way.
+LD_SID="fixture-token-ledger-lock-legacy-dir-001"; LD_LOG="$SANDBOX/.supervisor/logs/${LD_SID}.jsonl"
+rm -rf "$LD_LOG.lock"; mkdir "$LD_LOG.lock"; touch -t 202601010000 "$LD_LOG.lock"
+LD_T="$SANDBOX/subagents/agent-ld001.jsonl"; cp "$LK_T" "$LD_T"
+tu_payload "$LD_T" "$LD_SID" ld001 > "$SANDBOX/ld.json"
+run_sut "$SANDBOX/ld.json" >/dev/null
+assert_eq "case25c a stale lock DIRECTORY from an older build: python step breaks it, one transcript line, nothing left" \
+  "1 transcript no" "$(wc -l < "$LD_LOG" 2>/dev/null | tr -d ' ') $(jq -r '.usage_source' "$LD_LOG" 2>/dev/null) $([ -e "$LD_LOG.lock" ] && echo yes || echo no)"
+SD_SID="fixture-token-ledger-lock-legacy-dir-002"; SD_LOG="$SANDBOX/.supervisor/logs/${SD_SID}.jsonl"
+rm -rf "$SD_LOG.lock"; mkdir "$SD_LOG.lock"; touch -t 202601010000 "$SD_LOG.lock"
+printf 'SSSSSSSS' > "$SANDBOX/sd-tp.jsonl"
+jq -n --arg tp "$SANDBOX/sd-tp.jsonl" --arg sid "$SD_SID" '{session_id: $sid, transcript_path: $tp}' > "$SANDBOX/sd.json"
+run_sut "$SANDBOX/sd.json" >/dev/null
+assert_eq "case25c … and the shell's own wait breaks one too: one line, nothing left" \
+  "1 no" "$(wc -l < "$SD_LOG" 2>/dev/null | tr -d ' ') $([ -e "$SD_LOG.lock" ] && echo yes || echo no)"
+
+echo "== 25x. the lock under the two ways it failed on CI: a false win, and a slow holder =="
+# Both were measured on a GitHub runner by a throwaway probe (the changelog entry has the numbers).
+# 25d THE FALSE WIN. uutils mkdir, ubuntu-latest's default, exits 0 when mkdir(2) returned EEXIST and
+# the path is a directory, so two racers can both hold a mkdir "lock". That is timing dependent on a
+# real uutils and absent on BSD and GNU, so the shim below exits 0 every time the directory exists:
+# the worst case of the same behaviour, on every platform. The control puts the `mkdir` command back
+# as the primitive and the duplicate returns, which also proves the shim bites.
+FW_BIN="$SANDBOX/false-win-bin"; mkdir -p "$FW_BIN"
+printf '#!/bin/sh\n"%s" "$@" 2>/dev/null && exit 0\nfor a in "$@"; do l="$a"; done\n[ -d "$l" ] && exit 0\nexit 1\n' "$(command -v mkdir)" > "$FW_BIN/mkdir"
+chmod +x "$FW_BIN/mkdir"
+sed 's#^  if ( set -C; : > "$_lock" ) 2>/dev/null; then#  if mkdir "$_lock" 2>/dev/null; then#' \
+  "$CONC_DIR/widened-locked.sh" > "$CONC_DIR/mkdir-primitive.sh" 2>/dev/null
+# 25e THE SLOW HOLDER. The section is stalled past the wait the emitter used to have (20 x 50ms in the
+# shell, 40 x 50ms in the python step). A waiter that gave up then read the log before the holder had
+# appended, and appended too. Each control restores only the old bound, and the duplicate returns.
+sed 's#^  _last_line="$(tail -1 "$LOG_FILE" 2>/dev/null || true)"#&; sleep 2.6#' "$SUT" > "$CONC_DIR/stalled.sh" 2>/dev/null
+sed 's#^_lock_wait_tries=200 #_lock_wait_tries=20 #' "$CONC_DIR/stalled.sh" > "$CONC_DIR/stalled-old-shell.sh" 2>/dev/null
+sed 's#^LOCK_WAIT_TRIES = 200 #LOCK_WAIT_TRIES = 40 #' "$CONC_DIR/stalled.sh" > "$CONC_DIR/stalled-old-python.sh" 2>/dev/null
+LK_STAGED=1
+for _pair in "mkdir-primitive widened-locked" "stalled-old-shell stalled" "stalled-old-python stalled"; do
+  set -- $_pair
+  [ -s "$CONC_DIR/$1.sh" ] && ! cmp -s "$CONC_DIR/$1.sh" "$CONC_DIR/$2.sh" && bash -n "$CONC_DIR/$1.sh" 2>/dev/null || LK_STAGED=0
+done
+if [ "$LK_STAGED" != "1" ] || cmp -s "$CONC_DIR/stalled.sh" "$SUT"; then
+  no "case25d/e could not stage the lock variants — these cases prove nothing"
+else
+  lk_py_run() { # lk_py_run <script> <session-id> -> line count INCLUDING the seed, via the python step's lock
+    local script="$1" sid="$2" tr="$SANDBOX/subagents/agent-$2.jsonl"
+    printf '%s\n' '{"type":"assistant","message":{"id":"p1","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}}' > "$tr"
+    tu_payload "$tr" "$sid" "$sid" > "$SANDBOX/lkpy-$sid.json"
+    printf '%s\n' '{"event":"seed-so-the-guard-block-is-reached"}' > "$SANDBOX/.supervisor/logs/$sid.jsonl"
+    ( cd "$SANDBOX" && bash "$script" < "$SANDBOX/lkpy-$sid.json" >/dev/null 2>&1 ) &
+    ( cd "$SANDBOX" && bash "$script" < "$SANDBOX/lkpy-$sid.json" >/dev/null 2>&1 ) &
+    wait
+    wc -l < "$SANDBOX/.supervisor/logs/$sid.jsonl" 2>/dev/null | tr -d ' '
+  }
+  assert_eq "case25d a mkdir that lets two racers win: two firings still append exactly ONE line (seed + 1 = 2)" "2" \
+    "$(PATH="$FW_BIN:$PATH" conc_run "$CONC_DIR/widened-locked.sh" "fixture-lock-false-win-001")"
+  assert_eq "case25d MUTATION CONTROL: with the mkdir command as the primitive, the same pair appends TWO (seed + 2 = 3)" "3" \
+    "$(PATH="$FW_BIN:$PATH" conc_run "$CONC_DIR/mkdir-primitive.sh" "fixture-lock-false-win-002")"
+  assert_eq "case25e a holder stalled past the old shell budget: the waiter outlasts it, ONE line (seed + 1 = 2)" "2" \
+    "$(conc_run "$CONC_DIR/stalled.sh" "fixture-lock-stall-shell-001")"
+  assert_eq "case25e MUTATION CONTROL: with the old 20 x 50ms bound, the waiter gives up and duplicates (seed + 2 = 3)" "3" \
+    "$(conc_run "$CONC_DIR/stalled-old-shell.sh" "fixture-lock-stall-shell-002")"
+  assert_eq "case25f the same stall on the python step's lock: the waiter reads the watermark after the holder, ONE line (seed + 1 = 2)" "2" \
+    "$(lk_py_run "$CONC_DIR/stalled.sh" "lkpy001")"
+  assert_eq "case25f MUTATION CONTROL: with the old 40 x 50ms bound, the python waiter gives up and duplicates (seed + 2 = 3)" "3" \
+    "$(lk_py_run "$CONC_DIR/stalled-old-python.sh" "lkpy002")"
+fi
+# 25g A LOG DIR THAT CANNOT BE WRITTEN spends none of the wait: no wait can help, and every firing of a
+# fourteen-way fan-out would otherwise burn the whole bound for an append that fails silently anyway.
+if [ "$(id -u)" != 0 ]; then
+  RO_SB="$SANDBOX/readonly"; mkdir -p "$RO_SB/.supervisor/logs"; chmod 555 "$RO_SB/.supervisor/logs"
+  printf 'RRRRRRRR' > "$RO_SB/tp.jsonl"
+  jq -n --arg tp "$RO_SB/tp.jsonl" '{session_id: "fixture-lock-readonly-001", transcript_path: $tp}' > "$RO_SB/p.json"
+  RO_START=$SECONDS
+  ( cd "$RO_SB" && bash "$SUT" < "$RO_SB/p.json" >/dev/null 2>&1 ); RO_RC=$?
+  RO_SECS=$((SECONDS - RO_START))
+  chmod 755 "$RO_SB/.supervisor/logs"
+  assert_eq "case25g an unwritable log dir: exit 0" "0" "$RO_RC"
+  if [ "$RO_SECS" -lt 5 ]; then ok "case25g … and it did not spend the ~10s wait (${RO_SECS}s)"
+  else no "case25g an unwritable log dir spent the lock wait (${RO_SECS}s)"; fi
+fi
 
 echo "== 26. hooks.json: every agent this plugin ships runs THIS emitter on its own matcher =="
 # The ledger is only as complete as its registrations: `loomwright:worker` — the largest spender —

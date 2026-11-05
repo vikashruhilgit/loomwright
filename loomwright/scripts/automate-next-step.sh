@@ -370,7 +370,7 @@ ns_valve_report() {
   line="$("$JQ" -cn --arg ts "$(ns_ts)" --arg r "$RUN_ID" --arg i "$item" --arg s "$step" --arg o "$1" --arg why "$(printf '%s' "${2:-}" | head -n 1 | cut -c1-300)" \
     '{ts: $ts, run_id: $r, item: (if $i == "" or $i == "null" then null else $i end), step: (if $s == "" then null else $s end), ok: ($o == "true")}
      + (if $o == "true" then {} else {reason: $why} end)' 2>/dev/null)" || return 0
-  # the report line and the escalation check run under one mkdir lock, so concurrent calls never write a second
+  # the report line and the escalation check run under one lock, so concurrent calls never write a second
   # escalated record; without the lock (a LIVE holder past ~2s) the escalation is skipped — the next report
   # retries it. The lock cannot outlive its holder: EXIT / INT / TERM / HUP traps release it for the critical
   # section (the caller's own traps restored after), and a lock whose holder is gone — its owner pid no longer
@@ -394,8 +394,9 @@ ns_valve_report() {
 }
 # the ledger lock: NS_CM_LOCK / NS_CM_LOCK_TOKEN while held, NS_CM_BREAKER while arbitrating a stale break
 NS_CM_LOCK=""; NS_CM_LOCK_TOKEN=""; NS_CM_BREAKER=""
-ns_cm_take() { # <lock> — mkdir + an owner stamp `<pid>-<nonce>`; a lock whose stamp cannot be written is not held
-  mkdir "$1" 2>/dev/null || return 1
+ns_cm_take() { # <lock> — an O_EXCL owner stamp `<pid>-<nonce>` is the test (uutils `mkdir` exits 0 on an existing dir); a lock whose stamp cannot be written is not held
+  mkdir "$1" 2>/dev/null || :   # mkdir-ok: its exit status is ignored, the O_EXCL stamp below decides who holds the lock
+  ( set -C; : > "$1/owner" ) 2>/dev/null || return 1
   local t="$$-${RANDOM:-0}${RANDOM:-0}"
   if printf '%s\n' "$t" > "$1/owner" 2>/dev/null; then NS_CM_LOCK="$1"; NS_CM_LOCK_TOKEN="$t"; return 0; fi
   rm -f "$1/owner" 2>/dev/null; rmdir "$1" 2>/dev/null
@@ -405,7 +406,7 @@ ns_cm_unlock() { # ownership-verified: a lock broken as stale and re-taken by an
   if [ -n "$NS_CM_LOCK" ] && [ "$(cat "$NS_CM_LOCK/owner" 2>/dev/null)" = "$NS_CM_LOCK_TOKEN" ]; then
     rm -f "$NS_CM_LOCK/owner" 2>/dev/null; rmdir "$NS_CM_LOCK" 2>/dev/null
   fi
-  [ -z "$NS_CM_BREAKER" ] || rmdir "$NS_CM_BREAKER" 2>/dev/null
+  [ -z "$NS_CM_BREAKER" ] || rm -f "$NS_CM_BREAKER" 2>/dev/null
   NS_CM_LOCK=""; NS_CM_LOCK_TOKEN=""; NS_CM_BREAKER=""
   return 0
 }
@@ -413,18 +414,18 @@ ns_cm_stale() { # <lock> — 0 when its holder is gone: the stamped pid is not r
   local p e
   [ -d "$1" ] || return 1
   p="$(cat "$1/owner" 2>/dev/null)"; p="${p%%-*}"
-  # an unstamped lock (mkdir done, the stamp not yet written) is a live holder until the age test says otherwise;
+  # an unstamped lock (the stamp created, not yet written) is a live holder until the age test says otherwise;
   # `kill -0` is a builtin (no PATH dependency) and EPERM still means a running process
   if [[ "$p" =~ ^[0-9]{1,10}$ ]]; then
     e="$(kill -0 "$p" 2>&1)" || case "$e" in *ermitted*) ;; *) return 0 ;; esac
   fi
   [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]
 }
-ns_cm_break() { # <lock> — single winner: the breaker mkdir admits one caller, which re-tests staleness under it
+ns_cm_break() { # <lock> — single winner: the breaker's O_EXCL create admits one caller, which re-tests staleness under it
   local b="$1.breaker"
-  if ! mkdir "$b" 2>/dev/null; then
+  if ! ( set -C; : > "$b" ) 2>/dev/null; then
     # a breaker stranded by a kill -9 inside its microsecond window: cleared once over a minute old
-    [ -z "$(find "$b" -maxdepth 0 -mmin +1 2>/dev/null)" ] || rmdir "$b" 2>/dev/null
+    [ -z "$(find "$b" -maxdepth 0 -mmin +1 2>/dev/null)" ] || rm -rf "$b" 2>/dev/null
     return 1
   fi
   NS_CM_BREAKER="$b"
@@ -432,7 +433,7 @@ ns_cm_break() { # <lock> — single winner: the breaker mkdir admits one caller,
     ns_err "coordinator_model_ledger_lock_stale — $1's holder is gone — the lock is broken"
     rm -f "$1/owner" 2>/dev/null; rmdir "$1" 2>/dev/null
   fi
-  rmdir "$b" 2>/dev/null; NS_CM_BREAKER=""
+  rm -f "$b" 2>/dev/null; NS_CM_BREAKER=""
   return 0
 }
 ns_valve_escalate() { # under the ledger lock: ONE escalated record once the window holds NS_CM_FAILS FAILs

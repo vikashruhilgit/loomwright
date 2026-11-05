@@ -306,10 +306,10 @@
 # Nothing to push => exit 0 `meta_sync: no_changes`.
 #
 # LOCK — `pull` and `push` (the only commands that write local files or meta-base) hold
-# `<gitdir>/meta-sync.lock` (an atomic `mkdir` holding the holder's pid) for their whole run; every
+# `<gitdir>/meta-sync.lock` (a directory whose pid file, created with O_EXCL, is the lock) for their whole run; every
 # worktree defaults to the same --root, so they serialise there. A holder whose pid is dead (or a
 # pid-less lock older than a minute) is reclaimed — by exactly ONE waiter per observed holder: the
-# one whose `mkdir <lock>.reclaim.<pid>` succeeds; inside that marker it re-reads the pid and
+# one whose O_EXCL create of `<lock>.reclaim.<pid>/pid` succeeds; inside that marker it re-reads the pid and
 # removes the lock only if it still carries that dead pid. A waiter never renames a lock aside, so
 # it can never move a live holder's lock and let a second process in. A live holder is waited for
 # up to META_SYNC_LOCK_WAIT_SECS (default 120), then exit 1 `locked`, nothing changed. A live

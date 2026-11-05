@@ -275,7 +275,10 @@ YAML="$(awk -v id="$CASE_ID" -v desc="$DESC" -v kind="$KIND" '
   || die "the rendered case.yaml differs from the template from execution: on"
 
 mkdir -p "$(dirname "$CORPUS")" || die "cannot create $(dirname "$CORPUS")"
-mkdir "$CASE_DIR" 2>/dev/null || die "cannot create $CASE_DIR (it exists, or the suite dir is missing)"
+# The -e test is the refusal: uutils `mkdir` exits 0 on an existing directory, so its status cannot say so.
+[ ! -e "$CASE_DIR" ] || die "cannot create $CASE_DIR (it exists)"
+# mkdir-ok: one authoring run makes one case dir, nothing races it; the -e test above refuses an existing one
+mkdir "$CASE_DIR" 2>/dev/null || die "cannot create $CASE_DIR (the suite dir is missing)"
 cleanup_case() { rm -rf "$CASE_DIR"; die "$1"; }
 printf 'PR=%s\nBASE_SHA=%s\nHEAD_SHA=%s\n' "$PR" "$BASE" "$PRE" > "$CASE_DIR/case.env" || cleanup_case "cannot write case.env"
 printf '%s\n' "$YAML" > "$CASE_DIR/case.yaml" || cleanup_case "cannot write case.yaml"

@@ -29,7 +29,7 @@
 # The file is rendered into a mktemp dir, printed on a dry run, and under --confirm copied beside the
 # target and `mv`ed into place; only then is each named draft removed and one Progress line appended
 # per draft whose run file exists (progress-append's writer, so it never forges a run file). Under
-# --confirm one bundler runs at a time (a `mkdir` lock in proposed/, released on exit). Finding
+# --confirm one bundler runs at a time (an O_EXCL lock file in proposed/, released on exit). Finding
 # text is DATA: it is read from each draft's fenced finding block(s) (`### Entry N` blocks for a
 # summary draft) and every line is written `> `-prefixed inside a fence longer than any backtick run
 # in it, so no finding byte starts a column-0 heading or `## Status:` line; it is never interpolated
@@ -46,7 +46,7 @@ _FU_LOCK=""
 
 _fu_fail() { echo "followup-bundle: refused — $1 (nothing written)" >&2; exit 1; }
 # _fu_cleanup — the EXIT trap: the render dir, and the bundle lock only when THIS process took it.
-_fu_cleanup() { [ -z "$_FU_TMP" ] || rm -rf "$_FU_TMP"; [ -z "$_FU_LOCK" ] || rmdir "$_FU_LOCK" 2>/dev/null; return 0; }
+_fu_cleanup() { [ -z "$_FU_TMP" ] || rm -rf "$_FU_TMP"; [ -z "$_FU_LOCK" ] || rm -f "$_FU_LOCK" 2>/dev/null; return 0; }
 # _fu_in_proposed <req> <phys> — exit 0 when <phys> (a path under <req>) lands in <req>/proposed/.
 # Decided by identity, never by spelling: on a case-insensitive filesystem (macOS APFS default)
 # PROPOSED/ IS proposed/, yet `pwd -P` keeps the typed case, so a string prefix match misses it. So
@@ -189,13 +189,14 @@ followup_bundle() {
   if [ -d "$req/proposed" ]; then prop="$(cd "$req/proposed" 2>/dev/null && pwd -P)" || prop=""; fi
   trap '_fu_cleanup' EXIT
   # One --confirm bundler at a time per checkout: validation through draft removal is check-then-act,
-  # so two concurrent bundles of one draft would each write a queue item for the same finding. A
-  # `mkdir` lock in proposed/ (atomic, backlog-stamp's idiom) serializes them, taken BEFORE any check
-  # so the second sees the first's result (its drafts gone ⇒ refused). Waits at most ~10 s, then
-  # refuses. A dry run takes no lock and writes nothing.
+  # so two concurrent bundles of one draft would each write a queue item for the same finding. An
+  # O_EXCL lock file in proposed/ (backlog-stamp's idiom; never the `mkdir` command, which uutils
+  # lets two racers both pass) serializes them, taken BEFORE any check so the second sees the first's
+  # result (its drafts gone ⇒ refused). Waits at most ~10 s, then refuses. A dry run takes no lock
+  # and writes nothing.
   if [ "$confirm" = 1 ] && [ -n "$prop" ]; then
     w=0
-    until mkdir "$prop/.followup-bundle.lock" 2>/dev/null; do
+    until ( set -C; : > "$prop/.followup-bundle.lock" ) 2>/dev/null; do
       w=$((w + 1)); [ "$w" -le 100 ] || _fu_fail "another followup-bundle holds .supervisor/requirements/proposed/.followup-bundle.lock"
       sleep 0.1
     done

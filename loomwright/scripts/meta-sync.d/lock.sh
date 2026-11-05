@@ -35,8 +35,8 @@ lock_holder_alive() {
   ps -p "$1" >/dev/null 2>&1
 }
 # lock_is_stale <dir> <token> — 0 when <dir>, carrying <token> (the pid read from <dir>/pid), is
-# abandoned: the token is a dead pid, or the dir is token-less (its holder died between mkdir and
-# the pid write) and over a minute old.
+# abandoned: the token is a dead pid, or the pid file is empty (its holder died between creating it
+# and writing it) and over a minute old.
 lock_is_stale() {
   [ -d "$1" ] || return 1
   if [ -n "$2" ]; then
@@ -46,8 +46,10 @@ lock_is_stale() {
   [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]
 }
 # reclaim_lock <dir> <token> <depth> — remove <dir> iff it STILL carries <token> and is STILL stale.
-# Exactly one process may act on a given (dir, token): the one whose mkdir of the marker
-# "<dir>.reclaim.<token>" succeeds. While it holds the marker, the instance carrying <token> can
+# Exactly one process may act on a given (dir, token): the one whose O_EXCL create of the pid file
+# in the marker "<dir>.reclaim.<token>" succeeds. The `mkdir` command never decides that, because
+# uutils `mkdir` exits 0 on an existing directory, so the lock and the marker are both held by
+# their pid file. An older build's directory with a pid in it reads as held. While it holds the marker, the instance carrying <token> can
 # only be removed by it (its holder is dead; every other reclaimer re-checks a DIFFERENT token or
 # waits on this marker), so the re-check-then-rm below cannot hit a live lock: a lock re-acquired
 # in between carries another token and is left alone. Nothing is ever renamed aside and put back,
@@ -57,10 +59,10 @@ reclaim_lock() {
   local d="$1" t="$2" depth="$3" m w
   m="$1.reclaim.${2:-nopid}"
   [ "$depth" -le 4 ] || return 0
-  if mkdir "$m" 2>/dev/null; then
+  mkdir "$m" 2>/dev/null || :   # mkdir-ok: its exit status is ignored, the O_EXCL stamp below decides who holds the lock
+  if ( set -C; printf '%s\n' "$$" > "$m/pid" ) 2>/dev/null; then
     RECLAIM_MARK="$m"
-    if printf '%s\n' "$$" > "$m/pid" \
-       && [ "$(cat "$d/pid" 2>/dev/null)" = "$t" ] && lock_is_stale "$d" "$t"; then
+    if [ "$(cat "$d/pid" 2>/dev/null)" = "$t" ] && lock_is_stale "$d" "$t"; then
       rm -rf "$d" && [ "$depth" -eq 0 ] && RECLAIMED=1
     fi
     rm -rf "$m"; RECLAIM_MARK=""
@@ -74,10 +76,11 @@ acquire_lock() {
   local start holder
   start="$(date +%s)"
   while :; do
-    # LOCK_HELD is set BEFORE the mkdir so a signal between the mkdir and the pid write still runs
+    # LOCK_HELD is set BEFORE the create so a signal between the create and the pid write still runs
     # cleanup; cleanup removes the lock only when it carries this run's pid, so this is safe.
     LOCK_HELD=1
-    if mkdir "$LOCK_DIR" 2>/dev/null; then
+    mkdir "$LOCK_DIR" 2>/dev/null || :   # mkdir-ok: its exit status is ignored, the O_EXCL stamp below decides who holds the lock
+    if ( set -C; : > "$LOCK_DIR/pid" ) 2>/dev/null; then
       if printf '%s\n' "$$" > "$LOCK_DIR/pid"; then return 0; fi
       rm -rf "$LOCK_DIR"; LOCK_HELD=0; die "could not write the lock holder pid into $LOCK_DIR"
     fi
