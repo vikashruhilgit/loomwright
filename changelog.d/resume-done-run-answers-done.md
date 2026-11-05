@@ -1,0 +1,4 @@
+<!-- bump: patch -->
+`/automate --resume <id>` on a finished run answers done instead of a false refusal
+The driver runs `resume-glob --finalize` before it looks the id up, so a run that close-out had finished was stamped `## Status: done` and had its trail pushed, and the same call then exited 2 with `run_not_incomplete … nothing written`.
+A named run that reads done now gets the documented `{"do":"done","status":"done"}` answer with `run_file` and `closeout_others`, exit 0, whether this call or an earlier one stamped it. An id naming no run still exits 2, its message now says nothing was written past the start steps, and the start's `closeout-others` lines go to stderr first instead of being lost. `automate-helpers.sh is-run-file` exposes the one run-file shape check to the driver, so a result sidecar named as the id is never read as a done run.

@@ -1128,6 +1128,7 @@ main() {
     escalation-cause) escalation_cause "$@" ;;
     closeout-classify) closeout_classify "$@" ;;
     remaining)       remaining "$@" ;;
+    is-run-file)     [ "$#" -eq 1 ] || die "is-run-file <file>"; [ -f "$1" ] && is_run_file "$1" ;;
     ceiling-check)   ceiling_check "$@" ;;
     resolve-folder)  resolve_folder "$@" ;;
     resolve-backlog) resolve_backlog "$@" ;;
