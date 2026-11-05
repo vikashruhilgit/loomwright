@@ -1,3 +1,0 @@
-<!-- bump: patch -->
-`reconcile-status` no longer slows down as the requirements folder grows, and a failed GitHub read no longer looks like a clean scan
-On a 474-file folder with 252 done briefs, the resume step took 7:19 and 5:53 of it was local: every not-done requirement re-parsed every done brief. Briefs are now parsed once per pass, merged PRs are read once per pass instead of searched per file, and a diff is read only for a PR that already qualifies. A throttled `gh` used to print nothing and exit 0, exactly like a scan that found nothing stale; a failed read now prints an `unverified` row, which `/automate --resume` carries into `## Progress`. Reading all merged PRs also lifts the five-hit search cap, so a citing PR can no longer fall off it.
