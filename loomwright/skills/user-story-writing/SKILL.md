@@ -191,7 +191,8 @@ src/notifications/shift-assigned.ts
 
 **Fill them; do not leave the defaults** (an undeclared story serialises the whole queue):
 
-- **`## Touches` comes from your own file-impact reasoning.** List every path the story's Scope names or plainly implies — the files and directories the change will edit or create. Write the sole line `unknown` only when you truly cannot name the change site (e.g. a capability with no code yet to point at), never as a placeholder.
+- **`## Touches` comes from your own file-impact reasoning.** List every path the story's Scope names or plainly implies — the files and directories the change will edit or create. Write the sole line `unknown` only when you truly cannot name the change site (e.g. a capability with no code yet to point at), never as a placeholder. Add what the shared-file sweep below finds.
+- **Shared-file sweep.** When the story adds a new symbol, route, setting or category, find an existing similar feature and list the existing files that register, dispatch, configure or test it (an index, a policy table, wiring, the test that pins the list): the files the story plugs into, not only those it creates. No similar feature ⇒ say so in Assumptions and list what you can name (`unknown` only when you truly cannot). A file a `.agent/companions.json` rule already adds need not be listed again; a shared file every story of a kind needs belongs in such a rule (`{"when": "<glob>", "add": ["<path>"]}`), which the planner then adds on its own — propose it to the owner, never write the file. A contract change the sweep finds (a response shape, an accepted input form, a refusal a test pins) goes in the Acceptance Criteria, never as a Touches-only file; when the required form is unclear, ask the owner (Product Owner: a contract-change flag at Responsibilities 3a).
 - **No prose inside the section, ever.** A condition ("only if a test exposes a defect"), a part label ("(part B)"), a comma list or a bullet makes the WHOLE section unknown. Put conditions in Scope; keep one bare path per line here.
 - **Always write `## Depends on`** — `none` when the story depends on nothing. A missing section is not "none"; it makes the story wait for every earlier story.
 - **Check before handing off:** `automate-helpers.sh plan-waves <file|dir> --lint` (the `/automate` engine's helper script) prints `ok` / `ok (declared unknown)` or the exact bad line, its number and the reason for both sections, and exits 1 when either is missing or unparsable.
@@ -321,7 +322,7 @@ Before finalizing a story:
 - [ ] Assumptions made explicit
 - [ ] Dependencies listed
 - [ ] `### Non-goals` and `### Owner decisions` written (`none recorded` when the owner decided nothing); `## Validation (must pass before merge)` has at least one entry, and an outcome only a running system can show has a Running system entry
-- [ ] `## Depends on` written (`none` when none) and `## Touches` filled from Scope — `plan-waves --lint` says `ok`
+- [ ] `## Depends on` written (`none` when none) and `## Touches` filled from Scope plus the shared-file sweep — `plan-waves --lint` says `ok`
 - [ ] A set of 2+ items was planned with `plan-waves --explain`, reshaped where it serialised needlessly, and its waves and N are in the plan doc's `## Run` (§"Shaping a set for parallel waves")
 - [ ] Risks identified
 - [ ] Story is estimable (not too vague, not too large) and its shape was decided first — it fits one PR (§"Requirement Shape")

@@ -143,7 +143,7 @@ _lp_catalog_rows() {
   _lp_row AUT-OVERLAP  human-only 'Serialize|Continue in parallel|Defer to next wave|Revise' \
     '/automate --parallel N>1 coordinator scope re-gate: a lane held scope_hold after its Launch Pad save shares files with another live lane of the wave (or its set is unreadable); ONE ask naming the lane, the other lanes, the shared files and any pending widening; answered through lane-scope-decide; cannot ask ⇒ the lane stays held'
   _lp_row PO-ASSUME    human-only 'Proceed anyway|Refine requirements|Abort' \
-    'Product Owner assumption-check soft gate, pre-persist house-rule check and missing-proof (no Validation) flag (/automate prompt intake)'
+    'Product Owner assumption-check soft gate, pre-persist house-rule check, missing-proof (no Validation) flag and contract-change flag (/automate prompt intake)'
   _lp_row PO-RULE-MUST human-only 'Refine requirements|Change the rule via /rules|Abort' \
     'Product Owner pre-persist house-rule check on a must-rule conflict (no override option: a must rule is never overridden)'
   _lp_row LP-CLARIFY   human-only '(free text)' \
