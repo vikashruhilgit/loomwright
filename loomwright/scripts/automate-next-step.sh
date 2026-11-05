@@ -1783,6 +1783,8 @@ ns_reconcile_status() {
   done <<EOF
 $out
 EOF
+  # the keys guard a retry of this step only: the next resume's pass reports its own rows
+  ns_clear_once once_rs_
   st_del resume_status_due
   NEXT=trail-gate
 }

@@ -96,4 +96,12 @@ in_case "$DRIVER" "$CASE_DIR/seams.rs" bash "$DRIVER" "$CASE_RF" --session-id au
 if [ "$rsrc" = 0 ] && grep -qF -- '- reconcile-status: UNVERIFIED merged-pr-list: gh pr list failed; no merged PR was checked' "$CASE_RF" && ! grep -qF 'reconcile-status: would stamp' "$CASE_RF"; then
   ok "reconcile-status: a failed merged-PR read ⇒ an UNVERIFIED progress line and no would-stamp line, the step still completes"
 else no "reconcile-status unverified line wrong: rc $rsrc, $(head -n 2 "$CASE_DIR/rs.err" | tr '\n' ' '), $(grep -n 'reconcile-status' "$CASE_RF" | tr '\n' ' ')"; fi
+# A later resume of the same item reports its own rows: the once-keys guard a retry of a failed step, and
+# must not outlive the step, or a different failure holding the same row position is silently dropped
+printf '0\tpr list *\t<html>502</html>\n' > "$CASE_GH"
+printf 'NEXT_STEP_FROM=reconcile-status\nNEXT_STEP_UNTIL=reconcile-status\n' > "$CASE_DIR/seams.rs"
+in_case "$DRIVER" "$CASE_DIR/seams.rs" bash "$DRIVER" "$CASE_RF" --session-id auto-2026-10-15-040641 > "$CASE_DIR/rs2.out" 2> "$CASE_DIR/rs2.err"; rsrc=$?
+if [ "$rsrc" = 0 ] && grep -qF -- '- reconcile-status: UNVERIFIED merged-pr-list: gh pr list answered unreadable JSON; no merged PR was checked' "$CASE_RF"; then
+  ok "reconcile-status: a second pass reports its own different failure, not skipped by the first pass's once-key"
+else no "reconcile-status second pass dropped its row: rc $rsrc, $(grep -n 'reconcile-status' "$CASE_RF" | tr '\n' ' ')"; fi
 
