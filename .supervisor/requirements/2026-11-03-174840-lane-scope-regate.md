@@ -204,3 +204,14 @@ loomwright/scripts/test-automate-next-step.d/05-fresh-phases.sh
 loomwright/scripts/test-lane-policy.sh
 loomwright/skills/automate-loop/lanes.md
 loomwright/skills/automate-loop/per-item-loop.md
+
+## Status: brief-shipped
+
+Job `.supervisor/jobs/done/2026-11-04-lane-scope-regate.md` completed (reconciled from the job lifecycle, not self-reported).
+Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-05T13:57:38Z
+- **Brief:** .supervisor/jobs/done/2026-11-04-lane-scope-regate.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/822
