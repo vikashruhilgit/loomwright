@@ -477,17 +477,26 @@ def count_after(order, per, mark):
 # shell lock below documents), so a watermark read before the lock lets every
 # sibling read "nothing counted yet" and append the full total — and when their
 # ts differ by a second the byte-identity guard cannot catch it. So this path
-# takes the SAME per-log mkdir lock the shell takes, AFTER the transcript read
+# takes the SAME per-log lock file the shell takes, AFTER the transcript read
 # (which touches no shared state) and BEFORE the watermark read, and HANDS IT
 # OVER to the shell, which keeps it through its tail-compare and append and
 # releases it there (line 2 of the output says so). Every failure direction is
 # the shell one: a lock not taken within the bound proceeds unguarded, a lock
 # older than a minute is broken, and every exit of this interpreter before the
 # hand-over releases it (atexit).
-LOCK_WAIT_TRIES = 40        # 40 x 50ms: this section also spans an interpreter exit
+# The bound is the same ~10s as the shell one (the reasoning is at the shell lock). The
+# section this waits on spans an interpreter exit as well as the sibling shell append.
+LOCK_WAIT_TRIES = 200       # 200 x 50ms
 LOCK_WAIT_S = 0.05
 LOCK_STALE_S = 60
 _LOCK = {"path": None, "handed_off": False}
+
+def _drop_lock(lock_path):
+    """Remove the lock. A directory is what a build before the O_EXCL change left."""
+    try:
+        os.remove(lock_path)
+    except OSError:
+        os.rmdir(lock_path)
 
 def take_log_lock(lock_path):
     """Returns "held" or "timeout" (never raises)."""
@@ -497,13 +506,13 @@ def take_log_lock(lock_path):
         pass
     for _ in range(LOCK_WAIT_TRIES):
         try:
-            os.mkdir(lock_path)
+            os.close(os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644))
             _LOCK["path"] = lock_path
             return "held"
         except FileExistsError:
             try:
                 if time.time() - os.path.getmtime(lock_path) > LOCK_STALE_S:
-                    os.rmdir(lock_path)
+                    _drop_lock(lock_path)
             except OSError:
                 pass
         except OSError:
@@ -514,7 +523,7 @@ def take_log_lock(lock_path):
 def _release_unless_handed_off():
     if _LOCK["path"] and not _LOCK["handed_off"]:
         try:
-            os.rmdir(_LOCK["path"])
+            _drop_lock(_LOCK["path"])
         except OSError:
             pass
 
@@ -759,7 +768,7 @@ _have_lock=""
 # so no exit path strands it (the chained trap is explained at the shell lock).
 if [ "$PY_LOCK" = held ] && [ -n "$SESSION_ID" ]; then
   _have_lock=1
-  trap 'rmdir "$_lock" 2>/dev/null || true; exit 0' EXIT
+  trap 'rm -f "$_lock" 2>/dev/null || true; exit 0' EXIT
 fi
 
 # Guard: need all four lines, and the event line must be a JSON object.
@@ -825,9 +834,16 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
 # they sometimes serialise by luck. A read-then-write guard cannot close that, so
 # the read and the write are made ONE critical section instead.
 #
-# `mkdir` is the primitive, for the reason the ui registry lock already documents:
-# `flock` is not on stock macOS, and `mkdir` is atomic on every POSIX filesystem —
-# exactly one of N racing callers creates it and the rest get EEXIST.
+# THE PRIMITIVE IS AN O_EXCL CREATE, `( set -C; : > "$_lock" )`, NEVER THE `mkdir` COMMAND.
+# `flock` is not on stock macOS, and the mkdir(2) syscall is atomic, but what this script
+# runs is a userland binary that decides its own exit status. uutils mkdir, the default on
+# Ubuntu 26.04 and so on `ubuntu-latest`, exits 0 when mkdir(2) returns EEXIST and the path
+# is a directory (`Err(_) if path.is_dir()` in its mkdir.rs, not limited to -p), so two
+# racers can both "win". Measured on a runner: see the changelog entry for this change.
+# Two holders is the check-then-act race below again, with the lock looking healthy.
+# Bash makes the noclobber redirect with open(O_CREAT|O_EXCL) in the shell itself on 3.2
+# and on 5.x, so no coreutils implementation is in the path. A directory left by an older
+# build still reads as held, because the create fails on it, and it ages out as below.
 #
 # EVERY FAILURE DIRECTION IS TOWARD THE APPEND, never toward silence or a hang.
 # This is an ALWAYS-EXIT-0 advisory emitter (see the header): losing a ledger line
@@ -835,6 +851,11 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
 # than both. So a lock that cannot be taken within the bounded wait is abandoned
 # and the append proceeds unguarded, and a lock older than a minute — far longer
 # than a healthy holder of this section can need — is broken rather than waited on.
+# THE BOUND IS ~10s, WELL UNDER THE MINUTE: fourteen firings of one completion queue on
+# this lock, so a waiter can sit behind thirteen sections, and on a loaded host one holder
+# can take most of a second. A budget that covers one healthy holder gives up exactly when
+# the fan-out is under load, which is when the guard is needed. A log dir that cannot be
+# written spends none of it: no wait can help, and the append below fails silently.
 # PER LOG FILE, not per logs DIRECTORY. The duplication this serialises is two
 # firings of ONE completion, which by construction target the same file; a
 # directory-wide lock would additionally serialise unrelated sessions against each
@@ -844,10 +865,11 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
 # step, BEFORE its watermark read, and hands it over (PY_LOCK=held, adopted above).
 # PY_LOCK=timeout means that step already spent the bounded wait — the append
 # proceeds unguarded rather than waiting a second time. Otherwise the shell takes it.
+_lock_wait_tries=200   # x 50ms; the python step's LOCK_WAIT_TRIES is the same bound
 _tries=0
-if [ -n "$_have_lock" ] || [ "$PY_LOCK" = timeout ]; then _tries=20; fi
-while [ "$_tries" -lt 20 ]; do
-  if mkdir "$_lock" 2>/dev/null; then
+if [ -n "$_have_lock" ] || [ "$PY_LOCK" = timeout ] || [ ! -w "$LOG_DIR" ]; then _tries=$_lock_wait_tries; fi
+while [ "$_tries" -lt "$_lock_wait_tries" ]; do
+  if ( set -C; : > "$_lock" ) 2>/dev/null; then
     _have_lock=1
     break
   fi
@@ -858,7 +880,7 @@ while [ "$_tries" -lt 20 ]; do
   # live holder after a minute, and a stranded lock costs at most that minute of
   # unguarded appends — today's behaviour, not worse.
   if [ -n "$(find "$_lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-    rmdir "$_lock" 2>/dev/null || true
+    rm -f "$_lock" 2>/dev/null || rmdir "$_lock" 2>/dev/null || true
   fi
   _tries=$((_tries + 1))
   sleep 0.05 2>/dev/null || true
@@ -883,7 +905,7 @@ done
 # registration appends `|| true`. That is the caller's accident, not this script's
 # contract, and a contract that holds only because of an external wrapper is exactly
 # the fail-safe inversion CLAUDE.md's Failure-Mode Invariants section forbids.
-[ -n "$_have_lock" ] && trap 'rmdir "$_lock" 2>/dev/null || true; exit 0' EXIT
+[ -n "$_have_lock" ] && trap 'rm -f "$_lock" 2>/dev/null || true; exit 0' EXIT
 
 # Adjacent identity — only now the read and the append cannot be interleaved by a
 # sibling firing. Identity includes agent_id and the transcript byte count, and
