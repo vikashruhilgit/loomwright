@@ -76,3 +76,9 @@ loomwright/skills/user-story-writing/SKILL.md
 loomwright/docs/prompt-token-budgets.json
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
 changelog.d/touches-name-shared-files-at-intake.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-11-05T16:17:34Z
+- **Brief:** .supervisor/jobs/done/2026-11-05-touches-name-shared-files-at-intake.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/830
