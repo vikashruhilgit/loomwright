@@ -622,14 +622,12 @@ reconcile_status() {
   automate_dir="$proj_root/.supervisor/automate"
 
   # Per-pass scratch: the brief index and the merged-PR read. No scratch dir is
-  # the same degrade as no read, and it says so in the closing rows' place.
+  # the same degrade as no read, and it says so among the closing rows.
   RS_TMP="$(mktemp -d 2>/dev/null)" || RS_TMP=""
   if [ -n "$RS_TMP" ]; then
     trap 'rm -rf "$RS_TMP"' EXIT
     _rs_index_briefs "$jobs_done" > "$RS_TMP/briefs"
     RS_BRIEF_INDEX="$RS_TMP/briefs"
-  else
-    printf 'unverified\tmerged-pr-list\tno scratch directory; no merged PR was checked\n'
   fi
 
   local f
@@ -641,6 +639,7 @@ reconcile_status() {
   done < <(find "$root_abs" -type f -name '*.md' 2>/dev/null | env LC_ALL=C sort)
 
   _rs_process_abandoned "$root_abs" "$proj_root" "$automate_dir" "$apply"
+  [ -n "$RS_TMP" ] || printf 'unverified\tmerged-pr-list\tno scratch directory; no merged PR was checked\n'
   [ -z "$RS_TMP" ] || [ ! -f "$RS_TMP/unverified" ] || awk -F'\t' '!seen[$0]++ { print "unverified\t" $1 "\t" $2 }' "$RS_TMP/unverified"
   return 0
 }

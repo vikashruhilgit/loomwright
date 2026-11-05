@@ -973,3 +973,17 @@ else
   no "H14 failed-search leg wrong (rc=$RUN_RC out='$RUN_OUT')"
 fi
 rm -rf "$R"
+
+# H15. No scratch directory (mktemp failing) degrades like a failed read, and its unverified row
+#      closes the output like every other. The brief's own PR is still tried, so the row after a
+#      `plan` is what this pins: `plan` first, then `unverified`.
+R="$(rs_shipped_repo MERGED feature/qh-07-shipped "Ships the thing." '["src/x.sh"]')"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$R/bin/mktemp"; chmod +x "$R/bin/mktemp"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+if [ "$RUN_RC" = 0 ] && [ "$(printf '%s\n' "$RUN_OUT" | cut -f1 | tr '\n' ' ')" = "plan unverified " ] && rs_uv_row merged-pr-list "no scratch directory"; then
+  ok "H15 mktemp failing ⇒ exit 0, and the unverified row closes the output"
+else
+  no "H15 mktemp-failure order wrong (rc=$RUN_RC out='$RUN_OUT')"
+fi
+rm -rf "$R"
+
