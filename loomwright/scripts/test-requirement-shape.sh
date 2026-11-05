@@ -28,6 +28,12 @@
 #        story block; the Persist step says the Validation section is written at H2 in the file.
 #        The template's Running system entry names where its output goes: `docs/evidence/<slug>.md`
 #        `with its declared verdict line` (that phrase on exactly one line of the skill)
+#   (S7) shared-file sweep: `**Shared-file sweep` in the PO agent, its command mirror and the skill; the
+#        agent and command `**Shared-file sweep:**` lines identical; the skill's sweep bullet names
+#        `.agent/companions.json` on its own line; each PO file's `<n>` formula counts contract-change
+#        flags. Its own mutation controls (sweep line deleted per file, the skill bullet's companions
+#        reference removed, one word of the command's line drifted, `contract-change flags` dropped from
+#        each `<n>` formula separately) each must turn (S7) red.
 #   MUTATION CONTROLS (each must turn its check red): (M1) the template's status stamp deleted
 #   ⇒ S2 fails (the plan doc is enqueued); (M2) one required section deleted ⇒ S1 fails;
 #   (M3) the "count by hand" sentence restored in the skill ⇒ S5 fails; (M4) the Story Template's
@@ -273,6 +279,50 @@ else
     ok "(M5) control: without '$VERDICT_PH' the Running system entry check fails"
   else no "(M5) control did not discriminate: the entry check passed without '$VERDICT_PH'"; fi
 fi
+
+# (S7) shared-file sweep. sweep_ok <agent> <command> <skill> — 0 when all three name the sweep, the
+# agent and command `**Shared-file sweep:**` lines are identical (grep -F, as (S5) reads Persist),
+# the skill's sweep bullet names `.agent/companions.json` on its own line, and each PO file's `<n>`
+# formula line counts contract-change flags; prints the reason otherwise.
+SWEEP_PO='**Shared-file sweep:**'
+SWEEP_SK='- **Shared-file sweep.**'
+N_LINE='`<n>` = prerequisite flags'
+sweep_ok() {
+  local f sa sc n
+  for f in "$1" "$2" "$3"; do grep -qF '**Shared-file sweep' "$f" || { echo "no '**Shared-file sweep' in $f"; return 1; }; done
+  sa="$(grep -F -- "$SWEEP_PO" "$1")"; sc="$(grep -F -- "$SWEEP_PO" "$2")"
+  [ -n "$sa" ] && [ "$sa" = "$sc" ] || { echo "the agent and command '$SWEEP_PO' lines differ (or are missing)"; return 1; }
+  grep -F -- "$SWEEP_SK" "$3" | grep -qF '.agent/companions.json' || { echo "the skill's sweep bullet does not name .agent/companions.json"; return 1; }
+  for f in "$1" "$2"; do
+    n="$(grep -F -- "$N_LINE" "$f")"
+    [ "$(printf '%s\n' "$n" | grep -c .)" = 1 ] || { echo "not exactly one <n> formula line in $f"; return 1; }
+    grep -qF 'contract-change flags' <<<"$n" || { echo "the <n> formula in $f does not count contract-change flags"; return 1; }
+  done
+  return 0
+}
+if r="$(sweep_ok "$PO_AGENT" "$PO_CMD" "$SKILL")"; then
+  ok "(S7) shared-file sweep in PO agent, command (identical lines) and skill (names .agent/companions.json); both <n> formulas count contract-change flags"
+else no "(S7) $r"; fi
+
+# (S7) mutation controls. s7_mutant <label> <sed expr> <which: agent|cmd|skill> — build a mutant copy of
+# one file, trust it only when non-empty and different from its original, and expect (S7) to fail.
+s7_mutant() {
+  local label="$1" expr="$2" which="$3" src a="$PO_AGENT" c="$PO_CMD" s="$SKILL" m
+  case "$which" in agent) src="$PO_AGENT" ;; cmd) src="$PO_CMD" ;; skill) src="$SKILL" ;; esac
+  m="$T/s7-$label.md"
+  sed "$expr" "$src" > "$m"
+  if [ ! -s "$m" ] || cmp -s "$src" "$m"; then no "(S7/$label) mutant not built"; return; fi
+  case "$which" in agent) a="$m" ;; cmd) c="$m" ;; skill) s="$m" ;; esac
+  if sweep_ok "$a" "$c" "$s" >/dev/null; then no "(S7/$label) control did not discriminate: (S7) passed on the mutant"
+  else ok "(S7/$label) control: (S7) fails on the mutant"; fi
+}
+s7_mutant agent-no-sweep '/\*\*Shared-file sweep/d' agent
+s7_mutant cmd-no-sweep '/\*\*Shared-file sweep/d' cmd
+s7_mutant skill-no-sweep '/\*\*Shared-file sweep/d' skill
+s7_mutant skill-no-companions '/^- \*\*Shared-file sweep\./s#`\.agent/companions\.json` rule#companions rule#' skill
+s7_mutant cmd-drift 's/\*\*Shared-file sweep:\*\* when a story/**Shared-file sweep:** when any story/' cmd
+s7_mutant agent-n-formula 's/missing-proof flags + contract-change flags/missing-proof flags/' agent
+s7_mutant cmd-n-formula 's/missing-proof flags + contract-change flags/missing-proof flags/' cmd
 
 echo "test-requirement-shape: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
