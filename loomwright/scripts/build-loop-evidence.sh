@@ -92,9 +92,11 @@ WORK="$(mktemp -d 2>/dev/null || true)"
 if [ -z "$WORK" ]; then
   # mktemp unavailable — fall back to a $$+$RANDOM path (not guessable-by-PID alone) and
   # refuse to reuse a pre-existing dir (no -p, no ||-swallow: a squattable path is worse
-  # than no output). If even that fails, emit a fully-labeled skeleton and exit 0.
+  # than no output). A status of 0 does not prove the create (uutils `mkdir` exits 0 on an existing
+  # directory), so the directory must also be ours. If even that fails, emit a fully-labeled skeleton and exit 0.
   WORK="/tmp/loop-evidence.$$.$RANDOM"
-  if ! mkdir "$WORK" 2>/dev/null; then
+  # mkdir-ok: a private scratch dir, nothing waits on it; the -O test below is what refuses a planted one
+  if ! { mkdir "$WORK" 2>/dev/null && [ -O "$WORK" ] && [ ! -L "$WORK" ]; }; then
     if [ "$JSONL" -eq 1 ]; then
       printf '%s\n' '{"type":"data_quality","notes":["scratch dir unavailable (mktemp and fallback both failed) — builder cannot run, every cell insufficient_data"]}'
     else

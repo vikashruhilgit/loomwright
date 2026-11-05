@@ -99,6 +99,14 @@ jobs:
           bash scripts/test-check-test-hermetic.sh
           bash scripts/check-test-hermetic.sh
 
+      # The mkdir command is not exclusive: uutils, the ubuntu-latest default, exits 0 on an existing
+      # directory, so a bare mkdir lock can have two holders. Every non-recursive mkdir in a shipped
+      # script is an O_EXCL lock's helper or carries a `# mkdir-ok:` reason. No `|| true`: fail-CLOSED.
+      - name: Check no bare mkdir lock
+        run: |
+          bash scripts/test-check-mkdir-lock.sh
+          bash scripts/check-mkdir-lock.sh
+
       # No shell script may run a command under a TEMPORARY locale assignment (`LC_ALL=C sort`);
       # write `env LC_ALL=C sort`. Homebrew bash 5.3 on macOS segfaults (exit 139, empty output)
       # restoring the locale in a forked subshell — CoreFoundation is not fork-safe — so the crash

@@ -9,11 +9,15 @@
 #   run-lock.sh status  [--root <checkout>]
 #   run-lock.sh liveness [--pid <pid>] [--root <checkout>]
 #
-# Lock: <root>/.supervisor/run.lock          (a directory — `mkdir` is atomic
-#                                              on every POSIX filesystem, the
+# Lock: <root>/.supervisor/run.lock          (a directory. Holding it means having
+#                                              created its `meta` with O_EXCL, the
 #                                              same primitive dispatch-pr-review.sh's
-#                                              acquire_lock already uses; no
-#                                              flock on stock macOS)
+#                                              acquire_lock uses. The `mkdir` command is
+#                                              NOT the test: uutils `mkdir` exits 0 on
+#                                              an existing directory. No flock on stock
+#                                              macOS. A directory with a meta from an
+#                                              older build reads as held; one with no
+#                                              meta has no holder to wait for.)
 # Meta: <root>/.supervisor/run.lock/meta     (TSV `key<TAB>value` lines —
 #                                              NOT JSON, matching
 #                                              dispatch-pr-review.sh's
@@ -98,9 +102,9 @@
 # This is a NEW lock, not a call into dispatch-pr-review.sh's acquire_lock —
 # that function's meta shape carries no `session_id`/`owner` fields and its
 # lock dir is scoped to a per-PR hash (a different namespace: one dispatch
-# lock per PR vs. one run lock per REPO). The mkdir-atomicity + TSV-meta +
+# lock per PR vs. one run lock per REPO). The O_EXCL-meta + TSV-meta +
 # pid-liveness + TTL-reclaim SHAPE is mirrored deliberately (see the
-# `write_lock_meta`/`acquire_lock` pair in dispatch-pr-review.sh:630
+# `write_lock_meta`/`acquire_lock` pair in dispatch-pr-review.sh:647
 # [pins: `write_lock_meta`]) so both locks fail exactly the same way
 # under a crashed holder.
 #
@@ -367,6 +371,20 @@ break_lock() {
   rm -rf "$LOCK_DIR" 2>/dev/null || true
 }
 
+# take_lock — 0 when THIS call created the meta file exclusively, so it holds the lock. A release
+# that removed the directory between the mkdir and the create reads as ENOENT, not as a holder:
+# try again, a bounded number of times, so a free lock is not reported as held.
+take_lock() {
+  local i=0
+  while [ "$i" -lt 3 ]; do
+    mkdir "$LOCK_DIR" 2>/dev/null || :   # mkdir-ok: its exit status is ignored, the O_EXCL stamp below decides who holds the lock
+    ( set -C; : > "$LOCK_META" ) 2>/dev/null && return 0
+    [ -d "$LOCK_DIR" ] && return 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
 cmd_acquire() {
   [ -n "$OWNER" ] || die_usage
   mkdir -p "$ROOT/.supervisor" 2>/dev/null || true
@@ -375,7 +393,7 @@ cmd_acquire() {
     break_lock
   fi
 
-  if mkdir "$LOCK_DIR" 2>/dev/null; then
+  if take_lock; then
     write_meta
     note_degraded "$WROTE_SRC"
     exit 0
@@ -414,7 +432,7 @@ cmd_acquire() {
   fi
   if [ "$pid_alive" -eq 0 ] && [ "$age" -ge "$LOCK_TTL_SECONDS" ] 2>/dev/null; then
     rm -rf "$LOCK_DIR" 2>/dev/null || true
-    if mkdir "$LOCK_DIR" 2>/dev/null; then
+    if take_lock; then
       write_meta
       note_degraded "$WROTE_SRC"
       exit 0

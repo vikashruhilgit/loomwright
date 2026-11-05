@@ -408,6 +408,7 @@ while [ -e "$SALVAGE_DIR" ]; do
   [ "$N" -le 999 ] || fail "no free salvage name under $DEST for $NAME-$TS (cap 999)"
   SALVAGE_DIR="$DEST/$NAME-$TS-$N"
 done
+# mkdir-ok: the -e loop above picks the free name; two salvages of one worktree in one second would share identical content
 mkdir "$SALVAGE_DIR" 2>/dev/null || fail "cannot create $SALVAGE_DIR"
 
 # ---- capture (best-effort per step, README last) -----------------------------

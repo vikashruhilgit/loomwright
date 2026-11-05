@@ -29,7 +29,7 @@
 # The file is rendered into a mktemp dir, printed on a dry run, and under --confirm copied beside the
 # target and `mv`ed into place; only then is each named draft removed and one Progress line appended
 # per draft whose run file exists (progress-append's writer, so it never forges a run file). Under
-# --confirm one bundler runs at a time (a `mkdir` lock in proposed/, released on exit). Finding
+# --confirm one bundler runs at a time (an O_EXCL lock file in proposed/, released on exit). Finding
 # text is DATA: it is read from each draft's fenced finding block(s) (`### Entry N` blocks for a
 # summary draft) and every line is written `> `-prefixed inside a fence longer than any backtick run
 # in it, so no finding byte starts a column-0 heading or `## Status:` line; it is never interpolated

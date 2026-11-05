@@ -119,7 +119,7 @@
 # its OWN read-modify-write (via the Edit tool) against the same file for
 # `## Decisions Log` / `## Worker Results` / `## Error Log` / `## Phase
 # Flags`. Reproduced 6/6: an interleaved Context-Keeper write-back can
-# clobber a freshly projected `## Session` block. Fix: a portable mkdir-based
+# clobber a freshly projected `## Session` block. Fix: a portable O_EXCL file
 # lock (flock(1) is not on stock macOS) around the read-modify-write. Under
 # contention this projector SKIPS (exits 0) rather than waiting — safe
 # specifically BECAUSE the log is append-only: the next event re-derives the
@@ -424,24 +424,24 @@ if [ -f "$STATE_MD_READ" ]; then
   ' "$STATE_MD_READ" 2>/dev/null || true)"
 fi
 
-# ---- mkdir-based lock (Finding 2) -------------------------------------------
-# flock(1) is not available on stock macOS (bash 3.2 + BSD userland), so use a
-# directory-create as the portable atomic mutual-exclusion primitive: mkdir
-# either creates the directory (lock acquired) or fails because it already
-# exists (lock held elsewhere) — both outcomes are atomic at the filesystem
-# level.
+# ---- O_EXCL lock file (Finding 2) --------------------------------------------
+# flock(1) is not available on stock macOS (bash 3.2 + BSD userland), so a
+# noclobber create is the portable mutual-exclusion primitive: bash opens the
+# file with O_EXCL, so it either creates it (lock acquired) or fails because
+# it already exists (lock held elsewhere). The `mkdir` command is not used: it
+# depends on the coreutils, and uutils exits 0 on an existing directory.
 #
-# Stale-lock decision (documented, not implicit): a lock dir can be
-# abandoned by a hard-killed holder (SIGKILL, power loss) between mkdir and
-# its own rmdir — mkdir-based locks have no OS-level "owner died" detection,
-# unlike flock(1). This script ages out any lock dir older than
-# STALE_LOCK_SECONDS by rmdir-ing it and retrying acquisition exactly once.
+# Stale-lock decision (documented, not implicit): a lock can be abandoned by a
+# hard-killed holder (SIGKILL, power loss) between its create and its remove,
+# with no OS-level "owner died" detection, unlike flock(1). This script ages
+# out any lock older than STALE_LOCK_SECONDS, including a directory left by an
+# older build, by removing it and retrying acquisition exactly once.
 # This is safe specifically because the only thing the lock protects is a
 # projection that is ALWAYS re-derivable from the same append-only log on
 # the very next event — an incorrectly-stolen lock from a genuinely slow
 # (not dead) holder costs, at worst, one skipped or doubled projection of
 # IDENTICAL derivable content, never data loss.
-LOCK_DIR="$SUP_DIR/.state.lock"
+LOCK_FILE="$SUP_DIR/.state.lock"
 STALE_LOCK_SECONDS=60
 
 lock_age_seconds() {
@@ -466,29 +466,29 @@ lock_age_seconds() {
 }
 
 acquire_lock() {
-  if mkdir "$LOCK_DIR" 2>/dev/null; then
+  if ( set -C; : > "$LOCK_FILE" ) 2>/dev/null; then
     return 0
   fi
   # Contention. Check whether the existing lock is stale enough to steal.
   local age
-  age="$(lock_age_seconds "$LOCK_DIR" 2>/dev/null || true)"
+  age="$(lock_age_seconds "$LOCK_FILE" 2>/dev/null || true)"
   if [ -n "${age:-}" ] && [ "$age" -ge "$STALE_LOCK_SECONDS" ] 2>/dev/null; then
-    rmdir "$LOCK_DIR" 2>/dev/null || true
-    if mkdir "$LOCK_DIR" 2>/dev/null; then
+    rm -rf "$LOCK_FILE" 2>/dev/null || true
+    if ( set -C; : > "$LOCK_FILE" ) 2>/dev/null; then
       return 0
     fi
   fi
   return 1
 }
 
-# Ensure the lock dir's PARENT exists before attempting to acquire it — on a
-# genuinely first-ever projection (no `.supervisor/` yet) `mkdir "$LOCK_DIR"`
+# Ensure the lock's PARENT exists before attempting to acquire it — on a
+# genuinely first-ever projection (no `.supervisor/` yet) creating "$LOCK_FILE"
 # would otherwise fail with ENOENT (missing parent), which `acquire_lock`
 # cannot distinguish from real contention, and this script would exit 0
 # without ever writing the very first state.md. This mkdir is best-effort and
 # unconditional (not itself lock-protected) — creating the directory is not
 # the racy part; the read-modify-write of state.md inside it is.
-mkdir -p "$(dirname "$LOCK_DIR")" 2>/dev/null || true
+mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || true
 
 if ! acquire_lock; then
   # Under contention (or a live holder), skip THIS projection rather than
@@ -498,12 +498,12 @@ if ! acquire_lock; then
 fi
 
 # ---- Targeted in-place edit of ## Session only, preserving other sections --
-mkdir -p "$(dirname "$STATE_MD")" 2>/dev/null || { rmdir "$LOCK_DIR" 2>/dev/null || true; exit 0; }
+mkdir -p "$(dirname "$STATE_MD")" 2>/dev/null || { rm -f "$LOCK_FILE" 2>/dev/null || true; exit 0; }
 
-TMP="$(mktemp "${STATE_MD}.XXXXXX" 2>/dev/null)" || { rmdir "$LOCK_DIR" 2>/dev/null || true; exit 0; }
-BLOCK="$(mktemp "${STATE_MD}.block.XXXXXX" 2>/dev/null)" || { rm -f "$TMP" 2>/dev/null; rmdir "$LOCK_DIR" 2>/dev/null || true; exit 0; }
-cleanup_tmp() { rm -f "$TMP" "$BLOCK" 2>/dev/null || true; rmdir "$LOCK_DIR" 2>/dev/null || true; }
-# Lock is released (rmdir) on EVERY exit path from here on — normal
+TMP="$(mktemp "${STATE_MD}.XXXXXX" 2>/dev/null)" || { rm -f "$LOCK_FILE" 2>/dev/null || true; exit 0; }
+BLOCK="$(mktemp "${STATE_MD}.block.XXXXXX" 2>/dev/null)" || { rm -f "$TMP" "$LOCK_FILE" 2>/dev/null || true; exit 0; }
+cleanup_tmp() { rm -f "$TMP" "$BLOCK" "$LOCK_FILE" 2>/dev/null || true; }
+# Lock is released on EVERY exit path from here on — normal
 # completion, any `exit 0` below, or an unexpected signal — via this single
 # trap (bash traps replace, not stack, so this supersedes the top-of-file
 # `trap 'exit 0' EXIT`).

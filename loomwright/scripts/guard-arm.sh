@@ -185,7 +185,7 @@ prune() {
 
 # write_marker <sid> <by> — atomic same-dir temp + mv, idempotent (own file
 # present -> no-op, never rewritten). Mirrors dispatch-pr-review.sh's
-# acquire_lock SHAPE (atomic mkdir/temp+mv discipline) but is a one-file-
+# acquire_lock SHAPE (atomic create/temp+mv discipline) but is a one-file-
 # per-session design, not a shared lock slot.
 write_marker() {
   local sid="$1" by="$2" marker tmp armed_at _gd

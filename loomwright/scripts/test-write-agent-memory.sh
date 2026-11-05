@@ -30,7 +30,7 @@
 #          through a lock another writer holds                                      ((j2) goes RED)
 #   · (M6) the STALENESS RE-CHECK under arbitration stripped ⇒ a breaker that observed a stale
 #          lock acts on that stale observation and deletes a LIVE lock            ((j5/X) goes RED)
-#   · (M7) the SINGLE-WINNER arbitration directory stripped  ⇒ two simultaneous breakers both
+#   · (M7) the SINGLE-WINNER arbitration file stripped  ⇒ two simultaneous breakers both
 #          break the same stale lock and both acquire                             ((j5/Y) goes RED)
 #   · (M8) the CALL-SITE ADVISORY NOTICE removed ⇒ a real write with an advisory finding no longer
 #          says so at the call site, while the check's own token still prints       ((d6b) goes RED)
@@ -949,7 +949,8 @@ BJ2="$(mkbody "$RJ2/body-j2.md")"
 run "$RJ2" "$SJ2" "$AGENT" j2_seed "a seed entry written before the lock was held, per PR #153" "$BJ2" --source "PR #153" --confirm
 [ "$RC" -eq 0 ] && ok "(j2) the seed write (lock free) succeeds" || no "(j2) the seed write failed with $RC — $OUT"
 J2_LOCK="$DJ2/.write-agent-memory.lock"
-if mkdir "$J2_LOCK" 2>/dev/null; then
+# The stamp is what holds it: an O_EXCL create of `owner`, so a lock dir without one has no holder.
+if mkdir "$J2_LOCK" 2>/dev/null && printf 'a-live-writers-token\n' > "$J2_LOCK/owner" 2>/dev/null; then
   ok "(j2) the test holds the lock directory itself — the writer below provably cannot acquire it (driven, not raced)"
   OUT="$(AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 bash "$WRITER" "$AGENT" j2_blocked \
           "an entry attempted while another writer held the index lock, per PR #153" "$BJ2" \
@@ -958,7 +959,7 @@ if mkdir "$J2_LOCK" 2>/dev/null; then
   grep -qF 'could not acquire the store lock' <<< "$OUT" && ok "(j2) the refusal NAMES the lock as the reason (not a generic rebuild failure)" || no "(j2) the refusal does not name the lock — $OUT"
   [ -f "$DJ2/j2_blocked.md" ] && no "(j2) the blocked entry file was LEFT BEHIND — the rebuild was skipped and the index/directory now disagree" || ok "(j2) the blocked entry file was removed by the undo path — the store never holds a file the index cannot name"
   [ -f "$DJ2/j2_seed.md" ] && ok "(j2) the pre-existing seed entry is untouched" || no "(j2) the refusal collaterally removed an unrelated entry"
-  rmdir "$J2_LOCK" 2>/dev/null
+  rm -f "$J2_LOCK/owner" 2>/dev/null; rmdir "$J2_LOCK" 2>/dev/null
   # And once the lock is free again the very same write succeeds — proving (j2) failed on the lock
   # and not on something else about the entry.
   run "$RJ2" "$SJ2" "$AGENT" j2_blocked "an entry attempted while another writer held the index lock, per PR #153" "$BJ2" --source "PR #153" --confirm
@@ -987,7 +988,7 @@ RJ3="$(new_repo)"; SJ3="$RJ3/.claude/agent-memory"; DJ3="$SJ3/$AGENT"
 BJ3="$(mkbody "$RJ3/body-j3.md")"
 mkdir -p "$DJ3" || setup_fail "could not create the M5 store dir $DJ3"
 J3_LOCK="$DJ3/.write-agent-memory.lock"
-if mkdir "$J3_LOCK" 2>/dev/null; then
+if mkdir "$J3_LOCK" 2>/dev/null && printf 'a-live-writers-token\n' > "$J3_LOCK/owner" 2>/dev/null; then
   OUT="$(WRITE_AGENT_MEMORY_VALIDATOR="$VALIDATOR" AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 \
           bash "$M5" "$AGENT" j3_entry \
           "an entry written by a writer that ignores the store lock entirely, per PR #154" "$BJ3" \
@@ -997,7 +998,7 @@ if mkdir "$J3_LOCK" 2>/dev/null; then
   else
     no "(j3) the mutant did NOT write through the held lock (rc=$RC) — (j2) is passing for some other reason and is vacuous: $OUT"
   fi
-  rmdir "$J3_LOCK" 2>/dev/null
+  rm -f "$J3_LOCK/owner" 2>/dev/null; rmdir "$J3_LOCK" 2>/dev/null
 else
   no "(j3) could not create the M5 lock fixture at $J3_LOCK — the mutation control did not run (a fixture gap, not a pass)"
 fi
@@ -1027,7 +1028,7 @@ if mkdir "$J4_LOCK" 2>/dev/null && printf 'a-dead-writers-token\n' > "$J4_LOCK/o
   grep -qF 'breaking a STALE index lock' <<< "$OUT" && ok "(j4) and it says so on stderr, naming the lock it broke" || no "(j4) the break was silent — an operator cannot tell an abandoned lock was cleared: $OUT"
   grep -qF '(j4_stale.md)' "$DJ4/MEMORY.md" 2>/dev/null && ok "(j4) the index was rebuilt and names the entry" || no "(j4) MEMORY.md does not name j4_stale.md after the stale break"
   resid_j4="$(find "$DJ4" -name '.write-agent-memory.*' 2>/dev/null | wc -l | tr -d '[:space:]')"
-  [ "$resid_j4" = "0" ] && ok "(j4) neither the broken lock, the arbitration directory nor a temp file survived" || no "(j4) $resid_j4 .write-agent-memory.* artifact(s) left behind after the stale break"
+  [ "$resid_j4" = "0" ] && ok "(j4) neither the broken lock, the arbitration file nor a temp file survived" || no "(j4) $resid_j4 .write-agent-memory.* artifact(s) left behind after the stale break"
 else
   no "(j4) could not build the stale-lock fixture at $J4_LOCK — the stale-break assertions did not run (a fixture gap, not a pass)"
 fi
@@ -1181,12 +1182,12 @@ n_rc_mut="$(grep -c '^      if \[ -n "\$(find "\$lock" -maxdepth 0 -mmin' "$M6" 
 [ "$n_rc_orig" -eq 1 ] && [ "$n_rc_mut" -eq 0 ] && ok "(j5) M6 is NON-VACUOUS: the staleness re-check under arbitration is gone ($n_rc_orig → $n_rc_mut sites)" || no "(j5) M6 did not take (re-check sites $n_rc_orig → $n_rc_mut) — the control proves nothing"
 H_M6="$MUT_DIR/lock-harness-m6.sh"; build_lock_harness "$M6" "$H_M6"
 
-# MUTATION CONTROL M7 — the single-winner arbitration directory stripped (the simultaneous half).
+# MUTATION CONTROL M7 — the single-winner arbitration file stripped (the simultaneous half).
 M7="$MUT_DIR/mutant-no-breaker.sh"
-n_bk_orig="$(grep -c '^    if mkdir "\$breaker" 2>/dev/null; then' "$WRITER" 2>/dev/null || true)"; [ -n "$n_bk_orig" ] || n_bk_orig=0
-sed -e '/^    if mkdir "\$breaker" 2>\/dev\/null; then/s/.*/    if :; then/' "$WRITER" > "$M7" || setup_fail "could not build mutant M7"
-n_bk_mut="$(grep -c '^    if mkdir "\$breaker" 2>/dev/null; then' "$M7" 2>/dev/null || true)"; [ -n "$n_bk_mut" ] || n_bk_mut=0
-[ "$n_bk_orig" -eq 1 ] && [ "$n_bk_mut" -eq 0 ] && ok "(j5) M7 is NON-VACUOUS: the single-winner arbitration directory is gone ($n_bk_orig → $n_bk_mut sites)" || no "(j5) M7 did not take (arbitration sites $n_bk_orig → $n_bk_mut) — the control proves nothing"
+n_bk_orig="$(grep -c '^    if ( set -C; : > "\$breaker" ) 2>/dev/null; then' "$WRITER" 2>/dev/null || true)"; [ -n "$n_bk_orig" ] || n_bk_orig=0
+sed -e '/^    if ( set -C; : > "\$breaker" ) 2>\/dev\/null; then/s/.*/    if :; then/' "$WRITER" > "$M7" || setup_fail "could not build mutant M7"
+n_bk_mut="$(grep -c '^    if ( set -C; : > "\$breaker" ) 2>/dev/null; then' "$M7" 2>/dev/null || true)"; [ -n "$n_bk_mut" ] || n_bk_mut=0
+[ "$n_bk_orig" -eq 1 ] && [ "$n_bk_mut" -eq 0 ] && ok "(j5) M7 is NON-VACUOUS: the single-winner arbitration file is gone ($n_bk_orig → $n_bk_mut sites)" || no "(j5) M7 did not take (arbitration sites $n_bk_orig → $n_bk_mut) — the control proves nothing"
 H_M7="$MUT_DIR/lock-harness-m7.sh"; build_lock_harness "$M7" "$H_M7"
 
 # FIXTURE X — the SEQUENTIAL hazard. Both gates sit on find call 1 (the unarbitrated staleness
@@ -1201,12 +1202,12 @@ x_m6="$(run_breaker_race "$H_M6" m6-x 1 "observed.B done.B" 1 "held.A done.A")"
 # FIXTURE Y — the SIMULTANEOUS hazard. Both gates sit on find call 2 (the re-check, reached only
 # from inside the breaker block). B's answer is held until A has OBSERVED; A's answer is held until
 # B HOLDS. So whoever gets inside the breaker block observes the stale lock before anyone breaks it,
-# and A acts on its observation after B has broken and re-taken. With the arbitration directory
+# and A acts on its observation after B has broken and re-taken. With the arbitration file
 # intact only one waiter ever reaches call 2 and the other's exit (`done.*`) opens the gate.
 y_real="$(run_breaker_race "$H_REAL" real-y 2 "held.B done.B" 2 "observed.A done.A")"
-[ "$y_real" = "1" ] && ok "(j5/Y) simultaneous: exactly ONE waiter acquired — only the holder of the arbitration directory may break, the other refuses" || no "(j5/Y) $y_real waiters acquired the lock (expected 1) — two racers broke the same lock and both entered the critical section"
+[ "$y_real" = "1" ] && ok "(j5/Y) simultaneous: exactly ONE waiter acquired — only the holder of the arbitration file may break, the other refuses" || no "(j5/Y) $y_real waiters acquired the lock (expected 1) — two racers broke the same lock and both entered the critical section"
 y_m7="$(run_breaker_race "$H_M7" m7-y 2 "held.B done.B" 2 "observed.A done.A")"
-[ "$y_m7" = "2" ] && ok "(j5/Y) M7 CONFIRMED: without the arbitration directory the same fixture puts TWO waiters in the lock" || no "(j5/Y) the arbitration-stripped mutant did NOT double-acquire ($y_m7 acquisitions) — (j5/Y) is passing for some other reason and is vacuous"
+[ "$y_m7" = "2" ] && ok "(j5/Y) M7 CONFIRMED: without the arbitration file the same fixture puts TWO waiters in the lock" || no "(j5/Y) the arbitration-stripped mutant did NOT double-acquire ($y_m7 acquisitions) — (j5/Y) is passing for some other reason and is vacuous"
 
 echo "== (g) the confirm-only gate: a non-TTY run WITHOUT --confirm writes nothing =="
 RG="$(new_repo)"; SG="$RG/.claude/agent-memory"

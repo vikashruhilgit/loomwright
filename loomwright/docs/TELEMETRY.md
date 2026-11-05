@@ -432,7 +432,7 @@ verdict (see §"Run ownership"). Self-test: `scripts/test-progress-state.sh`
 the worktree-anchoring hazard from inside a real `git worktree add`, the
 Parallel-Path case, projector round-trip byte-identity, section
 preservation, the AC-5 hook-dispatch positive/negative cases, and the
-PR #116 review round's ordering rule, mkdir-lock, permission-preservation,
+PR #116 review round's ordering rule, lock, permission-preservation,
 non-derived-key-preservation, and `reproject-state-on-terminal.sh` cases,
 plus the run-ownership, agent-identity, and staleness-backstop cases added
 in v15.49.0 and the pre-first-event-window cases added with the run-creation
@@ -576,7 +576,7 @@ own read-modify-write (via the Edit tool) against `## Decisions Log` /
 with it — reproduced deterministically 6/6: an interleaved Context-Keeper
 write-back clobbers the freshly projected `## Session` block (the
 *projection* is lost, not the decision — note the direction, it is easy to
-misstate). `build-state.sh` now takes a portable `mkdir`-based lock
+misstate). `build-state.sh` now takes a portable O_EXCL lock file
 (`.supervisor/.state.lock`; `flock(1)` is not on stock macOS) around its
 read-modify-write. **What the lock guarantees:** no two `build-state.sh`
 invocations can be inside the read-modify-write at the same time, so a
