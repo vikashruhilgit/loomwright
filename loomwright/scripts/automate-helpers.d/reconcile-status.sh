@@ -79,7 +79,7 @@
 # 252 done/ briefs, 569 merged PRs) the pass took 7:19 and 5:53 of that was
 # local: _rs_find_done_brief re-parsed every brief for every not-done file. So:
 #   - the briefs are parsed ONCE per pass (RS_BRIEF_INDEX);
-#   - merged PRs are read ONCE per pass, on the first file that needs them
+#   - merged PRs are read ONCE per pass, on the first not-done file
 #     (_rs_load_merged_prs), replacing a `pr list --search` per file. That read
 #     also lifts the old five-hit cap, so a citing PR can no longer fall off it;
 #   - a search runs only for a file with an unrecorded merged PR on a
@@ -323,7 +323,8 @@ _rs_note_unverified() {
 }
 
 # _rs_load_merged_prs — the ONE merged-PR read of a pass, called on the first
-# file that needs it (from the main shell, so the RS_PR_* paths survive). On
+# not-done file, even a `proposed` or `parked` one that will not consult it (from
+# the main shell, so the RS_PR_* paths survive). On
 # success: RS_PR_ROWS (one compact JSON row per PR, newest first), RS_PR_URLS (the
 # matching url per line), RS_PR_LINES (`<url>\t<one title or body line>`) and
 # RS_PR_HEADS (`<url>\t<head branch>`, same order). A
