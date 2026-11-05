@@ -608,7 +608,7 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 | `launch-pad`        | 47557 | 46506¹ | 7 |
 | `orchestrator`      | 10357 | 9415¹ | 1 |
 | `plan-reviewer`     | 11535 | 10528¹ | 0 |
-| `product-owner`     | 17356 | 16719¹ | 3 |
+| `product-owner`     | 17356 | 17195¹ | 3 |
 | `qa-executor`       | 53332 | 48483¹ | 5 |
 | `qa-strategist`     | 24219 | 22017¹ | 3 |
 | `red-team-reviewer` | 6666  | 6060¹ | 1 |
@@ -630,6 +630,8 @@ A CI ratchet on **prompt inventory**, in three tables. An **agent's** weight is 
 > **Raise log (requirement-to-plan-checks, 2026-11-02):** `plan-reviewer` 9451 → 11535 (live 9273 at origin/main → 10486 at the raise, 10528¹ at the end of the PR) — the new partly-conditional Criterion 22 "Requirement Fit" (the two-way requirement ↔ brief mapping, the `### Requirement fit` table, the `requirement_fit: fulfils | under | over | skipped` field and issue category) plus its Decision Matrix row breached the 178-headroom row; restored to measured + ~10% per the raise rule. The same PR raised two non-agent ceilings, recorded here for completeness: skill `user-story-writing` 4732 → 5709 (live 4452 → 5190; the Story Template's `### Non-goals`, `### Owner decisions` and `## Validation (must pass before merge)`) and command `product-owner` 10258 → 11537 (live 9638 → 10488; the same three sections in its Output Format and Persist step, plus the missing-proof flag).
 
 > **Re-measure log (no raise — requirement-to-plan-checks, 2026-11-02):** live weight at origin/main → this PR's head, every `budget` unchanged, per `bash scripts/check-token-budget.sh`: agents `launch-pad` 44872 → 45127 (2430 headroom; the Phase 5.5 `--- SOURCE REQUIREMENT ---` spawn-contract paste and the refine branch's add-coverage rule), `product-owner` 15939 → 16719 (637 headroom; its Output Format and Persist step gained Non-goals, Owner decisions and Validation, plus the missing-proof flag); command `launch-pad` 5143 → 5326 (189 headroom; Criterion 22 in the Phase 5.5 conditional list). No budget breached; none raised, per the anti-treadmill rule. The two agent rows are ¹-marked LIVE rows; all three table cells and JSON `measured` fields carry these end-of-PR figures.
+
+> **Re-measure log (no raise — touches-name-shared-files-at-intake, 2026-11-05):** live weight at origin/main → this PR's head, every `budget` unchanged, per `bash scripts/check-token-budget.sh`: agent `product-owner` 16719 → 17195 (**161 headroom, 0.9%** — the next PR that grows it will breach); command `product-owner` 10488 → 11004 (533 headroom); skill `user-story-writing` 5279 → 5535 (174 headroom). The growth is the Product Owner's shared-file sweep bullet (mirrored in the command), the contract-change flag at the Pre-persist gate (Assumption Check and Output Format lines, the 3a trigger, option bullet and `<n>` count) and the skill's sweep bullet with its `.agent/companions.json` pointer. No budget breached; none raised. The agent row stays ¹-marked LIVE; all three table cells and JSON `measured` fields carry these end-of-PR figures.
 
 > **Raise log (lane-scope-regate Part A, 2026-11-04):** command `launch-pad` 5515 → 6203 — the `LP-SCOPE` mirror (the Can't-ask rule's `scope_widening_non_interactive` branch, the no-improvised-header rule, Phase 2.5's "outside Touches is never a NO-GO" line and the Phase 6 step 1 ask) moved the live weight 5326 → 5639 (breach by 124); restored to measured + ~10% per the raise rule. **Re-measured, no raise:** agent `launch-pad` 45686 → 46388 (Phase 6 action 1a, its Save rule and Phase 5.5 pseudocode line, the Critical Rules additions and the Phase 2.5 line; 1169 headroom). **Part B, re-measured, no raise:** agent `launch-pad` 46388 → 46506 and command `launch-pad` 5639 → 5678 (the lane `- decision: pending-coordinator` branch of action 1a and its Phase 6 mirror; 1051 / 525 headroom). Both table cells and JSON `measured` fields carry these end-of-change figures.
 
@@ -744,7 +746,7 @@ Mirror of `.skills` in `prompt-token-budgets.json` (gate-checked the same way as
 | `supervisor-readiness` | 12700 | 11545 |
 | `telemetry` | 3216 | 2923 |
 | `unit-testing` | 1691 | 1537 |
-| `user-story-writing` | 5709 | 5190 |
+| `user-story-writing` | 5709 | 5535 |
 | `verify-walkthrough` | 9454 | 8594 |
 | `workflow-management` | 4915 | 4468 |
 
@@ -768,7 +770,7 @@ Mirror of `.commands` in `prompt-token-budgets.json` (gate-checked the same way)
 | `obsidian` | 1518 | 1380 |
 | `orchestrator` | 3859 | 3508 |
 | `pr-postmortem` | 2215 | 2013 |
-| `product-owner` | 11537 | 10488 |
+| `product-owner` | 11537 | 11004 |
 | `propose` | 6018 | 5471 |
 | `qa-executor` | 1337 | 1215 |
 | `qa-strategist` | 4411 | 4010 |
