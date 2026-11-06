@@ -538,7 +538,7 @@ echo 'echo "validate" >> "$FIXTURE_LOG"' > "$R/scripts/validate-version.sh"
 echo ': library' > "$R/loomwright/scripts/one.sh"
 echo 'echo "two" >> "$FIXTURE_LOG"' > "$R/loomwright/scripts/test-two.sh"
 ( cd "$R" && git add -A && git commit -qm affected-fixture && git update-ref refs/remotes/origin/main HEAD )
-marker="affected-only — not a pre-push gate; run ci-local.sh before pushing"
+marker="affected-only — not a CI result; GitHub CI runs the full suite on the PR"
 cheap_ran() { ran "check-a --self-test" && ran "check-a plain" && ran vendor && ran validate; }
 # The marker is the line right before the closing log-path line.
 marker_last() { [ "$(awk '{ p = c; c = $0 } END { print p }' <<<"$out")" = "$marker" ] && names_log; }
