@@ -453,6 +453,10 @@ case "$BOUND" in
   ''|*[!0-9]*) NO_LIST_GRACE=0 ;;
   *) [ "$NO_LIST_GRACE" -gt $((BOUND / 2)) ] && NO_LIST_GRACE=$((BOUND / 2)) ;;
 esac
+# $SECONDS restarts with each --continue call, so resumable mode takes off what earlier calls already spent.
+if [ -n "$DEADLINE" ]; then
+  NO_LIST_GRACE=$((NO_LIST_GRACE - ($(date +%s) - (DEADLINE - BOUND))))
+fi
 
 while :; do
   _view="$("$GH_BIN" pr view "$PR_URL" --json headRefOid,statusCheckRollup 2>/dev/null || true)"

@@ -832,7 +832,7 @@ rm -rf "$D35"
 echo "== 36. paid-plan 403, an empty rollup just after a push => held through the grace, then the real result =="
 D36="$(fresh_stub_dir)"
 write_refusal_stub "$D36" "$PAID_BODY" "$PAID_ERR" '[]' "$CI_RED"
-OUTP="$(WFC_NO_LIST_GRACE=5 GH="$D36/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
+OUTP="$(WFC_NO_LIST_GRACE=8 GH="$D36/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
 if grep -qE '^SETTLED sha=deadbeef00 required=red' < <(printf '%s' "$OUTP"); then
   ok "not-yet-queued checks are not read as green ($OUTP)"
 else
@@ -844,7 +844,7 @@ echo "== 36b. paid-plan 403, one green check first and a red one queued later =>
 D36B="$(fresh_stub_dir)"
 CI_LATE='[{"name":"lint","status":"COMPLETED","conclusion":"SUCCESS","state":""},{"name":"ci","status":"COMPLETED","conclusion":"FAILURE","state":""}]'
 write_refusal_stub "$D36B" "$PAID_BODY" "$PAID_ERR" '[{"name":"lint","status":"COMPLETED","conclusion":"SUCCESS","state":""}]' "$CI_LATE"
-OUTP="$(WFC_NO_LIST_GRACE=5 GH="$D36B/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
+OUTP="$(WFC_NO_LIST_GRACE=8 GH="$D36B/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
 if grep -qE '^SETTLED sha=deadbeef00 required=red' < <(printf '%s' "$OUTP"); then
   ok "a partly queued rollup is not read as green ($OUTP)"
 else
@@ -855,7 +855,7 @@ rm -rf "$D36B"
 echo "== 37. paid-plan 403, a rollup that stays empty (no CI) => settles green after the grace, never elapses =="
 D37="$(fresh_stub_dir)"
 write_refusal_stub "$D37" "$PAID_BODY" "$PAID_ERR" '[]'
-OUTP="$(WFC_NO_LIST_GRACE=1 GH="$D37/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
+OUTP="$(WFC_NO_LIST_GRACE=6 GH="$D37/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 20 --interval 1 --required-only)"
 POLLS="$(cat "$D37/count" 2>/dev/null)"
 if grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUTP") && [ "${POLLS:-0}" -ge 2 ]; then
   ok "no CI settles after the grace ($POLLS polls, $OUTP)"
@@ -874,6 +874,22 @@ else
   no "paid-plan 403 --bound 0 wrong (polls=$(cat "$D38/count") out='$OUTP')"
 fi
 rm -rf "$D38"
+
+echo "== 38b. paid-plan 403 under --call-max shorter than the grace => the grace runs once across calls =="
+D38B="$(fresh_stub_dir)"
+write_refusal_stub "$D38B" "$PAID_BODY" "$PAID_ERR" "$CI_GREEN"
+OUTP="$(CHECK_WAIT_DIR="$D38B/state" WFC_NO_LIST_GRACE=3 GH="$D38B/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 60 --interval 1 --required-only --call-max 1)"
+CALLS=1
+while [ "${OUTP%% *}" = CONTINUE ] && [ "$CALLS" -lt 8 ]; do
+  OUTP="$(CHECK_WAIT_DIR="$D38B/state" WFC_NO_LIST_GRACE=3 GH="$D38B/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 60 --interval 1 --required-only --call-max 1 --continue)"
+  CALLS=$((CALLS + 1))
+done
+if grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUTP"); then
+  ok "the grace is not restarted by --continue ($CALLS calls, $OUTP)"
+else
+  no "paid-plan 403 resumable grace wrong (calls=$CALLS out='$OUTP') -- each --continue restarted the grace"
+fi
+rm -rf "$D38B"
 
 echo "== 39. other refusals stay required=unknown, even with green checks =="
 for pair in \
