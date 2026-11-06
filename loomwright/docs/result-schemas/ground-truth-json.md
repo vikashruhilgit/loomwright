@@ -252,6 +252,11 @@ heading line**, opened by the namespaced HTML-comment sentinel the idempotency g
   the sentinel alone on its line, the NEXT line a `## Status: done` / `done_with_escalation` heading
   (`closeout: skipped — already stamped` otherwise; a sentinel quoted in prose does not count,
   automate-followups/38); the requirement file is stamped **in place** and never moved.
+- **The first heading:** in the same atomic write, an explicit `pending`/`ready` first `## Status:` line
+  becomes `## Status: done` with a `- **PR:** <url>` line under it, so the file no longer opens with
+  `pending` (`scripts/requirement-heading.sh`). The PR line is what trail-pr's evidence gate reads for that
+  heading. `proposed`, `parked`, `brief-shipped` and free-text headings stay. `scripts/backfill-requirement-headings.sh`
+  (owner-run, dry-run unless `--apply`) does the same for files stamped earlier.
 - **Other writers of a `## Status:` heading (not this block):** `reconcile-status --apply` (human-run,
   evidence-gated on a merged PR) writes `## Status: done (PR #<n>, merge <sha>)` without the sentinel,
   and an owner's `# abandoned:` decision becomes `## Status: done_with_escalation — ABANDONED (…)`

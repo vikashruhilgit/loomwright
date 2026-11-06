@@ -137,9 +137,12 @@
 #   DS. done stamp only post-merge (automate-followups/37) — a requirement at
 #      `## Status: pending` after Phase 4.5 (its step-2.5 stamp block, if any,
 #      applied) + closeout with the PR OPEN is byte-identical; MERGED ⇒ exactly
-#      one closeout-printf block; the self-heal skill instructs no stamp; DS4: a
-#      `## Status: brief-shipped` requirement + MERGED ⇒ the done block is appended
-#      below the kept brief-shipped heading (byte for byte).
+#      one closeout-printf block and the first `## Status:` line rewritten to done + its
+#      PR; the self-heal skill instructs no stamp; DS4: a `## Status: brief-shipped`
+#      requirement + MERGED ⇒ the done block is appended below the kept brief-shipped
+#      heading (byte for byte); DS5: only explicit pending/ready headings are rewritten;
+#      DS6: the first-line readers and trail-pr's gate over a stamped file; mutation
+#      control. BF: backfill-requirement-headings.sh, dry-run unless --apply.
 #   NT. closeout --no-trail (automate-followups/38) — the same steps, run file
 #      and requirement bytes as plain closeout, no trail-pr (spy), classified
 #      `complete`; OPEN ⇒ nothing; the --auto-merge SYNC close-out (pending

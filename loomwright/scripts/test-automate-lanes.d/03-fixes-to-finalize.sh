@@ -503,8 +503,10 @@ check "AB3 merged re-run exits 0 and its last line reads closeout complete" "$rc
 has "AB3b … closeout stamped the lane's requirement (a quoted sentinel is not a stamp)" "$out" "  closeout: stamped — $RAB"
 has "AB3c … ran with --no-trail" "$out" "  trail-pr: skipped — --no-trail"
 hasnt "AB3d … and the wave-end push no longer excludes the requirement" "$out" "excluded $RAB — pr not merged"
+# ab_blocks <file> — sentinel-led done headings. closeout also rewrites the first heading, which is not a stamp block.
+ab_blocks() { grep -A1 -xF '<!-- loomwright:requirement-closeout -->' "$1" | grep -cE '^## Status:[[:space:]]*done' | tr -d ' '; }
 check "AB3e the lane requirement carries ONE sentinel-led ## Status: done" \
-  "$(grep -A1 -xF '<!-- loomwright:requirement-closeout -->' "$L57/$RAB" | tr '\n' '|'):$(grep -cE '^## Status:[[:space:]]*done' "$L57/$RAB" | tr -d ' ')" \
+  "$(grep -A1 -xF '<!-- loomwright:requirement-closeout -->' "$L57/$RAB" | tr '\n' '|'):$(ab_blocks "$L57/$RAB")" \
   "<!-- loomwright:requirement-closeout -->|## Status: done|:1"
 # AB3f/AB3g/AB4b — parallel-automate/21 A1: the merged re-run now also runs finalize-empty (branch mode),
 # which writes `## Status: done` and `pause_reason: null`; before A1 the lane stayed done / awaiting_go.
@@ -513,7 +515,7 @@ check "AB3f the lane run file reads - [x] <item> and ## Current done (no current
 check "AB3g the PUSHED run file carries both" \
   "$(grep -cxF -- "- [x] $RAB" "$T/remote-ab/.supervisor/automate/$PARENT5-L7.md" 2>/dev/null | tr -d ' '):$(cur_line "$T/remote-ab/.supervisor/automate/$PARENT5-L7.md" 2>/dev/null)" \
   "1:- item: $RAB | status: done | pr: $PRAB | branch: feature/ab|- pause_reason: null|"
-check "AB3h the PUSHED requirement carries the done stamp" "$(grep -cE '^## Status:[[:space:]]*done' "$T/remote-ab/$RAB" 2>/dev/null | tr -d ' ')" 1
+check "AB3h the PUSHED requirement carries the done stamp" "$(ab_blocks "$T/remote-ab/$RAB" 2>/dev/null | tr -d ' ')" 1
 check "AB3k the merged re-run's closeout AND its NAME=VALUE-led finalize-empty each ran with LOOMWRIGHT_HOLDER_PID = their own pid" \
   "$(holder_pinned closeout):$(holder_pinned finalize-empty)" "pinned:pinned"
 ab_co="$(grep -n '^closeout ' "$T_ABSPY" | tail -n1 | cut -d: -f1)"; ab_tp="$(grep -n '^trail-pr ' "$T_ABSPY" | tail -n1 | cut -d: -f1)"
@@ -541,7 +543,7 @@ out="$(STUB_PR_STATE=MERGED ab lane-convert-ready "$L58")"; rc=$?
 check "AB6 a closeout sync leftover in the lane keeps exit 0" "$rc" 0
 has "AB6b … the sync skip is echoed indented" "$out" "  closeout: skipped — primary checkout is on scratch (neither main nor the PR head)"
 has "AB6c … and named in the last line" "$(printf '%s\n' "$out" | tail -n1)" "; closeout leftover: sync — skipped — primary checkout is on scratch (neither main nor the PR head)"
-check "AB6d … the requirement is still stamped" "$(grep -cE '^## Status:[[:space:]]*done' "$L58/$RAB8" | tr -d ' ')" 1
+check "AB6d … the requirement is still stamped" "$(ab_blocks "$L58/$RAB8")" 1
 
 # AB7 an awaiting_merge re-run whose ## Current carries no pr: closeout is not run, and the last line says so.
 RAB9=".supervisor/requirements/t/ab9.md"
@@ -558,7 +560,7 @@ ab_rf "$RFAB10" 10 "$RAB10" "$PRAB10" awaiting_merge awaiting_merge
 out="$(STUB_MODE_LINE=off STUB_PR_STATE=MERGED ab lane-convert-ready "$L510")"; rc=$?
 check "AB8 mode off: the merged re-run exits 0 with the mode-off line (naming the state it reads) + the closeout summary" "$rc:$(printf '%s\n' "$out" | tail -n1)" \
   "0:lane-convert-ready: L10 reads done / awaiting_go (a re-run converts nothing) (metadata mode off — no metadata branch to push); closeout complete"
-check "AB8b … and the lane requirement is stamped" "$(grep -cE '^## Status:[[:space:]]*done' "$L510/$RAB10" | tr -d ' ')" 1
+check "AB8b … and the lane requirement is stamped" "$(ab_blocks "$L510/$RAB10")" 1
 
 # ---- AC: a lane whose run wrote an Orchestrator task plan is removable with no hand push -------------
 # Operator-run 2026-10-10 Phase 0.2: the plan (`.supervisor/requirements/<slug>-plan.md`, a meta-managed

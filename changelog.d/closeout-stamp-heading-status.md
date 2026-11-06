@@ -1,0 +1,3 @@
+<!-- bump: minor -->
+closeout rewrites a requirement's first `## Status:` line when it stamps done
+A closed-out requirement no longer opens with `## Status: pending`: in the same atomic write as its appended block, closeout turns an explicit `pending` or `ready` first heading into `## Status: done` with a `- **PR:**` line under it, because trail-pr's evidence gate fails closed on a done heading naming no PR. `proposed`, `parked`, `brief-shipped` and free-text headings stay, and the block, the merge gate and every board and `reconcile-status` classification are unchanged. `scripts/backfill-requirement-headings.sh` does the same for files stamped earlier; it is owner-run and writes nothing without `--apply`.
