@@ -140,5 +140,52 @@ if cmp -s "$m3" "$HERE/automate-lanes.d/remove.sh"; then no "mutant 3 did not ch
 elif [ "$(fallback_ere "$m3")" = "$lib_ere" ]; then no "a drifted fallback still compares equal"
 else ok "a drifted fallback pattern ⇒ the comparison turns red"; fi
 
+echo "-- reconcile-jobs.sh and remove.sh, with and without the library"
+# stage_lib <dir> — give <dir> the library, as an install has it
+stage_lib() { mkdir -p "$1/automate-helpers.d"; cp "$LIB" "$1/automate-helpers.d/"; }
+
+# rj_answer <script dir> <file> — reconcile-jobs.sh's real is_done and requirement_status, run from
+# <script dir>: "<done|not> <status>"
+rj_src() { awk '/^_rj_status_lib=/,/^is_done\(\)/' "$1"; awk '/^requirement_status\(\) \{/,/^}/' "$1"; }
+rj_answer() {
+  { rj_src "$RJ"; printf 'if is_done "$1"; then printf "done "; else printf "not "; fi; requirement_status "$1"\n'; } > "$1/probe.sh"
+  bash "$1/probe.sh" "$2" 2>/dev/null
+}
+RJ="$HERE/reconcile-jobs.sh"
+rj_case() { # <dir with library> <dir without>
+  [ "$(rj_answer "$1" "$F/escalated.md")" = "done done_with_escalation" ] || { echo "library: an escalated stamp"; return 1; }
+  [ "$(rj_answer "$1" "$F/fenced-pending.md")" = "not " ] || { echo "library: a fenced stamp read done"; return 1; }
+  [ "$(rj_answer "$2" "$F/stale-first.md")" = "done done" ] || { echo "no library: a real stamp"; return 1; }
+  [ "$(rj_answer "$2" "$F/not-a-stamp.md")" = "not " ] || { echo "no library: a longer word read done"; return 1; }
+  [ "$(rj_answer "$2" "$F/fenced-pending.md")" = "done done" ] || { echo "no library: the plain read should err toward done"; return 1; }
+}
+RW="$W/rj-with"; RN="$W/rj-none"; mkdir -p "$RW" "$RN"; stage_lib "$RW"
+if m="$(rj_case "$RW" "$RN")"; then ok "reconcile-jobs.sh: fence-aware with the library; the plain read without it, erring toward done"; else no "reconcile-jobs.sh: $m"; fi
+RJ_REAL="$RJ"; RJ="$W/rj-typo.sh"; sed 's|/automate-helpers.d/status-stamp.sh"$|/automate-helpers.d/status-stampp.sh"|' "$RJ_REAL" > "$RJ"
+if cmp -s "$RJ" "$RJ_REAL"; then no "reconcile-jobs mutant did not change the script"; elif rj_case "$RW" "$RN" >/dev/null; then no "a wrong library path in reconcile-jobs.sh stays green"; else ok "a wrong library path in reconcile-jobs.sh ⇒ the case turns red"; fi
+RJ="$RJ_REAL"
+
+# lane_list <remove.sh copy> <HERE> — _lanes_noclaim_files' real answer over one lane
+LANE="$W/lane"; mkdir -p "$LANE/.supervisor/automate" "$LANE/.supervisor/requirements/proposed"
+printf '# Automate Run: x\n## Queue\n## Current\n' > "$LANE/.supervisor/automate/R.md"
+cp "$F/plain.md"          "$LANE/.supervisor/requirements/proposed/real-done.md"
+cp "$F/fenced-pending.md" "$LANE/.supervisor/requirements/proposed/quoted.md"
+cp "$F/none.md"           "$LANE/.supervisor/requirements/proposed/open.md"
+lane_list() (
+  HERE="$2"; LN_DIR="$LANE"; LN_RUN="R"
+  eval "$(awk '/^_lanes_noclaim_files\(\) \{/,/^}/' "$1")"
+  _lanes_noclaim_files 2>/dev/null | sed 's|.*/||' | env LC_ALL=C sort | tr '\n' ' '
+)
+RM="$HERE/automate-lanes.d/remove.sh"
+LW="$W/lane-with"; mkdir -p "$LW"; stage_lib "$LW"
+got="$(lane_list "$RM" "$LW")"
+[ "$got" = "open.md quoted.md " ] && ok "remove.sh with the library: a quoted stamp stays pushable, a real done claim does not" || no "remove.sh with the library listed: $got"
+got="$(lane_list "$RM" "$W/no-such-dir")"
+[ "$got" = "open.md " ] && ok "remove.sh without the library: the plain read still lists unpushed files, erring toward a done claim" || no "remove.sh without the library listed: $got"
+m4="$W/remove-typo.sh"; sed 's|automate-helpers.d/status-stamp.sh|automate-helpers.d/status-stampp.sh|g' "$RM" > "$m4"
+if cmp -s "$m4" "$RM"; then no "remove.sh mutant did not change the script"
+elif [ "$(lane_list "$m4" "$LW")" = "open.md quoted.md " ]; then no "a wrong library path in remove.sh stays green"
+else ok "a wrong library path in remove.sh ⇒ the case turns red"; fi
+
 echo "PASS: $pass FAIL: $fail"
 [ "$fail" -eq 0 ]
