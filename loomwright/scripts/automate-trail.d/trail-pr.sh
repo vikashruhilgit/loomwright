@@ -192,6 +192,12 @@ EOF
 # `## ` heading or EOF. The PR token excludes markdown link punctuation
 # (`[]()<>`), so `[<url>](<url>)` and `<url>` yield the bare URL.
 AB_PREFIX="## Status: done_with_escalation "$'\xe2\x80\x94'" ABANDONED (- [x] "
+# _unfenced_text <file> — the file without its closed code fences, so a stamp quoted as an example is
+# not a claim (automate-helpers.d/status-stamp.sh). Without the library, or if it fails, the whole
+# file: a real stamp is never hidden. Run in a subshell so the library adds nothing to this process.
+_unfenced_text() {
+  ( . "$HERE/automate-helpers.d/status-stamp.sh" 2>/dev/null && status_unfenced "$1" ) || cat "$1" 2>/dev/null
+}
 _done_prs() {
   awk -v ab="$AB_PREFIX" '
     function flush() { if (inb && !seen) print "-"; inb = 0; seen = 0 }
@@ -206,7 +212,7 @@ _done_prs() {
       seen = 1; next
     }
     END { flush() }
-  ' "$1" 2>/dev/null
+  ' 2>/dev/null <<<"$(_unfenced_text "$1")"
 }
 
 # _outcome_prs <brief-file> — every PR a done/ brief's Outcome section names.

@@ -161,6 +161,11 @@ if [ ! -f "$COMMON" ]; then
 fi
 # shellcheck disable=SC1090
 . "$COMMON"
+if [ ! -f "$SCRIPT_DIR/automate-helpers.d/status-stamp.sh" ]; then
+  say "automate-helpers.d/status-stamp.sh not found - skipping, nothing proposed"
+  exit 0
+fi
+. "$SCRIPT_DIR/automate-helpers.d/status-stamp.sh"
 
 # ---------------------------------------------------------------------------
 # 2. Env knobs. Every numeric knob is validated; a non-numeric value is NAMED and ignored rather
@@ -320,7 +325,7 @@ superseded_by() {
     sb_list="$(find "$REQ_DIR" -type f -name '*.md' 2>/dev/null | env LC_ALL=C sort)"
     while IFS= read -r sb_f; do
       [ -n "$sb_f" ] && [ -f "$sb_f" ] || continue
-      grep -Eq '^##[[:space:]]+Status:[[:space:]]*done[[:space:]]*$' "$sb_f" 2>/dev/null || continue
+      status_is_done "$sb_f" || continue
       if grep -Fq -- "$sb_tok" "$sb_f" 2>/dev/null; then printf '%s' "$sb_f"; return 0; fi
     done <<EOF
 $sb_list

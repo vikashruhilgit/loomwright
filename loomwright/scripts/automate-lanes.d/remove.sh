@@ -251,6 +251,14 @@ _lanes_meta_extras() {
 # so meta-sync pushes nothing for it; a lane clone has exactly one run, so nothing here is another run's.
 _lanes_noclaim_files() {
   local f p items nl tab
+  # Without the library, the plain any-line read: it errs toward "a done claim", which is left to
+  # trail-pr's evidence gate. Never an early return, which would empty this list and hide unpushed files.
+  if [ -f "$HERE/automate-helpers.d/status-stamp.sh" ]; then
+    . "$HERE/automate-helpers.d/status-stamp.sh"
+  else
+    status_has() { grep -qE "$2" "$1" 2>/dev/null; }
+    status_is_done() { status_has "$1" '^## Status:[[:space:]]*done(_with_escalation)?\b'; }
+  fi
   nl="$(printf '\nx')"; nl="${nl%x}"; tab="$(printf '\t')"
   items="$(awk '/^## / { sec = $0; next }
     sec == "## Queue" && /^- \[[ xX]\] / { v = $0; sub(/^- \[[ xX]\] /, "", v); sub(/[[:space:]]+#.*$/, "", v); sub(/[[:space:]]+$/, "", v); sub(/^\.\//, "", v); print v }
@@ -261,7 +269,7 @@ _lanes_noclaim_files() {
     p="${f#"$LN_DIR"/}"
     case "$p" in *"$nl"*|*"$tab"*) continue ;; esac   # meta-sync refuses such names; never split a line
     grep -qxF -- "$p" <<<"$items" && continue
-    grep -qE '^## Status:[[:space:]]*done' "$f" 2>/dev/null && continue
+    status_is_done "$f" && continue
     printf '%s\n' "$p"
   done
   return 0

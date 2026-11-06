@@ -187,7 +187,7 @@ fi
 # from the original, and still parses (bash -n) — NOT the H2/H3 fixture-value
 # mutation pattern (~line 1724), which mutates a fixture, not the script.
 MUT="$(mktemp -d)"
-sed 's/^is_not_ready() { grep -qE .*$/is_not_ready() { return 1; }/' "$H" > "$MUT/automate-helpers.sh"
+sed 's/^is_not_ready() { .*$/is_not_ready() { return 1; }/' "$H" > "$MUT/automate-helpers.sh"
 if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$MUT/automate-helpers.sh" && bash -n "$MUT/automate-helpers.sh" 2>/dev/null \
    && grep -qF 'is_not_ready() { return 1; }' "$MUT/automate-helpers.sh"; then
   MUT_FOLDER_OUT="$(bash "$MUT/automate-helpers.sh" resolve-folder "$DIR" 2>/dev/null)"

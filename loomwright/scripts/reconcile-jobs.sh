@@ -289,10 +289,17 @@ done
 
 # is_done — mirrors automate-helpers.sh's matcher deliberately, including the
 # `done_with_escalation` arm: an escalated run still shipped, so its requirement
-# must not be re-picked.
-is_done() {
-  grep -qE '^## Status:[[:space:]]*done(_with_escalation)?\b' "$1" 2>/dev/null
-}
+# must not be re-picked. Both go through automate-helpers.d/status-stamp.sh, which ignores a stamp quoted in a fence.
+_rj_status_lib="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)/automate-helpers.d/status-stamp.sh"
+# Without it this falls back to the plain any-line read, which errs toward done: a reconciler must
+# not stop, and must not re-offer shipped work.
+if [ -f "$_rj_status_lib" ]; then
+  . "$_rj_status_lib"
+else
+  status_has() { grep -qE "$2" "$1" 2>/dev/null; }
+  status_is_done() { status_has "$1" '^## Status:[[:space:]]*done(_with_escalation)?\b'; }
+fi
+is_done() { status_is_done "$1"; }
 
 # requirement_status <requirement> — echo the terminal value on the `## Status:`
 # heading: `done` or `done_with_escalation`. Empty when neither is present.
@@ -306,9 +313,9 @@ is_done() {
 # it, not by reading it. Same family as the repo's recorded stat -f/-c flavour
 # trap: macOS-green is not the same as portable.
 requirement_status() {
-  if grep -qE '^## Status:[[:space:]]*done_with_escalation\b' "$1" 2>/dev/null; then
+  if status_has "$1" '^## Status:[[:space:]]*done_with_escalation\b'; then
     printf 'done_with_escalation'
-  elif grep -qE '^## Status:[[:space:]]*done\b' "$1" 2>/dev/null; then
+  elif status_has "$1" '^## Status:[[:space:]]*done\b'; then
     printf 'done'
   fi
 }

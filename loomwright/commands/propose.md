@@ -63,7 +63,7 @@ Each basis is tuned by environment variables, all optional.
 |----------|---------|-------------|
 | `PROPOSE_FLOOR_JSON` | `.supervisor/floor/floor.json` | The basis to read. The **only** ledger surface consulted — it is not a second parser. |
 | `PROPOSE_OUT_DIR` | `.supervisor/requirements/proposed` | Where candidates are written. The only place any file is written. |
-| `PROPOSE_REQUIREMENTS_DIR` | `.supervisor/requirements` | Root scanned for `## Status: done` files that supersede a candidate. |
+| `PROPOSE_REQUIREMENTS_DIR` | `.supervisor/requirements` | Root scanned for done-stamped files that supersede a candidate. |
 | `PROPOSE_THRESHOLD` | `10` | Entries a `(class, flow_stage)` pair needs before it is emitted. A non-numeric value is ignored with a named reason. |
 | `PROPOSE_MAX_AGE_SECONDS` | `86400` (24h) | Staleness limit on the basis. Older ⇒ propose nothing, name the age, exit 0. |
 | `PROPOSE_SOURCE_DATE_EPOCH` | *(now)* | Pin the staleness "now" for reproducible runs. |
@@ -80,7 +80,7 @@ Each basis is tuned by environment variables, all optional.
 |----------|---------|-------------|
 | `PROPOSE_DOMAIN_STORE` | `<repo root>/.agent/product.json` | The product store — domain, stance, audience, `competitors[]`. Read by shelling out to `read-product.sh`, never re-parsed here, so `stance_default_action` keeps exactly one home. Absent or unreadable ⇒ name it, offer the bootstrap, write nothing, exit 0. |
 | `PROPOSE_DOMAIN_OUT_DIR` | `.supervisor/requirements/proposed` | Where candidates are written. The only place any file is written, through a single write-path guard. |
-| `PROPOSE_DOMAIN_REQUIREMENTS_DIR` | `.supervisor/requirements` | Root scanned for `## Status: done` files that supersede a candidate. |
+| `PROPOSE_DOMAIN_REQUIREMENTS_DIR` | `.supervisor/requirements` | Root scanned for done-stamped files that supersede a candidate. |
 | `PROPOSE_DOMAIN_FETCH_CMD` | *(unset ⇒ no fetcher)* | **The only external transport in the run.** Invoked as `<cmd> <url>` with the source text read from its stdout; it must be one executable command with no arguments (wrap it in a script otherwise) and it owns its own timeout. Unset, empty, or not executable ⇒ **nothing is fetched at all**: there is no implicit `curl`, no `wget` and no shell default, ever. |
 | `PROPOSE_DOMAIN_MAX_FETCHES` | `5` | Hard cap on external calls for the **whole run** (mirrors `/capability-check --max-fetches`). Local reads — the store, the code/doc inventory, `.agent/orientation/` — are not external calls and never draw on it. A non-numeric value is named and ignored. |
 | `PROPOSE_DOMAIN_MAX_SOURCE_AGE_SECONDS` | `7776000` (90d) | A source whose store-recorded `last_fetched` is older than this is named **STALE** in the output rather than cited silently. A date that cannot be parsed degrades to *staleness unknown* — unknown is not old, and never-fetched is not stale. |

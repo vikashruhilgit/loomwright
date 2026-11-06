@@ -86,6 +86,7 @@ for f in "$SUT" "$COMMON" "$GOLD" "$GOLD_PERM" "$BELOW" "$STALE" "$MALFORMED" "$
 done
 
 ROOT="$(mktemp -d)"   # OUTSIDE the repo root, deliberately - see the header note on AC8.
+mkdir -p "$ROOT/automate-helpers.d"; cp "$HERE/automate-helpers.d/status-stamp.sh" "$ROOT/automate-helpers.d/" 2>/dev/null   # a mutant dropped in $ROOT sources it beside itself
 trap 'chmod -R u+rwX "$ROOT" >/dev/null 2>&1; rm -rf "$ROOT" 2>/dev/null' EXIT
 mktmp() { mktemp -d "$ROOT/d.XXXXXX"; }
 
@@ -378,6 +379,14 @@ run_sut "$M1/there-is-no-floor.json" "$MO1" "$M1/req"; rc=$?
 grep -Fq "not found - skipping, nothing proposed" "$LOGERR" 2>/dev/null \
   && ok "basis missing: the reason is named" || no "basis missing: no named reason"
 [ "$(count_props "$MO1")" -eq 0 ] && ok "basis missing: nothing was written" || no "basis missing: something was written"
+
+# The status library missing: this copy has no automate-helpers.d/ beside it.
+ML="$(mktmp)"; cp "$SUT" "$ML/propose-work.sh"
+run_sut "$M1/there-is-no-floor.json" "$ML/out" "$ML/req" "$ML/propose-work.sh"; rc=$?
+[ "$rc" -eq 0 ] && ok "status library missing: exit 0" || no "status library missing: exit $rc"
+grep -Fq "status-stamp.sh not found - skipping, nothing proposed" "$LOGERR" 2>/dev/null \
+  && ok "status library missing: the reason is named" || no "status library missing: no named reason"
+[ "$(count_props "$ML/out")" -eq 0 ] && ok "status library missing: nothing was written" || no "status library missing: something was written"
 
 M2="$(mktmp)"; MO2="$M2/out"
 run_sut "$MALFORMED" "$MO2" "$M2/req"; rc=$?
@@ -714,6 +723,22 @@ if [ -f "$TARGET" ]; then
   [ ! -f "$D2/out/convention_mismatch--worker.md" ] \
     && ok "AC12: pasting the token into a '## Status: done' file DOES suppress it - the documented path works" \
     || no "AC12: the documented durable-dismissal path did not suppress the candidate - we would be printing guidance that does not work"
+
+  # Every terminal stamp supersedes, not only a bare `## Status: done`; a quoted one does not.
+  for st in 'done (PR #269, merge e319536)' 'done_with_escalation'; do
+    D3="$(mktmp)"; mkdir -p "$D3/req"
+    { printf '# t\n\n## Status: pending\n\n%s\n\n## Status: %s\n' "$tok_before" "$st"; } > "$D3/req/r.md"
+    run_sut "$GJ" "$D3/out" "$D3/req" >/dev/null 2>&1
+    [ ! -f "$D3/out/convention_mismatch--worker.md" ] \
+      && ok "AC12: a '## Status: $st' file suppresses the candidate" \
+      || no "AC12: a '## Status: $st' file did not suppress the candidate, so finished work is proposed again"
+  done
+  D3="$(mktmp)"; mkdir -p "$D3/req"
+  { printf '# t\n\n## Status: pending\n\n%s\n\n```\n## Status: done\n```\n' "$tok_before"; } > "$D3/req/r.md"
+  run_sut "$GJ" "$D3/out" "$D3/req" >/dev/null 2>&1
+  [ -f "$D3/out/convention_mismatch--worker.md" ] \
+    && ok "AC12: a stamp only quoted in a code fence does not suppress the candidate" \
+    || no "AC12: a stamp quoted in a code fence suppressed the candidate"
 else
   no "AC12: no worker proposal to delete - cannot evaluate"
 fi
