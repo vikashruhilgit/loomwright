@@ -477,6 +477,15 @@ check "NF12 a pending spawn reads stalled with --continue" "$(nf_lane)" "stalled
 out="$(LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$SGL/L2" --owner-command "$OWN" --continue 2>&1)"; rc=$?; wait_gone "$SGL/L2"
 check "NF12b --continue launches once, in the recorded session" "$rc|$(( $(claude_calls) - n_nf ))|$(grep '^ARGS' "$STUB_LOG" | tail -1 | grep -c '\[--resume\] \[sess-nf\]')" "0|1|1"
 check "NF12c … a bare driver call gives that session the live spawn" "$(jq -r '.do + "|" + .phase' <<<"$want" 2>/dev/null)" "spawn|launch-pad"
+# the driver's other done/stopped exits carry a PR (`reconcile`: its owned drain already ran; `drain-result`: no terminal
+# block): nothing to continue there either. The sidecar is the one those exits write; the readers are real.
+nf_base; nf_pr=https://github.com/o/r/pull/9
+sed -i.bak "s#^- item: reqs/y.md | status: running | pr: null#- item: reqs/y.md | status: running | pr: $nf_pr#" "$NF_RF"; rm -f "$NF_RF.bak"
+jq --arg t "$(jq -cn '{do: "done", step: "reconcile", status: "stopped", message: "x"}')" '.pending_text = $t' "$SGL/L2/.supervisor/automate/$NF_RUN.next-step.json" > "$SGR/nf.j" && cp "$SGR/nf.j" "$SGL/L2/.supervisor/automate/$NF_RUN.next-step.json"
+NF_PR_WANT="its driver stopped this pass (PR $nf_pr open), so a continued session only re-reads that stop — resume once with lane-launch --resume-run $NF_RUN"
+check "NF13 a stop with an open PR reads stalled, naming the PR and --resume-run" "$(nf_lane)" "stalled|$NF_PR_WANT"
+n_nf="$(claude_calls)"; out="$(bash "$S" lane-launch "$SGL/L2" --owner-command "$OWN" --continue 2>&1)"; rc=$?
+check "NF13b --continue refuses it too, no session started" "$rc|$(( $(claude_calls) - n_nf ))|$out" "1|0|lane-launch: refused — L2 — $NF_PR_WANT"
 # SM — the brief's Pin mutations for Part B: each one-line edit turns its pin red (built from $SB like SC9, gated)
 sg_mut() { # <name> <anchor (once in $SB)> <replacement> — the mutant entry's path, or nothing
   local d="$T/sgmut/$1" c
