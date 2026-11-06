@@ -1,2 +1,0 @@
-Worker prompt: the project's CI on the PR is the full gate
-`agents/worker.md` said the project's full pre-push command belongs to the foreground session or FINALIZE, but nothing in FINALIZE, Supervisor or Execute Manager runs one. It now names the project's CI on the PR as the full gate. A worker still never runs the full `ci-local.sh` pool. `CLAUDE.md`, `AGENT_GUIDELINES.md` and the line `ci-local.sh --affected` prints now state the same rule: `--affected` before a push, in every session.
