@@ -61,6 +61,12 @@ _lanes_parked() {
   return 1
 }
 
+# _lanes_no_pr_stop_cause <runfile> — the reason token of the run's last `parked no_pr_stop — <reason>` line.
+_lanes_no_pr_stop_cause() {
+  awk '/^## / { sec = $0; next } sec == "## Progress" && / parked no_pr_stop — / { c = $0; sub(/^.* parked no_pr_stop [^ ]+ /, "", c); sub(/[; ].*/, "", c) }
+    END { printf "%s", (c == "" ? "unknown" : c) }' "$1" 2>/dev/null
+}
+
 # _lanes_last_message <stream_log> — the most recent assistant TEXT (never a tool-use line), ≤300 chars.
 _lanes_last_message() {
   grep '^{' "$1" 2>/dev/null | jq -r -R 'fromjson? | select(.type == "assistant")
@@ -415,7 +421,7 @@ _lanes_timeline() {
     | (if $state == "running" then "active"
        elif ($state | test("^(awaiting_input|answer_pending|scope_hold|ready_for_release|awaiting_merge)$")) then "waiting"
        elif ($state | test("^(held_for_load|created|removed)$")) then "held"
-       elif ($state | test("^(stalled|died|lost_to_reset|missing|blocked_launch|gone|escalated|failed|rate_limit|drain_died|abandoned)$")) then "trouble"
+       elif ($state | test("^(stalled|died|lost_to_reset|missing|blocked_launch|gone|escalated|failed|rate_limit|drain_died|no_pr_stop|abandoned)$")) then "trouble"
        else "active" end) as $cs
     | [range(0; 7) as $i
         | ([$ev[] | select(.step == ids[$i])] | sort_by(.e // 9e15)) as $mine
@@ -540,6 +546,7 @@ _lanes_lane_json() {
       elif [ "$nq" -gt 0 ]; then state=awaiting_input; reason="question $(jq -r '.[0].id' <<<"$qs")"
       elif pk="$(_lanes_parked "$status" "$pause")"; then
         state="$pk"
+        [ "$pk" = no_pr_stop ] && reason="$(_lanes_no_pr_stop_cause "$rf") — no PR and nothing to continue: the owner refines the requirement, then lane-scope-decide $lane defer | drop"
         if [ -n "$(_lanes_dash "$pr")" ]; then
           case "$pk" in
             awaiting_merge|ready_for_release)

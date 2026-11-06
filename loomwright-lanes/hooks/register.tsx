@@ -81,7 +81,7 @@ async function lane($: EngineInterface, configured: string, sub: LaneCommand, ar
 const WAITING = new Set(['awaiting_input', 'answer_pending', 'scope_hold'])
 /** Parked for the owner's merge: one name everywhere, "ready to merge", in the ready (success) tone — ◆ is kept for a question. */
 const PARKED = new Set(['ready_for_release', 'awaiting_merge'])
-const TROUBLE = new Set(['stalled', 'died', 'lost_to_reset', 'missing', 'blocked_launch', 'gone', 'escalated', 'failed', 'rate_limit', 'drain_died', 'abandoned'])
+const TROUBLE = new Set(['stalled', 'died', 'lost_to_reset', 'missing', 'blocked_launch', 'gone', 'escalated', 'failed', 'rate_limit', 'drain_died', 'no_pr_stop', 'abandoned'])
 
 /** Its item landed: merged, or closed out (and removed) as done. */
 function landed(l: LaneRow): boolean {

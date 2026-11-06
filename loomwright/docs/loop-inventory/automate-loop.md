@@ -628,6 +628,8 @@ This file lists every branch and rule the `/automate` engine prose states — th
 | AL-605 | skills/automate-loop/intake.md | q: **Ask or skip — `queue-confirm`.** | why the Queue is confirmed and when the confirm is skipped | a prompt can explode into many files; the backlog-within-limit and lane-backlog skips are owner-chosen work | story | rationale:docs/rationale/automate-loop.md#why-the-queue-is-confirmed-and-when-the-confirm-is-skipped | - | GAP |
 | AL-606 | skills/automate-loop/intake.md | q: **"Done" is read from two places, and either one excludes the line:** | why a named file's stamp counts as done and the engine never ticks the backlog doc | the stamp is evidence-gated; a tick would be a second, ungated done claim | story | rationale:docs/rationale/automate-loop.md#why-a-named-files-stamp-counts-as-done-and-why-the-engine-never-ticks-the-backlog-doc | - | GAP |
 | AL-607 | skills/automate-loop/intake.md | h: ### `--parallel N>1` intake lint (§14) | why the parallel intake lint is information only | the planner already runs unparallelisable items alone, which is safe | story | rationale:docs/rationale/automate-loop.md#why-the-parallel-intake-lint-is-information-only | - | GAP |
+| AL-611 | skills/automate-loop/per-item-loop.md | h: ### No-PR stop park (end of RUN, after the rate-limit read) | a pass ends with no PR and a `status_reason` in the closed deliberate list | park `no_pr_stop`, run lock released; an owner's stop records the requirement's fingerprint and RECONCILE parks it again while that is unchanged; anything else stays `done` `stopped` | deterministic | script:automate-next-step.sh rate-limit | script:automate-next-step.sh rate-limit | test-automate-next-step.sh |
+| AL-612 | skills/automate-loop/lanes.md | q: **`no_pr_stop` — never resume it.** | a lane reads `no_pr_stop` | report its reason; `lane-launch --continue` refuses; the owner refines the requirement, then `lane-scope-decide` `defer` or `drop` | deterministic | script:automate-lanes.sh lane-status | script:automate-lanes.sh lane-scope-decide | test-automate-lanes.sh |
 
 ## Gap list (ordered by risk)
 
@@ -783,8 +785,8 @@ This file lists every branch and rule the `/automate` engine prose states — th
 150. AL-607 — story/rationale, no test; why the parallel intake lint is information only
 
 ## Counts
-- rows: 608
-- deterministic: 411
+- rows: 610
+- deterministic: 413
 - judgment: 13
 - rule: 139
 - story: 45

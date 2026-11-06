@@ -99,7 +99,7 @@ lanes_scope_outside() {
 #              `scope re-gate: <lane> serialize — scope_wait: L<m>` (parent) once, and stays held until L<m> reads
 #              ready_for_release / awaiting_merge / merged — re-run it then. Refused, nothing written, when L<m> already
 #              waits (directly or through others) for this lane: the wait could never end. Refused too when L<m> has
-#              ended (escalated, failed, died, gone, removed …; a rate_limit park has not ended, it can be resumed): it
+#              ended (escalated, failed, died, gone, no_pr_stop, removed …; a rate_limit park has not ended, it can be resumed): it
 #              will never read ready without the owner, and a lane already waiting
 #              on it reads undecided again (_lanes_scope_held), so the Stop guard and AUT-OVERLAP return. It reads L<m>'s PR head (`gh pr view
 #              --json headRefOid,headRefName`), fetches that branch from origin into the held lane and checks the
@@ -120,6 +120,8 @@ lanes_scope_outside() {
 #              `trail-pr <parent run file> --reason skipped`, as for any skip check-off.
 #   revise     releases with `scope re-gate released (revise) — keep off: <files>`: the driver re-plans (a new Launch
 #              Pad phase whose prompt names those files) and the new save holds again.
+# A lane parked `no_pr_stop` (its plan stopped with no PR, no brief saved) takes `defer` and `drop` here too, with no
+# --gate and no scope check, and nothing else: they are the one way such a lane leaves the wave for a later re-plan.
 # A relaunch that is HELD or BLOCKED is printed after the release line; the release stands (`lane-status` reads it).
 # The coordinator's writes into a held lane: its run file (the release / serialize lines), its brief's widening line,
 # serialize's fetch of the other lane's head and its removal (defer).
@@ -274,15 +276,19 @@ lanes_scope_decide() {
   _sgr() { echo "lane-scope-decide: refused — $LN_LANE — $1"; return 1; }
   rf="$LN_DIR/.supervisor/automate/$LN_RUN.md"; tab="$(printf '\t')"
   pause="$(_lanes_runfile_fields "$rf" | cut -f2)"
-  [ "$pause" = scope_hold ] || { _sgr "not held (pause_reason ${pause:--}) — nothing written"; return 1; }
+  case "$pause" in
+    scope_hold) ;;
+    no_pr_stop) case "$dec" in defer|drop) gate=no_pr_stop ;; *) _sgr "parked no_pr_stop — only defer or drop apply: there is no brief to continue from; nothing written"; return 1 ;; esac ;;
+    *) _sgr "not held (pause_reason ${pause:--}) — nothing written"; return 1 ;;
+  esac
   pid="$(_lt_get "$LN_TABLE" "$LN_LANE" 5)"; st="$(_lt_get "$LN_TABLE" "$LN_LANE" 6)"
   if lanes_proc_alive "$pid" "$st" "$LN_DIR"; then _sgr "a lane process runs (pid $pid) — nothing written"; return 1; fi
-  [ "$dec" != drop ] || [ "$gate" = LP-SCOPE ] || { _sgr "drop answers only LP-SCOPE — pass --gate LP-SCOPE; nothing written"; return 1; }
+  [ "$dec" != drop ] || [ "$gate" = LP-SCOPE ] || [ "$gate" = no_pr_stop ] || { _sgr "drop answers only LP-SCOPE — pass --gate LP-SCOPE; nothing written"; return 1; }
   case "$dec" in serialize|defer|drop|revise)
     [ -n "$gate" ] || { _sgr "$dec is the owner's answer — name the question with --gate AUT-OVERLAP|LP-SCOPE; nothing written"; return 1; } ;; esac
   case "$dec" in continue|serialize|revise)
     [ -n "$own" ] || { echo "lane-scope-decide: BLOCKED — $LN_LANE — no owner-invoked command — need the owner"; return 3; } ;; esac
-  _lanes_sg_check
+  [ "$pause" = no_pr_stop ] || _lanes_sg_check
   case "$dec" in
     continue)
       if [ "$SG_KIND" != clear ] && [ "$gate" != AUT-OVERLAP ]; then
@@ -309,7 +315,7 @@ lanes_scope_decide() {
         _sgr "serializing after $after would deadlock: $after already waits for $LN_LANE — nothing written; choose Continue in parallel, Defer to next wave or Revise"; return 1
       fi
       ast="$(_lanes_state_of "$after")"
-      case "$ast" in escalated|failed|died|lost_to_reset|gone|drain_died|abandoned|removed|missing)
+      case "$ast" in escalated|failed|died|lost_to_reset|gone|drain_died|no_pr_stop|abandoned|removed|missing)
         _sgr "$after ended $ast, so it will never read ready_for_release — nothing written; ask AUT-OVERLAP again"; return 1 ;;
       esac
       if ! awk -v a="$after" '/^- / { x = substr($0, 3); if (x ~ /^[0-9][0-9][0-9][0-9]-/) sub(/^[^ ]+ /, "", x)
@@ -370,7 +376,8 @@ lanes_scope_decide() {
 # _lanes_sg_defer <defer|drop> — lane-scope-decide defer / drop, in its scope (after the refusals): the lane leaves
 # this wave unclaimed; `drop` also checks its Queue row off, so no later wave plans it again
 _lanes_sg_defer() {
-  local how="$1" prf="$LN_PRIMARY/.supervisor/automate/$LN_PARENT.md" wl k="" items rest item sv out
+  local how="$1" prf="$LN_PRIMARY/.supervisor/automate/$LN_PARENT.md" wl k="" items rest item sv out by="the scope re-gate ($gate)"
+  [ "$gate" = no_pr_stop ] && by="the owner after its no-PR stop"
   item="$(_lt_get "$LN_TABLE" "$LN_LANE" 3)"
   bash "$HELPERS" progress-append "$rf" "$(now_utc) scope re-gate: $([ "$how" = drop ] && echo dropped || echo 'deferred to the next wave') ($gate)" >/dev/null 2>&1 </dev/null \
     || { _sgr "the lane line could not be appended — nothing removed"; return 1; }
@@ -386,13 +393,13 @@ _lanes_sg_defer() {
   fi
   rm -rf "$LN_DIR" || { _sgr "could not remove $LN_DIR"; return 1; }
   _lt_set "$LN_TABLE" "$LN_LANE" 8 abandoned || echo "lane-scope-decide: WARNING — the lane table state could not be set" >&2
-  bash "$HELPERS" progress-append "$prf" "lane abandoned: $LN_LANE ($LN_RUN) — deferred to the next wave by the scope re-gate ($gate); salvage kept at <primary>-lanes/$LN_PARENT/salvage/${sv##*/}" >/dev/null 2>&1 </dev/null \
+  bash "$HELPERS" progress-append "$prf" "lane abandoned: $LN_LANE ($LN_RUN) — deferred to the next wave by $by; salvage kept at <primary>-lanes/$LN_PARENT/salvage/${sv##*/}" >/dev/null 2>&1 </dev/null \
     || echo "lane-scope-decide: WARNING — the parent abandon line could not be appended" >&2
   _lanes_event lane-remove pass removed
   if [ "$how" = drop ]; then
-    _lanes_sg_parent "$LN_LANE drop — $item checked off, the owner stopped it at the scope re-gate ($gate)" \
+    _lanes_sg_parent "$LN_LANE drop — $item checked off, stopped by $by" \
       || echo "lane-scope-decide: WARNING — the parent ## Progress line could not be appended" >&2
-    out="$(bash "$HELPERS" queue-checkoff "$prf" "$item" "the owner chose Stop at the scope re-gate ($gate)" skipped 2>&1 </dev/null)" \
+    out="$(bash "$HELPERS" queue-checkoff "$prf" "$item" "stopped by $by" skipped 2>&1 </dev/null)" \
       || { _sgr "the lane is removed but $item could not be checked off ($(printf '%s\n' "$out" | head -1)) — check it off by hand"; return 1; }
     echo "lane-scope-decide: dropped $LN_LANE — $item is checked off # skipped; the lane is removed (salvage $sv)"
     echo "remaining: $(bash "$HELPERS" remaining "$prf" 2>/dev/null </dev/null)"
@@ -425,7 +432,7 @@ _lanes_sg_wait_broken() {
   { [ -d "$path" ] && [ ! -e "$path.died" ]; } || return 0
   f="$path/.supervisor/automate/$run.md"
   [ -f "$f" ] || return 1
-  grep -qE '^- pause_reason: *(escalated|failed|drain_died|gone)[[:space:]]*$' "$f"
+  grep -qE '^- pause_reason: *(escalated|failed|drain_died|gone|no_pr_stop)[[:space:]]*$' "$f"
 }
 # _lanes_scope_held <table> — READ-ONLY, fail SAFE: one `lane<TAB>path<TAB>held_at<TAB>decided (0|1)<TAB>scope_wait lane|-`
 # row per lane-table lane whose run file parks `pause_reason: scope_hold`. `decided` = a `scope re-gate` line follows

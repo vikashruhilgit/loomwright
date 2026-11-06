@@ -21,7 +21,7 @@
 - [x] <... path ...>  # skipped: <reason>     # checked-off so "next unchecked" never re-picks it; reason also in ## Progress
 ## Current
 - item: <path> | status: running|awaiting_merge|ready_for_release|escalated|failed|rate_limit|drain_died|done | pr: <url> | branch: <name>
-- pause_reason: awaiting_merge|ready_for_release|awaiting_go|escalated|limit_reached|resume_ambiguous|rate_limit|drain_died|token_ceiling|run_lock_held|meta_unreachable|trail_pr_open|closeout_leftover|scope_hold|live_lane|phase_relay_unavailable|null
+- pause_reason: awaiting_merge|ready_for_release|awaiting_go|escalated|limit_reached|resume_ambiguous|rate_limit|drain_died|token_ceiling|run_lock_held|meta_unreachable|trail_pr_open|closeout_leftover|scope_hold|live_lane|phase_relay_unavailable|no_pr_stop|null
 - wave: <k> | items: <i1>, <i2>     # present ONLY on a --parallel N>1 parent run; written only by `current-wave` (§14)
 - owned_drain_started: <ts> | owned_drain_result: READY|ESCALATED|died|superseded_by_merge | suppressed_default_dispatch: true     # each value's meaning: docs/result-schemas/automate-run.md §"`## Current` fields" (`sub_floor_converged` READY is NOT merge-eligible, §10 cond 1)
 - escalation_cause: check_pending|check_red_unrelated|check_red|findings|validation_unrun|other | check: <c|null> | run_id: <id|null> | attempt: <n|null> | sha: <sha|null>     # present ONLY at an `escalated` park; written only by `current-escalation`
@@ -73,7 +73,7 @@ Every write of `## Current`'s `- item: … | status: … | pr: … | branch: …
 | GATE `awaiting_merge` park (§9) | `current-set <rf> --item <path> --status awaiting_merge --pause-reason awaiting_merge` |
 | GATE `escalated` park (§9) | `current-set <rf> --item <path> --status escalated --pause-reason escalated` |
 | Close-out of the `## Current` item (§6 "Post-merge close-out") | `closeout` itself: `current-set <rf> --item <stored item> --status done --pause-reason awaiting_go\|null` |
-| RUN-level parks — `run_lock_held`, `token_ceiling`, `phase_relay_unavailable`, `trail_pr_open`, `limit_reached`, `resume_ambiguous`, `scope_hold`, `meta_unreachable`, `closeout_leftover`, `live_lane` | `current-set <rf> --pause-reason <reason>` (the run-level form — the item line is never touched; `ready_for_release` is never run-level — the lane row above) |
+| RUN-level parks — `run_lock_held`, `token_ceiling`, `phase_relay_unavailable`, `trail_pr_open`, `limit_reached`, `resume_ambiguous`, `scope_hold`, `meta_unreachable`, `closeout_leftover`, `live_lane`, `no_pr_stop` | `current-set <rf> --pause-reason <reason>` (the run-level form — the item line is never touched; `ready_for_release` is never run-level — the lane row above) |
 | `finalize-empty` (§4 step 1) | `current-set <staged copy> --pause-reason null` (run-level form) on the copy whose `## Status` it already rewrote to `done`, then ONE `runfile-write` of that copy — so the run file still changes atomically and a refusal leaves it byte-unchanged and still eligible |
 
 `current-set` validates every value against the enums above, refuses a half-null item form, an item form missing `--item` or `--status`, a run-level form missing `--pause-reason`, and any value carrying `|` or a newline (exit 1, file byte-unchanged). When `--item` changes, an omitted `--pr`/`--branch` resets to `null`. A refusal is never "fixed" by writing the file another way.
