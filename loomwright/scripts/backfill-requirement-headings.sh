@@ -49,7 +49,7 @@ fi
 # `- **PR:**` line of the block. Prints nothing when the file has no real block. Same fence rule and
 # same PR token as requirement-heading.sh and trail-pr's _done_prs.
 _bf_block() {
-  LC_ALL=C awk '
+  env LC_ALL=C awk '
     BEGIN { s = "<!-- loomwright:requirement-closeout -->" }
     { sub(/\r$/, "") }
     /^(```|~~~)/ { f = !f; prev = 0; inb = 0; next }
@@ -88,7 +88,7 @@ while IFS= read -r -d '' f; do
   else
     printf 'fail\t%s\tnot writable\n' "$rel"; failed=$((failed + 1))
   fi
-done < <(find "$ROOT" -type f -name '*.md' -print0 | LC_ALL=C sort -z)
+done < <(find "$ROOT" -type f -name '*.md' -print0 | env LC_ALL=C sort -z)
 
 if [ "$APPLY" -eq 0 ]; then
   printf 'summary\tdry run: %s would be rewritten, %s skipped; nothing written (pass --apply)\n' "$planned" "$skipped"

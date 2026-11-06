@@ -34,10 +34,10 @@
 # reads explicit pending/ready; prints nothing otherwise.
 req_open_heading_line() {
   local n
-  n="$(LC_ALL=C awk '/^(```|~~~)/ { f = !f; next } !f && /^## Status:/ { print NR; exit }' "$1" 2>/dev/null)"
+  n="$(env LC_ALL=C awk '/^(```|~~~)/ { f = !f; next } !f && /^## Status:/ { print NR; exit }' "$1" 2>/dev/null)"
   [ -n "$n" ] || return 0
   sed -n "${n}p" "$1" 2>/dev/null \
-    | LC_ALL=C grep -qE '^## Status:[[:space:]]*(pending|ready)([^A-Za-z0-9_-]|$)' && printf '%s\n' "$n"
+    | env LC_ALL=C grep -qE '^## Status:[[:space:]]*(pending|ready)([^A-Za-z0-9_-]|$)' && printf '%s\n' "$n"
   return 0
 }
 

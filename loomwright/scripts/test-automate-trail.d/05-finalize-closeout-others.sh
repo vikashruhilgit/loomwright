@@ -645,7 +645,7 @@ ds5() {
   printf "$2" > "$P/$REQ"
   ds5_out="$(run_closeout)"
 }
-ds5_body() { LC_ALL=C awk '/^<!-- loomwright:requirement-closeout -->\r?$/ && !seen { exit } { print }' "$P/$REQ" | sed '$d'; }
+ds5_body() { env LC_ALL=C awk '/^<!-- loomwright:requirement-closeout -->\r?$/ && !seen { exit } { print }' "$P/$REQ" | sed '$d'; }
 ds5_want() { printf "$1"; }
 ds5_kept() { # <fixture n> <label> <file bytes>: the block lands, every byte above it is unchanged
   ds5 "$1" "$3"
@@ -729,9 +729,9 @@ printf '# e\n\n## Status: pending\n' > "$BFR/e-open.md"
 { printf '# g\n\n## Status: proposed\n'; bf_block done "- **PR:** $BU"$'\n'; } > "$BFR/g-proposed.md"
 { printf '# h\n\n## Status: brief-shipped\n'; bf_block done "- **PR:** $BU"$'\n'; } > "$BFR/h-shipped.md"
 { printf '# i\n\n## Status: done\n- **PR:** %s\n' "$BU"; bf_block done "- **PR:** $BU"$'\n'; } > "$BFR/i-already.md"
-(cd "$BFR" && find . -type f | LC_ALL=C sort | xargs cksum) > "$TOP/bf-before"
+(cd "$BFR" && find . -type f | env LC_ALL=C sort | xargs cksum) > "$TOP/bf-before"
 out="$(bash "$BF" "$BFR")"; rc=$?
-(cd "$BFR" && find . -type f | LC_ALL=C sort | xargs cksum) > "$TOP/bf-after"
+(cd "$BFR" && find . -type f | env LC_ALL=C sort | xargs cksum) > "$TOP/bf-after"
 cmp -s "$TOP/bf-before" "$TOP/bf-after" && ok "(BF) no --apply writes nothing" || no "(BF) dry run changed files"
 [ "$rc" -eq 0 ] && ok "(BF) dry run exits 0" || no "(BF) dry run rc=$rc"
 [ "$(printf '%s\n' "$out" | grep -c '^plan')" = 2 ] && grep -qF "$(printf 'plan\ta.md\t## Status: pending\t## Status: done')" <<<"$out" \
@@ -746,9 +746,9 @@ out="$(bash "$BF" "$BFR" --apply)"
 [ "$(sed -n 3,5p "$BFR/sub/b.md" | tr '\n' '|')" = "## Status: done_with_escalation|- **PR:** $BU|- **PR:** $PRURL|" ] \
   && ok "(BF) --apply keeps the block's value and every PR it names" || no "(BF) b.md: $(tr '\n' '|' < "$BFR/sub/b.md")"
 grep -qF "$(printf 'summary\t2 rewritten, 2 skipped, 0 failed')" <<<"$out" && ok "(BF) --apply summary counts" || no "(BF) summary: $out"
-(cd "$BFR" && find . -type f | LC_ALL=C sort | xargs cksum) > "$TOP/bf-applied"
+(cd "$BFR" && find . -type f | env LC_ALL=C sort | xargs cksum) > "$TOP/bf-applied"
 out="$(bash "$BF" "$BFR" --apply)"
-(cd "$BFR" && find . -type f | LC_ALL=C sort | xargs cksum) > "$TOP/bf-again"
+(cd "$BFR" && find . -type f | env LC_ALL=C sort | xargs cksum) > "$TOP/bf-again"
 cmp -s "$TOP/bf-applied" "$TOP/bf-again" && ! grep -q '^rewrote' <<<"$out" && ok "(BF) a second --apply changes nothing" || no "(BF) second apply: $out"
 bash "$BF" "$BFR" --bogus >/dev/null 2>&1; [ "$?" -eq 2 ] && ok "(BF) an unknown flag is a usage error" || no "(BF) unknown flag accepted"
 
