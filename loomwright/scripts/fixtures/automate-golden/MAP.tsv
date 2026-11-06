@@ -47,6 +47,9 @@ per-item-loop.md|§6 — The per-item loop|L1.5	sync-closeout-no-trail
 per-item-loop.md|§6 — The per-item loop|L1.6	check-off-progress
 per-item-loop.md|Termination (two exits)	termination-limit-reached
 per-item-loop.md|Brief-repair at RECONCILE and SYNC (merge-evidenced lifecycle repair)	brief-repair-merged
+# No golden case for the no_pr_stop park: it needs a Launch Pad report, which a golden step list cannot carry. Its
+# deterministic branches are pinned by test-automate-next-step.sh F4n and test-automate-lanes.sh NP.
+per-item-loop.md|No-PR stop park (end of RUN, after the rate-limit read)	judgment — covered at the step boundary: rate-limit-park
 per-item-loop.md|Rate-limit park (end of RUN, before DRAIN)	rate-limit-park
 per-item-loop.md|Dismissed-findings decision step (before the park)	dismissed-findings-decision-step
 # per-item-loop.md|Rate-limit park (end of RUN, before DRAIN) and Dismissed-findings decision step (before the

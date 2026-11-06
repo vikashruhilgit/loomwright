@@ -352,6 +352,56 @@ has "SGd5 the awaited lane's died marker ⇒ the serialized lane blocks again" "
 rm -f "$SGL/L1.died"
 rm -rf "$SGP/.supervisor/run.lock"
 
+# ---- NP: a lane stopped deliberately with no PR (run automate-2026-11-06-131342 L1: Refine offline, then `stalled`) --
+# The REAL driver writes the lane's run file from a `status: blocked` LAUNCH_PAD_RESULT; lane-status, lane-wait,
+# lane-launch and lane-scope-decide then read that file. L1 is the control: the same lane with no park, a real stall.
+np_fx() {
+  local b="$SGR/np.result.md"
+  sg_wave; sg_lane 1 reqs/x.md - null; sg_lane 2 reqs/y.md - null
+  printf 'LAUNCH_PAD_RESULT:\n  schema_version: 1\n  status: blocked\n  saved_brief_path: null\n  summary: Plan Review FAIL x3; owner chose Refine offline\n' > "$b"
+  ( cd "$SGL/L2" && bash "$HERE/automate-next-step.sh" "$SGL/L2/.supervisor/automate/$SGPAR-L2.md" --start run --session-id np-s >/dev/null 2>&1
+    bash "$HERE/automate-next-step.sh" "$SGL/L2/.supervisor/automate/$SGPAR-L2.md" --result "$(jq -cn --arg f "$b" '{launch_pad_result_file: $f, session_id: "np-lp"}')" 2>&1 )
+}
+np_out="$(np_fx)"; np_rf="$SGL/L2/.supervisor/automate/$SGPAR-L2.md"
+check "NP1 the real driver parks the lane: the run file reads paused / no_pr_stop, the item still running" \
+  "$(jq -r '.do + "|" + .pause_reason' <<<"$np_out" 2>/dev/null)|$(sed -n 's/^## Status: //p' "$np_rf")|$(sed -n 's/^- pause_reason: //p' "$np_rf")" "park|no_pr_stop|paused|no_pr_stop"
+np_json() { LOOMWRIGHT_GH_BIN="$SGR/bin/gh" bash "$1" lane-status "$SGRF" --json 2>/dev/null; }
+J="$(np_json "$S")"
+check "NP2 lane-status reads it parked, naming the stop and what the owner does — never stalled" \
+  "$(jq -r '.lanes[] | select(.lane == "L2") | .state + "|" + .reason' <<<"$J")" \
+  "no_pr_stop|launch_pad_blocked — no PR and nothing to continue: the owner refines the requirement, then lane-scope-decide L2 defer | drop"
+check "NP3 control: a lane with no park and no process still reads stalled, the resume in its reason" \
+  "$(jq -r '.lanes[] | select(.lane == "L1") | .state + "|" + .reason' <<<"$J")" \
+  "stalled|process gone, run file not parked, no pending question — resume once with lane-launch --continue"
+check "NP3b its step timeline stops on Plan, in trouble" "$(jq -r '.lanes[] | select(.lane == "L2") | .timeline | "\(.current)|\(.steps[1].state)"' <<<"$J")" "plan|trouble"
+out="$(LOOMWRIGHT_GH_BIN="$SGR/bin/gh" bash "$S" lane-wait "$SGRF" --interval 1 --timeout 2 2>&1)"; rm -f "$SGP/.supervisor/automate/$SGPAR.lane-wait-seen"
+has "NP4 lane-wait reports the park as a state event" "$out" "lane-wait: state L2 no_pr_stop — pr -"
+has "NP4b … and its act line says never to resume it" "$out" "no_pr_stop ⇒ never resume it"
+has "NP4c … the real stall is still reported" "$out" "lane-wait: state L1 stalled"
+n_np="$(claude_calls)"
+out="$(bash "$S" lane-launch "$SGL/L2" --owner-command "$OWN" --continue 2>&1)"; rc=$?
+check "NP5 lane-launch --continue on the park ⇒ refused exit 1, no session started" "$rc|$(( $(claude_calls) - n_np ))" "1|0"
+has "NP5b … naming the stop and the owner's way out" "$out" "lane-launch: refused — L2 is parked no_pr_stop (launch_pad_blocked)"
+out="$(sgd "$S" continue --owner-command x)"; rc=$?
+check "NP6 lane-scope-decide continue does not apply: there is no brief ⇒ refused exit 1, nothing written" "$rc|$(sed -n 's/^- pause_reason: //p' "$np_rf")" "1|no_pr_stop"
+np_red() { # <leg> <mutant> <want> <its command's output>
+  [ -n "$2" ] || { bad "$1 mutant not built"; return; }
+  if [ "$4" != "$3" ]; then ok "$1 (mutant: $(printf '%s' "$4" | cut -c1-100))"; else bad "$1 — the mutant still passes: the pin is vacuous"; fi
+}
+out="$(sgd "$S" defer)"; rc=$?
+if [ "$rc" = 0 ] && [ ! -d "$SGL/L2" ] && [ "$(awk -F'\t' '$1 == "L2" { s = $8 } END { print s }' "$SGT")" = abandoned ] \
+   && grep -qx -- '- wave: 1 | items: reqs/x.md' "$SGRF" && grep -qxF -- '- [ ] reqs/y.md' "$SGRF" && ls -d "$SGL"/salvage/L2-deferred-* >/dev/null 2>&1 \
+   && grep -q 'lane abandoned: L2 .* deferred to the next wave by the owner after its no-PR stop' "$SGRF"; then
+  ok "NP7 defer with no --gate ⇒ salvaged, removed, abandoned in the table, the wave line drops it, its Queue row stays - [ ]"
+else bad "NP7 defer" "rc=$rc out=[$out] dir=$([ -d "$SGL/L2" ] && echo kept) $(grep -E 'wave:|reqs/y' "$SGRF" | tr '\n' '|')"; fi
+np_fx >/dev/null; out="$(sgd "$S" drop)"; rc=$?
+if [ "$rc" = 0 ] && [ ! -d "$SGL/L2" ] && grep -q '^- \[x\] reqs/y.md  *# skipped: stopped by the owner after its no-PR stop' "$SGRF"; then
+  ok "NP8 drop with no --gate ⇒ removed, its Queue row checked off # skipped"
+else bad "NP8 drop" "rc=$rc out=[$out] $(grep -E 'reqs/y' "$SGRF" | tr '\n' '|')"; fi
+# a lane may not serialize behind one that stopped: it will never read ready_for_release
+sg_wave; sg_lane 1 reqs/x.md - no_pr_stop; sg_lane 2 reqs/y.md '  - "src/b/two.ts"'
+out="$(sgd "$S" serialize --after L1 --gate AUT-OVERLAP --owner-command x)"; rc=$?
+check "NP9 serialize after a no_pr_stop lane ⇒ refused exit 1, it has ended" "$rc|$(printf '%s' "$out" | grep -c 'L1 ended no_pr_stop')" "1|1"
 # SM — the brief's Pin mutations for Part B: each one-line edit turns its pin red (built from $SB like SC9, gated)
 sg_mut() { # <name> <anchor (once in $SB)> <replacement> — the mutant entry's path, or nothing
   local d="$T/sgmut/$1" c
@@ -391,3 +441,12 @@ if ! cmp -s "$HERE/guard-lane-wait-armed.sh" "$sg_gd/guard-lane-wait-armed.sh" &
   sg_fx1; case "$(sg_guard "$sg_gd/guard-lane-wait-armed.sh")" in *'scope_hold'*) bad "SM7 the guard mutant still blocks on scope_hold — the pin is vacuous" ;; *) ok "SM7 the guard's scope-hold condition disabled turns SGd1 red" ;; esac
   rm -rf "$SGP/.supervisor/run.lock"
 else bad "SM7 guard mutant not built"; fi
+# NP's pins: built here because sg_mut is defined above
+np_fx >/dev/null
+np_m="$(sg_mut np-continue 'if [ "$(_lanes_runfile_fields "$LN_DIR/.supervisor/automate/$LN_RUN.md" | cut -f2)" = no_pr_stop ]; then' 'if false; then')"
+if [ -n "$np_m" ]; then out="$(bash "$np_m" lane-launch "$SGL/L2" --owner-command "$OWN" --continue 2>&1)"; wait_gone "$SGL/L2" 2>/dev/null; fi
+np_red "NP-M1 the --continue refusal dropped turns NP5b red" "$np_m" "lane-launch: refused — L2 is parked no_pr_stop (launch_pad_blocked)" "$(printf '%s\n' "${out:-}" | grep -o 'lane-launch: refused — L2 is parked no_pr_stop (launch_pad_blocked)')"
+np_fx >/dev/null
+np_m="$(sg_mut np-defer 'no_pr_stop) case "$dec" in defer|drop) gate=no_pr_stop ;;' 'no_pr_stop_off) case "$dec" in defer|drop) gate=no_pr_stop ;;')"
+if [ -n "$np_m" ]; then sgd "$np_m" defer >/dev/null; fi
+np_red "NP-M2 the park's defer branch dropped turns NP7 red" "$np_m" abandoned "$(awk -F'\t' '$1 == "L2" { s = $8 } END { print s }' "$SGT")"

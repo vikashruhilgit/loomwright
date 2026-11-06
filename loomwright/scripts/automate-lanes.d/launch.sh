@@ -287,6 +287,10 @@ _lanes_launch_go() {
     fi
     _lanes_spawn "/loomwright:automate --resume $LN_RUN$ch" "" "(resume $LN_RUN in a fresh session)"
   elif [ "$cont" = 1 ]; then
+    # a deliberate no-PR stop has nothing to continue: the resumed session would only re-read the same park
+    if [ "$(_lanes_runfile_fields "$LN_DIR/.supervisor/automate/$LN_RUN.md" | cut -f2)" = no_pr_stop ]; then
+      echo "lane-launch: refused — $LN_LANE is parked no_pr_stop ($(_lanes_no_pr_stop_cause "$LN_DIR/.supervisor/automate/$LN_RUN.md")) — the owner refines the requirement, then lane-scope-decide $LN_LANE defer | drop"; return 1
+    fi
     local sid; sid="$(_lanes_session_id)"
     [ -n "$sid" ] || { echo "lane-launch: refused — $LN_LANE has no recorded session to continue"; return 1; }
     _lanes_spawn "$LANE_CONTINUE_MSG" "$sid" "(continue)"

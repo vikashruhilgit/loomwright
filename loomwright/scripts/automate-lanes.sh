@@ -228,7 +228,7 @@
 # removed/abandoned, answer_pending, blocked_launch, held_for_load (awaiting_input instead while the
 # lane holds an unanswered question and no process runs), created, missing, running
 # (lanes_proc_alive), awaiting_input, the run
-# file's park (merged / gone after reconcile-item; `scope_hold` — an N > 1 lane held before its Supervisor phase), lost_to_reset (boot later than the last launch),
+# file's park (merged / gone after reconcile-item; `scope_hold` — an N > 1 lane held before its Supervisor phase; `no_pr_stop` — a deliberate stop with no PR, never resumed), lost_to_reset (boot later than the last launch),
 # died (.died marker), running again while an answered deferred question's resume is not yet visible
 # (answer written ≤ LOOMWRIGHT_LANES_RESUME_GRACE_S ago, default 120), stalled (process gone, not parked,
 # no question). Keep-awake is SUGGESTED on macOS
