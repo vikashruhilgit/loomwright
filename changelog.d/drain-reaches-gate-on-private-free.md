@@ -1,3 +1,3 @@
-<!-- bump: minor -->
+<!-- bump: patch -->
 The review drain reaches the merge gate on a private GitHub Free repo
 GitHub answers the branch-protection read with a 403 "Upgrade to GitHub Pro" on these repos, and the drain read that as an unreadable required-check set and escalated at its `required` step, before `wait-for-checks.sh` ran. That refusal now means no required list can exist: the drain goes on with every check not `NEUTRAL` or `SKIPPED` blocking `READY`, and `wait-for-checks.sh` waits on them all, so red CI goes to a fix round instead of passing as a vacuous green. An empty rollup settles only after a 60-second grace, since just after a push it can mean the checks are not queued yet. Every other 403 and every 5xx still escalates. `--required-checks all-non-neutral` is no longer needed on these repos.
