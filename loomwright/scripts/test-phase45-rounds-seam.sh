@@ -69,8 +69,10 @@ check_prompt "review-heal Step 2" "$(after "$RH" 'Address ONLY these new review 
 check_prompt "review-heal Step U4" "$(after "$RH" 'Address ONLY these required-check failures and VALIDATED bot findings' 13)"
 check_prompt "Worker Prompt Template" "$(section "$AO" '^### Worker Prompt Template' '^5\. Output a WORKER_RESULT block')"
 check_prompt "worker.md Step 5" "$(section "$WK" '^### Step 5: Verify' '^3\. If no tests')"
-has "$WK" 'pre-push command belongs to the foreground session / FINALIZE' && ok "worker.md: the full pre-push run belongs to the foreground session" \
-  || no "worker.md: no foreground-session ownership of the pre-push run"
+has "$WK" "the project's CI on the PR is the full gate" && ok "worker.md: the project's CI on the PR is named as the full gate" \
+  || no "worker.md: does not name the project's CI on the PR as the full gate"
+! has "$WK" 'belongs to the foreground session' && ok "worker.md: no claim that a foreground session owns a full pre-push run" \
+  || no "worker.md: still says a foreground session owns a full pre-push run"
 ! has "$WK" "pre-push command once, before a push" && ok "worker.md: no line still orders the worker to run the pre-push command" \
   || no "worker.md: an opposite order (run the pre-push command) is still there"
 grep -qE 'scripts/ci-local\.sh' "$RH" && no "review-heal names scripts/ci-local.sh (test-dispatch-pr-review.sh's drift guard reads it as a plugin script)" \

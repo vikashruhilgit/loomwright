@@ -14,7 +14,7 @@
 # The rule each surface carries ends with the pinned phrase below. Surfaces are DERIVED, not
 # hand-listed: every line in an agent or skill prompt that tells a fix worker to run tests
 # ("tests locally") must carry the phrase on that line or the next 3, and the worker contract's
-# test step (anchored on "pre-push command") must too. A new fix-worker prompt that says
+# test step (anchored on "Run relevant tests") must too. A new fix-worker prompt that says
 # "tests locally" without the rule fails here.
 #
 # Honest limit: a prompt that asks for tests in other words ("run the suite") is not derived.
@@ -69,9 +69,9 @@ for f in ${files[@]+"${files[@]}"}; do
 done
 
 W="$PLUGIN/agents/worker.md"
-if [ "$(anchors "$W" "pre-push command")" -ge 1 ] && [ -z "$(missing "$W" "pre-push command")" ]; then
+if [ "$(anchors "$W" "Run relevant tests")" -ge 1 ] && [ -z "$(missing "$W" "Run relevant tests")" ]; then
   ok "agents/worker.md: the Step 5 test step carries the no-self-matching-wait rule"
-else no "agents/worker.md: the 'pre-push command' test step has no '$PHRASE' within 3 lines"; fi
+else no "agents/worker.md: the 'Run relevant tests' test step has no '$PHRASE' within 3 lines"; fi
 
 # MUTATION CONTROL: drop the phrase from one prompt of a copy — the same check must catch it.
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/no-self-wait.XXXXXX")"

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ci-local.sh — the ONE pre-push command: every gate the `ci` CI job runs, in one concurrent pool,
+# ci-local.sh — the ONE local test command (pre-push: `--affected`; GitHub CI runs the full suite on
+# the PR): a full run is every gate the `ci` CI job runs, in one concurrent pool,
 # safe to call from any number of sessions, and free to repeat on an unchanged tree.
 #
 # Why it exists: sessions kept hand-rolling `for t in …/test-*.sh; do bash "$t"; done` loops before
@@ -222,7 +223,7 @@ state="$(bash "$slot_helper" dir)" && [ -n "$state" ] \
 [ "$last" -eq 1 ] || mkdir -p "$state/pass"
 runs="$state/runs"
 keep_runs=20
-affected_marker="affected-only — not a pre-push gate; run ci-local.sh before pushing"
+affected_marker="affected-only — not a CI result; GitHub CI runs the full suite on the PR"
 
 tmpd="$(mktemp -d "${TMPDIR:-/tmp}/ci-local.XXXXXX")"
 have_lock=0
