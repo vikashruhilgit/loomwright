@@ -2278,7 +2278,8 @@ ns_429_hint() { # <payload session id> <row ts> — the closest-preceding STOP_F
 #          the same answer, so a re-pick waits for it to change (ns_no_pr_stop_unchanged)
 #   gate   a named gate stopped with nobody to ask, or a saved brief failed a check: the owner's --resume is the remedy
 #   empty  anything else is a failure, not a decision (phase_died, a malformed block, a concurrent session, a
-#          checkpoint, supervisor_failed_other, an unknown token): the lane reads `stalled`, as it always did
+#          checkpoint, supervisor_failed_other, an unknown token): a lane reads `stalled`, resumed by --resume-run (a bare
+#          call re-prints the done/stopped) — `_lanes_driver_stopped` in automate-lanes.d/common.sh
 ns_no_pr_class() {
   case "${1:-}" in
     launch_pad_blocked|user_discarded_at_phase_6|user_aborted_at_launch_pad|user_aborted_at_no_go|user_aborted_at_plan_review_fail) printf owner ;;

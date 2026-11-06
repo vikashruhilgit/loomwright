@@ -554,8 +554,7 @@ _lanes_lane_json() {
       elif rs="$(_lanes_resume_in_flight "$log" "$path/.supervisor/inbox" "$now")"; then
         state=running; reason="resuming after answer $rs"
       else
-        state=stalled; reason="process gone, run file not parked, no pending question — resume once with lane-launch --continue"
-        rs="$(_lanes_resume_in_flight "$log" "$path/.supervisor/inbox" "$now" any)" && reason="process gone after answer $rs, no resumed process — resume once with lane-launch --continue"
+        state=stalled; reason="$(_lanes_stalled_reason "$path" "$run" "$rf" "$(_lanes_dash "$pr")" "$log" "$now")"
       fi ;;
   esac
   fi

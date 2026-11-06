@@ -281,6 +281,48 @@ _lanes_merge_hooks() { # <settings_file> <hook_command>
   printf '%s\n' "$out" > "$f.tmp.$$" && mv "$f.tmp.$$" "$f"
 }
 
+# _lanes_driver_stopped <lane_dir> <run_id> — exit 0 when the lane driver's pending instruction is a terminal
+# {"do":"done","status":"stopped"}. A no-result driver call re-prints the pending instruction and writes nothing, and
+# that call is all a `--continue`d session has, so here it can only read the same stop again; `--resume-run` is what
+# reaches RECONCILE and re-picks. The driver keeps that re-print: a bare call cannot tell a continued session from a
+# retry, and a re-pick there would start Launch Pads with no owner command behind them. An absent or unreadable
+# sidecar reads not stopped: the stall stays a `--continue`, whose worst case is one no-op.
+_lanes_driver_stopped() {
+  jq -e '(.pending_text // "") | fromjson? | select(.do == "done" and .status == "stopped")' \
+    "$1/.supervisor/automate/$2.next-step.json" >/dev/null 2>&1
+}
+# _lanes_stopped_reason <runfile> <run_id> <pr or empty> — what to do about such a lane: its cause, and --resume-run
+# (a checkpoint's re-pick resumes its Supervisor run, ns_checkpoint_task), or the owner when a resume already failed
+# the same way or the phase left a PR open: a re-pick is a new Launch Pad, far dearer than the no-op it replaces.
+_lanes_stopped_reason() {
+  local tok="" n=1 own=0
+  if [ -n "$3" ]; then tok="PR $3 open"
+  else
+    read -r tok n own <<<"$(awk '/^## / { sec = $0; next } sec == "## Progress" && / ran \/autonomous — no PR: / {
+        c = $0; sub(/^.* ran \/autonomous — no PR: /, "", c); own = (index(c, "left for the owner") > 0)
+        sub(/[ ;(].*/, "", c); seen[c]++; last = c }
+      END { if (last != "") printf "%s %d %d", last, seen[last], own }' "$1" 2>/dev/null)"
+  fi
+  [ -n "$tok" ] || tok=unknown
+  if [ "${own:-0}" = 1 ]; then
+    printf 'its driver stopped this pass (%s; the phase left a PR open for the owner) — the owner decides; a resume is lane-launch --resume-run %s' "$tok" "$2"
+  elif [ "${n:-1}" -gt 1 ]; then
+    printf 'its driver stopped this pass (%s, %s times) — the owner decides; a resume is lane-launch --resume-run %s' "$tok" "$n" "$2"
+  else
+    printf 'its driver stopped this pass (%s), so a continued session only re-reads that stop — resume once with lane-launch --resume-run %s' "$tok" "$2"
+  fi
+}
+# _lanes_stalled_reason <lane_dir> <run_id> <runfile> <pr or empty> <stream log> <now> — a `stalled` lane's reason,
+# which names the one resume that does anything for it.
+_lanes_stalled_reason() {
+  local rs
+  if _lanes_driver_stopped "$1" "$2"; then _lanes_stopped_reason "$3" "$2" "$4"; return 0; fi
+  if rs="$(_lanes_resume_in_flight "$5" "$1/.supervisor/inbox" "$6" any)"; then
+    printf 'process gone after answer %s, no resumed process — resume once with lane-launch --continue' "$rs"
+  else
+    printf 'process gone, run file not parked, no pending question — resume once with lane-launch --continue'
+  fi
+}
 # _lanes_no_pr_stop_cause <runfile> — the reason token of the run's last `parked no_pr_stop — <reason>` line.
 _lanes_no_pr_stop_cause() {
   awk '/^## / { sec = $0; next } sec == "## Progress" && / parked no_pr_stop — / { c = $0; sub(/^.* parked no_pr_stop [^ ]+ /, "", c); sub(/[; ].*/, "", c) }
