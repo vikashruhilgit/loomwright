@@ -30,6 +30,7 @@ fi
 #   AC13  undecided per-finding drafts stay undecided after MERGE     AC14  --resume --auto-merge on the parked open PR
 #   AC16/AC17  refusals: exit 2, .supervisor/ byte-unchanged, no lock      AC18  MERGED / CLOSED at entry
 #   LEFT  a closeout leftover kept ⇒ the entry's tail (awaiting_go)        HOST  LOOMWRIGHT_HOST_STATE_DIR untouched
+#   UNREAD  the fail-CLOSED reads (PR head, feedback, compare) park; a held run lock refuses (exit 2, nothing written)
 echo "-- MP. --merge-parked: one parked item through the existing gate, the durable READY record"
 
 MP_CASE=reconcile-closeout-merged
@@ -302,6 +303,25 @@ mp_usage() {
   ! grep -qE '(gh|GH")? pr merge' "$1" || { LEG_MSG="the driver names a pr merge"; return 1; }
 }
 
+# mp_row <gh pattern> <rc> <output> — one gh table row replaced (the rest of the table kept)
+mp_row() { MP_P="$1" MP_C="$2" MP_O="$3" awk -F'\t' 'BEGIN { OFS = "\t" } $2 == ENVIRON["MP_P"] { $1 = ENVIRON["MP_C"]; $3 = ENVIRON["MP_O"] } { print }' "$CASE_GH" > "$CASE_GH.t" && mv "$CASE_GH.t" "$CASE_GH"; }
+mp_unread() { # the fail-CLOSED branches: an unreadable PR head / feedback / base read parks; a late review comment parks; a held lock refuses
+  local drv; drv="$(mp_spy "$1")" || { LEG_MSG="spy"; return 1; }
+  mp_new && mp_row "pr view $MP_PR --json headRefOid,headRefName,baseRefName" 1 "" || { LEG_MSG="scratch"; return 1; }
+  mp_call "$drv"; [ "$MP_RC" = 0 ] && mp_park pr_unreadable || { mp_fail "pr view unreadable"; return 1; }
+  mp_new && mp_row "api $MP_API/pulls/555/comments --paginate" 1 "" || { LEG_MSG="scratch"; return 1; }
+  mp_call "$drv"; [ "$MP_RC" = 0 ] && mp_park feedback_unreadable || { mp_fail "review comments unreadable"; return 1; }
+  mp_new && mp_row "api $MP_API/pulls/555/comments --paginate" 0 '[{"created_at":"2026-10-15T11:00:00Z"}]' || { LEG_MSG="scratch"; return 1; }
+  mp_call "$drv"; [ "$MP_RC" = 0 ] && mp_park ready_stale_feedback || { mp_fail "a review comment after ready_at"; return 1; }
+  mp_new && mp_row "api $MP_API/compare/main...*" 0 '{"message":"Not Found"}' || { LEG_MSG="scratch"; return 1; }
+  mp_call "$drv"; [ "$MP_RC" = 0 ] && mp_park base_unreadable || { mp_fail "compare unreadable"; return 1; }
+  mp_new || { LEG_MSG="scratch"; return 1; }
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$CASE_BIN/nolock"; chmod +x "$CASE_BIN/nolock"; mp_seam "NEXT_STEP_LOCK_CMD=$CASE_BIN/nolock"
+  MP_SNAP="$(snapshot)"; mp_call "$drv"
+  [ "$MP_RC" = 2 ] && [ -z "$MP_OUT" ] && grep -qF 'run_lock_held — ' <<<"$MP_ERR" && [ "$(snapshot)" = "$MP_SNAP" ] && [ "$(mp_n '^helper ')" = 0 ] \
+    || { mp_fail "a held run lock: not refused with nothing written"; return 1; }
+}
+
 for mp_leg in "AC1:mp_ac1:MERGE ⇒ gate-eval once, closeout once WITH its trail + --session-id, one check-off, items remain ⇒ awaiting_go (the entry's message), no pick, no spawn, mode: safe" \
   "AC3:mp_ac3:no items remain ⇒ the done termination, trail included" \
   "AC5:mp_ac5:--resume first, then the entry ⇒ the ctx carries the recorded ready_sha, READY and termination_reason" \
@@ -321,6 +341,7 @@ for mp_leg in "AC1:mp_ac1:MERGE ⇒ gate-eval once, closeout once WITH its trail
   "AC18:mp_ac18:MERGED at entry ⇒ closeout with no gate; CLOSED ⇒ RECONCILE's report, never checked off" \
   "LEFT:mp_left:a closeout leftover kept ⇒ the entry's own tail (awaiting_go)" \
   "HOST:mp_host:LOOMWRIGHT_HOST_STATE_DIR set ⇒ nothing written under it; the run file and sidecar under the automate dir" \
+  "UNREAD:mp_unread:an unreadable PR head / review-comment / compare read parks (fail CLOSED), a late review comment parks, a held run lock refuses with nothing written" \
   "USAGE:mp_usage:--merge-parked with --resume / --start / --result ⇒ exit 2, nothing written; the driver names no pr merge"; do
   LEG_MSG=""; mp_id="${mp_leg%%:*}"; mp_rest="${mp_leg#*:}"; mp_fn="${mp_rest%%:*}"; mp_what="${mp_rest#*:}"
   if "$mp_fn" "$DRIVER"; then ok "MP $mp_id: $mp_what"; else no "MP $mp_id: $LEG_MSG"; fi
