@@ -35,6 +35,7 @@ mk quoted           '# t\n\n## Status: proposed\n\n> ## Status: done\n'
 mk not-a-stamp      '# t\n\n## Status: donegal\n\n## Status note\n'
 mk none             '# t\n'
 mk parked           '# t\n\n## Status: parked (merged into x)\n'
+mk tilde-only       '# t\n\n## Status: pending\n\n~~~\n## Status: done\n~~~\n'
 mk fenced-parked    "# t\n\n## Status: pending\n\n$FENCE\n## Status: parked\n$FENCE\n"
 
 # run_lib <lib> <fn> <file> — the function's exit status, in a clean shell
@@ -46,7 +47,7 @@ expect_done() {
   for n in plain stale-first pr-suffix escalated abandoned crlf fenced-then-real unclosed-fence; do
     run_lib "$lib" status_is_done "$F/$n.md" || { echo "$n read not done"; return 1; }
   done
-  for n in fenced-only fenced-pending two-then-unclosed quoted not-a-stamp none; do
+  for n in fenced-only fenced-pending tilde-only two-then-unclosed quoted not-a-stamp none; do
     if run_lib "$lib" status_is_done "$F/$n.md"; then echo "$n read done"; return 1; fi
   done
   return 0
@@ -71,14 +72,14 @@ if ( . "$LIB"; PATH="$sh_d" status_is_done "$F/stale-first.md" ) >/dev/null 2>&1
 else no "a failing fence filter turned a done file into not-done, which would re-run merged work"; fi
 
 echo "-- mutation controls"
-m1="$W/lib-nofence.sh"; sed 's/^    \/\^```\/ .*$/    \/^NEVER\/ { next }/' "$LIB" > "$m1"
+m1="$W/lib-nofence.sh"; sed 's/^    \/\^(```|~~~)\/ .*$/    \/^NEVER\/ { next }/' "$LIB" > "$m1"
 if cmp -s "$m1" "$LIB"; then no "mutant 1 did not change the library"; elif expect_done "$m1" >/dev/null; then no "fence handling removed and the shapes still pass"; else ok "fence handling removed ⇒ the shape case turns red"; fi
 m2="$W/lib-noflush.sh"; sed 's/if (inf) print buf\[i\]/if (0) print buf[i]/' "$LIB" > "$m2"
 if cmp -s "$m2" "$LIB"; then no "mutant 2 did not change the library"; elif expect_done "$m2" >/dev/null; then no "the unclosed-fence flush removed and the shapes still pass"; else ok "the unclosed-fence flush removed ⇒ the shape case turns red"; fi
 
 echo "-- resolve-folder, the real intake reader"
 got="$(bash "$HERE/automate-helpers.sh" resolve-folder "$F" 2>/dev/null | sed 's|.*/||' | env LC_ALL=C sort | tr '\n' ' ')"
-want="fenced-only.md fenced-parked.md fenced-pending.md none.md not-a-stamp.md two-then-unclosed.md "
+want="fenced-only.md fenced-parked.md fenced-pending.md none.md not-a-stamp.md tilde-only.md two-then-unclosed.md "
 [ "$got" = "$want" ] && ok "resolve-folder lists exactly the not-done, ready files" || no "resolve-folder listed: $got"
 mkdir -p "$W/p"; printf '# t\n\n## Status: proposed\n\n%s\n## Status: done\n%s\n' "$FENCE" "$FENCE" > "$W/p/draft.md"
 [ -z "$(bash "$HERE/automate-helpers.sh" resolve-folder "$W/p" 2>/dev/null)" ] \
@@ -91,6 +92,40 @@ for c in automate-helpers.sh reconcile-jobs.sh propose-work.sh propose-domain.sh
     no "$c reads a done stamp with its own grep: use automate-helpers.d/status-stamp.sh"
   else ok "$c has no private done-stamp grep"; fi
 done
+
+echo "-- the trail readers: closeout's already-stamped check and the evidence gate's done claims"
+TR="$HERE/automate-trail.d/trail-pr.sh"; CO="$HERE/automate-trail.d/closeout.sh"
+# trail_fns <trail-pr file> <closeout file> — the three real functions, in a sourceable form
+trail_fns() {
+  sed -n '/^AB_PREFIX=/p' "$1"
+  awk '/^_unfenced_text\(\) \{/,/^}/' "$1"; awk '/^_done_prs\(\) \{/,/^}/' "$1"; awk '/^_co_stamped\(\) \{/,/^}/' "$2"
+}
+URL='https://github.com/o/r/pull/7'
+BLOCK="<!-- loomwright:requirement-closeout -->\n## Status: done\n- **PR:** $URL\n"
+mk co-real     "# t\n\n## Status: pending\n\n$BLOCK"
+mk co-fenced   "# t\n\n## Status: proposed\n\n$FENCE\n$BLOCK$FENCE\n"
+mk co-both     "# t\n\n$FENCE\n<!-- loomwright:requirement-closeout -->\n## Status: done\n- **PR:** https://github.com/o/r/pull/1\n$FENCE\n\n$BLOCK"
+mk co-unclosed "# t\n\n$FENCE\nstray\n\n$BLOCK"
+# trail_case <fns file> ⇒ 0 when every shape reads as expected; else prints the first miss
+trail_case() (
+  HERE_REAL="$HERE"; HERE="$HERE_REAL"; . "$1"
+  _co_stamped "$F/co-real.md"     || { echo "a real block read not stamped"; exit 1; }
+  _co_stamped "$F/co-unclosed.md" || { echo "a real block under an unclosed fence read not stamped"; exit 1; }
+  if _co_stamped "$F/co-fenced.md"; then echo "a fenced block read stamped"; exit 1; fi
+  [ "$(_done_prs "$F/co-real.md")" = "$URL" ]   || { echo "a real claim lost its PR"; exit 1; }
+  [ -z "$(_done_prs "$F/co-fenced.md")" ]       || { echo "a fenced claim was read"; exit 1; }
+  [ "$(_done_prs "$F/co-both.md")" = "$URL" ]   || { echo "a fenced PR leaked in beside the real claim"; exit 1; }
+  exit 0
+)
+trail_fns "$TR" "$CO" > "$W/fns.sh"
+if m="$(trail_case "$W/fns.sh")"; then ok "_co_stamped and _done_prs read a real block, also under an unclosed fence, and ignore a fenced one"; else no "trail readers: $m"; fi
+sed 's/status_unfenced "$1" ) || cat "$1"/false ) || cat "$1"/' "$W/fns.sh" > "$W/fns-mut.sh"
+if cmp -s "$W/fns.sh" "$W/fns-mut.sh"; then no "trail mutant did not change the functions"
+elif trail_case "$W/fns-mut.sh" >/dev/null; then no "the fence filter removed and the trail case still passes"
+else ok "the fence filter removed ⇒ the trail case turns red"; fi
+( HERE="$W/no-such-dir"; . "$W/fns.sh"; _co_stamped "$F/co-real.md" && [ "$(_done_prs "$F/co-real.md")" = "$URL" ] ) \
+  && ok "without the library the trail readers still see a real block" \
+  || no "a missing library hid a real block from the trail readers"
 
 echo "-- pin: a library-missing fallback reads done exactly as the library does"
 fallback_ere() { sed -n "s/^ *status_is_done() { status_has \"\$1\" '\(.*\)'; }\$/\1/p" "$1"; }

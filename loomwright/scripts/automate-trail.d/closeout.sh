@@ -107,13 +107,14 @@ _co_current() {
 # the shape the step-5 printf writes. A sentinel quoted inline in prose, or on a
 # line of its own followed by anything else, does not count (automate-followups/38:
 # af/37's own requirement quotes it in `## Problem`, and a plain substring match
-# read that as stamped, so closeout never stamped it).
+# read that as stamped, so closeout never stamped it). A block quoted in a code fence does not count
+# either (_unfenced_text).
 _co_stamped() {
   awk 'BEGIN { s = "<!-- loomwright:requirement-closeout -->" }
     { sub(/\r$/, "") }
     prev && /^## Status:[[:space:]]*done(_with_escalation)?([^A-Za-z0-9_]|$)/ { f = 1; exit }
     { prev = ($0 == s) }
-    END { exit !f }' "$1" 2>/dev/null
+    END { exit !f }' 2>/dev/null <<<"$(_unfenced_text "$1")"
 }
 
 closeout() {

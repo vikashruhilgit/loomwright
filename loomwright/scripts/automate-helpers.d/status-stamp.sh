@@ -16,29 +16,29 @@
 # Fail direction: wrongly reading a finished item as not done re-runs merged work, so every doubt
 # keeps the plain any-line answer. A fence that never closes is not treated as a fence (a stray
 # ``` above an appended stamp must not hide it), and a failing filter keeps the grep's answer.
-# Only a line starting with ``` opens or closes a fence, so a `> ` quote or an indented example is
+# Only a line starting with ``` or ~~~ opens or closes a fence, so a `> ` quote or an indented example is
 # handled by the `^## Status:` anchor instead. Bash 3.2 / BSD safe; set -u safe.
 
 STATUS_DONE_ERE='^## Status:[[:space:]]*done(_with_escalation)?\b'
 STATUS_NOT_READY_ERE='^## Status:[[:space:]]*(proposed|parked)\b'
 
-# status_lines <file> — its `## Status:` lines outside closed code fences, in file order within each
-# group; lines held by a fence that never closes come last.
-status_lines() {
+# status_unfenced <file> — the file without its closed code fences (``` or ~~~), in file order. A
+# fence that never closes keeps its lines. For a reader that needs more than a heading, such as a
+# closeout block and its PR line: feed it with a here-string, not a pipe, because an awk that exits
+# early makes the producer return 141 under pipefail.
+status_unfenced() {
   env LC_ALL=C awk '
-    /^```/ { n = 0; inf = !inf; next }
-    !/^## Status:/ { next }
+    /^(```|~~~)/ { n = 0; inf = !inf; next }
     inf { buf[++n] = $0; next }
     { print }
     END { for (i = 1; i <= n; i++) if (inf) print buf[i] }' "$1" 2>/dev/null
 }
 
-# status_has <file> <ere> — true when a line status_lines keeps matches <ere>. Here-string, never a
-# pipe: under pipefail `producer | grep -q` returns 141 on a match.
+# status_has <file> <ere> — true when a line status_unfenced keeps matches <ere>.
 status_has() {
   local l
   grep -qE "$2" "$1" 2>/dev/null || return 1
-  l="$(status_lines "$1")" || return 0
+  l="$(status_unfenced "$1")" || return 0
   grep -qE "$2" <<<"$l"
 }
 

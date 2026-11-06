@@ -62,7 +62,7 @@
 # Modules (sourced in this order from automate-trail.d/):
 # - sidecar.sh: sidecar-check — sidecar_check (its python checker and key tables).
 # - trail-pr.sh: trail-pr — trail_cleanup, _in_list, _trail_is_run_draft, _trail_candidates,
-#     _done_prs, _outcome_prs, _gate_keep, _evidence_gate, _trail_owned, _stage_tip,
+#     _unfenced_text, _done_prs, _outcome_prs, _gate_keep, _evidence_gate, _trail_owned, _stage_tip,
 #     _branch_mode, _trail_meta_fail, _trail_meta_push, trail_pr.
 # - stage-sync.sh: trail-unstage, trail-gate — trail_unstage, trail_gate, _restage_landed,
 #     _restore_prior, _sync_primary.
