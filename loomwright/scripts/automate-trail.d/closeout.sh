@@ -313,7 +313,9 @@ WTLIST
   # ---- 5. requirement stamp (runs 4th; the ONLY engine done-stamp writer) ---
   # This printf IS the block's byte-shape authority; Phase 4.5 writes nothing to
   # the requirement (automate-followups/37), so the stamp lands only past step 1.
-  local sp done_brief="" b ptr
+  # In the same atomic write the first `## Status:` line, when explicit pending/ready, becomes
+  # `## Status: done` + this PR (requirement-heading.sh: the shape, and why anything else stays).
+  local sp done_brief="" b ptr co_block
   if [ ! -f "$item" ]; then
     sp="$S requirement $item not found"
   elif _co_stamped "$item"; then
@@ -332,11 +334,16 @@ WTLIST
     fi
     if [ -z "$done_brief" ]; then
       sp="$S no done brief"
-    elif printf '\n<!-- loomwright:requirement-closeout -->\n## Status: done\n- **Completed:** %s\n- **Brief:** %s\n- **PR:** %s\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$done_brief" "$pr_url" >> "$item" 2>/dev/null; then
-      sp="closeout: stamped — $item (## Status: done, brief $done_brief)"; did=1
     else
-      sp="$S requirement not writable"
+      co_block="$(printf '\n<!-- loomwright:requirement-closeout -->\n## Status: done\n- **Completed:** %s\n- **Brief:** %s\n- **PR:** %s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$done_brief" "$pr_url")"
+      # shellcheck source=/dev/null
+      . "$HERE/requirement-heading.sh"
+      if req_heading_write "$item" "$(req_open_heading_line "$item")" done "$pr_url" "$co_block"; then
+        sp="closeout: stamped — $item (## Status: done, brief $done_brief)"; did=1
+      else
+        sp="$S requirement not writable"
+      fi
     fi
   fi
   echo "$sp"; lines="$lines"$'\n'"$sp"

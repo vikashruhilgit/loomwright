@@ -594,16 +594,22 @@ cmp -s "$P/$REQ" "$TOP/ds-req-pending" && ! grep -qE '^## Status:[[:space:]]*don
 jq '.[0].state = "MERGED"' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
 out="$(run_closeout)"
 case "$out" in *"closeout: stamped — $REQ (## Status: done, brief .supervisor/jobs/done/brief-a.md)"*) ok "(DS2) PR MERGED ⇒ closeout stamps the requirement" ;; *) no "(DS2) MERGED closeout: $(printf '%s' "$out" | tr '\n' '|')" ;; esac
-[ "$(grep -cF '<!-- loomwright:requirement-closeout -->' "$P/$REQ")" = 1 ] && [ "$(grep -cE '^## Status:[[:space:]]*done' "$P/$REQ")" = 1 ] \
+[ "$(grep -cF '<!-- loomwright:requirement-closeout -->' "$P/$REQ")" = 1 ] && [ "$(grep -A1 -F '<!-- loomwright:requirement-closeout -->' "$P/$REQ" | grep -cE '^## Status:[[:space:]]*done')" = 1 ] \
   && ok "(DS2) exactly one sentinel-led done block" || no "(DS2) sentinel/done count: $(tr '\n' '|' < "$P/$REQ")"
+[ "$(grep -m1 '^## Status:' "$P/$REQ")" = "## Status: done" ] \
+  && ok "(DS2) the file no longer opens with pending: its first ## Status: line reads done" || no "(DS2) first status line: $(grep -m1 '^## Status:' "$P/$REQ")"
 grep -qE '^- \*\*Completed:\*\* [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$P/$REQ" && ok "(DS2) Completed is a UTC ISO-8601 timestamp" || no "(DS2) Completed line malformed"
-{ cat "$TOP/ds-req-pending"
+{ printf '# req a\n\n## Status: done\n- **PR:** %s\n' "$PRURL"
   printf '\n<!-- loomwright:requirement-closeout -->\n## Status: done\n- **Completed:** <TS>\n- **Brief:** .supervisor/jobs/done/brief-a.md\n- **PR:** %s\n' "$PRURL"; } > "$TOP/ds-req-want"
 sed -E 's/^(- \*\*Completed:\*\* ).*/\1<TS>/' "$P/$REQ" > "$TOP/ds-req-got"
-cmp -s "$TOP/ds-req-got" "$TOP/ds-req-want" && ok "(DS2) the requirement is the pending bytes + the closeout printf block, byte for byte (Completed normalised)" \
+cmp -s "$TOP/ds-req-got" "$TOP/ds-req-want" && ok "(DS2) the requirement is the rewritten heading + its PR + the closeout printf block, byte for byte (Completed normalised)" \
   || no "(DS2) stamped bytes differ: $(diff "$TOP/ds-req-want" "$TOP/ds-req-got" | tr '\n' '|')"
 grep -qF "printf '\n<!-- loomwright:requirement-closeout -->\n## Status: done\n- **Completed:** %s\n- **Brief:** %s\n- **PR:** %s\n'" "$TB" \
   && ok "(DS2) closeout's step-5 printf is unchanged in automate-trail.sh" || no "(DS2) closeout printf changed"
+cp "$P/$REQ" "$TOP/ds-req-stamped"
+out="$(run_closeout)"
+case "$out" in *"closeout: skipped — already stamped"*) ok "(DS2) a second closeout reads already stamped" ;; *) no "(DS2) second closeout: $(printf '%s' "$out" | tr '\n' '|')" ;; esac
+cmp -s "$P/$REQ" "$TOP/ds-req-stamped" && ok "(DS2) a second closeout leaves the requirement byte-identical" || no "(DS2) second closeout changed it: $(diff "$TOP/ds-req-stamped" "$P/$REQ" | tr '\n' '|')"
 # Contract: the completion tail instructs no requirement `## Status:` stamp (fails on the base commit).
 [ -z "$(grep -A1 -F '<!-- loomwright:requirement-closeout -->' "$DS_SKILL" | grep '## Status')" ] \
   && ok "(DS3) contract: self-heal-advisory carries no sentinel-led requirement ## Status block" || no "(DS3) self-heal-advisory still carries a requirement stamp block"
@@ -631,6 +637,120 @@ ds4_order="$(awk '/^## Status:/ { sub(/^## Status:[[:space:]]*/, ""); printf "%s
 sed -E 's/^(- \*\*Completed:\*\* ).*/\1<TS>/' "$P/$REQ" > "$TOP/ds4-req-got"
 cmp -s "$TOP/ds4-req-got" "$TOP/ds4-req-want" && ok "(DS4) the requirement is the brief-shipped bytes + the closeout printf block, byte for byte (Completed normalised)" \
   || no "(DS4) stamped bytes differ: $(diff "$TOP/ds4-req-want" "$TOP/ds4-req-got" | tr '\n' '|')"
+
+# (DS5) which first headings closeout rewrites. ds5 <fixture n> <file bytes as a printf format> runs a
+# MERGED closeout over that file and leaves it in $P/$REQ; ds5_body strips the appended block.
+ds5() {
+  closeout_fixture "$1"; rm -f "$P/.supervisor/jobs/in-progress/brief-live.md"
+  printf "$2" > "$P/$REQ"
+  ds5_out="$(run_closeout)"
+}
+ds5_body() { env LC_ALL=C awk '/^<!-- loomwright:requirement-closeout -->\r?$/ && !seen { exit } { print }' "$P/$REQ" | sed '$d'; }
+ds5_want() { printf "$1"; }
+ds5_kept() { # <fixture n> <label> <file bytes>: the block lands, every byte above it is unchanged
+  ds5 "$1" "$3"
+  case "$ds5_out" in *"closeout: stamped — $REQ"*) ;; *) no "(DS5) $2: not stamped: $(printf '%s' "$ds5_out" | tr '\n' '|')"; return ;; esac
+  if [ "$(ds5_body)" = "$(ds5_want "$3")" ]; then ok "(DS5) $2: the block is appended and the heading is not rewritten"
+  else no "(DS5) $2: bytes above the block changed: $(ds5_body | tr '\n' '|')"; fi
+}
+ds5_kept 372 "proposed" '# req a\n\n## Status: proposed\n\nbody\n'
+ds5_kept 373 "parked" '# req a\n\n## Status: parked (blocked on x)\n\nbody\n'
+ds5_kept 374 "free text" '# req a\n\n## Status: in review — PR #1\n\nbody\n'
+ds5_kept 375 "a longer word (pending-review)" '# req a\n\n## Status: pending-review\n'
+ds5_kept 376 "no status line" '# req a\n\nbody\n'
+ds5_kept 377 "the only status line is a fenced quotation" '# req a\n\n```\n## Status: pending\n```\n'
+ds5_kept 378 "a fenced pending above a real proposed" '# req a\n\n```\n## Status: pending\n```\n\n## Status: proposed\n'
+ds5_rewritten() { # <fixture n> <label> <file bytes> <wanted bytes above the block>
+  ds5 "$1" "$3"
+  if [ "$(ds5_body)" = "$(ds5_want "$4")" ]; then ok "(DS5) $2"
+  else no "(DS5) $2: got $(ds5_body | tr '\n' '|')"; fi
+}
+ds5_rewritten 379 "ready is rewritten" '# req a\n\n## Status: ready\n\nbody\n' "# req a\n\n## Status: done\n- **PR:** $PRURL\n\nbody\n"
+ds5_rewritten 380 "an annotated pending is rewritten, every other byte kept" '# req a\n\n## Status: pending — note\n\n## Problem\nx\n' "# req a\n\n## Status: done\n- **PR:** $PRURL\n\n## Problem\nx\n"
+ds5_rewritten 381 "a fenced quotation above the real heading stays, the heading is rewritten" '```\n## Status: pending\n```\n## Status: pending\n' "\`\`\`\n## Status: pending\n\`\`\`\n## Status: done\n- **PR:** $PRURL\n"
+ds5_rewritten 382 "only the first heading is rewritten" '## Status: pending\n\n## Status: pending\n' "## Status: done\n- **PR:** $PRURL\n\n## Status: pending\n"
+ds5_rewritten 383 "a CRLF heading stays CRLF" '# req a\r\n## Status: pending\r\nbody\r\n' "# req a\r\n## Status: done\r\n- **PR:** $PRURL\r\nbody\r\n"
+# (DS6) the first-line readers against a really stamped file, each decided as it was before the rewrite.
+ds5 384 '# req a\n\n## Status: pending\n\n## Problem\nx\n'
+cp "$P/$REQ" "$TOP/ds6-stamped"
+ds6_reader() { (cd "$P" && bash "$H" "$@" 2>/dev/null); }
+[ -z "$(ds6_reader resolve-folder "$(dirname "$REQ")" | grep -F "$(basename "$REQ")")" ] \
+  && ok "(DS6) resolve-folder (is_done, is_not_ready) does not offer it" || no "(DS6) resolve-folder offered the stamped item"
+case "$(ds6_reader item-state "$REQ")" in done$'\t'*) ok "(DS6) item-state reads done" ;; *) no "(DS6) item-state: $(ds6_reader item-state "$REQ")" ;; esac
+printf -- '- [x] %s  # abandoned: owner said no\n' "$REQ" >> "$P/$RF_REL"
+case "$(ds6_reader item-state "$REQ")" in done$'\t'*) ok "(DS6) an abandoned Queue row does not make a stamped item a conflict" ;; *) no "(DS6) conflict rule: $(ds6_reader item-state "$REQ")" ;; esac
+# The same row over an unstamped pending file is a conflict, so the leg above can fail. (closeout's own
+# plain `- [x]` row goes first: it would read merged_unstamped, which outranks conflict.)
+printf '# req a\n\n## Status: pending\n' > "$P/$REQ"
+grep -vxF -- "- [x] $REQ" "$P/$RF_REL" > "$TOP/ds6-rf" && cp "$TOP/ds6-rf" "$P/$RF_REL"
+case "$(ds6_reader item-state "$REQ")" in conflict$'\t'*) ok "(DS6) control: that row over an unstamped pending item reads conflict" ;; *) no "(DS6) control: $(ds6_reader item-state "$REQ")" ;; esac
+# trail-pr's evidence gate: the rewritten heading names its PR, so the requirement still rides; a bare
+# `## Status: done` heading would be excluded, which is why the PR line is there.
+new_fixture 385; mkdir -p "$(dirname "$P/$REQ")"; cp "$TOP/ds6-stamped" "$P/$REQ"; set_pr "$PRURL" MERGED
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason closeout)"
+case "$out" in *"excluded $REQ"*) no "(DS6) the rewritten requirement was excluded: $out" ;; "trail-pr: opened "*) ok "(DS6) trail-pr's evidence gate lets the rewritten requirement ride" ;; *) no "(DS6) trail-pr: $out" ;; esac
+new_fixture 386; mkdir -p "$(dirname "$P/$REQ")"; grep -vF -- "- **PR:** $PRURL" "$TOP/ds6-stamped" > "$P/$REQ"; printf -- '- **PR:** %s\n' "$PRURL" >> "$P/$REQ"; set_pr "$PRURL" MERGED
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason closeout)"
+case "$out" in *"excluded $REQ"*) ok "(DS6) control: a done heading with no PR line under it is excluded" ;; *) no "(DS6) control: a bare done heading rode: $out" ;; esac
+# (DS7) an unwritable requirement keeps the skip line and its bytes. (root writes anyway; skip it there.)
+if [ "$(id -u)" != 0 ]; then
+  closeout_fixture 387; rm -f "$P/.supervisor/jobs/in-progress/brief-live.md"
+  printf '# req a\n\n## Status: pending\n' > "$P/$REQ"; chmod 444 "$P/$REQ"
+  out="$(run_closeout)"; chmod 644 "$P/$REQ"
+  case "$out" in *"closeout: skipped — requirement not writable"*) ok "(DS7) a read-only requirement reads not writable" ;; *) no "(DS7) read-only: $(printf '%s' "$out" | tr '\n' '|')" ;; esac
+  [ "$(cat "$P/$REQ")" = "$(printf '# req a\n\n## Status: pending')" ] && ok "(DS7) and is unchanged" || no "(DS7) read-only file changed"
+fi
+# (DS8) a failed write leaves no temp file behind, and the symlink case keeps the link.
+closeout_fixture 388; rm -f "$P/.supervisor/jobs/in-progress/brief-live.md"
+printf '# req a\n\n## Status: pending\n' > "$P/.supervisor/requirements/f/real.md"; ln -sf real.md "$P/$REQ"
+out="$(run_closeout)"
+[ -L "$P/$REQ" ] && grep -qxF '<!-- loomwright:requirement-closeout -->' "$P/.supervisor/requirements/f/real.md" \
+  && ok "(DS8) a symlinked requirement stays a symlink and gets the block" || no "(DS8) symlink: $(ls -l "$P/$REQ")"
+[ -z "$(find "$P/.supervisor/requirements" -name '*.md.*')" ] && ok "(DS8) no temp file is left beside the requirement" || no "(DS8) leftovers: $(find "$P/.supervisor/requirements" -name '*.md.*')"
+# Mutation control: with the heading rewrite off, the heading leg turns red.
+cp "$SPYD/requirement-heading.sh" "$TOP/ds-heading-saved"
+printf '\nreq_open_heading_line() { return 0; }\n' >> "$SPYD/requirement-heading.sh"
+ds5 389 '# req a\n\n## Status: pending\n'
+[ "$(grep -m1 '^## Status:' "$P/$REQ")" = "## Status: pending" ] \
+  && ok "mutation control: with the heading rewrite skipped the first line stays pending (the DS2 heading leg would fail)" \
+  || no "mutation control: the first line still changed: $(grep -m1 '^## Status:' "$P/$REQ")"
+cp "$TOP/ds-heading-saved" "$SPYD/requirement-heading.sh"
+
+echo "== BF. backfill-requirement-headings.sh: owner-run, dry-run unless --apply =="
+BF="$HERE/backfill-requirement-headings.sh"; BFR="$TOP/bf/requirements"; mkdir -p "$BFR/sub"
+bf_block() { printf '\n<!-- loomwright:requirement-closeout -->\n## Status: %s\n- **Completed:** 2026-01-01T00:00:00Z\n- **Brief:** b.md\n%s' "$1" "$2"; }
+BU="https://github.com/acme/widgets/pull/9"
+{ printf '# a\n\n## Status: pending\n\nbody\n'; bf_block done "- **PR:** $BU (merged)"$'\n'; } > "$BFR/a.md"
+{ printf '# b\n\n## Status: ready — note\n'; bf_block done_with_escalation "- **PR:** $BU"$'\n'"- **PR:** $PRURL"$'\n'; } > "$BFR/sub/b.md"
+{ printf '# c\n\n## Status: pending\n'; bf_block "done_with_escalation — ABANDONED (x)" "- **PR:** $BU"$'\n'; } > "$BFR/c-abandoned.md"
+{ printf '# d\n\n## Status: pending\n'; bf_block done ""; } > "$BFR/d-nopr.md"
+printf '# e\n\n## Status: pending\n' > "$BFR/e-open.md"
+{ printf '# f\n\n## Status: pending\n\n```\n'; bf_block done "- **PR:** $BU"$'\n'; printf '```\n'; } > "$BFR/f-quoted.md"
+{ printf '# g\n\n## Status: proposed\n'; bf_block done "- **PR:** $BU"$'\n'; } > "$BFR/g-proposed.md"
+{ printf '# h\n\n## Status: brief-shipped\n'; bf_block done "- **PR:** $BU"$'\n'; } > "$BFR/h-shipped.md"
+{ printf '# i\n\n## Status: done\n- **PR:** %s\n' "$BU"; bf_block done "- **PR:** $BU"$'\n'; } > "$BFR/i-already.md"
+(cd "$BFR" && find . -type f | env LC_ALL=C sort | xargs cksum) > "$TOP/bf-before"
+out="$(bash "$BF" "$BFR")"; rc=$?
+(cd "$BFR" && find . -type f | env LC_ALL=C sort | xargs cksum) > "$TOP/bf-after"
+cmp -s "$TOP/bf-before" "$TOP/bf-after" && ok "(BF) no --apply writes nothing" || no "(BF) dry run changed files"
+[ "$rc" -eq 0 ] && ok "(BF) dry run exits 0" || no "(BF) dry run rc=$rc"
+[ "$(printf '%s\n' "$out" | grep -c '^plan')" = 2 ] && grep -qF "$(printf 'plan\ta.md\t## Status: pending\t## Status: done')" <<<"$out" \
+  && grep -qF "$(printf 'plan\tsub/b.md\t## Status: ready — note\t## Status: done_with_escalation')" <<<"$out" \
+  && ok "(BF) plans exactly the two rewritable files" || no "(BF) plan rows: $out"
+grep -qF "$(printf 'skip\tc-abandoned.md\tblock is ABANDONED')" <<<"$out" && grep -qF "$(printf 'skip\td-nopr.md\tblock names no PR')" <<<"$out" \
+  && ok "(BF) an ABANDONED block and a block naming no PR are skipped by name" || no "(BF) skip rows: $out"
+if grep -qE 'e-open|f-quoted|g-proposed|h-shipped|i-already' <<<"$out"; then no "(BF) listed a file it must ignore: $out"; else ok "(BF) no block, a quoted block, proposed, brief-shipped and already-done are not candidates"; fi
+out="$(bash "$BF" "$BFR" --apply)"
+[ "$(sed -n 3,5p "$BFR/a.md" | tr '\n' '|')" = "## Status: done|- **PR:** $BU||" ] \
+  && ok "(BF) --apply rewrites the heading with the block's PR" || no "(BF) a.md: $(tr '\n' '|' < "$BFR/a.md")"
+[ "$(sed -n 3,5p "$BFR/sub/b.md" | tr '\n' '|')" = "## Status: done_with_escalation|- **PR:** $BU|- **PR:** $PRURL|" ] \
+  && ok "(BF) --apply keeps the block's value and every PR it names" || no "(BF) b.md: $(tr '\n' '|' < "$BFR/sub/b.md")"
+grep -qF "$(printf 'summary\t2 rewritten, 2 skipped, 0 failed')" <<<"$out" && ok "(BF) --apply summary counts" || no "(BF) summary: $out"
+(cd "$BFR" && find . -type f | env LC_ALL=C sort | xargs cksum) > "$TOP/bf-applied"
+out="$(bash "$BF" "$BFR" --apply)"
+(cd "$BFR" && find . -type f | env LC_ALL=C sort | xargs cksum) > "$TOP/bf-again"
+cmp -s "$TOP/bf-applied" "$TOP/bf-again" && ! grep -q '^rewrote' <<<"$out" && ok "(BF) a second --apply changes nothing" || no "(BF) second apply: $out"
+bash "$BF" "$BFR" --bogus >/dev/null 2>&1; [ "$?" -eq 2 ] && ok "(BF) an unknown flag is a usage error" || no "(BF) unknown flag accepted"
 
 echo "== NT. automate-followups/38: closeout --no-trail, the --auto-merge SYNC close-out, the strict sentinel guard =="
 # nt_norm <file> <fx dir> — a run file / requirement with the per-fixture bytes normalised: the fixture
@@ -690,7 +810,7 @@ bash "$HERE/run-lock.sh" acquire --owner "automate:$RUN_ID" --session-id NT-SID 
 nt_c0="$(count_creates)"
 nt_out="$(cd "$P" && bash "$SPYD/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" --no-trail --session-id NT-SID)"
 printf '%s\n' "$nt_out" | sed 's/^/    | /'
-[ "$(grep -A1 -xF '<!-- loomwright:requirement-closeout -->' "$P/$REQ" | tr '\n' '|')" = "<!-- loomwright:requirement-closeout -->|## Status: done|" ] && [ "$(grep -cE '^## Status:[[:space:]]*done' "$P/$REQ")" = 1 ] \
+[ "$(grep -A1 -xF '<!-- loomwright:requirement-closeout -->' "$P/$REQ" | tr '\n' '|')" = "<!-- loomwright:requirement-closeout -->|## Status: done|" ] && [ "$(grep -cE '^## Status:[[:space:]]*done' "$P/$REQ")" = 2 ] \
   && ok "(NT4) auto-merge SYNC: the requirement carries ONE sentinel-led ## Status: done block" || no "(NT4) requirement: $(tr '\n' '|' < "$P/$REQ")"
 [ "$(grep -cxF -- "- [x] $REQ" "$P/$RF_REL")" = 1 ] && ok "(NT4) exactly one - [x] row for the item" || no "(NT4) check-off rows: $(grep -cF "$REQ" "$P/$RF_REL")"
 grep -qF -- "- item: $REQ | status: done" "$P/$RF_REL" && grep -qxF -- '- pause_reason: null' "$P/$RF_REL" \
@@ -703,6 +823,7 @@ bash "$HERE/run-lock.sh" release --owner "automate:$RUN_ID" --root "$P" >/dev/nu
 
 # (NT5) the strict sentinel guard: a quoted sentinel is not a stamp; a real stamp block is.
 nt_q='quotes `<!-- loomwright:requirement-closeout -->` inline in its prose'
+nt_blocks() { grep -A1 -xF '<!-- loomwright:requirement-closeout -->' "$P/$REQ" | grep -cE '^## Status:[[:space:]]*done'; }   # sentinel-led done headings; the rewritten first heading is not a block
 for v in inline ownline real dwe; do
   case "$v" in inline) closeout_fixture 510 ;; ownline) closeout_fixture 511 ;; real) closeout_fixture 512 ;; dwe) closeout_fixture 513 ;; esac
   case "$v" in
@@ -715,10 +836,10 @@ for v in inline ownline real dwe; do
   nt_out="$(run_closeout)"
   case "$v" in
     inline|ownline)
-      grep -qF "closeout: stamped — $REQ" <<<"$nt_out" && [ "$(grep -cE '^## Status:[[:space:]]*done' "$P/$REQ")" = 1 ] \
+      grep -qF "closeout: stamped — $REQ" <<<"$nt_out" && [ "$(nt_blocks)" = 1 ] \
         && ok "(NT5) a sentinel quoted $v in prose ⇒ closeout stamps" || no "(NT5) $v: $(grep -F 'closeout: s' <<<"$nt_out" | tr '\n' '|')"
       nt_out="$(run_closeout)"
-      grep -qxF "closeout: skipped — already stamped" <<<"$nt_out" && [ "$(grep -cE '^## Status:[[:space:]]*done' "$P/$REQ")" = 1 ] \
+      grep -qxF "closeout: skipped — already stamped" <<<"$nt_out" && [ "$(nt_blocks)" = 1 ] \
         && ok "(NT5) $v: the re-run reads its own block as stamped (idempotent, one block)" || no "(NT5) $v re-run: $(tr '\n' '|' <<<"$nt_out")" ;;
     *)
       grep -qxF "closeout: skipped — already stamped" <<<"$nt_out" && [ "$q0" = "$(cksum < "$P/$REQ")" ] \
