@@ -92,5 +92,18 @@ for c in automate-helpers.sh reconcile-jobs.sh propose-work.sh propose-domain.sh
   else ok "$c has no private done-stamp grep"; fi
 done
 
+echo "-- pin: a library-missing fallback reads done exactly as the library does"
+fallback_ere() { sed -n "s/^ *status_is_done() { status_has \"\$1\" '\(.*\)'; }\$/\1/p" "$1"; }
+lib_ere="$( . "$LIB" && printf '%s' "$STATUS_DONE_ERE" )"
+for c in reconcile-jobs.sh automate-lanes.d/remove.sh; do
+  got="$(fallback_ere "$HERE/$c")"
+  [ "$got" = "$lib_ere" ] && ok "$c: its fallback pattern equals STATUS_DONE_ERE" \
+    || no "$c: its fallback pattern '$got' differs from STATUS_DONE_ERE '$lib_ere'"
+done
+m3="$W/remove-drifted.sh"; sed 's/done(_with_escalation)?\\b/done/' "$HERE/automate-lanes.d/remove.sh" > "$m3"
+if cmp -s "$m3" "$HERE/automate-lanes.d/remove.sh"; then no "mutant 3 did not change remove.sh"
+elif [ "$(fallback_ere "$m3")" = "$lib_ere" ]; then no "a drifted fallback still compares equal"
+else ok "a drifted fallback pattern ⇒ the comparison turns red"; fi
+
 echo "PASS: $pass FAIL: $fail"
 [ "$fail" -eq 0 ]

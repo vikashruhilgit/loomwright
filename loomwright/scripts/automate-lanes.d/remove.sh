@@ -257,7 +257,7 @@ _lanes_noclaim_files() {
     . "$HERE/automate-helpers.d/status-stamp.sh"
   else
     status_has() { grep -qE "$2" "$1" 2>/dev/null; }
-    status_is_done() { status_has "$1" '^## Status:[[:space:]]*done'; }
+    status_is_done() { status_has "$1" '^## Status:[[:space:]]*done(_with_escalation)?\b'; }
   fi
   nl="$(printf '\nx')"; nl="${nl%x}"; tab="$(printf '\t')"
   items="$(awk '/^## / { sec = $0; next }
