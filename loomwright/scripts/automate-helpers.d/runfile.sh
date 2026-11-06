@@ -233,7 +233,8 @@ _current_build_line() {
 # `- pause_reason:` line (appended to the block when absent), and — item form only —
 # REMOVES a `- escalation_cause:` line when the new status is not `escalated` or the
 # item changes (per-item park state, automate-followups/31: closeout's `done`, PICK's
-# `running` and every non-escalated park clear it); every other line of the file is
+# `running` and every non-escalated park clear it) — and a `- ready_sha:` line (the durable
+# READY record `--merge-parked` reads) when the item changes; every other line of the file is
 # byte-unchanged. pr/branch retention: when --item equals the line's
 # current item (compared after a leading `./` strip) an omitted --pr/--branch keeps
 # the stored value; when --item CHANGES, an omitted --pr/--branch resets to `null`
@@ -304,7 +305,7 @@ current_set() {
   is_run_file "$out" || die "$CS not a run file (no '# Automate Run:' title): $out; left unchanged [runfile_write_refused]"
   grep -q '^## Current' "$out" || die "$CS no '## Current' heading in $out; left unchanged"
 
-  local old_line new_line="" old_reason new_reason="" change=0 drop_esc=0
+  local old_line new_line="" old_reason new_reason="" change=0 drop_esc=0 drop_ready=0
   old_line="$(_current_item_line "$out")"
   if [ "$hi" = 1 ]; then
     local old_item; old_item="$(_current_field "$old_line" item)"
@@ -320,6 +321,12 @@ current_set() {
        && awk '/^## Current/ && !s { s=1; c=1; next } /^## / { c=0 } c && /^- escalation_cause:/ { f=1 } END { exit !f }' "$out"; then
       drop_esc=1; change=1
     fi
+    # the `- ready_sha:` line (automate-next-step.sh drain-result's durable READY record) is the item's own:
+    # dropped by an item-form write that changes the item, so it never rides into the next one
+    if [ "${old_item#./}" != "${item#./}" ] \
+       && awk '/^## Current/ && !s { s=1; c=1; next } /^## / { c=0 } c && /^- ready_sha:/ { f=1 } END { exit !f }' "$out"; then
+      drop_ready=1; change=1
+    fi
   fi
   if [ "$hr" = 1 ]; then
     old_reason="$(_current_reason_line "$out")"
@@ -331,9 +338,10 @@ current_set() {
   local have_item=0; [ -n "$old_line" ] && have_item=1
   local tmp; tmp="$(mktemp "${out}.XXXXXX")"
   CS_ITEM_ON="$hi" CS_NEW_ITEM="$new_line" CS_HAVE_ITEM="$have_item" \
-  CS_REASON_ON="$hr" CS_NEW_REASON="$new_reason" CS_DROP_ESC="$drop_esc" awk '
+  CS_REASON_ON="$hr" CS_NEW_REASON="$new_reason" CS_DROP_ESC="$drop_esc" CS_DROP_READY="$drop_ready" awk '
     BEGIN { ion=ENVIRON["CS_ITEM_ON"]; nitem=ENVIRON["CS_NEW_ITEM"]; have=ENVIRON["CS_HAVE_ITEM"]
-            ron=ENVIRON["CS_REASON_ON"]; nreason=ENVIRON["CS_NEW_REASON"]; desc=ENVIRON["CS_DROP_ESC"] }
+            ron=ENVIRON["CS_REASON_ON"]; nreason=ENVIRON["CS_NEW_REASON"]; desc=ENVIRON["CS_DROP_ESC"]
+            dready=ENVIRON["CS_DROP_READY"] }
     /^## Current/ && !seen {
       seen=1; c=1; print
       if (ion == 1 && have != 1) { print nitem; idone=1 }
@@ -346,6 +354,7 @@ current_set() {
     c && ion == 1 && !idone && /^- item: / { print nitem; idone=1; next }
     c && ron == 1 && !rdone && /^- pause_reason:/ { print nreason; rdone=1; next }
     c && desc == 1 && /^- escalation_cause:/ { next }
+    c && dready == 1 && /^- ready_sha:/ { next }
     { print }
     END { if (c && ron == 1 && !rdone) print nreason }
   ' "$out" > "$tmp" || { rm -f "$tmp"; die "current-set: rewrite failed; $out left unchanged"; }

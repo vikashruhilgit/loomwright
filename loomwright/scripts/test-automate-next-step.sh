@@ -262,8 +262,8 @@ TAB="$(printf '\t')"
 # usage: test-automate-next-step.sh [--group <g> | --all | --part <part>]
 # --part <part> runs ONE part after the shared setup — what a part file run directly does (it re-enters this
 # runner for itself), so `bash test-automate-next-step.d/<part>.sh` (a pin-mutation run) is a real test run.
-TNS_PARTS="01-golden-idem-gates 02-branches 03-run-drain 04-pick-resume 05-fresh-phases 06-running-system 07-doc-mirror 08-coordinator-model 09-mutants-tail 10-mutants-pick-fresh 11-mutants-cm 12-dismissed-batch"
-TNS_GROUPS="1=01-golden-idem-gates,02-branches,03-run-drain,06-running-system,07-doc-mirror 2=04-pick-resume,05-fresh-phases,08-coordinator-model,11-mutants-cm,12-dismissed-batch 3=09-mutants-tail,10-mutants-pick-fresh"
+TNS_PARTS="01-golden-idem-gates 02-branches 03-run-drain 04-pick-resume 05-fresh-phases 06-running-system 07-doc-mirror 08-coordinator-model 09-mutants-tail 10-mutants-pick-fresh 11-mutants-cm 12-dismissed-batch 13-merge-parked"
+TNS_GROUPS="1=01-golden-idem-gates,02-branches,03-run-drain,06-running-system,07-doc-mirror 2=04-pick-resume,05-fresh-phases,08-coordinator-model,11-mutants-cm,12-dismissed-batch 3=09-mutants-tail,10-mutants-pick-fresh,13-merge-parked"
 . "$HERE/part-groups-lib.sh"
 if [ "${1:-}" = --part ]; then
   case " $TNS_PARTS " in *" ${2:-} "*) ;; *) echo "  FAIL: --part names no part of TNS_PARTS: '${2:-}'"; exit 1 ;; esac
@@ -2678,6 +2678,7 @@ pg_want 09-mutants-tail       && tns_part 09-mutants-tail       && . "$TNS_D/09-
 pg_want 10-mutants-pick-fresh && tns_part 10-mutants-pick-fresh && . "$TNS_D/10-mutants-pick-fresh.sh"
 pg_want 11-mutants-cm         && tns_part 11-mutants-cm         && . "$TNS_D/11-mutants-cm.sh"
 pg_want 12-dismissed-batch    && tns_part 12-dismissed-batch    && . "$TNS_D/12-dismissed-batch.sh"
+pg_want 13-merge-parked       && tns_part 13-merge-parked       && . "$TNS_D/13-merge-parked.sh"
 if [ "$TNS_BEFORE_CM" = 1 ] && [ "$TNS_CM_CHECKED" = 0 ]; then TNS_CM_CHECKED=1; ns_cm_all_check; fi
 [ "$TNS_DONE" = "$PG_SEL" ] || no "parts sourced ($TNS_DONE) differ from the parts selected ($PG_SEL): a TNS_PARTS entry has no source line"
 echo "PASS: $pass FAIL: $fail ($PG_LABEL)"
